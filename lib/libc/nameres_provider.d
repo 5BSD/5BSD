@@ -10,3 +10,11 @@ provider nameres {
 	probe backend__start(uintptr_t, uintptr_t);
 	probe backend__done(uintptr_t, uintptr_t, int);
 };
+
+/* libc providers share one DOF relocation object. */
+provider semwait {
+	probe park__start(uintptr_t, int, int);
+	probe park__done(uintptr_t, int, int);
+	probe wake__start(uintptr_t);
+	probe wake__done(uintptr_t, int, int);
+};

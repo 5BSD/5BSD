@@ -13,4 +13,7 @@ provider bsdsysctl {
 	 */
 	probe request__done(const char *client, uint16_t opcode, uint32_t bytes,
 	    int status, int transport_error);
+	probe session__limit(int a0, uint64_t a1);
+	probe session__open__failure(int a0, int a1);
+	probe session__close__reason(int a0, int a1);
 };

@@ -89,6 +89,10 @@
 #include "fuse_internal.h"
 
 SDT_PROVIDER_DECLARE(fusefs);
+SDT_PROBE_DEFINE1(fusefs, , , answer__wait__start, "struct fuse_dispatcher *");
+SDT_PROBE_DEFINE2(fusefs, , , answer__wait__done,
+    "struct fuse_dispatcher *", "int");
+
 /* 
  * Fuse trace probe:
  * arg0: verbosity.  Higher numbers give more verbose messages
@@ -976,7 +980,10 @@ fdisp_wait_answ(struct fuse_dispatcher *fdip)
 	fuse_insert_callback(fdip->tick, fuse_standard_handler);
 	fuse_insert_message(fdip->tick, false);
 
-	if ((err = fticket_wait_answer(fdip->tick))) {
+	SDT_PROBE1(fusefs, , , answer__wait__start, fdip);
+	err = fticket_wait_answer(fdip->tick);
+	SDT_PROBE2(fusefs, , , answer__wait__done, fdip, err);
+	if (err != 0) {
 		fuse_lck_mtx_lock(fdip->tick->tk_aw_mtx);
 
 		if (fticket_answered(fdip->tick)) {

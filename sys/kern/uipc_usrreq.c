@@ -123,6 +123,8 @@ SDT_PROBE_DEFINE6(fd, , , xfer__consume,
  * is available, an fd/message count, and a result/error where meaningful.
  */
 SDT_PROVIDER_DEFINE(unpcb);
+SDT_PROBE_DEFINE1(unpcb, , , send__wait__start, "struct socket *");
+SDT_PROBE_DEFINE2(unpcb, , , send__wait__done, "struct socket *", "int");
 SDT_PROBE_DEFINE4(unpcb, , , attach,
     "pid_t", "struct socket *", "struct unpcb *", "int");
 SDT_PROBE_DEFINE3(unpcb, , , detach,
@@ -1416,11 +1418,15 @@ static int
 uipc_stream_sbwait(struct socket *so, sbintime_t timeo)
 {
 	struct sockbuf *sb = &so->so_rcv;
+	int error;
 
 	SOCK_RECVBUF_LOCK_ASSERT(so);
 	sb->sb_flags |= SB_WAIT;
-	return (msleep_sbt(&sb->sb_acc, SOCK_RECVBUF_MTX(so), PSOCK | PCATCH,
-	    "sbwait", timeo, 0, 0));
+	SDT_PROBE1(unpcb, , , send__wait__start, so);
+	error = msleep_sbt(&sb->sb_acc, SOCK_RECVBUF_MTX(so), PSOCK | PCATCH,
+	    "sbwait", timeo, 0, 0);
+	SDT_PROBE2(unpcb, , , send__wait__done, so, error);
+	return (error);
 }
 
 static int

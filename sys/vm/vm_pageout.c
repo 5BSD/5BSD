@@ -1847,6 +1847,9 @@ vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
 		if (vmd->vmd_oom) {
 			vmd->vmd_oom = false;
 			atomic_subtract_int(&vm_pageout_oom_vote, 1);
+			if (!cold)
+				DTRACE_PROBE2(oom__vote__withdraw,
+				    int, (vmd->vmd_domain), int, (0));
 		}
 		return;
 	}
@@ -1862,6 +1865,9 @@ vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
 
 	vmd->vmd_oom = true;
 	old_vote = atomic_fetchadd_int(&vm_pageout_oom_vote, 1);
+	if (!cold)
+		DTRACE_PROBE3(oom__vote, int, (vmd->vmd_domain),
+		    int, (old_vote + 1), int, (page_shortage));
 	if (old_vote != vm_ndomains - 1)
 		return;
 
@@ -1880,6 +1886,9 @@ vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
 	 */
 	vmd->vmd_oom = false;
 	atomic_subtract_int(&vm_pageout_oom_vote, 1);
+	if (!cold)
+		DTRACE_PROBE2(oom__vote__withdraw, int, (vmd->vmd_domain),
+		    int, (1));
 }
 
 /*
@@ -1963,11 +1972,16 @@ vm_pageout_oom(int shortage)
 	 * initiated by vm_fault() time-outs on the waits for free
 	 * pages.
 	 */
+	if (!cold)
+		DTRACE_PROBE1(oom__start, int, (shortage));
 	mtx_lock(&vm_oom_ratelim_mtx);
 	now = ticks;
 	if (shortage == VM_OOM_MEM_PF &&
 	    (u_int)(now - vm_oom_ratelim_last) < hz * vm_oom_pf_secs) {
 		mtx_unlock(&vm_oom_ratelim_mtx);
+		if (!cold)
+			DTRACE_PROBE4(oom__done, int, (shortage), int, (1),
+			    int, (-1), u_long, (0));
 		return;
 	}
 	vm_oom_ratelim_last = now;
@@ -2074,10 +2088,20 @@ vm_pageout_oom(int shortage)
 		if (vm_panic_on_oom != 0 && --vm_panic_on_oom == 0)
 			panic("%s", reason);
 		PROC_LOCK(bigproc);
+		if (!cold)
+			DTRACE_PROBE3(oom__victim, int, (shortage),
+			    int, (bigproc->p_pid), u_long, (bigsize));
 		killproc(bigproc, reason);
 		sched_nice(bigproc, PRIO_MIN);
+		if (!cold)
+			DTRACE_PROBE4(oom__done, int, (shortage), int, (0),
+			    int, (bigproc->p_pid), u_long, (bigsize));
 		_PRELE(bigproc);
 		PROC_UNLOCK(bigproc);
+	} else {
+		if (!cold)
+			DTRACE_PROBE4(oom__done, int, (shortage), int, (2),
+			    int, (-1), u_long, (0));
 	}
 }
 

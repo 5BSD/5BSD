@@ -49,6 +49,20 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "fileflags_trace.h"
+
+static int
+trace_chflagsat(int fd, const char *path, unsigned long flags, int atflags)
+{
+	int result;
+
+	TRACE_FILEFLAGS_OPERATION__START(flags);
+	result = chflagsat(fd, path, flags, atflags);
+	TRACE_FILEFLAGS_OPERATION__DONE(flags, result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 static volatile sig_atomic_t siginfo;
 
 #define	OPT_DEREF_UNSAFE	(CHAR_MAX + 1)
@@ -154,7 +168,7 @@ chflags_fts(int dirfd, char **paths, int fts_options, u_long set, u_long clear,
 			newflags = (p->fts_statp->st_flags | set) & clear;
 		if (newflags == p->fts_statp->st_flags)
 			continue;
-		if (chflagsat(p->fts_parent->fts_dirfd, p->fts_name, newflags,
+		if (trace_chflagsat(p->fts_parent->fts_dirfd, p->fts_name, newflags,
 		    atflag) == -1) {
 			e = errno;
 			if (!fflag) {

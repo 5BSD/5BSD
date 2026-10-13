@@ -24,10 +24,11 @@
 #include "opt_ratelimit.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
-#include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/sockio.h>
 #include <sys/sysctl.h>
@@ -73,6 +74,11 @@
 #include <net/if_vlan_var.h>
 #include <net/if_lagg.h>
 #include <net/ieee8023ad_lacp.h>
+
+SDT_PROVIDER_DEFINE(lagg);
+SDT_PROBE_DEFINE3(lagg, , , port__start, "void *", "void *", "int");
+SDT_PROBE_DEFINE4(lagg, , , port__done, "void *", "void *", "int", "int");
+
 
 #ifdef DEV_NETMAP
 MODULE_DEPEND(if_lagg, netmap, 1, 1, 1);
@@ -1637,7 +1643,9 @@ lagg_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 #endif
 		oldmtu = ifp->if_mtu;
 		LAGG_XLOCK(sc);
+		SDT_PROBE3(lagg, , , port__start, sc, tpif, 1);
 		error = lagg_port_create(sc, tpif);
+		SDT_PROBE4(lagg, , , port__done, sc, tpif, 1, error);
 		LAGG_XUNLOCK(sc);
 		if_rele(tpif);
 
@@ -1669,7 +1677,9 @@ lagg_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 			break;
 		}
 
+		SDT_PROBE3(lagg, , , port__start, sc, tpif, 0);
 		error = lagg_port_destroy(lp, 1);
+		SDT_PROBE4(lagg, , , port__done, sc, tpif, 0, error);
 		LAGG_XUNLOCK(sc);
 		if_rele(tpif);
 		VLAN_CAPABILITIES(ifp);

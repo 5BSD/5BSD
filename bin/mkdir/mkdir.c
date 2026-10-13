@@ -41,10 +41,23 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#include "dircreate_trace.h"
+
 static int	build(char *, mode_t);
 static void	usage(void);
 
 static int	vflag;
+
+static int
+trace_mkdir(const char *path, mode_t mode)
+{
+	int result;
+
+	TRACE_DIRCREATE_OPERATION__START(mode);
+	result = mkdir(path, mode);
+	TRACE_DIRCREATE_OPERATION__DONE(mode, result, result < 0 ? errno : 0);
+	return (result);
+}
 
 int
 main(int argc, char *argv[])
@@ -89,7 +102,7 @@ main(int argc, char *argv[])
 	for (exitval = 0; *argv != NULL; ++argv) {
 		if (pflag) {
 			success = build(*argv, omode);
-		} else if (mkdir(*argv, omode) < 0) {
+		} else if (trace_mkdir(*argv, omode) < 0) {
 			if (errno == ENOTDIR || errno == ENOENT)
 				warn("%s", dirname(*argv));
 			else
@@ -164,7 +177,8 @@ build(char *path, mode_t omode)
 		}
 		if (last)
 			(void)umask(oumask);
-		if (mkdir(path, last ? omode : S_IRWXU | S_IRWXG | S_IRWXO) < 0) {
+		if (trace_mkdir(path,
+		    last ? omode : S_IRWXU | S_IRWXG | S_IRWXO) < 0) {
 			if (errno == EEXIST || errno == EISDIR) {
 				if (stat(path, &sb) < 0) {
 					warn("%s", path);

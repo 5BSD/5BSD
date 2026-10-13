@@ -35,6 +35,21 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "envquery_trace.h"
+
+static int
+trace_kenv(int action, const char *name, char *value, int len)
+{
+	int result;
+
+	TRACE_ENVQUERY_OPERATION__START(action, len);
+	result = kenv(action, name, value, len);
+	TRACE_ENVQUERY_OPERATION__DONE(action, len,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 static void	usage(void);
 static int	kdumpenv(int dump_type);
 static int	kgetenv(const char *);
@@ -149,7 +164,7 @@ kdumpenv(int dump_type)
 	char *buf, *bp, *cp;
 	int buflen, envlen;
 
-	envlen = kenv(dump_type, NULL, NULL, 0);
+	envlen = trace_kenv(dump_type, NULL, NULL, 0);
 	if (envlen < 0)
 		return (-1);
 	for (;;) {
@@ -157,7 +172,7 @@ kdumpenv(int dump_type)
 		buf = calloc(1, buflen + 1);
 		if (buf == NULL)
 			return (-1);
-		envlen = kenv(dump_type, NULL, buf, buflen);
+		envlen = trace_kenv(dump_type, NULL, buf, buflen);
 		if (envlen < 0) {
 			free(buf);
 			return (-1);
@@ -194,7 +209,7 @@ kgetenv(const char *env)
 	char buf[1024];
 	int ret;
 
-	ret = kenv(KENV_GET, env, buf, sizeof(buf));
+	ret = trace_kenv(KENV_GET, env, buf, sizeof(buf));
 	if (ret == -1)
 		return (ret);
 	if (vflag)
@@ -209,7 +224,7 @@ ksetenv(const char *env, char *val)
 {
 	int ret;
 
-	ret = kenv(KENV_SET, env, val, strlen(val) + 1);
+	ret = trace_kenv(KENV_SET, env, val, strlen(val) + 1);
 	if (ret == 0)
 		printf("%s=\"%s\"\n", env, val);
 	return (ret);
@@ -220,6 +235,6 @@ kunsetenv(const char *env)
 {
 	int ret;
 
-	ret = kenv(KENV_UNSET, env, NULL, 0);
+	ret = trace_kenv(KENV_UNSET, env, NULL, 0);
 	return (ret);
 }

@@ -1,0 +1,72 @@
+Static DTrace source comparison, 2026-10-13
+=========================================
+
+The combined static source inventory exceeds three times the pinned vanilla
+FreeBSD inventory. Kernel-only coverage does not exceed three times.
+
+                       5BSD working tree   FreeBSD baseline   Ratio
+Kernel contracts               2,379             1,037         2.294x
+Userland contracts               849                12        70.750x
+Combined                       3,228             1,049         3.077x
+
+Baseline: c2b7fe4a9e94a0edba9dd2772874928b565c4f9e, 2026-10-08,
+FreeBSD commit '.gitignore: add tgrep index directory', author/committer
+Konstantin Belousov. The baseline is an ancestor of the current source HEAD.
+The complete commit metadata and current HEAD are recorded in comparison.json.
+This pins the comparison to the imported FreeBSD 16 development source; it is
+not a claim about every FreeBSD release or a continuously moving upstream HEAD.
+
+How the comparison was checked
+------------------------------
+Run the maintained script with the same source roots, filename/directory
+exclusions, macro parser and identity rules on both trees. Fetch baseline
+source blobs directly from git cat-file; do not reuse the old candidate cache.
+The working scan combines git-tracked candidates, visible source candidates,
+and all eligible .d files, including local additions. The baseline also adds
+all eligible .d files, catching multiline provider declarations. This expanded
+candidate discovery reproduces the previous 1,049 baseline and includes all
+year's currently retained work, not just recent instrumentation patches.
+
+Reproduce:
+  python3.12 /usr/src/tools/test/system-tracing/static-census.py \
+    --out /usr/obj/5bsd-dtrace-census-recheck \
+    --baseline c2b7fe4a9e94a0edba9dd2772874928b565c4f9e
+
+Artifacts in /usr/obj/5bsd-dtrace-nineteenth-validation/census:
+  working-tree.json and vanilla-freebsd.json: every identity, source path,
+    recognized declaration form, provider counts and invocation-site inventory.
+  comparison.json: pinned metadata, counts, ratios, additions and removals.
+  working-source-hashes.json: SHA256 of exact candidate source bytes.
+
+A contract is a distinct kind/provider/module/function/name tuple, normalizing
+double underscores to DTrace's visible hyphens. Multiple call sites and copies
+of the same contract do not multiply its count. Explicit SDT definitions,
+inline DTRACE/ZFS_BSD forms, supported MAC/MIB wrapper definitions, ABI-neutral
+linuxulator definitions, and USDT .d provider declarations are recognized.
+Comments and preprocessor definition text are separated before extraction;
+supported constant macro-body probes are handled explicitly. Both inventories
+report zero unresolved identities among the recognized forms.
+
+The set difference is 2,180 5BSD-only contracts and one upstream-only contract:
+1,049 + 2,180 - 1 = 3,228. This round added 13 contracts and removed the previous
+5BSD pts:::alloc-external contract, so 3,216 + 13 - 1 = 3,228. Source invocation
+sites are a separate metric, not the basis for the 3.077x result.
+
+Limits on certainty
+-------------------
+This is a reproducible static inventory under explicit parsing rules, not a
+preprocessor/build-independent proof of every possible DTrace probe. It spans
+architectures and conditional configurations and may include dormant source
+contracts. Userland declarations are not proof that every corresponding program
+was built, installed or loaded, nor that every contract has a firing path.
+Test/example/doc directories and foreign /os/linux/ implementations are excluded;
+see the script and comparison.json for the exact roots and exclusion names.
+Generated/dynamic providers (FBT, syscall, pid, profile, etc.) are outside this
+metric. ABI variants are collapsed where specified by the parser.
+
+A runtime comparison would require matched architecture/kernel options, built
+and loaded modules, matching installed binaries/processes, and dtrace -l on
+both systems. /dev/dtrace is unavailable here. Therefore do not describe these
+figures as '3x all runtime probes' or '3x kernel probes'. The defensible statement
+is '3.077x the unique static source contracts of the pinned FreeBSD baseline,
+combining kernel and userland; 2.294x for kernel contracts alone.'

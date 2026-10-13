@@ -1,0 +1,118 @@
+Seventeenth system tracing expansion (2026-10-13)
+===============================================
+
+14 new kernel contracts at 27 source sites in seven IPC source files. Five
+profiles bring the bsdinstruments installation catalog to 434. Profiles use
+the existing /usr/share/bsdinstruments/profiles base installation mechanism;
+no installation was performed. The inventory is coverage-seventeenth.json.
+All selectors are sdt:::NAME. A contract is a unique provider/module/function/
+name tuple, not the number of call sites or loaded instances.
+
+Purpose and safety
+------------------
+Existing pipe, shared-memory, kqueue and IPC lifecycle/wait probes do not
+explain many failures. This pass adds causal pressure and limit events, plus
+large-page retry and actual wait timing. A rejected resource request is not
+proof of system-wide OOM. Successful fast paths gain no new event sites.
+All new calls exclude cold startup. They use existing syscall/thread paths,
+not early initialization, raw interrupt filters, allocators or panic handlers.
+No allocation, extra locking, counter modification, payload or credential
+collection is introduced. Supplied profiles do not dereference pointers.
+Some probes execute under existing sleeping locks/mutexes; enabled tracing
+there can extend lock hold time. No live overhead measurement is claimed.
+
+Contracts (arguments in order)
+-----------------------------
+pipe-buffer-pressure: pipe identity, reason, attempted allocation bytes.
+  1 = RLIMIT_PIPEBUF accounting rejected the reservation.
+  2 = global pipe KVA reservation threshold rejected an unprivileged caller.
+  3 = pipe_map virtual mapping failed.
+Emits for failed attempts including attempts followed by SMALL_PIPE_SIZE
+fallback. It does not by itself mean the pipe creation/resize ultimately failed.
+pipe-buffer-retry: pipe identity, failed size, fallback size, immediately before
+the existing small-buffer retry. Correlate with existing pipe resize results.
+
+shmfd-swap-pressure: shmfd identity, additional requested swap reservation bytes.
+This is swap/accounting reservation failure while extending ordinary shared
+memory, not physical allocation failure or proof that all swap is full.
+shmfd-largepage-pressure: shmfd, page-size index, retry count, allocation policy,
+on contiguous-page allocation failure. Count is zero for the first failed
+attempt and resets after each successfully allocated large page. Policy is
+SHM_LARGEPAGE_ALLOC_*; failure may lead to EINTR, ENOMEM, reclaim or waiting.
+shmfd-largepage-retry: shmfd, page-size index, retry count, before reclamation.
+The event denotes an attempt, not recovery success or completed allocation.
+shmfd-largepage-wait-start/done: shmfd (done adds vm_wait_intr error), immediately
+around the interruptible sleep following an ENOMEM reclamation result.
+The VM object lock is already released; the existing range lock keeps the
+operation serialized. Partial large-page growth may survive a later failure.
+
+sysvshm-limit: reason, requested bytes.
+  1 = system segment-count limit (original, unrounded requested bytes).
+  2 = system committed-page limit.
+  3 = no free descriptor after attempting descriptor-table growth.
+  4 = RACCT_NSHM rejection.
+  5 = RACCT_SHMSIZE rejection.
+Reasons 2--5 report page-rounded bytes; reasons 4--5 require active RACCT.
+sysvshm-pager-pressure: page-rounded bytes, physical-pager selection boolean,
+when vm_pager_allocate returns NULL. Does not expose keys or credentials.
+
+sysvmsg-limit: reason (1 = no free queue descriptor; 2 = RACCT_NMSGQ rejection),
+configured msgmni. msgmni is contextual system configuration, not the RACCT
+limit or a measured current queue count. These events concern queue creation.
+sysvsem-limit: reason, requested semaphore count.
+  1 = system semaphore-element capacity exceeded.
+  2 = no free semaphore-set descriptor.
+  3 = RACCT_NSEM rejection.
+These concern set creation, not every semop/undo allocation failure.
+
+kqueue-timer-limit: knote identity, configured callout maximum, after reverting
+the failed callout reservation during attach or fork copy. The maximum can be
+changed concurrently and is contextual, not an exact snapshot of a counter.
+kqueue-expand-pressure: kqueue, kind (1 = descriptor list; 2 = identifier hash),
+allocation flags, when storage allocation returns NULL. No identifier payload
+or stale pointer dereference is captured.
+mqueue-count-limit: configured maxmq, when the existing queue-count comparison
+rejects allocation. This is not malloc exhaustion; the subsequent allocation
+uses M_WAITOK. maxmq can change concurrently. Only the active allocation path
+is covered; disabled mqfs creation routines and an unreachable node-failure
+branch were not instrumented.
+
+Profiles
+--------
+pipe-buffer-pressure: failed attempts by cause/size and fallback sizes.
+shm-largepage-pressure: swap reservation sizes, failed large-page attempts by
+size index/policy, reclaim counts, actual wait latency and returned errors.
+sysv-ipc-pressure: creation limits by cause and requested resources.
+kqueue-resource-pressure: timer cap and storage allocation failures.
+mqueue-count-pressure: queue-count rejections grouped by configured limit.
+
+Start before the workload. The wait pair uses PID/TID/depth keys and clears
+matched state. Dropped events invalidate pairing; elapsed time includes
+scheduling. These profiles collect aggregates, not pointer identities, paths,
+message contents, IPC keys or credentials. PID filters apply to initiating
+threads. Existing lifecycle profiles remain useful for final operation results.
+
+Validation
+----------
+Artifacts and exact originals: /usr/obj/5bsd-dtrace-seventeenth-validation.
+Maintained scripts in this directory:
+  coverage-seventeenth-modules.py: native mqueue implementation module build.
+  coverage-seventeenth-compile.py: seven sources, hooks on/off (14 compilations).
+  coverage-seventeenth-check.py: source hashes, selector/arity checks, ten
+    offline profile compiles (plain and PID/duration filtered), executable
+    SDT NOP sites in enabled objects and absence in disabled objects.
+  coverage-seventeenth-codegen.py: all seven no-hooks .text byte sequences
+    match saved originals with diagnostic file/line macros normalized.
+    This does not claim relocation equivalence or runtime qualification.
+  coverage-seventeenth-linked.py: executable new site in linked mqueuefs.ko.
+  coverage-seventeenth-variants.py: RACCT disabled in three System V IPC files,
+    both hook modes (six compilations); only non-RACCT limit sites remain.
+The prepared GENERIC-NODEBUG kernel is linked using -j16 and SRCTOP=/usr/src
+under /usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG. All compilation uses
+available logical CPUs. Source edits are relative to saved current originals,
+preserving earlier rounds and unrelated changes; session.patch reverse-checks.
+
+No module load, forced OOM, limit mutation, installation, publication or reboot.
+/dev/dtrace is unavailable: offline compilation and ELF checks do not prove
+live firing or qualify enabled-trace overhead. Builds are native amd64, not
+cross-architecture certification. Limits and failure paths were not induced.

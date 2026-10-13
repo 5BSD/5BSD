@@ -34,6 +34,7 @@
  */
 
 #include <sys/param.h>
+#include "bhyve_trace.h"
 #include <sys/types.h>
 #ifndef WITHOUT_CAPSICUM
 #include <sys/capsicum.h>
@@ -1195,7 +1196,10 @@ restore_vm_mem(struct vmctx *ctx, struct restore_state *rstate)
 	 * future caller.  In particular, an incompatible generic-device-memory
 	 * extension must not be discovered after ordinary guest RAM has changed.
 	 */
+	BHYVE_PHASE_START(__func__, "vm_restore_memory_preflight");
 	error = vm_restore_memory_preflight(ctx, rstate);
+	BHYVE_PHASE_DONE(__func__, "vm_restore_memory_preflight",
+	    error, error < 0 ? errno : 0);
 	if (error != 0) {
 		errno = error;
 		return (-1);
@@ -1473,7 +1477,10 @@ vm_restore_device(struct restore_state *rstate, vm_snapshot_dev_cb func,
 		.op = VM_SNAPSHOT_RESTORE,
 	};
 
+	BHYVE_PHASE_START(__func__, name);
 	ret = func(meta);
+	BHYVE_PHASE_DONE(__func__, name, ret,
+	    ret < 0 ? errno : 0);
 	if (ret != 0) {
 		EPRINTLN("Failed to restore dev: %s %d", name, ret);
 		return (ret);
@@ -2081,7 +2088,10 @@ vm_restore_devices(struct restore_state *rstate)
 	int ret;
 	struct pci_devinst *pdi;
 
+	BHYVE_PHASE_START(__func__, "vm_restore_preflight");
 	ret = vm_restore_preflight(rstate);
+	BHYVE_PHASE_DONE(__func__, "vm_restore_preflight",
+	    ret, ret < 0 ? errno : 0);
 	if (ret != 0)
 		return (ret);
 
@@ -2308,35 +2318,53 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 	bool released, resolved, session_active;
 	int error, release_error;
 
-	if (ctx == NULL || rstate == NULL)
+	BHYVE_TRACE(RESTORE_BEGIN, (uintptr_t)ctx);
+	if (ctx == NULL || rstate == NULL) {
+		BHYVE_TRACE(RESTORE_RESULT, EINVAL);
 		return (EINVAL);
+	}
 	/*
 	 * bhyverun must have fenced every newly created vCPU before this
 	 * transaction starts.  Refuse a direct caller rather than allowing a
 	 * destination-local instruction to run before the saved state commits.
 	 */
-	if (!checkpoint_restore_startup_held())
+	if (!checkpoint_restore_startup_held()) {
+		BHYVE_TRACE(RESTORE_RESULT, EBUSY);
 		return (EBUSY);
+	}
 	session_active = false;
 	memset(&session, 0, sizeof(session));
 
+	BHYVE_PHASE_START(__func__, "vm_pause_devices");
 	error = vm_pause_devices();
+	BHYVE_PHASE_DONE(__func__, "vm_pause_devices",
+	    error, error < 0 ? errno : 0);
 	if (error != 0) {
 		EPRINTLN("Failed to pause PCI device state.");
+		BHYVE_TRACE(RESTORE_RESULT, error);
 		return (error);
 	}
+	BHYVE_PHASE_START(__func__, "vm_restore_preflight");
 	error = vm_restore_preflight(rstate);
+	BHYVE_PHASE_DONE(__func__, "vm_restore_preflight",
+	    error, error < 0 ? errno : 0);
 	if (error != 0) {
 		EPRINTLN("Checkpoint topology or device contract is invalid.");
 		goto failed;
 	}
+	BHYVE_PHASE_START(__func__, "vm_restore_memory_preflight");
 	error = vm_restore_memory_preflight(ctx, rstate);
+	BHYVE_PHASE_DONE(__func__, "vm_restore_memory_preflight",
+	    error, error < 0 ? errno : 0);
 	if (error != 0) {
 		EPRINTLN("Checkpoint memory layout is invalid.");
 		goto failed;
 	}
 
+	BHYVE_PHASE_START(__func__, "vm_snapshot_session_begin_exact");
 	error = vm_snapshot_session_begin_exact(ctx, &session, &resolved);
+	BHYVE_PHASE_DONE(__func__, "vm_snapshot_session_begin_exact",
+	    error, error < 0 ? errno : 0);
 	if (error != 0) {
 		EPRINTLN("Could not begin kernel restore session: %s",
 		    strerror(error));
@@ -2348,26 +2376,39 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 	session_active = true;
 
 	FPRINTLN(stdout, "Restoring vm mem...");
-	if (restore_vm_mem(ctx, rstate) != 0) {
+	BHYVE_PHASE_START(__func__, "restore_vm_mem");
+	error = restore_vm_mem(ctx, rstate);
+	BHYVE_PHASE_DONE(__func__, "restore_vm_mem", error,
+	    error != 0 ? errno : 0);
+	if (error != 0) {
 		error = errno != 0 ? errno : EIO;
 		EPRINTLN("Failed to restore VM memory.");
 		goto failed;
 	}
 	FPRINTLN(stdout, "Restoring pci devs...");
+	BHYVE_PHASE_START(__func__, "vm_restore_devices");
 	error = vm_restore_devices(rstate);
+	BHYVE_PHASE_DONE(__func__, "vm_restore_devices",
+	    error, error < 0 ? errno : 0);
 	if (error != 0) {
 		EPRINTLN("Failed to restore PCI device state.");
 		goto failed;
 	}
 	FPRINTLN(stdout, "Restoring kernel structs...");
+	BHYVE_PHASE_START(__func__, "vm_restore_kern_structs");
 	error = vm_restore_kern_structs(ctx, rstate);
+	BHYVE_PHASE_DONE(__func__, "vm_restore_kern_structs",
+	    error, error < 0 ? errno : 0);
 	if (error != 0) {
 		EPRINTLN("Failed to restore kernel structs.");
 		goto failed;
 	}
 
+	BHYVE_PHASE_START(__func__, "vm_snapshot_session_release_exact");
 	release_error = vm_snapshot_session_release_exact(ctx, &session, true,
 	    &released);
+	BHYVE_PHASE_DONE(__func__, "vm_snapshot_session_release_exact",
+	    release_error, release_error < 0 ? errno : 0);
 	if (released)
 		session_active = false;
 	if (release_error != 0) {
@@ -2377,20 +2418,30 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 		goto failed;
 	}
 	FPRINTLN(stdout, "Resuming pci devs...");
+	BHYVE_PHASE_START(__func__, "vm_resume_devices");
 	error = vm_resume_devices();
+	BHYVE_PHASE_DONE(__func__, "vm_resume_devices",
+	    error, error < 0 ? errno : 0);
 	if (error != 0)
 		EPRINTLN("Failed to resume PCI device state.");
 	else {
+		BHYVE_PHASE_START(__func__, "checkpoint_restore_startup_release");
 		error = checkpoint_restore_startup_release();
+		BHYVE_PHASE_DONE(__func__, "checkpoint_restore_startup_release",
+		    error, error < 0 ? errno : 0);
 		if (error != 0)
 			EPRINTLN("Failed to release restore startup fence.");
 	}
+	BHYVE_TRACE(RESTORE_RESULT, error);
 	return (error);
 
 failed:
 	if (session_active) {
+		BHYVE_PHASE_START(__func__, "vm_snapshot_session_release_exact");
 		release_error = vm_snapshot_session_release_exact(ctx, &session,
 		    false, &released);
+		BHYVE_PHASE_DONE(__func__, "vm_snapshot_session_release_exact",
+		    release_error, release_error < 0 ? errno : 0);
 		if (release_error != 0) {
 			EPRINTLN("Could not abort kernel restore session: %s",
 			    strerror(release_error));
@@ -2398,6 +2449,7 @@ failed:
 				error = release_error;
 		}
 	}
+	BHYVE_TRACE(RESTORE_RESULT, error != 0 ? error : EIO);
 	return (error != 0 ? error : EIO);
 }
 
@@ -2451,7 +2503,10 @@ vm_save_kern_struct(struct vmctx *ctx, int data_fd, xo_handle_t *xop,
 	int error, ret;
 	size_t data_size;
 
+	BHYVE_PHASE_START(__func__, "vm_snapshot_req");
 	ret = vm_snapshot_req(ctx, meta);
+	BHYVE_PHASE_DONE(__func__, "vm_snapshot_req",
+	    ret, ret < 0 ? errno : 0);
 	if (ret != 0) {
 		error = errno != 0 ? errno : EIO;
 		fprintf(stderr, "%s: Failed to snapshot struct %s: %s\r\n",
@@ -2730,7 +2785,9 @@ vm_snapshot_device(vm_snapshot_dev_cb func, const char *dev_name,
 			return (ret);
 		}
 	}
+	BHYVE_PHASE_START(__func__, dev_name);
 	ret = func(meta);
+	BHYVE_PHASE_DONE(__func__, dev_name, ret, ret < 0 ? errno : 0);
 	if (ret != 0) {
 		EPRINTLN("Failed to snapshot %s; ret=%d", dev_name, ret);
 		return (ret);
@@ -2992,16 +3049,21 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	char *lock_filename = NULL, *manifest_tmp = NULL;
 	FILE *meta_file = NULL;
 
+	BHYVE_TRACE(CHECKPOINT_BEGIN, stop_vm);
 	/* Fail before creating files or stopping the guest. */
 	if (tpm_device_present()) {
 		EPRINTLN("TPM-equipped VMs cannot be checkpointed safely yet.");
+		BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, false, ENOTSUP);
 		return (ENOTSUP);
 	}
 	memset(&manifest, 0, sizeof(manifest));
 	memset(&old_manifest, 0, sizeof(old_manifest));
 	lock_filename = strcat_extension(checkpoint_file, ".lock");
-	if (lock_filename == NULL)
-		return (errno != 0 ? errno : ENOMEM);
+	if (lock_filename == NULL) {
+		error = errno != 0 ? errno : ENOMEM;
+		BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, false, error);
+		return (error);
+	}
 	lock_fd = openat(fddir, lock_filename,
 	    O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
 	if (lock_fd < 0) {
@@ -3080,10 +3142,15 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 		goto done;
 	}
 
+	BHYVE_PHASE_START(__func__, "vm_vcpu_pause");
 	vm_vcpu_pause(ctx);
+	BHYVE_PHASE_DONE(__func__, "vm_vcpu_pause", 0, 0);
 	vcpus_paused = true;
 
+	BHYVE_PHASE_START(__func__, "vm_pause_devices");
 	ret = vm_pause_devices();
+	BHYVE_PHASE_DONE(__func__, "vm_pause_devices",
+	    ret, ret < 0 ? errno : 0);
 	if (ret != 0) {
 		fprintf(stderr, "Could not pause devices\r\n");
 		error = ret;
@@ -3094,8 +3161,11 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	{
 		bool resolved = true;
 
+		BHYVE_PHASE_START(__func__, "vm_snapshot_session_begin_exact");
 		error = vm_snapshot_session_begin_exact(ctx, &snapshot_session,
 		    &resolved);
+		BHYVE_PHASE_DONE(__func__, "vm_snapshot_session_begin_exact",
+		    error, error < 0 ? errno : 0);
 		/* EBUSY means another descriptor still owns VM-wide ingress. */
 		snapshot_session_unresolved = error != 0 &&
 		    (!resolved || error == EBUSY);
@@ -3110,7 +3180,10 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	}
 	snapshot_session_active = true;
 
+	BHYVE_PHASE_START(__func__, "vm_snapshot_mem");
 	memsz = vm_snapshot_mem(ctx, fd_checkpoint, 0, true);
+	BHYVE_PHASE_DONE(__func__, "vm_snapshot_mem",
+	    memsz == 0 ? -1 : 0, memsz == 0 ? errno : 0);
 	if (memsz == 0) {
 		perror("Could not write guest memory to file");
 		error = errno != 0 ? errno : EIO;
@@ -3139,14 +3212,20 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 		goto done;
 	}
 
+	BHYVE_PHASE_START(__func__, "vm_save_kern_structs");
 	ret = vm_save_kern_structs(ctx, kdata_fd, xop);
+	BHYVE_PHASE_DONE(__func__, "vm_save_kern_structs",
+	    ret, ret < 0 ? errno : 0);
 	if (ret != 0) {
 		fprintf(stderr, "Failed to snapshot vm kernel data.\n");
 		error = ret > 0 ? ret : EIO;
 		goto done;
 	}
 
+	BHYVE_PHASE_START(__func__, "vm_snapshot_devices");
 	ret = vm_snapshot_devices(kdata_fd, xop);
+	BHYVE_PHASE_DONE(__func__, "vm_snapshot_devices",
+	    ret, ret < 0 ? errno : 0);
 	if (ret != 0) {
 		fprintf(stderr, "Failed to snapshot device state.\n");
 		error = ret > 0 ? ret : EIO;
@@ -3195,8 +3274,11 @@ done:
 	if (error == 0 && fsync(fddir) != 0)
 		error = errno != 0 ? errno : EIO;
 	if (error == 0) {
+		BHYVE_PHASE_START(__func__, "checkpoint_publish");
 		error = checkpoint_publish(fddir, checkpoint_file, manifest_tmp,
 		    &manifest, &published);
+		BHYVE_PHASE_DONE(__func__, "checkpoint_publish", error, 0);
+		BHYVE_TRACE(CHECKPOINT_PUBLISH, published, error);
 		if (published && error == 0 && old_exists)
 			checkpoint_remove_old_generation(fddir, &old_manifest);
 	}
@@ -3214,8 +3296,11 @@ done:
 		int session_error;
 		bool released = false;
 
+		BHYVE_PHASE_START(__func__, "vm_snapshot_session_release_exact");
 		session_error = vm_snapshot_session_release_exact(ctx,
 		    &snapshot_session, published, &released);
+		BHYVE_PHASE_DONE(__func__, "vm_snapshot_session_release_exact",
+		    session_error, session_error < 0 ? errno : 0);
 		if (released)
 			snapshot_session_active = false;
 		if (session_error != 0) {
@@ -3227,6 +3312,7 @@ done:
 	}
 
 	if (stop_vm && published && error == 0) {
+		BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, published, error);
 		vm_destroy(ctx);
 		exit(BHYVE_EXIT_SUSPEND);
 	}
@@ -3239,7 +3325,10 @@ done:
 	 */
 	if (!snapshot_session_active && !snapshot_session_unresolved &&
 	    (devices_paused || vcpus_paused)) {
+		BHYVE_PHASE_START(__func__, "vm_resume_devices");
 		ret = vm_resume_devices();
+		BHYVE_PHASE_DONE(__func__, "vm_resume_devices",
+		    ret, ret < 0 ? errno : 0);
 		if (ret != 0) {
 			fprintf(stderr, "Could not resume devices\r\n");
 			devices_resumed = false;
@@ -3270,6 +3359,7 @@ done:
 		close(lock_fd);
 	free(lock_filename);
 	free(manifest_tmp);
+	BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, published, error);
 	return (error);
 }
 
@@ -3372,7 +3462,10 @@ vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **blob_out,
 	 * stays consistent whether the cutover commits (source goes defunct) or
 	 * rolls back (source resumes).
 	 */
+	BHYVE_PHASE_START(__func__, "vm_snapshot_session_begin_exact");
 	error = vm_snapshot_session_begin_exact(ctx, &session, &resolved);
+	BHYVE_PHASE_DONE(__func__, "vm_snapshot_session_begin_exact",
+	    error, error < 0 ? errno : 0);
 	if (error != 0)
 		goto out;
 	session_active = true;
@@ -3381,10 +3474,16 @@ vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **blob_out,
 	    vm_get_lowmem_size(ctx) + vm_get_highmem_size(ctx));
 	if (error != 0)
 		goto out;
+	BHYVE_PHASE_START(__func__, "vm_save_kern_structs");
 	error = vm_save_kern_structs(ctx, kdata_fd, xop);
+	BHYVE_PHASE_DONE(__func__, "vm_save_kern_structs",
+	    error, error < 0 ? errno : 0);
 	if (error != 0)
 		goto out;
+	BHYVE_PHASE_START(__func__, "vm_snapshot_devices");
 	error = vm_snapshot_devices(kdata_fd, xop);
+	BHYVE_PHASE_DONE(__func__, "vm_snapshot_devices",
+	    error, error < 0 ? errno : 0);
 	if (error != 0)
 		goto out;
 	if (xo_finish_h(xop) < 0) {
@@ -3451,8 +3550,11 @@ out:
 	if (session_active) {
 		int rel;
 
+		BHYVE_PHASE_START(__func__, "vm_snapshot_session_release_exact");
 		rel = vm_snapshot_session_release_exact(ctx, &session, false,
 		    &released);
+		BHYVE_PHASE_DONE(__func__, "vm_snapshot_session_release_exact",
+		    rel, rel < 0 ? errno : 0);
 		if (rel != 0 && error == 0)
 			error = rel;
 	}
@@ -3531,24 +3633,42 @@ vm_migrate_commit_state(struct vmctx *ctx, const uint8_t *blob, size_t len)
 		goto out;
 	}
 
+	BHYVE_PHASE_START(__func__, "vm_pause_devices");
 	error = vm_pause_devices();
+	BHYVE_PHASE_DONE(__func__, "vm_pause_devices",
+	    error, error < 0 ? errno : 0);
 	if (error != 0)
 		goto out;
+	BHYVE_PHASE_START(__func__, "vm_restore_preflight");
 	error = vm_restore_preflight(&rstate);
+	BHYVE_PHASE_DONE(__func__, "vm_restore_preflight",
+	    error, error < 0 ? errno : 0);
 	if (error != 0)
 		goto out;
+	BHYVE_PHASE_START(__func__, "vm_snapshot_session_begin_exact");
 	error = vm_snapshot_session_begin_exact(ctx, &session, &resolved);
+	BHYVE_PHASE_DONE(__func__, "vm_snapshot_session_begin_exact",
+	    error, error < 0 ? errno : 0);
 	if (error != 0)
 		goto out;
 	session_active = true;
 	/* Guest RAM is already present; only devices and kernel structs. */
+	BHYVE_PHASE_START(__func__, "vm_restore_devices");
 	error = vm_restore_devices(&rstate);
+	BHYVE_PHASE_DONE(__func__, "vm_restore_devices",
+	    error, error < 0 ? errno : 0);
 	if (error != 0)
 		goto out;
+	BHYVE_PHASE_START(__func__, "vm_restore_kern_structs");
 	error = vm_restore_kern_structs(ctx, &rstate);
+	BHYVE_PHASE_DONE(__func__, "vm_restore_kern_structs",
+	    error, error < 0 ? errno : 0);
 	if (error != 0)
 		goto out;
+	BHYVE_PHASE_START(__func__, "vm_snapshot_session_release_exact");
 	rel = vm_snapshot_session_release_exact(ctx, &session, true, &released);
+	BHYVE_PHASE_DONE(__func__, "vm_snapshot_session_release_exact",
+	    rel, rel < 0 ? errno : 0);
 	if (released)
 		session_active = false;
 	if (rel != 0) {
@@ -3578,9 +3698,16 @@ vm_migrate_resume(struct vmctx *ctx)
 	/* Consume the committed restore's one-shot time-rebase credential first. */
 	if (vm_restore_time(ctx) < 0)
 		return (errno != 0 ? errno : EIO);
+	BHYVE_PHASE_START(__func__, "vm_resume_devices");
 	error = vm_resume_devices();
-	if (error == 0)
+	BHYVE_PHASE_DONE(__func__, "vm_resume_devices",
+	    error, error < 0 ? errno : 0);
+	if (error == 0) {
+		BHYVE_PHASE_START(__func__, "checkpoint_restore_startup_release");
 		error = checkpoint_restore_startup_release();
+		BHYVE_PHASE_DONE(__func__, "checkpoint_restore_startup_release",
+		    error, error < 0 ? errno : 0);
+	}
 	return (error);
 }
 

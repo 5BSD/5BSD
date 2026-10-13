@@ -25,6 +25,7 @@
 
 #include "channel.h"
 #include "channel_probes.h"
+#include "trace_pressure.h"
 
 _Static_assert(sizeof(struct channel_fd_spec) ==
     sizeof(struct mac_capability_fd_spec) &&
@@ -546,6 +547,8 @@ channel_queue(struct channel *channel, const void *data, size_t length,
 	if (channel->nqueued >= channel->max_queued_messages ||
 	    length > channel->max_queued_bytes - channel->queued_bytes ||
 	    nfds > channel->max_queued_fds - channel->queued_fds) {
+		LIBCHANNEL_TRACE_QUEUE_LIMIT(channel->nqueued, channel->queued_bytes,
+		    channel->queued_fds);
 		errno = ENOBUFS;
 		return (-1);
 	}
@@ -1077,6 +1080,7 @@ channel_send_request(struct channel *channel,
 	}
 	*requestp = NULL;
 	if (channel->npending >= channel->max_pending_requests) {
+		LIBCHANNEL_TRACE_PENDING_LIMIT(channel->npending, channel->max_pending_requests);
 		errno = ENOBUFS;
 		return (-1);
 	}

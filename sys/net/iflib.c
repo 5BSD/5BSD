@@ -53,6 +53,8 @@
 #include <sys/syslog.h>
 #include <sys/taskqueue.h>
 #include <sys/limits.h>
+#include <sys/sdt.h>
+
 
 #include <net/if.h>
 #include <net/if_var.h>
@@ -99,6 +101,13 @@
 #endif
 
 #include <sys/bitstring.h>
+
+SDT_PROVIDER_DEFINE(iflib);
+/* Driver callbacks only; excludes preparation and child-bus operations. */
+SDT_PROBE_DEFINE1(iflib, , , suspend__start, "void *");
+SDT_PROBE_DEFINE2(iflib, , , suspend__done, "void *", "int");
+SDT_PROBE_DEFINE1(iflib, , , resume__start, "void *");
+SDT_PROBE_DEFINE2(iflib, , , resume__done, "void *", "int");
 /*
  * enable accounting of every mbuf as it comes in to and goes out of
  * iflib's software descriptor references
@@ -2314,8 +2323,13 @@ iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 		MPASS(frag_idx >= 0);
 		if ((cl = sd_cl[frag_idx]) == NULL) {
 			cl = uma_zalloc(fl->ifl_zone, M_NOWAIT);
-			if (__predict_false(cl == NULL))
+			if (__predict_false(cl == NULL)) {
+				if (!cold)
+					DTRACE_PROBE3(iflib__rx__pressure,
+					    void *, (fl), int, (1),
+					    int, (ENOMEM));
 				break;
+			}
 
 			cb_arg.error = 0;
 			MPASS(sd_map != NULL);
@@ -2323,6 +2337,10 @@ iflib_fl_refill(if_ctx_t ctx, iflib_fl_t fl, int count)
 			    cl, fl->ifl_buf_size, _rxq_refill_cb, &cb_arg,
 			    BUS_DMA_NOWAIT);
 			if (__predict_false(err != 0 || cb_arg.error)) {
+				if (!cold)
+					DTRACE_PROBE3(iflib__rx__pressure,
+					    void *, (fl), int, (2),
+					    int, (err != 0 ? err : cb_arg.error));
 				uma_zfree(fl->ifl_zone, cl);
 				break;
 			}
@@ -3972,6 +3990,9 @@ defrag:
 			*m_headp = NULL;
 			break;
 		}
+		if (!cold)
+			DTRACE_PROBE3(iflib__dma__failure, void *, (txq),
+			    int, (err), int, (remap));
 		txq->ift_map_failed++;
 		DBG_COUNTER_INC(encap_load_mbuf_fail);
 		DBG_COUNTER_INC(encap_txd_encap_fail);
@@ -4324,8 +4345,12 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 		err = iflib_encap(txq, mp, &bytes_sent, &pkt_sent);
 		if (__predict_false(err)) {
 			/* no room - bail out */
-			if (err == ENOBUFS)
+			if (err == ENOBUFS) {
+				if (!cold)
+					DTRACE_PROBE2(iflib__tx__pressure,
+					    void *, (txq), int, (err));
 				break;
+			}
 			consumed++;
 			/* we can't send this packet - skip it */
 			continue;
@@ -6116,7 +6141,9 @@ iflib_device_resume_locked(if_ctx_t ctx)
 	    ("iflib resume from power state %d", ctx->ifc_pm_state));
 
 	ifp = ctx->ifc_ifp;
+	SDT_PROBE1(iflib, , , resume__start, ctx);
 	error = IFDI_RESUME(ctx);
+	SDT_PROBE2(iflib, , , resume__done, ctx, error);
 	if (error != 0)
 		return (error);
 	ctx->ifc_pm_state = IFLIB_PM_ACTIVE;
@@ -6152,7 +6179,9 @@ iflib_device_suspend(device_t dev)
 	taskqueue_drain_all(ctx->ifc_tq);
 
 	CTX_LOCK(ctx);
+	SDT_PROBE1(iflib, , , suspend__start, ctx);
 	error = IFDI_SUSPEND(ctx);
+	SDT_PROBE2(iflib, , , suspend__done, ctx, error);
 	if (error == 0)
 		ctx->ifc_pm_state = IFLIB_PM_SUSPENDED;
 	else {

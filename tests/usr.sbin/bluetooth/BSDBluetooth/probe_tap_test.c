@@ -188,6 +188,18 @@ ATF_TC_BODY(tap_api_basics, tc)
 	idx = probe_tap_find("a:one", idx + 1);
 	ATF_CHECK_EQ(3, idx);	/* == count(): no further match */
 
+	/* Discovery completion preserves generation, status and reply intent. */
+	probe_tap_rec5("discovery:lease:done", NULL, 42, UINT64_MAX,
+	    UINT32_MAX, 13, 1);
+	r = probe_tap_get(3);
+	ATF_REQUIRE(r != NULL);
+	ATF_CHECK_EQ(5, r->nargs);
+	ATF_CHECK_EQ(42, r->args[0]);
+	ATF_CHECK_EQ(UINT64_MAX, r->args[1]);
+	ATF_CHECK_EQ(UINT32_MAX, r->args[2]);
+	ATF_CHECK_EQ(13, r->args[3]);
+	ATF_CHECK_EQ(1, r->args[4]);
+
 	probe_tap_reset();
 	ATF_CHECK_EQ(0, probe_tap_count());
 }

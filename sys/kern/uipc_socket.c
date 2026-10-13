@@ -906,15 +906,28 @@ soalloc(struct vnet *vnet)
 	struct socket *so;
 
 	so = uma_zalloc(socket_zone, M_NOWAIT | M_ZERO);
-	if (so == NULL)
+	if (so == NULL) {
+		if (!cold && !SCHEDULER_STOPPED() &&
+		    curthread->td_intr_nesting_level == 0)
+			DTRACE_PROBE1(socket__alloc__failure,
+			    int, (1));
 		return (NULL);
+	}
 #ifdef MAC
 	if (mac_socket_init(so, M_NOWAIT) != 0) {
+		if (!cold && !SCHEDULER_STOPPED() &&
+		    curthread->td_intr_nesting_level == 0)
+			DTRACE_PROBE1(socket__alloc__failure,
+			    int, (2));
 		uma_zfree(socket_zone, so);
 		return (NULL);
 	}
 #endif
 	if (khelp_init_osd(HELPER_CLASS_SOCKET, &so->osd)) {
+		if (!cold && !SCHEDULER_STOPPED() &&
+		    curthread->td_intr_nesting_level == 0)
+			DTRACE_PROBE1(socket__alloc__failure,
+			    int, (3));
 		uma_zfree(socket_zone, so);
 		return (NULL);
 	}
@@ -941,6 +954,10 @@ soalloc(struct vnet *vnet)
 #ifdef SOCKET_HHOOK
 	/* We shouldn't need the so_global_mtx */
 	if (hhook_run_socket(so, NULL, HHOOK_SOCKET_CREATE)) {
+		if (!cold && !SCHEDULER_STOPPED() &&
+		    curthread->td_intr_nesting_level == 0)
+			DTRACE_PROBE1(socket__alloc__failure,
+			    int, (4));
 		/* Do we need more comprehensive error returns? */
 		uma_zfree(socket_zone, so);
 		return (NULL);
@@ -1717,8 +1734,15 @@ solisten_dequeue(struct socket *head, struct socket **ret, int flags)
 
 	while (!(head->so_state & SS_NBIO) && TAILQ_EMPTY(&head->sol_comp) &&
 	    head->so_error == 0) {
+		if (!cold)
+			DTRACE_PROBE1(socket__accept__wait__start,
+			    void *, (head));
 		error = msleep(&head->sol_comp, SOCK_MTX(head), PSOCK | PCATCH,
 		    "accept", 0);
+		if (!cold)
+			DTRACE_PROBE2(socket__accept__wait__done,
+			    void *, (head),
+			    int, (error));
 		if (error != 0) {
 			SOLISTEN_UNLOCK(head);
 			return (error);

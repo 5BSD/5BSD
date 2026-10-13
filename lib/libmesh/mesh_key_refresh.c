@@ -14,6 +14,7 @@
  */
 
 #include <stddef.h>
+#include "mesh_probes.h"
 
 #include "mesh_key_refresh.h"
 
@@ -41,6 +42,7 @@ mesh_kr_begin(struct mesh_key_refresh *st)
 
 	if (st == NULL || st->phase != MESH_KR_PHASE_NORMAL)
 		return (-1);
+	MESH_PROBE_MESH__KEYREFRESH__PHASE(st->phase, MESH_KR_PHASE_1);
 	st->phase = MESH_KR_PHASE_1;
 	return (0);
 }
@@ -57,11 +59,15 @@ mesh_kr_beacon(struct mesh_key_refresh *st, int key_refresh_flag)
 	switch (st->phase) {
 	case MESH_KR_PHASE_1:
 		/* A new-key KR=0 beacon skips Phase 2 and revokes old keys. */
+		MESH_PROBE_MESH__KEYREFRESH__PHASE(st->phase,
+		    (flag ? MESH_KR_PHASE_2 : MESH_KR_PHASE_3));
 		st->phase = flag ? MESH_KR_PHASE_2 : MESH_KR_PHASE_3;
 		break;
 	case MESH_KR_PHASE_2:
-		if (!flag)
+		if (!flag) {
+			MESH_PROBE_MESH__KEYREFRESH__PHASE(st->phase, MESH_KR_PHASE_3);
 			st->phase = MESH_KR_PHASE_3;
+		}
 		break;
 	case MESH_KR_PHASE_3:
 		/* The owner promotes the new key, then calls mesh_kr_init(). */

@@ -1,0 +1,791 @@
+{
+  "probes": [
+    {
+      "kind": "user",
+      "source": "usr.bin/touch/touch.c",
+      "provider": "filetime*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/touch/touch.c",
+      "provider": "filetime*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/stat/stat.c",
+      "provider": "filestat*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/stat/stat.c",
+      "provider": "filestat*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/chown/chown.c",
+      "provider": "fileowner*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/chown/chown.c",
+      "provider": "fileowner*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/mkfifo/mkfifo.c",
+      "provider": "fifocreate*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "unsigned int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/mkfifo/mkfifo.c",
+      "provider": "fifocreate*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "unsigned int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/pathchk/pathchk.c",
+      "provider": "pathcheck*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/pathchk/pathchk.c",
+      "provider": "pathcheck*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/du/du.c",
+      "provider": "diskwalk*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/du/du.c",
+      "provider": "diskwalk*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/df/df.c",
+      "provider": "diskspace*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/df/df.c",
+      "provider": "diskspace*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "sbin/sysctl/sysctl.c",
+      "provider": "sysctltool*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "unsigned int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "sbin/sysctl/sysctl.c",
+      "provider": "sysctltool*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "unsigned int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/limits/limits.c",
+      "provider": "limittool*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/limits/limits.c",
+      "provider": "limittool*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/killall/killall.c",
+      "provider": "signalall*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/killall/killall.c",
+      "provider": "signalall*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/kill/kill.c",
+      "provider": "signaltool*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/kill/kill.c",
+      "provider": "signaltool*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/logger/logger.c",
+      "provider": "logsend*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "size_t"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/logger/logger.c",
+      "provider": "logsend*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "size_t",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/logger/logger.c",
+      "provider": "logsend*",
+      "module": "",
+      "function": "",
+      "name": "local-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/logger/logger.c",
+      "provider": "logsend*",
+      "module": "",
+      "function": "",
+      "name": "local-done",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/daemon/daemon.c",
+      "provider": "daemonwait*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/daemon/daemon.c",
+      "provider": "daemonwait*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/env/env.c",
+      "provider": "envdir*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/env/env.c",
+      "provider": "envdir*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/getconf/getconf.c",
+      "provider": "configquery*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/getconf/getconf.c",
+      "provider": "configquery*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/cpuset/cpuset.c",
+      "provider": "cpusettool*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/cpuset/cpuset.c",
+      "provider": "cpusettool*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/timeout/timeout.c",
+      "provider": "timeoutsig*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/timeout/timeout.c",
+      "provider": "timeoutsig*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/timeout/timeout.c",
+      "provider": "timeoutsig*",
+      "module": "",
+      "function": "",
+      "name": "reaper-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/timeout/timeout.c",
+      "provider": "timeoutsig*",
+      "module": "",
+      "function": "",
+      "name": "reaper-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/realpath/realpath.c",
+      "provider": "pathresolve*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/realpath/realpath.c",
+      "provider": "pathresolve*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/sleep/sleep.c",
+      "provider": "sleepwait*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/sleep/sleep.c",
+      "provider": "sleepwait*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/mktemp/mktemp.c",
+      "provider": "tempcreate*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/mktemp/mktemp.c",
+      "provider": "tempcreate*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    }
+  ],
+  "passes": [
+    {
+      "component": "usr.bin/touch",
+      "provider": "filetime",
+      "scope": "Each timestamp update, including retry; flags, result and errno. No timestamps or paths."
+    },
+    {
+      "component": "usr.bin/stat",
+      "provider": "filestat",
+      "scope": "Metadata queries: kind 0 stat, 1 lstat, 2 fstat. Result/errno; excludes fhstat and readlink payload."
+    },
+    {
+      "component": "usr.sbin/chown",
+      "provider": "fileowner",
+      "scope": "Ownership update attempts, including chgrp alias; flags and result, no identities/paths."
+    },
+    {
+      "component": "usr.bin/mkfifo",
+      "provider": "fifocreate",
+      "scope": "FIFO creation mode, result and errno."
+    },
+    {
+      "component": "usr.bin/pathchk",
+      "provider": "pathcheck",
+      "scope": "Filesystem-aware path component lookup; ENOENT may be accepted by the caller, not a command failure."
+    },
+    {
+      "component": "usr.bin/du",
+      "provider": "diskwalk",
+      "scope": "Traversal advance; FTS entry type or terminal zero, with errno only for terminal return or FTS_ERR/DNR/NS entries. No paths."
+    },
+    {
+      "component": "bin/df",
+      "provider": "diskspace",
+      "scope": "Per-path filesystem usage query; excludes bulk getmntinfo."
+    },
+    {
+      "component": "sbin/sysctl",
+      "provider": "sysctltool",
+      "scope": "Sysctl query/set and name-walking requests; write flag and MIB length, never values or MIB buffers."
+    },
+    {
+      "component": "usr.bin/limits",
+      "provider": "limittool",
+      "scope": "Current-process resource limit application; resource/result; excludes target-process sysctl mode."
+    },
+    {
+      "component": "usr.bin/killall",
+      "provider": "signalall",
+      "scope": "Each selected-process signal attempt; pid, signal, result, errno. Dry-run produces no send probes."
+    },
+    {
+      "component": "bin/kill",
+      "provider": "signaltool",
+      "scope": "Numeric signal syscall boundary including signal-zero checks; no process names."
+    },
+    {
+      "component": "usr.bin/logger",
+      "provider": "logsend",
+      "scope": "Remote datagram send length, bytes/result and errno; local submission pair is void and does not claim delivery."
+    },
+    {
+      "component": "usr.sbin/daemon",
+      "provider": "daemonwait",
+      "scope": "Supervisor event registration and waits; change/event capacities, returned count and errno. No probes in signal handlers."
+    },
+    {
+      "component": "usr.bin/env",
+      "provider": "envdir",
+      "scope": "Requested working-directory change before exec; no environment or command values."
+    },
+    {
+      "component": "usr.bin/getconf",
+      "provider": "configquery",
+      "scope": "Sysconf query key and returned value; -1 with errno zero is indeterminate, not a failure."
+    },
+    {
+      "component": "bin/cpuset",
+      "provider": "cpusettool",
+      "scope": "Affinity read/write operation kind, level and selector; no masks. Excludes domain/id operations."
+    },
+    {
+      "component": "bin/timeout",
+      "provider": "timeoutsig",
+      "scope": "Foreground signal dispatch including SIGCONT; reaper dispatch has its own pair. Signal handlers only set flags."
+    },
+    {
+      "component": "bin/realpath",
+      "provider": "pathresolve",
+      "scope": "Path resolution boundary; boolean success and errno, no input/resolved strings."
+    },
+    {
+      "component": "bin/sleep",
+      "provider": "sleepwait",
+      "scope": "Each sleep attempt, completion and interruption; duration measured by paired timestamps outside signal handler."
+    },
+    {
+      "component": "usr.bin/mktemp",
+      "provider": "tempcreate",
+      "scope": "Temporary file (kind 0) or directory (kind 1) creation; boolean success/errno, never templates or generated paths."
+    }
+  ],
+  "components": [
+    "usr.bin/touch",
+    "usr.bin/stat",
+    "usr.sbin/chown",
+    "usr.bin/mkfifo",
+    "usr.bin/pathchk",
+    "usr.bin/du",
+    "bin/df",
+    "sbin/sysctl",
+    "usr.bin/limits",
+    "usr.bin/killall",
+    "bin/kill",
+    "usr.bin/logger",
+    "usr.sbin/daemon",
+    "usr.bin/env",
+    "usr.bin/getconf",
+    "bin/cpuset",
+    "bin/timeout",
+    "bin/realpath",
+    "bin/sleep",
+    "usr.bin/mktemp"
+  ],
+  "profiles": [
+    "base-file-metadata",
+    "base-owner-fifo",
+    "base-path-walk",
+    "base-space-sysctl",
+    "base-limits-signals",
+    "base-signal-logging",
+    "base-supervisor-env",
+    "base-config-affinity",
+    "base-timeout-resolve",
+    "base-sleep-temporary"
+  ],
+  "dependencies": [],
+  "sources": {
+    "bin/cpuset/Makefile": "90937d5f3456056703f45f527a4fda9e09741ea51ef087ce97137d22efa782cb",
+    "bin/cpuset/cpuset.c": "5d90b996b06ce334b37c66a7f9819c5433f93585cdb1d471f1a658c6325a65f6",
+    "bin/cpuset/cpusettool_provider.d": "6b48ff7ca1a3a7cad09aacadc9c1ae4be10749acb4c2b91aed15b077772415a9",
+    "bin/cpuset/cpusettool_trace.h": "bd5b24eec82c89d8063fcbb10acd4eeeaf11cfee93d01381b9f60619c49871ea",
+    "bin/df/Makefile": "3bbb4aa4c7ec26659356f50673b551562496c455bd97a9b61d37104c9b100f7d",
+    "bin/df/df.c": "098d5023f6b9e9d6d30bf17be01410bc3ddfa884ceec78741fc3609273b5cd61",
+    "bin/df/diskspace_provider.d": "922b05f5a2ff91dbdca3703ec06dd2930ab01dffe972733cc0915cc71f342cdb",
+    "bin/df/diskspace_trace.h": "3d59f3cb886196ca9278e10c45f9a5365751bbd430b58f7ae38eeb71dd601b78",
+    "bin/kill/Makefile": "305c91a8cddf07e31b643c26251e25d89e1f8fcd780f9cbdedb4d782fcfb5fef",
+    "bin/kill/kill.c": "71b6bcdfe5618dc0b435df70419be9dd477f067f55992121b1dc23ba2d182b88",
+    "bin/kill/signaltool_provider.d": "cc3a211566ad4a2ef43f6c1fe16034fbdcc97b0b61c6319841763d5b3aade6f5",
+    "bin/kill/signaltool_trace.h": "1b5bef20b42b200be0846fe90d16d4b612515935310ade62c2be7456d67bb94c",
+    "bin/realpath/Makefile": "32d746aad77e356c9ebbf89a2f6a41a0268690fb7281a54340ab98ea891a4499",
+    "bin/realpath/pathresolve_provider.d": "f2af27f8c65f4d5637c635163984a3cf9f58418b7e2dde0a861031db4100be2a",
+    "bin/realpath/pathresolve_trace.h": "300e0d7ae1b7161eafb3f06e5fdcf431ded520a6ce8347cec75ea3bdcd516d21",
+    "bin/realpath/realpath.c": "449bb6979459269872087a72a87441241592c78dfd7c5f5fa90065ae70aea304",
+    "bin/sleep/Makefile": "51a76dad207b927cdf0a7dbf7e36db29738e5d6366e5269ea3b7ee83d638f81c",
+    "bin/sleep/sleep.c": "96fac111e6605901cb413df985d56d0f548c61adb6040ce3605148a77aa22c08",
+    "bin/sleep/sleepwait_provider.d": "2595da195b89e76fa247693ac4ff918c60d157676def3f3e8f41945b2bdb0666",
+    "bin/sleep/sleepwait_trace.h": "4dcdc5841a8c631fcf62f1ae30c39bd32f97983fd349ec73befc7fbd7f475787",
+    "bin/timeout/Makefile": "e08417d24929bf9a6bdb9472ffbd2efdb537c3d182527543017683833a78a521",
+    "bin/timeout/timeout.c": "b56eaac6c8aae040ce79e09db84fa5929be2972ea6348f42485cc3817f228d12",
+    "bin/timeout/timeoutsig_provider.d": "1529fccce19f3b54ed1598fc583760f69e1ca7e2d8db1ce63eb5a4bf07f6de01",
+    "bin/timeout/timeoutsig_trace.h": "386acbc226b6dadaa00ca8be29ff819f5707e229339f80d5d12df3e29484232a",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-config-affinity.d": "70dfa6fe12694ed55307e29680bad73c91fd4771cd6f72990236d1263aa2163b",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-file-metadata.d": "ce3678de09a1bd8c6a7c67b2279ff84e3d6db582fcc9d7fde83782c80033440b",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-limits-signals.d": "32a8f9d2c57d436e7f79aa0de0708f2283b88b5eaf82e108b1abc238c9799332",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-owner-fifo.d": "0632233ae0799e22b784d95e5172a5c51dbe73f911ed36fb4ba8fdbe7c47d582",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-path-walk.d": "64e7a9d876a5b3e6949137108465ef8476aa6509ca7c19469fca4676af1342bf",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-signal-logging.d": "0f9292c3f4e65382a1802030b9db9757fae62ca4b33152433fc5e0a999995dc3",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-sleep-temporary.d": "78eb516fc5259abd63e0d39e1022fb83df5d84513e653a28bbc00e1414f22341",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-space-sysctl.d": "65fdd3544f1b3255e5f2748fcf3f37b141127150b15a1a3328a2310cb518eb1c",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-supervisor-env.d": "8b6da1fe1cf3a35a039a8e29fdfef14c05971950487a2d17432bcd1ce758b66e",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-timeout-resolve.d": "27bcb9d407091f3a7b6f701daadd916652e48ea9b79d1b4733818bc3d1267a03",
+    "sbin/sysctl/Makefile": "f3631e4f3fa0b755de147fb21367dd10fa35aa0d27c9b23f14b9b72f3062925e",
+    "sbin/sysctl/sysctl.c": "a943775347b5fe2f2da3ad7f4f163d67e666ed0a0ae510c407cd4454358cf54b",
+    "sbin/sysctl/sysctltool_provider.d": "10d9db383c9d652033e46264c86b22984bffda2c3dceb404476d3113af0ff317",
+    "sbin/sysctl/sysctltool_trace.h": "ddd0a511d218d9fcd3dca0fa61b8e3f796d5f2849781822c24db8e21c26f9672",
+    "tools/test/system-tracing/COVERAGE-TENTH": "c33ed5d01afa48e581588684ba63ace08d3b9caeb4a892ddeda82b828e5cb342",
+    "tools/test/system-tracing/README": "e03fc1574ff0d8d2e4f23868e9c5660815bbae8446164f3c9337cfcad51baf73",
+    "tools/test/system-tracing/coverage-tenth-base.py": "77dea007a232ad2f95dd177fb8b61e8e6e433d96546fbcf80a5ecaaae641b35c",
+    "tools/test/system-tracing/coverage-tenth-check.py": "6405c42295d7cac7d9f06cff3d193c1da4bbfddb49f8381706fa154ea2074e63",
+    "tools/test/system-tracing/coverage-tenth-foreground.c": "012262ca3cdd79e67b609e0f59f0c5cfe3459fece227e95e9aad3e8abc70b512",
+    "tools/test/system-tracing/coverage-tenth-guards.py": "af8dd0e9bbea6225a7be30f38394946bcd1cfa626f5dc594b66963f221f977a7",
+    "tools/test/system-tracing/coverage-tenth-smoke.py": "e63d21afe0916bfe6e8ab7a4431c5ad577d2ca4379bdec3fcd8ab30d6636ec48",
+    "tools/test/system-tracing/coverage-tenth-tests.py": "c39138dcff0778f2b7d4abf31c3bddfd5ba7ebf25e9a7763a0eeb716d3357b63",
+    "usr.bin/du/Makefile": "290eff54a58c2d5d53a3805c7846f830b18af30ef9be461b289d897050b36bec",
+    "usr.bin/du/diskwalk_provider.d": "4e25a9031586c6066eec067c458bc73a96039db05a342d7e3f34805f0fd4f3e2",
+    "usr.bin/du/diskwalk_trace.h": "a0d11cb9d967ba2152b6d885089f1d855494ee9ee5f37d0152881f4cbe48311e",
+    "usr.bin/du/du.c": "b523ea1d714142abee9fca2dbd70f4b97c7ae1612c03d25b7446e6ff0c3414b6",
+    "usr.bin/env/Makefile": "a0ef633049495b8dd5e1686ad95cc0d35496ff4d753421c4035d8a554357b528",
+    "usr.bin/env/env.c": "7545f961aa0c70947b9b8a6dee1588ea52253970e93121f08bd95bef40a27c45",
+    "usr.bin/env/envdir_provider.d": "1afef54275d41150844fcf612c8beacb10ac4f99399e4604cd33bf8dfaff2408",
+    "usr.bin/env/envdir_trace.h": "4180d68357c110e50762ef3321c911b902a70d55fb262967e2bf407032e45662",
+    "usr.bin/getconf/Makefile": "0c50ae82fe4a713fb2530a1367cb5478b8cabfb6c0749c17f5fde6ce2b4d16b9",
+    "usr.bin/getconf/configquery_provider.d": "fe073aab4659e5880cedabb2cef9cc75ce1ca5b347cf954f3e2fb5d6bce19889",
+    "usr.bin/getconf/configquery_trace.h": "b51c52308e0308d8063a188dcd51d2719796f2b93ab3e3d7d19f0fa7a3db4ed0",
+    "usr.bin/getconf/getconf.c": "e6afa8f6c7b16518c392f5ee87557d0d1e9f5ccfd29e9c5e689f48c1c7211276",
+    "usr.bin/killall/Makefile": "4aff2a3706389e55555b9433eec937a43725ab9b8c1c113b1b93d4e91973c92d",
+    "usr.bin/killall/killall.c": "096a38a6a921d5425c2bb1b3de0854608ef4c1b5d908d5a917a127e3e947fd23",
+    "usr.bin/killall/signalall_provider.d": "514f87969e245c488709ce85dd230e3fb5fe5a06b57793065afc7c5bf9018ad9",
+    "usr.bin/killall/signalall_trace.h": "903949713282e62b8afa5862a6317d06b068ea49d4495a2b181a169da8b7fbc9",
+    "usr.bin/limits/Makefile": "38e6d0f26f7194ae95b500148540a651707524941cb8fdcb0a7f4f2ef8056e8d",
+    "usr.bin/limits/limits.c": "73a307c722215c2cbf7baa9de277d9263ef12ab9b3095e2ae501149189bb0898",
+    "usr.bin/limits/limittool_provider.d": "63065ef28816b34c650a0577c889e40e0e821c9763787934a23cc467dd85eed9",
+    "usr.bin/limits/limittool_trace.h": "7431f4bcd1b8353f970a58c025cadc871bb19ea8992c524519d3db5ff6b3fb43",
+    "usr.bin/logger/Makefile": "378e5bcc47c6120091593f543051c4c166f435cf249c84ea633b3915d2da9935",
+    "usr.bin/logger/logger.c": "48316af8a445e18bdf1716f853602d96d875eb9dfe74e9eb1dd38f730a9af84c",
+    "usr.bin/logger/logsend_provider.d": "6b04c8d281e3718fbaddebb9fd966a9124ba0c6fda13fb61f3447f5067802cba",
+    "usr.bin/logger/logsend_trace.h": "3505d19107a842ab328286f7f0cbf84c10160946075dbfe7b6aa1138912f8d86",
+    "usr.bin/mkfifo/Makefile": "18a855977c76c05b2d52e98a2cd77a83d008876c236ad979a9b7bd1f332f0a02",
+    "usr.bin/mkfifo/fifocreate_provider.d": "179f1366aeed0387673ccc27b81ba9ed9fd3f0844f0abb3691342179bf2dbd68",
+    "usr.bin/mkfifo/fifocreate_trace.h": "b3cfdcdf7a168637e3bad5acc8e1a665299c2c38d24a89d06b4a13ab46d04e07",
+    "usr.bin/mkfifo/mkfifo.c": "7fe4c5375f246cd813e9e9c20945fd44bf1b044036d18c03f7a38d896615dea5",
+    "usr.bin/mktemp/Makefile": "f5cbe1778802b32c78c167b55abbc4f8cf74b160c7ebfe947dd9c0f68dde0b4b",
+    "usr.bin/mktemp/mktemp.c": "f401f3424470cf2b0b4e5d1b8c4beb8fbe41c1a2830ff513b974e55b6dc7ab95",
+    "usr.bin/mktemp/tempcreate_provider.d": "112e8e69aca4b04762e3e77ced467fa1996a1c15017b6bc0c5570615885825d5",
+    "usr.bin/mktemp/tempcreate_trace.h": "49df52b86860657fda376a34b8ad3a582230baecd2298aec8be7233d0a76571a",
+    "usr.bin/pathchk/Makefile": "2461956901118b0d4fad786e7f8243355f64cf446427a5012a33e1cdda8e7439",
+    "usr.bin/pathchk/pathcheck_provider.d": "ed89311ea1b4706968582b7ed53abbcf24b0889bc6ae8c4ea521e158170df1b6",
+    "usr.bin/pathchk/pathcheck_trace.h": "6f042b83ec33bab0274f6c1667652f5c9a2e19420aa7222d50d15847f240c54c",
+    "usr.bin/pathchk/pathchk.c": "bdad44eba09b94bbdb412c768ba3e2141759543b67d3eb1d981c64a6ce3a5ade",
+    "usr.bin/stat/Makefile": "089e8de6701ba1577c7592baf3d20118dcfe54c417f42076b610db572514f711",
+    "usr.bin/stat/filestat_provider.d": "5a8d2a2e68d0f104f1c87dd3384e901531f82b9f6c4960ae06fa627141fff0fb",
+    "usr.bin/stat/filestat_trace.h": "547cdc0f9e2f1d3d7b165c6f057b95f36fcdc7b7b03b3dfbce26ec4df7f06865",
+    "usr.bin/stat/stat.c": "e8c1e91c3daeb1d62015c2f10aedffd01a0c07eeabcd887d5b63c534167c89be",
+    "usr.bin/touch/Makefile": "8c88ba53d391867e7aa19980d66092ca82d160c7bb36da104d7b5f8b81e44f72",
+    "usr.bin/touch/filetime_provider.d": "b52a06dab85ecb07ff65ea193fafb9300be682c0726e05a6d57d07e5702313be",
+    "usr.bin/touch/filetime_trace.h": "4f4d93c1b19bb24f724824298f54febb52eea1ab945ae1f101c8cb0babbd9270",
+    "usr.bin/touch/touch.c": "30ebba51dd4c5a0812e2b0541fe8302b5f27dea59ab6d8199c519e1e5951f948",
+    "usr.sbin/chown/Makefile": "0056d2bfb9152f84dbbc87755b9a83ea06631258a0687e2e186716ea4f2ff767",
+    "usr.sbin/chown/chown.c": "abd113e08bd6f392f75ff6b03e1efb629fe4a0f53580b49b11cbb67f208d94ca",
+    "usr.sbin/chown/fileowner_provider.d": "d53185fbbb20bc8d11c08539ad19a2b0f4f67feb494a87c4e6d10d814dba7f4a",
+    "usr.sbin/chown/fileowner_trace.h": "d466da89521fdfa58ad3f0d648e46035dfdae55854ea62ce74c853ef3687c8c2",
+    "usr.sbin/daemon/Makefile": "6e8b5ba62b5c405cb4091922604e62141057748bd41e481e4d8a8dc1966f08ea",
+    "usr.sbin/daemon/daemon.c": "a9e9a04fa84d220f191025dd786a44b88229a713b26fe00ea09f99f7c454f825",
+    "usr.sbin/daemon/daemonwait_provider.d": "2d48627cb1750fa9918711e828b31b90f23ca7caedacadcb7d1d02a0ffe41d94",
+    "usr.sbin/daemon/daemonwait_trace.h": "696352880ed58a4d5f9eac65a9443cc836fa58e199eb458f7d5de7a934a13c94"
+  },
+  "categories": [
+    "lifecycle",
+    "latency",
+    "errors",
+    "resources",
+    "filesystem",
+    "network",
+    "waits",
+    "access-decisions"
+  ]
+}

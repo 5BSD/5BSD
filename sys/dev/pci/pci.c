@@ -48,6 +48,7 @@
 #include <sys/stdarg.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
+#include <sys/sdt.h>
 #include <sys/taskqueue.h>
 #include <sys/tree.h>
 
@@ -83,6 +84,10 @@
 
 #include "pcib_if.h"
 #include "pci_if.h"
+
+SDT_PROVIDER_DEFINE(pci);
+SDT_PROBE_DEFINE2(pci, , , power__start, "void *", "int");
+SDT_PROBE_DEFINE3(pci, , , power__done, "void *", "int", "int");
 
 #define	PCIR_IS_BIOS(cfg, reg)						\
 	(((cfg)->hdrtype == PCIM_HDRTYPE_NORMAL && reg == PCIR_BIOS) ||	\
@@ -2885,8 +2890,11 @@ pci_set_powerstate_method(device_t dev, device_t child, int state)
 	uint16_t status;
 	int oldstate, highest, delay;
 
-	if (cfg->pp.pp_location == 0)
+	SDT_PROBE2(pci, , , power__start, child, state);
+	if (cfg->pp.pp_location == 0) {
+		SDT_PROBE3(pci, , , power__done, child, state, EOPNOTSUPP);
 		return (EOPNOTSUPP);
+	}
 
 	/*
 	 * Optimize a no state change request away.  While it would be OK to
@@ -2894,8 +2902,10 @@ pci_set_powerstate_method(device_t dev, device_t child, int state)
 	 * behavior when going from D3 -> D3.
 	 */
 	oldstate = pci_get_powerstate(child);
-	if (oldstate == state)
+	if (oldstate == state) {
+		SDT_PROBE3(pci, , , power__done, child, state, 0);
 		return (0);
+	}
 
 	/*
 	 * The PCI power management specification states that after a state
@@ -2923,19 +2933,24 @@ pci_set_powerstate_method(device_t dev, device_t child, int state)
 		status |= PCIM_PSTAT_D0;
 		break;
 	case PCI_POWERSTATE_D1:
-		if ((cfg->pp.pp_cap & PCIM_PCAP_D1SUPP) == 0)
+		if ((cfg->pp.pp_cap & PCIM_PCAP_D1SUPP) == 0) {
+			SDT_PROBE3(pci, , , power__done, child, state, EOPNOTSUPP);
 			return (EOPNOTSUPP);
+		}
 		status |= PCIM_PSTAT_D1;
 		break;
 	case PCI_POWERSTATE_D2:
-		if ((cfg->pp.pp_cap & PCIM_PCAP_D2SUPP) == 0)
+		if ((cfg->pp.pp_cap & PCIM_PCAP_D2SUPP) == 0) {
+			SDT_PROBE3(pci, , , power__done, child, state, EOPNOTSUPP);
 			return (EOPNOTSUPP);
+		}
 		status |= PCIM_PSTAT_D2;
 		break;
 	case PCI_POWERSTATE_D3:
 		status |= PCIM_PSTAT_D3;
 		break;
 	default:
+		SDT_PROBE3(pci, , , power__done, child, state, EINVAL);
 		return (EINVAL);
 	}
 
@@ -2948,6 +2963,7 @@ pci_set_powerstate_method(device_t dev, device_t child, int state)
 	    status, 2);
 	if (delay)
 		DELAY(delay);
+	SDT_PROBE3(pci, , , power__done, child, state, 0);
 	return (0);
 }
 

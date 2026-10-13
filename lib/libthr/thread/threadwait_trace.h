@@ -32,7 +32,18 @@ static const void * const threadwait_dtrace_anchor __attribute__((used, retain))
 	if (THREADWAIT_JOIN_DONE_ENABLED()) \
 		THREADWAIT_JOIN_DONE((uintptr_t)(a0), (int)(a1)); \
 } while (0)
+
+#define TRACE_THREADWAIT_RWLOCK__START(a0, a1) do { \
+	if (THREADWAIT_RWLOCK_START_ENABLED()) \
+		THREADWAIT_RWLOCK_START((uintptr_t)(a0), (int)(a1)); \
+} while (0)
+#define TRACE_THREADWAIT_RWLOCK__DONE(a0, a1, a2) do { \
+	if (THREADWAIT_RWLOCK_DONE_ENABLED()) \
+		THREADWAIT_RWLOCK_DONE((uintptr_t)(a0), (int)(a1), (int)(a2)); \
+} while (0)
 #else
+#define TRACE_THREADWAIT_RWLOCK__START(a0, a1) do { } while (0)
+#define TRACE_THREADWAIT_RWLOCK__DONE(a0, a1, a2) do { } while (0)
 #define TRACE_THREADWAIT_MUTEX__START(a0) do { } while (0)
 #define TRACE_THREADWAIT_MUTEX__DONE(a0, a1) do { } while (0)
 #define TRACE_THREADWAIT_CONDITION__START(a0, a1) do { } while (0)

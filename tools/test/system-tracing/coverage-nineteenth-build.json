@@ -1,0 +1,14 @@
+{
+  "snp": [
+    "sys/dev/snp/snp.c"
+  ],
+  "lpt": [
+    "sys/dev/ppbus/lpt.c"
+  ],
+  "uart": [
+    "sys/dev/uart/uart_tty.c"
+  ],
+  "nmdm": [
+    "sys/dev/nmdm/nmdm.c"
+  ]
+}

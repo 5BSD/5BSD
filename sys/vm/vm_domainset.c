@@ -31,6 +31,8 @@
 #include "opt_vm.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/bitset.h>
 #include <sys/domainset.h>
@@ -294,6 +296,10 @@ vm_domainset_iter_page(struct vm_domainset_iter *di, struct vm_object *obj,
 		if (pages != NULL)
 			pctrie_iter_reset(pages);
 	}
+	if (!cold)
+		DTRACE_PROBE4(memory__domains__wait, int, (1),
+		    int, (di->di_flags), int, (di->di_policy),
+		    int, (di->di_domain->ds_cnt));
 	vm_wait_doms(&di->di_valid_mask, 0);
 	if (obj != NULL)
 		VM_OBJECT_WLOCK(obj);
@@ -344,6 +350,10 @@ vm_domainset_iter_policy(struct vm_domainset_iter *di, int *domain)
 		return (ENOMEM);
 
 	/* Wait for one of the domains to accumulate some free pages. */
+	if (!cold)
+		DTRACE_PROBE4(memory__domains__wait, int, (2),
+		    int, (di->di_flags), int, (di->di_policy),
+		    int, (di->di_domain->ds_cnt));
 	vm_wait_doms(&di->di_valid_mask, 0);
 
 	/* Restart the search. */

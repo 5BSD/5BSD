@@ -459,7 +459,6 @@ disc1:
 	echo entropy_cache_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linux_common_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linux64_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo pty_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo fdescfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linprocfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linsysfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
@@ -527,7 +526,6 @@ bootonly:
 	echo entropy_cache_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linux_common_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linux64_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo pty_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo fdescfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linprocfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linsysfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
@@ -609,7 +607,6 @@ dvd:
 	echo entropy_cache_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linux_common_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linux64_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo pty_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo fdescfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linprocfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linsysfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf

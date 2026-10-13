@@ -43,6 +43,31 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "timeoutsig_trace.h"
+
+static int
+trace_procctl(idtype_t idtype, id_t ident, int cmd, void *data)
+{
+	int result;
+
+	TRACE_TIMEOUTSIG_REAPER__START(cmd);
+	result = procctl(idtype, ident, cmd, data);
+	TRACE_TIMEOUTSIG_REAPER__DONE(cmd, result, result < 0 ? errno : 0);
+	return (result);
+}
+
+static int
+trace_kill(pid_t pid, int sig)
+{
+	int result;
+
+	TRACE_TIMEOUTSIG_OPERATION__START(pid, sig);
+	result = kill(pid, sig);
+	TRACE_TIMEOUTSIG_OPERATION__DONE(pid, sig, result,
+	    result < 0 ? errno : 0);
+	return (result);
+}
+
 #define EXIT_TIMEOUT	124
 #define EXIT_INVALID	125
 #define EXIT_CMD_ERROR	126
@@ -172,12 +197,12 @@ send_sig(pid_t pid, int signo, bool foreground)
 	logv("sending signal %s(%d) to command '%s'",
 	    sys_signame[signo], signo, command);
 	if (foreground) {
-		if (kill(pid, signo) < 0 && errno != ESRCH)
+		if (trace_kill(pid, signo) < 0 && errno != ESRCH)
 			warn("kill(%d, %s)", (int)pid, sys_signame[signo]);
 	} else {
 		memset(&rk, 0, sizeof(rk));
 		rk.rk_sig = signo;
-		if (procctl(P_PID, getpid(), PROC_REAP_KILL, &rk) < 0 &&
+		if (trace_procctl(P_PID, getpid(), PROC_REAP_KILL, &rk) < 0 &&
 		    errno != ESRCH) {
 			warn("procctl(PROC_REAP_KILL)");
 			if (rk.rk_fpid > 0) {
@@ -198,11 +223,11 @@ send_sig(pid_t pid, int signo, bool foreground)
 		logv("sending signal %s(%d) to command '%s'",
 		    sys_signame[SIGCONT], SIGCONT, command);
 		if (foreground) {
-			kill(pid, SIGCONT);
+			trace_kill(pid, SIGCONT);
 		} else {
 			memset(&rk, 0, sizeof(rk));
 			rk.rk_sig = SIGCONT;
-			procctl(P_PID, getpid(), PROC_REAP_KILL, &rk);
+			trace_procctl(P_PID, getpid(), PROC_REAP_KILL, &rk);
 		}
 	}
 }
@@ -334,7 +359,7 @@ main(int argc, char **argv)
 
 	if (!foreground) {
 		/* Acquire a reaper */
-		if (procctl(P_PID, getpid(), PROC_REAP_ACQUIRE, NULL) < 0)
+		if (trace_procctl(P_PID, getpid(), PROC_REAP_ACQUIRE, NULL) < 0)
 			err(EXIT_FAILURE, "procctl(PROC_REAP_ACQUIRE)");
 	}
 
@@ -443,7 +468,7 @@ main(int argc, char **argv)
 				if (foreground) {
 					break;
 				} else {
-					procctl(P_PID, getpid(),
+					trace_procctl(P_PID, getpid(),
 					    PROC_REAP_STATUS, &info);
 					if (info.rs_children == 0)
 						break;
@@ -481,7 +506,7 @@ main(int argc, char **argv)
 	}
 
 	if (!foreground)
-		procctl(P_PID, getpid(), PROC_REAP_RELEASE, NULL);
+		trace_procctl(P_PID, getpid(), PROC_REAP_RELEASE, NULL);
 
 	if (timedout && !preserve) {
 		pstat = EXIT_TIMEOUT;

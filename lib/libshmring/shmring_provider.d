@@ -11,4 +11,5 @@ provider shmring {
 	probe consumer__arm(uint64_t epoch, int readable, int result);
 	probe producer__wakeup(uint64_t epoch, int needed, int result);
 	probe corrupt(uint64_t head, uint64_t tail, uint64_t capacity);
+	probe record__reject(int a0, uint64_t a1, uint64_t a2);
 };

@@ -50,6 +50,8 @@
 #include "opt_wlan.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/sysctl.h>
 #include <sys/mbuf.h>
@@ -3815,11 +3817,17 @@ static void
 ath_reset_proc(void *arg, int pending)
 {
 	struct ath_softc *sc = arg;
+	int error __unused;
 
 #if 0
 	device_printf(sc->sc_dev, "%s: resetting\n", __func__);
 #endif
-	ath_reset(sc, ATH_RESET_NOLOSS, HAL_RESET_FORCE_COLD);
+	if (!cold)
+		DTRACE_PROBE1(ath__deferred__reset__start, void *, (sc));
+	error = ath_reset(sc, ATH_RESET_NOLOSS, HAL_RESET_FORCE_COLD);
+	if (!cold)
+		DTRACE_PROBE2(ath__deferred__reset__done, void *, (sc),
+		    int, (error));
 }
 
 /*
@@ -6584,6 +6592,8 @@ ath_watchdog(void *arg)
 	 * do the reset deferred.
 	 */
 	if (do_reset) {
+		if (!cold)
+			DTRACE_PROBE1(ath__watchdog__expired, void *, (sc));
 		taskqueue_enqueue(sc->sc_tq, &sc->sc_resettask);
 	}
 

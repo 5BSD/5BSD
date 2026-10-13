@@ -451,4 +451,112 @@
 
 #endif /* WITH_PROBE_TAP */
 
+
+/* Runtime outcomes: identifiers and counts only, never secret material. */
+#if defined(WITH_PROBE_TAP)
+#define BLUED_PROBE_DISCOVERY__LEASE__START(a0, a1, a2) \
+	probe_tap_rec3("discovery:lease:start", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2))
+#define BLUED_PROBE_DISCOVERY__LEASE__DONE(a0, a1, a2, a3, a4) \
+	probe_tap_rec5("discovery:lease:done", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2), (uint64_t)(a3), (uint64_t)(a4))
+#define BLUED_PROBE_DISCOVERY__DELIVER(a0, a1, a2, a3) \
+	probe_tap_rec4("discovery:deliver", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2), (uint64_t)(a3))
+#define BLUED_PROBE_ISO__STREAM__UNLINK(a0) \
+	probe_tap_rec1("iso:stream:unlink", NULL, (uint64_t)(a0))
+#elif defined(WITH_DTRACE)
+#define BLUED_PROBE_DISCOVERY__LEASE__START(a0, a1, a2) \
+	DTRACE_PROBE3(blued, discovery__lease__start, a0, a1, a2)
+#define BLUED_PROBE_DISCOVERY__LEASE__DONE(a0, a1, a2, a3, a4) \
+	DTRACE_PROBE5(blued, discovery__lease__done, a0, a1, a2, a3, a4)
+#define BLUED_PROBE_DISCOVERY__DELIVER(a0, a1, a2, a3) \
+	DTRACE_PROBE4(blued, discovery__deliver, a0, a1, a2, a3)
+#define BLUED_PROBE_ISO__STREAM__UNLINK(a0) \
+	DTRACE_PROBE1(blued, iso__stream__unlink, a0)
+#else
+#define BLUED_PROBE_DISCOVERY__LEASE__START(...) ((void)0)
+#define BLUED_PROBE_DISCOVERY__LEASE__DONE(...) ((void)0)
+#define BLUED_PROBE_DISCOVERY__DELIVER(...) ((void)0)
+#define BLUED_PROBE_ISO__STREAM__UNLINK(...) ((void)0)
+#endif
+
+/* Runtime outcomes: identifiers and counts only, never secret material. */
+#if defined(WITH_PROBE_TAP)
+#define BLUED_PROBE_ISO__STREAM__ALLOC(a0) \
+	probe_tap_rec1("iso:stream:alloc", NULL, (uint64_t)(a0))
+#define BLUED_PROBE_ISO__HANDOFF(a0, a1, a2) \
+	probe_tap_rec3("iso:handoff", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2))
+#elif defined(WITH_DTRACE)
+#define BLUED_PROBE_ISO__STREAM__ALLOC(a0) \
+	DTRACE_PROBE1(blued, iso__stream__alloc, a0)
+#define BLUED_PROBE_ISO__HANDOFF(a0, a1, a2) \
+	DTRACE_PROBE3(blued, iso__handoff, a0, a1, a2)
+#else
+#define BLUED_PROBE_ISO__STREAM__ALLOC(...) ((void)0)
+#define BLUED_PROBE_ISO__HANDOFF(...) ((void)0)
+#endif
+
+/* Runtime outcomes: identifiers and counts only, never secret material. */
+#if defined(WITH_PROBE_TAP)
+#define BLUED_PROBE_ISO__CIG__PARAMS(a0, a1, a2) \
+	probe_tap_rec3("iso:cig:params", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2))
+#define BLUED_PROBE_ISO__CIS__CREATE(a0, a1) \
+	probe_tap_rec2("iso:cis:create", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#define BLUED_PROBE_ISO__CIS__ACCEPT(a0, a1) \
+	probe_tap_rec2("iso:cis:accept", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#define BLUED_PROBE_ISO__CIS__REJECT(a0, a1) \
+	probe_tap_rec2("iso:cis:reject", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#define BLUED_PROBE_ISO__CIG__REMOVE(a0, a1) \
+	probe_tap_rec2("iso:cig:remove", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#define BLUED_PROBE_ISO__BIG__CREATE(a0, a1, a2) \
+	probe_tap_rec3("iso:big:create", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2))
+#define BLUED_PROBE_ISO__BIG__TERMINATE(a0, a1) \
+	probe_tap_rec2("iso:big:terminate", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#define BLUED_PROBE_ISO__DATAPATH__SETUP(a0, a1, a2) \
+	probe_tap_rec3("iso:datapath:setup", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2))
+#define BLUED_PROBE_ISO__CIS__REQUEST(a0, a1, a2, a3) \
+	probe_tap_rec4("iso:cis:request", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2), (uint64_t)(a3))
+#define BLUED_PROBE_ISO__BIG__COMPLETE(a0, a1, a2) \
+	probe_tap_rec3("iso:big:complete", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2))
+#define BLUED_PROBE_ISO__BIG__SYNC(a0, a1, a2) \
+	probe_tap_rec3("iso:big:sync", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2))
+#define BLUED_PROBE_CONN__ALLOC(a0) \
+	probe_tap_rec1("conn:alloc", NULL, (uint64_t)(a0))
+#elif defined(WITH_DTRACE)
+#define BLUED_PROBE_ISO__CIG__PARAMS(a0, a1, a2) \
+	DTRACE_PROBE3(blued, iso__cig__params, a0, a1, a2)
+#define BLUED_PROBE_ISO__CIS__CREATE(a0, a1) \
+	DTRACE_PROBE2(blued, iso__cis__create, a0, a1)
+#define BLUED_PROBE_ISO__CIS__ACCEPT(a0, a1) \
+	DTRACE_PROBE2(blued, iso__cis__accept, a0, a1)
+#define BLUED_PROBE_ISO__CIS__REJECT(a0, a1) \
+	DTRACE_PROBE2(blued, iso__cis__reject, a0, a1)
+#define BLUED_PROBE_ISO__CIG__REMOVE(a0, a1) \
+	DTRACE_PROBE2(blued, iso__cig__remove, a0, a1)
+#define BLUED_PROBE_ISO__BIG__CREATE(a0, a1, a2) \
+	DTRACE_PROBE3(blued, iso__big__create, a0, a1, a2)
+#define BLUED_PROBE_ISO__BIG__TERMINATE(a0, a1) \
+	DTRACE_PROBE2(blued, iso__big__terminate, a0, a1)
+#define BLUED_PROBE_ISO__DATAPATH__SETUP(a0, a1, a2) \
+	DTRACE_PROBE3(blued, iso__datapath__setup, a0, a1, a2)
+#define BLUED_PROBE_ISO__CIS__REQUEST(a0, a1, a2, a3) \
+	DTRACE_PROBE4(blued, iso__cis__request, a0, a1, a2, a3)
+#define BLUED_PROBE_ISO__BIG__COMPLETE(a0, a1, a2) \
+	DTRACE_PROBE3(blued, iso__big__complete, a0, a1, a2)
+#define BLUED_PROBE_ISO__BIG__SYNC(a0, a1, a2) \
+	DTRACE_PROBE3(blued, iso__big__sync, a0, a1, a2)
+#define BLUED_PROBE_CONN__ALLOC(a0) \
+	DTRACE_PROBE1(blued, conn__alloc, a0)
+#else
+#define BLUED_PROBE_ISO__CIG__PARAMS(...) ((void)0)
+#define BLUED_PROBE_ISO__CIS__CREATE(...) ((void)0)
+#define BLUED_PROBE_ISO__CIS__ACCEPT(...) ((void)0)
+#define BLUED_PROBE_ISO__CIS__REJECT(...) ((void)0)
+#define BLUED_PROBE_ISO__CIG__REMOVE(...) ((void)0)
+#define BLUED_PROBE_ISO__BIG__CREATE(...) ((void)0)
+#define BLUED_PROBE_ISO__BIG__TERMINATE(...) ((void)0)
+#define BLUED_PROBE_ISO__DATAPATH__SETUP(...) ((void)0)
+#define BLUED_PROBE_ISO__CIS__REQUEST(...) ((void)0)
+#define BLUED_PROBE_ISO__BIG__COMPLETE(...) ((void)0)
+#define BLUED_PROBE_ISO__BIG__SYNC(...) ((void)0)
+#define BLUED_PROBE_CONN__ALLOC(...) ((void)0)
+#endif
 #endif /* BLUED_PROBES_H */

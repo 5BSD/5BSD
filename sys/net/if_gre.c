@@ -40,6 +40,8 @@
 #include "opt_rss.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/jail.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
@@ -100,6 +102,12 @@
 
 #include <machine/in_cksum.h>
 #include <security/mac/mac_framework.h>
+
+SDT_PROVIDER_DEFINE(gretunnel);
+SDT_PROBE_DEFINE2(gretunnel, , , control__start, "void *", "unsigned long");
+SDT_PROBE_DEFINE3(gretunnel, , , control__done, "void *", "unsigned long", "int");
+SDT_PROBE_DEFINE3(gretunnel, , , access, "void *", "unsigned long", "int");
+
 
 #define	GREMTU			1476
 
@@ -550,6 +558,7 @@ gre_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	case GREGPROTO:
 		return (EOPNOTSUPP);
 	}
+	SDT_PROBE2(gretunnel, , , control__start, ifp, cmd);
 	sx_xlock(&gre_ioctl_sx);
 	sc = ifp->if_softc;
 	if (sc == NULL) {
@@ -581,7 +590,9 @@ gre_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		ifr->ifr_fib = sc->gre_fibnum;
 		break;
 	case SIOCSTUNFIB:
-		if ((error = priv_check(curthread, PRIV_NET_GRE)) != 0)
+		error = priv_check(curthread, PRIV_NET_GRE);
+		SDT_PROBE3(gretunnel, , , access, ifp, cmd, error);
+		if (error != 0)
 			break;
 		if (ifr->ifr_fib >= rt_numfibs)
 			error = EINVAL;
@@ -591,7 +602,9 @@ gre_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	case GRESKEY:
 	case GRESOPTS:
 	case GRESPORT:
-		if ((error = priv_check(curthread, PRIV_NET_GRE)) != 0)
+		error = priv_check(curthread, PRIV_NET_GRE);
+		SDT_PROBE3(gretunnel, , , access, ifp, cmd, error);
+		if (error != 0)
 			break;
 		if ((error = copyin(ifr_data_get_ptr(ifr), &opt,
 		    sizeof(opt))) != 0)
@@ -632,6 +645,7 @@ gre_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		}
 	}
 end:
+	SDT_PROBE3(gretunnel, , , control__done, ifp, cmd, error);
 	sx_xunlock(&gre_ioctl_sx);
 	return (error);
 }

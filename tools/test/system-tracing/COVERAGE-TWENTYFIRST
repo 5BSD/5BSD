@@ -1,0 +1,80 @@
+Twenty-first pass: additional libraries and authorization outcomes
+=================================================================
+
+20 contracts: 15 USDT in four libraries and three base tools/daemons, and five
+kernel contracts in MAC ABAC and OpenEndpointSecurity. Four installed profiles.
+Existing ABAC allow/deny and OES allow/deny/timeout probes are retained. New
+probes add reasons and scalar values missing from those contracts. No command,
+label text, path, credential, secret, capability token or message ID is added.
+
+New kernel contracts (provider sdt, empty module/function)
+--------------------------------------------------------
+abac-check-bypass(op, missing_subject, missing_object): existing null-label
+allow shortcut, before return; not a newly introduced authorization exemption.
+abac-rule-decision(rule_id, set, operation_mask, result): matched rule, with
+result=0 or EACCES; set comes from the rule iteration under the read lock.
+abac-default-decision(operation_mask, default_policy, result): no matching
+rule. default_policy=0 allows, other values deny under existing semantics.
+oes-auth-flags(event_type, result, allowed_mask, denied_mask): accepted first
+flag response while the pending event is locked. Masks describe the response,
+not necessarily the final combined authorization of every listening client.
+oes-response-rejected(error, has_flags, proposed_result): invalid flag-based
+response for an event type (EINVAL), already responded/expired (EALREADY), or
+unknown/non-auth message (ESRCH). No dereference after release. Existing auth
+allow/deny/timeout and wait probes cover ordinary outcomes and deadline policy.
+All five use inline SDT patchpoints guarded by !cold; no early boot, interrupt
+entry, DTrace internals, extra clocks or allocations are instrumented.
+
+New userland contracts
+----------------------
+oesclient (liboes):
+ batch-read(bytes,error): raw batch read outcome, including short reads (EIO).
+ buffer-corrupt(buffered_bytes,offset): malformed buffer before its reset.
+ auth-response(proposed_result,allowed_mask,denied_mask,error): one event per
+ response attempt, including invalid client, invalid flags response result,
+ short write, write failure and accepted write. Plain responses use zero masks.
+ A successful write is submission success, not proof the operation is allowed.
+timecmp (libtimecmp):
+ wait-start(client_identity), wait-done(client_identity,error,malformed): wait
+ for FIDL completion, including transport errors, deadline expiry and application
+ status. No extra clock query. The wrapper disappears when tracing is disabled.
+ reply-malformed(error): invalid result shape/value or protocol version.
+capsuleclaims (libcapsulert):
+ rights-parsed(kind,result,mask): jail=1, file=2, storage=3. Success exposes the
+ parsed rights mask; error exposes zero, even if parsing partially filled output.
+ No textual manifest is collected. Disabled builds retain the original body.
+shmring (libshmring):
+ record-reject(error,required_or_observed_bytes,available_bytes): short record
+ header, impossible record length or insufficient destination buffer. Existing
+ successful read/write probes remain the success path. Ring indices are not
+ reread for tracing, and payloads are never copied into probes.
+abacdaemon (mac_abacd), abacctl (mac_abac_ctl):
+ policy-start(command), policy-done(command,error): management mac_syscall
+ results before logging, cleanup or errx. Covers good and bad kernel results;
+ does not expose the opaque command argument or configuration text.
+oeslogger:
+ event-handled(event_type,message_size): validated event delivered to handler;
+ the site is before handler invocation, so it does not guarantee output success.
+ wait-done(poll_result,error): polling including timeout/interruption/failure.
+ dispatch-error(stage,error): batch read=1, dead/error poll descriptor=2.
+ The standalone example remains usable without base's FIVEBSD_TRACE definition.
+
+Validation and limits
+---------------------
+14 native library/tool builds with MK_DTRACE=yes/no. DOF inspection checks real
+probe sites and arity, and absence from disabled builds. MAC ABAC and OES modules
+link; four kernel on/off source builds pass -Werror. Linked modules contain six
+new executable sites for the five contracts (response rejection has two sites).
+No modules were loaded. These checks do not claim live authorization probes
+fired; /dev/dtrace is unavailable on the running host.
+Existing liboes tests use pipes and mock allocation/ioctl paths to verify owned
+versus borrowed descriptors, invalid descriptors, allocation failure and path
+bounds. Claim-parser tests run against both new library variants. No policy is
+loaded, power/time operation issued, or production daemon started.
+
+Artifact root: /usr/obj/5bsd-dtrace-twentyfirst-validation
+Disabled-code comparisons and the exact commands/results are retained there.
+Dev integration and the combined probe commit are separately qualified under
+/usr/obj/5bsd-dtrace-commit-validation; dev has newer FIDL consumers than the
+original /usr/src checkout. Do not treat historical source hashes as hashes of
+the integration commit. No installation, package publication or reboot.

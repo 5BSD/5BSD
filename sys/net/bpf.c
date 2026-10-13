@@ -92,6 +92,9 @@ SDT_PROBE_DEFINE2(bpf, , , open, "struct ucred *", "int");
 /* Binding a capture descriptor to an interface.  Args: ifname, cred. */
 SDT_PROBE_DEFINE2(bpf, , , attach, "char *", "struct ucred *");
 
+SDT_PROBE_DEFINE1(bpf, , , read__wait__start, "struct bpf_d *");
+SDT_PROBE_DEFINE2(bpf, , , read__wait__done, "struct bpf_d *", "int");
+
 struct bpf_if {
 	struct bpfd_list	bif_dlist;	/* list of all interfaces */
 	LIST_ENTRY(bpf_if)	bif_next;	/* descriptor list */
@@ -868,8 +871,10 @@ bpfread(struct cdev *dev, struct uio *uio, int ioflag)
 			BPFD_UNLOCK(d);
 			return (EWOULDBLOCK);
 		}
+		SDT_PROBE1(bpf, , , read__wait__start, d);
 		error = msleep(d, &d->bd_lock, PRINET | PCATCH,
 		     "bpf", d->bd_rtout);
+		SDT_PROBE2(bpf, , , read__wait__done, d, error);
 		if (error == EINTR || error == ERESTART) {
 			BPFD_UNLOCK(d);
 			return (error);

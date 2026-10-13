@@ -1420,7 +1420,6 @@ device		iser		# iSCSI Extensions for RDMA (iSER) initiator
 #####################################################################
 # MISCELLANEOUS DEVICES AND OPTIONS
 
-device		pty		#BSD-style compatibility pseudo ttys
 device		nmdm		#back-to-back tty devices
 device		md		#Memory/malloc disk
 device		snp		#Snoop device - to look at pty/vty/etc..

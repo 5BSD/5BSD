@@ -1,0 +1,241 @@
+DTRACE COVERAGE: FOURTEENTH EXPANSION
+====================================
+
+20 operation-focused passes in base software: 48 new USDT contracts across
+17 binaries, with eight base-install bsdinstruments profiles. The four
+extended-attribute commands are separate passes sharing the rmextattr binary.
+This round adds userland observations that complement earlier kernel probes;
+it does not add kernel probes or claim exhaustive system coverage.
+
+Pass ledger
+-----------
+ 1. usr.sbin/extattr / attrtool / delete
+    Attribute delete file/link calls, including size queries; namespace/nofollow/request length/result, no names or values.
+ 2. usr.sbin/extattr / attrtool / set
+    Attribute set file/link calls, including size queries; namespace/nofollow/request length/result, no names or values.
+ 3. usr.sbin/extattr / attrtool / list
+    Attribute list file/link calls, including size queries; namespace/nofollow/request length/result, no names or values.
+ 4. usr.sbin/extattr / attrtool / get
+    Attribute get file/link calls, including size queries; namespace/nofollow/request length/result, no names or values.
+ 5. bin/getfacl / aclread / operation
+    ACL retrieval; type/nofollow/success/errno, excluding stat and text rendering.
+ 6. bin/setfacl / aclwrite / operation
+    ACL application file/link calls; excludes parsing, merging, default-ACL deletion and traversal.
+ 7. usr.bin/fsync / filesync / operation
+    Per-opened-file fsync result; does not imply device power-loss guarantees.
+ 8. bin/cat / catio / stream
+    Raw read/write calls; fd/requested bytes/returned bytes/errno; excludes stdio-only paths and fast metadata shortcuts.
+ 9. usr.bin/tee / teeio / stream
+    Raw read/write calls; fd/requested bytes/returned bytes/errno; excludes stdio-only paths and fast metadata shortcuts.
+10. usr.bin/split / splitio / stream
+    Raw read/write calls; fd/requested bytes/returned bytes/errno; excludes stdio-only paths and fast metadata shortcuts.
+11. usr.bin/wc / wordcountio / stream
+    Raw read calls; fd/requested bytes/returned bytes/errno; excludes stdio-only paths and fast metadata shortcuts.
+12. usr.bin/tail / tailwait / operation
+    Follow-mode registration and kevent waits; completion count/errno, not an assertion of appended data.
+13. usr.bin/cksum / checksumtool / file
+    One complete checksum dispatch, all four algorithms and sum alias; length on success only, no checksum or contents.
+14. sbin/kldstat / modulequery / operation
+    Module metadata query id/result; excludes enumeration and rendering.
+15. bin/kenv / envquery / operation
+    Kernel environment get/set/unset/dump calls; operation/length/result only, never names or values.
+16. usr.sbin/chroot / rootchange / operation
+    Root-directory change after setup; no path, credentials or executable arguments.
+17. usr.bin/procstat / processquery / operation
+    Process enumeration kind, result count and null-result indicator; final int is unavailable flag, NOT errno.
+18. bin/pwait / processwait / operation
+    Process event registration/waits. No probes in alarm handlers; returned events need caller interpretation.
+19. usr.bin/brandelf / elfbrand / header
+    ELF identification read/write calls, including short transfers; no header bytes.
+20. usr.bin/vmstat / vmquery / operation
+    Live sysctl query boundary; excludes kvm crash-dump and libdevstat calls. No MIB names or values.
+
+Contract conventions
+--------------------
+USDT runtime providers carry a PID suffix; profiles select provider*.
+Each operation has start/done probes, e.g. attrtool*:...:get-start/get-done.
+Pairs execute synchronously in the invoking thread. These boundaries cover
+individual API calls or checksum dispatch, not necessarily entire commands.
+The manifest records every probe's ordered argument types and source.
+All results and errno values are captured before the caller interprets them.
+No filename, attribute name/value, ACL, credential, environment value,
+checksum, file contents, kernel address or process argument string is exposed.
+
+attrtool delete-start(namespace, nofollow)
+         delete-done(namespace, nofollow, result, errno)
+         get/set/list-start(namespace, nofollow, requested_size, size_query)
+         get/set/list-done(namespace, nofollow, requested_size, size_query,
+                           signed_result, errno)
+    Each file and link API has its own call site. get/list first query length,
+    then request data: those are separate pairs. Positive size-query results
+    are required length, not transferred bytes. Short positive transfers are
+    reported verbatim with errno=0; the caller can still diagnose truncation.
+    Argument/namespace parsing and stdin collection precede these boundaries.
+
+aclread operation-start(acl_type, nofollow)
+        operation-done(acl_type, nofollow, success_boolean, errno)
+aclwrite operation-start(acl_type, nofollow)
+         operation-done(acl_type, nofollow, result, errno)
+    Covers acl_get_file/acl_get_link_np and acl_set_file/acl_set_link_np.
+    Excludes pathname/stat checks before retrieval, parsing/ACL transformations,
+    text rendering, traversal and acl_delete_def_file. No synthetic security
+    decision is inferred from a successful ACL read or edit.
+
+catio / teeio / splitio read/write-start(fd, requested_bytes)
+                       read/write-done(fd, requested_bytes, signed_result, errno)
+wordcountio read-start(fd, requested_bytes)
+            read-done(fd, requested_bytes, signed_result, errno)
+    Negative result reports errno; zero read means EOF and a positive result
+    can be short. These are raw I/O calls only. cat's cooked stdio path,
+    split's stdio reads in line mode and wc's metadata-only byte-count shortcut
+    do not necessarily fire these pairs. Existing loops and error handling
+    are unchanged. tee writes produce separate pairs for each destination.
+
+filesync operation-start(fd); operation-done(fd, result, errno)
+    Only files successfully opened reach fsync. A successful return is the
+    fsync API result, not a stronger claim about device power-loss behavior.
+
+checksumtool file-start(fd); file-done(fd, length_on_success, result, errno)
+    Encloses selected checksum function, covering crc, csum1, csum2 and crc32,
+    including sum's default algorithm. Length is zero on failure because the
+    helper's output need not be initialized; it does not imply zero bytes
+    were processed. Opening files and printing results remain outside.
+
+tailwait / processwait operation-start(change_count, event_capacity)
+                      operation-done(change_count, event_capacity, result, errno)
+    Covers kevent registration and wait calls. Zero may be a timeout or a
+    successful registration with no returned events. A returned event still
+    needs caller interpretation. No event payload or signal-handler probe.
+    tail's ordinary read/print mode is outside its new follow-mode probes.
+
+modulequery operation-start(module_id); operation-done(module_id, result, errno)
+    Covers kldstat metadata calls. kldnext enumeration and output formatting
+    remain outside. No module name or kernel address is newly exposed.
+
+envquery operation-start(action, buffer_length)
+         operation-done(action, buffer_length, result, errno)
+    Covers kenv get/set/unset/dump, including dump-size queries/retries. Results
+    have action-specific meanings. Names and values are never copied to probes.
+
+rootchange operation-start(reserved_zero)
+           operation-done(reserved_zero, result, errno)
+    Covers chroot(".") after directory/setup work, before optional credential
+    changes and exec. This pair is not credential-change or exec success.
+
+processquery operation-start(selector_kind)
+             operation-done(selector_kind, count_if_available, unavailable)
+    Covers procstat_getprocs for live and core-backed handles. The final int
+    is a null-result indicator, NOT errno. Count is only read when a non-NULL
+    array is returned. Other libprocstat queries and formatting are excluded.
+
+elfbrand read/write-start(fd, requested_bytes)
+         read/write-done(fd, requested_bytes, signed_result, errno)
+    Only the ELF identification header's read/write calls. A short transfer
+    can be a command error despite errno=0. Validation/seeking are excluded.
+
+vmquery operation-start(reserved_zero)
+        operation-done(reserved_zero, result, errno)
+    Covers vmstat's direct sysctlbyname query helper. Aggregate query latency;
+    no individual MIB identity or counter value is exposed. kvm crash-dump
+    and libdevstat calls are outside this boundary.
+
+Nine-category mapping
+---------------------
+Lifecycle/execution: start/completion of the observed operations.
+Performance: elapsed operation, checksum and wait latency.
+Errors: API errno, short results and unavailable-process-array outcomes.
+Resources: requested/returned I/O sizes, process counts, attribute size queries.
+I/O: stream reads/writes, checksum input, file synchronization, ELF headers.
+Networking: tee writes include its existing Unix-socket destinations; broader
+            protocol/network coverage remains in prior kernel/base providers.
+Synchronization: tail follow waits, pwait process waits, fsync completion.
+Security/access: ACL application/retrieval errors, chroot outcome and attribute
+                 namespace/access failures. No authentication claim.
+Counters/state: transfer-length histograms, query/event/result counts.
+Categories apply collectively where meaningful. There are no invented
+allocation, deadlock, authentication, threshold or recovery events.
+
+Build integration and disabled behavior
+---------------------------------------
+Each affected Makefile conditionally adds its provider and enables the
+existing bsd.dtrace.mk generation/link path when MK_DTRACE is not no.
+RESCUE and BOOTSTRAPPING explicitly exclude the new providers, keeping host
+bootstrap tools independent of target DTrace. These modes were checked at
+Makefile source-list selection; full rescue and cross-host bootstrap builds
+were not performed. Standard on/off native builds both linked successfully.
+
+Headers guard each USDT firing with its enabled predicate, preserve errno,
+and fully parenthesize/cast arguments. Disabled headers do not evaluate probe
+arguments. No tracing calls were inserted into signal handlers. Hot stream
+operations can produce many events: choose profiles selectively. No enabled
+or disabled runtime overhead measurement is claimed; C wrappers may be
+inlined, but no machine-code identity claim is made for this round.
+
+Base profiles
+-------------
+  base-attribute-operations   extended-attribute API calls
+  base-acl-operations         ACL get/set calls
+  base-stream-io              cat, tee, split and wc raw I/O
+  base-file-completion        fsync and checksum dispatch
+  base-event-waits            tail and pwait kevent phases
+  base-system-queries        kldstat, kenv, procstat and vmstat queries
+  base-root-change           chroot API outcome
+  base-elf-headers           brandelf header I/O
+
+The existing bsdinstruments Makefile includes these profiles in the base
+package under /usr/share/bsdinstruments/profiles; catalog count is 404.
+They aggregate per-operation outcome and elapsed microseconds. Stream/ELF
+profiles also histogram successful transfer lengths. processquery's grouping
+key is unavailable, not errno. PID/tid/depth pairing is cleared on matched
+completion. Start before workload: event loss, process exit or attaching
+mid-operation can leave incomplete pairs. Elapsed time includes preemption.
+Normal and --pid/--duration generated forms were compiled offline, with exact
+selector/argument checks in addition to -Z accepting absent live providers.
+
+Example once installed and the matching provider-bearing tool is running:
+  bsdinstruments generate -f /usr/share/bsdinstruments/profiles/base-stream-io.d
+No installation or publication was performed for this validation.
+
+Validation
+----------
+Native amd64 prepared world sysroot: /usr/obj/usr/src/amd64.amd64/tmp.
+All compilation uses the 16 available CPUs. Maintained validation scripts:
+  coverage-fourteenth-base.py         17 binaries x enabled/disabled = 34 links
+  coverage-fourteenth-guards.py       34 enabled/disabled guard + errno checks
+  coverage-fourteenth-check.py        17 linked DOF inventories and disabled
+                                     absence, all 48 contract arities and
+                                     firing/enabled offsets, 16 profile compiles
+  coverage-fourteenth-smoke.py        100 isolated CLI checks
+  coverage-fourteenth-tests.py        134 existing ATF cases passed, 2 skipped
+  coverage-fourteenth-integration.py  17 C token-preservation checks;
+                                     68 enabled/disabled/rescue/bootstrap
+                                     Makefile source-selection checks
+
+The token check removes generated wrappers, reverses call-name substitutions,
+and compares remaining C tokens with the saved originals while preserving
+string/character literals. It complements builds and behavioral tests; it is
+not a runtime performance measurement or compiler proof.
+
+Isolated CLI checks exercise private files, file/link attribute APIs, ACLs,
+checksumming algorithms, stream output, fsync, ELF header editing on a private
+writable copy, read-only system queries, and waits on test-created children.
+kenv and chroot checks relink the actual compiled objects with test-only
+--wrap syscall replacements for success and failure. They do not mutate the
+real kernel environment or change the actual root directory. These stubs
+validate CLI behavior and binding, not real syscall or live DTrace execution.
+
+ATF suites cover cat, tee, split, wc and tail, in both build modes. tee's
+sigint_ignored case requires the unavailable porch program and is skipped
+once per mode. Source fixtures are linked into the uninstalled test tree;
+locale-changing tests retain their own LC_CTYPE. Initial harness failures
+(missing fixture paths, missing prerequisite and forced LC_ALL) are recorded
+in tests/initial-results.json; the corrected final run is tests/results.json.
+No underlying utility behavior failure remains in the executed cases.
+
+Artifacts, originals and the session-only reverse-checked patch:
+  /usr/obj/5bsd-dtrace-fourteenth-validation
+Source hashes and contracts: coverage-fourteenth.json.
+No /dev/dtrace is available. Live probe firing, attach behavior under Capsicum,
+event loss and workload overhead remain unqualified. No kernel rebuild/load,
+module installation, global settings change, publication or reboot occurred.
+Earlier kernel and subsystem runtime qualification gaps remain open.

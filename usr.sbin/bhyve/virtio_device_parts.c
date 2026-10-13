@@ -3,6 +3,7 @@
  */
 
 #include <sys/endian.h>
+#include "bhyve_trace.h"
 
 #include <errno.h>
 #include <stdbool.h>
@@ -281,6 +282,8 @@ virtio_device_parts_next(struct virtio_device_parts_iterator *iterator,
 		iterator->singleton_seen |= bit;
 		iterator->known_seen |= vdev_part_known_bit(type);
 	}
+	BHYVE_TRACE(DEVICE_PART, type, part->selector, value_length,
+	    iterator->headers_only);
 	return (0);
 }
 

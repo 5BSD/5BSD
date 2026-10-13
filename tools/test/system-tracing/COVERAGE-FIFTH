@@ -1,0 +1,233 @@
+Kernel breadth expansion (2026-10-13)
+===================================
+
+This adds 31 semantic probes in 13 source files, following the 26 passes in
+COVERAGE-FOURTH. These are 13 subsystem reviews, not a claim that the kernel
+is comprehensively traced. The original pass count measured operations, not
+coverage of every subsystem or driver. See coverage-fifth.json for the exact
+source hashes, argument types, selectors and profiles.
+
+Execution context and early boot
+-------------------------------
+
+Never add a probe merely because an SDT macro compiles at that location.
+In this source tree, sys/sys/sdt.h uses asm-goto patchpoints; on amd64 the
+inactive instruction is the five-byte NOP defined in
+sys/amd64/include/sdt_machdep.h. sys/cddl/dev/sdt/sdt.c patches sites only
+when enabled. Before enablement, the argument expressions and probe call
+are bypassed. Without KDTRACE_HOOKS the macros disappear. kern_sdt.c's
+fallback stub is NOT an early-boot tracing facility; it must never be called.
+
+Consequently, shared runtime routines such as device attach and AHCI reset
+may contain inactive sites during boot, but their pre-enable invocations
+produce no records. These additions do not provide a boot trace, replay old
+events, or force DTrace initialization earlier. Do not interpret absence of
+boot records as absence of boot work or a successful operation.
+
+DTrace's dtrace_probe_enter() explicitly forbids recursion (except its ERROR
+probe) and disables interrupts. Do not place probes in DTrace internals,
+probe patching, trap/NMI entry, low-level interrupt dispatch, IPI/rendezvous,
+pmap/bootstrap allocation, or debugger/panic machinery without a separate
+architecture and call-chain review. No new sites here are in those paths.
+Entropy harvesting was considered and deferred: early initialization and
+low-level callers deserve a separate review, not blanket instrumentation.
+
+Interrupt probes are in intr_event_execute_handlers(), called from the
+ordinary ithread execution loop. They run only after dead, suspended,
+filter-only, and unneeded software handlers have been skipped. The start
+site is AFTER acquisition of Giant when required; done is BEFORE release.
+This measures the callback's elapsed time, including preemption/blocking,
+not Giant acquisition time, CPU-only time, hard IRQ arrival latency, filter
+execution, or interrupt-to-thread scheduling delay. No instrumentation was
+added to intr_event_handle(), fast filters, clock filters, NMI or IPI paths.
+DTrace uses its own low-level timer/interrupt machinery; it must not be
+routed through these callbacks from probe context.
+
+VM probes use existing object lifetime and lock guarantees. They do not
+allocate, acquire locks, traverse object lists, inspect page contents, or
+retain references. Pager completion is before object destruction. The
+collapse event reports only the surviving object after reacquiring its
+lock; it never passes the already-freed backing object. The bypass event
+runs while both objects remain protected and before backing unlock. No
+hooks were added to vm_object_init(), UMA constructors, bootstrap objects,
+pmap, or page-fault entry.
+
+The previous vm_fault_trap probes are in the normal fault resolver, not in
+machine trap entry. On the validated amd64 path, trap_check() invokes
+DTrace's no-fault handler before trap()/trap_pfault()/vm_fault_trap(). That
+ordering is important and must be preserved. This review does not certify
+all architectures or make instrumenting trap_check() permissible.
+
+Contracts (arguments are zero-based)
+------------------------------------
+
+All pointer arguments are opaque identities, valid only in their documented
+context. Profiles never dereference them. Identities can be reused. Native
+return values are not automatically errno values or end-to-end success.
+Double underscores in source probe names appear as hyphens in DTrace.
+
+  irq:::thread-start / thread-done
+    (intr_event *, intr_handler *), at the threaded callback boundary above.
+    Both hardware interrupt threads and requested software handlers count.
+    A thread can execute several handlers for one interrupt; counts are NOT
+    hardware IRQ counts. Handler pointers identify callbacks, not IRQ vectors.
+
+  vm:::object-pager-start / object-pager-done
+    start(object, object type); done(object). Only vm_pager_deallocate() in
+    vm_object_terminate(), excluding earlier pip waits/page cleanup and later
+    object destruction. The pager returns void; done is not an error status.
+  vm:::object-collapse
+    (surviving object), after backing termination and survivor lock reacquire.
+  vm:::object-bypass
+    (surviving object, bypassed backing object), after unlink/refcount drop,
+    with backing still locked and referenced. Reports successful bypass only.
+    Neither event accounts for failed attempts or every object allocation.
+
+  newbus:::attach-start / attach-done; detach-start / detach-done
+    start(device); done(device, native driver callback result). DEVICE_ATTACH
+    and DEVICE_DETACH only. Excludes disabled-device/busy/precheck failures,
+    notifications, cleanup, and the complete device lifecycle. Post-enable
+    hotplug/reprobe/detach can be observed; early boot cannot be reconstructed.
+
+  affinity:::set-start / set-done
+    start(level, which, id); done(level, which, id, errno).
+    Entire kern_cpuset_setaffinity(), including capability/empty-mask/invalid
+    selector failures. Excludes user mask copying and does not capture masks.
+
+  routing:::action-start / action-done
+    start(fibnum, action); done(fibnum, action, errno). rib_action() only.
+    Direct calls to newer route APIs that bypass rib_action are NOT covered.
+    No route addresses, next-hop contents, or packet data are captured.
+
+  ndp:::state
+    (llentry identity, old state, requested new state), immediately before
+    the assignment in nd6_llinfo_setstate(). Includes same-state assignments;
+    not all direct state assignments elsewhere. Timer setup precedes this
+    event. Uses ndp rather than a trailing-digit provider name to avoid
+    libdtrace interpreting an unavailable provider as a pid-provider request.
+
+  geom:::access-start / access-done
+    start(provider, delta-read, delta-write, delta-exclusive);
+    done(provider, native callback result). Only the class access callback,
+    not earlier validation failures, count updates or complete g_access().
+
+  bpf:::read-wait-start / read-wait-done
+    start(capture descriptor); done(descriptor, msleep result).
+    The buffered-read data wait only; excludes hold-buffer ownership waits,
+    zero-copy mode, packet contents and transfer to userspace. Timeout results
+    can subsequently lead to a successful read; this is not the read result.
+
+  fusefs:::answer-wait-start / answer-wait-done
+    start(dispatcher); done(dispatcher, fticket_wait_answer result).
+    Raw wait after enqueue, before later daemon/response error translation.
+    Zero does not assert that the FUSE request ultimately succeeded.
+
+  ahci:::reset-start / reset-done
+    start(device); done(device, 0 or ENXIO). Controller reset including BIOS
+    handoff, reset polling and capability restoration, not channel recovery.
+    Boot invocations before enablement are absent.
+
+  vtnet:::reinit-start / reinit-done
+    start(softc); done(softc, errno). vtnet_reinit() including feature and
+    queue setup. Excludes stop and later interrupt activation by the caller.
+
+  iflib:::suspend-start / suspend-done; resume-start / resume-done
+    start(context); done(context, native callback result). IFDI_SUSPEND and
+    IFDI_RESUME only, under the existing context lock. Resume includes rollback
+    invocations. Excludes prepare, taskqueue draining, child-bus callbacks and
+    later state changes. This is not whole-system suspend/resume tracing.
+
+  ipsec:::output-start / output-done
+    start(address family); done(address family, native result).
+    ipsec4/6_process_packet submission wrappers, not every IPsec path. The
+    packet/policy may be consumed asynchronously, so neither is passed after
+    the call. Results including EINPROGRESS/EJUSTRETURN retain native meaning;
+    zero does not mean crypto or wire delivery completed.
+
+Installed base profiles
+-----------------------
+
+The bsdinstruments Makefile automatically selects these 13 new .d files for
+/usr/share/bsdinstruments/profiles in the bsdinstruments base package:
+
+  interrupt-threads       vm-object-operations    device-callbacks
+  affinity-changes        routing-actions        neighbor-states
+  geom-access             capture-waits          fuse-answer-waits
+  ahci-resets             virtio-network-reinit   iflib-power-callbacks
+  ipsec-submissions
+
+The profile catalog now has 323 entries in this working tree. This checks
+installation selection; it does not mean packages or files were installed.
+The earlier base library/tool probes and profiles remain described in
+COVERAGE-FOURTH. No new utility binary or dependency is required here.
+
+Profiles use per-thread nesting for synchronous pairs and only scalar
+arguments. Elapsed histograms include blocking/preemption and probe overhead.
+Start tracing before the workload. Event drops, enabling/disabling midway,
+and nonlocal exits can invalidate pairing. PID filters select the process
+executing the probe, not workload causality: IRQ, worker and daemon activity
+usually belongs to kernel threads. Use interrupt-threads without a target
+application PID when investigating interrupt load. Provider names are not
+necessarily loaded on the running kernel; an empty profile is not proof of
+coverage or absence of work.
+
+Coverage audit and remaining work
+---------------------------------
+
+coverage-kernel-census.py records direct calls AND known wrappers (including
+IP, TCP, UDP, UDPLITE, CAM, MIB_SDT and Linuxulator wrappers) in kernel source
+and headers. The JSON evidence is a search aid, NOT a coverage percentage:
+header macros expand at callers; conditional compilation changes availability;
+FBT, syscall, lockstat, profile and audit have dynamic mechanisms; provider
+presence says nothing about semantic completeness. IPv6 and CAM already had
+wrapper-based tracing and must not be described as wholly uninstrumented.
+CAM recovery already has a result probe; this round does not duplicate it.
+
+Reviewed and extended: interrupt threads, VM objects, device lifecycle,
+CPU affinity, routing control, IPv6 neighbor state, GEOM access, BPF waiting,
+FUSE IPC waiting, AHCI reset, virtio networking reinit, iflib PM, IPsec output.
+
+Still partial: VM allocation/reclamation/swap/NUMA, network protocols and
+routing APIs outside these wrappers, VFS/file locking/quotas, CAM transports,
+GEOM classes, scheduler/taskqueues/callouts, jail/IPC/resource accounting,
+LinuxKPI and Linuxulator, MAC/audit, and most individual device drivers.
+Existing probes in these areas are not a substitute for per-operation review.
+
+Further driver-family reviews include NVMe queue/completion/recovery beyond
+existing reset probes, virtio block/SCSI, USB and audio beyond drain paths,
+input/HID, MMC/SD, I2C/SPI/GPIO, firmware/ACPI, hypervisors, wireless and
+individual NIC families. Device-specific locks, callback lifetime, debugger
+or netdump reuse, and interrupt context require inspection before placement.
+Imported ZFS and external graphics/hardware ports need separate ownership and
+build reviews. No changes here diagnose the recorded ZFS/WITNESS issue.
+
+Deferred context-sensitive areas: early bootstrap, trap/NMI/IPI entry,
+pmap/allocator primitives used by tracing, entropy collection, and DTrace
+itself. Those are deliberately not treated as a checklist of places to add
+probes. Ordinary DTrace cannot retroactively observe pre-enable execution.
+
+Validation and reproduction
+---------------------------
+
+From /usr/src, with permission to write /usr/obj:
+
+  python3.12 tools/test/system-tracing/coverage-fifth-compile.py \
+    --kernel-obj /usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG
+  python3.12 tools/test/system-tracing/coverage-fifth-check.py
+  python3.12 tools/test/system-tracing/coverage-fifth-objects.py
+  python3.12 tools/test/system-tracing/coverage-kernel-census.py
+
+Compilation uses all logical CPUs and the existing configured amd64 kernel
+and module object trees. Hooks enabled/disabled are both checked with -Werror.
+Object inspection checks each declared probe's symbol, executable tracepoint
+relocation and inactive amd64 NOP, plus absence in the no-hooks object.
+Prepared GENERIC-NODEBUG and affected modules are also linked separately.
+
+Results and before-images are under
+/usr/obj/5bsd-dtrace-kernel-breadth-validation. The running host has no
+/dev/dtrace. Offline -e -Z profile checks permit absent providers, so they
+are supplemented by selector/argument contracts and compiled object checks.
+They cannot prove live provider registration, firing, pair balance, interrupt
+latency impact, or hardware safety. A booted test kernel with DTrace is still
+required for live workload and enable/disable stress qualification. No kernel
+or module was loaded, installed or published, and no reboot was performed.

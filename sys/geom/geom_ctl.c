@@ -37,6 +37,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/conf.h>
 #include <sys/malloc.h>
@@ -50,6 +52,10 @@
 #include <geom/geom_int.h>
 #define GCTL_TABLE 1
 #include <geom/geom_ctl.h>
+
+SDT_PROVIDER_DECLARE(geom);
+SDT_PROBE_DEFINE1(geom, , , control__start, "void *");
+SDT_PROBE_DEFINE2(geom, , , control__done, "void *", "int");
 
 static d_ioctl_t g_ctl_ioctl;
 
@@ -606,7 +612,9 @@ g_ctl_ioctl_ctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag, struct th
 			gctl_dump(req, "request");
 
 		if (!req->nerror) {
+			SDT_PROBE1(geom, , , control__start, req);
 			g_waitfor_event(g_ctl_req, req, M_WAITOK, NULL);
+			SDT_PROBE2(geom, , , control__done, req, req->nerror);
 
 			if (g_debugflags & G_F_CTLDUMP)
 				gctl_dump(req, "result");

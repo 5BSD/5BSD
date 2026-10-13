@@ -65,6 +65,7 @@
 #include "opt_vm.h"
 
 #include <sys/systm.h>
+#include <sys/sdt.h>
 #include <sys/blockcount.h>
 #include <sys/conf.h>
 #include <sys/cpuset.h>
@@ -105,6 +106,14 @@
 #include <vm/vm_radix.h>
 #include <vm/vm_reserv.h>
 #include <vm/uma.h>
+
+SDT_PROVIDER_DECLARE(vm);
+/* Runtime object operations; no bootstrap, UMA constructor or pmap hooks. */
+SDT_PROBE_DEFINE2(vm, , , object__pager__start, "struct vm_object *", "int");
+SDT_PROBE_DEFINE1(vm, , , object__pager__done, "struct vm_object *");
+SDT_PROBE_DEFINE1(vm, , , object__collapse, "struct vm_object *");
+SDT_PROBE_DEFINE2(vm, , , object__bypass,
+    "struct vm_object *", "struct vm_object *");
 
 static int old_msync;
 SYSCTL_INT(_vm, OID_AUTO, old_msync, CTLFLAG_RW, &old_msync, 0,
@@ -964,7 +973,9 @@ vm_object_terminate(vm_object_t object)
 	/*
 	 * Let the pager know object is dead.
 	 */
+	SDT_PROBE2(vm, , , object__pager__start, object, object->type);
 	vm_pager_deallocate(object);
+	SDT_PROBE1(vm, , , object__pager__done, object);
 	VM_OBJECT_WUNLOCK(object);
 
 	vm_object_destroy(object);
@@ -1918,6 +1929,7 @@ vm_object_collapse(vm_object_t object)
 			vm_object_terminate(backing_object);
 			counter_u64_add(object_collapses, 1);
 			VM_OBJECT_WLOCK(object);
+			SDT_PROBE1(vm, , , object__collapse, object);
 		} else {
 			/*
 			 * If we do not entirely shadow the backing object,
@@ -1953,6 +1965,8 @@ vm_object_collapse(vm_object_t object)
 			KASSERT(backing_object->ref_count >= 1, (
 "backing_object %p was somehow dereferenced during collapse!",
 			    backing_object));
+			SDT_PROBE2(vm, , , object__bypass, object,
+			    backing_object);
 			VM_OBJECT_WUNLOCK(backing_object);
 			counter_u64_add(object_bypasses, 1);
 		}

@@ -1,0 +1,67 @@
+DTrace integration on dev, 2026-10-13
+
+Scope and isolation
+Saved probe patches from rounds 4 through 20 and the additional round 21
+were reconstructed and integrated on dev at c222f34d39557e8bb07f4971bc63838d37816415.
+The original /usr/src checkout on fix/kldload-broker-guidance retains its
+unrelated pending work. No live installation, module loading, policy changes,
+publication, push, or reboot was performed.
+
+The integration preserves dev's FIDL migration and libservice.so.2.
+BSDSysctl admission failures cover FIDL connection creation and binding.
+liboes retains FIDL generation and adds its DTrace build integration.
+ObsoleteFiles.inc and UPDATING retain both the migration and fixed-name BSD
+PTY retirement. Modern pts/PTMX remains supported. Profile whitespace was
+normalized; historical per-round source hashes describe their saved snapshots.
+
+Latest two passes
+50 new contracts: 45 userland and 5 kernel, plus 9 analysis profiles.
+Six libraries: libservice, libchannel, libcapsulert, liboes, libtimecmp,
+libshmring. Executables: Capsule, Switchboard, BSDDevice, BSDExtension,
+BSDMemory, BSDSysctl, Zsh, mac_abacd, mac_abac_ctl, oeslogger.
+MAC ABAC records bypass, rule and default decisions with operation, rule/set,
+result and missing-label indicators. OpenES records accepted authorization
+masks and rejected responses. Library/tool probes expose scalar error/status,
+validation, allocation/admission, timeout and lifecycle context. No credentials,
+command strings or event payloads are added. Kernel additions are guarded
+against cold boot and do not instrument tracing internals.
+See COVERAGE-TWENTIETH and COVERAGE-TWENTYFIRST for contracts and limitations.
+
+Validation
+All 42 native dev integration builds passed with DTrace both enabled and
+disabled (32 target builds plus 10 dependency builds). All 45 new userland
+contracts have linked sites and expected arity; providers are absent when
+disabled. Both changed kernel modules link, four source on/off compilations
+pass, and all five new kernel contracts have linked sites (six total sites).
+All selected modified kernel C/header files match the validated /usr/src
+sources byte for byte.
+
+The preceding per-round tests cover service runtime, claim parsing, liboes
+ownership/invalid-descriptor/allocation failures, and upstream Zsh execution,
+grammar and assignment tests. Sixteen userland no-hooks .text comparisons
+are identical. After normalizing diagnostic file/line constants, OpenES kernel
+.text is identical; ABAC has compiler control-flow layout differences at equal
+text size, so byte identity is NOT claimed. Its disabled object has no cold or
+probe symbol references from the new instrumentation. These comparisons do
+not establish relocation equivalence or runtime behavior.
+
+The complete 451-profile catalog was rendered in plain and PID/duration forms:
+820 offline compilations passed (410 profiles); 82 checks (41 unchanged
+profiles) require unavailable live pid-provider or typed kernel probe metadata.
+All changed/new profiles compile. No /dev/dtrace was available, so actual
+probe firing, privileged authorization workflows and the new kernel were not
+exercised on a running system. No full world was built for this integration.
+
+Artifacts and reproduction
+/usr/obj/5bsd-dtrace-commit-validation contains build/results.json,
+extra-build/results.json, integrated-dof.json, profile-results.json, census/,
+the exact reconstructed patches and validation driver scripts. Per-round
+artifacts remain under /usr/obj/5bsd-dtrace-<round>-validation. Drivers use
+the standard /usr/obj object root and all available logical CPUs.
+The saved integration-check driver performs the initial offline catalog pass;
+the followup supplies required profile parameters and classifies live-provider
+limitations. Original kernel code-generation comparisons with diagnostic line
+changes are retained; normalized-codegen-results.json records the followup.
+
+TRACING-DESIGN-REVIEW records the Fuchsia, CADETS and HyperTrace review.
+It is a proposal, not a tracing-engine import or performance claim.

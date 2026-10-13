@@ -46,6 +46,7 @@
 
 #include "avdtp_signal.h"
 #include "bt.h"
+#include "btaudio_trace.h"
 
 #define	DPRINTF(...) printf("backend_bt: " __VA_ARGS__)
 
@@ -240,6 +241,7 @@ avdtpSendSyncCommand(int fd, struct avdtpGetPacketInfo *info,
 
 	trans = atomic_fetch_add_explicit(&transLabel, 1, memory_order_relaxed) & 0xF;
 
+	BTAUDIO_TRACE(COMMAND_START, fd, command, trans);
 	retval = avdtpSendPacketUntil(fd, command, trans, type,
 	    data0, datasize0, data1, datasize1, deadline);
 	if (retval)
@@ -257,8 +259,10 @@ retry:
 		case AVDTP_CLOSE:
 		case AVDTP_SUSPEND:
 		case AVDTP_ABORT:
-			if (info->buffer_len != 0)
-				return (-EPROTO);
+			if (info->buffer_len != 0) {
+				retval = -EPROTO;
+				goto done;
+			}
 			break;
 		default:
 			break;
@@ -292,6 +296,7 @@ retry:
 		break;
 	}
 done:
+	BTAUDIO_TRACE(COMMAND_DONE, fd, command, trans, retval);
 	return (retval);
 }
 

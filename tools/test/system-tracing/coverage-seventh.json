@@ -1,0 +1,1054 @@
+{
+  "head": "9f3fd2b183c2c16c593495a3560c1324e0661685",
+  "sources": {
+    "cddl/usr.sbin/bsdinstruments/profiles/bhyve-checkpoint-phases.d": "5a52cb880524b0909356012cfd0d9eecb7e5d3e24caef670ffb92bf1db034940",
+    "cddl/usr.sbin/bsdinstruments/profiles/bhyve-device-parts.d": "b071347feae6b4dffe40dcc7924094632ecc2b1b31b8b3fad8c5c61c5a1462b1",
+    "cddl/usr.sbin/bsdinstruments/profiles/bhyve-migration-progress.d": "d8c76c157463843ac9dacf042825d8bd32405dc0d2eab83185fbd2bd4d9c2464",
+    "cddl/usr.sbin/bsdinstruments/profiles/bluetooth-audio-commands.d": "b90a7e5049eac8813b0449a0b68f5eccd576e6283f2124f4e56c995783398d71",
+    "cddl/usr.sbin/bsdinstruments/profiles/bluetooth-discovery-leases.d": "501793bb86ad40d162f1e6b969edae7166abab27d67d9f5f2b28fd82a083e7f8",
+    "cddl/usr.sbin/bsdinstruments/profiles/bluetooth-iso-lifecycle.d": "96b13738c1180dab40c8caa2be3bb4530c15159a35572e4749c99756ee7f341e",
+    "cddl/usr.sbin/bsdinstruments/profiles/coalition-cleanup-waiters.d": "2679341ee072f242d2d2694add59ddf33b6d2bdcf5ff044cd22c0f38f667d014",
+    "cddl/usr.sbin/bsdinstruments/profiles/descriptor-runtime-waits.d": "14881f56d02f59f4095f32fa6c69e4775c6f9d40aefd0fbb9517801e187dbdb2",
+    "cddl/usr.sbin/bsdinstruments/profiles/mac-policy-control.d": "d728fc507b8bb75faa7c226e6c27ed51a6079316e8a09dceb5c3e97e19954ba6",
+    "cddl/usr.sbin/bsdinstruments/profiles/mac-verification-work.d": "aeb233c7661a65298cf8c2ebc157ce1ae9ea06f939e78100266f308f8ee1c8eb",
+    "cddl/usr.sbin/bsdinstruments/profiles/mesh-daemon-runtime.d": "b8f41568ff1f5c297b82f3bc26fe7d3b34e009061dc696590532bc74d1c3e2a3",
+    "cddl/usr.sbin/bsdinstruments/profiles/mesh-runtime.d": "ecbcdd196eaf05b91c52dd77963b48b1b36119e0aac926f2fd628f36e4fbe4dc",
+    "cddl/usr.sbin/bsdinstruments/profiles/virtio-admin-quiesce.d": "cbd6d7fceb2c3c3b53f1e9e569ff87cfa5693957cd0ed697da71dce3166345c3",
+    "cddl/usr.sbin/bsdinstruments/profiles/vmm-snapshot-requests.d": "8a5c544af5c88113a8e2d74bf3ef9a7ffc733b76b685b13570cda916105a5e26",
+    "lib/libmesh/Makefile": "7c99d4f87e09e3f9f146e9dc926ce836eb306756f9d30648ee7a2edb3f118e8d",
+    "lib/libmesh/mesh_access.c": "85fef9dbfcd4caec4416cd7e26c1ee393da5ee2296f54180f40c48bf2362687b",
+    "lib/libmesh/mesh_bridge.c": "5ce449d351d6ac49509120ebcc4722df9f17ae0a221d130b6214c06a128e620e",
+    "lib/libmesh/mesh_cfg_model.c": "37376a9add8f17030c36d19466c42d7606977230cc053dc83bdaca39272672f8",
+    "lib/libmesh/mesh_df.c": "b1097c08aac0570f85faac4a6ae225747e291260ac88cfaa0a3da5a733732ae0",
+    "lib/libmesh/mesh_friend.c": "cfd7bccf583df1e57317082a5a5f013c00729f7894a1b5283d6d5e07a7cc7748",
+    "lib/libmesh/mesh_key_refresh.c": "9893fee0cecbc660b88ee2be12c5af2a84e0ba609fe85568408313ed828ca36f",
+    "lib/libmesh/mesh_lpn.c": "84418fad8a4fac8c00a8d989f9ebdddb23b0691d146409ee5e1349318d09898d",
+    "lib/libmesh/mesh_manager.c": "9ebb50777bcc010fbe0b23f6d4f52f8eaf490527a35a620b92d3421c3fcdcdd2",
+    "lib/libmesh/mesh_probes.h": "220e9f87169bd3b019754fe22d10a035e4691c7f17e6852343414eeec2bb199c",
+    "lib/libmesh/mesh_provider.d": "d6653fe202b5ec341562513ae6ae14511481df6947cdc50b6584630c7a75308f",
+    "lib/libmesh/mesh_proxy.c": "1779bc1e753567f324c0938324e26eb06e2a787d3564765192b7a75a5deeaf85",
+    "lib/libmesh/mesh_remote_prov.c": "56463ee5bd189a231f690cc6d6eaa88ba6b8b017334801c500e72ed561523ca0",
+    "lib/virtual_oss/bt/Makefile": "dd969ca97ec09747c6cbfa4082ad10c040c3f46b711ad1c25b0de04d0e81214a",
+    "lib/virtual_oss/bt/avdtp.c": "24164c19ce26789167036a16ebbfa8a2a58b4f7c7c1aeabebb6b64a57d3ae5a7",
+    "lib/virtual_oss/bt/btaudio_provider.d": "80f2161f31ba31450f69bd51e59bd570eb4627aaea61b911f59767b17fe1061f",
+    "lib/virtual_oss/bt/btaudio_trace.h": "67dce0dc01080c7fbe0fd42bc3b53e863bf74a45fa11f5456bb32c43e184248e",
+    "share/mk/bsd.dep.mk": "236f99ad1270759df3825805ae4908e8b9714e840d0f22c17b70df6473143d41",
+    "sys/amd64/vmm/vmm.c": "74d1986703859a75e3c36dfcd66f7454108e8df3891a930668ad3b149d5a1444",
+    "sys/dev/mac_capability/mac_capability_coalition.c": "79e07c20289253326c2bc1c3e5b76fe363371faefee9036f474e0a38c4f8b085",
+    "sys/dev/ntsync/ntsync.c": "f4110d96c01c124d43f3e60a258663442f725bfab72d0c9da5a9db23b43c6749",
+    "sys/kern/vfs_inotify.c": "1bec332ce0b35590f9b69cdafcbd0e5a93830dafc2fb087ab265e356a1379234",
+    "sys/netgraph/bluetooth/hci/ng_hci_ulpi.c": "17dbe11059d424377f96fe3395040b95e98e7a6b2f73ff3b1ce37edc5d1ef690",
+    "sys/security/mac/mac_syscalls.c": "e47778b568183266fb1c3eb660a038e05c70abe872fe21facbcab973786ebb81",
+    "sys/security/mac_do/mac_do.c": "9b42f8763b20cfabbd8c64693bab5e3e936308323905f878b27d9bdf6534a1cc",
+    "sys/security/mac_veriexec/veriexec_metadata.c": "02a1fae1a741184ff2fb5466e278c992e36c18f5cb03359a46ed4da47e6ad3a8",
+    "tests/usr.sbin/bluetooth/BSDBluetooth/probe_tap_test.c": "b74176c57472a1201b7cc7d03088b35742ec34a70f894e13a649a5c6b8523701",
+    "usr.sbin/bhyve/bhyve_trace.h": "607738d146ce3c11ad2757ab69dcec8c39986fe7f0504d932922e2ac62298c7c",
+    "usr.sbin/bhyve/migration_session.c": "b86771fe958e815606b20c19158fd21c0956c7c99840f18e1d4b9327c4e5ccd4",
+    "usr.sbin/bhyve/snapshot.c": "3c38be041eca329b2f2f8594a20e86670895792fcdadc794d0ade2cbc4dab219",
+    "usr.sbin/bhyve/virtio_admin.c": "5147c558f15ae92e96818d0ab7fe87796c89c2878c8c5bd091163a27c163aa2a",
+    "usr.sbin/bhyve/virtio_device_parts.c": "4ed0295b324d8bfc5c22b660fabcfbd80370ff2e2d913699971fbf7ad68b6890",
+    "usr.sbin/bhyve/virtio_pci_modern_probes.h": "7cd96f33ca73a0926792e23037d12bcbd952c28ab02ae6f9e3f66c6e74f117d1",
+    "usr.sbin/bhyve/vsock_provider.d": "e4d275695e57b84823bbde59ffe462a9c8a955359cdab5bba89f8d74a1cda2e8",
+    "usr.sbin/bluetooth/BSDBluetooth/blued_event.c": "86bfb6ff2c4ad986e07a4cbe828de5f1124267ed8d7d94dce70d732ad2ddc4fa",
+    "usr.sbin/bluetooth/BSDBluetooth/blued_probe_tap.c": "cd1416590c557ef5945bfcab28590f6d070557990562e00280d33e4a87dd9c4f",
+    "usr.sbin/bluetooth/BSDBluetooth/blued_probe_tap.h": "07770256237e23489e36d2f1b2b17d6d3835d33bdc618c61c2e0b68ecf3dc00e",
+    "usr.sbin/bluetooth/BSDBluetooth/blued_probes.h": "460c4b63b0ff4301f8825199c35fb3e4efddf8a298198e2e60a52c4de165d7f9",
+    "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d": "811b8259579217df8d80832f1d19c1a20f1b8602b080012d7e45e4a52b115611",
+    "usr.sbin/bluetooth/BSDBluetooth/conn.c": "971bbec851a10775c3bbc827828e95695e4089911586a63a78b32fe169f8b0bc",
+    "usr.sbin/bluetooth/BSDBluetooth/discovery.c": "9d37ab81ade5fbf1800d2ac63771d11f85db2663d902a35e0e8dc5bb5f6f5f65",
+    "usr.sbin/bluetooth/BSDBluetooth/hci_misc.c": "3f65b72ba2382bb86b1018ed5087dbcb568147148faeeb76b8d704db1a503eee",
+    "usr.sbin/bluetooth/BSDBluetooth/iso.c": "1fbbd6648da1ae309948f3efc54b72fc9037d3ac28bda28035d1ab46d383cee8",
+    "usr.sbin/bluetooth/meshd/meshd_bearer_blued.c": "f870ebc92f9117fa3cdd10d385df4ea6204fcb076bfd7c0e4e994546dc1db27e",
+    "usr.sbin/bluetooth/meshd/meshd_persist.c": "2331aa162a44b4835188fe4d84191b016e9b2308fd4f007b6113fa625f81b8d2",
+    "usr.sbin/bluetooth/meshd/meshd_probes.h": "fa61bea2fa615966e622200765c56c66b3819add4836f7d5f192121b94197873",
+    "usr.sbin/bluetooth/meshd/meshd_provider.d": "aa5a5de39e6d19dec36ed482f25f78610b52c39b12ee97eadb2d9eb3d670db0e"
+  },
+  "probes": [
+    {
+      "kind": "user",
+      "provider": "mesh*",
+      "module": "",
+      "function": "",
+      "name": "mesh-cfg-appkey",
+      "types": [
+        "int opcode",
+        "int net_idx",
+        "int app_idx"
+      ],
+      "source": "lib/libmesh/mesh_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "mesh*",
+      "module": "",
+      "function": "",
+      "name": "mesh-model-recv",
+      "types": [
+        "int opcode",
+        "int src"
+      ],
+      "source": "lib/libmesh/mesh_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "mesh*",
+      "module": "",
+      "function": "",
+      "name": "mesh-keyrefresh-phase",
+      "types": [
+        "int old_phase",
+        "int new_phase"
+      ],
+      "source": "lib/libmesh/mesh_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "mesh*",
+      "module": "",
+      "function": "",
+      "name": "mesh-friend-poll",
+      "types": [
+        "int lpn",
+        "int fsn"
+      ],
+      "source": "lib/libmesh/mesh_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "mesh*",
+      "module": "",
+      "function": "",
+      "name": "mesh-proxy-pdu",
+      "types": [
+        "int type",
+        "int len"
+      ],
+      "source": "lib/libmesh/mesh_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "mesh*",
+      "module": "",
+      "function": "",
+      "name": "mesh-proxy-reasm",
+      "types": [
+        "int type",
+        "int complete"
+      ],
+      "source": "lib/libmesh/mesh_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "mesh*",
+      "module": "",
+      "function": "",
+      "name": "manager-transaction",
+      "types": [
+        "uint16_t a0",
+        "uint32_t a1",
+        "int a2",
+        "unsigned a3"
+      ],
+      "source": "lib/libmesh/mesh_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "mesh*",
+      "module": "",
+      "function": "",
+      "name": "bridge-forward",
+      "types": [
+        "uint16_t a0",
+        "uint16_t a1",
+        "uint16_t a2",
+        "uint16_t a3"
+      ],
+      "source": "lib/libmesh/mesh_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "mesh*",
+      "module": "",
+      "function": "",
+      "name": "directed-expire",
+      "types": [
+        "uint16_t a0",
+        "uint16_t a1"
+      ],
+      "source": "lib/libmesh/mesh_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "mesh*",
+      "module": "",
+      "function": "",
+      "name": "directed-control",
+      "types": [
+        "uint8_t a0",
+        "uint64_t a1"
+      ],
+      "source": "lib/libmesh/mesh_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "mesh*",
+      "module": "",
+      "function": "",
+      "name": "remote-timeout",
+      "types": [
+        "uintptr_t a0"
+      ],
+      "source": "lib/libmesh/mesh_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "mesh*",
+      "module": "",
+      "function": "",
+      "name": "remote-transfer",
+      "types": [
+        "uintptr_t a0",
+        "uint8_t a1",
+        "uint64_t a2"
+      ],
+      "source": "lib/libmesh/mesh_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "mesh*",
+      "module": "",
+      "function": "",
+      "name": "lpn-state",
+      "types": [
+        "uint16_t a0",
+        "int a1"
+      ],
+      "source": "lib/libmesh/mesh_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "btaudio*",
+      "module": "",
+      "function": "",
+      "name": "command-start",
+      "types": [
+        "int fd",
+        "uint8_t command",
+        "uint8_t transaction"
+      ],
+      "source": "lib/virtual_oss/bt/btaudio_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "btaudio*",
+      "module": "",
+      "function": "",
+      "name": "command-done",
+      "types": [
+        "int fd",
+        "uint8_t command",
+        "uint8_t transaction",
+        "int result"
+      ],
+      "source": "lib/virtual_oss/bt/btaudio_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "vmm",
+      "module": "",
+      "function": "",
+      "name": "snapshot-start",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/amd64/vmm/vmm.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "vmm",
+      "module": "",
+      "function": "",
+      "name": "snapshot-done",
+      "types": [
+        "void *",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/amd64/vmm/vmm.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "mac_capability_coalition",
+      "module": "",
+      "function": "",
+      "name": "cleanup-status",
+      "types": [
+        "void *",
+        "uint32_t",
+        "int"
+      ],
+      "source": "sys/dev/mac_capability/mac_capability_coalition.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "mac_capability_coalition",
+      "module": "",
+      "function": "",
+      "name": "waiter-create",
+      "types": [
+        "void *",
+        "void *"
+      ],
+      "source": "sys/dev/mac_capability/mac_capability_coalition.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "mac_capability_coalition",
+      "module": "",
+      "function": "",
+      "name": "waiter-revoke",
+      "types": [
+        "void *",
+        "void *"
+      ],
+      "source": "sys/dev/mac_capability/mac_capability_coalition.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "mac_capability_coalition",
+      "module": "",
+      "function": "",
+      "name": "waiter-notify",
+      "types": [
+        "void *",
+        "void *",
+        "uint32_t"
+      ],
+      "source": "sys/dev/mac_capability/mac_capability_coalition.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "ntsync",
+      "module": "",
+      "function": "",
+      "name": "wait-start",
+      "types": [
+        "void *",
+        "int",
+        "bool"
+      ],
+      "source": "sys/dev/ntsync/ntsync.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "ntsync",
+      "module": "",
+      "function": "",
+      "name": "wait-done",
+      "types": [
+        "void *",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/ntsync/ntsync.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "ntsync",
+      "module": "",
+      "function": "",
+      "name": "create",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/ntsync/ntsync.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "inotify",
+      "module": "",
+      "function": "",
+      "name": "wait-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/kern/vfs_inotify.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "inotify",
+      "module": "",
+      "function": "",
+      "name": "wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/vfs_inotify.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "inotify",
+      "module": "",
+      "function": "",
+      "name": "watch-add",
+      "types": [
+        "void *",
+        "int",
+        "uint32_t",
+        "int"
+      ],
+      "source": "sys/kern/vfs_inotify.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "bluetooth",
+      "module": "hci",
+      "function": "connection",
+      "name": "timeout",
+      "types": [
+        "void *",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/netgraph/bluetooth/hci/ng_hci_ulpi.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "mac_framework",
+      "module": "",
+      "function": "",
+      "name": "syscall-start",
+      "types": [
+        "char *",
+        "int"
+      ],
+      "source": "sys/security/mac/mac_syscalls.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "mac_framework",
+      "module": "",
+      "function": "",
+      "name": "syscall-done",
+      "types": [
+        "char *",
+        "int",
+        "int"
+      ],
+      "source": "sys/security/mac/mac_syscalls.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "mac_do",
+      "module": "",
+      "function": "",
+      "name": "configuration",
+      "types": [
+        "int",
+        "bool",
+        "bool",
+        "int"
+      ],
+      "source": "sys/security/mac_do/mac_do.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "mac_do",
+      "module": "",
+      "function": "",
+      "name": "rule-grant",
+      "types": [
+        "uid_t",
+        "uid_t",
+        "u_int",
+        "int"
+      ],
+      "source": "sys/security/mac_do/mac_do.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "veriexec",
+      "module": "",
+      "function": "",
+      "name": "fingerprint-status",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/security/mac_veriexec/veriexec_metadata.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "veriexec",
+      "module": "",
+      "function": "",
+      "name": "fingerprint-start",
+      "types": [
+        "void *",
+        "off_t"
+      ],
+      "source": "sys/security/mac_veriexec/veriexec_metadata.c",
+      "change": "new"
+    },
+    {
+      "kind": "kernel",
+      "provider": "veriexec",
+      "module": "",
+      "function": "",
+      "name": "fingerprint-done",
+      "types": [
+        "void *",
+        "off_t",
+        "int"
+      ],
+      "source": "sys/security/mac_veriexec/veriexec_metadata.c",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "virtio*",
+      "module": "",
+      "function": "",
+      "name": "admin-quiesce-start",
+      "types": [
+        "uintptr_t owner",
+        "uint64_t generation"
+      ],
+      "source": "usr.sbin/bhyve/vsock_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "virtio*",
+      "module": "",
+      "function": "",
+      "name": "admin-quiesce-done",
+      "types": [
+        "uintptr_t owner",
+        "uint64_t generation"
+      ],
+      "source": "usr.sbin/bhyve/vsock_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "bhyve*",
+      "module": "",
+      "function": "",
+      "name": "checkpoint-begin",
+      "types": [
+        "int stop_vm"
+      ],
+      "source": "usr.sbin/bhyve/vsock_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "bhyve*",
+      "module": "",
+      "function": "",
+      "name": "restore-begin",
+      "types": [
+        "uintptr_t context"
+      ],
+      "source": "usr.sbin/bhyve/vsock_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "bhyve*",
+      "module": "",
+      "function": "",
+      "name": "restore-result",
+      "types": [
+        "int error"
+      ],
+      "source": "usr.sbin/bhyve/vsock_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "bhyve*",
+      "module": "",
+      "function": "",
+      "name": "device-part",
+      "types": [
+        "uint16_t type",
+        "uint64_t selector",
+        "uint32_t length",
+        "int headers_only"
+      ],
+      "source": "usr.sbin/bhyve/vsock_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "bhyve*",
+      "module": "",
+      "function": "",
+      "name": "checkpoint-phase-start",
+      "types": [
+        "const char *operation",
+        "const char *phase"
+      ],
+      "source": "usr.sbin/bhyve/vsock_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "bhyve*",
+      "module": "",
+      "function": "",
+      "name": "checkpoint-phase-done",
+      "types": [
+        "const char *operation",
+        "const char *phase",
+        "int result",
+        "int saved_errno"
+      ],
+      "source": "usr.sbin/bhyve/vsock_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "bhyve*",
+      "module": "",
+      "function": "",
+      "name": "checkpoint-publish",
+      "types": [
+        "int published",
+        "int error"
+      ],
+      "source": "usr.sbin/bhyve/vsock_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "bhyve*",
+      "module": "",
+      "function": "",
+      "name": "checkpoint-result",
+      "types": [
+        "int stop_vm",
+        "int published",
+        "int error"
+      ],
+      "source": "usr.sbin/bhyve/vsock_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "bhyve*",
+      "module": "",
+      "function": "",
+      "name": "migration-progress",
+      "types": [
+        "uint32_t phase",
+        "uint32_t round",
+        "uint64_t bytes",
+        "uint64_t dirty_pages",
+        "int converged"
+      ],
+      "source": "usr.sbin/bhyve/vsock_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "bhyve*",
+      "module": "",
+      "function": "",
+      "name": "migration-send",
+      "types": [
+        "uint16_t type",
+        "uint32_t sequence",
+        "uint64_t length",
+        "int error"
+      ],
+      "source": "usr.sbin/bhyve/vsock_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "conn-alloc",
+      "types": [
+        "int count"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "conn-state",
+      "types": [
+        "int handle",
+        "int old_state",
+        "int new_state"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-cig-params",
+      "types": [
+        "int cig_id",
+        "int cis_count",
+        "int status"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-cis-create",
+      "types": [
+        "int cis_count",
+        "int status"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-cis-accept",
+      "types": [
+        "int handle",
+        "int status"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-cis-reject",
+      "types": [
+        "int handle",
+        "int reason"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-cig-remove",
+      "types": [
+        "int cig_id",
+        "int status"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-big-create",
+      "types": [
+        "int big_handle",
+        "int adv_handle",
+        "int status"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-big-terminate",
+      "types": [
+        "int big_handle",
+        "int reason"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-datapath-setup",
+      "types": [
+        "int handle",
+        "int direction",
+        "int path_id"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-cis-request",
+      "types": [
+        "int acl_handle",
+        "int cis_handle",
+        "int cig_id",
+        "int cis_id"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-big-complete",
+      "types": [
+        "int big_handle",
+        "int status",
+        "int num_bis"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-big-sync",
+      "types": [
+        "int big_handle",
+        "int status",
+        "int num_bis"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "activated"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "discovery-lease-start",
+      "types": [
+        "int a0",
+        "uint64_t a1",
+        "uint32_t a2"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "discovery-lease-done",
+      "types": [
+        "int a0",
+        "uint64_t a1",
+        "uint32_t a2",
+        "uint16_t a3",
+        "int a4"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "discovery-deliver",
+      "types": [
+        "int a0",
+        "uint32_t a1",
+        "int a2",
+        "int a3"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-stream-unlink",
+      "types": [
+        "uintptr_t a0"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-stream-alloc",
+      "types": [
+        "uintptr_t a0"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "blued*",
+      "module": "",
+      "function": "",
+      "name": "iso-handoff",
+      "types": [
+        "uintptr_t a0",
+        "uint16_t a1",
+        "int a2"
+      ],
+      "source": "usr.sbin/bluetooth/BSDBluetooth/blued_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "meshd*",
+      "module": "",
+      "function": "",
+      "name": "bearer-queue",
+      "types": [
+        "int a0",
+        "uint16_t a1",
+        "uint64_t a2",
+        "uint64_t a3"
+      ],
+      "source": "usr.sbin/bluetooth/meshd/meshd_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "meshd*",
+      "module": "",
+      "function": "",
+      "name": "bearer-full",
+      "types": [
+        "int a0",
+        "uint64_t a1",
+        "uint64_t a2"
+      ],
+      "source": "usr.sbin/bluetooth/meshd/meshd_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "meshd*",
+      "module": "",
+      "function": "",
+      "name": "bearer-failed",
+      "types": [
+        "int a0",
+        "int a1"
+      ],
+      "source": "usr.sbin/bluetooth/meshd/meshd_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "meshd*",
+      "module": "",
+      "function": "",
+      "name": "persist-write-start",
+      "types": [
+        "uint64_t a0"
+      ],
+      "source": "usr.sbin/bluetooth/meshd/meshd_provider.d",
+      "change": "new"
+    },
+    {
+      "kind": "user",
+      "provider": "meshd*",
+      "module": "",
+      "function": "",
+      "name": "persist-write-done",
+      "types": [
+        "uint64_t a0",
+        "int a1"
+      ],
+      "source": "usr.sbin/bluetooth/meshd/meshd_provider.d",
+      "change": "new"
+    }
+  ],
+  "profiles": [
+    "bhyve-checkpoint-phases",
+    "bhyve-migration-progress",
+    "bhyve-device-parts",
+    "virtio-admin-quiesce",
+    "bluetooth-discovery-leases",
+    "bluetooth-iso-lifecycle",
+    "bluetooth-audio-commands",
+    "mesh-runtime",
+    "descriptor-runtime-waits",
+    "coalition-cleanup-waiters",
+    "mac-policy-control",
+    "vmm-snapshot-requests",
+    "mesh-daemon-runtime",
+    "mac-verification-work"
+  ]
+}

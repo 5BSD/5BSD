@@ -48,6 +48,11 @@
 #include <netgraph/bluetooth/hci/ng_hci_evnt.h>
 #include <netgraph/bluetooth/hci/ng_hci_ulpi.h>
 #include <netgraph/bluetooth/hci/ng_hci_misc.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(bluetooth);
+SDT_PROBE_DEFINE4(bluetooth, hci, connection, timeout,
+    "void *", "int", "int", "int");
 
 /******************************************************************************
  ******************************************************************************
@@ -1803,6 +1808,8 @@ ng_hci_process_con_timeout(node_p node, hook_p hook, void *arg1, int con_handle)
 		return;
 	}
 
+	SDT_PROBE4(bluetooth, hci, connection, timeout, unit, con_handle,
+	    con->state, con->link_type);
 	con->flags &= ~NG_HCI_CON_TIMEOUT_PENDING;
 
 	/*

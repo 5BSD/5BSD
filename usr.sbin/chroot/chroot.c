@@ -45,6 +45,21 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "rootchange_trace.h"
+
+static int
+trace_chroot(const char *path)
+{
+	int result;
+
+	TRACE_ROOTCHANGE_OPERATION__START(0);
+	result = chroot(path);
+	TRACE_ROOTCHANGE_OPERATION__DONE(0,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 static void usage(void) __dead2;
 
 static gid_t
@@ -173,7 +188,7 @@ main(int argc, char *argv[])
 
 	if (chdir(argv[0]) == -1)
 		err(1, "%s", argv[0]);
-	if (chroot(".") == -1) {
+	if (trace_chroot(".") == -1) {
 		if (errno == EPERM && !nonprivileged && geteuid() != 0)
 			errx(1, "unprivileged use requires -n");
 		err(1, "%s", argv[0]);

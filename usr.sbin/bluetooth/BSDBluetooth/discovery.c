@@ -5,6 +5,7 @@
 
 /* Timed discovery leases. No scan-duration read loop runs on this thread. */
 #include <sys/event.h>
+#include "blued_probes.h"
 #include <sys/socket.h>
 #define L2CAP_SOCKET_CHECKED
 #include <bluetooth.h>
@@ -221,6 +222,7 @@ lease_finish(struct discovery_lease *lease, uint16_t status, bool reply)
 	memset(lease, 0, sizeof(*lease));
 	if (!blued_discovery_busy() && !scan_stop() && status == IPC_ERR_NONE)
 		status = IPC_ERR_IO;
+	BLUED_PROBE_DISCOVERY__LEASE__DONE(fd, generation, request, status, reply);
 	if (reply)
 		blued_ctl_scan_done(fd, generation, request, status);
 }
@@ -362,6 +364,8 @@ discovery_start_locked(struct blued_ctl_client *client,
 		return (IPC_ERR_IO);
 	}
 	lease->used = true;
+	BLUED_PROBE_DISCOVERY__LEASE__START(lease->fd, lease->generation,
+	    lease->request);
 	return (IPC_ERR_NONE);
 }
 
@@ -447,6 +451,8 @@ lease_deliver(struct discovery_lease *lease, struct blued_adapter *adp,
 		lease->seen[slot].adapter = adp->index;
 		lease->seen[slot].result = *result;
 	}
+	BLUED_PROBE_DISCOVERY__DELIVER(lease->fd, lease->request, adp->index,
+	    result->rssi);
 	blued_ctl_scan_event(lease->fd, lease->generation, lease->request,
 	    adp, result);
 }

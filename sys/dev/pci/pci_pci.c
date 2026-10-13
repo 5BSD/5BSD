@@ -38,6 +38,8 @@
 #include "opt_pci.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/bus.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
@@ -1139,6 +1141,8 @@ pcib_pcie_hotplug_task(void *context, int pending)
 	sc = context;
 	PCIB_HP_LOCK(sc);
 	dev = sc->dev;
+	if (!cold)
+		DTRACE_PROBE2(pci__hotplug__start, void *, sc, int, (sc->child != NULL));
 	if (pcib_hotplug_present(sc) != 0) {
 		if (sc->child == NULL) {
 			sc->child = device_add_child(dev, "pci", DEVICE_UNIT_ANY);
@@ -1150,6 +1154,8 @@ pcib_pcie_hotplug_task(void *context, int pending)
 				sc->child = NULL;
 		}
 	}
+	if (!cold)
+		DTRACE_PROBE2(pci__hotplug__done, void *, sc, int, (sc->child != NULL));
 	PCIB_HP_UNLOCK(sc);
 }
 
@@ -1176,6 +1182,9 @@ pcib_pcie_cc_timeout(void *arg, int pending)
 
 	PCIB_HP_LOCK(sc);
 	sta = pcie_read_config(dev, PCIER_SLOT_STA, 2);
+	if (!cold)
+		DTRACE_PROBE3(pci__hotplug__watchdog, void *, sc, int, 1,
+		    int, sta);
 	if (!(sta & PCIEM_SLOT_STA_CC)) {
 		device_printf(dev, "HotPlug Command Timed Out\n");
 		sc->flags &= ~PCIB_HOTPLUG_CMD_PENDING;
@@ -1196,6 +1205,9 @@ pcib_pcie_dll_timeout(void *arg, int pending)
 
 	PCIB_HP_LOCK(sc);
 	sta = pcie_read_config(dev, PCIER_LINK_STA, 2);
+	if (!cold)
+		DTRACE_PROBE3(pci__hotplug__watchdog, void *, sc, int, 2,
+		    int, sta);
 	if (!(sta & PCIEM_LINK_STA_DL_ACTIVE)) {
 		device_printf(dev,
 		    "Timed out waiting for Data Link Layer Active\n");

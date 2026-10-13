@@ -33,6 +33,21 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#include "filesync_trace.h"
+
+static int
+trace_fsync(int fd)
+{
+	int result;
+
+	TRACE_FILESYNC_OPERATION__START(fd);
+	result = fsync(fd);
+	TRACE_FILESYNC_OPERATION__DONE(fd,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 static void	usage(void);
 
 int
@@ -56,7 +71,7 @@ main(int argc, char *argv[])
 			continue;
 		}
 
-		if (fsync(fd) == -1) {
+		if (trace_fsync(fd) == -1) {
 			warn("fsync %s", argv[i]);
 			if (rval == EX_OK)
 				rval = EX_OSERR;

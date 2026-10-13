@@ -10,6 +10,7 @@
  */
 
 #include <sys/event.h>
+#include "blued_probes.h"
 #include <sys/socket.h>
 
 #define L2CAP_SOCKET_CHECKED
@@ -253,6 +254,7 @@ blued_conn_set_state(struct blued_conn *conn, int new_state)
 	    blued_conn_state_name(old_state),
 	    blued_conn_state_name(new_state));
 	atomic_store_explicit(&conn->state, new_state, memory_order_release);
+	BLUED_PROBE_CONN_STATE(conn->con_handle, old_state, new_state);
 }
 
 struct blued_conn *
@@ -293,6 +295,7 @@ blued_conn_alloc(void)
 	}
 
 	LIST_INSERT_HEAD(&blued_g.conns, conn, entries);
+	BLUED_PROBE_CONN__ALLOC(nconn + 1);
 	pthread_rwlock_unlock(&blued_g.conns_lock);
 	return (conn);
 }

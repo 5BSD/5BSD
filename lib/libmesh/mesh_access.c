@@ -481,9 +481,10 @@ mesh_access_dispatch_key_at(const struct mesh_element *elems, size_t n_elems,
 			rx.ctx = ctx;
 			rx.now_ms = now_ms;
 			rx.label = mesh_addr_is_virtual(dst) ? label : NULL;
-			if (op != NULL)
+			if (op != NULL) {
+				MESH_PROBE_MESH__MODEL__RECV(ap.opcode, src);
 				rc = op->handler(&rx);
-			else
+			} else
 				rc = 0;
 			ran = 1;
 		}

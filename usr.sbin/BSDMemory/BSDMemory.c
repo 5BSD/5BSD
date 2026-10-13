@@ -13,6 +13,7 @@
 
 #include "pressure.h"
 #include "bsdmemory_probes.h"
+#include "trace_pressure.h"
 
 static int
 sample(struct sysctlcmp_client **client, uint32_t values[3])
@@ -110,10 +111,12 @@ main(void)
 			BSDMEMORY_SAMPLE_DONE(saved, values[0], values[1], values[2]);
 			service_retry_result(&source_retry,
 			    service_monotime_ms(), error == 0);
-			if (service_health_record(&source_health, saved))
+			if (service_health_record(&source_health, saved)) {
+				BSDMEMORY_TRACE_DEPENDENCY_HEALTH(1, saved, source_health.failures);
 				syslog(saved ? LOG_WARNING : LOG_NOTICE,
 				    "sysctl dependency error=%d failures=%ju",
 				    saved, (uintmax_t)source_health.failures);
+			}
 		}
 		level = pressure_update(&filter, error, values[0], values[1],
 		    values[2]);
@@ -130,10 +133,12 @@ main(void)
 			service_budget_end();
 			service_retry_result(&notify_retry,
 			    service_monotime_ms(), saved == 0);
-			if (service_health_record(&notify_health, saved))
+			if (service_health_record(&notify_health, saved)) {
+				BSDMEMORY_TRACE_DEPENDENCY_HEALTH(2, saved, notify_health.failures);
 				syslog(saved ? LOG_WARNING : LOG_NOTICE,
 				    "notify dependency error=%d failures=%ju",
 				    saved, (uintmax_t)notify_health.failures);
+			}
 		}
 		if (service_budget_begin(400) == -1)
 			break;

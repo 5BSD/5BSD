@@ -58,6 +58,18 @@
 #include "fetch.h"
 #include "common.h"
 
+static int
+fetch_trace_poll(struct pollfd *pfd, int timeout)
+{
+	int result;
+
+	TRACE_FETCHIO_POLL__START(pfd->fd, pfd->events, timeout);
+	result = poll(pfd, 1, timeout);
+	TRACE_FETCHIO_POLL__DONE(pfd->fd, result < 0 ? 0 : pfd->revents, result,
+	    result < 0 ? errno : 0);
+	return (result);
+}
+
 /* Maximum length of a line, newline included, for fetch_getln() */
 #define FETCH_LINE_MAX		65536
 
@@ -685,7 +697,7 @@ fetch_connect(const char *host, int port, int af, int verbose)
 				    delta.tv_usec / 1000;
 			}
 			/* wait for something to happen */
-			if ((err = poll(&pfd, 1, deltams)) > 0)
+			if ((err = fetch_trace_poll(&pfd, deltams)) > 0)
 				break;
 			if (err == 0)
 				continue;
@@ -1412,6 +1424,7 @@ fetch_read(conn_t *conn, void *buf, size_t len)
 	ssize_t rlen, total;
 	int deltams;
 
+	TRACE_FETCHIO_READ__START(conn, len);
 	if (fetchTimeout > 0) {
 		gettimeofday(&timeout, NULL);
 		timeout.tv_sec += fetchTimeout;
@@ -1472,6 +1485,7 @@ fetch_read(conn_t *conn, void *buf, size_t len)
 			if (!timercmp(&timeout, &now, >)) {
 				errno = ETIMEDOUT;
 				fetch_syserr();
+				TRACE_FETCHIO_READ__DONE(conn, -1, errno);
 				return (-1);
 			}
 			timersub(&timeout, &now, &delta);
@@ -1479,7 +1493,7 @@ fetch_read(conn_t *conn, void *buf, size_t len)
 			    delta.tv_usec / 1000;
 		}
 		/* wait for the socket to become readable */
-		if (poll(&pfd, 1, deltams) < 0) {
+		if (fetch_trace_poll(&pfd, deltams) < 0) {
 			if (errno == EAGAIN)
 				continue;
 			if (errno == EINTR && fetchRestartCalls)
@@ -1488,8 +1502,11 @@ fetch_read(conn_t *conn, void *buf, size_t len)
 		}
 	}
 	/* a partial read is success */
-	if (rlen < 0 && total == 0)
+	if (rlen < 0 && total == 0) {
+		TRACE_FETCHIO_READ__DONE(conn, -1, errno);
 		return (-1);
+	}
+	TRACE_FETCHIO_READ__DONE(conn, total, 0);
 	return (total);
 }
 
@@ -1639,10 +1656,14 @@ ssize_t
 fetch_write(conn_t *conn, const void *buf, size_t len)
 {
 	struct iovec iov;
+	ssize_t result;
 
 	iov.iov_base = __DECONST(char *, buf);
 	iov.iov_len = len;
-	return (fetch_writev(conn, &iov, 1));
+	TRACE_FETCHIO_WRITE__START(conn, len);
+	result = fetch_writev(conn, &iov, 1);
+	TRACE_FETCHIO_WRITE__DONE(conn, result, result < 0 ? errno : 0);
+	return (result);
 }
 
 /*
@@ -1727,7 +1748,7 @@ fetch_writev(conn_t *conn, struct iovec *iov, int iovcnt)
 			    delta.tv_usec / 1000;
 		}
 		/* wait for the socket to become writeable */
-		if (poll(&pfd, 1, deltams) < 0) {
+		if (fetch_trace_poll(&pfd, deltams) < 0) {
 			if (errno == EAGAIN)
 				continue;
 			if (errno == EINTR && fetchRestartCalls)

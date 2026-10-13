@@ -44,6 +44,20 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "filetime_trace.h"
+
+static int
+trace_utimensat(int fd, const char *path, const struct timespec times[2],
+	    int flags)
+{
+	int result;
+
+	TRACE_FILETIME_OPERATION__START(flags);
+	result = utimensat(fd, path, times, flags);
+	TRACE_FILETIME_OPERATION__DONE(flags, result, result < 0 ? errno : 0);
+	return (result);
+}
+
 static void	stime_arg1(const char *, struct timespec *);
 static void	stime_arg2(const char *, int, struct timespec *);
 static void	stime_darg(const char *, struct timespec *);
@@ -194,7 +208,7 @@ main(int argc, char *argv[])
 			}
 		}
 
-		if (!utimensat(AT_FDCWD, *argv, ts, atflag))
+		if (!trace_utimensat(AT_FDCWD, *argv, ts, atflag))
 			continue;
 
 		rval = 1;

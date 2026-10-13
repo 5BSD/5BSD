@@ -27,6 +27,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/bio.h>
 #include <sys/endian.h>
 #include <sys/kernel.h>
@@ -292,6 +294,9 @@ g_raid_tr_raid1_rebuild_finish(struct g_raid_tr_object *tr)
 
 	trs = (struct g_raid_tr_raid1_object *)tr;
 	sd = trs->trso_failed_sd;
+	if (!cold)
+		DTRACE_PROBE2(graid__rebuild__finish, void *, (tr),
+		    off_t, (sd->sd_rebuild_pos));
 	G_RAID_DEBUG1(0, tr->tro_volume->v_softc,
 	    "Subdisk %s:%d-%s rebuild completed.",
 	    sd->sd_volume->v_name, sd->sd_pos,
@@ -312,6 +317,9 @@ g_raid_tr_raid1_rebuild_abort(struct g_raid_tr_object *tr)
 	vol = tr->tro_volume;
 	trs = (struct g_raid_tr_raid1_object *)tr;
 	sd = trs->trso_failed_sd;
+	if (!cold)
+		DTRACE_PROBE2(graid__rebuild__abort, void *, (tr),
+		    int, ((trs->trso_flags & TR_RAID1_F_DOING_SOME) != 0));
 	if (trs->trso_flags & TR_RAID1_F_DOING_SOME) {
 		G_RAID_DEBUG1(1, vol->v_softc,
 		    "Subdisk %s:%d-%s rebuild is aborting.",
@@ -387,6 +395,9 @@ g_raid_tr_raid1_rebuild_start(struct g_raid_tr_object *tr)
 		return;
 	}
 	trs->trso_failed_sd = fsd;
+	if (!cold)
+		DTRACE_PROBE2(graid__rebuild__start, void *, (tr),
+		    off_t, (fsd->sd_rebuild_pos));
 	G_RAID_DEBUG1(0, vol->v_softc,
 	    "Subdisk %s:%d-%s rebuild start at %jd.",
 	    fsd->sd_volume->v_name, fsd->sd_pos,

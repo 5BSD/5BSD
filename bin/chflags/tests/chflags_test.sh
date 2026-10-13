@@ -149,12 +149,15 @@ outside_symlink_rejected_head()
 }
 outside_symlink_rejected_body()
 {
+	local original_flags
+
 	require_chflags
 	mkdir -p foo/bar/baz
 	touch target
+	original_flags=$(stat -f %Sf target)
 	ln -s ../../../target foo/bar/baz/link
 	atf_check -s not-exit:0 -e ignore chflags -RL nodump foo/bar
-	atf_check -o match:"target[[:space:]]*-" stat -f "%N %Sf" target
+	atf_check -o inline:"target ${original_flags}\n" stat -f "%N %Sf" target
 }
 
 atf_test_case outside_symlink_unsafe

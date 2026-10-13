@@ -819,6 +819,9 @@ out:
 	return (error);
 }
 
+SDT_PROBE_DEFINE2(mac_framework, , , syscall__start, "char *", "int");
+SDT_PROBE_DEFINE3(mac_framework, , , syscall__done, "char *", "int", "int");
+
 int
 sys_mac_syscall(struct thread *td, struct mac_syscall_args *uap)
 {
@@ -838,6 +841,7 @@ sys_mac_syscall(struct thread *td, struct mac_syscall_args *uap)
 	    uap->call != MAC_VERIEXEC_CHECK_CAPIMAGE_FD_SYSCALL))
 		return (ECAPMODE);
 
+	SDT_PROBE2(mac_framework, , , syscall__start, target, uap->call);
 	error = ENOSYS;
 	LIST_FOREACH(mpc, &mac_static_policy_list, mpc_list) {
 		if (strcmp(mpc->mpc_name, target) == 0 &&
@@ -861,6 +865,7 @@ sys_mac_syscall(struct thread *td, struct mac_syscall_args *uap)
 		mac_policy_sunlock_sleep();
 	}
 out:
+	SDT_PROBE3(mac_framework, , , syscall__done, target, uap->call, error);
 	return (error);
 }
 

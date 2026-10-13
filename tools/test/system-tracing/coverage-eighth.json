@@ -1,0 +1,1006 @@
+{
+  "probes": [
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_mqueue.c",
+      "provider": "mqueue",
+      "module": "",
+      "function": "",
+      "name": "send-wake",
+      "types": [
+        "void *",
+        "int",
+        "long"
+      ],
+      "categories": [
+        "errors",
+        "network/communication",
+        "performance",
+        "resource",
+        "state",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_mqueue.c",
+      "provider": "mqueue",
+      "module": "",
+      "function": "",
+      "name": "receive-wake",
+      "types": [
+        "void *",
+        "int",
+        "long"
+      ],
+      "categories": [
+        "errors",
+        "network/communication",
+        "performance",
+        "resource",
+        "state",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sysv_msg.c",
+      "provider": "sysvmsg",
+      "module": "",
+      "function": "",
+      "name": "msgsnd-wake",
+      "types": [
+        "int",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "network/communication",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sysv_msg.c",
+      "provider": "sysvmsg",
+      "module": "",
+      "function": "",
+      "name": "msgrcv-wake",
+      "types": [
+        "int",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "network/communication",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sysv_sem.c",
+      "provider": "sysvsem",
+      "module": "",
+      "function": "",
+      "name": "semop-wake",
+      "types": [
+        "int",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_pipe.c",
+      "provider": "pipe",
+      "module": "",
+      "function": "",
+      "name": "lock-wait-start",
+      "types": [
+        "struct pipe *"
+      ],
+      "categories": [
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_pipe.c",
+      "provider": "pipe",
+      "module": "",
+      "function": "",
+      "name": "lock-wait-done",
+      "types": [
+        "struct pipe *",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_aio.c",
+      "provider": "aio",
+      "module": "",
+      "function": "",
+      "name": "suspend-wait-start",
+      "types": [
+        "struct proc *"
+      ],
+      "categories": [
+        "io",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_aio.c",
+      "provider": "aio",
+      "module": "",
+      "function": "",
+      "name": "suspend-wait-done",
+      "types": [
+        "struct proc *",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "io",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_mount.c",
+      "provider": "mount",
+      "module": "",
+      "function": "",
+      "name": "drain-start",
+      "types": [
+        "struct mount *"
+      ],
+      "categories": [
+        "lifecycle",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_mount.c",
+      "provider": "mount",
+      "module": "",
+      "function": "",
+      "name": "drain-done",
+      "types": [
+        "struct mount *",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "lifecycle",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/dev/usb/usb_dev.c",
+      "provider": "usb",
+      "module": "",
+      "function": "",
+      "name": "fifo-wait-start",
+      "types": [
+        "void *"
+      ],
+      "categories": [
+        "io",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/dev/usb/usb_dev.c",
+      "provider": "usb",
+      "module": "",
+      "function": "",
+      "name": "fifo-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "io",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/vm/swap_pager.c",
+      "provider": "swap",
+      "module": "",
+      "function": "",
+      "name": "buffer-wait-start",
+      "types": [
+        "int"
+      ],
+      "categories": [
+        "performance",
+        "resource",
+        "state",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/vm/swap_pager.c",
+      "provider": "swap",
+      "module": "",
+      "function": "",
+      "name": "buffer-wait-done",
+      "types": [
+        "int"
+      ],
+      "categories": [
+        "performance",
+        "resource",
+        "state",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_racct.c",
+      "provider": "racct",
+      "module": "",
+      "function": "",
+      "name": "throttle-start",
+      "types": [
+        "struct proc *",
+        "int"
+      ],
+      "categories": [
+        "performance",
+        "resource",
+        "state",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_racct.c",
+      "provider": "racct",
+      "module": "",
+      "function": "",
+      "name": "throttle-done",
+      "types": [
+        "struct proc *",
+        "int"
+      ],
+      "categories": [
+        "performance",
+        "resource",
+        "state",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/geom/geom_ctl.c",
+      "provider": "geom",
+      "module": "",
+      "function": "",
+      "name": "control-start",
+      "types": [
+        "void *"
+      ],
+      "categories": [
+        "io",
+        "lifecycle",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/geom/geom_ctl.c",
+      "provider": "geom",
+      "module": "",
+      "function": "",
+      "name": "control-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "io",
+        "lifecycle",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_usrreq.c",
+      "provider": "unpcb",
+      "module": "",
+      "function": "",
+      "name": "send-wait-start",
+      "types": [
+        "struct socket *"
+      ],
+      "categories": [
+        "network/communication",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_usrreq.c",
+      "provider": "unpcb",
+      "module": "",
+      "function": "",
+      "name": "send-wait-done",
+      "types": [
+        "struct socket *",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "network/communication",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_event.c",
+      "provider": "kqueue",
+      "module": "",
+      "function": "",
+      "name": "drain-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "categories": [
+        "lifecycle",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_event.c",
+      "provider": "kqueue",
+      "module": "",
+      "function": "",
+      "name": "drain-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "categories": [
+        "lifecycle",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/dd/dd.c",
+      "provider": "ddio*",
+      "module": "",
+      "function": "",
+      "name": "sync-start",
+      "types": [
+        "int",
+        "int"
+      ],
+      "categories": [
+        "io",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/dd/dd.c",
+      "provider": "ddio*",
+      "module": "",
+      "function": "",
+      "name": "sync-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "io",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/cp/utils.c",
+      "provider": "cpcopy*",
+      "module": "",
+      "function": "",
+      "name": "retry",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "io",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "lib/libfetch/common.c",
+      "provider": "fetchio*",
+      "module": "",
+      "function": "",
+      "name": "poll-start",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "network/communication",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "lib/libfetch/common.c",
+      "provider": "fetchio*",
+      "module": "",
+      "function": "",
+      "name": "poll-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "network/communication",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/rm/rm.c",
+      "provider": "removeio*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ],
+      "categories": [
+        "io",
+        "lifecycle",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/rm/rm.c",
+      "provider": "removeio*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "io",
+        "lifecycle",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/chmod/chmod.c",
+      "provider": "modechange*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ],
+      "categories": [
+        "performance",
+        "security"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/chmod/chmod.c",
+      "provider": "modechange*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "performance",
+        "security"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/mkdir/mkdir.c",
+      "provider": "dircreate*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ],
+      "categories": [
+        "io",
+        "lifecycle",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/mkdir/mkdir.c",
+      "provider": "dircreate*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "io",
+        "lifecycle",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/truncate/truncate.c",
+      "provider": "resizeio*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int",
+        "int64_t",
+        "int64_t"
+      ],
+      "categories": [
+        "io",
+        "performance",
+        "resource"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/truncate/truncate.c",
+      "provider": "resizeio*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "io",
+        "performance",
+        "resource"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/mv/mv.c",
+      "provider": "moveio*",
+      "module": "",
+      "function": "",
+      "name": "child-start",
+      "types": [
+        "int"
+      ],
+      "categories": [
+        "lifecycle",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/mv/mv.c",
+      "provider": "moveio*",
+      "module": "",
+      "function": "",
+      "name": "child-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "lifecycle",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/autofs/autofs.c",
+      "provider": "autofs",
+      "module": "",
+      "function": "",
+      "name": "request-start",
+      "types": [
+        "int"
+      ],
+      "categories": [
+        "io",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/autofs/autofs.c",
+      "provider": "autofs",
+      "module": "",
+      "function": "",
+      "name": "request-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "io",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/cuse/cuse.c",
+      "provider": "cuse",
+      "module": "",
+      "function": "",
+      "name": "command-start",
+      "types": [
+        "void *",
+        "uint32_t"
+      ],
+      "categories": [
+        "io",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/cuse/cuse.c",
+      "provider": "cuse",
+      "module": "",
+      "function": "",
+      "name": "command-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "io",
+        "performance",
+        "synchronization"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/p9fs/p9_client.c",
+      "provider": "p9fs",
+      "module": "",
+      "function": "",
+      "name": "request-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "categories": [
+        "io",
+        "network/communication",
+        "performance",
+        "resource"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/p9fs/p9_client.c",
+      "provider": "p9fs",
+      "module": "",
+      "function": "",
+      "name": "request-done",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "errors",
+        "io",
+        "network/communication",
+        "performance",
+        "resource"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/p9fs/p9_client.c",
+      "provider": "p9fs",
+      "module": "",
+      "function": "",
+      "name": "tag-exhausted",
+      "types": [
+        "void *"
+      ],
+      "categories": [
+        "errors",
+        "io",
+        "network/communication",
+        "performance",
+        "resource"
+      ],
+      "priority": "P1"
+    }
+  ],
+  "passes": [
+    "POSIX message queues: wake outcomes and queue depth complement existing block probes.",
+    "System V message queues: distinguish periodic retry wakes from interruption and receive wakes.",
+    "System V semaphores: raw timed wait completion before object revalidation.",
+    "Pipe serialization: lock contention latency and interruption.",
+    "AIO suspend: per-sleep latency and raw wake status.",
+    "Filesystem unmount: reference drain timing outside filesystem callbacks.",
+    "USB FIFO: process-context I/O waits including device-loss wake status.",
+    "Swap pager: async write-buffer exhaustion wait and available capacity on wake.",
+    "Resource accounting: throttling delay and state on wake, before timeout clearing.",
+    "GEOM control: queued event execution latency and handler outcome.",
+    "UNIX stream sockets: peer receive-buffer backpressure latency and wake errors.",
+    "Kqueue teardown: reference and taskqueue drain timing with explicit reason.",
+    "dd: fsync/fdatasync latency and durable-write failure.",
+    "cp: interrupted transfer retries with descriptor identities, no paths.",
+    "libfetch: connect/read/write readiness wait latency, poll timeout, errno, revents.",
+    "rm/unlink: file/directory removal attempts, latency and errno.",
+    "chmod: requested permission mode, actual syscall outcome including suppressed errors.",
+    "mkdir: each parent/leaf creation attempt, requested mode and errno.",
+    "truncate: resize and hole-deallocation extent, latency and failure.",
+    "mv: parent-only copy/remove child wait latency, raw exit status and wait error.",
+    "Autofs: joined/new request wait including daemon status and interruption before releasing request reference.",
+    "CUSE: client command completion and outstanding process-reference drain, including server closing.",
+    "9P: whole synchronous RPC through preparation/transport/reply error and exhausted transaction tags."
+  ],
+  "profiles": [
+    "ipc-wake-results",
+    "kernel-drain-waits",
+    "resource-pressure-waits",
+    "device-control-waits",
+    "unix-peer-pressure",
+    "base-file-mutations",
+    "copy-durability",
+    "fetch-readiness",
+    "move-child-waits",
+    "userspace-filesystem-requests"
+  ],
+  "dependencies": [
+    {
+      "provider": "mqueue",
+      "module": "",
+      "function": "",
+      "name": "send-block",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "provider": "mqueue",
+      "module": "",
+      "function": "",
+      "name": "receive-block",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "provider": "sysvmsg",
+      "module": "",
+      "function": "",
+      "name": "msgsnd-block",
+      "types": [
+        "pid_t",
+        "int",
+        "size_t"
+      ]
+    },
+    {
+      "provider": "sysvmsg",
+      "module": "",
+      "function": "",
+      "name": "msgrcv-block",
+      "types": [
+        "pid_t",
+        "int",
+        "long"
+      ]
+    },
+    {
+      "provider": "sysvsem",
+      "module": "",
+      "function": "",
+      "name": "semop-block",
+      "types": [
+        "pid_t",
+        "int",
+        "size_t"
+      ]
+    }
+  ],
+  "sources": {
+    "bin/chmod/Makefile": "7368fe098f2398a17121069a4de5675ef22a3a0dcf89843063443f5f458730c9",
+    "bin/chmod/chmod.c": "f87f56891e44612fb9070a1bccd02a31a8b885193a3e7a13655e4df2c6428b44",
+    "bin/chmod/modechange_provider.d": "3795e0a442a1c2e932940a3a2974b547488f7f9099addff2367ba36787f50cd7",
+    "bin/chmod/modechange_trace.h": "493bbe6ca58863baa9a0ea24fe0192d34e9dd5e6659c077613b15541e0ba3871",
+    "bin/cp/cpcopy_provider.d": "9ef8450475e42dc8b982d0bafdf00a9782a701579016a71d48bd5195bb65c2b9",
+    "bin/cp/cpcopy_trace.h": "103f08ebbb68bbc304163b28082b0745c01ecd031c6eb87af2b45625e35385d4",
+    "bin/cp/utils.c": "5b6980c614801ddaa0b0f00fd171f5ea1ce9f52e69f648147327abe113291580",
+    "bin/dd/dd.c": "b69b1cc5347bff9b653771a1d64907016df3061185b7cc98a50a9a3138ccfc44",
+    "bin/dd/ddio_provider.d": "1444960be35c4dcffe6cd815eff93126bf92856be1ba8b8054d6e1bc60b30b7b",
+    "bin/dd/ddio_trace.h": "4ab46e012fe5ae78ff57ae2adbccc623f50c8a0820969e63d246628ef0764c4f",
+    "bin/mkdir/Makefile": "d1cd066b919172434ad90b421d6f63d380a440c2de594a349a0be7f5896ef342",
+    "bin/mkdir/dircreate_provider.d": "264a30ebb69910afba917769c2a32c306c6f9857bef509f9e24fa7d37bda14fa",
+    "bin/mkdir/dircreate_trace.h": "76b2312731ae21886bb41cef3c739f401a29b09b508730c56efa9913153b894b",
+    "bin/mkdir/mkdir.c": "66b3a1b2081c76e2e489f952094cfe78602c6b7dfb76cd038c716f687c64edc3",
+    "bin/mv/moveio_provider.d": "35380083b35a22e4de90ebea99debf3098f0aee011f57e3bfac14d5450e74f99",
+    "bin/mv/moveio_trace.h": "741745a8d3cb76678531a1cf5875e9b95664061e80ec73754db47996fa23d351",
+    "bin/mv/mv.c": "4cf4b4940756b3d77bcf0d0597f6521b8ff40696744bacbe899a429d5bee9baa",
+    "bin/rm/Makefile": "d764f5016f6afa1e5e07f330cbae153a752f4e45c55faaac368a3482ee817372",
+    "bin/rm/removeio_provider.d": "baa3d13ef4002234354a6ec1e3aa6590eaf56163da7e618936a13208ebc23e89",
+    "bin/rm/removeio_trace.h": "fa86c2e42e3765bc26a2c9107911e0273195baed81fc59a48cc1fa71362ea059",
+    "bin/rm/rm.c": "d78a379578858a1af2c2b5bbf701aaf30c7a0d06598b9f69de1949c2b447170f",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-file-mutations.d": "4c1115d124089402491aa1e5864d0f807bc162594c275f27653bf4fc9db117b6",
+    "cddl/usr.sbin/bsdinstruments/profiles/copy-durability.d": "5211f0f6e895fcb10c27ac643fcb75b5e62a56afca181094895dfe31866be3dd",
+    "cddl/usr.sbin/bsdinstruments/profiles/device-control-waits.d": "7baf1cfa84f043efdf3d6dda8827096964ee26f0bfc710b21a83749ea8369fad",
+    "cddl/usr.sbin/bsdinstruments/profiles/fetch-readiness.d": "317e3f98a32af8b454e8187f78ebed7d2f713e8a40554ea1f08d39cb257e6e87",
+    "cddl/usr.sbin/bsdinstruments/profiles/ipc-wake-results.d": "966a25e691909087abcb47697b8340e19e897517f44370a20a7b714ecfae7ddc",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-drain-waits.d": "3339fec51201b717561f4913c95ef6c4297c5d488e0c4627f5205a2087cb40a5",
+    "cddl/usr.sbin/bsdinstruments/profiles/move-child-waits.d": "4740d1fb5e3eb57bd199cc563dee9b31b2a4a3e1adb97f9670ea566a0708fef5",
+    "cddl/usr.sbin/bsdinstruments/profiles/resource-pressure-waits.d": "47c6ea336c51ed39f35eba505011801d57fe8c9b574201a5da096a4c7b4d7f55",
+    "cddl/usr.sbin/bsdinstruments/profiles/unix-peer-pressure.d": "c185abd35aa172dc2d01da633bf148f2dcde77b7af30159541f5d4ba4a6a63a5",
+    "cddl/usr.sbin/bsdinstruments/profiles/userspace-filesystem-requests.d": "a71e03f70bb820069af0cb16061d6dacee78af457116cfe6e4ff42b56f0fad1b",
+    "lib/libfetch/common.c": "948d0bf9967a28a761b081dd052200cbcd1abc6f607737d791b32e3fb8cdd93a",
+    "lib/libfetch/fetchio_provider.d": "a81d6f8f69ec8016075c73599d96d5ceb60f34c6b7bb573cb586bb726f0c8224",
+    "lib/libfetch/fetchio_trace.h": "3f4fa35b0f574108518d98e4e40142abea032d9b7b8ba2a0eee3f03302b1fc65",
+    "sys/dev/usb/usb_dev.c": "349c4db7b0937698fbcc253209b741b949a0e31c50a71e9dc7d9c3f04c9d67a2",
+    "sys/fs/autofs/autofs.c": "bfc24aecc206924ef4b92c5b5aa4c723b091f543523cebebd621a0d10f06f529",
+    "sys/fs/cuse/cuse.c": "9ef0a1025e268cc78b133c6ae1f34693f79f9883d333f29465d1974562c7c9c6",
+    "sys/fs/p9fs/p9_client.c": "0a8b19dc17a3f8d3ca313b67ded2d3ab4d84f97d085c6467cbfd6b8f4b76f91f",
+    "sys/geom/geom_ctl.c": "e44e1f4fb507be57e0b933db7ab609d661071cec2bbd71ecca939b33c8fd5e9c",
+    "sys/kern/kern_event.c": "1fe6c8179b75ac421bbab185c1db43cf7ec09a562fdf9044fdf30ffeac4fdc32",
+    "sys/kern/kern_racct.c": "5f6673e7c5a2dec38ca03803594e34bc16727f9e9a5b4d53c8e2185bd3963f26",
+    "sys/kern/sys_pipe.c": "2ed347bd537d2da0e9757cf6919d729473197cd423b5549ce55fbd472aacfab7",
+    "sys/kern/sysv_msg.c": "b298568d9801ef8e96d8e4009111140ccfa1e23d0cc7ac6e9acba20795124423",
+    "sys/kern/sysv_sem.c": "00c3b406ee6c98553335dab8be2563881b8d0f43f42e2225deaa82b1c55bd812",
+    "sys/kern/uipc_mqueue.c": "c766e33036ec8b262264408e49bd6f2eb97096c6670de1899b7045508013e1a2",
+    "sys/kern/uipc_usrreq.c": "37e6c09ec82bb4e1c4e531bdd2e3e1eda2792a165cad9f3537c4008a86beb31e",
+    "sys/kern/vfs_aio.c": "f94c2e441583102345e9b9d192bbc6993d79f9c741d4222ea698fef9c35e7342",
+    "sys/kern/vfs_mount.c": "115d07a15f76bbc2dc034fe6a0d53ab8d66ee21cda3fa843505dcd9cf9a18aa4",
+    "sys/vm/swap_pager.c": "10dfde81761530aa71bb736e64c75c06ee554452bf920e166eba6ca536ca5158",
+    "tools/test/system-tracing/COVERAGE-EIGHTH": "642a0db0f7850a2ec3cc736bfde81bf0a1f53b9a2e45b204e3d96285db03e1af",
+    "tools/test/system-tracing/README": "651d2cb9af712337470a679e39d846d69f96c58f37d9db265e32beb5346aae42",
+    "tools/test/system-tracing/coverage-eighth-base.py": "fc68ae0360bd38cbc42377812a94d14536ad2f3ed27467e1c99227748ec42281",
+    "tools/test/system-tracing/coverage-eighth-census.py": "002de2d229f5eb63f1c29e9145ac82b7c31b721efc69971228c0792005c0c09b",
+    "tools/test/system-tracing/coverage-eighth-check.py": "d74e8406a322b7ee954fd4b5cdeee2b4cc78da363a6cc7ea6ab36f69f3f472b7",
+    "tools/test/system-tracing/coverage-eighth-compile.py": "246af99868bbfca5a05e51dc7afe35945e95dee64471230116b7444b69d5292f",
+    "tools/test/system-tracing/coverage-eighth-fetch.c": "6d7f833ef8231d19b52b10f6917ecf28d561fdfc51bf83d00951558e1a0ab9c8",
+    "tools/test/system-tracing/coverage-eighth-modules.py": "b1dd44ad382cb9dd8b3bf187114c8aa5286368f0a321a3d2e6d63e1ef7e9d51c",
+    "tools/test/system-tracing/coverage-eighth-smoke.py": "f919c87da81d169bc1e5e3e5f22f85718f1c783326716f21c48f2e053a7a3f41",
+    "tools/test/system-tracing/coverage-eighth-tests.py": "9cfac8d8259df02550a9dc26a81b9e35131a3e5cff3a527ec5683c5307164fd2",
+    "usr.bin/truncate/Makefile": "51296ad0f673e30234225c83064d13631f645edfb35378bcd0ca8cec2b4e48a2",
+    "usr.bin/truncate/resizeio_provider.d": "7f0d6cc544733d6ee190b4294887b6ff9971a0193dea3d797f85eabb97ebb3e5",
+    "usr.bin/truncate/resizeio_trace.h": "c793ebbda77d8e18c93c2ac4a5447f7f36ffb4f04e1357b787f2854a9abbabb5",
+    "usr.bin/truncate/truncate.c": "0ed1ac723f20379f7996a3db84de6eac62abe4d2697868d4d5adb300b164e086"
+  },
+  "scope": "23 focused implementation passes after whole-tree macro census; not every function or driver is instrumented.",
+  "new_contracts": 45,
+  "kernel_contracts": 30,
+  "user_contracts": 15
+}

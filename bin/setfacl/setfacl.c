@@ -42,6 +42,34 @@
 
 #include "setfacl.h"
 
+#include "aclwrite_trace.h"
+
+static int
+trace_acl_set_link_np(const char *path, acl_type_t type, acl_t acl)
+{
+	int result;
+
+	TRACE_ACLWRITE_OPERATION__START(type, 1);
+	result = acl_set_link_np(path, type, acl);
+	TRACE_ACLWRITE_OPERATION__DONE(type, 1,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
+static int
+trace_acl_set_file(const char *path, acl_type_t type, acl_t acl)
+{
+	int result;
+
+	TRACE_ACLWRITE_OPERATION__START(type, 0);
+	result = acl_set_file(path, type, acl);
+	TRACE_ACLWRITE_OPERATION__DONE(type, 0,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 /* file operations */
 #define	OP_MERGE_ACL		0x00	/* merge acl's (-mM) */
 #define	OP_REMOVE_DEF		0x01	/* remove default acl's (-k) */
@@ -330,12 +358,12 @@ handle_file(FTS *ftsp, FTSENT *file)
 		warnx("%s: failed to set ACL mask", file->fts_path);
 		ret = 1;
 	} else if (follow_symlink) {
-		if (acl_set_file(file->fts_accpath, acl_type, acl) == -1) {
+		if (trace_acl_set_file(file->fts_accpath, acl_type, acl) == -1) {
 			warn("%s: acl_set_file() failed", file->fts_path);
 			ret = 1;
 		}
 	} else {
-		if (acl_set_link_np(file->fts_accpath, acl_type, acl) == -1) {
+		if (trace_acl_set_link_np(file->fts_accpath, acl_type, acl) == -1) {
 			warn("%s: acl_set_link_np() failed", file->fts_path);
 			ret = 1;
 		}

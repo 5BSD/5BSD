@@ -38,6 +38,7 @@
 #include <sys/stddef.h>
 #include <sys/param.h>
 #include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/types.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -447,6 +448,10 @@ uhub_explore_handle_re_enumerate(struct usb_device *child)
 		if (err == 0) {
 			err = usb_probe_and_attach(child,
 			    USB_IFACE_INDEX_ANY);
+#ifndef USB_GLOBAL_INCLUDE_FILE
+			if (!cold)
+				DTRACE_PROBE2(usb__attach__done, void *, child, int, err);
+#endif
 		}
 		child->re_enumerate_wait = USB_RE_ENUM_DONE;
 		break;
@@ -484,6 +489,10 @@ uhub_explore_handle_re_enumerate(struct usb_device *child)
 		} else {
 			err = usb_probe_and_attach(child,
 			    USB_IFACE_INDEX_ANY);
+#ifndef USB_GLOBAL_INCLUDE_FILE
+			if (!cold)
+				DTRACE_PROBE2(usb__attach__done, void *, child, int, err);
+#endif
 		}
 		child->re_enumerate_wait = USB_RE_ENUM_DONE;
 		break;
@@ -532,6 +541,10 @@ uhub_explore_sub(struct uhub_softc *sc, struct usb_port *up)
 		child->driver_added_refcount = refcount;
 		err = usb_probe_and_attach(child,
 		    USB_IFACE_INDEX_ANY);
+#ifndef USB_GLOBAL_INCLUDE_FILE
+		if (!cold)
+			DTRACE_PROBE2(usb__attach__done, void *, child, int, err);
+#endif
 		if (err) {
 			goto done;
 		}
@@ -629,6 +642,10 @@ repeat:
 		/*
 		 * Free USB device and all subdevices, if any.
 		 */
+#ifndef USB_GLOBAL_INCLUDE_FILE
+		if (!cold)
+			DTRACE_PROBE2(usb__disconnect, void *, udev, int, portno);
+#endif
 		usb_free_device(child, 0);
 		child = NULL;
 	}
@@ -810,8 +827,17 @@ repeat:
 		mode = USB_MODE_HOST;
 
 	/* need to create a new child */
+#ifndef USB_GLOBAL_INCLUDE_FILE
+	if (!cold)
+		DTRACE_PROBE2(usb__enumerate__start, void *, udev, int, portno);
+#endif
 	child = usb_alloc_device(sc->sc_dev, udev->bus, udev,
 	    udev->depth + 1, portno - 1, portno, speed, mode);
+#ifndef USB_GLOBAL_INCLUDE_FILE
+	if (!cold)
+		DTRACE_PROBE3(usb__enumerate__done, void *, udev, int, portno,
+		    int, (child != NULL));
+#endif
 	if (child == NULL) {
 		DPRINTFN(0, "could not allocate new device\n");
 		goto error;
@@ -823,6 +849,10 @@ error:
 		/*
 		 * Free USB device and all subdevices, if any.
 		 */
+#ifndef USB_GLOBAL_INCLUDE_FILE
+		if (!cold)
+			DTRACE_PROBE2(usb__disconnect, void *, udev, int, portno);
+#endif
 		usb_free_device(child, 0);
 		child = NULL;
 	}
@@ -1577,8 +1607,16 @@ uhub_detach(device_t dev)
 #if USB_HAVE_TT_SUPPORT
 	/* Make sure our TT messages are not queued anywhere */
 	USB_BUS_LOCK(bus);
+#ifndef USB_GLOBAL_INCLUDE_FILE
+	if (!cold)
+		DTRACE_PROBE1(usb__tt__drain__start, void *, hub);
+#endif
 	usb_proc_mwait(USB_BUS_TT_PROC(bus),
 	    &hub->tt_msg[0], &hub->tt_msg[1]);
+#ifndef USB_GLOBAL_INCLUDE_FILE
+	if (!cold)
+		DTRACE_PROBE1(usb__tt__drain__done, void *, hub);
+#endif
 	USB_BUS_UNLOCK(bus);
 #endif
 

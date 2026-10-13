@@ -57,7 +57,6 @@ EOF
 #include <stdlib.h>
 #include <unistd.h>
 
-char dname[]= "/dev/ptyrX";
 
 void leak(void)
 {
@@ -65,11 +64,10 @@ void leak(void)
 
 	if (fork() == 0) {
 		for (i = '0'; i < '9'; i ++) {
-			dname[9] = i;
-			fd = open(dname, O_RDWR);
+			fd = posix_openpt(O_RDWR | O_NOCTTY);
 			if (fd == -1)
 				if (errno != EBUSY && errno != ENXIO)
-					err(1, "open(%s)", dname);
+					err(1, "posix_openpt");
 		}
 		_exit(0);
 	}

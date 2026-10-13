@@ -1,0 +1,258 @@
+DTrace coverage: bhyve, Bluetooth, Mesh, active MAC policies and descriptors
+==========================================================================
+
+Scope and result
+----------------
+This round adds 52 probe contracts and connects 19 pre-existing declarations
+to executable sites: 20 kernel contracts and 51 user-space contracts in total.
+It adds 14 installed bsdinstruments profiles. coverage-seventh.json records
+exact selectors, argument counts, source hashes and new/activated status.
+This extends COVERAGE-FOURTH, COVERAGE-FIFTH and COVERAGE-SIXTH; it does not
+replace their kernel subsystem, driver, LinuxKPI or Linuxulator coverage.
+
+This is semantic runtime coverage, not a claim that every function is probed.
+The binary census distinguishes declarations from actual linked sites.
+Current tracing builds have 73 BSDBluetooth, 31 libblemesh, 11 meshd and 70
+bhyve probe names, including earlier work. Remaining declaration-only names
+are recorded in /usr/obj/5bsd-dtrace-seventh-validation/coverage-audit.json.
+They are not counted as working probes. Snapshot-disabled bhyve deliberately
+omits the checkpoint/restore provider sites while retaining migration wire
+and generic device-part/virtio support.
+
+History and installation audit
+------------------------------
+3549c1df043: FreeBSD main through 2026-10-08 (c2b7fe4a9e9). Reviewed its
+first-parent changed-path inventory, the preceding September/July merge
+history, native inotify/jail descriptors and the new ntsync descriptor.
+The full merge path inventory is retained in coverage-audit.json.
+f05832f34fd: coalition cleanup wait descriptors -> waiter lifecycle/status.
+9ec24a62c93: channel IPC and batched descriptors -> checked existing capability
+send/recv/dispatch/transfer instrumentation, added cleanup-waiter coverage.
+7f8e2ec745b: virtio notification fencing -> existing queue/notify/reset/error
+probes retained; added admin quiescence and accepted device-part records.
+7df4e878a41 and 3a535630f01: advertising cache isolation, discovery and Classic
+audio -> discovery leases, ISO lifecycle and virtual_oss AVDTP transactions.
+a7b358373a7: OpenThread and Matter IDL import -> see the explicit boundary below.
+
+Installable components checked: bhyve, the BSDBluetooth capability unit and
+/usr/sbin/blued link, meshd, libblemesh, the voss_bt.so sound plugin, active
+kernel modules, and the automatically selected bsdinstruments profiles.
+libblemesh now follows MK_DTRACE normally; no extra MESH_DTRACE_PROBES make
+flag is required. The header flag remains available for direct/test builds.
+Static libblemesh archives retain the DOF object using the existing hidden
+anchor mechanism. bsd.dep.mk now generates PIC provider objects for
+SHLIB_NAME-only plugins as well as LIB/SHLIB libraries. Without that change,
+voss_bt.so compiled its probe calls but failed to link its provider object.
+A pre-existing BSDBluetooth probe-only status variable is marked unused so
+MK_DTRACE=no builds also succeed.
+
+Focused coverage pass log
+-------------------------
+ 1. Whole checkpoint request: begin/result, including early rejection and stop.
+ 2. vCPU quiescence: pause start/done around the rendezvous.
+ 3. Guest RAM capture: save phase timing and zero-size failure result.
+ 4. Device serialization: per-device save callback start/done.
+ 5. Kernel serialization: user ioctl phase plus kernel dispatch start/done.
+ 6. Whole restore transaction: begin/result on every return path.
+ 7. Restore topology and memory preflight: paired phase outcomes.
+ 8. Guest RAM restoration: paired raw result and errno outcome.
+ 9. Per-device restoration: restore callback timing with device identity.
+10. Snapshot session ownership: begin, commit and abort release phase timing.
+11. Checkpoint publication: visible-generation flag separate from durability error.
+12. Device resume and startup-fence release: paired phase outcomes.
+13. Migration: progress even without a UI callback; framed-send outcome.
+14. Virtio device parts: accepted type, selector, length and header-only mode.
+15. Virtio admin: reset/destroy drain waits, outside the low-level event path.
+16. Bluetooth discovery: lease identity, terminal status, delivery and RSSI.
+17. Bluetooth ISO: allocation/unlink and CIS/BIS descriptor handoff results.
+18. ISO HCI control: CIG/CIS/BIG/data-path operations and BIG/CIS events.
+19. Bluetooth connection registry: allocation count and state transitions.
+20. Classic Bluetooth audio: AVDTP transaction timing, timeout and rejection.
+21. Kernel HCI: connection timeout with link type and connection state.
+22. Mesh configuration client: waiting/completion/retry/timeout and attempt count.
+23. Mesh subnet bridge: selected source/destination network indices.
+24. Directed forwarding: control input and expiring path identity.
+25. Remote provisioning: outbound transfer count/length and open timeout.
+26. Low-power mesh: friendship state transitions, including retry/loss.
+27. Key refresh: actual phase transitions, not just a provider declaration.
+28. Friend queue: polling identity and FSN; existing implementation is unchanged.
+29. Mesh proxy: parsed PDU and accepted reassembly progress/completion.
+30. Mesh model/config dispatch: model opcode and parsed AppKey indices, no keys.
+31. meshd bearer: queued frames, bounded-buffer pressure and transport failure.
+32. meshd persistence: write/fsync/rename/directory-sync phase result.
+33. NT synchronization descriptors: common native/Linux wait and object creation.
+34. Native inotify: blocking read waits and add/update-watch outcomes.
+35. Coalition cleanup descriptors: creation, status, successful notify and revoke.
+36. MAC framework and MAC/do: policy syscall timing, config and matching-rule result.
+37. Verified execution: cached fingerprint status and actual fingerprint work.
+
+Probe contracts and interpretation
+----------------------------------
+All pointers are opaque identities, valid only during the call. Profiles never
+dereference saved objects. User strings are copied only while their site fires.
+No guest RAM, Bluetooth packets, cryptographic keys, fingerprints, capability
+message payloads or mesh decrypted payloads are emitted.
+
+bhyve checkpoint-phase-start(operation, phase), checkpoint-phase-done(operation,
+phase, result, saved_errno): nesting is synchronous on a thread. operation is
+__func__; phase is the called routine or device name. Result is the underlying
+return value. saved_errno is meaningful for negative-return phases; positive
+errno APIs carry the error directly in result. vm_snapshot_mem normalizes zero
+bytes to -1 and nonzero to 0. Both save and restore can contain nested phases.
+checkpoint-begin(stop), checkpoint-result(stop, published, error) cover the
+request, including failures before file creation. A successful stop emits its
+result before vm_destroy/exit. checkpoint-publish(published, error) distinguishes
+a visible manifest rename from a subsequent durability failure. restore-begin
+(context), restore-result(error) cover vm_restore_transaction, including invalid
+arguments and missing startup fence. These do not certify guest resume if a
+later bhyverun operation fails.
+
+migration-progress(phase, round, bytes, dirty_pages, converged) reports the
+existing progress milestones, not a promise of one event per packet. The source
+and destination use the existing enum values. migration-send(type, sequence,
+payload_length, error) fires after frame encoding/send was attempted; sequence
+is the last successfully sent sequence (not the failed frame's sequence on
+error). Allocation/oversize rejection occurs before this site. Existing protocol
+validation tests cover failed commit, cancellation, truncated device state and
+source rollback. Device-part events report accepted records only; they do not
+assert a whole restore subsequently commits. Admin quiesce start/done surround
+the entire active-command drain under the owner's mutex, including a zero wait.
+
+blued discovery-lease-start(fd, generation, request), discovery-lease-done(fd,
+generation, request, status, reply) use the generation to avoid fd reuse aliasing.
+Discovery deliver(fd, request, adapter_index, rssi) is the delivery attempt after
+filter/dedup. iso-stream-alloc/unlink use the registry object identity; unlink
+is not necessarily final memory destruction. iso-handoff(stream, handle, fd)
+reports attempted socket acquisition, with fd < 0 denoting failure. Existing
+iso-*-status contracts report controller status after a complete HCI reply;
+transport failures are visible through the existing HCI command probes. Reject,
+terminate and data-path setup contracts fire on command success. BIG completion
+and sync events precede stream matching; unmatched events remain observable.
+Connection state reports old/new state after the state store.
+
+btaudio command-start(fd, command, transaction), command-done(fd, command,
+transaction, result): negative errno convention, with the 4-bit transaction label
+interpreted only within the socket/operation. Covers synchronous AVDTP command
+transactions, including timeout, rejection, malformed acceptance and peer loss;
+it is not per-audio-sample tracing. HCI kernel timeout(unit, handle, state,
+link_type) fires after a pending timer and live connection have been verified.
+
+Mesh manager-transaction(node_addr, expected_opcode, state, attempts) fires after
+a sent initial request, matching completion, successful retry or budget timeout.
+bridge-forward(src,dst,rx_net_idx,tx_net_idx) reports selected forwarding only.
+directed-expire(origin,target) precedes clearing the expired entry;
+directed-control(opcode,length) follows basic pointer validation, before semantic
+dispatch. remote-timeout(link) is an opening deadline; remote-transfer(link,
+number,length) is a constructed outbound provisioning PDU. lpn-state(address,
+state) includes initialized IDLE and transition outcomes. Existing mesh-prefixed
+keyrefresh, friend, proxy, cfg and model contracts retain their original names.
+The AppKey event carries indices and opcode only, not the key bytes.
+
+meshd bearer-queue(fd,type,payload_length,pending_bytes) fires after enqueue,
+before an immediate flush; bearer-full(fd,frame_length,pending_bytes) is ENOBUFS;
+bearer-failed(fd,state) precedes transport cleanup. persist-write-start(length),
+persist-write-done(length,result) cover writing an already-created temporary file
+through durable publication/cleanup; validation/allocation/temp-file failures
+occur earlier. Result is 0/-1, not errno (cleanup may change errno).
+
+ntsync wait-start(state,count,all), wait-done(state,wait_error,object_error,index)
+cover the common wait implementation used by native and Linux ioctl callers.
+Index is -1 if the wait fails; object_error separately includes abandoned-owner
+semantics. create(object,fd,error) covers descriptor installation (fd=-1 on error),
+not earlier allocation failures. inotify wait-start(instance), wait-done(instance,
+error) measure one sleep iteration; spurious wakes can produce several pairs.
+watch-add(instance,wd,mask,error) includes updates, but not failures before a
+validated inotify file is acquired. Earlier queue/remove probes remain intact.
+
+Coalition cleanup-status(coalition,phase,error) is a status computation, not
+necessarily a transition. waiter-create/revoke(coalition,instance) bracket waiter
+membership; waiter-notify(coalition,instance,phase) means the terminal notification
+was successfully queued, not that a client consumed it. Pending-count fields
+remain available through the existing status API rather than leaking objects.
+
+MACF syscall-start(policy,call), syscall-done(policy,call,error) cover dispatch,
+including no matching policy; copyinstr and capability-mode rejection occur
+before dispatch. Existing per-policy hook and decision probes already cover
+active policy callbacks. mac_do configuration(jail,rules_changed,paths_changed,
+error) reports parse/set outcome. rule-grant(old_uid,new_uid,flags,error) reports
+each applicable rule's decision, not a combined grant from every policy.
+veriexec fingerprint-status(vnode,status) reports the prior cached status;
+fingerprint-start(vnode,size), fingerprint-done(vnode,size,error) surround hashing
+only when metadata requests it. Status and failure enums remain those of veriexec.
+
+Safety, active code and intentional boundaries
+---------------------------------------------
+Kernel probes use SDT's disabled asm-goto NOP sites and compile away without
+KDTRACE_HOOKS. No allocation, string formatting or new locks are added by probes.
+The VMM sites are at the process-context snapshot dispatcher, after selector
+validation and outside VM-entry, VM-exit, FPU/TSC restore internals, NMI/IPI,
+interrupt-entry, bootstrap, pmap, allocator and DTrace implementation paths.
+The new HCI timer site runs through Netgraph's established callback context.
+These probes cannot observe execution before DTrace providers are registered.
+IRQ thread and VM-object probes from COVERAGE-FIFTH retain their original limits.
+
+Descriptor audit also checked existing envfd create/read/write/seal/close,
+jaildesc alloc/find/get/set/close, process descriptors, capability channels and
+Linux pidfd/signalfd/perf coverage. No duplicate lifecycle probes were added just
+to increase counts. DTYPE_NTSYNC and coalition cleanup descriptors had real gaps.
+Active MAC callbacks are covered through MACF; ABAC, isolation, authority and
+other capability providers retain their earlier semantic events. The retained
+mac_grantbylabel source has no current module Makefile and refers to an obsolete
+mpo_proc_check_resource hook. It is not claimed as built coverage and was left
+unchanged. Likewise removed policy directories are not counted as installed code.
+
+Matter/OpenThread boundary: a7b358373a7 imported Matter Python IDL tooling/data
+and OpenThread build targets. contrib/connectedhomeip/README.5BSD and
+contrib/openthread/README.5BSD explicitly state these are not installed capability
+services. There is no native Matter commissioning/device runtime here to place
+service probes in. No fictitious Matter or physical Thread provider is added.
+All 120 imported Matter IDL tests were run successfully. They verify tooling,
+not commissioning, radio operation or Matter interoperability. OpenThread's
+simulation/tool builds are not represented as installed base services.
+
+Validation and reproduction
+---------------------------
+Artifacts: /usr/obj/5bsd-dtrace-seventh-validation
+  before/                 per-file pre-round state (unrelated changes preserved)
+  session.patch           only this round's edits and new validation/profile files
+  coverage-audit.json      linked names, declaration-only gaps, upstream merge paths
+  base/                   DTrace on/off builds; bhyve snapshot on/off independently
+  kernel/, modules/       hooks on/off compiles, linked modules and build logs
+  kernel-link.log         successful GENERIC-NODEBUG link, no install or boot
+  profile-results.json    28 offline compile/filter variants, 345 install entries
+  dof-results.json        typed arg counts and actual offsets in six on/off pairs
+  object-results.json     16 kernel objects: actual relocations, NOPs, nohooks absence
+  static-results.json     static libblemesh DOF retention and key-refresh behavior
+  tests/                  ATF result files, logs and per-case outcomes
+  matter-tests.log        120 Matter IDL tests passed
+  validation.json        final combined result summary
+
+The base matrix has 12 successful configurations: libblemesh, voss_bt.so,
+BSDBluetooth and meshd with/without DTrace; bhyve in all four DTrace/snapshot
+combinations. Six modules link: ntsync, mac_do, mac_capability_coalition, ng_hci,
+mac_veriexec and vmm. Eight kernel source files compile with and without hooks.
+428 distinct ATF cases across 20 programs passed, including migration
+rollback, admin reset/destroy concurrency, ISO failures, mesh friendship/proxy,
+configuration, discovery, Classic audio, persistence and injected I/O failures.
+The probe-tap backend compiles all 18 edited runtime sources, and its regression
+checks preserve all five discovery completion arguments. Two static-library
+behavior/link checks and the 120 Matter tests also passed.
+
+Reproduction uses the prepared native amd64 world and GENERIC-NODEBUG object
+root. No home-directory build/repository override is used. Run from a shell
+with OS permission to write /usr/obj (16 logical CPUs on this machine):
+  python3.12 tools/test/system-tracing/coverage-seventh-base.py
+  python3.12 tools/test/system-tracing/coverage-seventh-compile.py
+  python3.12 tools/test/system-tracing/coverage-seventh-modules.py
+  python3.12 tools/test/system-tracing/coverage-seventh-tests.py
+  python3.12 tools/test/system-tracing/coverage-seventh-static.py
+  python3.12 tools/test/system-tracing/coverage-seventh-tap.py
+  python3.12 tools/test/system-tracing/coverage-seventh-check.py
+  make -C /usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG -j16 kernel
+  python3.12 tools/build/fuchsia/test-matter.py
+
+The host has no /dev/dtrace. Offline compilation and ELF inspection do not
+qualify live provider registration/firing, hardware Bluetooth/Thread traffic,
+VM checkpoint/resume under a real hypervisor, kernel runtime races or overhead.
+No modules were loaded, no services/VMs were started outside isolated test
+harnesses, and no packages were installed/published or machine rebooted.

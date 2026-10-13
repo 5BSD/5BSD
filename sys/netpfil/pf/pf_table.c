@@ -36,6 +36,8 @@
 #include "opt_inet6.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -1542,6 +1544,8 @@ pfr_ina_begin(struct pfr_table *trs, u_int32_t *ticket, int *ndel, int flags)
 		pf_remove_if_empty_kruleset(rs);
 	if (ndel != NULL)
 		*ndel = xdel;
+	DTRACE_PROBE3(pf__table__begin, int, flags, int, (xdel),
+	    int, 0);
 	return (0);
 }
 
@@ -1676,6 +1680,8 @@ pfr_ina_rollback(struct pfr_table *trs, u_int32_t ticket, int *ndel, int flags)
 	}
 	if (ndel != NULL)
 		*ndel = xdel;
+	DTRACE_PROBE3(pf__table__rollback, int, flags, int, (xdel),
+	    int, 0);
 	return (0);
 }
 
@@ -1693,8 +1699,11 @@ pfr_ina_commit(struct pfr_table *trs, u_int32_t ticket, int *nadd,
 
 	ACCEPT_FLAGS(flags, PFR_FLAG_DUMMY);
 	rs = pf_find_kruleset(trs->pfrt_anchor);
-	if (rs == NULL || !rs->topen || ticket != rs->tticket)
+	if (rs == NULL || !rs->topen || ticket != rs->tticket) {
+		DTRACE_PROBE3(pf__table__commit, int, flags, int, 0,
+		    int, EBUSY);
 		return (EBUSY);
+	}
 
 	SLIST_INIT(&workq);
 	RB_FOREACH(p, pfr_ktablehead, &V_pfr_ktables) {
@@ -1720,6 +1729,8 @@ pfr_ina_commit(struct pfr_table *trs, u_int32_t ticket, int *nadd,
 	if (nchange != NULL)
 		*nchange = xchange;
 
+	DTRACE_PROBE3(pf__table__commit, int, flags, int, (xadd + xchange),
+	    int, 0);
 	return (0);
 }
 

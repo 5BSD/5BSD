@@ -37,4 +37,9 @@ LINKS+=		${BINDIR}/procstat ${BINDIR}/pwdx
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
 
+.if ${MK_DTRACE} != "no" && !defined(RESCUE) && !defined(BOOTSTRAPPING)
+SRCS+=	processquery_provider.d
+CFLAGS+= -DWITH_COVERAGE_DTRACE
+.endif
+
 .include <bsd.prog.mk>

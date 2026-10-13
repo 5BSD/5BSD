@@ -22,4 +22,11 @@ SUBDIR.${MK_TESTS}+= tests
 # Depend on Makefile to rebuild when WITH_CASPER changes
 cat.o:	Makefile
 
+SRCS=	cat.c
+
+.if ${MK_DTRACE} != "no" && !defined(RESCUE) && !defined(BOOTSTRAPPING)
+SRCS+=	catio_provider.d
+CFLAGS+= -DWITH_COVERAGE_DTRACE
+.endif
+
 .include <bsd.prog.mk>

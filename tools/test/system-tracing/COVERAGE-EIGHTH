@@ -1,0 +1,232 @@
+DTrace eighth expansion: categories, wait outcomes, base file operations
+======================================================================
+
+Result and scope
+----------------
+The requested 20 focused implementation passes plus three census-discovered
+filesystem/device gaps add 45 probe contracts: 30 kernel SDT and 15 USDT.
+Ten bsdinstruments profiles join the automatic base-install profile catalog.
+The earlier coverage rounds remain useful; this round fills missing semantic
+boundaries instead of adding duplicate entry/return probes to every function.
+coverage-eighth.json records exact selectors, argument types, categories,
+priority, source hashes, and the five existing block-probe dependencies.
+
+The whole-tree census covers 55,266 C/C++/assembly/header/provider files in
+1,243 groups under sys, bin, sbin, lib, libexec, usr.bin, usr.sbin, cddl,
+crypto, contrib, stand and rescue. It records 646 files with known probe-macro
+evidence. The narrower kernel census covers 13,806 files in 403 groups. These
+are source inventories, not claims of semantic completeness, compilation,
+installation, or live tracing. Imported/optional code is included. Dynamic
+syscall, FBT and lockstat coverage is not represented by macro counts.
+
+Whole-tree findings are retained in whole-tree-census.json, including groups
+with no detected macros. Autofs, CUSE and p9fs had no matching SDT sites in the
+initial kernel census and now have explicit request/command boundaries.
+Architecture/bootstrap code, non-amd64 targets, dormant modules and every
+individual hardware driver's runtime behavior are not validated by this run.
+
+Category and priority policy
+----------------------------
+P0 lifecycle/flow: paired syscall work, filesystem service requests, child
+completion, and teardown boundaries. Existing bhyve migration/snapshot,
+Bluetooth/Mesh, MACF and descriptor contracts are retained from prior rounds.
+P0 errors: raw sleep return, syscall errno, daemon/transport outcome, retry,
+peer loss and tag exhaustion. A wake is not necessarily operation success.
+P0 latency: consumers compute elapsed time from start/done or block/wake;
+probes introduce no clocks, duration arithmetic, or slow-path thresholds.
+P1 resource: queue occupancy, swap-buffer scarcity, racct throttling and 9P
+transaction-tag exhaustion. Allocation internals are not newly instrumented.
+P1 synchronization: contended pipe lock, kernel waits, reference/task drains,
+USB FIFO, AIO, and UNIX peer-buffer backpressure, rather than every lock hit.
+P1 I/O/communication: GEOM, USB, filesystem requests, durability, file mutation,
+libfetch readiness and IPC. Only metadata and scalar outcomes are recorded.
+P2 security: chmod reports requested mode and actual syscall result, including
+errors suppressed by -f. It is not a replacement for kernel MACF policy
+checks or an authentication audit. Existing MACF/security contracts remain.
+P2 counters/state: profiles aggregate events and depth distributions; no new
+shared kernel counters, atomics, health model or deadlock detector is added.
+
+Focused implementation passes
+-----------------------------
+ 1. POSIX message queues: wake outcomes and queue depth complement existing block probes.
+ 2. System V message queues: distinguish periodic retry wakes from interruption and receive wakes.
+ 3. System V semaphores: raw timed wait completion before object revalidation.
+ 4. Pipe serialization: lock contention latency and interruption.
+ 5. AIO suspend: per-sleep latency and raw wake status.
+ 6. Filesystem unmount: reference drain timing outside filesystem callbacks.
+ 7. USB FIFO: process-context I/O waits including device-loss wake status.
+ 8. Swap pager: async write-buffer exhaustion wait and available capacity on wake.
+ 9. Resource accounting: throttling delay and state on wake, before timeout clearing.
+10. GEOM control: queued event execution latency and handler outcome.
+11. UNIX stream sockets: peer receive-buffer backpressure latency and wake errors.
+12. Kqueue teardown: reference and taskqueue drain timing with explicit reason.
+13. dd: fsync/fdatasync latency and durable-write failure.
+14. cp: interrupted transfer retries with descriptor identities, no paths.
+15. libfetch: connect/read/write readiness wait latency, poll timeout, errno, revents.
+16. rm/unlink: file/directory removal attempts, latency and errno.
+17. chmod: requested permission mode, actual syscall outcome including suppressed errors.
+18. mkdir: each parent/leaf creation attempt, requested mode and errno.
+19. truncate: resize and hole-deallocation extent, latency and failure.
+20. mv: parent-only copy/remove child wait latency, raw exit status and wait error.
+21. Autofs: joined/new request wait including daemon status and interruption before releasing request reference.
+22. CUSE: client command completion and outstanding process-reference drain, including server closing.
+23. 9P: whole synchronous RPC through preparation/transport/reply error and exhausted transaction tags.
+
+Kernel contracts and limits
+---------------------------
+mqueue send-wake/receive-wake(instance, raw_error, current_messages) pair with
+existing send-block/receive-block. One wake per sleep. EAGAIN is recorded
+before the implementation maps it to ETIMEDOUT; a concurrently available
+message/slot can still cause the overall request to succeed. Depth is read
+under the queue mutex after decrementing the waiter count.
+sysvmsg msgsnd-wake/msgrcv-wake(msqid, raw_error) pair with existing block
+sites. Send uses periodic hz sleeps, so EWOULDBLOCK often means retry, not
+terminal failure. sysvsem semop-wake(semid, raw_error) precedes semaphore
+revalidation; it does not certify the object still exists. Neither family
+newly dereferences an IPC object after sleeping.
+pipe lock-wait-start(pipe)/done(pipe,error) measures a single serialization
+sleep, not the full pipe read/write. aio suspend-wait-start(process)/done
+(process,error) records one sleep before ERESTART-to-EINTR normalization.
+mount drain-start(mount)/done(mount,error) surrounds the unmount reference
+drain. kqueue drain-start/done(queue,reason) uses reason 0 for outstanding
+references and 1 for scheduled task drain. Its second argument is not errno.
+swap buffer-wait-start/done(available_async_buffers) surrounds the blocked
+pageout buffer wait. racct throttle-start/done(process,throttle_ticks) reports
+state before the sleep and before post-wake timeout clearing. Negative ticks
+mean indefinite throttling. Done does not assert a resource was acquired.
+usb fifo-wait-start(fifo)/done(fifo,error) wraps process-context FIFO sleep;
+post-wake device loss reports EIO. Already-failed devices return before the
+pair. The declarations/sites are absent with USB_GLOBAL_INCLUDE_FILE, and
+UGEN-disabled builds omit them. No new USB interrupt or boot-time site exists.
+geom control-start(request)/done(request,handler_error) wraps the queued GEOM
+event. Validation/copyin precedes it and final copyout follows it; the result
+is not necessarily the final ioctl errno.
+unpcb send-wait-start(socket)/done(socket,error) observes waiting for space
+in the peer receive buffer. The socket argument is the peer buffer owner.
+autofs request-start(id)/done(id,wait_error,request_error) runs after a new or
+joined request is referenced, through waiting, before release. Multiple threads
+may share the id, so profiles pair by thread. An interrupted wait can leave an
+unfinished daemon request; request_error alone is insufficient to infer success.
+cuse command-start(command,input_length)/done(command,error) includes reply
+wait and draining process references. Error is the existing CUSE return domain,
+not necessarily a positive errno. Server closing is included. Payloads are not.
+p9fs request-start(client,type)/done(client,type,error) covers preparation,
+transport request and generic reply validation, including preparation failure.
+Operation-specific payload decoding in the caller happens later. tag-exhausted
+(client) reports alloc_unr failure before returning P9_NOTAG. No paths, user
+identities, protocol payloads or credentials are exposed.
+
+Userland contracts and installation
+----------------------------------
+ddio sync-start(fd,data_only)/done(fd,data_only,result,errno): fsync is 0,
+fdatasync is 1. errno is zero on success. This is the actual syscall duration;
+it does not promise storage hardware semantics beyond that syscall.
+cpcopy retry(source_fd,destination_fd,errno) reports the existing EINTR retry
+branch. Non-EINTR failure and fallback retain earlier contracts.
+fetchio poll-start(fd,requested_events,timeout_ms)/done(fd,returned_events,
+result,errno) wraps connect/read/write readiness polling. Result 0 is timeout,
+negative is error; returned_events is normalized to zero on a negative result
+instead of reading an unspecified field. The library still owns retry policy.
+removeio operation-start(kind)/done(kind,result,errno): kind 0 unlink, 1 rmdir.
+Recursive and nonrecursive paths, and the unlink alias, share these sites.
+Pre-stat rejection, confirmation refusal and whiteout undelete are outside them.
+modechange operation-start(mode)/done(mode,result,errno) surrounds fchmodat.
+Requested mode is not an authoritative record of final ACL permissions.
+dircreate operation-start(mode)/done(mode,result,errno) surrounds mkdir for
+parents and leaves. Existing-parent EEXIST can subsequently be accepted by -p;
+post-creation chmod failures are outside this pair.
+resizeio operation-start(fd,kind,offset,length)/done(fd,kind,result,errno): kind
+0 ftruncate (offset=0,length=new_size), kind 1 fspacectl deallocation extent.
+Open/stat/argument rejection happens before these sites.
+moveio child-start(pid)/done(requested_pid,waitpid_result,raw_wait_status,errno)
+is parent-only, outside vfork children, for the cp/rm fallback helpers. On
+wait failure status is zero, with errno separate; decode a successful wait
+status with the usual WIFEXITED/WEXITSTATUS/WIFSIGNALED conventions.
+
+New rm/chmod/mkdir/truncate providers follow MK_DTRACE; no provider sources or
+calls are required in MK_DTRACE=no builds. Existing dd/cp/mv/libfetch integration
+is extended. Normal base targets install the utilities and libfetch; the rm
+unlink alias uses the same executable. No packages or live filesystem files
+were installed by this task. Ten profiles are selected automatically by the
+bsdinstruments Makefile, with 355 total catalog entries at validation time:
+  ipc-wake-results
+  kernel-drain-waits
+  resource-pressure-waits
+  device-control-waits
+  unix-peer-pressure
+  base-file-mutations
+  copy-durability
+  fetch-readiness
+  move-child-waits
+  userspace-filesystem-requests
+
+Safety and overhead
+-------------------
+Kernel sites use existing SDT disabled NOPs and compile away without
+KDTRACE_HOOKS. No new allocations, locks, timestamp calls, buffer copies or
+logging are added to kernel probe sites. Most new sites run only when a wait
+or relatively coarse operation occurs. USDT arguments are guarded by ENABLED
+checks; wrappers restore errno. A fake provider that deliberately overwrites
+errno verifies every new USDT wrapper in enabled/disabled builds. This is a
+wrapper test, not a live DTrace firing test.
+
+Pointers are opaque identities. Profiles never save and dereference objects.
+There are no new sites in DTrace internals, early provider/bootstrap setup,
+NMI/IPI entry, CPU restore internals, pmap or allocation fast paths. Prior
+IRQ-thread and VM-object coverage retains its documented scope. These probes
+cannot reveal events occurring before DTrace providers have been registered.
+Latency includes scheduler/preemption delay. Start tracing before the workload;
+dropped records invalidate pairing. Per-thread nesting handles synchronous
+calls; PID filters refer to executing context, not always the originating app.
+
+Validation and reproduction
+---------------------------
+Artifacts: /usr/obj/5bsd-dtrace-eighth-validation
+  before/, session.patch      per-file baseline and this session's patch only
+  whole-tree-census.json       all requested kernel/userland source roots
+  kernel-census.json           earlier focused subsystem inventory
+  base-results.json           16 successful component/configuration builds
+  kernel/results.json         30 successful hooks-on/off source compiles
+  modules/results.json        seven successful loadable module links
+  kernel-link.log              final GENERIC-NODEBUG kernel link, no install
+  profile-results.json        20 plain/PID-filtered offline DTrace compilations
+  dof-results.json            eight linked USDT binaries and no-hooks counterparts
+  object-results.json         30 objects: executable SDT NOPs/relocations or absence
+  tests/results.json          146 passed, four expected failures, 46 skipped
+  smoke/results.json          22 successful guard/errno and behavior checks
+  link-results.json           final kernel/module symbol and checksum verification
+  validation.json             aggregate status and hashes
+
+Existing shell ATF suites are run against built utilities via PATH wrappers.
+Only those utility processes use the matching prepared-world libraries; host
+ATF tools retain their installed libraries. This matters because the source
+world requires newer fts symbol versions than the running host. Cases run in
+fresh temporary directories. Root/mount fixtures are explicitly skipped;
+other skips and expected failures retain the test suite's result and reason.
+The four expected failures are chmod flag/verbose cases in both modes on this
+host filesystem. They are not reported as passing assertions.
+
+The 22 smoke records cover each new USDT header's guard/errno behavior in both
+modes (16), libfetch local socketpair timeout/interruption/read/write/EOF (2),
+utility success/error and fsync/fdatasync/pipe-failure behavior (2), and mv
+cross-filesystem directory copy/remove helper waits (2). They perform no
+external network access, module loading, daemon startup or mounts.
+
+Run from /usr/src with permission to write standard /usr/obj paths and a
+prepared native amd64 world/GENERIC-NODEBUG object tree:
+  python3.12 tools/test/system-tracing/coverage-eighth-census.py
+  python3.12 tools/test/system-tracing/coverage-eighth-base.py
+  python3.12 tools/test/system-tracing/coverage-eighth-compile.py
+  python3.12 tools/test/system-tracing/coverage-eighth-modules.py
+  python3.12 tools/test/system-tracing/coverage-eighth-check.py
+  python3.12 tools/test/system-tracing/coverage-eighth-tests.py
+  python3.12 tools/test/system-tracing/coverage-eighth-smoke.py
+  make -C /usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG -j16 kernel
+
+Development builds retain the prepared world's settings; these are not package
+publication builds. All parallel compilation uses the 16 logical CPUs. No
+home-directory build/repository overrides, installation, publication, service
+changes or reboot occurred. The host lacks /dev/dtrace. Live firing, overhead,
+hardware devices, kernel runtime races and actual autofs/CUSE/9P services
+remain unverified. Source census breadth is not proof every subsystem has
+adequate probes; the explicit zero-evidence inventory is a follow-up map.

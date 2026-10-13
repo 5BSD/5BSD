@@ -42,6 +42,32 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#include "lockfile_trace.h"
+
+static int
+trace_lock_open(const char *path, int flags)
+{
+	int result;
+
+	TRACE_LOCKFILE_OPERATION__START(1, flags);
+	result = open(path, flags, 0666);
+	TRACE_LOCKFILE_OPERATION__DONE(1, flags, result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
+static int
+trace_flock(int fd, int flags)
+{
+	int result;
+
+	TRACE_LOCKFILE_OPERATION__START(0, flags);
+	result = flock(fd, flags);
+	TRACE_LOCKFILE_OPERATION__DONE(0, flags, result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 #define	FDLOCK_PREFIX	"/dev/fd/"
 
 union lock_subject {
@@ -327,12 +353,12 @@ acquire_lock(union lock_subject *subj, int flags, int silent)
 
 		if ((flags & O_NONBLOCK) == O_NONBLOCK)
 			lflags |= LOCK_NB;
-		if (flock(fd, lflags) == -1) {
+		if (trace_flock(fd, lflags) == -1) {
 			if (errno == EAGAIN || errno == EINTR)
 				return (-1);
 			err(EX_CANTCREAT, "cannot lock fd %d", fd);
 		}
-	} else if ((fd = open(subj->subj_name, O_EXLOCK|flags, 0666)) == -1) {
+	} else if ((fd = trace_lock_open(subj->subj_name, O_EXLOCK|flags)) == -1) {
 		if (errno == EAGAIN || errno == EINTR)
 			return (-1);
 		else if (errno == ENOENT && (flags & O_CREAT) == 0) {
@@ -353,7 +379,7 @@ cleanup(void)
 {
 
 	if (keep || fdlock)
-		flock(lockfd, LOCK_UN);
+		trace_flock(lockfd, LOCK_UN);
 	else
 		unlink(lockname);
 }

@@ -62,4 +62,11 @@ provider mesh {
 	probe mesh__proxy__pdu(int type, int len);
 	probe mesh__proxy__reasm(int type, int complete);
 	probe mesh__proxy__cfg(int opcode);
+	probe manager__transaction(uint16_t a0, uint32_t a1, int a2, unsigned a3);
+	probe bridge__forward(uint16_t a0, uint16_t a1, uint16_t a2, uint16_t a3);
+	probe directed__expire(uint16_t a0, uint16_t a1);
+	probe directed__control(uint8_t a0, uint64_t a1);
+	probe remote__timeout(uintptr_t a0);
+	probe remote__transfer(uintptr_t a0, uint8_t a1, uint64_t a2);
+	probe lpn__state(uint16_t a0, int a1);
 };

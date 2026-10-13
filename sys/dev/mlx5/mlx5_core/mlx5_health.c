@@ -35,6 +35,8 @@
 #include <dev/mlx5/driver.h>
 #include <dev/mlx5/mlx5_ifc.h>
 #include <dev/mlx5/mlx5_core/mlx5_core.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 
 #define	MLX5_HEALTH_POLL_INTERVAL	(2 * HZ)
 #define	MAX_MISSES			3
@@ -378,6 +380,8 @@ static void health_recover(struct work_struct *work)
 
 	/* This might likely be wrong, cut and paste from elsewhere? */
 	bus_topo_lock();
+	if (!cold)
+		DTRACE_PROBE1(mlx5__recovery__start, void *, (dev));
 
 	if (sensor_pci_no_comm(dev)) {
 		mlx5_core_err(dev,
@@ -404,6 +408,9 @@ static void health_recover(struct work_struct *work)
 		mlx5_recover_device(dev);
 	}
 
+	if (!cold)
+		DTRACE_PROBE3(mlx5__recovery__done, void *, (dev),
+		    int, (recover), int, (nic_mode));
 	bus_topo_unlock();
 }
 

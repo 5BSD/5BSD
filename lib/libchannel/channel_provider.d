@@ -15,4 +15,6 @@ provider libchannel {
 	probe complete(uint64_t token, int result);
 	probe discard(uint64_t token, uint64_t fds, uint32_t reason);
 	probe peer__death(int error, uint64_t pending);
+	probe queue__limit(uint64_t a0, uint64_t a1, uint64_t a2);
+	probe pending__limit(uint64_t a0, uint64_t a1);
 };

@@ -76,6 +76,9 @@ LIN_SDT_PROBE_DEFINE3(epoll, , deliver, "uintptr_t", "int", "uint32_t");
 LIN_SDT_PROBE_DEFINE4(epoll, , ctl__done, "int", "int", "int", "int");
 LIN_SDT_PROBE_DEFINE4(epoll, , translate, "int", "int", "uint32_t", "int");
 LIN_SDT_PROBE_DEFINE2(epoll, , wait__start, "int", "int");
+LIN_SDT_PROBE_DEFINE4(epoll, , eventfd__create, "unsigned int", "int",
+    "int", "int");
+LIN_SDT_PROBE_DEFINE4(epoll, , timerfd__create, "int", "int", "int", "int");
 LIN_SDT_PROBE_DEFINE3(epoll, , wait__done, "int", "int", "int");
 
 typedef uint64_t	epoll_udata_t;
@@ -731,11 +734,14 @@ int
 linux_eventfd2(struct thread *td, struct linux_eventfd2_args *args)
 {
 	struct specialfd_eventfd ae;
-	int flags;
+	int error, flags;
 
 	if ((args->flags & ~(LINUX_O_CLOEXEC | LINUX_O_NONBLOCK |
-	    LINUX_EFD_SEMAPHORE)) != 0)
+	    LINUX_EFD_SEMAPHORE)) != 0) {
+		LIN_SDT_PROBE4(epoll, , eventfd__create, args->initval,
+		    args->flags, -1, EINVAL);
 		return (EINVAL);
+	}
 	flags = 0;
 	if ((args->flags & LINUX_O_CLOEXEC) != 0)
 		flags |= EFD_CLOEXEC;
@@ -747,7 +753,10 @@ linux_eventfd2(struct thread *td, struct linux_eventfd2_args *args)
 	bzero(&ae, sizeof(ae));
 	ae.flags = flags;
 	ae.initval = args->initval;
-	return (kern_specialfd(td, SPECIALFD_EVENTFD, &ae));
+	error = kern_specialfd(td, SPECIALFD_EVENTFD, &ae);
+	LIN_SDT_PROBE4(epoll, , eventfd__create, args->initval, args->flags,
+	    error == 0 ? td->td_retval[0] : -1, error);
+	return (error);
 }
 
 int
@@ -758,17 +767,26 @@ linux_timerfd_create(struct thread *td, struct linux_timerfd_create_args *args)
 
 	/* Linux: only REALTIME, MONOTONIC, BOOTTIME and the ALARM clocks. */
 	error = linux_to_native_clockid(&clockid, args->clockid);
-	if (error != 0)
+	if (error != 0) {
+		LIN_SDT_PROBE4(epoll, , timerfd__create, args->clockid,
+		    args->flags, -1, EINVAL);
 		return (EINVAL);
-	if ((args->flags & ~(LINUX_TFD_CLOEXEC | LINUX_TFD_NONBLOCK)) != 0)
+	}
+	if ((args->flags & ~(LINUX_TFD_CLOEXEC | LINUX_TFD_NONBLOCK)) != 0) {
+		LIN_SDT_PROBE4(epoll, , timerfd__create, args->clockid,
+		    args->flags, -1, EINVAL);
 		return (EINVAL);
+	}
 	flags = 0;
 	if ((args->flags & LINUX_TFD_CLOEXEC) != 0)
 		flags |= O_CLOEXEC;
 	if ((args->flags & LINUX_TFD_NONBLOCK) != 0)
 		flags |= TFD_NONBLOCK;
 
-	return (kern_timerfd_create(td, clockid, flags));
+	error = kern_timerfd_create(td, clockid, flags);
+	LIN_SDT_PROBE4(epoll, , timerfd__create, args->clockid,
+	    args->flags, error == 0 ? td->td_retval[0] : -1, error);
+	return (error);
 }
 
 int

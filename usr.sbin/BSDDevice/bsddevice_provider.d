@@ -21,4 +21,5 @@ provider bsddevice {
 	 */
 	probe list(const char *label, uint32_t cursor, uint32_t count,
 	    int error);
+	probe worker__reject(int a0, int a1, uint32_t a2);
 };

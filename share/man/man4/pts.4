@@ -55,6 +55,21 @@ given to the slave device as input and anything written
 on the slave device is presented as input on the master
 device.
 .Pp
+Pseudo-terminals are allocated with
+.Xr posix_openpt 2 ,
+.Xr openpty 3 ,
+or by opening
+.Pa /dev/ptmx .
+The clone device is provided by the core driver and does not require
+loading a separate module.
+Slave devices use names of the form
+.Pa /dev/pts/N .
+The former fixed BSD names
+.Pa /dev/ptyXX
+and
+.Pa /dev/ttyXX
+are no longer provided.
+.Pp
 The following
 .Xr ioctl 2
 calls apply only to pseudo-terminals:
@@ -145,7 +160,6 @@ None.
 .Xr posix_openpt 2 ,
 .Xr grantpt 3 ,
 .Xr ptsname 3 ,
-.Xr pty 4 ,
 .Xr tty 4
 .Sh HISTORY
 A

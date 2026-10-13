@@ -49,6 +49,34 @@
 #include <regex.h>
 #include <sysexits.h>
 
+#include "splitio_trace.h"
+
+static ssize_t
+trace_write(int fd, const void *buf, size_t len)
+{
+	ssize_t result;
+
+	TRACE_SPLITIO_WRITE__START(fd, len);
+	result = write(fd, buf, len);
+	TRACE_SPLITIO_WRITE__DONE(fd, len,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
+static ssize_t
+trace_read(int fd, void *buf, size_t len)
+{
+	ssize_t result;
+
+	TRACE_SPLITIO_READ__START(fd, len);
+	result = read(fd, buf, len);
+	TRACE_SPLITIO_READ__DONE(fd, len,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 #define DEFLINE	1000			/* Default num lines per file. */
 
 static off_t	 bytecnt;		/* Byte count to split on. */
@@ -219,7 +247,7 @@ split1(void)
 	nfiles = 0;
 
 	for (bcnt = 0;;)
-		switch ((len = read(ifd, bfr, sizeof(bfr)))) {
+		switch ((len = trace_read(ifd, bfr, sizeof(bfr)))) {
 		case 0:
 			exit(0);
 		case -1:
@@ -234,7 +262,7 @@ split1(void)
 			}
 			if (bcnt + len >= bytecnt) {
 				dist = bytecnt - bcnt;
-				if (write(ofd, bfr, dist) != dist)
+				if (trace_write(ofd, bfr, dist) != dist)
 					err(EX_IOERR, "write");
 				len -= dist;
 				for (C = bfr + dist; len >= bytecnt;
@@ -243,7 +271,7 @@ split1(void)
 						newfile();
 						nfiles++;
 					}
-					if (write(ofd, C, bytecnt) != bytecnt)
+					if (trace_write(ofd, C, bytecnt) != bytecnt)
 						err(EX_IOERR, "write");
 				}
 				if (len != 0) {
@@ -251,7 +279,7 @@ split1(void)
 						newfile();
 						nfiles++;
 					}
-					if (write(ofd, C, len) != len)
+					if (trace_write(ofd, C, len) != len)
 						err(EX_IOERR, "write");
 				} else {
 					file_open = 0;
@@ -259,7 +287,7 @@ split1(void)
 				bcnt = len;
 			} else {
 				bcnt += len;
-				if (write(ofd, bfr, len) != len)
+				if (trace_write(ofd, bfr, len) != len)
 					err(EX_IOERR, "write");
 			}
 		}
@@ -305,7 +333,7 @@ split2(void)
 			newfile();
 
 		/* Write out line */
-		if (write(ofd, buf, len) != len)
+		if (trace_write(ofd, buf, len) != len)
 			err(EX_IOERR, "write");
 	}
 

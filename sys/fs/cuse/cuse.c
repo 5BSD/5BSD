@@ -45,6 +45,7 @@
 #include <sys/sx.h>
 #include <sys/rwlock.h>
 #include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/fcntl.h>
 #include <sys/proc.h>
 #include <sys/vnode.h>
@@ -62,6 +63,10 @@
 
 #include <fs/cuse/cuse_defs.h>
 #include <fs/cuse/cuse_ioctl.h>
+
+SDT_PROVIDER_DEFINE(cuse);
+SDT_PROBE_DEFINE2(cuse, , , command__start, "void *", "uint32_t");
+SDT_PROBE_DEFINE2(cuse, , , command__done, "void *", "int");
 
 /* set this define to zero to disable this feature */
 #define	CUSE_COPY_BUFFER_MAX \
@@ -558,6 +563,7 @@ cuse_client_receive_command_locked(struct cuse_client_command *pccmd,
 
 	pcs = pccmd->client->server;
 	error = 0;
+	SDT_PROBE2(cuse, , , command__start, pccmd, arg_len);
 
 	pccmd->proc_curr = curthread->td_proc;
 
@@ -593,6 +599,7 @@ done:
 	while (pccmd->proc_refs != 0)
 		cv_wait(&pccmd->cv, &pcs->mtx);
 
+	SDT_PROBE2(cuse, , , command__done, pccmd, error);
 	return (error);
 }
 

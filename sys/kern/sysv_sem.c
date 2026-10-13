@@ -81,6 +81,8 @@ static MALLOC_DEFINE(M_SEM, "sem", "SVID compatible semaphores");
  * decisions are already covered by the MAC framework's mac_sysvsem_* probes.
  */
 SDT_PROVIDER_DEFINE(sysvsem);
+SDT_PROBE_DEFINE2(sysvsem, , , semop__wake, "int", "int");
+
 SDT_PROBE_DEFINE5(sysvsem, , , semget__create, "pid_t", "key_t", "int", "int",
     "int");
 SDT_PROBE_DEFINE5(sysvsem, , , semget__lookup, "pid_t", "key_t", "int", "int",
@@ -1037,6 +1039,9 @@ sys_semget(struct thread *td, struct semget_args *uap)
 			goto done2;
 		}
 		if (nsems > seminfo.semmns - semtot) {
+			if (!cold)
+				DTRACE_PROBE2(sysvsem__limit,
+				    int, (1), int, (nsems));
 			DPRINTF((
 			    "not enough semaphores left (need %d, got %d)\n",
 			    nsems, seminfo.semmns - semtot));
@@ -1048,6 +1053,9 @@ sys_semget(struct thread *td, struct semget_args *uap)
 				break;
 		}
 		if (semid == seminfo.semmni) {
+			if (!cold)
+				DTRACE_PROBE2(sysvsem__limit,
+				    int, (2), int, (nsems));
 			DPRINTF(("no more semid_kernel's available\n"));
 			error = ENOSPC;
 			goto done2;
@@ -1058,6 +1066,9 @@ sys_semget(struct thread *td, struct semget_args *uap)
 			error = racct_add(td->td_proc, RACCT_NSEM, nsems);
 			PROC_UNLOCK(td->td_proc);
 			if (error != 0) {
+				if (!cold)
+					DTRACE_PROBE2(sysvsem__limit,
+					    int, (3), int, (nsems));
 				error = ENOSPC;
 				goto done2;
 			}
@@ -1331,6 +1342,7 @@ kern_semop(struct thread *td, int usemid, struct sembuf *usops,
 		    usemid, nsops);
 		error = msleep_sbt(semakptr, sema_mtxp, PVFS | PCATCH,
 		    "semwait", sbt, precision, C_ABSOLUTE);
+		SDT_PROBE2(sysvsem, , , semop__wake, usemid, error);
 		DPRINTF(("semop:  good morning (error=%d)!\n", error));
 		/* return code is checked below, after sem[nz]cnt-- */
 

@@ -45,6 +45,32 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "tempcreate_trace.h"
+
+static char *
+trace_mkdtemp(char *template)
+{
+	char *result;
+
+	TRACE_TEMPCREATE_OPERATION__START(1);
+	result = mkdtemp(template);
+	TRACE_TEMPCREATE_OPERATION__DONE(1, result != NULL,
+	    result == NULL ? errno : 0);
+	return (result);
+}
+
+static int
+trace_mkstemp(char *template)
+{
+	int result;
+
+	TRACE_TEMPCREATE_OPERATION__START(0);
+	result = mkstemp(template);
+	TRACE_TEMPCREATE_OPERATION__DONE(0, result >= 0,
+	    result < 0 ? errno : 0);
+	return (result);
+}
+
 static void usage(void) __dead2;
 
 static const struct option long_opts[] = {
@@ -162,7 +188,7 @@ main(int argc, char **argv)
 		}
 
 		if (dflag) {
-			if (mkdtemp(name) == NULL) {
+			if (trace_mkdtemp(name) == NULL) {
 				ret = 1;
 				if (!qflag)
 					warn("mkdtemp failed on %s", name);
@@ -172,7 +198,7 @@ main(int argc, char **argv)
 					rmdir(name);
 			}
 		} else {
-			fd = mkstemp(name);
+			fd = trace_mkstemp(name);
 			if (fd < 0) {
 				ret = 1;
 				if (!qflag)

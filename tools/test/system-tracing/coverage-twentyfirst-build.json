@@ -1,0 +1,8 @@
+{
+  "mac_abac": [
+    "sys/security/mac_abac/abac_rules.c"
+  ],
+  "oes": [
+    "sys/security/oes/oes_event.c"
+  ]
+}

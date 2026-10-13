@@ -49,6 +49,19 @@
 #include <unistd.h>
 #include <libxo/xo.h>
 
+#include "diskspace_trace.h"
+
+static int
+trace_statfs(const char *path, struct statfs *st)
+{
+	int result;
+
+	TRACE_DISKSPACE_OPERATION__START(0);
+	result = statfs(path, st);
+	TRACE_DISKSPACE_OPERATION__DONE(0, result, result < 0 ? errno : 0);
+	return (result);
+}
+
 #define UNITS_SI	1
 #define UNITS_2		2
 
@@ -230,7 +243,7 @@ main(int argc, char *argv[])
 		 * Statfs does not take a `wait' flag, so we cannot
 		 * implement nflag here.
 		 */
-		if (statfs(mntpt, &statfsbuf) < 0) {
+		if (trace_statfs(mntpt, &statfsbuf) < 0) {
 			xo_warn("%s", mntpt);
 			rv = EXIT_FAILURE;
 			continue;
@@ -387,7 +400,7 @@ regetmntinfo(struct statfs **mntbufp, long mntsize)
 		 * pathname, if this happens, we will fall back on
 		 * "stale" filesystem statistics.
 		 */
-		error = statfs(mntbuf[i].f_mntonname, &mntbuf[j]);
+		error = trace_statfs(mntbuf[i].f_mntonname, &mntbuf[j]);
 		if (nflag || error < 0)
 			if (i != j) {
 				if (error < 0)

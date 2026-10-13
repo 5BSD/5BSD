@@ -62,7 +62,6 @@ device		ath_rate_sample
 device		loop
 device		ether
 device		tuntap
-device		pty
 device		md
 device		gif
 device		firmware

@@ -42,6 +42,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "priorityop_trace.h"
+
+static int
+trace_setpriority(int which, int who, int priority)
+{
+	int result;
+
+	TRACE_PRIORITYOP_OPERATION__START(which, who, priority);
+	result = setpriority(which, who, priority);
+	TRACE_PRIORITYOP_OPERATION__DONE(which, who, priority, result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 static int	donice(int, int, int, bool);
 static int	getnum(const char *, const char *, int *);
 static void	usage(void);
@@ -139,7 +153,7 @@ donice(int which, int who, int prio, bool incr)
 		prio = PRIO_MAX;
 	if (prio < PRIO_MIN)
 		prio = PRIO_MIN;
-	if (setpriority(which, who, prio) < 0) {
+	if (trace_setpriority(which, who, prio) < 0) {
 		warn("%d: setpriority", who);
 		return (1);
 	}

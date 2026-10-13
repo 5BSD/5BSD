@@ -13,6 +13,7 @@
  */
 
 #include <sys/endian.h>
+#include "mesh_probes.h"
 #include <sys/stat.h>
 
 #include <fcntl.h>
@@ -1926,6 +1927,8 @@ mesh_mgr_txn_begin(struct mesh_mgr *mgr, struct mesh_mgr_txn *t,
 	t->attempts = 1;
 	t->deadline = now + interval;
 	t->state = MESH_MGR_TXN_WAITING;
+	MESH_PROBE_MANAGER__TRANSACTION(t->node_addr, t->expect_opcode,
+	    t->state, t->attempts);
 	if (out_seq != NULL)
 		*out_seq = seq;
 	return (0);
@@ -1959,6 +1962,8 @@ mesh_mgr_txn_rx(struct mesh_mgr_txn *t, const struct mesh_mgr *mgr,
 	memcpy(t->status, access, alen);
 	t->status_len = alen;
 	t->state = MESH_MGR_TXN_COMPLETE;
+	MESH_PROBE_MANAGER__TRANSACTION(t->node_addr, t->expect_opcode,
+	    t->state, t->attempts);
 	return (1);
 }
 
@@ -1980,6 +1985,8 @@ mesh_mgr_txn_tick(struct mesh_mgr *mgr, struct mesh_mgr_txn *t,
 	/* Retry due: stop if the bounded budget is spent (cannot loop forever). */
 	if (t->attempts >= t->max_attempts) {
 		t->state = MESH_MGR_TXN_TIMEOUT;
+		MESH_PROBE_MANAGER__TRANSACTION(t->node_addr, t->expect_opcode,
+		    t->state, t->attempts);
 		return (0);
 	}
 
@@ -1989,6 +1996,8 @@ mesh_mgr_txn_tick(struct mesh_mgr *mgr, struct mesh_mgr_txn *t,
 		return (-1);
 	t->last_seq = seq;
 	t->attempts++;
+	MESH_PROBE_MANAGER__TRANSACTION(t->node_addr, t->expect_opcode,
+	    t->state, t->attempts);
 	t->deadline = now + t->interval;
 	if (out_seq != NULL)
 		*out_seq = seq;

@@ -1,0 +1,471 @@
+{
+  "probes": [
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_eventfd.c",
+      "provider": "eventfd",
+      "module": "",
+      "function": "",
+      "name": "read-wait-start",
+      "types": [
+        "void *"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_eventfd.c",
+      "provider": "eventfd",
+      "module": "",
+      "function": "",
+      "name": "read-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_eventfd.c",
+      "provider": "eventfd",
+      "module": "",
+      "function": "",
+      "name": "write-wait-start",
+      "types": [
+        "void *"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_eventfd.c",
+      "provider": "eventfd",
+      "module": "",
+      "function": "",
+      "name": "write-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_eventfd.c",
+      "provider": "eventfd",
+      "module": "",
+      "function": "",
+      "name": "read-copy-start",
+      "types": [
+        "void *"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_eventfd.c",
+      "provider": "eventfd",
+      "module": "",
+      "function": "",
+      "name": "read-copy-done",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_eventfd.c",
+      "provider": "eventfd",
+      "module": "",
+      "function": "",
+      "name": "read-state",
+      "types": [
+        "void *",
+        "uint64_t",
+        "uint64_t"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_timerfd.c",
+      "provider": "timerfd",
+      "module": "",
+      "function": "",
+      "name": "read-wait-start",
+      "types": [
+        "void *"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_timerfd.c",
+      "provider": "timerfd",
+      "module": "",
+      "function": "",
+      "name": "read-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_timerfd.c",
+      "provider": "timerfd",
+      "module": "",
+      "function": "",
+      "name": "read-copy-start",
+      "types": [
+        "void *"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_timerfd.c",
+      "provider": "timerfd",
+      "module": "",
+      "function": "",
+      "name": "read-copy-done",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_timerfd.c",
+      "provider": "timerfd",
+      "module": "",
+      "function": "",
+      "name": "fd-alloc-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_timerfd.c",
+      "provider": "timerfd",
+      "module": "",
+      "function": "",
+      "name": "fd-alloc-done",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_timerfd.c",
+      "provider": "timerfd",
+      "module": "",
+      "function": "",
+      "name": "read-reset",
+      "types": [
+        "void *",
+        "int",
+        "uint64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_sem.c",
+      "provider": "posixsem",
+      "module": "",
+      "function": "",
+      "name": "allocate",
+      "types": [
+        "void *",
+        "unsigned int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_sem.c",
+      "provider": "posixsem",
+      "module": "",
+      "function": "",
+      "name": "release",
+      "types": [
+        "void *"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_sem.c",
+      "provider": "posixsem",
+      "module": "",
+      "function": "",
+      "name": "limit",
+      "types": [
+        "unsigned int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_sem.c",
+      "provider": "posixsem",
+      "module": "",
+      "function": "",
+      "name": "access",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_sem.c",
+      "provider": "posixsem",
+      "module": "",
+      "function": "",
+      "name": "wait-start",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_sem.c",
+      "provider": "posixsem",
+      "module": "",
+      "function": "",
+      "name": "wait-done",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_sem.c",
+      "provider": "posixsem",
+      "module": "",
+      "function": "",
+      "name": "sleep-start",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_sem.c",
+      "provider": "posixsem",
+      "module": "",
+      "function": "",
+      "name": "sleep-done",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_sem.c",
+      "provider": "posixsem",
+      "module": "",
+      "function": "",
+      "name": "post",
+      "types": [
+        "void *",
+        "unsigned int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_sem.c",
+      "provider": "posixsem",
+      "module": "",
+      "function": "",
+      "name": "value",
+      "types": [
+        "void *",
+        "unsigned int",
+        "unsigned int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_gif.c",
+      "provider": "giftunnel",
+      "module": "",
+      "function": "",
+      "name": "control-start",
+      "types": [
+        "void *",
+        "unsigned long"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_gif.c",
+      "provider": "giftunnel",
+      "module": "",
+      "function": "",
+      "name": "control-done",
+      "types": [
+        "void *",
+        "unsigned long",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_gif.c",
+      "provider": "giftunnel",
+      "module": "",
+      "function": "",
+      "name": "access",
+      "types": [
+        "void *",
+        "unsigned long",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_gre.c",
+      "provider": "gretunnel",
+      "module": "",
+      "function": "",
+      "name": "control-start",
+      "types": [
+        "void *",
+        "unsigned long"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_gre.c",
+      "provider": "gretunnel",
+      "module": "",
+      "function": "",
+      "name": "control-done",
+      "types": [
+        "void *",
+        "unsigned long",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_gre.c",
+      "provider": "gretunnel",
+      "module": "",
+      "function": "",
+      "name": "access",
+      "types": [
+        "void *",
+        "unsigned long",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_vxlan.c",
+      "provider": "vxlanctl",
+      "module": "",
+      "function": "",
+      "name": "control-start",
+      "types": [
+        "void *",
+        "unsigned long"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_vxlan.c",
+      "provider": "vxlanctl",
+      "module": "",
+      "function": "",
+      "name": "control-done",
+      "types": [
+        "void *",
+        "unsigned long",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_vxlan.c",
+      "provider": "vxlanctl",
+      "module": "",
+      "function": "",
+      "name": "access",
+      "types": [
+        "void *",
+        "unsigned long",
+        "int"
+      ]
+    }
+  ],
+  "profiles": [
+    "kernel-sem-resources",
+    "kernel-sem-waits",
+    "kernel-sem-decisions",
+    "kernel-counterfd-waits",
+    "kernel-counterfd-io",
+    "kernel-tunnel-controls"
+  ],
+  "dependencies": [],
+  "sources": {
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-counterfd-io.d": "5c58141ac5f414a9ae5b02d9062b01e69b6ba1e7a125451525ce2caf6e6b7a5f",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-counterfd-waits.d": "2b4abe9929895220e0cd8854e30ef03565c2535036ab2ba871f82f3f7f50b3a1",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-sem-decisions.d": "e98ef27de72a4eba265f30e56038a7a4831201238b0c4db9438b9f19e6d96f61",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-sem-resources.d": "b2cc742c4e47cf302477304fb05c462080e93034d6fdd188efa0265fdc8c4488",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-sem-waits.d": "4747e85803ad6ac9f24b44a4a01cc8f3b1b92c6dbe6c2f4438c45e081284c594",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-tunnel-controls.d": "8d2196b44d27788ce300112b6a1e8e120023ac7faf7eeb74604822fc16f3f597",
+    "sys/kern/sys_eventfd.c": "f39d51ecd862adb9f3720a4eb96cf674ebc661024a8592bd998654ccb4d88e15",
+    "sys/kern/sys_timerfd.c": "d4503b34953271aa75f1cbde9182b824c0df4909785d31dc41a9b5ef6733b37d",
+    "sys/kern/uipc_sem.c": "1629931cd04f9424179e06506bf3e2f6dce4cb570e70bd03ae5e1fe548cbec5d",
+    "sys/net/if_gif.c": "82ec2487ffe190552411d9267f94ae9716459f40b3a4d8fe1197e5bdc4247471",
+    "sys/net/if_gre.c": "f29a7512eaeba3cc4fd8b68d8157af1504be4392d5c799084cdc274009c2267d",
+    "sys/net/if_vxlan.c": "c594c50d91e1e236cfe544ecf9fc0ba82cba2a60e06ed73a0134de0a0baeb99a",
+    "tools/test/system-tracing/COVERAGE-ELEVENTH": "513bab3aecef394297dc8b864e3913b90b8b7f078a9ceecbe083213e611c6c61",
+    "tools/test/system-tracing/README": "011f0caff563b1fb213d881bd81a812aa6ef0d0526c0ce60026809a857f9d304",
+    "tools/test/system-tracing/coverage-eleventh-check.py": "c01a6d49c27d9b6948c161afae654c1ac33c9c8030072727be4b37b762485652",
+    "tools/test/system-tracing/coverage-eleventh-compile.py": "027a59f90bbe95e3e99679e9ca280460d72437093674a5ce0100e1eb69fcff82",
+    "tools/test/system-tracing/coverage-eleventh-modules.py": "3beb49e7bbc4332b5e18213a97084884cc189deae67621878667345d902b7aa0",
+    "tools/test/system-tracing/coverage-eleventh-variants.py": "4a810f97074bd5a7a1e7b57b595b6ce2b0dd3677bd6ecc18ea70fea76d727733"
+  },
+  "categories": {
+    "lifecycle": [
+      "posixsem allocate/release",
+      "giftunnel/gretunnel/vxlanctl control"
+    ],
+    "latency": [
+      "paired control, wait, sleep, copy and fd allocation"
+    ],
+    "errors": [
+      "paired results, semaphore post/limit, timer cancellation"
+    ],
+    "resources": [
+      "posixsem allocate/release/limit",
+      "timerfd fd allocation"
+    ],
+    "io": [
+      "eventfd/timerfd read copyout phases"
+    ],
+    "network": [
+      "GIF/GRE/VXLAN administrative controls"
+    ],
+    "synchronization": [
+      "eventfd read/write sleeps",
+      "timerfd read sleep",
+      "POSIX semaphore waits"
+    ],
+    "access-control": [
+      "semaphore DAC/privilege override result",
+      "tunnel privilege checks"
+    ],
+    "counters-state": [
+      "semaphore old/new values",
+      "eventfd read counter consumption",
+      "timerfd read reset"
+    ]
+  }
+}

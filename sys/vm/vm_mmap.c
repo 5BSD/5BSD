@@ -113,6 +113,15 @@ SDT_PROBE_DECLARE(capsicum, , , mmap__capmode__deny);
  * observability only: no control-flow or locking changes.
  */
 SDT_PROVIDER_DECLARE(vm);
+/* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
+SDT_PROBE_DEFINE2(vm, , , sync__map__start,
+    "size_t", "int");
+SDT_PROBE_DEFINE1(vm, , , sync__map__done,
+    "int");
+SDT_PROBE_DEFINE1(vm, , , wire__map__start,
+    "size_t");
+SDT_PROBE_DEFINE1(vm, , , wire__map__done,
+    "int");
 /* mmap: pid, addr, len, prot, flags, error */
 SDT_PROBE_DEFINE6(vm, , , mmap, "pid_t", "vm_offset_t", "vm_size_t", "int",
     "int", "int");
@@ -603,8 +612,10 @@ kern_msync(struct thread *td, uintptr_t addr0, size_t size, int flags)
 	/*
 	 * Clean the pages and interpret the return value.
 	 */
+	SDT_PROBE2(vm, , , sync__map__start, (size), (flags));
 	rv = vm_map_sync(map, addr, addr + size, (flags & MS_ASYNC) == 0,
 	    (flags & MS_INVALIDATE) != 0);
+	SDT_PROBE1(vm, , , sync__map__done, (rv));
 
 	SDT_PROBE4(vm, , , msync, td->td_proc->p_pid, addr, size, flags);
 
@@ -1193,8 +1204,10 @@ kern_mlock(struct proc *proc, struct ucred *cred, uintptr_t addr0, size_t len)
 			return (ENOMEM);
 	}
 #endif
+	SDT_PROBE1(vm, , , wire__map__start, (end - start));
 	error = vm_map_wire(map, start, end,
 	    VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
+	SDT_PROBE1(vm, , , wire__map__done, (error));
 #ifdef RACCT
 	if (racct_enable && error != KERN_SUCCESS) {
 		PROC_LOCK(proc);

@@ -15,6 +15,7 @@
  */
 
 #include <sys/types.h>
+#include "mesh_probes.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -722,6 +723,7 @@ mesh_fq_poll(struct mesh_friend_queue *q, int fsn,
 
 	if (q == NULL || out == NULL || (fsn != 0 && fsn != 1))
 		return (-1);
+	MESH_PROBE_MESH__FRIEND__POLL(q->lpn_addr, fsn);
 	memset(out, 0, sizeof(*out));
 
 	/*

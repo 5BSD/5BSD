@@ -45,7 +45,7 @@
 The function
 .Fn openpty
 attempts to obtain the next available pseudo-terminal from the system (see
-.Xr pty 4 ) .
+.Xr pts 4 ) .
 If it successfully finds one, it subsequently changes the
 ownership of the slave device to the real UID of the current process,
 the group membership to the group
@@ -138,7 +138,7 @@ may set it to any value as described for
 .Xr open 2 ,
 .Xr revoke 2 ,
 .Xr login_tty 3 ,
-.Xr pty 4 ,
+.Xr pts 4 ,
 .Xr termios 4 ,
 .Xr group 5
 .Sh HISTORY

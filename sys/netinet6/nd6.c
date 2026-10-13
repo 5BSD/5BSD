@@ -80,7 +80,12 @@
 
 #include <sys/limits.h>
 
+
 #include <security/mac/mac_framework.h>
+
+SDT_PROVIDER_DEFINE(ndp);
+/* Setter invocations, including same-state updates; no address payload. */
+SDT_PROBE_DEFINE3(ndp, , , state, "struct llentry *", "int", "int");
 
 #define	ND6_PREFIX_WITH_ROUTER(pr)	!LIST_EMPTY(&(pr)->ndpr_advrtrs)
 
@@ -756,6 +761,7 @@ nd6_llinfo_setstate(struct llentry *lle, int newstate)
 		nd6_llinfo_settimer_locked(lle, delay);
 
 	lle->lle_remtime = remtime;
+	SDT_PROBE3(ndp, , , state, lle, lle->ln_state, newstate);
 	lle->ln_state = newstate;
 }
 

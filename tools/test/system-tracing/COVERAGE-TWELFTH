@@ -1,0 +1,223 @@
+PF AND ZFS DTRACE COVERAGE: TWELFTH EXPANSION
+===========================================
+
+21 new contracts across five runtime sources, plus one newly connected path
+for the existing zfs:::access contract. Seven base-install profiles. This is
+a focused nine-category PF/ZFS expansion, not complete networking/storage or
+complete PF/OpenZFS coverage.
+
+History and existing coverage
+----------------------------
+Reviewed PF source-limiter capacity fix 9e33f72d94e: address-entry exhaustion
+must honor PF_LIMITER_BLOCK; explicit fallthrough remains unchanged. The new
+sites observe those decisions without altering counters, rule selection,
+block reasons, limiter policy or recovery behavior. Existing rule/state,
+translation, Dummynet and route probes are retained rather than duplicated.
+
+Existing OpenZFS ARC hit/miss/eviction, ZIL error and TXG lifecycle probes are
+retained. New wait boundaries complement them. The FreeBSD access completion
+probe existed, but the successful VEXEC shortcut returned before it; that
+ordinary VOP access path now emits the same contract. No site is added to the
+special SMR fast-lookup permission path.
+
+Consulted /home/koryheard/5bsd-issues/2026-10-03-zfs-lock-order-reversal.md,
+including its 2026-10-12 diagnosis: the recorded cycle was fixed by removing
+the procdesc/proctree edge in 425f274a444. These changes add no lock acquisition
+and are not another fix for that incident or the separate tmpfs report.
+
+Nine-category mapping
+---------------------
+lifecycle: ZIL waiter allocate/release; DMU assignment start/done
+performance: DMU assignment; dirty/dnode waits; TXG wait; ZIL commit waiter; FreeBSD vnode read/write
+errors: PF limiter rejection reasons; DMU attempt and terminal errors; TXG EINTR/ESHUTDOWN; ZIL waiter error/issuance timeout; vnode errno
+resources: PF states/source entries/rate budget pressure; ZFS dirty-data limit wait; ZIL waiter allocation/release
+io: ZFS vnode requested offset/length and completion residual/errno
+network: PF state/source limiter decisions and eligibility
+synchronization: ZFS dirty-data/dnode/TXG/ZIL waits
+access-control: PF block versus fallthrough; existing ZFS access probe connected to successful execute shortcut
+counters-state: PF pressure/eligibility events; ZFS dirty bytes and assigned/synced transaction-group progress
+
+PF limiter contracts and scope
+------------------------------
+pf:ip:limiter:decision(kind, id, rule_number, reason, configured_action, block)
+  kind: 0 state limiter, 1 source limiter.
+  reason: 0 missing limiter, 1 hard state limit, 2 rate limit,
+          3 source-address entry capacity.
+  block: 1 for the PF_LIMITER_BLOCK branch, 0 for rule fallthrough.
+  Missing limiters preserve existing PF_TEST_ATTRIB fallthrough regardless
+  of configured action; the event reports block=0 and never dereferences
+  the absent limiter. No firewall policy is changed.
+  Seven source sites cover two missing-limiter cases, state hard/rate limits,
+  source hard/rate limits and the new source-entry capacity branch.
+
+pf:ip:limiter:pressure(kind, id, reason, observed, threshold, configured_action)
+  Five source sites, on the hard/rate/capacity rejection branches only.
+  Hard-limit values are states, capacity values are source entries, and rate
+  values are elapsed nanoseconds versus the token interval. Samples add no
+  locking and should not be treated as an atomic multi-field snapshot beyond
+  the original path's synchronization guarantees. Missing limiters have no
+  pressure event because there is no object to read.
+
+pf:ip:limiter:eligible(kind, id, rule_number)
+  One site after each limiter's checks pass. This is NOT packet admission or
+  successful state allocation: later packet-rate checks, rules and other
+  stages can still reject the packet. It permits correlating rejection and
+  renewed eligibility without inventing a persistent recovery state.
+
+These sites execute in PF's existing rule-test context and may be high
+volume. No packet buffers, IP addresses, ports, limiter names or payloads
+are copied. The profile groups decisions by numeric identifiers/reasons and
+uses pressure histograms rather than an aggregation key for every value.
+
+ZFS contracts and scope
+-----------------------
+sdt:::dmu-assign-start(tx, flags) / done(tx, assigned_txg, error)
+  Enclose assignment attempts and their waits after initial setup. Failure
+  uses assigned_txg=0; success uses the actual assigned txg. Both return
+  sites are verified. dmu-assign-retry(tx, attempt_error) records a failed
+  try_assign before normalization/unassignment; it can precede a terminal
+  return, so its name does not promise another attempt. Done reports the
+  final ERESTART/EIO/ENOSPC/EDQUOT or success as returned by the original code.
+
+sdt:::dmu-dirty-wait-start(pool, dirty_bytes, limit_bytes)
+  / done(pool, remaining_dirty_bytes)
+  Surround each actual condition-variable sleep at the dirty-data maximum.
+  Observations are under dp_lock; wake completion includes reacquisition.
+  This does not cover every throttle/delay path or assert that pressure is
+  resolved after one wake. Existing delay-mintime instrumentation remains.
+
+sdt:::dmu-dnode-wait-start(dnode, assigned_txg)
+  / done(dnode, assigned_txg)
+  Surround each assignment-conflict sleep under dn_mtx. Done is a wake, not
+  proof that the next loop test permits assignment.
+
+sdt:::txg-wait-start(pool, target_txg, flags)
+  / done(pool, target_txg, synced_txg, error)
+  Cover the sync wait after acquiring tx_sync_lock and resolving a zero
+  target. Include repeated sleeps and EINTR/ESHUTDOWN; exclude initial mutex
+  acquisition. An already-satisfied target produces a short successful pair.
+
+sdt:::zil-wait-start(zilog, waiter) / done(zilog, waiter, error)
+  Cover the commit waiter including its initial mutex acquisition. Completion
+  reads the final waiter error under the lock. It is not a direct fsync return
+  contract: callers can fall back to TXG syncing. zil-wait-timeout(zilog,
+  waiter) marks an issuance timeout that invokes the existing timeout helper;
+  it is not a storage I/O failure. No potentially freed LWB is dereferenced.
+  zil-waiter-allocate(waiter) runs after full initialization; release(waiter)
+  runs before cache free and exposes identity only, after private teardown.
+
+sdt:::zfs-vop-read-start / zfs-vop-write-start(vnode, offset, length, flags)
+  / done(vnode, residual_length, error)
+  Surround the FreeBSD zfs_read/zfs_write calls. Length/residual reveal short
+  transfers; errors include their original direct-I/O/user-copy failures.
+  These are vnode operation boundaries, not physical device I/O completion
+  or stable-storage guarantees. No extra clock reads or payload copies occur.
+
+zfs:::access(object_id, access_mode, credential_pointer, error)
+  Existing contract, unchanged argument order. Successful ordinary VEXEC
+  shortcut now emits it once with error=0. Other paths still emit the existing
+  final result. The supplied profile reads only mode and errno; it does not
+  dereference the credential pointer or collect credentials.
+
+Exact new definitions
+---------------------
+pf:ip:limiter:decision(int, uint32_t, uint32_t, int, int, int)
+pf:ip:limiter:pressure(int, uint32_t, int, uint64_t, uint64_t, int)
+pf:ip:limiter:eligible(int, uint32_t, uint32_t)
+sdt:::dmu-assign-start(dmu_tx_t *, int)
+sdt:::dmu-assign-retry(dmu_tx_t *, int)
+sdt:::dmu-assign-done(dmu_tx_t *, uint64_t, int)
+sdt:::dmu-dirty-wait-start(dsl_pool_t *, uint64_t, uint64_t)
+sdt:::dmu-dirty-wait-done(dsl_pool_t *, uint64_t)
+sdt:::dmu-dnode-wait-start(dnode_t *, uint64_t)
+sdt:::dmu-dnode-wait-done(dnode_t *, uint64_t)
+sdt:::txg-wait-start(dsl_pool_t *, uint64_t, int)
+sdt:::txg-wait-done(dsl_pool_t *, uint64_t, uint64_t, int)
+sdt:::zil-wait-start(zilog_t *, zil_commit_waiter_t *)
+sdt:::zil-wait-done(zilog_t *, zil_commit_waiter_t *, int)
+sdt:::zil-wait-timeout(zilog_t *, zil_commit_waiter_t *)
+sdt:::zil-waiter-allocate(zil_commit_waiter_t *)
+sdt:::zil-waiter-release(zil_commit_waiter_t *)
+sdt:::zfs-vop-read-start(vnode_t *, int64_t, uint64_t, int)
+sdt:::zfs-vop-read-done(vnode_t *, uint64_t, int)
+sdt:::zfs-vop-write-start(vnode_t *, int64_t, uint64_t, int)
+sdt:::zfs-vop-write-done(vnode_t *, uint64_t, int)
+
+Backend and context safety
+--------------------------
+Shared OpenZFS sources use trace_bsd.h forwarding macros only in FreeBSD kernel
+builds. Other platforms and userland discard the calls and their arguments:
+Linux tracing requires separately declared events, so these additions must
+not introduce undefined Linux tracepoint calls. The FreeBSD vnode source uses
+its existing DTRACE_PROBE convention. No upstream Linux runtime coverage or
+cross-platform build validation is claimed; the foreign guard test tests only
+that preprocessing branch. Base libzpool's three affected shared sources build.
+
+There are no new sites in early initialization, hard interrupt filters,
+NMI/IPI handlers, DTrace internals or allocator internals. The PF sites are
+in the normal packet rule path, so enable them selectively. ZFS wait/state
+observations use existing object ownership and locks; no new locking is
+introduced. Profiles never dereference kernel pointers. Native inactive SDT
+patchpoints are NOPs; compiled-out configurations have no new probe symbols.
+Enabled tracing still costs time and should not be described as overhead-free.
+
+Profiles and installation
+-------------------------
+  pf-limiter-decisions
+  zfs-assignment-phases
+  zfs-pressure-waits
+  zfs-sync-waits
+  zfs-log-waiters
+  zfs-vnode-io
+  zfs-access-outcomes
+
+The existing bsdinstruments Makefile selects all seven profiles for the base
+bsdinstruments package under /usr/share/bsdinstruments/profiles. The catalog
+contains 388 entries. No utility executable, package publication or system
+installation is required to review these source changes.
+
+Paired profiles use per-pid/tid depth and timestamps, clear completed entries,
+and aggregate elapsed microseconds. Start before workload; lost events can
+invalidate pairing. PID filtering selects the current execution context,
+not the process owning a packet, pool or asynchronous I/O. Resource allocation
+counts are events since tracing started, not a complete live-object census.
+
+Validation and reproduction
+---------------------------
+Artifact root: /usr/obj/5bsd-dtrace-twelfth-validation
+Prepared kernel: /usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG
+Prepared world sysroot: /usr/obj/usr/src/amd64.amd64/tmp
+Runners: coverage-twelfth-{modules,compile,base,guards,codegen,check}.py
+All compilation uses the available CPUs (-j16 here). Module-source checks use
+the modules' real flags, including OpenZFS's existing per-source suppressions.
+An initial raw flag query omitted those suppressions; it was corrected rather
+than changing unrelated imported code or lowering the module's warning policy.
+
+  Two native module links: pf.ko and zfs.ko, with new probe-symbol verification.
+  Ten source builds: five kernel sources, KDTRACE_HOOKS enabled and disabled.
+  Ten executable-object checks: real NOP sites and compiled-out absence;
+    all seven PF decisions, five pressure sites, two eligibility sites, both
+    DMU completion sites and both ZFS access completion sites checked.
+  Three base libzpool object builds: dmu_tx.o, txg.o and zil.o.
+  Three backend guard checks: FreeBSD kernel forwarding, userland no-op,
+    and foreign-kernel no-op with no argument evaluation.
+  Fourteen offline profile compilations: normal and PID/duration filtered,
+    plus exact selector/argument contracts and base installation selection.
+  Two additional PF baseline/current compilations with diagnostic __FILE__
+    and __LINE__ normalized: their executable .text bytes match. The raw
+    comparison retained equal size but differed in diagnostic line constants;
+    both results are retained. This limited code-generation check is not a
+    runtime correctness or packet-performance benchmark.
+
+PF and ZFS are modules in the prepared kernel's selected object list, so the
+new code is validated by module links; no new monolithic kernel link is claimed.
+Nothing was loaded, installed, booted or mounted. /dev/dtrace is unavailable,
+so live firing, existing PF limiter traffic regressions and ZFS storage/stress
+regressions were not run against these modules. No pool state, firewall rules,
+network configuration or storage devices were changed.
+
+Remaining gaps include PF limiter administration and broader shaping/NAT64
+qualification, ZFS scrub/resilver/trim/import/recovery and device-specific I/O,
+and comprehensive hardware/runtime validation. Existing upstream probes in
+those areas are not proof that all nine categories are complete. The manifest
+and session-only reverse-checked patch preserve the exact reviewed snapshot.

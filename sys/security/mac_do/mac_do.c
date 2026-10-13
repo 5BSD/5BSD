@@ -33,6 +33,11 @@
 #include <sys/vnode.h>
 
 #include <security/mac/mac_policy.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(mac_do);
+SDT_PROBE_DEFINE4(mac_do, , , configuration, "int", "bool", "bool", "int");
+SDT_PROBE_DEFINE4(mac_do, , , rule__grant, "uid_t", "uid_t", "u_int", "int");
 
 
 #ifdef INVARIANTS
@@ -1522,6 +1527,8 @@ parse_and_set_conf(struct prison *const pr, const char *const rules_string,
 
 	MPASS(error == 0 && *parse_error == NULL);
 out:
+	SDT_PROBE4(mac_do, , , configuration, pr->pr_id, (rules_string != NULL),
+	    (exec_paths_string != NULL), error);
 	drop_conf(conf);
 	return (error);
 error:
@@ -2492,6 +2499,8 @@ mac_do_priv_grant(struct ucred *cred, int priv)
 	STAILQ_FOREACH(rule, &rules->head, r_entries)
 	    if (rule_applies(rule, cred)) {
 		    error = rule_grant_setcred(rule, cred, new_cred);
+		    SDT_PROBE4(mac_do, , , rule__grant, cred->cr_uid,
+		        new_cred->cr_uid, setcred_flags, error);
 		    if (error != EPERM)
 			    break;
 	    }

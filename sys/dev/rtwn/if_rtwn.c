@@ -25,6 +25,8 @@
 #include "opt_wlan.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/sockio.h>
 #include <sys/sysctl.h>
 #include <sys/lock.h>
@@ -1479,6 +1481,8 @@ rtwn_watchdog(void *arg)
 
 	if (sc->sc_tx_timer != 0 && --sc->sc_tx_timer == 0) {
 		ic_printf(ic, "device timeout\n");
+		if (!cold)
+			DTRACE_PROBE1(rtwn__watchdog__expired, void *, (sc));
 		ieee80211_restart_all(ic);
 		return;
 	}
@@ -1919,6 +1923,8 @@ rtwn_init(struct rtwn_softc *sc)
 		RTWN_UNLOCK(sc);
 		return (0);
 	}
+	if (!cold)
+		DTRACE_PROBE1(rtwn__init__start, void *, (sc));
 	sc->sc_flags |= RTWN_STARTED;
 
 	/* Power on adapter. */
@@ -2053,6 +2059,8 @@ rtwn_init(struct rtwn_softc *sc)
 
 	sc->sc_flags |= RTWN_RUNNING;
 fail:
+	if (!cold)
+		DTRACE_PROBE2(rtwn__init__done, void *, (sc), int, (error));
 	RTWN_UNLOCK(sc);
 
 	return (error);

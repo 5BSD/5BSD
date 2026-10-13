@@ -79,6 +79,7 @@
 #include "bsdextension.h"
 #include "bsdextension_reclaim.h"
 #include "bsdextension_probes.h"
+#include "trace_pressure.h"
 
 /*
  * The kernel-module allow-list.  Loading is default-deny by name: only a module
@@ -1109,6 +1110,7 @@ sysext_serve(void)
 			 * keep serving; back off on fd exhaustion so the loop does
 			 * not spin.
 			 */
+			BSDEXTENSION_TRACE_ACCEPT_RETRY(error);
 			if (error == EMFILE || error == ENFILE)
 				(void)usleep(100000);
 			if (error != EINTR)
@@ -1127,6 +1129,7 @@ sysext_serve(void)
 		 */
 		if (atomic_load_explicit(&sysext_nthreads,
 		    memory_order_relaxed) >= SYSEXT_MAX_CLIENTS) {
+			BSDEXTENSION_TRACE_WORKER_REJECT(1, ENOSPC);
 			syslog(LOG_WARNING, "client from %s refused: %u sessions "
 			    "already active", id.client_label, SYSEXT_MAX_CLIENTS);
 			(void)close(fd);
@@ -1134,6 +1137,7 @@ sysext_serve(void)
 		}
 		c = malloc(sizeof(*c));
 		if (c == NULL) {
+			BSDEXTENSION_TRACE_WORKER_REJECT(2, errno);
 			syslog(LOG_WARNING, "client alloc: %m");
 			(void)close(fd);
 			continue;
@@ -1153,6 +1157,7 @@ sysext_serve(void)
 		if (error != 0) {
 			(void)atomic_fetch_sub_explicit(&sysext_nthreads, 1,
 			    memory_order_relaxed);
+			BSDEXTENSION_TRACE_WORKER_REJECT(3, error);
 			syslog(LOG_ERR, "pthread_create: %s", strerror(error));
 			(void)close(fd);
 			free(c);

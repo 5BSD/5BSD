@@ -46,6 +46,34 @@
 #include <libcasper.h>
 #include <casper/cap_fileargs.h>
 
+#include "elfbrand_trace.h"
+
+static ssize_t
+trace_write(int fd, const void *buf, size_t len)
+{
+	ssize_t result;
+
+	TRACE_ELFBRAND_WRITE__START(fd, len);
+	result = write(fd, buf, len);
+	TRACE_ELFBRAND_WRITE__DONE(fd, len,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
+static ssize_t
+trace_read(int fd, void *buf, size_t len)
+{
+	ssize_t result;
+
+	TRACE_ELFBRAND_READ__START(fd, len);
+	result = read(fd, buf, len);
+	TRACE_ELFBRAND_READ__DONE(fd, len,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 static int elftype(const char *);
 static const char *iselftype(int);
 static void printelftypes(void);
@@ -147,7 +175,7 @@ main(int argc, char **argv)
 			retval = 1;
 			goto fail;
 		}
-		if (read(fd, buffer, EI_NIDENT) < EI_NIDENT) {
+		if (trace_read(fd, buffer, EI_NIDENT) < EI_NIDENT) {
 			warnx("file '%s' too short", argv[0]);
 			retval = 1;
 			goto fail;
@@ -172,7 +200,7 @@ main(int argc, char **argv)
 		else {
 			buffer[EI_OSABI] = type;
 			lseek(fd, 0, SEEK_SET);
-			if (write(fd, buffer, EI_NIDENT) != EI_NIDENT) {
+			if (trace_write(fd, buffer, EI_NIDENT) != EI_NIDENT) {
 				warn("error writing %s %d", argv[0], fd);
 				retval = 1;
 				goto fail;

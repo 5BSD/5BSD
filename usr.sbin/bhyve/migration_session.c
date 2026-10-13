@@ -13,6 +13,7 @@
  */
 
 #include <sys/endian.h>
+#include "bhyve_trace.h"
 
 #include <errno.h>
 #include <stdbool.h>
@@ -797,6 +798,8 @@ migration_progress_report(const struct migration_session *sess, uint32_t phase,
 	struct migration_stat stat;
 	const struct migration_progress *progress;
 
+	BHYVE_TRACE(MIGRATION_PROGRESS, phase, round, bytes, dirty_pages,
+	    converged);
 	if (sess->config == NULL || sess->config->progress == NULL)
 		return;
 	progress = sess->config->progress;
@@ -838,6 +841,7 @@ migration_send(struct migration_session *sess, uint16_t type, uint32_t flags,
 		if (error == 0)
 			sess->send_seq++;
 	}
+	BHYVE_TRACE(MIGRATION_SEND, type, sess->send_seq, payload_len, error);
 	free(frame);
 	return (error);
 }

@@ -43,6 +43,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "modechange_trace.h"
+
 static volatile sig_atomic_t siginfo;
 
 static void usage(void) __dead2;
@@ -53,6 +55,17 @@ siginfo_handler(int sig __unused)
 {
 
 	siginfo = 1;
+}
+
+static int
+trace_fchmodat(int fd, const char *path, mode_t mode, int flags)
+{
+	int result;
+
+	TRACE_MODECHANGE_OPERATION__START(mode);
+	result = fchmodat(fd, path, mode, flags);
+	TRACE_MODECHANGE_OPERATION__DONE(mode, result, result < 0 ? errno : 0);
+	return (result);
 }
 
 int
@@ -188,7 +201,7 @@ done:	argv += optind;
 		if (may_have_nfs4acl(p, hflag) == 0 &&
 		    (newmode & ALLPERMS) == (p->fts_statp->st_mode & ALLPERMS))
 				continue;
-		if (fchmodat(AT_FDCWD, p->fts_accpath, newmode, atflag) == -1
+		if (trace_fchmodat(AT_FDCWD, p->fts_accpath, newmode, atflag) == -1
 		    && !fflag) {
 			warn("%s", p->fts_path);
 			rval = 1;

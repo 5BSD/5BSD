@@ -53,6 +53,21 @@
 #include <time.h>
 #include <assert.h>
 
+#include "daemonwait_trace.h"
+
+static int
+trace_kevent(int kq, const struct kevent *changes, int nchanges,
+	    struct kevent *events, int nevents, const struct timespec *timeout)
+{
+	int result;
+
+	TRACE_DAEMONWAIT_OPERATION__START(nchanges, nevents);
+	result = kevent(kq, changes, nchanges, events, nevents, timeout);
+	TRACE_DAEMONWAIT_OPERATION__DONE(nchanges, nevents, result,
+	    result < 0 ? errno : 0);
+	return (result);
+}
+
 /* 1 year in seconds */
 #define MAX_RESTART_DELAY 60*60*24*365
 
@@ -448,7 +463,7 @@ daemon_eventloop(struct daemon_state *state)
 	kq = state->kqueue_fd;
 	EV_SET(&event, state->pipe_rd, EVFILT_READ, EV_ADD|EV_CLEAR, 0, 0,
 	    NULL);
-	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
+	if (trace_kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
 		err(EXIT_FAILURE, "failed to register kevent");
 	}
 
@@ -478,7 +493,7 @@ daemon_eventloop(struct daemon_state *state)
 	setbuf(stdout, NULL);
 
 	while (state->mode != MODE_NOCHILD) {
-		ret = kevent(kq, NULL, 0, &event, 1, NULL);
+		ret = trace_kevent(kq, NULL, 0, &event, 1, NULL);
 		switch (ret) {
 		case -1:
 			if (errno == EINTR)
@@ -582,12 +597,12 @@ daemon_sleep(struct daemon_state *state)
 
 	EV_SET(&event, 0, EVFILT_TIMER, EV_ADD|EV_ONESHOT, NOTE_SECONDS,
 	    state->restart_delay, NULL);
-	if (kevent(state->kqueue_fd, &event, 1, NULL, 0, NULL) == -1) {
+	if (trace_kevent(state->kqueue_fd, &event, 1, NULL, 0, NULL) == -1) {
 		err(1, "failed to register timer");
 	}
 
 	for (;;) {
-		ret = kevent(state->kqueue_fd, NULL, 0, &event, 1, NULL);
+		ret = trace_kevent(state->kqueue_fd, NULL, 0, &event, 1, NULL);
 		if (ret == -1) {
 			if (errno != EINTR) {
 				err(1, "kevent");
@@ -933,17 +948,17 @@ daemon_setup_kqueue(void)
 	}
 
 	EV_SET(&event, SIGHUP,  EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
+	if (trace_kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
 		err(EXIT_FAILURE, "failed to register kevent");
 	}
 
 	EV_SET(&event, SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
+	if (trace_kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
 		err(EXIT_FAILURE, "failed to register kevent");
 	}
 
 	EV_SET(&event, SIGCHLD, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
+	if (trace_kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
 		err(EXIT_FAILURE, "failed to register kevent");
 	}
 

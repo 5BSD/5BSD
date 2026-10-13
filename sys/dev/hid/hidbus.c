@@ -26,6 +26,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/bus.h>
 #include <sys/ck.h>
 #include <sys/epoch.h>
@@ -779,14 +781,32 @@ static int
 hidbus_get_report(device_t dev, device_t child __unused, void *data,
     hid_size_t maxlen, hid_size_t *actlen, uint8_t type, uint8_t id)
 {
-	return (hid_get_report(dev, data, maxlen, actlen, type, id));
+	int error;
+
+	if (!cold)
+		DTRACE_PROBE4(hid__report__start, void *, (dev), int, (1),
+		    int, (type), size_t, (maxlen));
+	error = hid_get_report(dev, data, maxlen, actlen, type, id);
+	if (!cold)
+		DTRACE_PROBE3(hid__report__done, void *, (dev), int, (1),
+		    int, (error));
+	return (error);
 }
 
 static int
 hidbus_set_report(device_t dev, device_t child __unused, const void *data,
     hid_size_t len, uint8_t type, uint8_t id)
 {
-	return (hid_set_report(dev, data, len, type, id));
+	int error;
+
+	if (!cold)
+		DTRACE_PROBE4(hid__report__start, void *, (dev), int, (2),
+		    int, (type), size_t, (len));
+	error = hid_set_report(dev, data, len, type, id);
+	if (!cold)
+		DTRACE_PROBE3(hid__report__done, void *, (dev), int, (2),
+		    int, (error));
+	return (error);
 }
 
 static int

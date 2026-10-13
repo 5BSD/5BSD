@@ -51,6 +51,15 @@
 #include <security/mac/mac_framework.h>
 
 SDT_PROVIDER_DECLARE(vfs);
+/* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
+SDT_PROBE_DEFINE2(vfs, , , extattr__get__start,
+    "struct vnode *", "int");
+SDT_PROBE_DEFINE3(vfs, , , extattr__get__done,
+    "struct vnode *", "int", "int");
+SDT_PROBE_DEFINE2(vfs, , , extattr__list__start,
+    "struct vnode *", "int");
+SDT_PROBE_DEFINE3(vfs, , , extattr__list__done,
+    "struct vnode *", "int", "int");
 SDT_PROBE_DEFINE4(vfs, , , setextattr, "int", "char *", "struct ucred *",
     "int");
 SDT_PROBE_DEFINE3(vfs, , , rmextattr, "int", "char *", "int");
@@ -380,6 +389,7 @@ extattr_get_vp(struct vnode *vp, int attrnamespace, const char *attrname,
 	if (nbytes > IOSIZE_MAX)
 		return (EINVAL);
 
+	SDT_PROBE2(vfs, , , extattr__get__start, (vp), (attrnamespace));
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 
 	/*
@@ -424,6 +434,7 @@ extattr_get_vp(struct vnode *vp, int attrnamespace, const char *attrname,
 done:
 #endif
 	VOP_UNLOCK(vp);
+	SDT_PROBE3(vfs, , , extattr__get__done, (vp), (attrnamespace), (error));
 	return (error);
 }
 
@@ -740,12 +751,15 @@ extattr_list_vp(struct vnode *vp, int attrnamespace, struct uio *auiop,
 	} else
 		sizep = &size;
 
+	SDT_PROBE2(vfs, , , extattr__list__start, (vp), (attrnamespace));
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 
 #ifdef MAC
 	error = mac_vnode_check_listextattr(td->td_ucred, vp, attrnamespace);
 	if (error) {
 		VOP_UNLOCK(vp);
+		SDT_PROBE3(vfs, , , extattr__list__done,
+		    (vp), (attrnamespace), (error));
 		return (error);
 	}
 #endif
@@ -759,6 +773,8 @@ extattr_list_vp(struct vnode *vp, int attrnamespace, struct uio *auiop,
 		td->td_retval[0] = cnt;
 	} else
 		td->td_retval[0] = size;
+	SDT_PROBE3(vfs, , , extattr__list__done,
+	    (vp), (attrnamespace), (error));
 	return (error);
 }
 

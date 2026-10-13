@@ -1,0 +1,125 @@
+DTrace review: Fuchsia, CADETS and HyperTrace (2026-10-13)
+========================================================
+
+This is a source review and proposal, not an implementation or performance
+claim. The request to avoid system modification is applied to tracing-engine
+changes and live deployment. Separately authorized USDT additions remain in
+the twentieth pass. No tracing infrastructure from another OS was imported.
+
+Existing facilities in this checkout
+-----------------------------------
+DTrace already provides dynamic instrumentation, predicates, in-kernel
+aggregation, speculation, per-CPU buffering and selectable buffer policy.
+Do not sell rings, filtering or histograms as missing features. Inspect
+cddl/contrib/opensolaris/lib/libdtrace/common/dt_options.c and the kernel
+DTrace implementation for policy and drop semantics.
+
+CADETS-derived work is partly present: share/man/man4/dtrace_audit.4 and the
+audit provider, safety tests for jail identity, and libxo-backed libdtrace
+printing. dtrace.c calls xo_parse_args and dtrace_oformat_configure; dt_print.c,
+dt_handle.c and dt_aggregate.c contain structured-output paths. A targeted
+correctness audit is justified: libxo_specified in main is declared without
+an initializer, conditionally assigned, and subsequently read. This review
+records it without changing the engine/CLI.
+
+bsdinstruments already has profiles, filters, JSONL, OTLP and collapsed-stack
+export; libotelexport already reports DTrace drops to OTLP. libtracecmp and
+BSDTrace already support authorized descriptor delegation and buffer sizing.
+They do not implement D-language policy isolation for untrusted scripts.
+The oe_event representation currently carries wall time and a rendered body;
+there are no typed duration/flow fields in that structure. Drop metadata is
+currently documented as a no-op for non-OTLP exporters. These are concrete
+integration gaps, not reasons to replace DTrace.
+
+Fuchsia findings and proposed adoption
+-------------------------------------
+Fuchsia has explicit duration, counter, asynchronous and flow events with
+correlation IDs. Its workflow opens traces in Perfetto. Adopt this vocabulary
+in versioned userspace trace metadata and export it through bsdinstruments.
+Start with channel/RPC handoffs and bhyve save/restore phases. Request IDs must
+be scoped by boot/session, process instance and VM instance; raw pointers,
+reused PIDs and security tokens are unsuitable persistent identities. Cross-
+process causal edges need an actual propagated or observed correlation key;
+matching two timestamps is not proof of a causal relationship.
+Sources:
+https://fuchsia.dev/fuchsia-src/development/tracing/trace_events
+https://fuchsia.dev/fuchsia-src/development/tools/ffx/workflows/record-traces
+
+Fuchsia providers write a binary record stream into shared VMOs. The format
+uses compact string/thread references and permits recovery through the last
+valid record. Borrow compact, versioned capture archives with explicit record
+lengths and metadata retention; add Perfetto export as a consumer feature.
+A shared-memory fast path would be a distinct USDT transport design requiring
+measurement and process-lifetime safeguards, not a drop-in DTrace optimization.
+Source: https://fuchsia.dev/fuchsia-src/reference/tracing/trace-format
+
+Fuchsia supports oneshot, circular and streaming modes; streaming can drop
+records when draining falls behind. It does not promise lossless tracing.
+DTrace already has related buffer policies. Improve consistent export of
+loss intervals, overflow reasons, clock domains and capture configuration.
+Invalidate affected latency/causal results rather than quietly presenting
+incomplete captures as complete. Include monotonic event time and explicit
+wall-clock conversion anchors, rather than treating collector time as firing
+time. Provider restart and VM restore need new clock/lifetime epochs.
+Source: https://fuchsia.dev/fuchsia-src/concepts/kernel/tracing-provider-buffering-modes
+
+CADETS findings and proposed adoption
+------------------------------------
+CADETS emphasizes causal provenance and adaptive distributed observation.
+Its published FreeBSD work describes structured output and audit integration,
+which are already partly represented here. The useful next step is a small
+causal schema linking resource creation, ownership transfer and release, with
+coverage and loss annotations. Use low-volume aggregates to trigger bounded
+higher-detail captures. Avoid copying every syscall payload or claiming that
+DTrace is a tamper-proof, lossless security audit trail. Existing audit policy
+must continue to govern that use case.
+Sources:
+https://www.cl.cam.ac.uk/research/security/cadets/
+https://freebsdfoundation.org/wp-content/uploads/2017/06/Cadets-Blending-Tracing-and-Security-on-FreeBSD.pdf
+
+HyperTrace findings and proposed adoption
+----------------------------------------
+The relevant project is cadets/freebsd, not the unrelated Hypertrace cloud
+observability product. Its README describes a target field in probe selectors,
+ELF-encoded programs, DIF typing/relocations, dtraced program distribution,
+tagged guest addresses, and self-instrumenting guests calling the host through
+hypercalls. It also lists virtio transport and bhyve integration. The inspected
+/usr/src lacks those distinctive DTrace modules, compiler files and selector
+support. Prior local ownership or another branch is not evidence of integration
+in this checkout. No exhaustive audit of every external checkout was performed.
+
+Adopt explicit VM identity and host/guest capture coordination first; isolate
+per-VM maps and resource quotas, validate guest types and addresses, and revoke
+sessions on reset. A full HyperTrace port is a separate compiler/runtime/VMM
+project. The README notes missing retransmission after guest death; restore,
+migration, stale probe maps and tracing-session revocation need explicit tests.
+Synchronous hypercalls give host-side observation order but incur VM exits;
+they do not prove causal order or free high-rate tracing. Benchmark selective
+hypercalls against batched guest export before choosing a default transport.
+Source: https://github.com/cadets/freebsd
+Background: https://freebsdfoundation.org/wp-content/uploads/2023/01/918ab1cb58d4efe919ab11c7648eb92e35c343ba.1.pdf
+
+Recommended sequence and acceptance criteria (our engineering judgment)
+---------------------------------------------------------------------
+P0: Qualify installed probe availability and enabled/disabled correctness.
+    Use the new DOF checks plus live firing in a qualification VM. Add a
+    structured-output regression suite and fix the observed initialization bug
+    in a separately reviewed DTrace change.
+P0: Versioned event schema, monotonic clock provenance and loss metadata across
+    every exporter. Typed duration/flow plus Perfetto export can start in
+    userspace without replacing the kernel engine.
+P1: Adaptive capture profiles and bounded budgets in the existing trace broker.
+    A raw delegated DTrace descriptor is not a sandbox for untrusted D code.
+P1: Host/guest identity, coordinated collection and bhyve restore epochs;
+    prototype selected HyperTrace capabilities behind opt-in configuration.
+P2: Consider shared-memory USDT transport or DIF specialization/JIT only after
+    profiling identifies trap/VM-exit cost or interpreter cost as the bottleneck.
+    New executable code paths need their own safety and architecture validation.
+
+Benchmark disabled, enabled-empty, predicate-rejected, aggregated and raw-export
+cases separately. Include Zsh pipelines, Capsule RPC, channel saturation,
+network throughput, storage latency and guest I/O. Record cycles/event, p50/p99
+application latency, throughput, CPU, memory, allocation rates, drops and export
+backpressure; sweep CPU count, event rate, argument size and stack depth. Measure
+both no-probe baseline and compiled-in-but-disabled probes. Publish variance
+and build/hardware configuration. No numerical speedup is established here.

@@ -94,33 +94,10 @@ MAN=		libblemesh.3
 
 WARNS?=		6
 
-#
-# USDT provider: the `mesh` DTrace provider (mesh_provider.d, 34 probes).
-#
-# Whenever DTrace is enabled we generate the provider header (dtrace -h ->
-# mesh_provider.h) so the layer .c files can #include it and add probe call
-# sites; -I${.OBJDIR} puts that generated header on the search path.
-#
-# The provider OBJECT (dtrace -G, driven by a .d in SRCS) can only be linked
-# once at least one .c actually references a probe -- dtrace(1) aborts with
-# "No probe sites found for declared provider" otherwise.  The probe call
-# sites land in a later instrumentation wave; until then the -G link is gated
-# behind MESH_DTRACE_PROBES so this library builds clean today.  That wave
-# only has to (1) add the probe call sites and (2) build with
-# -DMESH_DTRACE_PROBES (e.g. make MESH_DTRACE_PROBES=1).
-#
-#
-# The `mesh` USDT provider object is linked by adding mesh_provider.d to SRCS
-# (dtrace -G), exactly like blued does with blued_provider.d.  The layer .c
-# files reference the probes through mesh_probes.h using raw DTRACE_PROBE
-# macros, so no generated provider header is required.  dtrace(1) aborts with
-# "No probe sites found for declared provider" unless at least one .c actually
-# fires a probe, so the -G link is gated behind MESH_DTRACE_PROBES, which also
-# selects the DTrace backend of mesh_probes.h.  Build it with
-# `make MESH_DTRACE_PROBES=1` (requires MK_DTRACE != no).
-#
-.if ${MK_DTRACE} != "no" && defined(MESH_DTRACE_PROBES)
+# Include the existing USDT sites in normal DTrace-enabled base libraries.
+.if ${MK_DTRACE} != "no"
 SRCS+=		mesh_provider.d
+DTRACE_STATIC_ANCHOR= yes
 CFLAGS+=	-DMESH_DTRACE_PROBES
 .endif
 

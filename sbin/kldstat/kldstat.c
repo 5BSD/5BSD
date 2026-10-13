@@ -38,6 +38,21 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "modulequery_trace.h"
+
+static int
+trace_kldstat(int id, struct kld_file_stat *st)
+{
+	int result;
+
+	TRACE_MODULEQUERY_OPERATION__START(id);
+	result = kldstat(id, st);
+	TRACE_MODULEQUERY_OPERATION__DONE(id,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 #define	PTR_WIDTH ((int)(sizeof(void *) * 2 + 2))
 
 static void printmod(int);
@@ -73,7 +88,7 @@ printfile(int fileid, int verbose, int humanized)
 	char buf[5];
 
 	stat.version = sizeof(struct kld_file_stat);
-	if (kldstat(fileid, &stat) < 0)
+	if (trace_kldstat(fileid, &stat) < 0)
 		err(1, "can't stat file id %d", fileid);
 	if (humanized) {
 		humanize_number(buf, sizeof(buf), stat.size,

@@ -8,4 +8,5 @@ provider bsdmemory {
 	probe publish__start(uint32_t level);
 	probe publish__done(uint32_t requested, uint32_t published, int error);
 	probe exit(int status);
+	probe dependency__health(int a0, int a1, uint64_t a2);
 };

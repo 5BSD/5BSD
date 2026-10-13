@@ -14,6 +14,7 @@
  */
 
 #include <sys/types.h>
+#include "blued_probes.h"
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
@@ -1086,6 +1087,7 @@ hci_le_set_cig_params(int hci_fd, uint8_t cig_id,
 		errno = EIO;
 		return (-1);
 	}
+	BLUED_PROBE_ISO__CIG__PARAMS(cig_id, cis_count, rpbuf[0]);
 	if (rpbuf[0] != 0x00) {
 		LOG_HCI(1, "LE Set CIG Params failed, status=0x%02x",
 		    rpbuf[0]);
@@ -1289,6 +1291,7 @@ hci_le_create_cis(int hci_fd, uint8_t cis_count,
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	BLUED_PROBE_ISO__CIS__CREATE(cis_count, rp.status);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Create CIS failed, status=0x%02x", rp.status);
 		errno = EIO;
@@ -1329,6 +1332,7 @@ hci_le_remove_cig(int hci_fd, uint8_t cig_id)
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	BLUED_PROBE_ISO__CIG__REMOVE(cig_id, rp.status);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Remove CIG failed, status=0x%02x", rp.status);
 		errno = EIO;
@@ -1369,6 +1373,7 @@ hci_le_accept_cis_request(int hci_fd, uint16_t con_handle)
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	BLUED_PROBE_ISO__CIS__ACCEPT(con_handle, rp.status);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Accept CIS Request failed, status=0x%02x",
 		    rp.status);
@@ -1420,6 +1425,7 @@ hci_le_reject_cis_request(int hci_fd, uint16_t con_handle, uint8_t reason)
 
 	LOG_HCI(1, "CIS request rejected: handle=%04x reason=0x%02x",
 	    con_handle, reason);
+	BLUED_PROBE_ISO__CIS__REJECT(con_handle, reason);
 	return (0);
 }
 
@@ -1498,6 +1504,7 @@ hci_le_create_big(int hci_fd, uint8_t big_handle, uint8_t adv_handle,
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	BLUED_PROBE_ISO__BIG__CREATE(big_handle, adv_handle, rp.status);
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Create BIG failed, status=0x%02x", rp.status);
 		errno = EIO;
@@ -1628,6 +1635,7 @@ hci_le_terminate_big(int hci_fd, uint8_t big_handle, uint8_t reason)
 
 	LOG_HCI(1, "LE Terminate BIG requested: big=%d reason=0x%02x",
 	    big_handle, reason);
+	BLUED_PROBE_ISO__BIG__TERMINATE(big_handle, reason);
 	return (0);
 }
 
@@ -1813,6 +1821,7 @@ hci_le_setup_iso_data_path(int hci_fd, uint16_t con_handle,
 
 	LOG_HCI(1, "ISO data path set: handle=%04x dir=%d path_id=%d",
 	    con_handle, direction, path_id);
+	BLUED_PROBE_ISO__DATAPATH__SETUP(con_handle, direction, path_id);
 	return (0);
 }
 

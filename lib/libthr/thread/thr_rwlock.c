@@ -35,6 +35,7 @@
 #include <pthread.h>
 #include "un-namespace.h"
 #include "thr_private.h"
+#include "threadwait_trace.h"
 
 _Static_assert(sizeof(struct pthread_rwlock) <= THR_PAGE_SIZE_MIN,
     "pthread_rwlock is too large for off-page");
@@ -211,7 +212,9 @@ rwlock_rdlock_common(pthread_rwlock_t *rwlock, const struct timespec *abstime)
 
 	for (;;) {
 		/* goto kernel and lock it */
+		TRACE_THREADWAIT_RWLOCK__START(rwlock, 0);
 		ret = __thr_rwlock_rdlock(&prwlock->lock, flags, abstime);
+		TRACE_THREADWAIT_RWLOCK__DONE(rwlock, 0, ret);
 		if (ret != EINTR)
 			break;
 
@@ -325,7 +328,9 @@ rwlock_wrlock_common(pthread_rwlock_t *rwlock, const struct timespec *abstime)
 
 	for (;;) {
 		/* goto kernel and lock it */
+		TRACE_THREADWAIT_RWLOCK__START(rwlock, 1);
 		ret = __thr_rwlock_wrlock(&prwlock->lock, abstime);
+		TRACE_THREADWAIT_RWLOCK__DONE(rwlock, 1, ret);
 		if (ret == 0) {
 			prwlock->owner = TID(curthread);
 			break;

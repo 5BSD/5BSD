@@ -59,6 +59,7 @@
 
 #include "dd.h"
 #include "extern.h"
+#include "ddio_trace.h"
 
 static void dd_close(void);
 static void dd_in(void);
@@ -79,6 +80,17 @@ size_t	speed = 0;		/* maximum speed, in bytes per second */
 volatile sig_atomic_t need_summary;
 volatile sig_atomic_t need_progress;
 volatile sig_atomic_t kill_signal;
+
+static int
+dd_sync(int fd, int data_only)
+{
+	int result;
+
+	TRACE_DDIO_SYNC__START(fd, data_only);
+	result = data_only ? fdatasync(fd) : fsync(fd);
+	TRACE_DDIO_SYNC__DONE(fd, data_only, result, result < 0 ? errno : 0);
+	return (result);
+}
 
 int
 main(int argc __unused, char *argv[])
@@ -411,7 +423,9 @@ dd_in(void)
 		in.dbrcnt = 0;
 fill:
 		before_io();
+		TRACE_DDIO_READ__START(in.fd, in.dbsz - in.dbrcnt);
 		n = read(in.fd, in.dbp + in.dbrcnt, in.dbsz - in.dbrcnt);
+		TRACE_DDIO_READ__DONE(in.fd, n, n < 0 ? errno : 0);
 		after_io();
 
 		/* EOF */
@@ -527,10 +541,10 @@ dd_close(void)
 	}
 
 	if (ddflags & C_FSYNC) {
-		if (fsync(out.fd) == -1)
+		if (dd_sync(out.fd, 0) == -1)
 			err(1, "fsyncing %s", out.name);
 	} else if (ddflags & C_FDATASYNC) {
-		if (fdatasync(out.fd) == -1)
+		if (dd_sync(out.fd, 1) == -1)
 			err(1, "fdatasyncing %s", out.name);
 	}
 }
@@ -576,6 +590,7 @@ dd_out(int force)
 				sparse = BISZERO(outp, cnt);
 			}
 			if (sparse && !force) {
+				TRACE_DDIO_SPARSE(out.fd, cnt);
 				pending += cnt;
 				nw = cnt;
 			} else {
@@ -594,7 +609,10 @@ dd_out(int force)
 				}
 				if (cnt) {
 					before_io();
+					TRACE_DDIO_WRITE__START(out.fd, cnt);
 					nw = write(out.fd, outp, cnt);
+					TRACE_DDIO_WRITE__DONE(out.fd, nw,
+					    nw < 0 ? errno : 0);
 					after_io();
 					out.seek_offset = 0;
 				} else {

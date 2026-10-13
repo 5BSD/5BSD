@@ -29,6 +29,8 @@
 #include "opt_inet6.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/eventhandler.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
@@ -76,6 +78,13 @@
 
 #include <netinet6/ip6_var.h>
 #include <netinet6/scope6_var.h>
+
+SDT_PROVIDER_DEFINE(vxlanctl);
+SDT_PROBE_DEFINE3(vxlanctl, , , access, "void *", "unsigned long", "int");
+
+SDT_PROBE_DEFINE2(vxlanctl, , , control__start, "void *", "unsigned long");
+SDT_PROBE_DEFINE3(vxlanctl, , , control__done, "void *", "unsigned long", "int");
+
 
 struct vxlan_softc;
 LIST_HEAD(vxlan_softc_head, vxlan_softc);
@@ -2322,6 +2331,7 @@ vxlan_ioctl_drvspec(struct vxlan_softc *sc, struct ifdrv *ifd, int get)
 
 	if (vc->vxlc_flags & VXLAN_CTRL_FLAG_SUSER) {
 		error = priv_check(curthread, PRIV_NET_VXLAN);
+		SDT_PROBE3(vxlanctl, , , access, sc, ifd->ifd_cmd, error);
 		if (error)
 			return (error);
 	}
@@ -2336,7 +2346,9 @@ vxlan_ioctl_drvspec(struct vxlan_softc *sc, struct ifdrv *ifd, int get)
 			return (error);
 	}
 
+	SDT_PROBE2(vxlanctl, , , control__start, sc, ifd->ifd_cmd);
 	error = vc->vxlc_func(sc, &args);
+	SDT_PROBE3(vxlanctl, , , control__done, sc, ifd->ifd_cmd, error);
 	if (error)
 		return (error);
 

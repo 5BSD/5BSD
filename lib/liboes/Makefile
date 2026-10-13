@@ -49,4 +49,9 @@ FIDL_SCHEMAS.oes_broker=	lib/libfidl/tests/zx.fidl \
 FIDL_LIBRARY.oes_broker=	bsd.oes.v1
 .include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
+.if ${MK_DTRACE} != "no"
+SRCS+= diagnostics_provider.d
+CFLAGS+= -DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

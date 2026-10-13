@@ -721,18 +721,30 @@ shmget_allocate_segment(struct thread *td, key_t key, size_t size, int mode)
 
 	if (size < shminfo.shmmin || size > shminfo.shmmax)
 		return (EINVAL);
-	if (shm_nused >= shminfo.shmmni) /* Any shmids left? */
+	if (shm_nused >= shminfo.shmmni) { /* Any shmids left? */
+		if (!cold)
+			DTRACE_PROBE2(sysvshm__limit,
+			    int, (1), size_t, (size));
 		return (ENOSPC);
+	}
 	size = round_page(size);
-	if (shm_committed + btoc(size) > shminfo.shmall)
+	if (shm_committed + btoc(size) > shminfo.shmall) {
+		if (!cold)
+			DTRACE_PROBE2(sysvshm__limit,
+			    int, (2), size_t, (size));
 		return (ENOMEM);
+	}
 	if (shm_last_free < 0) {
 		shmrealloc();	/* Maybe expand the shmsegs[] array. */
 		for (i = 0; i < shmalloced; i++)
 			if (shmsegs[i].u.shm_perm.mode & SHMSEG_FREE)
 				break;
-		if (i == shmalloced)
+		if (i == shmalloced) {
+			if (!cold)
+				DTRACE_PROBE2(sysvshm__limit,
+				    int, (3), size_t, (size));
 			return (ENOSPC);
+		}
 		segnum = i;
 	} else  {
 		segnum = shm_last_free;
@@ -745,10 +757,16 @@ shmget_allocate_segment(struct thread *td, key_t key, size_t size, int mode)
 	if (racct_enable) {
 		PROC_LOCK(td->td_proc);
 		if (racct_add(td->td_proc, RACCT_NSHM, 1)) {
+			if (!cold)
+				DTRACE_PROBE2(sysvshm__limit,
+				    int, (4), size_t, (size));
 			PROC_UNLOCK(td->td_proc);
 			return (ENOSPC);
 		}
 		if (racct_add(td->td_proc, RACCT_SHMSIZE, size)) {
+			if (!cold)
+				DTRACE_PROBE2(sysvshm__limit,
+				    int, (5), size_t, (size));
 			racct_sub(td->td_proc, RACCT_NSHM, 1);
 			PROC_UNLOCK(td->td_proc);
 			return (ENOMEM);
@@ -764,6 +782,9 @@ shmget_allocate_segment(struct thread *td, key_t key, size_t size, int mode)
 	shm_object = vm_pager_allocate(shm_use_phys ? OBJT_PHYS : OBJT_SWAP,
 	    0, size, VM_PROT_DEFAULT, 0, cred);
 	if (shm_object == NULL) {
+		if (!cold)
+			DTRACE_PROBE2(sysvshm__pager__pressure,
+			    size_t, (size), int, (shm_use_phys));
 #ifdef RACCT
 		if (racct_enable) {
 			PROC_LOCK(td->td_proc);

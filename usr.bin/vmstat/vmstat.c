@@ -65,6 +65,21 @@
 #include <libutil.h>
 #include <libxo/xo.h>
 
+#include "vmquery_trace.h"
+
+static int
+trace_sysctlbyname(const char *name, void *out, size_t *size, const void *in, size_t inlen)
+{
+	int result;
+
+	TRACE_VMQUERY_OPERATION__START(0);
+	result = sysctlbyname(name, out, size, in, inlen);
+	TRACE_VMQUERY_OPERATION__DONE(0,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 #define VMSTAT_XO_VERSION "2"
 
 static char da[] = "da";
@@ -385,7 +400,7 @@ mysysctl(const char *name, void *oldp, size_t *oldlenp)
 {
 	int error;
 
-	error = sysctlbyname(name, oldp, oldlenp, NULL, 0);
+	error = trace_sysctlbyname(name, oldp, oldlenp, NULL, 0);
 	if (error != 0 && errno != ENOMEM)
 		xo_err(1, "sysctl(%s)", name);
 	return (error);

@@ -118,6 +118,8 @@ static int	itimespecfix(struct timespec *ts);
 SYSINIT(posix_timer, SI_SUB_P1003_1B, SI_ORDER_FIRST+4, itimer_start, NULL);
 
 SDT_PROVIDER_DEFINE(clock);
+SDT_PROBE_DEFINE2(clock, , , timer__set__start, "int", "int");
+SDT_PROBE_DEFINE2(clock, , , timer__set__done, "int", "int");
 /*
  * The absolute system clock was stepped via settimeofday(2)/clock_settime(2):
  * new time (sec), requested delta (sec), subject credential.  A large or
@@ -1509,6 +1511,7 @@ kern_ktimer_settime(struct thread *td, int timer_id, int flags,
 	struct itimer *it;
 	int error;
 
+	SDT_PROBE2(clock, , , timer__set__start, timer_id, flags);
 	p = td->td_proc;
 	PROC_LOCK(p);
 	if (timer_id < 3 || (it = itimer_find(p, timer_id)) == NULL) {
@@ -1522,6 +1525,7 @@ kern_ktimer_settime(struct thread *td, int timer_id, int flags,
 		itimer_leave(it);
 		ITIMER_UNLOCK(it);
 	}
+	SDT_PROBE2(clock, , , timer__set__done, timer_id, error);
 	return (error);
 }
 

@@ -66,6 +66,8 @@
 #include "opt_lpt.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/module.h>
 #include <sys/bus.h>
@@ -202,7 +204,15 @@ lpt_request_ppbus(device_t dev, int how)
 	if (sc->sc_state & HAVEBUS)
 		return (0);
 
+	if (!cold)
+		DTRACE_PROBE2(lpt__bus__request__start,
+		    void *, (dev),
+		    int, (how));
 	error = ppb_request_bus(ppbus, dev, how);
+	if (!cold)
+		DTRACE_PROBE2(lpt__bus__request__done,
+		    void *, (dev),
+		    int, (error));
 	if (error == 0)
 		sc->sc_state |= HAVEBUS;
 	return (error);

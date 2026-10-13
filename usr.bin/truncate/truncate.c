@@ -41,6 +41,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include "resizeio_trace.h"
 
 #include <libutil.h>
 
@@ -201,10 +202,15 @@ main(int argc, char **argv)
 
 			sr.r_offset = off;
 			sr.r_len = len;
+			TRACE_RESIZEIO_OPERATION__START(fd, 1, off, len);
 			r = fspacectl(fd, SPACECTL_DEALLOC, &sr, 0, &sr);
+			TRACE_RESIZEIO_OPERATION__DONE(fd, 1, r, r < 0 ? errno : 0);
 		}
-		if (do_truncate == 1)
+		if (do_truncate == 1) {
+			TRACE_RESIZEIO_OPERATION__START(fd, 0, 0, tsize);
 			r = ftruncate(fd, tsize);
+			TRACE_RESIZEIO_OPERATION__DONE(fd, 0, r, r < 0 ? errno : 0);
+		}
 		if (r == -1) {
 			warn("%s", fname);
 			error++;

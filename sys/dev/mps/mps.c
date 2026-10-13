@@ -35,6 +35,8 @@
 /* TODO Move headers to mpsvar */
 #include <sys/types.h>
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/selinfo.h>
@@ -832,7 +834,11 @@ mps_reinit(struct mps_softc *sc)
 	mps_dprint(sc, MPS_INIT, "masking interrupts and resetting\n");
 	mps_mask_intr(sc);
 
+	if (!cold)
+		DTRACE_PROBE1(mps__reset__start, void *, (sc));
 	error = mps_diag_reset(sc, CAN_SLEEP);
+	if (!cold)
+		DTRACE_PROBE2(mps__reset__done, void *, (sc), int, (error));
 	if (error != 0) {
 		/* XXXSL No need to panic here */
 		panic("%s hard reset failed with error %d\n",
@@ -3090,7 +3096,13 @@ mps_wait_command(struct mps_softc *sc, struct mps_command **cmp, int timeout,
 	getmicrouptime(&start_time);
 	if (mtx_owned(&sc->mps_mtx) && sleep_flag == CAN_SLEEP) {
 		cm->cm_flags |= MPS_CM_FLAGS_WAKEUP;
+		if (!cold)
+			DTRACE_PROBE2(mps__command__wait__start, void *, (sc),
+			    int, (timeout));
 		error = msleep(cm, &sc->mps_mtx, 0, "mpswait", timeout*hz);
+		if (!cold)
+			DTRACE_PROBE2(mps__command__wait__done, void *, (sc),
+			    int, (error));
 		if (error == EWOULDBLOCK) {
 			/*
 			 * Record the actual elapsed time in the case of a

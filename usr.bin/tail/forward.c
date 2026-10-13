@@ -56,6 +56,21 @@
 
 #include "extern.h"
 
+#include "tailwait_trace.h"
+
+static int
+trace_kevent(int fd, const struct kevent *changes, int nchanges, struct kevent *events, int nevents, const struct timespec *timeout)
+{
+	int result;
+
+	TRACE_TAILWAIT_OPERATION__START(nchanges, nevents);
+	result = kevent(fd, changes, nchanges, events, nevents, timeout);
+	TRACE_TAILWAIT_OPERATION__DONE(nchanges, nevents,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 static void rlines(FILE *, const char *fn, off_t, struct stat *);
 static int show(file_info_t *);
 static void set_events(file_info_t *files);
@@ -292,7 +307,7 @@ set_events(file_info_t *files)
 		n++;
 	}
 
-	if (kevent(kq, ev, n, NULL, 0, &ts) < 0) {
+	if (trace_kevent(kq, ev, n, NULL, 0, &ts) < 0) {
 		action = USE_SLEEP;
 	}
 }
@@ -409,7 +424,7 @@ follow(file_info_t *files, enum STYLE style, off_t off)
 			 * for its generation are transient.
 			 */
 			do {
-				n = kevent(kq, NULL, 0, ev, 1, Fflag ? &ts : NULL);
+				n = trace_kevent(kq, NULL, 0, ev, 1, Fflag ? &ts : NULL);
 				if (n < 0 && errno != EINTR)
 					err(1, "kevent");
 			} while (n < 0);

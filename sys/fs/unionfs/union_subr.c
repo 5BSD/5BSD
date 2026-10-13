@@ -36,6 +36,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/ktr.h>
@@ -61,6 +63,11 @@
 #include <vm/uma.h>
 
 #include <fs/unionfs/union.h>
+
+SDT_PROVIDER_DEFINE(unionfs);
+SDT_PROBE_DEFINE2(unionfs, , , copyup__start, "void *", "void *");
+SDT_PROBE_DEFINE3(unionfs, , , copyup__done, "void *", "void *", "int");
+
 
 #define NUNIONFSNODECACHE 16
 #define UNIONFSHASHMASK (NUNIONFSNODECACHE - 1)
@@ -1492,7 +1499,9 @@ unionfs_copyfile(struct vnode *vp, int docopy, struct ucred *cred,
 	if (docopy != 0) {
 		error = VOP_OPEN(lvp, FREAD, cred, td, NULL);
 		if (error == 0) {
+			SDT_PROBE2(unionfs, , , copyup__start, lvp, uvp);
 			error = unionfs_copyfile_core(lvp, uvp, cred, td);
+			SDT_PROBE3(unionfs, , , copyup__done, lvp, uvp, error);
 			VOP_CLOSE(lvp, FREAD, cred, td);
 		}
 	}

@@ -18,6 +18,7 @@
  */
 
 #include <sys/types.h>
+#include "mesh_probes.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -356,6 +357,7 @@ mesh_cfg_appkey_add_parse(const uint8_t *in, size_t inlen, uint32_t *opcode,
 	memcpy(out->key, ap.params + 3, 16);
 	if (opcode != NULL)
 		*opcode = ap.opcode;
+	MESH_PROBE_MESH__CFG__APPKEY(ap.opcode, out->net_idx, out->app_idx);
 	return (0);
 }
 

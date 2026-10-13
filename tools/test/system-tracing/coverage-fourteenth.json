@@ -1,0 +1,1123 @@
+{
+  "probes": [
+    {
+      "kind": "user",
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "provider": "attrtool*",
+      "module": "",
+      "function": "",
+      "name": "delete-start",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "provider": "attrtool*",
+      "module": "",
+      "function": "",
+      "name": "delete-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "provider": "attrtool*",
+      "module": "",
+      "function": "",
+      "name": "set-start",
+      "types": [
+        "int",
+        "int",
+        "size_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "provider": "attrtool*",
+      "module": "",
+      "function": "",
+      "name": "set-done",
+      "types": [
+        "int",
+        "int",
+        "size_t",
+        "int",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "provider": "attrtool*",
+      "module": "",
+      "function": "",
+      "name": "list-start",
+      "types": [
+        "int",
+        "int",
+        "size_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "provider": "attrtool*",
+      "module": "",
+      "function": "",
+      "name": "list-done",
+      "types": [
+        "int",
+        "int",
+        "size_t",
+        "int",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "provider": "attrtool*",
+      "module": "",
+      "function": "",
+      "name": "get-start",
+      "types": [
+        "int",
+        "int",
+        "size_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "provider": "attrtool*",
+      "module": "",
+      "function": "",
+      "name": "get-done",
+      "types": [
+        "int",
+        "int",
+        "size_t",
+        "int",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/getfacl/getfacl.c",
+      "provider": "aclread*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/getfacl/getfacl.c",
+      "provider": "aclread*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/setfacl/setfacl.c",
+      "provider": "aclwrite*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/setfacl/setfacl.c",
+      "provider": "aclwrite*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/fsync/fsync.c",
+      "provider": "filesync*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/fsync/fsync.c",
+      "provider": "filesync*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/cat/cat.c",
+      "provider": "catio*",
+      "module": "",
+      "function": "",
+      "name": "read-start",
+      "types": [
+        "int",
+        "size_t"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/cat/cat.c",
+      "provider": "catio*",
+      "module": "",
+      "function": "",
+      "name": "read-done",
+      "types": [
+        "int",
+        "size_t",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/cat/cat.c",
+      "provider": "catio*",
+      "module": "",
+      "function": "",
+      "name": "write-start",
+      "types": [
+        "int",
+        "size_t"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/cat/cat.c",
+      "provider": "catio*",
+      "module": "",
+      "function": "",
+      "name": "write-done",
+      "types": [
+        "int",
+        "size_t",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/tee/tee.c",
+      "provider": "teeio*",
+      "module": "",
+      "function": "",
+      "name": "read-start",
+      "types": [
+        "int",
+        "size_t"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/tee/tee.c",
+      "provider": "teeio*",
+      "module": "",
+      "function": "",
+      "name": "read-done",
+      "types": [
+        "int",
+        "size_t",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/tee/tee.c",
+      "provider": "teeio*",
+      "module": "",
+      "function": "",
+      "name": "write-start",
+      "types": [
+        "int",
+        "size_t"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/tee/tee.c",
+      "provider": "teeio*",
+      "module": "",
+      "function": "",
+      "name": "write-done",
+      "types": [
+        "int",
+        "size_t",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/split/split.c",
+      "provider": "splitio*",
+      "module": "",
+      "function": "",
+      "name": "read-start",
+      "types": [
+        "int",
+        "size_t"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/split/split.c",
+      "provider": "splitio*",
+      "module": "",
+      "function": "",
+      "name": "read-done",
+      "types": [
+        "int",
+        "size_t",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/split/split.c",
+      "provider": "splitio*",
+      "module": "",
+      "function": "",
+      "name": "write-start",
+      "types": [
+        "int",
+        "size_t"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/split/split.c",
+      "provider": "splitio*",
+      "module": "",
+      "function": "",
+      "name": "write-done",
+      "types": [
+        "int",
+        "size_t",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/wc/wc.c",
+      "provider": "wordcountio*",
+      "module": "",
+      "function": "",
+      "name": "read-start",
+      "types": [
+        "int",
+        "size_t"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/wc/wc.c",
+      "provider": "wordcountio*",
+      "module": "",
+      "function": "",
+      "name": "read-done",
+      "types": [
+        "int",
+        "size_t",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/tail/forward.c",
+      "provider": "tailwait*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/tail/forward.c",
+      "provider": "tailwait*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/cksum/cksum.c",
+      "provider": "checksumtool*",
+      "module": "",
+      "function": "",
+      "name": "file-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/cksum/cksum.c",
+      "provider": "checksumtool*",
+      "module": "",
+      "function": "",
+      "name": "file-done",
+      "types": [
+        "int",
+        "int64_t",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "sbin/kldstat/kldstat.c",
+      "provider": "modulequery*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "sbin/kldstat/kldstat.c",
+      "provider": "modulequery*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/kenv/kenv.c",
+      "provider": "envquery*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/kenv/kenv.c",
+      "provider": "envquery*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/chroot/chroot.c",
+      "provider": "rootchange*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/chroot/chroot.c",
+      "provider": "rootchange*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/procstat/procstat.c",
+      "provider": "processquery*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/procstat/procstat.c",
+      "provider": "processquery*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "unsigned int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/pwait/pwait.c",
+      "provider": "processwait*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/pwait/pwait.c",
+      "provider": "processwait*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/brandelf/brandelf.c",
+      "provider": "elfbrand*",
+      "module": "",
+      "function": "",
+      "name": "read-start",
+      "types": [
+        "int",
+        "size_t"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/brandelf/brandelf.c",
+      "provider": "elfbrand*",
+      "module": "",
+      "function": "",
+      "name": "read-done",
+      "types": [
+        "int",
+        "size_t",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/brandelf/brandelf.c",
+      "provider": "elfbrand*",
+      "module": "",
+      "function": "",
+      "name": "write-start",
+      "types": [
+        "int",
+        "size_t"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/brandelf/brandelf.c",
+      "provider": "elfbrand*",
+      "module": "",
+      "function": "",
+      "name": "write-done",
+      "types": [
+        "int",
+        "size_t",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/vmstat/vmstat.c",
+      "provider": "vmquery*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/vmstat/vmstat.c",
+      "provider": "vmquery*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    }
+  ],
+  "passes": [
+    {
+      "number": 1,
+      "component": "usr.sbin/extattr",
+      "provider": "attrtool",
+      "operation": "delete",
+      "scope": "Attribute delete file/link calls, including size queries; namespace/nofollow/request length/result, no names or values."
+    },
+    {
+      "number": 2,
+      "component": "usr.sbin/extattr",
+      "provider": "attrtool",
+      "operation": "set",
+      "scope": "Attribute set file/link calls, including size queries; namespace/nofollow/request length/result, no names or values."
+    },
+    {
+      "number": 3,
+      "component": "usr.sbin/extattr",
+      "provider": "attrtool",
+      "operation": "list",
+      "scope": "Attribute list file/link calls, including size queries; namespace/nofollow/request length/result, no names or values."
+    },
+    {
+      "number": 4,
+      "component": "usr.sbin/extattr",
+      "provider": "attrtool",
+      "operation": "get",
+      "scope": "Attribute get file/link calls, including size queries; namespace/nofollow/request length/result, no names or values."
+    },
+    {
+      "number": 5,
+      "component": "bin/getfacl",
+      "provider": "aclread",
+      "operation": "operation",
+      "scope": "ACL retrieval; type/nofollow/success/errno, excluding stat and text rendering."
+    },
+    {
+      "number": 6,
+      "component": "bin/setfacl",
+      "provider": "aclwrite",
+      "operation": "operation",
+      "scope": "ACL application file/link calls; excludes parsing, merging, default-ACL deletion and traversal."
+    },
+    {
+      "number": 7,
+      "component": "usr.bin/fsync",
+      "provider": "filesync",
+      "operation": "operation",
+      "scope": "Per-opened-file fsync result; does not imply device power-loss guarantees."
+    },
+    {
+      "number": 8,
+      "component": "bin/cat",
+      "provider": "catio",
+      "operation": "stream",
+      "scope": "Raw read/write calls; fd/requested bytes/returned bytes/errno; excludes stdio-only paths and fast metadata shortcuts."
+    },
+    {
+      "number": 9,
+      "component": "usr.bin/tee",
+      "provider": "teeio",
+      "operation": "stream",
+      "scope": "Raw read/write calls; fd/requested bytes/returned bytes/errno; excludes stdio-only paths and fast metadata shortcuts."
+    },
+    {
+      "number": 10,
+      "component": "usr.bin/split",
+      "provider": "splitio",
+      "operation": "stream",
+      "scope": "Raw read/write calls; fd/requested bytes/returned bytes/errno; excludes stdio-only paths and fast metadata shortcuts."
+    },
+    {
+      "number": 11,
+      "component": "usr.bin/wc",
+      "provider": "wordcountio",
+      "operation": "stream",
+      "scope": "Raw read calls; fd/requested bytes/returned bytes/errno; excludes stdio-only paths and fast metadata shortcuts."
+    },
+    {
+      "number": 12,
+      "component": "usr.bin/tail",
+      "provider": "tailwait",
+      "operation": "operation",
+      "scope": "Follow-mode registration and kevent waits; completion count/errno, not an assertion of appended data."
+    },
+    {
+      "number": 13,
+      "component": "usr.bin/cksum",
+      "provider": "checksumtool",
+      "operation": "file",
+      "scope": "One complete checksum dispatch, all four algorithms and sum alias; length on success only, no checksum or contents."
+    },
+    {
+      "number": 14,
+      "component": "sbin/kldstat",
+      "provider": "modulequery",
+      "operation": "operation",
+      "scope": "Module metadata query id/result; excludes enumeration and rendering."
+    },
+    {
+      "number": 15,
+      "component": "bin/kenv",
+      "provider": "envquery",
+      "operation": "operation",
+      "scope": "Kernel environment get/set/unset/dump calls; operation/length/result only, never names or values."
+    },
+    {
+      "number": 16,
+      "component": "usr.sbin/chroot",
+      "provider": "rootchange",
+      "operation": "operation",
+      "scope": "Root-directory change after setup; no path, credentials or executable arguments."
+    },
+    {
+      "number": 17,
+      "component": "usr.bin/procstat",
+      "provider": "processquery",
+      "operation": "operation",
+      "scope": "Process enumeration kind, result count and null-result indicator; final int is unavailable flag, NOT errno."
+    },
+    {
+      "number": 18,
+      "component": "bin/pwait",
+      "provider": "processwait",
+      "operation": "operation",
+      "scope": "Process event registration/waits. No probes in alarm handlers; returned events need caller interpretation."
+    },
+    {
+      "number": 19,
+      "component": "usr.bin/brandelf",
+      "provider": "elfbrand",
+      "operation": "header",
+      "scope": "ELF identification read/write calls, including short transfers; no header bytes."
+    },
+    {
+      "number": 20,
+      "component": "usr.bin/vmstat",
+      "provider": "vmquery",
+      "operation": "operation",
+      "scope": "Live sysctl query boundary; excludes kvm crash-dump and libdevstat calls. No MIB names or values."
+    }
+  ],
+  "components": [
+    {
+      "directory": "usr.sbin/extattr",
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "provider": "attrtool",
+      "binary": "rmextattr"
+    },
+    {
+      "directory": "bin/getfacl",
+      "source": "bin/getfacl/getfacl.c",
+      "provider": "aclread",
+      "binary": "getfacl"
+    },
+    {
+      "directory": "bin/setfacl",
+      "source": "bin/setfacl/setfacl.c",
+      "provider": "aclwrite",
+      "binary": "setfacl"
+    },
+    {
+      "directory": "usr.bin/fsync",
+      "source": "usr.bin/fsync/fsync.c",
+      "provider": "filesync",
+      "binary": "fsync"
+    },
+    {
+      "directory": "bin/cat",
+      "source": "bin/cat/cat.c",
+      "provider": "catio",
+      "binary": "cat"
+    },
+    {
+      "directory": "usr.bin/tee",
+      "source": "usr.bin/tee/tee.c",
+      "provider": "teeio",
+      "binary": "tee"
+    },
+    {
+      "directory": "usr.bin/split",
+      "source": "usr.bin/split/split.c",
+      "provider": "splitio",
+      "binary": "split"
+    },
+    {
+      "directory": "usr.bin/wc",
+      "source": "usr.bin/wc/wc.c",
+      "provider": "wordcountio",
+      "binary": "wc"
+    },
+    {
+      "directory": "usr.bin/tail",
+      "source": "usr.bin/tail/forward.c",
+      "provider": "tailwait",
+      "binary": "tail"
+    },
+    {
+      "directory": "usr.bin/cksum",
+      "source": "usr.bin/cksum/cksum.c",
+      "provider": "checksumtool",
+      "binary": "cksum"
+    },
+    {
+      "directory": "sbin/kldstat",
+      "source": "sbin/kldstat/kldstat.c",
+      "provider": "modulequery",
+      "binary": "kldstat"
+    },
+    {
+      "directory": "bin/kenv",
+      "source": "bin/kenv/kenv.c",
+      "provider": "envquery",
+      "binary": "kenv"
+    },
+    {
+      "directory": "usr.sbin/chroot",
+      "source": "usr.sbin/chroot/chroot.c",
+      "provider": "rootchange",
+      "binary": "chroot"
+    },
+    {
+      "directory": "usr.bin/procstat",
+      "source": "usr.bin/procstat/procstat.c",
+      "provider": "processquery",
+      "binary": "procstat"
+    },
+    {
+      "directory": "bin/pwait",
+      "source": "bin/pwait/pwait.c",
+      "provider": "processwait",
+      "binary": "pwait"
+    },
+    {
+      "directory": "usr.bin/brandelf",
+      "source": "usr.bin/brandelf/brandelf.c",
+      "provider": "elfbrand",
+      "binary": "brandelf"
+    },
+    {
+      "directory": "usr.bin/vmstat",
+      "source": "usr.bin/vmstat/vmstat.c",
+      "provider": "vmquery",
+      "binary": "vmstat"
+    }
+  ],
+  "call_replacements": [
+    {
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "function": "extattr_delete_file",
+      "calls": 1
+    },
+    {
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "function": "extattr_delete_link",
+      "calls": 1
+    },
+    {
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "function": "extattr_set_file",
+      "calls": 1
+    },
+    {
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "function": "extattr_set_link",
+      "calls": 1
+    },
+    {
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "function": "extattr_list_file",
+      "calls": 2
+    },
+    {
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "function": "extattr_list_link",
+      "calls": 2
+    },
+    {
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "function": "extattr_get_file",
+      "calls": 2
+    },
+    {
+      "source": "usr.sbin/extattr/rmextattr.c",
+      "function": "extattr_get_link",
+      "calls": 2
+    },
+    {
+      "source": "bin/getfacl/getfacl.c",
+      "function": "acl_get_file",
+      "calls": 1
+    },
+    {
+      "source": "bin/getfacl/getfacl.c",
+      "function": "acl_get_link_np",
+      "calls": 1
+    },
+    {
+      "source": "bin/setfacl/setfacl.c",
+      "function": "acl_set_file",
+      "calls": 1
+    },
+    {
+      "source": "bin/setfacl/setfacl.c",
+      "function": "acl_set_link_np",
+      "calls": 1
+    },
+    {
+      "source": "usr.bin/fsync/fsync.c",
+      "function": "fsync",
+      "calls": 1
+    },
+    {
+      "source": "bin/cat/cat.c",
+      "function": "read",
+      "calls": 1
+    },
+    {
+      "source": "bin/cat/cat.c",
+      "function": "write",
+      "calls": 1
+    },
+    {
+      "source": "usr.bin/tee/tee.c",
+      "function": "read",
+      "calls": 1
+    },
+    {
+      "source": "usr.bin/tee/tee.c",
+      "function": "write",
+      "calls": 1
+    },
+    {
+      "source": "usr.bin/split/split.c",
+      "function": "read",
+      "calls": 1
+    },
+    {
+      "source": "usr.bin/split/split.c",
+      "function": "write",
+      "calls": 5
+    },
+    {
+      "source": "usr.bin/wc/wc.c",
+      "function": "read",
+      "calls": 2
+    },
+    {
+      "source": "usr.bin/tail/forward.c",
+      "function": "kevent",
+      "calls": 2
+    },
+    {
+      "source": "sbin/kldstat/kldstat.c",
+      "function": "kldstat",
+      "calls": 1
+    },
+    {
+      "source": "bin/kenv/kenv.c",
+      "function": "kenv",
+      "calls": 5
+    },
+    {
+      "source": "usr.sbin/chroot/chroot.c",
+      "function": "chroot",
+      "calls": 1
+    },
+    {
+      "source": "usr.bin/procstat/procstat.c",
+      "function": "procstat_getprocs",
+      "calls": 3
+    },
+    {
+      "source": "bin/pwait/pwait.c",
+      "function": "kevent",
+      "calls": 4
+    },
+    {
+      "source": "usr.bin/brandelf/brandelf.c",
+      "function": "read",
+      "calls": 1
+    },
+    {
+      "source": "usr.bin/brandelf/brandelf.c",
+      "function": "write",
+      "calls": 1
+    },
+    {
+      "source": "usr.bin/vmstat/vmstat.c",
+      "function": "sysctlbyname",
+      "calls": 1
+    }
+  ],
+  "profiles": [
+    "base-attribute-operations",
+    "base-acl-operations",
+    "base-stream-io",
+    "base-file-completion",
+    "base-event-waits",
+    "base-system-queries",
+    "base-root-change",
+    "base-elf-headers"
+  ],
+  "dependencies": [],
+  "sources": {
+    "bin/cat/Makefile": "f89a02c960ed9ce7d7b4e3b8abac9927ba1822f0991a4ed8c30cae8c6b1d7e48",
+    "bin/cat/cat.c": "6204350bf86a501f7a5eb243c26a139ccf69f0eef2834302328ae8ae6d1ed89f",
+    "bin/cat/catio_provider.d": "5daa05e3b87fa27b04fdff5772c9ebd5f2b9aaac881ea7991a7c18ef8b7a5a4d",
+    "bin/cat/catio_trace.h": "b22427047b7b67894c29c3eaf5ed6cfcf70ce33e5fade1c4ab745a4f3c233f4c",
+    "bin/getfacl/Makefile": "29b32a72640e6215d4878e383431b1eaff09e33fbbcdac26a12e7cbd0d373d14",
+    "bin/getfacl/aclread_provider.d": "f336e94a5ef4f8c63aa2389c98f4b160f44087fc628a0d145bf231ed923246d7",
+    "bin/getfacl/aclread_trace.h": "e4ecbb9c0ac77a241978d93f818c230801c1110b1ee0006e80991bc5411833c2",
+    "bin/getfacl/getfacl.c": "2ddf5bfbda000bdbc755eb1a9524733977658c9271c6fb9e48a702641f2fa6dd",
+    "bin/kenv/Makefile": "b28be42c78be7f73f8eada7e1913b26f42a1a874a79581d770ec50d268bdc9b4",
+    "bin/kenv/envquery_provider.d": "7eb6fa5e2c3790527a85e81e44f6f5ebadd3c99c266d216622c4163eb387b42e",
+    "bin/kenv/envquery_trace.h": "92563e1b77f54ec6ac90e7eac66472ef419f9a9229581d47c4d6e5f0dfe65962",
+    "bin/kenv/kenv.c": "5ec79db9ecdf7d7e251a25edc4726cd61d12c63a8d6095aea3caf157fd373da7",
+    "bin/pwait/Makefile": "f5c1ea8ddda29d4a59926a9d2295c9fc0a47fdc00b3ebc03f6b9a6d136aa8b91",
+    "bin/pwait/processwait_provider.d": "a1d73ff2202d2d51ea5cebfdbd35d91082a36d8ab74770cd9fd7dd7acaed8536",
+    "bin/pwait/processwait_trace.h": "2a450ad0461f095b0c3b55edbd353d837576ff77427e4dfca22eb6124071330c",
+    "bin/pwait/pwait.c": "513063995adc970c1693c22fb438e5b3caa583a06cef416c5178d15139867533",
+    "bin/setfacl/Makefile": "ff996706a4b691e05c4e0af9db3f44d900f6662d37aedf7db90b637f949b1daf",
+    "bin/setfacl/aclwrite_provider.d": "0614a6a507342b380131c0fa701485a019f865fca884c3c10cc7d36781037d69",
+    "bin/setfacl/aclwrite_trace.h": "dce935c713f923e110966c63abea1570323ca4ab7385f01ff2431c8f99f12696",
+    "bin/setfacl/setfacl.c": "4f2e35f5a1989cbdbdb4e986da64a3c5e0296d0f554cf19c70fdf8aef9498d1c",
+    "cddl/usr.sbin/bsdinstruments/Makefile": "2f8e2f3b2ab8af9e3ee452c054e29bf6e5c48de21021889448c62a2af238714a",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-acl-operations.d": "c76f8abf0675c21e75fc10515dd6555fa5b9dfcf5f61813a874357a578f9fc38",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-attribute-operations.d": "638091a3da6950e448bcae169ff8089df7177fc7feb41e9137fa420eb0e05fb5",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-elf-headers.d": "56de3b88374c9a923a48cd00f9646f955941de7cfd80ddecdb0ea788d2103e79",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-event-waits.d": "bd03a477e7a1d81b68fa1d4fb0b21dbc720eea0a627ce92e528cb2011be32214",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-file-completion.d": "c6b98f39883640a15a0fba222f3df24df8f57a2f76d45a72ec7c7563379465d9",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-root-change.d": "5d398cb5644c5febbc0bb3e2346205437b3770207fb7d5fe685202e6a62e1fa4",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-stream-io.d": "eb515faad6231fdc7388b1913821a18d8a18393efa99218064ad767a9eac3a07",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-system-queries.d": "5a47d8a9fc2a28b68b2a34d5712980a60f3941b1415b5f3b987953ef60902334",
+    "sbin/kldstat/Makefile": "c3841ddb6bfc840335b757c1c525fae062cc8672a00b0d8c186632b2af221b01",
+    "sbin/kldstat/kldstat.c": "549aa4287f99f28ba6e8dc19cb69d41b3b57f935053ff4e6f044a372472f8b05",
+    "sbin/kldstat/modulequery_provider.d": "7e43df67053dbaa30b58daf66058f9b91626050835e3b33f1c04220fd97bccda",
+    "sbin/kldstat/modulequery_trace.h": "d9c5517faa6e4a1b41188278b4c1f15d4e7d879937d7a3d53b2b04455bfe7bfe",
+    "tools/test/system-tracing/COVERAGE-FOURTEENTH": "c69c9784df685250ebd5ac59dc7e232de57977fd788fea819a6f4c5240b9a7f8",
+    "tools/test/system-tracing/README": "93b6d8b1001abd71e2fcd287656191c0bdc7fc7250b587607ea8b0ae2e165a4d",
+    "tools/test/system-tracing/coverage-fourteenth-base.py": "04350bdf50fe627d4ef8cfcec0111e7b7c1be3d1a73af86fd7309cc0474824c1",
+    "tools/test/system-tracing/coverage-fourteenth-check.py": "a988e9c8891d622d419f6c23e1be69a059dfeee1e9d8116443e4517dc6ee0150",
+    "tools/test/system-tracing/coverage-fourteenth-guards.py": "04443d40a0a57d403747804b41de85a9d9ac545517832c0dae28c4fad04a0d2d",
+    "tools/test/system-tracing/coverage-fourteenth-integration.py": "ad9647823ce4b347ab39f3d68c992e233a390a8af88b3a1d2fa6ef60b2687909",
+    "tools/test/system-tracing/coverage-fourteenth-smoke.py": "31bc6820a553956758718ad7c1102ee9d7d39ef2657ac30435ca563dfd1ac628",
+    "tools/test/system-tracing/coverage-fourteenth-stubs.c": "fb328e5bf915c3fc445c9f1e507a7c718fab48db889f1a49af722df8893812d6",
+    "tools/test/system-tracing/coverage-fourteenth-tests.py": "274f5a3bc5812cd01cedd3eacbb698dc546ac7ab8cdab19df796a31008e8fd5d",
+    "tools/test/system-tracing/coverage-fourth-dof.py": "7a2fc9fc87d4b6d161c88f981ace9c7c6e8c1090cfab60f523b5a61e6730375a",
+    "tools/test/system-tracing/coverage-third-profile-check.py": "6a63a690cbbf6970c52a90e234a701b64cd7e20d7745139d6e18977dfe71e0ae",
+    "usr.bin/brandelf/Makefile": "7f8add7f4dcf8de03d894d9ffe676fd1ad7687345fdaf00476dc6de4fb916e23",
+    "usr.bin/brandelf/brandelf.c": "83ea5eb779363c7618d1ab6b7a8a3b97788b70c9ee187dbe799dd45c0bd95166",
+    "usr.bin/brandelf/elfbrand_provider.d": "6b57b5b1a927dce3c9f1c1b683d65aec152352e35e2e5ccf234a800bc88aa9f8",
+    "usr.bin/brandelf/elfbrand_trace.h": "d8af2a7def50ae71e2f2d490b546f9f43c7d5f81307f7b4d0eaefdb0929fa31a",
+    "usr.bin/cksum/Makefile": "10bdbd0e50b0564a8cc26854e9f2fd73de9b917dd0935542a4e0cf941aabaea1",
+    "usr.bin/cksum/checksumtool_provider.d": "3f5572cd332d7755ae477fe86ec20f7e410a17b01a74ba921bbc222f61f01c93",
+    "usr.bin/cksum/checksumtool_trace.h": "40a72eb846777e95a717746d7de5caca73dcce3dbd10a0747a5d280c67b57ad4",
+    "usr.bin/cksum/cksum.c": "3a7e39e82904b22d2667d2b350a24de7e60c9dc59682735f15fefbd8e2d6beea",
+    "usr.bin/fsync/Makefile": "3a2dfe8ec9022790dfae4c927ed2c683cedd1d759ea5b5092151cba139d8115c",
+    "usr.bin/fsync/filesync_provider.d": "53e784dc550aa6c9dd5eb3d241b5e773b0ab67cf7bcd6c8a370bc56f66e3e9bf",
+    "usr.bin/fsync/filesync_trace.h": "495b6b73d6091923fa583e2f3aa05d2738ba162d5a9ab1758fea97a4f9bdce81",
+    "usr.bin/fsync/fsync.c": "e4a549b9c8ebb13888ea936e5d06027ecfc8087cb5389e51c4991d61a8c4a6ab",
+    "usr.bin/procstat/Makefile": "eb0b2c2f2b193817fc6da61fdbfa3e8ef835addc00eab0a56288ddc7a50cee9b",
+    "usr.bin/procstat/processquery_provider.d": "646d579859aabb0712103a336823720b177dfcf1e4bf87f33dab677a08076187",
+    "usr.bin/procstat/processquery_trace.h": "b9bc239ef975751cd1132faee076bfd50acf4c8eee09eef01cb4973d4cbdb515",
+    "usr.bin/procstat/procstat.c": "3804847def1f21ba34b79e0605834d43664b5aef1f26cfd319a00c9dc7184276",
+    "usr.bin/split/Makefile": "64ecb439c45405c509295bd5c931adbdbea9e880dbca763816560ca4a4eb2983",
+    "usr.bin/split/split.c": "25f155679e3a984caef9123c8ebcd421bef2fcad29bb13e535d23e2808b12e0d",
+    "usr.bin/split/splitio_provider.d": "17d972036ef81481c91eecda9aa559db75c52cc1b463c2f5ec167c03f4a26fdd",
+    "usr.bin/split/splitio_trace.h": "39da5dccd8962bea3e31973fc00ce8a288b2e0462a1be6a0be27bb18c23355de",
+    "usr.bin/tail/Makefile": "c13f0796ef1c2fb11b2b234a2646306112c73fc99d0513ee8af8b1dac43da284",
+    "usr.bin/tail/forward.c": "5a4fa90d18e7d654d645724a0450b0a82239b712c0361582db8a454e44ee02f2",
+    "usr.bin/tail/tailwait_provider.d": "726830bb7ada63a257323d2b16b5ed6850fe7de3b25c8316a8cd6345006f79b7",
+    "usr.bin/tail/tailwait_trace.h": "d989a5d26b66cac6756b0c5ded3c1281407b1738c0cecd95edee1da9c380f83d",
+    "usr.bin/tee/Makefile": "8fed97ea0f4efaad36d604f960b04961a865380f92d38ef3819e2e751462131f",
+    "usr.bin/tee/tee.c": "e2681166135c0a33a61b765fc57a569c806fc05cc69a96f349dd79ee67e35888",
+    "usr.bin/tee/teeio_provider.d": "7434581c7345bd1c2e5c46e97943ce9dec22cc451c44f6e80b9f7f8b63f93d77",
+    "usr.bin/tee/teeio_trace.h": "238c5b63c267b20339198439ec7caedf7e429cbb082581dae5603d310428fd5b",
+    "usr.bin/vmstat/Makefile": "800596d377249b2ab18701e3e746d52e3c7631a4cb33f9783ac477220cab6e3d",
+    "usr.bin/vmstat/vmquery_provider.d": "13a0ddb0c7f031ed16f5ed1450f66911f0c84cf9d08bd2e059c480fd22de88ba",
+    "usr.bin/vmstat/vmquery_trace.h": "fd5dd41d6472bc18d85d91b5458473db8fb9f68ae7f25c7cdc82a1867061cc0f",
+    "usr.bin/vmstat/vmstat.c": "c56bd61f0bfee660730941e98e66ca019233640a8a62c8576516afc2c9d8e504",
+    "usr.bin/wc/Makefile": "5dbc06fdce9daa6dc7bf286fc33cf3f506ab65af4cfaac18398b9e50d9a8003e",
+    "usr.bin/wc/wc.c": "3bda6ee40d92e10aa57348cfe6495cb97bf153dbdd6b854549f4d241d8b24107",
+    "usr.bin/wc/wordcountio_provider.d": "52d366cd165cccb19887c3b05e0e1a56652cb3e5b0a1e26b1bb2e86b82e20c1e",
+    "usr.bin/wc/wordcountio_trace.h": "3bb19523b0cc365dc9fbba51d8aae72c22807dc53bae4bd2da9084dbc83efced",
+    "usr.sbin/chroot/Makefile": "b4c227e1fb9f94367d2b48c4e8a7e6a99bdbacfef4b38fa0fe59df9c96614745",
+    "usr.sbin/chroot/chroot.c": "a93d0e6388e7730a093b2684ed1e5a768ae93020e1e197fb9e66cf74c601471c",
+    "usr.sbin/chroot/rootchange_provider.d": "333e065d986ed6dd421f20181a9c2b1c9d7379906a2744c7f9c5dce640dbbbf0",
+    "usr.sbin/chroot/rootchange_trace.h": "79ca09bb3d3c467017f29cde0aa6106d6779aea06bf928a4820b5dc3cfafae69",
+    "usr.sbin/extattr/Makefile": "8105d5b819edfcfbd60ba1a2d3b123d7c12afe53d6f7ceaa44372adc757cd358",
+    "usr.sbin/extattr/attrtool_provider.d": "c89cf63566bbb7539d056a52935ef9bf8a74d837f1652690ef6e8f1f7508f1d0",
+    "usr.sbin/extattr/attrtool_trace.h": "862b9cf5da02c0f776cc43dfbdf1722b2baa58c8c36b778c683b8f2aed59b812",
+    "usr.sbin/extattr/rmextattr.c": "e1040688626819a34b0c17996fdb1d7eee33184f4877bdff407d8f712f9eea5b"
+  }
+}

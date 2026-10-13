@@ -35,6 +35,20 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "dirremove_trace.h"
+
+static int
+trace_rmdir(const char *path)
+{
+	int result;
+
+	TRACE_DIRREMOVE_OPERATION__START(0);
+	result = rmdir(path);
+	TRACE_DIRREMOVE_OPERATION__DONE(0, result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 static int rm_path(char *);
 static void usage(void) __dead2;
 
@@ -65,7 +79,7 @@ main(int argc, char *argv[])
 		usage();
 
 	for (errors = 0; *argv; argv++) {
-		if (rmdir(*argv) < 0) {
+		if (trace_rmdir(*argv) < 0) {
 			warn("%s", *argv);
 			errors = 1;
 		} else {
@@ -96,7 +110,7 @@ rm_path(char *path)
 		if (p == path)
 			break;
 
-		if (rmdir(path) < 0) {
+		if (trace_rmdir(path) < 0) {
 			warn("%s", path);
 			return (1);
 		}

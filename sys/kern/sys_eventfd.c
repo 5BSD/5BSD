@@ -55,6 +55,17 @@ _Static_assert(EFD_NONBLOCK == O_NONBLOCK, "Mismatched EFD_NONBLOCK");
 MALLOC_DEFINE(M_EVENTFD, "eventfd", "eventfd structures");
 
 SDT_PROVIDER_DEFINE(eventfd);
+SDT_PROBE_DEFINE3(eventfd, , , read__state, "void *", "uint64_t", "uint64_t");
+
+SDT_PROBE_DEFINE1(eventfd, , , read__copy__start, "void *");
+SDT_PROBE_DEFINE2(eventfd, , , read__copy__done, "void *", "int");
+
+SDT_PROBE_DEFINE1(eventfd, , , write__wait__start, "void *");
+SDT_PROBE_DEFINE2(eventfd, , , write__wait__done, "void *", "int");
+
+SDT_PROBE_DEFINE1(eventfd, , , read__wait__start, "void *");
+SDT_PROBE_DEFINE2(eventfd, , , read__wait__done, "void *", "int");
+
 /* A new eventfd object was created: pid, initval, flags. */
 SDT_PROBE_DEFINE3(eventfd, , , create, "int", "uint32_t", "int");
 /* A blocking/successful read returned a value: pid, count, flags. */
@@ -229,8 +240,10 @@ eventfd_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 			SDT_PROBE1(eventfd, , , read__eagain, td->td_proc->p_pid);
 			return (EAGAIN);
 		}
+		SDT_PROBE1(eventfd, , , read__wait__start, efd);
 		error = mtx_sleep(&efd->efd_count, &efd->efd_lock, PCATCH,
 		    "efdrd", 0);
+		SDT_PROBE2(eventfd, , , read__wait__done, efd, error);
 	}
 	if (error == 0) {
 		MPASS(efd->efd_count > 0);
@@ -241,13 +254,17 @@ eventfd_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 			count = efd->efd_count;
 			efd->efd_count = 0;
 		}
+		SDT_PROBE3(eventfd, , , read__state, efd,
+		    (efd->efd_count + count), efd->efd_count);
 		SDT_PROBE3(eventfd, , , read, td->td_proc->p_pid, count,
 		    efd->efd_flags);
 		KNOTE_LOCKED(&efd->efd_sel.si_note, 0);
 		selwakeup(&efd->efd_sel);
 		wakeup(&efd->efd_count);
 		mtx_unlock(&efd->efd_lock);
+		SDT_PROBE1(eventfd, , , read__copy__start, efd);
 		error = uiomove(&count, sizeof(eventfd_t), uio);
+		SDT_PROBE2(eventfd, , , read__copy__done, efd, error);
 	} else
 		mtx_unlock(&efd->efd_lock);
 
@@ -284,8 +301,10 @@ retry:
 			    td->td_proc->p_pid, count);
 			return (EAGAIN);
 		}
+		SDT_PROBE1(eventfd, , , write__wait__start, efd);
 		error = mtx_sleep(&efd->efd_count, &efd->efd_lock,
 		    PCATCH, "efdwr", 0);
+		SDT_PROBE2(eventfd, , , write__wait__done, efd, error);
 		if (error == 0)
 			goto retry;
 	}

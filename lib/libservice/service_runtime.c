@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "service_runtime.h"
+#include "trace_pressure.h"
 
 static _Thread_local uint64_t budget_end;
 static _Thread_local pid_t budget_owner;
@@ -49,6 +50,8 @@ void
 service_retry_result(struct service_retry *r, uint64_t now, bool success)
 {
 	if (success) {
+		if (r->delay_ms != 0)
+			SERVICE_RUNTIME_TRACE_RETRY_RECOVERED((uintptr_t)r, r->delay_ms);
 		r->next_ms = r->delay_ms = 0;
 		return;
 	}
@@ -56,6 +59,7 @@ service_retry_result(struct service_retry *r, uint64_t now, bool success)
 	    r->initial_ms :
 	    (r->delay_ms > r->maximum_ms / 2 ? r->maximum_ms : r->delay_ms * 2);
 	r->next_ms = add_ms(now, r->delay_ms);
+	SERVICE_RUNTIME_TRACE_RETRY_SCHEDULED((uintptr_t)r, r->delay_ms, r->next_ms);
 }
 static void
 increment(uint64_t *v)
@@ -77,15 +81,21 @@ service_health_record(struct service_health *h, int error)
 	if (changed)
 		increment(&h->changes);
 	h->last_error = error;
+	if (changed)
+		SERVICE_RUNTIME_TRACE_HEALTH_CHANGE((uintptr_t)h, error, h->failures);
 	return (changed);
 }
 int
 service_budget_begin(uint32_t ms)
 {
-	if (ms == 0 || ms == UINT32_MAX)
+	if (ms == 0 || ms == UINT32_MAX) {
+		SERVICE_RUNTIME_TRACE_BUDGET_REJECTED(EINVAL, ms);
 		return (errno = EINVAL, -1);
-	if (budget_owner == getpid() && budget_end != 0)
+	}
+	if (budget_owner == getpid() && budget_end != 0) {
+		SERVICE_RUNTIME_TRACE_BUDGET_REJECTED(EBUSY, ms);
 		return (errno = EBUSY, -1);
+	}
 	budget_owner = getpid();
 	budget_end = add_ms(service_monotime_ms(), ms);
 	return (0);
@@ -104,8 +114,10 @@ service_budget_timeout(uint32_t *ms)
 	if (budget_end == 0 || budget_owner != getpid())
 		return (0);
 	now = service_monotime_ms();
-	if (now >= budget_end)
+	if (now >= budget_end) {
+		SERVICE_RUNTIME_TRACE_BUDGET_EXPIRED(now - budget_end);
 		return (errno = ETIMEDOUT, -1);
+	}
 	left = budget_end - now;
 	if (left < *ms)
 		*ms = (uint32_t)left;
@@ -167,10 +179,14 @@ service_lease_acquire(struct service_lease_set *s, uint64_t owner, uint64_t *id)
 	size_t i;
 	if (s == NULL || owner == 0 || id == NULL)
 		return (errno = EINVAL, -1);
-	if (s->count == s->capacity)
+	if (s->count == s->capacity) {
+		SERVICE_RUNTIME_TRACE_LEASE_LIMIT(s->count, s->capacity, ENOSPC);
 		return (errno = ENOSPC, -1);
-	if (s->serial == UINT64_MAX)
+	}
+	if (s->serial == UINT64_MAX) {
+		SERVICE_RUNTIME_TRACE_LEASE_LIMIT(s->count, s->capacity, EOVERFLOW);
 		return (errno = EOVERFLOW, -1);
+	}
 	for (i = 0; i < s->capacity; i++) {
 		if (s->entries[i].id != 0)
 			continue;

@@ -22,6 +22,7 @@
  */
 
 #include <pthread.h>
+#include "blued_probes.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -75,6 +76,7 @@ iso_alloc(void)
 	pthread_mutex_lock(&iso_lock);
 	LIST_INSERT_HEAD(&iso_streams, s, entries);
 	s->linked = true;
+	BLUED_PROBE_ISO__STREAM__ALLOC((uintptr_t)s);
 	pthread_mutex_unlock(&iso_lock);
 	return (s);
 }
@@ -127,6 +129,7 @@ iso_unlink(struct blued_iso_stream *s)
 	if (s->linked) {
 		LIST_REMOVE(s, entries);
 		s->linked = false;
+		BLUED_PROBE_ISO__STREAM__UNLINK((uintptr_t)s);
 		did = true;
 	}
 	pthread_mutex_unlock(&iso_lock);
@@ -798,6 +801,7 @@ blued_iso_acquire_fd(struct blued_adapter *adp, uint16_t handle)
 	    (const uint8_t *)&s->peer, s->peer_type, handle, 0);
 	if (fd >= 0)
 		s->state = ISO_ST_HANDED_OFF;
+	BLUED_PROBE_ISO__HANDOFF((uintptr_t)s, handle, fd);
 	iso_unref(s);
 	return (fd);
 }
@@ -823,6 +827,7 @@ blued_iso_acquire_bis_fd(struct blued_adapter *adp, uint8_t big_handle,
 	    0);
 	if (fd >= 0)
 		s->state = ISO_ST_HANDED_OFF;
+	BLUED_PROBE_ISO__HANDOFF((uintptr_t)s, s->bis_handles[bis_index], fd);
 	iso_unref(s);
 	return (fd);
 }
@@ -1128,6 +1133,7 @@ iso_on_cis_request(struct blued_adapter *adp, uint16_t acl_handle,
 	struct blued_iso_stream *s;
 	struct blued_conn *conn;
 
+	BLUED_PROBE_ISO__CIS__REQUEST(acl_handle, cis_handle, cig_id, cis_id);
 	/* Ignore a duplicate request for a handle we already track. */
 	s = iso_find_by_handle(adp, cis_handle);
 	if (s != NULL) {
@@ -1179,6 +1185,11 @@ iso_on_big_established(struct blued_adapter *adp, uint8_t big_handle,
 	uint8_t i;
 	int up;
 
+	if (kind == HCI_ISO_STREAM_BIS_SOURCE) {
+		BLUED_PROBE_ISO__BIG__COMPLETE(big_handle, status, num_bis);
+	} else {
+		BLUED_PROBE_ISO__BIG__SYNC(big_handle, status, num_bis);
+	}
 	s = iso_find_big(adp, big_handle);
 	if (s == NULL) {
 		LOG_ISO(1, "BIG %u event: no matching stream", big_handle);

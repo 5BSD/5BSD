@@ -1,0 +1,124 @@
+Eighteenth system tracing expansion (2026-10-13)
+==============================================
+
+13 new kernel contracts in four source files, at 19 source sites (18 in the
+native kernel; the additional socket helper-hook site requires SOCKET_HHOOK).
+Four profiles bring the bsdinstruments base installation catalog to 438.
+No installation occurred. Inventory: coverage-eighteenth.json.
+All new selectors are sdt:::NAME. Counts are unique provider/module/function/
+name contracts, not runtime instances, source sites or generated FBT probes.
+
+Scope and placement
+-------------------
+Socket allocation failures, socket buffer limits, blocking accept, filesystem
+write throttling, AIO process rundown, list waits and completion waits.
+Existing generic operation/result probes do not isolate these causal failures
+or individual waits. New events only occur on failures or actual sleeps, not
+successful packet or storage I/O fast paths. No new allocator-internal probe,
+payload copying, allocation, counter update or lock acquisition is introduced.
+
+Every event excludes cold startup. Allocation and socket-buffer failures also
+exclude stopped-scheduler and raw interrupt contexts. The sleep events surround
+existing sleepable thread operations; no probe was placed in an interrupt
+filter, panic handler or dump completion path. Some events fire under existing
+locks and may extend their hold time when enabled. Live overhead is unmeasured.
+
+Contracts (arguments in order)
+-----------------------------
+sockbuf-reserve-failure: socket identity, SO_RCV/SO_SND selector, cause,
+requested bytes, applicable byte limit.
+  cause 1 = request exceeds BUF_MAX_ADJ(buf_max), the effective buffer cap.
+  cause 2 = chgsbsize rejects per-user buffer accounting under RLIMIT_SBSIZE.
+The latter limit is the caller's supplied thread limit; when no appropriate
+thread exists, the existing code supplies RLIM_INFINITY. No credential or UID
+is exposed. The shared reservation path covers initial reservation, resizing
+and automatic growth when they reach these failures; failure does not always
+mean the enclosing operation terminates.
+sockbuf-listen-limit: listening socket, SO_SNDBUF/SO_RCVBUF option, requested
+bytes, current sb_max_adj. Listening sockets take a separate setsockopt path.
+The sysctl-controlled limit is context and can change concurrently; it is not
+an atomic snapshot of the earlier comparison. No actual mbufs are allocated
+by these reservation operations.
+
+socket-alloc-failure: cause.
+  1 = socket-zone M_NOWAIT allocation returned NULL (capacity or memory).
+  2 = MAC socket initialization returned an error; requires MAC.
+  3 = socket helper object-specific data initialization failed.
+  4 = socket creation helper hook rejected creation; requires SOCKET_HHOOK.
+These are distinct allocation/initialization failures, not all OOM. The shared
+soalloc path covers explicit creation and inbound child allocation. No socket
+pointer is exposed before full initialization, and no new dereference occurs
+after cleanup. This probe identifies the stage, not the underlying errno.
+socket-accept-wait-start/done: listening socket (done adds raw msleep return),
+around each actual accept-queue sleep. Nonblocking/ready/error early paths
+are excluded. A wake does not promise that a connection is ready or accepted;
+the caller may recheck and sleep again.
+
+bufcache-throttle-start/done: kind.
+  1 = waitrunningbufspace: async-write backlog exceeds hirunningspace.
+  2 = bwillwrite: severe dirty-buffer pressure before vnode locking.
+Pairs enclose each actual sleep, not the complete write. Done means the wait
+returned, not that pressure is gone, a write completed or a barrier reached
+stable storage. Kind 2 is driven by the existing per-domain dirty bitmap, not
+a newly sampled global buffer count. Existing non-interruptible sleep results
+remain ignored, as before. No racy counters are added to the probe arguments.
+
+AIO pairs report each actual sleep rather than complete operation latency:
+aio-rundown-wait-start: process identity, sampled active AIO count.
+aio-rundown-wait-done: process identity, raw msleep return. Rundown waits one
+second at a time while cancellation/draining proceeds and may repeat. The
+count is contextual and does not include every queued-but-inactive request;
+a zero count does not imply the process has no queued jobs.
+aio-list-wait-start: process identity, unfinished list-job count excluding the
+list's sentinel reference, sampled under the existing AIO lock.
+aio-list-wait-done: process identity, raw msleep return, before any ERESTART
+to EINTR conversion. Only LIO_WAIT's actual sleeps are covered.
+aio-completion-wait-start: process identity, timeout ticks (zero = indefinite).
+aio-completion-wait-done: process identity, raw msleep return before the
+existing timeout/restart conversion. The nonblocking branch is excluded.
+These done results describe waking, not the I/O status later returned/reaped.
+
+Profiles
+--------
+socket-resource-failures: reservation causes, requested sizes, contextual
+limits, listener buffer failures and allocation/initialization stages.
+socket-accept-waits: accept sleep latency and raw wake results.
+buffer-write-throttle: sleep latency and wake count by throttle kind.
+aio-drain-waits: rundown/list/completion sleep latencies, wake errors and
+contextual outstanding counts or configured timeout ticks.
+
+Profiles use scalar arguments only, without pointers, addresses, credentials,
+paths or payloads in output. PID/TID/depth keys handle nested synchronous pairs
+and clear matched state. Start before the workload; dropped events invalidate
+pairing. Elapsed time includes scheduling and reacquiring existing locks.
+PID filters observe the executing thread, which may be a network worker for
+allocation failures. The throttle pair uses one thread-local logical stack
+because the calls are synchronous; this also fits DTrace's register budget.
+
+Validation
+----------
+Artifacts, exact originals and session.patch:
+  /usr/obj/5bsd-dtrace-eighteenth-validation
+Maintained validation scripts in this directory:
+  coverage-eighteenth-compile.py: four native sources, tracing hooks on/off;
+    eight successful Werror compilations using prepared kernel flags.
+  coverage-eighteenth-codegen.py: disabled-tracing .text bytes match all four
+    originals after diagnostic file/line normalization. This does not prove
+    relocation equivalence, cross-architecture behavior or live overhead.
+  coverage-eighteenth-check.py: source hashes, profile selector/argument arity,
+    eight offline DTrace compiles (normal and PID/duration-filtered), executable
+    SDT NOP sites in enabled objects and absent contracts with hooks disabled.
+  coverage-eighteenth-variants.py: no-MAC/no-SOCKET_HHOOK and SOCKET_HHOOK-on,
+    each with hooks on/off (four builds); verify 2/4 allocation failure sites
+    when enabled and zero with hooks disabled.
+  coverage-eighteenth-linked.py: validate all 13 contracts and their 18 native
+    executable NOP sites in the final amd64 kernel ELF, including target PCs.
+
+The prepared GENERIC-NODEBUG kernel links under the standard /usr/obj root,
+using all available logical CPUs (-j16), with SRCTOP=/usr/src. No additional
+modules are changed this round. The session patch preserves previous changes
+and passes git apply --check --reverse against the final working tree.
+
+/dev/dtrace is unavailable. Offline validation does not qualify live firing,
+enabled-trace overhead or induced failures. No fault injection, forced OOM,
+limit changes, module loading, installation, publication or reboot occurred.

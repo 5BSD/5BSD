@@ -173,4 +173,10 @@ provider blued {
 	probe power__tx__read(int handle, int phy, int level, int status);
 	probe power__pathloss__enable(int handle, int enable);
 	probe power__report__enable(int handle, int local, int remote);
+	probe discovery__lease__start(int a0, uint64_t a1, uint32_t a2);
+	probe discovery__lease__done(int a0, uint64_t a1, uint32_t a2, uint16_t a3, int a4);
+	probe discovery__deliver(int a0, uint32_t a1, int a2, int a3);
+	probe iso__stream__unlink(uintptr_t a0);
+	probe iso__stream__alloc(uintptr_t a0);
+	probe iso__handoff(uintptr_t a0, uint16_t a1, int a2);
 };

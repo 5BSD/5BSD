@@ -12,6 +12,7 @@
  */
 
 #include <sys/types.h>
+#include "meshd_probes.h"
 #include <sys/capsicum.h>
 #include <sys/param.h>
 #include <sys/socket.h>
@@ -77,6 +78,7 @@ mbw_transport_failed(struct meshd_blued *bc, struct meshd_node *nd)
 
 	if (bc == NULL)
 		return;
+	MESHD_PROBE_BEARER__FAILED(bc->fd, bc->state);
 	if (nd == NULL)
 		nd = bc->node;
 	if (nd != NULL) {
@@ -294,6 +296,7 @@ mbw_queue_frame(struct meshd_blued *bc, uint16_t type, uint16_t arg,
 	framelen = IPC_HDR_SIZE + plen;
 	pending = bc->txlen - bc->txoff;
 	if (framelen > sizeof(bc->tx) - pending) {
+		MESHD_PROBE_BEARER__FULL(bc->fd, framelen, pending);
 		errno = ENOBUFS;
 		return (-1);
 	}
@@ -308,6 +311,7 @@ mbw_queue_frame(struct meshd_blued *bc, uint16_t type, uint16_t arg,
 		memcpy(bc->tx + bc->txlen, payload, plen);
 		bc->txlen += plen;
 	}
+	MESHD_PROBE_BEARER__QUEUE(bc->fd, type, plen, bc->txlen);
 	if (bc->state == MESHD_BLUED_CONNECTING)
 		return (0);
 	return (meshd_blued_flush(bc));

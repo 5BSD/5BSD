@@ -1,0 +1,1011 @@
+{
+  "passes": [
+    {
+      "number": 1,
+      "operation": "read",
+      "sources": [
+        "sys/kern/sys_pipe.c"
+      ]
+    },
+    {
+      "number": 2,
+      "operation": "write",
+      "sources": [
+        "sys/kern/sys_pipe.c"
+      ]
+    },
+    {
+      "number": 3,
+      "operation": "direct",
+      "sources": [
+        "sys/kern/sys_pipe.c"
+      ]
+    },
+    {
+      "number": 4,
+      "operation": "resize",
+      "sources": [
+        "sys/kern/sys_pipe.c"
+      ]
+    },
+    {
+      "number": 5,
+      "operation": "scan",
+      "sources": [
+        "sys/kern/kern_event.c"
+      ]
+    },
+    {
+      "number": 6,
+      "operation": "wait",
+      "sources": [
+        "sys/kern/kern_event.c"
+      ]
+    },
+    {
+      "number": 7,
+      "operation": "copyout",
+      "sources": [
+        "sys/kern/kern_event.c"
+      ]
+    },
+    {
+      "number": 8,
+      "operation": "timer-settime",
+      "sources": [
+        "sys/kern/kern_time.c"
+      ]
+    },
+    {
+      "number": 9,
+      "operation": "fault-trap",
+      "sources": [
+        "sys/vm/vm_fault.c"
+      ]
+    },
+    {
+      "number": 10,
+      "operation": "geom-submit",
+      "sources": [
+        "sys/geom/geom_io.c"
+      ]
+    },
+    {
+      "number": 11,
+      "operation": "interface-ioctl",
+      "sources": [
+        "sys/net/if.c"
+      ]
+    },
+    {
+      "number": 12,
+      "operation": "usb-drain",
+      "sources": [
+        "sys/dev/usb/usb_transfer.c"
+      ]
+    },
+    {
+      "number": 13,
+      "operation": "pcm-close-drain",
+      "sources": [
+        "sys/dev/sound/pcm/channel.c"
+      ]
+    },
+    {
+      "number": 14,
+      "operation": "nvme-reset",
+      "sources": [
+        "sys/dev/nvme/nvme_ctrlr.c"
+      ]
+    },
+    {
+      "number": 15,
+      "operation": "pci-power",
+      "sources": [
+        "sys/dev/pci/pci.c"
+      ]
+    },
+    {
+      "number": 16,
+      "operation": "linuxkpi-delayed-cancel",
+      "sources": [
+        "sys/compat/linuxkpi/common/src/linux_work.c"
+      ]
+    },
+    {
+      "number": 17,
+      "operation": "linux-eventfd-timerfd",
+      "sources": [
+        "sys/compat/linux/linux_event.c"
+      ]
+    },
+    {
+      "number": 18,
+      "operation": "linuxkpi-shrinker",
+      "sources": [
+        "sys/compat/linuxkpi/common/src/linux_shrinker.c"
+      ]
+    },
+    {
+      "number": 19,
+      "operation": "syncer-fsync",
+      "sources": [
+        "sys/kern/vfs_subr.c"
+      ]
+    },
+    {
+      "number": 20,
+      "operation": "crypto-session",
+      "sources": [
+        "sys/opencrypto/crypto.c"
+      ]
+    },
+    {
+      "number": 21,
+      "operation": "fetch-read-write",
+      "sources": [
+        "lib/libfetch/fetchio_provider.d",
+        "lib/libfetch/fetchio_trace.h",
+        "lib/libfetch/common.c"
+      ]
+    },
+    {
+      "number": 22,
+      "operation": "archive-skip",
+      "sources": [
+        "lib/libarchive/archiveio_provider.d",
+        "contrib/libarchive/libarchive/archiveio_trace.h",
+        "contrib/libarchive/libarchive/archive_read.c"
+      ]
+    },
+    {
+      "number": 23,
+      "operation": "pthread-rwlock",
+      "sources": [
+        "lib/libthr/threadwait_provider.d",
+        "lib/libthr/thread/threadwait_trace.h",
+        "lib/libthr/thread/thr_rwlock.c"
+      ]
+    },
+    {
+      "number": 24,
+      "operation": "cp-transfer",
+      "sources": [
+        "bin/cp/cpcopy_provider.d",
+        "bin/cp/cpcopy_trace.h",
+        "bin/cp/Makefile",
+        "bin/cp/utils.c"
+      ]
+    },
+    {
+      "number": 25,
+      "operation": "install-copy-range",
+      "sources": [
+        "usr.bin/xinstall/installcopy_provider.d",
+        "usr.bin/xinstall/installcopy_trace.h",
+        "usr.bin/xinstall/Makefile",
+        "usr.bin/xinstall/xinstall.c"
+      ]
+    },
+    {
+      "number": 26,
+      "operation": "semaphore-kernel-wait-wake",
+      "sources": [
+        "lib/libc/Makefile",
+        "lib/libc/gen/sem_new.c",
+        "lib/libc/include/semwait_trace.h",
+        "lib/libc/nameres_provider.d"
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "kind": "user",
+      "provider": "cpcopy*",
+      "module": "",
+      "function": "",
+      "name": "transfer-start",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "bin/cp/cpcopy_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "cpcopy*",
+      "module": "",
+      "function": "",
+      "name": "transfer-done",
+      "types": [
+        "int",
+        "int",
+        "int64_t",
+        "int"
+      ],
+      "source": "bin/cp/cpcopy_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "cpcopy*",
+      "module": "",
+      "function": "",
+      "name": "fallback",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "bin/cp/cpcopy_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "archiveio*",
+      "module": "",
+      "function": "",
+      "name": "skip-start",
+      "types": [
+        "uintptr_t"
+      ],
+      "source": "lib/libarchive/archiveio_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "archiveio*",
+      "module": "",
+      "function": "",
+      "name": "skip-done",
+      "types": [
+        "uintptr_t",
+        "int"
+      ],
+      "source": "lib/libarchive/archiveio_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "semwait*",
+      "module": "",
+      "function": "",
+      "name": "park-start",
+      "types": [
+        "uintptr_t",
+        "int",
+        "int"
+      ],
+      "source": "lib/libc/nameres_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "semwait*",
+      "module": "",
+      "function": "",
+      "name": "park-done",
+      "types": [
+        "uintptr_t",
+        "int",
+        "int"
+      ],
+      "source": "lib/libc/nameres_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "semwait*",
+      "module": "",
+      "function": "",
+      "name": "wake-start",
+      "types": [
+        "uintptr_t"
+      ],
+      "source": "lib/libc/nameres_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "semwait*",
+      "module": "",
+      "function": "",
+      "name": "wake-done",
+      "types": [
+        "uintptr_t",
+        "int",
+        "int"
+      ],
+      "source": "lib/libc/nameres_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "fetchio*",
+      "module": "",
+      "function": "",
+      "name": "read-start",
+      "types": [
+        "uintptr_t",
+        "size_t"
+      ],
+      "source": "lib/libfetch/fetchio_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "fetchio*",
+      "module": "",
+      "function": "",
+      "name": "read-done",
+      "types": [
+        "uintptr_t",
+        "int64_t",
+        "int"
+      ],
+      "source": "lib/libfetch/fetchio_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "fetchio*",
+      "module": "",
+      "function": "",
+      "name": "write-start",
+      "types": [
+        "uintptr_t",
+        "size_t"
+      ],
+      "source": "lib/libfetch/fetchio_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "fetchio*",
+      "module": "",
+      "function": "",
+      "name": "write-done",
+      "types": [
+        "uintptr_t",
+        "int64_t",
+        "int"
+      ],
+      "source": "lib/libfetch/fetchio_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "threadwait*",
+      "module": "",
+      "function": "",
+      "name": "rwlock-start",
+      "types": [
+        "uintptr_t",
+        "int"
+      ],
+      "source": "lib/libthr/threadwait_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "threadwait*",
+      "module": "",
+      "function": "",
+      "name": "rwlock-done",
+      "types": [
+        "uintptr_t",
+        "int",
+        "int"
+      ],
+      "source": "lib/libthr/threadwait_provider.d"
+    },
+    {
+      "kind": "kernel",
+      "provider": "linuxulator*",
+      "module": "epoll",
+      "function": "",
+      "name": "eventfd-create",
+      "types": [
+        "unsigned int",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_event.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "linuxulator*",
+      "module": "epoll",
+      "function": "",
+      "name": "timerfd-create",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/compat/linux/linux_event.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "linuxkpi_shrinker",
+      "module": "",
+      "function": "",
+      "name": "count-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/compat/linuxkpi/common/src/linux_shrinker.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "linuxkpi_shrinker",
+      "module": "",
+      "function": "",
+      "name": "count-done",
+      "types": [
+        "void *",
+        "unsigned long"
+      ],
+      "source": "sys/compat/linuxkpi/common/src/linux_shrinker.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "linuxkpi_shrinker",
+      "module": "",
+      "function": "",
+      "name": "scan-start",
+      "types": [
+        "void *",
+        "unsigned long"
+      ],
+      "source": "sys/compat/linuxkpi/common/src/linux_shrinker.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "linuxkpi_shrinker",
+      "module": "",
+      "function": "",
+      "name": "scan-done",
+      "types": [
+        "void *",
+        "unsigned long"
+      ],
+      "source": "sys/compat/linuxkpi/common/src/linux_shrinker.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "linuxkpi_work",
+      "module": "",
+      "function": "",
+      "name": "delayed-cancel-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/compat/linuxkpi/common/src/linux_work.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "linuxkpi_work",
+      "module": "",
+      "function": "",
+      "name": "delayed-cancel-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/compat/linuxkpi/common/src/linux_work.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "nvme",
+      "module": "",
+      "function": "",
+      "name": "reset-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/nvme/nvme_ctrlr.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "nvme",
+      "module": "",
+      "function": "",
+      "name": "reset-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/nvme/nvme_ctrlr.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "pci",
+      "module": "",
+      "function": "",
+      "name": "power-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/pci/pci.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "pci",
+      "module": "",
+      "function": "",
+      "name": "power-done",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/pci/pci.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "pcm",
+      "module": "",
+      "function": "",
+      "name": "drain-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/sound/pcm/channel.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "pcm",
+      "module": "",
+      "function": "",
+      "name": "drain-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/sound/pcm/channel.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "usb",
+      "module": "",
+      "function": "",
+      "name": "drain-start",
+      "types": [
+        "void *",
+        "void *"
+      ],
+      "source": "sys/dev/usb/usb_transfer.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "usb",
+      "module": "",
+      "function": "",
+      "name": "drain-done",
+      "types": [
+        "void *",
+        "void *"
+      ],
+      "source": "sys/dev/usb/usb_transfer.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "geom",
+      "module": "",
+      "function": "",
+      "name": "io-submit",
+      "types": [
+        "void *",
+        "void *",
+        "int",
+        "int64_t",
+        "int"
+      ],
+      "source": "sys/geom/geom_io.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "kqueue",
+      "module": "",
+      "function": "",
+      "name": "copyout-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/kern_event.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "kqueue",
+      "module": "",
+      "function": "",
+      "name": "copyout-done",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/kern_event.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "kqueue",
+      "module": "",
+      "function": "",
+      "name": "wait-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/kern/kern_event.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "kqueue",
+      "module": "",
+      "function": "",
+      "name": "wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/kern_event.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "kqueue",
+      "module": "",
+      "function": "",
+      "name": "scan-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/kern_event.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "kqueue",
+      "module": "",
+      "function": "",
+      "name": "scan-done",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/kern_event.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "clock",
+      "module": "",
+      "function": "",
+      "name": "timer-set-start",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/kern_time.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "clock",
+      "module": "",
+      "function": "",
+      "name": "timer-set-done",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/kern_time.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "pipe",
+      "module": "",
+      "function": "",
+      "name": "resize-start",
+      "types": [
+        "struct pipe *",
+        "int"
+      ],
+      "source": "sys/kern/sys_pipe.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "pipe",
+      "module": "",
+      "function": "",
+      "name": "resize-done",
+      "types": [
+        "struct pipe *",
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/sys_pipe.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "pipe",
+      "module": "",
+      "function": "",
+      "name": "direct-start",
+      "types": [
+        "struct pipe *",
+        "ssize_t"
+      ],
+      "source": "sys/kern/sys_pipe.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "pipe",
+      "module": "",
+      "function": "",
+      "name": "direct-done",
+      "types": [
+        "struct pipe *",
+        "ssize_t",
+        "int"
+      ],
+      "source": "sys/kern/sys_pipe.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "pipe",
+      "module": "",
+      "function": "",
+      "name": "write-start",
+      "types": [
+        "struct pipe *",
+        "ssize_t"
+      ],
+      "source": "sys/kern/sys_pipe.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "pipe",
+      "module": "",
+      "function": "",
+      "name": "write-done",
+      "types": [
+        "struct pipe *",
+        "ssize_t",
+        "int"
+      ],
+      "source": "sys/kern/sys_pipe.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "pipe",
+      "module": "",
+      "function": "",
+      "name": "read-start",
+      "types": [
+        "struct pipe *",
+        "ssize_t"
+      ],
+      "source": "sys/kern/sys_pipe.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "pipe",
+      "module": "",
+      "function": "",
+      "name": "read-done",
+      "types": [
+        "struct pipe *",
+        "ssize_t",
+        "int"
+      ],
+      "source": "sys/kern/sys_pipe.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "syncer-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/kern/vfs_subr.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "syncer-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/vfs_subr.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "ifnet",
+      "module": "",
+      "function": "",
+      "name": "ioctl-start",
+      "types": [
+        "void *",
+        "unsigned long"
+      ],
+      "source": "sys/net/if.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "ifnet",
+      "module": "",
+      "function": "",
+      "name": "ioctl-done",
+      "types": [
+        "void *",
+        "unsigned long",
+        "int"
+      ],
+      "source": "sys/net/if.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "opencrypto",
+      "module": "",
+      "function": "",
+      "name": "session-start",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/opencrypto/crypto.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "opencrypto",
+      "module": "",
+      "function": "",
+      "name": "session-done",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/opencrypto/crypto.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "fault-trap-start",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/vm/vm_fault.c"
+    },
+    {
+      "kind": "kernel",
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "fault-trap-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/vm/vm_fault.c"
+    },
+    {
+      "kind": "user",
+      "provider": "installcopy*",
+      "module": "",
+      "function": "",
+      "name": "range-start",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "usr.bin/xinstall/installcopy_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "installcopy*",
+      "module": "",
+      "function": "",
+      "name": "range-done",
+      "types": [
+        "int",
+        "int",
+        "int64_t",
+        "int"
+      ],
+      "source": "usr.bin/xinstall/installcopy_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "installcopy*",
+      "module": "",
+      "function": "",
+      "name": "fallback",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "usr.bin/xinstall/installcopy_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "installcopy*",
+      "module": "",
+      "function": "",
+      "name": "sync-start",
+      "types": [
+        "int"
+      ],
+      "source": "usr.bin/xinstall/installcopy_provider.d"
+    },
+    {
+      "kind": "user",
+      "provider": "installcopy*",
+      "module": "",
+      "function": "",
+      "name": "sync-done",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "usr.bin/xinstall/installcopy_provider.d"
+    }
+  ],
+  "sources": {
+    "bin/cp/Makefile": "35b3e1de4c5807feb20f1cc24a311209c2e8783edffe453ca271952400e8ed12",
+    "bin/cp/cpcopy_provider.d": "9c4c9877691f0444ec073a89a7d191ac65b3de38eb9c3b3e48f05fbdc3dbe031",
+    "bin/cp/cpcopy_trace.h": "2d8d9ac747c2ccaf9e16beca3cb152df2e380e7d116d1a7f711cf63aff5199d3",
+    "bin/cp/utils.c": "f36dbb5c2e73efb637fecdc9dd28f9c4695e9d1dc23752238ce2ca16197cf016",
+    "contrib/libarchive/libarchive/archive_read.c": "b331e0e52f4fa4f31415d000ccdb025e130e6432ffb4982476aebf925e4df2c8",
+    "contrib/libarchive/libarchive/archiveio_trace.h": "30af27c27ee533b0f249eaa3d31477792a58ac877209ab98bdb7de518f47a804",
+    "lib/libarchive/archiveio_provider.d": "d5907de49f1478dcd0dcaec35b7cedeba2daec5847204a637bcfc1967d926f70",
+    "lib/libc/Makefile": "10792fae1f639fda186a4a36fa19c09a7aeb386a6cc4f9412f5a28f2c14a8eb5",
+    "lib/libc/gen/sem_new.c": "36f34f03d9cfc680778f6bcb9bbb81387236ba4be77d32fc5de89374052a4434",
+    "lib/libc/include/semwait_trace.h": "df8ac138bc452e185b1702409a119dc9ec015465245cbd1b1d8efec2605227a7",
+    "lib/libc/nameres_provider.d": "ea911d054a3ebfa79c1932687912de31335a31cc393142abfed0a5a280b3a2c3",
+    "lib/libfetch/common.c": "117879ebd904c923749b450b51b66e98777626114d66d855bd0d02b677a2b032",
+    "lib/libfetch/fetchio_provider.d": "6036adb9e2edc460c52181bdf2ab4f40090706fd5dc4527c86fe953ae5ec4cac",
+    "lib/libfetch/fetchio_trace.h": "9e310d3882f05ad49a75547b220427e4975c4c0c3c40ae0b2fa2af8a2db49c8b",
+    "lib/libthr/thread/thr_rwlock.c": "db2cc26953675b53d17fcea19af9c9afee7c8bc3e4847747ee9abfa744974877",
+    "lib/libthr/thread/threadwait_trace.h": "52f788dd8c2fc7c5d73b3e321c5e0068834c8e5237b049c7bba52add87adefea",
+    "lib/libthr/threadwait_provider.d": "96080fc9367829ae5098f8d2711c5b41fbcd5fe76fcd6219e8169182cbaba185",
+    "sys/compat/linux/linux_event.c": "db3997bf855e8d0e9fddceac4591859c2a20b8351f01384c6dc45297901a7f6b",
+    "sys/compat/linuxkpi/common/src/linux_shrinker.c": "c4dfef2e13cb939d4b315c4bff0d63468ddbb1bda9aa94b5e1a5826890fc1f97",
+    "sys/compat/linuxkpi/common/src/linux_work.c": "fbd2aff9d2a741f7c91a1add3d9277f11ce4837ec070f485d75c8539e1cc922e",
+    "sys/dev/nvme/nvme_ctrlr.c": "2c51b60a1fe5e7d77c7349f3f8fa8799fc77e17399b2857980bbf56ace6b56cf",
+    "sys/dev/pci/pci.c": "acecf0c89a17fd25c4dc86a60f2b1b0c027f7ca32378ced9d28835bd1877a665",
+    "sys/dev/sound/pcm/channel.c": "f6feb540fb3c698a9fe1ce1009c18958ac7692a26355fa16b9fee80e05a3283f",
+    "sys/dev/usb/usb_transfer.c": "63564ef3435ea830c2f8a37797359338eb03dfd5daf5ccc5c60eb30280fdc0e5",
+    "sys/geom/geom_io.c": "f7aa429d92f862d5ee8b5d5b02d763e0123dfd43b122d1e75576e45c294edc35",
+    "sys/kern/kern_event.c": "9f7365ee0fd9209b4fa84721c17d593657a2a6df11c08e2aee9068d30e0d3283",
+    "sys/kern/kern_time.c": "d62822c760c97f3d27760252dd2541ee9b9d3908e9befad967549d08c8f91684",
+    "sys/kern/sys_pipe.c": "617375f59142e5f0b086b0696e6da150231898e37f8fb96bb4ed9c5c405c1270",
+    "sys/kern/vfs_subr.c": "89a6c9d65ee553c73f5c068a87cf877c50305131c2f0a1c95255e334c5dfbb27",
+    "sys/net/if.c": "28f953b0afe52b19aa64070d3c9a2829f814d5023f8fc0427d578ee55c090741",
+    "sys/opencrypto/crypto.c": "b01c18b8ee7679b3fd4bfa70c68d5770f71f3e8d428c55db2c1298073b771295",
+    "sys/vm/vm_fault.c": "329d4a25676cb037f9cee2c960b99a972c42ac453e2da9cebea6295d68e9b8ca",
+    "usr.bin/xinstall/Makefile": "d0b43422b8338a3017ba54949e09977db4f76d961938910ba6bf8cb4366f8978",
+    "usr.bin/xinstall/installcopy_provider.d": "d9c7333d68d5b0cce7ba1555e865b615812bec07d69c4e3f20ef8324194eb58d",
+    "usr.bin/xinstall/installcopy_trace.h": "79e8d35e5d010ae094bc6c89b05d8f881508126cf0266094f910c12185e6ac5c",
+    "usr.bin/xinstall/xinstall.c": "e230059654beafa3817c642a2b6e0923e67a7f69c95ac6df08facc676b8742ea"
+  },
+  "profiles": [
+    "pipe-operations",
+    "kqueue-dispatch",
+    "timer-programming",
+    "fault-traps",
+    "geom-submissions",
+    "interface-ioctls",
+    "device-drains",
+    "device-recovery",
+    "linuxkpi-reclaim",
+    "linux-event-fds",
+    "syncer-writes",
+    "crypto-sessions",
+    "fetch-transfers",
+    "archive-skips",
+    "pthread-rwlocks",
+    "copy-transfers",
+    "semaphore-parking"
+  ]
+}

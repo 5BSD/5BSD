@@ -36,6 +36,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/sdt.h>
 #include <sys/sysctl.h>
 #include <sys/ctype.h>
 #include <sys/sysproto.h>
@@ -76,6 +77,10 @@
 #ifdef DDB
 #include <ddb/ddb.h>
 #endif /* DDB */
+
+SDT_PROVIDER_DEFINE(affinity);
+SDT_PROBE_DEFINE3(affinity, , , set__start, "int", "int", "id_t");
+SDT_PROBE_DEFINE4(affinity, , , set__done, "int", "int", "id_t", "int");
 
 /*
  * cpusets provide a mechanism for creating and manipulating sets of
@@ -2241,15 +2246,18 @@ kern_cpuset_setaffinity(struct thread *td, cpulevel_t level, cpuwhich_t which,
 	struct proc *p;
 	int error;
 
+	SDT_PROBE3(affinity, , , set__start, level, which, id);
 #ifdef KTRACE
 	if (KTRPOINT(td, KTR_STRUCT))
 		ktrcpuset(mask, sizeof(cpuset_t));
 #endif
 	error = cpuset_check_capabilities(td, level, which, id);
 	if (error != 0)
-		return (error);
-	if (CPU_EMPTY(mask))
-		return (EDEADLK);
+		goto out;
+	if (CPU_EMPTY(mask)) {
+		error = EDEADLK;
+		goto out;
+	}
 	switch (level) {
 	case CPU_LEVEL_ROOT:
 	case CPU_LEVEL_CPUSET:
@@ -2272,7 +2280,8 @@ kern_cpuset_setaffinity(struct thread *td, cpulevel_t level, cpuwhich_t which,
 		case CPU_WHICH_INTRHANDLER:
 		case CPU_WHICH_ITHREAD:
 		case CPU_WHICH_DOMAIN:
-			return (EINVAL);
+			error = EINVAL;
+			goto out;
 		}
 		if (level == CPU_LEVEL_ROOT)
 			nset = cpuset_refroot(set);
@@ -2319,6 +2328,8 @@ kern_cpuset_setaffinity(struct thread *td, cpulevel_t level, cpuwhich_t which,
 		error = EINVAL;
 		break;
 	}
+out:
+	SDT_PROBE4(affinity, , , set__done, level, which, id, error);
 	return (error);
 }
 

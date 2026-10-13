@@ -51,6 +51,22 @@
 #include <unistd.h>
 #include <libxo/xo.h>
 
+#include "diskwalk_trace.h"
+
+static FTSENT *
+trace_fts_read(FTS *tree)
+{
+	FTSENT *result;
+
+	TRACE_DISKWALK_OPERATION__START(0);
+	result = fts_read(tree);
+	TRACE_DISKWALK_OPERATION__DONE(0,
+	    result != NULL ? result->fts_info : 0, result == NULL ? errno :
+	    (result->fts_info == FTS_ERR || result->fts_info == FTS_DNR ||
+	    result->fts_info == FTS_NS ? result->fts_errno : 0));
+	return (result);
+}
+
 #define SI_OPT	(CHAR_MAX + 1)
 
 #define UNITS_2		1
@@ -269,7 +285,7 @@ main(int argc, char *argv[])
 	xo_set_version(DU_XO_VERSION);
 	xo_open_container("disk-usage-information");
 	xo_open_list("paths");
-	for (errno = 0; (p = fts_read(fts)) != NULL; errno = 0) {
+	for (errno = 0; (p = trace_fts_read(fts)) != NULL; errno = 0) {
 		if (info) {
 			info = 0;
 			(void)fprintf(stderr, "\t%s\n", p->fts_path);

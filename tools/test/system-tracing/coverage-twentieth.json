@@ -1,0 +1,283 @@
+{
+  "probes": [
+    {
+      "component": "lib/libservice",
+      "provider": "service_runtime",
+      "name": "retry-scheduled",
+      "types": [
+        "uintptr_t",
+        "uint32_t",
+        "uint64_t"
+      ]
+    },
+    {
+      "component": "lib/libservice",
+      "provider": "service_runtime",
+      "name": "retry-recovered",
+      "types": [
+        "uintptr_t",
+        "uint32_t"
+      ]
+    },
+    {
+      "component": "lib/libservice",
+      "provider": "service_runtime",
+      "name": "health-change",
+      "types": [
+        "uintptr_t",
+        "int",
+        "uint64_t"
+      ]
+    },
+    {
+      "component": "lib/libservice",
+      "provider": "service_runtime",
+      "name": "budget-rejected",
+      "types": [
+        "int",
+        "uint32_t"
+      ]
+    },
+    {
+      "component": "lib/libservice",
+      "provider": "service_runtime",
+      "name": "budget-expired",
+      "types": [
+        "uint64_t"
+      ]
+    },
+    {
+      "component": "lib/libservice",
+      "provider": "service_runtime",
+      "name": "lease-limit",
+      "types": [
+        "uint64_t",
+        "uint64_t",
+        "int"
+      ]
+    },
+    {
+      "component": "lib/libchannel",
+      "provider": "libchannel",
+      "name": "queue-limit",
+      "types": [
+        "uint64_t",
+        "uint64_t",
+        "uint64_t"
+      ]
+    },
+    {
+      "component": "lib/libchannel",
+      "provider": "libchannel",
+      "name": "pending-limit",
+      "types": [
+        "uint64_t",
+        "uint64_t"
+      ]
+    },
+    {
+      "component": "usr.sbin/capsule",
+      "provider": "capsule",
+      "name": "ctl-admission-failure",
+      "types": [
+        "int",
+        "int",
+        "uint32_t"
+      ]
+    },
+    {
+      "component": "usr.sbin/capsule",
+      "provider": "capsule",
+      "name": "ctl-timeout",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "component": "usr.sbin/switchboard",
+      "provider": "switchboard",
+      "name": "capsule-rpc-start",
+      "types": [
+        "uint32_t",
+        "uint32_t",
+        "int"
+      ]
+    },
+    {
+      "component": "usr.sbin/switchboard",
+      "provider": "switchboard",
+      "name": "capsule-rpc-done",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "component": "usr.sbin/switchboard",
+      "provider": "switchboard",
+      "name": "capsule-stale-reply",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "component": "usr.sbin/switchboard",
+      "provider": "switchboard",
+      "name": "capsule-malformed-reply",
+      "types": [
+        "uint32_t",
+        "uint32_t"
+      ]
+    },
+    {
+      "component": "usr.sbin/BSDDevice",
+      "provider": "bsddevice",
+      "name": "worker-reject",
+      "types": [
+        "int",
+        "int",
+        "uint32_t"
+      ]
+    },
+    {
+      "component": "usr.sbin/BSDExtension",
+      "provider": "bsdextension",
+      "name": "accept-retry",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "component": "usr.sbin/BSDExtension",
+      "provider": "bsdextension",
+      "name": "worker-reject",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "component": "usr.sbin/BSDMemory",
+      "provider": "bsdmemory",
+      "name": "dependency-health",
+      "types": [
+        "int",
+        "int",
+        "uint64_t"
+      ]
+    },
+    {
+      "component": "usr.sbin/BSDSysctl",
+      "provider": "bsdsysctl",
+      "name": "session-limit",
+      "types": [
+        "int",
+        "uint64_t"
+      ]
+    },
+    {
+      "component": "usr.sbin/BSDSysctl",
+      "provider": "bsdsysctl",
+      "name": "session-open-failure",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "component": "usr.sbin/BSDSysctl",
+      "provider": "bsdsysctl",
+      "name": "session-close-reason",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "component": "bin/zsh",
+      "provider": "zsh",
+      "name": "fork-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "component": "bin/zsh",
+      "provider": "zsh",
+      "name": "fork-done",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "component": "bin/zsh",
+      "provider": "zsh",
+      "name": "job-limit",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "component": "bin/zsh",
+      "provider": "zsh",
+      "name": "exec-attempt",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "component": "bin/zsh",
+      "provider": "zsh",
+      "name": "exec-failure",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "component": "bin/zsh",
+      "provider": "zsh",
+      "name": "pipeline-start",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "component": "bin/zsh",
+      "provider": "zsh",
+      "name": "pipeline-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "component": "bin/zsh",
+      "provider": "zsh",
+      "name": "wait-start",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "component": "bin/zsh",
+      "provider": "zsh",
+      "name": "wait-done",
+      "types": [
+        "int",
+        "int"
+      ]
+    }
+  ],
+  "profiles": [
+    "service-runtime-pressure",
+    "capability-daemon-admission",
+    "switchboard-capsule-transport",
+    "zsh-execution",
+    "switchboard-capsule-latency"
+  ]
+}

@@ -38,6 +38,7 @@
 #include <sys/stddef.h>
 #include <sys/param.h>
 #include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/types.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -84,6 +85,12 @@
 #endif			/* USB_GLOBAL_INCLUDE_FILE */
 
 #if USB_HAVE_UGEN
+
+#ifndef USB_GLOBAL_INCLUDE_FILE
+SDT_PROVIDER_DECLARE(usb);
+SDT_PROBE_DEFINE1(usb, , , fifo__wait__start, "void *");
+SDT_PROBE_DEFINE2(usb, , , fifo__wait__done, "void *", "int");
+#endif
 
 #ifdef USB_DEBUG
 static int usb_fifo_debug = 0;
@@ -1724,12 +1731,18 @@ usb_fifo_wait(struct usb_fifo *f)
 	}
 	f->flag_sleeping = 1;
 
+#ifndef USB_GLOBAL_INCLUDE_FILE
+	SDT_PROBE1(usb, , , fifo__wait__start, f);
+#endif
 	err = cv_wait_sig(&f->cv_io, f->priv_mtx);
 
 	if (f->flag_iserror) {
 		/* we are gone */
 		err = EIO;
 	}
+#ifndef USB_GLOBAL_INCLUDE_FILE
+	SDT_PROBE2(usb, , , fifo__wait__done, f, err);
+#endif
 	return (err);
 }
 

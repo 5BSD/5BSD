@@ -45,6 +45,7 @@
 #include <unistd.h>
 
 #include "extern.h"
+#include "cpcopy_trace.h"
 
 #define	cp_pct(x, y)	((y == 0) ? 0 : (int)(100.0 * (x) / (y)))
 
@@ -203,6 +204,7 @@ copy_file(const FTSENT *entp, bool dne, bool beneath)
 		goto done;
 	}
 
+	TRACE_CPCOPY_TRANSFER__START(from_fd, to_fd);
 	wtotal = 0;
 	do {
 		if (use_copy_file_range) {
@@ -210,6 +212,7 @@ copy_file(const FTSENT *entp, bool dne, bool beneath)
 			    to_fd, NULL, SSIZE_MAX, 0);
 			if (wcount < 0 && errno == EINVAL) {
 				/* probably a non-seekable descriptor */
+				TRACE_CPCOPY_FALLBACK(from_fd, to_fd, errno);
 				use_copy_file_range = false;
 			}
 		}
@@ -220,6 +223,8 @@ copy_file(const FTSENT *entp, bool dne, bool beneath)
 			wtotal += wcount;
 		else if (errno != EINTR)
 			break;
+		else
+			TRACE_CPCOPY_RETRY(from_fd, to_fd, errno);
 		if (info) {
 			info = 0;
 			(void)fprintf(stderr,
@@ -228,6 +233,8 @@ copy_file(const FTSENT *entp, bool dne, bool beneath)
 			    cp_pct(wtotal, fs->st_size));
 		}
 	} while (wcount != 0);
+	TRACE_CPCOPY_TRANSFER__DONE(from_fd, to_fd, wtotal,
+	    wcount < 0 ? errno : 0);
 	if (wcount < 0) {
 		warn("%s", entp->fts_path);
 		rval = 1;

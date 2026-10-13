@@ -321,7 +321,6 @@ SUBDIR=	\
 	pseudofs \
 	${_pst} \
 	${_pt} \
-	pty  \
 	pvpanic \
 	puc \
 	pwm \

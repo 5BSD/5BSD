@@ -31,6 +31,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/eventhandler.h>
 #include <sys/malloc.h>
 #include <sys/limits.h>
@@ -53,6 +55,11 @@
 #include <netlink/netlink_ctl.h>
 #include <netlink/netlink_route.h>
 #include <netlink/route/route_var.h>
+
+SDT_PROVIDER_DEFINE(ifclone);
+SDT_PROBE_DEFINE1(ifclone, , , create__start, "void *");
+SDT_PROBE_DEFINE2(ifclone, , , create__done, "void *", "int");
+
 
 /* Current IF_MAXUNIT expands maximum to 5 characters. */
 #define	IFCLOSIZ	(IFNAMSIZ - 5)
@@ -200,7 +207,11 @@ ifc_create_ifp(const char *name, struct ifc_data *ifd, struct ifnet **ifpp)
 		.params = ifd->params,
 	};
 
-	int error = if_clone_createif_nl(ifc, name, &ifd_new);
+	int error;
+
+	SDT_PROBE1(ifclone, , , create__start, ifc);
+	error = if_clone_createif_nl(ifc, name, &ifd_new);
+	SDT_PROBE2(ifclone, , , create__done, ifc, error);
 
 	if (ifpp != NULL)
 		*ifpp = ifd_new.ifp;
@@ -217,7 +228,9 @@ ifc_create_ifp_nl(const char *name, struct ifc_data_nl *ifd)
 		return (false);
 	}
 
+	SDT_PROBE1(ifclone, , , create__start, ifc);
 	ifd->error = if_clone_createif_nl(ifc, name, ifd);
+	SDT_PROBE2(ifclone, , , create__done, ifc, ifd->error);
 
 	return (true);
 }

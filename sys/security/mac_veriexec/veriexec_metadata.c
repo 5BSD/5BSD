@@ -48,6 +48,12 @@
 
 #include "mac_veriexec.h"
 #include "mac_veriexec_internal.h"
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(veriexec);
+SDT_PROBE_DEFINE2(veriexec, , , fingerprint__status, "void *", "int");
+SDT_PROBE_DEFINE2(veriexec, , , fingerprint__start, "void *", "off_t");
+SDT_PROBE_DEFINE3(veriexec, , , fingerprint__done, "void *", "off_t", "int");
 
 /**
  * @brief per-device meta-data storage
@@ -505,6 +511,7 @@ mac_veriexec_metadata_fetch_fingerprint_status(struct vnode *vp,
 	ip = NULL;
 
 	status = mac_veriexec_get_fingerprint_status(vp);
+	SDT_PROBE2(veriexec, , , fingerprint__status, vp, status);
 	if (status == FINGERPRINT_INVALID || status == FINGERPRINT_NODEV) {
 		found_dev = 0;
 		if (mac_veriexec_metadata_get_file_info(vap->va_fsid,
@@ -520,8 +527,11 @@ mac_veriexec_metadata_fetch_fingerprint_status(struct vnode *vp,
 			/*
 			 * evaluate and compare fingerprint
 			 */
+			SDT_PROBE2(veriexec, , , fingerprint__start, vp, vap->va_size);
 			error = mac_veriexec_fingerprint_check_vnode(vp, ip,
 			    td, vap->va_size, digest);
+			SDT_PROBE3(veriexec, , , fingerprint__done, vp, vap->va_size,
+			    error);
 			switch (error) {
 			case 0:
 				/* Process flags */

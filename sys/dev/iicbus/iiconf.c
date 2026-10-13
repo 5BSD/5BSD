@@ -38,6 +38,14 @@
 #include <dev/iicbus/iicbus.h>
 #include "iicbus_if.h"
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(iicbus);
+SDT_PROBE_DEFINE3(iicbus, , , acquire__start, "device_t", "device_t", "int");
+SDT_PROBE_DEFINE3(iicbus, , , acquire__done, "device_t", "device_t", "int");
+SDT_PROBE_DEFINE2(iicbus, , , transfer__start, "device_t", "uint32_t");
+SDT_PROBE_DEFINE2(iicbus, , , transfer__done, "device_t", "int");
+
 /*
  * Encode a system errno value into the IIC_Exxxxx space by setting the
  * IIC_ERRNO marker bit, so that iic2errno() can turn it back into a plain
@@ -138,6 +146,7 @@ iicbus_request_bus(device_t bus, device_t dev, int how)
 	struct iicbus_softc *sc = (struct iicbus_softc *)device_get_softc(bus);
 	int error = 0;
 
+	SDT_PROBE3(iicbus, , , acquire__start, bus, dev, how);
 	IICBUS_LOCK(sc);
 
 	for (;;) {
@@ -191,6 +200,7 @@ iicbus_request_bus(device_t bus, device_t dev, int how)
 
 	IICBUS_UNLOCK(sc);
 
+	SDT_PROBE3(iicbus, , , acquire__done, bus, dev, error);
 	return (error);
 }
 
@@ -438,8 +448,12 @@ iicbus_block_read(device_t bus, u_char slave, char *buf, int len, int *read)
 int
 iicbus_transfer(device_t bus, struct iic_msg *msgs, uint32_t nmsgs)
 {
+	int error;
 
-	return (IICBUS_TRANSFER(device_get_parent(bus), msgs, nmsgs));
+	SDT_PROBE2(iicbus, , , transfer__start, bus, nmsgs);
+	error = IICBUS_TRANSFER(device_get_parent(bus), msgs, nmsgs);
+	SDT_PROBE2(iicbus, , , transfer__done, bus, error);
+	return (error);
 }
 
 int
@@ -451,8 +465,11 @@ iicbus_transfer_excl(device_t dev, struct iic_msg *msgs, uint32_t nmsgs,
 
 	bus = device_get_parent(dev);
 	error = iicbus_request_bus(bus, dev, how);
-	if (error == 0)
+	if (error == 0) {
+		SDT_PROBE2(iicbus, , , transfer__start, bus, nmsgs);
 		error = IICBUS_TRANSFER(bus, msgs, nmsgs);
+		SDT_PROBE2(iicbus, , , transfer__done, bus, error);
+	}
 	iicbus_release_bus(bus, dev);
 	return (error);
 }

@@ -58,6 +58,34 @@
 #include <casper/cap_fileargs.h>
 #include <casper/cap_net.h>
 
+#include "catio_trace.h"
+
+static ssize_t
+trace_write(int fd, const void *buf, size_t len)
+{
+	ssize_t result;
+
+	TRACE_CATIO_WRITE__START(fd, len);
+	result = write(fd, buf, len);
+	TRACE_CATIO_WRITE__DONE(fd, len,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
+static ssize_t
+trace_read(int fd, void *buf, size_t len)
+{
+	ssize_t result;
+
+	TRACE_CATIO_READ__START(fd, len);
+	result = read(fd, buf, len);
+	TRACE_CATIO_READ__DONE(fd, len,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 static int bflag, Eflag, lflag, nflag, sflag, Tflag, vflag;
 static int rval;
 static const char *filename;
@@ -431,9 +459,9 @@ raw_cat(int rfd)
 		if ((buf = malloc(bsize)) == NULL)
 			err(1, "malloc() failure of IO buffer");
 	}
-	while ((nr = read(rfd, buf, bsize)) > 0)
+	while ((nr = trace_read(rfd, buf, bsize)) > 0)
 		for (off = 0; nr; nr -= nw, off += nw)
-			if ((nw = write(wfd, buf + off, (size_t)nr)) < 0)
+			if ((nw = trace_write(wfd, buf + off, (size_t)nr)) < 0)
 				err(1, "stdout");
 	if (nr < 0) {
 		warn("%s", filename);

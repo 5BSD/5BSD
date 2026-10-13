@@ -13,7 +13,7 @@
  *
  *   (default)              MESH_PROBE_x(...) expands to nothing (zero cost).
  *   -DMESH_DTRACE_PROBES   MESH_PROBE_x(...) fires a `mesh` USDT probe,
- *                          is-enabled-gated so it is free when not traced.
+ *                          patched to an inactive call site when not traced.
  *                          The libmesh Makefile also adds mesh_provider.d to
  *                          SRCS in this mode so the provider object links.
  *   -DMESH_WITH_PROBE_TAP  MESH_PROBE_x(...) appends a record to the shared
@@ -117,6 +117,11 @@
  * links the provider object).  No generated header is needed.
  * ================================================================ */
 #include <sys/sdt.h>
+/* Retain provider metadata when callers link libblemesh.a. */
+extern const unsigned char __bsd_dof_anchor_mesh_provider
+    __attribute__((visibility("hidden")));
+static const void * const mesh_dtrace_anchor __attribute__((used, retain)) =
+    &__bsd_dof_anchor_mesh_provider;
 
 #define	MESH_PROBE_NET_ENCRYPT(src, dst, seq, ttl)	\
 	DTRACE_PROBE4(mesh, mesh__net__encrypt, src, dst, seq, ttl)
@@ -193,4 +198,87 @@
 
 #endif
 
+
+/* Runtime outcomes: identifiers and counts only, never secret material. */
+#if defined(MESH_WITH_PROBE_TAP)
+#define MESH_PROBE_MANAGER__TRANSACTION(a0, a1, a2, a3) \
+	probe_tap_rec4("manager:transaction", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2), (uint64_t)(a3))
+#define MESH_PROBE_BRIDGE__FORWARD(a0, a1, a2, a3) \
+	probe_tap_rec4("bridge:forward", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2), (uint64_t)(a3))
+#define MESH_PROBE_DIRECTED__EXPIRE(a0, a1) \
+	probe_tap_rec2("directed:expire", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#define MESH_PROBE_DIRECTED__CONTROL(a0, a1) \
+	probe_tap_rec2("directed:control", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#elif defined(MESH_DTRACE_PROBES)
+#define MESH_PROBE_MANAGER__TRANSACTION(a0, a1, a2, a3) \
+	DTRACE_PROBE4(mesh, manager__transaction, a0, a1, a2, a3)
+#define MESH_PROBE_BRIDGE__FORWARD(a0, a1, a2, a3) \
+	DTRACE_PROBE4(mesh, bridge__forward, a0, a1, a2, a3)
+#define MESH_PROBE_DIRECTED__EXPIRE(a0, a1) \
+	DTRACE_PROBE2(mesh, directed__expire, a0, a1)
+#define MESH_PROBE_DIRECTED__CONTROL(a0, a1) \
+	DTRACE_PROBE2(mesh, directed__control, a0, a1)
+#else
+#define MESH_PROBE_MANAGER__TRANSACTION(...) ((void)0)
+#define MESH_PROBE_BRIDGE__FORWARD(...) ((void)0)
+#define MESH_PROBE_DIRECTED__EXPIRE(...) ((void)0)
+#define MESH_PROBE_DIRECTED__CONTROL(...) ((void)0)
+#endif
+
+/* Runtime outcomes: identifiers and counts only, never secret material. */
+#if defined(MESH_WITH_PROBE_TAP)
+#define MESH_PROBE_REMOTE__TIMEOUT(a0) \
+	probe_tap_rec1("remote:timeout", NULL, (uint64_t)(a0))
+#define MESH_PROBE_REMOTE__TRANSFER(a0, a1, a2) \
+	probe_tap_rec3("remote:transfer", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2))
+#define MESH_PROBE_LPN__STATE(a0, a1) \
+	probe_tap_rec2("lpn:state", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#elif defined(MESH_DTRACE_PROBES)
+#define MESH_PROBE_REMOTE__TIMEOUT(a0) \
+	DTRACE_PROBE1(mesh, remote__timeout, a0)
+#define MESH_PROBE_REMOTE__TRANSFER(a0, a1, a2) \
+	DTRACE_PROBE3(mesh, remote__transfer, a0, a1, a2)
+#define MESH_PROBE_LPN__STATE(a0, a1) \
+	DTRACE_PROBE2(mesh, lpn__state, a0, a1)
+#else
+#define MESH_PROBE_REMOTE__TIMEOUT(...) ((void)0)
+#define MESH_PROBE_REMOTE__TRANSFER(...) ((void)0)
+#define MESH_PROBE_LPN__STATE(...) ((void)0)
+#endif
+
+/* Runtime outcomes: identifiers and counts only, never secret material. */
+#if defined(MESH_WITH_PROBE_TAP)
+#define MESH_PROBE_MESH__KEYREFRESH__PHASE(a0, a1) \
+	probe_tap_rec2("mesh:keyrefresh:phase", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#define MESH_PROBE_MESH__FRIEND__POLL(a0, a1) \
+	probe_tap_rec2("mesh:friend:poll", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#define MESH_PROBE_MESH__PROXY__PDU(a0, a1) \
+	probe_tap_rec2("mesh:proxy:pdu", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#define MESH_PROBE_MESH__PROXY__REASM(a0, a1) \
+	probe_tap_rec2("mesh:proxy:reasm", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#define MESH_PROBE_MESH__CFG__APPKEY(a0, a1, a2) \
+	probe_tap_rec3("mesh:cfg:appkey", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2))
+#define MESH_PROBE_MESH__MODEL__RECV(a0, a1) \
+	probe_tap_rec2("mesh:model:recv", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#elif defined(MESH_DTRACE_PROBES)
+#define MESH_PROBE_MESH__KEYREFRESH__PHASE(a0, a1) \
+	DTRACE_PROBE2(mesh, mesh__keyrefresh__phase, a0, a1)
+#define MESH_PROBE_MESH__FRIEND__POLL(a0, a1) \
+	DTRACE_PROBE2(mesh, mesh__friend__poll, a0, a1)
+#define MESH_PROBE_MESH__PROXY__PDU(a0, a1) \
+	DTRACE_PROBE2(mesh, mesh__proxy__pdu, a0, a1)
+#define MESH_PROBE_MESH__PROXY__REASM(a0, a1) \
+	DTRACE_PROBE2(mesh, mesh__proxy__reasm, a0, a1)
+#define MESH_PROBE_MESH__CFG__APPKEY(a0, a1, a2) \
+	DTRACE_PROBE3(mesh, mesh__cfg__appkey, a0, a1, a2)
+#define MESH_PROBE_MESH__MODEL__RECV(a0, a1) \
+	DTRACE_PROBE2(mesh, mesh__model__recv, a0, a1)
+#else
+#define MESH_PROBE_MESH__KEYREFRESH__PHASE(...) ((void)0)
+#define MESH_PROBE_MESH__FRIEND__POLL(...) ((void)0)
+#define MESH_PROBE_MESH__PROXY__PDU(...) ((void)0)
+#define MESH_PROBE_MESH__PROXY__REASM(...) ((void)0)
+#define MESH_PROBE_MESH__CFG__APPKEY(...) ((void)0)
+#define MESH_PROBE_MESH__MODEL__RECV(...) ((void)0)
+#endif
 #endif /* MESH_PROBES_H */

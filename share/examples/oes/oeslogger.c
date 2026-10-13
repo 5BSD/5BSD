@@ -46,6 +46,13 @@
 #include <unistd.h>
 
 #include "liboes.h"
+#ifdef FIVEBSD_TRACE
+#include "oeslogger_diagnostics.h"
+#else
+#define OESLOGGER_TRACE_EVENT_HANDLED(a, b) do { } while (0)
+#define OESLOGGER_TRACE_WAIT_DONE(a, b) do { } while (0)
+#define OESLOGGER_TRACE_DISPATCH_ERROR(a, b) do { } while (0)
+#endif
 
 static volatile sig_atomic_t running = 1;
 static bool pretty = false;
@@ -1350,13 +1357,17 @@ dispatch_events(oes_client_t *client)
 
 	while (running) {
 		while (oes_read_event(client, &msg, false) == 0) {
+			OESLOGGER_TRACE_EVENT_HANDLED(msg->em_event, msg->em_size);
 			if (!handle_event(client, msg, NULL))
 				return (0);
 		}
-		if (errno != EAGAIN && errno != EWOULDBLOCK)
+		if (errno != EAGAIN && errno != EWOULDBLOCK) {
+			OESLOGGER_TRACE_DISPATCH_ERROR(1, errno);
 			return (-1);
+		}
 		pfd.revents = 0;
 		nready = poll(&pfd, 1, 250);
+		OESLOGGER_TRACE_WAIT_DONE(nready, nready < 0 ? errno : 0);
 		if (nready < 0) {
 			if (errno == EINTR)
 				continue;
@@ -1364,6 +1375,7 @@ dispatch_events(oes_client_t *client)
 		}
 		if (nready > 0 &&
 		    (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+			OESLOGGER_TRACE_DISPATCH_ERROR(2, ENXIO);
 			errno = ENXIO;
 			return (-1);
 		}

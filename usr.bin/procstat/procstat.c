@@ -42,6 +42,21 @@
 
 #include "procstat.h"
 
+#include "processquery_trace.h"
+
+static struct kinfo_proc *
+trace_procstat_getprocs(struct procstat *ps, int what, int arg, unsigned int *count)
+{
+	struct kinfo_proc * result;
+
+	TRACE_PROCESSQUERY_OPERATION__START(what);
+	result = procstat_getprocs(ps, what, arg, count);
+	TRACE_PROCESSQUERY_OPERATION__DONE(what,
+	    result != NULL ? *count : 0, result == NULL);
+	return (result);
+}
+
+
 enum {
 	PS_CMP_NORMAL = 0x00,
 	PS_CMP_PLURAL = 0x01, 
@@ -478,7 +493,7 @@ main(int argc, char *argv[])
 		}
 
 		if (aflag) {
-			p = procstat_getprocs(prstat, KERN_PROC_PROC, 0, &cnt);
+			p = trace_procstat_getprocs(prstat, KERN_PROC_PROC, 0, &cnt);
 			if (p == NULL)
 				xo_errx(1, "procstat_getprocs()");
 			kinfo_proc_sort(p, cnt);
@@ -498,7 +513,7 @@ main(int argc, char *argv[])
 					usage(cmd);
 				pid = l;
 
-				p = procstat_getprocs(prstat, KERN_PROC_PID,
+				p = trace_procstat_getprocs(prstat, KERN_PROC_PID,
 				    pid, &cnt);
 				if (p == NULL)
 					xo_errx(1, "procstat_getprocs()");
@@ -512,7 +527,7 @@ main(int argc, char *argv[])
 						warnx("procstat_open()");
 						continue;
 					}
-					p = procstat_getprocs(cprstat,
+					p = trace_procstat_getprocs(cprstat,
 					    KERN_PROC_PID, -1, &cnt);
 					if (p == NULL) {
 						xo_errx(1,

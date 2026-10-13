@@ -105,6 +105,9 @@ FEATURE(p1003_1b_mqueue, "POSIX P1003.1B message queues support");
  */
 SDT_PROVIDER_DEFINE(mqueue);
 
+SDT_PROBE_DEFINE3(mqueue, , , send__wake, "void *", "int", "long");
+SDT_PROBE_DEFINE3(mqueue, , , receive__wake, "void *", "int", "long");
+
 /* kmq_open: create a new named queue (name, flags, mode, maxmsg, msgsize). */
 SDT_PROBE_DEFINE5(mqueue, , , open__create,
     "char *", "int", "int", "long", "long");
@@ -1674,8 +1677,12 @@ mqueue_alloc(const struct mq_attr *attr)
 {
 	struct mqueue *mq;
 
-	if (curmq >= maxmq)
+	if (curmq >= maxmq) {
+		if (!cold)
+			DTRACE_PROBE1(mqueue__count__limit,
+			    int, (maxmq));
 		return (NULL);
+	}
 	mq = uma_zalloc(mqueue_zone, M_WAITOK | M_ZERO);
 	TAILQ_INIT(&mq->mq_msgq);
 	if (attr != NULL) {
@@ -1855,6 +1862,7 @@ _mqueue_send(struct mqueue *mq, struct mqueue_msg *msg, int timo)
 		error = msleep(&mq->mq_senders, &mq->mq_mutex,
 			    PCATCH, "mqsend", timo);
 		mq->mq_senders--;
+		SDT_PROBE3(mqueue, , , send__wake, mq, error, mq->mq_curmsgs);
 		if (error == EAGAIN)
 			error = ETIMEDOUT;
 	}
@@ -2016,6 +2024,7 @@ _mqueue_recv(struct mqueue *mq, struct mqueue_msg **msg, int timo)
 		error = msleep(&mq->mq_receivers, &mq->mq_mutex,
 			    PCATCH, "mqrecv", timo);
 		mq->mq_receivers--;
+		SDT_PROBE3(mqueue, , , receive__wake, mq, error, mq->mq_curmsgs);
 		if (error == EAGAIN)
 			error = ETIMEDOUT;
 	}

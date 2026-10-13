@@ -735,6 +735,9 @@ oes_event_respond_internal(struct oes_client *ec, uint64_t msg_id,
 		    ep->ep_msg.em_event != OES_EVENT_AUTH_MPROTECT) {
 			mtx_unlock(&ep->ep_mtx);
 			EC_UNLOCK(ec);
+			if (!cold)
+				DTRACE_PROBE3(oes__response__rejected,
+				    int, EINVAL, int, has_flags, int, result);
 			return (EINVAL);
 		}
 
@@ -745,6 +748,10 @@ oes_event_respond_internal(struct oes_client *ec, uint64_t msg_id,
 				ep->ep_allowed_flags = allowed_flags;
 				ep->ep_denied_flags = denied_flags;
 				ep->ep_has_flag_response = true;
+				if (!cold)
+					DTRACE_PROBE4(oes__auth__flags,
+					    int, ep->ep_msg.em_event, int, result,
+					    uint32_t, allowed_flags, uint32_t, denied_flags);
 			}
 
 			/* Update stats and fire DTrace probes */
@@ -786,6 +793,9 @@ oes_event_respond_internal(struct oes_client *ec, uint64_t msg_id,
 
 	EC_UNLOCK(ec);
 
+	if (!cold && error != 0)
+		DTRACE_PROBE3(oes__response__rejected,
+		    int, error, int, has_flags, int, result);
 	return (error);
 }
 

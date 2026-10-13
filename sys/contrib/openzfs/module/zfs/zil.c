@@ -34,6 +34,7 @@
 #include <sys/dsl_pool.h>
 #include <sys/metaslab.h>
 #include <sys/trace_zfs.h>
+#include <sys/trace_bsd.h>
 #include <sys/abd.h>
 #include <sys/brt.h>
 #include <sys/wmsum.h>
@@ -3592,6 +3593,9 @@ zil_commit_waiter(zilog_t *zilog, zil_commit_waiter_t *zcw)
 	ASSERT(!MUTEX_HELD(&zilog->zl_issuer_lock));
 	ASSERT(spa_writeable(zilog->zl_spa));
 
+	ZFS_BSD_PROBE2(zil__wait__start,
+	    zilog_t *, zilog,
+	    zil_commit_waiter_t *, zcw);
 	mutex_enter(&zcw->zcw_lock);
 
 	/*
@@ -3648,6 +3652,9 @@ zil_commit_waiter(zilog_t *zilog, zil_commit_waiter_t *zcw)
 				continue;
 
 			timedout = B_TRUE;
+			ZFS_BSD_PROBE2(zil__wait__timeout,
+			    zilog_t *, zilog,
+			    zil_commit_waiter_t *, zcw);
 			zil_commit_waiter_timeout(zilog, zcw);
 
 			if (!zcw->zcw_done) {
@@ -3685,6 +3692,10 @@ zil_commit_waiter(zilog_t *zilog, zil_commit_waiter_t *zcw)
 		}
 	}
 
+	ZFS_BSD_PROBE3(zil__wait__done,
+	    zilog_t *, zilog,
+	    zil_commit_waiter_t *, zcw,
+	    int, zcw->zcw_error);
 	mutex_exit(&zcw->zcw_lock);
 }
 
@@ -3700,6 +3711,7 @@ zil_alloc_commit_waiter(void)
 	zcw->zcw_done = B_FALSE;
 	zcw->zcw_error = 0;
 
+	ZFS_BSD_PROBE1(zil__waiter__allocate, zil_commit_waiter_t *, zcw);
 	return (zcw);
 }
 
@@ -3711,6 +3723,7 @@ zil_free_commit_waiter(zil_commit_waiter_t *zcw)
 	ASSERT3B(zcw->zcw_done, ==, B_TRUE);
 	mutex_destroy(&zcw->zcw_lock);
 	cv_destroy(&zcw->zcw_cv);
+	ZFS_BSD_PROBE1(zil__waiter__release, zil_commit_waiter_t *, zcw);
 	kmem_cache_free(zil_zcw_cache, zcw);
 }
 

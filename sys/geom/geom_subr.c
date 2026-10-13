@@ -68,6 +68,10 @@
 
 SDT_PROVIDER_DEFINE(geom);
 
+SDT_PROBE_DEFINE4(geom, , , access__start,
+    "struct g_provider *", "int", "int", "int");
+SDT_PROBE_DEFINE2(geom, , , access__done, "struct g_provider *", "int");
+
 struct class_list_head g_classes = LIST_HEAD_INITIALIZER(g_classes);
 static struct g_tailq_head geoms = TAILQ_HEAD_INITIALIZER(geoms);
 char *g_wait_event, *g_wait_up, *g_wait_down;
@@ -1047,7 +1051,9 @@ g_access(struct g_consumer *cp, int dcr, int dcw, int dce)
 	se = cp->ace;
 #endif
 	gp->flags |= G_GEOM_IN_ACCESS;
+	SDT_PROBE4(geom, , , access__start, pp, dcr, dcw, dce);
 	error = gp->access(pp, dcr, dcw, dce);
+	SDT_PROBE2(geom, , , access__done, pp, error);
 	KASSERT(dcr > 0 || dcw > 0 || dce > 0 || error == 0,
 	    ("Geom provider %s::%s dcr=%d dcw=%d dce=%d error=%d failed "
 	    "closing ->access()", gp->class->name, pp->name, dcr, dcw,

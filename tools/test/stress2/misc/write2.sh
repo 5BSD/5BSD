@@ -37,7 +37,6 @@
 num=`awk '/SYS_write[^a-z]/ {print $NF}' < /usr/include/sys/syscall.h`
 [ -z "$num" ] && exit 0
 
-kldstat | grep -q pty.ko || kldload pty.ko
 ./syscall4.sh $num
 
 exit 0

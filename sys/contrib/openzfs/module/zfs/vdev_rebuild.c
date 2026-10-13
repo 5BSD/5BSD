@@ -28,6 +28,8 @@
 #include <sys/arc.h>
 #include <sys/arc_impl.h>
 #include <sys/zap.h>
+#include <sys/trace_zfs.h>
+#include <sys/trace_bsd.h>
 
 /*
  * This file contains the sequential reconstruction implementation for
@@ -223,6 +225,8 @@ vdev_rebuild_initiate_sync(void *arg, dmu_tx_t *tx)
 	mutex_enter(&vd->vdev_rebuild_lock);
 	memset(vrp, 0, sizeof (uint64_t) * REBUILD_PHYS_ENTRIES);
 	vrp->vrp_rebuild_state = VDEV_REBUILD_ACTIVE;
+	ZFS_BSD_PROBE3(rebuild__state, vdev_t *, vd, uint64_t,
+	    vrp->vrp_rebuild_state, uint64_t, tx->tx_txg);
 	vrp->vrp_min_txg = TXG_INITIAL;
 	vrp->vrp_max_txg = dmu_tx_get_txg(tx);
 	vrp->vrp_start_time = gethrestime_sec();
@@ -312,6 +316,8 @@ vdev_rebuild_complete_sync(void *arg, dmu_tx_t *tx)
 	}
 
 	vrp->vrp_rebuild_state = VDEV_REBUILD_COMPLETE;
+	ZFS_BSD_PROBE3(rebuild__state, vdev_t *, vd, uint64_t,
+	    vrp->vrp_rebuild_state, uint64_t, tx->tx_txg);
 	vrp->vrp_end_time = gethrestime_sec();
 
 	VERIFY0(zap_update(vd->vdev_spa->spa_meta_objset, vd->vdev_top_zap,
@@ -365,6 +371,8 @@ vdev_rebuild_cancel_sync(void *arg, dmu_tx_t *tx)
 
 	mutex_enter(&vd->vdev_rebuild_lock);
 	vrp->vrp_rebuild_state = VDEV_REBUILD_CANCELED;
+	ZFS_BSD_PROBE3(rebuild__state, vdev_t *, vd, uint64_t,
+	    vrp->vrp_rebuild_state, uint64_t, tx->tx_txg);
 	vrp->vrp_end_time = gethrestime_sec();
 
 	VERIFY0(zap_update(vd->vdev_spa->spa_meta_objset, vd->vdev_top_zap,
@@ -574,8 +582,12 @@ vdev_rebuild_range(vdev_rebuild_t *vr, uint64_t start, uint64_t size)
 	mutex_enter(&vr->vr_io_lock);
 
 	/* Limit in flight rebuild I/Os */
-	while (vr->vr_bytes_inflight >= vr->vr_bytes_inflight_max)
+	while (vr->vr_bytes_inflight >= vr->vr_bytes_inflight_max) {
+		ZFS_BSD_PROBE3(rebuild__wait__start, void *, vr,
+		    int, 1, uint64_t, vr->vr_bytes_inflight);
 		cv_wait(&vr->vr_io_cv, &vr->vr_io_lock);
+		ZFS_BSD_PROBE2(rebuild__wait__done, void *, vr, int, 1);
+	}
 
 	vr->vr_bytes_inflight += psize;
 	mutex_exit(&vr->vr_io_lock);
@@ -922,8 +934,12 @@ vdev_rebuild_thread(void *arg)
 
 	/* Wait for any remaining rebuild I/O to complete */
 	mutex_enter(&vr->vr_io_lock);
-	while (vr->vr_bytes_inflight > 0)
+	while (vr->vr_bytes_inflight > 0) {
+		ZFS_BSD_PROBE3(rebuild__wait__start, void *, vr,
+		    int, 2, uint64_t, vr->vr_bytes_inflight);
 		cv_wait(&vr->vr_io_cv, &vr->vr_io_lock);
+		ZFS_BSD_PROBE2(rebuild__wait__done, void *, vr, int, 2);
+	}
 
 	mutex_exit(&vr->vr_io_lock);
 

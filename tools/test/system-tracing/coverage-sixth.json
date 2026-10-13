@@ -1,0 +1,342 @@
+{
+  "probes": [
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_sockbuf.c",
+      "provider": "sockbuf",
+      "name": "wait-start",
+      "types": [
+        "struct socket *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/uipc_sockbuf.c",
+      "provider": "sockbuf",
+      "name": "wait-done",
+      "types": [
+        "struct socket *",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_bio.c",
+      "provider": "bufcache",
+      "name": "writes-wait-start",
+      "types": [
+        "struct bufobj *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_bio.c",
+      "provider": "bufcache",
+      "name": "writes-wait-done",
+      "types": [
+        "struct bufobj *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/ufs/ufs/ufs_quota.c",
+      "provider": "ufsquota",
+      "name": "deny",
+      "types": [
+        "struct dquot *",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/ufs/ufs/ufs_quota.c",
+      "provider": "ufsquota",
+      "name": "grace-start",
+      "types": [
+        "struct dquot *",
+        "int",
+        "int",
+        "int64_t"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/ufs/ufs/ufs_quota.c",
+      "provider": "ufsquota",
+      "name": "sync-start",
+      "types": [
+        "struct dquot *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/ufs/ufs/ufs_quota.c",
+      "provider": "ufsquota",
+      "name": "sync-done",
+      "types": [
+        "struct dquot *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/dev/mmc/mmc.c",
+      "provider": "mmc",
+      "name": "request-start",
+      "types": [
+        "device_t",
+        "struct mmc_request *",
+        "uint32_t"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/dev/mmc/mmc.c",
+      "provider": "mmc",
+      "name": "request-done",
+      "types": [
+        "struct mmc_request *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/dev/mmc/mmc.c",
+      "provider": "mmc",
+      "name": "retune-start",
+      "types": [
+        "device_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/dev/mmc/mmc.c",
+      "provider": "mmc",
+      "name": "retune-done",
+      "types": [
+        "device_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/dev/mmc/mmc_subr.c",
+      "provider": "mmc",
+      "name": "command-retry",
+      "types": [
+        "device_t",
+        "uint32_t",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/dev/iicbus/iiconf.c",
+      "provider": "iicbus",
+      "name": "acquire-start",
+      "types": [
+        "device_t",
+        "device_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/dev/iicbus/iiconf.c",
+      "provider": "iicbus",
+      "name": "acquire-done",
+      "types": [
+        "device_t",
+        "device_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/dev/iicbus/iiconf.c",
+      "provider": "iicbus",
+      "name": "transfer-start",
+      "types": [
+        "device_t",
+        "uint32_t"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/dev/iicbus/iiconf.c",
+      "provider": "iicbus",
+      "name": "transfer-done",
+      "types": [
+        "device_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/dd/dd.c",
+      "provider": "ddio*",
+      "name": "read-start",
+      "types": [
+        "int",
+        "uint64_t"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/dd/dd.c",
+      "provider": "ddio*",
+      "name": "read-done",
+      "types": [
+        "int",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/dd/dd.c",
+      "provider": "ddio*",
+      "name": "write-start",
+      "types": [
+        "int",
+        "uint64_t"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/dd/dd.c",
+      "provider": "ddio*",
+      "name": "write-done",
+      "types": [
+        "int",
+        "int64_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/dd/dd.c",
+      "provider": "ddio*",
+      "name": "sparse",
+      "types": [
+        "int",
+        "uint64_t"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/mv/mv.c",
+      "provider": "moveio*",
+      "name": "rename-start",
+      "types": []
+    },
+    {
+      "kind": "user",
+      "source": "bin/mv/mv.c",
+      "provider": "moveio*",
+      "name": "rename-done",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/mv/mv.c",
+      "provider": "moveio*",
+      "name": "fallback-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "bin/mv/mv.c",
+      "provider": "moveio*",
+      "name": "fallback-done",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/cron/cron/do_command.c",
+      "provider": "cron*",
+      "name": "job-launch",
+      "types": [
+        "int",
+        "uint32_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/cron/cron/do_command.c",
+      "provider": "cron*",
+      "name": "job-exec-error",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/cron/cron/do_command.c",
+      "provider": "cron*",
+      "name": "child-wait-start",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "user",
+      "source": "usr.sbin/cron/cron/do_command.c",
+      "provider": "cron*",
+      "name": "child-wait-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ]
+    }
+  ],
+  "sources": {
+    "bin/dd/Makefile": "7a8d5ff5232e2bf287e98cb312c534b95f70038dd117cd80e11646d0497487d8",
+    "bin/dd/dd.c": "c7e9b8ebcfa69acbe0a79dbe164bdaef6df407d1b406edbfa89d068ee45cb38f",
+    "bin/dd/ddio_provider.d": "c7048fc878d487c73dbbc58b69071fdc646bb05d02e88da14c979a578f989334",
+    "bin/dd/ddio_trace.h": "57261bcfea93edfeae55eab79e0fc89c673afeb0de8a708d3ef4b3e3e77b2bb8",
+    "bin/mv/Makefile": "6d7759f845d3efc74d8f8bf7052b8c731fb03183b6f11b25405355e0b82025e6",
+    "bin/mv/moveio_provider.d": "dcd12706de326336e608e5fa42bbd112350ca1f529fcc1d738390aaae67772d4",
+    "bin/mv/moveio_trace.h": "b320fa528d8be7c2dafd0aef6bc7af05ba69ce587c494a8995bcd19523b76fb6",
+    "bin/mv/mv.c": "22b6dcdef60d676b4897e7e19ae558272432bf070c65c5252b57b4f8207e9b1a",
+    "sys/dev/iicbus/iiconf.c": "9435bfffd9ce3a72d8f5540c67573c3649669b96a3c9c8342ccc8e8c4e905811",
+    "sys/dev/mmc/mmc.c": "0a3f37cc1316074e1b7e7af220b89976219de45270ebefa876d6d58607a8c531",
+    "sys/dev/mmc/mmc_subr.c": "7ce4ae44c7afb91bfebf7ecea84a5713976c3477ab5ecb025c391d859ef215a3",
+    "sys/kern/uipc_sockbuf.c": "b339a0f63e5f7438dcc5f8121efbe9781f4856c99dd94b95faaf95ef1fb5f846",
+    "sys/kern/vfs_bio.c": "3268a65cc2934a7733978aa6564f099a00fa665352fc47faecf67d2cd7673b03",
+    "sys/ufs/ufs/ufs_quota.c": "ad7c0e996372707d6acca7d03626c44f1bb06e4b042441a070191a04d7f660dd",
+    "usr.sbin/cron/cron/cron_provider.d": "d4c2fc6700cbf9951750d58798e0285dd3a951d7515353b20f88829e20a0a5d4",
+    "usr.sbin/cron/cron/cron_trace.h": "d30d37b3dd2582078085c64006778a7fa3eec99391b5bbbafbc045d2354d9ef2",
+    "usr.sbin/cron/cron/do_command.c": "fd397625a3e10973f00a15a4e976678db49dbd70497ac2af334bce7a6ccae020",
+    "usr.sbin/cron/cron/cron_probes.h": "4b93213e59937d347f94faacae3de8394a8ba089f0e9a4f8746a04553b4bc4f9"
+  },
+  "profiles": [
+    "socket-buffer-waits",
+    "quota-decisions",
+    "mmc-requests",
+    "iicbus-transfers",
+    "buffer-write-waits",
+    "dd-transfers",
+    "move-fallbacks",
+    "cron-child-results"
+  ]
+}

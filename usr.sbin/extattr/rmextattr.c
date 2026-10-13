@@ -51,6 +51,112 @@
 #include <err.h>
 #include <errno.h>
 
+#include "attrtool_trace.h"
+
+static ssize_t
+trace_extattr_get_link(const char *path, int ns, const char *name, void *data, size_t len)
+{
+	ssize_t result;
+
+	TRACE_ATTRTOOL_GET__START(ns, 1, len, data == NULL);
+	result = extattr_get_link(path, ns, name, data, len);
+	TRACE_ATTRTOOL_GET__DONE(ns, 1, len, data == NULL,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
+static ssize_t
+trace_extattr_get_file(const char *path, int ns, const char *name, void *data, size_t len)
+{
+	ssize_t result;
+
+	TRACE_ATTRTOOL_GET__START(ns, 0, len, data == NULL);
+	result = extattr_get_file(path, ns, name, data, len);
+	TRACE_ATTRTOOL_GET__DONE(ns, 0, len, data == NULL,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
+static ssize_t
+trace_extattr_list_link(const char *path, int ns, void *data, size_t len)
+{
+	ssize_t result;
+
+	TRACE_ATTRTOOL_LIST__START(ns, 1, len, data == NULL);
+	result = extattr_list_link(path, ns, data, len);
+	TRACE_ATTRTOOL_LIST__DONE(ns, 1, len, data == NULL,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
+static ssize_t
+trace_extattr_list_file(const char *path, int ns, void *data, size_t len)
+{
+	ssize_t result;
+
+	TRACE_ATTRTOOL_LIST__START(ns, 0, len, data == NULL);
+	result = extattr_list_file(path, ns, data, len);
+	TRACE_ATTRTOOL_LIST__DONE(ns, 0, len, data == NULL,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
+static ssize_t
+trace_extattr_set_link(const char *path, int ns, const char *name, const void *data, size_t len)
+{
+	ssize_t result;
+
+	TRACE_ATTRTOOL_SET__START(ns, 1, len, data == NULL);
+	result = extattr_set_link(path, ns, name, data, len);
+	TRACE_ATTRTOOL_SET__DONE(ns, 1, len, data == NULL,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
+static ssize_t
+trace_extattr_set_file(const char *path, int ns, const char *name, const void *data, size_t len)
+{
+	ssize_t result;
+
+	TRACE_ATTRTOOL_SET__START(ns, 0, len, data == NULL);
+	result = extattr_set_file(path, ns, name, data, len);
+	TRACE_ATTRTOOL_SET__DONE(ns, 0, len, data == NULL,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
+static int
+trace_extattr_delete_link(const char *path, int ns, const char *name)
+{
+	int result;
+
+	TRACE_ATTRTOOL_DELETE__START(ns, 1);
+	result = extattr_delete_link(path, ns, name);
+	TRACE_ATTRTOOL_DELETE__DONE(ns, 1,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
+static int
+trace_extattr_delete_file(const char *path, int ns, const char *name)
+{
+	int result;
+
+	TRACE_ATTRTOOL_DELETE__START(ns, 0);
+	result = extattr_delete_file(path, ns, name);
+	TRACE_ATTRTOOL_DELETE__DONE(ns, 0,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 static enum { EADUNNO, EAGET, EASET, EARM, EALS } what = EADUNNO;
 
 static void __dead2
@@ -211,10 +317,10 @@ main(int argc, char *argv[])
 		switch (what) {
 		case EARM:
 			if (flag_nofollow)
-				error = extattr_delete_link(argv[arg_counter],
+				error = trace_extattr_delete_link(argv[arg_counter],
 				    attrnamespace, attrname);
 			else
-				error = extattr_delete_file(argv[arg_counter],
+				error = trace_extattr_delete_file(argv[arg_counter],
 				    attrnamespace, attrname);
 			if (error >= 0)
 				continue;
@@ -222,11 +328,11 @@ main(int argc, char *argv[])
 		case EASET:
 			len = sbuf_len(attrvalue) + flag_null;
 			if (flag_nofollow)
-				ret = extattr_set_link(argv[arg_counter],
+				ret = trace_extattr_set_link(argv[arg_counter],
 				    attrnamespace, attrname,
 				    sbuf_data(attrvalue), len);
 			else
-				ret = extattr_set_file(argv[arg_counter],
+				ret = trace_extattr_set_file(argv[arg_counter],
 				    attrnamespace, attrname,
 				    sbuf_data(attrvalue), len);
 			if (ret >= 0) {
@@ -239,19 +345,19 @@ main(int argc, char *argv[])
 			break;
 		case EALS:
 			if (flag_nofollow)
-				ret = extattr_list_link(argv[arg_counter],
+				ret = trace_extattr_list_link(argv[arg_counter],
 				    attrnamespace, NULL, 0);
 			else
-				ret = extattr_list_file(argv[arg_counter],
+				ret = trace_extattr_list_file(argv[arg_counter],
 				    attrnamespace, NULL, 0);
 			if (ret < 0)
 				break;
 			mkbuf(&buf, &buflen, ret);
 			if (flag_nofollow)
-				ret = extattr_list_link(argv[arg_counter],
+				ret = trace_extattr_list_link(argv[arg_counter],
 				    attrnamespace, buf, buflen);
 			else
-				ret = extattr_list_file(argv[arg_counter],
+				ret = trace_extattr_list_file(argv[arg_counter],
 				    attrnamespace, buf, buflen);
 			if (ret < 0)
 				break;
@@ -268,19 +374,19 @@ main(int argc, char *argv[])
 			continue;
 		case EAGET:
 			if (flag_nofollow)
-				ret = extattr_get_link(argv[arg_counter],
+				ret = trace_extattr_get_link(argv[arg_counter],
 				    attrnamespace, attrname, NULL, 0);
 			else
-				ret = extattr_get_file(argv[arg_counter],
+				ret = trace_extattr_get_file(argv[arg_counter],
 				    attrnamespace, attrname, NULL, 0);
 			if (ret < 0)
 				break;
 			mkbuf(&buf, &buflen, ret);
 			if (flag_nofollow)
-				ret = extattr_get_link(argv[arg_counter],
+				ret = trace_extattr_get_link(argv[arg_counter],
 				    attrnamespace, attrname, buf, buflen);
 			else
-				ret = extattr_get_file(argv[arg_counter],
+				ret = trace_extattr_get_file(argv[arg_counter],
 				    attrnamespace, attrname, buf, buflen);
 			if (ret < 0)
 				break;

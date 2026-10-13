@@ -58,6 +58,11 @@
 
 #include "bsdtar.h"
 #include "lafe_err.h"
+#include "archiveop_trace.h"
+#ifndef WITH_COVERAGE_DTRACE
+#define trace_archive_read_next_header archive_read_next_header
+#define trace_archive_read_extract2 archive_read_extract2
+#endif
 
 struct progress_data {
 	struct bsdtar *bsdtar;
@@ -243,7 +248,7 @@ read_archive(struct bsdtar *bsdtar, char mode, struct archive *writer)
 				break;
 		}
 
-		r = archive_read_next_header(a, &entry);
+		r = trace_archive_read_next_header(a, &entry);
 		progress_data.entry = entry;
 		if (r == ARCHIVE_EOF)
 			break;
@@ -358,7 +363,7 @@ read_archive(struct bsdtar *bsdtar, char mode, struct archive *writer)
 			if (bsdtar->flags & OPTFLAG_STDOUT)
 				r = archive_read_data_into_fd(a, 1);
 			else
-				r = archive_read_extract2(a, entry, writer);
+				r = trace_archive_read_extract2(a, entry, writer);
 			if (r != ARCHIVE_OK) {
 				if (!bsdtar->verbose)
 					safe_fprintf(stderr, "%s", archive_entry_pathname(entry));

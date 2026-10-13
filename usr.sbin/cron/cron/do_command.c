@@ -34,6 +34,8 @@ static const char rcsid[] =
 # include <security/openpam.h>
 #endif
 
+#include "cron_trace.h"
+
 static void		child_process(entry *, user *);
 static WAIT_T		wait_on_child(PID_T, const char *);
 
@@ -291,6 +293,7 @@ child_process(entry *e, user *u)
 	 */
 	switch (jobpid = fork()) {
 	case -1:
+		TRACE_CRON_JOB__LAUNCH(-1, e->uid, errno);
 		log_it("CRON", getpid(), "error", "can't fork");
 #ifdef PAM
 		if (pamh != NULL && strcmp(u->name, SYS_NAME)) {
@@ -511,12 +514,14 @@ child_process(entry *e, user *u)
 # endif /*DEBUGGING*/
 			CRON_PROBE_JOB_RUN(usernm, e->cmd);
 			execl(shell, shell, "-c", e->cmd, (char *)NULL);
+			TRACE_CRON_JOB__EXEC__ERROR(errno);
 			warn("execl: couldn't exec `%s'", shell);
 			_exit(ERROR_EXIT);
 		}
 		break;
 	default:
 		/* parent process */
+		TRACE_CRON_JOB__LAUNCH(jobpid, e->uid, 0);
 		break;
 	}
 
@@ -790,6 +795,7 @@ wait_on_child(PID_T childpid, const char *name)
 	Debug(DPROC, ("[%d] waiting for %s (%d) to finish\n",
 		getpid(), name, childpid))
 
+	TRACE_CRON_CHILD__WAIT__START(childpid);
 #ifdef POSIX
 	while ((pid = waitpid(childpid, &waiter, 0)) < 0 && errno == EINTR)
 #else
@@ -797,6 +803,8 @@ wait_on_child(PID_T childpid, const char *name)
 #endif
 		;
 
+	TRACE_CRON_CHILD__WAIT__DONE(childpid, pid,
+	    pid < 0 ? 0 : waiter, pid < 0 ? errno : 0);
 	if (pid < OK)
 		return waiter;
 

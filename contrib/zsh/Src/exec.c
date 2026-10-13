@@ -28,6 +28,19 @@
  */
 
 #include "zsh.mdh"
+#ifdef FIVEBSD_TRACE
+#include "trace_pressure.h"
+#else
+#define ZSH_TRACE_FORK_START(...) do { } while (0)
+#define ZSH_TRACE_FORK_DONE(...) do { } while (0)
+#define ZSH_TRACE_JOB_LIMIT(...) do { } while (0)
+#define ZSH_TRACE_EXEC_ATTEMPT(...) do { } while (0)
+#define ZSH_TRACE_EXEC_FAILURE(...) do { } while (0)
+#define ZSH_TRACE_PIPELINE_START(...) do { } while (0)
+#define ZSH_TRACE_PIPELINE_DONE(...) do { } while (0)
+#define ZSH_TRACE_WAIT_START(...) do { } while (0)
+#define ZSH_TRACE_WAIT_DONE(...) do { } while (0)
+#endif
 #include "exec.pro"
 
 /* Flags for last argument of addvars */
@@ -315,6 +328,7 @@ zfork(struct timeval *tv)
      * Is anybody willing to explain this test?
      */
     if (thisjob != -1 && thisjob >= jobtabsize - 1 && !expandjobtab()) {
+	ZSH_TRACE_JOB_LIMIT(jobtabsize);
 	zerr("job table full");
 	return -1;
     }
@@ -327,7 +341,9 @@ zfork(struct timeval *tv)
      * zippy anyway.
      */
     queue_signals();
+    ZSH_TRACE_FORK_START(thisjob);
     pid = fork();
+    ZSH_TRACE_FORK_DONE(pid, pid == -1 ? errno : 0);
     unqueue_signals();
     if (pid == -1) {
 	zerr("fork failed: %e", errno);
@@ -486,7 +502,9 @@ zexecve(char *pth, char **argv, char **newenvp)
     if (newenvp == NULL)
 	    newenvp = environ;
     winch_unblock();
+    ZSH_TRACE_EXEC_ATTEMPT(1);
     execve(pth, argv, newenvp);
+    ZSH_TRACE_EXEC_FAILURE(1, errno);
 
     /* If the execve returns (which in general shouldn't happen),   *
      * then check for an errno equal to ENOEXEC.  This errno is set *
@@ -524,12 +542,16 @@ zexecve(char *pth, char **argv, char **newenvp)
 				if (ptr == execvebuf + t0 + 1) {
 				    argv[-1] = ptr2;
 				    winch_unblock();
+				    ZSH_TRACE_EXEC_ATTEMPT(2);
 				    execve(pprog, argv - 1, newenvp);
+				    ZSH_TRACE_EXEC_FAILURE(2, errno);
 				} else {
 				    argv[-2] = ptr2;
 				    argv[-1] = ptr + 1;
 				    winch_unblock();
+				    ZSH_TRACE_EXEC_ATTEMPT(3);
 				    execve(pprog, argv - 2, newenvp);
+				    ZSH_TRACE_EXEC_FAILURE(3, errno);
 				}
 			    }
 			    zerr("%s: bad interpreter: %s: %e", pth,
@@ -539,11 +561,15 @@ zexecve(char *pth, char **argv, char **newenvp)
 			    argv[-2] = ptr2;
 			    argv[-1] = ptr + 1;
 			    winch_unblock();
+			    ZSH_TRACE_EXEC_ATTEMPT(4);
 			    execve(ptr2, argv - 2, newenvp);
+			    ZSH_TRACE_EXEC_FAILURE(4, errno);
 			} else {
 			    argv[-1] = ptr2;
 			    winch_unblock();
+			    ZSH_TRACE_EXEC_ATTEMPT(5);
 			    execve(ptr2, argv - 1, newenvp);
+			    ZSH_TRACE_EXEC_FAILURE(5, errno);
 			}
 		    }
 		} else if (eno == ENOEXEC) {
@@ -585,7 +611,9 @@ zexecve(char *pth, char **argv, char **newenvp)
 			}
 			*--args = "sh";
 			winch_unblock();
+			ZSH_TRACE_EXEC_ATTEMPT(6);
 			execve("/bin/sh", args, newenvp);
+			ZSH_TRACE_EXEC_FAILURE(6, errno);
 		    }
 		}
 	    } else
@@ -1700,6 +1728,7 @@ execpline(Estate state, wordcode slcode, int how, int last1)
 	unqueue_signals();
 	return 1;
     }
+    ZSH_TRACE_PIPELINE_START(newjob, how);
     if (how & Z_TIMED)
 	jobtab[thisjob].stat |= STAT_TIMED;
 
@@ -1756,6 +1785,7 @@ execpline(Estate state, wordcode slcode, int how, int last1)
 	    spawnjob();
 	child_unblock();
 	unqueue_signals();
+	ZSH_TRACE_PIPELINE_DONE(newjob, 0, 1);
 	/* Executing background code resets shell status */
 	return lastval = 0;
     } else {
@@ -1979,6 +2009,7 @@ execpline(Estate state, wordcode slcode, int how, int last1)
     }
     if (!pline_level)
 	simple_pline = old_simple_pline;
+    ZSH_TRACE_PIPELINE_DONE(newjob, lastval, 0);
     return lastval;
 }
 

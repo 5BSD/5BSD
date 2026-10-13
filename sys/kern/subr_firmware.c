@@ -52,6 +52,11 @@
 #include <sys/sdt.h>
 
 SDT_PROVIDER_DEFINE(firmware);
+/* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
+SDT_PROBE_DEFINE1(firmware, , , load__wait__start,
+    "void *");
+SDT_PROBE_DEFINE1(firmware, , , load__wait__done,
+    "void *");
 SDT_PROBE_DEFINE2(firmware, , , lookup, "char *", "int");
 SDT_PROBE_DEFINE1(firmware, , , module__start, "char *");
 SDT_PROBE_DEFINE2(firmware, , , module__done, "char *", "int");
@@ -434,7 +439,9 @@ firmware_get_flags(const char *imagename, uint32_t flags)
 		fwli.flags = flags;
 		TASK_INIT(&fwload_task, 0, loadimage, (void *)&fwli);
 		taskqueue_enqueue(firmware_tq, &fwload_task);
+		SDT_PROBE1(firmware, , , load__wait__start, (&fwli));
 		msleep((void *)&fwli, &firmware_mtx, 0, "fwload", 0);
+		SDT_PROBE1(firmware, , , load__wait__done, (&fwli));
 	}
 	/*
 	 * After attempting to load the module, see if the image is registered.

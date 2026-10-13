@@ -38,6 +38,8 @@
 #include <sys/sdt.h>
 
 SDT_PROVIDER_DEFINE(linuxkpi_work);
+SDT_PROBE_DEFINE1(linuxkpi_work, , , delayed__cancel__start, "void *");
+SDT_PROBE_DEFINE2(linuxkpi_work, , , delayed__cancel__done, "void *", "int");
 SDT_PROBE_DEFINE3(linuxkpi_work, , , state, "void *", "int", "int");
 SDT_PROBE_DEFINE3(linuxkpi_work, , , execute__start, "void *", "void *", "int");
 SDT_PROBE_DEFINE2(linuxkpi_work, , , execute__done, "void *", "void *");
@@ -585,6 +587,7 @@ linux_cancel_delayed_work_sync(struct delayed_work *dwork)
 	bool res = false;
 	bool ret;
 
+	SDT_PROBE1(linuxkpi_work, , , delayed__cancel__start, dwork);
 	do {
 		pending = 0;
 		cancelled = false;
@@ -593,6 +596,7 @@ linux_cancel_delayed_work_sync(struct delayed_work *dwork)
 		res = res || cancelled || pending != 0;
 	} while (ret);
 
+	SDT_PROBE2(linuxkpi_work, , , delayed__cancel__done, dwork, res);
 	return (res);
 }
 

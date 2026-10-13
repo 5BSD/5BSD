@@ -1,0 +1,218 @@
+{
+  "probes": [
+    {
+      "component": "lib/liboes",
+      "provider": "oesclient",
+      "name": "batch-read",
+      "types": [
+        "int64_t",
+        "int"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "lib/liboes",
+      "provider": "oesclient",
+      "name": "buffer-corrupt",
+      "types": [
+        "uint64_t",
+        "uint64_t"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "lib/liboes",
+      "provider": "oesclient",
+      "name": "auth-response",
+      "types": [
+        "int",
+        "uint32_t",
+        "uint32_t",
+        "int"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "lib/libtimecmp",
+      "provider": "timecmp",
+      "name": "wait-start",
+      "types": [
+        "uintptr_t"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "lib/libtimecmp",
+      "provider": "timecmp",
+      "name": "wait-done",
+      "types": [
+        "uintptr_t",
+        "int",
+        "int"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "lib/libtimecmp",
+      "provider": "timecmp",
+      "name": "reply-malformed",
+      "types": [
+        "int"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "lib/libcapsulert",
+      "provider": "capsuleclaims",
+      "name": "rights-parsed",
+      "types": [
+        "int",
+        "int",
+        "uint64_t"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "lib/libshmring",
+      "provider": "shmring",
+      "name": "record-reject",
+      "types": [
+        "int",
+        "uint64_t",
+        "uint64_t"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "usr.sbin/mac_abacd",
+      "provider": "abacdaemon",
+      "name": "policy-start",
+      "types": [
+        "int"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "usr.sbin/mac_abacd",
+      "provider": "abacdaemon",
+      "name": "policy-done",
+      "types": [
+        "int",
+        "int"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "usr.sbin/mac_abac_ctl",
+      "provider": "abacctl",
+      "name": "policy-start",
+      "types": [
+        "int"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "usr.sbin/mac_abac_ctl",
+      "provider": "abacctl",
+      "name": "policy-done",
+      "types": [
+        "int",
+        "int"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "usr.sbin/oeslogger",
+      "provider": "oeslogger",
+      "name": "event-handled",
+      "types": [
+        "uint32_t",
+        "uint32_t"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "usr.sbin/oeslogger",
+      "provider": "oeslogger",
+      "name": "wait-done",
+      "types": [
+        "int",
+        "int"
+      ],
+      "kind": "user"
+    },
+    {
+      "component": "usr.sbin/oeslogger",
+      "provider": "oeslogger",
+      "name": "dispatch-error",
+      "types": [
+        "int",
+        "int"
+      ],
+      "kind": "user"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/security/mac_abac/abac_rules.c",
+      "provider": "sdt",
+      "name": "abac-check-bypass",
+      "types": [
+        "uint32_t",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/security/mac_abac/abac_rules.c",
+      "provider": "sdt",
+      "name": "abac-rule-decision",
+      "types": [
+        "uint32_t",
+        "uint16_t",
+        "uint32_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/security/mac_abac/abac_rules.c",
+      "provider": "sdt",
+      "name": "abac-default-decision",
+      "types": [
+        "uint32_t",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/security/oes/oes_event.c",
+      "provider": "sdt",
+      "name": "oes-response-rejected",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/security/oes/oes_event.c",
+      "provider": "sdt",
+      "name": "oes-auth-flags",
+      "types": [
+        "int",
+        "int",
+        "uint32_t",
+        "uint32_t"
+      ]
+    }
+  ],
+  "profiles": [
+    "authorization-decisions",
+    "oes-client-outcomes",
+    "abac-policy-management",
+    "library-validation-failures"
+  ]
+}

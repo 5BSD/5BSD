@@ -36,6 +36,7 @@
 
 #include "policy.h"
 #include "bsddevice_probes.h"
+#include "trace_pressure.h"
 #ifdef BSDDEVICE_TESTING
 #include "bsddevice_test.h"
 #endif
@@ -533,6 +534,7 @@ main(void)
 		}
 		if (nworkers >= DEVICECMP_MAX_WORKERS ||
 		    !device_worker_admit(workers, id.client_label)) {
+			BSDDEVICE_TRACE_WORKER_REJECT(1, ENOSPC, nworkers);
 			syslog(LOG_WARNING, "worker limit reached; dropping %s",
 			    id.client_label);
 			(void)close(fd);
@@ -541,6 +543,7 @@ main(void)
 		w = calloc(1, sizeof(struct device_worker_ent));
 		if (w == NULL || start_session(fd, id.client_label,
 		    &w->pd) == -1) {
+			BSDDEVICE_TRACE_WORKER_REJECT(w == NULL ? 2 : 3, errno, nworkers);
 			syslog(LOG_WARNING, "session for %s rejected: %m",
 			    id.client_label);
 			free(w);
@@ -554,6 +557,7 @@ main(void)
 		    kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
 			int status;
 
+			BSDDEVICE_TRACE_WORKER_REJECT(4, errno, nworkers);
 			/*
 			 * Cannot watch it.  The child runs under a PD_DAEMON
 			 * descriptor, so close(pd) would NOT kill it -- it would

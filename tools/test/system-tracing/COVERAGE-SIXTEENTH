@@ -1,0 +1,201 @@
+Sixteenth system tracing expansion (2026-10-13)
+==============================================
+
+66 new kernel SDT contracts in 26 source files cover every area requested in
+the sparse-subsystem/OOM review. Fifteen profiles bring the bsdinstruments
+install catalog to 429 files. The profiles use the normal base installation
+path, /usr/share/bsdinstruments/profiles. No system installation occurred.
+
+Scope / new contracts
+---------------------
+OOM decisions 5; memory waits, NUMA and fragmentation 8; swap metadata 1;
+iflib 3; NVMe over Fabrics 6; GEOM ELI 2 and RAID 7; mpr 4 and mps 4;
+ixgbe 2, igc 3, mlx5 2; ath 3, rtwn 3, net80211 2; WireGuard 3;
+Hyper-V network/storage 4; HID 2; sound 2.
+
+The inventory is coverage-sixteenth.json. A contract is a unique provider /
+module / function / name, not the number of source or machine-code sites.
+All new selectors are sdt:::NAME. GELI's crypto-pressure contract has sites
+in both privacy and integrity source files; additional_sources records this
+without double counting. argument_expressions is one representative call site.
+The descriptions below identify all argument variants and their limitations.
+
+Memory and OOM contracts
+------------------------
+oom-vote: domain, atomic vote result after increment, page shortage.
+oom-vote-withdraw: domain, reason (0=pressure/progress no longer warrants a
+vote, 1=the quorum-triggered OOM attempt returned). No extra atomic reads.
+oom-start: shortage cause, using VM_OOM_MEM / VM_OOM_MEM_PF / VM_OOM_SWAPZ.
+oom-victim: cause, PID, existing estimated reclaimable-page score before
+killproc. This is the selection heuristic, not measured pages freed.
+oom-done: cause, outcome (0=killproc called, 1=fault-OOM rate limited,
+2=no eligible victim), PID or -1, page score or zero. Outcome 0 is not proof
+that the process exited or memory was recovered. Panic-on-OOM does not emit
+a normal done event; no probe is placed in panic handling.
+
+memory-wait-start: kind (1=page daemon generic wait, 2=minimum-domain wait),
+sleep flags; memory-wait-done: kind, msleep return. These surround actual
+sleeps, after the existing early-boot panic check, not every vm_wait call.
+memory-fault-wait-start: timeout in ticks; memory-fault-wait-done: msleep
+return. A timeout is observable separately from a successful wakeup.
+memory-domains-wait: allocation family (1=VM page flags, 2=malloc flags),
+flags, domain policy, configured domain count, before waiting after exhausting
+the domain search. The configured count need not equal the current eligible
+mask. Requires NUMA; no per-page fast path or NOWAIT iteration probes.
+memory-contig-start: domain, requested pages before rounding, desired runs;
+memory-contig-done: domain, reclamation result (0, ENOMEM or ERANGE).
+This measures reclaiming contiguous runs, not final allocation success.
+memory-reservation-reclaim: domain, whether an inactive reservation was
+reclaimed, after reservation/domain locks have been released. False means
+no candidate was reclaimed, not an independently diagnosed global OOM.
+swap-metadata-pressure: zone kind (1=swblk, 2=swpctrie), exhausted boolean.
+Only the winner of the existing exhaustion/recovery CAS emits the transition.
+This differentiates metadata-zone exhaustion from backing swap-space usage.
+
+VM context rules: all events exclude cold startup. Contiguous reclamation
+also excludes stopped-scheduler and raw interrupt contexts and requests in
+the VM_ALLOC_INTERRUPT class. Reservation probes exclude stopped-scheduler
+and raw interrupt contexts. No instrumentation is added inside the physical
+buddy allocator or boot-time reservation setup. Pointer fields are never
+walked by the supplied profiles; probes introduce no allocation or locking.
+
+Networking, drivers, and resource pressure
+-----------------------------------------
+iflib-rx-pressure: free-list identity, kind (1=cluster allocation, 2=DMA map),
+error. DMA errors select the immediate return or callback error already
+sampled by the caller. iflib-dma-failure: TX queue, terminal mapping error,
+remap count; transient EFBIG attempts that successfully retry do not emit it.
+iflib-tx-pressure: TX queue, ENOBUFS when draining cannot enqueue the packet.
+These events occur at existing failure branches, not successful packet paths.
+
+nvmf-disconnect-start/done: controller identity (start also includes I/O
+queue count), around teardown of a normal established association. Early
+attach/detach/no-association branches are excluded.
+nvmf-reconnect-retry: controller, reconnect delay seconds, at the retry task.
+nvmf-reconnect-start/done: controller (done adds error), after acquiring the
+connection lock through the reconnect handoff processing. Initial copyin and
+transport-type validation failures precede start and are not covered.
+nvmf-capsule-pressure: qpair, kind (1=command, 2=response), allocation flags
+when transport capsule allocation returns NULL. Does not expose NVMe command
+contents. Excludes cold, dumping, stopped-scheduler and raw interrupt contexts.
+
+GELI: geli-bio-pressure reports softc, BIO command, requested bytes on failed
+bio cloning. geli-crypto-pressure reports softc, BIO command, allocation
+bytes on privacy/authentication buffer failures. No key, IV, authentication
+tag, block offset, or data buffer is exposed.
+GEOM RAID: graid-{disk,subdisk,volume}-state reports object, old/new state
+at the existing state assignment (which may repeat a state).
+graid-bio-pressure: volume, BIO command when cloning the common fanout fails.
+graid-rebuild-start/finish: RAID1 transform, rebuild byte position before
+starting/completing. graid-rebuild-abort: transform, whether abort is deferred
+until the in-flight slab finishes. It means abort requested, not necessarily
+completed. The generic state probes cover other RAID layouts; explicit rebuild
+lifecycle probes are for RAID1. Async rebuild events are not latency-paired.
+
+mpr/mps-reset-start/done: controller identity; done adds the diagnostic-reset
+return from the sleepable reinitialization path, before its existing fatal
+error handling. Does not mean all subsequent reinitialization completed.
+mpr/mps-command-wait-start: controller, timeout seconds; done: controller,
+msleep return. The no-sleep polling/interrupt completion branches are excluded.
+
+ixgbe-admin-batch: softc, claimed task-request bits, zero-based budget pass.
+ixgbe-reset-request: softc when the admin task requests an iflib reset.
+igc-fatal-error: softc, saved PEIND and PCIe error status after the admin task
+claims the detected fatal event. No extra MMIO reads are introduced.
+igc-reset-request: softc at the host-reset request (management-only faults can
+be handled by firmware without this event).
+igc-reset-result: softc, reset-poll timeout boolean, PCIe-master-disable return.
+This is a reset preparation result, not a final link-health verdict.
+mlx5-recovery-start/done: device, with done adding recovery-attempt boolean and
+last NIC mode. The boolean says mlx5_recover_device was called, not that its
+internal recovery succeeded. Runs in health recovery work, outside raw IRQs.
+
+ath-watchdog-expired: softc when its watchdog schedules deferred reset.
+ath-deferred-reset-start/done: softc; done adds ath_reset's existing return.
+The implementation lives in ath_main. The ath module is a loader stub.
+rtwn-watchdog-expired: softc before restarting VAPs on TX timeout; not compiled
+with the historical D4054 alternate watchdog option.
+rtwn-init-start/done: softc; done adds the init return. The already-running
+short circuit is excluded. Cold startup is excluded; later reinitialization
+can be measured. Firmware-less builds retain these lifecycle probes.
+wlan-auth-retry: VAP identity, authentication/association reason code at retry.
+wlan-association-failed: VAP, reason, roaming policy at the alternate failure
+branch. These complement existing wlan state-request/state-result contracts;
+no station address or authentication payload is exposed.
+
+wg-handshake-retry/exhausted: peer identity, retry counter while its mutex is
+held. No public/private keys, endpoints, cookie MACs, or packet data.
+wg-queue-pressure: queue, kind (1=handshake, 2=serial, 3=parallel), length read
+under the queue mutex before failure handling. Parallel failure leaves the
+existing dead-packet processing unchanged; it is not an immediate free event.
+
+hyperv-net-send-pressure: TX ring, send error, whether this is the second
+attempt in hn_txpkt. The descriptor may already have completed, so the probe
+uses ring/local variables only and never dereferences the descriptor.
+hyperv-storage-connect-start/done: softc, with done adding transport return,
+current packet operation and status, around active channel negotiation. The
+original return alone does not prove protocol success; inspect packet status.
+hyperv-storage-request-pressure: softc, existing frozen boolean when the free
+request list is empty, before CAM requeue/freeze handling. Dumping is excluded.
+The disabled storvsc timeout/host-reset code and low-level spin-locked VMBus
+ring operations were deliberately not instrumented. Events are in active
+network/storage paths, not raw interrupt filters or polling dump handlers.
+
+hid-report-start: device, kind (1=get, 2=set), report type, requested length;
+hid-report-done: device, kind, returned error. Does not capture report bytes
+or report IDs. These are forwarded control-report operations, not all input
+interrupt reports or every transport method.
+pcm-buffer-wait-start: channel, timeout ticks; done: channel, raw timed-wait
+result, channel-dead boolean. The caller can override the result to EINVAL
+when dead. Already-dead calls that never wait are excluded. Existing pcm xrun
+probes remain responsible for underrun/overrun reporting.
+
+Profiles
+--------
+oom-decisions; memory-pressure-waits; memory-fragmentation;
+swap-metadata-pressure; iflib-resource-pressure; nvmf-recovery;
+geom-pressure-rebuild; scsi-controller-recovery; intel-nic-recovery;
+mlx5-health-recovery; wireless-recovery; wireguard-resource-pressure;
+hyperv-resource-pressure; hid-report-latency; pcm-buffer-waits.
+
+All use scalar arguments without pointer dereferences, payload copies, or
+credential collection. Start before the workload. Lost events invalidate
+pairing; elapsed times include scheduling. Nested synchronous calls use
+PID/TID/depth keys and clear matched state. PID filters can omit deferred
+workers; asynchronous lifecycle events use counts rather than fake durations.
+
+Validation and artifacts
+------------------------
+Exact originals, logs, objects, results and this pass's patch are under:
+  /usr/obj/5bsd-dtrace-sixteenth-validation
+
+Maintained scripts in this directory:
+  coverage-sixteenth-modules.py: 18 implementation modules, native flags.
+  coverage-sixteenth-compile.py: 26 sources, hooks enabled/disabled (52).
+    An optional list of source paths reruns just those and merges results.
+  coverage-sixteenth-check.py: contract/hash checks, 30 offline profile
+    compiles (plain and PID/duration filtered), executable SDT NOP sites in
+    enabled objects and new-contract absence in disabled objects.
+  coverage-sixteenth-linked.py: verify new executable sites in linked .ko files.
+  coverage-sixteenth-codegen.py: compare original/changed no-hooks .text with
+    diagnostic file/line macros normalized. All 26 match. Requires saved before/
+    files; does not claim relocation equivalence or live runtime behavior.
+  coverage-sixteenth-variants.py: NUMA-off, reservations-off and firmware-less
+    rtwn compile in both modes (six successful variant compiles). D4054 fails
+    in both modes with the same two missing API diagnostics in original and
+    modified source; preprocessing confirms the excluded event is absent.
+
+The prepared GENERIC-NODEBUG kernel links with:
+  make -C /usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG -j16 \
+    SRCTOP=/usr/src kernel
+SRCTOP is needed by ath's prepared per-source include flags. The initial
+standalone make invocation omitted it and sought /sys/dev/ath; the corrected
+build succeeds without source or global build-configuration changes.
+
+All native and module builds use the standard /usr/obj tree and all logical
+CPUs. No module loading, configuration changes, hardware fault injection,
+forced OOM, installation, package publication, or reboot was performed.
+/dev/dtrace is unavailable, so live firing, enabled-trace overhead and hardware
+recovery behavior remain unqualified. Native compilation is amd64; this is not
+a cross-architecture build certification. The existing D4054 API mismatch is
+recorded rather than fixed as part of tracing work.

@@ -35,6 +35,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/namei.h>
 #include <sys/kernel.h>
@@ -58,6 +60,11 @@
 #include <fs/cd9660/cd9660_node.h>
 #include <fs/cd9660/cd9660_mount.h>
 #include <fs/cd9660/iso_rrip.h>
+
+SDT_PROVIDER_DEFINE(isofs);
+SDT_PROBE_DEFINE3(isofs, , , block__start, "void *", "int64_t", "int");
+SDT_PROBE_DEFINE4(isofs, , , block__done, "void *", "int64_t", "int", "int");
+
 
 static vop_setattr_t	cd9660_setattr;
 static vop_open_t	cd9660_open;
@@ -301,6 +308,7 @@ cd9660_read(struct vop_read_args *ap)
 		if (diff < n)
 			n = diff;
 		size = blksize(imp, ip, lbn);
+		SDT_PROBE3(isofs, , , block__start, vp, lbn, size);
 		rablock = lbn + 1;
 		if ((vp->v_mount->mnt_flag & MNT_NOCLUSTERR) == 0) {
 			if (lblktosize(imp, rablock) < ip->i_size)
@@ -318,6 +326,7 @@ cd9660_read(struct vop_read_args *ap)
 			} else
 				error = bread(vp, lbn, size, NOCRED, &bp);
 		}
+		SDT_PROBE4(isofs, , , block__done, vp, lbn, size, error);
 		if (error != 0)
 			return (error);
 		n = MIN(n, size - bp->b_resid);

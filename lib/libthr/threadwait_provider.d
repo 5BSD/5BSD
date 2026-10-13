@@ -7,4 +7,6 @@ provider threadwait {
 	probe condition__done(uintptr_t, int);
 	probe join__start(uintptr_t);
 	probe join__done(uintptr_t, int);
+	probe rwlock__start(uintptr_t, int);
+	probe rwlock__done(uintptr_t, int, int);
 };

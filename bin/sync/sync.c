@@ -32,9 +32,13 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "flushall_trace.h"
+
 int
 main(int argc __unused, char *argv[] __unused)
 {
+	TRACE_FLUSHALL_OPERATION__START(0);
 	sync();
+	TRACE_FLUSHALL_OPERATION__DONE(0);
 	exit(0);
 }

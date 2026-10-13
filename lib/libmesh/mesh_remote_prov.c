@@ -18,6 +18,7 @@
  */
 
 #include <sys/types.h>
+#include "mesh_probes.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -1101,6 +1102,7 @@ mesh_rp_client_link_send_pdu(struct mesh_rp_client_link *l,
 		return (-1);
 	l->outbound_pdu_number = next_number;
 	l->awaiting_outbound_report = 1;
+	MESH_PROBE_REMOTE__TRANSFER((uintptr_t)l, next_number, len);
 	return (0);
 }
 
@@ -1161,6 +1163,7 @@ mesh_rp_client_link_tick(struct mesh_rp_client_link *l, uint64_t now)
 	if (l->state != MESH_RP_LINK_OPENING)
 		return (0);
 	if (now - l->open_ms >= l->open_deadline_ms - l->open_ms) {
+		MESH_PROBE_REMOTE__TIMEOUT((uintptr_t)l);
 		l->state = MESH_RP_LINK_IDLE;
 		return (1);
 	}

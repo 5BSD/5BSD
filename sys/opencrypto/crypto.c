@@ -108,6 +108,8 @@ SDT_PROBE_DEFINE1(crypto, , , defer, "void *");
 #endif
 
 SDT_PROVIDER_DEFINE(opencrypto);
+SDT_PROBE_DEFINE2(opencrypto, , , session__start, "int", "int");
+SDT_PROBE_DEFINE2(opencrypto, , , session__done, "int", "int");
 
 /*
  * Crypto drivers register themselves by allocating a slot in the
@@ -961,8 +963,11 @@ crypto_newsession(crypto_session_t *cses,
 	struct cryptocap *cap;
 	int err;
 
-	if (!check_csp(csp))
+	SDT_PROBE2(opencrypto, , , session__start, crid, csp->csp_mode);
+	if (!check_csp(csp)) {
+		SDT_PROBE2(opencrypto, , , session__done, crid, EINVAL);
 		return (EINVAL);
+	}
 
 	res = NULL;
 
@@ -983,6 +988,7 @@ crypto_newsession(crypto_session_t *cses,
 	if (cap == NULL) {
 		CRYPTO_DRIVER_UNLOCK();
 		CRYPTDEB("no driver");
+		SDT_PROBE2(opencrypto, , , session__done, crid, EOPNOTSUPP);
 		return (EOPNOTSUPP);
 	}
 	cap_ref(cap);
@@ -1001,10 +1007,12 @@ crypto_newsession(crypto_session_t *cses,
 	if (err != 0) {
 		CRYPTDEB("dev newsession failed: %d", err);
 		crypto_deletesession(res);
+		SDT_PROBE2(opencrypto, , , session__done, crid, err);
 		return (err);
 	}
 
 	*cses = res;
+	SDT_PROBE2(opencrypto, , , session__done, crid, 0);
 	return (0);
 }
 

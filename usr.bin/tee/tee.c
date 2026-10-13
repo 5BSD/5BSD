@@ -46,6 +46,34 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "teeio_trace.h"
+
+static ssize_t
+trace_write(int fd, const void *buf, size_t len)
+{
+	ssize_t result;
+
+	TRACE_TEEIO_WRITE__START(fd, len);
+	result = write(fd, buf, len);
+	TRACE_TEEIO_WRITE__DONE(fd, len,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
+static ssize_t
+trace_read(int fd, void *buf, size_t len)
+{
+	ssize_t result;
+
+	TRACE_TEEIO_READ__START(fd, len);
+	result = read(fd, buf, len);
+	TRACE_TEEIO_READ__DONE(fd, len,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 struct entry {
 	int fd;
 	const char *name;
@@ -106,12 +134,12 @@ main(int argc, char *argv[])
 
 	if (caph_enter() < 0)
 		err(EXIT_FAILURE, "unable to enter capability mode");
-	while ((rval = read(STDIN_FILENO, buf, BSIZE)) > 0)
+	while ((rval = trace_read(STDIN_FILENO, buf, BSIZE)) > 0)
 		STAILQ_FOREACH(p, &head, entries) {
 			n = rval;
 			bp = buf;
 			do {
-				if ((wval = write(p->fd, bp, n)) == -1) {
+				if ((wval = trace_write(p->fd, bp, n)) == -1) {
 					warn("%s", p->name);
 					exitval = 1;
 					break;

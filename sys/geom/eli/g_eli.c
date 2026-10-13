@@ -27,6 +27,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/cons.h>
 #include <sys/kenv.h>
@@ -491,6 +493,9 @@ g_eli_start(struct bio *bp)
 	}
 	cbp = g_clone_bio(bp);
 	if (cbp == NULL) {
+		if (!cold)
+			DTRACE_PROBE3(geli__bio__pressure, void *, (sc),
+			    int, (bp->bio_cmd), off_t, (bp->bio_length));
 		g_io_deliver(bp, ENOMEM);
 		return;
 	}

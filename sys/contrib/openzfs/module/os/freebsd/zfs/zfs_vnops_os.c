@@ -4702,8 +4702,17 @@ zfs_freebsd_read(struct vop_read_args *ap)
 	zfs_uio_t uio;
 	int error = 0;
 	zfs_uio_init(&uio, ap->a_uio);
+	DTRACE_PROBE4(zfs__vop__read__start,
+	    vnode_t *, ap->a_vp,
+	    int64_t, zfs_uio_offset(&uio),
+	    uint64_t, zfs_uio_resid(&uio),
+	    int, ap->a_ioflag);
 	error = zfs_read(VTOZ(ap->a_vp), &uio, ioflags(ap->a_ioflag),
 	    ap->a_cred);
+	DTRACE_PROBE3(zfs__vop__read__done,
+	    vnode_t *, ap->a_vp,
+	    uint64_t, zfs_uio_resid(&uio),
+	    int, error);
 	/*
 	 * XXX We occasionally get an EFAULT for Direct I/O reads on
 	 * FreeBSD 13. This still needs to be resolved. The EFAULT comes
@@ -4745,9 +4754,21 @@ static int
 zfs_freebsd_write(struct vop_write_args *ap)
 {
 	zfs_uio_t uio;
+	int error;
+
 	zfs_uio_init(&uio, ap->a_uio);
-	return (zfs_write(VTOZ(ap->a_vp), &uio, ioflags(ap->a_ioflag),
-	    ap->a_cred));
+	DTRACE_PROBE4(zfs__vop__write__start,
+	    vnode_t *, ap->a_vp,
+	    int64_t, zfs_uio_offset(&uio),
+	    uint64_t, zfs_uio_resid(&uio),
+	    int, ap->a_ioflag);
+	error = zfs_write(VTOZ(ap->a_vp), &uio, ioflags(ap->a_ioflag),
+	    ap->a_cred);
+	DTRACE_PROBE3(zfs__vop__write__done,
+	    vnode_t *, ap->a_vp,
+	    uint64_t, zfs_uio_resid(&uio),
+	    int, error);
+	return (error);
 }
 
 /*
@@ -4814,8 +4835,11 @@ zfs_freebsd_access(struct vop_access_args *ap)
 
 
 	if (ap->a_accmode == VEXEC) {
-		if (zfs_fastaccesschk_execute(zp, ap->a_cred) == 0)
+		if (zfs_fastaccesschk_execute(zp, ap->a_cred) == 0) {
+			SDT_PROBE4(zfs, , , access, (uint64_t)zp->z_id,
+			    (int)ap->a_accmode, ap->a_cred, 0);
 			return (0);
+		}
 	}
 
 	/*

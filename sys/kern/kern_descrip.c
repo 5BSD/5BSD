@@ -107,6 +107,11 @@ MALLOC_DEFINE(M_FILECAPS, "filecaps", "descriptor capabilities");
 MALLOC_DECLARE(M_FADVISE);
 
 SDT_PROVIDER_DEFINE(fd);
+/* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
+SDT_PROBE_DEFINE3(fd, , , advlock__start,
+    "struct vnode *", "int", "int");
+SDT_PROBE_DEFINE3(fd, , , advlock__done,
+    "struct vnode *", "int", "int");
 SDT_PROBE_DEFINE6(fd, , , install,
     "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
 SDT_PROBE_DEFINE6(fd, , , dup,
@@ -633,7 +638,9 @@ file_advlock(struct vnode *vp, struct file *fp, void *owner, int op,
 	int error;
 
 	vn_file_context_enter(&ctx, fp, NULL, 0);
+	SDT_PROBE3(fd, , , advlock__start, (vp), (op), (flags));
 	error = VOP_ADVLOCK(vp, owner, op, fl, flags);
+	SDT_PROBE3(fd, , , advlock__done, (vp), (op), (error));
 	vn_file_context_leave(&ctx);
 	return (error);
 }

@@ -8,7 +8,7 @@ payload=${1:-/mnt}
 
 install -m 555 "$payload/kernel" /boot/kernel/kernel
 for module in zfs.ko cryptodev.ko linux_common.ko linux64.ko mqueuefs.ko \
-    pty.ko fdescfs.ko linprocfs.ko linsysfs.ko hwt.ko; do
+    fdescfs.ko linprocfs.ko linsysfs.ko hwt.ko; do
 	if [ -f "$payload/$module" ]; then
 		install -m 555 "$payload/$module" "/boot/kernel/$module"
 	fi

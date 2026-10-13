@@ -124,6 +124,9 @@
 #include <sys/sdt.h>
 
 SDT_PROVIDER_DECLARE(swap);
+SDT_PROBE_DEFINE1(swap, , , buffer__wait__start, "int");
+SDT_PROBE_DEFINE1(swap, , , buffer__wait__done, "int");
+
 SDT_PROBE_DEFINE3(swap, , , io__start, "void *", "int", "long");
 SDT_PROBE_DEFINE4(swap, , , io__done, "void *", "int", "long", "int");
 
@@ -1655,9 +1658,14 @@ swap_pager_putpages(vm_object_t object, vm_page_t *ma, int count,
 
 		if (async) {
 			mtx_lock(&swbuf_mtx);
-			while (nsw_wcount_async == 0)
+			while (nsw_wcount_async == 0) {
+				SDT_PROBE1(swap, , , buffer__wait__start,
+				    nsw_wcount_async);
 				msleep(&nsw_wcount_async, &swbuf_mtx, PVM,
 				    "swbufa", 0);
+				SDT_PROBE1(swap, , , buffer__wait__done,
+				    nsw_wcount_async);
+			}
 			nsw_wcount_async--;
 			mtx_unlock(&swbuf_mtx);
 		}
@@ -2243,8 +2251,12 @@ swp_pager_meta_build(struct pctrie_iter *blks, vm_object_t object,
 				for (i = 0; i < SWAP_META_PAGES; i++)
 					sb->d[i] = SWAPBLK_NONE;
 				if (atomic_cmpset_int(&swblk_zone_exhausted,
-				    1, 0))
+				    1, 0)) {
+					if (!cold)
+						DTRACE_PROBE2(swap__metadata__pressure,
+						    int, (1), int, (0));
 					printf("swblk zone ok\n");
+				}
 				break;
 			}
 			if (nowait_noreplace)
@@ -2252,9 +2264,13 @@ swp_pager_meta_build(struct pctrie_iter *blks, vm_object_t object,
 			VM_OBJECT_WUNLOCK(object);
 			if (uma_zone_exhausted(swblk_zone)) {
 				if (atomic_cmpset_int(&swblk_zone_exhausted,
-				    0, 1))
+				    0, 1)) {
+					if (!cold)
+						DTRACE_PROBE2(swap__metadata__pressure,
+						    int, (1), int, (1));
 					printf("swap blk zone exhausted, "
 					    "increase kern.maxswzone\n");
+				}
 				vm_pageout_oom(VM_OOM_SWAPZ);
 				pause("swzonxb", 10);
 			} else
@@ -2273,8 +2289,12 @@ swp_pager_meta_build(struct pctrie_iter *blks, vm_object_t object,
 			error = swblk_iter_insert(blks, sb);
 			if (error == 0) {
 				if (atomic_cmpset_int(&swpctrie_zone_exhausted,
-				    1, 0))
+				    1, 0)) {
+					if (!cold)
+						DTRACE_PROBE2(swap__metadata__pressure,
+						    int, (2), int, (0));
 					printf("swpctrie zone ok\n");
+				}
 				break;
 			}
 			if (nowait_noreplace) {
@@ -2284,9 +2304,13 @@ swp_pager_meta_build(struct pctrie_iter *blks, vm_object_t object,
 			VM_OBJECT_WUNLOCK(object);
 			if (uma_zone_exhausted(swpctrie_zone)) {
 				if (atomic_cmpset_int(&swpctrie_zone_exhausted,
-				    0, 1))
+				    0, 1)) {
+					if (!cold)
+						DTRACE_PROBE2(swap__metadata__pressure,
+						    int, (2), int, (1));
 					printf("swap pctrie zone exhausted, "
 					    "increase kern.maxswzone\n");
+				}
 				vm_pageout_oom(VM_OOM_SWAPZ);
 				pause("swzonxp", 10);
 			} else

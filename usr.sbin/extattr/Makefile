@@ -16,4 +16,11 @@ MLINKS+=	rmextattr.8 lsextattr.8
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
 
+SRCS=	rmextattr.c
+
+.if ${MK_DTRACE} != "no" && !defined(RESCUE) && !defined(BOOTSTRAPPING)
+SRCS+=	attrtool_provider.d
+CFLAGS+= -DWITH_COVERAGE_DTRACE
+.endif
+
 .include <bsd.prog.mk>

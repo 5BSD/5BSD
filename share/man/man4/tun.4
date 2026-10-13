@@ -18,23 +18,23 @@ The
 .Nm
 interface is a software loopback mechanism that can be loosely
 described as the network interface analog of the
-.Xr pty 4 ,
+.Xr pts 4 ,
 that is,
 .Nm
 does for network interfaces what the
-.Xr pty 4
+.Xr pts 4
 driver does for terminals.
 .Pp
 The
 .Nm
 driver, like the
-.Xr pty 4
+.Xr pts 4
 driver, provides two interfaces: an interface like the usual facility
 it is simulating
 (a network interface in the case of
 .Nm ,
 or a terminal for
-.Xr pty 4 ) ,
+.Xr pts 4 ) ,
 and a character-special device
 .Dq control
 interface.
@@ -342,7 +342,7 @@ them pile up.
 .Xr devname 3 ,
 .Xr inet 4 ,
 .Xr intro 4 ,
-.Xr pty 4 ,
+.Xr pts 4 ,
 .Xr tap 4 ,
 .Xr ifconfig 8
 .Sh AUTHORS

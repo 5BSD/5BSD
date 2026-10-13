@@ -26,3 +26,14 @@ provider service_ambient {
 	probe reg__result(int use_private, int create_errno, int send_ok,
 	    int ack_ok);
 };
+
+/* Shared runtime policy; compiled with the ambient provider in one DOF object. */
+/* SPDX-License-Identifier: BSD-2-Clause */
+provider service_runtime {
+	probe retry__scheduled(uintptr_t a0, uint32_t a1, uint64_t a2);
+	probe retry__recovered(uintptr_t a0, uint32_t a1);
+	probe health__change(uintptr_t a0, int a1, uint64_t a2);
+	probe budget__rejected(int a0, uint32_t a1);
+	probe budget__expired(uint64_t a0);
+	probe lease__limit(uint64_t a0, uint64_t a1, int a2);
+};

@@ -1,0 +1,5 @@
+{
+  "mqueue": [
+    "sys/kern/uipc_mqueue.c"
+  ]
+}

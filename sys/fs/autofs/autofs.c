@@ -60,6 +60,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/buf.h>
 #include <sys/conf.h>
@@ -80,6 +82,10 @@
 
 #include <fs/autofs/autofs.h>
 #include <fs/autofs/autofs_ioctl.h>
+
+SDT_PROVIDER_DEFINE(autofs);
+SDT_PROBE_DEFINE1(autofs, , , request__start, "int");
+SDT_PROBE_DEFINE3(autofs, , , request__done, "int", "int", "int");
 
 MALLOC_DEFINE(M_AUTOFS, "autofs", "Automounter filesystem");
 
@@ -445,6 +451,7 @@ autofs_trigger_one(struct autofs_node *anp,
 		TAILQ_INSERT_TAIL(&autofs_softc->sc_requests, ar, ar_next);
 	}
 
+	SDT_PROBE1(autofs, , , request__start, ar->ar_id);
 	cv_broadcast(&autofs_softc->sc_cv);
 	while (ar->ar_done == false) {
 		if (autofs_interruptible != 0) {
@@ -463,6 +470,7 @@ autofs_trigger_one(struct autofs_node *anp,
 	}
 
 	request_error = ar->ar_error;
+	SDT_PROBE3(autofs, , , request__done, ar->ar_id, error, request_error);
 	if (request_error != 0) {
 		AUTOFS_WARN("request for %s completed with error %d, "
 		    "pid %d (%s)", ar->ar_path, request_error,

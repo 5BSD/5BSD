@@ -45,6 +45,8 @@
 #include <sys/sdt.h>
 
 SDT_PROVIDER_DEFINE(pcm);
+SDT_PROBE_DEFINE1(pcm, , , drain__start, "void *");
+SDT_PROBE_DEFINE2(pcm, , , drain__done, "void *", "int");
 SDT_PROBE_DEFINE4(pcm, , , xrun, "void *", "int", "unsigned int",
     "unsigned int");
 SDT_PROBE_DEFINE3(pcm, , , trigger, "void *", "int", "int");
@@ -350,7 +352,13 @@ chn_sleep(struct pcm_channel *c, int timeout)
 		return (EINVAL);
 
 	c->sleeping++;
+	if (!cold)
+		DTRACE_PROBE2(pcm__buffer__wait__start, void *, (c),
+		    int, (timeout));
 	ret = cv_timedwait_sig(&c->intr_cv, &c->lock, timeout);
+	if (!cold)
+		DTRACE_PROBE3(pcm__buffer__wait__done, void *, (c), int, (ret),
+		    int, ((c->flags & CHN_F_DEAD) != 0));
 	c->sleeping--;
 
 	return ((c->flags & CHN_F_DEAD) ? EINVAL : ret);
@@ -898,13 +906,16 @@ int
 chn_flush(struct pcm_channel *c)
 {
     	struct snd_dbuf *b = c->bufhard;
+	int error __unused;
 
 	CHN_LOCKASSERT(c);
 	KASSERT(c->direction == PCMDIR_PLAY, ("chn_flush on bad channel"));
     	DEB(printf("chn_flush: c->flags 0x%08x\n", c->flags));
 
 	c->flags |= CHN_F_CLOSING;
-	chn_sync(c, 0);
+	SDT_PROBE1(pcm, , , drain__start, c);
+	error = chn_sync(c, 0);
+	SDT_PROBE2(pcm, , , drain__done, c, error);
 	c->flags &= ~CHN_F_TRIGGERED;
 	/* kill the channel */
 	chn_trigger(c, PCMTRIG_ABORT);

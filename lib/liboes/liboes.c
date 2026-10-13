@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "liboes.h"
+#include "diagnostics.h"
 
 /*
  * Client structure
@@ -808,6 +809,8 @@ oes_refill(oes_client_t *client, bool blocking)
 	}
 
 	n = read(client->ec_fd, client->ec_buf._raw, sizeof(client->ec_buf));
+	OESCLIENT_TRACE_BATCH_READ(n, n < 0 ? errno :
+	    (size_t)n < sizeof(oes_message_t) ? EIO : 0);
 	if (n < 0)
 		return (-1);
 
@@ -841,6 +844,7 @@ oes_buffer_message(oes_client_t *client, const oes_message_t **msgp)
 	return (0);
 
 corrupt:
+	OESCLIENT_TRACE_BUFFER_CORRUPT(client->ec_buflen, client->ec_bufoff);
 	client->ec_buflen = 0;
 	client->ec_bufoff = 0;
 	errno = EPROTO;
@@ -925,14 +929,18 @@ oes_respond(oes_client_t *client, uint64_t msg_id, oes_auth_result_t result)
 	int fd;
 
 	fd = oes_client_get_fd(client);
-	if (fd < 0)
+	if (fd < 0) {
+		OESCLIENT_TRACE_AUTH_RESPONSE(result, 0, 0, errno);
 		return (-1);
+	}
 
 	memset(&resp, 0, sizeof(resp));
 	resp.er_id = msg_id;
 	resp.er_result = result;
 
 	n = write(fd, &resp, sizeof(resp));
+	OESCLIENT_TRACE_AUTH_RESPONSE(result, 0, 0,
+	    n < 0 ? errno : (size_t)n != sizeof(resp) ? EIO : 0);
 	if (n < 0)
 		return (-1);
 
@@ -956,9 +964,12 @@ oes_respond_flags(oes_client_t *client, uint64_t msg_id,
 	int fd;
 
 	fd = oes_client_get_fd(client);
-	if (fd < 0)
+	if (fd < 0) {
+		OESCLIENT_TRACE_AUTH_RESPONSE(result, allowed_flags, denied_flags, errno);
 		return (-1);
+	}
 	if (result != OES_AUTH_ALLOW && result != OES_AUTH_DENY) {
+		OESCLIENT_TRACE_AUTH_RESPONSE(result, allowed_flags, denied_flags, EINVAL);
 		errno = EINVAL;
 		return (-1);
 	}
@@ -970,6 +981,8 @@ oes_respond_flags(oes_client_t *client, uint64_t msg_id,
 	resp.erf_denied_flags = denied_flags;
 
 	n = write(fd, &resp, sizeof(resp));
+	OESCLIENT_TRACE_AUTH_RESPONSE(result, allowed_flags, denied_flags,
+	    n < 0 ? errno : (size_t)n != sizeof(resp) ? EIO : 0);
 	if (n < 0)
 		return (-1);
 	if (n != sizeof(resp)) {

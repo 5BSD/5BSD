@@ -35,6 +35,8 @@
 #include <sys/dirent.h>
 #include <sys/fcntl.h>
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/malloc.h>
 #include <sys/mount.h>
 #include <sys/sysctl.h>
@@ -43,6 +45,11 @@
 #include <fs/p9fs/p9_debug.h>
 #include <fs/p9fs/p9_transport.h>
 #include <fs/p9fs/p9_wire.h>
+
+SDT_PROVIDER_DEFINE(p9fs);
+SDT_PROBE_DEFINE2(p9fs, , , request__start, "void *", "int");
+SDT_PROBE_DEFINE3(p9fs, , , request__done, "void *", "int", "int");
+SDT_PROBE_DEFINE1(p9fs, , , tag__exhausted, "void *");
 
 #define P9FS_MAX_FID_CNT (1024 * 1024 * 1024)
 #define P9FS_ROOT_FID_NO 2
@@ -373,13 +380,16 @@ p9_client_request(struct p9_client *c, int8_t type, int *error,
 	va_list ap;
 	struct p9_req_t *req;
 
+	SDT_PROBE2(p9fs, , , request__start, c, type);
 	va_start(ap, fmt);
 	req = p9_client_prepare_req(c, type, c->msize, error, fmt, ap);
 	va_end(ap);
 
 	/* Issue with allocation of request buffer */
-	if (*error != 0)
+	if (*error != 0) {
+		SDT_PROBE3(p9fs, , , request__done, c, type, *error);
 		return (NULL);
+	}
 
 	/* Call into the transport for submission. */
 	*error = c->ops->request(c->handle, req);
@@ -396,8 +406,10 @@ p9_client_request(struct p9_client *c, int8_t type, int *error,
 	if (*error != 0)
 		goto out;
 
+	SDT_PROBE3(p9fs, , , request__done, c, type, 0);
 	return (req);
 out:
+	SDT_PROBE3(p9fs, , , request__done, c, type, *error);
 	p9_free_req(c, req);
 	return (NULL);
 }
@@ -413,6 +425,7 @@ p9_tag_create(struct p9_client *clnt)
 
 	/* Alloc_unr returning -1 is an error for no units left */
 	if (tag == -1) {
+		SDT_PROBE1(p9fs, , , tag__exhausted, clnt);
 		return (P9_NOTAG);
 	}
 	return (tag);

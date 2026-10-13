@@ -42,6 +42,9 @@
 #include "opt_vm.h"
 
 #include <sys/param.h>
+#include <sys/proc.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -1223,8 +1226,16 @@ vm_reserv_reclaim_inactive(int domain)
 	if (rv != NULL) {
 		vm_reserv_reclaim(rv);
 		vm_reserv_unlock(rv);
+		if (!cold && !SCHEDULER_STOPPED() &&
+		    curthread->td_intr_nesting_level == 0)
+			DTRACE_PROBE2(memory__reservation__reclaim,
+			    int, (domain), int, (true));
 		return (true);
 	}
+	if (!cold && !SCHEDULER_STOPPED() &&
+		    curthread->td_intr_nesting_level == 0)
+		DTRACE_PROBE2(memory__reservation__reclaim, int, (domain),
+		    int, (false));
 	return (false);
 }
 

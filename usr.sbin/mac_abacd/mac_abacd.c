@@ -30,6 +30,7 @@
 #include <unistd.h>
 
 #include "mac_abacd.h"
+#include "diagnostics.h"
 
 /* Global state */
 static struct mac_abacd_config config;
@@ -55,7 +56,9 @@ abac_syscall(int cmd, void *arg)
 {
 	int error;
 
+	ABACDAEMON_TRACE_POLICY_START(cmd);
 	error = mac_syscall(ABAC_POLICY_NAME, cmd, arg);
+	ABACDAEMON_TRACE_POLICY_DONE(cmd, error < 0 ? errno : 0);
 	if (error < 0 && errno == ENOSYS) {
 		mac_abacd_log(LOG_ERR, "ABAC module not loaded");
 		return (-1);

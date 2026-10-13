@@ -29,6 +29,7 @@
 #include <sys/param.h>
 #include <sys/module.h>
 #include <sys/systm.h>
+#include <sys/sdt.h>
 #include <sys/kernel.h>
 #include <sys/bus.h>
 #include <sys/conf.h>
@@ -49,6 +50,10 @@
 #include <cam/cam_sim.h>
 #include <cam/cam_xpt_sim.h>
 #include <cam/cam_debug.h>
+
+SDT_PROVIDER_DEFINE(ahci);
+SDT_PROBE_DEFINE1(ahci, , , reset__start, "device_t");
+SDT_PROBE_DEFINE2(ahci, , , reset__done, "device_t", "int");
 
 /* local prototypes */
 static void ahci_intr(void *data);
@@ -142,6 +147,7 @@ ahci_ctlr_reset(device_t dev)
 	uint32_t v;
 	int timeout;
 
+	SDT_PROBE1(ahci, , , reset__start, dev);
 	/* BIOS/OS Handoff */
 	if ((ATA_INL(ctlr->r_mem, AHCI_VS) >= 0x00010200) &&
 	    (ATA_INL(ctlr->r_mem, AHCI_CAP2) & AHCI_CAP2_BOH) &&
@@ -170,6 +176,7 @@ ahci_ctlr_reset(device_t dev)
 			break;
 	}
 	if (timeout == 0) {
+		SDT_PROBE2(ahci, , , reset__done, dev, ENXIO);
 		device_printf(dev, "AHCI controller reset failure\n");
 		return (ENXIO);
 	}
@@ -187,6 +194,7 @@ ahci_ctlr_reset(device_t dev)
 		ATA_OUTL(ctlr->r_mem, AHCI_CAP, ctlr->caps);
 	}
 
+	SDT_PROBE2(ahci, , , reset__done, dev, 0);
 	return (0);
 }
 

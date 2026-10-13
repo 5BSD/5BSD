@@ -6,6 +6,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/bus.h>
 #include <sys/conf.h>
 #include <sys/dnv.h>
@@ -674,6 +676,9 @@ nvmf_disconnect_task(void *arg, int pending __unused)
 		return;
 	}
 
+	if (!cold)
+		DTRACE_PROBE2(nvmf__disconnect__start, void *, (sc),
+		    u_int, (sc->num_io_queues));
 	nanotime(&sc->last_disconnect);
 	callout_drain(&sc->ka_tx_timer);
 	callout_drain(&sc->ka_rx_timer);
@@ -695,6 +700,8 @@ nvmf_disconnect_task(void *arg, int pending __unused)
 	sc->num_io_queues = 0;
 	nvmf_destroy_qp(sc->admin);
 	sc->admin = NULL;
+	if (!cold)
+		DTRACE_PROBE1(nvmf__disconnect__done, void *, (sc));
 
 	if (sc->reconnect_delay != 0)
 		nvmf_request_reconnect(sc);
@@ -763,6 +770,9 @@ nvmf_request_reconnect_task(void *arg, int pending)
 		return;
 	}
 
+	if (!cold)
+		DTRACE_PROBE2(nvmf__reconnect__retry, void *, (sc),
+		    u_int, (sc->reconnect_delay));
 	nvmf_request_reconnect(sc);
 	sx_xunlock(&sc->connection_lock);
 }
@@ -787,6 +797,8 @@ nvmf_reconnect_host(struct nvmf_softc *sc, struct nvmf_ioc_nv *nv)
 	}
 
 	sx_xlock(&sc->connection_lock);
+	if (!cold)
+		DTRACE_PROBE1(nvmf__reconnect__start, void *, (sc));
 	if (sc->admin != NULL || sc->detaching || sc->controller_timedout) {
 		error = EBUSY;
 		goto out;
@@ -837,6 +849,9 @@ nvmf_reconnect_host(struct nvmf_softc *sc, struct nvmf_ioc_nv *nv)
 	taskqueue_cancel_timeout(nvmf_tq, &sc->request_reconnect_task, NULL);
 	taskqueue_cancel_timeout(nvmf_tq, &sc->controller_loss_task, NULL);
 out:
+	if (!cold)
+		DTRACE_PROBE2(nvmf__reconnect__done, void *, (sc),
+		    int, (error));
 	sx_xunlock(&sc->connection_lock);
 	nvlist_destroy(nvl);
 	return (error);

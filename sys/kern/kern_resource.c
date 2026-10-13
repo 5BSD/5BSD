@@ -36,6 +36,8 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/sysproto.h>
 #include <sys/capsicum.h>
 #include <sys/file.h>
@@ -64,6 +66,17 @@
 #include <vm/pmap.h>
 #include <vm/vm_map.h>
 #include <vm/vm_extern.h>
+
+/* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
+SDT_PROVIDER_DEFINE(procresource);
+SDT_PROBE_DEFINE2(procresource, , , nice__start,
+    "pid_t", "int");
+SDT_PROBE_DEFINE3(procresource, , , nice__done,
+    "pid_t", "int", "int");
+SDT_PROBE_DEFINE3(procresource, , , limit__start,
+    "u_int", "rlim_t", "rlim_t");
+SDT_PROBE_DEFINE2(procresource, , , limit__done,
+    "u_int", "int");
 
 static MALLOC_DEFINE(M_PLIMIT, "plimit", "plimit structures");
 static MALLOC_DEFINE(M_UIDINFO, "uidinfo", "uidinfo structures");
@@ -284,15 +297,23 @@ donice(struct thread *td, struct proc *p, int n)
 	int error;
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
-	if ((error = p_cansched(td, p)))
+	SDT_PROBE2(procresource, , , nice__start, (p->p_pid), (n));
+	if ((error = p_cansched(td, p))) {
+		SDT_PROBE3(procresource, , , nice__done,
+		    (p->p_pid), (n), (error));
 		return (error);
+	}
 	if (n > PRIO_MAX)
 		n = PRIO_MAX;
 	if (n < PRIO_MIN)
 		n = PRIO_MIN;
-	if (n < p->p_nice && priv_check(td, PRIV_SCHED_SETPRIORITY) != 0)
+	if (n < p->p_nice && priv_check(td, PRIV_SCHED_SETPRIORITY) != 0) {
+		SDT_PROBE3(procresource, , , nice__done,
+		    (p->p_pid), (n), (EACCES));
 		return (EACCES);
+	}
 	sched_nice(p, n);
+	SDT_PROBE3(procresource, , , nice__done, (p->p_pid), (n), (0));
 	return (0);
 }
 
@@ -662,8 +683,13 @@ lim_cb(void *arg)
 int
 kern_setrlimit(struct thread *td, u_int which, struct rlimit *limp)
 {
+	int error;
 
-	return (kern_proc_setrlimit(td, td->td_proc, which, limp));
+	SDT_PROBE3(procresource, , , limit__start,
+	    (which), (limp->rlim_cur), (limp->rlim_max));
+	error = kern_proc_setrlimit(td, td->td_proc, which, limp);
+	SDT_PROBE2(procresource, , , limit__done, (which), (error));
+	return (error);
 }
 
 int

@@ -1,0 +1,217 @@
+Runtime waits, quotas, buses and base-tool expansion (2026-10-13)
+================================================================
+
+30 new probes: 17 kernel and 13 userland, covering the eight areas requested
+following COVERAGE-FIFTH. coverage-sixth.json records exact types, source
+hashes and profile names. Cron already had job-run/job-done through wrapper
+macros; this round extends that provider rather than duplicating those events.
+
+Placement and lifetime
+----------------------
+
+The restrictions in COVERAGE-FIFTH still apply. No sites were added to early
+bootstrap, DTrace internals, trap/NMI/IPI entry, low-level interrupt handlers,
+bit-banging, scheduler primitives, debugger or panic entry. Shared runtime
+routines may also run during initialization, but pre-enable execution is not
+recorded. Disabled kernel sites are NOPs; no-hooks builds remove the probes.
+The source must not call DTrace's fallback stub before provider enablement.
+
+Socket and buffer-object waits use existing caller locks and lifetimes; the
+completion sites do not dereference their identity arguments. Quota decision
+sites execute under the existing dquot interlock, before warning paths unlock
+it. Quota writeback retains the existing DQ_LOCK protection across VOP_WRITE.
+MMC requests remain owned by the waiting caller until its completion flag is
+observed; neither the bridge interrupt handler nor mmc_wakeup is instrumented.
+I2C uses the existing bus/device lifetime rules at acquisition and synchronous
+transfer boundaries. No probe arguments traverse message buffers. The MMC provider is defined in
+the common mmc_subr.c so configurations do not depend on the legacy bus.
+
+No probe adds allocation, sleeps, locks, payload copying, or retained object
+references. Enabling probes still adds execution time and can affect timing.
+The amd64 build/patchpoint checks are not architecture-wide or hardware safety
+qualification. MMC and I2C controllers need live workload testing separately.
+
+Kernel contracts (arguments in order)
+-------------------------------------
+
+sockbuf:::wait-start / wait-done
+  start(socket, which); done(socket, which, sleep result).
+  Around msleep_sbt in sbwait(), after setting SB_WAIT. 'which' is the native
+  SO_SND/SO_RCV selector. Captures data-arrival/output-space sleep, timeouts
+  and interruptions; not the complete socket operation or every socket wait.
+  Waking successfully does not prove the caller's readiness condition holds.
+
+bufcache:::writes-wait-start / writes-wait-done
+  start(bufobj, initial outstanding-output count); done(bufobj, sleep result).
+  Entire bufobj_wwait() loop, including immediate returns when there are no
+  outstanding writes. Existing lock assertions precede the start. A successful
+  wait means outstanding output drained, not that every write succeeded or
+  data is durable. Individual write errors are not returned by this helper.
+
+ufsquota:::deny
+  (dquot, quota class, resource, reason).
+  Quota class is native USRQUOTA/GRPQUOTA. Resource 0 = blocks, 1 = inodes;
+  reason 0 = hard limit, 1 = expired soft-limit grace period. Emitted once
+  before each denial path, regardless of whether a user warning is suppressed.
+  Only UFS chkdqchg/chkiqchg decisions; privileged bypasses and other filesystems
+  are not covered. This is an EDQUOT decision, not a generic storage failure.
+ufsquota:::grace-start
+  (dquot, quota class, resource, grace deadline in epoch seconds).
+  On assignment of a new deadline after crossing the soft limit. Expiry is
+  observed at the later deny event, not by a new timer callback.
+ufsquota:::sync-start / sync-done
+  start(dquot, quota class); done(dquot, errno).
+  Actual quota-file VOP_WRITE and short-write-to-EIO conversion in dqsync().
+  Excludes earlier locks/waits, clean-record skips and later vnode cleanup.
+  Zero is the write-call result; it is not a stable-storage guarantee.
+
+mmc:::request-start / request-done
+  start(bus device, request, opcode); done(request, native MMC command error).
+  The legacy MMC bus's mmc_wait_for_req(), from bridge submission through
+  MMC_REQ_DONE observation. Excludes earlier retuning and later caller work.
+  Return values are MMC_ERR_* values, not errno; the helper itself returns 0
+  even when the command reports an error. No data, response or command-address
+  payload is captured. CAM-based MMC paths that bypass this bus are not covered.
+mmc:::retune-start / retune-done
+  start(requesting device, reset-requested boolean); done(device, MMC result).
+  The mmc_retune() call in mmc_wait_for_request(), before the caller translates
+  or tolerates particular results. Nested command requests may occur inside it.
+mmc:::command-retry
+  (requesting device, opcode, MMC result, retries remaining before decrement).
+  Failed attempts in mmc_wait_for_cmd() only when another attempt is allowed.
+  Excludes terminal failures and the separate application-command retry loop.
+
+ iicbus:::acquire-start / acquire-done
+  start(bus, requesting device, flags); done(bus, requesting device, result).
+  iicbus_request_bus() includes ownership contention and controller acquisition.
+  Results retain the native IIC_* / IIC_ERRNO representation, not plain errno.
+ iicbus:::transfer-start / transfer-done
+  start(bus, message count); done(bus, native IIC result).
+  IICBUS_TRANSFER callbacks from iicbus_transfer() and iicbus_transfer_excl().
+  Acquisition failures produce no transfer pair. Release follows completion
+  and is excluded. Nested wrappers can produce nested pairs; these are callback
+  counts, not guaranteed counts of physical transactions. Direct driver calls
+  outside these wrappers are not covered. No bus addresses or data are exposed.
+
+Base-tool contracts
+-------------------
+
+New helper macros use generated typed provider headers and ENABLED guards;
+arguments are discarded when tracing is compiled out. Enabled helper calls
+save/restore errno so they do not corrupt subsequent error handling.
+No probes were added to signal handlers or the mv vfork child.
+
+ ddio*:::read-start / read-done; write-start / write-done
+  start(fd, requested bytes); done(fd, signed syscall result, errno-or-zero).
+  Actual read/write calls in dd_in/dd_out, before conversion/accounting and
+  before after_io() processes pending termination. Includes partial results,
+  EOF (read result 0), errors (-1), and write retries after EINTR. A zero write
+  has errno 0 but dd treats it as end-of-device failure: examine both result
+  and error. These do not cover setup/positioning reads or close/fsync phases.
+ ddio*:::sparse
+  (output fd, bytes deferred). A zero block was deferred instead of written;
+  this does NOT mean a later seek or final file extension succeeded.
+
+ moveio*:::rename-start / rename-done
+  start(); done(native rename result, errno-or-zero).
+  After overwrite prompts and before fallback handling. A successful rename
+  is not followed by a fallback pair; precheck skips have neither pair.
+ moveio*:::fallback-start / fallback-done
+  start(regular-file boolean); done(mv helper result: 0 success, 1 failure).
+  After EXDEV handling and source validation, around fastcopy() or copy(),
+  including removal of the source when successful. Helper result is NOT errno.
+  Metadata warnings can coexist with result 0. The external cp/rm implementation
+  stays unchanged. Paths and file contents are not probe arguments.
+
+ cron*:::job-launch
+  (command-child pid or -1, requested uid, fork errno-or-zero).
+  Emitted in the middle process for the fork that creates the command child.
+  Successful fork does not imply successful credentials, setup or exec.
+  Excludes the daemon's initial fork and failures before command-child creation.
+ cron*:::job-exec-error
+  (errno), immediately after the command-shell execl returns. It is an event
+  in the command child, with its pid supplied by DTrace's pid builtin.
+ cron*:::child-wait-start / child-wait-done
+  start(requested child pid);
+  done(requested child pid, wait return pid, raw wait status, errno-or-zero).
+  One pair across EINTR retries in wait_on_child(). On failure, status is 0
+  as a placeholder and must not be interpreted as success; consult errno/return
+  pid. Includes command and stdin-helper waits. This is reap-wait latency,
+  NOT full job runtime: output processing may have consumed most of that time.
+  Cross-process launch/completion correlation uses recorded child pids, not tid;
+  PID reuse, fork/exec discovery and event loss require care in live consumers.
+
+Cron's existing job-run/job-done names and argument contracts are preserved.
+Their wrappers now use the generated provider header too: mixing its typed
+prototypes with the previous generic DTRACE_PROBE macros caused incompatible
+symbol declarations. The old events remain present in linked DOF, with
+explicit enable guards. No job commands, credentials or execution policy were
+changed, and no scheduler configuration was modified.
+
+Installed base integration
+--------------------------
+
+  /bin/dd, /bin/mv       runtime package
+  /usr/sbin/cron         cron package
+
+Providers are compiled with MK_DTRACE=yes, omitted with MK_DTRACE=no. mv now
+explicitly lists mv.c in SRCS because adding a provider .d otherwise replaces
+the implicit single-source default. Cron extends its existing provider .d.
+No extra installed binary or runtime dependency is added.
+
+The existing bsdinstruments profile selection installs eight new profiles in
+/usr/share/bsdinstruments/profiles, in the bsdinstruments package:
+
+  socket-buffer-waits   quota-decisions       mmc-requests
+  iicbus-transfers      buffer-write-waits    dd-transfers
+  move-fallbacks        cron-child-results
+
+The working-tree catalog has 331 entries after this round. Installation
+selection was checked; no package publication or installation was performed.
+Profiles aggregate native result codes, not a universal errno namespace.
+The dd profile also counts actual bytes, zero results, and deferred sparse
+bytes. Cron reports raw wait statuses separately from wait errors.
+
+Elapsed histograms include preemption/blocking and enabled-probe overhead.
+Start before the workload. Per-thread depth handles synchronous nesting, not
+lost events or process exits. PID filters select the executing process; workers
+and cron children may not match a selected application's or daemon's pid.
+Pointer identities are never dereferenced by these profiles.
+
+Validation
+----------
+
+From /usr/src, with permission to write /usr/obj:
+
+  python3.12 tools/test/system-tracing/coverage-sixth-compile.py \
+    --kernel-obj /usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG
+  python3.12 tools/test/system-tracing/coverage-sixth-base.py
+  python3.12 tools/test/system-tracing/coverage-sixth-check.py
+  python3.12 tools/test/system-tracing/coverage-sixth-objects.py
+  python3.12 tools/test/system-tracing/coverage-sixth-dof.py
+  python3.12 tools/test/system-tracing/coverage-sixth-smoke.py
+
+Artifacts, commands, logs, before-images and a session-only patch are in
+/usr/obj/5bsd-dtrace-sixth-validation. Parallel compilation uses every logical
+CPU. Validation covers 14 kernel configurations (six sources, hooks on/off,
+including UFS built-in and module variants),
+three base programs in both variants, actual kernel patchpoint relocations
+and inactive amd64 NOP bytes, linked userland DOF sites/enable guards, preserved
+cron probes, and 16 plain/filtered profile compilations plus install selection.
+The prepared GENERIC-NODEBUG kernel, mmc, iicbus and ufs modules were also linked.
+
+33 functional build/run checks include dd short pipe reads, partial tails,
+count=0, sync padding, sparse output, read/write errors; mv normal rename,
+no-clobber, real cross-filesystem regular-file and directory/symlink fallback,
+missing input and bad destinations; and cron's exact wait helper with normal,
+signaled and interrupted child termination. The helper is extracted unchanged
+into the harness to avoid linking unrelated job-launch/PAM/mail paths.
+Cross-filesystem checks require /tmp and the object directory on distinct
+mounts; the harness explicitly verifies this prerequisite rather than faking
+EXDEV. All test files/child processes are isolated; cron itself is not started.
+
+The host lacks /dev/dtrace. These checks do not establish live probe firing,
+provider registration, enable/disable races, or hardware workload behavior.
+MMC/I2C recovery injection, quota-enabled UFS workloads, socket wake/timeout
+correlation and live consumer stress still require a booted test kernel.
+No kernel/modules were loaded or installed, and no reboot was performed.

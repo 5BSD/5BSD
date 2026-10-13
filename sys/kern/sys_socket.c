@@ -31,6 +31,8 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/aio.h>
 #include <sys/domain.h>
 #include <sys/file.h>
@@ -71,6 +73,13 @@
 #include <vm/pmap.h>
 #include <vm/vm_extern.h>
 #include <vm/vm_map.h>
+
+/* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
+SDT_PROVIDER_DEFINE(socketctl);
+SDT_PROBE_DEFINE2(socketctl, , , protocol__start,
+    "struct socket *", "u_long");
+SDT_PROBE_DEFINE3(socketctl, , , protocol__done,
+    "struct socket *", "u_long", "int");
 
 static SYSCTL_NODE(_kern_ipc, OID_AUTO, aio, CTLFLAG_RD | CTLFLAG_MPSAFE, NULL,
     "socket AIO stats");
@@ -273,7 +282,10 @@ soo_ioctl(struct file *fp, u_long cmd, void *data, struct ucred *active_cred,
 			CURVNET_RESTORE();
 		} else {
 			CURVNET_SET(so->so_vnet);
+			SDT_PROBE2(socketctl, , , protocol__start, (so), (cmd));
 			error = so->so_proto->pr_control(so, cmd, data, 0, td);
+			SDT_PROBE3(socketctl, , , protocol__done,
+			    (so), (cmd), (error));
 			CURVNET_RESTORE();
 		}
 		break;

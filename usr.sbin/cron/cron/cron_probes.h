@@ -7,16 +7,29 @@
 #ifndef CRON_PROBES_H
 #define CRON_PROBES_H
 
-#ifdef WITH_DTRACE
-#include <sys/sdt.h>
-#else
-#define DTRACE_PROBE2(p,n,a,b) do { if (0){(void)(a);(void)(b);} } while (0)
-#define DTRACE_PROBE3(p,n,a,b,c) do { if (0){(void)(a);(void)(b);(void)(c);} } while (0)
-#endif
+#include <errno.h>
+#include <stdint.h>
 
-#define	CRON_PROBE_JOB_RUN(user,cmd) \
-	DTRACE_PROBE2(cron, job__run, user, cmd)
-#define	CRON_PROBE_JOB_DONE(user,status) \
-	DTRACE_PROBE2(cron, job__done, user, status)
+#ifdef WITH_DTRACE
+#include <cron_provider.h>
+
+#define CRON_PROBE_JOB_RUN(user, cmd) do { \
+	if (CRON_JOB_RUN_ENABLED()) { \
+		int trace_saved_errno = errno; \
+		CRON_JOB_RUN(__DECONST(char *, user), __DECONST(char *, cmd)); \
+		errno = trace_saved_errno; \
+	} \
+} while (0)
+#define CRON_PROBE_JOB_DONE(user, status) do { \
+	if (CRON_JOB_DONE_ENABLED()) { \
+		int trace_saved_errno = errno; \
+		CRON_JOB_DONE(__DECONST(char *, user), (int)(status)); \
+		errno = trace_saved_errno; \
+	} \
+} while (0)
+#else
+#define CRON_PROBE_JOB_RUN(user, cmd) do { } while (0)
+#define CRON_PROBE_JOB_DONE(user, status) do { } while (0)
+#endif
 
 #endif /* CRON_PROBES_H */

@@ -28,6 +28,19 @@
  */
 
 #include "zsh.mdh"
+#ifdef FIVEBSD_TRACE
+#include "trace_pressure.h"
+#else
+#define ZSH_TRACE_FORK_START(...) do { } while (0)
+#define ZSH_TRACE_FORK_DONE(...) do { } while (0)
+#define ZSH_TRACE_JOB_LIMIT(...) do { } while (0)
+#define ZSH_TRACE_EXEC_ATTEMPT(...) do { } while (0)
+#define ZSH_TRACE_EXEC_FAILURE(...) do { } while (0)
+#define ZSH_TRACE_PIPELINE_START(...) do { } while (0)
+#define ZSH_TRACE_PIPELINE_DONE(...) do { } while (0)
+#define ZSH_TRACE_WAIT_START(...) do { } while (0)
+#define ZSH_TRACE_WAIT_DONE(...) do { } while (0)
+#endif
 #include "jobs.pro"
 
 /*
@@ -1572,6 +1585,7 @@ waitforpid(pid_t pid, int wait_cmd)
 {
     int first = 1, q = queue_signal_level();
 
+    ZSH_TRACE_WAIT_START(pid, wait_cmd);
     /* child_block() around this loop in case #ifndef WNOHANG */
     dont_queue_signals();
     child_block();		/* unblocked in signal_suspend() */
@@ -1595,6 +1609,7 @@ waitforpid(pid_t pid, int wait_cmd)
 	    (sigtrapped[last_signal] & ZSIG_TRAPPED)) {
 	    /* wait command interrupted, but no error: return */
 	    restore_queue_signals(q);
+	    ZSH_TRACE_WAIT_DONE(pid, 128 + last_signal);
 	    return 128 + last_signal;
 	}
 	child_block();
@@ -1603,6 +1618,7 @@ waitforpid(pid_t pid, int wait_cmd)
     child_unblock();
     restore_queue_signals(q);
 
+    ZSH_TRACE_WAIT_DONE(pid, 0);
     return 0;
 }
 

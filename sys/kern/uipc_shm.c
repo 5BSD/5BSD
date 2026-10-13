@@ -920,8 +920,12 @@ shm_dotruncate_locked(struct shmfd *shmfd, off_t length, void *rl_cookie)
 
 		/* Try to reserve additional swap space. */
 		delta = IDX_TO_OFF(nobjsize - object->size);
-		if (!swap_reserve_by_cred(delta, object->cred))
+		if (!swap_reserve_by_cred(delta, object->cred)) {
+			if (!cold)
+				DTRACE_PROBE2(shmfd__swap__pressure,
+				    void *, (shmfd), off_t, (delta));
 			return (ENOMEM);
+		}
 	}
 	shmfd->shm_size = length;
 	mtx_lock(&shm_timestamp_lock);
@@ -992,6 +996,10 @@ shm_dotruncate_largepage(struct shmfd *shmfd, off_t length, void *rl_cookie)
 		    pagesizes[psind], 0,
 		    VM_MEMATTR_DEFAULT);
 		if (m == NULL) {
+			if (!cold)
+				DTRACE_PROBE4(shmfd__largepage__pressure,
+				    void *, (shmfd), int, (psind), int, (try),
+				    int, (shmfd->shm_lp_alloc_policy));
 			VM_OBJECT_WUNLOCK(object);
 			error = sig_intr();
 			if (error != 0) {
@@ -1006,11 +1014,21 @@ shm_dotruncate_largepage(struct shmfd *shmfd, off_t length, void *rl_cookie)
 				VM_OBJECT_WLOCK(object);
 				return (ENOMEM);
 			}
+			if (!cold)
+				DTRACE_PROBE3(shmfd__largepage__retry,
+				    void *, (shmfd), int, (psind), int, (try));
 			error = vm_page_reclaim_contig(aflags,
 			    pagesizes[psind] / PAGE_SIZE, 0, ~0,
 			    pagesizes[psind], 0);
-			if (error == ENOMEM)
+			if (error == ENOMEM) {
+				if (!cold)
+					DTRACE_PROBE1(shmfd__largepage__wait__start,
+					    void *, (shmfd));
 				error = vm_wait_intr(object);
+				if (!cold)
+					DTRACE_PROBE2(shmfd__largepage__wait__done,
+					    void *, (shmfd), int, (error));
+			}
 			if (error != 0) {
 				VM_OBJECT_WLOCK(object);
 				return (error);

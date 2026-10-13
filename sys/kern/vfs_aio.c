@@ -90,6 +90,9 @@
  */
 SDT_PROVIDER_DEFINE(aio);
 
+SDT_PROBE_DEFINE1(aio, , , suspend__wait__start, "struct proc *");
+SDT_PROBE_DEFINE2(aio, , , suspend__wait__done, "struct proc *", "int");
+
 /* Submission surface (aio_aqueue / aio_read / aio_write / aio_fsync / mlock). */
 SDT_PROBE_DEFINE5(aio, , , submit,
     "int" /*pid*/, "int" /*fd*/, "int" /*opcode*/, "size_t" /*nbytes*/,
@@ -727,6 +730,7 @@ aio_proc_rundown(void *arg, struct proc *p)
 	struct kaioinfo *ki;
 	struct aioliojob *lj;
 	struct kaiocb *job, *jobn;
+	int wait_error __unused;
 
 	KASSERT(curthread->td_proc == p,
 	    ("%s: called on non-curproc", __func__));
@@ -752,7 +756,15 @@ restart:
 	/* Wait for all running I/O to be finished */
 	if (!TAILQ_EMPTY(&ki->kaio_jobqueue) || ki->kaio_active_count != 0) {
 		ki->kaio_flags |= KAIO_WAKEUP;
-		msleep(&p->p_aioinfo, AIO_MTX(ki), PRIBIO, "aioprn", hz);
+		if (!cold)
+			DTRACE_PROBE2(aio__rundown__wait__start,
+			    void *, (p),
+			    int, (ki->kaio_active_count));
+		wait_error = msleep(&p->p_aioinfo, AIO_MTX(ki), PRIBIO, "aioprn", hz);
+		if (!cold)
+			DTRACE_PROBE2(aio__rundown__wait__done,
+			    void *, (p),
+			    int, (wait_error));
 		goto restart;
 	}
 
@@ -2271,8 +2283,10 @@ kern_aio_suspend(struct thread *td, int njoblist, struct aiocb **ujoblist,
 			break;
 
 		ki->kaio_flags |= KAIO_WAKEUP;
+		SDT_PROBE1(aio, , , suspend__wait__start, p);
 		error = msleep(&p->p_aioinfo, AIO_MTX(ki), PRIBIO | PCATCH,
 		    "aiospn", timo);
+		SDT_PROBE2(aio, , , suspend__wait__done, p, error);
 		if (error == ERESTART)
 			error = EINTR;
 		if (error)
@@ -2599,8 +2613,16 @@ kern_lio_listio(struct thread *td, int mode, struct aiocb * const *uacb_list,
 	if (mode == LIO_WAIT) {
 		while (lj->lioj_count - 1 != lj->lioj_finished_count) {
 			ki->kaio_flags |= KAIO_WAKEUP;
+			if (!cold)
+				DTRACE_PROBE2(aio__list__wait__start,
+				    void *, (p),
+				    int, (lj->lioj_count - 1 - lj->lioj_finished_count));
 			error = msleep(&p->p_aioinfo, AIO_MTX(ki),
 			    PRIBIO | PCATCH, "aiospn", 0);
+			if (!cold)
+				DTRACE_PROBE2(aio__list__wait__done,
+				    void *, (p),
+				    int, (error));
 			if (error == ERESTART)
 				error = EINTR;
 			if (error)
@@ -2787,8 +2809,16 @@ kern_aio_waitcomplete(struct thread *td, struct aiocb **ujobp,
 			break;
 		}
 		ki->kaio_flags |= KAIO_WAKEUP;
+		if (!cold)
+			DTRACE_PROBE2(aio__completion__wait__start,
+			    void *, (p),
+			    int, (timo));
 		error = msleep(&p->p_aioinfo, AIO_MTX(ki), PRIBIO | PCATCH,
 		    "aiowc", timo);
+		if (!cold)
+			DTRACE_PROBE2(aio__completion__wait__done,
+			    void *, (p),
+			    int, (error));
 		if (timo && error == ERESTART)
 			error = EINTR;
 		if (error)

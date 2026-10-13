@@ -1334,7 +1334,7 @@ blued_hci_event_process(struct blued_adapter *adp, uint8_t *buf, ssize_t n)
 	struct blued_encryption_change encryption_change;
 	if (blued_parse_encryption_change(buf, (size_t)n,
 	    &encryption_change) == 0) {
-		uint8_t status = encryption_change.status;
+		uint8_t status __unused = encryption_change.status;
 		uint16_t handle = encryption_change.handle;
 		uint8_t enc_enabled = encryption_change.encryption_enabled;
 

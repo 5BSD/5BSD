@@ -50,6 +50,20 @@
 #define	SYSLOG_NAMES
 #include <syslog.h>
 
+#include "logsend_trace.h"
+
+static ssize_t
+trace_sendto(int fd, const void *buffer, size_t len, int flags,
+	    const struct sockaddr *to, socklen_t tolen)
+{
+	ssize_t result;
+
+	TRACE_LOGSEND_OPERATION__START(len);
+	result = sendto(fd, buffer, len, flags, to, tolen);
+	TRACE_LOGSEND_OPERATION__DONE(len, result, result < 0 ? errno : 0);
+	return (result);
+}
+
 #define	sstosa(ss)	((struct sockaddr *)(void *)ss)
 
 struct socks {
@@ -365,7 +379,9 @@ logmessage(int pri, const char *timestamp, const char *hostname,
 	int len, i, lsent;
 
 	if (nsock == 0) {
+		TRACE_LOGSEND_LOCAL__START(pri);
 		cap_syslog(capsyslog, pri, "%s", buf);
+		TRACE_LOGSEND_LOCAL__DONE(pri);
 		return;
 	}
 	if ((len = asprintf(&line, "<%d>%s %s %s: %s", pri, timestamp,
@@ -374,7 +390,7 @@ logmessage(int pri, const char *timestamp, const char *hostname,
 
 	lsent = -1;
 	for (i = 0; i < nsock; i++) {
-		lsent = sendto(sk[i].sk_sock, line, len, 0,
+		lsent = trace_sendto(sk[i].sk_sock, line, len, 0,
 			       sstosa(&sk[i].sk_addr), sk[i].sk_addrlen);
 		if (lsent == len && !send_to_all)
 			break;

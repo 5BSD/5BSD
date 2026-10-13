@@ -1,0 +1,892 @@
+{
+  "probes": [
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_clone.c",
+      "provider": "ifclone",
+      "module": "",
+      "function": "",
+      "name": "create-start",
+      "types": [
+        "void *"
+      ],
+      "categories": [
+        "lifecycle",
+        "network",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_clone.c",
+      "provider": "ifclone",
+      "module": "",
+      "function": "",
+      "name": "create-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "categories": [
+        "lifecycle",
+        "network",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_bridge.c",
+      "provider": "bridge",
+      "module": "",
+      "function": "",
+      "name": "control-start",
+      "types": [
+        "void *",
+        "unsigned long"
+      ],
+      "categories": [
+        "network",
+        "control",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_bridge.c",
+      "provider": "bridge",
+      "module": "",
+      "function": "",
+      "name": "control-done",
+      "types": [
+        "void *",
+        "unsigned long",
+        "int"
+      ],
+      "categories": [
+        "network",
+        "control",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_lagg.c",
+      "provider": "lagg",
+      "module": "",
+      "function": "",
+      "name": "port-start",
+      "types": [
+        "void *",
+        "void *",
+        "int"
+      ],
+      "categories": [
+        "network",
+        "lifecycle",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_lagg.c",
+      "provider": "lagg",
+      "module": "",
+      "function": "",
+      "name": "port-done",
+      "types": [
+        "void *",
+        "void *",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "network",
+        "lifecycle",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_vlan.c",
+      "provider": "vlan",
+      "module": "",
+      "function": "",
+      "name": "configure-start",
+      "types": [
+        "void *",
+        "void *",
+        "int"
+      ],
+      "categories": [
+        "network",
+        "state",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_vlan.c",
+      "provider": "vlan",
+      "module": "",
+      "function": "",
+      "name": "configure-done",
+      "types": [
+        "void *",
+        "void *",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "network",
+        "state",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_tuntap.c",
+      "provider": "tuntap",
+      "module": "",
+      "function": "",
+      "name": "read-wait-start",
+      "types": [
+        "void *"
+      ],
+      "categories": [
+        "network",
+        "synchronization",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_tuntap.c",
+      "provider": "tuntap",
+      "module": "",
+      "function": "",
+      "name": "read-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "categories": [
+        "network",
+        "synchronization",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/tarfs/tarfs_io.c",
+      "provider": "tarfs",
+      "module": "",
+      "function": "",
+      "name": "read-start",
+      "types": [
+        "void *",
+        "int",
+        "int64_t",
+        "size_t"
+      ],
+      "categories": [
+        "io",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/tarfs/tarfs_io.c",
+      "provider": "tarfs",
+      "module": "",
+      "function": "",
+      "name": "read-done",
+      "types": [
+        "void *",
+        "size_t",
+        "int"
+      ],
+      "categories": [
+        "io",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/unionfs/union_subr.c",
+      "provider": "unionfs",
+      "module": "",
+      "function": "",
+      "name": "copyup-start",
+      "types": [
+        "void *",
+        "void *"
+      ],
+      "categories": [
+        "io",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/unionfs/union_subr.c",
+      "provider": "unionfs",
+      "module": "",
+      "function": "",
+      "name": "copyup-done",
+      "types": [
+        "void *",
+        "void *",
+        "int"
+      ],
+      "categories": [
+        "io",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/nullfs/null_subr.c",
+      "provider": "nullfs",
+      "module": "",
+      "function": "",
+      "name": "cache-hit",
+      "types": [
+        "void *",
+        "void *"
+      ],
+      "categories": [
+        "resource",
+        "state",
+        "performance"
+      ],
+      "priority": "P1"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/nullfs/null_subr.c",
+      "provider": "nullfs",
+      "module": "",
+      "function": "",
+      "name": "cache-miss",
+      "types": [
+        "void *",
+        "void *"
+      ],
+      "categories": [
+        "resource",
+        "state",
+        "performance"
+      ],
+      "priority": "P1"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/nullfs/null_subr.c",
+      "provider": "nullfs",
+      "module": "",
+      "function": "",
+      "name": "node-start",
+      "types": [
+        "void *"
+      ],
+      "categories": [
+        "resource",
+        "state",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/nullfs/null_subr.c",
+      "provider": "nullfs",
+      "module": "",
+      "function": "",
+      "name": "node-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "categories": [
+        "resource",
+        "state",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/udf/udf_vnops.c",
+      "provider": "udf",
+      "module": "",
+      "function": "",
+      "name": "block-start",
+      "types": [
+        "void *",
+        "int64_t",
+        "int"
+      ],
+      "categories": [
+        "io",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/udf/udf_vnops.c",
+      "provider": "udf",
+      "module": "",
+      "function": "",
+      "name": "block-done",
+      "types": [
+        "void *",
+        "int64_t",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "io",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/cd9660/cd9660_vnops.c",
+      "provider": "isofs",
+      "module": "",
+      "function": "",
+      "name": "block-start",
+      "types": [
+        "void *",
+        "int64_t",
+        "int"
+      ],
+      "categories": [
+        "io",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/fs/cd9660/cd9660_vnops.c",
+      "provider": "isofs",
+      "module": "",
+      "function": "",
+      "name": "block-done",
+      "types": [
+        "void *",
+        "int64_t",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "io",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/dev/md/md.c",
+      "provider": "mdio",
+      "module": "",
+      "function": "",
+      "name": "control-start",
+      "types": [
+        "unsigned long"
+      ],
+      "categories": [
+        "io",
+        "lifecycle",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/dev/md/md.c",
+      "provider": "mdio",
+      "module": "",
+      "function": "",
+      "name": "control-done",
+      "types": [
+        "unsigned long",
+        "int"
+      ],
+      "categories": [
+        "io",
+        "lifecycle",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/tty.c",
+      "provider": "tty",
+      "module": "",
+      "function": "",
+      "name": "control-start",
+      "types": [
+        "void *",
+        "unsigned long"
+      ],
+      "categories": [
+        "io",
+        "control",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/tty.c",
+      "provider": "tty",
+      "module": "",
+      "function": "",
+      "name": "control-done",
+      "types": [
+        "void *",
+        "unsigned long",
+        "int"
+      ],
+      "categories": [
+        "io",
+        "control",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/ln/ln.c",
+      "provider": "linkop*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ],
+      "categories": [
+        "io",
+        "lifecycle",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/ln/ln.c",
+      "provider": "linkop*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "io",
+        "lifecycle",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/rmdir/rmdir.c",
+      "provider": "dirremove*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ],
+      "categories": [
+        "io",
+        "lifecycle",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/rmdir/rmdir.c",
+      "provider": "dirremove*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "io",
+        "lifecycle",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/chflags/chflags.c",
+      "provider": "fileflags*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "uint64_t"
+      ],
+      "categories": [
+        "security",
+        "state",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/chflags/chflags.c",
+      "provider": "fileflags*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "uint64_t",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "security",
+        "state",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/renice/renice.c",
+      "provider": "priorityop*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "resource",
+        "control",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/renice/renice.c",
+      "provider": "priorityop*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "resource",
+        "control",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "sbin/kldload/kldload.c",
+      "provider": "moduleload*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ],
+      "categories": [
+        "lifecycle",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "sbin/kldload/kldload.c",
+      "provider": "moduleload*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "lifecycle",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "sbin/kldunload/kldunload.c",
+      "provider": "moduleunload*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int"
+      ],
+      "categories": [
+        "lifecycle",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "sbin/kldunload/kldunload.c",
+      "provider": "moduleunload*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "lifecycle",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/sync/sync.c",
+      "provider": "flushall*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ],
+      "categories": [
+        "io",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "bin/sync/sync.c",
+      "provider": "flushall*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int"
+      ],
+      "categories": [
+        "io",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/lockf/lockf.c",
+      "provider": "lockfile*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int",
+        "int"
+      ],
+      "categories": [
+        "synchronization",
+        "performance"
+      ],
+      "priority": "P0"
+    },
+    {
+      "kind": "user",
+      "source": "usr.bin/lockf/lockf.c",
+      "provider": "lockfile*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "categories": [
+        "synchronization",
+        "performance",
+        "errors"
+      ],
+      "priority": "P0"
+    }
+  ],
+  "passes": [
+    "Interface cloning: ioctl and Netlink create requests after cloner lookup; no attach-time auto-create site.",
+    "Bridge: validated control callback timing and result, outside packet forwarding.",
+    "Link aggregation: member add/remove lifecycle and failure before dropping the interface reference.",
+    "VLAN: ioctl association with parent/tag and configuration result.",
+    "Tun/tap: blocking character-device reads and wake errors, no packets.",
+    "Tarfs: backing/compressed stream read latency, requested extent and residual/error.",
+    "Unionfs: actual lower-to-upper copy phase timing and error.",
+    "Nullfs: initial vnode cache hit/miss and getnewvnode latency/error; no allocator internals.",
+    "UDF: buffer/cluster read extent, latency and error before touching the returned buffer.",
+    "CD9660: buffer/cluster read extent, latency and error before touching the returned buffer.",
+    "Memory disks: ioctl attach/detach/resize/query dispatch; excluded preload initialization.",
+    "Terminal: validated tty ioctl dispatch latency and failure, no terminal bytes.",
+    "ln/link: hard/symbolic link creation syscall latency/error; no path strings.",
+    "rmdir: each directory/parent removal attempt and syscall errno.",
+    "chflags: requested file flags and actual chflagsat outcome, including suppressed failures.",
+    "renice: selector/identity/requested priority and kernel outcome.",
+    "kldload: actual load attempt latency, returned module id and errno.",
+    "kldunload: unload id/flags, syscall result and errno.",
+    "sync: whole sync syscall boundary; done does not invent an errno for a void API.",
+    "lockf: fd flock and path open-with-lock operations, including lock release and interruption; no filenames."
+  ],
+  "profiles": [
+    "virtualnet-control",
+    "tunnel-terminal-control",
+    "filesystem-read-phases",
+    "stacked-filesystems",
+    "memory-disk-control",
+    "base-link-flags",
+    "module-tool-phases",
+    "priority-changes",
+    "file-lock-operations",
+    "base-sync-duration"
+  ],
+  "dependencies": [],
+  "sources": {
+    "bin/chflags/Makefile": "2532c7274c18ee47e508be192b383a881e48f1736bf76b05fcecd2e8bf85b281",
+    "bin/chflags/chflags.c": "f12368591646ba959d59dd81b67a5e275072a603da00571b948906f15ed27acf",
+    "bin/chflags/fileflags_provider.d": "ab6c52dd681e6f8345813a6c21610649b515f407279fb736c5907232f52b6d2f",
+    "bin/chflags/fileflags_trace.h": "0e4710ff0a8178efa0102da1fe6768b9196a34cf6c6a8291a69830844d273575",
+    "bin/chflags/tests/chflags_test.sh": "50d7551f9cc4b147b616d729bb83039375ff58925d94521a390fbe5214cb550d",
+    "bin/ln/Makefile": "811c8cb6a7f0551374bfa858b9f6b0d5c5ccb72a7e18c987ab5670571fb11ecd",
+    "bin/ln/linkop_provider.d": "803146f8b39efb7baa0bf7a6548a90e7cb31de9fe84e39d8fbf10cbc8694242e",
+    "bin/ln/linkop_trace.h": "f79be016ffffba33e8600e281e1f8542b4f8b3b31258e0186ebfbd0920bba777",
+    "bin/ln/ln.c": "7042eb237f93863d085a9279e3d291bc7e2f7e888c2413a99c4775795afa6588",
+    "bin/rmdir/Makefile": "852310a3da76591fbc4492d822a2dbad4429ef76ee53c40789796c0a6afd7c2d",
+    "bin/rmdir/dirremove_provider.d": "b5bab50990af0ac20dc7791f5d43ada93f000d7594b44a058c879e7ce83ae400",
+    "bin/rmdir/dirremove_trace.h": "22fc77c6e339327fa1a68d7a6b0ecf36194e9de424fcec6ad87e5931665fa386",
+    "bin/rmdir/rmdir.c": "a0569b5da156c8f2a600c866a20968df6424e27fcd8df2877c3948c737e896da",
+    "bin/sync/Makefile": "10b6bee0ff6f346de81b51a368319dddf3314b688ce69039eb4853e28a3d5bfc",
+    "bin/sync/flushall_provider.d": "4c78cb5c501c58241fba985d2f70381b8d39a2bb78260b8ad6b88e92ad287a0c",
+    "bin/sync/flushall_trace.h": "649ee4d189c906658e30cf8d38653eb6514cdb827b1836e2500b2b8b80c7b31f",
+    "bin/sync/sync.c": "79c23162062a5260780000e3dec3099d32e134ee7fbb1d13bb3fb0af6606035a",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-link-flags.d": "5b23729d2522791f9273ff02d1eac2470b052f32640730edc866c4a464d77b73",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-sync-duration.d": "658e68f775cd0e74dd65d48d856ef9024e6a9b54363f085a72976eb649c30af2",
+    "cddl/usr.sbin/bsdinstruments/profiles/file-lock-operations.d": "46ec419610a9465a29cb4cbc413da3b01a0b9864e753cc83b808d71b8a36f052",
+    "cddl/usr.sbin/bsdinstruments/profiles/filesystem-read-phases.d": "09cb96f2efd5ea04f2e33262e833e36bb1515aa74d5e7ac22953bc6f661af680",
+    "cddl/usr.sbin/bsdinstruments/profiles/memory-disk-control.d": "0f757e961731985a134a7eca621fd7b979fe77a431a44fa81b4c96cf9e7b0858",
+    "cddl/usr.sbin/bsdinstruments/profiles/module-tool-phases.d": "c6ce6c1b02cef5097f4f6b850b882b84aaea899dcf6d87d35012f2f5c8e9189c",
+    "cddl/usr.sbin/bsdinstruments/profiles/priority-changes.d": "2f4eb090305f4680244d3721530da8bc4a33a42dece18fbc9e90daf72355fb8b",
+    "cddl/usr.sbin/bsdinstruments/profiles/stacked-filesystems.d": "eb3447c94798b4af7784994f6b664028613983f55b01c58e5263598e6337ddfb",
+    "cddl/usr.sbin/bsdinstruments/profiles/tunnel-terminal-control.d": "ebfc9353733501a37b80311af698544a5c198fd8d9497ce382547752ea356795",
+    "cddl/usr.sbin/bsdinstruments/profiles/virtualnet-control.d": "4128ba9f27242f7c14ac324f85f7f4a2d4b002fe1c423054965fd8226444f5a3",
+    "sbin/kldload/Makefile": "545eaeca947d5447e34d5ce7e14e6a899d21c7121c100ab98696d7c2fe3f84d3",
+    "sbin/kldload/kldload.c": "f76aeed66c535e4fa6a076ddc7d279a3c8644d52c33af1f5cdfdd325fb9b66b4",
+    "sbin/kldload/moduleload_provider.d": "9fada566c402e62021a2106efc0d58bb04699af494df80fb9c0a2a8afcd46212",
+    "sbin/kldload/moduleload_trace.h": "e2a6e2455c4362a6afc85e17c3fc5709055305fad342c36accd39ed28c38b61d",
+    "sbin/kldunload/Makefile": "bbf62d8b3cffd504c32748b312adb709f5e221b283950c3fb58bab3f3e6c9bc3",
+    "sbin/kldunload/kldunload.c": "ef409bdda7c62b15dea268b9a70516bfece532628ef34b12154479bc74c45df2",
+    "sbin/kldunload/moduleunload_provider.d": "102dfa707947a08dc30f1074cbe0e8bb8d3d4629779ca691a114e6c9a6b86a99",
+    "sbin/kldunload/moduleunload_trace.h": "6ed780d515791defce039b37442f65833264a4ea755c9369f96747d4da07f98b",
+    "sys/dev/md/md.c": "eeb5c21ddc0d434c95f6c0fa2229c1468d724db18371435caa1736509fa2d5be",
+    "sys/fs/cd9660/cd9660_vnops.c": "1d8c1526a95396864db99f1e2f442864da989aad6ee42282e928b1e7a0feffba",
+    "sys/fs/nullfs/null_subr.c": "1b6b4c76a91e68ab0168170643fa274e206f3f5e9d5618007d31a8340a4f56dd",
+    "sys/fs/tarfs/tarfs_io.c": "d6b9992f3f112c0acf7b43d9ba7f40173091a0f30657bb57db52b54d6c6fd763",
+    "sys/fs/udf/udf_vnops.c": "6b2e7b2ee84443e8b700193a4d565ffe63517c4e558ba3cb6fb9c21e7937d8bc",
+    "sys/fs/unionfs/union_subr.c": "844495839f1f82cf95cc258556fab0b12563dba0dce0139c9fffbff67e921409",
+    "sys/kern/tty.c": "d5fc8ab4ddbda54b343ff2f01e8ff29eb4cb8cf5e669730423daa8e9e2104821",
+    "sys/net/if_bridge.c": "2af62c7fef8df4f84cff1b2d5befb1e3d0d6c398332d19bdc9528ee5adc9f5d4",
+    "sys/net/if_clone.c": "edde5442d445c6cb74350ece1583628795d7acef58bf82d250a2ec37c5710976",
+    "sys/net/if_lagg.c": "cac9add695f5c7e31fa27f7837367f0586fa54dd8916fc66ec9cbb56ee194deb",
+    "sys/net/if_tuntap.c": "e840564a77bd77e038646ac61a2a8958e5b957130ec47151b4fde1618dd0f232",
+    "sys/net/if_vlan.c": "aa7202a31c73d97c1256d63841ef891b1d1d5c6f9ce40b304a99a6894e1bd02d",
+    "tools/test/system-tracing/COVERAGE-NINTH": "7bb92103cff6c57f2d22eccb46b84610fdca5734d513a8b92723d06878e194d0",
+    "tools/test/system-tracing/README": "09454c06fde30bd1047cd76a6902a349efa5fc47434804d487acc2a896355e98",
+    "tools/test/system-tracing/coverage-ninth-base.py": "1d3e5f664cf95035c7a6be3143307bf2ce5e1db28bc01bf277642e400481be64",
+    "tools/test/system-tracing/coverage-ninth-check.py": "07729b1e1ba3cb5d3cadc9032dd02224a0d58c5b38d166510d21db22ff73e49b",
+    "tools/test/system-tracing/coverage-ninth-compile.py": "c17533760545347cb1e179c388d0bccefcf186ebb225d27e5cb77d103b835064",
+    "tools/test/system-tracing/coverage-ninth-guards.py": "172e0caec030a04d30de7abaa23e847af55d31892fac1f6e6e13113cee9b5926",
+    "tools/test/system-tracing/coverage-ninth-modules.py": "97bb64cc9b0dca05d6c16231bc85144d54a9f9fd3f9734e2a0493907ff1c2fb9",
+    "tools/test/system-tracing/coverage-ninth-smoke.py": "4574a60a319d95d7e30ba39cab9fe26d166ba168fcf405d02cc0b923815f3b28",
+    "tools/test/system-tracing/coverage-ninth-syscall-stubs.c": "043e59b20908a3fe41c5321ed8abd7d226542090102b655c8497e415f8809353",
+    "tools/test/system-tracing/coverage-ninth-tests.py": "7b58ce8e090d5dde10cd4a15f91b878b74573fa80e445009e129ba2cf90d5e54",
+    "usr.bin/lockf/Makefile": "0426da0537a20854199f5027fb9cddac22e3cb5b623b172003df827922fd029f",
+    "usr.bin/lockf/lockf.c": "11344118fc12e5847d72ab9ff3924fa8e788445e478dccef7f70ca6c68a6b48d",
+    "usr.bin/lockf/lockfile_provider.d": "ff23b40fbea7fdfb53d582fcbb17973771a3afb6441b20c447ed497964ee02f6",
+    "usr.bin/lockf/lockfile_trace.h": "c53f7bdbf1d10bf8efebb8bd451e0b70f952e47ce0d1968316b141badc22f9cf",
+    "usr.bin/renice/Makefile": "e99758024ec6c5c079b4f47122af9f1598b341c834f828769be209a0609ee5d1",
+    "usr.bin/renice/priorityop_provider.d": "62092f0c9a0e4f69fe01d77afe0868184485ad918c9be85b926295856fb45fc4",
+    "usr.bin/renice/priorityop_trace.h": "0bd2404ac4a01b50ac9840a2ccd09421852fb729e1d8ca4dbd5bb0561d63d83d",
+    "usr.bin/renice/renice.c": "d91e457a7103013711d2809cde370efea37a7534ae456b555ccfe95ded068937"
+  },
+  "scope": "20 different runtime source components, zero overlap with eighth expansion; not exhaustive coverage of every operation.",
+  "counts": {
+    "passes": 20,
+    "kernel_contracts": 26,
+    "user_contracts": 16,
+    "profiles": 10
+  }
+}

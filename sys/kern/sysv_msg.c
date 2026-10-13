@@ -91,6 +91,9 @@ static MALLOC_DEFINE(M_MSG, "msg", "SVID compatible message queues");
  * decisions are already covered by the MAC framework's mac_sysvmsq_* probes.
  */
 SDT_PROVIDER_DEFINE(sysvmsg);
+SDT_PROBE_DEFINE2(sysvmsg, , , msgsnd__wake, "int", "int");
+SDT_PROBE_DEFINE2(sysvmsg, , , msgrcv__wake, "int", "int");
+
 SDT_PROBE_DEFINE4(sysvmsg, , , msgget__create, "pid_t", "key_t", "int", "int");
 SDT_PROBE_DEFINE4(sysvmsg, , , msgget__lookup, "pid_t", "key_t", "int", "int");
 SDT_PROBE_DEFINE4(sysvmsg, , , msgsnd, "pid_t", "int", "long", "size_t");
@@ -712,6 +715,9 @@ sys_msgget(struct thread *td, struct msgget_args *uap)
 				break;
 		}
 		if (msqid == msginfo.msgmni) {
+			if (!cold)
+				DTRACE_PROBE2(sysvmsg__limit,
+				    int, (1), int, (msginfo.msgmni));
 			DPRINTF(("no more msqid_ds's available\n"));
 			error = ENOSPC;
 			goto done2;
@@ -722,6 +728,9 @@ sys_msgget(struct thread *td, struct msgget_args *uap)
 			error = racct_add(td->td_proc, RACCT_NMSGQ, 1);
 			PROC_UNLOCK(td->td_proc);
 			if (error != 0) {
+				if (!cold)
+					DTRACE_PROBE2(sysvmsg__limit,
+					    int, (2), int, (msginfo.msgmni));
 				error = ENOSPC;
 				goto done2;
 			}
@@ -910,6 +919,7 @@ kern_msgsnd(struct thread *td, int msqid, const void *msgp,
 			    td->td_proc->p_pid, msqid, msgsz);
 			error = msleep(msqkptr, &msq_mtx, PVFS | PCATCH,
 			    "msgsnd", hz);
+			SDT_PROBE2(sysvmsg, , , msgsnd__wake, msqid, error);
 			DPRINTF(("msgsnd:  good morning, error=%d\n", error));
 			if (we_own_it)
 				msqkptr->u.msg_perm.mode &= ~MSG_LOCKED;
@@ -1324,6 +1334,7 @@ kern_msgrcv(struct thread *td, int msqid, void *msgp, size_t msgsz, long msgtyp,
 		    msqid, msgtyp);
 		error = msleep(msqkptr, &msq_mtx, PVFS | PCATCH,
 		    "msgrcv", 0);
+		SDT_PROBE2(sysvmsg, , , msgrcv__wake, msqid, error);
 		DPRINTF(("msgrcv:  good morning (error=%d)\n", error));
 
 		if (error != 0) {

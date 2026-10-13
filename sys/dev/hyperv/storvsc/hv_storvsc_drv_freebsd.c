@@ -36,6 +36,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/proc.h>
 #include <sys/condvar.h>
 #include <sys/time.h>
@@ -468,6 +470,8 @@ hv_storvsc_channel_init(struct storvsc_softc *sc)
 	boolean_t support_multichannel;
 	uint32_t version;
 
+	if (!cold)
+		DTRACE_PROBE1(hyperv__storage__connect__start, void *, (sc));
 	max_subch = 0;
 	support_multichannel = FALSE;
 
@@ -603,6 +607,10 @@ hv_storvsc_channel_init(struct storvsc_softc *sc)
 	if (support_multichannel && max_subch > 0)
 		storvsc_send_multichannel_request(sc, max_subch);
 cleanup:
+	if (!cold)
+		DTRACE_PROBE4(hyperv__storage__connect__done, void *, (sc),
+		    int, (ret), uint32_t, (vstor_packet->operation),
+		    uint32_t, (vstor_packet->status));
 	sema_destroy(&request->synch_sema);
 	return (ret);
 }
@@ -1540,6 +1548,11 @@ storvsc_action(struct cam_sim *sim, union ccb *ccb)
 		}
 
 		if (LIST_EMPTY(&sc->hs_free_list)) {
+			if (!dumping) {
+				if (!cold)
+					DTRACE_PROBE2(hyperv__storage__request__pressure,
+					    void *, (sc), int, (sc->hs_frozen));
+			}
 			ccb->ccb_h.status = CAM_REQUEUE_REQ;
 			if (sc->hs_frozen == 0) {
 				sc->hs_frozen = 1;

@@ -28,6 +28,7 @@
 #include <sys/zfshandle.h>
 
 #include "claim_parse.h"
+#include "diagnostics.h"
 #include "capsulert.h"
 
 int
@@ -255,8 +256,13 @@ parse_jail_action_string(const char *s, uint32_t *actionsp)
 	return (0);
 }
 
+#ifdef WITH_DTRACE
+static int
+parse_jail_actions_trace_impl(const ucl_object_t *v, uint32_t *actionsp)
+#else
 int
 parse_jail_actions(const ucl_object_t *v, uint32_t *actionsp)
+#endif
 {
 	const ucl_object_t *elem;
 	ucl_object_iter_t it;
@@ -281,6 +287,18 @@ parse_jail_actions(const ucl_object_t *v, uint32_t *actionsp)
 	}
 	return (*actionsp != 0 ? 0 : -1);
 }
+
+#ifdef WITH_DTRACE
+int
+parse_jail_actions(const ucl_object_t *v, uint32_t *actionsp)
+{
+	int result;
+
+	result = parse_jail_actions_trace_impl(v, actionsp);
+	CAPSULECLAIMS_TRACE_RIGHTS_PARSED(1, result, result == 0 ? *actionsp : 0);
+	return (result);
+}
+#endif
 
 int
 parse_file_action_string(const char *s, uint64_t *actionsp)
@@ -321,8 +339,13 @@ parse_file_action_string(const char *s, uint64_t *actionsp)
 	return (0);
 }
 
+#ifdef WITH_DTRACE
+static int
+parse_file_actions_trace_impl(const ucl_object_t *v, uint64_t *actionsp)
+#else
 int
 parse_file_actions(const ucl_object_t *v, uint64_t *actionsp)
+#endif
 {
 	const ucl_object_t *elem;
 	ucl_object_iter_t it;
@@ -347,6 +370,18 @@ parse_file_actions(const ucl_object_t *v, uint64_t *actionsp)
 	}
 	return (*actionsp != 0 ? 0 : -1);
 }
+
+#ifdef WITH_DTRACE
+int
+parse_file_actions(const ucl_object_t *v, uint64_t *actionsp)
+{
+	int result;
+
+	result = parse_file_actions_trace_impl(v, actionsp);
+	CAPSULECLAIMS_TRACE_RIGHTS_PARSED(2, result, result == 0 ? *actionsp : 0);
+	return (result);
+}
+#endif
 
 /*
  * TrustedZFS storage rights: map manifest right names to the ZH_* mask a
@@ -389,8 +424,13 @@ parse_storage_right_string(const char *s, uint64_t *rightsp)
 	return (0);
 }
 
+#ifdef WITH_DTRACE
+static int
+parse_storage_rights_trace_impl(const ucl_object_t *v, uint64_t *rightsp)
+#else
 int
 parse_storage_rights(const ucl_object_t *v, uint64_t *rightsp)
+#endif
 {
 	const ucl_object_t *elem;
 	ucl_object_iter_t it;
@@ -413,6 +453,18 @@ parse_storage_rights(const ucl_object_t *v, uint64_t *rightsp)
 	}
 	return (*rightsp != 0 ? 0 : -1);
 }
+
+#ifdef WITH_DTRACE
+int
+parse_storage_rights(const ucl_object_t *v, uint64_t *rightsp)
+{
+	int result;
+
+	result = parse_storage_rights_trace_impl(v, rightsp);
+	CAPSULECLAIMS_TRACE_RIGHTS_PARSED(3, result, result == 0 ? *rightsp : 0);
+	return (result);
+}
+#endif
 
 int
 parse_storage_lifetime_string(const char *s, uint8_t *lifetimep)

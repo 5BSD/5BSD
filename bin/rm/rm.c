@@ -46,6 +46,8 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#include "removeio_trace.h"
+
 static int dflag, eval, fflag, iflag, vflag, Wflag, stdin_ok;
 static int rflag, Iflag, xflag;
 static uid_t uid;
@@ -59,6 +61,28 @@ static void	rm_file(char **);
 static void	rm_tree(char **);
 static void siginfo(int __unused);
 static void	usage(void);
+
+static int
+trace_unlink(const char *path)
+{
+	int result;
+
+	TRACE_REMOVEIO_OPERATION__START(0);
+	result = unlink(path);
+	TRACE_REMOVEIO_OPERATION__DONE(0, result, result < 0 ? errno : 0);
+	return (result);
+}
+
+static int
+trace_rmdir(const char *path)
+{
+	int result;
+
+	TRACE_REMOVEIO_OPERATION__START(1);
+	result = rmdir(path);
+	TRACE_REMOVEIO_OPERATION__DONE(1, result, result < 0 ? errno : 0);
+	return (result);
+}
 
 /*
  * rm --
@@ -257,7 +281,7 @@ rm_tree(char **argv)
 			switch (p->fts_info) {
 			case FTS_DP:
 			case FTS_DNR:
-				rval = rmdir(p->fts_accpath);
+				rval = trace_rmdir(p->fts_accpath);
 				if (rval == 0 || (fflag && errno == ENOENT)) {
 					if (rval == 0 && vflag)
 						(void)printf("%s\n",
@@ -298,7 +322,7 @@ rm_tree(char **argv)
 			case FTS_F:
 			case FTS_NSOK:
 			default:
-				rval = unlink(p->fts_accpath);
+				rval = trace_unlink(p->fts_accpath);
 				if (rval == 0 || (fflag && errno == ENOENT)) {
 					if (rval == 0 && vflag)
 						(void)printf("%s\n",
@@ -366,9 +390,9 @@ rm_file(char **argv)
 			if (S_ISWHT(sb.st_mode))
 				rval = undelete(f);
 			else if (S_ISDIR(sb.st_mode))
-				rval = rmdir(f);
+				rval = trace_rmdir(f);
 			else
-				rval = unlink(f);
+				rval = trace_unlink(f);
 		}
 		if (rval && (!fflag || errno != ENOENT)) {
 			warn("%s", f);

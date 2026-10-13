@@ -74,4 +74,7 @@ void	probe_tap_rec3(const char *name, const char *str, uint64_t a0,
 void	probe_tap_rec4(const char *name, const char *str, uint64_t a0,
 	    uint64_t a1, uint64_t a2, uint64_t a3);
 
+void	probe_tap_rec5(const char *name, const char *str, uint64_t a0,
+	    uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4);
+
 #endif /* BLUED_PROBE_TAP_H */

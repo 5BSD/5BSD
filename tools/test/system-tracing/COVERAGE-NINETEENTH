@@ -1,0 +1,126 @@
+Nineteenth system tracing expansion and PTY retirement (2026-10-13)
+=================================================================
+
+Scope: the older terminal/device subsystems reviewed this round. Age alone
+is not evidence of replacement. This is not a whole-tree retirement audit.
+
+Replacement decisions
+---------------------
+The former pty(4) manual identifies the BSD fixed-name driver as compatibility
+for older C libraries, replaced by pts(4). Remove sys/dev/pty/pty.c, its module,
+configuration/build entries, manual, obsolete legacy-specific stress tests and
+kerneldoc entry. Remove PTS_EXTERNAL and pts_alloc_external from the core/header,
+including its now-unused pts:::alloc-external contract. Keep POSIX PTYs.
+
+/dev/ptmx was implemented inside the obsolete module but is still required by
+Linux emulation and modern clone-device callers. Move its existing fdopen
+semantics into the always-built pts core, create the clone node during pts
+initialization, and make pts_alloc private. Linux startup and loader/release
+configuration no longer load pty.ko. The ordinary /dev/pts/N slave path and
+posix_openpt/openpty remain. Update manual references and package obsolete-file
+entries. The vnode fork/exit stress test now allocates modern PTYs. Historical
+papers and historical trace inventories are retained as historical records.
+
+Compatibility change: applications requiring /dev/ptyXX and /dev/ttyXX naming
+must migrate; those names and kern.tty_pty_warningcnt are removed. The old
+module must not be loaded with the new kernel. UPDATING describes migration.
+No installed module, boot configuration or running kernel was changed here.
+
+Retain tty (terminal discipline/session semantics), uart (physical serial
+controllers), lpt (parallel hardware), snp (capture from an already-existing
+TTY), and nmdm (paired virtual serial ports with modem/rate behavior). No
+functionally complete replacement for those interfaces was found in the
+reviewed tree. USB serial and printer drivers address different buses, and
+new PTY allocation does not replace physical or paired null-modem interfaces.
+
+New tracing contracts
+---------------------
+13 new contracts at 21 source sites in six source files. Four profiles bring
+the base installation catalog to 442. One obsolete contract was removed,
+for a net increase of 12 contracts. All new selectors are sdt:::NAME.
+
+Every new call excludes cold initialization. There are no probes in UART
+console getc/putc/grab/poll paths, raw interrupt filters, per-character UART
+or nmdm loops, or panic handlers. No new allocation or locking is added.
+Arguments are identities, scalar results and configuration, never terminal
+characters, credentials, paths or packet contents. Existing locking protects
+operational lifetimes; enabled tracing can extend existing lock hold times.
+
+Arguments in order:
+
+tty-sleep-start: tty, kind (1=ordinary; 2=timed; 3=proctree-aware).
+tty-sleep-done: tty, kind, raw condition-variable return.
+Pairs surround actual sleeps. Kind 3 includes reacquiring the process-tree
+lock and TTY lock. Done is before gone/revoke remapping to ENXIO/ERESTART;
+it is not necessarily the error returned by tty_wait to its caller.
+
+pts-master-wait-start: unit, direction (1=master read; 2=master write).
+pts-master-wait-done: unit, direction, raw condition-variable return.
+Only actual waits are paired; immediate/nonblocking operations are excluded.
+pts-allocation-limit: cause (1=RACCT_NPTS; 2=RLIMIT_NPTS accounting;
+3=no available unit number). Existing EAGAIN return/rollback is unchanged.
+This is resource-limit pressure, not proof of global OOM.
+pts-ptmx-open: fdopen flags, allocation return. It covers clone-device opens;
+posix_openpt keeps its existing provider events. Failed clone allocation may
+also emit the causal limit event. No clone probe runs during initialization.
+
+snp-read-wait-start/done: snoop identity (done adds raw wake return).
+No captured terminal data is exposed. A successful wake can still lead to
+EIO if the terminal disappeared; done does not mean a read returned bytes.
+
+lpt-bus-request-start: device, PPB_* request flags.
+lpt-bus-request-done: device, ppb_request_bus return.
+This times a bus acquisition attempt, including contention when allowed to
+wait. PPB_DONTWAIT calls may return immediately. The already-owned shortcut
+is excluded, as are cold boot probing/attach calls. It is not byte-I/O latency.
+
+uart-parameter-start: softc, requested output baud rate.
+uart-parameter-done: softc, raw UART_PARAM return before mapping to EINVAL.
+Only the TTY parameter callback's hardware-programming operation is paired;
+pre-validation failures and the zero-baud hangup branch are excluded. A done
+success does not include subsequent flow-control changes. Console callbacks
+and UART interrupt servicing are untouched.
+
+nmdm-rate-configured: endpoint, callout interval ticks, scaled credits.
+Emits when setting a simulated rate for each endpoint. Credits use the
+existing QS fixed-point scale, not unscaled baud. Does not emit on every
+transmitted character, timeout tick, or disabled/zero-rate short circuit.
+
+Profiles
+--------
+terminal-waits: TTY sleep latency and raw results by kind.
+pts-pressure-waits: modern PTY master waits, limit causes and ptmx results.
+legacy-device-waits: snp waits and lpt bus acquisition latency/results.
+serial-configuration: UART parameter latency/results and nmdm rate intervals.
+All profiles use scalar aggregates without dereferencing pointers. Pairs use
+PID/TID/depth keys and clear matched state. Start before the workload; lost
+events invalidate pairing. Elapsed times include scheduling and lock reacquisition.
+
+Validation and limits
+---------------------
+Artifacts: /usr/obj/5bsd-dtrace-nineteenth-validation.
+Native module links: snp, lpt, uart and nmdm, using all CPUs and /usr/obj.
+Twelve native source compiles with tracing hooks enabled/disabled passed.
+Five instrumentation-only sources retain identical no-hooks .text after
+normalizing diagnostic locations. tty_pts.c intentionally changes semantics
+and layout for retirement and is excluded from that equivalence claim.
+Eight offline profile compiles passed, including PID/duration filtering;
+selectors, argument bounds, installed profile entries and object NOP sites
+are checked. All four linked driver modules retain their new probe sites.
+The prepared GENERIC-NODEBUG kernel links, retaining all six new core probe
+contracts. ptmx_fdopen is linked; pts_alloc_external, pty_clone and pty_modevent
+are absent from the linked kernel.
+
+Four rc startup tests passed against source with mocked module loaders and
+mounts. PTY regression tests compile; fionread and ptmx_core pass on the running
+host as ABI baseline checks, not validation of the rebuilt kernel. The new
+legacy_names_absent case must run after booting the new kernel and has not
+been executed here. A fresh boot, native/ Linux PTY runtime tests, and actual
+hardware tests remain outstanding; no boot/install is authorized or performed.
+/dev/dtrace is unavailable, so live firing/overhead remain unqualified.
+
+Maintained scripts: coverage-nineteenth-{modules,compile,check,codegen,linked,
+core-linked}.py. Build mapping and contracts are the adjacent JSON files.
+static-census.py performs the separate reproducible source-contract comparison
+against a pinned vanilla FreeBSD commit; see PROBE-COMPARISON-NINETEENTH for
+the exact metric, exclusions, totals and limits on the 3x claim.

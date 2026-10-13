@@ -1,3 +1,5 @@
+.include <src.opts.mk>
+
 #
 # Copyright (c) 1997 Doug Rabson
 # All rights reserved.
@@ -28,5 +30,10 @@
 PACKAGE=runtime
 PROG=	kldunload
 MAN=	kldunload.8
+
+.if ${MK_DTRACE} != "no"
+SRCS+=	kldunload.c moduleunload_provider.d
+CFLAGS+= -DWITH_COVERAGE_DTRACE
+.endif
 
 .include <bsd.prog.mk>

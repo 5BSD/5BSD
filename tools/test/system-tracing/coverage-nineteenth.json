@@ -1,0 +1,283 @@
+{
+  "probes": [
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "tty-sleep-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/tty.c",
+      "argument_expressions": [
+        "(tp)",
+        "(1)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "tty-sleep-done",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/tty.c",
+      "argument_expressions": [
+        "(tp)",
+        "(1)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pts-master-wait-start",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/tty_pts.c",
+      "argument_expressions": [
+        "(psc->pts_unit)",
+        "(1)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pts-master-wait-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/tty_pts.c",
+      "argument_expressions": [
+        "(psc->pts_unit)",
+        "(1)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pts-allocation-limit",
+      "types": [
+        "int"
+      ],
+      "source": "sys/kern/tty_pts.c",
+      "argument_expressions": [
+        "(1)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pts-ptmx-open",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/tty_pts.c",
+      "argument_expressions": [
+        "(fflags)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "snp-read-wait-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/snp/snp.c",
+      "argument_expressions": [
+        "(ss)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "snp-read-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/snp/snp.c",
+      "argument_expressions": [
+        "(ss)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "lpt-bus-request-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/ppbus/lpt.c",
+      "argument_expressions": [
+        "(dev)",
+        "(how)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "lpt-bus-request-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/ppbus/lpt.c",
+      "argument_expressions": [
+        "(dev)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "uart-parameter-start",
+      "types": [
+        "void *",
+        "unsigned int"
+      ],
+      "source": "sys/dev/uart/uart_tty.c",
+      "argument_expressions": [
+        "(sc)",
+        "(t->c_ospeed)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "uart-parameter-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/uart/uart_tty.c",
+      "argument_expressions": [
+        "(sc)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "nmdm-rate-configured",
+      "types": [
+        "void *",
+        "int",
+        "unsigned int"
+      ],
+      "source": "sys/dev/nmdm/nmdm.c",
+      "argument_expressions": [
+        "(np)",
+        "(rate)",
+        "(speed)"
+      ]
+    }
+  ],
+  "profiles": [
+    "terminal-waits",
+    "pts-pressure-waits",
+    "legacy-device-waits",
+    "serial-configuration"
+  ],
+  "dependencies": [],
+  "sources": {
+    "ObsoleteFiles.inc": "bfdcf8817ec668946f4f7efcca97b330127709aa9dd9b19fa62e6185a87457f0",
+    "UPDATING": "117ba2479c0cd9aec2d2149a470d2d19324584525ce3ce97aa0b8b865a373548",
+    "cddl/usr.sbin/bsdinstruments/Makefile": "2f8e2f3b2ab8af9e3ee452c054e29bf6e5c48de21021889448c62a2af238714a",
+    "cddl/usr.sbin/bsdinstruments/profiles/legacy-device-waits.d": "08cc78b56c94b192dedfd81a8af254a83a99b42d6d48779cdc30d7c946bca0d6",
+    "cddl/usr.sbin/bsdinstruments/profiles/pts-pressure-waits.d": "a75aaa8c1e22fd695e608314ac5349bccdc77d179352f61583e89095b7d8df9f",
+    "cddl/usr.sbin/bsdinstruments/profiles/serial-configuration.d": "188395d81896888b1d69818bbfd2afe10fd8442664ba816b850b51d9e998213d",
+    "cddl/usr.sbin/bsdinstruments/profiles/terminal-waits.d": "8bd3718e8b5a900233168621c794b1b9f2f663b9a28d470d92d5dab8b4fdb9ea",
+    "crypto/heimdal/appl/telnet/telnetd/telnetd.8": "1c8b842bcc8a9805dec9ad19924db45630e1215baff83bd40eddb93e3a904014",
+    "crypto/openssh/sshd_config.5": "e0b730bef31ef9a87a7505c4cd27803da073cd5386da7f6f9533fcd4573a9345",
+    "lib/libutil/pty.3": "1581bfe5b1753faabf7d39fbe64c9cda50985f8fec8928d3233f1a70f165baba",
+    "libexec/rc/rc.d/linux": "c64e4f28bf3a9d4841d1b6c6f9e55046e602d478effc4d974ac16fd6ce9b29f0",
+    "libexec/rc/tests/sysext_startup_test.sh": "7c60001aa751c0d70a9eb10fd83a82825238400854e05f55396616382fa25e58",
+    "release/Makefile": "7ad8799e317a9a0d7a93f83ad6dfb4c589659299d8d1b882361725101c8bcd43",
+    "share/man/man4/Makefile": "cc7969a7ed82b2b7ecd8a7aa71f20418f9c5e91835f670057cc00759912c2f0d",
+    "share/man/man4/linux.4": "90959e9dd21f94cdcf9c9cfa3c7de1f5c2744f7980ba1974b01e878d91cfc3c7",
+    "share/man/man4/pts.4": "2666bdcb514095170b2ea78672e237b66c35564e2f803ffcb399fb651730dc05",
+    "share/man/man4/snp.4": "9f0ee67b5deedea0acc5d1b777c0d640ed305ee5b24bb960ec416fd653ec1f4c",
+    "share/man/man4/tap.4": "690f1e8b2f8e2a02b0718b1a281adee40505626b6e4cfb39735676a081765442",
+    "share/man/man4/tty.4": "18a9d1cbbc415880ad08117164eb752beebfb2a89e14c2e806e4dba1cb795a32",
+    "share/man/man4/tun.4": "8d6b8dfb52835167d1ce102d58cfdaaa73a49c72a62bc97047dd7a40b75c5773",
+    "share/man/man4/vkbd.4": "5d141ffc09c98690aebc5a16cf2bf7f9359976f1067559eb5386cb090ddde470",
+    "stand/defaults/loader.conf": "6100792695ff2bd1e7d138bcf470704ea79c308844ccfa642c975b489cfaa047",
+    "sys/conf/NOTES": "3ff63c8708b7f329e98deeeb43e4b898bd697f1b6a94fd0a67e9ee2f38aa3c5e",
+    "sys/conf/files": "d8a69bfad379124b318a51ab3da9ae045d57a6e9517c75b3e4b89cb734a91f88",
+    "sys/dev/nmdm/nmdm.c": "e7761d38669886de619f490e5c8387e6f351b16d6429262ef9b48bd6317a8acc",
+    "sys/dev/ppbus/lpt.c": "744ec636cfd5c2d9e6516cf5f3ad588224b41509cc2c7d9722c034f1306381da",
+    "sys/dev/snp/snp.c": "c3219fe036feedc4cb99ac9dc07f4b8f4dceeff7f4674f41d457128b42359794",
+    "sys/dev/uart/uart_tty.c": "6c395bfe09922511a2052c45a250d938d37e7f330e8b44887a35de0f1947a479",
+    "sys/kern/tty.c": "6b51f50153bb65ec3d08bcf8afc95b4bf3b9641d56b0b5fa3666e3634bedca28",
+    "sys/kern/tty_pts.c": "189d34fb987f53d627ec19787a5b623631bcefaea1066c3bb5e4add2409c9b73",
+    "sys/modules/Makefile": "4b0139c9a96be36d7e06f0c321de9ee40d462553a02f6e7139b9a2c989e15ebf",
+    "sys/sys/tty.h": "31e354eaca084bceebfd7d534f0e383622ec6c104b972ec65a9a8faa164c7dd3",
+    "tests/sys/kern/tty_pts.c": "2dee9abd583721bf1d375b300f117dcd5f32d28e51f9d110dc7624be3fd63df9",
+    "tools/test/capability-qemu/guest-install.sh": "11b920ff467991dd65387f1faf24e874b12e149954950d11a1f277ac6dffebd8",
+    "tools/test/stress2/misc/vnodes.sh": "7b2af8ebce34004558603848256c9039141efeb675f154ebd0edd02b2e267924",
+    "tools/test/stress2/misc/write2.sh": "0a14155fc5c48c61931f897133cbf89932e4691d82a3f8c72081087845e59e6b",
+    "tools/test/system-tracing/COVERAGE-NINETEENTH": "2fde3b84c2312ee883eb32c58ee71f2e1e959ec248ebd235b6b742daceb895dd",
+    "tools/test/system-tracing/PROBE-COMPARISON-NINETEENTH": "d839f8cfbea8f2803434b1a8152daeb22a0e2a1e74edf627e01dc027d6b0dd37",
+    "tools/test/system-tracing/coverage-fourth-dof.py": "7a2fc9fc87d4b6d161c88f981ace9c7c6e8c1090cfab60f523b5a61e6730375a",
+    "tools/test/system-tracing/coverage-nineteenth-build.json": "f1b1be6048434e33460b619c82df3539f49fe32cd4dc0249a997413289603dbe",
+    "tools/test/system-tracing/coverage-nineteenth-check.py": "f053f9b8f3d113b3c5a624c9f2368cd66ed61f36c851b8a5a6796dcb3fdd1bb4",
+    "tools/test/system-tracing/coverage-nineteenth-codegen.py": "7bf53b08bfbdd395488064da23a050ac8acb73c34448c0983952767adff67d01",
+    "tools/test/system-tracing/coverage-nineteenth-compile.py": "efae7e0f4cc257d194c872212f2be08aea25623507aa41b92a0bfcdb4b3cbb8b",
+    "tools/test/system-tracing/coverage-nineteenth-core-linked.py": "259eeab305de579c300474be6b005f99a7dba56e2a38a10a6eec81418a20efa6",
+    "tools/test/system-tracing/coverage-nineteenth-linked.py": "d94260958e0efa3f14d5e3bf4fe0013c7825fbdc7bc0a5e0b58de8e6e6569585",
+    "tools/test/system-tracing/coverage-nineteenth-modules.py": "36839901a624df28f23e23f23442cf3aab037f1e76b8461782b9f10cb337eb62",
+    "tools/test/system-tracing/coverage-sixth-objects.py": "fc14488256457e044086c08f967c7a412060216d9d2b53a2c40b9be4405a965e",
+    "tools/test/system-tracing/coverage-third-profile-check.py": "6a63a690cbbf6970c52a90e234a701b64cd7e20d7745139d6e18977dfe71e0ae",
+    "tools/test/system-tracing/static-census.py": "1459cd465a24e162a548b6e88204f3340d69595345cb5bef6aa1b0608a7c69e7",
+    "tools/tools/nanobsd/pcengines/ALIX_DSK": "bd39d6d688b9c0717f22cba4220bfbba169834c3aeabe5d7683186a8405bca7a",
+    "tools/tools/sysdoc/tunables.mdoc": "b4c811cdfa0bcbe918444515a45420e35cb08ee1aa6fdcc6d387daee8fcd1877"
+  },
+  "removed_sources": {
+    "share/man/man4/pty.4": "f7faf03d271e7530bd9a1ec4db040c5b8dc36778fa5fe66a9495ffdc2009a280",
+    "sys/dev/pty/pty.c": "c9bf2447c37e2b24b31d8fe78ee93064f3c5ad0570dfb398e3f150d9815b8e13",
+    "sys/modules/pty/Makefile": "ecfc0b5a79de9e2f421e5a2087ae8eb0481d544ce91b884d443ec5e6a319ca34",
+    "tools/kerneldoc/subsys/Doxyfile-dev_pty": "46fcc8e92a8da396d8dc8b92c15c011109763f1511588f05ebd4f3dfc94cbd32",
+    "tools/test/stress2/misc/pty.sh": "6ee8ea87ae58356d6ac8072fbb11bd23aa034fed9777d5f10a7a980ad4be545c",
+    "tools/test/stress2/misc/pty2.sh": "956f6d0b351fabbb21602ff9281134295dae8d0a22afbcbf196556bed50c8e7c",
+    "tools/test/stress2/tools/ptyleak.sh": "5abfa1553d22ae2fab8df22a68c33b2090d86ccf74b12a56ff31b48e68506c8e"
+  }
+}

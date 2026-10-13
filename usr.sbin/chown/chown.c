@@ -47,6 +47,19 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "fileowner_trace.h"
+
+static int
+trace_fchownat(int fd, const char *path, uid_t uid, gid_t gid, int flags)
+{
+	int result;
+
+	TRACE_FILEOWNER_OPERATION__START(flags);
+	result = fchownat(fd, path, uid, gid, flags);
+	TRACE_FILEOWNER_OPERATION__DONE(flags, result, result < 0 ? errno : 0);
+	return (result);
+}
+
 static void	a_gid(const char *);
 static void	a_uid(const char *);
 static void	chownerr(const char *);
@@ -196,7 +209,7 @@ main(int argc, char **argv)
 		if ((uid == (uid_t)-1 || uid == p->fts_statp->st_uid) &&
 		    (gid == (gid_t)-1 || gid == p->fts_statp->st_gid))
 			continue;
-		if (fchownat(AT_FDCWD, p->fts_accpath, uid, gid, atflag)
+		if (trace_fchownat(AT_FDCWD, p->fts_accpath, uid, gid, atflag)
 		    == -1 && !fflag) {
 			chownerr(p->fts_path);
 			rval = 1;

@@ -51,6 +51,21 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#include "processwait_trace.h"
+
+static int
+trace_kevent(int fd, const struct kevent *changes, int nchanges, struct kevent *events, int nevents, const struct timespec *timeout)
+{
+	int result;
+
+	TRACE_PROCESSWAIT_OPERATION__START(nchanges, nevents);
+	result = kevent(fd, changes, nchanges, events, nevents, timeout);
+	TRACE_PROCESSWAIT_OPERATION__DONE(nchanges, nevents,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 struct pid {
 	RB_ENTRY(pid) entry;
 	pid_t pid;
@@ -199,7 +214,7 @@ main(int argc, char *argv[])
 			continue;
 		}
 		EV_SET(e + nleft, pid, EVFILT_PROC, EV_ADD, notes, 0, NULL);
-		if (kevent(kq, e + nleft, 1, NULL, 0, NULL) == -1) {
+		if (trace_kevent(kq, e + nleft, 1, NULL, 0, NULL) == -1) {
 			if (errno != ESRCH)
 				err(EX_OSERR, "kevent()");
 			warn("%ld", pid);
@@ -216,7 +231,7 @@ main(int argc, char *argv[])
 	 * Detect SIGINFO so we can print a status.
 	 */
 	EV_SET(e + nev, SIGINFO, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	if (kevent(kq, e + nev, 1, NULL, 0, NULL) == -1) {
+	if (trace_kevent(kq, e + nev, 1, NULL, 0, NULL) == -1) {
 		err(EX_OSERR, "kevent");
 	}
 	nev++;
@@ -226,7 +241,7 @@ main(int argc, char *argv[])
 		 * can be returned rather than 142.
 		 */
 		EV_SET(e + nev, SIGALRM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-		if (kevent(kq, e + nev, 1, NULL, 0, NULL) == -1) {
+		if (trace_kevent(kq, e + nev, 1, NULL, 0, NULL) == -1) {
 			err(EX_OSERR, "kevent");
 		}
 		nev++;
@@ -239,7 +254,7 @@ main(int argc, char *argv[])
 	ret = EX_OK;
 	setvbuf(stderr, NULL, _IOLBF, 0);
 	while ((ndone == 0 || !oflag) && ret == EX_OK && nleft > 0) {
-		n = kevent(kq, NULL, 0, e, nev, NULL);
+		n = trace_kevent(kq, NULL, 0, e, nev, NULL);
 		if (n == -1) {
 			err(EX_OSERR, "kevent");
 		}

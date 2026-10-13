@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 #include "switchboard.h"
+#include "trace_pressure.h"
 
 static volatile uint64_t next_reply_token = 1;
 
@@ -37,8 +38,11 @@ static volatile uint64_t next_reply_token = 1;
  * the status from capsule (0 = success, errno on failure).  Returns -1 on
  * communication error (sets errno).
  */
+#ifndef WITH_DTRACE
+#define capsule_rpc_fds_impl capsule_rpc_fds
+#endif
 static int
-capsule_rpc_fds(int channel_fd, const void *req, uint32_t reqlen,
+capsule_rpc_fds_impl(int channel_fd, const void *req, uint32_t reqlen,
     const int *send_fds, uint32_t send_nfds,
     int *reply_fds, int max_reply_fds, int *nfds_out)
 {
@@ -124,6 +128,7 @@ retry:
 		}
 
 		if (ra.reply_token != token) {
+			SWITCHBOARD_TRACE_CAPSULE_STALE_REPLY(retries + 1);
 			syslog(LOG_WARNING,
 			    "capsule_rpc: draining stale reply "
 			    "(got %ju, expected %ju)",
@@ -160,6 +165,7 @@ retry:
 	 */
 	if (ra.payload_len != sizeof(rpl) ||
 	    ra.nfds != (uint32_t)(rpl.status == 0 ? max_reply_fds : 0)) {
+		SWITCHBOARD_TRACE_CAPSULE_MALFORMED_REPLY(ra.payload_len, ra.nfds);
 		syslog(LOG_ERR, "capsule_rpc: malformed reply (%u bytes, %u fds)",
 		    (unsigned)ra.payload_len, (unsigned)ra.nfds);
 		for (i = 0; i < max_reply_fds; i++) {
@@ -177,6 +183,25 @@ retry:
 
 	return (rpl.status);
 }
+
+#ifdef WITH_DTRACE
+static int
+capsule_rpc_fds(int channel_fd, const void *req, uint32_t reqlen,
+    const int *send_fds, uint32_t send_nfds,
+    int *reply_fds, int max_reply_fds, int *nfds_out)
+{
+	int result, saved;
+
+	SWITCHBOARD_TRACE_CAPSULE_RPC_START(reqlen, send_nfds, max_reply_fds);
+	result = capsule_rpc_fds_impl(channel_fd, req, reqlen, send_fds,
+	    send_nfds, reply_fds, max_reply_fds, nfds_out);
+	saved = errno;
+	SWITCHBOARD_TRACE_CAPSULE_RPC_DONE(result, result == -1 ? saved : 0);
+	errno = saved;
+	return (result);
+}
+
+#endif
 
 /*
  * Send a request with no attached descriptors and wait for the reply.

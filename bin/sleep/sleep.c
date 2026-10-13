@@ -40,6 +40,19 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "sleepwait_trace.h"
+
+static int
+trace_nanosleep(const struct timespec *requested, struct timespec *remaining)
+{
+	int result;
+
+	TRACE_SLEEPWAIT_OPERATION__START(0);
+	result = nanosleep(requested, remaining);
+	TRACE_SLEEPWAIT_OPERATION__DONE(0, result, result < 0 ? errno : 0);
+	return (result);
+}
+
 static volatile sig_atomic_t report_requested;
 
 static void
@@ -117,7 +130,7 @@ main(int argc, char *argv[])
 
 	signal(SIGINFO, report_request);
 
-	while (nanosleep(&time_to_sleep, &time_to_sleep) != 0) {
+	while (trace_nanosleep(&time_to_sleep, &time_to_sleep) != 0) {
 		if (errno != EINTR)
 			err(1, "nanosleep");
 		if (report_requested) {

@@ -1,0 +1,166 @@
+Fifteenth system tracing expansion (2026-10-13)
+==============================================
+
+Scope: PF cookies/table transactions and pfsync; NVMe recovery; ZFS scan and
+rebuild; USB exploration and PCI deferred hotplug; sockstat, ipcs, gzip, tar.
+39 distinct contracts: 30 kernel SDT and 9 user USDT. Ten profiles bring the
+installed profile catalog to 414 entries. Profiles are installed by the
+existing bsdinstruments Makefile in /usr/share/bsdinstruments/profiles.
+No software was installed, no modules loaded, and no machine rebooted.
+
+Contract inventory: coverage-fifteenth.json. Its kernel argument_expressions
+show one representative call site, not all possible values. The semantics
+below cover every site. Repeated call sites are not counted as new contracts.
+All 39 are disjoint from the pre-pass whole-tree 3,084-contract inventory at
+/usr/obj/5bsd-dtrace-census-20261013/working-tree.json. This is source coverage,
+not a claim about the number registered on a particular running kernel.
+
+Kernel contracts: sdt:::NAME
+---------------------------
+Arguments are zero based; pointers identify objects only, not stable IDs.
+Do not dereference retained pointers or assume they survive the event.
+
+pf-syncookie-active: active boolean, configured mode. After the always-mode
+assignment, adaptive activation, or rotation-triggered deactivation. A mode
+assignment may repeat the active value; no key/cookie/address data is exposed.
+
+pf-table-begin / pf-table-rollback: flags, affected inactive-table count,
+zero status, at the successful transaction-processing exit. These do not fire
+for rejected flags, failed ruleset allocation, or rollback's no-op exit.
+pf-table-commit: flags, added+changed table count, status (0 or EBUSY for an
+invalid/closed ticket). Dummy transactions retain PFR_FLAG_DUMMY and do not
+imply any change was applied. Table names and addresses are omitted.
+
+pfsync-queue-pressure: bucket ID, existing packet bytes, requested extra bytes
+before an MTU-triggered sendout, at both queue insertion paths. Not queue count.
+pfsync-bulk-start: softc identity, after accepting an outgoing bulk request.
+pfsync-bulk-status-send: softc, PFSYNC_BUS_* status before constructing/sending
+that status message. This is an attempt, not confirmation of network delivery.
+pfsync-bulk-retry / pfsync-bulk-failed: incremented attempt count in the bulk
+receive watchdog. Failed is emitted before the existing reset/pretend-OK logic;
+it explicitly does not claim successful synchronization.
+
+nvme-watchdog-reset: qpair identity, sampled CSTS, only when reset was accepted.
+nvme-request-expired: qpair, local tracker CID, whether an abort was already
+sent, after completion polling still leaves an expired command.
+nvme-abort-pressure: qpair, reason 1=ACL capacity, 2=abort submission failure.
+nvme-abort-sent: qpair, local tracker CID, after successful abort submission.
+Local CIDs exclude the hardware cid_base offset. Qpair identity is required
+for correlation; neither opcode payloads nor namespace addresses are exposed.
+nvme-queued-resubmit: qpair, opcode, retry count before re-enabling queued I/O.
+It marks a submission attempt, not completion or a guaranteed hardware retry.
+These probes run in watchdog/recovery paths, not completion, panic polling,
+raw interrupt, or early startup paths. They are guarded by !cold.
+
+scan-state: scan identity, DSS_SCANNING, txg during scan setup.
+scan-done: scan identity, DSS_FINISHED or DSS_CANCELED, scan errors, txg.
+scan-paused: scan identity, 1=paused or 0=resumed after changing scrub flags.
+scan-checkpoint: scan identity, txg after queue/state checkpoint updates in
+sync processing. This does not mean the txg is already durable on disk.
+These cover the normal scrub/resilver scan; error-scrub has a separate state
+machine and is not represented by these events.
+rebuild-state: vdev identity, VDEV_REBUILD_ACTIVE/COMPLETE/CANCELED, txg.
+rebuild-wait-start: rebuild identity, kind (1=inflight capacity, 2=final drain),
+inflight bytes; rebuild-wait-done: identity, kind. Each cv_wait is paired,
+including spurious wakes; repeated waits are not one continuous operation.
+All new portable ZFS calls use trace_bsd.h: no argument evaluation in libzpool
+or foreign tracing backends, and no undeclared Linux tracepoint additions.
+
+usb-attach-done: child identity, usb_error_t from the three explore/reconfigure
+probe-and-attach calls. It does not observe every driver attachment globally.
+usb-disconnect: parent identity, port before freeing an existing or failed
+child in reattachment. It includes error cleanup, not just physical unplug.
+usb-enumerate-start: parent, port; usb-enumerate-done: parent, port, allocation
+success boolean after usb_alloc_device. No invented errno for NULL results.
+usb-tt-drain-start/done: hub identity around translator-message drain wait.
+These run after cold startup and are excluded from USB_GLOBAL_INCLUDE_FILE
+builds; TT probes additionally require USB_HAVE_TT_SUPPORT.
+
+pci-hotplug-start/done: bridge softc, child-present boolean around the locked,
+deferred hotplug task. Child presence is not attachment success or an errno.
+pci-hotplug-watchdog: bridge, kind 1=command completion/2=DLL active, sampled
+slot/link status. Both timeout and missed-interrupt recovery branches are
+observable from the register bits. No extra hardware reads are introduced.
+Probes are !cold guarded and do not run in the raw PCI interrupt handler.
+
+User contracts
+--------------
+USDT is selected only with MK_DTRACE != no, excluding RESCUE and BOOTSTRAPPING.
+Headers guard argument evaluation and preserve errno. Off builds use original
+calls directly. Shared ipc.c also compiles in ipcrm with tracing disabled.
+Portable bsdtar code needs no generated provider header in a non-USDT build.
+
+socketsnapshot*:::query-start / ipcsnapshot*:::query-start:
+  sizing-only boolean, requested bytes (0 for a sizing-only query).
+query-done: return value, errno on -1 (otherwise 0), resulting bytes on success
+(otherwise 0). Socket probes wrap cap_sysctlbyname, IPC probes sysctlbyname.
+No sysctl names, socket addresses, process names, IDs or returned structs are
+recorded. IPC's kvm backend and sockstat's numeric-MIB calls are not covered.
+
+gzipstream*:::inflate-start: available input/output bytes before inflate.
+inflate-done: zlib result and remaining input/output bytes. Z_BUF_ERROR with
+Z_FINISH can be normal; classify by the caller's state, not just negativity.
+decode-error: gzip state enum, input bytes read, at stop_and_fail before its
+failure result is assigned. Includes framing, CRC, length, truncation and
+stream failures reaching that exit, but not every early fatal allocation or
+other compression format. State values: 0/1 magic, 2 method, 3 flags, 4 skip,
+5..7 extra, 8 original name, 9 comment, 10/11 header CRC, 12 init, 13 inflate,
+14 payload CRC, 15 payload length. Neither CRC values nor contents are exposed.
+
+archiveop*:::operation-start: operation 1=next-header, 2=extract-entry;
+operation-done: operation, libarchive status. ARCHIVE_EOF is not an error;
+negative statuses have libarchive semantics, not errno semantics. These cover
+bsdtar's read/extract entry loop, not all archive library API calls or writes.
+No paths, archive entry names, ownership or payloads are exposed.
+
+Profiles and use
+----------------
+pf-table-cookie-events, pfsync-recovery-events, nvme-watchdog-events,
+zfs-scan-progress, zfs-rebuild-progress, usb-enumeration-latency,
+pci-hotplug-recovery, base-snapshot-latency, base-inflate-results,
+base-archive-operations.
+
+Example: bsdinstruments generate -f \
+  /usr/share/bsdinstruments/profiles/base-inflate-results.d --pid PID
+Start paired profiles before the workload. Lost events invalidate latency
+pairing. Times include scheduling and preemption. Thread-local nesting is
+cleared on matched returns. PID filters can omit deferred kernel work.
+These profiles never dereference kernel identities or read payloads.
+
+Validation and limitations
+--------------------------
+Artifacts and exact per-file originals:
+  /usr/obj/5bsd-dtrace-fifteenth-validation
+Maintained checks: coverage-fifteenth-{compile,modules,libzpool,base,check,
+codegen,guards,zfs-guards,integration,smoke}.py in this directory.
+They use the native prepared GENERIC-NODEBUG tree and standard /usr/obj root;
+compile flags are obtained from the kernel/module Makefiles, including
+per-source ZFS flags. Parallel compilation uses all logical CPUs.
+codegen additionally requires the preserved before/ sources in the artifact.
+
+Results:
+- Eight kernel sources, tracing enabled/disabled: 16 native Werror compiles.
+- PF, pfsync, ZFS, NVMe and USB modules link; prepared kernel links.
+- Both changed portable ZFS sources compile in base libzpool.
+- Four base tools plus shared-source ipcrm build in both modes: ten builds.
+- Exact kernel definitions have executable SDT NOP sites; off objects omit them.
+- Four user binaries have correct DOF arities and enabled offsets; off binaries
+  omit the new providers. These checks do not establish live registration.
+- Twenty profile renders/offline compiles (plain and PID/duration filtered),
+  with separate selector/argument checks and install-catalog membership.
+- Eight kernel sources have identical normalized no-hooks .text bytes to
+  originals. This compares code bytes, not relocation equivalence or runtime.
+- Eight real-header guard/errno fixtures, three ZFS backend guard fixtures,
+  and 21 source/build-selection/USB alternate-guard integration checks.
+- 36 real binary behavior checks: gzip valid/concatenated/empty compression,
+  CRC/truncation/header errors; tar list/extract/bad/missing archives;
+  IPv4/IPv6/Unix socket snapshots and shared-memory/queue/semaphore snapshots.
+
+Host limitation: sockstat -l (unqualified protocols) fails through Casper with
+"Socket is not connected" in both builds and installed /usr/bin/sockstat.
+The -46l, -46 and -u snapshot checks pass. No tracing-induced behavior change
+was identified; this pre-existing host path is not diagnosed here.
+
+/dev/dtrace is unavailable. No live probe firing, driver fault injection,
+pool scrub/rebuild, PF reconfiguration, or hardware hotplug was performed.
+No live kernel event ordering or tracing overhead qualification is claimed.

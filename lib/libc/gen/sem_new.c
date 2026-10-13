@@ -49,6 +49,7 @@
 #include <unistd.h>
 #include "un-namespace.h"
 #include "libc_private.h"
+#include "semwait_trace.h"
 
 __weak_reference(_sem_close, sem_close);
 __weak_reference(_sem_destroy, sem_destroy);
@@ -336,8 +337,12 @@ _sem_getvalue(sem_t * __restrict sem, int * __restrict sval)
 static __inline int
 usem_wake(struct _usem2 *sem)
 {
+	int result;
 
-	return (_umtx_op(sem, UMTX_OP_SEM2_WAKE, 0, NULL, NULL));
+	TRACE_SEMWAIT_WAKE__START(sem);
+	result = _umtx_op(sem, UMTX_OP_SEM2_WAKE, 0, NULL, NULL);
+	TRACE_SEMWAIT_WAKE__DONE(sem, result, result == -1 ? errno : 0);
+	return (result);
 }
 
 static __inline int
@@ -362,7 +367,9 @@ usem_wait(struct _usem2 *sem, clockid_t clock_id, int flags,
 		tm_p = &tms;
 		tm_size = sizeof(tms);
 	}
+	TRACE_SEMWAIT_PARK__START(sem, clock_id, flags);
 	retval = _umtx_op(sem, UMTX_OP_SEM2_WAIT, 0, (void *)tm_size, tm_p);
+	TRACE_SEMWAIT_PARK__DONE(sem, retval, retval == -1 ? errno : 0);
 	if (retval == -1 && errno == EINTR && (flags & TIMER_ABSTIME) == 0 &&
 	    rqtp != NULL && rmtp != NULL) {
 		*rmtp = tms.remain;

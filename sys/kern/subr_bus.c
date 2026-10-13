@@ -52,6 +52,7 @@
 #include <sys/stdarg.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
+#include <sys/sdt.h>
 #include <sys/taskqueue.h>
 #include <sys/bus.h>
 #include <sys/cpuset.h>
@@ -69,6 +70,13 @@
 #include <dev/iommu/iommu.h>
 
 #include <ddb/ddb.h>
+
+SDT_PROVIDER_DEFINE(newbus);
+/* Driver callback boundaries; early boot invocations precede enablement. */
+SDT_PROBE_DEFINE1(newbus, , , attach__start, "device_t");
+SDT_PROBE_DEFINE2(newbus, , , attach__done, "device_t", "int");
+SDT_PROBE_DEFINE1(newbus, , , detach__start, "device_t");
+SDT_PROBE_DEFINE2(newbus, , , detach__done, "device_t", "int");
 
 SYSCTL_NODE(_hw, OID_AUTO, bus, CTLFLAG_RW | CTLFLAG_MPSAFE, NULL,
     NULL);
@@ -2640,7 +2648,10 @@ device_attach(device_t dev)
 		device_print_child(dev->parent, dev);
 	attachtime = get_cyclecount();
 	dev->state = DS_ATTACHING;
-	if ((error = DEVICE_ATTACH(dev)) != 0) {
+	SDT_PROBE1(newbus, , , attach__start, dev);
+	error = DEVICE_ATTACH(dev);
+	SDT_PROBE2(newbus, , , attach__done, dev, error);
+	if (error != 0) {
 		printf("device_attach: %s%d attach returned %d\n",
 		    dev->driver->name, dev->unit, error);
 		BUS_CHILD_DETACHED(dev->parent, dev);
@@ -2719,7 +2730,10 @@ device_detach(device_t dev)
 		return (0);
 
 	EVENTHANDLER_DIRECT_INVOKE(device_detach, dev, EVHDEV_DETACH_BEGIN);
-	if ((error = DEVICE_DETACH(dev)) != 0) {
+	SDT_PROBE1(newbus, , , detach__start, dev);
+	error = DEVICE_DETACH(dev);
+	SDT_PROBE2(newbus, , , detach__done, dev, error);
+	if (error != 0) {
 		EVENTHANDLER_DIRECT_INVOKE(device_detach, dev,
 		    EVHDEV_DETACH_FAILED);
 		return (error);

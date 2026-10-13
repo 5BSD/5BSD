@@ -1,3 +1,5 @@
+.include <src.opts.mk>
+
 #
 # Copyright (c) 1997 Doug Rabson
 # All rights reserved.
@@ -30,5 +32,12 @@ PROG=	kldstat
 MAN=	kldstat.8
 
 LIBADD=	util
+
+SRCS=	kldstat.c
+
+.if ${MK_DTRACE} != "no" && !defined(RESCUE) && !defined(BOOTSTRAPPING)
+SRCS+=	modulequery_provider.d
+CFLAGS+= -DWITH_COVERAGE_DTRACE
+.endif
 
 .include <bsd.prog.mk>

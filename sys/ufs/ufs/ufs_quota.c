@@ -58,6 +58,15 @@
 #include <ufs/ufs/ufsmount.h>
 #include <ufs/ufs/ufs_extern.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(ufsquota);
+SDT_PROBE_DEFINE4(ufsquota, , , deny, "struct dquot *", "int", "int", "int");
+SDT_PROBE_DEFINE4(ufsquota, , , grace__start,
+    "struct dquot *", "int", "int", "int64_t");
+SDT_PROBE_DEFINE2(ufsquota, , , sync__start, "struct dquot *", "int");
+SDT_PROBE_DEFINE2(ufsquota, , , sync__done, "struct dquot *", "int");
+
 CTASSERT(sizeof(struct dqblk64) == sizeof(struct dqhdr64));
 
 static int unprivileged_get_quota = 0;
@@ -258,6 +267,7 @@ chkdqchg(struct inode *ip, ufs2_daddr_t change, struct ucred *cred,
 	 * If user would exceed their hard limit, disallow space allocation.
 	 */
 	if (ncurblocks >= dq->dq_bhardlimit && dq->dq_bhardlimit) {
+		SDT_PROBE4(ufsquota, , , deny, dq, type, 0, 0);
 		if ((dq->dq_flags & DQ_BLKS) == 0 &&
 		    ip->i_uid == cred->cr_uid) {
 			dq->dq_flags |= DQ_BLKS;
@@ -277,11 +287,14 @@ chkdqchg(struct inode *ip, ufs2_daddr_t change, struct ucred *cred,
 	if (ncurblocks >= dq->dq_bsoftlimit && dq->dq_bsoftlimit) {
 		if (dq->dq_curblocks < dq->dq_bsoftlimit) {
 			dq->dq_btime = time_second + ITOUMP(ip)->um_btime[type];
+			SDT_PROBE4(ufsquota, , , grace__start, dq, type,
+			    0, dq->dq_btime);
 			if (ip->i_uid == cred->cr_uid)
 				*warn = 1;
 			return (0);
 		}
 		if (time_second > dq->dq_btime) {
+			SDT_PROBE4(ufsquota, , , deny, dq, type, 0, 1);
 			if ((dq->dq_flags & DQ_BLKS) == 0 &&
 			    ip->i_uid == cred->cr_uid) {
 				dq->dq_flags |= DQ_BLKS;
@@ -396,6 +409,7 @@ chkiqchg(struct inode *ip, int change, struct ucred *cred, int type, int *warn)
 	 * If user would exceed their hard limit, disallow inode allocation.
 	 */
 	if (ncurinodes >= dq->dq_ihardlimit && dq->dq_ihardlimit) {
+		SDT_PROBE4(ufsquota, , , deny, dq, type, 1, 0);
 		if ((dq->dq_flags & DQ_INODS) == 0 &&
 		    ip->i_uid == cred->cr_uid) {
 			dq->dq_flags |= DQ_INODS;
@@ -415,11 +429,14 @@ chkiqchg(struct inode *ip, int change, struct ucred *cred, int type, int *warn)
 	if (ncurinodes >= dq->dq_isoftlimit && dq->dq_isoftlimit) {
 		if (dq->dq_curinodes < dq->dq_isoftlimit) {
 			dq->dq_itime = time_second + ITOUMP(ip)->um_itime[type];
+			SDT_PROBE4(ufsquota, , , grace__start, dq, type,
+			    1, dq->dq_itime);
 			if (ip->i_uid == cred->cr_uid)
 				*warn = 1;
 			return (0);
 		}
 		if (time_second > dq->dq_itime) {
+			SDT_PROBE4(ufsquota, , , deny, dq, type, 1, 1);
 			if ((dq->dq_flags & DQ_INODS) == 0 &&
 			    ip->i_uid == cred->cr_uid) {
 				dq->dq_flags |= DQ_INODS;
@@ -1613,9 +1630,11 @@ dqsync(struct vnode *vp, struct dquot *dq)
 	auio.uio_segflg = UIO_SYSSPACE;
 	auio.uio_rw = UIO_WRITE;
 	auio.uio_td = (struct thread *)0;
+	SDT_PROBE2(ufsquota, , , sync__start, dq, dq->dq_type);
 	error = VOP_WRITE(dqvp, &auio, 0, dq->dq_ump->um_cred[dq->dq_type]);
 	if (auio.uio_resid && error == 0)
 		error = EIO;
+	SDT_PROBE2(ufsquota, , , sync__done, dq, error);
 
 	DQI_LOCK(dq);
 	DQI_WAKEUP(dq);

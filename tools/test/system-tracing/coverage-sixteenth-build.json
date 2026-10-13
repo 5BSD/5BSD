@@ -1,0 +1,59 @@
+{
+  "iflib": [
+    "sys/net/iflib.c"
+  ],
+  "nvmf/nvmf": [
+    "sys/dev/nvmf/host/nvmf.c"
+  ],
+  "nvmf/nvmf_transport": [
+    "sys/dev/nvmf/nvmf_transport.c"
+  ],
+  "geom/geom_eli": [
+    "sys/geom/eli/g_eli.c",
+    "sys/geom/eli/g_eli_integrity.c",
+    "sys/geom/eli/g_eli_privacy.c"
+  ],
+  "geom/geom_raid": [
+    "sys/geom/raid/g_raid.c",
+    "sys/geom/raid/tr_raid1.c"
+  ],
+  "mpr": [
+    "sys/dev/mpr/mpr.c"
+  ],
+  "mps": [
+    "sys/dev/mps/mps.c"
+  ],
+  "ix": [
+    "sys/dev/ixgbe/if_ix.c"
+  ],
+  "igc": [
+    "sys/dev/igc/if_igc.c"
+  ],
+  "mlx5": [
+    "sys/dev/mlx5/mlx5_core/mlx5_health.c"
+  ],
+  "ath_main": [
+    "sys/dev/ath/if_ath.c"
+  ],
+  "rtwn": [
+    "sys/dev/rtwn/if_rtwn.c"
+  ],
+  "if_wg": [
+    "sys/dev/wg/if_wg.c"
+  ],
+  "wlan": [
+    "sys/net80211/ieee80211_sta.c"
+  ],
+  "hyperv/netvsc": [
+    "sys/dev/hyperv/netvsc/if_hn.c"
+  ],
+  "hyperv/storvsc": [
+    "sys/dev/hyperv/storvsc/hv_storvsc_drv_freebsd.c"
+  ],
+  "hid/hidbus": [
+    "sys/dev/hid/hidbus.c"
+  ],
+  "sound/sound": [
+    "sys/dev/sound/pcm/channel.c"
+  ]
+}

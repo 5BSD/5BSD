@@ -96,6 +96,7 @@ static uma_zone_t __read_mostly biozone;
 #include <sys/sdt.h>
 
 SDT_PROVIDER_DECLARE(geom);
+SDT_PROBE_DEFINE5(geom, , , io__submit, "void *", "void *", "int", "int64_t", "int");
 SDT_PROBE_DEFINE4(geom, , , io__retry, "void *", "void *", "int", "int");
 SDT_PROBE_DEFINE4(geom, , , io__complete, "void *", "void *", "int", "int");
 
@@ -583,6 +584,8 @@ g_io_request(struct bio *bp, struct g_consumer *cp)
 			direct = 0;
 	}
 
+	SDT_PROBE5(geom, , , io__submit, bp, pp, bp->bio_cmd,
+	    bp->bio_length, direct);
 	if (direct) {
 		error = g_io_check(bp);
 		if (error >= 0) {

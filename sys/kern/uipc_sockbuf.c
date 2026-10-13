@@ -53,6 +53,12 @@
 
 #include <netinet/in.h>
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(sockbuf);
+SDT_PROBE_DEFINE2(sockbuf, , , wait__start, "struct socket *", "int");
+SDT_PROBE_DEFINE3(sockbuf, , , wait__done, "struct socket *", "int", "int");
+
 /*
  * Function pointer set by the AIO routines so that the socket buffer code
  * can call back into the AIO module if it is loaded.
@@ -444,13 +450,17 @@ int
 sbwait(struct socket *so, sb_which which)
 {
 	struct sockbuf *sb;
+	int error;
 
 	SOCK_BUF_LOCK_ASSERT(so, which);
 
 	sb = sobuf(so, which);
 	sb->sb_flags |= SB_WAIT;
-	return (msleep_sbt(&sb->sb_acc, soeventmtx(so, which),
-	    PSOCK | PCATCH, "sbwait", sb->sb_timeo, 0, 0));
+	SDT_PROBE2(sockbuf, , , wait__start, so, which);
+	error = msleep_sbt(&sb->sb_acc, soeventmtx(so, which),
+	    PSOCK | PCATCH, "sbwait", sb->sb_timeo, 0, 0);
+	SDT_PROBE3(sockbuf, , , wait__done, so, which, error);
+	return (error);
 }
 
 /*
@@ -656,15 +666,33 @@ sbreserve_locked_limit(struct socket *so, sb_which which, u_long cc,
 	 * appropriate thread resource limits are available.  In that case,
 	 * we don't apply a process limit.
 	 */
-	if (cc > BUF_MAX_ADJ(buf_max))
+	if (cc > BUF_MAX_ADJ(buf_max)) {
+		if (!cold && !SCHEDULER_STOPPED() &&
+		    curthread->td_intr_nesting_level == 0)
+			DTRACE_PROBE5(sockbuf__reserve__failure,
+			    void *, (so),
+			    int, (which),
+			    int, (1),
+			    u_long, (cc),
+			    uint64_t, (BUF_MAX_ADJ(buf_max)));
 		return (false);
+	}
 	if (td != NULL) {
 		sbsize_limit = lim_cur(td, RLIMIT_SBSIZE);
 	} else
 		sbsize_limit = RLIM_INFINITY;
 	if (!chgsbsize(so->so_cred->cr_uidinfo, &sb->sb_hiwat, cc,
-	    sbsize_limit))
+	    sbsize_limit)) {
+		if (!cold && !SCHEDULER_STOPPED() &&
+		    curthread->td_intr_nesting_level == 0)
+			DTRACE_PROBE5(sockbuf__reserve__failure,
+			    void *, (so),
+			    int, (which),
+			    int, (2),
+			    u_long, (cc),
+			    uint64_t, (sbsize_limit));
 		return (false);
+	}
 	sb->sb_mbmax = min(cc * sb_efficiency, buf_max);
 	if (sb->sb_lowat > sb->sb_hiwat)
 		sb->sb_lowat = sb->sb_hiwat;
@@ -753,6 +781,13 @@ sbsetopt(struct socket *so, struct sockopt *sopt)
 	case SO_RCVBUF:
 		if (SOLISTENING(so)) {
 			if (cc > sb_max_adj) {
+				if (!cold && !SCHEDULER_STOPPED() &&
+				    curthread->td_intr_nesting_level == 0)
+					DTRACE_PROBE4(sockbuf__listen__limit,
+					    void *, (so),
+					    int, (sopt->sopt_name),
+					    u_int, (cc),
+					    u_long, (sb_max_adj));
 				error = ENOBUFS;
 				break;
 			}

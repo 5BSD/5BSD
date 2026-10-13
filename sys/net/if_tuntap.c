@@ -48,6 +48,8 @@
 #include "opt_inet6.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/lock.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
@@ -105,9 +107,13 @@
 
 #include <dev/virtio/network/virtio_net.h>
 
-#include <sys/queue.h>
 #include <sys/condvar.h>
 #include <security/mac/mac_framework.h>
+
+SDT_PROVIDER_DEFINE(tuntap);
+SDT_PROBE_DEFINE1(tuntap, , , read__wait__start, "void *");
+SDT_PROBE_DEFINE2(tuntap, , , read__wait__done, "void *", "int");
+
 
 struct tuntap_driver;
 
@@ -1860,8 +1866,10 @@ tunread(struct cdev *dev, struct uio *uio, int flag)
 			return (EWOULDBLOCK);
 		}
 		tp->tun_flags |= TUN_RWAIT;
+		SDT_PROBE1(tuntap, , , read__wait__start, tp);
 		error = mtx_sleep(tp, &tp->tun_mtx, PCATCH | PZERO,
 		    "tunread", 0);
+		SDT_PROBE2(tuntap, , , read__wait__done, tp, error);
 		if (error != 0) {
 			TUN_UNLOCK(tp);
 			return (error);

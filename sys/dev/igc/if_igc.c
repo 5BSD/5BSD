@@ -29,6 +29,8 @@
 
 #include <sys/cdefs.h>
 #include "if_igc.h"
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/sbuf.h>
 #include <machine/_inttypes.h>
 
@@ -1298,6 +1300,9 @@ igc_handle_fatal_error_admin(struct igc_softc *sc)
 		    IGC_FATAL_ERROR_NONE);
 
 	peind = sc->fatal_error_peind;
+	if (!cold)
+		DTRACE_PROBE3(igc__fatal__error, void *, (sc),
+		    uint32_t, (peind), uint32_t, (sc->fatal_error_pcie));
 	if (peind & IGC_PEIND_LANPORT_PARITY_FATAL)
 		sc->fatal_error_lan_count++;
 	if (peind & IGC_PEIND_MNG_PARITY_FATAL)
@@ -1328,6 +1333,8 @@ igc_handle_fatal_error_admin(struct igc_softc *sc)
 	}
 
 	device_printf(sc->dev, "requesting reset after memory error\n");
+	if (!cold)
+		DTRACE_PROBE1(igc__reset__request, void *, (sc));
 	iflib_request_reset(sc->ctx);
 	/* Re-enter the admin task so it observes the reset request. */
 	iflib_admin_intr_deferred(sc->ctx);
@@ -1686,6 +1693,9 @@ igc_prepare_fatal_error_reset(struct igc_softc *sc)
 		device_printf(sc->dev,
 		    "device reset did not complete during parity recovery\n");
 	error = igc_disable_pcie_master_generic(hw);
+	if (!cold)
+		DTRACE_PROBE3(igc__reset__result, void *, (sc),
+		    int, (i == AUTO_READ_DONE_TIMEOUT), int, (error));
 	if (error != IGC_SUCCESS)
 		device_printf(sc->dev,
 		    "PCIe master disable failed during parity recovery: %d\n",

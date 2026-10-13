@@ -97,6 +97,9 @@ static void racct_settime_locked(struct proc *p, bool exit);
 static void racct_zeropcpu_locked(struct proc *p);
 
 SDT_PROVIDER_DEFINE(racct);
+SDT_PROBE_DEFINE2(racct, , , throttle__start, "struct proc *", "int");
+SDT_PROBE_DEFINE2(racct, , , throttle__done, "struct proc *", "int");
+
 SDT_PROBE_DEFINE3(racct, , rusage, add,
     "struct proc *", "int", "uint64_t");
 SDT_PROBE_DEFINE3(racct, , rusage, add__failure,
@@ -890,8 +893,10 @@ ast_racct(struct thread *td, int tda __unused)
 
 	PROC_LOCK(p);
 	while (p->p_throttled != 0) {
+		SDT_PROBE2(racct, , , throttle__start, p, p->p_throttled);
 		msleep(p->p_racct, &p->p_mtx, 0, "racct",
 		    p->p_throttled < 0 ? 0 : p->p_throttled);
+		SDT_PROBE2(racct, , , throttle__done, p, p->p_throttled);
 		if (p->p_throttled > 0)
 			p->p_throttled = 0;
 	}

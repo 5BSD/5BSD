@@ -42,6 +42,8 @@
 #include "opt_posix.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/capsicum.h>
 #include <sys/condvar.h>
 #include <sys/fcntl.h>
@@ -72,6 +74,19 @@
 
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
+
+SDT_PROVIDER_DEFINE(posixsem);
+SDT_PROBE_DEFINE2(posixsem, , , allocate, "void *", "unsigned int");
+SDT_PROBE_DEFINE1(posixsem, , , release, "void *");
+SDT_PROBE_DEFINE2(posixsem, , , limit, "unsigned int", "int");
+SDT_PROBE_DEFINE2(posixsem, , , access, "void *", "int");
+SDT_PROBE_DEFINE3(posixsem, , , wait__start, "void *", "int", "int");
+SDT_PROBE_DEFINE2(posixsem, , , wait__done, "void *", "int");
+SDT_PROBE_DEFINE2(posixsem, , , sleep__start, "void *", "int");
+SDT_PROBE_DEFINE2(posixsem, , , sleep__done, "void *", "int");
+SDT_PROBE_DEFINE3(posixsem, , , post, "void *", "unsigned int", "int");
+SDT_PROBE_DEFINE4(posixsem, , , value, "void *", "unsigned int", "unsigned int", "int");
+
 
 FEATURE(p1003_1b_semaphores, "POSIX P1003.1B semaphores support");
 /*
@@ -304,6 +319,7 @@ ksem_alloc(struct ucred *ucred, mode_t mode, unsigned int value)
 
 	mtx_lock(&ksem_count_lock);
 	if (nsems == p31b_getcfg(CTL_P1003_1B_SEM_NSEMS_MAX) || ksem_dead) {
+		SDT_PROBE2(posixsem, , , limit, nsems, ksem_dead);
 		mtx_unlock(&ksem_count_lock);
 		return (NULL);
 	}
@@ -323,6 +339,7 @@ ksem_alloc(struct ucred *ucred, mode_t mode, unsigned int value)
 	mac_posixsem_create(ucred, ks);
 #endif
 
+	SDT_PROBE2(posixsem, , , allocate, ks, value);
 	return (ks);
 }
 
@@ -343,6 +360,7 @@ ksem_drop(struct ksem *ks)
 		mac_posixsem_destroy(ks);
 #endif
 		cv_destroy(&ks->ks_cv);
+		SDT_PROBE1(posixsem, , , release, ks);
 		free(ks, M_KSEM);
 		mtx_lock(&ksem_count_lock);
 		nsems--;
@@ -363,6 +381,7 @@ ksem_access(struct ksem *ks, struct ucred *ucred)
 	    VREAD | VWRITE, ucred);
 	if (error)
 		error = priv_check_cred(ucred, PRIV_SEM_WRITE);
+	SDT_PROBE2(posixsem, , , access, ks, error);
 	return (error);
 }
 
@@ -739,11 +758,14 @@ sys_ksem_post(struct thread *td, struct ksem_post_args *uap)
 		goto err;
 	}
 	++ks->ks_value;
+	SDT_PROBE4(posixsem, , , value, ks, (ks->ks_value - 1),
+	    ks->ks_value, 1);
 	if (ks->ks_waiters > 0)
 		cv_signal(&ks->ks_cv);
 	error = 0;
 	vfs_timestamp(&ks->ks_ctime);
 err:
+	SDT_PROBE3(posixsem, , , post, ks, ks->ks_value, error);
 	mtx_unlock(&sem_lock);
 	fdrop(fp, td);
 	return (error);
@@ -821,6 +843,8 @@ kern_sem_wait(struct thread *td, semid_t id, int tryflag,
 		return (error);
 	ks = fp->f_data;
 	mtx_lock(&sem_lock);
+	SDT_PROBE3(posixsem, , , wait__start, ks, tryflag,
+	    (abstime != NULL));
 	DP((">>> kern_sem_wait critical section entered! pid=%d\n",
 	    (int)td->td_proc->p_pid));
 #ifdef MAC
@@ -836,9 +860,11 @@ kern_sem_wait(struct thread *td, semid_t id, int tryflag,
 		ks->ks_waiters++;
 		if (tryflag != 0)
 			error = EAGAIN;
-		else if (abstime == NULL)
+		else if (abstime == NULL) {
+			SDT_PROBE2(posixsem, , , sleep__start, ks, 0);
 			error = cv_wait_sig(&ks->ks_cv, &sem_lock);
-		else {
+			SDT_PROBE2(posixsem, , , sleep__done, ks, error);
+		} else {
 			for (;;) {
 				ts1 = *abstime;
 				getnanotime(&ts2);
@@ -848,8 +874,10 @@ kern_sem_wait(struct thread *td, semid_t id, int tryflag,
 					error = ETIMEDOUT;
 					break;
 				}
+				SDT_PROBE2(posixsem, , , sleep__start, ks, 1);
 				error = cv_timedwait_sig(&ks->ks_cv,
 				    &sem_lock, tvtohz(&tv));
+				SDT_PROBE2(posixsem, , , sleep__done, ks, error);
 				if (error != EWOULDBLOCK)
 					break;
 			}
@@ -859,9 +887,12 @@ kern_sem_wait(struct thread *td, semid_t id, int tryflag,
 			goto err;
 	}
 	ks->ks_value--;
+	SDT_PROBE4(posixsem, , , value, ks, (ks->ks_value + 1),
+	    ks->ks_value, 0);
 	DP(("kern_sem_wait value post-decrement = %d\n", ks->ks_value));
 	error = 0;
 err:
+	SDT_PROBE2(posixsem, , , wait__done, ks, error);
 	mtx_unlock(&sem_lock);
 	fdrop(fp, td);
 	DP(("<<< kern_sem_wait leaving, pid=%d, error = %d\n",
@@ -964,6 +995,8 @@ static struct syscall_helper_data ksem_syscalls[] = {
 #include <compat/freebsd32/freebsd32_signal.h>
 #include <compat/freebsd32/freebsd32_syscall.h>
 #include <compat/freebsd32/freebsd32_util.h>
+
+
 
 int
 freebsd32_ksem_init(struct thread *td, struct freebsd32_ksem_init_args *uap)

@@ -49,6 +49,20 @@
 #include <unistd.h>
 #include <locale.h>
 
+#include "signalall_trace.h"
+
+static int
+trace_kill(pid_t pid, int sig)
+{
+	int result;
+
+	TRACE_SIGNALALL_OPERATION__START(pid, sig);
+	result = kill(pid, sig);
+	TRACE_SIGNALALL_OPERATION__DONE(pid, sig, result,
+	    result < 0 ? errno : 0);
+	return (result);
+}
+
 static void __dead2
 usage(void)
 {
@@ -59,7 +73,6 @@ usage(void)
 	fprintf(stderr, "At least one option or argument to specify processes must be given.\n");
 	exit(1);
 }
-
 
 static void
 printsig(FILE *fp)
@@ -420,7 +433,7 @@ main(int ac, char **av)
 
 		killed++;
 		if (!dflag && !sflag) {
-			if (kill(thispid, sig) < 0 /* && errno != ESRCH */ ) {
+			if (trace_kill(thispid, sig) < 0 /* && errno != ESRCH */ ) {
 				warn("warning: kill -%s %d",
 				    sys_signame[sig], thispid);
 				errors = 1;

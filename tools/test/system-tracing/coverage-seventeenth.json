@@ -1,0 +1,270 @@
+{
+  "probes": [
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pipe-buffer-pressure",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/sys_pipe.c",
+      "argument_expressions": [
+        "(cpipe)",
+        "(1)",
+        "(size)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pipe-buffer-retry",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/sys_pipe.c",
+      "argument_expressions": [
+        "(cpipe)",
+        "(size)",
+        "(SMALL_PIPE_SIZE)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "shmfd-swap-pressure",
+      "types": [
+        "void *",
+        "off_t"
+      ],
+      "source": "sys/kern/uipc_shm.c",
+      "argument_expressions": [
+        "(shmfd)",
+        "(delta)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "shmfd-largepage-pressure",
+      "types": [
+        "void *",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/uipc_shm.c",
+      "argument_expressions": [
+        "(shmfd)",
+        "(psind)",
+        "(try)",
+        "(shmfd->shm_lp_alloc_policy)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "shmfd-largepage-retry",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/uipc_shm.c",
+      "argument_expressions": [
+        "(shmfd)",
+        "(psind)",
+        "(try)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "shmfd-largepage-wait-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/kern/uipc_shm.c",
+      "argument_expressions": [
+        "(shmfd)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "shmfd-largepage-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/uipc_shm.c",
+      "argument_expressions": [
+        "(shmfd)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "sysvshm-limit",
+      "types": [
+        "int",
+        "size_t"
+      ],
+      "source": "sys/kern/sysv_shm.c",
+      "argument_expressions": [
+        "(1)",
+        "(size)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "sysvshm-pager-pressure",
+      "types": [
+        "size_t",
+        "int"
+      ],
+      "source": "sys/kern/sysv_shm.c",
+      "argument_expressions": [
+        "(size)",
+        "(shm_use_phys)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "sysvmsg-limit",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/sysv_msg.c",
+      "argument_expressions": [
+        "(1)",
+        "(msginfo.msgmni)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "sysvsem-limit",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/sysv_sem.c",
+      "argument_expressions": [
+        "(1)",
+        "(nsems)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "kqueue-timer-limit",
+      "types": [
+        "void *",
+        "unsigned int"
+      ],
+      "source": "sys/kern/kern_event.c",
+      "argument_expressions": [
+        "(kn)",
+        "(kq_calloutmax)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "kqueue-expand-pressure",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/kern/kern_event.c",
+      "argument_expressions": [
+        "(kq)",
+        "(1)",
+        "(mflag)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "mqueue-count-limit",
+      "types": [
+        "int"
+      ],
+      "source": "sys/kern/uipc_mqueue.c",
+      "argument_expressions": [
+        "(maxmq)"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "profiles": [
+    "pipe-buffer-pressure",
+    "shm-largepage-pressure",
+    "sysv-ipc-pressure",
+    "kqueue-resource-pressure",
+    "mqueue-count-pressure"
+  ],
+  "sources": {
+    "cddl/usr.sbin/bsdinstruments/Makefile": "2f8e2f3b2ab8af9e3ee452c054e29bf6e5c48de21021889448c62a2af238714a",
+    "cddl/usr.sbin/bsdinstruments/profiles/kqueue-resource-pressure.d": "b5af8a94f5d0e1c08a0d024671b9f009cc54fcce17c51c022ef3f0f7a2bc2302",
+    "cddl/usr.sbin/bsdinstruments/profiles/mqueue-count-pressure.d": "6a39d6d468decb2350834e9a6875cf625d0a0f6cc7f9a841380883612ba5e428",
+    "cddl/usr.sbin/bsdinstruments/profiles/pipe-buffer-pressure.d": "cf2b0f4269bf3d9b9a0c499ddcf1462e011d20dcbde716feceb564166e15d8bd",
+    "cddl/usr.sbin/bsdinstruments/profiles/shm-largepage-pressure.d": "cbb8e49772c95543ddd4bed28587b69e324afa9efac5462ab08e94b46dbda465",
+    "cddl/usr.sbin/bsdinstruments/profiles/sysv-ipc-pressure.d": "7f27ea83ea640cc2519b64da184d87a424946d3b0966c307fe33a46e14ef67b2",
+    "sys/kern/kern_event.c": "05bdfbbde517f23f524a6d9dea973b48f8bde017643a25ed21cf8f07930f7af9",
+    "sys/kern/sys_pipe.c": "8c2a67d34afa0a352b33f3e2de499e34e78d0802f220a26c4fbcc4036971400f",
+    "sys/kern/sysv_msg.c": "4d9fba4664b2151c369116e8098241712c42aebf80fce6b88bc22da94cf173ef",
+    "sys/kern/sysv_sem.c": "c7b4de03d7b1f8e452f460b943b559dc6098f3de4181c0364f1b7fd07dc6d6b6",
+    "sys/kern/sysv_shm.c": "04f1d9761987b9fd838dbb821d5317a944dcb414505f3c725a6d0a431c44db7a",
+    "sys/kern/uipc_mqueue.c": "58550db0abbefde80721cbbba67176aa7c200d7be3a2e7d0bda052e08ce7fefc",
+    "sys/kern/uipc_shm.c": "f151411eb5ecf40376aa2a34d5517d4f7ee9b124fa25bf843e937cd4b1adae00",
+    "tools/test/system-tracing/COVERAGE-SEVENTEENTH": "198338536903ffaa694a32287501c5c50431ed703d37f3e849d791308065b09a",
+    "tools/test/system-tracing/coverage-fourth-dof.py": "7a2fc9fc87d4b6d161c88f981ace9c7c6e8c1090cfab60f523b5a61e6730375a",
+    "tools/test/system-tracing/coverage-seventeenth-build.json": "902edd69cb9a5d2b23be9e673df800b16d93bea76d9719972e7dba91a175de19",
+    "tools/test/system-tracing/coverage-seventeenth-check.py": "8f435c82cdd80c410e6f0d593e3882f6068f9b33be70a47643f43c8a3feece8e",
+    "tools/test/system-tracing/coverage-seventeenth-codegen.py": "2282cb9c06d672f67976f588b61f51e6f0e130e00c136bb84ab1ed363fa1fcec",
+    "tools/test/system-tracing/coverage-seventeenth-compile.py": "23d4a85cd6d20f98a08b2d404e49a4ef429d24776c942d7a52fc5cd04ce3b035",
+    "tools/test/system-tracing/coverage-seventeenth-linked.py": "d88a4164c4e9d95bee321c83c1047435c9a3a00a4c60a055143f6595740b5388",
+    "tools/test/system-tracing/coverage-seventeenth-modules.py": "29d6b630d5265b539f0f98de0989b10343e77572dd13f3b26a442e3d3ce18bae",
+    "tools/test/system-tracing/coverage-seventeenth-variants.py": "30c558bfc3c7893e5822d54a863dc78861ac5ed5f8a92867ca7e3fa6371f4663",
+    "tools/test/system-tracing/coverage-sixth-objects.py": "fc14488256457e044086c08f967c7a412060216d9d2b53a2c40b9be4405a965e",
+    "tools/test/system-tracing/coverage-third-profile-check.py": "6a63a690cbbf6970c52a90e234a701b64cd7e20d7745139d6e18977dfe71e0ae"
+  }
+}

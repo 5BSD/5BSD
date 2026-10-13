@@ -51,6 +51,41 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "filestat_trace.h"
+
+static int
+trace_fstat(int fd, struct stat *st)
+{
+	int result;
+
+	TRACE_FILESTAT_OPERATION__START(2);
+	result = fstat(fd, st);
+	TRACE_FILESTAT_OPERATION__DONE(2, result, result < 0 ? errno : 0);
+	return (result);
+}
+
+static int
+trace_lstat(const char *path, struct stat *st)
+{
+	int result;
+
+	TRACE_FILESTAT_OPERATION__START(1);
+	result = lstat(path, st);
+	TRACE_FILESTAT_OPERATION__DONE(1, result, result < 0 ? errno : 0);
+	return (result);
+}
+
+static int
+trace_stat(const char *path, struct stat *st)
+{
+	int result;
+
+	TRACE_FILESTAT_OPERATION__START(0);
+	result = stat(path, st);
+	TRACE_FILESTAT_OPERATION__DONE(0, result, result < 0 ? errno : 0);
+	return (result);
+}
+
 #define DEF_FORMAT \
 	"%d %i %Sp %l %Su %Sg %r %z \"%Sa\" \"%Sm\" \"%Sc\" \"%SB\" " \
 	"%k %b %#Xf %N"
@@ -318,7 +353,7 @@ main(int argc, char *argv[])
 				file = dname;
 			else
 				file = "(stdin)";
-			rc = fstat(STDIN_FILENO, &st);
+			rc = trace_fstat(STDIN_FILENO, &st);
 		} else {
 			int j;
 
@@ -349,12 +384,12 @@ main(int argc, char *argv[])
 				 * lstat() just in case we're examining a
 				 * broken symlink.
 				 */
-				if ((rc = stat(file, &st)) == -1 &&
+				if ((rc = trace_stat(file, &st)) == -1 &&
 				    errno == ENOENT &&
-				    (rc = lstat(file, &st)) == -1)
+				    (rc = trace_lstat(file, &st)) == -1)
 					errno = ENOENT;
 			} else
-				rc = lstat(file, &st);
+				rc = trace_lstat(file, &st);
 		}
 
 		if (rc == -1) {
@@ -422,7 +457,7 @@ mountpoint_main(int argc, char *argv[])
 	if (argc != 1)
 		mountpoint_usage();
 
-	if (stat(argv[0], &st) == -1)
+	if (trace_stat(argv[0], &st) == -1)
 		err(2, "%s", argv[0]);
 
 	mounted = (st.st_bsdflags & SFBSD_MNTPOINT) != 0;
@@ -1106,7 +1141,6 @@ format1(const struct stat *st,
 	return (snprintf(buf, blen, lfmt, data));
 }
 
-
 #define hex2nibble(c) (c <= '9' ? c - '0' : toupper(c) - 'A' + 10)
 static int
 hex2byte(const char c[2]) {
@@ -1122,7 +1156,7 @@ fdlistholes(int fd, const char *fn)
 	off_t pos = 0, off;
 	long l;
 
-	if (fstat(fd, &sb) < 0)
+	if (trace_fstat(fd, &sb) < 0)
 		return (-1);
 	if (S_ISDIR(sb.st_mode)) {
 		if ((l = fpathconf(fd, _PC_MIN_HOLE_SIZE)) < 0)

@@ -59,6 +59,8 @@
 #include "opt_rss.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
 #include <sys/counter.h>
@@ -3573,6 +3575,11 @@ again:
 		hn_txdesc_hold(txd);
 	}
 	error = txr->hn_sendpkt(txr, txd);
+	if (error != 0) {
+		if (!cold)
+			DTRACE_PROBE3(hyperv__net__send__pressure,
+			    void *, (txr), int, (error), int, (send_failed));
+	}
 	if (!error) {
 		if (has_bpf) {
 			const struct hn_txdesc *tmp_txd;

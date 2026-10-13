@@ -20,7 +20,21 @@
 #ifndef PROBES_H
 #define PROBES_H
 
+#ifdef WITH_DTRACE
 #include <sys/sdt.h>
+#else
+#define DTRACE_PROBE(provider, name) do { } while (0)
+#define DTRACE_PROBE1(provider, name, a0) \
+	do { if (0) { (void)(a0); } } while (0)
+#define DTRACE_PROBE2(provider, name, a0, a1) \
+	do { if (0) { (void)(a0); (void)(a1); } } while (0)
+#define DTRACE_PROBE3(provider, name, a0, a1, a2) \
+	do { if (0) { (void)(a0); (void)(a1); (void)(a2); } } while (0)
+#define DTRACE_PROBE4(provider, name, a0, a1, a2, a3) \
+	do { if (0) { (void)(a0); (void)(a1); (void)(a2); (void)(a3); } } while (0)
+#define DTRACE_PROBE5(provider, name, a0, a1, a2, a3, a4) \
+	do { if (0) { (void)(a0); (void)(a1); (void)(a2); (void)(a3); (void)(a4); } } while (0)
+#endif
 
 /* Lifecycle */
 #define	CAPSULE_PROBE_STARTUP()		\

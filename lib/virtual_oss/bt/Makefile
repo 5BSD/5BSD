@@ -1,3 +1,5 @@
+.include <src.opts.mk>
+
 SHLIB_NAME= 	voss_bt.so
 
 SRCS=		bt.c \
@@ -10,6 +12,11 @@ LIBADD=		bluetooth sdp m
 CFLAGS+=	-I${LOCALBASE:U/usr/local}/include -DHAVE_LIBAV
 LDFLAGS+= 	-L${LOCALBASE:U/usr/local}/lib \
 		-lavdevice -lavutil -lavcodec -lavformat
+.endif
+
+.if ${MK_DTRACE} != "no"
+SRCS+=		btaudio_provider.d
+CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
 
 .include <bsd.lib.mk>

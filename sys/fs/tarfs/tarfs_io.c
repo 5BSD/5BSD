@@ -30,6 +30,8 @@
 #include "opt_zstdio.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/counter.h>
 #include <sys/bio.h>
@@ -53,6 +55,11 @@
 
 #include <fs/tarfs/tarfs.h>
 #include <fs/tarfs/tarfs_dbg.h>
+
+SDT_PROVIDER_DEFINE(tarfs);
+SDT_PROBE_DEFINE4(tarfs, , , read__start, "void *", "int", "int64_t", "size_t");
+SDT_PROBE_DEFINE3(tarfs, , , read__done, "void *", "size_t", "int");
+
 
 #ifdef TARFS_DEBUG
 SYSCTL_NODE(_vfs_tarfs, OID_AUTO, zio, CTLFLAG_RD, 0,
@@ -121,6 +128,7 @@ tarfs_io_read(struct tarfs_mount *tmp, bool raw, struct uio *uiop)
 	size_t len = uiop->uio_resid;
 	int error;
 
+	SDT_PROBE4(tarfs, , , read__start, tmp, raw, off, len);
 	if (raw || tmp->znode == NULL) {
 		rl = vn_rangelock_rlock(tmp->vp, off, off + len);
 		error = vn_lock(tmp->vp, LK_SHARED);
@@ -139,6 +147,7 @@ tarfs_io_read(struct tarfs_mount *tmp, bool raw, struct uio *uiop)
 			VOP_UNLOCK(tmp->znode);
 		}
 	}
+	SDT_PROBE3(tarfs, , , read__done, tmp, uiop->uio_resid, error);
 	TARFS_DPF(IO, "%s(%zu, %zu) = %d (resid %zd)\n", __func__,
 	    (size_t)off, len, error, uiop->uio_resid);
 	return (error);

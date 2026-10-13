@@ -79,6 +79,9 @@
 #define	VFS_MOUNTARG_SIZE_MAX	(1024 * 64)
 
 SDT_PROVIDER_DEFINE(mount);
+SDT_PROBE_DEFINE1(mount, , , drain__start, "struct mount *");
+SDT_PROBE_DEFINE2(mount, , , drain__done, "struct mount *", "int");
+
 SDT_PROBE_DEFINE5(mount, , , mount, "char *", "char *", "uint64_t",
     "struct ucred *", "int");
 SDT_PROBE_DEFINE4(mount, , , unmount, "char *", "char *", "uint64_t", "int");
@@ -2502,8 +2505,10 @@ dounmount(struct mount *mp, uint64_t flags, struct thread *td)
 	error = 0;
 	if (mp->mnt_lockref) {
 		mp->mnt_kern_flag |= MNTK_DRAINING;
+		SDT_PROBE1(mount, , , drain__start, mp);
 		error = msleep(&mp->mnt_lockref, MNT_MTX(mp), PVFS,
 		    "mount drain", 0);
+		SDT_PROBE2(mount, , , drain__done, mp, error);
 	}
 	MNT_IUNLOCK(mp);
 	KASSERT(mp->mnt_lockref == 0,

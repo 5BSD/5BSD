@@ -52,6 +52,8 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#include "moveio_trace.h"
+
 /* Exit code for a failed exec. */
 #define EXEC_FAILED 127
 
@@ -62,6 +64,18 @@ static int	do_move(const char *, const char *);
 static int	fastcopy(const char *, const char *, struct stat *);
 static void	usage(void);
 static void	preserve_fd_acls(int, int, const char *, const char *);
+
+static int
+move_wait(int pid, int *status)
+{
+	int result;
+
+	TRACE_MOVEIO_CHILD__START(pid);
+	result = waitpid(pid, status, 0);
+	TRACE_MOVEIO_CHILD__DONE(pid, result, result < 0 ? 0 : *status,
+	    result < 0 ? errno : 0);
+	return (result);
+}
 
 int
 main(int argc, char *argv[])
@@ -161,7 +175,7 @@ do_move(const char *from, const char *to)
 	char path[PATH_MAX], modep[15];
 	struct statfs sfs;
 	struct stat sb;
-	int ask, ch, first;
+	int ask, ch, first, error;
 
 	/*
 	 * Check access.  If interactive and file exists, ask user if it
@@ -207,7 +221,10 @@ do_move(const char *from, const char *to)
 	 * with EXDEV.  Therefore, copy() doesn't have to perform the checks
 	 * specified in the Step 3 of the POSIX mv specification.
 	 */
-	if (!rename(from, to)) {
+	TRACE_MOVEIO_RENAME__START();
+	error = rename(from, to);
+	TRACE_MOVEIO_RENAME__DONE(error, error < 0 ? errno : 0);
+	if (error == 0) {
 		if (vflg)
 			printf("%s -> %s\n", from, to);
 		return (0);
@@ -248,8 +265,11 @@ do_move(const char *from, const char *to)
 		warn("%s", from);
 		return (1);
 	}
-	return (S_ISREG(sb.st_mode) ?
-	    fastcopy(from, to, &sb) : copy(from, to));
+	TRACE_MOVEIO_FALLBACK__START(S_ISREG(sb.st_mode));
+	error = S_ISREG(sb.st_mode) ?
+	    fastcopy(from, to, &sb) : copy(from, to);
+	TRACE_MOVEIO_FALLBACK__DONE(error);
+	return (error);
 }
 
 static int
@@ -384,7 +404,7 @@ copy(const char *from, const char *to)
 		    (char *)NULL);
 		_exit(EXEC_FAILED);
 	}
-	if (waitpid(pid, &status, 0) == -1) {
+	if (move_wait(pid, &status) == -1) {
 		warn("%s %s %s: waitpid", _PATH_CP, from, to);
 		return (1);
 	}
@@ -410,7 +430,7 @@ copy(const char *from, const char *to)
 		execl(_PATH_RM, "mv", "-rf", "--", from, (char *)NULL);
 		_exit(EXEC_FAILED);
 	}
-	if (waitpid(pid, &status, 0) == -1) {
+	if (move_wait(pid, &status) == -1) {
 		warn("%s %s: waitpid", _PATH_RM, from);
 		return (1);
 	}

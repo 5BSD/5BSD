@@ -134,3 +134,12 @@ probe_tap_rec4(const char *name, const char *str, uint64_t a0, uint64_t a1,
 
 	probe_tap_append(name, str, 4, a);
 }
+
+void
+probe_tap_rec5(const char *name, const char *str, uint64_t a0, uint64_t a1,
+    uint64_t a2, uint64_t a3, uint64_t a4)
+{
+	uint64_t a[5] = { a0, a1, a2, a3, a4 };
+
+	probe_tap_append(name, str, 5, a);
+}

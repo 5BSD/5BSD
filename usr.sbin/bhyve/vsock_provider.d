@@ -46,6 +46,8 @@ provider vsock {
 
 /* Generic virtio transport probes, shared by present and future devices. */
 provider virtio {
+	probe admin__quiesce__start(uintptr_t owner, uint64_t generation);
+	probe admin__quiesce__done(uintptr_t owner, uint64_t generation);
 	probe transport__features(const char *device, uint64_t features);
 	probe transport__status(const char *device, uint8_t old_status,
 	    uint8_t new_status);
@@ -133,4 +135,22 @@ provider virtio {
 	    uint32_t event, uint64_t sequence, int result);
 	probe pmem__flush(const char *device, const char *stage,
 	    uint32_t request, uint64_t epoch, int result);
+};
+
+/* Whole-machine state and migration; no guest memory or payload contents. */
+provider bhyve {
+	probe checkpoint__begin(int stop_vm);
+	probe restore__begin(uintptr_t context);
+	probe restore__result(int error);
+	probe device__part(uint16_t type, uint64_t selector, uint32_t length,
+	    int headers_only);
+	probe checkpoint__phase__start(const char *operation, const char *phase);
+	probe checkpoint__phase__done(const char *operation, const char *phase,
+	    int result, int saved_errno);
+	probe checkpoint__publish(int published, int error);
+	probe checkpoint__result(int stop_vm, int published, int error);
+	probe migration__progress(uint32_t phase, uint32_t round, uint64_t bytes,
+	    uint64_t dirty_pages, int converged);
+	probe migration__send(uint16_t type, uint32_t sequence, uint64_t length,
+	    int error);
 };

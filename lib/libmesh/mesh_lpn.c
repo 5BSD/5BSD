@@ -11,6 +11,7 @@
  */
 
 #include <sys/types.h>
+#include "mesh_probes.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -61,6 +62,7 @@ lpn_build_request(struct mesh_lpn_fsm *l, uint64_t now, struct mesh_lpn_out *out
 	l->offer_start_ms = now;
 	l->offer_deadline_ms = now + l->offer_window_ms;
 	l->state = MESH_LPN_ST_REQUESTING;
+	MESH_PROBE_LPN__STATE(l->lpn_addr, l->state);
 	return (0);
 }
 
@@ -95,6 +97,7 @@ mesh_lpn_fsm_init(struct mesh_lpn_fsm *l, uint16_t lpn_addr,
 	memset(l, 0, sizeof(*l));
 	l->state = MESH_LPN_ST_IDLE;
 	l->lpn_addr = lpn_addr;
+	MESH_PROBE_LPN__STATE(l->lpn_addr, l->state);
 	l->num_elements = num_elements;
 	l->rssi_factor = rssi_factor;
 	l->rx_window_factor = rx_window_factor;
@@ -178,6 +181,7 @@ mesh_lpn_fsm_tick(struct mesh_lpn_fsm *l, uint64_t now, struct mesh_lpn_out *out
 		if (mesh_lpn_init(&l->cadence, l->poll_timeout, now) != 0)
 			return (-1);
 		l->state = MESH_LPN_ST_ESTABLISHING;
+		MESH_PROBE_LPN__STATE(l->lpn_addr, l->state);
 		/* Open the establish window: ReceiveDelay + Offer ReceiveWindow. */
 		l->establish_window_ms = (uint32_t)l->recv_delay +
 		    l->offers[best].recv_window;
@@ -207,6 +211,7 @@ mesh_lpn_fsm_tick(struct mesh_lpn_fsm *l, uint64_t now, struct mesh_lpn_out *out
 		if (mesh_lpn_friendship_lost(&l->cadence, now)) {
 			out->action = MESH_LPN_ACT_LOST;
 			l->state = MESH_LPN_ST_IDLE;
+			MESH_PROBE_LPN__STATE(l->lpn_addr, l->state);
 			return (0);
 		}
 		if (now - l->next_poll_start_ms >=
@@ -254,6 +259,7 @@ mesh_lpn_fsm_recv_update(struct mesh_lpn_fsm *l, const uint8_t *pdu, size_t len,
 
 	first = (l->state == MESH_LPN_ST_ESTABLISHING);
 	l->state = MESH_LPN_ST_ESTABLISHED;
+	MESH_PROBE_LPN__STATE(l->lpn_addr, l->state);
 	mesh_lpn_established(&l->cadence);
 
 	l->key_refresh = up.key_refresh;

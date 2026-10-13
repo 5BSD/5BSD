@@ -1,0 +1,1162 @@
+{
+  "probes": [
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "ath-deferred-reset-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/ath/if_ath.c",
+      "argument_expressions": [
+        "(sc)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "ath-deferred-reset-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/ath/if_ath.c",
+      "argument_expressions": [
+        "(sc)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "ath-watchdog-expired",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/ath/if_ath.c",
+      "argument_expressions": [
+        "(sc)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "hid-report-start",
+      "types": [
+        "void *",
+        "int",
+        "int",
+        "size_t"
+      ],
+      "source": "sys/dev/hid/hidbus.c",
+      "argument_expressions": [
+        "(dev)",
+        "(1)",
+        "(type)",
+        "(maxlen)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "hid-report-done",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/hid/hidbus.c",
+      "argument_expressions": [
+        "(dev)",
+        "(1)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "hyperv-net-send-pressure",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/hyperv/netvsc/if_hn.c",
+      "argument_expressions": [
+        "(txr)",
+        "(error)",
+        "(send_failed)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "hyperv-storage-connect-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/hyperv/storvsc/hv_storvsc_drv_freebsd.c",
+      "argument_expressions": [
+        "(sc)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "hyperv-storage-connect-done",
+      "types": [
+        "void *",
+        "int",
+        "uint32_t",
+        "uint32_t"
+      ],
+      "source": "sys/dev/hyperv/storvsc/hv_storvsc_drv_freebsd.c",
+      "argument_expressions": [
+        "(sc)",
+        "(ret)",
+        "(vstor_packet->operation)",
+        "(vstor_packet->status)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "hyperv-storage-request-pressure",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/hyperv/storvsc/hv_storvsc_drv_freebsd.c",
+      "argument_expressions": [
+        "(sc)",
+        "(sc->hs_frozen)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "igc-fatal-error",
+      "types": [
+        "void *",
+        "uint32_t",
+        "uint32_t"
+      ],
+      "source": "sys/dev/igc/if_igc.c",
+      "argument_expressions": [
+        "(sc)",
+        "(peind)",
+        "(sc->fatal_error_pcie)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "igc-reset-request",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/igc/if_igc.c",
+      "argument_expressions": [
+        "(sc)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "igc-reset-result",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/igc/if_igc.c",
+      "argument_expressions": [
+        "(sc)",
+        "(i == AUTO_READ_DONE_TIMEOUT)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "ixgbe-admin-batch",
+      "types": [
+        "void *",
+        "uint32_t",
+        "u_int"
+      ],
+      "source": "sys/dev/ixgbe/if_ix.c",
+      "argument_expressions": [
+        "(sc)",
+        "(requests)",
+        "(pass)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "ixgbe-reset-request",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/ixgbe/if_ix.c",
+      "argument_expressions": [
+        "(sc)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "mlx5-recovery-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/mlx5/mlx5_core/mlx5_health.c",
+      "argument_expressions": [
+        "(dev)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "mlx5-recovery-done",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/mlx5/mlx5_core/mlx5_health.c",
+      "argument_expressions": [
+        "(dev)",
+        "(recover)",
+        "(nic_mode)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "mpr-reset-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/mpr/mpr.c",
+      "argument_expressions": [
+        "(sc)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "mpr-reset-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/mpr/mpr.c",
+      "argument_expressions": [
+        "(sc)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "mpr-command-wait-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/mpr/mpr.c",
+      "argument_expressions": [
+        "(sc)",
+        "(timeout)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "mpr-command-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/mpr/mpr.c",
+      "argument_expressions": [
+        "(sc)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "mps-reset-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/mps/mps.c",
+      "argument_expressions": [
+        "(sc)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "mps-reset-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/mps/mps.c",
+      "argument_expressions": [
+        "(sc)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "mps-command-wait-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/mps/mps.c",
+      "argument_expressions": [
+        "(sc)",
+        "(timeout)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "mps-command-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/mps/mps.c",
+      "argument_expressions": [
+        "(sc)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "nvmf-disconnect-start",
+      "types": [
+        "void *",
+        "u_int"
+      ],
+      "source": "sys/dev/nvmf/host/nvmf.c",
+      "argument_expressions": [
+        "(sc)",
+        "(sc->num_io_queues)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "nvmf-disconnect-done",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/nvmf/host/nvmf.c",
+      "argument_expressions": [
+        "(sc)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "nvmf-reconnect-retry",
+      "types": [
+        "void *",
+        "u_int"
+      ],
+      "source": "sys/dev/nvmf/host/nvmf.c",
+      "argument_expressions": [
+        "(sc)",
+        "(sc->reconnect_delay)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "nvmf-reconnect-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/nvmf/host/nvmf.c",
+      "argument_expressions": [
+        "(sc)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "nvmf-reconnect-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/nvmf/host/nvmf.c",
+      "argument_expressions": [
+        "(sc)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "nvmf-capsule-pressure",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/nvmf/nvmf_transport.c",
+      "argument_expressions": [
+        "(qp)",
+        "(1)",
+        "(how)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "rtwn-watchdog-expired",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/rtwn/if_rtwn.c",
+      "argument_expressions": [
+        "(sc)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "rtwn-init-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/rtwn/if_rtwn.c",
+      "argument_expressions": [
+        "(sc)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "rtwn-init-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/rtwn/if_rtwn.c",
+      "argument_expressions": [
+        "(sc)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pcm-buffer-wait-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/sound/pcm/channel.c",
+      "argument_expressions": [
+        "(c)",
+        "(timeout)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pcm-buffer-wait-done",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/sound/pcm/channel.c",
+      "argument_expressions": [
+        "(c)",
+        "(ret)",
+        "((c->flags & CHN_F_DEAD) != 0)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "wg-handshake-retry",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/wg/if_wg.c",
+      "argument_expressions": [
+        "(peer)",
+        "(peer->p_handshake_retries)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "wg-handshake-exhausted",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/wg/if_wg.c",
+      "argument_expressions": [
+        "(peer)",
+        "(peer->p_handshake_retries)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "wg-queue-pressure",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/wg/if_wg.c",
+      "argument_expressions": [
+        "(hs)",
+        "(1)",
+        "(hs->q_len)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "geli-bio-pressure",
+      "types": [
+        "void *",
+        "int",
+        "off_t"
+      ],
+      "source": "sys/geom/eli/g_eli.c",
+      "argument_expressions": [
+        "(sc)",
+        "(bp->bio_cmd)",
+        "(bp->bio_length)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "geli-crypto-pressure",
+      "types": [
+        "void *",
+        "int",
+        "size_t"
+      ],
+      "source": "sys/geom/eli/g_eli_integrity.c",
+      "argument_expressions": [
+        "(sc)",
+        "(bp->bio_cmd)",
+        "(size)"
+      ],
+      "additional_sources": [
+        "sys/geom/eli/g_eli_privacy.c"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "graid-disk-state",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/geom/raid/g_raid.c",
+      "argument_expressions": [
+        "(disk)",
+        "(disk->d_state)",
+        "(state)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "graid-subdisk-state",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/geom/raid/g_raid.c",
+      "argument_expressions": [
+        "(sd)",
+        "(sd->sd_state)",
+        "(state)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "graid-volume-state",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/geom/raid/g_raid.c",
+      "argument_expressions": [
+        "(vol)",
+        "(vol->v_state)",
+        "(state)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "graid-bio-pressure",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/geom/raid/g_raid.c",
+      "argument_expressions": [
+        "(vol)",
+        "(bp->bio_cmd)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "graid-rebuild-finish",
+      "types": [
+        "void *",
+        "off_t"
+      ],
+      "source": "sys/geom/raid/tr_raid1.c",
+      "argument_expressions": [
+        "(tr)",
+        "(sd->sd_rebuild_pos)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "graid-rebuild-abort",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/geom/raid/tr_raid1.c",
+      "argument_expressions": [
+        "(tr)",
+        "((trs->trso_flags & TR_RAID1_F_DOING_SOME) != 0)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "graid-rebuild-start",
+      "types": [
+        "void *",
+        "off_t"
+      ],
+      "source": "sys/geom/raid/tr_raid1.c",
+      "argument_expressions": [
+        "(tr)",
+        "(fsd->sd_rebuild_pos)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "iflib-rx-pressure",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/net/iflib.c",
+      "argument_expressions": [
+        "(fl)",
+        "(1)",
+        "(ENOMEM)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "iflib-dma-failure",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/net/iflib.c",
+      "argument_expressions": [
+        "(txq)",
+        "(err)",
+        "(remap)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "iflib-tx-pressure",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/net/iflib.c",
+      "argument_expressions": [
+        "(txq)",
+        "(err)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "wlan-auth-retry",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/net80211/ieee80211_sta.c",
+      "argument_expressions": [
+        "(vap)",
+        "(reason)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "wlan-association-failed",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/net80211/ieee80211_sta.c",
+      "argument_expressions": [
+        "(vap)",
+        "(reason)",
+        "(vap->iv_roaming)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "swap-metadata-pressure",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/vm/swap_pager.c",
+      "argument_expressions": [
+        "(1)",
+        "(0)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "memory-domains-wait",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/vm/vm_domainset.c",
+      "argument_expressions": [
+        "(1)",
+        "(di->di_flags)",
+        "(di->di_policy)",
+        "(di->di_domain->ds_cnt)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "memory-contig-start",
+      "types": [
+        "int",
+        "u_long",
+        "int"
+      ],
+      "source": "sys/vm/vm_page.c",
+      "argument_expressions": [
+        "(domain)",
+        "(npages)",
+        "(desired_runs)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "memory-contig-done",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/vm/vm_page.c",
+      "argument_expressions": [
+        "(domain)",
+        "(ret)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "memory-wait-start",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/vm/vm_page.c",
+      "argument_expressions": [
+        "(1)",
+        "(mflags)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "memory-wait-done",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/vm/vm_page.c",
+      "argument_expressions": [
+        "(1)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "memory-fault-wait-start",
+      "types": [
+        "int"
+      ],
+      "source": "sys/vm/vm_page.c",
+      "argument_expressions": [
+        "(timo)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "memory-fault-wait-done",
+      "types": [
+        "int"
+      ],
+      "source": "sys/vm/vm_page.c",
+      "argument_expressions": [
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "oom-vote-withdraw",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/vm/vm_pageout.c",
+      "argument_expressions": [
+        "(vmd->vmd_domain)",
+        "(0)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "oom-vote",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/vm/vm_pageout.c",
+      "argument_expressions": [
+        "(vmd->vmd_domain)",
+        "(old_vote + 1)",
+        "(page_shortage)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "oom-start",
+      "types": [
+        "int"
+      ],
+      "source": "sys/vm/vm_pageout.c",
+      "argument_expressions": [
+        "(shortage)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "oom-done",
+      "types": [
+        "int",
+        "int",
+        "int",
+        "u_long"
+      ],
+      "source": "sys/vm/vm_pageout.c",
+      "argument_expressions": [
+        "(shortage)",
+        "(1)",
+        "(-1)",
+        "(0)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "oom-victim",
+      "types": [
+        "int",
+        "int",
+        "u_long"
+      ],
+      "source": "sys/vm/vm_pageout.c",
+      "argument_expressions": [
+        "(shortage)",
+        "(bigproc->p_pid)",
+        "(bigsize)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "memory-reservation-reclaim",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/vm/vm_reserv.c",
+      "argument_expressions": [
+        "(domain)",
+        "(true)"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "profiles": [
+    "oom-decisions",
+    "memory-pressure-waits",
+    "memory-fragmentation",
+    "swap-metadata-pressure",
+    "iflib-resource-pressure",
+    "nvmf-recovery",
+    "geom-pressure-rebuild",
+    "scsi-controller-recovery",
+    "intel-nic-recovery",
+    "mlx5-health-recovery",
+    "wireless-recovery",
+    "wireguard-resource-pressure",
+    "hyperv-resource-pressure",
+    "hid-report-latency",
+    "pcm-buffer-waits"
+  ],
+  "sources": {
+    "cddl/usr.sbin/bsdinstruments/Makefile": "2f8e2f3b2ab8af9e3ee452c054e29bf6e5c48de21021889448c62a2af238714a",
+    "cddl/usr.sbin/bsdinstruments/profiles/geom-pressure-rebuild.d": "fc164303a4795f9b1d5f73e5284214885cf1f76e1e836af6628d40dd4eb44675",
+    "cddl/usr.sbin/bsdinstruments/profiles/hid-report-latency.d": "2e7f962d4131bd6686823c122ef822028d3a0202c3ae285107c17de8fd7120cf",
+    "cddl/usr.sbin/bsdinstruments/profiles/hyperv-resource-pressure.d": "0c2997930276058d859e1bc9d08eb2b194463fb88c9faa8ce541499d1b49ddd0",
+    "cddl/usr.sbin/bsdinstruments/profiles/iflib-resource-pressure.d": "f302f2ddce16ca13c4bfbd4848ca50aa08cb95f265b63c3ed4348b811dca470a",
+    "cddl/usr.sbin/bsdinstruments/profiles/intel-nic-recovery.d": "c692aeb88e3b7853eb2f7b3164adc8dd55e1a43772a01a8c75e455407f6b470d",
+    "cddl/usr.sbin/bsdinstruments/profiles/memory-fragmentation.d": "5979236d2ca28137d7d7e9dcd67da36f60b11a9302c386f4e653f4fc172c941d",
+    "cddl/usr.sbin/bsdinstruments/profiles/memory-pressure-waits.d": "5994f0ac45466ec4f30f34886b757e4a096fed2bb78ebcee851bd17def4a91f7",
+    "cddl/usr.sbin/bsdinstruments/profiles/mlx5-health-recovery.d": "5ffa0be8188c3daf2ada6a40a092d5b9b3629d6f04680cf2c1c4e869403b9593",
+    "cddl/usr.sbin/bsdinstruments/profiles/nvmf-recovery.d": "6cf68fb07d24f17fa3ef378775f099ebc37395bcd52f94068953fa622cce6c75",
+    "cddl/usr.sbin/bsdinstruments/profiles/oom-decisions.d": "a3c778578cb65b6d2287cfc71499716d6385b8dfb717cdea872b4d685e059a9d",
+    "cddl/usr.sbin/bsdinstruments/profiles/pcm-buffer-waits.d": "3b2cd6f66cffed2377889248eb011c56dd422fd7659bbfd81a23e5dd5e7f494a",
+    "cddl/usr.sbin/bsdinstruments/profiles/scsi-controller-recovery.d": "388b16237f4b7033178fab88eb78c4ca8f6adb0422680f9c3b28cd0802b41664",
+    "cddl/usr.sbin/bsdinstruments/profiles/swap-metadata-pressure.d": "e17ae513a358db61f8470fca249a4ea18474f71941de717220055a4e2b70ae65",
+    "cddl/usr.sbin/bsdinstruments/profiles/wireguard-resource-pressure.d": "e82a900f334f8d8fcb03b66500df0f19bc50bd62f9f20b62f4bbc9e8e33a07f6",
+    "cddl/usr.sbin/bsdinstruments/profiles/wireless-recovery.d": "7dded6ef107dea3566fa5210d3489ab63763caf72694b9c7f76b356767565ffb",
+    "sys/dev/ath/if_ath.c": "67d9876f3a8e9580d559c6c444a6cc0e20b52d29a75952b40a66aba114720d4d",
+    "sys/dev/hid/hidbus.c": "be6363e6619a14359d74f537870e151414fb78f14e86f7de2937bb7e69157c09",
+    "sys/dev/hyperv/netvsc/if_hn.c": "bcaa1906357419dfe752ab694f12becab525a1344c852766861ae450db419965",
+    "sys/dev/hyperv/storvsc/hv_storvsc_drv_freebsd.c": "ee331a36e46fccc9a0f11e05a8dc4e4261347a9c837401622f017e0ea1c87ceb",
+    "sys/dev/igc/if_igc.c": "3dfa3df9ba62b8e9c8f95e9c21aafb474216ea4e8d7848c515d63de696d2ecdb",
+    "sys/dev/ixgbe/if_ix.c": "869c0d2c5deadac2c4df963d6becba6e4a3be696153edd17f9459fd55306bb69",
+    "sys/dev/mlx5/mlx5_core/mlx5_health.c": "0621cf5bd9f758a7de53fc6c105da51c13d35f4dada4aa05dac482326beeb66e",
+    "sys/dev/mpr/mpr.c": "45bf5665db6060b56f9ab6c94c5c68d9cc2b1d9d6455792137a33ab5276d014b",
+    "sys/dev/mps/mps.c": "51c74286a4bf8707112fc82626c67a8fb0bf138c3be310694211dd044f87c266",
+    "sys/dev/nvmf/host/nvmf.c": "cf5010e5c944ccb6216e8e85e539bf2e95260fd546f69b00148db865f890e088",
+    "sys/dev/nvmf/nvmf_transport.c": "18cff4afe7f029f82c6bf38712a2d560abd5e8ad04bbebe87caa123dd123264c",
+    "sys/dev/rtwn/if_rtwn.c": "b2fb379c836c3d0d7fa4b8fb5c8bfadd492493c85fa22965cf0559f0ca239c8f",
+    "sys/dev/sound/pcm/channel.c": "2c2f71d679201e4d23db94cb2c9cabced55f25d29e4bb9a77f5285e840ffbe4d",
+    "sys/dev/wg/if_wg.c": "8fb851591a7bbf2ba360feb3eb78f1f8ac5adb99d2b8d984b8c898b6658072c8",
+    "sys/geom/eli/g_eli.c": "e9d4b720151bf9da326ebeebad02e995a1d3d739d0e52a482c6aad13b4f1d316",
+    "sys/geom/eli/g_eli_integrity.c": "76cee4c7b3247e83fdc654e9689bd1559ee932f87bf02e0f32e4b03d95645a7c",
+    "sys/geom/eli/g_eli_privacy.c": "4df575f5995fbaf6cf874fb73730a4cae7e5062654689e9a918316ea8457ae40",
+    "sys/geom/raid/g_raid.c": "e7de725b182d037bcf47c7b5a414184d948164c2bed6833f2a3fc25e3fc5b296",
+    "sys/geom/raid/tr_raid1.c": "f7727a880165afafd19c8a9a75115132d6e4121329169cef00eda629fd148de3",
+    "sys/net/iflib.c": "e2f8795ee70e0b9a6db0a63bd66fba5d1dddcd29d1e99716d115908b14badf0a",
+    "sys/net80211/ieee80211_sta.c": "1cf17e77e61aad4ae39891391e4ead15db299d948014bb1e43d75796badd3509",
+    "sys/vm/swap_pager.c": "7fa5e7e817288a0ac0e00aff006943d10fb50ec3f49fe815d9f5dfb4f78579b8",
+    "sys/vm/vm_domainset.c": "77a606961d05dbf327312cb55940f8c78f50f611901d5a461e8543b45827eaf2",
+    "sys/vm/vm_page.c": "4b7aff80e91c8da29823416d2c65a1b0cbfa4923fd2b63472bb5981553e6f452",
+    "sys/vm/vm_pageout.c": "869dcc4a82711fcef931e7f2a577c7615e3e690090f4d8be253f20b777b9da24",
+    "sys/vm/vm_reserv.c": "796b04e99a95ecebc116de393ddd83760b17eebc78512024cd0c7f838bb99104",
+    "tools/test/system-tracing/COVERAGE-SIXTEENTH": "170b397cf6b486873f6b4098b7817dc2f97fe14aead30c144d995deb9de28b90",
+    "tools/test/system-tracing/coverage-fourth-dof.py": "7a2fc9fc87d4b6d161c88f981ace9c7c6e8c1090cfab60f523b5a61e6730375a",
+    "tools/test/system-tracing/coverage-sixteenth-build.json": "80d9d736f0a989675d5e95f4681aacfe4e745cb3d90373c192ecad7b26a3d13b",
+    "tools/test/system-tracing/coverage-sixteenth-check.py": "98f6115687e7544c27e346fe22198b649c0d5782197fc1124ec17fedb57a277a",
+    "tools/test/system-tracing/coverage-sixteenth-codegen.py": "6a0b34681a5b4debdd61e88f5c3879dbf81450888b26e3f8feec520331e22a08",
+    "tools/test/system-tracing/coverage-sixteenth-compile.py": "836f4889c40b7fddcb3b6bcb27c6b25172bb7fe1df6a7e0f673ff74eeed298d5",
+    "tools/test/system-tracing/coverage-sixteenth-linked.py": "84d55dc7f3579a262515615bddb267c333eb339fbdf24ace7102d4914b95f023",
+    "tools/test/system-tracing/coverage-sixteenth-modules.py": "a856f09f289c90e46f472d9d3af8953e652fe7c3ca85258654c7ee26d12a02fb",
+    "tools/test/system-tracing/coverage-sixteenth-variants.py": "aff61bc5d7d12140419b861dc0978c6b1f2bd2ecc1f5ea8a83a08692ef1a5fb6",
+    "tools/test/system-tracing/coverage-sixth-objects.py": "fc14488256457e044086c08f967c7a412060216d9d2b53a2c40b9be4405a965e",
+    "tools/test/system-tracing/coverage-third-profile-check.py": "6a63a690cbbf6970c52a90e234a701b64cd7e20d7745139d6e18977dfe71e0ae"
+  }
+}

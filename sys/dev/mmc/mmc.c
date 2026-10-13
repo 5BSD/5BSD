@@ -76,6 +76,15 @@
 #include "mmcbr_if.h"
 #include "mmcbus_if.h"
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DECLARE(mmc);
+SDT_PROBE_DEFINE3(mmc, , , request__start,
+    "device_t", "struct mmc_request *", "uint32_t");
+SDT_PROBE_DEFINE2(mmc, , , request__done, "struct mmc_request *", "int");
+SDT_PROBE_DEFINE2(mmc, , , retune__start, "device_t", "int");
+SDT_PROBE_DEFINE2(mmc, , , retune__done, "device_t", "int");
+
 CTASSERT(bus_timing_max <= sizeof(uint32_t) * NBBY);
 
 /*
@@ -467,11 +476,13 @@ mmc_wait_for_req(struct mmc_softc *sc, struct mmc_request *req)
 		} else
 			printf("\n");
 	}
+	SDT_PROBE3(mmc, , , request__start, sc->dev, req, req->cmd->opcode);
 	MMCBR_REQUEST(device_get_parent(sc->dev), sc->dev, req);
 	MMC_LOCK(sc);
 	while ((req->flags & MMC_REQ_DONE) == 0)
 		msleep(req, &sc->sc_mtx, 0, "mmcreq", 0);
 	MMC_UNLOCK(sc);
+	SDT_PROBE2(mmc, , , request__done, req, req->cmd->error);
 	if (__predict_false(mmc_debug > 2 || (mmc_debug > 0 &&
 	    req->cmd->error != MMC_ERR_NONE)))
 		device_printf(sc->dev, "CMD%d RESULT: %d\n",
@@ -518,7 +529,10 @@ mmc_wait_for_request(device_t busdev, device_t dev, struct mmc_request *req)
 				return (EINVAL);
 		}
 		sc->retune_ongoing = 1;
+		SDT_PROBE2(mmc, , , retune__start, dev,
+		    retune_req == retune_req_reset);
 		err = mmc_retune(busdev, dev, retune_req == retune_req_reset);
+		SDT_PROBE2(mmc, , , retune__done, dev, err);
 		sc->retune_ongoing = 0;
 		switch (err) {
 		case MMC_ERR_NONE:

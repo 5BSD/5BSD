@@ -192,6 +192,9 @@ abac_rules_check(struct ucred *cred, struct abac_label *subj,
 
 	/* Safety checks */
 	if (subj == NULL || obj == NULL) {
+		if (!cold)
+			DTRACE_PROBE3(abac__check__bypass, uint32_t, op,
+			    int, (subj == NULL), int, (obj == NULL));
 		atomic_add_64(&abac_allowed, 1);
 		return (0);
 	}
@@ -231,6 +234,10 @@ abac_rules_check(struct ucred *cred, struct abac_label *subj,
 					result = 0;
 				else
 					result = EACCES;
+				if (!cold)
+					DTRACE_PROBE4(abac__rule__decision,
+					    uint32_t, rule->vr_id, uint16_t, set,
+					    uint32_t, op, int, result);
 				goto out;
 			}
 		}
@@ -245,6 +252,10 @@ abac_rules_check(struct ucred *cred, struct abac_label *subj,
 		result = 0;
 	else
 		result = EACCES;
+
+	if (!cold)
+		DTRACE_PROBE3(abac__default__decision, uint32_t, op,
+		    int, abac_default_policy, int, result);
 
 out:
 	rw_runlock(&abac_rules_lock);

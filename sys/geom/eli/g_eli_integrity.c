@@ -27,6 +27,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/linker.h>
@@ -397,6 +399,9 @@ g_eli_auth_read(struct g_eli_softc *sc, struct bio *bp)
 	size += G_ELI_AUTH_SECKEYLEN * nsec;
 	cbp->bio_offset = (bp->bio_offset / bp->bio_to->sectorsize) * sc->sc_bytes_per_sector;
 	if (!g_eli_alloc_data(bp, size)) {
+		if (!cold)
+			DTRACE_PROBE3(geli__crypto__pressure, void *, (sc),
+			    int, (bp->bio_cmd), size_t, (size));
 		G_ELI_LOGREQ(0, bp, "Crypto auth read request failed (ENOMEM)");
 		g_destroy_bio(cbp);
 		bp->bio_error = ENOMEM;
@@ -487,6 +492,10 @@ g_eli_auth_run(struct g_eli_worker *wr, struct bio *bp)
 		size += G_ELI_AUTH_SECKEYLEN * nsec;
 		size += sizeof(uintptr_t);	/* Space for alignment. */
 		if (!g_eli_alloc_data(bp, size)) {
+			if (!cold)
+				DTRACE_PROBE3(geli__crypto__pressure,
+				    void *, (sc), int, (bp->bio_cmd),
+				    size_t, (size));
 			G_ELI_LOGREQ(0, bp, "Crypto request failed (ENOMEM)");
 			if (bp->bio_driver1 != NULL) {
 				g_destroy_bio(bp->bio_driver1);

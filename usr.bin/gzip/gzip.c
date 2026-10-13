@@ -56,6 +56,10 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <zlib.h>
+#include "gzipstream_trace.h"
+#ifndef WITH_COVERAGE_DTRACE
+#define trace_inflate inflate
+#endif
 #include <fts.h>
 #include <libgen.h>
 #include <stdarg.h>
@@ -924,7 +928,7 @@ gz_uncompress(int in, int out, char *pre, size_t prelen, off_t *gsizep,
 			break;
 
 		case GZSTATE_READ:
-			error = inflate(&z, Z_FINISH);
+			error = trace_inflate(&z, Z_FINISH);
 			switch (error) {
 			/* Z_BUF_ERROR goes with Z_FINISH... */
 			case Z_BUF_ERROR:
@@ -1038,6 +1042,7 @@ gz_uncompress(int in, int out, char *pre, size_t prelen, off_t *gsizep,
 		}
 		continue;
 stop_and_fail:
+		TRACE_DECODE__ERROR(state, in_tot);
 		out_tot = -1;
 stop:
 		break;

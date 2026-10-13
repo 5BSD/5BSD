@@ -11,6 +11,7 @@
  */
 
 #include <string.h>
+#include "mesh_probes.h"
 
 #include "mesh_access.h"
 #include "mesh_bridge.h"
@@ -173,6 +174,8 @@ mesh_bridge_forward_net_idx(const struct mesh_bridging_table *t, uint16_t src,
 		if (src == e->addr1 && dst == e->addr2 &&
 		    rx_net_idx == e->net_idx1) {
 			*out_net_idx = e->net_idx2;
+			MESH_PROBE_BRIDGE__FORWARD(src, dst, rx_net_idx,
+			    *out_net_idx);
 			return (1);
 		}
 		/*
@@ -183,6 +186,8 @@ mesh_bridge_forward_net_idx(const struct mesh_bridging_table *t, uint16_t src,
 		    src == e->addr2 && dst == e->addr1 &&
 		    rx_net_idx == e->net_idx2) {
 			*out_net_idx = e->net_idx1;
+			MESH_PROBE_BRIDGE__FORWARD(src, dst, rx_net_idx,
+			    *out_net_idx);
 			return (1);
 		}
 	}

@@ -27,4 +27,9 @@ DIRS+=		MAC_ABACINCDIR
 # public ABI include directory before bsd.incs.mk copies mac_abac.h.
 includes: installdirs
 
+.if ${MK_DTRACE} != "no"
+SRCS+= diagnostics_provider.d
+CFLAGS+= -DWITH_DTRACE
+.endif
+
 .include <bsd.prog.mk>

@@ -192,7 +192,7 @@ ${_D}.pieo: ${_DSRC} ${OBJS:S/^${_D}.pieo$//} ${_DTRACE_DRTI_DEP}
 .if defined(DTRACE_STATIC_ANCHOR)
 	${OBJCOPY} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
 .endif
-.if defined(LIB) || defined(SHLIB)
+.if defined(LIB) || defined(SHLIB) || defined(SHLIB_NAME)
 CLEANFILES+= ${_D}.pico ${_D}.pieo ${_D}.po ${_D}.nossppico
 ${_D}.pico: ${_DSRC} ${SOBJS:S/^${_D}.pico$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}

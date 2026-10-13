@@ -65,6 +65,12 @@
 
 #include "mmcbus_if.h"
 
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(mmc);
+SDT_PROBE_DEFINE4(mmc, , , command__retry,
+    "device_t", "uint32_t", "int", "int");
+
 #define	CMD_RETRIES	3
 #define	LOG_PPS		5 /* Log no more than 5 errors per second. */
 
@@ -88,6 +94,9 @@ mmc_wait_for_cmd(device_t busdev, device_t dev, struct mmc_command *cmd,
 			err = MMC_ERR_FAILED;
 		else
 			err = cmd->error;
+		if (err != MMC_ERR_NONE && retries > 0)
+			SDT_PROBE4(mmc, , , command__retry, dev, cmd->opcode,
+			    err, retries);
 	} while (err != MMC_ERR_NONE && retries-- > 0);
 
 	if (err != MMC_ERR_NONE && busdev == dev) {

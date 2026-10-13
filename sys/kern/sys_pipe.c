@@ -158,6 +158,17 @@
  *   pipe:::close		- an endpoint is being torn down (pipe)
  */
 SDT_PROVIDER_DEFINE(pipe);
+SDT_PROBE_DEFINE1(pipe, , , lock__wait__start, "struct pipe *");
+SDT_PROBE_DEFINE2(pipe, , , lock__wait__done, "struct pipe *", "int");
+
+SDT_PROBE_DEFINE2(pipe, , , resize__start, "struct pipe *", "int");
+SDT_PROBE_DEFINE3(pipe, , , resize__done, "struct pipe *", "int", "int");
+SDT_PROBE_DEFINE2(pipe, , , direct__start, "struct pipe *", "ssize_t");
+SDT_PROBE_DEFINE3(pipe, , , direct__done, "struct pipe *", "ssize_t", "int");
+SDT_PROBE_DEFINE2(pipe, , , write__start, "struct pipe *", "ssize_t");
+SDT_PROBE_DEFINE3(pipe, , , write__done, "struct pipe *", "ssize_t", "int");
+SDT_PROBE_DEFINE2(pipe, , , read__start, "struct pipe *", "ssize_t");
+SDT_PROBE_DEFINE3(pipe, , , read__done, "struct pipe *", "ssize_t", "int");
 SDT_PROBE_DEFINE3(pipe, , , create, "int", "int", "int");
 SDT_PROBE_DEFINE3(pipe, , , read, "struct pipe *", "int", "int");
 SDT_PROBE_DEFINE1(pipe, , , read__blocked, "struct pipe *");
@@ -746,8 +757,15 @@ retry:
 
 	if (!chgpipecnt(cpipe->pipe_pair->pp_owner->cr_ruidinfo,
 	    size, lim_cur(curthread, RLIMIT_PIPEBUF))) {
+		if (!cold)
+			DTRACE_PROBE3(pipe__buffer__pressure,
+			    void *, (cpipe), int, (1), int, (size));
 		if (cpipe->pipe_buffer.buffer == NULL &&
 		    size > SMALL_PIPE_SIZE) {
+			if (!cold)
+				DTRACE_PROBE3(pipe__buffer__retry,
+				    void *, (cpipe), int, (size),
+				    int, (SMALL_PIPE_SIZE));
 			size = SMALL_PIPE_SIZE;
 			goto retry;
 		}
@@ -757,10 +775,17 @@ retry:
 	vm_map_lock(pipe_map);
 	if (maxpipekva / 100 * (100 - pipebuf_reserv) < amountpipekva + size &&
 	    priv_check(curthread, PRIV_PIPEBUF) != 0) {
+		if (!cold)
+			DTRACE_PROBE3(pipe__buffer__pressure,
+			    void *, (cpipe), int, (2), int, (size));
 		vm_map_unlock(pipe_map);
 		chgpipecnt(cpipe->pipe_pair->pp_owner->cr_ruidinfo, -size, 0);
 		if (cpipe->pipe_buffer.buffer == NULL &&
 		    size > SMALL_PIPE_SIZE) {
+			if (!cold)
+				DTRACE_PROBE3(pipe__buffer__retry,
+				    void *, (cpipe), int, (size),
+				    int, (SMALL_PIPE_SIZE));
 			size = SMALL_PIPE_SIZE;
 			pipefragretry++;
 			goto retry;
@@ -771,9 +796,16 @@ retry:
 	    size, 0, VMFS_ANY_SPACE, VM_PROT_RW, VM_PROT_RW, 0);
 	vm_map_unlock(pipe_map);
 	if (error != KERN_SUCCESS) {
+		if (!cold)
+			DTRACE_PROBE3(pipe__buffer__pressure,
+			    void *, (cpipe), int, (3), int, (size));
 		chgpipecnt(cpipe->pipe_pair->pp_owner->cr_ruidinfo, -size, 0);
 		if (cpipe->pipe_buffer.buffer == NULL &&
 		    size > SMALL_PIPE_SIZE) {
+			if (!cold)
+				DTRACE_PROBE3(pipe__buffer__retry,
+				    void *, (cpipe), int, (size),
+				    int, (SMALL_PIPE_SIZE));
 			size = SMALL_PIPE_SIZE;
 			pipefragretry++;
 			goto retry;
@@ -818,10 +850,14 @@ retry:
 static int
 pipespace(struct pipe *cpipe, int size)
 {
+	int error;
 
 	KASSERT(cpipe->pipe_state & PIPE_LOCKFL,
 	    ("Unlocked pipe passed to pipespace"));
-	return (pipespace_new(cpipe, size));
+	SDT_PROBE2(pipe, , , resize__start, cpipe, size);
+	error = pipespace_new(cpipe, size);
+	SDT_PROBE3(pipe, , , resize__done, cpipe, size, error);
+	return (error);
 }
 
 /*
@@ -842,8 +878,10 @@ pipelock(struct pipe *cpipe, bool catch)
 		    ("%s: bad waiter count %d", __func__,
 		    cpipe->pipe_waiters));
 		cpipe->pipe_waiters++;
+		SDT_PROBE1(pipe, , , lock__wait__start, cpipe);
 		error = msleep(&cpipe->pipe_waiters, PIPE_MTX(cpipe), prio,
 		    "pipelk", 0);
+		SDT_PROBE2(pipe, , , lock__wait__done, cpipe, error);
 		cpipe->pipe_waiters--;
 		if (error != 0)
 			return (error);
@@ -933,6 +971,7 @@ pipe_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	int size;
 
 	rpipe = fp->f_data;
+	SDT_PROBE2(pipe, , , read__start, rpipe, uio->uio_resid);
 
 	/*
 	 * Try to avoid locking the pipe if we have nothing to do.
@@ -946,12 +985,16 @@ pipe_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	if (((fp->f_flag & FNONBLOCK) != 0 ||
 	    (flags & FOF_NBIO) != 0) &&
 	    !mac_pipe_check_read_enabled()) {
-		if (__predict_false(uio->uio_resid == 0))
+		if (__predict_false(uio->uio_resid == 0)) {
+			SDT_PROBE3(pipe, , , read__done, rpipe, 0, 0);
 			return (0);
+		}
 		if ((atomic_load_short(&rpipe->pipe_state) & PIPE_EOF) == 0 &&
 		    atomic_load_int(&rpipe->pipe_buffer.cnt) == 0 &&
 		    atomic_load_int(&rpipe->pipe_pages.cnt) == 0) {
 			SDT_PROBE3(pipe, , , read, rpipe, 0, EAGAIN);
+			SDT_PROBE3(pipe, , , read__done, rpipe,
+			    uio->uio_resid, EAGAIN);
 			return (EAGAIN);
 		}
 	}
@@ -1121,6 +1164,7 @@ unlocked_error:
 	SDT_PROBE3(pipe, , , read, rpipe, nread, error);
 	if (nread > 0)
 		td->td_ru.ru_msgrcv++;
+	SDT_PROBE3(pipe, , , read__done, rpipe, uio->uio_resid, error);
 	return (error);
 }
 
@@ -1243,6 +1287,7 @@ pipe_direct_write(struct pipe *wpipe, struct uio *uio)
 {
 	int error;
 
+	SDT_PROBE2(pipe, , , direct__start, wpipe, uio->uio_resid);
 retry:
 	PIPE_LOCK_ASSERT(wpipe, MA_OWNED);
 	if ((wpipe->pipe_state & PIPE_EOF) != 0) {
@@ -1313,10 +1358,12 @@ retry:
 	}
 	KASSERT((wpipe->pipe_state & PIPE_DIRECTW) == 0,
 	    ("pipe %p leaked PIPE_DIRECTW", wpipe));
+	SDT_PROBE3(pipe, , , direct__done, wpipe, uio->uio_resid, error);
 	return (error);
 
 error1:
 	wakeup(wpipe);
+	SDT_PROBE3(pipe, , , direct__done, wpipe, uio->uio_resid, error);
 	return (error);
 }
 #endif
@@ -1331,10 +1378,13 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 
 	rpipe = fp->f_data;
 	wpipe = PIPE_PEER(rpipe);
+	SDT_PROBE2(pipe, , , write__start, wpipe, uio->uio_resid);
 	PIPE_LOCK(rpipe);
 	error = pipelock(wpipe, true);
 	if (error) {
 		PIPE_UNLOCK(rpipe);
+		SDT_PROBE3(pipe, , , write__done, wpipe,
+		    uio->uio_resid, error);
 		return (error);
 	}
 	/*
@@ -1345,6 +1395,8 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 		SDT_PROBE3(pipe, , , write, wpipe, 0, EPIPE);
 		pipeunlock(wpipe);
 		PIPE_UNLOCK(rpipe);
+		SDT_PROBE3(pipe, , , write__done, wpipe,
+		    uio->uio_resid, EPIPE);
 		return (EPIPE);
 	}
 #ifdef MAC
@@ -1352,6 +1404,8 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	if (error) {
 		pipeunlock(wpipe);
 		PIPE_UNLOCK(rpipe);
+		SDT_PROBE3(pipe, , , write__done, wpipe,
+		    uio->uio_resid, error);
 		return (error);
 	}
 #endif
@@ -1587,6 +1641,7 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	SDT_PROBE3(pipe, , , write, wpipe, (orig_resid - uio->uio_resid), error);
 	if (uio->uio_resid != orig_resid)
 		td->td_ru.ru_msgsnd++;
+	SDT_PROBE3(pipe, , , write__done, wpipe, uio->uio_resid, error);
 	return (error);
 }
 

@@ -266,6 +266,10 @@ DEFINE_VMMOPS_IFUNC(int, restore_tsc, (void *vcpui, uint64_t now))
 #endif
 
 SDT_PROVIDER_DEFINE(vmm);
+#ifdef BHYVE_SNAPSHOT
+SDT_PROBE_DEFINE3(vmm, , , snapshot__start, "void *", "int", "int");
+SDT_PROBE_DEFINE4(vmm, , , snapshot__done, "void *", "int", "int", "int");
+#endif
 
 /*
  * Internal exits are consumed entirely by the architecture backend and are
@@ -3976,6 +3980,8 @@ vm_snapshot_req(struct vm *vm, struct vm_snapshot_meta *meta)
 	 * or restore dispatch.  Do not retain mem_segs_lock across arbitrary
 	 * architecture/device snapshot callbacks.
 	 */
+	/* Process-context ioctl boundary, outside architecture restore internals. */
+	SDT_PROBE3(vmm, , , snapshot__start, vm, meta->dev_req, meta->op);
 	vm_xlock_memsegs(vm);
 	ret = vm_mem_dirty_log_invalidate(vm);
 	vm_unlock_memsegs(vm);
@@ -4016,6 +4022,7 @@ vm_snapshot_req(struct vm *vm, struct vm_snapshot_meta *meta)
 		    meta->dev_req));
 		ret = EINVAL;
 	}
+	SDT_PROBE4(vmm, , , snapshot__done, vm, meta->dev_req, meta->op, ret);
 	return (ret);
 }
 

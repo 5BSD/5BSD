@@ -72,6 +72,8 @@
 #include <sys/sdt.h>
 
 SDT_PROVIDER_DEFINE(usb);
+SDT_PROBE_DEFINE2(usb, , , drain__start, "void *", "void *");
+SDT_PROBE_DEFINE2(usb, , , drain__done, "void *", "void *");
 SDT_PROBE_DEFINE3(usb, , , transfer__start, "void *", "void *", "int");
 SDT_PROBE_DEFINE6(usb, , , transfer__done, "void *", "void *", "int", "int",
     "unsigned int", "unsigned int");
@@ -2146,6 +2148,7 @@ usbd_transfer_drain(struct usb_xfer *xfer)
 	if (xfer->xroot->xfer_mtx != &Giant) {
 		USB_XFER_LOCK_ASSERT(xfer, MA_NOTOWNED);
 	}
+	USB_TRANSFER_PROBE2(usb, , , drain__start, xfer, xfer->xroot);
 	USB_XFER_LOCK(xfer);
 
 	usbd_transfer_stop(xfer);
@@ -2168,6 +2171,7 @@ usbd_transfer_drain(struct usb_xfer *xfer)
 		cv_wait(&xfer->xroot->cv_drain, xfer->xroot->xfer_mtx);
 	}
 	USB_XFER_UNLOCK(xfer);
+	USB_TRANSFER_PROBE2(usb, , , drain__done, xfer, xfer->xroot);
 }
 
 struct usb_page_cache *

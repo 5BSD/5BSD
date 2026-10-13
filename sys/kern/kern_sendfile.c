@@ -31,6 +31,8 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/capsicum.h>
 #include <sys/inotify.h>
 #include <sys/kernel.h>
@@ -65,6 +67,17 @@
 #include <vm/vm.h>
 #include <vm/vm_object.h>
 #include <vm/vm_pager.h>
+
+/* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
+SDT_PROVIDER_DEFINE(sendfile);
+SDT_PROBE_DEFINE1(sendfile, , , io__wait__start,
+    "void *");
+SDT_PROBE_DEFINE1(sendfile, , , io__wait__done,
+    "void *");
+SDT_PROBE_DEFINE2(sendfile, , , socket__wait__start,
+    "struct socket *", "off_t");
+SDT_PROBE_DEFINE2(sendfile, , , socket__wait__done,
+    "struct socket *", "int");
 
 static MALLOC_DEFINE(M_SENDFILE, "sendfile", "sendfile dynamic memory");
 
@@ -233,8 +246,10 @@ fixspace(int old, int new, off_t off, int *space)
 static void
 sendfile_iowait(struct sf_io *sfio, const char *wmesg)
 {
+	SDT_PROBE1(sendfile, , , io__wait__start, (sfio));
 	while (atomic_load_int(&sfio->nios) != 1)
 		pause(wmesg, 1);
+	SDT_PROBE1(sendfile, , , io__wait__done, (sfio));
 }
 
 /*
@@ -696,7 +711,9 @@ retry_space:
 		 * to retry_space the state may have changed and we retest
 		 * for it.
 		 */
+		SDT_PROBE2(sendfile, , , socket__wait__start, (so), (need));
 		error = sbwait(so, SO_SND);
+		SDT_PROBE2(sendfile, , , socket__wait__done, (so), (error));
 		/*
 		 * An error from sbwait() usually indicates that we've been
 		 * interrupted by a signal.  If we've sent anything then return

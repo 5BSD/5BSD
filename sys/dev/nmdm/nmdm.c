@@ -37,6 +37,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
@@ -359,6 +361,11 @@ nmdm_param(struct tty *tp, struct termios *t)
 
 		np->np_credits = speed;
 		np->np_rate = rate;
+		if (!cold)
+			DTRACE_PROBE3(nmdm__rate__configured,
+			    void *, (np),
+			    int, (rate),
+			    unsigned int, (speed));
 		callout_reset(&np->np_callout, rate, nmdm_timeout, np);
 
 		/*

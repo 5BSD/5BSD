@@ -23,6 +23,7 @@
 
 #include <security/mac_abac/mac_abac.h>
 #include "mac_abac_ctl.h"
+#include "diagnostics.h"
 
 /*
  * Wrapper for mac_syscall with error checking
@@ -32,7 +33,9 @@ abac_syscall(int cmd, void *arg)
 {
 	int error;
 
+	ABACCTL_TRACE_POLICY_START(cmd);
 	error = mac_syscall(ABAC_POLICY_NAME, cmd, arg);
+	ABACCTL_TRACE_POLICY_DONE(cmd, error < 0 ? errno : 0);
 	if (error < 0 && errno == ENOSYS)
 		errx(EX_UNAVAILABLE, "ABAC module not loaded");
 	return (error);

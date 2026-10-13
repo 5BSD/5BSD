@@ -61,6 +61,15 @@
 #include <security/mac/mac_framework.h>
 
 SDT_PROVIDER_DECLARE(vfs);
+/* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
+SDT_PROBE_DEFINE2(vfs, , , acl__get__start,
+    "struct vnode *", "acl_type_t");
+SDT_PROBE_DEFINE3(vfs, , , acl__get__done,
+    "struct vnode *", "acl_type_t", "int");
+SDT_PROBE_DEFINE2(vfs, , , acl__check__start,
+    "struct vnode *", "acl_type_t");
+SDT_PROBE_DEFINE3(vfs, , , acl__check__done,
+    "struct vnode *", "acl_type_t", "int");
 SDT_PROBE_DEFINE3(vfs, , , setacl, "acl_type_t", "struct ucred *", "int");
 SDT_PROBE_DEFINE2(vfs, , , rmacl, "acl_type_t", "int");
 
@@ -274,6 +283,7 @@ vacl_get_acl(struct thread *td, struct vnode *vp, acl_type_t type,
 	int error;
 
 	AUDIT_ARG_VALUE(type);
+	SDT_PROBE2(vfs, , , acl__get__start, (vp), (type));
 	inkernelacl = acl_alloc(M_WAITOK | M_ZERO);
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 	AUDIT_ARG_VNODE1(vp);
@@ -292,6 +302,7 @@ out:
 	if (error == 0)
 		error = acl_copyout(inkernelacl, aclp, type);
 	acl_free(inkernelacl);
+	SDT_PROBE3(vfs, , , acl__get__done, (vp), (type), (error));
 	return (error);
 }
 
@@ -337,6 +348,7 @@ vacl_aclcheck(struct thread *td, struct vnode *vp, acl_type_t type,
 	struct acl *inkernelacl;
 	int error;
 
+	SDT_PROBE2(vfs, , , acl__check__start, (vp), (type));
 	inkernelacl = acl_alloc(M_WAITOK);
 	error = acl_copyin(aclp, inkernelacl, type);
 	if (error != 0)
@@ -345,6 +357,7 @@ vacl_aclcheck(struct thread *td, struct vnode *vp, acl_type_t type,
 	    td->td_ucred, td);
 out:
 	acl_free(inkernelacl);
+	SDT_PROBE3(vfs, , , acl__check__done, (vp), (type), (error));
 	return (error);
 }
 

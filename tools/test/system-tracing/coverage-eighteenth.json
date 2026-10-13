@@ -1,0 +1,242 @@
+{
+  "probes": [
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "sockbuf-reserve-failure",
+      "types": [
+        "void *",
+        "int",
+        "int",
+        "u_long",
+        "uint64_t"
+      ],
+      "source": "sys/kern/uipc_sockbuf.c",
+      "argument_expressions": [
+        "(so)",
+        "(which)",
+        "(1)",
+        "(cc)",
+        "(BUF_MAX_ADJ(buf_max))"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "sockbuf-listen-limit",
+      "types": [
+        "void *",
+        "int",
+        "u_int",
+        "u_long"
+      ],
+      "source": "sys/kern/uipc_sockbuf.c",
+      "argument_expressions": [
+        "(so)",
+        "(sopt->sopt_name)",
+        "(cc)",
+        "(sb_max_adj)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "socket-alloc-failure",
+      "types": [
+        "int"
+      ],
+      "source": "sys/kern/uipc_socket.c",
+      "argument_expressions": [
+        "(1)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "socket-accept-wait-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/kern/uipc_socket.c",
+      "argument_expressions": [
+        "(head)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "socket-accept-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/uipc_socket.c",
+      "argument_expressions": [
+        "(head)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "bufcache-throttle-start",
+      "types": [
+        "int"
+      ],
+      "source": "sys/kern/vfs_bio.c",
+      "argument_expressions": [
+        "(1)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "bufcache-throttle-done",
+      "types": [
+        "int"
+      ],
+      "source": "sys/kern/vfs_bio.c",
+      "argument_expressions": [
+        "(1)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "aio-rundown-wait-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/vfs_aio.c",
+      "argument_expressions": [
+        "(p)",
+        "(ki->kaio_active_count)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "aio-rundown-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/vfs_aio.c",
+      "argument_expressions": [
+        "(p)",
+        "(wait_error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "aio-list-wait-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/vfs_aio.c",
+      "argument_expressions": [
+        "(p)",
+        "(lj->lioj_count - 1 - lj->lioj_finished_count)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "aio-list-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/vfs_aio.c",
+      "argument_expressions": [
+        "(p)",
+        "(error)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "aio-completion-wait-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/vfs_aio.c",
+      "argument_expressions": [
+        "(p)",
+        "(timo)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "aio-completion-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/kern/vfs_aio.c",
+      "argument_expressions": [
+        "(p)",
+        "(error)"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "profiles": [
+    "socket-resource-failures",
+    "socket-accept-waits",
+    "buffer-write-throttle",
+    "aio-drain-waits"
+  ],
+  "sources": {
+    "cddl/usr.sbin/bsdinstruments/Makefile": "2f8e2f3b2ab8af9e3ee452c054e29bf6e5c48de21021889448c62a2af238714a",
+    "cddl/usr.sbin/bsdinstruments/profiles/aio-drain-waits.d": "f6c3e8f466fe083bf27c8691ca7f46ff2db7c129a08aabbdbbcd480f43de5b49",
+    "cddl/usr.sbin/bsdinstruments/profiles/buffer-write-throttle.d": "2b632e3b0ddca676b2ff91d90ffb3c797006103ba94b422b895d4d34ac6026bc",
+    "cddl/usr.sbin/bsdinstruments/profiles/socket-accept-waits.d": "620f78611dcf7d8e6034d909d183f2014d8c5734b8e421f74f878e39b8e7b27b",
+    "cddl/usr.sbin/bsdinstruments/profiles/socket-resource-failures.d": "c532851a297e7e7f7d156662d0444c0ef887e01d558ce7b10a9795ba095e47cd",
+    "sys/kern/uipc_sockbuf.c": "e83ca185c8a883fc601306cf9db539604456d6fde70a2514c1f7deddfc200a2f",
+    "sys/kern/uipc_socket.c": "8882b9c38d819a29310c6ac8565f833384fe0925676bb99c9572b8919b4126ff",
+    "sys/kern/vfs_aio.c": "ea53ccd1692a130d771a916a32a0f22cc842928ec4e785d2129c38f15194a134",
+    "sys/kern/vfs_bio.c": "066b8de8813682cb5f3af6a4f18ac408d8e182e0aa42ba7113b25a62d1c9ab23",
+    "tools/test/system-tracing/COVERAGE-EIGHTEENTH": "b0cbf2cda034ada33ab3752f163d56df3d710579296ef3112588da994e80b9ef",
+    "tools/test/system-tracing/coverage-eighteenth-build.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+    "tools/test/system-tracing/coverage-eighteenth-check.py": "9607d4f3cd179d5e2a270bb675c88cedc32574e24fbd65089e291d85f5f26c57",
+    "tools/test/system-tracing/coverage-eighteenth-codegen.py": "a11794dab0ae6271f4b5f58d86e2b4f2dd383032c0005fbd69ece01261325843",
+    "tools/test/system-tracing/coverage-eighteenth-compile.py": "d7a56131d8f719699ce0c69bd8f412b1991a718a261e2995f7c112be5c3d3107",
+    "tools/test/system-tracing/coverage-eighteenth-linked.py": "b7c8d08bd46c76be890243868b80e5d5bb422a0ee9ba175679bc36b17012fd0d",
+    "tools/test/system-tracing/coverage-eighteenth-variants.py": "a0a9f92038a7d42363929cb83c9627f836ced557a49bb25f40bbb74e432b53b9",
+    "tools/test/system-tracing/coverage-fourth-dof.py": "7a2fc9fc87d4b6d161c88f981ace9c7c6e8c1090cfab60f523b5a61e6730375a",
+    "tools/test/system-tracing/coverage-sixth-objects.py": "fc14488256457e044086c08f967c7a412060216d9d2b53a2c40b9be4405a965e",
+    "tools/test/system-tracing/coverage-third-profile-check.py": "6a63a690cbbf6970c52a90e234a701b64cd7e20d7745139d6e18977dfe71e0ae"
+  }
+}

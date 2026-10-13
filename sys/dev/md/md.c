@@ -104,6 +104,11 @@
 
 #include <machine/bus.h>
 
+SDT_PROVIDER_DEFINE(mdio);
+SDT_PROBE_DEFINE1(mdio, , , control__start, "unsigned long");
+SDT_PROBE_DEFINE2(mdio, , , control__done, "unsigned long", "int");
+
+
 #define MD_MODVER 1
 
 #define MD_SHUTDOWN	0x10000		/* Tell worker thread to terminate. */
@@ -1984,6 +1989,7 @@ mdctlioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		break;
 	}
 
+	SDT_PROBE1(mdio, , , control__start, cmd);
 	error = 0;
 	switch (cmd) {
 	case MDIOCATTACH:
@@ -2013,6 +2019,8 @@ mdctlioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	default:
 		error = ENOIOCTL;
 	}
+
+	SDT_PROBE2(mdio, , , control__done, cmd, error);
 
 	switch (cmd) {
 	case MDIOCATTACH:

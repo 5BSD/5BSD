@@ -5,9 +5,9 @@ setup()
 	# Use the current startup functions with harmless command seams. Never
 	# invoke the host's rc configuration, module loader, or device controls.
 	sed '/^\. \/etc\/rc.subr$/d; /^load_rc_config /d; /^run_rc_command /d' \
-	    /etc/rc.d/kld > kld.sh
+	    "${RC_TEST_SRCDIR:-/etc/rc.d}/kld" > kld.sh
 	sed '/^\. \/etc\/rc.subr$/d; /^load_rc_config /d; /^run_rc_command /d' \
-	    /etc/rc.d/devmatch > devmatch.sh
+	    "${RC_TEST_SRCDIR:-/etc/rc.d}/devmatch" > devmatch.sh
 	cat > seams.sh <<-'EOF'
 	. /etc/rc.subr
 	kenv() {
@@ -81,7 +81,7 @@ linux_broker_body()
 {
 	setup
 	sed '/^\. \/etc\/rc.subr$/d; /^load_rc_config /d; /^run_rc_command /d' \
-	    /etc/rc.d/linux > linux.sh
+	    "${RC_TEST_SRCDIR:-/etc/rc.d}/linux" > linux.sh
 	cat > linux-seams.sh <<-'EOF'
 	. ./seams.sh
 	. ./linux.sh
@@ -105,7 +105,7 @@ linux_broker_body()
 		NO|off|0) loader=direct ;;
 		*) loader='broker load' ;;
 		esac
-		printf '%s\n' "$loader linux64" "$loader pty" \
+		printf '%s\n' "$loader linux64" \
 		    "$loader fdescfs" "$loader linprocfs" "$loader linsysfs" > expected
 		atf_check -s exit:0 -e empty -o file:expected env PLANE="$plane" \
 		    sh -c '. ./linux-seams.sh; linux_start'
@@ -116,7 +116,7 @@ linux_broker_body()
 	    sh -c '. ./linux-seams.sh; linux_start'
 	# A later filesystem-module refusal must also stop before mounting.
 	atf_check -s exit:1 -e match:'Unable to load kernel module fdescfs' \
-	    -o inline:'broker load linux64\nbroker load pty\nbroker load fdescfs\n' \
+	    -o inline:'broker load linux64\nbroker load fdescfs\n' \
 	    env FAIL_MODULE=fdescfs TEST_MOUNTS=YES \
 	    sh -c '. ./linux-seams.sh; linux_start'
 }

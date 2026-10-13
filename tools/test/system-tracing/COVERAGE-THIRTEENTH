@@ -1,0 +1,214 @@
+DTRACE COVERAGE: THIRTEENTH EXPANSION
+====================================
+
+20 operation-focused passes, 39 new probe contracts in 12 kernel source files,
+and eight base-install bsdinstruments profiles. This is an additional gap
+expansion, not a claim of complete coverage of every kernel subsystem or every
+error path. No new USDT provider is added to a base executable in this round.
+
+Prioritization and history
+--------------------------
+Existing syscall, VM completion, fd lifecycle, firmware lookup/load and VFS
+mutation probes remain intact. New probes add missing semantic phases,
+results and queue snapshots rather than replace those contracts.
+Reviewed sys_procdesc.c history, including 891e1a37812 (remote descriptor
+transfer policy), 425f274a444 (procdesc/proctree lock-order correction),
+8b202b7ffe2 (unreachable NOTE_REAP removal), and the FreeBSD 16 merge
+0632606e7fb. The new remote-transfer pair includes the actual fdup_remote
+policy decision and reports its result; it adds no policy or locking change.
+
+The 20 passes and their contracts
+--------------------------------
+The notation provider:::stem-{start,done} describes a synchronous pair.
+Argument lists below are ordered. Identities are opaque, borrowed values;
+consumers must not dereference them or assume they remain alive afterwards.
+Completion errors are errno unless explicitly described as KERN_* results.
+
+ 1. procresource:::nice-{start,done}
+    start(pid, requested_nice); done(pid, nice, error).
+    Encloses donice's scheduling-permission check and sched_nice. The process
+    lock is held. All three returns emit completion. nice on completion is
+    clamped except when p_cansched rejects before clamping. This is one target
+    operation, not the entire PRIO_USER/PRIO_PGRP syscall. Process lookup and
+    visibility failures before donice are excluded.
+ 2. procresource:::limit-{start,done}
+    start(resource, requested_soft, requested_hard); done(resource, error).
+    Encloses kern_setrlimit's call to kern_proc_setrlimit, including validation,
+    permissions, allocation and commit. Direct callers of kern_proc_setrlimit
+    do not fire this pair. User copyin before kern_setrlimit is excluded.
+ 3. vfs:::extattr-get-{start,done}
+    start(vnode, namespace); done(vnode, namespace, error).
+    Begins after length validation, before vnode locking. Includes MAC check,
+    VOP and unlock. No attribute name, value or output buffer is exposed.
+ 4. vfs:::extattr-list-{start,done}
+    Same arguments. Begins after size setup/validation, before vnode locking;
+    both MAC denial and ordinary return complete. No attribute names exposed.
+ 5. vfs:::acl-get-{start,done}
+    start(vnode, acl_type); done(vnode, acl_type, error).
+    Includes ACL allocation, vnode locking, MAC check, VOP, user copyout and
+    freeing the temporary ACL. Path/fd resolution occurs before this phase.
+ 6. vfs:::acl-check-{start,done}
+    Same arguments. Includes temporary allocation, copyin, VOP_ACLCHECK and
+    cleanup. Tests ACL applicability; this is not a granted-access decision.
+ 7. procdescriptor:::open-{start,done}
+    start(target_pid, flags); done(target_pid, flags, error).
+    Encloses kern_pdopenpid, including falloc failure, visibility/security,
+    procdesc setup, finstall and cleanup. Bad syscall flags rejected by the
+    outer sys_pdopenpid wrapper are excluded. No new lifetime references.
+ 8. procdescriptor:::transfer-{start,done}
+    start(procdesc_fd, source_fd); done(procdesc_fd, source_fd, error).
+    Encloses kern_pddupfd: descriptor rights, process exit/debug checks,
+    exec blocking, remote transfer policy, duplication and cleanup. The
+    target process is not dereferenced after its reference is dropped.
+    Invalid outer syscall flags are excluded; other transfer APIs are not
+    automatically covered by this pair.
+ 9. sendfile:::io-wait-{start,done}
+    start(sf_io_identity); done(sf_io_identity).
+    Encloses the complete existing sendfile_iowait loop, including a no-wait
+    invocation. It reports a wait phase, not disk I/O success. No probe in
+    the low-level completion callback; no dereference of sf_io at the site.
+10. sendfile:::socket-wait-{start,done}
+    start(socket, bytes_needed); done(socket, error).
+    One pair per sbwait invocation. Completion follows send-buffer lock
+    reacquisition; a wake may be followed by another wait after rechecking.
+    Nonblocking EAGAIN before sleeping is excluded.
+11. fd:::advlock-{start,done}
+    start(vnode, operation, flags); done(vnode, operation, error).
+    Encloses VOP_ADVLOCK in file_advlock, including a blocking lock request's
+    wait. Not every fcntl validation or every filesystem-internal lock call.
+12. vm:::sync-map-{start,done}
+    start(rounded_size, msync_flags); done(KERN_result).
+    Encloses vm_map_sync after range/flag validation. Completion precedes
+    syscall errno conversion. Includes synchronous/asynchronous mode choice;
+    it is not an assertion that all data reached persistent media.
+13. vm:::wire-map-{start,done}
+    start(range_size); done(KERN_result).
+    Encloses kern_mlock's vm_map_wire after privilege, range and accounting
+    checks. Excludes those earlier failures, mlockall and later accounting
+    rollback. Complements existing vm:::mlock completion.
+14. socketctl:::protocol-{start,done}
+    start(socket, ioctl_command); done(socket, ioctl_command, error).
+    Encloses protocol pr_control dispatch in soo_ioctl with CURVNET set.
+    Interface/routing branches and generic socket commands are excluded.
+    No ioctl data, addresses or packet payloads are captured.
+15. geomdev:::flush-{start,done}
+    start(consumer); done(consumer, error).
+    Encloses g_io_flush for DIOCGFLUSH in g_dev_ioctl. Reports that helper's
+    completion, not every flush submitted elsewhere through GEOM.
+16. geomdev:::delete-{start,done}
+    start(consumer, chunk_offset, chunk_length); done(consumer, error).
+    One pair per g_delete_data chunk after ioctl validation and alignment.
+    Size-limited chunks are distinct operations. Invalid requests rejected
+    before the chunk loop do not fire. No contents or keys are exposed.
+17. geomdev:::close-wait-{start,done}
+    start(softc, active_count); done(softc, active_count).
+    One pair per existing msleep while the last close waits for active I/O.
+    Counts exclude SC_A_OPEN/SC_A_DESTROY flag bits. A timeout/wake is not
+    successful close: the original loop rechecks its condition. No invented
+    errno, completion, retry or recovery claim.
+18. firmware:::load-wait-{start,done}
+    start(load_request_identity); done(load_request_identity).
+    One pair around the existing fwload sleep inside !cold, after the task
+    has been queued. Includes mutex reacquisition. A wake is not successful
+    firmware registration; existing lookup/module/binary outcomes remain
+    the authority for that. No firmware name, blob or early-boot probe added.
+19. epair:::enqueue(queue_id, packet_length, resulting_depth, error)
+    Runs under the existing queue mutex after mbufq_enqueue. Measures success
+    or queue exhaustion, bytes attempted and resulting depth. Does not read
+    mbuf after transfer; length was already saved by the original code.
+    Queue IDs are local to epair instances: the profile deliberately
+    aggregates matching queue IDs across pairs/VNETs, not per-interface
+    identity. Receiving/processing completion is not covered here.
+20. vfs:::copy-range-{start,done}
+    start(input_vnode, output_vnode, requested_length);
+    done(input_vnode, output_vnode, returned_length, error).
+    Encloses vn_copy_file_range with both range locks already acquired.
+    Excludes earlier fd/range checks and range-lock waiting, plus later
+    descriptor offset handling. returned_length is the helper's value; use
+    the error argument when interpreting it, particularly on partial errors.
+
+Nine-category mapping
+---------------------
+Lifecycle/execution: operation entry/completion across the 19 paired phases.
+Performance/latency: wall time between paired boundaries, including preemption.
+Errors/exceptions: helper errno, permission denials, KERN_* results, queue errors.
+Resources: limit requests/results, memory wiring, procdesc acquisition/transfer,
+           epair queue exhaustion and depth.
+I/O: GEOM flush/delete, VM sync, file copying and sendfile I/O waiting.
+Networking: sendfile socket capacity, protocol control and epair enqueue.
+Synchronization: sendfile, GEOM close and firmware waits; VOP advisory locks.
+Security/access: scheduling/limit permission results, procdesc rights/debug/
+                 transfer outcomes, MAC denial on metadata reads.
+Counters/state: epair queue depth and attempted length, GEOM active counts,
+                nice outcomes and resource-limit requests.
+
+No synthetic deadlock, health, retry, timeout, authentication or recovery
+probe is added where the underlying code does not establish that event.
+The nine categories apply collectively; each subsystem has only relevant
+categories. Some access errors require correlation with existing MAC/capsicum
+probes to distinguish a specific denial from other errno causes.
+
+Safety and overhead
+-------------------
+New sites are in ordinary operation or sleepable driver control paths.
+No raw interrupt entry, NMI, allocator core, panic, scheduler context-switch,
+SMR fast lookup or early-boot initialization site was added. Sites add no
+allocation, lock acquisition, clock read or payload copy. Disabled SDT hooks
+eliminate arguments, including the epair queue-depth accessor. With hooks
+compiled in but disabled, the native amd64 sites are inactive NOPs. Enabled
+packet and metadata probes may be high volume; enable selected profiles.
+Existing synchronization protects the values sampled here. Probe identities
+are borrowed and may be reused. No credential contents are newly collected.
+
+Base profiles
+-------------
+  kernel-resource-decisions    nice and limit outcomes/latency
+  kernel-procdesc-operations   open and remote-transfer outcomes/latency
+  vfs-metadata-reads          ACL and extended-attribute phases
+  kernel-data-waits           sendfile and advisory-lock phases
+  vm-operation-phases        map sync/wiring with raw KERN_* results
+  geom-device-operations      flush, delete chunks and close waits
+  kernel-device-control      protocol control, firmware wait, epair queue
+  vfs-copy-phases             copy helper outcomes/latency
+
+The existing bsdinstruments Makefile discovers these .d files for the base
+package at /usr/share/bsdinstruments/profiles; the install list has 396 entries.
+Nothing was installed. Example against a kernel with the providers present:
+  bsdinstruments generate -f /usr/share/bsdinstruments/profiles/kernel-data-waits.d
+
+Profiles use pid/tid/depth pairing, aggregate numeric outcomes and latency,
+and clear matching state. PID filters select executing context, not target
+procdesc PID or network peer. Begin tracing before a workload; enabling
+mid-operation, dropped events, thread exits and unmatched starts can make
+pairing incomplete. Latency is elapsed time, not CPU service time. Offline
+-Z compilation is accompanied by exact selector/argument and ELF-site checks.
+
+Validation and reproducibility
+------------------------------
+Prepared native amd64 GENERIC-NODEBUG under /usr/obj; all 16 CPUs used for
+parallel compilation. Scripts are under tools/test/system-tracing:
+  coverage-thirteenth-compile.py: 12 sources x hooks on/off, -Werror.
+  coverage-thirteenth-variants.py: 6 sources x hooks on/off, with MAC,
+    RACCT, COMPAT_FREEBSD32 and RSS undefined for alternate branches.
+    Existing kern_mprotect unused local 'error' breaks -Werror when MAC is
+    off on both saved baseline and edited VM source. Only that variant
+    source demotes unused-variable to a warning. Normal builds have no waiver.
+    Initial failures and baseline reproduction are retained in variant-initial.
+  coverage-thirteenth-modules.py: firmware.ko and if_epair.ko linked.
+  Prepared kernel linked with make -j16 kernel (not installed).
+  coverage-thirteenth-check.py: all 39 contract sites, executable NOPs,
+    no-hooks absence, multi-exit sites, source hashes, install membership and
+    8 profiles x normal/PID-duration filtered offline DTrace compilation.
+  coverage-thirteenth-codegen.py: 12 baseline/current no-hooks .text byte
+    comparisons, with diagnostic __FILE__/__LINE__ normalized. All match.
+    This does not establish relocation equivalence or runtime behavior.
+
+Artifacts and per-file before images:
+  /usr/obj/5bsd-dtrace-thirteenth-validation
+Session-only patch and SHA256 are retained there and reverse-checked against
+this source tree. No unrelated dirty changes are part of the session patch.
+No /dev/dtrace is available. Live firing, event ordering under contention,
+traffic/storage workloads and overhead remain unqualified. No module load,
+interface creation, firmware request, disk ioctl, publication, install,
+upgrade or reboot was performed. This pass does not erase earlier runtime
+qualification gaps or replace the broader coverage census.

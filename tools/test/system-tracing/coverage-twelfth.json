@@ -1,0 +1,390 @@
+{
+  "probes": [
+    {
+      "kind": "kernel",
+      "source": "sys/netpfil/pf/pf.c",
+      "provider": "pf",
+      "module": "ip",
+      "function": "limiter",
+      "name": "decision",
+      "types": [
+        "int",
+        "uint32_t",
+        "uint32_t",
+        "int",
+        "int",
+        "int"
+      ],
+      "style": "sdt"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/netpfil/pf/pf.c",
+      "provider": "pf",
+      "module": "ip",
+      "function": "limiter",
+      "name": "pressure",
+      "types": [
+        "int",
+        "uint32_t",
+        "int",
+        "uint64_t",
+        "uint64_t",
+        "int"
+      ],
+      "style": "sdt"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/netpfil/pf/pf.c",
+      "provider": "pf",
+      "module": "ip",
+      "function": "limiter",
+      "name": "eligible",
+      "types": [
+        "int",
+        "uint32_t",
+        "uint32_t"
+      ],
+      "style": "sdt"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/dmu_tx.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "dmu-assign-start",
+      "types": [
+        "dmu_tx_t *",
+        "int"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/dmu_tx.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "dmu-assign-retry",
+      "types": [
+        "dmu_tx_t *",
+        "int"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/dmu_tx.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "dmu-assign-done",
+      "types": [
+        "dmu_tx_t *",
+        "uint64_t",
+        "int"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/dmu_tx.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "dmu-dirty-wait-start",
+      "types": [
+        "dsl_pool_t *",
+        "uint64_t",
+        "uint64_t"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/dmu_tx.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "dmu-dirty-wait-done",
+      "types": [
+        "dsl_pool_t *",
+        "uint64_t"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/dmu_tx.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "dmu-dnode-wait-start",
+      "types": [
+        "dnode_t *",
+        "uint64_t"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/dmu_tx.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "dmu-dnode-wait-done",
+      "types": [
+        "dnode_t *",
+        "uint64_t"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/txg.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "txg-wait-start",
+      "types": [
+        "dsl_pool_t *",
+        "uint64_t",
+        "int"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/txg.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "txg-wait-done",
+      "types": [
+        "dsl_pool_t *",
+        "uint64_t",
+        "uint64_t",
+        "int"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/zil.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "zil-wait-start",
+      "types": [
+        "zilog_t *",
+        "zil_commit_waiter_t *"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/zil.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "zil-wait-done",
+      "types": [
+        "zilog_t *",
+        "zil_commit_waiter_t *",
+        "int"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/zil.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "zil-wait-timeout",
+      "types": [
+        "zilog_t *",
+        "zil_commit_waiter_t *"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/zil.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "zil-waiter-allocate",
+      "types": [
+        "zil_commit_waiter_t *"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/zfs/zil.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "zil-waiter-release",
+      "types": [
+        "zil_commit_waiter_t *"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/os/freebsd/zfs/zfs_vnops_os.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "zfs-vop-read-start",
+      "types": [
+        "vnode_t *",
+        "int64_t",
+        "uint64_t",
+        "int"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/os/freebsd/zfs/zfs_vnops_os.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "zfs-vop-read-done",
+      "types": [
+        "vnode_t *",
+        "uint64_t",
+        "int"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/os/freebsd/zfs/zfs_vnops_os.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "zfs-vop-write-start",
+      "types": [
+        "vnode_t *",
+        "int64_t",
+        "uint64_t",
+        "int"
+      ],
+      "style": "dtrace"
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/os/freebsd/zfs/zfs_vnops_os.c",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "zfs-vop-write-done",
+      "types": [
+        "vnode_t *",
+        "uint64_t",
+        "int"
+      ],
+      "style": "dtrace"
+    }
+  ],
+  "profiles": [
+    "pf-limiter-decisions",
+    "zfs-assignment-phases",
+    "zfs-pressure-waits",
+    "zfs-sync-waits",
+    "zfs-log-waiters",
+    "zfs-vnode-io",
+    "zfs-access-outcomes"
+  ],
+  "sources": {
+    "cddl/lib/libzpool/Makefile": "f1c5fa67572dcb26c6390736c24cbe80d9de697d525c788630f9c5acbe6fa250",
+    "cddl/usr.sbin/bsdinstruments/profiles/pf-limiter-decisions.d": "4569aebfdb0a585c56f1408673cf8ad9e80e5cb868eb778fe119c4ed0f5edfc6",
+    "cddl/usr.sbin/bsdinstruments/profiles/zfs-access-outcomes.d": "e2990d85d28b9137a290e8388f7f578c8c017e7683ad6754d5f4dd09984588e2",
+    "cddl/usr.sbin/bsdinstruments/profiles/zfs-assignment-phases.d": "67922a22cc96f3cd3a3e0870bec3316185ff68f76a69e60f7fc1cff0cfcf9b6b",
+    "cddl/usr.sbin/bsdinstruments/profiles/zfs-log-waiters.d": "e22a5ed0d40d5f7c7f55938cfc9a8052179bf05c2dd3ce0d5e8bbcdbd92c5046",
+    "cddl/usr.sbin/bsdinstruments/profiles/zfs-pressure-waits.d": "9e5304362060201f945a6bbefc3f3a8fdb53d1475859d79cb4214406a144374c",
+    "cddl/usr.sbin/bsdinstruments/profiles/zfs-sync-waits.d": "2e599a757af810fd3173e6c34226711435a24667c12a0f7939695d5071520edd",
+    "cddl/usr.sbin/bsdinstruments/profiles/zfs-vnode-io.d": "6134ab9f11ab6a5c5896579a123b4062854d750ffb59538833f258eb2f1dba30",
+    "sys/contrib/openzfs/include/sys/trace_bsd.h": "62f696d15ef37789c0564bfbbbab398caab193d5433063ae1d74db9df84f10de",
+    "sys/contrib/openzfs/module/os/freebsd/zfs/kmod_core.c": "4126e26922de8756134f187d978cb403682ca1376cb81db7043497c2a61c3a14",
+    "sys/contrib/openzfs/module/os/freebsd/zfs/zfs_vnops_os.c": "a8f78b02b2fabeea995be268e21eb14af8f56c9f6de54d1174f51bee793b099d",
+    "sys/contrib/openzfs/module/zfs/dmu_tx.c": "1e29a278c67c509be13ee0f15b37ed53f01f17dacf43fbf575f489298f2be8ff",
+    "sys/contrib/openzfs/module/zfs/txg.c": "50f71ea80fa3040584a7c0d4a2abf9ff6c5c85372640087800e9283943695d28",
+    "sys/contrib/openzfs/module/zfs/zil.c": "3e848d90c3ebf1bc32676d05d7bea3c6baf76049ec076e1768cf9a292ab083e2",
+    "sys/modules/pf/Makefile": "ffe05ad68bb80fa3dad47542417e8f94458f6270ca79a199e45d6cec22e8e5f3",
+    "sys/modules/zfs/Makefile": "6ff467955a31196f770575e7dce45ce61517dbe7809298f18c89959436045f78",
+    "sys/netpfil/pf/pf.c": "76a5d642239d6ee93237c228016ad6b18bab2a8fc331d7b43e22ad161b8af36e",
+    "tools/test/system-tracing/COVERAGE-TWELFTH": "19857b9fed889dc4fec27625cf916673210df9ad851e23c7423df4b40acb50bc",
+    "tools/test/system-tracing/README": "3295d7333601b91b201b1977702f8ada7e86b13d155acc80506b426dcc3a8037",
+    "tools/test/system-tracing/coverage-twelfth-base.py": "c46c5410d39ff647da51453787ef1526ba854dea98c8b621b037439a3cb39870",
+    "tools/test/system-tracing/coverage-twelfth-check.py": "dca4e319087038de4162d6c930088ac6d6e4061dfe60f050134cc4c3ccd61eb8",
+    "tools/test/system-tracing/coverage-twelfth-codegen.py": "b1d3aee6f2350f46fc6d8111c9b550e24645139cde7218bd18139dd2537470b2",
+    "tools/test/system-tracing/coverage-twelfth-compile.py": "12d48550558e70d16c6b0dbb58dd950046221b68aea70e5afdfa49da1093c95b",
+    "tools/test/system-tracing/coverage-twelfth-guards.py": "4c5be97e326b78364748e362a7b4356e38731c81e2a9faaeca67656ae973126c",
+    "tools/test/system-tracing/coverage-twelfth-modules.py": "b5df7e5ffe36f55a8d01b521bea9822f349830c2b792d5d21ffaf3568a39ee00"
+  },
+  "dependencies": [
+    {
+      "kind": "kernel",
+      "source": "sys/contrib/openzfs/module/os/freebsd/zfs/kmod_core.c",
+      "provider": "zfs",
+      "module": "",
+      "function": "",
+      "name": "access",
+      "types": [
+        "uint64_t",
+        "int",
+        "struct ucred *",
+        "int"
+      ]
+    }
+  ],
+  "categories": {
+    "lifecycle": [
+      "ZIL waiter allocate/release",
+      "DMU assignment start/done"
+    ],
+    "performance": [
+      "DMU assignment",
+      "dirty/dnode waits",
+      "TXG wait",
+      "ZIL commit waiter",
+      "FreeBSD vnode read/write"
+    ],
+    "errors": [
+      "PF limiter rejection reasons",
+      "DMU attempt and terminal errors",
+      "TXG EINTR/ESHUTDOWN",
+      "ZIL waiter error/issuance timeout",
+      "vnode errno"
+    ],
+    "resources": [
+      "PF states/source entries/rate budget pressure",
+      "ZFS dirty-data limit wait",
+      "ZIL waiter allocation/release"
+    ],
+    "io": [
+      "ZFS vnode requested offset/length and completion residual/errno"
+    ],
+    "network": [
+      "PF state/source limiter decisions and eligibility"
+    ],
+    "synchronization": [
+      "ZFS dirty-data/dnode/TXG/ZIL waits"
+    ],
+    "access-control": [
+      "PF block versus fallthrough",
+      "existing ZFS access probe connected to successful execute shortcut"
+    ],
+    "counters-state": [
+      "PF pressure/eligibility events",
+      "ZFS dirty bytes and assigned/synced transaction-group progress"
+    ]
+  }
+}

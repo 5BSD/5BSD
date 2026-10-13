@@ -104,6 +104,9 @@ SDT_PROBE_DEFINE3(bufcache, , , flush__start, "struct vnode *",
     "struct bufdomain *", "int");
 SDT_PROBE_DEFINE3(bufcache, , , flush__done, "struct vnode *",
     "struct bufdomain *", "int");
+SDT_PROBE_DEFINE2(bufcache, , , writes__wait__start, "struct bufobj *", "int");
+SDT_PROBE_DEFINE2(bufcache, , , writes__wait__done, "struct bufobj *", "int");
+
 SDT_PROBE_DEFINE1(bufcache, , , io__wait, "struct buf *");
 SDT_PROBE_DEFINE2(bufcache, , , io__done, "struct buf *", "int");
 
@@ -970,7 +973,13 @@ waitrunningbufspace(void)
 	mtx_lock(&rbreqlock);
 	while (runningbufspace > hirunningspace) {
 		runningbufreq = 1;
+		if (!cold)
+			DTRACE_PROBE1(bufcache__throttle__start,
+			    int, (1));
 		msleep(&runningbufreq, &rbreqlock, PVM, "wdrain", 0);
+		if (!cold)
+			DTRACE_PROBE1(bufcache__throttle__done,
+			    int, (1));
 	}
 	mtx_unlock(&rbreqlock);
 }
@@ -2668,7 +2677,13 @@ bwillwrite(void)
 		mtx_lock(&bdirtylock);
 		while (buf_dirty_count_severe()) {
 			bdirtywait = 1;
+			if (!cold)
+				DTRACE_PROBE1(bufcache__throttle__start,
+				    int, (2));
 			msleep(&bdirtywait, &bdirtylock, PVFS, "flswai", 0);
+			if (!cold)
+				DTRACE_PROBE1(bufcache__throttle__done,
+				    int, (2));
 		}
 		mtx_unlock(&bdirtylock);
 	}
@@ -5260,6 +5275,7 @@ bufobj_wwait(struct bufobj *bo, int slpflag, int timeo)
 
 	KASSERT(bo != NULL, ("NULL bo in bufobj_wwait"));
 	ASSERT_BO_WLOCKED(bo);
+	SDT_PROBE2(bufcache, , , writes__wait__start, bo, bo->bo_numoutput);
 	error = 0;
 	while (bo->bo_numoutput) {
 		bo->bo_flag |= BO_WWAIT;
@@ -5268,6 +5284,7 @@ bufobj_wwait(struct bufobj *bo, int slpflag, int timeo)
 		if (error)
 			break;
 	}
+	SDT_PROBE2(bufcache, , , writes__wait__done, bo, error);
 	return (error);
 }
 

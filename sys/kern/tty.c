@@ -95,6 +95,9 @@ static const char	*dev_console_filename;
  * deliberately NOT probed here (per-byte hot paths).
  */
 SDT_PROVIDER_DEFINE(tty);
+SDT_PROBE_DEFINE2(tty, , , control__start, "void *", "unsigned long");
+SDT_PROBE_DEFINE3(tty, , , control__done, "void *", "unsigned long", "int");
+
 
 /* Device open/close/revoke: (pid, result). */
 SDT_PROBE_DEFINE2(tty, , , open, "int", "int");
@@ -897,7 +900,9 @@ ttydev_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 			new->c_ospeed = old->c_ospeed;
 	}
 
+	SDT_PROBE2(tty, , , control__start, tp, cmd);
 	error = tty_ioctl(tp, cmd, data, fflag, td);
+	SDT_PROBE3(tty, , , control__done, tp, cmd, error);
 done:	tty_unlock(tp);
 
 	return (error);
@@ -1782,7 +1787,16 @@ tty_wait(struct tty *tp, struct cv *cv)
 	tty_lock_assert(tp, MA_OWNED|MA_NOTRECURSED);
 	MPASS(!tty_gone(tp));
 
+	if (!cold)
+		DTRACE_PROBE2(tty__sleep__start,
+		    void *, (tp),
+		    int, (1));
 	error = cv_wait_sig(cv, tp->t_mtx);
+	if (!cold)
+		DTRACE_PROBE3(tty__sleep__done,
+		    void *, (tp),
+		    int, (1),
+		    int, (error));
 
 	/* Bail out when the device slipped away. */
 	if (tty_gone(tp))
@@ -1810,6 +1824,10 @@ tty_wait_proctree(struct tty *tp, struct cv *cv, int proctree_lock_mode)
 	if (proctree_lock_mode != LA_UNLOCKED)
 		sx_unlock(&proctree_lock);
 
+	if (!cold)
+		DTRACE_PROBE2(tty__sleep__start,
+		    void *, (tp),
+		    int, (3));
 	error = cv_wait_sig_unlock(cv, tp->t_mtx);
 	switch (proctree_lock_mode) {
 	case LA_SLOCKED:
@@ -1820,6 +1838,11 @@ tty_wait_proctree(struct tty *tp, struct cv *cv, int proctree_lock_mode)
 		break;
 	}
 	tty_lock(tp);
+	if (!cold)
+		DTRACE_PROBE3(tty__sleep__done,
+		    void *, (tp),
+		    int, (3),
+		    int, (error));
 
 	/* Bail out when the device slipped away. */
 	if (tty_gone(tp))
@@ -1841,7 +1864,16 @@ tty_timedwait(struct tty *tp, struct cv *cv, int hz)
 	tty_lock_assert(tp, MA_OWNED|MA_NOTRECURSED);
 	MPASS(!tty_gone(tp));
 
+	if (!cold)
+		DTRACE_PROBE2(tty__sleep__start,
+		    void *, (tp),
+		    int, (2));
 	error = cv_timedwait_sig(cv, tp->t_mtx, hz);
+	if (!cold)
+		DTRACE_PROBE3(tty__sleep__done,
+		    void *, (tp),
+		    int, (2),
+		    int, (error));
 
 	/* Bail out when the device slipped away. */
 	if (tty_gone(tp))

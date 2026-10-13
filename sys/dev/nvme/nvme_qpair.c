@@ -36,6 +36,7 @@
 #include <dev/pci/pcivar.h>
 
 #include "nvme_private.h"
+#include <sys/sdt.h>
 
 typedef enum error_print { ERROR_PRINT_NONE, ERROR_PRINT_NO_RETRY, ERROR_PRINT_ALL } error_print_t;
 #define DO_NOT_RETRY	1
@@ -913,6 +914,8 @@ do_reset:
 				    (csts == NVME_GONE) ? " and possible hot unplug" :
 				    (cfs ? " and fatal error status" : ""));
 				qpair->recovery_state = RECOVERY_WAITING;
+				if (!cold)
+					DTRACE_PROBE2(nvme__watchdog__reset, void *, qpair, uint32_t, csts);
 			}
 			idle = false;
 			break;
@@ -976,6 +979,10 @@ do_reset:
 			if (now <= tr->deadline)
 				continue;
 
+			if (!cold)
+				DTRACE_PROBE3(nvme__request__expired, void *, qpair,
+				    int, tr->cid, int, tr->req->abort_sent);
+
 			/*
 			 * Timeout expired, abort it or reset controller.
 			 */
@@ -986,6 +993,8 @@ do_reset:
 				if (atomic_fetchadd_int(&ctrlr->outstanding_aborts, 1) >
 				    ctrlr->cdata.acl) {
 					atomic_subtract_int(&ctrlr->outstanding_aborts, 1);
+					if (!cold)
+						DTRACE_PROBE2(nvme__abort__pressure, void *, qpair, int, 1);
 					continue;
 				}
 				/* The device-visible CID includes the queue's
@@ -994,9 +1003,13 @@ do_reset:
 				    qpair->cid_base + tr->cid, qpair->id,
 				    nvme_abort_complete, ctrlr) != 0) {
 					atomic_subtract_int(&ctrlr->outstanding_aborts, 1);
+					if (!cold)
+						DTRACE_PROBE2(nvme__abort__pressure, void *, qpair, int, 2);
 					continue;
 				}
 				tr->req->abort_sent = true;
+				if (!cold)
+					DTRACE_PROBE2(nvme__abort__sent, void *, qpair, int, tr->cid);
 				tr->deadline = now + nvme_request_timeout(qpair, tr->req);
 			} else {
 				/* A second expiry (or an admin command) needs a
@@ -1319,6 +1332,9 @@ nvme_io_qpair_enable(struct nvme_qpair *qpair)
 	while (!STAILQ_EMPTY(&temp)) {
 		req = STAILQ_FIRST(&temp);
 		STAILQ_REMOVE_HEAD(&temp, stailq);
+		if (!cold)
+			DTRACE_PROBE3(nvme__queued__resubmit, void *, qpair,
+			    int, req->cmd.opc, int, req->retries);
 		nvme_qpair_print_command(qpair, &req->cmd);
 		_nvme_qpair_submit_request(qpair, req);
 	}

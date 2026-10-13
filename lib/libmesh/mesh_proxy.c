@@ -23,6 +23,7 @@
  */
 
 #include <sys/types.h>
+#include "mesh_probes.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -121,6 +122,7 @@ mesh_proxy_pdu_parse(const uint8_t *in, size_t inlen, uint8_t *sar,
 	*type = t;
 	*data = in + MESH_PROXY_HDR_LEN;
 	*datalen = inlen - MESH_PROXY_HDR_LEN;
+	MESH_PROBE_MESH__PROXY__PDU(t, *datalen);
 	return (0);
 }
 
@@ -266,6 +268,7 @@ mesh_proxy_reasm_feed(struct mesh_proxy_reasm *r, const uint8_t *pdu,
 		*out_msglen = datalen;
 		*complete = 1;
 		mesh_proxy_reasm_reset(r);
+		MESH_PROBE_MESH__PROXY__REASM(type, *complete);
 		return (0);
 
 	case MESH_PROXY_SAR_FIRST:
@@ -281,6 +284,7 @@ mesh_proxy_reasm_feed(struct mesh_proxy_reasm *r, const uint8_t *pdu,
 		r->len = datalen;
 		r->in_progress = 1;
 		r->timing = 0;		/* (re)start the 20 s timeout clock */
+		MESH_PROBE_MESH__PROXY__REASM(type, *complete);
 		return (0);
 
 	case MESH_PROXY_SAR_CONTINUATION:
@@ -293,6 +297,7 @@ mesh_proxy_reasm_feed(struct mesh_proxy_reasm *r, const uint8_t *pdu,
 			memcpy(r->buf + r->len, data, datalen);
 		r->len += datalen;
 		r->timing = 0;		/* a segment arrived: restart the clock */
+		MESH_PROBE_MESH__PROXY__REASM(type, *complete);
 		return (0);
 
 	case MESH_PROXY_SAR_LAST:
@@ -314,6 +319,7 @@ mesh_proxy_reasm_feed(struct mesh_proxy_reasm *r, const uint8_t *pdu,
 		*out_msglen = r->len;
 		*complete = 1;
 		mesh_proxy_reasm_reset(r);
+		MESH_PROBE_MESH__PROXY__REASM(type, *complete);
 		return (0);
 	}
 

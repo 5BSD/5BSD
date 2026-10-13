@@ -46,6 +46,20 @@
 #include "bltin/bltin.h"
 #endif
 
+#include "signaltool_trace.h"
+
+static int
+trace_kill(pid_t pid, int sig)
+{
+	int result;
+
+	TRACE_SIGNALTOOL_OPERATION__START(pid, sig);
+	result = kill(pid, sig);
+	TRACE_SIGNALTOOL_OPERATION__DONE(pid, sig, result,
+	    result < 0 ? errno : 0);
+	return (result);
+}
+
 static void nosig(const char *);
 static void printsignals(FILE *);
 static void usage(void) __dead2;
@@ -124,7 +138,7 @@ main(int argc, char *argv[])
 			pid = (pid_t)pidl;
 			if (!**argv || *ep || pid != pidl)
 				errx(2, "illegal process id: %s", *argv);
-			ret = kill(pid, numsig);
+			ret = trace_kill(pid, numsig);
 		}
 		if (ret == -1) {
 			warn("%s", *argv);

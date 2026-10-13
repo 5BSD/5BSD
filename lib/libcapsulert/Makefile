@@ -33,4 +33,9 @@ LIBADD=		ucl
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
+.if ${MK_DTRACE} != "no"
+SRCS+= diagnostics_provider.d
+CFLAGS+= -DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

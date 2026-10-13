@@ -1,0 +1,244 @@
+Fourth tracing expansion: 26 addition passes
+============================================
+
+Scope
+-----
+This expansion adds 61 probe definitions in 26 focused passes, spanning
+kernel subsystems, hardware drivers, LinuxKPI, both Linuxulator ABIs and
+installed base software. Existing probes and unrelated working-tree edits
+are preserved. It is additional semantic coverage, not complete coverage of
+every subsystem, driver or branch.
+
+coverage-fourth.json inventories the additions, final source hashes, pass
+numbers and 17 new BSDInstruments profiles. Per-pass edits and compiler
+results, baseline source snapshots, final builds and qualification results
+are under /usr/obj/5bsd-dtrace-20-validation. The directory name retains the
+original minimum pass count; the completed work contains 26 passes.
+
+Pass  Area                     Addition and reviewed boundary
+----  -----------------------  --------------------------------------------
+  1   Pipes: reads             Paired operation, including zero-size and
+                               nonblocking fast paths, MAC/lock failures.
+  2   Pipes: writes            Paired operation, including broken peers,
+                               lock/MAC failures and partial writes.
+  3   Pipes: direct writes     Paired direct-transfer attempt, including
+                               retries, interruption and peer loss.
+  4   Pipes: resizing          Reservation attempt and returned status.
+  5   Kqueue: scans            Paired scan, validation and copyout errors.
+  6   Kqueue: blocking         Each actual msleep interval and raw status.
+  7   Kqueue: copyout          Full and final partial batch callbacks.
+  8   POSIX timers             Timer programming, including invalid IDs.
+  9   VM                       Trap fault resolution and Mach status.
+ 10   GEOM                     Submission, length, command, dispatch mode.
+ 11   Network interfaces       Driver ioctl dispatch, including missing
+                               method and driver failures.
+ 12   USB                      Drain of a non-NULL transfer and callbacks.
+ 13   PCM sound                Playback-close chn_sync duration/status.
+ 14   NVMe                     Reset task's hardware-reset duration/status.
+ 15   PCI                      Power-state requests, no-ops, unsupported
+                               states, invalid states and transition delay.
+ 16   LinuxKPI workqueues      Synchronous delayed-work cancellation across
+                               its retry loop; result is boolean.
+ 17   Linuxulator             eventfd2 and timerfd_create results, flags,
+                               invalid inputs and fd on success; both ABIs.
+ 18   LinuxKPI memory          Shrinker count/scan callbacks and raw results.
+ 19   VFS                     Syncer's VOP_FSYNC callback/status, while the
+                               vnode is held and locked.
+ 20   Opencrypto              Session setup, bad parameters, unavailable
+                               drivers and driver initialization failures.
+ 21   libfetch                Connection reads and scalar writes, EOF,
+                               timeout/error and partial-read results.
+ 22   libarchive              Entry-data skipping after magic/state checks.
+ 23   libthr                  Slow read/write lock attempts, including
+                               individual interrupted attempts.
+ 24   cp                      Data transfer after descriptors are opened,
+                               copy_file_range fallback and byte count.
+ 25   install                 copy_file_range attempts/fallback and safe
+                               fsync, including failures before err().
+ 26   libc                    Raw semaphore park/wake calls and errno;
+                               generated cancellation-point variants too.
+
+Argument contracts
+------------------
+Argument positions are zero-based; types and exact selectors are in JSON.
+Ordinary kernel errors are native errno, except where noted. No new probe
+reads file contents, packet payloads, keys, passwords, pathnames or commands.
+Pointers are opaque live identities. Never dereference a saved identity;
+addresses and fds are reused. Pair synchronous calls by PID/thread/depth.
+Asynchronous GEOM work must not be paired by thread. Process/thread exit,
+cancellation, nonlocal exits and dropped events can leave unmatched starts.
+
+pipe:::read-start/write-start/direct-start(pipe, requested_bytes)
+pipe:::read-done/write-done/direct-done(pipe, residual_bytes, errno)
+  Residual is uio_resid; requested minus residual measures uio progress,
+  including possible partial progress on errors. Existing read/write probes
+  retain their older byte-accounting contracts. Direct is a nested operation
+  within a write; it need not consume the entire requested residual.
+pipe:::resize-start(pipe, requested_size)
+pipe:::resize-done(pipe, requested_size, errno)
+  Requested size is not a promise of allocation on error.
+
+kqueue:::scan-start(queue, maxevents)
+kqueue:::scan-done(queue, selected_events, errno)
+  Selected events need not have reached userspace if copyout failed. This
+  covers kqueue_scan, not registration or the whole kevent syscall.
+kqueue:::wait-start(queue); wait-done(queue, raw_msleep_status)
+  Fires on each actual wait; includes raw ERESTART/EWOULDBLOCK before mapping.
+kqueue:::copyout-start(queue, batch_events)
+kqueue:::copyout-done(queue, batch_events, errno)
+  Includes only scan batches, not EV_RECEIPT/change-list copyout.
+
+clock:::timer-set-start(timer_id, flags); timer-set-done(timer_id, errno)
+  Native kern_ktimer_settime, after syscall copyin and before syscall copyout.
+vm:::fault-trap-start(map, fault_type, fault_flags)
+vm:::fault-trap-done(map, Mach_KERN_status)
+  Trap wrapper, not every vm_fault caller. No faulting address is recorded.
+geom:::io-submit(bio, provider, command, length_bytes, direct_send)
+  Before inline or queued dispatch; pair with the existing io-complete by
+  live bio identity if desired. ENOMEM can cause retries/re-submission;
+  do not interpret submit count as completed physical device I/O count.
+ifnet:::ioctl-start(interface, command)
+ifnet:::ioctl-done(interface, command, errno)
+  Covers calls through if_ioctl(), not every legacy direct ifp->if_ioctl call.
+
+usb:::drain-start(transfer, root); drain-done(transfer, root)
+  Non-NULL usbd_transfer_drain only. Includes acquiring the transfer lock,
+  stopping the transfer and waiting for outstanding callbacks. No errno.
+pcm:::drain-start(channel); drain-done(channel, chn_sync_status)
+  Around chn_sync in playback close. chn_flush continues to ignore that
+  status, as before. This is not the whole PCM close operation.
+nvme:::reset-start(controller); reset-done(controller, hw_reset_status)
+  Around hardware reset in the reset task. Completion precedes controller
+  restart/failure handling; zero does not prove successful later restart.
+pci:::power-start(device, requested_state)
+pci:::power-done(device, requested_state, errno)
+  Includes no-op and validation outcomes, register write and mandated delay.
+  Successful write/delay is not independent verification of device health.
+
+linuxkpi_work:::delayed-cancel-start(delayed_work)
+linuxkpi_work:::delayed-cancel-done(delayed_work, cancelled_boolean)
+  Entire linux_cancel_delayed_work_sync retry loop. False is not errno.
+linuxkpi_shrinker:::count-start(shrinker); count-done(shrinker, object_count)
+linuxkpi_shrinker:::scan-start(shrinker, requested_batch)
+linuxkpi_shrinker:::scan-done(shrinker, raw_unsigned_result)
+  Callback results retain LinuxKPI conventions, including SHRINK_STOP.
+  This does not repair or change the existing shrink-control algorithm.
+linuxulator*:epoll::eventfd-create(initial_count, flags, fd_or_minus_one, errno)
+linuxulator*:epoll::timerfd-create(linux_clock_id, flags, fd_or_minus_one, errno)
+  Legacy eventfd (without the "2") is not included. Provider name/module
+  follow the existing LIN_SDT macros: linuxulator/linuxulator32, epoll.
+vfs:::syncer-start(vnode); syncer-done(vnode, fsync_errno)
+  Only sync_vnode's lazy fsync callback. Errors remain ignored by its caller.
+opencrypto:::session-start(driver_selection, session_mode)
+opencrypto:::session-done(driver_selection, errno)
+  Requested driver selection is not necessarily the selected driver ID.
+
+fetchio*:::read-start(connection, requested_bytes)
+fetchio*:::write-start(connection, requested_bytes)
+fetchio*:::read-done/write-done(connection, signed_result, errno_or_zero)
+  Write covers fetch_write, not direct fetch_writev calls. Read covers
+  fetch_read, not reads satisfied entirely from another buffer. EOF is a
+  zero result. Successful partial reads report zero error despite stale errno.
+archiveio*:::skip-start(archive); skip-done(archive, ARCHIVE_status)
+  Begins after archive_check_magic, which itself may return or abort.
+threadwait*:::rwlock-start(lock_address, mode)
+threadwait*:::rwlock-done(lock_address, mode, pthread_error)
+  Mode 0=read, 1=write. Each slow helper invocation, not the fast path,
+  validation errors, entire public API, or lock hold time. EINTR retries
+  are distinct intervals. Userland retry acquisition can end the loop.
+cpcopy*:::transfer-start(source_fd, target_fd)
+cpcopy*:::transfer-done(source_fd, target_fd, bytes_written, errno_or_zero)
+cpcopy*:::fallback(source_fd, target_fd, triggering_errno)
+  Only the data loop. Excludes open, metadata preservation, close failures
+  and link-only modes. EINTR retry is inside the interval; fallback switches
+  to read/write on EINVAL exactly as before.
+installcopy*:::range-start(source_fd, target_fd)
+installcopy*:::range-done(source_fd, target_fd, signed_result, errno_or_zero)
+installcopy*:::fallback(source_fd, target_fd, triggering_errno)
+installcopy*:::sync-start(target_fd); sync-done(target_fd, errno_or_zero)
+  Each copy_file_range attempt and safe fsync. Read/write fallback and digest
+  loops are not individually probed. Bootstrap builds omit this provider.
+semwait*:::park-start(usem_address, clock_id, flags)
+semwait*:::park-done(usem_address, raw_return, errno_or_zero)
+semwait*:::wake-start(usem_address)
+semwait*:::wake-done(usem_address, raw_return, errno_or_zero)
+  Raw _umtx_op calls, including those from libc's generated cancellation
+  points. Excludes userland fast acquisition/post, validation and deferred
+  cancellation after the raw wait. usem address is the internal _kern member,
+  not the public sem_t address. A wake failure remains ignored by sem_post.
+
+Installed base surface
+----------------------
+Component                   Destination / package
+--------------------------  -----------------------------------------------
+cp                          /bin/cp / runtime
+install                     /usr/bin/install / runtime
+libfetch                    /usr/lib/libfetch.so.6 / fetch
+libarchive                  /usr/lib/libarchive.so.7 / libarchive
+libthr                      /lib/libthr.so.3 / clibs
+libc                        /lib/libc.so.7 / clibs
+BSDInstruments profiles     /usr/share/bsdinstruments/profiles / bsdinstruments
+BSDInstruments              /usr/sbin/bsdinstruments / bsdinstruments
+
+The /usr/bin/fetch tool links libfetch; /usr/bin/bsdtar (with the tar symlink)
+links libarchive. Shared-library consumers inherit these probes after a
+normal build/install. Already statically linked consumers must be relinked.
+Libraries' static archives also include provider metadata and retain anchors.
+The semaphore provider shares libc's existing nameres_provider.d DOF input
+and anchor: this avoids cyclic prerequisites from separate provider objects.
+No public C API, shared-library version, syscall ABI or default policy changes.
+
+USDT is conditional on MK_DTRACE=yes. Installed user providers have PID
+suffixes; target the process that actually does the work. Kernel SDT requires
+KDTRACE_HOOKS and the corresponding running kernel/module. A loaded old
+kernel cannot acquire these probes from new profile files alone. The profile
+catalog is selected by the maintained PROFILES install rule; all 17 additions
+were confirmed in its 310-entry list. Existing profiles were not removed.
+
+Qualification and reproducibility
+---------------------------------
+On 2026-10-13, using the native amd64 prepared GENERIC-NODEBUG object tree:
+  * All 26 passes recorded edits; kernel passes compiled with hooks on/off.
+  * Final kernel matrix: 32/32 translation-unit configurations passed,
+    including linux64 and linux (32-bit compatibility ABI).
+  * The kernel and USB, sound, NVMe, linux64, linux and LinuxKPI modules linked.
+    Standalone LinuxKPI make received KERN_OPTS from prepared opt*.h files.
+  * libfetch, libarchive, libthr, cp, install and libc built and linked with
+    MK_DTRACE=yes and no (12 component configurations), using all 16 CPUs.
+    libc/libthr use /usr/obj/usr/src/amd64.amd64/tmp as the prepared sysroot;
+    installed host headers lack a current pthread constant.
+  * ELF DOF inspection confirmed provider names, argument counts, nonempty
+    firing offsets and is-enabled offsets in all six enabled components,
+    and provider absence in their disabled counterparts.
+  * Static libc semaphore consumers linked with --gc-sections retained the
+    enabled semwait DOF, omitted it when disabled, and passed behavior checks.
+  * All 61 definitions have call sites; 34/34 plain/filtered offline profile
+    compilations passed, with argument bounds and installed catalog checked.
+  * Both builds passed functional copy, FIFO fallback, safe install, digest
+    install, missing-source handling, fetch data/EOF/EPIPE, archive skipping,
+    timed rwlock contention and semaphore timeout/success checks (18 checks).
+
+Run from /usr/src (validation writes to /usr/obj, never an update repository):
+  python3.12 tools/test/system-tracing/coverage-fourth-compile.py \
+    --kernel-obj /usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG
+  python3.12 tools/test/system-tracing/coverage-fourth-check.py
+  python3.12 tools/test/system-tracing/coverage-fourth-dof.py
+  python3.12 tools/test/system-tracing/coverage-fourth-smoke.py
+
+The DOF and smoke tools expect the enabled/disabled build artifacts described
+by the recorded build commands in pass-21.json through pass-26.json. The
+profile checker verifies the recorded source snapshot, not arbitrary future
+edits. Update the inventory after deliberately changing a contract/source.
+
+Remaining live gates
+--------------------
+The host exposes no /dev/dtrace device. Offline compilation, ELF metadata and
+ordinary execution do NOT establish that a live probe fired, measured a
+correct duration, or ran with no DTrace drops/errors. Boot the matching kernel
+and modules in a test VM, enumerate providers, start tracing before each
+workload, assert expected counts/results, and test interruption and parallel
+work. Qualify USB/audio/NVMe/PCI on suitable hardware or validated emulation;
+do not trigger storage resets, low-memory pressure or PCI power transitions
+on a production host merely to generate events. Confirm Linuxulator native
+and compat workloads and LinuxKPI driver paths independently. Installation,
+package publication, module loading, upgrading and rebooting were not done.

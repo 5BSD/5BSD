@@ -37,4 +37,9 @@ FIDL_SCHEMAS.timecmp=	lib/libtimecmp/timecmp.fidl
 FIDL_LIBRARY.timecmp=	bsd.time.v1
 .include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
+.if ${MK_DTRACE} != "no"
+SRCS+= diagnostics_provider.d
+CFLAGS+= -DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

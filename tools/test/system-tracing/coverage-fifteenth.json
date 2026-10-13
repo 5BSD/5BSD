@@ -1,0 +1,675 @@
+{
+  "probes": [
+    {
+      "provider": "socketsnapshot*",
+      "module": "",
+      "function": "",
+      "name": "query-start",
+      "types": [
+        "int",
+        "size_t"
+      ],
+      "source": "usr.bin/sockstat/main.c",
+      "kind": "user"
+    },
+    {
+      "provider": "socketsnapshot*",
+      "module": "",
+      "function": "",
+      "name": "query-done",
+      "types": [
+        "int",
+        "int",
+        "size_t"
+      ],
+      "source": "usr.bin/sockstat/main.c",
+      "kind": "user"
+    },
+    {
+      "provider": "ipcsnapshot*",
+      "module": "",
+      "function": "",
+      "name": "query-start",
+      "types": [
+        "int",
+        "size_t"
+      ],
+      "source": "usr.bin/ipcs/ipc.c",
+      "kind": "user"
+    },
+    {
+      "provider": "ipcsnapshot*",
+      "module": "",
+      "function": "",
+      "name": "query-done",
+      "types": [
+        "int",
+        "int",
+        "size_t"
+      ],
+      "source": "usr.bin/ipcs/ipc.c",
+      "kind": "user"
+    },
+    {
+      "provider": "gzipstream*",
+      "module": "",
+      "function": "",
+      "name": "inflate-start",
+      "types": [
+        "unsigned int",
+        "unsigned int"
+      ],
+      "source": "usr.bin/gzip/gzip.c",
+      "kind": "user"
+    },
+    {
+      "provider": "gzipstream*",
+      "module": "",
+      "function": "",
+      "name": "inflate-done",
+      "types": [
+        "int",
+        "unsigned int",
+        "unsigned int"
+      ],
+      "source": "usr.bin/gzip/gzip.c",
+      "kind": "user"
+    },
+    {
+      "provider": "archiveop*",
+      "module": "",
+      "function": "",
+      "name": "operation-start",
+      "types": [
+        "int"
+      ],
+      "source": "contrib/libarchive/tar/read.c",
+      "kind": "user"
+    },
+    {
+      "provider": "archiveop*",
+      "module": "",
+      "function": "",
+      "name": "operation-done",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "contrib/libarchive/tar/read.c",
+      "kind": "user"
+    },
+    {
+      "provider": "gzipstream*",
+      "module": "",
+      "function": "",
+      "name": "decode-error",
+      "types": [
+        "int",
+        "long long"
+      ],
+      "source": "usr.bin/gzip/gzip.c",
+      "kind": "user"
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pf-syncookie-active",
+      "types": [
+        "int",
+        "int"
+      ],
+      "source": "sys/netpfil/pf/pf_syncookies.c",
+      "argument_expressions": [
+        "true",
+        "V_pf_status.syncookies_mode"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pf-table-begin",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/netpfil/pf/pf_table.c",
+      "argument_expressions": [
+        "flags",
+        "(xdel)",
+        "0"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pf-table-rollback",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/netpfil/pf/pf_table.c",
+      "argument_expressions": [
+        "flags",
+        "(xdel)",
+        "0"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pf-table-commit",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ],
+      "source": "sys/netpfil/pf/pf_table.c",
+      "argument_expressions": [
+        "flags",
+        "0",
+        "EBUSY"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pfsync-queue-pressure",
+      "types": [
+        "int",
+        "size_t",
+        "size_t"
+      ],
+      "source": "sys/netpfil/pf/if_pfsync.c",
+      "argument_expressions": [
+        "b->b_id",
+        "b->b_len",
+        "nlen"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pfsync-bulk-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/netpfil/pf/if_pfsync.c",
+      "argument_expressions": [
+        "sc"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pfsync-bulk-status-send",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/netpfil/pf/if_pfsync.c",
+      "argument_expressions": [
+        "sc",
+        "status"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pfsync-bulk-retry",
+      "types": [
+        "int"
+      ],
+      "source": "sys/netpfil/pf/if_pfsync.c",
+      "argument_expressions": [
+        "sc->sc_bulk_tries"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pfsync-bulk-failed",
+      "types": [
+        "int"
+      ],
+      "source": "sys/netpfil/pf/if_pfsync.c",
+      "argument_expressions": [
+        "sc->sc_bulk_tries"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "nvme-watchdog-reset",
+      "types": [
+        "void *",
+        "uint32_t"
+      ],
+      "source": "sys/dev/nvme/nvme_qpair.c",
+      "argument_expressions": [
+        "qpair",
+        "csts"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "nvme-request-expired",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/nvme/nvme_qpair.c",
+      "argument_expressions": [
+        "qpair",
+        "tr->cid",
+        "tr->req->abort_sent"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "nvme-abort-pressure",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/nvme/nvme_qpair.c",
+      "argument_expressions": [
+        "qpair",
+        "1"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "nvme-abort-sent",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/nvme/nvme_qpair.c",
+      "argument_expressions": [
+        "qpair",
+        "tr->cid"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "nvme-queued-resubmit",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/nvme/nvme_qpair.c",
+      "argument_expressions": [
+        "qpair",
+        "req->cmd.opc",
+        "req->retries"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "scan-checkpoint",
+      "types": [
+        "dsl_scan_t *",
+        "uint64_t"
+      ],
+      "source": "sys/contrib/openzfs/module/zfs/dsl_scan.c",
+      "argument_expressions": [
+        "scn",
+        "tx->tx_txg"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "scan-state",
+      "types": [
+        "dsl_scan_t *",
+        "uint64_t",
+        "uint64_t"
+      ],
+      "source": "sys/contrib/openzfs/module/zfs/dsl_scan.c",
+      "argument_expressions": [
+        "scn",
+        "scn->scn_phys.scn_state",
+        "tx->tx_txg"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "scan-done",
+      "types": [
+        "dsl_scan_t *",
+        "uint64_t",
+        "uint64_t",
+        "uint64_t"
+      ],
+      "source": "sys/contrib/openzfs/module/zfs/dsl_scan.c",
+      "argument_expressions": [
+        "scn",
+        "scn->scn_phys.scn_state",
+        "scn->scn_phys.scn_errors",
+        "tx->tx_txg"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "scan-paused",
+      "types": [
+        "dsl_scan_t *",
+        "int"
+      ],
+      "source": "sys/contrib/openzfs/module/zfs/dsl_scan.c",
+      "argument_expressions": [
+        "scn",
+        "1"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "rebuild-state",
+      "types": [
+        "vdev_t *",
+        "uint64_t",
+        "uint64_t"
+      ],
+      "source": "sys/contrib/openzfs/module/zfs/vdev_rebuild.c",
+      "argument_expressions": [
+        "vd",
+        "vrp->vrp_rebuild_state",
+        "tx->tx_txg"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "rebuild-wait-start",
+      "types": [
+        "void *",
+        "int",
+        "uint64_t"
+      ],
+      "source": "sys/contrib/openzfs/module/zfs/vdev_rebuild.c",
+      "argument_expressions": [
+        "vr",
+        "1",
+        "vr->vr_bytes_inflight"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "rebuild-wait-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/contrib/openzfs/module/zfs/vdev_rebuild.c",
+      "argument_expressions": [
+        "vr",
+        "1"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "usb-attach-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/usb/usb_hub.c",
+      "argument_expressions": [
+        "child",
+        "err"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "usb-disconnect",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/usb/usb_hub.c",
+      "argument_expressions": [
+        "udev",
+        "portno"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "usb-enumerate-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/usb/usb_hub.c",
+      "argument_expressions": [
+        "udev",
+        "portno"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "usb-enumerate-done",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/usb/usb_hub.c",
+      "argument_expressions": [
+        "udev",
+        "portno",
+        "(child != NULL)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "usb-tt-drain-start",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/usb/usb_hub.c",
+      "argument_expressions": [
+        "hub"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "usb-tt-drain-done",
+      "types": [
+        "void *"
+      ],
+      "source": "sys/dev/usb/usb_hub.c",
+      "argument_expressions": [
+        "hub"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pci-hotplug-start",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/pci/pci_pci.c",
+      "argument_expressions": [
+        "sc",
+        "(sc->child != NULL)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pci-hotplug-done",
+      "types": [
+        "void *",
+        "int"
+      ],
+      "source": "sys/dev/pci/pci_pci.c",
+      "argument_expressions": [
+        "sc",
+        "(sc->child != NULL)"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "provider": "sdt",
+      "module": "",
+      "function": "",
+      "name": "pci-hotplug-watchdog",
+      "types": [
+        "void *",
+        "int",
+        "int"
+      ],
+      "source": "sys/dev/pci/pci_pci.c",
+      "argument_expressions": [
+        "sc",
+        "1",
+        "sta"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "profiles": [
+    "pf-table-cookie-events",
+    "pfsync-recovery-events",
+    "nvme-watchdog-events",
+    "zfs-scan-progress",
+    "zfs-rebuild-progress",
+    "usb-enumeration-latency",
+    "pci-hotplug-recovery",
+    "base-snapshot-latency",
+    "base-inflate-results",
+    "base-archive-operations"
+  ],
+  "sources": {
+    "cddl/usr.sbin/bsdinstruments/profiles/base-archive-operations.d": "c1b6423341af534e3fc418c0533d56f26f9666108457a997731ac41b0622e14a",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-inflate-results.d": "ee498f6e03febea62c9540e850de78876332e20d246da451ab820763a365d9f0",
+    "cddl/usr.sbin/bsdinstruments/profiles/base-snapshot-latency.d": "c3742c4e1d79a56b0801a51d19c5af264ba69ba4abbd0eb9e1f280cb45cdb59a",
+    "cddl/usr.sbin/bsdinstruments/profiles/nvme-watchdog-events.d": "e0a1c13f3126bf104a09306f0cdb009c2844c655ea974e67d5ecd4ad4aefbc9f",
+    "cddl/usr.sbin/bsdinstruments/profiles/pci-hotplug-recovery.d": "d640ef8c21dc11a00f898b6f4c9a6b6451db379a23dc4dd3f24455dbc1f09dda",
+    "cddl/usr.sbin/bsdinstruments/profiles/pf-table-cookie-events.d": "cfb473978f6dda5ff269e6dcd7899e8df946ec4057d53b45f85b2a7101382ccf",
+    "cddl/usr.sbin/bsdinstruments/profiles/pfsync-recovery-events.d": "9dc6d56b9d4691f07e1dd1a959131ae59bd58097aaeba9366ab74052062b06bf",
+    "cddl/usr.sbin/bsdinstruments/profiles/usb-enumeration-latency.d": "ccd5144fbb238b5965f0168488da50d182a6b3fb2105110804b3e98cffc0d12b",
+    "cddl/usr.sbin/bsdinstruments/profiles/zfs-rebuild-progress.d": "7600f58aa7ba24af80332ed81bad6908f4df067b5214f3c04db7b489bf19183a",
+    "cddl/usr.sbin/bsdinstruments/profiles/zfs-scan-progress.d": "e0411f7b2229c1c86a71a1d08f1db48d96de34dc83c1414ad44accf1f00376e5",
+    "contrib/libarchive/tar/archiveop_trace.h": "a56341cf04846f53b0675737db0fea924c57e0c6051d3496121899cb6093a556",
+    "contrib/libarchive/tar/read.c": "9eab3f2a3b0286170414016c0d9311996415fa950e037fd2b63ea58e630b5994",
+    "sys/contrib/openzfs/module/zfs/dsl_scan.c": "ce2a894bebc30edc4c59da15cfbd627ea9625d5dffabcf200de666a6c372f654",
+    "sys/contrib/openzfs/module/zfs/vdev_rebuild.c": "5f6fffaf0ea5020dd918be58e2e59213688c9e7cc4116480095847ba7f6c4f49",
+    "sys/dev/nvme/nvme_qpair.c": "4f96b5b7d2aef2994536859c9615b604ba3fcc44cebb3733e57f51e86d49a2ff",
+    "sys/dev/pci/pci_pci.c": "ca1f6774a14796dc570d6d18e39140b548324d25a3467e3550b74eaaee222778",
+    "sys/dev/usb/usb_hub.c": "7f61a78bc779efd428f0dd9326ad38f43b80393e9fcf4ccb853c248d51be1c3b",
+    "sys/netpfil/pf/if_pfsync.c": "77fc739bccdf8d80476530ccc901fb9316bb40a1275ebae6ddb3c16d21eedb73",
+    "sys/netpfil/pf/pf_syncookies.c": "9bb3b275d4b5f2d09b030ecfc23520cd6b9673dd4ab0bf44fe354c3f8ae60f69",
+    "sys/netpfil/pf/pf_table.c": "b0437f497f367e93184567d9712c678f60250715207e6d02ff85bc53cb14fa6e",
+    "tools/test/system-tracing/COVERAGE-FIFTEENTH": "5ae599f57e452e41fdf8cc0c55c756ab696e3d967b4f251a86cb49beb04c521f",
+    "tools/test/system-tracing/coverage-fifteenth-base.py": "ffb9f3da38295e8ecbd77d3e6dbd75cd6bcd022fb146fa8c420b71b54e8fc0ea",
+    "tools/test/system-tracing/coverage-fifteenth-check.py": "21c3c928c5cccd305e11127d459457625cf845561faa9216594868f596509888",
+    "tools/test/system-tracing/coverage-fifteenth-codegen.py": "65bcc2df0ab2a7cfcf811ead2acb0a8ba260cad4801893b455bf121d3db7132f",
+    "tools/test/system-tracing/coverage-fifteenth-compile.py": "fed0af80ed9f6ff3e0123706e61fadfcd02c96a5b519a14dd6ebb5366f49bc80",
+    "tools/test/system-tracing/coverage-fifteenth-guards.py": "c3a704c7f6ad1de049510aeaac4194f808c2baae45c870260b08bc34689fd3e0",
+    "tools/test/system-tracing/coverage-fifteenth-integration.py": "1014b62606c27b0d5dcf3b905104023a4556ba1f452b96ad1a9d40552a9d8c47",
+    "tools/test/system-tracing/coverage-fifteenth-libzpool.py": "8082fdc4cc93c3d532990dd9b94210fca8cc92eccfdc65f5deac4e28e7fc4a5f",
+    "tools/test/system-tracing/coverage-fifteenth-modules.py": "a47db4931aa1b2bbab49381712e9cedd30dbd7ec4c11f3741773045198cfd507",
+    "tools/test/system-tracing/coverage-fifteenth-smoke.py": "ffdd677f3b494355255e1d3128f69e8f2271f2b678d57cb98a45df106ee0c01d",
+    "tools/test/system-tracing/coverage-fifteenth-zfs-guards.py": "b4c3c22286d614d958ee870793ad7e285c750d37728deb29fbbc2169fc50831f",
+    "usr.bin/gzip/Makefile": "448f727b1cb294fca52c4a32d53666db2325b60925410e7e39494459d8acb8eb",
+    "usr.bin/gzip/gzip.c": "00514f35611388a6a7bc81bdc4b4a6a339e80202a56d3cda4ea1df6eb42d7796",
+    "usr.bin/gzip/gzipstream_provider.d": "810f6abe52478657779c05f9a868a8068d714ded794709801a47049b6964d79c",
+    "usr.bin/gzip/gzipstream_trace.h": "9a99184146c3904a205bae669401bbb84f98da62f058b31d8665249f133a7916",
+    "usr.bin/ipcs/Makefile": "5fa88a59bd9db48432ad6e85e1e84c8e81944b971d8294908915bf4bb9580899",
+    "usr.bin/ipcs/ipc.c": "7bfead59afbaf554f9346a25affcf584afb2ccf3dc3cb34fd9b666956624b8d9",
+    "usr.bin/ipcs/ipcsnapshot_provider.d": "ef605796c28bb6abbf83e79f845405e331f4bcd5445f0a314907469673e54537",
+    "usr.bin/ipcs/ipcsnapshot_trace.h": "f757765151f35f85143fee162625463ab880704e09157e3202eddba99e425049",
+    "usr.bin/sockstat/Makefile": "28d664db2f4c5a1120772ddafdf37fb2c2b1ef5ccc35623a889c4fd037155ee2",
+    "usr.bin/sockstat/main.c": "9b0e7330e05209f2f3d02e03b4cd779f703cb769fd392c281f3ee8e5821a0f30",
+    "usr.bin/sockstat/socketsnapshot_provider.d": "3b07f152d0c5be5f54ec22af0e610de2e993e2994668071449f2afabde73516d",
+    "usr.bin/sockstat/socketsnapshot_trace.h": "645fdf920cb4aff3903d96b9722d8dc4ec41889a3242c26495f7bc512e2ee8a6",
+    "usr.bin/tar/Makefile": "e0cb70149f603a9c4e43861bb2f61a0055a75ce9461593c8dd8b7a750d260ad3",
+    "usr.bin/tar/archiveop_provider.d": "011d429400afc837087869bb477ae3ed6bf2c1cbe4edadbd39f7d565b605bb92",
+    "sys/contrib/openzfs/include/sys/trace_bsd.h": "62f696d15ef37789c0564bfbbbab398caab193d5433063ae1d74db9df84f10de",
+    "tools/test/system-tracing/coverage-third-profile-check.py": "6a63a690cbbf6970c52a90e234a701b64cd7e20d7745139d6e18977dfe71e0ae",
+    "tools/test/system-tracing/coverage-fourth-dof.py": "7a2fc9fc87d4b6d161c88f981ace9c7c6e8c1090cfab60f523b5a61e6730375a",
+    "tools/test/system-tracing/coverage-sixth-objects.py": "fc14488256457e044086c08f967c7a412060216d9d2b53a2c40b9be4405a965e",
+    "cddl/usr.sbin/bsdinstruments/Makefile": "2f8e2f3b2ab8af9e3ee452c054e29bf6e5c48de21021889448c62a2af238714a"
+  }
+}

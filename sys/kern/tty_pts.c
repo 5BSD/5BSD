@@ -32,8 +32,6 @@
 #include <sys/cdefs.h>
 /* Add compatibility bits for FreeBSD. */
 #define PTS_COMPAT
-/* Add pty(4) compat bits. */
-#define PTS_EXTERNAL
 /* Add bits to make Linux binaries work. */
 #define PTS_LINUX
 
@@ -100,10 +98,6 @@ struct pts_softc {
 	struct cv	pts_outwait;	/* (t) Blocking read() on master. */
 	struct selinfo	pts_outpoll;	/* (t) Select queue for read(). */
 
-#ifdef PTS_EXTERNAL
-	struct cdev	*pts_cdev;	/* (c) Master device node. */
-#endif /* PTS_EXTERNAL */
-
 	struct ucred	*pts_cred;	/* (c) Resource limit. */
 };
 
@@ -124,8 +118,6 @@ SDT_PROVIDER_DEFINE(pts);
 /* Lifecycle: a new pty pair is created. */
 SDT_PROBE_DEFINE3(pts, , , alloc,
     "int" /* unit */, "pid_t" /* pid */, "uid_t" /* uid */);
-SDT_PROBE_DEFINE3(pts, , , alloc__external,
-    "const char *" /* name */, "pid_t" /* pid */, "uid_t" /* uid */);
 
 /* posix_openpt(2) / /dev/ptmx clone-open: the master controller is handed out. */
 SDT_PROBE_DEFINE3(pts, , , openpt,
@@ -239,7 +231,16 @@ ptsdev_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 			error = EWOULDBLOCK;
 			break;
 		}
+		if (!cold)
+			DTRACE_PROBE2(pts__master__wait__start,
+			    int, (psc->pts_unit),
+			    int, (1));
 		error = cv_wait_sig(&psc->pts_outwait, tp->t_mtx);
+		if (!cold)
+			DTRACE_PROBE3(pts__master__wait__done,
+			    int, (psc->pts_unit),
+			    int, (1),
+			    int, (error));
 		if (error != 0)
 			break;
 	}
@@ -303,7 +304,16 @@ ptsdev_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 
 			/* Wake up users on the slave side. */
 			ttydisc_rint_done(tp);
+			if (!cold)
+				DTRACE_PROBE2(pts__master__wait__start,
+				    int, (psc->pts_unit),
+				    int, (2));
 			error = cv_wait_sig(&psc->pts_inwait, tp->t_mtx);
+			if (!cold)
+				DTRACE_PROBE3(pts__master__wait__done,
+				    int, (psc->pts_unit),
+				    int, (2),
+				    int, (error));
 			if (error != 0)
 				goto done;
 		} while (iblen > 0);
@@ -618,9 +628,6 @@ static int
 ptsdev_stat(struct file *fp, struct stat *sb, struct ucred *active_cred)
 {
 	struct tty *tp = fp->f_data;
-#ifdef PTS_EXTERNAL
-	struct pts_softc *psc = tty_softc(tp);
-#endif /* PTS_EXTERNAL */
 	struct cdev *dev = tp->t_dev;
 
 	/*
@@ -633,12 +640,7 @@ ptsdev_stat(struct file *fp, struct stat *sb, struct ucred *active_cred)
 	 */
 
 	bzero(sb, sizeof *sb);
-#ifdef PTS_EXTERNAL
-	if (psc->pts_cdev != NULL)
-		sb->st_ino = sb->st_rdev = dev2udev(psc->pts_cdev);
-	else
-#endif /* PTS_EXTERNAL */
-		sb->st_ino = sb->st_rdev = tty_udev(tp);
+	sb->st_ino = sb->st_rdev = tty_udev(tp);
 
 	sb->st_atim = dev->si_atime;
 	sb->st_ctim = dev->si_ctime;
@@ -663,7 +665,7 @@ ptsdev_close(struct file *fp, struct thread *td)
 	tty_rel_gone(tp);
 
 	/*
-	 * Open of /dev/ptmx or /dev/ptyXX changes the type of file
+	 * Open of /dev/ptmx changes the type of file
 	 * from DTYPE_VNODE to DTYPE_PTS. vn_open() increases vnode
 	 * use count, we need to decrement it, and possibly do other
 	 * required cleanup.
@@ -804,12 +806,6 @@ ptsdrv_free(void *softc)
 	knlist_destroy(&psc->pts_inpoll.si_note);
 	knlist_destroy(&psc->pts_outpoll.si_note);
 
-#ifdef PTS_EXTERNAL
-	/* Destroy master device as well. */
-	if (psc->pts_cdev != NULL)
-		destroy_dev_sched(psc->pts_cdev);
-#endif /* PTS_EXTERNAL */
-
 	free(psc, M_PTS);
 }
 
@@ -823,10 +819,7 @@ static struct ttydevsw pts_class = {
 	.tsw_free	= ptsdrv_free,
 };
 
-#ifndef PTS_EXTERNAL
-static
-#endif /* !PTS_EXTERNAL */
-int
+static int
 pts_alloc(int fflags, struct thread *td, struct file *fp)
 {
 	int unit, ok, error;
@@ -839,11 +832,17 @@ pts_alloc(int fflags, struct thread *td, struct file *fp)
 	PROC_LOCK(p);
 	error = racct_add(p, RACCT_NPTS, 1);
 	if (error != 0) {
+		if (!cold)
+			DTRACE_PROBE1(pts__allocation__limit,
+			    int, (1));
 		PROC_UNLOCK(p);
 		return (EAGAIN);
 	}
 	ok = chgptscnt(cred->cr_ruidinfo, 1, lim_cur(td, RLIMIT_NPTS));
 	if (!ok) {
+		if (!cold)
+			DTRACE_PROBE1(pts__allocation__limit,
+			    int, (2));
 		racct_sub(p, RACCT_NPTS, 1);
 		PROC_UNLOCK(p);
 		return (EAGAIN);
@@ -853,6 +852,9 @@ pts_alloc(int fflags, struct thread *td, struct file *fp)
 	/* Try to allocate a new pts unit number. */
 	unit = alloc_unr(pts_pool);
 	if (unit < 0) {
+		if (!cold)
+			DTRACE_PROBE1(pts__allocation__limit,
+			    int, (3));
 		racct_sub(p, RACCT_NPTS, 1);
 		chgptscnt(cred->cr_ruidinfo, -1, 0);
 		return (EAGAIN);
@@ -879,56 +881,6 @@ pts_alloc(int fflags, struct thread *td, struct file *fp)
 
 	return (0);
 }
-
-#ifdef PTS_EXTERNAL
-int
-pts_alloc_external(int fflags, struct thread *td, struct file *fp,
-    struct cdev *dev, const char *name)
-{
-	int ok, error;
-	struct tty *tp;
-	struct pts_softc *psc;
-	struct proc *p = td->td_proc;
-	struct ucred *cred = td->td_ucred;
-
-	/* Resource limiting. */
-	PROC_LOCK(p);
-	error = racct_add(p, RACCT_NPTS, 1);
-	if (error != 0) {
-		PROC_UNLOCK(p);
-		return (EAGAIN);
-	}
-	ok = chgptscnt(cred->cr_ruidinfo, 1, lim_cur(td, RLIMIT_NPTS));
-	if (!ok) {
-		racct_sub(p, RACCT_NPTS, 1);
-		PROC_UNLOCK(p);
-		return (EAGAIN);
-	}
-	PROC_UNLOCK(p);
-
-	/* Allocate TTY and softc. */
-	psc = malloc(sizeof(struct pts_softc), M_PTS, M_WAITOK|M_ZERO);
-	cv_init(&psc->pts_inwait, "ptsin");
-	cv_init(&psc->pts_outwait, "ptsout");
-
-	psc->pts_unit = -1;
-	psc->pts_cdev = dev;
-	psc->pts_cred = crhold(cred);
-
-	tp = tty_alloc(&pts_class, psc);
-	knlist_init_mtx(&psc->pts_inpoll.si_note, tp->t_mtx);
-	knlist_init_mtx(&psc->pts_outpoll.si_note, tp->t_mtx);
-
-	/* Expose the slave device as well. */
-	tty_makedev(tp, td->td_ucred, "%s", name);
-
-	finit(fp, fflags, DTYPE_PTS, tp, &ptsdev_ops);
-
-	SDT_PROBE3(pts, , , alloc__external, name, p->p_pid, cred->cr_uid);
-
-	return (0);
-}
-#endif /* PTS_EXTERNAL */
 
 int
 sys_posix_openpt(struct thread *td, struct posix_openpt_args *uap)
@@ -972,11 +924,33 @@ sys_posix_openpt(struct thread *td, struct posix_openpt_args *uap)
 	return (0);
 }
 
+static int
+ptmx_fdopen(struct cdev *dev __unused, int fflags, struct thread *td,
+    struct file *fp)
+{
+	int error;
+
+	error = pts_alloc(fflags & (FREAD|FWRITE|FNONBLOCK), td, fp);
+	if (!cold)
+		DTRACE_PROBE2(pts__ptmx__open,
+		    int, (fflags),
+		    int, (error));
+	return (error);
+}
+
+static struct cdevsw ptmx_cdevsw = {
+	.d_version	= D_VERSION,
+	.d_fdopen	= ptmx_fdopen,
+	.d_name		= "ptmx",
+};
+
 static void
 pts_init(void *unused)
 {
 
 	pts_pool = new_unrhdr(0, INT_MAX, NULL);
+	make_dev_credf(MAKEDEV_ETERNAL, &ptmx_cdevsw, 0, NULL,
+	    UID_ROOT, GID_WHEEL, 0666, "ptmx");
 }
 
 SYSINIT(pts, SI_SUB_DRIVERS, SI_ORDER_MIDDLE, pts_init, NULL);

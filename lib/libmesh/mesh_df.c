@@ -17,6 +17,7 @@
  */
 
 #include <sys/types.h>
+#include "mesh_probes.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -712,6 +713,8 @@ mesh_df_table_expire(struct mesh_df_fwd_table *t, uint64_t now)
 		return (0);
 	for (i = 0; i < MESH_DF_MAX_ENTRIES; i++) {
 		if (t->entries[i].valid && entry_expired(&t->entries[i], now)) {
+			MESH_PROBE_DIRECTED__EXPIRE(t->entries[i].path_origin,
+			    t->entries[i].path_target);
 			memset(&t->entries[i], 0, sizeof(t->entries[i]));
 			removed++;
 			if (t->count > 0)
@@ -1390,6 +1393,7 @@ mesh_df_recv_control(struct mesh_df_node *node,
 	if (pdu == NULL && pdulen != 0)
 		return (MESH_DF_RECV_DROP);
 
+	MESH_PROBE_DIRECTED__CONTROL(opcode, pdulen);
 	switch (opcode) {
 	case MESH_DF_OP_PATH_REQUEST:
 		return (recv_path_request(node, ctx, pdu, pdulen, out));

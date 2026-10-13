@@ -32,6 +32,7 @@
 #include <sys/sa_impl.h>
 #include <sys/zfs_context.h>
 #include <sys/trace_zfs.h>
+#include <sys/trace_bsd.h>
 
 typedef void (*dmu_tx_hold_func_t)(dmu_tx_t *tx, struct dnode *dn,
     uint64_t arg1, uint64_t arg2);
@@ -1254,7 +1255,9 @@ dmu_tx_assign(dmu_tx_t *tx, dmu_tx_flag_t flags)
 	if (!(flags & DMU_TX_SUSPEND))
 		tx->tx_break_on_suspend = B_TRUE;
 
+	ZFS_BSD_PROBE2(dmu__assign__start, dmu_tx_t *, tx, int, flags);
 	while ((err = dmu_tx_try_assign(tx)) != 0) {
+		ZFS_BSD_PROBE2(dmu__assign__retry, dmu_tx_t *, tx, int, err);
 		dmu_tx_unassign(tx);
 
 		boolean_t suspended = (err == ESHUTDOWN);
@@ -1291,6 +1294,10 @@ dmu_tx_assign(dmu_tx_t *tx, dmu_tx_flag_t flags)
 		if (err != ERESTART || !(flags & DMU_TX_WAIT)) {
 			ASSERT(err == EDQUOT || err == ENOSPC ||
 			    err == ERESTART || err == EIO);
+			ZFS_BSD_PROBE3(dmu__assign__done,
+			    dmu_tx_t *, tx,
+			    uint64_t, 0,
+			    int, err);
 			return (err);
 		}
 
@@ -1325,6 +1332,10 @@ dmu_tx_assign(dmu_tx_t *tx, dmu_tx_flag_t flags)
 	}
 
 	txg_rele_to_quiesce(&tx->tx_txgh);
+	ZFS_BSD_PROBE3(dmu__assign__done,
+	    dmu_tx_t *, tx,
+	    uint64_t, tx->tx_txg,
+	    int, 0);
 
 	return (0);
 }
@@ -1371,8 +1382,16 @@ dmu_tx_wait(dmu_tx_t *tx)
 			 */
 			dp->dp_dirty_waiters++;
 			membar_sync();
-			while (dp->dp_dirty_total >= zfs_dirty_data_max)
+			while (dp->dp_dirty_total >= zfs_dirty_data_max) {
+				ZFS_BSD_PROBE3(dmu__dirty__wait__start,
+				    dsl_pool_t *, dp,
+				    uint64_t, dp->dp_dirty_total,
+				    uint64_t, zfs_dirty_data_max);
 				cv_wait(&dp->dp_spaceavail_cv, &dp->dp_lock);
+				ZFS_BSD_PROBE2(dmu__dirty__wait__done,
+				    dsl_pool_t *, dp,
+				    uint64_t, dp->dp_dirty_total);
+			}
 			dp->dp_dirty_waiters--;
 			mutex_exit(&dp->dp_lock);
 		}
@@ -1402,8 +1421,15 @@ dmu_tx_wait(dmu_tx_t *tx)
 		dnode_t *dn = tx->tx_needassign_txh->txh_dnode;
 
 		mutex_enter(&dn->dn_mtx);
-		while (dn->dn_assigned_txg == tx->tx_lasttried_txg - 1)
+		while (dn->dn_assigned_txg == tx->tx_lasttried_txg - 1) {
+			ZFS_BSD_PROBE2(dmu__dnode__wait__start,
+			    dnode_t *, dn,
+			    uint64_t, dn->dn_assigned_txg);
 			cv_wait(&dn->dn_notxholds, &dn->dn_mtx);
+			ZFS_BSD_PROBE2(dmu__dnode__wait__done,
+			    dnode_t *, dn,
+			    uint64_t, dn->dn_assigned_txg);
+		}
 		mutex_exit(&dn->dn_mtx);
 		tx->tx_needassign_txh = NULL;
 	} else {

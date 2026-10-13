@@ -36,6 +36,8 @@
 #include "opt_rss.h"
 
 #include "ixgbe.h"
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include "mdio_if.h"
 #include "ixgbe_sriov.h"
 #include "ifdi_if.h"
@@ -5233,6 +5235,9 @@ ixgbe_if_update_admin_status(if_ctx_t ctx)
 		requests = atomic_readandclear_32(&sc->task_requests);
 		if (requests == 0)
 			break;
+		if (!cold)
+			DTRACE_PROBE3(ixgbe__admin__batch, void *, (sc),
+			    uint32_t, (requests), u_int, (pass));
 		if (requests & IXGBE_REQUEST_TASK_FWEVENT)
 			requests |= ixgbe_handle_fw_event(ctx);
 		if (requests & IXGBE_REQUEST_TASK_MOD) {
@@ -5254,6 +5259,9 @@ ixgbe_if_update_admin_status(if_ctx_t ctx)
 		if (requests & IXGBE_REQUEST_TASK_LSC)
 			check_link = true;
 		if (requests & IXGBE_REQUEST_TASK_RESET) {
+			if (!cold)
+				DTRACE_PROBE1(ixgbe__reset__request,
+				    void *, (sc));
 			/* Re-enter the admin task so it observes IFC_DO_RESET. */
 			iflib_request_reset(ctx);
 			iflib_admin_intr_deferred(ctx);

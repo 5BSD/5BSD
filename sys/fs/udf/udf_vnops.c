@@ -30,6 +30,8 @@
 /* Take care of the vnode side of things */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/namei.h>
 #include <sys/kernel.h>
@@ -43,7 +45,6 @@
 #include <sys/mount.h>
 #include <sys/vnode.h>
 #include <sys/dirent.h>
-#include <sys/queue.h>
 #include <sys/unistd.h>
 #include <sys/endian.h>
 
@@ -53,6 +54,11 @@
 #include <fs/udf/osta.h>
 #include <fs/udf/udf.h>
 #include <fs/udf/udf_mount.h>
+
+SDT_PROVIDER_DEFINE(udf);
+SDT_PROBE_DEFINE3(udf, , , block__start, "void *", "int64_t", "int");
+SDT_PROBE_DEFINE4(udf, , , block__done, "void *", "int64_t", "int", "int");
+
 
 extern struct iconv_functions *udf_iconv;
 
@@ -495,6 +501,7 @@ udf_read(struct vop_read_args *ap)
 		if (diff < n)
 			n = diff;
 		size = udfmp->bsize;
+		SDT_PROBE3(udf, , , block__start, vp, lbn, size);
 		rablock = lbn + 1;
 		if ((vp->v_mount->mnt_flag & MNT_NOCLUSTERR) == 0) {
 			if (lblktosize(udfmp, rablock) < fsize) {
@@ -507,6 +514,7 @@ udf_read(struct vop_read_args *ap)
 		} else {
 			error = bread(vp, lbn, size, NOCRED, &bp);
 		}
+		SDT_PROBE4(udf, , , block__done, vp, lbn, size, error);
 		if (error != 0) {
 			brelse(bp);
 			return (error);

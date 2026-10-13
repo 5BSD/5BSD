@@ -1,0 +1,500 @@
+{
+  "sources": {
+    "sys/net/bpf.c": "2102e2f3591e3b1db3c29af52240302a6b94160478733b968ddd07abaefc2824",
+    "sys/net/iflib.c": "c2189a6709395915125110816c05aa2e03252d78087f8c528fa8fdc42eb3653c",
+    "sys/kern/kern_intr.c": "603c1d675bec6aa3d8242f5aa39c0c21290d5acb9782080d264a1b637a13e224",
+    "sys/kern/kern_cpuset.c": "edc8e8b763cf84d2a5ac9770ecf379751bd006ee44dce8193552938a95cae82f",
+    "sys/kern/subr_bus.c": "71230882b7e4653d1e936652b0b5b155af36a17368cb2e7c85362c27f93a7681",
+    "sys/geom/geom_subr.c": "fcafda4e5c0eadb92b6a8ea707fcf326dddc4702b3822683670c7e21f1193e05",
+    "sys/vm/vm_object.c": "e3351ebbbe2b166cbe9e3d8876c6f8bfec088152d8d668234ef1b4b68176bddd",
+    "sys/netinet6/nd6.c": "1452a80c4e0e29e21b17538e21f42a7262157ab556ba348cbfb7b8df90bbafb4",
+    "sys/netipsec/ipsec_output.c": "0bd36e1ad5711ad650e877ffc65393037ef030efd1ae1f1b3d2b55c7dde5318d",
+    "sys/net/route/route_ctl.c": "6d708cf40f176567579b6b5933e2212df1f4fe1445bef042fa2a29b4f0a557ca",
+    "sys/fs/fuse/fuse_ipc.c": "649ad1bccc1b1a7c0cf3675cdadec0fa103f89ccf37ce879d20a75fb11013c64",
+    "sys/dev/ahci/ahci.c": "0364bdae6a226b953b60ac77f5944d4246c8c5b1d56ee14600dd8c08ae6745bd",
+    "sys/dev/virtio/network/if_vtnet.c": "2f1fc4f58c4b5e6b17d6d0e6c8a00f525fc020ca8f0c1f7c993ca504898718a7"
+  },
+  "probes": [
+    {
+      "provider": "bpf",
+      "module": "",
+      "function": "",
+      "name": "read-wait-start",
+      "argc": 1,
+      "kind": "kernel",
+      "source": "sys/net/bpf.c",
+      "types": [
+        "struct bpf_d *"
+      ]
+    },
+    {
+      "provider": "bpf",
+      "module": "",
+      "function": "",
+      "name": "read-wait-done",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/net/bpf.c",
+      "types": [
+        "struct bpf_d *",
+        "int"
+      ]
+    },
+    {
+      "provider": "iflib",
+      "module": "",
+      "function": "",
+      "name": "suspend-start",
+      "argc": 1,
+      "kind": "kernel",
+      "source": "sys/net/iflib.c",
+      "types": [
+        "void *"
+      ]
+    },
+    {
+      "provider": "iflib",
+      "module": "",
+      "function": "",
+      "name": "suspend-done",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/net/iflib.c",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "provider": "iflib",
+      "module": "",
+      "function": "",
+      "name": "resume-start",
+      "argc": 1,
+      "kind": "kernel",
+      "source": "sys/net/iflib.c",
+      "types": [
+        "void *"
+      ]
+    },
+    {
+      "provider": "iflib",
+      "module": "",
+      "function": "",
+      "name": "resume-done",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/net/iflib.c",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "provider": "irq",
+      "module": "",
+      "function": "",
+      "name": "thread-start",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/kern/kern_intr.c",
+      "types": [
+        "struct intr_event *",
+        "struct intr_handler *"
+      ]
+    },
+    {
+      "provider": "irq",
+      "module": "",
+      "function": "",
+      "name": "thread-done",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/kern/kern_intr.c",
+      "types": [
+        "struct intr_event *",
+        "struct intr_handler *"
+      ]
+    },
+    {
+      "provider": "affinity",
+      "module": "",
+      "function": "",
+      "name": "set-start",
+      "argc": 3,
+      "kind": "kernel",
+      "source": "sys/kern/kern_cpuset.c",
+      "types": [
+        "int",
+        "int",
+        "id_t"
+      ]
+    },
+    {
+      "provider": "affinity",
+      "module": "",
+      "function": "",
+      "name": "set-done",
+      "argc": 4,
+      "kind": "kernel",
+      "source": "sys/kern/kern_cpuset.c",
+      "types": [
+        "int",
+        "int",
+        "id_t",
+        "int"
+      ]
+    },
+    {
+      "provider": "newbus",
+      "module": "",
+      "function": "",
+      "name": "attach-start",
+      "argc": 1,
+      "kind": "kernel",
+      "source": "sys/kern/subr_bus.c",
+      "types": [
+        "device_t"
+      ]
+    },
+    {
+      "provider": "newbus",
+      "module": "",
+      "function": "",
+      "name": "attach-done",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/kern/subr_bus.c",
+      "types": [
+        "device_t",
+        "int"
+      ]
+    },
+    {
+      "provider": "newbus",
+      "module": "",
+      "function": "",
+      "name": "detach-start",
+      "argc": 1,
+      "kind": "kernel",
+      "source": "sys/kern/subr_bus.c",
+      "types": [
+        "device_t"
+      ]
+    },
+    {
+      "provider": "newbus",
+      "module": "",
+      "function": "",
+      "name": "detach-done",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/kern/subr_bus.c",
+      "types": [
+        "device_t",
+        "int"
+      ]
+    },
+    {
+      "provider": "geom",
+      "module": "",
+      "function": "",
+      "name": "access-start",
+      "argc": 4,
+      "kind": "kernel",
+      "source": "sys/geom/geom_subr.c",
+      "types": [
+        "struct g_provider *",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "provider": "geom",
+      "module": "",
+      "function": "",
+      "name": "access-done",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/geom/geom_subr.c",
+      "types": [
+        "struct g_provider *",
+        "int"
+      ]
+    },
+    {
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "object-pager-start",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/vm/vm_object.c",
+      "types": [
+        "struct vm_object *",
+        "int"
+      ]
+    },
+    {
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "object-pager-done",
+      "argc": 1,
+      "kind": "kernel",
+      "source": "sys/vm/vm_object.c",
+      "types": [
+        "struct vm_object *"
+      ]
+    },
+    {
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "object-collapse",
+      "argc": 1,
+      "kind": "kernel",
+      "source": "sys/vm/vm_object.c",
+      "types": [
+        "struct vm_object *"
+      ]
+    },
+    {
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "object-bypass",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/vm/vm_object.c",
+      "types": [
+        "struct vm_object *",
+        "struct vm_object *"
+      ]
+    },
+    {
+      "provider": "ndp",
+      "module": "",
+      "function": "",
+      "name": "state",
+      "argc": 3,
+      "kind": "kernel",
+      "source": "sys/netinet6/nd6.c",
+      "types": [
+        "struct llentry *",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "provider": "ipsec",
+      "module": "",
+      "function": "",
+      "name": "output-start",
+      "argc": 1,
+      "kind": "kernel",
+      "source": "sys/netipsec/ipsec_output.c",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "provider": "ipsec",
+      "module": "",
+      "function": "",
+      "name": "output-done",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/netipsec/ipsec_output.c",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "provider": "routing",
+      "module": "",
+      "function": "",
+      "name": "action-start",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/net/route/route_ctl.c",
+      "types": [
+        "uint32_t",
+        "int"
+      ]
+    },
+    {
+      "provider": "routing",
+      "module": "",
+      "function": "",
+      "name": "action-done",
+      "argc": 3,
+      "kind": "kernel",
+      "source": "sys/net/route/route_ctl.c",
+      "types": [
+        "uint32_t",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "provider": "fusefs",
+      "module": "",
+      "function": "",
+      "name": "answer-wait-start",
+      "argc": 1,
+      "kind": "kernel",
+      "source": "sys/fs/fuse/fuse_ipc.c",
+      "types": [
+        "struct fuse_dispatcher *"
+      ]
+    },
+    {
+      "provider": "fusefs",
+      "module": "",
+      "function": "",
+      "name": "answer-wait-done",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/fs/fuse/fuse_ipc.c",
+      "types": [
+        "struct fuse_dispatcher *",
+        "int"
+      ]
+    },
+    {
+      "provider": "ahci",
+      "module": "",
+      "function": "",
+      "name": "reset-start",
+      "argc": 1,
+      "kind": "kernel",
+      "source": "sys/dev/ahci/ahci.c",
+      "types": [
+        "device_t"
+      ]
+    },
+    {
+      "provider": "ahci",
+      "module": "",
+      "function": "",
+      "name": "reset-done",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/dev/ahci/ahci.c",
+      "types": [
+        "device_t",
+        "int"
+      ]
+    },
+    {
+      "provider": "vtnet",
+      "module": "",
+      "function": "",
+      "name": "reinit-start",
+      "argc": 1,
+      "kind": "kernel",
+      "source": "sys/dev/virtio/network/if_vtnet.c",
+      "types": [
+        "struct vtnet_softc *"
+      ]
+    },
+    {
+      "provider": "vtnet",
+      "module": "",
+      "function": "",
+      "name": "reinit-done",
+      "argc": 2,
+      "kind": "kernel",
+      "source": "sys/dev/virtio/network/if_vtnet.c",
+      "types": [
+        "struct vtnet_softc *",
+        "int"
+      ]
+    }
+  ],
+  "passes": [
+    {
+      "pass_number": 1,
+      "source": "sys/net/bpf.c",
+      "provider": "bpf"
+    },
+    {
+      "pass_number": 2,
+      "source": "sys/net/iflib.c",
+      "provider": "iflib"
+    },
+    {
+      "pass_number": 3,
+      "source": "sys/kern/kern_intr.c",
+      "provider": "irq"
+    },
+    {
+      "pass_number": 4,
+      "source": "sys/kern/kern_cpuset.c",
+      "provider": "affinity"
+    },
+    {
+      "pass_number": 5,
+      "source": "sys/kern/subr_bus.c",
+      "provider": "newbus"
+    },
+    {
+      "pass_number": 6,
+      "source": "sys/geom/geom_subr.c",
+      "provider": "geom"
+    },
+    {
+      "pass_number": 7,
+      "source": "sys/vm/vm_object.c",
+      "provider": "vm"
+    },
+    {
+      "pass_number": 8,
+      "source": "sys/netinet6/nd6.c",
+      "provider": "ndp"
+    },
+    {
+      "pass_number": 9,
+      "source": "sys/netipsec/ipsec_output.c",
+      "provider": "ipsec"
+    },
+    {
+      "pass_number": 10,
+      "source": "sys/net/route/route_ctl.c",
+      "provider": "routing"
+    },
+    {
+      "pass_number": 11,
+      "source": "sys/fs/fuse/fuse_ipc.c",
+      "provider": "fusefs"
+    },
+    {
+      "pass_number": 12,
+      "source": "sys/dev/ahci/ahci.c",
+      "provider": "ahci"
+    },
+    {
+      "pass_number": 13,
+      "source": "sys/dev/virtio/network/if_vtnet.c",
+      "provider": "vtnet"
+    }
+  ],
+  "profiles": [
+    "interrupt-threads",
+    "vm-object-operations",
+    "device-callbacks",
+    "geom-access",
+    "neighbor-states",
+    "routing-actions",
+    "affinity-changes",
+    "capture-waits",
+    "fuse-answer-waits",
+    "ahci-resets",
+    "virtio-network-reinit",
+    "iflib-power-callbacks",
+    "ipsec-submissions"
+  ]
+}

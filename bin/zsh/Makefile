@@ -72,4 +72,10 @@ ROOTNAME_dot.zprofile= .zprofile
 ROOTNAME_dot.zshrc= .zshrc
 .PATH: ${SRCTOP}/share/skel
 
+CFLAGS+= -I${.CURDIR} -DFIVEBSD_TRACE
+.if ${MK_DTRACE} != "no"
+SRCS+= zsh_provider.d
+CFLAGS+= -DWITH_DTRACE
+.endif
+
 .include <bsd.prog.mk>

@@ -43,6 +43,9 @@
 #include <sys/sdt.h>
 
 SDT_PROVIDER_DEFINE(inotify);
+SDT_PROBE_DEFINE1(inotify, , , wait__start, "void *");
+SDT_PROBE_DEFINE2(inotify, , , wait__done, "void *", "int");
+SDT_PROBE_DEFINE4(inotify, , , watch__add, "void *", "int", "uint32_t", "int");
 SDT_PROBE_DEFINE6(inotify, , , queue, "void *", "int", "uint32_t", "uint32_t",
     "int", "int");
 SDT_PROBE_DEFINE3(inotify, , , watch__remove, "void *", "void *", "int");
@@ -693,7 +696,9 @@ inotify_read(struct file *fp, struct uio *uio, struct ucred *cred, int flags,
 			mtx_unlock(&sc->lock);
 			return (EWOULDBLOCK);
 		}
+		SDT_PROBE1(inotify, , , wait__start, sc);
 		error = msleep(&sc->pending, &sc->lock, PCATCH, "inotify", 0);
+		SDT_PROBE2(inotify, , , wait__done, sc, error);
 		if (error != 0) {
 			mtx_unlock(&sc->lock);
 			return (error);
@@ -1640,6 +1645,8 @@ kern_inotify_add_watch(struct thread *td, int fd, int dfd, const char *path,
 	td->td_retval[0] = wd;
 
 out:
+	SDT_PROBE4(inotify, , , watch__add, sc, error == 0 ? wd : -1,
+	    mask, error);
 	if (vp != NULL)
 		vput(vp);
 	fdrop(fp, td);

@@ -73,6 +73,10 @@
 #include <casper/cap_netdb.h>
 #include <casper/cap_pwd.h>
 #include <casper/cap_sysctl.h>
+#include "socketsnapshot_trace.h"
+#ifndef WITH_COVERAGE_DTRACE
+#define trace_cap_sysctlbyname cap_sysctlbyname
+#endif
 
 #include "sockstat.h"
 
@@ -387,7 +391,7 @@ gather_sctp(struct proto *proto)
 	if (opt_6)
 		vflag |= INP_IPV6;
 
-	if (cap_sysctlbyname(capsysctl, proto->pcblist, 0, &len, 0, 0) < 0) {
+	if (trace_cap_sysctlbyname(capsysctl, proto->pcblist, 0, &len, 0, 0) < 0) {
 		if (errno != ENOENT)
 			xo_err(1, "cap_sysctlbyname()");
 		return;
@@ -396,7 +400,7 @@ gather_sctp(struct proto *proto)
 		xo_err(1, "malloc()");
 		return;
 	}
-	if (cap_sysctlbyname(capsysctl, proto->pcblist, buf, &len, 0, 0) < 0) {
+	if (trace_cap_sysctlbyname(capsysctl, proto->pcblist, buf, &len, 0, 0) < 0) {
 		xo_err(1, "cap_sysctlbyname()");
 		free(buf);
 		return;
@@ -662,7 +666,7 @@ gather_inet(struct proto *proto)
 			if ((buf = realloc(buf, bufsize)) == NULL)
 				xo_err(1, "realloc()");
 			len = bufsize;
-			if (cap_sysctlbyname(capsysctl, proto->pcblist, buf,
+			if (trace_cap_sysctlbyname(capsysctl, proto->pcblist, buf,
 			    &len, NULL, 0) == 0)
 				break;
 			if (errno == ENOENT)
@@ -802,7 +806,7 @@ gather_unix(struct proto *proto)
 			if ((buf = realloc(buf, bufsize)) == NULL)
 				xo_err(1, "realloc()");
 			len = bufsize;
-			if (cap_sysctlbyname(capsysctl, proto->pcblist, buf,
+			if (trace_cap_sysctlbyname(capsysctl, proto->pcblist, buf,
 			    &len, NULL, 0) == 0)
 				break;
 			if (errno != ENOMEM || len != bufsize)
@@ -874,7 +878,7 @@ gather_vsock(struct proto *proto)
 	for (;;) {
 		if ((buf = realloc(buf, len)) == NULL)
 			xo_err(1, "realloc()");
-		if (cap_sysctlbyname(capsysctl, proto->pcblist,
+		if (trace_cap_sysctlbyname(capsysctl, proto->pcblist,
 		    buf, &len, NULL, 0) == 0)
 			break;
 		if (errno == ENOENT) {
@@ -961,7 +965,7 @@ getfiles(void)
 	olen = len = sizeof(*xfiles);
 	if ((xfiles = malloc(len)) == NULL)
 		xo_err(1, "malloc()");
-	while (cap_sysctlbyname(capsysctl, "kern.file", xfiles, &len, 0, 0)
+	while (trace_cap_sysctlbyname(capsysctl, "kern.file", xfiles, &len, 0, 0)
 	    == -1) {
 		if (errno != ENOMEM || len != olen)
 			xo_err(1, "cap_sysctlbyname()");

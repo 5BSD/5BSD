@@ -57,7 +57,7 @@ LIBADD= capability crypt capsulert ucl util service
 
 .if ${MK_DTRACE} != "no"
 SRCS+= capsule_provider.d
-CFLAGS+= -I${.OBJDIR}
+CFLAGS+= -I${.OBJDIR} -DWITH_DTRACE
 .endif
 
 .include <bsd.prog.mk>

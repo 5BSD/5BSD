@@ -82,6 +82,8 @@
 #define	EXTERR_CATEGORY	EXTERR_CAT_BRIDGE
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/ctype.h>  /* string functions */
 #include <sys/eventhandler.h>
 #include <sys/exterrvar.h>
@@ -136,6 +138,11 @@
 #include <net/if_vlan_var.h>
 
 #include <net/route.h>
+
+SDT_PROVIDER_DEFINE(bridge);
+SDT_PROBE_DEFINE2(bridge, , , control__start, "void *", "unsigned long");
+SDT_PROBE_DEFINE3(bridge, , , control__done, "void *", "unsigned long", "int");
+
 
 /*
  * At various points in the code we need to know if we're hooked into the INET
@@ -1001,7 +1008,9 @@ bridge_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		}
 
 		oldmtu = ifp->if_mtu;
+		SDT_PROBE2(bridge, , , control__start, sc, ifd->ifd_cmd);
 		error = (*bc->bc_func)(sc, &args);
+		SDT_PROBE3(bridge, , , control__done, sc, ifd->ifd_cmd, error);
 		if (error)
 			break;
 

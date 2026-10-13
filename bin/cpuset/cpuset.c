@@ -51,6 +51,34 @@
 #include <unistd.h>
 #include <string.h>
 
+#include "cpusettool_trace.h"
+
+static int
+trace_cpuset_setaffinity(cpulevel_t lev, cpuwhich_t which, id_t ident,
+	    size_t size, const cpuset_t *mask)
+{
+	int result;
+
+	TRACE_CPUSETTOOL_OPERATION__START(1, lev, which);
+	result = cpuset_setaffinity(lev, which, ident, size, mask);
+	TRACE_CPUSETTOOL_OPERATION__DONE(1, lev, which, result,
+	    result < 0 ? errno : 0);
+	return (result);
+}
+
+static int
+trace_cpuset_getaffinity(cpulevel_t lev, cpuwhich_t which, id_t ident,
+	    size_t size, cpuset_t *mask)
+{
+	int result;
+
+	TRACE_CPUSETTOOL_OPERATION__START(0, lev, which);
+	result = cpuset_getaffinity(lev, which, ident, size, mask);
+	TRACE_CPUSETTOOL_OPERATION__DONE(0, lev, which, result,
+	    result < 0 ? errno : 0);
+	return (result);
+}
+
 static int Cflag;
 static int cflag;
 static int dflag;
@@ -101,7 +129,7 @@ printaffinity(void)
 	cpuset_t mask;
 	int policy;
 
-	if (cpuset_getaffinity(level, which, id, sizeof(mask), &mask) != 0)
+	if (trace_cpuset_getaffinity(level, which, id, sizeof(mask), &mask) != 0)
 		err(EXIT_FAILURE, "getaffinity");
 	printf("%s %jd%s mask: ", whichnames[which], (intmax_t)id,
 	    levelnames[level]);
@@ -245,7 +273,7 @@ main(int argc, char *argv[])
 				err(argc, "newid");
 		}
 		if (lflag) {
-			if (cpuset_setaffinity(level, CPU_WHICH_PID,
+			if (trace_cpuset_setaffinity(level, CPU_WHICH_PID,
 			    -1, sizeof(mask), &mask) != 0)
 				err(EXIT_FAILURE, "setaffinity");
 		}
@@ -293,7 +321,7 @@ main(int argc, char *argv[])
 		id = pid;
 	}
 	if (lflag) {
-		if (cpuset_setaffinity(level, which, id, sizeof(mask),
+		if (trace_cpuset_setaffinity(level, which, id, sizeof(mask),
 		    &mask) != 0)
 			err(EXIT_FAILURE, "setaffinity");
 	}

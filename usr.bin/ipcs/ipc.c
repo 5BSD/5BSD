@@ -46,6 +46,10 @@
 #include <stddef.h>
 
 #include "ipc.h"
+#include "ipcsnapshot_trace.h"
+#ifndef WITH_COVERAGE_DTRACE
+#define trace_sysctlbyname sysctlbyname
+#endif
 
 int	use_sysctl = 1;
 struct semid_kernel	*sema;
@@ -112,7 +116,7 @@ sysctlgatherstruct(void *addr, size_t size, struct scgs_vector *vecarr)
 	for (xp = vecarr; xp->sysctl != NULL; xp++) {
 		assert(xp->offset <= size);
 		tsiz = xp->size;
-		rv = sysctlbyname(xp->sysctl, (char *)addr + xp->offset,
+		rv = trace_sysctlbyname(xp->sysctl, (char *)addr + xp->offset,
 		    &tsiz, NULL, 0);
 		if (rv == -1)
 			err(1, "sysctlbyname: %s", xp->sysctl);
@@ -190,7 +194,7 @@ kget(int idx, void *addr, size_t size)
 			break;
 		default:
 			tsiz = size;
-			rv = sysctlbyname(sym2sysctl[idx], addr, &tsiz,
+			rv = trace_sysctlbyname(sym2sysctl[idx], addr, &tsiz,
 			    NULL, 0);
 			if (rv == -1)
 				err(1, "sysctlbyname: %s", sym2sysctl[idx]);

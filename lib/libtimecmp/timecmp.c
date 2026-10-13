@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "timecmp.h"
+#include "diagnostics.h"
 
 struct timecmp_client {
 	struct fidl_bsd_connection *connection;
@@ -38,6 +39,7 @@ failure(int error)
 static void
 bad_reply(struct completion *result)
 {
+	TIMECMP_TRACE_REPLY_MALFORMED(EPROTO);
 	result->malformed = true;
 	result->error = EPROTO;
 }
@@ -58,6 +60,7 @@ info_reply(void *context, int error, struct bsd_time_v1_ProtocolInfo *value)
 	if (!error &&
 	    (value == NULL || value->wire_version != TIMECMP_WIRE_VERSION)) {
 		result->malformed = true;
+		TIMECMP_TRACE_REPLY_MALFORMED(EPROTONOSUPPORT);
 		result->error = EPROTONOSUPPORT;
 	}
 }
@@ -131,8 +134,13 @@ adjust_reply(void *context, int error,
 	result->delta.tv_sec = (time_t)value->value.response.seconds;
 	result->delta.tv_usec = value->value.response.microseconds;
 }
+#ifdef WITH_DTRACE
+#define await_impl_name await_trace_impl
+#else
+#define await_impl_name await
+#endif
 static int
-await(struct timecmp_client *client, struct completion *result,
+await_impl_name(struct timecmp_client *client, struct completion *result,
     const struct timespec *deadline)
 {
 	while (!result->done) {
@@ -164,6 +172,22 @@ await(struct timecmp_client *client, struct completion *result,
 		fidl_bsd_connection_close(client->connection, result->error);
 	return (result->error ? failure(result->error) : 0);
 }
+
+#ifdef WITH_DTRACE
+static int
+await(struct timecmp_client *client, struct completion *completion,
+    const struct timespec *deadline)
+{
+	int result;
+
+	TIMECMP_TRACE_WAIT_START((uintptr_t)client);
+	result = await_trace_impl(client, completion, deadline);
+	TIMECMP_TRACE_WAIT_DONE((uintptr_t)client,
+	    result == -1 ? errno : 0, completion->malformed);
+	return (result);
+}
+#endif
+#undef await_impl_name
 static int
 begin(struct timecmp_client *client, struct timespec *deadline)
 {

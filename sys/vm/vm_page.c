@@ -68,6 +68,8 @@
 #include "opt_vm.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/counter.h>
 #include <sys/domainset.h>
@@ -3224,6 +3226,11 @@ vm_page_reclaim_contig_domain_ext(int domain, int req, u_long npages,
 	KASSERT(powerof2(alignment), ("alignment is not a power of 2"));
 	KASSERT(powerof2(boundary), ("boundary is not a power of 2"));
 
+	if (!cold && !SCHEDULER_STOPPED() &&
+	    curthread->td_intr_nesting_level == 0 &&
+	    (req & VM_ALLOC_CLASS_MASK) != VM_ALLOC_INTERRUPT)
+		DTRACE_PROBE3(memory__contig__start, int, (domain),
+		    u_long, (npages), int, (desired_runs));
 	ret = ENOMEM;
 
 	/*
@@ -3346,6 +3353,10 @@ vm_page_reclaim_contig_domain_ext(int domain, int req, u_long npages,
 done:
 	if (m_runs != _m_runs)
 		free(m_runs, M_TEMP);
+	if (!cold && !SCHEDULER_STOPPED() &&
+	    curthread->td_intr_nesting_level == 0 &&
+	    (req & VM_ALLOC_CLASS_MASK) != VM_ALLOC_INTERRUPT)
+		DTRACE_PROBE2(memory__contig__done, int, (domain), int, (ret));
 	return (ret);
 }
 
@@ -3504,8 +3515,14 @@ vm_wait_doms(const domainset_t *wdoms, int mflags)
 	if (curproc == pageproc) {
 		mtx_lock(&vm_domainset_lock);
 		vm_pageproc_waiters++;
+		if (!cold)
+			DTRACE_PROBE2(memory__wait__start, int, (1),
+			    int, (mflags));
 		error = msleep(&vm_pageproc_waiters, &vm_domainset_lock,
 		    PVM | PDROP | mflags, "pageprocwait", 1);
+		if (!cold)
+			DTRACE_PROBE2(memory__wait__done, int, (1),
+			    int, (error));
 	} else {
 		/*
 		 * XXX Ideally we would wait only until the allocation could
@@ -3517,8 +3534,14 @@ vm_wait_doms(const domainset_t *wdoms, int mflags)
 			if (pageproc == NULL)
 				panic("vm_wait in early boot");
 			vm_min_waiters++;
+			if (!cold)
+				DTRACE_PROBE2(memory__wait__start, int, (2),
+				    int, (mflags));
 			error = msleep(&vm_min_domains, &vm_domainset_lock,
 			    PVM | PDROP | mflags, "vmwait", 0);
+			if (!cold)
+				DTRACE_PROBE2(memory__wait__done, int, (2),
+				    int, (error));
 		} else
 			mtx_unlock(&vm_domainset_lock);
 	}
@@ -3638,6 +3661,7 @@ vm_domain_alloc_fail(struct vm_domain *vmd, vm_object_t object, int req)
 void
 vm_waitpfault(struct domainset *dset, int timo)
 {
+	int error __unused;
 
 	/*
 	 * XXX Ideally we would wait only until the allocation could
@@ -3647,8 +3671,12 @@ vm_waitpfault(struct domainset *dset, int timo)
 	mtx_lock(&vm_domainset_lock);
 	if (vm_page_count_min_set(&dset->ds_mask)) {
 		vm_min_waiters++;
-		msleep(&vm_min_domains, &vm_domainset_lock, PUSER | PDROP,
+		if (!cold)
+			DTRACE_PROBE1(memory__fault__wait__start, int, (timo));
+		error = msleep(&vm_min_domains, &vm_domainset_lock, PUSER | PDROP,
 		    "pfault", timo);
+		if (!cold)
+			DTRACE_PROBE1(memory__fault__wait__done, int, (error));
 	} else
 		mtx_unlock(&vm_domainset_lock);
 }

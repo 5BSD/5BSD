@@ -47,6 +47,34 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "aclread_trace.h"
+
+static acl_t
+trace_acl_get_link_np(const char *path, acl_type_t type)
+{
+	acl_t result;
+
+	TRACE_ACLREAD_OPERATION__START(type, 1);
+	result = acl_get_link_np(path, type);
+	TRACE_ACLREAD_OPERATION__DONE(type, 1,
+	    result != NULL, result == NULL ? errno : 0);
+	return (result);
+}
+
+
+static acl_t
+trace_acl_get_file(const char *path, acl_type_t type)
+{
+	acl_t result;
+
+	TRACE_ACLREAD_OPERATION__START(type, 0);
+	result = acl_get_file(path, type);
+	TRACE_ACLREAD_OPERATION__DONE(type, 0,
+	    result != NULL, result == NULL ? errno : 0);
+	return (result);
+}
+
+
 static int more_than_one = 0;
 
 static const struct option long_options[] =
@@ -126,9 +154,9 @@ print_acl(char *path, acl_type_t type, int hflag, int iflag, int nflag,
 	}
 
 	if (hflag)
-		acl = acl_get_link_np(path, type);
+		acl = trace_acl_get_link_np(path, type);
 	else
-		acl = acl_get_file(path, type);
+		acl = trace_acl_get_file(path, type);
 
 	if (!acl && errno != EOPNOTSUPP) {
 		warn("%s", path);

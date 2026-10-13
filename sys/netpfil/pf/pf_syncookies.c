@@ -64,6 +64,8 @@
 #include "opt_inet6.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/mbuf.h>
 #include <sys/filio.h>
@@ -261,6 +263,8 @@ pf_syncookies_setmode(u_int8_t mode)
 	if (V_pf_status.syncookies_mode == PF_SYNCOOKIES_ALWAYS) {
 		pf_syncookie_newkey();
 		V_pf_status.syncookies_active = true;
+		DTRACE_PROBE2(pf__syncookie__active, int, true,
+		    int, V_pf_status.syncookies_mode);
 	}
 	return (0);
 }
@@ -286,6 +290,8 @@ pf_synflood_check(struct pf_pdesc *pd)
 		callout_reset(&V_pf_syncookie_status.keytimeout, 0,
 		    pf_syncookie_rotate, curvnet);
 		V_pf_status.syncookies_active = true;
+		DTRACE_PROBE2(pf__syncookie__active, int, true,
+		    int, V_pf_status.syncookies_mode);
 		DPFPRINTF(LOG_WARNING,
 		    "synflood detected, enabling syncookies");
 		// XXXTODO V_pf_status.lcounters[LCNT_SYNFLOODS]++;
@@ -391,6 +397,8 @@ pf_syncookie_rotate(void *arg)
 	    V_pf_status.syncookies_mode == PF_SYNCOOKIES_NEVER)
 			) {
 		V_pf_status.syncookies_active = false;
+		DTRACE_PROBE2(pf__syncookie__active, int, false,
+		    int, V_pf_status.syncookies_mode);
 		DPFPRINTF(PF_DEBUG_MISC, "syncookies disabled");
 	}
 

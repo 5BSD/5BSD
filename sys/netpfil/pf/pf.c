@@ -118,6 +118,17 @@
 #include <security/mac/mac_framework.h>
 
 SDT_PROVIDER_DEFINE(pf);
+/* Limiter kind: 0 state, 1 source. Reason: 0 missing, 1 hard limit,
+ * 2 rate limit, 3 address capacity. Decision: 0 fallthrough, 1 block.
+ * Eligibility only passes limiter checks; it does not imply packet admission.
+ */
+SDT_PROBE_DEFINE6(pf, ip, limiter, decision,
+    "int", "uint32_t", "uint32_t", "int", "int", "int");
+SDT_PROBE_DEFINE6(pf, ip, limiter, pressure,
+    "int", "uint32_t", "int", "uint64_t", "uint64_t", "int");
+SDT_PROBE_DEFINE3(pf, ip, limiter, eligible,
+    "int", "uint32_t", "uint32_t");
+
 SDT_PROBE_DEFINE3(pf, ip, test, entry, "int", "int", "struct ifnet *");
 SDT_PROBE_DEFINE1(pf, ip, test, finish, "int");
 SDT_PROBE_DEFINE1(pf, ip, rules, entry, "struct pf_pdesc *");
@@ -6140,6 +6151,11 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_kruleset *ruleset)
 			 * There is no "backend" to get a resource out of
 			 * so the rule can't create state.
 			 */
+			if (stlim == NULL) {
+				SDT_PROBE6(pf, ip, limiter, decision, 0,
+				    r->statelim.id, r->nr, 0,
+				    r->statelim.limiter_action, 0);
+			}
 			PF_TEST_ATTRIB(stlim == NULL, TAILQ_NEXT(r, entries));
 
 			/*
@@ -6147,6 +6163,14 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_kruleset *ruleset)
 			 * can't create state.
 			 */
 			if (stlim->pfstlim_inuse >= stlim->pfstlim_limit) {
+				SDT_PROBE6(pf, ip, limiter, decision, 0,
+				    r->statelim.id, r->nr, 1,
+				    r->statelim.limiter_action,
+				    (r->statelim.limiter_action ==
+				    PF_LIMITER_BLOCK));
+				SDT_PROBE6(pf, ip, limiter, pressure, 0,
+				    r->statelim.id, 1, stlim->pfstlim_inuse,
+				    stlim->pfstlim_limit, r->statelim.limiter_action);
 				gen = pf_statelim_enter(stlim);
 				stlim->pfstlim_counters.hardlimited++;
 				pf_statelim_leave(stlim, gen);
@@ -6169,6 +6193,14 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_kruleset *ruleset)
 				    ts.tv_nsec - stlim->pfstlim_rate_ts;
 
 				if (diff < stlim->pfstlim_rate_token) {
+					SDT_PROBE6(pf, ip, limiter, decision, 0,
+					    r->statelim.id, r->nr, 2,
+					    r->statelim.limiter_action,
+					    (r->statelim.limiter_action ==
+				    PF_LIMITER_BLOCK));
+					SDT_PROBE6(pf, ip, limiter, pressure, 0,
+					    r->statelim.id, 2, diff,
+					    stlim->pfstlim_rate_token, r->statelim.limiter_action);
 					gen = pf_statelim_enter(stlim);
 					stlim->pfstlim_counters.ratelimited++;
 					pf_statelim_leave(stlim, gen);
@@ -6190,6 +6222,8 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_kruleset *ruleset)
 					    stlim->pfstlim_rate_bucket;
 				}
 			}
+			SDT_PROBE3(pf, ip, limiter, eligible, 0,
+			    r->statelim.id, r->nr);
 		}
 
 		if (r->sourcelim.id != PF_SOURCELIM_ID_NONE) {
@@ -6202,6 +6236,11 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_kruleset *ruleset)
 			 * There is no "backend" to get a resource out of
 			 * so the rule can't create state.
 			 */
+			if (srlim == NULL) {
+				SDT_PROBE6(pf, ip, limiter, decision, 1,
+				    r->sourcelim.id, r->nr, 0,
+				    r->sourcelim.limiter_action, 0);
+			}
 			PF_TEST_ATTRIB(srlim == NULL, TAILQ_NEXT(r, entries));
 
 			pf_source_key(srlim, &key, ctx->pd->af,
@@ -6213,6 +6252,13 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_kruleset *ruleset)
 				 * can't create state.
 				 */
 				if (sr->pfsr_inuse >= srlim->pfsrlim_limit) {
+					SDT_PROBE6(pf, ip, limiter, decision, 1,
+					    r->sourcelim.id, r->nr, 1,
+					    r->sourcelim.limiter_action,
+					    (r->sourcelim.limiter_action == PF_LIMITER_BLOCK));
+					SDT_PROBE6(pf, ip, limiter, pressure, 1,
+					    r->sourcelim.id, 1, sr->pfsr_inuse,
+					    srlim->pfsrlim_limit, r->sourcelim.limiter_action);
 					sr->pfsr_counters.hardlimited++;
 					gen = pf_sourcelim_enter(srlim);
 					srlim->pfsrlim_counters.hardlimited++;
@@ -6239,6 +6285,13 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_kruleset *ruleset)
 					    ts.tv_nsec - sr->pfsr_rate_ts;
 
 					if (diff < srlim->pfsrlim_rate_token) {
+						SDT_PROBE6(pf, ip, limiter, decision, 1,
+						    r->sourcelim.id, r->nr, 2,
+						    r->sourcelim.limiter_action,
+						    (r->sourcelim.limiter_action == PF_LIMITER_BLOCK));
+						SDT_PROBE6(pf, ip, limiter, pressure, 1,
+						    r->sourcelim.id, 2, diff,
+						    srlim->pfsrlim_rate_token, r->sourcelim.limiter_action);
 						sr->pfsr_counters.ratelimited++;
 						gen = pf_sourcelim_enter(srlim);
 						srlim->pfsrlim_counters
@@ -6270,6 +6323,13 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_kruleset *ruleset)
 
 				if (srlim->pfsrlim_nsources >=
 				    srlim->pfsrlim_entries) {
+					SDT_PROBE6(pf, ip, limiter, decision, 1,
+					    r->sourcelim.id, r->nr, 3,
+					    r->sourcelim.limiter_action,
+					    (r->sourcelim.limiter_action == PF_LIMITER_BLOCK));
+					SDT_PROBE6(pf, ip, limiter, pressure, 1,
+					    r->sourcelim.id, 3, srlim->pfsrlim_nsources,
+					    srlim->pfsrlim_entries, r->sourcelim.limiter_action);
 					gen = pf_sourcelim_enter(srlim);
 					srlim->pfsrlim_counters.addrlimited++;
 					pf_sourcelim_leave(srlim, gen);
@@ -6285,6 +6345,8 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_kruleset *ruleset)
 					continue;
 				}
 			}
+			SDT_PROBE3(pf, ip, limiter, eligible, 1,
+			    r->sourcelim.id, r->nr);
 		}
 
 		/* must be last! */

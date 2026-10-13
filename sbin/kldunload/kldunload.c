@@ -35,6 +35,20 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#include "moduleunload_trace.h"
+
+static int
+trace_kldunloadf(int id, int flags)
+{
+	int result;
+
+	TRACE_MODULEUNLOAD_OPERATION__START(id, flags);
+	result = kldunloadf(id, flags);
+	TRACE_MODULEUNLOAD_OPERATION__DONE(id, flags, result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 static void
 usage(void)
 {
@@ -108,7 +122,7 @@ main(int argc, char** argv)
 		else
 			force = LINKER_UNLOAD_NORMAL;
 
-		if (kldunloadf(fileid, force) < 0)
+		if (trace_kldunloadf(fileid, force) < 0)
 			err(EXIT_FAILURE, "can't unload file");
 	}
 

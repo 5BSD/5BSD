@@ -1,0 +1,199 @@
+DTRACE COVERAGE: TENTH EXPANSION
+===============================
+
+Twenty additional base utility components; 44 new USDT contracts and ten
+base-install profiles. This round is userland only and complements the
+kernel, bhyve, Bluetooth, Mesh, MACF and library coverage in earlier rounds.
+It does not claim complete coverage of these utilities or of the system.
+
+Selection and history
+---------------------
+The new runtime source files do not overlap the eighth or ninth rounds.
+Reviewed recent history includes 43b0384bc7e (mountpoint as a stat hardlink),
+fe06e383cc6 (daemon pidfile without supervision), and 2c88636e0e7 (stat tests).
+Stat/readlink/mountpoint share one executable: metadata lookups are traced,
+not every readlink operation. Daemon probes cover actual event registration
+and waits; the non-supervising execution path need not produce these probes.
+
+Twenty passes and precise scope
+-------------------------------
+ 1. usr.bin/touch (filetime*): Each timestamp update, including retry; flags, result and errno. No timestamps or paths.
+ 2. usr.bin/stat (filestat*): Metadata queries: kind 0 stat, 1 lstat, 2 fstat. Result/errno; excludes fhstat and readlink payload.
+ 3. usr.sbin/chown (fileowner*): Ownership update attempts, including chgrp alias; flags and result, no identities/paths.
+ 4. usr.bin/mkfifo (fifocreate*): FIFO creation mode, result and errno.
+ 5. usr.bin/pathchk (pathcheck*): Filesystem-aware path component lookup; ENOENT may be accepted by the caller, not a command failure.
+ 6. usr.bin/du (diskwalk*): One traversal advance; result is FTS entry type, zero is end/error; terminal errno distinguishes those. Entry-specific errors remain in fts_errno.
+ 7. bin/df (diskspace*): Per-path filesystem usage query; excludes bulk getmntinfo.
+ 8. sbin/sysctl (sysctltool*): Sysctl query/set and name-walking requests; write flag and MIB length, never values or MIB buffers.
+ 9. usr.bin/limits (limittool*): Current-process resource limit application; resource/result; excludes target-process sysctl mode.
+10. usr.bin/killall (signalall*): Each selected-process signal attempt; pid, signal, result, errno. Dry-run produces no send probes.
+11. bin/kill (signaltool*): Numeric signal syscall boundary including signal-zero checks; no process names.
+12. usr.bin/logger (logsend*): Remote datagram send length, bytes/result and errno; local submission pair is void and does not claim delivery.
+13. usr.sbin/daemon (daemonwait*): Supervisor event registration and waits; change/event capacities, returned count and errno. No probes in signal handlers.
+14. usr.bin/env (envdir*): Requested working-directory change before exec; no environment or command values.
+15. usr.bin/getconf (configquery*): Sysconf query key and returned value; -1 with errno zero is indeterminate, not a failure.
+16. bin/cpuset (cpusettool*): Affinity read/write operation kind, level and selector; no masks. Excludes domain/id operations.
+17. bin/timeout (timeoutsig*): Foreground signal dispatch including SIGCONT; reaper dispatch has its own pair. Signal handlers only set flags.
+18. bin/realpath (pathresolve*): Path resolution boundary; boolean success and errno, no input/resolved strings.
+19. bin/sleep (sleepwait*): Each sleep attempt, completion and interruption; duration measured by paired timestamps outside signal handler.
+20. usr.bin/mktemp (tempcreate*): Temporary file (kind 0) or directory (kind 1) creation; boolean success/errno, never templates or generated paths.
+
+Probe contracts
+---------------
+All selectors use provider*:::name. Types and argument order below are the
+public contract. An operation-done repeats the start arguments, followed by
+result and errno. Errno is zero on success; syscall result -1 indicates
+failure, except sysconf's indeterminate -1/errno-zero result. Pointer-return
+APIs expose scalar outcomes only. No command strings, paths, environment
+variables, messages, credentials, CPU masks or sysctl values are collected.
+
+filetime*:::operation-start(int)
+filetime*:::operation-done(int, int, int)
+filestat*:::operation-start(int)
+filestat*:::operation-done(int, int, int)
+fileowner*:::operation-start(int)
+fileowner*:::operation-done(int, int, int)
+fifocreate*:::operation-start(unsigned int)
+fifocreate*:::operation-done(unsigned int, int, int)
+pathcheck*:::operation-start(int)
+pathcheck*:::operation-done(int, int, int)
+diskwalk*:::operation-start(int)
+diskwalk*:::operation-done(int, int, int)
+diskspace*:::operation-start(int)
+diskspace*:::operation-done(int, int, int)
+sysctltool*:::operation-start(int, unsigned int)
+sysctltool*:::operation-done(int, unsigned int, int, int)
+limittool*:::operation-start(int)
+limittool*:::operation-done(int, int, int)
+signalall*:::operation-start(int, int)
+signalall*:::operation-done(int, int, int, int)
+signaltool*:::operation-start(int, int)
+signaltool*:::operation-done(int, int, int, int)
+logsend*:::operation-start(size_t)
+logsend*:::operation-done(size_t, int64_t, int)
+logsend*:::local-start(int)
+logsend*:::local-done(int)
+daemonwait*:::operation-start(int, int)
+daemonwait*:::operation-done(int, int, int, int)
+envdir*:::operation-start(int)
+envdir*:::operation-done(int, int, int)
+configquery*:::operation-start(int)
+configquery*:::operation-done(int, int64_t, int)
+cpusettool*:::operation-start(int, int, int)
+cpusettool*:::operation-done(int, int, int, int, int)
+timeoutsig*:::operation-start(int, int)
+timeoutsig*:::operation-done(int, int, int, int)
+timeoutsig*:::reaper-start(int)
+timeoutsig*:::reaper-done(int, int, int)
+pathresolve*:::operation-start(int)
+pathresolve*:::operation-done(int, int, int)
+sleepwait*:::operation-start(int)
+sleepwait*:::operation-done(int, int, int)
+tempcreate*:::operation-start(int)
+tempcreate*:::operation-done(int, int, int)
+
+Argument notes
+--------------
+filetime: utimensat flags. filestat: kind 0 stat, 1 lstat, 2 fstat.
+fileowner: fchownat flags. fifocreate: requested mode. pathcheck: reserved 0.
+diskwalk: reserved 0, FTS entry type (zero at terminal return), errno.
+  Entry errno is read only for FTS_ERR, FTS_DNR and FTS_NS; terminal errno
+  is inherited from fts_read after the caller clears errno. No entry paths.
+diskspace: reserved 0. sysctltool: write-buffer-present flag and MIB length.
+limittool: resource number. signalall/signaltool: target pid and signal.
+logsend operation: requested length, signed send result, errno.
+logsend local: priority on both sites; void API completion, not delivery.
+daemonwait: change count and event capacity, returned event count, errno.
+envdir: reserved 0. configquery: sysconf key and signed long value.
+cpusettool: operation kind (0 read, 1 write), level and selector.
+timeoutsig operation: pid and signal; reaper: procctl command/result/errno.
+pathresolve: reserved 0, boolean success, errno. sleepwait: reserved 0.
+tempcreate: kind (0 file, 1 directory), boolean success, errno.
+
+An ENOENT in pathcheck can be acceptable to the utility; syscall errors do
+not necessarily mean command failure. Signals numbered zero check access
+and existence. An interrupted nanosleep/kevent may be retried by the caller.
+No duration is calculated in C: start/done timestamps allow latency analysis
+without unconditional timing calls. No new probe runs in a signal handler,
+early boot, an interrupt filter, DTrace itself, or an allocator internals path.
+ENABLED guards suppress argument evaluation, including FTS field reads, when
+inactive. Trace wrappers preserve errno. Enabled traces still have a cost;
+per-entry traversal/metadata and event-wait probes may be high volume.
+
+Categories and limits
+---------------------
+P0: operation lifecycle, latency, syscall errors and interrupted waits.
+P1: temporary resources/FIFOs, filesystem I/O, traversal, event waits and
+    logging submission/network sends.
+P2: ownership/limits/affinity/signal/sysctl decision outcomes through errno.
+This is diagnostic instrumentation, not a tamper-resistant security audit.
+No invented deadlock/health thresholds or extra per-call counters are added.
+
+Profiles and installation
+-------------------------
+  base-file-metadata
+  base-owner-fifo
+  base-path-walk
+  base-space-sysctl
+  base-limits-signals
+  base-signal-logging
+  base-supervisor-env
+  base-config-affinity
+  base-timeout-resolve
+  base-sleep-temporary
+
+The existing bsdinstruments Makefile discovers profiles/*.d and installs them
+under /usr/share/bsdinstruments/profiles in the bsdinstruments base package.
+All ten new entries were verified in the 375-entry install catalog. Utility
+Makefiles use the existing MK_DTRACE switch and build native provider objects
+into the normal PROG; disabled builds contain none of these providers. No
+new standalone executable or external package is required. No installation
+or package publication was performed.
+
+Profiles aggregate elapsed microseconds and counts by operation and errno
+(or local log priority), using per-pid/tid depth and timestamps. They require
+starting before the workload; loss of events invalidates pairing. They make
+no pointer/string reads. PID filtering selects the executing process; child
+processes require their own selection or an unfiltered profile.
+
+Reproduction and validation
+---------------------------
+Artifacts: /usr/obj/5bsd-dtrace-tenth-validation
+Prepared sysroot: /usr/obj/usr/src/amd64.amd64/tmp
+Use the maintained coverage-tenth-{base,check,guards,tests,smoke}.py runners
+from tools/test/system-tracing; source/object writes require normal OS access.
+The base runner uses all logical CPUs (-j16 on this host). It builds only
+these programs, not world, and uses the development build configuration.
+
+  40 native utility builds: 20 with MK_DTRACE=yes and 20 with no.
+  20 linked executable DOF inspections: argument count, actual probe offsets
+     and enabled offsets; provider absence in all 20 disabled counterparts.
+  20 offline profile compilations: each profile normal and PID/duration
+     filtered, with selector/argument checks and base install selection.
+  40 header guard/errno checks: fake providers intentionally corrupt errno;
+     active, inactive and compiled-out argument evaluation are checked.
+  70 isolated behavior checks, exercising all 20 components in both modes.
+  18 existing ATF suite builds; 138 cases passed, 40 root/mount cases skipped,
+     two existing touch timestamp cases reported expected_failure.
+     One disabled limits CPU-time check measured 2.99 seconds against its
+     3.00-second minimum; the isolated recheck passed. The original failure
+     and output are retained in results.json under prior_attempt.
+
+Behavior tests use isolated files, read-only sysctl queries, private loopback
+logging, signal-zero checks and child-only timeout/limit operations. The
+actual daemon objects are relinked with daemon(3) replaced to stay foreground;
+a short-lived child writes a marker and supervisor pidfile removal is checked.
+The supervisor intentionally exits 1 even after normal completion; the test
+checks this existing behavior. No persistent service is started. No system
+settings, modules, mounts, upgrades or boot state are changed.
+
+Known limits: /dev/dtrace is unavailable, so no live firing or overhead
+measurement is claimed. Offline -Z compilation alone cannot prove provider
+presence; independent source contracts and linked DOF checks address that
+limit. These are amd64 native builds, not cross-architecture/world/rescue
+validation. Privileged mutation/error paths and local syslog delivery are not
+comprehensively exercised. The unchanged root-only regressions are skipped.
+
+The manifest hashes the exact reviewed source/profile/test/report snapshot.
+The session-only patch preserves preexisting changes and is reverse-checked
+against the current tree. No unrelated edits are committed or reverted.

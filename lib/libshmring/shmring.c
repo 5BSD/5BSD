@@ -21,6 +21,7 @@
 
 #include "shmring.h"
 #include "shmring_probes.h"
+#include "diagnostics.h"
 
 #define	SHMRING_MAGIC	0x53484d52494e4731ULL	/* "SHMRING1" */
 
@@ -853,6 +854,7 @@ shmring_read_record(struct shmring *ring, void *buf, size_t bufsz)
 		return (-1);
 	}
 	if (used < sizeof(record_len)) {
+		SHMRING_TRACE_RECORD_REJECT(EPROTO, used, sizeof(record_len));
 		errno = EPROTO;
 		return (-1);
 	}
@@ -860,10 +862,12 @@ shmring_read_record(struct shmring *ring, void *buf, size_t bufsz)
 	needed = sizeof(record_len) + record_len;
 	if (record_len > ring->config->max_record ||
 	    needed > ring->capacity || needed > used) {
+		SHMRING_TRACE_RECORD_REJECT(EPROTO, needed, used);
 		errno = EPROTO;
 		return (-1);
 	}
 	if (record_len > bufsz) {
+		SHMRING_TRACE_RECORD_REJECT(EMSGSIZE, record_len, bufsz);
 		errno = EMSGSIZE;
 		return (-1);
 	}

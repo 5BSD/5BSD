@@ -37,6 +37,8 @@
 #include "opt_inet6.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
@@ -97,6 +99,12 @@
 #include <netlink/route/route_var.h>
 
 #include <security/mac/mac_framework.h>
+
+SDT_PROVIDER_DEFINE(giftunnel);
+SDT_PROBE_DEFINE2(giftunnel, , , control__start, "void *", "unsigned long");
+SDT_PROBE_DEFINE3(giftunnel, , , control__done, "void *", "unsigned long", "int");
+SDT_PROBE_DEFINE3(giftunnel, , , access, "void *", "unsigned long", "int");
+
 
 static const char gifname[] = "gif";
 
@@ -788,6 +796,7 @@ gif_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 			ifp->if_mtu = ifr->ifr_mtu;
 		return (0);
 	}
+	SDT_PROBE2(giftunnel, , , control__start, ifp, cmd);
 	sx_xlock(&gif_ioctl_sx);
 	sc = ifp->if_softc;
 	if (sc == NULL) {
@@ -819,7 +828,9 @@ gif_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		ifr->ifr_fib = sc->gif_fibnum;
 		break;
 	case SIOCSTUNFIB:
-		if ((error = priv_check(curthread, PRIV_NET_GIF)) != 0)
+		error = priv_check(curthread, PRIV_NET_GIF);
+		SDT_PROBE3(giftunnel, , , access, ifp, cmd, error);
+		if (error != 0)
 			break;
 		if (ifr->ifr_fib >= rt_numfibs)
 			error = EINVAL;
@@ -832,7 +843,9 @@ gif_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		    sizeof(options));
 		break;
 	case GIFSOPTS:
-		if ((error = priv_check(curthread, PRIV_NET_GIF)) != 0)
+		error = priv_check(curthread, PRIV_NET_GIF);
+		SDT_PROBE3(giftunnel, , , access, ifp, cmd, error);
+		if (error != 0)
 			break;
 		error = copyin(ifr_data_get_ptr(ifr), &options,
 		    sizeof(options));
@@ -857,6 +870,7 @@ gif_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		}
 	}
 bad:
+	SDT_PROBE3(giftunnel, , , control__done, ifp, cmd, error);
 	sx_xunlock(&gif_ioctl_sx);
 	return (error);
 }

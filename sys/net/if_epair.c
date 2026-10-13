@@ -54,6 +54,7 @@
 #include <sys/module.h>
 #include <sys/proc.h>
 #include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
 #include <sys/socket.h>
@@ -81,6 +82,11 @@
 #endif
 #endif
 #include <net/vnet.h>
+
+/* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
+SDT_PROVIDER_DEFINE(epair);
+SDT_PROBE_DEFINE4(epair, , , enqueue,
+    "u_int", "int", "int", "int");
 
 static const char epairname[] = "epair";
 #define	RXRSIZE	4096	/* Probably overkill by 4-8x. */
@@ -279,6 +285,8 @@ epair_menq(struct mbuf *m, struct epair_softc *osc)
 		taskqueue_enqueue(epair_tasks.tq[q->id], &q->tx_task);
 	}
 	error = mbufq_enqueue(&q->q, m);
+	SDT_PROBE4(epair, , , enqueue,
+	    (q->id), (len), (mbufq_len(&q->q)), (error));
 	mtx_unlock(&q->mtx);
 
 	if (error != 0) {

@@ -46,6 +46,8 @@
 #include <sys/sdt.h>
 
 SDT_PROVIDER_DECLARE(vfs);
+SDT_PROBE_DEFINE1(vfs, , , syncer__start, "void *");
+SDT_PROBE_DEFINE2(vfs, , , syncer__done, "void *", "int");
 SDT_PROBE_DEFINE2(vfs, , , detach__start, "struct knote *", "struct vnode *");
 SDT_PROBE_DEFINE2(vfs, , , detach__done, "struct knote *", "struct vnode *");
 #include <sys/systm.h>
@@ -2994,6 +2996,7 @@ sync_vnode(struct synclist *slp, struct bufobj **bo, struct thread *td)
 {
 	struct vnode *vp;
 	struct mount *mp;
+	int error __unused;
 
 	*bo = LIST_FIRST(slp);
 	if (*bo == NULL)
@@ -3019,7 +3022,9 @@ sync_vnode(struct synclist *slp, struct bufobj **bo, struct thread *td)
 	    (mp->mnt_kern_flag & MNTK_SUSPENDED) == 0, mp,
 	    ("suspended mp syncing vp %p", vp));
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-	(void) VOP_FSYNC(vp, MNT_LAZY, td);
+	SDT_PROBE1(vfs, , , syncer__start, vp);
+	error = VOP_FSYNC(vp, MNT_LAZY, td);
+	SDT_PROBE2(vfs, , , syncer__done, vp, error);
 	VOP_UNLOCK(vp);
 	vn_finished_write(mp);
 	BO_LOCK(*bo);

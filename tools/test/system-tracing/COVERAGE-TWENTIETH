@@ -1,0 +1,94 @@
+Twentieth pass: daemon admission, shared runtime pressure, and base Zsh
+====================================================================
+
+Scope: 30 new USDT contracts, nine base components, five installed profiles.
+No DTrace engine, tracing transport, installed binary or running daemon change.
+All new arguments are scalar: no commands, environment, credentials, capability
+or reply tokens, filenames, or message payloads are collected. Runtime object
+addresses are opaque process-local correlation identities, not stable IDs.
+
+Contracts (arguments in order)
+------------------------------
+service_runtime (libservice):
+ retry-scheduled(object, delay_ms, next_monotonic_ms): every failed result.
+ retry-recovered(object, prior_delay_ms): success after nonzero backoff only.
+ health-change(object, error, cumulative_failures): healthy/unhealthy boundary;
+ changing from one nonzero error to another is not a health transition.
+ budget-rejected(error, requested_ms): invalid interval or nested budget.
+ budget-expired(overdue_ms): each timeout check after the deadline, not one
+ event per budget. No added clock calls; uses the existing monotonic sample.
+ lease-limit(count, capacity, error): full set or exhausted serial space.
+ Ambient and runtime providers share one .d input to the base DOF link rule.
+
+libchannel:
+ queue-limit(queued_messages, queued_bytes, queued_fds): a queue ceiling rejected
+ this message. Counts are current occupancy; no attempted contents are exposed.
+ pending-limit(pending, maximum): request concurrency ceiling.
+
+capsule:
+ ctl-admission-failure(stage, error, current_connections): confinement=1,
+ connection ceiling=2, peer credentials query=3, allocation=4, kevent watch=5.
+ Ceiling error ENOSPC is a diagnostic classification, not a returned errno.
+ ctl-timeout(connection_state): timer expiry before destroying the connection.
+ The existing probe header now compiles out with MK_DTRACE=no, matching its
+ Makefile. The enabled branch explicitly defines WITH_DTRACE.
+
+switchboard:
+ capsule-rpc-start(request_bytes, sent_fds, maximum_reply_fds)
+ capsule-rpc-done(result, transport_errno): result=-1 is transport failure;
+ otherwise result is Capsule application status. errno is saved and restored.
+ capsule-stale-reply(one_based_attempt): rejected reply before retry/exhaustion.
+ capsule-malformed-reply(received_bytes, received_fds): wire shape rejection.
+ Pair RPC start/done by process/thread with a nesting stack. An event drop or
+ process exit can leave an unmatched start. Profile histograms exclude it.
+
+bsddevice:
+ worker-reject(stage, error, current_workers): quota=1 (ENOSPC classification),
+ allocation=2, worker startup=3, descriptor confinement/watch installation=4.
+bsdextension:
+ accept-retry(error): failed accept after excluding clean quiesce, before fd
+ exhaustion backoff. EINTR remains visible as a retry.
+ worker-reject(stage,error): session ceiling=1 (ENOSPC classification),
+ allocation=2, pthread_create=3 (uses its returned error, not errno).
+bsdmemory:
+ dependency-health(kind,error,cumulative_failures): source sysctl=1, notify=2;
+ only the existing health-change branch, providing dependency context beyond
+ the generic libservice health event.
+bsdsysctl:
+ session-limit(global_table_full, same_label_sessions): admission refusal.
+ session-open-failure(stage,error): channel setup=1, request handler install=2.
+ session-close-reason(kind,error): idle=1 (ETIMEDOUT), channel=2, handler=3.
+ Preserves existing cleanup and error precedence.
+
+zsh (base runtime package):
+ fork-start(job): immediately before fork; fork-done(pid,error) in both parent
+ and child. Child sees pid=0; a parent/child pair is not a single latency pair.
+ job-limit(table_size): existing job-table expansion rejection in zfork.
+ exec-attempt(stage), exec-failure(stage,error): each actual execve invocation
+ in zexecve, including interpreter fallbacks. Stages 1..6 follow source order.
+ Successful exec does not return: correlate proc:::exec-success if needed.
+ pipeline-start(job,how), pipeline-done(job,status,async): final status for
+ foreground, launch status for background (async=1). Recursive pipelines,
+ forked children and _exit paths preclude naïve thread-local latency pairing.
+ wait-start(pid,wait_builtin), wait-done(pid,result): waitforpid's ordinary and
+ trapped-signal return paths. Does not claim to cover every zwaitjob wait.
+ Vendor sources remain buildable without the base-specific FIVEBSD_TRACE flag.
+
+Validation
+----------
+18 native builds (all logical CPUs): nine components, MK_DTRACE=yes/no.
+ELF DOF inspection: all 30 declared contracts have executable sites and correct
+arity; none of the new providers exists in disabled builds.
+Existing libservice retry/health, lease ownership, drain deadline and budget
+scope tests pass in both modes (eight cases). Upstream Zsh A01grammar,
+A05execution and A06assign pass in both modes (six suites). These execute
+ordinary isolated workloads; no privileged system services are started.
+Five profiles compile offline both unfiltered and PID/duration filtered, and
+appear in the base Makefile installation list. No live probe firing is claimed:
+the running host has no /dev/dtrace. Daemon failure branches are compiled and
+linked, not injected into production. Kernel and boot qualification from the
+nineteenth pass remains separate.
+
+Artifacts: /usr/obj/5bsd-dtrace-twentieth-validation
+Scripts in this directory reproduce builds, DOF checks, codegen comparisons,
+existing tests and offline profile checks. No installation or reboot performed.

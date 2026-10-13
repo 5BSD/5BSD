@@ -27,6 +27,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
 #include <sys/conf.h>
@@ -260,7 +262,7 @@ static int
 uart_tty_param(struct tty *tp, struct termios *t)
 {
 	struct uart_softc *sc;
-	int databits, parity, stopbits;
+	int databits, error, parity, stopbits;
 
 	sc = tty_softc(tp);
 	if (sc == NULL || sc->sc_leaving)
@@ -283,7 +285,16 @@ uart_tty_param(struct tty *tp, struct termios *t)
 		    UART_PARITY_EVEN;
 	else
 		parity = UART_PARITY_NONE;
-	if (UART_PARAM(sc, t->c_ospeed, databits, stopbits, parity) != 0)
+	if (!cold)
+		DTRACE_PROBE2(uart__parameter__start,
+		    void *, (sc),
+		    unsigned int, (t->c_ospeed));
+	error = UART_PARAM(sc, t->c_ospeed, databits, stopbits, parity);
+	if (!cold)
+		DTRACE_PROBE2(uart__parameter__done,
+		    void *, (sc),
+		    int, (error));
+	if (error != 0)
 		return (EINVAL);
 	if ((t->c_cflag & CNO_RTSDTR) == 0)
 		UART_SETSIG(sc, SER_DDTR | SER_DTR);

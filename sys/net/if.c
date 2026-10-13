@@ -46,6 +46,7 @@
 #include <sys/epoch.h>
 #include <sys/mbuf.h>
 #include <sys/systm.h>
+#include <sys/sdt.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/socket.h>
@@ -107,6 +108,10 @@
 #endif /* INET || INET6 */
 
 #include <security/mac/mac_framework.h>
+
+SDT_PROVIDER_DEFINE(ifnet);
+SDT_PROBE_DEFINE2(ifnet, , , ioctl__start, "void *", "unsigned long");
+SDT_PROBE_DEFINE3(ifnet, , , ioctl__done, "void *", "unsigned long", "int");
 
 /*
  * Consumers of struct ifreq such as tcpdump assume no pad between ifr_name
@@ -4956,10 +4961,15 @@ if_resolvemulti(if_t ifp, struct sockaddr **srcs, struct sockaddr *dst)
 int
 if_ioctl(if_t ifp, u_long cmd, void *data)
 {
-	if (ifp->if_ioctl == NULL)
-		return (EOPNOTSUPP);
+	int error;
 
-	return (ifp->if_ioctl(ifp, cmd, data));
+	SDT_PROBE2(ifnet, , , ioctl__start, ifp, cmd);
+	if (ifp->if_ioctl == NULL)
+		error = EOPNOTSUPP;
+	else
+		error = ifp->if_ioctl(ifp, cmd, data);
+	SDT_PROBE3(ifnet, , , ioctl__done, ifp, cmd, error);
+	return (error);
 }
 
 struct mbuf *

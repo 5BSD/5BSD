@@ -6,6 +6,10 @@
  */
 
 #include <sys/param.h>
+#include <sys/conf.h>
+#include <sys/proc.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/kernel.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
@@ -99,8 +103,13 @@ nvmf_allocate_command(struct nvmf_qpair *qp, const void *sqe, int how)
 	KASSERT(how == M_WAITOK || how == M_NOWAIT,
 	    ("%s: invalid how", __func__));
 	nc = qp->nq_ops->allocate_capsule(qp, how);
-	if (nc == NULL)
+	if (nc == NULL) {
+		if (!cold && !dumping && !SCHEDULER_STOPPED() &&
+		    curthread->td_intr_nesting_level == 0)
+			DTRACE_PROBE3(nvmf__capsule__pressure, void *, (qp),
+			    int, (1), int, (how));
 		return (NULL);
+	}
 
 	nc->nc_qpair = qp;
 	nc->nc_qe_len = sizeof(struct nvme_command);
@@ -120,8 +129,13 @@ nvmf_allocate_response(struct nvmf_qpair *qp, const void *cqe, int how)
 	KASSERT(how == M_WAITOK || how == M_NOWAIT,
 	    ("%s: invalid how", __func__));
 	nc = qp->nq_ops->allocate_capsule(qp, how);
-	if (nc == NULL)
+	if (nc == NULL) {
+		if (!cold && !dumping && !SCHEDULER_STOPPED() &&
+		    curthread->td_intr_nesting_level == 0)
+			DTRACE_PROBE3(nvmf__capsule__pressure, void *, (qp),
+			    int, (2), int, (how));
 		return (NULL);
+	}
 
 	nc->nc_qpair = qp;
 	nc->nc_qe_len = sizeof(struct nvme_completion);

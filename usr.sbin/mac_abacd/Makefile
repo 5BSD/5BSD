@@ -10,4 +10,9 @@ CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD=	ucl util
 
+.if ${MK_DTRACE} != "no"
+SRCS+= diagnostics_provider.d
+CFLAGS+= -DWITH_DTRACE
+.endif
+
 .include <bsd.prog.mk>

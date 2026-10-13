@@ -12,6 +12,7 @@
  */
 
 #include <sys/types.h>
+#include "meshd_probes.h"
 #include <sys/param.h>
 #include <sys/endian.h>
 #include <sys/stat.h>
@@ -1737,6 +1738,7 @@ meshd_persist_save(struct meshd_persist *ps, struct meshd_node *nd)
 		free(frame);
 		return (-1);
 	}
+	MESHD_PROBE_PERSIST__WRITE__START(frame_len);
 	rc = write_all(fd, frame, frame_len);
 	free(frame);
 	if (rc == 0)
@@ -1754,6 +1756,7 @@ meshd_persist_save(struct meshd_persist *ps, struct meshd_node *nd)
 		ps->due_ms = 0;
 		ps->last_errno = 0;
 	}
+	MESHD_PROBE_PERSIST__WRITE__DONE(frame_len, rc);
 	return (rc);
 }
 

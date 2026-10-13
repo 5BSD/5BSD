@@ -26,6 +26,7 @@
 #include <sys/zil.h>
 #include <sys/callb.h>
 #include <sys/trace_zfs.h>
+#include <sys/trace_bsd.h>
 
 /*
  * ZFS Transaction Groups
@@ -714,6 +715,10 @@ txg_wait_synced_flags(dsl_pool_t *dp, uint64_t txg, txg_wait_flag_t flags)
 	 * Keep pushing util the pool gets to the wanted txg. If something
 	 * else interesting happens, we'll set an error and break out.
 	 */
+	ZFS_BSD_PROBE3(txg__wait__start,
+	    dsl_pool_t *, dp,
+	    uint64_t, txg,
+	    int, flags);
 	while (tx->tx_synced_txg < txg) {
 		if ((flags & TXG_WAIT_SUSPEND) && spa_suspended(dp->dp_spa)) {
 			/*
@@ -747,6 +752,11 @@ txg_wait_synced_flags(dsl_pool_t *dp, uint64_t txg, txg_wait_flag_t flags)
 		}
 	}
 
+	ZFS_BSD_PROBE4(txg__wait__done,
+	    dsl_pool_t *, dp,
+	    uint64_t, txg,
+	    uint64_t, tx->tx_synced_txg,
+	    int, error);
 	mutex_exit(&tx->tx_sync_lock);
 	return (error);
 }

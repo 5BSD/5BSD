@@ -35,6 +35,8 @@
 /* TODO Move headers to mprvar */
 #include <sys/types.h>
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/selinfo.h>
@@ -863,7 +865,11 @@ mpr_reinit(struct mpr_softc *sc)
 	mpr_dprint(sc, MPR_INIT, "Masking interrupts and resetting\n");
 	mpr_mask_intr(sc);
 
+	if (!cold)
+		DTRACE_PROBE1(mpr__reset__start, void *, (sc));
 	error = mpr_diag_reset(sc, CAN_SLEEP);
+	if (!cold)
+		DTRACE_PROBE2(mpr__reset__done, void *, (sc), int, (error));
 	if (error != 0) {
 		panic("%s hard reset failed with error %d\n", __func__, error);
 	}
@@ -3814,7 +3820,13 @@ mpr_wait_command(struct mpr_softc *sc, struct mpr_command **cmp, int timeout,
 		sleep_flag = NO_SLEEP;
 	getmicrouptime(&start_time);
 	if (mtx_owned(&sc->mpr_mtx) && sleep_flag == CAN_SLEEP) {
+		if (!cold)
+			DTRACE_PROBE2(mpr__command__wait__start, void *, (sc),
+			    int, (timeout));
 		error = msleep(cm, &sc->mpr_mtx, 0, "mprwait", timeout*hz);
+		if (!cold)
+			DTRACE_PROBE2(mpr__command__wait__done, void *, (sc),
+			    int, (error));
 		if (error == EWOULDBLOCK) {
 			/*
 			 * Record the actual elapsed time in the case of a

@@ -27,6 +27,14 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261013:
+	The BSD fixed-name pty(4) compatibility driver has been removed.
+	Use posix_openpt(2), openpty(3), or /dev/ptmx and /dev/pts/N.
+	/dev/ptmx is now provided by the always-built pts(4) core; Linux
+	emulation no longer requires pty.ko. Remove local device pty and
+	pty_load entries. Programs requiring /dev/ptyXX or /dev/ttyXX must
+	be migrated. Do not load an old pty.ko into a new kernel.
+
 20261012:
 	system.VM, system.Namespace, system.SystemExtension, system.Filesystem
 	and system.OES now speak FIDL (bsd.vm.v1, bsd.namespace.v1,

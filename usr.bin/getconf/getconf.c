@@ -39,6 +39,19 @@
 
 #include "getconf.h"
 
+#include "configquery_trace.h"
+
+static long
+trace_sysconf(int key)
+{
+	long result;
+
+	TRACE_CONFIGQUERY_OPERATION__START(key);
+	result = sysconf(key);
+	TRACE_CONFIGQUERY_OPERATION__DONE(key, result, result < 0 ? errno : 0);
+	return (result);
+}
+
 static void	do_allsys(void);
 static void	do_allpath(const char *path);
 static void	do_confstr(const char *name, int key);
@@ -187,7 +200,7 @@ do_onesys(const char *name, int key)
 	long value;
 
 	errno = 0;
-	value = sysconf(key);
+	value = trace_sysconf(key);
 	if (value == -1 && errno != 0) {
 		warn("sysconf: %s", name);
 		return;
@@ -259,7 +272,7 @@ do_sysconf(const char *name, int key)
 	long value;
 
 	errno = 0;
-	value = sysconf(key);
+	value = trace_sysconf(key);
 	if (value == -1 && errno != 0)
 		err(EX_OSERR, "sysconf: %s", name);
 	else if (value == -1)

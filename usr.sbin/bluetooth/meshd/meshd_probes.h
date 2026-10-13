@@ -68,4 +68,35 @@
 
 #endif
 
+
+/* Runtime outcomes: identifiers and counts only, never secret material. */
+#if defined(MESHD_WITH_PROBE_TAP)
+#define MESHD_PROBE_BEARER__QUEUE(a0, a1, a2, a3) \
+	probe_tap_rec4("bearer:queue", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2), (uint64_t)(a3))
+#define MESHD_PROBE_BEARER__FULL(a0, a1, a2) \
+	probe_tap_rec3("bearer:full", NULL, (uint64_t)(a0), (uint64_t)(a1), (uint64_t)(a2))
+#define MESHD_PROBE_BEARER__FAILED(a0, a1) \
+	probe_tap_rec2("bearer:failed", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#define MESHD_PROBE_PERSIST__WRITE__START(a0) \
+	probe_tap_rec1("persist:write:start", NULL, (uint64_t)(a0))
+#define MESHD_PROBE_PERSIST__WRITE__DONE(a0, a1) \
+	probe_tap_rec2("persist:write:done", NULL, (uint64_t)(a0), (uint64_t)(a1))
+#elif defined(MESHD_DTRACE_PROBES)
+#define MESHD_PROBE_BEARER__QUEUE(a0, a1, a2, a3) \
+	DTRACE_PROBE4(meshd, bearer__queue, a0, a1, a2, a3)
+#define MESHD_PROBE_BEARER__FULL(a0, a1, a2) \
+	DTRACE_PROBE3(meshd, bearer__full, a0, a1, a2)
+#define MESHD_PROBE_BEARER__FAILED(a0, a1) \
+	DTRACE_PROBE2(meshd, bearer__failed, a0, a1)
+#define MESHD_PROBE_PERSIST__WRITE__START(a0) \
+	DTRACE_PROBE1(meshd, persist__write__start, a0)
+#define MESHD_PROBE_PERSIST__WRITE__DONE(a0, a1) \
+	DTRACE_PROBE2(meshd, persist__write__done, a0, a1)
+#else
+#define MESHD_PROBE_BEARER__QUEUE(...) ((void)0)
+#define MESHD_PROBE_BEARER__FULL(...) ((void)0)
+#define MESHD_PROBE_BEARER__FAILED(...) ((void)0)
+#define MESHD_PROBE_PERSIST__WRITE__START(...) ((void)0)
+#define MESHD_PROBE_PERSIST__WRITE__DONE(...) ((void)0)
+#endif
 #endif /* MESHD_PROBES_H */

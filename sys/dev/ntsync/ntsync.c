@@ -21,6 +21,12 @@
 #include <sys/sysent.h>
 #include <sys/user.h>
 #include <dev/ntsync/ntsyncvar.h>
+#include <sys/sdt.h>
+
+SDT_PROVIDER_DEFINE(ntsync);
+SDT_PROBE_DEFINE3(ntsync, , , wait__start, "void *", "int", "bool");
+SDT_PROBE_DEFINE4(ntsync, , , wait__done, "void *", "int", "int", "int");
+SDT_PROBE_DEFINE3(ntsync, , , create, "void *", "int", "int");
 
 static struct cdev *ntsync_cdev;
 MALLOC_DEFINE(M_NTSYNC, "ntsync", "ntsync");
@@ -244,11 +250,14 @@ ntsync_wait(struct ntsync_wait_state *state, struct thread *td)
 {
 	int error;
 
+	SDT_PROBE3(ntsync, , , wait__start, state, state->obj_count, state->all);
 	NTSYNC_PRIV_LOCK(state->owner);
 	ntsync_wait_link_waiters(state);
 	error = ntsync_wait_locked(state, td);
 	ntsync_wait_unlink_waiters(state);
 	NTSYNC_PRIV_UNLOCK(state->owner);
+	SDT_PROBE4(ntsync, , , wait__done, state, error,
+	    state->error, error == 0 ? state->index : -1);
 	return (error);
 }
 
@@ -305,6 +314,7 @@ ntsync_create_obj(struct ntsync_obj *obj, struct fileops *fops,
 	} else {
 		td->td_retval[0] = fd;
 	}
+	SDT_PROBE3(ntsync, , , create, obj, error == 0 ? fd : -1, error);
 	fdrop(fp, td);
 	return (error);
 }

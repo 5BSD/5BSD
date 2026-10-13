@@ -47,6 +47,8 @@
 #include <sys/abd.h>
 #include <sys/range_tree.h>
 #include <sys/dbuf.h>
+#include <sys/trace_zfs.h>
+#include <sys/trace_bsd.h>
 
 /*
  * Grand theory statement on scan queue sorting
@@ -934,6 +936,9 @@ dsl_scan_sync_state(dsl_scan_t *scn, dmu_tx_t *tx, state_sync_type_t sync_type)
 			zfs_dbgmsg("finish scan checkpoint for %s",
 			    spa->spa_name);
 
+		if (scn->scn_checkpointing)
+			ZFS_BSD_PROBE2(scan__checkpoint, dsl_scan_t *, scn,
+			    uint64_t, tx->tx_txg);
 		scn->scn_checkpointing = B_FALSE;
 		scn->scn_last_checkpoint = ddi_get_lbolt();
 	} else if (sync_type == SYNC_CACHED) {
@@ -982,6 +987,8 @@ dsl_scan_setup_sync(void *arg, dmu_tx_t *tx)
 	scn->scn_phys.scn_func = setup_sync_arg->func;
 	scn->scn_phys.scn_flags = setup_sync_arg->flags;
 	scn->scn_phys.scn_state = DSS_SCANNING;
+	ZFS_BSD_PROBE3(scan__state, dsl_scan_t *, scn, uint64_t,
+	    scn->scn_phys.scn_state, uint64_t, tx->tx_txg);
 	scn->scn_phys.scn_min_txg = setup_sync_arg->txgstart;
 	if (setup_sync_arg->txgend == 0) {
 		scn->scn_phys.scn_max_txg = tx->tx_txg;
@@ -1356,6 +1363,9 @@ dsl_scan_done(dsl_scan_t *scn, boolean_t complete, dmu_tx_t *tx)
 	if (spa->spa_errata == ZPOOL_ERRATA_ZOL_2094_SCRUB)
 		spa->spa_errata = 0;
 
+	ZFS_BSD_PROBE4(scan__done, dsl_scan_t *, scn, uint64_t,
+	    scn->scn_phys.scn_state, uint64_t, scn->scn_phys.scn_errors,
+	    uint64_t, tx->tx_txg);
 	ASSERT(!dsl_scan_is_running(scn));
 }
 
@@ -1515,6 +1525,7 @@ dsl_scrub_pause_resume_sync(void *arg, dmu_tx_t *tx)
 		spa->spa_scan_pass_scrub_pause = gethrestime_sec();
 		scn->scn_phys.scn_flags |= DSF_SCRUB_PAUSED;
 		scn->scn_phys_cached.scn_flags |= DSF_SCRUB_PAUSED;
+		ZFS_BSD_PROBE2(scan__paused, dsl_scan_t *, scn, int, 1);
 		dsl_scan_sync_state(scn, tx, SYNC_CACHED);
 		spa_event_notify(spa, NULL, NULL, ESC_ZFS_SCRUB_PAUSED);
 		spa_notify_waiters(spa);
@@ -1531,6 +1542,7 @@ dsl_scrub_pause_resume_sync(void *arg, dmu_tx_t *tx)
 			spa->spa_scan_pass_scrub_pause = 0;
 			scn->scn_phys.scn_flags &= ~DSF_SCRUB_PAUSED;
 			scn->scn_phys_cached.scn_flags &= ~DSF_SCRUB_PAUSED;
+			ZFS_BSD_PROBE2(scan__paused, dsl_scan_t *, scn, int, 0);
 			dsl_scan_sync_state(scn, tx, SYNC_CACHED);
 		}
 	}

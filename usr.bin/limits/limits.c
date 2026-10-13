@@ -41,6 +41,20 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 
+#include "limittool_trace.h"
+
+static int
+trace_setrlimit(int resource, const struct rlimit *limit)
+{
+	int result;
+
+	TRACE_LIMITTOOL_OPERATION__START(resource);
+	result = setrlimit(resource, limit);
+	TRACE_LIMITTOOL_OPERATION__DONE(resource, result,
+	    result < 0 ? errno : 0);
+	return (result);
+}
+
 enum
 {
     SH_NONE,
@@ -484,7 +498,7 @@ main(int argc, char *argv[])
 	/* Set limits */
 	for (rcswhich = 0; rcswhich < RLIM_NLIMITS; rcswhich++) {
 	    if (doall || num_limits == 0 || which_limits[rcswhich] != 0)
-		if (setrlimit(rcswhich, &limits[rcswhich]) == -1)
+		if (trace_setrlimit(rcswhich, &limits[rcswhich]) == -1)
 		    err(1, "setrlimit %s", resources[rcswhich].cap);
 	}
 
@@ -551,7 +565,6 @@ main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
 }
 
-
 static void
 usage(void)
 {
@@ -574,7 +587,6 @@ print_limit(rlim_t limit, unsigned divisor, const char * inf, const char * pfx, 
     printf(sfx, which);
 
 }
-
 
 static rlim_t
 resource_num(int which, int ch, const char *str)
@@ -682,7 +694,6 @@ resource_num(int which, int ch, const char *str)
     return res;
 }
 
-
 static int
 getshellbyname(const char * shell)
 {
@@ -705,7 +716,6 @@ getshellbyname(const char * shell)
     }
     return SH_SH;
 }
-
 
 /*
  * Determine the type of shell our parent process is

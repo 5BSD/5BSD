@@ -1,0 +1,650 @@
+{
+  "rounds": [
+    {
+      "number": 1,
+      "source": "sys/kern/kern_resource.c",
+      "provider": "procresource",
+      "operation": "nice"
+    },
+    {
+      "number": 2,
+      "source": "sys/kern/kern_resource.c",
+      "provider": "procresource",
+      "operation": "limit"
+    },
+    {
+      "number": 3,
+      "source": "sys/kern/vfs_extattr.c",
+      "provider": "vfs",
+      "operation": "extattr-get"
+    },
+    {
+      "number": 4,
+      "source": "sys/kern/vfs_extattr.c",
+      "provider": "vfs",
+      "operation": "extattr-list"
+    },
+    {
+      "number": 5,
+      "source": "sys/kern/vfs_acl.c",
+      "provider": "vfs",
+      "operation": "acl-get"
+    },
+    {
+      "number": 6,
+      "source": "sys/kern/vfs_acl.c",
+      "provider": "vfs",
+      "operation": "acl-check"
+    },
+    {
+      "number": 7,
+      "source": "sys/kern/sys_procdesc.c",
+      "provider": "procdescriptor",
+      "operation": "open"
+    },
+    {
+      "number": 8,
+      "source": "sys/kern/sys_procdesc.c",
+      "provider": "procdescriptor",
+      "operation": "transfer"
+    },
+    {
+      "number": 9,
+      "source": "sys/kern/kern_sendfile.c",
+      "provider": "sendfile",
+      "operation": "io-wait"
+    },
+    {
+      "number": 10,
+      "source": "sys/kern/kern_sendfile.c",
+      "provider": "sendfile",
+      "operation": "socket-wait"
+    },
+    {
+      "number": 11,
+      "source": "sys/kern/kern_descrip.c",
+      "provider": "fd",
+      "operation": "advlock"
+    },
+    {
+      "number": 12,
+      "source": "sys/vm/vm_mmap.c",
+      "provider": "vm",
+      "operation": "sync-map"
+    },
+    {
+      "number": 13,
+      "source": "sys/vm/vm_mmap.c",
+      "provider": "vm",
+      "operation": "wire-map"
+    },
+    {
+      "number": 14,
+      "source": "sys/kern/sys_socket.c",
+      "provider": "socketctl",
+      "operation": "protocol"
+    },
+    {
+      "number": 15,
+      "source": "sys/geom/geom_dev.c",
+      "provider": "geomdev",
+      "operation": "flush"
+    },
+    {
+      "number": 16,
+      "source": "sys/geom/geom_dev.c",
+      "provider": "geomdev",
+      "operation": "delete"
+    },
+    {
+      "number": 17,
+      "source": "sys/geom/geom_dev.c",
+      "provider": "geomdev",
+      "operation": "close-wait"
+    },
+    {
+      "number": 18,
+      "source": "sys/kern/subr_firmware.c",
+      "provider": "firmware",
+      "operation": "load-wait"
+    },
+    {
+      "number": 19,
+      "source": "sys/net/if_epair.c",
+      "provider": "epair",
+      "operation": "enqueue"
+    },
+    {
+      "number": 20,
+      "source": "sys/kern/vfs_syscalls.c",
+      "provider": "vfs",
+      "operation": "copy-range"
+    }
+  ],
+  "probes": [
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_resource.c",
+      "provider": "procresource",
+      "module": "",
+      "function": "",
+      "name": "nice-start",
+      "types": [
+        "pid_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_resource.c",
+      "provider": "procresource",
+      "module": "",
+      "function": "",
+      "name": "nice-done",
+      "types": [
+        "pid_t",
+        "int",
+        "int"
+      ],
+      "minimum_sites": 3
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_resource.c",
+      "provider": "procresource",
+      "module": "",
+      "function": "",
+      "name": "limit-start",
+      "types": [
+        "u_int",
+        "rlim_t",
+        "rlim_t"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_resource.c",
+      "provider": "procresource",
+      "module": "",
+      "function": "",
+      "name": "limit-done",
+      "types": [
+        "u_int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_extattr.c",
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "extattr-get-start",
+      "types": [
+        "struct vnode *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_extattr.c",
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "extattr-get-done",
+      "types": [
+        "struct vnode *",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_extattr.c",
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "extattr-list-start",
+      "types": [
+        "struct vnode *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_extattr.c",
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "extattr-list-done",
+      "types": [
+        "struct vnode *",
+        "int",
+        "int"
+      ],
+      "minimum_sites": 2
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_acl.c",
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "acl-get-start",
+      "types": [
+        "struct vnode *",
+        "acl_type_t"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_acl.c",
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "acl-get-done",
+      "types": [
+        "struct vnode *",
+        "acl_type_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_acl.c",
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "acl-check-start",
+      "types": [
+        "struct vnode *",
+        "acl_type_t"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_acl.c",
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "acl-check-done",
+      "types": [
+        "struct vnode *",
+        "acl_type_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_procdesc.c",
+      "provider": "procdescriptor",
+      "module": "",
+      "function": "",
+      "name": "open-start",
+      "types": [
+        "pid_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_procdesc.c",
+      "provider": "procdescriptor",
+      "module": "",
+      "function": "",
+      "name": "open-done",
+      "types": [
+        "pid_t",
+        "int",
+        "int"
+      ],
+      "minimum_sites": 2
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_procdesc.c",
+      "provider": "procdescriptor",
+      "module": "",
+      "function": "",
+      "name": "transfer-start",
+      "types": [
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_procdesc.c",
+      "provider": "procdescriptor",
+      "module": "",
+      "function": "",
+      "name": "transfer-done",
+      "types": [
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_sendfile.c",
+      "provider": "sendfile",
+      "module": "",
+      "function": "",
+      "name": "io-wait-start",
+      "types": [
+        "void *"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_sendfile.c",
+      "provider": "sendfile",
+      "module": "",
+      "function": "",
+      "name": "io-wait-done",
+      "types": [
+        "void *"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_sendfile.c",
+      "provider": "sendfile",
+      "module": "",
+      "function": "",
+      "name": "socket-wait-start",
+      "types": [
+        "struct socket *",
+        "off_t"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_sendfile.c",
+      "provider": "sendfile",
+      "module": "",
+      "function": "",
+      "name": "socket-wait-done",
+      "types": [
+        "struct socket *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_descrip.c",
+      "provider": "fd",
+      "module": "",
+      "function": "",
+      "name": "advlock-start",
+      "types": [
+        "struct vnode *",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/kern_descrip.c",
+      "provider": "fd",
+      "module": "",
+      "function": "",
+      "name": "advlock-done",
+      "types": [
+        "struct vnode *",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/vm/vm_mmap.c",
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "sync-map-start",
+      "types": [
+        "size_t",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/vm/vm_mmap.c",
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "sync-map-done",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/vm/vm_mmap.c",
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "wire-map-start",
+      "types": [
+        "size_t"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/vm/vm_mmap.c",
+      "provider": "vm",
+      "module": "",
+      "function": "",
+      "name": "wire-map-done",
+      "types": [
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_socket.c",
+      "provider": "socketctl",
+      "module": "",
+      "function": "",
+      "name": "protocol-start",
+      "types": [
+        "struct socket *",
+        "u_long"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/sys_socket.c",
+      "provider": "socketctl",
+      "module": "",
+      "function": "",
+      "name": "protocol-done",
+      "types": [
+        "struct socket *",
+        "u_long",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/geom/geom_dev.c",
+      "provider": "geomdev",
+      "module": "",
+      "function": "",
+      "name": "flush-start",
+      "types": [
+        "void *"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/geom/geom_dev.c",
+      "provider": "geomdev",
+      "module": "",
+      "function": "",
+      "name": "flush-done",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/geom/geom_dev.c",
+      "provider": "geomdev",
+      "module": "",
+      "function": "",
+      "name": "delete-start",
+      "types": [
+        "void *",
+        "off_t",
+        "off_t"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/geom/geom_dev.c",
+      "provider": "geomdev",
+      "module": "",
+      "function": "",
+      "name": "delete-done",
+      "types": [
+        "void *",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/geom/geom_dev.c",
+      "provider": "geomdev",
+      "module": "",
+      "function": "",
+      "name": "close-wait-start",
+      "types": [
+        "void *",
+        "u_int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/geom/geom_dev.c",
+      "provider": "geomdev",
+      "module": "",
+      "function": "",
+      "name": "close-wait-done",
+      "types": [
+        "void *",
+        "u_int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/subr_firmware.c",
+      "provider": "firmware",
+      "module": "",
+      "function": "",
+      "name": "load-wait-start",
+      "types": [
+        "void *"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/subr_firmware.c",
+      "provider": "firmware",
+      "module": "",
+      "function": "",
+      "name": "load-wait-done",
+      "types": [
+        "void *"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/net/if_epair.c",
+      "provider": "epair",
+      "module": "",
+      "function": "",
+      "name": "enqueue",
+      "types": [
+        "u_int",
+        "int",
+        "int",
+        "int"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_syscalls.c",
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "copy-range-start",
+      "types": [
+        "struct vnode *",
+        "struct vnode *",
+        "size_t"
+      ]
+    },
+    {
+      "kind": "kernel",
+      "source": "sys/kern/vfs_syscalls.c",
+      "provider": "vfs",
+      "module": "",
+      "function": "",
+      "name": "copy-range-done",
+      "types": [
+        "struct vnode *",
+        "struct vnode *",
+        "size_t",
+        "int"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "profiles": [
+    "kernel-resource-decisions",
+    "kernel-procdesc-operations",
+    "vfs-metadata-reads",
+    "kernel-data-waits",
+    "vm-operation-phases",
+    "geom-device-operations",
+    "kernel-device-control",
+    "vfs-copy-phases"
+  ],
+  "sources": {
+    "cddl/usr.sbin/bsdinstruments/Makefile": "2f8e2f3b2ab8af9e3ee452c054e29bf6e5c48de21021889448c62a2af238714a",
+    "cddl/usr.sbin/bsdinstruments/profiles/geom-device-operations.d": "35c8cd72268e4a171d2d8c2d0c9e1b503841c69310334e6a2228619d32790c58",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-data-waits.d": "b3054db48f606a03d63d60cc165b18bfc3ff1dcf8e96fb9ea1c6d3e340be47f1",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-device-control.d": "e22ac4345ba8ad25ca3664841eb623fab5e103f6fef56a9d78589c2579df37c6",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-procdesc-operations.d": "e9905a2919b264e19ba412fc1afb68b5196e808fd7754ad89392f24a6c83c6b3",
+    "cddl/usr.sbin/bsdinstruments/profiles/kernel-resource-decisions.d": "1bc7dee725c3674f7fc33059c5c2d02127eaac39dfb24271409513594c58d839",
+    "cddl/usr.sbin/bsdinstruments/profiles/vfs-copy-phases.d": "0b417c9ed82b91ad3934d9ab125ecc84fc7d91cb78329896d284c76d841947e4",
+    "cddl/usr.sbin/bsdinstruments/profiles/vfs-metadata-reads.d": "24b7df55f8322df76b1364282b9c1fe076183d49efe2a26d1770d43922a7f286",
+    "cddl/usr.sbin/bsdinstruments/profiles/vm-operation-phases.d": "4a47bc22b46e4a836a669c48d27cebc7a7ccf56d0449d8fa03e73070a0fd202d",
+    "sys/geom/geom_dev.c": "6725ed4809c1284a6a9f5a226ba113c7348387f7173a262d149f6108d2c9cd0e",
+    "sys/kern/kern_descrip.c": "92bbe9d065fa10d9e6ddc78e05f4c5785b2d8e8686ac1b89aa4ee6cd6a227734",
+    "sys/kern/kern_resource.c": "19055fc7537961a2c61b9c82d3ce29275592e09cb4fc0e6dd90b0b3a21355cf5",
+    "sys/kern/kern_sendfile.c": "0ed1d0012c8b0f6715aa21b284edfa2b0827cee97927ec938153e75ae8afcc6a",
+    "sys/kern/subr_firmware.c": "b3ec69b5a4ff327f7244d17954db9b31bb59aa267939926cbb02ada0300df743",
+    "sys/kern/sys_procdesc.c": "c71eeeb73cf069c27272527efbc3e191959a8679a719243d0a56c7ea6bf26ea7",
+    "sys/kern/sys_socket.c": "059d556dccb07a8376943a74fcc3ce2eeb0456839182a86ab91ea446891fa62e",
+    "sys/kern/vfs_acl.c": "a0186eaaa03e01ea57ea36ffde822453126f928703b05e28579ee55060caddfb",
+    "sys/kern/vfs_extattr.c": "2e7b59c5fdb97b5925944abdb0fbe5eab562969e8bd329e5f045779ef34836c3",
+    "sys/kern/vfs_syscalls.c": "c718e80fb5580db602edb53e2c57c5fc42be615c4fabc946acd0cce3f18061c2",
+    "sys/net/if_epair.c": "200633ff283311b18b402a20b669525fe1a2315845b24fba5378fb4a181eab5c",
+    "sys/vm/vm_mmap.c": "f0950ddae8ef6888cb7947932f040c8e461c5adfaa4cc1413be14962cae7c214",
+    "tools/test/system-tracing/COVERAGE-THIRTEENTH": "539e33711f79be656dded9d931d6f7548badc7f2baf817c3421fc187c60dd660",
+    "tools/test/system-tracing/README": "2663f3db0dde7c27b0c06f059b7a9b4a98f9a0bc92cc24695efcd0332cbcf29b",
+    "tools/test/system-tracing/coverage-fourth-dof.py": "7a2fc9fc87d4b6d161c88f981ace9c7c6e8c1090cfab60f523b5a61e6730375a",
+    "tools/test/system-tracing/coverage-sixth-objects.py": "fc14488256457e044086c08f967c7a412060216d9d2b53a2c40b9be4405a965e",
+    "tools/test/system-tracing/coverage-third-profile-check.py": "6a63a690cbbf6970c52a90e234a701b64cd7e20d7745139d6e18977dfe71e0ae",
+    "tools/test/system-tracing/coverage-thirteenth-check.py": "b93a3448b27db4ff613ad76263789e70170331077bbe8992f0020dffa7f7ce56",
+    "tools/test/system-tracing/coverage-thirteenth-codegen.py": "cc4689abc98899a4d173fd8ff1005e2ef4b02a406371c598a7fa4fa1182efca5",
+    "tools/test/system-tracing/coverage-thirteenth-compile.py": "5db75806d6eda90bc502195f0f1511ab5bcfe0443ef857a6ccb7c0f1dc0474f4",
+    "tools/test/system-tracing/coverage-thirteenth-modules.py": "604cc72ce0efadb4a43345c40213390dde43ad8f78ae712a4f345a741153b964",
+    "tools/test/system-tracing/coverage-thirteenth-variants.py": "d49e3d766c469aa99fbeeabffb7ef7f331adf1cc4f1b2d18b6ae99a587463f9e"
+  }
+}

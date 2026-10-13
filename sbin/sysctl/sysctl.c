@@ -65,6 +65,21 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#include "sysctltool_trace.h"
+
+static int
+trace_sysctl(const int *name, u_int namelen, void *oldp, size_t *oldlenp,
+	    const void *newp, size_t newlen)
+{
+	int result;
+
+	TRACE_SYSCTLTOOL_OPERATION__START(newp != NULL, namelen);
+	result = sysctl(name, namelen, oldp, oldlenp, newp, newlen);
+	TRACE_SYSCTLTOOL_OPERATION__DONE(newp != NULL, namelen, result,
+	    result < 0 ? errno : 0);
+	return (result);
+}
+
 #ifdef JAIL
 static const char *jailname;
 #endif
@@ -575,7 +590,7 @@ parse(const char *string, int lineno)
 	 * Show the current value, then set and show the new value.
 	 */
 	i = show_var(mib, len, false);
-	if (sysctl(mib, len, 0, 0, newval, newsize) == -1) {
+	if (trace_sysctl(mib, len, 0, 0, newval, newsize) == -1) {
 		save_errno = errno;
 		free(newbuf);
 		free(buf);
@@ -969,7 +984,7 @@ name2oid(const char *name, int *oidp)
 	oid[1] = CTL_SYSCTL_NAME2OID;
 
 	j = CTL_MAXNAME * sizeof(int);
-	i = sysctl(oid, 2, oidp, &j, name, strlen(name));
+	i = trace_sysctl(oid, 2, oidp, &j, name, strlen(name));
 	if (i < 0)
 		return (i);
 	j /= sizeof(int);
@@ -989,7 +1004,7 @@ oidfmt(int *oid, int len, char *fmt, u_int *kind)
 	memcpy(qoid + 2, oid, len * sizeof(int));
 
 	j = sizeof(buf);
-	i = sysctl(qoid, len + 2, buf, &j, 0, 0);
+	i = trace_sysctl(qoid, len + 2, buf, &j, 0, 0);
 	if (i)
 		err(1, "sysctl fmt %d %zu %d", i, j, errno);
 
@@ -1043,7 +1058,7 @@ show_info(char *name, const char *sep, int ctltype, char *fmt, int *qoid, int nl
 	qoid[1] = CTL_SYSCTL_OIDDESCR;
 	bzero(buf, BUFSIZ);
 	j = sizeof(buf);
-	i = sysctl(qoid, nlen + 2, buf, &j, 0, 0);
+	i = trace_sysctl(qoid, nlen + 2, buf, &j, 0, 0);
 	if (i < 0) {
 		putchar('\n');
 		return (1);
@@ -1086,7 +1101,7 @@ show_var(int *oid, int nlen, bool honor_skip)
 	qoid[1] = CTL_SYSCTL_NAME;
 	memcpy(qoid + 2, oid, nlen * sizeof(int));
 	j = sizeof(name);
-	i = sysctl(qoid, nlen + 2, name, &j, 0, 0);
+	i = trace_sysctl(qoid, nlen + 2, name, &j, 0, 0);
 	if (i || !j)
 		err(1, "sysctl name %d %zu %d", i, j, errno);
 
@@ -1172,7 +1187,7 @@ show_var(int *oid, int nlen, bool honor_skip)
 		j = Bflag;
 	else {
 		j = 0;
-		i = sysctl(oid, nlen, 0, &j, 0, 0);
+		i = trace_sysctl(oid, nlen, 0, &j, 0, 0);
 		j += j; /* we want to be sure :-) */
 	}
 
@@ -1182,7 +1197,7 @@ show_var(int *oid, int nlen, bool honor_skip)
 		return (1);
 	}
 	len = j;
-	i = sysctl(oid, nlen, val, &len, 0, 0);
+	i = trace_sysctl(oid, nlen, val, &len, 0, 0);
 	if (i != 0 || (len == 0 && ctltype != CTLTYPE_STRING)) {
 		free(oval);
 		return (1);
@@ -1342,7 +1357,7 @@ sysctl_all(int *oid, int len)
 	}
 	for (;;) {
 		l2 = sizeof(name2);
-		j = sysctl(name1, l1, name2, &l2, 0, 0);
+		j = trace_sysctl(name1, l1, name2, &l2, 0, 0);
 		if (j < 0) {
 			if (errno == ENOENT)
 				return (0);

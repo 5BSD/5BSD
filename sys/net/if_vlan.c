@@ -50,6 +50,8 @@
 #include "opt_ratelimit.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/eventhandler.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
@@ -58,7 +60,6 @@
 #include <sys/module.h>
 #include <sys/rmlock.h>
 #include <sys/priv.h>
-#include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/sockio.h>
 #include <sys/sysctl.h>
@@ -87,6 +88,11 @@
 #include <netlink/netlink_ctl.h>
 #include <netlink/netlink_route.h>
 #include <netlink/route/route_var.h>
+
+SDT_PROVIDER_DEFINE(vlan);
+SDT_PROBE_DEFINE3(vlan, , , configure__start, "void *", "void *", "int");
+SDT_PROBE_DEFINE4(vlan, , , configure__done, "void *", "void *", "int", "int");
+
 
 #define	VLAN_DEF_HWIDTH	4
 #define	VLAN_IFFLAGS	(IFF_BROADCAST | IFF_MULTICAST)
@@ -2349,7 +2355,9 @@ vlan_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		if (vlr.vlr_proto == 0)
 			vlr.vlr_proto = ETHERTYPE_VLAN;
 		oldmtu = ifp->if_mtu;
+		SDT_PROBE3(vlan, , , configure__start, ifp, p, vlr.vlr_tag);
 		error = vlan_config(ifv, p, vlr.vlr_tag, vlr.vlr_proto);
+		SDT_PROBE4(vlan, , , configure__done, ifp, p, vlr.vlr_tag, error);
 		if_rele(p);
 
 		/*

@@ -37,6 +37,8 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/malloc.h>
 #include <sys/kernel.h>
 #include <sys/conf.h>
@@ -56,6 +58,21 @@
 #include <sys/sysctl.h>
 #include <geom/geom.h>
 #include <geom/geom_int.h>
+
+/* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
+SDT_PROVIDER_DEFINE(geomdev);
+SDT_PROBE_DEFINE1(geomdev, , , flush__start,
+    "void *");
+SDT_PROBE_DEFINE2(geomdev, , , flush__done,
+    "void *", "int");
+SDT_PROBE_DEFINE3(geomdev, , , delete__start,
+    "void *", "off_t", "off_t");
+SDT_PROBE_DEFINE2(geomdev, , , delete__done,
+    "void *", "int");
+SDT_PROBE_DEFINE2(geomdev, , , close__wait__start,
+    "void *", "u_int");
+SDT_PROBE_DEFINE2(geomdev, , , close__wait__done,
+    "void *", "u_int");
 
 struct g_dev_softc {
 	struct mtx	 sc_mtx;
@@ -514,8 +531,13 @@ g_dev_close(struct cdev *dev, int flags, int fmt, struct thread *td)
 		atomic_clear_int(&sc->sc_active, SC_A_OPEN);
 	else
 		atomic_set_int(&sc->sc_active, SC_A_OPEN);
-	while (sc->sc_open == 0 && (sc->sc_active & SC_A_ACTIVE) != 0)
+	while (sc->sc_open == 0 && (sc->sc_active & SC_A_ACTIVE) != 0) {
+		SDT_PROBE2(geomdev, , , close__wait__start,
+		    (sc), (sc->sc_active & SC_A_ACTIVE));
 		msleep(&sc->sc_active, &sc->sc_mtx, 0, "g_dev_close", hz / 10);
+		SDT_PROBE2(geomdev, , , close__wait__done,
+		    (sc), (sc->sc_active & SC_A_ACTIVE));
+	}
 	KNOTE_LOCKED(&sc->sc_selinfo.si_note, NOTE_CLOSE | (w ? NOTE_CLOSE_WRITE : 0));
 	mtx_unlock(&sc->sc_mtx);
 	g_topology_lock();
@@ -604,7 +626,9 @@ g_dev_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag, struct thread
 		break;
 	    }
 	case DIOCGFLUSH:
+		SDT_PROBE1(geomdev, , , flush__start, (cp));
 		error = g_io_flush(cp);
+		SDT_PROBE2(geomdev, , , flush__done, (cp), (error));
 		break;
 	case DIOCGDELETE:
 		offset = ((off_t *)data)[0];
@@ -628,7 +652,10 @@ g_dev_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag, struct thread
 						chunk -= odd;
 				}
 			}
+			SDT_PROBE3(geomdev, , , delete__start,
+			    (cp), (offset), (chunk));
 			error = g_delete_data(cp, offset, chunk);
+			SDT_PROBE2(geomdev, , , delete__done, (cp), (error));
 			length -= chunk;
 			offset += chunk;
 			if (error)

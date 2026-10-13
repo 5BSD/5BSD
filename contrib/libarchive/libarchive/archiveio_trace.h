@@ -16,7 +16,18 @@ static const void * const archiveio_dtrace_anchor __attribute__((used, retain)) 
 	if (ARCHIVEIO_OPERATION_DONE_ENABLED()) \
 		ARCHIVEIO_OPERATION_DONE((uintptr_t)(a0), (int)(a1), (int64_t)(a2)); \
 } while (0)
+
+#define TRACE_ARCHIVEIO_SKIP__START(a0) do { \
+	if (ARCHIVEIO_SKIP_START_ENABLED()) \
+		ARCHIVEIO_SKIP_START((uintptr_t)(a0)); \
+} while (0)
+#define TRACE_ARCHIVEIO_SKIP__DONE(a0, a1) do { \
+	if (ARCHIVEIO_SKIP_DONE_ENABLED()) \
+		ARCHIVEIO_SKIP_DONE((uintptr_t)(a0), (int)(a1)); \
+} while (0)
 #else
+#define TRACE_ARCHIVEIO_SKIP__START(a0) do { } while (0)
+#define TRACE_ARCHIVEIO_SKIP__DONE(a0, a1) do { } while (0)
 #define TRACE_ARCHIVEIO_OPERATION__START(a0, a1, a2) do { } while (0)
 #define TRACE_ARCHIVEIO_OPERATION__DONE(a0, a1, a2) do { } while (0)
 #endif

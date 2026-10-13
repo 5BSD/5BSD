@@ -1,0 +1,225 @@
+DTrace ninth expansion: 20 passes through different systems
+==========================================================
+
+Scope and result
+----------------
+Twenty different runtime components add 42 probe contracts: 26 kernel SDT
+and 16 user-space USDT. The 12 kernel source files and eight base utility
+sources have zero overlap with the eighth expansion's runtime sources.
+Ten bsdinstruments profiles are included in the base-install catalog.
+coverage-ninth.json records selectors, types, category/priority, source hashes
+and the pass log. The eighth round's whole-tree census guided selection;
+this is targeted semantic coverage, not a claim every subsystem is complete.
+
+The new systems are virtual-interface cloning, bridge control, link aggregation,
+VLAN configuration, tun/tap blocking reads, tarfs, unionfs, nullfs, UDF, ISO9660,
+memory-disk management, terminal control, link construction, directory removal,
+file flags, process priority, module load/unload tools, sync, and file locking.
+Most were missing explicit semantic SDT/USDT sites in the census. Existing
+TTY and kernel module lifecycle probes remain; these additions cover separate
+control-phase and utility boundaries.
+
+Focused pass log
+----------------
+ 1. Interface cloning: ioctl and Netlink create requests after cloner lookup; no attach-time auto-create site.
+ 2. Bridge: validated control callback timing and result, outside packet forwarding.
+ 3. Link aggregation: member add/remove lifecycle and failure before dropping the interface reference.
+ 4. VLAN: ioctl association with parent/tag and configuration result.
+ 5. Tun/tap: blocking character-device reads and wake errors, no packets.
+ 6. Tarfs: backing/compressed stream read latency, requested extent and residual/error.
+ 7. Unionfs: actual lower-to-upper copy phase timing and error.
+ 8. Nullfs: initial vnode cache hit/miss and getnewvnode latency/error; no allocator internals.
+ 9. UDF: buffer/cluster read extent, latency and error before touching the returned buffer.
+10. CD9660: buffer/cluster read extent, latency and error before touching the returned buffer.
+11. Memory disks: ioctl attach/detach/resize/query dispatch; excluded preload initialization.
+12. Terminal: validated tty ioctl dispatch latency and failure, no terminal bytes.
+13. ln/link: hard/symbolic link creation syscall latency/error; no path strings.
+14. rmdir: each directory/parent removal attempt and syscall errno.
+15. chflags: requested file flags and actual chflagsat outcome, including suppressed failures.
+16. renice: selector/identity/requested priority and kernel outcome.
+17. kldload: actual load attempt latency, returned module id and errno.
+18. kldunload: unload id/flags, syscall result and errno.
+19. sync: whole sync syscall boundary; done does not invent an errno for a void API.
+20. lockf: fd flock and path open-with-lock operations, including lock release and interruption; no filenames.
+
+Category policy and diagnostic use
+----------------------------------
+P0 lifecycle/flow and latency use synchronous start/done pairs around concrete
+work. P0 errors record the underlying callback/syscall return, with errno
+separate for user-space negative returns. A successful inner phase is not
+necessarily success of the enclosing ioctl, mount, or application request.
+P1 resources/state are covered by nullfs cache outcomes and node acquisition,
+link-aggregation membership operations, and requested process priority.
+P1 synchronization covers tun/tap sleeps and lockf acquisition/release.
+P1 I/O/networking covers filesystem reads/copy-up, virtual-network control,
+terminal/device requests and sync. No packet, file or terminal bytes are traced.
+P2 security-related changes expose chflags' requested flags and syscall result;
+policy decisions remain the responsibility of existing MACF/privilege probes.
+No credentials, pathnames, module names or command arguments are collected.
+
+Kernel probe contracts
+----------------------
+ifclone create-start(cloner)/done(cloner,error) wraps the shared create call in
+public ioctl and Netlink request entry points after successful cloner lookup.
+The attach-time automatic-interface-creation call site is not instrumented.
+A missing cloner fails before the pair. The result includes create/modify work
+performed by that call; it does not identify the interface by name.
+bridge control-start(bridge,subcommand)/done(bridge,subcommand,error) wraps the
+validated control callback. Privilege, length and copyin checks precede it;
+post-callback MTU notification and copyout follow it.
+lagg port-start(aggregate,member,add)/done(aggregate,member,add,error) brackets
+ioctl member add (add=1) or removal (add=0). The referenced interface remains
+held until after done. The potentially freed lagg-port object is not traced.
+vlan configure-start(interface,parent,tag)/done(interface,parent,tag,error)
+wraps ioctl vlan_config after validation while holding a parent reference.
+It does not cover unconfiguration or all Netlink modification paths.
+tuntap read-wait-start(tunnel)/done(tunnel,error) brackets one blocking device
+read sleep. Nonblocking empty-queue EWOULDBLOCK occurs before this pair.
+tarfs read-start(mount,raw,offset,length)/done(mount,residual,error) covers the
+backing read including range/vnode locking. raw=false selects the compressed
+stream only when a compressed vnode exists. This is not a mount-wide pair.
+unionfs copyup-start(lower,upper)/done(lower,upper,error) measures actual file
+copying after both required opens. Creation/open/metadata/close failures lie
+outside this pair. Vnodes remain referenced during the call.
+nullfs cache-hit/cache-miss(mount,lower_vnode) reports the initial hash lookup.
+A miss may subsequently race with another creator and use its existing vnode.
+node-start(mount)/done(mount,error) surrounds getnewvnode only: it excludes
+allocation of the nullfs private node, mount-queue insertion and hash insertion.
+udf and isofs block-start(vnode,logical_block,size)/done(vnode,logical_block,
+size,error) surround buffer/cluster/readahead reads. The pair completes before
+accessing a returned buffer. It includes cache-hit time and can represent
+readahead beyond the named block; it is not one physical-device I/O request.
+UDF embedded-data reads and uiomove to the caller are outside these pairs.
+The ISO9660 provider is named isofs: DTrace treats a provider ending in decimal
+digits, such as cd9660, as a userspace provider with a PID suffix.
+mdio control-start(command)/done(command,error) covers attach/detach/resize/query
+ioctl dispatch, including compat32 dispatch, after version/argument preparation.
+It does not instrument preloaded-memory-disk initialization or inspect an
+uninitialized request for an unsupported command. Final response copying is
+outside the pair.
+tty control-start(terminal,command)/done(terminal,command,error) wraps tty_ioctl
+after device admission and command preparation while holding the terminal lock.
+Early admission failures and specialized early ioctl routes are not covered.
+
+User-space probe contracts and build integration
+-----------------------------------------------
+Every utility uses operation-start / operation-done under its provider below.
+MK_DTRACE=yes builds provider metadata and guarded sites; MK_DTRACE=no builds
+omit the metadata and calls. Headers preserve errno and suppress argument
+evaluation while disabled. New providers follow ordinary base build targets:
+  linkop       ln/link     start(symbolic), done(symbolic,result,errno)
+  dirremove    rmdir       start(0), done(0,result,errno)
+  fileflags    chflags     start(flags), done(flags,result,errno)
+  priorityop   renice      start(which,who,priority),
+                          done(which,who,priority,result,errno)
+  moduleload   kldload     start(0), done(0,module_id_or_minus_one,errno)
+  moduleunload kldunload   start(id,flags), done(id,flags,result,errno)
+  flushall     sync        start(0), done(0)
+  lockfile     lockf       start(kind,flags), done(kind,flags,result,errno)
+
+The constant-zero arguments are reserved. linkop symbolic=1 requests a symlink,
+0 a hard link; overwrite cleanup and earlier validation are outside the pair.
+rmdir emits a pair for each syscall, including -p parents. chflags reports the
+actual chflagsat result even when -f suppresses its diagnostic. Requested flags
+and priority are not assertions that a kernel policy accepted them.
+kldload records EEXIST even when -n subsequently treats it as successful.
+kldunload records actual syscall flags, including force. Name resolution and
+verbose status lookup precede its pair. Neither tool emits module pathnames.
+sync's C API is void; done records return only, not an invented error code or
+a guarantee about hardware power-loss durability.
+lockf kind=0 wraps flock, kind=1 wraps open with O_EXLOCK. The former returns
+0/-1; the latter returns a descriptor/-1. Flags are the respective syscall's
+flag domain, not interchangeable. LOCK_UN cleanup also appears under kind=0.
+Filename and descriptor identity are deliberately not exposed as lock identity;
+profiles diagnose a process's attempts, not cross-process inode ownership.
+
+Ten base-installed profile sources
+----------------------------------
+  virtualnet-control
+  tunnel-terminal-control
+  filesystem-read-phases
+  stacked-filesystems
+  memory-disk-control
+  base-link-flags
+  module-tool-phases
+  priority-changes
+  file-lock-operations
+  base-sync-duration
+
+Profiles use scalar arguments and per-thread nested timing. Pointers are
+opaque identities and never dereferenced. Timing includes scheduling delay.
+PID filtering selects executing context; kernel work may run on behalf of a
+different originating process. Begin before the workload. Dropped events or
+unobserved starts invalidate pairing. All ten sources are selected by the
+existing automatic profile Makefile, with 365 catalog entries at validation.
+
+Safety and overhead
+-------------------
+The new kernel sites use disabled SDT NOPs, compile away without KDTRACE_HOOKS,
+and add no allocation, locks, timestamps, formatting or payload copies. Control
+operations and actual waits are favored over per-packet instrumentation.
+Filesystem block and cache events can be frequent when enabled; select only
+needed profiles and filter workloads. Runtime overhead has not been measured.
+No new probe was placed in DTrace internals, NMI/IPI/interrupt entry, early
+bootstrap, CPU restore, pmap, allocator implementation or memory-disk preload
+setup. Filesystem code can execute before tracing becomes available (for
+example a root mount); disabled sites cannot capture those earlier events.
+Existing interrupt-thread and VM-object probes retain prior documented limits.
+
+Validation
+----------
+Artifacts: /usr/obj/5bsd-dtrace-ninth-validation
+  before/, session.patch       per-file baseline and only this round's patch
+  base-results.json            16 successful builds: eight utilities, on/off
+  kernel/results.json          24 successful source compiles: 12 files, on/off
+  modules/results.json         ten successfully linked loadable modules
+  kernel-link.log              final GENERIC-NODEBUG link, no install
+  dof-results.json             eight linked binaries and disabled counterparts
+  object-results.json          actual SDT NOP patchpoints and no-hooks absence
+  profile-results.json         20 plain/PID-filtered offline compilations
+  tests/results.json           98 passed, four root-only cases skipped
+  smoke/guard-results.json     16 fault-injected enabled/disabled header checks
+  smoke/behavior-results.json  16 intercepted utility success/failure checks
+  link-results.json            final kernel/module symbols and hashes
+  validation.json              aggregate verification result and patch hash
+
+The existing ln, rmdir, chflags, lockf and renice suites run against this
+round's built utilities via PATH wrappers. Only the utility processes use the
+matching prepared-world libraries; host ATF tools keep their own libraries.
+Root-wide renice tests are skipped; pid/process-group tests create their own
+children. No other user's priority is changed. lockf tests exercise acquisition,
+contention, timeout, child status and cleanup. Tests use fresh object-root
+working directories and per-case timeouts.
+
+One existing chflags test assumed a newly created file had no flags. This
+host filesystem creates files with uarch. The test now records the original
+flags and requires them to remain unchanged after a rejected external symlink
+traversal. It still checks the security behavior and no longer assumes a
+particular filesystem's initial flags. Both tracing configurations pass.
+
+The guard test compiles the real trace headers against an artificial backend
+that changes errno. Every new macro preserves errno with the backend enabled
+and avoids argument evaluation when disabled. This is not live DTrace firing.
+The behavior test links actual kldload/kldunload/sync/chflags program objects
+against --wrap replacements for only the relevant syscalls. It verifies
+success, EACCES, and kldload -n/EEXIST without loading/unloading any module,
+changing file flags through the stub, or invoking system-wide sync.
+
+Reproduction from /usr/src with a prepared native amd64 world/kernel and OS
+permission to write standard /usr/obj paths:
+  python3.12 tools/test/system-tracing/coverage-ninth-base.py
+  python3.12 tools/test/system-tracing/coverage-ninth-compile.py
+  python3.12 tools/test/system-tracing/coverage-ninth-modules.py
+  python3.12 tools/test/system-tracing/coverage-ninth-check.py
+  python3.12 tools/test/system-tracing/coverage-ninth-tests.py
+  python3.12 tools/test/system-tracing/coverage-ninth-guards.py
+  python3.12 tools/test/system-tracing/coverage-ninth-smoke.py
+  make -C /usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG -j16 kernel
+
+The tarfs compile driver supplies the same Zstandard FreeBSD compatibility
+include directory as its module Makefile. Parallel builds use all 16 logical
+CPUs. These are development validations, not publication worlds/packages.
+No repositories moved to a home directory; no packages were installed or
+published, modules loaded, interfaces changed, filesystems mounted, services
+restarted or machine rebooted. /dev/dtrace is unavailable, so live firing,
+actual kernel runtime behavior, hardware and enabled overhead remain unverified.

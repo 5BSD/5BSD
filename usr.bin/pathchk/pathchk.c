@@ -45,6 +45,19 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "pathcheck_trace.h"
+
+static int
+trace_stat(const char *path, struct stat *st)
+{
+	int result;
+
+	TRACE_PATHCHECK_OPERATION__START(0);
+	result = stat(path, st);
+	TRACE_PATHCHECK_OPERATION__DONE(0, result, result < 0 ? errno : 0);
+	return (result);
+}
+
 static int	 check(const char *);
 static int	 portable(const char *);
 static void	 usage(void);
@@ -135,7 +148,7 @@ check(const char *path)
 			goto bad;
 		}
 
-		if (!pflag && stat(pathd, &sb) == -1 && errno != ENOENT) {
+		if (!pflag && trace_stat(pathd, &sb) == -1 && errno != ENOENT) {
 			warn("%s: %.*s", path, (int)(strlen(pathd) -
 			    complen - 1), pathd);
 			goto bad;

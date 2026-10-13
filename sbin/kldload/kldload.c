@@ -38,6 +38,20 @@
 #include <unistd.h>
 #include <errno.h>
 
+#include "moduleload_trace.h"
+
+static int
+trace_kldload(const char *path)
+{
+	int result;
+
+	TRACE_MODULELOAD_OPERATION__START(0);
+	result = kldload(path);
+	TRACE_MODULELOAD_OPERATION__DONE(0, result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 #define	PATHCTL	"kern.module_path"
 
 /*
@@ -161,7 +175,7 @@ main(int argc, char** argv)
 
 	while (argc-- != 0) {
 		if (path_check(argv[0], quiet) == 0) {
-			fileid = kldload(argv[0]);
+			fileid = trace_kldload(argv[0]);
 			if (fileid < 0) {
 				if (check_loaded != 0 && errno == EEXIST) {
 					if (verbose)

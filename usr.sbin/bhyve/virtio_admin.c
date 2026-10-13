@@ -269,8 +269,10 @@ virtio_admin_owner_destroy(struct virtio_admin_owner *owner)
 	 * while destroy() waits for the already-active callback to retire.
 	 */
 	pthread_cond_broadcast(&owner->quiesced);
+	VIRTIO_PROBE_ADMIN_QUIESCE_START((uintptr_t)owner, owner->generation);
 	while (owner->active_commands != 0)
 		pthread_cond_wait(&owner->quiesced, &owner->mutex);
+	VIRTIO_PROBE_ADMIN_QUIESCE_DONE((uintptr_t)owner, owner->generation);
 	pthread_mutex_unlock(&owner->mutex);
 	pthread_cond_destroy(&owner->quiesced);
 	pthread_mutex_destroy(&owner->mutex);
@@ -286,8 +288,10 @@ virtio_admin_owner_reset(struct virtio_admin_owner *owner)
 	pthread_mutex_lock(&owner->mutex);
 	owner->resetting = true;
 	pthread_cond_broadcast(&owner->quiesced);
+	VIRTIO_PROBE_ADMIN_QUIESCE_START((uintptr_t)owner, owner->generation);
 	while (owner->active_commands != 0)
 		pthread_cond_wait(&owner->quiesced, &owner->mutex);
+	VIRTIO_PROBE_ADMIN_QUIESCE_DONE((uintptr_t)owner, owner->generation);
 	owner->used_commands = VADMIN_BASE_COMMANDS;
 	owner->generation++;
 	owner->resetting = false;

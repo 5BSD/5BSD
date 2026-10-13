@@ -25,6 +25,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/sdt.h>
 #include <sys/kernel.h>
 #include <sys/queue.h>
 #include <sys/eventhandler.h>
@@ -33,6 +34,12 @@
 #include <linux/compat.h>
 #include <linux/shrinker.h>
 #include <linux/slab.h>
+
+SDT_PROVIDER_DEFINE(linuxkpi_shrinker);
+SDT_PROBE_DEFINE1(linuxkpi_shrinker, , , count__start, "void *");
+SDT_PROBE_DEFINE2(linuxkpi_shrinker, , , count__done, "void *", "unsigned long");
+SDT_PROBE_DEFINE2(linuxkpi_shrinker, , , scan__start, "void *", "unsigned long");
+SDT_PROBE_DEFINE2(linuxkpi_shrinker, , , scan__done, "void *", "unsigned long");
 
 TAILQ_HEAD(, shrinker) lkpi_shrinkers = TAILQ_HEAD_INITIALIZER(lkpi_shrinkers);
 static struct sx sx_shrinker;
@@ -105,14 +112,18 @@ shrinker_shrink(struct shrinker *s)
 	unsigned long scanned = 0;
 	unsigned long ret;
 
+	SDT_PROBE1(linuxkpi_shrinker, , , count__start, s);
 	can_free = s->count_objects(s, &sc);
+	SDT_PROBE2(linuxkpi_shrinker, , , count__done, s, can_free);
 	if (can_free <= 0)
 		return;
 
 	batch = s->batch ? s->batch : SHRINKER_BATCH;
 	while (scanned <= can_free) {
 		sc.nr_to_scan = batch;
+		SDT_PROBE2(linuxkpi_shrinker, , , scan__start, s, batch);
 		ret = s->scan_objects(s, &sc);
+		SDT_PROBE2(linuxkpi_shrinker, , , scan__done, s, ret);
 		if (ret == SHRINK_STOP)
 			break;
 		scanned += batch;

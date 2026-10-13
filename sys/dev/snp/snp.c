@@ -27,6 +27,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/conf.h>
 #include <sys/fcntl.h>
 #include <sys/filio.h>
@@ -176,7 +178,14 @@ snp_read(struct cdev *dev, struct uio *uio, int flag)
 			error = EWOULDBLOCK;
 			break;
 		}
+		if (!cold)
+			DTRACE_PROBE1(snp__read__wait__start,
+			    void *, (ss));
 		error = cv_wait_sig(&ss->snp_outwait, tty_getlock(tp));
+		if (!cold)
+			DTRACE_PROBE2(snp__read__wait__done,
+			    void *, (ss),
+			    int, (error));
 		if (error != 0)
 			break;
 		if (tty_gone(tp)) {

@@ -144,4 +144,8 @@ provider switchboard {
 	probe error(const char *subsys, const char *msg);
 	probe svc__exec__fail(const char *label, int error);
 	probe capsule__disconnected(void);
+	probe capsule__rpc__start(uint32_t a0, uint32_t a1, int a2);
+	probe capsule__rpc__done(int a0, int a1);
+	probe capsule__stale__reply(int a0);
+	probe capsule__malformed__reply(uint32_t a0, uint32_t a1);
 };

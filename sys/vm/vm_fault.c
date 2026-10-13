@@ -113,6 +113,8 @@
 #include <vm/vm_reserv.h>
 
 SDT_PROVIDER_DECLARE(vm);
+SDT_PROBE_DEFINE3(vm, , , fault__trap__start, "void *", "int", "int");
+SDT_PROBE_DEFINE2(vm, , , fault__trap__done, "void *", "int");
 SDT_PROBE_DEFINE2(vm, , , fault__cow, "void *", "int");
 SDT_PROBE_DEFINE3(vm, , , fault__pager__start, "void *", "void *", "uint64_t");
 SDT_PROBE_DEFINE2(vm, , , fault__pager__done, "void *", "int");
@@ -764,6 +766,7 @@ vm_fault_trap(vm_map_t map, vm_offset_t vaddr, vm_prot_t fault_type,
 	if (map != kernel_map && KTRPOINT(curthread, KTR_FAULT))
 		ktrfault(vaddr, fault_type);
 #endif
+	SDT_PROBE3(vm, , , fault__trap__start, map, fault_type, fault_flags);
 	result = vm_fault(map, trunc_page(vaddr), fault_type, fault_flags,
 	    NULL);
 	KASSERT(result == KERN_SUCCESS || result == KERN_FAILURE ||
@@ -822,6 +825,7 @@ vm_fault_trap(vm_map_t map, vm_offset_t vaddr, vm_prot_t fault_type,
 			break;
 		}
 	}
+	SDT_PROBE2(vm, , , fault__trap__done, map, result);
 	return (result);
 }
 

@@ -43,6 +43,22 @@
 
 #include "extern.h"
 
+#include "checksumtool_trace.h"
+
+static int
+trace_checksum(int (*fn)(int, uint32_t *, off_t *), int fd,
+    uint32_t *value, off_t *length)
+{
+	int result;
+
+	TRACE_CHECKSUMTOOL_FILE__START(fd);
+	result = fn(fd, value, length);
+	TRACE_CHECKSUMTOOL_FILE__DONE(fd, result == 0 ? *length : 0,
+	    result, result != 0 ? errno : 0);
+	return (result);
+}
+
+
 static void usage(void) __dead2;
 
 int
@@ -104,7 +120,7 @@ main(int argc, char **argv)
 				continue;
 			}
 		}
-		if (cfncn(fd, &val, &len)) {
+		if (trace_checksum(cfncn, fd, &val, &len)) {
 			warn("%s", fn ? fn : "stdin");
 			rval = 1;
 		} else

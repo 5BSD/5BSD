@@ -11,6 +11,8 @@
 #include "opt_inet6.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/counter.h>
 #include <sys/gtaskqueue.h>
@@ -1198,6 +1200,9 @@ wg_timers_run_retry_handshake(void *_peer)
 	mtx_lock(&peer->p_handshake_mtx);
 	if (peer->p_handshake_retries <= MAX_TIMER_HANDSHAKES) {
 		peer->p_handshake_retries++;
+		if (!cold)
+			DTRACE_PROBE2(wg__handshake__retry, void *, (peer),
+			    int, (peer->p_handshake_retries));
 		mtx_unlock(&peer->p_handshake_mtx);
 
 		DPRINTF(peer->p_sc, "Handshake for peer %" PRIu64 " did not complete "
@@ -1206,6 +1211,9 @@ wg_timers_run_retry_handshake(void *_peer)
 		wg_peer_clear_src(peer);
 		wg_timers_run_send_initiation(peer, true);
 	} else {
+		if (!cold)
+			DTRACE_PROBE2(wg__handshake__exhausted, void *, (peer),
+			    int, (peer->p_handshake_retries));
 		mtx_unlock(&peer->p_handshake_mtx);
 
 		DPRINTF(peer->p_sc, "Handshake for peer %" PRIu64 " did not complete "
@@ -1909,6 +1917,9 @@ wg_queue_enqueue_handshake(struct wg_queue *hs, struct wg_packet *pkt)
 		STAILQ_INSERT_TAIL(&hs->q_queue, pkt, p_parallel);
 		hs->q_len++;
 	} else {
+		if (!cold)
+			DTRACE_PROBE3(wg__queue__pressure, void *, (hs),
+			    int, (1), int, (hs->q_len));
 		ret = ENOBUFS;
 	}
 	mtx_unlock(&hs->q_mtx);
@@ -1987,6 +1998,9 @@ wg_queue_both(struct wg_queue *parallel, struct wg_queue *serial, struct wg_pack
 		serial->q_len++;
 		STAILQ_INSERT_TAIL(&serial->q_queue, pkt, p_serial);
 	} else {
+		if (!cold)
+			DTRACE_PROBE3(wg__queue__pressure, void *, (serial),
+			    int, (2), int, (serial->q_len));
 		mtx_unlock(&serial->q_mtx);
 		wg_packet_free(pkt);
 		return (ENOBUFS);
@@ -1998,6 +2012,9 @@ wg_queue_both(struct wg_queue *parallel, struct wg_queue *serial, struct wg_pack
 		parallel->q_len++;
 		STAILQ_INSERT_TAIL(&parallel->q_queue, pkt, p_parallel);
 	} else {
+		if (!cold)
+			DTRACE_PROBE3(wg__queue__pressure, void *, (parallel),
+			    int, (3), int, (parallel->q_len));
 		mtx_unlock(&parallel->q_mtx);
 		pkt->p_state = WG_PACKET_DEAD;
 		return (ENOBUFS);

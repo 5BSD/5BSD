@@ -43,6 +43,21 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "linkop_trace.h"
+
+static int
+trace_link(const char *source, const char *target, int symbolic, int flags)
+{
+	int result;
+
+	TRACE_LINKOP_OPERATION__START(symbolic);
+	result = symbolic ? symlink(source, target) :
+	    linkat(AT_FDCWD, source, AT_FDCWD, target, flags);
+	TRACE_LINKOP_OPERATION__DONE(symbolic, result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 static bool	fflag;			/* Unlink existing files. */
 static bool	Fflag;			/* Remove empty directories also. */
 static bool	hflag;			/* Check new name for symlink first. */
@@ -350,9 +365,7 @@ linkit(const char *source, const char *target, bool isdir)
 	}
 
 	/* Attempt the link. */
-	if (sflag ? symlink(source, target) :
-	    linkat(AT_FDCWD, source, AT_FDCWD, target,
-	    Pflag ? 0 : AT_SYMLINK_FOLLOW)) {
+	if (trace_link(source, target, sflag, Pflag ? 0 : AT_SYMLINK_FOLLOW)) {
 		warn("%s", target);
 		return (1);
 	}

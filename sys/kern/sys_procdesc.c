@@ -85,12 +85,24 @@
 #include <sys/sysproto.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
+
 #include <sys/ucred.h>
 #include <sys/user.h>
 
 #include <security/audit/audit.h>
 
 #include <vm/uma.h>
+
+/* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
+SDT_PROVIDER_DEFINE(procdescriptor);
+SDT_PROBE_DEFINE2(procdescriptor, , , open__start,
+    "pid_t", "int");
+SDT_PROBE_DEFINE3(procdescriptor, , , open__done,
+    "pid_t", "int", "int");
+SDT_PROBE_DEFINE2(procdescriptor, , , transfer__start,
+    "int", "int");
+SDT_PROBE_DEFINE3(procdescriptor, , , transfer__done,
+    "int", "int", "int");
 
 SDT_PROBE_DECLARE(capsicum, , , pdfork);
 SDT_PROBE_DECLARE(capsicum, , , pdclose);
@@ -785,9 +797,13 @@ kern_pdopenpid(struct thread *td, pid_t pid, int flags)
 	struct filecaps fcaps;
 	int error, fd, fflags;
 
+	SDT_PROBE2(procdescriptor, , , open__start, (pid), (flags));
 	error = falloc_noinstall(td, &fp);
-	if (error != 0)
+	if (error != 0) {
+		SDT_PROBE3(procdescriptor, , , open__done,
+		    (pid), (flags), (error));
 		return (error);
+	}
 	fflags = pdtofdflags(flags);
 	pdf = procdesc_alloc(flags);
 	if ((flags & PD_DAEMON) != 0)
@@ -825,6 +841,7 @@ kern_pdopenpid(struct thread *td, pid_t pid, int flags)
 		MPASS(pdf->pd_pid == -1);
 		procdesc_destroy(pdf);
 	}
+	SDT_PROBE3(procdescriptor, , , open__done, (pid), (flags), (error));
 	return (error);
 }
 
@@ -891,6 +908,7 @@ kern_pddupfd(struct thread *td, int pdfd, int fd, int flags)
 	struct file *pfp;
 	int error, fdr;
 
+	SDT_PROBE2(procdescriptor, , , transfer__start, (pdfd), (fd));
 	sx_slock(&proctree_lock);
 	error = fget_procdesc(td, pdfd, &cap_pddupfd_rights, EINVAL, &pfp,
 	    NULL, &p);
@@ -935,6 +953,7 @@ kern_pddupfd(struct thread *td, int pdfd, int fd, int flags)
 out:
 	if (pfp != NULL)
 		fdrop(pfp, td);
+	SDT_PROBE3(procdescriptor, , , transfer__done, (pdfd), (fd), (error));
 	return (error);
 }
 

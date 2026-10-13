@@ -90,10 +90,19 @@ static MALLOC_DEFINE(M_KQUEUE, "kqueue", "memory for kqueue system");
 /*
  * Static DTrace (SDT) observability for the kqueue operation surface.
  * These probes cover per-syscall / per-registration granularity only; the
- * hot per-activation path (knote(), kqueue_scan() copyout loop) is left
- * deliberately uninstrumented.
+ * hot per-activation path (knote()) is left uninstrumented.  Scan probes
+ * describe whole scans, sleep intervals and copyout batches.
  */
 SDT_PROVIDER_DEFINE(kqueue);
+SDT_PROBE_DEFINE2(kqueue, , , drain__start, "void *", "int");
+SDT_PROBE_DEFINE2(kqueue, , , drain__done, "void *", "int");
+
+SDT_PROBE_DEFINE2(kqueue, , , copyout__start, "void *", "int");
+SDT_PROBE_DEFINE3(kqueue, , , copyout__done, "void *", "int", "int");
+SDT_PROBE_DEFINE1(kqueue, , , wait__start, "void *");
+SDT_PROBE_DEFINE2(kqueue, , , wait__done, "void *", "int");
+SDT_PROBE_DEFINE2(kqueue, , , scan__start, "void *", "int");
+SDT_PROBE_DEFINE3(kqueue, , , scan__done, "void *", "int", "int");
 SDT_PROBE_DEFINE4(kqueue, , , detach__start, "struct knote *", "uintptr_t",
     "int", "struct file *");
 SDT_PROBE_DEFINE1(kqueue, , , detach__done, "struct knote *");
@@ -1005,6 +1014,9 @@ filt_timerattach(struct knote *kn)
 
 	if (atomic_fetchadd_int(&kq_ncallouts, 1) + 1 > kq_calloutmax) {
 		atomic_subtract_int(&kq_ncallouts, 1);
+		if (!cold)
+			DTRACE_PROBE2(kqueue__timer__limit,
+			    void *, (kn), unsigned int, (kq_calloutmax));
 		return (ENOMEM);
 	}
 
@@ -1029,6 +1041,9 @@ filt_timercopy(struct knote *kn, struct proc *p)
 
 	if (atomic_fetchadd_int(&kq_ncallouts, 1) + 1 > kq_calloutmax) {
 		atomic_subtract_int(&kq_ncallouts, 1);
+		if (!cold)
+			DTRACE_PROBE2(kqueue__timer__limit,
+			    void *, (kn), unsigned int, (kq_calloutmax));
 		return (ENOMEM);
 	}
 
@@ -2156,8 +2171,12 @@ kqueue_expand(struct kqueue *kq, const struct filterops *fops, uintptr_t ident,
 				size += KQEXTENT;
 			} while (size <= fd);
 			list = malloc(size * sizeof(*list), M_KQUEUE, mflag);
-			if (list == NULL)
+			if (list == NULL) {
+				if (!cold)
+					DTRACE_PROBE3(kqueue__expand__pressure,
+					    void *, (kq), int, (1), int, (mflag));
 				return ENOMEM;
+			}
 			KQ_LOCK(kq);
 			if ((kq->kq_state & KQ_CLOSING) != 0) {
 				to_free = list;
@@ -2185,8 +2204,12 @@ kqueue_expand(struct kqueue *kq, const struct filterops *fops, uintptr_t ident,
 			tmp_knhash = hashinit_flags(KN_HASHSIZE, M_KQUEUE,
 			    &tmp_knhashmask, (mflag & M_WAITOK) != 0 ?
 			    HASH_WAITOK : HASH_NOWAIT);
-			if (tmp_knhash == NULL)
+			if (tmp_knhash == NULL) {
+				if (!cold)
+					DTRACE_PROBE3(kqueue__expand__pressure,
+					    void *, (kq), int, (2), int, (mflag));
 				return (ENOMEM);
+			}
 			KQ_LOCK(kq);
 			if ((kq->kq_state & KQ_CLOSING) != 0) {
 				to_free = tmp_knhash;
@@ -2242,6 +2265,7 @@ kqueue_scan(struct kqueue *kq, int maxevents, struct kevent_copyops *k_ops,
 	sbintime_t asbt, rsbt;
 	int count, error, haskqglobal, influx, nkev, touch;
 
+	SDT_PROBE2(kqueue, , , scan__start, kq, maxevents);
 	count = maxevents;
 	nkev = 0;
 	error = 0;
@@ -2288,8 +2312,10 @@ retry:
 			error = EWOULDBLOCK;
 		} else {
 			kq->kq_state |= KQ_SLEEP;
+			SDT_PROBE1(kqueue, , , wait__start, kq);
 			error = msleep_sbt(kq, &kq->kq_lock, PSOCK | PCATCH,
 			    "kqread", asbt, rsbt, C_ABSOLUTE);
+			SDT_PROBE2(kqueue, , , wait__done, kq, error);
 		}
 		if (error == 0)
 			goto retry;
@@ -2413,7 +2439,9 @@ retry:
 		if (nkev == KQ_NEVENTS) {
 			influx = 0;
 			KQ_UNLOCK_FLUX(kq);
+			SDT_PROBE2(kqueue, , , copyout__start, kq, nkev);
 			error = k_ops->k_copyout(k_ops->arg, keva, nkev);
+			SDT_PROBE3(kqueue, , , copyout__done, kq, nkev, error);
 			nkev = 0;
 			kevp = keva;
 			KQ_LOCK(kq);
@@ -2427,9 +2455,13 @@ done:
 	KQ_UNLOCK_FLUX(kq);
 done_nl:
 	KQ_NOTOWNED(kq);
-	if (nkev != 0)
+	if (nkev != 0) {
+		SDT_PROBE2(kqueue, , , copyout__start, kq, nkev);
 		error = k_ops->k_copyout(k_ops->arg, keva, nkev);
+		SDT_PROBE3(kqueue, , , copyout__done, kq, nkev, error);
+	}
 	td->td_retval[0] = maxevents - count;
+	SDT_PROBE3(kqueue, , , scan__done, kq, maxevents - count, error);
 	return (error);
 }
 
@@ -2536,8 +2568,11 @@ kqueue_drain(struct kqueue *kq, struct thread *td)
 	KASSERT((kq->kq_state & KQ_CLOSING) != KQ_CLOSING,
 	    ("kqueue already closing"));
 	kq->kq_state |= KQ_CLOSING;
-	if (kq->kq_refcnt > 1)
+	if (kq->kq_refcnt > 1) {
+		SDT_PROBE2(kqueue, , , drain__start, kq, 0);
 		msleep(&kq->kq_refcnt, &kq->kq_lock, PSOCK, "kqclose", 0);
+		SDT_PROBE2(kqueue, , , drain__done, kq, 0);
+	}
 
 	KASSERT(kq->kq_refcnt == 1, ("other refs are out there!"));
 
@@ -2574,7 +2609,9 @@ kqueue_drain(struct kqueue *kq, struct thread *td)
 
 	if ((kq->kq_state & KQ_TASKSCHED) == KQ_TASKSCHED) {
 		kq->kq_state |= KQ_TASKDRAIN;
+		SDT_PROBE2(kqueue, , , drain__start, kq, 1);
 		msleep(&kq->kq_state, &kq->kq_lock, PSOCK, "kqtqdr", 0);
+		SDT_PROBE2(kqueue, , , drain__done, kq, 1);
 	}
 
 	if ((kq->kq_state & KQ_SEL) == KQ_SEL) {

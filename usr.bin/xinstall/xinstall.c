@@ -37,6 +37,7 @@
 
 #include <err.h>
 #include <errno.h>
+#include "installcopy_trace.h"
 #include <fcntl.h>
 #include <grp.h>
 #include <libgen.h>
@@ -1211,7 +1212,7 @@ copy(int from_fd, const char *from_name, int to_fd, const char *to_name)
 	static char *buf = NULL;
 	static size_t bufsize;
 	int nr, nw;
-	int serrno;
+	int serrno, sync_error;
 #ifndef BOOTSTRAP_XINSTALL
 	ssize_t ret;
 #endif
@@ -1221,8 +1222,11 @@ copy(int from_fd, const char *from_name, int to_fd, const char *to_name)
 	/* Try copy_file_range() if no digest is requested */
 	if (digesttype == DIGEST_NONE) {
 		do {
+			TRACE_INSTALLCOPY_RANGE__START(from_fd, to_fd);
 			ret = copy_file_range(from_fd, NULL, to_fd, NULL,
 			    SSIZE_MAX, 0);
+			TRACE_INSTALLCOPY_RANGE__DONE(from_fd, to_fd, ret,
+			    ret < 0 ? errno : 0);
 		} while (ret > 0 || (ret < 0 && errno == EINTR));
 		if (ret == 0)
 			goto done;
@@ -1232,6 +1236,7 @@ copy(int from_fd, const char *from_name, int to_fd, const char *to_name)
 			errno = serrno;
 			err(EX_OSERR, "%s", to_name);
 		}
+		TRACE_INSTALLCOPY_FALLBACK(from_fd, to_fd, errno);
 		/* Fall back */
 	}
 #endif
@@ -1278,7 +1283,14 @@ copy(int from_fd, const char *from_name, int to_fd, const char *to_name)
 #ifndef BOOTSTRAP_XINSTALL
 done:
 #endif
-	if (safecopy && fsync(to_fd) == -1) {
+	sync_error = 0;
+	if (safecopy) {
+		TRACE_INSTALLCOPY_SYNC__START(to_fd);
+		sync_error = fsync(to_fd);
+		TRACE_INSTALLCOPY_SYNC__DONE(to_fd,
+		    sync_error == -1 ? errno : 0);
+	}
+	if (sync_error == -1) {
 		serrno = errno;
 		(void)unlink(to_name);
 		errno = serrno;

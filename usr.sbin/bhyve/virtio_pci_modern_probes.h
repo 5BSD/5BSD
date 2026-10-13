@@ -26,6 +26,11 @@
 	((void)(a), (void)(b), (void)(c), (void)(d), (void)(e))
 #endif
 
+#define VIRTIO_PROBE_ADMIN_QUIESCE_START(owner, gen) \
+	DTRACE_PROBE2(virtio, admin__quiesce__start, owner, gen)
+#define VIRTIO_PROBE_ADMIN_QUIESCE_DONE(owner, gen) \
+	DTRACE_PROBE2(virtio, admin__quiesce__done, owner, gen)
+
 #define	VIRTIO_PROBE_FEATURES(name, features)			\
 	DTRACE_PROBE2(virtio, transport__features, name, features)
 #define	VIRTIO_PROBE_STATUS(name, old_status, new_status)	\

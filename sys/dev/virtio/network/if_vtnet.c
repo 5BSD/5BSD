@@ -34,6 +34,7 @@
 #include <sys/param.h>
 #include <sys/eventhandler.h>
 #include <sys/systm.h>
+#include <sys/sdt.h>
 #include <sys/kernel.h>
 #include <sys/sockio.h>
 #include <sys/malloc.h>
@@ -90,6 +91,10 @@
 #if defined(INET) || defined(INET6)
 #include <machine/in_cksum.h>
 #endif
+
+SDT_PROVIDER_DEFINE(vtnet);
+SDT_PROBE_DEFINE1(vtnet, , , reinit__start, "struct vtnet_softc *");
+SDT_PROBE_DEFINE2(vtnet, , , reinit__done, "struct vtnet_softc *", "int");
 
 #ifdef __NO_STRICT_ALIGNMENT
 #define VTNET_ETHER_ALIGN 0
@@ -3674,13 +3679,14 @@ vtnet_reinit(struct vtnet_softc *sc)
 	if_t ifp;
 	int error;
 
+	SDT_PROBE1(vtnet, , , reinit__start, sc);
 	ifp = sc->vtnet_ifp;
 
 	bcopy(if_getlladdr(ifp), sc->vtnet_hwaddr, ETHER_ADDR_LEN);
 
 	error = vtnet_virtio_reinit(sc);
 	if (error)
-		return (error);
+		goto out;
 
 	vtnet_set_macaddr(sc);
 	vtnet_set_active_vq_pairs(sc);
@@ -3699,10 +3705,9 @@ vtnet_reinit(struct vtnet_softc *sc)
 		if_sethwassistbits(ifp, CSUM_IP6_TSO, 0);
 
 	error = vtnet_init_rxtx_queues(sc);
-	if (error)
-		return (error);
-
-	return (0);
+out:
+	SDT_PROBE2(vtnet, , , reinit__done, sc, error);
+	return (error);
 }
 
 static void

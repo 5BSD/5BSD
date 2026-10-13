@@ -1,0 +1,165 @@
+KERNEL DTRACE COVERAGE: ELEVENTH EXPANSION
+========================================
+
+33 new contracts in six kernel components, extending two existing providers
+(eventfd and timerfd) and introducing posixsem, giftunnel, gretunnel and
+vxlanctl. Six diagnostic profiles are selected for installation in base.
+This is one kernel-focused pass through all nine requested categories, not
+a claim that every subsystem or every path has all nine kinds of probes.
+
+Category mapping
+----------------
+lifecycle: posixsem allocate/release; giftunnel/gretunnel/vxlanctl control
+latency: paired control, wait, sleep, copy and fd allocation
+errors: paired results, semaphore post/limit, timer cancellation
+resources: posixsem allocate/release/limit; timerfd fd allocation
+io: eventfd/timerfd read copyout phases
+network: GIF/GRE/VXLAN administrative controls
+synchronization: eventfd read/write sleeps; timerfd read sleep; POSIX semaphore waits
+access-control: semaphore DAC/privilege override result; tunnel privilege checks
+counters-state: semaphore old/new values; eventfd read counter consumption; timerfd read reset
+
+Detailed scope and argument semantics
+-------------------------------------
+POSIX semaphore allocation emits allocate(object, initial_value) only after
+the object and MAC label have been initialized, before publication. release
+emits the opaque identity before freeing the last-reference object. limit
+emits the current global object count and teardown flag while the count lock
+is held: it can mean the configured count limit or teardown, not malloc
+failure. No instrumentation is inside the allocator or module initialization.
+
+access(object, error) reports the final DAC/privilege-override decision in
+ksem_access. It is not a complete MAC audit: MAC may reject before this helper.
+wait-start(object, tryflag, timed) runs after successful descriptor lookup and
+mutex acquisition and before the MAC check. wait-done(object, error) covers
+MAC denial, try-wait EAGAIN, timeout, signal interruption and successful
+consumption. It excludes failed descriptor lookup and initial lock wait.
+The sleep pair surrounds each actual cv wait, including mutex reacquisition.
+A timed sleep's EWOULDBLOCK may lead to another wait or final ETIMEDOUT; a
+sleep completion is not proof that a semaphore token was acquired.
+post(object, current_value, error) covers MAC denial, EOVERFLOW and successful
+post after descriptor lookup. value(object, old, new, operation) records
+successful post (operation 1) and consumption (0), under sem_lock. No names,
+credentials, paths, labels or user payloads are exposed.
+
+Eventfd read-wait and write-wait pairs cover each mtx_sleep and its actual
+return value, including mutex reacquisition, outside any interrupt context.
+read-state(object, old_count, new_count) records consumption under efd_lock.
+The preexisting write probe already reports increments and is not duplicated.
+read-copy pairs measure the uiomove phase after the counter has been consumed.
+A copyout EFAULT does not undo counter consumption; these two events let a
+trace distinguish consumption from successful delivery. Early invalid sizes,
+nonblocking EAGAIN and copyin failures do not get these new pairs.
+
+Timerfd read-wait/read-copy have the corresponding semantics. fd-alloc pairs
+report flags and falloc error, including descriptor exhaustion, in the create
+syscall path after flag/clock validation; no uninitialized fd is exposed.
+read-reset(object, prior_jump_state, discarded_count, error) fires under the
+object lock before a read clears a pending clock-jump state and count. The
+error may be zero or ECANCELED. This adds no site to the expiration callout,
+clock-adjustment path or early clock setup.
+
+GIF/GRE control pairs cover the complex ioctl branch from immediately before
+acquiring the ioctl sx lock through the final result, before releasing it.
+They include lock wait, copyin/out, configuration and errors (including a
+missing softc). Args are interface identity, ioctl command, and final errno.
+Early MTU/address/multicast/unsupported-command returns remain outside this
+pair. Netlink configuration paths are not claimed. access emits the result
+of each explicit GIF/GRE privilege check for FIB/options/key/port changes.
+Neither keys nor addresses are exposed.
+
+VXLAN control pairs surround only a validated driver-specific callback.
+They exclude preceding validation/copyin and following copyout. access emits
+the explicit privilege decision before callback dispatch. Generic VXLAN
+ioctls and packet encapsulation/decapsulation are not newly instrumented.
+All tunnel identity arguments are opaque: profiles never dereference them.
+
+Exact probe contracts (argument order)
+--------------------------------------
+eventfd:::read-wait-start(void *)
+eventfd:::read-wait-done(void *, int)
+eventfd:::write-wait-start(void *)
+eventfd:::write-wait-done(void *, int)
+eventfd:::read-copy-start(void *)
+eventfd:::read-copy-done(void *, int)
+eventfd:::read-state(void *, uint64_t, uint64_t)
+timerfd:::read-wait-start(void *)
+timerfd:::read-wait-done(void *, int)
+timerfd:::read-copy-start(void *)
+timerfd:::read-copy-done(void *, int)
+timerfd:::fd-alloc-start(int)
+timerfd:::fd-alloc-done(int, int)
+timerfd:::read-reset(void *, int, uint64_t, int)
+posixsem:::allocate(void *, unsigned int)
+posixsem:::release(void *)
+posixsem:::limit(unsigned int, int)
+posixsem:::access(void *, int)
+posixsem:::wait-start(void *, int, int)
+posixsem:::wait-done(void *, int)
+posixsem:::sleep-start(void *, int)
+posixsem:::sleep-done(void *, int)
+posixsem:::post(void *, unsigned int, int)
+posixsem:::value(void *, unsigned int, unsigned int, int)
+giftunnel:::control-start(void *, unsigned long)
+giftunnel:::control-done(void *, unsigned long, int)
+giftunnel:::access(void *, unsigned long, int)
+gretunnel:::control-start(void *, unsigned long)
+gretunnel:::control-done(void *, unsigned long, int)
+gretunnel:::access(void *, unsigned long, int)
+vxlanctl:::control-start(void *, unsigned long)
+vxlanctl:::control-done(void *, unsigned long, int)
+vxlanctl:::access(void *, unsigned long, int)
+
+Safety and cost
+---------------
+New sites are in file operations, syscall helper paths and administrative
+ioctls. There are no new sites in interrupt filters, NMI/IPI paths, scheduler
+internals, boot initialization, allocator internals, packet fast paths, or
+DTrace itself. Objects remain referenced at use; state fields are observed
+under their existing mutexes. The last-reference semaphore identity is emitted
+before free; no field is read afterward. Probe expressions perform no state
+changes, allocation, formatting, payload copies or unconditional timing.
+SDT's inactive patchpoints are verified as NOPs, and no-hooks builds contain
+none of the new definitions. Enabled probes still cost time and may be high
+volume on busy descriptor/semaphore workloads; select profiles narrowly.
+
+Profiles and installation
+-------------------------
+  kernel-sem-resources
+  kernel-sem-waits
+  kernel-sem-decisions
+  kernel-counterfd-waits
+  kernel-counterfd-io
+  kernel-tunnel-controls
+
+The existing bsdinstruments profile glob selects all six for installation to
+/usr/share/bsdinstruments/profiles in the base bsdinstruments package. The
+catalog now has 381 entries. Pair profiles use per-pid/tid depth and timestamps,
+aggregate latency in microseconds by errno, and clear completed state. Event
+profiles count numeric outcomes/transitions without dereferencing pointers.
+Start tracing before workload; event loss invalidates pairing. PID filters
+select execution context, not the owner of an opaque kernel object.
+
+Validation and reproduction
+---------------------------
+Artifacts: /usr/obj/5bsd-dtrace-eleventh-validation
+Prepared kernel: /usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG
+Maintained drivers: coverage-eleventh-{compile,variants,modules,check}.py.
+Compilation uses all available CPUs (16 here) and treats warnings as errors.
+
+  12 native kernel object builds: six sources, KDTRACE_HOOKS on/off.
+   2 additional semaphore builds: MAC and COMPAT_FREEBSD32 off, hooks on/off.
+   4 linked modules: sem, if_gif, if_gre and if_vxlan.
+   1 prepared kernel link, with make-selected object/probe symbol verification.
+  12 executable object checks: enabled definitions have real executable
+     patchpoints with inactive NOP instructions; disabled definitions absent.
+  12 offline profile compilations: each normal and PID/duration filtered;
+     selectors/argument counts and installation selection checked separately.
+
+No kernel/module was installed, loaded or booted. /dev/dtrace is unavailable;
+no live probe firing, lock-stress, traffic, timing accuracy or hardware testing
+is claimed. The running kernel cannot validate these newly compiled sites.
+Coverage is native amd64 plus the stated option variations, not every kernel
+configuration or architecture. The manifest hashes this source snapshot;
+session.patch contains only this round's changes over preserved dirty-tree
+baselines, checked in reverse against the current tree.

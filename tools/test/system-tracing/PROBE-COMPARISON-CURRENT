@@ -1,0 +1,29 @@
+Static DTrace contract census, dev integration, 2026-10-13
+
+Pinned vanilla FreeBSD 16 source revision:
+c2b7fe4a9e94a0edba9dd2772874928b565c4f9e (2026-10-08).
+Metric: unique source-level static provider/probe contracts, counted using the
+same static-census.py scanner and source roots for both complete trees.
+
+                         5BSD dev       FreeBSD       Ratio
+Kernel                       2384          1037       2.298939
+Userland                      894            12      74.500000
+Combined                     3278          1049       3.124881
+
+The combined static inventory exceeds three times this pinned baseline.
+The kernel inventory alone does not. This includes all accumulated source
+history, not just the recent probe pushes. Contract comparison finds 2230
+added and one removed relative to that baseline, with zero unresolved
+recognized probe forms.
+
+This is not a count from dtrace -l. Architecture/conditional definitions and
+.d declarations may not all be built, installed or enabled together. Dynamic
+FBT, syscall and pid probes are excluded. Source definitions alone do not
+prove linked call sites or runtime availability. Tests, examples, documentation
+and foreign Linux implementation paths are excluded symmetrically.
+
+Reproduce with tools/test/system-tracing/static-census.py using the pinned
+revision above and this dev tree. Full inventories, source hashes, exact
+scanner configuration and baseline identity are saved under:
+/usr/obj/5bsd-dtrace-commit-validation/census/
+Previous comparison reports remain historical snapshots.

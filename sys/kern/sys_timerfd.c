@@ -59,6 +59,17 @@
 static MALLOC_DEFINE(M_TIMERFD, "timerfd", "timerfd structures");
 
 SDT_PROVIDER_DEFINE(timerfd);
+SDT_PROBE_DEFINE4(timerfd, , , read__reset, "void *", "int", "uint64_t", "int");
+
+SDT_PROBE_DEFINE1(timerfd, , , fd__alloc__start, "int");
+SDT_PROBE_DEFINE2(timerfd, , , fd__alloc__done, "int", "int");
+
+SDT_PROBE_DEFINE1(timerfd, , , read__copy__start, "void *");
+SDT_PROBE_DEFINE2(timerfd, , , read__copy__done, "void *", "int");
+
+SDT_PROBE_DEFINE1(timerfd, , , read__wait__start, "void *");
+SDT_PROBE_DEFINE2(timerfd, , , read__wait__done, "void *", "int");
+
 /* A new timerfd was created: pid, clockid, flags, fd. */
 SDT_PROBE_DEFINE4(timerfd, , , create, "int", "int", "int", "int");
 /* A timerfd was armed/disarmed: pid, fd, flags, value sec, interval sec. */
@@ -222,6 +233,8 @@ retry:
 	if ((tfd->tfd_jumped & TFD_JUMPED) != 0) {
 		if (tfd->tfd_jumped == TFD_CANCELED)
 			error = ECANCELED;
+		SDT_PROBE4(timerfd, , , read__reset, tfd,
+		    tfd->tfd_jumped, tfd->tfd_count, error);
 		tfd->tfd_jumped = TFD_READ;
 		tfd->tfd_count = 0;
 		mtx_unlock(&tfd->tfd_lock);
@@ -236,8 +249,10 @@ retry:
 			SDT_PROBE1(timerfd, , , read__eagain, td->td_proc->p_pid);
 			return (EAGAIN);
 		}
+		SDT_PROBE1(timerfd, , , read__wait__start, tfd);
 		error = mtx_sleep(&tfd->tfd_count, &tfd->tfd_lock,
 		    PCATCH, "tfdrd", 0);
+		SDT_PROBE2(timerfd, , , read__wait__done, tfd, error);
 		if (error == 0) {
 			goto retry;
 		} else {
@@ -250,7 +265,9 @@ retry:
 	tfd->tfd_count = 0;
 	mtx_unlock(&tfd->tfd_lock);
 	SDT_PROBE2(timerfd, , , read, td->td_proc->p_pid, count);
+	SDT_PROBE1(timerfd, , , read__copy__start, tfd);
 	error = uiomove(&count, sizeof(timerfd_t), uio);
+	SDT_PROBE2(timerfd, , , read__copy__done, tfd, error);
 
 	return (error);
 }
@@ -502,7 +519,9 @@ kern_timerfd_create(struct thread *td, int clockid, int flags)
 	if ((flags & TFD_NONBLOCK) != 0)
 		fflags |= FNONBLOCK;
 
+	SDT_PROBE1(timerfd, , , fd__alloc__start, flags);
 	error = falloc(td, &fp, &fd, fflags);
+	SDT_PROBE2(timerfd, , , fd__alloc__done, flags, error);
 	if (error != 0)
 		return (error);
 

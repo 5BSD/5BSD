@@ -55,6 +55,7 @@
 #include "archive_integer.h"
 #include "archive_private.h"
 #include "archive_read_private.h"
+#include "archiveio_trace.h"
 
 #define minimum(a, b) (a < b ? a : b)
 
@@ -974,6 +975,7 @@ archive_read_data_skip(struct archive *_a)
 	    ARCHIVE_STATE_DATA | ARCHIVE_STATE_DATA_RECOVERY,
 	    "archive_read_data_skip");
 
+	TRACE_ARCHIVEIO_SKIP__START(_a);
 	if (a->format->read_data_skip != NULL)
 		r = (a->format->read_data_skip)(a);
 	else {
@@ -990,6 +992,7 @@ archive_read_data_skip(struct archive *_a)
 		a->archive.state = ARCHIVE_STATE_FATAL;
 	else
 		a->archive.state = ARCHIVE_STATE_HEADER;
+	TRACE_ARCHIVEIO_SKIP__DONE(_a, r);
 	return (r);
 }
 

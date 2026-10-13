@@ -91,6 +91,14 @@
  * DTrace SDT probes
  * ---------------------------------------------------------------- */
 SDT_PROVIDER_DEFINE(mac_capability_coalition);
+SDT_PROBE_DEFINE3(mac_capability_coalition, , , cleanup__status,
+    "void *", "uint32_t", "int");
+SDT_PROBE_DEFINE2(mac_capability_coalition, , , waiter__create,
+    "void *", "void *");
+SDT_PROBE_DEFINE2(mac_capability_coalition, , , waiter__revoke,
+    "void *", "void *");
+SDT_PROBE_DEFINE3(mac_capability_coalition, , , waiter__notify,
+    "void *", "void *", "uint32_t");
 SDT_PROBE_DEFINE1(mac_capability_coalition, , , create, "uint64_t");
 SDT_PROBE_DEFINE2(mac_capability_coalition, , , enlist, "int", "int");
 SDT_PROBE_DEFINE2(mac_capability_coalition, , , join, "pid_t", "int");
@@ -1514,6 +1522,8 @@ coalition_cleanup_status_locked(struct coalition *co,
 		reply->phase = COALITION_CLEANUP_RELEASED;
 	else
 		reply->phase = COALITION_CLEANUP_COMPLETE;
+	SDT_PROBE3(mac_capability_coalition, , , cleanup__status, co,
+	    reply->phase, reply->cleanup_error);
 }
 
 /* co_sx stabilizes waiter instances against their revoke callback. */
@@ -1532,8 +1542,11 @@ coalition_notify_cleanup_locked(struct coalition *co)
 		return;
 	LIST_FOREACH(cw, &co->co_waiters, cw_link) {
 		if (!cw->cw_notified && mac_capability_notify(cw->cw_instance,
-		    &state, sizeof(state), NULL, NULL, 0) == 0)
+		    &state, sizeof(state), NULL, NULL, 0) == 0) {
 			cw->cw_notified = true;
+			SDT_PROBE3(mac_capability_coalition, , , waiter__notify,
+			    co, cw->cw_instance, state.phase);
+		}
 	}
 }
 
@@ -1583,6 +1596,7 @@ coalition_wait_revoke(struct mac_capability_instance *s,
 		return;
 	co = cw->cw_co;
 	sx_xlock(&co->co_sx);
+	SDT_PROBE2(mac_capability_coalition, , , waiter__revoke, co, s);
 	LIST_REMOVE(cw, cw_link);
 	sx_xunlock(&co->co_sx);
 	mac_capability_instance_set_priv(s, NULL);
@@ -1615,6 +1629,8 @@ coalition_wait_create(struct coalition *co, struct file **fpp)
 	mac_capability_instance_set_priv(cw->cw_instance, cw);
 	sx_xlock(&co->co_sx);
 	LIST_INSERT_HEAD(&co->co_waiters, cw, cw_link);
+	SDT_PROBE2(mac_capability_coalition, , , waiter__create, co,
+	    cw->cw_instance);
 	coalition_notify_cleanup_locked(co);
 	sx_xunlock(&co->co_sx);
 	*fpp = fp;

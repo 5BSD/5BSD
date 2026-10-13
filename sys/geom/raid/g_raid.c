@@ -27,6 +27,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/bio.h>
 #include <sys/eventhandler.h>
@@ -573,6 +575,9 @@ g_raid_change_disk_state(struct g_raid_disk *disk, int state)
 	    g_raid_get_diskname(disk),
 	    g_raid_disk_state2str(disk->d_state),
 	    g_raid_disk_state2str(state));
+	if (!cold)
+		DTRACE_PROBE3(graid__disk__state, void *, (disk),
+		    int, (disk->d_state), int, (state));
 	disk->d_state = state;
 	g_raid_report_disk_state(disk);
 }
@@ -587,6 +592,9 @@ g_raid_change_subdisk_state(struct g_raid_subdisk *sd, int state)
 	    sd->sd_disk ? g_raid_get_diskname(sd->sd_disk) : "[none]",
 	    g_raid_subdisk_state2str(sd->sd_state),
 	    g_raid_subdisk_state2str(state));
+	if (!cold)
+		DTRACE_PROBE3(graid__subdisk__state, void *, (sd),
+		    int, (sd->sd_state), int, (state));
 	sd->sd_state = state;
 	if (sd->sd_disk)
 		g_raid_report_disk_state(sd->sd_disk);
@@ -601,6 +609,9 @@ g_raid_change_volume_state(struct g_raid_volume *vol, int state)
 	    vol->v_name,
 	    g_raid_volume_state2str(vol->v_state),
 	    g_raid_volume_state2str(state));
+	if (!cold)
+		DTRACE_PROBE3(graid__volume__state, void *, (vol),
+		    int, (vol->v_state), int, (state));
 	vol->v_state = state;
 }
 
@@ -994,6 +1005,9 @@ g_raid_tr_flush_common(struct g_raid_tr_object *tr, struct bio *bp)
 failure:
 	while ((cbp = bioq_takefirst(&queue)) != NULL)
 		g_destroy_bio(cbp);
+	if (!cold)
+		DTRACE_PROBE2(graid__bio__pressure, void *, (vol),
+		    int, (bp->bio_cmd));
 	if (bp->bio_error == 0)
 		bp->bio_error = ENOMEM;
 	g_raid_iodone(bp, bp->bio_error);

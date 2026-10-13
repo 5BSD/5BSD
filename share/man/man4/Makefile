@@ -504,7 +504,6 @@ MAN=	aac.4 \
 	pt.4 \
 	ptnet.4 \
 	pts.4 \
-	pty.4 \
 	puc.4 \
 	pwmc.4 \
 	${_pvscsi.4} \

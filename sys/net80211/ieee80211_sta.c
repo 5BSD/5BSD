@@ -32,6 +32,8 @@
 #include "opt_wlan.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h> 
 #include <sys/mbuf.h>   
 #include <sys/malloc.h>
@@ -191,9 +193,15 @@ sta_authretry(struct ieee80211vap *vap, struct ieee80211_node *ni, int reason)
 	case IEEE80211_REASON_NOT_ASSOCED:
 	case IEEE80211_REASON_ASSOC_LEAVE:
 	case IEEE80211_REASON_ASSOC_NOT_AUTHED:
+		if (!cold)
+			DTRACE_PROBE2(wlan__auth__retry, void *, (vap),
+			    int, (reason));
 		IEEE80211_SEND_MGMT(ni, IEEE80211_FC0_SUBTYPE_AUTH, 1);
 		break;
 	default:
+		if (!cold)
+			DTRACE_PROBE3(wlan__association__failed, void *, (vap),
+			    int, (reason), int, (vap->iv_roaming));
 		ieee80211_scan_assoc_fail(vap, vap->iv_bss->ni_macaddr, reason);
 		if (vap->iv_roaming == IEEE80211_ROAMING_AUTO)
 			ieee80211_check_scan_current(vap);

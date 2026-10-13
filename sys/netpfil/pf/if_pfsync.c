@@ -65,6 +65,8 @@
 #include "opt_pf.h"
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/bus.h>
 #include <sys/endian.h>
 #include <sys/interrupt.h>
@@ -2471,6 +2473,8 @@ pfsync_request_update(u_int32_t creatorid, u_int64_t id)
 		nlen += sizeof(struct pfsync_subheader);
 
 	if (b->b_len + nlen > sc->sc_ifp->if_mtu) {
+		DTRACE_PROBE3(pfsync__queue__pressure, int, b->b_id,
+		    size_t, b->b_len, size_t, nlen);
 		pfsync_sendout(0, 0);
 
 		nlen = sizeof(struct pfsync_subheader) +
@@ -2654,6 +2658,8 @@ pfsync_q_ins(struct pf_kstate *st, int sync_state, bool ref)
 		nlen += sizeof(struct pfsync_subheader);
 
 	if (b->b_len + nlen > sc->sc_ifp->if_mtu) {
+		DTRACE_PROBE3(pfsync__queue__pressure, int, b->b_id,
+		    size_t, b->b_len, size_t, nlen);
 		pfsync_sendout(1, b->b_id);
 
 		nlen = sizeof(struct pfsync_subheader) + pfsync_qs[q].len;
@@ -2697,6 +2703,7 @@ pfsync_bulk_start(void)
 	PFSYNC_BLOCK(sc);
 
 	sc->sc_ureq_received = time_uptime;
+	DTRACE_PROBE1(pfsync__bulk__start, void *, sc);
 	sc->sc_bulk_hashid = 0;
 	sc->sc_bulk_stateid = 0;
 	pfsync_bulk_status(PFSYNC_BUS_START);
@@ -2780,6 +2787,7 @@ pfsync_bulk_status(u_int8_t status)
 	r.bus.creatorid = V_pf_status.hostid;
 	r.bus.endtime = htonl(time_uptime - sc->sc_ureq_received);
 	r.bus.status = status;
+	DTRACE_PROBE2(pfsync__bulk__status__send, void *, sc, int, status);
 
 	pfsync_send_plus(&r, sizeof(r));
 }
@@ -2795,6 +2803,7 @@ pfsync_bulk_fail(void *arg)
 	PFSYNC_BLOCK_ASSERT(sc);
 
 	if (sc->sc_bulk_tries++ < PFSYNC_MAX_BULKTRIES) {
+		DTRACE_PROBE1(pfsync__bulk__retry, int, sc->sc_bulk_tries);
 		/* Try again */
 		callout_reset(&sc->sc_bulkfail_tmo, 5 * hz,
 		    pfsync_bulk_fail, V_pfsyncif);
@@ -2802,6 +2811,7 @@ pfsync_bulk_fail(void *arg)
 		pfsync_request_update(0, 0);
 		PFSYNC_BUCKET_UNLOCK(b);
 	} else {
+		DTRACE_PROBE1(pfsync__bulk__failed, int, sc->sc_bulk_tries);
 		/* Pretend like the transfer was ok. */
 		sc->sc_ureq_sent = 0;
 		sc->sc_bulk_tries = 0;

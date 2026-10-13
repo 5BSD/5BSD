@@ -51,6 +51,21 @@
 #include <libcasper.h>
 #include <casper/cap_fileargs.h>
 
+#include "wordcountio_trace.h"
+
+static ssize_t
+trace_read(int fd, void *buf, size_t len)
+{
+	ssize_t result;
+
+	TRACE_WORDCOUNTIO_READ__START(fd, len);
+	result = read(fd, buf, len);
+	TRACE_WORDCOUNTIO_READ__DONE(fd, len,
+	    result, result < 0 ? errno : 0);
+	return (result);
+}
+
+
 #define WC_XO_VERSION "1"
 
 static const char *stdin_filename = "stdin";
@@ -249,7 +264,7 @@ cnt(const char *file)
 	 * lines than to get words, since the word count requires locale
 	 * handling.
 	 */
-	while ((len = read(fd, buf, sizeof(buf))) != 0) {
+	while ((len = trace_read(fd, buf, sizeof(buf))) != 0) {
 		if (len < 0) {
 			xo_warn("%s: read", file);
 			(void)close(fd);
@@ -286,7 +301,7 @@ cnt(const char *file)
 word:	gotsp = true;
 	warned = false;
 	memset(&mbs, 0, sizeof(mbs));
-	while ((len = read(fd, buf, sizeof(buf))) != 0) {
+	while ((len = trace_read(fd, buf, sizeof(buf))) != 0) {
 		if (len < 0) {
 			xo_warn("%s: read", file);
 			(void)close(fd);

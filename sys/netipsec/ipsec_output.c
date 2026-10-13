@@ -37,6 +37,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/sdt.h>
 #include <sys/mbuf.h>
 #include <sys/domain.h>
 #include <sys/protosw.h>
@@ -96,6 +97,11 @@
 #include <netipsec/key_debug.h>
 
 #include <machine/in_cksum.h>
+
+SDT_PROVIDER_DEFINE(ipsec);
+/* Request submission results, not asynchronous crypto or wire completion. */
+SDT_PROBE_DEFINE1(ipsec, , , output__start, "int");
+SDT_PROBE_DEFINE2(ipsec, , , output__done, "int", "int");
 
 #define	IPSEC_OSTAT_INC(proto, name)	do {		\
 	if ((proto) == IPPROTO_ESP)	\
@@ -328,8 +334,12 @@ int
 ipsec4_process_packet(struct ifnet *ifp, struct mbuf *m, struct ip *ip1,
     struct secpolicy *sp, struct inpcb *inp, u_long mtu)
 {
+	int error;
 
-	return (ipsec4_perform_request(ifp, m, ip1, sp, inp, 0, mtu));
+	SDT_PROBE1(ipsec, , , output__start, AF_INET);
+	error = ipsec4_perform_request(ifp, m, ip1, sp, inp, 0, mtu);
+	SDT_PROBE2(ipsec, , , output__done, AF_INET, error);
+	return (error);
 }
 
 int
@@ -745,8 +755,12 @@ int
 ipsec6_process_packet(struct ifnet *ifp, struct mbuf *m, struct secpolicy *sp,
     struct inpcb *inp, u_long mtu)
 {
+	int error;
 
-	return (ipsec6_perform_request(ifp, m, sp, inp, 0, mtu));
+	SDT_PROBE1(ipsec, , , output__start, AF_INET6);
+	error = ipsec6_perform_request(ifp, m, sp, inp, 0, mtu);
+	SDT_PROBE2(ipsec, , , output__done, AF_INET6, error);
+	return (error);
 }
 
 /*

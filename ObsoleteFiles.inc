@@ -1,3 +1,7 @@
+# 20261013: retire BSD fixed-name PTYs; /dev/ptmx is now provided by pts
+OLD_FILES+= boot/kernel/pty.ko
+OLD_FILES+= usr/share/man/man4/pty.4.gz
+
 # 20261012: the Filesystem, Extension, Namespace and VM clients moved out of
 # libservice into libfilesystemcmp, libextensioncmp, libnamespacecmp and libvmcmp
 OLD_LIBS+= usr/lib/libservice.so.1

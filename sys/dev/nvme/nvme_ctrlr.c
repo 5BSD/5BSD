@@ -30,6 +30,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/sdt.h>
 #include <sys/buf.h>
 #include <sys/bus.h>
 #include <sys/conf.h>
@@ -51,6 +52,10 @@
 #include "nvme_linux.h"
 
 #include "nvme_if.h"
+
+SDT_PROVIDER_DEFINE(nvme);
+SDT_PROBE_DEFINE1(nvme, , , reset__start, "void *");
+SDT_PROBE_DEFINE2(nvme, , , reset__done, "void *", "int");
 
 #define B4_CHK_RDY_DELAY_MS	2300		/* work around controller bug */
 
@@ -1273,7 +1278,9 @@ nvme_ctrlr_reset_task(void *arg, int pending)
 	int			status;
 
 	nvme_ctrlr_devctl_log(ctrlr, "RESET", "event=\"start\"");
+	SDT_PROBE1(nvme, , , reset__start, ctrlr);
 	status = nvme_ctrlr_hw_reset(ctrlr);
+	SDT_PROBE2(nvme, , , reset__done, ctrlr, status);
 	if (status == 0) {
 		nvme_ctrlr_devctl_log(ctrlr, "RESET", "event=\"success\"");
 		nvme_ctrlr_start(ctrlr, true);

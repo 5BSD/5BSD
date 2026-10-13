@@ -43,6 +43,19 @@
 
 #include "envopts.h"
 
+#include "envdir_trace.h"
+
+static int
+trace_chdir(const char *path)
+{
+	int result;
+
+	TRACE_ENVDIR_OPERATION__START(0);
+	result = chdir(path);
+	TRACE_ENVDIR_OPERATION__DONE(0, result, result < 0 ? errno : 0);
+	return (result);
+}
+
 extern char **environ;
 
 int	 env_verbosity;
@@ -190,7 +203,7 @@ main(int argc, char **argv)
 	if (*argv) {
 		if (term == '\0')
 			errx(EXIT_CANCELED, "cannot specify command with -0");
-		if (altwd && chdir(altwd) != 0)
+		if (altwd && trace_chdir(altwd) != 0)
 			err(EXIT_CANCELED, "cannot change directory to '%s'",
 			    altwd);
 		if (altpath)

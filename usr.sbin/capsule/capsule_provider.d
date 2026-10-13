@@ -90,4 +90,6 @@ provider capsule {
 
 	/* Errors */
 	probe error(const char *subsys, const char *msg);
+	probe ctl__admission__failure(int a0, int a1, uint32_t a2);
+	probe ctl__timeout(int a0);
 };

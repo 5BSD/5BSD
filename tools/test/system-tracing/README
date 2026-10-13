@@ -92,3 +92,90 @@ NEXT-COVERAGE records the kernel/base audit and operation-pair contracts.
 COVERAGE-THIRD documents their initial implementation; MAC-HOOKS describes
 callback arguments and skips. COVERAGE-AUDIT summarizes all requested areas
 and the remaining runtime qualification limits.
+
+Fourth expansion
+----------------
+COVERAGE-FOURTH records 26 addition passes across kernel subsystems, drivers,
+LinuxKPI, both Linuxulator ABIs and installed base software. The inventory is
+coverage-fourth.json; coverage-fourth-compile.py, coverage-fourth-check.py,
+coverage-fourth-dof.py and coverage-fourth-smoke.py reproduce the kernel,
+profile/install-contract, linked-DOF and base behavior checks respectively.
+Live tracing and hardware workload qualification remain separate gates.
+
+Fifth expansion: kernel breadth and placement
+-------------------------------------------
+COVERAGE-FIFTH records 13 additional subsystem reviews, 31 probes and the
+execution-context restrictions for interrupt threads and VM objects.
+coverage-fifth.json is the exact inventory. coverage-fifth-compile.py checks
+hooks enabled/disabled; coverage-fifth-check.py checks profile contracts,
+base installation selection and offline syntax; coverage-fifth-objects.py
+checks actual amd64 SDT patchpoints and their inactive NOP instructions.
+coverage-kernel-census.py collects direct and wrapper-based source evidence;
+it deliberately does not equate provider presence with subsystem coverage.
+
+Sixth expansion: runtime waits, quotas, buses and base tools
+---------------------------------------------------------
+COVERAGE-SIXTH documents 30 additional probes for socket/buffer-cache waits,
+UFS quota decisions and writeback, MMC requests/retries/retuning, I2C bus
+acquisition/transfers, dd, mv and cron. coverage-sixth.json is the inventory.
+The coverage-sixth-{compile,base,check,objects,dof,smoke}.py drivers reproduce
+kernel/base builds, installed-profile checks, linked probe verification and
+isolated behavior checks. The cron harness tests the exact wait helper
+without starting the daemon or running scheduled jobs.
+
+COVERAGE-SEVENTH documents the history-led bhyve/snapshot/virtio, Bluetooth,
+Mesh, MACF/policy and descriptor expansion: 52 new and 19 newly connected
+contracts, 14 installed profiles, normal-build libblemesh USDT, static DOF
+retention and SHLIB_NAME plugin linkage. coverage-seventh.json and the
+coverage-seventh-*.py drivers provide contracts and native amd64 validation.
+The report distinguishes installed services from the imported Matter IDL and
+OpenThread tooling, and records the live-tracing/hardware limits.
+
+Eighth expansion: COVERAGE-EIGHTH and coverage-eighth.json document 23 focused
+passes, 45 new contracts, ten installed profiles, whole-tree source census,
+wait outcome semantics, safe tracing boundaries, and reproducible native
+build/object/DOF/profile/behavior validation. See coverage-eighth-*.py.
+
+Ninth expansion: COVERAGE-NINTH and coverage-ninth.json document 20 different
+runtime components, 42 new contracts, ten base profiles, and their validation.
+See coverage-ninth-*.py for on/off builds, executable sites, profiles, existing
+utility regressions, errno/guard checks and intercepted privileged syscalls.
+
+Tenth expansion: COVERAGE-TENTH and coverage-tenth.json document 20 additional
+base utilities, 44 new contracts and ten base-install profiles. Reproduce the
+enabled/disabled builds, DOF/profile checks, guard fault injection, existing
+regressions and isolated behavior tests with coverage-tenth-*.py. The report
+records exact argument semantics, aliases, scope exclusions and live-tracing
+limits; this round adds no kernel interrupt or early-initialization sites.
+
+Eleventh expansion: COVERAGE-ELEVENTH and coverage-eleventh.json map 33 new
+kernel contracts to all nine diagnostic categories across POSIX semaphores,
+eventfd/timerfd and GIF/GRE/VXLAN controls. Six base profiles accompany native
+hooks-on/off, optional-configuration, module, executable-site and offline
+profile checks in coverage-eleventh-*.py. Read the report for precise path
+boundaries, synchronization semantics and exclusions from live validation.
+
+Twelfth expansion: COVERAGE-TWELFTH and coverage-twelfth.json document the
+focused PF/ZFS nine-category pass: 21 new contracts, a newly connected ZFS
+access success path, and seven base profiles. coverage-twelfth-*.py reproduce
+module/option builds, libzpool compatibility, backend guards, executable sites,
+profile contracts and the normalized PF compiled-out baseline comparison.
+See the report for precise limiter decisions, wait semantics and runtime gaps.
+
+Thirteenth expansion: 20 operation-focused kernel passes
+------------------------------------------------------
+COVERAGE-THIRTEENTH and coverage-thirteenth.json record 39 new contracts in
+12 runtime sources and eight base profiles (396 installed profile entries).
+Resource/procdesc decisions, VFS metadata/copying, sendfile/advisory-lock waits,
+VM sync/wiring, socket control, GEOM, firmware and epair queue outcomes.
+See the report for exact boundaries, the baseline-reproduced MAC-off warning,
+validation commands and pending live qualification. No system installation.
+
+Fourteenth expansion: 20 base-software passes
+-------------------------------------------
+COVERAGE-FOURTEENTH and coverage-fourteenth.json record 48 USDT contracts
+across 17 binaries, including the four extended-attribute commands, and eight
+new base profiles (404 total). Includes ACL tools, stream/checksum utilities,
+file sync, process/follow waits, ELF headers and system queries. See the report
+for exact scope, 34 on/off builds, isolated CLI/ATF results, rescue/bootstrap
+selection guards, unavailable porch fixture, and pending live qualification.

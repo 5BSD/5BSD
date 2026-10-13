@@ -57,8 +57,7 @@ linux_start()
 		rm -rf ${_tmpdir}
 	fi
 
-	# Linux uses the pre-pts(4) tty naming scheme.
-	load_kld ${_broker} pty || return 1
+	# /dev/ptmx is provided by the always-built pts(4) core.
 
 	# Explicitly load the filesystem modules; they are usually required,
 	# even with linux_mounts_enable="NO".

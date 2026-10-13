@@ -44,6 +44,7 @@ confine_control_fd(int fd)
 	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
 }
 #include "probes.h"
+#include "trace_pressure.h"
 
 /* Module-private state. */
 static int control_sock = -1;
@@ -425,12 +426,14 @@ ctl_accept(void)
 		return (CTL_ACTION_NONE);
 	}
 	if (confine_control_fd(cfd) == -1) {
+		CAPSULE_TRACE_CTL_ADMISSION_FAILURE(1, errno, nconns);
 		syslog(LOG_WARNING, "control client confinement: %m");
 		close(cfd);
 		return (CTL_ACTION_NONE);
 	}
 
 	if (nconns >= CTL_CONN_MAX) {
+		CAPSULE_TRACE_CTL_ADMISSION_FAILURE(2, ENOSPC, nconns);
 		syslog(LOG_WARNING,
 		    "control: too many connections, rejecting");
 		close(cfd);
@@ -438,6 +441,7 @@ ctl_accept(void)
 	}
 
 	if (getpeereid(cfd, &euid, &egid) != 0) {
+		CAPSULE_TRACE_CTL_ADMISSION_FAILURE(3, errno, nconns);
 		syslog(LOG_WARNING, "control getpeereid: %m");
 		close(cfd);
 		return (CTL_ACTION_NONE);
@@ -447,6 +451,7 @@ ctl_accept(void)
 
 	c = calloc(1, sizeof(*c));
 	if (c == NULL) {
+		CAPSULE_TRACE_CTL_ADMISSION_FAILURE(4, errno, nconns);
 		syslog(LOG_ERR, "control: calloc conn: %m");
 		close(cfd);
 		return (CTL_ACTION_NONE);
@@ -463,6 +468,7 @@ ctl_accept(void)
 
 	EV_SET(&kev, cfd, EVFILT_READ, EV_ADD, 0, 0, c);
 	if (kevent(event_kq, &kev, 1, NULL, 0, NULL) == -1) {
+		CAPSULE_TRACE_CTL_ADMISSION_FAILURE(5, errno, nconns);
 		syslog(LOG_WARNING, "control: kevent register: %m");
 		conn_destroy(c);
 		return (CTL_ACTION_NONE);
@@ -482,6 +488,7 @@ ctl_conn_event(struct kevent *kev)
 	action = CTL_ACTION_NONE;
 
 	if (kev->filter == EVFILT_TIMER) {
+		CAPSULE_TRACE_CTL_TIMEOUT(c->state);
 		syslog(LOG_WARNING, "control: client timeout");
 		c->timer_ident = 0;
 		conn_destroy(c);

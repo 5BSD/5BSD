@@ -33,6 +33,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
@@ -46,6 +48,13 @@
 #include <fs/nullfs/null.h>
 
 #include <vm/uma.h>
+
+SDT_PROVIDER_DEFINE(nullfs);
+SDT_PROBE_DEFINE2(nullfs, , , cache__hit, "void *", "void *");
+SDT_PROBE_DEFINE2(nullfs, , , cache__miss, "void *", "void *");
+SDT_PROBE_DEFINE1(nullfs, , , node__start, "void *");
+SDT_PROBE_DEFINE2(nullfs, , , node__done, "void *", "int");
+
 
 VFS_SMR_DECLARE;
 
@@ -228,6 +237,7 @@ null_nodeget(struct mount *mp, struct vnode *lowervp, struct vnode **vpp)
 	/* Lookup the hash firstly. */
 	*vpp = null_hashget(mp, lowervp);
 	if (*vpp != NULL) {
+		SDT_PROBE2(nullfs, , , cache__hit, mp, lowervp);
 		vrele(lowervp);
 		return (0);
 	}
@@ -238,11 +248,14 @@ null_nodeget(struct mount *mp, struct vnode *lowervp, struct vnode **vpp)
 	 * Note that duplicate can only appear in hash if the lowervp is
 	 * locked LK_SHARED.
 	 */
+	SDT_PROBE2(nullfs, , , cache__miss, mp, lowervp);
 	xp = uma_zalloc_smr(null_node_zone, M_WAITOK);
 
+	SDT_PROBE1(nullfs, , , node__start, mp);
 	error = getnewvnode("nullfs", mp, (MOUNTTONULLMOUNT(mp)->nullm_flags &
 	    NULLM_NOUNPBYPASS) != 0 ? &null_vnodeops_no_unp_bypass :
 	    &null_vnodeops, &vp);
+	SDT_PROBE2(nullfs, , , node__done, mp, error);
 	if (error) {
 		vput(lowervp);
 		uma_zfree_smr(null_node_zone, xp);

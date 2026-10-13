@@ -92,6 +92,11 @@
 MALLOC_DEFINE(M_FADVISE, "fadvise", "posix_fadvise(2) information");
 
 SDT_PROVIDER_DECLARE(vfs);
+/* Operation boundaries; see tools/test/system-tracing/COVERAGE-THIRTEENTH. */
+SDT_PROBE_DEFINE3(vfs, , , copy__range__start,
+    "struct vnode *", "struct vnode *", "size_t");
+SDT_PROBE_DEFINE4(vfs, , , copy__range__done,
+    "struct vnode *", "struct vnode *", "size_t", "int");
 SDT_PROBE_DEFINE3(vfs, , , chflags, "u_long", "struct ucred *", "int");
 SDT_PROBE_DEFINE3(vfs, , , chroot, "struct vnode *", "struct ucred *", "int");
 
@@ -5333,8 +5338,11 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 
 	retlen = len;
 	vn_file_context_enter(&filectx, infp, outfp, 0);
+	SDT_PROBE3(vfs, , , copy__range__start, (invp), (outvp), (retlen));
 	error = vn_copy_file_range(invp, &inoff, outvp, &outoff, &retlen,
 	    flags, infp->f_cred, outfp->f_cred, td);
+	SDT_PROBE4(vfs, , , copy__range__done,
+	    (invp), (outvp), (retlen), (error));
 	vn_file_context_leave(&filectx);
 out:
 	if (rl_rcookie != NULL)

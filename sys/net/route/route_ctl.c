@@ -32,6 +32,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/sdt.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/socket.h>
@@ -66,6 +67,10 @@ _DECLARE_DEBUG(LOG_INFO);
  *
  * All functions assumes they are called in net epoch.
  */
+
+SDT_PROVIDER_DEFINE(routing);
+SDT_PROBE_DEFINE2(routing, , , action__start, "uint32_t", "int");
+SDT_PROBE_DEFINE3(routing, , , action__done, "uint32_t", "int", "int");
 
 union sockaddr_union {
 	struct sockaddr		sa;
@@ -1381,6 +1386,7 @@ rib_action(uint32_t fibnum, int action, struct rt_addrinfo *info,
 {
 	int error;
 
+	SDT_PROBE2(routing, , , action__start, fibnum, action);
 	switch (action) {
 	case RTM_ADD:
 		error = rib_add_route(fibnum, info, rc);
@@ -1395,6 +1401,7 @@ rib_action(uint32_t fibnum, int action, struct rt_addrinfo *info,
 		error = ENOTSUP;
 	}
 
+	SDT_PROBE3(routing, , , action__done, fibnum, action, error);
 	return (error);
 }
 

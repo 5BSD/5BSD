@@ -36,6 +36,20 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "pathresolve_trace.h"
+
+static char *
+trace_realpath(const char *path, char *resolved)
+{
+	char *result;
+
+	TRACE_PATHRESOLVE_OPERATION__START(0);
+	result = realpath(path, resolved);
+	TRACE_PATHRESOLVE_OPERATION__DONE(0, result != NULL,
+	    result == NULL ? errno : 0);
+	return (result);
+}
+
 static void usage(void) __dead2;
 
 int
@@ -62,7 +76,7 @@ main(int argc, char *argv[])
 	path = *argv != NULL ? *argv++ : ".";
 	rval  = 0;
 	do {
-		if ((p = realpath(path, buf)) == NULL) {
+		if ((p = trace_realpath(path, buf)) == NULL) {
 			if (!qflag)
 				warn("%s", path);
 			rval = 1;

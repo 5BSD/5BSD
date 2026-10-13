@@ -27,4 +27,11 @@ LINKS+=		${BINDIR}/gzip ${BINDIR}/gunzip \
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
 
+SRCS=	gzip.c
+
+.if ${MK_DTRACE} != "no" && !defined(RESCUE) && !defined(BOOTSTRAPPING)
+SRCS+=	gzipstream_provider.d
+CFLAGS+= -DWITH_COVERAGE_DTRACE
+.endif
+
 .include <bsd.prog.mk>

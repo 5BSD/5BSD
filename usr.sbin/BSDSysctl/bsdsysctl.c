@@ -39,6 +39,7 @@
 #include <unistd.h>
 
 #include "bsdsysctl_probes.h"
+#include "trace_pressure.h"
 #include "config.h"
 #include "interfaces.h"
 
@@ -508,6 +509,7 @@ session_open(struct session *session, int fd, const char *label,
 	if (session->label == NULL ||
 	    monotonic_ms(&session->last_request_ms) == -1) {
 		error = errno;
+		BSDSYSCTL_TRACE_SESSION_OPEN_FAILURE(1, error);
 		close(fd);
 		session_close(session);
 		return (errno = error, -1);
@@ -520,6 +522,7 @@ session_open(struct session *session, int fd, const char *label,
 	error = fidl_bsd_connection_create_with_options(fd, FIDL_BSD_SERVER,
 	    &options, &session->connection);
 	if (error != 0) {
+		BSDSYSCTL_TRACE_SESSION_OPEN_FAILURE(1, error);
 		session->connection = NULL;
 		close(fd);
 		session_close(session);
@@ -528,6 +531,7 @@ session_open(struct session *session, int fd, const char *label,
 	error = bsd_sysctl_v1_Sysctl_bind(session->connection, &handlers,
 	    session);
 	if (error != 0) {
+		BSDSYSCTL_TRACE_SESSION_OPEN_FAILURE(2, error);
 		session_close(session);
 		return (errno = error, -1);
 	}
@@ -551,6 +555,7 @@ sessions_admit(struct session *sessions, size_t count, int fd,
 			matching++;
 	}
 	if (free_slot == count || matching >= BSDSYSCTL_MAX_LABEL_SESSIONS) {
+		BSDSYSCTL_TRACE_SESSION_LIMIT(free_slot == count, matching);
 		close(fd);
 		return (errno = ENOSPC, -1);
 	}
@@ -570,9 +575,10 @@ sessions_wait(int kq, struct session *sessions, size_t count, int listener_fd,
 	for (i = 0; i < count; i++) {
 		if (sessions[i].connection != NULL) {
 			uint64_t elapsed = now - sessions[i].last_request_ms;
-			if (elapsed >= idle_ms)
+			if (elapsed >= idle_ms) {
+				BSDSYSCTL_TRACE_SESSION_CLOSE_REASON(1, ETIMEDOUT);
 				session_close(&sessions[i]);
-			else {
+			} else {
 				active = true;
 				if (idle_ms - elapsed < wait_ms)
 					wait_ms = idle_ms - elapsed;
@@ -603,6 +609,10 @@ sessions_wait(int kq, struct session *sessions, size_t count, int listener_fd,
 		if (slots[i].error != 0 || sessions[i].error != 0 ||
 		    (sessions[i].connection != NULL &&
 			now - sessions[i].last_request_ms >= idle_ms)) {
+			BSDSYSCTL_TRACE_SESSION_CLOSE_REASON(
+			    slots[i].error != 0 ? 2 : sessions[i].error != 0 ? 3 : 1,
+			    slots[i].error != 0 ? slots[i].error :
+			    sessions[i].error != 0 ? sessions[i].error : ETIMEDOUT);
 			if (sessions[i].error != 0)
 				*failed = 1;
 			session_close(&sessions[i]);

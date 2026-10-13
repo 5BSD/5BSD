@@ -39,6 +39,19 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "fifocreate_trace.h"
+
+static int
+trace_mkfifo(const char *path, mode_t mode)
+{
+	int result;
+
+	TRACE_FIFOCREATE_OPERATION__START(mode);
+	result = mkfifo(path, mode);
+	TRACE_FIFOCREATE_OPERATION__DONE(mode, result, result < 0 ? errno : 0);
+	return (result);
+}
+
 #define	BASEMODE	S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | \
 			S_IROTH | S_IWOTH
 
@@ -83,7 +96,7 @@ main(int argc, char *argv[])
 	}
 
 	for (exitval = 0; *argv != NULL; ++argv)
-		if (mkfifo(*argv, fifomode) < 0) {
+		if (trace_mkfifo(*argv, fifomode) < 0) {
 			warn("%s", *argv);
 			exitval = 1;
 		}

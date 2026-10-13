@@ -37,6 +37,7 @@
 #include <sys/cpuset.h>
 #include <sys/rtprio.h>
 #include <sys/systm.h>
+#include <sys/sdt.h>
 #include <sys/interrupt.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
@@ -65,6 +66,13 @@
 #include <ddb/ddb.h>
 #include <ddb/db_sym.h>
 #endif
+
+SDT_PROVIDER_DEFINE(irq);
+/* Threaded callbacks only: no fast filters, trap entry, NMI or IPI paths. */
+SDT_PROBE_DEFINE2(irq, , , thread__start,
+    "struct intr_event *", "struct intr_handler *");
+SDT_PROBE_DEFINE2(irq, , , thread__done,
+    "struct intr_event *", "struct intr_handler *");
 
 /*
  * Describe an interrupt thread.  There is one of these per interrupt event.
@@ -1181,7 +1189,9 @@ intr_event_execute_handlers(struct proc *p, struct intr_event *ie)
 
 		if (!(ih->ih_flags & IH_MPSAFE))
 			mtx_lock(&Giant);
+		SDT_PROBE2(irq, , , thread__start, ie, ih);
 		ih->ih_handler(ih->ih_argument);
+		SDT_PROBE2(irq, , , thread__done, ie, ih);
 		if (!(ih->ih_flags & IH_MPSAFE))
 			mtx_unlock(&Giant);
 	}
