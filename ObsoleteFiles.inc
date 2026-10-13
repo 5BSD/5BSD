@@ -1,3 +1,11 @@
+# 20261013: vendor PF integrates these interfaces in pf.ko; pflow uses
+# ifconfig(8), replacing the retired native netlink pflowctl interface.
+OLD_FILES+= boot/kernel/pflog.ko
+OLD_FILES+= boot/kernel/pflow.ko
+OLD_FILES+= boot/kernel/pfsync.ko
+OLD_FILES+= sbin/pflowctl
+OLD_FILES+= usr/share/man/man8/pflowctl.8.gz
+
 # 20261011: retire native procfs, old ABIs, GEOM classes and optional MAC policies
 OLD_FILES+= boot/kernel/aout.ko
 OLD_FILES+= boot/kernel/geom_ccd.ko
