@@ -7,6 +7,7 @@ TESTS_SUBDIRS+=	openbsd
 ATF_TESTS_SH+=	anchor \
 		counters \
 		debug \
+		delay \
 		divert-to \
 		dup \
 		ether \
@@ -73,6 +74,9 @@ ATF_TESTS_PYTEST+=	tcp.py
 TEST_METADATA+= execenv="jail"
 TEST_METADATA+= execenv_jail_params="vnet allow.raw_sockets allow.read_msgbuf"
 
+# Delay observes global SDT probes and changes the privileged shared pool limit.
+TEST_METADATA.delay+= execenv="" execenv_jail_params="" is_exclusive="true"
+
 ${PACKAGE}FILES+=	\
 			bsnmpd.conf \
 			CVE-2019-5597.py \
@@ -109,5 +113,12 @@ ${PACKAGE}FILESMODE_frag-adjhole.py=	0555
 ${PACKAGE}FILESMODE_pfsync_defer.py=	0555
 ${PACKAGE}FILESMODE_pft_ether.py=	0555
 ${PACKAGE}FILESMODE_pft_read_ipfix.py=	0555
+
+PROGS+=	delay_pool_limit
+BINDIR=	${TESTSDIR}
+MAN.delay_pool_limit=
+CFLAGS.delay_pool_limit+= -I${SRCTOP}/sys/netpfil/openbsd-pf/user
+CFLAGS.delay_pool_limit+= -I${SRCTOP}/contrib/openbsd-pf/sys
+CFLAGS.delay_pool_limit+= -include ${SRCTOP}/sys/netpfil/openbsd-pf/user/openbsd_compat.h
 
 .include <bsd.test.mk>
