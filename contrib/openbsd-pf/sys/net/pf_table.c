@@ -780,6 +780,17 @@ pfr_clr_astats(struct pfr_table *tbl, struct pfr_addr *addr, int size,
 	kt = pfr_lookup_table(tbl);
 	if (kt == NULL || !(kt->pfrkt_flags & PFR_TFLAG_ACTIVE))
 		return (ESRCH);
+	/* Clear marks before collecting unique entries in the work queue. */
+	for (i = 0; i < size; i++) {
+		YIELD(flags & PFR_FLAG_USERIOCTL);
+		if (COPYIN(addr+i, &ad, sizeof(ad), flags))
+			senderr(EFAULT);
+		if (pfr_validate_addr(&ad))
+			senderr(EINVAL);
+		p = pfr_lookup_addr(kt, &ad, 1);
+		if (p != NULL)
+			p->pfrke_flags &= ~PFRKE_FLAG_MARK;
+	}
 	SLIST_INIT(&workq);
 	for (i = 0; i < size; i++) {
 		YIELD(flags & PFR_FLAG_USERIOCTL);
@@ -794,7 +805,9 @@ pfr_clr_astats(struct pfr_table *tbl, struct pfr_addr *addr, int size,
 			if (COPYOUT(&ad, addr+i, sizeof(ad), flags))
 				senderr(EFAULT);
 		}
-		if (p != NULL) {
+		/* An address given more than once is cleared once. */
+		if (p != NULL && !(p->pfrke_flags & PFRKE_FLAG_MARK)) {
+			p->pfrke_flags |= PFRKE_FLAG_MARK;
 			SLIST_INSERT_HEAD(&workq, p, pfrke_workq);
 			xzero++;
 		}
