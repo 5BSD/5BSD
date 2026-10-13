@@ -1,4 +1,4 @@
-PACKAGE=examples
+PACKAGE=pf
 FILES=	README pf.conf
 
 FILESDIR=	${SHAREDIR}/examples/pf

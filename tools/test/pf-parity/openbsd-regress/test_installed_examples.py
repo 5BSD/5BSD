@@ -28,6 +28,15 @@ class InstalledExamples(unittest.TestCase):
         files = subprocess.check_output(['make', '-C', str(ROOT / 'share/examples/pf'),
                                          '-V', 'FILES'], text=True).split()
         self.assertEqual(sorted(files), ['README', 'pf.conf'])
+        # World installs via the parent SE_PF group, not this subdirectory.
+        actual = subprocess.check_output(['make', '-C', str(ROOT / 'share/examples'),
+                                          '-V', 'SE_PF', '-V', 'SE_PFPACKAGE'],
+                                         text=True).splitlines()
+        self.assertEqual(sorted(actual[0].split()), ['README', 'pf.conf'])
+        self.assertEqual(actual[1], 'pf')
+        package = subprocess.check_output(['make', '-C', str(ROOT / 'share/examples/pf'),
+                                          '-V', 'PACKAGE'], text=True).strip()
+        self.assertEqual(package, actual[1])
         obsolete = (ROOT / 'ObsoleteFiles.inc').read_text()
         for name in ['ackpri', 'faq-example1', 'faq-example2', 'faq-example3',
                      'queue1', 'queue2', 'queue3', 'queue4', 'spamd']:

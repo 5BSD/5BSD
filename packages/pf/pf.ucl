@@ -22,13 +22,15 @@ desc = <<EOD
 pf is an advanced stateful packet filter developed by the OpenBSD project.
 In addition to basic packet filtering, pf supports connection redirection,
 Network Address Translation (NAT), traffic normalisation, synchronisation
-of filter state between hosts (for redundant failover), and queueing via
-altq(9) or dummynet(4).  This version of pf also supports basic layer 2
-Ethernet filtering.
+of filter state between hosts (for redundant failover). Queue configuration
+is not currently supported by this port. The integrated pf kernel module
+provides pflog, pflow and pfsync interfaces and belongs to the matching kernel
+package; kernels may instead include PF as a built-in device.
 
 This package provides the pfctl(8) configuration utility used to monitor and
 change the pf configuration, as well as rc(8) scripts to configure pf during
 system startup, and a periodic(8) script to report connections denied by pf.
 
-Several example pf rulesets are also provided in /usr/share/examples/pf.
+An inactive example template is provided in /usr/share/examples/pf.
+The administrator supplies /etc/pf.conf; this package does not replace it.
 EOD
