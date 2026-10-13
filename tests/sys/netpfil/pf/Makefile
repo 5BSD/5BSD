@@ -57,6 +57,7 @@ ATF_TESTS_SH+=	anchor \
 		table \
 		tcp \
 		tos \
+		transaction \
 		unmapped_mbuf
 
 ATF_TESTS_PYTEST+=	frag4.py
@@ -82,6 +83,7 @@ TEST_METADATA.delay+= execenv="" execenv_jail_params="" is_exclusive="true"
 TEST_METADATA.priority+= execenv="" execenv_jail_params="" is_exclusive="true"
 TEST_METADATA.prio+= execenv="" execenv_jail_params="" is_exclusive="true"
 TEST_METADATA.statefile+= execenv="" execenv_jail_params="" is_exclusive="true"
+TEST_METADATA.transaction+= execenv="" execenv_jail_params="" is_exclusive="true"
 
 ${PACKAGE}FILES+=	\
 			bsnmpd.conf \
@@ -120,11 +122,16 @@ ${PACKAGE}FILESMODE_pfsync_defer.py=	0555
 ${PACKAGE}FILESMODE_pft_ether.py=	0555
 ${PACKAGE}FILESMODE_pft_read_ipfix.py=	0555
 
-PROGS+=	delay_pool_limit
+PROGS+=	delay_pool_limit statusif_transaction
 BINDIR=	${TESTSDIR}
 MAN.delay_pool_limit=
 CFLAGS.delay_pool_limit+= -I${SRCTOP}/sys/netpfil/openbsd-pf/user
 CFLAGS.delay_pool_limit+= -I${SRCTOP}/contrib/openbsd-pf/sys
 CFLAGS.delay_pool_limit+= -include ${SRCTOP}/sys/netpfil/openbsd-pf/user/openbsd_compat.h
+
+MAN.statusif_transaction=
+CFLAGS.statusif_transaction+= -I${SRCTOP}/sys/netpfil/openbsd-pf/user
+CFLAGS.statusif_transaction+= -I${SRCTOP}/contrib/openbsd-pf/sys
+CFLAGS.statusif_transaction+= -include ${SRCTOP}/sys/netpfil/openbsd-pf/user/openbsd_compat.h
 
 .include <bsd.test.mk>
