@@ -403,8 +403,8 @@ re=$(for p in $over; do printf '%s|' "$p"; done | sed -e 's/|$//' -e 's/\./\\./g
 	fi
 } | awk 'NR == 1 { print; next } NF { print }' > "$work/METALOG.raw"
 # Keep one record per path (makefs rejects duplicates in manifest mode); the
-# first record wins, and the stage's duplicates differ only in tags=.
-{ head -n 1 "$work/METALOG.raw"; tail -n +2 "$work/METALOG.raw" | awk '!seen[$1]++' |
+# last record wins: signing can update executable sizes after installation.
+{ head -n 1 "$work/METALOG.raw"; tail -n +2 "$work/METALOG.raw" | awk '{ record[$1] = $0 } END { for (path in record) print record[path] }' |
     env -i LC_ALL=C sort -k1,1; } > "$work/METALOG"
 for p in $over; do
 	n=$(grep -c "^\./$p " "$work/METALOG" || true)

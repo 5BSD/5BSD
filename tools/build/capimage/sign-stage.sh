@@ -113,6 +113,10 @@ for bundle in "$stage"/Capabilities/System/*.cap; do
     for image in "$bundle"/Units/*.unit/bin/*; do
         [ -f "$image" ] && [ ! -L "$image" ] || continue
         image_relative=${image#"$stage"/}
+        # Replace the pre-signing size; consumers must never truncate the
+        # appended signature by selecting an older METALOG record.
+        awk -v p="./$image_relative" '$1 != p' "$stage/METALOG" > "$scratch/METALOG"
+        mv "$scratch/METALOG" "$stage/METALOG"
         printf './%s type=file uname=root gname=wheel mode=%s size=%s tags=%s\n' \
             "$image_relative" "$(stat -f %Lp "$image")" "$(stat -f %z "$image")" "$tag" >> "$stage/METALOG"
     done
