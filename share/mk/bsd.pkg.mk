@@ -207,7 +207,8 @@ ${_pkgfullname}.pkgucl: ${_pkgfullname}.ucl.in
 
 # Stage the packages from objdir into repodir.
 
-stagepackages: .PHONY
+# Staging may be requested directly or alongside all under -j.
+stagepackages: all .PHONY
 	mkdir -p ${_STAGEDIR}
 	cp ${_ALLPACKAGES:S/^/${PKG_NAME_PREFIX}-/:S/$/-${PKG_VERSION}.pkg/} \
 		${_STAGEDIR}
