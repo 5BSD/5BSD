@@ -50,6 +50,7 @@ ATF_TESTS_SH+=	anchor \
 		set_tos \
 		snmp \
 		src_track \
+		statefile \
 		status \
 		syncookie \
 		synproxy \
@@ -80,6 +81,7 @@ TEST_METADATA.delay+= execenv="" execenv_jail_params="" is_exclusive="true"
 # Priority observes kernel FBT probes while creating its own VNET fixture.
 TEST_METADATA.priority+= execenv="" execenv_jail_params="" is_exclusive="true"
 TEST_METADATA.prio+= execenv="" execenv_jail_params="" is_exclusive="true"
+TEST_METADATA.statefile+= execenv="" execenv_jail_params="" is_exclusive="true"
 
 ${PACKAGE}FILES+=	\
 			bsnmpd.conf \
