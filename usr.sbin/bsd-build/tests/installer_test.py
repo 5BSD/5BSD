@@ -34,8 +34,8 @@ class Installer(unittest.TestCase):
         self.tool.chmod(0o755)
         self.scripts = self.base / 'scripts'
         self.scripts.mkdir()
-        for name in ('auto', 'repository.subr', 'verify-image'):
-            (self.scripts / name).write_text('BSDINSTALL_CODE_PUBLIC_KEY bsdinstall_repository')
+        for name in ('auto', 'repository.subr', 'verify-image', 'pkgbase'):
+            (self.scripts / name).write_text('BSDINSTALL_CODE_PUBLIC_KEY bsdinstall_repository BSDINSTALL_KERNEL')
         self.events = []
         self.fail_copy = False
         self.fail_install = False
@@ -61,9 +61,11 @@ class Installer(unittest.TestCase):
             raise subprocess.CalledProcessError(1, words)
         return SimpleNamespace(returncode=0)
 
-    def invoke(self, plan=False, uid=0):
+    def invoke(self, plan=False, uid=0, kernel=None):
         argv = ['installer', '--repository', str(self.repo), '--pkg-public-key', str(self.key),
                 '--public-key', str(self.key), '--capsign', str(self.tool), '--elfcache', str(self.tool)]
+        if kernel is not None:
+            argv.extend(["--kernel", kernel])
         if plan:
             argv.append('--plan')
         with patch.object(sys, 'argv', argv), \
@@ -89,6 +91,22 @@ class Installer(unittest.TestCase):
         self.assertNotEqual(environment['BSDINSTALL_PKG_REPOS_DIR'], '/wrong')
         self.assertEqual(Path(environment['BSDINSTALL_CODE_PUBLIC_KEY']).read_text(), self.key.read_text())
         self.assertEqual(self.events[1][1], [str(self.tool), 'auto'])
+
+    def test_selected_kernel_reaches_installer(self):
+        self.names['5BSD-kernel-custom-debug'] = None
+        self.invoke(kernel='CUSTOM_DEBUG')
+        self.assertEqual(self.events[1][2]['env']['BSDINSTALL_KERNEL'], 'CUSTOM_DEBUG')
+
+    def test_old_kernel_selector_rejected(self):
+        (self.scripts / 'pkgbase').write_text('old selector')
+        with self.assertRaisesRegex(ValueError, 'kernel selection'):
+            self.invoke()
+        self.assertEqual(self.events, [])
+
+    def test_invalid_kernel_never_launches(self):
+        with self.assertRaisesRegex(ValueError, 'invalid kernel'):
+            self.invoke(kernel='../GENERIC')
+        self.assertEqual(self.events, [])
 
     def test_bad_payload_never_launches(self):
         self.fail_copy = True

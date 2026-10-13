@@ -701,8 +701,39 @@ stage_layout_body()
         sh "$(atf_get_srcdir)/verify-stage.sh" -r stage -p public
 }
 
+# The signature is ordinary inspectable ELF metadata, outside all load segments.
+atf_test_case elf_note_tooling
+elf_note_tooling_head() { atf_set require.progs 'cc openssl readelf objcopy strip'; }
+elf_note_tooling_body()
+{
+    setup
+    atf_check -s exit:0 strip -s demo
+    atf_check -s exit:0 "$capsign" sign -m policy -k key -o signed demo
+    atf_check -s exit:0 -o ignore "$capsign" verify -p public signed
+    atf_check -s exit:0 -o save:sections readelf -SW signed
+    atf_check -s exit:0 -o ignore grep -E '\.note\.5bsd\.signature[[:space:]]+NOTE' sections
+    atf_check -s exit:0 -o save:notes readelf -n signed
+    atf_check -s exit:0 -o ignore grep '5BSD' notes
+    readelf -lW demo | awk '$1 == "LOAD" { print }' > original-loads
+    readelf -lW signed | awk '$1 == "LOAD" { print }' > signed-loads
+    [ -s original-loads ] || atf_fail 'no load segments inspected'
+    atf_check -s exit:0 cmp original-loads signed-loads
+    atf_check -s exit:0 "$capsign" remove -o restored signed
+    atf_check -s exit:0 cmp demo restored
+    atf_check -s exit:0 "$capsign" sign -m policy -k key -o resigned restored
+    atf_check -s exit:0 -o ignore "$capsign" verify -p public resigned
+    printf 'damaged signature note' > damage
+    atf_check -s exit:0 -o ignore -e ignore objcopy --update-section .note.5bsd.signature=damage signed damaged
+    atf_check -s not-exit:0 -e ignore "$capsign" verify -p public damaged
+    # ELF transformations occur before signing. An otherwise harmless section
+    # rename changes authenticated metadata and must require re-signing.
+    atf_check -s exit:0 -o ignore -e ignore objcopy --rename-section .note.5bsd.signature=.note.changed signed renamed
+    atf_check -s not-exit:0 -e ignore "$capsign" verify -p public renamed
+}
+
 atf_init_test_cases()
 {
+    atf_add_test_case elf_note_tooling
     atf_add_test_case stage_layout
     atf_add_test_case verify_stage
     atf_add_test_case resign_image

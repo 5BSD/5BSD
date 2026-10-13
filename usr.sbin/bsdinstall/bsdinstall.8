@@ -339,6 +339,13 @@ base system packages, e.g.,
 .Dq base kernel-dbg tests .
 Default:
 .Dq base .
+.It Ev BSDINSTALL_KERNEL
+Kernel configuration to install from pkgbase, such as GENERIC or GENERIC-NODEBUG.
+The name is converted to the corresponding package name.
+Without an explicit selection, the repository must contain exactly one
+non-debug-symbol kernel package.
+Hardware packages from the combined repository are installed automatically
+for system installations, and omitted for jails.
 .It Ev PARTITIONS
 The partitioning of the disk onto which the system is being installed.
 See

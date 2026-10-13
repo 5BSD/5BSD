@@ -31,6 +31,13 @@ ATF_TESTS_C+= cache_elf_test
 SRCS.cache_elf_test= cache_elf_test.c elf_cache_eligible.c
 CFLAGS.cache_elf_test+= -I${SRCTOP}/libexec/rtld-elf
 
+ATF_TESTS_C+= cache_pin_test
+CFLAGS.cache_pin_test.c+= -I${.OBJDIR}
+cache_pin_test.c: cache_pin_func.c
+cache_pin_func.c: ${SRCTOP}/libexec/rtld-elf/elf_cache.c
+	sed -ne '/^rtld_cache_pin_fallback(/,/^}/p' ${.ALLSRC} >${.TARGET}
+CLEANFILES+= cache_pin_func.c
+
 WARNS?=		3
 
 

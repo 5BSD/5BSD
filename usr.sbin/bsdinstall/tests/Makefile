@@ -9,6 +9,7 @@ ATF_TESTS_SH=	config_test \
 		hostname_test \
 		jail_test \
 		ports_test \
+		pkgbase_selection_test \
 		repository_test \
 		storage_requirement_test \
 		tzfspool_test

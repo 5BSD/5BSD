@@ -29,10 +29,12 @@
 #include <sys/vnode.h>
 #include <crypto/sha2/sha256.h>
 #include <opencrypto/cryptodesc_ed25519.h>
+#include <sys/capimage_elf.h>
 #include "mac_veriexec.h"
 #include "mac_veriexec_internal.h"
 
 FEATURE(veriexec_capimage, "Embedded ELF signature integrity on exec");
+FEATURE(veriexec_capimage_elf_note, "ELF-native signature note verification");
 FEATURE(veriexec_capimage_handle, "Explicit pinned integrity handles");
 FEATURE(veriexec_capimage_mmap, "Embedded signature mmap integrity and lifetime");
 
@@ -52,27 +54,44 @@ capimage_read(struct vnode *vp, void *buf, size_t size, off_t offset,
 	return (error != 0 ? error : resid != 0 ? EAUTH : 0);
 }
 
+/* The same bounded ELF locator parser is used by the signer and rtld. */
+struct capimage_vnode_reader {
+	struct vnode *vp;
+	struct ucred *cred;
+	int error;
+};
+
+static int
+capimage_vnode_read(void *context, uint64_t offset, void *data, size_t size)
+{
+	struct capimage_vnode_reader *reader = context;
+
+	reader->error = capimage_read(reader->vp, data, size, offset, reader->cred);
+	return (reader->error);
+}
+
 /* Caller holds the vnode locked through verification and exec text pinning. */
 static int
 capimage_check(struct ucred *cred, struct vnode *vp, off_t size,
     bool required, bool *signedp, enum capimage_check_source source,
     struct capimage_info *info, bool raw_digest)
 {
-	struct capimage_footer footer;
+	struct capimage_elf_info image;
+	struct capimage_vnode_reader reader = { .vp = vp, .cred = cred };
 	struct capimage_header header;
 	SHA256_CTX ctx, raw_ctx, policy_ctx;
 	uint8_t digest[SHA256_DIGEST_LENGTH], *buffer;
-	uint64_t offset, container_size, hashed_bytes = 0;
+	uint64_t offset, hashed_bytes = 0;
 	bool recognized = false;
 	off_t pos, zero, first, last;
 	size_t take;
-	int error, close_error;
+	int error, close_error, probe;
 
 	if (signedp != NULL)
 		*signedp = false;
 	ASSERT_VOP_LOCKED(vp, "mac_veriexec_capimage_check");
 	SDT_PROBE3(capimage, , verify, start, source, size, required);
-	if (vp->v_type != VREG || size < (off_t)sizeof(footer)) {
+	if (vp->v_type != VREG || size < 32) {
 		error = required ? EAUTH : 0;
 		goto done;
 	}
@@ -80,41 +99,24 @@ capimage_check(struct ucred *cred, struct vnode *vp, off_t size,
 	if (error != 0)
 		goto done;
 	buffer = NULL;
-	error = capimage_read(vp, &footer, sizeof(footer), size - sizeof(footer),
-	    cred);
-	if (error != 0)
-		goto out;
-	/* No canonical EOF marker means no embedded signature.  Requiring an
-	 * identity to remain signed is a separate enrollment/bundle policy. */
-	if (memcmp(footer.magic, "5BSDEND", sizeof(footer.magic)) != 0) {
+	probe = capimage_elf_probe(capimage_vnode_read, &reader, size, &image);
+	if (probe == 0) {
 		error = required ? EAUTH : 0;
 		goto out;
 	}
 	recognized = true;
+	if (probe < 0) {
+		error = reader.error != 0 ? reader.error : EAUTH;
+		goto out;
+	}
 	if (vp->v_writecount > 0) {
 		error = ETXTBSY;
 		goto out;
 	}
-	offset = le64toh(footer.offset);
-	container_size = le64toh(footer.size);
-	if ((uint64_t)size > CAPIMAGE_FILE_MAX ||
-	    le32toh(footer.version) != CAPIMAGE_VERSION || footer.reserved != 0 ||
-	    offset < 64 || offset > (uint64_t)size - sizeof(footer) ||
-	    container_size < sizeof(header) + 1 ||
-	    container_size > sizeof(header) + CAPIMAGE_POLICY_MAX ||
-	    container_size != (uint64_t)size - sizeof(footer) - offset) {
-		error = EAUTH;
-		goto out;
-	}
+	offset = image.descriptor_offset;
 	error = capimage_read(vp, &header, sizeof(header), offset, cred);
 	if (error != 0)
 		goto out;
-	if (memcmp(header.magic, "5BSDSIG", sizeof(header.magic)) != 0 ||
-	    le32toh(header.version) != CAPIMAGE_VERSION ||
-	    le32toh(header.policy_size) != container_size - sizeof(header)) {
-		error = EAUTH;
-		goto out;
-	}
 	buffer = malloc(PAGE_SIZE, M_VERIEXEC, M_WAITOK);
 	SHA256_Init(&ctx);
 	SHA256_Update(&ctx, CAPIMAGE_DOMAIN, sizeof(CAPIMAGE_DOMAIN));
@@ -132,7 +134,7 @@ capimage_check(struct ucred *cred, struct vnode *vp, off_t size,
 			SHA256_Update(&raw_ctx, buffer, take);
 		if (info != NULL) {
 			first = MAX(pos, (off_t)(offset + sizeof(header)));
-			last = MIN(pos + (off_t)take, (off_t)(offset + container_size));
+			last = MIN(pos + (off_t)take, (off_t)(offset + sizeof(header) + le32toh(header.policy_size)));
 			if (first < last)
 				SHA256_Update(&policy_ctx, buffer + first - pos, last - first);
 		}
@@ -155,7 +157,7 @@ capimage_check(struct ucred *cred, struct vnode *vp, off_t size,
 			memset(info, 0, sizeof(*info));
 			info->version = CAPIMAGE_HANDLE_VERSION;
 			info->struct_size = sizeof(*info);
-			info->container_version = CAPIMAGE_VERSION;
+			info->container_version = image.version;
 			info->file_size = size;
 			info->policy_offset = offset + sizeof(header);
 			info->policy_size = le32toh(header.policy_size);
@@ -402,14 +404,15 @@ int
 mac_veriexec_capimage_prepare(struct thread *td, void *arg)
 {
 	struct capimage_prepare request;
-	struct capimage_footer footer;
+	struct capimage_elf_info image;
+	struct capimage_vnode_reader reader;
 	struct capimage_handle *h = NULL;
 	struct file *backing = NULL, *fresh = NULL;
 	struct vnode *vp;
 	struct vattr va;
 	cap_rights_t rights;
 	bool pinned = false;
-	int error, fd;
+	int error, fd, probe;
 
 	error = copyin(arg, &request, sizeof(request));
 	if (error != 0)
@@ -437,15 +440,14 @@ mac_veriexec_capimage_prepare(struct thread *td, void *arg)
 	error = VOP_GETATTR(vp, &va, td->td_ucred);
 	if (error != 0)
 		goto unlock;
-	memset(&footer, 0, sizeof(footer));
-	if (va.va_size >= (off_t)sizeof(footer)) {
-		error = capimage_read(vp, &footer, sizeof(footer),
-		    va.va_size - sizeof(footer), td->td_ucred);
-		if (error != 0)
-			goto unlock;
+	reader = (struct capimage_vnode_reader){ .vp = vp, .cred = td->td_ucred };
+	probe = capimage_elf_probe(capimage_vnode_read, &reader, va.va_size, &image);
+	if (probe < 0) {
+		error = reader.error != 0 ? reader.error : EAUTH;
+		goto unlock;
 	}
 	/* Unsigned introspection must not pin, or fail because writers exist. */
-	if (memcmp(footer.magic, "5BSDEND", sizeof(footer.magic)) != 0) {
+	if (probe == 0) {
 		error = (request.flags & CAPIMAGE_PREPARE_REQUIRED) != 0 ? ENOATTR : 0;
 		if (error == 0 && (request.flags & CAPIMAGE_PREPARE_VVERIFY) != 0)
 			error = mac_veriexec_capimage_open_policy(td->td_ucred, vp);

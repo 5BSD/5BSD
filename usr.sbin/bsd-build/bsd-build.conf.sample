@@ -35,6 +35,10 @@ ports=/usr/obj/5BSD-ports
 # pkg_public_key=/secure/pkg-signing.pub
 # public_key=/secure/code-signing.pub
 # bootenv=5bsd-next
+# Optional source; otherwise clone the current boot environment:
+# clone_from=5bsd-current@before-upgrade
+# Optional explicit BE parent dataset (requires clone_from):
+# be_root=zroot/ROOT
 # Or use root=/usr/obj/usr/src/installed-root (must not exist).
 
 # For the media action: all, iso, or memstick.

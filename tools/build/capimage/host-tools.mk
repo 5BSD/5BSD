@@ -35,3 +35,8 @@ sys/elf_cache_layout.h: ${SRCTOP}/sys/sys/elf_cache_layout.h
 	mkdir -p sys
 	cp ${.ALLSRC} ${.TARGET}
 elfcache.o layout.o: sys/elf_cache.h sys/elf_cache_layout.h sys/capimage.h
+
+sys/capimage_elf.h: ${SRCTOP}/sys/sys/capimage_elf.h
+	mkdir -p sys
+	cp ${.ALLSRC} ${.TARGET}
+capimage.o: sys/capimage_elf.h

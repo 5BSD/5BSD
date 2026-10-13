@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -76,6 +77,107 @@ def load_hardware():
     return hw
 
 
+# A clone receives its own package database. Shared package/software mounts
+# are not silently updated through an inactive root's empty mountpoints.
+BE_PRIVATE_PATHS = ('etc', 'usr/local', 'var/db/pkg', 'Capabilities/System')
+
+
+def be_name(value):
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,62}', value):
+        raise ValueError('invalid boot environment name')
+    return value
+
+
+def mount_inventory():
+    result = command('/sbin/mount', '-p', capture=True)
+    if result.stderr:
+        raise ValueError('cannot read mount inventory')
+    rows = []
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 6:
+            raise ValueError('malformed mount inventory')
+        source, target, kind = fields[:3]
+        target = re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), target)
+        rows.append((source, Path(target), kind, fields[3].split(',')))
+    return rows
+
+
+def zfs_properties(dataset):
+    result = command('/sbin/zfs', 'get', '-Hp', '-o', 'property,value',
+                     'guid,origin,readonly', dataset, capture=True)
+    props = dict(line.split('\t', 1) for line in result.stdout.splitlines())
+    if result.stderr or set(props) != {'guid', 'origin', 'readonly'} or not props['guid'].isdigit():
+        raise ValueError('invalid ZFS identity response')
+    return props
+
+
+def be_source(clone_from=None, be_root=None):
+    mounts = mount_inventory()
+    active = [row for row in mounts if row[1] == Path('/')]
+    if be_root is None:
+        if len(active) != 1 or active[0][2] != 'zfs':
+            raise ValueError('boot-environment deployment requires a ZFS root')
+        be_root, active_name = active[0][0].rsplit('/', 1)
+        clone_from = clone_from or active_name
+    elif not clone_from:
+        raise ValueError('--be-root requires an explicit --clone-from')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_./:-]*', be_root) or any(x in ('', '.', '..') for x in be_root.split('/')):
+        raise ValueError('invalid boot-environment root dataset')
+    if clone_from.startswith(be_root + '/'):
+        clone_from = clone_from[len(be_root)+1:]
+    parts = clone_from.split('@')
+    if len(parts) > 2:
+        raise ValueError('invalid source snapshot')
+    be_name(parts[0])
+    if len(parts) == 2 and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}', parts[1]):
+        raise ValueError('invalid source snapshot')
+    source = be_root + '/' + parts[0]
+    props = zfs_properties(source)
+    # Reject known shared software/database paths. Home/data mounts may remain
+    # shared: this operation does not write or migrate them.
+    for row in mounts:
+        if row[1] == Path('/'):
+            continue
+        for relative in BE_PRIVATE_PATHS:
+            critical = Path('/') / relative
+            if row[1] == critical or row[1] in critical.parents or critical in row[1].parents:
+                raise ValueError('shared or separately mounted deployment state requires explicit migration: ' + str(row[1]))
+    return {'root': be_root, 'selector': clone_from, 'source': source, 'guid': props['guid']}
+
+
+def be_create(name, source):
+    prefix = ['bectl', '-r', source['root']]
+    command(*prefix, 'create', '-r', '-e', source['selector'], name)
+    target = source['root'] + '/' + name
+    props = zfs_properties(target)
+    if props['guid'] == source['guid'] or not props['origin'].startswith(source['source'] + '@'):
+        raise ValueError('new boot environment does not have an independent clone identity')
+    if '@' in source['selector'] and props['origin'] != source['root'] + '/' + source['selector']:
+        raise ValueError('new boot environment has the wrong snapshot origin')
+    command('/sbin/zfs', 'set', 'readonly=off', target)
+    return prefix
+
+
+def be_check_target(root, source, name):
+    rows = mount_inventory()
+    matching = [row for row in rows if row[1] == root]
+    target = source['root'] + '/' + name
+    if len(matching) != 1 or matching[0][0] != target or matching[0][2] != 'zfs' or 'rw' not in matching[0][3]:
+        raise ValueError('candidate is not the expected writable ZFS clone')
+    root_dev = root.stat().st_dev
+    for relative in BE_PRIVATE_PATHS:
+        current = root
+        for part in Path(relative).parts:
+            current = current / part
+            try:
+                info = current.lstat()
+            except FileNotFoundError:
+                break
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or info.st_dev != root_dev:
+                raise ValueError('candidate package/software state is not private to the clone: ' + str(current))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repository', type=Path, required=True)
@@ -85,6 +187,8 @@ def main():
     target.add_argument('--root', type=Path)
     target.add_argument('--bootenv')
     parser.add_argument('--kernel', default='GENERIC')
+    parser.add_argument('--clone-from', help='source BE or BE@snapshot; defaults to active BE')
+    parser.add_argument('--be-root', help='explicit ZFS boot-environment parent dataset')
     parser.add_argument('--plan', action='store_true')
     parser.add_argument('--capsign', default='/usr/sbin/capsign')
     parser.add_argument('--elfcache', default='/usr/sbin/elfcache')
@@ -102,6 +206,10 @@ def main():
         raise ValueError('invalid kernel configuration name')
     if args.bootenv and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,62}', args.bootenv):
         raise ValueError('invalid boot environment name')
+    if (args.clone_from or args.be_root) and not args.bootenv:
+        raise ValueError('--clone-from/--be-root require --bootenv')
+    if args.clone_from and any(ord(c) < 32 for c in args.clone_from):
+        raise ValueError('invalid source snapshot')
     root = new_root(args.root) if args.root else None
     print('repository=' + str(repository))
     print('target=' + (str(root) if root else 'new inactive boot environment ' + args.bootenv))
@@ -109,6 +217,8 @@ def main():
         print('verify signed pkg catalogue and archive downloads; select base, kernel and matching hardware')
         print('create destination; install using target chroot and isolated pkg database')
         print('verify all signed system bundles and cache with capsign/elfcache; unmount boot environment')
+        if args.bootenv:
+            print('clone source=' + (args.clone_from or 'current boot environment'))
         print('no boot environment activation or reboot')
         return
     if os.geteuid() != 0:
@@ -147,17 +257,24 @@ def main():
     install_names = sorted(hw.manifest(archive)['name'] for archive in archives)
     if len(install_names) != len(set(install_names)):
         raise ValueError('duplicate fetched package identity')
+    source = be_source(args.clone_from, args.be_root) if args.bootenv else None
+    be_prefix = ['bectl', '-r', source['root']] if source else None
     mounted = False
+    mount_attempted = False
     devmounted = False
     created = False
     try:
         if args.bootenv:
             root = scratch / 'root'
             # Existing names cause bectl to fail; never destroy or reuse one.
-            command('bectl', 'create', '-r', args.bootenv)
+            # Record creation intent so a failure retains a useful diagnostic.
+            # bectl refuses an existing target; no destroy or activation occurs.
             created = True
-            command('bectl', 'mount', args.bootenv, root)
+            be_prefix = be_create(args.bootenv, source)
+            mount_attempted = True
+            command(*be_prefix, 'mount', args.bootenv, root)
             mounted = True
+            be_check_target(root, source, args.bootenv)
         else:
             root.mkdir(mode=0o700)
             created = True
@@ -205,8 +322,8 @@ def main():
     finally:
         if devmounted:
             command('umount', root / 'dev')
-        if mounted:
-            command('bectl', 'unmount', args.bootenv)
+        if mount_attempted:
+            command(*be_prefix, 'unmount', args.bootenv)
     if not args.bootenv:
         root.chmod(0o755)
     print('DEPLOYMENT_VERIFIED target=' + (args.bootenv or str(root)))

@@ -127,7 +127,7 @@ retrying; no existing files are overwritten.
 Extraction does not install or activate the libraries.
 Without an explicit public key, verification uses the system trust catalogue.
 .Pp
-Cache format version 2 excludes each source library's appended signature and
+Cache format version 1 excludes each source library's appended signature and
 policy container.
 The cache has its own detached signature.
 Extraction produces unsigned ELF files, not the original signed artifacts.
@@ -145,7 +145,7 @@ The
 .Cm layout
 command creates a separate signed relative-layout sidecar bound to the full
 cache generation by SHA-256.
-It leaves cache version 2 unchanged.
+It leaves cache version 1 unchanged.
 With
 .Fl p ,
 it first verifies the input cache signature.

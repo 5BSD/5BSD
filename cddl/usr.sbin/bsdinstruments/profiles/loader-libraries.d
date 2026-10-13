@@ -21,13 +21,13 @@ struct ec_profile {
 };
 dtrace:::BEGIN
 {
-    printf("ELFPROFILE_BEGIN\t2\n");
+    printf("ELFPROFILE_BEGIN\t1\n");
 }
 syscall::utrace:entry
-/arg1 == 704 && stringof(copyin(arg0, 8)) == "ECLOAD2" /* @bsdinstruments-predicate-and */ /
+/arg1 == 704 && stringof(copyin(arg0, 8)) == "ECLOAD1" /* @bsdinstruments-predicate-and */ /
 {
     this->event = (struct ec_profile *)copyin(arg0, 704);
-    printf("ELFLOAD2\t%llu\t%u\t%u\t%S\t%u\t%u\t%llu\t%llu\t%llu\t%llu\t%llu\t%llu\t%S\t%S\t%S\n",
+    printf("ELFLOAD1\t%llu\t%u\t%u\t%S\t%u\t%u\t%llu\t%llu\t%llu\t%llu\t%llu\t%llu\t%S\t%S\t%S\n",
         (unsigned long long)timestamp, pid, tid, execname,
         this->event->flags, this->event->reason, (unsigned long long)this->event->bytes,
         (unsigned long long)this->event->lookup_ns, (unsigned long long)this->event->cache_ns,
@@ -42,5 +42,5 @@ dtrace:::ERROR
 }
 dtrace:::END
 {
-    printf("ELFPROFILE_END\t2\n");
+    printf("ELFPROFILE_END\t1\n");
 }

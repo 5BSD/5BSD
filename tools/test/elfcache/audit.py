@@ -26,17 +26,17 @@ def cache_entries(path):
         if len(head) != 64:
             raise ValueError('short cache header')
         magic, version, count, length, alignment, stride, reserved = struct.unpack('<8sIIQII32s', head)
-        if (magic != b'5BSDELF\0' or version != 2 or not 0 < count <= 4096 or
+        if (magic != b'5BSDELF\0' or version != 1 or not 0 < count <= 4096 or
                 length != size or size > 4 * 1024**3 or alignment != 65536 or
-                stride != 192 or any(reserved)):
+                stride != 224 or any(reserved)):
             raise ValueError('invalid cache header')
         result = {}
         previous = (-1, b'')
         for _ in range(count):
-            raw = stream.read(192)
-            if len(raw) != 192:
+            raw = stream.read(224)
+            if len(raw) != 224:
                 raise ValueError('short cache index')
-            directory, reserved, offset, length, source_length, digest, rawname = struct.unpack('<IIQQQ32s128s', raw)
+            directory, reserved, offset, length, source_length, digest, source_digest, rawname = struct.unpack('<IIQQQ32s32s128s', raw)
             name, separator, _ = rawname.partition(b'\0')
             if (directory > 1 or reserved or not separator or not name or
                     b'/' in name or name in (b'.', b'..') or
@@ -45,8 +45,8 @@ def cache_entries(path):
                     offset + length > size or source_length < length):
                 raise ValueError('invalid cache index entry')
             previous = directory, name
-            result[DIRECTORIES[directory] + '/' + os.fsdecode(name)] = (offset, length, digest, source_length)
-        for name, (offset, length, digest, source_length) in result.items():
+            result[DIRECTORIES[directory] + '/' + os.fsdecode(name)] = (offset, length, digest, source_length, source_digest)
+        for name, (offset, length, digest, source_length, source_digest) in result.items():
             stream.seek(offset)
             actual = hashlib.sha256()
             remaining = length
@@ -59,6 +59,19 @@ def cache_entries(path):
             if actual.digest() != digest:
                 raise ValueError('cache payload digest mismatch: ' + name)
         return result
+
+
+def source_matches(path, entry):
+    # The index authenticates separate source and extracted-payload identities. Signed
+    # ELF headers differ from their unsigned cache payload, so never compare a
+    # source prefix against the payload hash. This audit does not establish trust.
+    with path.open('rb') as stream:
+        if os.fstat(stream.fileno()).st_size != entry[3]:
+            return False
+        actual = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            actual.update(chunk)
+        return actual.digest() == entry[4]
 
 
 def inside(root, path):
@@ -133,18 +146,9 @@ def audit(root, cache, readelf):
             status = 'missing-library' if resolved is None else 'not-cached'
             if resolved in index:
                 if resolved not in digests:
-                    with inside(root, root / resolved.lstrip('/')).open('rb') as stream:
-                        length = index[resolved][1]
-                        actual = hashlib.sha256()
-                        while length:
-                            chunk = stream.read(min(length, 1024 * 1024))
-                            if not chunk:
-                                break
-                            actual.update(chunk)
-                            length -= len(chunk)
-                        digests[resolved] = (actual.digest() if not length and
-                            os.fstat(stream.fileno()).st_size == index[resolved][3] else None)
-                status = 'covered' if digests[resolved] == index[resolved][2] else 'different-bytes'
+                    digests[resolved] = source_matches(
+                        inside(root, root / resolved.lstrip('/')), index[resolved])
+                status = 'covered' if digests[resolved] else 'different-bytes'
             edge = {'consumer': path, 'needed': name, 'resolved': resolved, 'status': status}
             edges.append(edge)
             if status != 'covered':

@@ -410,7 +410,7 @@ int rtld_verify_object_signature(const char *, int, const struct stat *, bool);
 /* -1: integrity failure; 0: cache miss; 1: substitution. */
 /* A hit transfers a fresh cache descriptor to the caller, which must close
  * it after mapping. A miss or failure changes only the reason output. */
-int rtld_cache_substitute(const char *, int, const struct stat *, int *, off_t *, off_t *, unsigned *);
+int rtld_cache_substitute(const char *, int, const struct stat *, int *, off_t *, off_t *, unsigned *, int *);
 void *xcalloc(size_t, size_t);
 void *xmalloc(size_t);
 char *xstrdup(const char *);

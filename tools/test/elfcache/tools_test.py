@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
+import hashlib
+import struct
 import importlib.util
 import json
 import subprocess
@@ -21,7 +23,7 @@ measure = module('measure')
 
 class ProfileTests(unittest.TestCase):
     def event(self, time, pid, program, flags, reason, path):
-        return f'ELFLOAD1\t{time}\t{pid}\t1\t{program}\t{flags}\t{reason}\t4096\t1\t2\t3\t{path}\tlibtest.so\tconsumer\n'
+        return f'ELFLOAD1\t{time}\t{pid}\t1\t{program}\t{flags}\t{reason}\t4096\t1\t2\t3\t0\t0\t{path}\tlibtest.so\tconsumer\n'
 
     def test_sort_exec_reuse_and_dynamic(self):
         rows = ['ELFPROFILE_BEGIN\t1\n', self.event(20, 4, 'sh', 2, 7, '/lib/test.so'),
@@ -39,10 +41,10 @@ class ProfileTests(unittest.TestCase):
 
     def test_file_identity_joins_descriptor_aliases(self):
         def record(t, flags, inode, path):
-            return f'ELFLOAD2\t{t}\t{t}\t1\tdaemon\t{flags}\t1\t4096\t1\t2\t3\t17\t{inode}\t{path}\tlibtest.so\tconsumer\n'
-        result = profile.summarize(['ELFPROFILE_BEGIN\t2\n',
+            return f'ELFLOAD1\t{t}\t{t}\t1\tdaemon\t{flags}\t1\t4096\t1\t2\t3\t17\t{inode}\t{path}\tlibtest.so\tconsumer\n'
+        result = profile.summarize(['ELFPROFILE_BEGIN\t1\n',
             record(1, 16, 42, r'<fd>\0'), record(2, 0, 42, r'/lib/libtest.so\0'),
-            record(3, 0, 43, '/lib/libtest.so'), 'ELFPROFILE_END\t2\n'])
+            record(3, 0, 43, '/lib/libtest.so'), 'ELFPROFILE_END\t1\n'])
         self.assertFalse(result['errors'])
         self.assertEqual(len(result['libraries']), 2)
         row = next(r for r in result['libraries'] if r['file_inode'] == 42)
@@ -51,9 +53,9 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(row['paths'], ['/lib/libtest.so', 'descriptor:<fd>'])
 
     def test_signature_failure_is_not_a_cache_miss(self):
-        result = profile.summarize(['ELFPROFILE_BEGIN\t2\n',
+        result = profile.summarize(['ELFPROFILE_BEGIN\t1\n',
             self.event(1, 1, 'daemon', 2 | 4, 8, '/lib/libtest.so'),
-            'ELFPROFILE_END\t2\n'])
+            'ELFPROFILE_END\t1\n'])
         self.assertFalse(result['errors'])
         row = result['libraries'][0]
         self.assertEqual(row['failed'], 1)
@@ -159,6 +161,55 @@ class StagedPaths(unittest.TestCase):
             for name in ('escape', 'loop'):
                 with self.assertRaises(ValueError):
                     audit.inside(root, root / name)
+
+class CacheIdentityTests(unittest.TestCase):
+    def fixture(self, root, source, payload, version=1):
+        offset = 65536
+        header = struct.pack('<8sIIQII32s', b'5BSDELF\0', version, 1,
+                             offset + len(payload), offset, 224, bytes(32))
+        entry = struct.pack('<IIQQQ32s32s128s', 0, 0, offset, len(payload),
+                            len(source), hashlib.sha256(payload).digest(),
+                            hashlib.sha256(source).digest(), b'libtest.so')
+        cache = root / 'cache'
+        cache.write_bytes(header + entry + bytes(offset-len(header)-len(entry)) + payload)
+        original = root / 'source'
+        original.write_bytes(source)
+        return cache, original
+
+    def test_signed_source_uses_whole_source_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = b'\x7fELF' + bytes(60)
+            source = b'\x7fELF' + b'changed ELF header' + bytes(60) + b'signature note'
+            cache, original = self.fixture(root, source, payload)
+            entry = audit.cache_entries(cache)['/lib/libtest.so']
+            self.assertTrue(audit.source_matches(original, entry))
+            original.write_bytes(source[:-1] + b'X')
+            self.assertFalse(audit.source_matches(original, entry))
+            original.write_bytes(source + b'X')
+            self.assertFalse(audit.source_matches(original, entry))
+
+    def test_unsigned_source_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = b'\x7fELF' + bytes(60)
+            cache, original = self.fixture(root, payload, payload)
+            self.assertTrue(audit.source_matches(original, audit.cache_entries(cache)['/lib/libtest.so']))
+
+    def test_corrupt_payload_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache, _ = self.fixture(Path(directory), bytes(64), bytes(64))
+            with cache.open('r+b') as stream:
+                stream.seek(-1, 2)
+                stream.write(b'X')
+            with self.assertRaisesRegex(ValueError, 'payload digest mismatch'):
+                audit.cache_entries(cache)
+
+    def test_unknown_version_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache, _ = self.fixture(Path(directory), bytes(64), bytes(64), version=2)
+            with self.assertRaisesRegex(ValueError, 'invalid cache header'):
+                audit.cache_entries(cache)
 
 class MeasurementTests(unittest.TestCase):
     def capture(self):

@@ -20,7 +20,7 @@ struct ec_profile {
     char consumer[256];
 };
 syscall::utrace:entry
-/arg1 == 704 && stringof(copyin(arg0, 8)) == "ECLOAD2" &&
+/arg1 == 704 && stringof(copyin(arg0, 8)) == "ECLOAD1" &&
  (*(uint32_t *)copyin(arg0 + 8, 4) & 1) == 0 /* @bsdinstruments-predicate-and */ /
 {
     this->event = (struct ec_profile *)copyin(arg0, 704);

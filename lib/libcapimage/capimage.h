@@ -20,6 +20,7 @@ __BEGIN_DECLS
 int capimage_signatures_required(bool *, char *, size_t);
 int capimage_verify(int, const char *, struct capimage_policy *, char *, size_t);
 int capimage_sign(int, const char *, char *, size_t);
+int capimage_cache_info(int, struct capimage_elf_info *, char *, size_t);
 int capimage_cache_size(int, off_t *, char *, size_t);
 int capimage_remove(int, char *, size_t);
 int capimage_embed(int, const void *, size_t, char *, size_t);

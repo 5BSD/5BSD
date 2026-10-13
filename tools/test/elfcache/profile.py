@@ -22,13 +22,12 @@ def summarize(lines):
         fields = line.rstrip('\n').split('\t')
         # DTrace %S includes an escaped terminating NUL in string output.
         fields = [f[:-2] if f.endswith(r'\0') else f for f in fields]
-        if (len(fields) == 2 and fields[0] in markers and fields[1] in ('1', '2')):
+        if (len(fields) == 2 and fields[0] in markers and fields[1] == '1'):
             markers[fields[0]].append(fields[1])
             if len(markers[fields[0]]) != 1:
                 errors.append({'line': number, 'error': 'duplicate capture marker; captures must not be concatenated'})
             continue
-        if not ((fields[0] == 'ELFLOAD1' and len(fields) == 14) or
-                (fields[0] == 'ELFLOAD2' and len(fields) == 16)):
+        if not (fields[0] == 'ELFLOAD1' and len(fields) == 16):
             if line.strip():
                 errors.append({'line': number, 'error': 'unrecognized or malformed record'})
             continue
@@ -37,12 +36,12 @@ def summarize(lines):
             flags, reason, size, lookup, cache, mapping = map(int, fields[5:11])
             if min(timestamp, pid, tid, flags, reason, size, lookup, cache, mapping) < 0 or reason >= len(REASONS) or flags & ~63:
                 raise ValueError('invalid field')
-            device, inode = map(int, fields[11:13]) if fields[0] == 'ELFLOAD2' else (0, 0)
+            device, inode = map(int, fields[11:13])
             if min(device, inode) < 0:
                 raise ValueError('invalid file identity')
             events.append((timestamp, number, pid, fields[4], flags, reason,
                            size, lookup, cache, mapping, device, inode,
-                           *fields[13 if fields[0] == 'ELFLOAD2' else 11:]))
+                           *fields[13:]))
         except ValueError:
             errors.append({'line': number, 'error': 'invalid numeric field'})
     begin, end = markers['ELFPROFILE_BEGIN'], markers['ELFPROFILE_END']

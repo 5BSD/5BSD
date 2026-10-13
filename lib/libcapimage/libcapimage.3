@@ -51,8 +51,12 @@ Library of embedded policy signatures (libcapimage, -lcapimage)
 .Ft int
 .Fn capimage_prepare_trusted_fd "int fd" "uint32_t flags" "const char *public_key" "int *handle" "struct capimage_info *info" "char *error" "size_t error_size"
 .Sh DESCRIPTION
-The library authenticates exact policy bytes in one bounded EOF signature
-container outside ELF segments.
+The library authenticates exact policy bytes in a non-allocated
+.Dv SHT_NOTE
+section named
+.Pa .note.5bsd.signature ,
+outside all ELF program segments.
+A redundant footer must agree with the note locator.
 An unsigned non-allocated .5bsd.policy section
 is accepted only as build input to the signer.
 It does not parse UCL or grant attributes.
@@ -83,29 +87,35 @@ Different artifact protocols must use different domains.
 .Pp
 .Fn capimage_embed
 accepts a private writable copy of a linked ELF image.
-If no policy is present, it appends a header, exact policy bytes and a fixed
-little-endian footer without changing existing ELF offsets.
-The footer is included in whole-file signing.
+It appends the signature note, authenticated original-header record, copied
+section metadata and a fixed little-endian footer.
+Only the ELF section-table locator fields change in the original header;
+program-header and load-segment offsets remain unchanged.
+All new metadata is included in whole-file signing.
 If a policy is already present, the supplied bytes must match it exactly.
 An existing unsigned build-input section is retained in the original ELF
 prefix, but is not an alternate source of authenticated runtime policy.
 The caller must sign the result before publication.
 .Pp
 .Fn capimage_remove
-truncates a private writable copy at the start of its appended container,
-restoring the original pre-signing ELF bytes.
+restores the authenticated original ELF header and truncates a private
+writable copy to its recorded original length.
+Version-2 removal verifies integrity before using the restoration metadata.
 An unsigned build-input section, if originally present, is retained.
 No signing key is required, and the result grants no authority.
 .Pp
 .Fn capimage_cache_size
-returns the length of the ELF prefix preceding the appended container,
+returns the original pre-signing ELF length,
 or the entire file length for unsigned input.
 This is a structural check, not signature or trust verification.
 Malformed containers, stacked containers and retired inline signatures are
 rejected rather than copied into a cache.
-Callers must retain an immutable snapshot or content pin while copying this
-prefix; the returned size alone does not protect against concurrent changes.
-A cache built from these prefixes excludes per-image signature containers
+The signed file prefix has changed section-table locator fields.
+A cache builder must verify its private snapshot, then use
+.Fn capimage_remove
+to restore that header before copying the original-length payload.
+The returned size alone is insufficient for copying or concurrent-change protection.
+A cache built from these restored images excludes per-image signature containers
 and requires its own integrity signature.
 .Pp
 The system trust catalogue and enforcement marker are accessed through

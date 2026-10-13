@@ -68,7 +68,7 @@ Interpret the measurements carefully:
   performance comparisons after compilation and other controlled loads finish.
 
 A completed run requires `ELFCACHE_VM_END failures=0`, including observed
-cache mappings in every cache-mode worker. The initial v1 implementation
+cache mappings in every cache-mode worker. The current implementation
 compares source bytes before substituting signed cached bytes and retains
 private relocations. Ordinary ELF text is already shared by the VM. Packing
 libraries alone does not establish a memory or startup saving; report measured
@@ -79,8 +79,8 @@ regressions as regressions.
 `audit.py --root STAGE --cache CACHE --output report.json` reads ELF metadata
 without executing staged programs. It checks every DT_NEEDED edge in BSD
 program/library trees and capability bundles, so indirect dependencies and
-plugin dependencies are included. It compares staged library bytes with cache
-entry digests and separately reports runtime module candidates outside the
+plugin dependencies are included. It compares complete staged library bytes with source
+identity digests and independently validates extracted payload digests and separately reports runtime module candidates outside the
 cache, custom search paths, resolution errors, and unreferenced entries.
 Absolute symlinks resolve within the staged root. It does not emulate libmap,
 loader hints or dynamically computed module names, establish signature trust,
@@ -120,7 +120,7 @@ cache file, not runtime virtual addresses. Every index record is validated
 before emitting JSON.
 
 Extraction authenticates a private snapshot and all payload hashes before
-creating the destination. It reconstructs unsigned ELF payloads and hashes each output. Format v2
+creating the destination. It reconstructs unsigned ELF payloads and hashes each output. Format version 1
 excludes each source library's signature/policy container; extraction cannot
 reproduce that removed signature. Aliases become separate read-only regular files, not reconstructed
 symlinks. Existing destinations are refused. Inspection/statistics alone do
@@ -161,7 +161,7 @@ cache unavailable, not listed, size changed, mmap failed, ineligible ELF,
 bytes changed, and hit. Flags identify exec markers, dynamic loading, mapping
 failure, truncated names, descriptor-relative paths, and failed clocks.
 No descriptor numbers, pointers, service-handle contents, argv or environment
-values are recorded. Version 2 includes source device/inode identity and size,
+values are recorded. The version-1 record includes source device/inode identity and size,
 so descriptor-relative and absolute paths to the same file can be grouped within
 one quiescent VM capture. This identity is not cryptographic and must not be
 combined across boots or filesystem generations. Descriptor-only observations

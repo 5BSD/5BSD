@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/* ELF cache v2 deliberately preserves ordinary ELF lookup and identity.
- * The issuer has authenticated and pinned cache bytes. Until the kernel can
- * bind individual source vnodes to cache entries, use only byte-identical
- * substitutions, keeping all relocations and writable state process-private.
- * This conservative first version is also the measurement/control baseline. */
+/* ELF cache preserves ordinary ELF lookup and source identity.
+ * The issuer authenticates and pins the cache. Signed source identities are
+ * bound to payloads by its index, with a kernel-verified source handle held
+ * through adoption. Unsigned sources require exact byte comparison.
+ * Relocations and writable state remain process-private. */
 #include <sys/types.h>
 #include "sys/cap_authority.h"
 #include "sys/capimage.h"
@@ -25,32 +25,43 @@
 #include "rtld.h"
 #include "elf_cache_profile.h"
 #include "rtld_libc.h"
+#include "sys/capimage_elf.h"
 
-/* A caller-supplied descriptor does not pass through the loader's O_VERIFY
- * open.  Check recognizable signatures explicitly before mapping or reuse.
- * A signed cache entry additionally requires signature presence. */
+static int
+rtld_capimage_read(void *context, uint64_t offset, void *data, size_t size)
+{
+	int fd = *(int *)context;
+	unsigned char *cursor = data;
+
+	while (size != 0) {
+		ssize_t n = pread(fd, cursor, size, offset);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			return (-1);
+		cursor += n;
+		offset += n;
+		size -= n;
+	}
+	return (0);
+}
+
+/* A caller-supplied descriptor does not pass through O_VERIFY. Recognize
+ * either locator, rejecting a damaged one rather than treating it as unsigned. */
 int
 rtld_verify_object_signature(const char *path, int fd, const struct stat *st,
     bool required)
 {
-	struct capimage_footer footer;
-	ssize_t got;
+	struct capimage_elf_info image;
+	int probe = capimage_elf_probe(rtld_capimage_read, &fd, st->st_size, &image);
 
-	if (!required) {
-		if (st->st_size < (off_t)sizeof(footer))
-			return (0);
-		do {
-			got = pread(fd, &footer, sizeof(footer),
-			    st->st_size - sizeof(footer));
-		} while (got < 0 && errno == EINTR);
-		if (got != sizeof(footer)) {
-			_rtld_error("Cannot read library signature locator: %s",
-			    path != NULL ? path : "<descriptor>");
-			return (-1);
-		}
-		if (memcmp(footer.magic, "5BSDEND", sizeof(footer.magic)) != 0)
-			return (0);
+	if (probe < 0 || (required && probe == 0)) {
+		_rtld_error("Invalid library signature container: %s",
+		    path != NULL ? path : "<descriptor>");
+		return (-1);
 	}
+	if (probe == 0)
+		return (0);
 	if (syscall(SYS_mac_syscall, MAC_VERIEXEC_NAME,
 	    MAC_VERIEXEC_CHECK_CAPIMAGE_FD_SYSCALL, (void *)(intptr_t)fd) < 0) {
 		_rtld_error("Library signature verification failed: %s",
@@ -58,6 +69,16 @@ rtld_verify_object_signature(const char *path, int fd, const struct stat *st,
 		return (-1);
 	}
 	return (0);
+}
+
+/* No pinning support is never permission to consume an unverified source. */
+static bool
+rtld_cache_pin_fallback(const char *path, int source, const struct stat *st,
+    int result, int error)
+{
+	return (result < 0 && (error == EOPNOTSUPP || error == ENOSYS ||
+	    error == ECAPMODE) &&
+	    rtld_verify_object_signature(path, source, st, true) == 0);
 }
 
 struct cache_view {
@@ -154,17 +175,19 @@ invalid:
 
 int
 rtld_cache_substitute(const char *path, int source, const struct stat *st,
-    int *cachefd, off_t *offset, off_t *payload_size, unsigned *reason)
+    int *cachefd, off_t *offset, off_t *payload_size, unsigned *reason,
+    int *source_handle)
 {
 	struct cache_view *view;
 	const struct elf_cache_entry *entries, *entry = NULL;
 	const char *name;
 	char number[24];
 	uint32_t directory;
-	int dirfd, fd = -1;
+	int dirfd, fd = -1, handle = -1;
 	bool close_directory = false;
 	void *cached;
 	unsigned char buffer[16384];
+	*source_handle = -1;
 	*reason = ELF_CACHE_OUTSIDE;
 	if (path == NULL || st->st_size <= 0 || (uint64_t)st->st_size > SIZE_MAX)
 		return (false);
@@ -219,16 +242,51 @@ rtld_cache_substitute(const char *path, int source, const struct stat *st,
 	*reason = ELF_CACHE_SIZE_CHANGED;
 	if (le64toh(entry->source_size) != (uint64_t)st->st_size) goto miss;
 	off_t size = (off_t)le64toh(entry->size);
-	/* The authenticated cache records whether a source carried a signature.
-	 * Verify the original descriptor, including its excluded trailer, before
-	 * substituting payload bytes. Missing verification support fails closed.
-	 * In particular, an invalid signature must not become a cache miss that
-	 * falls back to an unchecked descriptor load. */
-	if (le64toh(entry->source_size) > le64toh(entry->size) &&
-	    rtld_verify_object_signature(path, source, st, true) < 0) {
-		*reason = ELF_CACHE_SIGNATURE_FAILED;
-		close(fd);
-		return (-1);
+	/* A signed cache binds the exact source digest to its extracted payload.
+	 * There is no runtime ELF rewriting or exception to byte comparisons. */
+	bool signed_source = le64toh(entry->source_size) > le64toh(entry->size);
+	if (signed_source) {
+		struct capimage_prepare prepare = {
+		    .version = CAPIMAGE_HANDLE_VERSION,
+		    .struct_size = sizeof(prepare), .source_fd = source,
+		    .flags = CAPIMAGE_PREPARE_REQUIRED | CAPIMAGE_PREPARE_RAW_DIGEST |
+		        CAPIMAGE_PREPARE_VVERIFY
+		};
+		int result = syscall(SYS_mac_syscall, CAPIMAGE_MAC_POLICY,
+		    CAPIMAGE_PREPARE_SYSCALL, &prepare);
+		if (result <= 0) {
+			/* Unsupported pinning, including the capability-mode syscall
+			 * gate, is a cache miss only after required integrity verification.
+			 * Never broaden authority or hide an authentication failure. */
+			if (rtld_cache_pin_fallback(path, source, st, result, errno))
+				goto miss;
+			goto bad_signature;
+		}
+		handle = result - 1;
+		struct capimage_info_request request = {
+		    .version = CAPIMAGE_HANDLE_VERSION,
+		    .struct_size = sizeof(request), .handle_fd = handle
+		};
+		if (fcntl(handle, F_SETFD, FD_CLOEXEC) < 0 ||
+		    syscall(SYS_mac_syscall, CAPIMAGE_MAC_POLICY,
+		    CAPIMAGE_HANDLE_INFO_SYSCALL, &request) < 0)
+			goto bad_signature;
+		const struct capimage_info *info = &request.info;
+		if (info->version != CAPIMAGE_HANDLE_VERSION ||
+		    info->struct_size != sizeof(*info) ||
+		    info->available != CAPIMAGE_INFO_RAW_DIGEST ||
+		    info->container_version != CAPIMAGE_VERSION ||
+		    info->file_size != (uint64_t)st->st_size ||
+		    info->policy_size == 0 || info->policy_size > CAPIMAGE_POLICY_MAX ||
+		    info->policy_offset > info->file_size ||
+		    info->policy_size > info->file_size - info->policy_offset)
+			goto bad_signature;
+		for (size_t i = 0; i < sizeof(info->reserved)/sizeof(info->reserved[0]); i++)
+			if (info->reserved[i] != 0) goto bad_signature;
+		if (memcmp(info->raw_digest, entry->source_sha256, 32) != 0) {
+			*reason = ELF_CACHE_BYTES_CHANGED;
+			goto miss;
+		}
 	}
 	*reason = ELF_CACHE_MAP_FAILED;
 	cached = mmap(NULL, (size_t)size, PROT_READ, MAP_PRIVATE,
@@ -243,7 +301,7 @@ rtld_cache_substitute(const char *path, int source, const struct stat *st,
 	/* Read mutable source files through pread: truncation must cause a
 	 * cache miss rather than SIGBUS in the loader. Cached bytes are pinned. */
 	bool same = true;
-	for (off_t pos = 0; pos < size;) {
+	for (off_t pos = 0; !signed_source && pos < size;) {
 		size_t length = (uint64_t)(size - pos) < sizeof(buffer) ?
 		    (size_t)(size - pos) : sizeof(buffer);
 		ssize_t n = pread(source, buffer, length, pos);
@@ -262,12 +320,20 @@ rtld_cache_substitute(const char *path, int source, const struct stat *st,
 		goto miss;
 	}
 	*reason = ELF_CACHE_HIT;
+	*source_handle = handle;
 	*payload_size = size;
 	*cachefd = fd;
 	*offset = (off_t)le64toh(entry->offset);
 	dbg("ELF cache hit: %s offset %ju", path, (uintmax_t)*offset);
 	return (true);
+bad_signature:
+	*reason = ELF_CACHE_SIGNATURE_FAILED;
+	if (handle >= 0) close(handle);
+	if (fd >= 0) close(fd);
+	_rtld_error("Cache source signature verification failed: %s", path);
+	return (-1);
 miss:
+	if (handle >= 0) close(handle);
 	if (fd >= 0)
 		close(fd);
 	return (false);

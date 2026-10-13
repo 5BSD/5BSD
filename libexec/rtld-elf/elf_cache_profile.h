@@ -4,7 +4,7 @@
 #include <sys/types.h>
 #include <stdint.h>
 /* Diagnostic records only. Never an authority, identity or policy input. */
-#define ELF_PROFILE_MAGIC "ECLOAD2"
+#define ELF_PROFILE_MAGIC "ECLOAD1"
 #define ELF_PROFILE_EXEC 1U
 #define ELF_PROFILE_DLOPEN 2U
 #define ELF_PROFILE_FAILED 4U

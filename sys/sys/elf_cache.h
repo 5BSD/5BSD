@@ -4,14 +4,14 @@
 #include <sys/types.h>
 /* All integer fields in the file are little endian. ELF bytes excluding per-image signature containers
  * occupy page-aligned slices; writable mappings are always private. */
-#define ELF_CACHE_VERSION 2
+#define ELF_CACHE_VERSION 1
 #define ELF_CACHE_MAX_ENTRIES 4096
 #define ELF_CACHE_NAME_MAX 128
 #define ELF_CACHE_ALIGNMENT 65536U
 #define ELF_CACHE_MAX_SIZE (4ULL * 1024 * 1024 * 1024)
 #define ELF_CACHE_PATH "/usr/libdata/5bsd/cache/elf.cache"
 #define ELF_CACHE_SEAL_PATH ELF_CACHE_PATH ".sig"
-#define ELF_CACHE_DOMAIN "org.5bsd.elf-cache.v2"
+#define ELF_CACHE_DOMAIN "org.5bsd.elf-cache.v1"
 struct elf_cache_header {
 	uint8_t magic[8]; /* "5BSDELF\0" */
 	uint32_t version;
@@ -25,14 +25,15 @@ struct elf_cache_entry {
 	uint32_t directory; /* 0: /lib, 1: /usr/lib */
 	uint32_t reserved;
 	uint64_t offset;
-	uint64_t size; /* cached unsigned ELF prefix */
+	uint64_t size; /* restored unsigned ELF image */
 	uint64_t source_size; /* original file, including any signature container */
-	uint8_t sha256[32];
+	uint8_t sha256[32]; /* payload identity */
+	uint8_t source_sha256[32]; /* exact source, before signature extraction */
 	char name[ELF_CACHE_NAME_MAX];
 };
 _Static_assert(sizeof(struct elf_cache_header) == 64, "ELF cache header ABI");
-_Static_assert(sizeof(struct elf_cache_entry) == 192, "ELF cache entry ABI");
-/* Opt-in, separately signed relative layout; cache v2 is unchanged. */
+_Static_assert(sizeof(struct elf_cache_entry) == 224, "ELF cache entry ABI");
+/* Opt-in, separately signed relative layout; independently versioned cache payload. */
 #define ELF_CACHE_LAYOUT_VERSION 1
 #define ELF_CACHE_LAYOUT_DOMAIN "org.5bsd.elf-layout.v1"
 #define ELF_CACHE_LAYOUT_MAX_SIZE (1024U * 1024U)

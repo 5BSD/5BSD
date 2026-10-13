@@ -21,6 +21,7 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include "capimage.h"
+#include <sys/capimage_elf.h>
 
 static char error[256];
 static const char policy_text[] = "attributes = [\"example.test\"];\n";
@@ -305,7 +306,7 @@ ATF_TC_BODY(appended_policy, tc)
 			/* Remove the optional build policy section table. */
 			unsigned char zero[8] = {0};
 			ATF_REQUIRE_EQ(elf64 ? 8 : 4, pwrite(fd, zero, elf64 ? 8 : 4, elf64 ? 40 : 32));
-			ATF_REQUIRE_EQ(2, pwrite(fd, zero, 2, elf64 ? 60 : 48));
+			ATF_REQUIRE_EQ(4, pwrite(fd, zero, 4, elf64 ? 60 : 48));
 			ATF_REQUIRE_EQ(0, capimage_embed(fd, policy_text, sizeof(policy_text)-1, error, sizeof(error)));
 			ATF_REQUIRE_EQ(0, capimage_sign(fd, "secret", error, sizeof(error)));
 			valid(fd);
@@ -313,7 +314,7 @@ ATF_TC_BODY(appended_policy, tc)
 			struct capimage_footer footer, bad;
 			ATF_REQUIRE_EQ(0, fstat(fd, &st));
 			ATF_REQUIRE_EQ(sizeof(footer), pread(fd, &footer, sizeof(footer), st.st_size-sizeof(footer)));
-			ATF_REQUIRE_EQ(4096, le64toh(footer.offset));
+			ATF_REQUIRE_EQ(4116, le64toh(footer.offset));
 			ATF_REQUIRE_EQ(0, capimage_embed(fd, policy_text, sizeof(policy_text)-1, error, sizeof(error)));
 			ATF_REQUIRE_EQ(-1, capimage_embed(fd, "different", 9, error, sizeof(error)));
 			bad = footer; bad.offset = htole64(UINT64_MAX);
@@ -675,8 +676,143 @@ ATF_TC_CLEANUP(handle_tmpfs_unsupported, tc)
  (void)unlinkat(dir,"handle-public",0);close(dir);(void)rmdir(path);
 }
 
+static int
+probe_read(void *arg, uint64_t offset, void *bytes, size_t size)
+{
+	return (pread(*(int *)arg, bytes, size, offset) == (ssize_t)size ? 0 : -1);
+}
+ATF_TC_WITHOUT_HEAD(elf_native);
+ATF_TC_BODY(elf_native, tc)
+{
+	(void)tc;
+	keys("secret", "public");
+	for (int elf64 = 0; elf64 < 2; elf64++) for (int little = 0; little < 2; little++)
+	for (int stripped = 0; stripped < 2; stripped++) {
+		int fd = fixture(elf64, little, 0);
+		unsigned char before[4096], after[4096], zero[8] = {0};
+		if (stripped) {
+			ATF_REQUIRE_EQ(elf64 ? 8 : 4, pwrite(fd, zero, elf64 ? 8 : 4, elf64 ? 40 : 32));
+			ATF_REQUIRE_EQ(4, pwrite(fd, zero, 4, elf64 ? 60 : 48));
+		}
+		ATF_REQUIRE_EQ(sizeof(before), pread(fd, before, sizeof(before), 0));
+		ATF_REQUIRE_EQ(0, capimage_embed(fd, policy_text, sizeof(policy_text)-1, error, sizeof(error)));
+		ATF_REQUIRE_EQ(0, capimage_sign(fd, "secret", error, sizeof(error)));
+		valid(fd);
+		struct capimage_elf_info info;
+		ATF_REQUIRE_EQ(0, capimage_cache_info(fd, &info, error, sizeof(error)));
+		ATF_REQUIRE_EQ(CAPIMAGE_VERSION, info.version);
+		ATF_REQUIRE_EQ(4096, info.original_size);
+		ATF_REQUIRE_EQ(elf64 ? 64 : 52, info.header_size);
+		ATF_REQUIRE_EQ(sizeof(after), pread(fd, after, sizeof(after), 0));
+		ATF_REQUIRE(memcmp(before, after, sizeof(after)) != 0);
+		memcpy(after, info.original_header, info.header_size);
+		ATF_REQUIRE_EQ(0, memcmp(before, after, sizeof(after)));
+		ATF_REQUIRE_EQ(0, capimage_remove(fd, error, sizeof(error)));
+		struct stat st;
+		ATF_REQUIRE_EQ(0, fstat(fd, &st));
+		ATF_REQUIRE_EQ(sizeof(before), st.st_size);
+		ATF_REQUIRE_EQ(sizeof(after), pread(fd, after, sizeof(after), 0));
+		ATF_REQUIRE_EQ(0, memcmp(before, after, sizeof(after)));
+		close(fd);
+	}
+}
+ATF_TC_WITHOUT_HEAD(elf_locators);
+ATF_TC_BODY(elf_locators, tc)
+{
+	(void)tc;
+	keys("secret", "public");
+	int fd = fixture(1, 1, 0);
+	ATF_REQUIRE_EQ(0, capimage_sign(fd, "secret", error, sizeof(error)));
+	struct stat st;
+	struct capimage_elf_info info;
+	ATF_REQUIRE_EQ(0, fstat(fd, &st));
+	ATF_REQUIRE_EQ(1, capimage_elf_probe(probe_read, &fd, st.st_size, &info));
+	unsigned char *image = malloc(st.st_size);
+	ATF_REQUIRE(image != NULL);
+	ATF_REQUIRE_EQ(st.st_size, pread(fd, image, st.st_size, 0));
+	uint64_t table = le64dec(image + 40);
+	unsigned count = le16dec(image + 60), si = le16dec(image + 62);
+	uint64_t strings = le64dec(image + table + si * 64 + 24);
+	uint64_t name = strings + le32dec(image + table + (count - 1) * 64);
+	uint64_t desc = info.descriptor_offset;
+	/* Each locator independently prevents a damaged other locator from
+	 * becoming unsigned. Type/owner also recognizes a damaged section name. */
+	uint64_t offsets[] = { (uint64_t)st.st_size - 32, name,
+	    table + (count - 1) * 64 + 8, desc - 20 + 8,
+	    desc + 112 + sizeof(policy_text)-1 + 24 + 24 };
+	for (unsigned i = 0; i < sizeof(offsets)/sizeof(offsets[0]); i++) {
+		unsigned char bad = image[offsets[i]] ^ 0x40;
+		ATF_REQUIRE_EQ(1, pwrite(fd, &bad, 1, offsets[i]));
+		ATF_REQUIRE_EQ(-1, capimage_elf_probe(probe_read, &fd, st.st_size, &info));
+		ATF_REQUIRE_EQ(st.st_size, pwrite(fd, image, st.st_size, 0));
+	}
+	unsigned char bad = '!';
+	ATF_REQUIRE_EQ(1, pwrite(fd, &bad, 1, name));
+	ATF_REQUIRE_EQ(1, pwrite(fd, &bad, 1, st.st_size-32));
+	ATF_REQUIRE_EQ(-1, capimage_elf_probe(probe_read, &fd, st.st_size, &info));
+	ATF_REQUIRE_EQ(st.st_size, pwrite(fd, image, st.st_size, 0));
+	/* Optional consumers must recognize the note after a sparse append moves
+	 * the footer beyond their bounded verification size. No huge hash needed. */
+	ATF_REQUIRE_EQ(0, ftruncate(fd, CAPIMAGE_FILE_MAX + 1));
+	ATF_REQUIRE_EQ(-1, capimage_elf_probe(probe_read, &fd,
+	    CAPIMAGE_FILE_MAX + 1, &info));
+	ATF_REQUIRE_EQ(0, ftruncate(fd, st.st_size));
+	/* Rollback is unavailable when signed payload integrity fails. */
+	ATF_REQUIRE_EQ(1, pwrite(fd, &bad, 1, 256));
+	ATF_REQUIRE_EQ(-1, capimage_remove(fd, error, sizeof(error)));
+	struct stat now;
+	ATF_REQUIRE_EQ(0, fstat(fd, &now));
+	ATF_REQUIRE_EQ(st.st_size, now.st_size);
+	free(image); close(fd);
+	/* Invalid unsigned ELF without a signature marker stays unsigned to the
+	 * probe; normal exec/ELF validation remains the loader's responsibility. */
+	fd = fixture(1, 1, 0);
+	ATF_REQUIRE_EQ(0, ftruncate(fd, CAPIMAGE_FILE_MAX + 1));
+	ATF_REQUIRE_EQ(0, capimage_elf_probe(probe_read, &fd,
+	    CAPIMAGE_FILE_MAX + 1, &info));
+	ATF_REQUIRE_EQ(0, ftruncate(fd, 4096));
+	ATF_REQUIRE_EQ(1, pwrite(fd, &bad, 1, 0));
+	ATF_REQUIRE_EQ(0, capimage_elf_probe(probe_read, &fd, 4096, &info));
+	ATF_REQUIRE_EQ(0, ftruncate(fd, CAPIMAGE_FILE_MAX + 1));
+	ATF_REQUIRE_EQ(0, capimage_elf_probe(probe_read, &fd,
+	    CAPIMAGE_FILE_MAX + 1, &info));
+	close(fd);
+}
+struct counted_probe { int fd; unsigned reads; };
+static int
+counted_read(void *arg, uint64_t offset, void *bytes, size_t size)
+{
+	struct counted_probe *c = arg;
+	c->reads++;
+	return (pread(c->fd, bytes, size, offset) == (ssize_t)size ? 0 : -1);
+}
+ATF_TC_WITHOUT_HEAD(elf_probe_reads);
+ATF_TC_BODY(elf_probe_reads, tc)
+{
+	(void)tc;
+	keys("secret", "public");
+	int fd = fixture(1, 1, 0);
+	unsigned char count[2]; put16(count, 8000, 1);
+	ATF_REQUIRE_EQ(2, pwrite(fd, count, 2, 60));
+	ATF_REQUIRE_EQ(0, ftruncate(fd, 2048 + 8000 * 64));
+	ATF_REQUIRE_EQ(0, capimage_sign(fd, "secret", error, sizeof(error)));
+	struct stat st;
+	ATF_REQUIRE_EQ(0, fstat(fd, &st));
+	struct capimage_elf_info plain, cached;
+	struct counted_probe a = {fd, 0}, b = {fd, 0};
+	ATF_REQUIRE_EQ(1, capimage_elf_probe_impl(counted_read, &a, st.st_size, &plain));
+	ATF_REQUIRE_EQ(1, capimage_elf_probe(counted_read, &b, st.st_size, &cached));
+	ATF_REQUIRE_EQ(0, memcmp(&plain, &cached, sizeof(plain)));
+	ATF_REQUIRE_MSG(b.reads < a.reads / 4, "cached=%u direct=%u", b.reads, a.reads);
+	printf("ELF_PROBE_READS sections=8001 direct=%u cached=%u window_bytes=1024\n", a.reads, b.reads);
+	close(fd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, elf_probe_reads);
+	ATF_TP_ADD_TC(tp, elf_native);
+	ATF_TP_ADD_TC(tp, elf_locators);
 	ATF_TP_ADD_TC(tp, handle_tmpfs_unsupported);
 	ATF_TP_ADD_TC(tp, handle_mapping_and_rights);
 	ATF_TP_ADD_TC(tp, handle_arguments);

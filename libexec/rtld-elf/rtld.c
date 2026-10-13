@@ -3072,7 +3072,7 @@ load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
 	}
 
 	/* First use of this object, so we must map it in */
-	int mapfd = fd;
+	int mapfd = fd, source_handle = -1;
 	off_t file_offset = 0;
 	unsigned cache_reason;
 #ifdef RTLD_CACHE_PROFILE
@@ -3087,7 +3087,7 @@ load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
         cache_result = 1;
     } else {
         cache_result = rtld_cache_substitute(path, fd, &sb, &mapfd,
-            &file_offset, &map_sb.st_size, &cache_reason);
+            &file_offset, &map_sb.st_size, &cache_reason, &source_handle);
     }
 #ifdef RTLD_CACHE_PROFILE
 	uint64_t profile_cache = rtld_profile_clock();
@@ -3103,6 +3103,8 @@ load_object(const char *name, int fd_u, const Obj_Entry *refobj, int flags)
         }
         obj->cache_only = cache_image.selected;
     }
+    if (source_handle >= 0)
+        close(source_handle);
     if (mapfd != fd)
         close(mapfd);
 #ifdef RTLD_CACHE_PROFILE

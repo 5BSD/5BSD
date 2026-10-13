@@ -159,16 +159,17 @@ json_images_body()
     atf_check -s exit:0 "$capsign" sign -m policy -k key -o signed root/lib/libdemo.so.1
     mv signed root/lib/libdemo.so.1
     source=$(stat -f %z root/lib/libdemo.so.1)
+    source_digest=$(sha256 -q root/lib/libdemo.so.1)
     [ "$source" -gt "$payload" ] || atf_fail 'missing signature container'
     odd=$(printf 'libz"\\\n\t\377.so')
     ln -s libdemo.so.1 "root/lib/$odd"
     atf_check -s exit:0 -o ignore "$tool" build -r root -o cache -k key
     {
-        printf '%s' '{"schema":"org.5bsd.elfcache.images.v1","format_version":2,"authenticated":false,"payload_digests_verified":false,"path_encoding":"byte-values","images":['
+        printf '%s' '{"schema":"org.5bsd.elfcache.images.v1","format_version":1,"authenticated":false,"payload_digests_verified":false,"path_encoding":"byte-values","images":['
         i=0
         for path in /lib/libdemo.so /lib/libdemo.so.1 '/lib/libz\"\\\u000a\u0009\u00ff.so'; do
             [ "$i" = 0 ] || printf ','
-            printf '{"index":%s,"path":"%s","cache_offset":65536,"payload_bytes":%s,"source_bytes":%s,"canonical_index":0,"payload_sha256":"%s"}' "$i" "$path" "$payload" "$source" "$digest"
+            printf '{"index":%s,"path":"%s","cache_offset":65536,"payload_bytes":%s,"source_bytes":%s,"canonical_index":0,"payload_sha256":"%s","source_sha256":"%s"}' "$i" "$path" "$payload" "$source" "$digest" "$source_digest"
             i=$((i + 1))
         done
         printf ']}\n'
@@ -177,7 +178,7 @@ json_images_body()
     # Even an invalid final record must emit no partial JSON document.
     chmod u+w cache
     printf '\001' > byte
-    atf_check -s exit:0 -o ignore -e ignore dd if=byte of=cache bs=1 seek=452 conv=notrunc
+    atf_check -s exit:0 -o ignore -e ignore dd if=byte of=cache bs=1 seek=516 conv=notrunc
     atf_check -s not-exit:0 -o empty -e match:'invalid cache entry' "$tool" map -j cache
 }
 atf_test_case json_summary
@@ -190,7 +191,7 @@ json_summary_body()
     bytes=$(stat -f %z cache)
     input=$((payload * 2))
     overhead=$((bytes - payload))
-    format='{"schema":"org.5bsd.elfcache.summary.v1","format_version":2,"authenticated":%s,"payload_digests_verified":%s,"verification_key_source":"%s","entries":2,"unique_images":1,"input_bytes":%s,"unique_bytes":%s,"cache_bytes":%s,"overhead_bytes":%s}\n'
+    format='{"schema":"org.5bsd.elfcache.summary.v1","format_version":1,"authenticated":%s,"payload_digests_verified":%s,"verification_key_source":"%s","entries":2,"unique_images":1,"input_bytes":%s,"unique_bytes":%s,"cache_bytes":%s,"overhead_bytes":%s}\n'
     printf "$format" false false none "$input" "$payload" "$bytes" "$overhead" > expected
     atf_check -s exit:0 -o file:expected -e empty "$tool" info -j cache
     printf "$format" true true explicit "$input" "$payload" "$bytes" "$overhead" > expected
@@ -282,7 +283,7 @@ layout_generation_body()
     printf x > byte
     atf_check -s exit:0 -o ignore -e ignore dd if=byte of=cache bs=1 seek=4096 conv=notrunc
     rm cache.sig
-    atf_check -s exit:0 -o ignore "$capsign" seal -k key -d org.5bsd.elf-cache.v2 -o cache.sig cache
+    atf_check -s exit:0 -o ignore "$capsign" seal -k key -d org.5bsd.elf-cache.v1 -o cache.sig cache
     atf_check -s exit:0 -o ignore "$tool" verify -p public cache
     atf_check -s not-exit:0 -o empty -e match:'generation mismatch' "$tool" layout-verify -p public -l layout cache
 }

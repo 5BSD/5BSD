@@ -205,11 +205,18 @@ scan(const char *root, unsigned index)
 			capimage_policy_free(&policy);
 		else if (errno != ENOENT && errno != ENOATTR)
 			errx(1, "%s: %s", path, signature_error);
+		hash(fd, 0, (uint64_t)st.st_size, inputs[count].entry.source_sha256);
 		inputs[count].fd = fd;
 		inputs[count].entry.directory = htole32(index);
 		off_t payload_size;
 		char error[256];
 		if (capimage_cache_size(fd, &payload_size, error, sizeof(error)) < 0)
+			errx(1, "%s: %s", path, error);
+		/* Restore the authenticated pre-signing ELF header before packing.
+		 * The original library stays signed; only this private snapshot is
+		 * normalized. No per-library signature metadata enters the cache. */
+		if (payload_size != st.st_size &&
+		    capimage_remove(fd, error, sizeof(error)) < 0)
 			errx(1, "%s: %s", path, error);
 		inputs[count].entry.size = htole64((uint64_t)payload_size);
 		inputs[count].entry.source_size = htole64((uint64_t)st.st_size);
@@ -341,6 +348,8 @@ json_images(const struct elf_cache_header *header,
 		    (uintmax_t)le64toh(e->offset), (uintmax_t)le64toh(e->size),
 		    (uintmax_t)le64toh(e->source_size), canonical);
 		for (size_t j = 0; j < sizeof(e->sha256); j++) printf("%02x", e->sha256[j]);
+		printf("\",\"source_sha256\":\"");
+		for (size_t j = 0; j < sizeof(e->source_sha256); j++) printf("%02x", e->source_sha256[j]);
 		printf("\"}");
 	}
 	printf("]}\n");
