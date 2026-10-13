@@ -956,14 +956,9 @@ options 	XBONEHACK
 #  The `stf' device implements 6to4 encapsulation.
 device		stf
 
-# The pf packet filter consists of three devices:
-#  The `pf' device provides /dev/pf and the firewall code itself.
-#  The `pflog' device provides the pflog0 interface which logs packets.
-#  The `pfsync' device provides the pfsync0 interface used for
-#   synchronization of firewall state tables (over the net).
+# The `pf' device provides the pf(4) packet filter (OpenBSD PF) and /dev/pf,
+# with the pflog(4), pflow(4) and pfsync(4) interfaces built in.
 device		pf
-device		pflog
-device		pfsync
 
 # Bridge interface.
 device		if_bridge
