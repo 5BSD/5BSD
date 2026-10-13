@@ -2963,10 +2963,6 @@ pfctl_state_store(int dev, const char *file)
 	char *inbuf = NULL, *newinbuf = NULL;
 	size_t n, len = 0;
 
-	f = fopen(file, "w");
-	if (f == NULL)
-		err(1, "open: %s", file);
-
 	memset(&ps, 0, sizeof(ps));
 	for (;;) {
 		ps.ps_len = len;
@@ -2976,25 +2972,33 @@ pfctl_state_store(int dev, const char *file)
 				err(1, "realloc");
 			ps.ps_buf = inbuf = newinbuf;
 		}
-		if (ioctl(dev, DIOCGETSTATES, &ps) == -1)
-			err(1, "DIOCGETSTATES");
+		if (ioctl(dev, DIOCGETSTATESEXPORT, &ps) == -1) {
+			if (errno == EOPNOTSUPP)
+				errx(1, "raw state export cannot preserve "
+				    "delay, tags, queues, or tracking/limiter/match associations");
+			err(1, "DIOCGETSTATESEXPORT");
+		}
 
 		if (ps.ps_len + sizeof(struct pfioc_states) < len)
 			break;
 		if (len == 0 && ps.ps_len == 0)
-			goto done;
+			goto writefile;
 		if (len == 0 && ps.ps_len != 0)
 			len = ps.ps_len;
 		if (ps.ps_len == 0)
-			goto done;	/* no states */
+			goto writefile;	/* no states */
 		len *= 2;
 	}
 
+writefile:
+	/* Do not clobber a previous snapshot if validation fails. */
+	f = fopen(file, "w");
+	if (f == NULL)
+		err(1, "open: %s", file);
 	n = ps.ps_len / sizeof(struct pfsync_state);
-	if (fwrite(inbuf, sizeof(struct pfsync_state), n, f) < n)
+	if (n != 0 && fwrite(inbuf, sizeof(struct pfsync_state), n, f) < n)
 		err(1, "fwrite");
 
-done:
 	free(inbuf);
 	if (fclose(f) == EOF)
 		err(1, "close: %s", file);

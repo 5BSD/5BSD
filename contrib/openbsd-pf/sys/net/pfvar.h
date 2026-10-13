@@ -1753,6 +1753,8 @@ struct pfioc_source_kill {
 #define DIOCGETNSOURCELIM	_IOWR('D', 107, struct pfioc_sourcelim)
 #define DIOCGETNSOURCE		_IOWR('D', 108, struct pfioc_source)
 #define DIOCCLRSOURCE		_IOWR('D', 109, struct pfioc_source_kill)
+/* 5BSD: checked raw snapshot for persistence, not ordinary state display. */
+#define DIOCGETSTATESEXPORT	_IOWR('D', 110, struct pfioc_states)
 
 #ifdef _KERNEL
 

@@ -14,9 +14,9 @@ STUBS = r'''
 struct pfsync_state { unsigned char data[32]; };
 struct pfioc_states { size_t ps_len; char *ps_buf; };
 struct pfioc_state { struct pfsync_state state; };
-#define DIOCGETSTATES 1
+#define DIOCGETSTATESEXPORT 1
 #define DIOCADDSTATE 2
-static int inject_close, add_error, added;
+static int inject_close, add_error, added, snapshots;
 static int checked_close(FILE *f) {
  int rc = fclose(f);
  if (inject_close) { errno = ENOSPC; return EOF; }
@@ -25,8 +25,14 @@ static int checked_close(FILE *f) {
 #define fclose checked_close
 static int fake_ioctl(int dev, int cmd, void *arg) {
  (void)dev;
- if (cmd == DIOCGETSTATES) {
+ if (cmd == DIOCGETSTATESEXPORT) {
   struct pfioc_states *s = arg;
+  if (add_error == -1) { s->ps_len = 0; return 0; }
+  if (add_error == -2) {
+   if (++snapshots < 3) { s->ps_len = 32 * snapshots; return 0; }
+   errno = EOPNOTSUPP; return -1;
+  }
+  if (add_error) { errno = add_error; return -1; }
   if (s->ps_len >= 32) memset(s->ps_buf, 0, 32);
   s->ps_len = 32;
   return 0;
@@ -73,5 +79,13 @@ class StateFileIO(unittest.TestCase):
    run('load',p,1,diagnostic='read:')
    raw.write_bytes(b''); run('load',raw,1,close=1,diagnostic='close:')
    run('store',raw,0); self.assertEqual(len(raw.read_bytes()),32)
+   run('store',raw,0,error=-1); self.assertEqual(raw.read_bytes(),b'')
    run('store',raw,1,close=1,diagnostic='close:')
+   raw.write_bytes(b'previous snapshot')
+   run('store',raw,1,error=errno.EOPNOTSUPP,diagnostic='cannot preserve')
+   self.assertEqual(raw.read_bytes(),b'previous snapshot')
+   run('store',raw,1,error=-2,diagnostic='cannot preserve')
+   self.assertEqual(raw.read_bytes(),b'previous snapshot')
+   run('store',raw,1,error=errno.ENOTTY,diagnostic='DIOCGETSTATESEXPORT')
+   self.assertEqual(raw.read_bytes(),b'previous snapshot')
 if __name__ == '__main__': unittest.main()

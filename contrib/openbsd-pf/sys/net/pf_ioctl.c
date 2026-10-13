@@ -112,7 +112,7 @@ u_int16_t		 pf_qname2qid(char *, int);
 void			 pf_qid2qname(u_int16_t, char *);
 void			 pf_qid_unref(u_int16_t);
 int			 pf_states_clr(struct pfioc_state_kill *);
-int			 pf_states_get(struct pfioc_states *);
+int			 pf_states_get(struct pfioc_states *, int);
 
 struct pf_trans		*pf_open_trans(uint32_t);
 struct pf_trans		*pf_find_trans(uint32_t, uint64_t);
@@ -1902,7 +1902,7 @@ unlock:
 }
 
 int
-pf_states_get(struct pfioc_states *ps)
+pf_states_get(struct pfioc_states *ps, int checked_export)
 {
 	struct pf_state		*st, *nextst;
 	struct pf_state		*head, *tail;
@@ -1942,6 +1942,15 @@ pf_states_get(struct pfioc_states *ps)
 		if ((nr+1) * sizeof(*p) > ps->ps_len)
 			break;
 
+		/* Raw records cannot restore these policy/resource associations. */
+		if (checked_export && (st->delay != 0 || st->tag != 0 ||
+		    st->qid != 0 || st->pqid != 0 || st->statelim != 0 ||
+		    st->sourcelim != 0 || !SLIST_EMPTY(&st->match_rules) ||
+		    !SLIST_EMPTY(&st->src_nodes) || !SLIST_EMPTY(&st->linkage))) {
+			error = EOPNOTSUPP;
+			goto fail;
+		}
+
 		pf_state_export(&pstore, st);
 		error = copyout(&pstore, p, sizeof(*p));
 		if (error)
@@ -1975,6 +1984,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		case DIOCNATLOOK:
 		case DIOCSETDEBUG:
 		case DIOCGETSTATES:
+		case DIOCGETSTATESEXPORT:
 		case DIOCGETTIMEOUT:
 		case DIOCGETLIMIT:
 		case DIOCGETSTATELIM:
@@ -2025,6 +2035,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		case DIOCGETSTATE:
 		case DIOCGETSTATUS:
 		case DIOCGETSTATES:
+		case DIOCGETSTATESEXPORT:
 		case DIOCGETTIMEOUT:
 		case DIOCGETLIMIT:
 		case DIOCGETSTATELIM:
@@ -2920,8 +2931,10 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		break;
 	}
 
-	case DIOCGETSTATES: 
-		error = pf_states_get((struct pfioc_states *)addr);
+	case DIOCGETSTATES:
+	case DIOCGETSTATESEXPORT:
+		error = pf_states_get((struct pfioc_states *)addr,
+		    cmd == DIOCGETSTATESEXPORT);
 		break;
 
 	case DIOCGETSTATUS:
