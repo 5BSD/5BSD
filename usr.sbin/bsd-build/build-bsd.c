@@ -446,6 +446,9 @@ execute(struct step *s,size_t number)
  }
  pid=fork();if(pid<0)err(1,"fork");
  if(pid==0){
+  /* Private orchestration files use 077; staged system trees need 022.
+   * Signing-key creation independently enforces its private permissions. */
+  umask(022);
   if(!s->terminal)setpgid(0,0);
   signal(SIGINT,SIG_DFL);signal(SIGTERM,SIG_DFL);signal(SIGHUP,SIG_DFL);
   if(!s->terminal){close(pipefd[0]);if(dup2(pipefd[1],1)<0 || dup2(pipefd[1],2)<0)_exit(126);close(pipefd[1]);}
