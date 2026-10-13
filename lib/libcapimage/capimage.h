@@ -20,14 +20,13 @@ __BEGIN_DECLS
 int capimage_signatures_required(bool *, char *, size_t);
 int capimage_verify(int, const char *, struct capimage_policy *, char *, size_t);
 int capimage_sign(int, const char *, char *, size_t);
-int capimage_cache_info(int, struct capimage_elf_info *, char *, size_t);
-int capimage_cache_size(int, off_t *, char *, size_t);
+int capimage_elf_info_fd(int, struct capimage_elf_info *, char *, size_t);
 int capimage_remove(int, char *, size_t);
 int capimage_embed(int, const void *, size_t, char *, size_t);
 int capimage_note(FILE *, const void *, size_t, char *, size_t);
 void capimage_policy_free(struct capimage_policy *);
-/* Detached signatures bind arbitrary immutable artifacts (bundle inventories,
- * shared caches). domain must be a stable, distinct protocol string. */
+/* Detached signatures bind arbitrary immutable artifacts such as bundle inventories.
+ * domain must be a stable, distinct protocol string. */
 int capimage_seal(int, int, const char *, const char *, char *, size_t);
 int capimage_check_seal(int, int, const char *, const char *, char *, size_t);
 /* Integrity only: embedded keys authenticate bytes, NOT a trusted publisher or

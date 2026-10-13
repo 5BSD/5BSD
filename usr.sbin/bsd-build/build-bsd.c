@@ -42,10 +42,10 @@ static struct option options[] = {
  S("pkg-key",""), S("public-key",""), S("pkg-public-key",""),
  S("root",""), S("output",""), S("repository",""),
  S("publish-repository",REPOSITORY), S("ports","/usr/obj/5BSD-ports"),
- S("hardware-profile",""), S("distfiles",""), S("library-list",""),
+ S("hardware-profile",""), S("distfiles",""),
  S("bootenv",""), S("clone-from",""), S("be-root",""), S("media-format","all"),
  S("format","text"), S("build-backend","bsd-make"),
- B("incremental"), B("cache"), B("cache-layout"),
+ B("incremental"),
  B("relaxed-signatures"), B("allow-debug-publication"), B("production")
 #undef S
 #undef B
@@ -246,7 +246,6 @@ validate(void)
  const char *paths[]={"src-conf","make-conf"};
  for(size_t i=0;i<nitems(paths);i++) {if(*get(paths[i])!='/' || strchr(get(paths[i]),'$'))fail("world configuration paths must be absolute without make expansion");if(selected(paths[i]) && strcmp(get(paths[i]),"/dev/null"))regular(get(paths[i]),false);}
  if(*get("kernel-dir")){canonical("kernel-dir");regular(format("%s/%s",get("kernel-dir"),get("kernel")),false);}
- if(yes("cache") && !request.packages && !action("stage") && !action("sign"))fail("--cache applies only to build, packages or stage/sign");
  if(*get("pkg-key") && !request.packages)fail("--pkg-key applies only to build or packages");
  if(selected("ports") && !request.packages)fail("--ports applies only to packages");
  if(selected("publish-repository") && !request.packages)fail("--publish-repository applies only to packages/build");
@@ -264,9 +263,7 @@ validate(void)
  if(!strcmp(get("publish-repository"),"/") || under(get("publish-repository"),SOURCE) || under(get("publish-repository"),"/home") || !strcmp(get("publish-repository"),"/usr"))fail("publication destination must be separate from source and home directories");
  const char *keys[]={"key","development-key","pkg-key"};
  for(size_t i=0;i<nitems(keys);i++)if(*get(keys[i]) && under(get(keys[i]),get("publish-repository")))fail("private keys must be outside the publication destination");
- if(!strcmp(get("signing"),"unsigned") && (yes("cache") || yes("relaxed-signatures")))fail("--cache requires development or signed mode; relaxed signatures require signing");
- if(yes("cache-layout") && (!yes("cache") || strcmp(request.arch,"amd64")))fail("--cache-layout requires --cache and currently requires amd64");
- if(*get("library-list")){if(!yes("cache"))fail("--library-list requires --cache");regular(get("library-list"),false);canonical("library-list");}
+ if(!strcmp(get("signing"),"unsigned") && yes("relaxed-signatures"))fail("relaxed signatures require signing");
  if(request.packages){
   if(request.cross)fail("native hardware backend cannot publish a foreign target");
   if(*get("output"))fail("packages uses maintained package staging directories");
@@ -329,7 +326,7 @@ static struct step *
 bsd_make(const char *name,bool signing)
 {
  struct step *s=step(name);
- args(s,"make","-C",SOURCE,"-j",format("%u",request.jobs),"MAKEOBJDIRPREFIX=" OBJECT,NULL);
+ args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE,"-j",format("%u",request.jobs),NULL);
  assignment(s,"TARGET",request.target);assignment(s,"TARGET_ARCH",request.arch);
  assignment(s,"KERNCONF",get("kernel"));assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));
  if(*get("kernel-dir"))assignment(s,"KERNCONFDIR",get("kernel-dir"));
@@ -339,8 +336,7 @@ bsd_make(const char *name,bool signing)
  if(signing){
   assignment(s,"CAPIMAGE_SIGNING_MODE",get("signing"));assignment(s,"CAPIMAGE_SIGNING_KEY",get("key"));
   assignment(s,"CAPIMAGE_DEVELOPMENT_KEY",get("development-key"));assignment(s,"CAPIMAGE_REQUIRE_SIGNATURES",yes("relaxed-signatures")?"no":"");
-  assignment(s,"CAPIMAGE_BUILD_CACHE",get("cache"));assignment(s,"CAPIMAGE_BUILD_LAYOUT",get("cache-layout"));assignment(s,"CAPIMAGE_CACHE_LIST",get("library-list"));
-  assignment(s,"CAPSIGN_HOST",format("%s/capsign",request.native));assignment(s,"ELFCACHE_HOST",format("%s/elfcache",request.native));
+  assignment(s,"CAPSIGN_HOST",format("%s/capsign",request.native));
  }
  return s;
 }
@@ -356,15 +352,12 @@ plan(void)
   s=step("host-tools");args(s,"make","-C",request.native,"-f",HELPERS "host-tools.mk","-j",format("%u",request.jobs),"SRCTOP=" SOURCE,NULL);
  }
  if(action("verify") || action("sign")){
-  s=step(request.action);args(s,"env",format("CAPSIGN=%s/capsign",request.native),format("ELFCACHE=%s/elfcache",request.native),"sh",action("sign")?HELPERS "sign-stage.sh":HELPERS "verify-stage.sh","-r",get("root"),action("sign")?"-k":"-p",action("sign")?get("key"):get("public-key"),NULL);
-  if(action("sign")){
-   if(yes("cache"))arg(s,"-c");if(yes("cache-layout"))arg(s,"-d");if(!yes("relaxed-signatures"))arg(s,"-e");
-   if(*get("library-list"))args(s,"-l",get("library-list"),NULL);
-  }
+  s=step(request.action);args(s,"env",format("CAPSIGN=%s/capsign",request.native),"sh",action("sign")?HELPERS "sign-stage.sh":HELPERS "verify-stage.sh","-r",get("root"),action("sign")?"-k":"-p",action("sign")?get("key"):get("public-key"),NULL);
+  if(action("sign") && !yes("relaxed-signatures"))arg(s,"-e");
   return;
  }
  if(action("deploy") || action("bsdinstall")){
-  s=step(request.action);args(s,PYTHON,action("deploy")?HELPERS "deploy.py":HELPERS "installer.py","--repository",get("repository"),"--pkg-public-key",get("pkg-public-key"),"--public-key",get("public-key"),"--kernel",get("kernel"),"--capsign",format("%s/capsign",request.native),"--elfcache",format("%s/elfcache",request.native),NULL);
+  s=step(request.action);args(s,PYTHON,action("deploy")?HELPERS "deploy.py":HELPERS "installer.py","--repository",get("repository"),"--pkg-public-key",get("pkg-public-key"),"--public-key",get("public-key"),"--kernel",get("kernel"),"--capsign",format("%s/capsign",request.native),NULL);
   if(action("deploy")){
    args(s,*get("bootenv")?"--bootenv":"--root",*get("bootenv")?get("bootenv"):get("root"),NULL);
    if(*get("clone-from"))args(s,"--clone-from",get("clone-from"),NULL);
@@ -375,7 +368,7 @@ plan(void)
  if(action("media")){
   s=step("media-code-key");args(s,format("%s/capsign",request.native),"key-id","-p",get("public-key"),NULL);
   s=step("media-directory");args(s,"mkdir","-p",get("output"),NULL);
-  s=step("media");args(s,"make","-C",SOURCE "/release","-j",format("%u",request.jobs),"MAKEOBJDIRPREFIX=" OBJECT,NULL);
+  s=step("media");args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE "/release","-j",format("%u",request.jobs),NULL);
   assignment(s,"RELEASE_OBJDIR",get("output"));assignment(s,"TARGET",request.target);assignment(s,"TARGET_ARCH",request.arch);assignment(s,"KERNCONF",get("kernel"));assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));assignment(s,"PORTSDIR",get("ports"));assignment(s,"PKGBASE_SIGNED_REPOSITORY",get("repository"));assignment(s,"PKGBASE_REPO_PUBLIC_KEY",get("pkg-public-key"));assignment(s,"PKGBASE_CODE_PUBLIC_KEY",get("public-key"));args(s,"HARDWARE_PYTHON=" PYTHON,"NOPKGBASE=","NODISTSETS=yes","NOPKG=yes",NULL);
   if(*get("kernel-dir"))assignment(s,"KERNCONFDIR",get("kernel-dir"));
   if(strcmp(get("media-format"),"memstick"))arg(s,"disc1.iso");if(strcmp(get("media-format"),"iso"))arg(s,"memstick.img");return;

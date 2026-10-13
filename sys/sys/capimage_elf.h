@@ -2,7 +2,12 @@
 #ifndef _SYS_CAPIMAGE_ELF_H_
 #define _SYS_CAPIMAGE_ELF_H_
 #include <sys/capimage.h>
-/* Caller supplies memcpy/memcmp/memset and size_t. No allocation, errno,
+#ifdef _KERNEL
+#include <sys/systm.h>
+#else
+#include <string.h>
+#endif
+/* No allocation, errno,
  * native ELF alignment or byte order assumptions. Callback: 0 on full read.
  * Probe: 0 no recognized signature, 1 structural signature, -1 damaged/read
  * failure. Ordinary malformed ELF without a recognized locator remains 0. */

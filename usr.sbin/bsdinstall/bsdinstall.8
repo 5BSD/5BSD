@@ -396,14 +396,11 @@ Default: unset
 .It Ev BSDINSTALL_CODE_PUBLIC_KEY
 Trusted code-signing public key used by
 .Cm auto
-to verify the installed system bundles and shared-library cache after pkgbase
+to verify the installed system bundles after pkgbase
 installation and before boot configuration.
 The signed image must include its signature-enforcement marker.
 Verification uses native
-.Xr capsign 8
-and
-.Xr elfcache 8
-tools and never requires a private key.
+.Xr capsign 8 and never requires a private key.
 When using the signed repository on installation media, the default is the
 public key at
 .Pa /usr/5bsd-packages/keys/code.pub .

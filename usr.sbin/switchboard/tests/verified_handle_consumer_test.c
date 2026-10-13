@@ -79,8 +79,6 @@ struct capbundle *bundle_registry_get(unsigned idx) { (void)idx; return (void *)
 struct capbundle_service *capbundle_service(const struct capbundle *b, unsigned idx)
 { (void)b; (void)idx; return &unit; }
 const char *capbundle_svc_program(const struct capbundle_service *s) { return s->program; }
-int svc_library_cache_policy_bind(const struct svc_runtime *s, int token)
-{ (void)s; (void)token; return 0; }
 int __wrap_syscall(int, ...);
 int
 __wrap_syscall(int number, ...)

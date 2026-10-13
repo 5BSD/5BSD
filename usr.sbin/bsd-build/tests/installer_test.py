@@ -63,7 +63,7 @@ class Installer(unittest.TestCase):
 
     def invoke(self, plan=False, uid=0, kernel=None):
         argv = ['installer', '--repository', str(self.repo), '--pkg-public-key', str(self.key),
-                '--public-key', str(self.key), '--capsign', str(self.tool), '--elfcache', str(self.tool)]
+                '--public-key', str(self.key), '--capsign', str(self.tool)]
         if kernel is not None:
             argv.extend(["--kernel", kernel])
         if plan:

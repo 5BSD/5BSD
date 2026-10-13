@@ -11,7 +11,7 @@ plans_body()
     setup
     output=/usr/obj/usr/src/bsd-build-plan-only-$$
     [ ! -e "$output" ] || atf_fail 'test output already exists'
-    atf_check -s exit:0 -o save:stage -e empty "$tool" plan stage --output "$output" --signing development --cache
+    atf_check -s exit:0 -o save:stage -e empty "$tool" plan stage --output "$output" --signing development
     [ ! -e "$output" ] || atf_fail 'plan created a stage'
     atf_check -s exit:0 -o ignore grep 'host-tools:' stage
     atf_check -s exit:0 -o ignore grep "installworld:.*NO_ROOT=yes DESTDIR=$output" stage
@@ -50,17 +50,40 @@ make_clean_options_body()
         atf_check -s exit:0 -o inline:"$expected\n" -e empty make -m /usr/src/share/mk -f options.mk SRCTOP=/usr/src "$option" -V MK_CLEAN
     done
 }
+atf_test_case make_object_environment
+make_object_environment_head()
+{
+    atf_set descr 'Generated build argv passes the real top-level make object-root validation'
+    atf_set require.progs 'make python3.12'
+}
+make_object_environment_body()
+{
+    setup
+    for operation in world kernel; do
+        atf_check -s exit:0 -o save:plan.jsonl -e empty "$tool" plan "$operation" --format json --src-conf /dev/null --make-conf /dev/null
+        atf_check -s exit:0 -o empty -e empty python3.12 - "$operation" <<'PYTHON'
+import json, os, subprocess, sys
+steps = [json.loads(line) for line in open('plan.jsonl')]
+step = next(x for x in steps if x.get('name') == 'build' + sys.argv[1])
+assert step['argv'][-1] == 'build' + sys.argv[1]
+result = subprocess.run(step['argv'][:-1] + ['-V', 'OBJTOP'],
+                        env=dict(os.environ, MAKEOBJDIRPREFIX='/home/incorrect'),
+                        capture_output=True, text=True)
+assert result.returncode == 0, result.stderr
+lines = result.stdout.splitlines()
+assert len(lines) == 1 and lines[0].startswith('/usr/obj/usr/src/'), lines
+PYTHON
+    done
+}
 atf_test_case invalid_options
 invalid_options_body()
 {
     setup
     atf_check -s not-exit:0 -o empty -e match:'applies only to media' "$tool" plan build --media-format iso
-    atf_check -s not-exit:0 -o empty -e match:'applies only to build, packages or stage' "$tool" plan media --signing development --cache
     atf_check -s not-exit:0 -o empty -e match:'applies only to build or packages' "$tool" plan verify --pkg-key /nonexistent/private.pem
     bad_key=$(printf '/tmp/key\nname')
     atf_check -s not-exit:0 -o empty -e match:'control characters' "$tool" plan stage --key "$bad_key"
     atf_check -s not-exit:0 -o empty -e match:'under /usr/obj' "$tool" plan stage --output /home/unsafe-stage
-    atf_check -s not-exit:0 -o empty -e match:'requires development or signed' "$tool" plan stage --cache
     atf_check -s not-exit:0 -o empty -e match:'requires a readable' "$tool" plan stage --signing signed
     atf_check -s not-exit:0 -o empty -e match:'applies only to packages' "$tool" plan stage --ports /usr/ports
     atf_check -s not-exit:0 -o empty -e match:'requires development signing' "$tool" plan stage --development-key /usr/obj/key
@@ -155,14 +178,14 @@ SCRIPT
     stage=/usr/obj/usr/src/bsd-build-test-stage-$$
     [ ! -e "$stage" ] || atf_fail 'test stage exists'
     printf '%s\n' "$stage" > created-stage
-    atf_check -s exit:0 -o save:out -e empty env PATH="$(pwd)/mock:$PATH" BSD_BUILD_TEST_LOG="$(pwd)/commands" "$tool" stage --output "$stage" --signing development --cache --relaxed-signatures
+    atf_check -s exit:0 -o save:out -e empty env PATH="$(pwd)/mock:$PATH" BSD_BUILD_TEST_LOG="$(pwd)/commands" "$tool" stage --output "$stage" --signing development --relaxed-signatures
     sed 's/.* //' commands > targets
     printf '%s\n' SRCTOP=/usr/src buildworld buildkernel installworld distribution installkernel capimage-stage > expected
     atf_check -s exit:0 -o empty diff -u expected targets
     for target in installworld distribution installkernel capimage-stage; do
         atf_check -s exit:0 -o ignore grep "NO_ROOT=yes DESTDIR=$stage.*$target\$" commands
     done
-    atf_check -s exit:0 -o ignore grep 'CAPIMAGE_SIGNING_MODE=development.*CAPIMAGE_REQUIRE_SIGNATURES=no.*CAPIMAGE_BUILD_CACHE=yes' commands
+    atf_check -s exit:0 -o ignore grep 'CAPIMAGE_SIGNING_MODE=development.*CAPIMAGE_REQUIRE_SIGNATURES=no' commands
     run=$(sed -n 's/^complete action=stage logs=\([^ ]*\) stage=.*/\1/p' out)
     case "$run" in /usr/obj/usr/src/build-runs/*) ;; *) atf_fail 'missing completion log location';; esac
     printf '%s\n' "$run" > created-run
@@ -186,7 +209,6 @@ kernel=GENERIC-NODEBUG
 src_conf=/dev/null
 make_conf=/dev/null
 signing=development
-cache=yes
 CONFIG
     atf_check -s exit:0 -o save:configured -e empty "$tool" plan build --jobs 3 --config settings
     atf_check -s exit:0 -o ignore grep 'cpus=3 kernel=GENERIC-NODEBUG production=yes' configured
@@ -205,7 +227,7 @@ CONFIG
     atf_check -s not-exit:0 -o empty -e match:duplicate "$tool" plan build --config bad
     printf 'unknown=value\n' > bad
     atf_check -s not-exit:0 -o empty -e match:unknown "$tool" plan build --config bad
-    printf 'cache=perhaps\n' > bad
+    printf 'incremental=perhaps\n' > bad
     atf_check -s not-exit:0 -o empty -e match:'yes or no' "$tool" plan build --config bad
     printf '%s\n' 'kernel=$(touch executed)' > bad
     atf_check -s not-exit:0 -o empty -e match:'configuration name' "$tool" plan build --config bad
@@ -335,21 +357,6 @@ publication_destination_body()
     done
     atf_check -s not-exit:0 -o empty -e ignore "$tool" plan stage --publish-repository "$destination"
 }
-atf_test_case cache_layout_constraints
-cache_layout_constraints_body()
-{
-    setup
-    atf_check -s exit:0 -o save:layout -e empty "$tool" plan stage --arch amd64 --signing development --cache --cache-layout
-    atf_check -s exit:0 -o ignore grep 'CAPIMAGE_BUILD_CACHE=yes CAPIMAGE_BUILD_LAYOUT=yes' layout
-    atf_check -s not-exit:0 -o empty -e match:'requires --cache' "$tool" plan stage --signing development --cache-layout
-    atf_check -s not-exit:0 -o empty -e match:'requires development or signed' "$tool" plan stage --cache --cache-layout
-    for arch in arm64 riscv64; do
-        atf_check -s not-exit:0 -o empty -e match:'currently requires amd64' "$tool" plan stage --arch "$arch" --signing development --cache --cache-layout
-    done
-    printf 'arch=amd64\nsigning=development\ncache=yes\ncache_layout=yes\n' > config
-    atf_check -s exit:0 -o save:configured -e empty "$tool" plan stage --config config
-    atf_check -s exit:0 -o ignore grep 'CAPIMAGE_BUILD_LAYOUT=yes' configured
-}
 atf_test_case build_profiles
 build_profiles_body()
 {
@@ -427,7 +434,6 @@ assert world["argv"][-1]=="buildworld"
 atf_init_test_cases()
 {
     atf_add_test_case publication_destination
-    atf_add_test_case cache_layout_constraints
     atf_add_test_case json_plan
     atf_add_test_case hardware_inputs
     atf_add_test_case boards
@@ -438,6 +444,7 @@ atf_init_test_cases()
     atf_add_test_case architectures
     atf_add_test_case configuration
     atf_add_test_case plans
+    atf_add_test_case make_object_environment
     atf_add_test_case make_clean_options
     atf_add_test_case invalid_options
     atf_add_test_case path_preflight

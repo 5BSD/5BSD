@@ -269,7 +269,7 @@ ATF_TC_BODY(detached, tc)
 	ATF_REQUIRE(seal >= 0);
 	ATF_REQUIRE_EQ(0, capimage_seal(fd, seal, "bundle.v1", "secret", error, sizeof(error)));
 	ATF_REQUIRE_EQ(0, capimage_check_seal(fd, seal, "bundle.v1", "public", error, sizeof(error)));
-	ATF_REQUIRE_EQ(-1, capimage_check_seal(fd, seal, "cache.v1", "public", error, sizeof(error)));
+	ATF_REQUIRE_EQ(-1, capimage_check_seal(fd, seal, "unrelated.v1", "public", error, sizeof(error)));
 	ATF_REQUIRE_EQ(EAUTH, errno);
 	ATF_REQUIRE_EQ(1, pwrite(fd, "x", 1, 1024));
 	ATF_REQUIRE_EQ(-1, capimage_check_seal(fd, seal, "bundle.v1", "public", error, sizeof(error)));
@@ -333,43 +333,6 @@ ATF_TC_BODY(appended_policy, tc)
 		}
 	}
 }
-ATF_TC_WITHOUT_HEAD(cache_payload);
-ATF_TC_BODY(cache_payload, tc)
-{
-	(void)tc;
-	keys("secret", "public");
-	int fd = fixture(1, 1, 0);
-	off_t size;
-	ATF_REQUIRE_EQ(0, capimage_cache_size(fd, &size, error, sizeof(error)));
-	ATF_REQUIRE_EQ(4096, size);
-	ATF_REQUIRE_EQ(0, capimage_sign(fd, "secret", error, sizeof(error)));
-	ATF_REQUIRE_EQ(0, capimage_cache_size(fd, &size, error, sizeof(error)));
-	ATF_REQUIRE_EQ(4096, size);
-	struct stat st;
-	struct capimage_footer footer;
-	ATF_REQUIRE_EQ(0, fstat(fd, &st));
-	ATF_REQUIRE_EQ(sizeof(footer), pread(fd, &footer, sizeof(footer), st.st_size-sizeof(footer)));
-	unsigned char container[2048];
-	size_t bytes = st.st_size - 4096;
-	ATF_REQUIRE(bytes <= sizeof(container));
-	ATF_REQUIRE_EQ((ssize_t)bytes, pread(fd, container, bytes, 4096));
-	footer.offset = htole64(st.st_size);
-	memcpy(container + bytes - sizeof(footer), &footer, sizeof(footer));
-	ATF_REQUIRE_EQ((ssize_t)bytes, pwrite(fd, container, bytes, st.st_size));
-	ATF_REQUIRE_EQ(-1, capimage_cache_size(fd, &size, error, sizeof(error)));
-	close(fd);
-	fd = fixture(1, 1, 0);
-	unsigned char ph[sizeof(Elf64_Phdr)] = {0}, note[24] = {0};
-	put32(ph, PT_NOTE, 1); put64(ph+8, 256, 1); put64(ph+32, sizeof(note), 1);
-	put32(note, 5, 1); put32(note+4, 4, 1); put32(note+8, CAPIMAGE_NOTE_TYPE, 1);
-	memcpy(note+12, "5BSD", 5);
-	ATF_REQUIRE_EQ(sizeof(ph), pwrite(fd, ph, sizeof(ph), sizeof(Elf64_Ehdr)));
-	ATF_REQUIRE_EQ(sizeof(note), pwrite(fd, note, sizeof(note), 256));
-	ATF_REQUIRE_EQ(-1, capimage_cache_size(fd, &size, error, sizeof(error)));
-	ATF_REQUIRE(strstr(error, "retired inline") != NULL);
-	close(fd);
-}
-
 ATF_TC_WITHOUT_HEAD(personal_integrity);
 ATF_TC_BODY(personal_integrity, tc)
 {
@@ -699,7 +662,7 @@ ATF_TC_BODY(elf_native, tc)
 		ATF_REQUIRE_EQ(0, capimage_sign(fd, "secret", error, sizeof(error)));
 		valid(fd);
 		struct capimage_elf_info info;
-		ATF_REQUIRE_EQ(0, capimage_cache_info(fd, &info, error, sizeof(error)));
+		ATF_REQUIRE_EQ(0, capimage_elf_info_fd(fd, &info, error, sizeof(error)));
 		ATF_REQUIRE_EQ(CAPIMAGE_VERSION, info.version);
 		ATF_REQUIRE_EQ(4096, info.original_size);
 		ATF_REQUIRE_EQ(elf64 ? 64 : 52, info.header_size);
@@ -821,7 +784,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, handle_fork_lifetime);
 	ATF_TP_ADD_TC(tp, handle_fd_exhaustion);
 	ATF_TP_ADD_TC(tp, personal_integrity);
-	ATF_TP_ADD_TC(tp, cache_payload);
 	ATF_TP_ADD_TC(tp, appended_policy);
 	ATF_TP_ADD_TC(tp, system_trust);
 	ATF_TP_ADD_TC(tp, unsigned_note);

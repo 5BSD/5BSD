@@ -39,7 +39,6 @@ def main():
     parser.add_argument('--pkg-public-key', type=Path, required=True)
     parser.add_argument('--public-key', type=Path, required=True)
     parser.add_argument('--capsign', type=Path, required=True)
-    parser.add_argument('--elfcache', type=Path, required=True)
     parser.add_argument('--kernel', default='GENERIC')
     parser.add_argument('--plan', action='store_true')
     args = parser.parse_args()
@@ -52,7 +51,6 @@ def main():
     pub = regular(args.pkg_public_key)
     codepub = regular(args.public_key)
     capsign = regular(args.capsign)
-    elfcache = regular(args.elfcache)
     if args.plan:
         print('verify and snapshot complete signed repository: ' + str(repository))
         print('launch interactive bsdinstall with explicit repository and code-signing trust')
@@ -116,7 +114,7 @@ def main():
             'BSDINSTALL_PKG_REPOS_DIR': str(repos),
             'BSDINSTALL_CODE_PUBLIC_KEY': str(keys / 'code.pub'),
             'BSDINSTALL_KERNEL': args.kernel,
-            'CAPSIGN': str(capsign), 'ELFCACHE': str(elfcache),
+            'CAPSIGN': str(capsign),
             'BSDINSTALL_LOG': str(scratch / 'bsdinstall.log')})
         status.write_text('running interactive installer\n')
         subprocess.run([str(INSTALLER), 'auto'], check=True, env=environment)

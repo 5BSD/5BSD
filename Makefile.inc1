@@ -2229,15 +2229,11 @@ stage-packages-world: .PHONY
 # Native signing tools run only after all target installation transformations.
 # An existing key preserves the historical opt-in; otherwise auto is unsigned.
 _CAPIMAGE_STAGE_ENV= env CAPSIGN=${CAPSIGN_HOST:Ucapsign:Q} \
-	ELFCACHE=${ELFCACHE_HOST:Uelfcache:Q} \
 	CAPIMAGE_SIGNING_MODE=${CAPIMAGE_SIGNING_MODE:Uauto:Q} \
 	CAPIMAGE_SIGNING_KEY=${CAPIMAGE_SIGNING_KEY:U:Q} \
 	CAPIMAGE_DEVELOPMENT_KEY=${CAPIMAGE_DEVELOPMENT_KEY:U/usr/obj/usr/src/signing-keys/development.pem:Q} \
 	CAPIMAGE_REQUIRE_SIGNATURES=${CAPIMAGE_REQUIRE_SIGNATURES:U:Q} \
-	CAPIMAGE_BUILD_CACHE=${CAPIMAGE_BUILD_CACHE:Uno:Q} \
-	CAPIMAGE_BUILD_LAYOUT=${CAPIMAGE_BUILD_LAYOUT:Uno:Q} \
-	CAPIMAGE_TARGET_ARCH=${TARGET_ARCH:Q} \
-	CAPIMAGE_CACHE_LIST=${CAPIMAGE_CACHE_LIST:U:Q}
+	CAPIMAGE_TARGET_ARCH=${TARGET_ARCH:Q}
 
 capimage-stage: .PHONY
 	@test "${NO_ROOT:Dyes:Uno}" = yes || { echo 'capimage-stage requires NO_ROOT=yes and a private DESTDIR' >&2; exit 1; }

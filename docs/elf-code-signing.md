@@ -1,6 +1,6 @@
-# ELF code signing: format revision and authority boundaries
+# ELF code signing: V1 format and authority boundaries
 
-This document describes the ELF-native revision under development. It is not a
+This document describes the ELF-native V1 format under development. It is not a
 claim of completed kernel/VM acceptance. See the workstream validation receipt
 for the exact tested source and outstanding gates.
 
@@ -38,7 +38,7 @@ table describe the signature, and both locators must agree. Recognizable partial
 metadata is an error, not a reason to try an external policy or unsigned fallback.
 The signer completes all ELF metadata edits before calculating the signature.
 
-Version 1 uses the fixed signing header and immediate policy bytes, adds an
+Version 1 stores a fixed signing header, immediate policy bytes and an
 authenticated original-header/length record, and describes the note through a
 copied string table and section table. Only ELF section-table locator fields may
 change in the original file prefix. Removal restores the authenticated original
@@ -66,27 +66,15 @@ distinguish that result from intentionally unsigned software. Trusted identities
 that require a signature must enforce that requirement externally. This revision
 does not implement the deferred immutable base or SIP-like process protections.
 
-## Cache and tooling
+## Tooling
 
-The cache builder verifies a private snapshot of each signed source, restores
-its exact pre-signing ELF header, and excludes appended signing metadata. It
-records the original signed source size separately. The cache index authenticates separate SHA-256 digests of the complete
-signed source and the extracted payload. The loader compares the source digest
-returned by a kernel-verified handle with the index, keeping the handle until
-mapping completes. It performs no ELF-header reconstruction. Unsigned sources
-retain exact byte comparison. Each cache entry grows by 32 bytes; this is an
-explicit cost, not a RAM-saving claim. Extraction yields an unsigned ELF with no pointers
-into discarded signature metadata. The cache has its own integrity seal.
-
-Ordinary ELF loading tolerated the previous trailer; the limitation was that
-standard rewriting tools did not understand it. The note makes the metadata
-inspectable with `readelf -S` and `readelf -n`. It does not make post-signing
+The ELF note makes the signature metadata inspectable with `readelf -S` and `readelf -n`. It does not make post-signing
 `strip`, `objcopy`, debuglink changes, or arbitrary relinking signature-preserving.
 Perform those transformations before signing. Removal and re-signing use
 `capsign`, including recursive bundle operations and updated outer seals.
 
-The ELF signature and cache formats are unreleased version 1. There is one
-supported layout for each; no development-format readers or migration paths
+The ELF signature format is unreleased version 1. There is one
+supported layout; no development-format readers or migration paths
 are retained. Build readers, writers and signed artifacts as one coordinated
 system generation. Unsupported format versions are rejected.
 
@@ -96,9 +84,6 @@ system generation. Unsupported format versions are rejected.
   and explicit-descriptor rtld verification; same malformed-input corpus.
 - Native inspection, exact remove/re-sign round trips, final-strip ordering,
   metadata and key tampering, two-key authority separation, recursive bundles.
-- Cache packing/extraction and runtime comparison with no signature metadata
-  copied into cache payloads and no stale section-table pointers.
 - Actual matching-kernel exec/fexec/open/mmap/descriptor-load tests, pinned-handle
   lifetime tests, ordinary unsigned execution, and personal enrollment tests.
-- Strict builds and explicit source/stage provenance. No RAM-savings or latency
-  claim is inferred from format acceptance.
+- Strict builds and explicit source/stage provenance.

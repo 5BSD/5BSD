@@ -161,21 +161,14 @@ Broker access does not make process attachment harmless: avoid probes --pid
 and ptrace/ktrace attachment when profiling protected capability daemons.
 Use global SDT and syscall profiles through the authorized tracing path.
 .Sh LOADER AND SCRIPT PROFILES
-The loader-libraries profile records bounded library-load events from a
-loader built with RTLD_CACHE_PROFILE=yes.
-The loader-summary profile aggregates load counts, file sizes, lookup time,
-cache-check time and mapping time through the normal exporters.
-These cover the common startup, dependency, dlopen and fdlopen paths in
-native and compatibility ELF loaders, including descriptor-granted lookups.
-Production loaders do not emit these optional events.
-.Pp
-The profiles observe utrace system calls through DTrace, without attaching
-ktrace or ptrace to capability processes.
-Per-process tracing flags deliberately prevent authority acquisition.
-Never relax authority checks to obtain profiling data.
-Events are untrusted diagnostics and do not authorize a cache or executable.
-Descriptor numbers, addresses, argument strings and environment contents are
-not included in these records.
+The loader-libraries profile records requested library names and load outcomes
+from the existing rtldtrace provider.
+The loader-summary profile counts these requests by process, name and outcome.
+Counts include requests satisfied by already-loaded objects; they do not
+measure unique files or resident memory.
+The loader must include DTrace support, and normal tracing permissions apply.
+Protected-process tracing restrictions must not be relaxed for profiling.
+Events are diagnostics and do not authorize executable content.
 .Pp
 The script-exec profile records attempted executable paths and exec outcomes.
 For a shebang script, these can be correlated with the interpreter's library
@@ -195,7 +188,7 @@ Unpaired completions indicate a check started before tracing was enabled.
 These SDT probes add no profiling clock reads when disabled and record no paths,
 descriptor numbers, public keys, policy contents or kernel addresses.
 They require a kernel built with MAC_VERIEXEC_CAPIMAGE and SDT support.
-Userland signing, detached cache verification and bundle verification are outside
+Userland signing and bundle verification are outside
 this profile's coverage.
 .Sh ENVIRONMENT
 The OTLP exporter honors the standard OpenTelemetry variables

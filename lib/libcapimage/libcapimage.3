@@ -11,7 +11,7 @@
 .Nm capimage_sign ,
 .Nm capimage_embed ,
 .Nm capimage_remove ,
-.Nm capimage_cache_size ,
+.Nm capimage_elf_info_fd ,
 .Nm capimage_note ,
 .Nm capimage_policy_free ,
 .Nm capimage_seal ,
@@ -31,7 +31,7 @@ Library of embedded policy signatures (libcapimage, -lcapimage)
 .Ft int
 .Fn capimage_remove "int fd" "char *error" "size_t error_size"
 .Ft int
-.Fn capimage_cache_size "int fd" "off_t *size" "char *error" "size_t error_size"
+.Fn capimage_elf_info_fd "int fd" "struct capimage_elf_info *info" "char *error" "size_t error_size"
 .Ft int
 .Fn capimage_note "FILE *out" "const void *policy" "size_t size" "char *error" "size_t error_size"
 .Ft void
@@ -100,23 +100,16 @@ The caller must sign the result before publication.
 .Fn capimage_remove
 restores the authenticated original ELF header and truncates a private
 writable copy to its recorded original length.
-Version-2 removal verifies integrity before using the restoration metadata.
+Signature removal verifies integrity before using the restoration metadata.
 An unsigned build-input section, if originally present, is retained.
 No signing key is required, and the result grants no authority.
 .Pp
-.Fn capimage_cache_size
-returns the original pre-signing ELF length,
-or the entire file length for unsigned input.
-This is a structural check, not signature or trust verification.
-Malformed containers, stacked containers and retired inline signatures are
-rejected rather than copied into a cache.
-The signed file prefix has changed section-table locator fields.
-A cache builder must verify its private snapshot, then use
-.Fn capimage_remove
-to restore that header before copying the original-length payload.
-The returned size alone is insufficient for copying or concurrent-change protection.
-A cache built from these restored images excludes per-image signature containers
-and requires its own integrity signature.
+.Fn capimage_elf_info_fd
+returns structural ELF signature metadata, including the original length and
+header needed for verified signature removal.
+Unsigned inputs retain their full original length.
+Malformed signature containers are rejected.
+This operation does not establish integrity or publisher trust.
 .Pp
 The system trust catalogue and enforcement marker are accessed through
 root-owned directory descriptors for /etc and /etc/capability, and the keys
@@ -209,7 +202,6 @@ ENOATTR, malformed structure returns EFTYPE,
 and an invalid or untrusted signature returns EAUTH.
 .Sh SEE ALSO
 .Xr capsign 8 ,
-.Xr elfcache 8
 .Sh SECURITY CONSIDERATIONS
 The one-shot verification interfaces are not content locks.
 Explicit image handles retain a content pin for their lifetime.

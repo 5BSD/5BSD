@@ -64,7 +64,7 @@ class Deployment(unittest.TestCase):
 
     def invoke(self, *extra, plan=False):
         argv = ['deploy', '--repository', str(self.repo), '--pkg-public-key', str(self.key),
-                '--public-key', str(self.key), '--capsign', str(self.tool), '--elfcache', str(self.tool), *extra]
+                '--public-key', str(self.key), '--capsign', str(self.tool), *extra]
         if plan:
             argv.append('--plan')
         with patch.object(sys, 'argv', argv), \

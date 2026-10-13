@@ -118,7 +118,7 @@ verify_image(const char *path, const char *public, bool show, bool inspect)
 	}
 	if (inspect) {
 		struct capimage_elf_info image;
-		if (capimage_cache_info(fd, &image, error, sizeof(error)) < 0) {
+		if (capimage_elf_info_fd(fd, &image, error, sizeof(error)) < 0) {
 			warnx("%s: %s", path, error);
 			capimage_policy_free(&policy);
 			close(fd);

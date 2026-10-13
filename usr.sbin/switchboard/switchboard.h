@@ -448,10 +448,6 @@ int	svc_channel_send_event(struct svc_runtime *, const void *, size_t,
 int	supervisor_reload(int kq, char *summary, size_t sumlen);
 struct svc_runtime *svc_by_label(const char *label);
 struct svc_runtime *svc_by_label_scoped(const char *, uid_t);
-int svc_library_cache_init(void);
-int svc_library_cache_policy_init(int);
-int svc_library_cache_policy_bind(const struct svc_runtime *, int);
-int svc_library_cache_status(pid_t, char *, size_t);
 void	svc_remove(unsigned idx);
 void	svc_reregister_kevents(int kq);
 struct svc_new_client_msg;

@@ -153,8 +153,8 @@ find_note(int fd, struct image_note *result, char *error, size_t error_size)
 		length = elf64 ? u64(ph + 32, little) : u32(ph + 16, little);
 		if (length != 0 && !range(off, length, limit))
 			goto malformed;
-		/* Refuse the retired in-segment signature representation. Otherwise
-		 * a cache builder could accidentally retain an old signature. */
+		/* Reject alternate in-segment signature representations so only the
+		 * current ELF signature section supplies authenticated policy. */
 		if (u32(ph, little) == PT_NOTE) {
 			uint64_t end = off + length;
 			unsigned notes = 0;
@@ -623,31 +623,21 @@ capimage_embed(int fd, const void *data, size_t size, char *error, size_t error_
 #undef TAIL
 	return (0);
 }
-/* Structural cache input selection, not signature verification. Runtime
- * library lookup/authority stays attached to the original source file. */
+/* Structural ELF signature information, not signature verification. */
 int
-capimage_cache_info(int fd, struct capimage_elf_info *info, char *error, size_t error_size)
+capimage_elf_info_fd(int fd, struct capimage_elf_info *info, char *error, size_t error_size)
 {
 	struct stat st;
 	if (info == NULL || fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size < 0)
-		return (fail(error, error_size, EFTYPE, "invalid cache input"));
+		return (fail(error, error_size, EFTYPE, "invalid ELF input"));
 	int rc = capimage_elf_probe(elf_read, &fd, st.st_size, info);
-	if (rc < 0) return (fail(error, error_size, EFTYPE, "malformed cache signature"));
+	if (rc < 0) return (fail(error, error_size, EFTYPE, "malformed ELF signature"));
 	if (rc == 0) {
 		/* Preserve unsigned build-input validation and retired-note rejection. */
 		struct image_note note;
 		if (find_note(fd, &note, error, error_size) < 0 && errno != ENOENT) return (-1);
 		info->original_size = st.st_size;
 	}
-	return (0);
-}
-int
-capimage_cache_size(int fd, off_t *size, char *error, size_t error_size)
-{
-	struct capimage_elf_info info;
-	if (size == NULL) return (fail(error, error_size, EINVAL, "size required"));
-	if (capimage_cache_info(fd, &info, error, error_size) < 0) return (-1);
-	*size = info.original_size;
 	return (0);
 }
 /* Only a private writable copy may be removed. Authenticated rollback metadata must pass
@@ -657,7 +647,7 @@ capimage_remove(int fd, char *error, size_t error_size)
 {
 	struct capimage_elf_info info;
 	struct capimage_policy policy;
-	if (capimage_cache_info(fd, &info, error, error_size) < 0) return (-1);
+	if (capimage_elf_info_fd(fd, &info, error, error_size) < 0) return (-1);
 	if (info.version == 0) return (fail(error, error_size, ENOENT, "no signature to remove"));
 	{
 		if (capimage_verify_integrity(fd, &policy, error, error_size) < 0) return (-1);

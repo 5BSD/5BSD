@@ -193,21 +193,6 @@ cmd_status(void)
 }
 
 static int
-cmd_cache_status(const char *label)
-{
-	char summary[SWITCHBOARD_CTL_SUMMARY_MAX] = {0};
-	int error;
-
-	error = sctl_rpc(SCTL_OP_CACHE_STATUS, 0, label, summary, sizeof(summary));
-	if (error != 0) {
-		warnx("cache-status: %s", strerror(error));
-		return (1);
-	}
-	printf("%s", summary);
-	return (0);
-}
-
-static int
 cmd_services(void)
 {
 	char summary[SWITCHBOARD_CTL_SUMMARY_MAX];
@@ -494,7 +479,6 @@ usage(void)
 	    "\n"
 	    "commands:\n"
 	    "  status              show switchboard status and service list\n"
-	    "  cache-status label  show a supervised unit's cache mapping counters\n"
 	    "  services            list loaded services\n"
 	    "  tree                show who each running unit exists on behalf of\n"
 	    "  reload              reload service bundles\n"
@@ -532,8 +516,6 @@ main(int argc, char *argv[])
 
 	cmd = argv[0];
 
-	if (strcmp(cmd, "cache-status") == 0 && argc == 2)
-		return (cmd_cache_status(argv[1]));
 	if (strcmp(cmd, "status") == 0 && argc == 1)
 		return (cmd_status());
 	if (strcmp(cmd, "tree") == 0 && argc == 1)

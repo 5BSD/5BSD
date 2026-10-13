@@ -141,7 +141,7 @@ moving existing program headers or load segments.
 The signature is a non-allocated
 .Pa .note.5bsd.signature
 ELF note; copied section metadata and an authenticated original-header
-record permit exact signature removal and cache extraction.
+record permit exact signature removal.
 The redundant footer must match the note.
 Use
 .Xr readelf 1
@@ -283,7 +283,6 @@ capsign verify -r -p public.pem Signed.cap
 .Ed
 .Sh SEE ALSO
 .Xr libcapimage 3 ,
-.Xr elfcache 8
 .Sh SECURITY CONSIDERATIONS
 Private signing keys belong in the release signing environment.
 Do not ship them in a package or guest image.

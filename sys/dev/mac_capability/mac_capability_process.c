@@ -268,7 +268,7 @@ sys_cap_process(struct thread *td, struct cap_process_args *a)
 	struct origin_token *t;
 	struct file *fp;
 	int error, fd;
-	if (a->op >= CAP_AUTH_ISSUER_CREATE && a->op <= CAP_CACHE_DOMAIN_PUBLISH) {
+	if (a->op >= CAP_AUTH_ISSUER_CREATE && a->op <= CAP_AUTH_GET_LIBDIR) {
 		if (a->uid != 0)
 			return (EINVAL);
 		return (cap_authority_call(td, a->op, a->fd, a->data));

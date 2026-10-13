@@ -191,7 +191,6 @@ def main():
     parser.add_argument('--be-root', help='explicit ZFS boot-environment parent dataset')
     parser.add_argument('--plan', action='store_true')
     parser.add_argument('--capsign', default='/usr/sbin/capsign')
-    parser.add_argument('--elfcache', default='/usr/sbin/elfcache')
     args = parser.parse_args()
     repository = args.repository.resolve(strict=True)
     if not repository.is_dir() or not (repository / 'publication.json').is_file():
@@ -201,7 +200,6 @@ def main():
     pub = regular(args.pkg_public_key)
     codepub = regular(args.public_key)
     regular(args.capsign)
-    regular(args.elfcache)
     if not re.fullmatch(r'[A-Za-z0-9_.-]+', args.kernel):
         raise ValueError('invalid kernel configuration name')
     if args.bootenv and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,62}', args.bootenv):
@@ -216,7 +214,7 @@ def main():
     if args.plan:
         print('verify signed pkg catalogue and archive downloads; select base, kernel and matching hardware')
         print('create destination; install using target chroot and isolated pkg database')
-        print('verify all signed system bundles and cache with capsign/elfcache; unmount boot environment')
+        print('verify all signed system bundles with capsign; unmount boot environment')
         if args.bootenv:
             print('clone source=' + (args.clone_from or 'current boot environment'))
         print('no boot environment activation or reboot')
@@ -311,7 +309,7 @@ def main():
             raise ValueError('repository catalogue changed during deployment')
         command(*targetpkg, 'install', '-U', '-f', '-y', '-r', 'bsd_build', *install_names)
         command(*targetpkg, 'check', '-s', '-a')
-        environment = dict(os.environ, CAPSIGN=args.capsign, ELFCACHE=args.elfcache)
+        environment = dict(os.environ, CAPSIGN=args.capsign)
         subprocess.run(['sh', '/usr/src/tools/build/capimage/verify-stage.sh',
                         '-r', str(root), '-p', str(codepub)], env=environment, check=True)
         shutil.rmtree(inputs)

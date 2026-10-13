@@ -345,9 +345,6 @@ CFLAGS.launch_gate_test+= -I${SRCTOP}/sys -I${SRCTOP}/lib/libcapsulert -I${SRCTO
 LDFLAGS.launch_gate_test+= -Wl,--gc-sections
 NO_SHARED.launch_gate_test= yes
 
-ATF_TESTS_C+= library_cache_stats_test
-CFLAGS.library_cache_stats_test+= -I${SRCTOP}/usr.sbin/switchboard
-
 # UID namespace regressions use real private registry/runtime functions.
 PLAIN_TESTS_C+= scope_registry_test scope_runtime_test scope_identity_contract_test scope_storage_test scope_cli_test
 CFLAGS.scope_cli_test+= -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libcapability -I${SRCTOP}/lib/libservice -ffunction-sections -fdata-sections
@@ -377,16 +374,5 @@ CFLAGS.verified_handle_consumer_test+= -DCAPIMAGE_EXPERIMENTAL_CONSUMER \
 LDFLAGS.verified_handle_consumer_test+= -Wl,--gc-sections \
     -Wl,--wrap=mac_syscall -Wl,--wrap=syscall
 LIBADD.verified_handle_consumer_test= crypto md ucl
-
-# Real parser/transaction with mock issuer and seed callbacks; no kernel proof.
-PLAIN_TESTS_C+= library_cache_policy_test
-CFLAGS.library_cache_policy_test+= -I${SRCTOP}/usr.sbin/switchboard \
-    -I${SRCTOP}/lib/libcapimage -I${SRCTOP}/lib/libcapbundle \
-    -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libchannel \
-    -I${SRCTOP}/lib/libcapability -I${SRCTOP}/lib/libservice \
-    -I${SRCTOP}/contrib/libucl/include -I${SRCTOP}/sys \
-    -ffunction-sections -fdata-sections
-LDFLAGS.library_cache_policy_test+= -Wl,--gc-sections
-LIBADD.library_cache_policy_test= ucl
 
 .include <bsd.test.mk>

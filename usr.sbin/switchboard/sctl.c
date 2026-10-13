@@ -395,25 +395,6 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			    "reload: %s", summary);
 		}
 		break;
-	case SCTL_OP_CACHE_STATUS: {
-		struct svc_runtime *svc;
-
-		if (datalen == 0) {
-			reply->status = EINVAL;
-		} else if ((svc = sctl_target(payload, audit_uid, is_admin)) == NULL) {
-			reply->status = ENOENT;
-		} else if (svc->pid <= 0 || (svc->state != SVC_STATE_RUNNING &&
-		    svc->state != SVC_STATE_STARTING)) {
-			reply->status = ESRCH;
-		} else {
-			reply->status = svc_library_cache_status(svc->pid, summary,
-			    summary_cap);
-		}
-		if (reply->status != 0)
-			snprintf(summary, summary_cap, "cache-status: %s",
-			    strerror(reply->status));
-		break;
-	}
 	case SCTL_OP_START_SVC:
 		if (datalen == 0) {
 			reply->status = EINVAL;
@@ -624,7 +605,6 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 			case SCTL_OP_STATUS:
 			case SCTL_OP_SERVICES:
 			case SCTL_OP_TREE:
-			case SCTL_OP_CACHE_STATUS:
 			case SCTL_OP_RELOAD:
 			case SCTL_OP_START_SVC:
 			case SCTL_OP_STOP_SVC:
