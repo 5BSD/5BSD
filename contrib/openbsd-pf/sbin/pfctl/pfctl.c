@@ -78,7 +78,7 @@ void	 pfctl_net_kill_states(int, const char *, int, int);
 void	 pfctl_label_kill_states(int, const char *, int, int);
 void	 pfctl_id_kill_states(int, int);
 void	 pfctl_key_kill_states(int, const char *, int, int);
-void	 pfctl_kill_source(int, const char *, const char *, int);
+void	 pfctl_kill_source(int, const char *, const char *, int, int);
 int	 pfctl_parse_host(char *, struct pf_rule_addr *);
 void	 pfctl_init_options(struct pfctl *);
 int	 pfctl_load_options(struct pfctl *);
@@ -1168,9 +1168,10 @@ pfctl_show_sourcelims(int dev, enum pfctl_show format, int opts,
 }
 
 void
-pfctl_kill_source(int dev, const char *idopt, const char *source, int opts)
+pfctl_kill_source(int dev, const char *idopt, const char *source, int opts,
+    int rdomain)
 {
-	struct pfioc_source_kill ioc;
+	struct pfioc_source_kill ioc = { 0 };
 	unsigned int id;
 	const char *errstr;
 	struct addrinfo hints, *res;
@@ -1194,6 +1195,7 @@ pfctl_kill_source(int dev, const char *idopt, const char *source, int opts)
 		errx(1, "source limiter address: %s", gai_strerror(error));
 
 	ioc.id = id;
+	ioc.rdomain = rdomain;
 	ioc.af = res->ai_family;
 	copy_satopfaddr(&ioc.addr, res->ai_addr);
 	ioc.rmstates = 0;
@@ -3448,7 +3450,8 @@ main(int argc, char *argv[])
 		else if (!strcmp(state_kill[0], "key"))
 			pfctl_key_kill_states(dev, ifaceopt, opts, rdomain);
 		else if (!strcmp(state_kill[0], "source"))
-			pfctl_kill_source(dev, idopt, state_kill[1], opts);
+			pfctl_kill_source(dev, idopt, state_kill[1], opts,
+			    rdomain);
 		else
 			pfctl_net_kill_states(dev, ifaceopt, opts, rdomain);
 	}
