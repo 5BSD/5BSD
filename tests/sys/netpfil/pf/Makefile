@@ -38,6 +38,7 @@ ATF_TESTS_SH+=	anchor \
 		pflow \
 		pfsync	\
 		prio \
+		priority \
 		proxy \
 		rdr \
 		route_to \
@@ -76,6 +77,8 @@ TEST_METADATA+= execenv_jail_params="vnet allow.raw_sockets allow.read_msgbuf"
 
 # Delay observes global SDT probes and changes the privileged shared pool limit.
 TEST_METADATA.delay+= execenv="" execenv_jail_params="" is_exclusive="true"
+# Priority observes kernel FBT probes while creating its own VNET fixture.
+TEST_METADATA.priority+= execenv="" execenv_jail_params="" is_exclusive="true"
 
 ${PACKAGE}FILES+=	\
 			bsnmpd.conf \
