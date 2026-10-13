@@ -1,0 +1,34 @@
+HyperTrace experimental vendor import
+
+Upstream: https://github.com/cadets/freebsd.git, branch hypertrace/main
+Revision: 42466516653b1974ae8d8d3899e9d6972312322b
+Committer date: 2024-08-23T18:45:24Z (author date differs).
+FreeBSD base: db87c98168b1605f067d283fa36a710369c3849d
+5BSD branch base: 1de2e37e9eff3a80d6605e546339f4ea4ebeb83f
+
+upstream/ preserves the exact added/modified files relative to the fork's
+last merged FreeBSD main revision, plus top-level and OpenSolaris licenses.
+It is an overlay, NOT a standalone FreeBSD source checkout. All 1957 changed
+paths are represented in upstream-manifest.json, including any deletions.
+upstream.patch is the complete binary-capable delta against the pinned base.
+Unmodified FreeBSD dependencies are obtained from the pinned upstream tree.
+Copyright and license notices are retained; licenses vary by source file.
+
+Do not build this old overlay as though it were a current 5BSD tree, or copy
+its modified kernel files over modern 5BSD. Compiler, DTrace ABI, VMM and
+network changes require review and integration against current interfaces.
+No buildworld/kernel inclusion, installation, module loading or daemon startup
+is enabled by this import. The public branch appears dormant since 2024;
+there may be other or private development not represented in this snapshot.
+
+Keep upstream/ pristine. Local fixes belong in patches/ as an ordered series.
+Apply that series to a separate working copy before compiling or testing.
+This permits independent verification of upstream bytes and local changes.
+The upstream README is historical; dtraced now resides in usr.sbin/dtraced
+and uses C++, rather than the older C layout described in that README.
+
+Integration requirements: port libdtrace ELF/type/relocation support and CLI;
+port dtraced and its distribution protocol; integrate guest forwarding and
+host guest-context handling; adapt virtio/VMM hypercalls to current bhyve;
+qualify provider compatibility, isolation, restart and snapshot/restore.
+A vendor import or component test does not establish a working HyperTrace VM.
