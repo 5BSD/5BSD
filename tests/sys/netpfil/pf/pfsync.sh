@@ -1742,6 +1742,58 @@ flush_by_intf_cleanup()
 	pfsynct_cleanup
 }
 
+atf_test_case "lifecycle_departure" "cleanup"
+lifecycle_departure_head()
+{
+	atf_set descr 'Drain pfsync hooks and timers across detach, VNET move, and destroy'
+	atf_set require.user root
+	atf_set timeout 300
+}
+
+lifecycle_departure_body()
+{
+	pft_init
+	vnet_mkjail pfsync_lifecycle
+
+	i=0
+	while [ $i -lt 16 ]; do
+		ep=$(vnet_mkepair)
+		[ -n "$ep" ] || atf_fail 'could not create epair'
+		ifconfig ${ep}b vnet pfsync_lifecycle ||
+		    atf_fail "moving ${ep}b into jail"
+		jexec pfsync_lifecycle ifconfig ${ep}b 192.0.2.1/24 up ||
+		    atf_fail "configuring ${ep}b"
+		jexec pfsync_lifecycle ifconfig pfsync0 create ||
+		    atf_fail 'creating pfsync0'
+		jexec pfsync_lifecycle ifconfig pfsync0 syncdev ${ep}b up ||
+		    atf_fail "starting pfsync0 on ${ep}b"
+		jexec pfsync_lifecycle ifconfig pfsync0 down ||
+		    atf_fail 'stopping pfsync0'
+		jexec pfsync_lifecycle ifconfig pfsync0 up ||
+		    atf_fail 'restarting pfsync0'
+
+		if [ $((i % 2)) -eq 0 ]; then
+			ifconfig ${ep}a destroy ||
+			    atf_fail "detaching ${ep}a"
+		else
+			ifconfig ${ep}b -vnet pfsync_lifecycle ||
+			    atf_fail "reclaiming ${ep}b from jail"
+			ifconfig ${ep}a destroy ||
+			    atf_fail "destroying ${ep}a after VNET move"
+		fi
+		unlist_interface ${ep}a
+		unlist_interface ${ep}b
+		jexec pfsync_lifecycle ifconfig pfsync0 destroy ||
+		    atf_fail 'destroying pfsync0 after departure'
+		i=$((i + 1))
+	done
+}
+
+lifecycle_departure_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "basic"
@@ -1767,4 +1819,5 @@ atf_init_test_cases()
 	atf_add_test_case "altq_queues"
 	atf_add_test_case "rt_af"
 	atf_add_test_case "flush_by_intf"
+	atf_add_test_case "lifecycle_departure"
 }

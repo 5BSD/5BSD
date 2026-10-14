@@ -1157,7 +1157,6 @@ pfsync_down(struct pfsync_softc *sc)
 	struct smr_entry smr;
 	size_t i;
 	void *inm = NULL;
-	unsigned int sndbar = 0;
 	struct pfsync_deferrals pds = TAILQ_HEAD_INITIALIZER(pds);
 	struct pfsync_deferral *pd;
 
@@ -1189,6 +1188,8 @@ pfsync_down(struct pfsync_softc *sc)
 #endif
 
 	NET_UNLOCK();
+	/* The link hook uses sc directly and may already be running. */
+	taskq_del_barrier(systq, &sc->sc_ltask);
 
 	KASSERTMSG(SMR_PTR_GET_LOCKED(&pfsyncif) == sc,
 	   "pfsyncif %p != sc %p", pfsyncif, sc);
@@ -1203,9 +1204,8 @@ pfsync_down(struct pfsync_softc *sc)
 
 	rw_enter_read(&pf_state_list.pfs_rwl);
 	rw_enter_write(&sc->sc_bulk_snd.snd_lock);
+	timeout_del(&sc->sc_bulk_snd.snd_tmo);
 	if (sc->sc_bulk_snd.snd_tail != NULL) {
-		sndbar = !timeout_del(&sc->sc_bulk_snd.snd_tmo);
-
 		sc->sc_bulk_snd.snd_again = 0;
 		sc->sc_bulk_snd.snd_next = NULL;
 		sc->sc_bulk_snd.snd_tail = NULL;
@@ -1213,11 +1213,7 @@ pfsync_down(struct pfsync_softc *sc)
 	rw_exit_write(&sc->sc_bulk_snd.snd_lock);
 	rw_exit_read(&pf_state_list.pfs_rwl);
 
-	/*
-	 * do a single barrier for all the timeouts. because the
-	 * timeouts in each slice are configured the same way, the
-	 * barrier for one will work for all of them.
-	 */
+	/* Stop producers before draining their callouts and queued tasks. */
 	for (i = 0; i < nitems(sc->sc_slices); i++) {
 		struct pfsync_slice *s = &sc->sc_slices[i];
 
@@ -1228,13 +1224,23 @@ pfsync_down(struct pfsync_softc *sc)
 		timeout_del(&s->s_deferrals_tmo);
 		task_del(s->s_softnet, &s->s_deferrals_task);
 	}
-	timeout_barrier(&sc->sc_slices[0].s_tmo);
-	timeout_barrier(&sc->sc_bulk_req.req_tmo); /* XXX proc */
-	if (sndbar) {
-		/* technically the preceding barrier does the same job */
-		timeout_barrier(&sc->sc_bulk_snd.snd_tmo);
+	/* 5BSD timeout barriers drain one callout, not an entire softclock. */
+	for (i = 0; i < nitems(sc->sc_slices); i++) {
+		struct pfsync_slice *s = &sc->sc_slices[i];
+
+		timeout_barrier(&s->s_tmo);
+		timeout_barrier(&s->s_deferrals_tmo);
 	}
-	net_tq_barriers("pfsyncbar");
+	timeout_barrier(&sc->sc_bulk_req.req_tmo);
+	timeout_barrier(&sc->sc_bulk_snd.snd_tmo);
+	/* A timer callback may have queued a slice task before the gate closed. */
+	for (i = 0; i < nitems(sc->sc_slices); i++) {
+		struct pfsync_slice *s = &sc->sc_slices[i];
+
+		taskq_del_barrier(s->s_softnet, &s->s_task);
+		taskq_del_barrier(s->s_softnet, &s->s_send);
+		taskq_del_barrier(s->s_softnet, &s->s_deferrals_task);
+	}
 
 	/* pfsync is no longer running */
 
