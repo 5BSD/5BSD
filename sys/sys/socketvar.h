@@ -124,6 +124,8 @@ struct socket {
 	struct	sigio *so_sigio;	/* [sg] information for async I/O or
 					   out of band data (SIGURG) */
 	struct	ucred *so_cred;		/* (a) user credentials */
+	uint32_t so_rxq_drops;	/* (cr) receive queue overflows */
+	u_int	so_defer_accept;	/* (b) Linux TCP_DEFER_ACCEPT seconds */
 	struct	label *so_label;	/* (b) MAC label for socket */
 	/* NB: generation count must not be first. */
 	so_gen_t so_gencnt;		/* (h) generation count */

@@ -309,18 +309,17 @@ test(void)
 	 * succeeds, returning the rounded value.
 	 */
 	if (fcntl(pipes[0], F_SETPIPE_SZ, sz / 2 + 1) != sz) return (48);
-	/*
-	 * 49: the native buffer is sized by the kernel, so a request that
-	 * rounds to a different size is deliberately rejected: EINVAL
-	 * (Linux would resize).
-	 */
-	if (fcntl(pipes[1], F_SETPIPE_SZ, sz * 8) != -EINVAL) return (49);
-	/*
-	 * 50: 0 is a one-page request on Linux (rounded up to PAGE_SIZE):
-	 * it succeeds only if the pipe already is one page.
-	 */
+	/* 49: both descriptors see the new capacity after a resize. */
+	if (fcntl(pipes[1], F_SETPIPE_SZ, sz * 2) != sz * 2) return (49);
+	if (fcntl(pipes[0], F_GETPIPE_SZ, 0) != sz * 2) return (49);
+	/* 50: zero requests one page, and the capacity stays fixed after I/O. */
 	r = fcntl(pipes[1], F_SETPIPE_SZ, 0);
-	if (r != (sz == 4096 ? 4096 : -EINVAL)) return (50);
+	if (r != 4096) return (50);
+	if (call(SYS_write, pipes[1], (long)fill, 4096, 0, 0, 0) != 4096)
+		return (50);
+	if (call(SYS_read, pipes[0], (long)fill, 4096, 0, 0, 0) != 4096)
+		return (50);
+	if (fcntl(pipes[0], F_GETPIPE_SZ, 0) != 4096) return (50);
 	/* 51: a size above 2^31 cannot be rounded: EINVAL on Linux too. */
 	if (fcntl(pipes[1], F_SETPIPE_SZ, 0x80000001L) != -EINVAL) return (51);
 	/* 52-53: F_GETPIPE_SZ / F_SETPIPE_SZ on a non-pipe are EBADF. */

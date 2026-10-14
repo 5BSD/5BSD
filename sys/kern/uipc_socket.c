@@ -4106,6 +4106,7 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 		case SO_NO_DDP:
 		case SO_NO_OFFLOAD:
 		case SO_RERROR:
+		case SO_RXQ_OVFL:
 stdopt:
 			error = sooptcopyin(sopt, &optval, sizeof optval,
 			    sizeof optval);
@@ -4370,6 +4371,7 @@ sogetopt(struct socket *so, struct sockopt *sopt)
 		case SO_NO_DDP:
 		case SO_NO_OFFLOAD:
 		case SO_RERROR:
+		case SO_RXQ_OVFL:
 stdopt:
 			optval = so->so_options & sopt->sopt_name;
 integer:

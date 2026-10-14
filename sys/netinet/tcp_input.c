@@ -1047,7 +1047,8 @@ findpcb:
 			/*
 			 * NB: syncache_expand() doesn't unlock inp.
 			 */
-			result = syncache_expand(&inc, &to, th, &so, m, port);
+			result = syncache_expand(&inc, &to, th, &so, m,
+			    tlen, port);
 			if (result < 0) {
 				/*
 				 * A failing TCP MD5 signature comparison

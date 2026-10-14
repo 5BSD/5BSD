@@ -424,6 +424,7 @@ soroverflow_locked(struct socket *so)
 {
 
 	SOCK_RECVBUF_LOCK_ASSERT(so);
+	so->so_rxq_drops++;
 
 	if (so->so_options & SO_RERROR) {
 		so->so_rerror = ENOBUFS;

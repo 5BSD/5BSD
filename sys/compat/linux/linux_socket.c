@@ -61,6 +61,7 @@
 #include <net/if_dl.h>
 #include <net/vnet.h>
 #include <netinet/in.h>
+#include <netinet/in_pcb.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <netinet/tcp_fsm.h>
@@ -268,9 +269,7 @@ linux_to_bsd_ip_sockopt_impl(int opt)
 		    opt);
 		return (-2);
 	case LINUX_IP_MTU:
-		LINUX_RATELIMIT_MSG_OPT1(
-		    "unsupported IPv4 socket option IP_MTU (%d), your linux program can not read the path MTU of this socket",
-		    opt);
+		/* Getsockopt is handled before this translation table. */
 		return (-2);
 	case LINUX_IP_RECVOPTS:
 	case LINUX_IP_RETOPTS:
@@ -521,6 +520,8 @@ linux_to_bsd_so_sockopt_impl(int opt)
 		return (SO_OOBINLINE);
 	case LINUX_SO_LINGER:
 		return (SO_LINGER);
+	case LINUX_SO_RXQ_OVFL:
+		return (SO_RXQ_OVFL);
 	case LINUX_SO_REUSEPORT:
 		/*
 		 * Linux SO_REUSEPORT load-balances incoming connections
@@ -601,7 +602,6 @@ linux_to_bsd_so_sockopt_impl(int opt)
 	case LINUX_SO_DETACH_FILTER:
 	case LINUX_SO_PEERNAME:
 	case LINUX_SO_PASSSEC:
-	case LINUX_SO_RXQ_OVFL:
 	case LINUX_SO_WIFI_STATUS:
 	case LINUX_SO_PEEK_OFF:
 	case LINUX_SO_NOFCS:
@@ -715,9 +715,7 @@ linux_to_bsd_tcp_sockopt_impl(int opt)
 
 	/* known but not implemented sockopts, could be done with more work */
 	case LINUX_TCP_DEFER_ACCEPT:
-		/* accf_data(9) has the wait but not the timeout. */
-		LINUX_RATELIMIT_MSG_OPT1(
-		    "unsupported TCP socket option TCP_DEFER_ACCEPT (%d)", opt);
+		/* Implemented by the TCP syncache before this table is used. */
 		return (-2);
 
 	/*
@@ -1045,6 +1043,105 @@ linux_getsockopt_fixed_int(struct thread *td,
 {
 
 	return (linux_sockopt_copyout_trunc(td, &fixed, sizeof(fixed), args));
+}
+
+static int
+linux_setsockopt_tcp_defer_accept(struct thread *td,
+    struct linux_setsockopt_args *args)
+{
+	struct socket *so;
+	struct file *fp;
+	int error, seconds;
+
+	if (args->optlen < sizeof(seconds))
+		return (EINVAL);
+	error = copyin(PTRIN(args->optval), &seconds, sizeof(seconds));
+	if (error != 0)
+		return (error);
+	error = getsock(td, args->s, &cap_setsockopt_rights, &fp);
+	if (error != 0)
+		return (error);
+	so = fp->f_data;
+	if (so->so_proto->pr_protocol != IPPROTO_TCP ||
+	    so->so_type != SOCK_STREAM)
+		error = ENOPROTOOPT;
+	else {
+		SOCK_LOCK(so);
+		/* Linux's default SYN-ACK retry window spans about a minute. */
+		so->so_defer_accept = seconds > 0 ? MIN(seconds, 63) : 0;
+		SOCK_UNLOCK(so);
+	}
+	fdrop(fp, td);
+	return (error);
+}
+
+static int
+linux_getsockopt_tcp_defer_accept(struct thread *td,
+    struct linux_getsockopt_args *args)
+{
+	struct socket *so;
+	struct file *fp;
+	int error, seconds;
+
+	error = getsock(td, args->s, &cap_getsockopt_rights, &fp);
+	if (error != 0)
+		return (error);
+	so = fp->f_data;
+	if (so->so_proto->pr_protocol != IPPROTO_TCP ||
+	    so->so_type != SOCK_STREAM)
+		error = ENOPROTOOPT;
+	else {
+		SOCK_LOCK(so);
+		seconds = so->so_defer_accept;
+		SOCK_UNLOCK(so);
+		error = linux_sockopt_copyout_trunc(td, &seconds,
+		    sizeof(seconds), args);
+	}
+	fdrop(fp, td);
+	return (error);
+}
+
+/* Linux IP_MTU reports the route MTU for a connected IPv4 socket. */
+static int
+linux_getsockopt_ip_mtu(struct thread *td,
+    struct linux_getsockopt_args *args)
+{
+	struct epoch_tracker et;
+	struct nhop_object *nh;
+	struct inpcb *inp;
+	struct in_addr dst;
+	struct socket *so;
+	struct file *fp;
+	int error, mtu;
+
+	error = getsock(td, args->s, &cap_getsockopt_rights, &fp);
+	if (error != 0)
+		return (error);
+	so = fp->f_data;
+	if (so->so_proto->pr_domain->dom_family != AF_INET ||
+	    so->so_pcb == NULL) {
+		error = ENOPROTOOPT;
+		goto out;
+	}
+	if ((so->so_state & SS_ISCONNECTED) == 0) {
+		error = ENOTCONN;
+		goto out;
+	}
+	inp = sotoinpcb(so);
+	INP_RLOCK(inp);
+	dst = inp->inp_faddr;
+	INP_RUNLOCK(inp);
+	NET_EPOCH_ENTER(et);
+	nh = fib4_lookup(so->so_fibnum, dst, 0, NHR_NONE, 0);
+	mtu = nh != NULL ? nh->nh_mtu : 0;
+	NET_EPOCH_EXIT(et);
+	if (mtu == 0)
+		error = ENOTCONN;
+	else
+		error = linux_sockopt_copyout_trunc(td, &mtu, sizeof(mtu), args);
+out:
+	fdrop(fp, td);
+	return (error);
 }
 
 /*
@@ -1675,6 +1772,8 @@ linux_to_bsd_msg_flags(int flags)
 		ret_flags |= MSG_WAITALL;
 	if (flags & LINUX_MSG_NOSIGNAL)
 		ret_flags |= MSG_NOSIGNAL;
+	if (flags & LINUX_MSG_MORE)
+		ret_flags |= MSG_MORETOCOME;
 	if (flags & LINUX_MSG_PROXY)
 		LINUX_RATELIMIT_MSG_OPT1("socket message flag MSG_PROXY (%d) not handled",
 		    LINUX_MSG_PROXY);
@@ -1792,6 +1891,8 @@ bsd_to_linux_cmsg_type(struct proc *p, int cmsg_type, int cmsg_level)
 		return (LINUX_SCM_CREDENTIALS);
 	case SCM_PIDFD_CRED:
 		return (LINUX_SCM_PIDFD);
+	case SCM_RXQ_OVFL:
+		return (LINUX_SO_RXQ_OVFL);
 	case SCM_TIMESTAMP:
 		return (pem->so_timestamp);
 	case SCM_BINTIME:
@@ -3789,6 +3890,8 @@ linux_setsockopt_impl(struct thread *td, struct linux_setsockopt_args *args)
 		name = linux_to_bsd_ip6_sockopt(args->optname);
 		break;
 	case IPPROTO_TCP:
+		if (args->optname == LINUX_TCP_DEFER_ACCEPT)
+			return (linux_setsockopt_tcp_defer_accept(td, args));
 		name = linux_to_bsd_tcp_sockopt(args->optname);
 		switch (name) {
 		case TCP_CONGESTION:
@@ -4190,6 +4293,7 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 		case LINUX_SO_BROADCAST:
 		case LINUX_SO_OOBINLINE:
 		case LINUX_SO_REUSEPORT:
+		case LINUX_SO_RXQ_OVFL:
 		case LINUX_SO_ACCEPTCONN:
 		case LINUX_SO_TIMESTAMPO:
 		case LINUX_SO_TIMESTAMPN:
@@ -4269,6 +4373,8 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 		case LINUX_IP_MTU_DISCOVER:
 			return (linux_getsockopt_mtu_discover(td, args,
 			    IPPROTO_IP, IP_DONTFRAG, LINUX_IP_PMTUDISC_DONT));
+		case LINUX_IP_MTU:
+			return (linux_getsockopt_ip_mtu(td, args));
 		case LINUX_IP_MULTICAST_ALL:
 			return (linux_getsockopt_fixed_int(td, args, 0));
 		case LINUX_IP_PROTOCOL:
@@ -4307,6 +4413,8 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 		name = linux_to_bsd_ip6_sockopt(args->optname);
 		break;
 	case IPPROTO_TCP:
+		if (args->optname == LINUX_TCP_DEFER_ACCEPT)
+			return (linux_getsockopt_tcp_defer_accept(td, args));
 		name = linux_to_bsd_tcp_sockopt(args->optname);
 		switch (name) {
 		case TCP_INFO:

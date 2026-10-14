@@ -2197,9 +2197,7 @@ linux_fcntl_setown(struct thread *td, int fd, pid_t owner)
  * Linux round_pipe_size(): F_SETPIPE_SZ rounds the request up to a
  * power-of-two multiple of the page size (a request of 0 is one page);
  * anything above 2^31 cannot be rounded and yields 0, which the caller
- * turns into EINVAL.  Native pipe buffers are sized by the kernel and
- * cannot be set from userland, so the request is honoured only when it
- * already matches the current size (the value Linux would return).
+ * turns into EINVAL.
  */
 static u_long
 linux_round_pipe_size(u_long size)
@@ -2221,7 +2219,8 @@ linux_round_pipe_size(u_long size)
  * direction; data written on fd[1] lands in pp_rpipe's buffer, which is
  * also the single pipe backing a FIFO, so report that one for either
  * end rather than fd[1]'s own unused reverse buffer.  The kernel grows
- * and shrinks the buffer itself, so the value is a snapshot.  Linux
+ * and shrinks the buffer itself until F_SETPIPE_SZ fixes it, so the value
+ * is otherwise a snapshot.  Linux
  * pipe_fcntl() reports a descriptor that is not a pipe as EBADF.
  */
 static int
@@ -2491,13 +2490,17 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 		return (0);
 
 	case LINUX_F_SETPIPE_SZ:
-		error = linux_pipe_size(td, args->fd, &size);
+		size = linux_round_pipe_size(args->arg);
+		if (size == 0)
+			return (EINVAL);
+		error = fget(td, args->fd, &cap_fcntl_rights, &fp);
 		if (error != 0)
 			return (error);
-		if (linux_round_pipe_size(args->arg) != size)
-			return (EINVAL);
-		td->td_retval[0] = size;
-		return (0);
+		error = kern_pipe_set_size(fp, size, &size);
+		fdrop(fp, td);
+		if (error == 0)
+			td->td_retval[0] = size;
+		return (error);
 
 	case LINUX_F_DUPFD_QUERY:
 		error = kern_kcmp(td, td->td_proc->p_pid, td->td_proc->p_pid,

@@ -150,6 +150,7 @@ typedef	__uintptr_t	uintptr_t;
 #define	SO_REUSEPORT_LB	0x00010000	/* int; reuse with load balancing */
 #define	SO_RERROR	0x00020000	/* int; keep track of receive errors */
 #define	SO_PASSRIGHTS	0x00040000	/* int; unix(4) accepts SCM_RIGHTS */
+#define	SO_RXQ_OVFL	0x00080000	/* int; report receive queue drops */
 
 /*
  * Additional options, not kept in so_options.
@@ -612,6 +613,7 @@ struct sockcred2 {
 #define	SCM_TIME_INFO	0x07		/* timestamp info */
 #define	SCM_CREDS2	0x08		/* process creds (struct sockcred2) */
 #define	SCM_PIDFD_CRED	0x09	/* kernel-generated sender identity */
+#define	SCM_RXQ_OVFL	0x0a	/* receive queue drop count (uint32_t) */
 
 struct sockpidfdcred {
 	pid_t		spc_pid;

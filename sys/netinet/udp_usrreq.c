@@ -324,6 +324,17 @@ udp_append(struct inpcb *inp, struct ip *ip, struct mbuf *n, int off,
 
 	so = inp->inp_socket;
 	SOCKBUF_LOCK(&so->so_rcv);
+	if ((so->so_options & SO_RXQ_OVFL) != 0 && so->so_rxq_drops != 0) {
+		uint32_t drops = so->so_rxq_drops;
+		struct mbuf *dropopt;
+
+		dropopt = sbcreatecontrol(&drops, sizeof(drops), SCM_RXQ_OVFL,
+		    SOL_SOCKET, M_NOWAIT);
+		if (dropopt != NULL) {
+			dropopt->m_next = opts;
+			opts = dropopt;
+		}
+	}
 	if (sbappendaddr_locked(&so->so_rcv, append_sa, n, opts) == 0) {
 		soroverflow_locked(so);
 		m_freem(n);

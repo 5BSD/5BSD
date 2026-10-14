@@ -32,6 +32,7 @@ struct ip_mreq_source { uint32_t multiaddr; uint32_t interface;
 	uint32_t sourceaddr; };
 struct in_pktinfo { int ifindex; uint32_t spec_dst; uint32_t addr; };
 struct sock_timeval { int64_t sec; int64_t usec; };
+struct pollfd { int fd; short events; short revents; };
 struct ifreq { char name[16]; union { int ifindex; char pad[24]; } u; };
 
 /* Linux constants. */
@@ -40,6 +41,8 @@ struct ifreq { char name[16]; union { int ifindex; char pad[24]; } u; };
 #define	AF_INET6	10
 #define	SOCK_STREAM	1
 #define	SOCK_DGRAM	2
+#define	O_NONBLOCK	0x800
+#define	F_SETFL	4
 #define	SOL_SOCKET	1
 #define	SOL_IP		0
 #define	SOL_TCP		6
@@ -47,16 +50,20 @@ struct ifreq { char name[16]; union { int ifindex; char pad[24]; } u; };
 #define	EPERM		1
 #define	ENOENT		2
 #define	EBADF		9
+#define	EAGAIN		11
 #define	EINVAL		22
 #define	EDOM		33
 #define	ENOPROTOOPT	92
 #define	EOPNOTSUPP	95
 #define	EADDRNOTAVAIL	99
+#define	ENOTCONN	107
 
 #define	SYS_read	0
 #define	SYS_write	1
 #define	SYS_close	3
+#define	SYS_poll	7
 #define	SYS_ioctl	16
+#define	SYS_fcntl	72
 #define	SYS_pipe	22
 #define	SYS_socket	41
 #define	SYS_connect	42
@@ -229,6 +236,8 @@ test_udp(void)
 
 	u = call(SYS_socket, AF_INET, SOCK_DGRAM, 0, 0, 0, 0);
 	if (u < 0) return (1);
+	/* IP_MTU(14) requires a connected IPv4 socket. */
+	if (getint(u, SOL_IP, 14) != -ENOTCONN) return (201);
 	lo = lo_ifindex();
 	if (lo <= 0) return (2);
 
@@ -459,6 +468,37 @@ test_udp(void)
 	if (cm->type != 8 || pki->addr != htonl(0x7f000001)) return (88);
 	(void)call(SYS_close, v, 0, 0, 0, 0, 0);
 
+	/* SO_RXQ_OVFL(40) is enabled; no cmsg precedes the first drop. */
+	v = call(SYS_socket, AF_INET, SOCK_DGRAM, 0, 0, 0, 0);
+	if (v < 0) return (202);
+	if (bind_lo(v, &sin) != 0) return (203);
+	if (setint(v, SOL_SOCKET, 40, 1) != 0) return (206);
+	if (getint(v, SOL_SOCKET, 40) != 1) return (207);
+	r = udp_roundtrip(v, &sin, 0, 0, cbuf, sizeof(cbuf));
+	if (r != 0) return (208);
+	/* Fill the small receive queue, then read the cumulative drop count. */
+	if (setint(v, SOL_SOCKET, 8, 4096) != 0) return (209);
+	for (len = 0; len < 256; len++)
+		if (call(SYS_sendto, v, (long)"x", 1, 0, (long)&sin,
+		    sizeof(sin)) != 1) return (228);
+	for (len = 0; len < 256; len++) {
+		r = call(SYS_recvfrom, v, (long)cbuf, 1, 0x40, 0, 0);
+		if (r == -EAGAIN)
+			break;
+		if (r != 1) return (229);
+	}
+	if (len == 256) return (230);
+	r = udp_roundtrip(v, &sin, 0, 0, cbuf, sizeof(cbuf));
+	if (r != 24) return (231);
+	cm = (struct cmsghdr *)cbuf;
+	if (cm->len != 20 || cm->level != SOL_SOCKET || cm->type != 40 ||
+	    *(uint32_t *)(cm + 1) == 0) return (232);
+	/* A connected UDP socket reports the loopback route's MTU. */
+	if (call(SYS_connect, v, (long)&sin, sizeof(sin), 0, 0, 0) != 0)
+		return (204);
+	if (getint(v, SOL_IP, 14) < 576) return (205);
+	(void)call(SYS_close, v, 0, 0, 0, 0, 0);
+
 	(void)call(SYS_close, u, 0, 0, 0, 0, 0);
 	return (0);
 }
@@ -492,6 +532,13 @@ test_tcp(void)
 		return (110);
 	a = call(SYS_accept4, t, 0, 0, 0, 0, 0);
 	if (a < 0) return (111);
+	/* MSG_MORE(0x8000) is accepted and the next send flushes both bytes. */
+	if (call(SYS_sendto, c, (long)"a", 1, 0x8000, 0, 0) != 1)
+		return (210);
+	if (call(SYS_sendto, c, (long)"b", 1, 0, 0, 0) != 1)
+		return (211);
+	if (call(SYS_recvfrom, a, (long)name, 2, 0x100, 0, 0) != 2 ||
+	    name[0] != 'a' || name[1] != 'b') return (212);
 
 	/* TCP_INFO(11): 248 bytes, tcpi_state TCP_ESTABLISHED(1). */
 	if (sizeof(ti) != 248) return (112);
@@ -564,8 +611,11 @@ test_tcp(void)
 	if (setint(c, SOL_TCP, 25, 1) != -ENOPROTOOPT) return (138);
 	if (setint(c, SOL_TCP, 36, 1) != -ENOPROTOOPT) return (139);
 	if (getint(c, SOL_TCP, 12) != -ENOPROTOOPT) return (140);
-	/* TCP_DEFER_ACCEPT(9): ENOPROTOOPT (logged as unimplemented). */
-	if (setint(t, SOL_TCP, 9, 1) != -ENOPROTOOPT) return (141);
+	/* TCP_DEFER_ACCEPT(9) sets a listener's deferred ACK interval. */
+	if (setint(t, SOL_TCP, 9, 3) != 0) return (141);
+	if (getint(t, SOL_TCP, 9) != 3) return (213);
+	if (setint(t, SOL_TCP, 9, 0) != 0) return (214);
+	if (getint(t, SOL_TCP, 9) != 0) return (215);
 	/* TCP_CORK(3): set 1, get 1 (not the FreeBSD TF_NOPUSH bit). */
 	if (setint(c, SOL_TCP, 3, 1) != 0) return (142);
 	if (getint(c, SOL_TCP, 3) != 1) return (143);
@@ -575,6 +625,46 @@ test_tcp(void)
 	(void)call(SYS_close, a, 0, 0, 0, 0, 0);
 	(void)call(SYS_close, c, 0, 0, 0, 0, 0);
 	(void)call(SYS_close, t, 0, 0, 0, 0, 0);
+	return (0);
+}
+
+static int
+test_defer_accept(void)
+{
+	struct sockaddr_in sin;
+	struct pollfd pfd;
+	long listener, client, accepted;
+	char byte;
+
+	listener = call(SYS_socket, AF_INET, SOCK_STREAM, 0, 0, 0, 0);
+	if (listener < 0) return (216);
+	if (setint(listener, SOL_TCP, 9, 3) != 0) return (217);
+	if (bind_lo(listener, &sin) != 0) return (218);
+	if (call(SYS_listen, listener, 1, 0, 0, 0, 0) != 0)
+		return (219);
+	if (call(SYS_fcntl, listener, F_SETFL, O_NONBLOCK, 0, 0, 0) != 0)
+		return (220);
+	client = call(SYS_socket, AF_INET, SOCK_STREAM, 0, 0, 0, 0);
+	if (client < 0) return (221);
+	if (call(SYS_connect, client, (long)&sin, sizeof(sin), 0, 0, 0) != 0)
+		return (222);
+	/* The empty handshake ACK must not make the listener readable. */
+	if (call(SYS_accept4, listener, 0, 0, 0, 0, 0) != -EAGAIN)
+		return (223);
+	if (call(SYS_write, client, (long)"x", 1, 0, 0, 0) != 1)
+		return (224);
+	pfd.fd = listener;
+	pfd.events = 1;
+	pfd.revents = 0;
+	if (call(SYS_poll, (long)&pfd, 1, 1000, 0, 0, 0) != 1 ||
+	    (pfd.revents & 1) == 0) return (225);
+	accepted = call(SYS_accept4, listener, 0, 0, 0, 0, 0);
+	if (accepted < 0) return (226);
+	if (call(SYS_read, accepted, (long)&byte, 1, 0, 0, 0) != 1 ||
+	    byte != 'x') return (227);
+	(void)call(SYS_close, accepted, 0, 0, 0, 0, 0);
+	(void)call(SYS_close, client, 0, 0, 0, 0, 0);
+	(void)call(SYS_close, listener, 0, 0, 0, 0, 0);
 	return (0);
 }
 
@@ -781,6 +871,7 @@ test(void)
 
 	if ((r = test_udp()) != 0) return (r);
 	if ((r = test_tcp()) != 0) return (r);
+	if ((r = test_defer_accept()) != 0) return (r);
 	if ((r = test_ipv6()) != 0) return (r);
 	if ((r = test_unix()) != 0) return (r);
 	if ((r = test_truncation()) != 0) return (r);
