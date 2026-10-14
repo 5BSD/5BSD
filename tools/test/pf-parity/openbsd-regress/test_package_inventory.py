@@ -18,7 +18,7 @@ class PackageInventory(unittest.TestCase):
                         ['make', '-C', str(ROOT / 'packages/pf'), '-V', '_ALLPACKAGES',
                          'REPODIR=' + temp, 'PKG_VERSION=1', 'PKG_ABI=FreeBSD:16:amd64',
                          *options], text=True).split()
-                    expected = ['pf'] + (['pf-dbg'] if debug else []) + (['pf-man'] if man else [])
+                    expected = ['pf', 'pf-dev'] + (['pf-dbg'] if debug else []) + (['pf-man'] if man else [])
                     self.assertEqual(sorted(actual), sorted(expected))
 
 if __name__ == '__main__':
