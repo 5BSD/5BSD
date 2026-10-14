@@ -198,6 +198,7 @@ struct vnode {
 	u_short	v_vflag;			/* v vnode flags */
 	u_short	v_mflag;			/* l mnt-specific vnode flags */
 	short	v_dbatchcpu;			/* i LRU requeue deferral batch */
+	short	v_write_hint;			/* i Linux write-life hint */
 	int	v_writecount;			/* I ref count of writers or
 						   (negative) text users */
 	int	v_seqc_users;			/* i modifications pending */

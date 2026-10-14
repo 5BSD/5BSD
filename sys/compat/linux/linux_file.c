@@ -2508,28 +2508,44 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 		return (0);
 
 	case LINUX_F_GET_RW_HINT:
-		/*
-		 * Write-life hints are advice to the block allocator; nothing
-		 * here consumes them, so the file always reports NOT_SET and
-		 * a set of any valid hint succeeds.  The argument is a
-		 * pointer to a u64 on Linux.
-		 */
 		error = fget(td, args->fd, &cap_no_rights, &fp);
 		if (error != 0)
 			return (error);
+		if (fp->f_type != DTYPE_VNODE || fp->f_vnode == NULL) {
+			fdrop(fp, td);
+			return (EINVAL);
+		}
+		hint = atomic_load_short(&fp->f_vnode->v_write_hint);
 		fdrop(fp, td);
-		hint = LINUX_RWH_WRITE_LIFE_NOT_SET;
 		return (copyout(&hint, PTRIN(args->arg), sizeof(hint)));
 	case LINUX_F_SET_RW_HINT:
 		error = fget(td, args->fd, &cap_no_rights, &fp);
 		if (error != 0)
 			return (error);
+		if (fp->f_type != DTYPE_VNODE || fp->f_vnode == NULL) {
+			fdrop(fp, td);
+			return (EINVAL);
+		}
+		error = vn_lock(fp->f_vnode, LK_SHARED | LK_RETRY);
+		if (error == 0) {
+			error = VOP_ACCESS(fp->f_vnode, VADMIN, td->td_ucred, td);
+			VOP_UNLOCK(fp->f_vnode);
+		}
+		if (error == 0)
+			error = copyin(PTRIN(args->arg), &hint, sizeof(hint));
+		if (error == 0 && hint > LINUX_RWH_WRITE_LIFE_EXTREME)
+			error = EINVAL;
+		if (error == 0)
+			atomic_store_short(&fp->f_vnode->v_write_hint, hint);
 		fdrop(fp, td);
-		error = copyin(PTRIN(args->arg), &hint, sizeof(hint));
+		return (error);
+
+	case LINUX_F_CREATED_QUERY:
+		error = fget(td, args->fd, &cap_no_rights, &fp);
 		if (error != 0)
 			return (error);
-		if (hint > LINUX_RWH_WRITE_LIFE_EXTREME)
-			return (EINVAL);
+		td->td_retval[0] = fp->f_created ? 1 : 0;
+		fdrop(fp, td);
 		return (0);
 
 	case LINUX_F_GET_FILE_RW_HINT:
@@ -2539,13 +2555,12 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 	case LINUX_F_GETLEASE:
 	case LINUX_F_NOTIFY:
 	case LINUX_F_GETOWNER_UIDS:
-	case LINUX_F_CREATED_QUERY:
 	case LINUX_F_CANCELLK:
 	case LINUX_F_GETDELEG:
 	case LINUX_F_SETDELEG:
 		/*
-		 * Leases, dnotify, CRIU owner uids, deleg and the O_CREAT
-		 * query have no facility here; Linux returns EINVAL for
+		 * Leases, dnotify, CRIU owner uids and deleg have no facility
+		 * here; Linux returns EINVAL for
 		 * each of them on a file that cannot do it.  Not logged.
 		 */
 		return (EINVAL);

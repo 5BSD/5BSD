@@ -553,13 +553,14 @@ vn_open_cred_impl(struct nameidata *ndp, int *flagp, int cmode, u_int vn_open_fl
 	struct vattr vat;
 	struct vattr *vap = &vat;
 	int fmode, error;
-	bool first_open, trackpath;
+	bool created, first_open, trackpath;
 	struct vn_file_context pathctx;
 
 	trackpath = fp != NULL &&
 	    SV_PROC_ABI(curproc) == SV_ABI_LINUX &&
 	    (curproc->p_sysent->sv_flags & SV_LP64) != 0;
 restart:
+	created = false;
 	first_open = false;
 	fmode = *flagp;
 	if ((fmode & (O_CREAT | O_EXCL | O_DIRECTORY)) == (O_CREAT |
@@ -650,6 +651,7 @@ restart:
 				}
 				return (error);
 			}
+			created = true;
 			fmode &= ~O_TRUNC;
 		} else {
 			if (trackpath)
@@ -725,6 +727,8 @@ restart:
 	}
 	if (error)
 		goto bad;
+	if (fp != NULL)
+		fp->f_created = created;
 	*flagp = fmode;
 	return (0);
 bad:

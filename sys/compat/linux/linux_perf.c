@@ -404,6 +404,32 @@ linux_perf_thread_detach(struct thread *td)
 	mtx_unlock(&linux_perf_mtx);
 }
 
+void
+linux_perf_task_events(struct thread *td, bool enable)
+{
+	struct linux_perf_event *pe;
+	struct linux_perf_raw raw;
+	uint64_t now, value, enabled;
+
+	linux_perf_snapshot_current(&raw);
+	now = linux_perf_now();
+	mtx_lock(&linux_perf_mtx);
+	LIST_FOREACH(pe, &linux_perf_events, link) {
+		if (pe->target != td || pe->detached || pe->enabled == enable)
+			continue;
+		if (enable) {
+			pe->start_value = linux_perf_raw_value(pe->config, &raw);
+			pe->start_ns = now;
+		} else {
+			linux_perf_values_locked(pe, &raw, now, &value, &enabled);
+			pe->value = value;
+			pe->enabled_ns = enabled;
+		}
+		pe->enabled = enable;
+	}
+	mtx_unlock(&linux_perf_mtx);
+}
+
 static int
 linux_perf_ioctl(struct thread *td, struct linux_ioctl_args *args)
 {

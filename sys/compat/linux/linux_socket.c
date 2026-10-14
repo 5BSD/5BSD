@@ -531,6 +531,8 @@ linux_to_bsd_so_sockopt_impl(int opt)
 		return (SO_REUSEPORT_LB);
 	case LINUX_SO_PASSCRED:
 		return (LOCAL_CREDS_PERSISTENT);
+	case LINUX_SO_PASSPIDFD:
+		return (LOCAL_PASSPIDFD);
 	case LINUX_SO_PEERCRED:
 		return (LOCAL_PEERCRED);
 	case LINUX_SO_RCVLOWAT:
@@ -626,7 +628,6 @@ linux_to_bsd_so_sockopt_impl(int opt)
 	case LINUX_SO_RESERVE_MEM:
 	case LINUX_SO_TXREHASH:
 	case LINUX_SO_RCVMARK:
-	case LINUX_SO_PASSPIDFD:
 	case LINUX_SO_DEVMEM_LINEAR:
 	case LINUX_SO_DEVMEM_DMABUF:
 	case LINUX_SO_DEVMEM_DONTNEED:
@@ -1789,6 +1790,8 @@ bsd_to_linux_cmsg_type(struct proc *p, int cmsg_type, int cmsg_level)
 		return (LINUX_SCM_CREDENTIALS);
 	case SCM_CREDS2:
 		return (LINUX_SCM_CREDENTIALS);
+	case SCM_PIDFD_CRED:
+		return (LINUX_SCM_PIDFD);
 	case SCM_TIMESTAMP:
 		return (pem->so_timestamp);
 	case SCM_BINTIME:
@@ -3224,9 +3227,11 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 	struct mbuf **controlp;
 	struct sockaddr *sa;
 	struct l_in_pktinfo pki;
+	struct sockpidfdcred *spc;
+	struct timeval pid_start;
 	caddr_t outbuf;
 	void *data, *udata;
-	int error, skiped;
+	int error, pidfd = -1, skiped;
 
 	memset(&pki, 0, sizeof(pki));
 	if (kernel_hdr) {
@@ -3356,23 +3361,37 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 		datalen = (caddr_t)cm + cm->cmsg_len - (caddr_t)data;
 		udata = NULL;
 		error = 0;
-
-		switch (cm->cmsg_level) {
-		case IPPROTO_IP:
-			error = recvmsg_scm_ipproto_ip(cm->cmsg_type,
-			    lcm->cmsg_type, &datalen, &data, &udata, &pki);
- 			break;
+		if (cm->cmsg_level == SOL_SOCKET &&
+		    cm->cmsg_type == SCM_PIDFD_CRED) {
+			if (datalen != sizeof(*spc)) {
+				error = EINVAL;
+				goto bad;
+			}
+			spc = data;
+			pid_start.tv_sec = spc->spc_start_sec;
+			pid_start.tv_usec = spc->spc_start_usec;
+			datalen = sizeof(pidfd);
+			data = &pidfd;
+		} else {
+			switch (cm->cmsg_level) {
+			case IPPROTO_IP:
+				error = recvmsg_scm_ipproto_ip(cm->cmsg_type,
+				    lcm->cmsg_type, &datalen, &data, &udata,
+				    &pki);
+				break;
 #ifdef INET6
-		case IPPROTO_IPV6:
-			error = recvmsg_scm_ipproto_ipv6(cm->cmsg_type,
-			    &datalen, &data, &udata);
-			break;
+			case IPPROTO_IPV6:
+				error = recvmsg_scm_ipproto_ipv6(cm->cmsg_type,
+				    &datalen, &data, &udata);
+				break;
 #endif
-		case SOL_SOCKET:
-			error = recvmsg_scm_sol_socket(td, cm->cmsg_type,
-			    lcm->cmsg_type, flags, &datalen, &data, &udata);
- 			break;
- 		}
+			case SOL_SOCKET:
+				error = recvmsg_scm_sol_socket(td, cm->cmsg_type,
+				    lcm->cmsg_type, flags, &datalen, &data,
+				    &udata);
+				break;
+			}
+		}
 
 		/* The recvmsg_scm_ is responsible to free udata on error. */
 		if (error != 0)
@@ -3405,6 +3424,13 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 			goto out;
 		}
 
+		if (cm->cmsg_level == SOL_SOCKET &&
+		    cm->cmsg_type == SCM_PIDFD_CRED &&
+		    outlen + LINUX_CMSG_LEN(datalen) > maxlen) {
+			l_msghdr.msg_flags |= LINUX_MSG_CTRUNC;
+			m_dispose_extcontrolm(m->m_next);
+			goto out;
+		}
 		if (outlen + LINUX_CMSG_LEN(datalen) > maxlen) {
 			if (outlen == 0) {
 				error = EMSGSIZE;
@@ -3419,6 +3445,13 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 			}
 		}
 
+		if (cm->cmsg_level == SOL_SOCKET &&
+		    cm->cmsg_type == SCM_PIDFD_CRED) {
+			error = linux_pidfd_create_identity(td, spc->spc_pid,
+			    &pid_start, &pidfd);
+			if (error != 0)
+				goto bad;
+		}
 		lcm->cmsg_len = LINUX_CMSG_LEN(datalen);
 		error = copyout(lcm, outbuf, L_CMSG_HDRSZ);
 		if (error == 0) {
@@ -3451,6 +3484,8 @@ out:
 	}
 
 bad:
+	if (error != 0 && pidfd >= 0)
+		(void)kern_close(td, pidfd);
 	if (control != NULL) {
 		if (error != 0)
 			m_dispose_extcontrolm(control);
@@ -3661,6 +3696,7 @@ linux_setsockopt_impl(struct thread *td, struct linux_setsockopt_args *args)
 		name = linux_to_bsd_so_sockopt(args->optname);
 		switch (name) {
 		case LOCAL_CREDS_PERSISTENT:
+		case LOCAL_PASSPIDFD:
 			level = SOL_LOCAL;
 			break;
 		case SO_RCVTIMEO:
@@ -4172,6 +4208,7 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 		name = linux_to_bsd_so_sockopt(args->optname);
 		switch (name) {
 		case LOCAL_CREDS_PERSISTENT:
+		case LOCAL_PASSPIDFD:
 			level = SOL_LOCAL;
 			break;
 		case SO_RCVTIMEO:

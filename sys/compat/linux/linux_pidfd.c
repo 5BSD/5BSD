@@ -322,13 +322,14 @@ linux_pidfd_topid(struct thread *td, int fd, pid_t *pidp)
 }
 
 /*
- * Create a pidfd for the process with the given pid and install it in the
- * caller's descriptor table (close-on-exec, as Linux does).  Allocation
- * happens before the process lookup so that nothing sleeps under the
- * process lock.  ESRCH if the pid has no process (zombies are accepted).
+ * Create a pidfd and install it close-on-exec.  A received SCM_PIDFD
+ * carries the sender's start time: if that process has already been
+ * reaped, create an exited pidfd without binding it to a reused pid.
+ * Ordinary pidfd_open still returns ESRCH when the pid is absent.
  */
-int
-linux_pidfd_create(struct thread *td, pid_t pid, bool nonblock, int *fdp)
+static int
+linux_pidfd_create_impl(struct thread *td, pid_t pid, bool nonblock,
+    const struct timeval *start, int *fdp)
 {
 	struct linux_pidfd *lpf;
 	struct proc *p;
@@ -348,19 +349,27 @@ linux_pidfd_create(struct thread *td, pid_t pid, bool nonblock, int *fdp)
 		goto fail;
 
 	p = pfind_any(pid);
-	if (p == NULL) {
+	if (p == NULL && start == NULL) {
 		fdclose(td, fp, fd);
 		fdrop(fp, td);
 		error = ESRCH;
 		goto fail;
 	}
-	lpf->lpf_proc = p;
-	lpf->lpf_pid = p->p_pid;
-	lpf->lpf_start = p->p_stats->p_start;
-	if (p->p_state == PRS_ZOMBIE) {
+	lpf->lpf_pid = pid;
+	if (start != NULL)
+		lpf->lpf_start = *start;
+	else
+		lpf->lpf_start = p->p_stats->p_start;
+	if (p == NULL || (start != NULL &&
+	    !linux_pidfd_match(p, pid, start))) {
+		lpf->lpf_flags |= LPF_EXITED;
+		exiting = false;
+	} else if (p->p_state == PRS_ZOMBIE) {
+		lpf->lpf_proc = p;
 		lpf->lpf_flags |= LPF_EXITED;
 		exiting = false;
 	} else {
+		lpf->lpf_proc = p;
 		/*
 		 * P_WEXIT is set (under the process lock) before the
 		 * process_exit handlers run.  If it is clear here, our
@@ -374,7 +383,8 @@ linux_pidfd_create(struct thread *td, pid_t pid, bool nonblock, int *fdp)
 	mtx_lock(&linux_pidfd_list_mtx);
 	LIST_INSERT_HEAD(&linux_pidfd_list, lpf, lpf_link);
 	mtx_unlock(&linux_pidfd_list_mtx);
-	PROC_UNLOCK(p);
+	if (p != NULL)
+		PROC_UNLOCK(p);
 	if (exiting)
 		linux_pidfd_queue_exit(p, lpf->lpf_pid, &lpf->lpf_start);
 
@@ -389,6 +399,21 @@ fail:
 	mtx_destroy(&lpf->lpf_mtx);
 	free(lpf, M_LINUX);
 	return (error);
+}
+
+int
+linux_pidfd_create(struct thread *td, pid_t pid, bool nonblock, int *fdp)
+{
+
+	return (linux_pidfd_create_impl(td, pid, nonblock, NULL, fdp));
+}
+
+int
+linux_pidfd_create_identity(struct thread *td, pid_t pid,
+    const struct timeval *start, int *fdp)
+{
+
+	return (linux_pidfd_create_impl(td, pid, false, start, fdp));
 }
 
 int

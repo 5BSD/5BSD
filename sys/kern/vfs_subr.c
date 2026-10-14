@@ -2164,6 +2164,7 @@ getnewvnode(const char *tag, struct mount *mp, struct vop_vector *vops,
 	vp->v_type = VNON;
 	vp->v_op = vops;
 	vp->v_irflag = 0;
+	vp->v_write_hint = 0;
 	v_init_counters(vp);
 	vn_seqc_init(vp);
 	vp->v_bufobj.bo_ops = &buf_ops_bio;

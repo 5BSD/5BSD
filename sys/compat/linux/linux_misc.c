@@ -2437,7 +2437,8 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 		break;
 	case LINUX_PR_TASK_PERF_EVENTS_DISABLE:
 	case LINUX_PR_TASK_PERF_EVENTS_ENABLE:
-		/* No perf events can exist: the Linux code paths return 0. */
+		linux_perf_task_events(td,
+		    args->option == LINUX_PR_TASK_PERF_EVENTS_ENABLE);
 		break;
 	case LINUX_PR_GET_UNALIGN:
 	case LINUX_PR_SET_UNALIGN:

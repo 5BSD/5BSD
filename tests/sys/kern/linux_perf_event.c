@@ -7,6 +7,8 @@
 #endif
 
 #define SYS_perf_event_open 298
+#define PR_TASK_PERF_EVENTS_DISABLE 31
+#define PR_TASK_PERF_EVENTS_ENABLE 32
 #define PERF_TYPE_SOFTWARE 1
 #define PERF_COUNT_SW_CPU_CLOCK 0
 #define PERF_COUNT_SW_TASK_CLOCK 1
@@ -158,6 +160,33 @@ read_formats(void)
 	if (sys3(SYS_ioctl, fd, PERF_EVENT_IOC_ID, (void *)1) != -EFAULT)
 		return (4);
 	if (sys3(SYS_read, fd, v, 31) != -ENOSPC)
+		return (5);
+	sys1(SYS_close, fd);
+	return (0);
+}
+
+static int
+task_prctl(void)
+{
+	struct perf_attr a;
+	u64 before, stopped, after;
+	long fd;
+
+	attr_init(&a, PERF_COUNT_SW_TASK_CLOCK);
+	fd = perf_open(&a, 0, -1, -1, 0);
+	if (fd < 0)
+		return (1);
+	burn(1000000);
+	if (sys2(SYS_prctl, PR_TASK_PERF_EVENTS_DISABLE, 0) != 0 ||
+	    sys3(SYS_read, fd, &before, 8) != 8)
+		return (2);
+	burn(2000000);
+	if (sys3(SYS_read, fd, &stopped, 8) != 8 || stopped != before)
+		return (3);
+	if (sys2(SYS_prctl, PR_TASK_PERF_EVENTS_ENABLE, 0) != 0)
+		return (4);
+	burn(2000000);
+	if (sys3(SYS_read, fd, &after, 8) != 8 || after <= stopped)
 		return (5);
 	sys1(SYS_close, fd);
 	return (0);
@@ -536,6 +565,7 @@ fork_inheritance(void)
 static const struct subtest tests[] = {
 	{"basic_task_clock", basic_task_clock},
 	{"disabled_transitions", disabled_transitions},
+	{"task_prctl", task_prctl},
 	{"read_formats", read_formats},
 	{"software_counters", software_counters},
 	{"attribute_sizes", attribute_sizes},

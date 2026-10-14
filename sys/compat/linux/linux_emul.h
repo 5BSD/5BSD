@@ -77,6 +77,7 @@ void	linux_schedtail(struct thread *);
 void	linux_rseq_schedswitch(struct thread *);
 void	linux_rseq_signal(struct thread *);
 void	linux_perf_thread_detach(struct thread *);
+void	linux_perf_task_events(struct thread *, bool);
 bool	linux_perf_inuse(void);
 typedef void (*linux_perf_detach_fn)(void *, struct thread *);
 EVENTHANDLER_DECLARE(linux_perf_detach_event, linux_perf_detach_fn);

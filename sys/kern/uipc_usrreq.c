@@ -388,6 +388,7 @@ static void	unp_internalize_fp(struct file *);
 static int	unp_externalize(const struct socket *, struct mbuf *,
 		    struct mbuf **, int);
 static int	unp_externalize_fp(struct file *);
+static void	unp_addpidfdcred(struct thread *, struct mchain *);
 static void	unp_addsockcred(struct thread *, struct mchain *, int);
 static void	unp_process_defers(void * __unused, int);
 
@@ -1527,6 +1528,8 @@ uipc_sosend_stream_or_seqpacket(struct socket *so, struct sockaddr *addr,
 		goto out3;
 	}
 
+	if (unp2->unp_flags & UNP_WANTPIDFD)
+		unp_addpidfdcred(td, &cmc);
 	if (unp2->unp_flags & UNP_WANTCRED_MASK) {
 		/*
 		 * Credentials are passed only once on SOCK_STREAM and
@@ -2462,6 +2465,8 @@ uipc_sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		goto out4;
 	}
 
+	if (unp2->unp_flags & UNP_WANTPIDFD)
+		unp_addpidfdcred(td, &cmc);
 	if (unp2->unp_flags & UNP_WANTCRED_MASK)
 		unp_addsockcred(td, &cmc, unp2->unp_flags);
 	if (unp->unp_addr != NULL)
@@ -3210,6 +3215,13 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 			error = sooptcopyout(sopt, &optval, sizeof(optval));
 			break;
 
+		case LOCAL_PASSPIDFD:
+			UNP_PCB_LOCK(unp);
+			optval = (unp->unp_flags & UNP_WANTPIDFD) != 0;
+			UNP_PCB_UNLOCK(unp);
+			error = sooptcopyout(sopt, &optval, sizeof(optval));
+			break;
+
 		case LOCAL_CAP_CONNECT:
 			UNP_PCB_LOCK(unp);
 			optval = (unp->unp_flags & UNP_CAP_CONNECT) ? 1 : 0;
@@ -3239,6 +3251,18 @@ uipc_ctloutput(struct socket *so, struct sockopt *sopt)
 
 	case SOPT_SET:
 		switch (sopt->sopt_name) {
+		case LOCAL_PASSPIDFD:
+			error = sooptcopyin(sopt, &optval, sizeof(optval),
+			    sizeof(optval));
+			if (error != 0)
+				break;
+			UNP_PCB_LOCK(unp);
+			if (optval != 0)
+				unp->unp_flags |= UNP_WANTPIDFD;
+			else
+				unp->unp_flags &= ~UNP_WANTPIDFD;
+			UNP_PCB_UNLOCK(unp);
+			break;
 		case LOCAL_CREDS:
 		case LOCAL_CREDS_PERSISTENT:
 			error = sooptcopyin(sopt, &optval, sizeof(optval),
@@ -3776,7 +3800,8 @@ unp_copy_peercred(struct thread *td, struct unpcb *client_unp,
 	memcpy(&server_unp->unp_peercred, &listen_unp->unp_peercred,
 	    sizeof(server_unp->unp_peercred));
 	server_unp->unp_flags |= UNP_HAVEPC;
-	client_unp->unp_flags |= (listen_unp->unp_flags & UNP_WANTCRED_MASK);
+	client_unp->unp_flags |= (listen_unp->unp_flags &
+	    (UNP_WANTCRED_MASK | UNP_WANTPIDFD));
 }
 
 /*
@@ -4451,6 +4476,12 @@ unp_externalize(const struct socket *so, struct mbuf *control,
 
 		data = CMSG_DATA(cm);
 		datalen = (caddr_t)cm + cm->cmsg_len - (caddr_t)data;
+		if (cm->cmsg_level == SOL_SOCKET &&
+		    cm->cmsg_type == SCM_PIDFD_CRED) {
+			if ((atomic_load_short(&sotounpcb(so)->unp_flags) &
+			    UNP_WANTPIDFD) == 0)
+				goto next;
+		}
 		if (cm->cmsg_level == SOL_SOCKET
 		    && cm->cmsg_type == SCM_RIGHTS) {
 			newfds = datalen / sizeof(*fdep);
@@ -5052,6 +5083,23 @@ out:
 		unp_internalize_cleanup_rights(mc_first(mc));
 	m_freem(control);
 	return (error);
+}
+
+static void
+unp_addpidfdcred(struct thread *td, struct mchain *mc)
+{
+	struct sockpidfdcred *spc;
+	struct mbuf *m;
+
+	m = sbcreatecontrol(NULL, sizeof(*spc), SCM_PIDFD_CRED,
+	    SOL_SOCKET, M_NOWAIT);
+	if (m == NULL)
+		return;
+	spc = (void *)CMSG_DATA(mtod(m, struct cmsghdr *));
+	spc->spc_pid = td->td_proc->p_pid;
+	spc->spc_start_sec = td->td_proc->p_stats->p_start.tv_sec;
+	spc->spc_start_usec = td->td_proc->p_stats->p_start.tv_usec;
+	mc_append(mc, m);
 }
 
 static void
