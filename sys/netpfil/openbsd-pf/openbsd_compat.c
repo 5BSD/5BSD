@@ -868,10 +868,9 @@ void	obsd_ifhooks_run(struct ifnet *, int);
 void
 obsd_ifhooks_run(struct ifnet *ifp, int kind)
 {
-	struct obsd_ifhook *h;
-
-	struct task *run[16];
-	int i, n;
+	TAILQ_HEAD(, obsd_ifhook) detached = TAILQ_HEAD_INITIALIZER(detached);
+	struct obsd_ifhook *h, *next;
+	struct obsd_ifclosing closing = { .c_ifp = ifp };
 
 	if (kind != OBSD_HOOK_DETACH) {
 		mtx_lock(&obsd_ifhook_mtx);
@@ -883,26 +882,43 @@ obsd_ifhooks_run(struct ifnet *ifp, int kind)
 	}
 
 	/*
-	 * OpenBSD runs detach hooks synchronously from if_detach() with the
-	 * net lock held: the interface must not go away under them, and they
-	 * (pfsync_syncif_detach()) drop and retake the net lock.  The hooks
-	 * may remove themselves, so collect them first.
+	 * FreeBSD marks the interface IFF_DYING before this notification,
+	 * so OpenBSD detach callbacks cannot use if_get() to find it and
+	 * unregister their other hooks.  Remove every registration while
+	 * excluding event producers, then drain callbacks before their
+	 * owners can be freed.  Do not hold netlock while draining: the
+	 * callbacks may need it.  OpenBSD runs detach hooks synchronously
+	 * before removing the interface from its index map.
 	 */
-	do {
-		n = 0;
-		mtx_lock(&obsd_ifhook_mtx);
-		TAILQ_FOREACH(h, &obsd_ifhooks, h_entry)
-			if (h->h_ifp == ifp && h->h_kind == kind &&
-			    n < (int)nitems(run))
-				run[n++] = h->h_task;
-		mtx_unlock(&obsd_ifhook_mtx);
-		for (i = 0; i < n; i++) {
-			obsd_hook_del(ifp, run[i], kind);
+	/* Serialize closing with pfsync_up(), which registers under netlock. */
+	NET_LOCK();
+	mtx_lock(&obsd_ifhook_mtx);
+	TAILQ_INSERT_TAIL(&obsd_ifclosing, &closing, c_entry);
+	TAILQ_FOREACH_SAFE(h, &obsd_ifhooks, h_entry, next) {
+		if (h->h_ifp == ifp) {
+			TAILQ_REMOVE(&obsd_ifhooks, h, h_entry);
+			TAILQ_INSERT_TAIL(&detached, h, h_entry);
+		}
+	}
+	mtx_unlock(&obsd_ifhook_mtx);
+	NET_UNLOCK();
+
+	TAILQ_FOREACH(h, &detached, h_entry)
+		taskq_del_barrier(systq, h->h_task);
+
+	while ((h = TAILQ_FIRST(&detached)) != NULL) {
+		TAILQ_REMOVE(&detached, h, h_entry);
+		if (h->h_kind == OBSD_HOOK_DETACH) {
 			NET_LOCK();
-			run[i]->t_func(run[i]->t_arg);
+			h->h_task->t_func(h->h_task->t_arg);
 			NET_UNLOCK();
 		}
-	} while (n == (int)nitems(run));
+		free(h, M_PF);
+	}
+
+	mtx_lock(&obsd_ifhook_mtx);
+	TAILQ_REMOVE(&obsd_ifclosing, &closing, c_entry);
+	mtx_unlock(&obsd_ifhook_mtx);
 }
 
 void
