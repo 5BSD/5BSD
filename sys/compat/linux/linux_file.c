@@ -87,6 +87,7 @@ static struct bsd_to_linux_bitmap seal_bitmap[] = {
 	BITMAP_1t1_LINUX(F_SEAL_GROW),
 	BITMAP_1t1_LINUX(F_SEAL_WRITE),
 	BITMAP_1t1_LINUX(F_SEAL_FUTURE_WRITE),
+	BITMAP_1t1_LINUX(F_SEAL_EXEC),
 };
 
 #define	MFD_HUGETLB_ENTRY(_size)					\
@@ -2474,11 +2475,10 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 	case LINUX_F_ADD_SEALS:
 		/*
 		 * Reject unsupported seals before translation can discard bits.
-		 * F_SEAL_EXEC still requires native execution-mode sealing.
 		 */
 		if ((args->arg & ~(LINUX_F_SEAL_SEAL | LINUX_F_SEAL_SHRINK |
 		    LINUX_F_SEAL_GROW | LINUX_F_SEAL_WRITE |
-		    LINUX_F_SEAL_FUTURE_WRITE)) != 0)
+		    LINUX_F_SEAL_FUTURE_WRITE | LINUX_F_SEAL_EXEC)) != 0)
 			return (EINVAL);
 		return (kern_fcntl(td, args->fd, F_ADD_SEALS,
 		    linux_to_bsd_bits(args->arg, seal_bitmap, 0)));
@@ -3142,8 +3142,12 @@ linux_memfd_create(struct thread *td, struct linux_memfd_create_args *args)
 	/* Validate Linux bits before translation can discard unknown flags. */
 	if ((args->flags & ~(LINUX_MFD_CLOEXEC | LINUX_MFD_ALLOW_SEALING |
 	    LINUX_MFD_HUGETLB | LINUX_MFD_EXEC |
+	    LINUX_MFD_NOEXEC_SEAL |
 	    ((l_uint)LINUX_HUGETLB_FLAG_ENCODE_MASK <<
 	    LINUX_HUGETLB_FLAG_ENCODE_SHIFT))) != 0)
+		return (EINVAL);
+	if ((args->flags & (LINUX_MFD_EXEC | LINUX_MFD_NOEXEC_SEAL)) ==
+	    (LINUX_MFD_EXEC | LINUX_MFD_NOEXEC_SEAL))
 		return (EINVAL);
 	if ((args->flags >> LINUX_HUGETLB_FLAG_ENCODE_SHIFT) != 0 &&
 	    (args->flags & LINUX_MFD_HUGETLB) == 0)
@@ -3179,23 +3183,28 @@ linux_memfd_create(struct thread *td, struct linux_memfd_create_args *args)
 	shmflags = SHM_GROW_ON_WRITE;
 	if ((flags & MFD_CLOEXEC) != 0)
 		oflags |= O_CLOEXEC;
-	if ((flags & MFD_ALLOW_SEALING) != 0)
+	if ((flags & MFD_ALLOW_SEALING) != 0 ||
+	    (args->flags & LINUX_MFD_NOEXEC_SEAL) != 0)
 		shmflags |= SHM_ALLOW_SEALING;
 	/*
 	 * MFD_EXEC explicitly requests the default executable memfd.  Native
 	 * shm mappings already permit PROT_EXEC, so it needs no translated
 	 * flag.  Linux creates mode 0777 independently of the caller's umask;
 	 * preallocate the object to avoid shm_open's umask processing.
-	 * MFD_NOEXEC_SEAL remains unsupported until execution-mode sealing
-	 * can be enforced, and is rejected by the flag check above.
+	 * MFD_NOEXEC_SEAL creates a non-executable memfd with F_SEAL_EXEC,
+	 * permitting further seals even without MFD_ALLOW_SEALING.
 	 */
-	shmfd = shm_alloc(td->td_ucred, ACCESSPERMS, false);
+	shmfd = shm_alloc(td->td_ucred,
+	    (args->flags & LINUX_MFD_NOEXEC_SEAL) != 0 ?
+	    ACCESSPERMS & ~0111 : ACCESSPERMS, false);
 	if (shmfd == NULL)
 		return (ENOMEM);
 	shmfd->shm_flags = shmflags;
-	shmfd->shm_seals = (shmflags & SHM_ALLOW_SEALING) != 0 ? 0 : F_SEAL_SEAL;
+	shmfd->shm_seals = (args->flags & LINUX_MFD_NOEXEC_SEAL) != 0 ?
+	    F_SEAL_EXEC :
+	    (shmflags & SHM_ALLOW_SEALING) != 0 ? 0 : F_SEAL_SEAL;
 	SDT_PROBE6(shmfd, , , create, td->td_proc->p_pid, "anon",
-	    memfd_name, shmflags, ACCESSPERMS, 0);
+	    memfd_name, shmflags, shmfd->shm_mode, 0);
 	error = kern_shm_open2(td, SHM_ANON, oflags, 0, shmflags, NULL,
 	    memfd_name, shmfd);
 	shm_drop(shmfd);

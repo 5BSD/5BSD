@@ -22,6 +22,12 @@ no_new_privs_body() { quickwins_run no_new_privs; }
 atf_test_case memfd_exec
 memfd_exec_head() { quickwins_head "Linux executable memfd flags, mode, mappings and seals"; }
 memfd_exec_body() { quickwins_run memfd_exec; }
+atf_test_case memfd_noexec
+memfd_noexec_head() { quickwins_head "Linux no-execute memfd mode, mmap and seals"; }
+memfd_noexec_body() { quickwins_run memfd_noexec; }
+atf_test_case vma_name
+vma_name_head() { quickwins_head "Linux anonymous VMA names and inheritance"; }
+vma_name_body() { quickwins_proc vma_name; }
 quickwins_proc()
 {
 	[ -r /compat/linux/proc/self/cgroup ] || [ -r /proc/self/cgroup ] || \
@@ -38,6 +44,8 @@ atf_init_test_cases()
 {
 	atf_add_test_case no_new_privs
 	atf_add_test_case memfd_exec
+	atf_add_test_case memfd_noexec
+	atf_add_test_case vma_name
 	atf_add_test_case thread_cgroup
 	atf_add_test_case thread_cpuset
 }

@@ -1878,8 +1878,17 @@ shm_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t objsize,
 
 	rl_cookie = shm_rangelock_rlock(shmfd, 0, objsize);
 	/* FREAD should always be set. */
-	if ((fp->f_flag & FREAD) != 0)
-		maxprot |= VM_PROT_EXECUTE | VM_PROT_READ;
+	if ((fp->f_flag & FREAD) != 0) {
+		maxprot |= VM_PROT_READ;
+		if ((shmfd->shm_seals & F_SEAL_EXEC) == 0 ||
+		    (shmfd->shm_mode & 0111) != 0)
+			maxprot |= VM_PROT_EXECUTE;
+	}
+	if ((prot & VM_PROT_EXECUTE) != 0 &&
+	    (maxprot & VM_PROT_EXECUTE) == 0) {
+		error = EACCES;
+		goto out;
+	}
 
 	/*
 	 * If FWRITE's set, we can allow VM_PROT_WRITE unless it's a shared
@@ -1964,10 +1973,12 @@ shm_chmod(struct file *fp, mode_t mode, struct ucred *active_cred,
     struct thread *td)
 {
 	struct shmfd *shmfd;
+	void *rl_cookie;
 	int error;
 
 	error = 0;
 	shmfd = fp->f_data;
+	rl_cookie = shm_rangelock_wlock(shmfd, 0, OFF_MAX);
 	mtx_lock(&shm_timestamp_lock);
 	/*
 	 * SUSv4 says that x bits of permission need not be affected.
@@ -1982,9 +1993,15 @@ shm_chmod(struct file *fp, mode_t mode, struct ucred *active_cred,
 	    VADMIN, active_cred);
 	if (error != 0)
 		goto out;
+	if ((shmfd->shm_seals & F_SEAL_EXEC) != 0 &&
+	    ((shmfd->shm_mode ^ mode) & 0111) != 0) {
+		error = EPERM;
+		goto out;
+	}
 	shmfd->shm_mode = mode & ACCESSPERMS;
 out:
 	mtx_unlock(&shm_timestamp_lock);
+	shm_rangelock_unlock(shmfd, rl_cookie);
 	return (error);
 }
 
@@ -2180,7 +2197,7 @@ shm_add_seals(struct file *fp, int seals)
 	if ((fp->f_flag & FWRITE) == 0)
 		return (EPERM);
 	if ((seals & ~(F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW |
-	    F_SEAL_WRITE | F_SEAL_FUTURE_WRITE)) != 0)
+	    F_SEAL_WRITE | F_SEAL_FUTURE_WRITE | F_SEAL_EXEC)) != 0)
 		return (EINVAL);
 
 	error = 0;
@@ -2192,6 +2209,11 @@ shm_add_seals(struct file *fp, int seals)
 		error = EPERM;
 		goto out;
 	}
+	/* Linux makes sealing an executable memfd imply W^X seals. */
+	if ((seals & F_SEAL_EXEC) != 0 &&
+	    (shmfd->shm_mode & 0111) != 0)
+		seals |= F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE |
+		    F_SEAL_FUTURE_WRITE;
 	nseals = seals & ~shmfd->shm_seals;
 	if ((nseals & F_SEAL_WRITE) != 0) {
 		if (shm_largepage(shmfd)) {

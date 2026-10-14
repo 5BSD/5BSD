@@ -91,9 +91,9 @@ memfd_valid(void)
 static int
 memfd_unknown(void)
 {
-	/* MFD_NOEXEC_SEAL is unsupported; MFD_EXEC (bit 4) is valid. */
+	/* MFD_NOEXEC_SEAL (bit 3) and MFD_EXEC (bit 4) are valid. */
 	for (unsigned bit = 3; bit < 26; bit++) {
-		if (bit == 4)
+		if (bit == 3 || bit == 4)
 			continue;
 		for (unsigned flags = 0; flags < 8; flags++)
 			CHECK(MEMFD("gate",(1U << bit) | flags) == -22);

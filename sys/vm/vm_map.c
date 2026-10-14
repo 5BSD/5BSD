@@ -145,6 +145,25 @@ struct vm_map_file {
 	struct file *fp;
 };
 static MALLOC_DEFINE(M_MAPFILE, "mapfile", "mapping file owners");
+static MALLOC_DEFINE(M_ANONVMA, "anonvma", "anonymous VMA names");
+
+struct vm_map_anon_name {
+	u_int refs;
+	char value[80];
+};
+
+static void
+vm_map_anon_name_drop(struct vm_map_anon_name *name)
+{
+	if (name != NULL && refcount_release(&name->refs))
+		free(name, M_ANONVMA);
+}
+
+const char *
+vm_map_entry_anon_name(vm_map_entry_t entry)
+{
+	return (entry->anon_name != NULL ? entry->anon_name->value : NULL);
+}
 
 static bool
 vm_map_same_file(struct vm_map_file *a, struct vm_map_file *b)
@@ -1010,6 +1029,7 @@ vm_map_entry_create(vm_map_t map)
 	new_entry->io_pin_count = 0;
 	new_entry->io_pin_id = 0;
 	new_entry->mapping_file = NULL;
+	new_entry->anon_name = NULL;
 	return (new_entry);
 }
 
@@ -1842,7 +1862,8 @@ vm_map_insert1(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 				vm_object_clear_flag(object, OBJ_ONEMAPPING);
 			VM_OBJECT_WUNLOCK(object);
 		}
-	} else if (vm_map_same_file(prev_entry->mapping_file, mapping_file) &&
+	} else if (prev_entry->anon_name == NULL &&
+	    vm_map_same_file(prev_entry->mapping_file, mapping_file) &&
 	    (prev_entry->eflags & ~MAP_ENTRY_USER_WIRED) ==
 	    protoeflags &&
 	    (cow & (MAP_STACK_AREA | MAP_VN_EXEC)) == 0 &&
@@ -2605,7 +2626,8 @@ vm_map_mergeable_neighbors(vm_map_entry_t prev, vm_map_entry_t entry)
 	    (entry->eflags & MAP_ENTRY_NOMERGE_MASK) == 0,
 	    ("vm_map_mergeable_neighbors: neither %p nor %p are mergeable",
 	    prev, entry));
-	return (vm_map_same_file(prev->mapping_file, entry->mapping_file) &&
+	return (prev->anon_name == entry->anon_name &&
+	    vm_map_same_file(prev->mapping_file, entry->mapping_file) &&
 	    prev->end == entry->start &&
 	    prev->object.vm_object == entry->object.vm_object &&
 	    (prev->object.vm_object == NULL ||
@@ -2640,6 +2662,7 @@ vm_map_merged_neighbor_dispose(vm_map_t map, vm_map_entry_t entry)
 	/* The merged neighbor owns another reference to this same file. */
 	if (entry->mapping_file != NULL)
 		vm_map_file_drop(entry->mapping_file);
+	vm_map_anon_name_drop(entry->anon_name);
 	vm_map_entry_dispose(map, entry);
 }
 
@@ -2744,6 +2767,8 @@ vm_map_entry_clone(vm_map_t map, vm_map_entry_t entry)
 	/* Clone the entry. */
 	new_entry = vm_map_entry_create(map);
 	*new_entry = *entry;
+	if (new_entry->anon_name != NULL)
+		refcount_acquire(&new_entry->anon_name->refs);
 	if (new_entry->mapping_file != NULL)
 		refcount_acquire(&new_entry->mapping_file->refs);
 	if (new_entry->cred != NULL)
@@ -2875,6 +2900,81 @@ vm_map_clip_end(vm_map_t map, vm_map_entry_t entry, vm_offset_t endaddr)
 	vm_map_entry_link(map, new_entry);
 
 	return (KERN_SUCCESS);
+}
+
+/*
+ * Set a label on an anonymous mapping range.  Labels are reference-counted
+ * because clipping and fork duplicate map entries without duplicating data.
+ */
+int
+vm_map_set_anon_name(vm_map_t map, vm_offset_t start, vm_size_t length,
+    const char *value)
+{
+	struct vm_map_anon_name *name, *old;
+	vm_map_entry_t entry, first, last;
+	vm_offset_t end, cursor;
+	int rv;
+
+	if (start >= VM_MAXUSER_ADDRESS ||
+	    length > VM_MAXUSER_ADDRESS - start)
+		return (KERN_INVALID_ADDRESS);
+	if (length == 0)
+		return (KERN_SUCCESS);
+	end = round_page(start + length);
+	if (end > VM_MAXUSER_ADDRESS)
+		return (KERN_INVALID_ADDRESS);
+	name = NULL;
+	if (value != NULL) {
+		name = malloc(sizeof(*name), M_ANONVMA, M_WAITOK | M_ZERO);
+		refcount_init(&name->refs, 1);
+		strlcpy(name->value, value, sizeof(name->value));
+	}
+
+	vm_map_lock(map);
+	vm_map_wait_busy(map);
+	if (!vm_map_range_valid(map, start, end) ||
+	    !vm_map_lookup_entry(map, start, &first)) {
+		rv = KERN_INVALID_ADDRESS;
+		goto out;
+	}
+	/* Validate the entire range before changing any entry. */
+	for (cursor = start, entry = first; cursor < end;
+	    entry = vm_map_entry_succ(entry)) {
+		if (entry == &map->header || entry->start > cursor ||
+		    entry->end <= cursor) {
+			rv = KERN_INVALID_ADDRESS;
+			goto out;
+		}
+		if ((entry->eflags & (MAP_ENTRY_IS_SUB_MAP | MAP_ENTRY_GUARD)) != 0 ||
+		    entry->mapping_file != NULL ||
+		    (entry->object.vm_object != NULL &&
+		    (entry->object.vm_object->flags & OBJ_ANON) == 0)) {
+			rv = KERN_INVALID_ARGUMENT;
+			goto out;
+		}
+		cursor = MIN(entry->end, end);
+		last = entry;
+	}
+	/* Clip both boundaries before assigning any labels. */
+	rv = vm_map_clip_end(map, last, end);
+	if (rv != KERN_SUCCESS)
+		goto out;
+	rv = vm_map_clip_start(map, first, start);
+	if (rv != KERN_SUCCESS)
+		goto out;
+	for (entry = first; entry->start < end;
+	    entry = vm_map_entry_succ(entry)) {
+		old = entry->anon_name;
+		entry->anon_name = name;
+		if (name != NULL)
+			refcount_acquire(&name->refs);
+		vm_map_anon_name_drop(old);
+	}
+	rv = KERN_SUCCESS;
+out:
+	vm_map_unlock(map);
+	vm_map_anon_name_drop(name);
+	return (rv);
 }
 
 /*
@@ -4198,6 +4298,7 @@ vm_map_entry_deallocate(vm_map_entry_t entry, boolean_t system_map)
 		MPASS(!system_map);
 		vm_map_file_drop(entry->mapping_file);
 	}
+	vm_map_anon_name_drop(entry->anon_name);
 
 	if ((entry->eflags & MAP_ENTRY_IS_SUB_MAP) == 0)
 		vm_object_deallocate(entry->object.vm_object);
@@ -4785,6 +4886,8 @@ vmspace_fork(struct vmspace *vm1, vm_ooffset_t *fork_charge)
 			 */
 			new_entry = vm_map_entry_create(new_map);
 			*new_entry = *old_entry;
+			if (new_entry->anon_name != NULL)
+				refcount_acquire(&new_entry->anon_name->refs);
 			if (new_entry->mapping_file != NULL)
 				refcount_acquire(&new_entry->mapping_file->refs);
 			new_entry->eflags &= ~(MAP_ENTRY_USER_WIRED |
@@ -4821,6 +4924,8 @@ vmspace_fork(struct vmspace *vm1, vm_ooffset_t *fork_charge)
 			 */
 			new_entry = vm_map_entry_create(new_map);
 			*new_entry = *old_entry;
+			if (new_entry->anon_name != NULL)
+				refcount_acquire(&new_entry->anon_name->refs);
 			if (new_entry->mapping_file != NULL)
 				refcount_acquire(&new_entry->mapping_file->refs);
 			/*
@@ -4858,6 +4963,9 @@ vmspace_fork(struct vmspace *vm1, vm_ooffset_t *fork_charge)
 			new_entry->protection = old_entry->protection;
 			new_entry->max_protection = old_entry->max_protection;
 			new_entry->inheritance = VM_INHERIT_ZERO;
+			new_entry->anon_name = old_entry->anon_name;
+			if (new_entry->anon_name != NULL)
+				refcount_acquire(&new_entry->anon_name->refs);
 
 			vm_map_entry_link(new_map, new_entry);
 			vmspace_map_entry_forked(vm1, vm2, new_entry);

@@ -117,6 +117,7 @@ struct vm_map_entry {
 	struct ucred *cred;		/* tmp storage for creator ref */
 	struct thread *wiring_thread;
 	struct vm_map_file *mapping_file;	/* optional open-file lifetime reference */
+	struct vm_map_anon_name *anon_name; /* optional Linux VMA name */
 };
 
 #define	MAP_ENTRY_NOSYNC		0x00000001
@@ -512,6 +513,8 @@ int vm_map_lookup_locked(vm_map_t *, vm_offset_t, vm_prot_t, vm_map_entry_t *, v
 void vm_map_lookup_done (vm_map_t, vm_map_entry_t);
 boolean_t vm_map_lookup_entry (vm_map_t, vm_offset_t, vm_map_entry_t *);
 struct vnode *vm_map_lookup_vnode(vm_map_t, vm_offset_t);
+int vm_map_set_anon_name(vm_map_t, vm_offset_t, vm_size_t, const char *);
+const char *vm_map_entry_anon_name(vm_map_entry_t);
 
 static inline vm_map_entry_t
 vm_map_entry_first(vm_map_t map)

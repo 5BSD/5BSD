@@ -1640,6 +1640,7 @@ linprocfs_doprocmaps(PFS_FILL_ARGS)
 	vm_prot_t e_prot;
 	unsigned int last_timestamp;
 	char *name = "", *freename = NULL;
+	char anon_name[sizeof("[anon:]") + 79];
 	const char *l_map_str;
 	ino_t ino;
 	int error;
@@ -1664,6 +1665,10 @@ linprocfs_doprocmaps(PFS_FILL_ARGS)
 	VM_MAP_ENTRY_FOREACH(entry, map) {
 		name = "";
 		freename = NULL;
+		anon_name[0] = '\0';
+		if (vm_map_entry_anon_name(entry) != NULL)
+			snprintf(anon_name, sizeof(anon_name), "[anon:%s]",
+			    vm_map_entry_anon_name(entry));
 		/*
 		 * Skip printing of the guard page of the stack region, as
 		 * it confuses glibc pthread_getattr_np() method, where both
@@ -1716,6 +1721,8 @@ linprocfs_doprocmaps(PFS_FILL_ARGS)
 			}
 		}
 
+		if (anon_name[0] != '\0')
+			name = anon_name;
 		/*
 		 * format:
 		 *  start, end, access, offset, major, minor, inode, name.

@@ -16,6 +16,13 @@
 #define F_GET_SEALS 1034
 #define F_SEAL_SEAL 1
 #define F_SEAL_GROW 4
+#define F_SEAL_SHRINK 2
+#define F_SEAL_WRITE 8
+#define F_SEAL_FUTURE_WRITE 16
+#define F_SEAL_EXEC 32
+#define SYS_fchmod 91
+#define PR_SET_VMA 0x53564d41
+#define PR_SET_VMA_ANON_NAME 0
 
 static long
 nnp(long option, long a, long b, long c, long d)
@@ -117,6 +124,129 @@ memfd_exec(void)
 	if (sys2(SYS_memfd_create, "quickwins", MFD_EXEC | 0x20) != -EINVAL)
 		return (10);
 	return (0);
+}
+
+static int
+memfd_noexec(void)
+{
+	struct stat st;
+	long fd, addr;
+	int rc = 0;
+
+	fd = sys2(SYS_memfd_create, "noexec", MFD_NOEXEC_SEAL);
+	if (fd < 0)
+		return (1);
+	if (sys2(SYS_fstat, fd, &st) != 0 || (st.st_mode & 0777) != 0666)
+		rc = 2;
+	else if (sys3(SYS_fcntl, fd, F_GET_SEALS, 0) != F_SEAL_EXEC)
+		rc = 3;
+	else if (sys2(SYS_fchmod, fd, 0777) != -EPERM)
+		rc = 4;
+	else if (sys2(SYS_ftruncate, fd, PAGE) != 0)
+		rc = 5;
+	else if (sys6(SYS_mmap, 0, PAGE, PROT_READ | PROT_EXEC,
+	    MAP_PRIVATE, fd, 0) != -EACCES)
+		rc = 6;
+	else {
+		addr = sys6(SYS_mmap, 0, PAGE, PROT_READ,
+		    MAP_PRIVATE, fd, 0);
+		if (addr < 0)
+			rc = 7;
+		else {
+			if (sys3(SYS_mprotect, addr, PAGE,
+			    PROT_READ | PROT_EXEC) != -EACCES)
+				rc = 8;
+			(void)sys2(SYS_munmap, addr, PAGE);
+		}
+	}
+	if (rc == 0 && sys3(SYS_fcntl, fd, F_ADD_SEALS,
+	    F_SEAL_GROW) != 0)
+		rc = 9;
+	if (rc == 0 && sys3(SYS_fcntl, fd, F_GET_SEALS, 0) !=
+	    (F_SEAL_EXEC | F_SEAL_GROW))
+		rc = 10;
+	(void)sys1(SYS_close, fd);
+	if (rc != 0)
+		return (rc);
+	fd = sys2(SYS_memfd_create, "exec-seal",
+	    MFD_EXEC | MFD_ALLOW_SEALING);
+	if (fd < 0)
+		return (11);
+	if (sys3(SYS_fcntl, fd, F_ADD_SEALS, F_SEAL_EXEC) != 0)
+		rc = 12;
+	else if (sys3(SYS_fcntl, fd, F_GET_SEALS, 0) !=
+	    (F_SEAL_EXEC | F_SEAL_SHRINK | F_SEAL_GROW |
+	    F_SEAL_WRITE | F_SEAL_FUTURE_WRITE))
+		rc = 13;
+	else if (sys2(SYS_fchmod, fd, 0666) != -EPERM)
+		rc = 14;
+	(void)sys1(SYS_close, fd);
+	return (rc);
+}
+
+static int
+maps_contain(const char *needle)
+{
+	char buf[512];
+	long fd, n;
+	int match = 0;
+
+	fd = sys3(SYS_open, "/compat/linux/proc/self/maps", 0, 0);
+	if (fd < 0)
+		fd = sys3(SYS_open, "/proc/self/maps", 0, 0);
+	if (fd < 0)
+		return (-1);
+	while ((n = sys3(SYS_read, fd, buf, sizeof(buf))) > 0) {
+		for (long i = 0; i < n; i++) {
+			match = buf[i] == needle[match] ? match + 1 :
+			    (buf[i] == needle[0] ? 1 : 0);
+			if (needle[match] == 0) {
+				(void)sys1(SYS_close, fd);
+				return (1);
+			}
+		}
+	}
+	(void)sys1(SYS_close, fd);
+	return (0);
+}
+
+static int
+vma_fork_child(void *unused __attribute__((unused)))
+{
+	return (maps_contain("[anon:linuxulator-vma]") == 1 ? 0 : 1);
+}
+
+static int
+vma_name(void)
+{
+	long addr;
+	char bad[] = "bad[name";
+	int rc = 0;
+
+	addr = sys6(SYS_mmap, 0, 3 * PAGE, PROT_READ | PROT_WRITE,
+	    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (addr < 0)
+		return (1);
+	if (sys5(SYS_prctl, PR_SET_VMA, PR_SET_VMA_ANON_NAME,
+	    addr + PAGE, PAGE, "linuxulator-vma") != 0)
+		rc = 2;
+	else if (maps_contain("[anon:linuxulator-vma]") != 1)
+		rc = 3;
+	else if (run_child(vma_fork_child, 0) != 0)
+		rc = 4;
+	else if (sys5(SYS_prctl, PR_SET_VMA, PR_SET_VMA_ANON_NAME,
+	    addr + PAGE, PAGE, bad) != -EINVAL)
+		rc = 5;
+	else if (sys5(SYS_prctl, PR_SET_VMA, PR_SET_VMA_ANON_NAME,
+	    addr + PAGE, PAGE, 0) != 0)
+		rc = 6;
+	else if (maps_contain("[anon:linuxulator-vma]") != 0)
+		rc = 7;
+	else if (sys5(SYS_prctl, PR_SET_VMA, PR_SET_VMA_ANON_NAME,
+	    addr + 1, PAGE, "bad") != -EINVAL)
+		rc = 8;
+	(void)sys2(SYS_munmap, addr, 3 * PAGE);
+	return (rc);
 }
 
 static long
@@ -231,6 +361,8 @@ test(int argc, char **argv, char **envp __attribute__((unused)))
 	static const struct subtest cases[] = {
 		{ "no_new_privs", no_new_privs },
 		{ "memfd_exec", memfd_exec },
+		{ "memfd_noexec", memfd_noexec },
+		{ "vma_name", vma_name },
 		{ "thread_cgroup", thread_cgroup },
 		{ "thread_cpuset", thread_cpuset },
 	};

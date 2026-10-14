@@ -1013,7 +1013,6 @@ linux_setsockopt_fixed_bool(struct thread *td,
 	return (((val != 0) == (fixed != 0)) ? 0 : EINVAL);
 }
 
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
 /* A file reference keeps the native socket generation identity immutable. */
 static int
 linux_getsockopt_cookie(struct thread *td, struct linux_getsockopt_args *args)
@@ -1038,7 +1037,6 @@ linux_getsockopt_cookie(struct thread *td, struct linux_getsockopt_args *args)
 	fdrop(fp, td);
 	return (error);
 }
-#endif
 
 static int
 linux_getsockopt_fixed_int(struct thread *td,
@@ -4127,9 +4125,9 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 		case LINUX_SO_SNDBUFFORCE:
 		case LINUX_SO_RCVBUFFORCE:
 			return (ENOPROTOOPT); /* Linux FORCE options are set-only. */
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
 		case LINUX_SO_COOKIE:
 			return (linux_getsockopt_cookie(td, args));
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
 		case LINUX_SO_PEERNAME:
 			return (linux_getsockopt_peername(td, args));
 #endif

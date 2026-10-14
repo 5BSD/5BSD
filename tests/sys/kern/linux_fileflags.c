@@ -251,8 +251,8 @@ test(void)
 	if (fcntl(mfd, F_GET_SEALS, 0) != 0) return (24);
 	/* 25: FUTURE_WRITE is enforced by the shared-memory implementation. */
 	if (fcntl(mfd, F_ADD_SEALS, F_SEAL_FUTURE_WRITE) != 0) return (25);
-	/* 26: F_SEAL_EXEC (Linux 6.3) likewise. */
-	if (fcntl(mfd, F_ADD_SEALS, F_SEAL_EXEC) != -EINVAL) return (26);
+	/* 26: An unknown seal bit is rejected. */
+	if (fcntl(mfd, F_ADD_SEALS, 0x40) != -EINVAL) return (26);
 	/* 27: an unknown seal bit is EINVAL, even alongside a valid one. */
 	if (fcntl(mfd, F_ADD_SEALS, F_SEAL_GROW | 0x100) != -EINVAL) return (27);
 	/* 28: ...and those rejected calls added nothing else. */

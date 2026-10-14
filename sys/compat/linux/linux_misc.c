@@ -70,6 +70,7 @@
 #include <security/mac/mac_framework.h>
 
 #include <vm/pmap.h>
+#include <vm/vm_extern.h>
 #include <vm/vm_map.h>
 #include <sys/rwlock.h>
 
@@ -2143,6 +2144,10 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 	struct proc *p = td->td_proc;
 	struct linux_pemuldata *pem;
 	char comm[LINUX_MAX_COMM_LEN];
+	char vma_name[80];
+	vm_offset_t vma_start;
+	size_t vma_len;
+	unsigned int i;
 	int pdeath_signal, trace_state;
 
 	switch (args->option) {
@@ -2519,13 +2524,27 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 		td->td_retval[0] = arg == PROC_NO_NEW_PRIVS_ENABLE ? 1 : 0;
 		break;
 	case LINUX_PR_SET_VMA:
-		/*
-		 * Anonymous VMA names are optional on Linux.  We have no
-		 * corresponding mapping metadata: reject the request quietly,
-		 * as Linux does without CONFIG_ANON_VMA_NAME.  Allocators probe
-		 * this operation frequently.
-		 */
-		return (EINVAL);
+		if (args->arg2 != LINUX_PR_SET_VMA_ANON_NAME)
+			return (EINVAL);
+		vma_start = (vm_offset_t)args->arg3;
+		vma_len = (size_t)args->arg4;
+		if ((vma_start & PAGE_MASK) != 0 ||
+		    vma_start >= VM_MAXUSER_ADDRESS ||
+		    vma_len > VM_MAXUSER_ADDRESS - vma_start)
+			return (EINVAL);
+		if (args->arg5 != 0) {
+			error = copyinstr(PTRIN(args->arg5), vma_name,
+			    sizeof(vma_name), NULL);
+			if (error != 0)
+				return (error == ENAMETOOLONG ? EINVAL : error);
+			for (i = 0; vma_name[i] != '\0'; i++)
+				if (vma_name[i] < 0x20 || vma_name[i] > 0x7e ||
+				    strchr("\\`$[]", vma_name[i]) != NULL)
+					return (EINVAL);
+		}
+		error = vm_map_set_anon_name(&p->p_vmspace->vm_map,
+		    vma_start, vma_len, args->arg5 != 0 ? vma_name : NULL);
+		return (vm_mmap_to_errno(error));
 	case LINUX_PR_SET_PTRACER:
 		/* Yama is not built in: Linux returns EINVAL then too. */
 		error = EINVAL;
