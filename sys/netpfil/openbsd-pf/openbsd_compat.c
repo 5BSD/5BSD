@@ -793,6 +793,13 @@ struct obsd_ifhook {
 #define	OBSD_HOOK_LINK		3
 static TAILQ_HEAD(, obsd_ifhook) obsd_ifhooks =
     TAILQ_HEAD_INITIALIZER(obsd_ifhooks);
+/* A stack-owned departure token also covers VNET moves (not IFF_DYING). */
+struct obsd_ifclosing {
+	TAILQ_ENTRY(obsd_ifclosing) c_entry;
+	struct ifnet *c_ifp;
+};
+static TAILQ_HEAD(, obsd_ifclosing) obsd_ifclosing =
+    TAILQ_HEAD_INITIALIZER(obsd_ifclosing);
 static struct mtx obsd_ifhook_mtx;
 MTX_SYSINIT(obsd_ifhook_mtx, &obsd_ifhook_mtx, "pf ifhooks", MTX_DEF);
 
@@ -800,6 +807,7 @@ static void
 obsd_hook_add(struct ifnet *ifp, struct task *t, int kind)
 {
 	struct obsd_ifhook *h;
+	struct obsd_ifclosing *closing;
 
 	/* pf adds hooks with its (non-sleepable) lock held. */
 	h = malloc(sizeof(*h), M_PF, (obsd_pf_nosleep() ?
@@ -813,6 +821,14 @@ obsd_hook_add(struct ifnet *ifp, struct task *t, int kind)
 	h->h_task = t;
 	h->h_kind = kind;
 	mtx_lock(&obsd_ifhook_mtx);
+	TAILQ_FOREACH(closing, &obsd_ifclosing, c_entry)
+		if (closing->c_ifp == ifp)
+			break;
+	if ((ifp->if_flags & IFF_DYING) || closing != NULL) {
+		mtx_unlock(&obsd_ifhook_mtx);
+		free(h, M_PF);
+		return;
+	}
 	{
 		/* OpenBSD links the task itself: it is on a list at most once. */
 		struct obsd_ifhook *o;
