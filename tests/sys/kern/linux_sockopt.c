@@ -740,6 +740,15 @@ test_unix(void)
 
 	if (call(SYS_socketpair, AF_UNIX, SOCK_STREAM, 0, (long)sv, 0, 0) != 0)
 		return (200);
+	/* SO_PASSCRED(16) and SO_PASSPIDFD(76) use SOL_LOCAL internally. */
+	if (setint(sv[0], SOL_SOCKET, 16, 1) != 0) return (240);
+	if (getint(sv[0], SOL_SOCKET, 16) != 1) return (241);
+	if (setint(sv[0], SOL_SOCKET, 16, 0) != 0) return (242);
+	if (getint(sv[0], SOL_SOCKET, 16) != 0) return (243);
+	if (setint(sv[0], SOL_SOCKET, 76, 1) != 0) return (244);
+	if (getint(sv[0], SOL_SOCKET, 76) != 1) return (245);
+	if (setint(sv[0], SOL_SOCKET, 76, 0) != 0) return (246);
+	if (getint(sv[0], SOL_SOCKET, 76) != 0) return (247);
 	if (call(SYS_pipe, (long)pp, 0, 0, 0, 0, 0) != 0) return (201);
 	mkzero(cbuf, sizeof(cbuf));
 	cm = (struct cmsghdr *)cbuf;

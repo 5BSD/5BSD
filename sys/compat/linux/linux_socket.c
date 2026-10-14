@@ -1131,10 +1131,12 @@ linux_getsockopt_ip_mtu(struct thread *td,
 	INP_RLOCK(inp);
 	dst = inp->inp_faddr;
 	INP_RUNLOCK(inp);
+	CURVNET_SET(so->so_vnet);
 	NET_EPOCH_ENTER(et);
 	nh = fib4_lookup(so->so_fibnum, dst, 0, NHR_NONE, 0);
 	mtu = nh != NULL ? nh->nh_mtu : 0;
 	NET_EPOCH_EXIT(et);
+	CURVNET_RESTORE();
 	if (mtu == 0)
 		error = ENOTCONN;
 	else
@@ -3795,11 +3797,10 @@ linux_setsockopt_impl(struct thread *td, struct linux_setsockopt_args *args)
 			break;
 		}
 		name = linux_to_bsd_so_sockopt(args->optname);
-		switch (name) {
-		case LOCAL_CREDS_PERSISTENT:
-		case LOCAL_PASSPIDFD:
+		if (args->optname == LINUX_SO_PASSCRED ||
+		    args->optname == LINUX_SO_PASSPIDFD)
 			level = SOL_LOCAL;
-			break;
+		switch (name) {
 		case SO_RCVTIMEO:
 			/* FALLTHROUGH */
 		case SO_SNDTIMEO:
@@ -4310,11 +4311,10 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 		}
 
 		name = linux_to_bsd_so_sockopt(args->optname);
-		switch (name) {
-		case LOCAL_CREDS_PERSISTENT:
-		case LOCAL_PASSPIDFD:
+		if (args->optname == LINUX_SO_PASSCRED ||
+		    args->optname == LINUX_SO_PASSPIDFD)
 			level = SOL_LOCAL;
-			break;
+		switch (name) {
 		case SO_RCVTIMEO:
 			/* FALLTHROUGH */
 		case SO_SNDTIMEO:
