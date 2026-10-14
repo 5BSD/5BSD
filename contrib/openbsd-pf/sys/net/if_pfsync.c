@@ -188,6 +188,8 @@ struct pfsync_slice {
 #define PFSYNC_NSLICES		 (1 << PFSYNC_SLICE_BITS)
 
 struct pfsync_softc {
+	struct mutex		 sc_sched_mtx; /* 5BSD: timer/task ownership */
+	unsigned int		 sc_scheduling; /* protected by sc_sched_mtx */
 	struct ifnet		*sc_ifp;	/* 5BSD: if_alloc()ed */
 #define	sc_if	sc_ifp[0]	/* 5BSD */
 	unsigned int		 sc_dead;
@@ -352,6 +354,40 @@ pfsyncattach(int npfsync)
 	if_clone_attach(&pfsync_cloner);
 }
 
+/*
+ * 5BSD timers dispatch through a taskqueue.  An in-flight callback must not
+ * rearm either stage while pfsync_down() drains it.  The scheduling lock is
+ * a leaf lock: callers may hold NET_LOCK, PF_LOCK or a slice lock, but the
+ * gate never acquires any of them and is never held across a drain.
+ */
+static void
+pfsync_schedule_set(struct pfsync_softc *sc, unsigned int enabled)
+{
+	mtx_enter(&sc->sc_sched_mtx);
+	sc->sc_scheduling = enabled;
+	mtx_leave(&sc->sc_sched_mtx);
+}
+
+static void
+pfsync_schedule_task(struct pfsync_softc *sc, struct taskq *tq,
+    struct task *task)
+{
+	mtx_enter(&sc->sc_sched_mtx);
+	if (sc->sc_scheduling)
+		task_add(tq, task);
+	mtx_leave(&sc->sc_sched_mtx);
+}
+
+static void
+pfsync_schedule_timeout(struct pfsync_softc *sc, struct timeout *to,
+    uint64_t nsecs)
+{
+	mtx_enter(&sc->sc_sched_mtx);
+	if (sc->sc_scheduling)
+		timeout_add_nsec(to, nsecs);
+	mtx_leave(&sc->sc_sched_mtx);
+}
+
 static int
 pfsync_clone_create(struct if_clone *ifc, int unit)
 {
@@ -372,6 +408,8 @@ pfsync_clone_create(struct if_clone *ifc, int unit)
 	sc = malloc(sizeof(*sc), M_DEVBUF, M_WAITOK|M_ZERO|M_CANFAIL);
 	if (sc == NULL)
 		return (ENOMEM);
+
+	mtx_init_flags(&sc->sc_sched_mtx, IPL_SOFTNET, "pfsync sched", 0);
 
 	/* sc_refs is "owned" by IFF_RUNNING */
 
@@ -480,6 +518,7 @@ pfsync_clone_destroy(struct ifnet *ifp)
 	}
 #endif
 
+	mtx_destroy(&sc->sc_sched_mtx.mtx); /* 5BSD */
 	free(sc, M_DEVBUF, sizeof(*sc));
 
 	return (0);
@@ -826,6 +865,7 @@ pfsync_up(struct pfsync_softc *sc)
 
 	sc->sc_inm = inm;
 	SET(ifp->if_flags, IFF_RUNNING);
+	pfsync_schedule_set(sc, 1);
 
 	pfsync_bulk_req_evt(sc, PFSYNC_BREQ_EVT_UP);
 
@@ -921,7 +961,8 @@ pfsync_bulk_req_nstate(struct pfsync_softc *sc,
 {
 	sc->sc_bulk_req.req_state = nstate;
 	if (seconds > 0)
-		timeout_add_sec(&sc->sc_bulk_req.req_tmo, seconds);
+		pfsync_schedule_timeout(sc, &sc->sc_bulk_req.req_tmo,
+		    SEC_TO_NSEC(seconds));
 	else
 		timeout_del(&sc->sc_bulk_req.req_tmo);
 }
@@ -1132,6 +1173,7 @@ pfsync_down(struct pfsync_softc *sc)
 	 * pfsync_up.
 	 */
 
+	pfsync_schedule_set(sc, 0);
 	CLR(ifp->if_flags, IFF_RUNNING);
 
 	ifp0 = if_get(sc->sc_sync_ifidx);
@@ -1552,14 +1594,14 @@ pfsync_slice_tmo(void *arg)
 {
 	struct pfsync_slice *s = arg;
 
-	task_add(s->s_softnet, &s->s_task);
+	pfsync_schedule_task(s->s_pfsync, s->s_softnet, &s->s_task);
 }
 
 static void
 pfsync_slice_sched(struct pfsync_slice *s)
 {
 	s->s_stat_task_add++;
-	task_add(s->s_softnet, &s->s_task);
+	pfsync_schedule_task(s->s_pfsync, s->s_softnet, &s->s_task);
 }
 
 static void
@@ -1619,7 +1661,8 @@ pfsync_q_ins(struct pfsync_slice *s, struct pf_state *st, unsigned int q)
 		if (m != NULL) {
 			s->s_stat_enqueue++;
 			if (mq_enqueue(&s->s_sendq, m) == 0)
-				task_add(s->s_softnet, &s->s_send);
+				pfsync_schedule_task(s->s_pfsync, s->s_softnet,
+				    &s->s_send);
 		}
 
 		nlen = sizeof(struct pfsync_subheader) + pfsync_qs[q].len;
@@ -1631,7 +1674,7 @@ pfsync_q_ins(struct pfsync_slice *s, struct pf_state *st, unsigned int q)
 	st->sync_state = q;
 
 	if (!timeout_pending(&s->s_tmo))
-		timeout_add_sec(&s->s_tmo, 1);
+		pfsync_schedule_timeout(s->s_pfsync, &s->s_tmo, SEC_TO_NSEC(1));
 }
 
 static void
@@ -1961,11 +2004,13 @@ pfsync_defer(struct pf_state *st, struct mbuf *m)
 	TAILQ_INSERT_TAIL(&s->s_deferrals, pd, pd_entry);
 
 	if (sched == 0)
-		timeout_add_nsec(&s->s_deferrals_tmo, PFSYNC_DEFER_NSEC);
+		pfsync_schedule_timeout(sc, &s->s_deferrals_tmo,
+		    PFSYNC_DEFER_NSEC);
 	else if (sched >= PFSYNC_DEFER_LIMIT) {
 		s->s_stat_defer_overlimit++;
 		timeout_del(&s->s_deferrals_tmo);
-		task_add(s->s_softnet, &s->s_deferrals_task);
+		pfsync_schedule_task(s->s_pfsync, s->s_softnet,
+		    &s->s_deferrals_task);
 	}
 
 	pfsync_slice_sched(s);
@@ -2007,7 +2052,8 @@ pfsync_deferrals_tmo(void *arg)
 	struct pfsync_slice *s = arg;
 
 	if (READ_ONCE(s->s_deferred) > 0)
-		task_add(s->s_softnet, &s->s_deferrals_task);
+		pfsync_schedule_task(s->s_pfsync, s->s_softnet,
+		    &s->s_deferrals_task);
 }
 
 static void
@@ -2050,7 +2096,7 @@ pfsync_deferrals_task(void *arg)
 
 	if (nsec > 0) {
 		/* we were looking at a pd, but it wasn't old enough */
-		timeout_add_nsec(&s->s_deferrals_tmo, nsec);
+		pfsync_schedule_timeout(s->s_pfsync, &s->s_deferrals_tmo, nsec);
 	}
 
 	if (TAILQ_EMPTY(&pds))
@@ -2189,7 +2235,8 @@ pfsync_bulk_snd_states(struct pfsync_softc *sc,
 
 	/* there's still work to do */
 	sc->sc_bulk_snd.snd_next = st;
-	timeout_add_msec(&sc->sc_bulk_snd.snd_tmo, PFSYNC_BULK_SND_IVAL_MS);
+	pfsync_schedule_timeout(sc, &sc->sc_bulk_snd.snd_tmo,
+	    MSEC_TO_NSEC(PFSYNC_BULK_SND_IVAL_MS));
 
 	return (count);
 }
@@ -2303,8 +2350,8 @@ pfsync_bulk_snd_tmo(void *arg)
 	if (m == NULL) {
 		/* some error++ */
 		/* retry later */
-		timeout_add_msec(&sc->sc_bulk_snd.snd_tmo,
-		    PFSYNC_BULK_SND_IVAL_MS);
+		pfsync_schedule_timeout(sc, &sc->sc_bulk_snd.snd_tmo,
+		    MSEC_TO_NSEC(PFSYNC_BULK_SND_IVAL_MS));
 		return;
 	}
 
@@ -2313,8 +2360,8 @@ pfsync_bulk_snd_tmo(void *arg)
 		/* some error++ */
 		m_freem(m);
 		/* retry later */
-		timeout_add_msec(&sc->sc_bulk_snd.snd_tmo,
-		    PFSYNC_BULK_SND_IVAL_MS);
+		pfsync_schedule_timeout(sc, &sc->sc_bulk_snd.snd_tmo,
+		    MSEC_TO_NSEC(PFSYNC_BULK_SND_IVAL_MS));
 		return;
 	}
 
@@ -2456,7 +2503,8 @@ pfsync_tdb_ins(struct pfsync_slice *s, struct tdb *tdb)
 		if (m != NULL) {
 			s->s_stat_enqueue++;
 			if (mq_enqueue(&s->s_sendq, m) == 0)
-				task_add(s->s_softnet, &s->s_send);
+				pfsync_schedule_task(s->s_pfsync, s->s_softnet,
+				    &s->s_send);
 		}
 
 		nlen = sizeof(struct pfsync_subheader) +
@@ -2468,7 +2516,7 @@ pfsync_tdb_ins(struct pfsync_slice *s, struct tdb *tdb)
 	tdb->tdb_updates = 0;
 
 	if (!timeout_pending(&s->s_tmo))
-		timeout_add_sec(&s->s_tmo, 1);
+		pfsync_schedule_timeout(s->s_pfsync, &s->s_tmo, SEC_TO_NSEC(1));
 }
 
 static void
