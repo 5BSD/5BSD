@@ -23,6 +23,10 @@
 .Li pf:state:state:create,insert,transition,remove,free
 .br
 .Li pf:state:purge:run
+.br
+.Li pf:sctp:multihome:test,add,remove
+.br
+.Li pf:sctp:multihome_scan:entry,param,ipv4,ipv6
 .Pp
 .Li pf:frag:reassemble,reassemble6:entry
 .br
@@ -153,7 +157,7 @@ anchor rule.
 .It Li pf:state:state:insert
 A state is inserted into the state table.
 .It Li pf:state:state:transition
-A TCP peer changes protocol state:
+A TCP or SCTP peer changes protocol state:
 .Fa args[0]
 state,
 .Fa arg1
@@ -166,6 +170,58 @@ A state is unlinked and later freed.
 A purge pass of expired states with
 .Fa arg0
 the scan limit.
+.El
+.Ss SCTP multihoming
+These probes have the names and arguments of
+.Fx
+pf.
+.Bl -tag -width "pf:sctp:multihome_scan:entry"
+.It Li pf:sctp:multihome:test
+The ruleset was evaluated for an address of a multihomed association:
+.Fa args[0]
+interface,
+.Fa args[1]
+matching rule,
+.Fa args[2]
+packet that listed the address,
+.Fa arg3
+result
+.Pq Dv PF_PASS , PF_DROP , No ... .
+.It Li pf:sctp:multihome:add
+An address,
+.Fa args[1]
+.Pq Vt struct pf_sctp_source ,
+is remembered for the endpoint with verification tag
+.Fa arg0 .
+.It Li pf:sctp:multihome:remove
+State
+.Fa args[1]
+is removed and with it the address
+.Fa args[2]
+of the endpoint with verification tag
+.Fa arg0 .
+.It Li pf:sctp:multihome_scan:entry
+The address parameters of an INIT, INIT ACK or ASCONF chunk are walked,
+once when the packet is checked and again after it has passed:
+.Fa arg0
+offset,
+.Fa arg1
+length,
+.Fa args[2]
+packet description,
+.Fa arg3
+operation
+.Pq Dv SCTP_ADD_IP_ADDRESS No or Dv SCTP_DEL_IP_ADDRESS .
+.It Li pf:sctp:multihome_scan:param
+A parameter of type
+.Fa arg0
+and length
+.Fa arg1 .
+.It Li pf:sctp:multihome_scan:ipv4,ipv6
+After the packet has passed, an address
+.Fa args[0]
+to add or remove
+.Pq operation Fa arg1 .
 .El
 .Ss Packet delay
 .Bl -tag -width "pf:queue:packet:delay"

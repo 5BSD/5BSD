@@ -102,6 +102,29 @@ to a re-import.
                  and checksum (pf_ioctl.c); pfctl parse.y grammar,
                  pfctl_parser.c printing, pfctl_optimize.c field table.
                  The logic is in sys/netpfil/openbsd-pf/pf_dummynet.c.
+  sctp (marked "5BSD: sctp"): SCTP association tracking, multihoming
+                 and the "allow-related" state option, as in FreeBSD pf:
+                 the PFTM_SCTP_* timeouts (appended before PFTM_MAX),
+                 PFRULE_ALLOW_RELATED, the PF_SCTPS_* peer states and the
+                 pfss_v_tag/pfss_ts_mod union in struct pf_state_scrub
+                 (pfvar.h); pf_pdesc's SCTP header, chunk flags, initiate
+                 tag and related rule, PFDESC_SCTP_*, the glue prototypes
+                 (pfvar_priv.h); hooks in pf_setup_pdesc(),
+                 pf_create_state(), pf_test_state(), the ICMP-error state
+                 lookup, pf_match_rule() ports, pf_test_rule() (related
+                 rule, "block return" ABORT, no pfsync deferral for
+                 multihome states), pf_state_key_attach() (reuse of closed
+                 states), pf_detach_state() and pf_test() (multihome
+                 states after filtering) (pf.c); no SCTP port changes for
+                 rdr-to (pf_lb.c); default timeouts (pf_ioctl.c).
+                 The logic is in sys/netpfil/openbsd-pf/pf_sctp.c.
+                 pfsync: the verification tag travels in pfss_ts_mod, the
+                 field it shares with the timestamp modulation, so the
+                 OpenBSD wire format is unchanged.  OpenBSD peers do not
+                 know the SCTP timeouts and reject SCTP states; the SCTP
+                 timeouts take the numbers OpenBSD gives PFTM_PURGE and
+                 PFTM_UNLINKED, so such a timeout from an OpenBSD peer is
+                 read as sctp.opening or sctp.established.
   pfvar.h        REASON_SET fires the pf::reason:set DTrace probe
                  userland (!_KERNEL): sys/param.h before sys/syslimits.h;
                  PF_DIVERT #undef, RTLABEL_LEN and union sockaddr_union

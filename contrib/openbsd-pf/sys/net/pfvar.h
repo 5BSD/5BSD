@@ -122,7 +122,11 @@ enum	{ PFTM_TCP_FIRST_PACKET, PFTM_TCP_OPENING, PFTM_TCP_ESTABLISHED,
 	  PFTM_OTHER_FIRST_PACKET, PFTM_OTHER_SINGLE,
 	  PFTM_OTHER_MULTIPLE, PFTM_FRAG, PFTM_INTERVAL,
 	  PFTM_ADAPTIVE_START, PFTM_ADAPTIVE_END, PFTM_SRC_NODE,
-	  PFTM_TS_DIFF, PFTM_MAX, PFTM_PURGE, PFTM_UNLINKED };
+	  PFTM_TS_DIFF,
+	  PFTM_SCTP_FIRST_PACKET, PFTM_SCTP_OPENING,	/* 5BSD: sctp */
+	  PFTM_SCTP_ESTABLISHED, PFTM_SCTP_CLOSING,	/* 5BSD: sctp */
+	  PFTM_SCTP_CLOSED,				/* 5BSD: sctp */
+	  PFTM_MAX, PFTM_PURGE, PFTM_UNLINKED };
 
 /* PFTM default values */
 #define PFTM_TCP_FIRST_PACKET_VAL	120	/* First TCP packet */
@@ -143,6 +147,12 @@ enum	{ PFTM_TCP_FIRST_PACKET, PFTM_TCP_OPENING, PFTM_TCP_ESTABLISHED,
 #define PFTM_INTERVAL_VAL		10	/* Expire interval */
 #define PFTM_SRC_NODE_VAL		0	/* Source tracking */
 #define PFTM_TS_DIFF_VAL		30	/* Allowed TS diff */
+/* 5BSD: sctp; as in FreeBSD pf, SCTP defaults to the TCP values */
+#define PFTM_SCTP_FIRST_PACKET_VAL	PFTM_TCP_FIRST_PACKET_VAL
+#define PFTM_SCTP_OPENING_VAL		PFTM_TCP_OPENING_VAL
+#define PFTM_SCTP_ESTABLISHED_VAL	PFTM_TCP_ESTABLISHED_VAL
+#define PFTM_SCTP_CLOSING_VAL		PFTM_TCP_CLOSING_VAL
+#define PFTM_SCTP_CLOSED_VAL		PFTM_TCP_CLOSED_VAL
 
 /*
  * For each connection (combination of proto,src,dst,af) the number
@@ -698,6 +708,7 @@ struct pf_rule {
 #define PFRULE_IFBOUND		0x00010000	/* if-bound */
 #define PFRULE_STATESLOPPY	0x00020000	/* sloppy state tracking */
 #define PFRULE_PFLOW		0x00040000
+#define PFRULE_ALLOW_RELATED	0x00080000	/* 5BSD: sctp; multihome */
 #define PFRULE_ONCE		0x00100000	/* one shot rule */
 #define PFRULE_AFTO		0x00200000	/* af-to rule */
 #define	PFRULE_EXPIRED		0x00400000	/* one shot rule hit by pkt */
@@ -756,7 +767,10 @@ struct pf_state_scrub {
 #define PFSS_DATA_NOTS	0x0080		/* no timestamp on data packets	*/
 	u_int8_t	pfss_ttl;	/* stashed TTL			*/
 	u_int8_t	pad;
-	u_int32_t	pfss_ts_mod;	/* timestamp modulation		*/
+	union {				/* 5BSD: sctp; pfsync syncs both */
+		u_int32_t	pfss_ts_mod;	/* timestamp modulation	*/
+		u_int32_t	pfss_v_tag;	/* SCTP verification tag */
+	};
 };
 
 struct pf_state_host {
@@ -1244,6 +1258,21 @@ enum pfi_kif_refs {
 	"MULTIPLE", \
 	NULL \
 }
+
+/*
+ * 5BSD: sctp.  SCTP peer states, in the order of FreeBSD pf's (the
+ * SCTP_* association states of <netinet/sctp.h>), so that states order
+ * as an association progresses.  The values are dense: pfsync drops
+ * states above PF_TCPS_PROXY_DST, which FreeBSD's 0x10 - 0x80 exceed.
+ */
+#define PF_SCTPS_CLOSED			0
+#define PF_SCTPS_COOKIE_WAIT		1
+#define PF_SCTPS_COOKIE_ECHOED		2
+#define PF_SCTPS_ESTABLISHED		3
+#define PF_SCTPS_SHUTDOWN_SENT		4
+#define PF_SCTPS_SHUTDOWN_RECEIVED	5
+#define PF_SCTPS_SHUTDOWN_ACK_SENT	6
+#define PF_SCTPS_SHUTDOWN_PENDING	7
 
 /* Other protocol state enumeration */
 #define PFOTHERS_NO_TRAFFIC	0
