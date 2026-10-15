@@ -647,7 +647,11 @@ Setting this to
 .Dq Li YES
 will automatically load the
 .Xr dummynet 4
-module independently of PF rule loading.
+module through the SystemExtension broker
+.Pq Xr BSDExtension 8
+independently of PF rule loading;
+.Va dnctl_enable
+loads it the same way.
 Use
 .Va dnctl_enable
 and
@@ -680,8 +684,28 @@ Adding
 .Pp
 builds support for
 .Xr pf 4
-into the kernel, otherwise the
-kernel module will be loaded.
+into the kernel.
+Otherwise the loader preloads
+.Pa pf.ko
+.Po
+.Va pf_load
+in
+.Xr loader.conf 5 ,
+.Dq Li YES
+by default
+.Pc .
+When it is not preloaded,
+.Pa /etc/rc.d/pf ,
+.Pa /etc/rc.d/pflog
+and
+.Pa /etc/rc.d/pfsync
+load it through the SystemExtension broker
+.Pq Xr BSDExtension 8 ,
+because the capability plane refuses
+.Xr kldload 2
+after boot; this requires the broker to be running and
+.Dq pf
+to be on its allow-list (it is by default).
 .It Va pf_rules
 .Pq Vt str
 Path to

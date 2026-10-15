@@ -511,6 +511,7 @@ noafif()
 
 	case $_if in
 	pflog[0-9]*|\
+	pflow[0-9]*|\
 	pfsync[0-9]*|\
 	usbus[0-9]*|\
 	an[0-9]*|\
