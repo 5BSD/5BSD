@@ -178,17 +178,16 @@ done
 atf_test_case "unstated_states_limit" "cleanup"
 unstated_states_limit_head()
 {
-	atf_set descr 'A jail ruleset without "set limit states" fails once the host changed the states limit'
+	atf_set descr 'A jail ruleset without "set limit states" loads and keeps the host-tuned states limit'
 	atf_set require.user root
 }
 
 unstated_states_limit_body()
 {
 	# pfctl loads "states" with its compiled default (PFSTATE_HIWAT,
-	# 100000) unless the ruleset sets it; the other pools start from the
-	# current kernel value.  So once the host runs with a non-default
-	# states limit, a VNET jail must restate it.  This records the
-	# current contract.
+	# 100000) unless the ruleset sets it.  In a VNET jail the host owns
+	# the limit: pfctl keeps the host's value for a limit the ruleset does
+	# not set, so a jail ruleset loads after the host tuned the limit.
 	pft_init
 	limits_save
 	vnet_mkjail a
@@ -196,9 +195,8 @@ unstated_states_limit_body()
 	pft_set_rules a "pass all label \"before\""
 	limits_set "states 54321"
 	echo 'pass all label "unstated"' > unstated.conf
-	atf_check -s not-exit:0 -e match:'Cannot set states limit to 100000' \
-	    jexec a pfctl -f ${PWD}/unstated.conf
-	atf_check -o match:'label "before"' jexec a pfctl -sr
+	atf_check -s exit:0 -e ignore jexec a pfctl -f ${PWD}/unstated.conf
+	atf_check -o match:'label "unstated"' jexec a pfctl -sr
 	expect_eq "$(limit_of states)" "54321" "limit_of states"
 
 	echo 'set limit states 54321' > stated.conf

@@ -2427,6 +2427,12 @@ pfctl_load_limit(struct pfctl *pf, unsigned int index, unsigned int limit)
 	pl.index = index;
 	pl.limit = limit;
 	if (ioctl(pf->dev, DIOCSETLIMIT, &pl) == -1) {
+		/*
+		 * 5BSD: a vnet jail may not change the host-owned pool limits;
+		 * a limit the ruleset did not set keeps the host's value.
+		 */
+		if (errno == EPERM && !pf->limit_set[index])
+			return (0);
 		if (errno == EBUSY)
 			warnx("Current pool size exceeds requested %s limit %u",
 			    pf_limits[index].name, limit);
