@@ -18,7 +18,7 @@ Parity is measured with OpenBSD's own regression suites
 ## One pf per vnet
 
 Every vnet runs its own pf instance: rulesets and anchors, states and source
-nodes, tables, state and source limiters, queues, the interface table,
+nodes, tables, state and source limiters, the interface table,
 fragment reassembly, status counters, syncookie state, and the pflog, pfsync
 and pflow interfaces. A vnet jail therefore has a private firewall:
 
@@ -33,9 +33,17 @@ pfctl -sr               # the host's rules only
 
 `/dev/pf` acts on the vnet of the process that opened it; the open keeps a
 reference to the opener's jail, so a descriptor passed elsewhere still
-addresses the same pf. The device is visible in a jail through the
+addresses the same pf. A descriptor that has issued no other ioctl can be
+moved to a descendant jail's vnet with the 5BSD ioctl `DIOCBINDJAIL` (see
+pf(4)); `system.Network.PF` uses it to serve jailed clients. The device, and
+bpf(4) for pflogd(8) and tcpdump(8), are visible in a jail through the
 `devfsrules_jail_vnet` devfs ruleset. A new vnet starts with pf disabled and
 an empty ruleset.
+
+`pf.ko` is preloaded by the loader (`pf_load="YES"` in loader.conf(5)). With
+`pf_load="NO"`, `rc.d/pf`, `rc.d/pflog` and `rc.d/pfsync` load it through
+the SystemExtension broker (`load_kld -b pf`; `pf` is on BSDExtension's
+allow-list), because the capability plane refuses `kldload(2)` after boot.
 
 Three things stay system wide. Memory pools are shared, so the limits set
 with `set limit` belong to the host: a vnet jail may restate the current
@@ -156,9 +164,14 @@ families and `pflowctl` are gone; programs written for OpenBSD's
 - `netstat -s -p pfsync` and `netstat -s -p pflow` print OpenBSD's pfsync
   and pflow counters (sysctls `net.pfsync.stats` and `net.pflow.stats`).
 - bsnmpd's `snmp_pf` module serves the BEGEMOT-PF-MIB from the OpenBSD
-  ioctls; its pfAltq objects describe pf.conf `queue` definitions.
+  ioctls; its pfAltq table would list pf.conf `queue` definitions, and is
+  empty while queues are refused.
 - `system.Network.PF` (BSDNetwork) hands clients a `/dev/pf` descriptor
-  limited to `DIOCGETSTATES`, OpenBSD's state export.
+  limited to `DIOCGETSTATES`, OpenBSD's state export, bound to the vnet of
+  the client's jail.
+- `pflogd(8)` is OpenBSD's, with FreeBSD's `-p pidfile` kept for
+  `pflog_instances` and newsyslog(8); `tftp-proxy(8)` runs from
+  `rc.d/tftpproxy` (`tftpproxy_enable`).
 - `blocklistd-helper` manages its anchors and tables with `pfctl` and needs
   `anchor "blocklistd/*"` in pf.conf.
 
@@ -170,8 +183,10 @@ families and `pflowctl` are gone; programs written for OpenBSD's
 | Per-vnet pf | Done; `vnet_test` (isolation, limits, clones, teardown with live state, nested vnet jails) |
 | divert-to, divert-reply, divert-packet | Done; `divert_test` and OpenBSD `pf_divert` |
 | `jail` option | Done; `jail_test` |
-| Routing domains (`rdomain`, `rtable`) | Planned: on FIBs |
-| Queues (HFSC, FQ-CoDel) | Planned |
+| Routing domains (`rdomain`, `rtable`) | Done on FIBs; see [Routing Domains](rdomains.md) |
+| `ether` rules, `dnpipe`/`dnqueue`, SCTP | Done (FreeBSD pf features kept as 5BSD extensions) |
+| pflogd, ftp-proxy, tftp-proxy, authpf | OpenBSD's, run from rc.d |
+| Queues (HFSC, FQ-CoDel) | Not supported: rulesets with `queue` are refused; shape with dummynet `dnpipe`/`dnqueue` |
 
 Where each part of pf and the network stack comes from, and how to bring
 OpenBSD and FreeBSD changes forward, is in
