@@ -83,6 +83,14 @@ pfsynct_init()
 	fi
 }
 
+# 5BSD pfsync is a cloner; unlike FreeBSD it does not precreate pfsync0
+# in each vnet.
+pfsynct_mkif()
+{
+	jexec $1 ifconfig pfsync0 create ||
+	    atf_fail "creating pfsync0 in jail $1"
+}
+
 pflog_init()
 {
 	pft_init

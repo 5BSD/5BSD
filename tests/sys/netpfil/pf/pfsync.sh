@@ -51,6 +51,8 @@ common_body()
 
 	vnet_mkjail one ${epair_one}a ${epair_sync}a
 	vnet_mkjail two ${epair_two}a ${epair_sync}b
+	pfsynct_mkif one
+	pfsynct_mkif two
 
 	# pfsync interface
 	jexec one ifconfig ${epair_sync}a 192.0.2.1/24 up
@@ -82,7 +84,9 @@ common_body()
 
 	ifconfig ${epair_one}b 198.51.100.254/24 up
 
-	ping -c 1 -S 198.51.100.254 198.51.100.1
+	# OpenBSD pf creates no state for an outbound ICMP echo reply, so
+	# originate the echo request behind the "pass out keep state" rule.
+	jexec one ping -c 1 -S 198.51.100.1 198.51.100.254
 
 	# Give pfsync time to do its thing
 	sleep 2
@@ -92,9 +96,10 @@ common_body()
 		atf_fail "state not found on synced host"
 	fi
 
-	if ! jexec two pfctl -sc | grep ""${hostid_one}"";
+	# OpenBSD pfctl has no -sc; check the synced state's creator instead.
+	if ! jexec two pfctl -ss -vv | grep "creatorid: ${hostid_one}";
 	then
-		jexec two pfctl -sc
+		jexec two pfctl -ss -vv
 		atf_fail "HostID for host one not found on two"
 	fi
 }
@@ -209,6 +214,8 @@ bulk_body()
 
 	vnet_mkjail one ${epair_one}a ${epair_sync}a
 	vnet_mkjail two ${epair_two}a ${epair_sync}b
+	pfsynct_mkif one
+	pfsynct_mkif two
 
 	# pfsync interface
 	jexec one ifconfig ${epair_sync}a 192.0.2.1/24 up
