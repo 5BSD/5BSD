@@ -42,9 +42,11 @@ match_full_v4_body()
     # Sanity check.
     ping_dummy_check_request exit:0 --ping-type=icmp
 
-    # Only non-fragmented packets are passed
+    # Only non-fragmented packets are passed.  OpenBSD reassembles by
+    # default ("set reassemble yes"); this file tests filtering without it.
     jexec router pfctl -e
     pft_set_rules router \
+        "set reassemble no" \
         "pass out" \
         "block in" \
         "pass in inet proto icmp all icmp-type echoreq"
@@ -75,6 +77,7 @@ match_fragment_v4_body()
 
     # Only fragmented packets are passed
     pft_set_rules router \
+        "set reassemble no" \
         "pass out" \
         "block in" \
         "pass in inet proto icmp fragment"
@@ -88,43 +91,8 @@ match_fragment_v4_cleanup()
 }
 
 
-atf_test_case "compat_override_v4" "cleanup"
-compat_override_v4_head()
-{
-    atf_set descr 'Scrub rules override "set reassemble" for IPv4'
-    atf_set require.user root
-    atf_set require.progs python3 scapy
-}
-
-compat_override_v4_body()
-{
-    setup_router_dummy_ipv4
-
-    # Sanity check.
-    ping_dummy_check_request exit:0 --ping-type=icmp
-
-    # The same as match_fragment_v4 but with "set reassemble yes" which
-    # is ignored because of presence of scrub rules.
-    # Only fragmented packets are passed.
-    pft_set_rules router \
-        "set reassemble yes" \
-        "no scrub" \
-        "pass out" \
-        "block in" \
-        "pass in inet proto icmp fragment"
-    ping_dummy_check_request exit:1 --ping-type=icmp
-    ping_dummy_check_request exit:0 --ping-type=icmp --send-length=2000 --send-frag-length 1000
-}
-
-compat_override_v4_cleanup()
-{
-    pft_cleanup
-}
-
-
 atf_init_test_cases()
 {
     atf_add_test_case "match_full_v4"
     atf_add_test_case "match_fragment_v4"
-    atf_add_test_case "compat_override_v4"
 }
