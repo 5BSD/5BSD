@@ -36,6 +36,14 @@
 .br
 .Li pf:ip,ip6:route_to:entry
 .Pp
+.Li pf:eth:test_rule:entry,test,mismatch,match,final_match
+.br
+.Li pf:eth:dummynet:submit,reinject
+.br
+.Li pf:eth:bridge_to:transmit
+.br
+.Li pf:eth:hook:link
+.Pp
 .Li pf:table:addr:match,update
 .br
 .Li pf:rule:jail:match,resolve
@@ -143,6 +151,85 @@ A packet is translated between address families (af-to).
 route-to, reply-to or dup-to routing of a packet;
 .Fa args[1]
 is the state.
+.El
+.Ss Ethernet rules
+These probes cover the 5BSD
+.Ic ether
+rules
+.Pq see Xr pf.conf 5 ,
+with the names and arguments of the
+.Fx
+pf probes.
+A rule is a
+.Vt struct pf_keth_rule ,
+whose first member is the
+.Vt struct pf_eth_rule
+of
+.In net/pfvar.h .
+.Bl -tag -width "pf:eth:test_rule:final_match"
+.It Li pf:eth:test_rule:entry
+A frame is filtered;
+.Fa arg0
+is the direction (1 in, 2 out),
+.Fa args[1]
+the interface and
+.Fa args[2]
+the mbuf.
+.It Li pf:eth:test_rule:test
+Rule number
+.Fa arg0 ,
+.Fa args[1] ,
+is evaluated.
+.It Li pf:eth:test_rule:mismatch
+The rule does not match;
+.Fa arg2
+names the condition that failed:
+.Dq kif ,
+.Dq dir ,
+.Dq proto ,
+.Dq src ,
+.Dq dst ,
+.Dq ip_src ,
+.Dq ip_dst
+or
+.Dq match_tag .
+.It Li pf:eth:test_rule:match
+The rule matches; evaluation continues unless it is
+.Cm quick .
+.It Li pf:eth:test_rule:final_match
+The rule that decides,
+.Fa arg0
+-1 and
+.Fa args[1]
+NULL when no rule matched and the frame passes.
+.It Li pf:eth:dummynet:submit
+A frame is sent to
+.Xr dummynet 4 ;
+.Fa args[0]
+is the rule,
+.Fa arg1
+the pipe or queue number and
+.Fa arg2
+the direction.
+.It Li pf:eth:dummynet:reinject
+.Xr dummynet 4
+passes a shaped frame on;
+.Fa arg0
+is the direction and
+.Fa args[1]
+the interface.
+.It Li pf:eth:bridge_to:transmit
+A frame is sent out of the
+.Cm bridge-to
+interface
+.Fa args[1]
+(NULL if it does not exist, and the frame is dropped).
+.It Li pf:eth:hook:link
+The link-layer
+.Xr pfil 9
+hooks of the current vnet are linked
+.Pq Fa arg0 No 1
+or unlinked (0).
 .El
 .Ss States
 .Bl -tag -width "pf:state:state:transition"

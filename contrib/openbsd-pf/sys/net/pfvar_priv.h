@@ -733,6 +733,11 @@ void	pf_sctp_multihome_delayed(struct pf_pdesc *, struct pf_state *, int,
 int	pf_test_rule(struct pf_pdesc *, struct pf_rule **, struct pf_state **,
 	    struct pf_rule **, struct pf_ruleset **, u_short *);
 void	pf_update_state_timeout(struct pf_state *, int);
+/* 5BSD: ether (sys/netpfil/openbsd-pf/pf_ether.c); called with PF_LOCK */
+int	pf_eth_begin(u_int32_t *, const char *);
+void	pf_eth_rollback(u_int32_t, const char *);
+int	pf_eth_ticket_valid(u_int32_t, const char *);
+int	pf_eth_commit(u_int32_t, const char *);
 
 #endif /* _KERNEL */
 

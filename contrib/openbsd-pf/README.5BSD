@@ -128,6 +128,19 @@ to a re-import.
                  timeouts take the numbers OpenBSD gives PFTM_PURGE and
                  PFTM_UNLINKED, so such a timeout from an OpenBSD peer is
                  read as sctp.opening or sctp.established.
+  ether (marked "5BSD: ether"): the 5BSD extension "ether" rules (layer-2
+                 filtering, as in FreeBSD pf): struct pf_eth_rule,
+                 struct pfioc_eth_rule, PF_TRANS_ETH and the DIOC*ETHRULE*
+                 ioctls ('D' 230-234) (pfvar.h), the glue prototypes
+                 (pfvar_priv.h), PF_TRANS_ETH elements in DIOCXBEGIN,
+                 DIOCXROLLBACK and DIOCXCOMMIT (pf_ioctl.c).  The rulesets,
+                 ioctls, packet path and pfil(9) hooks are in
+                 sys/netpfil/openbsd-pf/pf_ether.c.  pfctl: parse.y
+                 grammar and keywords (ether, l3, bridge-to,
+                 ridentifier), struct pfctl.eth and the prototypes
+                 (pfctl_parser.h), loading in pfctl_rules(), -s ethernet,
+                 -s Anchors, -s all, -z, -F ethernet and -F all (pfctl.c);
+                 the rest is in sys/netpfil/openbsd-pf/user/pfctl_ether.c.
   pfvar.h        REASON_SET fires the pf::reason:set DTrace probe
                  userland (!_KERNEL): sys/param.h before sys/syslimits.h;
                  PF_DIVERT #undef, RTLABEL_LEN and union sockaddr_union
@@ -172,7 +185,8 @@ Adopted OpenBSD code (pf/parity), all from facc8d7ec5d1:
   share/man/man4 pf.4, pflog.4, pflow.4, pfsync.4, divert.4, share/man/man5
   pf.conf.5, pf.os.5     -> installed by share/man/man4 and man5 (FreeBSD's
                             divert.4 is now ipdivert.4); marked 5BSD
-                            additions: pf.conf.5 jail and queueing status, pf.4 VNET,
+                            additions: pf.conf.5 jail, dummynet, ether rules and
+                            queueing status, pfctl.8 ethernet, pf.4 VNET,
                             divert.4
   usr.sbin/authpf, ftp-proxy, tftp-proxy -> same programs
   usr.sbin/tcpdump      -> /usr/sbin/tcpdump (glue: usr.sbin/tcpdump/tcpdump:

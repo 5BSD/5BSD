@@ -104,6 +104,7 @@ struct pfctl {
 	struct pf_anchor *anchor, *alast;
 	struct pfr_ktablehead pfr_ktlast;
 	const char *ruleset;
+	struct pfctl_eth *eth;	/* 5BSD: ether */
 
 	struct pfctl_statelim_ids statelim_ids;
 	struct pfctl_statelim_nms statelim_nms;
@@ -288,6 +289,22 @@ void	print_queuespec(struct pf_queuespec *);
 int	pfctl_define_table(char *, int, int, const char *, struct pfr_buffer *,
 	    u_int32_t, struct pfr_uktable *);
 void	pfctl_expand_label_nr(struct pf_rule *, unsigned int);
+
+/* 5BSD: ether (sys/netpfil/openbsd-pf/user/pfctl_ether.c) */
+struct pfctl_eth_anchor;
+void	pfctl_eth_init(struct pfctl *, const char *);
+void	pfctl_eth_brace_open(struct pfctl *);
+void	pfctl_eth_brace_close(struct pfctl *);
+const char *pfctl_eth_anchor_rule(struct pfctl *, const char *,
+	    struct pfctl_eth_anchor **, const char **);
+void	pfctl_eth_append_rule(struct pfctl *, struct pf_eth_rule *,
+	    const char *, struct pfctl_eth_anchor *);
+int	pfctl_eth_trans(struct pfctl *, const char *);
+int	pfctl_eth_load(struct pfctl *);
+int	pfctl_eth_clear_rules(int, int, const char *);
+int	pfctl_eth_show_rules(int, char *, int, int, char *, int, int);
+int	pfctl_eth_show_anchors(int, int, const char *);
+void	print_eth_rule(struct pf_eth_rule *, const char *, int);
 
 void		 pfctl_clear_fingerprints(int, int);
 int		 pfctl_file_fingerprints(int, int, const char *);
