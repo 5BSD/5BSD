@@ -160,6 +160,7 @@ enum showopt_id {
 	SHOWOPT_OSFP,
 	SHOWOPT_STATELIMS,
 	SHOWOPT_SOURCELIMS,
+	SHOWOPT_ETHER,		/* 5BSD: ether */
 	SHOWOPT_ALL,
 };
 
@@ -267,7 +268,7 @@ static const struct {
 
 static const char *clearopt_list[] = {
 	"rules", "Sources", "states", "info", "Tables", "osfp", "Reset",
-	"all", NULL
+	"all", "ethernet", NULL	/* 5BSD: ether */
 };
 
 struct pfctl_opt_id {
@@ -290,6 +291,7 @@ static const struct pfctl_opt_id showopt_list[] = {
 	{ "osfp",		SHOWOPT_OSFP },
 	{ "Stlimiters",		SHOWOPT_STATELIMS },
 	{ "Srclimiters",	SHOWOPT_SOURCELIMS },
+	{ "ethernet",		SHOWOPT_ETHER },	/* 5BSD: ether */
 	{ "all",		SHOWOPT_ALL },
 
 	{ NULL,			SHOWOPT_NONE },
@@ -2141,6 +2143,7 @@ pfctl_rules(int dev, char *filename, int opts, int optimize,
 	pf.asd = 0;
 	pf.trans = t;
 	pfctl_init_options(&pf);
+	pfctl_eth_init(&pf, anchorname);	/* 5BSD: ether */
 
 	if ((opts & PF_OPT_NOACTION) == 0) {
 		/*
@@ -2152,6 +2155,8 @@ pfctl_rules(int dev, char *filename, int opts, int optimize,
 			ERRX("pfctl_rules");
 		pf.astack[0]->ruleset.tticket =
 		    pfctl_get_ticket(t, PF_TRANS_TABLE, anchorname);
+		if (pfctl_eth_trans(&pf, anchorname))	/* 5BSD: ether */
+			ERRX("pfctl_rules");
 	}
 
 	if (parse_config(filename, &pf) < 0) {
@@ -2175,7 +2180,8 @@ pfctl_rules(int dev, char *filename, int opts, int optimize,
 		pfctl_load_sourcelims(&pf);
 	}
 
-	if (pfctl_load_ruleset(&pf, path, rs, 0)) {
+	if (pfctl_eth_load(&pf) ||	/* 5BSD: ether */
+	    pfctl_load_ruleset(&pf, path, rs, 0)) {
 		if ((opts & PF_OPT_NOACTION) == 0)
 			ERRX("Unable to load rules into kernel");
 		else
@@ -3321,6 +3327,11 @@ main(int argc, char *argv[])
 
 	case SHOWOPT_ANCHORS:
 		pfctl_show_anchors(dev, opts, anchorname);
+		pfctl_eth_show_anchors(dev, opts, anchorname);	/* 5BSD: ether */
+		break;
+	case SHOWOPT_ETHER:	/* 5BSD: ether */
+		pfctl_eth_show_rules(dev, path, opts, PFCTL_SHOW_RULES,
+		    anchorname, 0, anchor_wildcard);
 		break;
 	case SHOWOPT_RULES:
 		pfctl_init_show_rules(&show_rules_pf, dev, opts);
@@ -3357,6 +3368,8 @@ main(int argc, char *argv[])
 		opts |= PF_OPT_SHOWALL;
 		pfctl_init_show_rules(&show_rules_pf, dev, opts);
 		pfctl_load_fingerprints(dev, opts);
+		pfctl_eth_show_rules(dev, path, opts, PFCTL_SHOW_RULES,
+		    anchorname, 0, 0);	/* 5BSD: ether */
 		pfctl_show_rules(&show_rules_pf, path, PFCTL_SHOW_RULES,
 		    anchorname, 0, 0, -1);
 		pfctl_show_queues(dev, ifaceopt, opts,
@@ -3395,6 +3408,8 @@ main(int argc, char *argv[])
 	}
 
 	if ((opts & PF_OPT_CLRRULECTRS) && showopt == 0) {
+		pfctl_eth_show_rules(dev, path, opts, PFCTL_SHOW_NOTHING,
+		    anchorname, 0, 0);	/* 5BSD: ether */
 		pfctl_init_show_rules(&show_rules_pf, dev, opts);
 		pfctl_show_rules(&show_rules_pf, path, PFCTL_SHOW_NOTHING,
 		    anchorname, 0, 0, -1);
@@ -3402,6 +3417,9 @@ main(int argc, char *argv[])
 
 	if (clearopt != NULL) {
 		switch (*clearopt) {
+		case 'e':	/* 5BSD: ether */
+			pfctl_eth_clear_rules(dev, opts, anchorname);
+			break;
 		case 'r':
 			if (opts & PF_OPT_RECURSE)
 				pfctl_recurse(dev, opts, anchorname,
@@ -3424,6 +3442,7 @@ main(int argc, char *argv[])
 				usage();
 				/* NOTREACHED */
 			}
+			pfctl_eth_clear_rules(dev, opts, anchorname);	/* 5BSD: ether */
 			if (opts & PF_OPT_RECURSE)
 				pfctl_recurse(dev, opts, anchorname,
 				    pfctl_call_clearanchors);

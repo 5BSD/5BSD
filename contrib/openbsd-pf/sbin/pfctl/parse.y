@@ -37,6 +37,7 @@
 #include <netinet/ip_icmp.h>
 #include <netinet/icmp6.h>
 #include <net/pfvar.h>
+#include <net/ethernet.h>	/* 5BSD: ether */
 #include <arpa/inet.h>
 
 #include <stdio.h>
@@ -457,6 +458,44 @@ int	 map_tos(char *string, int *);
 int	 lookup_rtable(u_int);
 int	 filteropts_to_rule(struct pf_rule *, struct filter_opts *);
 
+/* 5BSD: ether; layer-2 rules, in FreeBSD's syntax */
+struct node_mac {
+	u_int8_t		 mac[PF_ETH_ADDR_LEN];
+	u_int8_t		 mask[PF_ETH_ADDR_LEN];
+	u_int8_t		 neg;
+	u_int8_t		 isset;
+	struct node_mac		*next;
+	struct node_mac		*tail;
+};
+
+struct node_etherproto {
+	u_int16_t		 proto;
+	struct node_etherproto	*next;
+	struct node_etherproto	*tail;
+};
+
+struct ether_opts {
+	char			*label[PF_ETH_LABEL_COUNT];
+	int			 labelcount;
+	char			*tag;
+	char			*match_tag;
+	u_int8_t		 match_tag_not;
+	char			*qname;
+	u_int32_t		 ridentifier;
+	u_int16_t		 dnpipe;
+	u_int8_t		 dnflags;
+	u_int8_t		 dnset;
+} ether_opts;
+
+struct node_mac	*node_mac_from_string(const char *);
+struct node_mac	*node_mac_from_string_masklen(const char *, int);
+struct node_mac	*node_mac_from_string_mask(const char *, const char *);
+int	 etheropts_to_rule(struct pf_eth_rule *, struct ether_opts *);
+void	 expand_eth_rule(struct pf_eth_rule *, struct node_if *,
+	    struct node_etherproto *, struct node_mac *, struct node_mac *,
+	    struct node_host *, struct node_host *, const char *, const char *,
+	    struct pfctl_eth_anchor *);
+
 TAILQ_HEAD(loadanchorshead, loadanchors)
     loadanchorshead = TAILQ_HEAD_INITIALIZER(loadanchorshead);
 
@@ -491,6 +530,13 @@ typedef struct {
 		struct node_gid		*gid;
 		struct node_jail	*jail;	/* 5BSD: jail */
 		struct pf_rule_dn	 dn;	/* 5BSD: dummynet */
+		struct node_mac		*mac;		/* 5BSD: ether */
+		struct {
+			struct node_mac	*src;
+			struct node_mac	*dst;
+		}			 etherfromto;	/* 5BSD: ether */
+		struct node_etherproto	*etherproto;	/* 5BSD: ether */
+		struct ether_opts	 ether_opts;	/* 5BSD: ether */
 		struct node_state_opt	*state_opt;
 		struct peer		 peer;
 		struct {
@@ -549,6 +595,7 @@ int	parseport(char *, struct range *r, int);
 %token	NOROUTE URPFFAILED FRAGMENT USER GROUP MAXMSS MAXIMUM TTL TOS DROP TABLE
 %token	JAIL	/* 5BSD: jail */
 %token	DNPIPE DNQUEUE	/* 5BSD: dummynet */
+%token	ETHER L3 BRIDGE_TO RIDENTIFIER	/* 5BSD: ether */
 %token	REASSEMBLE ANCHOR SYNCOOKIES
 %token	SET OPTIMIZATION TIMEOUT LIMIT LOGINTERFACE BLOCKPOLICY RANDOMID
 %token	SYNPROXY FINGERPRINTS NOSYNC DEBUG SKIP HOSTID
@@ -593,6 +640,13 @@ int	parseport(char *, struct range *r, int);
 %type	<v.jail>		jails jail_list jail_item	/* 5BSD: jail */
 %type	<v.number>		jailnum	/* 5BSD: jail */
 %type	<v.dn>			dnspec	/* 5BSD: dummynet */
+%type	<v.mac>			xmac mac mac_list macspec etherfrom etherto	/* 5BSD: ether */
+%type	<v.etherfromto>		etherfromto	/* 5BSD: ether */
+%type	<v.etherproto>		etherproto etherproto_list etherproto_item	/* 5BSD: ether */
+%type	<v.number>		etherprotoval	/* 5BSD: ether */
+%type	<v.string>		bridge etherqname	/* 5BSD: ether */
+%type	<v.fromto>		l3fromto	/* 5BSD: ether */
+%type	<v.ether_opts>		etherfilter_opts	/* 5BSD: ether */
 %type	<v.gid>			gids gid_list gid_item
 %type	<v.redirection>		redirpool
 %type	<v.string>		label stringall anchorname
@@ -627,6 +681,8 @@ ruleset		: /* empty */
 		| ruleset sourcelim '\n'
 		| ruleset pfrule '\n'
 		| ruleset anchorrule '\n'
+		| ruleset etherrule '\n'	/* 5BSD: ether */
+		| ruleset etheranchorrule '\n'	/* 5BSD: ether */
 		| ruleset loadrule '\n'
 		| ruleset queuespec '\n'
 		| ruleset varset '\n'
@@ -1072,6 +1128,308 @@ anchorrule	: ANCHOR anchorname dir quick interface af proto fromto
 			pf->astack[pf->asd + 1] = NULL;
 		}
 		;
+
+/*
+ * 5BSD: ether.  Layer-2 rules and anchors, as in FreeBSD pf.conf; see
+ * sys/netpfil/openbsd-pf/user/pfctl_ether.c.
+ */
+etherrule	: ETHER action dir quick interface bridge etherproto etherfromto
+		    l3fromto etherfilter_opts
+		{
+			struct pf_eth_rule	r;
+
+			memset(&r, 0, sizeof(r));
+			if ($2.b1 != PF_PASS && $2.b1 != PF_DROP) {
+				yyerror("ether rules can only pass or block");
+				YYERROR;
+			}
+			r.action = $2.b1;
+			r.direction = $3;
+			r.quick = $4.quick;
+			if (etheropts_to_rule(&r, &$10))
+				YYERROR;
+			expand_eth_rule(&r, $5, $7, $8.src, $8.dst,
+			    $9.src.host, $9.dst.host, $6, "", NULL);
+			free($6);
+		}
+		;
+
+etherpfa_anchorlist	: /* empty */
+		| etherpfa_anchorlist '\n'
+		| etherpfa_anchorlist etherrule '\n'
+		| etherpfa_anchorlist etheranchorrule '\n'
+		;
+
+etherpfa_anchor	: '{'
+		{
+			pfctl_eth_brace_open(pf);
+		} '\n' etherpfa_anchorlist '}'
+		{
+			pfctl_eth_brace_close(pf);
+		}
+		| /* empty */
+		;
+
+etheranchorrule	: ETHER ANCHOR anchorname dir quick interface etherproto
+		    etherfromto l3fromto etherpfa_anchor
+		{
+			struct pf_eth_rule	 r;
+			struct pfctl_eth_anchor	*a;
+			const char		*call, *errstr;
+
+			if ((call = pfctl_eth_anchor_rule(pf, $3, &a,
+			    &errstr)) == NULL) {
+				free($3);
+				yyerror("%s", errstr);
+				YYERROR;
+			}
+			memset(&r, 0, sizeof(r));
+			r.action = PF_PASS;
+			r.direction = $4;
+			r.quick = $5.quick;
+			expand_eth_rule(&r, $6, $7, $8.src, $8.dst,
+			    $9.src.host, $9.dst.host, NULL, call, a);
+			free($3);
+		}
+		;
+
+etherfilter_opts	:	{
+				memset(&ether_opts, 0, sizeof(ether_opts));
+			}
+		    etherfilter_opts_l
+			{ $$ = ether_opts; }
+		| /* empty */	{
+			memset(&ether_opts, 0, sizeof(ether_opts));
+			$$ = ether_opts;
+		}
+		;
+
+etherfilter_opts_l	: etherfilter_opts_l etherfilter_opt
+		| etherfilter_opt
+		;
+
+etherfilter_opt	: etherqname	{
+			if (ether_opts.qname) {
+				yyerror("queue cannot be redefined");
+				YYERROR;
+			}
+			ether_opts.qname = $1;
+		}
+		| RIDENTIFIER number {
+			if ($2 < 0 || $2 > UINT_MAX) {
+				yyerror("invalid ridentifier");
+				YYERROR;
+			}
+			ether_opts.ridentifier = $2;
+		}
+		| LABEL label	{
+			if (ether_opts.labelcount >= PF_ETH_LABEL_COUNT) {
+				yyerror("label can only be used %d times",
+				    PF_ETH_LABEL_COUNT);
+				YYERROR;
+			}
+			ether_opts.label[ether_opts.labelcount++] = $2;
+		}
+		| TAG string	{
+			if (ether_opts.tag) {
+				yyerror("tag cannot be redefined");
+				YYERROR;
+			}
+			ether_opts.tag = $2;
+		}
+		| not TAGGED string	{
+			if (ether_opts.match_tag) {
+				yyerror("tagged cannot be redefined");
+				YYERROR;
+			}
+			ether_opts.match_tag = $3;
+			ether_opts.match_tag_not = $1;
+		}
+		| DNPIPE number	{
+			if ($2 < 1 || $2 > 0xffff) {
+				yyerror("illegal dummynet number %lld (1-%u)",
+				    $2, 0xffff);
+				YYERROR;
+			}
+			if (ether_opts.dnset) {
+				yyerror("dnpipe/dnqueue cannot be respecified");
+				YYERROR;
+			}
+			ether_opts.dnset = 1;
+			ether_opts.dnpipe = $2;
+			ether_opts.dnflags = PF_DN_IS_PIPE;
+		}
+		| DNQUEUE number	{
+			if ($2 < 1 || $2 > 0xffff) {
+				yyerror("illegal dummynet number %lld (1-%u)",
+				    $2, 0xffff);
+				YYERROR;
+			}
+			if (ether_opts.dnset) {
+				yyerror("dnpipe/dnqueue cannot be respecified");
+				YYERROR;
+			}
+			ether_opts.dnset = 1;
+			ether_opts.dnpipe = $2;
+			ether_opts.dnflags = 0;
+		}
+		;
+
+etherqname	: QUEUE STRING		{ $$ = $2; }
+		| QUEUE '(' STRING ')'	{ $$ = $3; }
+		;
+
+bridge		: /* empty */		{ $$ = NULL; }
+		| BRIDGE_TO STRING	{ $$ = $2; }
+		;
+
+etherproto	: /* empty */				{ $$ = NULL; }
+		| PROTO etherproto_item			{ $$ = $2; }
+		| PROTO '{' optnl etherproto_list '}'	{ $$ = $4; }
+		;
+
+etherproto_list	: etherproto_item optnl			{ $$ = $1; }
+		| etherproto_list comma etherproto_item optnl	{
+			$1->tail->next = $3;
+			$1->tail = $3;
+			$$ = $1;
+		}
+		;
+
+etherproto_item	: etherprotoval		{
+			if ($1 == 0) {
+				yyerror("proto 0 cannot be used");
+				YYERROR;
+			}
+			$$ = calloc(1, sizeof(struct node_etherproto));
+			if ($$ == NULL)
+				err(1, "etherproto_item: calloc");
+			$$->proto = $1;
+			$$->next = NULL;
+			$$->tail = $$;
+		}
+		;
+
+etherprotoval	: NUMBER			{
+			if ($1 < 0 || $1 > 0xffff) {
+				yyerror("protocol outside range");
+				YYERROR;
+			}
+			$$ = $1;
+		}
+		| STRING			{
+			unsigned int	 v;
+			char		*ep;
+
+			if (strncmp($1, "0x", 2) != 0) {
+				yyerror("unknown EtherType %s (use a number, "
+				    "like 0x0800)", $1);
+				free($1);
+				YYERROR;
+			}
+			errno = 0;
+			v = strtoul($1 + 2, &ep, 16);
+			if ($1[2] == '\0' || *ep != '\0' || errno != 0 ||
+			    v > 0xffff) {
+				yyerror("invalid EtherType hex %s", $1);
+				free($1);
+				YYERROR;
+			}
+			free($1);
+			$$ = v;
+		}
+		;
+
+l3fromto	: /* empty */			{
+			memset(&$$, 0, sizeof($$));
+		}
+		| L3 fromto			{
+			struct node_host	*h;
+			int			 i;
+
+			if ($2.src_os != NULL) {
+				yyerror("l3 cannot match an os fingerprint");
+				YYERROR;
+			}
+			if ($2.src.port != NULL || $2.dst.port != NULL) {
+				yyerror("l3 cannot match ports");
+				YYERROR;
+			}
+			for (i = 0; i < 2; i++)
+				for (h = i ? $2.dst.host : $2.src.host;
+				    h != NULL; h = h->next)
+					if (h->addr.type != PF_ADDR_ADDRMASK &&
+					    h->addr.type != PF_ADDR_TABLE) {
+						yyerror("%s must be an address "
+						    "or table", i ? "to" :
+						    "from");
+						YYERROR;
+					}
+			$$ = $2;
+		}
+		;
+
+etherfromto	: ALL				{
+			$$.src = NULL;
+			$$.dst = NULL;
+		}
+		| etherfrom etherto		{
+			$$.src = $1;
+			$$.dst = $2;
+		}
+		;
+
+etherfrom	: /* empty */			{ $$ = NULL; }
+		| FROM macspec			{ $$ = $2; }
+		;
+
+etherto		: /* empty */			{ $$ = NULL; }
+		| TO macspec			{ $$ = $2; }
+		;
+
+mac		: STRING '/' NUMBER		{
+			$$ = node_mac_from_string_masklen($1, $3);
+			free($1);
+			if ($$ == NULL)
+				YYERROR;
+		}
+		| STRING			{
+			char	*m, *mask;
+
+			if ((mask = strchr($1, '&')) != NULL) {
+				/* mac&mask */
+				*mask++ = '\0';
+				m = $1;
+				$$ = node_mac_from_string_mask(m, mask);
+			} else
+				$$ = node_mac_from_string($1);
+			free($1);
+			if ($$ == NULL)
+				YYERROR;
+		}
+		;
+
+xmac		: not mac			{
+			struct node_mac	*n;
+
+			for (n = $2; n != NULL; n = n->next)
+				n->neg = $1;
+			$$ = $2;
+		}
+		;
+
+macspec		: xmac				{ $$ = $1; }
+		| '{' optnl mac_list '}'	{ $$ = $3; }
+		;
+
+mac_list	: xmac optnl			{ $$ = $1; }
+		| mac_list comma xmac optnl	{
+			$1->tail->next = $3;
+			$1->tail = $3->tail;
+			$$ = $1;
+		}
+		;
+/* 5BSD: ether end */
 
 loadrule	: LOAD ANCHOR anchorname FROM string	{
 			struct loadanchors	*loadanchor;
@@ -5629,6 +5987,80 @@ freehostlist(struct node_host *h)
 	FREE_LIST(struct node_host, h);
 }
 
+/* 5BSD: ether; one rule per interface, EtherType and address. */
+static u_int16_t
+pf_af_to_ethertype(sa_family_t af)
+{
+	switch (af) {
+	case AF_INET:
+		return (ETHERTYPE_IP);
+	case AF_INET6:
+		return (ETHERTYPE_IPV6);
+	}
+	return (0);
+}
+
+void
+expand_eth_rule(struct pf_eth_rule *r, struct node_if *interfaces,
+    struct node_etherproto *protos, struct node_mac *srcs,
+    struct node_mac *dsts, struct node_host *ipsrcs, struct node_host *ipdsts,
+    const char *bridge_to, const char *anchor_call,
+    struct pfctl_eth_anchor *anchor)
+{
+	int added = 0;
+
+	if (bridge_to != NULL && strlcpy(r->bridge_to, bridge_to,
+	    sizeof(r->bridge_to)) >= sizeof(r->bridge_to)) {
+		yyerror("bridge-to interface name too long");
+		return;
+	}
+
+	LOOP_THROUGH(struct node_if, interface, interfaces,
+	LOOP_THROUGH(struct node_etherproto, proto, protos,
+	LOOP_THROUGH(struct node_mac, src, srcs,
+	LOOP_THROUGH(struct node_mac, dst, dsts,
+	LOOP_THROUGH(struct node_host, ipsrc, ipsrcs,
+	LOOP_THROUGH(struct node_host, ipdst, ipdsts,
+		/* No rule can match IPv4 and IPv6 addresses together. */
+		if (ipsrc->af && ipdst->af && ipsrc->af != ipdst->af)
+			continue;
+		strlcpy(r->ifname, interface->ifname, sizeof(r->ifname));
+		r->ifnot = interface->not;
+		r->proto = proto->proto;
+		if (!r->proto && ipsrc->af)
+			r->proto = pf_af_to_ethertype(ipsrc->af);
+		else if (!r->proto && ipdst->af)
+			r->proto = pf_af_to_ethertype(ipdst->af);
+		memcpy(r->src.addr, src->mac, PF_ETH_ADDR_LEN);
+		memcpy(r->src.mask, src->mask, PF_ETH_ADDR_LEN);
+		r->src.neg = src->neg;
+		r->src.isset = src->isset;
+		memcpy(r->dst.addr, dst->mac, PF_ETH_ADDR_LEN);
+		memcpy(r->dst.mask, dst->mask, PF_ETH_ADDR_LEN);
+		r->dst.neg = dst->neg;
+		r->dst.isset = dst->isset;
+		memset(&r->ipsrc, 0, sizeof(r->ipsrc));
+		memset(&r->ipdst, 0, sizeof(r->ipdst));
+		r->ipsrc.addr = ipsrc->addr;
+		r->ipsrc.neg = ipsrc->not;
+		r->ipdst.addr = ipdst->addr;
+		r->ipdst.neg = ipdst->not;
+
+		pfctl_eth_append_rule(pf, r, anchor_call, anchor);
+		added++;
+	))))));
+
+	if (added == 0)
+		yyerror("ether rule expands to no valid combination");
+
+	FREE_LIST(struct node_if, interfaces);
+	FREE_LIST(struct node_etherproto, protos);
+	FREE_LIST(struct node_mac, srcs);
+	FREE_LIST(struct node_mac, dsts);
+	freehostlist(ipsrcs);
+	freehostlist(ipdsts);
+}
+
 #undef FREE_LIST
 #undef LOOP_THROUGH
 
@@ -5656,6 +6088,7 @@ lookup(char *s)
 		{ "bitmask",		BITMASK},
 		{ "block",		BLOCK},
 		{ "block-policy",	BLOCKPOLICY},
+		{ "bridge-to",		BRIDGE_TO},	/* 5BSD: ether */
 		{ "burst",		BURST},
 		{ "code",		CODE},
 		{ "debug",		DEBUG},
@@ -5669,6 +6102,7 @@ lookup(char *s)
 		{ "drop",		DROP},
 		{ "dup-to",		DUPTO},
 		{ "entries",		ENTRIES},
+		{ "ether",		ETHER},	/* 5BSD: ether */
 		{ "file",		FILENAME},
 		{ "fingerprints",	FINGERPRINTS},
 		{ "flags",		FLAGS},
@@ -5691,6 +6125,7 @@ lookup(char *s)
 		{ "inet6",		INET6},
 		{ "jail",		JAIL},	/* 5BSD: jail */
 		{ "keep",		KEEP},
+		{ "l3",			L3},	/* 5BSD: ether */
 		{ "label",		LABEL},
 		{ "least-states",	LEASTSTATES},
 		{ "limit",		LIMIT},
@@ -5746,6 +6181,7 @@ lookup(char *s)
 		{ "return-icmp",	RETURNICMP},
 		{ "return-icmp6",	RETURNICMP6},
 		{ "return-rst",		RETURNRST},
+		{ "ridentifier",	RIDENTIFIER},	/* 5BSD: ether */
 		{ "round-robin",	ROUNDROBIN},
 		{ "route",		ROUTE},
 		{ "route-to",		ROUTETO},
@@ -6716,4 +7152,121 @@ filteropts_to_rule(struct pf_rule *r, struct filter_opts *opts)
 	r->allow_opts = opts->allowopts;
 
 	return (0);
+}
+
+/* 5BSD: ether */
+int
+etheropts_to_rule(struct pf_eth_rule *r, struct ether_opts *opts)
+{
+	int i, errs = 0;
+
+	for (i = 0; i < opts->labelcount; i++) {
+		if (strlcpy(r->label[i], opts->label[i],
+		    sizeof(r->label[i])) >= sizeof(r->label[i])) {
+			yyerror("rule label too long (max %zu chars)",
+			    sizeof(r->label[i]) - 1);
+			errs++;
+		}
+		free(opts->label[i]);
+	}
+	if (opts->tag != NULL) {
+		if (strlcpy(r->tagname, opts->tag, sizeof(r->tagname)) >=
+		    sizeof(r->tagname)) {
+			yyerror("tag too long, max %zu chars",
+			    sizeof(r->tagname) - 1);
+			errs++;
+		}
+		free(opts->tag);
+	}
+	if (opts->match_tag != NULL) {
+		if (strlcpy(r->match_tagname, opts->match_tag,
+		    sizeof(r->match_tagname)) >= sizeof(r->match_tagname)) {
+			yyerror("tag too long, max %zu chars",
+			    sizeof(r->match_tagname) - 1);
+			errs++;
+		}
+		r->match_tag_not = opts->match_tag_not;
+		free(opts->match_tag);
+	}
+	if (opts->qname != NULL) {
+		if (strlcpy(r->qname, opts->qname, sizeof(r->qname)) >=
+		    sizeof(r->qname)) {
+			yyerror("queue name too long (max %zu chars)",
+			    sizeof(r->qname) - 1);
+			errs++;
+		}
+		free(opts->qname);
+	}
+	r->ridentifier = opts->ridentifier;
+	r->dnpipe = opts->dnpipe;
+	r->dnflags = opts->dnflags;
+	return (errs != 0);
+}
+
+struct node_mac *
+node_mac_from_string(const char *str)
+{
+	struct node_mac *m;
+
+	m = calloc(1, sizeof(struct node_mac));
+	if (m == NULL)
+		err(1, "%s: calloc", __func__);
+
+	if (sscanf(str, "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
+	    &m->mac[0], &m->mac[1], &m->mac[2], &m->mac[3], &m->mac[4],
+	    &m->mac[5]) != 6) {
+		free(m);
+		yyerror("invalid MAC address");
+		return (NULL);
+	}
+
+	memset(m->mask, 0xff, PF_ETH_ADDR_LEN);
+	m->isset = 1;
+	m->next = NULL;
+	m->tail = m;
+
+	return (m);
+}
+
+struct node_mac *
+node_mac_from_string_masklen(const char *str, int masklen)
+{
+	struct node_mac *m;
+	int i;
+
+	if (masklen < 0 || masklen > (PF_ETH_ADDR_LEN * 8)) {
+		yyerror("invalid MAC mask length");
+		return (NULL);
+	}
+
+	m = node_mac_from_string(str);
+	if (m == NULL)
+		return (NULL);
+
+	/* The leading masklen bits, most significant bit first. */
+	memset(m->mask, 0, PF_ETH_ADDR_LEN);
+	for (i = 0; i < masklen; i++)
+		m->mask[i / 8] |= 0x80 >> (i % 8);
+
+	return (m);
+}
+
+struct node_mac *
+node_mac_from_string_mask(const char *str, const char *mask)
+{
+	struct node_mac *m;
+
+	m = node_mac_from_string(str);
+	if (m == NULL)
+		return (NULL);
+
+	if (sscanf(mask, "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
+	    &m->mask[0], &m->mask[1], &m->mask[2], &m->mask[3], &m->mask[4],
+	    &m->mask[5]) != 6) {
+		free(m);
+		yyerror("invalid MAC mask");
+		return (NULL);
+	}
+
+	return (m);
 }
