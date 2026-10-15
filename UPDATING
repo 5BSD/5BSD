@@ -27,6 +27,26 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261015:
+	OpenBSD's pf replaces FreeBSD's (see the 20261012 entries).  The
+	FreeBSD pf extensions are kept on top of it with FreeBSD's syntax:
+	"dnpipe"/"dnqueue" (dummynet(4)), layer-2 "ether" rules
+	(pfctl -s ethernet, -F ethernet) and SCTP tracking with multihoming,
+	the sctp.* timeouts and the "allow-related" state option.  pfctl and
+	pf.ko must be updated together; struct pf_rule and the DIOC*ETHRULE*
+	ioctls changed.
+
+	The loader now preloads pf and every DTrace provider by default
+	(dtraceall_load, pf_load); loading pf does not enable it.  The
+	capability plane denies kldload(2) after boot, so modules a system
+	needs must be preloaded or loaded through the SystemExtension broker.
+	dummynet_enable="YES" now loads dummynet through the broker, and
+	dummynet is on BSDExtension's allow-list; the retired pty is not.
+
+	SO_BINDANY and SO_RXQ_OVFL, both 5BSD-only, moved to 0x20000000 and
+	0x40000000 so new FreeBSD socket options cannot collide with them.
+	Rebuild programs that use them.
+
 20261013:
 	The BSD fixed-name pty(4) compatibility driver has been removed.
 	Use posix_openpt(2), openpty(3), or /dev/ptmx and /dev/pts/N.
