@@ -25,14 +25,13 @@ resync_cmd="pflog_resync"
 
 pflog_prestart()
 {
-	load_kld pflog || return 1
+	load_kld pf || return 1
 
-	# Do we need to create more devices?
-	unit=${pflog_dev#pflog}
-	max=$(sysctl -n net.pflog.if_count)
-	if [ "$unit" -ge "$max" ]; then
-		sysctl net.pflog.if_count=$(expr ${unit} + 1)
+	# pflog(4) interfaces are cloned on demand.
+	if ! ifconfig $pflog_dev >/dev/null 2>&1; then
+		ifconfig $pflog_dev create || return 1
 	fi
+	ifconfig $pflog_dev up
 
 	# -p flag requires stripping pidfile's leading /var/run and trailing .pid
 	pidfile=$(echo $pidfile | sed -e 's|/var/run/||' -e 's|.pid$||')

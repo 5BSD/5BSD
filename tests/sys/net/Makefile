@@ -15,6 +15,7 @@ ATF_TESTS_SH+=	if_tun_test
 ATF_TESTS_SH+=	if_vlan
 ATF_TESTS_SH+=	if_wg
 ATF_TESTS_SH+=	if_geneve
+ATF_TESTS_SH+=	rdomain_test
 TEST_METADATA+=	execenv="jail"
 TEST_METADATA+=	execenv_jail_params="vnet allow.raw_sockets"
 

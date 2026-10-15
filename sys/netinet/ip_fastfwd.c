@@ -205,6 +205,17 @@ ip_findroute(struct nhop_object **pnh, struct in_addr dest, struct mbuf *m)
 		return (EHOSTUNREACH);
 	}
 	/*
+	 * As OpenBSD: the packet filter sees a forwarded packet before a
+	 * reject or blackhole route discards it, so route-to/reply-to rules
+	 * can take it elsewhere.
+	 */
+	if ((nh->nh_flags & (NHF_BLACKHOLE | NHF_REJECT)) != 0 &&
+	    PFIL_HOOKED_OUT(V_inet_pfil_head) &&
+	    pfil_mbuf_fwd(V_inet_pfil_head, &m, nh->nh_ifp, NULL) !=
+	    PFIL_PASS)
+		return (EHOSTUNREACH);
+
+	/*
 	 * Drop blackholed traffic and directed broadcasts.
 	 */
 	if ((nh->nh_flags & (NHF_BLACKHOLE | NHF_BROADCAST)) != 0) {
@@ -400,6 +411,19 @@ passin:
 	 * Avoid second route lookup by caching destination.
 	 */
 	rtdest.s_addr = dest.s_addr;
+
+	/*
+	 * Too big for the next hop with DF set: answer before outbound
+	 * filtering, as OpenBSD does, so the ICMP error quotes the packet
+	 * before outbound translation (nat-to) and returns to its sender.
+	 */
+	if ((ip->ip_off & htons(IP_DF)) && PFIL_HOOKED_OUT(V_inet_pfil_head) &&
+	    ntohs(ip->ip_len) > nh->nh_mtu) {
+		IPSTAT_INC(ips_cantfrag);
+		icmp_error(m, ICMP_UNREACH, ICMP_UNREACH_NEEDFRAG, 0,
+		    nh->nh_mtu);
+		return (NULL);
+	}
 
 	/*
 	 * Step 5: outgoing firewall packet processing

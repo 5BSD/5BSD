@@ -253,7 +253,8 @@ __END_DECLS
 /* last return value of *_input(), meaning "all job for this pkt is done".  */
 #define	IPPROTO_DONE		257
 
-#define __IPPROTO_DIVERT	258		/* Deprecated, use PF_DIVERT */
+#define	IPPROTO_DIVERT		258		/* divert(4) of pf (OpenBSD) */
+#define __IPPROTO_DIVERT	IPPROTO_DIVERT	/* ipdivert(4): use PF_DIVERT */
 
 /* Only used internally, so can be outside the range of valid IP protocols. */
 #define	IPPROTO_SEND		259		/* SeND pseudo-protocol */
@@ -463,6 +464,7 @@ VNET_DECLARE(uint32_t, in_loopback_mask);
 				     /* unused; was IP_RSS_LISTEN_BUCKET */
 #define	IP_ORIGDSTADDR		27   /* bool; receive IP dst addr/port w/dgram */
 #define	IP_RECVORIGDSTADDR      IP_ORIGDSTADDR
+#define	IP_RECVDSTPORT		33   /* bool; receive IP dst port w/dgram (OpenBSD) */
 
 /*
  * Options for controlling the firewall and dummynet.

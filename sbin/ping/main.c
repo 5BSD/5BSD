@@ -258,7 +258,7 @@ usage(void)
 	    "[-P policy] "
 #endif
 	    "[-p pattern] [-S src_addr] \n"
-	    "\t    [-s packetsize] [-t timeout] [-W waittime] [-z tos] "
+	    "\t    [-s packetsize] [-t timeout] [-V rtable] [-W waittime] [-z tos] "
 	    "IPv4-host\n"
 	    "\tping [-4AaDdfHLnoQqRrv] [-C pcp] [-c count] [-I iface] "
 	    "[-i wait]\n"
@@ -267,8 +267,9 @@ usage(void)
 	    "[-P policy] "
 #endif
 	    "[-p pattern]\n"
-	    "\t    [-S src_addr] [-s packetsize] [-T ttl] [-t timeout] [-W waittime]\n"
-	    "\t    [-z tos] IPv4-mcast-group\n"
+	    "\t    [-S src_addr] [-s packetsize] [-T ttl] [-t timeout] [-V rtable]\n"
+	    "\t    [-W waittime]"
+	    " [-z tos] IPv4-mcast-group\n"
 #endif /* INET */
 #ifdef INET6
 	    "\tping [-6AaDd"
@@ -292,7 +293,7 @@ usage(void)
 	    " [-P policy]"
 #endif
 	    " [-S sourceaddr] [-s packetsize] [-t timeout]\n"
-	    "\t    [-W waittime] [-z tclass] [IPv6-hops ...] IPv6-host\n"
+	    "\t    [-V rtable] [-W waittime] [-z tclass] [IPv6-hops ...] IPv6-host\n"
 #endif	/* INET6 */
 	    );
 

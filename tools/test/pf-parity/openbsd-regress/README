@@ -1,0 +1,69 @@
+OpenBSD PF regress runner (two disposable guests)
+=================================================
+
+Corpus: contrib/openbsd-pf (verbatim, pinned; see its README.5BSD).
+
+Topology (vm.py; patched QEMU only, 4 vCPUs each, at most these two guests):
+  helper  OpenBSD guest: SRC (rdomain 0, vio1), RT (rdomain 2, vio2 and
+          pair2 mtu 1300), ECO (rdomain 3, pair3 and vether3, inetd echo)
+  dut     OpenBSD reference or 5BSD: PF_IFIN (link A), PF_IFOUT (link B,
+          mtu 1400), routes/reject routes, pf.conf "pass; anchor regress"
+  Control: QEMU user networking, ssh forwarded to 127.0.0.1:2241 (dut) and
+  :2242 (helper) only.  Test links: QEMU dgram over unix sockets.
+
+Addresses are the upstream Makefile defaults (10.188.21x.0/24 and
+fdd7:e83e:66bc:21x::/64); setup-helper-openbsd.sh, setup-dut-openbsd.sh and
+setup-dut-5bsd.sh configure them.  pf_state uses FAKE_NET 10.188.219.0/24,
+pf_divert FAKE_ADDR 10.188.222.188.
+
+regress.py DUT_OS OUTDIR [--suite NAME]... runs the upstream Makefiles with
+REGRESS_LOG (one SUCCESS/FAIL/SKIP line per target).  pfctl runs every
+numbered target individually (REGRESS_TARGETS override), so totals count
+upstream test cases, not aggregate targets.  Local suites run on the DUT;
+multi-host suites run on the helper with PF_SSH/REMOTE_SSH set to the DUT.
+
+On a 5BSD DUT the runner defaults to bmake with explicit
+`-m /usr/local/share/pf-parity/mk -m /usr/share/mk` include paths.
+It prepares pf_print's generated source for PIE objects and supplies
+pflow's base private event1 include/link settings. No expected outputs change.
+image-5bsd.sh builds the
+DUT disk from a completed buildworld/buildkernel without root (NO_ROOT
+METALOG); test tools (perl5, p5-Socket6, p5-Net-Flow, oksh as /bin/ksh,
+python312, py312-scapy) come from catalogue-verified FreeBSD:16 packages.
+
+Plumbing only: never change expected outputs here.
+
+The JSON records SSH, log-transfer, and make exit statuses separately.
+The effective suite status and CLI exit also fail for FAIL, XPASS, NOT_RUN,
+or missing result evidence: REGRESS_FAIL_EARLY=no can leave make successful
+even when individual targets fail. SKIP and XFAIL remain distinct outcomes.
+The default PF gate excludes the separate route and rtable project.
+Run the transport/accounting tests without guests with:
+  python3.12 tools/test/pf-parity/openbsd-regress/test_regress.py
+
+Saved pflow counter evidence
+
+`audit_pflow.py CAPTURE.pcap FLOW_OUTPUT --family 4|6` checks all four
+`flow.pl` export records against saved loopback IP packet lengths and counts.
+It accepts the 5BSD DLT_NULL and OpenBSD DLT_LOOP captures used here and
+rejects truncated packets or inconsistent counters. Preserve the original
+fixture output/diff alongside the capture: an accounting pass does not turn
+a strict fixture failure into a pass. `FIXTURE_EXIT=N`, when recorded in the
+output, is retained separately in the JSON result. This check runs offline
+and measures no timing or performance.
+
+Fragment ownership and packet accounting
+
+`test_fragment_contract.py` compiles the actual IPv4/IPv6 adapters against
+native fragment-chain ownership stubs. It checks original packet ownership,
+partial-allocation cleanup, and the IPv6 minimum payload before calling the
+native fragmenter. This is not kernel allocation-failure injection.
+
+`audit_fragment6.py CAPTURE.pcap --expected-flows 3` checks Ethernet captures
+of the unchanged upstream `run-frag6-ext` case. It requires exactly two
+ICMPv6 fragments per flow with the fixture payload, and rejects extra
+fragment headers of another protocol. Capture on the downstream helper to
+verify actual transmitted packets: an echo reply alone does not detect a
+malformed original emitted alongside the valid fragments. Retain the raw
+fixture status and before/after captures separately. This audit measures no
+timing or performance.

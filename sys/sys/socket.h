@@ -150,7 +150,9 @@ typedef	__uintptr_t	uintptr_t;
 #define	SO_REUSEPORT_LB	0x00010000	/* int; reuse with load balancing */
 #define	SO_RERROR	0x00020000	/* int; keep track of receive errors */
 #define	SO_PASSRIGHTS	0x00040000	/* int; unix(4) accepts SCM_RIGHTS */
-#define	SO_RXQ_OVFL	0x00080000	/* int; report receive queue drops */
+/* 5BSD-local option flags use the top bits so new FreeBSD ones cannot collide. */
+#define	SO_BINDANY	0x20000000	/* int; bind to any address (OpenBSD) */
+#define	SO_RXQ_OVFL	0x40000000	/* int; report receive queue drops */
 
 /*
  * Additional options, not kept in so_options.
@@ -171,6 +173,7 @@ typedef	__uintptr_t	uintptr_t;
 #define	SO_LISTENINCQLEN	0x1013	/* int; socket's incomplete queue length */
 #define	SO_FIB		0x1014		/* int; get or set socket FIB */
 #define	SO_SETFIB	SO_FIB		/* backward compat alias */
+#define	SO_RTABLE	SO_FIB		/* OpenBSD name (5BSD: rdomain(4)) */
 #define	SO_USER_COOKIE	0x1015		/* uint32_t; user cookie (dummynet etc.) */
 #define	SO_PROTOCOL	0x1016		/* int; get socket protocol (Linux name) */
 #define	SO_PROTOTYPE	SO_PROTOCOL	/* alias for SO_PROTOCOL (SunOS name) */
@@ -436,6 +439,7 @@ struct sockproto {
 					 * versions of msghdr structs. */
 #define NET_RT_NHOP	6		/* dump routing nexthops */
 #define NET_RT_NHGRP	7		/* dump routing nexthop groups */
+#define	NET_RT_TABLE	1024		/* 5BSD: routing table info (OpenBSD) */
 #endif /* __BSD_VISIBLE */
 
 /*

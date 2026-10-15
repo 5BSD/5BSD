@@ -14,7 +14,8 @@ rcvar="pfsync_enable"
 start_precmd="pfsync_prestart"
 start_cmd="pfsync_start"
 stop_cmd="pfsync_stop"
-required_modules="pf pfsync"
+# Vendor PF includes the pfsync interface in pf.ko (or the kernel).
+required_modules="pf"
 
 pfsync_prestart()
 {
@@ -35,6 +36,7 @@ pfsync_start()
 	if [ -n "${pfsync_syncpeer}" ]; then
 		_syncpeer="syncpeer ${pfsync_syncpeer}"
 	fi
+	ifconfig pfsync0 >/dev/null 2>&1 || ifconfig pfsync0 create
 	ifconfig pfsync0 $_syncpeer syncdev $pfsync_syncdev $pfsync_ifconfig up
 }
 

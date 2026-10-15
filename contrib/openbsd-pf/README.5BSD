@@ -1,0 +1,148 @@
+OpenBSD PF reference material for 5BSD PF parity
+================================================
+
+Source: https://github.com/openbsd/src.git (OpenBSD CVS mirror)
+Revision: facc8d7ec5d1f7a22cd5b7f1e8c6ac4990d91244 (2026-10-10), matching the
+  OpenBSD 8.0-current amd64 snapshot used as the reference guest; see
+  UPSTREAM.json for the snapshot identity, the PF source-alignment check and
+  the git tree object ID of every imported subtree.
+Imported: 2026-10-11
+License: LICENSE (ISC-style OpenBSD notice); per-file notices retained.
+
+Contents (verbatim, upstream relative paths):
+  regress/sbin/pfctl, regress/sys/net/pf_{divert,forward,fragment,opts,
+  policy,print,state,table,trans}, regress/sys/net/pflog,
+  regress/sys/net/pflow                 primary PF parity suites
+  regress/sys/netinet/{frag,pmtu,tcpstate}, regress/sys/netinet6/{frag6,rh0}
+                                         IP-stack suites using pf as a tool
+                                         (secondary, reported separately)
+  regress/sys/netinet/ipsec, regress/sys/net/pair
+                                         secondary: pflog of IPsec/enc0 traffic
+                                         and pflog on pair(4) (epair on 5BSD)
+
+  regress/sys/net/rdomains, regress/sys/net/rtable, regress/sbin/route,
+  regress/sbin/ifconfig                 routing domains (rdomain on FIBs) and
+                                         route -T / ifconfig rdomain; rtable is
+                                         a userland unit test of OpenBSD's ART
+                                         routing table code
+
+Not imported (see UPSTREAM.json "not_imported"): usr.sbin/bgpd pftable
+integration tests, usr.sbin/relayd (no PF use), sys/kern/pledge/ioctl
+(pledge-specific), and suites that only check pf is enabled (sosplice, gif,
+loop, mpath, snmpd).
+  share/mk/bsd.regress.mk               OpenBSD regress driver; the upstream
+                                         Makefiles include it unchanged
+  sbin/pfctl                            OpenBSD pfctl (vendor source for the
+                                         PF convergence; wired in by
+                                         sbin/pfctl/Makefile when adopted)
+  usr.sbin/authpf, usr.sbin/ftp-proxy, usr.sbin/tftp-proxy, sbin/pflogd,
+  usr.sbin/tcpdump/print-pf{log,sync}.c  OpenBSD PF userland (vendor source)
+  sys/net/pf*.[ch], if_pflog.[ch], if_pflow.[ch], if_pfsync.[ch]
+                                         OpenBSD kernel PF (vendor reference
+                                         for merges into sys/netpfil/pf)
+
+Not present upstream at this revision: regress for pfsync, queues,
+syncookies, authpf, pflogd, ftp-proxy/tftp-proxy.
+
+Local changes: the regress corpus, share/mk and sbin/pfctl are verbatim.
+Never edit the regress files to make a test pass; expected outputs change
+only through a recorded, user-approved compatibility decision kept in the
+glue.  The kernel sources under sys/net carry a small number of edits, each
+marked with a "5BSD" comment, where the compatibility layer cannot express
+the difference (list: git diff of contrib/openbsd-pf/sys/net against the
+import commits; summary below).  Keep them minimal so an update is close
+to a re-import.
+
+5BSD edits in usr.sbin (marked "5BSD"):
+  authpf/authpf.c  without fdescfs(4) on /dev/fd, /dev/fd/N above 2 does
+                 not exist: pass /dev/pf to pfctl as standard input
+                 (/dev/fd/0) instead.
+  ftp-proxy/ftp-proxy.c, tftp-proxy/tftp-proxy.c  NOPRIV_USER may be set
+                 by the build (5BSD uses the existing "proxy" user)
+
+5BSD edits in sys/net (all marked "5BSD"):
+  VNET (marked "5BSD: VNET"): global state is defined with PF_VNET_DEFINE*
+                 and declared with PF_VNET_DECLARE* (pfvar.h; plain
+                 globals outside the kernel), so every vnet runs its own pf;
+                 struct tags that share a variable's name are PF_KTAG()ed;
+                 static initializers of per-vnet lists move to the glue;
+                 pf_norm.c fragment queue/tree are pfn_*; small teardown
+                 helpers pfi_vnet_fini(), pf_normalize_vnet_fini(),
+                 pf_syncookies_vnet_fini()
+  m_tag (marked "5BSD: m_tag"): OpenBSD keeps per-packet pf state in
+                 m_pkthdr.pf; 5BSD keeps it in an mbuf tag (PACKET_TAG_PF,
+                 sys/sys/mbuf.h) so MSIZE stays 256.  Every access is
+                 rewritten mechanically:
+                   READ   x->m_pkthdr.pf.F   ->  PF_MTAG_R(x)->F
+                   WRITE  x->m_pkthdr.pf.F = ->  PF_MTAG_W(x)->F =
+                   and pd.m / pd->m / ctx->pd->m  ->  PF_PDTAG_R/W(pd)
+                 (writes are =, |=, &=, ++, --).  Reads never allocate
+                 (no tag: default values); writes allocate the tag; the
+                 PF_PDTAG forms cache it in pf_pdesc (pfh_m, pfh_t).  After
+                 a re-import, apply the same rewrite (see the commit
+                 "pf: OpenBSD per-packet state in an mbuf tag").  The
+                 single exception: PF_TAG_PROCESSED is set only on packets
+                 that already have a tag (nothing reads it on 5BSD).
+  jail (marked "5BSD: jail"): the 5BSD extension "jail <name|jid>":
+                 struct pf_rule_jail and pf_rule.jail (pfvar.h), lookup.jid
+                 (pfvar_priv.h), pf_match_jail() and its rule test (pf.c),
+                 rule copy and checksum (pf_ioctl.c); pfctl parse.y grammar,
+                 pfctl_parser.c printing, pfctl_optimize.c field table
+  pfvar.h        REASON_SET fires the pf::reason:set DTrace probe
+  pfvar_priv.h   state-list lock is a sleepable lock (struct sx)
+  pf.c           receive interface from m_pkthdr.rcvif (no ph_ifidx);
+                 flow id through M_HASHTYPE; DTrace probe hooks;
+                 pf_socket_lookup() uses the outbound packet's socket
+                 (locked by the 5BSD stack) instead of a pcb table lookup
+  pf_if.c        CK_STAILQ interface/group lists; allocate before PF_LOCK
+  pf_ioctl.c     p_pid; pfioctl_rw is sleepable; overload table PR_NOWAIT
+                 under PF_LOCK; DTrace probe hooks
+  pf_norm.c      refragmented packets leave through if_output_obsd()
+  pf_lb.c, pf_table.c, pf_syncookies.c   DTrace probe hooks
+  if_pflog.[ch], if_pflow.[ch], if_pfsync.c
+                 ifnet is if_alloc()ed (sc_if is a macro over sc_ifp);
+                 if_output casts; interface counters; no ifq start;
+                 sleepable configuration locks; DTrace probe hooks
+The compatibility layer and 5BSD attachment live in sys/netpfil/openbsd-pf
+(openbsd_compat.[ch], openbsd_net.c, openbsd_ifq.c, pf_freebsd.c,
+pf_sdt.c, include/ shadow headers, user/ userland compatibility).
+
+5BSD glue: tests/sys/netpfil/pf/openbsd (Kyua/ATF wrapper; installs this
+corpus beneath its srctree/ through tests/srctree.mk) and
+tools/test/pf-parity/openbsd-regress (two-guest topology runner: OpenBSD
+helper as SRC/RT/ECO, DUT = OpenBSD reference or 5BSD).
+
+OpenBSD-derived PF code: whole files adopted for parity are imported here
+with provenance and wired in from their native build directories.  Code
+merged into FreeBSD-derived sys/netpfil/pf or sbin/pfctl files is recorded
+below (OpenBSD file, revision, local destination) and in the commit message.
+
+Adopted OpenBSD code (pf/parity), all from facc8d7ec5d1:
+  sys/net pf*.c, if_pflog, if_pflow, if_pfsync, hfsc, fq_codel, radix (for
+  pf tables, renamed obsd_rn_*), sys/netinet in4_cksum.c, inet_nat64.c
+                         -> pf.ko (sys/modules/pf)
+  sbin/pfctl, etc/pf.os  -> /sbin/pfctl, /etc/pf.os
+  share/man/man4 pf.4, pflog.4, pflow.4, pfsync.4, divert.4, share/man/man5
+  pf.conf.5, pf.os.5     -> installed by share/man/man4 and man5 (FreeBSD's
+                            divert.4 is now ipdivert.4); marked 5BSD
+                            additions: pf.conf.5 jail and queueing status, pf.4 VNET,
+                            divert.4
+  usr.sbin/authpf, ftp-proxy, tftp-proxy -> same programs
+  sbin/ifconfig/ifconfig.c pfsync/pflow functions -> sbin/ifconfig/ifpf.c
+  sys/sys/mbuf.h struct pkthdr_pf and PF_TAG_* -> 5BSD sys/sys/mbuf.h
+  sys/sys/sockio.h SIOC[SG]IFPARENT, SIOC[GS]ETPF{SYNC,LOW} numbers and
+  sys/net/if.h struct if_parent -> 5BSD headers
+
+Update procedure: fetch the new pinned commit, replace the subtrees,
+regenerate UPSTREAM.json (git rev-parse <commit>:<path>), rerun the reference
+baseline on the matching signed OpenBSD snapshot, and record any expected
+output changes in the PF parity gap report.
+
+Regression plumbing adjustment (5BSD):
+  regress/sys/net/pflow/Makefile escapes Perl $@ as $$@ so bmake does not
+  replace it with its automatic target variable. Test expectations unchanged.
+  regress/sys/net/pflog/Makefile uses portable UID shell assignment and
+  sysctl -n values so bmake checks the real UID and forwarding settings;
+  packet-output expectations and forwarding requirements are unchanged.
+  regress/sys/net/rdomains/ifalocal.sh calls its defined fail_test helper
+  so a failed route-count assertion cannot report success. Expectations unchanged.

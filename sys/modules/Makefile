@@ -159,6 +159,7 @@ SUBDIR=	\
 	if_ovpn \
 	${_if_stf} \
 	if_tuntap \
+	if_vether \
 	if_vlan \
 	if_vxlan \
 	if_geneve \
@@ -280,9 +281,6 @@ SUBDIR=	\
 	${_padlock} \
 	${_pchtherm} \
 	${_pf} \
-	${_pflog} \
-	${_pflow} \
-	${_pfsync} \
 	${_pms} \
 	proto \
 	pseudofs \

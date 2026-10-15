@@ -32,6 +32,10 @@
 #
 # Package metadata:
 #
+# PKG_METADATA_ONLY	Explicit package names (without PKG_NAME_PREFIX) which
+#			contain only metadata/dependencies, with no staged plist.
+#			All other packages must contain files. [empty]
+#
 # PKG_NAME_PREFIX	The prefix to use for package names.  [5BSD]
 # PKG_MAINTAINER	The package maintainer.  [re@5bsd.org]
 # PKG_WWW		The package website.  [https://github.com/5BSD/5BSD]

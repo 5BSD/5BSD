@@ -35,7 +35,7 @@
 .Nm
 .\" .Op Fl fimst
 .Op Fl -libxo
-.Op Fl afHhimoPsz
+.Op Fl afHhimoPsvz
 .Op Fl M Ar core Op Fl N Ar system
 .Op Fl c Ar count
 .Op Fl n Ar devs
@@ -122,6 +122,20 @@ which is the kernel image the system has booted from.
 Report on the usage of kernel dynamic memory allocated using
 .Xr malloc 9
 by type.
+.It Fl v
+With
+.Fl m ,
+also report memory pool statistics in the
+.Ox
+layout (Name, Size, Requests, Fail, InUse, Pgreq, Pgrel, Npage, Hiwat,
+Minpg, Maxpg, Idle), one line for every UMA zone.
+Kernel code ported from
+.Ox ,
+such as
+.Xr pf 4 ,
+names its zones after its
+.Ox
+pools.
 .It Fl n
 Change the maximum number of disks to display from the default of 2.
 .It Fl o

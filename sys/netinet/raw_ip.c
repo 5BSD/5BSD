@@ -204,6 +204,7 @@ rip_append(struct inpcb *inp, struct ip *ip, struct mbuf *m,
 
 struct rip_inp_match_ctx {
 	struct ip *ip;
+	struct in_addr laddr;	/* ip_dst, or where a filter diverted it */
 	int proto;
 };
 
@@ -220,7 +221,7 @@ rip_inp_match(const struct inpcb *inp, void *v)
 		return (false);
 #endif
 	if (!in_nullhost(inp->inp_laddr) &&
-	    !in_hosteq(inp->inp_laddr, ctx->ip->ip_dst))
+	    !in_hosteq(inp->inp_laddr, ctx->laddr))
 		return (false);
 	if (!in_nullhost(inp->inp_faddr) &&
 	    !in_hosteq(inp->inp_faddr, ctx->ip->ip_src))
@@ -249,6 +250,19 @@ rip_input(struct mbuf **mp, int *offp, int proto)
 
 	M_ASSERTPKTHDR(m);
 
+	/*
+	 * A packet filter diverted the packet to a local address (pf
+	 * divert-to): deliver it to raw sockets bound to that address.
+	 */
+	ctx.laddr = ctx.ip->ip_dst;
+	if (m->m_flags & M_IP_NEXTHOP) {
+		struct m_tag *fwd_tag;
+
+		fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL);
+		if (fwd_tag != NULL)
+			ctx.laddr = ((struct sockaddr_in *)(fwd_tag + 1))->sin_addr;
+	}
+
 	*mp = NULL;
 	appended = 0;
 
@@ -271,6 +285,9 @@ rip_input(struct mbuf **mp, int *offp, int proto)
 			 */
 			continue;
 		}
+		/* 5BSD: raw sockets see their routing domain only. */
+		if (!rt_fib_same_rdomain(fib, inp->inp_inc.inc_fibnum))
+			continue;
 		if (V_rip_bind_all_fibs == 0 && fib != inp->inp_inc.inc_fibnum)
 			/*
 			 * Sockets bound to a specific FIB can only receive
@@ -292,6 +309,9 @@ rip_input(struct mbuf **mp, int *offp, int proto)
 			 * assume process had PRIV_NETINET_RAW at attach,
 			 * and fall through into normal filter path if so.
 			 */
+			continue;
+		/* 5BSD: raw sockets see their routing domain only. */
+		if (!rt_fib_same_rdomain(fib, inp->inp_inc.inc_fibnum))
 			continue;
 		if (V_rip_bind_all_fibs == 0 && fib != inp->inp_inc.inc_fibnum)
 			continue;
@@ -843,7 +863,7 @@ rip_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 	KASSERT(inp != NULL, ("rip_bind: inp == NULL"));
 
 	fib = V_rip_bind_all_fibs == 0 ? inp->inp_inc.inc_fibnum :
-	    RT_ALL_FIBS;
+	    rt_fib_scope(inp->inp_inc.inc_fibnum);
 	addr->sin_port = 0;
 	if (CK_STAILQ_EMPTY(&V_ifnet) ||
 	    (addr->sin_family != AF_INET && addr->sin_family != AF_IMPLINK) ||

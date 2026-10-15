@@ -1,0 +1,253 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 The 5BSD Project
+.\"
+.Dd October 12, 2026
+.Dt DTRACE_PF 4
+.Os
+.Sh NAME
+.Nm dtrace_pf
+.Nd a DTrace provider for the pf packet filter
+.Sh SYNOPSIS
+.Li pf:ip:test:entry,finish
+.Pp
+.Li pf:ip:rules:entry
+.br
+.Li pf:ip:anchor:enter
+.Pp
+.Li pf::reason:set
+.Pp
+.Li pf:state:state:create,insert,transition,remove,free
+.br
+.Li pf:state:purge:run
+.Pp
+.Li pf:frag:reassemble,reassemble6:entry
+.br
+.Li pf:nat:transaddr:entry
+.br
+.Li pf:nat:af_to:translate
+.br
+.Li pf:ip,ip6:route_to:entry
+.Pp
+.Li pf:table:addr:match,update
+.br
+.Li pf:rule:jail:match,resolve
+.br
+.Li pf:syncookie:cookie:send,validate
+.Pp
+.Li pf:log:pflog:packet
+.br
+.Li pf:pfsync:packet:send,input
+.br
+.Li pf:pflow:flow:export
+.br
+.Li pf:queue:packet:delay
+.Pp
+.Li pf:ioctl:ioctl:entry,return
+.br
+.Li pf:ioctl:xact:begin,commit,rollback
+.Sh DESCRIPTION
+The
+.Nm pf
+provider instruments
+.Xr pf 4 ,
+the
+.Ox
+packet filter.
+All probes are statically defined
+.Pq Xr SDT 9
+and cost nothing when not enabled.
+Structure arguments use the types of the
+.Ox
+.In net/pfvar.h
+and are available to D scripts through CTF.
+.Ss Packet path
+.Bl -tag -width "pf::reason:set"
+.It Li pf:ip:test:entry
+Fires before
+.Fn pf_test
+for a packet.
+.Fa arg0
+is the address family,
+.Fa arg1
+the direction (1 in, 2 out, 3 forwarded) and
+.Fa args[2]
+the
+.Vt struct ifnet .
+.It Li pf:ip:test:finish
+Fires after
+.Fn pf_test
+with
+.Fa arg0
+the action (0 pass, 1 drop),
+.Fa arg1
+the direction and
+.Fa args[2]
+the interface.
+.It Li pf:ip:rules:entry
+Ruleset evaluation of a packet without matching state;
+.Fa args[0]
+is the
+.Vt struct pf_pdesc .
+.It Li pf:ip:anchor:enter
+A ruleset (the main ruleset or an anchor) is evaluated;
+.Fa args[1]
+is the
+.Vt struct pf_ruleset .
+.It Li pf::reason:set
+Every point where pf records a reason code
+.Pq Dv PFRES_*
+for a drop, a match or a normalisation decision.
+.Fa arg0
+is the reason,
+.Fa arg1
+the source file and
+.Fa arg2
+the line.
+The reasons are: 0 match, 1 bad-offset, 2 fragment, 3 short, 4
+normalize, 5 memory, 6 bad-timestamp, 7 congestion, 8 ip-option, 9
+proto-cksum, 10 state-mismatch, 11 state-insert, 12 state-limit, 13
+src-limit, 14 synproxy, 15 translate, 16 no-route.
+.It Li pf:frag:reassemble:entry,Li pf:frag:reassemble6:entry
+An IPv4 or IPv6 fragment enters reassembly;
+.Fa args[0]
+is the mbuf and
+.Fa arg1
+the direction.
+.It Li pf:nat:transaddr:entry
+A nat-to, rdr-to or binat-to address is selected;
+.Fa args[0]
+is the rule,
+.Fa args[1]
+the packet description.
+.It Li pf:nat:af_to:translate
+A packet is translated between address families (af-to).
+.It Li pf:ip:route_to:entry,Li pf:ip6:route_to:entry
+route-to, reply-to or dup-to routing of a packet;
+.Fa args[1]
+is the state.
+.El
+.Ss States
+.Bl -tag -width "pf:state:state:transition"
+.It Li pf:state:state:create
+A rule creates a state:
+.Fa args[0]
+packet description,
+.Fa args[1]
+rule,
+.Fa args[2]
+anchor rule.
+.It Li pf:state:state:insert
+A state is inserted into the state table.
+.It Li pf:state:state:transition
+A TCP peer changes protocol state:
+.Fa args[0]
+state,
+.Fa arg1
+peer (0 source, 1 destination),
+.Fa arg2
+new state.
+.It Li pf:state:state:remove,free
+A state is unlinked and later freed.
+.It Li pf:state:purge:run
+A purge pass of expired states with
+.Fa arg0
+the scan limit.
+.El
+.Ss Packet delay
+.Bl -tag -width "pf:queue:packet:delay"
+.It Li pf:queue:packet:delay
+A packet has obtained delay storage and is about to be scheduled:
+.Fa arg0
+is the queue ID,
+.Fa arg1
+the requested delay in milliseconds, and
+.Fa arg2
+the interface index.
+The probe exposes packet metadata independently of its storage layout.
+Its availability does not imply that the native output path supports
+.Cm set delay .
+.El
+.Ss Tables, logging, synchronisation and control
+.Bl -tag -width "pf:table:addr:update"
+.It Li pf:table:addr:match
+An address is looked up in table
+.Fa args[0]
+.Pq Vt struct pfr_ktable .
+.It Li pf:table:addr:update
+Table statistics are updated for a packet.
+.It Li pf:rule:jail:match
+The 5BSD
+.Cm jail
+rule option of rule
+.Fa args[0]
+.Pq Vt struct pf_rule
+matched a socket of jail ID
+.Fa arg1 .
+.It Li pf:rule:jail:resolve
+Rule
+.Fa args[0]
+names a jail and was re-resolved after a jail was created, renamed or
+removed:
+.Fa arg1
+is the old jail ID and
+.Fa arg2
+the new one, -2 for no jail.
+.It Li pf:syncookie:cookie:send,validate
+A SYN cookie is sent or an ACK is validated against one.
+.It Li pf:log:pflog:packet
+A packet is logged to a
+.Xr pflog 4
+interface:
+.Fa args[0]
+packet description,
+.Fa arg1
+reason,
+.Fa args[2]
+matching rule,
+.Fa args[3]
+anchor rule.
+.It Li pf:pfsync:packet:send,input
+A
+.Xr pfsync 4
+packet is sent or received.
+.It Li pf:pflow:flow:export
+A state is exported as a
+.Xr pflow 4
+flow record.
+.It Li pf:ioctl:ioctl:entry,return
+A
+.Pa /dev/pf
+ioctl:
+.Fa arg0
+command,
+.Fa arg1
+per-open unit and, on return,
+.Fa arg2
+the error.
+.It Li pf:ioctl:xact:begin,commit,rollback
+A ruleset transaction step for the named anchor.
+.El
+.Sh FILES
+.Bl -tag -width "/usr/share/bsdinstruments/profiles/pf-*.d" -compact
+.It Pa /usr/share/dtrace/pf-observe
+summary of verdicts, latency, reasons, states, NAT, tables, pflog,
+pfsync and pflow activity
+.It Pa /usr/share/bsdinstruments/profiles/pf-*.d
+focused profiles: pf-latency, pf-audit, pf-drops, pf-states,
+pf-frags, pf-nat, pf-tables, pf-rules, pf-pfsync, pf-queues
+.El
+.Sh EXAMPLES
+Count drops by reason and source location:
+.Bd -literal -offset indent
+# dtrace -n 'pf::reason:set { @[arg0, stringof(arg1), arg2] = count(); }'
+.Ed
+.Sh SEE ALSO
+.Xr dtrace 1 ,
+.Xr pf 4 ,
+.Xr pflog 4 ,
+.Xr pflow 4 ,
+.Xr pfsync 4 ,
+.Xr pfctl 8 ,
+.Xr SDT 9

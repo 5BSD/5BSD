@@ -927,6 +927,10 @@ device		disc
 # like interface pair.
 device		epair
 
+# The `vether' device is a virtual Ethernet interface without hardware
+# (OpenBSD vether(4)); frames sent are dropped unless bridged.
+device		vether
+
 #  The `edsc' device implements a minimal Ethernet interface,
 #  which discards all packets sent and receives none.
 device		edsc
@@ -952,14 +956,11 @@ options 	XBONEHACK
 #  The `stf' device implements 6to4 encapsulation.
 device		stf
 
-# The pf packet filter consists of three devices:
-#  The `pf' device provides /dev/pf and the firewall code itself.
-#  The `pflog' device provides the pflog0 interface which logs packets.
-#  The `pfsync' device provides the pfsync0 interface used for
-#   synchronization of firewall state tables (over the net).
+# The `pf' device provides the pf(4) packet filter (OpenBSD PF) and /dev/pf,
+# with the pflog(4), pflow(4) and pfsync(4) interfaces built in.
+# The vendor default passes unmatched packets, as documented in pf.conf(5).
+# Set the desired policy in pf.conf; PF_DEFAULT_TO_DROP is not supported.
 device		pf
-device		pflog
-device		pfsync
 
 # Bridge interface.
 device		if_bridge
@@ -992,8 +993,6 @@ device		dummymbuf
 # packets without touching the TTL).  This can be useful to hide firewalls
 # from traceroute and similar tools.
 #
-# PF_DEFAULT_TO_DROP causes the default pf(4) rule to deny everything.
-#
 # TCP_BLACKBOX enables enhanced TCP event logging.
 #
 # TCP_HHOOK enables the hhook(9) framework hooks for the TCP stack.
@@ -1002,7 +1001,6 @@ device		dummymbuf
 options 	MROUTING		# Multicast routing
 options 	IPDIVERT		#divert sockets
 options 	IPSTEALTH		#support for stealth forwarding
-options 	PF_DEFAULT_TO_DROP	#drop everything by default
 options 	TCP_BLACKBOX
 options 	TCP_HHOOK
 options		SOCKET_HHOOK

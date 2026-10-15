@@ -1,3 +1,21 @@
+# 20261013: retire examples for the old PF grammar.
+OLD_FILES+= usr/share/examples/pf/ackpri
+OLD_FILES+= usr/share/examples/pf/faq-example1
+OLD_FILES+= usr/share/examples/pf/faq-example2
+OLD_FILES+= usr/share/examples/pf/faq-example3
+OLD_FILES+= usr/share/examples/pf/queue1
+OLD_FILES+= usr/share/examples/pf/queue2
+OLD_FILES+= usr/share/examples/pf/queue3
+OLD_FILES+= usr/share/examples/pf/queue4
+OLD_FILES+= usr/share/examples/pf/spamd
+# 20261013: vendor PF integrates these interfaces in pf.ko; pflow uses
+# ifconfig(8), replacing the retired native netlink pflowctl interface.
+OLD_FILES+= boot/kernel/pflog.ko
+OLD_FILES+= boot/kernel/pflow.ko
+OLD_FILES+= boot/kernel/pfsync.ko
+OLD_FILES+= sbin/pflowctl
+OLD_FILES+= usr/share/man/man8/pflowctl.8.gz
+
 # 20261013: retire upgt and base RIP routing tools
 OLD_FILES+= boot/kernel/if_upgt.ko
 OLD_FILES+= usr/share/man/man4/upgt.4.gz

@@ -1,0 +1,12 @@
+These examples use the vendor PF grammar documented in pf.conf(5).
+
+pf.conf is an inactive, fully commented IPv4 gateway template. Adapt the
+interface names, addresses and policy before installing any selected rules in
+/etc/pf.conf. A block/pass policy in an example does not change the kernel's
+unmatched default, and installing this package does not enable PF.
+Run pfctl -nf /path/to/proposed.conf before loading a real configuration.
+
+The historical faq-example*, ackpri, queue* and spamd files used retired
+ALTQ or pre-match NAT/redirection syntax. They are no longer installed as
+current examples. Consult the current pf.conf(5), including match, nat-to,
+rdr-to and queue syntax, rather than applying the old examples unchanged.

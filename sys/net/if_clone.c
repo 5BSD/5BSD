@@ -61,8 +61,8 @@ SDT_PROBE_DEFINE1(ifclone, , , create__start, "void *");
 SDT_PROBE_DEFINE2(ifclone, , , create__done, "void *", "int");
 
 
-/* Current IF_MAXUNIT expands maximum to 5 characters. */
-#define	IFCLOSIZ	(IFNAMSIZ - 5)
+/* Current IF_MAXUNIT expands maximum to 7 characters. */
+#define	IFCLOSIZ	(IFNAMSIZ - 7)
 
 /*
  * Structure describing a `cloning' interface.

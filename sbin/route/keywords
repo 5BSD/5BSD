@@ -8,6 +8,7 @@ cloning
 del
 delete
 dst
+exec
 expire
 fib
 flush

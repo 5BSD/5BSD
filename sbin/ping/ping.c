@@ -85,8 +85,17 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <net/route.h>
+
 #include "main.h"
 #include "ping.h"
+
+/* 5BSD: -V rtable puts the (already open) ICMP sockets on routing table rtable. */
+#define	PING_SETRTABLE(t) do {						\
+	if (setsockopt(ssend, SOL_SOCKET, SO_SETFIB, &(t), sizeof(t)) == -1 || \
+	    setsockopt(srecv, SOL_SOCKET, SO_SETFIB, &(t), sizeof(t)) == -1) \
+		err(EX_OSERR, "SO_SETFIB %d", (t));			\
+} while (0)
 #include "utils.h"
 
 #define	INADDR_LEN	((int)sizeof(in_addr_t))
@@ -493,6 +502,31 @@ ping(int argc, char *const *argv)
 			break;
 		case 'v':
 			options |= F_VERBOSE;
+			break;
+		case 'V':		/* OpenBSD: routing table (rtable) */
+			{
+				const char *verr;
+				int rtable;
+
+				rtable = (int)strtonum(optarg, 0, RT_TABLEID_MAX,
+				    &verr);
+				if (verr != NULL)
+					errx(EX_USAGE, "rtable value is %s: %s",
+					    verr, optarg);
+				PING_SETRTABLE(rtable);
+			}
+			break;
+		case 'w':		/* OpenBSD: max seconds to wait after the last request */
+			{
+				const char *werr;
+
+				waittime = (int)strtonum(optarg, 1,
+				    INT_MAX / 1000, &werr);
+				if (werr != NULL)
+					errx(EX_USAGE, "maxwait value is %s: %s",
+					    werr, optarg);
+				waittime *= 1000;
+			}
 			break;
 		case 'W':		/* wait ms for answer */
 			t = strtod(optarg, &ep);

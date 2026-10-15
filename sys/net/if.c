@@ -1748,7 +1748,7 @@ ifa_ifwithaddr_fib(const struct sockaddr *addr, int fibnum)
 
 	NET_EPOCH_ASSERT();
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		if ((fibnum != RT_ALL_FIBS) && (ifp->if_fib != fibnum))
+		if (!rt_fib_match(ifp->if_fib, fibnum))
 			continue;
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			if (ifa->ifa_addr->sa_family != addr->sa_family)
@@ -1811,7 +1811,7 @@ ifa_ifwithbroadaddr(const struct sockaddr *addr, int fibnum)
 
 	NET_EPOCH_ASSERT();
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		if ((fibnum != RT_ALL_FIBS) && (ifp->if_fib != fibnum))
+		if (!rt_fib_match(ifp->if_fib, fibnum))
 			continue;
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			if (ifa->ifa_addr->sa_family != addr->sa_family)
@@ -1843,7 +1843,7 @@ ifa_ifwithdstaddr(const struct sockaddr *addr, int fibnum)
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
 		if ((ifp->if_flags & IFF_POINTOPOINT) == 0)
 			continue;
-		if ((fibnum != RT_ALL_FIBS) && (ifp->if_fib != fibnum))
+		if (!rt_fib_match(ifp->if_fib, fibnum))
 			continue;
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			if (ifa->ifa_addr->sa_family != addr->sa_family)
@@ -1888,7 +1888,7 @@ ifa_ifwithnet(const struct sockaddr *addr, int ignore_ptp, int fibnum)
 	 * in this address family and the requested fib.
 	 */
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		if ((fibnum != RT_ALL_FIBS) && (ifp->if_fib != fibnum))
+		if (!rt_fib_match(ifp->if_fib, fibnum))
 			continue;
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			const char *cp, *cp2, *cp3;
@@ -2687,7 +2687,25 @@ ifhwioctl(u_long cmd, struct ifnet *ifp, caddr_t data, struct thread *td)
 		if (ifr->ifr_fib >= rt_numfibs)
 			return (EINVAL);
 
-		ifp->if_fib = ifr->ifr_fib;
+		/* 5BSD: a FIB of another routing domain moves the interface. */
+		error = rt_rdomain_setif(ifp, ifr->ifr_fib, false);
+		break;
+
+	/* 5BSD: routing domains (rdomain(4)), OpenBSD SIOC[GS]IFRDOMAIN. */
+	case SIOCGIFRDOMAIN:
+		ifr->ifr_rdomainid = rt_fib_l2(ifp->if_fib);
+		break;
+
+	case SIOCSIFRDOMAIN:
+		error = priv_check(td, PRIV_NET_SETIFFIB);
+		if (error)
+			return (error);
+		/* Create and join atomically with default-loopback destruction. */
+		sx_xlock(&ifnet_detach_sxlock);
+		error = rt_rdomain_create(ifr->ifr_rdomainid, ifp);
+		if (error == 0 || error == EEXIST)
+			error = rt_rdomain_setif(ifp, ifr->ifr_rdomainid, true);
+		sx_xunlock(&ifnet_detach_sxlock);
 		break;
 
 	case SIOCSIFFLAGS:
@@ -4943,9 +4961,13 @@ if_input(if_t ifp, struct mbuf* sendmp)
 	(*ifp->if_input)(ifp, sendmp);
 }
 
+int (*pf_delay_transmit_hook)(struct ifnet *, struct mbuf *);
+
 int
 if_transmit(if_t ifp, struct mbuf *m)
 {
+	if (pf_delay_transmit_hook != NULL && m_pf_ro(m)->delay != 0)
+		return (pf_delay_transmit_hook(ifp, m));
 	return ((*ifp->if_transmit)(ifp, m));
 }
 

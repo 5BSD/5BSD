@@ -60,6 +60,64 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	major number is now 2 (libservice.so.2); relink consumers and add the
 	new library to LIBADD/LDADD and its header to the includes.
 
+20261012:
+	Routing domains (rdomain(4)) as on OpenBSD, built on FIBs.  A FIB is
+	a routing table; "ifconfig IF rdomain N" makes FIB N routing domain N
+	with its loopback lo<N> and moves IF into it (dropping its addresses).
+	Inside a domain, addresses are local and sockets receive packets only
+	in that domain, so domains can reuse addresses.  FIBs made with
+	net.fibs stay tables of domain 0: nothing changes until a domain is
+	created.  Entering a FIB of another routing domain (setfib(2),
+	SO_SETFIB, now also called SO_RTABLE) requires privilege.
+
+	New: ifconfig "rdomain N", "-rdomain" and an " rdomain N" field in
+	the status line; ifconfig creates a missing cloneable interface when
+	it is configured (OpenBSD); route -T rtable ("add" creates the table),
+	"route -T N exec cmd" and an OpenBSD-style "route show" table dump;
+	route -iface accepts the interface's address as gateway; ping -V
+	rtable; SIOC[SG]IFRDOMAIN, the sysctl NET_RT_TABLE (struct
+	rt_tableinfo) and the vether(4) interface (device vether, in GENERIC).
+	pf's "on rdomain N", "rtable N" and its state keys use the routing
+	domain.
+
+20261012:
+	pf is OpenBSD's packet filter (pf/parity).  New and changed interfaces:
+
+	Each vnet runs its own pf: a vnet jail has its own rules, states,
+	tables, anchors and pflog/pfsync/pflow interfaces, and /dev/pf acts on
+	the vnet of the process that opens it.  "set limit" belongs to the host;
+	a vnet jail may restate the current limits but not change them.
+
+	pf.conf accepts the 5BSD extension "jail <name|jid>", which matches the
+	jail of a TCP or UDP packet's local socket.  OpenBSD does not know it.
+
+	Transparent proxying works as on OpenBSD: divert-to, divert-reply and
+	divert-packet.  New socket interfaces: SO_BINDANY (socket level; its
+	value differs from OpenBSD's, use the name), IP_RECVDSTPORT and
+	IPV6_RECVDSTPORT, and OpenBSD divert(4) sockets
+	(SOCK_RAW/IPPROTO_DIVERT in AF_INET and AF_INET6).  IPPROTO_DIVERT is
+	defined again; an ipdivert(4) program that opens
+	socket(PF_INET, SOCK_RAW, IPPROTO_DIVERT) gets pf's divert(4) while pf
+	is loaded and must use PF_DIVERT.
+
+	Forwarded packets are filtered before a reject or blackhole route
+	discards them, and "too big" ICMP errors for forwarded packets are sent
+	before outbound filtering, as OpenBSD does.
+
+	ping and ping6 accept OpenBSD's -w maxwait.  vmstat -m -v prints
+	OpenBSD's pool listing; vmstat -m alone is unchanged.
+
+	pf queueing (HFSC, FQ-CoDel; OpenBSD "queue" rules) is not available
+	yet: a ruleset with queue definitions fails to load with
+	"DIOCADDQUEUE: Operation not supported" and the running ruleset stays.
+	ALTQ is retired.  Queueing follows in the next pf series.
+
+	The loopback interface MTU is 32768, as on OpenBSD (was 16384).
+
+	The pf manual pages are OpenBSD's: pf(4), pflog(4), pflow(4),
+	pfsync(4), divert(4), pf.conf(5), pf.os(5).  The former divert(4),
+	about ipfw's PF_DIVERT sockets, is now ipdivert(4).
+
 20261011:
 	5BSD has retired native procfs, a.out execution, COMPAT_43TTY and the
 	FreeBSD 4-7 syscall compatibility options. Remove native procfs entries

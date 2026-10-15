@@ -411,6 +411,7 @@ status_nl(if_ctx *ctx, struct iface *iface)
 
 	printf("flags=%x", link->ifi_flags);
 	print_bits("IFF", &link->ifi_flags, 1, IFFBITS, nitems(IFFBITS));
+	print_rdomain(ctx);
 
 	print_metric(ctx);
 	printf(" mtu %d\n", link->ifla_mtu);

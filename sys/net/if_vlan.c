@@ -1469,7 +1469,7 @@ vlan_transmit(struct ifnet *ifp, struct mbuf *m)
 	/*
 	 * Send it, precisely as ether_output() would have.
 	 */
-	error = (p->if_transmit)(p, m);
+	error = if_transmit(p, m);
 	if (error == 0) {
 		if_inc_counter(ifp, IFCOUNTER_OPACKETS, 1);
 		if_inc_counter(ifp, IFCOUNTER_OBYTES, len);
@@ -1614,6 +1614,20 @@ vlan_input(struct ifnet *ifp, struct mbuf *m)
 		return;
 	}
 
+	/* VLAN wire PCP and PF internal priority have opposite zero/one order. */
+	{
+		struct pkthdr_pf *pfh = m_pf_get(m);
+
+		if (pfh == NULL) {
+			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+			m_freem(m);
+			return;
+		}
+		pfh->prio = EVL_PRIOFTAG(tag);
+		if (pfh->prio <= 1)
+			pfh->prio = !pfh->prio;
+	}
+
 	if (V_vlan_mtag_pcp) {
 		/*
 		 * While uncommon, it is possible that we will find a 802.1q
@@ -1734,7 +1748,7 @@ vlan_config(struct ifvlan *ifv, struct ifnet *p, uint16_t vid,
 	}
 
 	ifv->ifv_vid = vid;	/* must set this before vlan_inshash() */
-	ifv->ifv_pcp = 0;       /* Default: best effort delivery. */
+	ifv->ifv_pcp = IFNET_PCP_NONE; /* Default: internal packet priority. */
 	error = vlan_inshash(trunk, ifv);
 	if (error)
 		goto done;
@@ -2434,7 +2448,8 @@ vlan_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		error = priv_check(curthread, PRIV_NET_SETVLANPCP);
 		if (error)
 			break;
-		if (ifr->ifr_vlan_pcp > VLAN_PCP_MAX) {
+		if (ifr->ifr_vlan_pcp > VLAN_PCP_MAX &&
+		    ifr->ifr_vlan_pcp != IFNET_PCP_NONE) {
 			error = EINVAL;
 			break;
 		}

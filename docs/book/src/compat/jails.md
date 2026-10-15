@@ -62,6 +62,15 @@ A coalition (mac_capability_coalition, see [Coalitions and Accounting](../capabi
 
 The other direction is handled too. The coalition attaches jail OSD to the prison when it enlists it; if the jail dies first, through `jail -r` or `jail_remove_jd`, the OSD destructor queues a cleanup task that removes the member from the coalition, drops the prison reference, and emits `COALITION_NOTE_MEMBER_REMOVED`. If that jail was the coalition's designated leader, its death terminates the coalition (`COALITION_OP_SET_LEADER`). Jail membership is inherited across fork through the same OSD, so a process forked inside an enlisted jail is accounted to the coalition. Limits are soft and best-effort: `kern.mac_capability_coalition.max` (1024 coalitions) and `max_members` (8192 total members) bound the tables, and `kern.mac_capability_coalition.count` and `members` report use. The exhaustion, jail-death race and churn cases are exercised by the coalition tests under `INVARIANTS` and `WITNESS`.
 
+## Jails and the packet filter
+
+A vnet jail has its own pf: rules, states, tables, anchors and the pflog,
+pfsync and pflow interfaces belong to the jail's vnet, `pfctl` in the jail
+sees only them, and removing the jail frees them. Jails that share the
+host's network stack are told apart by the 5BSD `jail` rule option, which
+matches the jail of the local socket (`pass in proto tcp to port 443 jail
+web0`). Both are described in [Packet Filter (pf)](../operations/pf.md).
+
 ## Choosing a route
 
 | Need | Route |

@@ -76,9 +76,19 @@ pfsynct_init()
 {
 	pft_init
 
-	if ! kldstat -q -m pfsync; then
+	# 5BSD provides pfsync through the integrated pf module.
+	if ! kldstat -q -m pfsync &&
+	    ! ifconfig -C | grep -Eq '(^|[[:space:]])pfsync([[:space:]]|$)'; then
 		atf_skip "This test requires pfsync"
 	fi
+}
+
+# 5BSD pfsync is a cloner; unlike FreeBSD it does not precreate pfsync0
+# in each vnet.
+pfsynct_mkif()
+{
+	jexec $1 ifconfig pfsync0 create ||
+	    atf_fail "creating pfsync0 in jail $1"
 }
 
 pflog_init()

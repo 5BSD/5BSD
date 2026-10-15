@@ -88,6 +88,8 @@
 - [Upgrading](operations/upgrading.md)
 - [Boot Knobs](operations/boot-knobs.md)
 - [Observability](operations/observability.md)
+- [Packet Filter (pf)](operations/pf.md)
+- [Routing Domains](operations/rdomains.md)
 - [Graphics](operations/graphics.md)
 - [Troubleshooting](operations/troubleshooting.md)
 - [Tool Reference](operations/tools.md)

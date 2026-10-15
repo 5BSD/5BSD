@@ -2392,7 +2392,14 @@ create-world-packages:	_pkgbootstrap .PHONY
 	    WSTAGEDIR=${WSTAGEDIR} \
 	    PKG_VERSION=${PKG_VERSION} \
 	    MK_AUTO_OBJ=yes \
-	    clean all stagepackages
+	    clean
+	${CROSSENV} ${MAKE} -C ${.CURDIR}/packages \
+	    FLUA=${WORLDTMP}/legacy/usr/libexec/flua \
+	    REPODIR=${REPODIR} \
+	    WSTAGEDIR=${WSTAGEDIR} \
+	    PKG_VERSION=${PKG_VERSION} \
+	    MK_AUTO_OBJ=yes \
+	    stagepackages
 
 create-sets-packages-jobs: .PHONY create-sets-packages
 create-sets-packages: .PHONY

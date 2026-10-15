@@ -202,16 +202,8 @@ SE_DIRS+=	pf
 .if ${MK_STAGING} == "no"
 SE_PFPACKAGE=	pf
 SE_PF= \
-	ackpri \
-	faq-example1 \
-	faq-example2 \
-	faq-example3 \
-	pf.conf \
-	queue1 \
-	queue2 \
-	queue3 \
-	queue4 \
-	spamd
+	README \
+	pf.conf
 .endif
 .endif
 

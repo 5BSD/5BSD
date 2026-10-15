@@ -298,6 +298,15 @@ udp_append(struct inpcb *inp, struct ip *ip, struct mbuf *n, int off,
 #endif /* INET6 */
 			ip_savecontrol(inp, &opts, ip, n);
 	}
+	if ((inp->inp_vflag & INP_IPV4) && (inp->inp_flags2 & INP_RECVDSTPORT)) {
+		/* OpenBSD IP_RECVDSTPORT: the destination port, network order. */
+		tmpopts = sbcreatecontrol(&udp_in[1].sin_port,
+		    sizeof(u_int16_t), IP_RECVDSTPORT, IPPROTO_IP, M_NOWAIT);
+		if (tmpopts) {
+			tmpopts->m_next = opts;
+			opts = tmpopts;
+		}
+	}
 	if ((inp->inp_vflag & INP_IPV4) && (inp->inp_flags2 & INP_ORIGDSTADDR)) {
 		tmpopts = sbcreatecontrol(&udp_in[1],
 		    sizeof(struct sockaddr_in), IP_ORIGDSTADDR, IPPROTO_IP,
@@ -396,6 +405,9 @@ udp_multi_input(struct mbuf *m, int proto, struct sockaddr_in *udp_in)
 		 * inpcb lock is held.
 		 */
 
+		/* 5BSD: sockets see their routing domain only. */
+		if (!rt_fib_same_rdomain(fib, inp->inp_inc.inc_fibnum))
+			continue;
 		if (V_udp_bind_all_fibs == 0 && fib != inp->inp_inc.inc_fibnum)
 			/*
 			 * Sockets bound to a specific FIB can only receive

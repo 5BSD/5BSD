@@ -634,6 +634,23 @@ using the
 kernel configuration option, or the
 .Va net.fibs
 tunable.
+A FIB of another routing domain moves the interface into that domain, as
+.Cm rdomain
+does.
+.It Cm rdomain Ar N
+Move the interface into routing domain
+.Ar N
+.Pq 0 to 255, see Xr rdomain 4 .
+The routing domain and its loopback interface
+.Li lo Ns Ar N
+are created if needed.
+The interface loses its addresses and routes, which belong to the old
+domain.
+The status line shows
+.Dq rdomain Ar N
+for interfaces outside routing domain 0.
+.It Fl rdomain
+Move the interface back into routing domain 0.
 .It Cm tunnelfib Ar fib_number
 Specify tunnel FIB.
 A FIB
@@ -885,6 +902,12 @@ printed to standard output unless the interface is renamed or destroyed
 in the same
 .Nm
 invocation.
+As on
+.Ox ,
+configuring a pseudo-device with a unit number that does not exist yet,
+for example
+.Dq Nm Li vether0 192.0.2.1/24 ,
+creates it first.
 .It Cm destroy
 Destroy the specified network pseudo-device.
 .It Cm plumb

@@ -4184,6 +4184,7 @@ net/if_mib.c			standard
 net/if_ovpn.c			optional ovpn inet | ovpn inet6
 net/if_stf.c			optional stf inet inet6
 net/if_tuntap.c			optional tuntap
+net/if_vether.c			optional vether
 net/if_vlan.c			optional vlan
 net/if_vxlan.c			optional vxlan inet | vxlan inet6
 net/if_geneve.c			optional geneve inet | geneve inet6
@@ -4208,6 +4209,7 @@ net/route/route_ctl.c		standard
 net/route/route_ddb.c		optional ddb
 net/route/route_helpers.c	standard
 net/route/route_ifaddrs.c	standard
+net/route/route_rdomain.c	standard
 net/route/route_rtentry.c	standard
 net/route/route_subscription.c	standard
 net/route/route_tables.c	standard
@@ -4528,23 +4530,55 @@ netpfil/dummynet/dn_sched_rr.c	optional inet dummynet
 netpfil/dummynet/dn_sched_wf2q.c	optional inet dummynet
 netpfil/dummynet/ip_dummynet.c	optional inet dummynet
 netpfil/dummynet/ip_dn_io.c		optional inet dummynet
-netpfil/pf/if_pflog.c		optional pflog pf inet
-netpfil/pf/if_pfsync.c		optional pfsync pf inet
-netpfil/pf/pf.c			optional pf inet
-netpfil/pf/pf_if.c		optional pf inet
-netpfil/pf/pf_ioctl.c		optional pf inet
-netpfil/pf/pf_lb.c		optional pf inet
-netpfil/pf/pf_norm.c		optional pf inet
-netpfil/pf/pf_nl.c		optional pf inet
-netpfil/pf/pf_nv.c		optional pf inet
-netpfil/pf/pf_osfp.c		optional pf inet
-netpfil/pf/pf_ruleset.c		optional pf inet
-netpfil/pf/pf_syncookies.c	optional pf inet
-netpfil/pf/pf_table.c		optional pf inet
-netpfil/pf/pflow.c		optional pflow pf inet
-netpfil/pf/pfsync_nv.c		optional pfsync pf inet
-netpfil/pf/in4_cksum.c		optional pf inet
-netpfil/pf/inet_nat64.c		optional pf inet
+# pf(4): OpenBSD PF (contrib/openbsd-pf) with pflog(4), pflow(4) and pfsync(4)
+# built in, as sys/modules/pf.
+../contrib/openbsd-pf/sys/net/pf.c       optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+../contrib/openbsd-pf/sys/net/pf_if.c    optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+../contrib/openbsd-pf/sys/net/pf_ioctl.c optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+../contrib/openbsd-pf/sys/net/pf_lb.c    optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+../contrib/openbsd-pf/sys/net/pf_norm.c  optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+../contrib/openbsd-pf/sys/net/pf_osfp.c  optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+../contrib/openbsd-pf/sys/net/pf_ruleset.c optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+../contrib/openbsd-pf/sys/net/pf_syncookies.c optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+../contrib/openbsd-pf/sys/net/pf_table.c optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+../contrib/openbsd-pf/sys/net/if_pflog.c optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+../contrib/openbsd-pf/sys/net/if_pflow.c optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+../contrib/openbsd-pf/sys/net/if_pfsync.c optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+../contrib/openbsd-pf/sys/net/radix.c    optional pf inet \
+	compile-with "${OPENBSD_PF_C} -DOBSD_RADIX_IMPL -o ${.TARGET}" \
+	obj-prefix "obsd_"
+../contrib/openbsd-pf/sys/netinet/inet_nat64.c optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+../contrib/openbsd-pf/sys/netinet/in4_cksum.c optional pf inet \
+	compile-with "${OPENBSD_PF_C}"
+netpfil/openbsd-pf/openbsd_compat.c      optional pf inet \
+	compile-with "${OPENBSD_PF_C} -DOPENBSD_PF_GLUE"
+netpfil/openbsd-pf/openbsd_net.c         optional pf inet \
+	compile-with "${OPENBSD_PF_C} -DOPENBSD_PF_GLUE"
+netpfil/openbsd-pf/openbsd_ifq.c         optional pf inet \
+	compile-with "${OPENBSD_PF_C} -DOPENBSD_PF_GLUE"
+netpfil/openbsd-pf/pf_freebsd.c          optional pf inet \
+	compile-with "${OPENBSD_PF_C} -DOPENBSD_PF_GLUE"
+netpfil/openbsd-pf/pf_sdt.c              optional pf inet \
+	compile-with "${OPENBSD_PF_C} -DOPENBSD_PF_GLUE"
+netpfil/openbsd-pf/pf_divert.c           optional pf inet \
+	compile-with "${OPENBSD_PF_C} -DOPENBSD_PF_GLUE"
+netpfil/openbsd-pf/pf_jail.c             optional pf inet \
+	compile-with "${OPENBSD_PF_C} -DOPENBSD_PF_GLUE"
+netpfil/openbsd-pf/pf_sysctl.c           optional pf inet \
+	compile-with "${OPENBSD_PF_C} -DOPENBSD_PF_GLUE"
 netsmb/smb_conn.c		optional netsmb
 netsmb/smb_crypt.c		optional netsmb
 netsmb/smb_dev.c		optional netsmb

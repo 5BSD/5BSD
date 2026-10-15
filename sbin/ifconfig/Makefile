@@ -28,6 +28,7 @@ SRCS+=	ifclone.c		# clone device support
 SRCS+=	ifmac.c			# MAC support
 SRCS+=	ifmedia.c		# SIOC[GS]IFMEDIA support
 SRCS+=	iffib.c			# non-default FIB support
+SRCS+=	ifrdomain.c		# routing domains (rdomain(4))
 SRCS+=	ifvlan.c		# SIOC[GS]ETVLAN support
 SRCS+=	ifvxlan.c		# VXLAN support
 SRCS+=	ifgre.c			# GRE keys etc
@@ -50,7 +51,9 @@ SRCS+=	ifue.c
 SRCS+=	carp.c			# SIOC[GS]VH support
 SRCS+=	ifgroup.c		# ...
 .if ${MK_PF} != "no"
-SRCS+=	ifpfsync.c		# pfsync(4) support
+SRCS+=	ifpf.c			# pfsync(4) and pflow(4) support (OpenBSD)
+CFLAGS.ifpf.c+=	-I${SRCTOP}/sys/netpfil/openbsd-pf/user -Wno-unused-parameter -Wno-cast-align \
+		-Wno-sign-compare -Wno-shadow
 .endif
 
 SRCS+=	ifbridge.c		# bridge support

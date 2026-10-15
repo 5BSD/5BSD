@@ -78,7 +78,7 @@
 #elif defined(LARGE_LOMTU)
 #define LOMTU	131072
 #else
-#define LOMTU	16384
+#define LOMTU	32768	/* 5BSD: OpenBSD's loopback MTU */
 #endif
 
 #define	LO_CSUM_FEATURES	(CSUM_IP | CSUM_IP_TCP | CSUM_IP_UDP | \
@@ -102,6 +102,13 @@ lo_clone_destroy(struct if_clone *ifc, struct ifnet *ifp, uint32_t flags)
 {
 	if (ifp->if_dunit == 0 && (flags & IFC_F_FORCE) == 0)
 		return (EINVAL);
+	/* A nonzero routing domain may go away once its other interfaces do. */
+	if ((flags & IFC_F_FORCE) == 0) {
+		int error = rt_rdomain_can_destroy(ifp);
+
+		if (error != 0)
+			return (error);
+	}
 
 #ifndef VIMAGE
 	/* XXX: destroying lo0 will lead to panics. */
@@ -110,6 +117,7 @@ lo_clone_destroy(struct if_clone *ifc, struct ifnet *ifp, uint32_t flags)
 
 	bpfdetach(ifp);
 	if_detach(ifp);
+	rt_rdomain_ifdetach(ifp);
 	if_free(ifp);
 
 	return (0);
@@ -223,9 +231,24 @@ looutput(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 #endif
 
 	/* BPF writes need to be handled specially. */
-	if (dst->sa_family == AF_UNSPEC || dst->sa_family == pseudo_AF_HDRCMPLT)
+	if (dst->sa_family == AF_UNSPEC || dst->sa_family == pseudo_AF_HDRCMPLT) {
 		bcopy(dst->sa_data, &af, sizeof(af));
-	else
+		/*
+		 * 5BSD: accept OpenBSD's DLT_LOOP header from bpf(4)
+		 * writers too (network byte order, AF_INET6 is 24 there).
+		 */
+		if (af != AF_INET && af != AF_INET6) {
+			switch (ntohl(af)) {
+			case AF_INET:
+				af = AF_INET;
+				break;
+			case 24:
+			case AF_INET6:
+				af = AF_INET6;
+				break;
+			}
+		}
+	} else
 		af = RO_GET_FAMILY(ro, dst);
 
 	switch (af) {
@@ -266,6 +289,12 @@ if_simloop(struct ifnet *ifp, struct mbuf *m, int af, int hlen)
 	M_ASSERTPKTHDR(m);
 	m_tag_delete_nonpersistent(m);
 	m->m_pkthdr.rcvif = ifp;
+	/*
+	 * 5BSD: a packet received on an interface of another routing domain
+	 * enters the domain of that interface (OpenBSD if_input_local()).
+	 */
+	if (!rt_fib_same_rdomain(M_GETFIB(m), ifp->if_fib))
+		M_SETFIB(m, ifp->if_fib);
 
 #ifdef MAC
 	mac_ifnet_create_mbuf(ifp, m);
@@ -286,15 +315,22 @@ if_simloop(struct ifnet *ifp, struct mbuf *m, int af, int hlen)
 			bpf_mtap(ifp->if_bpf, m);
 		}
 	} else {
-		if (bpf_peers_present(V_loif->if_bpf)) {
-			if ((m->m_flags & M_MCAST) == 0 || V_loif == ifp) {
+		/*
+		 * 5BSD: a loopback interface other than lo0 (the loopback of
+		 * a routing domain) shows its own traffic, as on OpenBSD.
+		 */
+		struct ifnet *bifp = (ifp->if_flags & IFF_LOOPBACK) ? ifp :
+		    V_loif;
+
+		if (bpf_peers_present(bifp->if_bpf)) {
+			if ((m->m_flags & M_MCAST) == 0 || bifp == ifp) {
 				/* XXX beware sizeof(af) != 4 */
 				u_int32_t af1 = af;
 
 				/*
 				 * We need to prepend the address family.
 				 */
-				bpf_mtap2(V_loif->if_bpf, &af1, sizeof(af1), m);
+				bpf_mtap2(bifp->if_bpf, &af1, sizeof(af1), m);
 			}
 		}
 	}

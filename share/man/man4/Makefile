@@ -159,6 +159,7 @@ MAN=	aac.4 \
 	disc.4 \
 	disk.4 \
 	divert.4 \
+	ipdivert.4 \
 	${_dpms.4} \
 	ds1307.4 \
 	ds3231.4 \
@@ -514,6 +515,7 @@ MAN=	aac.4 \
 	ral.4 \
 	random.4 \
 	rctl.4 \
+	rdomain.4 \
 	re.4 \
 	rge.4 \
 	rgephy.4 \
@@ -645,6 +647,7 @@ MAN=	aac.4 \
 	${_vmci.4} \
 	vmgenc.4 \
 	vkbd.4 \
+	vether.4 \
 	vlan.4 \
 	vxlan.4 \
 	${_vmd.4} \
@@ -1042,6 +1045,7 @@ _dtrace_provs=	dtrace_audit.4 \
 		dtrace_cam.4 \
 		dtrace_dtmalloc.4 \
 		dtrace_dtrace.4 \
+		dtrace_pf.4 \
 		dtrace_fbt.4 \
 		dtrace_io.4 \
 		dtrace_ip.4 \
@@ -1168,5 +1172,8 @@ MLINKS+=zyd.4 if_zyd.4
 MANGROUPS+=		MAC_ABAC
 MAC_ABACPACKAGE=	mac-abac
 MAC_ABAC=		mac_abac.4
+
+# OpenBSD PF manual pages (pf, pflog, pflow, pfsync, divert).
+.PATH: ${SRCTOP}/contrib/openbsd-pf/share/man/man4
 
 .include <bsd.prog.mk>

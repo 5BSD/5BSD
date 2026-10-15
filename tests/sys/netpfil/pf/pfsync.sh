@@ -51,6 +51,8 @@ common_body()
 
 	vnet_mkjail one ${epair_one}a ${epair_sync}a
 	vnet_mkjail two ${epair_two}a ${epair_sync}b
+	pfsynct_mkif one
+	pfsynct_mkif two
 
 	# pfsync interface
 	jexec one ifconfig ${epair_sync}a 192.0.2.1/24 up
@@ -82,7 +84,9 @@ common_body()
 
 	ifconfig ${epair_one}b 198.51.100.254/24 up
 
-	ping -c 1 -S 198.51.100.254 198.51.100.1
+	# OpenBSD pf creates no state for an outbound ICMP echo reply, so
+	# originate the echo request behind the "pass out keep state" rule.
+	jexec one ping -c 1 -S 198.51.100.1 198.51.100.254
 
 	# Give pfsync time to do its thing
 	sleep 2
@@ -92,9 +96,10 @@ common_body()
 		atf_fail "state not found on synced host"
 	fi
 
-	if ! jexec two pfctl -sc | grep ""${hostid_one}"";
+	# OpenBSD pfctl has no -sc; check the synced state's creator instead.
+	if ! jexec two pfctl -ss -vv | grep "creatorid: ${hostid_one}";
 	then
-		jexec two pfctl -sc
+		jexec two pfctl -ss -vv
 		atf_fail "HostID for host one not found on two"
 	fi
 }
@@ -209,6 +214,8 @@ bulk_body()
 
 	vnet_mkjail one ${epair_one}a ${epair_sync}a
 	vnet_mkjail two ${epair_two}a ${epair_sync}b
+	pfsynct_mkif one
+	pfsynct_mkif two
 
 	# pfsync interface
 	jexec one ifconfig ${epair_sync}a 192.0.2.1/24 up
@@ -1742,6 +1749,58 @@ flush_by_intf_cleanup()
 	pfsynct_cleanup
 }
 
+atf_test_case "lifecycle_departure" "cleanup"
+lifecycle_departure_head()
+{
+	atf_set descr 'Drain pfsync hooks and timers across detach, VNET move, and destroy'
+	atf_set require.user root
+	atf_set timeout 300
+}
+
+lifecycle_departure_body()
+{
+	pft_init
+	vnet_mkjail pfsync_lifecycle
+
+	i=0
+	while [ $i -lt 16 ]; do
+		ep=$(vnet_mkepair)
+		[ -n "$ep" ] || atf_fail 'could not create epair'
+		ifconfig ${ep}b vnet pfsync_lifecycle ||
+		    atf_fail "moving ${ep}b into jail"
+		jexec pfsync_lifecycle ifconfig ${ep}b 192.0.2.1/24 up ||
+		    atf_fail "configuring ${ep}b"
+		jexec pfsync_lifecycle ifconfig pfsync0 create ||
+		    atf_fail 'creating pfsync0'
+		jexec pfsync_lifecycle ifconfig pfsync0 syncdev ${ep}b up ||
+		    atf_fail "starting pfsync0 on ${ep}b"
+		jexec pfsync_lifecycle ifconfig pfsync0 down ||
+		    atf_fail 'stopping pfsync0'
+		jexec pfsync_lifecycle ifconfig pfsync0 up ||
+		    atf_fail 'restarting pfsync0'
+
+		if [ $((i % 2)) -eq 0 ]; then
+			ifconfig ${ep}a destroy ||
+			    atf_fail "detaching ${ep}a"
+		else
+			ifconfig ${ep}b -vnet pfsync_lifecycle ||
+			    atf_fail "reclaiming ${ep}b from jail"
+			ifconfig ${ep}a destroy ||
+			    atf_fail "destroying ${ep}a after VNET move"
+		fi
+		unlist_interface ${ep}a
+		unlist_interface ${ep}b
+		jexec pfsync_lifecycle ifconfig pfsync0 destroy ||
+		    atf_fail 'destroying pfsync0 after departure'
+		i=$((i + 1))
+	done
+}
+
+lifecycle_departure_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "basic"
@@ -1767,4 +1826,5 @@ atf_init_test_cases()
 	atf_add_test_case "altq_queues"
 	atf_add_test_case "rt_af"
 	atf_add_test_case "flush_by_intf"
+	atf_add_test_case "lifecycle_departure"
 }

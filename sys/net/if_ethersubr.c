@@ -76,7 +76,6 @@
 #include <net/rss_config.h>
 #include <net/vnet.h>
 
-#include <netpfil/pf/pf_mtag.h>
 
 #if defined(INET) || defined(INET6)
 #include <netinet/in.h>
@@ -281,7 +280,6 @@ ether_output(struct ifnet *ifp, struct mbuf *m,
 	int error = 0;
 	char linkhdr[ETHER_HDR_LEN], *phdr;
 	struct ether_header *eh;
-	struct pf_mtag *t;
 	bool loop_copy;
 	int hlen;	/* link layer header length */
 	uint32_t pflags;
@@ -380,7 +378,7 @@ ether_output(struct ifnet *ifp, struct mbuf *m,
 	 * reasons and compatibility with the original behavior.
 	 */
 	if ((m->m_flags & M_BCAST) && loop_copy && (ifp->if_flags & IFF_SIMPLEX) &&
-	    ((t = pf_find_mtag(m)) == NULL || !t->routed)) {
+	    m_pf_ro(m)->routed == 0) {
 		struct mbuf *n;
 
 		/*
@@ -483,7 +481,7 @@ ether_output_frame(struct ifnet *ifp, struct mbuf *m)
 	 * any uninitialized bytes.
 	 */
 	kmsan_check_mbuf(m, "ether_output");
-	return ((ifp->if_transmit)(ifp, m));
+	return (if_transmit(ifp, m));
 }
 
 /*
@@ -1347,6 +1345,13 @@ ether_8021q_frame(struct mbuf **mp, struct ifnet *ife, struct ifnet *p,
 	uint8_t pcp = qtag->pcp;
 	static const char pad[8];	/* just zeros */
 
+	/* Automatic VLAN PCP follows internal priority, not its wire encoding. */
+	if (pcp == IFNET_PCP_NONE) {
+		pcp = m_pf_ro(*mp)->prio;
+		if (pcp <= 1)
+			pcp = !pcp;
+	}
+
 	/*
 	 * Pad the frame to the minimum size allowed if told to.
 	 * This option is in accord with IEEE Std 802.1Q, 2003 Ed.,
@@ -1374,9 +1379,10 @@ ether_8021q_frame(struct mbuf **mp, struct ifnet *ife, struct ifnet *p,
 	}
 
 	/*
-	 * If PCP is set in mbuf, use it
+	 * Preserve cached wire PCP in numeric mode.  Automatic priority must
+	 * come from the packet, including when an inner VLAN used hardware tags.
 	 */
-	if ((*mp)->m_flags & M_VLANTAG) {
+	if (qtag->pcp != IFNET_PCP_NONE && ((*mp)->m_flags & M_VLANTAG)) {
 		pcp = EVL_PRIOFTAG((*mp)->m_pkthdr.ether_vtag);
 	}
 
