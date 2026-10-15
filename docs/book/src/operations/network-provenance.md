@@ -134,7 +134,7 @@ cannot collide:
 - pf ioctls: `DIOCADDETHRULE` through `DIOCGETETHRULESET` are `'D'` 230–234;
   `DIOCBINDJAIL` is `'D'` 235.
 - pfsync: `SIOCSETPFSYNC6`/`SIOCGETPFSYNC6` are `'i'` 242/243.
-- Address family 44 (former `AF_DIVERT`) is reserved and not reused.
+- Address family 44 (formerly AF_DIVERT, now removed) is reserved and not reused.
 - Address families from 64, `NET_RT_TABLE` 1024, and the other ranges
   recorded in the FreeBSD sync notes.
 
