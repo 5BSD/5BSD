@@ -15,13 +15,16 @@ The per-file detail lives next to the code:
 - `contrib/openbsd-pf/UPSTREAM.json`: the OpenBSD snapshot identity and the
   git tree ID of every imported subtree.
 - `tests/sys/netpfil/pf/README.5BSD`: what happened to each FreeBSD pf test.
+- `tests/sys/netpfil/integration/README`: the 5BSD seam tests (VNET
+  /dev/pf, host-owned limits, capability plane, cloners, jail option,
+  rdomains, sockets, securelevel, consumers, DTrace, bridge).
 
 ## Where each part comes from
 
 | Part | Origin | Location |
 |---|---|---|
 | pf kernel: pf.c, pf_ioctl.c, pf_norm.c, pf_table.c, pf_lb.c, pf_if.c, pf_ruleset.c, pf_osfp.c, pf_syncookies.c, radix, pflog, pflow, pfsync | OpenBSD | `contrib/openbsd-pf/sys/net` |
-| pfctl, authpf, ftp-proxy, tftp-proxy, pflogd, tcpdump | OpenBSD | `contrib/openbsd-pf/{sbin,usr.sbin}` |
+| pfctl, authpf, ftp-proxy, tftp-proxy, pflogd, tcpdump | OpenBSD | `contrib/openbsd-pf/{sbin,usr.sbin}`; pflogd glue in `sbin/pflogd/pflogd_5bsd.[ch]` (libpcap activation, 32-bit savefile header, `-p` pidfile) |
 | pf(4), pflog(4), pflow(4), pfsync(4), divert(4), pf.conf(5), pf.os(5), pfctl(8) | OpenBSD, with marked 5BSD sections | `contrib/openbsd-pf/share/man`, `contrib/openbsd-pf/sbin/pfctl` |
 | OpenBSD regress suites | OpenBSD, verbatim | `contrib/openbsd-pf/regress` |
 | Compatibility layer, pfil(9) hooks, VNET, ioctl dispatch, DTrace provider | 5BSD | `sys/netpfil/openbsd-pf` |
@@ -71,7 +74,10 @@ goes in its own file in `sys/netpfil/openbsd-pf` (`pf_dummynet.c`,
 | `dnpipe`, `dnqueue` | FreeBSD pf | dummynet(4) shaping, also on route-to; dummynet is loaded through the SystemExtension broker |
 | `ether` rules | FreeBSD pf | separate layer-2 ruleset on the link-layer pfil hooks; `pfctl -s ethernet`, `-F ethernet`; ioctls `DIOC*ETHRULE*` |
 | SCTP, multihoming, `allow-related`, `sctp.*` timeouts | FreeBSD pf | association tracking with verification tags; extra states for INIT/ASCONF addresses |
-| Per-VNET pf | 5BSD | each VNET jail has its own rules, states, tables and interfaces |
+| Per-VNET pf | 5BSD | each VNET jail has its own rules, states, tables and interfaces; jails without their own VNET cannot open `/dev/pf`; pool limits are host-owned |
+| `DIOCBINDJAIL` | 5BSD | moves an unused `/dev/pf` descriptor to a descendant jail's VNET; BSDNetwork uses it so system.Network.PF serves the caller's own states |
+| pfsync IPv6 peers (`5BSD: pfsync6`) | FreeBSD feature, 5BSD code | IPv6 unicast or ff12::f0 peers; messages unchanged, IPv6 header with hop limit 255; `SIOC[GS]ETPFSYNC6` |
+| pfsync CARP demotion (`5BSD: carp`) | OpenBSD design on FreeBSD carp | OpenBSD's carp-group counts drive `net.inet.carp.demotion` through `net.pfsync.carp_demotion_factor`; glue `pf_pfsync.c` |
 | divert-to, divert-reply, divert-packet | OpenBSD semantics on FreeBSD sockets | `SO_BINDANY`, `IP_RECVDSTPORT`, OpenBSD divert(4) sockets |
 | FreeBSD DTrace contracts | dev (FreeBSD pf era) | limiter, table, syncookie and pfsync probes kept with the same names |
 
@@ -104,7 +110,7 @@ new decision. The matching OpenBSD regress cases are expected to fail.
 | One global PF lock for rule evaluation (FreeBSD pf evaluated in parallel) | OpenBSD design kept for now; SMP work deferred | none |
 | `set limit` belongs to the host; VNET jails cannot change shared pools | pools are host-wide | 5BSD `limits` tests |
 | SCTP verification tags travel in pfsync's `pfss_ts_mod`; OpenBSD peers reject SCTP states | OpenBSD pfsync has no SCTP | none |
-| 18 pfctl cases | they fail on the OpenBSD reference too | pfctl |
+| 18 pfctl cases (pfr1–6, pfr8–15, pfsetup1, pfchksum1–3) | they fail on the OpenBSD reference too (stale upstream .ok files) | pfctl; expected failures in `sbin/pfctl/tests` |
 
 5BSD also fixes OpenBSD PF where its code contradicts its own manual; these
 are vendor edits to re-check on every import:
@@ -122,7 +128,9 @@ cannot collide:
   0x20000000, `SO_RXQ_OVFL` 0x40000000).
 - pf rule flags: `PFRULE_ALLOW_RELATED` 0x40000000; SCTP timeouts are
   appended before `PFTM_MAX`.
-- pf ioctls: `DIOCADDETHRULE` through `DIOCGETETHRULESET` are `'D'` 230–234.
+- pf ioctls: `DIOCADDETHRULE` through `DIOCGETETHRULESET` are `'D'` 230–234;
+  `DIOCBINDJAIL` is `'D'` 235.
+- pfsync: `SIOCSETPFSYNC6`/`SIOCGETPFSYNC6` are `'i'` 242/243.
 - Address families from 64, `NET_RT_TABLE` 1024, and the other ranges
   recorded in the FreeBSD sync notes.
 
