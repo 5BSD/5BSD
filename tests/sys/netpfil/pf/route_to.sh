@@ -60,12 +60,12 @@ check_random() {
 			cat $states
 			if [ -n "${bad_targets}" ]; then
 				for bad_target in $bad_targets; do
-					if grep -qE "route-to: ${bad_target}@" $states; then
+					if grep -qE " \{${bad_target}\} " $states; then
 						atf_fail "Bad target ${bad_target} selected!"
 					fi
 				done
 			fi;
-			if grep -qE "route-to: ${good_target}@" $states; then
+			if grep -qE " \{${good_target}\} " $states; then
 				break
 			fi
 		done
@@ -151,7 +151,8 @@ rt_leak_install_rules()
 # Packet count observed by the probe rule in the wan jail.
 rt_leak_probe_pkts()
 {
-	jexec wan pfctl -sl | awk '$1 == "rt_leak_probe" { print $3 }'
+	# Both probe rules carry the label; add up their packet counts.
+	jexec wan pfctl -sl | awk '$1 == "rt_leak_probe" { n += $3 } END { print n + 0 }'
 }
 
 # Send one UDP datagram from $1 (a jail name) to $2 (a destination address).
@@ -191,8 +192,9 @@ v4_body()
 	jexec alcatraz pfctl -e
 
 	# Attempt to provoke PR 228782
-	pft_set_rules alcatraz "block all" "pass user 2" \
-		"pass out route-to 203.0.113.1 from 192.0.2.2 to 198.51.100.1 no state"
+	# (OpenBSD route-to requires state, so the rule keeps state.)
+	pft_set_rules alcatraz "block all" "pass proto { tcp udp } user 2" \
+		"pass out from 192.0.2.2 to 198.51.100.1 route-to 203.0.113.1"
 	jexec alcatraz nc -w 3 -s 192.0.2.2 198.51.100.1 22
 
 	# atf wants us to not return an error, but our netcat will fail
@@ -227,8 +229,9 @@ v6_body()
 	jexec alcatraz pfctl -e
 
 	# Attempt to provoke PR 228782
-	pft_set_rules alcatraz "block all" "pass user 2" \
-		"pass out route-to 2001:db8:43::1 from 2001:db8:42::2 to 2001:db8:666::1 no state"
+	# (OpenBSD route-to requires state, so the rule keeps state.)
+	pft_set_rules alcatraz "block all" "pass proto { tcp udp } user 2" \
+		"pass out from 2001:db8:42::2 to 2001:db8:666::1 route-to 2001:db8:43::1"
 	jexec alcatraz nc -6 -w 3 -s 2001:db8:42::2 2001:db8:666::1 22
 
 	# atf wants us to not return an error, but our netcat will fail
@@ -290,8 +293,8 @@ multiwan_body()
 		"match in on ${epair_two}b inet proto tcp from any to 198.51.100.2 port 7 rdr-to 127.0.0.1 port 7" \
 		"block in"	\
 		"block out"	\
-		"pass in quick on ${epair_one}b reply-to 192.0.2.1 inet proto tcp from any to 127.0.0.1 port 7" \
-		"pass in quick on ${epair_two}b reply-to 198.51.100.1 inet proto tcp from any to 127.0.0.1 port 7"
+		"pass in quick on ${epair_one}b inet proto tcp from any to 127.0.0.1 port 7 reply-to 192.0.2.1" \
+		"pass in quick on ${epair_two}b inet proto tcp from any to 127.0.0.1 port 7 reply-to 198.51.100.1"
 
 	# These will always succeed, because we don't change interface to route
 	# correctly here.
@@ -367,7 +370,7 @@ multiwanlocal_body()
 	pft_set_rules client \
 		"block in"	\
 		"block out"	\
-		"pass out quick route-to 203.0.113.129 inet proto tcp from 203.0.113.128 to any port 7" \
+		"pass out quick inet proto tcp from 203.0.113.128 to any port 7 route-to 203.0.113.129" \
 		"pass out on ${epair_cl_one}a inet proto tcp from any to any port 7" \
 		"set skip on lo"
 
@@ -429,7 +432,7 @@ icmp_nat_body()
 	pft_set_rules gw \
 		"match out on ${epair_two}a inet from 192.0.2.0/24 to any nat-to (${epair_two}a)" \
 		"match out on ${epair_three}a inet from 192.0.2.0/24 to any nat-to (${epair_three}a)" \
-		"pass out route-to 203.0.113.2 proto icmp icmp-type echoreq"
+		"pass out proto icmp icmp-type echoreq route-to 203.0.113.2"
 
 	# Now ensure that we get an ICMP error with the correct IP addresses in it.
 	atf_check -s exit:0 ${common_dir}/pft_icmp_check.py \
@@ -479,7 +482,7 @@ dummynet_body()
 
 	jexec gw dnctl pipe 1 config delay 1200
 	pft_set_rules gw \
-		"pass out route-to 192.0.2.1 to 192.0.2.1 dnpipe 1"
+		"pass out to 192.0.2.1 route-to 192.0.2.1 dnpipe 1"
 	jexec gw pfctl -e
 
 	# The ping request will pass, but take 1.2 seconds
@@ -490,7 +493,7 @@ dummynet_body()
 
 	# return path dummynet
 	pft_set_rules gw \
-		"pass out route-to 192.0.2.1 to 192.0.2.1 dnpipe (0, 1)"
+		"pass out to 192.0.2.1 route-to 192.0.2.1 dnpipe (0, 1)"
 
 	# The ping request will pass, but take 1.2 seconds
 	# So this works:
@@ -535,7 +538,7 @@ dummynet_in_body()
 
 	jexec gw dnctl pipe 1 config delay 1200
 	pft_set_rules gw \
-		"pass in route-to 192.0.2.1 to 192.0.2.1 dnpipe 1"
+		"pass in to 192.0.2.1 route-to 192.0.2.1 dnpipe 1"
 	jexec gw pfctl -e
 
 	# The ping request will pass, but take 1.2 seconds
@@ -548,7 +551,7 @@ dummynet_in_body()
 
 	# return path dummynet
 	pft_set_rules gw \
-		"pass in route-to 192.0.2.1 to 192.0.2.1 dnpipe (0, 1)"
+		"pass in to 192.0.2.1 route-to 192.0.2.1 dnpipe (0, 1)"
 
 	# The ping request will pass, but take 1.2 seconds
 	# So this works:
@@ -679,7 +682,7 @@ ifbound_reply_to_body()
 	pft_set_rules $j \
 		"set state-policy if-bound" \
 		"block" \
-		"pass in on ${epair_one}a reply-to 192.0.2.2 inet from any to 192.0.2.0/24 keep state"
+		"pass in on ${epair_one}a inet from any to 192.0.2.0/24 reply-to 192.0.2.2 keep state"
 
 	atf_check -s exit:0 -o ignore \
 	    ping -c 3 192.0.2.1
@@ -739,7 +742,7 @@ ifbound_reply_to_v6_body()
 		"set state-policy if-bound" \
 		"block" \
 		"pass quick inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-		"pass in on ${epair_one}a reply-to 2001:db8::2 inet6 from any to 2001:db8::/64 keep state"
+		"pass in on ${epair_one}a inet6 from any to 2001:db8::/64 reply-to 2001:db8::2 keep state"
 
 	atf_check -s exit:0 -o ignore \
 	    jexec ${j}s ping6 -c 3 2001:db8::1
@@ -799,7 +802,7 @@ ifbound_reply_to_rdr_dummynet_body()
 		"match in on ${epair_one}a proto icmp from any to 192.0.2.1 rdr-to 127.0.0.1" \
 		"match in on ${epair_two}a proto icmp from any to 198.51.100.1 rdr-to 127.0.0.1" \
 		"match in on ${epair_one}a inet all dnpipe (1, 1)" \
-		"pass in on ${epair_one}a reply-to 192.0.2.2 inet from any to 127.0.0.1 keep state"
+		"pass in on ${epair_one}a inet from any to 127.0.0.1 reply-to 192.0.2.2 keep state"
 
 	atf_check -s exit:0 -o ignore \
 	    ping -c 3 192.0.2.1
@@ -864,7 +867,7 @@ dummynet_frag_body()
 	jexec alcatraz pfctl -e
 	pft_set_rules alcatraz \
 		"set reassemble yes" \
-		"pass in route-to 198.51.100.2 inet proto icmp all icmp-type echoreq dnpipe 1" \
+		"pass in inet proto icmp all icmp-type echoreq route-to 198.51.100.2 dnpipe 1" \
 		"pass out dnpipe 2"
 
 
@@ -911,8 +914,8 @@ dummynet_double_body()
 	pft_set_rules alcatraz \
 		"set reassemble yes" \
 		"match out on ${epair_two}a from 192.0.2.0/24 nat-to (${epair_two}a)" \
-		"pass in route-to 198.51.100.2 inet proto icmp all icmp-type echoreq dnpipe (1, 1)" \
-		"pass out route-to 198.51.100.2 inet proto icmp all icmp-type echoreq"
+		"pass in inet proto icmp all icmp-type echoreq route-to 198.51.100.2 dnpipe (1, 1)" \
+		"pass out inet proto icmp all icmp-type echoreq route-to 198.51.100.2"
 
 	ping -c 1 198.51.100.2
 	jexec alcatraz pfctl -sr -vv
@@ -943,7 +946,7 @@ sticky_body()
 	vnet_mkjail alcatraz
 
 	pft_set_rules alcatraz \
-	    "pass in quick log on n_test_h_rtr route-to <change_dst> sticky-address from any to <dst> keep state"
+	    "pass in quick log on n_test_h_rtr from any to <dst> route-to <change_dst> sticky-address keep state"
 
 	jexec alcatraz pfctl -qvvsr
 }
@@ -1017,15 +1020,16 @@ empty_pool_body()
 	pft_set_rules router \
 		"block" \
 		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-		"pass in  on ${epair_tester}b route-to <nonexistent> inet6 from any to ${net_server_host_server}" \
+		"pass in  on ${epair_tester}b inet6 from any to ${net_server_host_server} route-to <nonexistent>" \
 		"pass out on ${epair_server}a"
 
-	# pf_map_addr_sn() won't be able to pick a target address, because
+	# pf_map_addr() won't be able to pick a target address, because
 	# the table used in redireciton pool is empty. Packet will not be
-	# forwarded, error counter will be increased.
+	# forwarded, the state is not created and OpenBSD counts the packet
+	# as "no-route".
 	ping_server_check_reply exit:1
-	# Ignore warnings about not-loaded ALTQ
-	atf_check -o "match:map-failed +1 +" -x "jexec router pfctl -qvvsi 2> /dev/null"
+	# Ignore warnings
+	atf_check -o "match:no-route +1 +" -x "jexec router pfctl -qvvsi 2> /dev/null"
 }
 
 empty_pool_cleanup()
@@ -1048,25 +1052,21 @@ table_loop_body()
 
 	jexec router pfctl -e
 	pft_set_rules router \
-		"set debug loud" \
+		"set debug debug" \
 		"set reassemble yes" \
 		"set state-policy if-bound" \
-		"table <rt_targets_1> { ${net_server1_6}::42:4/127 ${net_server1_6}::42:0/127 }" \
-		"table <rt_targets_2> { ${net_server2_6}::42:4/127 }" \
+		"table <rt_targets> { ${net_server1_6}::42:4/127 ${net_server1_6}::42:0/127 ${net_server2_6}::42:4/127 }" \
 		"pass in on ${epair_tester}b \
-			route-to { \
-			(${epair_server1}a <rt_targets_1>) \
-			(${epair_server2}a <rt_targets_2_empty>) \
-			(${epair_server2}a <rt_targets_2>) \
-			} \
 		inet6 proto tcp \
+		route-to <rt_targets> round-robin \
 		keep state"
 
-	# Both hosts of the pool are tables. Each table gets iterated over once,
-	# then the pool iterates to the next host, which is also iterated,
-	# then the pool loops back to the 1st host. If an empty table is found,
-	# it is skipped. Unless that's the only table, that is tested by
-	# the "empty_pool" test.
+	# An OpenBSD route-to pool is a single address or table (no list of
+	# tables, no per-entry interface: the route to the chosen address
+	# picks the interface).  Each prefix of the table gets iterated over
+	# once, in address order, then the pool iterates to the next prefix,
+	# which is also iterated, then the pool loops back to the 1st prefix.
+	# An empty pool is tested by the "empty_pool" test.
 	for port in $(seq 1 7); do
 	port=$((4200 + port))
 		atf_check -s exit:0 ${common_dir}/pft_ping.py \
@@ -1080,13 +1080,13 @@ table_loop_body()
 	cat $states
 
 	for state_regexp in \
-		"${epair_tester}b tcp ${host_server_6}\[9\] <- ${net_clients_6}::1\[4201\] .* route-to: ${net_server1_6}::42:0@${epair_server1}a" \
-		"${epair_tester}b tcp ${host_server_6}\[9\] <- ${net_clients_6}::1\[4202\] .* route-to: ${net_server1_6}::42:1@${epair_server1}a" \
-		"${epair_tester}b tcp ${host_server_6}\[9\] <- ${net_clients_6}::1\[4203\] .* route-to: ${net_server1_6}::42:4@${epair_server1}a" \
-		"${epair_tester}b tcp ${host_server_6}\[9\] <- ${net_clients_6}::1\[4204\] .* route-to: ${net_server1_6}::42:5@${epair_server1}a" \
-		"${epair_tester}b tcp ${host_server_6}\[9\] <- ${net_clients_6}::1\[4205\] .* route-to: ${net_server2_6}::42:4@${epair_server2}a" \
-		"${epair_tester}b tcp ${host_server_6}\[9\] <- ${net_clients_6}::1\[4206\] .* route-to: ${net_server2_6}::42:5@${epair_server2}a" \
-		"${epair_tester}b tcp ${host_server_6}\[9\] <- ${net_clients_6}::1\[4207\] .* route-to: ${net_server1_6}::42:0@${epair_server1}a" \
+		"${epair_tester}b tcp ${host_server_6}\[9\] \{${net_server1_6}::42:0\} <- ${net_clients_6}::1\[4201\] " \
+		"${epair_tester}b tcp ${host_server_6}\[9\] \{${net_server1_6}::42:1\} <- ${net_clients_6}::1\[4202\] " \
+		"${epair_tester}b tcp ${host_server_6}\[9\] \{${net_server1_6}::42:4\} <- ${net_clients_6}::1\[4203\] " \
+		"${epair_tester}b tcp ${host_server_6}\[9\] \{${net_server1_6}::42:5\} <- ${net_clients_6}::1\[4204\] " \
+		"${epair_tester}b tcp ${host_server_6}\[9\] \{${net_server2_6}::42:4\} <- ${net_clients_6}::1\[4205\] " \
+		"${epair_tester}b tcp ${host_server_6}\[9\] \{${net_server2_6}::42:5\} <- ${net_clients_6}::1\[4206\] " \
+		"${epair_tester}b tcp ${host_server_6}\[9\] \{${net_server1_6}::42:0\} <- ${net_clients_6}::1\[4207\] " \
 	; do
 		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
 	done
@@ -1111,26 +1111,21 @@ roundrobin_body()
 {
 	pf_map_addr_common
 
-	# The rule is defined as "inet6 proto tcp" so directly given IPv4 hosts
-	# will be removed from the pool by pfctl. Tables will still be loaded
-	# and pf_map_addr() will only use IPv6 addresses from them. It will
-	# iterate over members of the pool and inside of tables and prefixes.
+	# OpenBSD route-to pools are a single address or table, so the
+	# hosts, prefixes and tables of the pool are one table here; it
+	# keeps the IPv4 entries, and the rule being "inet6 proto tcp",
+	# pf_map_addr() will only use IPv6 addresses from it. It will
+	# iterate over the table, in address order, and inside of prefixes.
 
 	jexec router pfctl -e
 	pft_set_rules router \
-		"set debug loud" \
+		"set debug debug" \
 		"set reassemble yes" \
 		"set state-policy if-bound" \
-		"table <rt_targets> { ${net_server2_4}.40/31 ${net_server2_4}.44 ${net_server2_6}::42:0/127 ${net_server2_6}::42:4 }" \
+		"table <rt_targets> { ${net_server1_4_host_server} ${net_server2_4}.40/31 ${net_server2_4}.44 ${net_server1_6}::42:0/127 ${net_server2_6}::42:0/127 ${net_server2_6}::42:4 }" \
 		"pass in on ${epair_tester}b \
-			route-to { \
-				(${epair_server1}a ${net_server1_4_host_server}) \
-				(${epair_server2}a <rt_targets_empty>) \
-				(${epair_server1}a ${net_server1_6}::42:0/127) \
-				(${epair_server2}a <rt_targets_empty>) \
-				(${epair_server2}a <rt_targets>) \
-			} \
 			inet6 proto tcp \
+			route-to <rt_targets> round-robin \
 			keep state"
 
 	for port in $(seq 1 6); do
@@ -1145,12 +1140,12 @@ roundrobin_body()
 	jexec router pfctl -qvvss | normalize_pfctl_s > $states
 
 	for state_regexp in \
-		"${epair_tester}b tcp ${host_server_6}\[9\] <- ${net_clients_6}::1\[4201\] .* route-to: ${net_server1_6}::42:0@${epair_server1}a" \
-		"${epair_tester}b tcp ${host_server_6}\[9\] <- ${net_clients_6}::1\[4202\] .* route-to: ${net_server1_6}::42:1@${epair_server1}a" \
-		"${epair_tester}b tcp ${host_server_6}\[9\] <- ${net_clients_6}::1\[4203\] .* route-to: ${net_server2_6}::42:0@${epair_server2}a" \
-		"${epair_tester}b tcp ${host_server_6}\[9\] <- ${net_clients_6}::1\[4204\] .* route-to: ${net_server2_6}::42:1@${epair_server2}a" \
-		"${epair_tester}b tcp ${host_server_6}\[9\] <- ${net_clients_6}::1\[4205\] .* route-to: ${net_server2_6}::42:4@${epair_server2}a" \
-		"${epair_tester}b tcp ${host_server_6}\[9\] <- ${net_clients_6}::1\[4206\] .* route-to: ${net_server1_6}::42:0@${epair_server1}a" \
+		"${epair_tester}b tcp ${host_server_6}\[9\] \{${net_server1_6}::42:0\} <- ${net_clients_6}::1\[4201\] " \
+		"${epair_tester}b tcp ${host_server_6}\[9\] \{${net_server1_6}::42:1\} <- ${net_clients_6}::1\[4202\] " \
+		"${epair_tester}b tcp ${host_server_6}\[9\] \{${net_server2_6}::42:0\} <- ${net_clients_6}::1\[4203\] " \
+		"${epair_tester}b tcp ${host_server_6}\[9\] \{${net_server2_6}::42:1\} <- ${net_clients_6}::1\[4204\] " \
+		"${epair_tester}b tcp ${host_server_6}\[9\] \{${net_server2_6}::42:4\} <- ${net_clients_6}::1\[4205\] " \
+		"${epair_tester}b tcp ${host_server_6}\[9\] \{${net_server1_6}::42:0\} <- ${net_clients_6}::1\[4206\] " \
 	; do
 		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
 	done
@@ -1180,13 +1175,13 @@ random_table_body()
 
 	jexec router pfctl -e
 	pft_set_rules router \
-		"set debug loud" \
+		"set debug debug" \
 		"set reassemble yes" \
 		"set state-policy if-bound" \
 		"table <rt_targets> { ${net_server2_4}.40/31 ${net_server2_4}.44 ${net_server2_6}::42:0/127 ${net_server2_6}::42:4 }" \
 		"pass in on ${epair_tester}b \
-			route-to <rt_targets> random \
 			inet6 proto tcp \
+			route-to <rt_targets> random \
 			keep state"
 
 	good_targets="${net_server2_6}::42:0 ${net_server2_6}::42:4"
@@ -1219,12 +1214,12 @@ random_prefix_body()
 
 	jexec router pfctl -e
 	pft_set_rules router \
-		"set debug loud" \
+		"set debug debug" \
 		"set reassemble yes" \
 		"set state-policy if-bound" \
 		"pass in on ${epair_tester}b \
-			route-to ${net_server2_6}::42:0/127 random \
 			inet6 proto tcp \
+			route-to ${net_server2_6}::42:0/127 random \
 			keep state"
 
 	good_targets="${net_server2_6}::42:0 ${net_server2_6}::42:1"
@@ -1255,7 +1250,7 @@ bcast_directed_forwarded_body()
 	# so the router's own broadcasts are *not* affected.
 	rt_leak_install_rules \
 		"block out quick on ${epair_wan}a inet from any to (${epair_wan}a:broadcast) received-on any" \
-		"pass in on ${epair_lan}b route-to 198.51.100.2 inet proto udp from any to any keep state"
+		"pass in on ${epair_lan}b inet proto udp from any to any route-to 198.51.100.2 keep state"
 
 	rt_leak_send client 198.51.100.255
 
@@ -1289,7 +1284,7 @@ bcast_limited_forwarded_body()
 	# so the router's own broadcasts are *not* affected.
 	rt_leak_install_rules \
 		"block out quick on ${epair_wan}a inet from any to 255.255.255.255 received-on any" \
-		"pass in on ${epair_lan}b route-to 198.51.100.2 inet proto udp from any to any keep state"
+		"pass in on ${epair_lan}b inet proto udp from any to any route-to 198.51.100.2 keep state"
 
 	rt_leak_send client 255.255.255.255
 
@@ -1321,7 +1316,7 @@ bcast_directed_local_body()
 	rt_leak_install_rules \
 		"block out quick on ${epair_wan}a inet from any to (${epair_wan}a:broadcast) received-on any" \
 		"block out quick on ${epair_wan}a inet from any to 255.255.255.255 received-on any" \
-		"pass in on ${epair_lan}b route-to 198.51.100.2 inet proto udp from any to any keep state"
+		"pass in on ${epair_lan}b inet proto udp from any to any route-to 198.51.100.2 keep state"
 
 	# Router emits a directed broadcast on its own wan subnet.
 	rt_leak_send router 198.51.100.255
@@ -1354,7 +1349,7 @@ bcast_limited_local_body()
 	rt_leak_install_rules \
 		"block out quick on ${epair_wan}a inet from any to (${epair_wan}a:broadcast) received-on any" \
 		"block out quick on ${epair_wan}a inet from any to 255.255.255.255 received-on any" \
-		"pass in on ${epair_lan}b route-to 198.51.100.2 inet proto udp from any to any keep state"
+		"pass in on ${epair_lan}b inet proto udp from any to any route-to 198.51.100.2 keep state"
 
 	# Router emits a limited broadcast on its own wan subnet.
 	rt_leak_send router 255.255.255.255
@@ -1388,7 +1383,7 @@ mcast_v4_forwarded_body()
 	# multicast is *not* affected.
 	rt_leak_install_rules \
 		"block out quick on ${epair_wan}a inet from any to 224.0.0.0/4 received-on any" \
-		"pass in on ${epair_lan}b route-to 198.51.100.2 inet proto udp from any to any keep state"
+		"pass in on ${epair_lan}b inet proto udp from any to any route-to 198.51.100.2 keep state"
 
 	rt_leak_send client 224.0.0.1
 
@@ -1421,7 +1416,7 @@ mcast_v6_forwarded_body()
 	# multicast is *not* affected.
 	rt_leak_install_rules \
 		"block out quick on ${epair_wan}a inet6 from any to ff00::/8 received-on any" \
-		"pass in on ${epair_lan}b route-to 2001:db8:2::2 inet6 proto udp from any to any keep state"
+		"pass in on ${epair_lan}b inet6 proto udp from any to any route-to 2001:db8:2::2 keep state"
 
 	rt_leak_send client ff0e::1
 
@@ -1452,7 +1447,7 @@ mcast_v4_local_body()
 	# router-originated broadcasts to pass normally.
 	rt_leak_install_rules \
 		"block out quick on ${epair_wan}a inet from any to 224.0.0.0/4 received-on any" \
-		"pass in on ${epair_lan}b route-to 198.51.100.2 inet proto udp from any to any keep state"
+		"pass in on ${epair_lan}b inet proto udp from any to any route-to 198.51.100.2 keep state"
 
 	# Router emits an IPv4 multicast datagram from its own stack.
 	rt_leak_send router 224.0.0.1
@@ -1484,7 +1479,7 @@ mcast_v6_local_body()
 	# router-originated broadcasts to pass normally.
 	rt_leak_install_rules \
 		"block out quick on ${epair_wan}a inet6 from any to ff00::/8 received-on any" \
-		"pass in on ${epair_lan}b route-to 2001:db8:2::2 inet6 proto udp from any to any keep state"
+		"pass in on ${epair_lan}b inet6 proto udp from any to any route-to 2001:db8:2::2 keep state"
 
 	# Router emits an IPv6 multicast datagram from its own stack.
 	rt_leak_send router ff0e::1
@@ -1556,9 +1551,9 @@ divert_to_body()
 	jexec firewall pfctl -e
 	pft_set_rules firewall \
 	    "pass in quick on ${epair_cl}b \
-	        route-to 10.3.3.2 \
 	        inet proto tcp from 10.1.1.0/24 to 10.4.4.2 port 8080 \
-	        keep state divert-to 8000" \
+	        route-to 10.3.3.2 \
+	        keep state divert-packet port 8000" \
 	    "pass in all" \
 	    "pass out all"
 

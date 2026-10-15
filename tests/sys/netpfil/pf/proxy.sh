@@ -65,11 +65,9 @@ ftp_body()
 	jexec fwd pfctl -e
 	pft_set_rules fwd \
 		"match out on ${epair_link}a inet from 192.0.2.0/24 to any nat-to (${epair_link}a)" \
-		"nat-anchor \"ftp-proxy/*\"" \
-		"rdr-anchor \"ftp-proxy/*\"" \
-		"pass in on ${epair_client}b proto tcp from 192.0.2.0/24 to any port 21 rdr-to 127.0.0.1 port 8021" \
 		"anchor \"ftp-proxy/*\"" \
-		"pass out proto tcp from 127.0.0.1 to any port 21"
+		"pass in quick on ${epair_client}b proto tcp from 192.0.2.0/24 to any port 21 divert-to 127.0.0.1 port 8021" \
+		"pass out inet proto tcp from (self) to any port 21"
 	jexec fwd /usr/sbin/ftp-proxy
 
 	# Create a dummy file to download
@@ -120,17 +118,16 @@ tftp_body()
 	jexec srv /usr/sbin/inetd -p ${PWD}/inetd-srv.pid \
 	    $(atf_get_srcdir)/tftpd_inetd.conf
 
-	jexec fwd /usr/sbin/inetd -p ${PWD}/inetd-fwd.pid \
-	    $(atf_get_srcdir)/tftpd_proxy_inetd.conf
+	# OpenBSD's tftp-proxy is a daemon listening on localhost port 6969,
+	# not an inetd service.
+	jexec fwd /usr/libexec/tftp-proxy
 
 	jexec fwd pfctl -e
 	pft_set_rules fwd \
 		"match out on ${epair_link}a inet from 192.0.2.0/24 to any nat-to (${epair_link}a)" \
-		"nat-anchor \"tftp-proxy/*\"" \
-		"rdr-anchor \"tftp-proxy/*\"" \
-		"pass in on ${epair_client}b proto udp from 192.0.2.0/24 to any port 69 rdr-to 127.0.0.1 port 69" \
 		"anchor \"tftp-proxy/*\"" \
-		"pass out proto udp from 127.0.0.1 to any port 69"
+		"pass in quick on ${epair_client}b inet proto udp from 192.0.2.0/24 to any port 69 divert-to 127.0.0.1 port 6969" \
+		"pass out quick on ${epair_link}a inet proto udp from 192.0.2.0/24 to any port 69 group proxy divert-reply"
 
 	# Create a dummy file to download
 	echo 'foo' > /tmp/remote.txt

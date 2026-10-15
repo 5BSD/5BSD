@@ -44,13 +44,11 @@ class TestNAT66(VnetTestTemplate):
     }
 
     def vnet2_handler(self, vnet):
-        outifname = vnet.iface_alias_map["if2"].name
-
         ToolsHelper.print_output("/sbin/pfctl -e")
         ToolsHelper.pf_rules([
             "set reassemble yes",
-            "match inet6 from 2001:db8::/64 to 2001:db8:1::/64 binat-to 2001:db8:42::/64",
-            "match inet6 from 2001:db8:1::/64 to 2001:db8:42::/64 binat-to 2001:db8::/64",
+            "match inet6 from 2001:db8::/64 to 2001:db8:1::/64 binat-to 2001:db8:42::/64 bitmask",
+            "match inet6 from 2001:db8:1::/64 to 2001:db8:42::/64 binat-to 2001:db8::/64 bitmask",
             "pass inet6 proto icmp6",
             "pass in inet6 from 2001:db8::3 to 2001:db8:1::/64 route-to 2001:db8:1::2"])
 

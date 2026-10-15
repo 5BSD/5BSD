@@ -33,7 +33,7 @@ from atf_python.sys.net.tools import ToolsHelper
 from atf_python.sys.net.vnet import VnetTestTemplate
 
 class TestNAT64(VnetTestTemplate):
-    # pflog and pfsync are part of pf.ko (no modules of their own).
+    # 5BSD: pflog and pfsync are part of the pf module.
     REQUIRED_MODULES = [ "pf" ]
     TOPOLOGY = {
         "vnet1": {"ifaces": ["if1"]},
@@ -102,7 +102,7 @@ class TestNAT64(VnetTestTemplate):
             "pass in on %s inet6 af-to inet from 192.0.2.1" % ifname,
         ])
 
-        # pfsync is a cloner and pfsync0 is not precreated.
+        # 5BSD pfsync is a cloner; there is no pfsync0 until it is created.
         ToolsHelper.print_output("/sbin/ifconfig pfsync0 create")
         vnet.pipe.send(socket.if_nametoindex("pfsync0"))
 
