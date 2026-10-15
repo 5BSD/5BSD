@@ -37,7 +37,10 @@ if a.normal_boot:
             errors.append('missing or duplicate marker: ' + marker)
 if a.followup_only and s.count('COMMON_TEST_RESULT 0') != 1:
     errors.append('missing or duplicate marker: COMMON_TEST_RESULT 0')
-if not re.search(r"kldload: can't load ipfw: No such file or directory", s):
+# kldload ipfw fails either because the module is gone or because the
+# capability plane denies late loads; the guest checks both and the absence
+# of ipfw.ko, then prints PF_IPFW_ABSENT.
+if s.count('PF_IPFW_ABSENT') != 1:
     errors.append('missing IPFW load rejection')
 if re.search(r'^panic:|UNEXPECTED_IPFW_|Fatal trap', s, re.M):
     errors.append('kernel or IPFW isolation failure')
