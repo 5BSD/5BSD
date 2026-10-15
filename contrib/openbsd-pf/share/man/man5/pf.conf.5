@@ -593,8 +593,16 @@ This rule only applies to packets of sockets in the specified
 given by name or jail ID; 0 is the host.
 Like
 .Cm user ,
-it applies to TCP and UDP only, accepts lists and never matches packets
-that are only forwarded.
+it applies to TCP and UDP only and accepts lists.
+Packets that are only forwarded have no socket:
+.Cm jail
+.Ar X
+never matches them, while
+.Cm jail
+!=
+.Ar X
+does, as with
+.Cm user .
 Jail IDs also take ranges and the operators of
 .Cm port ;
 jail names take
