@@ -74,6 +74,7 @@ BOOK_OPERATIONS=	${BOOKSRC}/operations/boot-knobs.md \
 		${BOOKSRC}/operations/building.md \
 		${BOOKSRC}/operations/graphics.md \
 		${BOOKSRC}/operations/installing.md \
+		${BOOKSRC}/operations/network-provenance.md \
 		${BOOKSRC}/operations/observability.md \
 		${BOOKSRC}/operations/pf.md \
 		${BOOKSRC}/operations/rdomains.md \
