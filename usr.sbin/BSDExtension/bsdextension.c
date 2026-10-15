@@ -189,6 +189,7 @@ valid_module_name(const char *name)
  *   pty/fdescfs/linprocfs/linsysfs:               Linux terminals and filesystems.
  *   drm/i915kms/amdgpu/radeonkms:                 installed graphics drivers.
  *   cpuctl/coretemp/amdsmn/amdtemp:                hwstat CPU telemetry.
+ *   dummynet   rc.d/dummynet:                    pf dnpipe/dnqueue shaping.
  *
  * Deliberately narrow — every entry corresponds to a concrete on-demand
  * consumer.  Do not broaden without a matching consumer.
@@ -200,7 +201,7 @@ sysext_config_defaults(struct sysext_config *cfg)
 		"cryptodev", "vhid", "zfs", "linux64", "vmm",
 		"pty", "fdescfs", "linprocfs", "linsysfs",
 		"drm", "i915kms", "amdgpu", "radeonkms",
-		"cpuctl", "coretemp", "amdsmn", "amdtemp"
+		"cpuctl", "coretemp", "amdsmn", "amdtemp", "dummynet"
 	};
 	size_t i;
 

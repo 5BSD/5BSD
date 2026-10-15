@@ -74,6 +74,7 @@ ATF_TC_BODY(allowlisted_module_is_permitted, tc)
 	ATF_CHECK(extension_allowed(&cfg, "coretemp"));
 	ATF_CHECK(extension_allowed(&cfg, "amdsmn"));
 	ATF_CHECK(extension_allowed(&cfg, "amdtemp"));
+	ATF_CHECK(extension_allowed(&cfg, "dummynet"));
 }
 
 /*

@@ -35,4 +35,5 @@ allowed_extensions = [
     "coretemp",    # hwstat: Intel temperature
     "amdsmn",      # amdtemp: AMD System Management Network
     "amdtemp",     # hwstat: AMD temperature
+    "dummynet",    # rc.d/dummynet: pf dnpipe/dnqueue traffic shaping
 ]
