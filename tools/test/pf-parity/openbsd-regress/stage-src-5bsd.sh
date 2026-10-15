@@ -18,6 +18,9 @@ $S '[ -f /root/pf-parity-disposable ]' || { echo "not a disposable guest" >&2; e
 # Refresh mtimes so generated parser/object files cannot outlive staged inputs.
 tar -C "$src/contrib/openbsd-pf" -cf - regress sbin sys share usr.sbin etc |
     $S 'mkdir -p /usr/src && tar -m -C /usr/src -xf -'
-tar -C "$src/sys/netpfil/openbsd-pf/user" -cf - openbsd_compat.h util.h sys pfctl_jail.c |
+tar -C "$src/sys/netpfil/openbsd-pf/user" -cf - openbsd_compat.h util.h sys \
+    pfctl_jail.c pfctl_ether.c |
     $S "rm -rf $C && mkdir -p $C && tar -m -C $C -xf - &&
-	cc -c -O2 -fPIE -o $C/pfctl_jail.o $C/pfctl_jail.c && echo STAGED"
+	cc -c -O2 -fPIE -o $C/pfctl_jail.o $C/pfctl_jail.c &&
+	cc -c -O2 -fPIE -I$C -I/usr/src/sbin/pfctl -include $C/openbsd_compat.h \
+	    -o $C/pfctl_ether.o $C/pfctl_ether.c && echo STAGED"

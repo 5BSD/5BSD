@@ -77,7 +77,8 @@ def suites(dut_os):
         'CFLAGS': '-Wall -Wmissing-prototypes -Wstrict-prototypes '
                   '-Wno-unused-variable -I/usr/src/sbin/pfctl -DREGRESS_NOMAIN '
                   '-I' + PFCOMPAT + ' -include ' + PFCOMPAT + '/openbsd_compat.h',
-        'LDADD': '-lm -lmd -ljail ' + PFCOMPAT + '/pfctl_jail.o'}
+        'LDADD': '-lm -lmd -ljail ' + PFCOMPAT + '/pfctl_jail.o ' +
+                 PFCOMPAT + '/pfctl_ether.o'}
     ifin, ifout = ('vio1', 'vio2') if dut_os == 'openbsd' else ('vtnet1', 'vtnet2')
     pf_ssh = 'root@' + DUT_ADDR
     four = {'SRC_IF': 'vio1', 'PF_IFIN': ifin, 'PF_IFOUT': ifout,
