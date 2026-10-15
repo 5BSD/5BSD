@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Helpers for the 5BSD PF seam tests (tests/sys/netpfil/integration).
+# They build on the FreeBSD VNET helpers (tests/sys/common/vnet.subr) and the
+# pf test helpers (tests/sys/netpfil/pf/utils.subr).
+
+. $(atf_get_srcdir)/../pf/utils.subr
+
+# integ_require_prog prog...: skip unless every program is installed.
+integ_require_prog()
+{
+	for _p in "$@"; do
+		command -v "${_p}" >/dev/null 2>&1 ||
+		    atf_skip "${_p} is not installed"
+	done
+}
+
+# integ_has_cloner name: true if ifconfig -C lists the interface cloner.
+integ_has_cloner()
+{
+	ifconfig -C | tr ' ' '\n' | grep -qx "$1"
+}
+
+# integ_mkroot name: create an empty directory to serve as a jail root with
+# its own devfs mount (jails made by vnet_mkjail share the host's /dev).
+integ_mkroot()
+{
+	_root=${PWD}/root.$1
+	mkdir -p ${_root}/dev
+	echo ${_root}
+}
+
+# integ_mkjail_devfs name ruleset [jail params...]: create a persistent jail
+# rooted at an empty directory with devfs mounted under the given devfs
+# ruleset.  Recorded in created_jails.lst so pft_cleanup removes it (jail -r
+# also unmounts the devfs mount).
+integ_mkjail_devfs()
+{
+	_name=$1
+	_ruleset=$2
+	shift 2
+	_root=$(integ_mkroot ${_name})
+	jail -c name=${_name} path=${_root} persist mount.devfs \
+	    devfs_ruleset=${_ruleset} "$@" ||
+	    atf_fail "cannot create jail ${_name} (devfs ruleset ${_ruleset})"
+	echo ${_name} >> created_jails.lst
+	echo ${_root}
+}
+
+# integ_pf_rules jail rule...: flush and load the given rules into the pf of
+# a VNET jail, failing the test if pfctl rejects them.
+integ_pf_rules()
+{
+	pft_set_rules "$@"
+}
+
+# integ_cleanup: pft_cleanup plus the devfs mounts of integ_mkjail_devfs
+# jails (jail -r by name does not know about the mount.devfs pseudo-param).
+integ_cleanup()
+{
+	pft_cleanup
+	for _d in ${PWD}/root.*/dev; do
+		[ -d "${_d}" ] || continue
+		umount -f "${_d}" 2>/dev/null
+	done
+	return 0
+}
