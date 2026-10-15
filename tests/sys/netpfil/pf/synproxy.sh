@@ -55,8 +55,7 @@ synproxy_body()
 	jexec singsing /usr/sbin/inetd -p ${PWD}/inetd-singsing.pid $(atf_get_srcdir)/echo_inetd.conf
 
 	jexec alcatraz pfctl -e
-	pft_set_rules alcatraz "set fail-policy return" \
-		"scrub in all fragment reassemble" \
+	pft_set_rules alcatraz "set reassemble yes" \
 		"pass out quick on ${epair}b all no state allow-opts" \
 		"pass in quick on ${epair}b proto tcp from any to any port 7 synproxy state" \
 		"pass in quick on ${epair}b all no state"
@@ -97,8 +96,7 @@ local_body()
 		$(atf_get_srcdir)/echo_inetd.conf
 
 	jexec alcatraz pfctl -e
-	pft_set_rules alcatraz "set fail-policy return" \
-		"scrub in all fragment reassemble" \
+	pft_set_rules alcatraz "set reassemble yes" \
 		"pass in quick on ${epair}b proto tcp from any to any port 7 synproxy state"
 
 	# Sanity check
@@ -137,8 +135,7 @@ local_v6_body()
 		$(atf_get_srcdir)/echo_inetd.conf
 
 	jexec alcatraz pfctl -e
-	pft_set_rules alcatraz "set fail-policy return" \
-		"scrub in all fragment reassemble" \
+	pft_set_rules alcatraz "set reassemble yes" \
 		"pass in quick on ${epair}b proto tcp from any to any port 7 synproxy state"
 
 	# Sanity check
