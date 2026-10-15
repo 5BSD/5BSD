@@ -20,8 +20,11 @@
 #include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/wait.h>
+#include <sys/socket.h>
 
 #include <dev/hid/vhid.h>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <net/pfvar.h>
 
 #include <ctype.h>
@@ -1085,8 +1088,8 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
 			VHID_CREATE, VHID_ATTACH, VHID_DESTROY,
 		};
 		static const unsigned long pf_ioctls[] = {
-			/* The compat ABI is guarded in pfvar.h for userland. */
-			_IOWR('D', 93, struct pfioc_states_v2),
+			/* pf(4) state export (read-only) */
+			DIOCGETSTATES,
 		};
 		const unsigned long *ioctls;
 		size_t nioctls;

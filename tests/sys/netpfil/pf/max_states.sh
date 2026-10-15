@@ -27,6 +27,7 @@
 . $(atf_get_srcdir)/utils.subr
 
 
+atf_test_case "max_states" "cleanup"
 max_states_head()
 {
 	atf_set descr 'Max states per rule'

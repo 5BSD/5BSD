@@ -119,7 +119,7 @@ ttl_exceeded_body()
 
 	jexec nat pfctl -e
 	pft_set_rules nat \
-	    "nat on ${epair_int}b from 2001:db8:3::/64 -> (${epair_int}b:0)" \
+	    "match out on ${epair_int}b from 2001:db8:3::/64 nat-to (${epair_int}b:0)" \
 	    "block" \
 	    "pass inet6 proto udp" \
 	    "pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv, echoreq }"
@@ -174,9 +174,9 @@ repeat_body()
 	jexec alcatraz pfctl -e
 	pft_set_rules alcatraz \
 		"block all" \
-		"pass quick inet6 proto ipv6-icmp all icmp6-type neighbrsol keep state (if-bound) ridentifier 1000000107"
+		"pass quick inet6 proto ipv6-icmp all icmp6-type neighbrsol keep state (if-bound)"
 
-	jexec alcatraz pfctl -x loud
+	jexec alcatraz pfctl -x debug
 	  ndisc6 -m -n -r 1 2001:db8::1 ${epair}a
 	jexec alcatraz pfctl -ss -vv
 

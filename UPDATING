@@ -80,6 +80,46 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	pf's "on rdomain N", "rtable N" and its state keys use the routing
 	domain.
 
+	The FreeBSD pf implementation is retired; OpenBSD PF (pf.ko, or
+	"device pf" in a kernel configuration) is the only pf.  pflog(4),
+	pflow(4) and pfsync(4) are part of it: remove "device pflog",
+	"device pfsync" and "options PF_DEFAULT_TO_DROP" from custom kernel
+	configurations, and pflog_load/pfsync_load/pflow_load from
+	loader.conf.  pf's netlink families, libpfctl and pflowctl(8) are gone;
+	configure pflow(4) with ifconfig(8) (flowsrc, flowdst, pflowproto).
+
+	<net/pfvar.h>, <net/if_pflog.h>, <net/if_pfsync.h> and
+	<net/if_pflow.h> are OpenBSD's: programs that use /dev/pf speak the
+	OpenBSD ioctl ABI (DIOCGETRULES needs DIOCXEND, DIOCGETSTATES returns
+	struct pfsync_state, ...).  <netpfil/pf/*.h> and <net/pflow.h> are no
+	longer installed.  In base, bsnmpd's snmp_pf, BSDNetwork/BSDFilesystem
+	("system.Network.PF" now passes DIOCGETSTATES), netstat -s -p pfsync and
+	-p pflow (OpenBSD counters, no per-action histogram), truss/kdump and
+	the rescue pfctl were converted.  snmp_pf's pfAltq objects describe
+	pf.conf "queue" definitions.
+
+	tcpdump(8) is OpenBSD's (manual in section 8): its output, options and
+	filter syntax follow OpenBSD, including the pflog(4) and pfsync(4)
+	printers.  FreeBSD tcpdump's long options (--immediate-mode, ...), -U,
+	-Q, -G, -W and -z are not available, and some letters mean something
+	else: -B is OpenBSD's filter drop setting (not the buffer size), -D
+	selects a direction (not the interface list) and -I prints the
+	interface name (not monitor mode).  Live captures are delivered as
+	packets arrive.  pcap and pcapng files are read through libpcap.  The
+	FreeBSD tcpdump remains available from ports (net/tcpdump).
+
+	ifconfig(8) prints interfaces in OpenBSD's format: no "metric 0" in the
+	header line; "lladdr" instead of "ether" for Ethernet addresses; an
+	"index" line; interface specific status, groups, media and link status
+	before the addresses; enabled capabilities ("options="), nd6 options,
+	fib and MAC label last.  Scripts that parse "ether" must look for
+	"lladdr" ("ifconfig IF ether" still selects the link-level address).
+	A missing interface is reported as "IF: no such interface".
+	"ifconfig IF -inet6" disables IPv6 on an interface and removes its IPv6
+	addresses, as on OpenBSD.  The flags in the status line are OpenBSD's
+	IFF_ and IFXF_ bits and names (STATICARP, MONITOR, LRO); 5BSD-only
+	flags such as PPROMISC, STICKYARP, DYING and LOWER_UP are not shown.
+
 20261012:
 	pf is OpenBSD's packet filter (pf/parity).  New and changed interfaces:
 

@@ -329,7 +329,7 @@ nat_natonly_body()
 		"set state-policy if-bound" \
 		"table <tbl_src_nat> { ${net_tester_host_tester} }" \
 		"table <tbl_dst_nat> { ${net_server_host_server} }" \
-		"nat on ${epair_server}a inet6 proto tcp from <tbl_src_nat> to <tbl_dst_nat> -> ${net_server_host_router}"
+		"match out on ${epair_server}a inet6 proto tcp from <tbl_src_nat> to <tbl_dst_nat> nat-to ${net_server_host_router}"
 
 	# Use a real TCP connection so that it will be properly closed, guaranteeing the amount of packets.
 	atf_check -s exit:0 -o match:"This is a test" -x \
@@ -338,7 +338,7 @@ nat_natonly_body()
 	get_counters
 
 	for rule_regexp in \
-		"@0 nat on ${epair_server}a .* Packets: 10 Bytes: 766 States: 1 " \
+		"@0 match out on ${epair_server}a .* Packets: 10 Bytes: 766 States: 1 " \
 	; do
 		grep -qE "${rule_regexp}" $rules || atf_fail "Rule regexp not found for '${rule_regexp}'"
 	done
@@ -391,7 +391,7 @@ nat_nat_body()
 		"table <tbl_dst_match> { ${net_server_host_server} }" \
 		"table <tbl_src_pass> { ${net_server_host_router} }" \
 		"table <tbl_dst_pass> { ${net_server_host_server} }" \
-		"nat on ${epair_server}a inet6 proto tcp from <tbl_src_nat> to <tbl_dst_nat> -> ${net_server_host_router}" \
+		"match out on ${epair_server}a inet6 proto tcp from <tbl_src_nat> to <tbl_dst_nat> nat-to ${net_server_host_router}" \
 		"block" \
 		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
 		"pass  in  on ${epair_tester}b inet6 proto tcp keep state" \
@@ -405,7 +405,7 @@ nat_nat_body()
 	get_counters
 
 	for rule_regexp in \
-		"@0 nat on ${epair_server}a .* Packets: 10 Bytes: 766 States: 1 " \
+		"@0 match out on ${epair_server}a .* Packets: 10 Bytes: 766 States: 1 " \
 		"@4 match out on ${epair_server}a .* Packets: 10 Bytes: 766 States: 1 " \
 		"@5 pass out on ${epair_server}a .* Packets: 10 Bytes: 766 States: 1 " \
 	; do

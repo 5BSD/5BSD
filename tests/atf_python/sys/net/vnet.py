@@ -62,7 +62,7 @@ class VnetInterface(object):
             self.iftype = self.IFT_LOOP
         else:
             self.iftype = self.IFT_ETHER
-            self.ether = ToolsHelper.get_output("/sbin/ifconfig %s ether | awk '/ether/ { print $2; }'" % iface_name).rstrip()
+            self.ether = ToolsHelper.get_output("/sbin/ifconfig %s ether | awk '/lladdr/ { print $2; }'" % iface_name).rstrip()
 
     @property
     def ifindex(self):

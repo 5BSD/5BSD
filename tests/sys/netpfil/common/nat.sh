@@ -71,7 +71,7 @@ basic_body()
 
 	firewall_config nat ${firewall} \
 		"pf" \
-			"nat pass on ${epair_host_nat}b inet from any to any -> (${epair_host_nat}b)"
+			"pass out on ${epair_host_nat}b inet from any to any nat-to (${epair_host_nat}b)"
 
 
 	# ping is successful now

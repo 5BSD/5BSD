@@ -271,18 +271,6 @@
       "tier": "vendor-source"
     },
     {
-      "path": "usr.sbin/tcpdump/print-pflog.c",
-      "git_blob": "d8c0b824334caee1f0f8b9a775f6a0998f7fef6c",
-      "local": "usr.sbin/tcpdump/print-pflog.c",
-      "tier": "vendor-source"
-    },
-    {
-      "path": "usr.sbin/tcpdump/print-pfsync.c",
-      "git_blob": "3eb1e4f06124b2c897debd7598a89509b06bf1f6",
-      "local": "usr.sbin/tcpdump/print-pfsync.c",
-      "tier": "vendor-source"
-    },
-    {
       "path": "sys/net/hfsc.h",
       "git_blob": "1c70a672965a7c3ad3e4199735d7fd320c854cb6",
       "local": "sys/net/hfsc.h",
@@ -370,6 +358,83 @@
       "path": "share/man/man5/pf.os.5",
       "git_blob": "aaf432cb3eccc7007b883e138e1a1a0483163019",
       "local": "share/man/man5/pf.os.5"
+    },
+    {
+      "path": "usr.sbin/tcpdump",
+      "git_tree": "d61a3691371f1ded58fead03940a9c8ccfa33598",
+      "local": "usr.sbin/tcpdump",
+      "tier": "vendor-source",
+      "note": "base tcpdump(8), built by usr.sbin/tcpdump/tcpdump"
+    },
+    {
+      "path": "sys/net/ofp.h",
+      "git_blob": "2349127215c8eb31166d024c4761dc4b508e868c",
+      "local": "sys/net/ofp.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/net/ethertypes.h",
+      "git_blob": "c69fc0f6b6bb9928ad2ef9173d700fe612f27245",
+      "local": "sys/net/ethertypes.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/net/if_enc.h",
+      "git_blob": "26fea18354d4d765e354f679cc569ffafbeb24e4",
+      "local": "sys/net/if_enc.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/netinet/ip_ipsp.h",
+      "git_blob": "bb9f57db8308d75f208aabedc02c61d88d251e8c",
+      "local": "sys/netinet/ip_ipsp.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/netinet/ip_ether.h",
+      "git_blob": "5e5e3ae2c3a8471897e5b9f0cbfc40e62a5dda14",
+      "local": "sys/netinet/ip_ether.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/netmpls/mpls.h",
+      "git_blob": "906e83df3d445aeadce3fe70618d3597c56b6eff",
+      "local": "sys/netmpls/mpls.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/dev/usb/usbpcap.h",
+      "git_blob": "c29361d973d20b8f80fb746c2795b59de61b29ef",
+      "local": "sys/dev/usb/usbpcap.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/net80211/ieee80211.h",
+      "git_blob": "71fded46c04ef6d17d08b0b616cfcf0508f3fe76",
+      "local": "sys/net80211/ieee80211.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/net80211/ieee80211_radiotap.h",
+      "git_blob": "a6b90a0a6a0d53d7f3316bab9bc2ce77a5ffeb8d",
+      "local": "sys/net80211/ieee80211_radiotap.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "usr.sbin/hostapd/iapp.h",
+      "git_blob": "b144c2aba7b8dcbccc07adbfaec4802dc49c26b2",
+      "local": "usr.sbin/hostapd/iapp.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
     }
   ],
   "verification": "git -C <openbsd-src> diff --stat <commit> -- <path> must be empty against the local copy; tree hashes are git tree object IDs at the pinned commit.",

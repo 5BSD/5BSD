@@ -91,8 +91,12 @@ vlan_status(if_ctx *ctx)
 		default:
 			printf("0x%04x", vreq.vlr_proto);
 	}
-	if (ioctl_ctx_ifr(ctx, SIOCGVLANPCP, &ifr) != -1)
-		printf(" vlanpcp: %u", ifr.ifr_vlan_pcp);
+	if (ioctl_ctx_ifr(ctx, SIOCGVLANPCP, &ifr) != -1) {
+		if (ifr.ifr_vlan_pcp == IFNET_PCP_NONE)
+			printf(" vlanpcp: auto");
+		else
+			printf(" vlanpcp: %u", ifr.ifr_vlan_pcp);
+	}
 	printf(" parent interface: %s", vreq.vlr_parent[0] == '\0' ?
 	    "<none>" : vreq.vlr_parent);
 	printf("\n");
@@ -264,11 +268,15 @@ setvlanpcp(if_ctx *ctx, const char *val, int dummy __unused)
 	char *endp;
 	struct ifreq ifr = {};
 
-	ul = strtoul(val, &endp, 0);
-	if (*endp != '\0')
-		errx(1, "invalid value for vlanpcp");
-	if (ul > 7)
-		errx(1, "value for vlanpcp out of range");
+	if (strcmp(val, "auto") == 0)
+		ul = IFNET_PCP_NONE;
+	else {
+		ul = strtoul(val, &endp, 0);
+		if (*endp != '\0')
+			errx(1, "invalid value for vlanpcp");
+		if (ul > 7)
+			errx(1, "value for vlanpcp out of range");
+	}
 	ifr.ifr_vlan_pcp = ul;
 	if (ioctl_ctx_ifr(ctx, SIOCSVLANPCP, &ifr) == -1)
 		err(1, "SIOCSVLANPCP");

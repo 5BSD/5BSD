@@ -30,6 +30,7 @@
 #include <sys/socket.h>
 
 #include <net/if.h>
+#include <netinet/in.h>
 #include <net/pfvar.h>
 
 #include <errno.h>
@@ -859,7 +860,6 @@ ATF_TC_BODY(tag, tc)
 	memset(&rule, 0x42, sizeof(rule));
 
 	rule.ticket = 0;
-	rule.pool_ticket = 0;
 	rule.anchor[0] = 0;
 
 	rule.rule.return_icmp = 0;
@@ -897,7 +897,6 @@ ATF_TC_BODY(rpool_mtx, tc)
 	memset(&rule, 0, sizeof(rule));
 
 	rule.ticket = 0;
-	rule.pool_ticket = 0;
 	rule.anchor[0] = 0;
 
 	rule.rule.return_icmp = 0;
@@ -934,7 +933,7 @@ ATF_TC_BODY(rpool_mtx2, tc)
 
 	memset(&rule, 0, sizeof(rule));
 
-	rule.pool_ticket = 1000000;
+	rule.ticket = 1000000;
 	rule.action = PF_CHANGE_ADD_HEAD;
 	rule.rule.af = AF_INET;
 
@@ -985,7 +984,7 @@ ATF_TC_WITH_CLEANUP(addstate);
 ATF_TC_HEAD(addstate, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "require.kmods", "pfsync");
+	atf_tc_set_md_var(tc, "require.kmods", "pf");
 }
 
 ATF_TC_BODY(addstate, tc)

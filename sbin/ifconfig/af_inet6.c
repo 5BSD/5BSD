@@ -698,6 +698,47 @@ in6_set_vhid(int vhid)
 #endif
 }
 
+/*
+ * OpenBSD "-inet6": disable IPv6 on the interface and remove all of its
+ * IPv6 addresses, including the link-local ones.  On 5BSD this sets the
+ * ifdisabled and clears the auto_linklocal nd6 flags; "inet6 -ifdisabled
+ * auto_linklocal" enables IPv6 again.
+ */
+static void
+setinet6disable(if_ctx *ctx, const char *dummy __unused, int d __unused)
+{
+	struct in6_ndireq nd = {};
+	struct in6_ifreq ifr6;
+	struct ifaddrs *ifap, *ifa;
+	int s;
+
+	if ((s = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+		err(1, "socket(AF_INET6)");
+	strlcpy(nd.ifname, ctx->ifname, sizeof(nd.ifname));
+	if (ioctl(s, SIOCGIFINFO_IN6, &nd) == -1)
+		err(1, "ioctl(SIOCGIFINFO_IN6)");
+	nd.ndi.flags |= ND6_IFF_IFDISABLED;
+	nd.ndi.flags &= ~ND6_IFF_AUTO_LINKLOCAL;
+	if (ioctl(s, SIOCSIFINFO_IN6, &nd) == -1)
+		err(1, "ioctl(SIOCSIFINFO_IN6)");
+
+	if (getifaddrs(&ifap) != 0)
+		err(1, "getifaddrs");
+	for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
+		if (ifa->ifa_addr == NULL ||
+		    ifa->ifa_addr->sa_family != AF_INET6 ||
+		    strcmp(ifa->ifa_name, ctx->ifname) != 0)
+			continue;
+		memset(&ifr6, 0, sizeof(ifr6));
+		strlcpy(ifr6.ifr_name, ctx->ifname, sizeof(ifr6.ifr_name));
+		memcpy(&ifr6.ifr_addr, ifa->ifa_addr, sizeof(ifr6.ifr_addr));
+		if (ioctl(s, SIOCDIFADDR_IN6, &ifr6) == -1)
+			warn("SIOCDIFADDR_IN6");
+	}
+	freeifaddrs(ifap);
+	close(s);
+}
+
 static struct cmd inet6_cmds[] = {
 	DEF_CMD_ARG("prefixlen",			setifprefixlen),
 	DEF_CMD("anycast",	IN6_IFF_ANYCAST,	setip6flags),
@@ -730,6 +771,7 @@ static struct cmd inet6_cmds[] = {
 	DEF_CMD("eui64",	0,			setip6eui64),
 	DEF_CMD("stableaddr",	ND6_IFF_STABLEADDR,	setnd6flags),
 	DEF_CMD("-stableaddr",	-ND6_IFF_STABLEADDR,	setnd6flags),
+	DEF_CMD("-inet6",	0,			setinet6disable),
 };
 
 static struct afswtch af_inet6 = {

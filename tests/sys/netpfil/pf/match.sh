@@ -134,7 +134,7 @@ allow_opts_body()
 	jexec alcatraz ifconfig ${epair}a 192.0.2.1/24 up
 
 	jexec alcatraz pfctl -e
-	jexec alcatraz pfctl -x loud
+	jexec alcatraz pfctl -x debug
 	pft_set_rules alcatraz \
 	    "match proto icmp allow-opts" \
 	    "pass"
@@ -209,7 +209,7 @@ double_match_body()
 
 	jexec rtr pfctl -e
 	pft_set_rules rtr \
-		"nat on ${epair_two}a from 192.0.2.0/24 to any -> (${epair_two}a)" \
+		"match out on ${epair_two}a from 192.0.2.0/24 to any nat-to (${epair_two}a)" \
 		"block all" \
 		"anchor \"userrules\" all {\n \
 		anchor \"one\" all { \n\

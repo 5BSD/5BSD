@@ -88,7 +88,7 @@ static void
 print_lladdr(struct sockaddr_dl *sdl)
 {
 	if (match_ether(sdl)) {
-		print_ether((struct ether_addr *)LLADDR(sdl), "ether");
+		print_ether((struct ether_addr *)LLADDR(sdl), "lladdr");
 	} else {
 		int n = sdl->sdl_nlen > 0 ? sdl->sdl_nlen + 1 : 0;
 		printf("\tlladdr %s\n", link_ntoa(sdl) + n);

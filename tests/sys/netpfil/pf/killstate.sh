@@ -397,7 +397,7 @@ gateway_body()
 	jexec alcatraz pfctl -e
 
 	pft_set_rules alcatraz "block all" \
-		"pass in reply-to (${epair}b 192.0.2.1) proto icmp" \
+		"pass in reply-to 192.0.2.1 proto icmp" \
 		"set skip on lo"
 
 	# Sanity check & establish state
@@ -477,7 +477,7 @@ match_body()
 	route add 198.51.100.0/24 192.0.2.2
 
 	pft_set_rules alcatraz \
-		"nat on ${epair_two}a from 192.0.2.0/24 -> (${epair_two}a)" \
+		"match out on ${epair_two}a from 192.0.2.0/24 nat-to (${epair_two}a)" \
 		"pass all"
 
 	nc 198.51.100.2 7 &
@@ -721,7 +721,7 @@ nat_body()
 
 	jexec ${j}r pfctl -e
 	pft_set_rules ${j}r \
-		"nat on ${epair_srv}b inet from 192.0.2.0/24 to any -> (${epair_srv}b)"
+		"match out on ${epair_srv}b inet from 192.0.2.0/24 to any nat-to (${epair_srv}b)"
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore \

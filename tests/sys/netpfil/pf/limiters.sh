@@ -26,6 +26,21 @@
 
 . $(atf_get_srcdir)/utils.subr
 
+# A failed show command or missing counter must not become a passing test.
+limiter_counter_nonzero()
+{
+	atf_check -s exit:0 -o save:limiter.stats -e empty \
+	    jexec "$1" pfctl -s "$2"
+	value=$(awk -v id="$3" -v name="$4" '
+	    NR == 1 { for (i = 1; i <= NF; i++) if ($i == name) col = i; next }
+	    $1 == id && col { print $col }
+	' limiter.stats)
+	case "$value" in
+	''|*[!0-9]*) atf_fail "Missing or invalid $4 counter for limiter $3" ;;
+	esac
+	[ "$value" -gt 0 ] || atf_fail "$4 counter not incremented for limiter $3"
+}
+
 atf_test_case "state_basic" "cleanup"
 state_basic_head()
 {
@@ -63,11 +78,7 @@ state_basic_body()
 	atf_check -s exit:2 -o ignore \
 	    ping -c 2 192.0.2.1
 
-	jexec alcatraz pfctl -sLimiterStates
-	hardlim=$(jexec alcatraz pfctl -sLimiterStates | awk 'NR>1 { print $5; }')
-	if [ $hardlim -eq 0 ]; then
-		atf_fail "Hard limit not incremented"
-	fi
+	limiter_counter_nonzero alcatraz Stlimiters 1 HARDLIM
 }
 
 state_basic_cleanup()
@@ -112,11 +123,7 @@ state_rate_body()
 	atf_check -s exit:2 -o ignore \
 	    ping -c 2 192.0.2.1
 
-	jexec alcatraz pfctl -sLimiterStates
-	ratelim=$(jexec alcatraz pfctl -sLimiterStates | awk 'NR>1 { print $6; }')
-	if [ $ratelim -eq 0 ]; then
-		atf_fail "Rate limit not incremented"
-	fi
+	limiter_counter_nonzero alcatraz Stlimiters 1 RATELIM
 
 	sleep 6
 
@@ -223,11 +230,7 @@ state_multiple_body()
 	atf_check -s exit:2 -o ignore \
 	    ping -c 2 192.0.2.1
 
-	jexec alcatraz pfctl -sLimiterStates
-	hardlim=$(jexec alcatraz pfctl -sLimiterStates | awk 'NR>1 { print $5; }')
-	if [ $hardlim -eq 0 ]; then
-		atf_fail "Hard limit not incremented"
-	fi
+	limiter_counter_nonzero alcatraz Stlimiters 1 HARDLIM
 }
 
 state_multiple_cleanup()
@@ -276,11 +279,7 @@ source_basic_body()
 	atf_check -s exit:2 -o ignore \
 	    ping -S 192.0.2.2 -c 2 192.0.2.1
 
-	jexec alcatraz pfctl -sLimiterSrcs
-	hardlim=$(jexec alcatraz pfctl -sLimiterSrcs | awk 'NR>1 { print $5; }')
-	if [ $hardlim -eq 0 ]; then
-		atf_fail "Hard limit not incremented"
-	fi
+	limiter_counter_nonzero alcatraz Srclimiters 1 HARDLIM
 
 	# However, a different source will succeed
 	atf_check -s exit:0 -o ignore \
@@ -288,10 +287,10 @@ source_basic_body()
 
 	atf_check -o match:"192.0.2.2/32 .*hardlim 2 ratelim 0" \
 	    -e ignore \
-	    jexec alcatraz pfctl -sLimiterSrcs -v
+	    jexec alcatraz pfctl -sSrclimiters -v
 	atf_check -o match:"192.0.2.3/32 .*hardlim 0 ratelim 0" \
 	    -e ignore \
-	    jexec alcatraz pfctl -sLimiterSrcs -v
+	    jexec alcatraz pfctl -sSrclimiters -v
 
 	# Kill the source entry
 	atf_check -s exit:0 -e ignore \
@@ -333,7 +332,8 @@ out_body()
 
 	jexec alcatraz pfctl -e
 
-	# Allow up to one source for ICMP.
+	# Exercise admission on an outbound request.  ICMP reply packets do
+	# not create state unless sloppy state tracking is explicitly selected.
 	pft_set_rules alcatraz \
 	    "set timeout icmp.error 120" \
 	    "source limiter \"crash\" id 1 entries 10000 limit 1000" \
@@ -341,8 +341,9 @@ out_body()
 	    "pass out from any to any source limiter \"crash\" keep state"
 
 	atf_check -s exit:0 -o ignore \
-	    ping -S 192.0.2.2 -c 2 192.0.2.1
+	    jexec alcatraz ping -c 2 192.0.2.2
 
+	limiter_counter_nonzero alcatraz Srclimiters 1 ADMIT
 	jexec alcatraz pfctl -Fs
 }
 
@@ -354,7 +355,7 @@ out_cleanup()
 atf_test_case "show_aliases" "cleanup"
 show_aliases_head()
 {
-	atf_set descr 'OpenBSD limiter show names preserve native output and old abbreviations'
+	atf_set descr 'OpenBSD limiter names work and obsolete or ambiguous names fail'
 	atf_set require.user root
 }
 show_aliases_body()
@@ -365,14 +366,15 @@ show_aliases_body()
 	    'state limiter "state-test" id 1 limit 5' \
 	    'source limiter "source-test" id 2 entries 128 limit 3' \
 	    'pass'
-	atf_check -s exit:0 -o save:states -e ignore jexec alcatraz pfctl -s LimiterStates
-	atf_check -s exit:0 -o file:states -e ignore jexec alcatraz pfctl -s Stlimiters
-	atf_check -s exit:0 -o save:sources -e ignore jexec alcatraz pfctl -s LimiterSrcs
-	atf_check -s exit:0 -o file:sources -e ignore jexec alcatraz pfctl -s Srclimiters
+	atf_check -s exit:0 -o save:states -e empty jexec alcatraz pfctl -s Stlimiters
+	atf_check -s exit:0 -o save:sources -e empty jexec alcatraz pfctl -s Srclimiters
 	atf_check -s exit:0 -o match:"1[[:space:]]+0/5" cat states
 	atf_check -s exit:0 -o match:"^[[:space:]]*2[[:space:]]+0/128[[:space:]]+3[[:space:]]" cat sources
-	atf_check -s exit:0 -o save:old_sources -e ignore jexec alcatraz pfctl -s Sources
-	atf_check -s exit:0 -o file:old_sources -e ignore jexec alcatraz pfctl -s S
+	atf_check -s exit:0 -o empty -e empty jexec alcatraz pfctl -s Sources
+	for name in LimiterStates LimiterSrcs S; do
+		atf_check -s exit:1 -o ignore -e ignore \
+		    jexec alcatraz pfctl -s "$name"
+	done
 }
 show_aliases_cleanup()
 {
@@ -447,6 +449,9 @@ source_capacity_test()
 	# must evaluate the limiter again rather than reuse that state.
 	atf_check -s exit:0 -o ignore -e ignore \
 	    jexec alcatraz pfctl -k ${prefix}4
+	# A different routing domain must not delete this domain's entry.
+	atf_check -s exit:1 -e match:"not found" \
+	    jexec alcatraz pfctl -V 1 -I 1 -k source -k ${prefix}3
 	# Releasing a source entry restores capacity for the third source.
 	atf_check -s exit:0 -e ignore \
 	    jexec alcatraz pfctl -I 1 -k source -k ${prefix}3

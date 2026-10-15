@@ -35,11 +35,15 @@ loop, mpath, snmpd).
   sbin/pfctl                            OpenBSD pfctl (vendor source for the
                                          PF convergence; wired in by
                                          sbin/pfctl/Makefile when adopted)
-  usr.sbin/authpf, usr.sbin/ftp-proxy, usr.sbin/tftp-proxy, sbin/pflogd,
-  usr.sbin/tcpdump/print-pf{log,sync}.c  OpenBSD PF userland (vendor source)
+  usr.sbin/authpf, usr.sbin/ftp-proxy, usr.sbin/tftp-proxy, sbin/pflogd
+                                         OpenBSD PF userland (vendor source)
+  usr.sbin/tcpdump                      OpenBSD tcpdump (the base tcpdump(8))
+  sys/net/{ofp,ethertypes,if_enc}.h, sys/netinet/{ip_ipsp,ip_ether}.h,
+  sys/netmpls/mpls.h, sys/dev/usb/usbpcap.h, sys/net80211/ieee80211{,
+  _radiotap}.h, usr.sbin/hostapd/iapp.h  headers tcpdump uses (tcpdump only)
   sys/net/pf*.[ch], if_pflog.[ch], if_pflow.[ch], if_pfsync.[ch]
-                                         OpenBSD kernel PF (vendor reference
-                                         for merges into sys/netpfil/pf)
+                                         OpenBSD kernel PF (pf.ko and
+                                         "device pf")
 
 Not present upstream at this revision: regress for pfsync, queues,
 syncookies, authpf, pflogd, ftp-proxy/tftp-proxy.
@@ -89,6 +93,10 @@ to a re-import.
                  rule copy and checksum (pf_ioctl.c); pfctl parse.y grammar,
                  pfctl_parser.c printing, pfctl_optimize.c field table
   pfvar.h        REASON_SET fires the pf::reason:set DTrace probe
+                 userland (!_KERNEL): sys/param.h before sys/syslimits.h;
+                 PF_DIVERT #undef, RTLABEL_LEN and union sockaddr_union
+                 (from other OpenBSD headers) so it is the installed
+                 <net/pfvar.h>
   pfvar_priv.h   state-list lock is a sleepable lock (struct sx)
   pf.c           receive interface from m_pkthdr.rcvif (no ph_ifidx);
                  flow id through M_HASHTYPE; DTrace probe hooks;
@@ -114,8 +122,11 @@ helper as SRC/RT/ECO, DUT = OpenBSD reference or 5BSD).
 
 OpenBSD-derived PF code: whole files adopted for parity are imported here
 with provenance and wired in from their native build directories.  Code
-merged into FreeBSD-derived sys/netpfil/pf or sbin/pfctl files is recorded
-below (OpenBSD file, revision, local destination) and in the commit message.
+merged into 5BSD files (ifconfig, headers) is recorded below (OpenBSD file,
+revision, local destination) and in the commit message.  FreeBSD's
+sys/netpfil/pf, libpfctl and pf netlink families are retired
+(sys/netpfil/pf keeps only pf.h, pf_altq.h and pf_mtag.h, which the
+kernel ALTQ disciplines still include).
 
 Adopted OpenBSD code (pf/parity), all from facc8d7ec5d1:
   sys/net pf*.c, if_pflog, if_pflow, if_pfsync, hfsc, fq_codel, radix (for
@@ -128,6 +139,12 @@ Adopted OpenBSD code (pf/parity), all from facc8d7ec5d1:
                             additions: pf.conf.5 jail and queueing status, pf.4 VNET,
                             divert.4
   usr.sbin/authpf, ftp-proxy, tftp-proxy -> same programs
+  usr.sbin/tcpdump      -> /usr/sbin/tcpdump (glue: usr.sbin/tcpdump/tcpdump:
+                            openbsd_compat.h, include/, privsep_5bsd.c)
+  sys/net/pfvar.h, if_pflog.h, if_pfsync.h, if_pflow.h, hfsc.h, fq_codel.h
+                         -> /usr/include/net (include/Makefile); with
+                            sys/netpfil/openbsd-pf/user/sys/{refcnt,timeout}.h
+                            -> /usr/include/sys
   sbin/ifconfig/ifconfig.c pfsync/pflow functions -> sbin/ifconfig/ifpf.c
   sys/sys/mbuf.h struct pkthdr_pf and PF_TAG_* -> 5BSD sys/sys/mbuf.h
   sys/sys/sockio.h SIOC[SG]IFPARENT, SIOC[GS]ETPF{SYNC,LOW} numbers and

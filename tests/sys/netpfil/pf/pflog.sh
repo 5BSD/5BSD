@@ -56,9 +56,9 @@ malformed_body()
 
 	# Not required, but the 'pf: dropping packet with ip options' kernel log can
 	# help when debugging the test.
-	jexec cl pfctl -x loud
+	jexec cl pfctl -x debug
 
-	jexec cl tcpdump -n -e -ttt --immediate-mode -l -U -i pflog0 >> pflog.txt &
+	jexec cl tcpdump -n -e -ttt -l -i pflog0 >> pflog.txt &
 	sleep 1 # Wait for tcpdump to start
 
 	# Sanity check
@@ -71,7 +71,7 @@ malformed_body()
 	    --send-nop \
 	    --recvif ${epair}b
 
-	atf_check -o match:".*rule 0/8\(ip-option\): block in on ${epair}a: 192.0.2.1 > 192.0.2.2: ICMP echo request.*" \
+	atf_check -o match:".*rule 0/\(ip-option\) block in on ${epair}a: 192.0.2.1 > 192.0.2.2: icmp: echo request.*" \
 	    cat pflog.txt
 }
 
@@ -109,7 +109,7 @@ matches_body()
 		"match log(matches) inet from 192.0.2.2" \
 		"pass"
 
-	jexec alcatraz tcpdump -n -e -ttt --immediate-mode -l -U -i pflog0 >> ${PWD}/pflog.txt &
+	jexec alcatraz tcpdump -n -e -ttt -l -i pflog0 >> ${PWD}/pflog.txt &
 	sleep 1 # Wait for tcpdump to start
 
 	atf_check -s exit:0 -o ignore \
@@ -122,9 +122,9 @@ matches_body()
 	echo "Log"
 	cat ${PWD}/pflog.txt
 
-	atf_check -o match:".*rule 0/0\(match\): match in on ${epair}a: 192.0.2.2 > 192.0.2.1: ICMP echo request.*" \
+	atf_check -o match:".*rule 0/\(match\) match in on ${epair}a: 192.0.2.2 > 192.0.2.1: icmp: echo request.*" \
 	    cat pflog.txt
-	atf_check -o match:".*rule 1/0\(match\): match in on ${epair}a: 192.0.2.2 > 192.0.2.1: ICMP echo request.*" \
+	atf_check -o match:".*rule 1/\(match\) match in on ${epair}a: 192.0.2.2 > 192.0.2.1: icmp: echo request.*" \
 	    cat pflog.txt
 }
 
@@ -164,8 +164,8 @@ matches_logif_body()
 		"match log inet from 192.0.2.2" \
 		"pass log(to pflog0)"
 
-	jexec alcatraz tcpdump -n -e -ttt --immediate-mode -l -U -i pflog1 >> ${PWD}/pflog1.txt &
-	jexec alcatraz tcpdump -n -e -ttt --immediate-mode -l -U -i pflog0 >> ${PWD}/pflog0.txt &
+	jexec alcatraz tcpdump -n -e -ttt -l -i pflog1 >> ${PWD}/pflog1.txt &
+	jexec alcatraz tcpdump -n -e -ttt -l -i pflog0 >> ${PWD}/pflog0.txt &
 	sleep 1 # Wait for tcpdump to start
 
 	atf_check -s exit:0 -o ignore \
@@ -180,9 +180,9 @@ matches_logif_body()
 	echo "Log 1"
 	cat ${PWD}/pflog1.txt
 
-	atf_check -o match:".*rule 0/0\(match\): match in on ${epair}a: 192.0.2.2 > 192.0.2.1: ICMP echo request.*" \
+	atf_check -o match:".*rule 0/\(match\) match in on ${epair}a: 192.0.2.2 > 192.0.2.1: icmp: echo request.*" \
 	    cat pflog1.txt
-	atf_check -o match:".*rule 1/0\(match\): match in on ${epair}a: 192.0.2.2 > 192.0.2.1: ICMP echo request.*" \
+	atf_check -o match:".*rule 1/\(match\) match in on ${epair}a: 192.0.2.2 > 192.0.2.1: icmp: echo request.*" \
 	    cat pflog1.txt
 }
 
@@ -219,7 +219,7 @@ state_max_body()
 	jexec alcatraz ifconfig pflog0 up
 	pft_set_rules alcatraz "pass log inet keep state (max 1)"
 
-	jexec alcatraz tcpdump -n -e -ttt --immediate-mode -l -U -i pflog0 >> ${PWD}/pflog.txt &
+	jexec alcatraz tcpdump -n -e -ttt -l -i pflog0 >> ${PWD}/pflog.txt &
 	sleep 1 # Wait for tcpdump to start
 
 	atf_check -s exit:0 -o ignore \
@@ -236,11 +236,11 @@ state_max_body()
 	cat ${PWD}/pflog.txt
 
 	# First ping passes.
-	atf_check -o match:".*rule 0/0\(match\): pass in on ${epair}a: 192.0.2.2 > 192.0.2.1: ICMP echo request.*" \
+	atf_check -o match:".*rule 0/\(match\) pass in on ${epair}a: 192.0.2.2 > 192.0.2.1: icmp: echo request.*" \
 	    cat pflog.txt
 
 	# Second ping is blocked due to the state limit.
-	atf_check -o match:".*rule 0/12\(state-limit\): block in on ${epair}a: 192.0.2.2 > 192.0.2.1: ICMP echo request.*" \
+	atf_check -o match:".*rule 0/\(state-limit\) block in on ${epair}a: 192.0.2.2 > 192.0.2.1: icmp: echo request.*" \
 	    cat pflog.txt
 
 	# At most three lines should be written: one for the first ping, and
@@ -286,13 +286,13 @@ unspecified_v4_body()
 	jexec alcatraz ifconfig pflog0 up
 	pft_set_rules alcatraz "block log on lo0 to 0.0.0.0"
 
-	jexec alcatraz tcpdump -n -e -ttt --immediate-mode -l -U -i pflog0 >> pflog.txt &
+	jexec alcatraz tcpdump -n -e -ttt -l -i pflog0 >> pflog.txt &
 	sleep 1 # Wait for tcpdump to start
 
 	atf_check -s not-exit:0 -o ignore -e ignore \
 	    jexec alcatraz ping -S 127.0.0.1 -c 1 0.0.0.0
 
-	atf_check -o match:".*: block out on lo0: 127.0.0.1 > 0.0.0.0: ICMP echo request,.*" \
+	atf_check -o match:".*: block out on lo0: 127.0.0.1 > 0.0.0.0: icmp: echo request.*" \
 	    cat pflog.txt
 }
 
@@ -320,14 +320,14 @@ unspecified_v6_body()
 	jexec alcatraz ifconfig pflog0 up
 	pft_set_rules alcatraz "block log on lo0 to ::0"
 
-	jexec alcatraz tcpdump -n -e -ttt --immediate-mode -l -U -i pflog0 >> pflog.txt &
+	jexec alcatraz tcpdump -n -e -ttt -l -i pflog0 >> pflog.txt &
 	sleep 1 # Wait for tcpdump to start
 
 	atf_check -s not-exit:0 -o ignore -e ignore \
 	    jexec alcatraz ping -6 -S ::1 -c 1 ::0
 
 	cat pflog.txt
-	atf_check -o match:".*: block out on lo0: ::1 > ::: ICMP6, echo request,.*" \
+	atf_check -o match:".*: block out on lo0: ::1 > ::: icmp6: echo request.*" \
 	    cat pflog.txt
 }
 
@@ -375,7 +375,7 @@ rdr_action_body()
 		"block quick inet6" \
 		"pass in log"
 
-	jexec ${j}gw tcpdump -n -e -ttt --immediate-mode -l -U -i pflog0 >> ${PWD}/pflog.txt &
+	jexec ${j}gw tcpdump -n -e -ttt -l -i pflog0 >> ${PWD}/pflog.txt &
 	sleep 1 # Wait for tcpdump to start
 
 	# send a SYN to catch in the log
@@ -385,11 +385,11 @@ rdr_action_body()
 	cat ${PWD}/pflog.txt
 
 	# log line generated for rdr hit (pre-NAT)
-	atf_check -o match:".*.*rule 0/0\(match\): rdr in on ${epair_srv}b: 198.51.100.1.[0-9]* > 198.51.100.2.1234: Flags \[S\].*" \
+	atf_check -o match:".*.*rule 0/\(match\) rdr in on ${epair_srv}b: 198.51.100.1.[0-9]* > 198.51.100.2.1234: S .*" \
 	    cat pflog.txt
 
 	# log line generated for pass hit (post-NAT)
-	atf_check -o match:".*.*rule 1/0\(match\): pass in on ${epair_srv}b: 198.51.100.1.[0-9]* > 192.0.2.2.1234: Flags \[S\].*" \
+	atf_check -o match:".*.*rule 1/\(match\) pass in on ${epair_srv}b: 198.51.100.1.[0-9]* > 192.0.2.2.1234: S .*" \
 	    cat pflog.txt
 
 	# only two log lines shall be written
@@ -430,7 +430,7 @@ rule_number_body()
 		}" \
 		"pass log from 192.0.2.4"
 
-	jexec alcatraz tcpdump -n -e -ttt --immediate-mode -l -U -i pflog0 >> pflog.txt &
+	jexec alcatraz tcpdump -n -e -ttt -l -i pflog0 >> pflog.txt &
 	sleep 1 # Wait for tcpdump to start
 
 	atf_check -s exit:0 -o ignore \
@@ -446,11 +446,11 @@ rule_number_body()
 	sleep 1
 	cat pflog.txt
 
-	atf_check -o match:"rule 0/0\(match\): pass in.*: 192.0.2.2.*ICMP echo request" \
+	atf_check -o match:"rule 0/\(match\) pass in.*: 192.0.2.2.*icmp: echo request" \
 	    cat pflog.txt
-	atf_check -o match:"rule 1.foo.0/0\(match\): pass in.*: 192.0.2.3.*: ICMP echo request" \
+	atf_check -o match:"rule 1.foo.0/\(match\) pass in.*: 192.0.2.3.*: icmp: echo request" \
 	    cat pflog.txt
-	atf_check -o match:"rule 2/0\(match\): pass in.*: 192.0.2.4.*: ICMP echo request" \
+	atf_check -o match:"rule 2/\(match\) pass in.*: 192.0.2.4.*: icmp: echo request" \
 	    cat pflog.txt
 }
 

@@ -45,7 +45,7 @@
 #include <arpa/inet.h>
 #ifdef PF
 #include <net/pfvar.h>
-#include <net/pflow.h>
+#include <net/if_pflow.h>
 #include <net/if_pfsync.h>
 #endif
 
@@ -70,64 +70,6 @@
 static void sidewaysintpr(void);
 
 #ifdef PF
-static const char* pfsyncacts[] = {
-	/* PFSYNC_ACT_CLR */		"clear all request",
-	/* PFSYNC_ACT_INS_1301 */	"13.1 state insert",
-	/* PFSYNC_ACT_INS_ACK */	"state inserted ack",
-	/* PFSYNC_ACT_UPD_1301 */	"13.1 state update",
-	/* PFSYNC_ACT_UPD_C */		"compressed state update",
-	/* PFSYNC_ACT_UPD_REQ */	"uncompressed state request",
-	/* PFSYNC_ACT_DEL */		"state delete",
-	/* PFSYNC_ACT_DEL_C */		"compressed state delete",
-	/* PFSYNC_ACT_INS_F */		"fragment insert",
-	/* PFSYNC_ACT_DEL_F */		"fragment delete",
-	/* PFSYNC_ACT_BUS */		"bulk update mark",
-	/* PFSYNC_ACT_TDB */		"TDB replay counter update",
-	/* PFSYNC_ACT_EOF */		"end of frame mark",
-	/* PFSYNC_ACT_INS_1400 */	"14.0 state insert",
-	/* PFSYNC_ACT_UPD_1400 */	"14.0 state update",
-	/* PFSYNC_ACT_INS_1500 */	"state insert",
-	/* PFSYNC_ACT_UPD_1500 */	"state update",
-};
-
-static const char* pfsyncacts_name[] = {
-	/* PFSYNC_ACT_CLR */		"clear-all-request",
-	/* PFSYNC_ACT_INS_1301 */	"state-insert-1301",
-	/* PFSYNC_ACT_INS_ACK */	"state-inserted-ack",
-	/* PFSYNC_ACT_UPD_1301 */	"state-update-1301",
-	/* PFSYNC_ACT_UPD_C */		"compressed-state-update",
-	/* PFSYNC_ACT_UPD_REQ */	"uncompressed-state-request",
-	/* PFSYNC_ACT_DEL */		"state-delete",
-	/* PFSYNC_ACT_DEL_C */		"compressed-state-delete",
-	/* PFSYNC_ACT_INS_F */		"fragment-insert",
-	/* PFSYNC_ACT_DEL_F */		"fragment-delete",
-	/* PFSYNC_ACT_BUS */		"bulk-update-mark",
-	/* PFSYNC_ACT_TDB */		"TDB-replay-counter-update",
-	/* PFSYNC_ACT_EOF */		"end-of-frame-mark",
-	/* PFSYNC_ACT_INS_1400 */	"state-insert-1400",
-	/* PFSYNC_ACT_UPD_1400 */	"state-update-1400",
-	/* PFSYNC_ACT_INS_1500 */	"state-insert",
-	/* PFSYNC_ACT_UPD_1500 */	"state-update",
-};
-
-static void
-pfsync_acts_stats(const char *list, const char *desc, uint64_t *a)
-{
-	int i;
-
-	xo_open_list(list);
-	for (i = 0; i < PFSYNC_ACT_MAX; i++, a++) {
-		if (*a || sflag <= 1) {
-			xo_open_instance(list);
-			xo_emit("\t\t{e:name}{:count/%ju} {N:/%s%s %s}\n",
-			    pfsyncacts_name[i], (uintmax_t)(*a),
-			    pfsyncacts[i], plural(*a), desc);
-			xo_close_instance(list);
-		}
-	}
-	xo_close_list(list);
-}
-
 /*
  * Dump pfsync statistics structure.
  */
@@ -150,8 +92,6 @@ pfsync_stats(u_long off, const char *name, int af1 __unused, int proto __unused)
 	    "{N:/packet%s received (IPv4)}\n");
 	p(pfsyncs_ipackets6, "\t{:received-inet6-packets/%ju} "
 	    "{N:/packet%s received (IPv6)}\n");
-	pfsync_acts_stats("input-histogram", "received",
-	    &pfsyncstat.pfsyncs_iacts[0]);
 	p(pfsyncs_badif, "\t\t{:dropped-bad-interface/%ju} "
 	    "{N:/packet%s discarded for bad interface}\n");
 	p(pfsyncs_badttl, "\t\t{:dropped-bad-ttl/%ju} "
@@ -176,8 +116,6 @@ pfsync_stats(u_long off, const char *name, int af1 __unused, int proto __unused)
 	    "{N:/packet%s sent (IPv4})\n");
 	p(pfsyncs_opackets6, "\t{:send-inet6-packets/%ju} "
 	    "{N:/packet%s sent (IPv6})\n");
-	pfsync_acts_stats("output-histogram", "sent",
-	    &pfsyncstat.pfsyncs_oacts[0]);
 	p(pfsyncs_onomem, "\t\t{:discarded-no-memory/%ju} "
 	    "{N:/failure%s due to mbuf memory error}\n");
 	p(pfsyncs_oerrors, "\t\t{:send-errors/%ju} "

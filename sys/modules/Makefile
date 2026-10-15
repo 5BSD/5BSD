@@ -571,11 +571,6 @@ _netgraph=	netgraph
 .if (${MK_PF} != "no" && (${MK_INET_SUPPORT} != "no" || \
 	${MK_INET6_SUPPORT} != "no")) || defined(ALL_MODULES)
 _pf=		pf
-_pflog=		pflog
-_pflow=		pflow
-.if ${MK_INET_SUPPORT} != "no"
-_pfsync=	pfsync
-.endif
 .endif
 
 .if ${MK_SOURCELESS_UCODE} != "no"

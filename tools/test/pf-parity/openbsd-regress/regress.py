@@ -27,6 +27,7 @@ GUEST_SRC = '/usr/src'          # upstream layout: /usr/src/regress/...
 DUT_ADDR = '10.188.210.50'
 SRC_ADDR = '10.188.210.10'
 P6 = 'fdd7:e83e:66bc'
+PFCOMPAT = '/usr/local/share/pf-parity/pfctl-compat'
 
 
 def mkvars(name, field):
@@ -68,6 +69,15 @@ SETUP_TARGETS = {'pf-include-setup', 'pf-loadanchors-setup'}
 
 
 def suites(dut_os):
+    # 5BSD plumbing for pf-changerule, which compiles OpenBSD's pfctl sources:
+    # the Makefile's own CFLAGS plus the userland compatibility header the
+    # base pfctl is built with (staged by stage-src-5bsd.sh), and libjail for
+    # the 5BSD "jail" rule option.
+    pfctl_vars = {} if dut_os == 'openbsd' else {
+        'CFLAGS': '-Wall -Wmissing-prototypes -Wstrict-prototypes '
+                  '-Wno-unused-variable -I/usr/src/sbin/pfctl -DREGRESS_NOMAIN '
+                  '-I' + PFCOMPAT + ' -include ' + PFCOMPAT + '/openbsd_compat.h',
+        'LDADD': '-lm -lmd -ljail ' + PFCOMPAT + '/pfctl_jail.o'}
     ifin, ifout = ('vio1', 'vio2') if dut_os == 'openbsd' else ('vtnet1', 'vtnet2')
     pf_ssh = 'root@' + DUT_ADDR
     four = {'SRC_IF': 'vio1', 'PF_IFIN': ifin, 'PF_IFOUT': ifout,
@@ -78,7 +88,8 @@ def suites(dut_os):
            'REMOTE_SSH': pf_ssh}
     sec = dict(two, LOCAL_MAC='fe:e1:ba:d1:0a:dc', REMOTE_MAC='52:54:00:12:34:50')
     return {
-        'pfctl': dict(host='dut', dir='regress/sbin/pfctl', targets=pfctl_targets(), timeout=28800),
+        'pfctl': dict(host='dut', dir='regress/sbin/pfctl', targets=pfctl_targets(), timeout=28800,
+                      vars=pfctl_vars),
         'pf_table': dict(host='dut', dir='regress/sys/net/pf_table'),
         'pf_trans': dict(host='dut', dir='regress/sys/net/pf_trans',
                          vars={'TIMEOUT': '60'}),  # max allowed; TCG guests fork slowly
