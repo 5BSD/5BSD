@@ -151,7 +151,8 @@ rt_leak_install_rules()
 # Packet count observed by the probe rule in the wan jail.
 rt_leak_probe_pkts()
 {
-	jexec wan pfctl -sl | awk '$1 == "rt_leak_probe" { print $3 }'
+	# Both probe rules carry the label; add up their packet counts.
+	jexec wan pfctl -sl | awk '$1 == "rt_leak_probe" { n += $3 } END { print n + 0 }'
 }
 
 # Send one UDP datagram from $1 (a jail name) to $2 (a destination address).
