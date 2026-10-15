@@ -104,6 +104,30 @@ interfaces belong to the vnet, and the
 .Nm
 device acts on the vnet of the process that opened it.
 Memory pool limits are shared; only the host may change them.
+.Pp
+A descriptor that has issued no other ioctl can be moved to the vnet of a
+jail with
+.Bl -tag -width xxxxxx
+.It Dv DIOCBINDJAIL Fa "int *jid"
+Bind the descriptor to the vnet of the jail
+.Fa jid ,
+which must be a living descendant of both the jail that opened
+.Pa /dev/pf
+and the caller's jail.
+A jail without its own vnet shares its parent's.
+The jail is held until the descriptor is closed.
+Fails with
+.Er EBUSY
+once another ioctl has been issued,
+.Er ESRCH
+if no such jail is visible,
+.Er EPERM
+if the jail is not below the opener's, and
+.Er ENXIO
+if pf is not running in that vnet.
+.Xr BSDNetwork 8
+uses it to give jailed clients the state table of their own vnet.
+.El
 .Sh IOCTL INTERFACE
 .Nm
 supports the following

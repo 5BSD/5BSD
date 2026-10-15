@@ -20,6 +20,7 @@
 
 #include <sys/module.h>
 #include <sys/bitstring.h>
+#include <sys/jail.h>
 
 #include <net/pfvar.h>
 #include <net/pfvar_priv.h>
@@ -753,9 +754,15 @@ static struct cdev *pf_dev;
 
 struct pf_fbsd_open {
 	int		 unit;
+	volatile u_int	 state;	/* PF_FBSD_FRESH, _USED or _BINDING */
 	struct vnet	*vnet;	/* the opener's vnet: all ioctls act on it */
 	struct ucred	*cred;	/* holds the prison, and so the vnet */
+	struct prison	*bound;	/* DIOCBINDJAIL: held, its vnet replaces */
 };
+
+#define	PF_FBSD_FRESH	0	/* no ioctl yet: DIOCBINDJAIL is allowed */
+#define	PF_FBSD_USED	1
+#define	PF_FBSD_BINDING	2
 
 static dev_t
 pf_fbsd_minor(int unit)
@@ -771,6 +778,8 @@ pf_fbsd_dtor(void *arg)
 	CURVNET_SET(po->vnet);
 	(void)pfclose(pf_fbsd_minor(po->unit), 0, 0, curproc);
 	CURVNET_RESTORE();
+	if (po->bound != NULL)
+		prison_free(po->bound);
 	crfree(po->cred);
 	mtx_lock(&pf_units_mtx);
 	bit_clear(pf_units, po->unit);
@@ -817,6 +826,73 @@ pf_fbsd_open(struct cdev *dev, int flags, int fmt, struct thread *td)
 }
 
 /*
+ * DIOCBINDJAIL: move a descriptor that has not issued any other ioctl to
+ * the vnet of jail *jidp.  The jail must be a living descendant of both
+ * the jail that opened /dev/pf and the caller's jail, so a descriptor can
+ * only be narrowed to a jail its holders already govern.  BSDNetwork(8)
+ * uses this to give a jailed client of system.Network.PF the state table
+ * of its own vnet; a non-VNET jail shares its parent's vnet.  The jail is
+ * held (and with it the vnet) until the descriptor is closed.
+ */
+static int
+pf_fbsd_bindjail(struct pf_fbsd_open *po, int jid, struct thread *td)
+{
+	struct prison *pr;
+	int error;
+
+	if (!atomic_cmpset_acq_int(&po->state, PF_FBSD_FRESH, PF_FBSD_BINDING))
+		return (EBUSY);
+	sx_slock(&allprison_lock);
+	pr = prison_find_child(td->td_ucred->cr_prison, jid);
+	if (pr == NULL)
+		error = ESRCH;
+	else if (!prison_isalive(pr))
+		error = ESRCH;
+	else if (!prison_ischild(po->cred->cr_prison, pr))
+		error = EPERM;
+	else {
+		prison_hold_locked(pr);
+		error = 0;
+	}
+	if (pr != NULL)
+		mtx_unlock(&pr->pr_mtx);
+	sx_sunlock(&allprison_lock);
+	if (error == 0) {
+		CURVNET_SET(pr->pr_vnet);
+		if (!V_pf_fbsd_ready)
+			error = ENXIO;
+		CURVNET_RESTORE();
+		if (error != 0)
+			prison_free(pr);
+	}
+	if (error == 0) {
+		/* Fresh: no transaction to drop in the old vnet (pfclose). */
+		po->bound = pr;
+		po->vnet = pr->pr_vnet;
+	}
+	atomic_store_rel_int(&po->state, error == 0 ? PF_FBSD_USED :
+	    PF_FBSD_FRESH);
+	return (error);
+}
+
+/* Every ioctl but DIOCBINDJAIL ends the descriptor's fresh state. */
+static int
+pf_fbsd_use(struct pf_fbsd_open *po)
+{
+	u_int state;
+
+	for (;;) {
+		state = atomic_load_acq_int(&po->state);
+		if (state == PF_FBSD_USED)
+			return (0);
+		if (state == PF_FBSD_BINDING)
+			return (EBUSY);
+		if (atomic_cmpset_acq_int(&po->state, state, PF_FBSD_USED))
+			return (0);
+	}
+}
+
+/*
  * Pool limits are shared by all vnets.  A vnet other than the default
  * one may restate the current limit (pfctl loads every limit with each
  * ruleset) but may not change it.
@@ -841,6 +917,15 @@ pf_fbsd_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flags,
 	if ((error = devfs_get_cdevpriv((void **)&po)) != 0)
 		return (error);
 	SDT_PROBE2(pf, ioctl, ioctl, entry, cmd, po->unit);
+	if (cmd == DIOCBINDJAIL) {
+		error = pf_fbsd_bindjail(po, *(int *)data, td);
+		SDT_PROBE3(pf, ioctl, ioctl, return, cmd, po->unit, error);
+		return (error);
+	}
+	if ((error = pf_fbsd_use(po)) != 0) {
+		SDT_PROBE3(pf, ioctl, ioctl, return, cmd, po->unit, error);
+		return (error);
+	}
 	CURVNET_SET(po->vnet);
 	if (!V_pf_fbsd_ready)
 		error = ENXIO;
