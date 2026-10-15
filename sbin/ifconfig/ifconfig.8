@@ -3678,7 +3678,7 @@ Display inet and inet6 address subnet masks in CIDR notation
 Display interfaces that are up with the exception of loopback
 .Dl # ifconfig -a -u -G lo
 .Pp
-Display a list of interface names beloning to the wlan group:
+Display a list of interface names belonging to the wlan group:
 .Bd -literal -offset indent -compact
 # ifconfig -g wlan
 wlan0
@@ -3702,7 +3702,6 @@ wlan0: flags=8843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> mtu 1500
         inet 192.168.10.5 netmask 0xffffff00 broadcast 192.168.10.255
         inet6 fe80::4c75:636a:616e:ffd8%wlan0 prefixlen 64 scopeid 0x3
         inet6 2001:5761:6e64:6152:6f6d:616e:fea4:ffe2 prefixlen 64 autoconf
-        nd6 options=23<PERFORMNUD,ACCEPT_RTADV,AUTO_LINKLOCAL>
 wlan1: flags=8843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> mtu 1500
         lladdr 00:50:69:6f:74:72
         index 4
@@ -3714,7 +3713,6 @@ wlan1: flags=8843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> mtu 1500
         scanvalid 60 bgscan bgscanintvl 300 bgscanidle 250 roam:rssi 7
         roam:rate 5 protmode CTS wme bintval 0
         parent interface: rum0
-        nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
 .Ed
 .Pp
 Set a randomly-generated MAC address on tap0:
