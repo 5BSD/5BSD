@@ -62,7 +62,6 @@ ATF_TC_BODY(allowlisted_module_is_permitted, tc)
 	ATF_CHECK(extension_allowed(&cfg, "zfs"));
 	ATF_CHECK(extension_allowed(&cfg, "linux64"));
 	ATF_CHECK(extension_allowed(&cfg, "vmm"));
-	ATF_CHECK(extension_allowed(&cfg, "pty"));
 	ATF_CHECK(extension_allowed(&cfg, "fdescfs"));
 	ATF_CHECK(extension_allowed(&cfg, "linprocfs"));
 	ATF_CHECK(extension_allowed(&cfg, "linsysfs"));

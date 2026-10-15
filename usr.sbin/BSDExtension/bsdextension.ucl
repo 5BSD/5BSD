@@ -23,7 +23,6 @@ allowed_extensions = [
     "zfs",         # bsdfilesystem: ZFS backing /Capabilities storage
     "linux64",     # sysextctl: Linux application runtime
     "vmm",         # WASPNest virtual machine monitor
-    "pty",         # Linux /dev/ptmx and legacy BSD PTYs
     "fdescfs",     # Linux /dev/fd (linrdlnk)
     "linprocfs",   # Linux /proc
     "linsysfs",    # Linux /sys

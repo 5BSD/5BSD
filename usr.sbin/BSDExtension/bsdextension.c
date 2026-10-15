@@ -186,7 +186,7 @@ valid_module_name(const char *name)
  *   zfs        bsdfilesystem (usr.sbin/bsdfilesystem):             storage backing /Capabilities.
  *   linux64    sysextctl:                        Linux application runtime.
  *   vmm        WASPNest:                         Virtual machine monitor.
- *   pty/fdescfs/linprocfs/linsysfs:               Linux terminals and filesystems.
+ *   fdescfs/linprocfs/linsysfs:                   Linux terminals and filesystems.
  *   drm/i915kms/amdgpu/radeonkms:                 installed graphics drivers.
  *   cpuctl/coretemp/amdsmn/amdtemp:                hwstat CPU telemetry.
  *   dummynet   rc.d/dummynet:                    pf dnpipe/dnqueue shaping.
@@ -199,7 +199,7 @@ sysext_config_defaults(struct sysext_config *cfg)
 {
 	static const char *const builtin[] = {
 		"cryptodev", "vhid", "zfs", "linux64", "vmm",
-		"pty", "fdescfs", "linprocfs", "linsysfs",
+		"fdescfs", "linprocfs", "linsysfs",
 		"drm", "i915kms", "amdgpu", "radeonkms",
 		"cpuctl", "coretemp", "amdsmn", "amdtemp", "dummynet"
 	};
