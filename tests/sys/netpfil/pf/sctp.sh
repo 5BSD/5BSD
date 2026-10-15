@@ -72,7 +72,7 @@ basic_v4_body()
 
 	# Now with scrub rules present, so normalization is done
 	pft_set_rules ${j}a \
-		"scrub on ${j}a" \
+		"match on ${j}a scrub (reassemble tcp)" \
 		"block" \
 		"pass in proto sctp to port 1234"
 
@@ -147,7 +147,7 @@ basic_v6_body()
 
 	# Now with scrub rules present, so normalization is done
 	pft_set_rules ${j}a \
-		"scrub on ${j}a" \
+		"match on ${j}a scrub (reassemble tcp)" \
 		"block proto sctp" \
 		"pass in proto sctp to port 1234"
 
