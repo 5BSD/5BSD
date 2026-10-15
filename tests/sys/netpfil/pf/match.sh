@@ -117,7 +117,7 @@ quick_cleanup()
 atf_test_case "allow_opts" "cleanup"
 allow_opts_head()
 {
-	atf_set descr 'Test allowing IP options via match'
+	atf_set descr 'Test allowing IP options (pass rules only)'
 	atf_set require.user root
 	atf_set require.progs python3 scapy
 }
@@ -135,20 +135,20 @@ allow_opts_body()
 
 	jexec alcatraz pfctl -e
 	jexec alcatraz pfctl -x debug
+
+	# OpenBSD: allow-opts is an option of pass rules only; a match rule
+	# cannot allow IP options (FreeBSD accepted it there).
+	echo "match proto icmp allow-opts" > match-allow-opts.conf
+	atf_check -s exit:1 -o ignore \
+	    -e match:"allow-opts can only be specified for pass rules" \
+	    jexec alcatraz pfctl -nf ${PWD}/match-allow-opts.conf
+
 	pft_set_rules alcatraz \
-	    "match proto icmp allow-opts" \
 	    "pass"
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore \
 	    ping -c 1 192.0.2.1
-
-	atf_check -s exit:0 -o ignore \
-	    ${common_dir}/pft_ping.py  \
-	    --sendif ${epair}b \
-	    --to 192.0.2.1 \
-	    --send-nop \
-	    --replyif ${epair}b
 
 	# This doesn't work without 'allow-opts'
 	pft_set_rules alcatraz \
