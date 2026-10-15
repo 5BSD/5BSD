@@ -67,6 +67,7 @@ struct	vnet;
 struct	ifmedia;
 struct	netmap_adapter;
 struct	debugnet_methods;
+struct	mbuf;			/* if_input_fn_t, if_output_fn_t */
 
 #ifdef _KERNEL
 #include <sys/_eventhandler.h>
