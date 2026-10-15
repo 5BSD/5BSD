@@ -215,7 +215,7 @@ nat_body()
 	jexec rtr pfctl -e
 	pft_set_rules rtr \
 		"set state-defaults pflow" \
-		"nat pass on ${epair_srv}b inet from 192.0.2.0/24 to any -> (${epair_srv}b)" \
+		"match out on ${epair_srv}b inet from 192.0.2.0/24 to any nat-to (${epair_srv}b)" \
 		"pass"
 
 	pflow=pflow0
@@ -226,7 +226,8 @@ nat_body()
 	atf_check -s exit:0 -o ignore \
 	    ping -c 1 198.51.100.2
 
-	atf_check -o match:".*v=10,NAT=4,proto=1,src=192.0.2.2-198.51.100.1.*" \
+	# OpenBSD's NAT44 template has no natEvent field.
+	atf_check -o match:".*v=10,NAT,proto=1,src=192.0.2.2-198.51.100.1.*" \
 	    $(atf_get_srcdir)/pft_read_ipfix.py --recvif ${epair}b --port 2055
 }
 
