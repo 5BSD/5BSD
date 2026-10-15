@@ -4585,6 +4585,8 @@ netpfil/openbsd-pf/pf_ether.c            optional pf inet \
 	compile-with "${OPENBSD_PF_C} -DOPENBSD_PF_GLUE"
 netpfil/openbsd-pf/pf_sysctl.c           optional pf inet \
 	compile-with "${OPENBSD_PF_C} -DOPENBSD_PF_GLUE"
+netpfil/openbsd-pf/pf_pfsync.c           optional pf inet \
+	compile-with "${OPENBSD_PF_C} -DOPENBSD_PF_GLUE"
 netsmb/smb_conn.c		optional netsmb
 netsmb/smb_crypt.c		optional netsmb
 netsmb/smb_dev.c		optional netsmb

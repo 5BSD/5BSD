@@ -167,4 +167,8 @@
 #define	SIOCSIFRDOMAIN	 _IOW('i', 240, struct ifreq)	/* set rdomain */
 #define	SIOCGIFRDOMAIN	_IOWR('i', 241, struct ifreq)	/* get rdomain */
 
+/* 5BSD: pfsync(4) with an IPv6 sync peer (struct pfsyncreq6). */
+#define	SIOCSETPFSYNC6	 _IOW('i', 242, struct ifreq)
+#define	SIOCGETPFSYNC6	_IOWR('i', 243, struct ifreq)
+
 #endif /* !_SYS_SOCKIO_H_ */

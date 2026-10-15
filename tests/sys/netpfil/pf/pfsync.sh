@@ -1274,6 +1274,218 @@ lifecycle_departure_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "ipv6_syncpeer" "cleanup"
+ipv6_syncpeer_head()
+{
+	atf_set descr 'IPv6 unicast sync peer: configuration, MTU and bulk update (5BSD extension)'
+	atf_set require.user root
+}
+
+ipv6_syncpeer_body()
+{
+	pfsynct_init
+
+	epair_sync=$(vnet_mkepair)
+	epair_one=$(vnet_mkepair)
+
+	vnet_mkjail one ${epair_one}a ${epair_sync}a
+	vnet_mkjail two ${epair_sync}b
+	pfsynct_mkif one
+	pfsynct_mkif two
+
+	# The sync link has IPv6 addresses only.
+	jexec one ifconfig ${epair_sync}a inet6 fd2c::1/64 no_dad up
+	jexec two ifconfig ${epair_sync}b inet6 fd2c::2/64 no_dad up
+	jexec one ifconfig ${epair_one}a inet6 fd2b::1/64 no_dad up
+	ifconfig ${epair_one}b inet6 fd2b::f0/64 no_dad up
+	ifconfig ${epair_one}b inet6 fd2b::f1/64 alias no_dad
+
+	jexec one ifconfig pfsync0 \
+		syncdev ${epair_sync}a \
+		syncpeer fd2c::2 \
+		maxupd 1
+	atf_check -o match:"syncpeer: fd2c::2 " jexec one ifconfig pfsync0
+
+	# The IPv6 header is 20 bytes longer than the IPv4 one pfsync sizes
+	# its packets for: the pfsync MTU stays 20 bytes below the syncdev's.
+	atf_check -s not-exit:0 -e ignore jexec one ifconfig pfsync0 mtu 1500
+	atf_check jexec one ifconfig pfsync0 up
+	atf_check -o match:"mtu 1480" jexec one ifconfig pfsync0
+
+	# The peer can only change while pfsync0 is down.
+	atf_check -s not-exit:0 -e match:"busy" \
+	    jexec one ifconfig pfsync0 syncpeer fd2c::3
+
+	# No IPv4 on the sync link; pfsync itself is not synced.
+	jexec one pfctl -e
+	pft_set_rules one \
+		"block on ${epair_sync}a inet" \
+		"pass quick on ${epair_sync}a inet6 proto pfsync keep state (no-sync)" \
+		"pass out keep state"
+	jexec two pfctl -e
+	pft_set_rules two \
+		"block on ${epair_sync}b inet" \
+		"pass quick on ${epair_sync}b inet6 proto pfsync keep state (no-sync)" \
+		"pass out keep state"
+
+	# A state that exists before two starts reaches it by bulk update.
+	jexec one ping6 -c 1 -S fd2b::1 fd2b::f0
+	sleep 1
+
+	jexec two ifconfig pfsync0 \
+		syncdev ${epair_sync}b \
+		syncpeer fd2c::1 \
+		maxupd 1 \
+		up
+	sleep 2
+
+	if ! jexec two pfctl -s states | grep icmp | grep fd2b::1 | \
+	    grep fd2b::f0 ; then
+		jexec two pfctl -s states
+		atf_fail "bulk-updated state not found on synced host"
+	fi
+
+	# A new state reaches it as an insert.
+	jexec one ping6 -c 1 -S fd2b::1 fd2b::f1
+	sleep 2
+
+	if ! jexec two pfctl -s states | grep icmp | grep fd2b::1 | \
+	    grep fd2b::f1 ; then
+		jexec two pfctl -s states
+		atf_fail "inserted state not found on synced host"
+	fi
+
+	# Back to IPv4: an IPv4 peer replaces the IPv6 one, and -syncpeer
+	# returns to the default group (not shown).
+	atf_check jexec one ifconfig pfsync0 down syncpeer 192.0.2.2 up
+	atf_check -o match:"syncpeer: 192.0.2.2 " -o not-match:"fd2c::" \
+	    jexec one ifconfig pfsync0
+	atf_check jexec one ifconfig pfsync0 down -syncpeer
+	atf_check -o not-match:"syncpeer" jexec one ifconfig pfsync0
+}
+
+ipv6_syncpeer_cleanup()
+{
+	pfsynct_cleanup
+}
+
+pfsynct_demotion()
+{
+	jexec $1 sysctl -n net.inet.carp.demotion
+}
+
+# pfsynct_wait_demotion jail value seconds
+pfsynct_wait_demotion()
+{
+	local jail want secs
+
+	jail=$1
+	want=$2
+	secs=$3
+	while [ "$(pfsynct_demotion ${jail})" != "${want}" ]; do
+		if [ ${secs} -le 0 ]; then
+			atf_fail "net.inet.carp.demotion in ${jail} is" \
+			    "$(pfsynct_demotion ${jail}), expected ${want}"
+		fi
+		sleep 1
+		secs=$((secs - 1))
+	done
+}
+
+atf_test_case "carp_demotion" "cleanup"
+carp_demotion_head()
+{
+	atf_set descr 'pfsync demotes carp until it is synchronised and undoes it on failure, down and destroy'
+	atf_set require.user root
+	atf_set timeout 300
+}
+
+carp_demotion_body()
+{
+	if ! kldstat -q -m carp
+	then
+		atf_skip "This test requires carp"
+	fi
+	pfsynct_init
+
+	epair_sync=$(vnet_mkepair)
+
+	vnet_mkjail one ${epair_sync}a
+	vnet_mkjail two ${epair_sync}b
+	pfsynct_mkif one
+
+	jexec one ifconfig ${epair_sync}a 192.0.2.1/24 up
+	jexec two ifconfig ${epair_sync}b 192.0.2.2/24 up
+
+	# pfsync only processes input while pf is enabled.
+	jexec one pfctl -e
+	pft_set_rules one \
+		"set skip on ${epair_sync}a" \
+		"pass"
+	jexec two pfctl -e
+	pft_set_rules two \
+		"set skip on ${epair_sync}b" \
+		"pass"
+
+	atf_check -o inline:"0\n" jexec one sysctl -n net.inet.carp.demotion
+	atf_check -o inline:"240\n" \
+	    jexec one sysctl -n net.pfsync.carp_demotion_factor
+
+	# Nobody answers the bulk update request: pfsync0 is demoted from
+	# "up" until it gives up (12 requests, 2 seconds apart).
+	jexec one ifconfig pfsync0 syncdev ${epair_sync}a up
+	atf_check -o inline:"240\n" jexec one sysctl -n net.inet.carp.demotion
+
+	# A new factor applies at once and leaves no residue.
+	atf_check -o ignore jexec one sysctl net.pfsync.carp_demotion_factor=100
+	atf_check -o inline:"100\n" jexec one sysctl -n net.inet.carp.demotion
+	atf_check -o ignore jexec one sysctl net.pfsync.carp_demotion_factor=240
+	atf_check -o inline:"240\n" jexec one sysctl -n net.inet.carp.demotion
+	atf_check -s not-exit:0 -e ignore \
+	    jexec one sysctl net.pfsync.carp_demotion_factor=-1
+
+	# The failed bulk update ends the demotion.
+	pfsynct_wait_demotion one 0 40
+
+	# Destroying a demoted pfsync0 removes its demotion.
+	jexec one ifconfig pfsync0 down
+	jexec one ifconfig pfsync0 up
+	atf_check -o inline:"240\n" jexec one sysctl -n net.inet.carp.demotion
+	jexec one ifconfig pfsync0 destroy
+	atf_check -o inline:"0\n" jexec one sysctl -n net.inet.carp.demotion
+
+	# So does bringing it down.
+	pfsynct_mkif one
+	jexec one ifconfig pfsync0 syncdev ${epair_sync}a up
+	atf_check -o inline:"240\n" jexec one sysctl -n net.inet.carp.demotion
+	jexec one ifconfig pfsync0 down
+	atf_check -o inline:"0\n" jexec one sysctl -n net.inet.carp.demotion
+
+	# A peer answers: the bulk update completes and the demotion ends
+	# well before the request retries would run out.
+	pfsynct_mkif two
+	jexec two ifconfig pfsync0 syncdev ${epair_sync}b up
+	jexec one ifconfig pfsync0 up
+	pfsynct_wait_demotion one 0 10
+
+	# The sync link going down demotes; coming back up undoes it.
+	jexec one ifconfig ${epair_sync}a down
+	pfsynct_wait_demotion one 240 5
+	jexec one ifconfig ${epair_sync}a up
+	pfsynct_wait_demotion one 0 5
+
+	# Destroy with the link down leaves nothing behind either.
+	jexec one ifconfig ${epair_sync}a down
+	pfsynct_wait_demotion one 240 5
+	jexec one ifconfig pfsync0 destroy
+	atf_check -o inline:"0\n" jexec one sysctl -n net.inet.carp.demotion
+}
+
+carp_demotion_cleanup()
+{
+	pfsynct_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "basic"
@@ -1291,4 +1503,6 @@ atf_init_test_cases()
 	atf_add_test_case "af_to_in_if_bound"
 	atf_add_test_case "flush_by_intf"
 	atf_add_test_case "lifecycle_departure"
+	atf_add_test_case "ipv6_syncpeer"
+	atf_add_test_case "carp_demotion"
 }

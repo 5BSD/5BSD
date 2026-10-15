@@ -84,6 +84,7 @@
 #include <netinet6/ip6_var.h>
 #endif /* INET6 */
 
+#define PFSYNC_CARP_DEMOTE	/* 5BSD: carp */
 #include "carp.h"
 #if NCARP > 0
 #include <netinet/ip_carp.h>
@@ -198,6 +199,7 @@ struct pfsync_softc {
 
 	/* config */
 	struct in_addr		 sc_syncpeer;
+	struct pfsync6		 sc_pfsync6;	/* 5BSD: pfsync6 */
 	unsigned int		 sc_maxupdates;
 	unsigned int		 sc_defer;
 
@@ -256,10 +258,13 @@ static int	pfsync_set_parent(struct pfsync_softc *,
 static int	pfsync_get_parent(struct pfsync_softc *, struct if_parent *);
 static int	pfsync_del_parent(struct pfsync_softc *);
 
-static int	pfsync_get_ioc(struct pfsync_softc *, struct ifreq *);
-static int	pfsync_set_ioc(struct pfsync_softc *, struct ifreq *);
+static int	pfsync_get_ioc(struct pfsync_softc *, struct ifreq *,
+		    u_long);	/* 5BSD: pfsync6 */
+static int	pfsync_set_ioc(struct pfsync_softc *, struct ifreq *,
+		    u_long);	/* 5BSD: pfsync6 */
 
 static void	pfsync_syncif_link(void *);
+static void	pfsync_syncif_link_task(void *);	/* 5BSD: carp */
 static void	pfsync_syncif_detach(void *);
 
 static void	pfsync_sendout(struct pfsync_softc *, struct mbuf *);
@@ -417,7 +422,7 @@ pfsync_clone_create(struct if_clone *ifc, int unit)
 	sc->sc_maxupdates = 128;
 	sc->sc_defer = 0;
 
-	task_set(&sc->sc_ltask, pfsync_syncif_link, sc);
+	task_set(&sc->sc_ltask, pfsync_syncif_link_task, sc);	/* 5BSD: carp */
 	task_set(&sc->sc_dtask, pfsync_syncif_detach, sc);
 
 	rw_init(&sc->sc_bulk_req.req_lock, "pfsyncbreq");
@@ -482,7 +487,7 @@ pfsync_clone_create(struct if_clone *ifc, int unit)
 	if_attach(ifp);
 	if_alloc_sadl(ifp);
 
-#if NCARP > 0
+#if NCARP > 0 && !defined(PFSYNC_CARP_DEMOTE)	/* 5BSD: carp: no carp group */
 	if_addgroup(ifp, "carp");
 #endif
 
@@ -564,6 +569,23 @@ pfsync_syncif_link(void *arg)
 	sc->sc_sync_if_down = sync_if_down;
 }
 
+/*
+ * 5BSD: carp
+ * OpenBSD runs link-state hooks synchronously under the net lock; 5BSD
+ * runs them from a task.  Take the net lock and skip a hook that lost
+ * the race with pfsync_down(), so the link demotion stays balanced.
+ */
+static void
+pfsync_syncif_link_task(void *arg)
+{
+	struct pfsync_softc *sc = arg;
+
+	NET_LOCK();
+	if (ISSET(sc->sc_if.if_flags, IFF_RUNNING))
+		pfsync_syncif_link(sc);
+	NET_UNLOCK();
+}
+
 static void
 pfsync_syncif_detach(void *arg)
 {
@@ -625,10 +647,12 @@ pfsync_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		break;
 
 	case SIOCSETPFSYNC:
-		error = pfsync_set_ioc(sc, ifr);
+	case SIOCSETPFSYNC6:	/* 5BSD: pfsync6 */
+		error = pfsync_set_ioc(sc, ifr, cmd);
 		break;
 	case SIOCGETPFSYNC:
-		error = pfsync_get_ioc(sc, ifr);
+	case SIOCGETPFSYNC6:	/* 5BSD: pfsync6 */
+		error = pfsync_get_ioc(sc, ifr, cmd);
 		break;
 
 	default:
@@ -652,7 +676,8 @@ pfsync_set_mtu(struct pfsync_softc *sc, unsigned int mtu)
 	if (ifp0 == NULL)
 		return (EINVAL);
 
-	if (mtu <= PFSYNC_MINPKT || mtu > ifp0->if_mtu) {
+	if (mtu <= PFSYNC_MINPKT || mtu > ifp0->if_mtu -
+	    PFSYNC6_MTU_RESERVE(&sc->sc_pfsync6)) {	/* 5BSD: pfsync6 */
 		error = EINVAL;
 		goto put;
 	}
@@ -723,9 +748,10 @@ pfsync_del_parent(struct pfsync_softc *sc)
 }
 
 static int
-pfsync_get_ioc(struct pfsync_softc *sc, struct ifreq *ifr)
+pfsync_get_ioc(struct pfsync_softc *sc, struct ifreq *ifr, u_long cmd)
 {
 	struct pfsyncreq pfsyncr;
+	struct pfsyncreq6 pfsyncr6;	/* 5BSD: pfsync6 */
 	struct ifnet *ifp0;
 
 	memset(&pfsyncr, 0, sizeof(pfsyncr));
@@ -741,14 +767,23 @@ pfsync_get_ioc(struct pfsync_softc *sc, struct ifreq *ifr)
 	pfsyncr.pfsyncr_maxupdates = sc->sc_maxupdates;
 	pfsyncr.pfsyncr_defer = sc->sc_defer;
 
+	if (cmd == SIOCGETPFSYNC6) {	/* 5BSD: pfsync6 */
+		memset(&pfsyncr6, 0, sizeof(pfsyncr6));
+		pfsyncr6.pfsyncr6_req = pfsyncr;
+		pfsyncr6.pfsyncr6_syncpeer = sc->sc_pfsync6.p6_peer;
+		return (copyout(&pfsyncr6, ifr->ifr_data, sizeof(pfsyncr6)));
+	}
+
 	return (copyout(&pfsyncr, ifr->ifr_data, sizeof(pfsyncr)));
 }
 
 static int
-pfsync_set_ioc(struct pfsync_softc *sc, struct ifreq *ifr)
+pfsync_set_ioc(struct pfsync_softc *sc, struct ifreq *ifr, u_long cmd)
 {
 	struct ifnet *ifp = &sc->sc_if;
 	struct pfsyncreq pfsyncr;
+	struct pfsyncreq6 pfsyncr6;	/* 5BSD: pfsync6 */
+	struct in6_addr syncpeer6 = sc->sc_pfsync6.p6_peer;
 	unsigned int sync_ifidx = sc->sc_sync_ifidx;
 	int wantdown = 0;
 	int error;
@@ -757,6 +792,16 @@ pfsync_set_ioc(struct pfsync_softc *sc, struct ifreq *ifr)
 	if (error != 0)
 		return (error);
 
+	if (cmd == SIOCSETPFSYNC6) {	/* 5BSD: pfsync6 */
+		error = copyin(ifr->ifr_data, &pfsyncr6, sizeof(pfsyncr6));
+		if (error != 0)
+			return (error);
+		error = pfsync6_check(&pfsyncr6.pfsyncr6_syncpeer);
+		if (error != 0)
+			return (error);
+		pfsyncr = pfsyncr6.pfsyncr6_req;
+		syncpeer6 = pfsyncr6.pfsyncr6_syncpeer;
+	} else
 	error = copyin(ifr->ifr_data, &pfsyncr, sizeof(pfsyncr));
 	if (error != 0)
 		return (error);
@@ -783,6 +828,8 @@ pfsync_set_ioc(struct pfsync_softc *sc, struct ifreq *ifr)
 		pfsyncr.pfsyncr_syncpeer.s_addr = INADDR_PFSYNC_GROUP;
 	if (pfsyncr.pfsyncr_syncpeer.s_addr != sc->sc_syncpeer.s_addr)
 		wantdown = 1;
+	if (!IN6_ARE_ADDR_EQUAL(&syncpeer6, &sc->sc_pfsync6.p6_peer))
+		wantdown = 1;	/* 5BSD: pfsync6 */
 
 	if (wantdown && ISSET(ifp->if_flags, IFF_RUNNING))
 		return (EBUSY);
@@ -790,6 +837,7 @@ pfsync_set_ioc(struct pfsync_softc *sc, struct ifreq *ifr)
 	/* commit */
 	sc->sc_sync_ifidx = sync_ifidx;
 	sc->sc_syncpeer = pfsyncr.pfsyncr_syncpeer;
+	sc->sc_pfsync6.p6_peer = syncpeer6;	/* 5BSD: pfsync6 */
 	sc->sc_maxupdates = pfsyncr.pfsyncr_maxupdates;
 	sc->sc_defer = pfsyncr.pfsyncr_defer;
 
@@ -826,6 +874,12 @@ pfsync_up(struct pfsync_softc *sc)
 	if (ifp0 == NULL)
 		return (ENXIO);
 
+	if (!IN6_IS_ADDR_UNSPECIFIED(&sc->sc_pfsync6.p6_peer)) {
+		/* 5BSD: pfsync6 */
+		error = pfsync6_up(&sc->sc_pfsync6, ifp, ifp0);
+		if (error != 0)
+			goto put;
+	} else
 	if (IN_MULTICAST(sc->sc_syncpeer.s_addr)) {
 		if (!ISSET(ifp0->if_flags, IFF_MULTICAST)) {
 			error = ENODEV;
@@ -1280,6 +1334,7 @@ pfsync_down(struct pfsync_softc *sc)
 
 	if (inm != NULL)
 		in_delmulti(inm);
+	pfsync6_down(&sc->sc_pfsync6);	/* 5BSD: pfsync6 */
 
 	while ((pd = TAILQ_FIRST(&pds)) != NULL) {
 		TAILQ_REMOVE(&pds, pd, pd_entry);
@@ -1593,6 +1648,16 @@ pfsync_sendout(struct pfsync_softc *sc, struct mbuf *m)
 	imo.imo_loop = 0;
 	m->m_pkthdr.ph_rtableid = sc->sc_if.if_rdomain;
 
+	if (sc->sc_pfsync6.p6_up) {	/* 5BSD: pfsync6 */
+		if (pfsync6_output(&sc->sc_pfsync6, m) == 0) {
+			counters_pkt(sc->sc_if.if_counters, ifc_opackets,
+			    ifc_obytes, len);
+			pfsyncstat_inc(pfsyncs_opackets6);
+		} else {
+			counters_inc(sc->sc_if.if_counters, ifc_oerrors);
+			pfsyncstat_inc(pfsyncs_oerrors);
+		}
+	} else
 	if (ip_output(m, NULL, NULL, IP_RAWOUTPUT, &imo, NULL, 0) == 0) {
 		counters_pkt(sc->sc_if.if_counters, ifc_opackets,
 		    ifc_obytes, len);
@@ -2705,7 +2770,7 @@ pfsync_input(struct mbuf *m, uint8_t ttl, unsigned int hlen)
 
 	PF_SDT1(pfsync, packet, input, m);	/* 5BSD: DTrace */
 
-	pfsyncstat_inc(pfsyncs_ipackets);
+	/* 5BSD: pfsync6: pfsync_input4/6 count ipackets/ipackets6 */
 
 	if (!pf_status.running)
 		return (m);
@@ -3402,6 +3467,7 @@ pfsync_input4(struct mbuf **mp, int *offp, int proto, int af,
 
 	ip = mtod(m, struct ip *);
 
+	pfsyncstat_inc(pfsyncs_ipackets);	/* 5BSD: pfsync6 */
 	m = pfsync_input(m, ip->ip_ttl, ip->ip_hl << 2);
 
 	m_freem(m);
@@ -3409,6 +3475,31 @@ pfsync_input4(struct mbuf **mp, int *offp, int proto, int af,
 
 	return (IPPROTO_DONE);
 }
+
+#ifdef INET6
+/*
+ * 5BSD: pfsync6
+ * pfsync from an IPv6 peer: the same messages behind an IPv6 header,
+ * whose hop limit must be 255 (*offp is the IPv6 header length).
+ */
+int
+pfsync_input6(struct mbuf **mp, int *offp, int proto, int af,
+    struct netstack *ns)
+{
+	struct mbuf *m = *mp;
+	struct ip6_hdr *ip6;
+
+	ip6 = mtod(m, struct ip6_hdr *);
+
+	pfsyncstat_inc(pfsyncs_ipackets6);
+	m = pfsync_input(m, ip6->ip6_hlim, *offp);
+
+	m_freem(m);
+	*mp = NULL;
+
+	return (IPPROTO_DONE);
+}
+#endif /* INET6 */
 
 int
 pfsync_sysctl_pfsyncstat(void *oldp, size_t *oldlenp, void *newp)

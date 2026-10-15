@@ -1069,6 +1069,30 @@ struct obsd_ip_moptions {
 };
 #define	ip_moptions	obsd_ip_moptions
 #define	IFT_PFSYNC_OBSD		IFT_PFSYNC
+
+/*
+ * 5BSD: pfsync6 -- an IPv6 synchronisation peer for pfsync(4)
+ * (pf_pfsync.c).  pfsync builds every packet behind its IPv4 template;
+ * with an IPv6 peer pfsync6_output() replaces that header with an IPv6
+ * one (hop limit 255), so the pfsync messages stay OpenBSD's.  The
+ * IPv6 header is longer: the pfsync MTU is kept PFSYNC6_HDREXTRA below
+ * the syncdev's.
+ */
+struct in6_multi;
+struct pfsync6 {
+	struct in6_addr	 p6_peer;	/* configured; unspecified: IPv4 */
+	struct in6_addr	 p6_dst;	/* p6_peer in the syncdev's zone */
+	struct in6_multi *p6_inm;	/* joined group, if multicast */
+	u_int		 p6_ifidx;	/* syncdev while up */
+	int		 p6_up;
+};
+#define	PFSYNC6_HDREXTRA	(sizeof(struct ip6_hdr) - sizeof(struct ip))
+#define	PFSYNC6_MTU_RESERVE(p6)						\
+	(IN6_IS_ADDR_UNSPECIFIED(&(p6)->p6_peer) ? 0 : PFSYNC6_HDREXTRA)
+int	pfsync6_check(const struct in6_addr *);
+int	pfsync6_up(struct pfsync6 *, struct ifnet *, struct ifnet *);
+void	pfsync6_down(struct pfsync6 *);
+int	pfsync6_output(struct pfsync6 *, struct mbuf *);
 #ifndef ifr_data
 #define	ifr_data		ifr_ifru.ifru_data
 #endif

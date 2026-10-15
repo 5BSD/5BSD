@@ -34,6 +34,7 @@ void	pflogattach(int);
 void	pflowattach(int);
 void	pfsyncattach(int);
 int	pfsync_input4(struct mbuf **, int *, int, int, struct netstack *);
+int	pfsync_input6(struct mbuf **, int *, int, int, struct netstack *);
 void	pf_mbuf_unlink_state_key(struct mbuf *);
 void	pf_mbuf_unlink_inpcb(struct mbuf *);
 int	pf_mbuf_link_state_key(struct mbuf *, struct pf_state_key *);
@@ -555,9 +556,21 @@ pf_fbsd_pfsync_intask(void *arg)
 
 	mq_delist(&V_pf_pfsync_inq, &ml);
 	while ((m = ml_dequeue(&ml)) != NULL) {
-		off = mtod(m, struct ip *)->ip_hl << 2;
 		NET_LOCK_SHARED();
-		(void)pfsync_input4(&m, &off, IPPROTO_PFSYNC, AF_INET, NULL);
+#ifdef INET6
+		/* pfsync6: the IPv6 input below queues bare headers only. */
+		if ((mtod(m, struct ip6_hdr *)->ip6_vfc & IPV6_VERSION_MASK) ==
+		    IPV6_VERSION) {
+			off = sizeof(struct ip6_hdr);
+			(void)pfsync_input6(&m, &off, IPPROTO_PFSYNC, AF_INET6,
+			    NULL);
+		} else
+#endif
+		{
+			off = mtod(m, struct ip *)->ip_hl << 2;
+			(void)pfsync_input4(&m, &off, IPPROTO_PFSYNC, AF_INET,
+			    NULL);
+		}
 		NET_UNLOCK_SHARED();
 	}
 }
@@ -575,6 +588,24 @@ pf_fbsd_pfsync_input(struct mbuf **mp, int *offp, int proto)
 	*mp = NULL;
 	return (IPPROTO_DONE);
 }
+
+#ifdef INET6
+/*
+ * 5BSD: pfsync6 -- pfsync from an IPv6 peer.  pfsync sends no extension
+ * headers; anything but the bare IPv6 header in front of the pfsync
+ * header is dropped, so the task above finds the offset again.
+ */
+static int
+pf_fbsd_pfsync6_input(struct mbuf **mp, int *offp, int proto)
+{
+	if (*offp != sizeof(struct ip6_hdr)) {
+		m_freem(*mp);
+		*mp = NULL;
+		return (IPPROTO_DONE);
+	}
+	return (pf_fbsd_pfsync_input(mp, offp, proto));
+}
+#endif
 
 VNET_DEFINE_STATIC(pfil_hook_t, pf_ip4_in_hook);
 VNET_DEFINE_STATIC(pfil_hook_t, pf_ip4_out_hook);
@@ -1078,6 +1109,9 @@ pf_fbsd_load(void)
 	pflowattach(1);
 	pfsyncattach(1);
 	(void)ipproto_register(IPPROTO_PFSYNC, pf_fbsd_pfsync_input, NULL);
+#ifdef INET6
+	(void)ip6proto_register(IPPROTO_PFSYNC, pf_fbsd_pfsync6_input, NULL);
+#endif
 	pf_divert_attach();
 	pf_jail_attach();
 

@@ -160,9 +160,32 @@ to a re-import.
                  ifnet is if_alloc()ed (sc_if is a macro over sc_ifp);
                  if_output casts; interface counters; no ifq start;
                  sleepable configuration locks; DTrace probe hooks
+  carp (marked "5BSD: carp"): pfsync's carp(4) demotion is compiled in
+                 (if_pfsync.c defines PFSYNC_CARP_DEMOTE before "carp.h";
+                 pf.c's IFT_CARP paths stay out and pfsync0 joins no "carp"
+                 group, carp(4) not being an interface).  The carp group
+                 demote counts map onto net.inet.carp.demotion through
+                 carp_group_demote_adj() and net.pfsync.carp_demotion_factor
+                 (pf_pfsync.c).  The syncdev link-state hook runs under the
+                 net lock and only while pfsync is running
+                 (pfsync_syncif_link_task), as OpenBSD's synchronous hooks
+                 do, so the link demotion stays balanced.
+  pfsync6 (marked "5BSD: pfsync6"): the 5BSD extension of an IPv6 sync
+                 peer: struct pfsyncreq6 and pfsync_input6() (if_pfsync.h);
+                 SIOC[GS]ETPFSYNC6 in pfsync_[gs]et_ioc(), the peer in the
+                 softc (struct pfsync6, openbsd_compat.h), hooks in
+                 pfsync_up/down/set_mtu/sendout, and ipackets/ipackets6
+                 counted in pfsync_input4/6 (if_pfsync.c).  The ioctl
+                 numbers are in sys/sys/sockio.h, the logic in pf_pfsync.c,
+                 the IPv6 input registration in pf_freebsd.c.  pfsync
+                 messages are unchanged: the IPv4 header pfsync builds is
+                 replaced by an IPv6 one (hop limit 255), and the pfsync
+                 MTU stays 20 bytes below the syncdev's.  SIOC[GS]ETPFSYNC
+                 keep OpenBSD's struct and leave the IPv6 peer alone.
 The compatibility layer and 5BSD attachment live in sys/netpfil/openbsd-pf
 (openbsd_compat.[ch], openbsd_net.c, openbsd_ifq.c, pf_freebsd.c,
-pf_sdt.c, include/ shadow headers, user/ userland compatibility).
+pf_pfsync.c, pf_sdt.c, include/ shadow headers, user/ userland
+compatibility).
 
 5BSD glue: tests/sys/netpfil/pf/openbsd (Kyua/ATF wrapper; installs this
 corpus beneath its srctree/ through tests/srctree.mk) and
@@ -187,7 +210,8 @@ Adopted OpenBSD code (pf/parity), all from facc8d7ec5d1:
                             divert.4 is now ipdivert.4); marked 5BSD
                             additions: pf.conf.5 jail, dummynet, ether rules and
                             queueing status, pfctl.8 ethernet, pf.4 VNET,
-                            divert.4
+                            divert.4, pfsync.4 IPv6 peers and carp
+                            demotion
   usr.sbin/authpf, ftp-proxy, tftp-proxy -> same programs
   usr.sbin/tcpdump      -> /usr/sbin/tcpdump (glue: usr.sbin/tcpdump/tcpdump:
                             openbsd_compat.h, include/, privsep_5bsd.c)

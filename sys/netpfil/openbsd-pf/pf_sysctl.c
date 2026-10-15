@@ -71,7 +71,8 @@ pf_sysctl_pflow_stats(SYSCTL_HANDLER_ARGS)
 	return (SYSCTL_OUT(req, &st, sizeof(st)));
 }
 
-static SYSCTL_NODE(_net, OID_AUTO, pfsync, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+/* Also net.pfsync.carp_demotion_factor, pf_pfsync.c. */
+SYSCTL_NODE(_net, OID_AUTO, pfsync, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "pfsync(4)");
 SYSCTL_PROC(_net_pfsync, OID_AUTO, stats,
     CTLTYPE_STRUCT | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
