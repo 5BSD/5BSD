@@ -438,24 +438,37 @@ in_exec_nl(if_ctx *ctx, unsigned long action, void *data)
 }
 #endif
 
-static void
-err_nomask(int ifflags)
+/*
+ * 5BSD follows OpenBSD: an address given without a mask gets the
+ * historical classful default (OpenBSD in_ifinit()), on any interface.
+ */
+static int
+in_default_plen(struct in_addr a)
 {
-    if ((ifflags & (IFF_POINTOPOINT | IFF_LOOPBACK)) == 0) {
-	errx(1, "ERROR: setting interface address without mask is no longer supported.");
-    }
+	uint32_t i = ntohl(a.s_addr);
+
+	if (IN_CLASSA(i))
+		return (8);
+	if (IN_CLASSB(i))
+		return (16);
+	return (24);
 }
 
 static void
-in_postproc(if_ctx *ctx __unused, int newaddr, int ifflags)
+in_postproc(if_ctx *ctx __unused, int newaddr, int ifflags __unused)
 {
 #ifdef WITHOUT_NETLINK
 	if (sintab[ADDR]->sin_len != 0 && sintab[MASK]->sin_len == 0 && newaddr) {
-		err_nomask(ifflags);
+		int plen = in_default_plen(sintab[ADDR]->sin_addr);
+
+		sintab[MASK]->sin_len = sizeof(struct sockaddr_in);
+		sintab[MASK]->sin_family = AF_INET;
+		sintab[MASK]->sin_addr.s_addr = htonl(~((1U << (32 - plen)) - 1));
 	}
 #else
 	if (sintab_nl[ADDR]->addrset && !sintab_nl[ADDR]->maskset && newaddr) {
-		err_nomask(ifflags);
+		sintab_nl[ADDR]->plen = in_default_plen(sintab_nl[ADDR]->addr);
+		sintab_nl[ADDR]->maskset = true;
 	}
 #endif
 }
