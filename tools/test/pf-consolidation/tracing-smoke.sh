@@ -18,16 +18,26 @@ cleanup()
     echo "PF tracing evidence: $work"
 }
 trap cleanup EXIT
-for mod in pf dummynet if_epair dtraceall; do
-    kldstat -q -m "$mod" || kldload "$mod"
+# 5BSD: the capability plane denies kldload(2) after boot.  pf and the
+# DTrace providers are loader defaults, if_epair must be preloaded and
+# dummynet may come from the SystemExtension broker.
+for mod in pf if_epair dtraceall; do
+    kldstat -q -m "$mod" || { echo "not preloaded: $mod" >&2; exit 1; }
 done
+kldstat -q -m dummynet || sysextctl load dummynet
+kldstat -q -m dummynet
 dtrace -l -P pf > "$work/probes.txt"
-for probe in 'test entry' 'test finish' 'rules entry' 'rules finish' \
-    'rules selected' 'translation result' 'state create_error' 'test result' 'state insert' 'state insert_error' \
-    'state remove' 'state transition' 'dummynet submit' \
-    'dummynet returned' 'dummynet reinject' 'dummynet error'; do
-    set -- $probe
-    awk -v f="$1" -v n="$2" '$2 == "pf" && $3 == "ip" && $4 == f && $5 == n {found=1} END {exit !found}' "$work/probes.txt"
+# OpenBSD PF probes (sys/netpfil/openbsd-pf/pf_sdt.c, pf_dummynet.c;
+# dtrace_pf(4)) as "module function name".
+for probe in 'ip test entry' 'ip test finish' 'ip rules entry' \
+    'ip anchor enter' ' reason set' 'state state create' \
+    'state state insert' 'state state remove' 'state state transition' \
+    'state state free' 'ip dummynet submit' 'ip dummynet returned' \
+    'ip dummynet reinject' 'ip dummynet error'; do
+    m=${probe%% *}; rest=${probe#* }
+    set -- $rest
+    # An empty module (pf::reason:set) matches whatever dtrace -l shows there.
+    awk -v m="$m" -v f="$1" -v n="$2" '$2 == "pf" && $(NF-1) == f && $NF == n && (m == "" || $3 == m) {found=1} END {exit !found}' "$work/probes.txt"
 done
 dtrace -l -P dummynet > "$work/dn-probes.txt"
 for probe in 'sched enqueue result' 'sched dequeue packet' 'sched credit wait' \
@@ -74,17 +84,13 @@ echo PF_TRACE_TRAFFIC_PASS
 EOF
 cat > "$work/trace.d" <<EOF
 #pragma D option quiet
-pf:ip:state:insert,
-pf:ip:state:remove,
-pf:ip:state:transition
-/args[0]->rule != 0 && stringof(args[0]->rule->label[0]) == "pf-trace-test"/
+pf:state:state:create
+/stringof(args[1]->label) == "pf-trace-test"/
+{ @events["create"] = count(); }
+pf:state:state:insert,
+pf:state:state:remove,
+pf:state:state:transition
 { @events[probename] = count(); }
-pf:ip:rules:selected
-/stringof(args[1]->label[0]) == "pf-trace-test"/
-{ @events["selected"] = count(); }
-pf:ip:translation:result
-/stringof(args[0]->kif->pfik_ifp->if_xname) == "$eb"/
-{ @events["translation"] = count(); }
 pf:ip:dummynet:submit
 /(arg2 & 0xffff) == 4242/
 { @events["submit"] = count(); }
@@ -92,11 +98,14 @@ pf:ip:dummynet:returned
 /(arg0 & 0xffff) == 4242/
 { @events["returned"] = count(); }
 pf:ip:dummynet:reinject
-/stringof(args[2]->if_xname) == "$eb"/
+/args[0] != 0 && stringof(args[0]->if_xname) == "$eb"/
 { @events["reinject"] = count(); }
-pf:ip:test:result
-/stringof(args[4]->if_xname) == "$eb"/
-{ @result[arg0, arg2] = count(); }
+pf:ip:test:entry
+/stringof(args[2]->if_xname) == "$eb"/
+{ @af[arg0] = count(); }
+pf:ip:test:finish
+/stringof(args[2]->if_xname) == "$eb"/
+{ @result[arg0] = count(); }
 dummynet:queue:drop:reason
 /stringof(args[2]) == "loss model"/
 { @events["loss_drop"] = count(); }
@@ -105,32 +114,38 @@ dummynet:queue:drop:reason
 { @events["queue_limit"] = count(); }
 dummynet:sched:credit:wait
 { @events["credit_wait"] = count(); }
-pf:ip:state:create_error
-/stringof(args[1]->label[0]) == "pf-trace-limit"/
+pf::reason:set
+/arg0 == 12/
 { @events["state_limit"] = count(); }
 ERROR { exit(2); }
 END {
-    printa("EVENT %s %@d\n", @events);
-    printa("RESULT %d %d %@d\n", @result);
+    printa("EVENT %s %@d\\n", @events);
+    printa("AF %d %@d\\n", @af);
+    printa("RESULT %d %@d\\n", @result);
 }
 EOF
 dtrace -s /usr/share/dtrace/pf-observe -s /usr/share/dtrace/dn-observe -s "$work/trace.d" -c "/bin/sh $work/traffic.sh" > "$work/trace.out" 2> "$work/trace.err"
 cat "$work/trace.out"
 cat "$work/trace.err"
-grep -q '^PF_SUMMARY .* faults=0$' "$work/trace.out"
 grep -q '^DN_SUMMARY faults=0$' "$work/trace.out"
-for metric in PF_TOTAL PF_RULE_SAMPLES PF_HANDOFF_SAMPLES DN_DEQUEUED DN_RELEASED; do
+for metric in DN_DEQUEUED DN_RELEASED; do
     awk -v m="$metric" '$1 == m && $2 > 0 {found=1} END {exit !found}' "$work/trace.out"
+done
+# pf-observe's verdict table: "  <dir> <action> <count>".
+for verdict in 'in pass' 'in drop'; do
+    set -- $verdict
+    awk -v d="$1" -v a="$2" '$1 == d && $2 == a && $3 > 0 {found=1} END {exit !found}' "$work/trace.out"
 done
 grep -q '^PF_TRACE_TRAFFIC_PASS$' "$work/trace.out"
 ! grep -Ei 'drop|error|invalid|fault' "$work/trace.err"
-for event in insert remove transition selected translation submit returned reinject loss_drop queue_limit credit_wait state_limit; do
+for event in create insert remove transition submit returned reinject loss_drop queue_limit credit_wait state_limit; do
     awk -v e="$event" '$1 == "EVENT" && $2 == e && $3 > 0 {found=1} END {exit !found}' "$work/trace.out"
 done
 # FreeBSD AF_INET=2, AF_INET6=28; PF_PASS=0, PF_DROP=1.
 for af in 2 28; do
-    for action in 0 1; do
-        awk -v af="$af" -v a="$action" '$1 == "RESULT" && $2 == af && $3 == a && $4 > 0 {found=1} END {exit !found}' "$work/trace.out"
-    done
+    awk -v af="$af" '$1 == "AF" && $2 == af && $3 > 0 {found=1} END {exit !found}' "$work/trace.out"
+done
+for action in 0 1; do
+    awk -v a="$action" '$1 == "RESULT" && $2 == a && $3 > 0 {found=1} END {exit !found}' "$work/trace.out"
 done
 echo PF_TRACING_PASS

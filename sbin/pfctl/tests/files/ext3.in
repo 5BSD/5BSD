@@ -1,0 +1,7 @@
+# 5BSD: dummynet pipes and queues
+pass out proto tcp to port 80 dnpipe 1
+pass in proto udp dnpipe (1, 2)
+pass out proto tcp dnqueue 10
+pass in dnqueue (0, 42)
+match out proto icmp dnpipe 5
+pass out proto tcp route-to 127.0.0.1 dnpipe 7

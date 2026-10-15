@@ -4,6 +4,7 @@ TESTSDIR=		${TESTSBASE}/sys/netpfil
 TESTS_SUBDIRS+=		common
 
 .if ${MK_PF} != "no"
+TESTS_SUBDIRS+=		integration
 TESTS_SUBDIRS+=		pf
 .endif
 
