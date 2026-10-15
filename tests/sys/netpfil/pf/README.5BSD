@@ -11,6 +11,13 @@ multihoming (sctp.sh, sctp.py) are ported as the "5BSD: ether",
 (contrib/openbsd-pf/README.5BSD).  OpenBSD's own suites are in
 openbsd/ (contrib/openbsd-pf/regress).
 
+OpenBSD applies a match rule's actions (set tos, set prio, ...) through
+the state of the rule that passes the packet; its implicit default rule
+passes without state, so a ruleset of match rules alone changes nothing.
+FreeBSD applied them anyway.  Tests that only had match rules
+(set_tos.sh, ../common/tos.sh) gain "pass out", so the outbound pass
+creates the state that carries the actions.
+
 STATUS: WORK IN PROGRESS.  The conversions below are mechanical and have
 NOT been run in a VM yet; see tools/test/pf-parity/HANDOFF-consumers.md.
 

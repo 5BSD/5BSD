@@ -60,7 +60,8 @@ v4_body()
 	jexec alcatraz pfctl -e
 
 	# No change is done if not requested
-	pft_set_rules alcatraz "match out proto icmp"
+	pft_set_rules alcatraz "match out proto icmp" \
+		"pass out"
 	atf_check -s exit:1 -o ignore ${common_dir}/pft_ping.py \
 		--sendif ${epair_send}a \
 		--to 198.51.100.3 \
@@ -68,7 +69,8 @@ v4_body()
 		--expect-tc 42
 
 	# The requested ToS is set
-	pft_set_rules alcatraz "match out proto icmp set tos 42"
+	pft_set_rules alcatraz "match out proto icmp set tos 42" \
+		"pass out"
 	atf_check -s exit:0 ${common_dir}/pft_ping.py \
 		--sendif ${epair_send}a \
 		--to 198.51.100.3 \
@@ -76,7 +78,8 @@ v4_body()
 		--expect-tc 42
 
 	# ToS is not changed if the scrub rule does not match
-	pft_set_rules alcatraz "match out proto tcp set tos 42"
+	pft_set_rules alcatraz "match out proto tcp set tos 42" \
+		"pass out"
 	atf_check -s exit:1 -o ignore ${common_dir}/pft_ping.py \
 		--sendif ${epair_send}a \
 		--to 198.51.100.3 \
@@ -85,7 +88,8 @@ v4_body()
 
 	# Multiple scrub rules match as expected
 	pft_set_rules alcatraz "match out proto tcp set tos 13" \
-		"match out proto icmp set tos 14"
+		"match out proto icmp set tos 14" \
+		"pass out"
 	atf_check -s exit:0 ${common_dir}/pft_ping.py \
 		--sendif ${epair_send}a \
 		--to 198.51.100.3 \
@@ -101,7 +105,8 @@ v4_body()
 		--expect-tc 14
 
 	# ToS values are unmolested if the packets do not match a scrub rule
-	pft_set_rules alcatraz "match out proto tcp set tos 13"
+	pft_set_rules alcatraz "match out proto tcp set tos 13" \
+		"pass out"
 	atf_check -s exit:0 ${common_dir}/pft_ping.py \
 		--sendif ${epair_send}a \
 		--to 198.51.100.3 \
@@ -140,7 +145,8 @@ v6_body()
 	jexec alcatraz pfctl -e
 
 	# No change is done if not requested
-	pft_set_rules alcatraz "match out proto ipv6-icmp"
+	pft_set_rules alcatraz "match out proto ipv6-icmp" \
+		"pass out"
 	atf_check -s exit:1 -o ignore -e ignore ${common_dir}/pft_ping.py \
 		--sendif ${epair}a \
 		--to 2001:db8:192::2 \
@@ -148,7 +154,8 @@ v6_body()
 		--expect-tc 42
 
 	# The requested ToS is set
-	pft_set_rules alcatraz "match out proto ipv6-icmp set tos 42"
+	pft_set_rules alcatraz "match out proto ipv6-icmp set tos 42" \
+		"pass out"
 	atf_check -s exit:0 -o ignore -e ignore ${common_dir}/pft_ping.py \
 		--sendif ${epair}a \
 		--to 2001:db8:192::2 \
@@ -156,7 +163,8 @@ v6_body()
 		--expect-tc 42
 
 	# ToS is not changed if the scrub rule does not match
-	pft_set_rules alcatraz "match out from 2001:db8:192::3 set tos 42"
+	pft_set_rules alcatraz "match out from 2001:db8:192::3 set tos 42" \
+		"pass out"
 	atf_check -s exit:1 -o ignore -e ignore ${common_dir}/pft_ping.py \
 		--sendif ${epair}a \
 		--to 2001:db8:192::2 \
@@ -165,7 +173,8 @@ v6_body()
 
 	# Multiple scrub rules match as expected
 	pft_set_rules alcatraz "match out from 2001:db8:192::3 set tos 13" \
-		"match out proto ipv6-icmp set tos 14"
+		"match out proto ipv6-icmp set tos 14" \
+		"pass out"
 	atf_check -s exit:0 -o ignore -e ignore ${common_dir}/pft_ping.py \
 		--sendif ${epair}a \
 		--to 2001:db8:192::2 \
@@ -181,7 +190,8 @@ v6_body()
 		--expect-tc 14
 
 	# ToS values are unmolested if the packets do not match a scrub rule
-	pft_set_rules alcatraz "match out from 2001:db8:192::3 set tos 13"
+	pft_set_rules alcatraz "match out from 2001:db8:192::3 set tos 13" \
+		"pass out"
 	atf_check -s exit:0 -o ignore -e ignore ${common_dir}/pft_ping.py \
 		--sendif ${epair}a \
 		--to 2001:db8:192::2 \
