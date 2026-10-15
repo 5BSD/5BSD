@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 
 p = argparse.ArgumentParser(description=__doc__)
-p.add_argument('--source', type=Path, default=Path('/usr/src/contrib/pf/authpf/authpf.c'))
+p.add_argument('--source', type=Path, default=Path('/usr/src/contrib/openbsd-pf/usr.sbin/authpf/authpf.c'))
 p.add_argument('--output', type=Path, required=True)
 a = p.parse_args()
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
