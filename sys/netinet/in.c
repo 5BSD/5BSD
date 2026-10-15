@@ -1281,6 +1281,13 @@ in_ifscrub_all(void)
 	struct ifaddr *ifa, *nifa;
 	struct ifreq ifr;
 
+	/*
+	 * 5BSD: in_control before ifnet_sx, the order of an address change
+	 * whose route message reaches SCTP's sctp_addr_change() (which takes
+	 * IFNET_RLOCK); taking in_control per address under IFNET_RLOCK
+	 * reversed it whenever a VNET jail was removed.
+	 */
+	sx_xlock(&in_control_sx);
 	IFNET_RLOCK();
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
 		/* Cannot lock here - lock recursion. */
@@ -1295,7 +1302,7 @@ in_ifscrub_all(void)
 			 */
 			bzero(&ifr, sizeof(ifr));
 			ifr.ifr_addr = *ifa->ifa_addr;
-			(void)in_control(NULL, SIOCDIFADDR, (caddr_t)&ifr,
+			(void)in_difaddr_ioctl(SIOCDIFADDR, (caddr_t)&ifr,
 			    ifp, NULL);
 		}
 		/* NET_EPOCH_EXIT(et); */
@@ -1303,6 +1310,7 @@ in_ifscrub_all(void)
 		igmp_domifdetach(ifp);
 	}
 	IFNET_RUNLOCK();
+	sx_xunlock(&in_control_sx);
 }
 
 bool
