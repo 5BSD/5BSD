@@ -1075,18 +1075,6 @@ socreate(int dom, struct socket **aso, int type, int proto,
 	int error;
 
 	prp = pffindproto(dom, type, proto);
-#ifdef COMPAT_FREEBSD15
-	/*
-	 * ipdivert(4) historically abuses PF_INET.  Unless pf provides the
-	 * OpenBSD divert(4) protocol there, use PF_DIVERT instead.
-	 */
-	if (__predict_false(dom == PF_INET && type == SOCK_RAW &&
-	    proto == __IPPROTO_DIVERT &&
-	    (prp == NULL || prp->pr_protocol != __IPPROTO_DIVERT))) {
-		dom = PF_DIVERT;
-		prp = pffindproto(dom, type, proto);
-	}
-#endif
 	if (prp == NULL) {
 		/* No support for domain. */
 		if (pffinddomain(dom) == NULL)

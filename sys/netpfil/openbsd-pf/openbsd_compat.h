@@ -214,8 +214,6 @@ int	in_baddynamic(u_int16_t, u_int16_t);
 /* Network stack globals under their OpenBSD names. */
 #define	tcp_mssdflt	V_tcp_mssdflt
 
-/* sys/socket.h protocol family that collides with pf's PF_DIVERT action */
-#undef	PF_DIVERT
 #undef	TASK_INITIALIZER
 
 /* Route labels (OpenBSD net/route.h); implemented in the glue. */

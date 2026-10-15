@@ -266,8 +266,6 @@ caddr_t	(*carp_macmatch6_p)(struct ifnet *ifp, struct mbuf *m,
     const struct in6_addr *taddr);
 #endif
 
-struct mbuf *(*tbr_dequeue_ptr)(struct ifaltq *, int) = NULL;
-
 /*
  * XXX: Style; these should be sorted alphabetically, and unprototyped
  * static functions should be prototyped. Currently they are sorted by
@@ -726,12 +724,6 @@ ifq_init(struct ifaltq *ifq, struct ifnet *ifp)
 
 	if (ifq->ifq_maxlen == 0) 
 		ifq->ifq_maxlen = ifqmaxlen;
-
-	ifq->altq_type = 0;
-	ifq->altq_disc = NULL;
-	ifq->altq_flags &= ALTQF_CANTCHANGE;
-	ifq->altq_tbr  = NULL;
-	ifq->altq_ifp  = ifp;
 }
 
 void
@@ -1131,13 +1123,6 @@ if_detach_internal(struct ifnet *ifp, bool vmove)
 	/*
 	 * Remove routes and flush queues.
 	 */
-#ifdef ALTQ
-	if (ALTQ_IS_ENABLED(&ifp->if_snd))
-		altq_disable(&ifp->if_snd);
-	if (ALTQ_IS_ATTACHED(&ifp->if_snd))
-		altq_detach(&ifp->if_snd);
-#endif
-
 	rt_flushifroutes(ifp);
 
 	if_purgeaddrs(ifp);
@@ -2154,10 +2139,6 @@ if_qflush(struct ifnet *ifp)
 
 	ifq = &ifp->if_snd;
 	IFQ_LOCK(ifq);
-#ifdef ALTQ
-	if (ALTQ_IS_ENABLED(ifq))
-		ALTQ_PURGE(ifq);
-#endif
 	n = ifq->ifq_head;
 	while ((m = n) != NULL) {
 		n = m->m_nextpkt;
@@ -5245,12 +5226,6 @@ if_getcounter(if_t ifp, ift_counter counter)
 	return (ifp->if_get_counter(ifp, counter));
 }
 
-bool
-if_altq_is_enabled(if_t ifp)
-{
-	return (ALTQ_IS_ENABLED(&ifp->if_snd));
-}
-
 struct vnet *
 if_getvnet(if_t ifp)
 {
@@ -5355,8 +5330,6 @@ if_show_ifnet(struct ifnet *ifp)
 	IF_DB_PRINTF("%p", if_snd.ifq_drv_tail);
 	IF_DB_PRINTF("%d", if_snd.ifq_drv_len);
 	IF_DB_PRINTF("%d", if_snd.ifq_drv_maxlen);
-	IF_DB_PRINTF("%d", if_snd.altq_type);
-	IF_DB_PRINTF("%x", if_snd.altq_flags);
 #undef IF_DB_PRINTF
 }
 

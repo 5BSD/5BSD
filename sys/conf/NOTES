@@ -778,23 +778,6 @@ options 	IPOIB
 options 	IPOIB_DEBUG
 options 	IPOIB_CM
 
-# altq(9). Enable the base part of the hooks with the ALTQ option.
-# Individual disciplines must be built into the base system and can not be
-# loaded as modules at this point. ALTQ requires a stable TSC so if yours is
-# broken or changes with CPU throttling then you must also have the ALTQ_NOPCC
-# option.
-options 	ALTQ
-options 	ALTQ_CBQ	# Class Based Queueing
-options 	ALTQ_RED	# Random Early Detection
-options 	ALTQ_RIO	# RED In/Out
-options 	ALTQ_CODEL	# CoDel Active Queueing
-options 	ALTQ_HFSC	# Hierarchical Packet Scheduler
-options 	ALTQ_FAIRQ	# Fair Packet Scheduler
-options 	ALTQ_CDNR	# Traffic conditioner
-options 	ALTQ_PRIQ	# Priority Queueing
-options 	ALTQ_NOPCC	# Required if the TSC is unusable
-options 	ALTQ_DEBUG
-
 # netgraph(4). Enable the base netgraph code with the NETGRAPH option.
 # Individual node types can be enabled with the corresponding option
 # listed below; however, this is not strictly necessary as netgraph
@@ -986,8 +969,8 @@ device		dummymbuf
 # MROUTING enables the kernel multicast packet forwarder, which works
 # with mrouted and XORP.
 #
-# IPDIVERT retains packet-diversion socket infrastructure.
 # Packet filtering is provided by PF; shaping is provided by Dummynet.
+# PF's divert-packet rules deliver packets to divert(4) sockets.
 #
 # IPSTEALTH enables code to support stealth forwarding (i.e., forwarding
 # packets without touching the TTL).  This can be useful to hide firewalls
@@ -999,7 +982,6 @@ device		dummymbuf
 # SOCKET_HHOOK enables the hhook(9) framework hooks for socket operations.
 #
 options 	MROUTING		# Multicast routing
-options 	IPDIVERT		#divert sockets
 options 	IPSTEALTH		#support for stealth forwarding
 options 	TCP_BLACKBOX
 options 	TCP_HHOOK

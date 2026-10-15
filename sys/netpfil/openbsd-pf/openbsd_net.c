@@ -14,7 +14,6 @@
 #include "openbsd_compat.h"
 
 #include <sys/module.h>
-#include <netinet/ip_divert.h>
 #include <netinet/sctp_crc32.h>
 #include <net/pfvar.h>
 #include <net/if_clone.h>

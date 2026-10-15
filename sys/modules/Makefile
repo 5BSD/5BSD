@@ -173,7 +173,6 @@ SUBDIR=	\
 	${_io} \
 	${_ioat} \
         ${_ipoib} \
-	ipdivert \
 	${_ipmi} \
 	ip6_mroute_mod \
 	ip_mroute_mod \

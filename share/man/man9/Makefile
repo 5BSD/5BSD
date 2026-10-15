@@ -9,7 +9,6 @@ MAN=	accept_filter.9 \
 	accf_tls.9 \
 	acl.9 \
 	alq.9 \
-	altq.9 \
 	atomic.9 \
 	backlight.9 \
 	bcopy.9 \
@@ -491,7 +490,6 @@ MLINKS+=alq.9 ALQ.9 \
 	alq.9 alq_post_flags.9 \
 	alq.9 alq_write.9 \
 	alq.9 alq_writen.9
-MLINKS+=altq.9 ALTQ.9
 MLINKS+=atomic.9 atomic_add.9 \
 	atomic.9 atomic_clear.9 \
 	atomic.9 atomic_cmpset.9 \

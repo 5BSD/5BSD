@@ -1500,7 +1500,7 @@ divert_to_head()
 {
 	atf_set descr 'Test that route-to is applied to divert-injected packets'
 	atf_set require.user root
-	atf_set require.kmods ipdivert
+	atf_set require.kmods pf
 }
 divert_to_body()
 {

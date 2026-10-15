@@ -233,7 +233,7 @@ Adopted OpenBSD code (pf/parity), all from facc8d7ec5d1:
   sbin/pfctl, etc/pf.os  -> /sbin/pfctl, /etc/pf.os
   share/man/man4 pf.4, pflog.4, pflow.4, pfsync.4, divert.4, share/man/man5
   pf.conf.5, pf.os.5     -> installed by share/man/man4 and man5 (FreeBSD's
-                            divert.4 is now ipdivert.4); marked 5BSD
+                            ipdivert.4 is retired); marked 5BSD
                             additions: pf.conf.5 jail, dummynet, ether rules and
                             queueing status, pfctl.8 ethernet and rc.conf(5),
                             pf.4 VNET and DIOCBINDJAIL, divert.4 (the only

@@ -29,22 +29,18 @@
 
 . $(atf_get_srcdir)/../common/vnet.subr
 
-load_divert_module() {
-	kldstat -q -m ipdivert
-	if [ $? -ne  0 ]; then
-		atf_skip "ipdivert module is not loaded"
-	fi
-}
+# divert(4) sockets are OpenBSD's, provided by pf(4); ipdivert(4) is retired.
 
-atf_test_case "ipdivert_ip6_output_remote_success" "cleanup"
-ipdivert_ip6_output_remote_success_head() {
+atf_test_case "divert_ip6_output_remote_success" "cleanup"
+divert_ip6_output_remote_success_head() {
 
 	atf_set descr 'Test valid IPv6 redirect'
 	atf_set require.user root
 	atf_set require.progs python3 scapy
+	atf_set require.kmods pf
 }
 
-ipdivert_ip6_output_remote_success_body() {
+divert_ip6_output_remote_success_body() {
 	ids=65530
 	id=`printf "%x" ${ids}`
 	if [ $$ -gt 65535 ]; then
@@ -56,7 +52,6 @@ ipdivert_ip6_output_remote_success_body() {
 	fi
 
 	vnet_init
-	load_divert_module
 
 	ip6a="2001:db8:6666:0000:${yl}:${id}:1:${xl}"
 	ip6b="2001:db8:6666:0000:${yl}:${id}:2:${xl}"
@@ -79,14 +74,14 @@ ipdivert_ip6_output_remote_success_body() {
 	# echo "REMOTE: ${remote_rtr_ll_ip} ${remote_rtr_mac}"
 
 	atf_check -s exit:0 $(atf_get_srcdir)/${script_name} \
-		--dip ${ip6b} --test_name ipdivert_ip6_output_remote_success
+		--dip ${ip6b} --test_name divert_ip6_output_remote_success
 	
 	count=`jexec ${jname} netstat -s -p icmp6 | grep 'Input histogram:' -A1 | grep -c 'echo:'`
 	# Verify redirect got installed
 	atf_check_equal "1" "${count}"
 }
 
-ipdivert_ip6_output_remote_success_cleanup() {
+divert_ip6_output_remote_success_cleanup() {
 
 	vnet_cleanup
 }
@@ -94,7 +89,7 @@ ipdivert_ip6_output_remote_success_cleanup() {
 atf_init_test_cases()
 {
 
-	atf_add_test_case "ipdivert_ip6_output_remote_success"
+	atf_add_test_case "divert_ip6_output_remote_success"
 }
 
 # end

@@ -566,17 +566,23 @@ second.
 Attempts to change the time by more than this will log the message
 .Dq Time adjustment clamped to +1 second .
 .Pp
-As on
-.Ox ,
-the
+The
 .Xr pf 4
-ruleset and settings are locked from this level on: rules cannot be
-loaded and options cannot be changed, while the addresses in existing
-tables can still be edited.
+packet filter is locked, as on
+.Ox :
+its rules, layer-2
+.Cm ether
+rules, options, queues and states cannot be changed.
+.Xr pfctl 8
+can still display the configuration, states and statistics, clear the
+statistics and source tracking nodes, set the debug level, the
+statistics interface and interface flags, and add, delete or replace
+addresses in existing tables; tables cannot be created or destroyed.
 .It Ic 3
 Network secure mode \- same as highly secure mode, plus
 .Xr dummynet 4
-configuration cannot be adjusted.
+pipes, queues and schedulers cannot be configured with
+.Xr dnctl 8 .
 .El
 .Pp
 The security level can be configured with variables documented in

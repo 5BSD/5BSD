@@ -84,8 +84,6 @@ struct	debugnet_methods;
 #include <sys/_task.h>		/* if_link_task */
 #define	IF_DUNIT_NONE	-1
 
-#include <net/altq/if_altq.h>
-
 CK_STAILQ_HEAD(ifnethead, ifnet);	/* we use TAILQs so that the order of */
 CK_STAILQ_HEAD(ifaddrhead, ifaddr);	/* instantiation is preserved in the list */
 CK_STAILQ_HEAD(ifmultihead, ifmultiaddr);
@@ -683,7 +681,6 @@ struct bpf_if *if_getbpf(if_t ifp);
 uint8_t if_getpcp(if_t ifp);
 void *if_getl2com(if_t ifp);
 struct ifvlantrunk *if_getvlantrunk(if_t ifp);
-bool if_altq_is_enabled(if_t ifp);
 
 struct in_ifinfo *if_getinet(if_t ifp);
 struct in6_ifextra *if_getinet6(if_t ifp);

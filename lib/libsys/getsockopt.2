@@ -229,10 +229,6 @@ Incoming TCP and UDP connections are distributed among the participating
 listening sockets based on a hash function of local port number, and foreign IP
 address and port number.
 A maximum of 256 sockets can be bound to the same load-balancing group.
-.Dv PF_DIVERT
-sockets may also be bound to a group, see the
-.Xr divert 4
-manual page for details.
 .Pp
 .Dv SO_KEEPALIVE
 enables the

@@ -46,7 +46,6 @@ MAN=	aac.4 \
 	ale.4 \
 	alpm.4 \
 	appleir.4 \
-	altq.4 \
 	amdpm.4 \
 	${_amdsbwd.4} \
 	${_amdsmb.4} \
@@ -159,7 +158,6 @@ MAN=	aac.4 \
 	disc.4 \
 	disk.4 \
 	divert.4 \
-	ipdivert.4 \
 	${_dpms.4} \
 	ds1307.4 \
 	ds3231.4 \
@@ -692,7 +690,6 @@ MLINKS+=age.4 if_age.4
 MLINKS+=agp.4 agpgart.4
 MLINKS+=alc.4 if_alc.4
 MLINKS+=ale.4 if_ale.4
-MLINKS+=altq.4 ALTQ.4
 MLINKS+=ath.4 if_ath.4
 MLINKS+=aue.4 if_aue.4
 MLINKS+=axe.4 if_axe.4
