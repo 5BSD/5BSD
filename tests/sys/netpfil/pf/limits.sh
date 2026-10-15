@@ -26,6 +26,11 @@
 
 . $(atf_get_srcdir)/utils.subr
 
+# 5BSD: pf's pool limits are host-wide and owned by the host vnet; a vnet
+# jail sees them and may restate them but not change them.  These tests run
+# exclusively in the host vnet (Makefile), change the limits there with
+# "pfctl -O", and restore the saved limits in cleanup.
+
 atf_test_case "basic" "cleanup"
 basic_head()
 {
@@ -36,27 +41,30 @@ basic_head()
 basic_body()
 {
 	pft_init
+	limits_save
 
 	vnet_mkjail alcatraz
 
-	pft_set_rules alcatraz \
-		"set limit states 200" \
-		"set limit frags 100" \
-		"set limit src-nodes 50" \
-		"set limit table-entries 25"
+	limits_set "states 200" "frags 100" "src-nodes 50" "table-entries 25"
 
-	atf_check -s exit:0 -o match:'states.*200' \
-	    jexec alcatraz pfctl -sm
-	atf_check -s exit:0 -o match:'frags.*100' \
-	    jexec alcatraz pfctl -sm
-	atf_check -s exit:0 -o match:'src-nodes.*50' \
-	    jexec alcatraz pfctl -sm
-	atf_check -s exit:0 -o match:'table-entries.*25' \
-	    jexec alcatraz pfctl -sm
+	for j in "" "jexec alcatraz"; do
+		atf_check -s exit:0 -o match:'states.*200' $j pfctl -sm
+		atf_check -s exit:0 -o match:'frags.*100' $j pfctl -sm
+		atf_check -s exit:0 -o match:'src-nodes.*50' $j pfctl -sm
+		atf_check -s exit:0 -o match:'table-entries.*25' $j pfctl -sm
+	done
+
+	# A vnet jail may restate the host's limit but not change it.
+	echo "set limit states 200" | atf_check -s exit:0 -e ignore \
+	    jexec alcatraz pfctl -Of -
+	echo "set limit states 300" | atf_check -s not-exit:0 -e ignore \
+	    jexec alcatraz pfctl -Of -
+	atf_check -s exit:0 -o match:'states.*200' pfctl -sm
 }
 
 basic_cleanup()
 {
+	limits_restore
 	pft_cleanup
 }
 
@@ -70,6 +78,7 @@ zero_head()
 zero_body()
 {
 	pft_init
+	limits_save
 
 	epair=$(vnet_mkepair)
 	ifconfig ${epair}b 192.0.2.2/24 up
@@ -81,10 +90,10 @@ zero_body()
 	    ping -c 3 192.0.2.1
 
 	jexec alcatraz pfctl -e
+	pft_set_rules noflush alcatraz "pass"
+
 	# Set no limit
-	pft_set_rules noflush alcatraz \
-		"set limit states 0" \
-		"pass"
+	limits_set "states 0"
 
 	# Check that we really report no limit
 	atf_check -s exit:0 -o 'match:states        hard limit        0' \
@@ -95,9 +104,7 @@ zero_body()
 	    ping -c 3 192.0.2.1
 
 	# Limit states
-	pft_set_rules noflush alcatraz \
-		"set limit states 1000" \
-		"pass"
+	limits_set "states 1000"
 
 	# And create a new state
 	atf_check -s exit:0 -o ignore \
@@ -109,6 +116,7 @@ zero_body()
 
 zero_cleanup()
 {
+	limits_restore
 	pft_cleanup
 }
 
@@ -122,16 +130,16 @@ anchors_head()
 anchors_body()
 {
 	pft_init
+	limits_save
 
 	vnet_mkjail alcatraz
 
 	jexec alcatraz pfctl -e
 
-	pft_set_rules alcatraz \
-	    "set limit anchors 1"
+	limits_set "anchors 1"
+	limits_set "anchors 2"
 
 	pft_set_rules alcatraz \
-	    "set limit anchors 2" \
 	    "pass" \
 	    "anchor \"foo\" {\n
 	        pass in\n
@@ -143,6 +151,7 @@ anchors_body()
 
 anchors_cleanup()
 {
+	limits_restore
 	pft_cleanup
 }
 

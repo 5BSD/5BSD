@@ -84,6 +84,9 @@ TEST_METADATA.priority+= execenv="" execenv_jail_params="" is_exclusive="true"
 TEST_METADATA.prio+= execenv="" execenv_jail_params="" is_exclusive="true"
 TEST_METADATA.statefile+= execenv="" execenv_jail_params="" is_exclusive="true"
 TEST_METADATA.transaction+= execenv="" execenv_jail_params="" is_exclusive="true"
+# pf pool limits are owned by the host vnet (a vnet jail cannot change them).
+TEST_METADATA.limits+= execenv="" execenv_jail_params="" is_exclusive="true"
+TEST_METADATA.syncookie+= execenv="" execenv_jail_params="" is_exclusive="true"
 
 ${PACKAGE}FILES+=	\
 			bsnmpd.conf \

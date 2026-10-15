@@ -91,6 +91,30 @@ pfsynct_mkif()
 	    atf_fail "creating pfsync0 in jail $1"
 }
 
+# 5BSD: pf's pool limits are host-wide and owned by the host vnet.  Tests
+# that change them run exclusively in the host vnet (Makefile), save the
+# limits first and restore them in cleanup.
+limits_save()
+{
+	pfctl -sm | awk '{ print "set limit " $1 " " $NF }' > limits.original
+	[ -s limits.original ] || atf_fail "Cannot read the current limits"
+}
+
+limits_restore()
+{
+	if [ -f limits.original ]; then
+		pfctl -Of limits.original
+	fi
+}
+
+limits_set()
+{
+	while [ $# -gt 0 ]; do
+		printf "set limit %s\n" "$1"
+		shift
+	done | pfctl -Of - || atf_fail "Failed to set limits"
+}
+
 pflog_init()
 {
 	pft_init

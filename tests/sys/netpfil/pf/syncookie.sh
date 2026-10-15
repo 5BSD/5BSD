@@ -440,8 +440,9 @@ adaptive_body()
 	jexec alcatraz ifconfig ${epair}b 192.0.2.1/24 up
 
 	jexec alcatraz pfctl -e
+	limits_save
+	limits_set "states 100"
 	pft_set_rules alcatraz \
-		"set limit states 100" \
 		"set syncookies adaptive (start 10%%, end 5%%)" \
 		"pass in" \
 		"pass out"
@@ -481,6 +482,7 @@ adaptive_body()
 
 adaptive_cleanup()
 {
+	limits_restore
 	pft_cleanup
 }
 
@@ -498,14 +500,15 @@ limits_body()
 	vnet_mkjail alcatraz
 
 	jexec alcatraz pfctl -e
+	limits_save
+	limits_set "states 1"
 	pft_set_rules alcatraz \
-		"set limit states 1" \
 		"set syncookies adaptive (start 10%%, end 5%%)" \
 		"pass in" \
 		"pass out"
 
+	limits_set "states 326000000"
 	pft_set_rules alcatraz \
-		"set limit states 326000000" \
 		"set syncookies adaptive (start 10%%, end 5%%)" \
 		"pass in" \
 		"pass out"
@@ -513,6 +516,7 @@ limits_body()
 
 limits_cleanup()
 {
+	limits_restore
 	pft_cleanup
 }
 
