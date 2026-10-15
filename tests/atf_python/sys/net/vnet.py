@@ -13,6 +13,7 @@ from typing import Dict
 from typing import List
 from typing import NamedTuple
 
+import pytest
 from atf_python.sys.net.tools import ToolsHelper
 from atf_python.utils import BaseTest
 from atf_python.utils import libc
@@ -349,8 +350,29 @@ class VnetTestTemplate(BaseTest):
     TOPOLOGY = {}
 
     def _require_default_modules(self):
-        libc.kldload("if_epair.ko")
-        self.require_module("if_epair")
+        # 5BSD: the capability plane denies kldload(2) after boot, so
+        # if_epair (and if_bridge for bridged topologies) must be preloaded
+        # on a test image; see tests/README.  Name the fix in the skip
+        # reason instead of a bare "module not available".
+        mods = ["if_epair"]
+        if any(
+            isinstance(v, dict) and v.get("type") == "bridge"
+            for v in self.TOPOLOGY.values()
+        ):
+            mods.append("if_bridge")
+        for mod in mods:
+            if libc.modfind(mod) == 0:
+                continue
+            load_err = libc.kldload(mod + ".ko")
+            if libc.modfind(mod) == 0:
+                continue
+            pytest.skip(
+                "{} is not loaded and cannot be loaded ({}): preload "
+                "if_epair/if_bridge (capability plane; set {}_load=\"YES\" "
+                "in loader.conf, see tests/README)".format(
+                    mod, os.strerror(load_err) if load_err else "not found", mod
+                )
+            )
 
     def _get_vnet_handler(self, vnet_alias: str):
         handler_name = "{}_handler".format(vnet_alias)
