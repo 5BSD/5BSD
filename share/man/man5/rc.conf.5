@@ -839,6 +839,26 @@ in the list, a variable named
 should be defined, containing the command-line flags to be passed to the
 .Xr ftp-proxy 8
 instance.
+.It Va tftpproxy_enable
+.Pq Vt bool
+Set to
+.Dq Li NO
+by default.
+Setting this to
+.Dq Li YES
+starts the
+.Xr tftp-proxy 8
+daemon
+.Pq Pa /usr/libexec/tftp-proxy ,
+which supports the
+.Xr pf 4
+packet filter in passing TFTP transfers.
+.It Va tftpproxy_flags
+.Pq Vt str
+Empty by default.
+This variable contains additional flags passed to the
+.Xr tftp-proxy 8
+program.
 .It Va pfsync_enable
 .Pq Vt bool
 Set to

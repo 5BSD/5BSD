@@ -129,6 +129,30 @@ pass in quick on $int_if inet proto udp from $lan to port tftp \e
 pass out quick on $ext_if inet proto udp from $lan to port tftp \e
     group _tftp_proxy divert-reply
 .Ed
+.\" 5BSD: proxy user, path and rc.conf
+.Pp
+On 5BSD
+.Nm
+is installed as
+.Pa /usr/libexec/tftp-proxy
+.Po
+.Ox :
+.Pa /usr/sbin/tftp-proxy
+.Pc ,
+runs as the
+.Dq proxy
+user, so the second rule uses
+.Cm group proxy ,
+and
+.Xr rc 8
+starts it when
+.Va tftpproxy_enable
+is set in
+.Xr rc.conf 5
+.Po
+flags in
+.Va tftpproxy_flags
+.Pc .
 .Sh SEE ALSO
 .Xr tftp 1 ,
 .Xr pf 4 ,

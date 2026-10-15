@@ -83,6 +83,15 @@ pass out from $client to $server port $port nat-to $proxy
 .Pp
 .Nm
 needs to start as root and drops privileges to the _ftp_proxy user.
+.\" 5BSD: proxy user
+On 5BSD it drops privileges to the
+.Dq proxy
+user, and
+.Xr rc 8
+starts it when
+.Va ftpproxy_enable
+is set in
+.Xr rc.conf 5 .
 .Pp
 The options are as follows:
 .Bl -tag -width Ds

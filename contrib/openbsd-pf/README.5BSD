@@ -82,6 +82,9 @@ to a re-import.
                  (/dev/fd/0) instead.
   ftp-proxy/ftp-proxy.c, tftp-proxy/tftp-proxy.c  NOPRIV_USER may be set
                  by the build (5BSD uses the existing "proxy" user)
+  ftp-proxy/ftp-proxy.8, tftp-proxy/tftp-proxy.8  a paragraph on the
+                 "proxy" user, the 5BSD path (/usr/libexec/tftp-proxy) and
+                 the rc.conf(5) knobs
 
 5BSD edits in sys/net (all marked "5BSD"):
   VNET (marked "5BSD: VNET"): global state is defined with PF_VNET_DEFINE*
