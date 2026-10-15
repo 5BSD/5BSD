@@ -158,7 +158,8 @@ enum	{ PF_STATE_OPT_MAX, PF_STATE_OPT_NOSYNC, PF_STATE_OPT_SRCTRACK,
 	    PF_STATE_OPT_OVERLOAD, PF_STATE_OPT_STATELOCK,
 	    PF_STATE_OPT_TIMEOUT, PF_STATE_OPT_SLOPPY,
 	    PF_STATE_OPT_PFLOW,
-	    PF_STATE_OPT_STATELIM, PF_STATE_OPT_SOURCELIM };
+	    PF_STATE_OPT_STATELIM, PF_STATE_OPT_SOURCELIM,
+	    PF_STATE_OPT_ALLOW_RELATED };	/* 5BSD: sctp */
 
 enum	{ PF_SRCTRACK_NONE, PF_SRCTRACK, PF_SRCTRACK_GLOBAL, PF_SRCTRACK_RULE };
 
@@ -549,6 +550,7 @@ int	parseport(char *, struct range *r, int);
 %token	NOROUTE URPFFAILED FRAGMENT USER GROUP MAXMSS MAXIMUM TTL TOS DROP TABLE
 %token	JAIL	/* 5BSD: jail */
 %token	DNPIPE DNQUEUE	/* 5BSD: dummynet */
+%token	ALLOW_RELATED	/* 5BSD: sctp */
 %token	REASSEMBLE ANCHOR SYNCOOKIES
 %token	SET OPTIMIZATION TIMEOUT LIMIT LOGINTERFACE BLOCKPOLICY RANDOMID
 %token	SYNPROXY FINGERPRINTS NOSYNC DEBUG SKIP HOSTID
@@ -2268,6 +2270,15 @@ pfrule		: action dir logquick interface af proto fromto
 						YYERROR;
 					}
 					r.rule_flag |= PFRULE_PFLOW;
+					break;
+				case PF_STATE_OPT_ALLOW_RELATED: /* 5BSD: sctp */
+					if (r.rule_flag & PFRULE_ALLOW_RELATED) {
+						yyerror("state allow-related "
+						    "option: multiple "
+						    "definitions");
+						YYERROR;
+					}
+					r.rule_flag |= PFRULE_ALLOW_RELATED;
 					break;
 				case PF_STATE_OPT_TIMEOUT:
 					if (o->data.timeout.number ==
@@ -4097,6 +4108,14 @@ state_opt_item	: MAXIMUM NUMBER		{
 			$$->next = NULL;
 			$$->tail = $$;
 		}
+		| ALLOW_RELATED {	/* 5BSD: sctp */
+			$$ = calloc(1, sizeof(struct node_state_opt));
+			if ($$ == NULL)
+				err(1, "state_opt_item: calloc");
+			$$->type = PF_STATE_OPT_ALLOW_RELATED;
+			$$->next = NULL;
+			$$->tail = $$;
+		}
 		| STRING NUMBER			{
 			int	i;
 
@@ -4501,8 +4520,9 @@ rule_consistent(struct pf_rule *r)
 		problems++;
 	}
 	if (r->proto != IPPROTO_TCP && r->proto != IPPROTO_UDP &&
+	    r->proto != IPPROTO_SCTP &&	/* 5BSD: sctp */
 	    (r->src.port_op || r->dst.port_op)) {
-		yyerror("port only applies to tcp/udp");
+		yyerror("port only applies to tcp/udp/sctp");
 		problems++;
 	}
 	if (r->proto != IPPROTO_TCP && r->proto != IPPROTO_UDP &&
@@ -5647,6 +5667,7 @@ lookup(char *s)
 		{ "af-to",		AFTO},
 		{ "all",		ALL},
 		{ "allow-opts",		ALLOWOPTS},
+		{ "allow-related",	ALLOW_RELATED},	/* 5BSD: sctp */
 		{ "anchor",		ANCHOR},
 		{ "antispoof",		ANTISPOOF},
 		{ "any",		ANY},
@@ -6405,6 +6426,8 @@ getservice(char *n)
 		s = getservbyname(n, "tcp");
 		if (s == NULL)
 			s = getservbyname(n, "udp");
+		if (s == NULL)
+			s = getservbyname(n, "sctp");	/* 5BSD: sctp */
 		if (s == NULL) {
 			yyerror("unknown port %s", n);
 			return (-1);

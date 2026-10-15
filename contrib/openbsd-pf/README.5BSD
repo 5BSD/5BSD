@@ -116,7 +116,10 @@ to a re-import.
                  multihome states), pf_state_key_attach() (reuse of closed
                  states), pf_detach_state() and pf_test() (multihome
                  states after filtering) (pf.c); no SCTP port changes for
-                 rdr-to (pf_lb.c); default timeouts (pf_ioctl.c).
+                 rdr-to (pf_lb.c); default timeouts (pf_ioctl.c); pfctl
+                 parse.y grammar (allow-related, SCTP ports and service
+                 names), pfctl_parser.c timeout names and printing,
+                 pfctl.c default timeouts, pf_print_state.c state names.
                  The logic is in sys/netpfil/openbsd-pf/pf_sctp.c.
                  pfsync: the verification tag travels in pfss_ts_mod, the
                  field it shares with the timestamp modulation, so the

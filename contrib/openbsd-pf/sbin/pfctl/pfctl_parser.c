@@ -204,6 +204,11 @@ const struct pf_timeout pf_timeouts[] = {
 	{ "other.first",	PFTM_OTHER_FIRST_PACKET },
 	{ "other.single",	PFTM_OTHER_SINGLE },
 	{ "other.multiple",	PFTM_OTHER_MULTIPLE },
+	{ "sctp.first",		PFTM_SCTP_FIRST_PACKET },	/* 5BSD: sctp */
+	{ "sctp.opening",	PFTM_SCTP_OPENING },		/* 5BSD: sctp */
+	{ "sctp.established",	PFTM_SCTP_ESTABLISHED },	/* 5BSD: sctp */
+	{ "sctp.closing",	PFTM_SCTP_CLOSING },		/* 5BSD: sctp */
+	{ "sctp.closed",	PFTM_SCTP_CLOSED },		/* 5BSD: sctp */
 	{ "frag",		PFTM_FRAG },
 	{ "interval",		PFTM_INTERVAL },
 	{ "adaptive.start",	PFTM_ADAPTIVE_START },
@@ -976,6 +981,8 @@ print_rule(struct pfctl *pf, struct pf_rule *r, const char *anchor_call,
 		ropts = 1;
 	if (r->rule_flag & PFRULE_PFLOW)
 		ropts = 1;
+	if (r->rule_flag & PFRULE_ALLOW_RELATED)	/* 5BSD: sctp */
+		ropts = 1;
 	for (i = 0; !ropts && i < PFTM_MAX; ++i)
 		if (r->timeout[i])
 			ropts = 1;
@@ -1098,6 +1105,12 @@ print_rule(struct pfctl *pf, struct pf_rule *r, const char *anchor_call,
 			if (!ropts)
 				printf(", ");
 			printf("pflow");
+			ropts = 0;
+		}
+		if (r->rule_flag & PFRULE_ALLOW_RELATED) {	/* 5BSD: sctp */
+			if (!ropts)
+				printf(", ");
+			printf("allow-related");
 			ropts = 0;
 		}
 		for (i = 0; i < PFTM_MAX; ++i)
