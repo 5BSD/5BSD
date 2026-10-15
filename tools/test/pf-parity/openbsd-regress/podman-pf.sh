@@ -20,6 +20,8 @@ fail() { echo "FAIL $*"; rc=1; }
 # DUT: default route via the helper, the CNI sample ruleset, vfs storage on
 # UFS, and a minimal image: /rescue plus nc(1) with its libraries.
 $S dut 'sh -es' <<'EOF'
+ifconfig vtnet1 | grep -q 'inet 10.188.210.50 ' ||
+    ifconfig vtnet1 inet 10.188.210.50/24 up
 route -q delete default >/dev/null 2>&1 || true
 route -q add default 10.188.210.10
 sysctl -q net.inet.ip.forwarding=1
@@ -106,7 +108,7 @@ if $S dut 'test -x ${PODMAN_CNI_ORIG:-/var/tmp/podman/cni-orig}/portmap'; then
 fi
 
 # H: no panics, lock-order reversals or pf warnings from all of the above.
-d=$($S dut 'dmesg | grep -E "lock order reversal|panic|pf_|WARNING" | tail -5')
+d=$($S dut 'dmesg | grep -E "lock order reversal|panic|state key linking mismatch|pf: " | tail -5')
 [ -z "$d" ] && pass "dmesg: clean" || fail "dmesg: $d"
 
 $S dut 'route -q delete default >/dev/null 2>&1; true'

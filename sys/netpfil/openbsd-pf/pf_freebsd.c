@@ -696,7 +696,7 @@ pf_fbsd_unhook(void)
 
 static eventhandler_tag pf_ifattach_tag, pf_ifdetach_tag, pf_ifaddr_tag;
 static eventhandler_tag pf_iflink_tag, pf_grpattach_tag, pf_grpdetach_tag;
-static eventhandler_tag pf_grpchange_tag;
+static eventhandler_tag pf_grpchange_tag, pf_ifrename_tag;
 
 static void
 pf_fbsd_ifattach(void *arg, struct ifnet *ifp)
@@ -714,6 +714,22 @@ pf_fbsd_ifdetach(void *arg, struct ifnet *ifp)
 	obsd_ifhooks_run(ifp, OBSD_HOOK_DETACH);
 	if (V_pf_fbsd_ready)
 		pfi_detach_ifnet(ifp);
+	CURVNET_RESTORE();
+}
+
+/*
+ * FreeBSD renames interfaces (ifconfig name, podman's CNI bridges, jail
+ * managers); OpenBSD cannot.  pf finds interfaces by name, so move the
+ * interface from the kif of its old name to the kif of its new one, as
+ * FreeBSD pf did, without the detach hooks: the interface itself stays.
+ * See pfi_rename_ifnet().
+ */
+static void
+pf_fbsd_ifrename(void *arg, struct ifnet *ifp, const char *old_name)
+{
+	CURVNET_SET(ifp->if_vnet);
+	if (V_pf_fbsd_ready)
+		pfi_rename_ifnet(ifp, old_name);
 	CURVNET_RESTORE();
 }
 
@@ -1225,6 +1241,8 @@ pf_fbsd_load(void)
 	    pf_fbsd_ifdetach, NULL, EVENTHANDLER_PRI_FIRST);
 	pf_ifaddr_tag = EVENTHANDLER_REGISTER(ifaddr_event_ext,
 	    pf_fbsd_ifaddr, NULL, EVENTHANDLER_PRI_ANY);
+	pf_ifrename_tag = EVENTHANDLER_REGISTER(ifnet_rename_event,
+	    pf_fbsd_ifrename, NULL, EVENTHANDLER_PRI_ANY);
 	pf_iflink_tag = EVENTHANDLER_REGISTER(ifnet_link_event,
 	    pf_fbsd_iflink, NULL, EVENTHANDLER_PRI_ANY);
 	pf_grpattach_tag = EVENTHANDLER_REGISTER(group_attach_event,

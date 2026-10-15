@@ -32,9 +32,9 @@
 #   - the sample ruleset: table <cni-nat>, match ... nat-to (egress:0),
 #     anchor "cni-rdr/*";
 #   - ipmasq: pfctl -t cni-nat -T add|delete <container address>;
-#   - portmap: pfctl -a cni-rdr/<id> -f - with "pass in ... rdr-to" and
-#     "pass out on <bridge> ... from (lo0) ... nat-to (<bridge>)", removed
-#     with pfctl -a cni-rdr/<id> -F rules.
+#   - portmap: pfctl -a cni-rdr/<id> -f - with "pass in ... rdr-to" for
+#     outside clients and "pass out on lo0 ... rdr-to ... nat-to
+#     (<bridge>:0)" for the host itself, removed with -F rules.
 # Keep these strings in step with the port's patch and pf.conf.sample.
 
 . $(atf_get_srcdir)/integration.subr
@@ -207,7 +207,7 @@ portmap_body()
 	cni_serve 4 80
 	cni_portmap \
 	    "pass in inet proto tcp from any to self port 8080 rdr-to 10.88.0.2 port 80" \
-	    "pass out on ${br} inet proto tcp from (lo0) to 10.88.0.2 port 80 nat-to (${br})"
+	    "pass out on lo0 inet proto tcp from any to self port 8080 rdr-to 10.88.0.2 port 80 nat-to (${br}:0)"
 	atf_check -s exit:0 -o match:"rdr-to 10.88.0.2 port 80" \
 	    jexec host pfctl -a cni-rdr/${CNI_ID} -sr
 	# The main ruleset reaches the nested anchor through cni-rdr/*.
@@ -259,11 +259,16 @@ portmap_local_body()
 	cni_serve 4 80
 	cni_portmap \
 	    "pass in inet proto tcp from any to self port 8080 rdr-to 10.88.0.2 port 80" \
-	    "pass out on ${br} inet proto tcp from (lo0) to 10.88.0.2 port 80 nat-to (${br})"
+	    "pass out on lo0 inet proto tcp from any to self port 8080 rdr-to 10.88.0.2 port 80 nat-to (${br}:0)"
 	atf_check -s exit:0 -o inline:"hello\n" \
 	    jexec host nc -w 3 127.0.0.1 8080
 	atf_check -s exit:0 -o inline:"hello\n" \
 	    jexec host nc -w 3 198.51.100.1 8080
+	atf_check -s exit:0 -o inline:"hello\n" \
+	    jexec host nc -w 3 10.88.0.1 8080
+	# Outside clients still use the inbound rule.
+	atf_check -s exit:0 -o inline:"hello\n" \
+	    jexec out nc -w 3 198.51.100.1 8080
 }
 
 portmap_local_cleanup()
@@ -365,6 +370,57 @@ local_reset_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "renamed_interface" "cleanup"
+renamed_interface_head()
+{
+	atf_set descr 'Rules, (if) addresses and interface tables follow an interface renamed after creation, as podman names its bridge'
+	atf_set require.user root
+}
+
+renamed_interface_body()
+{
+	pft_init
+	e=$(vnet_mkepair)
+	vnet_mkjail host ${e}a
+	vnet_mkjail peer ${e}b
+	jexec host ifconfig ${e}a 192.0.2.1/24 up
+	jexec peer ifconfig ${e}b 192.0.2.2/24 up
+	jexec host ifconfig ${e}a name cniren0 >/dev/null ||
+	    atf_fail "cannot rename ${e}a"
+	jexec host pfctl -e >/dev/null 2>&1
+
+	# A rule on the new name applies.
+	pft_set_rules host "pass" "block out quick on cniren0 inet proto icmp"
+	atf_check -s exit:2 -o ignore jexec host ping -c 1 -t 2 192.0.2.2
+	# The old name no longer matches the interface.
+	pft_set_rules host "pass" "block out quick on ${e}a inet proto icmp"
+	atf_check -s exit:0 -o ignore jexec host ping -c 1 -t 2 192.0.2.2
+
+	# (if) addresses: the new name has the address, the old has none.
+	pft_set_rules host "pass" \
+	    "pass out quick on cniren0 inet proto icmp from (cniren0) label new" \
+	    "pass out quick inet proto icmp from (${e}a) label old"
+	atf_check -s exit:0 -o ignore jexec host ping -c 2 -t 4 192.0.2.2
+	atf_check -s exit:0 -o match:"^new [0-9]+ [1-9]" jexec host pfctl -sl
+	atf_check -s exit:0 -o match:"^old [0-9]+ 0 " jexec host pfctl -sl
+
+	# Renamed again while rules use it.
+	jexec host ifconfig cniren0 name cniren1 >/dev/null
+	pft_set_rules host "pass" "block out quick on cniren1 inet proto icmp"
+	atf_check -s exit:2 -o ignore jexec host ping -c 1 -t 2 192.0.2.2
+}
+
+renamed_interface_cleanup()
+{
+	pft_cleanup
+	# Jail removal returns the renamed epair to the host under its new
+	# name, which vnet_cleanup does not know.
+	for i in cniren0 cniren1; do
+		ifconfig ${i} destroy 2>/dev/null
+	done
+	return 0
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "egress_group"
@@ -376,4 +432,5 @@ atf_init_test_cases()
 	atf_add_test_case "portmap_teardown"
 	atf_add_test_case "freebsd_syntax_refused"
 	atf_add_test_case "local_reset"
+	atf_add_test_case "renamed_interface"
 }

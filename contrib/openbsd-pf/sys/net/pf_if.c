@@ -372,6 +372,25 @@ pfi_detach_ifnet(struct ifnet *ifp)
 	PF_UNLOCK();
 }
 
+/*
+ * 5BSD: rename.  FreeBSD interfaces can be renamed.  Move the interface to
+ * the kif of its new name; the old name's dynamic addresses and tables are
+ * emptied, as if that interface had been detached.
+ */
+void
+pfi_rename_ifnet(struct ifnet *ifp, const char *old_name)
+{
+	struct pfi_kif		*kif;
+
+	pfi_detach_ifnet(ifp);
+	PF_LOCK();
+	pfi_update++;
+	if ((kif = pfi_kif_find(old_name)) != NULL)
+		pfi_kif_update(kif);
+	PF_UNLOCK();
+	pfi_attach_ifnet(ifp);
+}
+
 void
 pfi_attach_ifgroup(struct ifg_group *ifg)
 {
