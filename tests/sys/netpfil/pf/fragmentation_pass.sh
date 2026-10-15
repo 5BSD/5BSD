@@ -191,7 +191,7 @@ v6_route_to_body()
 	pft_set_rules alcatraz \
 		"set reassemble yes" \
 		"pass" \
-		"pass in route-to 2001:db8:43::3 inet6 proto icmp6 from any to 2001:db8:43::3 keep state"
+		"pass in inet6 proto icmp6 from any to 2001:db8:43::3 route-to 2001:db8:43::3 keep state"
 
 	# Forwarding test
 	atf_check -s exit:0 -o ignore \
@@ -207,7 +207,7 @@ v6_route_to_body()
 	pft_set_rules alcatraz \
 		"set reassemble no" \
 		"pass" \
-		"pass in route-to 2001:db8:43::3 inet6 proto icmp6 from any to 2001:db8:43::3 keep state"
+		"pass in inet6 proto icmp6 from any to 2001:db8:43::3 route-to 2001:db8:43::3 keep state"
 
 	atf_check -s exit:0 -o ignore \
 		ping -6 -c 1 2001:db8:43::3
@@ -411,7 +411,9 @@ reassemble_body()
 	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.2
 
 	jexec alcatraz pfctl -e
+	# OpenBSD reassembles fragments by default; turn it off explicitly.
 	pft_set_rules alcatraz \
+		"set reassemble no" \
 		"pass out" \
 		"block in" \
 		"pass in inet proto icmp all icmp-type echoreq"
@@ -463,7 +465,8 @@ no_df_body()
 
 	# Enable packet reassembly with clearing of the no-df flag.
 	pft_set_rules router \
-		"scrub all fragment reassemble no-df" \
+		"set reassemble yes" \
+		"match all scrub (no-df)" \
 		"block" \
 		"pass inet proto icmp all icmp-type echoreq"
 	# Ping with non-fragmentable packets.
@@ -505,10 +508,11 @@ reassemble_slowpath_body()
 	# Sanity check.
 	ping_server_check_reply exit:0 --ping-type=icmp
 
-	# Enable packet reassembly with clearing of the no-df flag.
+	# Enable packet reassembly.  OpenBSD reassembles globally, not per
+	# interface, so the packet is reassembled on input and pf refragments
+	# it when it leaves through the slow path.
 	pft_set_rules router \
-		"scrub in on ${epair_tester}b fragment no reassemble" \
-		"scrub on ${epair_server}a fragment reassemble" \
+		"set reassemble yes" \
 		"pass"
 
 	# Ensure that the packet makes it through the slow path
@@ -639,7 +643,7 @@ dummynet_fragmented_body()
 	# Count that fragmented packets have hit the rule only once and that
 	# they have not created states. There is no stateful firewall support
 	# for fragmented packets.
-	grep -qE 'pass in on epair0b inet proto udp all keep state dnpipe\(1, 1\) .* Packets: 8 Bytes: 10168 States: 0 ' $rules ||
+	grep -qE "pass in on ${epair_tester}b inet proto udp all dnpipe\(1, 1\) .* Packets: 8 Bytes: 10168 States: 0 " $rules ||
 		atf_fail "Fragmented packets not counted correctly"
 }
 
