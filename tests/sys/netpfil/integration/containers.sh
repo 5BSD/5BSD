@@ -334,7 +334,7 @@ freebsd_syntax_refused_cleanup()
 atf_test_case "local_reset" "cleanup"
 local_reset_head()
 {
-	atf_set descr 'A refused local connection: the TCP reset does not carry the input packet\'s pf state key'
+	atf_set descr "A refused local connection: the TCP reset does not carry the input packet's pf state key"
 	atf_set require.user root
 }
 
