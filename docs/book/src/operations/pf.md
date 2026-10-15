@@ -77,8 +77,8 @@ behave as on OpenBSD:
   `socket(AF_INET, SOCK_RAW, IPPROTO_DIVERT)` (or `AF_INET6`) bound to port
   `n`. Writing a packet back with an unspecified destination address sends
   it out; with a local address it is received on the interface that has the
-  address. Checksums are recomputed. This is OpenBSD's divert(4); the
-  ipdivert(4) `PF_DIVERT` sockets of ipfw are unrelated.
+  address. Checksums are recomputed. This is OpenBSD's divert(4), the
+  only divert interface; FreeBSD's ipdivert(4) is retired.
 
 A transparent HTTP proxy on the router:
 
