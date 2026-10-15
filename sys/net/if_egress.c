@@ -166,7 +166,7 @@ egress_sync_one(struct ifnet *ifp, void *arg)
 static void
 egress_task_fn(void *arg, int pending __unused)
 {
-	struct vnet *vnet = arg;
+	struct vnet *vnet __unused = arg;	/* unused without VIMAGE */
 	struct egress_set *set;
 	struct epoch_tracker et;
 
