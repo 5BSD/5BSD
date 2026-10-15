@@ -345,7 +345,7 @@ See section 3.1.
 | IPPROTO_IP | MCAST_JOIN/LEAVE_GROUP (Linux 136-byte group_req), IP_ADD/DROP_SOURCE_MEMBERSHIP (Linux member order) | mapped | short struct EINVAL; leaving a group not joined EADDRNOTAVAIL |
 | IPPROTO_IP | IP_MTU_DISCOVER DO/DONT | mapped | OMIT/INTERFACE EINVAL; out of range EINVAL |
 | IPPROTO_IP | IP_MULTICAST_ALL | mapped-partial | only the FreeBSD behaviour (0) accepted |
-| IPPROTO_IP | IP_FREEBIND | mapped | IP_BINDANY, root only (EPERM otherwise) |
+| IPPROTO_IP | IP_FREEBIND, IP_TRANSPARENT | mapped | IP_BINDANY, root only (EPERM otherwise); interception itself is a pf(4) `divert-to`/`rdr-to` rule |
 | IPPROTO_IP | IP_RECVOPTS/IP_RETOPTS, IP_ROUTER_ALERT, IP_NODEFRAG | rejected-unimplementable | ENOPROTOOPT (logged once) |
 | IPPROTO_TCP | TCP_NODELAY, TCP_MAXSEG, TCP_CORK (TCP_NOPUSH), TCP_KEEP*, TCP_INFO (translated, read-only), TCP_CONGESTION (name translation incl. reno<->newreno, optlen rules), TCP_USER_TIMEOUT (ms rounded up to s), TCP_FASTOPEN, TCP_MD5SIG | mapped | |
 | IPPROTO_TCP | TCP_QUICKACK, TCP_NOTSENT_LOWAT, TCP_INQ, TCP_DEFER_ACCEPT | rejected-unimplementable | ENOPROTOOPT |

@@ -830,6 +830,13 @@ instance.
 must contain the name of the logfile that will be used by the
 .Xr pflogd 8
 instance.
+Each instance writes its process ID to
+.Pa /var/run/pflogd.<element>.pid ;
+rotate its logfile with a
+.Xr newsyslog.conf 5
+line that names that pidfile, as the commented example in
+.Pa /etc/newsyslog.conf.d/pf.conf
+shows.
 .It Va ftpproxy_enable
 .Pq Vt bool
 Set to
