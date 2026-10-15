@@ -143,8 +143,26 @@ Link-layer packets.
 .Pp
 Default rulesets are automatically linked to these heads to preserve
 historical behaviour.
+.Pp
+On 5BSD the packet filter is
+.Xr pf 4 ;
+its hooks belong to module
+.Dq pf :
+.Dq default-in
+and
+.Dq default-out
+on the inet head,
+.Dq default-in6
+and
+.Dq default-out6
+on the inet6 head, and
+.Dq eth-in
+and
+.Dq eth-out
+on the ethernet head for its layer-2
+.Cm ether
+rules.
 .Sh SEE ALSO
-.Xr ipfw 4 ,
 .Xr pf 4 ,
 .Xr pfilctl 8
 .Sh HISTORY

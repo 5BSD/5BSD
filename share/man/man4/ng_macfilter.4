@@ -140,9 +140,11 @@ This node shuts down upon receipt of a
 .Dv NGM_SHUTDOWN
 control message or when all have been disconnected.
 .Sh EXAMPLES
-The following netgraph configuration will apply
-.Xr ipfw 8
-tag 42 to each packet that is routed over the
+The following netgraph configuration will attach an
+.Xr mbuf_tags 9
+tag (cookie
+.Dv MTAG_IPFW ,
+id 42) to each packet that is routed over the
 .Dq accepted
 hook.
 The graph looks like the following:
@@ -172,7 +174,7 @@ Commands:
   # Connect tagger:out to recombiner:many1
   ngctl connect tagger: recombiner: out many1
 
-  # Mark tag all traffic through tagger in -> out with an ipfw tag 42
+  # Tag all traffic through tagger in -> out with tag 42
   ngctl msg tagger: sethookin '{ thisHook="in" ifNotMatch="out" }'
   ngctl msg tagger: sethookout '{ thisHook="out" tag_cookie=1148380143 tag_id=42 }'
 
@@ -186,6 +188,13 @@ The tag_cookie 1148380143 was retrieved from
 .Dv MTAG_IPFW
 in
 .Pa /usr/include/netinet/ip_var.h .
+That cookie was read by
+ipfw,
+which 5BSD does not have;
+.Xr pf 4
+does not match these tags, so they are only useful to other netgraph
+nodes such as
+.Xr ng_tag 4 .
 .Pp
 The following command can be used to add a MAC address to be output via
 .Dv macfilter:accepted :
@@ -204,8 +213,6 @@ It will return the contents of the MAC table:
   Args:	{ n=1 macs=[ { ether=08:00:27:92:eb:aa hookid=1 packets_in=3571 bytes_in=592631 packets_out=3437 bytes_out=777142 } ] }
 .Ed
 .Sh SEE ALSO
-.Xr ipdivert 4 ,
-.Xr ipfw 4 ,
 .Xr netgraph 4 ,
 .Xr ng_ether 4 ,
 .Xr ng_one2many 4 ,

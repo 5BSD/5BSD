@@ -46,11 +46,8 @@ Mandatory Access Control (MAC) labels as described in
 .Xr mac 9 ,
 IPsec policy information as described in
 .Xr ipsec 4 ,
-and packet filter tags used by
+and packet filter state used by
 .Xr pf 4 .
-One should also consider useful setting or checking
-.Xr ipfw 8
-tags, which are implemented as mbuf tags, too.
 .Pp
 Each node allows an arbitrary number of connections to arbitrarily
 named hooks.
@@ -203,114 +200,45 @@ This node shuts down upon receipt of a
 .Dv NGM_SHUTDOWN
 control message, or when all hooks have been disconnected.
 .Sh EXAMPLES
-It is possible to do a simple L7 filtering by using
-.Xr ipfw 8
-tags in conjunction with
-.Xr ng_bpf 4
-traffic analyzer.
-Example below explains how to filter DirectConnect P2P network data traffic,
-which cannot be done by usual means as it uses random ports.
-It is known that such data connection always contains a TCP packet with
-6-byte payload string "$Send|".
-So ipfw's
-.Cm netgraph
-action will be used to divert all TCP packets to an
-.Xr ng_bpf 4
-node which will check for the specified string and return non-matching
-packets to
-.Xr ipfw 8 .
-Matching packets are passed to
+The
+.Fx
+example of L7 filtering with
+ipfw
+tags does not apply to 5BSD, which has no
+ipfw
+or
+ng_ipfw.
+Tags set by
 .Nm
-node, which will set a tag and pass them back to
-.Xr ng_bpf 4
-node on a hook programmed to accept all packets and pass them back to
-.Xr ipfw 8 .
-A script provided in
-.Xr ng_bpf 4
-manual page will be used for programming node.
-Note that packets diverted from
-.Xr ipfw 8
-to Netgraph have no link-level header, so offsets in
-.Xr tcpdump 1
-expressions must be altered accordingly.
-Thus, there will be expression
-.Dq Li "ether[40:2]=0x244c && ether[42:4]=0x6f636b20"
-on incoming hook and empty expression to match all packets from
-.Nm .
-.Pp
-So, this is
-.Xr ngctl 8
-script for nodes creating and naming for easier access:
-.Bd -literal -offset 4n
-/usr/sbin/ngctl -f- <<-SEQ
-	mkpeer ipfw: bpf 41 ipfw
-	name ipfw:41 dcbpf
-	mkpeer dcbpf: tag matched th1
-	name dcbpf:matched ngdc
-SEQ
-.Ed
-.Pp
-Now
-.Dq Li ngdc
-node (which is of type
-.Nm )
-must be programmed to echo all packets received on the
-.Dq Li th1
-hook back, with the
-.Xr ipfw 8
-tag 412 attached.
+are visible to other netgraph nodes, including other
+.Nm
+nodes; the
+.Cm tag
+and
+.Cm tagged
+options of
+.Xr pf.conf 5
+use pf's own packet state and do not match them.
+The following hook configuration attaches tag 412 with the
 .Dv MTAG_IPFW
-value for
-.Va tag_cookie
-was taken from file
-.In netinet/ip_fw.h
-and value for
-.Va tag_id
-is tag number (412), with zero tag length:
+cookie
+.Pq Pa /usr/include/netinet/ip_var.h
+to every packet that the
+.Nm
+node named
+.Dq Li ngdc
+echoes back on its hook
+.Dq Li th1 :
 .Bd -literal -offset 4n
 ngctl msg ngdc: sethookin { thisHook=\e"th1\e" ifNotMatch=\e"th1\e" }
 ngctl msg ngdc: sethookout { thisHook=\e"th1\e" \e
   tag_cookie=1148380143 \e
   tag_id=412 }
 .Ed
-.Pp
-Do not forget to program
-.Xr ng_bpf 4
-.Dq Li ipfw
-hook with the above expression (see
-.Xr ng_bpf 4
-for script doing this) and
-.Dq Li matched
-hook with an empty expression:
-.Bd -literal -offset 4n
-ngctl msg dcbpf: setprogram { thisHook=\e"matched\e" ifMatch=\e"ipfw\e" \e
-  bpf_prog_len=1 bpf_prog=[ { code=6 k=8192 } ] }
-.Ed
-.Pp
-After finishing with
-.Xr netgraph 4
-nodes,
-.Xr ipfw 8
-rules must be added to enable packet flow:
-.Bd -literal -offset 4n
-ipfw add 100 netgraph 41 tcp from any to any iplen 46
-ipfw add 110 reset tcp from any to any tagged 412
-.Ed
-.Pp
-Note: one should ensure that packets are returned to ipfw after processing
-inside
-.Xr netgraph 4 ,
-by setting appropriate
-.Xr sysctl 8
-variable:
-.Bd -literal -offset 4n
-sysctl net.inet.ip.fw.one_pass=0
-.Ed
 .Sh SEE ALSO
 .Xr netgraph 4 ,
 .Xr ng_bpf 4 ,
-.Xr ng_ipfw 4 ,
-.Xr ipfw 8 ,
+.Xr pf.conf 5 ,
 .Xr ngctl 8 ,
 .Xr mbuf_tags 9
 .Sh HISTORY

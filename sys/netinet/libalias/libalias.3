@@ -245,17 +245,12 @@ See
 .Fn LibAliasProxyRule
 below for details.
 .It Dv PKT_ALIAS_SKIP_GLOBAL
-This option is used by
-.Pa ipfw_nat
-only.
+This option was used only by the in-kernel NAT of
+ipfw,
+which 5BSD does not have.
 Specifying it as a flag to
 .Fn LibAliasSetMode
 has no effect.
-See section
-.Sx NETWORK ADDRESS TRANSLATION
-in
-.Xr ipfw 8
-for more details.
 .It Dv PKT_ALIAS_UDP_EIM
 When this bit is set, UDP uses endpoint-independent mapping (EIM), as per
 RFC 4787 ("full cone" NAT of RFC 3489).
@@ -999,7 +994,7 @@ If this results in a conflict, then port numbers are randomly chosen until
 a unique aliasing link can be established.
 In an alternate operating mode, the first choice of an aliasing port is also
 random and unrelated to the local port number.
-.Sh MODULAR ARCHITECTURE Po AND Xr ipfw 4 SUPPORT Pc
+.Sh MODULAR ARCHITECTURE
 One of the latest improvements to
 .Nm
 was to make its support
@@ -1393,12 +1388,11 @@ signal, just add a call to
 .Fn LibAliasRefreshModules
 in the signal handler function.
 .El
-For example, to patch
-.Xr natd 8
-to use
-.Nm
-modules, just add the following line to
-.Fn RefreshAddr "int sig __unused" :
+For example, an application that already refreshes its aliasing address on
+.Dv SIGHUP
+in a function such as
+.Fn RefreshAddr "int sig __unused"
+just adds the following line to it:
 .Pp
 .Dl "LibAliasRefreshModules()"
 .Pp
