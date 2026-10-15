@@ -56,7 +56,7 @@ class TestICMP(VnetTestTemplate):
             ])
 
         ToolsHelper.print_output("/sbin/sysctl net.inet.ip.forwarding=1")
-        ToolsHelper.print_output("/sbin/pfctl -x loud")
+        ToolsHelper.print_output("/sbin/pfctl -x debug")
 
     def vnet3_handler(self, vnet):
         # Import in the correct vnet, so at to not confuse Scapy
@@ -203,13 +203,13 @@ class TestICMP_NAT(VnetTestTemplate):
         ToolsHelper.pf_rules([
             "set reassemble yes",
             "set state-policy if-bound",
-            "nat on %s inet from 192.0.2.0/24 to any -> (%s)" % (if2name, if2name),
+            "match out on %s inet from 192.0.2.0/24 to any nat-to (%s)" % (if2name, if2name),
             "block",
             "pass inet proto icmp icmp-type echoreq",
             ])
 
         ToolsHelper.print_output("/sbin/sysctl net.inet.ip.forwarding=1")
-        ToolsHelper.print_output("/sbin/pfctl -x loud")
+        ToolsHelper.print_output("/sbin/pfctl -x debug")
 
     def vnet3_handler(self, vnet):
         ifname = vnet.iface_alias_map["if2"].name

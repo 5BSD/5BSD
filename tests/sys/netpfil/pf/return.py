@@ -52,13 +52,13 @@ class TestReturn(VnetTestTemplate):
 
         ToolsHelper.print_output("/sbin/pfctl -e")
         ToolsHelper.pf_rules([
-            "nat on %s inet from 192.0.2.0/24 to any -> (%s)" % (ifname, ifname),
+            "match out on %s inet from 192.0.2.0/24 to any nat-to (%s)" % (ifname, ifname),
             "block return",
             "pass inet proto icmp icmp-type echoreq",
             ])
 
         ToolsHelper.print_output("/sbin/sysctl net.inet.ip.forwarding=1")
-        ToolsHelper.print_output("/sbin/pfctl -x loud")
+        ToolsHelper.print_output("/sbin/pfctl -x debug")
 
     def vnet3_handler(self, vnet):
         ToolsHelper.print_output("/sbin/route add default 198.51.100.1")

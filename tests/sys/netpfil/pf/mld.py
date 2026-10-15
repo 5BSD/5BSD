@@ -44,7 +44,7 @@ class TestMLD(VnetTestTemplate):
         ToolsHelper.pf_rules([
             "pass",
             ])
-        ToolsHelper.print_output("/sbin/pfctl -x loud")
+        ToolsHelper.print_output("/sbin/pfctl -x debug")
 
         while True:
             cmd = self.wait_object(vnet.pipe)

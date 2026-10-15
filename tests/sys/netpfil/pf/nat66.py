@@ -49,10 +49,10 @@ class TestNAT66(VnetTestTemplate):
         ToolsHelper.print_output("/sbin/pfctl -e")
         ToolsHelper.pf_rules([
             "set reassemble yes",
-            "binat inet6 from 2001:db8::/64 to 2001:db8:1::/64 -> 2001:db8:42::/64",
-            "binat inet6 from 2001:db8:1::/64 to 2001:db8:42::/64 -> 2001:db8::/64",
+            "match inet6 from 2001:db8::/64 to 2001:db8:1::/64 binat-to 2001:db8:42::/64",
+            "match inet6 from 2001:db8:1::/64 to 2001:db8:42::/64 binat-to 2001:db8::/64",
             "pass inet6 proto icmp6",
-            "pass in route-to ( %s 2001:db8:1::2 ) inet6 from 2001:db8::3 to 2001:db8:1::/64" % outifname])
+            "pass in inet6 from 2001:db8::3 to 2001:db8:1::/64 route-to 2001:db8:1::2"])
 
         ToolsHelper.print_output("/sbin/sysctl net.inet6.ip6.forwarding=1")
 

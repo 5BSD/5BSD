@@ -16,7 +16,7 @@ a = p.parse_args()
 source = 'fe80::1234'
 
 def states():
-    output = subprocess.check_output(['jexec', a.jail, 'pfctl', '-S', '-ss'], text=True)
+    output = subprocess.check_output(['jexec', a.jail, 'pfctl', '-ss'], text=True)
     return [line for line in output.splitlines() if source in line]
 
 def expect_count(expected):
