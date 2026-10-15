@@ -4880,7 +4880,7 @@ rule_consistent(struct pf_rule *r)
 	if (r->proto != IPPROTO_TCP && r->proto != IPPROTO_UDP &&
 	    r->proto != IPPROTO_SCTP &&	/* 5BSD: sctp */
 	    (r->src.port_op || r->dst.port_op)) {
-		yyerror("port only applies to tcp/udp/sctp");
+		yyerror("port only applies to tcp/udp");
 		problems++;
 	}
 	if (r->proto != IPPROTO_TCP && r->proto != IPPROTO_UDP &&
