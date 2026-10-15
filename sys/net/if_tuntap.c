@@ -916,18 +916,8 @@ static void
 tunstart(struct ifnet *ifp)
 {
 	struct tuntap_softc *tp = ifp->if_softc;
-	struct mbuf *m;
 
 	TUNDEBUG(ifp, "starting\n");
-	if (ALTQ_IS_ENABLED(&ifp->if_snd)) {
-		IFQ_LOCK(&ifp->if_snd);
-		IFQ_POLL_NOLOCK(&ifp->if_snd, m);
-		if (m == NULL) {
-			IFQ_UNLOCK(&ifp->if_snd);
-			return;
-		}
-		IFQ_UNLOCK(&ifp->if_snd);
-	}
 
 	TUN_LOCK(tp);
 	if (tp->tun_flags & TUN_RWAIT) {

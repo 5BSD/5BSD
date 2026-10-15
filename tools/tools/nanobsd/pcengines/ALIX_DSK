@@ -78,17 +78,7 @@ device		uftdi
 
 options         INCLUDE_CONFIG_FILE
 
-options         ALTQ
-options         ALTQ_CBQ
-options         ALTQ_RED
-options         ALTQ_RIO
-options         ALTQ_HFSC
-options         ALTQ_CDNR
-options         ALTQ_PRIQ
-
 device          pf
-device          pflog
-device          pfsync                                                          
 device          carp                                                            
 device          if_bridge
 device		crypto			# core crypto support

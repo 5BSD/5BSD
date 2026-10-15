@@ -169,10 +169,6 @@ static int	vtnet_txq_enqueue_buf(struct vtnet_txq *, struct mbuf **,
 		    struct vtnet_tx_header *);
 static int	vtnet_txq_encap(struct vtnet_txq *, struct mbuf **, int);
 
-/* Required for ALTQ */
-static void	vtnet_start_locked(struct vtnet_txq *, if_t);
-static void	vtnet_start(if_t);
-
 /* Required for MQ */
 static int	vtnet_txq_mq_start_locked(struct vtnet_txq *, struct mbuf *);
 static int	vtnet_txq_mq_start(if_t, struct mbuf *);
@@ -313,19 +309,6 @@ SYSCTL_INT(_hw_vtnet, OID_AUTO, lro_entry_count, CTLFLAG_RDTUN,
 static int vtnet_lro_mbufq_depth = 0;
 SYSCTL_UINT(_hw_vtnet, OID_AUTO, lro_mbufq_depth, CTLFLAG_RDTUN,
     &vtnet_lro_mbufq_depth, 0, "Depth of software LRO mbuf queue");
-
-/* Deactivate ALTQ Support */
-static int vtnet_altq_disable = 0;
-SYSCTL_INT(_hw_vtnet, OID_AUTO, altq_disable, CTLFLAG_RDTUN,
-    &vtnet_altq_disable, 0, "Disables ALTQ Support");
-
-/*
- * For the driver to be considered as having altq enabled,
- * it must be compiled with an ALTQ capable kernel,
- * and the tunable hw.vtnet.altq_disable must be zero
- */
-#define VTNET_ALTQ_ENABLED (VTNET_ALTQ_CAPABLE && (!vtnet_altq_disable))
-
 
 static uma_zone_t vtnet_tx_header_zone;
 
@@ -807,8 +790,8 @@ vtnet_negotiate_features(struct vtnet_softc *sc)
 	if (no_csum || vtnet_tunable_int(sc, "lro_disable", vtnet_lro_disable))
 		features &= ~VTNET_LRO_FEATURES;
 
-	/* Deactivate MQ Feature flag, if driver has ALTQ enabled, or MQ is explicitly disabled */
-	if (VTNET_ALTQ_ENABLED || vtnet_tunable_int(sc, "mq_disable", vtnet_mq_disable))
+	/* Deactivate MQ Feature flag if MQ is explicitly disabled */
+	if (vtnet_tunable_int(sc, "mq_disable", vtnet_mq_disable))
 		features &= ~VIRTIO_NET_F_MQ;
 
 	negotiated_features = virtio_negotiate_features(dev, features);
@@ -1099,14 +1082,12 @@ vtnet_init_txq(struct vtnet_softc *sc, int id)
 	if (txq->vtntx_sg == NULL)
 		return (ENOMEM);
 
-	if (!VTNET_ALTQ_ENABLED) {
-		txq->vtntx_br = buf_ring_alloc(VTNET_DEFAULT_BUFRING_SIZE, M_DEVBUF,
-		    M_NOWAIT, &txq->vtntx_mtx);
-		if (txq->vtntx_br == NULL)
-			return (ENOMEM);
+	txq->vtntx_br = buf_ring_alloc(VTNET_DEFAULT_BUFRING_SIZE, M_DEVBUF,
+	    M_NOWAIT, &txq->vtntx_mtx);
+	if (txq->vtntx_br == NULL)
+		return (ENOMEM);
 
-		TASK_INIT(&txq->vtntx_defrtask, 0, vtnet_txq_tq_deferred, txq);
-	}
+	TASK_INIT(&txq->vtntx_defrtask, 0, vtnet_txq_tq_deferred, txq);
 	TASK_INIT(&txq->vtntx_intrtask, 0, vtnet_txq_tq_intr, txq);
 	txq->vtntx_tq = taskqueue_create(txq->vtntx_name, M_NOWAIT,
 	    taskqueue_thread_enqueue, &txq->vtntx_tq);
@@ -1177,11 +1158,9 @@ vtnet_destroy_txq(struct vtnet_txq *txq)
 		txq->vtntx_sg = NULL;
 	}
 
-	if (!VTNET_ALTQ_ENABLED) {
-		if (txq->vtntx_br != NULL) {
-			buf_ring_free(txq->vtntx_br, M_DEVBUF);
-			txq->vtntx_br = NULL;
-		}
+	if (txq->vtntx_br != NULL) {
+		buf_ring_free(txq->vtntx_br, M_DEVBUF);
+		txq->vtntx_br = NULL;
 	}
 
 	if (mtx_initialized(&txq->vtntx_mtx) != 0)
@@ -1327,15 +1306,8 @@ vtnet_setup_interface(struct vtnet_softc *sc)
 	if_setioctlfn(ifp, vtnet_ioctl);
 	if_setgetcounterfn(ifp, vtnet_get_counter);
 
-	if (!VTNET_ALTQ_ENABLED) {
-		if_settransmitfn(ifp, vtnet_txq_mq_start);
-		if_setqflushfn(ifp, vtnet_qflush);
-	} else {
-		struct virtqueue *vq = sc->vtnet_txqs[0].vtntx_vq;
-		if_setstartfn(ifp, vtnet_start);
-		if_setsendqlen(ifp, virtqueue_size(vq) - 1);
-		if_setsendqready(ifp);
-	}
+	if_settransmitfn(ifp, vtnet_txq_mq_start);
+	if_setqflushfn(ifp, vtnet_qflush);
 
 	vtnet_get_macaddr(sc);
 
@@ -2868,69 +2840,6 @@ fail:
 }
 
 
-static void
-vtnet_start_locked(struct vtnet_txq *txq, if_t ifp)
-{
-	struct vtnet_softc *sc;
-	struct virtqueue *vq;
-	struct mbuf *m0;
-	int tries, enq;
-
-	sc = txq->vtntx_sc;
-	vq = txq->vtntx_vq;
-	tries = 0;
-
-	VTNET_TXQ_LOCK_ASSERT(txq);
-
-	if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0 ||
-	    sc->vtnet_link_active == 0)
-		return;
-
-	vtnet_txq_eof(txq);
-
-again:
-	enq = 0;
-
-	while (!if_sendq_empty(ifp)) {
-		if (virtqueue_full(vq))
-			break;
-
-		m0 = if_dequeue(ifp);
-		if (m0 == NULL)
-			break;
-
-		if (vtnet_txq_encap(txq, &m0, M_NOWAIT) != 0) {
-			if (m0 != NULL)
-				if_sendq_prepend(ifp, m0);
-			break;
-		}
-
-		enq++;
-		ETHER_BPF_MTAP(ifp, m0);
-	}
-
-	if (enq > 0 && vtnet_txq_notify(txq) != 0) {
-		if (tries++ < VTNET_NOTIFY_RETRIES)
-			goto again;
-
-		txq->vtntx_stats.vtxs_rescheduled++;
-		taskqueue_enqueue(txq->vtntx_tq, &txq->vtntx_intrtask);
-	}
-}
-
-static void
-vtnet_start(if_t ifp)
-{
-	struct vtnet_softc *sc;
-	struct vtnet_txq *txq;
-
-	sc = if_getsoftc(ifp);
-	txq = &sc->vtnet_txqs[0];
-
-	VTNET_TXQ_LOCK(txq);
-	vtnet_start_locked(txq, ifp);
-	VTNET_TXQ_UNLOCK(txq);
-}
 
 
 static int
@@ -3052,14 +2961,8 @@ vtnet_txq_start(struct vtnet_txq *txq)
 	sc = txq->vtntx_sc;
 	ifp = sc->vtnet_ifp;
 
-	if (!VTNET_ALTQ_ENABLED) {
-		if (!drbr_empty(ifp, txq->vtntx_br))
-			vtnet_txq_mq_start_locked(txq, NULL);
-	} else {
-		if (!if_sendq_empty(ifp))
-			vtnet_start_locked(txq, ifp);
-
-	}
+	if (!drbr_empty(ifp, txq->vtntx_br))
+		vtnet_txq_mq_start_locked(txq, NULL);
 }
 
 static void
@@ -3392,8 +3295,7 @@ vtnet_drain_taskqueues(struct vtnet_softc *sc)
 		txq = &sc->vtnet_txqs[i];
 		if (txq->vtntx_tq != NULL) {
 			taskqueue_drain(txq->vtntx_tq, &txq->vtntx_intrtask);
-			if (!VTNET_ALTQ_ENABLED)
-				taskqueue_drain(txq->vtntx_tq, &txq->vtntx_defrtask);
+			taskqueue_drain(txq->vtntx_tq, &txq->vtntx_defrtask);
 		}
 	}
 }

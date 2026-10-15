@@ -79,7 +79,7 @@ struct ifnet {
 	time_t		if_epoch;	/* uptime at attach or stat reset */
 	struct timeval	if_lastchange;	/* time of last administrative change */
 
-	struct  ifaltq if_snd;		/* output queue (includes altq) */
+	struct  ifaltq if_snd;		/* output queue */
 	struct	task if_linktask;	/* task for link change events */
 	struct	task if_addmultitask;	/* task for SIOCADDMULTI */
 

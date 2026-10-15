@@ -1,3 +1,23 @@
+# 20261015: finish the ALTQ retirement (OpenBSD PF does not use ALTQ)
+OLD_FILES+= usr/include/net/altq/altq.h
+OLD_FILES+= usr/include/net/altq/altq_cbq.h
+OLD_FILES+= usr/include/net/altq/altq_cdnr.h
+OLD_FILES+= usr/include/net/altq/altq_classq.h
+OLD_FILES+= usr/include/net/altq/altq_codel.h
+OLD_FILES+= usr/include/net/altq/altq_fairq.h
+OLD_FILES+= usr/include/net/altq/altq_hfsc.h
+OLD_FILES+= usr/include/net/altq/altq_priq.h
+OLD_FILES+= usr/include/net/altq/altq_red.h
+OLD_FILES+= usr/include/net/altq/altq_rio.h
+OLD_FILES+= usr/include/net/altq/altq_rmclass.h
+OLD_FILES+= usr/include/net/altq/altq_rmclass_debug.h
+OLD_FILES+= usr/include/net/altq/altq_var.h
+OLD_FILES+= usr/include/net/altq/if_altq.h
+OLD_DIRS+= usr/include/net/altq
+OLD_FILES+= usr/share/man/man4/altq.4.gz
+OLD_FILES+= usr/share/man/man4/ALTQ.4.gz
+OLD_FILES+= usr/share/man/man9/altq.9.gz
+OLD_FILES+= usr/share/man/man9/ALTQ.9.gz
 # 20261015: retire ipdivert(4); pf divert-packet and OpenBSD divert(4) remain
 OLD_FILES+= boot/kernel/ipdivert.ko
 OLD_FILES+= usr/include/netinet/ip_divert.h

@@ -375,30 +375,18 @@ ng_iface_output(struct ifnet *ifp, struct mbuf *m,
 	/* Berkeley packet filter */
 	ng_iface_bpftap(ifp, m, af);
 
-	if (ALTQ_IS_ENABLED(&ifp->if_snd)) {
-		M_PREPEND(m, sizeof(sa_family_t), M_NOWAIT);
-		if (m == NULL) {
-			if_inc_counter(ifp, IFCOUNTER_OQDROPS, 1);
-			return (ENOBUFS);
-		}
-		*(sa_family_t *)m->m_data = af;
-		error = (ifp->if_transmit)(ifp, m);
-	} else
-		error = ng_iface_send(ifp, m, af);
-
-	return (error);
+	return (ng_iface_send(ifp, m, af));
 }
 
 /*
- * Start method is used only when ALTQ is enabled.
+ * Start method.  ng_iface_output() sends directly; packets on the send
+ * queue carry their address family in front of the data.
  */
 static void
 ng_iface_start(struct ifnet *ifp)
 {
 	struct mbuf *m;
 	sa_family_t sa;
-
-	KASSERT(ALTQ_IS_ENABLED(&ifp->if_snd), ("%s without ALTQ", __func__));
 
 	for(;;) {
 		IFQ_DRV_DEQUEUE(&ifp->if_snd, m);
