@@ -189,6 +189,7 @@ struct pkthdr_pf {
 #define	PF_DN_TAG_INFLIGHT		0x01	/* handed to dummynet */
 #define	PF_DN_TAG_DONE			0x02	/* shaped once; never again */
 #define	PF_DN_TAG_ROUTE_TO		0x04	/* send to dn_ifidx/dn_dst */
+#define	PF_DN_TAG_ETHER			0x08	/* 5BSD: ether; dummynet at layer 2 */
 
 struct pkthdr {
 	union {

@@ -44,8 +44,9 @@
  * pfil(9) hooks, which are only linked while the main ether ruleset is
  * not empty.  The last matching rule (or the first "quick" one) decides;
  * a packet that matches no rule passes.  A passing rule can tag the
- * packet for the IP rules ("tag"), set its queue or transmit it unchanged
- * on another interface ("bridge-to").
+ * packet for the IP rules ("tag"), set its queue, send it through a
+ * dummynet(4) pipe or queue at layer 2 ("dnpipe"/"dnqueue") or transmit
+ * it unchanged on another interface ("bridge-to").
  *
  * Rulesets change through the OpenBSD transaction ioctls with the
  * element type PF_TRANS_ETH; rules are added and read with the 5BSD
@@ -64,6 +65,8 @@
 #include <net/pfvar_priv.h>
 
 #include <netinet/ip_var.h>
+#include <netinet/ip_dn_flow.h>
+#include <netpfil/dummynet/dn_packet.h>
 
 /* FreeBSD's pf:eth:test_rule probes, with the same arguments. */
 SDT_PROBE_DEFINE3(pf, eth, test_rule, entry, "int", "struct ifnet *",
@@ -74,6 +77,9 @@ SDT_PROBE_DEFINE3(pf, eth, test_rule, mismatch, "int",
 SDT_PROBE_DEFINE2(pf, eth, test_rule, match, "int", "struct pf_keth_rule *");
 SDT_PROBE_DEFINE2(pf, eth, test_rule, final_match, "int",
     "struct pf_keth_rule *");
+SDT_PROBE_DEFINE3(pf, eth, dummynet, submit, "struct pf_keth_rule *",
+    "uint32_t", "uint32_t");
+SDT_PROBE_DEFINE2(pf, eth, dummynet, reinject, "int", "struct ifnet *");
 SDT_PROBE_DEFINE2(pf, eth, bridge_to, transmit, "struct pf_keth_rule *",
     "struct ifnet *");
 SDT_PROBE_DEFINE1(pf, eth, hook, link, "int");
@@ -641,8 +647,6 @@ pf_eth_rule_check(struct pfioc_eth_rule *pr)
 	if (r->direction != PF_INOUT && r->direction != PF_IN &&
 	    r->direction != PF_OUT)
 		return (EINVAL);
-	if (r->dnpipe != 0)	/* dummynet at layer 2 comes next */
-		return (EOPNOTSUPP);
 	if (r->dnflags & ~PF_DN_IS_PIPE)
 		return (EINVAL);
 	if (!pf_eth_addr_valid(&r->ipsrc) || !pf_eth_addr_valid(&r->ipdst))
@@ -1031,6 +1035,20 @@ pf_bridge_to(struct pf_keth_rule *r, struct ifnet *ifp, struct mbuf *m)
 	(void)ifp->if_transmit(ifp, m);
 }
 
+/* Forget the layer-2 dummynet pass, and dummynet's own rule tag. */
+static void
+pf_eth_dn_clear(struct mbuf *m)
+{
+	struct pkthdr_pf *t;
+	struct m_tag *mtag;
+
+	if ((t = PF_MTAG_W(m)) != NULL)
+		t->dn_flags &= ~PF_DN_TAG_ETHER;
+	mtag = m_tag_locate(m, MTAG_IPFW_RULE, 0, NULL);
+	if (mtag != NULL)
+		m_tag_delete(m, mtag);
+}
+
 static int
 pf_test_eth_rule(int dir, struct pfi_kif *kif, struct mbuf **m0)
 {
@@ -1046,14 +1064,26 @@ pf_test_eth_rule(int dir, struct pfi_kif *kif, struct mbuf **m0)
 	struct pf_addr *src = NULL, *dst = NULL;
 	struct pkthdr_pf *t;
 	struct ifnet *bridge_ifp = NULL;
+	struct ip_fw_args dnflow;
 	sa_family_t af = 0;
-	u_int16_t proto;
+	u_int16_t proto, dnpipe;
 	int asd = 0, match = 0, tag = -1, bridge = 0;
-	u_int8_t action;
+	u_int8_t action, dnflags;
 
 	NET_EPOCH_ASSERT();
 
 	SDT_PROBE3(pf, eth, test_rule, entry, dir, kif->pfik_ifp, m);
+
+	if (PF_MTAG_R(m)->dn_flags & PF_DN_TAG_ETHER) {
+		/*
+		 * Dummynet reinjects packets after their delay.  We have
+		 * already filtered them: pass once (we may see the packet on
+		 * both the input and the output hooks).
+		 */
+		SDT_PROBE2(pf, eth, dummynet, reinject, dir, kif->pfik_ifp);
+		pf_eth_dn_clear(m);
+		return (PF_PASS);
+	}
 
 	if (__predict_false(m->m_len < sizeof(struct ether_header)) &&
 	    (m = *m0 = m_pullup(*m0, sizeof(struct ether_header))) == NULL) {
@@ -1173,7 +1203,7 @@ pf_test_eth_rule(int dir, struct pfi_kif *kif, struct mbuf **m0)
 		return (PF_DROP);
 	}
 
-	if (tag > 0 || r->r.qid != 0) {
+	if (tag > 0 || r->r.qid != 0 || r->r.dnpipe != 0) {
 		if ((t = PF_MTAG_W(m)) == NULL) {
 			rw_exit_read(&pf_lock);
 			return (PF_DROP);
@@ -1189,7 +1219,53 @@ pf_test_eth_rule(int dir, struct pfi_kif *kif, struct mbuf **m0)
 		bridge = 1;
 		bridge_ifp = r->bridge_to->pfik_ifp;
 	}
+	dnpipe = r->r.dnpipe;
+	dnflags = r->r.dnflags;
+	if (dnpipe != 0)
+		SDT_PROBE3(pf, eth, dummynet, submit, r, dnpipe, dir);
 	rw_exit_read(&pf_lock);
+
+	if (dnpipe != 0) {
+		/* Drop packet if dummynet is not loaded. */
+		if (ip_dn_io_ptr == NULL)
+			return (PF_DROP);
+
+		/*
+		 * We don't have port numbers here, so flows can only be told
+		 * apart by their IP addresses, but it's better than nothing.
+		 */
+		memset(&dnflow, 0, sizeof(dnflow));
+		dnflow.rule.info = dnpipe | IPFW_IS_DUMMYNET;
+		if (dnflags & PF_DN_IS_PIPE)
+			dnflow.rule.info |= IPFW_IS_PIPE;
+		dnflow.f_id.extra = dnflow.rule.info;
+		dnflow.flags = (dir == PF_IN) ? IPFW_ARGS_IN : IPFW_ARGS_OUT;
+		dnflow.flags |= IPFW_ARGS_ETHER;
+		dnflow.ifp = kif->pfik_ifp;
+		switch (af) {
+		case AF_INET:
+			dnflow.f_id.addr_type = 4;
+			dnflow.f_id.src_ip = ntohl(src->v4.s_addr);
+			dnflow.f_id.dst_ip = ntohl(dst->v4.s_addr);
+			break;
+#ifdef INET6
+		case AF_INET6:
+			dnflow.flags |= IPFW_ARGS_IP6;
+			dnflow.f_id.addr_type = 6;
+			dnflow.f_id.src_ip6 = src->v6;
+			dnflow.f_id.dst_ip6 = dst->v6;
+			break;
+#endif
+		}
+
+		if ((t = PF_MTAG_W(m)) == NULL)
+			return (PF_DROP);
+		t->dn_flags |= PF_DN_TAG_ETHER;
+		ip_dn_io_ptr(m0, &dnflow);
+		if (*m0 == NULL)
+			return (action);	/* queued in or dropped by dummynet */
+		pf_eth_dn_clear(*m0);
+	}
 
 	if (action == PF_PASS && bridge) {
 		pf_bridge_to(r, bridge_ifp, *m0);
