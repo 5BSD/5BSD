@@ -47,6 +47,59 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	0x40000000 so new FreeBSD socket options cannot collide with them.
 	Rebuild programs that use them.
 
+	pf's behaviour now follows OpenBSD in these places: pflog0 and
+	pfsync0 are not precreated (create them with ifconfig; rc.d does);
+	pflog, pfsync and pflow are part of pf.ko, so "kldstat -m pflog"
+	finds nothing; the ruleset is locked from kern.securelevel 2 (was 3);
+	the FreeBSD tunables and sysctls net.pf.* (default_to_drop,
+	filter_local, *_hashsize, request_maxcount), net.pfsync.defer_delay,
+	net.pfsync.pfsync_buckets and net.pflog.if_count are gone.
+	ifconfig gives a mask-less IPv4 address its classful mask, accepts a
+	point-to-point address without a peer, and prints "nd6 options" only
+	with -v.  The loopback interface does LRO/TSO.
+
+	/dev/pf can no longer be opened from a jail without its own vnet
+	(such a jail would administer the host's pf); vnet jails keep their
+	own pf.  A vnet jail may restate but not change the host-owned pool
+	limits; pfctl keeps the host's value for a limit a jail's ruleset
+	does not set.  "source-track global" now shares its limits across
+	rules, as pf.conf(5) says.
+
+	pfsync(4) demotes carp(4) again while it is not synchronised: from
+	"up" until its bulk update completes or is given up, and while its
+	syncdev link is down, net.inet.carp.demotion carries
+	net.pfsync.carp_demotion_factor (per vnet, default 240, 0..255).
+	pfsync(4) accepts IPv6 sync peers again as a 5BSD extension
+	(ifconfig pfsync0 syncpeer <IPv6 address|ff12::f0>), through the new
+	SIOCSETPFSYNC6/SIOCGETPFSYNC6 ioctls; SIOC[GS]ETPFSYNC keep OpenBSD's
+	ABI.  syncdev/syncpeer change only while pfsync0 is down; rc.d/pfsync
+	brings it down first.
+
+	pflogd(8) is now OpenBSD's pflogd.  rc.d/pflog, -p pidfile,
+	pflog_instances and the newsyslog(8) entry work as before; the
+	SIGUSR1 statistics dump is gone and a corrupt log file suspends
+	logging (move it away and send SIGHUP) instead of being renamed.
+	tftp-proxy(8) starts with tftpproxy_enable in rc.conf(5).  rc.d/pf,
+	pflog, pfsync and dnctl load pf.ko/dummynet through the
+	SystemExtension broker ("pf" is on the BSDExtension allow-list); in
+	jails or with capability_plane=NO they only check for the module.
+	devfsrules_jail_vnet now unhides bpf(4).  system.Network.PF returns
+	the state table of the client's own vnet (new pf ioctl DIOCBINDJAIL).
+
+	The pfctl tests (/usr/tests/sbin/pfctl) run OpenBSD's regress corpus;
+	the FreeBSD pfctl_test corpus is removed.  New seam tests are in
+	/usr/tests/sys/netpfil/integration.  Test images must preload
+	if_epair and if_bridge (and if_enc, carp, dummynet, sctp as needed);
+	VNET tests skip and name the missing module otherwise.  The
+	bsdinstruments profile ipfw-audit.d and tools/test/netfibs are
+	retired.
+
+	Ports (5BSD-ports branch 5bsd/openbsd-pf-consumers): net/libpfctl is
+	ignored; consumers use OpenBSD's <net/pfvar.h> ioctls.  Rebuild
+	packages that embed the pf ABI (5bsd-instruments, p0f, spamd,
+	sslsplit, sslproxy, proxy-suite).  Run Tools/scripts/5bsd-pf-check.sh
+	in the ports tree after imports.
+
 20261013:
 	The BSD fixed-name pty(4) compatibility driver has been removed.
 	Use posix_openpt(2), openpty(3), or /dev/ptmx and /dev/pts/N.
