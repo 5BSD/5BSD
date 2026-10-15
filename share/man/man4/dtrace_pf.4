@@ -17,6 +17,8 @@
 .Li pf:ip:anchor:enter
 .br
 .Li pf:ip:limiter:decision,pressure,eligible
+.br
+.Li pf:ip:dummynet:submit,returned,reinject,error
 .Pp
 .Li pf::reason:set
 .Pp
@@ -418,6 +420,41 @@ configured action.
 The limiter checks passed for rule
 .Fa arg2 .
 This is not packet admission: later checks can still reject the packet.
+.El
+.Ss Dummynet
+Packets of rules with
+.Cm dnpipe
+or
+.Cm dnqueue
+.Pq a 5BSD extension .
+.Bl -tag -width "pf:ip:dummynet:reinject"
+.It Li pf:ip:dummynet:submit
+A packet is handed to
+.Xr dummynet 4 :
+.Fa args[0]
+packet description,
+.Fa args[1]
+state,
+.Fa arg2
+pipe or queue number with dummynet's flags,
+.Fa arg3
+direction flags.
+.It Li pf:ip:dummynet:returned
+Dummynet returned:
+.Fa arg0
+as above,
+.Fa arg1
+1 if the packet continues at once, 0 if dummynet kept it.
+.It Li pf:ip:dummynet:reinject
+A packet dummynet reinjects passes pf without evaluation;
+.Fa args[0]
+is the interface.
+.It Li pf:ip:dummynet:error
+A packet is dropped:
+.Fa arg1
+errno,
+.Fa arg2
+reason.
 .El
 .Ss Function-boundary contracts
 These
