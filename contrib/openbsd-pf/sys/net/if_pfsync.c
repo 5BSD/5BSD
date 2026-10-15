@@ -84,6 +84,7 @@
 #include <netinet6/ip6_var.h>
 #endif /* INET6 */
 
+#define PFSYNC_CARP_DEMOTE	/* 5BSD: carp */
 #include "carp.h"
 #if NCARP > 0
 #include <netinet/ip_carp.h>
@@ -260,6 +261,7 @@ static int	pfsync_get_ioc(struct pfsync_softc *, struct ifreq *);
 static int	pfsync_set_ioc(struct pfsync_softc *, struct ifreq *);
 
 static void	pfsync_syncif_link(void *);
+static void	pfsync_syncif_link_task(void *);	/* 5BSD: carp */
 static void	pfsync_syncif_detach(void *);
 
 static void	pfsync_sendout(struct pfsync_softc *, struct mbuf *);
@@ -417,7 +419,7 @@ pfsync_clone_create(struct if_clone *ifc, int unit)
 	sc->sc_maxupdates = 128;
 	sc->sc_defer = 0;
 
-	task_set(&sc->sc_ltask, pfsync_syncif_link, sc);
+	task_set(&sc->sc_ltask, pfsync_syncif_link_task, sc);	/* 5BSD: carp */
 	task_set(&sc->sc_dtask, pfsync_syncif_detach, sc);
 
 	rw_init(&sc->sc_bulk_req.req_lock, "pfsyncbreq");
@@ -482,7 +484,7 @@ pfsync_clone_create(struct if_clone *ifc, int unit)
 	if_attach(ifp);
 	if_alloc_sadl(ifp);
 
-#if NCARP > 0
+#if NCARP > 0 && !defined(PFSYNC_CARP_DEMOTE)	/* 5BSD: carp: no carp group */
 	if_addgroup(ifp, "carp");
 #endif
 
@@ -562,6 +564,23 @@ pfsync_syncif_link(void *arg)
 #endif
 
 	sc->sc_sync_if_down = sync_if_down;
+}
+
+/*
+ * 5BSD: carp
+ * OpenBSD runs link-state hooks synchronously under the net lock; 5BSD
+ * runs them from a task.  Take the net lock and skip a hook that lost
+ * the race with pfsync_down(), so the link demotion stays balanced.
+ */
+static void
+pfsync_syncif_link_task(void *arg)
+{
+	struct pfsync_softc *sc = arg;
+
+	NET_LOCK();
+	if (ISSET(sc->sc_if.if_flags, IFF_RUNNING))
+		pfsync_syncif_link(sc);
+	NET_UNLOCK();
 }
 
 static void

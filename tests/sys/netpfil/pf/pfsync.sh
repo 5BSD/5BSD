@@ -1274,6 +1274,123 @@ lifecycle_departure_cleanup()
 	pft_cleanup
 }
 
+pfsynct_demotion()
+{
+	jexec $1 sysctl -n net.inet.carp.demotion
+}
+
+# pfsynct_wait_demotion jail value seconds
+pfsynct_wait_demotion()
+{
+	local jail want secs
+
+	jail=$1
+	want=$2
+	secs=$3
+	while [ "$(pfsynct_demotion ${jail})" != "${want}" ]; do
+		if [ ${secs} -le 0 ]; then
+			atf_fail "net.inet.carp.demotion in ${jail} is" \
+			    "$(pfsynct_demotion ${jail}), expected ${want}"
+		fi
+		sleep 1
+		secs=$((secs - 1))
+	done
+}
+
+atf_test_case "carp_demotion" "cleanup"
+carp_demotion_head()
+{
+	atf_set descr 'pfsync demotes carp until it is synchronised and undoes it on failure, down and destroy'
+	atf_set require.user root
+	atf_set timeout 300
+}
+
+carp_demotion_body()
+{
+	if ! kldstat -q -m carp
+	then
+		atf_skip "This test requires carp"
+	fi
+	pfsynct_init
+
+	epair_sync=$(vnet_mkepair)
+
+	vnet_mkjail one ${epair_sync}a
+	vnet_mkjail two ${epair_sync}b
+	pfsynct_mkif one
+
+	jexec one ifconfig ${epair_sync}a 192.0.2.1/24 up
+	jexec two ifconfig ${epair_sync}b 192.0.2.2/24 up
+
+	# pfsync only processes input while pf is enabled.
+	jexec one pfctl -e
+	pft_set_rules one \
+		"set skip on ${epair_sync}a" \
+		"pass"
+	jexec two pfctl -e
+	pft_set_rules two \
+		"set skip on ${epair_sync}b" \
+		"pass"
+
+	atf_check -o inline:"0\n" jexec one sysctl -n net.inet.carp.demotion
+	atf_check -o inline:"240\n" \
+	    jexec one sysctl -n net.pfsync.carp_demotion_factor
+
+	# Nobody answers the bulk update request: pfsync0 is demoted from
+	# "up" until it gives up (12 requests, 2 seconds apart).
+	jexec one ifconfig pfsync0 syncdev ${epair_sync}a up
+	atf_check -o inline:"240\n" jexec one sysctl -n net.inet.carp.demotion
+
+	# A new factor applies at once and leaves no residue.
+	atf_check -o ignore jexec one sysctl net.pfsync.carp_demotion_factor=100
+	atf_check -o inline:"100\n" jexec one sysctl -n net.inet.carp.demotion
+	atf_check -o ignore jexec one sysctl net.pfsync.carp_demotion_factor=240
+	atf_check -o inline:"240\n" jexec one sysctl -n net.inet.carp.demotion
+	atf_check -s not-exit:0 -e ignore \
+	    jexec one sysctl net.pfsync.carp_demotion_factor=-1
+
+	# The failed bulk update ends the demotion.
+	pfsynct_wait_demotion one 0 40
+
+	# Destroying a demoted pfsync0 removes its demotion.
+	jexec one ifconfig pfsync0 down
+	jexec one ifconfig pfsync0 up
+	atf_check -o inline:"240\n" jexec one sysctl -n net.inet.carp.demotion
+	jexec one ifconfig pfsync0 destroy
+	atf_check -o inline:"0\n" jexec one sysctl -n net.inet.carp.demotion
+
+	# So does bringing it down.
+	pfsynct_mkif one
+	jexec one ifconfig pfsync0 syncdev ${epair_sync}a up
+	atf_check -o inline:"240\n" jexec one sysctl -n net.inet.carp.demotion
+	jexec one ifconfig pfsync0 down
+	atf_check -o inline:"0\n" jexec one sysctl -n net.inet.carp.demotion
+
+	# A peer answers: the bulk update completes and the demotion ends
+	# well before the request retries would run out.
+	pfsynct_mkif two
+	jexec two ifconfig pfsync0 syncdev ${epair_sync}b up
+	jexec one ifconfig pfsync0 up
+	pfsynct_wait_demotion one 0 10
+
+	# The sync link going down demotes; coming back up undoes it.
+	jexec one ifconfig ${epair_sync}a down
+	pfsynct_wait_demotion one 240 5
+	jexec one ifconfig ${epair_sync}a up
+	pfsynct_wait_demotion one 0 5
+
+	# Destroy with the link down leaves nothing behind either.
+	jexec one ifconfig ${epair_sync}a down
+	pfsynct_wait_demotion one 240 5
+	jexec one ifconfig pfsync0 destroy
+	atf_check -o inline:"0\n" jexec one sysctl -n net.inet.carp.demotion
+}
+
+carp_demotion_cleanup()
+{
+	pfsynct_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "basic"
@@ -1291,4 +1408,5 @@ atf_init_test_cases()
 	atf_add_test_case "af_to_in_if_bound"
 	atf_add_test_case "flush_by_intf"
 	atf_add_test_case "lifecycle_departure"
+	atf_add_test_case "carp_demotion"
 }

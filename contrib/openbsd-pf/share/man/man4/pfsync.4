@@ -143,6 +143,23 @@ demotion counter for any interface groups associated with the interface
 by 32 during initialisation, and by 1 if the
 .Nm
 link is down or if a bulk update fails.
+.\" 5BSD: carp
+.Pp
+On 5BSD,
+.Xr carp 4
+has a single demotion counter,
+.Va net.inet.carp.demotion ,
+and no interface groups.
+While either demotion is in effect,
+.Nm
+adds
+.Va net.pfsync.carp_demotion_factor
+to it (default 240, at most 255).
+The bulk update demotion ends when the bulk update has completed or
+has been given up (after 12 requests 2 seconds apart, or after 30
+seconds without a synchronisation link); bringing
+.Nm
+down or destroying it removes all of its demotion.
 .Sh EXAMPLES
 .Nm
 and
