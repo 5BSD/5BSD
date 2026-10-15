@@ -18,7 +18,7 @@ pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*"; rc=1; }
 
 # DUT: default route via the helper, the CNI sample ruleset, vfs storage on
-# UFS, and a minimal image: /rescue plus nc(1) with its libraries.
+# UFS, and a minimal image: a static sh plus nc(1) with its libraries.
 $S dut 'sh -es' <<'EOF'
 ifconfig vtnet1 | grep -q 'inet 10.188.210.50 ' ||
     ifconfig vtnet1 inet 10.188.210.50/24 up
@@ -43,8 +43,9 @@ pfctl -f /etc/pf.conf
 pfctl -e >/dev/null 2>&1 || true
 if ! podman image exists localhost/pftest:latest; then
 	r=/var/tmp/pftest-root; rm -rf $r; mkdir -p $r/bin $r/usr/bin $r/lib $r/libexec $r/etc $r/tmp $r/dev
-	tar -cf - -C / rescue | tar -xf - -C $r
-	ln -s /rescue/sh $r/bin/sh
+	# /rescue/sh is static.  Copy only it: an image's /rescue may be
+	# separate copies of one large binary rather than hard links.
+	cp /rescue/sh $r/bin/sh
 	cp /usr/bin/nc $r/usr/bin/nc
 	cp /libexec/ld-elf.so.1 $r/libexec/
 	for l in $(ldd -f "%p\n" /usr/bin/nc); do [ -f "$l" ] && cp $l $r/lib/; done
