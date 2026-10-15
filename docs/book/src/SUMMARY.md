@@ -90,6 +90,7 @@
 - [Observability](operations/observability.md)
 - [Packet Filter (pf)](operations/pf.md)
 - [Routing Domains](operations/rdomains.md)
+- [Network Stack Provenance](operations/network-provenance.md)
 - [Graphics](operations/graphics.md)
 - [Troubleshooting](operations/troubleshooting.md)
 - [Tool Reference](operations/tools.md)

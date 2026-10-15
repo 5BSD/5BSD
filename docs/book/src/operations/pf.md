@@ -172,3 +172,7 @@ families and `pflowctl` are gone; programs written for OpenBSD's
 | `jail` option | Done; `jail_test` |
 | Routing domains (`rdomain`, `rtable`) | Planned: on FIBs |
 | Queues (HFSC, FQ-CoDel) | Planned |
+
+Where each part of pf and the network stack comes from, and how to bring
+OpenBSD and FreeBSD changes forward, is in
+[Network Stack Provenance](network-provenance.md).
