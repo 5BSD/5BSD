@@ -95,7 +95,9 @@ pflog_init()
 {
 	pft_init
 
-	if ! kldstat -q -m pflog; then
+	# 5BSD: pflog(4) is part of pf.ko.
+	if ! kldstat -q -m pflog &&
+	    ! ifconfig -C | grep -Eq '(^|[[:space:]])pflog([[:space:]]|$)'; then
 		atf_skip "This test requires pflog"
 	fi
 }
@@ -104,7 +106,9 @@ pflow_init()
 {
 	pft_init
 
-	if ! kldstat -q -m pflow; then
+	# 5BSD: pflow(4) is part of pf.ko.
+	if ! kldstat -q -m pflow &&
+	    ! ifconfig -C | grep -Eq '(^|[[:space:]])pflow([[:space:]]|$)'; then
 		atf_skip "This test requires pflow"
 	fi
 }
