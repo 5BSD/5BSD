@@ -62,8 +62,15 @@ put boot/loader.conf 0644 <<'EOF'
 console="comconsole"
 autoboot_delay="1"
 beastie_disable="YES"
-# The capability plane denies late kldload; preload PF modules at boot.
-pf_load="YES"
+# The capability plane denies late kldload.  pf and DTrace are loader
+# defaults; preload the other modules the PF regress and ATF suites use.
+if_epair_load="YES"
+if_bridge_load="YES"
+carp_load="YES"
+if_enc_load="YES"
+dummymbuf_load="YES"
+dummynet_load="YES"
+sctp_load="YES"
 EOF
 put etc/rc.conf 0644 <<'EOF'
 hostname="pf-dut-5bsd"
