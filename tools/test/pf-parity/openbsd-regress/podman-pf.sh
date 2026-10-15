@@ -25,6 +25,10 @@ ifconfig vtnet1 | grep -q 'inet 10.188.210.50 ' ||
 route -q delete default >/dev/null 2>&1 || true
 route -q add default 10.188.210.10
 sysctl -q net.inet.ip.forwarding=1
+# Images built from package payloads have only the .sample configs.
+for f in /usr/local/etc/containers/*.sample; do
+	[ -e "${f%.sample}" ] || cp "$f" "${f%.sample}"
+done
 if ! zfs list >/dev/null 2>&1 || [ -z "$(zfs list -H 2>/dev/null)" ]; then
 	sed -i '' -e 's/^driver = "zfs"/driver = "vfs"/' \
 	    /usr/local/etc/containers/storage.conf

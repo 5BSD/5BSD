@@ -1274,42 +1274,45 @@ in_scrubprefix(struct in_ifaddr *target, u_int flags)
 	return (error);
 }
 
-void
-in_ifscrub_all(void)
+/*
+ * 5BSD: scrub one interface.  in_ifscrub_all() runs it through
+ * if_foreach_sleep(), holding a reference rather than IFNET_RLOCK: an
+ * address change holds in_control and its route message reaches SCTP's
+ * sctp_addr_change(), which takes IFNET_RLOCK, and if_bridge's ioctl
+ * (under in_multi_sx when a multicast group is joined) can reach a
+ * netlink interface dump that takes IFNET_RLOCK.  Holding IFNET_RLOCK
+ * here around in_control and in_multi_sx reversed both orders whenever a
+ * VNET jail was removed.
+ */
+static int
+in_ifscrub_one(if_t ifp, void *arg __unused)
 {
-	struct ifnet *ifp;
 	struct ifaddr *ifa, *nifa;
 	struct ifreq ifr;
 
-	/*
-	 * 5BSD: in_control before ifnet_sx, the order of an address change
-	 * whose route message reaches SCTP's sctp_addr_change() (which takes
-	 * IFNET_RLOCK); taking in_control per address under IFNET_RLOCK
-	 * reversed it whenever a VNET jail was removed.
-	 */
-	sx_xlock(&in_control_sx);
-	IFNET_RLOCK();
-	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		/* Cannot lock here - lock recursion. */
-		/* NET_EPOCH_ENTER(et); */
-		CK_STAILQ_FOREACH_SAFE(ifa, &ifp->if_addrhead, ifa_link, nifa) {
-			if (ifa->ifa_addr->sa_family != AF_INET)
-				continue;
+	CK_STAILQ_FOREACH_SAFE(ifa, &ifp->if_addrhead, ifa_link, nifa) {
+		if (ifa->ifa_addr->sa_family != AF_INET)
+			continue;
 
-			/*
-			 * This is ugly but the only way for legacy IP to
-			 * cleanly remove addresses and everything attached.
-			 */
-			bzero(&ifr, sizeof(ifr));
-			ifr.ifr_addr = *ifa->ifa_addr;
-			(void)in_difaddr_ioctl(SIOCDIFADDR, (caddr_t)&ifr,
-			    ifp, NULL);
-		}
-		/* NET_EPOCH_EXIT(et); */
-		in_purgemaddrs(ifp);
-		igmp_domifdetach(ifp);
+		/*
+		 * This is ugly but the only way for legacy IP to
+		 * cleanly remove addresses and everything attached.
+		 */
+		bzero(&ifr, sizeof(ifr));
+		ifr.ifr_addr = *ifa->ifa_addr;
+		(void)in_difaddr_ioctl(SIOCDIFADDR, (caddr_t)&ifr, ifp, NULL);
 	}
-	IFNET_RUNLOCK();
+	in_purgemaddrs(ifp);
+	igmp_domifdetach(ifp);
+	return (0);
+}
+
+void
+in_ifscrub_all(void)
+{
+
+	sx_xlock(&in_control_sx);
+	(void)if_foreach_sleep(NULL, NULL, in_ifscrub_one, NULL);
 	sx_xunlock(&in_control_sx);
 }
 
