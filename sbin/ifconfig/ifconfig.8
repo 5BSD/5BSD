@@ -647,6 +647,23 @@ For example, a VLAN interface such as
 .Em vlan10
 is a member of the VLAN interface family group,
 .Em vlan .
+All interfaces are members of the
+.Em all
+group.
+The
+.Em egress
+group contains the interfaces that the IPv4 and IPv6 default routes of
+routing table 0 point to, as on
+.Ox ;
+the kernel updates it in each
+.Xr vnet 9
+when a default route is added, changed or deleted.
+Reject and blackhole routes do not count.
+.Xr pf.conf 5
+rules can use it, for example
+.Dq Li pass out on egress
+or
+.Dq Li nat-to (egress) .
 .It Cm -group Ar groupname
 Remove the interface from the given
 .Dq group .

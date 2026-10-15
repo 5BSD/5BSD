@@ -10,6 +10,7 @@ ATF_TESTS_SH+=	anchor \
 		delay \
 		divert-to \
 		dup \
+		egress \
 		ether \
 		forward \
 		fragmentation_pass \

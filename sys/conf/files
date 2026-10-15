@@ -4165,6 +4165,7 @@ net/ifq.c			standard
 net/if_bridge.c			optional bridge inet | if_bridge inet
 net/if_clone.c			standard
 net/if_dead.c			standard
+net/if_egress.c			optional inet | inet6
 net/if_disc.c			optional disc
 net/if_edsc.c			optional edsc
 net/if_enc.c			optional enc inet | enc inet6

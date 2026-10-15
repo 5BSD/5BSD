@@ -573,7 +573,7 @@ struct ifconf {
  */
 
 #define	IFG_ALL		"all"		/* group contains all interfaces */
-/* XXX: will we implement this? */
+/* 5BSD: maintained from the default routes of FIB 0 (net/if_egress.c) */
 #define	IFG_EGRESS	"egress"	/* if(s) default route(s) point to */
 
 struct ifg_req {
