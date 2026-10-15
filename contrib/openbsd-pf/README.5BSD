@@ -170,6 +170,18 @@ to a re-import.
                  net lock and only while pfsync is running
                  (pfsync_syncif_link_task), as OpenBSD's synchronous hooks
                  do, so the link demotion stays balanced.
+  pfsync6 (marked "5BSD: pfsync6"): the 5BSD extension of an IPv6 sync
+                 peer: struct pfsyncreq6 and pfsync_input6() (if_pfsync.h);
+                 SIOC[GS]ETPFSYNC6 in pfsync_[gs]et_ioc(), the peer in the
+                 softc (struct pfsync6, openbsd_compat.h), hooks in
+                 pfsync_up/down/set_mtu/sendout, and ipackets/ipackets6
+                 counted in pfsync_input4/6 (if_pfsync.c).  The ioctl
+                 numbers are in sys/sys/sockio.h, the logic in pf_pfsync.c,
+                 the IPv6 input registration in pf_freebsd.c.  pfsync
+                 messages are unchanged: the IPv4 header pfsync builds is
+                 replaced by an IPv6 one (hop limit 255), and the pfsync
+                 MTU stays 20 bytes below the syncdev's.  SIOC[GS]ETPFSYNC
+                 keep OpenBSD's struct and leave the IPv6 peer alone.
 The compatibility layer and 5BSD attachment live in sys/netpfil/openbsd-pf
 (openbsd_compat.[ch], openbsd_net.c, openbsd_ifq.c, pf_freebsd.c,
 pf_pfsync.c, pf_sdt.c, include/ shadow headers, user/ userland
@@ -198,7 +210,8 @@ Adopted OpenBSD code (pf/parity), all from facc8d7ec5d1:
                             divert.4 is now ipdivert.4); marked 5BSD
                             additions: pf.conf.5 jail, dummynet, ether rules and
                             queueing status, pfctl.8 ethernet, pf.4 VNET,
-                            divert.4, pfsync.4 carp demotion
+                            divert.4, pfsync.4 IPv6 peers and carp
+                            demotion
   usr.sbin/authpf, ftp-proxy, tftp-proxy -> same programs
   usr.sbin/tcpdump      -> /usr/sbin/tcpdump (glue: usr.sbin/tcpdump/tcpdump:
                             openbsd_compat.h, include/, privsep_5bsd.c)

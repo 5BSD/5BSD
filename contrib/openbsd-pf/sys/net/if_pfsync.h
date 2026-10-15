@@ -271,6 +271,18 @@ struct pfsyncreq {
 	int		 pfsyncr_defer;
 };
 
+/*
+ * 5BSD: pfsync6
+ * Configuration structure for SIOCSETPFSYNC6 SIOCGETPFSYNC6: struct
+ * pfsyncreq and an IPv6 synchronisation peer.  An unspecified
+ * pfsyncr6_syncpeer selects the IPv4 peer in pfsyncr6_req.
+ * SIOCSETPFSYNC and SIOCGETPFSYNC leave the IPv6 peer alone.
+ */
+struct pfsyncreq6 {
+	struct pfsyncreq pfsyncr6_req;
+	struct in6_addr	 pfsyncr6_syncpeer;
+};
+
 #ifdef _KERNEL
 
 enum pfsync_counters {
@@ -310,6 +322,8 @@ enum pfsync_counters {
 
 int			pfsync_input4(struct mbuf **, int *, int, int,
 			    struct netstack *);
+int			pfsync_input6(struct mbuf **, int *, int, int,
+			    struct netstack *);	/* 5BSD: pfsync6 */
 int			pfsync_sysctl(int *, u_int,  void *, size_t *,
 			    void *, size_t);
 

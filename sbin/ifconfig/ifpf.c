@@ -4,7 +4,8 @@
  * pfsync(4) and pflow(4) configuration, from OpenBSD sbin/ifconfig/ifconfig.c
  * (revision facc8d7ec5d1, see contrib/openbsd-pf/README.5BSD), adapted to
  * the 5BSD ifconfig module interface.  Interface ioctls are OpenBSD's
- * (SIOC[GS]ETPFSYNC, SIOC[GS]ETPFLOW).
+ * (SIOC[GS]ETPFLOW) and, for pfsync, the 5BSD SIOC[GS]ETPFSYNC6, which
+ * add an IPv6 sync peer to OpenBSD's SIOC[GS]ETPFSYNC.
  *
  * Copyright (c) 1983, 1993 The Regents of the University of California.
  * Copyright (c) 1997, 1998, 2000 The NetBSD Foundation, Inc.
@@ -42,72 +43,90 @@
 #define	ifr_data	ifr_ifru.ifru_data
 #endif
 
+/*
+ * 5BSD: pfsync6 -- the 5BSD SIOC[GS]ETPFSYNC6 requests carry the OpenBSD
+ * struct pfsyncreq and an IPv6 sync peer (unspecified: the IPv4 peer).
+ */
+static void
+pfsync_get(if_ctx *ctx, struct ifreq *ifr, struct pfsyncreq6 *preq)
+{
+	bzero(preq, sizeof(*preq));
+	ifr->ifr_data = (caddr_t)preq;
+
+	if (ioctl_ctx_ifr(ctx, SIOCGETPFSYNC6, ifr) == -1)
+		err(1, "%s: SIOCGETPFSYNC6", ifr->ifr_name);
+}
+
+static void
+pfsync_set(if_ctx *ctx, struct ifreq *ifr, struct pfsyncreq6 *preq)
+{
+	ifr->ifr_data = (caddr_t)preq;
+
+	if (ioctl_ctx_ifr(ctx, SIOCSETPFSYNC6, ifr) == -1)
+		err(1, "%s: SIOCSETPFSYNC6", ifr->ifr_name);
+}
+
 static void
 setpfsync_syncdev(if_ctx *ctx, const char *val, int d)
 {
 	struct ifreq ifr = {};
-	struct pfsyncreq preq;
+	struct pfsyncreq6 preq;
 
-	bzero(&preq, sizeof(struct pfsyncreq));
-	ifr.ifr_data = (caddr_t)&preq;
-
-	if (ioctl_ctx_ifr(ctx, SIOCGETPFSYNC, &ifr) == -1)
-		err(1, "%s: SIOCGETPFSYNC", ifr.ifr_name);
-
-	strlcpy(preq.pfsyncr_syncdev, val, sizeof(preq.pfsyncr_syncdev));
-
-	if (ioctl_ctx_ifr(ctx, SIOCSETPFSYNC, &ifr) == -1)
-		err(1, "%s: SIOCSETPFSYNC", ifr.ifr_name);
+	pfsync_get(ctx, &ifr, &preq);
+	strlcpy(preq.pfsyncr6_req.pfsyncr_syncdev, val,
+	    sizeof(preq.pfsyncr6_req.pfsyncr_syncdev));
+	pfsync_set(ctx, &ifr, &preq);
 }
 
 static void
 unsetpfsync_syncdev(if_ctx *ctx, const char *val, int d)
 {
 	struct ifreq ifr = {};
-	struct pfsyncreq preq;
+	struct pfsyncreq6 preq;
 
-	bzero(&preq, sizeof(struct pfsyncreq));
-	ifr.ifr_data = (caddr_t)&preq;
-
-	if (ioctl_ctx_ifr(ctx, SIOCGETPFSYNC, &ifr) == -1)
-		err(1, "%s: SIOCGETPFSYNC", ifr.ifr_name);
-
-	bzero(&preq.pfsyncr_syncdev, sizeof(preq.pfsyncr_syncdev));
-
-	if (ioctl_ctx_ifr(ctx, SIOCSETPFSYNC, &ifr) == -1)
-		err(1, "%s: SIOCSETPFSYNC", ifr.ifr_name);
+	pfsync_get(ctx, &ifr, &preq);
+	bzero(&preq.pfsyncr6_req.pfsyncr_syncdev,
+	    sizeof(preq.pfsyncr6_req.pfsyncr_syncdev));
+	pfsync_set(ctx, &ifr, &preq);
 }
 
 static void
 setpfsync_syncpeer(if_ctx *ctx, const char *val, int d)
 {
 	struct ifreq ifr = {};
-	struct pfsyncreq preq;
+	struct pfsyncreq6 preq;
 	struct addrinfo hints, *peerres;
 	int ecode;
 
-	bzero(&preq, sizeof(struct pfsyncreq));
-	ifr.ifr_data = (caddr_t)&preq;
-
-	if (ioctl_ctx_ifr(ctx, SIOCGETPFSYNC, &ifr) == -1)
-		err(1, "%s: SIOCGETPFSYNC", ifr.ifr_name);
+	pfsync_get(ctx, &ifr, &preq);
 
 	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_INET;
+	hints.ai_family = AF_UNSPEC;	/* 5BSD: pfsync6 */
 	hints.ai_socktype = SOCK_DGRAM;	/*dummy*/
 
 	if ((ecode = getaddrinfo(val, NULL, &hints, &peerres)) != 0)
 		errx(1, "error in parsing address string: %s",
 		    gai_strerror(ecode));
 
-	if (peerres->ai_addr->sa_family != AF_INET)
-		errx(1, "only IPv4 addresses supported for the syncpeer");
+	switch (peerres->ai_addr->sa_family) {
+	case AF_INET:
+		preq.pfsyncr6_req.pfsyncr_syncpeer.s_addr =
+		    ((struct sockaddr_in *)peerres->ai_addr)->sin_addr.s_addr;
+		memset(&preq.pfsyncr6_syncpeer, 0,
+		    sizeof(preq.pfsyncr6_syncpeer));
+		break;
+	case AF_INET6:
+		preq.pfsyncr6_syncpeer =
+		    ((struct sockaddr_in6 *)peerres->ai_addr)->sin6_addr;
+		if (IN6_IS_ADDR_UNSPECIFIED(&preq.pfsyncr6_syncpeer))
+			errx(1, "syncpeer %s: unspecified address", val);
+		break;
+	default:
+		errx(1, "syncpeer %s: only IPv4 and IPv6 addresses are "
+		    "supported", val);
+	}
 
-	preq.pfsyncr_syncpeer.s_addr = ((struct sockaddr_in *)
-	    peerres->ai_addr)->sin_addr.s_addr;
-
-	if (ioctl_ctx_ifr(ctx, SIOCSETPFSYNC, &ifr) == -1)
-		err(1, "%s: SIOCSETPFSYNC", ifr.ifr_name);
+	pfsync_set(ctx, &ifr, &preq);
 
 	freeaddrinfo(peerres);
 }
@@ -116,18 +135,12 @@ static void
 unsetpfsync_syncpeer(if_ctx *ctx, const char *val, int d)
 {
 	struct ifreq ifr = {};
-	struct pfsyncreq preq;
+	struct pfsyncreq6 preq;
 
-	bzero(&preq, sizeof(struct pfsyncreq));
-	ifr.ifr_data = (caddr_t)&preq;
-
-	if (ioctl_ctx_ifr(ctx, SIOCGETPFSYNC, &ifr) == -1)
-		err(1, "%s: SIOCGETPFSYNC", ifr.ifr_name);
-
-	preq.pfsyncr_syncpeer.s_addr = 0;
-
-	if (ioctl_ctx_ifr(ctx, SIOCSETPFSYNC, &ifr) == -1)
-		err(1, "%s: SIOCSETPFSYNC", ifr.ifr_name);
+	pfsync_get(ctx, &ifr, &preq);
+	preq.pfsyncr6_req.pfsyncr_syncpeer.s_addr = 0;
+	memset(&preq.pfsyncr6_syncpeer, 0, sizeof(preq.pfsyncr6_syncpeer));
+	pfsync_set(ctx, &ifr, &preq);
 }
 
 static void
@@ -135,61 +148,54 @@ setpfsync_maxupd(if_ctx *ctx, const char *val, int d)
 {
 	struct ifreq ifr = {};
 	const char *errmsg = NULL;
-	struct pfsyncreq preq;
+	struct pfsyncreq6 preq;
 	int maxupdates;
 
 	maxupdates = strtonum(val, 0, 255, &errmsg);
 	if (errmsg)
 		errx(1, "maxupd %s: %s", val, errmsg);
 
-	bzero(&preq, sizeof(struct pfsyncreq));
-	ifr.ifr_data = (caddr_t)&preq;
-
-	if (ioctl_ctx_ifr(ctx, SIOCGETPFSYNC, &ifr) == -1)
-		err(1, "%s: SIOCGETPFSYNC", ifr.ifr_name);
-
-	preq.pfsyncr_maxupdates = maxupdates;
-
-	if (ioctl_ctx_ifr(ctx, SIOCSETPFSYNC, &ifr) == -1)
-		err(1, "%s: SIOCSETPFSYNC", ifr.ifr_name);
+	pfsync_get(ctx, &ifr, &preq);
+	preq.pfsyncr6_req.pfsyncr_maxupdates = maxupdates;
+	pfsync_set(ctx, &ifr, &preq);
 }
 
 static void
 setpfsync_defer(if_ctx *ctx, const char *val, int d)
 {
 	struct ifreq ifr = {};
-	struct pfsyncreq preq;
+	struct pfsyncreq6 preq;
 
-	bzero(&preq, sizeof(struct pfsyncreq));
-	ifr.ifr_data = (caddr_t)&preq;
-
-	if (ioctl_ctx_ifr(ctx, SIOCGETPFSYNC, &ifr) == -1)
-		err(1, "%s: SIOCGETPFSYNC", ifr.ifr_name);
-
-	preq.pfsyncr_defer = d;
-	if (ioctl_ctx_ifr(ctx, SIOCSETPFSYNC, &ifr) == -1)
-		err(1, "%s: SIOCSETPFSYNC", ifr.ifr_name);
+	pfsync_get(ctx, &ifr, &preq);
+	preq.pfsyncr6_req.pfsyncr_defer = d;
+	pfsync_set(ctx, &ifr, &preq);
 }
 
 static void
 pfsync_status(if_ctx *ctx)
 {
 	struct ifreq ifr = {};
-	struct pfsyncreq preq;
+	struct pfsyncreq6 preq6;
+	struct pfsyncreq *preq = &preq6.pfsyncr6_req;
+	char buf[INET6_ADDRSTRLEN];
 
-	bzero(&preq, sizeof(struct pfsyncreq));
-	ifr.ifr_data = (caddr_t)&preq;
+	bzero(&preq6, sizeof(preq6));
+	ifr.ifr_data = (caddr_t)&preq6;
 
-	if (ioctl_ctx_ifr(ctx, SIOCGETPFSYNC, &ifr) == -1)
+	if (ioctl_ctx_ifr(ctx, SIOCGETPFSYNC6, &ifr) == -1)
 		return;
 
-	if (preq.pfsyncr_syncdev[0] != '\0') {
-		printf("\tpfsync: syncdev: %s ", preq.pfsyncr_syncdev);
-		if (preq.pfsyncr_syncpeer.s_addr != htonl(INADDR_PFSYNC_GROUP))
+	if (preq->pfsyncr_syncdev[0] != '\0') {
+		printf("\tpfsync: syncdev: %s ", preq->pfsyncr_syncdev);
+		if (!IN6_IS_ADDR_UNSPECIFIED(&preq6.pfsyncr6_syncpeer))
+			printf("syncpeer: %s ", inet_ntop(AF_INET6,
+			    &preq6.pfsyncr6_syncpeer, buf, sizeof(buf)));
+		else if (preq->pfsyncr_syncpeer.s_addr !=
+		    htonl(INADDR_PFSYNC_GROUP))
 			printf("syncpeer: %s ",
-			    inet_ntoa(preq.pfsyncr_syncpeer));
-		printf("maxupd: %d ", preq.pfsyncr_maxupdates);
-		printf("defer: %s\n", preq.pfsyncr_defer ? "on" : "off");
+			    inet_ntoa(preq->pfsyncr_syncpeer));
+		printf("maxupd: %d ", preq->pfsyncr_maxupdates);
+		printf("defer: %s\n", preq->pfsyncr_defer ? "on" : "off");
 	}
 }
 

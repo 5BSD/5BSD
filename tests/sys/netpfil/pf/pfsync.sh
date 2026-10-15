@@ -1274,6 +1274,101 @@ lifecycle_departure_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "ipv6_syncpeer" "cleanup"
+ipv6_syncpeer_head()
+{
+	atf_set descr 'IPv6 unicast sync peer: configuration, MTU and bulk update (5BSD extension)'
+	atf_set require.user root
+}
+
+ipv6_syncpeer_body()
+{
+	pfsynct_init
+
+	epair_sync=$(vnet_mkepair)
+	epair_one=$(vnet_mkepair)
+
+	vnet_mkjail one ${epair_one}a ${epair_sync}a
+	vnet_mkjail two ${epair_sync}b
+	pfsynct_mkif one
+	pfsynct_mkif two
+
+	# The sync link has IPv6 addresses only.
+	jexec one ifconfig ${epair_sync}a inet6 fd2c::1/64 no_dad up
+	jexec two ifconfig ${epair_sync}b inet6 fd2c::2/64 no_dad up
+	jexec one ifconfig ${epair_one}a inet6 fd2b::1/64 no_dad up
+	ifconfig ${epair_one}b inet6 fd2b::f0/64 no_dad up
+	ifconfig ${epair_one}b inet6 fd2b::f1/64 alias no_dad
+
+	jexec one ifconfig pfsync0 \
+		syncdev ${epair_sync}a \
+		syncpeer fd2c::2 \
+		maxupd 1
+	atf_check -o match:"syncpeer: fd2c::2 " jexec one ifconfig pfsync0
+
+	# The IPv6 header is 20 bytes longer than the IPv4 one pfsync sizes
+	# its packets for: the pfsync MTU stays 20 bytes below the syncdev's.
+	atf_check -s not-exit:0 -e ignore jexec one ifconfig pfsync0 mtu 1500
+	atf_check jexec one ifconfig pfsync0 up
+	atf_check -o match:"mtu 1480" jexec one ifconfig pfsync0
+
+	# The peer can only change while pfsync0 is down.
+	atf_check -s not-exit:0 -e match:"busy" \
+	    jexec one ifconfig pfsync0 syncpeer fd2c::3
+
+	# No IPv4 on the sync link; pfsync itself is not synced.
+	jexec one pfctl -e
+	pft_set_rules one \
+		"block on ${epair_sync}a inet" \
+		"pass quick on ${epair_sync}a inet6 proto pfsync keep state (no-sync)" \
+		"pass out keep state"
+	jexec two pfctl -e
+	pft_set_rules two \
+		"block on ${epair_sync}b inet" \
+		"pass quick on ${epair_sync}b inet6 proto pfsync keep state (no-sync)" \
+		"pass out keep state"
+
+	# A state that exists before two starts reaches it by bulk update.
+	jexec one ping6 -c 1 -S fd2b::1 fd2b::f0
+	sleep 1
+
+	jexec two ifconfig pfsync0 \
+		syncdev ${epair_sync}b \
+		syncpeer fd2c::1 \
+		maxupd 1 \
+		up
+	sleep 2
+
+	if ! jexec two pfctl -s states | grep icmp | grep fd2b::1 | \
+	    grep fd2b::f0 ; then
+		jexec two pfctl -s states
+		atf_fail "bulk-updated state not found on synced host"
+	fi
+
+	# A new state reaches it as an insert.
+	jexec one ping6 -c 1 -S fd2b::1 fd2b::f1
+	sleep 2
+
+	if ! jexec two pfctl -s states | grep icmp | grep fd2b::1 | \
+	    grep fd2b::f1 ; then
+		jexec two pfctl -s states
+		atf_fail "inserted state not found on synced host"
+	fi
+
+	# Back to IPv4: an IPv4 peer replaces the IPv6 one, and -syncpeer
+	# returns to the default group (not shown).
+	atf_check jexec one ifconfig pfsync0 down syncpeer 192.0.2.2 up
+	atf_check -o match:"syncpeer: 192.0.2.2 " -o not-match:"fd2c::" \
+	    jexec one ifconfig pfsync0
+	atf_check jexec one ifconfig pfsync0 down -syncpeer
+	atf_check -o not-match:"syncpeer" jexec one ifconfig pfsync0
+}
+
+ipv6_syncpeer_cleanup()
+{
+	pfsynct_cleanup
+}
+
 pfsynct_demotion()
 {
 	jexec $1 sysctl -n net.inet.carp.demotion
@@ -1408,5 +1503,6 @@ atf_init_test_cases()
 	atf_add_test_case "af_to_in_if_bound"
 	atf_add_test_case "flush_by_intf"
 	atf_add_test_case "lifecycle_departure"
+	atf_add_test_case "ipv6_syncpeer"
 	atf_add_test_case "carp_demotion"
 }

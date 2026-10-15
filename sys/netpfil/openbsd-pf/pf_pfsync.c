@@ -4,7 +4,8 @@
  * Copyright (c) 2026 The 5BSD Project
  *
  * pfsync(4) on the 5BSD stack: the carp(4) demotion OpenBSD pfsync
- * applies to the "carp" interface group.
+ * applies to the "carp" interface group, and the 5BSD extension of an
+ * IPv6 synchronisation peer.
  *
  * carp (marked "5BSD: carp" in if_pfsync.c): OpenBSD demotes the carp
  * group by 32 while a bulk update is outstanding and by 1 while the
@@ -15,6 +16,10 @@
  * What was applied is remembered, so changing the factor never leaves
  * a residue.  Without carp(4) nothing is applied; carp(4) loaded later
  * sees the demotion from pfsync's next adjustment on.
+ *
+ * pfsync6 (marked "5BSD: pfsync6"): see struct pfsync6 in
+ * openbsd_compat.h.  pfsync messages and their OpenBSD wire format do
+ * not change; only the network header does.
  */
 
 #include "openbsd_compat.h"
@@ -22,6 +27,9 @@
 #include <net/pfvar.h>
 #include <net/if_pfsync.h>
 #include <netinet/ip_carp.h>	/* the shadow header: carp_group_demote_adj */
+#include <netinet6/scope6_var.h>
+
+#undef	ip6_output		/* this file calls the 5BSD ip6_output() */
 
 SYSCTL_DECL(_net_pfsync);
 
@@ -105,3 +113,150 @@ SYSCTL_PROC(_net_pfsync, OID_AUTO, carp_demotion_factor,
     CTLFLAG_VNET | CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
     pfsync_carp_adj_sysctl, "I",
     "pfsync's CARP demotion factor adjustment");
+
+/* ------------------------------------------------------------------ */
+/* IPv6 synchronisation peer                                            */
+/* ------------------------------------------------------------------ */
+
+int
+pfsync6_check(const struct in6_addr *a)
+{
+	if (IN6_IS_ADDR_UNSPECIFIED(a))
+		return (0);
+#ifdef INET6
+	if (IN6_IS_ADDR_V4MAPPED(a) || IN6_IS_ADDR_V4COMPAT(a) ||
+	    IN6_IS_ADDR_LOOPBACK(a) || IN6_IS_ADDR_MC_INTFACELOCAL(a))
+		return (EINVAL);
+	return (0);
+#else
+	return (EAFNOSUPPORT);
+#endif
+}
+
+/*
+ * pfsync_up(), net lock held: resolve the peer in the syncdev's scope
+ * zone and join it if it is a group.  The pfsync MTU keeps room for the
+ * longer IPv6 header.
+ */
+int
+pfsync6_up(struct pfsync6 *p6, struct ifnet *ifp, struct ifnet *ifp0)
+{
+#ifdef INET6
+	struct in6_addr dst;
+	int error;
+
+	KASSERT(!p6->p6_up && p6->p6_inm == NULL,
+	    ("%s: %s already up", __func__, ifp->if_xname));
+
+	if (ifp0->if_mtu <= PFSYNC6_HDREXTRA + sizeof(struct ip) +
+	    PFSYNC_HDRLEN)
+		return (EINVAL);
+
+	dst = p6->p6_peer;
+	error = in6_setscope(&dst, ifp0, NULL);
+	if (error != 0)
+		return (error);
+
+	if (IN6_IS_ADDR_MULTICAST(&dst)) {
+		if ((ifp0->if_flags & IFF_MULTICAST) == 0)
+			return (ENODEV);
+		error = in6_joingroup(ifp0, &dst, NULL, &p6->p6_inm, 0);
+		if (error != 0) {
+			p6->p6_inm = NULL;
+			return (error);
+		}
+	}
+
+	if (ifp->if_mtu + PFSYNC6_HDREXTRA > ifp0->if_mtu)
+		ifp->if_mtu = ifp0->if_mtu - PFSYNC6_HDREXTRA;
+
+	p6->p6_dst = dst;
+	p6->p6_ifidx = ifp0->if_index;
+	p6->p6_up = 1;
+	return (0);
+#else
+	return (EAFNOSUPPORT);
+#endif
+}
+
+/* pfsync_down(), net lock held, after pfsync stopped sending. */
+void
+pfsync6_down(struct pfsync6 *p6)
+{
+#ifdef INET6
+	if (p6->p6_inm != NULL) {
+		(void)in6_leavegroup(p6->p6_inm, NULL);
+		p6->p6_inm = NULL;
+	}
+#endif
+	p6->p6_up = 0;
+	p6->p6_ifidx = 0;
+	memset(&p6->p6_dst, 0, sizeof(p6->p6_dst));
+}
+
+/*
+ * Send a pfsync packet built behind pfsync's IPv4 template to the IPv6
+ * peer: swap the IPv4 header for an IPv6 one with hop limit 255.
+ * Consumes the mbuf.
+ */
+int
+pfsync6_output(struct pfsync6 *p6, struct mbuf *m)
+{
+#ifdef INET6
+	struct epoch_tracker et;
+	struct ip6_moptions im6o, *im6op = NULL;
+	struct ip6_hdr *ip6;
+	struct ifnet *ifp;
+	u_int fib;
+	int error, plen;
+
+	fib = M_GETFIB(m);
+	if (m->m_pkthdr.len < sizeof(struct ip)) {
+		m_freem(m);
+		return (EINVAL);
+	}
+	m_adj(m, sizeof(struct ip));
+	plen = m->m_pkthdr.len;
+	M_PREPEND(m, sizeof(*ip6), M_NOWAIT);
+	if (m == NULL)
+		return (ENOBUFS);
+
+	ip6 = mtod(m, struct ip6_hdr *);
+	memset(ip6, 0, sizeof(*ip6));
+	ip6->ip6_vfc = IPV6_VERSION;
+	ip6->ip6_plen = htons(plen);
+	ip6->ip6_nxt = IPPROTO_PFSYNC;
+	ip6->ip6_hlim = PFSYNC_DFLTTL;
+	ip6->ip6_dst = p6->p6_dst;
+
+	NET_EPOCH_ENTER(et);
+	ifp = ifnet_byindex(p6->p6_ifidx);
+	if (ifp == NULL) {
+		error = ENXIO;
+		goto drop;
+	}
+	if (IN6_IS_ADDR_MULTICAST(&ip6->ip6_dst)) {
+		memset(&im6o, 0, sizeof(im6o));
+		im6o.im6o_multicast_ifp = ifp;
+		im6o.im6o_multicast_hlim = PFSYNC_DFLTTL;
+		im6o.im6o_multicast_loop = 0;
+		ip6_mfilter_init(&im6o.im6o_head);
+		im6op = &im6o;
+	}
+	error = in6_selectsrc_nbr(fib, &ip6->ip6_dst, im6op, ifp,
+	    &ip6->ip6_src);
+	if (error != 0)
+		goto drop;
+
+	error = ip6_output(m, NULL, NULL, 0, im6op, NULL, NULL);
+	NET_EPOCH_EXIT(et);
+	return (error);
+drop:
+	NET_EPOCH_EXIT(et);
+	m_freem(m);
+	return (error);
+#else
+	m_freem(m);
+	return (EAFNOSUPPORT);
+#endif
+}

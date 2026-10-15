@@ -8,10 +8,11 @@ dummynet, SCTP multihome, VNET, divert, jail) keep their tests.  Ether
 rules (ether.sh), dummynet (../common/dummynet.sh) and SCTP with
 multihoming (sctp.sh, sctp.py) are ported as the "5BSD: ether",
 "5BSD: dummynet" and "5BSD: sctp" extensions
-(contrib/openbsd-pf/README.5BSD).  pfsync.sh's carp_demotion tests the
-"5BSD: carp" mapping of pfsync's carp demotion onto
-net.inet.carp.demotion (it needs carp(4) loaded).  OpenBSD's own suites
-are in openbsd/ (contrib/openbsd-pf/regress).
+(contrib/openbsd-pf/README.5BSD).  pfsync.sh's basic_ipv6,
+basic_ipv6_unicast and ipv6_syncpeer test the "5BSD: pfsync6" IPv6 sync
+peers; carp_demotion tests the "5BSD: carp" mapping of pfsync's carp
+demotion onto net.inet.carp.demotion (it needs carp(4) loaded).
+OpenBSD's own suites are in openbsd/ (contrib/openbsd-pf/regress).
 
 OpenBSD applies a match rule's actions (set tos, set prio, ...) through
 the state of the rule that passes the packet; its implicit default rule

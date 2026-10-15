@@ -117,6 +117,17 @@ An alternative destination address for
 packets can be specified using the
 .Ic syncpeer
 keyword.
+.\" 5BSD: pfsync6
+.Pp
+On 5BSD the
+.Ic syncpeer
+may also be an IPv6 address: a unicast address, or a multicast group
+such as ff12::f0, which is then joined on the synchronisation interface.
+The messages are unchanged; they are carried in IPv6 packets with a
+hop limit of 255 and IP protocol 240 as the next header.
+IPv6 synchronisation peers are a 5BSD extension;
+.Ox
+peers only use IPv4.
 .\" This can be used in combination with
 .\" .Xr ipsec 4
 .\" to protect the synchronisation traffic.
