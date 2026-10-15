@@ -1,0 +1,7 @@
+# 5BSD: SCTP timeouts, allow-related, return on SCTP
+set timeout { sctp.first 60, sctp.opening 20, sctp.established 3600 }
+set timeout sctp.closing 300
+set timeout sctp.closed 10
+pass in proto sctp to port 9 keep state (allow-related)
+pass in proto sctp to port 10 keep state (allow-related, sctp.established 600)
+block return in proto sctp to port 11

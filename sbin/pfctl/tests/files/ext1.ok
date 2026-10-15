@@ -1,0 +1,10 @@
+pass in proto tcp from any to any port = 22 jail = web flags S/SA
+pass out proto udp all jail = 0
+pass in proto tcp all jail = web flags S/SA
+pass in proto tcp all jail = db flags S/SA
+pass in proto tcp all jail = 3:7 flags S/SA
+pass in proto tcp all jail > 10 flags S/SA
+block drop in proto tcp all jail != web
+pass out proto tcp all user = 0 jail = web flags S/SA
+block drop in inet proto tcp all jail = parent.child
+block drop in inet proto udp all jail = parent.child
