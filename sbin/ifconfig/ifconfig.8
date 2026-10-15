@@ -28,7 +28,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd October 12, 2026
+.Dd October 15, 2026
 .Dt IFCONFIG 8
 .Os
 .Sh NAME
@@ -3171,35 +3171,60 @@ Note that
 .Xr gre 4 will always accept GRE packets with invalid or absent keys.
 This command will result in a four byte MTU reduction on the interface.
 .El
-.Ss Packet Filter State Table Sychronisation Parameters
+.Ss Packet Filter State Table Synchronisation Parameters
 The following parameters are specific to
 .Xr pfsync 4
-interfaces:
+interfaces.
+.Cm syncdev
+and
+.Cm syncpeer
+can only be changed while the
+.Xr pfsync 4
+interface is down; the interface comes up only once
+.Cm syncdev
+is set.
 .Bl -tag -width indent
 .It Cm syncdev Ar iface
 Use the specified interface
 to send and receive pfsync state synchronisation messages.
+.Cm syncif
+is an alias.
 .It Fl syncdev
 Stop sending pfsync state synchronisation messages over the network.
+.Fl syncif
+is an alias.
 .It Cm syncpeer Ar peer_address
-Set the destination address for the state synchronization messages sent.
+Set the destination address for the state synchronisation messages sent.
 The
 .Ar peer_address
 is normally the IPv4 or IPv6 address of the other host taking
 part in the pfsync cluster.
+By default the messages are sent to the IPv4 multicast group
+224.0.0.240.
 .Pp
 When the
 .Ar peer_address
-is set to a unicast IP address, the pfsync link will behave
+is a unicast address, the pfsync link will behave
 as point-to-point rather than using multicast to broadcast the messages.
+When it is an IPv4 or IPv6 multicast group, the
+.Ar syncdev
+joins the group; the IPv6 group conventionally used is ff12::f0.
 .Pp
-When the
+IPv6 sync peers are a 5BSD extension;
+.Ox
+peers only use IPv4.
+A link-local or multicast IPv6
 .Ar peer_address
-is set to ff12::f0, the state synchronization
-messages will be broadcast using multicast over IPv6.
+is taken to be in the scope zone of the
+.Cm syncdev .
+With an IPv6
+.Ar peer_address
+the pfsync MTU is kept 20 bytes below the MTU of the
+.Cm syncdev ,
+so that packets with the longer IPv6 header are not fragmented.
 .It Fl syncpeer
 Unset the syncpeer.
-Packets will then be broadcast using multicast over IPv4.
+Packets will then be sent to the IPv4 multicast group 224.0.0.240.
 .It Cm maxupd Ar n
 Set the maximum number of updates for a single state which
 can be collapsed into one.
@@ -3210,11 +3235,39 @@ acknowledged that the associated state has been inserted.
 .It Fl defer
 Do not defer the first packet in a state.
 This is the default.
-.It Fl version Ar n
-Configure message format for compatibility with older versions of FreeBSD.
-Refer to
-.Xr pfsync 4
-for details.
+.El
+.Ss Packet Flow Export Parameters
+The following parameters are specific to
+.Xr pflow 4
+interfaces:
+.Bl -tag -width indent
+.It Cm flowdst Ar addr : Ns Ar port
+Set the receiver address and the port for
+.Xr pflow 4
+packets.
+Both must be defined to export pflow data.
+.Ar addr
+is the IP address and
+.Ar port
+is the port number of the flow collector.
+An IPv6
+.Ar addr
+is written in brackets, for example
+.Li [2001:db8::1]:2055 .
+Pflow data will be sent to this address and port.
+.It Fl flowdst
+Unset the receiver address and stop sending pflow data.
+.It Cm flowsrc Ar addr Ns Op : Ns Ar port
+Set the source IP address and, optionally, the source port of
+.Xr pflow 4
+packets.
+The collector may use the address to identify the source of the data.
+.It Fl flowsrc
+Unset the source address.
+.It Cm pflowproto Ar n
+Set the export protocol:
+5 (NetFlow version 5) or 10 (IPFIX).
+The default is 5.
 .El
 .Ss VLAN Parameters
 The following parameters are specific to
