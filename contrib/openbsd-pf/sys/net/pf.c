@@ -1046,6 +1046,9 @@ pf_state_key_attach(struct pf_state_key *sk, struct pf_state *st, int idx)
 				    sist->src.state >= TCPS_FIN_WAIT_2 &&
 				    sist->dst.state >= TCPS_FIN_WAIT_2)
 					reuse = 1;
+				if (sk->proto == IPPROTO_SCTP &&	/* 5BSD: sctp */
+				    pf_sctp_state_reusable(sist))
+					reuse = 1;
 				if (pf_status.debug >= LOG_NOTICE) {
 					log(LOG_NOTICE,
 					    "pf: %s key attach %s on %s: ",
@@ -1109,6 +1112,7 @@ pf_state_key_attach(struct pf_state_key *sk, struct pf_state *st, int idx)
 void
 pf_detach_state(struct pf_state *st)
 {
+	pf_sctp_detach_state(st);	/* 5BSD: sctp */
 	KASSERT(st->key[PF_SK_WIRE] != NULL);
 	pf_state_key_detach(st, PF_SK_WIRE);
 
@@ -4591,6 +4595,7 @@ enter_ruleset:
 				TAILQ_NEXT(r, entries));
 			/* FALLTHROUGH */
 
+		case IPPROTO_SCTP:	/* 5BSD: sctp; ports as tcp/udp */
 		case IPPROTO_UDP:
 			/* tcp/udp only. port_op always 0 in other cases */
 			PF_TEST_ATTRIB((r->src.port_op &&
@@ -5049,7 +5054,11 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 	}
 
 	ruleset = &pf_main_ruleset;
-	rv = pf_match_rule(&ctx, ruleset);
+	if (pd->related_rule != NULL) {	/* 5BSD: sctp; allow-related */
+		*ctx.rm = pd->related_rule;
+		rv = PF_TEST_OK;
+	} else
+		rv = pf_match_rule(&ctx, ruleset);
 	if (rv == PF_TEST_FAIL || ctx.limiter_drop == 1) {
 		REASON_SET(reason, ctx.reason);
 		goto cleanup;
@@ -5103,6 +5112,9 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 				    ack, TH_RST|TH_ACK, 0, 0, r->return_ttl,
 				    1, 0, pd->rdomain, &ctx.reason);
 			}
+		} else if (pd->proto == IPPROTO_SCTP &&	/* 5BSD: sctp */
+		    (r->rule_flag & PFRULE_RETURN)) {
+			pf_sctp_send_abort(pd, r);
 		} else if ((pd->proto != IPPROTO_ICMP ||
 		    ICMP_INFOTYPE(ctx.icmptype)) && pd->af == AF_INET &&
 		    r->return_icmp)
@@ -5203,7 +5215,8 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 
 #if NPFSYNC > 0
 	if (*sm != NULL && !ISSET((*sm)->state_flags, PFSTATE_NOSYNC) &&
-	    pd->dir == PF_OUT && pfsync_is_up()) {
+	    pd->dir == PF_OUT && pfsync_is_up() &&
+	    !(pd->sctp_flags & PFDESC_SCTP_ADD_IP)) {	/* 5BSD: sctp */
 		/*
 		 * We want the state created, but we dont
 		 * want to send this in case a partner
@@ -5330,6 +5343,13 @@ pf_create_state(struct pf_pdesc *pd, struct pf_rule *r, struct pf_rule *a,
 		pf_set_protostate(st, PF_PEER_SRC, PFUDPS_SINGLE);
 		pf_set_protostate(st, PF_PEER_DST, PFUDPS_NO_TRAFFIC);
 		st->timeout = PFTM_UDP_FIRST_PACKET;
+		break;
+	case IPPROTO_SCTP:	/* 5BSD: sctp */
+		pf_set_protostate(st, PF_PEER_SRC, PF_SCTPS_COOKIE_WAIT);
+		pf_set_protostate(st, PF_PEER_DST, PF_SCTPS_CLOSED);
+		st->timeout = PFTM_SCTP_FIRST_PACKET;
+		if (pf_sctp_create_state(pd, st, &reason) != PF_PASS)
+			goto csfailed;
 		break;
 	case IPPROTO_ICMP:
 #ifdef INET6
@@ -6284,6 +6304,10 @@ pf_test_state(struct pf_pdesc *pd, struct pf_state **stp, u_short *reason)
 		else
 			pf_update_state_timeout(*stp, PFTM_UDP_SINGLE);
 		break;
+	case IPPROTO_SCTP:	/* 5BSD: sctp */
+		if (pf_sctp_test_state(pd, stp, reason) != PF_PASS)
+			return (PF_DROP);
+		break;
 	default:
 		/* update states */
 		if (src->state < PFOTHERS_SINGLE)
@@ -7195,10 +7219,16 @@ pf_test_state_icmp(struct pf_pdesc *pd, struct pf_state **stp,
 			key.port[0] = key.port[1] = 0;
 			key.hash = pf_pkt_hash(pd2.af, pd2.proto,
 			    pd2.src, pd2.dst, 0, 0);
+			if (pd2.proto == IPPROTO_SCTP &&	/* 5BSD: sctp */
+			    pf_sctp_icmp_key(&pd2, &key, reason) != PF_PASS)
+				return (PF_DROP);
 
 			action = pf_find_state(&pd2, &key, stp);
 			if (action != PF_MATCH)
 				return (action);
+			if (pd2.proto == IPPROTO_SCTP &&	/* 5BSD: sctp */
+			    pf_sctp_icmp_vtag(pd, &pd2, *stp, reason) != PF_PASS)
+				return (PF_DROP);
 
 			/* translate source/destination address, if necessary */
 			if ((*stp)->key[PF_SK_WIRE] !=
@@ -8297,6 +8327,10 @@ pf_setup_pdesc(struct pf_pdesc *pd, sa_family_t af, int dir,
 		pd->pcksum = &uh->uh_sum;
 		break;
 	}
+	case IPPROTO_SCTP:	/* 5BSD: sctp */
+		if (pf_sctp_setup_pdesc(pd, reason) != PF_PASS)
+			return (PF_DROP);
+		break;
 	case IPPROTO_ICMP: {
 		if (!pf_pull_hdr(pd->m, pd->off, &pd->hdr.icmp, ICMP_MINLEN,
 		    reason, pd->af))
@@ -8710,6 +8744,9 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 
 		break;
 	}
+
+	if (pd.proto == IPPROTO_SCTP)	/* 5BSD: sctp; multihome states */
+		pf_sctp_multihome_delayed(&pd, st, action, &have_pf_lock);
 
 	if (have_pf_lock != 0)
 		PF_UNLOCK();

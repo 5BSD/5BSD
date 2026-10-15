@@ -15,6 +15,7 @@
 
 #include <sys/module.h>
 #include <netinet/ip_divert.h>
+#include <netinet/sctp_crc32.h>
 #include <net/pfvar.h>
 #include <net/if_clone.h>
 
@@ -663,6 +664,19 @@ if_output_tso(struct ifnet *ifp, struct mbuf **mp, struct sockaddr *dst,
 	    (m->m_pkthdr.csum_flags & CSUM_TSO & ifp->if_hwassist) == 0)
 		return (0);
 	obsd_cksum_out(m, af);
+	/* route-to skips ip_output(): finish a delayed SCTP CRC32c here. */
+	if (m->m_pkthdr.csum_flags & (CSUM_SCTP | CSUM_SCTP_IPV6) &
+	    ~ifp->if_hwassist) {
+		int off = (af == AF_INET) ?
+		    (mtod(m, struct ip *)->ip_hl << 2) : sizeof(struct ip6_hdr);
+		uint32_t sum = 0;
+
+		/* As sctp_delayed_cksum(), which needs options SCTP. */
+		m_copyback(m, off + 8, sizeof(sum), &sum, M_NOWAIT);
+		sum = sctp_calculate_cksum(m, off);
+		m_copyback(m, off + 8, sizeof(sum), &sum, M_NOWAIT);
+		m->m_pkthdr.csum_flags &= ~(CSUM_SCTP | CSUM_SCTP_IPV6);
+	}
 	*mp = NULL;
 	(void)obsd_ifoutput(ifp, m, dst, rt);
 	return (1);

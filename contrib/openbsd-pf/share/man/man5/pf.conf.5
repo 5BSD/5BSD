@@ -171,7 +171,9 @@ option, or on a per-rule basis with one of the following options:
 .It Cm drop
 The packet is silently dropped.
 .It Cm return
-This causes a TCP RST to be returned for TCP packets
+This causes a TCP RST to be returned for TCP packets,
+.\" 5BSD: sctp
+an SCTP ABORT for SCTP packets (a 5BSD extension),
 and an ICMP UNREACHABLE for other types of packets.
 .It Cm return-icmp
 .It Cm return-icmp6
@@ -1078,6 +1080,13 @@ ones.
 Port numbers are never translated with a
 .Cm binat-to
 rule.
+.\" 5BSD: sctp
+SCTP ports are never translated: SCTP endpoints check their ports
+inside the association, so
+.Cm nat-to
+keeps the source port (a mapping that would collide fails) and
+.Cm rdr-to
+ignores a port.
 .Pp
 Translation options apply only to packets that pass through the specified
 interface, and if no interface is specified, translation is applied
@@ -1605,6 +1614,43 @@ Other protocols are handled similarly to UDP:
 .It Cm other.multiple Pq 60 seconds by default
 .It Cm other.single Pq 30 seconds by default
 .El
+.\" 5BSD: sctp
+.Pp
+SCTP states follow the association, as in
+.Fx
+pf; these timeouts are a 5BSD extension:
+.Pp
+.Bl -tag -width xxxx -compact
+.It Cm sctp.first Pq 120 seconds by default
+The state after the first packet (an INIT).
+.It Cm sctp.opening Pq 30 seconds by default
+The state while the association is being set up.
+.It Cm sctp.established Pq 24 hours by default
+The fully established state.
+.It Cm sctp.closing Pq 900 seconds by default
+The state after a SHUTDOWN, or after an address was removed from a
+multihomed association.
+.It Cm sctp.closed Pq 90 seconds by default
+The state after a SHUTDOWN COMPLETE or an ABORT.
+.El
+.Pp
+An SCTP state is created by an INIT chunk only and remembers the
+verification tag of each endpoint; packets with another tag are blocked,
+as are INIT chunks with a non-zero verification tag and malformed chunks.
+An INIT for a closed association replaces its state.
+ICMP errors match the state when the quoted SCTP header carries its
+verification tag.
+.Pp
+SCTP endpoints may be multihomed.
+The addresses an endpoint lists in INIT and INIT ACK chunks, and adds or
+removes with ASCONF chunks, are given states of their own once the packet
+announcing them has passed: a new address is evaluated against the
+ruleset as a packet of the association, and a removed address's state
+starts closing.
+Up to 8 addresses per endpoint are tracked.
+See the
+.Cm allow-related
+state option.
 .Pp
 Timeout values can be reduced adaptively as the number of state table
 entries grows.
@@ -2392,6 +2438,12 @@ or
 must be specified explicitly to apply these options to a rule.
 .Pp
 .Bl -tag -width xxxx -compact
+.\" 5BSD: sctp
+.It Cm allow-related
+States for the additional addresses of a multihomed SCTP association
+are created by this rule instead of the rule the addresses would match
+when evaluated on their own.
+This option is a 5BSD extension.
 .It Cm floating
 States can match packets on any interfaces
 (the opposite of
@@ -3180,7 +3232,7 @@ state-opt      = ( "max" number | "no-sync" | timeout | "sloppy" |
                  "max-src-conn" number |
                  "max-src-conn-rate" number "/" number |
                  "overload" "<" string ">" [ "flush" [ "global" ] ] |
-                 "if-bound" | "floating" )
+                 "if-bound" | "floating" | "allow-related" )
 
 timeout-list   = timeout [ [ "," ] timeout-list ]
 timeout        = ( "tcp.first" | "tcp.opening" | "tcp.established" |
@@ -3188,6 +3240,8 @@ timeout        = ( "tcp.first" | "tcp.opening" | "tcp.established" |
                  "udp.first" | "udp.single" | "udp.multiple" |
                  "icmp.first" | "icmp.error" |
                  "other.first" | "other.single" | "other.multiple" |
+                 "sctp.first" | "sctp.opening" | "sctp.established" |
+                 "sctp.closing" | "sctp.closed" |
                  "frag" | "interval" | "src.track" |
                  "adaptive.start" | "adaptive.end" ) number
 

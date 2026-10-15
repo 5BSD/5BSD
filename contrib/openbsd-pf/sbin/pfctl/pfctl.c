@@ -2264,6 +2264,11 @@ pfctl_init_options(struct pfctl *pf)
 	pf->timeout[PFTM_INTERVAL] = PFTM_INTERVAL_VAL;
 	pf->timeout[PFTM_SRC_NODE] = PFTM_SRC_NODE_VAL;
 	pf->timeout[PFTM_TS_DIFF] = PFTM_TS_DIFF_VAL;
+	pf->timeout[PFTM_SCTP_FIRST_PACKET] = PFTM_SCTP_FIRST_PACKET_VAL; /* 5BSD: sctp */
+	pf->timeout[PFTM_SCTP_OPENING] = PFTM_SCTP_OPENING_VAL;	/* 5BSD: sctp */
+	pf->timeout[PFTM_SCTP_ESTABLISHED] = PFTM_SCTP_ESTABLISHED_VAL; /* 5BSD: sctp */
+	pf->timeout[PFTM_SCTP_CLOSING] = PFTM_SCTP_CLOSING_VAL;	/* 5BSD: sctp */
+	pf->timeout[PFTM_SCTP_CLOSED] = PFTM_SCTP_CLOSED_VAL;	/* 5BSD: sctp */
 	pf->timeout[PFTM_ADAPTIVE_START] = PFSTATE_ADAPT_START;
 	pf->timeout[PFTM_ADAPTIVE_END] = PFSTATE_ADAPT_END;
 
