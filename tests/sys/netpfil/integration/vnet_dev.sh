@@ -319,6 +319,34 @@ nonvnet_default_cleanup()
 	integ_cleanup
 }
 
+atf_test_case "nonvnet_refused" "cleanup"
+nonvnet_refused_head()
+{
+	atf_set descr 'A non-VNET jail cannot open /dev/pf even when devfs exposes it'
+	atf_set require.user root
+}
+
+nonvnet_refused_body()
+{
+	pft_init
+
+	# path=/ shares the host's /dev, so /dev/pf is visible in the jail.
+	atf_check -s exit:0 jail -c name=nvr path=/ persist ip4=inherit
+	echo nvr >> created_jails.lst
+	atf_check -s exit:0 jexec nvr test -c /dev/pf
+	atf_check -s not-exit:0 -e match:'Operation not permitted' \
+	    jexec nvr pfctl -si
+	# The host and VNET jails are unaffected.
+	atf_check -s exit:0 -o ignore pfctl -si
+	vnet_mkjail vr
+	atf_check -s exit:0 -o ignore jexec vr pfctl -si
+}
+
+nonvnet_refused_cleanup()
+{
+	integ_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "isolation"
@@ -330,4 +358,5 @@ atf_init_test_cases()
 	atf_add_test_case "devfs_ruleset_vnet_bpf"
 	atf_add_test_case "devfs_ruleset_jail"
 	atf_add_test_case "nonvnet_default"
+	atf_add_test_case "nonvnet_refused"
 }

@@ -815,6 +815,14 @@ pf_fbsd_open(struct cdev *dev, int flags, int fmt, struct thread *td)
 	struct pf_fbsd_open *po;
 	int unit, error;
 
+	/*
+	 * A jail without its own vnet shares the host's network stack and
+	 * would administer the host's pf: only the host and vnet jails may
+	 * open /dev/pf, whatever devfs exposes.
+	 */
+	if (jailed(td->td_ucred) && !prison_owns_vnet(td->td_ucred->cr_prison))
+		return (EPERM);
+
 	mtx_lock(&pf_units_mtx);
 	bit_ffc_at(pf_units, 1, PF_FBSD_UNITS, &unit);
 	if (unit < 0) {
