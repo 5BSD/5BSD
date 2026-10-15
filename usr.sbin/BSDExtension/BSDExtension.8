@@ -212,9 +212,9 @@ capability bundle shipping
 .It Pa /Capabilities/System/SystemExtension.cap/Units/bsdextension.unit/Config/bsdextension.ucl
 Optional allow-list policy, read at daemon startup and on authorized reload.
 The allowed_extensions array replaces the built-in list.
-The built-in list includes cryptodev, vhid, zfs, linux64, vmm, pty, fdescfs,
+The built-in list includes cryptodev, vhid, zfs, linux64, vmm, fdescfs,
 linprocfs, linsysfs, drm, i915kms, amdgpu, radeonkms, cpuctl, coretemp,
-amdsmn, and amdtemp.
+amdsmn, amdtemp, and dummynet.
 The CPU telemetry drivers are built into the amd64 and i386 GENERIC kernels;
 the allow-list also supports loading them on kernels that omit them.
 Graphics startup uses this broker when the capability plane is enabled.

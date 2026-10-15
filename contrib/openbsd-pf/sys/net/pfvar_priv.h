@@ -42,6 +42,8 @@
 #include <sys/pclock.h>
 #include <sys/percpu.h>
 
+#include <netinet/sctp.h>	/* 5BSD: sctp; struct sctphdr */
+
 /*
  * Locks used to protect struct members in this file:
  *	L	pf_inp_mtx		link pf to inp mutex
@@ -183,6 +185,9 @@ struct pf_state {
 	u_int16_t		 if_index_in;	/* [I] */
 	u_int16_t		 if_index_out;	/* [I] */
 	u_int16_t		 delay;		/* [I] */
+	u_int16_t		 dnpipe;	/* [I] 5BSD: dummynet */
+	u_int16_t		 dnrpipe;	/* [I] 5BSD: dummynet */
+	u_int8_t		 dnflags;	/* [I] 5BSD: dummynet */
 	u_int8_t		 rt;		/* [I] */
 	uint8_t			 statelim;
 	uint8_t			 sourcelim;
@@ -561,6 +566,11 @@ struct pf_pdesc {
 	u_int8_t	 didx;		/* key index for destination */
 	u_int8_t	 destchg;	/* flag set when destination changed */
 	u_int8_t	 pflog;		/* flags for packet logging */
+	/* 5BSD: sctp; chunks seen (PFDESC_SCTP_*) and the INIT(-ACK) tag */
+	u_int16_t	 sctp_flags;
+	u_int16_t	 sctp_dummy_sum; /* pcksum; CRC32c needs no fixup */
+	u_int32_t	 sctp_initiate_tag;
+	struct pf_rule	*related_rule;	/* 5BSD: sctp; allow-related */
 	union {
 		struct tcphdr			tcp;
 		struct udphdr			udp;
@@ -570,8 +580,22 @@ struct pf_pdesc {
 		struct mld_hdr			mld;
 		struct nd_neighbor_solicit	nd_ns;
 #endif /* INET6 */
+		struct sctphdr			sctp;	/* 5BSD: sctp */
 	} hdr;
 };
+#define PFDESC_SCTP_INIT		0x0001	/* 5BSD: sctp */
+#define PFDESC_SCTP_INIT_ACK		0x0002
+#define PFDESC_SCTP_COOKIE		0x0004
+#define PFDESC_SCTP_COOKIE_ACK		0x0008
+#define PFDESC_SCTP_ABORT		0x0010
+#define PFDESC_SCTP_SHUTDOWN		0x0020
+#define PFDESC_SCTP_SHUTDOWN_COMPLETE	0x0040
+#define PFDESC_SCTP_DATA		0x0080
+#define PFDESC_SCTP_ASCONF		0x0100
+#define PFDESC_SCTP_HEARTBEAT		0x0200
+#define PFDESC_SCTP_HEARTBEAT_ACK	0x0400
+#define PFDESC_SCTP_OTHER		0x0800
+#define PFDESC_SCTP_ADD_IP		0x1000	/* multihome: state for an address */
 
 struct pf_anchor_stackframe {
 	struct pf_ruleset	*sf_rs;
@@ -686,6 +710,34 @@ u_int16_t		pf_pkt_hash(sa_family_t, uint8_t,
 void			pf_status_init(void);
 void			pf_status_clear(void);
 int			pf_status_read(struct PF_KTAG(pf_status) *); /* 5BSD: VNET */
+
+/* 5BSD: dummynet (sys/netpfil/openbsd-pf/pf_dummynet.c) */
+int	pf_dn_reinjected(struct mbuf **);
+int	pf_dn_output(struct pf_pdesc *, struct pf_state *, struct pf_rule *,
+	    struct ifnet *, struct sockaddr *, struct mbuf **);
+
+/* 5BSD: sctp (sys/netpfil/openbsd-pf/pf_sctp.c) */
+int	pf_sctp_setup_pdesc(struct pf_pdesc *, u_short *);
+int	pf_sctp_create_state(struct pf_pdesc *, struct pf_state *, u_short *);
+int	pf_sctp_test_state(struct pf_pdesc *, struct pf_state **, u_short *);
+int	pf_sctp_state_reusable(const struct pf_state *);
+void	pf_sctp_detach_state(struct pf_state *);
+int	pf_sctp_icmp_key(struct pf_pdesc *, struct pf_state_key_cmp *,
+	    u_short *);
+int	pf_sctp_icmp_vtag(struct pf_pdesc *, struct pf_pdesc *,
+	    struct pf_state *, u_short *);
+void	pf_sctp_send_abort(struct pf_pdesc *, struct pf_rule *);
+void	pf_sctp_multihome_delayed(struct pf_pdesc *, struct pf_state *, int,
+	    int *);
+/* pf.c functions the SCTP glue uses */
+int	pf_test_rule(struct pf_pdesc *, struct pf_rule **, struct pf_state **,
+	    struct pf_rule **, struct pf_ruleset **, u_short *);
+void	pf_update_state_timeout(struct pf_state *, int);
+/* 5BSD: ether (sys/netpfil/openbsd-pf/pf_ether.c); called with PF_LOCK */
+int	pf_eth_begin(u_int32_t *, const char *);
+void	pf_eth_rollback(u_int32_t, const char *);
+int	pf_eth_ticket_valid(u_int32_t, const char *);
+int	pf_eth_commit(u_int32_t, const char *);
 
 #endif /* _KERNEL */
 

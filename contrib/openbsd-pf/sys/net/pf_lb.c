@@ -753,7 +753,7 @@ pf_get_transaddr(struct pf_rule *r, struct pf_pdesc *pd,
 			    &pd->ndaddr);
 		*nr = r;
 		pf_addrcpy(&pd->ndaddr, &naddr, pd->af);
-		if (nport)
+		if (nport && pd->proto != IPPROTO_SCTP)	/* 5BSD: sctp */
 			pd->ndport = nport;
 	}
 
@@ -833,7 +833,8 @@ pf_get_transaddr_af(struct pf_rule *r, struct pf_pdesc *pd,
 		if (pf_map_addr(pd->naf, r, &nsaddr, &naddr, NULL, sns,
 		    &r->rdr, PF_SN_RDR))
 			return (-1);
-		if (r->rdr.proxy_port[0])
+		if (r->rdr.proxy_port[0] &&
+		    pd->proto != IPPROTO_SCTP)	/* 5BSD: sctp */
 			pd->ndport = htons(r->rdr.proxy_port[0]);
 
 		if (pd->naf == AF_INET) {

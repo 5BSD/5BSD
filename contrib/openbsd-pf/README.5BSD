@@ -92,6 +92,55 @@ to a re-import.
                  (pfvar_priv.h), pf_match_jail() and its rule test (pf.c),
                  rule copy and checksum (pf_ioctl.c); pfctl parse.y grammar,
                  pfctl_parser.c printing, pfctl_optimize.c field table
+  dummynet (marked "5BSD: dummynet"): the 5BSD extension "dnpipe" and
+                 "dnqueue" (dummynet(4) shaping, as in FreeBSD pf):
+                 struct pf_rule_dn and pf_rule.dn, pf_rule_actions.dn*
+                 (pfvar.h), pf_state.dn* and the glue prototypes
+                 (pfvar_priv.h), rule-to-action/state copies, the pf_test()
+                 reinjection check and pass-path hand-off and the
+                 pf_route()/pf_route6() route-to hand-off (pf.c), rule copy
+                 and checksum (pf_ioctl.c); pfctl parse.y grammar,
+                 pfctl_parser.c printing, pfctl_optimize.c field table.
+                 The logic is in sys/netpfil/openbsd-pf/pf_dummynet.c.
+  sctp (marked "5BSD: sctp"): SCTP association tracking, multihoming
+                 and the "allow-related" state option, as in FreeBSD pf:
+                 the PFTM_SCTP_* timeouts (appended before PFTM_MAX),
+                 PFRULE_ALLOW_RELATED, the PF_SCTPS_* peer states and the
+                 pfss_v_tag/pfss_ts_mod union in struct pf_state_scrub
+                 (pfvar.h); pf_pdesc's SCTP header, chunk flags, initiate
+                 tag and related rule, PFDESC_SCTP_*, the glue prototypes
+                 (pfvar_priv.h); hooks in pf_setup_pdesc(),
+                 pf_create_state(), pf_test_state(), the ICMP-error state
+                 lookup, pf_match_rule() ports, pf_test_rule() (related
+                 rule, "block return" ABORT, no pfsync deferral for
+                 multihome states), pf_state_key_attach() (reuse of closed
+                 states), pf_detach_state() and pf_test() (multihome
+                 states after filtering) (pf.c); no SCTP port changes for
+                 rdr-to (pf_lb.c); default timeouts (pf_ioctl.c); pfctl
+                 parse.y grammar (allow-related, SCTP ports and service
+                 names), pfctl_parser.c timeout names and printing,
+                 pfctl.c default timeouts, pf_print_state.c state names.
+                 The logic is in sys/netpfil/openbsd-pf/pf_sctp.c.
+                 pfsync: the verification tag travels in pfss_ts_mod, the
+                 field it shares with the timestamp modulation, so the
+                 OpenBSD wire format is unchanged.  OpenBSD peers do not
+                 know the SCTP timeouts and reject SCTP states; the SCTP
+                 timeouts take the numbers OpenBSD gives PFTM_PURGE and
+                 PFTM_UNLINKED, so such a timeout from an OpenBSD peer is
+                 read as sctp.opening or sctp.established.
+  ether (marked "5BSD: ether"): the 5BSD extension "ether" rules (layer-2
+                 filtering, as in FreeBSD pf): struct pf_eth_rule,
+                 struct pfioc_eth_rule, PF_TRANS_ETH and the DIOC*ETHRULE*
+                 ioctls ('D' 230-234) (pfvar.h), the glue prototypes
+                 (pfvar_priv.h), PF_TRANS_ETH elements in DIOCXBEGIN,
+                 DIOCXROLLBACK and DIOCXCOMMIT (pf_ioctl.c).  The rulesets,
+                 ioctls, packet path and pfil(9) hooks are in
+                 sys/netpfil/openbsd-pf/pf_ether.c.  pfctl: parse.y
+                 grammar and keywords (ether, l3, bridge-to,
+                 ridentifier), struct pfctl.eth and the prototypes
+                 (pfctl_parser.h), loading in pfctl_rules(), -s ethernet,
+                 -s Anchors, -s all, -z, -F ethernet and -F all (pfctl.c);
+                 the rest is in sys/netpfil/openbsd-pf/user/pfctl_ether.c.
   pfvar.h        REASON_SET fires the pf::reason:set DTrace probe
                  userland (!_KERNEL): sys/param.h before sys/syslimits.h;
                  PF_DIVERT #undef, RTLABEL_LEN and union sockaddr_union
@@ -136,7 +185,8 @@ Adopted OpenBSD code (pf/parity), all from facc8d7ec5d1:
   share/man/man4 pf.4, pflog.4, pflow.4, pfsync.4, divert.4, share/man/man5
   pf.conf.5, pf.os.5     -> installed by share/man/man4 and man5 (FreeBSD's
                             divert.4 is now ipdivert.4); marked 5BSD
-                            additions: pf.conf.5 jail and queueing status, pf.4 VNET,
+                            additions: pf.conf.5 jail, dummynet, ether rules and
+                            queueing status, pfctl.8 ethernet, pf.4 VNET,
                             divert.4
   usr.sbin/authpf, ftp-proxy, tftp-proxy -> same programs
   usr.sbin/tcpdump      -> /usr/sbin/tcpdump (glue: usr.sbin/tcpdump/tcpdump:

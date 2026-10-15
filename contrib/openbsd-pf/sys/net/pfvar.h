@@ -122,7 +122,11 @@ enum	{ PFTM_TCP_FIRST_PACKET, PFTM_TCP_OPENING, PFTM_TCP_ESTABLISHED,
 	  PFTM_OTHER_FIRST_PACKET, PFTM_OTHER_SINGLE,
 	  PFTM_OTHER_MULTIPLE, PFTM_FRAG, PFTM_INTERVAL,
 	  PFTM_ADAPTIVE_START, PFTM_ADAPTIVE_END, PFTM_SRC_NODE,
-	  PFTM_TS_DIFF, PFTM_MAX, PFTM_PURGE, PFTM_UNLINKED };
+	  PFTM_TS_DIFF,
+	  PFTM_SCTP_FIRST_PACKET, PFTM_SCTP_OPENING,	/* 5BSD: sctp */
+	  PFTM_SCTP_ESTABLISHED, PFTM_SCTP_CLOSING,	/* 5BSD: sctp */
+	  PFTM_SCTP_CLOSED,				/* 5BSD: sctp */
+	  PFTM_MAX, PFTM_PURGE, PFTM_UNLINKED };
 
 /* PFTM default values */
 #define PFTM_TCP_FIRST_PACKET_VAL	120	/* First TCP packet */
@@ -143,6 +147,12 @@ enum	{ PFTM_TCP_FIRST_PACKET, PFTM_TCP_OPENING, PFTM_TCP_ESTABLISHED,
 #define PFTM_INTERVAL_VAL		10	/* Expire interval */
 #define PFTM_SRC_NODE_VAL		0	/* Source tracking */
 #define PFTM_TS_DIFF_VAL		30	/* Allowed TS diff */
+/* 5BSD: sctp; as in FreeBSD pf, SCTP defaults to the TCP values */
+#define PFTM_SCTP_FIRST_PACKET_VAL	PFTM_TCP_FIRST_PACKET_VAL
+#define PFTM_SCTP_OPENING_VAL		PFTM_TCP_OPENING_VAL
+#define PFTM_SCTP_ESTABLISHED_VAL	PFTM_TCP_ESTABLISHED_VAL
+#define PFTM_SCTP_CLOSING_VAL		PFTM_TCP_CLOSING_VAL
+#define PFTM_SCTP_CLOSED_VAL		PFTM_TCP_CLOSED_VAL
 
 /*
  * For each connection (combination of proto,src,dst,af) the number
@@ -514,7 +524,23 @@ struct pf_rule_actions {
 	u_int8_t	min_ttl;
 	u_int8_t	set_prio[2];
 	u_int8_t	pad[1];
+	u_int16_t	dnpipe;		/* 5BSD: dummynet */
+	u_int16_t	dnrpipe;	/* 5BSD: dummynet */
+	u_int8_t	dnflags;	/* 5BSD: dummynet */
 };
+
+/*
+ * 5BSD: dummynet.  "dnpipe"/"dnqueue" send matching packets through a
+ * dummynet(4) pipe or queue: pipe for the rule's direction, rpipe for
+ * the reverse direction of its state.
+ */
+struct pf_rule_dn {
+	u_int16_t	pipe;
+	u_int16_t	rpipe;
+	u_int8_t	flags;		/* PF_DN_* */
+	u_int8_t	pad[3];
+};
+#define	PF_DN_IS_PIPE	0x01		/* dnpipe; otherwise dnqueue */
 
 union pf_rule_ptr {
 	struct pf_rule		*ptr;
@@ -664,6 +690,7 @@ struct pf_rule {
 	time_t			 exptime;
 
 	struct pf_rule_jail	 jail;	/* 5BSD extension */
+	struct pf_rule_dn	 dn;	/* 5BSD: dummynet */
 };
 
 /* rule flags */
@@ -681,6 +708,7 @@ struct pf_rule {
 #define PFRULE_IFBOUND		0x00010000	/* if-bound */
 #define PFRULE_STATESLOPPY	0x00020000	/* sloppy state tracking */
 #define PFRULE_PFLOW		0x00040000
+#define PFRULE_ALLOW_RELATED	0x40000000	/* 5BSD: sctp; high bit, clear of OpenBSD flags */
 #define PFRULE_ONCE		0x00100000	/* one shot rule */
 #define PFRULE_AFTO		0x00200000	/* af-to rule */
 #define	PFRULE_EXPIRED		0x00400000	/* one shot rule hit by pkt */
@@ -739,7 +767,10 @@ struct pf_state_scrub {
 #define PFSS_DATA_NOTS	0x0080		/* no timestamp on data packets	*/
 	u_int8_t	pfss_ttl;	/* stashed TTL			*/
 	u_int8_t	pad;
-	u_int32_t	pfss_ts_mod;	/* timestamp modulation		*/
+	union {				/* 5BSD: sctp; pfsync syncs both */
+		u_int32_t	pfss_ts_mod;	/* timestamp modulation	*/
+		u_int32_t	pfss_v_tag;	/* SCTP verification tag */
+	};
 };
 
 struct pf_state_host {
@@ -1227,6 +1258,21 @@ enum pfi_kif_refs {
 	"MULTIPLE", \
 	NULL \
 }
+
+/*
+ * 5BSD: sctp.  SCTP peer states, in the order of FreeBSD pf's (the
+ * SCTP_* association states of <netinet/sctp.h>), so that states order
+ * as an association progresses.  The values are dense: pfsync drops
+ * states above PF_TCPS_PROXY_DST, which FreeBSD's 0x10 - 0x80 exceed.
+ */
+#define PF_SCTPS_CLOSED			0
+#define PF_SCTPS_COOKIE_WAIT		1
+#define PF_SCTPS_COOKIE_ECHOED		2
+#define PF_SCTPS_ESTABLISHED		3
+#define PF_SCTPS_SHUTDOWN_SENT		4
+#define PF_SCTPS_SHUTDOWN_RECEIVED	5
+#define PF_SCTPS_SHUTDOWN_ACK_SENT	6
+#define PF_SCTPS_SHUTDOWN_PENDING	7
 
 /* Other protocol state enumeration */
 #define PFOTHERS_NO_TRAFFIC	0
@@ -1778,6 +1824,71 @@ struct pfioc_source_kill {
 #define DIOCCLRSOURCE		_IOWR('D', 109, struct pfioc_source_kill)
 /* 5BSD: checked raw snapshot for persistence, not ordinary state display. */
 #define DIOCGETSTATESEXPORT	_IOWR('D', 110, struct pfioc_states)
+
+/*
+ * 5BSD: ether.  Layer-2 ("ether") rules, as in FreeBSD pf: a separate
+ * ruleset with its own anchors, evaluated statelessly from the
+ * link-layer pfil(9) hooks (sys/netpfil/openbsd-pf/pf_ether.c).  The
+ * ruleset takes part in DIOCXBEGIN/DIOCXCOMMIT/DIOCXROLLBACK as
+ * transaction element type PF_TRANS_ETH.  The ioctl numbers are in the
+ * 5BSD-reserved range 'D' 230-239, clear of OpenBSD's DIOC* numbers.
+ */
+#define	PF_TRANS_ETH		0x45	/* pfioc_trans_e.type, beside PF_TRANS_* */
+#define	PF_ETH_ADDR_LEN		6
+#define	PF_ETH_LABEL_COUNT	5
+
+struct pf_eth_addr {
+	u_int8_t	 addr[PF_ETH_ADDR_LEN];
+	u_int8_t	 mask[PF_ETH_ADDR_LEN];
+	u_int8_t	 neg;
+	u_int8_t	 isset;
+};
+
+struct pf_eth_rule {
+	struct pf_rule_addr	 ipsrc, ipdst;	/* "l3": addresses or tables */
+	struct pf_eth_addr	 src, dst;
+	char			 ifname[IFNAMSIZ];
+	char			 bridge_to[IFNAMSIZ];
+	char			 label[PF_ETH_LABEL_COUNT][PF_RULE_LABEL_SIZE];
+	char			 tagname[PF_TAG_NAME_SIZE];
+	char			 match_tagname[PF_TAG_NAME_SIZE];
+	char			 qname[PF_QNAME_SIZE];
+	u_int64_t		 evaluations;
+	u_int64_t		 packets[2];
+	u_int64_t		 bytes[2];
+	int64_t			 last_active;	/* time_t, 0 if never */
+	u_int32_t		 nr;
+	u_int32_t		 ridentifier;
+	u_int16_t		 proto;		/* EtherType, host order */
+	u_int16_t		 tag;
+	u_int16_t		 match_tag;
+	u_int16_t		 qid;
+	u_int16_t		 dnpipe;
+	u_int8_t		 dnflags;	/* PF_DN_IS_PIPE */
+	u_int8_t		 action;	/* PF_PASS, PF_DROP */
+	u_int8_t		 direction;
+	u_int8_t		 quick;
+	u_int8_t		 ifnot;
+	u_int8_t		 match_tag_not;
+	u_int8_t		 anchor_relative;
+	u_int8_t		 anchor_wildcard;
+	u_int8_t		 pad[6];
+};
+
+struct pfioc_eth_rule {
+	u_int32_t		 action;	/* PF_GET_NONE, PF_GET_CLR_CNTR */
+	u_int32_t		 ticket;
+	u_int32_t		 nr;
+	char			 anchor[PATH_MAX];
+	char			 anchor_call[PATH_MAX];
+	struct pf_eth_rule	 rule;
+};
+
+#define DIOCADDETHRULE		_IOWR('D', 230, struct pfioc_eth_rule)
+#define DIOCGETETHRULES		_IOWR('D', 231, struct pfioc_eth_rule)
+#define DIOCGETETHRULE		_IOWR('D', 232, struct pfioc_eth_rule)
+#define DIOCGETETHRULESETS	_IOWR('D', 233, struct pfioc_ruleset)
+#define DIOCGETETHRULESET	_IOWR('D', 234, struct pfioc_ruleset)
 
 #ifdef _KERNEL
 

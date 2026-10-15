@@ -171,7 +171,9 @@ option, or on a per-rule basis with one of the following options:
 .It Cm drop
 The packet is silently dropped.
 .It Cm return
-This causes a TCP RST to be returned for TCP packets
+This causes a TCP RST to be returned for TCP packets,
+.\" 5BSD: sctp
+an SCTP ABORT for SCTP packets (a 5BSD extension),
 and an ICMP UNREACHABLE for other types of packets.
 .It Cm return-icmp
 .It Cm return-icmp6
@@ -695,6 +697,32 @@ pass in proto icmp max-pkt-rate 100/10
 When the rate is exceeded, all ICMP is blocked until the rate falls below
 100 per 10 seconds again.
 .Pp
+.\" 5BSD: dummynet
+.It Cm dnpipe Ar number | Pq Ar number , number
+.It Cm dnqueue Ar number | Pq Ar number , number
+Packets matching this rule are sent through the
+.Xr dummynet 4
+pipe or queue
+.Ar number ,
+configured with
+.Xr dnctl 8 ,
+which can delay, rate-limit, drop and schedule them.
+With two numbers, the second is used for packets of the rule's state
+that travel in the reverse direction;
+.Cm dnqueue ( 0 , 42 )
+shapes only the reverse direction.
+On a
+.Ic match
+rule the setting carries over to the passing rule's state.
+A packet goes through dummynet once and is then passed without being
+evaluated again.
+For
+.Cm route-to
+the packet is shaped before it is sent to the chosen route.
+Loading a ruleset with these options does not load
+.Xr dummynet 4 ;
+until it is loaded, matching packets are dropped.
+These options are a 5BSD extension.
 .It Cm once
 Create a one shot rule.
 The first matching packet marks the rule as expired.
@@ -1052,6 +1080,13 @@ ones.
 Port numbers are never translated with a
 .Cm binat-to
 rule.
+.\" 5BSD: sctp
+SCTP ports are never translated: SCTP endpoints check their ports
+inside the association, so
+.Cm nat-to
+keeps the source port (a mapping that would collide fails) and
+.Cm rdr-to
+ignores a port.
 .Pp
 Translation options apply only to packets that pass through the specified
 interface, and if no interface is specified, translation is applied
@@ -1224,6 +1259,150 @@ and
 .Cm source-hash ,
 as described above,
 can be used.
+.\" 5BSD: ether
+.Sh ETHERNET FILTERING
+.Ic ether
+rules filter Ethernet frames on the link layer, before
+.Xr pf 4
+filters the IP packets they carry and after it has filtered outgoing
+ones.
+They form their own ruleset, which is evaluated without state:
+each frame is evaluated anew, the last matching rule decides what happens
+to it (or the first matching
+.Cm quick
+rule), and a frame that matches no rule passes.
+Ether rules are a 5BSD extension, with the syntax of
+.Fx
+pf.
+.Bd -literal -offset indent
+ether block in on em0 from ! 00:11:22:33:44:55
+ether pass quick proto 0x0806
+ether pass in on em0 l3 from 192.0.2.0/24 tag lan
+pass in on em0 tagged lan
+.Ed
+.Pp
+An ether rule consists of:
+.Bl -tag -width xxxx
+.It Cm pass | block
+Pass or drop the frame.
+.It Cm in | out
+The direction the frame is moving in; without it the rule applies to
+both.
+.It Cm quick
+If the frame matches, this rule decides and no further rules are
+evaluated.
+.It Cm on Oo Cm \&! Oc Ar interface
+The frame is received or sent on this interface or interface group
+(or, with
+.Cm \&! ,
+on any other).
+A list in braces makes one rule per interface.
+.It Cm bridge-to Ar interface
+A frame that passes is sent unchanged out of
+.Ar interface
+instead of being processed by the stack.
+Only Ethernet, VLAN, bridge and
+.Xr lagg 4
+interfaces can be used; frames for any other interface are dropped.
+.It Cm proto Ar ethertype
+The EtherType of the frame, as a number such as
+.Li 0x0806 ,
+or a list of them in braces.
+.It Cm from Ar mac | Cm to Ar mac
+The source or destination MAC address, written as six colon-separated
+hexadecimal bytes.
+.Ar mac Ns Li / Ns Ar len
+matches the first
+.Ar len
+bits of the address,
+.Ar mac Ns Li & Ns Ar mask
+the bits set in
+.Ar mask
+(also written as a MAC address).
+A preceding
+.Cm \&!
+negates the address; a list in braces makes one rule per address.
+.Cm all
+matches any addresses.
+.It Cm l3 Ar from-to
+For IPv4 and IPv6 frames, the source and destination address of the IP
+header, as for IP rules
+.Pq Cm from Ar host Cm to Ar host ,
+but only addresses, networks and tables; no ports, interfaces or routes.
+An address also limits the rule to its address family's EtherType when
+no
+.Cm proto
+is given.
+Frames of other EtherTypes are not compared with the addresses.
+.It Cm tag Ar name
+Tag a passing frame, so that IP rules can match it with
+.Cm tagged .
+.It Oo Cm \&! Oc Ns Cm tagged Ar name
+The frame is (or is not) tagged
+.Ar name ,
+by an earlier ether rule or, for outgoing frames, by an IP rule or the
+state of its packet.
+.It Cm queue Ar name
+Assign a passing frame to a queue.
+.It Cm dnpipe Ar number | Cm dnqueue Ar number
+Send a passing frame through a
+.Xr dummynet 4
+pipe or queue, as for IP rules.
+The frame is shaped as a layer-2 frame and is then passed on without
+being evaluated by the ether rules again; its packet is still filtered
+by the IP rules.
+Until
+.Xr dummynet 4
+is loaded, matching frames are dropped.
+.It Cm label Ar string
+A label for the rule; it may be given up to five times.
+.It Cm ridentifier Ar number
+A number identifying the rule, shown with it.
+.El
+.Pp
+.Ic ether anchor
+rules evaluate a separate ether ruleset, with the same
+.Cm in | out ,
+.Cm quick ,
+.Cm on ,
+.Cm proto ,
+.Cm from ,
+.Cm to
+and
+.Cm l3
+conditions.
+As for IP anchors, the rules can be given in braces after the anchor
+rule, a name ending in
+.Li /*
+evaluates each anchor below it, and
+.Xr pfctl 8
+loads, shows and flushes the rules of a named anchor with
+.Fl a .
+Ether anchors and IP anchors with the same name are separate rulesets,
+but a table in the
+.Cm l3
+addresses of an ether anchor is looked up in the IP anchor of the same
+name and then in the main ruleset.
+.Bd -literal -offset indent
+ether anchor "captive" on em0 {
+	ether pass quick proto { 0x0806, 0x888e }
+	ether pass quick from { 00:11:22:33:44:55 }
+	ether pass tag unauthenticated
+}
+pass in on em0 proto tcp to port www tagged unauthenticated \e
+	rdr-to 127.0.0.1 port 8080
+.Ed
+.Pp
+Loading a ruleset with
+.Xr pfctl 8
+replaces the ether rules too; a ruleset without
+.Ic ether
+rules removes them.
+.Ql pfctl -s ethernet
+shows them and
+.Ql pfctl -F ethernet
+removes them.
+While there are no ether rules, frames are not passed to pf.
 .Sh OPTIONS
 .Xr pf 4
 may be tuned for various situations using the
@@ -1579,6 +1758,43 @@ Other protocols are handled similarly to UDP:
 .It Cm other.multiple Pq 60 seconds by default
 .It Cm other.single Pq 30 seconds by default
 .El
+.\" 5BSD: sctp
+.Pp
+SCTP states follow the association, as in
+.Fx
+pf; these timeouts are a 5BSD extension:
+.Pp
+.Bl -tag -width xxxx -compact
+.It Cm sctp.first Pq 120 seconds by default
+The state after the first packet (an INIT).
+.It Cm sctp.opening Pq 30 seconds by default
+The state while the association is being set up.
+.It Cm sctp.established Pq 24 hours by default
+The fully established state.
+.It Cm sctp.closing Pq 900 seconds by default
+The state after a SHUTDOWN, or after an address was removed from a
+multihomed association.
+.It Cm sctp.closed Pq 90 seconds by default
+The state after a SHUTDOWN COMPLETE or an ABORT.
+.El
+.Pp
+An SCTP state is created by an INIT chunk only and remembers the
+verification tag of each endpoint; packets with another tag are blocked,
+as are INIT chunks with a non-zero verification tag and malformed chunks.
+An INIT for a closed association replaces its state.
+ICMP errors match the state when the quoted SCTP header carries its
+verification tag.
+.Pp
+SCTP endpoints may be multihomed.
+The addresses an endpoint lists in INIT and INIT ACK chunks, and adds or
+removes with ASCONF chunks, are given states of their own once the packet
+announcing them has passed: a new address is evaluated against the
+ruleset as a packet of the association, and a removed address's state
+starts closing.
+Up to 8 addresses per endpoint are tracked.
+See the
+.Cm allow-related
+state option.
 .Pp
 Timeout values can be reduced adaptively as the number of state table
 entries grows.
@@ -2366,6 +2582,12 @@ or
 must be specified explicitly to apply these options to a rule.
 .Pp
 .Bl -tag -width xxxx -compact
+.\" 5BSD: sctp
+.It Cm allow-related
+States for the additional addresses of a multihomed SCTP association
+are created by this rule instead of the rule the addresses would match
+when evaluated on their own.
+This option is a 5BSD extension.
 .It Cm floating
 States can match packets on any interfaces
 (the opposite of
@@ -2992,7 +3214,8 @@ in BNF:
 .Bd -literal
 line           = ( option | pf-rule |
                  antispoof-rule | queue-rule | anchor-rule |
-                 anchor-close | load-anchor | table-rule | include )
+                 anchor-close | load-anchor | table-rule | include |
+                 ether-rule | ether-anchor-rule )
 
 option         = "set" ( [ "timeout" ( timeout | "{" timeout-list "}" ) ] |
                  [ "ruleset-optimization" [ "none" | "basic" |
@@ -3014,6 +3237,26 @@ pf-rule        = action [ ( "in" | "out" ) ]
                  [ "log" [ "(" logopts ")"] ] [ "quick" ]
                  [ "on" ( ifspec | "rdomain" number ) ] [ af ]
                  [ protospec ] [ hosts ] [ filteropts ]
+
+ether-rule     = "ether" ( "pass" | "block" ) [ ( "in" | "out" ) ]
+                 [ "quick" ] [ "on" ifspec ] [ "bridge-to" interface-name ]
+                 [ etherprotospec ] [ etherhosts ] [ "l3" hosts ]
+                 [ etherfilteropts ]
+
+ether-anchor-rule = "ether" "anchor" [ string ] [ ( "in" | "out" ) ]
+                 [ "quick" ] [ "on" ifspec ] [ etherprotospec ]
+                 [ etherhosts ] [ "l3" hosts ]
+                 [ "{" newline ether-ruleset "}" ]
+
+etherprotospec = "proto" ( ethertype | "{" ethertype-list "}" )
+etherhosts     = "all" | [ "from" macspec ] [ "to" macspec ]
+macspec        = [ "!" ] mac | "{" mac-list "}"
+mac            = mac-address [ "/" number | "&" mac-address ]
+etherfilteropts = etherfilteropt [ etherfilteropts ]
+etherfilteropt = "tag" string | [ "!" ] "tagged" string |
+                 "queue" ( string | "(" string ")" ) |
+                 "label" string | "ridentifier" number |
+                 ( "dnpipe" | "dnqueue" ) number
 
 logopts        = logopt [ [ "," ] logopts ]
 logopt         = "all" | "matches" | "user" | "to" interface-name
@@ -3154,7 +3397,7 @@ state-opt      = ( "max" number | "no-sync" | timeout | "sloppy" |
                  "max-src-conn" number |
                  "max-src-conn-rate" number "/" number |
                  "overload" "<" string ">" [ "flush" [ "global" ] ] |
-                 "if-bound" | "floating" )
+                 "if-bound" | "floating" | "allow-related" )
 
 timeout-list   = timeout [ [ "," ] timeout-list ]
 timeout        = ( "tcp.first" | "tcp.opening" | "tcp.established" |
@@ -3162,6 +3405,8 @@ timeout        = ( "tcp.first" | "tcp.opening" | "tcp.established" |
                  "udp.first" | "udp.single" | "udp.multiple" |
                  "icmp.first" | "icmp.error" |
                  "other.first" | "other.single" | "other.multiple" |
+                 "sctp.first" | "sctp.opening" | "sctp.established" |
+                 "sctp.closing" | "sctp.closed" |
                  "frag" | "interval" | "src.track" |
                  "adaptive.start" | "adaptive.end" ) number
 

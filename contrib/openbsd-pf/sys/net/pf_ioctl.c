@@ -282,6 +282,11 @@ pfattach(int num)
 	timeout[PFTM_INTERVAL] = PFTM_INTERVAL_VAL;
 	timeout[PFTM_SRC_NODE] = PFTM_SRC_NODE_VAL;
 	timeout[PFTM_TS_DIFF] = PFTM_TS_DIFF_VAL;
+	timeout[PFTM_SCTP_FIRST_PACKET] = PFTM_SCTP_FIRST_PACKET_VAL; /* 5BSD: sctp */
+	timeout[PFTM_SCTP_OPENING] = PFTM_SCTP_OPENING_VAL;	/* 5BSD: sctp */
+	timeout[PFTM_SCTP_ESTABLISHED] = PFTM_SCTP_ESTABLISHED_VAL; /* 5BSD: sctp */
+	timeout[PFTM_SCTP_CLOSING] = PFTM_SCTP_CLOSING_VAL;	/* 5BSD: sctp */
+	timeout[PFTM_SCTP_CLOSED] = PFTM_SCTP_CLOSED_VAL;	/* 5BSD: sctp */
 	timeout[PFTM_ADAPTIVE_START] = PFSTATE_ADAPT_START;
 	timeout[PFTM_ADAPTIVE_END] = PFSTATE_ADAPT_END;
 
@@ -863,6 +868,9 @@ pf_hash_rule(MD5_CTX *ctx, struct pf_rule *rule)
 		PF_MD5_UPD_HTONL(rule, jail.jid[1], y);
 	}
 	PF_MD5_UPD(rule, jail.op);		/* 5BSD: jail */
+	PF_MD5_UPD_HTONS(rule, dn.pipe, x);	/* 5BSD: dummynet */
+	PF_MD5_UPD_HTONS(rule, dn.rpipe, x);	/* 5BSD: dummynet */
+	PF_MD5_UPD(rule, dn.flags);		/* 5BSD: dummynet */
 	PF_MD5_UPD_HTONL(rule, rule_flag, y);
 	PF_MD5_UPD(rule, action);
 	PF_MD5_UPD(rule, direction);
@@ -3545,6 +3553,16 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 					goto fail;
 				}
 				break;
+			case PF_TRANS_ETH:	/* 5BSD: ether */
+				if ((error = pf_eth_begin(&ioe->ticket,
+				    ioe->anchor))) {
+					PF_UNLOCK();
+					NET_UNLOCK();
+					free(table, M_PF, sizeof(*table));
+					free(ioe, M_PF, sizeof(*ioe));
+					goto fail;
+				}
+				break;
 			default:
 				PF_UNLOCK();
 				NET_UNLOCK();
@@ -3611,6 +3629,9 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 				break;
 			case PF_TRANS_RULESET:
 				pf_rollback_rules(ioe->ticket, ioe->anchor);
+				break;
+			case PF_TRANS_ETH:	/* 5BSD: ether */
+				pf_eth_rollback(ioe->ticket, ioe->anchor);
 				break;
 			default:
 				PF_UNLOCK();
@@ -3685,6 +3706,17 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 					goto fail;
 				}
 				break;
+			case PF_TRANS_ETH:	/* 5BSD: ether */
+				if (!pf_eth_ticket_valid(ioe->ticket,
+				    ioe->anchor)) {
+					PF_UNLOCK();
+					NET_UNLOCK();
+					free(table, M_PF, sizeof(*table));
+					free(ioe, M_PF, sizeof(*ioe));
+					error = EBUSY;
+					goto fail;
+				}
+				break;
 			default:
 				PF_UNLOCK();
 				NET_UNLOCK();
@@ -3734,6 +3766,16 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 				break;
 			case PF_TRANS_RULESET:
 				if ((error = pf_commit_rules(ioe->ticket,
+				    ioe->anchor))) {
+					PF_UNLOCK();
+					NET_UNLOCK();
+					free(table, M_PF, sizeof(*table));
+					free(ioe, M_PF, sizeof(*ioe));
+					goto fail; /* really bad */
+				}
+				break;
+			case PF_TRANS_ETH:	/* 5BSD: ether */
+				if ((error = pf_eth_commit(ioe->ticket,
 				    ioe->anchor))) {
 					PF_UNLOCK();
 					NET_UNLOCK();
@@ -4220,6 +4262,9 @@ pf_rule_copyin(struct pf_rule *from, struct pf_rule *to)
 	to->jail = from->jail; /* 5BSD: jail */
 	if (to->jail.byname && pf_jail_rule_copyin(to) != 0)	/* 5BSD: jail */
 		return (EINVAL);
+	if (from->dn.flags & ~PF_DN_IS_PIPE)	/* 5BSD: dummynet */
+		return (EINVAL);
+	to->dn = from->dn;	/* 5BSD: dummynet */
 	to->rule_flag = from->rule_flag;
 	to->action = from->action;
 	to->direction = from->direction;

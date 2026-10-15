@@ -278,7 +278,7 @@ captive_body()
 	pft_set_rules gw \
 		"ether pass quick proto 0x0806" \
 		"ether pass tag captive" \
-		"rdr on ${epair_gw}b proto tcp to port echo tagged captive -> 127.0.0.1 port echo"
+		"pass in on ${epair_gw}b proto tcp to port echo tagged captive rdr-to 127.0.0.1 port echo"
 	jexec gw pfctl -e
 
 	# ICMP should still work, because we don't redirect it.
@@ -299,7 +299,7 @@ captive_body()
 		"ether pass quick proto 0x0806" \
 		"ether pass quick from ${epair_gw_a_mac}" \
 		"ether pass tag captive" \
-		"rdr on ${epair_gw}b proto tcp to port echo tagged captive -> 127.0.0.1 port echo"
+		"pass in on ${epair_gw}b proto tcp to port echo tagged captive rdr-to 127.0.0.1 port echo"
 
 	# No redirect, so failure.
 	atf_check -s exit:1 -x "echo foo | nc -N 198.51.100.2 7"
@@ -358,7 +358,7 @@ captive_long_body()
 			"ether pass quick proto { 0x0806, 0x8035, 0x888e, 0x88c7, 0x8863, 0x8864 }" \
 			"ether pass tag \"captive\"" \
 		"}" \
-		"rdr on ${epair_gw}b proto tcp to port daytime tagged captive -> 127.0.0.1 port echo"
+		"pass in on ${epair_gw}b proto tcp to port daytime tagged captive rdr-to 127.0.0.1 port echo"
 	jexec gw pfctl -e
 
 	# ICMP should still work, because we don't redirect it.
@@ -380,7 +380,7 @@ captive_long_body()
 			"ether pass quick from { ${epair_gw_a_mac} } dnpipe 1" \
 			"ether pass tag \"captive\"" \
 		"}" \
-		"rdr on ${epair_gw}b proto tcp to port daytime tagged captive -> 127.0.0.1 port echo"
+		"pass in on ${epair_gw}b proto tcp to port daytime tagged captive rdr-to 127.0.0.1 port echo"
 
 	# We're not being redirected and get datime information now
 	atf_check -s exit:0 -o match:"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)" -x "echo foo | nc -N 198.51.100.2 13"

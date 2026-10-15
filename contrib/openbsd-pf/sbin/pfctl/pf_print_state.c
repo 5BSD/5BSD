@@ -198,6 +198,32 @@ print_seq(struct pfsync_state_peer *p)
 		    ntohl(p->seqhi) - ntohl(p->seqlo));
 }
 
+/* 5BSD: sctp; FreeBSD pf's names */
+static const char *
+sctp_state_name(int state)
+{
+	switch (state) {
+	case PF_SCTPS_CLOSED:
+		return ("CLOSED");
+	case PF_SCTPS_COOKIE_WAIT:
+		return ("COOKIE_WAIT");
+	case PF_SCTPS_COOKIE_ECHOED:
+		return ("COOKIE_ECHOED");
+	case PF_SCTPS_ESTABLISHED:
+		return ("ESTABLISHED");
+	case PF_SCTPS_SHUTDOWN_SENT:
+		return ("SHUTDOWN_SENT");
+	case PF_SCTPS_SHUTDOWN_RECEIVED:
+		return ("SHUTDOWN_RECEIVED");
+	case PF_SCTPS_SHUTDOWN_ACK_SENT:
+		return ("SHUTDOWN_ACK_SENT");
+	case PF_SCTPS_SHUTDOWN_PENDING:
+		return ("SHUTDOWN_PENDING");
+	default:
+		return ("?");
+	}
+}
+
 void
 print_state(struct pfsync_state *s, int opts)
 {
@@ -299,6 +325,9 @@ print_state(struct pfsync_state *s, int opts)
 		const char *states[] = PFUDPS_NAMES;
 
 		printf("   %s:%s\n", states[src->state], states[dst->state]);
+	} else if (s->proto == IPPROTO_SCTP) {	/* 5BSD: sctp */
+		printf("   %s:%s\n", sctp_state_name(src->state),
+		    sctp_state_name(dst->state));
 	} else if (s->proto != IPPROTO_ICMP && s->proto != IPPROTO_ICMPV6 &&
 	    src->state < PFOTHERS_NSTATES && dst->state < PFOTHERS_NSTATES) {
 		/* XXX ICMP doesn't really have state levels */

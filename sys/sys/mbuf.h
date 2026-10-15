@@ -167,6 +167,12 @@ struct pkthdr_pf {
 	uint8_t		 routed;
 	uint8_t		 prio;
 	uint8_t		 pad[1];
+	/* 5BSD: dummynet(4) through pf dnpipe/dnqueue */
+	uint8_t		 dn_flags;	/* PF_DN_TAG_* */
+	uint8_t		 dn_pad;
+	uint16_t	 dn_ifidx;	/* route-to interface ... */
+	uint16_t	 dn_ifgen;	/* ... and its generation */
+	uint64_t	 dn_dst[4];	/* route-to next hop (sockaddr_in[6]) */
 };
 
 /* pkthdr_pf.flags */
@@ -178,6 +184,12 @@ struct pkthdr_pf {
 #define	PF_TAG_REROUTE			0x20
 #define	PF_TAG_REFRAGMENTED		0x40	/* refragmented ipv6 packet */
 #define	PF_TAG_PROCESSED		0x80	/* packet was checked by pf */
+
+/* pkthdr_pf.dn_flags (5BSD: dummynet) */
+#define	PF_DN_TAG_INFLIGHT		0x01	/* handed to dummynet */
+#define	PF_DN_TAG_DONE			0x02	/* shaped once; never again */
+#define	PF_DN_TAG_ROUTE_TO		0x04	/* send to dn_ifidx/dn_dst */
+#define	PF_DN_TAG_ETHER			0x08	/* 5BSD: ether; dummynet at layer 2 */
 
 struct pkthdr {
 	union {

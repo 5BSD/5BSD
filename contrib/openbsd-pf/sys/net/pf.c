@@ -1046,6 +1046,9 @@ pf_state_key_attach(struct pf_state_key *sk, struct pf_state *st, int idx)
 				    sist->src.state >= TCPS_FIN_WAIT_2 &&
 				    sist->dst.state >= TCPS_FIN_WAIT_2)
 					reuse = 1;
+				if (sk->proto == IPPROTO_SCTP &&	/* 5BSD: sctp */
+				    pf_sctp_state_reusable(sist))
+					reuse = 1;
 				if (pf_status.debug >= LOG_NOTICE) {
 					log(LOG_NOTICE,
 					    "pf: %s key attach %s on %s: ",
@@ -1109,6 +1112,7 @@ pf_state_key_attach(struct pf_state_key *sk, struct pf_state *st, int idx)
 void
 pf_detach_state(struct pf_state *st)
 {
+	pf_sctp_detach_state(st);	/* 5BSD: sctp */
 	KASSERT(st->key[PF_SK_WIRE] != NULL);
 	pf_state_key_detach(st, PF_SK_WIRE);
 
@@ -4508,6 +4512,11 @@ pf_rule_to_actions(struct pf_rule *r, struct pf_rule_actions *a)
 	}
 	if (r->rule_flag & PFRULE_SETDELAY)
 		a->delay = r->delay;
+	if (r->dn.pipe || r->dn.rpipe) {	/* 5BSD: dummynet */
+		a->dnpipe = r->dn.pipe;
+		a->dnrpipe = r->dn.rpipe;
+		a->dnflags = r->dn.flags;
+	}
 }
 
 #define PF_TEST_ATTRIB(t, a)			\
@@ -4586,6 +4595,7 @@ enter_ruleset:
 				TAILQ_NEXT(r, entries));
 			/* FALLTHROUGH */
 
+		case IPPROTO_SCTP:	/* 5BSD: sctp; ports as tcp/udp */
 		case IPPROTO_UDP:
 			/* tcp/udp only. port_op always 0 in other cases */
 			PF_TEST_ATTRIB((r->src.port_op &&
@@ -5044,7 +5054,11 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 	}
 
 	ruleset = &pf_main_ruleset;
-	rv = pf_match_rule(&ctx, ruleset);
+	if (pd->related_rule != NULL) {	/* 5BSD: sctp; allow-related */
+		*ctx.rm = pd->related_rule;
+		rv = PF_TEST_OK;
+	} else
+		rv = pf_match_rule(&ctx, ruleset);
 	if (rv == PF_TEST_FAIL || ctx.limiter_drop == 1) {
 		REASON_SET(reason, ctx.reason);
 		goto cleanup;
@@ -5098,6 +5112,9 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 				    ack, TH_RST|TH_ACK, 0, 0, r->return_ttl,
 				    1, 0, pd->rdomain, &ctx.reason);
 			}
+		} else if (pd->proto == IPPROTO_SCTP &&	/* 5BSD: sctp */
+		    (r->rule_flag & PFRULE_RETURN)) {
+			pf_sctp_send_abort(pd, r);
 		} else if ((pd->proto != IPPROTO_ICMP ||
 		    ICMP_INFOTYPE(ctx.icmptype)) && pd->af == AF_INET &&
 		    r->return_icmp)
@@ -5198,7 +5215,8 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 
 #if NPFSYNC > 0
 	if (*sm != NULL && !ISSET((*sm)->state_flags, PFSTATE_NOSYNC) &&
-	    pd->dir == PF_OUT && pfsync_is_up()) {
+	    pd->dir == PF_OUT && pfsync_is_up() &&
+	    !(pd->sctp_flags & PFDESC_SCTP_ADD_IP)) {	/* 5BSD: sctp */
 		/*
 		 * We want the state created, but we dont
 		 * want to send this in case a partner
@@ -5272,6 +5290,9 @@ pf_create_state(struct pf_pdesc *pd, struct pf_rule *r, struct pf_rule *a,
 	st->set_prio[0] = act->set_prio[0];
 	st->set_prio[1] = act->set_prio[1];
 	st->delay = act->delay;
+	st->dnpipe = act->dnpipe;	/* 5BSD: dummynet */
+	st->dnrpipe = act->dnrpipe;	/* 5BSD: dummynet */
+	st->dnflags = act->dnflags;	/* 5BSD: dummynet */
 	SLIST_INIT(&st->src_nodes);
 	SLIST_INIT(&st->linkage);
 
@@ -5322,6 +5343,13 @@ pf_create_state(struct pf_pdesc *pd, struct pf_rule *r, struct pf_rule *a,
 		pf_set_protostate(st, PF_PEER_SRC, PFUDPS_SINGLE);
 		pf_set_protostate(st, PF_PEER_DST, PFUDPS_NO_TRAFFIC);
 		st->timeout = PFTM_UDP_FIRST_PACKET;
+		break;
+	case IPPROTO_SCTP:	/* 5BSD: sctp */
+		pf_set_protostate(st, PF_PEER_SRC, PF_SCTPS_COOKIE_WAIT);
+		pf_set_protostate(st, PF_PEER_DST, PF_SCTPS_CLOSED);
+		st->timeout = PFTM_SCTP_FIRST_PACKET;
+		if (pf_sctp_create_state(pd, st, &reason) != PF_PASS)
+			goto csfailed;
 		break;
 	case IPPROTO_ICMP:
 #ifdef INET6
@@ -6276,6 +6304,10 @@ pf_test_state(struct pf_pdesc *pd, struct pf_state **stp, u_short *reason)
 		else
 			pf_update_state_timeout(*stp, PFTM_UDP_SINGLE);
 		break;
+	case IPPROTO_SCTP:	/* 5BSD: sctp */
+		if (pf_sctp_test_state(pd, stp, reason) != PF_PASS)
+			return (PF_DROP);
+		break;
 	default:
 		/* update states */
 		if (src->state < PFOTHERS_SINGLE)
@@ -7187,10 +7219,16 @@ pf_test_state_icmp(struct pf_pdesc *pd, struct pf_state **stp,
 			key.port[0] = key.port[1] = 0;
 			key.hash = pf_pkt_hash(pd2.af, pd2.proto,
 			    pd2.src, pd2.dst, 0, 0);
+			if (pd2.proto == IPPROTO_SCTP &&	/* 5BSD: sctp */
+			    pf_sctp_icmp_key(&pd2, &key, reason) != PF_PASS)
+				return (PF_DROP);
 
 			action = pf_find_state(&pd2, &key, stp);
 			if (action != PF_MATCH)
 				return (action);
+			if (pd2.proto == IPPROTO_SCTP &&	/* 5BSD: sctp */
+			    pf_sctp_icmp_vtag(pd, &pd2, *stp, reason) != PF_PASS)
+				return (PF_DROP);
 
 			/* translate source/destination address, if necessary */
 			if ((*stp)->key[PF_SK_WIRE] !=
@@ -7496,6 +7534,9 @@ pf_route(struct pf_pdesc *pd, struct pf_state *st)
 		ip = mtod(m0, struct ip *);
 	}
 
+	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sintosa(dst), &m0))	/* 5BSD: dummynet */
+		goto done;
+
 	if (if_output_tso(ifp, &m0, sintosa(dst), rt, ifp->if_mtu) ||
 	    m0 == NULL)
 		goto done;
@@ -7625,6 +7666,9 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 		(void) pf_refragment6(&m0, mtag, dst, ifp, rt);
 		goto done;
 	}
+
+	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sin6tosa(dst), &m0))	/* 5BSD: dummynet */
+		goto done;
 
 	if (if_output_tso(ifp, &m0, sin6tosa(dst), rt, ifp->if_mtu) ||
 	    m0 == NULL)
@@ -8283,6 +8327,10 @@ pf_setup_pdesc(struct pf_pdesc *pd, sa_family_t af, int dir,
 		pd->pcksum = &uh->uh_sum;
 		break;
 	}
+	case IPPROTO_SCTP:	/* 5BSD: sctp */
+		if (pf_sctp_setup_pdesc(pd, reason) != PF_PASS)
+			return (PF_DROP);
+		break;
 	case IPPROTO_ICMP: {
 		if (!pf_pull_hdr(pd->m, pd->off, &pd->hdr.icmp, ICMP_MINLEN,
 		    reason, pd->af))
@@ -8463,6 +8511,9 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 		PF_MTAG_W(*m0)->flags &= ~PF_TAG_REFRAGMENTED;	/* 5BSD: m_tag */
 		return (PF_PASS);
 	}
+
+	if (pf_dn_reinjected(m0))	/* 5BSD: dummynet */
+		return (PF_PASS);
 
 	action = pf_setup_pdesc(&pd, af, dir, kif, *m0, &reason);
 	if (action != PF_PASS) {
@@ -8693,6 +8744,9 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 
 		break;
 	}
+
+	if (pd.proto == IPPROTO_SCTP)	/* 5BSD: sctp; multihome states */
+		pf_sctp_multihome_delayed(&pd, st, action, &have_pf_lock);
 
 	if (have_pf_lock != 0)
 		PF_UNLOCK();
@@ -8927,6 +8981,8 @@ log_packet:
 #endif /* INET6 */
 			}
 		}
+		if (pd.m != NULL)	/* 5BSD: dummynet */
+			(void)pf_dn_output(&pd, st, r, NULL, NULL, &pd.m);
 		break;
 	}
 

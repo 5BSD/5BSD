@@ -210,6 +210,11 @@ Reset limits, timeouts and other options back to default settings.
 See the OPTIONS section in
 .Xr pf.conf 5
 for details.
+.\" 5BSD: ether
+.It Cm ethernet
+Flush the
+.Cm ether
+(layer-2) rules, a 5BSD extension.
 .It Cm all
 Flush all of the above.
 .El
@@ -474,6 +479,21 @@ If
 .Fl v
 is specified,
 the address entries for the source pools are shown too.
+.\" 5BSD: ether
+.It Cm ethernet
+Show the currently loaded
+.Cm ether
+(layer-2) rules, a 5BSD extension.
+When used together with
+.Fl v ,
+the per-rule statistics (number of evaluations,
+packets and bytes) are also shown, and with
+.Fl vv
+the time the rule last matched.
+.Fl s Cm Anchors
+lists the
+.Cm ether
+anchors after the others.
 .It Cm all
 Show all of the above, except for the lists of interfaces and operating
 system fingerprints.

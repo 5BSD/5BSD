@@ -4,9 +4,11 @@ tests/sys/netpfil/pf on 5BSD (OpenBSD PF)
 FreeBSD's pf tests, kept where the feature exists in OpenBSD PF and adapted
 to OpenBSD pf.conf syntax and OpenBSD tcpdump/pfctl output; retired where
 they test FreeBSD-only behaviour.  The 5BSD extensions (ether rules,
-dummynet, SCTP multihome, VNET, divert, jail) keep their tests; ether,
-dummynet and SCTP multihome are not yet ported to OpenBSD PF, so those
-tests are expected to fail until they are.  OpenBSD's own suites are in
+dummynet, SCTP multihome, VNET, divert, jail) keep their tests.  Ether
+rules (ether.sh), dummynet (../common/dummynet.sh) and SCTP with
+multihoming (sctp.sh, sctp.py) are ported as the "5BSD: ether",
+"5BSD: dummynet" and "5BSD: sctp" extensions
+(contrib/openbsd-pf/README.5BSD).  OpenBSD's own suites are in
 openbsd/ (contrib/openbsd-pf/regress).
 
 STATUS: WORK IN PROGRESS.  The conversions below are mechanical and have
@@ -43,6 +45,8 @@ unmapped_mbuf: FreeBSD "nat on/rdr on/binat on ... ->" became OpenBSD
 "route-to addr".
 set_tos, scrub_pass: "scrub ... set-tos", "set ( tos x )" became
 "match ... set tos x".
+sctp: legacy "scrub on <if>" (a scrub rule being present) became
+"match on <if> scrub (reassemble tcp)"; sctp.py needs no conversion.
 pflog: expectations in OpenBSD tcpdump format ("rule N/(reason) action",
 "icmp: echo request"), no --immediate-mode/-U.
 pflow: pflowctl replaced by ifconfig pflow0 flowdst/pflowproto.
@@ -52,10 +56,12 @@ utils.subr: pflog/pfsync/pflow availability from ifconfig -C (they are
 part of pf.ko).
 pfsync: the FreeBSD "version" parameter removed from the route-to helper.
 common/{nat,rdr,fragments,tos}.sh: pf variants converted the same way.
+ether: the 5BSD ether rules keep FreeBSD's syntax; the captive cases'
+"rdr on ... ->" became "pass in ... rdr-to".
 
 Not yet reviewed: everything else (pass_block, table, tcp, syncookie,
 synproxy, limiters, limits, max_states, max_pkt_rate, modulate, names,
 once, osfp, prio, rtable, set_skip, snmp, status, tos, get_state,
-loginterface, macro, forward, icmp, mbuf, ether, divert-to, *.py;
+loginterface, macro, forward, icmp, mbuf, divert-to, *.py;
 scrub.sh still uses legacy "scrub on"/"no scrub" rules and needs converting
 or retiring).
