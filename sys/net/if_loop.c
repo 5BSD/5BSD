@@ -86,6 +86,14 @@
 #define	LO_CSUM_FEATURES6	(CSUM_IP6_TCP | CSUM_IP6_UDP | CSUM_IP6_SCTP)
 #define	LO_CSUM_SET		(CSUM_L3_CALC | CSUM_L3_VALID | \
 				    CSUM_L4_CALC | CSUM_L4_VALID)
+/*
+ * 5BSD: like OpenBSD's lo(4), loopback does LRO: TCP hands it segments up
+ * to 64 kB (TSO) and they are delivered whole.  It relies on the checksum
+ * offload above, so it is in effect only while TXCSUM and RXCSUM are.
+ */
+#define	LO_LRO_CAPS		(IFCAP_LRO | IFCAP_TSO4 | IFCAP_TSO6)
+
+static void	lo_set_hwassist(struct ifnet *);
 
 static int	loioctl(struct ifnet *, u_long, caddr_t);
 static int	looutput(struct ifnet *ifp, struct mbuf *m,
@@ -137,8 +145,11 @@ lo_clone_create(struct if_clone *ifc, char *name, size_t len,
 	ifp->if_output = looutput;
 	ifp->if_snd.ifq_maxlen = ifqmaxlen;
 	ifp->if_capabilities = ifp->if_capenable =
-	    IFCAP_HWCSUM | IFCAP_HWCSUM_IPV6 | IFCAP_LINKSTATE;
-	ifp->if_hwassist = LO_CSUM_FEATURES | LO_CSUM_FEATURES6;
+	    IFCAP_HWCSUM | IFCAP_HWCSUM_IPV6 | IFCAP_LINKSTATE | LO_LRO_CAPS;
+	ifp->if_hw_tsomax = 65535;	/* IP_MAXPACKET */
+	ifp->if_hw_tsomaxsegcount = 0;	/* no limit: the chain is looped */
+	ifp->if_hw_tsomaxsegsize = 0;
+	lo_set_hwassist(ifp);
 	if_attach(ifp);
 	bpfattach(ifp, DLT_NULL, sizeof(u_int32_t));
 	*ifpp = ifp;
@@ -267,7 +278,29 @@ looutput(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 		m_freem(m);
 		return (EAFNOSUPPORT);
 	}
+	/* LRO: the segment is delivered as it is; there is nothing to cut. */
+	m->m_pkthdr.csum_flags &= ~CSUM_TSO;
 	return (if_simloop(ifp, m, af, 0));
+}
+
+static void
+lo_set_hwassist(struct ifnet *ifp)
+{
+	int lro = (ifp->if_capenable & IFCAP_LRO) != 0;
+
+	ifp->if_hwassist = 0;
+	if (ifp->if_capenable & IFCAP_TXCSUM) {
+		ifp->if_hwassist |= LO_CSUM_FEATURES;
+		if (lro && (ifp->if_capenable & (IFCAP_TSO4 | IFCAP_RXCSUM)) ==
+		    (IFCAP_TSO4 | IFCAP_RXCSUM))
+			ifp->if_hwassist |= CSUM_IP_TSO;
+	}
+	if (ifp->if_capenable & IFCAP_TXCSUM_IPV6) {
+		ifp->if_hwassist |= LO_CSUM_FEATURES6;
+		if (lro && (ifp->if_capenable & (IFCAP_TSO6 |
+		    IFCAP_RXCSUM_IPV6)) == (IFCAP_TSO6 | IFCAP_RXCSUM_IPV6))
+			ifp->if_hwassist |= CSUM_IP6_TSO;
+	}
 }
 
 /*
@@ -443,11 +476,8 @@ loioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 			ifp->if_capenable ^= IFCAP_RXCSUM_IPV6;
 		if ((mask & IFCAP_TXCSUM_IPV6) != 0)
 			ifp->if_capenable ^= IFCAP_TXCSUM_IPV6;
-		ifp->if_hwassist = 0;
-		if (ifp->if_capenable & IFCAP_TXCSUM)
-			ifp->if_hwassist = LO_CSUM_FEATURES;
-		if (ifp->if_capenable & IFCAP_TXCSUM_IPV6)
-			ifp->if_hwassist |= LO_CSUM_FEATURES6;
+		ifp->if_capenable ^= mask & LO_LRO_CAPS;
+		lo_set_hwassist(ifp);
 		break;
 
 	default:
