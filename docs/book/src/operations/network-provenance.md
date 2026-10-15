@@ -59,6 +59,7 @@ file has a one-line edit with a marker comment:
 | `5BSD: dummynet` | `dnpipe`/`dnqueue` (FreeBSD pf feature) |
 | `5BSD: sctp` | SCTP tracking, multihoming, `allow-related` (FreeBSD pf feature) |
 | `5BSD: ether` | layer-2 `ether` rules (FreeBSD pf feature) |
+| `5BSD: rename` | FreeBSD interfaces can be renamed; `pfi_rename_ifnet()` moves the interface to the kif of its new name (glue listens to `ifnet_rename_event`) |
 | `5BSD` | other small adaptations, listed in `README.5BSD` |
 
 `grep -rn '5BSD' contrib/openbsd-pf/sys contrib/openbsd-pf/sbin` lists every
@@ -94,6 +95,7 @@ goes in its own file in `sys/netpfil/openbsd-pf` (`pf_dummynet.c`,
 | pflow and pfsync configured with ifconfig (pflowctl retired) | `sbin/ifconfig` |
 | ping/ping6 `-w` and `-V`; `vmstat -m -v` pool listing; `route -T` | `sbin`, `usr.bin` |
 | Larger interface unit numbers (`IF_MAXUNIT`) | `sys/net/if_clone.c` |
+| A packet reused as a reply drops pf's state key, as OpenBSD's `m_resethdr()` does: ICMP reflection and TCP resets (`tcp_respond()`) | `sys/netinet/ip_icmp.c`, `sys/netinet6/icmp6.c`, `sys/netinet/tcp_subr.c` (`M_PF_UNLINK`) |
 | tcpdump is OpenBSD's (OpenBSD pflog output) | `contrib/openbsd-pf/usr.sbin/tcpdump` |
 
 ## Deliberate differences from OpenBSD

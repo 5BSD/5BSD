@@ -126,6 +126,12 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	changes in existing tables are allowed); securelevel 3 additionally
 	refuses dummynet configuration with dnctl(8).
 
+	The loader also preloads nullfs, if_bridge and if_epair, which
+	podman's containers need and which cannot be loaded after boot.
+	pf now follows interfaces renamed after creation (ifconfig ... name,
+	podman's cni-podman0, jail managers): rules and (if) addresses use
+	the new name.
+
 20261013:
 	The BSD fixed-name pty(4) compatibility driver has been removed.
 	Use posix_openpt(2), openpty(3), or /dev/ptmx and /dev/pts/N.
