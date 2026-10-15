@@ -1796,6 +1796,71 @@ struct pfioc_source_kill {
 /* 5BSD: checked raw snapshot for persistence, not ordinary state display. */
 #define DIOCGETSTATESEXPORT	_IOWR('D', 110, struct pfioc_states)
 
+/*
+ * 5BSD: ether.  Layer-2 ("ether") rules, as in FreeBSD pf: a separate
+ * ruleset with its own anchors, evaluated statelessly from the
+ * link-layer pfil(9) hooks (sys/netpfil/openbsd-pf/pf_ether.c).  The
+ * ruleset takes part in DIOCXBEGIN/DIOCXCOMMIT/DIOCXROLLBACK as
+ * transaction element type PF_TRANS_ETH.  The ioctl numbers are in the
+ * 5BSD-reserved range 'D' 230-239, clear of OpenBSD's DIOC* numbers.
+ */
+#define	PF_TRANS_ETH		0x45	/* pfioc_trans_e.type, beside PF_TRANS_* */
+#define	PF_ETH_ADDR_LEN		6
+#define	PF_ETH_LABEL_COUNT	5
+
+struct pf_eth_addr {
+	u_int8_t	 addr[PF_ETH_ADDR_LEN];
+	u_int8_t	 mask[PF_ETH_ADDR_LEN];
+	u_int8_t	 neg;
+	u_int8_t	 isset;
+};
+
+struct pf_eth_rule {
+	struct pf_rule_addr	 ipsrc, ipdst;	/* "l3": addresses or tables */
+	struct pf_eth_addr	 src, dst;
+	char			 ifname[IFNAMSIZ];
+	char			 bridge_to[IFNAMSIZ];
+	char			 label[PF_ETH_LABEL_COUNT][PF_RULE_LABEL_SIZE];
+	char			 tagname[PF_TAG_NAME_SIZE];
+	char			 match_tagname[PF_TAG_NAME_SIZE];
+	char			 qname[PF_QNAME_SIZE];
+	u_int64_t		 evaluations;
+	u_int64_t		 packets[2];
+	u_int64_t		 bytes[2];
+	int64_t			 last_active;	/* time_t, 0 if never */
+	u_int32_t		 nr;
+	u_int32_t		 ridentifier;
+	u_int16_t		 proto;		/* EtherType, host order */
+	u_int16_t		 tag;
+	u_int16_t		 match_tag;
+	u_int16_t		 qid;
+	u_int16_t		 dnpipe;
+	u_int8_t		 dnflags;	/* PF_DN_IS_PIPE */
+	u_int8_t		 action;	/* PF_PASS, PF_DROP */
+	u_int8_t		 direction;
+	u_int8_t		 quick;
+	u_int8_t		 ifnot;
+	u_int8_t		 match_tag_not;
+	u_int8_t		 anchor_relative;
+	u_int8_t		 anchor_wildcard;
+	u_int8_t		 pad[6];
+};
+
+struct pfioc_eth_rule {
+	u_int32_t		 action;	/* PF_GET_NONE, PF_GET_CLR_CNTR */
+	u_int32_t		 ticket;
+	u_int32_t		 nr;
+	char			 anchor[PATH_MAX];
+	char			 anchor_call[PATH_MAX];
+	struct pf_eth_rule	 rule;
+};
+
+#define DIOCADDETHRULE		_IOWR('D', 230, struct pfioc_eth_rule)
+#define DIOCGETETHRULES		_IOWR('D', 231, struct pfioc_eth_rule)
+#define DIOCGETETHRULE		_IOWR('D', 232, struct pfioc_eth_rule)
+#define DIOCGETETHRULESETS	_IOWR('D', 233, struct pfioc_ruleset)
+#define DIOCGETETHRULESET	_IOWR('D', 234, struct pfioc_ruleset)
+
 #ifdef _KERNEL
 
 struct pf_pdesc;

@@ -695,6 +695,12 @@ int	pf_dn_reinjected(struct mbuf **);
 int	pf_dn_output(struct pf_pdesc *, struct pf_state *, struct pf_rule *,
 	    struct ifnet *, struct sockaddr *, struct mbuf **);
 
+/* 5BSD: ether (sys/netpfil/openbsd-pf/pf_ether.c); called with PF_LOCK */
+int	pf_eth_begin(u_int32_t *, const char *);
+void	pf_eth_rollback(u_int32_t, const char *);
+int	pf_eth_ticket_valid(u_int32_t, const char *);
+int	pf_eth_commit(u_int32_t, const char *);
+
 #endif /* _KERNEL */
 
 #endif /* _NET_PFVAR_PRIV_H_ */

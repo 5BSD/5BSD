@@ -102,6 +102,14 @@ to a re-import.
                  and checksum (pf_ioctl.c); pfctl parse.y grammar,
                  pfctl_parser.c printing, pfctl_optimize.c field table.
                  The logic is in sys/netpfil/openbsd-pf/pf_dummynet.c.
+  ether (marked "5BSD: ether"): the 5BSD extension "ether" rules (layer-2
+                 filtering, as in FreeBSD pf): struct pf_eth_rule,
+                 struct pfioc_eth_rule, PF_TRANS_ETH and the DIOC*ETHRULE*
+                 ioctls ('D' 230-234) (pfvar.h), the glue prototypes
+                 (pfvar_priv.h), PF_TRANS_ETH elements in DIOCXBEGIN,
+                 DIOCXROLLBACK and DIOCXCOMMIT (pf_ioctl.c).  The rulesets,
+                 ioctls, packet path and pfil(9) hooks are in
+                 sys/netpfil/openbsd-pf/pf_ether.c.
   pfvar.h        REASON_SET fires the pf::reason:set DTrace probe
                  userland (!_KERNEL): sys/param.h before sys/syslimits.h;
                  PF_DIVERT #undef, RTLABEL_LEN and union sockaddr_union

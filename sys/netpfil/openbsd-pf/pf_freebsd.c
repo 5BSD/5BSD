@@ -65,6 +65,13 @@ void	obsd_if_clone_vnet_detach(void);
 void	obsd_sendq_drain(void);
 void	pf_divert_attach(void);
 void	pf_jail_attach(void);
+/* 5BSD: ether (pf_ether.c) */
+int	pf_eth_is_ioctl(u_long);
+int	pf_eth_ioctl(u_long, caddr_t, int);
+void	pf_eth_hook_update(void);
+void	pf_eth_vnet_init(void);
+void	pf_eth_vnet_unhook(void);
+void	pf_eth_vnet_fini(void);
 extern struct sx pfioctl_rw;
 extern struct pf_pool_limit pf_pool_limits[PF_LIMIT_MAX];
 PF_VNET_DECLARE(struct cpumem *, pf_status_fcounters);
@@ -846,9 +853,15 @@ pf_fbsd_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flags,
 		 * the transaction is rolled back with nothing half-committed.
 		 */
 		error = EOPNOTSUPP;
-	else
+	else if (pf_eth_is_ioctl(cmd))
+		error = pf_eth_ioctl(cmd, data, flags);
+	else {
 		error = pfioctl(pf_fbsd_minor(po->unit), cmd, data, flags,
 		    td->td_proc);
+		/* A transaction may have filled or emptied the ether rules. */
+		if (cmd == DIOCXCOMMIT && error == 0)
+			pf_eth_hook_update();
+	}
 	CURVNET_RESTORE();
 	SDT_PROBE3(pf, ioctl, ioctl, return, cmd, po->unit, error);
 	return (error);
@@ -890,6 +903,7 @@ pf_fbsd_vnet_init(void *arg __unused)
 	TAILQ_INIT(&pf_source_gc);
 
 	pfattach(1);
+	pf_eth_vnet_init();
 	mq_init(&V_pf_pfsync_inq, 1024, IPL_SOFTNET);
 	task_set(&V_pf_pfsync_intask, pf_fbsd_pfsync_intask, NULL);
 	obsd_if_clone_vnet_attach();
@@ -957,6 +971,7 @@ pf_fbsd_vnet_uninit(void *arg __unused)
 
 	/* No new packets for this pf. */
 	pf_fbsd_unhook();
+	pf_eth_vnet_unhook();
 	NET_EPOCH_WAIT();
 	pf_fbsd_delay_drain();
 
@@ -975,6 +990,7 @@ pf_fbsd_vnet_uninit(void *arg __unused)
 	NET_UNLOCK();
 
 	/* Rules, anchors, limiters and queues; then tables and states. */
+	pf_eth_vnet_fini();	/* ether rules hold tables and kifs */
 	pf_fbsd_flush_rulesets();
 	memset(&filter, 0, sizeof(filter));
 	NET_LOCK();
