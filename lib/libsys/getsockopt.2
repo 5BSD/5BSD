@@ -195,6 +195,14 @@ The following options are recognized in
 .It Dv SO_PASSRIGHTS Ta "enables passing of SCM_RIGHTS over unix(4) sockets"
 .El
 .Pp
+The following options come from
+.Ox :
+.Bl -column SO_LISTENINCQLEN -offset indent
+.It Dv SO_BINDANY Ta "allow binding to and sending from non-local addresses"
+.It Dv SO_RXQ_OVFL Ta "report receive buffer drops with UDP datagrams"
+.It Dv SO_RTABLE Ta "alias for SO_FIB (routing domain, see rdomain(4))"
+.El
+.Pp
 .Dv SO_DEBUG
 enables debugging in the underlying protocol modules.
 .Pp
@@ -369,14 +377,52 @@ The value must be from 0 to one less than the number returned from
 the sysctl
 .Em net.fibs .
 .Pp
+.Dv SO_RTABLE
+is the
+.Ox
+name of
+.Dv SO_FIB .
+.Pp
 .Dv SO_USER_COOKIE
 can be used to set the uint32_t so_user_cookie field in the socket.
-The value is an uint32_t, and can be used in the kernel code that
-manipulates traffic related to the socket.
 The default value for the field is 0.
-As an example, the value can be used as the skipto target or
-pipe number in
-.Nm ipfw/dummynet .
+No part of the base system currently uses the value; the packet filter
+.Xr pf 4
+does not match it.
+.Pp
+.Dv SO_BINDANY
+allows the socket to be bound to an address that is not configured on
+the host and to send from such an address, as needed by transparent
+proxies that receive traffic through
+.Xr pf 4
+.Cm divert-to
+rules.
+It is the socket-level spelling of the
+.Dv IP_BINDANY
+option of
+.Xr ip 4
+and the
+.Dv IPV6_BINDANY
+option of
+.Xr ip6 4 ,
+is valid only on
+.Dv AF_INET
+and
+.Dv AF_INET6
+sockets, and setting it requires the
+.Dv PRIV_NETINET_BINDANY
+privilege.
+.Pp
+.Dv SO_RXQ_OVFL
+makes UDP sockets report receive buffer overflows: once at least one
+datagram has been dropped because the receive buffer was full, each
+datagram received carries a control message of level
+.Dv SOL_SOCKET
+and type
+.Dv SCM_RXQ_OVFL
+whose data is a
+.Vt uint32_t
+holding the number of datagrams dropped on the socket so far.
 .Pp
 .Dv SO_ACCEPTFILTER
 places an
@@ -675,6 +721,8 @@ to perform the operation.
 .Xr sysctl 3 ,
 .Xr ip 4 ,
 .Xr ip6 4 ,
+.Xr pf 4 ,
+.Xr rdomain 4 ,
 .Xr sctp 4 ,
 .Xr tcp 4 ,
 .Xr protocols 5 ,

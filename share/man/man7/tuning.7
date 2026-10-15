@@ -383,9 +383,12 @@ Note that the routing table (see
 can be used to introduce route-specific send and receive buffer size
 defaults.
 .Pp
-As an additional management tool you can use pipes in your
-firewall rules (see
-.Xr ipfw 8 )
+As an additional management tool you can use
+.Xr dummynet 4
+pipes in your
+.Xr pf.conf 5
+rules
+.Pq Cm dnpipe , dnqueue ; see Xr dnctl 8
 to limit the bandwidth going to or from particular IP blocks or ports.
 For example, if you have a T1 you might want to limit your web traffic
 to 70% of the T1's bandwidth in order to leave the remainder available
@@ -707,14 +710,15 @@ over services you export from your box (web services, email).
 .Xr boot 8 ,
 .Xr bsdinstall 8 ,
 .Xr config 8 ,
+.Xr dnctl 8 ,
 .Xr fsck 8 ,
 .Xr gpart 8 ,
 .Xr gstripe 8 ,
 .Xr ifconfig 8 ,
-.Xr ipfw 8 ,
 .Xr loader 8 ,
 .Xr mount 8 ,
 .Xr newfs 8 ,
+.Xr pfctl 8 ,
 .Xr route 8 ,
 .Xr sysctl 8 ,
 .Xr tunefs 8

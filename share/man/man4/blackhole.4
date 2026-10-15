@@ -76,7 +76,9 @@ for firewall solutions.
 Better security would consist of the
 .Nm
 .Xr sysctl 8
-MIB used in conjunction with one of the available firewall packages.
+MIB used in conjunction with the
+.Xr pf 4
+packet filter.
 .Pp
 This mechanism is not a substitute for securing a system.
 It should be used together with other security mechanisms.
@@ -85,7 +87,6 @@ It should be used together with other security mechanisms.
 .Xr sctp 4 ,
 .Xr tcp 4 ,
 .Xr udp 4 ,
-.Xr ipfw 8 ,
 .Xr pfctl 8 ,
 .Xr sysctl 8
 .Sh HISTORY
