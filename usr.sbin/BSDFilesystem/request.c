@@ -1090,6 +1090,8 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
 		static const unsigned long pf_ioctls[] = {
 			/* pf(4) state export (read-only) */
 			DIOCGETSTATES,
+			/* narrow to a jailed client's vnet (BSDNetwork(8)) */
+			DIOCBINDJAIL,
 		};
 		const unsigned long *ioctls;
 		size_t nioctls;

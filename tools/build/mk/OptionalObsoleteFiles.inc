@@ -6796,6 +6796,7 @@ OLD_FILES+=etc/rc.d/ftp-proxy
 OLD_FILES+=etc/rc.d/pf
 OLD_FILES+=etc/rc.d/pflog
 OLD_FILES+=etc/rc.d/pfsync
+OLD_FILES+=etc/rc.d/tftpproxy
 OLD_FILES+=sbin/pfctl
 OLD_FILES+=sbin/pflogd
 OLD_FILES+=usr/lib/snmp_pf.so

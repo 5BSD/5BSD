@@ -1891,6 +1891,13 @@ struct pfioc_eth_rule {
 #define DIOCGETETHRULESETS	_IOWR('D', 233, struct pfioc_ruleset)
 #define DIOCGETETHRULESET	_IOWR('D', 234, struct pfioc_ruleset)
 
+/*
+ * 5BSD: VNET.  Bind a /dev/pf descriptor that has issued no other ioctl to
+ * the vnet of the jail with this jid, a living descendant of the opener's
+ * and the caller's jail (system.Network.PF serves jailed clients with it).
+ */
+#define DIOCBINDJAIL		_IOW('D', 235, int)
+
 #ifdef _KERNEL
 
 struct pf_pdesc;

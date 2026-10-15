@@ -29,7 +29,7 @@ Kernel providers are defined with `SDT_PROVIDER_DEFINE` and appear in
 | Virtualisation | `vmm`, `virtio`, `virtqueue`, `vtblk`, `vsock`, `xbb` | Hypervisor, VirtIO device models, AF_VSOCK |
 | Linux | `linuxulator`, `linuxkpi_fw`, `linuxkpi_sdio`, `linuxkpi_fullmac` | Emulation and LinuxKPI drivers |
 | Bluetooth | `bluetooth` | Netgraph HCI and L2CAP |
-| Packet filter | `pf` (31 probes: packet verdicts, ruleset and anchor evaluation, reason codes, state lifecycle, fragments, NAT and af-to, route-to, tables, SYN cookies, pflog, pfsync, pflow, ioctls and ruleset transactions), `dummynet` | Every pf decision; see dtrace_pf(4) and the PF section below |
+| Packet filter | `pf` (56 probes: packet verdicts, ruleset and anchor evaluation, reason codes, state lifecycle, fragments, NAT and af-to, route-to, tables, SYN cookies, pflog, pfsync, pflow, ioctls and ruleset transactions, the `jail` option, dummynet hand-off, ether rules and SCTP multihoming), `dummynet` | Every pf decision; see dtrace_pf(4) and the PF section below |
 
 Userland USDT providers ship as `<name>_provider.d` next to the program and
 register when it runs: `capsule` (57 probes: claims, minting, shield,

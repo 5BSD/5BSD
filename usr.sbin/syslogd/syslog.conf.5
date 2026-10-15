@@ -583,13 +583,13 @@ console.*						/var/log/console.log
 !ftpd
 *.*							/var/log/spoolerr
 
-# Log ipfw messages without syncing after every message.
-!ipfw
-*.*							-/var/log/ipfw
+# Log sshd messages without syncing after every message.
+!sshd
+*.*							-/var/log/sshd
 
-# Log ipfw messages with "Deny" in the message body.
-:msg, contains, ".*Deny.*"
-*.*							/var/log/ipfw.deny
+# Log sshd messages with "Failed" in the message body.
+:msg, contains, ".*Failed.*"
+*.*							/var/log/sshd.failed
 
 # Reset program name filtering
 !*

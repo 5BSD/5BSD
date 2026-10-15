@@ -45,7 +45,6 @@ printcap	- configuration file for lpr(1)
 profile		- system-wide .profile for sh(1)
 protocols	- see protocols(5)
 rc		- system startup script (see init(8))
-rc.firewall	- ipfw(8) setup script with basic rulesets
 rc.initdiskless	- configuration file to boot a diskless machine
 rc.resume	- sample run command file for APM Resume Event
 rc.shutdown	- system shutdown script (see init(8))

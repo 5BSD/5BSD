@@ -96,6 +96,16 @@ priv_init(int Pflag, char *execpath, int argc, char *argv[])
 		return;
 	}
 
+#ifdef __FreeBSD__
+	/*
+	 * 5BSD: libpcap.  A pcap_t cannot be rebuilt around a passed bpf(4)
+	 * descriptor with 5BSD's libpcap, so open pflog before the fork and
+	 * let the child keep it instead of re-executing (as FreeBSD pflogd).
+	 */
+	if (init_pcap())
+		errx(1, "[priv]: init failed");
+#endif
+
 	/* Create sockets */
 	if (socketpair(AF_LOCAL, SOCK_STREAM, PF_UNSPEC, socks) == -1)
 		err(1, "socketpair() failed");
@@ -104,6 +114,14 @@ priv_init(int Pflag, char *execpath, int argc, char *argv[])
 	if (child_pid == -1)
 		err(1, "fork() failed");
 
+#ifdef __FreeBSD__	/* 5BSD: libpcap, see above */
+	if (!child_pid) {
+		close(socks[0]);
+		priv_init(1, execpath, argc, argv);
+		priv_fd = socks[1];
+		return;
+	}
+#endif
 	if (!child_pid) {
 		close(socks[0]);
 		if (dup2(socks[1], 3) == -1)
@@ -241,6 +259,12 @@ priv_init_pcap(int snaplen)
 	if (priv_fd < 0)
 		errx(1, "%s: called from privileged portion", __func__);
 
+#ifdef __FreeBSD__	/* 5BSD: libpcap, the pcap_t comes from priv_init() */
+	(void)cmd;
+	(void)fd;
+	(void)buflen;
+	return (hpcap == NULL ? -1 : 0);
+#endif
 	cmd = PRIV_INIT_PCAP;
 
 	must_write(priv_fd, &cmd, sizeof(int));

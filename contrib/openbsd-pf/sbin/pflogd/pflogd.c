@@ -153,7 +153,7 @@ __dead void
 usage(void)
 {
 	fprintf(stderr, "usage: pflogd [-Dx] [-d delay] [-f filename]");
-	fprintf(stderr, " [-i interface] [-s snaplen]\n");
+	fprintf(stderr, " [-i interface] [-p pidfile] [-s snaplen]\n");	/* 5BSD */
 	fprintf(stderr, "              [expression ...]\n");
 	exit(1);
 }
@@ -199,6 +199,7 @@ if_exists(char *ifname)
 	return (if_nametoindex(ifname) != 0);
 }
 
+#ifndef __FreeBSD__	/* 5BSD: libpcap, pflog_read_live() is in pflogd_5bsd.c */
 pcap_t *
 pflog_read_live(const char *source, int slen, int promisc, int to_ms,
     char *ebuf)
@@ -284,6 +285,7 @@ bad:
 	pcap_close(p);
 	return (NULL);
 }
+#endif	/* 5BSD: libpcap */
 
 int
 init_pcap(void)
@@ -383,7 +385,11 @@ reset_dump(void)
 		hdr.magic = TCPDUMP_MAGIC;
 		hdr.version_major = PCAP_VERSION_MAJOR;
 		hdr.version_minor = PCAP_VERSION_MINOR;
+#ifdef __FreeBSD__	/* 5BSD: libpcap has no tzoff; savefiles are UTC */
+		hdr.thiszone = 0;
+#else
 		hdr.thiszone = hpcap->tzoff;
+#endif
 		hdr.snaplen = hpcap->snapshot;
 		hdr.sigfigs = 0;
 		hdr.linktype = hpcap->linktype;
@@ -411,7 +417,11 @@ int
 scan_dump(FILE *fp, off_t size)
 {
 	struct pcap_file_header hdr;
+#ifdef __FreeBSD__	/* 5BSD: savefile record header */
+	struct pcap_sf_pkthdr ph;
+#else
 	struct pcap_pkthdr ph;
+#endif
 	off_t pos;
 
 	/*
@@ -477,9 +487,17 @@ scan_dump(FILE *fp, off_t size)
 
 /* dump a packet directly to the stream, which is unbuffered */
 void
+#ifdef __FreeBSD__	/* 5BSD: savefile record header */
+dump_packet_nobuf(u_char *user, const struct pcap_pkthdr *ph, const u_char *sp)
+#else
 dump_packet_nobuf(u_char *user, const struct pcap_pkthdr *h, const u_char *sp)
+#endif
 {
 	FILE *f = (FILE *)user;
+#ifdef __FreeBSD__	/* 5BSD: savefile record header */
+	const struct pcap_sf_pkthdr sh = PCAP_SF_PKTHDR(ph, cur_snaplen);
+	const struct pcap_sf_pkthdr *h = &sh;
+#endif
 
 	if (suspended) {
 		packets_dropped++;
@@ -557,9 +575,17 @@ purge_buffer(void)
 
 /* append packet to the buffer, flushing if necessary */
 void
+#ifdef __FreeBSD__	/* 5BSD: savefile record header */
+dump_packet(u_char *user, const struct pcap_pkthdr *ph, const u_char *sp)
+#else
 dump_packet(u_char *user, const struct pcap_pkthdr *h, const u_char *sp)
+#endif
 {
 	FILE *f = (FILE *)user;
+#ifdef __FreeBSD__	/* 5BSD: savefile record header */
+	const struct pcap_sf_pkthdr sh = PCAP_SF_PKTHDR(ph, cur_snaplen);
+	const struct pcap_sf_pkthdr *h = &sh;
+#endif
 	size_t len = sizeof(*h) + h->caplen;
 
 	if (len < sizeof(*h) || h->caplen > (size_t)cur_snaplen) {
@@ -583,7 +609,11 @@ dump_packet(u_char *user, const struct pcap_pkthdr *h, const u_char *sp)
 	}
 
 	if (len > bufleft) {
+#ifdef __FreeBSD__	/* 5BSD: savefile record header */
+		dump_packet_nobuf(user, ph, sp);
+#else
 		dump_packet_nobuf(user, h, sp);
+#endif
 		return;
 	}
 
@@ -605,10 +635,11 @@ main(int argc, char **argv)
 	pcap_handler phandler = dump_packet;
 	const char *errstr = NULL;
 	char execpath[PATH_MAX];
+	char *pidf = NULL;	/* 5BSD: -p pidfile */
 
 	ret = 0;
 
-	while ((ch = getopt(argc, argv, "Dxd:f:i:Ps:")) != -1) {
+	while ((ch = getopt(argc, argv, "Dxd:f:i:Pp:s:")) != -1) {
 		switch (ch) {
 		case 'D':
 			Debug = 1;
@@ -623,6 +654,9 @@ main(int argc, char **argv)
 			break;
 		case 'i':
 			interface = optarg;
+			break;
+		case 'p':	/* 5BSD: pidfile name, as FreeBSD pflogd */
+			pidf = optarg;
 			break;
 		case 'P': /* used internally, exec the child */
 			if (strcmp("-P", argv[1]) == 0)
@@ -662,13 +696,21 @@ main(int argc, char **argv)
 	}
 
 	if (!Debug) {
+#ifdef __FreeBSD__	/* 5BSD: no sendsyslog(2); connect before chroot */
+		openlog("pflogd", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+#else
 		openlog("pflogd", LOG_PID, LOG_DAEMON);
+#endif
 		if (!Pflag) {
 			if (daemon(0, 0)) {
 				logmsg(LOG_WARNING,
 				    "Failed to become daemon: %s",
 				    strerror(errno));
 			}
+			if (pidfile(pidf) == -1)	/* 5BSD: -p pidfile */
+				logmsg(LOG_WARNING,
+				    "Failed to write pidfile: %s",
+				    strerror(errno));
 		}
 	}
 

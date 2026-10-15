@@ -174,7 +174,7 @@ typedef	__uintptr_t	uintptr_t;
 #define	SO_FIB		0x1014		/* int; get or set socket FIB */
 #define	SO_SETFIB	SO_FIB		/* backward compat alias */
 #define	SO_RTABLE	SO_FIB		/* OpenBSD name (5BSD: rdomain(4)) */
-#define	SO_USER_COOKIE	0x1015		/* uint32_t; user cookie (dummynet etc.) */
+#define	SO_USER_COOKIE	0x1015		/* uint32_t; user cookie (no consumer) */
 #define	SO_PROTOCOL	0x1016		/* int; get socket protocol (Linux name) */
 #define	SO_PROTOTYPE	SO_PROTOCOL	/* alias for SO_PROTOCOL (SunOS name) */
 #define	SO_TS_CLOCK	0x1017		/* int; clock type used for SO_TIMESTAMP */

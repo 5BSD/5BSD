@@ -25,7 +25,8 @@ resync_cmd="pflog_resync"
 
 pflog_prestart()
 {
-	load_kld pf || return 1
+	# Late kldload(2) is reserved to the SystemExtension broker.
+	load_kld -b pf || return 1
 
 	# pflog(4) interfaces are cloned on demand.
 	if ! ifconfig $pflog_dev >/dev/null 2>&1; then

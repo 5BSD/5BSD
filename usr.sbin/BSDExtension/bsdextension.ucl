@@ -35,4 +35,5 @@ allowed_extensions = [
     "amdsmn",      # amdtemp: AMD System Management Network
     "amdtemp",     # hwstat: AMD temperature
     "dummynet",    # rc.d/dummynet: pf dnpipe/dnqueue traffic shaping
+    "pf",          # rc.d/pf, pflog, pfsync: packet filter when not preloaded
 ]

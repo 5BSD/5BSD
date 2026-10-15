@@ -91,3 +91,8 @@ add include $devfsrules_unhide_basic
 add include $devfsrules_unhide_login
 add include $devfsrules_jail
 add path pf unhide
+# bpf(4) for pflogd(8), tcpdump(8) and dhclient(8) in the jail.  A VNET
+# jail's bpf descriptors can attach only to the jail's own interfaces
+# (BIOCSETIF looks the name up in the jail's VNET), so this exposes no
+# host or other-jail traffic.
+add path 'bpf*' unhide

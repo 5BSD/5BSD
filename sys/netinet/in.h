@@ -470,6 +470,10 @@ VNET_DECLARE(uint32_t, in_loopback_mask);
  * Options for controlling the firewall and dummynet.
  * Historical options (from 40 to 64) will eventually be
  * replaced by only two options, IP_FW3 and IP_DUMMYNET3.
+ *
+ * 5BSD: ipfw(4) is retired; only IP_DUMMYNET3 (dnctl(8)) is served and the
+ * other numbers fail with ENOPROTOOPT.  They stay defined so that the
+ * values are not reused and FreeBSD merges of this list stay trivial.
  */
 #define	IP_FW_TABLE_ADD		40   /* add entry */
 #define	IP_FW_TABLE_DEL		41   /* delete entry */

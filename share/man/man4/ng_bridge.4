@@ -69,10 +69,10 @@ The time period is called the minimum stable time.
 .Pp
 A looped back link will be temporarily muted, i.e., all traffic
 received on that link is ignored.
-.Sh IPFW PROCESSING
-Processing of IP packets via the
-.Xr ipfirewall 4
-mechanism on a per-link basis is not yet implemented.
+.Sh PACKET FILTERING
+Packets passing through the bridge node are not seen by
+.Xr pf 4
+on a per-link basis.
 .Sh HOOKS
 This node type supports an unlimited number of hooks.
 Each connected hook represents a bridged link.

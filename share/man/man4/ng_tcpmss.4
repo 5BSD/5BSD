@@ -86,23 +86,27 @@ This control message clears statistics for a given hook.
 This control message obtains and clears statistics for a given hook.
 .El
 .Sh EXAMPLES
-In the following example, packets are injected into the
+5BSD has no
+ipfw
+or
+ng_ipfw,
+so packets reach the
 .Nm tcpmss
-node using the
-.Xr ng_ipfw 4
-node.
+node from other netgraph nodes that carry IP datagrams.
+The node is configured per hook; here the hook
+.Dq Li qqq
+reflects every packet back with its MSS clamped to 1452:
 .Bd -literal -offset indent
-# Create tcpmss node and connect it to ng_ipfw node
-ngctl mkpeer ipfw: tcpmss 100 qqq
-
-# Adjust MSS to 1452
-ngctl msg ipfw:100 config '{ inHook="qqq" outHook="qqq" maxMSS=1452 }'
-
-# Divert traffic into tcpmss node
-ipfw add 300 netgraph 100 tcp from any to any tcpflags syn out via fxp0
-
-# Let packets continue with ipfw after being hacked
-sysctl net.inet.ip.fw.one_pass=0
+ngctl msg tcpmss: config '{ inHook="qqq" outHook="qqq" maxMSS=1452 }'
+.Ed
+.Pp
+For connections through a
+.Xr pf 4
+firewall,
+.Xr pf.conf 5
+does the same without netgraph:
+.Bd -literal -offset indent
+match out on em0 proto tcp scrub (max-mss 1452)
 .Ed
 .Sh SHUTDOWN
 This node shuts down upon receipt of an
@@ -110,7 +114,7 @@ This node shuts down upon receipt of an
 control message, or when all hooks have been disconnected.
 .Sh SEE ALSO
 .Xr netgraph 4 ,
-.Xr ng_ipfw 4
+.Xr pf.conf 5
 .Sh HISTORY
 The
 .Nm

@@ -137,7 +137,9 @@ struct socket {
 	 * so_fibnum, so_user_cookie and friends can be used to attach
 	 * some user-specified metadata to a socket, which then can be
 	 * used by the kernel for various actions.
-	 * so_user_cookie is used by ipfw/dummynet.
+	 * so_user_cookie (SO_USER_COOKIE) was matched by ipfw; 5BSD's pf
+	 * does not use it, so it is stored but has no consumer.  It is
+	 * kept for the socket option ABI (wg(4) and Linux SO_MARK set it).
 	 */
 	int so_fibnum;		/* routing domain for this socket */
 	uint32_t so_user_cookie;

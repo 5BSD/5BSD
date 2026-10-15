@@ -565,17 +565,17 @@ In addition, kernel time changes are restricted to less than or equal to one
 second.
 Attempts to change the time by more than this will log the message
 .Dq Time adjustment clamped to +1 second .
+.Pp
+As on
+.Ox ,
+the
+.Xr pf 4
+ruleset and settings are locked from this level on: rules cannot be
+loaded and options cannot be changed, while the addresses in existing
+tables can still be edited.
 .It Ic 3
 Network secure mode \- same as highly secure mode, plus
-IP packet filter rules (see
-.Xr ipfw 8 ,
-.Xr ipfirewall 4
-and
-.Xr pfctl 8 )
-cannot be changed and
 .Xr dummynet 4
-or
-.Xr pf 4
 configuration cannot be adjusted.
 .El
 .Pp

@@ -650,11 +650,9 @@ If using
 on a machine that is also running other modules utilising the
 .Xr pfil 9
 framework e.g.
-.Xr dummynet 4 ,
-.Xr ipfw 8 ,
-.Xr pf 4 Ns ,
+.Xr pf 4 ,
 the order in which you load the modules is important.
-You should kldload the other modules first, as this will ensure TCP packets
+You should load the other modules first, as this will ensure TCP packets
 undergo any necessary manipulations before
 .Nm
 .Qq sees

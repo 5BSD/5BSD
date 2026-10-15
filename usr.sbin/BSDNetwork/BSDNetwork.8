@@ -130,9 +130,20 @@ For each admitted session it obtains an exact
 descriptor from
 .Xr BSDFilesystem 8
 and passes it to a private worker.
-The descriptor is limited to the read-only PF state export ioctl and one
-transfer to the client; the client cannot change PF rules or settings through
-it.
+The descriptor reports the PF state table of the client's own network stack:
+.Pa /dev/pf
+acts on the vnet of the jail that opened it, so for a client in a jail the
+worker binds the unused descriptor to that jail's vnet with
+.Dv DIOCBINDJAIL
+.Pq see Xr pf 4
+before delivering it.
+The client's jail is the one the kernel stamps on its request; a client in a
+jail without its own vnet shares its parent's.
+If the bind fails the request fails and no descriptor is delivered.
+The delivered descriptor is limited to the read-only PF state export ioctl
+.Pq Dv DIOCGETSTATES
+and one transfer to the client; the client cannot change PF rules or settings,
+or rebind the descriptor, through it.
 The daemon itself runs as the unprivileged
 .Dq capability
 user and does not hold a directory descriptor for

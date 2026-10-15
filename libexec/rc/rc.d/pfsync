@@ -15,7 +15,8 @@ start_precmd="pfsync_prestart"
 start_cmd="pfsync_start"
 stop_cmd="pfsync_stop"
 # Vendor PF includes the pfsync interface in pf.ko (or the kernel).
-required_modules="pf"
+# Late kldload(2) is reserved to the SystemExtension broker; a pf preloaded
+# from loader.conf (the default) is claimed through it.
 
 pfsync_prestart()
 {
@@ -25,7 +26,7 @@ pfsync_prestart()
 		return 1
 		;;
 	esac
-	return 0
+	load_kld -b pf
 }
 
 pfsync_start()
