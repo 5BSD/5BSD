@@ -264,6 +264,7 @@ pf_map_addr_sticky(sa_family_t af, struct pf_rule *r, struct pf_addr *saddr,
 	k.type = type;
 	pf_addrcpy(&k.addr, saddr, af);
 	k.rule.ptr = r;
+	k.global = 0;	/* 5BSD: sticky-address nodes are per rule */
 	pf_status.scounters[SCNT_SRC_NODE_SEARCH]++;
 	sns[type] = RB_FIND(pf_src_tree, &tree_src_tracking, &k);
 	if (sns[type] == NULL)

@@ -743,6 +743,7 @@ struct pf_src_node {
 	sa_family_t		 af;
 	sa_family_t		 naf;
 	u_int8_t		 type;
+	u_int8_t		 global;	/* 5BSD: source-track global */
 };
 
 struct pf_sn_item {

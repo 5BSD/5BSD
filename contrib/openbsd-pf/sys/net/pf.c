@@ -618,9 +618,16 @@ pf_src_compare(struct pf_src_node *a, struct pf_src_node *b)
 {
 	int	diff;
 
-	if (a->rule.ptr > b->rule.ptr)
+	/*
+	 * 5BSD: "source-track global" limit nodes are shared by every rule
+	 * using it, as pf.conf(5) and FreeBSD pf have it; key them without
+	 * the rule.
+	 */
+	if ((diff = a->global - b->global) != 0)
+		return (diff);
+	if (!a->global && a->rule.ptr > b->rule.ptr)
 		return (1);
-	if (a->rule.ptr < b->rule.ptr)
+	if (!a->global && a->rule.ptr < b->rule.ptr)
 		return (-1);
 	if ((diff = a->type - b->type) != 0)
 		return (diff);
@@ -870,6 +877,8 @@ pf_insert_src_node(struct pf_src_node **sn, struct pf_rule *rule,
 		k.type = type;
 		pf_addrcpy(&k.addr, src, af);
 		k.rule.ptr = rule;
+		k.global = (type == PF_SN_NONE &&	/* 5BSD */
+		    !(rule->rule_flag & PFRULE_RULESRCTRACK));
 		pf_status.scounters[SCNT_SRC_NODE_SEARCH]++;
 		*sn = RB_FIND(pf_src_tree, &tree_src_tracking, &k);
 	}
@@ -889,6 +898,8 @@ pf_insert_src_node(struct pf_src_node **sn, struct pf_rule *rule,
 		(*sn)->type = type;
 		(*sn)->af = af;
 		(*sn)->rule.ptr = rule;
+		(*sn)->global = (type == PF_SN_NONE &&	/* 5BSD */
+		    !(rule->rule_flag & PFRULE_RULESRCTRACK));
 		pf_addrcpy(&(*sn)->addr, src, af);
 		if (raddr)
 			pf_addrcpy(&(*sn)->raddr, raddr, af);
