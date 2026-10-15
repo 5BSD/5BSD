@@ -57,6 +57,25 @@ the difference (list: git diff of contrib/openbsd-pf/sys/net against the
 import commits; summary below).  Keep them minimal so an update is close
 to a re-import.
 
+5BSD edits in sbin/pflogd (marked "5BSD"; glue in sbin/pflogd/pflogd_5bsd.[ch]):
+  pflogd.c       libpcap: pflog_read_live() opens pflog(4) through
+                 pcap_activate(3) (pflogd_5bsd.c) instead of filling in
+                 libpcap's private pcap_t; savefile thiszone is 0.
+                 savefile record header: records are written in the 32-bit
+                 on-disk layout (struct pcap_sf_pkthdr) because 5BSD's
+                 struct pcap_pkthdr carries a struct timeval; the capture
+                 length is clamped to the current snaplen because 5BSD's
+                 bpf(4) refuses BIOCSETF on a BIOCLOCKed descriptor even
+                 for root.
+                 pidfile: -p name writes /var/run/<name>.pid (default
+                 pflogd.pid), kept from FreeBSD pflogd for rc.d/pflog and
+                 newsyslog; openlog() uses LOG_NDELAY so the chrooted child
+                 keeps its syslog socket (no sendsyslog(2)).
+  privsep.c      libpcap: the privileged process opens pflog before the
+                 fork and the child keeps that pcap_t (no re-exec with -P);
+                 priv_init_pcap() is then a no-op.
+  pflogd.8       -p, the pidfile and the snaplen note above.
+
 5BSD edits in usr.sbin (marked "5BSD"):
   authpf/authpf.c  without fdescfs(4) on /dev/fd, /dev/fd/N above 2 does
                  not exist: pass /dev/pf to pfctl as standard input

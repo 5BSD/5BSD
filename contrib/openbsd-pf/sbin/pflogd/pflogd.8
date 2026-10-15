@@ -37,6 +37,8 @@
 .Op Fl d Ar delay
 .Op Fl f Ar filename
 .Op Fl i Ar interface
+.\" 5BSD: pidfile
+.Op Fl p Ar pidfile
 .Op Fl s Ar snaplen
 .Op Ar expression ...
 .Ek
@@ -81,6 +83,13 @@ new logs are appended to the existing file.
 If the existing log file was created with a different snaplen,
 .Nm
 temporarily uses the old snaplen to keep the log file consistent.
+.\" 5BSD: snaplen
+On 5BSD the locked
+.Xr bpf 4
+descriptor keeps capturing with the snaplen
+.Nm
+started with; packets are truncated to the smaller of the two when they
+are written.
 .Pp
 .Nm
 tries to preserve the integrity of the log file against I/O errors.
@@ -115,10 +124,26 @@ By default,
 .Nm
 will use
 .Pa pflog0 .
+.\" 5BSD: pidfile
+.It Fl p Ar pidfile
+Write the process ID of the privileged process to
+.Pa /var/run/ Ns Ar pidfile Ns Pa .pid
+instead of
+.Pa /var/run/pflogd.pid .
+This option is a 5BSD addition, kept from the
+.Fx
+.Nm
+for
+.Xr rc 8
+and
+.Xr newsyslog 8 .
 .It Fl s Ar snaplen
 Analyze at most the first
 .Ar snaplen
 bytes of data from each packet rather than the default of 160.
+A
+.Ar snaplen
+of 0 selects the default.
 The default of 160 is adequate for IP, ICMP, TCP, and UDP headers but may
 truncate protocol information for other protocols.
 Other file parsers may desire a higher snaplen.
@@ -166,6 +191,10 @@ The direction was outbound.
 .Bl -tag -width /var/run/pflogd.pid -compact
 .It Pa /var/log/pflog
 Default log file.
+.\" 5BSD: pidfile
+.It Pa /var/run/pflogd.pid
+Process ID of the running
+.Nm .
 .El
 .Sh EXAMPLES
 Log specific TCP packets to a different log file with a large snaplen
