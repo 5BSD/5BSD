@@ -212,8 +212,10 @@ Adopted OpenBSD code (pf/parity), all from facc8d7ec5d1:
   pf.conf.5, pf.os.5     -> installed by share/man/man4 and man5 (FreeBSD's
                             divert.4 is now ipdivert.4); marked 5BSD
                             additions: pf.conf.5 jail, dummynet, ether rules and
-                            queueing status, pfctl.8 ethernet, pf.4 VNET
-                            and DIOCBINDJAIL, divert.4
+                            queueing status, pfctl.8 ethernet and rc.conf(5),
+                            pf.4 VNET and DIOCBINDJAIL, divert.4 (the only
+                            divert interface), pf.4/pflog.4/pfsync.4/pflow.4
+                            "device pf" for OpenBSD's pseudo-device lines
   usr.sbin/authpf, ftp-proxy, tftp-proxy -> same programs
   usr.sbin/tcpdump      -> /usr/sbin/tcpdump (glue: usr.sbin/tcpdump/tcpdump:
                             openbsd_compat.h, include/, privsep_5bsd.c)

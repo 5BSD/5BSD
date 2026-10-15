@@ -101,12 +101,13 @@ Note that the default is 64k and too short to handle full sized UDP
 packets.
 .\" 5BSD: ipdivert
 .Pp
-On 5BSD this is the divert interface of
-.Xr pf 4 .
-The divert sockets of
-.Xr ipfw 8
-are a different interface, described in
-.Xr ipdivert 4 .
+On 5BSD this is the only divert interface: the packet filter is
+.Xr pf 4 ,
+and the ipfw divert sockets
+.Pq Dv PF_DIVERT
+of
+.Fx
+are not part of the system.
 .Sh EXAMPLES
 The following PF rule queues outbound IPv4 packets to TCP port 80,
 as well as the return traffic, on the em0 interface to divert port 700:
