@@ -18,6 +18,12 @@ $S '[ -f /root/pf-parity-disposable ]' || { echo "not a disposable guest" >&2; e
 # Refresh mtimes so generated parser/object files cannot outlive staged inputs.
 tar -C "$src/contrib/openbsd-pf" -cf - regress sbin sys share usr.sbin etc |
     $S 'mkdir -p /usr/src && tar -m -C /usr/src -xf -'
+# The fresh copy undoes setup-dut-5bsd.sh's SO_BINDANY plumbing; redo it.
+$S 'f=/usr/src/regress/sys/net/pf_divert/Client.pm
+if grep -q "SO_BINDANY => 0x1000;" $f; then
+	sed "s/SO_BINDANY => 0x1000;/SO_BINDANY => 0x20000000;/" $f > $f.new &&
+	    [ -s $f.new ] && mv $f.new $f
+fi'
 tar -C "$src/sys/netpfil/openbsd-pf/user" -cf - openbsd_compat.h util.h sys \
     pfctl_jail.c pfctl_ether.c |
     $S "rm -rf $C && mkdir -p $C && tar -m -C $C -xf - &&
