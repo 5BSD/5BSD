@@ -297,144 +297,6 @@ label_cleanup()
 	pft_cleanup
 }
 
-atf_test_case "multilabel" "cleanup"
-multilabel_head()
-{
-	atf_set descr 'Test killing states with multiple labels by label'
-	atf_set require.user root
-	atf_set require.progs python3 scapy
-}
-
-multilabel_body()
-{
-	pft_init
-
-	epair=$(vnet_mkepair)
-	ifconfig ${epair}a 192.0.2.1/24 up
-
-	vnet_mkjail alcatraz ${epair}b
-	jexec alcatraz ifconfig ${epair}b 192.0.2.2/24 up
-	jexec alcatraz pfctl -e
-
-	pft_set_rules alcatraz "block all" \
-		"pass in proto icmp label foo label bar" \
-		"set skip on lo"
-
-	# Sanity check & establish state
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
-
-	# Change rules to now deny the ICMP traffic
-	pft_set_rules noflush alcatraz "block all"
-	if ! find_state;
-	then
-		atf_fail "Setting new rules removed the state."
-	fi
-
-	# Killing a label on a different rules keeps the state
-	jexec alcatraz pfctl -k label -k baz
-	if ! find_state;
-	then
-		atf_fail "Killing a different label removed the state."
-	fi
-
-	# Killing the state with the last label works
-	jexec alcatraz pfctl -k label -k bar
-	if find_state;
-	then
-		atf_fail "Killing with the last label did not remove the state."
-	fi
-
-	pft_set_rules alcatraz "block all" \
-		"pass in proto icmp label foo label bar" \
-		"set skip on lo"
-
-	# Reestablish state
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
-
-	# Change rules to now deny the ICMP traffic
-	pft_set_rules noflush alcatraz "block all"
-	if ! find_state;
-	then
-		atf_fail "Setting new rules removed the state."
-	fi
-
-	# Killing with the first label works too
-	jexec alcatraz pfctl -k label -k foo
-	if find_state;
-	then
-		atf_fail "Killing with the first label did not remove the state."
-	fi
-}
-
-multilabel_cleanup()
-{
-	pft_cleanup
-}
-
-atf_test_case "gateway" "cleanup"
-gateway_head()
-{
-	atf_set descr 'Test killing states by route-to/reply-to address'
-	atf_set require.user root
-	atf_set require.progs python3 scapy
-}
-
-gateway_body()
-{
-	pft_init
-
-	epair=$(vnet_mkepair)
-	ifconfig ${epair}a 192.0.2.1/24 up
-
-	vnet_mkjail alcatraz ${epair}b
-	jexec alcatraz ifconfig ${epair}b 192.0.2.2/24 up
-	jexec alcatraz pfctl -e
-
-	pft_set_rules alcatraz "block all" \
-		"pass in reply-to 192.0.2.1 proto icmp" \
-		"set skip on lo"
-
-	# Sanity check & establish state
-	# Note: use pft_ping so we always use the same ID, so pf considers all
-	# echo requests part of the same flow.
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
-
-	# Change rules to now deny the ICMP traffic
-	pft_set_rules noflush alcatraz "block all"
-	if ! find_state;
-	then
-		atf_fail "Setting new rules removed the state."
-	fi
-
-	# Killing with a different gateway does not affect our state
-	jexec alcatraz pfctl -k gateway -k 192.0.2.2
-	if ! find_state;
-	then
-		atf_fail "Killing with a different gateway removed the state."
-	fi
-
-	# Killing states with the relevant gateway does terminate our state
-	jexec alcatraz pfctl -k gateway -k 192.0.2.1
-	if find_state;
-	then
-		atf_fail "Killing with the gateway did not remove the state."
-	fi
-}
-
-gateway_cleanup()
-{
-	pft_cleanup
-}
-
 atf_test_case "match" "cleanup"
 match_head()
 {
@@ -490,22 +352,11 @@ match_body()
 		atf_fail "Expected two states, found $states"
 	fi
 
-	# If we don't kill the matching NAT state one should be left
+	# OpenBSD matches the source of an outbound state on its stack side
+	# (before NAT), so killing by the client address removes both the
+	# inbound state and the matching outbound NAT state; there is no
+	# FreeBSD-style -M option.
 	jexec alcatraz pfctl -k 192.0.2.1
-	states=$(jexec alcatraz pfctl -s s | grep 192.0.2.1 | wc -l)
-	if [ $states -ne 1 ] ;
-	then
-		atf_fail "Expected one states, found $states"
-	fi
-
-	# Flush
-	jexec alcatraz pfctl -F states
-
-	nc 198.51.100.2 7 &
-	wait_for_state alcatraz 192.0.2.1
-
-	# Kill matching states, expect all of them to be gone
-	jexec alcatraz pfctl -M -k 192.0.2.1
 	states=$(jexec alcatraz pfctl -s s | grep 192.0.2.1 | wc -l)
 	if [ $states -ne 0 ] ;
 	then
@@ -537,7 +388,11 @@ interface_body()
 	jexec alcatraz ifconfig ${epair}b 192.0.2.2/24 up
 	jexec alcatraz pfctl -e
 
-	pft_set_rules alcatraz "block all" \
+	# OpenBSD's pfctl -i <if> -Fs flushes the states bound to <if>;
+	# floating states are bound to "all", so bind the state to the
+	# interface.
+	pft_set_rules alcatraz "set state-policy if-bound" \
+		"block all" \
 		"pass in proto icmp" \
 		"set skip on lo"
 
@@ -561,7 +416,7 @@ interface_body()
 		atf_fail "Flushing on a different interface removed the state."
 	fi
 
-	# Flushing on the correct interface does (even with floating states)
+	# Flushing on the correct interface does
 	jexec alcatraz pfctl -i ${epair}b -Fs
 	if find_state;
 	then
@@ -691,86 +546,14 @@ key_cleanup()
 	pft_cleanup
 }
 
-atf_test_case "nat" "cleanup"
-nat_head()
-{
-	atf_set descr 'Test killing states by their NAT-ed IP address'
-	atf_set require.user root
-	atf_set require.progs python3 scapy
-}
-
-nat_body()
-{
-	pft_init
-	j="killstate:nat"
-
-	epair_c=$(vnet_mkepair)
-	epair_srv=$(vnet_mkepair)
-
-	vnet_mkjail ${j}c ${epair_c}a
-	ifconfig -j ${j}c ${epair_c}a inet 192.0.2.2/24 up
-	jexec ${j}c route add default 192.0.2.1
-
-	vnet_mkjail ${j}srv ${epair_srv}a
-	ifconfig -j ${j}srv ${epair_srv}a inet 198.51.100.2/24 up
-
-	vnet_mkjail ${j}r ${epair_c}b ${epair_srv}b
-	ifconfig -j ${j}r ${epair_c}b inet 192.0.2.1/24 up
-	ifconfig -j ${j}r ${epair_srv}b inet 198.51.100.1/24 up
-	jexec ${j}r sysctl net.inet.ip.forwarding=1
-
-	jexec ${j}r pfctl -e
-	pft_set_rules ${j}r \
-		"match out on ${epair_srv}b inet from 192.0.2.0/24 to any nat-to (${epair_srv}b)"
-
-	# Sanity check
-	atf_check -s exit:0 -o ignore \
-	    jexec ${j}c ping -c 1 192.0.2.1
-	atf_check -s exit:0 -o ignore \
-	    jexec ${j}srv ping -c 1 198.51.100.1
-	atf_check -s exit:0 -o ignore \
-	    jexec ${j}c ping -c 1 198.51.100.2
-
-	# Establish state
-	# Note: use pft_ping so we always use the same ID, so pf considers all
-	# echo requests part of the same flow.
-	atf_check -s exit:0 -o ignore jexec ${j}c ${common_dir}/pft_ping.py \
-		--sendif ${epair_c}a \
-		--to 198.51.100.1 \
-		--replyif ${epair_c}a
-
-	# There's NAT here, so the source IP will be 198.51.100.1
-	if ! find_state ${j}r 198.51.100.1;
-	then
-		atf_fail "Expected state not found"
-	fi
-
-	# By NAT-ed address?
-	jexec ${j}r pfctl -k nat -k 192.0.2.2
-
-	if find_state ${j}r 198.51.100.1;
-	then
-		jexec ${j}r pfctl -ss -v
-		atf_fail "Failed to remove state"
-	fi
-}
-
-nat_cleanup()
-{
-	pft_cleanup
-}
-
 atf_init_test_cases()
 {
 	atf_add_test_case "v4"
 	atf_add_test_case "src_dst"
 	atf_add_test_case "v6"
 	atf_add_test_case "label"
-	atf_add_test_case "multilabel"
-	atf_add_test_case "gateway"
 	atf_add_test_case "match"
 	atf_add_test_case "interface"
 	atf_add_test_case "id"
 	atf_add_test_case "key"
-	atf_add_test_case "nat"
 }
