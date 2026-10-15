@@ -71,15 +71,17 @@ pr279225_body()
 
 	vnet_mkjail alcatraz
 
+	# OpenBSD has no separate nat/rdr anchors: translation rules live in
+	# ordinary anchors, so all three are filter anchors shown by -sr.
 	pft_set_rules alcatraz \
-		"nat-anchor \"appjail-nat/jail/*\" all" \
-		"rdr-anchor \"appjail-rdr/*\" all" \
+		"anchor \"appjail-nat/jail/*\" all" \
+		"anchor \"appjail-rdr/*\" all" \
 		"anchor \"appjail/jail/*\" all"
 
-	atf_check -s exit:0 -o match:"nat-anchor \"appjail-nat/jail/\*\" all \{" \
-		jexec alcatraz pfctl -sn -a "*"
-	atf_check -s exit:0 -o match:"rdr-anchor \"appjail-rdr/\*\" all \{" \
-		jexec alcatraz pfctl -sn -a "*"
+	atf_check -s exit:0 -o match:"anchor \"appjail-nat/jail/\*\" all \{" \
+		jexec alcatraz pfctl -sr -a "*"
+	atf_check -s exit:0 -o match:"anchor \"appjail-rdr/\*\" all \{" \
+		jexec alcatraz pfctl -sr -a "*"
 	atf_check -s exit:0 -o match:"anchor \"appjail/jail/\*\" all \{" \
 		jexec alcatraz pfctl -sr -a "*"
 }
@@ -112,7 +114,7 @@ nested_anchor_body()
 
 	atf_check -s exit:0 -o inline:"anchor \"foo\" all {
   anchor \"bar\" all {
-    pass on ${epair}a all flags S/SA keep state
+    pass on ${epair}a all flags S/SA
   }
 }
 " jexec alcatraz pfctl -sr -a "*"
@@ -228,11 +230,17 @@ nested_label_body()
 		}" \
 		"pass quick from any to any label \"anytoany\""
 
+	# OpenBSD's pfctl -sl does not descend into anchors (-a '*' only
+	# recurses for -sr), so read each nested anchor's labels directly.
 	atf_check -s exit:0 \
 	    -o inline:"passicmp 0 0 0 0 0 0 0 0
-passtcp 0 0 0 0 0 0 0 0
-anytoany 0 0 0 0 0 0 0 0
-" jexec alcatraz pfctl -sl -a*
+" jexec alcatraz pfctl -sl -a foo
+	atf_check -s exit:0 \
+	    -o inline:"passtcp 0 0 0 0 0 0 0 0
+" jexec alcatraz pfctl -sl -a foo/bar
+	atf_check -s exit:0 \
+	    -o inline:"anytoany 0 0 0 0 0 0 0 0
+" jexec alcatraz pfctl -sl
 }
 
 nested_label_cleanup()
@@ -395,22 +403,25 @@ nat_body()
 
 	jexec alcatraz pfctl -e
 	pft_set_rules alcatraz \
-	    "nat-anchor \"foo/*\"" \
+	    "anchor \"foo/*\"" \
 	    "pass"
 
-	echo "nat log on ${epair}a inet from 192.0.2.0/24 to any port = 53 -> 192.0.2.1" \
+	# OpenBSD: translation rules are match rules in ordinary anchors,
+	# listed by -sr; a port needs a protocol, and pfctl prints port
+	# numbers unless -P is given.
+	echo "match out log on ${epair}a inet proto udp from 192.0.2.0/24 to any port = 53 nat-to 192.0.2.1" \
 	    | jexec alcatraz pfctl -a "foo/bar" -g -f -
 	echo "match in on ${epair}a proto tcp to port echo rdr-to 127.0.0.1 port echo" \
 	    | jexec alcatraz pfctl -a "foo/baz" -g -f -
 
-	jexec alcatraz pfctl -sn -a "*"
-	jexec alcatraz pfctl -sn -a "foo/bar"
-	jexec alcatraz pfctl -sn -a "foo/baz"
+	jexec alcatraz pfctl -sr -a "*"
+	jexec alcatraz pfctl -sr -a "foo/bar"
+	jexec alcatraz pfctl -sr -a "foo/baz"
 
-	atf_check -s exit:0 -o match:"nat log on ${epair}a inet from 192.0.2.0/24 to any port = domain -> 192.0.2.1" \
-	    jexec alcatraz pfctl -sn -a "*"
-	atf_check -s exit:0 -o match:"match in on ${epair}a inet proto tcp from any to any port = echo rdr-to 127.0.0.1 port 7" \
-	    jexec alcatraz pfctl -sn -a "*"
+	atf_check -s exit:0 -o match:"match out log on ${epair}a inet proto udp from 192.0.2.0/24 to any port = 53 nat-to 192.0.2.1" \
+	    jexec alcatraz pfctl -sr -a "*"
+	atf_check -s exit:0 -o match:"match in on ${epair}a inet proto tcp from any to any port = 7 rdr-to 127.0.0.1 port 7" \
+	    jexec alcatraz pfctl -sr -a "*"
 }
 
 nat_cleanup()

@@ -32,8 +32,16 @@ syncookie_state()
 {
 	jail=$1
 
-	jexec $jail pfctl -si -v | grep -A 2 '^Syncookies' | grep active \
-	    | awk '{ print($2); }'
+	# OpenBSD's pfctl does not print whether syncookie mode is active;
+	# pfctl -si -v counts the syncookies sent (Limit Counters).  Report
+	# "active" once syncookies were sent, "inactive" while none were.
+	sent=$(jexec $jail pfctl -si -v | \
+	    awk '$1 == "syncookies" && $2 == "sent" { print($3); }')
+	case "$sent" in
+	''|*[!0-9]*)	echo "missing" ;;
+	0)		echo "inactive" ;;
+	*)		echo "active" ;;
+	esac
 }
 
 atf_test_case "basic" "cleanup"

@@ -98,18 +98,27 @@ rule_body()
 	# Establish state
 	atf_check -o ignore ping -c 1 -W 1 192.0.2.2
 
-	# We should see the rule now
-	atf_check -o match:"rule: pass in proto icmp all keep state label \"icmplabel\"" \
+	# We should see the rule now.  OpenBSD's pfctl -ss -v identifies the
+	# rule that created the state by its number, not by its text.
+	atf_check -o match:", rule 0$" \
 	    -e ignore \
 	    jexec alcatraz pfctl -ss -vv
 
+	# The pass rule of the new ruleset is @1, so a state that followed
+	# it would report rule 1.
 	pft_set_rules noflush alcatraz \
+	    "block in proto tcp" \
 	    "pass"
 
-	# Even after the rules changes we should see the original rule
-	atf_check -o match:"rule: pass in proto icmp all keep state label \"icmplabel\"" \
+	# Even after the rules changes we should see the original rule:
+	# still rule 0, and still carrying the original rule's label.
+	atf_check -o match:", rule 0$" \
 	    -e ignore \
 	    jexec alcatraz pfctl -ss -vv
+	atf_check -s exit:0 -e match:"killed 1 states" \
+	    jexec alcatraz pfctl -k label -k icmplabel
+	atf_check -s exit:0 -o empty -e ignore \
+	    jexec alcatraz pfctl -ss
 }
 
 rule_cleanup()
