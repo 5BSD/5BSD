@@ -116,10 +116,10 @@ sa_ntop(const struct sockaddr *sa, char *buf, size_t len)
 {
 	if (sa->sa_family == AF_INET)
 		return (inet_ntop(AF_INET,
-		    &((const struct sockaddr_in *)sa)->sin_addr, buf, len));
+		    &((const struct sockaddr_in *)(const void *)sa)->sin_addr, buf, len));
 	if (sa->sa_family == AF_INET6)
 		return (inet_ntop(AF_INET6,
-		    &((const struct sockaddr_in6 *)sa)->sin6_addr, buf, len));
+		    &((const struct sockaddr_in6 *)(const void *)sa)->sin6_addr, buf, len));
 	snprintf(buf, len, "af%d", sa->sa_family);
 	return (buf);
 }
