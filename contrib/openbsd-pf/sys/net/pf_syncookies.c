@@ -140,6 +140,8 @@ pf_syncookies_setmode(u_int8_t mode)
 	if (pf_status.syncookies_mode == PF_SYNCOOKIES_ALWAYS) {
 		pf_syncookie_newkey();
 		pf_status.syncookies_active = 1;
+		DTRACE_PROBE2(pf__syncookie__active, int, 1,	/* 5BSD: DTrace */
+		    int, pf_status.syncookies_mode);
 	}
 	return (0);
 }
@@ -178,6 +180,8 @@ pf_synflood_check(struct pf_pdesc *pd)
 	    pf_status.states_halfopen > pf_syncookie_status.hiwat) {
 		pf_syncookie_newkey();
 		pf_status.syncookies_active = 1;
+		DTRACE_PROBE2(pf__syncookie__active, int, 1,	/* 5BSD: DTrace */
+		    int, pf_status.syncookies_mode);
 		DPFPRINTF(LOG_WARNING,
 		    "synflood detected, enabling syncookies");
 		pf_status.lcounters[LCNT_SYNFLOODS]++;
@@ -244,6 +248,8 @@ pf_syncookie_rotate(void *arg)
 	    pf_status.syncookies_inflight[1] < pf_syncookie_status.lowat) ||
 	    pf_status.syncookies_mode == PF_SYNCOOKIES_NEVER)) {
 		pf_status.syncookies_active = 0;
+		DTRACE_PROBE2(pf__syncookie__active, int, 0,	/* 5BSD: DTrace */
+		    int, pf_status.syncookies_mode);
 		DPFPRINTF(LOG_WARNING, "syncookies disabled");
 	}
 

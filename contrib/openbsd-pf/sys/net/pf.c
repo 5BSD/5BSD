@@ -4682,6 +4682,8 @@ enter_ruleset:
 			 * There is no "backend" to get a resource out of
 			 * so the rule can't create state.
 			 */
+			if (stlim == NULL)	/* 5BSD: DTrace */
+				PF_LIMITER_MISSING(0, r->statelim, r->nr);
 			PF_TEST_ATTRIB(stlim == NULL,
 				TAILQ_NEXT(r, entries));
 
@@ -4690,6 +4692,8 @@ enter_ruleset:
 			 * can't create state.
 			 */
 			if (stlim->pfstlim_inuse >= stlim->pfstlim_limit) {
+				PF_LIMITER_DENY(0, r->statelim, r->nr, 1,	/* 5BSD: DTrace */
+				    stlim->pfstlim_inuse, stlim->pfstlim_limit);
 				gen = pf_statelim_enter(stlim);
 				stlim->pfstlim_counters.hardlimited++;
 				pf_statelim_leave(stlim, gen);
@@ -4711,6 +4715,8 @@ enter_ruleset:
 				uint64_t diff = ts - stlim->pfstlim_rate_ts;
 
 				if (diff < stlim->pfstlim_rate_token) {
+					PF_LIMITER_DENY(0, r->statelim, r->nr, 2,	/* 5BSD: DTrace */
+					    diff, stlim->pfstlim_rate_token);
 					gen = pf_statelim_enter(stlim);
 					stlim->pfstlim_counters.ratelimited++;
 					pf_statelim_leave(stlim, gen);
@@ -4731,6 +4737,7 @@ enter_ruleset:
 					    ts - stlim->pfstlim_rate_bucket;
 				}
 			}
+			PF_LIMITER_ELIGIBLE(0, r->statelim, r->nr);	/* 5BSD: DTrace */
 		}
 
 		if (r->sourcelim.id != PF_SOURCELIM_ID_NONE) {
@@ -4743,6 +4750,8 @@ enter_ruleset:
 			 * There is no "backend" to get a resource out of
 			 * so the rule can't create state.
 			 */
+			if (srlim == NULL)	/* 5BSD: DTrace */
+				PF_LIMITER_MISSING(1, r->sourcelim, r->nr);
 			PF_TEST_ATTRIB(srlim == NULL,
 				TAILQ_NEXT(r, entries));
 
@@ -4755,6 +4764,8 @@ enter_ruleset:
 				 * can't create state.
 				 */
 				if (sr->pfsr_inuse >= srlim->pfsrlim_limit) {
+					PF_LIMITER_DENY(1, r->sourcelim, r->nr, 1,	/* 5BSD: DTrace */
+					    sr->pfsr_inuse, srlim->pfsrlim_limit);
 					sr->pfsr_counters.hardlimited++;
 					gen = pf_sourcelim_enter(srlim);
 					srlim->pfsrlim_counters.hardlimited++;
@@ -4779,6 +4790,8 @@ enter_ruleset:
 					uint64_t diff = ts - sr->pfsr_rate_ts;
 
 					if (diff < srlim->pfsrlim_rate_token) {
+						PF_LIMITER_DENY(1, r->sourcelim, r->nr, 2,	/* 5BSD: DTrace */
+						    diff, srlim->pfsrlim_rate_token);
 						sr->pfsr_counters.ratelimited++;
 						gen = pf_sourcelim_enter(srlim);
 						srlim->pfsrlim_counters.ratelimited++;
@@ -4808,6 +4821,8 @@ enter_ruleset:
 
 				if (srlim->pfsrlim_nsources >=
 				    srlim->pfsrlim_entries) {
+					PF_LIMITER_DENY(1, r->sourcelim, r->nr, 3,	/* 5BSD: DTrace */
+					    srlim->pfsrlim_nsources, srlim->pfsrlim_entries);
 					gen = pf_sourcelim_enter(srlim);
 					srlim->pfsrlim_counters.addrlimited++;
 					pf_sourcelim_leave(srlim, gen);
@@ -4823,6 +4838,7 @@ enter_ruleset:
 					continue;
 				}
 			}
+			PF_LIMITER_ELIGIBLE(1, r->sourcelim, r->nr);	/* 5BSD: DTrace */
 		}
 
 		/* must be last! */

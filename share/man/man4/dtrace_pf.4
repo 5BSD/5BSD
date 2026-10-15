@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 The 5BSD Project
 .\"
-.Dd October 12, 2026
+.Dd October 15, 2026
 .Dt DTRACE_PF 4
 .Os
 .Sh NAME
@@ -15,6 +15,8 @@
 .Li pf:ip:rules:entry
 .br
 .Li pf:ip:anchor:enter
+.br
+.Li pf:ip:limiter:decision,pressure,eligible
 .Pp
 .Li pf::reason:set
 .Pp
@@ -47,6 +49,16 @@
 .Li pf:ioctl:ioctl:entry,return
 .br
 .Li pf:ioctl:xact:begin,commit,rollback
+.Pp
+.Li sdt:::pf-table-begin,pf-table-commit,pf-table-rollback
+.br
+.Li sdt:::pf-syncookie-active
+.br
+.Li sdt:::pfsync-queue-pressure
+.br
+.Li sdt:::pfsync-bulk-start,pfsync-bulk-status-send
+.br
+.Li sdt:::pfsync-bulk-retry,pfsync-bulk-failed
 .Sh DESCRIPTION
 The
 .Nm pf
@@ -229,6 +241,94 @@ the error.
 .It Li pf:ioctl:xact:begin,commit,rollback
 A ruleset transaction step for the named anchor.
 .El
+.Ss State and source limiters
+These probes fire in rule evaluation for rules that use a state or source
+limiter.
+.Fa arg0
+is the limiter kind (0 state, 1 source) and
+.Fa arg1
+its identifier.
+.Bl -tag -width "pf:ip:limiter:decision"
+.It Li pf:ip:limiter:decision
+A limiter stops the rule from creating state:
+.Fa arg2
+rule number,
+.Fa arg3
+reason (0 missing limiter, 1 hard limit, 2 rate limit,
+3 source-address entry capacity),
+.Fa arg4
+configured action and
+.Fa arg5
+1 if the packet is blocked, 0 if evaluation falls through to the next rule.
+A missing limiter always falls through.
+.It Li pf:ip:limiter:pressure
+The values behind a hard, rate or capacity rejection:
+.Fa arg2
+reason,
+.Fa arg3
+observed value (states, elapsed nanoseconds or source entries),
+.Fa arg4
+threshold and
+.Fa arg5
+configured action.
+.It Li pf:ip:limiter:eligible
+The limiter checks passed for rule
+.Fa arg2 .
+This is not packet admission: later checks can still reject the packet.
+.El
+.Ss Function-boundary contracts
+These
+.Li sdt
+provider probes carry scalar arguments only.
+.Bl -tag -width "pfsync-bulk-status-send"
+.It Li pf-table-begin , pf-table-rollback
+A table transaction began or was rolled back:
+.Fa arg0
+flags,
+.Fa arg1
+affected inactive tables,
+.Fa arg2
+0.
+.It Li pf-table-commit
+A table transaction commit:
+.Fa arg0
+flags,
+.Fa arg1
+added and changed tables,
+.Fa arg2
+0 or
+.Er EBUSY
+for an invalid or closed ticket.
+.It Li pf-syncookie-active
+SYN cookies were switched on or off:
+.Fa arg0
+active,
+.Fa arg1
+configured mode.
+.It Li pfsync-queue-pressure
+A
+.Xr pfsync 4
+slice must send its packet before queueing more:
+.Fa arg0
+slice,
+.Fa arg1
+bytes queued,
+.Fa arg2
+bytes requested.
+.It Li pfsync-bulk-start
+A bulk update send began for softc
+.Fa arg0 .
+.It Li pfsync-bulk-status-send
+A bulk update status message
+.Pq Dv PFSYNC_BUS_*
+.Fa arg1
+is about to be sent.
+This is an attempt, not confirmed delivery.
+.It Li pfsync-bulk-retry , pfsync-bulk-failed
+A bulk update request timed out:
+.Fa arg0
+is the attempt count; failed means no further retry.
+.El
 .Sh FILES
 .Bl -tag -width "/usr/share/bsdinstruments/profiles/pf-*.d" -compact
 .It Pa /usr/share/dtrace/pf-observe
@@ -236,7 +336,8 @@ summary of verdicts, latency, reasons, states, NAT, tables, pflog,
 pfsync and pflow activity
 .It Pa /usr/share/bsdinstruments/profiles/pf-*.d
 focused profiles: pf-latency, pf-audit, pf-drops, pf-states,
-pf-frags, pf-nat, pf-tables, pf-rules, pf-pfsync, pf-queues
+pf-frags, pf-nat, pf-tables, pf-rules, pf-pfsync, pf-queues,
+pf-limiter-decisions, pf-table-cookie-events, pfsync-recovery-events
 .El
 .Sh EXAMPLES
 Count drops by reason and source location:

@@ -1079,12 +1079,16 @@ pfsync_bulk_req_evt(struct pfsync_softc *sc, enum pfsync_bulk_req_event evt)
 		case PFSYNC_BREQ_EVT_TMO:
 			if (++sc->sc_bulk_req.req_tries <
 			    PFSYNC_MAX_BULKTRIES) {
+				DTRACE_PROBE1(pfsync__bulk__retry, int,	/* 5BSD: DTrace */
+				    sc->sc_bulk_req.req_tries);
 				pfsync_bulk_req_send(sc);
 				pfsync_bulk_req_nstate(sc,
 				    PFSYNC_BREQ_S_SENT, 2);
 				break;
 			}
 
+			DTRACE_PROBE1(pfsync__bulk__failed, int,	/* 5BSD: DTrace */
+			    sc->sc_bulk_req.req_tries);
 			pfsync_dprintf(sc,
 			    "timeout waiting for bulk transfer start");
 			pfsync_bulk_req_nstate_done(sc);
@@ -1106,10 +1110,14 @@ pfsync_bulk_req_evt(struct pfsync_softc *sc, enum pfsync_bulk_req_event evt)
 		case PFSYNC_BREQ_EVT_TMO:
 			if (++sc->sc_bulk_req.req_tries <
 			    PFSYNC_MAX_BULKTRIES) {
+				DTRACE_PROBE1(pfsync__bulk__retry, int,	/* 5BSD: DTrace */
+				    sc->sc_bulk_req.req_tries);
 				pfsync_bulk_req_send(sc);
 				pfsync_bulk_req_nstate(sc,
 				    PFSYNC_BREQ_S_SENT, 2);
-			}
+			} else	/* 5BSD: DTrace */
+				DTRACE_PROBE1(pfsync__bulk__failed, int,
+				    sc->sc_bulk_req.req_tries);
 
 			pfsync_dprintf(sc,
 			    "timeout waiting for bulk transfer end");
@@ -1663,6 +1671,9 @@ pfsync_q_ins(struct pfsync_slice *s, struct pf_state *st, unsigned int q)
 		nlen += sizeof(struct pfsync_subheader);
 
 	if (s->s_len + nlen > s->s_pfsync->sc_if.if_mtu) {
+		DTRACE_PROBE3(pfsync__queue__pressure,	/* 5BSD: DTrace */
+		    int, (int)(s - s->s_pfsync->sc_slices),
+		    size_t, s->s_len, size_t, nlen);
 		m = pfsync_slice_write(s);
 		if (m != NULL) {
 			s->s_stat_enqueue++;
@@ -2178,6 +2189,7 @@ pfsync_bulk_snd_bus(struct pfsync_softc *sc,
 	nlen = m->m_len + sizeof(*h);
 	if (space < nlen)
 		return (0);
+	DTRACE_PROBE2(pfsync__bulk__status__send, void *, sc, int, status);	/* 5BSD: DTrace */
 
 	h = (struct pfsync_subh_bus *)(mtod(m, caddr_t) + m->m_len);
 	memset(h, 0, sizeof(*h));
@@ -2297,6 +2309,7 @@ pfsync_bulk_snd_start(struct pfsync_softc *sc)
 	sc->sc_bulk_snd.snd_tail = TAILQ_LAST(&pf_state_list.pfs_list,
 	    pf_state_queue);
 	mtx_leave(&pf_state_list.pfs_mtx);
+	DTRACE_PROBE1(pfsync__bulk__start, void *, sc);	/* 5BSD: DTrace */
 
 	m = m_gethdr(M_DONTWAIT, MT_DATA);
 	if (m == NULL)
@@ -2505,6 +2518,9 @@ pfsync_tdb_ins(struct pfsync_slice *s, struct tdb *tdb)
 		nlen += sizeof(struct pfsync_subheader);
 
 	if (s->s_len + nlen > s->s_pfsync->sc_if.if_mtu) {
+		DTRACE_PROBE3(pfsync__queue__pressure,	/* 5BSD: DTrace */
+		    int, (int)(s - s->s_pfsync->sc_slices),
+		    size_t, s->s_len, size_t, nlen);
 		m = pfsync_slice_write(s);
 		if (m != NULL) {
 			s->s_stat_enqueue++;

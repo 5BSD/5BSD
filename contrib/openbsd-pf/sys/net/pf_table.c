@@ -1933,6 +1933,7 @@ pfr_ina_begin(struct pfr_table *trs, u_int32_t *ticket, int *ndel, int flags)
 		pf_remove_if_empty_ruleset(rs);
 	if (ndel != NULL)
 		*ndel = xdel;
+	DTRACE_PROBE3(pf__table__begin, int, flags, int, xdel, int, 0);	/* 5BSD: DTrace */
 	return (0);
 }
 
@@ -2072,6 +2073,7 @@ pfr_ina_rollback(struct pfr_table *trs, u_int32_t ticket, int *ndel, int flags)
 	}
 	if (ndel != NULL)
 		*ndel = xdel;
+	DTRACE_PROBE3(pf__table__rollback, int, flags, int, xdel, int, 0);	/* 5BSD: DTrace */
 	return (0);
 }
 
@@ -2087,8 +2089,10 @@ pfr_ina_commit(struct pfr_table *trs, u_int32_t ticket, int *nadd,
 
 	ACCEPT_FLAGS(flags, PFR_FLAG_DUMMY);
 	rs = pf_find_ruleset(trs->pfrt_anchor);
-	if (rs == NULL || !rs->topen || ticket != rs->tticket)
+	if (rs == NULL || !rs->topen || ticket != rs->tticket) {	/* 5BSD: DTrace */
+		DTRACE_PROBE3(pf__table__commit, int, flags, int, 0, int, EBUSY);
 		return (EBUSY);
+	}
 
 	SLIST_INIT(&workq);
 	RB_FOREACH(p, pfr_ktablehead, &pfr_ktables) {
@@ -2113,6 +2117,8 @@ pfr_ina_commit(struct pfr_table *trs, u_int32_t ticket, int *nadd,
 		*nadd = xadd;
 	if (nchange != NULL)
 		*nchange = xchange;
+	DTRACE_PROBE3(pf__table__commit, int, flags, int, xadd + xchange,	/* 5BSD: DTrace */
+	    int, 0);
 
 	return (0);
 }

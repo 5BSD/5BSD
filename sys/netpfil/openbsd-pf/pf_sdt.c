@@ -23,6 +23,16 @@ SDT_PROBE_DEFINE1(pf, ioctl, xact, begin, "const char *");
 SDT_PROBE_DEFINE2(pf, ioctl, xact, commit, "uint32_t", "const char *");
 SDT_PROBE_DEFINE2(pf, ioctl, xact, rollback, "uint32_t", "const char *");
 SDT_PROBE_DEFINE2(pf, ip, anchor, enter, "void *", "struct pf_ruleset *");
+/* Limiter kind: 0 state, 1 source.  Reason: 0 missing, 1 hard limit,
+ * 2 rate limit, 3 address capacity.  Decision: 0 fallthrough, 1 block.
+ * Eligibility only passes limiter checks; it does not imply packet admission.
+ */
+SDT_PROBE_DEFINE6(pf, ip, limiter, decision,
+    "int", "uint32_t", "uint32_t", "int", "int", "int");
+SDT_PROBE_DEFINE6(pf, ip, limiter, pressure,
+    "int", "uint32_t", "int", "uint64_t", "uint64_t", "int");
+SDT_PROBE_DEFINE3(pf, ip, limiter, eligible,
+    "int", "uint32_t", "uint32_t");
 SDT_PROBE_DEFINE2(pf, ip, route_to, entry, "struct pf_pdesc *", "struct pf_state *");
 SDT_PROBE_DEFINE1(pf, ip, rules, entry, "struct pf_pdesc *");
 SDT_PROBE_DEFINE3(pf, ip, test, entry, "int", "int", "struct ifnet *");

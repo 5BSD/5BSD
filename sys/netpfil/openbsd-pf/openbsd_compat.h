@@ -1281,6 +1281,9 @@ SDT_PROBE_DECLARE(pf, ioctl, xact, begin);
 SDT_PROBE_DECLARE(pf, ioctl, xact, commit);
 SDT_PROBE_DECLARE(pf, ioctl, xact, rollback);
 SDT_PROBE_DECLARE(pf, ip, anchor, enter);
+SDT_PROBE_DECLARE(pf, ip, limiter, decision);
+SDT_PROBE_DECLARE(pf, ip, limiter, eligible);
+SDT_PROBE_DECLARE(pf, ip, limiter, pressure);
 SDT_PROBE_DECLARE(pf, ip, route_to, entry);
 SDT_PROBE_DECLARE(pf, ip, rules, entry);
 SDT_PROBE_DECLARE(pf, ip, test, entry);
@@ -1308,6 +1311,23 @@ SDT_PROBE_DECLARE(pf, table, addr, update);
 #define	PF_SDT2(m, f, n, a, b)		SDT_PROBE2(pf, m, f, n, a, b)
 #define	PF_SDT3(m, f, n, a, b, c)	SDT_PROBE3(pf, m, f, n, a, b, c)
 #define	PF_SDT4(m, f, n, a, b, c, d)	SDT_PROBE4(pf, m, f, n, a, b, c, d)
+/*
+ * State/source limiter probes (contracts in
+ * tools/test/system-tracing/COVERAGE-TWELFTH).  kind: 0 state, 1 source;
+ * reason: 0 missing, 1 hard limit, 2 rate limit, 3 source-entry capacity.
+ * A missing limiter falls through (block 0) and is never dereferenced.
+ */
+#define	PF_LIMITER_MISSING(k, rl, rn)					\
+	SDT_PROBE6(pf, ip, limiter, decision, (k), (rl).id, (rn), 0,	\
+	    (rl).limiter_action, 0)
+#define	PF_LIMITER_DENY(k, rl, rn, why, obs, thr) do {			\
+	SDT_PROBE6(pf, ip, limiter, decision, (k), (rl).id, (rn), (why),	\
+	    (rl).limiter_action, (rl).limiter_action == PF_LIMITER_BLOCK);	\
+	SDT_PROBE6(pf, ip, limiter, pressure, (k), (rl).id, (why),	\
+	    (uint64_t)(obs), (uint64_t)(thr), (rl).limiter_action);	\
+} while (0)
+#define	PF_LIMITER_ELIGIBLE(k, rl, rn)					\
+	SDT_PROBE3(pf, ip, limiter, eligible, (k), (rl).id, (rn))
 #define	PF_SDT_REASON(x)	SDT_PROBE3(pf, , reason, set, (x), __FILE__, __LINE__)
 
 /* ------------------------------------------------------------------ */
