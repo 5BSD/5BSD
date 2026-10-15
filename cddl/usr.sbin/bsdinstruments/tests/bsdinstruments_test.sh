@@ -208,8 +208,10 @@ pf_profiles_compile_head()
 pf_profiles_compile_body()
 {
 	kldstat -q -m pf || atf_skip "pf is not loaded"
-	for profile in pf-audit pf-drops pf-frags pf-latency pf-nat \
-	    pf-pfsync pf-queues pf-rules pf-states pf-tables; do
+	for profile in pf-audit pf-drops pf-frags pf-latency \
+	    pf-limiter-decisions pf-nat pf-pfsync pf-queues pf-rules \
+	    pf-states pf-table-cookie-events pf-tables \
+	    pfsync-recovery-events; do
 		path="/usr/share/bsdinstruments/profiles/$profile.d"
 		[ -f "$path" ] || atf_fail "missing installed profile: $path"
 		# No -Z: every pf probe named by the profile must exist.

@@ -1,3 +1,5 @@
+# 20261015: IPFW is retired; its bsdinstruments profile traced fbt::ipfw_chk
+OLD_FILES+= usr/share/bsdinstruments/profiles/ipfw-audit.d
 # 20261013: retire examples for the old PF grammar.
 OLD_FILES+= usr/share/examples/pf/ackpri
 OLD_FILES+= usr/share/examples/pf/faq-example1
