@@ -100,6 +100,32 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	sslsplit, sslproxy, proxy-suite).  Run Tools/scripts/5bsd-pf-check.sh
 	in the ports tree after imports.
 
+	The kernel maintains the OpenBSD "egress" interface group: the
+	interfaces the IPv4 and IPv6 default routes of FIB 0 point to, per
+	VNET.  pf rules can use "on egress" and "(egress)".  An interface
+	added to the group by hand is removed at the next default route
+	change.
+
+	ipdivert(4) has been retired: the ipdivert module, "options IPDIVERT",
+	<netinet/ip_divert.h>, AF_DIVERT/PF_DIVERT (44 stays reserved),
+	netstat's divert statistics and sockstat's "divert" protocol.  Use pf
+	"divert-packet" rules with OpenBSD divert(4) sockets,
+	socket(AF_INET or AF_INET6, SOCK_RAW, IPPROTO_DIVERT), provided by
+	pf.ko.  Remove "options IPDIVERT" from custom kernel configurations
+	and ipdivert from kld_list.  ng_ksocket(4) nodes use "inet/raw/divert"
+	(or "inet6/raw/divert6") instead of "divert/raw/0".
+
+	ALTQ has been removed: sys/net/altq, "options ALTQ*", altq(4),
+	altq(9), <net/altq/*.h>, if_altq_is_enabled() and the
+	hw.vtnet.altq_disable tunable.  Remove ALTQ options from custom kernel
+	configurations.  struct ifaltq remains the name of the interface send
+	queue (<net/ifq.h>); IFQ_SET_READY() is now a no-op.  struct ifnet
+	changed: rebuild out-of-tree kernel modules.
+
+	As on OpenBSD, pf is locked at securelevel 2 (only reads and address
+	changes in existing tables are allowed); securelevel 3 additionally
+	refuses dummynet configuration with dnctl(8).
+
 20261013:
 	The BSD fixed-name pty(4) compatibility driver has been removed.
 	Use posix_openpt(2), openpty(3), or /dev/ptmx and /dev/pts/N.

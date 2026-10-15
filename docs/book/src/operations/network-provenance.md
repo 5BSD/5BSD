@@ -34,7 +34,7 @@ The per-file detail lives next to the code:
 | ifnet, if_clone, pfil(9), VNET, loopback, epair, bridge, carp, vlan | FreeBSD, with 5BSD changes listed below | `sys/net`, `sys/netinet` |
 | dummynet(4) and dnctl(8) | FreeBSD | `sys/netpfil/dummynet`, `sbin/dnctl` |
 | ifconfig, route, ping, netstat, vmstat | FreeBSD, with OpenBSD behaviour added | `sbin`, `usr.bin` |
-| FreeBSD pf, libpfctl, pf netlink, pflowctl, IPFW, IPFilter | FreeBSD, retired | none (see `ObsoleteFiles.inc`) |
+| FreeBSD pf, libpfctl, pf netlink, pflowctl, IPFW, IPFilter, ipdivert(4), ALTQ | FreeBSD, retired | none (see `ObsoleteFiles.inc`) |
 
 The OpenBSD import is pinned to the revision in `README.5BSD` (OpenBSD
 8.0-current as of 2026-10-10). The FreeBSD side follows `dev`'s upstream
@@ -78,7 +78,7 @@ goes in its own file in `sys/netpfil/openbsd-pf` (`pf_dummynet.c`,
 | `DIOCBINDJAIL` | 5BSD | moves an unused `/dev/pf` descriptor to a descendant jail's VNET; BSDNetwork uses it so system.Network.PF serves the caller's own states |
 | pfsync IPv6 peers (`5BSD: pfsync6`) | FreeBSD feature, 5BSD code | IPv6 unicast or ff12::f0 peers; messages unchanged, IPv6 header with hop limit 255; `SIOC[GS]ETPFSYNC6` |
 | pfsync CARP demotion (`5BSD: carp`) | OpenBSD design on FreeBSD carp | OpenBSD's carp-group counts drive `net.inet.carp.demotion` through `net.pfsync.carp_demotion_factor`; glue `pf_pfsync.c` |
-| divert-to, divert-reply, divert-packet | OpenBSD semantics on FreeBSD sockets | `SO_BINDANY`, `IP_RECVDSTPORT`, OpenBSD divert(4) sockets |
+| divert-to, divert-reply, divert-packet | OpenBSD semantics on FreeBSD sockets | `SO_BINDANY`, `IP_RECVDSTPORT`; OpenBSD divert(4) sockets are the only divert interface (ipdivert(4) retired) |
 | FreeBSD DTrace contracts | dev (FreeBSD pf era) | limiter, table, syncookie and pfsync probes kept with the same names |
 
 ## FreeBSD stack changed to follow OpenBSD
@@ -88,6 +88,7 @@ goes in its own file in `sys/netpfil/openbsd-pf` (`pf_dummynet.c`,
 | Routing domains (`rdomain`, `rtable`) built on FIBs; `SO_RTABLE` | `sys/net`, `sbin/ifconfig`, `sbin/route` (see [Routing Domains](rdomains.md)) |
 | Loopback MTU 32768 and LRO/TSO on lo(4) | `sys/net/if_loop.c` |
 | vether(4) | `sys/net` |
+| "egress" interface group from the default routes of FIB 0, per VNET | `sys/net/if_egress.c` |
 | ifconfig status in OpenBSD's format; `nd6 options` only with `-v` | `sbin/ifconfig` |
 | ifconfig: a mask-less IPv4 address gets the classful default; a point-to-point address may omit the peer | `sbin/ifconfig/af_inet.c`, `sys/netlink/route/iface.c` |
 | pflow and pfsync configured with ifconfig (pflowctl retired) | `sbin/ifconfig` |
@@ -110,6 +111,8 @@ new decision. The matching OpenBSD regress cases are expected to fail.
 | One global PF lock for rule evaluation (FreeBSD pf evaluated in parallel) | OpenBSD design kept for now; SMP work deferred | none |
 | `set limit` belongs to the host; VNET jails cannot change shared pools | pools are host-wide | 5BSD `limits` tests |
 | SCTP verification tags travel in pfsync's `pfss_ts_mod`; OpenBSD peers reject SCTP states | OpenBSD pfsync has no SCTP | none |
+| egress is also rebuilt when a default route is deleted (OpenBSD rebuilds only on add, change and link state) | membership follows the routing table | none |
+| pf locks at securelevel 2 as on OpenBSD; dummynet (dnctl) at 3 | user decision | none |
 | 18 pfctl cases (pfr1–6, pfr8–15, pfsetup1, pfchksum1–3) | they fail on the OpenBSD reference too (stale upstream .ok files) | pfctl; expected failures in `sbin/pfctl/tests` |
 
 5BSD also fixes OpenBSD PF where its code contradicts its own manual; these
@@ -131,6 +134,7 @@ cannot collide:
 - pf ioctls: `DIOCADDETHRULE` through `DIOCGETETHRULESET` are `'D'` 230–234;
   `DIOCBINDJAIL` is `'D'` 235.
 - pfsync: `SIOCSETPFSYNC6`/`SIOCGETPFSYNC6` are `'i'` 242/243.
+- Address family 44 (former `AF_DIVERT`) is reserved and not reused.
 - Address families from 64, `NET_RT_TABLE` 1024, and the other ranges
   recorded in the FreeBSD sync notes.
 
