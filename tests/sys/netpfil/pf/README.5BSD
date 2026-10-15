@@ -4,10 +4,10 @@ tests/sys/netpfil/pf on 5BSD (OpenBSD PF)
 FreeBSD's pf tests, kept where the feature exists in OpenBSD PF and adapted
 to OpenBSD pf.conf syntax and OpenBSD tcpdump/pfctl output; retired where
 they test FreeBSD-only behaviour.  The 5BSD extensions (ether rules,
-dummynet, SCTP multihome, VNET, divert, jail) keep their tests; ether,
-dummynet and SCTP multihome are not yet ported to OpenBSD PF, so those
-tests are expected to fail until they are.  OpenBSD's own suites are in
-openbsd/ (contrib/openbsd-pf/regress).
+dummynet, SCTP multihome, VNET, divert, jail) keep their tests; ether rules
+are ported (ether.sh); dummynet and SCTP multihome are not yet ported to
+OpenBSD PF, so those tests are expected to fail until they are.  OpenBSD's
+own suites are in openbsd/ (contrib/openbsd-pf/regress).
 
 STATUS: WORK IN PROGRESS.  The conversions below are mechanical and have
 NOT been run in a VM yet; see tools/test/pf-parity/HANDOFF-consumers.md.
@@ -52,10 +52,12 @@ utils.subr: pflog/pfsync/pflow availability from ifconfig -C (they are
 part of pf.ko).
 pfsync: the FreeBSD "version" parameter removed from the route-to helper.
 common/{nat,rdr,fragments,tos}.sh: pf variants converted the same way.
+ether: the 5BSD ether rules keep FreeBSD's syntax; the captive cases'
+"rdr on ... ->" became "pass in ... rdr-to".
 
 Not yet reviewed: everything else (pass_block, table, tcp, syncookie,
 synproxy, limiters, limits, max_states, max_pkt_rate, modulate, names,
 once, osfp, prio, rtable, set_skip, snmp, status, tos, get_state,
-loginterface, macro, forward, icmp, mbuf, ether, divert-to, *.py;
+loginterface, macro, forward, icmp, mbuf, divert-to, *.py;
 scrub.sh still uses legacy "scrub on"/"no scrub" rules and needs converting
 or retiring).
