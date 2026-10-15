@@ -12,8 +12,9 @@
  * it is received on the interface that has that address.  Reinjected
  * packets carry PF_TAG_DIVERTED_PACKET so pf does not divert them again.
  *
- * This is the 5BSD implementation of the OpenBSD interface; it is not
- * related to the PF_DIVERT domain of ipdivert(4).
+ * This is the 5BSD implementation of the OpenBSD interface.  FreeBSD's
+ * ipdivert(4) (the PF_DIVERT domain) is retired; this is the only divert
+ * interface.
  */
 
 #include "openbsd_compat.h"

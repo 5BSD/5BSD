@@ -81,9 +81,6 @@ protocol_to_string(int domain, int type, int protocol)
 		default:
 			return ("UD?");
 		}
-	case AF_DIVERT:
-		return ("IPD");
-		break;
 	default:
 		return ("?");
 	}

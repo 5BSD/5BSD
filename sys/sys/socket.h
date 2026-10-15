@@ -276,7 +276,7 @@ struct accept_filter_arg {
 #define	AF_INET_SDP	40		/* OFED Socket Direct Protocol ipv4 */
 #define	AF_INET6_SDP	42		/* OFED Socket Direct Protocol ipv6 */
 #define	AF_HYPERV	43		/* HyperV sockets */
-#define	AF_DIVERT	44		/* divert(4) */
+/* 44: was AF_DIVERT (ipdivert(4), retired); reserved, do not reuse */
 #define	AF_IPFWLOG	46
 /* 5BSD-local families start at 64 so new FreeBSD ones cannot collide. */
 #define	AF_VSOCK	64		/* virtio/vm sockets */
@@ -408,7 +408,6 @@ struct sockproto {
 #define	PF_INET_SDP	AF_INET_SDP
 #define	PF_INET6_SDP	AF_INET6_SDP
 #define	PF_HYPERV	AF_HYPERV
-#define	PF_DIVERT	AF_DIVERT
 #define	PF_VSOCK	AF_VSOCK
 #define	PF_IPFWLOG	AF_IPFWLOG
 

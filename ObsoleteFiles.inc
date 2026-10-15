@@ -1,3 +1,7 @@
+# 20261015: retire ipdivert(4); pf divert-packet and OpenBSD divert(4) remain
+OLD_FILES+= boot/kernel/ipdivert.ko
+OLD_FILES+= usr/include/netinet/ip_divert.h
+OLD_FILES+= usr/share/man/man4/ipdivert.4.gz
 # 20261013: retire examples for the old PF grammar.
 OLD_FILES+= usr/share/examples/pf/ackpri
 OLD_FILES+= usr/share/examples/pf/faq-example1

@@ -88,14 +88,13 @@ VNET_DEFINE(struct inpcbinfo, ripcbinfo);
 #define	V_ripcbinfo		VNET(ripcbinfo)
 
 /*
- * Control and data hooks for Dummynet and packet diversion.
- * The data hooks are not used here but it is convenient
+ * Control and data hooks for Dummynet.
+ * The data hook is not used here but it is convenient
  * to keep them all in one place.
  */
 
 int	(*ip_dn_ctl_ptr)(struct sockopt *);
 int	(*ip_dn_io_ptr)(struct mbuf **, struct ip_fw_args *);
-void	(*ip_divert_ptr)(struct mbuf *, uint64_t, bool);
 
 #ifdef INET
 /*

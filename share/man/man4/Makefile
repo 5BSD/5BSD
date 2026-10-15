@@ -159,7 +159,6 @@ MAN=	aac.4 \
 	disc.4 \
 	disk.4 \
 	divert.4 \
-	ipdivert.4 \
 	${_dpms.4} \
 	ds1307.4 \
 	ds3231.4 \

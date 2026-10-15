@@ -21,7 +21,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* sys/socket.h protocol family that collides with pf's PF_DIVERT action */
+/*
+ * Headers from before ipdivert(4)'s retirement define the PF_DIVERT
+ * protocol family, which collides with pf's PF_DIVERT action.
+ */
 #undef	PF_DIVERT
 
 /* OpenBSD sys/queue.h SIMPLEQ (FreeBSD calls it STAILQ). */

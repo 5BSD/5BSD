@@ -986,8 +986,8 @@ device		dummymbuf
 # MROUTING enables the kernel multicast packet forwarder, which works
 # with mrouted and XORP.
 #
-# IPDIVERT retains packet-diversion socket infrastructure.
 # Packet filtering is provided by PF; shaping is provided by Dummynet.
+# PF's divert-packet rules deliver packets to divert(4) sockets.
 #
 # IPSTEALTH enables code to support stealth forwarding (i.e., forwarding
 # packets without touching the TTL).  This can be useful to hide firewalls
@@ -999,7 +999,6 @@ device		dummymbuf
 # SOCKET_HHOOK enables the hhook(9) framework hooks for socket operations.
 #
 options 	MROUTING		# Multicast routing
-options 	IPDIVERT		#divert sockets
 options 	IPSTEALTH		#support for stealth forwarding
 options 	TCP_BLACKBOX
 options 	TCP_HHOOK

@@ -254,7 +254,6 @@ __END_DECLS
 #define	IPPROTO_DONE		257
 
 #define	IPPROTO_DIVERT		258		/* divert(4) of pf (OpenBSD) */
-#define __IPPROTO_DIVERT	IPPROTO_DIVERT	/* ipdivert(4): use PF_DIVERT */
 
 /* Only used internally, so can be outside the range of valid IP protocols. */
 #define	IPPROTO_SEND		259		/* SeND pseudo-protocol */
