@@ -452,10 +452,12 @@ pfdiv_input(int af, struct mbuf *m, int dir, u_int16_t port)
 			if (!IN6_IS_SCOPE_LINKLOCAL(&su.sin6.sin6_addr))
 				break;
 		}
+#ifdef INET6
 		if (af == AF_INET6) {
 			if (IN6_IS_SCOPE_LINKLOCAL(&su.sin6.sin6_addr))
 				(void)sa6_recoverscope(&su.sin6);
 		}
+#endif
 	}
 
 	mtx_lock(&pfdiv_mtx);

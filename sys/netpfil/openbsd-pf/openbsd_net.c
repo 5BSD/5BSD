@@ -294,11 +294,13 @@ obsd_cksum_out(struct mbuf *m, int af)
 	}
 }
 
+#ifdef INET6
 int
 frag6_deletefraghdr(struct mbuf *m, int offset)
 {
 	return (ip6_deletefraghdr(m, offset, M_NOWAIT));
 }
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Output, forwarding and errors                                       */

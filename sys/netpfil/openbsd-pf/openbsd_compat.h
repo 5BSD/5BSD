@@ -116,12 +116,13 @@
 #include <netinet/udp_var.h>
 #include <netinet/if_ether.h>
 #include <netinet/igmp.h>
-#ifdef INET6
+/* OpenBSD always has INET6; pf.c uses these definitions unconditionally. */
 #include <netinet/ip6.h>
 #include <netinet/icmp6.h>
+#include <netinet6/ip6_var.h>
+#ifdef INET6
 #include <netinet6/in6_var.h>
 #include <netinet6/in6_fib.h>
-#include <netinet6/ip6_var.h>
 #include <netinet6/in6_pcb.h>
 #include <netinet6/nd6.h>
 #include <netinet6/scope6_var.h>
