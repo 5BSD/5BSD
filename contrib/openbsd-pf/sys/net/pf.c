@@ -4508,6 +4508,11 @@ pf_rule_to_actions(struct pf_rule *r, struct pf_rule_actions *a)
 	}
 	if (r->rule_flag & PFRULE_SETDELAY)
 		a->delay = r->delay;
+	if (r->dn.pipe || r->dn.rpipe) {	/* 5BSD: dummynet */
+		a->dnpipe = r->dn.pipe;
+		a->dnrpipe = r->dn.rpipe;
+		a->dnflags = r->dn.flags;
+	}
 }
 
 #define PF_TEST_ATTRIB(t, a)			\
@@ -5272,6 +5277,9 @@ pf_create_state(struct pf_pdesc *pd, struct pf_rule *r, struct pf_rule *a,
 	st->set_prio[0] = act->set_prio[0];
 	st->set_prio[1] = act->set_prio[1];
 	st->delay = act->delay;
+	st->dnpipe = act->dnpipe;	/* 5BSD: dummynet */
+	st->dnrpipe = act->dnrpipe;	/* 5BSD: dummynet */
+	st->dnflags = act->dnflags;	/* 5BSD: dummynet */
 	SLIST_INIT(&st->src_nodes);
 	SLIST_INIT(&st->linkage);
 
@@ -7496,6 +7504,9 @@ pf_route(struct pf_pdesc *pd, struct pf_state *st)
 		ip = mtod(m0, struct ip *);
 	}
 
+	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sintosa(dst), &m0))	/* 5BSD: dummynet */
+		goto done;
+
 	if (if_output_tso(ifp, &m0, sintosa(dst), rt, ifp->if_mtu) ||
 	    m0 == NULL)
 		goto done;
@@ -7625,6 +7636,9 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 		(void) pf_refragment6(&m0, mtag, dst, ifp, rt);
 		goto done;
 	}
+
+	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sin6tosa(dst), &m0))	/* 5BSD: dummynet */
+		goto done;
 
 	if (if_output_tso(ifp, &m0, sin6tosa(dst), rt, ifp->if_mtu) ||
 	    m0 == NULL)
@@ -8464,6 +8478,9 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 		return (PF_PASS);
 	}
 
+	if (pf_dn_reinjected(m0))	/* 5BSD: dummynet */
+		return (PF_PASS);
+
 	action = pf_setup_pdesc(&pd, af, dir, kif, *m0, &reason);
 	if (action != PF_PASS) {
 #if NPFLOG > 0
@@ -8927,6 +8944,8 @@ log_packet:
 #endif /* INET6 */
 			}
 		}
+		if (pd.m != NULL)	/* 5BSD: dummynet */
+			(void)pf_dn_output(&pd, st, r, NULL, NULL, &pd.m);
 		break;
 	}
 

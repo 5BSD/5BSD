@@ -92,6 +92,16 @@ to a re-import.
                  (pfvar_priv.h), pf_match_jail() and its rule test (pf.c),
                  rule copy and checksum (pf_ioctl.c); pfctl parse.y grammar,
                  pfctl_parser.c printing, pfctl_optimize.c field table
+  dummynet (marked "5BSD: dummynet"): the 5BSD extension "dnpipe" and
+                 "dnqueue" (dummynet(4) shaping, as in FreeBSD pf):
+                 struct pf_rule_dn and pf_rule.dn, pf_rule_actions.dn*
+                 (pfvar.h), pf_state.dn* and the glue prototypes
+                 (pfvar_priv.h), rule-to-action/state copies, the pf_test()
+                 reinjection check and pass-path hand-off and the
+                 pf_route()/pf_route6() route-to hand-off (pf.c), rule copy
+                 and checksum (pf_ioctl.c); pfctl parse.y grammar,
+                 pfctl_parser.c printing, pfctl_optimize.c field table.
+                 The logic is in sys/netpfil/openbsd-pf/pf_dummynet.c.
   pfvar.h        REASON_SET fires the pf::reason:set DTrace probe
                  userland (!_KERNEL): sys/param.h before sys/syslimits.h;
                  PF_DIVERT #undef, RTLABEL_LEN and union sockaddr_union

@@ -183,6 +183,9 @@ struct pf_state {
 	u_int16_t		 if_index_in;	/* [I] */
 	u_int16_t		 if_index_out;	/* [I] */
 	u_int16_t		 delay;		/* [I] */
+	u_int16_t		 dnpipe;	/* [I] 5BSD: dummynet */
+	u_int16_t		 dnrpipe;	/* [I] 5BSD: dummynet */
+	u_int8_t		 dnflags;	/* [I] 5BSD: dummynet */
 	u_int8_t		 rt;		/* [I] */
 	uint8_t			 statelim;
 	uint8_t			 sourcelim;
@@ -686,6 +689,11 @@ u_int16_t		pf_pkt_hash(sa_family_t, uint8_t,
 void			pf_status_init(void);
 void			pf_status_clear(void);
 int			pf_status_read(struct PF_KTAG(pf_status) *); /* 5BSD: VNET */
+
+/* 5BSD: dummynet (sys/netpfil/openbsd-pf/pf_dummynet.c) */
+int	pf_dn_reinjected(struct mbuf **);
+int	pf_dn_output(struct pf_pdesc *, struct pf_state *, struct pf_rule *,
+	    struct ifnet *, struct sockaddr *, struct mbuf **);
 
 #endif /* _KERNEL */
 

@@ -695,6 +695,32 @@ pass in proto icmp max-pkt-rate 100/10
 When the rate is exceeded, all ICMP is blocked until the rate falls below
 100 per 10 seconds again.
 .Pp
+.\" 5BSD: dummynet
+.It Cm dnpipe Ar number | Pq Ar number , number
+.It Cm dnqueue Ar number | Pq Ar number , number
+Packets matching this rule are sent through the
+.Xr dummynet 4
+pipe or queue
+.Ar number ,
+configured with
+.Xr dnctl 8 ,
+which can delay, rate-limit, drop and schedule them.
+With two numbers, the second is used for packets of the rule's state
+that travel in the reverse direction;
+.Cm dnqueue ( 0 , 42 )
+shapes only the reverse direction.
+On a
+.Ic match
+rule the setting carries over to the passing rule's state.
+A packet goes through dummynet once and is then passed without being
+evaluated again.
+For
+.Cm route-to
+the packet is shaped before it is sent to the chosen route.
+Loading a ruleset with these options does not load
+.Xr dummynet 4 ;
+until it is loaded, matching packets are dropped.
+These options are a 5BSD extension.
 .It Cm once
 Create a one shot rule.
 The first matching packet marks the rule as expired.

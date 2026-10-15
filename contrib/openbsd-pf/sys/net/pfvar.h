@@ -514,7 +514,23 @@ struct pf_rule_actions {
 	u_int8_t	min_ttl;
 	u_int8_t	set_prio[2];
 	u_int8_t	pad[1];
+	u_int16_t	dnpipe;		/* 5BSD: dummynet */
+	u_int16_t	dnrpipe;	/* 5BSD: dummynet */
+	u_int8_t	dnflags;	/* 5BSD: dummynet */
 };
+
+/*
+ * 5BSD: dummynet.  "dnpipe"/"dnqueue" send matching packets through a
+ * dummynet(4) pipe or queue: pipe for the rule's direction, rpipe for
+ * the reverse direction of its state.
+ */
+struct pf_rule_dn {
+	u_int16_t	pipe;
+	u_int16_t	rpipe;
+	u_int8_t	flags;		/* PF_DN_* */
+	u_int8_t	pad[3];
+};
+#define	PF_DN_IS_PIPE	0x01		/* dnpipe; otherwise dnqueue */
 
 union pf_rule_ptr {
 	struct pf_rule		*ptr;
@@ -664,6 +680,7 @@ struct pf_rule {
 	time_t			 exptime;
 
 	struct pf_rule_jail	 jail;	/* 5BSD extension */
+	struct pf_rule_dn	 dn;	/* 5BSD: dummynet */
 };
 
 /* rule flags */

@@ -1159,6 +1159,15 @@ print_rule(struct pfctl *pf, struct pf_rule *r, const char *anchor_call,
 		printf(" allow-opts");
 	if (r->label[0])
 		printf(" label \"%s\"", r->label);
+	/* Only rpipe: "(0, 42)" queues just the return traffic. */	/* 5BSD: dummynet */
+	if (r->dn.rpipe)
+		printf(" %s(%u, %u)",
+		    r->dn.flags & PF_DN_IS_PIPE ? "dnpipe" : "dnqueue",
+		    r->dn.pipe, r->dn.rpipe);
+	else if (r->dn.pipe)
+		printf(" %s %u",
+		    r->dn.flags & PF_DN_IS_PIPE ? "dnpipe" : "dnqueue",
+		    r->dn.pipe);
 	if (r->rule_flag & PFRULE_ONCE)
 		printf(" once");
 	if (r->tagname[0])

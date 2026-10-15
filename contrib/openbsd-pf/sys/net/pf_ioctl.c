@@ -863,6 +863,9 @@ pf_hash_rule(MD5_CTX *ctx, struct pf_rule *rule)
 		PF_MD5_UPD_HTONL(rule, jail.jid[1], y);
 	}
 	PF_MD5_UPD(rule, jail.op);		/* 5BSD: jail */
+	PF_MD5_UPD_HTONS(rule, dn.pipe, x);	/* 5BSD: dummynet */
+	PF_MD5_UPD_HTONS(rule, dn.rpipe, x);	/* 5BSD: dummynet */
+	PF_MD5_UPD(rule, dn.flags);		/* 5BSD: dummynet */
 	PF_MD5_UPD_HTONL(rule, rule_flag, y);
 	PF_MD5_UPD(rule, action);
 	PF_MD5_UPD(rule, direction);
@@ -4220,6 +4223,9 @@ pf_rule_copyin(struct pf_rule *from, struct pf_rule *to)
 	to->jail = from->jail; /* 5BSD: jail */
 	if (to->jail.byname && pf_jail_rule_copyin(to) != 0)	/* 5BSD: jail */
 		return (EINVAL);
+	if (from->dn.flags & ~PF_DN_IS_PIPE)	/* 5BSD: dummynet */
+		return (EINVAL);
+	to->dn = from->dn;	/* 5BSD: dummynet */
 	to->rule_flag = from->rule_flag;
 	to->action = from->action;
 	to->direction = from->direction;

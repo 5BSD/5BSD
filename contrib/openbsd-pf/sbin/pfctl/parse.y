@@ -262,6 +262,7 @@ struct filter_opts {
 #define FOM_ONCE	0x1000
 #define FOM_PRIO	0x2000
 #define FOM_SETDELAY	0x4000
+#define FOM_DN		0x8000	/* 5BSD: dummynet */
 	struct node_uid		*uid;
 	struct node_gid		*gid;
 	struct node_jail	*jail;	/* 5BSD: jail */
@@ -292,6 +293,7 @@ struct filter_opts {
 	u_int8_t		 prio;
 	u_int8_t		 set_prio[2];
 	u_int16_t		 delay;
+	struct pf_rule_dn	 dn;	/* 5BSD: dummynet */
 	struct divertspec	 divert;
 	struct redirspec	 nat;
 	struct redirspec	 rdr;
@@ -488,6 +490,7 @@ typedef struct {
 		struct node_uid		*uid;
 		struct node_gid		*gid;
 		struct node_jail	*jail;	/* 5BSD: jail */
+		struct pf_rule_dn	 dn;	/* 5BSD: dummynet */
 		struct node_state_opt	*state_opt;
 		struct peer		 peer;
 		struct {
@@ -545,6 +548,7 @@ int	parseport(char *, struct range *r, int);
 %token	MINTTL ERROR ALLOWOPTS FILENAME ROUTETO DUPTO REPLYTO NO LABEL
 %token	NOROUTE URPFFAILED FRAGMENT USER GROUP MAXMSS MAXIMUM TTL TOS DROP TABLE
 %token	JAIL	/* 5BSD: jail */
+%token	DNPIPE DNQUEUE	/* 5BSD: dummynet */
 %token	REASSEMBLE ANCHOR SYNCOOKIES
 %token	SET OPTIMIZATION TIMEOUT LIMIT LOGINTERFACE BLOCKPOLICY RANDOMID
 %token	SYNPROXY FINGERPRINTS NOSYNC DEBUG SKIP HOSTID
@@ -588,6 +592,7 @@ int	parseport(char *, struct range *r, int);
 %type	<v.uid>			uids uid_list uid_item
 %type	<v.jail>		jails jail_list jail_item	/* 5BSD: jail */
 %type	<v.number>		jailnum	/* 5BSD: jail */
+%type	<v.dn>			dnspec	/* 5BSD: dummynet */
 %type	<v.gid>			gids gid_list gid_item
 %type	<v.redirection>		redirpool
 %type	<v.string>		label stringall anchorname
@@ -2390,6 +2395,23 @@ filter_opt	: USER uids {
 				$2->tail->next = filter_opts.jail;
 			filter_opts.jail = $2;
 		}
+		| DNPIPE dnspec {	/* 5BSD: dummynet */
+			if (filter_opts.marker & FOM_DN) {
+				yyerror("dnpipe/dnqueue cannot be respecified");
+				YYERROR;
+			}
+			filter_opts.marker |= FOM_DN;
+			filter_opts.dn = $2;
+			filter_opts.dn.flags |= PF_DN_IS_PIPE;
+		}
+		| DNQUEUE dnspec {	/* 5BSD: dummynet */
+			if (filter_opts.marker & FOM_DN) {
+				yyerror("dnpipe/dnqueue cannot be respecified");
+				YYERROR;
+			}
+			filter_opts.marker |= FOM_DN;
+			filter_opts.dn = $2;
+		}
 		| GROUP gids {
 			if (filter_opts.gid)
 				$2->tail->next = filter_opts.gid;
@@ -2713,6 +2735,39 @@ filter_set	: prio {
 			}
 			filter_opts.marker |= FOM_SETDELAY;
 			filter_opts.delay = $2;
+		}
+		;
+
+/* 5BSD: dummynet; "N", "(N)" or "(N, reverse N)" */
+dnspec		: NUMBER {
+			if ($1 < 1 || $1 > 0xffff) {
+				yyerror("illegal dummynet number %lld (1-%u)",
+				    $1, 0xffff);
+				YYERROR;
+			}
+			memset(&$$, 0, sizeof($$));
+			$$.pipe = $1;
+		}
+		| '(' NUMBER ')' {
+			if ($2 < 1 || $2 > 0xffff) {
+				yyerror("illegal dummynet number %lld (1-%u)",
+				    $2, 0xffff);
+				YYERROR;
+			}
+			memset(&$$, 0, sizeof($$));
+			$$.pipe = $2;
+		}
+		| '(' NUMBER comma NUMBER ')' {
+			/* "(0, N)" shapes only the reverse direction. */
+			if ($2 < 0 || $2 > 0xffff || $4 < 0 || $4 > 0xffff ||
+			    ($2 == 0 && $4 == 0)) {
+				yyerror("illegal dummynet numbers %lld, %lld "
+				    "(0-%u, not both 0)", $2, $4, 0xffff);
+				YYERROR;
+			}
+			memset(&$$, 0, sizeof($$));
+			$$.pipe = $2;
+			$$.rpipe = $4;
 		}
 		;
 
@@ -5609,6 +5664,8 @@ lookup(char *s)
 		{ "divert-packet",	DIVERTPACKET},
 		{ "divert-reply",	DIVERTREPLY},
 		{ "divert-to",		DIVERTTO},
+		{ "dnpipe",		DNPIPE},	/* 5BSD: dummynet */
+		{ "dnqueue",		DNQUEUE},	/* 5BSD: dummynet */
 		{ "drop",		DROP},
 		{ "dup-to",		DUPTO},
 		{ "entries",		ENTRIES},
@@ -6608,6 +6665,13 @@ filteropts_to_rule(struct pf_rule *r, struct filter_opts *opts)
 	if (opts->marker & FOM_SETDELAY) {
 		r->delay = opts->delay;
 		r->rule_flag |= PFRULE_SETDELAY;
+	}
+	if (opts->marker & FOM_DN) {	/* 5BSD: dummynet */
+		if (r->action == PF_DROP) {
+			yyerror("dnpipe/dnqueue cannot be used with block");
+			return (1);
+		}
+		r->dn = opts->dn;
 	}
 	if (opts->marker & FOM_SETTOS) {
 		r->scrub_flags |= PFSTATE_SETTOS;
