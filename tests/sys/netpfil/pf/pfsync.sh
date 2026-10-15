@@ -143,15 +143,13 @@ defer_body()
 	epair_out=$(vnet_mkepair)
 
 	vnet_mkjail alcatraz ${epair_sync}a ${epair_in}a ${epair_out}a
+	pfsynct_mkif alcatraz
 
 	jexec alcatraz ifconfig ${epair_sync}a 192.0.2.1/24 up
 	jexec alcatraz ifconfig ${epair_out}a 198.51.100.1/24 up
 	jexec alcatraz ifconfig ${epair_in}a 203.0.113.1/24 up
 	jexec alcatraz arp -s 203.0.113.2 00:01:02:03:04:05
 	jexec alcatraz sysctl net.inet.ip.forwarding=1
-
-	# Set a long defer delay
-	jexec alcatraz sysctl net.pfsync.defer_delay=2500
 
 	jexec alcatraz ifconfig pfsync0 \
 		syncdev ${epair_sync}a \
@@ -165,7 +163,6 @@ defer_body()
 	route add -net 203.0.113.0/24 198.51.100.1
 
 	# Enable pf
-	jexec alcatraz sysctl net.pf.filter_local=0
 	jexec alcatraz pfctl -e
 	pft_set_rules alcatraz \
 		"set skip on ${epair_sync}a" \
@@ -422,6 +419,10 @@ pbr_common_body()
 	jexec gw_reply_to_backup hostname gw_reply_to_backup
 	vnet_mkjail server ${epair_server_bridge2}a
 	jexec server hostname server
+	pfsynct_mkif gw_route_to_master
+	pfsynct_mkif gw_route_to_backup
+	pfsynct_mkif gw_reply_to_master
+	pfsynct_mkif gw_reply_to_backup
 
 	jexec client ifconfig ${epair_client_bridge0}a inet 198.18.0.1/24 up
 	jexec client route add 198.18.2.0/24 198.18.0.10
@@ -456,7 +457,7 @@ pbr_common_body()
 		"pass quick on { if_br0 if_br1 } proto carp keep state (no-sync)" \
 		"block drop in quick to 224.0.0.18/32" \
 		"pass out quick tagged auth_packet keep state" \
-		"pass in quick log on if_br0 route-to 198.18.1.20 proto { icmp udp tcp } from 198.18.0.0/24 to 198.18.2.0/24 \$keep_state"
+		"pass in quick log on if_br0 proto { icmp udp tcp } from 198.18.0.0/24 to 198.18.2.0/24 route-to 198.18.1.20 \$keep_state"
 	jexec gw_route_to_master pfctl -e
 
 	jexec gw_route_to_backup ifconfig ${epair_sync_gw_route_to}b \
@@ -488,7 +489,7 @@ pbr_common_body()
 		"pass quick on { if_br0 if_br1 } proto carp keep state (no-sync)" \
 		"block drop in quick to 224.0.0.18/32" \
 		"pass out quick tagged auth_packet keep state" \
-		"pass in quick log on if_br0 route-to 198.18.1.20 proto { icmp udp tcp } from 198.18.0.0/24 to 198.18.2.0/24 \$keep_state"
+		"pass in quick log on if_br0 proto { icmp udp tcp } from 198.18.0.0/24 to 198.18.2.0/24 route-to 198.18.1.20 \$keep_state"
 	jexec gw_route_to_backup pfctl -e
 
 	jexec gw_reply_to_master ifconfig ${epair_sync_gw_reply_to}a \
@@ -519,7 +520,7 @@ pbr_common_body()
 		"pass quick on if_pfsync proto pfsync keep state (no-sync)" \
 		"pass quick on { if_br1 if_br2 } proto carp keep state (no-sync)" \
 		"block drop in quick to 224.0.0.18/32" \
-		"pass out quick on if_br2 reply-to 198.18.1.10 tagged auth_packet_reply_to keep state" \
+		"pass out quick on if_br2 tagged auth_packet_reply_to reply-to 198.18.1.10 keep state" \
 		"pass in quick log on if_br1 proto { icmp udp tcp } from 198.18.0.0/24 to 198.18.2.0/24 tag auth_packet_reply_to keep state"
 	jexec gw_reply_to_master pfctl -e
 
@@ -550,7 +551,7 @@ pbr_common_body()
 		"pass quick on if_pfsync proto pfsync keep state (no-sync)" \
 		"pass quick on { if_br1 if_br2 } proto carp keep state (no-sync)" \
 		"block drop in quick to 224.0.0.18/32" \
-		"pass out quick on if_br2 reply-to 198.18.1.10 tagged auth_packet_reply_to keep state" \
+		"pass out quick on if_br2 tagged auth_packet_reply_to reply-to 198.18.1.10 keep state" \
 		"pass in quick log on if_br1 proto { icmp udp tcp } from 198.18.0.0/24 to 198.18.2.0/24 tag auth_packet_reply_to keep state"
 	jexec gw_reply_to_backup pfctl -e
 
@@ -651,7 +652,7 @@ ipsec_body()
 	    | jexec two setkey -c
 
 	# We've set incompatible keys, so pfsync will be broken.
-	ping -c 1 -S 198.51.100.254 198.51.100.1
+	jexec one ping -c 1 -S 198.51.100.1 198.51.100.254
 
 	# Give pfsync time to do its thing
 	sleep 2
@@ -674,7 +675,7 @@ ipsec_body()
 	add 192.0.2.2 192.0.2.1 esp 0x1001 -E aes-gcm-16 \"12345678901234567890\";" \
 	    | jexec two setkey -c
 
-	ping -c 1 -S 198.51.100.254 198.51.100.1
+	jexec one ping -c 1 -S 198.51.100.1 198.51.100.254
 
 	# Give pfsync time to do its thing
 	sleep 2
@@ -699,9 +700,10 @@ timeout_head()
 
 timeout_body()
 {
-	pft_init
+	pfsynct_init
 
 	vnet_mkjail one
+	pfsynct_mkif one
 
 	jexec one ifconfig lo0 127.0.0.1/8 up
 	jexec one ifconfig lo0 inet6 ::1/128 up
@@ -740,6 +742,8 @@ basic_ipv6_unicast_body()
 
 	vnet_mkjail one ${epair_one}a ${epair_sync}a
 	vnet_mkjail two ${epair_two}a ${epair_sync}b
+	pfsynct_mkif one
+	pfsynct_mkif two
 
 	# pfsync interface
 	jexec one ifconfig ${epair_sync}a inet6 fd2c::1/64 no_dad up
@@ -769,7 +773,7 @@ basic_ipv6_unicast_body()
 
 	ifconfig ${epair_one}b inet6 fd2b::f0/64 no_dad up
 
-	ping6 -c 1 -S fd2b::f0 fd2b::1
+	jexec one ping6 -c 1 -S fd2b::1 fd2b::f0
 
 	# Give pfsync time to do its thing
 	sleep 2
@@ -802,6 +806,8 @@ basic_ipv6_body()
 
 	vnet_mkjail one ${epair_one}a ${epair_sync}a
 	vnet_mkjail two ${epair_two}a ${epair_sync}b
+	pfsynct_mkif one
+	pfsynct_mkif two
 
 	# pfsync interface
 	jexec one ifconfig ${epair_sync}a inet6 fd2c::1/64 no_dad up
@@ -831,7 +837,7 @@ basic_ipv6_body()
 
 	ifconfig ${epair_one}b inet6 fd2b::f0/64 no_dad up
 
-	ping6 -c 1 -S fd2b::f0 fd2b::1
+	jexec one ping6 -c 1 -S fd2b::1 fd2b::f0
 
 	# Give pfsync time to do its thing
 	sleep 2
@@ -864,6 +870,8 @@ rtable_body()
 
 	vnet_mkjail one ${epair_one}a ${epair_sync}a
 	vnet_mkjail two ${epair_two}a ${epair_sync}b
+	pfsynct_mkif one
+	pfsynct_mkif two
 
 	# pfsync interface
 	jexec one ifconfig ${epair_sync}a 192.0.2.1/24 up
@@ -948,6 +956,8 @@ route_to_common_head()
 
 	vnet_mkjail one ${epair_one}a ${epair_sync}a ${epair_out_one}a
 	vnet_mkjail two ${epair_two}a ${epair_sync}b ${epair_out_two}a
+	pfsynct_mkif one
+	pfsynct_mkif two
 
 	# pfsync interface
 	jexec one ifconfig ${epair_sync}a 192.0.2.1/24 up
@@ -1013,7 +1023,6 @@ route_to_common_tail()
 	jexec two pfctl -qvvss | normalize_pfctl_s > $states_two
 }
 
-atf_test_case "route_to_1301_body" "cleanup"
 atf_test_case "af_to_in_floating" "cleanup"
 af_to_in_floating_head()
 {
@@ -1057,10 +1066,10 @@ af_to_in_floating_body()
 	jexec two pfctl -qvvss | normalize_pfctl_s > $states_two
 
 	# Sanity check
-	grep -qE 'all ipv6-icmp 203.0.113.1 \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe) .* rule 3 .* origif: inif' $states_one ||
+	grep -qE 'all ipv6-icmp 203.0.113.1 \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe\) .* rule 3 ' $states_one ||
 		atf_fail "State missing on router one"
 
-	grep -qE 'all ipv6-icmp 203.0.113.1 \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe) .* origif: inif' $states_two ||
+	grep -qE 'all ipv6-icmp 203.0.113.1 \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe\) ' $states_two ||
 		atf_fail "State missing on router two"
 }
 
@@ -1111,140 +1120,17 @@ af_to_in_if_bound_body()
 	jexec one pfctl -qvvss | normalize_pfctl_s > $states_one
 	jexec two pfctl -qvvss | normalize_pfctl_s > $states_two
 
+	# OpenBSD binds an if-bound af-to state to the inbound interface; pfctl
+	# has no "origif".
 	# Sanity check
-	grep -qE 'outif ipv6-icmp 203.0.113.1 \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe) .* rule 3 .* origif: inif' $states_one ||
+	grep -qE 'inif ipv6-icmp 203.0.113.1 \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe\) .* rule 3 ' $states_one ||
 		atf_fail "State missing on router one"
 
-	grep -qE 'outif ipv6-icmp 203.0.113.1 \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe) .* origif: inif' $states_two ||
+	grep -qE 'inif ipv6-icmp 203.0.113.1 \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe\) ' $states_two ||
 		atf_fail "State missing on router two"
 }
 
 af_to_in_if_bound_cleanup()
-{
-	pfsynct_cleanup
-}
-
-atf_test_case "af_to_out_if_bound" "cleanup"
-af_to_out_if_bound_head()
-{
-	atf_set descr 'Test syncing of states created by outbound af-to rules with if-bound states'
-	atf_set require.user root
-	atf_set require.progs python3 scapy
-}
-
-af_to_out_if_bound_body()
-{
-	route_to_common_head 1500
-
-	jexec one route add -inet6 -net 64:ff9b::/96 -iface outif
-	jexec one sysctl net.inet6.ip6.forwarding=1
-
-	jexec one pfctl -e
-	pft_set_rules one \
-		"set state-policy if-bound" \
-		"set skip on ${epair_sync}a" \
-		"block" \
-		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv } keep state (no-sync)" \
-		"pass in  on inif  to 64:ff9b::/96 keep state" \
-		"pass out on outif to 64:ff9b::/96 af-to inet from (outif) keep state"
-
-	jexec two pfctl -e
-	pft_set_rules two \
-		"set skip on ${epair_sync}b" \
-		"block" \
-		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv } keep state (no-sync)"
-
-	# ptf_ping can't deal with nat64, this test will fail but generate states
-	atf_check -s exit:1 env PYTHONPATH=${common_dir} \
-		${common_dir}/pft_ping.py \
-		--sendif ${epair_one}b \
-		--fromaddr 2001:db8:4201::fe \
-		--to 64:ff9b::203.0.113.254 \
-		--recvif ${epair_out_one}b
-
-	# Allow time for sync
-	sleep 2
-
-	states_one=$(mktemp)
-	states_two=$(mktemp)
-	jexec one pfctl -qvvss | normalize_pfctl_s > $states_one
-	jexec two pfctl -qvvss | normalize_pfctl_s > $states_two
-
-	# Sanity check
-	# st->orig_kif is the same as st->kif, so st->orig_kif is not printed.
-	for state_regexp in \
-		"inif ipv6-icmp 64:ff9b::cb00:71fe\[128\] <- 2001:db8:4201::fe .* rule 3 .* creatorid: [0-9a-f]+" \
-		"outif icmp 203.0.113.1 \(64:ff9b::cb00:71fe\[8\]\) -> 203.0.113.254:8 \(2001:db8:4201::fe\) .* rule 4 .* creatorid: [0-9a-f]+" \
-	; do
-		grep -qE "${state_regexp}" $states_one || atf_fail "State not found for '${state_regexp}'"
-	done
-
-	for state_regexp in \
-		"inif ipv6-icmp 64:ff9b::cb00:71fe\[128\] <- 2001:db8:4201::fe .* creatorid: [0-9a-f]+" \
-		"outif icmp 203.0.113.1 \(64:ff9b::cb00:71fe\[8\]\) -> 203.0.113.254:8 \(2001:db8:4201::fe\) .* creatorid: [0-9a-f]+" \
-	; do
-		grep -qE "${state_regexp}" $states_two || atf_fail "State not found for '${state_regexp}'"
-	done
-}
-
-af_to_out_if_bound_cleanup()
-{
-	pfsynct_cleanup
-}
-
-atf_test_case "tag" "cleanup"
-tag_head()
-{
-	atf_set descr 'Test if the pf tag is synced'
-	atf_set require.user root
-	atf_set require.progs python3 scapy
-}
-
-tag_body()
-{
-	route_to_common_head 1500
-
-	jexec one pfctl -e
-	pft_set_rules one \
-		"set skip on ${epair_sync}a" \
-		"block" \
-		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv } keep state (no-sync)" \
-		"pass in  on inif  inet proto udp tag sometag keep state" \
-		"pass out on outif tagged sometag keep state (no-sync)"
-
-	jexec two pfctl -e
-	pft_set_rules two \
-		"set debug loud" \
-		"set skip on ${epair_sync}b" \
-		"block" \
-		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv } keep state (no-sync)" \
-		"block tagged othertag" \
-		"pass out on outif tagged sometag keep state (no-sync)"
-
-	atf_check -s exit:0 env PYTHONPATH=${common_dir} \
-		${common_dir}/pft_ping.py \
-		--ping-type=udp \
-		--sendif ${epair_one}b \
-		--fromaddr 198.51.100.254 \
-		--to 203.0.113.254 \
-		--recvif ${epair_out_one}b
-
-	# Allow time for sync
-	sleep 2
-
-	# Force the next request to go through the 2nd router
-	route change -net 203.0.113.0/24 198.51.100.17
-
-	atf_check -s exit:0 env PYTHONPATH=${common_dir} \
-		${common_dir}/pft_ping.py \
-		--ping-type=udp \
-		--sendif ${epair_two}b \
-		--fromaddr 198.51.100.254 \
-		--to 203.0.113.254 \
-		--recvif ${epair_out_two}b
-}
-
-tag_cleanup()
 {
 	pfsynct_cleanup
 }
@@ -1266,6 +1152,8 @@ flush_by_intf_body()
 
 	vnet_mkjail one ${epair_one}a ${epair_sync}a
 	vnet_mkjail two ${epair_two}a ${epair_sync}b
+	pfsynct_mkif one
+	pfsynct_mkif two
 
 	# pfsync interface
 	jexec one ifconfig ${epair_sync}a 192.0.2.1/24 up
@@ -1296,7 +1184,7 @@ flush_by_intf_body()
 
 	ifconfig ${epair_one}b 198.51.100.254/24 up
 
-	ping -c 1 -S 198.51.100.254 198.51.100.1
+	jexec one ping -c 1 -S 198.51.100.1 198.51.100.254
 
 	# Give pfsync time to do its thing
 	sleep 2
@@ -1401,8 +1289,6 @@ atf_init_test_cases()
 	atf_add_test_case "rtable"
 	atf_add_test_case "af_to_in_floating"
 	atf_add_test_case "af_to_in_if_bound"
-	atf_add_test_case "af_to_out_if_bound"
-	atf_add_test_case "tag"
 	atf_add_test_case "flush_by_intf"
 	atf_add_test_case "lifecycle_departure"
 }

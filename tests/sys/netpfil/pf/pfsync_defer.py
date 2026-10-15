@@ -119,11 +119,12 @@ def main():
     if not got_ping:
         sys.exit(2)
 
-    # Deferred packets are delayed around 2.5s (unless the pfsync peer, which
-    # we don't have here, acks their state update earlier)
-    # Expect at least a second of delay, to be somewhat robust against
-    # scheduling-induced jitter.
-    if (sent_ping + 1) > got_ping:
+    # OpenBSD pfsync sends the state insert message of a deferred packet
+    # immediately and holds the packet until the pfsync peer (which we don't
+    # have here) acks it or a short timeout expires, so the update is seen
+    # before the packet.  Without defer the packet is forwarded at once and
+    # the update follows when the pfsync queue is flushed (within a second).
+    if got_ping < got_pfsync:
         sys.exit(3)
 
 if __name__ == '__main__':
