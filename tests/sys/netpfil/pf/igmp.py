@@ -43,7 +43,7 @@ class TestIGMP(VnetTestTemplate):
         ToolsHelper.pf_rules([
             "pass",
             ])
-        ToolsHelper.print_output("/sbin/pfctl -x loud")
+        ToolsHelper.print_output("/sbin/pfctl -x debug")
         ToolsHelper.print_output("echo \"j 230.0.0.1 %s\ns 3600\nq\" | /usr/sbin/mtest" % ifname)
 
     def find_igmp_reply(self, pkt, ifname):

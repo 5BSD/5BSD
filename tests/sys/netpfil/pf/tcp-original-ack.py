@@ -67,7 +67,7 @@ def exchange(forward, sport, seq, ack, flags, payload=b'', admitted=True):
 
 
 def assert_established(sport):
-    states = pfctl('-S', '-ss')
+    states = pfctl('-ss')
     endpoint = client + (f':{sport}' if a.family == 'inet' else f'[{sport}]')
     selected = [line for line in states.splitlines() if endpoint in line]
     assert len(selected) == 1 and 'ESTABLISHED:ESTABLISHED' in selected[0], states

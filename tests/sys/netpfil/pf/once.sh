@@ -59,7 +59,7 @@ basic_body()
 
 	# Check for '# expired'
 	atf_check -s exit:0 -e ignore \
-	    -o match:'pass in inet from 192.0.2.2 to any flags S/SA keep state once # expired' \
+	    -o match:'pass in inet from 192.0.2.2 to any flags S/SA once # expired' \
 	    jexec alcatraz pfctl -sr -vv
 
 	# The second one does not
@@ -112,7 +112,7 @@ anchor_body()
 	# Check for '# expired'
 	jexec alcatraz pfctl -sr -vv -a "*"
 	atf_check -s exit:0 -e ignore \
-	    -o match:'pass in inet from 192.0.2.2 to any flags S/SA keep state once # expired' \
+	    -o match:'pass in inet from 192.0.2.2 to any flags S/SA once # expired' \
 	    jexec alcatraz pfctl -sr -vv -a "*"
 
 	# The second one does not
