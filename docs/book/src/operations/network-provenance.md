@@ -106,6 +106,13 @@ new decision. The matching OpenBSD regress cases are expected to fail.
 | SCTP verification tags travel in pfsync's `pfss_ts_mod`; OpenBSD peers reject SCTP states | OpenBSD pfsync has no SCTP | none |
 | 18 pfctl cases | they fail on the OpenBSD reference too | pfctl |
 
+5BSD also fixes OpenBSD PF where its code contradicts its own manual; these
+are vendor edits to re-check on every import:
+
+| Fix | Upstream behaviour |
+|---|---|
+| `source-track global` limit nodes are shared by all rules using it, as pf.conf(5) and FreeBSD pf say | OpenBSD keys every source node by rule, so the limit is per rule |
+
 ## Number allocation
 
 5BSD additions take values that upstream will not reuse, so later merges
