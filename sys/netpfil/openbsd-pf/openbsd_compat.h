@@ -954,6 +954,12 @@ obsd_m_prepend(struct mbuf *m, int plen, int how)
 }
 #undef	M_PREPEND
 #define	M_PREPEND(m, plen, how)	((m) = obsd_m_prepend((m), (plen), (how)))
+/*
+ * OpenBSD m_prepend() also accounts for the prepended bytes in the packet
+ * header; FreeBSD's leaves m_pkthdr.len short, so ip_input() drops the
+ * packet when the mbuf is handed over directly (epair, loopback).
+ */
+#define	m_prepend(m, plen, how)	obsd_m_prepend((m), (plen), (how))
 #define	m_removehdr(m)			m_demote_pkthdr(m)
 
 /* OpenBSD packet header fields under 5BSD names. */
