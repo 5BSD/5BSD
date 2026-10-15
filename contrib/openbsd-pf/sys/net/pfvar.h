@@ -708,7 +708,7 @@ struct pf_rule {
 #define PFRULE_IFBOUND		0x00010000	/* if-bound */
 #define PFRULE_STATESLOPPY	0x00020000	/* sloppy state tracking */
 #define PFRULE_PFLOW		0x00040000
-#define PFRULE_ALLOW_RELATED	0x00080000	/* 5BSD: sctp; multihome */
+#define PFRULE_ALLOW_RELATED	0x40000000	/* 5BSD: sctp; high bit, clear of OpenBSD flags */
 #define PFRULE_ONCE		0x00100000	/* one shot rule */
 #define PFRULE_AFTO		0x00200000	/* af-to rule */
 #define	PFRULE_EXPIRED		0x00400000	/* one shot rule hit by pkt */
