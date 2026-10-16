@@ -595,9 +595,18 @@ pfi_kif_update(struct pfi_kif *kif)
 
 	/* again for all groups kif is member of */
 	if (kif->pfik_ifp != NULL)
-		CK_STAILQ_FOREACH(ifgl, &kif->pfik_ifp->if_groups, ifgl_next) /* 5BSD */
-			pfi_kif_update((struct pfi_kif *)
-			    ifgl->ifgl_group->ifg_pf_kif);
+		CK_STAILQ_FOREACH(ifgl, &kif->pfik_ifp->if_groups, ifgl_next) { /* 5BSD */
+			struct pfi_kif *gkif =
+			    (struct pfi_kif *)ifgl->ifgl_group->ifg_pf_kif;
+
+			/*
+			 * 5BSD: names.  A FreeBSD interface can be renamed to
+			 * the name of one of its groups ("ifconfig epair0a name
+			 * epair"); the group's kif is then this one.
+			 */
+			if (gkif != NULL && gkif != kif)
+				pfi_kif_update(gkif);
+		}
 }
 
 void
