@@ -670,7 +670,9 @@
 		);
 	}
 97	AUE_NULL	STD	{
-		int linux_unshare(void);
+		int linux_unshare(
+		    l_ulong flags
+		);
 	}
 98	AUE_NULL	STD	{
 		int linux_sys_futex(

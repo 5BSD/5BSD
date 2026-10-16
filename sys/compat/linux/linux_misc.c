@@ -697,6 +697,8 @@ linux_newuname(struct thread *td, struct linux_newuname_args *args)
 	strlcpy(utsname.machine, "x86_64", LINUX_MAX_UTSNAME);
 #elif defined(__aarch64__)
 	strlcpy(utsname.machine, "aarch64", LINUX_MAX_UTSNAME);
+#elif defined(__riscv)
+	strlcpy(utsname.machine, "riscv64", LINUX_MAX_UTSNAME);
 #endif
 
 	return (copyout(&utsname, args->buf, sizeof(utsname)));
@@ -892,7 +894,7 @@ linux_common_wait(struct thread *td, idtype_t idtype, int id, int *statusp,
 			    (bsd_to_linux_signal(WSTOPSIG(tmpstat)) << 8);
 #if defined(__amd64__)
 			tmpstat = linux_ptrace_status(td, siginfo.si_pid, tmpstat);
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__riscv)
 			if (WSTOPSIG(status) == SIGTRAP)
 				tmpstat = linux_ptrace_status(td,
 				    siginfo.si_pid, tmpstat);

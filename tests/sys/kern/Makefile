@@ -153,6 +153,10 @@ ${PACKAGE}FILES+=	linux_test.h
 ATF_TESTS_SH+=	linux_arm64_parity_test
 ${PACKAGE}FILES+=	linux_arm64_parity.c linux_test.h
 .endif
+.if ${MACHINE_ARCH} == "riscv64"
+ATF_TESTS_SH+=	linux_riscv64_smoke_test
+${PACKAGE}FILES+=	linux_riscv64_smoke.c linux_test.h
+.endif
 ATF_TESTS_C+=	cap_confinement_test
 LIBADD.cap_confinement_test+=	pthread
 ATF_TESTS_C+=	capmode_interp_test

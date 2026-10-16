@@ -5,6 +5,9 @@
 .if ${MACHINE_CPUARCH} == "aarch64"
 .PATH: ${SRCTOP}/sys/arm64/linux
 .endif
+.if ${MACHINE_CPUARCH} == "riscv"
+.PATH: ${SRCTOP}/sys/riscv/linux
+.endif
 
 KMOD=	linux_common
 SRCS=	linux_common.c linux_mib.c linux_mmap.c linux_util.c linux_emul.c \
@@ -15,6 +18,9 @@ SRCS=	linux_common.c linux_mib.c linux_mmap.c linux_util.c linux_emul.c \
 SRCS+=	linux_pkru.c linux_x86.c linux_vdso_selector_x86.c
 .endif
 .if ${MACHINE_CPUARCH} == "aarch64"
+SRCS+=	linux_emul_md.c
+.endif
+.if ${MACHINE_CPUARCH} == "riscv"
 SRCS+=	linux_emul_md.c
 .endif
 

@@ -456,12 +456,12 @@ SUBDIR+=	fdt
 .endif
 
 # Linuxulator
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "riscv"
 SUBDIR+=	linprocfs
 SUBDIR+=	linsysfs
 SUBDIR+=	linux_ntsync
 .endif
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "riscv"
 SUBDIR+=	linux64
 SUBDIR+=	linux_common
 .endif

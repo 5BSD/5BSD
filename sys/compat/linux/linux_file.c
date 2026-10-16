@@ -2227,7 +2227,7 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 	case LINUX_F_OFD_GETLK:
 	case LINUX_F_OFD_SETLK:
 	case LINUX_F_OFD_SETLKW:
-#if defined(__aarch64__) || defined(__amd64__)
+#if defined(__aarch64__) || defined(__amd64__) || defined(__riscv)
 		error = copyin((void *)args->arg, &linux_flock,
 		    sizeof(linux_flock));
 		if (error != 0)
@@ -2828,7 +2828,7 @@ linux_copy_file_range(struct thread *td, struct linux_copy_file_range_args
 
 #define	LINUX_MEMFD_PREFIX	"memfd:"
 
-#if defined(__aarch64__) || defined(__amd64__)
+#if defined(__aarch64__) || defined(__amd64__) || defined(__riscv)
 /*
  * readahead(2): EBADF unless the descriptor is open for reading, EINVAL
  * unless it is a regular file, otherwise a WILLNEED advice.

@@ -152,7 +152,9 @@ bsd_to_linux_sigaction(struct sigaction *bsa, l_sigaction_t *lsa)
 
 	bsd_to_linux_sigset(&bsa->sa_mask, &lsa->lsa_mask);
 	lsa->lsa_handler = bsa->sa_handler;
+#if !defined(__riscv)
 	lsa->lsa_restorer = 0;		/* unsupported */
+#endif
 	lsa->lsa_flags = 0;
 	if (bsa->sa_flags & SA_NOCLDSTOP)
 		lsa->lsa_flags |= LINUX_SA_NOCLDSTOP;

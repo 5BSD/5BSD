@@ -61,14 +61,13 @@
 #include <compat/linux/linux_util.h>
 
 /*
- * Path and file-table detachment are supported only for single-threaded
- * Linux64 amd64 processes.  Linux permits per-thread resource ownership;
+ * Path and file-table detachment are supported for single-threaded
+ * Linux64 processes.  Linux permits per-thread resource ownership;
  * replacing p_pd or p_fd in a multithreaded process would affect siblings.
  */
 int
 linux_unshare(struct thread *td, struct linux_unshare_args *args)
 {
-#if defined(__amd64__)
 	struct proc *p;
 	int error;
 
@@ -95,9 +94,6 @@ linux_unshare(struct thread *td, struct linux_unshare_args *args)
 	if ((args->flags & LINUX_CLONE_FS) != 0)
 		pdunshare(td);
 	return (0);
-#else
-	return (ENOSYS);
-#endif
 }
 
 #ifdef LINUX_LEGACY_SYSCALLS

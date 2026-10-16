@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Shared preamble for the freestanding amd64/arm64 Linux syscall tests: no Linux
+ * Shared preamble for freestanding amd64/arm64/riscv64 Linux syscall tests: no Linux
  * libc or sysroot is required.  A test is one static binary whose exit
  * status is the number of the failed check (0 = all passed); it is built
  * and run by its ATF sh wrapper with
@@ -165,7 +165,7 @@ typedef unsigned long size_t;
 #define	SYS_munlock		150
 #define	SYS_waitid		247
 
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__riscv)
 /* Linux arm64 asm-generic syscall numbering. */
 #define	SYS_mmap		222
 #define	SYS_futex		98
@@ -289,6 +289,13 @@ typedef unsigned long size_t;
 #define	SYS_mlock		228
 #define	SYS_munlock		229
 #define	SYS_waitid		95
+#ifdef __riscv
+#define	SYS_uname		160
+#define	SYS_sigaltstack		132
+#define	SYS_unshare		97
+#define	SYS_riscv_hwprobe	258
+#define	SYS_riscv_flush_icache 259
+#endif
 #else
 #error Unsupported Linux test architecture
 #endif
@@ -347,7 +354,7 @@ typedef unsigned long size_t;
 #define	O_NONBLOCK	04000
 #define	O_DSYNC		010000
 #define	O_ASYNC		020000
-#ifdef __aarch64__
+#if defined(__aarch64__) || defined(__riscv)
 #define	O_DIRECT	0200000
 #define	O_LARGEFILE	0400000
 #define	O_DIRECTORY	040000
@@ -461,7 +468,7 @@ struct clone_args {
 	    stack_size, tls, set_tid, set_tid_size, cgroup;
 };
 
-#ifdef __aarch64__
+#if defined(__aarch64__) || defined(__riscv)
 struct stat {
 	u64 st_dev, st_ino;
 	u32 st_mode, st_nlink, st_uid, st_gid;
@@ -522,6 +529,18 @@ call(long nr, long a, long b, long c, long d, long e, long f)
 	__asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1),
 	    "r"(x2), "r"(x3), "r"(x4), "r"(x5) : "memory", "cc");
 	return (x0);
+#elif defined(__riscv)
+	register long a7 __asm__("a7") = nr;
+	register long a0 __asm__("a0") = a;
+	register long a1 __asm__("a1") = b;
+	register long a2 __asm__("a2") = c;
+	register long a3 __asm__("a3") = d;
+	register long a4 __asm__("a4") = e;
+	register long a5 __asm__("a5") = f;
+
+	__asm__ volatile("ecall" : "+r"(a0) : "r"(a7), "r"(a1),
+	    "r"(a2), "r"(a3), "r"(a4), "r"(a5) : "memory");
+	return (a0);
 #else
 	register long r10 __asm__("r10") = d;
 	register long r8 __asm__("r8") = e;
@@ -643,7 +662,7 @@ skip(const char *s)
 static long __attribute__((unused))
 fork_process(void)
 {
-#ifdef __aarch64__
+#if defined(__aarch64__) || defined(__riscv)
 	return (sys5(SYS_clone, SIGCHLD, 0, 0, 0, 0));
 #else
 	return (sys0(SYS_fork));
@@ -902,6 +921,13 @@ __asm__(
 	" mov x0, sp\n"
 	" bl start_c\n"
 	" brk #0\n");
+#elif defined(__riscv)
+__asm__(
+	".globl _start\n"
+	"_start:\n"
+	" mv a0, sp\n"
+	" call start_c\n"
+	" ebreak\n");
 #else
 __asm__(
 	".globl _start\n"

@@ -862,7 +862,9 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 	}
 	/* linux_unshare */
 	case 97: {
-		*n_args = 0;
+		struct linux_unshare_args *p = params;
+		iarg[a++] = p->flags; /* l_ulong */
+		*n_args = 1;
 		break;
 	}
 	/* linux_sys_futex */
@@ -4268,6 +4270,13 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_unshare */
 	case 97:
+		switch (ndx) {
+		case 0:
+			p = "l_ulong";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_sys_futex */
 	case 98:
@@ -7958,6 +7967,9 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_unshare */
 	case 97:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_sys_futex */
 	case 98:
 		if (ndx == 0 || ndx == 1)

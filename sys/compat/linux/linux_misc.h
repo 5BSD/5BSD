@@ -309,7 +309,7 @@ extern int stclohz;
 #define	LINUX_OOM_SCORE_ADJ_MIN	-1000
 #define	LINUX_OOM_SCORE_ADJ_MAX	1000
 
-#if defined(__aarch64__) || defined(__amd64__)
+#if defined(__aarch64__) || defined(__amd64__) || defined(__riscv)
 int linux_ptrace_status(struct thread *td, int pid, int status);
 #endif
 void linux_to_bsd_waitopts(int options, int *bsdopts);
@@ -328,7 +328,7 @@ int linux_iou_waitid_probe(struct thread *,
 
 struct thread	*linux_tdfind(struct thread *, lwpid_t, pid_t);
 #if defined(_AMD64_LINUX_H_) || defined(_I386_LINUX_H_) || \
-    defined(_ARM64_LINUX_H_)
+    defined(_ARM64_LINUX_H_) || defined(_RISCV_LINUX_H_)
 struct image_args;
 int	linux_exec_copyin_args(struct image_args *, const char *,
 	    l_uintptr_t *, l_uintptr_t *);

@@ -111,7 +111,7 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = AS(linux_exit_group_args), .sy_call = (sy_call_t *)linux_exit_group, .sy_auevent = AUE_EXIT, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 94 = linux_exit_group */
 	{ .sy_narg = AS(linux_waitid_args), .sy_call = (sy_call_t *)linux_waitid, .sy_auevent = AUE_WAIT6, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 95 = linux_waitid */
 	{ .sy_narg = AS(linux_set_tid_address_args), .sy_call = (sy_call_t *)linux_set_tid_address, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 96 = linux_set_tid_address */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_unshare, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 97 = linux_unshare */
+	{ .sy_narg = AS(linux_unshare_args), .sy_call = (sy_call_t *)linux_unshare, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 97 = linux_unshare */
 	{ .sy_narg = AS(linux_sys_futex_args), .sy_call = (sy_call_t *)linux_sys_futex, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 98 = linux_sys_futex */
 	{ .sy_narg = AS(linux_set_robust_list_args), .sy_call = (sy_call_t *)linux_set_robust_list, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 99 = linux_set_robust_list */
 	{ .sy_narg = AS(linux_get_robust_list_args), .sy_call = (sy_call_t *)linux_get_robust_list, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 100 = linux_get_robust_list */
