@@ -4,8 +4,9 @@
 # Stage the imported OpenBSD tree on a disposable 5BSD DUT in the upstream
 # layout the regress Makefiles expect (/usr/src/regress, /usr/src/sbin/pfctl,
 # /usr/src/sys/net, ...), plus the pfctl userland compatibility header and
-# the 5BSD "jail" option glue that pf-changerule links with (regress.py
-# passes them as CFLAGS/LDADD).  Plumbing only.
+# the 5BSD "jail" option glue that pf-changerule links with, and the build
+# glue for the ifconfig suite's ifaddr.c (regress.py passes them as
+# CFLAGS/LDADD).  Plumbing only.
 #
 # usage: stage-src-5bsd.sh SRCTOP [SSH_HOST]
 set -eu
@@ -30,3 +31,7 @@ tar -C "$src/sys/netpfil/openbsd-pf/user" -cf - openbsd_compat.h util.h sys \
 	cc -c -O2 -fPIE -o $C/pfctl_jail.o $C/pfctl_jail.c &&
 	cc -c -O2 -fPIE -I$C -I/usr/src/sbin/pfctl -include $C/openbsd_compat.h \
 	    -o $C/pfctl_ether.o $C/pfctl_ether.c && echo STAGED"
+# Build glue for the ifconfig suite's ifaddr.c (regress.py CFLAGS).
+I=/usr/local/share/pf-parity/ifaddr-compat
+tar -C "$src/tools/test/pf-parity/openbsd-regress/ifaddr-compat" -cf - . |
+    $S "rm -rf $I && mkdir -p $I && tar -m -C $I -xf - && echo STAGED"

@@ -28,6 +28,7 @@ DUT_ADDR = '10.188.210.50'
 SRC_ADDR = '10.188.210.10'
 P6 = 'fdd7:e83e:66bc'
 PFCOMPAT = '/usr/local/share/pf-parity/pfctl-compat'
+IFCOMPAT = '/usr/local/share/pf-parity/ifaddr-compat'
 
 
 def mkvars(name, field):
@@ -130,7 +131,13 @@ def suites(dut_os):
         # variable, so list the numbered targets (plumbing only).
         'route': dict(host='dut', dir='regress/sbin/route',
                       targets=['netmask'] + ['rttest%d' % n for n in range(1, 39)]),
-        'ifconfig': dict(host='dut', dir='regress/sbin/ifconfig'),
+        # 5BSD plumbing for ifaddr.c, OpenBSD's cut-down ifconfig: the
+        # build glue for its OpenBSD-only requests (staged by
+        # stage-src-5bsd.sh from ifaddr-compat/).
+        'ifconfig': dict(host='dut', dir='regress/sbin/ifconfig',
+                         vars=({'CFLAGS': '-O2 -pipe -I' + IFCOMPAT + ' -include ' +
+                                IFCOMPAT + '/ifaddr_compat.h'}
+                               if dut_os == '5bsd' else {})),
     }
 
 
