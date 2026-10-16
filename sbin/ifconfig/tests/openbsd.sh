@@ -150,6 +150,119 @@ pflow_cleanup()
 	vnet_cleanup
 }
 
+atf_test_case "inet_mask" "cleanup"
+inet_mask_head()
+{
+	atf_set descr "IPv4 prefixlen, contiguous netmasks and /32 broadcast as OpenBSD"
+	atf_set require.user root
+}
+inet_mask_body()
+{
+	local epair
+
+	vnet_init
+	epair=$(vnet_mkepair)
+	vnet_mkjail one ${epair}a
+
+	atf_check jexec one ifconfig ${epair}a inet 192.0.2.1 prefixlen 24
+	atf_check -o match:"inet 192\.0\.2\.1 netmask 0xffffff00 broadcast 192\.0\.2\.255$" \
+	    jexec one ifconfig ${epair}a
+	atf_check jexec one ifconfig ${epair}a inet 192.0.2.1 delete
+
+	atf_check -s exit:1 -e match:"non-contiguous netmask" \
+	    jexec one ifconfig ${epair}a inet 192.0.2.1 netmask 255.255.255.64
+	atf_check -o not-match:"inet 192\.0\.2\.1 " jexec one ifconfig ${epair}a
+
+	# No broadcast address is shown for a host address.
+	atf_check jexec one ifconfig ${epair}a inet 192.0.2.1/24
+	atf_check jexec one ifconfig ${epair}a inet 192.0.2.1/32
+	atf_check -o match:"inet 192\.0\.2\.1 netmask 0xffffffff$" \
+	    jexec one ifconfig ${epair}a
+	atf_check jexec one ifconfig ${epair}a inet 192.0.2.2/32 alias
+	atf_check -o match:"inet 192\.0\.2\.2 netmask 0xffffffff$" \
+	    jexec one ifconfig ${epair}a
+	# A broadcast address set explicitly is shown.
+	atf_check jexec one ifconfig ${epair}a inet 192.0.2.3/32 \
+	    broadcast 192.0.2.255 alias
+	atf_check -o match:"inet 192\.0\.2\.3 netmask 0xffffffff broadcast 192\.0\.2\.255$" \
+	    jexec one ifconfig ${epair}a
+}
+inet_mask_cleanup()
+{
+	vnet_cleanup
+}
+
+atf_test_case "p2p_nodst" "cleanup"
+p2p_nodst_head()
+{
+	atf_set descr "Point-to-point addresses without or sharing a destination"
+	atf_set require.user root
+}
+p2p_nodst_body()
+{
+	local tun
+
+	vnet_init
+	vnet_mkjail one
+	tun=$(jexec one ifconfig tun create)
+
+	atf_check jexec one ifconfig ${tun} inet 192.0.2.1/24
+	atf_check -o match:"inet 192\.0\.2\.1 --> 0\.0\.0\.0 netmask 0xffffff00$" \
+	    jexec one ifconfig ${tun}
+	atf_check jexec one ifconfig ${tun} inet 192.0.2.1/24 192.0.2.2
+	atf_check -o match:"inet 192\.0\.2\.1 --> 192\.0\.2\.2 netmask 0xffffff00$" \
+	    jexec one ifconfig ${tun}
+
+	atf_check jexec one ifconfig ${tun} inet6 2001:db8::1/64
+	atf_check -o match:"inet6 2001:db8::1 --> :: prefixlen 64" \
+	    jexec one ifconfig ${tun}
+
+	# A destination implies prefixlen 128; addresses may share it.
+	atf_check jexec one ifconfig ${tun} inet6 2001:db8:1::1 2001:db8:1::ff
+	atf_check jexec one ifconfig ${tun} inet6 2001:db8:1::2 2001:db8:1::ff alias
+	atf_check -o match:"inet6 2001:db8:1::1 --> 2001:db8:1::ff prefixlen 128" \
+	    jexec one ifconfig ${tun}
+	atf_check -o match:"inet6 2001:db8:1::2 --> 2001:db8:1::ff prefixlen 128" \
+	    jexec one ifconfig ${tun}
+	# The route to the peer moves to the remaining address.
+	atf_check jexec one ifconfig ${tun} inet6 2001:db8:1::1 delete
+	atf_check -o match:"interface: ${tun}" \
+	    jexec one route -n get -inet6 2001:db8:1::ff
+}
+p2p_nodst_cleanup()
+{
+	vnet_cleanup
+}
+
+atf_test_case "inet6_attach" "cleanup"
+inet6_attach_head()
+{
+	atf_set descr "eui64 attaches IPv6; a first address is tentative"
+	atf_set require.user root
+}
+inet6_attach_body()
+{
+	local epair
+
+	vnet_init
+	epair=$(vnet_mkepair)
+	vnet_mkjail one ${epair}a ${epair}b
+
+	# "eui64" creates the link-local address, as OpenBSD.
+	atf_check jexec one ifconfig ${epair}a inet6 eui64
+	atf_check -o match:"inet6 fe80::[0-9a-f:]*%${epair}a " \
+	    jexec one ifconfig ${epair}a
+
+	# The first address of an interface still without IPv6 gets DAD.
+	atf_check jexec one ifconfig ${epair}b inet6 2001:db8::2/64
+	atf_check -o match:"inet6 2001:db8::2 prefixlen 64 tentative" \
+	    jexec one ifconfig ${epair}b
+}
+inet6_attach_cleanup()
+{
+	vnet_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case autocreate
@@ -157,4 +270,7 @@ atf_init_test_cases()
 	atf_add_test_case format
 	atf_add_test_case extended_flags
 	atf_add_test_case pflow
+	atf_add_test_case inet_mask
+	atf_add_test_case p2p_nodst
+	atf_add_test_case inet6_attach
 }

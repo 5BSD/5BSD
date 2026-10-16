@@ -409,6 +409,11 @@ It is also possible to use the CIDR notation (also known as the
 slash notation) to include the netmask.
 That is, one can specify an address like
 .Li 192.168.0.1/16 .
+An address given without a netmask gets the historical classful netmask
+of its network
+.Pq Li /8 , /16 No or Li /24 ,
+as on
+.Ox .
 .Pp
 For the
 .Cm inet6
@@ -468,6 +473,19 @@ Synonymous with
 .It Ar dest_address
 Specify the address of the correspondent on the other end
 of a point to point link.
+As on
+.Ox ,
+an address can be configured on a point to point interface before its
+destination is known; the status output then shows the destination as
+.Li 0.0.0.0
+or
+.Li :: ,
+and no route to the peer is installed until it is set.
+Several addresses on the interface may share a destination.
+An
+.Cm inet6
+address with a destination gets a prefix length of 128 unless one is
+given.
 .It Ar interface
 This
 parameter is a string of the form
@@ -602,6 +620,13 @@ configuration.
 Specify the address to use to represent broadcasts to the
 network.
 The default broadcast address is the address with a host part of all 1's.
+As on
+.Ox ,
+no broadcast address is shown for a
+.Li /31
+or
+.Li /32
+address unless one was set explicitly.
 .It Cm debug
 Enable driver dependent debugging code; usually, this turns on
 extra console error logging.
@@ -672,6 +697,12 @@ Remove the interface from the given
 Fill interface index
 (lowermost 64bit of an IPv6 address)
 automatically.
+As on
+.Ox ,
+if the interface has no link-local address yet, IPv6 is first enabled on
+it
+.Pq Cm -ifdisabled auto_linklocal
+and the link-local address is configured, even when the interface is down.
 .It Cm fib Ar fib_number
 Specify interface FIB.
 A FIB
@@ -989,8 +1020,6 @@ interface.
 Not all interfaces support setting the MTU, and some interfaces have
 range restrictions.
 .It Cm netmask Ar mask
-.\" (Inet and ISO.)
-(Inet only.)
 Specify how much of the address to reserve for subdividing
 networks into sub-networks.
 The mask includes the network part of the local address
@@ -1007,21 +1036,39 @@ and 0's for the host part.
 The mask should contain at least the standard network portion,
 and the subnet field should be contiguous with the network
 portion.
+As on
+.Ox ,
+a mask that is not contiguous is rejected.
+.Pp
+For the
+.Cm inet6
+family the mask is an IPv6 address, for example
+.Li ffff:ffff:ffff:ffff::\& ,
+and is equivalent to the corresponding
+.Cm prefixlen .
 .Pp
 The netmask can also be specified in CIDR notation after the address.
 See the
 .Ar address
 option above for more information.
 .It Cm prefixlen Ar len
-(Inet6 only.)
 Specify that
 .Ar len
-bits are reserved for subdividing networks into sub-networks.
-The
+bits are reserved for subdividing networks into sub-networks,
+as an alternative to
+.Cm netmask .
+For the
+.Cm inet
+family
 .Ar len
-must be integer, and for syntactical reason it must be between 0 to 128.
-It is almost always 64 under the current IPv6 assignment rule.
-If the parameter is omitted, 64 is used.
+must be between 0 and 32.
+For the
+.Cm inet6
+family it must be between 0 and 128;
+it is almost always 64 under the current IPv6 assignment rule.
+If the parameter is omitted, 64 is used,
+or 128 for an address with a
+.Ar dest_address .
 .Pp
 The prefix can also be specified using the slash notation after the address.
 See the

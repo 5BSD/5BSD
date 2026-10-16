@@ -1393,6 +1393,20 @@ setifnetmask(if_ctx *ctx, const char *addr, int dummy __unused)
 	}
 }
 
+/*
+ * OpenBSD "prefixlen": the netmask as a prefix length, for the address
+ * families that have one.
+ */
+static void
+setifprefixlen(if_ctx *ctx, const char *plen, int dummy __unused)
+{
+	const struct afswtch *afp = ctx->afp;
+
+	if (afp->af_getprefix == NULL)
+		errx(1, "prefixlen: invalid option for %s", afp->af_name);
+	afp->af_getprefix(plen, MASK);
+}
+
 static void
 setifbroadaddr(if_ctx *ctx, const char *addr, int dummy __unused)
 {
@@ -2183,6 +2197,7 @@ static struct cmd basic_cmds[] = {
 	DEF_CMD("delete",	-IFF_UP,	notealias),
 	DEF_CMD("remove",	-IFF_UP,	notealias),
 	DEF_CMD_ARG("netmask",			setifnetmask),
+	DEF_CMD_ARG("prefixlen",		setifprefixlen),
 	DEF_CMD_ARG("metric",			setifmetric),
 	DEF_CMD_ARG("broadcast",		setifbroadaddr),
 	DEF_CMD_ARG2("tunnel",			settunnel),

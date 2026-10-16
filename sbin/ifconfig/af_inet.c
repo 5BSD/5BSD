@@ -94,17 +94,55 @@ print_addr(struct sockaddr_in *sin)
 	printf("\tinet %s", addr_buf);
 }
 
+/*
+ * 5BSD prints OpenBSD's status: OpenBSD stores no broadcast address for a
+ * /31 or /32 (RFC 3021) and prints none.  The kernel keeps the address it
+ * derives for those (the address itself, or 255.255.255.255 for a /31);
+ * do not print that derived value.  A broadcast address set explicitly is
+ * printed.
+ */
+static bool
+in_brd_derived(struct in_addr addr, struct in_addr brd, int plen)
+{
+	if (plen == 32)
+		return (brd.s_addr == addr.s_addr);
+	if (plen == 31)
+		return (brd.s_addr == INADDR_BROADCAST);
+	return (false);
+}
+
+/*
+ * As OpenBSD's kernel, reject a non-contiguous netmask.
+ */
+static void
+in_check_mask(const char *s, struct in_addr mask)
+{
+	uint32_t m = ntohl(mask.s_addr);
+
+	if (m & (~m >> 1))
+		errx(1, "%s: non-contiguous netmask", s);
+}
+
+static int
+in_mask_plen(struct in_addr mask)
+{
+	return (__bitcount32(mask.s_addr));
+}
+
 #ifdef WITHOUT_NETLINK
 static void
 in_status(if_ctx *ctx __unused, const struct ifaddrs *ifa)
 {
 	struct sockaddr_in *sin, null_sin = {};
+	struct in_addr addr;
+	int plen;
 
 	sin = satosin(ifa->ifa_addr);
 	if (sin == NULL)
 		return;
 
 	print_addr(sin);
+	addr = sin->sin_addr;
 
 	if (ifa->ifa_flags & IFF_POINTOPOINT) {
 		sin = satosin(ifa->ifa_dstaddr);
@@ -116,6 +154,7 @@ in_status(if_ctx *ctx __unused, const struct ifaddrs *ifa)
 	sin = satosin(ifa->ifa_netmask);
 	if (sin == NULL)
 		sin = &null_sin;
+	plen = in_mask_plen(sin->sin_addr);
 	if (f_inet != NULL && strcmp(f_inet, "cidr") == 0) {
 		int cidr = 32;
 		unsigned long smask;
@@ -135,7 +174,8 @@ in_status(if_ctx *ctx __unused, const struct ifaddrs *ifa)
 
 	if (ifa->ifa_flags & IFF_BROADCAST) {
 		sin = satosin(ifa->ifa_broadaddr);
-		if (sin != NULL && sin->sin_addr.s_addr != 0)
+		if (sin != NULL && sin->sin_addr.s_addr != 0 &&
+		    !in_brd_derived(addr, sin->sin_addr, plen))
 			printf(" broadcast %s", inet_ntoa(sin->sin_addr));
 	}
 
@@ -165,8 +205,15 @@ in_status_nl(if_ctx *ctx __unused, if_link_t *link, if_addr_t *ifa)
 
 	if (link->ifi_flags & IFF_POINTOPOINT) {
 		struct sockaddr_in *dst = satosin(ifa->ifa_address);
+		struct in_addr dst_addr = {};
 
-		printf(" --> %s", inet_ntoa(dst->sin_addr));
+		/*
+		 * Without a destination, IFA_ADDRESS repeats the local
+		 * address; print OpenBSD's unset destination instead.
+		 */
+		if (dst != NULL && dst->sin_addr.s_addr != sin->sin_addr.s_addr)
+			dst_addr = dst->sin_addr;
+		printf(" --> %s", inet_ntoa(dst_addr));
 	}
 	if (f_inet != NULL && strcmp(f_inet, "cidr") == 0) {
 		printf("/%d", plen);
@@ -177,7 +224,8 @@ in_status_nl(if_ctx *ctx __unused, if_link_t *link, if_addr_t *ifa)
 
 	if ((link->ifi_flags & IFF_BROADCAST) && plen != 0)  {
 		struct sockaddr_in *brd = satosin(ifa->ifa_broadcast);
-		if (brd != NULL)
+		if (brd != NULL &&
+		    !in_brd_derived(sin->sin_addr, brd->sin_addr, plen))
 			printf(" broadcast %s", inet_ntoa(brd->sin_addr));
 	}
 
@@ -237,14 +285,32 @@ in_getaddr(const char *s, int which)
 	}
 
 	if (inet_aton(s, &sin->sin_addr))
-		return;
-	if ((hp = gethostbyname(s)) != NULL)
+		;
+	else if ((hp = gethostbyname(s)) != NULL)
 		bcopy(hp->h_addr, (char *)&sin->sin_addr, 
 		    MIN((size_t)hp->h_length, sizeof(sin->sin_addr)));
 	else if ((np = getnetbyname(s)) != NULL)
 		sin->sin_addr = inet_makeaddr(np->n_net, INADDR_ANY);
 	else
 		errx(1, "%s: bad value", s);
+	if (which == MASK)
+		in_check_mask(s, sin->sin_addr);
+}
+
+/* OpenBSD "prefixlen": the netmask as a prefix length. */
+static void
+in_getprefix(const char *plen, int which)
+{
+	struct sockaddr_in *sin = sintab[which];
+	const char *errstr;
+	int len;
+
+	len = (int)strtonum(plen, 0, 32, &errstr);
+	if (errstr != NULL)
+		errx(1, "prefixlen %s: %s", plen, errstr);
+	sin->sin_len = sizeof(*sin);
+	sin->sin_family = AF_INET;
+	sin->sin_addr.s_addr = htonl(len ? ~((1U << (32 - len)) - 1) : 0);
 }
 
 #else
@@ -291,7 +357,8 @@ in_getaddr(const char *s, int which)
 		struct in_addr mask = {};
 
 		in_getip(s, &mask);
-		px_addr->plen = __bitcount32(mask.s_addr);
+		in_check_mask(s, mask);
+		px_addr->plen = in_mask_plen(mask);
 		px_addr->maskset = true;
 		return;
 	}
@@ -319,6 +386,21 @@ in_getaddr(const char *s, int which)
 
 	in_getip(s, &px->addr);
 	px->addrset = true;
+}
+
+/* OpenBSD "prefixlen": the netmask as a prefix length. */
+static void
+in_getprefix(const char *plen, int which __unused)
+{
+	struct in_px *px_addr = sintab_nl[ADDR];
+	const char *errstr;
+	int len;
+
+	len = (int)strtonum(plen, 0, 32, &errstr);
+	if (errstr != NULL)
+		errx(1, "prefixlen %s: %s", plen, errstr);
+	px_addr->plen = len;
+	px_addr->maskset = true;
 }
 
 /*
@@ -534,6 +616,7 @@ static struct afswtch af_inet = {
 	.af_status	= in_status_nl,
 #endif
 	.af_getaddr	= in_getaddr,
+	.af_getprefix	= in_getprefix,
 	.af_copyaddr	= in_copyaddr,
 	.af_postproc	= in_postproc,
 	.af_status_tunnel = in_status_tunnel,
