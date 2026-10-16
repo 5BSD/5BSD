@@ -25,7 +25,7 @@
 #
 
 # PROVIDE: bridge
-# REQUIRE: netif ppp stf
+# REQUIRE: netif ppp
 # KEYWORD: nojailvnet
 
 . /etc/rc.subr

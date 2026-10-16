@@ -1878,11 +1878,6 @@ ktritimerval(struct itimerval *it)
 static void
 ktrsockaddr(struct sockaddr *sa)
 {
-/*
- TODO: Support additional address families
-	#include <netsmb/netbios.h>
-	struct sockaddr_nb	*nb;
-*/
 	const char *str;
 	char addr[64];
 

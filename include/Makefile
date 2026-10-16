@@ -48,7 +48,7 @@ LHDRS=	aio.h errno.h fcntl.h linker_set.h poll.h stdatomic.h stdint.h \
 	syslog.h ucontext.h
 
 LDIRS=	geom net net80211 netgraph netinet netinet6 \
-	netipsec netlink netsmb nfs nfsclient nfsserver sys vm
+	netipsec netlink nfs nfsclient nfsserver sys vm
 
 LSUBDIRS=	dev/acpica dev/ciss dev/filemon dev/firewire \
 	dev/hwpmc dev/hyperv \
@@ -56,7 +56,7 @@ LSUBDIRS=	dev/acpica dev/ciss dev/filemon dev/firewire \
 	dev/ofw dev/pbio dev/pci ${_dev_powermac_nvram} dev/pwm \
 	dev/smbus dev/speaker dev/tcp_log dev/veriexec dev/vkbd dev/wg \
 	fs/devfs fs/fdescfs fs/msdosfs fs/nfs fs/nullfs \
-	fs/smbfs fs/unionfs \
+	fs/unionfs \
 	geom/eli geom/gate geom/label \
 	geom/mirror geom/multipath geom/nop \
 	geom/raid \

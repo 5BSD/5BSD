@@ -35,7 +35,6 @@ MAN=	aac.4 \
 	ads111x.4 \
 	ae.4 \
 	${_aesni.4} \
-	age.4 \
 	ahc.4 \
 	ahci.4 \
 	ahd.4 \
@@ -388,16 +387,12 @@ MAN=	aac.4 \
 	ng_deflate.4 \
 	ng_device.4 \
 	nge.4 \
-	ng_echo.4 \
 	ng_eiface.4 \
-	ng_etf.4 \
 	ng_ether.4 \
-	ng_ether_echo.4 \
 	ng_gif.4 \
 	ng_gif_demux.4 \
 	ng_hci.4 \
 	ng_hci_virt.4 \
-	ng_hole.4 \
 	ng_hub.4 \
 	ng_iface.4 \
 	ng_ip_input.4 \
@@ -415,7 +410,6 @@ MAN=	aac.4 \
 	ng_pppoe.4 \
 	ng_pptpgre.4 \
 	ng_socket.4 \
-	ng_source.4 \
 	ng_split.4 \
 	ng_tag.4 \
 	ng_tcpmss.4 \
@@ -569,7 +563,6 @@ MAN=	aac.4 \
 	spigen.4 \
 	${_spkr.4} \
 	ste.4 \
-	stf.4 \
 	stge.4 \
 	${_sume.4} \
 	${_superio.4} \
@@ -666,7 +659,6 @@ MLINKS=	ads111x.4 ads1013.4 \
 	ads111x.4 ads1114.4 \
 	ads111x.4 ads1115.4
 MLINKS+=ae.4 if_ae.4
-MLINKS+=age.4 if_age.4
 MLINKS+=alc.4 if_alc.4
 MLINKS+=ale.4 if_ale.4
 MLINKS+=altq.4 ALTQ.4
@@ -809,7 +801,6 @@ MLINKS+=smsc.4 if_smsc.4
 MLINKS+=snd_envy24.4 snd_ak452x.4
 MLINKS+=${_spkr.4} ${_speaker.4}
 MLINKS+=ste.4 if_ste.4
-MLINKS+=stf.4 if_stf.4
 MLINKS+=stge.4 if_stge.4
 MLINKS+=syncache.4 syncookies.4
 MLINKS+=tap.4 if_tap.4 \

@@ -133,7 +133,6 @@ BADHDRS= \
 	net/bpf_zerocopy.h \
 	net/bpfdesc.h \
 	net/debugnet_int.h \
-	net/firewire.h \
 	net/if_arp.h \
 	net/if_dl.h \
 	net/if_enc.h \
@@ -199,8 +198,6 @@ BADHDRS= \
 	netgraph/ng_car.h \
 	netgraph/ng_checksum.h \
 	netgraph/ng_deflate.h \
-	netgraph/ng_etf.h \
-	netgraph/ng_hole.h \
 	netgraph/ng_ksocket.h \
 	netgraph/ng_l2tp.h \
 	netgraph/ng_macfilter.h \
@@ -214,10 +211,8 @@ BADHDRS= \
 	netgraph/ng_ppp.h \
 	netgraph/ng_pppoe.h \
 	netgraph/ng_pptpgre.h \
-	netgraph/ng_sample.h \
 	netgraph/ng_socket.h \
 	netgraph/ng_socketvar.h \
-	netgraph/ng_source.h \
 	netgraph/ng_tag.h \
 	netgraph/ng_tcpmss.h \
 	netgraph/ng_tee.h \
@@ -285,9 +280,3 @@ BADHDRS= \
 	netipsec/ipsec6.h \
 	netipsec/key_debug.h \
 	netipsec/keysock.h \
-	netsmb/netbios.h \
-	netsmb/smb.h \
-	netsmb/smb_conn.h \
-	netsmb/smb_rq.h \
-	netsmb/smb_subr.h \
-	netsmb/smb_tran.h \

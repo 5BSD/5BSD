@@ -221,7 +221,6 @@ device		mlx5en			# Ethernet driver
 # PCI Ethernet NICs that use the common MII bus controller code.
 # NOTE: Be sure to keep the 'device miibus' line in order to use these NICs!
 device		miibus			# MII bus support
-device		age			# Attansic/Atheros L1 Gigabit Ethernet
 device		alc			# Atheros AR8131/AR8132 Ethernet
 device		ale			# Atheros AR8121/AR8113/AR8114 Ethernet
 device		bce			# Broadcom BCM5706/BCM5708 Gigabit Ethernet

@@ -37,7 +37,6 @@ netstart	- network startup script run from /etc/rc
 network.subr	- routines for network configuration scripts
 networks	- see networks(5)
 newsyslog.conf	- configuration for system log file rotator newsyslog(8)
-nsmb.conf	- smbfs lookups configuration file
 pf.conf		- pf(4) example configuration file
 pf.os		- SYN fingerprint database
 phones		- phone number database for tip(1)

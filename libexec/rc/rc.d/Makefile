@@ -64,7 +64,6 @@ CONFS=	DAEMON \
 	securelevel \
 	static_arp \
 	static_ndp \
-	stf \
 	swap \
 	swaplate \
 	sysctl \

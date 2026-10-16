@@ -2132,8 +2132,6 @@ in6_if2idlen(struct ifnet *ifp)
 		return (64);
 	case IFT_FRELAY:	/* RFC2590 */
 		return (64);
-	case IFT_IEEE1394:	/* RFC3146 */
-		return (64);
 	case IFT_GIF:
 		return (64);	/* draft-ietf-v6ops-mech-v2-07 */
 	case IFT_LOOP:

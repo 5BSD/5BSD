@@ -61,14 +61,10 @@
 #include <netgraph/ng_car.h>
 #include <netgraph/ng_deflate.h>
 #include <netgraph/ng_device.h>
-#include <netgraph/ng_echo.h>
 #include <netgraph/ng_eiface.h>
-#include <netgraph/ng_etf.h>
 #include <netgraph/ng_ether.h>
-#include <netgraph/ng_ether_echo.h>
 #include <netgraph/ng_gif.h>
 #include <netgraph/ng_gif_demux.h>
-#include <netgraph/ng_hole.h>
 #include <netgraph/ng_hub.h>
 #include <netgraph/ng_iface.h>
 #include <netgraph/ng_ip_input.h>
@@ -84,7 +80,6 @@
 #include <netgraph/ng_pppoe.h>
 #include <netgraph/ng_pptpgre.h>
 #include <netgraph/ng_socket.h>
-#include <netgraph/ng_source.h>
 #include <netgraph/ng_split.h>
 #include <netgraph/ng_tag.h>
 #include <netgraph/ng_tcpmss.h>
@@ -128,15 +123,11 @@ static const struct ng_cookie cookies[] = {
 	COOKIE(CAR),
 	COOKIE(DEFLATE),
 	COOKIE(DEVICE),
-	COOKIE(ECHO),
 	COOKIE(EIFACE),
-	COOKIE(ETF),
 	COOKIE(ETHER),
-	COOKIE(ETHER_ECHO),
 	COOKIE(GIF),
 	COOKIE(GIF_DEMUX),
 	COOKIE(GENERIC),
-	COOKIE(HOLE),
 	COOKIE(HUB),
 	COOKIE(IFACE),
 	COOKIE(IP_INPUT),
@@ -152,7 +143,6 @@ static const struct ng_cookie cookies[] = {
 	COOKIE(PPPOE),
 	COOKIE(PPTPGRE),
 	COOKIE(SOCKET),
-	COOKIE(SOURCE),
 	COOKIE(SPLIT),
 	COOKIE(TAG),
 	COOKIE(TCPMSS),

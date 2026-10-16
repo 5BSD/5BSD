@@ -373,7 +373,6 @@ dhcpif()
 
 	case $1 in
 	lo[0-9]*|\
-	stf[0-9]*|\
 	lp[0-9]*|\
 	sl[0-9]*)
 		return 1
@@ -583,7 +582,6 @@ ipv6_autoconfif()
 
 	case $_if in
 	lo[0-9]*|\
-	stf[0-9]*|\
 	lp[0-9]*|\
 	sl[0-9]*)
 		return 1

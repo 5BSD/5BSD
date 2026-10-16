@@ -831,10 +831,6 @@ on the node.
 .Pp
 From a hook you can obtain the corresponding node, and from
 a node, it is possible to traverse all the active hooks.
-.Pp
-A current example of how to define a node can always be seen in
-.Pa src/sys/netgraph/ng_sample.c
-and should be used as a starting point for new node writers.
 .El
 .Ss Netgraph Message Structure
 Control messages have the following structure:
@@ -1376,11 +1372,6 @@ subsystem loadable KLD module.
 .It Pa /boot/kernel/ng_ Ns Ao Ar type Ac Ns Pa .ko
 Loadable KLD module for node type
 .Ar type .
-.It Pa src/sys/netgraph/ng_sample.c
-Skeleton
-.Nm
-node.
-Use this as a starting point for new node types.
 .El
 .Sh USER MODE SUPPORT
 There is a library for supporting user-mode programs that wish
@@ -1422,14 +1413,11 @@ common networking problems, solved using
 .Xr ng_btsocket 4 ,
 .Xr ng_car 4 ,
 .Xr ng_device 4 ,
-.Xr ng_echo 4 ,
 .Xr ng_eiface 4 ,
-.Xr ng_etf 4 ,
 .Xr ng_ether 4 ,
 .Xr ng_gif 4 ,
 .Xr ng_gif_demux 4 ,
 .Xr ng_hci 4 ,
-.Xr ng_hole 4 ,
 .Xr ng_hub 4 ,
 .Xr ng_iface 4 ,
 .Xr ng_ip_input 4 ,

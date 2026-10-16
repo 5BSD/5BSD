@@ -48,7 +48,6 @@ DIRDEPS+= \
 	sbin/atm/atmconfig \
 	sbin/camcontrol \
 	sbin/clri \
-	sbin/comcontrol \
 	sbin/conscontrol \
 	sbin/decryptcore \
 	sbin/ddb \
@@ -308,7 +307,6 @@ DIRDEPS+= \
 	usr.bin/seq \
 	usr.bin/shar \
 	usr.bin/showmount \
-	usr.bin/smbutil \
 	usr.bin/sockstat \
 	usr.bin/soelim \
 	usr.bin/sort \
@@ -574,7 +572,6 @@ DIRDEPS+= \
 	usr.sbin/mixer \
 	usr.sbin/mld6query \
 	usr.sbin/mlxcontrol \
-	usr.sbin/mount_smbfs \
 	usr.sbin/mountd \
 	usr.sbin/moused \
 	usr.sbin/mpsutil \
@@ -724,8 +721,6 @@ DIRDEPS+=	usr.sbin/efidp
 .endif
 
 DIRDEPS.amd64= \
-	sbin/bsdlabel \
-	sbin/fdisk \
 	sbin/nvmecontrol \
 	usr.sbin/acpi/acpiconf \
 	usr.sbin/acpi/acpidb \
@@ -748,13 +743,9 @@ DIRDEPS.amd64= \
 	usr.sbin/zzz
 
 DIRDEPS.arm= \
-	sbin/bsdlabel \
-	sbin/fdisk \
 	usr.sbin/ofwdump
 
 DIRDEPS.i386= \
-	sbin/bsdlabel \
-	sbin/fdisk \
 	sbin/nvmecontrol \
 	usr.sbin/apm \
 	usr.sbin/btxld \

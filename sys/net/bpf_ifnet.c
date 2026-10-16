@@ -49,7 +49,6 @@
 /* We need to know all the ifnets we support. */
 #include <net/if_dl.h>
 #include <net/ethernet.h>
-#include <net/firewire.h>
 #include <net/if_pflog.h>
 #include <net/if_pfsync.h>
 
@@ -110,11 +109,6 @@ bpf_ifnet_write(void *arg, struct mbuf *m, struct mbuf *mc, int flags)
 		hlen = ETHER_HDR_LEN;
 		break;
 	}
-	/* DLT_APPLE_IP_OVER_IEEE1394 */
-	case IFT_IEEE1394:	/* fwip(4) */
-		hlen = sizeof(struct fw_hwaddr);
-		break;
-
 	/* DLT_NULL */
 	case IFT_GIF:		/* gif(4) */
 	case IFT_LOOP:		/* lo(4), disc(4) */
@@ -122,7 +116,6 @@ bpf_ifnet_write(void *arg, struct mbuf *m, struct mbuf *mc, int flags)
 	case IFT_PPP:		/* tun(4) */
 	case IFT_PROPVIRTUAL:	/* ng_iface(4) */
 	case IFT_WIREGUARD:	/* wg(4) */
-	case IFT_STF:		/* stf(4) */
 	case IFT_TUNNEL:	/* ipsec(4), me(4), gre(4), ovpn(4) */
 		hlen = sizeof(uint32_t);
 		break;

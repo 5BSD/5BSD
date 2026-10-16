@@ -209,9 +209,7 @@ in6_get_interface_hwaddr(struct ifnet *ifp, size_t *len)
 	case IFT_ETHER:
 	case IFT_L2VLAN:
 	case IFT_ATM:
-	case IFT_IEEE1394:
 		/* IEEE802/EUI64 cases - what others? */
-		/* IEEE1394 uses 16byte length address starting with EUI64 */
 		if (*len > 8)
 			*len = 8;
 
@@ -230,7 +228,6 @@ in6_get_interface_hwaddr(struct ifnet *ifp, size_t *len)
 		break;
 
 	case IFT_GIF:
-	case IFT_STF:
 		/*
 		 * RFC2893 says: "SHOULD use IPv4 address as ifid source".
 		 * however, IPv4 address is not very suitable as unique
@@ -784,24 +781,6 @@ in6_ifattach(struct ifnet *ifp, struct ifnet *altifp)
 	/* XXXGL: can this happen after IFT_PFSYNC is gone? */
 	if (ifp->if_inet6 == NULL)
 		return;
-	/*
-	 * quirks based on interface type
-	 */
-	switch (ifp->if_type) {
-	case IFT_STF:
-		/*
-		 * 6to4 interface is a very special kind of beast.
-		 * no multicast, no linklocal.  RFC2529 specifies how to make
-		 * linklocals for 6to4 interface, but there's no use and
-		 * it is rather harmful to have one.
-		 */
-		ifp->if_inet6->nd_flags &= ~ND6_IFF_AUTO_LINKLOCAL;
-		ifp->if_inet6->nd_flags |= ND6_IFF_NO_DAD;
-		break;
-	default:
-		break;
-	}
-
 	/*
 	 * usually, we require multicast capability to the interface
 	 */

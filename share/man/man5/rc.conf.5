@@ -2713,27 +2713,6 @@ is set to
 these are the flags to pass to the
 .Xr bootparamd 8
 daemon.
-.It Va stf_interface_ipv4addr
-.Pq Vt str
-If not set to
-.Dq Li NO ,
-this is the local IPv4 address for 6to4 (IPv6 over IPv4 tunneling
-interface).
-Specify this entry to enable the 6to4 interface.
-.It Va stf_interface_ipv4plen
-.Pq Vt int
-Prefix length for 6to4 IPv4 addresses, to limit peer address range.
-An effective value is 0-31.
-.It Va stf_interface_ipv6_ifid
-.Pq Vt str
-IPv6 interface ID for
-.Xr stf 4 .
-This can be set to
-.Dq Li AUTO .
-.It Va stf_interface_ipv6_slaid
-.Pq Vt str
-IPv6 Site Level Aggregator for
-.Xr stf 4 .
 .It Va ipv6_ipv4mapping
 .Pq Vt bool
 If set to

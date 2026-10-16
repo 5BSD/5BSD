@@ -23,7 +23,6 @@ SUBDIR=	\
 	acl_posix1e \
 	${_acpi} \
 	${_aesni} \
-	age \
 	ahci \
 	alc \
 	ale \
@@ -150,7 +149,6 @@ SUBDIR=	\
 	if_infiniband \
 	if_lagg \
 	if_ovpn \
-	${_if_stf} \
 	if_tuntap \
 	if_vlan \
 	if_vxlan \
@@ -426,11 +424,6 @@ _ipsec=		ipsec
 .if ${KERN_OPTS:MSCTP_SUPPORT} || ${KERN_OPTS:MSCTP}
 _sctp=		sctp
 .endif
-.endif
-
-.if (${MK_INET_SUPPORT} != "no" && ${MK_INET6_SUPPORT} != "no") || \
-	defined(ALL_MODULES)
-_if_stf=	if_stf
 .endif
 
 .if (${KERN_OPTS:MINET} && ${MK_INET_SUPPORT} != "no") || defined(ALL_MODULES)

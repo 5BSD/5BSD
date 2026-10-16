@@ -1616,7 +1616,6 @@ fwohci_irx_enable(struct firewire_comm *fc, int dmach)
 	while  ((chunk = STAILQ_FIRST(&ir->stfree)) != NULL) {
 		struct fwohcidb *db;
 
-#if 1 /* XXX for if_fwe */
 		if (chunk->mbuf != NULL) {
 			db_tr = (struct fwohcidb_tr *)(chunk->start);
 			db_tr->dbcnt = 1;
@@ -1627,7 +1626,6 @@ fwohci_irx_enable(struct firewire_comm *fc, int dmach)
 				OHCI_UPDATE | OHCI_INPUT_LAST |
 				OHCI_INTERRUPT_ALWAYS | OHCI_BRANCH_ALWAYS);
 		}
-#endif
 		db = ((struct fwohcidb_tr *)(chunk->end))->db;
 		FWOHCI_DMA_WRITE(db[ldesc].db.desc.res, 0);
 		FWOHCI_DMA_CLEAR(db[ldesc].db.desc.depend, 0xf);

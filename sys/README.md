@@ -58,7 +58,6 @@ Source Roadmap:
 | netipsec | IPsec protocol implementation - `ipsec(4)` |
 | netlink | kernel network configuration protocol - `netlink(4)` |
 | netpfil | packet filters - `pf(4)` and `dummynet(4)` |
-| netsmb | Server Message Block protocol implementation |
 | nfs | common code and headers for Network File System |
 | nfsclient | NFS client implementation for mounting and stats |
 | nfsserver | NFS server implementation for exporting local filesystems to network |

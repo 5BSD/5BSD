@@ -9,14 +9,10 @@ SUBDIR=	async \
 	checksum \
 	deflate \
 	device \
-	echo \
 	eiface \
-	etf \
 	ether \
-	ether_echo \
 	gif \
 	gif_demux \
-	hole \
 	hub \
 	iface \
 	ip_input \
@@ -33,7 +29,6 @@ SUBDIR=	async \
 	ppp \
 	pppoe \
 	socket \
-	source \
 	split \
 	tag \
 	tcpmss \

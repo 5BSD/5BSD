@@ -653,9 +653,6 @@ crypto/chacha20/chacha-sw.c	optional crypto
 crypto/chacha20_poly1305.c	optional crypto
 crypto/curve25519.c		optional crypto \
 	compile-with "${NORMAL_C} -I$S/contrib/libsodium/src/libsodium/include -I$S/crypto/libsodium"
-crypto/des/des_ecb.c		optional netsmb
-crypto/des/des_setkey.c		optional netsmb
-crypto/md4c.c			optional netsmb
 crypto/md5c.c			standard
 crypto/openssl/ossl.c		optional ossl
 crypto/openssl/ossl_aes.c	optional ossl
@@ -756,7 +753,6 @@ dev/acpica/acpi_spmc.c		optional acpi
 dev/acpica/apei_if.m		optional acpi
 dev/adlink/adlink.c		optional adlink
 dev/ae/if_ae.c			optional ae pci
-dev/age/if_age.c		optional age pci
 dev/ahci/ahci.c			optional ahci
 dev/ahci/ahciem.c		optional ahci
 dev/ahci/ahci_pci.c		optional ahci pci
@@ -1671,8 +1667,6 @@ dev/firewire/fwisound_pcm.c	optional fwisound sound
 dev/firewire/fwmem.c		optional firewire
 dev/firewire/fwohci.c		optional firewire
 dev/firewire/fwohci_pci.c	optional firewire pci
-dev/firewire/if_fwe.c		optional fwe
-dev/firewire/if_fwip.c		optional fwip
 dev/firewire/sbp.c		optional sbp
 dev/firewire/sbp_targ.c		optional sbp_targ
 dev/flash/at45d.c		optional at45d
@@ -3602,12 +3596,6 @@ fs/pseudofs/pseudofs.c		optional pseudofs
 fs/pseudofs/pseudofs_fileno.c	optional pseudofs
 fs/pseudofs/pseudofs_vncache.c	optional pseudofs
 fs/pseudofs/pseudofs_vnops.c	optional pseudofs
-fs/smbfs/smbfs_io.c		optional smbfs
-fs/smbfs/smbfs_node.c		optional smbfs
-fs/smbfs/smbfs_smb.c		optional smbfs
-fs/smbfs/smbfs_subr.c		optional smbfs
-fs/smbfs/smbfs_vfsops.c		optional smbfs
-fs/smbfs/smbfs_vnops.c		optional smbfs
 fs/tarfs/tarfs_io.c		optional tarfs compile-with "${NORMAL_C} -I$S/contrib/zstd/lib/freebsd"
 fs/tarfs/tarfs_subr.c		optional tarfs
 fs/tarfs/tarfs_vfsops.c		optional tarfs
@@ -3866,7 +3854,6 @@ kern/subr_kdb.c			standard
 kern/subr_kobj.c		standard
 kern/subr_lock.c		standard
 kern/subr_log.c			standard
-kern/subr_mchain.c		optional libmchain
 kern/subr_memdesc.c		standard
 kern/subr_module.c		standard
 kern/subr_msan.c		optional kmsan \
@@ -4122,7 +4109,6 @@ net/if_edsc.c			optional edsc
 net/if_enc.c			optional enc inet | enc inet6
 net/if_epair.c			optional epair
 net/if_ethersubr.c		optional ether
-net/if_fwsubr.c			optional fwip
 net/if_gif.c			optional gif inet | gif inet6 | \
 					 netgraph_gif inet | netgraph_gif inet6
 net/if_gre.c			optional gre inet | gre inet6
@@ -4134,7 +4120,6 @@ net/if_me.c			optional me inet
 net/if_media.c			standard
 net/if_mib.c			standard
 net/if_ovpn.c			optional ovpn inet | ovpn inet6
-net/if_stf.c			optional stf inet inet6
 net/if_tuntap.c			optional tuntap
 net/if_vlan.c			optional vlan
 net/if_vxlan.c			optional vxlan inet | vxlan inet6
@@ -4252,13 +4237,10 @@ netgraph/ng_car.c		optional netgraph_car
 netgraph/ng_checksum.c		optional netgraph_checksum
 netgraph/ng_deflate.c		optional netgraph_deflate
 netgraph/ng_device.c		optional netgraph_device
-netgraph/ng_echo.c		optional netgraph_echo
 netgraph/ng_eiface.c		optional netgraph_eiface
 netgraph/ng_ether.c		optional netgraph_ether
-netgraph/ng_ether_echo.c	optional netgraph_ether_echo
 netgraph/ng_gif.c		optional netgraph_gif inet6 | netgraph_gif inet
 netgraph/ng_gif_demux.c		optional netgraph_gif_demux
-netgraph/ng_hole.c		optional netgraph_hole
 netgraph/ng_iface.c		optional netgraph_iface
 netgraph/ng_ip_input.c		optional netgraph_ip_input
 netgraph/ng_ksocket.c		optional netgraph_ksocket
@@ -4492,15 +4474,6 @@ netpfil/pf/pflow.c		optional pflow pf inet
 netpfil/pf/pfsync_nv.c		optional pfsync pf inet
 netpfil/pf/in4_cksum.c		optional pf inet
 netpfil/pf/inet_nat64.c		optional pf inet
-netsmb/smb_conn.c		optional netsmb
-netsmb/smb_crypt.c		optional netsmb
-netsmb/smb_dev.c		optional netsmb
-netsmb/smb_iod.c		optional netsmb
-netsmb/smb_rq.c			optional netsmb
-netsmb/smb_smb.c		optional netsmb
-netsmb/smb_subr.c		optional netsmb
-netsmb/smb_trantcp.c		optional netsmb
-netsmb/smb_usr.c		optional netsmb
 nfs/bootp_subr.c		optional bootp nfscl
 nfs/krpc_subr.c			optional bootp nfscl
 nfs/nfs_diskless.c		optional nfscl nfs_root

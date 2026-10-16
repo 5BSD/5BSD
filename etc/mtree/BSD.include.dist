@@ -289,8 +289,6 @@
         ..
         nullfs
         ..
-        smbfs
-        ..
         unionfs
         ..
     ..
@@ -395,8 +393,6 @@
     netpfil
         pf              tags=package=pf-dev
         ..
-    ..
-    netsmb
     ..
     nfs
     ..

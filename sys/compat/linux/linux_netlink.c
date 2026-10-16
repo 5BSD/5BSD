@@ -397,9 +397,6 @@ rtnl_newlink_to_linux(struct nlmsghdr *hdr, struct nlpcb *nlp,
 	case IFT_L2VLAN:
 		ifinfo->ifi_type = LINUX_ARPHRD_ETHER;
 		break;
-	case IFT_STF:
-		ifinfo->ifi_type = LINUX_ARPHRD_SIT;
-		break;
 	}
 	/* Native IFF_CANTCONFIG overlaps Linux IFF_LOWER_UP. */
 	ifinfo->ifi_flags = rtnl_if_flags_to_linux(ifinfo->ifi_flags);

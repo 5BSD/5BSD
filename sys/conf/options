@@ -248,7 +248,6 @@ FUSEFS		opt_dontuse.h
 MSDOSFS		opt_dontuse.h
 NULLFS		opt_dontuse.h
 PSEUDOFS	opt_dontuse.h
-SMBFS		opt_dontuse.h
 TARFS		opt_dontuse.h
 TMPFS		opt_dontuse.h
 UNIONFS		opt_dontuse.h
@@ -307,9 +306,6 @@ UFS_DIRHASH	opt_ufs.h
 # allows these options to be present in config files already (though
 # they won't make any difference yet).
 NFS_ROOT	opt_nfsroot.h
-
-# SMB/CIFS requester
-NETSMB		opt_netsmb.h
 
 # Enable debugnet(4) networking support
 DEBUGNET 	opt_global.h
@@ -426,7 +422,6 @@ IPSTEALTH
 KERN_TLS
 KRPC
 LIBALIAS
-LIBMCHAIN
 MBUF_PROFILING
 MBUF_STRESS_TEST
 MROUTING		opt_mrouting.h
