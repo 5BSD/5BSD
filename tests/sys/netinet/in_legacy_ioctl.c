@@ -93,11 +93,12 @@ static int
 set(int s, u_long cmd, const char *a)
 {
 	struct ifreq ifr = {};
+	struct sockaddr_in sa;
 
 	strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
 	/* As OpenBSD's ifconfig, a netmask carries no family. */
-	*(struct sockaddr_in *)&ifr.ifr_addr =
-	    sin(a, cmd == SIOCSIFNETMASK ? AF_UNSPEC : AF_INET);
+	sa = sin(a, cmd == SIOCSIFNETMASK ? AF_UNSPEC : AF_INET);
+	memcpy(&ifr.ifr_addr, &sa, sizeof(sa));
 	return (ioctl(s, cmd, &ifr));
 }
 
@@ -107,15 +108,17 @@ get(int s, u_long cmd, const char *a)
 {
 	static char buf[INET_ADDRSTRLEN];
 	struct ifreq ifr = {};
+	struct sockaddr_in sa;
 
 	strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
-	if (a != NULL)
-		*(struct sockaddr_in *)&ifr.ifr_addr = sin(a, AF_INET);
+	if (a != NULL) {
+		sa = sin(a, AF_INET);
+		memcpy(&ifr.ifr_addr, &sa, sizeof(sa));
+	}
 	ATF_REQUIRE_MSG(ioctl(s, cmd, &ifr) == 0, "ioctl: %s",
 	    strerror(errno));
-	return (inet_ntop(AF_INET,
-	    &((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr, buf,
-	    sizeof(buf)));
+	memcpy(&sa, &ifr.ifr_addr, sizeof(sa));
+	return (inet_ntop(AF_INET, &sa.sin_addr, buf, sizeof(buf)));
 }
 
 static int
@@ -138,6 +141,7 @@ count(const char *a)
 {
 	struct ifaddrs *ifa0, *ifa;
 	struct in_addr in;
+	struct sockaddr_in sa;
 	int n = 0;
 
 	if (a != NULL)
@@ -147,8 +151,8 @@ count(const char *a)
 		if (strcmp(ifa->ifa_name, ifname) != 0 ||
 		    ifa->ifa_addr->sa_family != AF_INET)
 			continue;
-		if (a == NULL || ((struct sockaddr_in *)ifa->ifa_addr)->
-		    sin_addr.s_addr == in.s_addr)
+		memcpy(&sa, ifa->ifa_addr, sizeof(sa));
+		if (a == NULL || sa.sin_addr.s_addr == in.s_addr)
 			n++;
 	}
 	freeifaddrs(ifa0);
