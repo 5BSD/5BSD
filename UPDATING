@@ -136,6 +136,21 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	struct pfi_kif grew (pfik_nifp); rebuild programs that read pf's
 	interface list (DIOCIGETIFACES), such as ports of pftop.
 
+	ifconfig(8) and the IPv4/IPv6 address code follow OpenBSD further.
+	"prefixlen" applies to inet; "netmask" applies to inet6; a
+	non-contiguous netmask is rejected (also by SIOCAIFADDR).  No
+	broadcast address is shown for a /31 or /32 unless set explicitly.
+	A point-to-point address may be added without a destination
+	(shown as "--> 0.0.0.0" or "--> ::"; SIOCAIFADDR no longer returns
+	EDESTADDRREQ), an inet6 address with a destination defaults to
+	prefixlen 128, and several inet6 addresses may share a destination.
+	"inet6 eui64" enables IPv6 and creates the link-local address.
+	SIOCSIFADDR, SIOCSIFNETMASK and SIOCSIFBRDADDR work again with
+	OpenBSD's semantics (SIOCSIFDSTADDR remains unsupported).  The first
+	IPv6 address added to an interface with IPv6 disabled now performs
+	DAD (it is tentative until DAD completes); use "no_dad" to skip it.
+	The kernel and ifconfig must be updated together.
+
 20261013:
 	The BSD fixed-name pty(4) compatibility driver has been removed.
 	Use posix_openpt(2), openpty(3), or /dev/ptmx and /dev/pts/N.

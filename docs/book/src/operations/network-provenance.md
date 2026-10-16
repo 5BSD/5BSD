@@ -92,6 +92,9 @@ goes in its own file in `sys/netpfil/openbsd-pf` (`pf_dummynet.c`,
 | vether(4) | `sys/net` |
 | "egress" interface group from the default routes of FIB 0, per VNET | `sys/net/if_egress.c` |
 | ifconfig status in OpenBSD's format; `nd6 options` only with `-v` | `sbin/ifconfig` |
+| SIOCSIFADDR/SIOCSIFNETMASK/SIOCSIFBRDADDR with OpenBSD semantics; contiguous netmasks; point-to-point address without a peer (no EDESTADDRREQ) | `sys/netinet/in.c` |
+| First IPv6 address on an IPv6-disabled interface is tentative and gets DAD; inet6 point-to-point addresses may share a destination | `sys/netinet6/in6.c` |
+| ifconfig: `prefixlen` for inet, `netmask` for inet6, non-contiguous masks rejected, no derived /31–/32 broadcast shown, `--> 0.0.0.0`/`--> ::` for an unset peer, inet6 peer implies /128, `eui64` attaches IPv6 | `sbin/ifconfig/af_inet.c`, `sbin/ifconfig/af_inet6.c`, `sbin/ifconfig/ifconfig.c` |
 | ifconfig: a mask-less IPv4 address gets the classful default; a point-to-point address may omit the peer | `sbin/ifconfig/af_inet.c`, `sys/netlink/route/iface.c` |
 | pflow and pfsync configured with ifconfig (pflowctl retired) | `sbin/ifconfig` |
 | ping/ping6 `-w` and `-V`; `vmstat -m -v` pool listing; `route -T` | `sbin`, `usr.bin` |
