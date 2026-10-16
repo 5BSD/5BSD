@@ -96,6 +96,7 @@ int lookup_cpu_topology(struct restore_state *rstate, int *ncpusp,
     uint16_t *socketsp, uint16_t *coresp, uint16_t *threadsp);
 int lookup_cpu_contract(struct restore_state *,
     struct checkpoint_cpu_contract *);
+int checkpoint_restore_cpu_contract(struct restore_state *, struct vcpu *);
 int lookup_numa_topology(struct restore_state *, size_t, uint64_t,
     uint64_t [CHECKPOINT_NUMA_MAX_DOMAINS], size_t *, uint16_t *);
 int lookup_memory_geometry(struct restore_state *,
@@ -104,6 +105,8 @@ int lookup_memory_geometry(struct restore_state *,
 void checkpoint_cpu_add(int vcpu);
 void checkpoint_cpu_resume(int vcpu);
 void checkpoint_cpu_suspend(int vcpu);
+int checkpoint_vcpu_pause(struct vmctx *ctx, bool *runnable, bool *owned);
+int checkpoint_vcpu_resume(struct vmctx *ctx);
 
 /*
  * A restore destination starts its vCPU threads before its saved CPU state
@@ -137,7 +140,17 @@ int load_restore_file(const char *filename, struct restore_state *rstate);
  * leaves devices paused and the restore startup fence held; vm_migrate_resume
  * releases the destination to run after the source's RELEASE.
  */
-int vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **blob, size_t *len);
+struct vm_snapshot_capture {
+	struct vm_snapshot_session session;
+	bool active;
+	bool unresolved;
+};
+
+/* The caller zero-initializes capture and retains it through RELEASE/rollback. */
+int vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **blob, size_t *len,
+    struct vm_snapshot_capture *capture);
+int vm_snapshot_dev_state_finish(struct vmctx *ctx,
+    struct vm_snapshot_capture *capture, bool commit);
 int vm_migrate_commit_state(struct vmctx *ctx, const uint8_t *blob, size_t len);
 int vm_migrate_resume(struct vmctx *ctx);
 

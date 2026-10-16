@@ -27,6 +27,9 @@ static unsigned int pwrite_calls;
 static unsigned int pwritev_calls;
 static unsigned int mevent_disable_calls;
 static unsigned int mevent_enable_calls;
+static const char *test_cfg_path;
+static const char *test_cfg_sectorsize;
+static const char *test_cfg_bootindex;
 
 ssize_t __real_pwrite(int, const void *, size_t, off_t);
 ssize_t __wrap_pwrite(int, const void *, size_t, off_t);
@@ -84,9 +87,15 @@ set_config_value_node(nvlist_t *parent __unused, const char *name __unused,
 
 const char *
 get_config_value_node(const nvlist_t *parent __unused,
-    const char *name __unused)
+    const char *name)
 {
 
+	if (strcmp(name, "path") == 0)
+		return (test_cfg_path);
+	if (strcmp(name, "sectorsize") == 0)
+		return (test_cfg_sectorsize);
+	if (strcmp(name, "bootindex") == 0)
+		return (test_cfg_bootindex);
 	return (NULL);
 }
 
@@ -220,6 +229,43 @@ init_scheduler(struct blockif_ctxt *bc)
 		bc->bc_reqs[i].be_status = BST_FREE;
 		TAILQ_INSERT_TAIL(&bc->bc_freeq, &bc->bc_reqs[i], be_link);
 	}
+}
+
+ATF_TC_WITHOUT_HEAD(config_numbers_are_bounded);
+ATF_TC_BODY(config_numbers_are_bounded, tc)
+{
+	static const char *invalid_sizes[] = {
+		"0", "512junk", "512/4096junk",
+		"999999999999999999999999999999",
+	};
+	struct blockif_ctxt *bc;
+	char path[] = "/tmp/blockif-config.XXXXXX";
+	int fd;
+
+	(void)tc;
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, ftruncate(fd, 1024 * 1024));
+	ATF_REQUIRE_EQ(0, close(fd));
+	test_cfg_path = path;
+	test_cfg_sectorsize = "512";
+	bc = blockif_open(NULL, "config-test");
+	ATF_REQUIRE(bc != NULL);
+	ATF_CHECK_EQ(512, bc->bc_sectsz);
+	ATF_REQUIRE_EQ(0, blockif_close(bc));
+	for (size_t i = 0; i < nitems(invalid_sizes); i++) {
+		test_cfg_sectorsize = invalid_sizes[i];
+		ATF_CHECK(blockif_open(NULL, "config-test") == NULL);
+	}
+	test_cfg_sectorsize = "512";
+	test_cfg_bootindex = "1junk";
+	ATF_CHECK(blockif_open(NULL, "config-test") == NULL);
+	test_cfg_bootindex = "999999999999999999999999999999";
+	ATF_CHECK(blockif_open(NULL, "config-test") == NULL);
+	test_cfg_path = NULL;
+	test_cfg_sectorsize = NULL;
+	test_cfg_bootindex = NULL;
+	ATF_REQUIRE_EQ(0, unlink(path));
 }
 
 ATF_TC_WITHOUT_HEAD(checkpoint_identity_contract);
@@ -918,6 +964,7 @@ ATF_TC_BODY(suspend_timeout_rolls_back, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, config_numbers_are_bounded);
 
 	ATF_TP_ADD_TC(tp, write_zeroes_file);
 	ATF_TP_ADD_TC(tp, checkpoint_identity_contract);

@@ -91,6 +91,9 @@ struct fs_softc {
 
 struct fs_fid {
 	DIR	*ff_dir;
+	uint64_t ff_dir_index;
+	uint64_t ff_dir_hash;
+	uint64_t ff_dir_bytes;
 	int	ff_dirfd;
 	int	ff_fd;
 	int	ff_flags;
@@ -573,7 +576,9 @@ open_fid(int dirfd, const char *path, struct fs_authinfo *ai, bool creating)
 	uint32_t newcount;
 	int error;
 
-	ret = l9p_calloc(1, sizeof(*ret));
+	ret = calloc(1, sizeof(*ret));
+	if (ret == NULL)
+		return (NULL);
 	error = pthread_mutex_init(&ret->ff_mtx, NULL);
 	if (error) {
 		free(ret);
@@ -1674,6 +1679,153 @@ fs_lstatat(struct fs_fid *file, char *name, struct stat *st)
 	return (fstatat(dirfd(file->ff_dir), name, st, AT_SYMLINK_NOFOLLOW));
 }
 
+/* Hash the ordered names before the cursor; host DIR cookies are not portable. */
+static uint64_t
+fs_dir_hash_entry(uint64_t hash, const struct dirent *entry)
+{
+	const unsigned char *name;
+	uint64_t inode;
+
+	if (hash == 0)
+		hash = UINT64_C(14695981039346656037);
+	name = (const unsigned char *)entry->d_name;
+	do {
+		hash = (hash ^ *name) * UINT64_C(1099511628211);
+	} while (*name++ != '\0');
+#if defined(__FreeBSD__)
+	inode = entry->d_fileno;
+#else
+	inode = entry->d_ino;
+#endif
+	for (unsigned int i = 0; i < sizeof(inode); i++) {
+		hash = (hash ^ (uint8_t)inode) *
+		    UINT64_C(1099511628211);
+		inode >>= 8;
+	}
+	return (hash);
+}
+
+/* Directory positions on the wire count entries, not libc DIR cookies. */
+static int
+fs_dir_seek_index(struct fs_fid *file, uint64_t index)
+{
+	struct dirent *entry;
+	DIR *newdir;
+	uint64_t hash, position;
+	int error, fd;
+
+	if (index == file->ff_dir_index)
+		return (0);
+	/* An invalid guest offset must not change a live fid's cursor. */
+	fd = openat(dirfd(file->ff_dir), ".",
+	    O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd < 0)
+		return (errno);
+	newdir = fdopendir(fd);
+	if (newdir == NULL) {
+		error = errno;
+		close(fd);
+		return (error);
+	}
+	hash = 0;
+	position = 0;
+	while (position < index) {
+		errno = 0;
+		entry = readdir(newdir);
+		if (entry == NULL) {
+			error = errno != 0 ? errno : ESTALE;
+			closedir(newdir);
+			return (error);
+		}
+		hash = fs_dir_hash_entry(hash, entry);
+		position++;
+	}
+	closedir(file->ff_dir);
+	file->ff_dir = newdir;
+	file->ff_dir_index = position;
+	file->ff_dir_hash = hash;
+	file->ff_dir_bytes = 0;
+	return (0);
+}
+
+/* Classic Tread directory offsets count packed stat bytes, not entries. */
+static int
+fs_dir_scan_classic(struct fs_softc *sc, struct fs_fid *file,
+    enum l9p_version version, uint64_t target_bytes,
+    uint64_t target_index, bool exact_index)
+{
+	struct l9p_stat l9stat;
+	struct dirent *entry;
+	struct fs_fid scan = { 0 };
+	struct stat st;
+	DIR *newdir;
+	uint16_t size;
+	int fd, error;
+
+	/* Scan on a separate open description; a bad offset leaves the fid intact. */
+	fd = openat(dirfd(file->ff_dir), ".",
+	    O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd < 0)
+		return (errno);
+	newdir = fdopendir(fd);
+	if (newdir == NULL) {
+		error = errno;
+		close(fd);
+		return (error);
+	}
+	scan.ff_dir = newdir;
+	error = 0;
+	while (exact_index ? scan.ff_dir_index < target_index :
+	    scan.ff_dir_bytes < target_bytes) {
+		errno = 0;
+		entry = readdir(newdir);
+		if (entry == NULL) {
+			error = errno != 0 ? errno : ESTALE;
+			break;
+		}
+		if (scan.ff_dir_index == UINT64_MAX) {
+			error = EOVERFLOW;
+			break;
+		}
+		scan.ff_dir_hash = fs_dir_hash_entry(scan.ff_dir_hash,
+		    entry);
+		scan.ff_dir_index++;
+		if (fs_lstatat(&scan, entry->d_name, &st) != 0)
+			continue;
+		dostat(sc, &l9stat, fd, entry->d_name,
+		    &st, version >= L9P_2000U);
+		size = l9p_sizeof_stat(&l9stat, version);
+		l9p_freestat(&l9stat);
+		if (scan.ff_dir_bytes > target_bytes ||
+		    size > target_bytes - scan.ff_dir_bytes) {
+			error = exact_index ? ESTALE : EINVAL;
+			break;
+		}
+		scan.ff_dir_bytes += size;
+	}
+	if (error == 0 && exact_index &&
+	    scan.ff_dir_bytes != target_bytes)
+		error = ESTALE;
+	if (error != 0) {
+		closedir(newdir);
+		return (error);
+	}
+	closedir(file->ff_dir);
+	file->ff_dir = newdir;
+	file->ff_dir_index = scan.ff_dir_index;
+	file->ff_dir_hash = scan.ff_dir_hash;
+	file->ff_dir_bytes = scan.ff_dir_bytes;
+	return (0);
+}
+
+static int
+fs_dir_seek_bytes(struct fs_softc *sc, struct fs_fid *file,
+    enum l9p_version version, uint64_t target)
+{
+
+	return (fs_dir_scan_classic(sc, file, version, target, 0, false));
+}
+
 static int
 fs_read(void *softc, struct l9p_request *req)
 {
@@ -1692,8 +1844,19 @@ fs_read(void *softc, struct l9p_request *req)
 		struct stat st;
 		struct l9p_message msg;
 		long o;
+		uint64_t old_hash;
+		uint32_t old_count;
+		int error;
 
 		pthread_mutex_lock(&file->ff_mtx);
+		if (req->lr_req.io.offset != file->ff_dir_bytes) {
+			error = fs_dir_seek_bytes(sc, file,
+			    req->lr_conn->lc_version, req->lr_req.io.offset);
+			if (error != 0) {
+				pthread_mutex_unlock(&file->ff_mtx);
+				return (error);
+			}
+		}
 
 		/*
 		 * Must use telldir before readdir since seekdir
@@ -1712,17 +1875,41 @@ fs_read(void *softc, struct l9p_request *req)
 		l9p_init_msg(&msg, req, L9P_PACK);
 		for (;;) {
 			o = telldir(file->ff_dir);
+			if (o < 0) {
+				error = errno != 0 ? errno : EIO;
+				pthread_mutex_unlock(&file->ff_mtx);
+				return (error);
+			}
+			old_hash = file->ff_dir_hash;
+			errno = 0;
 			d = readdir(file->ff_dir);
-			if (d == NULL)
+			if (d == NULL) {
+				if (errno != 0) {
+					error = errno;
+					pthread_mutex_unlock(&file->ff_mtx);
+					return (error);
+				}
 				break;
+			}
+			if (file->ff_dir_index == UINT64_MAX) {
+				seekdir(file->ff_dir, o);
+				pthread_mutex_unlock(&file->ff_mtx);
+				return (EOVERFLOW);
+			}
+			file->ff_dir_index++;
+			file->ff_dir_hash = fs_dir_hash_entry(old_hash, d);
 			if (fs_lstatat(file, d->d_name, &st))
 				continue;
 			dostat(sc, &l9stat, dirfd(file->ff_dir), d->d_name,
 			    &st, dotu);
+			old_count = req->lr_resp.io.count;
 			if (l9p_pack_stat(&msg, req, &l9stat) != 0) {
 				seekdir(file->ff_dir, o);
+				file->ff_dir_index--;
+				file->ff_dir_hash = old_hash;
 				break;
 			}
+			file->ff_dir_bytes += req->lr_resp.io.count - old_count;
 #if defined(__FreeBSD__)
 			seekdir(file->ff_dir, o);
 			(void) readdir(file->ff_dir);
@@ -2697,6 +2884,8 @@ fs_readdir(void *softc __unused, struct l9p_request *req)
 	struct dirent *dp;
 	struct stat st;
 	uint32_t count;
+	uint64_t old_hash;
+	long offset;
 	int error = 0;
 
 	file = req->lr_fid->lo_aux;
@@ -2718,14 +2907,38 @@ fs_readdir(void *softc __unused, struct l9p_request *req)
 	 * getdirentries() / getdents() directly, instead of
 	 * going through libc.
 	 */
-	if (req->lr_req.io.offset == 0)
-		rewinddir(file->ff_dir);
-	else
-		seekdir(file->ff_dir, (long)req->lr_req.io.offset);
+	error = fs_dir_seek_index(file, req->lr_req.io.offset);
+	if (error != 0) {
+		pthread_mutex_unlock(&file->ff_mtx);
+		return (error);
+	}
 
 	l9p_init_msg(&msg, req, L9P_PACK);
 	count = (uint32_t)msg.lm_size; /* in case we get no entries */
-	while ((dp = readdir(file->ff_dir)) != NULL) {
+	for (;;) {
+		offset = telldir(file->ff_dir);
+		if (offset < 0) {
+			error = errno != 0 ? errno : EIO;
+			break;
+		}
+		old_hash = file->ff_dir_hash;
+		errno = 0;
+		dp = readdir(file->ff_dir);
+		if (dp == NULL) {
+			if (errno != 0)
+				error = errno;
+#if defined(__FreeBSD__)
+			seekdir(file->ff_dir, offset);
+#endif
+			break;
+		}
+		if (file->ff_dir_index == UINT64_MAX) {
+			seekdir(file->ff_dir, offset);
+			error = EOVERFLOW;
+			break;
+		}
+		file->ff_dir_index++;
+		file->ff_dir_hash = fs_dir_hash_entry(file->ff_dir_hash, dp);
 		/*
 		 * Although "." is forbidden in naming and ".." is
 		 * special cased, testing shows that we must transmit
@@ -2739,19 +2952,33 @@ fs_readdir(void *softc __unused, struct l9p_request *req)
 		 * to construct the qid more efficiently, as long
 		 * as dp->d_type != DT_UNKNOWN.
 		 */
-		if (fs_lstatat(file, dp->d_name, &st))
+		if (fs_lstatat(file, dp->d_name, &st)) {
+#if defined(__FreeBSD__)
+			seekdir(file->ff_dir, offset);
+			(void)readdir(file->ff_dir);
+#endif
 			continue;
+		}
 
 		de.qid.type = 0;
 		generate_qid(&st, &de.qid);
-		de.offset = (uint64_t)telldir(file->ff_dir);
+		de.offset = file->ff_dir_index;
 		de.type = dp->d_type;
 		de.name = dp->d_name;
 
 		/* Update count only if we completely pack the dirent. */
-		if (l9p_pudirent(&msg, &de) < 0)
+		if (l9p_pudirent(&msg, &de) < 0) {
+			seekdir(file->ff_dir, offset);
+			file->ff_dir_index--;
+			file->ff_dir_hash = old_hash;
 			break;
+		}
 		count = (uint32_t)msg.lm_size;
+#if defined(__FreeBSD__)
+		/* FreeBSD seekdir consumes this cookie and avoids retaining it. */
+		seekdir(file->ff_dir, offset);
+		(void)readdir(file->ff_dir);
+#endif
 	}
 
 	pthread_mutex_unlock(&file->ff_mtx);
@@ -3037,6 +3264,267 @@ fs_freefid(void *softc __unused, struct l9p_fid *fid)
 		L9P_LOG(L9P_DEBUG, "authinfo %p now used by %lu",
 		    (void *)ai, (u_long)newcount);
 	}
+}
+
+void
+l9p_backend_fs_free_fid_state(struct l9p_fs_fid_state *state)
+{
+
+	if (state == NULL)
+		return;
+	free(state->path);
+	free(state->gids);
+	memset(state, 0, sizeof(*state));
+}
+
+/* Only status flags that can be reopened without creating or truncating. */
+#define FS_FID_REOPEN_FLAGS (O_ACCMODE | O_APPEND | O_NONBLOCK | O_SYNC | \
+    O_DIRECT)
+#define FS_FID_IGNORED_FLAGS (O_NOFOLLOW | O_NOCTTY | O_DIRECTORY)
+#if defined(AT_RESOLVE_BENEATH) && defined(O_RESOLVE_BENEATH)
+#define FS_FID_RESTORE_AT_FLAGS AT_RESOLVE_BENEATH
+#define FS_FID_RESTORE_OPEN_FLAGS O_RESOLVE_BENEATH
+#else
+#define FS_FID_RESTORE_AT_FLAGS 0
+#define FS_FID_RESTORE_OPEN_FLAGS 0
+#endif
+
+static bool
+fs_fid_path_valid(const char *path)
+{
+	const char *component, *end;
+	size_t len;
+
+	if (path == NULL || path[0] == '/' ||
+	    (len = strnlen(path, MAXPATHLEN)) == 0 || len == MAXPATHLEN)
+		return (false);
+	for (component = path; *component != '\0'; component = end + 1) {
+		end = strchr(component, '/');
+		if (end == NULL)
+			end = path + len;
+		if (end == component ||
+		    (end - component == 2 && component[0] == '.' &&
+		    component[1] == '.') ||
+		    (end - component == 1 && component[0] == '.' &&
+		    component != path))
+			return (false);
+		if (*end == '\0')
+			break;
+		if (end[1] == '\0')
+			return (false);
+	}
+	return (true);
+}
+
+int
+l9p_backend_fs_export_fid(struct l9p_backend *backend,
+    struct l9p_fid *fid, struct l9p_fs_fid_state *state)
+{
+	struct fs_authinfo *ai;
+	struct fs_fid *file;
+	struct stat named, opened;
+	int fd, flags, error;
+
+	if (backend == NULL || backend->softc == NULL || fid == NULL ||
+	    state == NULL ||
+	    fid->lo_aux == NULL)
+		return (EINVAL);
+	memset(state, 0, sizeof(*state));
+	if ((fid->lo_flags & ~(L9P_LO_ISDIR | L9P_LO_ISOPEN |
+	    L9P_LO_ISVALID)) != 0 || !l9p_fid_isvalid(fid))
+		return (EOPNOTSUPP);
+	file = fid->lo_aux;
+	ai = file->ff_ai;
+	if (ai == NULL || ai->ai_ngids < 0 ||
+	    (unsigned int)ai->ai_ngids > L9P_FS_FID_MAX_GROUPS ||
+	    ai->ai_flags != 0 ||
+	    file->ff_dirfd != ((struct fs_softc *)backend->softc)->fs_rootfd ||
+	    (file->ff_dir != NULL && file->ff_fd != -1) ||
+	    !fs_fid_path_valid(file->ff_name))
+		return (EOPNOTSUPP);
+	if (fstatat(file->ff_dirfd, file->ff_name, &named,
+	    AT_SYMLINK_NOFOLLOW) != 0)
+		return (errno);
+	if (l9p_fid_isdir(fid) != S_ISDIR(named.st_mode))
+		return (EINVAL);
+	fd = file->ff_dir != NULL ? dirfd(file->ff_dir) : file->ff_fd;
+	if (l9p_fid_isopen(fid)) {
+		if (fd < 0 || (file->ff_dir != NULL) !=
+		    l9p_fid_isdir(fid) ||
+		    (!S_ISDIR(named.st_mode) && !S_ISREG(named.st_mode)))
+			return (EOPNOTSUPP);
+		if (fstat(fd, &opened) != 0)
+			return (errno);
+		if (opened.st_dev != named.st_dev ||
+		    opened.st_ino != named.st_ino)
+			return (ESTALE);
+		flags = fcntl(fd, F_GETFL);
+		if (flags < 0)
+			return (errno);
+		if ((flags & ~(FS_FID_REOPEN_FLAGS |
+		    FS_FID_IGNORED_FLAGS)) != 0)
+			return (EOPNOTSUPP);
+		state->open_flags = flags & FS_FID_REOPEN_FLAGS;
+	} else if (file->ff_dir != NULL || file->ff_fd != -1) {
+		return (EINVAL);
+	}
+	state->path = strdup(file->ff_name);
+	if (state->path == NULL)
+		return (ENOMEM);
+	if (ai->ai_ngids != 0) {
+		state->gids = malloc((size_t)ai->ai_ngids *
+		    sizeof(*state->gids));
+		if (state->gids == NULL) {
+			error = ENOMEM;
+			goto fail;
+		}
+		for (int i = 0; i < ai->ai_ngids; i++)
+			state->gids[i] = (uint32_t)ai->ai_gids[i];
+	}
+	state->flags = fid->lo_flags;
+	state->uid = (uint32_t)ai->ai_uid;
+	state->ngids = (uint32_t)ai->ai_ngids;
+	state->dev = (uint64_t)named.st_dev;
+	state->ino = (uint64_t)named.st_ino;
+	state->dir_index = file->ff_dir != NULL ? file->ff_dir_index : 0;
+	state->dir_hash = file->ff_dir != NULL ? file->ff_dir_hash : 0;
+	state->dir_bytes = file->ff_dir != NULL ? file->ff_dir_bytes : 0;
+	state->mode = named.st_mode & S_IFMT;
+	return (0);
+fail:
+	l9p_backend_fs_free_fid_state(state);
+	return (error);
+}
+
+int
+l9p_backend_fs_import_fid(struct l9p_backend *backend,
+    const struct l9p_fs_fid_state *state, struct l9p_fid *fid,
+    bool allow_dev_rebind, enum l9p_version version)
+{
+	struct fs_authinfo *ai;
+	struct fs_fid *file;
+	struct fs_softc *sc;
+	struct stat named, opened, root;
+	int fd, error;
+
+	if (backend == NULL || state == NULL || fid == NULL ||
+	    fid->lo_aux != NULL || fid->lo_flags != 0 ||
+	    !fs_fid_path_valid(state->path) ||
+	    state->ngids > L9P_FS_FID_MAX_GROUPS ||
+	    (state->ngids != 0 && state->gids == NULL) ||
+	    (state->flags & ~(L9P_LO_ISDIR | L9P_LO_ISOPEN |
+	    L9P_LO_ISVALID)) != 0 ||
+	    (state->flags & L9P_LO_ISVALID) == 0 ||
+	    (state->open_flags & ~FS_FID_REOPEN_FLAGS) != 0 ||
+	    (state->open_flags & O_ACCMODE) == O_ACCMODE ||
+	    ((state->flags & L9P_LO_ISDIR) != 0 &&
+	    state->open_flags != O_RDONLY) ||
+	    ((state->flags & L9P_LO_ISOPEN) == 0 &&
+	    state->open_flags != 0) ||
+	    ((state->flags & (L9P_LO_ISDIR | L9P_LO_ISOPEN)) !=
+	    (L9P_LO_ISDIR | L9P_LO_ISOPEN) && state->dir_index != 0) ||
+	    (state->mode & ~S_IFMT) != 0 ||
+	    (state->dir_index == 0 && state->dir_hash != 0) ||
+	    (state->dir_index == 0 && state->dir_bytes != 0) ||
+	    (version != L9P_2000 && version != L9P_2000U &&
+	    version != L9P_2000L) ||
+	    (version == L9P_2000L && state->dir_bytes != 0))
+		return (EINVAL);
+#if !defined(AT_RESOLVE_BENEATH) || !defined(O_RESOLVE_BENEATH)
+	/* Restoring a path without a beneath-root lookup is unsafe. */
+	return (EOPNOTSUPP);
+#endif
+	sc = backend->softc;
+	if (sc == NULL)
+		return (EINVAL);
+	if (fstatat(sc->fs_rootfd, state->path, &named,
+	    AT_SYMLINK_NOFOLLOW | FS_FID_RESTORE_AT_FLAGS) != 0)
+		return (errno);
+	if (allow_dev_rebind &&
+	    (fstat(sc->fs_rootfd, &root) != 0 ||
+	    named.st_dev != root.st_dev))
+		return (ESTALE);
+	if ((!allow_dev_rebind && state->dev != (uint64_t)named.st_dev) ||
+	    state->ino != (uint64_t)named.st_ino ||
+	    state->mode != (uint32_t)(named.st_mode & S_IFMT) ||
+	    ((state->flags & L9P_LO_ISDIR) != 0) != S_ISDIR(named.st_mode))
+		return (ESTALE);
+	if ((state->flags & L9P_LO_ISOPEN) != 0 &&
+	    !S_ISDIR(named.st_mode) && !S_ISREG(named.st_mode))
+		return (EOPNOTSUPP);
+	if (sc->fs_readonly && (state->open_flags & O_ACCMODE) != O_RDONLY)
+		return (EROFS);
+	ai = malloc(sizeof(*ai) + state->ngids * sizeof(gid_t));
+	if (ai == NULL)
+		return (ENOMEM);
+	error = pthread_mutex_init(&ai->ai_mtx, NULL);
+	if (error != 0) {
+		free(ai);
+		return (error);
+	}
+	ai->ai_refcnt = 0;
+	ai->ai_flags = 0;
+	ai->ai_uid = (uid_t)state->uid;
+	ai->ai_ngids = (int)state->ngids;
+	for (uint32_t i = 0; i < state->ngids; i++)
+		ai->ai_gids[i] = (gid_t)state->gids[i];
+	file = open_fid(sc->fs_rootfd, state->path, ai, true);
+	if (file == NULL) {
+		pthread_mutex_destroy(&ai->ai_mtx);
+		free(ai);
+		return (ENOMEM);
+	}
+	fid->lo_aux = file;
+	if ((state->flags & L9P_LO_ISOPEN) != 0) {
+		if (S_ISDIR(named.st_mode))
+			fd = openat(sc->fs_rootfd, state->path,
+			    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC |
+			    FS_FID_RESTORE_OPEN_FLAGS);
+		else
+			fd = openat(sc->fs_rootfd, state->path,
+			    state->open_flags | O_NOFOLLOW | O_NOCTTY | O_CLOEXEC |
+			    FS_FID_RESTORE_OPEN_FLAGS);
+		if (fd < 0) {
+			error = errno;
+			goto fail;
+		}
+		if (fstat(fd, &opened) != 0 ||
+		    opened.st_dev != named.st_dev ||
+		    opened.st_ino != named.st_ino) {
+			error = ESTALE;
+			close(fd);
+			goto fail;
+		}
+		if (S_ISDIR(named.st_mode)) {
+			file->ff_dir = fdopendir(fd);
+			if (file->ff_dir == NULL) {
+				error = errno;
+				close(fd);
+				goto fail;
+			}
+			if (version == L9P_2000L)
+				error = fs_dir_seek_index(file,
+				    state->dir_index);
+			else
+				error = fs_dir_scan_classic(sc, file, version,
+				    state->dir_bytes, state->dir_index, true);
+			if (error != 0)
+				goto fail;
+			if (file->ff_dir_index != state->dir_index ||
+			    file->ff_dir_hash != state->dir_hash) {
+				error = ESTALE;
+				goto fail;
+			}
+		} else {
+			file->ff_fd = fd;
+		}
+	}
+	fid->lo_flags = state->flags;
+	return (0);
+fail:
+	fs_freefid(sc, fid);
+	fid->lo_aux = NULL;
+	return (error);
 }
 
 int

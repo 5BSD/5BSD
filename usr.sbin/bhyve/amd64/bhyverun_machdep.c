@@ -345,6 +345,15 @@ bhyve_init_vcpu(struct vcpu *vcpu)
 			exit(BHYVE_EXIT_ERROR);
 		}
 	}
+	if (get_config_bool_default("x86.nested_svm", false)) {
+		nested_cap = vm_capability_name2type("nested_svm");
+		error = nested_cap < 0 ? ENOTSUP :
+		    vm_set_capability(vcpu, (enum vm_cap_type)nested_cap, 1);
+		if (error != 0) {
+			EPRINTLN("Nested SVM requested but unavailable (%d)", error);
+			exit(BHYVE_EXIT_ERROR);
+		}
+	}
 
 	error = vm_set_capability(vcpu, VM_CAP_IPI_EXIT, 1);
 	if (error != 0)

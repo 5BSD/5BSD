@@ -127,37 +127,45 @@ fi
 # knowing an ARM64 or RISC-V tag is not a substitute for an architecture
 # capture implementation: those callbacks intentionally fail closed until a
 # native CPU-state contract exists.  Keep the three calls ordered in the
-# restore block so a later refactor cannot admit a foreign contract by
-# comparing or restoring it without destination capture.
+# shared restore helper so both disk restore and migration use the same
+# ordering before restoring guest state.
 if ! awk '
 function delta(s, t) {
 	t = s
 	return (gsub(/\{/, "{", t) - gsub(/\}/, "}", t))
 }
-/if \(restore_file != NULL\)/ {
-	in_restore = 1
+/^checkpoint_restore_cpu_contract\(struct restore_state \*rstate,/ {
+	in_helper = 1
 	opened = 0
 	depth = 0
 }
-in_restore {
+in_helper {
 	if (index($0, "{") != 0)
 		opened = 1
 	depth += delta($0)
-	if ($0 ~ /lookup_cpu_contract\(&rstate, &source_cpu\)/)
+	if ($0 ~ /lookup_cpu_contract\(rstate, &source\)/)
 		lookup = FNR
 	if ($0 ~ /checkpoint_cpu_contract_capture\(bsp,/)
 		capture = FNR
-	if ($0 ~ /checkpoint_cpu_contract_match\(&source_cpu,/)
+	if ($0 ~ /checkpoint_cpu_contract_match\(&source, &destination\)/)
 		compare_line = FNR
 	if (opened && depth == 0)
-		in_restore = 0
+		in_helper = 0
 }
 END {
 	if (lookup == 0 || capture == 0 || compare_line == 0 ||
 	    !(lookup < capture && capture < compare_line))
 		exit (1)
 }
-' "$bhyverun"; then
+' "$snapshot" ||
+    ! awk '/checkpoint_restore_cpu_contract\(&rstate, bsp\)/ { check = FNR }
+        /if \(qemu_fwcfg_init\(ctx\) != 0\)/ { devices = FNR }
+        END { exit !(check != 0 && devices != 0 && check < devices) }
+    ' "$bhyverun" ||
+    ! awk '/error = checkpoint_restore_cpu_contract\(&rstate, fbsdrun_vcpu\(0\)\)/ { check = FNR }
+        /error = vm_pause_devices\(\)/ { pause = FNR }
+        END { exit !(check != 0 && pause != 0 && check < pause) }
+    ' "$snapshot"; then
 	echo "snapshot portability: restore must decode, capture, then compare CPU contract" >&2
 	exit 1
 fi

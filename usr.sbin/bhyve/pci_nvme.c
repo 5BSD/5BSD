@@ -60,6 +60,7 @@
 #include <net/ieee_oui.h>
 
 #include <assert.h>
+#include <limits.h>
 #include <pthread.h>
 #include <pthread_np.h>
 #include <semaphore.h>
@@ -692,7 +693,7 @@ pci_nvme_init_ctrldata(struct pci_nvme_softc *sc)
 	    "nqn.2013-12.org.freebsd:bhyve-%s-%u-%u-%u",
 	    get_config_value("name"), sc->nsc_pi->pi_bus,
 	    sc->nsc_pi->pi_slot, sc->nsc_pi->pi_func);
-	if ((ret < 0) || ((unsigned)ret > sizeof(cd->subnqn)))
+	if ((ret < 0) || ((unsigned)ret >= sizeof(cd->subnqn)))
 		EPRINTLN("%s: error setting subnqn (%d)", __func__, ret);
 }
 
@@ -3836,7 +3837,7 @@ pci_nvme_parse_u32(const char *value, uint32_t minimum, uint32_t maximum,
 	errno = 0;
 	end = NULL;
 	number = strtoul(value, &end, 10);
-	if (errno != 0 || end == value || *end != '\0' ||
+	if (errno != 0 || end == value || *end != '\0' || value[0] == '-' ||
 	    number < minimum || number > maximum)
 		return (EINVAL);
 	*result = (uint32_t)number;
@@ -3942,8 +3943,11 @@ pci_nvme_parse_config(struct pci_nvme_softc *sc, nvlist_t *nvl)
 
 	value = get_config_value_node(nvl, "bootindex");
 	if (value != NULL) {
-		if (pci_emul_add_boot_device(sc->nsc_pi, atoi(value))) {
-			EPRINTLN("Invalid bootindex %d", atoi(value));
+		uint32_t bootindex;
+
+		if (pci_nvme_parse_u32(value, 0, INT_MAX, &bootindex) != 0 ||
+		    pci_emul_add_boot_device(sc->nsc_pi, (int)bootindex) != 0) {
+			EPRINTLN("Invalid bootindex %s", value);
 			return (-1);
 		}
 	}

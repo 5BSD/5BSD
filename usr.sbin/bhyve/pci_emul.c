@@ -1164,6 +1164,18 @@ int
 pci_emul_alloc_rom(struct pci_devinst *const pdi, const uint64_t size,
     void **const addr)
 {
+	uint64_t rom_size;
+
+	if (size == 0 || size > PCI_EMUL_ROMSIZE) {
+		warnx("%s: invalid ROM size %lu", __func__, size);
+		return (-1);
+	}
+	/* ROM size must be a power of two and at least 2 KB. */
+	rom_size = size;
+	if ((rom_size & (rom_size - 1)) != 0)
+		rom_size = 1UL << flsl(rom_size);
+	rom_size = MAX(rom_size, ~PCIM_BIOS_ADDR_MASK + 1);
+
 	/* allocate ROM space once on first call */
 	if (pci_emul_rombase == 0) {
 		pci_emul_rombase = vm_create_devmem(pdi->pi_vmctx, VM_PCIROM,
@@ -1176,12 +1188,8 @@ pci_emul_alloc_rom(struct pci_devinst *const pdi, const uint64_t size,
 		pci_emul_romoffset = 0;
 	}
 
-	/* ROM size should be a power of 2 and greater than 2 KB */
-	const uint64_t rom_size = MAX(1UL << flsl(size),
-	    ~PCIM_BIOS_ADDR_MASK + 1);
-
 	/* check if ROM fits into ROM space */
-	if (pci_emul_romoffset + rom_size > PCI_EMUL_ROMSIZE) {
+	if (rom_size > PCI_EMUL_ROMSIZE - pci_emul_romoffset) {
 		warnx("%s: no space left in rom segment:", __func__);
 		warnx("%16lu bytes left",
 		    PCI_EMUL_ROMSIZE - pci_emul_romoffset);

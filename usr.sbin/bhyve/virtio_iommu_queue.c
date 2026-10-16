@@ -89,7 +89,8 @@ viommu_iov_gather(const struct iovec *iov, size_t count, uint8_t *buffer,
 	offset = 0;
 	for (size_t i = 0; i < count && offset < length; i++) {
 		fragment = MIN(iov[i].iov_len, length - offset);
-		memcpy(buffer + offset, iov[i].iov_base, fragment);
+		if (fragment != 0)
+			memcpy(buffer + offset, iov[i].iov_base, fragment);
 		offset += fragment;
 	}
 }
@@ -103,7 +104,8 @@ viommu_iov_scatter(const struct iovec *iov, size_t count,
 	copied = 0;
 	for (size_t i = 0; i < count && copied < length; i++) {
 		fragment = MIN(iov[i].iov_len, length - copied);
-		memcpy(iov[i].iov_base, buffer + copied, fragment);
+		if (fragment != 0)
+			memcpy(iov[i].iov_base, buffer + copied, fragment);
 		copied += fragment;
 	}
 	return (copied == length ? 0 : EMSGSIZE);

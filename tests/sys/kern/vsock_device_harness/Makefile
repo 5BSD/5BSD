@@ -10,17 +10,33 @@
 
 .include <src.opts.mk>
 
+# These tests include implementation files relative to this source directory.
+# The world build compiles their copied test sources from the object directory.
+.for _test in smbiostbl_bounds_test net_utils_parse_test \
+	    tpm_state_transaction_test tpm_local_state_test \
+	    tpm_checkpoint_state_test tpm_swtpm_control_test \
+	    migration_session_test migration_precopy_test migration_dirty_test \
+	    x86_cpuid_topology_test vmm_cpu_contract_abi_test
+CFLAGS.${_test}+=	-I${.CURDIR}
+.endfor
+
 PACKAGE=	waspnest-tests
 TESTSDIR=	${TESTSBASE}/sys/kern/vsock_device_harness
 SCRIPTSDIR=	${TESTSDIR}
 
 ATF_TESTS_C+=	vsock_device_test
+ATF_TESTS_C+=	vsock_migration_state_test
+ATF_TESTS_C+=	migration_vsock_bundle_test
+ATF_TESTS_C+=	migration_vsock_owner_test
+ATF_TESTS_C+=	migration_vsock_relay_test
 ATF_TESTS_C+=	virtio_modern_test
 ATF_TESTS_C+=	virtio_input_test
 ATF_TESTS_C+=	virtio_rnd_test
 ATF_TESTS_C+=	virtio_rnd_interrupt_test
 ATF_TESTS_C+=	virtio_core_test
 ATF_TESTS_C+=	iov_test
+ATF_TESTS_C+=	smbiostbl_bounds_test
+ATF_TESTS_C+=	net_utils_parse_test
 ATF_TESTS_C+=	virtio_console_test
 ATF_TESTS_C+=	virtio_9p_test
 ATF_TESTS_C+=	virtio_block_test
@@ -35,6 +51,7 @@ ATF_TESTS_C+=	pci_ahci_model_test
 ATF_TESTS_C+=	pci_ahci_full_test
 ATF_TESTS_C+=	pci_e82545_model_test
 ATF_TESTS_C+=	pci_e82545_full_test
+ATF_TESTS_C+=	fwctl_test
 ATF_TESTS_C+=	pci_fbuf_model_test
 ATF_TESTS_C+=	pci_fbuf_full_test
 ATF_TESTS_C+=	pci_hda_model_test
@@ -46,7 +63,12 @@ ATF_TESTS_C+=	uart_backend_full_test
 ATF_TESTS_C+=	uart_emul_full_test
 ATF_TESTS_C+=	console_owner_test
 ATF_TESTS_C+=	mevent_lifecycle_test
+ATF_TESTS_C+=	sockstream_test
 ATF_TESTS_C+=	tpm_intf_crb_model_test
+ATF_TESTS_C+=	tpm_local_state_test
+ATF_TESTS_C+=	tpm_checkpoint_state_test
+ATF_TESTS_C+=	tpm_swtpm_control_test
+ATF_TESTS_C+=	tpm_state_transaction_test
 ATF_TESTS_C+=	pvpanic_model_test
 ATF_TESTS_C+=	pci_i6300esb_test
 ATF_TESTS_C+=	migration_dirty_test
@@ -188,6 +210,8 @@ VIRTIO_VALIDATION_FILES=	virtio-1.4-requirements.tsv \
 				virtio_1_4_spec.h \
 				virtio_1_4_wire.h \
 				iov_test.c \
+				smbiostbl_bounds_test.c \
+				net_utils_parse_test.c \
 				virtio_9p_test.c \
 				virtio_block_test.c \
 				virtio_blk_capacity_test.c \
@@ -211,6 +235,7 @@ VIRTIO_VALIDATION_FILES=	virtio-1.4-requirements.tsv \
 				uart_emul_full_test.c \
 				console_owner_test.c \
 				mevent_lifecycle_test.c \
+				sockstream_test.c \
 				tpm_intf_crb_model_test.c \
 				pvpanic_model_test.c \
 				pci_i6300esb_test.c \
@@ -329,6 +354,7 @@ ${PACKAGE}FILES+=	${VIRTIO_VALIDATION_FILES} ${SANITIZER_HARNESS_FILES} \
 			DEEP_REVIEW_PROMPT.md Makefile
 CFLAGS.vsock_device_test+=	-DWITHOUT_CAPSICUM \
 				-I${.CURDIR} -I${.OBJDIR} \
+				-I${SRCTOP}/usr.sbin/bhyve \
 				-I${SRCTOP}/sys
 CFLAGS.virtio_modern_test+=	-I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/usr.sbin \
@@ -392,6 +418,9 @@ CWARNFLAGS.pci_e82545_full_test.c+= -Wno-cast-align \
 				-Wno-thread-safety-analysis
 LIBADD.pci_e82545_full_test+= pthread
 pci_e82545_full_test: pci_e82545.c
+CFLAGS.fwctl_test+= -I${.CURDIR} -I${.OBJDIR} \
+	-I${SRCTOP}/usr.sbin/bhyve/amd64 -I${SRCTOP}/usr.sbin/bhyve
+fwctl_test: fwctl.c
 CFLAGS.pci_xhci_model_test+= -I${SRCTOP}/usr.sbin/bhyve
 # TU-include coverage harness: compiles pci_xhci.c directly against the mocks in
 # this directory (their real bhyve include guards are pre-defined in the test).
@@ -620,6 +649,17 @@ CFLAGS.virtio_core_test+=	-DWITHOUT_CAPSICUM -ffunction-sections \
 				-I${SRCTOP}/sys
 CFLAGS.iov_test+=		-I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/sys
+CFLAGS.smbiostbl_bounds_test+= -ffunction-sections -fdata-sections \
+	-I${SRCTOP}/sys/amd64 -I${SRCTOP}/sys \
+	-I${SRCTOP}/usr.sbin/bhyve
+CFLAGS.vsock_migration_state_test+= -I${SRCTOP}/usr.sbin/bhyve
+CFLAGS.migration_vsock_bundle_test+= -I${SRCTOP}/usr.sbin/bhyve
+CFLAGS.migration_vsock_owner_test+= -I${SRCTOP}/usr.sbin/bhyve
+CFLAGS.migration_vsock_relay_test+= -I${SRCTOP}/usr.sbin/bhyve
+LDFLAGS.smbiostbl_bounds_test+= -Wl,--gc-sections
+CFLAGS.net_utils_parse_test+= -ffunction-sections -fdata-sections \
+	-I${SRCTOP}/usr.sbin/bhyve
+LDFLAGS.net_utils_parse_test+= -Wl,--gc-sections
 CFLAGS.virtio_console_test+= -DWITHOUT_CAPSICUM -ffunction-sections \
 				-fdata-sections -I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/usr.sbin -I${SRCTOP}/sys
@@ -640,7 +680,8 @@ CFLAGS.audio_test+=	-DWITHOUT_CAPSICUM -ffunction-sections \
 				-fdata-sections -I${.CURDIR} \
 				-I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.mevent_lifecycle_test+= -DWITHOUT_CAPSICUM -I${.CURDIR} \
-				-I${.OBJDIR} -I${SRCTOP}/usr.sbin/bhyve
+	-I${.OBJDIR} -I${SRCTOP}/usr.sbin/bhyve
+CFLAGS.sockstream_test+= -I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.tpm_intf_crb_model_test+= -I${SRCTOP}/usr.sbin/bhyve
 CWARNFLAGS.mevent_lifecycle_test.c+= -Wno-thread-safety-analysis
 CFLAGS.virtio_net_test+= -DWITHOUT_CAPSICUM -ffunction-sections \
@@ -674,8 +715,9 @@ LIBADD.lib9p_tversion_test+= 9p sbuf pthread
 CFLAGS.lib9p_name_test+= -I${SRCTOP}/contrib/lib9p
 LIBADD.lib9p_name_test+= 9p sbuf pthread
 CFLAGS.lib9p_fs_path_test+= -ffunction-sections -fdata-sections \
-				-I${SRCTOP}/contrib/lib9p
-LDFLAGS.lib9p_fs_path_test+= -Wl,--gc-sections
+			-I${SRCTOP}/contrib/lib9p
+LDFLAGS.lib9p_fs_path_test+= -Wl,--gc-sections -Wl,--wrap=calloc
+LIBADD.lib9p_fs_path_test+= 9p sbuf pthread
 CFLAGS.lib9p_threadpool_test+= -I${SRCTOP}/contrib/lib9p
 LIBADD.lib9p_threadpool_test+= 9p sbuf pthread
 # Marshalling round-trip tests drive the in-tree pack.c through the public
@@ -689,6 +731,7 @@ LIBADD.lib9p_marshal_test+= 9p sbuf pthread
 # The dispatch tests exercise the in-tree request.c (compiled locally, as for
 # lib9p_tversion_test) so an older installed lib9p.a cannot be substituted.
 CFLAGS.lib9p_dispatch_test+= -I${SRCTOP}/contrib/lib9p
+LDFLAGS.lib9p_dispatch_test+= -Wl,--wrap=l9p_connection_alloc_fid
 SRCS.lib9p_dispatch_test= lib9p_dispatch_test.c lib9p_request.c
 LIBADD.lib9p_dispatch_test+= 9p sbuf pthread
 CFLAGS.p9_guest_wire_test+= -I${SRCTOP}/sys
@@ -742,6 +785,7 @@ LDFLAGS.vsock_device_test+=	-Wl,--wrap=socket -Wl,--wrap=connectat \
 	-Wl,--wrap=poll -Wl,--wrap=close -Wl,--wrap=accept \
 	-Wl,--wrap=socketpair -Wl,--wrap=fcntl -Wl,--wrap=setsockopt \
 	-Wl,--wrap=getsockopt -Wl,--wrap=recvmsg -Wl,--wrap=ioctl \
+	-Wl,--wrap=getpeername -Wl,--wrap=fstat \
 	-Wl,--wrap=realloc -Wl,--wrap=writev
 LDFLAGS.virtio_core_test+=	-Wl,--gc-sections
 LDFLAGS.virtio_rnd_interrupt_test+= -Wl,--gc-sections
@@ -775,6 +819,8 @@ LDFLAGS.virtio_mem_test+=	-Wl,--gc-sections \
 	-Wl,--wrap=calloc -Wl,--wrap=malloc -Wl,--wrap=pthread_mutex_init
 LDFLAGS.virtio_snd_test+=	-Wl,--gc-sections
 LIBADD.vsock_device_test+=	pthread
+LIBADD.migration_vsock_relay_test+= pthread
+LIBADD.migration_vsock_owner_test+= pthread
 LIBADD.virtio_modern_test+=	pthread
 LIBADD.virtio_input_test+=	pthread
 LIBADD.virtio_rnd_test+=	pthread
@@ -896,6 +942,7 @@ CLEANFILES+=	pci_nvme.c
 CLEANFILES+=	pci_hda.c
 CLEANFILES+=	pci_ahci.c
 CLEANFILES+=	pci_e82545.c
+CLEANFILES+=	fwctl.c
 CLEANFILES+=	vmmapi_memory.c vmmapi_memory.h
 CLEANFILES+=	mevent_dut.c
 
@@ -964,6 +1011,7 @@ beforedepend:	pci_nvme.c
 beforedepend:	pci_hda.c
 beforedepend:	pci_ahci.c
 beforedepend:	pci_e82545.c
+beforedepend:	fwctl.c
 beforedepend:	snapshot_identity.h
 beforedepend:	vmmapi_memory.c vmmapi_memory.h
 beforedepend:	mevent_dut.c
@@ -1025,6 +1073,8 @@ pci_nvme.c: ${SRCTOP}/usr.sbin/bhyve/pci_nvme.c
 pci_ahci.c: ${SRCTOP}/usr.sbin/bhyve/pci_ahci.c
 	${_COPY_ATOMIC}
 pci_e82545.c: ${SRCTOP}/usr.sbin/bhyve/pci_e82545.c
+	${_COPY_ATOMIC}
+fwctl.c: ${SRCTOP}/usr.sbin/bhyve/amd64/fwctl.c
 	${_COPY_ATOMIC}
 vmmapi_memory.c: ${SRCTOP}/lib/libvmmapi/vmmapi_memory.c
 	${_COPY_ATOMIC}

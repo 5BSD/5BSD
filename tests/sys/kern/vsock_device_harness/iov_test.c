@@ -117,10 +117,19 @@ ATF_TC_BODY(length_overflow_saturates, tc)
 	ATF_CHECK(!check_iov_len(iov, 2, 8));
 }
 
+ATF_TC_WITHOUT_HEAD(zero_length_requires_no_iovecs);
+ATF_TC_BODY(zero_length_requires_no_iovecs, tc)
+{
+
+	ATF_CHECK(check_iov_len(NULL, 0, 0));
+	ATF_CHECK(!check_iov_len(NULL, 0, 1));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, split_preserves_tail);
 	ATF_TP_ADD_TC(tp, scsi_packed_data_descriptor);
 	ATF_TP_ADD_TC(tp, length_overflow_saturates);
+	ATF_TP_ADD_TC(tp, zero_length_requires_no_iovecs);
 	return (atf_no_error());
 }

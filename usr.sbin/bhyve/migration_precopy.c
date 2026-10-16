@@ -14,6 +14,7 @@
 #include <vmmapi.h>
 
 #include <dev/vmm/vmm_address_range.h>
+#include <dev/vmm/vmm_dirty_log_request.h>
 
 #include "migration_dirty.h"
 #include "migration_eligibility.h"
@@ -81,6 +82,8 @@ migration_precopy_cpu_request(void *arg, uint16_t operation, uint64_t gpa,
 	request.version = VMM_DIRTY_LOG_REQUEST_VERSION;
 	request.size = VMM_DIRTY_LOG_REQUEST_SIZE;
 	request.operation = operation;
+	if (operation == VMM_DIRTY_LOG_REQUEST_ENABLE)
+		request.flags = VMM_DIRTY_LOG_REQUEST_F_SPARSE_RANGE;
 	request.gpa = gpa;
 	request.length = length;
 	if (output != NULL) {
@@ -403,8 +406,8 @@ migration_precopy_collect_with_ops(struct vmctx *ctx, uint64_t gpa,
 	*generation = candidate;
 settle:
 	pthread_mutex_lock(&session->lock);
-	session->phase = failed ? MIGRATION_PRECOPY_FAILED :
-	    MIGRATION_PRECOPY_ACTIVE;
+	session->phase = failed || session->phase == MIGRATION_PRECOPY_FAILED ?
+	    MIGRATION_PRECOPY_FAILED : MIGRATION_PRECOPY_ACTIVE;
 	pthread_mutex_unlock(&session->lock);
 	free(device_bitmap);
 	free(cpu_bitmap);
@@ -438,6 +441,87 @@ migration_precopy_collect(struct vmctx *ctx, uint64_t gpa, uint64_t length,
 {
 
 	return (migration_precopy_collect_with_ops(ctx, gpa, length, mode,
+	    bitmap, bitmap_bytes, generation, &migration_precopy_vm_ops, ctx));
+}
+
+int
+migration_precopy_collect_window_with_ops(struct vmctx *ctx, uint64_t gpa,
+    uint64_t length, uint8_t *bitmap, size_t bitmap_bytes,
+    struct migration_precopy_generation *generation,
+    const struct migration_precopy_cpu_ops *ops, void *arg)
+{
+	const uint64_t max_length = VMM_DIRTY_LOG_MAX_BITMAP_BYTES * NBBY *
+	    MIGRATION_DIRTY_GRANULARITY;
+	struct migration_precopy_generation current, previous;
+	uint64_t chunk_gpa, chunk_length, remaining;
+	size_t chunk_bytes, offset, required;
+	int error;
+
+	if (ctx == NULL || bitmap == NULL || generation == NULL ||
+	    migration_precopy_ops_validate(ops) != 0 ||
+	    migration_dirty_range_bitmap_bytes(gpa, length, &required) != 0 ||
+	    bitmap_bytes != required ||
+	    vmm_address_ranges_overlap(bitmap, bitmap_bytes, generation,
+	    sizeof(*generation)))
+		return (EINVAL);
+	memset(&previous, 0, sizeof(previous));
+	chunk_gpa = gpa;
+	remaining = length;
+	while (remaining != 0) {
+		chunk_length = remaining < max_length ? remaining : max_length;
+		error = migration_dirty_range_bitmap_bytes(chunk_gpa,
+		    chunk_length, &chunk_bytes);
+		if (error != 0)
+			goto failed;
+		offset = (size_t)((chunk_gpa - gpa) /
+		    (MIGRATION_DIRTY_GRANULARITY * NBBY));
+		if (offset > bitmap_bytes || chunk_bytes > bitmap_bytes - offset) {
+			error = EPROTO;
+			goto failed;
+		}
+		memset(&current, 0, sizeof(current));
+		error = migration_precopy_collect_with_ops(ctx, chunk_gpa,
+		    chunk_length, MIGRATION_DIRTY_CLEAR, bitmap + offset,
+		    chunk_bytes, &current, ops, arg);
+		if (error != 0)
+			goto failed;
+		if (previous.cpu_identity != 0 &&
+		    (current.cpu_map_generation !=
+		    previous.cpu_map_generation ||
+		    current.cpu_identity != previous.cpu_identity + 1 ||
+		    current.cpu_dirty_generation !=
+		    previous.cpu_dirty_generation + 1 ||
+		    current.device_identity != previous.device_identity + 1 ||
+		    current.device_dirty_generation !=
+		    previous.device_dirty_generation)) {
+			error = EPROTO;
+			goto failed;
+		}
+		previous = current;
+		chunk_gpa += chunk_length;
+		remaining -= chunk_length;
+	}
+	*generation = previous;
+	return (0);
+failed:
+	/* Any earlier chunk may have cleared CPU bits: this session is cleanup-only. */
+	pthread_mutex_lock(&migration_precopy_session.lock);
+	if (migration_precopy_session_matches(&migration_precopy_session, ctx,
+	    ops, arg) && (migration_precopy_session.phase ==
+	    MIGRATION_PRECOPY_ACTIVE || migration_precopy_session.phase ==
+	    MIGRATION_PRECOPY_COLLECTING))
+		migration_precopy_session.phase = MIGRATION_PRECOPY_FAILED;
+	pthread_mutex_unlock(&migration_precopy_session.lock);
+	return (error);
+}
+
+int
+migration_precopy_collect_window(struct vmctx *ctx, uint64_t gpa,
+    uint64_t length, uint8_t *bitmap, size_t bitmap_bytes,
+    struct migration_precopy_generation *generation)
+{
+
+	return (migration_precopy_collect_window_with_ops(ctx, gpa, length,
 	    bitmap, bitmap_bytes, generation, &migration_precopy_vm_ops, ctx));
 }
 
@@ -490,29 +574,25 @@ int
 migration_precopy_free_set_mark(struct migration_precopy_free_set *set,
     uint64_t gpa, uint64_t length)
 {
-	uint64_t start, end, page, first_page, last_page;
+	uint64_t end, first_page, last_page, page, start;
 
 	if (set == NULL || set->bitmap == NULL)
 		return (EINVAL);
 	if (length == 0)
 		return (0);
-	if (gpa > UINT64_MAX - length)
+	if (gpa > UINT64_MAX - (length - 1))
 		return (EINVAL);
-	/* Clamp the reported range to the covered window. */
+	/* Clamp inclusive endpoints; the exclusive end may not fit in uint64_t. */
 	start = gpa < set->gpa ? set->gpa : gpa;
-	end = gpa + length;
-	if (end > set->gpa + set->length)
-		end = set->gpa + set->length;
-	if (start >= end)
+	end = gpa + length - 1;
+	if (end > set->gpa + set->length - 1)
+		end = set->gpa + set->length - 1;
+	if (start > end)
 		return (0);
-	/* Round inward to whole covered pages. */
-	start += (MIGRATION_DIRTY_GRANULARITY - 1);
-	start -= start % MIGRATION_DIRTY_GRANULARITY;
-	end -= end % MIGRATION_DIRTY_GRANULARITY;
-	if (start >= end)
-		return (0);
-	first_page = (start - set->gpa) / MIGRATION_DIRTY_GRANULARITY;
-	last_page = (end - set->gpa) / MIGRATION_DIRTY_GRANULARITY;
+	/* Convert to offsets before rounding inward to whole covered pages. */
+	first_page = (start - set->gpa + MIGRATION_DIRTY_GRANULARITY - 1) /
+	    MIGRATION_DIRTY_GRANULARITY;
+	last_page = (end - set->gpa + 1) / MIGRATION_DIRTY_GRANULARITY;
 	for (page = first_page; page < last_page; page++) {
 		size_t index = (size_t)(page / NBBY);
 

@@ -4,6 +4,7 @@
 
 #include <limits.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <atf-c.h>
 
@@ -48,11 +49,46 @@ ATF_TC_BODY(axis_monotonic_and_in_range, tc)
 	}
 }
 
+ATF_TC_WITHOUT_HEAD(short_string_descriptors);
+ATF_TC_BODY(short_string_descriptors, tc)
+{
+	uint8_t bytes[8];
+
+	memset(bytes, 0xa5, sizeof(bytes));
+	ATF_CHECK_EQ(umouse_string_descriptor_encode("AB", false, 3, bytes,
+	    0), 0);
+	ATF_CHECK_EQ(bytes[0], 0xa5);
+	ATF_CHECK_EQ(umouse_string_descriptor_encode("AB", false, 3, bytes,
+	    1), 1);
+	ATF_CHECK_EQ(bytes[0], 6);
+	ATF_CHECK_EQ(bytes[1], 0xa5);
+	ATF_CHECK_EQ(umouse_string_descriptor_encode("AB", false, 3, bytes,
+	    3), 3);
+	ATF_CHECK_EQ(bytes[1], 3);
+	ATF_CHECK_EQ(bytes[2], 'A');
+	ATF_CHECK_EQ(bytes[3], 0xa5);
+	ATF_CHECK_EQ(umouse_string_descriptor_encode("AB", false, 3, bytes,
+	    sizeof(bytes)), 6);
+	ATF_CHECK_EQ(bytes[3], 0);
+	ATF_CHECK_EQ(bytes[4], 'B');
+	ATF_CHECK_EQ(bytes[5], 0);
+	ATF_CHECK_EQ(bytes[6], 0xa5);
+
+	memset(bytes, 0xa5, sizeof(bytes));
+	ATF_CHECK_EQ(umouse_string_descriptor_encode("\x09\x04", true, 3,
+	    bytes, 3), 3);
+	ATF_CHECK_EQ(bytes[0], 4);
+	ATF_CHECK_EQ(bytes[1], 3);
+	ATF_CHECK_EQ(bytes[2], 9);
+	ATF_CHECK_EQ(bytes[3], 0xa5);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, axis_boundaries);
 	ATF_TP_ADD_TC(tp, axis_clamps_outside_framebuffer);
 	ATF_TP_ADD_TC(tp, axis_monotonic_and_in_range);
+	ATF_TP_ADD_TC(tp, short_string_descriptors);
 	return (atf_no_error());
 }

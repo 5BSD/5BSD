@@ -227,8 +227,9 @@ pci_fbuf_baraddr(struct pci_devinst *pi, int baridx, int enabled,
 static int
 pci_fbuf_parse_config(struct pci_fbuf_softc *sc, nvlist_t *nvl)
 {
-	const char *value;
+	const char *errstr, *value;
 	uint16_t height, width;
+	long long parsed;
 	char *cp;
 
 	sc->rfb_wait = get_config_bool_node_default(nvl, "wait", false);
@@ -264,7 +265,10 @@ pci_fbuf_parse_config(struct pci_fbuf_softc *sc, nvlist_t *nvl)
 					    value);
 					return (-1);
 				}
-				sc->rfb_port = atoi(cp);
+				parsed = strtonum(cp, 0, UINT16_MAX, &errstr);
+				if (errstr != NULL)
+					return (-1);
+				sc->rfb_port = (int)parsed;
 			} else if (*cp != '\0') {
 				EPRINTLN("fbuf: Invalid IPv6 address: \"%s\"",
 				    value);
@@ -289,7 +293,11 @@ pci_fbuf_parse_config(struct pci_fbuf_softc *sc, nvlist_t *nvl)
 			sc->rfb_family = AF_UNSPEC;
 			cp = strchr(value, ':');
 			if (cp == NULL) {
-				sc->rfb_port = atoi(value);
+				parsed = strtonum(value, 0, UINT16_MAX,
+				    &errstr);
+				if (errstr != NULL)
+					return (-1);
+				sc->rfb_port = (int)parsed;
 			} else {
 				sc->rfb_host = strndup(value, cp - value);
 				if (sc->rfb_host == NULL)
@@ -301,7 +309,10 @@ pci_fbuf_parse_config(struct pci_fbuf_softc *sc, nvlist_t *nvl)
 					    value);
 					return (-1);
 				}
-				sc->rfb_port = atoi(cp);
+				parsed = strtonum(cp, 0, UINT16_MAX, &errstr);
+				if (errstr != NULL)
+					return (-1);
+				sc->rfb_port = (int)parsed;
 			}
 		}
 	}
@@ -339,14 +350,20 @@ pci_fbuf_parse_config(struct pci_fbuf_softc *sc, nvlist_t *nvl)
 	}
 
 	value = get_config_value_node(nvl, "w");
-	if (value != NULL)
-		pci_fbuf_set_u16(sc, PCI_FBUF_REG_WIDTH,
-		    strtol(value, NULL, 10));
+	if (value != NULL) {
+		parsed = strtonum(value, COLS_MIN, COLS_MAX, &errstr);
+		if (errstr != NULL)
+			return (-1);
+		pci_fbuf_set_u16(sc, PCI_FBUF_REG_WIDTH, (uint16_t)parsed);
+	}
 
 	value = get_config_value_node(nvl, "h");
-	if (value != NULL)
-		pci_fbuf_set_u16(sc, PCI_FBUF_REG_HEIGHT,
-		    strtol(value, NULL, 10));
+	if (value != NULL) {
+		parsed = strtonum(value, ROWS_MIN, ROWS_MAX, &errstr);
+		if (errstr != NULL)
+			return (-1);
+		pci_fbuf_set_u16(sc, PCI_FBUF_REG_HEIGHT, (uint16_t)parsed);
+	}
 
 	width = pci_fbuf_get_u16(sc, PCI_FBUF_REG_WIDTH);
 	height = pci_fbuf_get_u16(sc, PCI_FBUF_REG_HEIGHT);

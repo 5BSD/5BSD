@@ -18,7 +18,9 @@
  * restore rejects the image at manifest admission rather than discovering a
  * shifted kernel record after it has begun the restore transaction.
  */
-#define	CHECKPOINT_MACHINE_ABI		"bhyve-virtio-v2"
+#define	CHECKPOINT_MACHINE_ABI		"bhyve-virtio-v3"
+/* v0.1.0 used this ABI; admission requires a separately qualified decoder. */
+#define	CHECKPOINT_MACHINE_ABI_PREVIOUS	"bhyve-virtio-v2"
 #define	CHECKPOINT_SHA256_HEX_LEN	64
 
 struct checkpoint_manifest {
@@ -38,6 +40,8 @@ bool	checkpoint_manifest_valid_for(const char *base,
 	    const struct checkpoint_manifest *manifest);
 bool	checkpoint_manifest_compatible(
 	    const struct checkpoint_manifest *manifest);
+bool	checkpoint_manifest_restore_compatible(
+	    const struct checkpoint_manifest *manifest, bool allow_previous);
 const char *checkpoint_host_architecture(void);
 int	checkpoint_manifest_read(const char *filename,
 	    struct checkpoint_manifest *manifest, bool *is_manifest);

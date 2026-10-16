@@ -188,6 +188,11 @@ status_body()
 	    >root/sys/vmm/vmx-nested-default-policy-live-qualification.tsv
 	printf 'D\tx\tpending\tl\tpending\tf\n' \
 	    >>root/sys/vmm/vmx-nested-default-policy-live-qualification.tsv
+	cp "$src/../sys/vmm/svm-nested-live-qualification.tsv" \
+	    root/sys/vmm/svm-nested-live-qualification.tsv
+	cp "$src/../sys/vmm/validate-svm-nested-live-ledger.sh" \
+	    root/sys/vmm/validate-svm-nested-live-ledger.sh
+	chmod +x root/sys/vmm/validate-svm-nested-live-ledger.sh
 	: >root/sys/kern/vsock_e2e/run-waspnest-qualification.sh
 	chmod +x root/sys/kern/vsock_e2e/run-waspnest-qualification.sh
 	lab_src="$src/virtio-lab.lua"
@@ -227,9 +232,12 @@ status_body()
 	    WASPNEST_TESTROOT="$PWD/root" sh "$runner" status
 	grep -q 'Linux exercised.*1' status.out || atf_fail "missing Linux count"
 	grep -q '5BSD  pending.*1' status.out || atf_fail "missing 5BSD count"
-	grep -q 'Nested live groups: 1' status.out || atf_fail "missing nested count"
+	grep -q 'Intel nested live groups: 1' status.out ||
+	    atf_fail "missing Intel nested count"
 	grep -q 'Nested default-policy groups: 1' status.out ||
 	    atf_fail "missing nested default-policy count"
+	grep -q 'AMD nested live groups: 12 pending' status.out ||
+	    atf_fail "missing AMD nested count"
 	atf_check -s exit:1 -o match:'VirtIO activation rows: 2' \
 	    -e match:'release coverage unresolved' env \
 	    WORKDIR="$PWD/campaign" WASPNEST_TESTROOT="$PWD/root" \

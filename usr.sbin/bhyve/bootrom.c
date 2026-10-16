@@ -235,6 +235,11 @@ bootrom_loadrom(struct vmctx *ctx)
 	}
 
 	rom_size = sbuf.st_size;
+	if (rom_size <= 0 || rom_size > BOOTROM_SIZE ||
+	    (rom_size & PAGE_MASK) != 0) {
+		EPRINTLN("Invalid bootrom size %ld", rom_size);
+		goto done;
+	}
 
 	varfile = get_config_value("bootvars");
 	var_size = 0;
@@ -256,7 +261,7 @@ bootrom_loadrom(struct vmctx *ctx)
 		var_size = sbuf.st_size;
 	}
 
-	if (var_size > BOOTROM_SIZE ||
+	if (var_size < 0 || var_size > BOOTROM_SIZE ||
 	    (var_size != 0 && var_size < PAGE_SIZE)) {
 		EPRINTLN("Invalid bootrom variable size %ld",
 		    var_size);

@@ -6,6 +6,7 @@
 
 #include <atf-c.h>
 #include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "checkpoint_topology.c"
@@ -83,6 +84,7 @@ ATF_TC_BODY(exact_record_partition, tc)
 	ATF_CHECK_EQ(checkpoint_record_layout_validate(gap, 2, 56), EINVAL);
 	ATF_CHECK_EQ(checkpoint_record_layout_validate(zero, 1, 1), EINVAL);
 	ATF_CHECK_EQ(checkpoint_record_layout_validate(ordered, 3, 57), EINVAL);
+	ATF_CHECK_EQ(checkpoint_record_layout_validate(ordered, 3, 2), EINVAL);
 	ATF_CHECK_EQ(checkpoint_record_layout_validate(overflow, 1,
 	    UINT64_MAX), EINVAL);
 	ATF_CHECK_EQ(checkpoint_record_layout_validate(NULL, 0, 0), 0);
@@ -91,6 +93,31 @@ ATF_TC_BODY(exact_record_partition, tc)
 }
 
 ATF_TC_WITHOUT_HEAD(exact_record_consumption);
+
+ATF_TC_WITHOUT_HEAD(large_unordered_record_partition);
+ATF_TC_BODY(large_unordered_record_partition, tc)
+{
+	const size_t count = 32768;
+	struct checkpoint_record_range *ranges;
+
+	(void)tc;
+	ranges = calloc(count, sizeof(*ranges));
+	ATF_REQUIRE(ranges != NULL);
+	for (size_t i = 0; i < count; i++) {
+		ranges[i].offset = count - i - 1;
+		ranges[i].length = 1;
+	}
+	ATF_CHECK_EQ(checkpoint_record_layout_validate(ranges, count,
+	    count), 0);
+	/* Validation must not reorder the caller's metadata. */
+	ATF_CHECK_EQ(ranges[0].offset, count - 1);
+	ATF_CHECK_EQ(ranges[count - 1].offset, 0);
+	ranges[count / 2].offset = count;
+	ATF_CHECK_EQ(checkpoint_record_layout_validate(ranges, count,
+	    count), EINVAL);
+	free(ranges);
+}
+
 ATF_TC_BODY(exact_record_consumption, tc)
 {
 
@@ -243,6 +270,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, exact_named_device_set);
 	ATF_TP_ADD_TC(tp, rejects_ambiguous_or_invalid_names);
 	ATF_TP_ADD_TC(tp, exact_record_partition);
+	ATF_TP_ADD_TC(tp, large_unordered_record_partition);
 	ATF_TP_ADD_TC(tp, exact_record_consumption);
 	ATF_TP_ADD_TC(tp, cpu_topology_product_and_bounds);
 	ATF_TP_ADD_TC(tp, numa_topology_is_an_exact_partition);

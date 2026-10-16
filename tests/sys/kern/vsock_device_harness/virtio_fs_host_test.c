@@ -448,6 +448,26 @@ ATF_TC_BODY(asynchronous_init_and_stale_completion, tc)
 	    DOC_FUSE_OUT_HEADER_SIZE), EINVAL);
 }
 
+ATF_TC_WITHOUT_HEAD(init_overflow_preserves_outputs);
+ATF_TC_BODY(init_overflow_preserves_outputs, tc)
+{
+	struct virtio_fs_request_context context, saved_context;
+	struct virtio_fs_session session, saved_session;
+	uint8_t request[DOC_FUSE_INIT_IN_MIN_SIZE];
+
+	memset(&session, 0, sizeof(session));
+	session.incarnation = UINT64_MAX;
+	memset(&context, 0xa5, sizeof(context));
+	saved_session = session;
+	saved_context = context;
+	encode_init_request(request, 11, false);
+	ATF_CHECK_EQ(virtio_fs_request_accept(&session,
+	    VIRTIO_FS_QUEUE_REQUEST, request, sizeof(request), 64,
+	    &context), EOVERFLOW);
+	ATF_CHECK_EQ(memcmp(&session, &saved_session, sizeof(session)), 0);
+	ATF_CHECK_EQ(memcmp(&context, &saved_context, sizeof(context)), 0);
+}
+
 ATF_TC_WITHOUT_HEAD(newer_major_requires_a_second_init);
 ATF_TC_BODY(newer_major_requires_a_second_init, tc)
 {
@@ -608,6 +628,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, api_contract_validation);
 	ATF_TP_ADD_TC(tp, publication_aliases_are_rejected);
 	ATF_TP_ADD_TC(tp, asynchronous_init_and_stale_completion);
+	ATF_TP_ADD_TC(tp, init_overflow_preserves_outputs);
 	ATF_TP_ADD_TC(tp, little_and_big_endian_init);
 	ATF_TP_ADD_TC(tp, configuration_layout_and_utf8);
 	ATF_TP_ADD_TC(tp, queue_class_and_no_reply);

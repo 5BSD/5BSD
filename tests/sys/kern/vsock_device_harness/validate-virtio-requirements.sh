@@ -2709,7 +2709,10 @@ if rg -q 'SNAPSHOT_LE64_OR_LEAVE\((saved->vq_generation|generation),' \
 	echo "virtio requirements: obsolete source-generation wire slot remains" >&2
 	exit 1
 fi
-if ! rg -q '#define[[:space:]]+VT9P_SNAPSHOT_VERSION[[:space:]]+2U' \
+# The v6 9P fid image adds the classic Tread byte position to the entry index
+# and ordered prefix hash.  Older records remain readable where their cursor
+# can be reconstructed and verified.
+if ! rg -q '#define[[:space:]]+VT9P_SNAPSHOT_VERSION[[:space:]]+6U' \
     "$source_root/usr.sbin/bhyve/pci_virtio_9p.c" ||
     rg -q 'version[[:space:]]*==[[:space:]]*1' \
     "$source_root/usr.sbin/bhyve/pci_virtio_9p.c"; then

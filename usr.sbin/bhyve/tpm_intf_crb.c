@@ -19,6 +19,8 @@
 #include <pthread_np.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
+#include <time.h>
 #include <stdlib.h>
 #include <vmmapi.h>
 
@@ -29,6 +31,7 @@
 #include "tpm_device.h"
 #include "tpm_intf.h"
 #include "tpm_intf_crb_model.h"
+#include "tpm_local_state.h"
 
 #define TPM_CRB_ADDRESS 0xFED40000
 #define TPM_CRB_REGS_SIZE 0x1000
@@ -42,6 +45,7 @@
 #define TPM_CRB_DATA_BUFFER_SIZE 0xF80
 
 #define TPM_CRB_LOG_AREA_MINIMUM_SIZE (64 * 1024)
+#define TPM_CRB_QUIESCE_TIMEOUT_SECONDS 30
 
 #define TPM_CRB_LOG_AREA_FWCFG_NAME "etc/tpm/log"
 
@@ -141,6 +145,8 @@ struct tpm_crb_regs {
 } __packed;
 static_assert(sizeof(struct tpm_crb_regs) == TPM_CRB_REGS_SIZE,
     "Invalid size of tpm_crb");
+static_assert(TPM_CRB_LOCAL_DATA_SIZE == TPM_CRB_DATA_BUFFER_SIZE,
+    "CRB state buffer size mismatch");
 
 #define CRB_CMD_SIZE_READ(regs) (regs.cmd_size)
 #define CRB_CMD_SIZE_WRITE(regs, val) \
@@ -183,6 +189,8 @@ struct tpm_crb {
 	pthread_mutex_t mutex;
 	pthread_cond_t cond;
 	bool closing;
+	bool pause_requested;
+	bool paused;
 	bool mmio_registered;
 	bool mutex_initialized;
 	bool cond_initialized;
@@ -269,8 +277,15 @@ tpm_crb_thread(void *const arg)
 
 	pthread_mutex_lock(&crb->mutex);
 	for (;;) {
-		while (!crb->closing && !crb->regs.ctrl_start.start)
+		while (!crb->closing &&
+		    (crb->paused || !crb->regs.ctrl_start.start)) {
+			if (crb->pause_requested && !crb->paused &&
+			    !crb->regs.ctrl_start.start) {
+				crb->paused = true;
+				pthread_cond_broadcast(&crb->cond);
+			}
 			pthread_cond_wait(&crb->cond, &crb->mutex);
+		}
 		if (crb->closing)
 			break;
 		tpm_crb_execute_locked(crb);
@@ -334,8 +349,10 @@ tpm_crb_mem_handler(struct vcpu *vcpu __unused, const int dir,
 			union tpm_crb_reg_loc_ctrl loc_ctrl = { 0 };
 
 			if (tpm_crb_control_write_decode(*val, off & 3, size,
-			    &decoded) != 0)
+			    &decoded) != 0) {
+				error = EINVAL;
 				goto err_out;
+			}
 			loc_ctrl.val = decoded;
 
 			pthread_mutex_lock(&crb->mutex);
@@ -354,8 +371,10 @@ tpm_crb_mem_handler(struct vcpu *vcpu __unused, const int dir,
 			union tpm_crb_reg_ctrl_req req = { 0 };
 
 			if (tpm_crb_control_write_decode(*val, off & 3, size,
-			    &decoded) != 0)
+			    &decoded) != 0) {
+				error = EINVAL;
 				goto err_out;
+			}
 			req.val = decoded;
 
 			pthread_mutex_lock(&crb->mutex);
@@ -370,12 +389,14 @@ tpm_crb_mem_handler(struct vcpu *vcpu __unused, const int dir,
 			break;
 		}
 		case offsetof(struct tpm_crb_regs, ctrl_cancel): {
-			union tpm_crb_reg_ctrl_cancel cancel;
+			union tpm_crb_reg_ctrl_cancel cancel = { 0 };
 
-			if ((size_t)size > sizeof(cancel))
+			if (tpm_crb_control_write_decode(*val, off & 3, size,
+			    &decoded) != 0) {
+				error = EINVAL;
 				goto err_out;
-
-			tpm_crb_mmiocpy(&cancel, val, size);
+			}
+			cancel.val = decoded;
 			if (cancel.cancel != 0) {
 				/* TODO: cancel the tpm command */
 				warnx(
@@ -392,11 +413,17 @@ tpm_crb_mem_handler(struct vcpu *vcpu __unused, const int dir,
 			union tpm_crb_reg_ctrl_start start = { 0 };
 
 			if (tpm_crb_control_write_decode(*val, off & 3, size,
-			    &decoded) != 0)
+			    &decoded) != 0) {
+				error = EINVAL;
 				goto err_out;
+			}
 			start.val = decoded;
 
 			pthread_mutex_lock(&crb->mutex);
+			if (crb->pause_requested) {
+				pthread_mutex_unlock(&crb->mutex);
+				return (EBUSY);
+			}
 			if (!start.start || crb->regs.ctrl_start.start) {
 				pthread_mutex_unlock(&crb->mutex);
 				break;
@@ -472,6 +499,7 @@ tpm_crb_init(void **sc, struct tpm_emul *emul, void *emul_sc,
     struct acpi_device *acpi_dev)
 {
 	struct tpm_crb *crb = NULL;
+	pthread_condattr_t condattr;
 	int error;
 
 	assert(sc != NULL);
@@ -525,7 +553,15 @@ tpm_crb_init(void **sc, struct tpm_emul *emul, void *emul_sc,
 	}
 	crb->mutex_initialized = true;
 
-	error = pthread_cond_init(&crb->cond, NULL);
+	error = pthread_condattr_init(&condattr);
+	if (error) {
+		warnc(error, "%s: failed to init cond attributes", __func__);
+		goto err_out;
+	}
+	error = pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC);
+	if (error == 0)
+		error = pthread_cond_init(&crb->cond, &condattr);
+	(void)pthread_condattr_destroy(&condattr);
 	if (error) {
 		warnc(error, "%s: failed to init cond", __func__);
 		goto err_out;
@@ -618,6 +654,133 @@ tpm_crb_deinit(void *sc)
 }
 
 static int
+tpm_crb_pause(void *sc)
+{
+	struct tpm_crb *crb = sc;
+	struct timespec deadline;
+	int error;
+
+	if (crb == NULL)
+		return (EINVAL);
+	pthread_mutex_lock(&crb->mutex);
+	if (crb->closing || crb->pause_requested) {
+		pthread_mutex_unlock(&crb->mutex);
+		return (EBUSY);
+	}
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0) {
+		error = errno;
+		pthread_mutex_unlock(&crb->mutex);
+		return (error);
+	}
+	deadline.tv_sec += TPM_CRB_QUIESCE_TIMEOUT_SECONDS;
+	crb->pause_requested = true;
+	pthread_cond_broadcast(&crb->cond);
+	error = 0;
+	while (!crb->paused && !crb->closing && error == 0)
+		error = pthread_cond_timedwait(&crb->cond, &crb->mutex,
+		    &deadline);
+	if (crb->paused && !crb->closing)
+		error = 0;
+	else {
+		crb->pause_requested = false;
+		pthread_cond_broadcast(&crb->cond);
+		error = crb->closing ? EBUSY : error;
+	}
+	pthread_mutex_unlock(&crb->mutex);
+	return (error);
+}
+
+static int
+tpm_crb_resume(void *sc)
+{
+	struct tpm_crb *crb = sc;
+
+	if (crb == NULL)
+		return (EINVAL);
+	pthread_mutex_lock(&crb->mutex);
+	if (crb->closing || !crb->pause_requested || !crb->paused) {
+		pthread_mutex_unlock(&crb->mutex);
+		return (EINVAL);
+	}
+	crb->pause_requested = false;
+	crb->paused = false;
+	pthread_cond_broadcast(&crb->cond);
+	pthread_mutex_unlock(&crb->mutex);
+	return (0);
+}
+
+static int
+tpm_crb_state_get(void *sc, uint8_t *wire, size_t wire_size)
+{
+	struct tpm_crb_local_state state;
+	struct tpm_crb *crb = sc;
+	int error;
+
+	if (crb == NULL || wire == NULL ||
+	    wire_size != TPM_CRB_LOCAL_STATE_SIZE)
+		return (EINVAL);
+	pthread_mutex_lock(&crb->mutex);
+	if (!crb->paused || crb->regs.ctrl_start.start) {
+		pthread_mutex_unlock(&crb->mutex);
+		return (EBUSY);
+	}
+	state.loc_state = crb->regs.loc_state.val;
+	state.loc_sts = crb->regs.loc_sts.val;
+	state.ctrl_sts = crb->regs.ctrl_sts.val;
+	state.cmd_size = crb->regs.cmd_size;
+	state.cmd_addr = CRB_CMD_ADDR_READ(crb->regs);
+	state.rsp_size = crb->regs.rsp_size;
+	state.rsp_addr = CRB_RSP_ADDR_READ(crb->regs);
+	memcpy(state.data, crb->regs.data_buffer, sizeof(state.data));
+	pthread_mutex_unlock(&crb->mutex);
+	error = tpm_crb_local_state_encode(&state, wire, wire_size);
+	explicit_bzero(&state, sizeof(state));
+	return (error);
+}
+
+static int
+tpm_crb_state_validate(const uint8_t *wire, size_t wire_size)
+{
+	struct tpm_crb_local_state state;
+	int error;
+
+	error = tpm_crb_local_state_decode(wire, wire_size, &state);
+	if (error == 0)
+		explicit_bzero(&state, sizeof(state));
+	return (error);
+}
+
+static int
+tpm_crb_state_set(void *sc, const uint8_t *wire, size_t wire_size)
+{
+	struct tpm_crb_local_state state;
+	struct tpm_crb *crb = sc;
+	int error;
+
+	if (crb == NULL)
+		return (EINVAL);
+	error = tpm_crb_local_state_decode(wire, wire_size, &state);
+	if (error != 0)
+		return (error);
+	pthread_mutex_lock(&crb->mutex);
+	if (!crb->paused || crb->regs.ctrl_start.start)
+		error = EBUSY;
+	else {
+		crb->regs.loc_state.val = state.loc_state;
+		crb->regs.loc_sts.val = state.loc_sts;
+		crb->regs.ctrl_sts.val = state.ctrl_sts;
+		crb->regs.cmd_size = state.cmd_size;
+		CRB_CMD_ADDR_WRITE(crb->regs, state.cmd_addr);
+		crb->regs.rsp_size = state.rsp_size;
+		CRB_RSP_ADDR_WRITE(crb->regs, state.rsp_addr);
+		memcpy(crb->regs.data_buffer, state.data, sizeof(state.data));
+	}
+	pthread_mutex_unlock(&crb->mutex);
+	explicit_bzero(&state, sizeof(state));
+	return (error);
+}
+
+static int
 tpm_crb_build_acpi_table(void *sc __unused, struct vmctx *vm_ctx)
 {
 	struct basl_table *table;
@@ -655,6 +818,12 @@ static struct tpm_intf tpm_intf_crb = {
 	.name = TPM_CRB_INTF_NAME,
 	.init = tpm_crb_init,
 	.deinit = tpm_crb_deinit,
+	.pause = tpm_crb_pause,
+	.resume = tpm_crb_resume,
+	.state_size = TPM_CRB_LOCAL_STATE_SIZE,
+	.state_get = tpm_crb_state_get,
+	.state_validate = tpm_crb_state_validate,
+	.state_set = tpm_crb_state_set,
 	.build_acpi_table = tpm_crb_build_acpi_table,
 };
 TPM_INTF_SET(tpm_intf_crb);

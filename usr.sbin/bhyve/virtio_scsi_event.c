@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "virtio_scsi_event.h"
+#include "virtio_state_range.h"
 
 int
 virtio_scsi_event_state_init(struct virtio_scsi_event_state *state,
@@ -18,7 +19,9 @@ virtio_scsi_event_state_init(struct virtio_scsi_event_state *state,
 {
 
 	if (state == NULL || records == NULL || capacity == 0 ||
-	    capacity > BHYVE_VTSCSI_EVENT_CAPACITY_MAX)
+	    capacity > BHYVE_VTSCSI_EVENT_CAPACITY_MAX ||
+	    virtio_state_ranges_overlap(state, sizeof(*state), records,
+	    capacity * sizeof(*records)))
 		return (EINVAL);
 	memset(state, 0, sizeof(*state));
 	memset(records, 0, capacity * sizeof(*records));
@@ -60,6 +63,8 @@ virtio_scsi_event_state_push(struct virtio_scsi_event_state *state,
 
 	if (state == NULL || record == NULL || state->records == NULL ||
 	    state->capacity == 0 ||
+	    state->capacity > BHYVE_VTSCSI_EVENT_CAPACITY_MAX ||
+	    state->head >= state->capacity || state->count > state->capacity ||
 	    record->source_sequence == 0 ||
 	    (record->event & BHYVE_VTSCSI_EVENT_MISSED) != 0)
 		return (EINVAL);
@@ -116,7 +121,14 @@ virtio_scsi_event_state_pop(struct virtio_scsi_event_state *state,
     struct virtio_scsi_event_record *record)
 {
 
-	if (state == NULL || record == NULL || state->records == NULL)
+	if (state == NULL || record == NULL || state->records == NULL ||
+	    state->capacity == 0 ||
+	    state->capacity > BHYVE_VTSCSI_EVENT_CAPACITY_MAX ||
+	    state->head >= state->capacity || state->count > state->capacity ||
+	    virtio_state_ranges_overlap(record, sizeof(*record), state,
+	    sizeof(*state)) ||
+	    virtio_state_ranges_overlap(record, sizeof(*record), state->records,
+	    state->capacity * sizeof(*state->records)))
 		return (false);
 	if (state->count == 0) {
 		if (!state->missed)

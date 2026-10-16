@@ -227,34 +227,55 @@ checkpoint_memory_geometry_match(
 	return (0);
 }
 
+static int
+checkpoint_record_range_compare(const void *left, const void *right)
+{
+	const struct checkpoint_record_range *a, *b;
+
+	a = left;
+	b = right;
+	if (a->offset < b->offset)
+		return (-1);
+	if (a->offset > b->offset)
+		return (1);
+	return (0);
+}
+
 int
 checkpoint_record_layout_validate(const struct checkpoint_record_range *ranges,
     size_t count, uint64_t total_length)
 {
+	struct checkpoint_record_range *ordered;
 	uint64_t cursor;
-	size_t selected;
+	int error;
 
 	if (count == 0)
 		return (total_length == 0 ? 0 : EINVAL);
-	if (ranges == NULL || total_length == 0)
+	if (ranges == NULL || total_length == 0 || count > total_length)
 		return (EINVAL);
+	if (count > SIZE_MAX / sizeof(*ordered))
+		return (EOVERFLOW);
+	/* Sort a private copy so untrusted record counts have bounded work. */
+	ordered = malloc(count * sizeof(*ordered));
+	if (ordered == NULL)
+		return (ENOMEM);
+	memcpy(ordered, ranges, count * sizeof(*ordered));
+	qsort(ordered, count, sizeof(*ordered),
+	    checkpoint_record_range_compare);
 	cursor = 0;
-	for (size_t emitted = 0; emitted < count; emitted++) {
-		selected = SIZE_MAX;
-		for (size_t i = 0; i < count; i++) {
-			if (ranges[i].length == 0 ||
-			    ranges[i].offset > total_length ||
-			    ranges[i].length > total_length - ranges[i].offset)
-				return (EINVAL);
-			if (ranges[i].offset < cursor)
-				continue;
-			if (selected == SIZE_MAX ||
-			    ranges[i].offset < ranges[selected].offset)
-				selected = i;
+	error = 0;
+	for (size_t i = 0; i < count; i++) {
+		if (ordered[i].length == 0 ||
+		    ordered[i].offset != cursor ||
+		    ordered[i].offset > total_length ||
+		    ordered[i].length > total_length - ordered[i].offset) {
+			error = EINVAL;
+			break;
 		}
-		if (selected == SIZE_MAX || ranges[selected].offset != cursor)
-			return (EINVAL);
-		cursor += ranges[selected].length;
+		cursor += ordered[i].length;
 	}
-	return (cursor == total_length ? 0 : EINVAL);
+	if (cursor != total_length)
+		error = EINVAL;
+	free(ordered);
+	return (error);
 }

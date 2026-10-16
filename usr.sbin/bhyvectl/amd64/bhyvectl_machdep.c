@@ -33,9 +33,12 @@
 #include <machine/specialreg.h>
 
 #include <err.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <limits.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -177,8 +180,58 @@ cpu_vendor_intel(void)
 	if (memcmp(v, "AuthenticAMD", sizeof(v)) == 0 ||
 	    memcmp(v, "HygonGenuine", sizeof(v)) == 0)
 		return (false);
-	fprintf(stderr, "Unknown cpu vendor \"%s\"\n", (const char *)v);
+	fprintf(stderr, "Unknown cpu vendor \"%.*s\"\n", (int)sizeof(v),
+	    (const char *)v);
 	exit(1);
+}
+
+static uint64_t
+parse_unsigned(const char *arg, uint64_t maximum)
+{
+	unsigned long long value;
+	char *end;
+
+	if (arg[0] == '-' || arg[0] == '\0')
+		errx(1, "invalid numeric value: %s", arg);
+	errno = 0;
+	value = strtoull(arg, &end, 0);
+	if (errno != 0 || end == arg || *end != '\0' || value > maximum)
+		errx(1, "invalid numeric value: %s", arg);
+	return (value);
+}
+
+static void
+parse_pptdev(const char *arg, int *busp, int *slotp, int *funcp)
+{
+	const char *input;
+	char *end;
+	unsigned long bus_number, slot_number, func_number;
+
+	input = arg;
+	if (arg[0] == '-')
+		errx(1, "invalid PCI address: %s", input);
+	errno = 0;
+	bus_number = strtoul(arg, &end, 10);
+	if (errno != 0 || end == arg || *end != '/' || bus_number > 255)
+		errx(1, "invalid PCI address: %s", input);
+	arg = end + 1;
+	if (arg[0] == '-')
+		errx(1, "invalid PCI address: %s", input);
+	errno = 0;
+	slot_number = strtoul(arg, &end, 10);
+	if (errno != 0 || end == arg || (*end != '.' && *end != '/') ||
+	    slot_number > 31)
+		errx(1, "invalid PCI address: %s", input);
+	arg = end + 1;
+	if (arg[0] == '-')
+		errx(1, "invalid PCI address: %s", input);
+	errno = 0;
+	func_number = strtoul(arg, &end, 10);
+	if (errno != 0 || end == arg || *end != '\0' || func_number > 7)
+		errx(1, "invalid PCI address: %s", input);
+	*busp = bus_number;
+	*slotp = slot_number;
+	*funcp = func_number;
 }
 
 void
@@ -1335,134 +1388,134 @@ bhyvectl_opts(const struct option *options, size_t count)
 void
 bhyvectl_handle_opt(const struct option *opts, int opt)
 {
+	(void)opts;
 	switch (opt) {
 	case SET_EFER:
-		set_efer_val = strtoul(optarg, NULL, 0);
+		set_efer_val = parse_unsigned(optarg, UINT64_MAX);
 		set_efer = 1;
 		break;
 	case SET_CR0:
-		set_cr0_val = strtoul(optarg, NULL, 0);
+		set_cr0_val = parse_unsigned(optarg, UINT64_MAX);
 		set_cr0 = 1;
 		break;
 	case SET_CR2:
-		set_cr2_val = strtoul(optarg, NULL, 0);
+		set_cr2_val = parse_unsigned(optarg, UINT64_MAX);
 		set_cr2 = 1;
 		break;
 	case SET_CR3:
-		set_cr3_val = strtoul(optarg, NULL, 0);
+		set_cr3_val = parse_unsigned(optarg, UINT64_MAX);
 		set_cr3 = 1;
 		break;
 	case SET_CR4:
-		set_cr4_val = strtoul(optarg, NULL, 0);
+		set_cr4_val = parse_unsigned(optarg, UINT64_MAX);
 		set_cr4 = 1;
 		break;
 	case SET_DR0:
-		set_dr0_val = strtoul(optarg, NULL, 0);
+		set_dr0_val = parse_unsigned(optarg, UINT64_MAX);
 		set_dr0 = 1;
 		break;
 	case SET_DR1:
-		set_dr1_val = strtoul(optarg, NULL, 0);
+		set_dr1_val = parse_unsigned(optarg, UINT64_MAX);
 		set_dr1 = 1;
 		break;
 	case SET_DR2:
-		set_dr2_val = strtoul(optarg, NULL, 0);
+		set_dr2_val = parse_unsigned(optarg, UINT64_MAX);
 		set_dr2 = 1;
 		break;
 	case SET_DR3:
-		set_dr3_val = strtoul(optarg, NULL, 0);
+		set_dr3_val = parse_unsigned(optarg, UINT64_MAX);
 		set_dr3 = 1;
 		break;
 	case SET_DR6:
-		set_dr6_val = strtoul(optarg, NULL, 0);
+		set_dr6_val = parse_unsigned(optarg, UINT64_MAX);
 		set_dr6 = 1;
 		break;
 	case SET_DR7:
-		set_dr7_val = strtoul(optarg, NULL, 0);
+		set_dr7_val = parse_unsigned(optarg, UINT64_MAX);
 		set_dr7 = 1;
 		break;
 	case SET_RSP:
-		set_rsp_val = strtoul(optarg, NULL, 0);
+		set_rsp_val = parse_unsigned(optarg, UINT64_MAX);
 		set_rsp = 1;
 		break;
 	case SET_RIP:
-		set_rip_val = strtoul(optarg, NULL, 0);
+		set_rip_val = parse_unsigned(optarg, UINT64_MAX);
 		set_rip = 1;
 		break;
 	case SET_RAX:
-		set_rax_val = strtoul(optarg, NULL, 0);
+		set_rax_val = parse_unsigned(optarg, UINT64_MAX);
 		set_rax = 1;
 		break;
 	case SET_RFLAGS:
-		set_rflags_val = strtoul(optarg, NULL, 0);
+		set_rflags_val = parse_unsigned(optarg, UINT64_MAX);
 		set_rflags = 1;
 		break;
 	case DESC_BASE:
-		desc_base = strtoul(optarg, NULL, 0);
+		desc_base = parse_unsigned(optarg, UINT64_MAX);
 		break;
 	case DESC_LIMIT:
-		desc_limit = strtoul(optarg, NULL, 0);
+		desc_limit = parse_unsigned(optarg, UINT32_MAX);
 		break;
 	case DESC_ACCESS:
-		desc_access = strtoul(optarg, NULL, 0);
+		desc_access = parse_unsigned(optarg, UINT32_MAX);
 		break;
 	case SET_CS:
-		set_cs_val = strtoul(optarg, NULL, 0);
+		set_cs_val = parse_unsigned(optarg, UINT64_MAX);
 		set_cs = 1;
 		break;
 	case SET_DS:
-		set_ds_val = strtoul(optarg, NULL, 0);
+		set_ds_val = parse_unsigned(optarg, UINT64_MAX);
 		set_ds = 1;
 		break;
 	case SET_ES:
-		set_es_val = strtoul(optarg, NULL, 0);
+		set_es_val = parse_unsigned(optarg, UINT64_MAX);
 		set_es = 1;
 		break;
 	case SET_FS:
-		set_fs_val = strtoul(optarg, NULL, 0);
+		set_fs_val = parse_unsigned(optarg, UINT64_MAX);
 		set_fs = 1;
 		break;
 	case SET_GS:
-		set_gs_val = strtoul(optarg, NULL, 0);
+		set_gs_val = parse_unsigned(optarg, UINT64_MAX);
 		set_gs = 1;
 		break;
 	case SET_SS:
-		set_ss_val = strtoul(optarg, NULL, 0);
+		set_ss_val = parse_unsigned(optarg, UINT64_MAX);
 		set_ss = 1;
 		break;
 	case SET_TR:
-		set_tr_val = strtoul(optarg, NULL, 0);
+		set_tr_val = parse_unsigned(optarg, UINT64_MAX);
 		set_tr = 1;
 		break;
 	case SET_LDTR:
-		set_ldtr_val = strtoul(optarg, NULL, 0);
+		set_ldtr_val = parse_unsigned(optarg, UINT64_MAX);
 		set_ldtr = 1;
 		break;
 	case SET_X2APIC_STATE:
-		x2apic_state = strtol(optarg, NULL, 0);
+		x2apic_state = parse_unsigned(optarg, X2APIC_STATE_LAST - 1);
 		set_x2apic_state = 1;
 		break;
 	case SET_RTC_TIME:
-		rtc_secs = strtoul(optarg, NULL, 0);
+		rtc_secs = parse_unsigned(optarg, INT64_MAX);
 		set_rtc_time = 1;
 		break;
 	case SET_RTC_NVRAM:
-		rtc_nvram_value = (uint8_t)strtoul(optarg, NULL, 0);
+		rtc_nvram_value = parse_unsigned(optarg, UINT8_MAX);
 		set_rtc_nvram = 1;
 		break;
 	case RTC_NVRAM_OFFSET:
-		rtc_nvram_offset = strtoul(optarg, NULL, 0);
+		rtc_nvram_offset = parse_unsigned(optarg, INT_MAX);
 		break;
 	case GET_GPA_PMAP:
-		gpa_pmap = strtoul(optarg, NULL, 0);
+		gpa_pmap = parse_unsigned(optarg, UINT64_MAX);
 		get_gpa_pmap = 1;
 		break;
 	case UNASSIGN_PPTDEV:
 		unassign_pptdev = 1;
-		if (sscanf(optarg, "%d/%d/%d", &bus, &slot, &func) != 3)
-			usage(opts);
+		parse_pptdev(optarg, &bus, &slot, &func);
 		break;
 	case ASSERT_LAPIC_LVT:
-		assert_lapic_lvt = atoi(optarg);
+		assert_lapic_lvt = parse_unsigned(optarg, INT_MAX);
 		break;
 	}
 }

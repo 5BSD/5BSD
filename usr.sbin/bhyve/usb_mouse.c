@@ -346,7 +346,6 @@ umouse_request(void *scarg, struct usb_data_xfer *xfer)
 	uint16_t value;
 	uint16_t index;
 	uint16_t len;
-	uint16_t slen;
 	uint8_t *udata;
 	int	err;
 	int	i, idx;
@@ -379,6 +378,11 @@ umouse_request(void *scarg, struct usb_data_xfer *xfer)
 	value = UGETW(xfer->ureq->wValue);
 	index = UGETW(xfer->ureq->wIndex);
 	len = UGETW(xfer->ureq->wLength);
+	/* A setup length must never authorize writes past the data TRB. */
+	if (data != NULL && (data->blen < 0 || len > data->blen)) {
+		err = USB_ERR_STALLED;
+		goto done;
+	}
 
 	DPRINTF(("umouse_request: port %d, type 0x%x, req 0x%x, val 0x%x, "
 	         "idx 0x%x, len %u",
@@ -389,6 +393,8 @@ umouse_request(void *scarg, struct usb_data_xfer *xfer)
 	case UREQ(UR_GET_CONFIG, UT_READ_DEVICE):
 		DPRINTF(("umouse: (UR_GET_CONFIG, UT_READ_DEVICE)"));
 		if (!data)
+			break;
+		if (len == 0)
 			break;
 
 		*udata = umouse_confd.confd.bConfigurationValue;
@@ -445,38 +451,10 @@ umouse_request(void *scarg, struct usb_data_xfer *xfer)
 			else
 				goto done;
 
-			if ((value & 0xFF) == UMSTR_LANG) {
-				udata[0] = 4;
-				udata[1] = UDESC_STRING;
-				data->blen = len - 2;
-				len -= 2;
-				data->bdone += 2;
-
-				if (len >= 2) {
-					udata[2] = str[0];
-					udata[3] = str[1];
-					data->blen -= 2;
-					data->bdone += 2;
-				} else
-					data->blen = 0;
-
-				goto done;
-			}
-
-			slen = 2 + strlen(str) * 2;
-			udata[0] = slen;
-			udata[1] = UDESC_STRING;
-
-			if (len > slen) {
-				data->blen = len - slen;
-				len = slen;
-			} else
-				data->blen = 0;
-			for (i = 2; i < len; i += 2) {
-				udata[i] = *str++;
-				udata[i+1] = '\0';
-			}
-			data->bdone += slen;
+			i = umouse_string_descriptor_encode(str,
+			    (value & 0xFF) == UMSTR_LANG, UDESC_STRING, udata, len);
+			data->bdone += i;
+			data->blen = len - i;
 
 			break;
 
@@ -538,22 +516,23 @@ umouse_request(void *scarg, struct usb_data_xfer *xfer)
 		if (len > 0) {
 			*udata = 0;
 			data->blen = len - 1;
+			data->bdone += 1;
 		}
 		eshort = data->blen > 0;
-		data->bdone += 1;
 		break;
 
 	case UREQ(UR_GET_STATUS, UT_READ_DEVICE):
 		DPRINTF(("umouse: (UR_GET_STATUS, UT_READ_DEVICE)"));
 		if (data == NULL)
 			break;
-		if (len > 1) {
-			if (sc->hid.feature == UF_DEVICE_REMOTE_WAKEUP)
-				USETW(udata, UDS_REMOTE_WAKEUP);
-			else
-				USETW(udata, 0);
-			data->blen = len - 2;
-			data->bdone += 2;
+		if (len > 0) {
+			udata[0] = sc->hid.feature == UF_DEVICE_REMOTE_WAKEUP ?
+			    UDS_REMOTE_WAKEUP : 0;
+			if (len > 1)
+				udata[1] = 0;
+			i = len > 1 ? 2 : 1;
+			data->blen = len - i;
+			data->bdone += i;
 		}
 
 		eshort = data->blen > 0;
@@ -564,10 +543,13 @@ umouse_request(void *scarg, struct usb_data_xfer *xfer)
 		DPRINTF(("umouse: (UR_GET_STATUS, UT_READ_INTERFACE)"));
 		if (data == NULL)
 			break;
-		if (len > 1) {
-			USETW(udata, 0);
-			data->blen = len - 2;
-			data->bdone += 2;
+		if (len > 0) {
+			udata[0] = 0;
+			if (len > 1)
+				udata[1] = 0;
+			i = len > 1 ? 2 : 1;
+			data->blen = len - i;
+			data->bdone += i;
 		}
 		eshort = data->blen > 0;
 		break;

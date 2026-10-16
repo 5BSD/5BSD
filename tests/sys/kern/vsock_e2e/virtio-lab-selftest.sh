@@ -1474,7 +1474,7 @@ if "$LUA" "$lab" plan --manifest "$work/inactive-9p-checkpoint.yaml" \
 	echo "inactive 9P checkpoint unexpectedly passed" >&2
 	exit 1
 fi
-grep -q 'checkpoint-9p-packed-modern must enable CHECKPOINT_ACTIVE_9P_REJECT' \
+grep -q 'checkpoint-9p-packed-modern must enable CHECKPOINT_ACTIVE_9P' \
     "$work/inactive-9p-checkpoint.out"
 
 cat >"$work/inactive-fs-checkpoint.yaml" <<'EOF'

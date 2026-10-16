@@ -30,8 +30,34 @@
 #define LIB9P_BACKEND_FS_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "backend.h"
 
 int l9p_backend_fs_init(struct l9p_backend **backendp, int rootfd, bool ro);
+
+/* Numeric credentials and root-relative path used to rebind a quiescent fid. */
+#define L9P_FS_FID_MAX_GROUPS 1024U
+struct l9p_fs_fid_state {
+	uint32_t flags;
+	uint32_t open_flags;
+	uint32_t uid;
+	uint32_t ngids;
+	uint32_t *gids;
+	uint64_t dev;
+	uint64_t ino;
+	uint64_t dir_index;
+	uint64_t dir_hash;
+	uint64_t dir_bytes;
+	uint32_t mode;
+	char *path;
+};
+
+struct l9p_fid;
+int l9p_backend_fs_export_fid(struct l9p_backend *, struct l9p_fid *,
+    struct l9p_fs_fid_state *);
+int l9p_backend_fs_import_fid(struct l9p_backend *,
+    const struct l9p_fs_fid_state *, struct l9p_fid *, bool,
+    enum l9p_version);
+void l9p_backend_fs_free_fid_state(struct l9p_fs_fid_state *);
 
 #endif  /* LIB9P_BACKEND_FS_H */

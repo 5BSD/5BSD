@@ -68,21 +68,17 @@ net_parsemtu(const char *mtu_str, unsigned long *mtu)
 	char *end;
 	unsigned long val;
 
-	assert(mtu_str != NULL);
-
-	if (*mtu_str == '-')
+	if (mtu_str == NULL || mtu == NULL || *mtu_str == '-')
 		goto err;
 
+	errno = 0;
 	val = strtoul(mtu_str, &end, 0);
 
-	if (*end != '\0')
+	if (end == mtu_str || *end != '\0' || val == 0)
 		goto err;
 
-	if (val == ULONG_MAX)
+	if (errno == ERANGE || val == ULONG_MAX)
 		return (ERANGE);
-
-	if (val == 0 && errno == EINVAL)
-		return (EINVAL);
 
 	*mtu = val;
 

@@ -7,6 +7,7 @@
 #include <sys/param.h>
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,11 +15,12 @@
 /*
  * Serialize an external-backend identity without importing source bytes into
  * the destination.  Validation and restore consume the complete bounded
- * record and compare it with the already-open destination backend.
+ * record.  Callers with a separate verified identity may waive the string
+ * comparison while still consuming the old path field.
  */
 static inline int
-vm_snapshot_identity_string(const char *current, uint32_t maximum,
-    struct vm_snapshot_meta *meta)
+vm_snapshot_identity_string_check(const char *current, uint32_t maximum,
+    struct vm_snapshot_meta *meta, bool require_match)
 {
 	char *saved;
 	uint32_t current_length, saved_length;
@@ -70,13 +72,22 @@ vm_snapshot_identity_string(const char *current, uint32_t maximum,
 		goto done;
 	}
 	SNAPSHOT_BUF_OR_LEAVE(saved, saved_length, meta, error, free_saved);
-	error = saved_length == current_length &&
+	error = !require_match || (saved_length == current_length &&
 	    (saved_length == 0 ||
-	    memcmp(saved, current, saved_length) == 0) ? 0 : EINVAL;
+	    memcmp(saved, current, saved_length) == 0)) ? 0 : EINVAL;
 free_saved:
 done:
 	free(saved);
 	return (error);
+}
+
+static inline int
+vm_snapshot_identity_string(const char *current, uint32_t maximum,
+    struct vm_snapshot_meta *meta)
+{
+
+	return (vm_snapshot_identity_string_check(current, maximum, meta,
+	    true));
 }
 
 #endif /* _BHYVE_SNAPSHOT_IDENTITY_H_ */

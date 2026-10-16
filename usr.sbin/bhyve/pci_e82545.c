@@ -1307,7 +1307,8 @@ e82545_transmit(struct e82545_softc *sc, uint16_t head, uint16_t tail,
 		if (ckinfo[1].ck_valid)
 			hdrlen = MAX(hdrlen, ckinfo[1].ck_off + 2U);
 		/* Round up writable space to the first vector. */
-		if (hdrlen != 0 && iov[0].iov_len > hdrlen &&
+		if (hdrlen != 0 && iovcnt != 0 &&
+		    iov[0].iov_len > hdrlen &&
 		    iov[0].iov_len < hdrlen + 100)
 			hdrlen = iov[0].iov_len;
 	} else {

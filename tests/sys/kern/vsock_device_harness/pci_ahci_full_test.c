@@ -1642,6 +1642,28 @@ ATF_TC_BODY(split_transfer_iov_cap, tc)
 	ATF_CHECK_EQ(total * 512u, hdr->prdbc);
 }
 
+ATF_TC_WITHOUT_HEAD(subsector_prdt_iov_cap_aborts);
+ATF_TC_BODY(subsector_prdt_iov_cap_aborts, tc)
+{
+	struct pci_ahci_softc *sc;
+	struct ahci_prdt_entry *prdt;
+	uint8_t *cfis;
+
+	env_reset();
+	sc = ctrl_init(1, 0);
+	port_online(sc, 0);
+	cfis = cmd_setup(sc, 0, 0, BLOCKIF_IOV_MAX);
+	cfis[2] = ATA_READ_DMA48;
+	cfis[12] = 1;
+	prdt = cmd_prdt(cfis);
+	for (int i = 0; i < BLOCKIF_IOV_MAX; i++)
+		prdt_set(prdt, i, DATA_GPA + i, 1);
+
+	issue(sc, 0, 1u << 0);
+	ATF_CHECK((rfis_d2h(sc, 0)[2] & O_ATA_S_ERR) != 0);
+	ATF_CHECK((pr_reg(sc, 0, AHCI_P_IS) & O_PxIS_TFES) != 0);
+}
+
 ATF_TC_WITHOUT_HEAD(non_command_fis_and_reset);
 ATF_TC_BODY(non_command_fis_and_reset, tc)
 {
@@ -2609,6 +2631,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, ncq_read_write);
 	ATF_TP_ADD_TC(tp, ncq_send_trim);
 	ATF_TP_ADD_TC(tp, split_transfer_iov_cap);
+	ATF_TP_ADD_TC(tp, subsector_prdt_iov_cap_aborts);
 	ATF_TP_ADD_TC(tp, non_command_fis_and_reset);
 	ATF_TP_ADD_TC(tp, unmappable_cmd_list_and_table);
 	ATF_TP_ADD_TC(tp, port_stop_cancels_inflight);

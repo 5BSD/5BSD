@@ -740,7 +740,9 @@ ahci_build_iov(struct ahci_port *p, struct ahci_ioreq *aior,
 	if (j == BLOCKIF_IOV_MAX) {
 		extra = todo % blockif_sectsz(p->bctx);
 		todo -= extra;
-		assert(todo > 0);
+		/* A guest may fill every PRD slot with sub-sector fragments. */
+		if (todo == 0)
+			return (false);
 		while (extra > 0) {
 			if (breq->br_iov[j - 1].iov_len > extra) {
 				breq->br_iov[j - 1].iov_len -= extra;

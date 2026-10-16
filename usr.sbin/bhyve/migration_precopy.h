@@ -87,6 +87,9 @@ int	migration_precopy_disable(struct vmctx *);
 int	migration_precopy_collect(struct vmctx *, uint64_t, uint64_t,
 	    enum migration_dirty_collect_mode, uint8_t *, size_t,
 	    struct migration_precopy_generation *);
+/* Collect and clear a large range in bounded adjacent bitmap requests. */
+int	migration_precopy_collect_window(struct vmctx *, uint64_t, uint64_t,
+	    uint8_t *, size_t, struct migration_precopy_generation *);
 
 int	migration_precopy_enable_with_ops(struct vmctx *, uint64_t, uint64_t,
 	    const struct migration_precopy_cpu_ops *, void *);
@@ -95,6 +98,9 @@ int	migration_precopy_disable_with_ops(struct vmctx *,
 int	migration_precopy_collect_with_ops(struct vmctx *, uint64_t, uint64_t,
 	    enum migration_dirty_collect_mode, uint8_t *, size_t,
 	    struct migration_precopy_generation *,
+	    const struct migration_precopy_cpu_ops *, void *);
+int	migration_precopy_collect_window_with_ops(struct vmctx *, uint64_t,
+	    uint64_t, uint8_t *, size_t, struct migration_precopy_generation *,
 	    const struct migration_precopy_cpu_ops *, void *);
 
 #endif /* _BHYVE_MIGRATION_PRECOPY_H_ */

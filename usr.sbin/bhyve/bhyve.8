@@ -449,12 +449,18 @@ and
 .Fl l
 options.
 The count of vCPUs and memory configuration are read from the snapshot.
+The guest-memory member also saves fixed boot and PCI ROM contents.
+Snapshots whose memory extension predates fixed-ROM support cannot restore
+into a VM with either ROM region because their contents cannot be verified.
 .It Fl R Ar fd
 Stand up this instance as the destination of an inbound live migration on the
 already-connected stream socket referenced by file descriptor
 .Ar fd ,
 which the operator or monitor passes after accepting the connection from the
 source host.
+The supplied stream must be connected to the intended source and protect
+guest memory and device state in transit; the migration protocol does not
+authenticate or encrypt the stream.
 The guest is configured normally from the command line, as for a fresh boot,
 but is held fenced and does not begin executing until the migration commits
 and releases its vCPUs.
@@ -557,6 +563,9 @@ the following command is provided:
 Drive a live migration of this running guest, acting as the migration source,
 over the already-connected stream socket referenced by file descriptor
 .Ar fd .
+The caller must supply a stream connected to the intended destination and
+protect guest memory and device state in transit; the migration protocol does
+not authenticate or encrypt the stream.
 The command performs the live handshake, capability and topology validation,
 device-eligibility check, and iterative pre-copy against a destination
 .Nm
@@ -1489,6 +1498,13 @@ VirtIO PCI transport.
 The default is
 .Cm legacy .
 .El
+.Pp
+Checkpoint and migration preserve quiescent 9P fids, including open regular
+files and directories.  The destination reopens them beneath the configured
+export root and verifies each file's device, inode, and type.  The source and
+destination must therefore refer to the same filesystem objects.  A request
+still in progress, a changed path, or an unsupported open handle prevents the
+checkpoint or restore.
 .Ss TTY device backends
 .Bl -tag -width 10n
 .It Cm stdio

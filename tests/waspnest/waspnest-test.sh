@@ -77,6 +77,7 @@ require_payload()
 	need_file "$vmm/vmx-nested-requirements.tsv"
 	need_file "$vmm/vmx-nested-live-qualification.tsv"
 	need_file "$vmm/vmx-nested-default-policy-live-qualification.tsv"
+	need_file "$vmm/svm-nested-live-qualification.tsv"
 	need_file "$nonvirtio"
 	need_exec "$e2e/run-waspnest-qualification.sh"
 	need_exec "$package_validator"
@@ -110,6 +111,10 @@ validate_dispositions()
 	    $5 !~ /^(exercised|pending|driver-gap|not-applicable)$/ { exit 1 }
 	' "$vmm/vmx-nested-default-policy-live-qualification.tsv" ||
 	    fail "nested default-policy ledger contains an unknown disposition"
+	need_exec "$vmm/validate-svm-nested-live-ledger.sh"
+	"$vmm/validate-svm-nested-live-ledger.sh" \
+	    "$vmm/svm-nested-live-qualification.tsv" ||
+	    fail "AMD nested live ledger is invalid"
 	awk -F '\t' '
 	    NR == 1 || $0 ~ /^#/ { next }
 	    $4 !~ /^(exercised|pending|driver-gap|not-applicable|environment-dependent)$/ ||
@@ -136,7 +141,7 @@ status()
 	awk -F '\t' '
 	    NR > 1 && $0 !~ /^#/ { linux[$3]++; fivebsd[$5]++; rows++ }
 	    END {
-		printf "Nested live groups: %d\n", rows
+		printf "Intel nested live groups: %d\n", rows
 		n = split("exercised pending driver-gap not-applicable", order, " ")
 		for (i = 1; i <= n; i++) if (linux[order[i]])
 		    printf "  Linux-L2 %-21s %d\n", order[i], linux[order[i]]
@@ -153,6 +158,9 @@ status()
 		for (i = 1; i <= n; i++) if (fivebsd[order[i]])
 		    printf "  5BSD-L2  %-21s %d\n", order[i], fivebsd[order[i]]
 	    }' "$vmm/vmx-nested-default-policy-live-qualification.tsv"
+	awk -F '\t' 'NR > 1 { rows++ }
+	    END { printf "AMD nested live groups: %d pending hardware evidence\n", rows }' \
+	    "$vmm/svm-nested-live-qualification.tsv"
 	awk -F '\t' '
 	    NR > 1 && $0 !~ /^#/ { linux[$4]++; fivebsd[$6]++; checkpoint[$8]++; rows++ }
 	    END {
@@ -197,6 +205,9 @@ audit()
 		need_exec "$vmm/validate-vmx-nested-public-headers.sh"
 		need_exec "$vmm/vmx-nested-requirements-selftest.sh"
 		need_exec "$vmm/vmx-nested-live-coverage-selftest.sh"
+		need_exec "$vmm/svm-nested-live-ledger-selftest.sh"
+		need_exec "$vmm/svm-nested-live-staging-selftest.sh"
+		need_exec "$vmm/svm-nested-live-evidence-selftest.sh"
 		run_gate "Nested VMX requirement/source/test mapping" env \
 		    SRCTOP="$srctop" sh "$vmm/validate-vmx-nested-requirements.sh"
 		run_gate "Nested VMX public headers" env SRCTOP="$srctop" \
@@ -205,6 +216,12 @@ audit()
 		    sh "$vmm/vmx-nested-requirements-selftest.sh"
 		run_gate "Nested VMX live-coverage validator" env SRCTOP="$srctop" \
 		    sh "$vmm/vmx-nested-live-coverage-selftest.sh"
+		run_gate "Nested SVM live ledger" \
+		    sh "$vmm/svm-nested-live-ledger-selftest.sh"
+		run_gate "Nested SVM evidence staging" \
+		    sh "$vmm/svm-nested-live-staging-selftest.sh"
+		run_gate "Nested SVM evidence validation" \
+		    sh "$vmm/svm-nested-live-evidence-selftest.sh"
 		;;
 	*)
 		echo "=== Nested VMX validation ==="

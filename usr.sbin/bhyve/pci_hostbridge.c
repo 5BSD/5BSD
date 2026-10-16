@@ -28,30 +28,66 @@
 
 #include <sys/cdefs.h>
 #include <err.h>
+#include <errno.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 #include "config.h"
 #include "pci_emul.h"
 
 static int
+pci_hostbridge_parse_id(const char *value, int base, u_int *id)
+{
+	char *end;
+	unsigned long parsed;
+
+	if (value[0] == '-')
+		return (EINVAL);
+	errno = 0;
+	parsed = strtoul(value, &end, base);
+	if (errno != 0 || end == value || *end != '\0' ||
+	    parsed > UINT16_MAX)
+		return (EINVAL);
+	*id = parsed;
+	return (0);
+}
+
+static int
 pci_hostbridge_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
+	nvlist_t *pci_regs;
 	const char *value;
+	int base;
 	u_int vendor, device;
 
 	vendor = 0x1275;	/* NetApp */
 	device = 0x1275;	/* NetApp */
 
+	pci_regs = find_relative_config_node(nvl, "pcireg");
 	value = get_config_value_node(nvl, "vendor");
-	if (value != NULL)
-		vendor = strtol(value, NULL, 0);
-	else
-		vendor = pci_config_read_reg(NULL, nvl, PCIR_VENDOR, 2, vendor);
+	base = 0;
+	if (value == NULL && pci_regs != NULL) {
+		value = get_config_value_node(pci_regs, "vendor");
+		base = 16;
+	}
+	if (value != NULL) {
+		if (pci_hostbridge_parse_id(value, base, &vendor) != 0) {
+			warnx("hostbridge: invalid vendor ID '%s'", value);
+			return (-1);
+		}
+	}
 	value = get_config_value_node(nvl, "devid");
-	if (value != NULL)
-		device = strtol(value, NULL, 0);
-	else
-		device = pci_config_read_reg(NULL, nvl, PCIR_DEVICE, 2, device);
+	base = 0;
+	if (value == NULL && pci_regs != NULL) {
+		value = get_config_value_node(pci_regs, "device");
+		base = 16;
+	}
+	if (value != NULL) {
+		if (pci_hostbridge_parse_id(value, base, &device) != 0) {
+			warnx("hostbridge: invalid device ID '%s'", value);
+			return (-1);
+		}
+	}
 
 	/* config space */
 	pci_set_cfgdata16(pi, PCIR_VENDOR, vendor);
@@ -60,9 +96,7 @@ pci_hostbridge_init(struct pci_devinst *pi, nvlist_t *nvl)
 	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_BRIDGE);
 	pci_set_cfgdata8(pi, PCIR_SUBCLASS, PCIS_BRIDGE_HOST);
 
-	pci_emul_add_pciecap(pi, PCIEM_TYPE_ROOT_PORT);
-
-	return (0);
+	return (pci_emul_add_pciecap(pi, PCIEM_TYPE_ROOT_PORT));
 }
 
 static int

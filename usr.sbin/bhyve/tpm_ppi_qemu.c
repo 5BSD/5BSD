@@ -16,6 +16,7 @@
 #include <err.h>
 #include <errno.h>
 #include <pthread.h>
+#include <string.h>
 #include <vmmapi.h>
 
 #include "acpi.h"
@@ -23,6 +24,7 @@
 #include "config.h"
 #include "mem.h"
 #include "qemu_fwcfg.h"
+#include "tpm_local_state.h"
 #include "tpm_ppi.h"
 
 #define TPM_PPI_ADDRESS 0xFED45000
@@ -88,6 +90,7 @@ tpm_ppi_mem_handler(struct vcpu *const vcpu __unused, const int dir,
 
 	pthread_mutex_lock(&sc->mutex);
 	if (dir == MEM_F_READ) {
+		*val = 0;
 		memcpy(val, ptr, size);
 	} else {
 		memcpy(ptr, val, size);
@@ -191,6 +194,58 @@ tpm_ppi_deinit(void *sc)
 
 	(void)pthread_mutex_destroy(&ppi->mutex);
 	free(ppi);
+}
+
+static int
+tpm_ppi_state_get(void *sc, uint8_t *wire, size_t wire_size)
+{
+	struct tpm_ppi_softc *ppi = sc;
+	uint8_t state[TPM_PPI_LOCAL_DATA_SIZE];
+	int error;
+
+	if (ppi == NULL || wire == NULL ||
+	    wire_size != TPM_PPI_LOCAL_STATE_SIZE)
+		return (EINVAL);
+	pthread_mutex_lock(&ppi->mutex);
+	memcpy(state, ppi->regs, sizeof(state));
+	pthread_mutex_unlock(&ppi->mutex);
+	error = tpm_ppi_local_state_encode(state, sizeof(state), wire,
+	    wire_size);
+	explicit_bzero(state, sizeof(state));
+	return (error);
+}
+
+static int
+tpm_ppi_state_validate(const uint8_t *wire, size_t wire_size)
+{
+	uint8_t state[TPM_PPI_LOCAL_DATA_SIZE];
+	int error;
+
+	error = tpm_ppi_local_state_decode(wire, wire_size, state,
+	    sizeof(state));
+	if (error == 0)
+		explicit_bzero(state, sizeof(state));
+	return (error);
+}
+
+static int
+tpm_ppi_state_set(void *sc, const uint8_t *wire, size_t wire_size)
+{
+	struct tpm_ppi_softc *ppi = sc;
+	uint8_t state[TPM_PPI_LOCAL_DATA_SIZE];
+	int error;
+
+	if (ppi == NULL)
+		return (EINVAL);
+	error = tpm_ppi_local_state_decode(wire, wire_size, state,
+	    sizeof(state));
+	if (error != 0)
+		return (error);
+	pthread_mutex_lock(&ppi->mutex);
+	memcpy(ppi->regs, state, sizeof(state));
+	pthread_mutex_unlock(&ppi->mutex);
+	explicit_bzero(state, sizeof(state));
+	return (0);
 }
 
 static int
@@ -496,6 +551,10 @@ static struct tpm_ppi tpm_ppi_qemu = {
 	.name = TPM_PPI_QEMU_NAME,
 	.init = tpm_ppi_init,
 	.deinit = tpm_ppi_deinit,
+	.state_size = TPM_PPI_LOCAL_STATE_SIZE,
+	.state_get = tpm_ppi_state_get,
+	.state_validate = tpm_ppi_state_validate,
+	.state_set = tpm_ppi_state_set,
 	.write_dsdt_regions = tpm_ppi_write_dsdt_regions,
 	.write_dsdt_dsm = tpm_ppi_write_dsdt_dsm,
 };

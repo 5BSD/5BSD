@@ -1,8 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Live-migration control plane for bhyve: a versioned, authenticated
- * source/destination session protocol driven on top of the existing
+ * Live-migration control plane for bhyve: a versioned source/destination
+ * session protocol driven on top of the existing
  * migration_precopy/migration_dirty/snapshot foundations.
  *
  * This header defines three independently testable layers:
@@ -18,7 +18,9 @@
  * file-descriptor adapter (migration_transport_fd_*) is the only piece that
  * touches sockets; it is deliberately separated so the state machine and codec
  * run in-process over a socketpair or an injected transport with no network,
- * no root, and no running VM.
+ * no root, and no running VM.  The supplied transport must enforce the
+ * operator's peer trust and confidentiality policy; the frame codec provides
+ * integrity checks for accidental corruption, not peer authentication.
  */
 
 #ifndef _BHYVE_MIGRATION_SESSION_H_
@@ -35,7 +37,7 @@
 /* ---- Wire constants ------------------------------------------------------ */
 
 #define	MIGRATION_PROTO_MAGIC		0x4D494731u	/* "MIG1" */
-#define	MIGRATION_PROTO_VERSION		1u
+#define	MIGRATION_PROTO_VERSION		2u
 #define	MIGRATION_PROTO_VERSION_MIN	1u
 
 #define	MIGRATION_FRAME_HDR_SIZE	24u
@@ -69,8 +71,13 @@
  * allocation.
  */
 #define	MIGRATION_MAX_DEV_STATE		(512u * 1024u * 1024u)
+#define	MIGRATION_MAX_VSOCK_STATE	(512u * 1024u * 1024u)
 
-/* Message types (frame header "type" field). */
+/*
+ * Message types (frame header "type" field).  TOPO_ACCEPT, MEM_ACK, and
+ * COMMIT have empty payloads.  FINAL and RELEASE carry a reason record with
+ * reason_code == MIGRATION_REASON_NONE and detail == 0.
+ */
 enum migration_msg_type {
 	MIGRATION_MSG_HELLO		= 1,
 	MIGRATION_MSG_CAPS_ACCEPT	= 2,
@@ -85,6 +92,7 @@ enum migration_msg_type {
 	MIGRATION_MSG_COMMIT		= 11,
 	MIGRATION_MSG_RELEASE		= 12,
 	MIGRATION_MSG_ABORT		= 13,
+	MIGRATION_MSG_VSOCK_STATE	= 14,
 };
 
 /* HELLO role field. */
@@ -112,8 +120,13 @@ enum migration_msg_type {
 /* Capability flags carried in HELLO.capability_flags. */
 #define	MIGRATION_CAP_PRECOPY		(1ull << 0)
 #define	MIGRATION_CAP_DEVICE_DIRTY	(1ull << 1)
+/* Destination-only admission gate for a qualified v0.1.0 source. */
+#define	MIGRATION_CAP_V2_RESTORE	(1ull << 2)
+#define	MIGRATION_CAP_VSOCK_STATE	(1ull << 3)
 #define	MIGRATION_CAP_ALL		(MIGRATION_CAP_PRECOPY | \
-					 MIGRATION_CAP_DEVICE_DIRTY)
+					 MIGRATION_CAP_DEVICE_DIRTY | \
+					 MIGRATION_CAP_V2_RESTORE | \
+					 MIGRATION_CAP_VSOCK_STATE)
 
 /* Structured rejection/abort reasons.  Stable wire values. */
 enum migration_reason {
@@ -310,6 +323,8 @@ int	migration_negotiate_version(uint16_t local_max, uint16_t local_min,
 int	migration_hello_validate(const struct migration_hello *local,
 	    const struct migration_hello *remote, uint16_t *negotiated,
 	    uint32_t *reason);
+int	migration_caps_accept_validate(const struct migration_hello *source,
+	    const struct migration_caps_accept *caps, uint32_t *reason);
 
 /*
  * Structural eligibility of a single device record: exactly one compatibility,
@@ -345,15 +360,16 @@ struct migration_transport {
 
 /*
  * Thin file-descriptor transport adapter (the separately identified TCP/stream
- * layer).  Works on any stream socket or pipe, including a socketpair for
- * in-process loopback.  recv_timeout_ms <= 0 means block indefinitely.
+ * layer).  The descriptor must be a connected stream socket, including a
+ * socketpair for in-process loopback.  io_timeout_ms <= 0 means block
+ * indefinitely.
  */
 struct migration_transport_fd {
 	int fd;
-	int recv_timeout_ms;
+	int io_timeout_ms;
 };
 void	migration_transport_fd_init(struct migration_transport *,
-	    struct migration_transport_fd *, int fd, int recv_timeout_ms);
+	    struct migration_transport_fd *, int fd, int io_timeout_ms);
 
 /* ---- Session drivers ----------------------------------------------------- */
 
@@ -412,6 +428,17 @@ struct migration_session_config {
  *                     chunks and frames it and then frees *buf.  The buffer may
  *                     exceed one frame; the session performs multi-frame
  *                     chunking transparently.
+ *   so_vsock_state    optional v2-only active-vsock state captured while the
+ *                     source is paused, before so_dev_state.  The session owns
+ *                     and frees the returned buffer.  A v1 peer must be
+ *                     rejected before quiesce if the peer cannot stage it.
+ *   so_prepare_relay   optional: transfer paused source sockets to a standby
+ *                     owner after COMMIT, before RELEASE.  The owner must not
+ *                     read or forward them until the source is defunct.
+ *   so_cancel_relay    cancel even a partially prepared owner before source
+ *                     rollback; failure keeps the source quiesced.
+ *   so_activate_relay  start the prepared relay after RELEASE.  Failure is
+ *                     terminal: the source must still become defunct.
  *   so_defunct        mark the source permanently stopped (post-commit)
  */
 struct migration_source_ops {
@@ -425,6 +452,10 @@ struct migration_source_ops {
 	int (*so_quiesce)(void *, bool *source_runnable);
 	int (*so_resume)(void *);
 	int (*so_dev_state)(void *, uint8_t **buf, size_t *len);
+	int (*so_vsock_state)(void *, uint8_t **buf, size_t *len);
+	int (*so_prepare_relay)(void *);
+	int (*so_cancel_relay)(void *);
+	int (*so_activate_relay)(void *);
 	void (*so_defunct)(void *);
 };
 
@@ -434,6 +465,7 @@ struct migration_source_ops {
  *   do_local_hello     fill the local capability/identity record
  *   do_stage_mem       stage one received memory generation (not published)
  *   do_stage_dev       stage received device/backend state (not published)
+ *   do_stage_vsock     stage a v2 active-vsock table before device restore
  *   do_commit          atomically publish every CPU/device/backend/interrupt/
  *                      timer state (still not running the guest)
  *   do_resume          run the guest (only after RELEASE from the source)
@@ -445,6 +477,7 @@ struct migration_dest_ops {
 	int (*do_stage_mem)(void *, const struct migration_memgen *,
 	    const uint8_t *buf, size_t len);
 	int (*do_stage_dev)(void *, const uint8_t *buf, size_t len);
+	int (*do_stage_vsock)(void *, const uint8_t *buf, size_t len);
 	int (*do_commit)(void *);
 	int (*do_resume)(void *);
 	void (*do_discard)(void *);

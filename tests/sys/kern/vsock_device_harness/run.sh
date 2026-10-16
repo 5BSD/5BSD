@@ -447,6 +447,7 @@ EOF
 
 "$cc" -g -O1 -fsanitize="$sanitizers" \
 	-I"$work/atfshim" -I"$work/inc" \
+    -I"$srctop/usr.sbin/bhyve" \
     -I"$srctop/sys" \
     -o "$work/devtest" "$work/vsock_device_test.c" \
     -Wl,--wrap=socket,--wrap=connectat,--wrap=send,--wrap=recv,--wrap=sendmsg,--wrap=shutdown,--wrap=poll,--wrap=close,--wrap=accept,--wrap=socketpair,--wrap=fcntl,--wrap=setsockopt,--wrap=getsockopt,--wrap=recvmsg,--wrap=ioctl,--wrap=realloc,--wrap=writev \

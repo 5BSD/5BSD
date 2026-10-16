@@ -274,6 +274,7 @@ static struct req_info {
 	uint32_t req_size;
 	uint32_t req_type;
 	uint32_t req_txid;
+	bool req_invalid_size;
 	struct op_info *req_op;
 	int	 resp_error;
 	int	 resp_count;
@@ -315,15 +316,18 @@ fwctl_request_start(void)
 	/* Data size doesn't include header */
 	rinfo.req_size -= 12;
 
-	rinfo.req_op = &errop_info;
-	if (rinfo.req_type <= OP_MAX && ops[rinfo.req_type] != NULL)
-		rinfo.req_op = ops[rinfo.req_type];
-
-	err = (*rinfo.req_op->op_start)(rinfo.req_size);
-
-	if (err) {
-		errop_set(err);
+	if (rinfo.req_invalid_size) {
 		rinfo.req_op = &errop_info;
+		errop_set(EINVAL);
+	} else {
+		rinfo.req_op = &errop_info;
+		if (rinfo.req_type <= OP_MAX && ops[rinfo.req_type] != NULL)
+			rinfo.req_op = ops[rinfo.req_type];
+		err = (*rinfo.req_op->op_start)(rinfo.req_size);
+		if (err) {
+			errop_set(err);
+			rinfo.req_op = &errop_info;
+		}
 	}
 
 	/* Catch case of zero-length message here */
@@ -348,7 +352,7 @@ fwctl_request_data(uint32_t value)
 
 	(*rinfo.req_op->op_data)(value);
 
-	if (rinfo.req_size < sizeof(uint32_t)) {
+	if (rinfo.req_size == 0) {
 		fwctl_request_done();
 		return (1);
 	}
@@ -365,12 +369,9 @@ fwctl_request(uint32_t value)
 
 	switch (rinfo.req_count) {
 	case 0:
-		/* Verify size */
-		if (value < 12) {
-			printf("msg size error");
-			exit(BHYVE_EXIT_ERROR);
-		}
-		rinfo.req_size = value;
+		/* Consume the header and report malformed sizes to the guest. */
+		rinfo.req_invalid_size = value < 12;
+		rinfo.req_size = value < 12 ? 12 : value;
 		rinfo.req_count = 1;
 		break;
 	case 1:

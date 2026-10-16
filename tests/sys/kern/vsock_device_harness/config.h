@@ -8,6 +8,7 @@ typedef struct nvlist nvlist_t;
 #endif
 const char *get_config_value_node(const nvlist_t *, const char *);
 bool get_config_bool_node_default(const nvlist_t *, const char *, bool);
+bool get_config_bool_default(const char *, bool);
 void set_config_value_node(nvlist_t *, const char *, const char *);
 void set_config_bool_node(nvlist_t *, const char *, bool);
 int pci_parse_legacy_config(nvlist_t *, const char *);

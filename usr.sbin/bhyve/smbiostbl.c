@@ -32,6 +32,7 @@
 #include <err.h>
 #include <errno.h>
 #include <md5.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -625,6 +626,7 @@ static struct smbios_template_entry smbios_template[] = {
 
 static uint64_t guest_lomem, guest_himem, guest_himem_base;
 static uint16_t type16_handle;
+static char *smbios_limit;
 
 static int
 smbios_generic_initializer(const struct smbios_structure *template_entry,
@@ -632,17 +634,23 @@ smbios_generic_initializer(const struct smbios_structure *template_entry,
     uint16_t *n)
 {
 	struct smbios_structure *entry;
+	bool has_strings;
+	size_t available, len;
+
+	if (curaddr >= smbios_limit ||
+	    (size_t)(smbios_limit - curaddr) < template_entry->length + 2)
+		return (EOVERFLOW);
 
 	memcpy(curaddr, template_entry, template_entry->length);
 	entry = (struct smbios_structure *)curaddr;
 	entry->handle = *n + 1;
 	curaddr += entry->length;
+	has_strings = false;
 	if (template_strings != NULL) {
 		int	i;
 
 		for (i = 0; template_strings[i].value != NULL; i++) {
 			const char *string;
-			int len;
 
 			if (template_strings[i].node == NULL) {
 				string = template_strings[i].value;
@@ -654,10 +662,17 @@ smbios_generic_initializer(const struct smbios_structure *template_entry,
 				    template_strings[i].node);
 			}
 
-			len = strlen(string) + 1;
+			available = (size_t)(smbios_limit - curaddr);
+			len = strnlen(string, available - 1);
+			if (len >= available - 1)
+				return (EOVERFLOW);
+			len++;
 			memcpy(curaddr, string, len);
 			curaddr += len;
+			has_strings = true;
 		}
+	}
+	if (has_strings) {
 		*curaddr = '\0';
 		curaddr++;
 	} else {
@@ -680,9 +695,12 @@ smbios_type1_initializer(const struct smbios_structure *template_entry,
 {
 	struct smbios_table_type1 *type1;
 	const char *guest_uuid_str;
+	int error;
 
-	smbios_generic_initializer(template_entry, template_strings,
+	error = smbios_generic_initializer(template_entry, template_strings,
 	    curaddr, endaddr, n);
+	if (error != 0)
+		return (error);
 	type1 = (struct smbios_table_type1 *)curaddr;
 
 	guest_uuid_str = get_config_value("uuid");
@@ -736,15 +754,19 @@ smbios_type4_initializer(const struct smbios_structure *template_entry,
     const struct smbios_string *template_strings, char *curaddr, char **endaddr,
     uint16_t *n)
 {
-	int i;
+	char socket_name[32];
+	size_t name_len;
+	int error, i;
 
 	for (i = 0; i < cpu_sockets; i++) {
 		struct smbios_table_type4 *type4;
 		char *p;
-		int nstrings, len;
+		int nstrings;
 
-		smbios_generic_initializer(template_entry, template_strings,
+		error = smbios_generic_initializer(template_entry, template_strings,
 		    curaddr, endaddr, n);
+		if (error != 0)
+			return (error);
 		type4 = (struct smbios_table_type4 *)curaddr;
 		p = curaddr + sizeof (struct smbios_table_type4);
 		nstrings = 0;
@@ -752,10 +774,15 @@ smbios_type4_initializer(const struct smbios_structure *template_entry,
 			if (*p++ == '\0')
 				nstrings++;
 		}
-		len = sprintf(*endaddr - 1, "CPU #%d", i) + 1;
-		*endaddr += len - 1;
-		*(*endaddr) = '\0';
-		(*endaddr)++;
+		error = snprintf(socket_name, sizeof(socket_name), "CPU #%d", i);
+		if (error < 0 || (size_t)error >= sizeof(socket_name))
+			return (EOVERFLOW);
+		name_len = (size_t)error;
+		if ((size_t)(smbios_limit - (*endaddr - 1)) < name_len + 2)
+			return (EOVERFLOW);
+		memcpy(*endaddr - 1, socket_name, name_len + 1);
+		(*endaddr)[name_len] = '\0';
+		*endaddr += name_len + 1;
 		type4->socket = nstrings + 1;
 		/* Revise cores and threads after update to smbios 3.0 */
 		if (cpu_cores > 254)
@@ -855,23 +882,25 @@ smbios_type11_initializer(const struct smbios_structure *template_entry,
 {
 	struct smbios_table_type11 *type11;
 	struct smbios_string *type11_strings;
-	int i = 0;
+	int error, i = 0;
 
 	type11_strings = smbios_gather_type11_strings();
 
-	smbios_generic_initializer(template_entry, type11_strings, curaddr,
+	error = smbios_generic_initializer(template_entry, type11_strings, curaddr,
 	    endaddr, n);
 
 	if (type11_strings != NULL) {
 		/* count up strings */
-		type11 = (struct smbios_table_type11 *)curaddr;
 		for (i = 0; type11_strings[i].value != NULL; i++) {
 			free(__DECONST(char *, type11_strings[i].value));
 		}
-		type11->nstrings = i;
+		if (error == 0) {
+			type11 = (struct smbios_table_type11 *)curaddr;
+			type11->nstrings = i;
+		}
 	}
 	free(type11_strings);
-	return (0);
+	return (error);
 }
 
 static int
@@ -880,10 +909,13 @@ smbios_type16_initializer(const struct smbios_structure *template_entry,
     uint16_t *n)
 {
 	struct smbios_table_type16 *type16;
+	int error;
 
 	type16_handle = *n;
-	smbios_generic_initializer(template_entry, template_strings,
+	error = smbios_generic_initializer(template_entry, template_strings,
 	    curaddr, endaddr, n);
+	if (error != 0)
+		return (error);
 	type16 = (struct smbios_table_type16 *)curaddr;
 	type16->xsize = guest_lomem + guest_himem;
 	type16->ndevs = guest_himem > 0 ? 2 : 1;
@@ -898,9 +930,12 @@ smbios_type17_initializer(const struct smbios_structure *template_entry,
 {
 	struct smbios_table_type17 *type17;
 	uint64_t memsize, size_KB, size_MB;
+	int error;
 
-	smbios_generic_initializer(template_entry, template_strings,
+	error = smbios_generic_initializer(template_entry, template_strings,
 	    curaddr, endaddr, n);
+	if (error != 0)
+		return (error);
 	type17 = (struct smbios_table_type17 *)curaddr;
 	type17->arrayhand = type16_handle;
 
@@ -941,9 +976,12 @@ smbios_type19_initializer(const struct smbios_structure *template_entry,
     uint16_t *n)
 {
 	struct smbios_table_type19 *type19;
+	int error;
 
-	smbios_generic_initializer(template_entry, template_strings,
+	error = smbios_generic_initializer(template_entry, template_strings,
 	    curaddr, endaddr, n);
+	if (error != 0)
+		return (error);
 	type19 = (struct smbios_table_type19 *)curaddr;
 	type19->arrayhand = type16_handle;
 	type19->xsaddr = 0;
@@ -951,8 +989,10 @@ smbios_type19_initializer(const struct smbios_structure *template_entry,
 
 	if (guest_himem > 0) {
 		curaddr = *endaddr;
-		smbios_generic_initializer(template_entry, template_strings,
+		error = smbios_generic_initializer(template_entry, template_strings,
 		    curaddr, endaddr, n);
+		if (error != 0)
+			return (error);
 		type19 = (struct smbios_table_type19 *)curaddr;
 		type19->arrayhand = type16_handle;
 		type19->xsaddr = guest_himem_base;
@@ -1022,6 +1062,7 @@ smbios_build(struct vmctx *ctx)
 		EPRINTLN("smbios table requires mapped mem");
 		return (ENOMEM);
 	}
+	smbios_limit = startaddr + SMBIOS_MAX_LENGTH;
 
 	curaddr = startaddr;
 
@@ -1055,7 +1096,8 @@ smbios_build(struct vmctx *ctx)
 		curaddr = endaddr;
 	}
 
-	assert(curaddr - startaddr < SMBIOS_MAX_LENGTH);
+	if (curaddr > smbios_limit)
+		return (EOVERFLOW);
 	smbios_ep_finalizer(smbios_ep, curaddr - ststartaddr, n, maxssize);
 
 	return (0);

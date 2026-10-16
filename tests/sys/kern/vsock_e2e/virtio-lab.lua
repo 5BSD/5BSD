@@ -617,9 +617,9 @@ local function validate_active_checkpoint_evidence(case)
 		    "checkpoint qualification proves active-port rollback")
 	end
 	if case_has_device(case, "9p") and
-	    tostring(case.env.CHECKPOINT_ACTIVE_9P_REJECT or "") ~= "yes" then
-		die(case.id .. " must enable CHECKPOINT_ACTIVE_9P_REJECT so " ..
-		    "checkpoint qualification proves active-fid rollback")
+	    tostring(case.env.CHECKPOINT_ACTIVE_9P or "") ~= "yes" then
+		die(case.id .. " must enable CHECKPOINT_ACTIVE_9P so " ..
+		    "checkpoint qualification proves active-fid reconstruction")
 	end
 	-- The active and idle virtio-fs checkpoint lanes intentionally exercise
 	-- different reconstruction contracts.  Keep the names authoritative:

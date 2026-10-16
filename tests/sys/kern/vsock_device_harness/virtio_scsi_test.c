@@ -3203,6 +3203,17 @@ ATF_TC_BODY(device_init_lifecycle, tc)
 	g_boot_device_error = 1;
 	ATF_CHECK_EQ(pci_vtscsi_init(&pi, NULL), -1);
 
+	/* Reject a numeric prefix with trailing junk or an out-of-range index. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_bootindex = "3junk";
+	ATF_CHECK_EQ(pci_vtscsi_init(&pi, NULL), -1);
+
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_bootindex = "999999999999999999999999999999";
+	ATF_CHECK_EQ(pci_vtscsi_init(&pi, NULL), -1);
+
 	/* A CTL device that cannot be opened fails cleanly. */
 	reset_mocks();
 	memset(&pi, 0, sizeof(pi));

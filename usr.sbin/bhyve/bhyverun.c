@@ -95,6 +95,7 @@
 #ifdef BHYVE_SNAPSHOT
 #include "snapshot.h"
 #include "migration_session.h"
+#include "migration_vsock_owner.h"
 #endif
 #include "tpm_device.h"
 #include "vmgenc.h"
@@ -1362,6 +1363,14 @@ main(int argc, char *argv[])
 		}
 	}
 
+#ifdef BHYVE_SNAPSHOT
+	if (get_config_bool_default("checkpoint.migrate_active_vsock", false)) {
+		error = migration_vsock_owner_start(NULL);
+		if (error != 0)
+			errx(EX_OSERR, "cannot start vsock migration relay owner: %s",
+			    strerror(error));
+	}
+#endif
 	bsp = vm_vcpu_open(ctx, BSP);
 	if (bsp == NULL) {
 		fprintf(stderr, "Unable to open boot VCPU: %s",
@@ -1400,17 +1409,8 @@ main(int argc, char *argv[])
 
 #ifdef BHYVE_SNAPSHOT
 	if (restore_file != NULL) {
-		struct checkpoint_cpu_contract destination_cpu, source_cpu;
-
-		error = lookup_cpu_contract(&rstate, &source_cpu);
-		if (error == 0) {
-			error = checkpoint_cpu_contract_capture(bsp,
-			    &destination_cpu);
-				if (error == 0)
-					error = checkpoint_cpu_contract_match(&source_cpu,
-					    &destination_cpu);
-			}
-			if (error != 0) {
+		error = checkpoint_restore_cpu_contract(&rstate, bsp);
+		if (error != 0) {
 			EPRINTLN("Checkpoint CPU contract is incompatible with "
 			    "this destination.");
 			exit(BHYVE_EXIT_ERROR);
@@ -1536,6 +1536,9 @@ main(int argc, char *argv[])
 		 */
 		for (int vcpuid = 0; vcpuid < guest_ncpus; vcpuid++)
 			vm_resume_cpu(vcpu_info[vcpuid].vcpu);
+		/* The relay owner has its own descriptor after RELEASE. */
+		close(migrate_recv_fd);
+		migrate_recv_fd = -1;
 	} else
 #endif
 		vm_resume_cpu(bsp);

@@ -455,8 +455,11 @@ ps2kbd_setkbdlayout(void)
 	err = stat(path, &sb);
 	if (err)
 		return;
+	if (sb.st_size <= 0 || (uintmax_t)sb.st_size > SIZE_MAX - 1 ||
+	    (uintmax_t)sb.st_size > SSIZE_MAX)
+		return;
 
-	buf = (char *)malloc(sizeof(char) * sb.st_size);
+	buf = malloc((size_t)sb.st_size + 1);
 	if (buf == NULL)
 		return;
 
@@ -470,6 +473,7 @@ ps2kbd_setkbdlayout(void)
 
 	if (sz < 0 || sz != sb.st_size)
 		goto out;
+	buf[sz] = '\0';
 
 	next = buf;
 	while ((line = strsep(&next, "\n")) != NULL)	{

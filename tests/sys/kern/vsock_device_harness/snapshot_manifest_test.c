@@ -125,6 +125,7 @@ ATF_TC_BODY(manifest_validation, tc)
 	    "machine=" CHECKPOINT_MACHINE_ABI "\n"
 	    "architecture=amd64\n"
 	    "data=d\nkern=k\nmeta=m\n";
+	const char short_field[] = CHECKPOINT_MANIFEST_MAGIC "a\n";
 	const char empty_architecture[] = CHECKPOINT_MANIFEST_MAGIC
 	    "architecture=\n"
 	    "machine=" CHECKPOINT_MACHINE_ABI "\n"
@@ -211,6 +212,11 @@ ATF_TC_BODY(manifest_validation, tc)
 	    EINVAL);
 	ATF_CHECK(!is_manifest);
 	ATF_CHECK_EQ(memcmp(&manifest, &before, sizeof(manifest)), 0);
+	ATF_REQUIRE_EQ(replace_file(path, short_field), 0);
+	ATF_CHECK_EQ(checkpoint_manifest_read(path, &manifest, &is_manifest),
+	    EINVAL);
+	ATF_CHECK(!is_manifest);
+	ATF_CHECK_EQ(memcmp(&manifest, &before, sizeof(manifest)), 0);
 	ATF_REQUIRE_EQ(replace_file(path, wrong_order), 0);
 	ATF_CHECK_EQ(checkpoint_manifest_read(path, &manifest, &is_manifest),
 	    EINVAL);
@@ -271,6 +277,23 @@ ATF_TC_BODY(noncurrent_manifest_header_rejected, tc)
 	    checkpoint_host_architecture()) == 0);
 	ATF_CHECK(strcmp(manifest.machine, CHECKPOINT_MACHINE_ABI) == 0);
 	ATF_CHECK(checkpoint_manifest_compatible(&manifest));
+	manifest.machine[strlen(manifest.machine) + 1] = 'x';
+	ATF_CHECK(!checkpoint_manifest_compatible(&manifest));
+	manifest.machine[strlen(manifest.machine) + 1] = '\0';
+	manifest.architecture[strlen(manifest.architecture) + 1] = 'x';
+	ATF_CHECK(!checkpoint_manifest_compatible(&manifest));
+	manifest.architecture[strlen(manifest.architecture) + 1] = '\0';
+	strlcpy(manifest.machine, "bhyve-virtio-v2",
+	    sizeof(manifest.machine));
+	ATF_CHECK(!checkpoint_manifest_compatible(&manifest));
+	ATF_CHECK(!checkpoint_manifest_restore_compatible(&manifest, false));
+	ATF_CHECK(checkpoint_manifest_restore_compatible(&manifest, true));
+	manifest.machine[strlen(manifest.machine) + 1] = 'x';
+	ATF_CHECK(!checkpoint_manifest_restore_compatible(&manifest, true));
+	manifest.machine[strlen(manifest.machine) + 1] = '\0';
+	strlcpy(manifest.machine, CHECKPOINT_MACHINE_ABI,
+	    sizeof(manifest.machine));
+	ATF_CHECK(checkpoint_manifest_restore_compatible(&manifest, false));
 	strlcpy(manifest.architecture, "different-arch",
 	    sizeof(manifest.architecture));
 	ATF_CHECK(!checkpoint_manifest_compatible(&manifest));
@@ -301,6 +324,44 @@ ATF_TC_BODY(noncurrent_manifest_header_rejected, tc)
 	    EINVAL);
 	ATF_CHECK(!is_manifest);
 	ATF_CHECK_EQ(memcmp(&manifest, &before, sizeof(manifest)), 0);
+	ATF_REQUIRE_EQ(unlink(path), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(previous_release_manifest_wire);
+ATF_TC_BODY(previous_release_manifest_wire, tc)
+{
+	struct checkpoint_manifest manifest;
+	char path[] = "/tmp/bhyve-manifest-v010.XXXXXX";
+	char wire[1024];
+	bool is_manifest;
+	int fd, length;
+
+	(void)tc;
+	/* Exact field order and names emitted by the v0.1.0 publisher. */
+	length = snprintf(wire, sizeof(wire),
+	    "BHYVE-CHECKPOINT-MANIFEST-3\n"
+	    "architecture=%s\n"
+	    "machine=bhyve-virtio-v2\n"
+	    "data=checkpoint.data.0123456789abcdef0123456789abcdef\n"
+	    "kern=checkpoint.kern.0123456789abcdef0123456789abcdef\n"
+	    "meta=checkpoint.meta.0123456789abcdef0123456789abcdef\n"
+	    "data_sha256=%064d\n"
+	    "kern_sha256=%064d\n"
+	    "meta_sha256=%064d\n",
+	    checkpoint_host_architecture(), 0, 0, 0);
+	ATF_REQUIRE(length > 0 && (size_t)length < sizeof(wire));
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(checkpoint_write_all(fd, wire, (size_t)length), 0);
+	ATF_REQUIRE_EQ(close(fd), 0);
+	ATF_REQUIRE_EQ(checkpoint_manifest_read(path, &manifest,
+	    &is_manifest), 0);
+	ATF_CHECK(is_manifest);
+	ATF_CHECK(checkpoint_manifest_valid_for("checkpoint", &manifest));
+	ATF_CHECK(!checkpoint_manifest_restore_compatible(&manifest, false));
+	ATF_CHECK(checkpoint_manifest_restore_compatible(&manifest, true));
+	manifest.machine[strlen(CHECKPOINT_MACHINE_ABI_PREVIOUS) + 1] = 'x';
+	ATF_CHECK(!checkpoint_manifest_restore_compatible(&manifest, true));
 	ATF_REQUIRE_EQ(unlink(path), 0);
 }
 
@@ -611,6 +672,22 @@ ATF_TC_BODY(manifest_publication_rejects_invalid_topology, tc)
 	ATF_CHECK_EQ(faccessat(dirfd, "checkpoint", F_OK, 0), -1);
 	ATF_CHECK_EQ(errno, ENOENT);
 
+	/* Publication must reject the same inode alias that restore rejects. */
+	make_file_at(dirfd, manifest.data, "data");
+	make_file_at(dirfd, manifest.kern, "kernel");
+	ATF_REQUIRE_EQ(linkat(dirfd, manifest.kern, dirfd, manifest.meta, 0),
+	    0);
+	ATF_CHECK_EQ(checkpoint_publish(dirfd, "checkpoint", temporary,
+	    &manifest, &published), EINVAL);
+	ATF_CHECK(!published);
+	ATF_CHECK_EQ(faccessat(dirfd, "checkpoint", F_OK, 0), -1);
+	ATF_CHECK_EQ(errno, ENOENT);
+	ATF_CHECK_EQ(faccessat(dirfd, temporary, F_OK, 0), -1);
+	ATF_CHECK_EQ(errno, ENOENT);
+	ATF_REQUIRE_EQ(unlinkat(dirfd, manifest.data, 0), 0);
+	ATF_REQUIRE_EQ(unlinkat(dirfd, manifest.kern, 0), 0);
+	ATF_REQUIRE_EQ(unlinkat(dirfd, manifest.meta, 0), 0);
+
 	free(temporary);
 	ATF_REQUIRE_EQ(close(dirfd), 0);
 	ATF_REQUIRE_EQ(rmdir(directory), 0);
@@ -710,6 +787,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, manifest_validation);
 	ATF_TP_ADD_TC(tp, noncurrent_manifest_header_rejected);
+	ATF_TP_ADD_TC(tp, previous_release_manifest_wire);
 	ATF_TP_ADD_TC(tp, raw_three_file_format_rejected);
 	ATF_TP_ADD_TC(tp, manifest_rejects_nonregular_files);
 	ATF_TP_ADD_TC(tp, manifest_member_integrity);

@@ -12,6 +12,7 @@
 
 #include "virtio_pmem_host.h"
 #include "virtio_pmem_queue.h"
+#include "virtio_state_range.h"
 
 static int
 virtio_pmem_iov_total(const struct iovec *iov, int niov, size_t *total)
@@ -42,6 +43,15 @@ virtio_pmem_chain_prepare(const struct iovec *iov, int niov, int readable,
 	    writable <= 0 || readable > niov || writable > niov - readable ||
 	    readable + writable != niov)
 		return (EINVAL);
+	if ((size_t)niov > SIZE_MAX / sizeof(*iov) ||
+	    virtio_state_ranges_overlap(chain, sizeof(*chain), iov,
+	    (size_t)niov * sizeof(*iov)))
+		return (EINVAL);
+	for (int i = 0; i < niov; i++) {
+		if (virtio_state_ranges_overlap(chain, sizeof(*chain),
+		    iov[i].iov_base, iov[i].iov_len))
+			return (EINVAL);
+	}
 	error = virtio_pmem_iov_total(iov, readable, &readable_bytes);
 	if (error != 0)
 		return (error);
@@ -87,7 +97,9 @@ virtio_pmem_chain_complete(const struct virtio_pmem_chain *chain, int error,
 	size_t copied;
 
 	if (chain == NULL || written == NULL || chain->response_count == 0 ||
-	    chain->response_count > nitems(chain->response))
+	    chain->response_count > nitems(chain->response) ||
+	    virtio_state_ranges_overlap(chain, sizeof(*chain), written,
+	    sizeof(*written)))
 		return (EINVAL);
 	if (virtio_pmem_response_encode(error, response, sizeof(response)) != 0)
 		return (EINVAL);
@@ -95,14 +107,24 @@ virtio_pmem_chain_complete(const struct virtio_pmem_chain *chain, int error,
 	for (size_t i = 0; i < chain->response_count; i++) {
 		if (chain->response[i].iov_base == NULL ||
 		    chain->response[i].iov_len == 0 ||
-		    chain->response[i].iov_len > sizeof(response) - copied)
+		    chain->response[i].iov_len > sizeof(response) - copied ||
+		    virtio_state_ranges_overlap(chain, sizeof(*chain),
+		    chain->response[i].iov_base,
+		    chain->response[i].iov_len) ||
+		    virtio_state_ranges_overlap(written, sizeof(*written),
+		    chain->response[i].iov_base,
+		    chain->response[i].iov_len))
 			return (EINVAL);
-		memcpy(chain->response[i].iov_base, response + copied,
-		    chain->response[i].iov_len);
 		copied += chain->response[i].iov_len;
 	}
 	if (copied != sizeof(response))
 		return (EINVAL);
+	copied = 0;
+	for (size_t i = 0; i < chain->response_count; i++) {
+		memcpy(chain->response[i].iov_base, response + copied,
+		    chain->response[i].iov_len);
+		copied += chain->response[i].iov_len;
+	}
 	*written = copied;
 	return (0);
 }

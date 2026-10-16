@@ -54,6 +54,7 @@
 #include <pthread_np.h>
 
 #include <lib9p.h>
+#include <fid.h>
 #include <backend/fs.h>
 
 #include "bhyverun.h"
@@ -68,6 +69,7 @@
 #define	VT9P_MAX_IOV	128
 #define VT9P_RINGSZ	256
 #define	VT9P_MAXTAGSZ	256
+#define	VT9P_SHARE_ID_SIZE	16
 /*
  * Protocol/resource limit, not a host-page calculation.  Keeping the
  * historical amd64 limit explicit makes negotiation and saved state stable
@@ -97,6 +99,8 @@ struct pci_vt9p_softc {
 	char *                   vsc_rootpath;
 	dev_t                    vsc_rootdev;
 	ino_t                    vsc_rootino;
+	uint8_t                  vsc_migration_share_id[VT9P_SHARE_ID_SIZE];
+	bool                     vsc_migration_share_id_valid;
 	bool                     vsc_readonly;
 	struct pci_vt9p_config * vsc_config;
 	struct l9p_backend *     vsc_fs_backend;
@@ -513,9 +517,94 @@ pci_vt9p_notify(void *vsc, struct vqueue_info *vq)
 }
 
 #ifdef BHYVE_SNAPSHOT
-#define	VT9P_SNAPSHOT_MAGIC		0x32503956U	/* "V9P2" on disk */
-#define	VT9P_SNAPSHOT_VERSION		2U
+#define	VT9P_SNAPSHOT_MAGIC_V2	0x32503956U	/* "V9P2" on disk */
+#define	VT9P_SNAPSHOT_MAGIC_V3	0x33503956U	/* "V9P3" on disk */
+#define	VT9P_SNAPSHOT_MAGIC_V4	0x34503956U	/* "V9P4" on disk */
+#define	VT9P_SNAPSHOT_MAGIC_V5	0x35503956U	/* "V9P5" on disk */
+#define	VT9P_SNAPSHOT_MAGIC		0x36503956U	/* "V9P6" on disk */
+#define	VT9P_SNAPSHOT_VERSION		6U
 #define	VT9P_SNAPSHOT_STRING_MAX	(1024U * 1024U)
+#define	VT9P_SNAPSHOT_MAX_FIDS	4096U
+
+struct vt9p_staged_fid {
+	struct l9p_fid *fid;
+	struct l9p_fs_fid_state state;
+};
+
+static int
+pci_vt9p_fid_record(struct l9p_fs_fid_state *state, uint32_t *fidno,
+    struct vm_snapshot_meta *meta, bool portable_cursor,
+    bool verified_cursor, bool byte_cursor)
+{
+	uint32_t pathlen;
+	int error;
+
+	pathlen = meta->op == VM_SNAPSHOT_SAVE ?
+	    (uint32_t)strlen(state->path) + 1 : 0;
+	SNAPSHOT_LE32_OR_LEAVE(*fidno, meta, error, done);
+	SNAPSHOT_LE32_OR_LEAVE(state->flags, meta, error, done);
+	SNAPSHOT_LE32_OR_LEAVE(state->open_flags, meta, error, done);
+	SNAPSHOT_LE32_OR_LEAVE(state->uid, meta, error, done);
+	SNAPSHOT_LE32_OR_LEAVE(state->ngids, meta, error, done);
+	SNAPSHOT_LE64_OR_LEAVE(state->dev, meta, error, done);
+	SNAPSHOT_LE64_OR_LEAVE(state->ino, meta, error, done);
+	SNAPSHOT_LE32_OR_LEAVE(state->mode, meta, error, done);
+	if (portable_cursor)
+		SNAPSHOT_LE64_OR_LEAVE(state->dir_index, meta, error, done);
+	if (verified_cursor)
+		SNAPSHOT_LE64_OR_LEAVE(state->dir_hash, meta, error, done);
+	if (byte_cursor)
+		SNAPSHOT_LE64_OR_LEAVE(state->dir_bytes, meta, error, done);
+	SNAPSHOT_LE32_OR_LEAVE(pathlen, meta, error, done);
+	if (pathlen < 2 || pathlen > MAXPATHLEN ||
+	    state->ngids > L9P_FS_FID_MAX_GROUPS) {
+		error = EINVAL;
+		goto done;
+	}
+	if (vm_snapshot_is_loading(meta)) {
+		if (state->ngids != 0) {
+			state->gids = calloc(state->ngids, sizeof(*state->gids));
+			if (state->gids == NULL) {
+				error = ENOMEM;
+				goto done;
+			}
+		}
+		state->path = malloc(pathlen);
+		if (state->path == NULL) {
+			error = ENOMEM;
+			goto done;
+		}
+	}
+	for (uint32_t i = 0; i < state->ngids; i++)
+		SNAPSHOT_LE32_OR_LEAVE(state->gids[i], meta, error, done);
+	SNAPSHOT_BUF_OR_LEAVE(state->path, pathlen, meta, error, done);
+	if (state->path[pathlen - 1] != '\0' ||
+	    strnlen(state->path, pathlen) != pathlen - 1) {
+		error = EINVAL;
+		goto done;
+	}
+	error = 0;
+done:
+	return (error);
+}
+
+static void
+pci_vt9p_free_staged(struct pci_vt9p_softc *sc,
+    struct vt9p_staged_fid *staged, uint32_t count)
+{
+
+	if (staged == NULL)
+		return;
+	for (uint32_t i = 0; i < count; i++) {
+		if (staged[i].fid != NULL) {
+			sc->vsc_fs_backend->freefid(sc->vsc_fs_backend->softc,
+			    staged[i].fid);
+			free(staged[i].fid);
+		}
+		l9p_backend_fs_free_fid_state(&staged[i].state);
+	}
+	free(staged);
+}
 
 static bool
 pci_vt9p_has_fids(struct pci_vt9p_softc *sc)
@@ -530,6 +619,151 @@ pci_vt9p_has_fids(struct pci_vt9p_softc *sc)
 }
 
 static int
+pci_vt9p_snapshot_fids(struct pci_vt9p_softc *sc,
+    struct vm_snapshot_meta *meta, bool portable_cursor,
+    bool verified_cursor, bool byte_cursor, bool allow_dev_rebind,
+    uint64_t source_rootdev, enum l9p_version connection_version)
+{
+	struct vt9p_staged_fid *staged;
+	struct l9p_fs_fid_state state;
+	struct l9p_fid *fid;
+	struct ht_iter iter;
+	uint32_t count, fidno, published;
+	int error;
+
+	count = 0;
+	if (meta->op == VM_SNAPSHOT_SAVE &&
+	    sc->vsc_conn->lc_files.ht_entries != NULL) {
+		ht_iter(&sc->vsc_conn->lc_files, &iter);
+		while (ht_next(&iter) != NULL) {
+			if (++count > VT9P_SNAPSHOT_MAX_FIDS)
+				return (E2BIG);
+		}
+	}
+	SNAPSHOT_LE32_OR_LEAVE(count, meta, error, done);
+	if (count > VT9P_SNAPSHOT_MAX_FIDS)
+		return (E2BIG);
+	if (count == 0)
+		return (0);
+	if (sc->vsc_fs_backend == NULL)
+		return (EINVAL);
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		ht_iter(&sc->vsc_conn->lc_files, &iter);
+		while ((fid = ht_next(&iter)) != NULL) {
+			error = l9p_backend_fs_export_fid(sc->vsc_fs_backend,
+			    fid, &state);
+			if (error != 0)
+				return (error);
+			/* Older records lack the ordered prefix needed to verify DIR. */
+			if (!verified_cursor &&
+			    (state.flags & (L9P_LO_ISDIR | L9P_LO_ISOPEN)) ==
+			    (L9P_LO_ISDIR | L9P_LO_ISOPEN)) {
+				l9p_backend_fs_free_fid_state(&state);
+				return (EOPNOTSUPP);
+			}
+			/* A share ID never authorizes fids on another mounted filesystem. */
+			if (allow_dev_rebind && state.dev != source_rootdev) {
+				l9p_backend_fs_free_fid_state(&state);
+				return (EOPNOTSUPP);
+			}
+			if (!portable_cursor &&
+			    (state.flags & (L9P_LO_ISDIR | L9P_LO_ISOPEN)) ==
+			    (L9P_LO_ISDIR | L9P_LO_ISOPEN)) {
+				l9p_backend_fs_free_fid_state(&state);
+				return (EOPNOTSUPP);
+			}
+			fidno = fid->lo_fid;
+			error = pci_vt9p_fid_record(&state, &fidno, meta,
+			    portable_cursor, verified_cursor, byte_cursor);
+			l9p_backend_fs_free_fid_state(&state);
+			if (error != 0)
+				return (error);
+		}
+		return (0);
+	}
+	staged = calloc(count, sizeof(*staged));
+	if (staged == NULL)
+		return (ENOMEM);
+	for (uint32_t i = 0; i < count; i++) {
+		fidno = 0;
+		error = pci_vt9p_fid_record(&staged[i].state, &fidno, meta,
+		    portable_cursor, verified_cursor, byte_cursor);
+		if (error != 0)
+			goto cleanup;
+		if (allow_dev_rebind &&
+		    staged[i].state.dev != source_rootdev) {
+			error = EOPNOTSUPP;
+			goto cleanup;
+		}
+		if (!verified_cursor &&
+		    (staged[i].state.flags &
+		    (L9P_LO_ISDIR | L9P_LO_ISOPEN)) ==
+		    (L9P_LO_ISDIR | L9P_LO_ISOPEN)) {
+			error = EOPNOTSUPP;
+			goto cleanup;
+		}
+		/* V9P5 lacks classic Tread's byte position. */
+		if (!byte_cursor && connection_version != L9P_2000L &&
+		    (staged[i].state.flags &
+		    (L9P_LO_ISDIR | L9P_LO_ISOPEN)) ==
+	    (L9P_LO_ISDIR | L9P_LO_ISOPEN) &&
+	    staged[i].state.dir_index != 0) {
+			error = EOPNOTSUPP;
+			goto cleanup;
+		}
+		if (!portable_cursor && (staged[i].state.flags &
+		    (L9P_LO_ISDIR | L9P_LO_ISOPEN)) ==
+		    (L9P_LO_ISDIR | L9P_LO_ISOPEN)) {
+			error = EOPNOTSUPP;
+			goto cleanup;
+		}
+		for (uint32_t j = 0; j < i; j++) {
+			if (staged[j].fid->lo_fid == fidno) {
+				error = EINVAL;
+				goto cleanup;
+			}
+		}
+		staged[i].fid = calloc(1, sizeof(*staged[i].fid));
+		if (staged[i].fid == NULL) {
+			error = ENOMEM;
+			goto cleanup;
+		}
+		staged[i].fid->lo_fid = fidno;
+		error = l9p_backend_fs_import_fid(sc->vsc_fs_backend,
+		    &staged[i].state, staged[i].fid, allow_dev_rebind,
+		    connection_version);
+		if (error != 0)
+			goto cleanup;
+	}
+	if (meta->op == VM_SNAPSHOT_VALIDATE) {
+		error = 0;
+		goto cleanup;
+	}
+	published = 0;
+	for (uint32_t i = 0; i < count; i++) {
+		if (ht_add(&sc->vsc_conn->lc_files,
+		    staged[i].fid->lo_fid, staged[i].fid) != 0) {
+			error = errno != 0 ? errno : EIO;
+			goto rollback;
+		}
+		published++;
+	}
+	for (uint32_t i = 0; i < count; i++) {
+		staged[i].fid = NULL;
+	}
+	error = 0;
+	goto cleanup;
+rollback:
+	for (uint32_t i = 0; i < published; i++)
+		(void)ht_remove(&sc->vsc_conn->lc_files,
+		    staged[i].fid->lo_fid);
+cleanup:
+	pci_vt9p_free_staged(sc, staged, count);
+done:
+	return (error);
+}
+
+static int
 pci_vt9p_pause(void *vsc)
 {
 	struct pci_vt9p_softc *sc;
@@ -537,14 +771,13 @@ pci_vt9p_pause(void *vsc)
 	sc = vsc;
 	pthread_mutex_lock(&sc->vsc_mtx);
 	/*
-	 * lib9p fids contain backend-private host descriptors and credentials.
-	 * They are not portable state.  Refuse the checkpoint rather than
-	 * silently restoring a broken mount or serializing host pointers.
-	 * VIRTIO_ACTIVATION_ASSERTION: active-fid-checkpoint-rejected
+	 * Keep the connection stable while each fid is exported as a bounded
+	 * path, credential set, and file identity.  Unsupported fids fail in
+	 * snapshot_fids() before the checkpoint is committed.
 	 */
 	if (sc->vsc_conn == NULL || sc->vsc_resetting ||
 	    sc->vsc_qreset_pending ||
-	    sc->vsc_active_requests != 0 || pci_vt9p_has_fids(sc)) {
+	    sc->vsc_active_requests != 0) {
 		pthread_mutex_unlock(&sc->vsc_mtx);
 		return (EBUSY);
 	}
@@ -566,16 +799,19 @@ pci_vt9p_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 {
 	struct pci_vt9p_softc *sc;
 	uint64_t features, restore_generation, rootdev, rootino;
+	const uint8_t empty_share_id[VT9P_SHARE_ID_SIZE] = { 0 };
+	uint8_t share_id[VT9P_SHARE_ID_SIZE];
 	uint32_t magic, max_io_size, msize, version;
 	uint16_t current_tag_len, saved_tag_len;
 	uint8_t connection_version, readonly;
+	bool allow_dev_rebind, legacy_v2, legacy_v3, legacy_v4, legacy_v5;
 	char saved_tag[VT9P_MAXTAGSZ];
 	int error;
 
 	sc = vsc;
 	if (sc->vsc_conn == NULL || sc->vsc_resetting ||
 	    sc->vsc_qreset_pending || sc->vsc_active_requests != 0 ||
-	    pci_vt9p_has_fids(sc))
+	    (vm_snapshot_is_loading(meta) && pci_vt9p_has_fids(sc)))
 		return (EBUSY);
 	restore_generation = 0;
 	if (vm_snapshot_is_loading(meta)) {
@@ -585,9 +821,14 @@ pci_vt9p_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	}
 	magic = VT9P_SNAPSHOT_MAGIC;
 	version = VT9P_SNAPSHOT_VERSION;
+	legacy_v2 = false;
+	legacy_v3 = false;
+	legacy_v4 = false;
+	legacy_v5 = false;
 	features = sc->vsc_features;
 	rootdev = (uint64_t)sc->vsc_rootdev;
 	rootino = (uint64_t)sc->vsc_rootino;
+	memcpy(share_id, sc->vsc_migration_share_id, sizeof(share_id));
 	readonly = sc->vsc_readonly;
 	connection_version = sc->vsc_conn->lc_version;
 	msize = sc->vsc_conn->lc_msize;
@@ -608,14 +849,24 @@ pci_vt9p_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 
 	SNAPSHOT_LE32_OR_LEAVE(magic, meta, error, done);
 	SNAPSHOT_LE32_OR_LEAVE(version, meta, error, done);
-	if (magic != VT9P_SNAPSHOT_MAGIC ||
-	    version != VT9P_SNAPSHOT_VERSION) {
+	legacy_v2 = magic == VT9P_SNAPSHOT_MAGIC_V2 && version == 2;
+	legacy_v3 = magic == VT9P_SNAPSHOT_MAGIC_V3 && version == 3;
+	legacy_v4 = magic == VT9P_SNAPSHOT_MAGIC_V4 && version == 4;
+	legacy_v5 = magic == VT9P_SNAPSHOT_MAGIC_V5 && version == 5;
+	if (!legacy_v2 && !legacy_v3 && !legacy_v4 && !legacy_v5 &&
+	    (magic != VT9P_SNAPSHOT_MAGIC ||
+	    version != VT9P_SNAPSHOT_VERSION)) {
 		error = ENOTSUP;
 		goto done;
 	}
 	SNAPSHOT_LE64_OR_LEAVE(features, meta, error, done);
 	SNAPSHOT_LE64_OR_LEAVE(rootdev, meta, error, done);
 	SNAPSHOT_LE64_OR_LEAVE(rootino, meta, error, done);
+	if (!legacy_v2 && !legacy_v3)
+		SNAPSHOT_BUF_OR_LEAVE(share_id, sizeof(share_id), meta, error,
+		    done);
+	else
+		memset(share_id, 0, sizeof(share_id));
 	SNAPSHOT_U8_OR_LEAVE(readonly, meta, error, done);
 	SNAPSHOT_U8_OR_LEAVE(connection_version, meta, error, done);
 	SNAPSHOT_LE32_OR_LEAVE(msize, meta, error, done);
@@ -643,17 +894,40 @@ pci_vt9p_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 			goto done;
 		}
 	}
-	error = vm_snapshot_identity_string(sc->vsc_rootpath,
-	    VT9P_SNAPSHOT_STRING_MAX, meta);
+	allow_dev_rebind = false;
+	/* Only an explicit matching share identity can waive host-local st_dev. */
+	if (vm_snapshot_is_loading(meta) &&
+	    memcmp(share_id, empty_share_id, sizeof(share_id)) != 0) {
+		if (!sc->vsc_migration_share_id_valid ||
+		    memcmp(share_id, sc->vsc_migration_share_id,
+		    sizeof(share_id)) != 0) {
+			error = EOPNOTSUPP;
+			goto done;
+		}
+		allow_dev_rebind = true;
+	} else if (meta->op == VM_SNAPSHOT_SAVE &&
+	    sc->vsc_migration_share_id_valid)
+		allow_dev_rebind = true;
+	/* The share identity permits a different destination mount path. */
+	error = vm_snapshot_identity_string_check(sc->vsc_rootpath,
+	    VT9P_SNAPSHOT_STRING_MAX, meta, !allow_dev_rebind);
 	if (error != 0)
 		goto done;
 	if (vm_snapshot_is_loading(meta) &&
 	    (features != sc->vsc_vs.vs_negotiated_caps ||
-	    rootdev != (uint64_t)sc->vsc_rootdev ||
+	    (!allow_dev_rebind && rootdev != (uint64_t)sc->vsc_rootdev) ||
 	    rootino != (uint64_t)sc->vsc_rootino ||
 	    readonly != sc->vsc_readonly)) {
 		error = EINVAL;
 		goto done;
+	}
+	if (!legacy_v2) {
+		error = pci_vt9p_snapshot_fids(sc, meta, !legacy_v3,
+		    !legacy_v3 && !legacy_v4,
+		    !legacy_v3 && !legacy_v4 && !legacy_v5,
+		    allow_dev_rebind, rootdev, connection_version);
+		if (error != 0)
+			goto done;
 	}
 	if (meta->op == VM_SNAPSHOT_RESTORE) {
 		sc->vsc_features = features;
@@ -736,6 +1010,37 @@ pci_vt9p_legacy_config(nvlist_t *nvl, const char *opts)
 }
 
 static int
+pci_vt9p_share_id_parse(const char *text,
+    uint8_t id[VT9P_SHARE_ID_SIZE])
+{
+	uint8_t candidate[VT9P_SHARE_ID_SIZE], any;
+	unsigned int high, low;
+	char digit;
+
+	if (text == NULL || id == NULL ||
+	    strnlen(text, VT9P_SHARE_ID_SIZE * 2 + 1) !=
+	    VT9P_SHARE_ID_SIZE * 2)
+		return (EINVAL);
+	any = 0;
+	for (size_t i = 0; i < VT9P_SHARE_ID_SIZE; i++) {
+		digit = text[i * 2];
+		high = digit >= '0' && digit <= '9' ? digit - '0' :
+		    digit >= 'a' && digit <= 'f' ? digit - 'a' + 10 : 16;
+		digit = text[i * 2 + 1];
+		low = digit >= '0' && digit <= '9' ? digit - '0' :
+		    digit >= 'a' && digit <= 'f' ? digit - 'a' + 10 : 16;
+		if (high == 16 || low == 16)
+			return (EINVAL);
+		candidate[i] = (high << 4) | low;
+		any |= candidate[i];
+	}
+	if (any == 0)
+		return (EINVAL);
+	memcpy(id, candidate, sizeof(candidate));
+	return (0);
+}
+
+static int
 pci_vt9p_confine_rootfd(int rootfd)
 {
 	int flags;
@@ -763,7 +1068,7 @@ pci_vt9p_root_cap_rights(cap_rights_t *rights, bool readonly)
 
 	cap_rights_init(rights, CAP_LOOKUP, CAP_ACL_CHECK, CAP_ACL_GET,
 	    CAP_READ, CAP_SEEK, CAP_FSTAT, CAP_PREAD, CAP_EXTATTR_GET,
-	    CAP_EXTATTR_LIST, CAP_FSTATFS, CAP_FPATHCONF);
+	    CAP_EXTATTR_LIST, CAP_FSTATFS, CAP_FPATHCONF, CAP_FCNTL);
 	if (!readonly) {
 		cap_rights_set(rights, CAP_ACL_DELETE, CAP_ACL_SET, CAP_WRITE,
 		    CAP_CREATE, CAP_FCHMODAT, CAP_FCHOWNAT, CAP_FTRUNCATE,
@@ -834,6 +1139,16 @@ pci_vt9p_init(struct pci_devinst *pi, nvlist_t *nvl)
 		goto fail;
 	sc->vsc_rootdev = rootstat.st_dev;
 	sc->vsc_rootino = rootstat.st_ino;
+	value = get_config_value_node(nvl, "migration_share_id");
+	if (value != NULL) {
+		if (pci_vt9p_share_id_parse(value,
+		    sc->vsc_migration_share_id) != 0) {
+			EPRINTLN("virtio-9p: migration_share_id must be a nonzero "
+			    "128-bit value in 32 lowercase hex digits");
+			goto fail;
+		}
+		sc->vsc_migration_share_id_valid = true;
+	}
 	sc->vsc_readonly = ro;
 	sc->vsc_config = calloc(1, sizeof(struct pci_vt9p_config) +
 	    VT9P_MAXTAGSZ);
@@ -863,6 +1178,9 @@ pci_vt9p_init(struct pci_devinst *pi, nvlist_t *nvl)
 	pci_vt9p_root_cap_rights(&rootcap, ro);
 
 	if (cap_rights_limit(rootfd, &rootcap) != 0)
+		goto fail;
+	/* Reopened child fds need F_GETFL for the next checkpoint. */
+	if (cap_fcntls_limit(rootfd, CAP_FCNTL_GETFL) != 0)
 		goto fail;
 
 	memcpy(&sc->vsc_consts, &vt9p_vi_consts, sizeof(sc->vsc_consts));

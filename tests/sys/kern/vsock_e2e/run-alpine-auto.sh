@@ -41,7 +41,7 @@ VSOCK_BARRIER_DIR=${VSOCK_BARRIER_DIR:-}
 VSOCK_BARRIER_CIDS=${VSOCK_BARRIER_CIDS:-}
 CONSOLE_PORT=${CONSOLE_PORT:-}
 CONSOLE_MULTIPORT=${CONSOLE_MULTIPORT:-no}
-CHECKPOINT_ACTIVE_9P_REJECT=${CHECKPOINT_ACTIVE_9P_REJECT:-no}
+CHECKPOINT_ACTIVE_9P=${CHECKPOINT_ACTIVE_9P:-no}
 CHECKPOINT_ACTIVE_FS=${CHECKPOINT_ACTIVE_FS:-no}
 CHECKPOINT_ACTIVE_VSOCK_REJECT=${CHECKPOINT_ACTIVE_VSOCK_REJECT:-no}
 CHECKPOINT_ACTIVE_CONSOLE_REJECT=${CHECKPOINT_ACTIVE_CONSOLE_REJECT:-no}
@@ -355,9 +355,9 @@ case "$CONSOLE_MULTIPORT" in
 yes|no) ;;
 *) echo "CONSOLE_MULTIPORT must be yes or no" >&2; exit 2 ;;
 esac
-case "$CHECKPOINT_ACTIVE_9P_REJECT" in
+case "$CHECKPOINT_ACTIVE_9P" in
 yes|no) ;;
-*) echo "CHECKPOINT_ACTIVE_9P_REJECT must be yes or no" >&2; exit 2 ;;
+*) echo "CHECKPOINT_ACTIVE_9P must be yes or no" >&2; exit 2 ;;
 esac
 case "$CHECKPOINT_ACTIVE_FS" in
 yes|no) ;;
@@ -607,9 +607,9 @@ done
 	echo "virtiofsd not found; set VIRTIOFSD or build usr.sbin/virtiofsd" >&2
 	exit 1
 }
-[ "$CHECKPOINT_ACTIVE_9P_REJECT" = no ] ||
+[ "$CHECKPOINT_ACTIVE_9P" = no ] ||
     { [ "$CHECKPOINT_TEST" = yes ] && [ "$run_9p_device" = yes ]; } || {
-	echo "CHECKPOINT_ACTIVE_9P_REJECT=yes requires CHECKPOINT_TEST=yes and DEVICES including 9p" >&2
+	echo "CHECKPOINT_ACTIVE_9P=yes requires CHECKPOINT_TEST=yes and DEVICES including 9p" >&2
 	exit 2
 }
 [ "$CHECKPOINT_ACTIVE_FS" = no ] || [ "$run_fs_device" = yes ] || {
@@ -1369,19 +1369,22 @@ run_checkpoint_roundtrip()
 	guest_cmd "printf %s '$marker' > /tmp/bhyve-checkpoint-marker" 30
 	verify_active_console_checkpoint_rejected
 	verify_active_vsock_checkpoint_rejected
-	verify_active_9p_checkpoint_rejected
 	prepare_checkpoint_backends
+	prepare_active_9p_checkpoint
 	start_checkpoint_workloads
 	"$BHYVECTL" --vm="$vmname" --checkpoint="$checkpoint"
 	wait_checkpoint_manifest "$checkpoint"
 	first_manifest=$(cat "$checkpoint")
 	guest_cmd "test \"\$(cat /tmp/bhyve-checkpoint-marker)\" = '$marker'" 30
+	verify_active_9p_checkpoint
 	verify_active_fs_checkpoint
 	verify_checkpoint_workloads
 	stop_checkpoint_workloads
+	cleanup_active_9p_checkpoint
 	run_lifecycle_smokes
 
 	prepare_checkpoint_backends
+	prepare_active_9p_checkpoint
 	start_checkpoint_workloads
 	"$BHYVECTL" --vm="$vmname" --suspend="$checkpoint"
 	i=0
@@ -1404,18 +1407,22 @@ run_checkpoint_roundtrip()
 	verify_incompatible_nonvirtio_restore_rejected
 	launch_vm "$checkpoint"
 	guest_cmd "test \"\$(cat /tmp/bhyve-checkpoint-marker)\" = '$marker'" 60
+	verify_active_9p_checkpoint
 	verify_active_fs_checkpoint
 	verify_checkpoint_workloads
 	stop_checkpoint_workloads
+	cleanup_active_9p_checkpoint
 	run_lifecycle_smokes
 	if [ "$CHECKPOINT_REPEAT_PMEM_RESTORE" = yes ] ||
 	    [ "$CHECKPOINT_REPEAT_FS_RESTORE" = yes ]; then
 		terminate_vm_for_repeat_restore
 		launch_vm "$checkpoint"
 		guest_cmd "test \"\$(cat /tmp/bhyve-checkpoint-marker)\" = '$marker'" 60
+		verify_active_9p_checkpoint
 		verify_active_fs_checkpoint
 		verify_checkpoint_workloads
 		stop_checkpoint_workloads
+		cleanup_active_9p_checkpoint
 		run_lifecycle_smokes
 		if [ "$CHECKPOINT_REPEAT_FS_RESTORE" = yes ]; then
 			echo "PASS repeated checkpoint restore contract=virtio-fs-active-handles"
@@ -1618,22 +1625,26 @@ verify_active_vsock_checkpoint_rejected()
 	echo "PASS active vsock checkpoint rejected backend=$VSOCK_BACKEND and live connection survived rollback"
 }
 
-verify_active_9p_checkpoint_rejected()
+prepare_active_9p_checkpoint()
 {
-	[ "$CHECKPOINT_ACTIVE_9P_REJECT" = yes ] || return 0
-	rejected="$WORKDIR/$transport.active-9p-rejected.checkpoint"
-	probe="active-9p-$transport-$$"
+	[ "$CHECKPOINT_ACTIVE_9P" = yes ] || return 0
+	guest_cmd "set -eu; grep -qs ' /mnt/bhyve-9p ' /proc/mounts; [ \"\$(cat /mnt/bhyve-9p/host-seed)\" = '$ninep_seed' ]; rm -f /tmp/bhyve-9p-checkpoint-holder.pid /tmp/bhyve-9p-checkpoint-holder.ready /tmp/bhyve-9p-checkpoint-holder.result; nohup python3 /tmp/g9p_checkpoint_holder.py /mnt/bhyve-9p/host-seed '$ninep_seed' /tmp/bhyve-9p-checkpoint-holder.ready /tmp/bhyve-9p-checkpoint-holder.result >/dev/null 2>&1 & printf %s \$! >/tmp/bhyve-9p-checkpoint-holder.pid; i=0; while [ ! -f /tmp/bhyve-9p-checkpoint-holder.ready ] && [ \"\$i\" -lt 30 ]; do sleep 1; i=\$((i + 1)); done; fd=\$(cat /tmp/bhyve-9p-checkpoint-holder.ready); case \"\$fd\" in ''|*[!0-9]*) exit 1;; esac; [ -L /proc/\$(cat /tmp/bhyve-9p-checkpoint-holder.pid)/fd/\$fd ]" 40
+	echo "PASS active 9P fid established"
+}
 
-	rm -f "$rejected" "$rejected".*
-	guest_cmd "set -eu; grep -qs ' /mnt/bhyve-9p ' /proc/mounts; printf %s '$probe' > /mnt/bhyve-9p/checkpoint-reject-probe; sync" 30
-	if "$BHYVECTL" --vm="$vmname" --checkpoint="$rejected"; then
-		echo "active 9P mount checkpoint unexpectedly succeeded" >&2
-		return 1
-	fi
-	guest_cmd "set -eu; grep -qs ' /mnt/bhyve-9p ' /proc/mounts; [ \"\$(cat /mnt/bhyve-9p/checkpoint-reject-probe)\" = '$probe' ]; printf %s '$probe-after' > /mnt/bhyve-9p/checkpoint-reject-after; sync" 30
-	[ "$(cat "$ninep_share/checkpoint-reject-after")" = "$probe-after" ]
-	rm -f "$rejected" "$rejected".*
-	echo "PASS active 9P checkpoint rejected and source mount remains usable"
+verify_active_9p_checkpoint()
+{
+	[ "$CHECKPOINT_ACTIVE_9P" = yes ] || return 0
+	probe="active-9p-$transport-$$"
+	guest_cmd "set -eu; grep -qs ' /mnt/bhyve-9p ' /proc/mounts; pid=\$(cat /tmp/bhyve-9p-checkpoint-holder.pid); kill -0 \"\$pid\"; rm -f /tmp/bhyve-9p-checkpoint-holder.result; kill -USR1 \"\$pid\"; i=0; while [ ! -f /tmp/bhyve-9p-checkpoint-holder.result ] && [ \"\$i\" -lt 30 ]; do sleep 1; i=\$((i + 1)); done; [ \"\$(cat /tmp/bhyve-9p-checkpoint-holder.result)\" = ok ]; [ \"\$(cat /mnt/bhyve-9p/host-seed)\" = '$ninep_seed' ]; printf %s '$probe' >/mnt/bhyve-9p/checkpoint-active-probe; sync" 45
+	[ "$(cat "$ninep_share/checkpoint-active-probe")" = "$probe" ]
+	echo "PASS active 9P fid and mount survive checkpoint"
+}
+
+cleanup_active_9p_checkpoint()
+{
+	[ "$CHECKPOINT_ACTIVE_9P" = yes ] || return 0
+	guest_cmd "set -eu; pid=\$(cat /tmp/bhyve-9p-checkpoint-holder.pid); fd=\$(cat /tmp/bhyve-9p-checkpoint-holder.ready); kill \"\$pid\"; i=0; while [ -L /proc/\$pid/fd/\$fd ] && [ \"\$i\" -lt 30 ]; do sleep 1; i=\$((i + 1)); done; [ ! -L /proc/\$pid/fd/\$fd ]; rm -f /tmp/bhyve-9p-checkpoint-holder.pid /tmp/bhyve-9p-checkpoint-holder.ready /tmp/bhyve-9p-checkpoint-holder.result" 45
 }
 
 prepare_active_fs_checkpoint()
@@ -1667,7 +1678,7 @@ cleanup_active_fs_checkpoint()
 
 prepare_checkpoint_backends()
 {
-	[ "$run_9p_device" = no ] ||
+	[ "$run_9p_device" = no ] || [ "$CHECKPOINT_ACTIVE_9P" = yes ] ||
 	    guest_cmd "if grep -qs ' /mnt/bhyve-9p ' /proc/mounts; then umount /mnt/bhyve-9p; fi" 30
 	[ "$run_fs_device" = no ] || [ "$CHECKPOINT_ACTIVE_FS" = yes ] ||
 	    guest_cmd "if grep -qs ' /mnt/bhyve-fs ' /proc/mounts; then umount /mnt/bhyve-fs; fi" 30
@@ -2093,6 +2104,8 @@ provision_guest()
 	if [ "$run_9p_device" = yes ]; then
 		guest_cmd 'modprobe 9p; modprobe 9pnet; modprobe 9pnet_virtio' 30
 		copy_guest_file "$here/g9p.py" /tmp/g9p.py
+		copy_guest_file "$here/g9p_checkpoint_holder.py" \
+		    /tmp/g9p_checkpoint_holder.py
 		guest_cmd 'python3 /tmp/g9p.py --self-test | grep -q "^SELFTEST PASS$"' 30
 	fi
 	if [ "$run_fs_device" = yes ]; then

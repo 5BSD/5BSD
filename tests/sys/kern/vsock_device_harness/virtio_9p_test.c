@@ -67,6 +67,17 @@ static int g_qreset_complete_error;
 static struct pci_vt9p_softc *g_notify_during_close;
 static bool g_drop_during_close;
 static bool g_has_fid;
+static struct l9p_fid g_fid;
+static struct l9p_fid *g_restored_fid;
+static bool g_multi_fid_mode;
+static struct l9p_fid g_multi_source[2];
+static struct l9p_fid *g_multi_restored[2];
+static unsigned int g_multi_source_count;
+static unsigned int g_multi_restored_count;
+static unsigned int g_multi_add_calls;
+static unsigned int g_multi_add_fail_at;
+static int g_mock_freefid_calls;
+static uint64_t g_mock_dir_bytes;
 static struct l9p_connection g_connection;
 static uint8_t g_config[VT9P_CONFIGSPACESZ];
 static int g_snapshot_validate_calls;
@@ -200,6 +211,7 @@ ATF_TC_BODY(readonly_export_root_rights, tc)
 	ATF_CHECK(cap_rights_is_set(&readonly, CAP_LOOKUP));
 	ATF_CHECK(cap_rights_is_set(&readonly, CAP_READ));
 	ATF_CHECK(cap_rights_is_set(&readonly, CAP_FSTAT));
+	ATF_CHECK(cap_rights_is_set(&readonly, CAP_FCNTL));
 	ATF_CHECK(!cap_rights_is_set(&readonly, CAP_WRITE));
 	ATF_CHECK(!cap_rights_is_set(&readonly, CAP_CREATE));
 	ATF_CHECK(!cap_rights_is_set(&readonly, CAP_UNLINKAT));
@@ -305,11 +317,135 @@ ht_iter(struct ht *h, struct ht_iter *iter)
 }
 
 void *
-ht_next(struct ht_iter *iter __unused)
+ht_next(struct ht_iter *iter)
 {
-	static int fid;
+	if (g_multi_fid_mode) {
+		unsigned int index = iter->htit_slot++;
 
-	return (g_has_fid ? &fid : NULL);
+		if (g_multi_source_count != 0)
+			return (index < g_multi_source_count ?
+			    &g_multi_source[index] : NULL);
+		return (index < g_multi_restored_count ?
+		    g_multi_restored[index] : NULL);
+	}
+
+	if (!g_has_fid || iter->htit_slot++ != 0)
+		return (NULL);
+	return (g_restored_fid != NULL ? g_restored_fid : &g_fid);
+}
+
+int
+ht_add(struct ht *table, uint32_t id __unused, void *value)
+{
+	if (g_multi_fid_mode) {
+		g_multi_add_calls++;
+		if (g_multi_add_calls == g_multi_add_fail_at) {
+			errno = ENOMEM;
+			return (-1);
+		}
+		if (g_multi_restored_count >= nitems(g_multi_restored)) {
+			errno = E2BIG;
+			return (-1);
+		}
+		g_multi_restored[g_multi_restored_count++] = value;
+		table->ht_entries = (void *)(uintptr_t)1;
+		return (0);
+	}
+
+	if (g_restored_fid != NULL)
+		return (-1);
+	g_restored_fid = value;
+	g_has_fid = true;
+	table->ht_entries = (void *)(uintptr_t)1;
+	return (0);
+}
+
+int
+ht_remove(struct ht *table, uint32_t id)
+{
+	if (g_multi_fid_mode) {
+		for (unsigned int i = 0; i < g_multi_restored_count; i++) {
+			if (g_multi_restored[i]->lo_fid != id)
+				continue;
+			for (unsigned int j = i + 1;
+			    j < g_multi_restored_count; j++)
+				g_multi_restored[j - 1] = g_multi_restored[j];
+			g_multi_restored[--g_multi_restored_count] = NULL;
+			if (g_multi_restored_count == 0)
+				table->ht_entries = NULL;
+			return (0);
+		}
+		errno = ENOENT;
+		return (-1);
+	}
+
+	(void)id;
+	g_restored_fid = NULL;
+	g_has_fid = false;
+	table->ht_entries = NULL;
+	return (0);
+}
+
+static void
+mock_fs_freefid(void *softc __unused, struct l9p_fid *fid)
+{
+
+	g_mock_freefid_calls++;
+	fid->lo_aux = NULL;
+}
+
+int
+l9p_backend_fs_export_fid(struct l9p_backend *backend __unused,
+    struct l9p_fid *fid, struct l9p_fs_fid_state *state)
+{
+
+	memset(state, 0, sizeof(*state));
+	state->path = strdup(".");
+	if (state->path == NULL)
+		return (ENOMEM);
+	state->flags = fid->lo_flags;
+	state->uid = 1000;
+	state->dev = 12;
+	state->ino = 34;
+	state->dir_index = (fid->lo_flags & L9P_LO_ISOPEN) != 0 ? 3 : 0;
+	state->dir_hash = (fid->lo_flags & L9P_LO_ISOPEN) != 0 ?
+	    UINT64_C(0x123456789abcdef0) : 0;
+	state->dir_bytes = (fid->lo_flags & L9P_LO_ISOPEN) != 0 ?
+	    g_mock_dir_bytes : 0;
+	state->mode = S_IFDIR;
+	return (0);
+}
+
+int
+l9p_backend_fs_import_fid(struct l9p_backend *backend __unused,
+    const struct l9p_fs_fid_state *state, struct l9p_fid *fid,
+    bool allow_dev_rebind, enum l9p_version version __unused)
+{
+
+	if (strcmp(state->path, ".") != 0 ||
+	    (!allow_dev_rebind && state->dev != 12) ||
+	    state->ino != 34 || state->mode != S_IFDIR ||
+	    (state->flags != (L9P_LO_ISVALID | L9P_LO_ISDIR) &&
+	    state->flags != (L9P_LO_ISVALID | L9P_LO_ISDIR |
+	    L9P_LO_ISOPEN)) ||
+	    state->dir_index != ((state->flags & L9P_LO_ISOPEN) != 0 ? 3 : 0) ||
+	    state->dir_hash != ((state->flags & L9P_LO_ISOPEN) != 0 ?
+	    UINT64_C(0x123456789abcdef0) : 0) ||
+	    state->dir_bytes != ((state->flags & L9P_LO_ISOPEN) != 0 ?
+	    g_mock_dir_bytes : 0))
+		return (EINVAL);
+	fid->lo_aux = fid;
+	fid->lo_flags = state->flags;
+	return (0);
+}
+
+void
+l9p_backend_fs_free_fid_state(struct l9p_fs_fid_state *state)
+{
+
+	free(state->path);
+	free(state->gids);
+	memset(state, 0, sizeof(*state));
 }
 
 static void
@@ -351,6 +487,17 @@ reset_mocks(void)
 	g_notify_during_close = NULL;
 	g_drop_during_close = false;
 	g_has_fid = false;
+	memset(&g_fid, 0, sizeof(g_fid));
+	g_restored_fid = NULL;
+	g_multi_fid_mode = false;
+	memset(g_multi_source, 0, sizeof(g_multi_source));
+	memset(g_multi_restored, 0, sizeof(g_multi_restored));
+	g_multi_source_count = 0;
+	g_multi_restored_count = 0;
+	g_multi_add_calls = 0;
+	g_multi_add_fail_at = 0;
+	g_mock_freefid_calls = 0;
+	g_mock_dir_bytes = 0;
 	g_cfg_sharename = NULL;
 	g_cfg_path = NULL;
 	g_cfg_ro = false;
@@ -674,6 +821,8 @@ setup_snapshot_softc(struct pci_vt9p_softc *sc)
 	sc->vsc_vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
 	pci_vt9p_set_tag(sc, "hostshare");
 	sc->vsc_rootpath = __DECONST(char *, "/host/share");
+	sc->vsc_fs_backend = &g_fs_backend;
+	g_fs_backend.freefid = mock_fs_freefid;
 	sc->vsc_rootdev = 12;
 	sc->vsc_rootino = 34;
 	sc->vsc_readonly = true;
@@ -1166,11 +1315,11 @@ ATF_TC_BODY(snapshot_identity_and_atomicity, tc)
 	ATF_REQUIRE_EQ(run_snapshot(&source, image, sizeof(image),
 	    VM_SNAPSHOT_SAVE, &used), 0);
 	ATF_REQUIRE(used > 16);
-	/* Internal save-state magic is a fixed little-endian "V9P2". */
+	/* Internal save-state magic is a fixed little-endian "V9P6". */
 	ATF_CHECK_EQ(image[0], (uint8_t)'V');
 	ATF_CHECK_EQ(image[1], (uint8_t)'9');
 	ATF_CHECK_EQ(image[2], (uint8_t)'P');
-	ATF_CHECK_EQ(image[3], (uint8_t)'2');
+	ATF_CHECK_EQ(image[3], (uint8_t)'6');
 	source.vsc_features ^= UINT64_C(1);
 	ATF_CHECK_EQ(run_snapshot(&source, image, sizeof(image),
 	    VM_SNAPSHOT_SAVE, NULL), EINVAL);
@@ -1188,6 +1337,10 @@ ATF_TC_BODY(snapshot_identity_and_atomicity, tc)
 	destination.vsc_conn->lc_version = L9P_2000;
 	destination.vsc_conn->lc_msize = 1024;
 	destination.vsc_conn->lc_max_io_size = 512;
+	destination.vsc_rootpath = __DECONST(char *, "/different/mount");
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
+	destination.vsc_rootpath = source.vsc_rootpath;
 	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
 	    VM_SNAPSHOT_VALIDATE, NULL), 0);
 	ATF_CHECK_EQ(destination.vsc_features, 7);
@@ -1265,6 +1418,311 @@ ATF_TC_BODY(snapshot_preflight_is_locally_serialized, tc)
 	pthread_mutex_destroy(&sc.vsc_mtx);
 }
 
+ATF_TC_WITHOUT_HEAD(snapshot_active_fid_roundtrip);
+ATF_TC_BODY(snapshot_active_fid_roundtrip, tc)
+{
+	struct pci_vt9p_softc source, destination;
+	uint8_t image[1024], corrupt[1024];
+	size_t used;
+
+	reset_mocks();
+	setup_snapshot_softc(&source);
+	g_fid.lo_fid = 42;
+	g_fid.lo_flags = L9P_LO_ISVALID | L9P_LO_ISDIR;
+	g_fid.lo_aux = &g_fid;
+	g_has_fid = true;
+	source.vsc_conn->lc_files.ht_entries = (void *)(uintptr_t)1;
+	ATF_REQUIRE_EQ(pci_vt9p_pause(&source), 0);
+	ATF_REQUIRE_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_REQUIRE_EQ(pci_vt9p_resume(&source), 0);
+	g_has_fid = false;
+	source.vsc_conn->lc_files.ht_entries = NULL;
+
+	setup_snapshot_softc(&destination);
+	memcpy(corrupt, image, used);
+	corrupt[used - 1] = 'x';
+	ATF_CHECK_EQ(run_snapshot(&destination, corrupt, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
+	/* One 70-byte fid record follows the four-byte count. */
+	ATF_REQUIRE(used >= 74);
+	ATF_CHECK_EQ(image[used - 74], 1);
+	memcpy(corrupt, image, used);
+	memset(&corrupt[used - 74], 0xff, 4);
+	ATF_CHECK_EQ(run_snapshot(&destination, corrupt, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), E2BIG);
+	ATF_CHECK_EQ(g_mock_freefid_calls, 0);
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	ATF_CHECK_EQ(g_mock_freefid_calls, 1);
+	ATF_CHECK(g_restored_fid == NULL);
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_REQUIRE(g_restored_fid != NULL);
+	ATF_CHECK_EQ(g_restored_fid->lo_fid, 42);
+	ATF_CHECK_EQ(g_restored_fid->lo_flags,
+	    L9P_LO_ISVALID | L9P_LO_ISDIR);
+	ATF_CHECK_EQ(destination.vsc_generation, 10);
+	ATF_CHECK_EQ(g_mock_freefid_calls, 1);
+
+	mock_fs_freefid(NULL, g_restored_fid);
+	free(g_restored_fid);
+	g_restored_fid = NULL;
+	g_has_fid = false;
+	destination.vsc_conn->lc_files.ht_entries = NULL;
+	destroy_softc(&destination);
+	destroy_softc(&source);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_active_open_directory_fid);
+ATF_TC_WITHOUT_HEAD(snapshot_second_fid_publish_failure_rolls_back);
+ATF_TC_BODY(snapshot_second_fid_publish_failure_rolls_back, tc)
+{
+	struct pci_vt9p_softc source, destination;
+	uint8_t image[1024];
+	size_t used;
+
+	(void)tc;
+	reset_mocks();
+	g_multi_fid_mode = true;
+	g_multi_source_count = nitems(g_multi_source);
+	for (unsigned int i = 0; i < g_multi_source_count; i++) {
+		g_multi_source[i].lo_fid = 42 + i;
+		g_multi_source[i].lo_flags = L9P_LO_ISVALID | L9P_LO_ISDIR;
+		g_multi_source[i].lo_aux = &g_multi_source[i];
+	}
+	setup_snapshot_softc(&source);
+	source.vsc_conn->lc_files.ht_entries = (void *)(uintptr_t)1;
+	ATF_REQUIRE_EQ(pci_vt9p_pause(&source), 0);
+	ATF_REQUIRE_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_REQUIRE_EQ(pci_vt9p_resume(&source), 0);
+	g_multi_source_count = 0;
+	source.vsc_conn->lc_files.ht_entries = NULL;
+
+	setup_snapshot_softc(&destination);
+	g_multi_add_fail_at = 2;
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), ENOMEM);
+	ATF_CHECK_EQ(g_multi_add_calls, 2U);
+	ATF_CHECK_EQ(g_multi_restored_count, 0U);
+	ATF_CHECK(destination.vsc_conn->lc_files.ht_entries == NULL);
+	ATF_CHECK_EQ(g_mock_freefid_calls, 2);
+	ATF_CHECK_EQ(destination.vsc_generation, 9U);
+
+	g_multi_add_fail_at = 0;
+	g_multi_add_calls = 0;
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK_EQ(g_multi_restored_count, 2U);
+	ATF_REQUIRE(g_multi_restored[0] != NULL &&
+	    g_multi_restored[1] != NULL);
+	ATF_CHECK_EQ(g_multi_restored[0]->lo_fid, 42U);
+	ATF_CHECK_EQ(g_multi_restored[1]->lo_fid, 43U);
+	for (unsigned int i = 0; i < g_multi_restored_count; i++) {
+		mock_fs_freefid(NULL, g_multi_restored[i]);
+		free(g_multi_restored[i]);
+		g_multi_restored[i] = NULL;
+	}
+	g_multi_restored_count = 0;
+	destination.vsc_conn->lc_files.ht_entries = NULL;
+	destroy_softc(&destination);
+	destroy_softc(&source);
+}
+
+ATF_TC_BODY(snapshot_active_open_directory_fid, tc)
+{
+	struct pci_vt9p_softc source, destination;
+	uint8_t image[1024], classic[1024], legacy[1024], legacy_v4[1024];
+	size_t used, classic_used;
+
+	(void)tc;
+	reset_mocks();
+	setup_snapshot_softc(&source);
+	g_fid.lo_fid = 42;
+	g_fid.lo_flags = L9P_LO_ISVALID | L9P_LO_ISDIR | L9P_LO_ISOPEN;
+	g_fid.lo_aux = &g_fid;
+	g_has_fid = true;
+	source.vsc_conn->lc_files.ht_entries = (void *)(uintptr_t)1;
+	ATF_REQUIRE_EQ(pci_vt9p_pause(&source), 0);
+	source.vsc_conn->lc_version = L9P_2000;
+	g_mock_dir_bytes = 64;
+	ATF_REQUIRE_EQ(run_snapshot(&source, classic, sizeof(classic),
+	    VM_SNAPSHOT_SAVE, &classic_used), 0);
+	source.vsc_conn->lc_version = L9P_2000L;
+	g_mock_dir_bytes = 0;
+	ATF_REQUIRE_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_REQUIRE_EQ(pci_vt9p_resume(&source), 0);
+	g_has_fid = false;
+	source.vsc_conn->lc_files.ht_entries = NULL;
+
+	setup_snapshot_softc(&destination);
+	ATF_REQUIRE(used >= 74);
+	ATF_CHECK_EQ(le64dec(classic + classic_used - 14), 64);
+	g_mock_dir_bytes = 64;
+	ATF_REQUIRE_EQ(run_snapshot(&destination, classic, classic_used,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	g_mock_dir_bytes = 0;
+	/* V9P5 cannot recover an active classic Tread byte position. */
+	ATF_REQUIRE(classic_used >= 74);
+	memmove(classic + classic_used - 14,
+	    classic + classic_used - 6, 6);
+	classic[3] = '5';
+	classic[4] = 5;
+	ATF_CHECK_EQ(run_snapshot(&destination, classic,
+	    classic_used - 8, VM_SNAPSHOT_VALIDATE, NULL), EOPNOTSUPP);
+	/* V9P5 remains readable for an indexed 9P2000.L directory. */
+	memcpy(legacy, image, used);
+	memmove(legacy + used - 14, legacy + used - 6, 6);
+	legacy[3] = '5';
+	legacy[4] = 5;
+	ATF_REQUIRE_EQ(run_snapshot(&destination, legacy, used - 8,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	memcpy(legacy_v4, image, used);
+	memmove(legacy_v4 + used - 22, legacy_v4 + used - 6, 6);
+	legacy_v4[3] = '4';
+	legacy_v4[4] = 4;
+	ATF_CHECK_EQ(run_snapshot(&destination, legacy_v4, used - 16,
+	    VM_SNAPSHOT_VALIDATE, NULL), EOPNOTSUPP);
+	memcpy(legacy, image, used);
+	/* V3 predates the share identity and verified directory cursor. */
+	memmove(legacy + 32, legacy + 48, used - 48);
+	memmove(legacy + used - 46, legacy + used - 22, 6);
+	legacy[3] = '3';
+	legacy[4] = 3;
+	ATF_CHECK_EQ(run_snapshot(&destination, legacy, used - 40,
+	    VM_SNAPSHOT_VALIDATE, NULL), EOPNOTSUPP);
+	ATF_CHECK_EQ(g_mock_freefid_calls, 2);
+	/* V3 remains readable for fids that never held a DIR cursor. */
+	le32enc(legacy + used - 40 - 42,
+	    L9P_LO_ISVALID | L9P_LO_ISDIR);
+	ATF_REQUIRE_EQ(run_snapshot(&destination, legacy, used - 40,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	image[used - 22] ^= 1;
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
+	image[used - 22] ^= 1;
+	image[used - 14] ^= 1;
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
+	image[used - 14] ^= 1;
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_REQUIRE(g_restored_fid != NULL);
+	ATF_CHECK_EQ(g_restored_fid->lo_flags,
+	    L9P_LO_ISVALID | L9P_LO_ISDIR | L9P_LO_ISOPEN);
+	mock_fs_freefid(NULL, g_restored_fid);
+	free(g_restored_fid);
+	g_restored_fid = NULL;
+	g_has_fid = false;
+	destination.vsc_conn->lc_files.ht_entries = NULL;
+	destroy_softc(&destination);
+	destroy_softc(&source);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_share_identity_rebind);
+ATF_TC_BODY(snapshot_share_identity_rebind, tc)
+{
+	struct pci_vt9p_softc source, destination;
+	uint8_t image[1024];
+	size_t used;
+
+	(void)tc;
+	reset_mocks();
+	setup_snapshot_softc(&source);
+	ATF_CHECK_EQ(pci_vt9p_share_id_parse(
+	    "00000000000000000000000000000000",
+	    source.vsc_migration_share_id), EINVAL);
+	ATF_CHECK_EQ(pci_vt9p_share_id_parse(
+	    "0123456789abcdef0123456789abcdeF",
+	    source.vsc_migration_share_id), EINVAL);
+	ATF_REQUIRE_EQ(pci_vt9p_share_id_parse(
+	    "0123456789abcdef0123456789abcdef",
+	    source.vsc_migration_share_id), 0);
+	source.vsc_migration_share_id_valid = true;
+	g_fid.lo_fid = 42;
+	g_fid.lo_flags = L9P_LO_ISVALID | L9P_LO_ISDIR | L9P_LO_ISOPEN;
+	g_fid.lo_aux = &g_fid;
+	g_has_fid = true;
+	source.vsc_conn->lc_files.ht_entries = (void *)(uintptr_t)1;
+	ATF_REQUIRE_EQ(pci_vt9p_pause(&source), 0);
+	source.vsc_rootdev++;
+	ATF_CHECK_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, NULL), EOPNOTSUPP);
+	source.vsc_rootdev--;
+	ATF_REQUIRE_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_REQUIRE_EQ(pci_vt9p_resume(&source), 0);
+	g_has_fid = false;
+	source.vsc_conn->lc_files.ht_entries = NULL;
+
+	setup_snapshot_softc(&destination);
+	destination.vsc_rootdev++;
+	destination.vsc_rootpath = __DECONST(char *, "/destination/mount");
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EOPNOTSUPP);
+	memcpy(destination.vsc_migration_share_id,
+	    source.vsc_migration_share_id, VT9P_SHARE_ID_SIZE);
+	destination.vsc_migration_share_id[0] ^= 1;
+	destination.vsc_migration_share_id_valid = true;
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EOPNOTSUPP);
+	destination.vsc_migration_share_id[0] ^= 1;
+	destination.vsc_rootino++;
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
+	destination.vsc_rootino--;
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_REQUIRE(g_restored_fid != NULL);
+	mock_fs_freefid(NULL, g_restored_fid);
+	free(g_restored_fid);
+	g_restored_fid = NULL;
+	g_has_fid = false;
+	destination.vsc_conn->lc_files.ht_entries = NULL;
+	destroy_softc(&destination);
+	destroy_softc(&source);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_loads_v2_empty_fids);
+ATF_TC_BODY(snapshot_loads_v2_empty_fids, tc)
+{
+	struct pci_vt9p_softc destination;
+	uint8_t image[68] = { 0 };
+	size_t used;
+
+	(void)tc;
+	reset_mocks();
+	/* Exact V9P2 field order from the v0.1.0 pci_virtio_9p.c writer. */
+	memcpy(image, "V9P2", 4);
+	le32enc(image + 4, 2);
+	le64enc(image + 8, UINT64_C(0x1122334455667788));
+	le64enc(image + 16, 12);
+	le64enc(image + 24, 34);
+	image[32] = 1;
+	image[33] = L9P_2000L;
+	le32enc(image + 34, 8192);
+	le32enc(image + 38, 8192 - 24);
+	le16enc(image + 42, 9);
+	memcpy(image + 44, "hostshare", 9);
+	le32enc(image + 53, 11);
+	memcpy(image + 57, "/host/share", 11);
+	setup_snapshot_softc(&destination);
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, sizeof(image),
+	    VM_SNAPSHOT_VALIDATE, &used), 0);
+	ATF_CHECK_EQ(used, sizeof(image));
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, sizeof(image),
+	    VM_SNAPSHOT_RESTORE, &used), 0);
+	ATF_CHECK_EQ(used, sizeof(image));
+	ATF_CHECK_EQ(destination.vsc_generation, 10);
+	destroy_softc(&destination);
+}
+
 ATF_TC_WITHOUT_HEAD(suspend_timeout_preserves_session);
 ATF_TC_BODY(suspend_timeout_preserves_session, tc)
 {
@@ -1289,8 +1747,8 @@ ATF_TC_BODY(suspend_timeout_preserves_session, tc)
 	destroy_softc(&sc);
 }
 
-ATF_TC_WITHOUT_HEAD(checkpoint_rejects_live_session);
-ATF_TC_BODY(checkpoint_rejects_live_session, tc)
+ATF_TC_WITHOUT_HEAD(checkpoint_requires_quiescence);
+ATF_TC_BODY(checkpoint_requires_quiescence, tc)
 {
 	struct pci_vt9p_softc sc;
 
@@ -1304,7 +1762,8 @@ ATF_TC_BODY(checkpoint_rejects_live_session, tc)
 	sc.vsc_active_requests = 0;
 	g_has_fid = true;
 	sc.vsc_conn->lc_files.ht_entries = (void *)(uintptr_t)1;
-	ATF_CHECK_EQ(pci_vt9p_pause(&sc), EBUSY);
+	ATF_REQUIRE_EQ(pci_vt9p_pause(&sc), 0);
+	ATF_REQUIRE_EQ(pci_vt9p_resume(&sc), 0);
 	sc.vsc_conn->lc_files.ht_entries = NULL;
 	g_has_fid = false;
 	sc.vsc_qreset_pending = true;
@@ -1831,7 +2290,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, suspend_timeout_preserves_session);
 	ATF_TP_ADD_TC(tp, snapshot_identity_and_atomicity);
 	ATF_TP_ADD_TC(tp, snapshot_preflight_is_locally_serialized);
-	ATF_TP_ADD_TC(tp, checkpoint_rejects_live_session);
+	ATF_TP_ADD_TC(tp, snapshot_active_fid_roundtrip);
+	ATF_TP_ADD_TC(tp, snapshot_second_fid_publish_failure_rolls_back);
+	ATF_TP_ADD_TC(tp, snapshot_active_open_directory_fid);
+	ATF_TP_ADD_TC(tp, snapshot_share_identity_rebind);
+	ATF_TP_ADD_TC(tp, snapshot_loads_v2_empty_fids);
+	ATF_TP_ADD_TC(tp, checkpoint_requires_quiescence);
 	ATF_TP_ADD_TC(tp, neg_features_records);
 	ATF_TP_ADD_TC(tp, get_response_buffer_slices);
 	ATF_TP_ADD_TC(tp, qenable_rejects_foreign_queue);

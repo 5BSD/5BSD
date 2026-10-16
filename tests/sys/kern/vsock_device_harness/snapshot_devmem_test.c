@@ -181,6 +181,66 @@ ATF_TC_BODY(roundtrip_and_golden_encoding, tc)
 	ATF_REQUIRE(close(fd) == 0);
 }
 
+ATF_TC_WITHOUT_HEAD(fixed_rom_uses_version_two_and_rejects_legacy_image);
+ATF_TC_BODY(fixed_rom_uses_version_two_and_rejects_legacy_image, tc)
+{
+	const uint8_t rom[] = { 0x55, 0xaa, 0x12, 0x34 };
+	const uint8_t generic[] = { 0x41, 0x42 };
+	struct bhyve_devmem_region source[2], destination[2];
+	uint8_t restored_rom[sizeof(rom)] = { 0 };
+	uint8_t restored_generic[sizeof(generic)] = { 0 };
+	uint8_t header[32];
+	size_t extension_size;
+	int fd;
+
+	(void)tc;
+	set_region(&source[0], "bootrom", __DECONST(void *, rom),
+	    sizeof(rom));
+	source[0].flags = BHYVE_DEVMEM_REGION_F_FIXED_ROM;
+	set_region(&source[1], "generic", __DECONST(void *, generic),
+	    sizeof(generic));
+	set_region(&destination[0], "bootrom", restored_rom,
+	    sizeof(restored_rom));
+	destination[0].flags = BHYVE_DEVMEM_REGION_F_FIXED_ROM;
+	set_region(&destination[1], "generic", restored_generic,
+	    sizeof(restored_generic));
+	fd = temporary_file();
+	ATF_REQUIRE_EQ(bhyve_devmem_snapshot_save(fd, NORMAL_MEMORY_SIZE,
+	    source, nitems(source), &extension_size), 0);
+	read_all_at(fd, header, sizeof(header), NORMAL_MEMORY_SIZE);
+	ATF_CHECK(memcmp(header, "BHVDEM2\0", 8) == 0);
+	ATF_CHECK_EQ(le16dec(header + 8), 2);
+	ATF_REQUIRE_EQ(bhyve_devmem_snapshot_validate(fd,
+	    NORMAL_MEMORY_SIZE, file_size(fd), destination,
+	    nitems(destination)), 0);
+	ATF_CHECK_EQ(restored_rom[0], 0);
+	ATF_REQUIRE_EQ(bhyve_devmem_snapshot_restore(fd,
+	    NORMAL_MEMORY_SIZE, file_size(fd), destination,
+	    nitems(destination)), 0);
+	ATF_CHECK(memcmp(restored_rom, rom, sizeof(rom)) == 0);
+	ATF_CHECK(memcmp(restored_generic, generic, sizeof(generic)) == 0);
+	ATF_REQUIRE(close(fd) == 0);
+
+	/* A v1 extension cannot establish fixed ROM contents at restore. */
+	source[0].flags = 0;
+	fd = temporary_file();
+	ATF_REQUIRE_EQ(bhyve_devmem_snapshot_save(fd, NORMAL_MEMORY_SIZE,
+	    source, nitems(source), &extension_size), 0);
+	read_all_at(fd, header, sizeof(header), NORMAL_MEMORY_SIZE);
+	ATF_CHECK_EQ(le16dec(header + 8), 1);
+	ATF_CHECK_EQ(bhyve_devmem_snapshot_validate(fd,
+	    NORMAL_MEMORY_SIZE, file_size(fd), destination,
+	    nitems(destination)), EPROTO);
+	memset(restored_rom, 0, sizeof(restored_rom));
+	memset(restored_generic, 0, sizeof(restored_generic));
+	ATF_CHECK_EQ(bhyve_devmem_snapshot_restore(fd,
+	    NORMAL_MEMORY_SIZE, file_size(fd), destination,
+	    nitems(destination)), EPROTO);
+	ATF_CHECK_EQ(restored_rom[0], 0);
+	ATF_CHECK_EQ(restored_generic[0], 0);
+	ATF_REQUIRE(close(fd) == 0);
+}
+
 ATF_TC_WITHOUT_HEAD(empty_and_identity_validation);
 ATF_TC_BODY(empty_and_identity_validation, tc)
 {
@@ -419,6 +479,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, roundtrip_and_golden_encoding);
+	ATF_TP_ADD_TC(tp, fixed_rom_uses_version_two_and_rejects_legacy_image);
 	ATF_TP_ADD_TC(tp, empty_and_identity_validation);
 	ATF_TP_ADD_TC(tp, corruption_is_detected_before_mutation);
 	ATF_TP_ADD_TC(tp, malformed_metadata_rejected);

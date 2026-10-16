@@ -121,6 +121,29 @@ The value must be formatted as described in
 .Xr expand_number 3 .
 .It Va memory.wired Ta bool Ta false Ta
 Wire guest memory.
+.It Va checkpoint.restore_abi_v2 Ta bool Ta false Ta
+Allow this destination to attempt restore of a
+.Nm bhyve
+v0.1.0 checkpoint with the previous
+.Dq bhyve-virtio-v2
+machine ABI, including an inbound migration from that release.
+The current architecture, device topology, record validators, and CPU
+capabilities must still match.
+This opt-in path requires full release-fixture and live-VM qualification.
+.It Va checkpoint.migrate_active_vsock Ta bool Ta false Ta
+Opt in to live migration of active userspace VirtIO vsock connections.
+Both VMs must set this option and configure the same
+.Va migration_endpoint_id
+for each corresponding vsock device.
+The operator-supplied migration stream carries live connection state,
+buffered data, and endpoint traffic; the operator must secure that stream.
+Connection descriptors are handed to a standby relay with one-shot transfer
+authority and forwarding starts only after migration RELEASE.
+If a migration fails after descriptor transfer, those source connections
+remain usable but cannot be transferred again.
+This option does not enable active kernel-provider migration or active
+connections in disk checkpoints.
+Keep it disabled until live qualification succeeds.
 .It Va bootrom Ta path Ta Ta
 Path to a boot ROM.
 During initialization of the guest, the contents of this file are copied into
@@ -281,6 +304,19 @@ This second tunable is disabled by default and is intended for the VPID
 lifecycle, invalidation, migration, reset, and restore qualification matrix;
 it changes the nested guest CPU model and requires
 .Va hw.vmm.vmx.nested=1 .
+.It Va x86.nested_svm Ta bool Ta false Ta
+Expose AMD SVM instructions and CPUID features to the guest on an AMD host.
+This also requires the boot-time
+.Va hw.vmm.svm.nested
+tunable to be set to
+.Ql 1
+before
+.Nm vmm
+is loaded.
+This opt-in path supports VMRUN, VMLOAD, VMSAVE, nested page translation,
+L2 string I/O, selected L2 exits, and nested checkpoint records.
+Some L0-owned exits remain unsupported; active-L2 save and restore still
+require live qualification.
 .It Va x86.strictio Ta bool Ta false Ta
 Exit if a guest accesses an I/O port that is not emulated.
 By default, writes are ignored and reads return all bits set.
@@ -623,6 +659,18 @@ and defaults to
 The userspace backend requires
 .Va path ,
 which specifies an existing host directory for Unix domain sockets.
+The optional
+.Va migration_endpoint_id
+is a nonzero 128-bit identity written as 32 lowercase hexadecimal digits.
+When the source and destination userspace backends use the same identity,
+a vsock device can restore with a different
+.Va path .
+The operator must ensure both paths name the same logical host service.
+An old version 2 snapshot still requires an exact path match.
+Active vsock connections remain ineligible for disk checkpoints.
+Live migration requires
+.Va checkpoint.migrate_active_vsock
+on both the source and destination.
 The optional
 .Va transport
 variable is either
@@ -970,7 +1018,7 @@ node rather than under the LPC TPM device's node.
 Only one TPM device is supported.
 The following nodes are available under
 .Va tpm :
-.Bl -column "tpm.version" "Format" "Default"
+.Bl -column "tpm.migration_key_id" "Format" "Default"
 .It Sy Name Ta Sy Format Ta Sy Default Ta Sy Description
 .It Va tpm.path Ta string Ta Ta
 Path to the TPM backend.
@@ -981,6 +1029,42 @@ this is either the host TPM device, typically
 or any UNIX domain socket on which a
 .Cm swtpm
 process is listening.
+.It Va tpm.ctrl_path Ta string Ta Ta
+Path to the
+.Cm swtpm
+control socket.
+When specified, the control channel must support TPM stop, init, storage lock,
+and state blob transfer commands.
+Portable state capture also requires a configured swtpm migration key and
+encrypted state blobs.
+The TPM state transaction is used only for an explicitly enabled migration
+or disk checkpoint.
+.It Va tpm.migration Ta bool Ta false Ta
+Opt in to live migration of a TPM backed by an encrypted
+.Cm swtpm
+state stream.
+Both hosts need matching migration key identifiers and actual keys, separate
+TPM state storage, and compatible TPM backend, interface, and PPI types.
+This path requires live qualification before production use.
+Use a dedicated destination TPM state directory and discard it if migration
+fails after state replay begins.
+Disk checkpoint and restore use the same encrypted state record and require
+the same migration opt-in, key, and separate destination state storage.
+Discard the destination TPM state directory if restore fails after state
+replay begins.
+.It Va tpm.state_id Ta string Ta Ta
+Nonzero 128-bit identifier of the TPM backend state storage, written as
+32 lowercase hexadecimal digits.
+The source and destination must use distinct identifiers for TPM restore.
+The operator must ensure that the identifiers refer to separate storage.
+This setting alone does not enable TPM migration.
+.It Va tpm.migration_key_id Ta string Ta Ta
+Nonzero 128-bit identifier of the configured swtpm migration key, written as
+32 lowercase hexadecimal digits.
+The source and destination must use the same identifier and the same actual
+key for encrypted TPM state restore.
+This identifier is supplied by the operator; it does not verify the key.
+This setting alone does not enable TPM migration.
 .It Va tpm.type Ta string Ta Ta
 Type of the TPM device passed to the guest.
 This can be either
@@ -1060,7 +1144,7 @@ ROM file of the device which will be executed by OVMF to init the device.
 .El
 .Ss VirtIO 9p Settings
 Each VirtIO 9p device exposes a single filesystem from a host path.
-.Bl -column "sharename" "Format" "Default"
+.Bl -column "migration_share_id" "32 lowercase hex digits" "Default"
 .It Sy Name Ta Sy Format Ta Sy Default Ta Sy Description
 .It Va sharename Ta string Ta Ta
 The share name exposed to the guest.
@@ -1068,6 +1152,18 @@ The share name exposed to the guest.
 The path of a directory on the host to export to the guest.
 .It Va ro Ta bool Ta false Ta
 If true, the guest filesystem is read-only.
+.It Va migration_share_id Ta 32 lowercase hex digits Ta Ta
+An operator-assigned identity for the same shared filesystem on migration
+hosts.
+Matching nonzero IDs permit a destination mount with a different host device
+number, while the root and every active fid must still have the same inode
+number and file type.
+The exported path may differ between hosts when the IDs match; without an ID,
+both hosts must use the same path and device number.
+Open directory fids carry a hash of the ordered entry names and inode numbers;
+restore fails if the destination enumerates that prefix differently.
+Classic 9P directory reads also carry their packed-stat byte position;
+restore verifies that this position still identifies the same entry prefix.
 .El
 .Ss VirtIO Filesystem Settings
 The modern-only, non-DAX VirtIO filesystem device supports the following

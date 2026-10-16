@@ -20,8 +20,9 @@
 #define PCI_EMUL_SET(name)
 
 /* Exercise the production timeout path without making this unit case wait
- * for the production thirty-second lifecycle bound. */
-#define	VTPMEM_DRAIN_TIMEOUT_MS	50U
+ * for the production thirty-second lifecycle bound.  A real fsync on a busy
+ * filesystem can exceed 50 ms even when the worker makes normal progress. */
+#define	VTPMEM_DRAIN_TIMEOUT_MS	1000U
 
 #define virtio_pmem_worker_defer_reset test_worker_defer_reset
 #define virtio_pmem_worker_destroy test_worker_destroy

@@ -43,6 +43,7 @@
 #endif
 #include <err.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -669,7 +670,8 @@ blockif_open(nvlist_t *nvl, const char *ident)
 {
 	char tname[MAXCOMLEN + 1];
 	char name[MAXPATHLEN];
-	const char *checkpoint_identity, *path, *pssval, *ssval, *bootindex_val;
+	const char *checkpoint_identity, *errstr, *path, *pssval, *ssval;
+	const char *bootindex_val;
 	char *cp;
 	struct blockif_ctxt *bc;
 	struct stat sbuf;
@@ -679,6 +681,7 @@ blockif_open(nvlist_t *nvl, const char *ident)
 	int ro, candelete, geom, ssopt, pssopt;
 	int nodelete;
 	int bootindex;
+	long parsed;
 
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_t rights;
@@ -706,20 +709,26 @@ blockif_open(nvlist_t *nvl, const char *ident)
 		ro = 1;
 	ssval = get_config_value_node(nvl, "sectorsize");
 	if (ssval != NULL) {
-		ssopt = strtol(ssval, &cp, 10);
-		if (cp == ssval) {
+		errno = 0;
+		parsed = strtol(ssval, &cp, 10);
+		if (errno != 0 || cp == ssval || parsed < 512 ||
+		    parsed > INT_MAX) {
 			EPRINTLN("Invalid sector size \"%s\"", ssval);
 			goto err;
 		}
+		ssopt = (int)parsed;
 		if (*cp == '\0') {
 			pssopt = ssopt;
 		} else if (*cp == '/') {
 			pssval = cp + 1;
-			pssopt = strtol(pssval, &cp, 10);
-			if (cp == pssval || *cp != '\0') {
+			errno = 0;
+			parsed = strtol(pssval, &cp, 10);
+			if (errno != 0 || cp == pssval || *cp != '\0' ||
+			    parsed < 512 || parsed > INT_MAX) {
 				EPRINTLN("Invalid sector size \"%s\"", ssval);
 				goto err;
 			}
+			pssopt = (int)parsed;
 		} else {
 			EPRINTLN("Invalid sector size \"%s\"", ssval);
 			goto err;
@@ -728,7 +737,12 @@ blockif_open(nvlist_t *nvl, const char *ident)
 
 	bootindex_val = get_config_value_node(nvl, "bootindex");
 	if (bootindex_val != NULL) {
-		bootindex = atoi(bootindex_val);
+		parsed = strtonum(bootindex_val, 0, INT_MAX, &errstr);
+		if (errstr != NULL) {
+			EPRINTLN("Invalid bootindex \"%s\"", bootindex_val);
+			goto err;
+		}
+		bootindex = (int)parsed;
 	}
 
 	path = get_config_value_node(nvl, "path");

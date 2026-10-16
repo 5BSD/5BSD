@@ -58,7 +58,7 @@ defaults:
     FIVEBSD_PMEM_TEST: "no"
     FIVEBSD_IOMMU_TEST: "no"
     CONSOLE_MULTIPORT: "no"
-    CHECKPOINT_ACTIVE_9P_REJECT: "no"
+    CHECKPOINT_ACTIVE_9P: "no"
     CHECKPOINT_ACTIVE_FS: "no"
     CHECKPOINT_REPEAT_FS_RESTORE: "no"
     CHECKPOINT_ACTIVE_VSOCK_REJECT: "no"
@@ -186,7 +186,7 @@ allowed_overrides:
   - SCSI_EVENTS
   - CONSOLE_PACKED
   - CONSOLE_MULTIPORT
-  - CHECKPOINT_ACTIVE_9P_REJECT
+  - CHECKPOINT_ACTIVE_9P
   - CHECKPOINT_ACTIVE_FS
   - CHECKPOINT_REPEAT_FS_RESTORE
   - CHECKPOINT_ACTIVE_VSOCK_REJECT
@@ -770,7 +770,7 @@ coverage:
     values: ["no", "yes"]
   - id: ninep-active-checkpoint-policy
     profiles: [checkpoint]
-    variable: CHECKPOINT_ACTIVE_9P_REJECT
+    variable: CHECKPOINT_ACTIVE_9P
     selector: { DEVICES: 9p, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
     values: ["yes"]
   - id: fs-active-checkpoint-policy
@@ -2947,7 +2947,7 @@ cases:
       VERIFY_DEVICE_RING_LAYOUT: packed
       CHECKPOINT_ACTIVE_VSOCK_REJECT: "yes"
       CHECKPOINT_ACTIVE_CONSOLE_REJECT: "yes"
-      CHECKPOINT_ACTIVE_9P_REJECT: "yes"
+      CHECKPOINT_ACTIVE_9P: "yes"
       CHECKPOINT_ACTIVE_FS: "yes"
       CHECKPOINT_REPEAT_FS_RESTORE: "yes"
       CHECKPOINT_TEST: "yes"
@@ -3412,7 +3412,7 @@ cases:
       TRANSPORTS: modern
       NINEP_PACKED: "no"
       CHECKPOINT_TEST: "yes"
-      CHECKPOINT_ACTIVE_9P_REJECT: "yes"
+      CHECKPOINT_ACTIVE_9P: "yes"
 
   - id: checkpoint-9p-packed-modern
     executor: alpine-auto
@@ -3424,7 +3424,7 @@ cases:
       NINEP_PACKED: "yes"
       VERIFY_DEVICE_RING_NAME: vt9p
       VERIFY_DEVICE_RING_LAYOUT: packed
-      CHECKPOINT_ACTIVE_9P_REJECT: "yes"
+      CHECKPOINT_ACTIVE_9P: "yes"
       CHECKPOINT_TEST: "yes"
 
   - id: checkpoint-fs-active-modern
@@ -3524,7 +3524,7 @@ cases:
       RTC_ALARM: "yes"
       CHECKPOINT_ACTIVE_VSOCK_REJECT: "yes"
       CHECKPOINT_ACTIVE_CONSOLE_REJECT: "yes"
-      CHECKPOINT_ACTIVE_9P_REJECT: "yes"
+      CHECKPOINT_ACTIVE_9P: "yes"
       CHECKPOINT_ACTIVE_FS: "yes"
       CHECKPOINT_REPEAT_FS_RESTORE: "yes"
       CHECKPOINT_TEST: "yes"
@@ -3570,7 +3570,7 @@ cases:
       RTC_ALARM: "yes"
       CHECKPOINT_ACTIVE_VSOCK_REJECT: "yes"
       CHECKPOINT_ACTIVE_CONSOLE_REJECT: "yes"
-      CHECKPOINT_ACTIVE_9P_REJECT: "yes"
+      CHECKPOINT_ACTIVE_9P: "yes"
       CHECKPOINT_ACTIVE_FS: "yes"
       CHECKPOINT_REPEAT_FS_RESTORE: "yes"
       CHECKPOINT_REPEAT_PMEM_RESTORE: "yes"

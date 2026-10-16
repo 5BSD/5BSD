@@ -1040,6 +1040,8 @@ passthru_lookup_pptdev(const char *name, int *bus, int *slot, int *func)
 	struct pci_conf_io pc;
 	struct pci_conf conf[1];
 	struct pci_match_conf patterns[1];
+	const char *errstr;
+	long long unit;
 	char *cp;
 
 	bzero(&pc, sizeof(struct pci_conf_io));
@@ -1055,9 +1057,9 @@ passthru_lookup_pptdev(const char *name, int *bus, int *slot, int *func)
 	 */
 	cp = strchr(name, '\0');
 	assert(cp != NULL);
-	while (cp != name && isdigit(cp[-1]))
+	while (cp != name && isdigit((unsigned char)cp[-1]))
 		cp--;
-	if (cp == name || !isdigit(*cp)) {
+	if (cp == name || !isdigit((unsigned char)*cp)) {
 		EPRINTLN("Invalid passthru device name %s", name);
 		return (false);
 	}
@@ -1066,11 +1068,12 @@ passthru_lookup_pptdev(const char *name, int *bus, int *slot, int *func)
 		return (false);
 	}
 	memcpy(patterns[0].pd_name, name, cp - name);
-	patterns[0].pd_unit = strtol(cp, &cp, 10);
-	if (*cp != '\0') {
+	unit = strtonum(cp, 0, UINT32_MAX, &errstr);
+	if (errstr != NULL) {
 		EPRINTLN("Invalid passthru device name %s", name);
 		return (false);
 	}
+	patterns[0].pd_unit = (u_long)unit;
 	patterns[0].flags = PCI_GETCONF_MATCH_NAME | PCI_GETCONF_MATCH_UNIT;
 	pc.num_patterns = 1;
 	pc.pat_buf_len = sizeof(patterns);
@@ -1107,7 +1110,8 @@ passthru_init(struct pci_devinst *pi, nvlist_t *nvl)
 	struct passthru_softc *sc;
 	struct passthru_dev **devpp;
 	struct passthru_dev *devp, *dev = NULL;
-	const char *value;
+	const char *errstr, *value;
+	long long parsed;
 
 	sc = NULL;
 	error = 1;
@@ -1122,13 +1126,18 @@ passthru_init(struct pci_devinst *pi, nvlist_t *nvl)
 		return (error);
 	}
 
-#define GET_INT_CONFIG(var, name) do {					\
+#define GET_INT_CONFIG(var, name, maximum) do {				\
 	value = get_config_value_node(nvl, name);			\
 	if (value == NULL) {						\
 		EPRINTLN("passthru: missing required %s setting", name); \
 		return (error);						\
 	}								\
-	var = atoi(value);						\
+	parsed = strtonum(value, 0, maximum, &errstr);		\
+	if (errstr != NULL) {						\
+		EPRINTLN("passthru: invalid %s setting: %s", name, value); \
+		return (error);						\
+	}								\
+	var = (int)parsed;						\
 } while (0)
 
 	value = get_config_value_node(nvl, "pptdev");
@@ -1136,9 +1145,9 @@ passthru_init(struct pci_devinst *pi, nvlist_t *nvl)
 		if (!passthru_lookup_pptdev(value, &bus, &slot, &func))
 			return (error);
 	} else {
-		GET_INT_CONFIG(bus, "bus");
-		GET_INT_CONFIG(slot, "slot");
-		GET_INT_CONFIG(func, "func");
+		GET_INT_CONFIG(bus, "bus", PCI_BUSMAX);
+		GET_INT_CONFIG(slot, "slot", PCI_SLOTMAX);
+		GET_INT_CONFIG(func, "func", PCI_FUNCMAX);
 	}
 
 	if (vm_assign_pptdev(pi->pi_vmctx, bus, slot, func) != 0) {
