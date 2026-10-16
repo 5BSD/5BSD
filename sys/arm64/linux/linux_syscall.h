@@ -4,6 +4,11 @@
  * DO NOT EDIT-- this file is automatically @generated.
  */
 
+#define	LINUX_SYS_linux_io_setup	0
+#define	LINUX_SYS_linux_io_destroy	1
+#define	LINUX_SYS_linux_io_submit	2
+#define	LINUX_SYS_linux_io_cancel	3
+#define	LINUX_SYS_linux_io_getevents	4
 #define	LINUX_SYS_linux_setxattr	5
 #define	LINUX_SYS_linux_lsetxattr	6
 #define	LINUX_SYS_linux_fsetxattr	7
@@ -58,6 +63,7 @@
 #define	LINUX_SYS_close	57
 #define	LINUX_SYS_linux_vhangup	58
 #define	LINUX_SYS_linux_pipe2	59
+#define	LINUX_SYS_linux_quotactl	60
 #define	LINUX_SYS_linux_getdents64	61
 #define	LINUX_SYS_linux_lseek	62
 #define	LINUX_SYS_read	63

@@ -149,6 +149,10 @@ ${PACKAGE}FILES+=	linux_mseal.c
 ATF_TESTS_SH+=	linux_busybox_test
 ${PACKAGE}FILES+=	linux_test.h
 .endif
+.if ${MACHINE_ARCH} == "aarch64"
+ATF_TESTS_SH+=	linux_arm64_parity_test
+${PACKAGE}FILES+=	linux_arm64_parity.c linux_test.h
+.endif
 ATF_TESTS_C+=	cap_confinement_test
 LIBADD.cap_confinement_test+=	pthread
 ATF_TESTS_C+=	capmode_interp_test

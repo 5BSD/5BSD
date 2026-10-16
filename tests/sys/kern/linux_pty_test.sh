@@ -2,7 +2,7 @@
 atf_test_case pty
 pty_head()
 {
-	atf_set "descr" "Linux TIOCGPTPEER opens the slave of a pty master"
+	atf_set "descr" "Linux PTY lock ioctls and TIOCGPTPEER slave opens"
 	atf_set "require.arch" "amd64"
 	atf_set "require.progs" "clang"
 	atf_set "require.kmods" "linux64"

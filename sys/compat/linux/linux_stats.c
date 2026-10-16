@@ -536,11 +536,7 @@ statx_copyout(struct stat *buf, uint32_t mask, uint64_t mntid, void *ubuf)
 	if ((buf->st_flags & UF_NODUMP) != 0)
 		tbuf.stx_attributes |= STATX_ATTR_NODUMP;
 	/* Obtain identity from the same held vnode as the stat snapshot. */
-	if ((mask & STATX_MNT_ID) != 0
-#if defined(__amd64__)
-	    && mntid != 0
-#endif
-	) {
+	if ((mask & STATX_MNT_ID) != 0 && mntid != 0) {
 		tbuf.stx_mnt_id = mntid;
 		tbuf.stx_mask |= STATX_MNT_ID;
 	}
@@ -587,15 +583,8 @@ linux_statx(struct thread *td, struct linux_statx_args *args)
 		return (EINVAL);
 
 	dirfd = (args->dirfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->dirfd;
-#if defined(__amd64__)
 	error = linux_kern_statat_id(td, flags, dirfd, args->pathname,
 	    UIO_USERSPACE, &buf, &mntid);
-#else
-	error = linux_kern_statat(td, flags, dirfd, args->pathname,
-	    UIO_USERSPACE, &buf);
-	if (error == 0)
-		mntid = buf.st_dev;
-#endif
 	if (error == 0)
 		error = statx_copyout(&buf, args->mask, mntid, args->statxbuf);
 

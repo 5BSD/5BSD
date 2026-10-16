@@ -21,6 +21,43 @@ readfile(const char *path, char *buf, long n)
 }
 
 static int
+fd_modes(void)
+{
+	static const struct { long flags; unsigned mode; } cases[] = {
+		{ 0, 0500 }, { 1, 0300 }, { 2, 0700 },
+		{ 010000000, 0000 }, { 010000001, 0000 },
+		{ 010000002, 0000 } /* Linux O_PATH with each access mode */
+	};
+	char path[64], digits[24], statbuf[256];
+	long fd;
+	unsigned i, j, n;
+
+	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		fd = sys3(SYS_open, "/dev/null", cases[i].flags, 0);
+		if (fd < 0)
+			return (1);
+		n = 0;
+		for (const char *p = "/proc/self/fd/"; *p; p++)
+			path[n++] = *p;
+		j = 0;
+		for (long v = fd;; v /= 10) {
+			digits[j++] = '0' + v % 10;
+			if (v < 10)
+				break;
+		}
+		while (j != 0)
+			path[n++] = digits[--j];
+		path[n] = 0;
+		xmemset(statbuf, 0, sizeof(statbuf));
+		if (sys2(SYS_lstat, path, statbuf) != 0 ||
+		    *(u32 *)(statbuf + 24) != (0120000 | cases[i].mode))
+			return (2 + i);
+		(void)sys1(SYS_close, fd);
+	}
+	return (0);
+}
+
+static int
 test(int argc __attribute__((unused)), char **argv __attribute__((unused)),
     char **envp __attribute__((unused)))
 {
@@ -95,6 +132,10 @@ test(int argc __attribute__((unused)), char **argv __attribute__((unused)),
 		    sys3(SYS_read, fd, &byte, 1) != 0)
 			return (6);
 		(void)sys1(SYS_close, fd);
+	}
+	if ((r = fd_modes()) != 0) {
+		msgnum("proc fd mode ", r);
+		return (7);
 	}
 	return (0);
 }

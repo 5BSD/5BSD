@@ -9,10 +9,10 @@
 KMOD=	linux_common
 SRCS=	linux_common.c linux_mib.c linux_mmap.c linux_util.c linux_emul.c \
 	linux_dummy.c linux_errno.c linux_netlink.c linux_if.c \
-	linux.c device_if.h vnode_if.h bus_if.h opt_inet6.h opt_inet.h
+	linux_aio.c linux.c device_if.h vnode_if.h bus_if.h opt_inet6.h opt_inet.h
 
 .if ${MACHINE_CPUARCH} == "amd64"
-SRCS+=	linux_pkru.c linux_x86.c linux_vdso_selector_x86.c linux_aio.c
+SRCS+=	linux_pkru.c linux_x86.c linux_vdso_selector_x86.c
 .endif
 .if ${MACHINE_CPUARCH} == "aarch64"
 SRCS+=	linux_emul_md.c

@@ -12,11 +12,40 @@
 #include <arm64/linux/linux.h>
 #include <arm64/linux/linux_proto.h>
 
-0	AUE_NULL	UNIMPL	linux_io_setup
-1	AUE_NULL	UNIMPL	linux_io_destroy
-2	AUE_NULL	UNIMPL	linux_io_submit
-3	AUE_NULL	UNIMPL	linux_io_cancel
-4	AUE_NULL	UNIMPL	linux_io_getevents
+0	AUE_NULL	STD {
+		int linux_io_setup(
+		    l_uint nr_events,
+		    l_ulong *ctxp
+		);
+	}
+1	AUE_NULL	STD {
+		int linux_io_destroy(
+		    l_ulong ctx
+		);
+	}
+2	AUE_NULL	STD {
+		int linux_io_submit(
+		    l_ulong ctx,
+		    l_long nr,
+		    struct l_aio_iocb **iocbpp
+		);
+	}
+3	AUE_NULL	STD {
+		int linux_io_cancel(
+		    l_ulong ctx,
+		    struct l_aio_iocb *iocb,
+		    struct l_aio_event *result
+		);
+	}
+4	AUE_NULL	STD {
+		int linux_io_getevents(
+		    l_ulong ctx,
+		    l_long min_nr,
+		    l_long nr,
+		    struct l_aio_event *events,
+		    struct l_timespec *timeout
+		);
+	}
 5	AUE_NULL	STD	{
 		int linux_setxattr(
 		    const char *path,
@@ -378,7 +407,14 @@
 		    l_int flags
 		);
 	}
-60	AUE_NULL	UNIMPL	linux_quotactl
+60	AUE_QUOTACTL	STD {
+		int linux_quotactl(
+		    l_uint cmd,
+		    const char *special,
+		    l_uint id,
+		    void *addr
+		);
+	}
 61	AUE_GETDIRENTRIES	STD {
 		int linux_getdents64(
 		    l_uint fd,
@@ -1478,7 +1514,13 @@
 		);
 	}
 234	AUE_NULL	STD	{
-		int linux_remap_file_pages(void);
+		int linux_remap_file_pages(
+		    l_ulong start,
+		    l_ulong size,
+		    l_ulong prot,
+		    l_ulong pgoff,
+		    l_ulong flags
+		);
 	}
 235	AUE_NULL	STD	{
 		int linux_mbind(
@@ -1797,7 +1839,14 @@
 	}
 ; Linux 4.18:
 292    AUE_NULL		STD {
-		int linux_io_pgetevents(void);
+		int linux_io_pgetevents(
+		    l_ulong ctx,
+		    l_long min_nr,
+		    l_long nr,
+		    struct l_aio_event *events,
+		    struct l_timespec *timeout,
+		    struct l_aio_sigset *sig
+		);
 	}
 293    AUE_NULL		STD {
 		int linux_rseq(
@@ -1915,7 +1964,12 @@
 	}
 ; Linux 5.14:
 443	AUE_NULL		STD {
-		int linux_quotactl_fd(void);
+		int linux_quotactl_fd(
+		    l_uint fd,
+		    l_uint cmd,
+		    l_uint id,
+		    void *addr
+		);
 	}
 ; Linux 5.13:
 444	AUE_NULL		STD {

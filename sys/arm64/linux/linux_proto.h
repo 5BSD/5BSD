@@ -33,6 +33,30 @@ struct thread;
 #define	PADR_(t)	0
 #endif
 
+struct linux_io_setup_args {
+	char nr_events_l_[PADL_(l_uint)]; l_uint nr_events; char nr_events_r_[PADR_(l_uint)];
+	char ctxp_l_[PADL_(l_ulong *)]; l_ulong * ctxp; char ctxp_r_[PADR_(l_ulong *)];
+};
+struct linux_io_destroy_args {
+	char ctx_l_[PADL_(l_ulong)]; l_ulong ctx; char ctx_r_[PADR_(l_ulong)];
+};
+struct linux_io_submit_args {
+	char ctx_l_[PADL_(l_ulong)]; l_ulong ctx; char ctx_r_[PADR_(l_ulong)];
+	char nr_l_[PADL_(l_long)]; l_long nr; char nr_r_[PADR_(l_long)];
+	char iocbpp_l_[PADL_(struct l_aio_iocb **)]; struct l_aio_iocb ** iocbpp; char iocbpp_r_[PADR_(struct l_aio_iocb **)];
+};
+struct linux_io_cancel_args {
+	char ctx_l_[PADL_(l_ulong)]; l_ulong ctx; char ctx_r_[PADR_(l_ulong)];
+	char iocb_l_[PADL_(struct l_aio_iocb *)]; struct l_aio_iocb * iocb; char iocb_r_[PADR_(struct l_aio_iocb *)];
+	char result_l_[PADL_(struct l_aio_event *)]; struct l_aio_event * result; char result_r_[PADR_(struct l_aio_event *)];
+};
+struct linux_io_getevents_args {
+	char ctx_l_[PADL_(l_ulong)]; l_ulong ctx; char ctx_r_[PADR_(l_ulong)];
+	char min_nr_l_[PADL_(l_long)]; l_long min_nr; char min_nr_r_[PADR_(l_long)];
+	char nr_l_[PADL_(l_long)]; l_long nr; char nr_r_[PADR_(l_long)];
+	char events_l_[PADL_(struct l_aio_event *)]; struct l_aio_event * events; char events_r_[PADR_(struct l_aio_event *)];
+	char timeout_l_[PADL_(struct l_timespec *)]; struct l_timespec * timeout; char timeout_r_[PADR_(struct l_timespec *)];
+};
 struct linux_setxattr_args {
 	char path_l_[PADL_(const char *)]; const char * path; char path_r_[PADR_(const char *)];
 	char name_l_[PADL_(const char *)]; const char * name; char name_r_[PADR_(const char *)];
@@ -265,6 +289,12 @@ struct linux_vhangup_args {
 struct linux_pipe2_args {
 	char pipefds_l_[PADL_(l_int *)]; l_int * pipefds; char pipefds_r_[PADR_(l_int *)];
 	char flags_l_[PADL_(l_int)]; l_int flags; char flags_r_[PADR_(l_int)];
+};
+struct linux_quotactl_args {
+	char cmd_l_[PADL_(l_uint)]; l_uint cmd; char cmd_r_[PADR_(l_uint)];
+	char special_l_[PADL_(const char *)]; const char * special; char special_r_[PADR_(const char *)];
+	char id_l_[PADL_(l_uint)]; l_uint id; char id_r_[PADR_(l_uint)];
+	char addr_l_[PADL_(void *)]; void * addr; char addr_r_[PADR_(void *)];
 };
 struct linux_getdents64_args {
 	char fd_l_[PADL_(l_uint)]; l_uint fd; char fd_r_[PADR_(l_uint)];
@@ -950,7 +980,11 @@ struct linux_madvise_args {
 	char behav_l_[PADL_(l_int)]; l_int behav; char behav_r_[PADR_(l_int)];
 };
 struct linux_remap_file_pages_args {
-	syscallarg_t dummy;
+	char start_l_[PADL_(l_ulong)]; l_ulong start; char start_r_[PADR_(l_ulong)];
+	char size_l_[PADL_(l_ulong)]; l_ulong size; char size_r_[PADR_(l_ulong)];
+	char prot_l_[PADL_(l_ulong)]; l_ulong prot; char prot_r_[PADR_(l_ulong)];
+	char pgoff_l_[PADL_(l_ulong)]; l_ulong pgoff; char pgoff_r_[PADR_(l_ulong)];
+	char flags_l_[PADL_(l_ulong)]; l_ulong flags; char flags_r_[PADR_(l_ulong)];
 };
 struct linux_mbind_args {
 	char start_l_[PADL_(l_ulong)]; l_ulong start; char start_r_[PADR_(l_ulong)];
@@ -1188,7 +1222,12 @@ struct linux_statx_args {
 	char statxbuf_l_[PADL_(void *)]; void * statxbuf; char statxbuf_r_[PADR_(void *)];
 };
 struct linux_io_pgetevents_args {
-	syscallarg_t dummy;
+	char ctx_l_[PADL_(l_ulong)]; l_ulong ctx; char ctx_r_[PADR_(l_ulong)];
+	char min_nr_l_[PADL_(l_long)]; l_long min_nr; char min_nr_r_[PADR_(l_long)];
+	char nr_l_[PADL_(l_long)]; l_long nr; char nr_r_[PADR_(l_long)];
+	char events_l_[PADL_(struct l_aio_event *)]; struct l_aio_event * events; char events_r_[PADR_(struct l_aio_event *)];
+	char timeout_l_[PADL_(struct l_timespec *)]; struct l_timespec * timeout; char timeout_r_[PADR_(struct l_timespec *)];
+	char sig_l_[PADL_(struct l_aio_sigset *)]; struct l_aio_sigset * sig; char sig_r_[PADR_(struct l_aio_sigset *)];
 };
 struct linux_rseq_args {
 	char rseq_l_[PADL_(struct linux_rseq *)]; struct linux_rseq * rseq; char rseq_r_[PADR_(struct linux_rseq *)];
@@ -1272,7 +1311,10 @@ struct linux_mount_setattr_args {
 	syscallarg_t dummy;
 };
 struct linux_quotactl_fd_args {
-	syscallarg_t dummy;
+	char fd_l_[PADL_(l_uint)]; l_uint fd; char fd_r_[PADR_(l_uint)];
+	char cmd_l_[PADL_(l_uint)]; l_uint cmd; char cmd_r_[PADR_(l_uint)];
+	char id_l_[PADL_(l_uint)]; l_uint id; char id_r_[PADR_(l_uint)];
+	char addr_l_[PADL_(void *)]; void * addr; char addr_r_[PADR_(void *)];
 };
 struct linux_landlock_create_ruleset_args {
 	syscallarg_t dummy;
@@ -1416,6 +1458,11 @@ struct linux_fchroot_args {
 	char fd_l_[PADL_(l_int)]; l_int fd; char fd_r_[PADR_(l_int)];
 	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
 };
+int	linux_io_setup(struct thread *, struct linux_io_setup_args *);
+int	linux_io_destroy(struct thread *, struct linux_io_destroy_args *);
+int	linux_io_submit(struct thread *, struct linux_io_submit_args *);
+int	linux_io_cancel(struct thread *, struct linux_io_cancel_args *);
+int	linux_io_getevents(struct thread *, struct linux_io_getevents_args *);
 int	linux_setxattr(struct thread *, struct linux_setxattr_args *);
 int	linux_lsetxattr(struct thread *, struct linux_lsetxattr_args *);
 int	linux_fsetxattr(struct thread *, struct linux_fsetxattr_args *);
@@ -1463,6 +1510,7 @@ int	linux_fchownat(struct thread *, struct linux_fchownat_args *);
 int	linux_openat(struct thread *, struct linux_openat_args *);
 int	linux_vhangup(struct thread *, struct linux_vhangup_args *);
 int	linux_pipe2(struct thread *, struct linux_pipe2_args *);
+int	linux_quotactl(struct thread *, struct linux_quotactl_args *);
 int	linux_getdents64(struct thread *, struct linux_getdents64_args *);
 int	linux_lseek(struct thread *, struct linux_lseek_args *);
 int	linux_write(struct thread *, struct linux_write_args *);
@@ -1697,6 +1745,11 @@ int	linux_file_setattr(struct thread *, struct linux_file_setattr_args *);
 int	linux_listns(struct thread *, struct linux_listns_args *);
 int	linux_rseq_slice_yield(struct thread *, struct linux_rseq_slice_yield_args *);
 int	linux_fchroot(struct thread *, struct linux_fchroot_args *);
+#define	LINUX_SYS_AUE_linux_io_setup	AUE_NULL
+#define	LINUX_SYS_AUE_linux_io_destroy	AUE_NULL
+#define	LINUX_SYS_AUE_linux_io_submit	AUE_NULL
+#define	LINUX_SYS_AUE_linux_io_cancel	AUE_NULL
+#define	LINUX_SYS_AUE_linux_io_getevents	AUE_NULL
 #define	LINUX_SYS_AUE_linux_setxattr	AUE_NULL
 #define	LINUX_SYS_AUE_linux_lsetxattr	AUE_NULL
 #define	LINUX_SYS_AUE_linux_fsetxattr	AUE_NULL
@@ -1744,6 +1797,7 @@ int	linux_fchroot(struct thread *, struct linux_fchroot_args *);
 #define	LINUX_SYS_AUE_linux_openat	AUE_OPEN_RWTC
 #define	LINUX_SYS_AUE_linux_vhangup	AUE_NULL
 #define	LINUX_SYS_AUE_linux_pipe2	AUE_NULL
+#define	LINUX_SYS_AUE_linux_quotactl	AUE_QUOTACTL
 #define	LINUX_SYS_AUE_linux_getdents64	AUE_GETDIRENTRIES
 #define	LINUX_SYS_AUE_linux_lseek	AUE_LSEEK
 #define	LINUX_SYS_AUE_linux_write	AUE_NULL

@@ -1283,7 +1283,25 @@ fuse_internal_init_callback(struct fuse_ticket *tick, struct uio *uio)
 	if (fuse_libabi_geq(data, 7, 5)) {
 		if (fticket_resp(tick)->len == sizeof(struct fuse_init_out) ||
 		    fticket_resp(tick)->len == FUSE_COMPAT_22_INIT_OUT_SIZE) {
-			data->max_write = fiio->max_write;
+			/* Zero would leave the write loop unable to advance. */
+			data->max_write = fiio->max_write != 0 ?
+			    fiio->max_write : 4096;
+			if (fuse_libabi_geq(data, 7, 28) &&
+			    (fiio->flags & FUSE_MAX_PAGES) != 0) {
+				if (fticket_resp(tick)->len !=
+				    sizeof(struct fuse_init_out)) {
+					err = EINVAL;
+					goto out;
+				}
+				/* A zero reply uses the protocol's 32-page default. */
+				data->max_pages_bytes =
+				    (fiio->max_pages != 0 ?
+				    (uint32_t)fiio->max_pages : 32) * PAGE_SIZE;
+				data->max_read = MIN(data->max_read,
+				    data->max_pages_bytes);
+				data->max_write = MIN(data->max_write,
+				    data->max_pages_bytes);
+			}
 			if (fiio->flags & FUSE_ASYNC_READ)
 				data->dataflags |= FSESS_ASYNC_READ;
 			if (fiio->flags & FUSE_POSIX_LOCKS)
@@ -1395,13 +1413,12 @@ fuse_internal_send_init(struct fuse_data *data, struct thread *td)
 	 * FUSE_POSIX_ACL: not yet implemented
 	 * FUSE_ABORT_ERROR: not yet implemented
 	 * FUSE_CACHE_SYMLINKS: not yet implemented
-	 * FUSE_MAX_PAGES: not yet implemented
 	 */
 	fiii->flags = FUSE_ASYNC_READ | FUSE_POSIX_LOCKS | FUSE_EXPORT_SUPPORT
 		| FUSE_BIG_WRITES | FUSE_HAS_IOCTL_DIR | FUSE_WRITEBACK_CACHE
 		| FUSE_NO_OPEN_SUPPORT | FUSE_NO_OPENDIR_SUPPORT
 		| FUSE_SETXATTR_EXT | FUSE_FLOCK_LOCKS
-		| FUSE_DO_READDIRPLUS | FUSE_READDIRPLUS_AUTO;
+		| FUSE_DO_READDIRPLUS | FUSE_READDIRPLUS_AUTO | FUSE_MAX_PAGES;
 
 	fuse_insert_callback(fdi.tick, fuse_internal_init_callback);
 	fuse_insert_message(fdi.tick, false);

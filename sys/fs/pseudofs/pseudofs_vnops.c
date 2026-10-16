@@ -382,7 +382,14 @@ pfs_getattr(struct vop_getattr_args *va)
 		vap->va_gid = 0;
 	}
 
-	if (pn->pn_attr != NULL)
+	if (pvd->pvd_fd >= 0 && pn->pn_attr_fd != NULL) {
+		KASSERT(proc != NULL, ("descriptor node without process"));
+		_PHOLD(proc);
+		PROC_UNLOCK(proc);
+		error = pn->pn_attr_fd(curthread, proc, pn, vap, pvd->pvd_fd);
+		PROC_LOCK(proc);
+		_PRELE(proc);
+	} else if (pn->pn_attr != NULL)
 		error = pn_attr(curthread, proc, pn, vap);
 	if (error == 0 && proc != NULL && pn->pn_info->pi_proc_attr != NULL)
 		pn->pn_info->pi_proc_attr(proc, vap);

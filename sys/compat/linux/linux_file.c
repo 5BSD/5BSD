@@ -1569,7 +1569,6 @@ linux_pwritev2(struct thread *td, struct linux_pwritev2_args *uap)
 	    uap->pos_l, uap->pos_h, uap->flags, true));
 }
 
-#if defined(__amd64__)
 /* Parse completely before allocating mount arguments or changing a mount. */
 static int
 linux_tmpfs_options(struct thread *td, const char *user, uint32_t flags,
@@ -1690,7 +1689,6 @@ out:
 	free(data, M_TEMP);
 	return (error);
 }
-#endif
 
 int
 linux_mount(struct thread *td, struct linux_mount_args *args)
@@ -1729,10 +1727,8 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 		strcpy(fstypename, "ext2fs");
 	} else if (strcmp(fstypename, "proc") == 0) {
 		strcpy(fstypename, "linprocfs");
-#if defined(__amd64__)
 	} else if (strcmp(fstypename, "sysfs") == 0) {
 		strcpy(fstypename, "linsysfs");
-#endif
 	} else if (strcmp(fstypename, "vfat") == 0) {
 		strcpy(fstypename, "msdosfs");
 	} else if (strcmp(fstypename, "fuse") == 0 ||
@@ -1749,7 +1745,6 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 		fuse_options = data;
 		while ((fuse_option = strsep(&fuse_options, ",")) != NULL) {
 			fuse_name = strsep(&fuse_option, "=");
-#if defined(__amd64__)
 			if (fuse_name == NULL || *fuse_name == '\0') {
 				error = EINVAL;
 				goto out;
@@ -1763,10 +1758,6 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 				ma = mount_arg(ma, fuse_name, NULL, 0);
 				continue;
 			}
-#else
-			if (fuse_name == NULL || fuse_option == NULL)
-				goto out;
-#endif
 			ma = mount_arg(ma, fuse_name, fuse_option, -1);
 		}
 
@@ -1806,13 +1797,11 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 		goto out;
 	}
 	if ((rwflag & LINUX_MS_BIND) != 0) {
-#if defined(__amd64__)
 		/* Linux copies options even when bind will not interpret them. */
 		if (args->data != NULL && fubyte(args->data) == -1) {
 			error = EFAULT;
 			goto out;
 		}
-#endif
 		/*
 		 * A bind mount is a nullfs mount of the source directory;
 		 * Linux ignores the type and data arguments here.
@@ -1848,13 +1837,11 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 	if (rwflag & LINUX_MS_NOSYMFOLLOW)
 		fsflags |= MNT_NOSYMFOLLOW;
 
-#if defined(__amd64__)
 	if (strcmp(fstypename, "tmpfs") == 0) {
 		error = linux_tmpfs_options(td, args->data, rwflag, &ma);
 		if (error != 0)
 			goto out;
 	}
-#endif
 	ma = mount_arg(ma, "fstype", fstypename, -1);
 	ma = mount_arg(ma, "fspath", mntonname, -1);
 	ma = mount_arg(ma, "from", mntfromname, -1);

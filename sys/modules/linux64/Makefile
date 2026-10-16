@@ -19,6 +19,8 @@ SRCS=	linux_dummy_machdep.c \
 	linux_pidfd.c \
 	linux_signalfd.c \
 	linux_ptrace.c \
+	linux_quota.c \
+	linux_remap.c \
 	linux_rseq.c \
 	linux_signal.c \
 	linux_socket.c \
@@ -43,7 +45,7 @@ SRCS=	linux_dummy_machdep.c \
 	linux_support.S \
 	linux_vdso_inc.S
 .if ${MACHINE_CPUARCH} == "amd64"
-SRCS+=	linux_dummy_x86.c linux_sysfs.c linux_quota.c linux_ptrace_registers.c
+SRCS+=	linux_dummy_x86.c linux_sysfs.c linux_ptrace_registers.c
 .endif
 DPSRCS=	assym.inc linux_genassym.c
 

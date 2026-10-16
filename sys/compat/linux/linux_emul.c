@@ -217,10 +217,8 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 				struct linux_pemuldata *ppem;
 
 				ppem = pem_find(td->td_proc);
-#ifdef __amd64__
 				if (p->p_vmspace == td->td_proc->p_vmspace)
 					linux_aio_proc_share(ppem, pem);
-#endif
 #if defined(__amd64__)
 				/* Auto-attached children inherit their tracee's options. */
 				sx_xlock(&proctree_lock);
@@ -297,9 +295,7 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 		 */
 		/* OOM adjustment and THP policy survive exec, as on Linux. */
 		linux_pemuldata_exec_md(pem);
-#ifdef __amd64__
 		linux_aio_proc_release(pem, td);
-#endif
 		/* A new image has no sealed mappings. */
 		LINUX_PEM_XLOCK(pem);
 		free(pem->seals, M_LINUX);
@@ -324,9 +320,7 @@ linux_on_exit(struct proc *p)
 	if (pem == NULL)
 		return;
 	(p->p_sysent->sv_thread_detach)(td);
-#ifdef __amd64__
 	linux_aio_proc_release(pem, td);
-#endif
 	p->p_emuldata = NULL;
 
 	free(pem->seals, M_LINUX);
@@ -375,9 +369,7 @@ linux_common_execve(struct thread *td, struct image_args *eargs)
 		PROC_UNLOCK(p);
 
 		free(em, M_LINUX);
-#ifdef __amd64__
 		linux_aio_proc_release(pem, td);
-#endif
 		free(pem, M_LINUX);
 	}
 	return (EJUSTRETURN);

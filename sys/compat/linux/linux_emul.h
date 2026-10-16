@@ -129,11 +129,9 @@ struct linux_seal {
 #define	LINUX_PEM_SUNLOCK(p)	sx_sunlock(&(p)->pem_sx)
 
 struct linux_pemuldata	*pem_find(struct proc *);
-#ifdef __amd64__
 void	linux_aio_proc_share(struct linux_pemuldata *,
 	    struct linux_pemuldata *);
 void	linux_aio_proc_release(struct linux_pemuldata *, struct thread *);
-#endif
 
 #if defined(_KERNEL) && defined(__amd64__)
 void linux_ptrace_init(void);

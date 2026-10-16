@@ -2292,6 +2292,29 @@ linprocfs_fdget(struct thread *td, struct proc *p, int fd, bool follow,
 }
 
 static int
+linprocfs_fdmodeattr(struct thread *td, struct proc *p,
+    struct pfs_node *pn __unused, struct vattr *vap, int fd)
+{
+	struct file *fp = NULL;
+	int error, flags;
+
+	error = linprocfs_fdget(td, p, fd, false, &fp, &flags);
+	if (error != 0)
+		return (error);
+	if ((fp->f_flag & O_PATH) != 0)
+		vap->va_mode = 0;
+	else {
+		vap->va_mode = 0;
+		if ((fp->f_flag & FREAD) != 0)
+			vap->va_mode |= 0500;
+		if ((fp->f_flag & FWRITE) != 0)
+			vap->va_mode |= 0300;
+	}
+	fdrop(fp, td);
+	return (0);
+}
+
+static int
 linprocfs_fd_vget(struct mount *mp, void *arg, int flags, struct vnode **vp)
 {
 	struct file *fp = arg;
@@ -3637,6 +3660,7 @@ linprocfs_init(PFS_INIT_ARGS)
 	pfs_create_link(fddir, &fdnode, "descriptor", linprocfs_fd_fill, NULL,
 	    linprocfs_common_candebug, NULL, PFS_FDNAME | PFS_MAGICLINK);
 	fdnode->pn_fill_fd = linprocfs_dofd;
+	fdnode->pn_attr_fd = linprocfs_fdmodeattr;
 	fdnode->pn_fdlookup = linprocfs_fdlookup;
 	pfs_create_dir(dir, &fddir, "fdinfo", linprocfs_fdattr, linprocfs_common_candebug,
 	    NULL, 0);
@@ -3717,6 +3741,7 @@ linprocfs_init(PFS_INIT_ARGS)
 	pfs_create_link(fddir, &fdnode, "descriptor", linprocfs_fd_fill, NULL,
 	    linprocfs_common_candebug, NULL, PFS_FDNAME | PFS_MAGICLINK);
 	fdnode->pn_fill_fd = linprocfs_dofd;
+	fdnode->pn_attr_fd = linprocfs_fdmodeattr;
 	fdnode->pn_fdlookup = linprocfs_fdlookup;
 	pfs_create_dir(dir, &fddir, "fdinfo", linprocfs_fdattr, linprocfs_common_candebug,
 	    NULL, 0);

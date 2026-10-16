@@ -129,6 +129,10 @@ struct vattr;
 	int name(PFS_ATTR_ARGS);
 typedef int (*pfs_attr_t)(PFS_ATTR_ARGS);
 
+/* Descriptor attributes run with the process held but unlocked. */
+typedef int (*pfs_fdattr_t)(struct thread *, struct proc *,
+    struct pfs_node *, struct vattr *, int);
+
 /*
  * Visibility callback
  * Called with proc locked
@@ -244,6 +248,7 @@ struct pfs_node {
 	pfs_ioctl_t		 pn_ioctl;
 	pfs_close_t		 pn_close;
 	pfs_attr_t		 pn_attr;
+	pfs_fdattr_t		 pn_attr_fd;
 	pfs_vis_t		 pn_vis;
 	pfs_getextattr_t	 pn_getextattr;
 	pfs_destroy_t		 pn_destroy;

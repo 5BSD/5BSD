@@ -27,10 +27,8 @@
  */
 
 #include "opt_inet6.h"
-#if defined(__amd64__)
 #include "opt_mac.h"
 #include "opt_inet.h"
-#endif
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
@@ -1307,14 +1305,11 @@ linux_to_bsd_sockaddr_storage(const struct l_sockaddr_storage *lss,
 
 	memcpy(ss, lss, sizeof(*ss));
 	len = sizeof(*ss);
-#if defined(__amd64__)
 	if (lss->ss_family == LINUX_AF_INET6)
 		len = sizeof(struct l_sockaddr_in6);
-#endif
 	return (linux_to_bsd_sockaddr((struct l_sockaddr *)ss, NULL, &len));
 }
 
-#if defined(__amd64__)
 /* Linux64 headers have inline vectors; native __msfilterreq uses a pointer. */
 struct linux_group_filter {
 	l_uint index, pad;
@@ -1616,7 +1611,6 @@ out:
 	fdrop(fp, td);
 	return (error);
 }
-#endif
 
 /*
  * MCAST_JOIN_GROUP & co.  struct group_req and struct group_source_req
@@ -1975,7 +1969,6 @@ linux_copyout_sockaddr(const struct sockaddr *sa, void *uaddr, size_t len)
 	return (error);
 }
 
-#if defined(__amd64__)
 /* SO_PEERNAME copies a prefix, but rejects a buffer larger than the name. */
 static int
 linux_getsockopt_peername(struct thread *td, struct linux_getsockopt_args *args)
@@ -2023,7 +2016,6 @@ out:
 	fdrop(fp, td);
 	return (error);
 }
-#endif
 
 static int
 linux_sendit(struct thread *td, int s, struct msghdr *mp, int flags,
@@ -3571,13 +3563,11 @@ linux_setsockopt_impl(struct thread *td, struct linux_setsockopt_args *args)
 	int error, level, name, val;
 
 	level = linux_to_bsd_sockopt_level(args->level);
-#if defined(__amd64__)
 	if ((args->level == IPPROTO_IP &&
 	    (args->optname == LINUX_IP_MSFILTER || args->optname == LINUX_MCAST_MSFILTER)) ||
 	    (args->level == IPPROTO_IPV6 && args->optname == LINUX_MCAST_MSFILTER))
 		return (linux_sockopt_msfilter(td, args->s, args->level,
 		    args->optname, PTRIN(args->optval), args->optlen, NULL, true));
-#endif
 
 	switch (level) {
 	case SOL_SOCKET:
@@ -4059,13 +4049,11 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 	int error, level, name, newval;
 
 	level = linux_to_bsd_sockopt_level(args->level);
-#if defined(__amd64__)
 	if ((args->level == IPPROTO_IP &&
 	    (args->optname == LINUX_IP_MSFILTER || args->optname == LINUX_MCAST_MSFILTER)) ||
 	    (args->level == IPPROTO_IPV6 && args->optname == LINUX_MCAST_MSFILTER))
 		return (linux_sockopt_msfilter(td, args->s, args->level,
 		    args->optname, PTRIN(args->optval), 0, PTRIN(args->optlen), false));
-#endif
 
 	switch (level) {
 	case SOL_SOCKET:
@@ -4075,10 +4063,8 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 			return (ENOPROTOOPT); /* Linux FORCE options are set-only. */
 		case LINUX_SO_COOKIE:
 			return (linux_getsockopt_cookie(td, args));
-#if defined(__amd64__)
 		case LINUX_SO_PEERNAME:
 			return (linux_getsockopt_peername(td, args));
-#endif
 		case LINUX_SO_PEERGROUPS:
 			return (linux_getsockopt_so_peergroups(td, args));
 		case LINUX_SO_PEERSEC:

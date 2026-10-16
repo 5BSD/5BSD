@@ -755,7 +755,7 @@ linux_ioctl_termio(struct thread *td, struct linux_ioctl_args *args)
 	struct linux_termios2 lios2;
 	struct linux_termio lio;
 	struct file *fp;
-	int error;
+	int error, lock;
 
 	error = fget(td, args->fd, &cap_ioctl_rights, &fp);
 	if (error != 0)
@@ -1182,12 +1182,16 @@ linux_ioctl_termio(struct thread *td, struct linux_ioctl_args *args)
 		error = linux_ioctl_tiocgptpeer(td, fp, args->arg);
 		break;
 	case LINUX_TIOCSPTLCK:
-		/*
-		 * Our unlockpt() does nothing. Check that fd refers
-		 * to a pseudo-terminal master device.
-		 */
-		args->cmd = TIOCPTMASTER;
-		error = (sys_ioctl(td, (struct ioctl_args *)args));
+		error = copyin((void *)args->arg, &lock, sizeof(lock));
+		if (error == 0)
+			error = fo_ioctl(fp, TIOCSPTLCK, (caddr_t)&lock,
+			    td->td_ucred, td);
+		break;
+	case LINUX_TIOCGPTLCK:
+		error = fo_ioctl(fp, TIOCGPTLCK, (caddr_t)&lock,
+		    td->td_ucred, td);
+		if (error == 0)
+			error = copyout(&lock, (void *)args->arg, sizeof(lock));
 		break;
 	default:
 		error = ENOIOCTL;

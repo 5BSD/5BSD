@@ -14,11 +14,11 @@
 
 /* The casts are bogus but will do for now. */
 struct sysent linux_sysent[] = {
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 0 = linux_io_setup */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 1 = linux_io_destroy */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 2 = linux_io_submit */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 3 = linux_io_cancel */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 4 = linux_io_getevents */
+	{ .sy_narg = AS(linux_io_setup_args), .sy_call = (sy_call_t *)linux_io_setup, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 0 = linux_io_setup */
+	{ .sy_narg = AS(linux_io_destroy_args), .sy_call = (sy_call_t *)linux_io_destroy, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 1 = linux_io_destroy */
+	{ .sy_narg = AS(linux_io_submit_args), .sy_call = (sy_call_t *)linux_io_submit, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 2 = linux_io_submit */
+	{ .sy_narg = AS(linux_io_cancel_args), .sy_call = (sy_call_t *)linux_io_cancel, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 3 = linux_io_cancel */
+	{ .sy_narg = AS(linux_io_getevents_args), .sy_call = (sy_call_t *)linux_io_getevents, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 4 = linux_io_getevents */
 	{ .sy_narg = AS(linux_setxattr_args), .sy_call = (sy_call_t *)linux_setxattr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 5 = linux_setxattr */
 	{ .sy_narg = AS(linux_lsetxattr_args), .sy_call = (sy_call_t *)linux_lsetxattr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 6 = linux_lsetxattr */
 	{ .sy_narg = AS(linux_fsetxattr_args), .sy_call = (sy_call_t *)linux_fsetxattr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 7 = linux_fsetxattr */
@@ -74,7 +74,7 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = AS(close_args), .sy_call = (sy_call_t *)sys_close, .sy_auevent = AUE_CLOSE, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 57 = close */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_vhangup, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 58 = linux_vhangup */
 	{ .sy_narg = AS(linux_pipe2_args), .sy_call = (sy_call_t *)linux_pipe2, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 59 = linux_pipe2 */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 60 = linux_quotactl */
+	{ .sy_narg = AS(linux_quotactl_args), .sy_call = (sy_call_t *)linux_quotactl, .sy_auevent = AUE_QUOTACTL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 60 = linux_quotactl */
 	{ .sy_narg = AS(linux_getdents64_args), .sy_call = (sy_call_t *)linux_getdents64, .sy_auevent = AUE_GETDIRENTRIES, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 61 = linux_getdents64 */
 	{ .sy_narg = AS(linux_lseek_args), .sy_call = (sy_call_t *)linux_lseek, .sy_auevent = AUE_LSEEK, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 62 = linux_lseek */
 	{ .sy_narg = AS(read_args), .sy_call = (sy_call_t *)sys_read, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 63 = read */
@@ -248,7 +248,7 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)sys_munlockall, .sy_auevent = AUE_MUNLOCKALL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 231 = munlockall */
 	{ .sy_narg = AS(linux_mincore_args), .sy_call = (sy_call_t *)linux_mincore, .sy_auevent = AUE_MINCORE, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 232 = linux_mincore */
 	{ .sy_narg = AS(linux_madvise_args), .sy_call = (sy_call_t *)linux_madvise, .sy_auevent = AUE_MADVISE, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 233 = linux_madvise */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_remap_file_pages, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 234 = linux_remap_file_pages */
+	{ .sy_narg = AS(linux_remap_file_pages_args), .sy_call = (sy_call_t *)linux_remap_file_pages, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 234 = linux_remap_file_pages */
 	{ .sy_narg = AS(linux_mbind_args), .sy_call = (sy_call_t *)linux_mbind, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 235 = linux_mbind */
 	{ .sy_narg = AS(linux_get_mempolicy_args), .sy_call = (sy_call_t *)linux_get_mempolicy, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 236 = linux_get_mempolicy */
 	{ .sy_narg = AS(linux_set_mempolicy_args), .sy_call = (sy_call_t *)linux_set_mempolicy, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 237 = linux_set_mempolicy */
@@ -306,7 +306,7 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = AS(linux_pkey_alloc_args), .sy_call = (sy_call_t *)linux_pkey_alloc, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 289 = linux_pkey_alloc */
 	{ .sy_narg = AS(linux_pkey_free_args), .sy_call = (sy_call_t *)linux_pkey_free, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 290 = linux_pkey_free */
 	{ .sy_narg = AS(linux_statx_args), .sy_call = (sy_call_t *)linux_statx, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 291 = linux_statx */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_io_pgetevents, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 292 = linux_io_pgetevents */
+	{ .sy_narg = AS(linux_io_pgetevents_args), .sy_call = (sy_call_t *)linux_io_pgetevents, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 292 = linux_io_pgetevents */
 	{ .sy_narg = AS(linux_rseq_args), .sy_call = (sy_call_t *)linux_rseq, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 293 = linux_rseq */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_kexec_file_load, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 294 = linux_kexec_file_load */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 295 = unimpl_md_syscall */
@@ -457,7 +457,7 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = AS(linux_process_madvise_args), .sy_call = (sy_call_t *)linux_process_madvise, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 440 = linux_process_madvise */
 	{ .sy_narg = AS(linux_epoll_pwait2_args), .sy_call = (sy_call_t *)linux_epoll_pwait2, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 441 = linux_epoll_pwait2 */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_mount_setattr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 442 = linux_mount_setattr */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_quotactl_fd, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 443 = linux_quotactl_fd */
+	{ .sy_narg = AS(linux_quotactl_fd_args), .sy_call = (sy_call_t *)linux_quotactl_fd, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 443 = linux_quotactl_fd */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_landlock_create_ruleset, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 444 = linux_landlock_create_ruleset */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_landlock_add_rule, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 445 = linux_landlock_add_rule */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_landlock_restrict_self, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 446 = linux_landlock_restrict_self */

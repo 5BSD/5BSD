@@ -393,11 +393,7 @@ linux_clone_thread(struct thread *td, struct l_clone_args *args)
 	p->p_flag |= P_HADTHREADS;
 	thread_link(newtd, p);
 	thread_lock(td);
-#if defined(__amd64__)
 	bcopy(td->td_name, newtd->td_name, sizeof(newtd->td_name));
-#else
-	bcopy(p->p_comm, newtd->td_name, sizeof(newtd->td_name));
-#endif
 
 	/* let the scheduler know about these things. */
 	sched_fork_thread(td, newtd);

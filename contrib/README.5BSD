@@ -147,6 +147,16 @@ License/notices: reviewed Starnix files carry The Fuchsia Authors copyright
 
 Upstream-to-local mappings (upstream paths relative to src/starnix/;
 local paths relative to the 5BSD source root):
+  - Follow-up reviewed at upstream revision
+    088a6edc59c19bbbf07595a403c0fac4bc233c6a (2026-10-16):
+    tests/syscalls/cpp/procfs_test.cc FdOpathMode supplies the descriptor
+    link-mode regression for tests/sys/kern/linux_procfs.c and native
+    linprocfs/pseudofs; modules/fuse/lib.rs supplies the max_pages and
+    zero-value default reference for native FUSE INIT and read/write tests.
+    modules/devpts/lib.rs new-terminal and lock-ioctl tests supply the PTY
+    behavior reference; native tty/pts implementation and the
+    freestanding Linux PTY regression are independently written. No upstream
+    implementation source was copied.
   - kernel/core/vfs/syscalls.rs, close_range table detachment:
     sys/compat/linux/linux_file.c, linux_file.h and linux_fork.c;
     sys/kern/kern_descrip.c and sys/sys/filedesc.h;

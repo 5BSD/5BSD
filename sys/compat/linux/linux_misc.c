@@ -2112,31 +2112,21 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 			return (error);
 
 		PROC_LOCK(p);
-#if defined(__amd64__)
 		thread_lock(td);
 		strlcpy(td->td_name, comm, sizeof(td->td_name));
 		thread_unlock(td);
 		if (em_find(td)->em_tid == p->p_pid)
-#endif
 			strlcpy(p->p_comm, comm, sizeof(p->p_comm));
 		PROC_UNLOCK(p);
 		break;
 	case LINUX_PR_GET_NAME:
 		bzero(comm, sizeof(comm));
 		PROC_LOCK(p);
-#if defined(__amd64__)
 		thread_lock(td);
 		strlcpy(comm, td->td_name, sizeof(comm));
 		thread_unlock(td);
-#else
-		strlcpy(comm, p->p_comm, sizeof(comm));
-#endif
 		PROC_UNLOCK(p);
-#if defined(__amd64__)
 		max_size = sizeof(comm);
-#else
-		max_size = strlen(comm) + 1;
-#endif
 		error = copyout(comm, (void *)(register_t)args->arg2, max_size);
 		break;
 	case LINUX_PR_GET_SECCOMP:

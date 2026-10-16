@@ -53,8 +53,9 @@ linux_quotactl(struct thread *td, struct linux_quotactl_args *args)
 	return (error);
 }
 
-int
-linux_quotactl_fd64(struct thread *td, struct linux_quotactl_fd64_args *args)
+static int
+linux_quotactl_fd_impl(struct thread *td, l_uint fd, l_uint cmdword,
+    l_uint id, void *addr)
 {
 	struct linux_if_dqblk dq;
 	struct vfs_quota quota = { 0 };
@@ -64,11 +65,11 @@ linux_quotactl_fd64(struct thread *td, struct linux_quotactl_fd64_args *args)
 	int cmd, type, op, error;
 
 	/* Resolve the descriptor before validating the quota type, as Linux does. */
-	error = fget(td, args->fd, &cap_fstatfs_rights, &fp);
+	error = fget(td, fd, &cap_fstatfs_rights, &fp);
 	if (error != 0)
 		return (error);
-	type = args->cmd & 0xff;
-	cmd = args->cmd >> 8;
+	type = cmdword & 0xff;
+	cmd = cmdword >> 8;
 	if (type >= 3) {
 		fdrop(fp, td);
 		return (EINVAL);
@@ -109,11 +110,11 @@ linux_quotactl_fd64(struct thread *td, struct linux_quotactl_fd64_args *args)
 		goto out;
 	}
 	op = cmd == L_Q_GETQUOTA ? VFS_QUOTA_GET : VFS_QUOTA_SET_BYTES;
-	error = vfs_quota_check(td, op, type, args->id);
+	error = vfs_quota_check(td, op, type, id);
 	if (error != 0)
 		goto out;
 	if (cmd == L_Q_SETQUOTA) {
-		error = copyin(args->addr, &dq, sizeof(dq));
+		error = copyin(addr, &dq, sizeof(dq));
 		if (error != 0)
 			goto out;
 		if ((dq.valid & ~L_QIF_BLIMITS) != 0 ||
@@ -127,7 +128,7 @@ linux_quotactl_fd64(struct thread *td, struct linux_quotactl_fd64_args *args)
 		}
 		quota.bytes_limit = dq.bhardlimit << 10;
 	}
-	if (args->id == (l_uint)-1) {
+	if (id == (l_uint)-1) {
 		error = EINVAL;
 		goto out;
 	}
@@ -135,7 +136,7 @@ linux_quotactl_fd64(struct thread *td, struct linux_quotactl_fd64_args *args)
 		/* Check backend support even for an empty update. */
 		op = VFS_QUOTA_GET;
 	}
-	error = vfs_quota(mp, op, type, args->id, &quota);
+	error = vfs_quota(mp, op, type, id, &quota);
 	if (error == EOPNOTSUPP)
 		error = ENOSYS;
 	if (error == 0 && cmd == L_Q_GETQUOTA) {
@@ -146,9 +147,27 @@ linux_quotactl_fd64(struct thread *td, struct linux_quotactl_fd64_args *args)
 		dq.ihardlimit = quota.objects_limit;
 		dq.curinodes = quota.objects_used;
 		dq.valid = L_QIF_ALL;
-		error = copyout(&dq, args->addr, sizeof(dq));
+		error = copyout(&dq, addr, sizeof(dq));
 	}
 out:
 	vfs_unbusy(mp);
 	return (error);
 }
+
+#if defined(__amd64__)
+int
+linux_quotactl_fd64(struct thread *td, struct linux_quotactl_fd64_args *args)
+{
+
+	return (linux_quotactl_fd_impl(td, args->fd, args->cmd, args->id,
+	    args->addr));
+}
+#else
+int
+linux_quotactl_fd(struct thread *td, struct linux_quotactl_fd_args *args)
+{
+
+	return (linux_quotactl_fd_impl(td, args->fd, args->cmd, args->id,
+	    args->addr));
+}
+#endif

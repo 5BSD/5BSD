@@ -221,11 +221,14 @@ fuse_vfs_remount(struct mount *mp, struct thread *td, uint64_t mntopts,
 {
 	int err = 0;
 	struct fuse_data *data = fuse_get_mpdata(mp);
+	uint32_t effective_max_read;
 	/* Don't allow these options to be changed */
 	const static unsigned long long cant_update_opts = 
 		MNT_USER;	/* Mount owner must be the user running the daemon */
 
 	FUSE_LOCK();
+	effective_max_read = data->max_pages_bytes != 0 ?
+	    MIN(max_read, data->max_pages_bytes) : max_read;
 
 	if ((mp->mnt_flag ^ data->mnt_flag) & cant_update_opts) {
 		err = EOPNOTSUPP;
@@ -235,7 +238,7 @@ fuse_vfs_remount(struct mount *mp, struct thread *td, uint64_t mntopts,
 		goto out;
 	}
 	if (((data->dataflags ^ mntopts) & FSESS_MNTOPTS_MASK) ||
-	     (data->max_read != max_read) ||
+	     (data->max_read != effective_max_read) ||
 	     (data->daemon_timeout != daemon_timeout)) {
 		// TODO: allow changing options where it makes sense
 		err = EOPNOTSUPP;
