@@ -131,6 +131,10 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	pf now follows interfaces renamed after creation (ifconfig ... name,
 	podman's cni-podman0, jail managers): rules and (if) addresses use
 	the new name.
+	Two interfaces with the same name (possible after a VNET jail's
+	interface returns) share pf's interface entry, as with FreeBSD pf.
+	struct pfi_kif grew (pfik_nifp); rebuild programs that read pf's
+	interface list (DIOCIGETIFACES), such as ports of pftop.
 
 20261013:
 	The BSD fixed-name pty(4) compatibility driver has been removed.

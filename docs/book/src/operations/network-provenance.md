@@ -60,6 +60,7 @@ file has a one-line edit with a marker comment:
 | `5BSD: sctp` | SCTP tracking, multihoming, `allow-related` (FreeBSD pf feature) |
 | `5BSD: ether` | layer-2 `ether` rules (FreeBSD pf feature) |
 | `5BSD: rename` | FreeBSD interfaces can be renamed; `pfi_rename_ifnet()` moves the interface to the kif of its new name (glue listens to `ifnet_rename_event`) |
+| `5BSD: names` | FreeBSD can give two interfaces one name (a VNET jail's interface returning next to a renamed one); they share the kif of the name, as in FreeBSD pf, counted in `pfik_nifp` |
 | `5BSD` | other small adaptations, listed in `README.5BSD` |
 
 `grep -rn '5BSD' contrib/openbsd-pf/sys contrib/openbsd-pf/sbin` lists every
