@@ -294,6 +294,8 @@ pfi_kif_unref(struct pfi_kif *kif, enum pfi_kif_refs what)
 
 	if (kif->pfik_ifp != NULL || kif->pfik_group != NULL || kif == pfi_all)
 		return;
+	if (kif->pfik_nifp != 0)	/* 5BSD: names */
+		return;
 
 	if (kif->pfik_rules || kif->pfik_states || kif->pfik_routes ||
 	    kif->pfik_srcnodes || kif->pfik_flagrefs)
@@ -337,6 +339,23 @@ pfi_attach_ifnet(struct ifnet *ifp)
 	if ((kif = pfi_kif_get(ifp->if_xname, NULL)) == NULL)
 		panic("%s: pfi_kif_get failed", __func__);
 
+	/*
+	 * 5BSD: names.  FreeBSD can give two interfaces one name (one
+	 * returned from a removed VNET jail next to a renamed one); OpenBSD
+	 * cannot.  As in FreeBSD pf, both use the kif of the name, so rules
+	 * naming it match either; the first keeps the address hook.  Count
+	 * the others so the kif outlives them.
+	 */
+	if (kif->pfik_ifp != NULL) {
+		if (kif->pfik_ifp != ifp) {
+			kif->pfik_nifp++;
+			ifp->if_pf_kif = (caddr_t)kif;
+		}
+		PF_UNLOCK();
+		free(t, PFI_MTYPE, sizeof(*t));
+		return;
+	}
+
 	kif->pfik_ifp = ifp;
 	ifp->if_pf_kif = (caddr_t)kif;
 
@@ -358,6 +377,15 @@ pfi_detach_ifnet(struct ifnet *ifp)
 		return;
 
 	PF_LOCK();
+	/* 5BSD: names.  This interface shares the kif of its name. */
+	if (kif->pfik_ifp != ifp) {
+		ifp->if_pf_kif = NULL;
+		if (kif->pfik_nifp > 0)
+			kif->pfik_nifp--;
+		pfi_kif_unref(kif, PFI_KIF_REF_NONE);
+		PF_UNLOCK();
+		return;
+	}
 	pfi_update++;
 	t = kif->pfik_ah_cookie;
 	kif->pfik_ah_cookie = NULL;

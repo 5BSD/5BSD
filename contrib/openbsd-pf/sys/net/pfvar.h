@@ -1160,6 +1160,7 @@ struct pfi_kif {
 	int				 pfik_srcnodes;
 	int				 pfik_flagrefs;
 	TAILQ_HEAD(, pfi_dynaddr)	 pfik_dynaddrs;
+	int				 pfik_nifp;	/* 5BSD: names */
 };
 
 enum pfi_kif_refs {
