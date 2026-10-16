@@ -459,6 +459,7 @@ struct dest_model {
 	struct model_guest staged;	/* not published until commit */
 	struct model_guest published;
 	int fail_commit;		/* errno to fail do_commit with */
+	int fail_resume;		/* errno to fail after RELEASE */
 	bool committed;
 	bool resumed;
 	bool discarded;
@@ -764,6 +765,8 @@ dst_resume(void *arg)
 {
 	struct dest_model *m = arg;
 
+	if (m->fail_resume != 0)
+		return (m->fail_resume);
 	m->resumed = true;
 	return (0);
 }
@@ -1233,6 +1236,30 @@ ATF_TC_BODY(destination_without_release_does_not_run, tc)
 	ATF_CHECK(dst.committed);
 	ATF_CHECK(!dst.resumed);
 	ATF_CHECK(dst.discarded);
+}
+
+ATF_TC_WITHOUT_HEAD(destination_resume_failure_after_release_is_terminal);
+ATF_TC_BODY(destination_resume_failure_after_release_is_terminal, tc)
+{
+	struct migration_session_config cfg;
+	struct migration_source_result sres;
+	struct source_model src;
+	struct dest_model dst;
+	int serr, derr;
+
+	(void)tc;
+	memset(&src, 0, sizeof(src));
+	memset(&dst, 0, sizeof(dst));
+	dst.fail_resume = EIO;
+	cfg = base_config();
+	run_loopback(&src, &dst, &cfg, &cfg, &sres, NULL, &serr, &derr);
+	/* RELEASE has transferred ownership even if destination startup fails. */
+	ATF_CHECK_EQ(serr, 0);
+	ATF_CHECK_EQ(derr, EIO);
+	ATF_CHECK_EQ(sres.phase, (uint32_t)MIGRATION_PHASE_COMPLETED);
+	ATF_CHECK(!sres.source_runnable);
+	ATF_CHECK(src.defunct && !src.resumed_after_rollback);
+	ATF_CHECK(dst.committed && dst.discarded && !dst.resumed);
 }
 
 /*
@@ -2449,6 +2476,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cancellation_midcopy_keeps_source);
 	ATF_TP_ADD_TC(tp, recv_enforces_sequence_monotonicity);
 	ATF_TP_ADD_TC(tp, destination_without_release_does_not_run);
+	ATF_TP_ADD_TC(tp, destination_resume_failure_after_release_is_terminal);
 	ATF_TP_ADD_TC(tp, source_rolls_back_when_dev_state_fails);
 	ATF_TP_ADD_TC(tp, source_resume_failure_stays_fail_closed);
 	ATF_TP_ADD_TC(tp, source_quiesce_failure_rolls_back_runnable);
