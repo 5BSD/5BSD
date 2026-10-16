@@ -15,6 +15,7 @@
  * and host page sizes must not cross into the common dirty-log contract.
  */
 #define VMM_DIRTY_LOG_MAP_F_COLLECTABLE 0x00000001U
+#define VMM_DIRTY_LOG_MAP_F_READONLY_ROM 0x00000002U
 #define VMM_DIRTY_LOG_MAP_MAX_ENTRIES VM_MAX_MEMMAPS
 
 struct vmm_dirty_log_map_entry {
@@ -37,6 +38,14 @@ int	vmm_dirty_log_map_validate(const struct vmm_dirty_log_map_entry *,
  * No map or collection state is retained or changed.
  */
 int	vmm_dirty_log_map_covers(const struct vmm_dirty_log_map_entry *,
+	    size_t, const struct vmm_dirty_log_range *);
+
+/*
+ * A sparse range may cross unmapped holes and read-only firmware/PCI ROM.
+ * Other device mappings fail closed because their host backing may change
+ * without a CPU dirty bit, even if the guest mapping is read-only.
+ */
+int	vmm_dirty_log_map_sparse(const struct vmm_dirty_log_map_entry *,
 	    size_t, const struct vmm_dirty_log_range *);
 
 #endif /* _DEV_VMM_VMM_DIRTY_LOG_MAP_H_ */

@@ -42,6 +42,7 @@
 #include "vmcb.h"
 #include "svm_softc.h"
 #include "svm_msr.h"
+#include "nested_svm_policy.h"
 #include "vpvclock.h"
 
 #ifndef MSR_AMDK8_IPM
@@ -113,6 +114,23 @@ svm_rdmsr(struct svm_vcpu *vcpu, u_int num, uint64_t *result, bool *retu)
 	int error = 0;
 
 	switch (num) {
+	case MSR_EFER:
+		/* Hardware execution always requires SVME; the guest does not. */
+		*result = svm_nested_msr_efer_read(&vcpu->nested_msr,
+		    svm_get_vmcb_state(vcpu)->efer);
+		break;
+	case MSR_VM_HSAVE_PA:
+		if (!vcpu->nested_msr.exposed)
+			error = EINVAL;
+		else
+			*result = vcpu->nested_msr.hsave_gpa;
+		break;
+	case MSR_VM_CR:
+		if (!vcpu->nested_msr.exposed)
+			error = EINVAL;
+		else
+			*result = vcpu->nested_msr.vm_cr;
+		break;
 	case MSR_MCG_CAP:
 	case MSR_MCG_STATUS:
 		*result = 0;
@@ -149,6 +167,20 @@ svm_wrmsr(struct svm_vcpu *vcpu, u_int num, uint64_t val, bool *retu)
 	int error = 0;
 
 	switch (num) {
+	case MSR_VM_CR:
+		if (!vcpu->nested_msr.exposed)
+			error = EINVAL;
+		else if (!svm_nested_msr_vmcr_write(&vcpu->nested_msr, val))
+			vm_inject_gp(vcpu->vcpu);
+		break;
+	case MSR_VM_HSAVE_PA:
+		if (!vcpu->nested_msr.exposed)
+			error = EINVAL;
+		else if (!svm_nested_msr_hsave_write(&vcpu->nested_msr,
+		    val, svm_nested_physical_width(
+		    vm_mtrr_maxphyaddr(cpu_maxphyaddr))))
+			vm_inject_gp(vcpu->vcpu);
+		break;
 	case MSR_MCG_CAP:
 	case MSR_MCG_STATUS:
 		break;		/* ignore writes */

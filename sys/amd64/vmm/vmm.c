@@ -242,8 +242,13 @@ DEFINE_VMMOPS_IFUNC(int, vcpu_startup_event_step, (void *vcpui,
 DEFINE_VMMOPS_IFUNC(int, vcpu_event_cleanup_check, (void *vcpui))
 DEFINE_VMMOPS_IFUNC(int, vcpu_event_cleanup, (void *vcpui))
 DEFINE_VMMOPS_IFUNC(void, vcpu_cleanup, (void *vcpui))
+DEFINE_VMMOPS_IFUNC(int, nested_memmap_invalidate, (void *vcpui))
 DEFINE_VMMOPS_IFUNC(int, getreg, (void *vcpui, int num, uint64_t *retval))
 DEFINE_VMMOPS_IFUNC(int, setreg, (void *vcpui, int num, uint64_t val))
+DEFINE_VMMOPS_IFUNC(int, translate_gpa, (void *vcpui, uint64_t gpa,
+    uint64_t gla, int prot, bool usermode, bool guest_page_table,
+    bool guest_page_writable, bool guest_page_execute_disable, bool check_only,
+    uint64_t *translated))
 DEFINE_VMMOPS_IFUNC(int, getdesc, (void *vcpui, int num, struct seg_desc *desc))
 DEFINE_VMMOPS_IFUNC(int, setdesc, (void *vcpui, int num, struct seg_desc *desc))
 DEFINE_VMMOPS_IFUNC(int, getcap, (void *vcpui, int num, int *retval))
@@ -264,6 +269,27 @@ DEFINE_VMMOPS_IFUNC(int, vm_snapshot_complete, (void *vmi,
     struct vm_snapshot_meta *meta, int status))
 DEFINE_VMMOPS_IFUNC(int, restore_tsc, (void *vcpui, uint64_t now))
 #endif
+
+/* The caller holds the memory-map xlock and has frozen every vCPU. */
+int
+vm_nested_memmap_invalidate(struct vm *vm)
+{
+	struct vcpu *vcpu;
+	int error;
+
+	vm_assert_memseg_xlocked(vm);
+	for (uint16_t i = 0; i < vm_get_maxcpus(vm); i++) {
+		vcpu = vm_vcpu(vm, i);
+		if (vcpu == NULL)
+			continue;
+		if (vcpu_get_state(vcpu, NULL) != VCPU_FROZEN)
+			return (EBUSY);
+		error = vmmops_nested_memmap_invalidate(vcpu->cookie);
+		if (error != 0)
+			return (error);
+	}
+	return (0);
+}
 
 SDT_PROVIDER_DEFINE(vmm);
 #ifdef BHYVE_SNAPSHOT
@@ -533,22 +559,33 @@ vm_init(struct vm *vm, bool create)
 	}
 }
 
-struct vcpu *
-vm_alloc_vcpu(struct vm *vm, int vcpuid)
+int
+vm_alloc_vcpu(struct vm *vm, int vcpuid, struct vcpu **vcpup)
 {
 	struct vcpu *vcpu;
+	int error;
 
-	if (vcpuid < 0 || vcpuid >= vm_get_maxcpus(vm))
-		return (NULL);
+	if (vcpup == NULL || vcpuid < 0 || vcpuid >= vm_get_maxcpus(vm))
+		return (EINVAL);
+	*vcpup = NULL;
 
 	vcpu = (struct vcpu *)
 	    atomic_load_acq_ptr((uintptr_t *)&vm->vcpu[vcpuid]);
-	if (__predict_true(vcpu != NULL))
-		return (vcpu);
+	if (__predict_true(vcpu != NULL)) {
+		*vcpup = vcpu;
+		return (0);
+	}
 
 	sx_xlock(&vm->vcpus_init_lock);
 	vcpu = vm->vcpu[vcpuid];
 	if (vcpu == NULL && !vm->dying) {
+		/* BEGIN holds this lock while it fixes the checkpoint CPU set. */
+		error = vmm_event_coordinator_checkpoint_topology_admit(
+		    vm_event_coordinator(vm));
+		if (error != 0) {
+			sx_xunlock(&vm->vcpus_init_lock);
+			return (error);
+		}
 		vcpu = vcpu_alloc(vm, vcpuid);
 		vcpu_init(vcpu);
 
@@ -560,7 +597,10 @@ vm_alloc_vcpu(struct vm *vm, int vcpuid)
 		    (uintptr_t)vcpu);
 	}
 	sx_xunlock(&vm->vcpus_init_lock);
-	return (vcpu);
+	if (vcpu == NULL)
+		return (EINVAL);
+	*vcpup = vcpu;
+	return (0);
 }
 
 int
@@ -912,6 +952,20 @@ vm_get_register(struct vcpu *vcpu, int reg, uint64_t *retval)
 }
 
 int
+vm_translate_gpa(struct vcpu *vcpu, uint64_t gpa, uint64_t gla, int prot,
+    bool usermode, bool guest_page_table, bool guest_page_writable,
+    bool guest_page_execute_disable, bool check_only,
+    uint64_t *translated)
+{
+
+	if (vcpu == NULL || translated == NULL)
+		return (EINVAL);
+	return (vmmops_translate_gpa(vcpu->cookie, gpa, gla, prot, usermode,
+	    guest_page_table, guest_page_writable,
+	    guest_page_execute_disable, check_only, translated));
+}
+
+int
 vm_set_register(struct vcpu *vcpu, int reg, uint64_t val)
 {
 	int error;
@@ -1218,9 +1272,14 @@ done:
 	return (0);
 }
 
+static int vm_handle_inst_emul(struct vcpu *vcpu, bool *retu);
+
+static int vm_handle_suspend(struct vcpu *vcpu, bool *retu);
+
 static int
-vm_handle_internal_exit(struct vcpu *vcpu)
+vm_handle_internal_exit(struct vcpu *vcpu, bool *retu)
 {
+	struct vm_exit *vme;
 	int error;
 
 	KASSERT(vcpu_get_state(vcpu, NULL) == VCPU_FROZEN,
@@ -1230,6 +1289,30 @@ vm_handle_internal_exit(struct vcpu *vcpu)
 	    vcpu->exitinfo.inst_length));
 
 	error = vmmops_handle_internal_exit(vcpu->cookie);
+	vme = &vcpu->exitinfo;
+	if (error == 0 && (vme->exitcode == VM_EXITCODE_INST_EMUL ||
+	    vme->exitcode == VM_EXITCODE_INOUT ||
+	    vme->exitcode == VM_EXITCODE_INOUT_STR ||
+	    vme->exitcode == VM_EXITCODE_HLT ||
+	    vme->exitcode == VM_EXITCODE_PAUSE ||
+	    vme->exitcode == VM_EXITCODE_BPT ||
+	    vme->exitcode == VM_EXITCODE_SVM ||
+	    vme->exitcode == VM_EXITCODE_SUSPENDED)) {
+		/* The backend resolved an internal nested exit or suspension. */
+		vcpu->nextrip = vme->rip + vme->inst_length;
+		if (vme->exitcode == VM_EXITCODE_INST_EMUL)
+			error = vm_handle_inst_emul(vcpu, retu);
+		else if (vme->exitcode == VM_EXITCODE_INOUT ||
+		    vme->exitcode == VM_EXITCODE_INOUT_STR)
+			error = vm_handle_inout(vcpu, vme, retu);
+		else if (vme->exitcode == VM_EXITCODE_HLT)
+			error = vm_handle_hlt(vcpu,
+			    (vme->u.hlt.rflags & PSL_I) == 0, retu);
+		else if (vme->exitcode == VM_EXITCODE_SUSPENDED)
+			error = vm_handle_suspend(vcpu, retu);
+		else
+			*retu = true;
+	}
 	VMM_CTR1(vcpu, "internal frozen-vCPU handler returned %d", error);
 	SDT_PROBE2(vmm, kernel, internal_exit, handled, vcpu, error);
 	return (error);
@@ -1830,7 +1913,7 @@ restart:
 			error = vm_handle_paging(vcpu, &retu);
 			break;
 		case VM_EXITCODE_VMM_INTERNAL:
-			error = vm_handle_internal_exit(vcpu);
+			error = vm_handle_internal_exit(vcpu, &retu);
 			break;
 		case VM_EXITCODE_INST_EMUL:
 			error = vm_handle_inst_emul(vcpu, &retu);

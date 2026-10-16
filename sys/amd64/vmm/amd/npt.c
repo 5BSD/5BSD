@@ -77,6 +77,21 @@ svm_npt_alloc(vm_offset_t min, vm_offset_t max)
 	return (vmspace_alloc(min, max, npt_pinit));
 }
 
+/* Nested NPT02 aliases need exact 4 KiB leaves and permissions. */
+static int
+npt_nested_pinit(pmap_t pmap)
+{
+
+	return (pmap_pinit_type(pmap, PT_RVI, npt_flags & NPT_IPIMASK));
+}
+
+struct vmspace *
+svm_nested_npt_alloc(vm_offset_t min, vm_offset_t max)
+{
+
+	return (vmspace_alloc(min, max, npt_nested_pinit));
+}
+
 void
 svm_npt_free(struct vmspace *vmspace)
 {

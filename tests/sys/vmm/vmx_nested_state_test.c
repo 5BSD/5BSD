@@ -11155,6 +11155,7 @@ struct test_ept_handoff_backend {
 	uint64_t l2_page;
 	uint64_t l1_page;
 	uint8_t permissions;
+	uint8_t access;
 	uint32_t calls;
 	int error;
 	int reentry_error;
@@ -11164,7 +11165,7 @@ struct test_ept_handoff_backend {
 
 static int
 test_ept_handoff_populate(void *arg, uint64_t l2_page, uint64_t l1_page,
-    uint8_t permissions, bool mode_based_execute)
+    uint8_t permissions, uint8_t access, bool mode_based_execute)
 {
 	struct test_ept_handoff_backend *backend;
 
@@ -11173,6 +11174,7 @@ test_ept_handoff_populate(void *arg, uint64_t l2_page, uint64_t l1_page,
 	backend->l2_page = l2_page;
 	backend->l1_page = l1_page;
 	backend->permissions = permissions;
+	backend->access = access;
 	backend->mode_based_execute = mode_based_execute;
 	if (backend->corrupt_handoff && backend->handoff != NULL) {
 		backend->handoff->state = VMX_NESTED_EPT_HANDOFF_IDLE;
@@ -11412,6 +11414,7 @@ ATF_TC_BODY(ept_frozen_handoff, tc)
 	ATF_CHECK_EQ(backend.l2_page, trunc_page(gpa));
 	ATF_CHECK_EQ(backend.l1_page, UINT64_C(0x800000));
 	ATF_CHECK_EQ(backend.permissions, 7);
+	ATF_CHECK_EQ(backend.access, request.access);
 	ATF_CHECK(!backend.mode_based_execute);
 	ATF_CHECK_EQ(vmx_nested_ept_handoff_handle(&handoff, &request.id,
 	    &memory, &ops, &backend), EALREADY);
@@ -11432,6 +11435,18 @@ ATF_TC_BODY(ept_frozen_handoff, tc)
 	ATF_CHECK_EQ(handoff.state, VMX_NESTED_EPT_HANDOFF_IDLE);
 	ATF_CHECK_EQ(vmx_nested_ept_handoff_take(&handoff, &request.id,
 	    &result), ENOENT);
+
+	/* A translated L1 device page retains the cold L2 emulation path. */
+	request.id.execution_epoch++;
+	backend.error = ENXIO;
+	ATF_REQUIRE_EQ(vmx_nested_ept_handoff_publish(&handoff, &request), 0);
+	ATF_REQUIRE_EQ(vmx_nested_ept_handoff_handle(&handoff, &request.id,
+	    &memory, &ops, &backend), 0);
+	ATF_REQUIRE_EQ(vmx_nested_ept_handoff_take(&handoff, &request.id,
+	    &result), 0);
+	ATF_CHECK_EQ(result.plan.action, VMX_NESTED_EPT_FAULT_DEVICE);
+	ATF_CHECK_EQ(result.plan.l1_page, UINT64_C(0x800000));
+	backend.error = 0;
 
 	/*
 	 * A malformed EPT12 leaf is reflected without requiring an EPT02
@@ -12440,6 +12455,10 @@ ATF_TC_BODY(nested_startup_arbitration, tc)
 	input.kind = VMX_NESTED_STARTUP_SIPI;
 	input.vector = 0x55;
 	ATF_REQUIRE_EQ(vmx_nested_startup_plan(&input, &plan), 0);
+	ATF_CHECK_EQ(plan.action, VMX_NESTED_STARTUP_ACTION_DISCARD);
+	ATF_CHECK(plan.consume_claim);
+	input.l0_wait_for_sipi = true;
+	ATF_REQUIRE_EQ(vmx_nested_startup_plan(&input, &plan), 0);
 	ATF_CHECK_EQ(plan.action, VMX_NESTED_STARTUP_ACTION_APPLY_L0);
 	ATF_CHECK(!plan.active_l2);
 	ATF_CHECK(plan.consume_claim);
@@ -12470,6 +12489,7 @@ ATF_TC_BODY(nested_startup_arbitration, tc)
 	ATF_CHECK(!plan.consume_claim);
 	input.nested_entry_pending = false;
 	input.vmx_operation = false;
+	input.l0_wait_for_sipi = true;
 	ATF_REQUIRE_EQ(vmx_nested_startup_plan(&input, &plan), 0);
 	ATF_CHECK_EQ(plan.action, VMX_NESTED_STARTUP_ACTION_APPLY_L0);
 	plan.active_l2 = true;
@@ -12842,10 +12862,12 @@ struct startup_transaction_test_context {
 	const struct vmx_nested_startup_transaction_ops *ops;
 	struct vmx_nested_startup_transaction_ops *mutable_ops;
 	int prepare_error;
+	int discard_error;
 	int side_error;
 	enum vmx_nested_startup_machine_disposition apply_disposition;
 	int release_error;
 	unsigned int prepare_calls;
+	unsigned int discard_calls;
 	unsigned int apply_calls;
 	unsigned int active_calls;
 	unsigned int finish_calls;
@@ -12866,6 +12888,16 @@ struct startup_transaction_test_context {
 	int reenter_error;
 	bool derived_cache_present;
 };
+
+static int
+startup_transaction_discard(void *arg)
+{
+	struct startup_transaction_test_context *context;
+
+	context = arg;
+	context->discard_calls++;
+	return (context->discard_error);
+}
 
 static int
 startup_transaction_prepare(void *arg, enum vmx_nested_startup_kind kind,
@@ -13126,6 +13158,7 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 		{ (enum vmx_nested_startup_machine_disposition)99, 0 },
 	};
 	struct vmx_nested_startup_transaction_ops ops = {
+		.discard_l0_sipi = startup_transaction_discard,
 		.prepare_l0 = startup_transaction_prepare,
 		.apply_l0 = startup_transaction_apply,
 		.commit_active_l2 = startup_transaction_active,
@@ -13147,6 +13180,7 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 	memset(&input, 0, sizeof(input));
 	input.kind = VMX_NESTED_STARTUP_SIPI;
 	input.vector = 0x55;
+	input.l0_wait_for_sipi = true;
 	ATF_REQUIRE_EQ(vmx_nested_startup_transaction_begin(&transaction,
 	    &claim, &input), 0);
 	memset(&context, 0, sizeof(context));
@@ -13177,6 +13211,7 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 	memset(&input, 0, sizeof(input));
 	input.kind = VMX_NESTED_STARTUP_SIPI;
 	input.vector = 0x56;
+	input.l0_wait_for_sipi = true;
 	ATF_REQUIRE_EQ(vmx_nested_startup_transaction_begin(&transaction,
 	    &claim, &input), 0);
 	memset(&context, 0, sizeof(context));
@@ -13354,6 +13389,7 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 	memset(&input, 0, sizeof(input));
 	input.kind = VMX_NESTED_STARTUP_SIPI;
 	input.vector = 7;
+	input.l0_wait_for_sipi = true;
 	claim_before = claim;
 	ATF_REQUIRE_EQ(vmx_nested_startup_transaction_begin(&transaction,
 	    &claim, &input), 0);
@@ -13365,11 +13401,13 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 	ATF_CHECK_EQ(vmx_nested_startup_transaction_resolve(&transaction,
 	    &claim, &ops, &context), EAGAIN);
 	ATF_CHECK_EQ(transaction.state,
-	    VMX_NESTED_STARTUP_TRANSACTION_PLANNED);
+	    VMX_NESTED_STARTUP_TRANSACTION_RETAINED);
 	ATF_CHECK_EQ(memcmp(&claim, &claim_before, sizeof(claim)), 0);
 
 	/* Release retry never repeats an already irrevocable side effect. */
 	context.side_error = 0;
+	ATF_REQUIRE_EQ(vmx_nested_startup_transaction_replan(&transaction,
+	    &claim, &input), 0);
 	context.release_error = EIO;
 	ATF_CHECK_EQ(vmx_nested_startup_transaction_resolve(&transaction,
 	    &claim, &ops, &context), EIO);
@@ -13397,6 +13435,7 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 		memset(&input, 0, sizeof(input));
 		input.kind = VMX_NESTED_STARTUP_SIPI;
 		input.vector = claim.vector;
+		input.l0_wait_for_sipi = true;
 		claim_before = claim;
 		ATF_REQUIRE_EQ(vmx_nested_startup_transaction_begin(
 		    &transaction, &claim, &input), 0);
@@ -13423,6 +13462,7 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 	memset(&input, 0, sizeof(input));
 	input.kind = VMX_NESTED_STARTUP_SIPI;
 	input.vector = claim.vector;
+	input.l0_wait_for_sipi = true;
 	claim_before = claim;
 	ATF_REQUIRE_EQ(vmx_nested_startup_transaction_begin(&transaction,
 	    &claim, &input), 0);
@@ -13441,6 +13481,7 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 	startup_transaction_claim_init(&claim, VMM_STARTUP_EVENT_SIPI, 0x79);
 	input.vector = claim.vector;
 	input.active_l2 = true;
+	input.l0_wait_for_sipi = false;
 	input.vmx_operation = true;
 	input.wait_for_sipi = true;
 	claim_before = claim;
@@ -13462,6 +13503,7 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 	memset(&input, 0, sizeof(input));
 	input.kind = VMX_NESTED_STARTUP_SIPI;
 	input.vector = claim.vector;
+	input.l0_wait_for_sipi = true;
 	claim_before = claim;
 	ATF_REQUIRE_EQ(vmx_nested_startup_transaction_begin(&transaction,
 	    &claim, &input), 0);
@@ -13499,12 +13541,14 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 	ATF_CHECK_EQ(vmx_nested_startup_transaction_resolve(&transaction,
 	    &claim, &ops, &context), EAGAIN);
 	ATF_CHECK_EQ(transaction.state,
-	    VMX_NESTED_STARTUP_TRANSACTION_PLANNED);
+	    VMX_NESTED_STARTUP_TRANSACTION_RETAINED);
 	ATF_CHECK_EQ(context.prepare_calls, 1);
 	ATF_CHECK_EQ(context.apply_calls, 0);
 	ATF_CHECK(!context.derived_cache_present);
 	ATF_CHECK_EQ(memcmp(&claim, &claim_before, sizeof(claim)), 0);
 	context.prepare_error = 0;
+	ATF_REQUIRE_EQ(vmx_nested_startup_transaction_replan(&transaction,
+	    &claim, &input), 0);
 	ATF_REQUIRE_EQ(vmx_nested_startup_transaction_resolve(&transaction,
 	    &claim, &ops, &context), 0);
 	ATF_CHECK_EQ(context.prepare_calls, 2);
@@ -13552,6 +13596,7 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 	memset(&input, 0, sizeof(input));
 	input.kind = VMX_NESTED_STARTUP_SIPI;
 	input.vector = 0x56;
+	input.l0_wait_for_sipi = true;
 	ATF_REQUIRE_EQ(vmx_nested_startup_transaction_begin(&transaction,
 	    &claim, &input), 0);
 	memset(&context, 0, sizeof(context));
@@ -13575,6 +13620,7 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 	memset(&input, 0, sizeof(input));
 	input.kind = VMX_NESTED_STARTUP_SIPI;
 	input.vector = 0x57;
+	input.l0_wait_for_sipi = true;
 	claim_before = claim;
 	ATF_REQUIRE_EQ(vmx_nested_startup_transaction_begin(&transaction,
 	    &claim, &input), 0);
@@ -13598,6 +13644,7 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 	memset(&input, 0, sizeof(input));
 	input.kind = VMX_NESTED_STARTUP_SIPI;
 	input.vector = 9;
+	input.l0_wait_for_sipi = true;
 	ATF_REQUIRE_EQ(vmx_nested_startup_transaction_begin(&transaction,
 	    &claim, &input), 0);
 	memset(&context, 0, sizeof(context));
@@ -13631,6 +13678,7 @@ ATF_TC_BODY(nested_startup_transaction, tc)
 	memset(&input, 0, sizeof(input));
 	input.kind = VMX_NESTED_STARTUP_SIPI;
 	input.vector = 12;
+	input.l0_wait_for_sipi = true;
 	ATF_REQUIRE_EQ(vmx_nested_startup_transaction_begin(&transaction,
 	    &claim, &input), 0);
 	memset(&context, 0, sizeof(context));
@@ -13679,11 +13727,23 @@ struct startup_dispatch_test_context {
 	bool mutate_apply_ops;
 	bool mutate_check_claim;
 	bool mutate_abort_transaction;
+	bool wait_after_derive;
 	unsigned int begin_calls;
 	unsigned int abort_calls;
 	unsigned int check_calls;
 	unsigned int substituted_finish_calls;
 };
+
+static int
+startup_dispatch_discard(void *arg)
+{
+	struct startup_dispatch_test_context *context;
+
+	context = arg;
+	context->transaction.discard_calls++;
+	return (context->input.l0_wait_for_sipi &&
+	    !context->input.vmx_operation ? EAGAIN : 0);
+}
 
 static int
 startup_dispatch_substituted_finish(void *arg,
@@ -13781,6 +13841,10 @@ startup_dispatch_derive(void *arg,
 	    context->input.kind != VMX_NESTED_STARTUP_SIPI))
 		return (ESTALE);
 	*input = context->input;
+	if (context->wait_after_derive) {
+		context->input.l0_wait_for_sipi = true;
+		context->wait_after_derive = false;
+	}
 	return (0);
 }
 
@@ -13793,6 +13857,7 @@ ATF_TC_BODY(nested_startup_dispatch, tc)
 		.claim_abort = startup_dispatch_claim_abort,
 		.derive = startup_dispatch_derive,
 		.transaction = {
+			.discard_l0_sipi = startup_dispatch_discard,
 			.prepare_l0 = startup_transaction_prepare,
 			.apply_l0 = startup_dispatch_apply,
 			.commit_active_l2 = startup_transaction_active,
@@ -13804,7 +13869,7 @@ ATF_TC_BODY(nested_startup_dispatch, tc)
 	struct startup_dispatch_test_context context_copy;
 	struct vmx_nested_startup_dispatch copy, dispatch;
 	enum vmx_nested_startup_dispatch_result result;
-	unsigned int apply_calls;
+	unsigned int apply_calls, discard_calls;
 
 	(void)tc;
 	vmx_nested_startup_dispatch_init(&dispatch);
@@ -13831,6 +13896,7 @@ ATF_TC_BODY(nested_startup_dispatch, tc)
 	CHECK_INCOMPLETE(claim_check);
 	CHECK_INCOMPLETE(claim_abort);
 	CHECK_INCOMPLETE(derive);
+	CHECK_INCOMPLETE(transaction.discard_l0_sipi);
 	CHECK_INCOMPLETE(transaction.prepare_l0);
 	CHECK_INCOMPLETE(transaction.apply_l0);
 	CHECK_INCOMPLETE(transaction.commit_active_l2);
@@ -13904,6 +13970,7 @@ ATF_TC_BODY(nested_startup_dispatch, tc)
 	context.pending = true;
 	context.input.kind = VMX_NESTED_STARTUP_SIPI;
 	context.input.vector = 0x42;
+	context.input.l0_wait_for_sipi = true;
 	apply_calls = context.transaction.finish_calls;
 	ATF_CHECK_EQ(vmx_nested_startup_dispatch_step(&dispatch, &ops_copy,
 	    &context, &result), EPROTO);
@@ -13920,6 +13987,7 @@ ATF_TC_BODY(nested_startup_dispatch, tc)
 	memset(&context.input, 0, sizeof(context.input));
 	context.input.kind = VMX_NESTED_STARTUP_SIPI;
 	context.input.vector = 0x51;
+	context.input.l0_wait_for_sipi = true;
 	context.pending = true;
 	ATF_REQUIRE_EQ(vmx_nested_startup_dispatch_step(&dispatch, &ops,
 	    &context, &result), 0);
@@ -13950,6 +14018,7 @@ ATF_TC_BODY(nested_startup_dispatch, tc)
 	memset(&context.input, 0, sizeof(context.input));
 	context.input.kind = VMX_NESTED_STARTUP_SIPI;
 	context.input.vector = 0x52;
+	context.input.l0_wait_for_sipi = true;
 	context.pending = true;
 	context.transaction.prepare_error = EBUSY;
 	apply_calls = context.transaction.apply_calls;
@@ -13958,13 +14027,53 @@ ATF_TC_BODY(nested_startup_dispatch, tc)
 	ATF_CHECK_EQ(result, VMX_NESTED_STARTUP_DISPATCH_RETAINED);
 	ATF_CHECK_EQ(dispatch.state, VMX_NESTED_STARTUP_DISPATCH_ACTIVE);
 	ATF_CHECK_EQ(dispatch.transaction.state,
-	    VMX_NESTED_STARTUP_TRANSACTION_PLANNED);
+	    VMX_NESTED_STARTUP_TRANSACTION_RETAINED);
 	ATF_CHECK_EQ(context.transaction.apply_calls, apply_calls);
 	context.transaction.prepare_error = 0;
 	ATF_REQUIRE_EQ(vmx_nested_startup_dispatch_step(&dispatch, &ops,
 	    &context, &result), 0);
 	ATF_CHECK_EQ(result, VMX_NESTED_STARTUP_DISPATCH_CONSUMED);
 	ATF_CHECK_EQ(context.transaction.apply_calls, apply_calls + 1);
+
+	/* A newly waiting AP must be replanned before an old discard commits. */
+	memset(&context.input, 0, sizeof(context.input));
+	context.input.kind = VMX_NESTED_STARTUP_SIPI;
+	context.input.vector = 0x53;
+	context.pending = true;
+	context.wait_after_derive = true;
+	apply_calls = context.transaction.apply_calls;
+	discard_calls = context.transaction.discard_calls;
+	ATF_REQUIRE_EQ(vmx_nested_startup_dispatch_step(&dispatch, &ops,
+	    &context, &result), 0);
+	ATF_CHECK_EQ(result, VMX_NESTED_STARTUP_DISPATCH_RETAINED);
+	ATF_CHECK_EQ(dispatch.transaction.state,
+	    VMX_NESTED_STARTUP_TRANSACTION_RETAINED);
+	ATF_CHECK_EQ(context.transaction.apply_calls, apply_calls);
+	ATF_CHECK_EQ(context.transaction.discard_calls, discard_calls + 1);
+	ATF_REQUIRE_EQ(vmx_nested_startup_dispatch_step(&dispatch, &ops,
+	    &context, &result), 0);
+	ATF_CHECK_EQ(result, VMX_NESTED_STARTUP_DISPATCH_CONSUMED);
+	ATF_CHECK_EQ(context.transaction.apply_calls, apply_calls + 1);
+
+	/* A retrying apply must become a discard if the AP has since run. */
+	memset(&context.input, 0, sizeof(context.input));
+	context.input.kind = VMX_NESTED_STARTUP_SIPI;
+	context.input.vector = 0x54;
+	context.input.l0_wait_for_sipi = true;
+	context.pending = true;
+	context.transaction.prepare_error = EAGAIN;
+	apply_calls = context.transaction.apply_calls;
+	ATF_REQUIRE_EQ(vmx_nested_startup_dispatch_step(&dispatch, &ops,
+	    &context, &result), 0);
+	ATF_CHECK_EQ(result, VMX_NESTED_STARTUP_DISPATCH_RETAINED);
+	ATF_CHECK_EQ(dispatch.transaction.state,
+	    VMX_NESTED_STARTUP_TRANSACTION_RETAINED);
+	context.transaction.prepare_error = 0;
+	context.input.l0_wait_for_sipi = false;
+	ATF_REQUIRE_EQ(vmx_nested_startup_dispatch_step(&dispatch, &ops,
+	    &context, &result), 0);
+	ATF_CHECK_EQ(result, VMX_NESTED_STARTUP_DISPATCH_CONSUMED);
+	ATF_CHECK_EQ(context.transaction.apply_calls, apply_calls);
 
 	/* A frozen-state blocker retains a claim even before a plan exists. */
 	memset(&context.input, 0, sizeof(context.input));
@@ -21648,6 +21757,24 @@ ATF_TC_BODY(nested_l2_portable_transaction, tc)
 	ATF_CHECK_EQ(memcmp(&reject_runtime, &reject_runtime_before,
 	    sizeof(reject_runtime)), 0);
 
+	reject_context = ept_context;
+	reject_context.internal.operation.ept.result.plan.action =
+	    VMX_NESTED_EPT_FAULT_DEVICE;
+	reject_continuation = ept_continuation;
+	reject_runtime = ept_runtime;
+	ATF_REQUIRE_EQ(vmx_nested_cold_ept_resolve(&reject_context,
+	    &reject_continuation, &reject_runtime, &ept_state,
+	    &ept_disposition), 0);
+	ATF_CHECK_EQ(ept_disposition, VMX_NESTED_COLD_EPT_DEVICE);
+	ATF_CHECK_EQ(reject_context.internal.kind,
+	    VMX_NESTED_INTERNAL_CONTINUATION);
+	ATF_CHECK_EQ(reject_context.internal.operation.continuation.state,
+	    VMX_NESTED_CONTINUATION_HANDOFF_PENDING);
+	ATF_CHECK_EQ(reject_continuation.state,
+	    VMX_NESTED_L0_CONTINUATION_COLD);
+	ATF_CHECK_EQ(reject_runtime.state,
+	    VMX_NESTED_ENTRY_RUNTIME_L0_COLD);
+
 	ATF_REQUIRE_EQ(vmx_nested_cold_ept_resolve(&ept_context,
 	    &ept_continuation, &ept_runtime, &ept_state,
 	    &ept_disposition), 0);
@@ -21695,6 +21822,44 @@ ATF_TC_BODY(nested_l2_portable_transaction, tc)
 	ATF_CHECK_EQ(ept_continuation.state,
 	    VMX_NESTED_L0_CONTINUATION_IDLE);
 	ATF_CHECK_EQ(ept_runtime.state,
+	    VMX_NESTED_ENTRY_RUNTIME_EXIT_CAPTURED_COLD);
+
+	/* A software EPT12 denial replaces a pending L0 emulation in place. */
+	reflect_context = context;
+	reflect_continuation = continuation;
+	reflect_runtime = entry_runtime;
+	ATF_REQUIRE_EQ(vmx_nested_continuation_handoff_request_build(
+	    &reflect_continuation, &reflect_request), 0);
+	ATF_REQUIRE_EQ(vmx_nested_internal_publish_continuation(
+	    &reflect_context.internal, &reflect_request), 0);
+	reject_context = reflect_context;
+	reject_continuation = reflect_continuation;
+	reject_runtime = reflect_runtime;
+	reject_context_before = reject_context;
+	reject_continuation_before = reject_continuation;
+	reject_runtime_before = reject_runtime;
+	state.portable_generation++;
+	ATF_CHECK_EQ(vmx_nested_cold_software_ept_reflect_publish(
+	    &reject_context, &reject_continuation, &reject_runtime,
+	    &state, &ept_raw), ESTALE);
+	ATF_CHECK_EQ(memcmp(&reject_context, &reject_context_before,
+	    sizeof(reject_context)), 0);
+	ATF_CHECK_EQ(memcmp(&reject_continuation,
+	    &reject_continuation_before, sizeof(reject_continuation)), 0);
+	ATF_CHECK_EQ(memcmp(&reject_runtime, &reject_runtime_before,
+	    sizeof(reject_runtime)), 0);
+	state.portable_generation--;
+	ATF_REQUIRE_EQ(vmx_nested_cold_software_ept_reflect_publish(
+	    &reflect_context, &reflect_continuation, &reflect_runtime,
+	    &state, &ept_raw), 0);
+	ATF_CHECK_EQ(reflect_context.phase,
+	    VMX_NESTED_CONTEXT_EXIT_PENDING);
+	ATF_CHECK_EQ(reflect_context.internal.operation.vmexit.request.
+	    information.guest_physical_address,
+	    ept_raw.guest_physical_address);
+	ATF_CHECK_EQ(reflect_continuation.state,
+	    VMX_NESTED_L0_CONTINUATION_IDLE);
+	ATF_CHECK_EQ(reflect_runtime.state,
 	    VMX_NESTED_ENTRY_RUNTIME_EXIT_CAPTURED_COLD);
 
 	/*

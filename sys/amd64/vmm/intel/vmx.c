@@ -4641,8 +4641,11 @@ static int
 vmx_startup_derive(void *arg, const struct vmm_startup_event_claim *claim,
     struct vmx_nested_startup_input *input)
 {
+	struct vmm_startup_entry_snapshot snapshot;
+	struct vmx_nested_startup_input candidate;
 	struct vmx_vcpu *vcpu;
 	enum vmx_nested_startup_kind kind;
+	int error;
 
 	vcpu = arg;
 	if (vcpu == NULL || claim == NULL || input == NULL ||
@@ -4659,10 +4662,20 @@ vmx_startup_derive(void *arg, const struct vmm_startup_event_claim *claim,
 	default:
 		return (EINVAL);
 	}
-	return (vmx_nested_startup_input_from_frozen_target(kind,
+	error = vcpu_startup_entry_observation(vcpu->vcpu, &snapshot, NULL);
+	if (error != 0)
+		return (error);
+	error = vmx_nested_startup_input_from_frozen_target(kind,
 	    claim->vector, &vcpu->nested, &vcpu->nested_l0_continuation,
 	    &vcpu->nested_entry_runtime, &vcpu->nested_l2_portable,
-	    vcpu->nested_l2_portable_valid, input));
+	    vcpu->nested_l2_portable_valid, &candidate);
+	if (error != 0)
+		return (error);
+	if (candidate.active_l2 && snapshot.waiting != 0)
+		return (EPROTO);
+	candidate.l0_wait_for_sipi = snapshot.waiting != 0;
+	*input = candidate;
+	return (0);
 }
 
 /*
@@ -4938,9 +4951,10 @@ vmx_startup_l0_binding_prepare(struct vmx_vcpu *vcpu,
 		return (EPROTO);
 	rax = CPUID_0000_0001;
 	rbx = rcx = rdx = 0;
+	/* CPUID emulation returns one when it handled the requested leaf. */
 	error = x86_emulate_cpuid(vcpu->vcpu, &rax, &rbx, &rcx, &rdx);
-	if (error != 0)
-		return (error);
+	if (error != 1)
+		return (EPROTO);
 	if (rax > UINT32_MAX)
 		return (EPROTO);
 	signature_candidate = (uint32_t)rax;
@@ -5043,6 +5057,7 @@ vmx_startup_l0_owner_preflight(void *arg,
     uint8_t vector)
 {
 	struct vmx_nested_l0_startup_preflight preflight;
+	struct vmm_startup_entry_snapshot snapshot;
 	struct vmx_vcpu *vcpu;
 	bool registry_owner_active;
 	int error;
@@ -5054,6 +5069,14 @@ vmx_startup_l0_owner_preflight(void *arg,
 	    kind != VMX_NESTED_STARTUP_SIPI) ||
 	    (kind == VMX_NESTED_STARTUP_INIT && vector != 0))
 		return (EINVAL);
+	if (kind == VMX_NESTED_STARTUP_SIPI) {
+		error = vcpu_startup_entry_observation(vcpu->vcpu,
+		    &snapshot, NULL);
+		if (error != 0)
+			return (error);
+		if (snapshot.waiting == 0)
+			return (EAGAIN);
+	}
 
 	memset(&preflight, 0, sizeof(preflight));
 	preflight.version = VMX_NESTED_L0_STARTUP_PREFLIGHT_VERSION;
@@ -5188,6 +5211,27 @@ vmx_startup_l0_owner_preflight(void *arg,
 }
 
 static int
+vmx_startup_discard_l0_sipi(void *arg)
+{
+	struct vmm_startup_entry_snapshot snapshot;
+	struct vmx_vcpu *vcpu;
+	int error;
+
+	vcpu = arg;
+	if (vcpu == NULL ||
+	    vcpu_get_state(vcpu->vcpu, NULL) != VCPU_FROZEN)
+		return (EINVAL);
+	if (vcpu->nested.phase != VMX_NESTED_CONTEXT_ROOT)
+		return (EAGAIN);
+	error = vcpu_startup_entry_observation(vcpu->vcpu, &snapshot, NULL);
+	if (error != 0)
+		return (error);
+	if (snapshot.waiting != 0 && !vcpu->nested.machine.vmxon)
+		return (EAGAIN);
+	return (0);
+}
+
+static int
 vmx_startup_prepare_l0(void *arg, enum vmx_nested_startup_kind kind,
     uint8_t vector)
 {
@@ -5288,6 +5332,7 @@ vmx_startup_dispatch_ops = {
 	.claim_abort = vmx_startup_claim_abort,
 	.derive = vmx_startup_derive,
 	.transaction = {
+		.discard_l0_sipi = vmx_startup_discard_l0_sipi,
 		.prepare_l0 = vmx_startup_prepare_l0,
 		.apply_l0 = vmx_startup_apply_l0,
 		.commit_active_l2 = vmx_startup_commit_active_l2,
@@ -6819,6 +6864,9 @@ vmx_nested_snapshot_destination_validate(struct vmx_vcpu *vcpu)
 		return (EINVAL);
 	if (vcpu_get_state(vcpu->vcpu, NULL) != VCPU_FROZEN)
 		return (EBUSY);
+	/* This temporary L0 interrupt mask is not a checkpoint record. */
+	if ((vcpu->cap.set & (1 << VM_CAP_MASK_HWINTR)) != 0)
+		return (EBUSY);
 	error = vmx_nested_prepared_owner_validate(vcpu);
 	if (error != 0)
 		return (error);
@@ -6926,6 +6974,9 @@ vmx_nested_snapshot_source_validate(struct vmx_vcpu *vcpu, bool active_l2)
 	if (vcpu == NULL || vcpu->vcpu == NULL)
 		return (EINVAL);
 	if (vcpu_get_state(vcpu->vcpu, NULL) != VCPU_FROZEN)
+		return (EBUSY);
+	/* Preserve the same boundary as destination validation. */
+	if ((vcpu->cap.set & (1 << VM_CAP_MASK_HWINTR)) != 0)
 		return (EBUSY);
 	error = vmx_nested_prepared_owner_validate(vcpu);
 	if (error != 0)
@@ -13631,6 +13682,92 @@ fail:
 	return (error);
 }
 
+struct vmx_nested_cold_device_exit {
+	struct vm_guest_paging paging;
+	uint64_t rip;
+	uint64_t gpa;
+	uint64_t gla;
+	uint64_t cs_base;
+	int cs_d;
+};
+
+static int
+vmx_nested_cold_device_emul_prepare(struct vmx_vcpu *vcpu,
+    const struct vmx_nested_ept_handoff_result *result,
+    struct vmx_nested_cold_device_exit *device)
+{
+	struct vm_guest_paging *paging;
+	struct seg_desc cs, ss;
+	uint64_t cr0, cr3, cr4, efer, rip;
+	int error;
+
+	if (device == NULL ||
+	    result->plan.action != VMX_NESTED_EPT_FAULT_DEVICE ||
+	    !result->guest_linear_address_valid ||
+	    !ept_emulation_fault(result->vmcs02_exit.exit_qualification))
+		return (EPROTO);
+	error = vmx_getreg(vcpu, VM_REG_GUEST_CR0, &cr0);
+	if (error == 0)
+		error = vmx_getreg(vcpu, VM_REG_GUEST_CR3, &cr3);
+	if (error == 0)
+		error = vmx_getreg(vcpu, VM_REG_GUEST_CR4, &cr4);
+	if (error == 0)
+		error = vmx_getreg(vcpu, VM_REG_GUEST_EFER, &efer);
+	if (error == 0)
+		error = vmx_getreg(vcpu, VM_REG_GUEST_RIP, &rip);
+	if (error == 0)
+		error = vmx_getdesc(vcpu, VM_REG_GUEST_CS, &cs);
+	if (error == 0)
+		error = vmx_getdesc(vcpu, VM_REG_GUEST_SS, &ss);
+	if (error != 0)
+		return (error);
+	device->rip = rip;
+	device->gpa = result->plan.l1_page |
+	    (result->guest_physical_address & PAGE_MASK);
+	device->gla = result->guest_linear_address;
+	paging = &device->paging;
+	paging->cr3 = cr3;
+	paging->cpl = (ss.access >> 5) & 3;
+	if ((efer & EFER_LMA) != 0)
+		paging->cpu_mode = (cs.access & 0x2000) != 0 ?
+		    CPU_MODE_64BIT : CPU_MODE_COMPATIBILITY;
+	else
+		paging->cpu_mode = (cr0 & CR0_PE) != 0 ?
+		    CPU_MODE_PROTECTED : CPU_MODE_REAL;
+	if ((cr0 & CR0_PG) == 0)
+		paging->paging_mode = PAGING_MODE_FLAT;
+	else if ((cr4 & CR4_PAE) == 0)
+		paging->paging_mode = PAGING_MODE_32;
+	else if ((efer & EFER_LME) == 0)
+		paging->paging_mode = PAGING_MODE_PAE;
+	else
+		paging->paging_mode = (cr4 & CR4_LA57) != 0 ?
+		    PAGING_MODE_64_LA57 : PAGING_MODE_64;
+	device->cs_base = paging->cpu_mode == CPU_MODE_64BIT ?
+	    0 : cs.base;
+	device->cs_d = paging->cpu_mode == CPU_MODE_REAL ?
+	    0 : SEG_DESC_DEF32(cs.access);
+	return (0);
+}
+
+static void
+vmx_nested_cold_device_emul_publish(struct vmx_vcpu *vcpu,
+    const struct vmx_nested_cold_device_exit *device)
+{
+	struct vm_exit *vmexit;
+
+	vmexit = vm_exitinfo(vcpu->vcpu);
+	vmexit->exitcode = VM_EXITCODE_INST_EMUL;
+	vmexit->rip = device->rip;
+	vmexit->inst_length = 0;
+	vmexit->u.inst_emul.gpa = device->gpa;
+	vmexit->u.inst_emul.gla = device->gla;
+	vmexit->u.inst_emul.paging = device->paging;
+	vmexit->u.inst_emul.cs_base = device->cs_base;
+	vmexit->u.inst_emul.cs_d = device->cs_d;
+	vie_init(&vmexit->u.inst_emul.vie, NULL, 0);
+}
+
 static int
 vmx_handle_internal_exit(void *vcpui)
 {
@@ -13664,6 +13801,7 @@ vmx_handle_internal_exit(void *vcpui)
 	struct vmx_nested_ept_handoff *ept;
 	struct vmx_nested_ept_handoff_id ept_id;
 	struct vmx_nested_ept_handoff_result ept_result;
+	struct vmx_nested_cold_device_exit device_exit;
 	enum vmx_nested_cold_ept_disposition ept_disposition;
 	struct vmx_nested_ept_cache_key ept_key;
 	struct vmx_nested_ept_runtime ept_runtime;
@@ -13733,6 +13871,14 @@ vmx_handle_internal_exit(void *vcpui)
 		}
 		if (vcpu->nested_l0_continuation.state ==
 		    VMX_NESTED_L0_CONTINUATION_COLD) {
+			ept_result = ept->result;
+			if (ept_result.plan.action ==
+			    VMX_NESTED_EPT_FAULT_DEVICE) {
+				error = vmx_nested_cold_device_emul_prepare(
+				    vcpu, &ept_result, &device_exit);
+				if (error != 0)
+					return (error);
+			}
 			error = vmx_nested_cold_ept_resolve(&vcpu->nested,
 			    &vcpu->nested_l0_continuation,
 			    &vcpu->nested_entry_runtime,
@@ -13742,6 +13888,11 @@ vmx_handle_internal_exit(void *vcpui)
 			if (ept_disposition ==
 			    VMX_NESTED_COLD_EPT_REFLECTED)
 				return (vmx_nested_commit_captured_exit(vcpu));
+			if (ept_disposition == VMX_NESTED_COLD_EPT_DEVICE) {
+				vmx_nested_cold_device_emul_publish(vcpu,
+				    &device_exit);
+				return (0);
+			}
 			if (ept_disposition !=
 			    VMX_NESTED_COLD_EPT_POPULATED)
 				return (EPROTO);
@@ -14036,6 +14187,146 @@ vmx_handle_internal_exit(void *vcpui)
 	return (0);
 }
 
+static int
+vmx_nested_ept_probe_compare_exchange(void *arg __unused,
+    uint64_t gpa __unused, const uint8_t expected[8],
+    const uint8_t desired[8] __unused, uint8_t observed[8],
+    bool *exchanged)
+{
+
+	memcpy(observed, expected, 8);
+	*exchanged = true;
+	return (0);
+}
+
+static int
+vmx_translate_gpa(void *vcpui, uint64_t gpa, uint64_t gla, int prot, bool usermode,
+    bool guest_page_table, bool guest_page_writable,
+    bool guest_page_execute_disable, bool check_only, uint64_t *translated)
+{
+	struct vmx_nested_l2_portable_state *portable;
+	struct vmx_nested_ept_runtime runtime;
+	struct vmx_nested_ept_memory memory;
+	struct vmx_nested_ept_fault_input fault_input;
+	struct vmx_nested_ept_fault_plan fault_plan;
+	struct vmx_nested_ept_result result;
+	struct vmx_nested_ept_walk walk;
+	struct vmx_nested_exit_information information;
+	struct vmx_vcpu *vcpu;
+	void *root;
+	int error, retry;
+
+	vcpu = vcpui;
+	if (vcpu == NULL || translated == NULL || prot == 0 ||
+	    (prot & ~VM_PROT_ALL) != 0)
+		return (EINVAL);
+	if (vcpu->nested.phase != VMX_NESTED_CONTEXT_GUEST) {
+		*translated = gpa;
+		return (0);
+	}
+	error = vmx_nested_cold_l2(vcpu, &portable);
+	if (error != 0)
+		return (error);
+	if (!vcpu->nested_vmcs02_plan_valid)
+		return (EPROTO);
+	if (!vcpu->nested_vmcs02_plan.image.ept_enabled) {
+		*translated = gpa;
+		return (0);
+	}
+	error = vmx_nested_ept_binding_resolve(&vcpu->nested_ept_cache,
+	    &vcpu->nested_ept_binding,
+	    &vcpu->nested_vmcs02_plan.image.ept, &root);
+	if (error != 0)
+		return (error);
+	error = vmx_nested_ept_runtime_init(&runtime, vcpu->vcpu, root);
+	if (error != 0)
+		return (error);
+	memory = *vmx_nested_ept_runtime_memory(&runtime);
+	if (check_only)
+		memory.compare_exchange =
+		    vmx_nested_ept_probe_compare_exchange;
+	memset(&walk, 0, sizeof(walk));
+	walk.capabilities = &vcpu->nested_vmcs12_snapshot.capabilities;
+	walk.memory = &memory;
+	walk.eptp = vcpu->nested_vmcs02_plan.image.ept.eptp;
+	walk.guest_physical_address = gpa;
+	walk.mode_based_execute =
+	    vcpu->nested_vmcs02_plan.image.ept.mode_based_execute;
+	walk.user_mode = usermode;
+	walk.guest_paging_structure_access = guest_page_table;
+	if ((prot & VM_PROT_EXECUTE) != 0)
+		walk.access = VMX_NESTED_EPT_ACCESS_EXECUTE;
+	else {
+		walk.access = VMX_NESTED_EPT_ACCESS_READ;
+		if ((prot & VM_PROT_WRITE) != 0)
+			walk.access |= VMX_NESTED_EPT_ACCESS_WRITE;
+	}
+	for (retry = 0; retry < 8; retry++) {
+		error = vmx_nested_ept_walk(&walk, &result);
+		if (error != EAGAIN)
+			break;
+	}
+	if (error != 0)
+		return (error);
+	if (result.outcome != VMX_NESTED_EPT_TRANSLATED) {
+		if (check_only)
+			return (EFAULT);
+		memset(&fault_input, 0, sizeof(fault_input));
+		fault_input.result = &result;
+		fault_input.l2_gpa = gpa;
+		fault_input.linear_address_valid = true;
+		fault_input.final_translation = !guest_page_table;
+		fault_input.mode_based_execute = walk.mode_based_execute;
+		fault_input.user_mode = usermode;
+		fault_input.advanced_exit_information =
+		    !guest_page_table &&
+		    (vcpu->nested_vmcs12_snapshot.capabilities.ept_vpid &
+		    (UINT64_C(1) << 22)) != 0;
+		if (fault_input.advanced_exit_information) {
+			fault_input.guest_page_writable = guest_page_writable;
+			fault_input.guest_page_execute_disable =
+			    guest_page_execute_disable;
+		}
+		error = vmx_nested_ept_fault_plan(&fault_input, &fault_plan);
+		if (error != 0)
+			return (error);
+		information = portable->exit;
+		information.exit_reason = fault_plan.action ==
+		    VMX_NESTED_EPT_FAULT_REFLECT_MISCONFIGURATION ? 49 : 48;
+		information.exit_qualification = fault_plan.exit_qualification;
+		information.guest_linear_address =
+		    information.exit_reason == 48 ? gla : 0;
+		information.guest_physical_address = gpa;
+		information.exit_interruption_info = 0;
+		information.exit_interruption_error = 0;
+		information.exit_instruction_length = 0;
+		information.exit_instruction_info = 0;
+		information.launched = false;
+		error = vmx_nested_cold_software_ept_reflect_publish(
+		    &vcpu->nested, &vcpu->nested_l0_continuation,
+		    &vcpu->nested_entry_runtime, portable, &information);
+		if (error != 0)
+			return (error);
+		error = vmx_nested_commit_captured_exit(vcpu);
+		return (error == 0 ? VMM_TRANSLATE_NESTED_EXIT : error);
+	}
+	*translated = result.translated_address;
+	return (0);
+}
+
+static int
+vmx_nested_memmap_invalidate(void *vcpui)
+{
+	struct vmx_vcpu *vcpu;
+	const struct vmx_nested_invalidation all = {
+		.scope = VMX_NESTED_INVALIDATE_EPT_ALL,
+	};
+
+	vcpu = vcpui;
+	return (vmx_nested_ept_cache_invalidate(&vcpu->nested_ept_cache,
+	    &all));
+}
+
 const struct vmm_ops vmm_ops_intel = {
 	.modinit	= vmx_modinit,
 	.modcleanup	= vmx_modcleanup,
@@ -14051,8 +14342,10 @@ const struct vmm_ops vmm_ops_intel = {
 	.vcpu_event_cleanup_check = vmx_vcpu_event_cleanup_check,
 	.vcpu_event_cleanup = vmx_vcpu_event_cleanup,
 	.vcpu_cleanup	= vmx_vcpu_cleanup,
+	.nested_memmap_invalidate = vmx_nested_memmap_invalidate,
 	.getreg		= vmx_getreg,
 	.setreg		= vmx_setreg,
+	.translate_gpa	= vmx_translate_gpa,
 	.getdesc	= vmx_getdesc,
 	.setdesc	= vmx_setdesc,
 	.getcap		= vmx_getcap,

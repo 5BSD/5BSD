@@ -140,7 +140,8 @@ nvmx_startup_ops_equal(
     const struct vmx_nested_startup_transaction_ops *right)
 {
 
-	return (left->prepare_l0 == right->prepare_l0 &&
+	return (left->discard_l0_sipi == right->discard_l0_sipi &&
+	    left->prepare_l0 == right->prepare_l0 &&
 	    left->apply_l0 == right->apply_l0 &&
 	    left->commit_active_l2 == right->commit_active_l2 &&
 	    left->claim_finish == right->claim_finish);
@@ -298,8 +299,11 @@ nvmx_startup_side_effect(
 	case VMX_NESTED_STARTUP_ACTION_REFLECT_L1:
 		return (ops->commit_active_l2(arg, &transaction->plan));
 	case VMX_NESTED_STARTUP_ACTION_DISCARD:
-		return (transaction->plan.active_l2 ?
-		    ops->commit_active_l2(arg, &transaction->plan) : 0);
+		if (transaction->plan.active_l2)
+			return (ops->commit_active_l2(arg, &transaction->plan));
+		if (transaction->plan.kind == VMX_NESTED_STARTUP_SIPI)
+			return (ops->discard_l0_sipi(arg));
+		return (0);
 	case VMX_NESTED_STARTUP_ACTION_RETAIN_RETRY:
 		return (0);
 	default:
@@ -336,7 +340,10 @@ vmx_nested_startup_transaction_execute(
 	    VMX_NESTED_STARTUP_ACTION_REFLECT_L1 ||
 	    (transaction->plan.action == VMX_NESTED_STARTUP_ACTION_DISCARD &&
 	    transaction->plan.active_l2)) &&
-	    ops->commit_active_l2 == NULL))
+	    ops->commit_active_l2 == NULL) ||
+	    (transaction->plan.action == VMX_NESTED_STARTUP_ACTION_DISCARD &&
+	    !transaction->plan.active_l2 &&
+	    ops->discard_l0_sipi == NULL))
 		return (EINVAL);
 	ops_snapshot = *ops;
 
@@ -374,7 +381,7 @@ vmx_nested_startup_transaction_execute(
 				return (EPROTO);
 			}
 			transaction->state =
-			    VMX_NESTED_STARTUP_TRANSACTION_PLANNED;
+			    VMX_NESTED_STARTUP_TRANSACTION_RETAINED;
 			return (error);
 		}
 	}
@@ -396,7 +403,7 @@ vmx_nested_startup_transaction_execute(
 			    VMX_NESTED_STARTUP_TRANSACTION_POISONED;
 			return (EPROTO);
 		}
-		transaction->state = VMX_NESTED_STARTUP_TRANSACTION_PLANNED;
+		transaction->state = VMX_NESTED_STARTUP_TRANSACTION_RETAINED;
 		return (error);
 	}
 	transaction->state = VMX_NESTED_STARTUP_TRANSACTION_FINISH_PENDING;

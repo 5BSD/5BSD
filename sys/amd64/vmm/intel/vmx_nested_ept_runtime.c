@@ -78,7 +78,7 @@ nvmx_ept_runtime_compare_exchange(void *arg, uint64_t gpa,
 
 static int
 nvmx_ept_runtime_populate(void *arg, uint64_t l2_gpa, uint64_t l1_gpa,
-    uint8_t permissions, bool mode_based_execute)
+    uint8_t permissions, uint8_t access, bool mode_based_execute)
 {
 	struct vmx_nested_ept_runtime *runtime;
 
@@ -88,8 +88,10 @@ nvmx_ept_runtime_populate(void *arg, uint64_t l2_gpa, uint64_t l1_gpa,
 		return (EINVAL);
 	if (vcpu_get_state(runtime->vcpu, NULL) != VCPU_FROZEN)
 		return (EBUSY);
+	if (!vm_mem_allocated(runtime->vcpu, l1_gpa))
+		return (ENXIO);
 	return (vmx_nested_ept_root_populate(runtime->runtime_root,
-	    runtime->vcpu, l2_gpa, l1_gpa, permissions,
+	    runtime->vcpu, l2_gpa, l1_gpa, permissions, access,
 	    mode_based_execute));
 }
 

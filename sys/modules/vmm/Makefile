@@ -240,6 +240,19 @@ SRCS+=	ept.c		\
 # amd-specific files
 .PATH: ${SRCTOP}/sys/amd64/vmm/amd
 SRCS+=	vmcb.c		\
+	nested_svm_aux.c \
+	nested_svm_bitmap.c \
+	nested_svm_compose.c \
+	nested_svm_exit_policy.c \
+	nested_svm_l2_msr.c \
+	nested_svm_memory.c \
+	nested_svm_msr.c \
+	nested_svm_npt.c \
+	nested_svm_npt_runtime.c \
+	nested_svm_npt_root.c \
+	nested_svm_operand.c \
+	nested_svm_policy.c \
+	nested_svm_reflect.c \
 	amdviiommu.c	\
 	ivhd_if.c	\
 	ivhd_if.h	\
@@ -280,6 +293,9 @@ svm_genassym.o: offset.inc
 	${CC} -c ${NOSAN_CFLAGS:N-flto*:N-fno-common} -fcommon ${.IMPSRC}
 
 .elif ${MACHINE_CPUARCH} == "riscv"
+
+SRCS+=	ofw_bus_if.h
+DPSRCS+=	assym.inc
 
 SRCS+=	vmm_aplic.c	\
 	vmm_fence.c	\

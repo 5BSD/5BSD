@@ -74,6 +74,8 @@ struct vmx_nested_startup_transaction {
 };
 
 struct vmx_nested_startup_transaction_ops {
+	/* Recheck that an L0 SIPI is still ignorable before consuming its claim. */
+	int	(*discard_l0_sipi)(void *);
 	/*
 	 * Fallible preparation for an L0 operation.  This callback may discard
 	 * only destination-local derived runtime state which is explicitly safe

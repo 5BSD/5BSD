@@ -521,6 +521,13 @@ ATF_TC_BODY(xcr0_validate_matrix, tc)
 	ATF_CHECK_EQ(vmm_snapshot_x86_xcr0_validate(XCR0_X87 | XCR0_SSE |
 	    XCR0_YMM | XCR0_OPMASK | XCR0_ZMM_HI256 | XCR0_HI16_ZMM,
 	    UINT64_MAX, true), 0);
+	/* AMX tile configuration and data are a single XCR0 group. */
+	ATF_CHECK_EQ(vmm_snapshot_x86_xcr0_validate(XCR0_X87 | XCR0_TILECFG,
+	    UINT64_MAX, true), EINVAL);
+	ATF_CHECK_EQ(vmm_snapshot_x86_xcr0_validate(XCR0_X87 | XCR0_TILEDATA,
+	    UINT64_MAX, true), EINVAL);
+	ATF_CHECK_EQ(vmm_snapshot_x86_xcr0_validate(XCR0_X87 | XCR0_TILECFG |
+	    XCR0_TILEDATA, UINT64_MAX, true), 0);
 }
 
 ATF_TC_WITHOUT_HEAD(x86_validate_event_matrix);

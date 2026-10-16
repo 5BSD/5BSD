@@ -31,6 +31,7 @@ ATF_TESTS_C+=	vmm_kvm_parity_live_test
 ATF_TESTS_C+=	vmm_snapshot_envelope_test
 ATF_TESTS_C+=	vmm_snapshot_x86_fpu_test
 ATF_TESTS_C+=	vmm_mtrr_test
+ATF_TESTS_C+=	svm_nested_policy_test
 ATF_TESTS_C+=	vpvclock_model_test
 ATF_TESTS_C+=	vmm_event_state_test
 ATF_TESTS_C+=	vmm_startup_management_abi_test
@@ -52,6 +53,8 @@ CFLAGS.vmm_snapshot_x86_fpu_test+=	-I${SRCTOP}/sys \
 	-I${SRCTOP}/sys/amd64/vmm
 CFLAGS.vmm_mtrr_test+=	-I${SRCTOP}/sys \
 	-I${SRCTOP}/sys/amd64/vmm
+CFLAGS.svm_nested_policy_test+=	-I${SRCTOP}/sys \
+	-I${SRCTOP}/sys/amd64/vmm/amd
 CFLAGS.vpvclock_model_test+=	-I${SRCTOP}/sys \
 	-I${SRCTOP}/sys/amd64/vmm
 CFLAGS.vmm_exception_test+=	-I${SRCTOP}/sys
@@ -83,7 +86,7 @@ CFLAGS.vmm_startup_management_abi_test+=	-I${SRCTOP}/sys \
 CFLAGS.vmm_startup_staging_live_test+=	-I${SRCTOP}/sys \
 	-I${SRCTOP}/sys/${MACHINE_CPUARCH}/include \
 	-I${SRCTOP}/lib/libvmmapi
-LIBADD.vmm_startup_staging_live_test+=	vmmapi
+LIBADD.vmm_startup_staging_live_test+=	vmmapi pthread
 CFLAGS.vmm_x86_startup_state_test+=	-I${SRCTOP}/sys \
 	-I${SRCTOP}/sys/amd64/vmm
 CFLAGS.vmm_x86_startup_transaction_test+=	-I${SRCTOP}/sys \
@@ -140,6 +143,25 @@ ${PACKAGE}FILES+=	run-vmx-nested-model.sh
 ${PACKAGE}FILESMODE_run-vmx-nested-model.sh=	0555
 ${PACKAGE}FILES+=	run-vmm-root.sh
 ${PACKAGE}FILESMODE_run-vmm-root.sh=	0555
+${PACKAGE}FILES+=	run-svm-nested-atf.sh
+${PACKAGE}FILESMODE_run-svm-nested-atf.sh=	0555
+${PACKAGE}FILES+=	svm-nested-atf-cases.tsv
+${PACKAGE}FILES+=	run-svm-nested-live.sh
+${PACKAGE}FILES+=	validate-svm-nested-live-ledger.sh
+${PACKAGE}FILES+=	svm-nested-live-ledger-selftest.sh
+${PACKAGE}FILES+=	validate-svm-nested-live-staging.sh
+${PACKAGE}FILES+=	validate-svm-nested-live-evidence.sh
+${PACKAGE}FILES+=	svm-nested-live-staging-selftest.sh
+${PACKAGE}FILES+=	svm-nested-live-evidence-selftest.sh
+${PACKAGE}FILES+=	svm-nested-live-qualification.tsv
+${PACKAGE}FILES+=	SVM_NESTED_LIVE.md
+${PACKAGE}FILESMODE_run-svm-nested-live.sh=	0555
+${PACKAGE}FILESMODE_validate-svm-nested-live-ledger.sh=	0555
+${PACKAGE}FILESMODE_svm-nested-live-ledger-selftest.sh=	0555
+${PACKAGE}FILESMODE_validate-svm-nested-live-staging.sh=	0555
+${PACKAGE}FILESMODE_validate-svm-nested-live-evidence.sh=	0555
+${PACKAGE}FILESMODE_svm-nested-live-staging-selftest.sh=	0555
+${PACKAGE}FILESMODE_svm-nested-live-evidence-selftest.sh=	0555
 ${PACKAGE}FILES+=	validate-kvm-parity-requirements.sh
 ${PACKAGE}FILES+=	kvm-parity-selftest.sh
 ${PACKAGE}FILES+=	kvm-parity-requirements.tsv
@@ -175,6 +197,17 @@ VMM_OBJECT_FILES=	utils.subr \
 			vmx-nested-live-coverage-selftest.sh \
 			run-vmx-nested-model.sh \
 			run-vmm-root.sh \
+			run-svm-nested-atf.sh \
+			svm-nested-atf-cases.tsv \
+			run-svm-nested-live.sh \
+			validate-svm-nested-live-ledger.sh \
+			svm-nested-live-ledger-selftest.sh \
+			validate-svm-nested-live-staging.sh \
+			validate-svm-nested-live-evidence.sh \
+			svm-nested-live-staging-selftest.sh \
+			svm-nested-live-evidence-selftest.sh \
+			svm-nested-live-qualification.tsv \
+			SVM_NESTED_LIVE.md \
 			validate-kvm-parity-requirements.sh \
 			kvm-parity-selftest.sh \
 			kvm-parity-requirements.tsv \

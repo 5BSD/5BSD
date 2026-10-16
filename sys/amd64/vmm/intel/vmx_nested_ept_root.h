@@ -33,6 +33,6 @@ uint64_t vmx_nested_ept_root_eptp(const void *);
 void	vmx_nested_ept_root_activate(void *);
 void	vmx_nested_ept_root_deactivate(void *);
 int	vmx_nested_ept_root_populate(void *, struct vcpu *, uint64_t,
-	    uint64_t, uint8_t, bool);
+	    uint64_t, uint8_t, uint8_t, bool);
 
 #endif /* _VMM_INTEL_VMX_NESTED_EPT_ROOT_H_ */

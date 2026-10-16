@@ -1,5 +1,8 @@
 #!/bin/sh
 # Run the complete VMM Kyua suite against one explicitly selected module.
+# On AMD, set hw.vmm.svm.kernel_startup_experimental=1 and
+# hw.vmm.svm.nested=1 in the kernel environment before this script loads vmm.
+# The zero-skip gate then checks both experimental paths.
 
 set -eu
 
@@ -30,6 +33,17 @@ fail()
     grep -qx '#define BHYVE_SNAPSHOT 1' \
     "$KERNBUILDDIR/opt_bhyve_snapshot.h" ||
     fail "kernel object directory does not enable BHYVE_SNAPSHOT"
+[ -f "$KERNBUILDDIR/kernel.full" ] &&
+    [ ! -L "$KERNBUILDDIR/kernel.full" ] ||
+    fail "kernel object directory lacks a regular kernel.full"
+running_build_id=$(sysctl -n kern.build_id) ||
+    fail "cannot read the running kernel build ID"
+object_build_id=$(readelf -n "$KERNBUILDDIR/kernel.full" |
+    awk '/Build ID:/ { print $3; exit }') ||
+    fail "cannot read the object kernel build ID"
+[ -n "$running_build_id" ] && [ -n "$object_build_id" ] &&
+    [ "$running_build_id" = "$object_build_id" ] ||
+    fail "running kernel does not match $KERNBUILDDIR/kernel.full"
 nm "$MODULE" | grep -Eq '[[:space:]]vmmdev_snapshot_session_begin$' ||
     fail "reviewed module lacks snapshot-session support"
 [ -f "$KYUAFILE" ] && [ ! -L "$KYUAFILE" ] ||
@@ -39,9 +53,19 @@ inventory=$(kyua list -k "$KYUAFILE")
 for test_case in \
     vmm_run_live_test:real_mode_io_and_halt \
     vmm_run_live_test:breakpoint_exit \
-    vmm_run_live_test:pause_exit; do
+    vmm_run_live_test:pause_exit \
+    vmm_run_live_test:svm_nested_host_policy \
+    vmm_run_live_test:svm_l2_portio \
+    vmm_run_live_test:svm_l2_npt12_readonly_alias \
+    vmm_run_live_test:svm_l2_l0_irq \
+    vmm_run_live_test:svm_l2_l0_nmi \
+    vmm_run_live_test:svm_l2_l0_exception \
+    vmm_run_live_test:svm_l2_checkpoint \
+    vmm_startup_staging_live_test:configure_activation_boundary \
+    vmm_startup_staging_live_test:generation_run_requires_controller \
+    vmm_startup_staging_live_test:amd_init_sipi_executes_ap; do
 	printf '%s\n' "$inventory" | grep -qx "$test_case" ||
-	    fail "built suite lacks live hardware-entry case: $test_case"
+	    fail "built suite lacks required live case: $test_case"
 done
 
 busy=no
@@ -59,6 +83,19 @@ fi
 kldload "$MODULE"
 kldstat -v | grep -F "vmm.ko ($MODULE)" >/dev/null ||
     fail "loaded module path does not match $MODULE"
+case "$(sysctl -n hw.model)" in
+AMD*)
+	startup_enabled=$(sysctl -n \
+	    hw.vmm.svm.kernel_startup_experimental 2>/dev/null) ||
+	    fail "cannot read AMD kernel startup gate"
+	[ "$startup_enabled" = 1 ] ||
+	    fail "AMD kernel startup gate must equal 1 for the live suite"
+	nested_enabled=$(sysctl -n hw.vmm.svm.nested 2>/dev/null) ||
+	    fail "cannot read AMD nested SVM gate"
+	[ "$nested_enabled" = 1 ] ||
+	    fail "AMD nested SVM gate must equal 1 for the live suite"
+	;;
+esac
 
 echo "VMM-MODULE path=$MODULE sha256=$(sha256 -q "$MODULE")"
 echo "VMM-CAPABILITIES"

@@ -116,7 +116,9 @@ enum x2apic_state {
 
 #define	VM_CPU_COMPAT_VERSION		1U
 #define	VM_CPU_COMPAT_F_NESTED_VMX	0x00000001U
-#define	VM_CPU_COMPAT_F_VALID		VM_CPU_COMPAT_F_NESTED_VMX
+#define	VM_CPU_COMPAT_F_NESTED_SVM	0x00000002U
+#define	VM_CPU_COMPAT_F_VALID		(VM_CPU_COMPAT_F_NESTED_VMX | \
+					 VM_CPU_COMPAT_F_NESTED_SVM)
 struct vm_cpu_compat {
 	uint32_t	version;
 	uint32_t	flags;
@@ -227,8 +229,14 @@ DECLARE_VMMOPS_FUNC(int, vcpu_startup_event_step, (void *vcpui,
 DECLARE_VMMOPS_FUNC(int, vcpu_event_cleanup_check, (void *vcpui));
 DECLARE_VMMOPS_FUNC(int, vcpu_event_cleanup, (void *vcpui));
 DECLARE_VMMOPS_FUNC(void, vcpu_cleanup, (void *vcpui));
+DECLARE_VMMOPS_FUNC(int, nested_memmap_invalidate, (void *vcpui));
 DECLARE_VMMOPS_FUNC(int, getreg, (void *vcpui, int num, uint64_t *retval));
 DECLARE_VMMOPS_FUNC(int, setreg, (void *vcpui, int num, uint64_t val));
+DECLARE_VMMOPS_FUNC(int, translate_gpa, (void *vcpui, uint64_t gpa,
+    uint64_t gla,
+    int prot, bool usermode, bool guest_page_table,
+    bool guest_page_writable, bool guest_page_execute_disable, bool check_only,
+    uint64_t *translated));
 DECLARE_VMMOPS_FUNC(int, getdesc, (void *vcpui, int num,
     struct seg_desc *desc));
 DECLARE_VMMOPS_FUNC(int, setdesc, (void *vcpui, int num,
@@ -266,8 +274,10 @@ struct vmm_ops {
 	vmmops_vcpu_event_cleanup_check_t vcpu_event_cleanup_check;
 	vmmops_vcpu_event_cleanup_t vcpu_event_cleanup;
 	vmmops_vcpu_cleanup_t	vcpu_cleanup;
+	vmmops_nested_memmap_invalidate_t nested_memmap_invalidate;
 	vmmops_getreg_t		getreg;
 	vmmops_setreg_t		setreg;
+	vmmops_translate_gpa_t	translate_gpa;
 	vmmops_getdesc_t	getdesc;
 	vmmops_setdesc_t	setdesc;
 	vmmops_getcap_t		getcap;
@@ -295,6 +305,11 @@ int vm_unassign_pptdev(struct vm *vm, int bus, int slot, int func);
 int vm_reset_pptdev(struct vm *vm, int bus, int slot, int func);
 
 int vm_get_register(struct vcpu *vcpu, int reg, uint64_t *retval);
+#define	VMM_TRANSLATE_NESTED_EXIT	0x10000
+int vm_translate_gpa(struct vcpu *vcpu, uint64_t gpa, uint64_t gla, int prot,
+    bool usermode, bool guest_page_table, bool guest_page_writable,
+    bool guest_page_execute_disable, bool check_only,
+    uint64_t *translated);
 int vm_set_register(struct vcpu *vcpu, int reg, uint64_t val);
 void vm_set_nextrip(struct vcpu *vcpu, uint64_t val);
 int vm_get_instruction_completion(struct vcpu *vcpu, uint64_t *rip,
@@ -493,6 +508,9 @@ int vcpu_trace_exceptions(struct vcpu *vcpu);
 int vcpu_trap_wbinvd(struct vcpu *vcpu);
 #endif	/* KERNEL */
 
+/* vm_gla2gpa() reflected an L2 nested-page fault to L1. */
+#define	VM_GLA2GPA_NESTED_EXIT	2
+
 /*
  * Identifiers for optional vmm capabilities
  */
@@ -509,6 +527,7 @@ enum vm_cap_type {
 	VM_CAP_MASK_HWINTR,
 	VM_CAP_RFLAGS_TF,
 	VM_CAP_NESTED_VMX,
+	VM_CAP_NESTED_SVM,
 	VM_CAP_MAX
 };
 

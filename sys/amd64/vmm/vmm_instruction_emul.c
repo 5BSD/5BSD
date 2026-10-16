@@ -2066,13 +2066,40 @@ ptp_release(void **cookie)
 }
 
 static void *
-ptp_hold(struct vcpu *vcpu, vm_paddr_t ptpphys, size_t len, void **cookie)
+ptp_hold(struct vcpu *vcpu, vm_paddr_t ptpphys, uint64_t gla, size_t len, void **cookie,
+    bool usermode, bool check_only, bool *nested_exit, uint64_t *held_gpa)
 {
 	void *ptr;
+	uint64_t translated;
+	int error;
 
 	ptp_release(cookie);
-	ptr = vm_gpa_hold(vcpu, ptpphys, len, VM_PROT_RW, cookie);
+	*nested_exit = false;
+	error = vm_translate_gpa(vcpu, ptpphys, gla, VM_PROT_READ, usermode, true,
+	    false, false, check_only, &translated);
+	if (error == VMM_TRANSLATE_NESTED_EXIT)
+		*nested_exit = true;
+	if (error != 0)
+		return (NULL);
+	ptr = vm_gpa_hold(vcpu, translated, len, VM_PROT_RW, cookie);
+	if (ptr != NULL)
+		*held_gpa = translated;
 	return (ptr);
+}
+
+static int
+ptp_write_access(struct vcpu *vcpu, uint64_t ptp_gpa, uint64_t gla,
+    uint64_t held_gpa, bool usermode)
+{
+	uint64_t translated;
+	int error;
+
+	error = vm_translate_gpa(vcpu, ptp_gpa, gla, VM_PROT_RW, usermode, true,
+	    false, false, false, &translated);
+	if (error != 0)
+		return (error);
+	/* L1 may have remapped the table since the read-only hold. */
+	return (translated == held_gpa ? 0 : EAGAIN);
 }
 
 static int
@@ -2080,19 +2107,24 @@ _vm_gla2gpa(struct vcpu *vcpu, struct vm_guest_paging *paging,
     uint64_t gla, int prot, uint64_t *gpa, int *guest_fault, bool check_only)
 {
 	int nlevels, pfcode, ptpshift, ptpindex, retval, usermode, writable;
+	int translation_error;
 	u_int retries;
-	uint64_t *ptpbase, ptpphys, pte, pgsize;
+	uint64_t *ptpbase, ptpphys, pte, pgsize, held_gpa, ptp_write_gpa;
 	uint32_t *ptpbase32, pte32;
 	void *cookie;
+	bool nested_exit, guest_page_writable, guest_page_execute_disable;
 
 	*guest_fault = 0;
 
 	usermode = (paging->cpl == 3 ? 1 : 0);
 	writable = prot & VM_PROT_WRITE;
 	cookie = NULL;
+	nested_exit = false;
 	retval = 0;
 	retries = 0;
 restart:
+	guest_page_writable = true;
+	guest_page_execute_disable = false;
 	ptpphys = paging->cr3;		/* root of the page tables */
 	ptp_release(&cookie);
 	if (retries++ > 0)
@@ -2119,14 +2151,16 @@ restart:
 			/* Zero out the lower 12 bits. */
 			ptpphys &= ~0xfff;
 
-			ptpbase32 = ptp_hold(vcpu, ptpphys, PAGE_SIZE,
-			    &cookie);
+			ptpbase32 = ptp_hold(vcpu, ptpphys, gla, PAGE_SIZE,
+			    &cookie, usermode != 0, check_only, &nested_exit,
+			    &held_gpa);
 
 			if (ptpbase32 == NULL)
-				goto error;
+				goto page_table_error;
 
 			ptpshift = PAGE_SHIFT + nlevels * 10;
 			ptpindex = (gla >> ptpshift) & 0x3FF;
+			ptp_write_gpa = ptpphys + ptpindex * sizeof(*ptpbase32);
 			pgsize = 1UL << ptpshift;
 
 			pte32 = ptpbase32[ptpindex];
@@ -2141,6 +2175,7 @@ restart:
 				}
 				goto fault;
 			}
+			guest_page_writable &= (pte32 & PG_RW) != 0;
 
 			/*
 			 * Emulate the x86 MMU's management of the accessed
@@ -2150,6 +2185,15 @@ restart:
 			 * physical address.
 			 */
 			if (!check_only && (pte32 & PG_A) == 0) {
+				translation_error = ptp_write_access(vcpu,
+				    ptp_write_gpa, gla, held_gpa +
+				    ptpindex * sizeof(*ptpbase32), usermode != 0);
+				if (translation_error == EAGAIN)
+					goto restart;
+				if (translation_error == VMM_TRANSLATE_NESTED_EXIT)
+					goto nested_fault;
+				if (translation_error != 0)
+					goto page_table_error;
 				if (atomic_cmpset_32(&ptpbase32[ptpindex],
 				    pte32, pte32 | PG_A) == 0) {
 					goto restart;
@@ -2165,6 +2209,15 @@ restart:
 
 		/* Set the dirty bit in the page table entry if necessary */
 		if (!check_only && writable && (pte32 & PG_M) == 0) {
+			translation_error = ptp_write_access(vcpu,
+			    ptp_write_gpa, gla, held_gpa +
+			    ptpindex * sizeof(*ptpbase32), usermode != 0);
+			if (translation_error == EAGAIN)
+				goto restart;
+			if (translation_error == VMM_TRANSLATE_NESTED_EXIT)
+				goto nested_fault;
+			if (translation_error != 0)
+				goto page_table_error;
 			if (atomic_cmpset_32(&ptpbase32[ptpindex],
 			    pte32, pte32 | PG_M) == 0) {
 				goto restart;
@@ -2181,10 +2234,11 @@ restart:
 		/* Zero out the lower 5 bits and the upper 32 bits */
 		ptpphys &= 0xffffffe0UL;
 
-		ptpbase = ptp_hold(vcpu, ptpphys, sizeof(*ptpbase) * 4,
-		    &cookie);
+		ptpbase = ptp_hold(vcpu, ptpphys, gla, sizeof(*ptpbase) * 4,
+		    &cookie, usermode != 0, check_only, &nested_exit,
+		    &held_gpa);
 		if (ptpbase == NULL)
-			goto error;
+			goto page_table_error;
 
 		ptpindex = (gla >> 30) & 0x3;
 
@@ -2197,6 +2251,7 @@ restart:
 			}
 			goto fault;
 		}
+		guest_page_execute_disable |= (pte & PG_NX) != 0;
 
 		ptpphys = pte;
 
@@ -2211,12 +2266,14 @@ restart:
 		/* Zero out the lower 12 bits and the upper 12 bits */
 		ptpphys >>= 12; ptpphys <<= 24; ptpphys >>= 12;
 
-		ptpbase = ptp_hold(vcpu, ptpphys, PAGE_SIZE, &cookie);
+		ptpbase = ptp_hold(vcpu, ptpphys, gla, PAGE_SIZE, &cookie,
+		    usermode != 0, check_only, &nested_exit, &held_gpa);
 		if (ptpbase == NULL)
-			goto error;
+			goto page_table_error;
 
 		ptpshift = PAGE_SHIFT + nlevels * 9;
 		ptpindex = (gla >> ptpshift) & 0x1FF;
+		ptp_write_gpa = ptpphys + ptpindex * sizeof(*ptpbase);
 		pgsize = 1UL << ptpshift;
 
 		pte = ptpbase[ptpindex];
@@ -2230,9 +2287,20 @@ restart:
 			}
 			goto fault;
 		}
+		guest_page_writable &= (pte & PG_RW) != 0;
+		guest_page_execute_disable |= (pte & PG_NX) != 0;
 
 		/* Set the accessed bit in the page table entry */
 		if (!check_only && (pte & PG_A) == 0) {
+			translation_error = ptp_write_access(vcpu,
+			    ptp_write_gpa, gla, held_gpa +
+			    ptpindex * sizeof(*ptpbase), usermode != 0);
+			if (translation_error == EAGAIN)
+				goto restart;
+			if (translation_error == VMM_TRANSLATE_NESTED_EXIT)
+				goto nested_fault;
+			if (translation_error != 0)
+				goto page_table_error;
 			if (atomic_cmpset_64(&ptpbase[ptpindex],
 			    pte, pte | PG_A) == 0) {
 				goto restart;
@@ -2256,6 +2324,14 @@ restart:
 
 	/* Set the dirty bit in the page table entry if necessary */
 	if (!check_only && writable && (pte & PG_M) == 0) {
+		translation_error = ptp_write_access(vcpu, ptp_write_gpa, gla,
+		    held_gpa + ptpindex * sizeof(*ptpbase), usermode != 0);
+		if (translation_error == EAGAIN)
+			goto restart;
+		if (translation_error == VMM_TRANSLATE_NESTED_EXIT)
+			goto nested_fault;
+		if (translation_error != 0)
+			goto page_table_error;
 		if (atomic_cmpset_64(&ptpbase[ptpindex], pte, pte | PG_M) == 0)
 			goto restart;
 	}
@@ -2265,11 +2341,25 @@ restart:
 	*gpa = pte | (gla & (pgsize - 1));
 done:
 	ptp_release(&cookie);
+	if (retval == 0 && *guest_fault == 0) {
+		translation_error = vm_translate_gpa(vcpu, *gpa, gla, prot,
+		    usermode != 0, false, guest_page_writable,
+		    guest_page_execute_disable, check_only, gpa);
+		if (translation_error == VMM_TRANSLATE_NESTED_EXIT)
+			*guest_fault = VM_GLA2GPA_NESTED_EXIT;
+		else if (translation_error != 0)
+			retval = EFAULT;
+	}
 	KASSERT(retval == 0 || retval == EFAULT, ("%s: unexpected retval %d",
 	    __func__, retval));
 	return (retval);
-error:
+page_table_error:
+	if (nested_exit)
+		goto nested_fault;
 	retval = EFAULT;
+	goto done;
+nested_fault:
+	*guest_fault = VM_GLA2GPA_NESTED_EXIT;
 	goto done;
 fault:
 	*guest_fault = 1;

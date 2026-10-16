@@ -283,6 +283,57 @@ ATF_TC_CLEANUP(policy_and_descriptor_ownership, tc)
 	cleanup_vm(tc);
 }
 
+ATF_TC_WITH_CLEANUP(topology_frozen_during_session);
+ATF_TC_HEAD(topology_frozen_during_session, tc)
+{
+
+	require_root(tc);
+}
+ATF_TC_BODY(topology_frozen_during_session, tc)
+{
+	struct vm_snapshot_session session;
+	struct vmctx *ctx, *ctx2;
+	struct vcpu *vcpu0, *vcpu1;
+	char name[VM_MAX_NAMELEN];
+	uint16_t sockets, cores, threads, maxcpus;
+
+	ctx = create_vm_with_vcpu(tc, &vcpu0);
+	ATF_REQUIRE_EQ_MSG(vm_get_topology(ctx, &sockets, &cores, &threads,
+	    &maxcpus), 0, "vm_get_topology: %s", strerror(errno));
+	if (maxcpus < 2)
+		atf_tc_skip("vmm allows fewer than two vCPUs");
+	vm_name_for(tc, name, sizeof(name));
+	ctx2 = vm_open(name);
+	ATF_REQUIRE_MSG(ctx2 != NULL, "second vm_open: %s",
+	    strerror(errno));
+	vcpu1 = vm_vcpu_open(ctx2, 1);
+	ATF_REQUIRE_MSG(vcpu1 != NULL, "vm_vcpu_open: %s",
+	    strerror(errno));
+	session = (struct vm_snapshot_session) {
+		.version = VM_SNAPSHOT_SESSION_VERSION,
+		.op = VM_SNAPSHOT_SESSION_BEGIN,
+	};
+	ATF_REQUIRE_EQ_MSG(vm_snapshot_session(ctx, &session), 0,
+	    "BEGIN: %s", strerror(errno));
+	errno = 0;
+	ATF_REQUIRE_EQ(vm_activate_cpu(vcpu1), -1);
+	ATF_REQUIRE_EQ(errno, EBUSY);
+	session.op = VM_SNAPSHOT_SESSION_ABORT;
+	ATF_REQUIRE_EQ_MSG(vm_snapshot_session(ctx, &session), 0,
+	    "ABORT: %s", strerror(errno));
+	ATF_REQUIRE_EQ_MSG(vm_activate_cpu(vcpu1), 0,
+	    "activate after ABORT: %s", strerror(errno));
+	vm_vcpu_close(vcpu1);
+	vm_close(ctx2);
+	vm_vcpu_close(vcpu0);
+	vm_destroy(ctx);
+}
+ATF_TC_CLEANUP(topology_frozen_during_session, tc)
+{
+
+	cleanup_vm(tc);
+}
+
 ATF_TC_WITH_CLEANUP(truncated_vcpu_restore_preserves_state_and_retries);
 ATF_TC_HEAD(truncated_vcpu_restore_preserves_state_and_retries, tc)
 {
@@ -563,6 +614,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, policy_and_descriptor_ownership);
+	ATF_TP_ADD_TC(tp, topology_frozen_during_session);
 	ATF_TP_ADD_TC(tp, truncated_vcpu_restore_preserves_state_and_retries);
 	ATF_TP_ADD_TC(tp, copyout_fault_consumes_exact_operation);
 	ATF_TP_ADD_TC(tp, final_close_aborts);

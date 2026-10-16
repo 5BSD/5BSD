@@ -31,6 +31,10 @@
 
 #define BIT(n)			(1ULL << n)
 
+/* Code segment descriptor attribute bits in the VMCB's 12-bit format. */
+#define	VMCB_CS_ATTRIB_L		BIT(9)
+#define	VMCB_CS_ATTRIB_D		BIT(10)
+
 /*
  * Secure Virtual Machine: AMD64 Programmer's Manual Vol2, Chapter 15
  * Layout of VMCB: AMD64 Programmer's Manual Vol2, Appendix B
@@ -124,9 +128,12 @@
 #define	VMCB_EVENTINJ_TYPE_INTn		4
 
 /* VMCB exit code, APM vol2 Appendix C */
+#define	VMCB_EXIT_DB			0x41
 #define	VMCB_EXIT_MC			0x52
 #define	VMCB_EXIT_INTR			0x60
 #define	VMCB_EXIT_NMI			0x61
+#define	VMCB_EXIT_SMI			0x62
+#define	VMCB_EXIT_INIT			0x63
 #define	VMCB_EXIT_VINTR			0x64
 #define	VMCB_EXIT_PUSHF			0x70
 #define	VMCB_EXIT_POPF			0x71
@@ -138,6 +145,7 @@
 #define	VMCB_EXIT_INVLPGA		0x7A
 #define	VMCB_EXIT_IO			0x7B
 #define	VMCB_EXIT_MSR			0x7C
+#define	VMCB_EXIT_FERR_FREEZE		0x7E
 #define	VMCB_EXIT_SHUTDOWN		0x7F
 #define	VMCB_EXIT_VMRUN			0x80
 #define	VMCB_EXIT_VMMCALL		0x81
@@ -244,10 +252,6 @@ struct vmcb_segment {
 } __attribute__ ((__packed__));
 CTASSERT(sizeof(struct vmcb_segment) == 16);
 
-/* Code segment descriptor attribute in 12 bit format as saved by VMCB. */
-#define	VMCB_CS_ATTRIB_L		BIT(9)	/* Long mode. */
-#define	VMCB_CS_ATTRIB_D		BIT(10)	/* OPerand size bit. */
-
 /*
  * The VMCB is divided into two areas - the first one contains various
  * control bits including the intercept vector and the second one contains
@@ -268,12 +272,17 @@ struct vmcb_ctrl {
 	uint8_t  pad2[3];	/* 0x5D-0x5F: Reserved. */
 	uint8_t	 v_tpr;		/* 0x60: V_TPR, guest CR8 */
 	uint8_t	 v_irq:1;	/* Is virtual interrupt pending? */
-	uint8_t	:7; 		/* Padding */
+	uint8_t	:2;
+	uint8_t v_nmi_pending:1;
+	uint8_t v_nmi_blocking:1;
+	uint8_t	:3;
 	uint8_t v_intr_prio:4;	/* 0x62: Priority for virtual interrupt. */
 	uint8_t v_ign_tpr:1;
 	uint8_t :3;
 	uint8_t	v_intr_masking:1; /* Guest and host sharing of RFLAGS. */
-	uint8_t	:7;
+	uint8_t	:1;
+	uint8_t v_nmi_enable:1;
+	uint8_t	:5;
 	uint8_t	v_intr_vector;	/* 0x64: Vector for virtual interrupt. */
 	uint8_t pad3[3];	/* 0x65-0x67 Reserved. */
 	uint64_t intr_shadow:1; /* 0x68: Interrupt shadow, section15.2.1 APM2 */
@@ -354,8 +363,16 @@ CTASSERT(offsetof(struct vmcb, state) == 0x400);
 
 int	vmcb_read(struct svm_vcpu *vcpu, int ident, uint64_t *retval);
 int	vmcb_write(struct svm_vcpu *vcpu, int ident, uint64_t val);
+int	vmcb_read_from(struct svm_vcpu *vcpu, struct vmcb *vmcb, int ident,
+	    uint64_t *retval);
+int	vmcb_write_to(struct svm_vcpu *vcpu, struct vmcb *vmcb, int ident,
+	    uint64_t val);
 int	vmcb_setdesc(struct svm_vcpu *vcpu, int ident, struct seg_desc *desc);
 int	vmcb_getdesc(struct svm_vcpu *vcpu, int ident, struct seg_desc *desc);
+int	vmcb_setdesc_to(struct svm_vcpu *vcpu, struct vmcb *vmcb, int ident,
+	    struct seg_desc *desc);
+int	vmcb_getdesc_from(struct svm_vcpu *vcpu, struct vmcb *vmcb,
+	    int ident, struct seg_desc *desc);
 int	vmcb_seg(struct vmcb *vmcb, int ident, struct vmcb_segment *seg);
 #ifdef BHYVE_SNAPSHOT
 int	vmcb_getany(struct svm_vcpu *vcpu, int ident, uint64_t *val);

@@ -46,6 +46,7 @@
 #include "vmm_util.h"
 #include "vpvclock.h"
 #include "x86.h"
+#include "amd/nested_svm_cpuid.h"
 #include "x86_cpuid.h"
 
 SYSCTL_DECL(_hw_vmm);
@@ -53,6 +54,11 @@ static SYSCTL_NODE(_hw_vmm, OID_AUTO, topology, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
     NULL);
 
 #define CPUID_VM_SIGNATURE	0x40000000
+/* VM_MAXUSER_ADDRESS_LA48 is 2^47, both nested translation roots' limit. */
+#define NESTED_LA48_GPA_WIDTH	47U
+#define NESTED_SVM_CPUID_NPT	(1U << 0)
+#define NESTED_SVM_CPUID_LBRV	(1U << 1)
+#define NESTED_SVM_CPUID_NRIPS	(1U << 3)
 
 /*
  * When the KVM paravirtual clock interface is advertised, the KVM signature
@@ -95,14 +101,15 @@ log2(u_int x)
 
 static int
 x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
-    uint64_t *rcx, uint64_t *rdx, bool baseline)
+    uint64_t *rcx, uint64_t *rdx, bool baseline,
+    const uint64_t *guest_cr4, bool nested_svm_l2)
 {
 	struct vm *vm = vcpu_vm(vcpu);
 	int vcpu_id = vcpu_vcpuid(vcpu);
 	const struct xsave_limits *limits;
 	uint64_t cr4;
 	int error, enable_invpcid, enable_rdpid, enable_rdtscp, level,
-	    nested_vmx, width;
+	    nested_vmx, nested_svm, width;
 	unsigned int func, regs[4], logical_cpus, param;
 	enum x2apic_state x2apic_state;
 	uint16_t cores, maxcpus, sockets, threads;
@@ -167,6 +174,24 @@ x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 			 */
 			regs[0] = (regs[0] & ~0xffU) |
 			    vm_mtrr_maxphyaddr(regs[0] & 0xffU);
+			/*
+			 * Nested VMX currently backs EPT02 with an LA48 user vmspace.
+			 * The VMX capability model bounds L2 physical addresses to that
+			 * root, so L1 must see the same limit in MAXPHYADDR.  Otherwise
+			 * an L1 can legitimately place a VMCS12 or L2 page beyond the
+			 * region the nested pmap can represent.
+			 */
+			error = vm_get_capability(vcpu, VM_CAP_NESTED_VMX,
+			    &nested_vmx);
+			if (error == 0 && nested_vmx != 0)
+				regs[0] = (regs[0] & ~0xffU) |
+				    MIN(regs[0] & 0xffU, NESTED_LA48_GPA_WIDTH);
+			/* NPT02 has the same guest-physical root limit as EPT02. */
+			error = vm_get_capability(vcpu, VM_CAP_NESTED_SVM,
+			    &nested_svm);
+			if (error == 0 && nested_svm != 0)
+				regs[0] = (regs[0] & ~0xffU) |
+				    MIN(regs[0] & 0xffU, NESTED_LA48_GPA_WIDTH);
 			if (vmm_is_svm()) {
 				/*
 				 * As on Intel (0000_0007:0, EDX), mask out
@@ -194,13 +219,38 @@ x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 			}
 			break;
 
+		case 0x8000000a:
+			/*
+			 * Expose only SVM facilities implemented by this VMM.  In
+			 * particular, AVIC and virtual GIF cannot be passed to L1.
+			 */
+			if (vmm_is_svm()) {
+				error = vm_get_capability(vcpu, VM_CAP_NESTED_SVM,
+				    &nested_svm);
+				if (error == 0 && nested_svm != 0) {
+					cpuid_count(func, param, regs);
+					regs[3] &= NESTED_SVM_CPUID_NPT |
+					    NESTED_SVM_CPUID_LBRV |
+					    NESTED_SVM_CPUID_NRIPS;
+				} else {
+					regs[0] = 0;
+					regs[1] = 0;
+					regs[2] = 0;
+					regs[3] = 0;
+				}
+			} else {
+				cpuid_count(func, param, regs);
+			}
+			break;
+
 		case CPUID_8000_0001:
 			cpuid_count(func, param, regs);
 
-			/*
-			 * Hide SVM from guest.
-			 */
-			regs[2] &= ~AMDID2_SVM;
+			/* Keep the SVM bit consistent with the optional backend. */
+			error = vm_get_capability(vcpu, VM_CAP_NESTED_SVM,
+			    &nested_svm);
+			if (error != 0 || nested_svm == 0)
+				regs[2] &= ~AMDID2_SVM;
 
 			/*
 			 * Don't advertise extended performance counter MSRs
@@ -395,11 +445,15 @@ x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 			 */
 			regs[2] &= ~CPUID2_OSXSAVE;
 			if (!baseline && (regs[2] & CPUID2_XSAVE)) {
-				error = vm_get_register(vcpu,
-				    VM_REG_GUEST_CR4, &cr4);
-				if (error)
-					panic("x86_emulate_cpuid: error %d "
-					      "fetching %%cr4", error);
+				if (guest_cr4 != NULL)
+					cr4 = *guest_cr4;
+				else {
+					error = vm_get_register(vcpu,
+					    VM_REG_GUEST_CR4, &cr4);
+					if (error)
+						panic("x86_emulate_cpuid: error %d "
+						    "fetching %%cr4", error);
+				}
 				if (cr4 & CR4_XSAVE)
 					regs[2] |= CPUID2_OSXSAVE;
 			}
@@ -730,6 +784,8 @@ default_leaf:
 			cpuid_count(func, param, regs);
 			break;
 	}
+	if (nested_svm_l2)
+		svm_nested_l2_cpuid_filter(func, regs);
 
 	/*
 	 * CPUID clears the upper 32-bits of the long-mode registers.
@@ -747,7 +803,17 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
     uint64_t *rcx, uint64_t *rdx)
 {
 
-	return (x86_emulate_cpuid_impl(vcpu, rax, rbx, rcx, rdx, false));
+	return (x86_emulate_cpuid_impl(vcpu, rax, rbx, rcx, rdx, false,
+	    NULL, false));
+}
+
+int
+x86_emulate_cpuid_nested_svm_l2(struct vcpu *vcpu, uint64_t guest_cr4,
+    uint64_t *rax, uint64_t *rbx, uint64_t *rcx, uint64_t *rdx)
+{
+
+	return (x86_emulate_cpuid_impl(vcpu, rax, rbx, rcx, rdx, false,
+	    &guest_cr4, true));
 }
 
 int
@@ -755,7 +821,8 @@ x86_emulate_cpuid_baseline(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
     uint64_t *rcx, uint64_t *rdx)
 {
 
-	return (x86_emulate_cpuid_impl(vcpu, rax, rbx, rcx, rdx, true));
+	return (x86_emulate_cpuid_impl(vcpu, rax, rbx, rcx, rdx, true,
+	    NULL, false));
 }
 
 bool

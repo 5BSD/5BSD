@@ -155,6 +155,14 @@ fail()
 	exit 1
 }
 
+if command -v python3 >/dev/null 2>&1; then
+	python_cmd=python3
+elif command -v python3.12 >/dev/null 2>&1; then
+	python_cmd=python3.12
+else
+	fail "Python 3 is required for source contract checks"
+fi
+
 [ -d "$src/sys" ] || fail "source tree not found at $src"
 if [ ! -f "$ledger" ]; then
 	ledger="$src/tests/sys/vmm/vmx-nested-requirements.tsv"
@@ -849,7 +857,7 @@ for contract in \
 	rg -q -F "$contract" "$event_coordinator_source" ||
 	    fail "coordinator cancellation interlock is missing: $contract"
 done
-python3 - "$event_coordinator_source" <<'PY' ||
+"$python_cmd" - "$event_coordinator_source" <<'PY' ||
 import pathlib
 import sys
 
@@ -897,7 +905,7 @@ for contract in \
 	    "$event_coordinator_header" ||
 	    fail "multi-target startup claim boundary is missing: $contract"
 done
-python3 - "$event_coordinator_source" <<'PY' ||
+"$python_cmd" - "$event_coordinator_source" <<'PY' ||
 import pathlib
 import sys
 
@@ -948,7 +956,7 @@ for contract in \
 	    "$event_coordinator_header" ||
 	    fail "multi-target startup publication is missing: $contract"
 done
-python3 - "$event_coordinator_source" <<'PY' ||
+"$python_cmd" - "$event_coordinator_source" <<'PY' ||
 import pathlib
 import sys
 
@@ -985,7 +993,7 @@ for contract in \
 	rg -q -F "$contract" "$vmm_vm_source" ||
 	    fail "VM startup publication adapter is missing: $contract"
 done
-python3 - "$vmm_vm_source" <<'PY' ||
+"$python_cmd" - "$vmm_vm_source" <<'PY' ||
 import pathlib
 import sys
 
@@ -1068,7 +1076,7 @@ for contract in \
 	    "$src/sys/dev/vmm/vmm_vm.h" ||
 	    fail "startup vCPU notification boundary is missing: $contract"
 done
-python3 - "$src/sys/dev/vmm/vmm_vm.c" <<'PY' ||
+"$python_cmd" - "$src/sys/dev/vmm/vmm_vm.c" <<'PY' ||
 import pathlib
 import sys
 
@@ -1155,7 +1163,8 @@ for contract in \
     '!plan->active_l2 || !plan->consume_claim' \
     'plan->kind == VMX_NESTED_STARTUP_SIPI &&' \
     '!plan->discard_mtf ? 0 : EINVAL' \
-    'transaction->plan.active_l2 ?'; do
+    'if (transaction->plan.active_l2)' \
+    'ops->discard_l0_sipi(arg)'; do
 	rg -q -F "$contract" "$src/sys/amd64/vmm/intel/vmx_nested_event.c" \
 	    "$startup_transaction_source" ||
 	    fail "startup discard provenance is missing: $contract"
@@ -1317,12 +1326,14 @@ rg -q -U --pcre2 \
     "$vmm_source" ||
     fail "VM reset changes coordinator generations before architecture claims"
 for contract in \
-	'svm_vcpu_event_cleanup_check(void *vcpui __unused)' \
+	'svm_vcpu_event_cleanup_check(void *vcpui)' \
+	'vcpu_startup_event_claim_check(vcpu->vcpu,' \
 	'.vcpu_event_cleanup_check = svm_vcpu_event_cleanup_check' \
-	'svm_vcpu_event_cleanup(void *vcpui __unused)' \
+	'svm_vcpu_event_cleanup(void *vcpui)' \
+	'svm_startup_claim_release(vcpu,' \
 	'.vcpu_event_cleanup = svm_vcpu_event_cleanup'; do
 	rg -q -F "$contract" "$svm_source" ||
-	    fail "AMD event cleanup no-op is missing: $contract"
+	    fail "AMD event claim cleanup is missing: $contract"
 done
 for contract in \
 	'vmx_nested_startup_dispatch_init(&vcpu->nested_startup_dispatch)' \
@@ -2903,7 +2914,7 @@ rg -q -U --pcre2 \
     "$vmx_source" ||
     fail "fallible INIT EPT retirement is missing or incorrectly affects SIPI"
 rg -q -U --pcre2 \
-    'VMX_NESTED_STARTUP_ACTION_APPLY_L0[\s\S]*?ops_snapshot.prepare_l0\(arg,[\s\S]*?VMX_NESTED_STARTUP_TRANSACTION_PLANNED' \
+    'VMX_NESTED_STARTUP_ACTION_APPLY_L0[\s\S]*?ops_snapshot.prepare_l0\(arg,[\s\S]*?VMX_NESTED_STARTUP_TRANSACTION_RETAINED' \
     "$startup_transaction_source" ||
     fail "startup preparation does not retain a retryable exact transaction"
 for contract in \
@@ -3550,8 +3561,8 @@ rg -q -U --pcre2 \
     'vmx_startup_kernel_actions_ready\(void\)[\s\S]*?return \(true\);' \
     "$vmx_source" || fail "qualified VMX startup readiness is not enabled"
 rg -q -U --pcre2 \
-    'svm_startup_kernel_actions_ready\(void\)[\s\S]*?return \(false\);' \
-    "$svm_source" || fail "unconverted SVM startup readiness is not fail closed"
+	'static int kernel_startup_experimental;[\s\S]*?SYSCTL_INT\(_hw_vmm_svm, OID_AUTO, kernel_startup_experimental,[\s\S]*?CTLFLAG_RDTUN, &kernel_startup_experimental, 0,[\s\S]*?svm_startup_kernel_actions_ready\(void\)[\s\S]*?return \(kernel_startup_experimental == 1\);' \
+	"$svm_source" || fail "SVM startup hardware-test gate is not default off"
 rg -q 'NVMX-EVENT-183.*Readiness is explicit and backend-specific' "$ledger" ||
 	fail "backend-specific readiness requirement is missing"
 # private-test: backend-specific-readiness-policy
@@ -3991,12 +4002,10 @@ for source in \
 	! rg -q 'vmx_nested_attempt_plan|VMX_NESTED_ATTEMPT_|host_error' "$source" ||
 		fail "Intel private attempt state leaked into portable interface: $source"
 done
-for contract in \
-    'svm_vcpu_startup_event_step' \
-    'return (EOPNOTSUPP);'; do
-	rg -q -F "$contract" "$svm_source" ||
-	    fail "AMD startup dispatch stub omits: $contract"
-done
+rg -q -U --pcre2 \
+    'svm_vcpu_startup_event_step\(void \*vcpui,[\s\S]*?vcpu_get_state\(vcpu->vcpu, NULL\) != VCPU_FROZEN[\s\S]*?vcpu_startup_event_claim_begin\(vcpu->vcpu,[\s\S]*?vcpu_startup_event_claim_check\(vcpu->vcpu,[\s\S]*?startup_claim.vcpuid != \(uint32_t\)vcpu->vcpuid[\s\S]*?startup_claim.kind == VMM_STARTUP_EVENT_INIT &&[\s\S]*?startup_claim.vector != 0[\s\S]*?if \(vcpu->nested_active\)' \
+    "$svm_source" ||
+    fail "AMD startup claim is not bound to the frozen target before dispatch"
 for contract in \
     'vcpu_get_state(vcpu->vcpu, NULL) != VCPU_FROZEN' \
     'vmx_nested_startup_dispatch_step(' \
@@ -5374,7 +5383,7 @@ rg -q -F 'vmm_event_coordinator.c:prepared-wait-ticket-cleanup' \
     fail "prepared wait-ticket cleanup is absent from the private ledger"
 
 # private-test: event-checkpoint-owner-allocation-preflight
-python3 - "$event_coordinator_source" <<'PY' ||
+"$python_cmd" - "$event_coordinator_source" <<'PY' ||
 import re
 import sys
 
@@ -5530,7 +5539,7 @@ rg -q 'NVMX-STATE-032.*destination XSAVE mask' "$ledger" ||
 # happens while the coordinator has stopped the guest.  None of these paths
 # may enter an unbounded allocator wait.  Parse complete function bodies so a
 # later helper refactor cannot hide M_WAITOK beyond a line-oriented window.
-if ! python3 - "$vmx_source" "$checkpoint_source" "$registry_source" \
+if ! "$python_cmd" - "$vmx_source" "$checkpoint_source" "$registry_source" \
     "$registry_state_source" "$test_source" <<'PY'
 import pathlib
 import re
@@ -5641,7 +5650,7 @@ fi
 # architecture helpers also enforce that private synchronization contract.
 # This prevents a future internal caller or dispatch-table refactor from
 # staging scratch or publishing VM-wide nested ownership beside a running CPU.
-if ! python3 - "$vmx_source" "$vmm_dev_machdep_source" <<'PY'
+if ! "$python_cmd" - "$vmx_source" "$vmm_dev_machdep_source" <<'PY'
 import pathlib
 import re
 import sys
@@ -5723,7 +5732,7 @@ rg -q -F '#include "vmx_nested_mtf_owner.h"' "$vmx_header" ||
     fail "vmx_vcpu lacks the typed nested MTF runtime owner declaration"
 rg -q -F 'struct vmx_nested_mtf_owner nested_mtf_owner;' "$vmx_header" ||
     fail "vmx_vcpu does not retain a generation-bound nested MTF owner"
-if ! python3 - "$vmx_source" <<'PY'
+if ! "$python_cmd" - "$vmx_source" <<'PY'
 import pathlib
 import re
 import sys
@@ -7015,7 +7024,7 @@ rg -q -F 'vmx_nested_caps.h:VMX_NESTED_VIRTUAL_REVISION_ID' \
 # decoder's exit RIP/decoded length/nextrip tuple, and invoke the portable
 # commit before destination-local thaw.  An EPT VM-exit instruction length is
 # not an architectural completion oracle and must never be substituted here.
-python3 - "$vmm_source" "$vmx_source" <<'PY' ||
+"$python_cmd" - "$vmm_source" "$vmx_source" <<'PY' ||
 import re
 import sys
 
@@ -7207,7 +7216,7 @@ rg -q -U --pcre2 \
 # freeze must put the owner into the newly captured, strictly newer portable
 # image before publishing it, and direct nested-exit publication must consume
 # the exact owner only after publication succeeds.
-python3 - "$vmx_source" <<'PY' ||
+"$python_cmd" - "$vmx_source" <<'PY' ||
 import re
 import sys
 
@@ -7644,7 +7653,7 @@ done
 # run loop must consume it through the backend while the vCPU is frozen and
 # must never return that value to the userspace VM_RUN ABI.
 rg -q -U --pcre2 \
-    'case VM_EXITCODE_VMM_INTERNAL:[[:space:]]*error = vm_handle_internal_exit\(vcpu\);[[:space:]]*break;' \
+    'case VM_EXITCODE_VMM_INTERNAL:[[:space:]]*error = vm_handle_internal_exit\(vcpu, &retu\);[[:space:]]*break;' \
     "$vmm_source" ||
     fail "kernel-private internal exits can escape the common VM_RUN loop"
 
@@ -8441,7 +8450,7 @@ END { exit bad || !common || !vmx || !nested || !svm }
 # do not catch a moved no-entry or cleanup edge that leaves a stale review row
 # behind.  This remains a source review gate, not evidence of hardware
 # placement or activation.
-python3 - "$entry_edge_matrix" "$vmm_source" "$vmx_source" "$svm_source" <<'PY' || fail "machine-entry edge matrix source anchors are stale"
+"$python_cmd" - "$entry_edge_matrix" "$vmm_source" "$vmx_source" "$svm_source" <<'PY' || fail "machine-entry edge matrix source anchors are stale"
 import csv
 import re
 import sys
@@ -8639,7 +8648,7 @@ done
 # real entry.  This source-order assertion is the rootless evidence available
 # on the Intel development host; live AMD qualification remains a release
 # gate rather than a fabricated passing test.
-python3 - "$svm_source" <<'PY' || fail "SVM CPU-residency publication is not post-VMRUN"
+"$python_cmd" - "$svm_source" <<'PY' || fail "SVM CPU-residency publication is not post-VMRUN"
 import sys
 
 source = open(sys.argv[1], encoding="utf-8").read()
@@ -8649,7 +8658,10 @@ body = source[start:end]
 launch = body.index("svm_launch(vmcb_pa, gctx, get_pcpu());")
 publish = body.index("vcpu->lastcpu = curcpu;")
 stat = body.index("vmm_stat_incr(vcpu->vcpu, VCPU_MIGRATIONS, 1);")
-if not (launch < publish < stat):
+valid_exit = body.index("entered_guest = ctrl->exitcode != VMCB_EXIT_INVALID;")
+if not (launch < valid_exit < publish < stat):
+    raise SystemExit(1)
+if "if (migrated && entered_guest)" not in body:
     raise SystemExit(1)
 if "migrated = vcpu->lastcpu != curcpu;" not in body:
     raise SystemExit(1)
@@ -8663,7 +8675,7 @@ PY
 # a next entry must rebuild them even when source and destination CPU numbers
 # happen to match.  This source-level contract is architecture-neutral in
 # intent while the field mechanics remain private to each backend.
-python3 - "$vmx_source" "$svm_source" "$vmm_source" <<'PY' || fail "snapshot restore violates the staged architecture contract"
+"$python_cmd" - "$vmx_source" "$svm_source" "$vmm_source" <<'PY' || fail "snapshot restore violates the staged architecture contract"
 import pathlib
 import re
 import sys
@@ -9086,7 +9098,10 @@ done
 for contract in \
 	'struct vmm_startup_entry_owner *entry_owner)' \
 	'vmm_startup_entry_owner_software_exit(entry_owner,' \
-	'vcpu_startup_entry_owner_guard_before(vcpu->vcpu,' \
+	'vcpu_startup_entry_owner_guard_before_attempt(vcpu->vcpu,' \
+	'vmm_startup_entry_owner_resolve_deferred(entry_owner,' \
+	'vmm_startup_entry_owner_commit_attempt(' \
+	'vmm_startup_entry_owner_abort_attempt(' \
 	'vmm_startup_entry_owner_guard_after(entry_owner,'; do
 	rg -q -F "$contract" "$svm_source" ||
 	    fail "SVM run-owner ordinary-entry conversion omits: $contract"
@@ -9209,12 +9224,10 @@ count=$(rg -c '^vcpu_startup_entry_owner_guard_before_attempt\(' \
 	"$src/sys/dev/vmm/vmm_vm.c" || true)
 [ "$count" -eq 1 ] ||
 	fail "attempted-entry wrapper has an unexpected live-observation implementation count"
-# Ordinary VMX has a complete, separately checked attempted-entry transaction.
-# Nested VMX now uses the same common protocol through a private adapter; SVM
-# retains its independently reviewed generic ordinary-loop boundary.
-if rg -q 'vcpu_startup_entry_owner_guard_before_(defer|attempt)' \
-	"$src/sys/amd64/vmm/amd/svm.c"; then
-	fail "SVM attempted/deferred owner was wired without a reviewed transaction"
+# Ordinary VMX and SVM use attempted entry.  The SVM commit/abort ordering is
+# checked against the production run loop below; it has no deferred adapter.
+if rg -q 'vcpu_startup_entry_owner_guard_before_defer' "$svm_source"; then
+	fail "SVM deferred owner was wired without a reviewed transaction"
 fi
 rg -q -F '#include "vmx_nested_owner_outcome.h"' "$vmx_source" ||
 	fail "nested VMX runtime does not import its reviewed owner adapter"
@@ -9366,9 +9379,17 @@ rg -q -U --pcre2 \
 	"$vmx_source" ||
 	fail "nested post-entry freeze boundary is no longer source-ordered"
 rg -q -U --pcre2 \
-	'svm_run\(void \*vcpui,[\s\S]*?svm_dr_enter_guest\(gctx\);[\s\S]*?vcpu_startup_entry_owner_guard_before\(vcpu->vcpu,[\s\S]*?if \(error != 0 \|\| owner_runtime.action !=[\s\S]*?svm_dr_leave_guest\(gctx\);[\s\S]*?svm_pmap_deactivate\(pmap\);[\s\S]*?svm_set_dirty\(vcpu, 0xffffffff\);[\s\S]*?enable_gintr\(\);[\s\S]*?break;[\s\S]*?svm_launch\(vmcb_pa, gctx, get_pcpu\(\)\);[\s\S]*?handled = svm_vmexit\(svm_sc, vcpu, vmexit\);[\s\S]*?vmm_startup_entry_owner_guard_after\(entry_owner,' \
+	'svm_run\(void \*vcpui,[\s\S]*?vcpu_startup_entry_owner_guard_before_attempt\(vcpu->vcpu,[\s\S]*?svm_pmap_deactivate\(run_pmap\);[\s\S]*?svm_set_dirty\(vcpu, 0xffffffff\);[\s\S]*?vmm_startup_entry_owner_resolve_deferred\(entry_owner,[\s\S]*?svm_dr_enter_guest\(gctx\);[\s\S]*?svm_launch\(vmcb_pa, gctx, get_pcpu\(\)\);[\s\S]*?svm_dr_leave_guest\(gctx\);[\s\S]*?entered_guest = ctrl->exitcode != VMCB_EXIT_INVALID;[\s\S]*?vmm_startup_entry_owner_commit_attempt\([\s\S]*?vmm_startup_entry_owner_abort_attempt\([\s\S]*?svm_pmap_deactivate\(run_pmap\);[\s\S]*?handled = svm_vmexit\(svm_sc, vcpu, vmexit\);[\s\S]*?if \(entry_owner != NULL && entered_guest\)[\s\S]*?vmm_startup_entry_owner_guard_after\(entry_owner,' \
 	"$svm_source" ||
 	fail "SVM run-owner guard/cleanup is not ordered around VMRUN"
+rg -q -U --pcre2 \
+	'svm_nested_l2_exit\(struct svm_vcpu \*vcpu\)[\s\S]*?switch \(svm_nested_l2_l0_exit_action\(code\)\)[\s\S]*?case SVM_NESTED_L2_FAIL_L0:[\s\S]*?return \(EPROTO\);[\s\S]*?if \(code == VMCB_EXIT_NPF\)' \
+	"$svm_source" ||
+	fail "SVM L0-only exits are not classified before L1 routing"
+rg -q -U --pcre2 \
+	'case VMCB_EXIT_INVALID:[\s\S]*?return \(SVM_NESTED_L2_FAIL_L0\);' \
+	"$src/sys/amd64/vmm/amd/nested_svm_exit_policy.c" ||
+	fail "SVM VMCB02 rejection is no longer an L0 failure"
 if rg -q -F 'vmm_startup_entry_owner' "$src/sys/arm64" "$src/sys/riscv"; then
 	fail "amd64-private run-owner parameter leaked to another architecture"
 fi
@@ -9397,9 +9418,9 @@ rg -q -U --pcre2 \
 	"$vmx_source" ||
 	fail "VMX startup readiness is not enabled after all-path owner conversion"
 rg -q -U --pcre2 \
-	'svm_startup_kernel_actions_ready\(void\)[\s\S]*?return \(false\);' \
+	'static int kernel_startup_experimental;[\s\S]*?SYSCTL_INT\(_hw_vmm_svm, OID_AUTO, kernel_startup_experimental,[\s\S]*?CTLFLAG_RDTUN, &kernel_startup_experimental, 0,[\s\S]*?svm_startup_kernel_actions_ready\(void\)[\s\S]*?return \(kernel_startup_experimental == 1\);' \
 	"$svm_source" ||
-	fail "SVM startup readiness changed without an all-path owner conversion review"
+	fail "SVM startup must require an explicit module-load hardware-test opt-in"
 # vmm_dev.c is also built by arm64 and riscv.  The complete private startup
 # ABI, including its amd64-only machine operation, must remain inside one
 # architecture guard rather than leaking a vmmops dependency into other VMMs.

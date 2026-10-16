@@ -100,6 +100,10 @@ vmm_snapshot_x86_xcr0_validate(uint64_t value, uint64_t allowed,
 	    (VMM_SNAPSHOT_X86_XCR0_AVX |
 	    VMM_SNAPSHOT_X86_XCR0_AVX512))
 		return (EINVAL);
+	if ((value & VMM_SNAPSHOT_X86_XCR0_AMX) != 0 &&
+	    (value & VMM_SNAPSHOT_X86_XCR0_AMX) !=
+	    VMM_SNAPSHOT_X86_XCR0_AMX)
+		return (EINVAL);
 	return (0);
 }
 
@@ -405,10 +409,6 @@ vmm_snapshot_x86_fpu_area_validate(uint32_t flags, uint64_t bitmap,
 	if ((bitmap & ~VMM_SNAPSHOT_X86_XSAVE_USER_MASK) != 0 ||
 	    vmm_snapshot_x86_xcr0_validate(bitmap,
 	    VMM_SNAPSHOT_X86_XSAVE_USER_MASK, true) != 0)
-		return (EINVAL);
-	if ((bitmap & VMM_SNAPSHOT_X86_XCR0_AMX) != 0 &&
-	    (bitmap & VMM_SNAPSHOT_X86_XCR0_AMX) !=
-	    VMM_SNAPSHOT_X86_XCR0_AMX)
 		return (EINVAL);
 	xstate_bv = le64dec(area + VMM_SNAPSHOT_X86_FPU_XSTATE_BV_OFF);
 	xcomp_bv = le64dec(area + VMM_SNAPSHOT_X86_FPU_XCOMP_BV_OFF);

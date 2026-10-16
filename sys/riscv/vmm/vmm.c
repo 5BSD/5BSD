@@ -68,6 +68,7 @@
 #include <dev/pci/pcireg.h>
 
 #include <dev/vmm/vmm_dev.h>
+#include <dev/vmm/vmm_event_coordinator.h>
 #include <dev/vmm/vmm_ktr.h>
 #include <dev/vmm/vmm_mem.h>
 #include <dev/vmm/vmm_vm.h>
@@ -170,22 +171,32 @@ vm_init(struct vm *vm, bool create)
 	}
 }
 
-struct vcpu *
-vm_alloc_vcpu(struct vm *vm, int vcpuid)
+int
+vm_alloc_vcpu(struct vm *vm, int vcpuid, struct vcpu **vcpup)
 {
 	struct vcpu *vcpu;
+	int error;
 
-	if (vcpuid < 0 || vcpuid >= vm_get_maxcpus(vm))
-		return (NULL);
+	if (vcpup == NULL || vcpuid < 0 || vcpuid >= vm_get_maxcpus(vm))
+		return (EINVAL);
+	*vcpup = NULL;
 
 	vcpu = (struct vcpu *)
 	    atomic_load_acq_ptr((uintptr_t *)&vm->vcpu[vcpuid]);
-	if (__predict_true(vcpu != NULL))
-		return (vcpu);
+	if (__predict_true(vcpu != NULL)) {
+		*vcpup = vcpu;
+		return (0);
+	}
 
 	sx_xlock(&vm->vcpus_init_lock);
 	vcpu = vm->vcpu[vcpuid];
 	if (vcpu == NULL && !vm->dying) {
+		error = vmm_event_coordinator_checkpoint_topology_admit(
+		    vm_event_coordinator(vm));
+		if (error != 0) {
+			sx_xunlock(&vm->vcpus_init_lock);
+			return (error);
+		}
 		vcpu = vcpu_alloc(vm, vcpuid);
 		vcpu_init(vcpu);
 
@@ -197,7 +208,10 @@ vm_alloc_vcpu(struct vm *vm, int vcpuid)
 		    (uintptr_t)vcpu);
 	}
 	sx_xunlock(&vm->vcpus_init_lock);
-	return (vcpu);
+	if (vcpu == NULL)
+		return (EINVAL);
+	*vcpup = vcpu;
+	return (0);
 }
 
 int

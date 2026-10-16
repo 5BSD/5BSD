@@ -667,7 +667,7 @@ vm_rev_map_gpa(struct vmctx *ctx, void *addr)
 
 	lowsize = ctx->lowmem_size;
 	if (lowsize > 0)
-		if (offaddr <= lowsize)
+		if (offaddr < lowsize)
 			return (offaddr);
 
 	highsize = ctx->highmem_size;

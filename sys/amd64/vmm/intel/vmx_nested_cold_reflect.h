@@ -22,6 +22,13 @@ int	vmx_nested_cold_reflect_publish(struct vmx_nested_context *,
 	    struct vmx_nested_entry_runtime *,
 	    const struct vmx_nested_l2_portable_state *);
 
+/* Replace a pending cold L0 emulation with a software-discovered EPT12 exit. */
+int	vmx_nested_cold_software_ept_reflect_publish(
+	    struct vmx_nested_context *, struct vmx_nested_l0_continuation *,
+	    struct vmx_nested_entry_runtime *,
+	    const struct vmx_nested_l2_portable_state *,
+	    const struct vmx_nested_exit_information *);
+
 /*
  * Publish a synthetic monitor-trap VM exit after an L0-emulated instruction.
  * This is deliberately distinct from the original continuation's reflected

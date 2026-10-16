@@ -1303,6 +1303,8 @@
 #define	AMDK8_C1EONCMPHALT	(1ULL << 28)
 
 /* MSR_VM_CR related */
+#define	VM_CR_R_INIT		0x02	/* SVM: redirect INIT to #SX */
+#define	VM_CR_LOCK		0x08	/* SVM: lock SVMDIS */
 #define	VM_CR_SVMDIS		0x10	/* SVM: disabled by BIOS */
 
 /* MSR_DE_CFG */

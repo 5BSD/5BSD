@@ -1712,6 +1712,24 @@ vmm_event_coordinator_unlock_checkpoint(
 }
 
 int
+vmm_event_coordinator_checkpoint_topology_admit(
+    struct vmm_event_coordinator *coordinator)
+{
+	int error;
+
+	if (coordinator == NULL)
+		return (EINVAL);
+	mtx_lock(&coordinator->transaction_lock);
+	error = vmm_event_coordinator_validate(coordinator);
+	if (error == 0 && atomic_load_acq_int(&coordinator->cancelled) != 0)
+		error = ECANCELED;
+	if (error == 0 && coordinator->transaction_active != 0)
+		error = EBUSY;
+	mtx_unlock(&coordinator->transaction_lock);
+	return (error);
+}
+
+int
 vmm_event_coordinator_checkpoint_begin(
     struct vmm_event_coordinator *coordinator,
     struct vmm_event_checkpoint *checkpoint,

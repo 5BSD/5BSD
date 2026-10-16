@@ -118,7 +118,7 @@ int vm_mem_dirty_log_map_snapshot(struct vm *,
  * mem_segs_lock.  They remain kernel-internal.
  */
 int vm_mem_dirty_log_enable(struct vm *,
-    const struct vmm_dirty_log_range *);
+    const struct vmm_dirty_log_range *, bool);
 int vm_mem_dirty_log_begin(struct vm *,
     const struct vmm_dirty_log_range *, enum vmm_dirty_log_collect_mode,
     struct vmm_dirty_log_ticket *);
@@ -142,8 +142,14 @@ void *vm_gpa_hold(struct vcpu *vcpu, vm_paddr_t gpa, size_t len,
 void *vm_gpa_hold_global(struct vm *vm, vm_paddr_t gpa, size_t len,
     int prot, void **cookie);
 void vm_gpa_release(void *cookie);
+/*
+ * Only prot intersected with L0 source rights is mapped; required_prot must
+ * be present in both.  Passing required_prot == prot retains strict mapping.
+ * On success effective_prot, when non-NULL, receives the installed rights.
+ */
 int vm_gpa_map_alias(struct vcpu *vcpu, struct vmspace *dst_vmspace,
-    vm_paddr_t dst_gpa, vm_paddr_t src_gpa, size_t len, int prot);
+    vm_paddr_t dst_gpa, vm_paddr_t src_gpa, size_t len, int prot,
+    int required_prot, int *effective_prot);
 bool vm_mem_allocated(struct vcpu *vcpu, vm_paddr_t gpa);
 
 int vm_gla2gpa_nofault(struct vcpu *vcpu, struct vm_guest_paging *paging,

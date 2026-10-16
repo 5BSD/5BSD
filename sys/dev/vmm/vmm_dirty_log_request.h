@@ -24,6 +24,9 @@
 #define VMM_DIRTY_LOG_RESULT_SIZE UINT16_C(80)
 #define VMM_DIRTY_LOG_REQUEST_IOCNUM 118
 
+/* ENABLE may span unmapped guest-physical holes such as the 32-bit MMIO gap. */
+#define VMM_DIRTY_LOG_REQUEST_F_SPARSE_RANGE UINT16_C(1)
+
 /*
  * Bound one synchronous kernel allocation and one vCPU-freeze interval.
  * Larger guests are collected in adjacent requests.  One MiB describes

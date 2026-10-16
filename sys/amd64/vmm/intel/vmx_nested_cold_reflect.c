@@ -116,6 +116,84 @@ vmx_nested_cold_reflect_publish(struct vmx_nested_context *context,
 }
 
 int
+vmx_nested_cold_software_ept_reflect_publish(
+    struct vmx_nested_context *context,
+    struct vmx_nested_l0_continuation *continuation,
+    struct vmx_nested_entry_runtime *runtime,
+    const struct vmx_nested_l2_portable_state *portable,
+    const struct vmx_nested_exit_information *information)
+{
+	struct vmx_nested_internal candidate;
+	struct vmx_nested_entry_runtime runtime_candidate;
+	struct vmx_nested_vmexit_handoff_request request;
+	const struct vmx_nested_continuation_handoff *handoff;
+	int error;
+
+	if (context == NULL || continuation == NULL || runtime == NULL ||
+	    portable == NULL || information == NULL ||
+	    vmx_nested_state_ranges_overlap(context, sizeof(*context),
+	    continuation, sizeof(*continuation)) ||
+	    vmx_nested_state_ranges_overlap(context, sizeof(*context), runtime,
+	    sizeof(*runtime)) ||
+	    vmx_nested_state_ranges_overlap(context, sizeof(*context), portable,
+	    sizeof(*portable)) ||
+	    vmx_nested_state_ranges_overlap(context, sizeof(*context),
+	    information, sizeof(*information)) ||
+	    vmx_nested_state_ranges_overlap(continuation,
+	    sizeof(*continuation), runtime, sizeof(*runtime)) ||
+	    vmx_nested_state_ranges_overlap(continuation,
+	    sizeof(*continuation), portable, sizeof(*portable)) ||
+	    vmx_nested_state_ranges_overlap(continuation,
+	    sizeof(*continuation), information, sizeof(*information)) ||
+	    vmx_nested_state_ranges_overlap(runtime, sizeof(*runtime), portable,
+	    sizeof(*portable)) ||
+	    vmx_nested_state_ranges_overlap(runtime, sizeof(*runtime),
+	    information, sizeof(*information)) ||
+	    context->phase != VMX_NESTED_CONTEXT_GUEST ||
+	    context->internal.kind != VMX_NESTED_INTERNAL_CONTINUATION ||
+	    continuation->state != VMX_NESTED_L0_CONTINUATION_COLD ||
+	    continuation->completion != VMX_NESTED_L0_COMPLETE_RESUME_L2 ||
+	    continuation->rollback_failed ||
+	    runtime->state != VMX_NESTED_ENTRY_RUNTIME_L0_COLD ||
+	    vmx_nested_entry_runtime_validate(runtime) != 0 ||
+	    vmx_nested_l2_portable_validate(portable) != 0 ||
+	    (information->exit_reason != 48 &&
+	    information->exit_reason != 49) || information->launched)
+		return (EINVAL);
+	handoff = &context->internal.operation.continuation;
+	if (handoff->state != VMX_NESTED_CONTINUATION_HANDOFF_PENDING ||
+	    handoff->request.completion != continuation->completion ||
+	    !nvmxcr_id_equal(&handoff->request.id, &continuation->id) ||
+	    !nvmxcr_id_equal(&runtime->id, &continuation->id) ||
+	    !nvmxcr_id_equal(&portable->id, &continuation->id) ||
+	    handoff->request.exit_sequence != continuation->exit_sequence ||
+	    handoff->request.portable_generation !=
+	    continuation->portable_generation ||
+	    portable->portable_generation !=
+	    continuation->portable_generation)
+		return (ESTALE);
+	memset(&candidate, 0, sizeof(candidate));
+	vmx_nested_internal_init(&candidate);
+	memset(&request, 0, sizeof(request));
+	request.id = continuation->id;
+	request.information = *information;
+	request.l2_runtime = portable->runtime;
+	error = vmx_nested_internal_publish_vmexit(&candidate, &request);
+	if (error != 0)
+		return (error);
+	runtime_candidate = *runtime;
+	error = vmx_nested_entry_runtime_l0_reflect_captured(
+	    &runtime_candidate, &continuation->id);
+	if (error != 0)
+		return (error);
+	*runtime = runtime_candidate;
+	context->internal = candidate;
+	context->phase = VMX_NESTED_CONTEXT_EXIT_PENDING;
+	vmx_nested_l0_continuation_init(continuation);
+	return (0);
+}
+
+int
 vmx_nested_cold_mtf_reflect_publish(struct vmx_nested_context *context,
     struct vmx_nested_l0_continuation *continuation,
     struct vmx_nested_entry_runtime *runtime,

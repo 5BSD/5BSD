@@ -52,6 +52,12 @@ ATF_TC_BODY(hole_and_uncollectable_mapping_are_distinct, tc)
 		  .flags = VMM_DIRTY_LOG_MAP_F_COLLECTABLE },
 		{ .range = { .gpa = 2 * DLPAGE, .length = DLPAGE }, .flags = 0 },
 	};
+	const struct vmm_dirty_log_map_entry readonly_entries[] = {
+		{ .range = { .gpa = DLPAGE, .length = DLPAGE },
+		  .flags = VMM_DIRTY_LOG_MAP_F_COLLECTABLE },
+		{ .range = { .gpa = 2 * DLPAGE, .length = DLPAGE },
+		  .flags = VMM_DIRTY_LOG_MAP_F_READONLY_ROM },
+	};
 	const struct vmm_dirty_log_range request = {
 		.gpa = DLPAGE,
 		.length = 2 * DLPAGE,
@@ -60,8 +66,16 @@ ATF_TC_BODY(hole_and_uncollectable_mapping_are_distinct, tc)
 	(void)tc;
 	ATF_CHECK_EQ(vmm_dirty_log_map_covers(hole_entries, nitems(hole_entries),
 	    &request), EFAULT);
+	ATF_CHECK_EQ(vmm_dirty_log_map_sparse(hole_entries,
+	    nitems(hole_entries), &request), 0);
 	ATF_CHECK_EQ(vmm_dirty_log_map_covers(unavailable_entries,
 	    nitems(unavailable_entries), &request), EOPNOTSUPP);
+	ATF_CHECK_EQ(vmm_dirty_log_map_sparse(unavailable_entries,
+	    nitems(unavailable_entries), &request), EOPNOTSUPP);
+	ATF_CHECK_EQ(vmm_dirty_log_map_covers(readonly_entries,
+	    nitems(readonly_entries), &request), EOPNOTSUPP);
+	ATF_CHECK_EQ(vmm_dirty_log_map_sparse(readonly_entries,
+	    nitems(readonly_entries), &request), 0);
 }
 
 ATF_TC_WITHOUT_HEAD(rejects_noncanonical_map_without_mutation);

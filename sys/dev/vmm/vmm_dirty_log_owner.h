@@ -45,6 +45,7 @@ struct vmm_dirty_log_owner {
 	uint64_t	identity;
 	uint32_t	collection_mode;
 	uint32_t	phase;
+	uint32_t	allow_holes;
 };
 
 /*
@@ -56,6 +57,9 @@ struct vmm_dirty_log_owner {
  * reused.
  */
 int	vmm_dirty_log_owner_enable(struct vmm_dirty_log_owner *,
+	    const struct vmm_dirty_log_map_entry *, size_t, uint64_t,
+	    const struct vmm_dirty_log_range *);
+int	vmm_dirty_log_owner_enable_sparse(struct vmm_dirty_log_owner *,
 	    const struct vmm_dirty_log_map_entry *, size_t, uint64_t,
 	    const struct vmm_dirty_log_range *);
 int	vmm_dirty_log_owner_begin(struct vmm_dirty_log_owner *,

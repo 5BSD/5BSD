@@ -266,7 +266,8 @@ vmmdev_dirty_log_request(struct vm *vm,
 		    &probe);
 		if (error != 0)
 			return (error);
-		return (vm_mem_dirty_log_enable(vm, &range));
+		return (vm_mem_dirty_log_enable(vm, &range,
+		    (input.flags & VMM_DIRTY_LOG_REQUEST_F_SPARSE_RANGE) != 0));
 	case VMM_DIRTY_LOG_REQUEST_DISABLE:
 		return (vm_mem_dirty_log_invalidate(vm));
 	case VMM_DIRTY_LOG_REQUEST_OBSERVE:
@@ -1296,11 +1297,9 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 				goto lockfail;
 			}
 		} else {
-			vcpu = vm_alloc_vcpu(sc->vm, vcpuid);
-			if (vcpu == NULL) {
-				error = EINVAL;
+			error = vm_alloc_vcpu(sc->vm, vcpuid, &vcpu);
+			if (error != 0)
 				goto lockfail;
-			}
 			if ((ioctl->flags & VMMDEV_IOCTL_LOCK_ONE_VCPU) != 0) {
 				error = vcpu_lock_one(vcpu);
 				if (error)

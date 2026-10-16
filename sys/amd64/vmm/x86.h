@@ -69,6 +69,8 @@ struct vcpu;
 
 int x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
     uint64_t *rcx, uint64_t *rdx);
+int x86_emulate_cpuid_nested_svm_l2(struct vcpu *vcpu, uint64_t guest_cr4,
+    uint64_t *rax, uint64_t *rbx, uint64_t *rcx, uint64_t *rdx);
 int x86_emulate_cpuid_baseline(struct vcpu *vcpu, uint64_t *rax,
     uint64_t *rbx, uint64_t *rcx, uint64_t *rdx);
 

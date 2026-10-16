@@ -162,10 +162,10 @@ vmx_nested_ept_root_deactivate(void *value)
 int
 vmx_nested_ept_root_populate(void *value, struct vcpu *vcpu,
     uint64_t l2_gpa, uint64_t l1_gpa, uint8_t permissions,
-    bool mode_based_execute)
+    uint8_t access, bool mode_based_execute)
 {
 	struct vmx_nested_ept_root *root;
-	int error, map_prot, prot;
+	int effective_prot, error, map_prot, prot, required_prot;
 
 	root = value;
 	if (root == NULL || vcpu == NULL ||
@@ -177,6 +177,11 @@ vmx_nested_ept_root_populate(void *value, struct vcpu *vcpu,
 	    VMX_NESTED_EPT_ACCESS_WRITE |
 	    VMX_NESTED_EPT_ACCESS_EXECUTE |
 	    VMX_NESTED_EPT_PERMISSION_USER_EXECUTE)) != 0 ||
+	    access == 0 ||
+	    (access & ~(VMX_NESTED_EPT_ACCESS_READ |
+	    VMX_NESTED_EPT_ACCESS_WRITE |
+	    VMX_NESTED_EPT_ACCESS_EXECUTE)) != 0 ||
+	    (permissions & access) != access ||
 	    (!mode_based_execute &&
 	    (permissions &
 	    VMX_NESTED_EPT_PERMISSION_USER_EXECUTE) != 0))
@@ -198,6 +203,13 @@ vmx_nested_ept_root_populate(void *value, struct vcpu *vcpu,
 		prot |= VM_PROT_WRITE;
 	if ((permissions & VMX_NESTED_EPT_ACCESS_EXECUTE) != 0)
 		prot |= VM_PROT_EXECUTE;
+	required_prot = 0;
+	if ((access & VMX_NESTED_EPT_ACCESS_READ) != 0)
+		required_prot |= VM_PROT_READ;
+	if ((access & VMX_NESTED_EPT_ACCESS_WRITE) != 0)
+		required_prot |= VM_PROT_WRITE;
+	if ((access & VMX_NESTED_EPT_ACCESS_EXECUTE) != 0)
+		required_prot |= VM_PROT_EXECUTE;
 
 	/*
 	 * A repeated fault may require broader EPT12 permissions than the
@@ -216,7 +228,7 @@ vmx_nested_ept_root_populate(void *value, struct vcpu *vcpu,
 	 */
 	map_prot = prot | VM_PROT_EXECUTE;
 	error = vm_gpa_map_alias(vcpu, root->vmspace, l2_gpa, l1_gpa,
-	    PAGE_SIZE, map_prot);
+	    PAGE_SIZE, map_prot, required_prot, &effective_prot);
 	if (error != 0)
 		return (error);
 	error = vm_map_wire(&root->vmspace->vm_map, l2_gpa,
@@ -225,8 +237,9 @@ vmx_nested_ept_root_populate(void *value, struct vcpu *vcpu,
 		nvmx_ept_remove_partial(root, l2_gpa, l2_gpa + PAGE_SIZE);
 		return (error == KERN_RESOURCE_SHORTAGE ? ENOMEM : EFAULT);
 	}
+	/* EPT12 cannot grant access that L0's source map withheld. */
 	error = pmap_ept_set_permissions(root->pmap, l2_gpa,
-	    permissions & PMAP_EPT_PERM_MASK);
+	    permissions & effective_prot & PMAP_EPT_PERM_MASK);
 	if (error != 0) {
 		nvmx_ept_remove_partial(root, l2_gpa, l2_gpa + PAGE_SIZE);
 		return (error);

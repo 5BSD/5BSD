@@ -444,11 +444,18 @@ vmx_nested_ept_handoff_handle(struct vmx_nested_ept_handoff *handoff,
 		}
 		error = ops->populate(arg, resolved.plan.l2_page,
 		    resolved.plan.l1_page, resolved.plan.permissions,
+		    result.access,
 		    resolved.plan.mode_based_execute);
 		if (!vmx_nested_ept_handoff_equal(handoff, &expected)) {
 			*handoff = expected;
 			handoff->state = VMX_NESTED_EPT_HANDOFF_PENDING;
 			return (EPROTO);
+		}
+		if (error == ENXIO && request->linear_address_valid &&
+		    request->final_translation &&
+		    (request->access & VMX_NESTED_EPT_ACCESS_EXECUTE) == 0) {
+			resolved.plan.action = VMX_NESTED_EPT_FAULT_DEVICE;
+			error = 0;
 		}
 		if (error != 0)
 			goto retry;
