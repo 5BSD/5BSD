@@ -56,3 +56,12 @@ does not exercise 5BSD's Linuxulator. Sv48 placement, dynamic glibc ELF,
 thread clone/TLS, futex contention, ptrace, floating point/vector preservation,
 and the shared AIO/quota/remap/mount/socket paths still need guest tests before
 riscv64 Linux binary support is advertised.
+
+## Serial build validation
+
+On 2026-10-16, `make -j8 buildworld` and `make -j8 buildkernel` with
+`KERNCONF=GENERIC` completed for amd64, arm64/aarch64, and riscv/riscv64, one
+build at a time. The six logs under `/usr/obj` use the pattern
+`linux64-final-<arch>-<buildworld|buildkernel>-20261016.log`. These were
+development worlds with the default malloc configuration; no packages were
+published or installed.
