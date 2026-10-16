@@ -1075,9 +1075,19 @@ in6_update_ifa_internal(struct ifnet *ifp, struct in6_aliasreq *ifra,
 	/*
 	 * DAD should be performed for an new address or addresses on
 	 * an interface with ND6_IFF_IFDISABLED.
+	 *
+	 * 5BSD: a new address is tentative also while IPv6 is still
+	 * disabled on the interface.  Adding it enables IPv6 (see
+	 * in6_control_ioctl()), and the DAD runs then, as for the
+	 * link-local address; OpenBSD attaches IPv6 before adding an
+	 * address, so its DAD is never skipped.  Only ND6_IFF_NO_DAD,
+	 * loopback and non-multicast interfaces skip it.
 	 */
-	if (in6if_do_dad(ifp) &&
-	    (hostIsNew || (ifp->if_inet6->nd_flags & ND6_IFF_IFDISABLED)))
+	if (hostIsNew && (in6if_do_dad(ifp) ||
+	    ((ifp->if_inet6->nd_flags & ND6_IFF_IFDISABLED) &&
+	    (ifp->if_inet6->nd_flags & ND6_IFF_NO_DAD) == 0 &&
+	    (ifp->if_flags & (IFF_LOOPBACK | IFF_MULTICAST)) ==
+	    IFF_MULTICAST)))
 		ia->ia6_flags |= IN6_IFF_TENTATIVE;
 
 	/* notify other subsystems */
@@ -1211,6 +1221,37 @@ ifa_is_p2p(struct in6_ifaddr *ia)
 		return (true);
 
 	return (false);
+}
+
+/*
+ * Another point-to-point address on @ia's interface with the same
+ * destination, which has (@routed) or has not installed the route to it.
+ * Returned referenced.
+ */
+static struct in6_ifaddr *
+in6_p2p_dst_sibling(struct in6_ifaddr *ia, bool routed)
+{
+	struct epoch_tracker et;
+	struct ifaddr *ifa;
+	struct in6_ifaddr *oia, *found;
+
+	found = NULL;
+	NET_EPOCH_ENTER(et);
+	CK_STAILQ_FOREACH(ifa, &ia->ia_ifp->if_addrhead, ifa_link) {
+		if (ifa->ifa_addr->sa_family != AF_INET6 || ifa == &ia->ia_ifa)
+			continue;
+		oia = (struct in6_ifaddr *)ifa;
+		if (!ifa_is_p2p(oia) || !IN6_ARE_ADDR_EQUAL(
+		    &oia->ia_dstaddr.sin6_addr, &ia->ia_dstaddr.sin6_addr))
+			continue;
+		if (((oia->ia_flags & IFA_ROUTE) != 0) != routed)
+			continue;
+		ifa_ref(ifa);
+		found = oia;
+		break;
+	}
+	NET_EPOCH_EXIT(et);
+	return (found);
 }
 
 int
@@ -1434,11 +1475,21 @@ in6_purgeaddr(struct ifaddr *ifa)
 	}
 	/* Check if we need to remove p2p route */
 	if ((ia->ia_flags & IFA_ROUTE) && ifa_is_p2p(ia)) {
+		struct in6_ifaddr *oia;
+
 		error = in6_handle_dstaddr_rtrequest(RTM_DELETE, ia);
 		if (error != 0)
 			log(LOG_INFO, "%s: err=%d, destination address delete "
 			    "failed\n", __func__, error);
 		ia->ia_flags &= ~IFA_ROUTE;
+
+		/* Hand the route over to an address sharing the peer. */
+		oia = in6_p2p_dst_sibling(ia, false);
+		if (oia != NULL) {
+			if (in6_handle_dstaddr_rtrequest(RTM_ADD, oia) == 0)
+				oia->ia_flags |= IFA_ROUTE;
+			ifa_free(&oia->ia_ifa);
+		}
 	}
 
 	in6_newaddrmsg(ia, RTM_DELETE);
@@ -1585,15 +1636,24 @@ in6_notify_ifa(struct ifnet *ifp, struct in6_ifaddr *ia,
 	/*
 	 * If a new destination address is specified for a point-to-point
 	 * interface, install a route to the destination as an interface
-	 * direct route.
-	 * XXX: the logic below rejects assigning multiple addresses on a p2p
-	 * interface that share the same destination.
+	 * direct route.  5BSD (as OpenBSD): several addresses on the
+	 * interface may share a destination; the first one installs the
+	 * route and in6_purgeaddr() hands it over.
 	 */
 	if (!(ia->ia_flags & IFA_ROUTE) && ifa_is_p2p(ia)) {
 		error = in6_handle_dstaddr_rtrequest(RTM_ADD, ia);
+		if (error == EEXIST) {
+			struct in6_ifaddr *oia;
+
+			oia = in6_p2p_dst_sibling(ia, true);
+			if (oia != NULL) {
+				ifa_free(&oia->ia_ifa);
+				error = 0;
+			}
+		} else if (error == 0)
+			ia->ia_flags |= IFA_ROUTE;
 		if (error)
 			goto done;
-		ia->ia_flags |= IFA_ROUTE;
 	}
 
 	/*
