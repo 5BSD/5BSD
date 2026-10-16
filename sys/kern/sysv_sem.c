@@ -256,22 +256,6 @@ static struct syscall_helper_data sem_syscalls[] = {
 	SYSCALL_INIT_LAST
 };
 
-#ifdef COMPAT_FREEBSD32
-#include <compat/freebsd32/freebsd32.h>
-#include <compat/freebsd32/freebsd32_ipc.h>
-#include <compat/freebsd32/freebsd32_proto.h>
-#include <compat/freebsd32/freebsd32_signal.h>
-#include <compat/freebsd32/freebsd32_syscall.h>
-#include <compat/freebsd32/freebsd32_util.h>
-
-static struct syscall_helper_data sem32_syscalls[] = {
-	SYSCALL32_INIT_HELPER(freebsd32___semctl),
-	SYSCALL32_INIT_HELPER_COMPAT(semget),
-	SYSCALL32_INIT_HELPER_COMPAT(semop),
-	SYSCALL32_INIT_HELPER(freebsd32_semsys),
-	SYSCALL_INIT_LAST
-};
-#endif
 
 static int
 seminit(void)
@@ -344,11 +328,6 @@ seminit(void)
 	error = syscall_helper_register(sem_syscalls, SY_THR_STATIC_KLD);
 	if (error != 0)
 		return (error);
-#ifdef COMPAT_FREEBSD32
-	error = syscall32_helper_register(sem32_syscalls, SY_THR_STATIC_KLD);
-	if (error != 0)
-		return (error);
-#endif
 	return (0);
 }
 
@@ -361,9 +340,6 @@ semunload(void)
 	if (semtot != 0)
 		return (EBUSY);
 
-#ifdef COMPAT_FREEBSD32
-	syscall32_helper_unregister(sem32_syscalls);
-#endif
 	syscall_helper_unregister(sem_syscalls);
 	EVENTHANDLER_DEREGISTER(process_exit, semexit_tag);
 	if (sem_prison_slot != 0)
@@ -1562,9 +1538,6 @@ sysctl_sema(SYSCTL_HANDLER_ARGS)
 {
 	struct prison *pr, *rpr;
 	struct semid_kernel tsemak;
-#ifdef COMPAT_FREEBSD32
-	struct semid_kernel32 tsemak32;
-#endif
 	void *outaddr;
 	size_t outsize;
 	int error, i;
@@ -1583,20 +1556,6 @@ sysctl_sema(SYSCTL_HANDLER_ARGS)
 				tsemak.u.sem_perm.key = IPC_PRIVATE;
 		}
 		mtx_unlock(&sema_mtx[i]);
-#ifdef COMPAT_FREEBSD32
-		if (SV_CURPROC_FLAG(SV_ILP32)) {
-			bzero(&tsemak32, sizeof(tsemak32));
-			freebsd32_ipcperm_out(&tsemak.u.sem_perm,
-			    &tsemak32.u.sem_perm);
-			/* Don't copy u.__sem_base */
-			CP(tsemak, tsemak32, u.sem_nsems);
-			CP(tsemak, tsemak32, u.sem_otime);
-			CP(tsemak, tsemak32, u.sem_ctime);
-			/* Don't copy label or cred */
-			outaddr = &tsemak32;
-			outsize = sizeof(tsemak32);
-		} else
-#endif
 		{
 			tsemak.u.__sem_base = NULL;
 			tsemak.label = NULL;
@@ -1819,87 +1778,3 @@ sem_prison_cleanup(struct prison *pr)
 }
 
 SYSCTL_JAIL_PARAM_SYS_NODE(sysvsem, CTLFLAG_RW, "SYSV semaphores");
-
-
-#ifdef COMPAT_FREEBSD32
-
-int
-freebsd32_semsys(struct thread *td, struct freebsd32_semsys_args *uap)
-{
-
-	return (kern_nosys(td, 0));
-}
-
-
-int
-freebsd32___semctl(struct thread *td, struct freebsd32___semctl_args *uap)
-{
-	struct semid_ds32 dsbuf32;
-	struct semid_ds dsbuf;
-	union semun semun;
-	union semun32 arg;
-	register_t rval;
-	int error;
-
-	switch (uap->cmd) {
-	case SEM_STAT:
-	case IPC_SET:
-	case IPC_STAT:
-	case GETALL:
-	case SETVAL:
-	case SETALL:
-		error = copyin(uap->arg, &arg, sizeof(arg));
-		if (error)
-			return (error);
-		break;
-	}
-
-	switch (uap->cmd) {
-	case SEM_STAT:
-	case IPC_STAT:
-		semun.buf = &dsbuf;
-		break;
-	case IPC_SET:
-		error = copyin(PTRIN(arg.buf), &dsbuf32, sizeof(dsbuf32));
-		if (error)
-			return (error);
-		freebsd32_ipcperm_in(&dsbuf32.sem_perm, &dsbuf.sem_perm);
-		PTRIN_CP(dsbuf32, dsbuf, __sem_base);
-		CP(dsbuf32, dsbuf, sem_nsems);
-		CP(dsbuf32, dsbuf, sem_otime);
-		CP(dsbuf32, dsbuf, sem_ctime);
-		semun.buf = &dsbuf;
-		break;
-	case GETALL:
-	case SETALL:
-		semun.array = PTRIN(arg.array);
-		break;
-	case SETVAL:
-		semun.val = arg.val;
-		break;
-	}
-
-	error = kern_semctl(td, uap->semid, uap->semnum, uap->cmd, &semun,
-	    &rval);
-	if (error)
-		return (error);
-
-	switch (uap->cmd) {
-	case SEM_STAT:
-	case IPC_STAT:
-		bzero(&dsbuf32, sizeof(dsbuf32));
-		freebsd32_ipcperm_out(&dsbuf.sem_perm, &dsbuf32.sem_perm);
-		PTROUT_CP(dsbuf, dsbuf32, __sem_base);
-		CP(dsbuf, dsbuf32, sem_nsems);
-		CP(dsbuf, dsbuf32, sem_otime);
-		CP(dsbuf, dsbuf32, sem_ctime);
-		error = copyout(&dsbuf32, PTRIN(arg.buf), sizeof(dsbuf32));
-		break;
-	}
-
-	if (error == 0)
-		td->td_retval[0] = rval;
-	return (error);
-}
-
-#endif /* COMPAT_FREEBSD32 */

@@ -171,34 +171,6 @@ timehands_update(struct vdso_sv_tk *svtk)
 	tk->tk_enabled = enabled;
 }
 
-#ifdef COMPAT_FREEBSD32
-static void
-timehands_update32(struct vdso_sv_tk *svtk)
-{
-	struct vdso_timehands32 th;
-	struct vdso_timekeep32 *tk;
-	uint32_t enabled, idx;
-
-	enabled = tc_fill_vdso_timehands32(&th);
-	th.th_gen = 0;
-	idx = svtk->sv_timekeep_curr;
-	if (++idx >= VDSO_TH_NUM)
-		idx = 0;
-	svtk->sv_timekeep_curr = idx;
-	if (++svtk->sv_timekeep_gen == 0)
-		svtk->sv_timekeep_gen = 1;
-
-	tk = (struct vdso_timekeep32 *)(shared_page_mapping +
-	    svtk->sv_timekeep_off);
-	tk->tk_th[idx].th_gen = 0;
-	atomic_thread_fence_rel();
-	if (enabled)
-		tk->tk_th[idx] = th;
-	atomic_store_rel_32(&tk->tk_th[idx].th_gen, svtk->sv_timekeep_gen);
-	atomic_store_rel_32(&tk->tk_current, idx);
-	tk->tk_enabled = enabled;
-}
-#endif
 
 /*
  * This is hackish, but easiest way to avoid creating list structures
@@ -206,9 +178,6 @@ timehands_update32(struct vdso_sv_tk *svtk)
  * context.
  */
 static struct vdso_sv_tk *host_svtk;
-#ifdef COMPAT_FREEBSD32
-static struct vdso_sv_tk *compat32_svtk;
-#endif
 
 void
 timekeep_push_vdso(void)
@@ -216,10 +185,6 @@ timekeep_push_vdso(void)
 
 	if (host_svtk != NULL)
 		timehands_update(host_svtk);
-#ifdef COMPAT_FREEBSD32
-	if (compat32_svtk != NULL)
-		timehands_update32(compat32_svtk);
-#endif
 }
 
 struct vdso_sv_tk *
@@ -241,26 +206,6 @@ alloc_sv_tk(void)
 	return (svtk);
 }
 
-#ifdef COMPAT_FREEBSD32
-struct vdso_sv_tk *
-alloc_sv_tk_compat32(void)
-{
-	struct vdso_sv_tk *svtk;
-	int tk_base;
-	uint32_t tk_ver;
-
-	svtk = malloc(sizeof(struct vdso_sv_tk), M_TEMP, M_WAITOK | M_ZERO);
-	tk_ver = VDSO_TK_VER_CURR;
-	tk_base = shared_page_alloc(sizeof(struct vdso_timekeep32) +
-	    sizeof(struct vdso_timehands32) * VDSO_TH_NUM, 16);
-	KASSERT(tk_base != -1, ("tk_base -1 for 32bit"));
-	shared_page_write(tk_base + offsetof(struct vdso_timekeep32,
-	    tk_ver), sizeof(uint32_t), &tk_ver);
-	svtk->sv_timekeep_off = tk_base;
-	timekeep_push_vdso();
-	return (svtk);
-}
-#endif
 
 #ifdef RANDOM_FENESTRASX
 void
@@ -330,19 +275,6 @@ exec_sysvec_init(void *param)
 		}
 	}
 	if ((flags & SV_TIMEKEEP) != 0) {
-#ifdef COMPAT_FREEBSD32
-		if ((flags & SV_ILP32) != 0) {
-			if ((flags & SV_ABI_MASK) == SV_ABI_FREEBSD) {
-				KASSERT(compat32_svtk == NULL,
-				    ("Compat32 already registered"));
-				compat32_svtk = alloc_sv_tk_compat32();
-			} else {
-				KASSERT(compat32_svtk != NULL,
-				    ("Compat32 not registered"));
-			}
-			sv->sv_timekeep_offset = compat32_svtk->sv_timekeep_off;
-		} else {
-#endif
 			if ((flags & SV_ABI_MASK) == SV_ABI_FREEBSD) {
 				KASSERT(host_svtk == NULL,
 				    ("Host already registered"));
@@ -352,9 +284,6 @@ exec_sysvec_init(void *param)
 				    ("Host not registered"));
 			}
 			sv->sv_timekeep_offset = host_svtk->sv_timekeep_off;
-#ifdef COMPAT_FREEBSD32
-		}
-#endif
 	}
 #ifdef RANDOM_FENESTRASX
 	if ((flags & (SV_ABI_MASK | SV_RNG_SEED_VER)) ==

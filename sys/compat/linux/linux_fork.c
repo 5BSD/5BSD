@@ -48,13 +48,8 @@
 #include <vm/pmap.h>
 #include <vm/vm_map.h>
 
-#ifdef COMPAT_LINUX32
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 #include <compat/linux/linux.h>
 #include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_file.h>
@@ -73,7 +68,7 @@
 int
 linux_unshare(struct thread *td, struct linux_unshare_args *args)
 {
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	struct proc *p;
 	int error;
 
@@ -116,7 +111,7 @@ linux_fork(struct thread *td, struct linux_fork_args *args)
 
 	bzero(&fr, sizeof(fr));
 	fr.fr_flags = RFFDG | RFPROC | RFSTOPPED;
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	fr.fr_flags2 = linux_ptrace_fork_flags(td, false, LINUX_SIGCHLD, false);
 #endif
 	fr.fr_procp = &p2;
@@ -126,7 +121,7 @@ linux_fork(struct thread *td, struct linux_fork_args *args)
 	td2 = FIRST_THREAD_IN_PROC(p2);
 
 	linux_proc_init(td, td2, false);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	td->td_dbg_forked = p2->p_pid;
 #endif
 
@@ -152,7 +147,7 @@ linux_vfork(struct thread *td, struct linux_vfork_args *args)
 
 	bzero(&fr, sizeof(fr));
 	fr.fr_flags = RFFDG | RFPROC | RFMEM | RFPPWAIT | RFSTOPPED;
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	fr.fr_flags2 = linux_ptrace_fork_flags(td, true, LINUX_SIGCHLD, false);
 #endif
 	fr.fr_procp = &p2;
@@ -162,7 +157,7 @@ linux_vfork(struct thread *td, struct linux_vfork_args *args)
 	td2 = FIRST_THREAD_IN_PROC(p2);
 
 	linux_proc_init(td, td2, false);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	td->td_dbg_forked = p2->p_pid;
 #endif
 
@@ -231,7 +226,7 @@ linux_clone_proc(struct thread *td, struct l_clone_args *args)
 	bzero(&fr, sizeof(fr));
 	fr.fr_flags = ff;
 	fr.fr_flags2 = f2;
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	fr.fr_flags2 |= linux_ptrace_fork_flags(td,
 	    (args->flags & LINUX_CLONE_VFORK) != 0, args->exit_signal,
 	    (args->flags & LINUX_CLONE_UNTRACED) != 0);
@@ -245,7 +240,7 @@ linux_clone_proc(struct thread *td, struct l_clone_args *args)
 
 	/* create the emuldata */
 	linux_proc_init(td, td2, false);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	td->td_dbg_forked = p2->p_pid;
 #endif
 
@@ -398,7 +393,7 @@ linux_clone_thread(struct thread *td, struct l_clone_args *args)
 	p->p_flag |= P_HADTHREADS;
 	thread_link(newtd, p);
 	thread_lock(td);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	bcopy(td->td_name, newtd->td_name, sizeof(newtd->td_name));
 #else
 	bcopy(p->p_comm, newtd->td_name, sizeof(newtd->td_name));

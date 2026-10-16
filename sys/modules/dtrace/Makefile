@@ -10,21 +10,13 @@ SUBDIR=		dtaudit		\
 		sdt		\
 		systrace
 
-.if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "i386"
+.if ${MACHINE_CPUARCH} == "amd64"
 SUBDIR+=	fasttrap systrace_linux
 .endif
 .if ${MACHINE_CPUARCH} == "amd64"
-SUBDIR+=	systrace_linux32
 SUBDIR+=	kinst
 .endif
 .if ${MACHINE_CPUARCH} == "riscv" || ${MACHINE_CPUARCH} == "aarch64"
 SUBDIR+=	kinst
 .endif
-.if ${MACHINE_CPUARCH} == "amd64" || \
-    ${MACHINE_CPUARCH} == "aarch64"
-.if !empty(COMPAT_FREEBSD32_ENABLED)
-SUBDIR+=	systrace_freebsd32
-.endif
-.endif
-
 .include <bsd.subdir.mk>

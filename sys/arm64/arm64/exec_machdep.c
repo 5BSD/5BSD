@@ -84,16 +84,6 @@ fill_regs(struct thread *td, struct reg *regs)
 
 	memcpy(regs->x, frame->tf_x, sizeof(regs->x));
 
-#ifdef COMPAT_FREEBSD32
-	/*
-	 * We may be called here for a 32bits process, if we're using a
-	 * 64bits debugger. If so, put PC and SPSR where it expects it.
-	 */
-	if (SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-		regs->x[15] = frame->tf_elr;
-		regs->x[16] = frame->tf_spsr;
-	}
-#endif
 	return (0);
 }
 
@@ -108,23 +98,6 @@ set_regs(struct thread *td, struct reg *regs)
 
 	memcpy(frame->tf_x, regs->x, sizeof(frame->tf_x));
 
-#ifdef COMPAT_FREEBSD32
-	if (SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-		/*
-		 * We may be called for a 32bits process if we're using
-		 * a 64bits debugger. If so, get PC and SPSR from where
-		 * it put it.
-		 */
-		frame->tf_elr = regs->x[15];
-		frame->tf_spsr &= ~PSR_SETTABLE_32;
-		frame->tf_spsr |= regs->x[16] & PSR_SETTABLE_32;
-		/* Don't allow userspace to ask to continue single stepping.
-		 * The SPSR.SS field doesn't exist when the EL1 is AArch32.
-		 * As the SPSR.DIT field has moved in its place don't
-		 * allow userspace to set the SPSR.SS field.
-		 */
-	} else
-#endif
 	{
 		frame->tf_elr = regs->elr;
 		/*
@@ -341,75 +314,6 @@ set_dbregs(struct thread *td, struct dbreg *regs)
 	return (0);
 }
 
-#ifdef COMPAT_FREEBSD32
-int
-fill_regs32(struct thread *td, struct reg32 *regs)
-{
-	int i;
-	struct trapframe *tf;
-
-	tf = td->td_frame;
-	for (i = 0; i < 13; i++)
-		regs->r[i] = tf->tf_x[i];
-	/* For arm32, SP is r13 and LR is r14 */
-	regs->r_sp = tf->tf_x[13];
-	regs->r_lr = tf->tf_x[14];
-	regs->r_pc = tf->tf_elr;
-	regs->r_cpsr = tf->tf_spsr;
-
-	return (0);
-}
-
-int
-set_regs32(struct thread *td, struct reg32 *regs)
-{
-	int i;
-	struct trapframe *tf;
-
-	tf = td->td_frame;
-	for (i = 0; i < 13; i++)
-		tf->tf_x[i] = regs->r[i];
-	/* For arm 32, SP is r13 an LR is r14 */
-	tf->tf_x[13] = regs->r_sp;
-	tf->tf_x[14] = regs->r_lr;
-	tf->tf_elr = regs->r_pc;
-	tf->tf_spsr &= ~PSR_SETTABLE_32;
-	tf->tf_spsr |= regs->r_cpsr & PSR_SETTABLE_32;
-
-	return (0);
-}
-
-/* XXX fill/set dbregs/fpregs are stubbed on 32-bit arm. */
-int
-fill_fpregs32(struct thread *td, struct fpreg32 *regs)
-{
-
-	memset(regs, 0, sizeof(*regs));
-	return (0);
-}
-
-int
-set_fpregs32(struct thread *td, struct fpreg32 *regs)
-{
-
-	return (0);
-}
-
-int
-fill_dbregs32(struct thread *td, struct dbreg32 *regs)
-{
-
-	memset(regs, 0, sizeof(*regs));
-	return (0);
-}
-
-int
-set_dbregs32(struct thread *td, struct dbreg32 *regs)
-{
-
-	return (0);
-}
-#endif
 
 void
 exec_setregs(struct thread *td, struct image_params *imgp, uintptr_t stack)

@@ -604,29 +604,6 @@ int
 cpu_set_upcall(struct thread *td, void (*entry)(void *), void *arg,
     stack_t *stack)
 {
-#ifdef COMPAT_FREEBSD32
-	if (SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-		/*
-		 * Set the trap frame to point at the beginning of the entry
-		 * function.
-		 */
-		td->td_frame->tf_rbp = 0;
-		td->td_frame->tf_rsp =
-		   (((uintptr_t)stack->ss_sp + stack->ss_size - 4) & ~0x0f) - 4;
-		td->td_frame->tf_rip = (uintptr_t)entry;
-
-		/* Return address sentinel value to stop stack unwinding. */
-		if (suword32((void *)td->td_frame->tf_rsp, 0) != 0)
-			return (EFAULT);
-
-		/* Pass the argument to the entry point. */
-		if (suword32(
-		    (void *)(td->td_frame->tf_rsp + sizeof(int32_t)),
-		    (uint32_t)(uintptr_t)arg) != 0)
-			return (EFAULT);
-		return (0);
-	}
-#endif
 
 	/*
 	 * Set the trap frame to point at the beginning of the uts
@@ -664,12 +641,6 @@ cpu_set_user_tls(struct thread *td, void *tls_base, int thr_flags)
 	pcb = td->td_pcb;
 	set_pcb_flags(pcb, PCB_FULL_IRET | ((thr_flags &
 	    THR_C_RUNTIME) != 0 ? PCB_TLSBASE : 0));
-#ifdef COMPAT_FREEBSD32
-	if (SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-		pcb->pcb_gsbase = (register_t)tls_base;
-		return (0);
-	}
-#endif
 	pcb->pcb_fsbase = pcb->pcb_tlsbase = (register_t)tls_base;
 	return (0);
 }

@@ -111,8 +111,6 @@ DIRECTIO
 FFCLOCK
 GZIO		opt_gzio.h
 IMGACT_BINMISC		opt_dontuse.h
-GEOM_CACHE	opt_geom.h
-GEOM_CONCAT	opt_geom.h
 GEOM_ELI	opt_geom.h
 GEOM_GATE	opt_geom.h
 GEOM_LABEL	opt_geom.h
@@ -120,7 +118,6 @@ GEOM_LABEL_GPT	opt_geom.h
 GEOM_LINUX_LVM	opt_geom.h
 GEOM_MAP	opt_geom.h
 GEOM_MIRROR	opt_geom.h
-GEOM_MOUNTVER	opt_geom.h
 GEOM_MULTIPATH	opt_geom.h
 GEOM_NOP	opt_geom.h
 GEOM_PART_APM	opt_geom.h
@@ -131,11 +128,8 @@ GEOM_PART_GPT	opt_geom.h
 GEOM_PART_LDM	opt_geom.h
 GEOM_PART_MBR	opt_geom.h
 GEOM_RAID	opt_geom.h
-GEOM_STRIPE	opt_geom.h
 GEOM_UZIP	opt_geom.h
 GEOM_UZIP_DEBUG	opt_geom.h
-GEOM_VINUM	opt_geom.h
-GEOM_ZERO	opt_geom.h
 IFLIB		opt_iflib.h
 KDTRACE_HOOKS	opt_global.h
 KDTRACE_FRAME	opt_kdtrace.h
@@ -185,8 +179,6 @@ MBUF_PACKET_ZONE_DISABLE	opt_global.h
 PANIC_REBOOT_WAIT_TIME	opt_panic.h
 PCI_HP		opt_pci.h
 PCI_IOV		opt_global.h
-PPC_DEBUG	opt_ppc.h
-PPC_PROBE_CHIPSET	opt_ppc.h
 PPS_SYNC	opt_ntp.h
 QUOTA
 SLEEPQUEUE_PROFILING
@@ -259,7 +251,6 @@ PSEUDOFS	opt_dontuse.h
 SMBFS		opt_dontuse.h
 TARFS		opt_dontuse.h
 TMPFS		opt_dontuse.h
-UDF		opt_dontuse.h
 UNIONFS		opt_dontuse.h
 ZFS		opt_dontuse.h
 P9FS		opt_dontuse.h
@@ -273,10 +264,7 @@ TARFS_DEBUG	opt_tarfs.h
 # In-kernel GSS-API
 KGSSAPI		opt_kgssapi.h
 
-# These static filesystems have one slightly bogus static dependency in
-# sys/i386/i386/autoconf.c.  If any of these filesystems are
-# statically compiled into the kernel, code for mounting them as root
-# filesystems will be enabled - but look below.
+# NFS client and server configuration.
 # NFSCL - client
 # NFSD - server
 NFSCL		opt_nfs.h
@@ -285,7 +273,6 @@ NFSD		opt_nfs.h
 # filesystems and libiconv bridge
 CD9660_ICONV	opt_dontuse.h
 MSDOSFS_ICONV	opt_dontuse.h
-UDF_ICONV	opt_dontuse.h
 
 # If you are following the conditions in the copyright,
 # you can enable soft-updates which will speed up a lot of thigs
@@ -501,7 +488,6 @@ NETGRAPH_BPF		opt_netgraph.h
 NETGRAPH_BRIDGE		opt_netgraph.h
 NETGRAPH_CAR		opt_netgraph.h
 NETGRAPH_CHECKSUM	opt_netgraph.h
-NETGRAPH_CISCO		opt_netgraph.h
 NETGRAPH_DEFLATE	opt_netgraph.h
 NETGRAPH_DEVICE		opt_netgraph.h
 NETGRAPH_ECHO		opt_netgraph.h
@@ -509,7 +495,6 @@ NETGRAPH_EIFACE		opt_netgraph.h
 NETGRAPH_ETHER		opt_netgraph.h
 NETGRAPH_ETHER_ECHO	opt_netgraph.h
 NETGRAPH_FEC		opt_netgraph.h
-NETGRAPH_FRAME_RELAY	opt_netgraph.h
 NETGRAPH_GIF		opt_netgraph.h
 NETGRAPH_GIF_DEMUX	opt_netgraph.h
 NETGRAPH_HOLE		opt_netgraph.h
@@ -517,7 +502,6 @@ NETGRAPH_IFACE		opt_netgraph.h
 NETGRAPH_IP_INPUT	opt_netgraph.h
 NETGRAPH_KSOCKET	opt_netgraph.h
 NETGRAPH_L2TP		opt_netgraph.h
-NETGRAPH_LMI		opt_netgraph.h
 NETGRAPH_MPPC_COMPRESSION	opt_netgraph.h
 NETGRAPH_MPPC_ENCRYPTION	opt_netgraph.h
 NETGRAPH_NAT		opt_netgraph.h
@@ -528,8 +512,6 @@ NETGRAPH_PIPE		opt_netgraph.h
 NETGRAPH_PPP		opt_netgraph.h
 NETGRAPH_PPPOE		opt_netgraph.h
 NETGRAPH_PPTPGRE	opt_netgraph.h
-NETGRAPH_PRED1		opt_netgraph.h
-NETGRAPH_RFC1490	opt_netgraph.h
 NETGRAPH_SOCKET		opt_netgraph.h
 NETGRAPH_SPLIT		opt_netgraph.h
 NETGRAPH_SPPP		opt_netgraph.h
@@ -550,19 +532,12 @@ TI_JUMBO_HDRSPLIT	opt_ti.h
 # Misc debug flags.  Most of these should probably be replaced with
 # 'DEBUG', and then let people recompile just the interesting modules
 # with 'make CC="cc -DDEBUG"'.
-DEBUG_1284		opt_ppb_1284.h
-LPT_DEBUG		opt_lpt.h
-PLIP_DEBUG		opt_plip.h
 LOCKF_DEBUG		opt_debug_lockf.h
 SI_DEBUG		opt_debug_si.h
 IFMEDIA_DEBUG		opt_ifmedia.h
 
 # Fb options
 FB_DEBUG		opt_fb.h
-
-# ppbus related options
-PERIPH_1284		opt_ppb_1284.h
-DONTPROBE_1284		opt_ppb_1284.h
 
 # smbus related options
 ENABLE_ALART		opt_intpm.h
@@ -654,9 +629,6 @@ INIT_PATH
 
 ROOTDEVNAME
 
-FDC_DEBUG 		opt_fdc.h
-PCFCLOCK_VERBOSE	opt_pcfclock.h
-PCFCLOCK_MAX_RETRIES	opt_pcfclock.h
 
 KTR			opt_global.h
 KTR_ALQ			opt_ktr.h
@@ -857,7 +829,6 @@ CFI_HARDWAREBYTESWAP	opt_cfi.h
 # Sound options
 SND_DIAGNOSTIC		opt_snd.h
 SND_FEEDER_RATE_HP	opt_snd.h
-SND_PCM_64		opt_snd.h
 
 X86BIOS
 

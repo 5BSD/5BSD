@@ -1,5 +1,7 @@
 # Linuxulator syscall coverage (x86_64)
 
+> **Historical inventory:** Linux32, FreeBSD32 and the native i386 kernel source were retired on 2026-10-15. Any 32-bit table counts or source paths below describe the earlier tree. See [the retirement record](kernel-retirement-2026-10-15.md).
+
 Current status of the x86_64 Linux syscall table (through number
 472). The section 1 totals and the section 5 per-slot statuses were re-verified
 against `sys/amd64/linux/syscalls.master` and the `DUMMY()` files at HEAD on

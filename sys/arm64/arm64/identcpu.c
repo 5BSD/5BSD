@@ -59,9 +59,6 @@ static void print_cpu_midr(struct sbuf *sb, u_int cpu);
 static void print_cpu_features(u_int cpu, struct cpu_desc *desc,
     struct cpu_desc *prev_desc);
 static void print_cpu_caches(struct sbuf *sb, struct cpu_desc *desc);
-#ifdef COMPAT_FREEBSD32
-static u_long parse_cpu_features_hwcap32(void);
-#endif
 
 const char machine[] = "arm64";
 
@@ -153,11 +150,6 @@ struct cpu_desc {
 	uint64_t	id_aa64pfr2;
 	uint64_t	id_aa64zfr0;
 	uint64_t	ctr;
-#ifdef COMPAT_FREEBSD32
-	uint64_t	id_isar5;
-	uint64_t	mvfr0;
-	uint64_t	mvfr1;
-#endif
 	uint64_t	clidr;
 	uint32_t	ccsidr[MAX_CACHES][2]; /* 2 possible types. */
 	bool		have_sve;
@@ -2014,220 +2006,6 @@ static const struct mrs_field id_aa64zfr0_fields[] = {
 };
 
 
-#ifdef COMPAT_FREEBSD32
-/* ID_ISAR5_EL1 */
-static const struct mrs_field_value id_isar5_vcma[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(ID_ISAR5, VCMA, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_value id_isar5_rdm[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(ID_ISAR5, RDM, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_value id_isar5_crc32[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(ID_ISAR5, CRC32, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_hwcap id_isar5_crc32_caps[] = {
-	MRS_HWCAP(2, HWCAP32_2_CRC32, ID_ISAR5_CRC32_IMPL),
-	MRS_HWCAP_END
-};
-
-static const struct mrs_field_value id_isar5_sha2[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(ID_ISAR5, SHA2, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_hwcap id_isar5_sha2_caps[] = {
-	MRS_HWCAP(2, HWCAP32_2_SHA2, ID_ISAR5_SHA2_IMPL),
-	MRS_HWCAP_END
-};
-
-static const struct mrs_field_value id_isar5_sha1[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(ID_ISAR5, SHA1, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_hwcap id_isar5_sha1_caps[] = {
-	MRS_HWCAP(2, HWCAP32_2_SHA1, ID_ISAR5_SHA1_IMPL),
-	MRS_HWCAP_END
-};
-
-static const struct mrs_field_value id_isar5_aes[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(ID_ISAR5, AES, NONE, BASE),
-	MRS_FIELD_VALUE(ID_ISAR5_AES_VMULL, "AES+VMULL"),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_hwcap id_isar5_aes_caps[] = {
-	MRS_HWCAP(2, HWCAP32_2_AES, ID_ISAR5_AES_BASE),
-	MRS_HWCAP(2, HWCAP32_2_PMULL, ID_ISAR5_AES_VMULL),
-	MRS_HWCAP_END
-};
-
-static const struct mrs_field_value id_isar5_sevl[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(ID_ISAR5, SEVL, NOP, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field id_isar5_fields[] = {
-	MRS_FIELD(ID_ISAR5, VCMA, false, MRS_LOWER,MRS_USERSPACE,
-	    id_isar5_vcma),
-	MRS_FIELD(ID_ISAR5, RDM, false, MRS_LOWER, MRS_USERSPACE, id_isar5_rdm),
-	MRS_FIELD_HWCAP(ID_ISAR5, CRC32, false, MRS_LOWER, MRS_USERSPACE,
-	    id_isar5_crc32, id_isar5_crc32_caps),
-	MRS_FIELD_HWCAP(ID_ISAR5, SHA2, false, MRS_LOWER, MRS_USERSPACE,
-	    id_isar5_sha2, id_isar5_sha2_caps),
-	MRS_FIELD_HWCAP(ID_ISAR5, SHA1, false, MRS_LOWER, MRS_USERSPACE,
-	    id_isar5_sha1, id_isar5_sha1_caps),
-	MRS_FIELD_HWCAP(ID_ISAR5, AES, false, MRS_LOWER, MRS_USERSPACE,
-	    id_isar5_aes, id_isar5_aes_caps),
-	MRS_FIELD(ID_ISAR5, SEVL, false, MRS_LOWER, MRS_USERSPACE,
-	    id_isar5_sevl),
-	MRS_FIELD_END,
-};
-
-/* MVFR0 */
-static const struct mrs_field_value mvfr0_fpround[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(MVFR0, FPRound, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_value mvfr0_fpsqrt[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(MVFR0, FPSqrt, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_value mvfr0_fpdivide[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(MVFR0, FPDivide, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_value mvfr0_fptrap[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(MVFR0, FPTrap, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_value mvfr0_fpdp[] = {
-	MRS_FIELD_VALUE(MVFR0_FPDP_NONE, ""),
-	MRS_FIELD_VALUE(MVFR0_FPDP_VFP_v2, "DP VFPv2"),
-	MRS_FIELD_VALUE(MVFR0_FPDP_VFP_v3_v4, "DP VFPv3+v4"),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_hwcap mvfr0_fpdp_caps[] = {
-	MRS_HWCAP(1, HWCAP32_VFP, MVFR0_FPDP_VFP_v2),
-	MRS_HWCAP(1, HWCAP32_VFPv3, MVFR0_FPDP_VFP_v3_v4),
-	MRS_HWCAP_END
-};
-
-static const struct mrs_field_value mvfr0_fpsp[] = {
-	MRS_FIELD_VALUE(MVFR0_FPSP_NONE, ""),
-	MRS_FIELD_VALUE(MVFR0_FPSP_VFP_v2, "SP VFPv2"),
-	MRS_FIELD_VALUE(MVFR0_FPSP_VFP_v3_v4, "SP VFPv3+v4"),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_value mvfr0_simdreg[] = {
-	MRS_FIELD_VALUE(MVFR0_SIMDReg_NONE, ""),
-	MRS_FIELD_VALUE(MVFR0_SIMDReg_FP, "FP 16x64"),
-	MRS_FIELD_VALUE(MVFR0_SIMDReg_AdvSIMD, "AdvSIMD"),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field mvfr0_fields[] = {
-	MRS_FIELD(MVFR0, FPRound, false, MRS_LOWER, MRS_USERSPACE,
-	    mvfr0_fpround),
-	MRS_FIELD(MVFR0, FPSqrt, false, MRS_LOWER, MRS_USERSPACE,
-	    mvfr0_fpsqrt),
-	MRS_FIELD(MVFR0, FPDivide, false, MRS_LOWER, MRS_USERSPACE,
-	    mvfr0_fpdivide),
-	MRS_FIELD(MVFR0, FPTrap, false, MRS_LOWER, MRS_USERSPACE,
-	    mvfr0_fptrap),
-	MRS_FIELD_HWCAP(MVFR0, FPDP, false, MRS_LOWER, MRS_USERSPACE,
-	    mvfr0_fpdp, mvfr0_fpdp_caps),
-	MRS_FIELD(MVFR0, FPSP, false, MRS_LOWER, MRS_USERSPACE, mvfr0_fpsp),
-	MRS_FIELD(MVFR0, SIMDReg, false, MRS_LOWER, MRS_USERSPACE,
-	    mvfr0_simdreg),
-	MRS_FIELD_END,
-};
-
-/* MVFR1 */
-static const struct mrs_field_value mvfr1_simdfmac[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(MVFR1, SIMDFMAC, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_hwcap mvfr1_simdfmac_caps[] = {
-	MRS_HWCAP(1, HWCAP32_VFPv4, MVFR1_SIMDFMAC_IMPL),
-	MRS_HWCAP_END
-};
-
-static const struct mrs_field_value mvfr1_fphp[] = {
-	MRS_FIELD_VALUE(MVFR1_FPHP_NONE, ""),
-	MRS_FIELD_VALUE(MVFR1_FPHP_CONV_SP, "FPHP SP Conv"),
-	MRS_FIELD_VALUE(MVFR1_FPHP_CONV_DP, "FPHP DP Conv"),
-	MRS_FIELD_VALUE(MVFR1_FPHP_ARITH, "FPHP Arith"),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_value mvfr1_simdhp[] = {
-	MRS_FIELD_VALUE(MVFR1_SIMDHP_NONE, ""),
-	MRS_FIELD_VALUE(MVFR1_SIMDHP_CONV_SP, "SIMDHP SP Conv"),
-	MRS_FIELD_VALUE(MVFR1_SIMDHP_ARITH, "SIMDHP Arith"),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_value mvfr1_simdsp[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(MVFR1, SIMDSP, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_value mvfr1_simdint[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(MVFR1, SIMDInt, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_value mvfr1_simdls[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(MVFR1, SIMDLS, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_hwcap mvfr1_simdls_caps[] = {
-	MRS_HWCAP(1, HWCAP32_VFPv4, MVFR1_SIMDFMAC_IMPL),
-	MRS_HWCAP_END
-};
-
-static const struct mrs_field_value mvfr1_fpdnan[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(MVFR1, FPDNaN, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field_value mvfr1_fpftz[] = {
-	MRS_FIELD_VALUE_NONE_IMPL(MVFR1, FPFtZ, NONE, IMPL),
-	MRS_FIELD_VALUE_END,
-};
-
-static const struct mrs_field mvfr1_fields[] = {
-	MRS_FIELD_HWCAP(MVFR1, SIMDFMAC, false, MRS_LOWER, MRS_USERSPACE,
-	    mvfr1_simdfmac, mvfr1_simdfmac_caps),
-	MRS_FIELD(MVFR1, FPHP, false, MRS_LOWER, MRS_USERSPACE, mvfr1_fphp),
-	MRS_FIELD(MVFR1, SIMDHP, false, MRS_LOWER, MRS_USERSPACE, mvfr1_simdhp),
-	MRS_FIELD(MVFR1, SIMDSP, false, MRS_LOWER, MRS_USERSPACE, mvfr1_simdsp),
-	MRS_FIELD(MVFR1, SIMDInt, false, MRS_LOWER, MRS_USERSPACE,
-	    mvfr1_simdint),
-	MRS_FIELD_HWCAP(MVFR1, SIMDLS, false, MRS_LOWER, MRS_USERSPACE,
-	    mvfr1_simdls, mvfr1_simdls_caps),
-	MRS_FIELD(MVFR1, FPDNaN, false, MRS_LOWER, MRS_USERSPACE,
-	    mvfr1_fpdnan),
-	MRS_FIELD(MVFR1, FPFtZ, false, MRS_LOWER, MRS_USERSPACE,
-	    mvfr1_fpftz),
-	MRS_FIELD_END,
-};
-#endif /* COMPAT_FREEBSD32 */
 
 struct mrs_user_reg {
 	u_int		iss;
@@ -2268,12 +2046,6 @@ static const struct mrs_user_reg user_regs[] = {
 
 	USER_REG(CTR_EL0, ctr, true),
 
-#ifdef COMPAT_FREEBSD32
-	USER_REG(ID_ISAR5_EL1, id_isar5, false),
-
-	USER_REG(MVFR0_EL1, mvfr0, false),
-	USER_REG(MVFR1_EL1, mvfr1, false),
-#endif /* COMPAT_FREEBSD32 */
 };
 
 #define	CPU_DESC_FIELD(desc, idx)					\
@@ -2856,18 +2628,11 @@ identify_hwcaps_sysinit(void *dummy __unused)
 	parse_cpu_features(true, &user_cpu_desc, &elf_hwcap, &elf_hwcap2);
 	parse_cpu_features(true, &l_user_cpu_desc, &linux_elf_hwcap,
 	    &linux_elf_hwcap2);
-#ifdef COMPAT_FREEBSD32
-	parse_cpu_features(false, &user_cpu_desc, &elf32_hwcap, &elf32_hwcap2);
-#endif
 
 	/* We export the CPUID registers */
 	elf_hwcap |= HWCAP_CPUID;
 	linux_elf_hwcap |= HWCAP_CPUID;
 
-#ifdef COMPAT_FREEBSD32
-	/* Set the default caps and any that need to check multiple fields */
-	elf32_hwcap |= parse_cpu_features_hwcap32();
-#endif
 
 	if ((elf_hwcap & HWCAP_ATOMICS) != 0) {
 		lse_supported = true;
@@ -2943,23 +2708,6 @@ cpu_feat_support(void *arg __unused)
 }
 SYSINIT(cpu_feat_support, SI_SUB_SMP, SI_ORDER_ANY, cpu_feat_support, NULL);
 
-#ifdef COMPAT_FREEBSD32
-static u_long
-parse_cpu_features_hwcap32(void)
-{
-	u_long hwcap = HWCAP32_DEFAULT;
-
-	if ((MVFR1_SIMDLS_VAL(user_cpu_desc.mvfr1) >=
-	     MVFR1_SIMDLS_IMPL) &&
-	    (MVFR1_SIMDInt_VAL(user_cpu_desc.mvfr1) >=
-	     MVFR1_SIMDInt_IMPL) &&
-	    (MVFR1_SIMDSP_VAL(user_cpu_desc.mvfr1) >=
-	     MVFR1_SIMDSP_IMPL))
-		hwcap |= HWCAP32_NEON;
-
-	return (hwcap);
-}
-#endif /* COMPAT_FREEBSD32 */
 
 static void
 print_register(struct sbuf *sb, const char *reg_name, uint64_t reg,
@@ -3271,22 +3019,6 @@ print_cpu_features(u_int cpu, struct cpu_desc *desc,
 		}
 	}
 
-#ifdef COMPAT_FREEBSD32
-	/* AArch32 Instruction Set Attribute Register 5 */
-	if (SHOULD_PRINT_REG(id_isar5))
-		print_id_register(sb, "AArch32 Instruction Set Attributes 5",
-		     desc->id_isar5, id_isar5_fields);
-
-	/* AArch32 Media and VFP Feature Register 0 */
-	if (SHOULD_PRINT_REG(mvfr0))
-		print_id_register(sb, "AArch32 Media and VFP Features 0",
-		     desc->mvfr0, mvfr0_fields);
-
-	/* AArch32 Media and VFP Feature Register 1 */
-	if (SHOULD_PRINT_REG(mvfr1))
-		print_id_register(sb, "AArch32 Media and VFP Features 1",
-		     desc->mvfr1, mvfr1_fields);
-#endif
 	if (bootverbose)
 		print_cpu_caches(sb, desc);
 
@@ -3387,14 +3119,6 @@ identify_cpu(u_int cpu)
 		desc->ccsidr[i][j] = READ_SPECIALREG(ccsidr_el1);
 	}
 
-#ifdef COMPAT_FREEBSD32
-	/* Only read aarch32 SRs if EL0-32 is available */
-	if (ID_AA64PFR0_EL0_VAL(desc->id_aa64pfr0) == ID_AA64PFR0_EL0_64_32) {
-		desc->id_isar5 = READ_SPECIALREG(id_isar5_el1);
-		desc->mvfr0 = READ_SPECIALREG(mvfr0_el1);
-		desc->mvfr1 = READ_SPECIALREG(mvfr1_el1);
-	}
-#endif
 }
 
 static void

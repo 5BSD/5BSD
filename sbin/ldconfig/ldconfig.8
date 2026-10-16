@@ -40,7 +40,6 @@
 .Nd configure the dynamic linker search path for shared libraries
 .Sh SYNOPSIS
 .Nm
-.Op Fl 32
 .Op Fl BRimr
 .Op Fl f Ar hints_file
 .Op Ar directory | Ar
@@ -100,9 +99,6 @@ switch of
 The following options are recognized by
 .Nm :
 .Bl -tag -width indent
-.It Fl 32
-Generate the hints for 32-bit ABI shared libraries
-on 64-bit systems that support running 32-bit binaries.
 .It Fl elf
 Ignored for backwards compatibility.
 .It Fl B
@@ -159,10 +155,6 @@ shared objects can be safely loaded.
 .Bl -tag -width /usr/local/libdata/ldconfig/* -compact
 .It Pa /var/run/ld-elf.so.hints
 Standard hints file for the ELF dynamic linker.
-.It Pa /var/run/ld-elf32.so.hints
-Hints file for 32 bit libraries on 64 bit architectures, processed by
-ldconfig when invoked with
-.Fl 32 .
 .It Pa /etc/ld-elf.so.conf
 Optional file with names of directories to be included in the standard
 hints file when booting to multi-user mode.

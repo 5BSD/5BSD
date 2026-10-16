@@ -3,8 +3,7 @@
 LIB=	sysdecode
 
 SRCS=	errno.c flags.c ioctl.c netlink.c signal.c syscallnames.c utrace.c support.c
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
-	${MACHINE_CPUARCH} == "i386"
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
 SRCS+= linux.c
 .endif
 INCS=	sysdecode.h
@@ -111,11 +110,6 @@ MLINKS+=sysdecode_mask.3 sysdecode_accessmode.3 \
 	sysdecode_mask.3 sysdecode_wait6_options.3
 
 CLEANFILES= ioctl.c ioctl.c.tmp tables.h tables_linux.h
-
-# XXX: The flags should come from bsd.compat.mk / Makefile.libcompat
-.if ${COMPAT_LIBCOMPAT:U} == "32"
-CPP+=	-m32
-.endif
 
 .if ${MK_PF} != "no"
 CFLAGS+=-DPF

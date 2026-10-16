@@ -2214,31 +2214,6 @@ tc_fill_vdso_timehands(struct vdso_timehands *vdso_th)
 	return (enabled);
 }
 
-#ifdef COMPAT_FREEBSD32
-uint32_t
-tc_fill_vdso_timehands32(struct vdso_timehands32 *vdso_th32)
-{
-	struct timehands *th;
-	uint32_t enabled;
-
-	th = timehands;
-	*(uint64_t *)&vdso_th32->th_scale[0] = th->th_scale;
-	vdso_th32->th_offset_count = th->th_offset_count;
-	vdso_th32->th_counter_mask = th->th_counter->tc_counter_mask;
-	vdso_th32->th_offset.sec = th->th_offset.sec;
-	*(uint64_t *)&vdso_th32->th_offset.frac[0] = th->th_offset.frac;
-	vdso_th32->th_boottime.sec = th->th_boottime.sec;
-	*(uint64_t *)&vdso_th32->th_boottime.frac[0] = th->th_boottime.frac;
-	if (th->th_counter->tc_fill_vdso_timehands32 != NULL) {
-		enabled = th->th_counter->tc_fill_vdso_timehands32(vdso_th32,
-		    th->th_counter);
-	} else
-		enabled = 0;
-	if (!vdso_th_enable)
-		enabled = 0;
-	return (enabled);
-}
-#endif
 
 #include "opt_ddb.h"
 #ifdef DDB

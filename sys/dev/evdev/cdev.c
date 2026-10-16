@@ -46,17 +46,6 @@
 #include <dev/evdev/evdev_private.h>
 #include <dev/evdev/input.h>
 
-#ifdef COMPAT_FREEBSD32
-#include <sys/mount.h>
-#include <sys/sysent.h>
-#include <compat/freebsd32/freebsd32.h>
-struct input_event32 {
-	struct timeval32	time;
-	uint16_t		type;
-	uint16_t		code;
-	int32_t			value;
-};
-#endif
 
 #ifdef EVDEV_DEBUG
 #define	debugf(client, fmt, args...)	printf("evdev cdev: "fmt"\n", ##args)
@@ -175,9 +164,6 @@ evdev_read(struct cdev *dev, struct uio *uio, int ioflag)
 	struct evdev_client *client;
 	union {
 		struct input_event t;
-#ifdef COMPAT_FREEBSD32
-		struct input_event32 t32;
-#endif
 	} event;
 	struct input_event *head;
 	size_t evsize;
@@ -194,12 +180,7 @@ evdev_read(struct cdev *dev, struct uio *uio, int ioflag)
 	if (client->ec_revoked)
 		return (ENODEV);
 
-#ifdef COMPAT_FREEBSD32
-	if (SV_CURPROC_FLAG(SV_ILP32))
-		evsize = sizeof(struct input_event32);
-	else
-#endif
-		evsize = sizeof(struct input_event);
+	evsize = sizeof(struct input_event);
 
 	/* Zero-sized reads are allowed for error checking */
 	if (uio->uio_resid != 0 && uio->uio_resid < evsize)
@@ -225,15 +206,6 @@ evdev_read(struct cdev *dev, struct uio *uio, int ioflag)
 
 	while (ret == 0 && !EVDEV_CLIENT_EMPTYQ(client) && remaining > 0) {
 		head = client->ec_buffer + client->ec_buffer_head;
-#ifdef COMPAT_FREEBSD32
-		if (SV_CURPROC_FLAG(SV_ILP32)) {
-			bzero(&event.t32, sizeof(struct input_event32));
-			TV_CP(*head, event.t32, time);
-			CP(*head, event.t32, type);
-			CP(*head, event.t32, code);
-			CP(*head, event.t32, value);
-		} else
-#endif
 			bcopy(head, &event.t, evsize);
 
 		client->ec_buffer_head =
@@ -257,9 +229,6 @@ evdev_write(struct cdev *dev, struct uio *uio, int ioflag)
 	struct evdev_client *client;
 	union {
 		struct input_event t;
-#ifdef COMPAT_FREEBSD32
-		struct input_event32 t32;
-#endif
 	} event;
 	size_t evsize;
 	int ret = 0;
@@ -274,12 +243,7 @@ evdev_write(struct cdev *dev, struct uio *uio, int ioflag)
 	if (client->ec_revoked || evdev == NULL)
 		return (ENODEV);
 
-#ifdef COMPAT_FREEBSD32
-	if (SV_CURPROC_FLAG(SV_ILP32))
-		evsize = sizeof(struct input_event32);
-	else
-#endif
-		evsize = sizeof(struct input_event);
+	evsize = sizeof(struct input_event);
 
 	if (uio->uio_resid % evsize != 0) {
 		debugf(client, "write size not multiple of input_event size");
@@ -289,12 +253,6 @@ evdev_write(struct cdev *dev, struct uio *uio, int ioflag)
 	while (uio->uio_resid > 0 && ret == 0) {
 		ret = uiomove(&event, evsize, uio);
 		if (ret == 0) {
-#ifdef COMPAT_FREEBSD32
-			if (SV_CURPROC_FLAG(SV_ILP32))
-				ret = evdev_inject_event(evdev, event.t32.type,
-				    event.t32.code, event.t32.value);
-			else
-#endif
 				ret = evdev_inject_event(evdev, event.t.type,
 				    event.t.code, event.t.value);
 		}

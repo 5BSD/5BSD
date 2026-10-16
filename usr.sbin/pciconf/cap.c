@@ -35,10 +35,8 @@
 #include <err.h>
 #include <stdio.h>
 #include <strings.h>
-#include <sys/agpio.h>
 #include <sys/pciio.h>
 
-#include <dev/agp/agpreg.h>
 #include <dev/pci/pcireg.h>
 
 #include "pciconf.h"
@@ -59,60 +57,6 @@ cap_power(int fd, struct pci_conf *p, uint8_t ptr)
 	    cap & PCIM_PCAP_D1SUPP ? " D1" : "",
 	    cap & PCIM_PCAP_D2SUPP ? " D2" : "",
 	    status & PCIM_PSTAT_DMASK);
-}
-
-static void
-cap_agp(int fd, struct pci_conf *p, uint8_t ptr)
-{
-	uint32_t status, command;
-
-	status = read_config(fd, &p->pc_sel, ptr + AGP_STATUS, 4);
-	command = read_config(fd, &p->pc_sel, ptr + AGP_CAPID, 4);
-	printf("AGP ");
-	if (AGP_MODE_GET_MODE_3(status)) {
-		printf("v3 ");
-		if (AGP_MODE_GET_RATE(status) & AGP_MODE_V3_RATE_8x)
-			printf("8x ");
-		if (AGP_MODE_GET_RATE(status) & AGP_MODE_V3_RATE_4x)
-			printf("4x ");
-	} else {
-		if (AGP_MODE_GET_RATE(status) & AGP_MODE_V2_RATE_4x)
-			printf("4x ");
-		if (AGP_MODE_GET_RATE(status) & AGP_MODE_V2_RATE_2x)
-			printf("2x ");
-		if (AGP_MODE_GET_RATE(status) & AGP_MODE_V2_RATE_1x)
-			printf("1x ");
-	}
-	if (AGP_MODE_GET_SBA(status))
-		printf("SBA ");
-	if (AGP_MODE_GET_AGP(command)) {
-		printf("enabled at ");
-		if (AGP_MODE_GET_MODE_3(command)) {
-			printf("v3 ");
-			switch (AGP_MODE_GET_RATE(command)) {
-			case AGP_MODE_V3_RATE_8x:
-				printf("8x ");
-				break;
-			case AGP_MODE_V3_RATE_4x:
-				printf("4x ");
-				break;
-			}
-		} else
-			switch (AGP_MODE_GET_RATE(command)) {
-			case AGP_MODE_V2_RATE_4x:
-				printf("4x ");
-				break;
-			case AGP_MODE_V2_RATE_2x:
-				printf("2x ");
-				break;
-			case AGP_MODE_V2_RATE_1x:
-				printf("1x ");
-				break;
-			}
-		if (AGP_MODE_GET_SBA(command))
-			printf("SBA ");
-	} else
-		printf("disabled");
 }
 
 static void
@@ -900,9 +844,6 @@ list_caps(int fd, struct pci_conf *p, int level)
 		switch (cap) {
 		case PCIY_PMG:
 			cap_power(fd, p, ptr);
-			break;
-		case PCIY_AGP:
-			cap_agp(fd, p, ptr);
 			break;
 		case PCIY_VPD:
 			cap_vpd(fd, p, ptr);

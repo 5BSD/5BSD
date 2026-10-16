@@ -36,13 +36,8 @@
 #include <sys/proc.h>
 #include <machine/bus.h>
 
-#if defined(__amd64__) /* Assume amd64 wants 32 bit Linux */
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 #include <compat/linux/linux_ioctl.h>
 #include <compat/linux/linux_util.h>
 
@@ -70,7 +65,7 @@ mfi_linux_modevent(module_t mod, int cmd, void *data)
 }
 
 DEV_MODULE(mfi_linux, mfi_linux_modevent, NULL);
-MODULE_DEPEND(mfi, linux, 1, 1, 1);
+MODULE_DEPEND(mfi_linux, linux64, 1, 1, 1);
 
 static int
 mfi_linux_ioctl(struct thread *p, struct linux_ioctl_args *args)

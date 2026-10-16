@@ -183,44 +183,6 @@ struct bpf_program_buffer {
 #define	SIZEOF_BPF_HDR(type)	\
     (offsetof(type, bh_hdrlen) + sizeof(((type *)0)->bh_hdrlen))
 
-#ifdef COMPAT_FREEBSD32
-#include <sys/mount.h>
-#include <compat/freebsd32/freebsd32.h>
-#define BPF_ALIGNMENT32 sizeof(int32_t)
-#define	BPF_WORDALIGN32(x) roundup2(x, BPF_ALIGNMENT32)
-
-#ifndef BURN_BRIDGES
-/*
- * 32-bit version of structure prepended to each packet.  We use this header
- * instead of the standard one for 32-bit streams.  We mark the a stream as
- * 32-bit the first time we see a 32-bit compat ioctl request.
- */
-struct bpf_hdr32 {
-	struct timeval32 bh_tstamp;	/* time stamp */
-	uint32_t	bh_caplen;	/* length of captured portion */
-	uint32_t	bh_datalen;	/* original length of packet */
-	uint16_t	bh_hdrlen;	/* length of bpf header (this struct
-					   plus alignment padding) */
-};
-#endif
-
-struct bpf_program32 {
-	u_int bf_len;
-	uint32_t bf_insns;
-};
-
-struct bpf_dltlist32 {
-	u_int	bfl_len;
-	u_int	bfl_list;
-};
-
-#define	BIOCSETF32	_IOW('B', 103, struct bpf_program32)
-#define	BIOCSRTIMEOUT32	_IOW('B', 109, struct timeval32)
-#define	BIOCGRTIMEOUT32	_IOR('B', 110, struct timeval32)
-#define	BIOCGDLTLIST32	_IOWR('B', 121, struct bpf_dltlist32)
-#define	BIOCSETWF32	_IOW('B', 123, struct bpf_program32)
-#define	BIOCSETFNR32	_IOW('B', 130, struct bpf_program32)
-#endif
 
 #define BPF_LOCK()		sx_xlock(&bpf_sx)
 #define BPF_UNLOCK()		sx_xunlock(&bpf_sx)
@@ -1174,14 +1136,8 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		case BIOCFLUSH:
 		case BIOCGDLT:
 		case BIOCGDLTLIST:
-#ifdef COMPAT_FREEBSD32
-		case BIOCGDLTLIST32:
-#endif
 		case BIOCGETIF:
 		case BIOCGRTIMEOUT:
-#if defined(COMPAT_FREEBSD32) && defined(__amd64__)
-		case BIOCGRTIMEOUT32:
-#endif
 		case BIOCGSTATS:
 		case BIOCVERSION:
 		case BIOCGRSIG:
@@ -1191,9 +1147,6 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		case FIONREAD:
 		case BIOCLOCK:
 		case BIOCSRTIMEOUT:
-#if defined(COMPAT_FREEBSD32) && defined(__amd64__)
-		case BIOCSRTIMEOUT32:
-#endif
 		case BIOCIMMEDIATE:
 		case TIOCGPGRP:
 		case BIOCROTZBUF:
@@ -1202,39 +1155,7 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 			return (EPERM);
 		}
 	}
-#ifdef COMPAT_FREEBSD32
-	/*
-	 * If we see a 32-bit compat ioctl, mark the stream as 32-bit so
-	 * that it will get 32-bit packet headers.
-	 */
-	switch (cmd) {
-	case BIOCSETF32:
-	case BIOCSETFNR32:
-	case BIOCSETWF32:
-	case BIOCGDLTLIST32:
-	case BIOCGRTIMEOUT32:
-	case BIOCSRTIMEOUT32:
-		if (SV_CURPROC_FLAG(SV_ILP32)) {
-			BPFD_LOCK(d);
-			d->bd_compat32 = 1;
-			BPFD_UNLOCK(d);
-		}
-	}
-#endif
 
-#if defined(COMPAT_FREEBSD32)
-	if (SV_CURPROC_FLAG(SV_ILP32)) {
-		/*
-		 * On platforms other than amd64, BIOC[GS]RTIMEOUT32 is equal to
-		 * BIOC[GS]RTIMEOUT. Since this is difficult to handle in the
-		 * switch command, map them.
-		 */
-		if (cmd == BIOCSRTIMEOUT32)
-			cmd = BIOCSRTIMEOUT;
-		if (cmd == BIOCGRTIMEOUT32)
-			cmd = BIOCGRTIMEOUT;
-	}
-#endif
 	CURVNET_SET(TD_TO_VNET(td));
 	switch (cmd) {
 	default:
@@ -1289,11 +1210,6 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	case BIOCSETF:
 	case BIOCSETFNR:
 	case BIOCSETWF:
-#ifdef COMPAT_FREEBSD32
-	case BIOCSETF32:
-	case BIOCSETFNR32:
-	case BIOCSETWF32:
-#endif
 		error = bpf_setf(d, (struct bpf_program *)addr, cmd);
 		break;
 
@@ -1340,27 +1256,6 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	/*
 	 * Get a list of supported data link types.
 	 */
-#ifdef COMPAT_FREEBSD32
-	case BIOCGDLTLIST32:
-		{
-			struct bpf_dltlist32 *list32;
-			struct bpf_dltlist dltlist;
-
-			list32 = (struct bpf_dltlist32 *)addr;
-			dltlist.bfl_len = list32->bfl_len;
-			dltlist.bfl_list = PTRIN(list32->bfl_list);
-			BPF_LOCK();
-			if (d->bd_bif == NULL)
-				error = EINVAL;
-			else {
-				error = bpf_getdltlist(d, &dltlist);
-				if (error == 0)
-					list32->bfl_len = dltlist.bfl_len;
-			}
-			BPF_UNLOCK();
-			break;
-		}
-#endif
 
 	case BIOCGDLTLIST:
 		BPF_LOCK();
@@ -1450,17 +1345,6 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	case BIOCSRTIMEOUT:
 		{
 			struct timeval *tv = (struct timeval *)addr;
-#ifdef COMPAT_FREEBSD32
-			struct timeval32 *tv32;
-			struct timeval tv64;
-
-			if (SV_CURPROC_FLAG(SV_ILP32)) {
-				tv32 = (struct timeval32 *)addr;
-				tv = &tv64;
-				tv->tv_sec = tv32->tv_sec;
-				tv->tv_usec = tv32->tv_usec;
-			}
-#endif
 
 			/*
 			 * Subtract 1 tick from tvtohz() since this isn't
@@ -1477,22 +1361,8 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	case BIOCGRTIMEOUT:
 		{
 			struct timeval *tv = (struct timeval *)addr;
-#ifdef COMPAT_FREEBSD32
-			struct timeval32 *tv32;
-			struct timeval tv64;
-
-			if (SV_CURPROC_FLAG(SV_ILP32))
-				tv = &tv64;
-#endif
 			tv->tv_sec = d->bd_rtout / hz;
 			tv->tv_usec = (d->bd_rtout % hz) * tick;
-#ifdef COMPAT_FREEBSD32
-			if (SV_CURPROC_FLAG(SV_ILP32)) {
-				tv32 = (struct timeval32 *)addr;
-				tv32->tv_sec = tv->tv_sec;
-				tv32->tv_usec = tv->tv_usec;
-			}
-#endif
 			break;
 		}
 
@@ -1797,10 +1667,6 @@ bpf_getiflist(struct bpf_iflist *bi)
 static int
 bpf_setf(struct bpf_d *d, struct bpf_program *fp, u_long cmd)
 {
-#ifdef COMPAT_FREEBSD32
-	struct bpf_program fp_swab;
-	struct bpf_program32 *fp32;
-#endif
 	struct bpf_program_buffer *fcode;
 	struct bpf_insn *filter;
 #ifdef BPF_JITTER
@@ -1810,27 +1676,6 @@ bpf_setf(struct bpf_d *d, struct bpf_program *fp, u_long cmd)
 	u_int flen;
 	bool track_event;
 
-#ifdef COMPAT_FREEBSD32
-	switch (cmd) {
-	case BIOCSETF32:
-	case BIOCSETWF32:
-	case BIOCSETFNR32:
-		fp32 = (struct bpf_program32 *)fp;
-		fp_swab.bf_len = fp32->bf_len;
-		fp_swab.bf_insns =
-		    (struct bpf_insn *)(uintptr_t)fp32->bf_insns;
-		fp = &fp_swab;
-		switch (cmd) {
-		case BIOCSETF32:
-			cmd = BIOCSETF;
-			break;
-		case BIOCSETWF32:
-			cmd = BIOCSETWF;
-			break;
-		}
-		break;
-	}
-#endif
 
 	filter = NULL;
 #ifdef BPF_JITTER
@@ -2389,21 +2234,11 @@ bpf_hdrlen(struct bpf_d *d)
 #ifndef BURN_BRIDGES
 	if (d->bd_tstamp == BPF_T_NONE ||
 	    BPF_T_FORMAT(d->bd_tstamp) == BPF_T_MICROTIME)
-#ifdef COMPAT_FREEBSD32
-		if (d->bd_compat32)
-			hdrlen += SIZEOF_BPF_HDR(struct bpf_hdr32);
-		else
-#endif
-			hdrlen += SIZEOF_BPF_HDR(struct bpf_hdr);
+		hdrlen += SIZEOF_BPF_HDR(struct bpf_hdr);
 	else
 #endif
 		hdrlen += SIZEOF_BPF_HDR(struct bpf_xhdr);
-#ifdef COMPAT_FREEBSD32
-	if (d->bd_compat32)
-		hdrlen = BPF_WORDALIGN32(hdrlen);
-	else
-#endif
-		hdrlen = BPF_WORDALIGN(hdrlen);
+	hdrlen = BPF_WORDALIGN(hdrlen);
 
 	return (hdrlen - d->bd_bif->bif_hdrlen);
 }
@@ -2455,9 +2290,6 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 	struct bpf_xhdr hdr;
 #ifndef BURN_BRIDGES
 	struct bpf_hdr hdr_old;
-#ifdef COMPAT_FREEBSD32
-	struct bpf_hdr32 hdr32_old;
-#endif
 #endif
 	int caplen, curlen, hdrlen, pad, totlen;
 	int do_wakeup = 0;
@@ -2504,12 +2336,7 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 	 * buffer is considered immutable by the buffer model, try to rotate
 	 * the buffer and wakeup pending processes.
 	 */
-#ifdef COMPAT_FREEBSD32
-	if (d->bd_compat32)
-		curlen = BPF_WORDALIGN32(d->bd_slen);
-	else
-#endif
-		curlen = BPF_WORDALIGN(d->bd_slen);
+	curlen = BPF_WORDALIGN(d->bd_slen);
 	if (curlen + totlen > d->bd_bufsize || !bpf_canwritebuf(d)) {
 		if (d->bd_fbuf == NULL) {
 			/*
@@ -2554,21 +2381,6 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 		struct bpf_ts ts;
 		if (do_timestamp)
 			bpf_bintime2ts(bt, &ts, tstype);
-#ifdef COMPAT_FREEBSD32
-		if (d->bd_compat32) {
-			bzero(&hdr32_old, sizeof(hdr32_old));
-			if (do_timestamp) {
-				hdr32_old.bh_tstamp.tv_sec = ts.bt_sec;
-				hdr32_old.bh_tstamp.tv_usec = ts.bt_frac;
-			}
-			hdr32_old.bh_datalen = pktlen;
-			hdr32_old.bh_hdrlen = hdrlen;
-			hdr32_old.bh_caplen = caplen;
-			bpf_append_bytes(d, d->bd_sbuf, curlen, &hdr32_old,
-			    sizeof(hdr32_old));
-			goto copy;
-		}
-#endif
 		bzero(&hdr_old, sizeof(hdr_old));
 		if (do_timestamp) {
 			hdr_old.bh_tstamp.tv_sec = ts.bt_sec;

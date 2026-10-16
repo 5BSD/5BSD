@@ -27,8 +27,8 @@
 
 #include <sys/cdefs.h>
 /*
- * Simple driver for PCI VGA display devices.  Drivers such as agp(4) and
- * drm(4) should attach as children of this device.
+ * Simple driver for PCI VGA display devices.  DRM drivers attach as children
+ * of this device.
  *
  * XXX: The vgapci name is a hack until we somehow merge the isa vga driver
  * in or rename it.

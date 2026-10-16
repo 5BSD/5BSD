@@ -48,13 +48,8 @@
 
 #include <security/audit/audit.h>
 
-#ifdef COMPAT_LINUX32
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 
 #include <compat/linux/linux.h>
 #include <compat/linux/linux_file.h>
@@ -124,7 +119,7 @@ linux_kern_fstat_id(struct thread *td, int fd, struct stat *sbp,
 	AUDIT_ARG_FILE(td->td_proc, fp);
 
 	error = fo_stat(fp, sbp, td->td_ucred);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	if (error == 0 && fp->f_type == DTYPE_SOCKET)
 		sbp->st_ino = ((struct socket *)fp->f_data)->so_gencnt;
 #endif
@@ -275,69 +270,6 @@ linux_newfstat(struct thread *td, struct linux_newfstat_args *args)
 	return (error);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-
-static __inline uint16_t
-linux_old_encode_dev(dev_t _dev)
-{
-
-	return (_dev == NODEV ? 0 : linux_encode_dev(major(_dev), minor(_dev)));
-}
-
-static int
-old_stat_copyout(struct stat *buf, void *ubuf)
-{
-	struct l_old_stat lbuf;
-
-	bzero(&lbuf, sizeof(lbuf));
-	lbuf.st_dev = linux_old_encode_dev(buf->st_dev);
-	lbuf.st_ino = buf->st_ino;
-	lbuf.st_mode = buf->st_mode;
-	lbuf.st_nlink = buf->st_nlink;
-	lbuf.st_uid = buf->st_uid;
-	lbuf.st_gid = buf->st_gid;
-	lbuf.st_rdev = linux_old_encode_dev(buf->st_rdev);
-	lbuf.st_size = MIN(buf->st_size, INT32_MAX);
-	lbuf.st_atim.tv_sec = buf->st_atim.tv_sec;
-	lbuf.st_atim.tv_nsec = buf->st_atim.tv_nsec;
-	lbuf.st_mtim.tv_sec = buf->st_mtim.tv_sec;
-	lbuf.st_mtim.tv_nsec = buf->st_mtim.tv_nsec;
-	lbuf.st_ctim.tv_sec = buf->st_ctim.tv_sec;
-	lbuf.st_ctim.tv_nsec = buf->st_ctim.tv_nsec;
-	lbuf.st_blksize = buf->st_blksize;
-	lbuf.st_blocks = buf->st_blocks;
-	lbuf.st_flags = buf->st_flags;
-	lbuf.st_gen = buf->st_gen;
-
-	return (copyout(&lbuf, ubuf, sizeof(lbuf)));
-}
-
-int
-linux_stat(struct thread *td, struct linux_stat_args *args)
-{
-	struct stat buf;
-	int error;
-
-	error = linux_kern_stat(td, args->path, UIO_USERSPACE, &buf);
-	if (error) {
-		return (error);
-	}
-	return (old_stat_copyout(&buf, args->up));
-}
-
-int
-linux_lstat(struct thread *td, struct linux_lstat_args *args)
-{
-	struct stat buf;
-	int error;
-
-	error = linux_kern_lstat(td, args->path, UIO_USERSPACE, &buf);
-	if (error) {
-		return (error);
-	}
-	return (old_stat_copyout(&buf, args->up));
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 struct l_statfs {
 	l_long		f_type;
@@ -422,21 +354,13 @@ static int
 bsd_to_linux_statfs(struct statfs *bsd_statfs, struct l_statfs *linux_statfs)
 {
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-	statfs_scale_blocks(bsd_statfs, INT32_MAX);
-#endif
 	linux_statfs->f_type = bsd_to_linux_ftype(bsd_statfs->f_fstypename);
 	linux_statfs->f_bsize = bsd_statfs->f_bsize;
 	linux_statfs->f_blocks = bsd_statfs->f_blocks;
 	linux_statfs->f_bfree = bsd_statfs->f_bfree;
 	linux_statfs->f_bavail = bsd_statfs->f_bavail;
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-	linux_statfs->f_ffree = MIN(bsd_statfs->f_ffree, INT32_MAX);
-	linux_statfs->f_files = MIN(bsd_statfs->f_files, INT32_MAX);
-#else
 	linux_statfs->f_ffree = bsd_statfs->f_ffree;
 	linux_statfs->f_files = bsd_statfs->f_files;
-#endif
 	linux_statfs->f_fsid.val[0] = bsd_statfs->f_fsid.val[0];
 	linux_statfs->f_fsid.val[1] = bsd_statfs->f_fsid.val[1];
 	linux_statfs->f_namelen = MAXNAMLEN;
@@ -464,66 +388,6 @@ linux_statfs(struct thread *td, struct linux_statfs_args *args)
 	return (copyout(&linux_statfs, args->buf, sizeof(linux_statfs)));
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-static void
-bsd_to_linux_statfs64(struct statfs *bsd_statfs, struct l_statfs64 *linux_statfs)
-{
-
-	linux_statfs->f_type = bsd_to_linux_ftype(bsd_statfs->f_fstypename);
-	linux_statfs->f_bsize = bsd_statfs->f_bsize;
-	linux_statfs->f_blocks = bsd_statfs->f_blocks;
-	linux_statfs->f_bfree = bsd_statfs->f_bfree;
-	linux_statfs->f_bavail = bsd_statfs->f_bavail;
-	linux_statfs->f_ffree = bsd_statfs->f_ffree;
-	linux_statfs->f_files = bsd_statfs->f_files;
-	linux_statfs->f_fsid.val[0] = bsd_statfs->f_fsid.val[0];
-	linux_statfs->f_fsid.val[1] = bsd_statfs->f_fsid.val[1];
-	linux_statfs->f_namelen = MAXNAMLEN;
-	linux_statfs->f_frsize = bsd_statfs->f_bsize;
-	linux_statfs->f_flags = bsd_to_linux_mnt_flags(bsd_statfs->f_flags);
-	memset(linux_statfs->f_spare, 0, sizeof(linux_statfs->f_spare));
-}
-
-int
-linux_statfs64(struct thread *td, struct linux_statfs64_args *args)
-{
-	struct l_statfs64 linux_statfs;
-	struct statfs *bsd_statfs;
-	int error;
-
-	if (args->bufsize != sizeof(struct l_statfs64))
-		return (EINVAL);
-
-	bsd_statfs = malloc(sizeof(struct statfs), M_STATFS, M_WAITOK);
-	error = kern_statfs(td, args->path, UIO_USERSPACE, bsd_statfs);
-	if (error == 0)
-		bsd_to_linux_statfs64(bsd_statfs, &linux_statfs);
-	free(bsd_statfs, M_STATFS);
-	if (error != 0)
-		return (error);
-	return (copyout(&linux_statfs, args->buf, sizeof(linux_statfs)));
-}
-
-int
-linux_fstatfs64(struct thread *td, struct linux_fstatfs64_args *args)
-{
-	struct l_statfs64 linux_statfs;
-	struct statfs *bsd_statfs;
-	int error;
-
-	if (args->bufsize != sizeof(struct l_statfs64))
-		return (EINVAL);
-
-	bsd_statfs = malloc(sizeof(struct statfs), M_STATFS, M_WAITOK);
-	error = kern_fstatfs(td, args->fd, bsd_statfs);
-	if (error == 0)
-		bsd_to_linux_statfs64(bsd_statfs, &linux_statfs);
-	free(bsd_statfs, M_STATFS);
-	if (error != 0)
-		return (error);
-	return (copyout(&linux_statfs, args->buf, sizeof(linux_statfs)));
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 int
 linux_fstatfs(struct thread *td, struct linux_fstatfs_args *args)
@@ -590,100 +454,6 @@ linux_to_bsd_stat_flags(int linux_flags, int *out_flags)
 	return (true);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-
-static int
-stat64_copyout(struct stat *buf, void *ubuf)
-{
-	struct l_stat64 lbuf;
-
-	bzero(&lbuf, sizeof(lbuf));
-	lbuf.st_dev = linux_new_encode_dev(buf->st_dev);
-	lbuf.st_ino = buf->st_ino;
-	lbuf.st_mode = buf->st_mode;
-	lbuf.st_nlink = buf->st_nlink;
-	lbuf.st_uid = buf->st_uid;
-	lbuf.st_gid = buf->st_gid;
-	lbuf.st_rdev = linux_new_encode_dev(buf->st_rdev);
-	lbuf.st_size = buf->st_size;
-	lbuf.st_atim.tv_sec = buf->st_atim.tv_sec;
-	lbuf.st_atim.tv_nsec = buf->st_atim.tv_nsec;
-	lbuf.st_mtim.tv_sec = buf->st_mtim.tv_sec;
-	lbuf.st_mtim.tv_nsec = buf->st_mtim.tv_nsec;
-	lbuf.st_ctim.tv_sec = buf->st_ctim.tv_sec;
-	lbuf.st_ctim.tv_nsec = buf->st_ctim.tv_nsec;
-	lbuf.st_blksize = buf->st_blksize;
-	lbuf.st_blocks = buf->st_blocks;
-
-	/*
-	 * The __st_ino field makes all the difference. In the Linux kernel
-	 * it is conditionally compiled based on STAT64_HAS_BROKEN_ST_INO,
-	 * but without the assignment to __st_ino the runtime linker refuses
-	 * to mmap(2) any shared libraries. I guess it's broken alright :-)
-	 */
-	lbuf.__st_ino = buf->st_ino;
-
-	return (copyout(&lbuf, ubuf, sizeof(lbuf)));
-}
-
-int
-linux_stat64(struct thread *td, struct linux_stat64_args *args)
-{
-	struct stat buf;
-	int error;
-
-	error = linux_kern_stat(td, args->filename, UIO_USERSPACE, &buf);
-	if (error)
-		return (error);
-	return (stat64_copyout(&buf, args->statbuf));
-}
-
-int
-linux_lstat64(struct thread *td, struct linux_lstat64_args *args)
-{
-	struct stat sb;
-	int error;
-
-	error = linux_kern_lstat(td, args->filename, UIO_USERSPACE, &sb);
-	if (error)
-		return (error);
-	return (stat64_copyout(&sb, args->statbuf));
-}
-
-int
-linux_fstat64(struct thread *td, struct linux_fstat64_args *args)
-{
-	struct stat buf;
-	int error;
-
-	error = linux_kern_fstat(td, args->fd, &buf);
-	if (!error)
-		error = stat64_copyout(&buf, args->statbuf);
-
-	return (error);
-}
-
-int
-linux_fstatat64(struct thread *td, struct linux_fstatat64_args *args)
-{
-	int error, dfd, flags;
-	struct stat buf;
-
-	if (!linux_to_bsd_stat_flags(args->flag, &flags)) {
-		linux_msg(td, "fstatat64 unsupported flags 0x%x", flags);
-		return (EINVAL);
-	}
-
-	dfd = (args->dfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->dfd;
-	error = linux_kern_statat(td, flags, dfd, args->pathname,
-	    UIO_USERSPACE, &buf);
-	if (error == 0)
-		error = stat64_copyout(&buf, args->statbuf);
-
-	return (error);
-}
-
-#else /* __amd64__ && !COMPAT_LINUX32 */
 
 int
 linux_newfstatat(struct thread *td, struct linux_newfstatat_args *args)
@@ -705,7 +475,6 @@ linux_newfstatat(struct thread *td, struct linux_newfstatat_args *args)
 	return (error);
 }
 
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 int
 linux_syncfs(struct thread *td, struct linux_syncfs_args *args)
@@ -768,7 +537,7 @@ statx_copyout(struct stat *buf, uint32_t mask, uint64_t mntid, void *ubuf)
 		tbuf.stx_attributes |= STATX_ATTR_NODUMP;
 	/* Obtain identity from the same held vnode as the stat snapshot. */
 	if ((mask & STATX_MNT_ID) != 0
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	    && mntid != 0
 #endif
 	) {
@@ -818,7 +587,7 @@ linux_statx(struct thread *td, struct linux_statx_args *args)
 		return (EINVAL);
 
 	dirfd = (args->dirfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->dirfd;
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	error = linux_kern_statat_id(td, flags, dirfd, args->pathname,
 	    UIO_USERSPACE, &buf, &mntid);
 #else

@@ -41,9 +41,6 @@ options 	SCTP_SUPPORT		# Allow kldload of SCTP
 options 	KERN_TLS		# TLS transmit & receive offload
 options 	FFS			# Berkeley Fast Filesystem
 options 	SOFTUPDATES		# Enable FFS soft updates support
-options 	UFS_ACL			# Support for access control lists
-options 	UFS_DIRHASH		# Improve performance on big directories
-options 	QUOTA			# Enable disk quotas for UFS
 options 	MD_ROOT			# MD is a potential root device
 options 	NFSCL			# Network Filesystem Client
 options 	NFSD			# Network Filesystem Server
@@ -53,10 +50,8 @@ options 	MSDOSFS			# MSDOS Filesystem
 options 	CD9660			# ISO 9660 Filesystem
 options 	PSEUDOFS		# Pseudo-filesystem framework
 options 	TMPFS			# Efficient memory filesystem
-options 	GEOM_RAID		# Soft RAID functionality.
-options 	GEOM_LABEL		# Provides labelization
+options 	GEOM_LABEL_GPT		# GPT labels used for /boot/efi
 options 	EFIRT			# EFI Runtime Services support
-options 	COMPAT_FREEBSD32	# Compatible with i386 binaries
 # FreeBSD 15 is the oldest supported compatibility ABI.
 options 	COMPAT_FREEBSD15	# Compatible with FreeBSD15
 options 	SCSI_DELAY=5000		# Delay (in ms) before probing SCSI
@@ -163,7 +158,6 @@ device		aacraid			# Adaptec by PMC RAID
 device		mfi			# LSI MegaRAID SAS
 device		mrsas			# LSI/Avago MegaRAID SAS/SATA, 6Gb/s and 12Gb/s
 #XXX pointer/int warnings
-#device		pst			# Promise Supertrak SX6000
 
 # NVM Express (NVMe) support
 device		nvme			# base NVMe driver
@@ -360,7 +354,6 @@ device		efirtc			# EFI RTC
 # ---------------------------------------------------------------------------
 
 # 5BSD is 64-bit only: no 32-bit binary compatibility.
-nooptions	COMPAT_FREEBSD32
 
 # 5BSD security policies (the mandatory mac_capability plane is always present
 # via sys/conf/files; these are the optional statically-compiled policies).

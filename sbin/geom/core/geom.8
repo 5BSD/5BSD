@@ -145,13 +145,11 @@ Currently, classes aware of
 are:
 .Pp
 .Bl -column "* MULTIPATH" "* MULTIPATH" "* MULTIPATH" -offset indent
-.It \(bu CACHE Ta \(bu MIRROR Ta \(bu SCHED
-.It \(bu CONCAT Ta \(bu MOUNTVER Ta \(bu SHSEC
-.It \(bu DISK Ta \(bu MULTIPATH Ta \(bu STRIPE
-.It \(bu ELI Ta \(bu NOP Ta \(bu UNION
-.It \(bu JOURNAL Ta \(bu PART Ta \(bu VFS
-.It \(bu LABEL Ta \(bu RAID Ta \(bu VIRSTOR
-.It \(bu MD Ta \(bu RAID3 Ta \(bu ZONED
+.It \(bu DISK Ta \(bu LABEL Ta \(bu MD
+.It \(bu ELI Ta \(bu LINUX_LVM Ta \(bu MIRROR
+.It \(bu GATE Ta \(bu MULTIPATH Ta \(bu NOP
+.It \(bu PART Ta \(bu RAID Ta \(bu UZIP
+.It \(bu VFS Ta \(bu ZONED Ta
 .El
 .Sh ENVIRONMENT
 The following environment variables affect the execution of
@@ -165,15 +163,9 @@ Multiple paths can be specified with a colon-separated list of paths.
 .Sh EXIT STATUS
 Exit status is 0 on success, and 1 if the command fails.
 .Sh EXAMPLES
-The following example shows how to set up a stripe on three disks for automatic
-configuration:
+The following example lists partitions on a disk:
 .Bd -literal -offset indent
-geom stripe label -v -s 65536 data /dev/da0 /dev/da1 /dev/da2
-.Ed
-.Pp
-or:
-.Bd -literal -offset indent
-gstripe label -v -s 65536 data /dev/da0 /dev/da1 /dev/da2
+geom part list da0
 .Ed
 .Pp
 Print the list of all providers from the DISK class:
@@ -189,21 +181,12 @@ geom md unload
 .Xr libgeom 3 ,
 .Xr geom 4 ,
 .Xr xo_options 7 ,
-.Xr gcache 8 ,
-.Xr gconcat 8 ,
 .Xr geli 8 ,
-.Xr gjournal 8 ,
 .Xr glabel 8 ,
 .Xr gmirror 8 ,
-.Xr gmountver 8 ,
 .Xr gmultipath 8 ,
 .Xr gnop 8 ,
 .Xr gpart 8 ,
-.Xr graid3 8 ,
-.Xr gshsec 8 ,
-.Xr gstripe 8 ,
-.Xr gunion 8 ,
-.Xr gvirstor 8 ,
 .Xr gzoned 8
 .Sh HISTORY
 The

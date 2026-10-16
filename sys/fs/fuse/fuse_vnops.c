@@ -401,10 +401,6 @@ fuse_vnop_do_ioctl(struct vnode *vp, u_long cmd, void *arg, int fflag,
 		flags |= FUSE_IOCTL_DIR;
 	}
 #ifdef __LP64__
-#ifdef COMPAT_FREEBSD32
-	if (SV_PROC_FLAG(td->td_proc, SV_ILP32))
-		flags |= FUSE_IOCTL_32BIT;
-#endif
 #else /* !defined(__LP64__) */
 	flags |= FUSE_IOCTL_32BIT;
 #endif

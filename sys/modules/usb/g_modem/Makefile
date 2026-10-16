@@ -29,6 +29,6 @@
 KMOD=	g_modem
 
 SRCS=	bus_if.h usb_if.h device_if.h vnode_if.h \
-    card_if.h opt_usb.h pci_if.h g_modem.c
+    opt_usb.h pci_if.h g_modem.c
 
 .include <bsd.kmod.mk>

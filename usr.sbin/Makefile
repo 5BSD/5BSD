@@ -170,10 +170,6 @@ SUBDIR.${MK_EFI}+=	efivar efidp efibootmgr efitable efiwake
 SUBDIR.${MK_EFI}+=	uefisign
 .endif
 SUBDIR.${MK_FDT}+=	ofwdump
-SUBDIR.${MK_FLOPPY}+=	fdcontrol
-SUBDIR.${MK_FLOPPY}+=	fdformat
-SUBDIR.${MK_FLOPPY}+=	fdread
-SUBDIR.${MK_FLOPPY}+=	fdwrite
 SUBDIR.${MK_FREEBSD_UPDATE}+=	freebsd-update
 SUBDIR.${MK_KERBEROS_SUPPORT}+=	gssd
 SUBDIR.${MK_GPIO}+=	gpioctl

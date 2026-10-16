@@ -1,3 +1,2 @@
-On 64-bit platforms, build the 32-bit library set and a
-.Nm ld-elf32.so.1
-runtime linker.
+Unsupported on 5BSD.
+The 32-bit execution ABI and its runtime linker have been retired.

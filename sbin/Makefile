@@ -43,7 +43,6 @@ SUBDIR=adjkerntz \
 	mount_msdosfs \
 	mount_nfs \
 	mount_nullfs \
-	mount_udf \
 	mount_unionfs \
 	newfs \
 	newfs_msdos \

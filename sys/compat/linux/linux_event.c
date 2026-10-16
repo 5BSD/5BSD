@@ -56,13 +56,8 @@
 #include <vm/pmap.h>
 #include <vm/vm_map.h>
 
-#ifdef COMPAT_LINUX32
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 
 #include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_event.h>
@@ -622,31 +617,6 @@ linux_epoll_pwait(struct thread *td, struct linux_epoll_pwait_args *args)
 	    args->maxevents, args->timeout, pmask));
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_epoll_pwait2_64(struct thread *td, struct linux_epoll_pwait2_64_args *args)
-{
-	struct timespec ts, *tsa;
-	sigset_t mask, *pmask;
-	int error;
-
-	error = linux_copyin_sigset(td, args->mask, sizeof(l_sigset_t),
-	    &mask, &pmask);
-	if (error != 0)
-		return (error);
-
-	if (args->timeout) {
-		error = linux_get_timespec64(&ts, args->timeout);
-		if (error != 0)
-			return (error);
-		tsa = &ts;
-	} else
-		tsa = NULL;
-
-	return (linux_epoll_wait_ts(td, args->epfd, args->events,
-	    args->maxevents, tsa, pmask));
-}
-#else
 int
 linux_epoll_pwait2(struct thread *td, struct linux_epoll_pwait2_args *args)
 {
@@ -670,7 +640,6 @@ linux_epoll_pwait2(struct thread *td, struct linux_epoll_pwait2_args *args)
 	return (linux_epoll_wait_ts(td, args->epfd, args->events,
 	    args->maxevents, tsa, pmask));
 }
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 static int
 epoll_register_kevent(struct thread *td, struct file *epfp, int fd, int filter,
@@ -832,49 +801,3 @@ linux_timerfd_settime(struct thread *td, struct linux_timerfd_settime_args *args
 
 	return (error);
 }
-
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_timerfd_gettime64(struct thread *td, struct linux_timerfd_gettime64_args *args)
-{
-	struct l_itimerspec64 lots;
-	struct itimerspec ots;
-	int error;
-
-	error = kern_timerfd_gettime(td, args->fd, &ots);
-	if (error != 0)
-		return (error);
-
-	error = native_to_linux_itimerspec64(&lots, &ots);
-	if (error == 0)
-		error = copyout(&lots, args->old_value, sizeof(lots));
-
-	return (error);
-}
-
-int
-linux_timerfd_settime64(struct thread *td, struct linux_timerfd_settime64_args *args)
-{
-	struct l_itimerspec64 lots;
-	struct itimerspec nts, ots;
-	int error;
-
-	error = copyin(args->new_value, &lots, sizeof(lots));
-	if (error != 0)
-		return (error);
-	error = linux_to_native_itimerspec64(&nts, &lots);
-	if (error != 0)
-		return (error);
-	if (args->old_value == NULL)
-		error = kern_timerfd_settime(td, args->fd, args->flags, &nts, NULL);
-	else
-		error = kern_timerfd_settime(td, args->fd, args->flags, &nts, &ots);
-	if (error == 0 && args->old_value != NULL) {
-		error = native_to_linux_itimerspec64(&lots, &ots);
-		if (error == 0)
-			error = copyout(&lots, args->old_value, sizeof(lots));
-	}
-
-	return (error);
-}
-#endif

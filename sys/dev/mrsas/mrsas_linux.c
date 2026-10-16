@@ -49,18 +49,12 @@
 #include <sys/proc.h>
 #include <machine/bus.h>
 
-#if defined(__amd64__)			/* Assume amd64 wants 32 bit Linux */
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 #include <compat/linux/linux_ioctl.h>
 #include <compat/linux/linux_util.h>
 
 #include <dev/mrsas/mrsas.h>
-#undef COMPAT_FREEBSD32
 #include <dev/mrsas/mrsas_ioctl.h>
 
 /* There are multiple ioctl number ranges that need to be handled */
@@ -113,4 +107,4 @@ END:
 }
 
 DEV_MODULE(mrsas_linux, mrsas_linux_modevent, NULL);
-MODULE_DEPEND(mrsas, linux, 1, 1, 1);
+MODULE_DEPEND(mrsas_linux, linux64, 1, 1, 1);

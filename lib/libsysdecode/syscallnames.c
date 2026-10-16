@@ -41,25 +41,13 @@
 static
 #include <kern/syscalls.c>
 
-#if defined(__amd64__) || defined(__powerpc64__) || defined(__aarch64__)
-static
-#include <compat/freebsd32/freebsd32_syscalls.c>
-#endif
-
-#if defined(__aarch64__) || defined(__amd64__) || defined(__i386__)
+#if defined(__aarch64__) || defined(__amd64__)
 static
 #ifdef __aarch64__
 #include <arm64/linux/linux_syscalls.c>
 #elif __amd64__
 #include <amd64/linux/linux_syscalls.c>
-#else
-#include <i386/linux/linux_syscalls.c>
 #endif
-#endif
-
-#ifdef __amd64__
-static
-#include <amd64/linux32/linux32_syscalls.c>
 #endif
 
 const char *
@@ -71,22 +59,10 @@ sysdecode_syscallname(enum sysdecode_abi abi, unsigned int code)
 		if (code < nitems(syscallnames))
 			return (syscallnames[code]);
 		break;
-#if defined(__amd64__) || defined(__powerpc64__) || defined(__aarch64__)
-	case SYSDECODE_ABI_FREEBSD32:
-		if (code < nitems(freebsd32_syscallnames))
-			return (freebsd32_syscallnames[code]);
-		break;
-#endif
-#if defined(__aarch64__) || defined(__amd64__) || defined(__i386__)
+#if defined(__aarch64__) || defined(__amd64__)
 	case SYSDECODE_ABI_LINUX:
 		if (code < nitems(linux_syscallnames))
 			return (linux_syscallnames[code]);
-		break;
-#endif
-#ifdef __amd64__
-	case SYSDECODE_ABI_LINUX32:
-		if (code < nitems(linux32_syscallnames))
-			return (linux32_syscallnames[code]);
 		break;
 #endif
 	default:

@@ -47,7 +47,6 @@ options 	UFS_DIRHASH		# Improve performance on big directories
 options 	QUOTA			# Enable disk quotas for UFS
 options 	MD_ROOT			# MD is a potential root device
 options 	GEOM_LABEL		# Provides labelization
-options 	COMPAT_FREEBSD32	# Compatible with i386 binaries
 # FreeBSD 15 is the oldest supported compatibility ABI.
 options 	COMPAT_FREEBSD15	# Compatible with FreeBSD15
 options 	SCSI_DELAY=5000		# Delay (in ms) before probing SCSI

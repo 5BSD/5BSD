@@ -7,7 +7,6 @@ SUBDIR=	async \
 	bridge \
 	car \
 	checksum \
-	cisco \
 	deflate \
 	device \
 	echo \
@@ -33,7 +32,6 @@ SUBDIR=	async \
 	pipe \
 	ppp \
 	pppoe \
-	pred1 \
 	socket \
 	source \
 	split \

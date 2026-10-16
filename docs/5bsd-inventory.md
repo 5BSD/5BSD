@@ -1,5 +1,7 @@
 # 5BSD divergence inventory
 
+> **Historical inventory:** Linux32, FreeBSD32 and the native i386 kernel source were retired on 2026-10-15. Any 32-bit table counts or source paths below describe the earlier tree. See [the retirement record](kernel-retirement-2026-10-15.md).
+
 What 5BSD adds to, and changes in, the FreeBSD it forked from. Produced
 2026-09-25 to scope the rewrite of The 5BSD Epic, then refreshed the same day
 after the defects it found were fixed (018de3344651 through edf6967eeff2); every section is written

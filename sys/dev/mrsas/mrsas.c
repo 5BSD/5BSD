@@ -1477,9 +1477,6 @@ mrsas_ioctl(struct cdev *dev, u_long cmd, caddr_t arg, int flag,
 do_ioctl:
 	switch (cmd) {
 	case MRSAS_IOC_FIRMWARE_PASS_THROUGH64:
-#ifdef COMPAT_FREEBSD32
-	case MRSAS_IOC_FIRMWARE_PASS_THROUGH32:
-#endif
 		/*
 		 * Decrement the Ioctl counting Semaphore before getting an
 		 * mfi command

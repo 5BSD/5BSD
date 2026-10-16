@@ -12,7 +12,6 @@ COMM=	${SYS}/sys/vnode.h \
 	${SYS}/dev/alc/*.[ch] \
 	${SYS}/dev/iicbus/*.[ch] \
 	${SYS}/dev/isp/*.[ch] \
-	${SYS}/dev/ppbus/*.[ch] \
 	${SYS}/dev/smbus/*.[ch] \
 	${SYS}/fs/autofs/*.[ch] \
 	${SYS}/fs/cd9660/*.[ch] \
@@ -32,7 +31,6 @@ COMM=	${SYS}/sys/vnode.h \
 	${SYS}/fs/pseudofs/*.[ch] \
 	${SYS}/fs/smbfs/*.[ch] \
 	${SYS}/fs/tmpfs/*.[ch] \
-	${SYS}/fs/udf/*.[ch] \
 	${SYS}/fs/unionfs/*.[ch] \
 	${SYS}/geom/*.[ch] \
 	${SYS}/kern/*.[ch] \
@@ -61,7 +59,6 @@ COMMDIR2= ${SYS}/dev/alc \
 	${SYS}/dev/iicbus \
 	${SYS}/dev/isp \
 	${SYS}/dev/md \
-	${SYS}/dev/ppbus \
 	${SYS}/dev/smbus \
 	${SYS}/fs/autofs \
 	${SYS}/fs/cd9660 \
@@ -81,7 +78,6 @@ COMMDIR2= ${SYS}/dev/alc \
 	${SYS}/fs/pseudofs \
 	${SYS}/fs/smbfs \
 	${SYS}/fs/tmpfs \
-	${SYS}/fs/udf \
 	${SYS}/fs/unionfs \
 	${SYS}/ufs/ffs \
 	${SYS}/ufs/ufs

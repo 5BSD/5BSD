@@ -159,11 +159,6 @@
 
 #include <vm/uma.h>
 
-#ifdef COMPAT_FREEBSD32
-#include <sys/mount.h>
-#include <sys/sysent.h>
-#include <compat/freebsd32/freebsd32.h>
-#endif
 
 /*
  * Static SDT (DTrace) tracepoints for the socket-layer operation surface.
@@ -290,20 +285,6 @@ VNET_DEFINE(struct hhook_head *, socket_hhh[HHOOK_SOCKET_LAST + 1]);
 static inline int hhook_run_socket(struct socket *, void *, int32_t);
 #endif
 
-#ifdef COMPAT_FREEBSD32
-#ifdef __amd64__
-/* off_t has 4-byte alignment on i386 but not on other 32-bit platforms. */
-#define	__splice32_packed	__packed
-#else
-#define	__splice32_packed
-#endif
-struct splice32 {
-	int32_t	sp_fd;
-	int64_t sp_max;
-	struct timeval32 sp_idle;
-} __splice32_packed;
-#undef __splice32_packed
-#endif
 
 /*
  * Limit on the number of connections in the listen queue waiting
@@ -4151,16 +4132,6 @@ stdopt:
 
 		case SO_SNDTIMEO:
 		case SO_RCVTIMEO:
-#ifdef COMPAT_FREEBSD32
-			if (SV_CURPROC_FLAG(SV_ILP32)) {
-				struct timeval32 tv32;
-
-				error = sooptcopyin(sopt, &tv32, sizeof tv32,
-				    sizeof tv32);
-				CP(tv32, tv, tv_sec);
-				CP(tv32, tv, tv_usec);
-			} else
-#endif
 				error = sooptcopyin(sopt, &tv, sizeof tv,
 				    sizeof tv);
 			if (error)
@@ -4220,22 +4191,6 @@ stdopt:
 		case SO_SPLICE: {
 			struct splice splice;
 
-#ifdef COMPAT_FREEBSD32
-			if (SV_CURPROC_FLAG(SV_ILP32)) {
-				struct splice32 splice32;
-
-				error = sooptcopyin(sopt, &splice32,
-				    sizeof(splice32), sizeof(splice32));
-				if (error == 0) {
-					splice.sp_fd = splice32.sp_fd;
-					splice.sp_max = splice32.sp_max;
-					CP(splice32.sp_idle, splice.sp_idle,
-					    tv_sec);
-					CP(splice32.sp_idle, splice.sp_idle,
-					    tv_usec);
-				}
-			} else
-#endif
 			{
 				error = sooptcopyin(sopt, &splice,
 				    sizeof(splice), sizeof(splice));
@@ -4453,15 +4408,6 @@ integer:
 			    (SOLISTENING(so) ? so->sol_sbrcv_timeo :
 			    so->so_rcv.sb_timeo));
 			SOCK_UNLOCK(so);
-#ifdef COMPAT_FREEBSD32
-			if (SV_CURPROC_FLAG(SV_ILP32)) {
-				struct timeval32 tv32;
-
-				CP(tv, tv32, tv_sec);
-				CP(tv, tv32, tv_usec);
-				error = sooptcopyout(sopt, &tv32, sizeof tv32);
-			} else
-#endif
 				error = sooptcopyout(sopt, &tv, sizeof tv);
 			break;
 

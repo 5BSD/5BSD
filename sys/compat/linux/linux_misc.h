@@ -196,7 +196,7 @@
 #endif
 
 /* Linux sets the i387 to extended precision. */
-#if defined(__i386__) || defined(__amd64__)
+#if defined(__amd64__)
 #define	__LINUX_NPXCW__		0x37f
 #endif
 
@@ -309,7 +309,7 @@ extern int stclohz;
 #define	LINUX_OOM_SCORE_ADJ_MIN	-1000
 #define	LINUX_OOM_SCORE_ADJ_MAX	1000
 
-#if defined(__aarch64__) || (defined(__amd64__) && !defined(COMPAT_LINUX32))
+#if defined(__aarch64__) || defined(__amd64__)
 int linux_ptrace_status(struct thread *td, int pid, int status);
 #endif
 void linux_to_bsd_waitopts(int options, int *bsdopts);

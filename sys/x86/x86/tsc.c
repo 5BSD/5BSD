@@ -103,10 +103,6 @@ static u_int tscp_get_timecount_low(struct timecounter *tc);
 static void tsc_levels_changed(void *arg, int unit);
 static uint32_t x86_tsc_vdso_timehands(struct vdso_timehands *vdso_th,
     struct timecounter *tc);
-#ifdef COMPAT_FREEBSD32
-static uint32_t x86_tsc_vdso_timehands32(struct vdso_timehands32 *vdso_th32,
-    struct timecounter *tc);
-#endif
 
 static struct timecounter tsc_timecounter = {
 	.tc_get_timecount =		tsc_get_timecount,
@@ -114,9 +110,6 @@ static struct timecounter tsc_timecounter = {
 	.tc_name =			"TSC",
 	.tc_quality =			800,	/* adjusted in code */
 	.tc_fill_vdso_timehands = 	x86_tsc_vdso_timehands,
-#ifdef COMPAT_FREEBSD32
-	.tc_fill_vdso_timehands32 = 	x86_tsc_vdso_timehands32,
-#endif
 };
 
 static int
@@ -981,20 +974,3 @@ x86_tsc_vdso_timehands(struct vdso_timehands *vdso_th, struct timecounter *tc)
 	bzero(vdso_th->th_res, sizeof(vdso_th->th_res));
 	return (1);
 }
-
-#ifdef COMPAT_FREEBSD32
-static uint32_t
-x86_tsc_vdso_timehands32(struct vdso_timehands32 *vdso_th32,
-    struct timecounter *tc)
-{
-
-	vdso_th32->th_algo = VDSO_TH_ALGO_X86_TSC;
-	vdso_th32->th_x86_shift = (int)(intptr_t)tc->tc_priv;
-	vdso_th32->th_x86_hpet_idx = 0xffffffff;
-	vdso_th32->th_x86_pvc_last_systime[0] = 0;
-	vdso_th32->th_x86_pvc_last_systime[1] = 0;
-	vdso_th32->th_x86_pvc_stable_mask = 0;
-	bzero(vdso_th32->th_res, sizeof(vdso_th32->th_res));
-	return (1);
-}
-#endif

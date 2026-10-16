@@ -41,13 +41,8 @@
 #include <sys/module.h>
 #include <sys/file.h>
 #include <sys/proc.h>
-#ifdef __amd64__
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 #include <compat/linux/linux_ioctl.h>
 
 /* There are multiple ioctl number ranges that need to be handled */
@@ -64,7 +59,7 @@ aacraid_linux_modevent(module_t mod, int type, void *data)
 }
 
 DEV_MODULE(aacraid_linux, aacraid_linux_modevent, NULL);
-MODULE_DEPEND(aacraid_linux, linux, 1, 1, 1);
+MODULE_DEPEND(aacraid_linux, linux64, 1, 1, 1);
 
 static int
 aacraid_linux_ioctl(struct thread *td, struct linux_ioctl_args *args)

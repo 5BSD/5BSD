@@ -1,5 +1,7 @@
 # Missing Linux syscalls: handoff for the next implementation stream
 
+> **Historical inventory:** Linux32, FreeBSD32 and the native i386 kernel source were retired on 2026-10-15. Any 32-bit table counts or source paths below describe the earlier tree. See [the retirement record](kernel-retirement-2026-10-15.md).
+
 Follow-up: the peer names, mixed multicast deltas and process ptrace events
 batch is summarized in the sockets and ptrace rows of
 [System Calls](book/src/compat/linux/syscalls.md); its VM procedure is in

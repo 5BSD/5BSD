@@ -154,8 +154,6 @@ options 	BOOT_TAG=\"\"
 # size for both BOOT_TAG and the assocated tunable.
 options 	BOOT_TAG_SZ=32
 
-options 	GEOM_CACHE		# Disk cache.
-options 	GEOM_CONCAT		# Disk concatenation.
 options 	GEOM_ELI		# Disk encryption.
 options 	GEOM_GATE		# Userland services.
 options 	GEOM_LABEL		# Providers labelization.
@@ -172,9 +170,7 @@ options 	GEOM_PART_GPT		# GPT partitioning
 options 	GEOM_PART_LDM		# Logical Disk Manager
 options 	GEOM_PART_MBR		# MBR partitioning
 options 	GEOM_RAID		# Soft RAID functionality.
-options 	GEOM_STRIPE		# Disk striping.
 options 	GEOM_UZIP		# Read-only compressed disks
-options 	GEOM_ZERO		# Performance testing helper.
 
 #
 # The root device and filesystem type can be compiled in;
@@ -816,13 +812,11 @@ options 	NETGRAPH_BPF
 options 	NETGRAPH_BRIDGE
 options 	NETGRAPH_CAR
 options 	NETGRAPH_CHECKSUM
-options 	NETGRAPH_CISCO
 options 	NETGRAPH_DEFLATE
 options 	NETGRAPH_DEVICE
 options 	NETGRAPH_ECHO
 options 	NETGRAPH_EIFACE
 options 	NETGRAPH_ETHER
-options 	NETGRAPH_FRAME_RELAY
 options 	NETGRAPH_GIF
 options 	NETGRAPH_GIF_DEMUX
 options 	NETGRAPH_HOLE
@@ -830,7 +824,6 @@ options 	NETGRAPH_IFACE
 options 	NETGRAPH_IP_INPUT
 options 	NETGRAPH_KSOCKET
 options 	NETGRAPH_L2TP
-options 	NETGRAPH_LMI
 options 	NETGRAPH_MPPC_COMPRESSION
 options 	NETGRAPH_MPPC_ENCRYPTION
 options 	NETGRAPH_NETFLOW
@@ -841,8 +834,6 @@ options 	NETGRAPH_PIPE
 options 	NETGRAPH_PPP
 options 	NETGRAPH_PPPOE
 options 	NETGRAPH_PPTPGRE
-options 	NETGRAPH_PRED1
-options 	NETGRAPH_RFC1490
 options 	NETGRAPH_SOCKET
 options 	NETGRAPH_SPLIT
 options 	NETGRAPH_TAG
@@ -1081,7 +1072,6 @@ options 	PSEUDOFS		#Pseudo-filesystem framework
 options 	PSEUDOFS_TRACE		#Debugging support for PSEUDOFS
 options 	SMBFS			#SMB/CIFS filesystem
 options 	TMPFS			#Efficient memory filesystem
-options 	UDF			#Universal Disk Format
 options 	UNIONFS			#Union filesystem
 # The xFS_ROOT options REQUIRE the associated ``options xFS''
 options 	NFS_ROOT		#NFS usable as root device
@@ -1174,7 +1164,6 @@ device		ksyms
 # Each option requires their base file system and LIBICONV.
 options 	CD9660_ICONV
 options 	MSDOSFS_ICONV
-options 	UDF_ICONV
 
 
 #####################################################################
@@ -1955,8 +1944,8 @@ device		oce		# Emulex 10GbE (OneConnect Ethernet)
 device		ti		# Alteon Networks Tigon I/II gigabit Ethernet
 
 # PCI IEEE 802.11 Wireless NICs
-device		ath		# Atheros pci/cardbus NIC's
-device		ath_hal		# pci/cardbus chip support
+device		ath		# Atheros PCI NICs
+device		ath_hal		# PCI chip support
 #device		ath_ar5210	# AR5210 chips
 #device		ath_ar5211	# AR5211 chips
 #device		ath_ar5212	# AR5212 chips
@@ -2108,22 +2097,6 @@ envvar		hint.gusc.0.flags="0x13"
 #                              as much as possible (the default trying to
 #                              avoid it). Possible slowdown.
 #
-# SND_PCM_64                   (Only applicable for i386/32bit arch)
-#                              Process 32bit samples through 64bit
-#                              integer/arithmetic. Slight increase of dynamic
-#                              range at a cost of possible slowdown.
-#
-options 	SND_DIAGNOSTIC
-options 	SND_FEEDER_RATE_HP
-options 	SND_PCM_64
-
-#
-# Cardbus
-#
-# cbb: pci/CardBus bridge implementing YENTA interface
-# cardbus: CardBus slots
-device		cbb
-device		cardbus
 
 #
 # MMC/SD
@@ -2222,47 +2195,6 @@ device		nxprtc		# NXP RTCs: PCA/PFC212x PCA/PCF85xx
 device		rtc8583		# Epson RTC-8583
 device		s35390a		# Seiko Instruments S-35390A RTC
 device		sy8106a		# Silergy Corp. SY8106A buck regulator
-
-# Parallel-Port Bus
-#
-# Parallel port bus support is provided by the `ppbus' device.
-# Multiple devices may be attached to the parallel port, devices
-# are automatically probed and attached when found.
-#
-# Supported devices:
-# lpt	Parallel Printer
-# plip	Parallel network interface
-# ppi	General-purpose I/O ("Geek Port") + IEEE1284 I/O
-# pps	Pulse per second Timing Interface
-# lpbb	Philips official parallel port I2C bit-banging interface
-# pcfclock Parallel port clock driver.
-#
-# Supported interfaces:
-# ppc	ISA-bus parallel port interfaces.
-#
-
-options 	PPC_PROBE_CHIPSET # Enable chipset specific detection
-				  # (see flags in ppc(4))
-options 	DEBUG_1284	# IEEE1284 signaling protocol debug
-options 	PERIPH_1284	# Makes your computer act as an IEEE1284
-				# compliant peripheral
-options 	DONTPROBE_1284	# Avoid boot detection of PnP parallel devices
-options 	LPT_DEBUG	# Printer driver debug
-options 	PPC_DEBUG	# Parallel chipset level debug
-options 	PLIP_DEBUG	# Parallel network IP interface debug
-options 	PCFCLOCK_VERBOSE         # Verbose pcfclock driver
-options 	PCFCLOCK_MAX_RETRIES=5   # Maximum read tries (default 10)
-
-device		ppc
-envvar		hint.ppc.0.at="isa"
-envvar		hint.ppc.0.irq="7"
-device		ppbus
-device		lpt
-device		plip
-device		ppi
-device		pps
-device		lpbb
-device		pcfclock
 
 # General Purpose I/O pins
 device		dwgpio		# Synopsys DesignWare APB GPIO Controller

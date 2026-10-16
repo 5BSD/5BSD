@@ -232,7 +232,6 @@ MAN=	accept_filter.9 \
 	memcpy.9 \
 	memguard.9 \
 	memmove.9 \
-	microseq.9 \
 	microtime.9 \
 	microuptime.9 \
 	mi_switch.9 \

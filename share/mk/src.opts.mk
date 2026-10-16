@@ -188,7 +188,6 @@ __DEFAULT_YES_OPTIONS = \
 __DEFAULT_NO_OPTIONS = \
     ROUTED \
     FREEBSD_UPDATE \
-    FLOPPY \
     FINGER \
     SENDMAIL \
     BOOTPARAMD \
@@ -309,7 +308,7 @@ __DEFAULT_NO_OPTIONS+=LLDB
 # kernel and user ABI (sys/sys/zfshandle.h #errors otherwise), so the 32-bit
 # shim libraries cannot be built and there is no supported 32-bit userland.
 # LIB32 is unconditionally broken.
-BROKEN_OPTIONS+=LIB32
+BROKEN_OPTIONS+=LIB32 FLOPPY
 # Retired native platforms supplied the OFW and U-Boot loaders.
 BROKEN_OPTIONS+=LOADER_OFW LOADER_UBOOT
 # KBOOT remains available on amd64 and aarch64.

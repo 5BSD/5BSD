@@ -36,7 +36,6 @@ MAN=	aac.4 \
 	ae.4 \
 	${_aesni.4} \
 	age.4 \
-	agp.4 \
 	ahc.4 \
 	ahci.4 \
 	ahd.4 \
@@ -55,7 +54,6 @@ MAN=	aac.4 \
 	${_amdtemp.4} \
 	${_apple_bce.4} \
 	${_bxe.4} \
-	${_aout.4} \
 	${_apic.4} \
 	${_apm.4} \
 	aq.4 \
@@ -104,7 +102,6 @@ MAN=	aac.4 \
 	bwn.4 \
 	${_bytgpio.4} \
 	capsicum.4 \
-	cardbus.4 \
 	carp.4 \
 	cas.4 \
 	mac_capability.4 \
@@ -176,12 +173,10 @@ MAN=	aac.4 \
 	et.4 \
 	etherswitch.4 \
 	eventtimers.4 \
-	exca.4 \
 	ext2fs.4 \
 	e6000sw.4 \
 	e6060sw.4 \
 	fd.4 \
-	fdc.4 \
 	fdescfs.4 \
 	fdt.4 \
 	fdt_pinctrl.4 \
@@ -207,7 +202,6 @@ MAN=	aac.4 \
 	geom.4 \
 	geom_linux_lvm.4 \
 	geom_uzip.4 \
-	geom_zero.4 \
 	gif.4 \
 	${_gve.4} \
 	gpio.4 \
@@ -328,9 +322,7 @@ MAN=	aac.4 \
 	liquidio.4 \
 	lm75.4 \
 	lo.4 \
-	lp.4 \
 	lpbb.4 \
-	lpt.4 \
 	ltc430x.4 \
 	mac.4 \
 	mac_ddb.4 \
@@ -393,7 +385,6 @@ MAN=	aac.4 \
 	ng_btsocket.4 \
 	ng_car.4 \
 	ng_checksum.4 \
-	ng_cisco.4 \
 	ng_deflate.4 \
 	ng_device.4 \
 	nge.4 \
@@ -402,7 +393,6 @@ MAN=	aac.4 \
 	ng_etf.4 \
 	ng_ether.4 \
 	ng_ether_echo.4 \
-	ng_frame_relay.4 \
 	ng_gif.4 \
 	ng_gif_demux.4 \
 	ng_hci.4 \
@@ -414,7 +404,6 @@ MAN=	aac.4 \
 	ng_ksocket.4 \
 	ng_l2cap.4 \
 	ng_l2tp.4 \
-	ng_lmi.4 \
 	ng_macfilter.4 \
 	ng_mppc.4 \
 	ng_nat.4 \
@@ -425,8 +414,6 @@ MAN=	aac.4 \
 	ng_ppp.4 \
 	ng_pppoe.4 \
 	ng_pptpgre.4 \
-	ng_pred1.4 \
-	ng_rfc1490.4 \
 	ng_socket.4 \
 	ng_source.4 \
 	ng_split.4 \
@@ -475,7 +462,6 @@ MAN=	aac.4 \
 	p9fs.4 \
 	pass.4 \
 	pca954x.4 \
-	pccbb.4 \
 	pcf.4 \
 	pcf8574.4 \
 	pcf8591.4 \
@@ -490,15 +476,11 @@ MAN=	aac.4 \
 	pim.4 \
 	pms.4 \
 	polling.4 \
-	ppbus.4 \
-	ppc.4 \
-	ppi.4 \
 	procdesc.4 \
 	proto.4 \
 	ps4dshock.4 \
 	ps5dsense.4 \
 	psm.4 \
-	pst.4 \
 	pt.4 \
 	ptnet.4 \
 	pts.4 \
@@ -602,7 +584,6 @@ MAN=	aac.4 \
 	tcp_bblog.4 \
 	tcp_bbr.4 \
 	tcp_rack.4 \
-	tdfx.4 \
 	termios.4 \
 	textdump.4 \
 	thunderbolt.4 \
@@ -686,7 +667,6 @@ MLINKS=	ads111x.4 ads1013.4 \
 	ads111x.4 ads1115.4
 MLINKS+=ae.4 if_ae.4
 MLINKS+=age.4 if_age.4
-MLINKS+=agp.4 agpgart.4
 MLINKS+=alc.4 if_alc.4
 MLINKS+=ale.4 if_ale.4
 MLINKS+=altq.4 ALTQ.4
@@ -750,7 +730,6 @@ MLINKS+=gem.4 if_gem.4
 MLINKS+=genet.4 if_genet.4
 MLINKS+=geneve.4 if_geneve.4
 MLINKS+=geom.4 GEOM.4
-MLINKS+=geom_zero.4 gzero.4
 MLINKS+=gif.4 if_gif.4
 MLINKS+=gpio.4 gpiobus.4
 MLINKS+=gpioths.4 dht11.4
@@ -782,7 +761,6 @@ MLINKS+=lagg.4 trunk.4
 MLINKS+=lagg.4 if_lagg.4
 MLINKS+=lge.4 if_lge.4
 MLINKS+=lo.4 loop.4
-MLINKS+=lp.4 plip.4
 MLINKS+=malo.4 if_malo.4
 MLINKS+=me.4 if_me.4
 MLINKS+=mem.4 kmem.4
@@ -809,7 +787,6 @@ MLINKS+=virtio_iommu.4 vtiommu.4
 MLINKS+=virtio_mem.4 vtmem.4
 MLINKS+=virtio_pmem.4 vtpmem.4
 MLINKS+=virtio_snd.4 vtsnd.4
-MLINKS+=pccbb.4 cbb.4
 MLINKS+=pcm.4 snd.4 \
 	pcm.4 sound.4
 MLINKS+=pms.4 pmspcv.4
@@ -838,7 +815,6 @@ MLINKS+=syncache.4 syncookies.4
 MLINKS+=tap.4 if_tap.4 \
 	tap.4 vmnet.4 \
 	tap.4 if_vmnet.4
-MLINKS+=tdfx.4 tdfx_linux.4
 MLINKS+=ti.4 if_ti.4
 MLINKS+=tty.4 cua.4
 MLINKS+=tun.4 if_tun.4
@@ -869,7 +845,6 @@ _acpi_sony.4=	acpi_sony.4
 _acpi_toshiba.4=acpi_toshiba.4
 _acpi_wmi.4=	acpi_wmi.4
 _aesni.4=	aesni.4
-_aout.4=	aout.4
 _apic.4=	apic.4
 _apm.4=		apm.4
 _atrtc.4=	atrtc.4

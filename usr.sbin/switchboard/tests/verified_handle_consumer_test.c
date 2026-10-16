@@ -62,17 +62,21 @@ __wrap_mac_syscall(const char *policy, int call, void *arg)
 static int
 image_fixture(void)
 {
-	unsigned char bytes[256]={0};
-	Elf64_Ehdr *eh=(Elf64_Ehdr *)bytes;
-	Elf64_Phdr *ph=(Elf64_Phdr *)(bytes+sizeof(*eh));
+	struct {
+		Elf64_Ehdr eh;
+		Elf64_Phdr ph;
+		unsigned char padding[256 - sizeof(Elf64_Ehdr) - sizeof(Elf64_Phdr)];
+	} image = {0};
+	Elf64_Ehdr *eh = &image.eh;
+	Elf64_Phdr *ph = &image.ph;
 	memcpy(eh->e_ident,ELFMAG,SELFMAG);eh->e_ident[EI_CLASS]=ELFCLASS64;
 	eh->e_ident[EI_DATA]=ELFDATA2LSB;eh->e_ident[EI_VERSION]=EV_CURRENT;
 	eh->e_type=htole16(ET_DYN);eh->e_machine=htole16(EM_X86_64);
 	eh->e_phoff=htole64(sizeof(*eh));eh->e_ehsize=htole16(sizeof(*eh));
 	eh->e_phentsize=htole16(sizeof(*ph));eh->e_phnum=htole16(1);
-	ph->p_type=htole32(PT_LOAD);ph->p_filesz=htole64(sizeof(bytes));
+	ph->p_type=htole32(PT_LOAD);ph->p_filesz=htole64(sizeof(image));
 	int fd=open("client-image",O_RDWR|O_CREAT|O_EXCL,0600);assert(fd>=0);
-	assert(write(fd,bytes,sizeof(bytes))==sizeof(bytes));
+	assert(write(fd,&image,sizeof(image))==sizeof(image));
 	return fd;
 }
 struct capbundle *bundle_registry_get(unsigned idx) { (void)idx; return (void *)&unit; }

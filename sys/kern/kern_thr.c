@@ -79,23 +79,7 @@ static int max_threads_hits;
 SYSCTL_INT(_kern_threads, OID_AUTO, max_threads_hits, CTLFLAG_RD,
     &max_threads_hits, 0, "kern.threads.max_threads_per_proc hit count");
 
-#ifdef COMPAT_FREEBSD32
-
-static inline int
-suword_lwpid(void *addr, lwpid_t lwpid)
-{
-	int error;
-
-	if (SV_CURPROC_FLAG(SV_LP64))
-		error = suword(addr, lwpid);
-	else
-		error = suword32(addr, lwpid);
-	return (error);
-}
-
-#else
 #define suword_lwpid	suword
-#endif
 
 /*
  * System call interface.

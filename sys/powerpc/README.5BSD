@@ -1,5 +1,0 @@
-Native PowerPC platforms are retired in 5BSD.
-
-The remaining headers describe foreign crash-dump formats and declarations
-referenced by imported drivers. They do not provide a bootable kernel.
-Compiler backends and userspace cross-target tools are intentionally retained.

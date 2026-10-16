@@ -59,10 +59,6 @@ struct regset {
 SET_DECLARE(__elfN(regset), struct regset);
 #define	ELF_REGSET(_regset)	DATA_SET(__elfN(regset), _regset)
 #endif
-#ifdef COMPAT_FREEBSD32
-SET_DECLARE(elf32_regset, struct regset);
-#define	ELF32_REGSET(_regset)	DATA_SET(elf32_regset, _regset)
-#endif
 
 int	fill_regs(struct thread *, struct reg *);
 int	set_regs(struct thread *, struct reg *);
@@ -70,22 +66,6 @@ int	fill_fpregs(struct thread *, struct fpreg *);
 int	set_fpregs(struct thread *, struct fpreg *);
 int	fill_dbregs(struct thread *, struct dbreg *);
 int	set_dbregs(struct thread *, struct dbreg *);
-#ifdef COMPAT_FREEBSD32
-int	fill_regs32(struct thread *, struct reg32 *);
-int	set_regs32(struct thread *, struct reg32 *);
-#ifndef fill_fpregs32
-int	fill_fpregs32(struct thread *, struct fpreg32 *);
-#endif
-#ifndef set_fpregs32
-int	set_fpregs32(struct thread *, struct fpreg32 *);
-#endif
-#ifndef fill_dbregs32
-int	fill_dbregs32(struct thread *, struct dbreg32 *);
-#endif
-#ifndef set_dbregs32
-int	set_dbregs32(struct thread *, struct dbreg32 *);
-#endif
-#endif
 #endif
 
 #endif

@@ -42,7 +42,6 @@ int	isofs_filestat(kvm_t *kd, struct vnode *vp, struct vnstat *vn);
 int	msdosfs_filestat(kvm_t *kd, struct vnode *vp, struct vnstat *vn);
 int	nfs_filestat(kvm_t *kd, struct vnode *vp, struct vnstat *vn);
 int	smbfs_filestat(kvm_t *kd, struct vnode *vp, struct vnstat *vn);
-int	udf_filestat(kvm_t *kd, struct vnode *vp, struct vnstat *vn);
 int	ufs_filestat(kvm_t *kd, struct vnode *vp, struct vnstat *vn);
 int	zfs_filestat(kvm_t *kd, struct vnode *vp, struct vnstat *vn);
 void	*getvnodedata(struct vnode *vp);

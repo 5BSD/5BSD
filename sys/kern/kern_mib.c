@@ -302,10 +302,6 @@ proc_machine_arch(struct proc *p)
 
 	if (p->p_sysent->sv_machine_arch != NULL)
 		return (p->p_sysent->sv_machine_arch(p));
-#ifdef COMPAT_FREEBSD32
-	if (SV_PROC_FLAG(p, SV_ILP32))
-		return (MACHINE_ARCH32);
-#endif
 	return (MACHINE_ARCH);
 }
 
@@ -324,9 +320,6 @@ SYSCTL_PROC(_hw, HW_MACHINE_ARCH, machine_arch, CTLTYPE_STRING | CTLFLAG_RD |
     CTLFLAG_CAPRD | CTLFLAG_MPSAFE, NULL, 0, sysctl_hw_machine_arch, "A",
     "System architecture");
 
-#ifdef COMPAT_FREEBSD32
-#include <compat/freebsd32/freebsd32_util.h>
-#endif
 
 static int
 sysctl_kern_supported_archs(SYSCTL_HANDLER_ARGS)
@@ -334,9 +327,6 @@ sysctl_kern_supported_archs(SYSCTL_HANDLER_ARGS)
 	const char *supported_archs;
 
 	supported_archs =
-#ifdef COMPAT_FREEBSD32
-	    compat_freebsd_32bit ? MACHINE_ARCH " " MACHINE_ARCH32 :
-#endif
 	    MACHINE_ARCH;
 	return (SYSCTL_OUT(req, supported_archs, strlen(supported_archs) + 1));
 }
@@ -634,10 +624,6 @@ SYSCTL_NODE(_kern, OID_AUTO, features, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
 
 
 
-#ifdef COMPAT_FREEBSD8
-FEATURE(compat_freebsd8, "Compatible with FreeBSD 8");
-#endif
-
 #ifdef COMPAT_FREEBSD9
 FEATURE(compat_freebsd9, "Compatible with FreeBSD 9");
 #endif
@@ -764,4 +750,3 @@ SYSCTL_SIZEOF_STRUCT(kinfo_proc);
 /* Used by kernel debuggers. */
 const int pcb_size = sizeof(struct pcb);
 SYSCTL_SIZEOF_STRUCT(pcb);
-

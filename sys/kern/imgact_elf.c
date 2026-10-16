@@ -116,12 +116,8 @@ static size_t __elfN(prepare_register_notes)(struct thread *td,
  * Static SDT tracepoints for the ELF image activator.  The "imgact"
  * provider is defined in imgact_shell.c; here we only reference it.
  *
- * This source is compiled once per ELF word size: natively (the "standard"
- * build) and again via imgact_elf32.c when COMPAT_FREEBSD32 is configured.
- * SDT_PROBE_DEFINE emits a global struct plus linker-set entry, so the
- * probes must be DEFINEd in exactly one of those passes to avoid duplicate
- * symbols at link time.  Define in the native pass; the 32-bit compat pass
- * (which always runs alongside a 64-bit native pass) only DECLAREs them.
+ * This source is compiled for the native ELF word size.
+ * SDT_PROBE_DEFINE emits a global struct plus linker-set entry.
  *
  *   imgact:::elf      - fires at successful ELF activation
  *   imgact:::interp   - fires when a PT_INTERP (dynamic linker / RTLD) runs
@@ -132,17 +128,10 @@ static size_t __elfN(prepare_register_notes)(struct thread *td,
  * stringof()/copyinstr() as appropriate.
  */
 SDT_PROVIDER_DECLARE(imgact);
-#if defined(COMPAT_FREEBSD32) && __ELF_WORD_SIZE == 32
-SDT_PROBE_DECLARE(imgact, , , elf);
-SDT_PROBE_DECLARE(imgact, , , interp);
-SDT_PROBE_DECLARE(imgact, , , brand);
-SDT_PROBE_DECLARE(imgact, , , wxneeded);
-#else
 SDT_PROBE_DEFINE4(imgact, , , elf, "char *", "char *", "unsigned long", "int");
 SDT_PROBE_DEFINE2(imgact, , , interp, "char *", "unsigned long");
 SDT_PROBE_DEFINE2(imgact, , , brand, "char *", "int");
 SDT_PROBE_DEFINE2(imgact, , , wxneeded, "char *", "uint32_t");
-#endif
 
 SYSCTL_NODE(_kern, OID_AUTO, ELF_ABI_ID, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "");
@@ -2345,21 +2334,6 @@ __elfN(putnote)(struct thread *td, struct note_info *ninfo, struct sbuf *sb)
  * Miscellaneous note out functions.
  */
 
-#if defined(COMPAT_FREEBSD32) && __ELF_WORD_SIZE == 32
-#include <compat/freebsd32/freebsd32.h>
-#include <compat/freebsd32/freebsd32_signal.h>
-
-typedef struct prstatus32 elf_prstatus_t;
-typedef struct prpsinfo32 elf_prpsinfo_t;
-typedef struct fpreg32 elf_prfpregset_t;
-typedef struct fpreg32 elf_fpregset_t;
-typedef struct reg32 elf_gregset_t;
-typedef struct thrmisc32 elf_thrmisc_t;
-typedef struct ptrace_lwpinfo32 elf_lwpinfo_t;
-#define ELF_KERN_PROC_MASK	KERN_PROC_MASK32
-typedef struct kinfo_proc32 elf_kinfo_proc_t;
-typedef uint32_t elf_ps_strings_t;
-#else
 typedef prstatus_t elf_prstatus_t;
 typedef prpsinfo_t elf_prpsinfo_t;
 typedef prfpregset_t elf_prfpregset_t;
@@ -2370,7 +2344,6 @@ typedef struct ptrace_lwpinfo elf_lwpinfo_t;
 #define ELF_KERN_PROC_MASK	0
 typedef struct kinfo_proc elf_kinfo_proc_t;
 typedef vm_offset_t elf_ps_strings_t;
-#endif
 
 static void
 __elfN(note_prpsinfo)(void *arg, struct sbuf *sb, size_t *sizep)
@@ -2454,11 +2427,7 @@ __elfN(get_prstatus)(struct regset *rs, struct thread *td, void *buf,
 		status->pr_osreldate = osreldate;
 		status->pr_cursig = td->td_proc->p_sig;
 		status->pr_pid = td->td_tid;
-#if defined(COMPAT_FREEBSD32) && __ELF_WORD_SIZE == 32
-		fill_regs32(td, &status->pr_reg);
-#else
 		fill_regs(td, &status->pr_reg);
-#endif
 	}
 	*sizep = sizeof(*status);
 	return (true);
@@ -2472,11 +2441,7 @@ __elfN(set_prstatus)(struct regset *rs, struct thread *td, void *buf,
 
 	KASSERT(size == sizeof(*status), ("%s: invalid size", __func__));
 	status = buf;
-#if defined(COMPAT_FREEBSD32) && __ELF_WORD_SIZE == 32
-	set_regs32(td, &status->pr_reg);
-#else
 	set_regs(td, &status->pr_reg);
-#endif
 	return (true);
 }
 
@@ -2498,11 +2463,7 @@ __elfN(get_fpregset)(struct regset *rs, struct thread *td, void *buf,
 		KASSERT(*sizep == sizeof(*fpregset), ("%s: invalid size",
 		    __func__));
 		fpregset = buf;
-#if defined(COMPAT_FREEBSD32) && __ELF_WORD_SIZE == 32
-		fill_fpregs32(td, fpregset);
-#else
 		fill_fpregs(td, fpregset);
-#endif
 	}
 	*sizep = sizeof(*fpregset);
 	return (true);
@@ -2517,11 +2478,7 @@ __elfN(set_fpregset)(struct regset *rs, struct thread *td, void *buf,
 	KASSERT(size == sizeof(*fpregset), ("%s: invalid size", __func__));
 
 	fpregset = buf;
-#if defined(COMPAT_FREEBSD32) && __ELF_WORD_SIZE == 32
-	return (set_fpregs32(td, fpregset) == 0);
-#else
 	return (set_fpregs(td, fpregset) == 0);
-#endif
 }
 
 static struct regset __elfN(regset_fpregset) = {
@@ -2577,11 +2534,7 @@ __elfN(get_lwpinfo)(struct regset *rs, struct thread *td, void *buf,
 		if (td->td_si.si_signo != 0) {
 			pl.pl_event = PL_EVENT_SIGNAL;
 			pl.pl_flags |= PL_FLAG_SI;
-#if defined(COMPAT_FREEBSD32) && __ELF_WORD_SIZE == 32
-			siginfo_to_siginfo32(&td->td_si, &pl.pl_siginfo);
-#else
 			pl.pl_siginfo = td->td_si;
-#endif
 		}
 		strcpy(pl.pl_tdname, td->td_name);
 		/* XXX TODO: supply more information in struct ptrace_lwpinfo*/
@@ -2868,11 +2821,7 @@ __elfN(note_procstat_psstrings)(void *arg, struct sbuf *sb, size_t *sizep)
 	if (sb != NULL) {
 		KASSERT(*sizep == size, ("invalid size"));
 		structsize = sizeof(ps_strings);
-#if defined(COMPAT_FREEBSD32) && __ELF_WORD_SIZE == 32
-		ps_strings = PTROUT(PROC_PS_STRINGS(p));
-#else
 		ps_strings = PROC_PS_STRINGS(p);
-#endif
 		sbuf_bcat(sb, &structsize, sizeof(structsize));
 		sbuf_bcat(sb, &ps_strings, sizeof(ps_strings));
 	}
@@ -2917,13 +2866,8 @@ __elfN(note_procstat_kqueues)(void *arg, struct sbuf *sb, size_t *sizep)
 	int structsize;
 	bool compat32;
 
-#if defined(COMPAT_FREEBSD32) && __ELF_WORD_SIZE == 32
-	compat32 = true;
-	structsize = sizeof(struct kinfo_knote32);
-#else
 	compat32 = false;
 	structsize = sizeof(struct kinfo_knote);
-#endif
 	p = arg;
 	if (sb == NULL) {
 		size = 0;

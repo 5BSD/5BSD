@@ -124,19 +124,6 @@ struct sndstioc_nv_arg {
 	_IO('D', 103)
 
 #ifdef _KERNEL
-#ifdef COMPAT_FREEBSD32
-
-struct sndstioc_nv_arg32 {
-	uint32_t nbytes;
-	uint32_t buf;
-};
-
-#define SNDSTIOC_GET_DEVS32 \
-	_IOC_NEWTYPE(SNDSTIOC_GET_DEVS, struct sndstioc_nv_arg32)
-#define SNDSTIOC_ADD_USER_DEVS32 \
-	_IOC_NEWTYPE(SNDSTIOC_ADD_USER_DEVS, struct sndstioc_nv_arg32)
-
-#endif
 #endif
 
 #endif /* !_SYS_SNDSTAT_H_ */

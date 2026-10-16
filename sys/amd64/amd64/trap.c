@@ -678,19 +678,11 @@ trap(struct trapframe *frame)
 			if (pti) {
 				if (frame->tf_rip ==
 				    (uintptr_t)IDTVEC(fast_syscall_pti) ||
-#ifdef COMPAT_FREEBSD32
-				    frame->tf_rip ==
-				    (uintptr_t)IDTVEC(int0x80_syscall_pti) ||
-#endif
 				    frame->tf_rip == (uintptr_t)IDTVEC(bpt_pti))
 					return;
 			} else {
 				if (frame->tf_rip ==
 				    (uintptr_t)IDTVEC(fast_syscall) ||
-#ifdef COMPAT_FREEBSD32
-				    frame->tf_rip ==
-				    (uintptr_t)IDTVEC(int0x80_syscall) ||
-#endif
 				    frame->tf_rip == (uintptr_t)IDTVEC(bpt))
 					return;
 			}
@@ -1641,13 +1633,6 @@ trap_fred_u(struct trapframe_fred *frame)
 		break;
 	case TF_FRED_EVINFO2_TYPE_INTn:
 		enable_intr();
-#ifdef COMPAT_FREEBSD32
-		if (vec == IDT_SYSCALL) {
-			frame->tf_idt.tf_err = fred_inst_len(frame);
-			ia32_syscall(&frame->tf_idt);
-			break;
-		}
-#endif
 		frame->tf_idt.tf_trapno = vec;
 		ksiginfo_init_trap(&ksi);
 		ksi.ksi_signo = SIGBUS;

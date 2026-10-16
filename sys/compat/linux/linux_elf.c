@@ -56,13 +56,7 @@
 
 #include <machine/elf.h>
 
-#ifdef COMPAT_LINUX32
-#define linux_pt_regset linux_pt_regset32
-#define bsd_to_linux_regset bsd_to_linux_regset32
-#include <machine/../linux32/linux.h>
-#else
 #include <machine/../linux/linux.h>
-#endif
 #include <compat/linux/linux_elf.h>
 #include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_mib.h>
@@ -141,13 +135,8 @@ __linuxN(prepare_notes)(struct thread *td, struct note_info_list *list,
 }
 
 typedef struct linux_elf_prstatus linux_elf_prstatus_t;
-#ifdef COMPAT_LINUX32
-typedef struct prpsinfo32 linux_elf_prpsinfo_t;
-typedef struct fpreg32 linux_elf_prfpregset_t;
-#else
 typedef prpsinfo_t linux_elf_prpsinfo_t;
 typedef prfpregset_t linux_elf_prfpregset_t;
-#endif
 
 static void
 __linuxN(note_prpsinfo)(void *arg, struct sbuf *sb, size_t *sizep)
@@ -218,11 +207,7 @@ __linuxN(note_prstatus)(void *arg, struct sbuf *sb, size_t *sizep)
 {
 	struct thread *td;
 	linux_elf_prstatus_t *status;
-#ifdef COMPAT_LINUX32
-	struct reg32 pr_reg;
-#else
 	struct reg pr_reg;
-#endif
 
 	td = arg;
 	if (sb != NULL) {
@@ -235,11 +220,7 @@ __linuxN(note_prstatus)(void *arg, struct sbuf *sb, size_t *sizep)
 		status->pr_cursig = td->td_proc->p_sig;
 		status->pr_pid = td->td_tid;
 
-#ifdef COMPAT_LINUX32
-		fill_regs32(td, &pr_reg);
-#else
 		fill_regs(td, &pr_reg);
-#endif
 		bsd_to_linux_regset(&pr_reg, &status->pr_reg);
 		sbuf_bcat(sb, status, sizeof(*status));
 		free(status, M_TEMP);
@@ -257,11 +238,7 @@ __linuxN(note_fpregset)(void *arg, struct sbuf *sb, size_t *sizep)
 	if (sb != NULL) {
 		KASSERT(*sizep == sizeof(*fpregset), ("invalid size"));
 		fpregset = malloc(sizeof(*fpregset), M_TEMP, M_ZERO | M_WAITOK);
-#ifdef COMPAT_LINUX32
-		fill_fpregs32(td, fpregset);
-#else
 		fill_fpregs(td, fpregset);
-#endif
 		sbuf_bcat(sb, fpregset, sizeof(*fpregset));
 		free(fpregset, M_TEMP);
 	}

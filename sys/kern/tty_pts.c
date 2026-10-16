@@ -360,9 +360,6 @@ ptsdev_ioctl(struct file *fp, u_long cmd, void *data,
 		tty_unlock(tp);
 		return (0);
 	case FIODGNAME:
-#ifdef COMPAT_FREEBSD32
-	case FIODGNAME_32:
-#endif
 	{
 		struct fiodgname_arg *fgn;
 		const char *p;

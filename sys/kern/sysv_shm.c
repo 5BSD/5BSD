@@ -973,23 +973,6 @@ static struct syscall_helper_data shm_syscalls[] = {
 	SYSCALL_INIT_LAST
 };
 
-#ifdef COMPAT_FREEBSD32
-#include <compat/freebsd32/freebsd32.h>
-#include <compat/freebsd32/freebsd32_ipc.h>
-#include <compat/freebsd32/freebsd32_proto.h>
-#include <compat/freebsd32/freebsd32_signal.h>
-#include <compat/freebsd32/freebsd32_syscall.h>
-#include <compat/freebsd32/freebsd32_util.h>
-
-static struct syscall_helper_data shm32_syscalls[] = {
-	SYSCALL32_INIT_HELPER_COMPAT(shmat),
-	SYSCALL32_INIT_HELPER_COMPAT(shmdt),
-	SYSCALL32_INIT_HELPER_COMPAT(shmget),
-	SYSCALL32_INIT_HELPER(freebsd32_shmsys),
-	SYSCALL32_INIT_HELPER(freebsd32_shmctl),
-	SYSCALL_INIT_LAST
-};
-#endif
 
 static int
 shminit(void)
@@ -1062,11 +1045,6 @@ shminit(void)
 	error = syscall_helper_register(shm_syscalls, SY_THR_STATIC_KLD);
 	if (error != 0)
 		return (error);
-#ifdef COMPAT_FREEBSD32
-	error = syscall32_helper_register(shm32_syscalls, SY_THR_STATIC_KLD);
-	if (error != 0)
-		return (error);
-#endif
 	return (0);
 }
 
@@ -1078,9 +1056,6 @@ shmunload(void)
 	if (shm_nused > 0)
 		return (EBUSY);
 
-#ifdef COMPAT_FREEBSD32
-	syscall32_helper_unregister(shm32_syscalls);
-#endif
 	syscall_helper_unregister(shm_syscalls);
 	if (shm_prison_slot != 0)
 		osd_jail_deregister(shm_prison_slot);
@@ -1111,9 +1086,6 @@ static int
 sysctl_shmsegs(SYSCTL_HANDLER_ARGS)
 {
 	struct shmid_kernel tshmseg;
-#ifdef COMPAT_FREEBSD32
-	struct shmid_kernel32 tshmseg32;
-#endif
 	struct prison *pr, *rpr;
 	void *outaddr;
 	size_t outsize;
@@ -1133,23 +1105,6 @@ sysctl_shmsegs(SYSCTL_HANDLER_ARGS)
 			if (tshmseg.cred->cr_prison != pr)
 				tshmseg.u.shm_perm.key = IPC_PRIVATE;
 		}
-#ifdef COMPAT_FREEBSD32
-		if (SV_CURPROC_FLAG(SV_ILP32)) {
-			bzero(&tshmseg32, sizeof(tshmseg32));
-			freebsd32_ipcperm_out(&tshmseg.u.shm_perm,
-			    &tshmseg32.u.shm_perm);
-			CP(tshmseg, tshmseg32, u.shm_segsz);
-			CP(tshmseg, tshmseg32, u.shm_lpid);
-			CP(tshmseg, tshmseg32, u.shm_cpid);
-			CP(tshmseg, tshmseg32, u.shm_nattch);
-			CP(tshmseg, tshmseg32, u.shm_atime);
-			CP(tshmseg, tshmseg32, u.shm_dtime);
-			CP(tshmseg, tshmseg32, u.shm_ctime);
-			/* Don't copy object, label, or cred */
-			outaddr = &tshmseg32;
-			outsize = sizeof(tshmseg32);
-		} else
-#endif
 		{
 			tshmseg.object = NULL;
 			tshmseg.label = NULL;
@@ -1475,99 +1430,6 @@ sys_shmsys(struct thread *td, struct shmsys_args *uap)
 
 #endif	/* i386 && (COMPAT_FREEBSD4 || COMPAT_43) */
 
-#ifdef COMPAT_FREEBSD32
-
-int
-freebsd32_shmsys(struct thread *td, struct freebsd32_shmsys_args *uap)
-{
-
-	return (kern_nosys(td, 0));
-}
-
-
-int
-freebsd32_shmctl(struct thread *td, struct freebsd32_shmctl_args *uap)
-{
-	int error;
-	union {
-		struct shmid_ds shmid_ds;
-		struct shm_info shm_info;
-		struct shminfo shminfo;
-	} u;
-	union {
-		struct shmid_ds32 shmid_ds32;
-		struct shm_info32 shm_info32;
-		struct shminfo32 shminfo32;
-	} u32;
-	size_t sz;
-
-	if (uap->cmd == IPC_SET) {
-		if ((error = copyin(uap->buf, &u32.shmid_ds32,
-		    sizeof(u32.shmid_ds32))))
-			goto done;
-		freebsd32_ipcperm_in(&u32.shmid_ds32.shm_perm,
-		    &u.shmid_ds.shm_perm);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_segsz);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_lpid);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_cpid);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_nattch);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_atime);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_dtime);
-		CP(u32.shmid_ds32, u.shmid_ds, shm_ctime);
-	}
-
-	error = kern_shmctl(td, uap->shmid, uap->cmd, (void *)&u, &sz);
-	if (error)
-		goto done;
-
-	/* Cases in which we need to copyout */
-	switch (uap->cmd) {
-	case IPC_INFO:
-		CP(u.shminfo, u32.shminfo32, shmmax);
-		CP(u.shminfo, u32.shminfo32, shmmin);
-		CP(u.shminfo, u32.shminfo32, shmmni);
-		CP(u.shminfo, u32.shminfo32, shmseg);
-		CP(u.shminfo, u32.shminfo32, shmall);
-		error = copyout(&u32.shminfo32, uap->buf,
-		    sizeof(u32.shminfo32));
-		break;
-	case SHM_INFO:
-		CP(u.shm_info, u32.shm_info32, used_ids);
-		CP(u.shm_info, u32.shm_info32, shm_rss);
-		CP(u.shm_info, u32.shm_info32, shm_tot);
-		CP(u.shm_info, u32.shm_info32, shm_swp);
-		CP(u.shm_info, u32.shm_info32, swap_attempts);
-		CP(u.shm_info, u32.shm_info32, swap_successes);
-		error = copyout(&u32.shm_info32, uap->buf,
-		    sizeof(u32.shm_info32));
-		break;
-	case SHM_STAT:
-	case IPC_STAT:
-		freebsd32_ipcperm_out(&u.shmid_ds.shm_perm,
-		    &u32.shmid_ds32.shm_perm);
-		if (u.shmid_ds.shm_segsz > INT32_MAX)
-			u32.shmid_ds32.shm_segsz = INT32_MAX;
-		else
-			CP(u.shmid_ds, u32.shmid_ds32, shm_segsz);
-		CP(u.shmid_ds, u32.shmid_ds32, shm_lpid);
-		CP(u.shmid_ds, u32.shmid_ds32, shm_cpid);
-		CP(u.shmid_ds, u32.shmid_ds32, shm_nattch);
-		CP(u.shmid_ds, u32.shmid_ds32, shm_atime);
-		CP(u.shmid_ds, u32.shmid_ds32, shm_dtime);
-		CP(u.shmid_ds, u32.shmid_ds32, shm_ctime);
-		error = copyout(&u32.shmid_ds32, uap->buf,
-		    sizeof(u32.shmid_ds32));
-		break;
-	}
-
-done:
-	if (error) {
-		/* Invalidate the return value */
-		td->td_retval[0] = -1;
-	}
-	return (error);
-}
-#endif
 
 
 static int

@@ -4985,29 +4985,6 @@ vfsconf2x(struct sysctl_req *req, struct vfsconf *vfsp)
 	return (SYSCTL_OUT(req, &xvfsp, sizeof(xvfsp)));
 }
 
-#ifdef COMPAT_FREEBSD32
-struct xvfsconf32 {
-	uint32_t	vfc_vfsops;
-	char		vfc_name[MFSNAMELEN];
-	int32_t		vfc_typenum;
-	int32_t		vfc_refcount;
-	int32_t		vfc_flags;
-	uint32_t	vfc_next;
-};
-
-static int
-vfsconf2x32(struct sysctl_req *req, struct vfsconf *vfsp)
-{
-	struct xvfsconf32 xvfsp;
-
-	bzero(&xvfsp, sizeof(xvfsp));
-	strcpy(xvfsp.vfc_name, vfsp->vfc_name);
-	xvfsp.vfc_typenum = vfsp->vfc_typenum;
-	xvfsp.vfc_refcount = vfsp->vfc_refcount;
-	xvfsp.vfc_flags = vfsp->vfc_flags;
-	return (SYSCTL_OUT(req, &xvfsp, sizeof(xvfsp)));
-}
-#endif
 
 /*
  * Top level filesystem related information gathering.
@@ -5021,12 +4998,7 @@ sysctl_vfs_conflist(SYSCTL_HANDLER_ARGS)
 	error = 0;
 	vfsconf_slock();
 	TAILQ_FOREACH(vfsp, &vfsconf, vfc_list) {
-#ifdef COMPAT_FREEBSD32
-		if (req->flags & SCTL_MASK32)
-			error = vfsconf2x32(req, vfsp);
-		else
-#endif
-			error = vfsconf2x(req, vfsp);
+		error = vfsconf2x(req, vfsp);
 		if (error)
 			break;
 	}
@@ -5051,11 +5023,9 @@ vfs_sysctl(SYSCTL_HANDLER_ARGS)
 	log(LOG_WARNING, "userland calling deprecated sysctl, "
 	    "please rebuild world\n");
 
-#if 1 || defined(COMPAT_PRELITE2)
 	/* Resolve ambiguity between VFS_VFSCONF and VFS_GENERIC. */
 	if (namelen == 1)
 		return (sysctl_ovfs_conf(oidp, arg1, arg2, req));
-#endif
 
 	switch (name[1]) {
 	case VFS_MAXTYPENUM:
@@ -5073,12 +5043,7 @@ vfs_sysctl(SYSCTL_HANDLER_ARGS)
 		vfsconf_sunlock();
 		if (vfsp == NULL)
 			return (EOPNOTSUPP);
-#ifdef COMPAT_FREEBSD32
-		if (req->flags & SCTL_MASK32)
-			return (vfsconf2x32(req, vfsp));
-		else
-#endif
-			return (vfsconf2x(req, vfsp));
+		return (vfsconf2x(req, vfsp));
 	}
 	return (EOPNOTSUPP);
 }
@@ -5087,7 +5052,6 @@ static SYSCTL_NODE(_vfs, VFS_GENERIC, generic, CTLFLAG_RD | CTLFLAG_SKIP |
     CTLFLAG_MPSAFE, vfs_sysctl,
     "Generic filesystem");
 
-#if 1 || defined(COMPAT_PRELITE2)
 
 static int
 sysctl_ovfs_conf(SYSCTL_HANDLER_ARGS)
@@ -5114,7 +5078,6 @@ sysctl_ovfs_conf(SYSCTL_HANDLER_ARGS)
 	return (0);
 }
 
-#endif /* 1 || COMPAT_PRELITE2 */
 #endif /* !BURN_BRIDGES */
 
 static void

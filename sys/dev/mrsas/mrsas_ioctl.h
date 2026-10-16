@@ -45,11 +45,6 @@
 #include <sys/ioccom.h>
 #endif					/* !_IOWR */
 
-#ifdef COMPAT_FREEBSD32
-/* Compilation error FIX */
-#include <sys/mount.h>
-#include <compat/freebsd32/freebsd32.h>
-#endif
 
 /*
  * We need to use the same values as the mfi driver until MegaCli adds
@@ -62,9 +57,6 @@
 
 #define	MRSAS_IOC_GET_PCI_INFO				_IOR('M', 7, MRSAS_DRV_PCI_INFORMATION)
 #define	MRSAS_IOC_FIRMWARE_PASS_THROUGH64	_IOWR('M', 1, struct mrsas_iocpacket)
-#ifdef COMPAT_FREEBSD32
-#define	MRSAS_IOC_FIRMWARE_PASS_THROUGH32	_IOWR('M', 1, struct mrsas_iocpacket32)
-#endif
 
 #define	MRSAS_IOC_SCAN_BUS		_IO('M',  10)
 
@@ -100,24 +92,6 @@ struct mrsas_iocpacket {
 
 #pragma pack()
 
-#ifdef COMPAT_FREEBSD32
-#pragma pack(1)
-struct mrsas_iocpacket32 {
-	u_int16_t host_no;
-	u_int16_t __pad1;
-	u_int32_t sgl_off;
-	u_int32_t sge_count;
-	u_int32_t sense_off;
-	u_int32_t sense_len;
-	union {
-		u_int8_t raw[MEGAMFI_RAW_FRAME_SIZE];
-		struct mrsas_header hdr;
-	}	frame;
-	struct iovec32 sgl[MAX_IOCTL_SGE];
-};
-
-#pragma pack()
-#endif					/* COMPAT_FREEBSD32 */
 
 struct mfi_ioc_passthru {
 	struct mrsas_dcmd_frame ioc_frame;

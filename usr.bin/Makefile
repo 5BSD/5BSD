@@ -212,7 +212,6 @@ SUBDIR.${MK_KERBEROS}+=	compile_et
 .endif
 SUBDIR.${MK_LDNS_UTILS}+=	drill
 SUBDIR.${MK_LDNS_UTILS}+=	host
-SUBDIR.${MK_LIB32}+=	ldd32
 SUBDIR.${MK_LOCATE}+=	locate
 # XXX msgs?
 SUBDIR.${MK_MAIL}+=	from

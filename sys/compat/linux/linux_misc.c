@@ -79,15 +79,8 @@
 #include <vm/vm_page.h>
 #include <vm/swap_pager.h>
 
-#ifdef COMPAT_LINUX32
-#include <compat/freebsd32/freebsd32_misc.h>
-#include <compat/freebsd32/freebsd32_util.h>
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 
 #include <compat/linux/linux_common.h>
 #include <compat/linux/linux_dtrace.h>
@@ -135,10 +128,6 @@ struct l_pselect6arg {
 
 static int	linux_utimensat_lts_to_ts(struct l_timespec *,
 			struct timespec *);
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-static int	linux_utimensat_lts64_to_ts(struct l_timespec64 *,
-			struct timespec *);
-#endif
 static int	linux_common_utimensat(struct thread *, int,
 			const char *, struct timespec *, int);
 static int	linux_common_pselect6(struct thread *, l_int,
@@ -705,16 +694,9 @@ linux_newuname(struct thread *td, struct linux_newuname_args *args)
 	 * the string returned by getauxval(AT_PLATFORM) needs
 	 * to remain "i686", though.
 	 */
-#if defined(COMPAT_LINUX32)
-	if (linux32_emulate_i386)
-		strlcpy(utsname.machine, "i686", LINUX_MAX_UTSNAME);
-	else
-#endif
 	strlcpy(utsname.machine, "x86_64", LINUX_MAX_UTSNAME);
 #elif defined(__aarch64__)
 	strlcpy(utsname.machine, "aarch64", LINUX_MAX_UTSNAME);
-#elif defined(__i386__)
-	strlcpy(utsname.machine, "i686", LINUX_MAX_UTSNAME);
 #endif
 
 	return (copyout(&utsname, args->buf, sizeof(utsname)));
@@ -858,61 +840,6 @@ linux_utimensat(struct thread *td, struct linux_utimensat_args *args)
 	    timesp, args->flags));
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-static int
-linux_utimensat_lts64_to_ts(struct l_timespec64 *l_times, struct timespec *times)
-{
-
-	/* Zero out the padding in compat mode. */
-	l_times->tv_nsec &= 0xFFFFFFFFUL;
-
-	if (l_times->tv_nsec != LINUX_UTIME_OMIT &&
-	    l_times->tv_nsec != LINUX_UTIME_NOW &&
-	    (l_times->tv_nsec < 0 || l_times->tv_nsec > 999999999))
-		return (EINVAL);
-
-	times->tv_sec = l_times->tv_sec;
-	switch (l_times->tv_nsec)
-	{
-	case LINUX_UTIME_OMIT:
-		times->tv_nsec = UTIME_OMIT;
-		break;
-	case LINUX_UTIME_NOW:
-		times->tv_nsec = UTIME_NOW;
-		break;
-	default:
-		times->tv_nsec = l_times->tv_nsec;
-	}
-
-	return (0);
-}
-
-int
-linux_utimensat_time64(struct thread *td, struct linux_utimensat_time64_args *args)
-{
-	struct l_timespec64 l_times[2];
-	struct timespec times[2], *timesp;
-	int error;
-
-	if (args->times64 != NULL) {
-		error = copyin(args->times64, l_times, sizeof(l_times));
-		if (error != 0)
-			return (error);
-
-		error = linux_utimensat_lts64_to_ts(&l_times[0], &times[0]);
-		if (error != 0)
-			return (error);
-		error = linux_utimensat_lts64_to_ts(&l_times[1], &times[1]);
-		if (error != 0)
-			return (error);
-		timesp = times;
-	} else
-		timesp = NULL;
-
-	return (linux_common_utimensat(td, args->dfd, args->pathname,
-	    timesp, args->flags));
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 #ifdef LINUX_LEGACY_SYSCALLS
 int
@@ -963,7 +890,7 @@ linux_common_wait(struct thread *td, idtype_t idtype, int id, int *statusp,
 		} else if (WIFSTOPPED(tmpstat)) {
 			tmpstat = (tmpstat & 0xffff00ff) |
 			    (bsd_to_linux_signal(WSTOPSIG(tmpstat)) << 8);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 			tmpstat = linux_ptrace_status(td, siginfo.si_pid, tmpstat);
 #elif defined(__aarch64__)
 			if (WSTOPSIG(status) == SIGTRAP)
@@ -988,7 +915,7 @@ linux_common_wait(struct thread *td, idtype_t idtype, int id, int *statusp,
 			sig = bsd_to_linux_signal(siginfo.si_signo);
 			memset(&lsi, 0, sizeof(lsi));
 			siginfo_to_lsiginfo(&siginfo, &lsi, sig);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 			if (siginfo.si_code == CLD_TRAPPED && WIFSTOPPED(status))
 				lsi.lsi_status = (unsigned int)tmpstat >> 8;
 #endif
@@ -999,20 +926,6 @@ linux_common_wait(struct thread *td, idtype_t idtype, int id, int *statusp,
 	return (error);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_waitpid(struct thread *td, struct linux_waitpid_args *args)
-{
-	struct linux_wait4_args wait4_args = {
-		.pid = args->pid,
-		.status = args->status,
-		.options = args->options,
-		.rusage = NULL,
-	};
-
-	return (linux_wait4(td, &wait4_args));
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 int
 linux_wait4(struct thread *td, struct linux_wait4_args *args)
@@ -1072,7 +985,7 @@ linux_waitid(struct thread *td, struct linux_waitid_args *args)
 
 	options = 0;
 	linux_to_bsd_waitopts(args->options, &options);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	if ((args->options & LINUX_WSTOPPED) != 0)
 		options |= WTRAPPED;
 #endif
@@ -1358,14 +1271,6 @@ linux_getitimer(struct thread *td, struct linux_getitimer_args *uap)
 	return (copyout(&ls, uap->itv, sizeof(ls)));
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_nice(struct thread *td, struct linux_nice_args *args)
-{
-
-	return (kern_setpriority(td, PRIO_PROCESS, 0, args->inc));
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 int
 linux_setgroups(struct thread *td, struct linux_setgroups_args *args)
@@ -1544,47 +1449,6 @@ linux_setrlimit(struct thread *td, struct linux_setrlimit_args *args)
 	return (kern_setrlimit(td, which, &bsd_rlim));
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_old_getrlimit(struct thread *td, struct linux_old_getrlimit_args *args)
-{
-	struct l_rlimit rlim;
-	struct rlimit bsd_rlim;
-	u_int which;
-
-	if (linux_get_dummy_limit(td, args->resource, &bsd_rlim)) {
-		rlim.rlim_cur = bsd_rlim.rlim_cur;
-		rlim.rlim_max = bsd_rlim.rlim_max;
-		return (copyout(&rlim, args->rlim, sizeof(rlim)));
-	}
-
-	if (args->resource >= LINUX_RLIM_NLIMITS)
-		return (EINVAL);
-
-	which = linux_to_bsd_resource[args->resource];
-	if (which == -1)
-		return (EINVAL);
-
-	lim_rlimit(td, which, &bsd_rlim);
-
-#ifdef COMPAT_LINUX32
-	rlim.rlim_cur = (unsigned int)bsd_rlim.rlim_cur;
-	if (rlim.rlim_cur == UINT_MAX)
-		rlim.rlim_cur = INT_MAX;
-	rlim.rlim_max = (unsigned int)bsd_rlim.rlim_max;
-	if (rlim.rlim_max == UINT_MAX)
-		rlim.rlim_max = INT_MAX;
-#else
-	rlim.rlim_cur = (unsigned long)bsd_rlim.rlim_cur;
-	if (rlim.rlim_cur == ULONG_MAX)
-		rlim.rlim_cur = LONG_MAX;
-	rlim.rlim_max = (unsigned long)bsd_rlim.rlim_max;
-	if (rlim.rlim_max == ULONG_MAX)
-		rlim.rlim_max = LONG_MAX;
-#endif
-	return (copyout(&rlim, args->rlim, sizeof(rlim)));
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 int
 linux_getrlimit(struct thread *td, struct linux_getrlimit_args *args)
@@ -2248,7 +2112,7 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 			return (error);
 
 		PROC_LOCK(p);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 		thread_lock(td);
 		strlcpy(td->td_name, comm, sizeof(td->td_name));
 		thread_unlock(td);
@@ -2260,7 +2124,7 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 	case LINUX_PR_GET_NAME:
 		bzero(comm, sizeof(comm));
 		PROC_LOCK(p);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 		thread_lock(td);
 		strlcpy(comm, td->td_name, sizeof(comm));
 		thread_unlock(td);
@@ -2268,7 +2132,7 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 		strlcpy(comm, p->p_comm, sizeof(comm));
 #endif
 		PROC_UNLOCK(p);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 		max_size = sizeof(comm);
 #else
 		max_size = strlen(comm) + 1;
@@ -2559,7 +2423,7 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 		if (args->arg2 != LINUX_PR_TIMING_STATISTICAL)
 			error = EINVAL;
 		break;
-#if defined(__i386__) || defined(__amd64__)
+#if defined(__amd64__)
 	case LINUX_PR_GET_TSC:
 		/* rdtsc is always permitted; we cannot trap it. */
 		arg = LINUX_PR_TSC_ENABLE;
@@ -3326,30 +3190,6 @@ linux_common_pselect6(struct thread *td, l_int nfds, l_fd_set *readfds,
 	return (error);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_pselect6_time64(struct thread *td,
-    struct linux_pselect6_time64_args *args)
-{
-	struct timespec ts, *tsp;
-	int error;
-
-	if (args->tsp != NULL) {
-		error = linux_get_timespec64(&ts, args->tsp);
-		if (error != 0)
-			return (error);
-		tsp = &ts;
-	} else
-		tsp = NULL;
-
-	error = linux_common_pselect6(td, args->nfds, args->readfds,
-	    args->writefds, args->exceptfds, tsp, args->sig);
-
-	if (args->tsp != NULL)
-		linux_put_timespec64(&ts, args->tsp);
-	return (error);
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 int
 linux_ppoll(struct thread *td, struct linux_ppoll_args *args)
@@ -3423,27 +3263,6 @@ out:
 	return (error);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_ppoll_time64(struct thread *td, struct linux_ppoll_time64_args *args)
-{
-	struct timespec uts, *tsp;
-	int error;
-
-	if (args->tsp != NULL) {
-		error = linux_get_timespec64(&uts, args->tsp);
-		if (error != 0)
-			return (error);
-		tsp = &uts;
-	} else
- 		tsp = NULL;
-	error = linux_common_ppoll(td, args->fds, args->nfds, tsp,
-	    args->sset, args->ssize);
-	if (error == 0 && args->tsp != NULL)
-		error = linux_put_timespec64(&uts, args->tsp);
-	return (error);
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 static int
 linux_pollin(struct thread *td, struct pollfd *fds, struct pollfd *ufds, u_int nfd)
@@ -3523,20 +3342,6 @@ linux_sched_rr_get_interval(struct thread *td,
 	return (linux_put_timespec(&ts, uap->interval));
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_sched_rr_get_interval_time64(struct thread *td,
-    struct linux_sched_rr_get_interval_time64_args *uap)
-{
-	struct timespec ts;
-	int error;
-
-	error = linux_sched_rr_get_interval_common(td, uap->pid, &ts);
-	if (error != 0)
-		return (error);
-	return (linux_put_timespec64(&ts, uap->interval));
-}
-#endif
 
 /*
  * In case when the Linux thread is the initial thread in
@@ -3872,11 +3677,7 @@ linux_process_vm_rw(struct thread *td, l_pid_t pid,
 
 	/* Import local iovecs. */
 	luio = NULL;
-#ifdef COMPAT_LINUX32
-	error = freebsd32_copyinuio(PTRIN(lvec), liovcnt, &luio);
-#else
 	error = copyinuio(lvec, liovcnt, &luio);
-#endif
 	if (error != 0)
 		return (error);
 	luio->uio_rw = rw == 0 ? UIO_READ : UIO_WRITE;
@@ -3888,12 +3689,8 @@ linux_process_vm_rw(struct thread *td, l_pid_t pid,
 	 * target process, so copy in only the iovec metadata.
 	 */
 	rvec = NULL;
-#ifdef COMPAT_LINUX32
-	error = freebsd32_copyiniov(PTRIN(rvec_uptr), riovcnt, &rvec, EINVAL);
-#else
 	error = copyiniov(__DECONST(struct iovec *, rvec_uptr), riovcnt,
 	    &rvec, EINVAL);
-#endif
 	if (error != 0)
 		goto out;
 
@@ -4592,12 +4389,7 @@ linux_process_madvise(struct thread *td, struct linux_process_madvise_args *args
 	/* Linux imports the vector before it looks at the pidfd. */
 	iov = NULL;
 	if (args->vlen != 0) {
-#ifdef COMPAT_LINUX32
-		error = freebsd32_copyiniov(PTRIN(args->vec), args->vlen, &iov,
-		    EINVAL);
-#else
 		error = copyiniov(args->vec, args->vlen, &iov, EINVAL);
-#endif
 		if (error != 0)
 			return (error);
 	}
@@ -4676,7 +4468,7 @@ linux_vhangup(struct thread *td, struct linux_vhangup_args *args)
 	return (0);
 }
 
-#if defined(__i386__) || defined(__amd64__)
+#if defined(__amd64__)
 int
 linux_poll(struct thread *td, struct linux_poll_args *args)
 {
@@ -4694,7 +4486,7 @@ linux_poll(struct thread *td, struct linux_poll_args *args)
 	return (linux_common_ppoll(td, args->fds, args->nfds,
 	    tsp, NULL, 0));
 }
-#endif /* __i386__ || __amd64__ */
+#endif /* __amd64__ */
 
 int
 linux_seccomp(struct thread *td, struct linux_seccomp_args *args)

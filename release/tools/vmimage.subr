@@ -76,8 +76,6 @@ vm_base_packages_list() {
 	[ -z "${WITHOUT_DEBUG_FILES}" ] && echo 5BSD-set-base-dbg
 	echo 5BSD-set-kernels
 	[ -z "${WITHOUT_KERNEL_SYMBOLS}" ] && echo 5BSD-set-kernels-dbg
-	# 5BSD is 64-bit only.  LIB32 is unconditionally disabled by
-	# share/mk/src.opts.mk, so no set-lib32 packages exist in pkgbase.
 	[ -n "${WITH_SRC}" ] && echo 5BSD-set-src
 	echo 5BSD-set-tests
 	# Install the base-system pkg bootstrap client.  A pkgbase repository is

@@ -2867,151 +2867,6 @@ static struct syscall_helper_data mq_syscalls[] = {
 	SYSCALL_INIT_LAST
 };
 
-#ifdef COMPAT_FREEBSD32
-#include <compat/freebsd32/freebsd32.h>
-#include <compat/freebsd32/freebsd32_proto.h>
-#include <compat/freebsd32/freebsd32_signal.h>
-#include <compat/freebsd32/freebsd32_syscall.h>
-#include <compat/freebsd32/freebsd32_util.h>
-
-static void
-mq_attr_from32(const struct mq_attr32 *from, struct mq_attr *to)
-{
-
-	to->mq_flags = from->mq_flags;
-	to->mq_maxmsg = from->mq_maxmsg;
-	to->mq_msgsize = from->mq_msgsize;
-	to->mq_curmsgs = from->mq_curmsgs;
-}
-
-static void
-mq_attr_to32(const struct mq_attr *from, struct mq_attr32 *to)
-{
-
-	to->mq_flags = from->mq_flags;
-	to->mq_maxmsg = from->mq_maxmsg;
-	to->mq_msgsize = from->mq_msgsize;
-	to->mq_curmsgs = from->mq_curmsgs;
-}
-
-int
-freebsd32_kmq_open(struct thread *td, struct freebsd32_kmq_open_args *uap)
-{
-	struct mq_attr attr;
-	struct mq_attr32 attr32;
-	int flags, error;
-
-	if ((uap->flags & O_ACCMODE) == O_ACCMODE || uap->flags & O_EXEC)
-		return (EINVAL);
-	flags = FFLAGS(uap->flags);
-	if ((flags & O_CREAT) != 0 && uap->attr != NULL) {
-		error = copyin(uap->attr, &attr32, sizeof(attr32));
-		if (error)
-			return (error);
-		mq_attr_from32(&attr32, &attr);
-	}
-	return (kern_kmq_open(td, uap->path, flags, uap->mode,
-	    uap->attr != NULL ? &attr : NULL));
-}
-
-int
-freebsd32_kmq_setattr(struct thread *td, struct freebsd32_kmq_setattr_args *uap)
-{
-	struct mq_attr attr, oattr;
-	struct mq_attr32 attr32, oattr32;
-	int error;
-
-	if (uap->attr != NULL) {
-		error = copyin(uap->attr, &attr32, sizeof(attr32));
-		if (error != 0)
-			return (error);
-		mq_attr_from32(&attr32, &attr);
-	}
-	error = kern_kmq_setattr(td, uap->mqd, uap->attr != NULL ? &attr : NULL,
-	    &oattr);
-	if (error == 0 && uap->oattr != NULL) {
-		mq_attr_to32(&oattr, &oattr32);
-		bzero(oattr32.__reserved, sizeof(oattr32.__reserved));
-		error = copyout(&oattr32, uap->oattr, sizeof(oattr32));
-	}
-	return (error);
-}
-
-int
-freebsd32_kmq_timedsend(struct thread *td,
-    struct freebsd32_kmq_timedsend_args *uap)
-{
-	struct timespec32 ets32;
-	struct timespec *abs_timeout, ets;
-	int error;
-
-	if (uap->abs_timeout != NULL) {
-		error = copyin(uap->abs_timeout, &ets32, sizeof(ets32));
-		if (error != 0)
-			return (error);
-		CP(ets32, ets, tv_sec);
-		CP(ets32, ets, tv_nsec);
-		abs_timeout = &ets;
-	} else
-		abs_timeout = NULL;
-
-	return (kern_kmq_timedsend(td, uap->mqd, uap->msg_ptr, uap->msg_len,
-		uap->msg_prio, abs_timeout));
-}
-
-int
-freebsd32_kmq_timedreceive(struct thread *td,
-    struct freebsd32_kmq_timedreceive_args *uap)
-{
-	struct timespec32 ets32;
-	struct timespec *abs_timeout, ets;
-	int error;
-
-	if (uap->abs_timeout != NULL) {
-		error = copyin(uap->abs_timeout, &ets32, sizeof(ets32));
-		if (error != 0)
-			return (error);
-		CP(ets32, ets, tv_sec);
-		CP(ets32, ets, tv_nsec);
-		abs_timeout = &ets;
-	} else
-		abs_timeout = NULL;
-
-	return (kern_kmq_timedreceive(td, uap->mqd, uap->msg_ptr, uap->msg_len,
-		uap->msg_prio, abs_timeout));
-}
-
-int
-freebsd32_kmq_notify(struct thread *td, struct freebsd32_kmq_notify_args *uap)
-{
-	struct sigevent ev, *evp;
-	struct sigevent32 ev32;
-	int error;
-
-	if (uap->sigev == NULL) {
-		evp = NULL;
-	} else {
-		error = copyin(uap->sigev, &ev32, sizeof(ev32));
-		if (error != 0)
-			return (error);
-		error = convert_sigevent32(&ev32, &ev);
-		if (error != 0)
-			return (error);
-		evp = &ev;
-	}
-	return (kern_kmq_notify(td, uap->mqd, evp));
-}
-
-static struct syscall_helper_data mq32_syscalls[] = {
-	SYSCALL32_INIT_HELPER(freebsd32_kmq_open),
-	SYSCALL32_INIT_HELPER_F(freebsd32_kmq_setattr, SYF_CAPENABLED),
-	SYSCALL32_INIT_HELPER_F(freebsd32_kmq_timedsend, SYF_CAPENABLED),
-	SYSCALL32_INIT_HELPER_F(freebsd32_kmq_timedreceive, SYF_CAPENABLED),
-	SYSCALL32_INIT_HELPER_F(freebsd32_kmq_notify, SYF_CAPENABLED),
-	SYSCALL32_INIT_HELPER_COMPAT(kmq_unlink),
-	SYSCALL_INIT_LAST
-};
-#endif
 
 static int
 mqinit(void)
@@ -3021,11 +2876,6 @@ mqinit(void)
 	error = syscall_helper_register(mq_syscalls, SY_THR_STATIC_KLD);
 	if (error != 0)
 		return (error);
-#ifdef COMPAT_FREEBSD32
-	error = syscall32_helper_register(mq32_syscalls, SY_THR_STATIC_KLD);
-	if (error != 0)
-		return (error);
-#endif
 	return (0);
 }
 
@@ -3033,9 +2883,6 @@ static int
 mqunload(void)
 {
 
-#ifdef COMPAT_FREEBSD32
-	syscall32_helper_unregister(mq32_syscalls);
-#endif
 	syscall_helper_unregister(mq_syscalls);
 	return (0);
 }

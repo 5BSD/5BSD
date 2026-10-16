@@ -48,7 +48,7 @@
 #include <compat/linux/linux_signal.h>
 #include <compat/linux/linux_util.h>
 
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 #define LINUX_PT_CONTINUE PT_KERN_CONTINUE
 #define LINUX_PT_STEP PT_KERN_STEP
 #define LINUX_PT_SYSCALL PT_KERN_SYSCALL
@@ -138,7 +138,7 @@ map_signum(int lsig, int *bsigp)
 	return (0);
 }
 
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 /* Trace relationship changes are serialized with native ptrace requests. */
 static eventhandler_tag linux_ptrace_tag;
 
@@ -452,7 +452,7 @@ linux_ptrace_fork_flags(struct thread *td, bool vfork, int signal, bool untraced
 int
 linux_ptrace_status(struct thread *td, pid_t pid, int status)
 {
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	struct linux_event_io io = { .status = status };
 	register_t saved = td->td_retval[0];
 
@@ -514,7 +514,7 @@ linux_ptrace_peek(struct thread *td, pid_t pid, void *addr, void *data)
 static int
 linux_ptrace_setoptions(struct thread *td, pid_t pid, l_ulong data)
 {
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	struct linux_event_io io = { .operation = 2, .options = data };
 
 	return (linux_event_request(td, pid, &io));
@@ -574,7 +574,7 @@ linux_ptrace_setoptions(struct thread *td, pid_t pid, l_ulong data)
 static int
 linux_ptrace_geteventmsg(struct thread *td, pid_t pid, l_ulong data)
 {
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	struct linux_event_io io = { .operation = 1, .user = (void *)data };
 
 	return (linux_event_request(td, pid, &io));
@@ -590,7 +590,7 @@ linux_ptrace_getsiginfo(struct thread *td, pid_t pid, l_ulong data)
 	l_siginfo_t l_siginfo;
 	int error, sig;
 
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	struct linux_event_io io = { .operation = 3, .user = (void *)data };
 
 	error = linux_event_request(td, pid, &io);
@@ -794,7 +794,7 @@ linux_ptrace_getregset(struct thread *td, pid_t pid, l_ulong addr, l_ulong data)
 	}
 }
 
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 static void
 linux_ptrace_seize_setup(struct thread *target, void *arg)
 {
@@ -922,7 +922,7 @@ linux_ptrace_listen(struct thread *td __unused, pid_t pid __unused)
 static int
 linux_ptrace_resume(struct thread *td, pid_t pid, int request, int sig)
 {
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	struct linux_event_io io = { .operation = 4, .signal = sig };
 	int error;
 
@@ -1028,7 +1028,7 @@ linux_ptrace(struct thread *td, struct linux_ptrace_args *uap)
 	if (!allow_ptrace)
 		return (ENOSYS);
 
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	/* Keep the complete amd64 register transaction under one target hold. */
 	if (uap->req == LINUX_PTRACE_PEEKUSER ||
 	    uap->req == LINUX_PTRACE_POKEUSER || uap->req == 30 ||
@@ -1104,7 +1104,7 @@ linux_ptrace(struct thread *td, struct linux_ptrace_args *uap)
 	case LINUX_PTRACE_DETACH:
 		error = map_signum(uap->data, &sig);
 		if (error != 0) {
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 			error = EIO;
 #endif
 			break;
@@ -1129,7 +1129,7 @@ linux_ptrace(struct thread *td, struct linux_ptrace_args *uap)
 	case LINUX_PTRACE_GETREGSET:
 		error = linux_ptrace_getregset(td, pid, uap->addr, uap->data);
 		break;
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	case LINUX_PTRACE_PEEKSIGINFO:
 		error = linux_ptrace_peeksiginfo(td, pid, uap->addr, uap->data);
 		break;

@@ -252,13 +252,6 @@ in6_mask2len(struct in6_addr *mask, u_char *lim0)
 	return x * 8 + y;
 }
 
-#ifdef COMPAT_FREEBSD32
-struct in6_ndifreq32 {
-	char ifname[IFNAMSIZ];
-	uint32_t ifindex;
-};
-#define	SIOCGDEFIFACE32_IN6	_IOWR('i', 86, struct in6_ndifreq32)
-#endif
 
 int
 in6_control_ioctl(u_long cmd, void *data,
@@ -303,21 +296,6 @@ in6_control_ioctl(u_long cmd, void *data,
 	case SIOCGDEFIFACE_IN6:
 		return (nd6_ioctl(cmd, data, ifp));
 
-#ifdef COMPAT_FREEBSD32
-	case SIOCGDEFIFACE32_IN6:
-		{
-			struct in6_ndifreq ndif;
-			struct in6_ndifreq32 *ndif32;
-
-			error = nd6_ioctl(SIOCGDEFIFACE_IN6, (caddr_t)&ndif,
-			    ifp);
-			if (error)
-				return (error);
-			ndif32 = (struct in6_ndifreq32 *)data;
-			ndif32->ifindex = ndif.ifindex;
-			return (0);
-		}
-#endif
 	}
 
 	switch (cmd) {

@@ -261,15 +261,13 @@ static bool filter_default = true;
 
 /*
  * A name reported by sysdecode may carry a prefix naming a compatibility
- * layer ("compat11.stat"), a non-native ABI ("linux_open",
- * "freebsd32_ioctl"), or both ("compat4.freebsd32_getfsstat").  Terms are
+ * layer ("compat11.stat"), a non-native ABI ("linux_open"), or both.
+ * Terms are
  * matched against the name as displayed and against each shortened form,
- * so that "-t @file" selects stat, compat11.stat and freebsd32_stat alike.
+ * so that "-t @file" selects stat, compat11.stat and linux_open alike.
  */
 static const char *const abi_prefixes[] = {
-	"freebsd32_",
 	"linux_",
-	"linux32_",
 };
 
 /*
@@ -548,9 +546,7 @@ term_matches_any_syscall(const struct filter_term *term)
 {
 	static const enum sysdecode_abi abis[] = {
 		SYSDECODE_ABI_FREEBSD,
-		SYSDECODE_ABI_FREEBSD32,
 		SYSDECODE_ABI_LINUX,
-		SYSDECODE_ABI_LINUX32,
 	};
 	const char *name;
 	size_t i;

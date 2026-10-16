@@ -3416,17 +3416,6 @@ aac_getnext_aif(struct aac_softc *sc, caddr_t arg)
 	fwprintf(sc, HBA_FLAGS_DBG_FUNCTION_ENTRY_B, "");
 
 	mtx_lock(&sc->aac_io_lock);
-#ifdef COMPAT_FREEBSD32
-	if (SV_CURPROC_FLAG(SV_ILP32)) {
-		struct get_adapter_fib_ioctl32 agf32;
-		error = copyin(arg, &agf32, sizeof(agf32));
-		if (error == 0) {
-			agf.AdapterFibContext = agf32.AdapterFibContext;
-			agf.Wait = agf32.Wait;
-			agf.AifFib = (caddr_t)(uintptr_t)agf32.AifFib;
-		}
-	} else
-#endif
 		error = copyin(arg, &agf, sizeof(agf));
 	if (error == 0) {
 		for (ctx = sc->fibctx; ctx; ctx = ctx->next) {

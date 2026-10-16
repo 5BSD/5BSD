@@ -23,7 +23,7 @@
 #include <compat/linux/linux_ioctl.h>
 #include <dev/ntsync/linux_ntsync.h>
 
-MODULE_DEPEND(linux_ntsync, linux, 1, 1, 1);
+MODULE_DEPEND(linux_ntsync, linux64, 1, 1, 1);
 MODULE_DEPEND(linux_ntsync, ntsync, 1, 1, 1);
 
 static linux_ioctl_function_t linux_ntsync_ioctl;

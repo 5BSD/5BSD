@@ -91,7 +91,6 @@ DIRDEPS+= \
 	sbin/mount_msdosfs \
 	sbin/mount_nfs \
 	sbin/mount_nullfs \
-	sbin/mount_udf \
 	sbin/mount_unionfs \
 	sbin/natd \
 	sbin/newfs \
@@ -519,10 +518,6 @@ DIRDEPS+= \
 	usr.sbin/etcupdate \
 	usr.sbin/extattr \
 	usr.sbin/extattrctl \
-	usr.sbin/fdcontrol \
-	usr.sbin/fdformat \
-	usr.sbin/fdread \
-	usr.sbin/fdwrite \
 	usr.sbin/fifolog/fifolog_create \
 	usr.sbin/fifolog/fifolog_reader \
 	usr.sbin/fifolog/fifolog_writer \
@@ -747,7 +742,6 @@ DIRDEPS.amd64= \
 	usr.sbin/hyperv/tools \
 	usr.sbin/hyperv/tools/kvp \
 	usr.sbin/hyperv/tools/vss \
-	usr.sbin/lptcontrol \
 	usr.sbin/mptable \
 	usr.sbin/spkrtest \
 	usr.sbin/sade \
@@ -768,7 +762,6 @@ DIRDEPS.i386= \
 	usr.sbin/hyperv/tools \
 	usr.sbin/hyperv/tools/kvp \
 	usr.sbin/hyperv/tools/vss \
-	usr.sbin/lptcontrol \
 	usr.sbin/mptable \
 	usr.sbin/pnpinfo \
 	usr.sbin/sade \

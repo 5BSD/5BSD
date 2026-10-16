@@ -84,7 +84,7 @@ EVENTHANDLER_DECLARE(linux_perf_detach_event, linux_perf_detach_fn);
 int	linux_on_exec(struct proc *, struct image_params *);
 bool	linux_exec_secure(struct image_params *);
 void	linux_thread_dtor(struct thread *);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 int	linux_ptrace_fork_flags(struct thread *, bool, int, bool);
 #endif
 int	linux_common_execve(struct thread *, struct image_args *);
@@ -135,7 +135,7 @@ void	linux_aio_proc_share(struct linux_pemuldata *,
 void	linux_aio_proc_release(struct linux_pemuldata *, struct thread *);
 #endif
 
-#if defined(_KERNEL) && defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(_KERNEL) && defined(__amd64__)
 void linux_ptrace_init(void);
 void linux_ptrace_fini(void);
 #endif

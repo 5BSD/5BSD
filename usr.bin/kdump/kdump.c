@@ -773,14 +773,12 @@ syscallabi(u_int sv_flags)
 
 	if (sv_flags == 0)
 		return (SYSDECODE_ABI_FREEBSD);
+	if ((sv_flags & SV_ILP32) != 0)
+		return (SYSDECODE_ABI_UNKNOWN);
 	switch (sv_flags & SV_ABI_MASK) {
 	case SV_ABI_FREEBSD:
 		return (SYSDECODE_ABI_FREEBSD);
 	case SV_ABI_LINUX:
-#ifdef __LP64__
-		if (sv_flags & SV_ILP32)
-			return (SYSDECODE_ABI_LINUX32);
-#endif
 		return (SYSDECODE_ABI_LINUX);
 	default:
 		return (SYSDECODE_ABI_UNKNOWN);
@@ -832,12 +830,6 @@ ktrsyscall(struct ktr_syscall *ktr, u_int sv_flags)
 				break;
 #ifdef SYSDECODE_HAVE_LINUX
 			case SV_ABI_LINUX:
-#ifdef __amd64__
-				if (sv_flags & SV_ILP32)
-					ktrsyscall_linux32(ktr, &ip,
-					    &narg, &c);
-				else
-#endif
 				ktrsyscall_linux(ktr, &ip, &narg, &c);
 				break;
 #endif /* SYSDECODE_HAVE_LINUX */

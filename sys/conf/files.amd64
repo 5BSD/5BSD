@@ -18,25 +18,6 @@ elf-vdso.so.o			standard				\
 	no-implicit-rule before-depend	\
 	clean		"elf-vdso.so.o elf-vdso.so.1 vdso_offsets.h sigtramp.pico"
 #
-elf-vdso32.so.o			optional	compat_freebsd32		\
-	dependency	"$S/amd64/ia32/ia32_sigtramp.S ia32_assym.h $S/conf/vdso_amd64_ia32.ldscript $S/tools/amd64_ia32_vdso.sh" \
-	compile-with	"env AWK='${AWK}' NM='${NM}' LD='${LD}' CC='${CC}' OBJCOPY='${OBJCOPY}' ELFDUMP='${ELFDUMP}' S='${S}' sh $S/tools/amd64_ia32_vdso.sh" \
-	no-ctfconvert	\
-	no-implicit-rule before-depend	\
-	clean		"elf-vdso32.so.o elf-vdso32.so.1 vdso_ia32_offsets.h ia32_sigtramp.pico"
-#
-ia32_genassym.o			standard				\
-	dependency 	"$S/compat/ia32/ia32_genassym.c offset.inc"		\
-	compile-with	"${CC} ${CFLAGS:N-flto*:N-fno-common:N-fsanitize*:N-fno-sanitize*} -fcommon -c ${.IMPSRC}" \
-	no-obj no-implicit-rule						\
-	clean		"ia32_genassym.o"
-#
-ia32_assym.h			standard				\
-	dependency 	"$S/kern/genassym.sh ia32_genassym.o"		\
-	compile-with	"env NM='${NM}' NMFLAGS='${NMFLAGS}' sh $S/kern/genassym.sh ia32_genassym.o > ${.TARGET}" \
-	no-obj no-implicit-rule before-depend				\
-	clean		"ia32_assym.h"
-#
 amd64/acpica/acpi_machdep.c	optional	acpi
 amd64/acpica/acpi_wakeup.c	optional	acpi
 acpi_wakecode.o			optional	acpi			\
@@ -404,12 +385,6 @@ kern/link_elf_obj.c		standard
 #
 # IA32 binary support
 #
-#amd64/ia32/ia32_exception.S	optional	compat_freebsd32
-amd64/ia32/ia32_reg.c		optional	compat_freebsd32
-amd64/ia32/ia32_signal.c	optional	compat_freebsd32
-amd64/ia32/ia32_syscall.c	optional	compat_freebsd32
-amd64/ia32/ia32_misc.c		optional	compat_freebsd32
-compat/ia32/ia32_sysvec.c	optional	compat_freebsd32
 #
 # x86 real mode BIOS emulator, required by dpms/pci/vesa
 #

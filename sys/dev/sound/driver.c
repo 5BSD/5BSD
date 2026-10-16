@@ -55,12 +55,6 @@ static moduledata_t snd_mod = {
 DECLARE_MODULE(snd_driver, snd_mod, SI_SUB_DRIVERS, SI_ORDER_MIDDLE);
 MODULE_VERSION(snd_driver, 1);
 
-#if defined(__powerpc__)
-MODULE_DEPEND(snd_driver, snd_ai2s, 1, 1, 1);
-#endif
-#if defined(__powerpc__)
-MODULE_DEPEND(snd_driver, snd_davbus, 1, 1, 1);
-#endif
 MODULE_DEPEND(snd_driver, snd_envy24, 1, 1, 1);
 MODULE_DEPEND(snd_driver, snd_envy24ht, 1, 1, 1);
 MODULE_DEPEND(snd_driver, snd_hda, 1, 1, 1);

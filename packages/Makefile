@@ -150,7 +150,6 @@ SUBDIR.${MK_EE}+=		ee
 SUBDIR.${MK_EFI}+=		efi-tools
 SUBDIR.${MK_EXAMPLES}+=		examples
 SUBDIR.${MK_FILE}+=		libmagic
-SUBDIR.${MK_FLOPPY}+=		fd
 SUBDIR.${MK_FTP}+=		ftp
 SUBDIR.${MK_GAMES}+=		games
 SUBDIR.${MK_GOOGLETEST}+=	googletest

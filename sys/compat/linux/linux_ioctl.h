@@ -904,10 +904,6 @@ struct linux_ioctl_handler_element
 
 int	linux_ioctl_register_handler(struct linux_ioctl_handler *h);
 int	linux_ioctl_unregister_handler(struct linux_ioctl_handler *h);
-#ifdef COMPAT_LINUX32
-int	linux32_ioctl_register_handler(struct linux_ioctl_handler *h);
-int	linux32_ioctl_unregister_handler(struct linux_ioctl_handler *h);
-#endif
 
 #define LINUX_IOCTL_SET(n, low, high)				\
 static linux_ioctl_function_t n##_linux_ioctl;			\

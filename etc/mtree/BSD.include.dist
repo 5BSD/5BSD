@@ -203,8 +203,6 @@
     dev
         acpica
         ..
-        agp
-        ..
         ciss
         ..
         coreboot
@@ -251,8 +249,6 @@
         ..
         powermac_nvram
         ..
-        ppbus
-        ..
         pwm
         ..
         smbus
@@ -294,8 +290,6 @@
         nullfs
         ..
         smbfs
-        ..
-        udf
         ..
         unionfs
         ..

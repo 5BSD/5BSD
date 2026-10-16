@@ -66,13 +66,8 @@
 #include <dev/iicbus/iic.h>
 #include <dev/usb/usb_ioctl.h>
 
-#ifdef COMPAT_LINUX32
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 
 #include <compat/linux/linux_common.h>
 #include <compat/linux/linux_file.h>
@@ -121,9 +116,7 @@ DEFINE_LINUX_IOCTL_SET(fbsd_usb, FBSD_LUSB);
 DEFINE_LINUX_IOCTL_SET(evdev, EVDEV);
 DEFINE_LINUX_IOCTL_SET(uinput, UINPUT);
 DEFINE_LINUX_IOCTL_SET(kcov, KCOV);
-#ifndef COMPAT_LINUX32
 DEFINE_LINUX_IOCTL_SET(nvme, NVME);
-#endif
 DEFINE_LINUX_IOCTL_SET(hidraw, HIDRAW);
 
 #undef DEFINE_LINUX_IOCTL_SET
@@ -138,19 +131,8 @@ static struct linux_ioctl_handler linux_ioctls[] = {
 	    .high = LINUX_IOCTL_TERMIO_MAX },
 };
 
-#ifdef __i386__
-static TAILQ_HEAD(, linux_ioctl_handler_element) linux_ioctl_handlers =
-    TAILQ_HEAD_INITIALIZER(linux_ioctl_handlers);
-static struct sx linux_ioctl_sx;
-SX_SYSINIT(linux_ioctl, &linux_ioctl_sx, "Linux ioctl handlers");
-#else
 extern TAILQ_HEAD(, linux_ioctl_handler_element) linux_ioctl_handlers;
 extern struct sx linux_ioctl_sx;
-#endif
-#ifdef COMPAT_LINUX32
-static TAILQ_HEAD(, linux_ioctl_handler_element) linux32_ioctl_handlers =
-    TAILQ_HEAD_INITIALIZER(linux32_ioctl_handlers);
-#endif
 
 /*
  * hdio related ioctls for VMWare support
@@ -2307,11 +2289,7 @@ linux_ioctl_ifname(struct thread *td, struct l_ifreq *uifr)
 static u_int
 linux_ifconf_ifaddr_cb(void *arg, struct ifaddr *ifa, u_int count)
 {
-#ifdef COMPAT_LINUX32
-	struct l_ifconf *ifc;
-#else
 	struct ifconf *ifc;
-#endif
 
 	ifc = arg;
 	ifc->ifc_len += sizeof(struct l_ifreq);
@@ -2369,11 +2347,7 @@ linux_ifconf(struct thread *td, struct ifconf *uifc)
 {
 	struct linux_ifconfig_ifaddr_cb2_s cbs;
 	struct epoch_tracker et;
-#ifdef COMPAT_LINUX32
-	struct l_ifconf ifc;
-#else
 	struct ifconf ifc;
-#endif
 	struct sbuf *sb;
 	int error, full;
 
@@ -2716,80 +2690,6 @@ linux_ioctl_syncfile(struct thread *td, struct linux_ioctl_args *args)
 	return (ENOIOCTL);
 }
 
-#ifdef COMPAT_LINUX32
-static int
-linux_ioctl_sg_io(struct thread *td, struct linux_ioctl_args *args)
-{
-	struct sg_io_hdr io;
-	struct sg_io_hdr32 io32;
-	struct file *fp;
-	int error;
-
-	error = fget(td, args->fd, &cap_ioctl_rights, &fp);
-	if (error != 0) {
-		printf("sg_linux_ioctl: fget returned %d\n", error);
-		return (error);
-	}
-
-	if ((error = copyin((void *)args->arg, &io32, sizeof(io32))) != 0)
-		goto out;
-
-	CP(io32, io, interface_id);
-	CP(io32, io, dxfer_direction);
-	CP(io32, io, cmd_len);
-	CP(io32, io, mx_sb_len);
-	CP(io32, io, iovec_count);
-	CP(io32, io, dxfer_len);
-	PTRIN_CP(io32, io, dxferp);
-	PTRIN_CP(io32, io, cmdp);
-	PTRIN_CP(io32, io, sbp);
-	CP(io32, io, timeout);
-	CP(io32, io, flags);
-	CP(io32, io, pack_id);
-	PTRIN_CP(io32, io, usr_ptr);
-	CP(io32, io, status);
-	CP(io32, io, masked_status);
-	CP(io32, io, msg_status);
-	CP(io32, io, sb_len_wr);
-	CP(io32, io, host_status);
-	CP(io32, io, driver_status);
-	CP(io32, io, resid);
-	CP(io32, io, duration);
-	CP(io32, io, info);
-
-	if ((error = fo_ioctl(fp, SG_IO, (caddr_t)&io, td->td_ucred, td)) != 0)
-		goto out;
-
-	CP(io, io32, interface_id);
-	CP(io, io32, dxfer_direction);
-	CP(io, io32, cmd_len);
-	CP(io, io32, mx_sb_len);
-	CP(io, io32, iovec_count);
-	CP(io, io32, dxfer_len);
-	PTROUT_CP(io, io32, dxferp);
-	PTROUT_CP(io, io32, cmdp);
-	PTROUT_CP(io, io32, sbp);
-	CP(io, io32, timeout);
-	CP(io, io32, flags);
-	CP(io, io32, pack_id);
-	PTROUT_CP(io, io32, usr_ptr);
-	CP(io, io32, status);
-	CP(io, io32, masked_status);
-	CP(io, io32, msg_status);
-	CP(io, io32, sb_len_wr);
-	CP(io, io32, host_status);
-	CP(io, io32, driver_status);
-	CP(io, io32, resid);
-	CP(io, io32, duration);
-	CP(io, io32, info);
-
-	error = copyout(&io32, (void *)args->arg, sizeof(io32));
-
-out:
-	fdrop(fp, td);
-	return (error);
-}
-#endif
 
 static int
 linux_ioctl_sg(struct thread *td, struct linux_ioctl_args *args)
@@ -2807,9 +2707,6 @@ linux_ioctl_sg(struct thread *td, struct linux_ioctl_args *args)
 		break;
 	case LINUX_SG_IO:
 		args->cmd = SG_IO;
-#ifdef COMPAT_LINUX32
-		return (linux_ioctl_sg_io(td, args));
-#endif
 		break;
 	case LINUX_SG_GET_RESERVED_SIZE:
 		args->cmd = SG_GET_RESERVED_SIZE;
@@ -3898,7 +3795,6 @@ linux_ioctl_kcov(struct thread *td, struct linux_ioctl_args *args)
 	return (error);
 }
 
-#ifndef COMPAT_LINUX32
 static int
 linux_ioctl_nvme(struct thread *td, struct linux_ioctl_args *args)
 {
@@ -3926,7 +3822,6 @@ linux_ioctl_nvme(struct thread *td, struct linux_ioctl_args *args)
 	}
 	return (sys_ioctl(td, (struct ioctl_args *)args));
 }
-#endif
 
 static int
 linux_ioctl_i2c(struct thread *td, struct linux_ioctl_args *args)
@@ -4215,19 +4110,6 @@ linux_ioctl_fallback(struct thread *td, struct linux_ioctl_args *args)
 	cmd = args->cmd & 0xffff;
 	sx_slock(&linux_ioctl_sx);
 	mtx_lock(&Giant);
-#ifdef COMPAT_LINUX32
-	TAILQ_FOREACH(he, &linux32_ioctl_handlers, list) {
-		if (cmd >= he->low && cmd <= he->high) {
-			error = (*he->func)(td, args);
-			if (error != ENOIOCTL) {
-				mtx_unlock(&Giant);
-				sx_sunlock(&linux_ioctl_sx);
-				fdrop(fp, td);
-				return (error);
-			}
-		}
-	}
-#endif
 	TAILQ_FOREACH(he, &linux_ioctl_handlers, list) {
 		if (cmd >= he->low && cmd <= he->high) {
 			error = (*he->func)(td, args);
@@ -4357,69 +4239,3 @@ linux_ioctl_unregister_handler(struct linux_ioctl_handler *h)
 
 	return (EINVAL);
 }
-
-#ifdef COMPAT_LINUX32
-int
-linux32_ioctl_register_handler(struct linux_ioctl_handler *h)
-{
-	struct linux_ioctl_handler_element *he, *cur;
-
-	if (h == NULL || h->func == NULL)
-		return (EINVAL);
-
-	/*
-	 * Reuse the element if the handler is already on the list, otherwise
-	 * create a new element.
-	 */
-	sx_xlock(&linux_ioctl_sx);
-	TAILQ_FOREACH(he, &linux32_ioctl_handlers, list) {
-		if (he->func == h->func)
-			break;
-	}
-	if (he == NULL) {
-		he = malloc(sizeof(*he), M_LINUX, M_WAITOK);
-		he->func = h->func;
-	} else
-		TAILQ_REMOVE(&linux32_ioctl_handlers, he, list);
-
-	/* Initialize range information. */
-	he->low = h->low;
-	he->high = h->high;
-	he->span = h->high - h->low + 1;
-
-	/* Add the element to the list, sorted on span. */
-	TAILQ_FOREACH(cur, &linux32_ioctl_handlers, list) {
-		if (cur->span > he->span) {
-			TAILQ_INSERT_BEFORE(cur, he, list);
-			sx_xunlock(&linux_ioctl_sx);
-			return (0);
-		}
-	}
-	TAILQ_INSERT_TAIL(&linux32_ioctl_handlers, he, list);
-	sx_xunlock(&linux_ioctl_sx);
-
-	return (0);
-}
-
-int
-linux32_ioctl_unregister_handler(struct linux_ioctl_handler *h)
-{
-	struct linux_ioctl_handler_element *he;
-
-	if (h == NULL || h->func == NULL)
-		return (EINVAL);
-
-	sx_xlock(&linux_ioctl_sx);
-	TAILQ_FOREACH(he, &linux32_ioctl_handlers, list) {
-		if (he->func == h->func) {
-			TAILQ_REMOVE(&linux32_ioctl_handlers, he, list);
-			sx_xunlock(&linux_ioctl_sx);
-			free(he, M_LINUX);
-			return (0);
-		}
-	}
-	sx_xunlock(&linux_ioctl_sx);
-
-	return (EINVAL);
-}
-#endif

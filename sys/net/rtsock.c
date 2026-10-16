@@ -84,55 +84,6 @@ SDT_PROBE_DEFINE2(route, , , add, "int", "int");
 SDT_PROBE_DEFINE2(route, , , delete, "int", "int");
 SDT_PROBE_DEFINE2(route, , , change, "int", "int");
 
-#ifdef COMPAT_FREEBSD32
-#include <sys/mount.h>
-#include <compat/freebsd32/freebsd32.h>
-
-struct if_msghdr32 {
-	uint16_t ifm_msglen;
-	uint8_t	ifm_version;
-	uint8_t	ifm_type;
-	int32_t	ifm_addrs;
-	int32_t	ifm_flags;
-	uint16_t ifm_index;
-	uint16_t _ifm_spare1;
-	struct	if_data ifm_data;
-};
-
-struct if_msghdrl32 {
-	uint16_t ifm_msglen;
-	uint8_t	ifm_version;
-	uint8_t	ifm_type;
-	int32_t	ifm_addrs;
-	int32_t	ifm_flags;
-	uint16_t ifm_index;
-	uint16_t _ifm_spare1;
-	uint16_t ifm_len;
-	uint16_t ifm_data_off;
-	uint32_t _ifm_spare2;
-	struct	if_data ifm_data;
-};
-
-struct ifa_msghdrl32 {
-	uint16_t ifam_msglen;
-	uint8_t	ifam_version;
-	uint8_t	ifam_type;
-	int32_t	ifam_addrs;
-	int32_t	ifam_flags;
-	uint16_t ifam_index;
-	uint16_t _ifam_spare1;
-	uint16_t ifam_len;
-	uint16_t ifam_data_off;
-	int32_t	ifam_metric;
-	struct	if_data ifam_data;
-};
-
-#define SA_SIZE32(sa)						\
-    (  (((struct sockaddr *)(sa))->sa_len == 0) ?		\
-	sizeof(int)		:				\
-	1 + ( (((struct sockaddr *)(sa))->sa_len - 1) | (sizeof(int) - 1) ) )
-
-#endif /* COMPAT_FREEBSD32 */
 
 struct linear_buffer {
 	char		*base;	/* Base allocated memory pointer */
@@ -1814,22 +1765,11 @@ rtsock_msg_buffer(int type, struct rt_addrinfo *rtinfo, struct walkarg *w, int *
 #ifdef INET6
 	struct sockaddr_in6 *sin6;
 #endif
-#ifdef COMPAT_FREEBSD32
-	bool compat32;
-
-	compat32 = w != NULL && w->w_req != NULL &&
-	    (w->w_req->flags & SCTL_MASK32);
-#endif
 
 	switch (type) {
 	case RTM_DELADDR:
 	case RTM_NEWADDR:
 		if (w != NULL && w->w_op == NET_RT_IFLISTL) {
-#ifdef COMPAT_FREEBSD32
-			if (compat32)
-				len = sizeof(struct ifa_msghdrl32);
-			else
-#endif
 				len = sizeof(struct ifa_msghdrl);
 		} else
 			len = sizeof(struct ifa_msghdr);
@@ -1837,18 +1777,8 @@ rtsock_msg_buffer(int type, struct rt_addrinfo *rtinfo, struct walkarg *w, int *
 
 	case RTM_IFINFO:
 		if (w != NULL && w->w_op == NET_RT_IFLISTL) {
-#ifdef COMPAT_FREEBSD32
-			if (compat32)
-				len = sizeof(struct if_msghdrl32);
-			else
-#endif
 				len = sizeof(struct if_msghdrl);
 		} else {
-#ifdef COMPAT_FREEBSD32
-			if (compat32)
-				len = sizeof(struct if_msghdr32);
-			else
-#endif
 				len = sizeof(struct if_msghdr);
 		}
 		break;
@@ -1874,11 +1804,6 @@ rtsock_msg_buffer(int type, struct rt_addrinfo *rtinfo, struct walkarg *w, int *
 		if ((sa = rtinfo->rti_info[i]) == NULL)
 			continue;
 		rtinfo->rti_addrs |= (1 << i);
-#ifdef COMPAT_FREEBSD32
-		if (compat32)
-			dlen = SA_SIZE32(sa);
-		else
-#endif
 			dlen = SA_SIZE(sa);
 		if (cp != NULL && buflen >= dlen) {
 			if (sa->sa_len > sizeof(ss))
@@ -2342,21 +2267,6 @@ sysctl_iflist_ifml(struct ifnet *ifp, const struct if_data *src_ifd,
 
 	ifm = (struct if_msghdrl *)w->w_tmem;
 
-#ifdef COMPAT_FREEBSD32
-	if (w->w_req->flags & SCTL_MASK32) {
-		struct if_msghdrl32 *ifm32;
-
-		ifm32 = (struct if_msghdrl32 *)ifm;
-		ifm32->ifm_addrs = info->rti_addrs;
-		ifm32->ifm_flags = ifp->if_flags | ifp->if_drv_flags;
-		ifm32->ifm_index = ifp->if_index;
-		ifm32->_ifm_spare1 = 0;
-		ifm32->ifm_len = sizeof(*ifm32);
-		ifm32->ifm_data_off = offsetof(struct if_msghdrl32, ifm_data);
-		ifm32->_ifm_spare2 = 0;
-		ifd = &ifm32->ifm_data;
-	} else
-#endif
 	{
 		ifm->ifm_addrs = info->rti_addrs;
 		ifm->ifm_flags = ifp->if_flags | ifp->if_drv_flags;
@@ -2382,18 +2292,6 @@ sysctl_iflist_ifm(struct ifnet *ifp, const struct if_data *src_ifd,
 
 	ifm = (struct if_msghdr *)w->w_tmem;
 
-#ifdef COMPAT_FREEBSD32
-	if (w->w_req->flags & SCTL_MASK32) {
-		struct if_msghdr32 *ifm32;
-
-		ifm32 = (struct if_msghdr32 *)ifm;
-		ifm32->ifm_addrs = info->rti_addrs;
-		ifm32->ifm_flags = ifp->if_flags | ifp->if_drv_flags;
-		ifm32->ifm_index = ifp->if_index;
-		ifm32->_ifm_spare1 = 0;
-		ifd = &ifm32->ifm_data;
-	} else
-#endif
 	{
 		ifm->ifm_addrs = info->rti_addrs;
 		ifm->ifm_flags = ifp->if_flags | ifp->if_drv_flags;
@@ -2416,22 +2314,6 @@ sysctl_iflist_ifaml(struct ifaddr *ifa, struct rt_addrinfo *info,
 
 	ifam = (struct ifa_msghdrl *)w->w_tmem;
 
-#ifdef COMPAT_FREEBSD32
-	if (w->w_req->flags & SCTL_MASK32) {
-		struct ifa_msghdrl32 *ifam32;
-
-		ifam32 = (struct ifa_msghdrl32 *)ifam;
-		ifam32->ifam_addrs = info->rti_addrs;
-		ifam32->ifam_flags = ifa->ifa_flags;
-		ifam32->ifam_index = ifa->ifa_ifp->if_index;
-		ifam32->_ifam_spare1 = 0;
-		ifam32->ifam_len = sizeof(*ifam32);
-		ifam32->ifam_data_off =
-		    offsetof(struct ifa_msghdrl32, ifam_data);
-		ifam32->ifam_metric = ifa->ifa_ifp->if_metric;
-		ifd = &ifam32->ifam_data;
-	} else
-#endif
 	{
 		ifam->ifam_addrs = info->rti_addrs;
 		ifam->ifam_flags = ifa->ifa_flags;

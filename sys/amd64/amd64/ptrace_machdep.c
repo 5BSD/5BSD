@@ -44,12 +44,6 @@
 #include <machine/frame.h>
 #include <machine/vmparam.h>
 
-#ifdef COMPAT_FREEBSD32
-struct ptrace_xstate_info32 {
-	uint32_t	xsave_mask1, xsave_mask2;
-	uint32_t	xsave_len;
-};
-#endif
 
 static bool
 get_segbases(struct regset *rs, struct thread *td, void *buf,
@@ -98,62 +92,11 @@ static struct regset regset_segbases = {
 };
 ELF_REGSET(regset_segbases);
 
-#ifdef COMPAT_FREEBSD32
-static bool
-get_segbases32(struct regset *rs, struct thread *td, void *buf,
-    size_t *sizep)
-{
-	struct segbasereg32 *reg;
-	struct pcb *pcb;
-
-	if (buf != NULL) {
-		KASSERT(*sizep == sizeof(*reg), ("%s: invalid size", __func__));
-		reg = buf;
-
-		pcb = td->td_pcb;
-		reg->r_fsbase = (uint32_t)pcb->pcb_fsbase;
-		reg->r_gsbase = (uint32_t)pcb->pcb_gsbase;
-	}
-	*sizep = sizeof(*reg);
-	return (true);
-}
-
-static bool
-set_segbases32(struct regset *rs, struct thread *td, void *buf,
-    size_t size)
-{
-	struct segbasereg32 *reg;
-	struct pcb *pcb;
-
-	KASSERT(size == sizeof(*reg), ("%s: invalid size", __func__));
-	reg = buf;
-
-	pcb = td->td_pcb;
-	set_pcb_flags(pcb, PCB_FULL_IRET);
-	pcb->pcb_fsbase = reg->r_fsbase;
-	td->td_frame->tf_fs = _ufssel;
-	pcb->pcb_gsbase = reg->r_gsbase;
-	td->td_frame->tf_gs = _ugssel;
-
-	return (true);
-}
-
-static struct regset regset_segbases32 = {
-	.note = NT_X86_SEGBASES,
-	.size = sizeof(struct segbasereg32),
-	.get = get_segbases32,
-	.set = set_segbases32,
-};
-ELF32_REGSET(regset_segbases32);
-#endif
 
 static int
 cpu_ptrace_xstate(struct thread *td, int req, void *addr, int data)
 {
 	struct ptrace_xstate_info info;
-#ifdef COMPAT_FREEBSD32
-	struct ptrace_xstate_info32 info32;
-#endif
 	char *savefpu;
 	int error;
 
@@ -183,18 +126,6 @@ cpu_ptrace_xstate(struct thread *td, int req, void *addr, int data)
 		break;
 
 	case PT_GETXSTATE_INFO:
-#ifdef COMPAT_FREEBSD32
-		if (SV_CURPROC_FLAG(SV_ILP32)) {
-			if (data != sizeof(info32)) {
-				error = EINVAL;
-			} else {
-				info32.xsave_len = cpu_max_ext_state_size;
-				info32.xsave_mask1 = xsave_mask;
-				info32.xsave_mask2 = xsave_mask >> 32;
-				error = copyout(&info32, addr, data);
-			}
-		} else
-#endif
 		{
 			if (data != sizeof(info)) {
 				error  = EINVAL;
@@ -252,73 +183,6 @@ cpu_ptrace_setbase(struct thread *td, int req, register_t r)
 	}
 }
 
-#ifdef COMPAT_FREEBSD32
-#define PT_I386_GETXMMREGS	(PT_FIRSTMACH + 0)
-#define PT_I386_SETXMMREGS	(PT_FIRSTMACH + 1)
-
-static int
-cpu32_ptrace(struct thread *td, int req, void *addr, int data)
-{
-	struct savefpu *fpstate;
-	struct pcb *pcb;
-	uint32_t r;
-	int error;
-
-	switch (req) {
-	case PT_I386_GETXMMREGS:
-		fpugetregs(td);
-		error = copyout(get_pcb_user_save_td(td), addr,
-		    sizeof(*fpstate));
-		break;
-
-	case PT_I386_SETXMMREGS:
-		fpugetregs(td);
-		fpstate = get_pcb_user_save_td(td);
-		error = copyin(addr, fpstate, sizeof(*fpstate));
-		fpstate->sv_env.en_mxcsr &= cpu_mxcsr_mask;
-		break;
-
-	case PT_GETXSTATE_OLD:
-	case PT_SETXSTATE_OLD:
-	case PT_GETXSTATE_INFO:
-	case PT_GETXSTATE:
-	case PT_SETXSTATE:
-		error = cpu_ptrace_xstate(td, req, addr, data);
-		break;
-
-	case PT_GETFSBASE:
-	case PT_GETGSBASE:
-		if (!SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-			error = EINVAL;
-			break;
-		}
-		pcb = td->td_pcb;
-		if (td == curthread)
-			update_pcb_bases(pcb);
-		r = req == PT_GETFSBASE ? pcb->pcb_fsbase : pcb->pcb_gsbase;
-		error = copyout(&r, addr, sizeof(r));
-		break;
-
-	case PT_SETFSBASE:
-	case PT_SETGSBASE:
-		if (!SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-			error = EINVAL;
-			break;
-		}
-		error = copyin(addr, &r, sizeof(r));
-		if (error != 0)
-			break;
-		cpu_ptrace_setbase(td, req, r);
-		break;
-
-	default:
-		error = EINVAL;
-		break;
-	}
-
-	return (error);
-}
-#endif
 
 int
 cpu_ptrace(struct thread *td, int req, void *addr, int data)
@@ -327,10 +191,6 @@ cpu_ptrace(struct thread *td, int req, void *addr, int data)
 	struct pcb *pcb;
 	int error;
 
-#ifdef COMPAT_FREEBSD32
-	if (SV_CURPROC_FLAG(SV_ILP32))
-		return (cpu32_ptrace(td, req, addr, data));
-#endif
 
 	/* Support old values of PT_GETXSTATE_OLD and PT_SETXSTATE_OLD. */
 	if (req == PT_FIRSTMACH + 0)

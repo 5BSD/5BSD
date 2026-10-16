@@ -37,7 +37,7 @@ struct note_info_list;
 #define	GNU_ABI_VENDOR		"GNU"
 #define	GNU_ABI_LINUX		0
 
-/* This adds "linux32_" and "linux64_" prefixes. */
+/* This adds the native Linux ELF word-size prefix. */
 #define	__linuxN(x)	__CONCAT(__CONCAT(__CONCAT(linux,__ELF_WORD_SIZE),_),x)
 
 void 	__linuxN(prepare_notes)(struct thread *, struct note_info_list *,

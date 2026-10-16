@@ -1,7 +1,6 @@
 # DO NOT EDIT-- this file is automatically @generated.
 BADHDRS= \
 	sys/aac_ioctl.h \
-	sys/agpio.h \
 	sys/atomic_common.h \
 	sys/atomic_san.h \
 	sys/bio.h \
@@ -199,13 +198,11 @@ BADHDRS= \
 	netgraph/ng_bridge.h \
 	netgraph/ng_car.h \
 	netgraph/ng_checksum.h \
-	netgraph/ng_cisco.h \
 	netgraph/ng_deflate.h \
 	netgraph/ng_etf.h \
 	netgraph/ng_hole.h \
 	netgraph/ng_ksocket.h \
 	netgraph/ng_l2tp.h \
-	netgraph/ng_lmi.h \
 	netgraph/ng_macfilter.h \
 	netgraph/ng_message.h \
 	netgraph/ng_mppc.h \
@@ -217,7 +214,6 @@ BADHDRS= \
 	netgraph/ng_ppp.h \
 	netgraph/ng_pppoe.h \
 	netgraph/ng_pptpgre.h \
-	netgraph/ng_pred1.h \
 	netgraph/ng_sample.h \
 	netgraph/ng_socket.h \
 	netgraph/ng_socketvar.h \
@@ -295,4 +291,3 @@ BADHDRS= \
 	netsmb/smb_rq.h \
 	netsmb/smb_subr.h \
 	netsmb/smb_tran.h \
-

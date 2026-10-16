@@ -25,26 +25,6 @@ local ucl = require("ucl")
 -- is important.
 pkg_suffixes = {
 	{
-		"%-dev%-lib32$", "(32-bit development files)",
-		"This package contains development files for compiling "..
-		"32-bit applications on a 64-bit host."
-	},
-	{
-		"%-dbg%-lib32$", "(32-bit debugging symbols)",
-		"This package contains 32-bit external debugging symbols "..
-		"for use with a source-level debugger.",
-	},
-	{
-		"%-man%-lib32$", "(32-bit manual pages)",
-		"This package contains the online manual pages for 32-bit "..
-		"components on a 64-bit host.",
-	},
-	{
-		"%-lib32$", "(32-bit libraries)",
-		"This package contains 32-bit libraries for running 32-bit "..
-		"applications on a 64-bit host.",
-	},
-	{
 		"%-lib$", "(libraries)",
 		"This package contains runtime shared libraries.",
 	},
@@ -87,12 +67,9 @@ end
 -- way to handle this.
 local no_gen_deps = {
 	["libcompat-dev"] = true,
-	["libcompat-dev-lib32"] = true,
 	["libcompat-man"] = true,
 	["libcompiler_rt-dev"] = true,
-	["libcompiler_rt-dev-lib32"] = true,
 	["liby-dev"] = true,
-	["liby-dev-lib32"] = true,
 	["kernel-man"] = true,
 }
 
@@ -184,20 +161,12 @@ sets = obj["annotations"]["set"] or "base"
 -- differently from the normal pkg suffix processing, because we don't need sets
 -- to be as a granular as the base packages.
 --
--- Create a single lib32 set for all lib32 packages.  Most users don't need
--- lib32, so this avoids creating a large number of unnecessary lib32 sets.
--- However, lib32 debug symbols still go into their own package since they're
--- quite large.
-if pkgname:match("%-dbg%-lib32$") then
-	sets = "lib32-dbg"
-elseif pkgname:match("%-lib32$") then
-	sets = "lib32"
 -- If this is a -dev package, put it in a single set called "devel" which
 -- contains all development files.  Also include lib*-man packages, which
 -- contain manpages for libraries. Having a separate <set>-dev for every
 -- set is not necessary, because generally you either want development
 -- support or you don't.
-elseif pkgname:match("%-dev$") or pkgname:match("^lib.*%-man$") then
+if pkgname:match("%-dev$") or pkgname:match("^lib.*%-man$") then
 	sets = "devel"
 -- Don't separate tests and tests-dbg into 2 sets, if the user wants tests
 -- they should be able to debug failures.

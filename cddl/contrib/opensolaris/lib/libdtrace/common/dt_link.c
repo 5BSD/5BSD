@@ -749,6 +749,12 @@ dump_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, int fd)
 #if defined(__riscv_float_abi_double)
 	elf_file.ehdr.e_flags |= EF_RISCV_FLOAT_ABI_DOUBLE;
 #endif
+	/* The host-built RISC-V linker cannot use host compiler ABI macros. */
+#if defined(DTRACE_TARGET_RISCV)
+	if (elf_file.ehdr.e_machine == EM_RISCV)
+		elf_file.ehdr.e_flags = EF_RISCV_RVC |
+		    EF_RISCV_FLOAT_ABI_DOUBLE;
+#endif
 	elf_file.ehdr.e_version = EV_CURRENT;
 	elf_file.ehdr.e_shoff = sizeof (Elf64_Ehdr);
 	elf_file.ehdr.e_ehsize = sizeof (Elf64_Ehdr);

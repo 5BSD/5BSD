@@ -18,7 +18,7 @@ Software that keys on `ID_LIKE` treats the system as FreeBSD; software that keys
 
 ## 64-bit only
 
-There is no 32-bit compatibility of any kind. `sys/amd64/conf/GENERIC` carries `nooptions COMPAT_FREEBSD32`, `share/mk/src.opts.mk` marks `LIB32` as a broken option (TrustedZFS capability descriptors require a 64-bit ABI; `sys/sys/zfshandle.h` refuses to compile otherwise), and i386 and armv7 are no longer universe targets. The Linux emulator loads only `linux64`: `/etc/rc.d/linux` loads the 64-bit ABI on amd64 and aarch64 alike and skips `kern.elf32.fallback_brand` because the sysctl does not exist. A 32-bit FreeBSD or Linux binary fails to exec.
+There is no 32-bit runtime compatibility. The FreeBSD32 and Linux32 kernel implementations, their syscall generators, and their DTrace modules have been retired. Both amd64 and arm64 kernel configurations omit `COMPAT_FREEBSD32`; `share/mk/src.opts.mk` marks `LIB32` as a broken option (TrustedZFS capability descriptors require a 64-bit ABI; `sys/sys/zfshandle.h` refuses to compile otherwise), and i386 and armv7 are no longer native targets. The Linux emulator loads only `linux64`: `/etc/rc.d/linux` loads the 64-bit ABI on amd64 and aarch64 alike. A 32-bit FreeBSD or Linux binary fails to exec. Some i386 format headers remain for reading historical kernel dumps; they do not enable 32-bit execution.
 
 ## The kernel is GENERIC
 
@@ -30,7 +30,7 @@ GENERIC is the 5BSD kernel; there is no overlay configuration. The mac_capabilit
 | `options RACCT` without `RACCT_DEFAULT_TO_DISABLED` | resource accounting is on; `kern.racct.enable` defaults to 1 |
 | `device vsock`, `device virtio_vsock` | the `AF_VSOCK` domain and its VirtIO transport |
 | `options BHYVE_SNAPSHOT` | checkpoint and restore in bhyve(8) |
-| `nooptions COMPAT_FREEBSD32` | no 32-bit binaries |
+| no `COMPAT_FREEBSD32` option | no 32-bit binaries |
 | `options OES` | OpenEndpointSecurity, oes(4) |
 | `options MAC_ABAC` | the attribute-based access control policy |
 | `options MAC_VERIEXEC`, `MAC_VERIEXEC_SHA256`, `device mac_veriexec_parser` | verified execution compiled in, inactive until a manifest is loaded |

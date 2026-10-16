@@ -221,7 +221,7 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 				if (p->p_vmspace == td->td_proc->p_vmspace)
 					linux_aio_proc_share(ppem, pem);
 #endif
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 				/* Auto-attached children inherit their tracee's options. */
 				sx_xlock(&proctree_lock);
 				PROC_LOCK(p);

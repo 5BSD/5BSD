@@ -30,11 +30,7 @@
 #include <sys/sdt.h>
 #include <sys/proc.h>
 
-/*
- * Including linux vs linux32 here is arbitrary -- the syscall args structures
- * (proto.h) are not dereferenced by the DUMMY stub implementations, and
- * suitable for use by both native and compat32 entrypoints.
- */
+/* The DUMMY stubs use the native Linux syscall argument declarations. */
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
 
@@ -117,7 +113,7 @@ DUMMY(landlock_restrict_self);
 /* Linux 5.14: */
 DUMMY(memfd_secret);
 /* The amd64 table uses a separate handler; retain this shared ABI stub. */
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 struct linux_quotactl_fd_args;
 int linux_quotactl_fd(struct thread *, struct linux_quotactl_fd_args *);
 #endif

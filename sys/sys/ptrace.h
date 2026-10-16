@@ -324,17 +324,6 @@ ssize_t	proc_readmem(struct thread *_td, struct proc *_p, vm_offset_t _va,
 	    void *_buf, size_t _len);
 ssize_t	proc_writemem(struct thread *_td, struct proc *_p, vm_offset_t _va,
 	    void *_buf, size_t _len);
-#ifdef COMPAT_FREEBSD32
-struct reg32;
-struct fpreg32;
-struct dbreg32;
-int	proc_read_regs32(struct thread *_td, struct reg32 *_reg32);
-int	proc_write_regs32(struct thread *_td, struct reg32 *_reg32);
-int	proc_read_fpregs32(struct thread *_td, struct fpreg32 *_fpreg32);
-int	proc_write_fpregs32(struct thread *_td, struct fpreg32 *_fpreg32);
-int	proc_read_dbregs32(struct thread *_td, struct dbreg32 *_dbreg32);
-int	proc_write_dbregs32(struct thread *_td, struct dbreg32 *_dbreg32);
-#endif
 
 void	ptrace_unsuspend(struct proc *p);
 int	ptrace_action(struct thread *td, int req, bool pd_mode, pid_t pid,

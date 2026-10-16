@@ -15,8 +15,7 @@ LIBADD+=	cap_pwd
 CFLAGS+=-DWITH_CASPER
 .endif
 
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
-	    ${MACHINE_CPUARCH} == "i386"
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
 SRCS+=		linux.c
 .endif
 

@@ -8,8 +8,7 @@ SRCS=	cd9660.c	\
 	libprocstat.c	\
 	libprocstat_compat.c \
 	msdosfs.c	\
-	smbfs.c		\
-	udf.c
+	smbfs.c
 
 VERSION_DEF=	${LIBCSRCDIR}/Versions.def
 SYMBOL_MAPS=	${.CURDIR}/Symbol.map

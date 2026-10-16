@@ -95,7 +95,7 @@ CRUNCH_PROGS_sbin= 						\
 	kldconfig kldload kldstat kldunload ldconfig 		\
 	md5 mdconfig mdmfs mknod mount mount_cd9660		\
 	mount_msdosfs mount_nfs mount_nullfs			\
-	mount_udf mount_unionfs newfs				\
+	mount_unionfs newfs				\
 	newfs_msdos nos-tun reboot				\
 	restore rcorder route savecore		 		\
 	shutdown swapon sysctl tunefs umount

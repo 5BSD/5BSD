@@ -45,15 +45,5 @@
 #define	VDSO_TH_ALGO_X86_PVCLK	VDSO_TH_ALGO_4	/* KVM/XEN paravirtual clock */
 
 #ifdef _KERNEL
-#ifdef COMPAT_FREEBSD32
-
-#define	VDSO_TIMEHANDS_MD32			\
-	uint32_t	th_x86_shift;		\
-	uint32_t	th_x86_hpet_idx;	\
-	uint32_t	th_x86_pvc_last_systime[2];\
-	uint8_t		th_x86_pvc_stable_mask;	\
-	uint8_t		th_res[15];
-
-#endif
 #endif
 #endif

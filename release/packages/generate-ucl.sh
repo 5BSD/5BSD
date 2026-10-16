@@ -37,18 +37,6 @@ main() {
 		*-dbg)
 			outname="${outname%%-dbg}"
 			;;
-		*-dev-lib32)
-			outname="${outname%%-dev-lib32}"
-			;;
-		*-dbg-lib32)
-			outname="${outname%%-dbg-lib32}"
-			;;
-		*-man-lib32)
-			outname="${outname%%-man-lib32}"
-			;;
-		*-lib32)
-			outname="${outname%%-lib32}"
-			;;
 		*-lib)
 			outname="${outname%%-lib}"
 			;;

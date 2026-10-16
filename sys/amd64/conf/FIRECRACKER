@@ -53,7 +53,6 @@ options 	TMPFS			# Efficient memory filesystem
 options 	GEOM_RAID		# Soft RAID functionality.
 options 	GEOM_LABEL		# Provides labelization
 options 	EFIRT			# EFI Runtime Services support
-options 	COMPAT_FREEBSD32	# Compatible with i386 binaries
 # FreeBSD 15 is the oldest supported compatibility ABI.
 options 	COMPAT_FREEBSD15	# Compatible with FreeBSD15
 options 	SCSI_DELAY=5000		# Delay (in ms) before probing SCSI

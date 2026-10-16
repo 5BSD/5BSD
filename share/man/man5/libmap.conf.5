@@ -126,19 +126,10 @@ Constraints apply to all mappings until the next constraint or the end
 of the file.
 Hence, unconstrained mappings must be placed at the top of the file.
 .Ef
-.Ss ABI compatibility
-On 64-bit architectures that provide 32-bit binary compatibility, the
-mappings in
-.Pa /etc/libmap.conf
-apply only to 64-bit binaries.
-Mappings for 32-bit binaries must be placed in
-.Pa /etc/libmap32.conf .
 .Sh FILES
-.Bl -tag -width ".Pa /etc/libmap32.conf" -compact
+.Bl -tag -width ".Pa /etc/libmap.conf" -compact
 .It Pa /etc/libmap.conf
 The libmap configuration file.
-.It Pa /etc/libmap32.conf
-The libmap configuration file for 32-bit binaries on 64-bit system.
 .El
 .Sh EXAMPLES
 .Bd -literal

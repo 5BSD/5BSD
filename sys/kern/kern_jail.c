@@ -1387,14 +1387,6 @@ kern_jail_set_common(struct thread *td, struct uio *optuio, int flags,
 		}
 	}
 
-#ifdef COMPAT_FREEBSD32
-	if (SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-		uint32_t hid32;
-
-		error = vfs_copyopt(opts, JAIL_PARAM_HOST_HOSTID, &hid32, sizeof(hid32));
-		hid = hid32;
-	} else
-#endif
 		error = vfs_copyopt(opts, JAIL_PARAM_HOST_HOSTID, &hid, sizeof(hid));
 	if (error == ENOENT)
 		gothid = 0;
@@ -2898,13 +2890,6 @@ kern_jail_get(struct thread *td, struct uio *optuio, int flags)
 	error = vfs_setopts(opts, JAIL_PARAM_HOST_HOSTUUID, pr->pr_hostuuid);
 	if (error != 0 && error != ENOENT)
 		goto done;
-#ifdef COMPAT_FREEBSD32
-	if (SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-		uint32_t hid32 = pr->pr_hostid;
-
-		error = vfs_setopt(opts, JAIL_PARAM_HOST_HOSTID, &hid32, sizeof(hid32));
-	} else
-#endif
 	error = vfs_setopt(opts, JAIL_PARAM_HOST_HOSTID, &pr->pr_hostid,
 	    sizeof(pr->pr_hostid));
 	if (error != 0 && error != ENOENT)

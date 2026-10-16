@@ -29,60 +29,32 @@
 
 #undef _PATH_ELF_HINTS
 
-#ifndef _RTLD_COMPAT_LIB_SUFFIX
-#ifdef COMPAT_libcompat
-#define	_RTLD_COMPAT_LIB_SUFFIX	COMPAT_libcompat
-#else
-#define	_RTLD_COMPAT_LIB_SUFFIX	""
-#endif
-#endif
-
-#ifndef _RTLD_COMPAT_ENV_SUFFIX
-#ifdef COMPAT_LIBCOMPAT
-#define	_RTLD_COMPAT_ENV_SUFFIX	COMPAT_LIBCOMPAT "_"
-#else
-#define	_RTLD_COMPAT_ENV_SUFFIX	""
-#endif
-#endif
-
-#ifndef __PATH_ELF_HINTS
-#define	__PATH_ELF_HINTS(_lc)	"/var/run/ld-elf" _lc ".so.hints"
-#endif
-
 #ifndef _PATH_ELF_HINTS
-#define	_PATH_ELF_HINTS		__PATH_ELF_HINTS(_RTLD_COMPAT_LIB_SUFFIX)
+#define	_PATH_ELF_HINTS		"/var/run/ld-elf.so.hints"
 #endif
 
 #ifndef _PATH_LIBMAP_CONF
-#define	_PATH_LIBMAP_CONF	"/etc/libmap" _RTLD_COMPAT_LIB_SUFFIX ".conf"
-#endif
-
-#ifndef __BASENAME_RTLD
-#define	__BASENAME_RTLD(_lc)	"ld-elf" _lc ".so.1"
+#define	_PATH_LIBMAP_CONF	"/etc/libmap.conf"
 #endif
 
 #ifndef _BASENAME_RTLD
-#define	_BASENAME_RTLD		__BASENAME_RTLD(_RTLD_COMPAT_LIB_SUFFIX)
-#endif
-
-#ifndef __PATH_RTLD
-#define	__PATH_RTLD(_lc)	"/libexec/" __BASENAME_RTLD(_lc)
+#define	_BASENAME_RTLD		"ld-elf.so.1"
 #endif
 
 #ifndef _PATH_RTLD
-#define	_PATH_RTLD		__PATH_RTLD(_RTLD_COMPAT_LIB_SUFFIX)
+#define	_PATH_RTLD		"/libexec/ld-elf.so.1"
 #endif
 
 #ifndef STANDARD_LIBRARY_PATH
-#define	STANDARD_LIBRARY_PATH	"/lib" _RTLD_COMPAT_LIB_SUFFIX ":/usr/lib" _RTLD_COMPAT_LIB_SUFFIX
+#define	STANDARD_LIBRARY_PATH	"/lib:/usr/lib"
 #endif
 
 #ifndef LD_
-#define	LD_			"LD_" _RTLD_COMPAT_ENV_SUFFIX
+#define	LD_			"LD_"
 #endif
 
 #ifndef TOKEN_LIB
-#define	TOKEN_LIB		"lib" _RTLD_COMPAT_LIB_SUFFIX
+#define	TOKEN_LIB		"lib"
 #endif
 
 #ifdef IN_RTLD

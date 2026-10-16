@@ -33,9 +33,7 @@
 enum sysdecode_abi {
 	SYSDECODE_ABI_UNKNOWN = 0,
 	SYSDECODE_ABI_FREEBSD,
-	SYSDECODE_ABI_FREEBSD32,
 	SYSDECODE_ABI_LINUX,
-	SYSDECODE_ABI_LINUX32,
 };
 
 int	sysdecode_abi_to_freebsd_errno(enum sysdecode_abi _abi, int _error);
@@ -139,7 +137,7 @@ bool	sysdecode_shmflags(FILE *_fp, int _flags, int *_rem);
 bool	sysdecode_netlink(FILE *_fp, const void *_buf, size_t _len,
     int _protocol);
 
-#if defined(__i386__) || defined(__amd64__) || defined(__aarch64__)
+#if defined(__amd64__) || defined(__aarch64__)
 
 #define	SYSDECODE_HAVE_LINUX
 
@@ -151,6 +149,6 @@ bool	sysdecode_linux_open_flags(FILE *_fp, int _flags, int *_rem);
 const char *sysdecode_linux_signal(int _sig);
 const char *sysdecode_linux_sigprocmask_how(int _how);
 
-#endif /* __i386__ || __amd64__ || __aarch64__ */
+#endif /* __amd64__ || __aarch64__ */
 
 #endif /* !__SYSDECODE_H__ */

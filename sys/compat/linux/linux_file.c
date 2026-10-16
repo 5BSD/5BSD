@@ -59,15 +59,8 @@
 #include <security/mac/mac_framework.h>
 #endif
 
-#ifdef COMPAT_LINUX32
-#include <compat/freebsd32/freebsd32_misc.h>
-#include <compat/freebsd32/freebsd32_util.h>
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 #include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_misc.h>
 #include <compat/linux/linux_util.h>
@@ -746,27 +739,6 @@ linux_lseek(struct thread *td, struct linux_lseek_args *args)
 	return (kern_lseek(td, args->fdes, args->off, args->whence));
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_llseek(struct thread *td, struct linux_llseek_args *args)
-{
-	int error;
-	off_t off;
-
-	off = (args->olow) | (((off_t) args->ohigh) << 32);
-
-	error = kern_lseek(td, args->fd, off, args->whence);
-	if (error != 0)
-		return (error);
-
-	error = copyout(td->td_retval, args->res, sizeof(off_t));
-	if (error != 0)
-		return (error);
-
-	td->td_retval[0] = 0;
-	return (0);
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 /*
  * Note that linux_getdents(2) and linux_getdents64(2) have the same
@@ -1030,50 +1002,6 @@ out1:
 	return (error);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_readdir(struct thread *td, struct linux_readdir_args *args)
-{
-	struct dirent *bdp;
-	caddr_t buf, bufsav;		/* BSD-format */
-	int linuxreclen;		/* Linux-format */
-	off_t base;
-	struct l_dirent *linux_dirent;	/* Linux-format */
-	int buflen, error, len;
-
-	buflen = DEV_BSIZE;
-	bufsav = buf = malloc(buflen, M_LINUX, M_WAITOK);
-
-	error = linux_getdirentries(td, args->fd, &buf, buflen,
-	    &base, &len);
-	if (error != 0) {
-		error = linux_getdents_error(td, args->fd, error);
-		goto out;
-	}
-	if (len == 0)
-		goto out;
-
-	linux_dirent = malloc(LINUX_RECLEN(LINUX_NAME_MAX), M_LINUX,
-	    M_WAITOK | M_ZERO);
-
-	bdp = (struct dirent *) buf;
-	linuxreclen = LINUX_RECLEN(bdp->d_namlen);
-
-	linux_dirent->d_ino = bdp->d_fileno;
-	linux_dirent->d_off = bdp->d_off;
-	linux_dirent->d_reclen = bdp->d_namlen;
-	strlcpy(linux_dirent->d_name, bdp->d_name,
-	    linuxreclen - offsetof(struct l_dirent, d_name));
-	error = copyout(linux_dirent, args->dent, linuxreclen);
-	if (error == 0)
-		td->td_retval[0] = linuxreclen;
-
-	free(linux_dirent, M_LINUX);
-out:
-	free(bufsav, M_LINUX);
-	return (error);
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 /*
  * These exist mainly for hooks for doing /compat/linux translation.
@@ -1402,21 +1330,6 @@ linux_truncate(struct thread *td, struct linux_truncate_args *args)
 	return (kern_truncate(td, args->path, UIO_USERSPACE, args->length));
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_truncate64(struct thread *td, struct linux_truncate64_args *args)
-{
-	off_t length;
-
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
-	length = PAIR32TO64(off_t, args->length);
-#else
-	length = args->length;
-#endif
-
-	return (kern_truncate(td, args->path, UIO_USERSPACE, length));
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 int
 linux_ftruncate(struct thread *td, struct linux_ftruncate_args *args)
@@ -1425,21 +1338,6 @@ linux_ftruncate(struct thread *td, struct linux_ftruncate_args *args)
 	return (kern_ftruncate(td, args->fd, args->length));
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_ftruncate64(struct thread *td, struct linux_ftruncate64_args *args)
-{
-	off_t length;
-
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
-	length = PAIR32TO64(off_t, args->length);
-#else
-	length = args->length;
-#endif
-
-	return (kern_ftruncate(td, args->fd, length));
-}
-#endif
 
 #ifdef LINUX_LEGACY_SYSCALLS
 int
@@ -1483,13 +1381,8 @@ linux_sync_file_range(struct thread *td, struct linux_sync_file_range_args *uap)
 	off_t nbytes, offset;
 	int error;
 
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
-	nbytes = PAIR32TO64(off_t, uap->nbytes);
-	offset = PAIR32TO64(off_t, uap->offset);
-#else
 	nbytes = uap->nbytes;
 	offset = uap->offset;
-#endif
 
 	/* Linux resolves the descriptor before validating the range and flags. */
 	error = fget(td, uap->fd, &cap_fsync_rights, &fp);
@@ -1523,11 +1416,7 @@ linux_pread(struct thread *td, struct linux_pread_args *uap)
 	off_t offset;
 	int error;
 
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
-	offset = PAIR32TO64(off_t, uap->offset);
-#else
 	offset = uap->offset;
-#endif
 
 	error = kern_pread(td, uap->fd, uap->buf, uap->nbyte, offset);
 	if (error == 0) {
@@ -1547,11 +1436,7 @@ linux_pwrite(struct thread *td, struct linux_pwrite_args *uap)
 {
 	off_t offset;
 
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
-	offset = PAIR32TO64(off_t, uap->offset);
-#else
 	offset = uap->offset;
-#endif
 
 	return (linux_enobufs2eagain(td, uap->fd,
 	    kern_pwrite(td, uap->fd, uap->buf, uap->nbyte, offset)));
@@ -1583,11 +1468,7 @@ linux_preadv(struct thread *td, struct linux_preadv_args *uap)
 	offset = pos_from_hilo(uap->pos_h, uap->pos_l);
 	if (offset < 0)
 		return (EINVAL);
-#ifdef COMPAT_LINUX32
-	error = freebsd32_copyinuio(PTRIN(uap->vec), uap->vlen, &auio);
-#else
 	error = copyinuio(uap->vec, uap->vlen, &auio);
-#endif
 	if (error != 0)
 		return (error);
 	error = kern_preadv(td, uap->fd, auio, offset);
@@ -1610,11 +1491,7 @@ linux_pwritev(struct thread *td, struct linux_pwritev_args *uap)
 	offset = pos_from_hilo(uap->pos_h, uap->pos_l);
 	if (offset < 0)
 		return (EINVAL);
-#ifdef COMPAT_LINUX32
-	error = freebsd32_copyinuio(PTRIN(uap->vec), uap->vlen, &auio);
-#else
 	error = copyinuio(uap->vec, uap->vlen, &auio);
-#endif
 	if (error != 0)
 		return (error);
 	error = kern_pwritev(td, uap->fd, auio, offset);
@@ -1668,11 +1545,7 @@ linux_dovectored2(struct thread *td, int fd, const void *vec, l_ulong vlen,
 		return (error);
 	if (vlen > UIO_MAXIOV)
 		return (EINVAL);
-#ifdef COMPAT_LINUX32
-	error = freebsd32_copyinuio(vec, vlen, &auio);
-#else
 	error = copyinuio(vec, vlen, &auio);
-#endif
 	if (error != 0)
 		return (error);
 	error = kern_rwv(td, fd, auio, offset, writing, foflags);
@@ -1696,7 +1569,7 @@ linux_pwritev2(struct thread *td, struct linux_pwritev2_args *uap)
 	    uap->pos_l, uap->pos_h, uap->flags, true));
 }
 
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 /* Parse completely before allocating mount arguments or changing a mount. */
 static int
 linux_tmpfs_options(struct thread *td, const char *user, uint32_t flags,
@@ -1856,7 +1729,7 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 		strcpy(fstypename, "ext2fs");
 	} else if (strcmp(fstypename, "proc") == 0) {
 		strcpy(fstypename, "linprocfs");
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	} else if (strcmp(fstypename, "sysfs") == 0) {
 		strcpy(fstypename, "linsysfs");
 #endif
@@ -1876,7 +1749,7 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 		fuse_options = data;
 		while ((fuse_option = strsep(&fuse_options, ",")) != NULL) {
 			fuse_name = strsep(&fuse_option, "=");
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 			if (fuse_name == NULL || *fuse_name == '\0') {
 				error = EINVAL;
 				goto out;
@@ -1933,7 +1806,7 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 		goto out;
 	}
 	if ((rwflag & LINUX_MS_BIND) != 0) {
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 		/* Linux copies options even when bind will not interpret them. */
 		if (args->data != NULL && fubyte(args->data) == -1) {
 			error = EFAULT;
@@ -1975,7 +1848,7 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 	if (rwflag & LINUX_MS_NOSYMFOLLOW)
 		fsflags |= MNT_NOSYMFOLLOW;
 
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 	if (strcmp(fstypename, "tmpfs") == 0) {
 		error = linux_tmpfs_options(td, args->data, rwflag, &ma);
 		if (error != 0)
@@ -1994,14 +1867,6 @@ out:
 	return (error);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_oldumount(struct thread *td, struct linux_oldumount_args *args)
-{
-
-	return (kern_unmount(td, args->path, 0));
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 int
 linux_umount(struct thread *td, struct linux_umount_args *args)
@@ -2066,9 +1931,6 @@ struct l_flock {
 	l_off_t		l_len;
 	l_pid_t		l_pid;
 }
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
-__packed
-#endif
 ;
 
 static void
@@ -2115,63 +1977,6 @@ bsd_to_linux_flock(struct flock *bsd_flock, struct l_flock *linux_flock)
 	linux_flock->l_pid = (l_pid_t)bsd_flock->l_pid;
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-struct l_flock64 {
-	l_short		l_type;
-	l_short		l_whence;
-	l_loff_t	l_start;
-	l_loff_t	l_len;
-	l_pid_t		l_pid;
-}
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
-__packed
-#endif
-;
-
-static void
-linux_to_bsd_flock64(struct l_flock64 *linux_flock, struct flock *bsd_flock)
-{
-	switch (linux_flock->l_type) {
-	case LINUX_F_RDLCK:
-		bsd_flock->l_type = F_RDLCK;
-		break;
-	case LINUX_F_WRLCK:
-		bsd_flock->l_type = F_WRLCK;
-		break;
-	case LINUX_F_UNLCK:
-		bsd_flock->l_type = F_UNLCK;
-		break;
-	default:
-		bsd_flock->l_type = -1;
-		break;
-	}
-	bsd_flock->l_whence = linux_flock->l_whence;
-	bsd_flock->l_start = (off_t)linux_flock->l_start;
-	bsd_flock->l_len = (off_t)linux_flock->l_len;
-	bsd_flock->l_pid = (pid_t)linux_flock->l_pid;
-	bsd_flock->l_sysid = 0;
-}
-
-static void
-bsd_to_linux_flock64(struct flock *bsd_flock, struct l_flock64 *linux_flock)
-{
-	switch (bsd_flock->l_type) {
-	case F_RDLCK:
-		linux_flock->l_type = LINUX_F_RDLCK;
-		break;
-	case F_WRLCK:
-		linux_flock->l_type = LINUX_F_WRLCK;
-		break;
-	case F_UNLCK:
-		linux_flock->l_type = LINUX_F_UNLCK;
-		break;
-	}
-	linux_flock->l_whence = bsd_flock->l_whence;
-	linux_flock->l_start = (l_loff_t)bsd_flock->l_start;
-	linux_flock->l_len = (l_loff_t)bsd_flock->l_len;
-	linux_flock->l_pid = (l_pid_t)bsd_flock->l_pid;
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 /* Linux64 one-way pipes keep SIGIO ownership per open description. */
 static int
@@ -2435,7 +2240,7 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 	case LINUX_F_OFD_GETLK:
 	case LINUX_F_OFD_SETLK:
 	case LINUX_F_OFD_SETLKW:
-#if defined(__aarch64__) || (defined(__amd64__) && !defined(COMPAT_LINUX32))
+#if defined(__aarch64__) || defined(__amd64__)
 		error = copyin((void *)args->arg, &linux_flock,
 		    sizeof(linux_flock));
 		if (error != 0)
@@ -2581,54 +2386,6 @@ linux_fcntl(struct thread *td, struct linux_fcntl_args *args)
 	return (fcntl_common(td, args));
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_fcntl64(struct thread *td, struct linux_fcntl64_args *args)
-{
-	struct l_flock64 linux_flock;
-	struct flock bsd_flock;
-	struct linux_fcntl_args fcntl_args;
-	int error;
-
-	switch (args->cmd) {
-	case LINUX_F_GETLK64:
-		error = copyin((void *)args->arg, &linux_flock,
-		    sizeof(linux_flock));
-		if (error)
-			return (error);
-		linux_to_bsd_flock64(&linux_flock, &bsd_flock);
-		error = kern_fcntl(td, args->fd, F_GETLK, (intptr_t)&bsd_flock);
-		if (error)
-			return (error);
-		bsd_to_linux_flock64(&bsd_flock, &linux_flock);
-		return (copyout(&linux_flock, (void *)args->arg,
-			    sizeof(linux_flock)));
-
-	case LINUX_F_SETLK64:
-		error = copyin((void *)args->arg, &linux_flock,
-		    sizeof(linux_flock));
-		if (error)
-			return (error);
-		linux_to_bsd_flock64(&linux_flock, &bsd_flock);
-		return (kern_fcntl(td, args->fd, F_SETLK,
-		    (intptr_t)&bsd_flock));
-
-	case LINUX_F_SETLKW64:
-		error = copyin((void *)args->arg, &linux_flock,
-		    sizeof(linux_flock));
-		if (error)
-			return (error);
-		linux_to_bsd_flock64(&linux_flock, &bsd_flock);
-		return (kern_fcntl(td, args->fd, F_SETLKW,
-		    (intptr_t)&bsd_flock));
-	}
-
-	fcntl_args.fd = args->fd;
-	fcntl_args.cmd = args->cmd;
-	fcntl_args.arg = args->arg;
-	return (fcntl_common(td, &fcntl_args));
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 /*
  * execveat(2).
@@ -2827,35 +2584,12 @@ linux_fadvise64(struct thread *td, struct linux_fadvise64_args *args)
 	off_t offset;
 	int advice;
 
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
-	offset = PAIR32TO64(off_t, args->offset);
-#else
 	offset = args->offset;
-#endif
 
 	advice = args->advice;
 	return (linux_kern_fadvise(td, args->fd, offset, args->len, advice));
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_fadvise64_64(struct thread *td, struct linux_fadvise64_64_args *args)
-{
-	off_t len, offset;
-	int advice;
-
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
-	len = PAIR32TO64(off_t, args->len);
-	offset = PAIR32TO64(off_t, args->offset);
-#else
-	len = args->len;
-	offset = args->offset;
-#endif
-
-	advice = args->advice;
-	return (linux_kern_fadvise(td, args->fd, offset, len, advice));
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 /*
  * FreeBSD pipes are full duplex; Linux pipes are not.  Strip the reverse
@@ -3062,13 +2796,8 @@ linux_fallocate(struct thread *td, struct linux_fallocate_args *args)
 {
 	off_t len, offset;
 
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
-	len = PAIR32TO64(off_t, args->len);
-	offset = PAIR32TO64(off_t, args->offset);
-#else
 	len = args->len;
 	offset = args->offset;
-#endif
 	return (linux_kern_fallocate(td, args->fd, args->mode, offset, len));
 }
 
@@ -3112,7 +2841,7 @@ linux_copy_file_range(struct thread *td, struct linux_copy_file_range_args
 
 #define	LINUX_MEMFD_PREFIX	"memfd:"
 
-#if defined(__aarch64__) || (defined(__amd64__) && !defined(COMPAT_LINUX32))
+#if defined(__aarch64__) || defined(__amd64__)
 /*
  * readahead(2): EBADF unless the descriptor is open for reading, EINVAL
  * unless it is a regular file, otherwise a WILLNEED advice.
@@ -3649,23 +3378,13 @@ linux_vmsplice(struct thread *td, struct linux_vmsplice_args *args)
 	}
 	if ((fp->f_flag & FWRITE) != 0) {
 		fdrop(fp, td);
-#ifdef COMPAT_LINUX32
-		error = freebsd32_copyinuio(PTRIN(args->iov), args->nr_segs,
-		    &auio);
-#else
 		error = copyinuio(PTRIN(args->iov), args->nr_segs, &auio);
-#endif
 		if (error != 0)
 			return (error);
 		error = kern_writev(td, args->fd, auio);
 	} else {
 		fdrop(fp, td);
-#ifdef COMPAT_LINUX32
-		error = freebsd32_copyinuio(PTRIN(args->iov), args->nr_segs,
-		    &auio);
-#else
 		error = copyinuio(PTRIN(args->iov), args->nr_segs, &auio);
-#endif
 		if (error != 0)
 			return (error);
 		error = kern_readv(td, args->fd, auio);
@@ -3763,11 +3482,7 @@ linux_writev(struct thread *td, struct linux_writev_args *args)
 	struct uio *auio;
 	int error;
 
-#ifdef COMPAT_LINUX32
-	error = freebsd32_copyinuio(PTRIN(args->iovp), args->iovcnt, &auio);
-#else
 	error = copyinuio(args->iovp, args->iovcnt, &auio);
-#endif
 	if (error != 0)
 		return (error);
 	error = kern_writev(td, args->fd, auio);
@@ -3795,7 +3510,7 @@ inotify_init_common(struct thread *td, int l_flags)
 	return (kern_specialfd(td, SPECIALFD_INOTIFY, &si));
 }
 
-#if defined(__i386__) || defined(__amd64__)
+#if defined(__amd64__)
 int
 linux_inotify_init(struct thread *td, struct linux_inotify_init_args *args)
 {

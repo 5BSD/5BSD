@@ -103,14 +103,12 @@ xmalloc(size_t size)
 static enum sysdecode_abi
 syscallabi(u_int sv_flags)
 {
+	if ((sv_flags & SV_ILP32) != 0)
+		return (SYSDECODE_ABI_UNKNOWN);
 	switch (sv_flags & SV_ABI_MASK) {
 	case SV_ABI_FREEBSD:
 		return (SYSDECODE_ABI_FREEBSD);
 	case SV_ABI_LINUX:
-#ifdef __LP64__
-		if ((sv_flags & SV_ILP32) != 0)
-			return (SYSDECODE_ABI_LINUX32);
-#endif
 		return (SYSDECODE_ABI_LINUX);
 	}
 	return (SYSDECODE_ABI_UNKNOWN);

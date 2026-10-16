@@ -43,13 +43,8 @@
 
 #include <security/audit/audit.h>
 
-#ifdef COMPAT_LINUX32
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 #include <compat/linux/linux_mib.h>
 #include <compat/linux/linux_signal.h>
 #include <compat/linux/linux_time.h>
@@ -156,11 +151,7 @@ bsd_to_linux_sigaction(struct sigaction *bsa, l_sigaction_t *lsa)
 {
 
 	bsd_to_linux_sigset(&bsa->sa_mask, &lsa->lsa_mask);
-#ifdef COMPAT_LINUX32
-	lsa->lsa_handler = (uintptr_t)bsa->sa_handler;
-#else
 	lsa->lsa_handler = bsa->sa_handler;
-#endif
 	lsa->lsa_restorer = 0;		/* unsupported */
 	lsa->lsa_flags = 0;
 	if (bsa->sa_flags & SA_NOCLDSTOP)
@@ -251,23 +242,6 @@ linux_sigaltstack(struct thread *td, struct linux_sigaltstack_args *uap)
 	return (error);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_signal(struct thread *td, struct linux_signal_args *args)
-{
-	l_sigaction_t nsa, osa;
-	int error;
-
-	nsa.lsa_handler = args->handler;
-	nsa.lsa_flags = LINUX_SA_ONESHOT | LINUX_SA_NOMASK;
-	LINUX_SIGEMPTYSET(nsa.lsa_mask);
-
-	error = linux_do_sigaction(td, args->sig, &nsa, &osa);
-	td->td_retval[0] = (int)(intptr_t)osa.lsa_handler;
-
-	return (error);
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 int
 linux_rt_sigaction(struct thread *td, struct linux_rt_sigaction_args *args)
@@ -323,44 +297,6 @@ linux_do_sigprocmask(struct thread *td, int how, sigset_t *new,
 	return (error);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_sigprocmask(struct thread *td, struct linux_sigprocmask_args *args)
-{
-	l_osigset_t mask;
-	l_sigset_t lset, oset;
-	sigset_t set;
-	int error;
-
-	if (args->mask != NULL) {
-		error = copyin(args->mask, &mask, sizeof(mask));
-		if (error != 0)
-			return (error);
-		LINUX_SIGEMPTYSET(lset);
-		lset.__mask = mask;
-#ifdef KTRACE
-		if (KTRPOINT(td, KTR_STRUCT))
-			linux_ktrsigset(&lset, sizeof(lset));
-#endif
-		linux_to_bsd_sigset(&lset, &set);
-	}
-
-	error = linux_do_sigprocmask(td, args->how,
-				     args->mask ? &set : NULL,
-				     args->omask ? &oset : NULL);
-
-	if (args->omask != NULL && error == 0) {
-#ifdef KTRACE
-		if (KTRPOINT(td, KTR_STRUCT))
-			linux_ktrsigset(&oset, sizeof(oset));
-#endif
-		mask = oset.__mask;
-		error = copyout(&mask, args->omask, sizeof(mask));
-	}
-
-	return (error);
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 int
 linux_rt_sigprocmask(struct thread *td, struct linux_rt_sigprocmask_args *args)
@@ -388,70 +324,6 @@ linux_rt_sigprocmask(struct thread *td, struct linux_rt_sigprocmask_args *args)
 	return (error);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_sgetmask(struct thread *td, struct linux_sgetmask_args *args)
-{
-	struct proc *p = td->td_proc;
-	l_sigset_t mask;
-
-	PROC_LOCK(p);
-	bsd_to_linux_sigset(&td->td_sigmask, &mask);
-	PROC_UNLOCK(p);
-	td->td_retval[0] = mask.__mask;
-#ifdef KTRACE
-	if (KTRPOINT(td, KTR_STRUCT))
-		linux_ktrsigset(&mask, sizeof(mask));
-#endif
-	return (0);
-}
-
-int
-linux_ssetmask(struct thread *td, struct linux_ssetmask_args *args)
-{
-	struct proc *p = td->td_proc;
-	l_sigset_t lset;
-	sigset_t bset;
-
-	PROC_LOCK(p);
-	bsd_to_linux_sigset(&td->td_sigmask, &lset);
-	td->td_retval[0] = lset.__mask;
-	LINUX_SIGEMPTYSET(lset);
-	lset.__mask = args->mask;
-	linux_to_bsd_sigset(&lset, &bset);
-#ifdef KTRACE
-	if (KTRPOINT(td, KTR_STRUCT))
-		linux_ktrsigset(&lset, sizeof(lset));
-#endif
-	td->td_sigmask = bset;
-	SIG_CANTMASK(td->td_sigmask);
-	signotify(td);
-	PROC_UNLOCK(p);
-	return (0);
-}
-
-int
-linux_sigpending(struct thread *td, struct linux_sigpending_args *args)
-{
-	struct proc *p = td->td_proc;
-	sigset_t bset;
-	l_sigset_t lset;
-	l_osigset_t mask;
-
-	PROC_LOCK(p);
-	bset = p->p_siglist;
-	SIGSETOR(bset, td->td_siglist);
-	SIGSETAND(bset, td->td_sigmask);
-	PROC_UNLOCK(p);
-	bsd_to_linux_sigset(&bset, &lset);
-#ifdef KTRACE
-	if (KTRPOINT(td, KTR_STRUCT))
-		linux_ktrsigset(&lset, sizeof(lset));
-#endif
-	mask = lset.__mask;
-	return (copyout(&mask, args->mask, sizeof(mask)));
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 /*
  * MPSAFE
@@ -530,26 +402,6 @@ linux_common_rt_sigtimedwait(struct thread *td, l_sigset_t *mask,
 	return (error);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_rt_sigtimedwait_time64(struct thread *td,
-	struct linux_rt_sigtimedwait_time64_args *args)
-{
-	struct timespec ts, *tsa;
-	int error;
-
-	if (args->timeout) {
-		error = linux_get_timespec64(&ts, args->timeout);
-		if (error != 0)
-			return (error);
-		tsa = &ts;
-	} else
-		tsa = NULL;
-
-	return (linux_common_rt_sigtimedwait(td, args->mask, tsa,
-	    args->ptr, args->sigsetsize));
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 int
 linux_kill(struct thread *td, struct linux_kill_args *args)

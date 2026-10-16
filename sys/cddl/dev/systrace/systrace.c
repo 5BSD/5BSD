@@ -56,52 +56,15 @@
 #include <cddl/dev/dtrace/dtrace_cddl.h>
 
 #ifdef LINUX_SYSTRACE
-#if defined(__amd64__)
 #include <amd64/linux/linux.h>
 #include <amd64/linux/linux_proto.h>
 #include <amd64/linux/linux_syscalls.c>
 #include <amd64/linux/linux_systrace_args.c>
-#elif defined(__i386__)
-#include <i386/linux/linux.h>
-#include <i386/linux/linux_proto.h>
-#include <i386/linux/linux_syscalls.c>
-#include <i386/linux/linux_systrace_args.c>
-#else
-#error Only i386 and amd64 are supported.
-#endif
 #define	MODNAME		"linux"
 extern struct sysent linux_sysent[];
 #define	MAXSYSCALL	LINUX_SYS_MAXSYSCALL
 #define	SYSCALLNAMES	linux_syscallnames
 #define	SYSENT		linux_sysent
-#elif defined(LINUX32_SYSTRACE)
-#if defined(__amd64__)
-#include <amd64/linux32/linux.h>
-#include <amd64/linux32/linux32_proto.h>
-#include <amd64/linux32/linux32_syscalls.c>
-#include <amd64/linux32/linux32_systrace_args.c>
-#else
-#error Only amd64 is supported.
-#endif
-#define	MODNAME		"linux32"
-extern struct sysent linux32_sysent[];
-#define	MAXSYSCALL	LINUX32_SYS_MAXSYSCALL
-#define	SYSCALLNAMES	linux32_syscallnames
-#define	SYSENT		linux32_sysent
-#elif defined(FREEBSD32_SYSTRACE)
-/*
- * The syscall arguments are processed into a DTrace argument array
- * using a generated function. See sys/tools/syscalls/README.md.
- */
-#include <compat/freebsd32/freebsd32_proto.h>
-#include <compat/freebsd32/freebsd32_util.h>
-#include <compat/freebsd32/freebsd32_syscall.h>
-#include <compat/freebsd32/freebsd32_systrace_args.c>
-extern const char *freebsd32_syscallnames[];
-#define	MODNAME		"freebsd32"
-#define	MAXSYSCALL	FREEBSD32_SYS_MAXSYSCALL
-#define	SYSCALLNAMES	freebsd32_syscallnames
-#define	SYSENT		freebsd32_sysent
 #else
 /*
  * The syscall arguments are processed into a DTrace argument array
@@ -387,24 +350,9 @@ SYSUNINIT(systrace_unload, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY,
 #ifdef LINUX_SYSTRACE
 DEV_MODULE(systrace_linux, systrace_modevent, NULL);
 MODULE_VERSION(systrace_linux, 1);
-#ifdef __amd64__
 MODULE_DEPEND(systrace_linux, linux64, 1, 1, 1);
-#else
-MODULE_DEPEND(systrace_linux, linux, 1, 1, 1);
-#endif
 MODULE_DEPEND(systrace_linux, dtrace, 1, 1, 1);
 MODULE_DEPEND(systrace_linux, opensolaris, 1, 1, 1);
-#elif defined(LINUX32_SYSTRACE)
-DEV_MODULE(systrace_linux32, systrace_modevent, NULL);
-MODULE_VERSION(systrace_linux32, 1);
-MODULE_DEPEND(systrace_linux32, linux, 1, 1, 1);
-MODULE_DEPEND(systrace_linux32, dtrace, 1, 1, 1);
-MODULE_DEPEND(systrace_linux32, opensolaris, 1, 1, 1);
-#elif defined(FREEBSD32_SYSTRACE)
-DEV_MODULE(systrace_freebsd32, systrace_modevent, NULL);
-MODULE_VERSION(systrace_freebsd32, 1);
-MODULE_DEPEND(systrace_freebsd32, dtrace, 1, 1, 1);
-MODULE_DEPEND(systrace_freebsd32, opensolaris, 1, 1, 1);
 #else
 DEV_MODULE(systrace, systrace_modevent, NULL);
 MODULE_VERSION(systrace, 1);

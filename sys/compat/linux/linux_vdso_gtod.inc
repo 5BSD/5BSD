@@ -73,11 +73,6 @@ static int
 __vdso_native_to_linux_timespec(struct l_timespec *lts,
     struct timespec *nts)
 {
-
-#ifdef COMPAT_LINUX32
-	if (nts->tv_sec > INT_MAX || nts->tv_sec < INT_MIN)
-		return (LINUX_EOVERFLOW);
-#endif
 	lts->tv_sec = nts->tv_sec;
 	lts->tv_nsec = nts->tv_nsec;
 	return (0);
@@ -87,28 +82,11 @@ static int
 __vdso_native_to_linux_timeval(l_timeval *ltv,
     struct timeval *ntv)
 {
-
-#ifdef COMPAT_LINUX32
-	if (ntv->tv_sec > INT_MAX || ntv->tv_sec < INT_MIN)
-		return (LINUX_EOVERFLOW);
-#endif
 	ltv->tv_sec = ntv->tv_sec;
 	ltv->tv_usec = ntv->tv_usec;
 	return (0);
 }
 
-
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-static int
-__vdso_native_to_linux_timespec64(struct l_timespec64 *lts,
-    struct timespec *nts)
-{
-
-	lts->tv_sec = nts->tv_sec;
-	lts->tv_nsec = nts->tv_nsec;
-	return (0);
-}
-#endif
 
 static int
 __vdso_linux_to_native_clockid(clockid_t *n, clockid_t l)
@@ -338,27 +316,6 @@ __vdsoN(clock_getres)(clockid_t clock_id, struct l_timespec *lts)
 	return (__vdso_clock_getres_fallback(clock_id, lts));
 }
 
-#if defined(__i386__) || defined(COMPAT_LINUX32)
-int
-__vdso_clock_gettime64(clockid_t clock_id, struct l_timespec64 *lts)
-{
-	struct timespec ts;
-	clockid_t which;
-	int error;
-
-	error = __vdso_linux_to_native_clockid(&which, clock_id);
-	if (error != 0)
-		return (__vdso_clock_gettime64_fallback(clock_id, lts));
-	error = freebsd_clock_gettime(which, &ts);
-	if (error == 0)
-		return(-__vdso_native_to_linux_timespec64(lts, &ts));
-	else
-		return(__vdso_clock_gettime64_fallback(clock_id, lts));
-}
-
-int clock_gettime64(clockid_t clock_id, struct l_timespec64 *lts)
-    __attribute__((weak, alias("__vdso_clock_gettime64")));
-#endif
 
 #if defined(__i386__) || defined(__amd64__)
 int

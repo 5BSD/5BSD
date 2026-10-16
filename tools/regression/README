@@ -51,7 +51,6 @@ To run the tests and parse their output install the devel/p5-Test-Harness
 port.  This includes the prove(1) command which is used to run the tests
 and collate the output.
 
-    prove geom_concat		# run all the tests in geom_concat
     prove -r lib		# run all tests in lib/, and subdirectories
     prove -r -v lib		# as above, with verbose output
     prove -r			# run *all* the tests

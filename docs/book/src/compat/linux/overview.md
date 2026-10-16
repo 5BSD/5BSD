@@ -6,7 +6,7 @@ This chapter says what is in scope, how the table is counted, which feature grou
 
 ## Scope: amd64 Linux64 only
 
-5BSD is a 64-bit-only platform (`nooptions COMPAT_FREEBSD32`, no `LIB32`), and the Linux ABI follows suit. The `linux64` module is the only Linux image activator loaded; the 32-bit `linux` module is neither built into images nor loaded by `rc.d/linux`, and `rc.d/linux` skips the `kern.elf32.fallback_brand` sysctl because the node does not exist. The arm64 Linux64 tables are regenerated for parity so the build stays consistent, but every qualification claim in this Part is for amd64 Linux64 unless a document says otherwise; arm64 and the vestigial linux32 tables lag (rseq, for instance, returns `ENOSYS` there).
+5BSD is a 64-bit-only platform with no FreeBSD32 or Linux32 kernel ABI. The `linux64` module is the only Linux image activator loaded, and `rc.d/linux` skips the absent `kern.elf32.fallback_brand` sysctl. The arm64 Linux64 table is maintained for build parity, but every qualification claim in this Part is for amd64 Linux64 unless stated otherwise. The 32-bit syscall tables and modules were retired on 2026-10-15; see [the kernel retirement record](../../../../kernel-retirement-2026-10-15.md).
 
 ## The syscall table, counted honestly
 

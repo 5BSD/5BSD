@@ -19,19 +19,3 @@ sdt:::snp-read-wait-done
     snp_time[pid, tid, snp_depth[pid, tid]] = 0;
     snp_depth[pid, tid]--;
 }
-
-sdt:::lpt-bus-request-start
-/* @bsdinstruments-predicate */
-{
-    lpt_depth[pid, tid]++;
-    lpt_time[pid, tid, lpt_depth[pid, tid]] = timestamp;
-}
-
-sdt:::lpt-bus-request-done
-/lpt_time[pid, tid, lpt_depth[pid, tid]] != 0/
-{
-    @lpt_us = quantize((timestamp - lpt_time[pid, tid, lpt_depth[pid, tid]]) / 1000);
-    @lpt_results[(int)arg1] = count();
-    lpt_time[pid, tid, lpt_depth[pid, tid]] = 0;
-    lpt_depth[pid, tid]--;
-}

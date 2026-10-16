@@ -11,10 +11,8 @@ SUBDIR_PARALLEL=
 .if defined(MODULES_OVERRIDE) && !defined(ALL_MODULES)
 SUBDIR=${MODULES_OVERRIDE}
 .else
-# 5BSD omits floppy, parallel-port, CardBus, and AGP modules.
+# 5BSD omits floppy, parallel-port, CardBus, and AGP support.
 SUBDIR=	\
-	${_3dfx} \
-	${_3dfx_linux} \
 	${_aac} \
 	${_aacraid} \
 	accf_data \
@@ -78,12 +76,10 @@ SUBDIR=	\
 	${_ccp} \
 	cd9660 \
 	cd9660_iconv \
-	${_cfi} \
 	${_chromebook_platform} \
 	${_ciss} \
 	${_coreboot} \
 	${_coretemp} \
-	${_cpsw} \
 	${_cpuctl} \
 	${_cpufreq} \
 	${_crypto} \
@@ -109,7 +105,6 @@ SUBDIR=	\
 	${_et} \
 	etherswitch \
 	evdev \
-	${_exca} \
 	ext2fs \
 	fdescfs \
 	${_felix} \
@@ -123,8 +118,6 @@ SUBDIR=	\
 	${_ftwd} \
 	fusefs \
 	geom \
-	${_glxiic} \
-	${_glxsb} \
 	gpio \
 	${_gve} \
 	${_hfsts} \
@@ -166,7 +159,6 @@ SUBDIR=	\
 	iflib \
 	${_igc} \
 	imgact_binmisc \
-	${_imx} \
 	${_intel_pmc} \
 	${_intelspi} \
 	${_io} \
@@ -286,7 +278,6 @@ SUBDIR=	\
 	${_pms} \
 	proto \
 	pseudofs \
-	${_pst} \
 	${_pt} \
 	pvpanic \
 	puc \
@@ -317,7 +308,6 @@ SUBDIR=	\
 	${_rtwnfw} \
 	${_s3} \
 	safexcel \
-	${_sbni} \
 	scc \
 	${_sctp} \
 	sdhci \
@@ -352,8 +342,6 @@ SUBDIR=	\
 	tpm \
 	tws \
 	uart \
-	udf \
-	udf_iconv \
 	ufs \
 	${_ufshci} \
 	uinput \
@@ -468,17 +456,10 @@ SUBDIR+=	fdt
 .endif
 
 # Linuxulator
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
-    ${MACHINE_CPUARCH} == "i386"
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
 SUBDIR+=	linprocfs
 SUBDIR+=	linsysfs
 SUBDIR+=	linux_ntsync
-.endif
-# 5BSD is 64-bit only (no COMPAT_FREEBSD32 / 32-bit ELF activator), so the
-# 32-bit 'linux' module cannot link or load; build only the 64-bit ABI.
-# (Upstream also builds 'linux' on amd64; kept for i386, which 5BSD omits.)
-.if ${MACHINE_CPUARCH} == "i386"
-SUBDIR+=	linux
 .endif
 .if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
 SUBDIR+=	linux64
@@ -495,7 +476,7 @@ _brcm80211= brcm80211
 
 # LinuxKPI based wireless drivers.
 .if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
-    ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "riscv"
+    ${MACHINE_CPUARCH} == "riscv"
 _iwlwifi=	iwlwifi
 _rtw88=		rtw88
 # rtw89 currently cannot be compiled without ACPI (seems also broken in Linux).
@@ -504,7 +485,6 @@ _rtw89=		rtw89
 .endif
 .endif
 
-.if ${MACHINE_CPUARCH} != "arm"
 .if ${MK_OFED} != "no" || defined(ALL_MODULES)
 _ibcore=	ibcore
 _ipoib=		ipoib
@@ -512,10 +492,8 @@ _iser=		iser
 _mthca=		mthca
 _rdma=		rdma
 .endif
-.endif
 
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
-    ${MACHINE_CPUARCH} == "i386" || ${MACHINE_ARCH:Mpowerpc64*} != ""
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
 _ipmi=		ipmi
 _mlx4=		mlx4
 _mlx5=		mlx5
@@ -530,8 +508,7 @@ _mlx5ib=	mlx5ib
 .endif
 .endif
 
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
-    ${MACHINE_CPUARCH} == "i386"
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
 _acpi=		acpi
 _ena=		ena
 _gve=		gve
@@ -539,9 +516,7 @@ _igc=		igc
 _vmware=	vmware
 .endif
 
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
-    ${MACHINE_CPUARCH} == "i386" || ${MACHINE_ARCH} == "armv7" || \
-	${MACHINE_ARCH:Mpowerpc64*} != ""
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
 _ossl=		ossl
 .endif
 
@@ -587,8 +562,7 @@ _otusfw=	otusfw
 _rtwnfw=	rtwnfw
 .endif
 
-.if ${MK_SOURCELESS_UCODE} != "no" && ${MACHINE_CPUARCH} != "arm" && \
-	${MACHINE_ARCH} != "powerpc" && ${MACHINE_CPUARCH} != "riscv"
+.if ${MK_SOURCELESS_UCODE} != "no" && ${MACHINE_CPUARCH} != "riscv"
 _cxgbe=		cxgbe
 .endif
 
@@ -602,8 +576,7 @@ _mpi3mr=mpi3mr
 _genet=		genet
 .endif
 
-.if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "aarch64" || \
-	${MACHINE_ARCH:Mpowerpc64*} != ""
+.if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "aarch64"
 _ice=		ice
 .if ${MK_SOURCELESS_UCODE} != "no"
 _ice_ddp=	ice_ddp
@@ -620,8 +593,7 @@ _ixl=		ixl
 _spe=		spe
 .endif
 
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "arm" || \
-	${MACHINE_CPUARCH} == "riscv"
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "riscv"
 .if !empty(OPT_FDT)
 _allwinner=	allwinner
 _if_cgem=	if_cgem
@@ -630,10 +602,8 @@ _sdhci_fdt=	sdhci_fdt
 .endif
 
 # These rely on 64bit atomics
-.if ${MACHINE_ARCH} != "powerpc"
 _mps=		mps
 _mpr=		mpr
-.endif
 
 .if ${MK_TESTS} != "no" || defined(ALL_MODULES)
 SUBDIR+=	ktest
@@ -676,11 +646,7 @@ _rockchip=	rockchip
 .endif
 .endif
 
-.if ${MACHINE_CPUARCH} == "arm"
-_imx=		imx
-.endif
-
-.if ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64"
+.if ${MACHINE_CPUARCH} == "amd64"
 _aq=		aq
 _bios=		bios
 .if ${MK_SOURCELESS_UCODE} != "no"
@@ -693,7 +659,6 @@ _em=		em
 _et=		et
 _ftgpio=	ftgpio
 _ftwd=		ftwd
-_exca=		exca
 _io=		io
 _itwd=		itwd
 _ix=		ix
@@ -820,23 +785,7 @@ _vmm=		vmm
 .endif
 .endif
 
-.if ${MACHINE_CPUARCH} == "i386"
-# XXX some of these can move to the general case when de-i386'ed
-# XXX some of these can move now, but are untested on other architectures.
-_3dfx=		3dfx
-_3dfx_linux=	3dfx_linux
-_glxiic=	glxiic
-_glxsb=		glxsb
-_pst=		pst
-_sbni=		sbni
-.endif
-
-.if ${MACHINE_ARCH} == "armv7"
-_cfi=		cfi
-_cpsw=		cpsw
-.endif
-
-.if ${MACHINE_CPUARCH} == "arm" || ${MACHINE_CPUARCH} == "aarch64"
+.if ${MACHINE_CPUARCH} == "aarch64"
 _bcm283x_clkman=  bcm283x_clkman
 _bcm283x_pwm=	bcm283x_pwm
 _neta=		neta

@@ -21,7 +21,6 @@ LDIRS=	BSD_daemon \
 	mdoc \
 	netgraph \
 	oci \
-	ppi \
 	ppp \
 	ses \
 	scsi_target \
@@ -214,11 +213,6 @@ SE_PF= \
 	spamd
 .endif
 .endif
-
-SE_DIRS+=	ppi
-SE_PPI= \
-	Makefile \
-	ppilcd.c
 
 SE_DIRS+=	ppp
 SE_PPPPACKAGE=	ppp

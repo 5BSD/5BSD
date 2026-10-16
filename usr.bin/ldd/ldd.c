@@ -50,23 +50,8 @@
 #include <string.h>
 #include <unistd.h>
 
-/*
- * 32-bit ELF data structures can only be used if the system header[s] declare
- * them.  There is no official macro for determining whether they are declared,
- * so check for the existence of one of the 32-macros defined in elf(5).
- */
-#ifdef ELF32_R_TYPE
-#define	ELF32_SUPPORTED
-#endif
-
 #define	LDD_SETENV(name, value, overwrite) do {		\
 	setenv("LD_" name, value, overwrite);		\
-	setenv("LD_32_" name, value, overwrite);	\
-} while (0)
-
-#define	LDD_UNSETENV(name) do {		\
-	unsetenv("LD_" name);		\
-	unsetenv("LD_32_" name);	\
 } while (0)
 
 static int	is_executable(const char *fname, int fd, int *is_shlib,
@@ -74,59 +59,7 @@ static int	is_executable(const char *fname, int fd, int *is_shlib,
 static void	usage(void);
 
 #define	TYPE_UNKNOWN	0
-#define	TYPE_ELF	1	/* Architecture default */
-#if __ELF_WORD_SIZE > 32 && defined(ELF32_SUPPORTED)
-#define	TYPE_ELF32	2	/* Explicit 32 bits on architectures >32 bits */
-
-#define	_PATH_LDD32	"/usr/bin/ldd32"
-
-static int
-execldd32(char *file, char *fmt1, char *fmt2, int aflag)
-{
-	char *argv[9];
-	int i, rval, status;
-
-	LDD_UNSETENV("TRACE_LOADED_OBJECTS");
-	rval = 0;
-	i = 0;
-	argv[i++] = strdup(_PATH_LDD32);
-	if (aflag)
-		argv[i++] = strdup("-a");
-	if (fmt1 != NULL) {
-		argv[i++] = strdup("-f");
-		argv[i++] = strdup(fmt1);
-	}
-	if (fmt2 != NULL) {
-		argv[i++] = strdup("-f");
-		argv[i++] = strdup(fmt2);
-	}
-	argv[i++] = strdup(file);
-	argv[i++] = NULL;
-
-	switch (fork()) {
-	case -1:
-		err(1, "fork");
-		break;
-	case 0:
-		execv(_PATH_LDD32, argv);
-		warn("%s", _PATH_LDD32);
-		_exit(127);
-		break;
-	default:
-		if (wait(&status) < 0)
-			rval = 1;
-		else if (WIFSIGNALED(status))
-			rval = 1;
-		else if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
-			rval = 1;
-		break;
-	}
-	while (i--)
-		free(argv[i]);
-	LDD_SETENV("TRACE_LOADED_OBJECTS", "yes", 1);
-	return (rval);
-}
-#endif
+#define	TYPE_ELF	1
 
 int
 main(int argc, char *argv[])
@@ -181,11 +114,6 @@ main(int argc, char *argv[])
 		switch (type) {
 		case TYPE_ELF:
 			break;
-#if __ELF_WORD_SIZE > 32 && defined(ELF32_SUPPORTED)
-		case TYPE_ELF32:
-			rval |= execldd32(*argv, fmt1, fmt2, aflag);
-			continue;
-#endif
 		case TYPE_UNKNOWN:
 		default:
 			/*
@@ -231,10 +159,6 @@ main(int argc, char *argv[])
 			break;
 		case 0:
 			rtld = _PATH_RTLD;
-#if __ELF_WORD_SIZE > 32 && defined(ELF32_SUPPORTED)
-			if (type == TYPE_ELF32)
-				rtld = __PATH_RTLD("32");
-#endif
 			if (is_shlib == 0) {
 				execl(rtld, rtld, "--",
 				    *argv, (char *)NULL);
@@ -422,11 +346,11 @@ is_executable(const char *fname, int fd, int *is_shlib, int *type)
 	}
 
 	*type = TYPE_ELF;
-#if __ELF_WORD_SIZE > 32 && defined(ELF32_SUPPORTED)
 	if (gelf_getclass(elf) == ELFCLASS32) {
-		*type = TYPE_ELF32;
+		elf_end(elf);
+		warnx("%s: 32-bit ELF binaries are unsupported", fname);
+		return (0);
 	}
-#endif
 
 	freebsd = ehdr.e_ident[EI_OSABI] == ELFOSABI_FREEBSD;
 	for (i = 0; i < ehdr.e_phnum; i++) {
