@@ -338,44 +338,6 @@
     },
     {
       "kind": "kernel",
-      "source": "sys/fs/udf/udf_vnops.c",
-      "provider": "udf",
-      "module": "",
-      "function": "",
-      "name": "block-start",
-      "types": [
-        "void *",
-        "int64_t",
-        "int"
-      ],
-      "categories": [
-        "io",
-        "performance"
-      ],
-      "priority": "P0"
-    },
-    {
-      "kind": "kernel",
-      "source": "sys/fs/udf/udf_vnops.c",
-      "provider": "udf",
-      "module": "",
-      "function": "",
-      "name": "block-done",
-      "types": [
-        "void *",
-        "int64_t",
-        "int",
-        "int"
-      ],
-      "categories": [
-        "io",
-        "performance",
-        "errors"
-      ],
-      "priority": "P0"
-    },
-    {
-      "kind": "kernel",
       "source": "sys/fs/cd9660/cd9660_vnops.c",
       "provider": "isofs",
       "module": "",
@@ -789,7 +751,6 @@
     "Tarfs: backing/compressed stream read latency, requested extent and residual/error.",
     "Unionfs: actual lower-to-upper copy phase timing and error.",
     "Nullfs: initial vnode cache hit/miss and getnewvnode latency/error; no allocator internals.",
-    "UDF: buffer/cluster read extent, latency and error before touching the returned buffer.",
     "CD9660: buffer/cluster read extent, latency and error before touching the returned buffer.",
     "Memory disks: ioctl attach/detach/resize/query dispatch; excluded preload initialization.",
     "Terminal: validated tty ioctl dispatch latency and failure, no terminal bytes.",
@@ -836,7 +797,7 @@
     "cddl/usr.sbin/bsdinstruments/profiles/base-link-flags.d": "5b23729d2522791f9273ff02d1eac2470b052f32640730edc866c4a464d77b73",
     "cddl/usr.sbin/bsdinstruments/profiles/base-sync-duration.d": "658e68f775cd0e74dd65d48d856ef9024e6a9b54363f085a72976eb649c30af2",
     "cddl/usr.sbin/bsdinstruments/profiles/file-lock-operations.d": "46ec419610a9465a29cb4cbc413da3b01a0b9864e753cc83b808d71b8a36f052",
-    "cddl/usr.sbin/bsdinstruments/profiles/filesystem-read-phases.d": "09cb96f2efd5ea04f2e33262e833e36bb1515aa74d5e7ac22953bc6f661af680",
+    "cddl/usr.sbin/bsdinstruments/profiles/filesystem-read-phases.d": "a3fad327c13665024ed276b8d554e96c4cff9b8e6996d85a3eb528d9ff7193b6",
     "cddl/usr.sbin/bsdinstruments/profiles/memory-disk-control.d": "0f757e961731985a134a7eca621fd7b979fe77a431a44fa81b4c96cf9e7b0858",
     "cddl/usr.sbin/bsdinstruments/profiles/module-tool-phases.d": "c6ce6c1b02cef5097f4f6b850b882b84aaea899dcf6d87d35012f2f5c8e9189c",
     "cddl/usr.sbin/bsdinstruments/profiles/priority-changes.d": "2f4eb090305f4680244d3721530da8bc4a33a42dece18fbc9e90daf72355fb8b",
@@ -855,7 +816,6 @@
     "sys/fs/cd9660/cd9660_vnops.c": "1d8c1526a95396864db99f1e2f442864da989aad6ee42282e928b1e7a0feffba",
     "sys/fs/nullfs/null_subr.c": "1b6b4c76a91e68ab0168170643fa274e206f3f5e9d5618007d31a8340a4f56dd",
     "sys/fs/tarfs/tarfs_io.c": "d6b9992f3f112c0acf7b43d9ba7f40173091a0f30657bb57db52b54d6c6fd763",
-    "sys/fs/udf/udf_vnops.c": "6b2e7b2ee84443e8b700193a4d565ffe63517c4e558ba3cb6fb9c21e7937d8bc",
     "sys/fs/unionfs/union_subr.c": "844495839f1f82cf95cc258556fab0b12563dba0dce0139c9fffbff67e921409",
     "sys/kern/tty.c": "d5fc8ab4ddbda54b343ff2f01e8ff29eb4cb8cf5e669730423daa8e9e2104821",
     "sys/net/if_bridge.c": "2af62c7fef8df4f84cff1b2d5befb1e3d0d6c398332d19bdc9528ee5adc9f5d4",
@@ -863,13 +823,13 @@
     "sys/net/if_lagg.c": "cac9add695f5c7e31fa27f7837367f0586fa54dd8916fc66ec9cbb56ee194deb",
     "sys/net/if_tuntap.c": "e840564a77bd77e038646ac61a2a8958e5b957130ec47151b4fde1618dd0f232",
     "sys/net/if_vlan.c": "aa7202a31c73d97c1256d63841ef891b1d1d5c6f9ce40b304a99a6894e1bd02d",
-    "tools/test/system-tracing/COVERAGE-NINTH": "7bb92103cff6c57f2d22eccb46b84610fdca5734d513a8b92723d06878e194d0",
+    "tools/test/system-tracing/COVERAGE-NINTH": "c8f571c695a72c5d111d23c1fc16cd49ea178a190ff4f9ddef9ae45d889435ac",
     "tools/test/system-tracing/README": "09454c06fde30bd1047cd76a6902a349efa5fc47434804d487acc2a896355e98",
     "tools/test/system-tracing/coverage-ninth-base.py": "1d3e5f664cf95035c7a6be3143307bf2ce5e1db28bc01bf277642e400481be64",
     "tools/test/system-tracing/coverage-ninth-check.py": "07729b1e1ba3cb5d3cadc9032dd02224a0d58c5b38d166510d21db22ff73e49b",
-    "tools/test/system-tracing/coverage-ninth-compile.py": "c17533760545347cb1e179c388d0bccefcf186ebb225d27e5cb77d103b835064",
+    "tools/test/system-tracing/coverage-ninth-compile.py": "d578c1158ed00a420e0ab4651de9cdc3b045218e3a44505ae5bc6e597a3ba817",
     "tools/test/system-tracing/coverage-ninth-guards.py": "172e0caec030a04d30de7abaa23e847af55d31892fac1f6e6e13113cee9b5926",
-    "tools/test/system-tracing/coverage-ninth-modules.py": "97bb64cc9b0dca05d6c16231bc85144d54a9f9fd3f9734e2a0493907ff1c2fb9",
+    "tools/test/system-tracing/coverage-ninth-modules.py": "52d126eea9d4eafe0b4e03701e5e37a6c7fd3f586156e77d91513a08f283198f",
     "tools/test/system-tracing/coverage-ninth-smoke.py": "4574a60a319d95d7e30ba39cab9fe26d166ba168fcf405d02cc0b923815f3b28",
     "tools/test/system-tracing/coverage-ninth-syscall-stubs.c": "043e59b20908a3fe41c5321ed8abd7d226542090102b655c8497e415f8809353",
     "tools/test/system-tracing/coverage-ninth-tests.py": "7b58ce8e090d5dde10cd4a15f91b878b74573fa80e445009e129ba2cf90d5e54",
@@ -882,10 +842,10 @@
     "usr.bin/renice/priorityop_trace.h": "0bd2404ac4a01b50ac9840a2ccd09421852fb729e1d8ca4dbd5bb0561d63d83d",
     "usr.bin/renice/renice.c": "d91e457a7103013711d2809cde370efea37a7534ae456b555ccfe95ded068937"
   },
-  "scope": "20 different runtime source components, zero overlap with eighth expansion; not exhaustive coverage of every operation.",
+  "scope": "19 different runtime source components, zero overlap with eighth expansion; not exhaustive coverage of every operation.",
   "counts": {
-    "passes": 20,
-    "kernel_contracts": 26,
+    "passes": 19,
+    "kernel_contracts": 24,
     "user_contracts": 16,
     "profiles": 10
   }

@@ -6,7 +6,7 @@ from pathlib import Path
 S=Path('/usr/src'); K=Path('/usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG'); O=Path('/usr/obj/5bsd-dtrace-ninth-validation/kernel'); O.mkdir(parents=True,exist_ok=True)
 (O/'nohooks.h').write_text('#undef KDTRACE_HOOKS\n')
 flags=shlex.split(subprocess.check_output(['make','-C',str(K),'-V','${CFLAGS}'],text=True))
-files=['sys/dev/md/md.c', 'sys/fs/cd9660/cd9660_vnops.c', 'sys/fs/nullfs/null_subr.c', 'sys/fs/tarfs/tarfs_io.c', 'sys/fs/udf/udf_vnops.c', 'sys/fs/unionfs/union_subr.c', 'sys/kern/tty.c', 'sys/net/if_bridge.c', 'sys/net/if_clone.c', 'sys/net/if_lagg.c', 'sys/net/if_tuntap.c', 'sys/net/if_vlan.c']
+files=['sys/dev/md/md.c', 'sys/fs/cd9660/cd9660_vnops.c', 'sys/fs/nullfs/null_subr.c', 'sys/fs/tarfs/tarfs_io.c', 'sys/fs/unionfs/union_subr.c', 'sys/kern/tty.c', 'sys/net/if_bridge.c', 'sys/net/if_clone.c', 'sys/net/if_lagg.c', 'sys/net/if_tuntap.c', 'sys/net/if_vlan.c']
 def run(job):
  f,h=job; ident=Path(f).stem+'-'+str(h); cmd=['cc',*flags,'-Werror']
  if Path(f).stem=='tarfs_io': cmd+=['-I/usr/src/sys/contrib/zstd/lib/freebsd']

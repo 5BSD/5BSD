@@ -1,6 +1,11 @@
 Nineteenth system tracing expansion and PTY retirement (2026-10-13)
 =================================================================
 
+2026-10-15 update: the parallel-port lpt driver was retired with the ppbus
+stack. Its two tracing contracts and module build target were removed from
+the maintained inventory. legacy-device-waits now reports only snp waits.
+The original 2026-10-13 results below describe the tree at that date.
+
 Scope: the older terminal/device subsystems reviewed this round. Age alone
 is not evidence of replacement. This is not a whole-tree retirement audit.
 
