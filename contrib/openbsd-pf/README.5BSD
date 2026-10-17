@@ -185,7 +185,9 @@ to a re-import.
   if_pflog.[ch], if_pflow.[ch], if_pfsync.c
                  ifnet is if_alloc()ed (sc_if is a macro over sc_ifp);
                  if_output casts; interface counters; no ifq start;
-                 sleepable configuration locks; DTrace probe hooks
+                 sleepable configuration locks; DTrace probe hooks;
+                 pflow_clone_destroy() drains its timeouts and waits out
+                 PF_LOCK holders (export_pflow() outside the net epoch)
   carp (marked "5BSD: carp"): pfsync's carp(4) demotion is compiled in
                  (if_pfsync.c defines PFSYNC_CARP_DEMOTE before "carp.h";
                  pf.c's IFT_CARP paths stay out and pfsync0 joins no "carp"

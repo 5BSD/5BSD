@@ -360,11 +360,19 @@ pflow_clone_destroy(struct ifnet *ifp)
 	KERNEL_ASSERT_LOCKED();
 	SMR_SLIST_REMOVE_LOCKED(&pflowif_list, sc, pflow_softc, sc_next);
 	smr_barrier();
+	/*
+	 * 5BSD: smr_barrier() waits for the net epoch only; export_pflow()
+	 * also runs from pf_remove_state() in ioctl and purge context,
+	 * always under PF_LOCK.  The handlers below re-arm and queue the
+	 * output task, so drain them before the task barrier.
+	 */
+	PF_LOCK();
+	PF_UNLOCK();
 
-	timeout_del(&sc->sc_tmo);
-	timeout_del(&sc->sc_tmo6);
-	timeout_del(&sc->sc_tmo_tmpl);
-	timeout_del(&sc->sc_tmo_nat);
+	timeout_del_barrier(&sc->sc_tmo);	/* 5BSD: drain */
+	timeout_del_barrier(&sc->sc_tmo6);	/* 5BSD: drain */
+	timeout_del_barrier(&sc->sc_tmo_tmpl);	/* 5BSD: drain */
+	timeout_del_barrier(&sc->sc_tmo_nat);	/* 5BSD: drain */
 
 	pflow_flush(sc);
 	taskq_del_barrier(net_tq(ifp->if_index), &sc->sc_outputtask);
