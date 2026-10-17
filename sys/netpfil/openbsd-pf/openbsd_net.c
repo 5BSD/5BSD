@@ -416,6 +416,7 @@ struct obsd_sendq_item {
 	int	type, code, param;
 	u_int32_t dest;
 	struct vnet *vnet;	/* vnet of the pf instance that queued it */
+	int	rcvif;		/* m_pkthdr.rcvif was serialised */
 };
 static struct mbuf_queue obsd_sendq;
 static struct task obsd_send_task;
@@ -440,6 +441,20 @@ obsd_send_run(void *arg)
 		it = (struct obsd_sendq_item *)(mtag + 1);
 		CURVNET_SET(it->vnet);
 		NET_EPOCH_ENTER(et);
+		/*
+		 * The receiving interface may have gone while the packet
+		 * was queued.  icmp_error() and icmp6_error() use it; a
+		 * packet pf builds itself (ip_send()) can go without.
+		 */
+		if (it->rcvif && m_rcvif_restore(m) == NULL) {
+			if (it->kind != OBSD_SEND_OUTPUT) {
+				NET_EPOCH_EXIT(et);
+				CURVNET_RESTORE();
+				m_freem(m);
+				continue;
+			}
+			m->m_pkthdr.rcvif = NULL;
+		}
 		switch (it->kind) {
 		case OBSD_SEND_OUTPUT: {
 			int af = it->af;	/* "it" lives in the tag */
@@ -523,6 +538,13 @@ obsd_sendq_enqueue(struct mbuf *m, int af, int kind, int type, int code,
 	it->dest = dest;
 	it->param = param;
 	it->vnet = curvnet;
+	/* No interface pointer while queued (see obsd_send_run()). */
+	it->rcvif = 0;
+	if ((m->m_pkthdr.csum_flags & CSUM_SND_TAG) == 0 &&
+	    m->m_pkthdr.rcvif != NULL) {
+		m_rcvif_serialize(m);
+		it->rcvif = 1;
+	}
 	m_tag_prepend(m, mtag);
 	if (mq_enqueue(&obsd_sendq, m) == 0)
 		task_add(systq, &obsd_send_task);
