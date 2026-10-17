@@ -821,7 +821,12 @@ vlan_pcp(struct ifnet *ifp, uint16_t *pcpp)
 	if (ifp->if_type != IFT_L2VLAN)
 		return (EINVAL);
 	ifv = ifp->if_softc;
-	*pcpp = ifv->ifv_pcp;
+	/*
+	 * 5BSD: automatic PCP is chosen per packet.  Offload consumers
+	 * (TOE) build one tag per connection: give them best effort, the
+	 * PCP that ether_8021q_frame() uses for the default priority.
+	 */
+	*pcpp = ifv->ifv_pcp == IFNET_PCP_NONE ? 0 : ifv->ifv_pcp;
 	return (0);
 }
 
