@@ -710,6 +710,7 @@ u_int16_t		pf_pkt_hash(sa_family_t, uint8_t,
 void			pf_status_init(void);
 void			pf_status_clear(void);
 int			pf_status_read(struct PF_KTAG(pf_status) *); /* 5BSD: VNET */
+void			pf_remove_divert_state_key(struct pf_state_key *); /* 5BSD */
 
 /* 5BSD: dummynet (sys/netpfil/openbsd-pf/pf_dummynet.c) */
 int	pf_dn_reinjected(struct mbuf **);
