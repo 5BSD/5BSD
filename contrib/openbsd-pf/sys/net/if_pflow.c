@@ -401,7 +401,7 @@ pflow_clone_destroy(struct ifnet *ifp)
 static bool
 pflow_jail_match(if_t ifp, void *arg __unused)
 {
-	return (ifp->if_ioctl == pflowioctl);
+	return (ifp->if_type == IFT_PFLOW);	/* if_ioctl is the compat one */
 }
 
 static int
