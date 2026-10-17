@@ -290,16 +290,17 @@ ATF_TC_BODY(clrtstats, tc)
 	io.pfrio_buffer = &tbl;
 	io.pfrio_esize = sizeof(tbl);
 
-	/* Negative size. This will succeed, because the kernel will not copy
-	 * tables than it has. */
+	/*
+	 * 5BSD: OpenBSD pf.  A negative size is refused (EINVAL); an overly
+	 * large one fails copying elements the buffer does not have.
+	 */
 	io.pfrio_size = -1;
-	if (ioctl(dev, DIOCRCLRTSTATS, &io) != 0)
-		atf_tc_fail("Request with size -1 failed ");
+	if (ioctl(dev, DIOCRCLRTSTATS, &io) == 0 || errno != EINVAL)
+		atf_tc_fail("Request with size -1 not refused with EINVAL");
 
-	/* Overly large size. See above. */
 	io.pfrio_size = 1 << 24;
-	if (ioctl(dev, DIOCRCLRTSTATS, &io) != 0)
-		atf_tc_fail("Request with size 1 << 24 failed");
+	if (ioctl(dev, DIOCRCLRTSTATS, &io) == 0)
+		atf_tc_fail("Request with size 1 << 24 succeeded");
 
 	io.pfrio_size = sizeof(tbl);
 	io.pfrio_buffer = NULL;
@@ -336,16 +337,17 @@ ATF_TC_BODY(settflags, tc)
 	io.pfrio_buffer = &tbl;
 	io.pfrio_esize = sizeof(tbl);
 
-	/* Negative size. This will succeed, because the kernel will not copy
-	 * tables than it has. */
+	/*
+	 * 5BSD: OpenBSD pf.  A negative size is refused (EINVAL); an overly
+	 * large one fails copying elements the buffer does not have.
+	 */
 	io.pfrio_size = -1;
-	if (ioctl(dev, DIOCRSETTFLAGS, &io) != 0)
-		atf_tc_fail("Request with size -1 failed");
+	if (ioctl(dev, DIOCRSETTFLAGS, &io) == 0 || errno != EINVAL)
+		atf_tc_fail("Request with size -1 not refused with EINVAL");
 
-	/* Overly large size. See above. */
 	io.pfrio_size = 1 << 28;
-	if (ioctl(dev, DIOCRSETTFLAGS, &io) != 0)
-		atf_tc_fail("Request with size 1 << 24 failed");
+	if (ioctl(dev, DIOCRSETTFLAGS, &io) == 0)
+		atf_tc_fail("Request with size 1 << 28 succeeded");
 
 	/* NULL buffer */
 	io.pfrio_buffer = NULL;

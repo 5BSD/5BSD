@@ -1983,6 +1983,40 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 {
 	int			 error = 0;
 
+	/*
+	 * 5BSD: negative element counts are invalid (the loops below would
+	 * skip them and report success), as FreeBSD's pf refuses them.
+	 */
+	switch (cmd) {
+	case DIOCRCLRTABLES:
+	case DIOCRADDTABLES:
+	case DIOCRDELTABLES:
+	case DIOCRGETTABLES:
+	case DIOCRGETTSTATS:
+	case DIOCRCLRTSTATS:
+	case DIOCRSETTFLAGS:
+	case DIOCRCLRADDRS:
+	case DIOCRADDADDRS:
+	case DIOCRDELADDRS:
+	case DIOCRSETADDRS:
+	case DIOCRGETADDRS:
+	case DIOCRGETASTATS:
+	case DIOCRCLRASTATS:
+	case DIOCRTSTADDRS:
+	case DIOCRINADEFINE:
+		if (((struct pfioc_table *)addr)->pfrio_size < 0 ||
+		    (cmd == DIOCRSETADDRS &&
+		    ((struct pfioc_table *)addr)->pfrio_size2 < 0))
+			return (EINVAL);
+		break;
+	case DIOCXBEGIN:
+	case DIOCXCOMMIT:
+	case DIOCXROLLBACK:
+		if (((struct pfioc_trans *)addr)->size < 0)
+			return (EINVAL);
+		break;
+	}
+
 	/* XXX keep in sync with switch() below */
 	if (securelevel > 1)
 		switch (cmd) {
