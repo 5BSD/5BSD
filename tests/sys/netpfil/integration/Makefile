@@ -18,7 +18,8 @@ ATF_TESTS_SH+=	vnet_dev \
 		dtrace \
 		bridge \
 		containers \
-		names
+		names \
+		glue_races
 
 # The seam tests create their own VNET jails, read host-wide state (pool
 # limits, loaded modules, DTrace providers) and mount devfs for jails with
