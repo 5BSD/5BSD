@@ -3,13 +3,13 @@
  *
  * Copyright (c) 2026 The 5BSD Project
  *
- * Socket helper for the 5BSD PF seam tests (sockets.sh, rdomain.sh): the
- * OpenBSD socket interfaces that 5BSD adds to the FreeBSD stack for PF
- * (SO_BINDANY, SO_RXQ_OVFL, IP_RECVDSTPORT, IPV6_RECVDSTPORT, divert(4)
- * sockets of protocol IPPROTO_DIVERT, SO_RTABLE).  Every mode prints its
- * results as "key=value" lines for the shell tests to match and exits
- * non-zero when an operation it needs fails.  Each mode is bounded by an
- * alarm so a test never hangs.
+ * Socket helper for the 5BSD PF seam tests (sockets.sh, rdomain.sh,
+ * stress.sh): the OpenBSD socket interfaces that 5BSD adds to the FreeBSD
+ * stack for PF (SO_BINDANY, SO_RXQ_OVFL, IP_RECVDSTPORT, IPV6_RECVDSTPORT,
+ * divert(4) sockets of protocol IPPROTO_DIVERT, SO_RTABLE).  Every mode
+ * prints its results as "key=value" lines for the shell tests to match and
+ * exits non-zero when an operation it needs fails.  Each mode is bounded by
+ * an alarm (TIMEOUT seconds, or -T seconds) so a test never hangs.
  */
 
 #include <sys/types.h>
@@ -45,14 +45,16 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: sockhelper consts\n"
+	    "usage: sockhelper [-T seconds] mode ...\n"
+	    "       sockhelper consts\n"
 	    "       sockhelper bindany [-n] inet|inet6 addr\n"
-	    "       sockhelper tcp-serve addr port\n"
+	    "       sockhelper tcp-serve [-n count] addr port\n"
 	    "       sockhelper tcp-connect [-b srcaddr] addr port\n"
 	    "       sockhelper udp-recvdst inet|inet6 addr port\n"
 	    "       sockhelper rxq-ovfl [-n] port\n"
 	    "       sockhelper divert inet|inet6 port [reinject]\n"
 	    "       sockhelper divert-open inet|inet6\n"
+	    "       sockhelper divert-churn inet|inet6 port count\n"
 	    "       sockhelper rtable n\n");
 	exit(2);
 }
@@ -192,8 +194,15 @@ mode_tcp_serve(int argc, char **argv)
 	socklen_t slen, plen;
 	char buf[INET6_ADDRSTRLEN];
 	const char msg[] = "hello from server\n";
-	int s, c, on = 1;
+	int s, c, on = 1, count = 0;
 
+	/* -n count: answer count connections, ignoring failed ones. */
+	if (argc >= 2 && strcmp(argv[0], "-n") == 0) {
+		count = atoi(argv[1]);
+		if (count < 1)
+			usage();
+		argc -= 2, argv += 2;
+	}
 	if (argc != 2)
 		usage();
 	slen = mksa(&ss, argv[0], atoi(argv[1]));
@@ -203,9 +212,25 @@ mode_tcp_serve(int argc, char **argv)
 	setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
 	if (bind(s, (struct sockaddr *)&ss, slen) == -1)
 		err(1, "bind");
-	if (listen(s, 1) == -1)
+	if (listen(s, count > 0 ? 128 : 1) == -1)
 		err(1, "listen");
 	ready();
+	if (count > 0) {
+		int n, served = 0;
+
+		for (n = 0; n < count; n++) {
+			c = accept(s, NULL, NULL);
+			if (c == -1)
+				continue;
+			if (write(c, msg, sizeof(msg) - 1) == sizeof(msg) - 1)
+				served++;
+			shutdown(c, SHUT_WR);
+			close(c);
+		}
+		printf("served=%d\n", served);
+		close(s);
+		return (0);
+	}
 	plen = sizeof(peer);
 	c = accept(s, (struct sockaddr *)&peer, &plen);
 	if (c == -1)
@@ -553,6 +578,81 @@ mode_divert(int argc, char **argv)
 	return (0);
 }
 
+/*
+ * Open, bind and close divert(4) sockets on one port, count times, while pf
+ * diverts traffic to it (stress.sh): each socket reads a few packets, writes
+ * some of them back and is closed with whatever else arrived still queued.
+ * Another process may hold the port (EADDRINUSE); that iteration only opens
+ * and closes.
+ */
+static int
+mode_divert_churn(int argc, char **argv)
+{
+	struct sockaddr_storage ss, from;
+	struct timeval tv;
+	socklen_t flen;
+	char pkt[65536];
+	long opened = 0, bound = 0, received = 0, reinjected = 0;
+	int af, s, i, j, count, port, rcvbuf = 4096;
+	ssize_t n;
+
+	if (argc != 3)
+		usage();
+	af = parse_af(argv[0]);
+	port = atoi(argv[1]);
+	count = atoi(argv[2]);
+	if (count < 1)
+		usage();
+	for (i = 0; i < count; i++) {
+		s = divert_socket(af);
+		if (s == -1)
+			err(1, "socket(IPPROTO_DIVERT)");
+		opened++;
+		/* Short reads, and a small buffer so packets are dropped. */
+		tv.tv_sec = 0;
+		tv.tv_usec = 20000;
+		(void)setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+		(void)setsockopt(s, SOL_SOCKET, SO_RCVBUF, &rcvbuf,
+		    sizeof(rcvbuf));
+		memset(&ss, 0, sizeof(ss));
+		if (af == AF_INET) {
+			struct sockaddr_in *sin = (struct sockaddr_in *)&ss;
+
+			sin->sin_len = sizeof(*sin);
+			sin->sin_family = AF_INET;
+			sin->sin_port = htons(port);
+		} else {
+			struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&ss;
+
+			sin6->sin6_len = sizeof(*sin6);
+			sin6->sin6_family = AF_INET6;
+			sin6->sin6_port = htons(port);
+		}
+		if (bind(s, (struct sockaddr *)&ss, ss.ss_len) == -1) {
+			if (errno != EADDRINUSE)
+				err(1, "bind");
+			close(s);
+			continue;
+		}
+		bound++;
+		for (j = 0; j < i % 4; j++) {
+			flen = sizeof(from);
+			n = recvfrom(s, pkt, sizeof(pkt), 0,
+			    (struct sockaddr *)&from, &flen);
+			if (n <= 0)
+				break;
+			received++;
+			if ((j & 1) == 0 && sendto(s, pkt, n, 0,
+			    (struct sockaddr *)&from, flen) == n)
+				reinjected++;
+		}
+		close(s);
+	}
+	printf("opened=%ld bound=%ld received=%ld reinjected=%ld\n", opened,
+	    bound, received, reinjected);
+	return (0);
+}
+
 /* SO_RTABLE (OpenBSD name of SO_SETFIB): select a routing table. */
 static int
 mode_rtable(int argc, char **argv)
@@ -589,12 +689,20 @@ int
 main(int argc, char **argv)
 {
 	const char *mode;
+	int secs = TIMEOUT;
 
+	if (argc >= 3 && strcmp(argv[1], "-T") == 0) {
+		secs = atoi(argv[2]);
+		if (secs < 1)
+			usage();
+		argc -= 2;
+		argv += 2;
+	}
 	if (argc < 2)
 		usage();
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	signal(SIGALRM, timeout);
-	alarm(TIMEOUT);
+	alarm(secs);
 	mode = argv[1];
 	argc -= 2;
 	argv += 2;
@@ -614,6 +722,8 @@ main(int argc, char **argv)
 		return (mode_divert(argc, argv));
 	if (strcmp(mode, "divert-open") == 0)
 		return (mode_divert_open(argc, argv));
+	if (strcmp(mode, "divert-churn") == 0)
+		return (mode_divert_churn(argc, argv));
 	if (strcmp(mode, "rtable") == 0)
 		return (mode_rtable(argc, argv));
 	usage();
