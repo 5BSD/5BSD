@@ -18,7 +18,8 @@ ATF_TESTS_SH+=	vnet_dev \
 		dtrace \
 		bridge \
 		containers \
-		names
+		names \
+		stress
 
 # The seam tests create their own VNET jails, read host-wide state (pool
 # limits, loaded modules, DTrace providers) and mount devfs for jails with
@@ -34,8 +35,9 @@ ${PACKAGE}FILES+=	integration.subr \
 ${PACKAGE}FILESMODE_pf_devhelper.py=	0555
 ${PACKAGE}FILESMODE_quota_frags.py=	0555
 
-# Helpers: socket options (sockets, rdomain), raw pf ioctls (securelevel,
-# quotas) and a capability-mode /dev/pf descriptor (consumers).
+# Helpers: socket options (sockets, rdomain, stress), raw pf ioctls
+# (securelevel, quotas) and a capability-mode /dev/pf descriptor
+# (consumers).  stress also uses ../../common/sendfile_helper.
 PROGS+=		sockhelper pfiochelper pf_capfd
 MAN.sockhelper=
 MAN.pfiochelper=
