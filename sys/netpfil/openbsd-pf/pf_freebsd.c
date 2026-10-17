@@ -650,20 +650,25 @@ pf_fbsd_pfsync_intask(void *arg)
 	struct epoch_tracker et;
 	struct mbuf_list ml;
 	struct mbuf *m;
+	struct ifnet *ifp;
 	int off;
 
 	mq_delist(&V_pf_pfsync_inq, &ml);
 	while ((m = ml_dequeue(&ml)) != NULL) {
 		/*
 		 * The receiving interface may have gone while the packet was
-		 * queued (it was serialised at enqueue); drop it then.
+		 * queued (it was serialised at enqueue); drop it then.  Hold a
+		 * reference rather than the epoch: the input below takes
+		 * sleepable locks, which is why it runs in this task.
 		 */
 		NET_EPOCH_ENTER(et);
-		if (m_rcvif_restore(m) == NULL) {
+		if ((ifp = m_rcvif_restore(m)) == NULL) {
 			NET_EPOCH_EXIT(et);
 			m_freem(m);
 			continue;
 		}
+		if_ref(ifp);
+		NET_EPOCH_EXIT(et);
 		NET_LOCK_SHARED();
 #ifdef INET6
 		/* pfsync6: the IPv6 input below queues bare headers only. */
@@ -680,7 +685,7 @@ pf_fbsd_pfsync_intask(void *arg)
 			    NULL);
 		}
 		NET_UNLOCK_SHARED();
-		NET_EPOCH_EXIT(et);
+		if_rele(ifp);
 	}
 }
 
@@ -836,10 +841,19 @@ pf_fbsd_ifdetach(void *arg, struct ifnet *ifp)
 static void
 pf_fbsd_ifrename(void *arg, struct ifnet *ifp, const char *old_name)
 {
+	/*
+	 * if_rename() holds no locks here.  ifnet_detach_sxlock serialises
+	 * the rename with if_detach(), VNET moves and VNET teardown (which
+	 * runs pf's uninit under it), so the interface cannot leave while
+	 * pf moves it between kifs, and two renames cannot interleave.
+	 */
+	sx_xlock(&ifnet_detach_sxlock);
 	CURVNET_SET(ifp->if_vnet);
-	if (V_pf_fbsd_ready)
+	if (V_pf_fbsd_ready && (ifp->if_flags & IFF_DYING) == 0 &&
+	    obsd_if_linked(ifp))
 		pfi_rename_ifnet(ifp, old_name);
 	CURVNET_RESTORE();
+	sx_xunlock(&ifnet_detach_sxlock);
 }
 
 static void
@@ -875,6 +889,22 @@ pf_fbsd_grpchange(void *arg, const char *gname)
 		pfi_group_addmember(gname); /* locks; add and delete alike */
 }
 
+/*
+ * Attach one existing interface.  It may have left meanwhile: an interface
+ * is unlinked (and marked dying when destroyed) before its departure
+ * handler runs, so if that handler ran before this attach, either flag is
+ * visible now and the attach is undone here.  If it runs later it finds
+ * the kif and detaches as usual.
+ */
+static int
+pf_fbsd_attach_one(if_t ifp, void *arg __unused)
+{
+	pfi_attach_ifnet(ifp);
+	if ((ifp->if_flags & IFF_DYING) != 0 || !obsd_if_linked(ifp))
+		pfi_detach_ifnet(ifp);
+	return (0);
+}
+
 static void
 pf_fbsd_attach_existing(void)
 {
@@ -887,19 +917,12 @@ pf_fbsd_attach_existing(void)
 		pfi_attach_ifgroup(ifg);
 	NET_EPOCH_EXIT(et);
 	/*
-	 * pfi_attach_ifnet() may sleep, so the walk cannot stay in the net
-	 * epoch or hold the ifnet lock.  ifnet_detach_sxlock keeps
-	 * if_detach() and VNET moves out instead: no interface leaves the
-	 * list (or is freed) during the walk, and none can run its departure
-	 * handler before pf has attached it, which would leave the kif
-	 * pointing at a gone interface.  Arrivals only append, which a CK
-	 * list walk tolerates; pfi_attach_ifnet() ignores a second attach of
-	 * one the arrival handler got first.
+	 * pfi_attach_ifnet() may sleep, so walk with references
+	 * (if_foreach_sleep()), not in the net epoch.  This runs from a
+	 * VNET_SYSINIT, under vnet_sysinit_sxlock, so it must not take
+	 * ifnet_detach_sxlock (vnet_destroy() takes them the other way).
 	 */
-	sx_xlock(&ifnet_detach_sxlock);
-	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link)
-		pfi_attach_ifnet(ifp);
-	sx_xunlock(&ifnet_detach_sxlock);
+	(void)if_foreach_sleep(NULL, NULL, pf_fbsd_attach_one, NULL);
 }
 
 /* ------------------------------------------------------------------ */

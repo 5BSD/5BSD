@@ -673,6 +673,21 @@ obsd_ifoutput(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
  * interfaces one name; pfi_detach_ifnet() hands the kif over to it).
  * Called with PF_LOCK held; does not sleep.
  */
+/* Whether ifp is (still) on the current VNET's interface list. */
+bool
+obsd_if_linked(struct ifnet *ifp)
+{
+	struct epoch_tracker et;
+	struct ifnet *iter;
+
+	NET_EPOCH_ENTER(et);
+	CK_STAILQ_FOREACH(iter, &V_ifnet, if_link)
+		if (iter == ifp)
+			break;
+	NET_EPOCH_EXIT(et);
+	return (iter != NULL);
+}
+
 struct ifnet *
 obsd_if_find_pfkif(void *kif, struct ifnet *skip)
 {

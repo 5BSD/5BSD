@@ -1159,6 +1159,7 @@ void		 rtfree(struct rtentry *);
 int		 rtisvalid(struct rtentry *);
 int		 rtable_exists(unsigned int);
 struct ifnet	*obsd_if_find_pfkif(void *, struct ifnet *);
+bool		 obsd_if_linked(struct ifnet *);
 unsigned int	 rtable_l2(unsigned int);
 
 #define	sintosa(sin)	((struct sockaddr *)(sin))

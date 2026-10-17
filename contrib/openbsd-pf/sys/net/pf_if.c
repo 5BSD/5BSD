@@ -346,6 +346,10 @@ pfi_attach_ifnet(struct ifnet *ifp)
 	struct pfi_kif		*kif;
 	struct task		*t;
 
+	/* 5BSD: names.  A dying interface gets no kif (it may be past its
+	 * departure handler, which would not detach it again). */
+	if (ifp->if_flags & IFF_DYING)
+		return;
 	/* 5BSD: PF_LOCK is not sleepable; allocate before taking it. */
 	t = malloc(sizeof(*t), PFI_MTYPE, M_WAITOK);
 	PF_LOCK();
@@ -401,6 +405,15 @@ pfi_detach_ifnet(struct ifnet *ifp)
 		if (kif->pfik_nifp > 0)
 			kif->pfik_nifp--;
 		pfi_kif_unref(kif, PFI_KIF_REF_NONE);
+		PF_UNLOCK();
+		free(nt, PFI_MTYPE, sizeof(*nt));
+		return;
+	}
+	/*
+	 * 5BSD: names.  Another detach of this interface is between taking
+	 * the hook and finishing (PF_LOCK is dropped below); it completes it.
+	 */
+	if (kif->pfik_ah_cookie == NULL) {
 		PF_UNLOCK();
 		free(nt, PFI_MTYPE, sizeof(*nt));
 		return;
