@@ -52,6 +52,9 @@ while read -r f; do
 	fi
 done
 ln -sf python3.12 "$R/usr/local/bin/python3"; add usr/local/bin/python3 link 0755 link=python3.12
+# FreeBSD test helpers (tests/sys/common/sender.py, netinet6/*.py) run
+# "/usr/bin/env python", which the python meta-port provides.
+ln -sf python3.12 "$R/usr/local/bin/python"; add usr/local/bin/python link 0755 link=python3.12
 ln -sf /usr/local/bin/oksh "$R/bin/ksh"; add bin/ksh link 0755 link=/usr/local/bin/oksh
 
 put etc/fstab 0644 <<'EOF'

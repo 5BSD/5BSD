@@ -49,12 +49,21 @@ regress_known_failure()
 	pfr[1-6]|pfr[89]|pfr1[0-5]|pfsetup1|pfchksum[1-3])
 		return 0
 		;;
+	pf104)
+		# Not pf: pf104.in "assumes that localhost points to
+		# 127.0.0.1 first"; FreeBSD's /etc/hosts lists ::1 first.
+		return 0
+		;;
 	esac
 	return 1
 }
 
 regress_mkifs()
 {
+	# Each case runs in a new VNET, whose lo0 has no IPv4 address; the
+	# corpus expects OpenBSD's lo0: ::1 (added when lo0 comes up), then
+	# 127.0.0.1.
+	ifconfig lo0 inet 127.0.0.1/8 up >/dev/null 2>&1
 	for _if in lo1000000 tun1000000 tun1000001; do
 		ifconfig ${_if} create >/dev/null 2>&1 ||
 		    ifconfig ${_if} >/dev/null 2>&1 ||
