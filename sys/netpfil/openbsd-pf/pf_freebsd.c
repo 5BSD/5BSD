@@ -812,16 +812,20 @@ pf_fbsd_attach_existing(void)
 	CK_STAILQ_FOREACH(ifg, &V_ifg_head, ifg_next)
 		pfi_attach_ifgroup(ifg);
 	NET_EPOCH_EXIT(et);
-	/* pfi_attach_ifnet() may sleep; walk with references. */
-	IFNET_RLOCK();
-	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		if_ref(ifp);
-		IFNET_RUNLOCK();
+	/*
+	 * pfi_attach_ifnet() may sleep, so the walk cannot stay in the net
+	 * epoch or hold the ifnet lock.  ifnet_detach_sxlock keeps
+	 * if_detach() and VNET moves out instead: no interface leaves the
+	 * list (or is freed) during the walk, and none can run its departure
+	 * handler before pf has attached it, which would leave the kif
+	 * pointing at a gone interface.  Arrivals only append, which a CK
+	 * list walk tolerates; pfi_attach_ifnet() ignores a second attach of
+	 * one the arrival handler got first.
+	 */
+	sx_xlock(&ifnet_detach_sxlock);
+	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link)
 		pfi_attach_ifnet(ifp);
-		IFNET_RLOCK();
-		if_rele(ifp);
-	}
-	IFNET_RUNLOCK();
+	sx_xunlock(&ifnet_detach_sxlock);
 }
 
 /* ------------------------------------------------------------------ */
