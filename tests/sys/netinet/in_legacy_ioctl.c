@@ -33,14 +33,18 @@
 
 #include <sys/param.h>
 #include <sys/ioctl.h>
+#include <sys/jail.h>
 #include <sys/socket.h>
 #include <sys/sockio.h>
+#include <sys/uio.h>
+#include <sys/wait.h>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <netinet/in_var.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <ifaddrs.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -229,6 +233,58 @@ ATF_TC_BODY(sifaddr_duplicate, tc)
 	ATF_CHECK_EQ(count(NULL), 0);
 }
 
+ATF_TC(sifaddr_duplicate_vnet);
+ATF_TC_HEAD(sifaddr_duplicate_vnet, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Identical addresses are scrubbed when their vnet goes away");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(sifaddr_duplicate_vnet, tc)
+{
+	char name[] = "name", vnet[] = "vnet", jname[32];
+	struct iovec iov[4];
+	pid_t pid;
+	int status, vnetval;
+
+	/* A child in a new vnet; the vnet goes when the child exits. */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int s;
+
+		snprintf(jname, sizeof(jname), "in_legacy_ioctl_%d",
+		    (int)getpid());
+		vnetval = JAIL_SYS_NEW;
+		iov[0].iov_base = name;
+		iov[0].iov_len = sizeof(name);
+		iov[1].iov_base = jname;
+		iov[1].iov_len = strlen(jname) + 1;
+		iov[2].iov_base = vnet;
+		iov[2].iov_len = sizeof(vnet);
+		iov[3].iov_base = &vnetval;
+		iov[3].iov_len = sizeof(vnetval);
+		if (jail_set(iov, nitems(iov), JAIL_CREATE | JAIL_ATTACH) < 0)
+			_exit(2);
+		s = socket(AF_INET, SOCK_DGRAM, 0);
+		strlcpy(ifname, "lo0", sizeof(ifname));
+		if (s < 0 ||
+		    add(s, "127.0.0.1", "255.0.0.0", NULL) != 0 ||
+		    add(s, "127.0.0.2", "255.0.0.0", NULL) != 0 ||
+		    set(s, SIOCSIFADDR, "127.0.0.2") != 0 ||
+		    count("127.0.0.2") != 2)
+			_exit(1);
+		_exit(0);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	if (WIFEXITED(status) && WEXITSTATUS(status) == 2)
+		atf_tc_skip("cannot create a vnet jail");
+	ATF_REQUIRE_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child status %#x", status);
+	/* The vnet, and with it in_ifscrub_all(), goes away asynchronously. */
+	sleep(1);
+}
+
 ATF_TC(aifaddr_mask);
 ATF_TC_HEAD(aifaddr_mask, tc)
 {
@@ -279,6 +335,7 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, sifaddr);
 	ATF_TP_ADD_TC(tp, sifaddr_duplicate);
+	ATF_TP_ADD_TC(tp, sifaddr_duplicate_vnet);
 	ATF_TP_ADD_TC(tp, aifaddr_mask);
 	ATF_TP_ADD_TC(tp, p2p_nodst);
 	return (atf_no_error());

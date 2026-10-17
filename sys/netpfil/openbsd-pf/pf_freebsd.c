@@ -172,11 +172,85 @@ obsd_pf_pdtag(struct pf_pdesc *pd, int write)
 	return ((struct pkthdr_pf *)(t + 1));
 }
 
+/*
+ * in_pcbfree() calls the hook with the pcb write-locked, while
+ * pf_socket_lookup() locks pcbs with PF_LOCK held.  The hook therefore
+ * only unlinks the pcb under pf_inp_mtx and leaves the state update of
+ * OpenBSD's pf_remove_divert_state(), which takes PF_LOCK, to a task.
+ */
+struct pf_fbsd_divert_rm {
+	STAILQ_ENTRY(pf_fbsd_divert_rm) next;
+	struct pf_state_key	*sk;
+};
+STAILQ_HEAD(pf_fbsd_divert_rmq, pf_fbsd_divert_rm);
+VNET_DEFINE_STATIC(struct pf_fbsd_divert_rmq, pf_fbsd_divert_q);
+VNET_DEFINE_STATIC(struct task, pf_fbsd_divert_task);
+VNET_DEFINE_STATIC(int, pf_fbsd_divert_closing);
+#define	V_pf_fbsd_divert_q	VNET(pf_fbsd_divert_q)
+#define	V_pf_fbsd_divert_task	VNET(pf_fbsd_divert_task)
+#define	V_pf_fbsd_divert_closing VNET(pf_fbsd_divert_closing)
+static struct mtx pf_fbsd_divert_mtx;
+MTX_SYSINIT(pf_fbsd_divert, &pf_fbsd_divert_mtx, "pf divert pcb", MTX_DEF);
+
+static void
+pf_fbsd_divert_run(void *arg __unused)
+{
+	struct pf_fbsd_divert_rmq q;
+	struct pf_fbsd_divert_rm *r;
+
+	STAILQ_INIT(&q);
+	mtx_lock(&pf_fbsd_divert_mtx);
+	STAILQ_CONCAT(&q, &V_pf_fbsd_divert_q);
+	mtx_unlock(&pf_fbsd_divert_mtx);
+	while ((r = STAILQ_FIRST(&q)) != NULL) {
+		STAILQ_REMOVE_HEAD(&q, next);
+		pf_remove_divert_state_key(r->sk);
+		free(r, M_PF);
+	}
+}
+
+/* No more deferred work for this vnet; finish what is queued. */
+static void
+pf_fbsd_divert_drain(void)
+{
+	mtx_lock(&pf_fbsd_divert_mtx);
+	V_pf_fbsd_divert_closing = 1;
+	mtx_unlock(&pf_fbsd_divert_mtx);
+	taskq_del_barrier(systq, &V_pf_fbsd_divert_task);
+	pf_fbsd_divert_run(NULL);
+}
+
 static void
 pf_fbsd_inpcb_free(struct inpcb *inp)
 {
-	pf_remove_divert_state(inp);
+	struct pf_fbsd_divert_rm *r;
+	struct pf_state_key *sk;
+
+	INP_WLOCK_ASSERT(inp);
+
+	mtx_enter(&pf_inp_mtx);
+	sk = pf_state_key_ref(inp->inp_pf_sk);
+	mtx_leave(&pf_inp_mtx);
 	pf_inp_unlink(inp);
+	if (sk == NULL)
+		return;
+
+	r = malloc(sizeof(*r), M_PF, M_NOWAIT);
+	CURVNET_SET_QUIET(inp->inp_socket->so_vnet);
+	mtx_lock(&pf_fbsd_divert_mtx);
+	if (r != NULL && !V_pf_fbsd_divert_closing) {
+		r->sk = sk;
+		STAILQ_INSERT_TAIL(&V_pf_fbsd_divert_q, r, next);
+		task_add(systq, &V_pf_fbsd_divert_task);
+		r = NULL;
+		sk = NULL;
+	}
+	mtx_unlock(&pf_fbsd_divert_mtx);
+	CURVNET_RESTORE();
+	/* Not queued: a diverted state then expires by its timeout. */
+	free(r, M_PF);
+	if (sk != NULL)
+		pf_state_key_unref(sk);
 }
 
 /* Standalone PF delay owns each frame until transmission or VNET teardown. */
@@ -1088,6 +1162,9 @@ pf_fbsd_vnet_init(void *arg __unused)
 	pf_eth_vnet_init();
 	mq_init(&V_pf_pfsync_inq, 1024, IPL_SOFTNET);
 	task_set(&V_pf_pfsync_intask, pf_fbsd_pfsync_intask, NULL);
+	STAILQ_INIT(&V_pf_fbsd_divert_q);
+	V_pf_fbsd_divert_closing = 0;
+	task_set(&V_pf_fbsd_divert_task, pf_fbsd_divert_run, NULL);
 	obsd_if_clone_vnet_attach();
 
 	V_pf_fbsd_ready = 1;
@@ -1186,6 +1263,7 @@ pf_fbsd_vnet_uninit(void *arg __unused)
 	(void)pf_states_clr(&psk);
 	for (i = 0; i < 1000 && pf_status.states != 0; i++)
 		(void)pf_purge_expired_states(UINT_MAX, 1024);
+	pf_fbsd_divert_drain();
 
 	NET_LOCK();
 	PF_LOCK();

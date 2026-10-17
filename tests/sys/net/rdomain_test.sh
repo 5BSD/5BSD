@@ -266,6 +266,133 @@ privilege_cleanup()
 	:
 }
 
+atf_test_case "vmove" "cleanup"
+vmove_head()
+{
+	atf_set descr 'A routing domain loopback cannot move to another vnet'
+	atf_set require.user root
+}
+vmove_body()
+{
+	. $(atf_get_srcdir)/../common/vnet.subr
+
+	rdomain_init
+	vnet_init
+	vnet_mkjail rdvmove
+
+	atf_check ifconfig lo5 rdomain 5 up
+	atf_check -s not-exit:0 -e match:'Device busy' \
+	    ifconfig lo5 vnet rdvmove
+	atf_check -o match:'rdomain 5 ' ifconfig lo5
+	atf_check -o match:'^Routing tables' route -T 5 -n show
+	# Other members of the domain may move.
+	atf_check -o ignore ifconfig vether0 create rdomain 5
+	atf_check ifconfig vether0 vnet rdvmove
+	atf_check -o match:'^vether0:' jexec rdvmove ifconfig vether0
+}
+vmove_cleanup()
+{
+	. $(atf_get_srcdir)/../common/vnet.subr
+
+	vnet_cleanup
+}
+
+atf_test_case "lo0_stays" "cleanup"
+lo0_stays_head()
+{
+	atf_set descr 'lo0 stays in routing domain 0, as on OpenBSD'
+	atf_set require.user root
+}
+lo0_stays_body()
+{
+	rdomain_init
+
+	atf_check -s ignore -e match:'Operation not permitted' \
+	    ifconfig lo0 rdomain 8
+	atf_check -o not-match:'rdomain' ifconfig lo0
+	atf_check -o match:'inet 127.0.0.1 ' ifconfig lo0
+	atf_check ifconfig lo6 rdomain 6
+	atf_check -s ignore -e match:'Operation not permitted' \
+	    ifconfig lo0 rdomain 6
+	atf_check -o not-match:'rdomain' ifconfig lo0
+}
+lo0_stays_cleanup()
+{
+	:
+}
+
+atf_test_case "allfibs" "cleanup"
+allfibs_head()
+{
+	atf_set descr 'A new routing domain gets no routes of domain 0 with net.add_addr_allfibs=1'
+	atf_set require.user root
+}
+allfibs_body()
+{
+	rdomain_init
+
+	atf_check -o ignore sysctl net.add_addr_allfibs=1
+	atf_check -o ignore ifconfig vether0 create
+	atf_check ifconfig vether0 inet 192.0.2.1/24 up
+	n=$(sysctl -n net.fibs)
+	rd=$((n + 2))
+	atf_check ifconfig lo${rd} rdomain ${rd} up
+	atf_check -o match:"rdomain ${rd} " ifconfig lo${rd}
+	atf_check -o not-match:'192.0.2' route -T ${rd} -n show
+	# The FIBs grown on the way are tables of domain 0 and get its routes.
+	atf_check -o match:'192.0.2' route -T $((n + 1)) -n show
+}
+allfibs_cleanup()
+{
+	sysctl net.add_addr_allfibs=0 >/dev/null 2>&1
+}
+
+atf_test_case "reuseport_lb" "cleanup"
+reuseport_lb_head()
+{
+	atf_set descr 'SO_REUSEPORT_LB sockets bound before and after the first routing domain share a group'
+	atf_set require.user root
+	atf_set require.progs python3
+}
+reuseport_lb_body()
+{
+	rdomain_init
+
+	cat > lb.py <<'PYCODE'
+import select, socket, subprocess
+SO_REUSEPORT_LB = 0x00010000
+
+def listener(port):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, SO_REUSEPORT_LB, 1)
+    s.bind(("127.0.0.1", port))
+    s.listen(64)
+    return s
+
+a = listener(0)
+port = a.getsockname()[1]
+subprocess.run(["ifconfig", "lo9", "rdomain", "9"], check=True)
+b = listener(port)
+counts = [0, 0]
+for i in range(256):
+    c = socket.create_connection(("127.0.0.1", port))
+    r, _, _ = select.select([a, b], [], [], 5)
+    assert r, "no listener accepted"
+    for s in r:
+        conn, _ = s.accept()
+        conn.close()
+        counts[0 if s is a else 1] += 1
+    c.close()
+print("ACCEPTS=" + str(counts))
+assert min(counts) > 0, counts
+PYCODE
+	atf_check -o match:'ACCEPTS=' python3 lb.py
+}
+reuseport_lb_cleanup()
+{
+	:
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "create"
@@ -276,4 +403,8 @@ atf_init_test_cases()
 	atf_add_test_case "socket_isolation"
 	atf_add_test_case "route_exec"
 	atf_add_test_case "privilege"
+	atf_add_test_case "vmove"
+	atf_add_test_case "lo0_stays"
+	atf_add_test_case "allfibs"
+	atf_add_test_case "reuseport_lb"
 }

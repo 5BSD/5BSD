@@ -2225,7 +2225,6 @@ void
 pf_remove_divert_state(struct inpcb *inp)
 {
 	struct pf_state_key	*sk;
-	struct pf_state_item	*si;
 
 	PF_ASSERT_UNLOCKED();
 
@@ -2237,6 +2236,22 @@ pf_remove_divert_state(struct inpcb *inp)
 	mtx_leave(&pf_inp_mtx);
 	if (sk == NULL)
 		return;
+
+	pf_remove_divert_state_key(sk);
+}
+
+/*
+ * 5BSD: the state update of pf_remove_divert_state(), for a state key
+ * reference taken from the pcb; consumes the reference.  FreeBSD frees a
+ * pcb with it locked, and pf takes pcb locks under PF_LOCK, so pf_freebsd.c
+ * runs this from a task instead of from the pcb free hook.
+ */
+void
+pf_remove_divert_state_key(struct pf_state_key *sk)
+{
+	struct pf_state_item	*si;
+
+	PF_ASSERT_UNLOCKED();
 
 	PF_LOCK();
 	PF_STATE_ENTER_WRITE();

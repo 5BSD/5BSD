@@ -821,7 +821,12 @@ vlan_pcp(struct ifnet *ifp, uint16_t *pcpp)
 	if (ifp->if_type != IFT_L2VLAN)
 		return (EINVAL);
 	ifv = ifp->if_softc;
-	*pcpp = ifv->ifv_pcp;
+	/*
+	 * 5BSD: automatic PCP is chosen per packet.  Offload consumers
+	 * (TOE) build one tag per connection: give them best effort, the
+	 * PCP that ether_8021q_frame() uses for the default priority.
+	 */
+	*pcpp = ifv->ifv_pcp == IFNET_PCP_NONE ? 0 : ifv->ifv_pcp;
 	return (0);
 }
 
@@ -1567,18 +1572,27 @@ vlan_input(struct ifnet *ifp, struct mbuf *m)
 		return;
 	}
 
-	/* VLAN wire PCP and PF internal priority have opposite zero/one order. */
-	{
-		struct pkthdr_pf *pfh = m_pf_get(m);
+	/*
+	 * VLAN wire PCP and PF internal priority have opposite zero/one
+	 * order.  Allocate the pf tag only when pf is loaded (it installs
+	 * the tag hooks) and the priority changes, so that frames at the
+	 * default priority, and all frames without pf, carry no tag.
+	 */
+	if (pf_mtag_unlink_hook != NULL) {
+		struct pkthdr_pf *pfh;
+		uint8_t prio;
 
-		if (pfh == NULL) {
-			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
-			m_freem(m);
-			return;
+		prio = EVL_PRIOFTAG(tag);
+		if (prio <= 1)
+			prio = !prio;
+		if (prio != m_pf_ro(m)->prio) {
+			if ((pfh = m_pf_get(m)) == NULL) {
+				if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+				m_freem(m);
+				return;
+			}
+			pfh->prio = prio;
 		}
-		pfh->prio = EVL_PRIOFTAG(tag);
-		if (pfh->prio <= 1)
-			pfh->prio = !pfh->prio;
 	}
 
 	if (V_vlan_mtag_pcp) {

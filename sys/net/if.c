@@ -286,6 +286,7 @@ static void	if_detach_internal(struct ifnet *, bool);
 static void	if_siocaddmulti(void *, int);
 static void	if_link_ifnet(struct ifnet *);
 static bool	if_unlink_ifnet(struct ifnet *, bool);
+static bool	if_linked_locked(struct ifnet *);
 #ifdef VIMAGE
 static void	if_vmove(struct ifnet *, struct vnet *);
 #endif
@@ -1197,28 +1198,30 @@ if_vmove(struct ifnet *ifp, struct vnet *new_vnet)
 }
 
 /*
- * 5BSD: drivers whose softc lives in per-VNET state of the creating VNET
- * (OpenBSD PF's pflog, pfsync and pflow) set IFKF_NOVMOVE: moved away, they
- * would be destroyed against the other VNET's state.  ifp is only known to
- * be valid while it is on the current VNET's list, which ifnet_detach_sxlock
- * keeps stable.
+ * 5BSD: refuse to move an interface to another vnet when
+ *  - its driver keeps its softc in per-VNET state of the creating VNET
+ *    (OpenBSD PF's pflog, pfsync and pflow set IFKF_NOVMOVE): moved away,
+ *    it would be destroyed against the other VNET's state (EOPNOTSUPP);
+ *  - it is the loopback interface of a routing domain, whose map
+ *    (V_rt_l2map) refers to it by index (EBUSY).
+ * ifp is only known to be valid while it is on the current VNET's list,
+ * which ifnet_detach_sxlock keeps stable.
  */
-static bool
-if_vmove_denied(struct ifnet *ifp)
+static int
+if_vmove_check(struct ifnet *ifp)
 {
-	struct ifnet *iter;
-	bool denied;
+	int error = 0;
 
 	sx_assert(&ifnet_detach_sxlock, SX_XLOCKED);
-	denied = false;
-	IFNET_RLOCK();
-	CK_STAILQ_FOREACH(iter, &V_ifnet, if_link)
-		if (iter == ifp) {
-			denied = (ifp->if_kflags & IFKF_NOVMOVE) != 0;
-			break;
-		}
-	IFNET_RUNLOCK();
-	return (denied);
+	IFNET_WLOCK();
+	if (if_linked_locked(ifp)) {
+		if ((ifp->if_kflags & IFKF_NOVMOVE) != 0)
+			error = EOPNOTSUPP;
+		else if (rt_rdomain_isloif(ifp))
+			error = EBUSY;
+	}
+	IFNET_WUNLOCK();
+	return (error);
 }
 
 /*
@@ -1229,6 +1232,7 @@ if_vmove_loan(struct thread *td, char *ifname, int jid)
 {
 	struct prison *pr;
 	struct ifnet *ifp, *difp;
+	int error;
 	bool found;
 
 	MPASS(curthread == td);
@@ -1270,10 +1274,10 @@ if_vmove_loan(struct thread *td, char *ifname, int jid)
 	}
 	sx_xlock(&ifnet_detach_sxlock);
 
-	if (if_vmove_denied(ifp)) {
+	if ((error = if_vmove_check(ifp)) != 0) {
 		sx_xunlock(&ifnet_detach_sxlock);
 		prison_free(pr);
-		return (EOPNOTSUPP);
+		return (error);
 	}
 	found = if_unlink_ifnet(ifp, true);
 	if (! found) {
@@ -1300,7 +1304,7 @@ if_vmove_reclaim(struct thread *td, char *ifname, int jid)
 	struct prison *pr;
 	struct vnet *vnet_dst;
 	struct ifnet *ifp;
-	int found;
+	int found, error;
 
 	/* Try to find the prison within our visibility. */
 	sx_slock(&allprison_lock);
@@ -1330,11 +1334,11 @@ if_vmove_reclaim(struct thread *td, char *ifname, int jid)
 
 	/* Get interface back from child jail/vnet. */
 	sx_xlock(&ifnet_detach_sxlock);
-	if (if_vmove_denied(ifp)) {
+	if ((error = if_vmove_check(ifp)) != 0) {
 		sx_xunlock(&ifnet_detach_sxlock);
 		CURVNET_RESTORE();
 		prison_free(pr);
-		return (EOPNOTSUPP);
+		return (error);
 	}
 	found = if_unlink_ifnet(ifp, true);
 	if (! found) {
@@ -1356,10 +1360,28 @@ if_vmove_reclaim(struct thread *td, char *ifname, int jid)
 #endif /* VIMAGE */
 
 /*
+ * 5BSD: is @ifp on this vnet's interface list?  An interface that
+ * if_unlink_ifnet() took off the list is being destroyed or moved, and
+ * if_detach_internal() may already have run if_delgroups() for it.
+ */
+static bool
+if_linked_locked(struct ifnet *ifp)
+{
+	struct ifnet *iter;
+
+	IFNET_WLOCK_ASSERT();
+
+	CK_STAILQ_FOREACH(iter, &V_ifnet, if_link)
+		if (iter == ifp)
+			return (true);
+	return (false);
+}
+
+/*
  * Add a group to an interface
  */
-int
-if_addgroup(struct ifnet *ifp, const char *groupname)
+static int
+if_addgroup_internal(struct ifnet *ifp, const char *groupname, bool linked)
 {
 	struct ifg_list		*ifgl;
 	struct ifg_group	*ifg = NULL;
@@ -1371,6 +1393,16 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 		return (EINVAL);
 
 	IFNET_WLOCK();
+	/*
+	 * 5BSD: never put a dying interface, or one owned by another vnet,
+	 * into this vnet's groups: if_delgroups() has already run for it
+	 * or runs elsewhere, and the membership would be left behind.
+	 */
+	if ((ifp->if_flags & IFF_DYING) != 0 || ifp->if_vnet != curvnet ||
+	    (linked && !if_linked_locked(ifp))) {
+		IFNET_WUNLOCK();
+		return (ENXIO);
+	}
 	CK_STAILQ_FOREACH(ifgl, &ifp->if_groups, ifgl_next)
 		if (!strcmp(ifgl->ifgl_group->ifg_group, groupname)) {
 			IFNET_WUNLOCK();
@@ -1419,6 +1451,23 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 	EVENTHANDLER_INVOKE(group_change_event, groupname);
 
 	return (0);
+}
+
+int
+if_addgroup(struct ifnet *ifp, const char *groupname)
+{
+	return (if_addgroup_internal(ifp, groupname, false));
+}
+
+/*
+ * 5BSD: if_addgroup() for a caller that holds only a reference to @ifp and
+ * can race with its detach or vnet move: fail with ENXIO unless @ifp is
+ * still on this vnet's interface list.
+ */
+int
+if_addgroup_attached(struct ifnet *ifp, const char *groupname)
+{
+	return (if_addgroup_internal(ifp, groupname, true));
 }
 
 /*

@@ -109,8 +109,8 @@ vlan_cleanup()
 }
 atf_test_case default cleanup
 vlan_head_common() { atf_set require.user root; atf_set is.exclusive true; atf_set timeout 30; atf_set require.progs "tcpdump python3"; }
-default_head() { vlan_head_common; atf_set descr "Automatic VLAN PCP uses default internal priority"; }
-default_body() { vlan_check default 3; }
+default_head() { vlan_head_common; atf_set descr "Automatic VLAN PCP keeps best effort PCP 0 at the default priority"; }
+default_body() { vlan_check default 0; }
 default_cleanup() { vlan_cleanup; }
 atf_test_case set_prio cleanup
 set_prio_head() { vlan_head_common; atf_set descr "PF priority four reaches the VLAN wire PCP"; }

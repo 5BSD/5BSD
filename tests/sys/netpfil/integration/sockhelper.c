@@ -155,7 +155,7 @@ mode_bindany(int argc, char **argv)
 {
 	struct sockaddr_storage ss;
 	socklen_t slen, olen;
-	int s, on = 1, val = 0, noset = 0, e;
+	int s, on = 1, val[2] = { 0, 0 }, noset = 0, e;
 
 	if (argc > 0 && strcmp(argv[0], "-n") == 0) {
 		noset = 1;
@@ -170,12 +170,13 @@ mode_bindany(int argc, char **argv)
 		e = setsockopt(s, SOL_SOCKET, SO_BINDANY, &on, sizeof(on)) ==
 		    -1 ? errno : 0;
 		printf("setsockopt=%s\n", errname(e));
+		/* A larger buffer: the returned length must be an int. */
 		olen = sizeof(val);
-		if (getsockopt(s, SOL_SOCKET, SO_BINDANY, &val, &olen) == -1)
+		if (getsockopt(s, SOL_SOCKET, SO_BINDANY, val, &olen) == -1)
 			printf("getsockopt=%s\n", errname(errno));
 		else
-			printf("getsockopt=%s value=%d\n", errname(0),
-			    val != 0);
+			printf("getsockopt=%s value=%d len=%u\n", errname(0),
+			    val[0] != 0, (unsigned)olen);
 	}
 	slen = mksa(&ss, argv[1], 0);
 	e = bind(s, (struct sockaddr *)&ss, slen) == -1 ? errno : 0;

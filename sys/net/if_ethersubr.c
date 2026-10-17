@@ -1345,10 +1345,18 @@ ether_8021q_frame(struct mbuf **mp, struct ifnet *ife, struct ifnet *p,
 	uint8_t pcp = qtag->pcp;
 	static const char pad[8];	/* just zeros */
 
-	/* Automatic VLAN PCP follows internal priority, not its wire encoding. */
+	/*
+	 * 5BSD: automatic VLAN PCP.  A priority pf gave the packet maps to
+	 * the wire as on OpenBSD (internal 0 and 1 are swapped on the
+	 * wire); a packet left at the default priority keeps FreeBSD's best
+	 * effort PCP 0.  A PCP already in the mbuf (IP_VLAN_PCP, an inner
+	 * VLAN) still takes precedence below.
+	 */
 	if (pcp == IFNET_PCP_NONE) {
 		pcp = m_pf_ro(*mp)->prio;
-		if (pcp <= 1)
+		if (pcp == m_pf_default.prio)
+			pcp = 0;
+		else if (pcp <= 1)
 			pcp = !pcp;
 	}
 
@@ -1379,10 +1387,9 @@ ether_8021q_frame(struct mbuf **mp, struct ifnet *ife, struct ifnet *p,
 	}
 
 	/*
-	 * Preserve cached wire PCP in numeric mode.  Automatic priority must
-	 * come from the packet, including when an inner VLAN used hardware tags.
+	 * If PCP is set in mbuf, use it
 	 */
-	if (qtag->pcp != IFNET_PCP_NONE && ((*mp)->m_flags & M_VLANTAG)) {
+	if ((*mp)->m_flags & M_VLANTAG) {
 		pcp = EVL_PRIOFTAG((*mp)->m_pkthdr.ether_vtag);
 	}
 

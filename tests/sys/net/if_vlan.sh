@@ -297,6 +297,86 @@ bpf_pcp_cleanup()
 	vnet_cleanup
 }
 
+# Capture three VLAN 42 echo requests on $1 while running the rest of the
+# arguments, then check that the raw 802.1Q PCP of each is $want.
+vlan_pcp_capture()
+{
+	want=$1
+	capif=$2
+	filter=$3
+	shift 3
+
+	tcpdump -n -i ${capif} -c 3 -w pcp.pcap "vlan 42 and (${filter})" \
+	    > pcp.out 2> pcp.err &
+	echo $! > tcpdump.pid
+	for i in $(jot 100); do
+		grep -q 'listening on' pcp.err && break
+		sleep 0.1
+	done
+	atf_check -s exit:0 -o ignore "$@"
+	wait $(cat tcpdump.pid) || atf_fail "capture failed"
+	rm tcpdump.pid
+	cat > pcp-raw.py <<'PYCODE'
+import struct, sys
+raw = open("pcp.pcap", "rb").read()
+e = "<" if raw[:4] == b"\xd4\xc3\xb2\xa1" else ">"
+pos, pcps = 24, []
+while pos < len(raw):
+    n = struct.unpack(e + "I", raw[pos + 8:pos + 12])[0]
+    pkt = raw[pos + 16:pos + 16 + n]
+    assert pkt[12:14] == b"\x81\x00"
+    tci = int.from_bytes(pkt[14:16], "big")
+    assert tci & 4095 == 42
+    pcps.append(tci >> 13)
+    pos += 16 + n
+print("PCP=" + str(pcps))
+sys.exit(0 if pcps == [int(sys.argv[1])] * 3 else 1)
+PYCODE
+	atf_check -s exit:0 -o match:"PCP=" python3 pcp-raw.py ${want}
+}
+
+atf_test_case "socket_pcp" "cleanup"
+socket_pcp_head()
+{
+	atf_set descr 'IP_VLAN_PCP and IPV6_VLAN_PCP reach the VLAN tag'
+	atf_set require.user root
+	atf_set require.progs python3 tcpdump
+}
+
+socket_pcp_body()
+{
+	vnet_init
+
+	epair=$(vnet_mkepair)
+	ifconfig ${epair}a up
+	vlan_h=$(ifconfig vlan create vlandev ${epair}a vlan 42)
+	echo ${vlan_h} >> created_interfaces.lst
+	ifconfig ${vlan_h} inet 192.0.2.2/24 up
+	ifconfig ${vlan_h} inet6 2001:db8::2/64 no_dad
+
+	vnet_mkjail alcatraz ${epair}b
+	vlan=$(jexec alcatraz ifconfig vlan create vlandev ${epair}b vlan 42)
+	jexec alcatraz ifconfig ${epair}b up
+	jexec alcatraz ifconfig ${vlan} inet 192.0.2.1/24 up
+	jexec alcatraz ifconfig ${vlan} inet6 2001:db8::1/64 no_dad
+
+	# Without a socket PCP or vlanpcp the tag carries PCP 0.
+	vlan_pcp_capture 0 ${epair}a "icmp[icmptype] == icmp-echo" \
+	    jexec alcatraz ping -c 3 -i 0.2 192.0.2.2
+	vlan_pcp_capture 5 ${epair}a "icmp[icmptype] == icmp-echo" \
+	    jexec alcatraz ping -c 3 -i 0.2 -C 5 192.0.2.2
+	vlan_pcp_capture 6 ${epair}a "icmp6 and ip6[40] == 128" \
+	    jexec alcatraz ping -6 -c 3 -i 0.2 -C 6 2001:db8::2
+}
+
+socket_pcp_cleanup()
+{
+	if [ -f tcpdump.pid ]; then
+		kill $(cat tcpdump.pid) 2>/dev/null
+	fi
+	vnet_cleanup
+}
+
 atf_test_case "conflict_id" "cleanup"
 conflict_id_head()
 {
@@ -368,6 +448,7 @@ atf_init_test_cases()
 	atf_add_test_case "qinq_dot"
 	atf_add_test_case "qinq_setflags"
 	atf_add_test_case "bpf_pcp"
+	atf_add_test_case "socket_pcp"
 	atf_add_test_case "conflict_id"
 	atf_add_test_case "bridge_vlandev"
 }

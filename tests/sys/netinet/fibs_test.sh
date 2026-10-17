@@ -707,6 +707,36 @@ udp_dontroute6_cleanup()
 }
 
 
+# A gateway reachable only through an interface of another FIB is not
+# usable in this one (while no routing domains exist).
+atf_test_case gateway_interface_fib cleanup
+gateway_interface_fib_head()
+{
+	atf_set "descr" "A route's gateway must be on an interface of the route's FIB"
+	atf_set "require.user" "root"
+}
+
+gateway_interface_fib_body()
+{
+	if [ 0 != `sysctl -n net.add_addr_allfibs` ]; then
+		atf_skip "This test requires net.add_addr_allfibs=0"
+	fi
+	get_fibs 1
+
+	setup_tap 0 inet 192.0.2.2 24
+	atf_check -o ignore route add -fib 0 198.51.100.0/24 192.0.2.1
+	atf_check -s not-exit:0 -e ignore -o ignore \
+	    route add -fib ${FIB0} 198.51.100.0/24 192.0.2.1
+	atf_check -s not-exit:0 -e ignore -o ignore \
+	    route add -fib ${FIB0} -iface 198.51.100.0/24 192.0.2.2
+	atf_check -o ignore route delete -fib 0 198.51.100.0/24
+}
+
+gateway_interface_fib_cleanup()
+{
+	cleanup_ifaces
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case arpresolve_checks_interface_fib
@@ -722,6 +752,7 @@ atf_init_test_cases()
 	atf_add_test_case subnet_route_with_multiple_fibs_on_same_subnet_inet6
 	atf_add_test_case udp_dontroute
 	atf_add_test_case udp_dontroute6
+	atf_add_test_case gateway_interface_fib
 }
 
 # Looks up one or more fibs from the configuration data and validates them.

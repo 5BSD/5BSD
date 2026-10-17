@@ -529,6 +529,7 @@ VNET_DECLARE(if_t, loif);	/* first loopback interface */
 typedef int (*if_foreach_group_cb_t)(struct ifg_group *, void *);
 int	if_foreach_group(if_t, if_foreach_group_cb_t, void *);
 int	if_addgroup(if_t, const char *);
+int	if_addgroup_attached(if_t, const char *);
 int	if_delgroup(if_t, const char *);
 int	if_addmulti(if_t, struct sockaddr *, struct ifmultiaddr **);
 int	if_allmulti(if_t, int);
