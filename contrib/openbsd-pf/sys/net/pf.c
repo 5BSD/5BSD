@@ -1824,6 +1824,19 @@ pf_state_import(const struct pfsync_state *sp, int flags)
 	}
 	st->rtableid[PF_SK_WIRE] = ntohl(sp->rtableid[PF_SK_WIRE]);
 	st->rtableid[PF_SK_STACK] = ntohl(sp->rtableid[PF_SK_STACK]);
+	/*
+	 * 5BSD: rtable.  A state from a pfsync peer or DIOCADDSTATE may name
+	 * routing domains and tables this VNET does not have; pf copies them
+	 * into packets, and FreeBSD's FIB lookups do not range-check.
+	 */
+	if (!rtable_exists(skw->rdomain) || !rtable_exists(sks->rdomain) ||
+	    (st->rtableid[PF_SK_WIRE] >= 0 &&
+	    !rtable_exists(st->rtableid[PF_SK_WIRE])) ||
+	    (st->rtableid[PF_SK_STACK] >= 0 &&
+	    !rtable_exists(st->rtableid[PF_SK_STACK]))) {
+		error = EINVAL;
+		goto cleanup;
+	}
 
 	/* copy to state */
 	st->rt_addr = sp->rt_addr;

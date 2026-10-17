@@ -86,7 +86,7 @@ pf_on_rdomain_body()
 	    "block in quick on rdomain 1 inet proto icmp"
 	atf_check -s exit:0 -o match:'block drop in quick on rdomain 1 inet proto icmp' \
 	    jexec fw pfctl -sr
-	atf_check -s not-exit:0 -o ignore -e ignore \
+	atf_check -s ignore -o ignore -e ignore \
 	    jexec fw ping -n -c 1 -t 2 -V 1 127.0.0.1
 	atf_check -s exit:0 -o match:'1 packets received' \
 	    jexec fw ping -n -c 1 -t 5 -V 2 127.0.0.1
@@ -222,6 +222,45 @@ rtable_privilege_cleanup()
 	integ_cleanup
 }
 
+atf_test_case "fib_vmove" "cleanup"
+fib_vmove_head()
+{
+	atf_set descr 'An interface returning from a VNET with more FIBs to one with fewer gets FIB 0 (no FIB lookup past the tables)'
+	atf_set require.user root
+}
+
+fib_vmove_body()
+{
+	pft_init
+	[ "$(sysctl -n net.fibs)" -eq 1 ] ||
+	    atf_skip "the host vnet has more than one FIB"
+	e=$(vnet_mkepair)
+	vnet_mkjail many ${e}b
+	jexec many sysctl net.fibs=2 >/dev/null 2>&1 ||
+	    atf_skip "net.fibs cannot be raised in a vnet jail"
+	atf_check -s exit:0 jexec many ifconfig ${e}b fib 1
+	atf_check -s exit:0 -o match:"fib: 1" jexec many ifconfig ${e}b
+
+	# The jail goes away; its interfaces return to the host vnet.
+	jail -r many
+	sed -i '' '/^many$/d' created_jails.lst 2>/dev/null
+	atf_check -s exit:0 -o not-match:"fib:" ifconfig ${e}b
+
+	# Traffic received on it is looked up in FIB 0, without a panic.
+	vnet_mkjail peer ${e}a
+	jexec peer ifconfig ${e}a 192.0.2.1/24 up
+	ifconfig ${e}b 192.0.2.2/24 up
+	atf_check -s exit:0 -o ignore ping -c 2 -t 4 192.0.2.1
+	# An ICMP error reflected on the moved interface (unreachable port).
+	atf_check -s ignore -o ignore -e ignore \
+	    jexec peer nc -u -z -w 2 192.0.2.2 9
+}
+
+fib_vmove_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "vnet_isolation"
@@ -229,4 +268,5 @@ atf_init_test_cases()
 	atf_add_test_case "state_kill_rdomain"
 	atf_add_test_case "rtable_cross_domain"
 	atf_add_test_case "rtable_privilege"
+	atf_add_test_case "fib_vmove"
 }

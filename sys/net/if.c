@@ -1183,6 +1183,14 @@ if_vmove(struct ifnet *ifp, struct vnet *new_vnet)
 	 * Switch to the context of the target vnet.
 	 */
 	CURVNET_SET_QUIET(new_vnet);
+	/*
+	 * 5BSD: net.fibs is per VNET.  An interface moved from a VNET with
+	 * more FIBs (or routing domains, which are FIBs) would stamp its
+	 * received packets with a FIB this one does not have, and the
+	 * routing lookups that index by it would read past the tables.
+	 */
+	if (ifp->if_fib >= V_rt_numfibs)
+		ifp->if_fib = RT_DEFAULT_FIB;
 	if_attach_internal(ifp, true);
 	bpf_vmove(ifp->if_bpf);
 	CURVNET_RESTORE();
