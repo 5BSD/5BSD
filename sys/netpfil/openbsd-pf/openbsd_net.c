@@ -636,6 +636,13 @@ obsd_ifoutput(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 	struct epoch_tracker et;
 	int error;
 
+	/*
+	 * As ip_output() and ip6_output(): an interface without
+	 * IFCAP_MEXTPG cannot take unmapped (sendfile, KTLS) mbufs.
+	 */
+	if ((ifp->if_capenable & IFCAP_MEXTPG) == 0 &&
+	    (error = mb_unmapped_to_ext(m, &m)) != 0)
+		return (error);
 	NET_EPOCH_ENTER(et);
 	error = ifp->if_output(ifp, m, obsd_rt_nexthop(rt, dst), NULL);
 	NET_EPOCH_EXIT(et);
@@ -661,6 +668,14 @@ if_output_tso(struct ifnet *ifp, struct mbuf **mp, struct sockaddr *dst,
 	struct mbuf *m = *mp;
 	int af = dst->sa_family;
 
+	/*
+	 * The software checksums here and in the caller's fragmentation
+	 * path, and the interface, need mapped data (see obsd_ifoutput()).
+	 */
+	if ((ifp->if_capenable & IFCAP_MEXTPG) == 0 &&
+	    mb_unmapped_to_ext(m, mp) != 0)
+		return (1);		/* freed, *mp is NULL */
+	m = *mp;
 	if (m->m_pkthdr.len > mtu &&
 	    (m->m_pkthdr.csum_flags & CSUM_TSO & ifp->if_hwassist) == 0)
 		return (0);
