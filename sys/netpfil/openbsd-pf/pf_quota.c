@@ -336,6 +336,13 @@ pf_quota_jail_link(struct prison *pr)
 		;
 	if (ppr == &prison0 || ppr->pr_vnet == NULL)
 		return;
+	/*
+	 * Parents first: an item's trailer records only that its ancestors
+	 * were charged, and its credit walks the chain as it is then, so a
+	 * chain must not grow above a linked jail (pf loaded with nested
+	 * jails, linked in allprison order, where a child may come first).
+	 */
+	pf_quota_jail_link(ppr);
 	q = VNET_VNET(pr->pr_vnet, pf_quota);
 	pq = VNET_VNET(ppr->pr_vnet, pf_quota);
 	if (q == NULL || pq == NULL || q == pq || q->pq_parent != NULL)

@@ -383,6 +383,11 @@ nested_share_body()
 	    atf_skip "nested VNET jails are not available"
 	jexec p jail -c name=c2 vnet persist
 
+	# pf runs its purge (which returns flushed states to the pool) only
+	# while enabled.
+	jexec p jexec c1 pfctl -e >/dev/null 2>&1
+	jexec p jexec c2 pfctl -e >/dev/null 2>&1
+
 	# Every jail's quota is 10 states; c1 and c2 count in p's as well.
 	atf_check -o match:'^DIOCADDSTATE=ENOMEM added=10$' \
 	    jexec p jexec c1 ${PFIO} addstate 20 95

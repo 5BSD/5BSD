@@ -340,8 +340,29 @@ pfi_kif_match_ifp(struct pfi_kif *rule_kif, struct pfi_kif *packet_kif,
 	return (0);
 }
 
+/*
+ * 5BSD: existing.  pf_fbsd_attach_existing() attaches the interfaces a VNET
+ * had before pf: only while ifp is still on this VNET's list, checked
+ * under PF_LOCK.  The departure handler runs after the unlink and takes
+ * PF_LOCK, so whatever is attached before it is detached by it.  (The
+ * arrival handler runs before the interface is linked and cannot check.)
+ */
+static void	pfi_attach_ifnet_cond(struct ifnet *, int);
+
 void
 pfi_attach_ifnet(struct ifnet *ifp)
+{
+	pfi_attach_ifnet_cond(ifp, 0);
+}
+
+void
+pfi_attach_ifnet_existing(struct ifnet *ifp)
+{
+	pfi_attach_ifnet_cond(ifp, 1);
+}
+
+static void
+pfi_attach_ifnet_cond(struct ifnet *ifp, int existing)
 {
 	struct pfi_kif		*kif;
 	struct task		*t;
@@ -354,6 +375,16 @@ pfi_attach_ifnet(struct ifnet *ifp)
 	t = malloc(sizeof(*t), PFI_MTYPE, M_WAITOK);
 	PF_LOCK();
 	pfi_initialize();
+	/*
+	 * 5BSD: existing.  Gone from this VNET meanwhile, or attached
+	 * already (by the arrival handler, here or in the VNET it moved to).
+	 */
+	if (existing && (ifp->if_vnet != curvnet || !obsd_if_linked(ifp) ||
+	    ifp->if_pf_kif != NULL)) {
+		PF_UNLOCK();
+		free(t, PFI_MTYPE, sizeof(*t));
+		return;
+	}
 	pfi_update++;
 	if ((kif = pfi_kif_get(ifp->if_xname, NULL)) == NULL)
 		panic("%s: pfi_kif_get failed", __func__);
@@ -435,7 +466,8 @@ pfi_detach_ifnet(struct ifnet *ifp)
 	pfi_kif_update(kif);
 
 	kif->pfik_ifp = NULL;
-	ifp->if_pf_kif = NULL;
+	if (ifp->if_pf_kif == (caddr_t)kif)	/* 5BSD: existing */
+		ifp->if_pf_kif = NULL;
 	/* 5BSD: names.  Another interface with this name takes the kif over. */
 	if (kif->pfik_nifp > 0 &&
 	    (nifp = obsd_if_find_pfkif(kif, ifp)) != NULL) {

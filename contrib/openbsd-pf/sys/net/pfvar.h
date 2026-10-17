@@ -2095,6 +2095,7 @@ int		 pfi_kif_match(struct pfi_kif *, struct pfi_kif *);
 int		 pfi_kif_match_ifp(struct pfi_kif *, struct pfi_kif *,
 		    struct ifnet *);	/* 5BSD: names */
 void		 pfi_attach_ifnet(struct ifnet *);
+void		 pfi_attach_ifnet_existing(struct ifnet *); /* 5BSD: existing */
 void		 pfi_detach_ifnet(struct ifnet *);
 void		 pfi_rename_ifnet(struct ifnet *, const char *); /* 5BSD: rename */
 void		 pfi_attach_ifgroup(struct ifg_group *);

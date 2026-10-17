@@ -215,16 +215,8 @@ pf_fbsd_divert_run(void *arg __unused)
 	mtx_unlock(&pf_fbsd_divert_mtx);
 	while ((r = STAILQ_FIRST(&q)) != NULL) {
 		STAILQ_REMOVE_HEAD(&q, next);
-		/*
-		 * A new socket with the same addresses may have linked to
-		 * the state since the old one went (a fast reconnect); the
-		 * state is its now.  OpenBSD removes synchronously, before
-		 * that can happen.
-		 */
-		if (READ_ONCE(r->sk->sk_inp) != NULL)
-			pf_state_key_unref(r->sk);
-		else
-			pf_remove_divert_state_key(r->sk);
+		/* Skips a state a new socket has linked to meanwhile. */
+		pf_remove_divert_state_key(r->sk);
 		free(r, M_PF);
 	}
 }
@@ -910,18 +902,14 @@ pf_fbsd_grpchange(void *arg, const char *gname)
 }
 
 /*
- * Attach one existing interface.  It may have left meanwhile: an interface
- * is unlinked (and marked dying when destroyed) before its departure
- * handler runs, so if that handler ran before this attach, either flag is
- * visible now and the attach is undone here.  If it runs later it finds
- * the kif and detaches as usual.
+ * Attach one existing interface, unless it has left this VNET meanwhile or
+ * is attached already: pfi_attach_ifnet_existing() checks under PF_LOCK,
+ * and the departure handler of an interface unlinked later detaches it.
  */
 static int
 pf_fbsd_attach_one(if_t ifp, void *arg __unused)
 {
-	pfi_attach_ifnet(ifp);
-	if ((ifp->if_flags & IFF_DYING) != 0 || !obsd_if_linked(ifp))
-		pfi_detach_ifnet(ifp);
+	pfi_attach_ifnet_existing(ifp);
 	return (0);
 }
 

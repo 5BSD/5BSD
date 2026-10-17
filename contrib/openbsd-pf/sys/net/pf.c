@@ -2256,6 +2256,18 @@ pf_remove_divert_state_key(struct pf_state_key *sk)
 
 	PF_LOCK();
 	PF_STATE_ENTER_WRITE();
+	/*
+	 * 5BSD: deferred.  The removal runs from a task after the socket
+	 * went (pf_freebsd.c); a new socket with the same addresses that
+	 * has linked to the key since owns the state.  A link after this
+	 * check finds the key invalid once the state is removed.
+	 */
+	mtx_enter(&pf_inp_mtx);
+	if (sk->sk_inp != NULL) {
+		mtx_leave(&pf_inp_mtx);
+		goto out;
+	}
+	mtx_leave(&pf_inp_mtx);
 	TAILQ_FOREACH(si, &sk->sk_states, si_entry) {
 		struct pf_state *sist = si->si_st;
 		if (sk == sist->key[PF_SK_STACK] && sist->rule.ptr &&
@@ -2282,6 +2294,7 @@ pf_remove_divert_state_key(struct pf_state_key *sk)
 			break;
 		}
 	}
+out:
 	PF_STATE_EXIT_WRITE();
 	PF_UNLOCK();
 
