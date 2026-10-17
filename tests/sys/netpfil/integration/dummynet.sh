@@ -65,6 +65,9 @@ dn_init()
 	dummynet_init
 	integ_require_prog dnctl
 	[ -x ${DNFLOW} ] || atf_skip "${DNFLOW} is not installed"
+	# Dummynet counts delays in ticks and releases a packet at a tick,
+	# up to one early; allow two ticks (ms) below every delay floor.
+	DN_SLACK=$(( (2000 + $(sysctl -n kern.hz) - 1) / $(sysctl -n kern.hz) ))
 }
 
 # dn_ctl jail dnctl-args...: configure dummynet in a jail or fail.
@@ -297,9 +300,9 @@ dn_dir()
 	_f=$(dn_field "${_l}" fwd_med)
 	_bm=$(dn_field "${_l}" back_min)
 	_b=$(dn_field "${_l}" back_med)
-	[ $3 -eq 0 ] || dn_check "${_fm} >= $3" "forward delay to $1"
+	[ $3 -eq 0 ] || dn_check "${_fm} >= $3 - ${DN_SLACK}" "forward delay to $1"
 	[ $4 -eq 0 ] || dn_check "${_f} < $4" "forward delay to $1"
-	[ $5 -eq 0 ] || dn_check "${_bm} >= $5" "return delay from $1"
+	[ $5 -eq 0 ] || dn_check "${_bm} >= $5 - ${DN_SLACK}" "return delay from $1"
 	[ $6 -eq 0 ] || dn_check "${_b} < $6" "return delay from $1"
 }
 
@@ -405,8 +408,8 @@ delay_icmp_body()
 	m6=$(dn_ping_min dncl -6 ${pargs} ${SRV6})
 	a4=$(dn_rtt dncl ${pargs} ${SRV4})
 	echo "dnpipe 1: IPv4 min ${m4} (${a4}), IPv6 min ${m6}"
-	dn_check "${m4} >= ${b4% *} + 225" "IPv4 round trip with 250 ms pipe"
-	dn_check "${m6} >= ${b6% *} + 225" "IPv6 round trip with 250 ms pipe"
+	dn_check "${m4} >= ${b4% *} + 225 - ${DN_SLACK}" "IPv4 round trip with 250 ms pipe"
+	dn_check "${m6} >= ${b6% *} + 225 - ${DN_SLACK}" "IPv6 round trip with 250 ms pipe"
 	dn_check "${a4#* } < ${b4#* } + 250 + 1000" \
 	    "IPv4 round trip far above the pipe delay"
 
@@ -416,14 +419,14 @@ delay_icmp_body()
 	m4=$(dn_ping_min dncl ${pargs} ${SRV4})
 	m6=$(dn_ping_min dncl -6 ${pargs} ${SRV6})
 	echo "dnpipe (1, 1): IPv4 min ${m4}, IPv6 min ${m6}"
-	dn_check "${m4} >= ${b4% *} + 450" "IPv4 round trip with (1, 1)"
-	dn_check "${m6} >= ${b6% *} + 450" "IPv6 round trip with (1, 1)"
+	dn_check "${m4} >= ${b4% *} + 450 - ${DN_SLACK}" "IPv4 round trip with (1, 1)"
+	dn_check "${m6} >= ${b6% *} + 450 - ${DN_SLACK}" "IPv6 round trip with (1, 1)"
 
 	# Only the reverse direction.
 	dn_gw_rules "pass" "pass out on ${b}a dnpipe (0, 1)"
 	m4=$(dn_ping_min dncl ${pargs} ${SRV4})
 	echo "dnpipe (0, 1): IPv4 min ${m4}"
-	dn_check "${m4} >= ${b4% *} + 225" "IPv4 round trip with (0, 1)"
+	dn_check "${m4} >= ${b4% *} + 225 - ${DN_SLACK}" "IPv4 round trip with (0, 1)"
 	dn_check "${m4} < ${b4% *} + 450" "IPv4 round trip with (0, 1)"
 }
 
@@ -925,12 +928,12 @@ route_to_v4_body()
 	    "pass in on ${a}b inet to 203.0.113.0/24 route-to ${SRV4} dnpipe 1"
 	m=$(dn_ping_min dncl -c 3 -i 0.3 -t 20 203.0.113.2)
 	echo "route-to, 64 bytes: min ${m} ms"
-	dn_check "${m} >= 135" "route-to round trip with a 150 ms pipe"
+	dn_check "${m} >= 135 - ${DN_SLACK}" "route-to round trip with a 150 ms pipe"
 
 	# 1428 bytes on a 1280 byte link: fragmented after the delay.
 	m=$(dn_ping_min dncl -c 3 -i 0.3 -t 20 -s 1400 203.0.113.2)
 	echo "route-to, 1400 bytes: min ${m} ms"
-	dn_check "${m} >= 135" "fragmented route-to round trip"
+	dn_check "${m} >= 135 - ${DN_SLACK}" "fragmented route-to round trip"
 
 	# With DF: "fragmentation needed" from the router.
 	atf_check -s exit:2 -o match:'frag needed and DF set' \
@@ -962,7 +965,7 @@ route_to_v6_body()
 	    "pass in on ${a}b inet6 to 2001:db8:3::/64 route-to ${SRV6} dnpipe 1"
 	m=$(dn_ping_min dncl -6 -c 3 -i 0.3 -t 20 2001:db8:3::2)
 	echo "route-to, 64 bytes: min ${m} ms"
-	dn_check "${m} >= 135" "route-to round trip with a 150 ms pipe"
+	dn_check "${m} >= 135 - ${DN_SLACK}" "route-to round trip with a 150 ms pipe"
 
 	# The first 1448 byte packet is refused with "packet too big" after
 	# the delay; the client learns the path MTU and fragments the next
@@ -971,7 +974,7 @@ route_to_v6_body()
 	echo "route-to, 1400 bytes: ${r} (min avg ms)"
 	[ -n "${r}" ] ||
 	    atf_fail "no replies to 1400 byte pings (no packet too big?)"
-	dn_check "${r% *} >= 135" "fragmented IPv6 route-to round trip"
+	dn_check "${r% *} >= 135 - ${DN_SLACK}" "fragmented IPv6 route-to round trip"
 }
 
 route_to_v6_cleanup()
@@ -995,7 +998,7 @@ route_to_out_pipe_body()
 	    "pass out on ${b}a inet proto icmp dnpipe 1"
 	m=$(dn_ping_min dncl -c 3 -i 0.3 -t 20 203.0.113.2)
 	echo "route-to, outbound pipe: min ${m} ms"
-	dn_check "${m} >= 135" "route-to round trip with a 150 ms out pipe"
+	dn_check "${m} >= 135 - ${DN_SLACK}" "route-to round trip with a 150 ms out pipe"
 }
 
 route_to_out_pipe_cleanup()
@@ -1027,8 +1030,8 @@ local_reply_body()
 	m4=$(dn_ping_min dncl -c 3 -i 0.3 -t 20 ${SRV4})
 	m6=$(dn_ping_min dncl -6 -c 3 -i 0.3 -t 20 ${SRV6})
 	echo "echo round trips: IPv4 min ${m4} ms, IPv6 min ${m6} ms"
-	dn_check "${m4} >= 450" "IPv4 echo reply skipped pipe 2"
-	dn_check "${m6} >= 450" "IPv6 echo reply skipped pipe 2"
+	dn_check "${m4} >= 450 - ${DN_SLACK}" "IPv4 echo reply skipped pipe 2"
+	dn_check "${m6} >= 450 - ${DN_SLACK}" "IPv6 echo reply skipped pipe 2"
 }
 
 local_reply_cleanup()
@@ -1127,7 +1130,7 @@ bridge_ether_body()
 	pft_set_rules dnbr "ether pass out on ${r}a dnpipe 1" "pass"
 	m=$(dn_ping_min dnl -c 3 -i 0.3 -t 20 192.0.2.2)
 	echo "ether out on member: min ${m} ms"
-	dn_check "${m} >= 225" "ether out on member: round trip with a 250 ms pipe"
+	dn_check "${m} >= 225 - ${DN_SLACK}" "ether out on member: round trip with a 250 ms pipe"
 
 	# Without the link-layer hook the ether rule does not see the frames.
 	atf_check -s exit:0 -o ignore jexec dnbr sysctl \
@@ -1160,13 +1163,13 @@ ether_body()
 	m4=$(dn_ping_min dncl -c 3 -i 0.3 -t 20 ${SRV4})
 	m6=$(dn_ping_min dncl -6 -c 3 -i 0.3 -t 20 ${SRV6})
 	echo "ether in: IPv4 min ${m4} ms, IPv6 min ${m6} ms"
-	dn_check "${m4} >= 225" "IPv4 round trip, ether in"
-	dn_check "${m6} >= 225" "IPv6 round trip, ether in"
+	dn_check "${m4} >= 225 - ${DN_SLACK}" "IPv4 round trip, ether in"
+	dn_check "${m6} >= 225 - ${DN_SLACK}" "IPv6 round trip, ether in"
 
 	pft_set_rules dngw "ether pass out on ${a}b dnpipe 1" "pass"
 	m4=$(dn_ping_min dncl -c 3 -i 0.3 -t 20 ${SRV4})
 	echo "ether out: IPv4 min ${m4} ms"
-	dn_check "${m4} >= 225" "IPv4 round trip, ether out"
+	dn_check "${m4} >= 225 - ${DN_SLACK}" "IPv4 round trip, ether out"
 
 	# Shaped at layer 2, then blocked by an IP rule.
 	pft_set_rules dngw "ether pass in on ${a}b dnpipe 1" \
@@ -1366,7 +1369,7 @@ vnet_isolation_body()
 	atf_check -s exit:0 -o empty jexec dnB dnctl pipe show
 	m=$(dn_ping_min dnA -c 3 -i 0.3 -t 20 192.0.2.2)
 	echo "jail A, its pipe 7: min ${m} ms"
-	dn_check "${m} >= 270" "jail A round trip with its 300 ms pipe"
+	dn_check "${m} >= 270 - ${DN_SLACK}" "jail A round trip with its 300 ms pipe"
 	# Jail B has no pipe 7: its matching packets are dropped.
 	atf_check -s exit:2 -o ignore jexec dnB ping -c 2 -t 5 198.51.100.2
 
@@ -1375,9 +1378,9 @@ vnet_isolation_body()
 	r=$(dn_rtt dnB -c 3 -i 0.3 -t 20 198.51.100.2)
 	echo "jail B, its pipe 7: ${r} (min avg ms)"
 	[ -n "${r}" ] || atf_fail "jail B lost its pings"
-	dn_check "${r% *} >= 45 && ${r#* } < 250" "jail B round trip"
+	dn_check "${r% *} >= 45 - ${DN_SLACK} && ${r#* } < 250" "jail B round trip"
 	m=$(dn_ping_min dnA -c 2 -i 0.3 -t 20 192.0.2.2)
-	dn_check "${m} >= 270" "jail A round trip after jail B's change"
+	dn_check "${m} >= 270 - ${DN_SLACK}" "jail A round trip after jail B's change"
 
 	# Deleting A's pipe leaves B's.
 	atf_check -s exit:0 -o ignore -e ignore \
@@ -1452,7 +1455,7 @@ jail_remove_body()
 	dn_ctl dnq2 pipe 1 config delay 100
 	pft_set_rules dnq2 "pass out dnpipe 1"
 	m=$(dn_ping_min dnq2 -c 2 -i 0.3 -t 20 198.51.100.2)
-	dn_check "${m} >= 90" "round trip in a new jail"
+	dn_check "${m} >= 90 - ${DN_SLACK}" "round trip in a new jail"
 }
 
 jail_remove_cleanup()
@@ -1551,7 +1554,7 @@ securelevel_body()
 
 	m=$(dn_ping_min dnsl -c 3 -i 0.3 -t 20 192.0.2.2)
 	echo "securelevel 3: min ${m} ms"
-	dn_check "${m} >= 180" "the existing pipe stopped shaping"
+	dn_check "${m} >= 180 - ${DN_SLACK}" "the existing pipe stopped shaping"
 
 	# The other jail is not locked.
 	atf_check -s exit:0 -o ignore -e ignore \
