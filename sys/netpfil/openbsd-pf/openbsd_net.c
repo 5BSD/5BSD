@@ -649,6 +649,26 @@ obsd_ifoutput(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 	return (error);
 }
 
+/*
+ * Another interface of this VNET that uses kif (FreeBSD allows two
+ * interfaces one name; pfi_detach_ifnet() hands the kif over to it).
+ * Called with PF_LOCK held; does not sleep.
+ */
+struct ifnet *
+obsd_if_find_pfkif(void *kif, struct ifnet *skip)
+{
+	struct epoch_tracker et;
+	struct ifnet *ifp;
+
+	NET_EPOCH_ENTER(et);
+	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link)
+		if (ifp != skip && ifp->if_pf_kif == kif &&
+		    (ifp->if_flags & IFF_DYING) == 0)
+			break;
+	NET_EPOCH_EXIT(et);
+	return (ifp);
+}
+
 int
 if_output_obsd(struct ifnet *ifp, struct mbuf *m, struct sockaddr *dst,
     struct rtentry *rt)

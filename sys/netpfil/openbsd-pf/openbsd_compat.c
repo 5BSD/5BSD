@@ -493,6 +493,16 @@ timeout_del_barrier(struct timeout *to)
 	int r = timeout_del(to);
 
 	timeout_barrier(to);
+	/*
+	 * A handler that was running when the callout was drained may have
+	 * re-armed it (pf_syncookie_rotate, pf purges); delete and wait
+	 * again.  Callers tear down what the handler uses next (a VNET).
+	 */
+	while (timeout_pending(to)) {
+		if (timeout_del(to))
+			r = 1;
+		timeout_barrier(to);
+	}
 	return (r);
 }
 

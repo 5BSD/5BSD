@@ -347,7 +347,7 @@ pfi_attach_ifnet(struct ifnet *ifp)
 	 * the others so the kif outlives them.
 	 */
 	if (kif->pfik_ifp != NULL) {
-		if (kif->pfik_ifp != ifp) {
+		if (kif->pfik_ifp != ifp && ifp->if_pf_kif != (caddr_t)kif) {
 			kif->pfik_nifp++;
 			ifp->if_pf_kif = (caddr_t)kif;
 		}
@@ -371,11 +371,14 @@ void
 pfi_detach_ifnet(struct ifnet *ifp)
 {
 	struct pfi_kif		*kif;
-	struct task		*t;
+	struct task		*t, *nt;
+	struct ifnet		*nifp;
 
 	if ((kif = (struct pfi_kif *)ifp->if_pf_kif) == NULL)
 		return;
 
+	/* 5BSD: names.  A hook for an interface that may take over the kif. */
+	nt = malloc(sizeof(*nt), PFI_MTYPE, M_WAITOK);
 	PF_LOCK();
 	/* 5BSD: names.  This interface shares the kif of its name. */
 	if (kif->pfik_ifp != ifp) {
@@ -384,20 +387,42 @@ pfi_detach_ifnet(struct ifnet *ifp)
 			kif->pfik_nifp--;
 		pfi_kif_unref(kif, PFI_KIF_REF_NONE);
 		PF_UNLOCK();
+		free(nt, PFI_MTYPE, sizeof(*nt));
 		return;
 	}
 	pfi_update++;
 	t = kif->pfik_ah_cookie;
 	kif->pfik_ah_cookie = NULL;
 	if_addrhook_del(ifp, t);
+	/*
+	 * 5BSD: the address hook runs on a task queue, not synchronously as
+	 * on OpenBSD; wait for a running one (it takes PF_LOCK) before the
+	 * kif can go.  The kif stays: it still names this interface.
+	 */
+	PF_UNLOCK();
+	taskq_del_barrier(systq, t);
 	free(t, PFI_MTYPE, sizeof(*t));
+	PF_LOCK();
 
 	pfi_kif_update(kif);
 
 	kif->pfik_ifp = NULL;
 	ifp->if_pf_kif = NULL;
+	/* 5BSD: names.  Another interface with this name takes the kif over. */
+	if (kif->pfik_nifp > 0 &&
+	    (nifp = obsd_if_find_pfkif(kif, ifp)) != NULL) {
+		kif->pfik_nifp--;
+		kif->pfik_ifp = nifp;
+		task_set(nt, pfi_kifaddr_update, kif);
+		if_addrhook_add(nifp, nt);
+		kif->pfik_ah_cookie = nt;
+		nt = NULL;
+		pfi_kif_update(kif);
+	}
 	pfi_kif_unref(kif, PFI_KIF_REF_NONE);
 	PF_UNLOCK();
+	if (nt != NULL)
+		free(nt, PFI_MTYPE, sizeof(*nt));
 }
 
 /*
@@ -600,12 +625,16 @@ pfi_kif_update(struct pfi_kif *kif)
 			    (struct pfi_kif *)ifgl->ifgl_group->ifg_pf_kif;
 
 			/*
-			 * 5BSD: names.  A FreeBSD interface can be renamed to
-			 * the name of one of its groups ("ifconfig epair0a name
-			 * epair"); the group's kif is then this one.
+			 * 5BSD: names.  FreeBSD interfaces can be named after
+			 * groups ("ifconfig epair0a name epair"), so a group's
+			 * kif may be an interface's, and interfaces may be in
+			 * each other's groups.  A group kif's own dynamic
+			 * addresses are all that needs refreshing; following
+			 * its interface's groups would recurse without end.
 			 */
 			if (gkif != NULL && gkif != kif)
-				pfi_kif_update(gkif);
+				TAILQ_FOREACH(p, &gkif->pfik_dynaddrs, entry)
+					pfi_dynaddr_update(p);
 		}
 }
 
