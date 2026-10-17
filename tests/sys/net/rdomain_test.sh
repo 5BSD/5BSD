@@ -266,6 +266,37 @@ privilege_cleanup()
 	:
 }
 
+atf_test_case "vmove" "cleanup"
+vmove_head()
+{
+	atf_set descr 'A routing domain loopback cannot move to another vnet'
+	atf_set require.user root
+}
+vmove_body()
+{
+	. $(atf_get_srcdir)/../common/vnet.subr
+
+	rdomain_init
+	vnet_init
+	vnet_mkjail rdvmove
+
+	atf_check ifconfig lo5 rdomain 5 up
+	atf_check -s not-exit:0 -e match:'Device busy' \
+	    ifconfig lo5 vnet rdvmove
+	atf_check -o match:'rdomain 5 ' ifconfig lo5
+	atf_check -o match:'^Routing tables' route -T 5 -n show
+	# Other members of the domain may move.
+	atf_check -o ignore ifconfig vether0 create rdomain 5
+	atf_check ifconfig vether0 vnet rdvmove
+	atf_check -o match:'^vether0:' jexec rdvmove ifconfig vether0
+}
+vmove_cleanup()
+{
+	. $(atf_get_srcdir)/../common/vnet.subr
+
+	vnet_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "create"
@@ -276,4 +307,5 @@ atf_init_test_cases()
 	atf_add_test_case "socket_isolation"
 	atf_add_test_case "route_exec"
 	atf_add_test_case "privilege"
+	atf_add_test_case "vmove"
 }

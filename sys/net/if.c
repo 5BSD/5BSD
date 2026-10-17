@@ -286,6 +286,7 @@ static void	if_detach_internal(struct ifnet *, bool);
 static void	if_siocaddmulti(void *, int);
 static void	if_link_ifnet(struct ifnet *);
 static bool	if_unlink_ifnet(struct ifnet *, bool);
+static bool	if_linked_locked(struct ifnet *);
 #ifdef VIMAGE
 static void	if_vmove(struct ifnet *, struct vnet *);
 #endif
@@ -1197,6 +1198,23 @@ if_vmove(struct ifnet *ifp, struct vnet *new_vnet)
 }
 
 /*
+ * 5BSD: the loopback interface of a routing domain stays in its vnet,
+ * whose routing domain map (V_rt_l2map) refers to it by index.
+ */
+static int
+if_vmove_check(struct ifnet *ifp)
+{
+	int error = 0;
+
+	sx_assert(&ifnet_detach_sxlock, SX_XLOCKED);
+	IFNET_WLOCK();
+	if (if_linked_locked(ifp) && rt_rdomain_isloif(ifp))
+		error = EBUSY;
+	IFNET_WUNLOCK();
+	return (error);
+}
+
+/*
  * Move an ifnet to or from another child prison/vnet, specified by the jail id.
  */
 static int
@@ -1204,6 +1222,7 @@ if_vmove_loan(struct thread *td, char *ifname, int jid)
 {
 	struct prison *pr;
 	struct ifnet *ifp, *difp;
+	int error;
 	bool found;
 
 	MPASS(curthread == td);
@@ -1245,6 +1264,11 @@ if_vmove_loan(struct thread *td, char *ifname, int jid)
 	}
 	sx_xlock(&ifnet_detach_sxlock);
 
+	if ((error = if_vmove_check(ifp)) != 0) {
+		sx_xunlock(&ifnet_detach_sxlock);
+		prison_free(pr);
+		return (error);
+	}
 	found = if_unlink_ifnet(ifp, true);
 	if (! found) {
 		sx_xunlock(&ifnet_detach_sxlock);
@@ -1270,7 +1294,7 @@ if_vmove_reclaim(struct thread *td, char *ifname, int jid)
 	struct prison *pr;
 	struct vnet *vnet_dst;
 	struct ifnet *ifp;
-	int found;
+	int found, error;
 
 	/* Try to find the prison within our visibility. */
 	sx_slock(&allprison_lock);
@@ -1300,6 +1324,12 @@ if_vmove_reclaim(struct thread *td, char *ifname, int jid)
 
 	/* Get interface back from child jail/vnet. */
 	sx_xlock(&ifnet_detach_sxlock);
+	if ((error = if_vmove_check(ifp)) != 0) {
+		sx_xunlock(&ifnet_detach_sxlock);
+		CURVNET_RESTORE();
+		prison_free(pr);
+		return (error);
+	}
 	found = if_unlink_ifnet(ifp, true);
 	if (! found) {
 		sx_xunlock(&ifnet_detach_sxlock);
