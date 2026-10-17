@@ -163,6 +163,17 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	does, and use the gateway of the route to the route-to address.
 	DIOCBINDJAIL refuses jails without their own vnet.
 
+	vlan(4): with the default "vlanpcp auto", frames at the default
+	priority are sent with PCP 0 again (they were 3), and IP_VLAN_PCP /
+	IPV6_VLAN_PCP take precedence over automatic and numeric PCP.  Only
+	pf "set prio" values other than 3 reach the wire; use an explicit
+	"vlanpcp 3" to send PCP 3.  An rdomain's loopback can no longer be
+	moved to another vnet (EBUSY), and lo0 can no longer leave routing
+	domain 0 (EPERM).  Without routing domains, a route in FIB N again
+	needs its gateway reachable through an interface of FIB N.  With a
+	packet filter loaded, "fragmentation needed" and "packet too big"
+	errors are sent only for packets the outbound rules pass.
+
 20261013:
 	The BSD fixed-name pty(4) compatibility driver has been removed.
 	Use posix_openpt(2), openpty(3), or /dev/ptmx and /dev/pts/N.
