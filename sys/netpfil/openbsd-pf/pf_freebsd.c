@@ -22,6 +22,9 @@
 #include <sys/bitstring.h>
 #include <sys/jail.h>
 
+#include <vm/vm.h>
+#include <vm/vm_extern.h>
+
 #include <net/pfvar.h>
 #include <net/pfvar_priv.h>
 #include <net/if_pflog.h>
@@ -1109,6 +1112,139 @@ pf_fbsd_use(struct pf_fbsd_open *po)
 	}
 }
 
+/*
+ * OpenBSD's pf copies to and from the ioctl's user buffers with pf's locks
+ * held; there they may sleep, here they may not: a fault on a user page
+ * that is not resident (or not mapped) with them held is fatal
+ * (trap_pfault()).  Wire the user buffers of these commands first, as
+ * sysctl(9) does for its old buffer; a range that cannot be wired is
+ * EFAULT before pf runs.
+ */
+#define	PF_FBSD_WIRE_MAX	(256 * 1024 * 1024)
+struct pf_fbsd_wire {
+	void	*addr;
+	size_t	 len;
+};
+
+static size_t
+pf_fbsd_nbytes(int n, int esize)
+{
+	if (n <= 0 || esize <= 0)
+		return (0);
+	if ((size_t)n > PF_FBSD_WIRE_MAX / (size_t)esize)
+		return (PF_FBSD_WIRE_MAX + 1);
+	return ((size_t)n * (size_t)esize);
+}
+
+static int
+pf_fbsd_user_bufs(u_long cmd, caddr_t data, struct pf_fbsd_wire *w)
+{
+	int n = 0;
+
+	switch (cmd) {
+	case DIOCGETSTATES:
+	case DIOCGETSTATESEXPORT: {
+		struct pfioc_states *ps = (struct pfioc_states *)data;
+
+		w[n].addr = ps->ps_buf;
+		w[n++].len = ps->ps_len;
+		break;
+	}
+	case DIOCGETSRCNODES: {
+		struct pfioc_src_nodes *psn = (struct pfioc_src_nodes *)data;
+
+		w[n].addr = psn->psn_buf;
+		w[n++].len = psn->psn_len;
+		break;
+	}
+	case DIOCXBEGIN:
+	case DIOCXCOMMIT:
+	case DIOCXROLLBACK: {
+		struct pfioc_trans *io = (struct pfioc_trans *)data;
+
+		w[n].addr = io->array;
+		w[n++].len = pf_fbsd_nbytes(io->size, io->esize);
+		break;
+	}
+	case DIOCGETQSTATS: {
+		struct pfioc_qstats *pq = (struct pfioc_qstats *)data;
+
+		w[n].addr = pq->buf;
+		w[n++].len = pq->nbytes > 0 ? (size_t)pq->nbytes : 0;
+		break;
+	}
+	case DIOCIGETIFACES: {
+		struct pfioc_iface *io = (struct pfioc_iface *)data;
+
+		w[n].addr = io->pfiio_buffer;
+		w[n++].len = pf_fbsd_nbytes(io->pfiio_size, io->pfiio_esize);
+		break;
+	}
+	case DIOCGETSOURCE:
+	case DIOCGETNSOURCE: {
+		struct pfioc_source *io = (struct pfioc_source *)data;
+
+		w[n].addr = io->key;
+		w[n++].len = io->key != NULL ? io->entry_size : 0;
+		w[n].addr = io->entries;
+		w[n++].len = io->entrieslen;
+		break;
+	}
+	case DIOCRCLRTABLES:
+	case DIOCRADDTABLES:
+	case DIOCRDELTABLES:
+	case DIOCRGETTABLES:
+	case DIOCRGETTSTATS:
+	case DIOCRCLRTSTATS:
+	case DIOCRSETTFLAGS:
+	case DIOCRCLRADDRS:
+	case DIOCRADDADDRS:
+	case DIOCRDELADDRS:
+	case DIOCRSETADDRS:
+	case DIOCRGETADDRS:
+	case DIOCRGETASTATS:
+	case DIOCRCLRASTATS:
+	case DIOCRTSTADDRS:
+	case DIOCRINADEFINE: {
+		struct pfioc_table *io = (struct pfioc_table *)data;
+		int cnt = io->pfrio_size;
+
+		/* DIOCRSETADDRS feeds back up to pfrio_size2 entries. */
+		if (cmd == DIOCRSETADDRS && io->pfrio_size2 > cnt)
+			cnt = io->pfrio_size2;
+		w[n].addr = io->pfrio_buffer;
+		w[n++].len = pf_fbsd_nbytes(cnt, io->pfrio_esize);
+		break;
+	}
+	}
+	return (n);
+}
+
+static int
+pf_fbsd_ioctl_wired(dev_t dev, u_long cmd, caddr_t data, int flags,
+    struct thread *td)
+{
+	struct pf_fbsd_wire w[2];
+	int error, i, n, nw;
+
+	n = pf_fbsd_user_bufs(cmd, data, w);
+	for (nw = 0; nw < n; nw++) {
+		if (w[nw].len == 0 || w[nw].addr == NULL)
+			continue;
+		if (w[nw].len > PF_FBSD_WIRE_MAX ||
+		    vslock(w[nw].addr, w[nw].len) != 0) {
+			error = EFAULT;
+			goto unwire;
+		}
+	}
+	error = pfioctl(dev, cmd, data, flags, td->td_proc);
+unwire:
+	for (i = 0; i < nw; i++)
+		if (w[i].len != 0 && w[i].addr != NULL)
+			vsunlock(w[i].addr, w[i].len);
+	return (error);
+}
+
 static int
 pf_fbsd_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flags,
     struct thread *td)
@@ -1146,8 +1282,8 @@ pf_fbsd_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flags,
 	else if (pf_eth_is_ioctl(cmd))
 		error = pf_eth_ioctl(cmd, data, flags);
 	else {
-		error = pfioctl(pf_fbsd_minor(po->unit), cmd, data, flags,
-		    td->td_proc);
+		error = pf_fbsd_ioctl_wired(pf_fbsd_minor(po->unit), cmd, data,
+		    flags, td);
 		/* A transaction may have filled or emptied the ether rules. */
 		if (cmd == DIOCXCOMMIT && error == 0)
 			pf_eth_hook_update();

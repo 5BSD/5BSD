@@ -50,6 +50,10 @@ nat64_setup_base()
 	atf_check -s exit:0 -o ignore \
 	    jexec dst ping -c 1 192.0.2.1
 
+	# OpenBSD pf forwards af-to packets only with forwarding enabled for
+	# the new family (FreeBSD's pf did not ask).
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 \
+	    > /dev/null
 	jexec rtr pfctl -e
 }
 
@@ -318,6 +322,7 @@ no_v4_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 
 	vnet_mkjail dst ${epair_link}b
@@ -361,6 +366,7 @@ range_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.2/24 up
 	jexec rtr ifconfig ${epair_link}a inet alias 192.0.2.3/24 up
@@ -427,6 +433,7 @@ pool_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.1/24 up
 	jexec rtr ifconfig ${epair_link}a inet alias 192.0.2.3/24 up
@@ -526,6 +533,7 @@ table_range_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.2/24 up
 	jexec rtr ifconfig ${epair_link}a inet alias 192.0.2.3/24 up
@@ -584,6 +592,7 @@ table_common_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.1/24 up
 	jexec rtr ifconfig ${epair_link}a inet alias 192.0.2.3/24 up
@@ -687,6 +696,7 @@ dummynet_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.1/24 up
 
@@ -749,6 +759,7 @@ gateway6_body()
 	jexec lan_rtr sysctl net.inet6.ip6.forwarding=1
 
 	vnet_mkjail rtr ${epair_lan_link}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair_lan_link}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.1/24 up
 	jexec rtr route -6 add default 2001:db8::2
@@ -807,6 +818,7 @@ v6_gateway_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair_lan}b ${epair_wan_one}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair_lan}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_wan_one}a 192.0.2.1/24 up
 	jexec rtr ifconfig ${epair_wan_one}a inet6 -ifdisabled
@@ -872,6 +884,7 @@ scrub_min_ttl_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.1/24 up
 	jexec rtr route add default 192.0.2.2

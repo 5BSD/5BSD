@@ -184,7 +184,16 @@ st_stop()
 	rm -f st.stop
 }
 
-# st_alive jail...: pf answers in the host and in each jail.
+# st_answers jail...: pf answers in each jail (enabled or not).
+st_answers()
+{
+	for _j in "$@"; do
+		atf_check -s exit:0 -o match:'^Status: ' -e ignore \
+		    jexec ${_j} pfctl -si
+	done
+}
+
+# st_alive jail...: pf answers in the host and is enabled in each jail.
 st_alive()
 {
 	atf_check -s exit:0 -o match:'^Status: ' -e ignore pfctl -si
@@ -527,7 +536,8 @@ reload_body()
 	st_loop reader $((n * 2)) st_reload_reader
 	st_wait
 
-	st_alive stfw stcli stsrv
+	st_alive stfw
+	st_answers stcli stsrv
 	atf_check -s exit:0 -e ignore jexec stfw pfctl -f ${PWD}/rs.0
 	jexec stfw pfctl -Fs > /dev/null 2>&1
 	st_traffic_ok
@@ -774,7 +784,8 @@ ifchurn_body()
 	st_loop reload ${n} st_if_reload
 	st_wait
 
-	st_alive stfw stcli
+	st_alive stfw
+	st_answers stcli
 	# The link is back under its name; nothing the loops made is left.
 	atf_check -s exit:0 -o ignore jexec stfw ifconfig ${C}
 	atf_check -s exit:0 -o not-match:'(^| )(stc[0-9]|stm[0-9]|stchurn|stg|stlink)( |$)' \

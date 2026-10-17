@@ -51,6 +51,12 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	domains) for route gateways, also with net.add_addr_allfibs=0, as
 	"route -T 1 add" does on OpenBSD.  Use routing domains to isolate
 	tables.
+	pf ioctls wire their user buffers before pf runs: OpenBSD's pf
+	copies them with pf's locks held, and a buffer that was not
+	resident or not mapped panicked the kernel (page fault in copyin
+	from pfr_clr_tstats(), DIOCRCLRTSTATS with an oversized count).
+	Such a request now fails with EFAULT.  Table and transaction
+	ioctls refuse negative counts with EINVAL.
 
 20261015:
 	OpenBSD's pf replaces FreeBSD's (see the 20261012 entries).  The
