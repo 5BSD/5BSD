@@ -10,7 +10,7 @@ REGRESS_PFCTL=	${SRCTOP}/contrib/openbsd-pf/regress/sbin/pfctl
 FILES!=		find ${REGRESS_PFCTL} -maxdepth 1 -type f \
 		    ! -name Makefile ! -name changerule.c | sort
 FILES+=		${REGRESS_PFCTL}/Makefile
-FILESNAME_Makefile=	regress.mk
+FILESNAME_${REGRESS_PFCTL}/Makefile=	regress.mk
 
 # The 5BSD extension round trips (pfctl_5bsd).
 FILES!=		echo ${FILES} ${.CURDIR}/ext*.in ${.CURDIR}/ext*.ok

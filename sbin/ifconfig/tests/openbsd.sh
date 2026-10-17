@@ -111,10 +111,10 @@ extended_flags_body()
 	vnet_init
 	vnet_mkjail one
 	atf_check jexec one ifconfig lo0 up monitor
-	atf_check -o match:'^lo0: flags=1008049<UP,LOOPBACK,RUNNING,MULTICAST,MONITOR>' \
+	atf_check -o match:'^lo0: flags=3008049<UP,LOOPBACK,RUNNING,MULTICAST,MONITOR,LRO>' \
 	    jexec one ifconfig lo0
 	atf_check jexec one ifconfig lo0 -monitor
-	atf_check -o match:'^lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST>' \
+	atf_check -o match:'^lo0: flags=2008049<UP,LOOPBACK,RUNNING,MULTICAST,LRO>' \
 	    jexec one ifconfig lo0
 }
 extended_flags_cleanup()
@@ -135,6 +135,8 @@ pflow_body()
 	fi
 	vnet_init
 	vnet_mkjail one
+	# flowsrc must be a local address; a new vnet's lo0 has none.
+	atf_check -s exit:0 jexec one ifconfig lo0 inet 127.0.0.1/8 up
 
 	atf_check -s exit:0 jexec one ifconfig pflow0 flowsrc 127.0.0.1 \
 	    flowdst 127.0.0.1:9996
