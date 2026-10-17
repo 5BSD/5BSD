@@ -1022,6 +1022,8 @@ nonh6lookup:
 		m_pf_find(m)->flags &= ~PF_TAG_REROUTE;
 		if (ro != NULL)
 			RO_INVALIDATE_CACHE(ro);
+		/* In the routing table pf chose, still filtered there. */
+		fibnum = M_GETFIB(m);
 		needfiblookup = 1;
 	} else if (!IN6_ARE_ADDR_EQUAL(&odst, &ip6->ip6_dst)) {
 		m->m_flags |= M_SKIP_FIREWALL;

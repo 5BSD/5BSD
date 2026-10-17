@@ -149,6 +149,8 @@ ip_output_pfil(struct mbuf **mp, struct ifnet *ifp, int flags,
 		dst->sin_family = AF_INET;
 		dst->sin_len = sizeof(*dst);
 		dst->sin_addr = ip->ip_dst;
+		/* In the routing table pf chose, if any. */
+		*fibnum = M_GETFIB(m);
 		return -1; /* Reloop */
 	}
 	if (odst.s_addr != ip->ip_dst.s_addr) {
