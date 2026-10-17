@@ -4045,7 +4045,7 @@ pf_match_rcvif(struct mbuf *m, struct pf_rule *r)
 		return (0);
 	}
 
-	return (pfi_kif_match(r->rcv_kif, kif));
+	return (pfi_kif_match_ifp(r->rcv_kif, kif, ifp));	/* 5BSD: names */
 }
 
 int
@@ -4576,7 +4576,8 @@ enter_ruleset:
 		    TAILQ_NEXT(r, entries));
 		r->evaluations++;
 		PF_TEST_ATTRIB(
-		    (pfi_kif_match(r->kif, ctx->pd->kif) == r->ifnot),
+		    (pfi_kif_match_ifp(r->kif, ctx->pd->kif,	/* 5BSD: names */
+		    ctx->pd->ifp) == r->ifnot),
 			r->skip[PF_SKIP_IFP].ptr);
 		PF_TEST_ATTRIB((r->direction && r->direction != ctx->pd->dir),
 			r->skip[PF_SKIP_DIR].ptr);
@@ -8545,6 +8546,7 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 		return (PF_PASS);
 
 	action = pf_setup_pdesc(&pd, af, dir, kif, *m0, &reason);
+	pd.ifp = ifp;	/* 5BSD: names */
 	if (action != PF_PASS) {
 #if NPFLOG > 0
 		pd.pflog |= PF_LOG_FORCE;
@@ -8578,6 +8580,7 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 	/* if packet has been reassembled, update packet description */
 	if (pf_status.reass && pd.virtual_proto == PF_VPROTO_FRAGMENT) {
 		action = pf_setup_pdesc(&pd, af, dir, kif, pd.m, &reason);
+		pd.ifp = ifp;	/* 5BSD: names */
 		if (action != PF_PASS) {
 #if NPFLOG > 0
 			pd.pflog |= PF_LOG_FORCE;

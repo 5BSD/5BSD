@@ -1050,7 +1050,8 @@ pf_eth_dn_clear(struct mbuf *m)
 }
 
 static int
-pf_test_eth_rule(int dir, struct pfi_kif *kif, struct mbuf **m0)
+pf_test_eth_rule(int dir, struct pfi_kif *kif, struct ifnet *ifp,
+    struct mbuf **m0)
 {
 	struct ip ip;
 #ifdef INET6
@@ -1072,7 +1073,7 @@ pf_test_eth_rule(int dir, struct pfi_kif *kif, struct mbuf **m0)
 
 	NET_EPOCH_ASSERT();
 
-	SDT_PROBE3(pf, eth, test_rule, entry, dir, kif->pfik_ifp, m);
+	SDT_PROBE3(pf, eth, test_rule, entry, dir, ifp, m);
 
 	if (PF_MTAG_R(m)->dn_flags & PF_DN_TAG_ETHER) {
 		/*
@@ -1080,7 +1081,7 @@ pf_test_eth_rule(int dir, struct pfi_kif *kif, struct mbuf **m0)
 		 * already filtered them: pass once (we may see the packet on
 		 * both the input and the output hooks).
 		 */
-		SDT_PROBE2(pf, eth, dummynet, reinject, dir, kif->pfik_ifp);
+		SDT_PROBE2(pf, eth, dummynet, reinject, dir, ifp);
 		pf_eth_dn_clear(m);
 		return (PF_PASS);
 	}
@@ -1126,7 +1127,7 @@ pf_test_eth_rule(int dir, struct pfi_kif *kif, struct mbuf **m0)
 		counter_u64_add(r->evaluations, 1);
 		SDT_PROBE2(pf, eth, test_rule, test, r->r.nr, r);
 
-		if (pfi_kif_match(r->kif, kif) == r->r.ifnot) {
+		if (pfi_kif_match_ifp(r->kif, kif, ifp) == r->r.ifnot) {
 			SDT_PROBE3(pf, eth, test_rule, mismatch, r->r.nr, r,
 			    "kif");
 			r = r->skip[PFE_SKIP_IFP];
@@ -1241,7 +1242,7 @@ pf_test_eth_rule(int dir, struct pfi_kif *kif, struct mbuf **m0)
 		dnflow.f_id.extra = dnflow.rule.info;
 		dnflow.flags = (dir == PF_IN) ? IPFW_ARGS_IN : IPFW_ARGS_OUT;
 		dnflow.flags |= IPFW_ARGS_ETHER;
-		dnflow.ifp = kif->pfik_ifp;
+		dnflow.ifp = ifp;
 		switch (af) {
 		case AF_INET:
 			dnflow.f_id.addr_type = 4;
@@ -1303,7 +1304,7 @@ pf_test_eth(int dir, struct ifnet *ifp, struct mbuf **m0)
 	}
 
 	/* Stateless! */
-	return (pf_test_eth_rule(dir, kif, m0));
+	return (pf_test_eth_rule(dir, kif, ifp, m0));
 }
 
 static pfil_return_t

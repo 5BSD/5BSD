@@ -530,6 +530,7 @@ struct pf_pdesc {
 	struct pf_addr	 ndaddr;	/* dst address after NAT */
 
 	struct pfi_kif	*kif;		/* incoming interface */
+	struct ifnet	*ifp;		/* 5BSD: names; the interface of kif */
 	struct mbuf	*m;		/* mbuf containing the packet */
 	struct pf_addr	*src;		/* src address */
 	struct pf_addr	*dst;		/* dst address */

@@ -177,7 +177,10 @@ to a re-import.
                  flow id through M_HASHTYPE; DTrace probe hooks;
                  pf_socket_lookup() uses the outbound packet's socket
                  (locked by the 5BSD stack) instead of a pcb table lookup
-  pf_if.c        CK_STAILQ interface/group lists; allocate before PF_LOCK
+  pf_if.c        CK_STAILQ interface/group lists; allocate before PF_LOCK;
+                 "5BSD: names" (interfaces sharing a name share a kif;
+                 pfi_kif_match_ifp() and pf_pdesc.ifp match groups and
+                 flags on the packet's own interface)
   pf_ioctl.c     p_pid; pfioctl_rw is sleepable; overload table PR_NOWAIT
                  under PF_LOCK; DTrace probe hooks
   pf_norm.c      refragmented packets leave through if_output_obsd()

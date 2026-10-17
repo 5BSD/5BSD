@@ -308,18 +308,33 @@ pfi_kif_unref(struct pfi_kif *kif, enum pfi_kif_refs what)
 int
 pfi_kif_match(struct pfi_kif *rule_kif, struct pfi_kif *packet_kif)
 {
+	return (pfi_kif_match_ifp(rule_kif, packet_kif, NULL));	/* 5BSD: names */
+}
+
+/*
+ * 5BSD: names.  Interfaces sharing a name share packet_kif, whose
+ * pfik_ifp is only the first of them: ifp, when the caller knows it, is
+ * the interface the packet is on, for its groups and flags.
+ */
+int
+pfi_kif_match_ifp(struct pfi_kif *rule_kif, struct pfi_kif *packet_kif,
+    struct ifnet *ifp)
+{
 	struct ifg_list	*p;
 
 	if (rule_kif == NULL || rule_kif == packet_kif)
 		return (1);
 
-	if (rule_kif->pfik_group != NULL)
-		CK_STAILQ_FOREACH(p, &packet_kif->pfik_ifp->if_groups, ifgl_next) /* 5BSD */
+	if (ifp == NULL || ifp->if_pf_kif != (caddr_t)packet_kif)	/* 5BSD */
+		ifp = packet_kif->pfik_ifp;
+
+	if (rule_kif->pfik_group != NULL && ifp != NULL)	/* 5BSD */
+		CK_STAILQ_FOREACH(p, &ifp->if_groups, ifgl_next) /* 5BSD */
 			if (p->ifgl_group == rule_kif->pfik_group)
 				return (1);
 
-	if (rule_kif->pfik_flags & PFI_IFLAG_ANY && packet_kif->pfik_ifp &&
-	    !(packet_kif->pfik_ifp->if_flags & IFF_LOOPBACK))
+	if (rule_kif->pfik_flags & PFI_IFLAG_ANY && ifp &&
+	    !(ifp->if_flags & IFF_LOOPBACK))
 		return (1);
 
 	return (0);
