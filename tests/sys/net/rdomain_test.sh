@@ -347,6 +347,52 @@ allfibs_cleanup()
 	sysctl net.add_addr_allfibs=0 >/dev/null 2>&1
 }
 
+atf_test_case "reuseport_lb" "cleanup"
+reuseport_lb_head()
+{
+	atf_set descr 'SO_REUSEPORT_LB sockets bound before and after the first routing domain share a group'
+	atf_set require.user root
+	atf_set require.progs python3
+}
+reuseport_lb_body()
+{
+	rdomain_init
+
+	cat > lb.py <<'PYCODE'
+import select, socket, subprocess
+SO_REUSEPORT_LB = 0x00010000
+
+def listener(port):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, SO_REUSEPORT_LB, 1)
+    s.bind(("127.0.0.1", port))
+    s.listen(64)
+    return s
+
+a = listener(0)
+port = a.getsockname()[1]
+subprocess.run(["ifconfig", "lo9", "rdomain", "9"], check=True)
+b = listener(port)
+counts = [0, 0]
+for i in range(256):
+    c = socket.create_connection(("127.0.0.1", port))
+    r, _, _ = select.select([a, b], [], [], 5)
+    assert r, "no listener accepted"
+    for s in r:
+        conn, _ = s.accept()
+        conn.close()
+        counts[0 if s is a else 1] += 1
+    c.close()
+print("ACCEPTS=" + str(counts))
+assert min(counts) > 0, counts
+PYCODE
+	atf_check -o match:'ACCEPTS=' python3 lb.py
+}
+reuseport_lb_cleanup()
+{
+	:
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "create"
@@ -360,4 +406,5 @@ atf_init_test_cases()
 	atf_add_test_case "vmove"
 	atf_add_test_case "lo0_stays"
 	atf_add_test_case "allfibs"
+	atf_add_test_case "reuseport_lb"
 }

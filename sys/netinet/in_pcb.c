@@ -375,6 +375,21 @@ in_pcblbgroup_resize(struct lbgroupbucket *bucket,
 }
 
 /*
+ * 5BSD: an unbound group of routing domain 0 has scope RT_ALL_FIBS until
+ * the first routing domain exists and RT_RDOMAIN_SEL(0) after; both match
+ * the same lookups, so sockets of either belong to one group.
+ */
+static bool
+in_pcblbgroup_fib_eq(int a, int b)
+{
+	if (a == RT_RDOMAIN_SEL(0))
+		a = RT_ALL_FIBS;
+	if (b == RT_RDOMAIN_SEL(0))
+		b = RT_ALL_FIBS;
+	return (a == b);
+}
+
+/*
  * Add PCB to load balance group for SO_REUSEPORT_LB option.
  */
 static int
@@ -412,7 +427,7 @@ in_pcbinslbgrouphash(struct inpcb *inp, uint8_t numa_domain)
 		    grp->il_vflag == inp->inp_vflag &&
 		    grp->il_lport == inp->inp_lport &&
 		    grp->il_numa_domain == numa_domain &&
-		    grp->il_fibnum == fib &&
+		    in_pcblbgroup_fib_eq(grp->il_fibnum, fib) &&
 		    memcmp(&grp->il_dependladdr,
 		    &inp->inp_inc.inc_ie.ie_dependladdr,
 		    sizeof(grp->il_dependladdr)) == 0) {
