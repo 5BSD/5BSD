@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-2-Clause
+"""Live function coverage of OpenBSD PF on 5BSD, measured with DTrace.
+
+  pf-coverage.py run   HOST OUT.json SUITE...   run kyua SUITEs on HOST under
+                                                DTrace fbt and save the counts
+  pf-coverage.py merge OUT.json IN.json...      union of several runs
+  pf-coverage.py report COV.json [--md FILE]    covered/uncovered per file
+
+The function universe is every function defined in pf.ko's objects (glue in
+sys/netpfil/openbsd-pf and vendor code in contrib/openbsd-pf) and in the
+FreeBSD stack files land/pf changed (STACK_OBJS), read from the build's
+object files with nm(1).  fbt has no probe for inlined functions; those
+are reported as "no probe" when DTrace lists no probe for them.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+SSH = ['ssh', '-F', '/usr/obj/5BSD-pf-parity/keys/ssh_config',
+       '-o', 'ConnectTimeout=300']
+OBJ = '/usr/obj/usr/obj/5BSD-pf-land/amd64.amd64/sys/GENERIC'
+PFOBJ = OBJ + '/modules/usr/obj/5BSD-pf-land/sys/modules/pf'
+# Kernel (not module) objects whose functions land/pf added or changed.
+STACK_OBJS = ['if_egress.o', 'in.o', 'in6.o', 'if.o', 'if_vlan.o',
+              'if_ethersubr.o', 'route_rdomain.o', 'ip_carp.o', 'uipc_domain.o',
+              'ip_fastfwd.o', 'ip6_fastfwd.o', 'in_pcb.o', 'ip_output.o',
+              'ip6_output.o', 'tcp_subr.o', 'if_loop.o']
+GLUE = {'openbsd_compat', 'openbsd_ifq', 'openbsd_net', 'pf_divert',
+        'pf_dummynet', 'pf_ether', 'pf_freebsd', 'pf_jail', 'pf_pfsync',
+        'pf_quota', 'pf_sctp', 'pf_sdt', 'pf_sysctl'}
+
+
+def sh(host, cmd, **kw):
+    return subprocess.run(SSH + [host, cmd], text=True, **kw)
+
+
+def universe():
+    funcs = {}
+    def add(path, module):
+        out = subprocess.run(['nm', '--defined-only', path], text=True,
+                             capture_output=True).stdout
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) == 3 and parts[1] in 'tT':
+                name = parts[2]
+                if name.startswith(('.L', '__', 'sysctl_')) and \
+                        '.' in name:
+                    continue
+                name = name.split('.')[0]	# .cold, .isra clones
+                base = os.path.basename(path)[:-2]
+                funcs.setdefault((module, name), base)
+    for f in sorted(os.listdir(PFOBJ)):
+        if f.endswith('.o') and f != 'genoffset.o':
+            add(os.path.join(PFOBJ, f), 'pf')
+    for f in STACK_OBJS:
+        p = os.path.join(OBJ, f)
+        if os.path.exists(p):
+            add(p, 'kernel')
+    return funcs
+
+
+def run(host, out, suites):
+    funcs = universe()
+    kfuncs = sorted({n for (m, n) in funcs if m == 'kernel'})
+    # One clause for pf.ko, one per kernel function (fbt:kernel:NAME:entry).
+    clauses = ['fbt:pf::entry { @c["pf", probefunc] = count(); }']
+    for i in range(0, len(kfuncs), 50):
+        probes = ','.join('fbt:kernel:%s:entry' % n for n in kfuncs[i:i + 50])
+        clauses.append(probes + ' { @c["kernel", probefunc] = count(); }')
+    script = '\n'.join(clauses) + '\n'
+    sh(host, 'cat > /root/pfcov.d', input=script, check=True)
+    # Probes that exist (to tell "not run" from "no probe").
+    probes = sh(host, "dtrace -l -m pf -n 'fbt:pf::entry' 2>/dev/null | "
+                "awk 'NR>1{print $4}'; dtrace -l -n 'fbt:kernel::entry' "
+                "2>/dev/null | awk 'NR>1{print $4}'",
+                capture_output=True).stdout.split()
+    sh(host, 'rm -f /root/pfcov.out /root/pfcov.done; daemon -f -p '
+       '/root/pfcov.pid dtrace -Z -q -x aggsize=8m -x dynvarsize=8m '
+       '-s /root/pfcov.d -o /root/pfcov.out', check=True)
+    time.sleep(20)
+    t0 = time.time()
+    sh(host, 'daemon -f -o /root/pfcov.kyua.log sh -c "kyua test -r '
+       '/root/pfcov.db -k /usr/tests/Kyuafile %s; touch /root/pfcov.done"'
+       % ' '.join(suites), check=True)
+    while sh(host, 'test -f /root/pfcov.done').returncode != 0:
+        time.sleep(120)
+    sh(host, 'kill -INT $(cat /root/pfcov.pid); sleep 10')
+    raw = sh(host, 'cat /root/pfcov.out', capture_output=True).stdout
+    counts = {}
+    for line in raw.splitlines():
+        m = re.match(r'\s*(pf|kernel)\s+(\S+)\s+(\d+)\s*$', line)
+        if m:
+            counts['%s:%s' % (m.group(1), m.group(2))] = int(m.group(3))
+    report = sh(host, 'kyua report -r /root/pfcov.db --results-filter= | '
+                'tail -3', capture_output=True).stdout
+    json.dump({'suites': suites, 'seconds': int(time.time() - t0),
+               'kyua': report.strip(), 'probes': sorted(set(probes)),
+               'counts': counts}, open(out, 'w'), indent=1)
+    print('saved %s: %d functions hit' % (out, len(counts)))
+
+
+def merge(out, ins):
+    total = {'suites': [], 'probes': set(), 'counts': {}, 'kyua': []}
+    for p in ins:
+        d = json.load(open(p))
+        total['suites'] += d['suites']
+        total['probes'] |= set(d['probes'])
+        total['kyua'].append(d.get('kyua', ''))
+        for k, v in d['counts'].items():
+            total['counts'][k] = total['counts'].get(k, 0) + v
+    total['probes'] = sorted(total['probes'])
+    json.dump(total, open(out, 'w'), indent=1)
+    print('merged %d runs: %d functions hit' % (len(ins), len(total['counts'])))
+
+
+def report(cov, md=None):
+    d = json.load(open(cov))
+    funcs = universe()
+    probes = set(d['probes'])
+    hit = d['counts']
+    files = {}
+    for (module, name), base in funcs.items():
+        key = '%s:%s' % (module, name)
+        f = files.setdefault((module, base), {'hit': [], 'miss': [],
+                                              'noprobe': []})
+        if hit.get(key):
+            f['hit'].append(name)
+        elif name not in probes:
+            f['noprobe'].append(name)
+        else:
+            f['miss'].append(name)
+    lines = ['| file | kind | functions | hit | % | not run |', '|---|---|---|---|---|---|']
+    th = tm = 0
+    for (module, base), f in sorted(files.items()):
+        n = len(f['hit']) + len(f['miss'])
+        if n == 0:
+            continue
+        kind = 'glue' if base in GLUE else ('vendor' if module == 'pf' else 'stack')
+        th += len(f['hit'])
+        tm += len(f['miss'])
+        lines.append('| %s | %s | %d | %d | %d | %s |' % (
+            base, kind, n, len(f['hit']), 100 * len(f['hit']) // n,
+            ', '.join(sorted(f['miss']))))
+    lines.append('')
+    lines.append('Total: %d of %d probed functions run (%d%%).' % (
+        th, th + tm, 100 * th // max(1, th + tm)))
+    text = '\n'.join(lines)
+    if md:
+        open(md, 'w').write(text + '\n')
+    print(text)
+
+
+def main():
+    if len(sys.argv) < 3:
+        sys.exit(__doc__)
+    cmd = sys.argv[1]
+    if cmd == 'run':
+        run(sys.argv[2], sys.argv[3], sys.argv[4:])
+    elif cmd == 'merge':
+        merge(sys.argv[2], sys.argv[3:])
+    elif cmd == 'report':
+        md = None
+        if '--md' in sys.argv:
+            md = sys.argv[sys.argv.index('--md') + 1]
+        report(sys.argv[2], md)
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == '__main__':
+    main()
