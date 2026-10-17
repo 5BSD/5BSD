@@ -45,12 +45,29 @@ an empty ruleset.
 the SystemExtension broker (`load_kld -b pf`; `pf` is on BSDExtension's
 allow-list), because the capability plane refuses `kldload(2)` after boot.
 
-Three things stay system wide. Memory pools are shared, so the limits set
-with `set limit` belong to the host: a vnet jail may restate the current
-values (pfctl loads every limit with a ruleset) but changing one fails with
-`EPERM`. Tag names (`tag`/`tagged`) share one name space. The pf locks are
-shared, so a large ruleset reload in one vnet briefly delays packet
-processing in the others.
+Memory pools are shared, but each vnet counts its own states, source nodes,
+fragment entries, tables, table entries, delayed packets and anchors and is
+refused at its own limit, so a jail cannot use up the host's (or another
+jail's) budget and leave its pf failing closed. The limits set with
+`set limit` belong to the host and are the host's own. A vnet jail's limit
+is the host's scaled by the host-only sysctl `net.pf.vnet_limit_pct`
+(1–100, default 100):
+
+```sh
+sysctl net.pf.vnet_limit_pct=25   # each jail gets a quarter of the host's limits
+```
+
+In a jail, `pfctl -sm` shows the jail's limits and `pfctl -si` its own
+counts; a jail may restate its limit or the host's (pfctl loads every limit
+with a ruleset) but changing one fails with `EPERM`. The read-only sysctl
+trees `net.pf.vnet_count`, `net.pf.vnet_limit` and `net.pf.vnet_refused`
+show, for the reader's vnet, the items held, the effective limits and the
+allocations refused at a limit. A jail at its fragment limit drops its own
+oldest fragments. Tag names (`tag`/`tagged`), queue and route label ids
+are allocated per vnet, and tags do not cross vnets (epair(4) strips them).
+
+The pf locks stay system wide, so a large ruleset reload in one vnet
+briefly delays packet processing in the others.
 
 The pflog, pfsync and pflow interfaces belong to the vnet that created
 them and cannot be moved: `ifconfig pflog0 vnet <jail>` and
@@ -185,7 +202,7 @@ families and `pflowctl` are gone; programs written for OpenBSD's
 | Area | State |
 |---|---|
 | OpenBSD regress: pfctl, pf_table, pf_policy, pf_forward, pf_fragment | Run on 5BSD; remaining differences tracked in the parity report |
-| Per-vnet pf | Done; `vnet_test` (isolation, limits, clones, teardown with live state, nested vnet jails) |
+| Per-vnet pf | Done; `vnet_test` (isolation, limits, clones, teardown with live state, nested vnet jails); per-vnet pool quotas and tag ids: integration `host_limits`, `quotas` |
 | divert-to, divert-reply, divert-packet | Done; `divert_test` and OpenBSD `pf_divert` |
 | `jail` option | Done; `jail_test` |
 | Routing domains (`rdomain`, `rtable`) | Done on FIBs; see [Routing Domains](rdomains.md) |

@@ -65,3 +65,24 @@ integ_cleanup()
 	done
 	return 0
 }
+
+# quota_pct_set pct: set the host's net.pf.vnet_limit_pct (a VNET jail's pf
+# limits in percent of the host's), saving the old value once for
+# quota_pct_restore.  Skips when pf has no per-VNET quotas.
+quota_pct_set()
+{
+	sysctl -n net.pf.vnet_limit_pct > /dev/null 2>&1 ||
+	    atf_skip "pf has no per-VNET quotas (net.pf.vnet_limit_pct)"
+	[ -f vnet_limit_pct.original ] ||
+	    sysctl -n net.pf.vnet_limit_pct > vnet_limit_pct.original
+	sysctl net.pf.vnet_limit_pct=$1 > /dev/null ||
+	    atf_fail "cannot set net.pf.vnet_limit_pct to $1"
+}
+
+quota_pct_restore()
+{
+	if [ -f vnet_limit_pct.original ]; then
+		sysctl net.pf.vnet_limit_pct=$(cat vnet_limit_pct.original) \
+		    > /dev/null
+	fi
+}

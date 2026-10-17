@@ -109,7 +109,7 @@ isolation_cleanup()
 atf_test_case "limits" "cleanup"
 limits_head()
 {
-	atf_set descr 'Pool limits are shared and owned by the host vnet'
+	atf_set descr 'Pool limits are owned by the host vnet'
 	atf_set require.user root
 }
 

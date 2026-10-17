@@ -104,7 +104,43 @@ and
 interfaces belong to the vnet, and the
 .Nm
 device acts on the vnet of the process that opened it.
-Memory pool limits are shared; only the host may change them.
+Tag, queue and route label ids are allocated per vnet.
+.Pp
+The memory pools are shared, but each vnet counts its own states, source
+nodes, fragment entries, tables, table entries, delayed packets and
+anchors and is refused at its own limit, so no vnet can use up another's.
+Only the host may change the limits.
+The host's limits are its own
+.Ic set limit
+values.
+A vnet jail's limit is the host's limit scaled by the host-only
+.Xr sysctl 8
+.Va net.pf.vnet_limit_pct
+(1 to 100, default 100).
+In a jail,
+.Dv DIOCGETLIMIT
+returns the jail's limit, and
+.Dv DIOCSETLIMIT
+accepts only the host's limit or the jail's own (pfctl restates every
+limit with each ruleset) and otherwise fails with
+.Er EPERM .
+The read-only
+.Va net.pf.vnet_count ,
+.Va net.pf.vnet_limit
+and
+.Va net.pf.vnet_refused
+sysctl trees show, for the reader's vnet, the items held, the effective
+limits (4294967295 when the host has set none) and the allocations
+refused at a limit, by pool:
+.Va states ,
+.Va src_nodes ,
+.Va frags ,
+.Va tables ,
+.Va table_entries ,
+.Va pktdelay_pkts
+and
+.Va anchors .
+A vnet that reaches its fragment limit drops its own oldest fragments.
 .Pp
 A descriptor that has issued no other ioctl can be moved to the vnet of a
 jail with
