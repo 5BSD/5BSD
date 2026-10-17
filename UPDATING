@@ -46,6 +46,11 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	unshaped, where they were lost before; use ether rules.  IP-rule
 	pipes on the bridge interface itself (pfil_bridge) are not
 	supported: pf cannot tell bridged packets there from local ones.
+	FIBs follow OpenBSD rtables: a FIB that is not a routing domain
+	shares the interfaces of its domain (domain 0 without routing
+	domains) for route gateways, also with net.add_addr_allfibs=0, as
+	"route -T 1 add" does on OpenBSD.  Use routing domains to isolate
+	tables.
 
 20261015:
 	OpenBSD's pf replaces FreeBSD's (see the 20261012 entries).  The

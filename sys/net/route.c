@@ -297,11 +297,10 @@ ifa_ifwithroute(int flags, const struct sockaddr *dst,
 		ifa = ifa_ifwithnet(gateway, 0, fibnum);
 	/*
 	 * 5BSD: a routing table that is not a routing domain itself shares
-	 * the interfaces of its domain (OpenBSD rtables of an rdomain).
-	 * Without routing domains FIBs keep FreeBSD's isolation.
+	 * the interfaces of its domain (OpenBSD rtables of an rdomain);
+	 * without routing domains every FIB is a table of domain 0.
 	 */
-	if (ifa == NULL && V_rt_rdomains != 0 &&
-	    rt_fib_l2(fibnum) != fibnum) {
+	if (ifa == NULL && rt_fib_l2(fibnum) != fibnum) {
 		int scope = RT_RDOMAIN_SEL(rt_fib_l2(fibnum));
 
 		if ((flags & RTF_GATEWAY) == 0)

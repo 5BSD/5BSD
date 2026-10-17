@@ -707,12 +707,14 @@ udp_dontroute6_cleanup()
 }
 
 
-# A gateway reachable only through an interface of another FIB is not
-# usable in this one (while no routing domains exist).
+# 5BSD: FIBs are OpenBSD routing tables.  A table that is not a routing
+# domain itself shares the interfaces of its domain (domain 0 while no
+# routing domains exist): a gateway on an interface of FIB 0 is usable in
+# another FIB, as with "route -T 1 add" on OpenBSD.
 atf_test_case gateway_interface_fib cleanup
 gateway_interface_fib_head()
 {
-	atf_set "descr" "A route's gateway must be on an interface of the route's FIB"
+	atf_set "descr" "A FIB shares the interfaces of its routing domain for gateways"
 	atf_set "require.user" "root"
 }
 
@@ -725,10 +727,11 @@ gateway_interface_fib_body()
 
 	setup_tap 0 inet 192.0.2.2 24
 	atf_check -o ignore route add -fib 0 198.51.100.0/24 192.0.2.1
-	atf_check -s not-exit:0 -e ignore -o ignore \
-	    route add -fib ${FIB0} 198.51.100.0/24 192.0.2.1
-	atf_check -s not-exit:0 -e ignore -o ignore \
-	    route add -fib ${FIB0} -iface 198.51.100.0/24 192.0.2.2
+	atf_check -o ignore route add -fib ${FIB0} 198.51.100.0/24 192.0.2.1
+	atf_check -o match:"192\.0\.2\.1" route -n get -fib ${FIB0} 198.51.100.1
+	atf_check -o ignore route delete -fib ${FIB0} 198.51.100.0/24
+	atf_check -o ignore route add -fib ${FIB0} -iface 198.51.100.0/24 192.0.2.2
+	atf_check -o ignore route delete -fib ${FIB0} 198.51.100.0/24
 	atf_check -o ignore route delete -fib 0 198.51.100.0/24
 }
 
