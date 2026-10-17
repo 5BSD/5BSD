@@ -240,7 +240,7 @@ void
 in6_proto_cksum_out(struct mbuf *m, struct ifnet *ifp)
 {
 	struct ip6_hdr *ip6 = mtod(m, struct ip6_hdr *);
-	int off, nxt, plen;
+	int off, nxt, plen, sumoff;
 	u_int16_t csum;
 
 	if ((m->m_pkthdr.csum_flags & (CSUM_IP6_TCP | CSUM_IP6_UDP)) == 0) {
@@ -252,24 +252,21 @@ in6_proto_cksum_out(struct mbuf *m, struct ifnet *ifp)
 	if (off < (int)sizeof(*ip6))
 		goto done;
 	plen = sizeof(*ip6) + ntohs(ip6->ip6_plen) - off;
-	if (nxt == IPPROTO_TCP) {
-		struct tcphdr *th;
-
-		if (m->m_len < off + (int)sizeof(*th))
-			goto done;
-		th = (struct tcphdr *)(mtod(m, caddr_t) + off);
-		th->th_sum = 0;
-		th->th_sum = in6_cksum(m, IPPROTO_TCP, off, plen);
-	} else if (nxt == IPPROTO_UDP) {
-		struct udphdr *uh;
-
-		if (m->m_len < off + (int)sizeof(*uh))
-			goto done;
-		uh = (struct udphdr *)(mtod(m, caddr_t) + off);
-		uh->uh_sum = 0;
-		csum = in6_cksum(m, IPPROTO_UDP, off, plen);
-		uh->uh_sum = csum == 0 ? 0xffff : csum;
-	}
+	/* Extension headers may leave the transport header in a later mbuf. */
+	if (nxt == IPPROTO_TCP)
+		sumoff = off + offsetof(struct tcphdr, th_sum);
+	else if (nxt == IPPROTO_UDP)
+		sumoff = off + offsetof(struct udphdr, uh_sum);
+	else
+		goto done;
+	if (plen <= 0 || sumoff + (int)sizeof(csum) > m->m_pkthdr.len)
+		goto done;
+	csum = 0;
+	m_copyback(m, sumoff, sizeof(csum), &csum, M_NOWAIT);
+	csum = in6_cksum(m, nxt, off, plen);
+	if (nxt == IPPROTO_UDP && csum == 0)
+		csum = 0xffff;
+	m_copyback(m, sumoff, sizeof(csum), &csum, M_NOWAIT);
 done:
 	m->m_pkthdr.csum_flags &= ~(CSUM_IP6_TCP | CSUM_IP6_UDP |
 	    CSUM_IP_TCP | CSUM_IP_UDP);
@@ -703,9 +700,22 @@ obsd_output_tso(struct ifnet *ifp, struct mbuf **mp, int af,
 	/* route-to skips ip_output(): finish a delayed SCTP CRC32c here. */
 	if (m->m_pkthdr.csum_flags & (CSUM_SCTP | CSUM_SCTP_IPV6) &
 	    ~ifp->if_hwassist) {
-		int off = (af == AF_INET) ?
-		    (mtod(m, struct ip *)->ip_hl << 2) : sizeof(struct ip6_hdr);
+		int nxt, off;
 		uint32_t sum = 0;
+
+		if (af == AF_INET)
+			off = mtod(m, struct ip *)->ip_hl << 2;
+		else {
+			nxt = -1;
+			off = ip6_lasthdr(m, 0, IPPROTO_IPV6, &nxt);
+			if (nxt != IPPROTO_SCTP)
+				off = -1;
+		}
+		if (off < 0 || off + 12 > m->m_pkthdr.len) {
+			m_freem(m);
+			*mp = NULL;
+			return (1);
+		}
 
 		/* As sctp_delayed_cksum(), which needs options SCTP. */
 		m_copyback(m, off + 8, sizeof(sum), &sum, M_NOWAIT);

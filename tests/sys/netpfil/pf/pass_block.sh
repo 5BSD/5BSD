@@ -604,6 +604,69 @@ blocklist_helpers_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "v6_exthdr_cksum" "cleanup"
+v6_exthdr_cksum_head()
+{
+	atf_set descr 'Delayed IPv6 TCP/UDP checksums are finished behind extension headers'
+	atf_set require.user root
+	atf_set require.progs python3
+}
+
+v6_exthdr_cksum_body()
+{
+	pft_init
+
+	epair=$(vnet_mkepair)
+	vnet_mkjail alcatraz ${epair}a
+	vnet_mkjail srv ${epair}b
+	# The sender leaves the checksums to the "hardware" (txcsum6), so pf
+	# finishes them; both ends verify received checksums in software.
+	jexec alcatraz ifconfig ${epair}a inet6 2001:db8:42::1/64 \
+	    -rxcsum -rxcsum6 txcsum6 up no_dad
+	jexec srv ifconfig ${epair}b inet6 2001:db8:42::2/64 \
+	    -rxcsum -rxcsum6 up no_dad
+
+	cat > sender.py <<'PY'
+import socket, sys
+IPV6_DSTOPTS = getattr(socket, "IPV6_DSTOPTS", 50)
+# Destination options header: next header, length 0 (8 bytes), PadN(4).
+opts = bytes([0, 0, 1, 4, 0, 0, 0, 0])
+proto, dst, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
+if proto == "udp":
+    s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+    s.setsockopt(socket.IPPROTO_IPV6, IPV6_DSTOPTS, opts)
+    s.sendto(b"udp-dstopts\n", (dst, port))
+else:
+    s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    s.setsockopt(socket.IPPROTO_IPV6, IPV6_DSTOPTS, opts)
+    s.settimeout(5)
+    s.connect((dst, port))
+    s.sendall(b"tcp-dstopts\n")
+    s.close()
+PY
+
+	jexec alcatraz pfctl -e
+	pft_set_rules alcatraz "pass"
+
+	jexec srv nc -6 -u -l 2001:db8:42::2 4000 > udp.out &
+	jexec srv nc -6 -l 2001:db8:42::2 4001 > tcp.out &
+	sleep 0.5
+
+	atf_check -s exit:0 jexec alcatraz python3 $(pwd)/sender.py udp \
+	    2001:db8:42::2 4000
+	atf_check -s exit:0 jexec alcatraz python3 $(pwd)/sender.py tcp \
+	    2001:db8:42::2 4001
+	sleep 1
+	atf_check -o match:'udp-dstopts' cat udp.out
+	atf_check -o match:'tcp-dstopts' cat tcp.out
+}
+
+v6_exthdr_cksum_cleanup()
+{
+	pkill -j srv nc 2>/dev/null
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "blocklist_helpers"
@@ -611,6 +674,7 @@ atf_init_test_cases()
 	atf_add_test_case "enable_disable"
 	atf_add_test_case "v4"
 	atf_add_test_case "v6"
+	atf_add_test_case "v6_exthdr_cksum"
 	atf_add_test_case "noalias"
 	atf_add_test_case "nested_inline"
 	atf_add_test_case "urpf"
