@@ -1628,8 +1628,19 @@ in6_notify_ifa(struct ifnet *ifp, struct in6_ifaddr *ia,
 			    "remove a route to the old destination: %s\n",
 			    ip6_sprintf(ip6buf, &ia->ia_addr.sin6_addr)));
 			/* proceed anyway... */
-		} else
+		} else if ((ia->ia_flags & IFA_ROUTE) != 0) {
+			struct in6_ifaddr *oia;
+
 			ia->ia_flags &= ~IFA_ROUTE;
+			/* As in6_purgeaddr(): hand the route over. */
+			oia = in6_p2p_dst_sibling(ia, false);
+			if (oia != NULL) {
+				if (in6_handle_dstaddr_rtrequest(RTM_ADD,
+				    oia) == 0)
+					oia->ia_flags |= IFA_ROUTE;
+				ifa_free(&oia->ia_ifa);
+			}
+		}
 		ia->ia_dstaddr = *pdst;
 	}
 
