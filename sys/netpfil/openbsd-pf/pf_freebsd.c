@@ -1288,6 +1288,12 @@ pf_fbsd_vnet_uninit(void *arg __unused)
 	 */
 	obsd_if_clone_vnet_detach();
 	V_pf_fbsd_ready = 0;
+	/*
+	 * pfsync input checks the flag in the net epoch of the IP input
+	 * path and then queues for its task, which is drained and purged
+	 * below: wait out an input that saw it still set.
+	 */
+	NET_EPOCH_WAIT();
 
 	NET_LOCK();
 	PF_LOCK();
