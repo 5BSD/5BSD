@@ -49,22 +49,32 @@ Memory pools are shared, but each vnet counts its own states, source nodes,
 fragment entries, tables, table entries, delayed packets and anchors and is
 refused at its own limit, so a jail cannot use up the host's (or another
 jail's) budget and leave its pf failing closed. The limits set with
-`set limit` belong to the host and are the host's own. A vnet jail's limit
-is the host's scaled by the host-only sysctl `net.pf.vnet_limit_pct`
-(1–100, default 100):
+`set limit` belong to the host and are the host's own: what the jails hold
+does not count against them. A vnet jail's limit is the host's scaled by
+the host-only sysctl `net.pf.vnet_limit_pct` (1–100, default 100), and a
+jail shares it with its descendant vnet jails (their items count in every
+ancestor vnet jail too). All vnet jails together are held to the host's
+limits scaled by the host-only `net.pf.vnet_total_pct` (1–10000, default
+200), and their fragment entries to the mbuf clusters the host's own
+frags limit leaves:
 
 ```sh
-sysctl net.pf.vnet_limit_pct=25   # each jail gets a quarter of the host's limits
+sysctl net.pf.vnet_limit_pct=25   # each jail tree gets a quarter of the host's limits
+sysctl net.pf.vnet_total_pct=100  # all jails together at most the host's limits
 ```
 
 In a jail, `pfctl -sm` shows the jail's limits and `pfctl -si` its own
 counts; a jail may restate its limit or the host's (pfctl loads every limit
-with a ruleset) but changing one fails with `EPERM`. The read-only sysctl
-trees `net.pf.vnet_count`, `net.pf.vnet_limit` and `net.pf.vnet_refused`
-show, for the reader's vnet, the items held, the effective limits and the
-allocations refused at a limit. A jail at its fragment limit drops its own
-oldest fragments. Tag names (`tag`/`tagged`), queue and route label ids
-are allocated per vnet, and tags do not cross vnets (epair(4) strips them).
+with a ruleset) but changing one fails with `EPERM`. The default adaptive
+timeouts a jail inherits are scaled down with its states limit when they
+exceed it. The read-only sysctl trees `net.pf.vnet_count`,
+`net.pf.vnet_limit` and `net.pf.vnet_refused` show, for the reader's vnet,
+the items held (with its descendants'), the effective limits and the
+allocations refused at a limit; `net.pf.vnet_total_count`,
+`net.pf.vnet_total_limit` and `net.pf.vnet_total_refused` the jails'
+total. A jail at its fragment limit drops its own oldest fragments. Tag
+names (`tag`/`tagged`), queue and route label ids are allocated per vnet,
+and tags do not cross vnets (epair(4) strips them).
 
 The pf locks stay system wide, so a large ruleset reload in one vnet
 briefly delays packet processing in the others.

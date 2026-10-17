@@ -102,12 +102,16 @@ to a re-import.
                  pf_fbsd_bindjail() in pf_freebsd.c; used by BSDNetwork for
                  system.Network.PF)
   VNET quotas (marked "5BSD: VNET quotas"): DIOCSETLIMIT compares the new
-                 limit with pool_nout(), the current vnet's items.  The
-                 pools stay shared, but each vnet is held to its own limit
-                 in them (glue: sys/netpfil/openbsd-pf/pf_quota.c and the
-                 pool(9) wrappers in openbsd_compat.c); pf_pool_limits[]
-                 holds the host's limits, and a vnet jail's are the host's
-                 scaled by net.pf.vnet_limit_pct
+                 limit with pool_nout(), the current vnet's items (pf_ioctl.c);
+                 pf_state_expires() passes the default adaptive timeouts
+                 through pf_quota_adaptive(), which scales a jail's to its
+                 states limit (pf.c).  The pools stay shared, but each vnet
+                 is held to its own limit in them (glue:
+                 sys/netpfil/openbsd-pf/pf_quota.c and the pool(9) wrappers
+                 in openbsd_compat.c); pf_pool_limits[] holds the host's
+                 limits, a vnet jail's are the host's scaled by
+                 net.pf.vnet_limit_pct and shared with its descendants, and
+                 all jails together are capped by net.pf.vnet_total_pct
   m_tag (marked "5BSD: m_tag"): OpenBSD keeps per-packet pf state in
                  m_pkthdr.pf; 5BSD keeps it in an mbuf tag (PACKET_TAG_PF,
                  sys/sys/mbuf.h) so MSIZE stays 256.  Every access is

@@ -616,8 +616,9 @@ u_int	pool_nout(void *);
 /* Per-VNET pf resource quotas (pf_quota.c). */
 struct pf_quota;
 int	pf_quota_pool_index(struct pool *);
-int	pf_quota_charge(int, int, struct pf_quota **);
-void	pf_quota_release(struct pf_quota *, int);
+int	pf_quota_charge(int, int, uintptr_t *);
+void	pf_quota_release(uintptr_t, int);
+void	pf_quota_adaptive(u_int32_t *, u_int32_t *);
 u_int	pf_quota_count(int);
 #define	pool_sethiwat(pp, n)		do { } while (0)
 #define	pool_setlowat(pp, n)		do { } while (0)

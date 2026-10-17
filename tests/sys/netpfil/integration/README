@@ -9,7 +9,8 @@ the seams between them:
 
   vnet_dev      /dev/pf per VNET, devfs rulesets 4 and 5, descriptor binding
   host_limits   pool limits owned by the host vnet
-  quotas        per-VNET pool quotas, net.pf.vnet_limit_pct, per-VNET tag ids
+  quotas        per-VNET pool quotas, shared by child jails and capped for all
+                jails together (net.pf.vnet_limit_pct, vnet_total_pct), tag ids
   modules       preloaded modules, pf.ko cloners, kldload vs. the broker, rc.d
   cloners       pflog/pfsync/pflow cloned interfaces in VNET jails
   jail_rule     the "jail" rule option (5BSD extension)

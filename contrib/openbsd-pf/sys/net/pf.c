@@ -2063,6 +2063,7 @@ pf_state_expires(const struct pf_state *st, uint8_t stimeout)
 		start = pf_default_rule.timeout[PFTM_ADAPTIVE_START];
 		end = pf_default_rule.timeout[PFTM_ADAPTIVE_END];
 		states = pf_status.states;
+		pf_quota_adaptive(&start, &end);	/* 5BSD: VNET quotas */
 	}
 	if (end && states > start && start < end) {
 		if (states >= end)

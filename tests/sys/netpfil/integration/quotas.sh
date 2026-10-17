@@ -7,11 +7,13 @@
 # of every pool with a pf limit and is refused at its own limit
 # (sys/netpfil/openbsd-pf/pf_quota.c): the host at its own "set limit"
 # values, a VNET jail at the host's limit scaled by the host-only sysctl
-# net.pf.vnet_limit_pct.  Tag and queue ids are per VNET.  A jail therefore
-# cannot use up the host's states, fragments or tag ids.
+# net.pf.vnet_limit_pct, shared with its child VNET jails, and all jails
+# together at the host's limit scaled by net.pf.vnet_total_pct.  Tag and
+# queue ids are per VNET.  A jail therefore cannot use up the host's
+# states, fragments or tag ids.
 #
 # Run exclusively in the host vnet (Makefile); every case saves the host
-# limits and net.pf.vnet_limit_pct and restores them in cleanup.
+# limits and the quota sysctls and restores them in cleanup.
 
 . $(atf_get_srcdir)/integration.subr
 
@@ -58,6 +60,7 @@ quota_init()
 {
 	pft_init
 	quota_pct_set 100
+	quota_total_pct_set 200
 	limits_save
 }
 
@@ -244,6 +247,10 @@ jail_fragment_quota_body()
 	expect_eq "$(limit_of frags b)" "100" "limit_of frags b"
 	atf_check -s exit:0 -o ignore jexec a ping -c 1 -s 3000 198.51.100.2
 
+	# Resolve b's link-layer address first: raw fragments sent before
+	# ARP completes would be dropped.
+	atf_check -s exit:0 -o ignore jexec a ping -c 1 192.0.2.2
+
 	# b holds fragments that are never completed, at most its quota;
 	# at the quota pf flushes b's own oldest fragments.
 	atf_check -s exit:0 -o match:'^sent 300$' \
@@ -288,6 +295,12 @@ pct_host_only_body()
 	atf_check -s not-exit:0 -e ignore -o ignore sysctl net.pf.vnet_limit_pct=0
 	atf_check -s not-exit:0 -e ignore -o ignore sysctl net.pf.vnet_limit_pct=101
 	expect_eq "$(sysctl -n net.pf.vnet_limit_pct)" "100" "after bad values"
+	atf_check -s not-exit:0 -e ignore -o ignore \
+	    jexec a sysctl net.pf.vnet_total_pct=1000
+	atf_check -s not-exit:0 -e ignore -o ignore sysctl net.pf.vnet_total_pct=0
+	atf_check -s not-exit:0 -e ignore -o ignore \
+	    sysctl net.pf.vnet_total_pct=10001
+	expect_eq "$(sysctl -n net.pf.vnet_total_pct)" "200" "vnet_total_pct"
 
 	# The host's value applies to every jail at once.
 	limits_set "states 4000"
@@ -338,6 +351,117 @@ jail_restates_quota_cleanup()
 	quota_cleanup
 }
 
+# wait_count jail pool value: wait (up to 30 s) until the jail's
+# net.pf.vnet_count.<pool> is at most value; removed states are freed by
+# the purge task.
+wait_count()
+{
+	for _i in $(seq 1 30); do
+		[ "$(quota_sysctl count $2 $1)" -le "$3" ] && return 0
+		sleep 1
+	done
+	atf_fail "net.pf.vnet_count.$2 in $1 stays above $3"
+}
+
+atf_test_case "nested_share" "cleanup"
+nested_share_head()
+{
+	atf_set descr 'Child VNET jails share their parent jail'"'"'s quota'
+	atf_set require.user root
+}
+
+nested_share_body()
+{
+	quota_init
+	limits_set "states 1000"
+	quota_pct_set 1
+	vnet_mkjail p
+	vnet_mkjail q
+	jail -m name=p children.max=4 ||
+	    atf_skip "nested jails are not available"
+	jexec p jail -c name=c1 vnet persist ||
+	    atf_skip "nested VNET jails are not available"
+	jexec p jail -c name=c2 vnet persist
+
+	# Every jail's quota is 10 states; c1 and c2 count in p's as well.
+	atf_check -o match:'^DIOCADDSTATE=ENOMEM added=10$' \
+	    jexec p jexec c1 ${PFIO} addstate 20 95
+	atf_check -o match:'^DIOCADDSTATE=ENOMEM added=0$' \
+	    jexec p jexec c2 ${PFIO} addstate 20 96
+	atf_check -o match:'^DIOCADDSTATE=ENOMEM added=0$' \
+	    jexec p ${PFIO} addstate 20 97
+	expect_eq "$(quota_sysctl count states p)" "10" "vnet_count.states p"
+	expect_eq "$(jexec p jexec c1 sysctl -n net.pf.vnet_count.states)" \
+	    "10" "vnet_count.states c1"
+
+	# Another jail tree has its own quota.
+	atf_check -o match:'^DIOCADDSTATE=ENOMEM added=10$' \
+	    jexec q ${PFIO} addstate 20 98
+
+	# c1's states gone, its parent's quota serves c2.
+	atf_check -s exit:0 -e ignore -o ignore jexec p jexec c1 pfctl -F states
+	wait_count p states 0
+	atf_check -o match:'^DIOCADDSTATE=ENOMEM added=10$' \
+	    jexec p jexec c2 ${PFIO} addstate 20 96
+}
+
+nested_share_cleanup()
+{
+	jexec p jail -r c1 2>/dev/null
+	jexec p jail -r c2 2>/dev/null
+	quota_cleanup
+}
+
+atf_test_case "jail_total_ceiling" "cleanup"
+jail_total_ceiling_head()
+{
+	atf_set descr 'All VNET jails together are held to net.pf.vnet_total_pct; the host is not'
+	atf_set require.user root
+}
+
+jail_total_ceiling_body()
+{
+	quota_init
+	limits_set "states 1000"
+	quota_pct_set 2
+	quota_total_pct_set 5
+	vnet_mkjail a
+	vnet_mkjail b
+	vnet_mkjail c
+
+	# 20 states for each jail, 50 for all of them.
+	expect_eq "$(quota_sysctl limit states a)" "20" "vnet_limit.states a"
+	expect_eq "$(sysctl -n net.pf.vnet_total_limit.states)" "50" \
+	    "vnet_total_limit.states"
+	atf_check -o match:'^DIOCADDSTATE=ENOMEM added=20$' \
+	    jexec a ${PFIO} addstate 30 95
+	atf_check -o match:'^DIOCADDSTATE=ENOMEM added=20$' \
+	    jexec b ${PFIO} addstate 30 95
+	atf_check -o match:'^DIOCADDSTATE=ENOMEM added=10$' \
+	    jexec c ${PFIO} addstate 30 95
+	expect_eq "$(sysctl -n net.pf.vnet_total_count.states)" "50" \
+	    "vnet_total_count.states"
+	[ "$(sysctl -n net.pf.vnet_total_refused.states)" -gt 0 ] ||
+	    atf_fail "net.pf.vnet_total_refused.states is 0"
+
+	# The host's own budget is separate from the jails' total.
+	atf_check -o match:'^DIOCADDSTATE=ok added=100$' ${PFIO} addstate 100 91
+
+	# Fragments: the jails' total stays within the mbuf clusters the
+	# host's own frags limit leaves.
+	ncl=$(sysctl -n kern.ipc.nmbclusters)
+	hf=$(limit_of frags)
+	tf=$(sysctl -n net.pf.vnet_total_limit.frags)
+	echo "nmbclusters ${ncl}, host frags ${hf}, jails' frags ${tf}"
+	[ "${tf}" -le $((ncl - hf)) ] ||
+	    atf_fail "the jails may hold ${tf} fragments, ${ncl} - ${hf} clusters"
+}
+
+jail_total_ceiling_cleanup()
+{
+	quota_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "jail_state_quota"
@@ -346,4 +470,6 @@ atf_init_test_cases()
 	atf_add_test_case "jail_fragment_quota"
 	atf_add_test_case "pct_host_only"
 	atf_add_test_case "jail_restates_quota"
+	atf_add_test_case "nested_share"
+	atf_add_test_case "jail_total_ceiling"
 }

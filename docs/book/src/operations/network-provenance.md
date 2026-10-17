@@ -54,7 +54,7 @@ file has a one-line edit with a marker comment:
 |---|---|
 | `5BSD: m_tag` | OpenBSD's per-packet `struct pkthdr_pf` lives in an mbuf tag (`PACKET_TAG_PF`), so `MSIZE` stays 256 |
 | `5BSD: VNET` | OpenBSD globals made per-VNET |
-| `5BSD: VNET quotas` | `DIOCSETLIMIT` compares a new limit with the current VNET's own items (`pool_nout()`, per-VNET pool quotas) |
+| `5BSD: VNET quotas` | per-VNET pool quotas: `DIOCSETLIMIT` compares a new limit with the current VNET's own items (`pool_nout()`); `pf_state_expires()` scales a jail's default adaptive timeouts (`pf_quota_adaptive()`) |
 | `5BSD: DTrace` | SDT probe sites (dtrace_pf(4)) |
 | `5BSD: jail` | the 5BSD `jail` rule option |
 | `5BSD: dummynet` | `dnpipe`/`dnqueue` (FreeBSD pf feature) |
@@ -78,7 +78,7 @@ goes in its own file in `sys/netpfil/openbsd-pf` (`pf_dummynet.c`,
 | `ether` rules | FreeBSD pf | separate layer-2 ruleset on the link-layer pfil hooks; `pfctl -s ethernet`, `-F ethernet`; ioctls `DIOC*ETHRULE*` |
 | SCTP, multihoming, `allow-related`, `sctp.*` timeouts | FreeBSD pf | association tracking with verification tags; extra states for INIT/ASCONF addresses |
 | Per-VNET pf | 5BSD | each VNET jail has its own rules, states, tables and interfaces; jails without their own VNET cannot open `/dev/pf`; pool limits are host-owned; pflog, pfsync and pflow cannot move between VNETs (`IFKF_NOVMOVE`, `sys/net/if.c`) |
-| Per-VNET pool quotas | 5BSD | each VNET counts its own states, src nodes, fragments, tables, table entries, delayed packets and anchors in the shared pools and is refused at its own limit (no global pool limit); a VNET jail's limit is the host's scaled by the host-only `net.pf.vnet_limit_pct`; tag, queue and route label ids per VNET; `net.pf.vnet_{count,limit,refused}`; glue `pf_quota.c`, owner trailer in `pool_get()`/`pool_put()` (`openbsd_compat.c`) |
+| Per-VNET pool quotas | 5BSD | each VNET counts its own states, src nodes, fragments, tables, table entries, delayed packets and anchors in the shared pools and is refused at its own limit (the host's budget is its own); a VNET jail's limit is the host's scaled by the host-only `net.pf.vnet_limit_pct`, shared with its descendant VNET jails; all jails together are capped at `net.pf.vnet_total_pct` of the host's limits (fragments also by the mbuf clusters the host leaves); a jail's default adaptive timeouts scale with its states limit; tag, queue and route label ids per VNET; `net.pf.vnet_{count,limit,refused}`, `net.pf.vnet_total_{count,limit,refused}`; glue `pf_quota.c`, owner trailer in `pool_get()`/`pool_put()` (`openbsd_compat.c`) |
 | `DIOCBINDJAIL` | 5BSD | moves an unused `/dev/pf` descriptor to a descendant jail's VNET; BSDNetwork uses it so system.Network.PF serves the caller's own states |
 | pfsync IPv6 peers (`5BSD: pfsync6`) | FreeBSD feature, 5BSD code | IPv6 unicast or ff12::f0 peers; messages unchanged, IPv6 header with hop limit 255; `SIOC[GS]ETPFSYNC6` |
 | pfsync CARP demotion (`5BSD: carp`) | OpenBSD design on FreeBSD carp | OpenBSD's carp-group counts drive `net.inet.carp.demotion` through `net.pfsync.carp_demotion_factor`; glue `pf_pfsync.c` |

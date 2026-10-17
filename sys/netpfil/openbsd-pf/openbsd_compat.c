@@ -71,17 +71,17 @@ pool_init(struct pool *pp, size_t size, u_int align, int ipl, int flags,
 	zsize = size;
 	/* A pool with a pf limit carries its owner's accounting (pf_quota.c). */
 	if ((pp->pr_quota = pf_quota_pool_index(pp)) != 0) {
-		pp->pr_qoff = roundup2(size, sizeof(struct pf_quota *));
-		zsize = pp->pr_qoff + sizeof(struct pf_quota *);
+		pp->pr_qoff = roundup2(size, sizeof(uintptr_t));
+		zsize = pp->pr_qoff + sizeof(uintptr_t);
 	}
 	pp->pr_zone = uma_zcreate(wchan, zsize, NULL, NULL, NULL, NULL,
 	    align ? align - 1 : UMA_ALIGN_PTR, 0);
 }
 
-static __inline struct pf_quota **
+static __inline uintptr_t *
 pool_owner(struct pool *pp, void *v)
 {
-	return ((struct pf_quota **)((char *)v + pp->pr_qoff));
+	return ((uintptr_t *)((char *)v + pp->pr_qoff));
 }
 
 void
@@ -95,15 +95,16 @@ pool_destroy(struct pool *pp)
 void *
 pool_get(struct pool *pp, int flags)
 {
-	struct pf_quota *q = NULL;
+	uintptr_t q = 0;
 	void *v;
 	int mflags;
 
 	if (pp->pr_quota != 0) {
 		/*
 		 * The current VNET's own count against its own limit (the
-		 * host's hard limit, or a VNET jail's quota); no global limit,
-		 * so no VNET can use up another's.  Never sleeps.
+		 * host's hard limit, or a VNET jail's quota, shared with its
+		 * child VNETs and capped for all jails together); the host's
+		 * budget is its own.  Never sleeps.
 		 */
 		if (pf_quota_charge(pp->pr_quota - 1, flags, &q) != 0) {
 			pp->pr_nfail++;
