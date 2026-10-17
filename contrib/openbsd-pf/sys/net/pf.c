@@ -7562,7 +7562,7 @@ pf_route(struct pf_pdesc *pd, struct pf_state *st)
 		ip = mtod(m0, struct ip *);
 	}
 
-	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sintosa(dst), &m0))	/* 5BSD: dummynet */
+	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sintosa(dst), rt, &m0))	/* 5BSD: dummynet */
 		goto done;
 
 	if (if_output_tso(ifp, &m0, sintosa(dst), rt, ifp->if_mtu) ||
@@ -7695,7 +7695,8 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 		goto done;
 	}
 
-	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sin6tosa(dst), &m0))	/* 5BSD: dummynet */
+	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sin6tosa(dst), rt,
+	    &m0))	/* 5BSD: dummynet */
 		goto done;
 
 	if (if_output_tso(ifp, &m0, sin6tosa(dst), rt, ifp->if_mtu) ||
@@ -9010,7 +9011,7 @@ log_packet:
 			}
 		}
 		if (pd.m != NULL)	/* 5BSD: dummynet */
-			(void)pf_dn_output(&pd, st, r, NULL, NULL, &pd.m);
+			(void)pf_dn_output(&pd, st, r, NULL, NULL, NULL, &pd.m);
 		break;
 	}
 

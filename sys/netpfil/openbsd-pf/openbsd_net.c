@@ -679,14 +679,14 @@ if_output_obsd(struct ifnet *ifp, struct mbuf *m, struct sockaddr *dst,
 /*
  * Returns non-zero when the packet was handled (sent, or dropped with
  * an error, *mp may be NULL); zero when it is too big for the interface
- * and the caller has to fragment or send an error.
+ * and the caller has to fragment or send an error.  af is the packet's
+ * family; nh the link-layer next hop (route-to's gateway or destination).
  */
 int
-if_output_tso(struct ifnet *ifp, struct mbuf **mp, struct sockaddr *dst,
-    struct rtentry *rt, u_int mtu)
+obsd_output_tso(struct ifnet *ifp, struct mbuf **mp, int af,
+    const struct sockaddr *nh, u_int mtu)
 {
 	struct mbuf *m = *mp;
-	int af = dst->sa_family;
 
 	/*
 	 * The software checksums here and in the caller's fragmentation
@@ -714,8 +714,16 @@ if_output_tso(struct ifnet *ifp, struct mbuf **mp, struct sockaddr *dst,
 		m->m_pkthdr.csum_flags &= ~(CSUM_SCTP | CSUM_SCTP_IPV6);
 	}
 	*mp = NULL;
-	(void)obsd_ifoutput(ifp, m, dst, rt);
+	(void)obsd_ifoutput(ifp, m, nh, NULL);
 	return (1);
+}
+
+int
+if_output_tso(struct ifnet *ifp, struct mbuf **mp, struct sockaddr *dst,
+    struct rtentry *rt, u_int mtu)
+{
+	return (obsd_output_tso(ifp, mp, dst->sa_family,
+	    obsd_rt_nexthop(rt, dst), mtu));
 }
 
 int

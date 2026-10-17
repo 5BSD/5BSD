@@ -1244,6 +1244,8 @@ int	obsd_ip_fragment(struct mbuf *, struct mbuf_list *, struct ifnet *, u_long);
 #define	ip_fragment(m, ml, ifp, mtu)	obsd_ip_fragment((m), (ml), (ifp), (mtu))
 int	obsd_ip6_fragment(struct mbuf *, struct mbuf_list *, int, u_char, u_long);
 #define	ip6_fragment(m, ml, hl, p, mtu)	obsd_ip6_fragment((m), (ml), (hl), (p), (mtu))
+int	obsd_output_tso(struct ifnet *, struct mbuf **, int,
+	    const struct sockaddr *, u_int);
 int	if_output_tso(struct ifnet *, struct mbuf **, struct sockaddr *,
 	    struct rtentry *, u_int);
 int	if_output_ml(struct ifnet *, struct mbuf_list *, struct sockaddr *,
