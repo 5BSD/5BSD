@@ -424,12 +424,19 @@ pfi_detach_ifnet(struct ifnet *ifp)
 	struct task		*t, *nt;
 	struct ifnet		*nifp;
 
-	if ((kif = (struct pfi_kif *)ifp->if_pf_kif) == NULL)
-		return;
-
 	/* 5BSD: names.  A hook for an interface that may take over the kif. */
 	nt = malloc(sizeof(*nt), PFI_MTYPE, M_WAITOK);
 	PF_LOCK();
+	/*
+	 * 5BSD: existing.  Read the kif under PF_LOCK: an attach of an
+	 * existing interface that found it still linked stores the kif
+	 * under the lock, after the unlink that precedes this handler.
+	 */
+	if ((kif = (struct pfi_kif *)ifp->if_pf_kif) == NULL) {
+		PF_UNLOCK();
+		free(nt, PFI_MTYPE, sizeof(*nt));
+		return;
+	}
 	/* 5BSD: names.  This interface shares the kif of its name. */
 	if (kif->pfik_ifp != ifp) {
 		ifp->if_pf_kif = NULL;
@@ -673,7 +680,14 @@ pfi_kif_update(struct pfi_kif *kif)
 {
 	struct ifg_list		*ifgl;
 	struct pfi_dynaddr	*p;
+	struct epoch_tracker	 et;	/* 5BSD */
 
+	/*
+	 * 5BSD: the interface's groups and addresses (pfi_instance_add(),
+	 * group members in pfi_table_update()) are CK lists freed after the
+	 * net epoch.  Nothing below sleeps: PF_LOCK is held.
+	 */
+	NET_EPOCH_ENTER(et);
 	/* update all dynaddr */
 	TAILQ_FOREACH(p, &kif->pfik_dynaddrs, entry)
 		pfi_dynaddr_update(p);
@@ -696,6 +710,7 @@ pfi_kif_update(struct pfi_kif *kif)
 				TAILQ_FOREACH(p, &gkif->pfik_dynaddrs, entry)
 					pfi_dynaddr_update(p);
 		}
+	NET_EPOCH_EXIT(et);	/* 5BSD */
 }
 
 void
@@ -896,6 +911,7 @@ pfi_update_status(const char *name, struct PF_KTAG(pf_status) *pfs) /* 5BSD: VNE
 	struct pfi_kif_cmp	 key;
 	struct ifg_member	 p_member, *ifgm;
 	CK_STAILQ_HEAD(, ifg_member) ifg_members;	/* 5BSD */
+	struct epoch_tracker	 et;	/* 5BSD */
 	int			 i, j, k;
 
 	if (*name == '\0' && pfs == NULL) {
@@ -912,6 +928,7 @@ pfi_update_status(const char *name, struct PF_KTAG(pf_status) *pfs) /* 5BSD: VNE
 	if (p == NULL) {
 		return;
 	}
+	NET_EPOCH_ENTER(et);	/* 5BSD: the group's member list */
 	if (p->pfik_group != NULL) {
 		memcpy(&ifg_members, &p->pfik_group->ifg_members,
 		    sizeof(ifg_members));
@@ -930,6 +947,8 @@ pfi_update_status(const char *name, struct PF_KTAG(pf_status) *pfs) /* 5BSD: VNE
 		if (ifgm->ifgm_ifp == NULL)
 			continue;
 		p = (struct pfi_kif *)ifgm->ifgm_ifp->if_pf_kif;
+		if (p == NULL)		/* 5BSD: a dying member has none */
+			continue;
 
 		/* just clear statistics */
 		if (pfs == NULL) {
@@ -947,6 +966,7 @@ pfi_update_status(const char *name, struct PF_KTAG(pf_status) *pfs) /* 5BSD: VNE
 						p->pfik_bytes[i][j][k];
 				}
 	}
+	NET_EPOCH_EXIT(et);	/* 5BSD */
 }
 
 void
@@ -985,10 +1005,17 @@ pfi_skip_if(const char *filter, struct pfi_kif *p)
 		return (1);	/* sanity check */
 	if (filter[n-1] >= '0' && filter[n-1] <= '9')
 		return (1);     /* group names may not end in a digit */
-	if (p->pfik_ifp != NULL)
+	if (p->pfik_ifp != NULL) {
+		struct epoch_tracker et;	/* 5BSD: a CK list */
+
+		NET_EPOCH_ENTER(et);
 		CK_STAILQ_FOREACH(i, &p->pfik_ifp->if_groups, ifgl_next) /* 5BSD */
 			if (!strncmp(i->ifgl_group->ifg_group, filter, IFNAMSIZ))
-				return (0);	/* iface is in group "filter" */
+				break;
+		NET_EPOCH_EXIT(et);
+		if (i != NULL)
+			return (0);	/* iface is in group "filter" */
+	}
 	return (1);
 }
 
@@ -1091,9 +1118,11 @@ pfi_xcommit(void)
 	struct ifg_list	*g;
 	struct ifnet	*ifp;
 	size_t n;
+	struct epoch_tracker et;	/* 5BSD */
 
 	PF_ASSERT_LOCKED();
 
+	NET_EPOCH_ENTER(et);	/* 5BSD: the interfaces' group lists */
 	RB_FOREACH(p, pfi_ifhead, &pfi_ifs) {
 		p->pfik_flags = p->pfik_flags_new;
 		n = strlen(p->pfik_name);
@@ -1113,6 +1142,7 @@ pfi_xcommit(void)
 				p->pfik_flags |= gkif->pfik_flags_new;
 			}
 	}
+	NET_EPOCH_EXIT(et);	/* 5BSD */
 }
 
 /* from pf_print_state.c */

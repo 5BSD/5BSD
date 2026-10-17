@@ -205,31 +205,34 @@ void
 in_proto_cksum_out(struct mbuf *m, struct ifnet *ifp)
 {
 	struct ip *ip = mtod(m, struct ip *);
-	int hlen, len;
+	int hlen, len, nxt, sumoff;
 	u_int16_t csum;
 
+	if ((m->m_pkthdr.csum_flags & (CSUM_IP_TCP | CSUM_IP_UDP)) == 0)
+		goto done;
 	hlen = ip->ip_hl << 2;
 	len = ntohs(ip->ip_len) - hlen;
+	/*
+	 * The transport header may be in a later mbuf.  Callers keep their
+	 * mbuf pointer, so do not pull it up: write the checksum in place.
+	 */
 	if (m->m_pkthdr.csum_flags & CSUM_IP_TCP) {
-		struct tcphdr *th;
-
-		if (m->m_len < hlen + (int)sizeof(*th) &&
-		    (m = m_pullup(m, hlen + sizeof(*th))) == NULL)
-			return;
-		th = (struct tcphdr *)(mtod(m, caddr_t) + hlen);
-		th->th_sum = 0;
-		th->th_sum = obsd_in4_cksum(m, IPPROTO_TCP, hlen, len);
-	} else if (m->m_pkthdr.csum_flags & CSUM_IP_UDP) {
-		struct udphdr *uh;
-
-		if (m->m_len < hlen + (int)sizeof(*uh) &&
-		    (m = m_pullup(m, hlen + sizeof(*uh))) == NULL)
-			return;
-		uh = (struct udphdr *)(mtod(m, caddr_t) + hlen);
-		uh->uh_sum = 0;
-		csum = obsd_in4_cksum(m, IPPROTO_UDP, hlen, len);
-		uh->uh_sum = csum == 0 ? 0xffff : csum;
+		nxt = IPPROTO_TCP;
+		sumoff = hlen + offsetof(struct tcphdr, th_sum);
+	} else {
+		nxt = IPPROTO_UDP;
+		sumoff = hlen + offsetof(struct udphdr, uh_sum);
 	}
+	if (len <= 0 || hlen + len > m->m_pkthdr.len ||
+	    sumoff + (int)sizeof(csum) > m->m_pkthdr.len)
+		goto done;
+	csum = 0;
+	m_copyback(m, sumoff, sizeof(csum), &csum, M_NOWAIT);
+	csum = obsd_in4_cksum(m, nxt, hlen, len);
+	if (nxt == IPPROTO_UDP && csum == 0)
+		csum = 0xffff;
+	m_copyback(m, sumoff, sizeof(csum), &csum, M_NOWAIT);
+done:
 	/* M_*_CSUM_OUT sets the IPv4 and IPv6 flags: clear both. */
 	m->m_pkthdr.csum_flags &= ~(CSUM_IP_TCP | CSUM_IP_UDP |
 	    CSUM_IP6_TCP | CSUM_IP6_UDP);
@@ -942,6 +945,19 @@ obsd_in_pcbunref(struct inpcb *inp)
 	STAILQ_INSERT_TAIL(&obsd_pcbrele_q, r, r_next);
 	mtx_unlock(&obsd_pcbrele_mtx);
 	task_add(systq, &obsd_pcbrele_task);
+}
+
+/*
+ * The last references a vnet's pf dropped (its states are gone) are
+ * released before the vnet's protocols destroy their pcb zones.  The task
+ * is global: run the queue here, for every vnet, after any running task.
+ */
+void	obsd_pcbrele_drain(void);
+void
+obsd_pcbrele_drain(void)
+{
+	taskq_del_barrier(systq, &obsd_pcbrele_task);
+	obsd_pcbrele_run(NULL);
 }
 
 /* ------------------------------------------------------------------ */
