@@ -743,3 +743,14 @@ The
 implementation aims to be source-compatible.
 .Sh BUGS
 Several of the socket options should be handled at lower levels of the system.
+.Pp
+.Dv SO_BINDANY
+and
+.Dv SO_RXQ_OVFL
+lie outside the option bits that
+.Vt struct xsocket
+reports, so
+.Xr netstat 1
+and
+.Xr sockstat 1
+do not show them.
