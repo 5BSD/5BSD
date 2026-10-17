@@ -22,17 +22,14 @@ the seams between them:
   bridge        pf on if_bridge members, if_enc, prio
   containers    podman's CNI networking: <cni-nat> masquerade, cni-rdr anchors
   names         interfaces sharing a name, interfaces named after groups
-<<<<<<< HEAD
   glue_races    interface index reuse under pfsync, VNET teardown with work in
                 flight, interface walks during address and group churn
   stress        survival under concurrency: ruleset and table reloads,
                 interface and VNET jail churn, state kills, pfsync,
                 divert sockets, dummynet and sendfile, all with traffic
-=======
   dummynet      dnpipe/dnqueue shaping measured on traffic: bandwidth, delay,
                 loss, schedulers, directions, NAT, route-to, bridge, ether,
                 reconfiguration, VNET isolation, counters, securelevel 3
->>>>>>> pf/tests-dummynet
 
 The programs read host-wide state and create their own VNET jails, so they
 run exclusively in the host vnet (see Makefile).  Run them in a test VM, not
@@ -42,8 +39,8 @@ on a working host:
 
 Test images must preload the modules the capability plane does not allow
 to be loaded after boot (loader.conf): pf_load, dtraceall_load,
-<<<<<<< HEAD
-if_epair_load, if_bridge_load (see tests/README).
+if_epair_load, if_bridge_load and, for dummynet, dummynet_load (see
+tests/README).
 
 stress runs its loops concurrently and is sized for a 4-CPU VM under
 emulation (each case a few minutes, about half an hour in all).  Each
@@ -55,7 +52,3 @@ Scale the iteration counts with
 
 	kyua test -v test_suites.FreeBSD.stress_scale=4 \
 	    -k /usr/tests/sys/netpfil/integration/Kyuafile stress
-=======
-if_epair_load, if_bridge_load and, for dummynet, dummynet_load (see
-tests/README).
->>>>>>> pf/tests-dummynet
