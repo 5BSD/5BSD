@@ -3374,6 +3374,15 @@ selects the packet's internal priority, including a priority assigned by
 .Xr pf.conf 5 .
 Internal priorities zero and one map to PCP one and zero, respectively;
 other priorities retain their value.
+A packet at the default internal priority of three is sent with PCP zero
+.Pq best effort ,
+as is one assigned priority three by
+.Xr pf.conf 5 .
+A PCP chosen by the sending socket with the
+.Dv IP_VLAN_PCP
+or
+.Dv IPV6_VLAN_PCP
+option takes precedence over both automatic selection and a numeric PCP.
 An explicit numeric PCP overrides automatic selection, including an explicit
 zero.
 Use
