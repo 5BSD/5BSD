@@ -174,6 +174,23 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	packet filter loaded, "fragmentation needed" and "packet too big"
 	errors are sent only for packets the outbound rules pass.
 
+	pf(4): each VNET is now held to its own pool limits.  The pools are
+	still shared, but states, source nodes, fragments, tables, table
+	entries, delayed packets and anchors are counted per VNET: the
+	host's "set limit" values are its own and jails do not count against
+	them; a VNET jail's limits are the host's scaled by the new host-only
+	sysctl net.pf.vnet_limit_pct (1-100, default 100) and shared with its
+	descendant VNET jails; all VNET jails together are held to the
+	host's limits scaled by net.pf.vnet_total_pct (1-10000, default
+	200), and their fragment entries to the mbuf clusters the host's
+	frags limit leaves.  Lower these on hosts with many jails.  In a jail,
+	pfctl -sm shows the jail's limits, and its default adaptive timeouts
+	are scaled to its states limit; net.pf.vnet_{count,limit,refused} and
+	net.pf.vnet_total_{count,limit,refused} show the usage.  The
+	table-entries limit now counts all table entry types.  Tag, queue and
+	route label ids are per VNET.  The host may lower a limit below a
+	jail's usage, but not below its own.
+
 20261013:
 	The BSD fixed-name pty(4) compatibility driver has been removed.
 	Use posix_openpt(2), openpty(3), or /dev/ptmx and /dev/pts/N.
