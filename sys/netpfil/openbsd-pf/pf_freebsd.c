@@ -271,9 +271,12 @@ TAILQ_HEAD(pf_fbsd_delay_head, pf_pktdelay);
 VNET_DEFINE_STATIC(struct pf_fbsd_delay_head, pf_fbsd_delays);
 VNET_DEFINE_STATIC(unsigned int, pf_fbsd_delay_count);
 VNET_DEFINE_STATIC(int, pf_fbsd_delay_closing);
+/* Callbacks that took their frame off the list and still use the VNET. */
+VNET_DEFINE_STATIC(unsigned int, pf_fbsd_delay_running);
 #define V_pf_fbsd_delays VNET(pf_fbsd_delays)
 #define V_pf_fbsd_delay_count VNET(pf_fbsd_delay_count)
 #define V_pf_fbsd_delay_closing VNET(pf_fbsd_delay_closing)
+#define V_pf_fbsd_delay_running VNET(pf_fbsd_delay_running)
 static struct mtx pf_fbsd_delay_mtx;
 MTX_SYSINIT(pf_fbsd_delay, &pf_fbsd_delay_mtx, "pf delay", MTX_DEF);
 
@@ -298,6 +301,7 @@ pf_fbsd_delay_run(void *arg)
 	}
 	TAILQ_REMOVE(&V_pf_fbsd_delays, p, entry);
 	V_pf_fbsd_delay_count--;
+	V_pf_fbsd_delay_running++;
 	mtx_unlock(&pf_fbsd_delay_mtx);
 
 	NET_EPOCH_ENTER(et);
@@ -311,6 +315,10 @@ pf_fbsd_delay_run(void *arg)
 	if_put(ifp);
 	NET_EPOCH_EXIT(et);
 	pf_fbsd_delay_release(p);
+	mtx_lock(&pf_fbsd_delay_mtx);
+	if (--V_pf_fbsd_delay_running == 0 && V_pf_fbsd_delay_closing)
+		wakeup(&V_pf_fbsd_delay_running);
+	mtx_unlock(&pf_fbsd_delay_mtx);
 }
 
 int
@@ -380,9 +388,15 @@ pf_fbsd_delay_drain(void)
 		pf_fbsd_delay_release(p);
 		mtx_lock(&pf_fbsd_delay_mtx);
 	}
+	/*
+	 * A callback may already have removed its frame before closing:
+	 * wait for this VNET's, not for the whole shared task queue (other
+	 * VNETs keep queueing; this runs under ifnet_detach_sxlock).
+	 */
+	while (V_pf_fbsd_delay_running != 0)
+		mtx_sleep(&V_pf_fbsd_delay_running, &pf_fbsd_delay_mtx, 0,
+		    "pfdelay", 0);
 	mtx_unlock(&pf_fbsd_delay_mtx);
-	/* A callback may already have removed its frame before closing. */
-	net_tq_barriers("pf delay");
 }
 
 /* ------------------------------------------------------------------ */
