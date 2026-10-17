@@ -915,7 +915,7 @@ pf_sctp_send_abort(struct pf_pdesc *pd, struct pf_rule *r)
 	}
 	PF_MTAG_W(m)->flags |= PF_TAG_GENERATED;
 	if (r->scrub_flags & PFSTATE_SETPRIO)
-		PF_MTAG_W(m)->prio = r->set_prio[0];
+		pf_mtag_setprio(PF_MTAG_W(m), r->set_prio[0]);
 	if (r->qid)
 		PF_MTAG_W(m)->qid = r->qid;
 	m->m_pkthdr.ph_rtableid = pd->rdomain;

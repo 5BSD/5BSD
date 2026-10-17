@@ -168,7 +168,7 @@ rt_rdomain_create_locked(u_int rdomain, struct ifnet *ifp)
 {
 	char loname[IFNAMSIZ];
 	struct ifnet *loifp;
-	bool pending;
+	bool added, pending;
 	int error;
 
 	sx_assert(&ifnet_detach_sxlock, SA_XLOCKED);
@@ -184,10 +184,12 @@ rt_rdomain_create_locked(u_int rdomain, struct ifnet *ifp)
 	 * The detach lock keeps others from seeing the domain half made.
 	 */
 	pending = rdomain >= V_rt_numfibs;
+	added = false;
 	if (pending)
 		rt_rdomain_map(rdomain, rdomain);
 	if ((error = rt_tables_add(rdomain)) != 0)
 		goto fail;
+	added = pending;
 	error = EEXIST;
 	if (!rt_fib_empty(rdomain))
 		goto fail;
@@ -217,6 +219,22 @@ rt_rdomain_create_locked(u_int rdomain, struct ifnet *ifp)
 fail:
 	if (pending)
 		rt_rdomain_map(rdomain, 0);
+	/*
+	 * The table stays, now an ordinary FIB of domain 0: give it the
+	 * interface routes its creation skipped (net.add_addr_allfibs).
+	 */
+	if (added) {
+		int af[] = { AF_INET, AF_INET6 };
+
+		for (u_int i = 0; i < nitems(af); i++) {
+			struct rib_head *src, *dst;
+
+			src = rt_tables_get_rnh(RT_DEFAULT_FIB, af[i]);
+			dst = rt_tables_get_rnh(rdomain, af[i]);
+			if (src != NULL && dst != NULL)
+				rib_copy_kernel_routes(src, dst);
+		}
+	}
 	return (error);
 }
 

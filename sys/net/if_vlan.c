@@ -1575,8 +1575,10 @@ vlan_input(struct ifnet *ifp, struct mbuf *m)
 	/*
 	 * VLAN wire PCP and PF internal priority have opposite zero/one
 	 * order.  Allocate the pf tag only when pf is loaded (it installs
-	 * the tag hooks) and the priority changes, so that frames at the
-	 * default priority, and all frames without pf, carry no tag.
+	 * the tag hooks); frames without pf carry no tag.  Every PCP is
+	 * recorded, 0 included (it is pf priority 1, which "prio 1" rules
+	 * match), and marked as set, so that PCP 3 is kept rather than taken
+	 * for pf's default.
 	 */
 	if (pf_mtag_unlink_hook != NULL) {
 		struct pkthdr_pf *pfh;
@@ -1585,14 +1587,13 @@ vlan_input(struct ifnet *ifp, struct mbuf *m)
 		prio = EVL_PRIOFTAG(tag);
 		if (prio <= 1)
 			prio = !prio;
-		if (prio != m_pf_ro(m)->prio) {
-			if ((pfh = m_pf_get(m)) == NULL) {
-				if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
-				m_freem(m);
-				return;
-			}
-			pfh->prio = prio;
+		if ((pfh = m_pf_get(m)) == NULL) {
+			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+			m_freem(m);
+			return;
 		}
+		pfh->prio = prio;
+		pfh->prio_set = 1;
 	}
 
 	if (V_vlan_mtag_pcp) {

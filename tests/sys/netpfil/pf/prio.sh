@@ -49,6 +49,7 @@ vlan_check()
  four|override6|override0|restore_auto|invalid) rule='pass out quick inet proto icmp icmp-type echoreq no state set prio 4' ;;
  zero) rule='pass out quick inet proto icmp icmp-type echoreq no state set prio 0' ;;
  one) rule='pass out quick inet proto icmp icmp-type echoreq no state set prio 1' ;;
+ three) rule='pass out quick inet proto icmp icmp-type echoreq no state set prio 3' ;;
  esac
  case "$mode" in
  override6) jexec priority ifconfig ${ep}b.42 vlanpcp 6 ;;
@@ -116,6 +117,10 @@ atf_test_case set_prio cleanup
 set_prio_head() { vlan_head_common; atf_set descr "PF priority four reaches the VLAN wire PCP"; }
 set_prio_body() { vlan_check four 4; }
 set_prio_cleanup() { vlan_cleanup; }
+atf_test_case three cleanup
+three_head() { vlan_head_common; atf_set descr "set prio 3 is sent as PCP 3, not taken for the default (PCP 0)"; }
+three_body() { vlan_check three 3; }
+three_cleanup() { vlan_cleanup; }
 atf_test_case zero cleanup
 zero_head() { vlan_head_common; atf_set descr "Internal priority zero maps to wire PCP one"; }
 zero_body() { vlan_check zero 1; }
@@ -205,6 +210,7 @@ atf_init_test_cases()
 {
 	atf_add_test_case default
 	atf_add_test_case set_prio
+	atf_add_test_case three
 	atf_add_test_case zero
 	atf_add_test_case one
 	atf_add_test_case override6

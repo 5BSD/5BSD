@@ -3746,7 +3746,7 @@ pf_build_tcp(const struct pf_rule *r, sa_family_t af,
 	PF_MTAG_W(m)->tag = rtag;	/* 5BSD: m_tag */
 	m->m_pkthdr.ph_rtableid = rdom;
 	if (r && (r->scrub_flags & PFSTATE_SETPRIO))
-		PF_MTAG_W(m)->prio = r->set_prio[0];	/* 5BSD: m_tag */
+		pf_mtag_setprio(PF_MTAG_W(m), r->set_prio[0]);	/* 5BSD: m_tag */
 	if (r && r->qid)
 		PF_MTAG_W(m)->qid = r->qid;	/* 5BSD: m_tag */
 	m->m_data += max_linkhdr;
@@ -3874,7 +3874,7 @@ pf_send_icmp(struct mbuf *m, u_int8_t type, u_int8_t code, int param,
 	PF_MTAG_W(m0)->flags |= PF_TAG_GENERATED;	/* 5BSD: m_tag */
 	m0->m_pkthdr.ph_rtableid = rdomain;
 	if (r && (r->scrub_flags & PFSTATE_SETPRIO))
-		PF_MTAG_W(m0)->prio = r->set_prio[0];	/* 5BSD: m_tag */
+		pf_mtag_setprio(PF_MTAG_W(m0), r->set_prio[0]);	/* 5BSD: m_tag */
 	if (r && r->qid)
 		PF_MTAG_W(m0)->qid = r->qid;	/* 5BSD: m_tag */
 
@@ -8833,14 +8833,14 @@ done:
 			if (pqid || (pd.tos & IPTOS_LOWDELAY)) {
 				qid = st->pqid;
 				if (st->state_flags & PFSTATE_SETPRIO) {
-					PF_PDTAG_W(&pd)->prio =	/* 5BSD: m_tag */
-					    st->set_prio[1];
+					pf_mtag_setprio(PF_PDTAG_W(&pd),	/* 5BSD: m_tag */
+					    st->set_prio[1]);
 				}
 			} else {
 				qid = st->qid;
 				if (st->state_flags & PFSTATE_SETPRIO) {
-					PF_PDTAG_W(&pd)->prio =	/* 5BSD: m_tag */
-					    st->set_prio[0];
+					pf_mtag_setprio(PF_PDTAG_W(&pd),	/* 5BSD: m_tag */
+					    st->set_prio[0]);
 				}
 			}
 			PF_PDTAG_W(&pd)->delay = st->delay;	/* 5BSD: m_tag */
@@ -8850,11 +8850,11 @@ done:
 			if (pqid || (pd.tos & IPTOS_LOWDELAY)) {
 				qid = r->pqid;
 				if (r->scrub_flags & PFSTATE_SETPRIO)
-					PF_PDTAG_W(&pd)->prio = r->set_prio[1];	/* 5BSD: m_tag */
+					pf_mtag_setprio(PF_PDTAG_W(&pd), r->set_prio[1]);	/* 5BSD: m_tag */
 			} else {
 				qid = r->qid;
 				if (r->scrub_flags & PFSTATE_SETPRIO)
-					PF_PDTAG_W(&pd)->prio = r->set_prio[0];	/* 5BSD: m_tag */
+					pf_mtag_setprio(PF_PDTAG_W(&pd), r->set_prio[0]);	/* 5BSD: m_tag */
 			}
 			PF_PDTAG_W(&pd)->delay = r->delay;	/* 5BSD: m_tag */
 		}

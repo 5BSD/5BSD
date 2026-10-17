@@ -166,7 +166,7 @@ struct pkthdr_pf {
 	uint8_t		 flags;
 	uint8_t		 routed;
 	uint8_t		 prio;
-	uint8_t		 pad[1];
+	uint8_t		 prio_set;	/* 5BSD: prio assigned (pf rule, VLAN PCP) */
 	/* 5BSD: dummynet(4) through pf dnpipe/dnqueue */
 	uint8_t		 dn_flags;	/* PF_DN_TAG_* */
 	uint8_t		 dn_pad;

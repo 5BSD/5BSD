@@ -204,7 +204,16 @@ pf_fbsd_divert_run(void *arg __unused)
 	mtx_unlock(&pf_fbsd_divert_mtx);
 	while ((r = STAILQ_FIRST(&q)) != NULL) {
 		STAILQ_REMOVE_HEAD(&q, next);
-		pf_remove_divert_state_key(r->sk);
+		/*
+		 * A new socket with the same addresses may have linked to
+		 * the state since the old one went (a fast reconnect); the
+		 * state is its now.  OpenBSD removes synchronously, before
+		 * that can happen.
+		 */
+		if (READ_ONCE(r->sk->sk_inp) != NULL)
+			pf_state_key_unref(r->sk);
+		else
+			pf_remove_divert_state_key(r->sk);
 		free(r, M_PF);
 	}
 }

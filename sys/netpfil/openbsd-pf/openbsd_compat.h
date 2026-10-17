@@ -1445,6 +1445,17 @@ struct pkthdr_pf *obsd_pf_mtag_w(struct mbuf *);
 struct pkthdr_pf *obsd_pf_pdtag(struct pf_pdesc *, int);
 #define	PF_MTAG_R(m)	m_pf_ro(m)
 #define	PF_MTAG_W(m)	obsd_pf_mtag_w(m)
+
+/*
+ * A priority pf assigns: marked, so the VLAN layer can tell pf's
+ * priority 3 from the default (sys/net/if_ethersubr.c).
+ */
+static __inline void
+pf_mtag_setprio(struct pkthdr_pf *p, uint8_t prio)
+{
+	p->prio = prio;
+	p->prio_set = 1;
+}
 #define	PF_PDTAG_R(pd)	((const struct pkthdr_pf *)obsd_pf_pdtag((pd), 0))
 #define	PF_PDTAG_W(pd)	obsd_pf_pdtag((pd), 1)
 

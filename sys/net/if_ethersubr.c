@@ -1348,15 +1348,17 @@ ether_8021q_frame(struct mbuf **mp, struct ifnet *ife, struct ifnet *p,
 	/*
 	 * 5BSD: automatic VLAN PCP.  A priority pf gave the packet maps to
 	 * the wire as on OpenBSD (internal 0 and 1 are swapped on the
-	 * wire); a packet left at the default priority keeps FreeBSD's best
-	 * effort PCP 0.  A PCP already in the mbuf (IP_VLAN_PCP, an inner
+	 * wire); a packet whose priority nothing set (pf rule, received
+	 * VLAN PCP) keeps FreeBSD's best effort PCP 0, although pf's default
+	 * priority is 3.  A PCP already in the mbuf (IP_VLAN_PCP, an inner
 	 * VLAN) still takes precedence below.
 	 */
 	if (pcp == IFNET_PCP_NONE) {
-		pcp = m_pf_ro(*mp)->prio;
-		if (pcp == m_pf_default.prio)
+		const struct pkthdr_pf *pfh = m_pf_ro(*mp);
+
+		if (!pfh->prio_set)
 			pcp = 0;
-		else if (pcp <= 1)
+		else if ((pcp = pfh->prio) <= 1)
 			pcp = !pcp;
 	}
 
