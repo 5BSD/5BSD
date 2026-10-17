@@ -297,6 +297,30 @@ vmove_cleanup()
 	vnet_cleanup
 }
 
+atf_test_case "lo0_stays" "cleanup"
+lo0_stays_head()
+{
+	atf_set descr 'lo0 stays in routing domain 0, as on OpenBSD'
+	atf_set require.user root
+}
+lo0_stays_body()
+{
+	rdomain_init
+
+	atf_check -s ignore -e match:'Operation not permitted' \
+	    ifconfig lo0 rdomain 8
+	atf_check -o not-match:'rdomain' ifconfig lo0
+	atf_check -o match:'inet 127.0.0.1 ' ifconfig lo0
+	atf_check ifconfig lo6 rdomain 6
+	atf_check -s ignore -e match:'Operation not permitted' \
+	    ifconfig lo0 rdomain 6
+	atf_check -o not-match:'rdomain' ifconfig lo0
+}
+lo0_stays_cleanup()
+{
+	:
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "create"
@@ -308,4 +332,5 @@ atf_init_test_cases()
 	atf_add_test_case "route_exec"
 	atf_add_test_case "privilege"
 	atf_add_test_case "vmove"
+	atf_add_test_case "lo0_stays"
 }

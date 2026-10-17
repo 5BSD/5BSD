@@ -211,7 +211,8 @@ rt_rdomain_setif_locked(struct ifnet *ifp, u_int fib, bool rdomain)
 		return (EINVAL);
 	ord = rt_fib_l2(ifp->if_fib);
 	nrd = rt_fib_l2(fib);
-	if (ord != nrd && rt_rdomain_isloif(ifp))
+	/* A domain keeps its loopback; lo0 is the loopback of domain 0. */
+	if (ord != nrd && (ifp == V_loif || rt_rdomain_isloif(ifp)))
 		return (EPERM);
 
 	if (ord == nrd) {
