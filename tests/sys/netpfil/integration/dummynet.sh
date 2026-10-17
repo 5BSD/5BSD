@@ -1103,6 +1103,38 @@ bridge_cleanup()
 	integ_cleanup
 }
 
+atf_test_case "bridge_ether" "cleanup"
+bridge_ether_head()
+{
+	atf_set descr 'ether rules with dnpipe on bridged frames leaving a member (net.link.bridge.pfil_layer2=1); shaped frames are still bridged'
+	atf_set require.user root
+	atf_set timeout 600
+}
+
+bridge_ether_body()
+{
+	dn_bridge_setup
+	atf_check -s exit:0 -o ignore jexec dnbr sysctl \
+	    net.link.bridge.pfil_member=0 net.link.bridge.pfil_bridge=0 \
+	    net.link.bridge.pfil_layer2=1
+	pft_set_rules dnbr "ether pass out on ${r}a dnpipe 1" "pass"
+	m=$(dn_ping_min dnl -c 3 -i 0.3 -t 20 192.0.2.2)
+	echo "ether out on member: min ${m} ms"
+	dn_check "${m} >= 225" "ether out on member: round trip with a 250 ms pipe"
+
+	# Without the link-layer hook the ether rule does not see the frames.
+	atf_check -s exit:0 -o ignore jexec dnbr sysctl \
+	    net.link.bridge.pfil_layer2=0
+	m=$(dn_ping_min dnl -c 3 -i 0.3 -t 20 192.0.2.2)
+	echo "pfil_layer2=0: min ${m} ms"
+	dn_check "${m} < 200" "pfil_layer2=0: not shaped"
+}
+
+bridge_ether_cleanup()
+{
+	integ_cleanup
+}
+
 atf_test_case "ether" "cleanup"
 ether_head()
 {
@@ -1546,6 +1578,7 @@ atf_init_test_cases()
 	atf_add_test_case "route_to_out_pipe"
 	atf_add_test_case "local_reply"
 	atf_add_test_case "bridge"
+	atf_add_test_case "bridge_ether"
 	atf_add_test_case "ether"
 	atf_add_test_case "reconfigure"
 	atf_add_test_case "pipe_delete"

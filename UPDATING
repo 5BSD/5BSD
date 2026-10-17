@@ -37,8 +37,12 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	the reverse pipe).  States from pfsync take the pipes of their rule
 	(pfsync does not carry them).  dnctl names the pipe, queue or
 	scheduler a failed delete was for.  pf.ko and the kernel must be
-	updated together (struct pkthdr_pf).  Pipes on bridged IP traffic
-	and ether rules on bridged frames are not supported yet.
+	updated together (struct pkthdr_pf).
+	if_bridge(4) again runs the link-layer filter on bridged frames
+	leaving a member, now with net.link.bridge.pfil_layer2=1 (FreeBSD's
+	net.link.bridge.ipfw, removed with IPFW): pf ether rules, with their
+	pipes, see bridged traffic again.  Pipes on IP rules for bridged
+	packets are not supported (as in FreeBSD pf): use ether rules.
 
 20261015:
 	OpenBSD's pf replaces FreeBSD's (see the 20261012 entries).  The

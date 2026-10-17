@@ -478,6 +478,17 @@ SYSCTL_INT(_net_link_bridge, OID_AUTO, pfil_member,
     CTLFLAG_RWTUN | CTLFLAG_VNET, &VNET_NAME(pfil_member), 0,
     "Packet filter on the member interface");
 
+/*
+ * 5BSD: run the link-layer pfil hooks (pf ether rules) on bridged frames
+ * leaving a member interface: FreeBSD's net.link.bridge.ipfw, which also
+ * served pf, without IPFW.
+ */
+VNET_DEFINE_STATIC(int, pfil_layer2) = 0;
+#define	V_pfil_layer2	VNET(pfil_layer2)
+SYSCTL_INT(_net_link_bridge, OID_AUTO, pfil_layer2,
+    CTLFLAG_RWTUN | CTLFLAG_VNET, &VNET_NAME(pfil_layer2), 0,
+    "Link-layer packet filter on bridged frames leaving a member");
+
 /* run pfil hooks on the physical interface for locally destined packets */
 VNET_DEFINE_STATIC(int, pfil_local_phys);
 #define	V_pfil_local_phys	VNET(pfil_local_phys)
@@ -3870,7 +3881,7 @@ bridge_pfil(struct mbuf **mp, struct ifnet *bifp, struct ifnet *ifp, int dir)
 	KASSERT(M_WRITABLE(*mp), ("%s: modifying a shared mbuf", __func__));
 #endif
 
-	if (V_pfil_bridge == 0 && V_pfil_member == 0)
+	if (V_pfil_bridge == 0 && V_pfil_member == 0 && V_pfil_layer2 == 0)
 		return (0); /* filtering is disabled */
 
 	if ((*mp)->m_len < ETHER_HDR_LEN) {
@@ -3945,6 +3956,21 @@ bridge_pfil(struct mbuf **mp, struct ifnet *bifp, struct ifnet *ifp, int dir)
 			if (V_pfil_onlyip)
 				goto bad;
 	}
+
+	/* Run the packet through pfil before stripping link headers */
+	if (PFIL_HOOKED_OUT(V_link_pfil_head) && V_pfil_layer2 != 0 &&
+	    dir == PFIL_OUT && ifp != NULL) {
+		switch (pfil_mbuf_out(V_link_pfil_head, mp, ifp, NULL)) {
+		case PFIL_DROPPED:
+			return (EACCES);
+		case PFIL_CONSUMED:
+			return (0);
+		default:
+			break;
+		}
+	}
+	if (V_pfil_bridge == 0 && V_pfil_member == 0)
+		return (0);
 
 	/* Strip off the Ethernet header and keep a copy. */
 	m_copydata(*mp, 0, ETHER_HDR_LEN, (caddr_t) &eh2);
