@@ -566,8 +566,21 @@ obsd_malloc_flags(int flags)
 #ifndef OPENBSD_PF_GLUE
 #undef	malloc
 #define	malloc(s, t, f)		(malloc)((s), (t), obsd_malloc_flags(f))
+/*
+ * OpenBSD mallocarray(9) returns NULL on overflow for a caller that
+ * handles failure (M_CANFAIL, M_NOWAIT); FreeBSD's panics.  Counts come
+ * from ioctl arguments (DIOCIGETIFACES pfiio_size, ...).
+ */
+static __inline void *
+obsd_mallocarray(size_t n, size_t size, struct malloc_type *type, int flags)
+{
+	if (size != 0 && n > SIZE_MAX / size &&
+	    (flags & (M_CANFAIL | M_NOWAIT)) != 0)
+		return (NULL);
+	return ((mallocarray)(n, size, type, obsd_malloc_flags(flags)));
+}
 #undef	mallocarray
-#define	mallocarray(n, s, t, f)	(mallocarray)((n), (s), (t), obsd_malloc_flags(f))
+#define	mallocarray(n, s, t, f)	obsd_mallocarray((n), (s), (t), (f))
 #endif
 #define	M_IFADDR	M_PF
 #define	M_IFGROUP	M_PF

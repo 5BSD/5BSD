@@ -1265,6 +1265,18 @@ pf_fbsd_ids_fini(void)
 	obsd_rtlabel_vnet_fini();
 }
 
+/* Stop this vnet's purge timers and tasks; they re-arm each other. */
+static void
+pf_fbsd_stop_purges(void)
+{
+	for (int i = 0; i < 3; i++) {
+		timeout_del_barrier(&pf_purge_to);
+		timeout_del_barrier(&pf_purge_states_to);
+		taskq_del_barrier(systqmp, &pf_purge_task);
+		taskq_del_barrier(systqmp, &pf_purge_states_task);
+	}
+}
+
 static void
 pf_fbsd_vnet_uninit(void *arg __unused)
 {
@@ -1296,6 +1308,14 @@ pf_fbsd_vnet_uninit(void *arg __unused)
 	PF_UNLOCK();
 	NET_UNLOCK();
 
+	/*
+	 * The purges below run here, in this thread; the purge timers and
+	 * their tasks must not run them concurrently (OpenBSD runs them only
+	 * from those tasks: pf_purge_expired_states() keeps a cursor into the
+	 * state list, and two purges free each other's states).
+	 */
+	pf_fbsd_stop_purges();
+
 	/* Rules, anchors, limiters and queues; then tables and states. */
 	pf_eth_vnet_fini();	/* ether rules hold tables and kifs */
 	pf_fbsd_flush_rulesets();
@@ -1320,16 +1340,10 @@ pf_fbsd_vnet_uninit(void *arg __unused)
 	PF_UNLOCK();
 	NET_UNLOCK();
 	pf_purge(NULL);
+	/* pf_purge() re-arms its timer. */
+	pf_fbsd_stop_purges();
 	pf_osfp_flush();
 	pf_normalize_vnet_fini();
-
-	/* Timers and tasks re-arm each other: stop both twice. */
-	for (i = 0; i < 3; i++) {
-		timeout_del_barrier(&pf_purge_to);
-		timeout_del_barrier(&pf_purge_states_to);
-		taskq_del_barrier(systqmp, &pf_purge_task);
-		taskq_del_barrier(systqmp, &pf_purge_states_task);
-	}
 	pf_syncookies_vnet_fini();
 	taskq_del_barrier(systq, &V_pf_pfsync_intask);
 	mq_purge(&V_pf_pfsync_inq);
