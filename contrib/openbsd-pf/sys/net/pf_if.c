@@ -424,12 +424,19 @@ pfi_detach_ifnet(struct ifnet *ifp)
 	struct task		*t, *nt;
 	struct ifnet		*nifp;
 
-	if ((kif = (struct pfi_kif *)ifp->if_pf_kif) == NULL)
-		return;
-
 	/* 5BSD: names.  A hook for an interface that may take over the kif. */
 	nt = malloc(sizeof(*nt), PFI_MTYPE, M_WAITOK);
 	PF_LOCK();
+	/*
+	 * 5BSD: existing.  Read the kif under PF_LOCK: an attach of an
+	 * existing interface that found it still linked stores the kif
+	 * under the lock, after the unlink that precedes this handler.
+	 */
+	if ((kif = (struct pfi_kif *)ifp->if_pf_kif) == NULL) {
+		PF_UNLOCK();
+		free(nt, PFI_MTYPE, sizeof(*nt));
+		return;
+	}
 	/* 5BSD: names.  This interface shares the kif of its name. */
 	if (kif->pfik_ifp != ifp) {
 		ifp->if_pf_kif = NULL;
