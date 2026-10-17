@@ -18,7 +18,8 @@ ATF_TESTS_SH+=	vnet_dev \
 		dtrace \
 		bridge \
 		containers \
-		names
+		names \
+		dummynet
 
 # The seam tests create their own VNET jails, read host-wide state (pool
 # limits, loaded modules, DTrace providers) and mount devfs for jails with
@@ -35,11 +36,13 @@ ${PACKAGE}FILESMODE_pf_devhelper.py=	0555
 ${PACKAGE}FILESMODE_quota_frags.py=	0555
 
 # Helpers: socket options (sockets, rdomain), raw pf ioctls (securelevel,
-# quotas) and a capability-mode /dev/pf descriptor (consumers).
-PROGS+=		sockhelper pfiochelper pf_capfd
+# quotas), a capability-mode /dev/pf descriptor (consumers) and timed TCP
+# and UDP traffic (dummynet).
+PROGS+=		sockhelper pfiochelper pf_capfd dnflow
 MAN.sockhelper=
 MAN.pfiochelper=
 MAN.pf_capfd=
+MAN.dnflow=
 .for p in pfiochelper pf_capfd
 CFLAGS.${p}+=	-I${SRCTOP}/sys/netpfil/openbsd-pf/user
 CFLAGS.${p}+=	-I${SRCTOP}/contrib/openbsd-pf/sys
