@@ -292,6 +292,16 @@ pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
 	}
 	if (sel == 0)
 		return (0);
+	/*
+	 * A packet on a bridge member is being bridged: dummynet would
+	 * reinject it into IP, not into the bridge.  Pass it unshaped; ether
+	 * rules shape bridged frames (net.link.bridge.pfil_layer2).
+	 */
+	if (ifp == NULL && pd->ifp != NULL && pd->ifp->if_bridge != NULL) {
+		SDT_PROBE3(pf, ip, dummynet, error, pd, EOPNOTSUPP,
+		    "bridged packet");
+		return (0);
+	}
 	if (ifp == NULL && (PF_MTAG_R(*m0)->dn_flags & PF_DN_TAG_ROUTING)) {
 		/* Nested in pf_route(): it submits with the next hop. */
 		if ((t = PF_MTAG_W(*m0)) == NULL)

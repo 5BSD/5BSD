@@ -41,8 +41,11 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	if_bridge(4) again runs the link-layer filter on bridged frames
 	leaving a member, now with net.link.bridge.pfil_layer2=1 (FreeBSD's
 	net.link.bridge.ipfw, removed with IPFW): pf ether rules, with their
-	pipes, see bridged traffic again.  Pipes on IP rules for bridged
-	packets are not supported (as in FreeBSD pf): use ether rules.
+	pipes, see bridged traffic again.  A pipe on an IP rule does not
+	shape packets bridged across members (pfil_member): they pass
+	unshaped, where they were lost before; use ether rules.  IP-rule
+	pipes on the bridge interface itself (pfil_bridge) are not
+	supported: pf cannot tell bridged packets there from local ones.
 
 20261015:
 	OpenBSD's pf replaces FreeBSD's (see the 20261012 entries).  The

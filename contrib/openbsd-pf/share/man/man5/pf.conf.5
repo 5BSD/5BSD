@@ -727,6 +727,13 @@ evaluated again.
 For
 .Cm route-to
 the packet is shaped before it is sent to the chosen route.
+Packets bridged by
+.Xr if_bridge 4
+across member interfaces are passed unshaped; shape them with
+.Ic ether
+rules and the
+.Va net.link.bridge.pfil_layer2
+sysctl.
 Loading a ruleset with these options does not load
 .Xr dummynet 4 ;
 until it is loaded, matching packets are dropped.

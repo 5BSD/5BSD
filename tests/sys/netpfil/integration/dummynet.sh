@@ -1066,19 +1066,24 @@ dn_bridge_mode()
 	    net.link.bridge.pfil_member=$1 net.link.bridge.pfil_bridge=$2
 }
 
-# dn_bridge_check what rule: ping across the bridge with the rule loaded.
-dn_bridge_check()
+# dn_bridge_unshaped what rule: ping across the bridge with the rule loaded.
+# Bridged packets matching a pipe still arrive, unshaped, and never enter
+# the pipe.
+dn_bridge_unshaped()
 {
 	pft_set_rules dnbr "pass" "$2"
+	before=$(dn_counters dnbr pipe 1)
 	m=$(dn_ping_min dnl -c 3 -i 0.3 -t 20 192.0.2.2)
-	echo "$1: min ${m} ms"
-	dn_check "${m} >= 225" "$1: round trip with a 250 ms pipe"
+	after=$(dn_counters dnbr pipe 1)
+	echo "$1: min ${m} ms, pipe 1 packets ${before% *} -> ${after% *}"
+	dn_check "${m} < 200" "$1: bridged packets not shaped"
+	dn_check "${after% *} == ${before% *}" "$1: nothing entered the pipe"
 }
 
 atf_test_case "bridge" "cleanup"
 bridge_head()
 {
-	atf_set descr 'dnpipe on bridged traffic: in and out on members (pfil_member=1) and on the bridge (pfil_bridge=1); shaped packets are still bridged'
+	atf_set descr 'dnpipe on IP rules does not shape bridged packets (pfil_member=1): they are passed and still bridged, unshaped; ether rules shape them (bridge_ether)'
 	atf_set require.user root
 	atf_set timeout 600
 }
@@ -1091,11 +1096,13 @@ bridge_body()
 	m=$(dn_ping_min dnl -c 2 -t 10 192.0.2.2)
 	echo "unshaped: min ${m} ms"
 
-	dn_bridge_check "in on member" "pass in on ${l}b dnpipe 1"
-	dn_bridge_check "out on member" "pass out on ${r}a dnpipe 1"
-	dn_bridge_mode 0 1
-	dn_bridge_check "in on bridge" "pass in on ${bridge} dnpipe 1"
-	dn_bridge_check "out on bridge" "pass out on ${bridge} dnpipe 1"
+	dn_bridge_unshaped "in on member" "pass in on ${l}b dnpipe 1"
+	dn_bridge_unshaped "out on member" "pass out on ${r}a dnpipe 1"
+	dn_bridge_unshaped "in and out on members" \
+	    "pass on { ${l}b ${r}a } dnpipe (1, 1)"
+	# The IP rules still filter bridged packets.
+	pft_set_rules dnbr "pass" "block in quick on ${l}b inet proto icmp"
+	atf_check -s exit:2 -o ignore jexec dnl ping -c 2 -t 5 192.0.2.2
 }
 
 bridge_cleanup()
