@@ -321,6 +321,32 @@ lo0_stays_cleanup()
 	:
 }
 
+atf_test_case "allfibs" "cleanup"
+allfibs_head()
+{
+	atf_set descr 'A new routing domain gets no routes of domain 0 with net.add_addr_allfibs=1'
+	atf_set require.user root
+}
+allfibs_body()
+{
+	rdomain_init
+
+	atf_check -o ignore sysctl net.add_addr_allfibs=1
+	atf_check -o ignore ifconfig vether0 create
+	atf_check ifconfig vether0 inet 192.0.2.1/24 up
+	n=$(sysctl -n net.fibs)
+	rd=$((n + 2))
+	atf_check ifconfig lo${rd} rdomain ${rd} up
+	atf_check -o match:"rdomain ${rd} " ifconfig lo${rd}
+	atf_check -o not-match:'192.0.2' route -T ${rd} -n show
+	# The FIBs grown on the way are tables of domain 0 and get its routes.
+	atf_check -o match:'192.0.2' route -T $((n + 1)) -n show
+}
+allfibs_cleanup()
+{
+	sysctl net.add_addr_allfibs=0 >/dev/null 2>&1
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "create"
@@ -333,4 +359,5 @@ atf_init_test_cases()
 	atf_add_test_case "privilege"
 	atf_add_test_case "vmove"
 	atf_add_test_case "lo0_stays"
+	atf_add_test_case "allfibs"
 }

@@ -143,6 +143,20 @@ rt_fib_change_check(struct thread *td, u_int oldfib, u_int newfib)
 	return (priv_check(td, PRIV_NET_SETIFFIB));
 }
 
+/* Set the routing domain map entry of FIB fib; l2 0 removes the domain. */
+static void
+rt_rdomain_map(u_int fib, uint32_t l2)
+{
+	sx_xlock(&rdomain_lock);
+	if (V_rt_l2map[fib] == 0 && l2 != 0)
+		V_rt_rdomains++;
+	else if (V_rt_l2map[fib] != 0 && l2 == 0)
+		V_rt_rdomains--;
+	V_rt_l2map[fib] = l2;
+	atomic_thread_fence_rel();
+	sx_xunlock(&rdomain_lock);
+}
+
 /*
  * Create routing domain rdomain with its loopback interface lo<rdomain>
  * (OpenBSD if_createrdomain()).  ifp is the interface being configured,
@@ -154,43 +168,55 @@ rt_rdomain_create_locked(u_int rdomain, struct ifnet *ifp)
 {
 	char loname[IFNAMSIZ];
 	struct ifnet *loifp;
+	bool pending;
 	int error;
+
+	sx_assert(&ifnet_detach_sxlock, SA_XLOCKED);
 
 	if (rdomain > RT_TABLEID_MAX)
 		return (EINVAL);
-	if ((error = rt_tables_add(rdomain)) != 0)
-		return (error);
 	if (rt_fib_is_rdomain(rdomain))
 		return (EEXIST);
+	/*
+	 * A table that does not exist yet becomes a (pending, loopback-less)
+	 * domain before it is created, so that grow_rtables() does not copy
+	 * the interface routes of domain 0 into it (net.add_addr_allfibs).
+	 * The detach lock keeps others from seeing the domain half made.
+	 */
+	pending = rdomain >= V_rt_numfibs;
+	if (pending)
+		rt_rdomain_map(rdomain, rdomain);
+	if ((error = rt_tables_add(rdomain)) != 0)
+		goto fail;
+	error = EEXIST;
 	if (!rt_fib_empty(rdomain))
-		return (EEXIST);
+		goto fail;
 
 	snprintf(loname, sizeof(loname), "lo%u", rdomain);
 	error = if_clone_create(loname, sizeof(loname), NULL);
-	if ((loifp = ifunit_ref(loname)) == NULL)
-		return (error != 0 ? error : ENXIO);
+	if ((loifp = ifunit_ref(loname)) == NULL) {
+		if (error == 0)
+			error = ENXIO;
+		goto fail;
+	}
 	if (error != 0 && (loifp != ifp || error != EEXIST)) {
 		if_rele(loifp);
-		return (error);
+		goto fail;
 	}
 	if ((loifp->if_flags & IFF_LOOPBACK) == 0) {
 		if_rele(loifp);
-		return (EINVAL);
+		error = EINVAL;
+		goto fail;
 	}
 
-	sx_xlock(&rdomain_lock);
-	if (rt_fib_is_rdomain(rdomain)) {
-		sx_xunlock(&rdomain_lock);
-		if_rele(loifp);
-		return (EEXIST);
-	}
-	V_rt_l2map[rdomain] = rdomain | ((uint32_t)loifp->if_index << 16);
-	atomic_thread_fence_rel();
-	V_rt_rdomains++;
-	sx_xunlock(&rdomain_lock);
+	rt_rdomain_map(rdomain, rdomain | ((uint32_t)loifp->if_index << 16));
 
 	error = rt_rdomain_setif(loifp, rdomain, true);
 	if_rele(loifp);
+	return (error);
+fail:
+	if (pending)
+		rt_rdomain_map(rdomain, 0);
 	return (error);
 }
 
