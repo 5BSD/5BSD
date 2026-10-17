@@ -228,6 +228,7 @@ pfdiv_send4(struct socket *so, struct mbuf *m, struct sockaddr_in *sin)
 	struct epoch_tracker et;
 	struct ifaddr *ifa;
 	struct ip *ip;
+	struct pkthdr_pf *t;
 	int error, off;
 
 	if (m->m_pkthdr.len > IP_MAXPACKET) {
@@ -250,7 +251,12 @@ pfdiv_send4(struct socket *so, struct mbuf *m, struct sockaddr_in *sin)
 	m->m_pkthdr.rcvif = NULL;
 	m->m_nextpkt = NULL;
 	M_SETFIB(m, so->so_fibnum);
-	PF_MTAG_W(m)->flags |= PF_TAG_DIVERTED_PACKET;
+	/* pf's per-packet state is an m_tag here; it can fail to allocate. */
+	if ((t = PF_MTAG_W(m)) == NULL) {
+		m_freem(m);
+		return (ENOBUFS);
+	}
+	t->flags |= PF_TAG_DIVERTED_PACKET;
 
 	if (sin->sin_addr.s_addr == INADDR_ANY) {
 		if ((error = pfdiv_cksum4(&m, 0)) != 0) {
@@ -339,6 +345,7 @@ pfdiv_send6(struct socket *so, struct mbuf *m, struct sockaddr_in6 *sin6)
 	struct epoch_tracker et;
 	struct ifaddr *ifa;
 	struct ip6_hdr *ip6;
+	struct pkthdr_pf *t;
 	struct sockaddr_in6 a;
 	int error;
 
@@ -355,7 +362,12 @@ pfdiv_send6(struct socket *so, struct mbuf *m, struct sockaddr_in6 *sin6)
 	m->m_pkthdr.rcvif = NULL;
 	m->m_nextpkt = NULL;
 	M_SETFIB(m, so->so_fibnum);
-	PF_MTAG_W(m)->flags |= PF_TAG_DIVERTED_PACKET;
+	/* pf's per-packet state is an m_tag here; it can fail to allocate. */
+	if ((t = PF_MTAG_W(m)) == NULL) {
+		m_freem(m);
+		return (ENOBUFS);
+	}
+	t->flags |= PF_TAG_DIVERTED_PACKET;
 	if ((error = pfdiv_cksum6(&m)) != 0) {
 		m_freem(m);
 		return (error);

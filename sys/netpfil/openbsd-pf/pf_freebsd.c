@@ -551,12 +551,23 @@ VNET_DEFINE_STATIC(struct task, pf_pfsync_intask);
 static void
 pf_fbsd_pfsync_intask(void *arg)
 {
+	struct epoch_tracker et;
 	struct mbuf_list ml;
 	struct mbuf *m;
 	int off;
 
 	mq_delist(&V_pf_pfsync_inq, &ml);
 	while ((m = ml_dequeue(&ml)) != NULL) {
+		/*
+		 * The receiving interface may have gone while the packet was
+		 * queued (it was serialised at enqueue); drop it then.
+		 */
+		NET_EPOCH_ENTER(et);
+		if (m_rcvif_restore(m) == NULL) {
+			NET_EPOCH_EXIT(et);
+			m_freem(m);
+			continue;
+		}
 		NET_LOCK_SHARED();
 #ifdef INET6
 		/* pfsync6: the IPv6 input below queues bare headers only. */
@@ -573,6 +584,7 @@ pf_fbsd_pfsync_intask(void *arg)
 			    NULL);
 		}
 		NET_UNLOCK_SHARED();
+		NET_EPOCH_EXIT(et);
 	}
 }
 
@@ -584,6 +596,7 @@ pf_fbsd_pfsync_input(struct mbuf **mp, int *offp, int proto)
 		*mp = NULL;
 		return (IPPROTO_DONE);
 	}
+	m_rcvif_serialize(*mp);		/* no interface reference while queued */
 	if (mq_enqueue(&V_pf_pfsync_inq, *mp) == 0)
 		task_add(systq, &V_pf_pfsync_intask);
 	*mp = NULL;
@@ -904,6 +917,9 @@ pf_fbsd_bindjail(struct pf_fbsd_open *po, int jid, struct thread *td)
 	else if (!prison_isalive(pr))
 		error = ESRCH;
 	else if (!prison_ischild(po->cred->cr_prison, pr))
+		error = EPERM;
+	else if (!prison_owns_vnet(pr))
+		/* As pf_fbsd_open(): its pf would be the parent's. */
 		error = EPERM;
 	else {
 		prison_hold_locked(pr);

@@ -249,6 +249,20 @@ job:
 		 * filtered and the state lock released: the new states'
 		 * keys cannot be inserted from here.
 		 */
+		/*
+		 * Each job is a rule evaluation under PF_LOCK: one packet
+		 * may list thousands of addresses.  pf keeps at most
+		 * PF_SCTP_MAX_ENDPOINTS per association; queue no more.
+		 */
+		{
+			struct pf_sctp_multihome_job *j;
+			int n = 0;
+
+			TAILQ_FOREACH(j, jobs, next)
+				n++;
+			if (n >= PF_SCTP_MAX_ENDPOINTS)
+				goto next;
+		}
 		job = malloc(sizeof(*job), M_PF, M_NOWAIT | M_ZERO);
 		if (job == NULL)
 			return (PF_DROP);

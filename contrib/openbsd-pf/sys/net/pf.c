@@ -1718,6 +1718,10 @@ pf_state_import(const struct pfsync_state *sp, int flags)
 		return (EINVAL);
 	}
 
+	/* 5BSD: names.  The name comes from a peer or user space. */
+	if (strnlen(sp->ifname, sizeof(sp->ifname)) == sizeof(sp->ifname))
+		return (EINVAL);
+
 	if ((kif = pfi_kif_get(sp->ifname, NULL)) == NULL) {
 		DPFPRINTF(LOG_NOTICE, "%s: unknown interface: %s", __func__,
 		    sp->ifname);

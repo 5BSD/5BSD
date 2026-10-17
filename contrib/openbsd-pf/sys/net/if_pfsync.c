@@ -2912,6 +2912,10 @@ pfsync_in_clr(struct pfsync_softc *sc,
 		clr = (struct pfsync_clr *)(buf + i * mlen);
 
 		creatorid = clr->creatorid;
+		/* 5BSD: names.  An unterminated name from the peer. */
+		if (strnlen(clr->ifname, sizeof(clr->ifname)) ==
+		    sizeof(clr->ifname))
+			continue;
 		if (clr->ifname[0] == '\0')
 			kif = NULL;
 		else {
