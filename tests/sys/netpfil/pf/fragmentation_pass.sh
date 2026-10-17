@@ -599,7 +599,11 @@ dummynet_nat_body()
 		"set reassemble yes" \
 		"match out on ${epair_two}a from 192.0.2.0/24 nat-to (${epair_two}a)" \
 		"block in" \
+		"pass out" \
 		"pass in inet proto icmp all icmp-type echoreq dnpipe (1, 2)"
+	# OpenBSD pf creates a state only for a rule that keeps state: the
+	# translated packet needs "pass out" (FreeBSD pf's default rule kept
+	# state for translations).
 
 	atf_check -s exit:0 -o ignore ping -c 1 198.51.100.2
 	atf_check -s exit:0 -o ignore ping -c 1 -s 2000 198.51.100.2

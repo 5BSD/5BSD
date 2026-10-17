@@ -238,9 +238,10 @@ nested_label_body()
 	atf_check -s exit:0 \
 	    -o inline:"passtcp 0 0 0 0 0 0 0 0
 " jexec alcatraz pfctl -sl -a foo/bar
-	atf_check -s exit:0 \
-	    -o inline:"anytoany 0 0 0 0 0 0 0 0
-" jexec alcatraz pfctl -sl
+	# At the top level OpenBSD's pfctl also prints the state and source
+	# limiter tables (headers only, without limiters).
+	atf_check -s exit:0 -o match:"^anytoany 0 0 0 0 0 0 0 0$" \
+	    -o not-match:"pass(icmp|tcp)" jexec alcatraz pfctl -sl
 }
 
 nested_label_cleanup()
