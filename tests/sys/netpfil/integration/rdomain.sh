@@ -86,7 +86,7 @@ pf_on_rdomain_body()
 	    "block in quick on rdomain 1 inet proto icmp"
 	atf_check -s exit:0 -o match:'block drop in quick on rdomain 1 inet proto icmp' \
 	    jexec fw pfctl -sr
-	atf_check -s ignore -o ignore -e ignore \
+	atf_check -s not-exit:0 -o ignore -e ignore \
 	    jexec fw ping -n -c 1 -t 2 -V 1 127.0.0.1
 	atf_check -s exit:0 -o match:'1 packets received' \
 	    jexec fw ping -n -c 1 -t 5 -V 2 127.0.0.1
@@ -243,7 +243,7 @@ fib_vmove_body()
 
 	# The jail goes away; its interfaces return to the host vnet.
 	jail -r many
-	sed -i '' '/^many$/d' created_jails.lst 2>/dev/null
+	sed -i '' '/^many /d' created_jails.lst 2>/dev/null
 	atf_check -s exit:0 -o not-match:"fib:" ifconfig ${e}b
 
 	# Traffic received on it is looked up in FIB 0, without a panic.

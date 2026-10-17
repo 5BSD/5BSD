@@ -61,9 +61,6 @@ owner_leaves_body()
 	atf_check -s exit:0 -o match:"dup" jexec host ifconfig -l
 
 	jexec host pfctl -e >/dev/null 2>&1
-	pft_set_rules host "pass" \
-	    "pass out quick on epair inet proto icmp label grp" \
-	    "pass out quick inet proto icmp from (dup:0) label dyn"
 
 	# The interface that owned the name goes away.  ifconfig dup destroy
 	# destroys whichever "dup" ifunit() finds first; destroy the one that
@@ -75,10 +72,19 @@ owner_leaves_body()
 	    atf_skip "the remaining dup cannot be told apart"
 	jexec host ifconfig dup 198.51.100.1/24 up
 
-	# Group rules on the remaining interface, and its (dup:0) address.
+	# Group rules match on the remaining interface (no NULL pfik_ifp).
+	pft_set_rules host "pass" \
+	    "pass out quick on epair inet proto icmp label grp"
 	atf_check -s exit:0 -o ignore jexec host ping -c 2 -t 4 198.51.100.2
 	atf_check -s exit:0 -o match:"^grp [0-9]+ [1-9]" jexec host pfctl -sl
-	atf_check -s exit:0 -o match:"198.51.100.1" jexec host pfctl -sr -vv
+
+	# (dup:0) holds the remaining interface's address: the rule matches
+	# packets from it.  pfctl prints the dynamic address, not its value.
+	pft_set_rules host "pass" \
+	    "pass out quick inet proto icmp from (dup:0) label dyn"
+	atf_check -s exit:0 -o match:'from \(dup:0' jexec host pfctl -sr
+	atf_check -s exit:0 -o ignore jexec host ping -c 2 -t 4 198.51.100.2
+	atf_check -s exit:0 -o match:"^dyn [0-9]+ [1-9]" jexec host pfctl -sl
 }
 
 owner_leaves_cleanup()

@@ -82,7 +82,7 @@ destroy(int s)
 }
 
 static struct sockaddr_in
-sin(const char *a, sa_family_t family)
+mksin(const char *a, sa_family_t family)
 {
 	struct sockaddr_in s = {
 		.sin_len = sizeof(struct sockaddr_in),
@@ -101,7 +101,7 @@ set(int s, u_long cmd, const char *a)
 
 	strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
 	/* As OpenBSD's ifconfig, a netmask carries no family. */
-	sa = sin(a, cmd == SIOCSIFNETMASK ? AF_UNSPEC : AF_INET);
+	sa = mksin(a, cmd == SIOCSIFNETMASK ? AF_UNSPEC : AF_INET);
 	memcpy(&ifr.ifr_addr, &sa, sizeof(sa));
 	return (ioctl(s, cmd, &ifr));
 }
@@ -116,7 +116,7 @@ get(int s, u_long cmd, const char *a)
 
 	strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
 	if (a != NULL) {
-		sa = sin(a, AF_INET);
+		sa = mksin(a, AF_INET);
 		memcpy(&ifr.ifr_addr, &sa, sizeof(sa));
 	}
 	ATF_REQUIRE_MSG(ioctl(s, cmd, &ifr) == 0, "ioctl: %s",
@@ -131,11 +131,11 @@ add(int s, const char *a, const char *mask, const char *dst)
 	struct in_aliasreq ifra = {};
 
 	strlcpy(ifra.ifra_name, ifname, sizeof(ifra.ifra_name));
-	ifra.ifra_addr = sin(a, AF_INET);
+	ifra.ifra_addr = mksin(a, AF_INET);
 	if (mask != NULL)
-		ifra.ifra_mask = sin(mask, AF_UNSPEC);
+		ifra.ifra_mask = mksin(mask, AF_UNSPEC);
 	if (dst != NULL)
-		ifra.ifra_dstaddr = sin(dst, AF_INET);
+		ifra.ifra_dstaddr = mksin(dst, AF_INET);
 	return (ioctl(s, SIOCAIFADDR, &ifra));
 }
 

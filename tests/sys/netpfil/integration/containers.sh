@@ -71,6 +71,8 @@ cni_setup()
 	jexec out ifconfig ${o}b 198.51.100.2/24 up
 	jexec out ifconfig ${o}b inet6 2001:db8::2/64 no_dad
 
+	# A new vnet's lo0 has no address; podman's host has 127.0.0.1.
+	jexec host ifconfig lo0 inet 127.0.0.1/8 up
 	jexec host ifconfig ${o}a 198.51.100.1/24 up
 	jexec host ifconfig ${o}a inet6 2001:db8::1/64 no_dad
 	jexec host route -q add default 198.51.100.2
@@ -155,7 +157,7 @@ masquerade_body()
 
 	# TCP, translated the same way: the server sees the host's address.
 	jexec out daemon -f sh -c \
-	    "nc -l 7000 -v > /dev/null 2> ${PWD}/peer.out"
+	    "nc -n -l 7000 -v > /dev/null 2> ${PWD}/peer.out"
 	sleep 1
 	atf_check -s exit:0 jexec ctr nc -w 3 -z 198.51.100.2 7000
 	sleep 1
@@ -391,7 +393,8 @@ renamed_interface_body()
 
 	# A rule on the new name applies.
 	pft_set_rules host "pass" "block out quick on cniren0 inet proto icmp"
-	atf_check -s exit:2 -o ignore jexec host ping -c 1 -t 2 192.0.2.2
+	atf_check -s exit:2 -o ignore -e match:"Permission denied" \
+	    jexec host ping -c 1 -t 2 192.0.2.2
 	# The old name no longer matches the interface.
 	pft_set_rules host "pass" "block out quick on ${e}a inet proto icmp"
 	atf_check -s exit:0 -o ignore jexec host ping -c 1 -t 2 192.0.2.2
@@ -407,7 +410,8 @@ renamed_interface_body()
 	# Renamed again while rules use it.
 	jexec host ifconfig cniren0 name cniren1 >/dev/null
 	pft_set_rules host "pass" "block out quick on cniren1 inet proto icmp"
-	atf_check -s exit:2 -o ignore jexec host ping -c 1 -t 2 192.0.2.2
+	atf_check -s exit:2 -o ignore -e match:"Permission denied" \
+	    jexec host ping -c 1 -t 2 192.0.2.2
 }
 
 renamed_interface_cleanup()

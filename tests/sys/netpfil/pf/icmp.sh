@@ -142,6 +142,7 @@ error_ifdestroy_head()
 {
 	atf_set descr 'ICMP errors queued by pf survive the receiving interface going away'
 	atf_set require.user root
+	atf_set timeout 600
 }
 
 error_ifdestroy_body()
@@ -166,10 +167,15 @@ error_ifdestroy_body()
 
 		# Each echo request is answered with an unreachable that pf
 		# queues; destroy the interface while they are in flight.
-		ping -f -c 2000 192.0.2.1 > /dev/null 2>&1 &
-		ping -6 -f -c 2000 2001:db8::1 > /dev/null 2>&1 &
-		sleep 0.2
+		# Unbounded floods, stopped once the interface is gone: a count
+		# would make each ping wait for replies that never come.
+		ping -f 192.0.2.1 > /dev/null 2>&1 &
+		p4=$!
+		ping -6 -f 2001:db8::1 > /dev/null 2>&1 &
+		p6=$!
+		sleep 0.5
 		jexec alcatraz ifconfig ${epair}b destroy
+		kill ${p4} ${p6} 2>/dev/null
 		wait
 		i=$((i + 1))
 	done
