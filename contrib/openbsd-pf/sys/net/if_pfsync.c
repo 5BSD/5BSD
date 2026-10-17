@@ -205,6 +205,7 @@ struct pfsync_softc {
 
 	/* operation */
 	unsigned int		 sc_sync_ifidx;
+	unsigned int		 sc_sync_ifgen;	/* 5BSD: index reuse */
 	unsigned int		 sc_sync_if_down;
 	void			*sc_inm;
 	struct task		 sc_ltask;
@@ -545,6 +546,26 @@ pfsync_dprintf(struct pfsync_softc *sc, const char *fmt, ...)
 	printf("\n");
 }
 
+/*
+ * 5BSD: FreeBSD reuses a freed interface index at once, and pfsync
+ * registers its detach hook on the sync interface only while running.
+ * Check the index generation, so a sync interface destroyed while pfsync
+ * is down is not replaced by an unrelated interface given its index.
+ */
+static struct ifnet *
+pfsync_sync_if_get(struct pfsync_softc *sc)
+{
+	struct ifnet *ifp0;
+
+	ifp0 = if_get(sc->sc_sync_ifidx);
+	if (ifp0 != NULL && (unsigned int)if_getidxgen(ifp0) !=
+	    sc->sc_sync_ifgen) {
+		if_put(ifp0);
+		ifp0 = NULL;
+	}
+	return (ifp0);
+}
+
 static void
 pfsync_syncif_link(void *arg)
 {
@@ -672,7 +693,7 @@ pfsync_set_mtu(struct pfsync_softc *sc, unsigned int mtu)
 	struct ifnet *ifp0;
 	int error = 0;
 
-	ifp0 = if_get(sc->sc_sync_ifidx);
+	ifp0 = pfsync_sync_if_get(sc);	/* 5BSD */
 	if (ifp0 == NULL)
 		return (EINVAL);
 
@@ -701,7 +722,8 @@ pfsync_set_parent(struct pfsync_softc *sc, const struct if_parent *p)
 	if (ifp0 == NULL)
 		return (ENXIO);
 
-	if (ifp0->if_index == sc->sc_sync_ifidx)
+	if (ifp0->if_index == sc->sc_sync_ifidx &&
+	    (unsigned int)if_getidxgen(ifp0) == sc->sc_sync_ifgen) /* 5BSD */
 		goto put;
 
 	if (ISSET(ifp->if_flags, IFF_RUNNING)) {
@@ -711,6 +733,7 @@ pfsync_set_parent(struct pfsync_softc *sc, const struct if_parent *p)
 
 	/* commit */
 	sc->sc_sync_ifidx = ifp0->if_index;
+	sc->sc_sync_ifgen = if_getidxgen(ifp0);	/* 5BSD */
 
 put:
 	if_put(ifp0);
@@ -723,7 +746,7 @@ pfsync_get_parent(struct pfsync_softc *sc, struct if_parent *p)
 	struct ifnet *ifp0;
 	int error = 0;
 
-	ifp0 = if_get(sc->sc_sync_ifidx);
+	ifp0 = pfsync_sync_if_get(sc);	/* 5BSD */
 	if (ifp0 == NULL)
 		error = EADDRNOTAVAIL;
 	else
@@ -756,7 +779,7 @@ pfsync_get_ioc(struct pfsync_softc *sc, struct ifreq *ifr, u_long cmd)
 
 	memset(&pfsyncr, 0, sizeof(pfsyncr));
 
-	ifp0 = if_get(sc->sc_sync_ifidx);
+	ifp0 = pfsync_sync_if_get(sc);	/* 5BSD */
 	if (ifp0 != NULL) {
 		strlcpy(pfsyncr.pfsyncr_syncdev, ifp0->if_xname,
 		    sizeof(pfsyncr.pfsyncr_syncdev));
@@ -785,6 +808,7 @@ pfsync_set_ioc(struct pfsync_softc *sc, struct ifreq *ifr, u_long cmd)
 	struct pfsyncreq6 pfsyncr6;	/* 5BSD: pfsync6 */
 	struct in6_addr syncpeer6 = sc->sc_pfsync6.p6_peer;
 	unsigned int sync_ifidx = sc->sc_sync_ifidx;
+	unsigned int sync_ifgen = sc->sc_sync_ifgen;	/* 5BSD */
 	int wantdown = 0;
 	int error;
 
@@ -814,10 +838,12 @@ pfsync_set_ioc(struct pfsync_softc *sc, struct ifreq *ifr, u_long cmd)
 		if (ifp0 == NULL)
 			return (ENXIO);
 
-		if (ifp0->if_index != sync_ifidx)
+		if (ifp0->if_index != sync_ifidx ||
+		    (unsigned int)if_getidxgen(ifp0) != sync_ifgen) /* 5BSD */
 			wantdown = 1;
 
 		sync_ifidx = ifp0->if_index;
+		sync_ifgen = if_getidxgen(ifp0);	/* 5BSD */
 		if_put(ifp0);
 	} else { /* del */
 		wantdown = 1;
@@ -836,6 +862,7 @@ pfsync_set_ioc(struct pfsync_softc *sc, struct ifreq *ifr, u_long cmd)
 
 	/* commit */
 	sc->sc_sync_ifidx = sync_ifidx;
+	sc->sc_sync_ifgen = sync_ifgen;	/* 5BSD */
 	sc->sc_syncpeer = pfsyncr.pfsyncr_syncpeer;
 	sc->sc_pfsync6.p6_peer = syncpeer6;	/* 5BSD: pfsync6 */
 	sc->sc_maxupdates = pfsyncr.pfsyncr_maxupdates;
@@ -870,7 +897,7 @@ pfsync_up(struct pfsync_softc *sc)
 	    sc->sc_syncpeer.s_addr == INADDR_BROADCAST)
 		return (EDESTADDRREQ);
 
-	ifp0 = if_get(sc->sc_sync_ifidx);
+	ifp0 = pfsync_sync_if_get(sc);	/* 5BSD */
 	if (ifp0 == NULL)
 		return (ENXIO);
 
