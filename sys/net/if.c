@@ -1197,6 +1197,31 @@ if_vmove(struct ifnet *ifp, struct vnet *new_vnet)
 }
 
 /*
+ * 5BSD: drivers whose softc lives in per-VNET state of the creating VNET
+ * (OpenBSD PF's pflog, pfsync and pflow) set IFKF_NOVMOVE: moved away, they
+ * would be destroyed against the other VNET's state.  ifp is only known to
+ * be valid while it is on the current VNET's list, which ifnet_detach_sxlock
+ * keeps stable.
+ */
+static bool
+if_vmove_denied(struct ifnet *ifp)
+{
+	struct ifnet *iter;
+	bool denied;
+
+	sx_assert(&ifnet_detach_sxlock, SX_XLOCKED);
+	denied = false;
+	IFNET_RLOCK();
+	CK_STAILQ_FOREACH(iter, &V_ifnet, if_link)
+		if (iter == ifp) {
+			denied = (ifp->if_kflags & IFKF_NOVMOVE) != 0;
+			break;
+		}
+	IFNET_RUNLOCK();
+	return (denied);
+}
+
+/*
  * Move an ifnet to or from another child prison/vnet, specified by the jail id.
  */
 static int
@@ -1245,6 +1270,11 @@ if_vmove_loan(struct thread *td, char *ifname, int jid)
 	}
 	sx_xlock(&ifnet_detach_sxlock);
 
+	if (if_vmove_denied(ifp)) {
+		sx_xunlock(&ifnet_detach_sxlock);
+		prison_free(pr);
+		return (EOPNOTSUPP);
+	}
 	found = if_unlink_ifnet(ifp, true);
 	if (! found) {
 		sx_xunlock(&ifnet_detach_sxlock);
@@ -1300,6 +1330,12 @@ if_vmove_reclaim(struct thread *td, char *ifname, int jid)
 
 	/* Get interface back from child jail/vnet. */
 	sx_xlock(&ifnet_detach_sxlock);
+	if (if_vmove_denied(ifp)) {
+		sx_xunlock(&ifnet_detach_sxlock);
+		CURVNET_RESTORE();
+		prison_free(pr);
+		return (EOPNOTSUPP);
+	}
 	found = if_unlink_ifnet(ifp, true);
 	if (! found) {
 		sx_xunlock(&ifnet_detach_sxlock);

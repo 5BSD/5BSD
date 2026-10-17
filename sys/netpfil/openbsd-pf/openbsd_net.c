@@ -950,6 +950,12 @@ obsd_if_attach(struct ifnet *ifp)
 		if_initname(ifp, oifc != NULL ? oifc->ifc_name :
 		    obsd_strdup_name(name), unit);
 	}
+	/*
+	 * pflog, pfsync and pflow keep their softc in the creating VNET's
+	 * state (V_pfsyncif, V_pflowif_list) and carry that VNET's
+	 * traffic: they cannot be lent to another VNET.
+	 */
+	ifp->if_kflags |= IFKF_NOVMOVE;
 	if_attach(ifp);
 }
 

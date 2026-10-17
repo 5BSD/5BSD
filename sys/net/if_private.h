@@ -193,6 +193,13 @@ struct ifnet {
 	int	if_ispare[4];		/* general use */
 };
 
+/*
+ * 5BSD: kernel-only interface flags, kept in a spare slot so the ifnet
+ * layout is unchanged (if_ispare[0] is the OpenBSD PF glue's if_xflags).
+ */
+#define	if_kflags	if_ispare[1]
+#define	IFKF_NOVMOVE	0x00000001	/* refuse SIOCSIFVNET/SIOCSIFRVNET */
+
 #define IF_LLADDR(ifp)							\
     LLADDR((struct sockaddr_dl *)((ifp)->if_addr->ifa_addr))
 
