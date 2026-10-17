@@ -1320,10 +1320,28 @@ if_vmove_reclaim(struct thread *td, char *ifname, int jid)
 #endif /* VIMAGE */
 
 /*
+ * 5BSD: is @ifp on this vnet's interface list?  An interface that
+ * if_unlink_ifnet() took off the list is being destroyed or moved, and
+ * if_detach_internal() may already have run if_delgroups() for it.
+ */
+static bool
+if_linked_locked(struct ifnet *ifp)
+{
+	struct ifnet *iter;
+
+	IFNET_WLOCK_ASSERT();
+
+	CK_STAILQ_FOREACH(iter, &V_ifnet, if_link)
+		if (iter == ifp)
+			return (true);
+	return (false);
+}
+
+/*
  * Add a group to an interface
  */
-int
-if_addgroup(struct ifnet *ifp, const char *groupname)
+static int
+if_addgroup_internal(struct ifnet *ifp, const char *groupname, bool linked)
 {
 	struct ifg_list		*ifgl;
 	struct ifg_group	*ifg = NULL;
@@ -1335,6 +1353,16 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 		return (EINVAL);
 
 	IFNET_WLOCK();
+	/*
+	 * 5BSD: never put a dying interface, or one owned by another vnet,
+	 * into this vnet's groups: if_delgroups() has already run for it
+	 * or runs elsewhere, and the membership would be left behind.
+	 */
+	if ((ifp->if_flags & IFF_DYING) != 0 || ifp->if_vnet != curvnet ||
+	    (linked && !if_linked_locked(ifp))) {
+		IFNET_WUNLOCK();
+		return (ENXIO);
+	}
 	CK_STAILQ_FOREACH(ifgl, &ifp->if_groups, ifgl_next)
 		if (!strcmp(ifgl->ifgl_group->ifg_group, groupname)) {
 			IFNET_WUNLOCK();
@@ -1383,6 +1411,23 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 	EVENTHANDLER_INVOKE(group_change_event, groupname);
 
 	return (0);
+}
+
+int
+if_addgroup(struct ifnet *ifp, const char *groupname)
+{
+	return (if_addgroup_internal(ifp, groupname, false));
+}
+
+/*
+ * 5BSD: if_addgroup() for a caller that holds only a reference to @ifp and
+ * can race with its detach or vnet move: fail with ENXIO unless @ifp is
+ * still on this vnet's interface list.
+ */
+int
+if_addgroup_attached(struct ifnet *ifp, const char *groupname)
+{
+	return (if_addgroup_internal(ifp, groupname, true));
 }
 
 /*

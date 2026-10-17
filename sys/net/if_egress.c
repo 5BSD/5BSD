@@ -154,10 +154,18 @@ egress_sync_one(struct ifnet *ifp, void *arg)
 	struct egress_set *set = arg;
 	bool want, have;
 
+	/*
+	 * The reference from if_foreach_sleep() does not keep @ifp on the
+	 * interface list: it may be detaching or moving to another vnet,
+	 * with its groups already removed.  if_addgroup_attached() checks
+	 * that again under the ifnet lock.
+	 */
+	if ((ifp->if_flags & IFF_DYING) != 0 || ifp->if_vnet != curvnet)
+		return (0);
 	want = egress_set_has(set, ifp);
 	have = egress_is_member(ifp);
 	if (want && !have)
-		(void)if_addgroup(ifp, IFG_EGRESS);
+		(void)if_addgroup_attached(ifp, IFG_EGRESS);
 	else if (!want && have)
 		(void)if_delgroup(ifp, IFG_EGRESS);
 	return (0);
