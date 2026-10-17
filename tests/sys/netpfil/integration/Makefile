@@ -7,6 +7,7 @@ BINDIR=		${TESTSDIR}
 # capability plane and jails.  See README.
 ATF_TESTS_SH+=	vnet_dev \
 		host_limits \
+		quotas \
 		modules \
 		cloners \
 		jail_rule \
@@ -28,11 +29,13 @@ TEST_METADATA.${t}+=	execenv="" is_exclusive="true"
 
 ${PACKAGE}FILES+=	integration.subr \
 			pf_devhelper.py \
+			quota_frags.py \
 			README
 ${PACKAGE}FILESMODE_pf_devhelper.py=	0555
+${PACKAGE}FILESMODE_quota_frags.py=	0555
 
-# Helpers: socket options (sockets, rdomain), raw pf ioctls (securelevel)
-# and a capability-mode /dev/pf descriptor (consumers).
+# Helpers: socket options (sockets, rdomain), raw pf ioctls (securelevel,
+# quotas) and a capability-mode /dev/pf descriptor (consumers).
 PROGS+=		sockhelper pfiochelper pf_capfd
 MAN.sockhelper=
 MAN.pfiochelper=

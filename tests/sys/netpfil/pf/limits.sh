@@ -26,7 +26,8 @@
 
 . $(atf_get_srcdir)/utils.subr
 
-# 5BSD: pf's pool limits are host-wide and owned by the host vnet; a vnet
+# 5BSD: pf's pool limits are owned by the host vnet (each vnet is held to its
+# own limits, at net.pf.vnet_limit_pct of the host's, default 100); a vnet
 # jail sees them and may restate them but not change them.  These tests run
 # exclusively in the host vnet (Makefile), change the limits there with
 # "pfctl -O", and restore the saved limits in cleanup.

@@ -586,15 +586,23 @@ obsd_malloc_flags(int flags)
 #define	PR_ZERO		0x0008
 #define	PR_RWLOCK	0x0010
 
+/*
+ * A pool with a pf limit (pf_pool_limits[], PF_LIMIT_*) is accounted per
+ * VNET (pf_quota.c): pr_quota is its PF_LIMIT_* index + 1, and each item
+ * carries a hidden trailer at pr_qoff naming the accounting of the VNET
+ * that allocated it, so a free in any context credits that VNET.
+ */
 struct pool {
 	uma_zone_t	pr_zone;
 	const char	*pr_wchan;
 	size_t		pr_size;
-	u_int		pr_hardlimit;
-	volatile u_int	pr_nout;
+	u_int		pr_hardlimit;	/* the host's (vnet0) limit; 0: none */
+	volatile u_int	pr_nout;	/* items out, all VNETs */
 	u_long		pr_nget;
 	u_long		pr_nfail;
 	u_long		pr_nput;
+	int		pr_quota;	/* PF_LIMIT_* + 1, or 0 */
+	size_t		pr_qoff;	/* offset of the owner trailer */
 };
 typedef struct pool pool_t;
 
@@ -603,6 +611,15 @@ void	pool_destroy(struct pool *);
 void	*pool_get(struct pool *, int);
 void	pool_put(struct pool *, void *);
 int	pool_sethardlimit(struct pool *, u_int);
+u_int	pool_nout(void *);
+
+/* Per-VNET pf resource quotas (pf_quota.c). */
+struct pf_quota;
+int	pf_quota_pool_index(struct pool *);
+int	pf_quota_charge(int, int, uintptr_t *);
+void	pf_quota_release(uintptr_t, int);
+void	pf_quota_adaptive(u_int32_t *, u_int32_t *);
+u_int	pf_quota_count(int);
 #define	pool_sethiwat(pp, n)		do { } while (0)
 #define	pool_setlowat(pp, n)		do { } while (0)
 #define	pool_cache_init(pp)		do { } while (0)
@@ -1416,6 +1433,8 @@ SDT_PROBE_DECLARE(pf, table, addr, update);
 #define	pflowif_list	VNET(pflowif_list_vnet)
 #define	pfsyncif	VNET(pfsyncif_vnet)
 #define	pf_trans_set	VNET(pf_trans_set_vnet)
+#define	pf_tags	VNET(pf_tags_vnet)
+#define	pf_qids	VNET(pf_qids_vnet)
 
 #ifndef OPENBSD_PF_GLUE
 /*

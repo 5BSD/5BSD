@@ -104,7 +104,60 @@ and
 interfaces belong to the vnet, and the
 .Nm
 device acts on the vnet of the process that opened it.
-Memory pool limits are shared; only the host may change them.
+Tag, queue and route label ids are allocated per vnet.
+.Pp
+The memory pools are shared, but each vnet counts its own states, source
+nodes, fragment entries, tables, table entries, delayed packets and
+anchors and is refused at its own limit, so no vnet can use up another's.
+Only the host may change the limits.
+The host's limits are its own
+.Ic set limit
+values, and what the jails hold does not count against them.
+A vnet jail's limit is the host's limit scaled by the host-only
+.Xr sysctl 8
+.Va net.pf.vnet_limit_pct
+(1 to 100, default 100).
+A vnet jail's items also count against the limit of every ancestor vnet
+jail, so a jail and all its descendants share one quota.
+All vnet jails together may hold at most the host's limits scaled by the
+host-only
+.Va net.pf.vnet_total_pct
+(1 to 10000, default 200), and fragment entries no more than the mbuf
+clusters
+.Pq Va kern.ipc.nmbclusters
+the host's own frags limit leaves.
+In a jail,
+.Dv DIOCGETLIMIT
+returns the jail's limit, and
+.Dv DIOCSETLIMIT
+accepts only the host's limit or the jail's own (pfctl restates every
+limit with each ruleset) and otherwise fails with
+.Er EPERM .
+A jail's default adaptive timeouts
+.Pq Ic set timeout adaptive.start , adaptive.end
+are scaled down with its states limit when they exceed it.
+The read-only
+.Va net.pf.vnet_count ,
+.Va net.pf.vnet_limit
+and
+.Va net.pf.vnet_refused
+sysctl trees show, for the reader's vnet, the items held (with those of
+its descendant vnet jails), the effective limits (4294967295 when the host
+has set none) and the allocations refused at a limit;
+.Va net.pf.vnet_total_count ,
+.Va net.pf.vnet_total_limit
+and
+.Va net.pf.vnet_total_refused
+the same for all vnet jails together; each by pool:
+.Va states ,
+.Va src_nodes ,
+.Va frags ,
+.Va tables ,
+.Va table_entries ,
+.Va pktdelay_pkts
+and
+.Va anchors .
+A vnet that reaches its fragment limit drops its own oldest fragments.
 .Pp
 A descriptor that has issued no other ioctl can be moved to the vnet of a
 jail with

@@ -4,17 +4,22 @@
 # 5BSD seam tests: host-owned pf pool limits.
 #
 # pf's memory pools (states, src-nodes, frags, tables, table-entries,
-# pktdelay-pkts, anchors) are global, shared by every VNET, and their limits
-# belong to the host vnet.  A VNET jail sees the host's limits, may restate
-# them (pfctl loads every limit with each ruleset), but may not change them:
-# DIOCSETLIMIT returns EPERM (pf_fbsd_vnet_setlimit) and pfctl rolls the
-# whole ruleset transaction back.  State-pool exhaustion caused by one VNET
-# is visible in every other VNET.
+# pktdelay-pkts, anchors) are global and shared by every VNET, but their
+# limits belong to the host vnet and every VNET is held to its own limit
+# in them (per-VNET quotas, quotas.sh).  A VNET jail sees its effective
+# limit (the host's, scaled by net.pf.vnet_limit_pct; these cases keep it
+# at 100, so the jail sees exactly the host's limits), may restate it
+# (pfctl loads every limit with each ruleset), but may not change it:
+# DIOCSETLIMIT returns EPERM (pf_quota_setlimit) and pfctl rolls the whole
+# ruleset transaction back.  State-pool exhaustion caused by one VNET is
+# not visible in any other VNET.
 #
 # Run exclusively in the host vnet (Makefile); every case saves the host
 # limits first and restores them in cleanup (pf/utils.subr).
 
 . $(atf_get_srcdir)/integration.subr
+
+PFIO=$(atf_get_srcdir)/pfiochelper
 
 pools="states src-nodes frags tables table-entries pktdelay-pkts anchors"
 
@@ -67,6 +72,7 @@ jail_sees_host_limits_head()
 jail_sees_host_limits_body()
 {
 	pft_init
+	quota_pct_set 100
 	limits_save
 	vnet_mkjail a
 
@@ -86,6 +92,7 @@ jail_sees_host_limits_body()
 jail_sees_host_limits_cleanup()
 {
 	limits_restore
+	quota_pct_restore
 	integ_cleanup
 }
 
@@ -99,6 +106,7 @@ jail_restate_ok_head()
 jail_restate_ok_body()
 {
 	pft_init
+	quota_pct_set 100
 	limits_save
 	vnet_mkjail a
 
@@ -119,6 +127,7 @@ jail_restate_ok_body()
 jail_restate_ok_cleanup()
 {
 	limits_restore
+	quota_pct_restore
 	integ_cleanup
 }
 
@@ -129,6 +138,7 @@ change_rejected_body()
 {
 	pool=$1
 	pft_init
+	quota_pct_set 100
 	limits_save
 	vnet_mkjail a
 
@@ -170,6 +180,7 @@ ${_tc}_body()
 ${_tc}_cleanup()
 {
 	limits_restore
+	quota_pct_restore
 	integ_cleanup
 }
 "
@@ -189,6 +200,7 @@ unstated_states_limit_body()
 	# the limit: pfctl keeps the host's value for a limit the ruleset does
 	# not set, so a jail ruleset loads after the host tuned the limit.
 	pft_init
+	quota_pct_set 100
 	limits_save
 	vnet_mkjail a
 
@@ -208,19 +220,21 @@ unstated_states_limit_body()
 unstated_states_limit_cleanup()
 {
 	limits_restore
+	quota_pct_restore
 	integ_cleanup
 }
 
-atf_test_case "state_pool_shared" "cleanup"
-state_pool_shared_head()
+atf_test_case "state_pool_isolated" "cleanup"
+state_pool_isolated_head()
 {
-	atf_set descr 'State-pool exhaustion by one VNET is visible in another'
+	atf_set descr 'State-pool exhaustion by one VNET is not visible in another'
 	atf_set require.user root
 }
 
-state_pool_shared_body()
+state_pool_isolated_body()
 {
 	pft_init
+	quota_pct_set 100
 	limits_save
 
 	vnet_mkjail a
@@ -231,78 +245,86 @@ state_pool_shared_body()
 		jexec $j pfctl -e
 	done
 
-	used=$(pfstate_used)
-	[ -n "${used}" ] || atf_skip "no pfstate UMA zone in vmstat -z"
-	limits_set "states $((used + 5))"
+	# A small limit the host's own states leave room under.
+	lim=$(($(sysctl -n net.pf.vnet_count.states) + 5))
+	limits_set "states ${lim}"
 
-	# Every ping uses a new ICMP id, so a new state.  At most 5 fit.
-	for i in $(seq 1 20); do
+	# Every ping uses a new ICMP id, so a new state.  At most ${lim} fit.
+	for i in $(seq 1 $((lim + 10))); do
 		jexec a ping -c 1 -t 1 127.0.0.1 > /dev/null 2>&1
 	done
 	na=$(state_count a)
 	echo "jail a: ${na} states, $(memory_drops a) memory drops"
-	[ "${na}" -le 5 ] || atf_fail "jail a holds ${na} states, limit allows 5"
+	[ "${na}" -le "${lim}" ] ||
+	    atf_fail "jail a holds ${na} states, limit allows ${lim}"
 	[ "$(memory_drops a)" -gt 0 ] ||
-	    atf_fail "jail a has no memory drops after exhausting the pool"
+	    atf_fail "jail a has no memory drops after exhausting its limit"
 
-	# Fill whatever headroom other VNETs left, then b cannot create a
-	# state: its ping is dropped for lack of memory.
-	for i in $(seq 1 5); do
-		jexec a ping -c 1 -t 1 127.0.0.1 > /dev/null 2>&1
+	# b counts its own states: it is not affected by a.
+	for i in $(seq 1 3); do
+		atf_check -s exit:0 -o ignore jexec b ping -c 1 -t 2 127.0.0.1
 	done
-	atf_check -s not-exit:0 -o ignore -e ignore \
-	    jexec b ping -c 1 -t 1 127.0.0.1
-	expect_eq "$(state_count b)" "0" "state_count b"
-	[ "$(memory_drops b)" -gt 0 ] ||
-	    atf_fail "jail b has no memory drops while the pool is exhausted"
-
-	# Freeing a's states makes room for b.
-	atf_check -s exit:0 -e ignore jexec a pfctl -F states
-	atf_check -s exit:0 -o ignore jexec b ping -c 1 -t 2 127.0.0.1
 	nb=$(state_count b)
-	[ "${nb}" -ge 1 ] || atf_fail "jail b has no state after a freed the pool"
+	[ "${nb}" -ge 3 ] || atf_fail "jail b holds only ${nb} states"
+	expect_eq "$(memory_drops b)" "0" "memory drops in b"
 }
 
-state_pool_shared_cleanup()
+state_pool_isolated_cleanup()
 {
 	limits_restore
+	quota_pct_restore
 	integ_cleanup
 }
 
 atf_test_case "host_lower_below_usage" "cleanup"
 host_lower_below_usage_head()
 {
-	atf_set descr 'The host cannot lower the states limit below what VNET jails use'
+	atf_set descr 'The host cannot lower a limit below its own usage, but may below a jail'"'"'s'
 	atf_set require.user root
 }
 
 host_lower_below_usage_body()
 {
 	pft_init
+	quota_pct_set 100
 	limits_save
 
 	vnet_mkjail a
 	jexec a ifconfig lo0 127.0.0.1/8 up
 	pft_set_rules a "pass all"
 	jexec a pfctl -e
-	for i in $(seq 1 4); do
+	for i in $(seq 1 10); do
 		jexec a ping -c 1 127.0.0.1 > /dev/null
 	done
-	[ "$(state_count a)" -ge 4 ] || atf_fail "jail a did not create 4 states"
+	[ "$(state_count a)" -ge 10 ] || atf_fail "jail a did not create 10 states"
 
+	# Five host states (DIOCADDSTATE, as pfsync would add them).
+	atf_check -o match:'^DIOCADDSTATE=ok added=5$' ${PFIO} addstate 5 94
+	own=$(sysctl -n net.pf.vnet_count.states)
 	used=$(pfstate_used)
-	[ -n "${used}" ] || atf_skip "no pfstate UMA zone in vmstat -z"
+	echo "host: ${own} states; all VNETs: ${used} pfstate items"
+	[ "${own}" -ge 5 ] || atf_fail "the host counts ${own} states"
+
+	# Below the host's own usage: refused.
 	old=$(limit_of states)
-	echo "set limit states $((used - 1))" > lower.conf
+	echo "set limit states $((own - 1))" > lower.conf
 	atf_check -s not-exit:0 \
 	    -e match:'Current pool size exceeds requested states limit' \
 	    pfctl -O -f ${PWD}/lower.conf
 	expect_eq "$(limit_of states)" "${old}" "limit_of states"
+
+	# Below the jail's usage: the jail's states are its own.
+	echo "set limit states ${own}" > lower.conf
+	atf_check -s exit:0 -e ignore pfctl -O -f ${PWD}/lower.conf
+	expect_eq "$(limit_of states)" "${own}" "limit_of states"
+	[ "$(state_count a)" -ge 10 ] || atf_fail "jail a lost states"
 }
 
 host_lower_below_usage_cleanup()
 {
+	pfctl -k 10.94.0.0/16 > /dev/null 2>&1
 	limits_restore
+	quota_pct_restore
 	integ_cleanup
 }
 
@@ -314,6 +336,6 @@ atf_init_test_cases()
 		atf_add_test_case change_rejected_$(echo ${_pool} | tr - _)
 	done
 	atf_add_test_case "unstated_states_limit"
-	atf_add_test_case "state_pool_shared"
+	atf_add_test_case "state_pool_isolated"
 	atf_add_test_case "host_lower_below_usage"
 }

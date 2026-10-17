@@ -74,8 +74,18 @@ void	pf_eth_hook_update(void);
 void	pf_eth_vnet_init(void);
 void	pf_eth_vnet_unhook(void);
 void	pf_eth_vnet_fini(void);
+/* Per-VNET quotas (pf_quota.c), route labels (openbsd_compat.c). */
+void	pf_quota_vnet_init(void);
+void	pf_quota_vnet_fini(void);
+int	pf_quota_getlimit(struct pfioc_limit *);
+int	pf_quota_setlimit(struct pfioc_limit *);
+void	obsd_rtlabel_vnet_fini(void);
+/* Per-VNET tag and queue ids (pf_ioctl.c). */
+TAILQ_HEAD(PF_KTAG(pf_tags), pf_tagname);
+PF_VNET_DECLARE(struct PF_KTAG(pf_tags), pf_tags);
+PF_VNET_DECLARE(struct PF_KTAG(pf_tags), pf_qids);
+extern struct pool pf_tag_pl;
 extern struct sx pfioctl_rw;
-extern struct pf_pool_limit pf_pool_limits[PF_LIMIT_MAX];
 PF_VNET_DECLARE(struct cpumem *, pf_status_fcounters);
 PF_VNET_DECLARE(struct pf_statelim_list, pf_statelim_list_active);
 PF_VNET_DECLARE(struct pf_source_list, pf_source_gc);
@@ -84,9 +94,10 @@ PF_VNET_DECLARE(int, pfr_ktable_cnt);
 
 /*
  * VNET: every vnet runs its own OpenBSD pf instance (rulesets, states,
- * tables, anchors, interfaces, pflog/pfsync/pflow).  Pools, the pf locks
- * and the tag name space are shared.  pf_fbsd_ready is set once a vnet's
- * instance is initialised and cleared before it is torn down.
+ * tables, anchors, interfaces, pflog/pfsync/pflow, tag, queue and route
+ * label ids).  The pools and the pf locks are shared; each vnet is held to
+ * its own limits in the pools (pf_quota.c).  pf_fbsd_ready is set once a
+ * vnet's instance is initialised and cleared before it is torn down.
  */
 VNET_DEFINE_STATIC(int, pf_fbsd_ready);
 #define	V_pf_fbsd_ready	VNET(pf_fbsd_ready)
@@ -1095,21 +1106,6 @@ pf_fbsd_use(struct pf_fbsd_open *po)
 	}
 }
 
-/*
- * Pool limits are shared by all vnets.  A vnet other than the default
- * one may restate the current limit (pfctl loads every limit with each
- * ruleset) but may not change it.
- */
-static int
-pf_fbsd_vnet_setlimit(struct pfioc_limit *pl)
-{
-	if (pl->index < 0 || pl->index >= PF_LIMIT_MAX)
-		return (EINVAL);
-	if (pl->limit != pf_pool_limits[pl->index].limit)
-		return (EPERM);
-	return (0);
-}
-
 static int
 pf_fbsd_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flags,
     struct thread *td)
@@ -1132,8 +1128,11 @@ pf_fbsd_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flags,
 	CURVNET_SET(po->vnet);
 	if (!V_pf_fbsd_ready)
 		error = ENXIO;
+	/* The host owns the limits; a VNET jail has its quota (pf_quota.c). */
 	else if (cmd == DIOCSETLIMIT && !IS_DEFAULT_VNET(curvnet))
-		error = pf_fbsd_vnet_setlimit((struct pfioc_limit *)data);
+		error = pf_quota_setlimit((struct pfioc_limit *)data);
+	else if (cmd == DIOCGETLIMIT && !IS_DEFAULT_VNET(curvnet))
+		error = pf_quota_getlimit((struct pfioc_limit *)data);
 	else if (cmd == DIOCADDQUEUE)
 		/*
 		 * Queueing (HFSC, FQ-CoDel) is not attached to the 5BSD
@@ -1190,6 +1189,7 @@ pf_fbsd_vnet_init(void *arg __unused)
 	TAILQ_INIT(&pf_sourcelim_list_inactive);
 	TAILQ_INIT(&pf_source_gc);
 
+	pf_quota_vnet_init();	/* before the first pool_get */
 	pfattach(1);
 	pf_eth_vnet_init();
 	mq_init(&V_pf_pfsync_inq, 1024, IPL_SOFTNET);
@@ -1247,6 +1247,34 @@ pf_fbsd_flush_rulesets(void)
 			pf_fbsd_flush_ruleset(paths[i]);
 	}
 	free(paths, M_PF);
+}
+
+/*
+ * The vnet's tag, queue and route label ids: its rules and states are
+ * gone, so any id left is a leaked reference; free it with the vnet.
+ */
+static void
+pf_fbsd_ids_fini(void)
+{
+	struct pf_tagname *t;
+	int n = 0;
+
+	PF_LOCK();
+	while ((t = TAILQ_FIRST(&pf_tags)) != NULL) {
+		TAILQ_REMOVE(&pf_tags, t, entries);
+		pool_put(&pf_tag_pl, t);
+		n++;
+	}
+	while ((t = TAILQ_FIRST(&pf_qids)) != NULL) {
+		TAILQ_REMOVE(&pf_qids, t, entries);
+		pool_put(&pf_tag_pl, t);
+		n++;
+	}
+	PF_UNLOCK();
+	if (n != 0)
+		printf("pf: vnet %p torn down with %d tag or queue ids\n",
+		    curvnet, n);
+	obsd_rtlabel_vnet_fini();
 }
 
 static void
@@ -1345,6 +1373,7 @@ pf_fbsd_vnet_uninit(void *arg __unused)
 		    RB_EMPTY(&pf_anchors) ? "none" : "left");
 
 	pfi_vnet_fini();
+	pf_fbsd_ids_fini();
 	counters_free(pf_status_fcounters, FCNT_MAX);
 	pf_status_fcounters = NULL;
 	cpumem_free(pf_anchor_stack, M_PF,
@@ -1354,6 +1383,7 @@ pf_fbsd_vnet_uninit(void *arg __unused)
 	mtx_destroy(&pf_frag_mtx.mtx);
 	mtx_destroy(&pf_state_list.pfs_mtx.mtx);
 	sx_destroy(&pf_state_list.pfs_rwl);
+	pf_quota_vnet_fini();
 }
 VNET_SYSUNINIT(pf_fbsd_vnet_uninit, SI_SUB_PROTO_FIREWALL, SI_ORDER_THIRD,
     pf_fbsd_vnet_uninit, NULL);

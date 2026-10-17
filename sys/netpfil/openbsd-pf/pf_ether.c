@@ -1147,13 +1147,13 @@ pf_test_eth_rule(int dir, struct pfi_kif *kif, struct ifnet *ifp,
 			SDT_PROBE3(pf, eth, test_rule, mismatch, r->r.nr, r,
 			    "dst");
 			r = r->skip[PFE_SKIP_DST_ADDR];
-		} else if (src != NULL && PF_MISMATCHAW(&r->r.ipsrc.addr, src,
-		    af, r->r.ipsrc.neg, kif, M_GETFIB(m))) {
+		} else if (src != NULL && PF_MISMATCHAW_IFP(&r->r.ipsrc.addr, src,
+		    af, r->r.ipsrc.neg, kif, ifp, M_GETFIB(m))) {
 			SDT_PROBE3(pf, eth, test_rule, mismatch, r->r.nr, r,
 			    "ip_src");
 			r = r->skip[PFE_SKIP_SRC_IP_ADDR];
-		} else if (dst != NULL && PF_MISMATCHAW(&r->r.ipdst.addr, dst,
-		    af, r->r.ipdst.neg, kif, M_GETFIB(m))) {
+		} else if (dst != NULL && PF_MISMATCHAW_IFP(&r->r.ipdst.addr, dst,
+		    af, r->r.ipdst.neg, kif, ifp, M_GETFIB(m))) {
 			SDT_PROBE3(pf, eth, test_rule, mismatch, r->r.nr, r,
 			    "ip_dst");
 			r = r->skip[PFE_SKIP_DST_IP_ADDR];

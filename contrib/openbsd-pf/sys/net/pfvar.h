@@ -321,12 +321,15 @@ struct pfi_dynaddr {
 	!(a)->addr32[0] && !(a)->addr32[1] && \
 	!(a)->addr32[2] && !(a)->addr32[3] )) \
 
+/* 5BSD: names.  pifp is the packet's interface for the uRPF check. */
 #define	PF_MISMATCHAW(aw, x, af, neg, ifp, rtid)			\
+	PF_MISMATCHAW_IFP(aw, x, af, neg, ifp, NULL, rtid)
+#define	PF_MISMATCHAW_IFP(aw, x, af, neg, ifp, pifp, rtid)		\
 	(								\
 		(((aw)->type == PF_ADDR_NOROUTE &&			\
 		    pf_routable((x), (af), NULL, (rtid))) ||		\
 		(((aw)->type == PF_ADDR_URPFFAILED && (ifp) != NULL &&	\
-		    pf_routable((x), (af), (ifp), (rtid))) ||		\
+		    pf_routable_ifp((x), (af), (ifp), (pifp), (rtid))) || /* 5BSD */ \
 		((aw)->type == PF_ADDR_RTLABEL &&			\
 		    !pf_rtlabel_match((x), (af), (aw), (rtid))) ||	\
 		((aw)->type == PF_ADDR_TABLE &&				\
@@ -2014,6 +2017,8 @@ void	pf_scrub(struct mbuf *, u_int16_t, sa_family_t, u_int8_t, u_int8_t);
 void	pf_purge_expired_fragments(void);
 int	pf_routable(struct pf_addr *addr, sa_family_t af, struct pfi_kif *,
 	    int);
+int	pf_routable_ifp(struct pf_addr *, sa_family_t, struct pfi_kif *,
+	    struct ifnet *, int);	/* 5BSD: names */
 int	pf_rtlabel_match(struct pf_addr *, sa_family_t, struct pf_addr_wrap *,
 	    int);
 int	pf_socket_lookup(struct pf_pdesc *);

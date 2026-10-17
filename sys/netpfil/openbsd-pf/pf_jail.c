@@ -191,12 +191,21 @@ pf_jail_changed(void *obj __unused, void *data __unused)
 	return (0);
 }
 
+/* A new VNET jail shares its ancestor VNET jail's quota (pf_quota.c). */
+void	pf_quota_jail_link(struct prison *);
+static int
+pf_jail_created(void *obj, void *data)
+{
+	pf_quota_jail_link(obj);
+	return (pf_jail_changed(obj, data));
+}
+
 void	pf_jail_attach(void);
 void
 pf_jail_attach(void)
 {
 	osd_method_t methods[PR_MAXMETHOD] = {
-		[PR_METHOD_CREATE] = pf_jail_changed,
+		[PR_METHOD_CREATE] = pf_jail_created,
 		[PR_METHOD_SET] = pf_jail_changed,
 		[PR_METHOD_REMOVE] = pf_jail_changed,
 	};

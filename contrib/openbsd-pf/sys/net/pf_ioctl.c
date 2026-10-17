@@ -157,8 +157,9 @@ PF_VNET_DEFINE_STATIC(struct pf_trans_set_s, pf_trans_set); /* 5BSD: VNET */
 #define	PF_TSET_REASS		0x08
 
 #define	TAGID_MAX	 50000
-TAILQ_HEAD(pf_tags, pf_tagname)	pf_tags = TAILQ_HEAD_INITIALIZER(pf_tags),
-				pf_qids = TAILQ_HEAD_INITIALIZER(pf_qids);
+TAILQ_HEAD(PF_KTAG(pf_tags), pf_tagname);	/* 5BSD: VNET */
+PF_VNET_DEFINE(struct PF_KTAG(pf_tags), pf_tags);	/* 5BSD: VNET */
+PF_VNET_DEFINE(struct PF_KTAG(pf_tags), pf_qids);	/* 5BSD: VNET */
 
 /*
  * pf_lock protects consistency of PF data structures, which don't have
@@ -182,9 +183,9 @@ PF_VNET_DEFINE(struct cpumem *, pf_anchor_stack); /* 5BSD: VNET */
 #if (PF_QNAME_SIZE != PF_TAG_NAME_SIZE)
 #error PF_QNAME_SIZE must be equal to PF_TAG_NAME_SIZE
 #endif
-u_int16_t		 tagname2tag(struct pf_tags *, char *, int);
-void			 tag2tagname(struct pf_tags *, u_int16_t, char *);
-void			 tag_unref(struct pf_tags *, u_int16_t);
+u_int16_t		 tagname2tag(struct PF_KTAG(pf_tags) *, char *, int); /* 5BSD: VNET */
+void			 tag2tagname(struct PF_KTAG(pf_tags) *, u_int16_t, char *); /* 5BSD: VNET */
+void			 tag_unref(struct PF_KTAG(pf_tags) *, u_int16_t); /* 5BSD: VNET */
 int			 pf_rtlabel_add(struct pf_addr_wrap *);
 void			 pf_rtlabel_remove(struct pf_addr_wrap *);
 void			 pf_rtlabel_copyout(struct pf_addr_wrap *);
@@ -254,6 +255,8 @@ pfattach(int num)
 	pf_init_ruleset(&pf_main_ruleset);
 	TAILQ_INIT(&pf_queues[0]);
 	TAILQ_INIT(&pf_queues[1]);
+	TAILQ_INIT(&pf_tags);	/* 5BSD: VNET */
+	TAILQ_INIT(&pf_qids);	/* 5BSD: VNET */
 	pf_queues_active = &pf_queues[0];
 	pf_queues_inactive = &pf_queues[1];
 
@@ -419,7 +422,7 @@ pf_rm_rule(struct pf_rulequeue *rulequeue, struct pf_rule *rule)
 }
 
 u_int16_t
-tagname2tag(struct pf_tags *head, char *tagname, int create)
+tagname2tag(struct PF_KTAG(pf_tags) *head, char *tagname, int create) /* 5BSD: VNET */
 {
 	struct pf_tagname	*tag, *p = NULL;
 	u_int16_t		 new_tagid = 1;
@@ -466,7 +469,7 @@ tagname2tag(struct pf_tags *head, char *tagname, int create)
 }
 
 void
-tag2tagname(struct pf_tags *head, u_int16_t tagid, char *p)
+tag2tagname(struct PF_KTAG(pf_tags) *head, u_int16_t tagid, char *p) /* 5BSD: VNET */
 {
 	struct pf_tagname	*tag;
 
@@ -478,7 +481,7 @@ tag2tagname(struct pf_tags *head, u_int16_t tagid, char *p)
 }
 
 void
-tag_unref(struct pf_tags *head, u_int16_t tag)
+tag_unref(struct PF_KTAG(pf_tags) *head, u_int16_t tag) /* 5BSD: VNET */
 {
 	struct pf_tagname	*p, *next;
 
@@ -3119,7 +3122,8 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 			PF_UNLOCK();
 			goto fail;
 		}
-		if (((struct pool *)pf_pool_limits[pl->index].pp)->pr_nout >
+		/* 5BSD: VNET quotas - the items of this VNET */
+		if (pool_nout(pf_pool_limits[pl->index].pp) >
 		    pl->limit) {
 			error = EBUSY;
 			PF_UNLOCK();

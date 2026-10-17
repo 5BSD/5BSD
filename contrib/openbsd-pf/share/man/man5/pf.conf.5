@@ -1534,6 +1534,21 @@ Multiple limits can be combined on a single line:
 .Bd -literal -offset indent
 set limit { states 20000, frags 2000, src-nodes 2000 }
 .Ed
+.\" 5BSD: VNET quotas
+.Pp
+On 5BSD the limits apply to each
+.Xr vnet 9
+separately: the host's limits are the values set here, and a vnet jail's
+are the host's scaled by the host's
+.Va net.pf.vnet_limit_pct
+.Xr sysctl 8
+(default 100), shared with its descendant vnet jails; all vnet jails
+together are held to the host's limits scaled by
+.Va net.pf.vnet_total_pct
+(default 200).
+A vnet jail may restate its limits but not change them; see
+.Xr pf 4 .
+The table-entries limit counts entries of every table type.
 .It Ic set Cm loginterface Ar interface | Cm none
 Enable collection of packet and byte count statistics for the given
 interface or interface group.

@@ -94,11 +94,24 @@ to a re-import.
                  static initializers of per-vnet lists move to the glue;
                  pf_norm.c fragment queue/tree are pfn_*; small teardown
                  helpers pfi_vnet_fini(), pf_normalize_vnet_fini(),
-                 pf_syncookies_vnet_fini()
+                 pf_syncookies_vnet_fini(); tag and queue ids (pf_tags,
+                 pf_qids, pf_ioctl.c) are per vnet, initialised in
+                 pfattach() and freed by the glue
                  DIOCBINDJAIL ('D' 235, pfvar.h): bind an unused /dev/pf
                  descriptor to a descendant jail's vnet (glue:
                  pf_fbsd_bindjail() in pf_freebsd.c; used by BSDNetwork for
                  system.Network.PF)
+  VNET quotas (marked "5BSD: VNET quotas"): DIOCSETLIMIT compares the new
+                 limit with pool_nout(), the current vnet's items (pf_ioctl.c);
+                 pf_state_expires() passes the default adaptive timeouts
+                 through pf_quota_adaptive(), which scales a jail's to its
+                 states limit (pf.c).  The pools stay shared, but each vnet
+                 is held to its own limit in them (glue:
+                 sys/netpfil/openbsd-pf/pf_quota.c and the pool(9) wrappers
+                 in openbsd_compat.c); pf_pool_limits[] holds the host's
+                 limits, a vnet jail's are the host's scaled by
+                 net.pf.vnet_limit_pct and shared with its descendants, and
+                 all jails together are capped by net.pf.vnet_total_pct
   m_tag (marked "5BSD: m_tag"): OpenBSD keeps per-packet pf state in
                  m_pkthdr.pf; 5BSD keeps it in an mbuf tag (PACKET_TAG_PF,
                  sys/sys/mbuf.h) so MSIZE stays 256.  Every access is
@@ -180,7 +193,9 @@ to a re-import.
   pf_if.c        CK_STAILQ interface/group lists; allocate before PF_LOCK;
                  "5BSD: names" (interfaces sharing a name share a kif;
                  pfi_kif_match_ifp() and pf_pdesc.ifp match groups and
-                 flags on the packet's own interface)
+                 flags on the packet's own interface; pf_routable_ifp()
+                 and PF_MISMATCHAW_IFP() (pf.c, pfvar.h) judge urpf-failed
+                 by it too)
   pf_ioctl.c     p_pid; pfioctl_rw is sleepable; overload table PR_NOWAIT
                  under PF_LOCK; DTrace probe hooks
   pf_norm.c      refragmented packets leave through if_output_obsd()

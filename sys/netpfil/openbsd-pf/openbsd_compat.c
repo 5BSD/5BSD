@@ -60,14 +60,28 @@ void
 pool_init(struct pool *pp, size_t size, u_int align, int ipl, int flags,
     const char *wchan, void *palloc)
 {
+	size_t zsize;
+
 	/* Pools are global; per-vnet initialisation calls this again. */
 	if (pp->pr_zone != NULL)
 		return;
 	memset(pp, 0, sizeof(*pp));
 	pp->pr_wchan = wchan;
 	pp->pr_size = size;
-	pp->pr_zone = uma_zcreate(wchan, size, NULL, NULL, NULL, NULL,
+	zsize = size;
+	/* A pool with a pf limit carries its owner's accounting (pf_quota.c). */
+	if ((pp->pr_quota = pf_quota_pool_index(pp)) != 0) {
+		pp->pr_qoff = roundup2(size, sizeof(uintptr_t));
+		zsize = pp->pr_qoff + sizeof(uintptr_t);
+	}
+	pp->pr_zone = uma_zcreate(wchan, zsize, NULL, NULL, NULL, NULL,
 	    align ? align - 1 : UMA_ALIGN_PTR, 0);
+}
+
+static __inline uintptr_t *
+pool_owner(struct pool *pp, void *v)
+{
+	return ((uintptr_t *)((char *)v + pp->pr_qoff));
 }
 
 void
@@ -81,10 +95,22 @@ pool_destroy(struct pool *pp)
 void *
 pool_get(struct pool *pp, int flags)
 {
+	uintptr_t q = 0;
 	void *v;
 	int mflags;
 
-	if (pp->pr_hardlimit != 0 && pp->pr_nout >= pp->pr_hardlimit) {
+	if (pp->pr_quota != 0) {
+		/*
+		 * The current VNET's own count against its own limit (the
+		 * host's hard limit, or a VNET jail's quota, shared with its
+		 * child VNETs and capped for all jails together); the host's
+		 * budget is its own.  Never sleeps.
+		 */
+		if (pf_quota_charge(pp->pr_quota - 1, flags, &q) != 0) {
+			pp->pr_nfail++;
+			return (NULL);
+		}
+	} else if (pp->pr_hardlimit != 0 && pp->pr_nout >= pp->pr_hardlimit) {
 		pp->pr_nfail++;
 		if ((flags & PR_LIMITFAIL) || (flags & PR_NOWAIT))
 			return (NULL);
@@ -98,9 +124,13 @@ pool_get(struct pool *pp, int flags)
 		mflags |= M_ZERO;
 	v = uma_zalloc(pp->pr_zone, mflags);
 	if (v == NULL) {
+		if (pp->pr_quota != 0)
+			pf_quota_release(q, pp->pr_quota - 1);
 		pp->pr_nfail++;
 		return (NULL);
 	}
+	if (pp->pr_quota != 0)
+		*pool_owner(pp, v) = q;
 	atomic_add_int(&pp->pr_nout, 1);
 	pp->pr_nget++;
 	return (v);
@@ -109,15 +139,36 @@ pool_get(struct pool *pp, int flags)
 void
 pool_put(struct pool *pp, void *v)
 {
+	/* Credit the VNET that allocated the item, whatever curvnet is. */
+	if (pp->pr_quota != 0)
+		pf_quota_release(*pool_owner(pp, v), pp->pr_quota - 1);
 	atomic_subtract_int(&pp->pr_nout, 1);
 	pp->pr_nput++;
 	uma_zfree(pp->pr_zone, v);
 }
 
+/* Items out: the current VNET's for a pool with a pf limit. */
+u_int
+pool_nout(void *arg)
+{
+	struct pool *pp = arg;
+
+	if (pp->pr_quota != 0)
+		return (pf_quota_count(pp->pr_quota - 1));
+	return (pp->pr_nout);
+}
+
 int
 pool_sethardlimit(struct pool *pp, u_int n)
 {
-	if (n < pp->pr_nout)
+	/*
+	 * The hard limit is the host's.  pfattach() and pf_normalize_init()
+	 * run again for every new VNET and would reset it to the default;
+	 * a VNET jail's quota derives from the host's limit (pf_quota.c).
+	 */
+	if (!IS_DEFAULT_VNET(curvnet))
+		return (0);
+	if (n < pool_nout(pp))
 		return (EBUSY);
 	pp->pr_hardlimit = n;
 	return (0);
@@ -977,10 +1028,37 @@ struct obsd_rtlabel {
 	u_int16_t	rtl_id;
 	int		rtl_ref;
 };
-static TAILQ_HEAD(, obsd_rtlabel) obsd_rtlabels =
-    TAILQ_HEAD_INITIALIZER(obsd_rtlabels);
+/* Labels name routes of a VNET's own FIBs: one id space per VNET. */
+TAILQ_HEAD(obsd_rtlabel_head, obsd_rtlabel);
+VNET_DEFINE_STATIC(struct obsd_rtlabel_head, obsd_rtlabels);
+#define	V_obsd_rtlabels	VNET(obsd_rtlabels)
 static struct mtx obsd_rtlabel_mtx;
 MTX_SYSINIT(obsd_rtlabel_mtx, &obsd_rtlabel_mtx, "pf rtlabels", MTX_DEF);
+
+/* The current VNET's labels (obsd_rtlabel_mtx held). */
+static struct obsd_rtlabel_head *
+obsd_rtlabels_head(void)
+{
+	mtx_assert(&obsd_rtlabel_mtx, MA_OWNED);
+	if (V_obsd_rtlabels.tqh_last == NULL)
+		TAILQ_INIT(&V_obsd_rtlabels);
+	return (&V_obsd_rtlabels);
+}
+
+/* A VNET goes away: its rules are gone, drop any label they leaked. */
+void	obsd_rtlabel_vnet_fini(void);
+void
+obsd_rtlabel_vnet_fini(void)
+{
+	struct obsd_rtlabel *l;
+
+	mtx_lock(&obsd_rtlabel_mtx);
+	while ((l = TAILQ_FIRST(obsd_rtlabels_head())) != NULL) {
+		TAILQ_REMOVE(obsd_rtlabels_head(), l, rtl_entry);
+		free(l, M_PF);
+	}
+	mtx_unlock(&obsd_rtlabel_mtx);
+}
 
 const char *
 rtlabel_id2name(u_int16_t id, char *buf, size_t sz)
@@ -989,7 +1067,7 @@ rtlabel_id2name(u_int16_t id, char *buf, size_t sz)
 	const char *r = NULL;
 
 	mtx_lock(&obsd_rtlabel_mtx);
-	TAILQ_FOREACH(l, &obsd_rtlabels, rtl_entry)
+	TAILQ_FOREACH(l, obsd_rtlabels_head(), rtl_entry)
 		if (l->rtl_id == id) {
 			strlcpy(buf, l->rtl_name, sz);
 			r = buf;
@@ -1008,14 +1086,14 @@ rtlabel_name2id(const char *name)
 	if (!name[0])
 		return (0);
 	mtx_lock(&obsd_rtlabel_mtx);
-	TAILQ_FOREACH(l, &obsd_rtlabels, rtl_entry)
+	TAILQ_FOREACH(l, obsd_rtlabels_head(), rtl_entry)
 		if (strcmp(name, l->rtl_name) == 0) {
 			l->rtl_ref++;
 			id = l->rtl_id;
 			goto out;
 		}
 	/* lowest free id */
-	TAILQ_FOREACH(p, &obsd_rtlabels, rtl_entry) {
+	TAILQ_FOREACH(p, obsd_rtlabels_head(), rtl_entry) {
 		if (p->rtl_id != new_id)
 			break;
 		new_id = p->rtl_id + 1;
@@ -1031,7 +1109,7 @@ rtlabel_name2id(const char *name)
 	if (p != NULL)
 		TAILQ_INSERT_BEFORE(p, l, rtl_entry);
 	else
-		TAILQ_INSERT_TAIL(&obsd_rtlabels, l, rtl_entry);
+		TAILQ_INSERT_TAIL(obsd_rtlabels_head(), l, rtl_entry);
 	id = l->rtl_id;
 out:
 	mtx_unlock(&obsd_rtlabel_mtx);
@@ -1046,10 +1124,10 @@ rtlabel_unref(u_int16_t id)
 	if (id == 0)
 		return;
 	mtx_lock(&obsd_rtlabel_mtx);
-	TAILQ_FOREACH_SAFE(l, &obsd_rtlabels, rtl_entry, n)
+	TAILQ_FOREACH_SAFE(l, obsd_rtlabels_head(), rtl_entry, n)
 		if (id == l->rtl_id) {
 			if (--l->rtl_ref <= 0) {
-				TAILQ_REMOVE(&obsd_rtlabels, l, rtl_entry);
+				TAILQ_REMOVE(obsd_rtlabels_head(), l, rtl_entry);
 				free(l, M_PF);
 			}
 			break;
