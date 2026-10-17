@@ -78,7 +78,8 @@
 #endif
 
 static int in_aifaddr_ioctl(u_long, caddr_t, struct ifnet *, struct ucred *);
-static int in_aifaddr_add(struct ifnet *, const struct in_aliasreq *, int);
+static int in_aifaddr_add(struct ifnet *, const struct in_aliasreq *, int,
+    bool *);
 static int in_difaddr_ioctl(u_long, caddr_t, struct ifnet *, struct ucred *);
 static int in_difaddr_ia(u_long, struct ifnet *, struct in_ifaddr *);
 static void in_difaddr_finish(u_long, struct ifnet *, struct in_ifaddr *, bool);
@@ -612,15 +613,19 @@ in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred
 	if (ia != NULL)
 		(void )in_difaddr_ioctl(cmd, data, ifp, cred);
 
-	return (in_aifaddr_add(ifp, ifra, vhid));
+	return (in_aifaddr_add(ifp, ifra, vhid, NULL));
 }
 
 /*
  * Add the address described by @ifra to @ifp.  The caller has checked
  * the request; an existing identical address is not replaced.
+ * *@installedp, if not NULL, tells whether the address was installed: like
+ * SIOCAIFADDR, this fails also after installing it when the all-hosts
+ * group cannot be joined.
  */
 static int
-in_aifaddr_add(struct ifnet *ifp, const struct in_aliasreq *ifra, int vhid)
+in_aifaddr_add(struct ifnet *ifp, const struct in_aliasreq *ifra, int vhid,
+    bool *installedp)
 {
 	const struct sockaddr_in *addr = &ifra->ifra_addr;
 	const struct sockaddr_in *broadaddr = &ifra->ifra_broadaddr;
@@ -632,6 +637,8 @@ in_aifaddr_add(struct ifnet *ifp, const struct in_aliasreq *ifra, int vhid)
 	bool iaIsFirst;
 	int error = 0;
 
+	if (installedp != NULL)
+		*installedp = false;
 	iaIsFirst = true;
 	NET_EPOCH_ENTER(et);
 	CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
@@ -779,6 +786,8 @@ in_aifaddr_add(struct ifnet *ifp, const struct in_aliasreq *ifra, int vhid)
 	 * thread.
 	 */
 	EVENTHANDLER_INVOKE(ifaddr_event_ext, ifp, ifa, IFADDR_EVENT_ADD);
+	if (installedp != NULL)
+		*installedp = true;
 
 	return (error);
 
@@ -980,6 +989,7 @@ in_sifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp,
 	struct ifaddr *ifa;
 	struct in_ifaddr *ia;
 	int error, vhid;
+	bool installed;
 
 	error = priv_check_cred(cred, PRIV_NET_ADDIFADDR);
 	if (error)
@@ -1049,7 +1059,7 @@ in_sifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp,
 		ifra.ifra_mask.sin_addr.s_addr = htonl(IN_CLASSA(i) ?
 		    IN_CLASSA_NET : IN_CLASSB(i) ? IN_CLASSB_NET :
 		    IN_CLASSC_NET);
-		return (in_aifaddr_add(ifp, &ifra, 0));
+		return (in_aifaddr_add(ifp, &ifra, 0, NULL));
 	}
 
 	if (cmd == SIOCSIFBRDADDR) {
@@ -1089,9 +1099,9 @@ in_sifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp,
 	ifa_free(&ia->ia_ifa);
 	if (error != 0)
 		return (error);
-	error = in_aifaddr_add(ifp, &ifra, vhid);
-	if (error != 0)
-		(void)in_aifaddr_add(ifp, &oifra, vhid);
+	error = in_aifaddr_add(ifp, &ifra, vhid, &installed);
+	if (error != 0 && !installed)
+		(void)in_aifaddr_add(ifp, &oifra, vhid, NULL);
 	return (error);
 }
 
