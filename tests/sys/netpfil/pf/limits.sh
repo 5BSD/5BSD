@@ -30,7 +30,7 @@
 # own limits, at net.pf.vnet_limit_pct of the host's, default 100); a vnet
 # jail sees them and may restate them but not change them.  These tests run
 # exclusively in the host vnet (Makefile), change the limits there with
-# "pfctl -O", and restore the saved limits in cleanup.
+# "pfctl -f" (no -O on OpenBSD), and restore the saved limits in cleanup.
 
 atf_test_case "basic" "cleanup"
 basic_head()
@@ -60,9 +60,9 @@ basic_body()
 
 	# A vnet jail may restate the host's limit but not change it.
 	echo "set limit states 200" | atf_check -s exit:0 -e ignore \
-	    jexec alcatraz pfctl -Of -
+	    jexec alcatraz pfctl -f -
 	echo "set limit states 300" | atf_check -s not-exit:0 -e ignore \
-	    jexec alcatraz pfctl -Of -
+	    jexec alcatraz pfctl -f -
 	atf_check -s exit:0 -o match:'states.*200' pfctl -sm
 }
 

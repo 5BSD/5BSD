@@ -119,9 +119,6 @@ jail_restate_ok_body()
 	atf_check -o match:'label "restated"' jexec a pfctl -sr
 	expect_eq "$(limit_of states)" "20000" "limit_of states"
 	expect_eq "$(limit_of src-nodes)" "3000" "limit_of src-nodes"
-
-	# Options only (-O) restating the same values succeeds too.
-	atf_check -s exit:0 -e ignore jexec a pfctl -O -f ${PWD}/restate.conf
 }
 
 jail_restate_ok_cleanup()
@@ -157,11 +154,6 @@ change_rejected_body()
 	atf_check -o not-match:'label "after"' jexec a pfctl -sr
 	expect_eq "$(limit_of ${pool})" "${cur}" "limit_of ${pool}"
 	expect_eq "$(limit_of ${pool} a)" "${cur}" "limit_of ${pool} a"
-
-	# The options-only path (-O) is refused the same way.
-	atf_check -s not-exit:0 -e match:"Cannot set ${pool} limit" \
-	    jexec a pfctl -O -f ${PWD}/change.conf
-	expect_eq "$(limit_of ${pool})" "${cur}" "limit_of ${pool}"
 }
 
 for _pool in ${pools}; do
@@ -314,12 +306,12 @@ host_lower_below_usage_body()
 	echo "set limit states $((own - 1))" > lower.conf
 	atf_check -s not-exit:0 \
 	    -e match:'Current pool size exceeds requested states limit' \
-	    pfctl -O -f ${PWD}/lower.conf
+	    pfctl -f ${PWD}/lower.conf
 	expect_eq "$(limit_of states)" "${old}" "limit_of states"
 
 	# Below the jail's usage: the jail's states are its own.
 	echo "set limit states ${own}" > lower.conf
-	atf_check -s exit:0 -e ignore pfctl -O -f ${PWD}/lower.conf
+	atf_check -s exit:0 -e ignore pfctl -f ${PWD}/lower.conf
 	expect_eq "$(limit_of states)" "${own}" "limit_of states"
 	[ "$(state_count a)" -ge 10 ] || atf_fail "jail a lost states"
 }

@@ -109,6 +109,6 @@ pflow/pft_read_ipfix.py: OpenBSD IPFIX template ids.  match:allow_opts
 asserts pfctl refuses "match ... allow-opts".  once: no "keep state" in
 OpenBSD output.  set_tos, common/tos: "pass out" so match actions apply.
 limits, syncookie: pool limits are host-owned; these run exclusively in
-the host vnet, set limits with pfctl -O and restore them.
+the host vnet, set limits with pfctl -f (OpenBSD has no -O) and restore them.
 mld-group.py, tcp-original-ack.py: pfctl -ss (-S takes a file).
 nat64.py: requires only pf; creates pfsync0.

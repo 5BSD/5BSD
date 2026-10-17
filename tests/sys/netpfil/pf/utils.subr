@@ -93,7 +93,9 @@ pfsynct_mkif()
 
 # 5BSD: pf's pool limits are host-wide and owned by the host vnet.  Tests
 # that change them run exclusively in the host vnet (Makefile), save the
-# limits first and restore them in cleanup.
+# limits first and restore them in cleanup.  OpenBSD's pfctl has no
+# options-only load (FreeBSD's -O): these load a ruleset of only options,
+# which also empties the host's main ruleset.
 limits_save()
 {
 	pfctl -sm | awk '{ print "set limit " $1 " " $NF }' > limits.original
@@ -103,7 +105,7 @@ limits_save()
 limits_restore()
 {
 	if [ -f limits.original ]; then
-		pfctl -Of limits.original
+		pfctl -f limits.original
 	fi
 }
 
@@ -112,7 +114,7 @@ limits_set()
 	while [ $# -gt 0 ]; do
 		printf "set limit %s\n" "$1"
 		shift
-	done | pfctl -Of - || atf_fail "Failed to set limits"
+	done | pfctl -f - || atf_fail "Failed to set limits"
 }
 
 pflog_init()
