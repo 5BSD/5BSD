@@ -151,6 +151,18 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	DAD (it is tentative until DAD completes); use "no_dad" to skip it.
 	The kernel and ifconfig must be updated together.
 
+	pflog(4), pfsync(4) and pflow(4) interfaces belong to the VNET
+	that created them and can no longer be moved to another VNET:
+	"ifconfig pflogN vnet <jail>" and "ifconfig pflogN -vnet <jail>"
+	(SIOCSIFVNET/SIOCSIFRVNET) now fail with EOPNOTSUPP.  Create the
+	interfaces inside the VNET jail that uses them instead.
+
+	pf route-to rules combined with dnpipe/dnqueue now fragment
+	oversized packets after the dummynet delay, send ICMP
+	"fragmentation needed"/"packet too big" errors as plain route-to
+	does, and use the gateway of the route to the route-to address.
+	DIOCBINDJAIL refuses jails without their own vnet.
+
 20261013:
 	The BSD fixed-name pty(4) compatibility driver has been removed.
 	Use posix_openpt(2), openpty(3), or /dev/ptmx and /dev/pts/N.
