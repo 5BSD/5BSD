@@ -101,6 +101,29 @@ ip6_findroute(struct nhop_object **pnh, const struct sockaddr_in6 *dst,
 	return (0);
 }
 
+/*
+ * 5BSD: a copy of the start of the packet for an ICMPv6 error about it,
+ * taken before outbound filtering, as OpenBSD's ip6_forward() does.
+ */
+static struct mbuf *
+ip6_fastfwd_quote(struct mbuf *m)
+{
+	struct mbuf *n;
+	int len;
+
+	len = min(m->m_pkthdr.len, ICMPV6_PLD_MAXLEN);
+	n = m_get2(len, M_NOWAIT, MT_DATA, M_PKTHDR);
+	if (n == NULL)
+		return (NULL);
+	if (m_dup_pkthdr(n, m, M_NOWAIT) == 0) {
+		m_free(n);
+		return (NULL);
+	}
+	m_copydata(m, 0, len, mtod(n, caddr_t));
+	n->m_len = n->m_pkthdr.len = len;
+	return (n);
+}
+
 struct mbuf*
 ip6_tryforward(struct mbuf *m)
 {
@@ -108,6 +131,7 @@ ip6_tryforward(struct mbuf *m)
 	struct nhop_object *nh;
 	struct m_tag *fwd_tag;
 	struct ip6_hdr *ip6;
+	struct mbuf *qcopy = NULL;
 	struct ifnet *rcvif;
 	uint32_t plen;
 	int error;
@@ -215,21 +239,26 @@ passin:
 		in6_ifstat_inc(rcvif, ifs6_in_noroute);
 		goto dropin;
 	}
+	if (!PFIL_HOOKED_OUT(V_inet6_pfil_head)) {
+		if (m->m_pkthdr.len > nh->nh_mtu) {
+			in6_ifstat_inc(nh->nh_ifp, ifs6_in_toobig);
+			icmp6_error(m, ICMP6_PACKET_TOO_BIG, 0, nh->nh_mtu);
+			m = NULL;
+			goto dropout;
+		}
+		goto passout;
+	}
 	/*
-	 * Too big for the next hop: answer before outbound filtering, as
-	 * OpenBSD does, so the error quotes the packet before outbound
-	 * translation (nat-to) and returns to its sender.  A packet the
-	 * filter reassembled is fragmented again by the filter itself.
+	 * Too big for the next hop: as OpenBSD, keep a copy from before
+	 * outbound filtering for the error, so that it quotes the packet
+	 * before outbound translation (nat-to) and returns to its sender.
+	 * The size is checked after the filter, which may drop the packet
+	 * or send it elsewhere.  A packet the filter reassembled is
+	 * fragmented again by the filter itself.
 	 */
 	if (m->m_pkthdr.len > nh->nh_mtu &&
-	    m_tag_find(m, PACKET_TAG_PF_REASSEMBLED, NULL) == NULL) {
-		in6_ifstat_inc(nh->nh_ifp, ifs6_in_toobig);
-		icmp6_error(m, ICMP6_PACKET_TOO_BIG, 0, nh->nh_mtu);
-		m = NULL;
-		goto dropout;
-	}
-	if (!PFIL_HOOKED_OUT(V_inet6_pfil_head))
-		goto passout;
+	    m_tag_find(m, PACKET_TAG_PF_REASSEMBLED, NULL) == NULL)
+		qcopy = ip6_fastfwd_quote(m);
 
 	/*
 	 * Outgoing packet firewall processing.
@@ -244,9 +273,18 @@ passin:
 	 */
 	if (m->m_pkthdr.len > nh->nh_mtu) {
 		in6_ifstat_inc(nh->nh_ifp, ifs6_in_toobig);
+		if (qcopy != NULL) {
+			m_freem(m);
+			m = qcopy;
+			qcopy = NULL;
+		}
 		icmp6_error(m, ICMP6_PACKET_TOO_BIG, 0, nh->nh_mtu);
 		m = NULL;
 		goto dropout;
+	}
+	if (qcopy != NULL) {
+		m_freem(qcopy);
+		qcopy = NULL;
 	}
 
 	/*
@@ -343,5 +381,7 @@ dropout:
 drop:
 	if (m != NULL)
 		m_freem(m);
+	if (qcopy != NULL)
+		m_freem(qcopy);
 	return (NULL);
 }

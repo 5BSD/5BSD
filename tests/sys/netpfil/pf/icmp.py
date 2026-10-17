@@ -261,3 +261,42 @@ class TestICMP_NAT(VnetTestTemplate):
         assert icmp
         assert ip.dst == "192.0.2.3"
         assert icmp.id == 42
+
+class TestICMPBlockedOut(VnetTestTemplate):
+    """
+    Forwarded packets that are too big for the next hop: the router checks
+    the MTU after outbound filtering, so a packet blocked on the way out
+    gets no ICMP error.
+    """
+    REQUIRED_MODULES = [ "pf" ]
+    TOPOLOGY = {
+        "vnet1": {"ifaces": ["if1"]},
+        "vnet2": {"ifaces": ["if1", "if2"]},
+        "vnet3": {"ifaces": ["if2"]},
+        "if1": {"prefixes4": [("192.0.2.2/24", "192.0.2.1/24")]},
+        "if2": {"prefixes4": [("198.51.100.1/24", "198.51.100.2/24")], "mtu": 1492},
+    }
+
+    def vnet2_handler(self, vnet):
+        ToolsHelper.print_output("/sbin/pfctl -e")
+        ToolsHelper.pf_rules([
+            "pass out",
+            "pass in no state",
+            "block out quick inet proto icmp to 198.51.100.2",
+            ])
+        ToolsHelper.print_output("/sbin/sysctl net.inet.ip.forwarding=1")
+
+    @pytest.mark.require_user("root")
+    @pytest.mark.require_progs(["scapy"])
+    def test_blocked_out_no_needfrag(self):
+        ToolsHelper.print_output("/sbin/route add default 192.0.2.1")
+
+        # Import in the correct vnet, so at to not confuse Scapy
+        import scapy.all as sp
+
+        check("/sbin/ping -c 1 192.0.2.1")
+        packet = sp.IP(dst="198.51.100.2", flags="DF") \
+            / sp.ICMP(type='echo-request') \
+            / sp.raw(bytes.fromhex('f0') * 1468)
+        p = sp.sr1(packet, timeout=3)
+        assert p is None, p.show(dump=True)
