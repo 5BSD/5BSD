@@ -1552,21 +1552,29 @@ in_scrubprefix(struct in_ifaddr *target, u_int flags)
 static int
 in_ifscrub_one(if_t ifp, void *arg __unused)
 {
-	struct ifaddr *ifa, *nifa;
-	struct ifreq ifr;
+	struct epoch_tracker et;
+	struct ifaddr *ifa;
+	int error;
 
-	CK_STAILQ_FOREACH_SAFE(ifa, &ifp->if_addrhead, ifa_link, nifa) {
-		if (ifa->ifa_addr->sa_family != AF_INET)
-			continue;
-
-		/*
-		 * This is ugly but the only way for legacy IP to
-		 * cleanly remove addresses and everything attached.
-		 */
-		bzero(&ifr, sizeof(ifr));
-		ifr.ifr_addr = *ifa->ifa_addr;
-		(void)in_difaddr_ioctl(SIOCDIFADDR, (caddr_t)&ifr, ifp, NULL);
-	}
+	/*
+	 * Delete the exact address and start over: an address deleted
+	 * by value may be a later one with the same value (the SIOCSIFADDR
+	 * path allows duplicates), and the walk is not in an epoch.
+	 */
+	do {
+		NET_EPOCH_ENTER(et);
+		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
+			if (ifa->ifa_addr->sa_family == AF_INET) {
+				ifa_ref(ifa);
+				break;
+			}
+		}
+		NET_EPOCH_EXIT(et);
+		if (ifa == NULL)
+			break;
+		error = in_difaddr_ia(SIOCDIFADDR, ifp, (struct in_ifaddr *)ifa);
+		ifa_free(ifa);
+	} while (error == 0);
 	in_purgemaddrs(ifp);
 	igmp_domifdetach(ifp);
 	return (0);
