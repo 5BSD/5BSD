@@ -285,6 +285,63 @@ rule_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "destroy_busy" "cleanup"
+destroy_busy_head()
+{
+	atf_set descr 'Destroy pflow interfaces while states are flushed and timers run'
+	atf_set require.user root
+}
+
+destroy_busy_body()
+{
+	pflow_init
+
+	epair=$(vnet_mkepair)
+	ifconfig ${epair}a 192.0.2.2/24 up
+
+	vnet_mkjail alcatraz ${epair}b
+	jexec alcatraz ifconfig ${epair}b 192.0.2.1/24 up
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.1
+
+	jexec alcatraz pfctl -e
+	pft_set_rules alcatraz \
+		"set state-defaults pflow" \
+		"pass"
+
+	# States keep being created and removed from the ioctl path, where
+	# export_pflow() runs outside the net epoch.
+	( while :; do
+		ping -c 1 -t 1 192.0.2.1 > /dev/null 2>&1
+		ping -c 1 -t 1 -S 192.0.2.2 192.0.2.1 > /dev/null 2>&1
+		jexec alcatraz pfctl -q -Fstates > /dev/null 2>&1
+	done ) &
+	echo $! > load.pid
+
+	i=0
+	while [ ${i} -lt 40 ]; do
+		for p in pflow1 pflow2; do
+			jexec alcatraz ifconfig ${p} create
+			jexec alcatraz ifconfig ${p} flowdst 192.0.2.2:2055
+		done
+		jexec alcatraz ifconfig pflow2 pflowproto 10
+		sleep 0.1
+		for p in pflow1 pflow2; do
+			atf_check -s exit:0 jexec alcatraz ifconfig ${p} destroy
+		done
+		i=$((i + 1))
+	done
+
+	kill $(cat load.pid)
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.1
+	atf_check -s exit:0 -o not-match:'pflow' jexec alcatraz ifconfig -l
+}
+
+destroy_busy_cleanup()
+{
+	[ -f load.pid ] && kill $(cat load.pid) 2>/dev/null
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "basic"
@@ -292,4 +349,5 @@ atf_init_test_cases()
 	atf_add_test_case "v6"
 	atf_add_test_case "nat"
 	atf_add_test_case "rule"
+	atf_add_test_case "destroy_busy"
 }

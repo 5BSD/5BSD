@@ -76,7 +76,7 @@ goes in its own file in `sys/netpfil/openbsd-pf` (`pf_dummynet.c`,
 | `dnpipe`, `dnqueue` | FreeBSD pf | dummynet(4) shaping, also on route-to; dummynet is loaded through the SystemExtension broker |
 | `ether` rules | FreeBSD pf | separate layer-2 ruleset on the link-layer pfil hooks; `pfctl -s ethernet`, `-F ethernet`; ioctls `DIOC*ETHRULE*` |
 | SCTP, multihoming, `allow-related`, `sctp.*` timeouts | FreeBSD pf | association tracking with verification tags; extra states for INIT/ASCONF addresses |
-| Per-VNET pf | 5BSD | each VNET jail has its own rules, states, tables and interfaces; jails without their own VNET cannot open `/dev/pf`; pool limits are host-owned |
+| Per-VNET pf | 5BSD | each VNET jail has its own rules, states, tables and interfaces; jails without their own VNET cannot open `/dev/pf`; pool limits are host-owned; pflog, pfsync and pflow cannot move between VNETs (`IFKF_NOVMOVE`, `sys/net/if.c`) |
 | `DIOCBINDJAIL` | 5BSD | moves an unused `/dev/pf` descriptor to a descendant jail's VNET; BSDNetwork uses it so system.Network.PF serves the caller's own states |
 | pfsync IPv6 peers (`5BSD: pfsync6`) | FreeBSD feature, 5BSD code | IPv6 unicast or ff12::f0 peers; messages unchanged, IPv6 header with hop limit 255; `SIOC[GS]ETPFSYNC6` |
 | pfsync CARP demotion (`5BSD: carp`) | OpenBSD design on FreeBSD carp | OpenBSD's carp-group counts drive `net.inet.carp.demotion` through `net.pfsync.carp_demotion_factor`; glue `pf_pfsync.c` |

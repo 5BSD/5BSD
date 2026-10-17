@@ -283,6 +283,58 @@ pflog_per_jail_cleanup()
 	integ_cleanup
 }
 
+atf_test_case "no_vnet_move" "cleanup"
+no_vnet_move_head()
+{
+	atf_set descr 'pflog, pfsync and pflow cannot be moved between VNETs (ifconfig vnet / -vnet)'
+	atf_set require.user root
+}
+
+no_vnet_move_body()
+{
+	cloners_init
+	vnet_mkjail a
+	vnet_mkjail b
+
+	# Host to jail (SIOCSIFVNET): refused, the interface stays usable.
+	for i in pflog45 pflow45; do
+		atf_check -s exit:0 -o ignore ifconfig ${i} create
+		atf_check -s not-exit:0 -e ignore ifconfig ${i} vnet b
+		atf_check -s exit:0 -o match:"^${i}: " ifconfig ${i}
+		atf_check -s not-exit:0 -e ignore jexec b ifconfig ${i}
+		atf_check -s exit:0 ifconfig ${i} up
+		atf_check -s exit:0 -o match:'flags=.*[<,]UP[,>]' ifconfig ${i}
+		atf_check -s exit:0 ifconfig ${i} destroy
+	done
+
+	# Jail to host (SIOCSIFRVNET): refused as well.
+	for i in pfsync0 pflog46 pflow46; do
+		atf_check -s exit:0 -o ignore jexec a ifconfig ${i} create
+		atf_check -s not-exit:0 -e ignore ifconfig ${i} -vnet a
+		atf_check -s exit:0 -o match:"^${i}: " jexec a ifconfig ${i}
+		atf_check -s exit:0 jexec a ifconfig ${i} up
+	done
+	atf_check -s not-exit:0 -e ignore ifconfig pflog46
+	atf_check -s not-exit:0 -e ignore ifconfig pflow46
+
+	# They still work in their own VNET: a logs to pflog46.
+	jexec a ifconfig lo0 127.0.0.1/8 up
+	pft_set_rules a "pass log (to pflog46) all"
+	jexec a pfctl -e
+	atf_check -s exit:0 -o ignore jexec a ping -c 1 127.0.0.1
+	for i in pfsync0 pflog46 pflow46; do
+		atf_check -s exit:0 jexec a ifconfig ${i} destroy
+	done
+}
+
+no_vnet_move_cleanup()
+{
+	for i in pflog45 pflow45; do
+		ifconfig ${i} destroy 2>/dev/null
+	done
+	integ_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "absent_until_created"
@@ -294,4 +346,5 @@ atf_init_test_cases()
 	atf_add_test_case "not_in_host"
 	atf_add_test_case "destroyed_on_teardown"
 	atf_add_test_case "pflog_per_jail"
+	atf_add_test_case "no_vnet_move"
 }

@@ -240,7 +240,7 @@ void
 in6_proto_cksum_out(struct mbuf *m, struct ifnet *ifp)
 {
 	struct ip6_hdr *ip6 = mtod(m, struct ip6_hdr *);
-	int off, nxt, plen;
+	int off, nxt, plen, sumoff;
 	u_int16_t csum;
 
 	if ((m->m_pkthdr.csum_flags & (CSUM_IP6_TCP | CSUM_IP6_UDP)) == 0) {
@@ -252,24 +252,21 @@ in6_proto_cksum_out(struct mbuf *m, struct ifnet *ifp)
 	if (off < (int)sizeof(*ip6))
 		goto done;
 	plen = sizeof(*ip6) + ntohs(ip6->ip6_plen) - off;
-	if (nxt == IPPROTO_TCP) {
-		struct tcphdr *th;
-
-		if (m->m_len < off + (int)sizeof(*th))
-			goto done;
-		th = (struct tcphdr *)(mtod(m, caddr_t) + off);
-		th->th_sum = 0;
-		th->th_sum = in6_cksum(m, IPPROTO_TCP, off, plen);
-	} else if (nxt == IPPROTO_UDP) {
-		struct udphdr *uh;
-
-		if (m->m_len < off + (int)sizeof(*uh))
-			goto done;
-		uh = (struct udphdr *)(mtod(m, caddr_t) + off);
-		uh->uh_sum = 0;
-		csum = in6_cksum(m, IPPROTO_UDP, off, plen);
-		uh->uh_sum = csum == 0 ? 0xffff : csum;
-	}
+	/* Extension headers may leave the transport header in a later mbuf. */
+	if (nxt == IPPROTO_TCP)
+		sumoff = off + offsetof(struct tcphdr, th_sum);
+	else if (nxt == IPPROTO_UDP)
+		sumoff = off + offsetof(struct udphdr, uh_sum);
+	else
+		goto done;
+	if (plen <= 0 || sumoff + (int)sizeof(csum) > m->m_pkthdr.len)
+		goto done;
+	csum = 0;
+	m_copyback(m, sumoff, sizeof(csum), &csum, M_NOWAIT);
+	csum = in6_cksum(m, nxt, off, plen);
+	if (nxt == IPPROTO_UDP && csum == 0)
+		csum = 0xffff;
+	m_copyback(m, sumoff, sizeof(csum), &csum, M_NOWAIT);
 done:
 	m->m_pkthdr.csum_flags &= ~(CSUM_IP6_TCP | CSUM_IP6_UDP |
 	    CSUM_IP_TCP | CSUM_IP_UDP);
@@ -419,6 +416,7 @@ struct obsd_sendq_item {
 	int	type, code, param;
 	u_int32_t dest;
 	struct vnet *vnet;	/* vnet of the pf instance that queued it */
+	int	rcvif;		/* m_pkthdr.rcvif was serialised */
 };
 static struct mbuf_queue obsd_sendq;
 static struct task obsd_send_task;
@@ -443,6 +441,20 @@ obsd_send_run(void *arg)
 		it = (struct obsd_sendq_item *)(mtag + 1);
 		CURVNET_SET(it->vnet);
 		NET_EPOCH_ENTER(et);
+		/*
+		 * The receiving interface may have gone while the packet
+		 * was queued.  icmp_error() and icmp6_error() use it; a
+		 * packet pf builds itself (ip_send()) can go without.
+		 */
+		if (it->rcvif && m_rcvif_restore(m) == NULL) {
+			if (it->kind != OBSD_SEND_OUTPUT) {
+				NET_EPOCH_EXIT(et);
+				CURVNET_RESTORE();
+				m_freem(m);
+				continue;
+			}
+			m->m_pkthdr.rcvif = NULL;
+		}
 		switch (it->kind) {
 		case OBSD_SEND_OUTPUT: {
 			int af = it->af;	/* "it" lives in the tag */
@@ -526,6 +538,13 @@ obsd_sendq_enqueue(struct mbuf *m, int af, int kind, int type, int code,
 	it->dest = dest;
 	it->param = param;
 	it->vnet = curvnet;
+	/* No interface pointer while queued (see obsd_send_run()). */
+	it->rcvif = 0;
+	if ((m->m_pkthdr.csum_flags & CSUM_SND_TAG) == 0 &&
+	    m->m_pkthdr.rcvif != NULL) {
+		m_rcvif_serialize(m);
+		it->rcvif = 1;
+	}
 	m_tag_prepend(m, mtag);
 	if (mq_enqueue(&obsd_sendq, m) == 0)
 		task_add(systq, &obsd_send_task);
@@ -679,14 +698,14 @@ if_output_obsd(struct ifnet *ifp, struct mbuf *m, struct sockaddr *dst,
 /*
  * Returns non-zero when the packet was handled (sent, or dropped with
  * an error, *mp may be NULL); zero when it is too big for the interface
- * and the caller has to fragment or send an error.
+ * and the caller has to fragment or send an error.  af is the packet's
+ * family; nh the link-layer next hop (route-to's gateway or destination).
  */
 int
-if_output_tso(struct ifnet *ifp, struct mbuf **mp, struct sockaddr *dst,
-    struct rtentry *rt, u_int mtu)
+obsd_output_tso(struct ifnet *ifp, struct mbuf **mp, int af,
+    const struct sockaddr *nh, u_int mtu)
 {
 	struct mbuf *m = *mp;
-	int af = dst->sa_family;
 
 	/*
 	 * The software checksums here and in the caller's fragmentation
@@ -703,9 +722,22 @@ if_output_tso(struct ifnet *ifp, struct mbuf **mp, struct sockaddr *dst,
 	/* route-to skips ip_output(): finish a delayed SCTP CRC32c here. */
 	if (m->m_pkthdr.csum_flags & (CSUM_SCTP | CSUM_SCTP_IPV6) &
 	    ~ifp->if_hwassist) {
-		int off = (af == AF_INET) ?
-		    (mtod(m, struct ip *)->ip_hl << 2) : sizeof(struct ip6_hdr);
+		int nxt, off;
 		uint32_t sum = 0;
+
+		if (af == AF_INET)
+			off = mtod(m, struct ip *)->ip_hl << 2;
+		else {
+			nxt = -1;
+			off = ip6_lasthdr(m, 0, IPPROTO_IPV6, &nxt);
+			if (nxt != IPPROTO_SCTP)
+				off = -1;
+		}
+		if (off < 0 || off + 12 > m->m_pkthdr.len) {
+			m_freem(m);
+			*mp = NULL;
+			return (1);
+		}
 
 		/* As sctp_delayed_cksum(), which needs options SCTP. */
 		m_copyback(m, off + 8, sizeof(sum), &sum, M_NOWAIT);
@@ -714,8 +746,16 @@ if_output_tso(struct ifnet *ifp, struct mbuf **mp, struct sockaddr *dst,
 		m->m_pkthdr.csum_flags &= ~(CSUM_SCTP | CSUM_SCTP_IPV6);
 	}
 	*mp = NULL;
-	(void)obsd_ifoutput(ifp, m, dst, rt);
+	(void)obsd_ifoutput(ifp, m, nh, NULL);
 	return (1);
+}
+
+int
+if_output_tso(struct ifnet *ifp, struct mbuf **mp, struct sockaddr *dst,
+    struct rtentry *rt, u_int mtu)
+{
+	return (obsd_output_tso(ifp, mp, dst->sa_family,
+	    obsd_rt_nexthop(rt, dst), mtu));
 }
 
 int
@@ -950,6 +990,12 @@ obsd_if_attach(struct ifnet *ifp)
 		if_initname(ifp, oifc != NULL ? oifc->ifc_name :
 		    obsd_strdup_name(name), unit);
 	}
+	/*
+	 * pflog, pfsync and pflow keep their softc in the creating VNET's
+	 * state (V_pfsyncif, V_pflowif_list) and carry that VNET's
+	 * traffic: they cannot be lent to another VNET.
+	 */
+	ifp->if_kflags |= IFKF_NOVMOVE;
 	if_attach(ifp);
 }
 

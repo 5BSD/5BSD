@@ -137,8 +137,56 @@ ttl_exceeded_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "error_ifdestroy" "cleanup"
+error_ifdestroy_head()
+{
+	atf_set descr 'ICMP errors queued by pf survive the receiving interface going away'
+	atf_set require.user root
+}
+
+error_ifdestroy_body()
+{
+	pft_init
+
+	vnet_mkjail alcatraz
+	jexec alcatraz pfctl -e
+	pft_set_rules alcatraz \
+	    "block return in inet proto icmp" \
+	    "block return in inet6 proto icmp6 icmp6-type echoreq" \
+	    "pass out"
+
+	i=0
+	while [ ${i} -lt 20 ]; do
+		epair=$(vnet_mkepair)
+		ifconfig ${epair}b vnet alcatraz
+		jexec alcatraz ifconfig ${epair}b 192.0.2.1/24 up
+		jexec alcatraz ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
+		ifconfig ${epair}a 192.0.2.2/24 up
+		ifconfig ${epair}a inet6 2001:db8::2/64 up no_dad
+
+		# Each echo request is answered with an unreachable that pf
+		# queues; destroy the interface while they are in flight.
+		ping -f -c 2000 192.0.2.1 > /dev/null 2>&1 &
+		ping -6 -f -c 2000 2001:db8::1 > /dev/null 2>&1 &
+		sleep 0.2
+		jexec alcatraz ifconfig ${epair}b destroy
+		wait
+		i=$((i + 1))
+	done
+
+	# pf in alcatraz still works.
+	atf_check -s exit:0 -o match:'Status: Enabled' -e ignore \
+	    jexec alcatraz pfctl -si
+}
+
+error_ifdestroy_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "cve_2019_5598"
 	atf_add_test_case "ttl_exceeded"
+	atf_add_test_case "error_ifdestroy"
 }

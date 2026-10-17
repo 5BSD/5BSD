@@ -932,6 +932,102 @@ dummynet_double_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "dummynet_gateway" "cleanup"
+dummynet_gateway_head()
+{
+	atf_set descr 'route-to through a gateway still uses the gateway after dummynet'
+	atf_set require.user root
+}
+
+dummynet_gateway_body()
+{
+	dummynet_init
+
+	epair_srv=$(vnet_mkepair)
+	epair_gw=$(vnet_mkepair)
+
+	vnet_mkjail srv ${epair_srv}a
+	jexec srv ifconfig ${epair_srv}a 192.0.2.1/24 up
+	jexec srv route add default 192.0.2.2
+
+	vnet_mkjail gw ${epair_srv}b ${epair_gw}a
+	jexec gw ifconfig ${epair_srv}b 192.0.2.2/24 up
+	jexec gw ifconfig ${epair_gw}a 198.51.100.1/24 up
+	jexec gw sysctl net.inet.ip.forwarding=1
+	# 203.0.113.1 is not on any link: reached through srv.
+	jexec gw route add -host 203.0.113.1 192.0.2.1
+
+	ifconfig ${epair_gw}b 198.51.100.2/24 up
+	route add -net 192.0.2.0/24 198.51.100.1
+
+	atf_check -s exit:0 -o ignore ping -c 1 -t 1 192.0.2.1
+
+	jexec gw dnctl pipe 1 config delay 100
+	jexec gw pfctl -e
+
+	# Without dummynet the gateway is used.
+	pft_set_rules gw \
+		"pass out to 192.0.2.1 route-to 203.0.113.1"
+	atf_check -s exit:0 -o ignore ping -c 1 -t 2 192.0.2.1
+
+	# And after dummynet reinjects the packet as well.
+	pft_set_rules gw \
+		"pass out to 192.0.2.1 route-to 203.0.113.1 dnpipe 1"
+	atf_check -s exit:0 -o ignore ping -c 1 -t 2 192.0.2.1
+}
+
+dummynet_gateway_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "dummynet_mtu" "cleanup"
+dummynet_mtu_head()
+{
+	atf_set descr 'route-to packets reinjected by dummynet are fragmented or refused with ICMP'
+	atf_set require.user root
+}
+
+dummynet_mtu_body()
+{
+	pft_init
+	dummynet_init
+
+	epair_one=$(vnet_mkepair)
+	epair_two=$(vnet_mkepair)
+
+	ifconfig ${epair_one}a 192.0.2.1/24 up
+
+	vnet_mkjail alcatraz ${epair_one}b ${epair_two}a
+	jexec alcatraz ifconfig ${epair_one}b 192.0.2.2/24 up
+	jexec alcatraz ifconfig ${epair_two}a 198.51.100.1/24 mtu 1280 up
+	jexec alcatraz sysctl net.inet.ip.forwarding=1
+
+	vnet_mkjail singsing ${epair_two}b
+	jexec singsing ifconfig ${epair_two}b 198.51.100.2/24 mtu 1280 up
+	jexec singsing route add default 198.51.100.1
+
+	route add 198.51.100.0/24 192.0.2.2
+
+	jexec alcatraz dnctl pipe 1 config delay 10
+	jexec alcatraz pfctl -e
+	pft_set_rules alcatraz \
+		"pass in inet proto icmp all icmp-type echoreq route-to 198.51.100.2 dnpipe 1" \
+		"pass out"
+
+	atf_check -s exit:0 -o ignore ping -c 1 -t 2 198.51.100.2
+	# Too big for the route-to interface: fragmented after dummynet.
+	atf_check -s exit:0 -o ignore ping -c 1 -t 2 -s 1400 198.51.100.2
+	# With DF the router answers "fragmentation needed".
+	atf_check -s exit:2 -o match:'[Ff]rag needed' \
+	    ping -c 1 -t 2 -D -s 1400 198.51.100.2
+}
+
+dummynet_mtu_cleanup()
+{
+	pft_cleanup
+}
+
 atf_test_case "sticky" "cleanup"
 sticky_head()
 {
@@ -1592,6 +1688,8 @@ atf_init_test_cases()
 	atf_add_test_case "ifbound_reply_to_rdr_dummynet"
 	atf_add_test_case "dummynet_frag"
 	atf_add_test_case "dummynet_double"
+	atf_add_test_case "dummynet_gateway"
+	atf_add_test_case "dummynet_mtu"
 	atf_add_test_case "sticky"
 	atf_add_test_case "ttl"
 	atf_add_test_case "empty_pool"

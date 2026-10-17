@@ -41,7 +41,8 @@
  * Dummynet reinjects it into ip_input()/ip_output() after its delay;
  * pf_test() then sees PF_DN_TAG_INFLIGHT and passes it without
  * evaluating it again.  A route-to packet carries its interface and next
- * hop in the tag and is sent there on reinjection.
+ * hop in the tag and is sent there on reinjection, through the output
+ * tail pf_route() would have run (checksums, MTU, fragmentation).
  */
 
 #include "openbsd_compat.h"
@@ -60,6 +61,10 @@ SDT_PROBE_DEFINE1(pf, ip, dummynet, reinject, "struct ifnet *");
 SDT_PROBE_DEFINE3(pf, ip, dummynet, error, "struct pf_pdesc *", "int",
     "const char *");
 
+/* pf.c; queues the error through the deferred send path. */
+void	pf_send_icmp(struct mbuf *, u_int8_t, u_int8_t, int, sa_family_t,
+	    struct pf_rule *, u_int);
+
 CTASSERT(sizeof(struct sockaddr_in6) <=
     sizeof(((struct pkthdr_pf *)NULL)->dn_dst));
 
@@ -69,10 +74,60 @@ pf_dn_clear(struct mbuf *m, struct pkthdr_pf *t)
 {
 	struct m_tag *mtag;
 
-	t->dn_flags &= ~(PF_DN_TAG_INFLIGHT | PF_DN_TAG_ROUTE_TO);
+	t->dn_flags &= ~(PF_DN_TAG_INFLIGHT | PF_DN_TAG_ROUTE_TO |
+	    PF_DN_TAG_DUPTO);
 	mtag = m_tag_locate(m, MTAG_IPFW_RULE, 0, NULL);
 	if (mtag != NULL)
 		m_tag_delete(m, mtag);
+}
+
+/*
+ * pf_route()/pf_route6() hand a route-to packet to dummynet before
+ * their output tail; finish it here as they would have: checksums
+ * (if_output_tso), the MTU check, IPv4 fragmentation and the
+ * "fragmentation needed"/"packet too big" errors.
+ */
+static void
+pf_dn_route_out(struct mbuf *m, struct ifnet *ifp, struct sockaddr *nh,
+    int dupto)
+{
+	struct mbuf_list ml;
+	struct ip *ip;
+	int af;
+
+	if (m->m_len < (int)sizeof(struct ip) &&
+	    (m = m_pullup(m, sizeof(struct ip))) == NULL)
+		return;
+	ip = mtod(m, struct ip *);
+	af = (ip->ip_v == IPVERSION) ? AF_INET : AF_INET6;
+	if (obsd_output_tso(ifp, &m, af, nh, ifp->if_mtu) || m == NULL)
+		return;
+
+	switch (af) {
+	case AF_INET:
+		ip = mtod(m, struct ip *);
+		if (ip->ip_off & htons(IP_DF)) {
+			ipstat_inc(ips_cantfrag);
+			if (!dupto)
+				pf_send_icmp(m, ICMP_UNREACH,
+				    ICMP_UNREACH_NEEDFRAG, ifp->if_mtu, AF_INET,
+				    NULL, m->m_pkthdr.ph_rtableid);
+			break;
+		}
+		if (ip_fragment(m, &ml, ifp, ifp->if_mtu) == 0 &&
+		    if_output_ml(ifp, &ml, nh, NULL) == 0)
+			ipstat_inc(ips_fragmented);
+		return;		/* ip_fragment() consumed the packet */
+#ifdef INET6
+	case AF_INET6:
+		ip6stat_inc(ip6s_cantfrag);
+		if (!dupto)
+			pf_send_icmp(m, ICMP6_PACKET_TOO_BIG, 0, ifp->if_mtu,
+			    AF_INET6, NULL, m->m_pkthdr.ph_rtableid);
+		break;
+#endif
+	}
+	m_freem(m);
 }
 
 /*
@@ -85,7 +140,8 @@ pf_dn_reinjected(struct mbuf **m0)
 {
 	struct pkthdr_pf *t;
 	struct ifnet *ifp;
-	struct sockaddr_in6 dst;
+	struct sockaddr_in6 nh;
+	int dupto;
 
 	if ((PF_MTAG_R(*m0)->dn_flags & PF_DN_TAG_INFLIGHT) == 0)
 		return (0);
@@ -101,28 +157,55 @@ pf_dn_reinjected(struct mbuf **m0)
 	}
 
 	NET_EPOCH_ASSERT();
-	memcpy(&dst, t->dn_dst, sizeof(dst));
+	memcpy(&nh, t->dn_dst, sizeof(nh));
+	dupto = (t->dn_flags & PF_DN_TAG_DUPTO) != 0;
 	ifp = ifnet_byindexgen(t->dn_ifidx, t->dn_ifgen);
+	/* The index table is global: the interface may be in another VNET. */
+	if (ifp != NULL && (ifp->if_vnet != curvnet ||
+	    (ifp->if_flags & IFF_DYING) != 0))
+		ifp = NULL;
 	pf_dn_clear(*m0, t);
 	SDT_PROBE1(pf, ip, dummynet, reinject, ifp);
-	if (ifp == NULL) {
+	if (ifp == NULL)
 		m_freem(*m0);
-	} else
-		(void)(*ifp->if_output)(ifp, *m0, (struct sockaddr *)&dst,
-		    NULL);
+	else
+		pf_dn_route_out(*m0, ifp, (struct sockaddr *)&nh, dupto);
 	*m0 = NULL;
 	return (1);
 }
 
 /*
+ * pf does not maintain the IPv4 header checksum (OpenBSD recomputes it on
+ * output); an inbound packet is reinjected into ip_input(), which checks
+ * it, after a TTL decrement or translation.
+ */
+static void
+pf_dn_ip_hdr_cksum(struct mbuf *m)
+{
+	struct ip *ip;
+
+	if (m->m_pkthdr.csum_flags & CSUM_IP)
+		return;		/* computed by the hardware or ip_output */
+	if (m->m_len < (int)sizeof(struct ip))
+		return;
+	ip = mtod(m, struct ip *);
+	if (ip->ip_v != IPVERSION || m->m_len < (ip->ip_hl << 2))
+		return;
+	ip->ip_sum = 0;
+	ip->ip_sum = in_cksum_hdr(ip);
+}
+
+/*
  * Hand a passed packet to its dummynet pipe or queue.  st and r give the
- * pipes (the state's actions, or the rule's for a stateless pass).  ifp
- * and dst are set for route-to.  Returns 1 if the packet was taken
- * (*m0 is NULL: queued in dummynet or dropped), 0 if it continues.
+ * pipes (the state's actions, or the rule's for a stateless pass).  ifp,
+ * dst and rt are set for route-to (rt gives the gateway, if any).
+ * Returns 1 if the packet was taken (*m0 is NULL: queued in dummynet or
+ * dropped), 0 if it continues.
  */
 int
 pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
-    struct ifnet *ifp, struct sockaddr *dst, struct mbuf **m0)
+    struct ifnet *ifp, struct sockaddr *dst, struct rtentry *rt,
+    struct mbuf **m0)
 {
 	struct ip_fw_args dnflow;
 	struct pf_state_key *sk = NULL;
@@ -173,6 +256,8 @@ pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
 	}
 
 	if (ifp != NULL) {
+		const struct sockaddr *nh;
+
 		/* Dummynet hands the reinjected packet to if_output(). */
 		if (mb_unmapped_to_ext(*m0, m0) != 0) {
 			SDT_PROBE3(pf, ip, dummynet, error, pd, ENOMEM,
@@ -181,12 +266,24 @@ pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
 		}
 		if ((t = PF_MTAG_W(*m0)) == NULL)
 			goto drop;
+		/* The link-layer next hop, as pf_route()'s output would. */
+		nh = dst;
+		if (rt != NULL && (rt->rt_nh->nh_flags & NHF_GATEWAY))
+			nh = &rt->rt_nh->gw_sa;
+		if (nh->sa_len > sizeof(t->dn_dst)) {
+			SDT_PROBE3(pf, ip, dummynet, error, pd, EAFNOSUPPORT,
+			    "next hop");
+			goto drop;
+		}
 		t->dn_flags |= PF_DN_TAG_ROUTE_TO;
+		if (st != NULL && st->rt == PF_DUPTO)
+			t->dn_flags |= PF_DN_TAG_DUPTO;
 		t->dn_ifidx = ifp->if_index;
 		t->dn_ifgen = ifp->if_idxgen;
 		memset(t->dn_dst, 0, sizeof(t->dn_dst));
-		memcpy(t->dn_dst, dst, dst->sa_len);
+		memcpy(t->dn_dst, nh, nh->sa_len);
 	}
+	pf_dn_ip_hdr_cksum(*m0);
 
 	/*
 	 * A connection redirected to loopback must be delivered locally when

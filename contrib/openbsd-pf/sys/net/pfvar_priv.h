@@ -530,6 +530,7 @@ struct pf_pdesc {
 	struct pf_addr	 ndaddr;	/* dst address after NAT */
 
 	struct pfi_kif	*kif;		/* incoming interface */
+	struct ifnet	*ifp;		/* 5BSD: names; the interface of kif */
 	struct mbuf	*m;		/* mbuf containing the packet */
 	struct pf_addr	*src;		/* src address */
 	struct pf_addr	*dst;		/* dst address */
@@ -714,7 +715,7 @@ int			pf_status_read(struct PF_KTAG(pf_status) *); /* 5BSD: VNET */
 /* 5BSD: dummynet (sys/netpfil/openbsd-pf/pf_dummynet.c) */
 int	pf_dn_reinjected(struct mbuf **);
 int	pf_dn_output(struct pf_pdesc *, struct pf_state *, struct pf_rule *,
-	    struct ifnet *, struct sockaddr *, struct mbuf **);
+	    struct ifnet *, struct sockaddr *, struct rtentry *, struct mbuf **);
 
 /* 5BSD: sctp (sys/netpfil/openbsd-pf/pf_sctp.c) */
 int	pf_sctp_setup_pdesc(struct pf_pdesc *, u_short *);

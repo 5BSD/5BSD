@@ -52,6 +52,11 @@ values (pfctl loads every limit with a ruleset) but changing one fails with
 shared, so a large ruleset reload in one vnet briefly delays packet
 processing in the others.
 
+The pflog, pfsync and pflow interfaces belong to the vnet that created
+them and cannot be moved: `ifconfig pflog0 vnet <jail>` and
+`ifconfig pflog0 -vnet <jail>` fail with `EOPNOTSUPP`. Create them inside
+the jail instead.
+
 When a vnet goes away, its pf is torn down: the pflog, pfsync and pflow
 interfaces are destroyed, rules, anchors, tables, states, source nodes and
 queued fragments are freed and its timers stopped. A jail that is removed

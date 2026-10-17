@@ -519,11 +519,22 @@ pf_fbsd_check6_out(struct mbuf **m, struct ifnet *ifp, int flags,
 {
 	struct mbuf *n = *m;
 	pfil_return_t rv;
+	int off, nxt;
 
 	if ((n->m_pkthdr.csum_flags & CSUM_TSO) == 0 &&
 	    (n->m_pkthdr.csum_flags & CSUM_DELAY_DATA_IPV6)) {
-		in6_delayed_cksum(n, n->m_pkthdr.len - sizeof(struct ip6_hdr),
-		    sizeof(struct ip6_hdr));
+		/*
+		 * The transport header follows any extension headers
+		 * (IPV6_HOPOPTS, IPV6_DSTOPTS, IPV6_RTHDR socket options).
+		 */
+		nxt = -1;
+		off = ip6_lasthdr(n, 0, IPPROTO_IPV6, &nxt);
+		if (off < (int)sizeof(struct ip6_hdr) || off >= n->m_pkthdr.len) {
+			m_freem(n);
+			*m = NULL;
+			return (PFIL_DROPPED);
+		}
+		in6_delayed_cksum(n, n->m_pkthdr.len - off, off);
 		n->m_pkthdr.csum_flags &= ~CSUM_DELAY_DATA_IPV6;
 	}
 	rv = pf_fbsd_result(pf_fbsd_test_out(AF_INET6,
@@ -531,8 +542,19 @@ pf_fbsd_check6_out(struct mbuf **m, struct ifnet *ifp, int flags,
 	if (rv != PFIL_PASS)
 		return (rv);
 	n = *m;
-	if ((n->m_pkthdr.csum_flags & CSUM_TSO) == 0 &&
-	    (n->m_pkthdr.csum_flags & (CSUM_IP6_TCP | CSUM_IP6_UDP)))
+	if (n->m_pkthdr.csum_flags & CSUM_TSO) {
+		/* Re-seed the TSO pseudo header after a translation. */
+		nxt = -1;
+		off = ip6_lasthdr(n, 0, IPPROTO_IPV6, &nxt);
+		if (nxt == IPPROTO_TCP && off >= (int)sizeof(struct ip6_hdr) &&
+		    n->m_len >= off + (int)sizeof(struct tcphdr)) {
+			struct tcphdr *th = (struct tcphdr *)(mtod(n, caddr_t) +
+			    off);
+
+			th->th_sum = in6_cksum_pseudo(mtod(n, struct ip6_hdr *),
+			    0, IPPROTO_TCP, 0);
+		}
+	} else if (n->m_pkthdr.csum_flags & (CSUM_IP6_TCP | CSUM_IP6_UDP))
 		in6_proto_cksum_out(n, ifp);
 	return (rv);
 }
@@ -790,16 +812,20 @@ pf_fbsd_attach_existing(void)
 	CK_STAILQ_FOREACH(ifg, &V_ifg_head, ifg_next)
 		pfi_attach_ifgroup(ifg);
 	NET_EPOCH_EXIT(et);
-	/* pfi_attach_ifnet() may sleep; walk with references. */
-	IFNET_RLOCK();
-	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		if_ref(ifp);
-		IFNET_RUNLOCK();
+	/*
+	 * pfi_attach_ifnet() may sleep, so the walk cannot stay in the net
+	 * epoch or hold the ifnet lock.  ifnet_detach_sxlock keeps
+	 * if_detach() and VNET moves out instead: no interface leaves the
+	 * list (or is freed) during the walk, and none can run its departure
+	 * handler before pf has attached it, which would leave the kif
+	 * pointing at a gone interface.  Arrivals only append, which a CK
+	 * list walk tolerates; pfi_attach_ifnet() ignores a second attach of
+	 * one the arrival handler got first.
+	 */
+	sx_xlock(&ifnet_detach_sxlock);
+	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link)
 		pfi_attach_ifnet(ifp);
-		IFNET_RLOCK();
-		if_rele(ifp);
-	}
-	IFNET_RUNLOCK();
+	sx_xunlock(&ifnet_detach_sxlock);
 }
 
 /* ------------------------------------------------------------------ */

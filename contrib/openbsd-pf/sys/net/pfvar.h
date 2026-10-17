@@ -2087,6 +2087,8 @@ struct pfi_kif	*pfi_kif_get(const char *, struct pfi_kif **);
 void		 pfi_kif_ref(struct pfi_kif *, enum pfi_kif_refs);
 void		 pfi_kif_unref(struct pfi_kif *, enum pfi_kif_refs);
 int		 pfi_kif_match(struct pfi_kif *, struct pfi_kif *);
+int		 pfi_kif_match_ifp(struct pfi_kif *, struct pfi_kif *,
+		    struct ifnet *);	/* 5BSD: names */
 void		 pfi_attach_ifnet(struct ifnet *);
 void		 pfi_detach_ifnet(struct ifnet *);
 void		 pfi_rename_ifnet(struct ifnet *, const char *); /* 5BSD: rename */

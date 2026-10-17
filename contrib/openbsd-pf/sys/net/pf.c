@@ -4045,7 +4045,7 @@ pf_match_rcvif(struct mbuf *m, struct pf_rule *r)
 		return (0);
 	}
 
-	return (pfi_kif_match(r->rcv_kif, kif));
+	return (pfi_kif_match_ifp(r->rcv_kif, kif, ifp));	/* 5BSD: names */
 }
 
 int
@@ -4576,7 +4576,8 @@ enter_ruleset:
 		    TAILQ_NEXT(r, entries));
 		r->evaluations++;
 		PF_TEST_ATTRIB(
-		    (pfi_kif_match(r->kif, ctx->pd->kif) == r->ifnot),
+		    (pfi_kif_match_ifp(r->kif, ctx->pd->kif,	/* 5BSD: names */
+		    ctx->pd->ifp) == r->ifnot),
 			r->skip[PF_SKIP_IFP].ptr);
 		PF_TEST_ATTRIB((r->direction && r->direction != ctx->pd->dir),
 			r->skip[PF_SKIP_DIR].ptr);
@@ -7562,7 +7563,7 @@ pf_route(struct pf_pdesc *pd, struct pf_state *st)
 		ip = mtod(m0, struct ip *);
 	}
 
-	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sintosa(dst), &m0))	/* 5BSD: dummynet */
+	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sintosa(dst), rt, &m0))	/* 5BSD: dummynet */
 		goto done;
 
 	if (if_output_tso(ifp, &m0, sintosa(dst), rt, ifp->if_mtu) ||
@@ -7695,7 +7696,8 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 		goto done;
 	}
 
-	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sin6tosa(dst), &m0))	/* 5BSD: dummynet */
+	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sin6tosa(dst), rt,
+	    &m0))	/* 5BSD: dummynet */
 		goto done;
 
 	if (if_output_tso(ifp, &m0, sin6tosa(dst), rt, ifp->if_mtu) ||
@@ -8544,6 +8546,7 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 		return (PF_PASS);
 
 	action = pf_setup_pdesc(&pd, af, dir, kif, *m0, &reason);
+	pd.ifp = ifp;	/* 5BSD: names */
 	if (action != PF_PASS) {
 #if NPFLOG > 0
 		pd.pflog |= PF_LOG_FORCE;
@@ -8577,6 +8580,7 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 	/* if packet has been reassembled, update packet description */
 	if (pf_status.reass && pd.virtual_proto == PF_VPROTO_FRAGMENT) {
 		action = pf_setup_pdesc(&pd, af, dir, kif, pd.m, &reason);
+		pd.ifp = ifp;	/* 5BSD: names */
 		if (action != PF_PASS) {
 #if NPFLOG > 0
 			pd.pflog |= PF_LOG_FORCE;
@@ -9010,7 +9014,7 @@ log_packet:
 			}
 		}
 		if (pd.m != NULL)	/* 5BSD: dummynet */
-			(void)pf_dn_output(&pd, st, r, NULL, NULL, &pd.m);
+			(void)pf_dn_output(&pd, st, r, NULL, NULL, NULL, &pd.m);
 		break;
 	}
 
