@@ -189,7 +189,9 @@ to a re-import.
   pf_if.c        CK_STAILQ interface/group lists; allocate before PF_LOCK;
                  "5BSD: names" (interfaces sharing a name share a kif;
                  pfi_kif_match_ifp() and pf_pdesc.ifp match groups and
-                 flags on the packet's own interface)
+                 flags on the packet's own interface; pf_routable_ifp()
+                 and PF_MISMATCHAW_IFP() (pf.c, pfvar.h) judge urpf-failed
+                 by it too)
   pf_ioctl.c     p_pid; pfioctl_rw is sleepable; overload table PR_NOWAIT
                  under PF_LOCK; DTrace probe hooks
   pf_norm.c      refragmented packets leave through if_output_obsd()

@@ -4588,8 +4588,8 @@ enter_ruleset:
 			r->skip[PF_SKIP_AF].ptr);
 		PF_TEST_ATTRIB((r->proto && r->proto != ctx->pd->proto),
 			r->skip[PF_SKIP_PROTO].ptr);
-		PF_TEST_ATTRIB((PF_MISMATCHAW(&r->src.addr, &ctx->pd->nsaddr,
-		    ctx->pd->naf, r->src.neg, ctx->pd->kif,
+		PF_TEST_ATTRIB((PF_MISMATCHAW_IFP(&r->src.addr, &ctx->pd->nsaddr, /* 5BSD */
+		    ctx->pd->naf, r->src.neg, ctx->pd->kif, ctx->pd->ifp,
 		    ctx->act.rtableid)),
 			r->skip[PF_SKIP_SRC_ADDR].ptr);
 		PF_TEST_ATTRIB((PF_MISMATCHAW(&r->dst.addr, &ctx->pd->ndaddr,
@@ -7353,6 +7353,18 @@ int
 pf_routable(struct pf_addr *addr, sa_family_t af, struct pfi_kif *kif,
     int rtableid)
 {
+	return (pf_routable_ifp(addr, af, kif, NULL, rtableid)); /* 5BSD: names */
+}
+
+/*
+ * 5BSD: names.  Interfaces sharing a name share kif, whose pfik_ifp is
+ * only the first of them: pifp, when the caller knows it, is the interface
+ * the packet came in on, for the uRPF check.
+ */
+int
+pf_routable_ifp(struct pf_addr *addr, sa_family_t af, struct pfi_kif *kif,
+    struct ifnet *pifp, int rtableid)
+{
 	struct sockaddr_storage	 ss;
 	struct sockaddr_in	*dst;
 	int			 ret = 1;
@@ -7405,11 +7417,13 @@ pf_routable(struct pf_addr *addr, sa_family_t af, struct pfi_kif *kif,
 			ret = 0;
 			goto out;
 		}
+		if (pifp == NULL || pifp->if_pf_kif != (caddr_t)kif)	/* 5BSD */
+			pifp = kif->pfik_ifp;
 
 		/* Perform uRPF check if passed input interface */
 		ret = 0;
 		do {
-			if (rt->rt_ifidx == kif->pfik_ifp->if_index) {
+			if (rt->rt_ifidx == pifp->if_index) {	/* 5BSD: names */
 				ret = 1;
 #if NCARP > 0
 			} else {
@@ -7419,7 +7433,7 @@ pf_routable(struct pf_addr *addr, sa_family_t af, struct pfi_kif *kif,
 				ifp = if_get_smr(rt->rt_ifidx);
 				if (ifp != NULL && ifp->if_type == IFT_CARP &&
 				    ifp->if_carpdevidx ==
-				    kif->pfik_ifp->if_index)
+				    pifp->if_index)	/* 5BSD: names */
 					ret = 1;
 				smr_read_leave();
 #endif /* NCARP */
