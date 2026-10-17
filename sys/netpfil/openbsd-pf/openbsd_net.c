@@ -944,6 +944,19 @@ obsd_in_pcbunref(struct inpcb *inp)
 	task_add(systq, &obsd_pcbrele_task);
 }
 
+/*
+ * The last references a vnet's pf dropped (its states are gone) are
+ * released before the vnet's protocols destroy their pcb zones.  The task
+ * is global: run the queue here, for every vnet, after any running task.
+ */
+void	obsd_pcbrele_drain(void);
+void
+obsd_pcbrele_drain(void)
+{
+	taskq_del_barrier(systq, &obsd_pcbrele_task);
+	obsd_pcbrele_run(NULL);
+}
+
 /* ------------------------------------------------------------------ */
 /* Pseudo-interfaces (pflog, pfsync, pflow)                            */
 /* ------------------------------------------------------------------ */

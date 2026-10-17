@@ -65,6 +65,7 @@ void	pf_syncookies_vnet_fini(void);
 void	obsd_if_clone_vnet_attach(void);
 void	obsd_if_clone_vnet_detach(void);
 void	obsd_sendq_drain(void);
+void	obsd_pcbrele_drain(void);
 void	pf_divert_attach(void);
 void	pf_jail_attach(void);
 /* 5BSD: ether (pf_ether.c) */
@@ -1340,6 +1341,7 @@ pf_fbsd_vnet_uninit(void *arg __unused)
 	taskq_del_barrier(systq, &V_pf_pfsync_intask);
 	mq_purge(&V_pf_pfsync_inq);
 	obsd_sendq_drain();
+	obsd_pcbrele_drain();	/* before the protocols' pcb zones go */
 
 	/*
 	 * Interfaces still present in this vnet, then their groups:
