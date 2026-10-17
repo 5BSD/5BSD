@@ -191,6 +191,25 @@ pf_jail_changed(void *obj __unused, void *data __unused)
 	return (0);
 }
 
+/*
+ * A VNET jail being removed: close the kernel sockets of its vnet that hold
+ * a credential of the jail (pflow), or it never finishes dying.
+ */
+void	pflow_jail_remove(void);
+static int
+pf_jail_removed(void *obj, void *data)
+{
+	struct prison *pr = obj;
+
+	if (prison_owns_vnet(pr)) {
+		CURVNET_SET(pr->pr_vnet);
+		if (pf_fbsd_vnet_ready())
+			pflow_jail_remove();
+		CURVNET_RESTORE();
+	}
+	return (pf_jail_changed(obj, data));
+}
+
 /* A new VNET jail shares its ancestor VNET jail's quota (pf_quota.c). */
 void	pf_quota_jail_link(struct prison *);
 static int
@@ -207,7 +226,7 @@ pf_jail_attach(void)
 	osd_method_t methods[PR_MAXMETHOD] = {
 		[PR_METHOD_CREATE] = pf_jail_created,
 		[PR_METHOD_SET] = pf_jail_changed,
-		[PR_METHOD_REMOVE] = pf_jail_changed,
+		[PR_METHOD_REMOVE] = pf_jail_removed,
 	};
 
 	pf_jail_osd_slot = osd_jail_register(NULL, methods);

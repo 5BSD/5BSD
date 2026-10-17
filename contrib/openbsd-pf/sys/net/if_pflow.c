@@ -391,6 +391,41 @@ pflow_clone_destroy(struct ifnet *ifp)
 	return (error);
 }
 
+/*
+ * 5BSD: VNET.  The flow socket holds the credential of the process that
+ * set flowdst.  In a VNET jail that pins the jail, and the jail's vnet,
+ * whose teardown destroys this interface and the socket: the jail never
+ * finished dying.  Close the sockets of the vnet when its jail is removed
+ * (pf_jail.c); no process is left there to use them.
+ */
+static bool
+pflow_jail_match(if_t ifp, void *arg __unused)
+{
+	return (ifp->if_ioctl == pflowioctl);
+}
+
+static int
+pflow_jail_close(if_t ifp, void *arg __unused)
+{
+	struct pflow_softc *sc = ifp->if_softc;
+
+	rw_enter_write(&sc->sc_lock);
+	if (!sc->sc_dying && sc->so != NULL) {
+		soclose(sc->so, MSG_DONTWAIT);
+		sc->so = NULL;
+		ifp->if_flags &= ~IFF_RUNNING;
+	}
+	rw_exit_write(&sc->sc_lock);
+	return (0);
+}
+
+void	pflow_jail_remove(void);
+void
+pflow_jail_remove(void)
+{
+	(void)if_foreach_sleep(pflow_jail_match, NULL, pflow_jail_close, NULL);
+}
+
 int
 pflowvalidsockaddr(const struct sockaddr *sa, int ignore_port)
 {

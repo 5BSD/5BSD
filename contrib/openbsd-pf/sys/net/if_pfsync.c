@@ -2094,7 +2094,7 @@ pfsync_defer(struct pf_state *st, struct mbuf *m)
 	if (PF_MTAG_W(m) == NULL)
 		goto leave;
 
-	pd = pool_get(&pfsync_deferrals_pool, M_NOWAIT);
+	pd = pool_get(&pfsync_deferrals_pool, PR_NOWAIT);	/* 5BSD: PR_, not M_ */
 	if (pd == NULL) {
 		goto leave;
 	}
