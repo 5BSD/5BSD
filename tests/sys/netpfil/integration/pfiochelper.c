@@ -74,7 +74,7 @@ addstates(int dev, long count, long net)
 		sp->rule = htonl(-1);
 		sp->anchor = htonl(-1);
 		sp->nat_rule = htonl(-1);
-		sp->rtableid[0] = sp->rtableid[1] = htonl(-1);
+		sp->rtableid[0] = sp->rtableid[1] = (int32_t)htonl((uint32_t)-1);
 		sp->key[0].af = sp->key[1].af = AF_INET;
 		sp->key[0].addr[0].v4.s_addr = htonl(0x0a000000 |
 		    ((net & 0xff) << 16) | (i & 0xffff));

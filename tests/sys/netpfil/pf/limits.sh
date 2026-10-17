@@ -41,6 +41,9 @@ basic_head()
 
 basic_body()
 {
+	# The jails' limits equal the host's only at net.pf.vnet_limit_pct 100.
+	[ "$(sysctl -n net.pf.vnet_limit_pct 2>/dev/null || echo 100)" -eq 100 ] ||
+	    atf_skip "net.pf.vnet_limit_pct is not 100"
 	pft_init
 	limits_save
 

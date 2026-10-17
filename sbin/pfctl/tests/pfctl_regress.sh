@@ -301,7 +301,14 @@ regress_case()
 	atf_test_case ${_tc} cleanup
 	_xfail=
 	if regress_known_failure ${_tc}; then
-		_xfail="atf_expect_fail 'fails on the OpenBSD reference system too (stale upstream expectation)';"
+		case ${_tc} in
+		pf104)
+			_xfail="atf_expect_fail 'FreeBSD /etc/hosts lists ::1 first; the corpus assumes 127.0.0.1 first';"
+			;;
+		*)
+			_xfail="atf_expect_fail 'fails on the OpenBSD reference system too (stale upstream expectation)';"
+			;;
+		esac
 	fi
 	eval "${_tc}_head() {
 		atf_set descr 'OpenBSD regress/sbin/pfctl target ${_tc}'

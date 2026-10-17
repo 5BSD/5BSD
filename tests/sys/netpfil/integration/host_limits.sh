@@ -241,7 +241,9 @@ state_pool_isolated_body()
 	vnet_mkjail b
 	for j in a b; do
 		jexec $j ifconfig lo0 127.0.0.1/8 up
-		pft_set_rules $j "pass all"
+		# States must outlive the slow steps below (default ~10 s).
+		pft_set_rules $j \
+		    "set timeout { icmp.first 600, icmp.error 600 }" "pass all"
 		jexec $j pfctl -e
 	done
 
@@ -291,7 +293,9 @@ host_lower_below_usage_body()
 
 	vnet_mkjail a
 	jexec a ifconfig lo0 127.0.0.1/8 up
-	pft_set_rules a "pass all"
+	# States must outlive the slow steps below (default ~10 s).
+	pft_set_rules a "set timeout { icmp.first 600, icmp.error 600 }" \
+	    "pass all"
 	jexec a pfctl -e
 	for i in $(seq 1 10); do
 		jexec a ping -c 1 127.0.0.1 > /dev/null

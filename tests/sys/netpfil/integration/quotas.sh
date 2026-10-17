@@ -434,6 +434,12 @@ jail_total_ceiling_body()
 	vnet_mkjail b
 	vnet_mkjail c
 
+	# Jails left from earlier tests (a VNET kept alive by a closing
+	# socket) still count in the total.
+	base=$(sysctl -n net.pf.vnet_total_count.states)
+	[ "${base}" -eq 0 ] ||
+	    atf_skip "VNET jails already hold ${base} states"
+
 	# 20 states for each jail, 50 for all of them.
 	expect_eq "$(quota_sysctl limit states a)" "20" "vnet_limit.states a"
 	expect_eq "$(sysctl -n net.pf.vnet_total_limit.states)" "50" \

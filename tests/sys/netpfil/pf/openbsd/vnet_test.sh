@@ -115,6 +115,9 @@ limits_head()
 
 limits_body()
 {
+	# The jails' limits equal the host's only at net.pf.vnet_limit_pct 100.
+	[ "$(sysctl -n net.pf.vnet_limit_pct 2>/dev/null || echo 100)" -eq 100 ] ||
+	    atf_skip "net.pf.vnet_limit_pct is not 100"
 	pf_vnet_init
 	vnet_mkjail pfvl
 
