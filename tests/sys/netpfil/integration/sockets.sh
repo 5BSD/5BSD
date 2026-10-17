@@ -117,14 +117,14 @@ bindany_body()
 	    jexec j ${HELPER} bindany -n inet 203.0.113.9
 	# With it, root binds the foreign address; the option reads back set.
 	atf_check -s exit:0 \
-	    -o inline:'setsockopt=ok\ngetsockopt=ok value=1\nbind=ok\n' \
+	    -o inline:'setsockopt=ok\ngetsockopt=ok value=1 len=4\nbind=ok\n' \
 	    jexec j ${HELPER} bindany inet 203.0.113.9
 	atf_check -s exit:0 \
-	    -o inline:'setsockopt=ok\ngetsockopt=ok value=1\nbind=ok\n' \
+	    -o inline:'setsockopt=ok\ngetsockopt=ok value=1 len=4\nbind=ok\n' \
 	    jexec j ${HELPER} bindany inet6 2001:db8:dead::9
 	# Unprivileged: EPERM, the option stays clear and the bind fails.
 	atf_check -s exit:0 \
-	    -o inline:'setsockopt=EPERM\ngetsockopt=ok value=0\nbind=EADDRNOTAVAIL\n' \
+	    -o inline:'setsockopt=EPERM\ngetsockopt=ok value=0 len=4\nbind=EADDRNOTAVAIL\n' \
 	    jexec -U nobody j ${HELPER} bindany inet 203.0.113.9
 	atf_check -s exit:0 -o match:'^setsockopt=EPERM$' \
 	    jexec -U nobody j ${HELPER} bindany inet6 2001:db8:dead::9

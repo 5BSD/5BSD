@@ -4053,6 +4053,7 @@ static int
 so_bindany_opt(struct socket *so, struct sockopt *sopt)
 {
 	struct sockopt popt;
+	int error;
 
 	popt = *sopt;
 	switch (so->so_proto->pr_domain->dom_family) {
@@ -4071,7 +4072,10 @@ so_bindany_opt(struct socket *so, struct sockopt *sopt)
 	default:
 		return (ENOPROTOOPT);
 	}
-	return (so->so_proto->pr_ctloutput(so, &popt));
+	error = so->so_proto->pr_ctloutput(so, &popt);
+	/* getsockopt(2) returns the size the protocol copied out. */
+	sopt->sopt_valsize = popt.sopt_valsize;
+	return (error);
 }
 
 int
