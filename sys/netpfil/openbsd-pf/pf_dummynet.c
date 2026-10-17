@@ -43,6 +43,12 @@
  * evaluating it again.  A route-to packet carries its interface and next
  * hop in the tag and is sent there on reinjection, through the output
  * tail pf_route() would have run (checksums, MTU, fragmentation).
+ *
+ * An inbound route-to packet is filtered outbound by a nested pf_test()
+ * in pf_route() (PF_DN_TAG_ROUTING): a pipe that pf_test() picks is kept
+ * in the tag (dn_dpipe) for pf_route(), which knows the next hop.  A
+ * packet pf reassembled (IPv6) is shaped whole and refragmented on
+ * reinjection, as pf_route6() and the end of pf_test() would have.
  */
 
 #include "openbsd_compat.h"
@@ -76,6 +82,7 @@ pf_dn_clear(struct mbuf *m, struct pkthdr_pf *t)
 
 	t->dn_flags &= ~(PF_DN_TAG_INFLIGHT | PF_DN_TAG_ROUTE_TO |
 	    PF_DN_TAG_DUPTO);
+	t->dn_dflags = 0;
 	mtag = m_tag_locate(m, MTAG_IPFW_RULE, 0, NULL);
 	if (mtag != NULL)
 		m_tag_delete(m, mtag);
@@ -100,6 +107,18 @@ pf_dn_route_out(struct mbuf *m, struct ifnet *ifp, struct sockaddr *nh,
 		return;
 	ip = mtod(m, struct ip *);
 	af = (ip->ip_v == IPVERSION) ? AF_INET : AF_INET6;
+#ifdef INET6
+	if (af == AF_INET6) {
+		struct m_tag *mtag;
+
+		mtag = m_tag_find(m, PACKET_TAG_PF_REASSEMBLED, NULL);
+		if (mtag != NULL) {
+			(void)pf_refragment6(&m, mtag,
+			    (struct sockaddr_in6 *)nh, ifp, NULL);
+			return;
+		}
+	}
+#endif
 	if (obsd_output_tso(ifp, &m, af, nh, ifp->if_mtu) || m == NULL)
 		return;
 
@@ -195,26 +214,46 @@ pf_dn_ip_hdr_cksum(struct mbuf *m)
 	ip->ip_sum = in_cksum_hdr(ip);
 }
 
+/* pf_route(): the nested outbound pf_test() keeps its pipe for us. */
+void
+pf_dn_routing(struct mbuf *m, int on)
+{
+	struct pkthdr_pf *t;
+
+	if (on) {
+		if ((t = PF_MTAG_W(m)) != NULL) {
+			t->dn_flags |= PF_DN_TAG_ROUTING;
+			t->dn_dflags = 0;
+		}
+	} else if (PF_MTAG_R(m)->dn_flags & PF_DN_TAG_ROUTING)
+		PF_MTAG_W(m)->dn_flags &= ~PF_DN_TAG_ROUTING;
+}
+
 /*
  * Hand a passed packet to its dummynet pipe or queue.  st and r give the
- * pipes (the state's actions, or the rule's for a stateless pass).  ifp,
- * dst and rt are set for route-to (rt gives the gateway, if any).
- * Returns 1 if the packet was taken (*m0 is NULL: queued in dummynet or
- * dropped), 0 if it continues.
+ * pipes (the state's actions; for a stateless pass, the actions of the
+ * rules that matched, in pd).  ifp, dst and rt are set for route-to (rt
+ * gives the gateway, if any).  refrag: a forwarded IPv6 packet pf
+ * reassembled leaves as fragments after dummynet.  Returns 1 if the
+ * packet was taken (*m0 is NULL: queued in dummynet or dropped), 0 if it
+ * continues.
  */
 int
 pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
     struct ifnet *ifp, struct sockaddr *dst, struct rtentry *rt,
-    struct mbuf **m0)
+    struct mbuf **m0, int refrag)
 {
 	struct ip_fw_args dnflow;
 	struct pf_state_key *sk = NULL;
 	struct pkthdr_pf *t;
 	struct pf_rule *dr = r;
-	u_int16_t pipe, rpipe;
+	u_int16_t pipe, rpipe, sel = 0;
 	u_int8_t flags;
 	sa_family_t af;
-	int dndir;
+	int dndir, ispipe = 0;
+
+	if (PF_MTAG_R(*m0)->dn_flags & PF_DN_TAG_DONE)
+		return (0);
 
 	if (st != NULL) {
 		pipe = st->dnpipe;
@@ -222,27 +261,48 @@ pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
 		flags = st->dnflags;
 		if (st->rule.ptr != NULL)
 			dr = st->rule.ptr;
+	} else if (pd->dn_rule != NULL) {
+		pipe = pd->dn_pipe;
+		rpipe = pd->dn_rpipe;
+		flags = pd->dn_flags;
+		dr = pd->dn_rule;
 	} else {
 		pipe = r->dn.pipe;
 		rpipe = r->dn.rpipe;
 		flags = r->dn.flags;
 	}
-	if (pipe == 0 && rpipe == 0)
+	if (pipe != 0 || rpipe != 0) {
+		dndir = dr->direction;
+		if (dndir == PF_INOUT)
+			dndir = (st != NULL) ? st->direction : pd->dir;
+		if (pd->dir != dndir && rpipe != 0)
+			sel = rpipe;
+		else if (pd->dir == dndir && pipe != 0)
+			sel = pipe;
+		ispipe = (flags & PF_DN_IS_PIPE) != 0;
+	}
+	/* route-to: the pipe the outbound pf_test() chose, if ours is none. */
+	if (ifp != NULL && (PF_MTAG_R(*m0)->dn_dflags & PF_DN_DEFER_SET)) {
+		if (sel == 0) {
+			sel = PF_MTAG_R(*m0)->dn_dpipe;
+			ispipe = (PF_MTAG_R(*m0)->dn_dflags &
+			    PF_DN_DEFER_PIPE) != 0;
+		}
+		PF_MTAG_W(*m0)->dn_dflags = 0;
+	}
+	if (sel == 0)
 		return (0);
-	if (PF_MTAG_R(*m0)->dn_flags & PF_DN_TAG_DONE)
+	if (ifp == NULL && (PF_MTAG_R(*m0)->dn_flags & PF_DN_TAG_ROUTING)) {
+		/* Nested in pf_route(): it submits with the next hop. */
+		if ((t = PF_MTAG_W(*m0)) == NULL)
+			goto drop;
+		t->dn_dpipe = sel;
+		t->dn_dflags = PF_DN_DEFER_SET | (ispipe ? PF_DN_DEFER_PIPE : 0);
 		return (0);
-
-	dndir = dr->direction;
-	if (dndir == PF_INOUT)
-		dndir = (st != NULL) ? st->direction : pd->dir;
+	}
 
 	memset(&dnflow, 0, sizeof(dnflow));
-	if (pd->dir != dndir && rpipe != 0)
-		dnflow.rule.info = rpipe;
-	else if (pd->dir == dndir && pipe != 0)
-		dnflow.rule.info = pipe;
-	else
-		return (0);
+	dnflow.rule.info = sel;
 
 	if (ip_dn_io_ptr == NULL) {
 		SDT_PROBE3(pf, ip, dummynet, error, pd, ENXIO,
@@ -300,7 +360,7 @@ pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
 		dnflow.f_id.dst_port = ntohs(*pd->dport);
 	dnflow.flags = (pd->dir == PF_IN) ? IPFW_ARGS_IN : IPFW_ARGS_OUT;
 	dnflow.rule.info |= IPFW_IS_DUMMYNET;
-	if (flags & PF_DN_IS_PIPE)
+	if (ispipe)
 		dnflow.rule.info |= IPFW_IS_PIPE;
 	dnflow.f_id.proto = pd->proto;
 	dnflow.f_id.extra = dnflow.rule.info;
@@ -332,6 +392,8 @@ pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
 		dnflow.flags |= IPFW_ARGS_IP6;
 
 	t->dn_flags |= PF_DN_TAG_INFLIGHT | PF_DN_TAG_DONE;
+	if (refrag && m_tag_find(*m0, PACKET_TAG_PF_REASSEMBLED, NULL) != NULL)
+		t->dn_flags |= PF_DN_TAG_REFRAG;
 	SDT_PROBE4(pf, ip, dummynet, submit, pd, st, dnflow.rule.info,
 	    dnflow.flags);
 	ip_dn_io_ptr(m0, &dnflow);
@@ -340,8 +402,10 @@ pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
 	if (*m0 == NULL)
 		return (1);
 	/* Passed straight through: continue as if it was never queued. */
-	if ((t = PF_MTAG_W(*m0)) != NULL)
+	if ((t = PF_MTAG_W(*m0)) != NULL) {
 		pf_dn_clear(*m0, t);
+		t->dn_flags &= ~PF_DN_TAG_REFRAG;	/* pf_test() refragments */
+	}
 	return (0);
 
 drop:

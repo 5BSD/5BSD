@@ -572,6 +572,11 @@ struct pf_pdesc {
 	u_int16_t	 sctp_dummy_sum; /* pcksum; CRC32c needs no fixup */
 	u_int32_t	 sctp_initiate_tag;
 	struct pf_rule	*related_rule;	/* 5BSD: sctp; allow-related */
+	/* 5BSD: dummynet; the pipes of a stateless pass, match rules included */
+	struct pf_rule	*dn_rule;
+	u_int16_t	 dn_pipe;
+	u_int16_t	 dn_rpipe;
+	u_int8_t	 dn_flags;
 	union {
 		struct tcphdr			tcp;
 		struct udphdr			udp;
@@ -716,7 +721,9 @@ void			pf_remove_divert_state_key(struct pf_state_key *); /* 5BSD */
 /* 5BSD: dummynet (sys/netpfil/openbsd-pf/pf_dummynet.c) */
 int	pf_dn_reinjected(struct mbuf **);
 int	pf_dn_output(struct pf_pdesc *, struct pf_state *, struct pf_rule *,
-	    struct ifnet *, struct sockaddr *, struct rtentry *, struct mbuf **);
+	    struct ifnet *, struct sockaddr *, struct rtentry *, struct mbuf **,
+	    int);
+void	pf_dn_routing(struct mbuf *, int);
 
 /* 5BSD: sctp (sys/netpfil/openbsd-pf/pf_sctp.c) */
 int	pf_sctp_setup_pdesc(struct pf_pdesc *, u_short *);

@@ -1875,6 +1875,10 @@ pf_state_import(const struct pfsync_state *sp, int flags)
 
 	st->rule.ptr = r;
 	st->anchor.ptr = NULL;
+	/* 5BSD: dummynet; pfsync carries no pipes: the rule's, if known. */
+	st->dnpipe = r->dn.pipe;
+	st->dnrpipe = r->dn.rpipe;
+	st->dnflags = r->dn.flags;
 
 	PF_REF_INIT(st->refcnt);
 	mtx_init(&st->mtx, IPL_NET);
@@ -5129,6 +5133,10 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 
 	/* apply actions for last matching pass/block rule */
 	pf_rule_to_actions(r, &ctx.act);
+	pd->dn_rule = r;	/* 5BSD: dummynet */
+	pd->dn_pipe = ctx.act.dnpipe;
+	pd->dn_rpipe = ctx.act.dnrpipe;
+	pd->dn_flags = ctx.act.dnflags;
 	if (r->rule_flag & PFRULE_AFTO)
 		pd->naf = r->naf;
 	if (pf_get_transaddr(r, pd, ctx.sns, &ctx.nr) == -1) {
@@ -7594,10 +7602,12 @@ pf_route(struct pf_pdesc *pd, struct pf_state *st)
 		ip->ip_src = ifatoia(rt->rt_ifa)->ia_addr.sin_addr;
 
 	if (st->rt != PF_DUPTO && pd->dir == PF_IN) {
+		pf_dn_routing(m0, 1);	/* 5BSD: dummynet */
 		if (pf_test(AF_INET, PF_OUT, ifp, &m0) != PF_PASS)
 			goto bad;
 		else if (m0 == NULL)
 			goto done;
+		pf_dn_routing(m0, 0);	/* 5BSD: dummynet */
 		if (m0->m_len < sizeof(struct ip)) {
 			DPFPRINTF(LOG_ERR,
 			    "%s: m0->m_len < sizeof(struct ip)", __func__);
@@ -7606,7 +7616,7 @@ pf_route(struct pf_pdesc *pd, struct pf_state *st)
 		ip = mtod(m0, struct ip *);
 	}
 
-	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sintosa(dst), rt, &m0))	/* 5BSD: dummynet */
+	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sintosa(dst), rt, &m0, 0))	/* 5BSD: dummynet */
 		goto done;
 
 	if (if_output_tso(ifp, &m0, sintosa(dst), rt, ifp->if_mtu) ||
@@ -7719,16 +7729,23 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 		ip6->ip6_src = ifatoia6(rt->rt_ifa)->ia_addr.sin6_addr;
 
 	if (st->rt != PF_DUPTO && pd->dir == PF_IN) {
+		pf_dn_routing(m0, 1);	/* 5BSD: dummynet */
 		if (pf_test(AF_INET6, PF_OUT, ifp, &m0) != PF_PASS)
 			goto bad;
 		else if (m0 == NULL)
 			goto done;
+		pf_dn_routing(m0, 0);	/* 5BSD: dummynet */
 		if (m0->m_len < sizeof(struct ip6_hdr)) {
 			DPFPRINTF(LOG_ERR,
 			    "%s: m0->m_len < sizeof(struct ip6_hdr)", __func__);
 			goto bad;
 		}
 	}
+
+	/* 5BSD: dummynet; refragmented on reinjection (pf_dn_route_out()) */
+	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sin6tosa(dst), rt,
+	    &m0, 0))
+		goto done;
 
 	/*
 	 * If packet has been reassembled by PF earlier, we have to
@@ -7738,10 +7755,6 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 		(void) pf_refragment6(&m0, mtag, dst, ifp, rt);
 		goto done;
 	}
-
-	if (pf_dn_output(pd, st, st->rule.ptr, ifp, sin6tosa(dst), rt,
-	    &m0))	/* 5BSD: dummynet */
-		goto done;
 
 	if (if_output_tso(ifp, &m0, sin6tosa(dst), rt, ifp->if_mtu) ||
 	    m0 == NULL)
@@ -8585,8 +8598,20 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 		return (PF_PASS);
 	}
 
-	if (pf_dn_reinjected(m0))	/* 5BSD: dummynet */
+	if (pf_dn_reinjected(m0)) {	/* 5BSD: dummynet */
+#ifdef INET6
+		struct m_tag *mtag;
+
+		/* As at the end of pf_test(): forwarded, it leaves as fragments. */
+		if (*m0 != NULL && (PF_MTAG_R(*m0)->dn_flags & PF_DN_TAG_REFRAG) &&
+		    (mtag = m_tag_find(*m0, PACKET_TAG_PF_REASSEMBLED,
+		    NULL)) != NULL) {
+			PF_MTAG_W(*m0)->dn_flags &= ~PF_DN_TAG_REFRAG;
+			return (pf_refragment6(m0, mtag, NULL, NULL, NULL));
+		}
+#endif	/* INET6 */
 		return (PF_PASS);
+	}
 
 	action = pf_setup_pdesc(&pd, af, dir, kif, *m0, &reason);
 	pd.ifp = ifp;	/* 5BSD: names */
@@ -9057,7 +9082,9 @@ log_packet:
 			}
 		}
 		if (pd.m != NULL)	/* 5BSD: dummynet */
-			(void)pf_dn_output(&pd, st, r, NULL, NULL, NULL, &pd.m);
+			(void)pf_dn_output(&pd, st, r, NULL, NULL, NULL, &pd.m,
+			    pf_status.reass && fwdir == PF_FWD &&
+			    pd.af == AF_INET6);
 		break;
 	}
 

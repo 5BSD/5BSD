@@ -169,9 +169,10 @@ struct pkthdr_pf {
 	uint8_t		 prio_set;	/* 5BSD: prio assigned (pf rule, VLAN PCP) */
 	/* 5BSD: dummynet(4) through pf dnpipe/dnqueue */
 	uint8_t		 dn_flags;	/* PF_DN_TAG_* */
-	uint8_t		 dn_pad;
+	uint8_t		 dn_dflags;	/* PF_DN_DEFER_* */
 	uint16_t	 dn_ifidx;	/* route-to interface ... */
 	uint16_t	 dn_ifgen;	/* ... and its generation */
+	uint16_t	 dn_dpipe;	/* pipe chosen during pf_route() */
 	uint64_t	 dn_dst[4];	/* route-to next hop (sockaddr_in[6]) */
 };
 
@@ -191,6 +192,12 @@ struct pkthdr_pf {
 #define	PF_DN_TAG_ROUTE_TO		0x04	/* send to dn_ifidx/dn_dst */
 #define	PF_DN_TAG_ETHER			0x08	/* 5BSD: ether; dummynet at layer 2 */
 #define	PF_DN_TAG_DUPTO			0x10	/* route-to copy (dup-to): no errors */
+#define	PF_DN_TAG_ROUTING		0x20	/* in pf_route(): defer the pipe */
+#define	PF_DN_TAG_REFRAG		0x40	/* refragment (IPv6) on reinjection */
+
+/* pkthdr_pf.dn_dflags (5BSD: dummynet) */
+#define	PF_DN_DEFER_SET			0x01	/* dn_dpipe is valid ... */
+#define	PF_DN_DEFER_PIPE		0x02	/* ... and is a pipe, not a queue */
 
 struct pkthdr {
 	union {
@@ -1594,9 +1601,18 @@ m_pf_ro(struct mbuf *m)
 	return (p != NULL ? p : &m_pf_default);
 }
 
-/* Drop pf's state-key and pcb references (OpenBSD pf_pkt_addr_changed). */
+/*
+ * Drop pf's state-key and pcb references (OpenBSD pf_pkt_addr_changed).
+ * The callers turn a received packet into a reply (icmp_reflect(),
+ * icmp6_reflect(), tcp_respond()): the reply is a new packet for
+ * dummynet too, so forget that the request was shaped.
+ */
 #define	M_PF_UNLINK(m) do {						\
 	struct pkthdr_pf *_mpf = m_pf_find(m);				\
+	if (_mpf != NULL) {						\
+		_mpf->dn_flags = 0;					\
+		_mpf->dn_dflags = 0;					\
+	}								\
 	if (_mpf != NULL && (_mpf->statekey != NULL ||			\
 	    _mpf->inp != NULL) && pf_mtag_unlink_hook != NULL)		\
 		pf_mtag_unlink_hook(_mpf);				\

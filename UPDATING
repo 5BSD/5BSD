@@ -27,6 +27,19 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261017:
+	pf dnpipe/dnqueue fixes.  An inbound route-to packet shaped by an
+	outbound rule's pipe now reaches the route-to next hop (it went
+	through the routing table).  IPv6 packets pf reassembled are shaped
+	whole and refragmented afterwards (route-to sent them unshaped).  A
+	stateless pass keeps the pipe a match rule set.  Kernel ICMP and TCP
+	replies are new packets for dummynet (an IPv6 echo reply skipped
+	the reverse pipe).  States from pfsync take the pipes of their rule
+	(pfsync does not carry them).  dnctl names the pipe, queue or
+	scheduler a failed delete was for.  pf.ko and the kernel must be
+	updated together (struct pkthdr_pf).  Pipes on bridged IP traffic
+	and ether rules on bridged frames are not supported yet.
+
 20261015:
 	OpenBSD's pf replaces FreeBSD's (see the 20261012 entries).  The
 	FreeBSD pf extensions are kept on top of it with FreeBSD's syntax:
