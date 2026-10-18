@@ -374,15 +374,19 @@ multiwanlocal_body()
 		"pass out on ${epair_cl_one}a inet proto tcp from any to any port 7" \
 		"set skip on lo"
 
+	# The client keeps its side open (no -N): a listening nc finishes
+	# when the client's side closes, and on a slow machine the client's
+	# FIN arrives before the server has sent all its data.
+
 	# This should work
-	result=$(jexec client nc -N -w 1 192.0.2.2 7 | wc -c)
+	result=$(jexec client nc -w 1 192.0.2.2 7 | wc -c)
 	if [ ${result} -ne 102400 ]; then
 		jexec client pfctl -ss
 		atf_fail "Redirect from client on one failed: ${result}"
 	fi
 
 	# This should trigger the issue
-	result=$(jexec client nc -N -w 1 -s 203.0.113.128 198.51.100.2 7 | wc -c)
+	result=$(jexec client nc -w 1 -s 203.0.113.128 198.51.100.2 7 | wc -c)
 	jexec client pfctl -ss
 	if [ ${result} -ne 102400 ]; then
 		atf_fail "Redirect from client on two failed: ${result}"
