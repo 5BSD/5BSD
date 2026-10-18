@@ -684,11 +684,15 @@ init_ipprotoarray(void)
 		}
 }
 
-/* XXX from libpcap */
+/*
+ * XXX from libpcap.  5BSD: FreeBSD's libpcap exports the table itself
+ * (nametoaddr.c), not a pointer to it as OpenBSD's does; reading it as a
+ * pointer crashed every tcpdump run without -n.
+ */
 extern const struct eproto {
-	char *s;
+	const char *s;
 	u_short p;
-} * const eproto_db;
+} eproto_db[];
 
 static void
 init_eprotoarray(void)
