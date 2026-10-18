@@ -320,7 +320,21 @@ if_simloop(struct ifnet *ifp, struct mbuf *m, int af, int hlen)
 	int32_t len;
 
 	M_ASSERTPKTHDR(m);
-	m_tag_delete_nonpersistent(m);
+	/*
+	 * 5BSD: OpenBSD's loopback keeps pf's per-packet header (a packet pf
+	 * generated, a synproxy SYN to a local server, stays "generated").
+	 * The packet stays in this vnet, so keep pf's tag.
+	 */
+	{
+		struct m_tag *pft;
+
+		pft = m_tag_locate(m, MTAG_ABI_COMPAT, PACKET_TAG_PF, NULL);
+		if (pft != NULL)
+			m_tag_unlink(m, pft);
+		m_tag_delete_nonpersistent(m);
+		if (pft != NULL)
+			m_tag_prepend(m, pft);
+	}
 	m->m_pkthdr.rcvif = ifp;
 	/*
 	 * 5BSD: a packet received on an interface of another routing domain

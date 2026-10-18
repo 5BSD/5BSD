@@ -127,10 +127,10 @@ local_v6_body()
 	pft_init
 
 	epair=$(vnet_mkepair)
-	ifconfig ${epair}a inet6 2001:db8:42::1/64 up
+	ifconfig ${epair}a inet6 2001:db8:42::1/64 up no_dad
 
 	vnet_mkjail alcatraz ${epair}b
-	jexec alcatraz ifconfig ${epair}b inet6 2001:db8:42::2/64 up
+	jexec alcatraz ifconfig ${epair}b inet6 2001:db8:42::2/64 up no_dad
 	jexec alcatraz /usr/sbin/inetd -p ${PWD}/inetd-alcatraz.pid \
 		$(atf_get_srcdir)/echo_inetd.conf
 

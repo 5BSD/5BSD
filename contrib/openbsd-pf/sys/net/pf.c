@@ -3862,6 +3862,24 @@ pf_send_tcp(const struct pf_rule *r, sa_family_t af,
 	}
 }
 
+/* 5BSD: is addr an address of this host (in the current vnet)? */
+static int
+pf_addr_is_local(sa_family_t af, const struct pf_addr *addr)
+{
+	switch (af) {
+	case AF_INET:
+		return (in_localip(addr->v4));
+#ifdef INET6
+	case AF_INET6: {
+		struct in6_addr a6 = addr->v6;
+
+		return (in6_localip(&a6));
+	}
+#endif
+	}
+	return (0);
+}
+
 static void
 pf_send_challenge_ack(struct pf_pdesc *pd, struct pf_state *st,
     struct pf_state_peer *src, struct pf_state_peer *dst, u_short *reason)
@@ -6227,12 +6245,19 @@ pf_synproxy(struct pf_pdesc *pd, struct pf_state **stp, u_short *reason)
 			(*stp)->src.max_win = MAX(ntohs(th->th_win), 1);
 			if ((*stp)->dst.seqhi == 1)
 				(*stp)->dst.seqhi = arc4random();
+			/*
+			 * 5BSD: a SYN to a server on this host loops back
+			 * through lo0, where it would meet this state again
+			 * and be dropped: send it as generated (FreeBSD's pf
+			 * supports synproxy to local services too).
+			 */
 			pf_send_tcp((*stp)->rule.ptr, pd->af,
 			    &sk->addr[pd->sidx], &sk->addr[pd->didx],
 			    sk->port[pd->sidx], sk->port[pd->didx],
 			    (*stp)->dst.seqhi, 0, TH_SYN, 0,
-			    (*stp)->src.mss, 0, 0, (*stp)->tag,
-			    sk->rdomain, reason);
+			    (*stp)->src.mss, 0,
+			    pf_addr_is_local(pd->af, &sk->addr[pd->didx]),
+			    (*stp)->tag, sk->rdomain, reason);
 			REASON_SET(reason, PFRES_SYNPROXY);
 			return (PF_SYNPROXY_DROP);
 		} else if (((th->th_flags & (TH_SYN|TH_ACK)) !=
