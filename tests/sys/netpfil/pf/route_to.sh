@@ -1450,11 +1450,20 @@ bcast_limited_local_body()
 	# Router emits a limited broadcast on its own wan subnet.
 	rt_leak_send router 255.255.255.255
 
-	pkts=$(rt_leak_probe_pkts)
-	if [ "${pkts:-0}" -eq 0 ]; then
-		jexec router pfctl -vvsr
-		atf_fail "router-originated limited broadcast was incorrectly blocked by received-on-scoped rule"
-	fi
+	# 5BSD: a limited broadcast through the -iface host route is not sent
+	# as a broadcast (the stack ARPs for 255.255.255.255, dev kernels too),
+	# so check the router's own rules: the received-on block rule must not
+	# match the router-originated probe, and pass out passes it.
+	jexec router pfctl -vsr > rules.txt
+	cat rules.txt
+	blocked=$(awk '/to 255.255.255.255 received-on any/ { getline; \
+	    sub(/.*Packets: */, ""); print $1; exit }' rules.txt)
+	passed=$(awk '/^pass out all/ { getline; sub(/.*Packets: */, ""); \
+	    print $1; exit }' rules.txt)
+	[ "${blocked:-x}" = 0 ] ||
+	    atf_fail "router-originated limited broadcast was incorrectly blocked by received-on-scoped rule"
+	[ "${passed:-0}" -ge 1 ] ||
+	    atf_fail "router-originated limited broadcast did not pass"
 }
 bcast_limited_local_cleanup()
 {
