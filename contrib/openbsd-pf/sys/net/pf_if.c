@@ -1160,7 +1160,12 @@ pfi_xcommit(void)
 			CK_STAILQ_FOREACH(g, &ifp->if_groups, ifgl_next) { /* 5BSD */
 				gkif =
 				    (struct pfi_kif *)g->ifgl_group->ifg_pf_kif;
-				KASSERT(gkif != NULL);
+				/*
+				 * 5BSD: a new group is on if_groups before
+				 * group_attach_event gives it a kif.
+				 */
+				if (gkif == NULL)
+					continue;
 				p->pfik_flags |= gkif->pfik_flags_new;
 			}
 	}
