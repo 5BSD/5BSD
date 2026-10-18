@@ -3308,7 +3308,12 @@ pf_translate_af(struct pf_pdesc *pd)
 		ip4->ip_tos = pd->tos;
 		ip4->ip_len = htons(hlen + dlen);
 		ip4->ip_id  = htons(ip_randomid());
-		ip4->ip_off = htons(IP_DF);
+		/*
+		 * 5BSD: a packet that arrived as IPv6 fragments (pf reassembled
+		 * it) may be fragmented again (RFC 7915 5.1.1), as FreeBSD's pf.
+		 */
+		ip4->ip_off = m_tag_find(pd->m, PACKET_TAG_PF_REASSEMBLED,
+		    NULL) != NULL ? 0 : htons(IP_DF);
 		ip4->ip_ttl = pd->ttl;
 		ip4->ip_p   = pd->proto;
 		ip4->ip_src = pd->nsaddr.v4;
@@ -5572,7 +5577,13 @@ pf_create_state(struct pf_pdesc *pd, struct pf_rule *r, struct pf_rule *a,
 	pfsync_init_state(st, *skw, *sks, 0);
 #endif
 
-	if (pf_state_insert(BOUND_IFACE(r, pd->kif), skw, sks, st)) {
+	/*
+	 * 5BSD: an af-to state floats even with if-bound: its reply arrives
+	 * on the interface of the other address family, which an if-bound
+	 * state would refuse (FreeBSD pf's nat64 behaviour).
+	 */
+	if (pf_state_insert((r->rule_flag & PFRULE_AFTO) ? pfi_all :
+	    BOUND_IFACE(r, pd->kif), skw, sks, st)) {
 		*sks = *skw = NULL;
 		REASON_SET(&reason, PFRES_STATEINS);
 		goto csfailed;
@@ -8882,6 +8893,8 @@ done:
 
 			pf_scrub(pd.m, st->state_flags, pd.af, st->min_ttl,
 			    st->set_tos);
+			if (st->min_ttl && pd.ttl < st->min_ttl)
+				pd.ttl = st->min_ttl;	/* 5BSD: af-to */
 			(void)pf_tag_packet(pd.m, st->tag, st->rtableid[pd.didx]);
 			if (pqid || (pd.tos & IPTOS_LOWDELAY)) {
 				qid = st->pqid;
@@ -8900,6 +8913,8 @@ done:
 		} else {
 			pf_scrub(pd.m, r->scrub_flags, pd.af, r->min_ttl,
 			    r->set_tos);
+			if (r->min_ttl && pd.ttl < r->min_ttl)
+				pd.ttl = r->min_ttl;	/* 5BSD: af-to */
 			if (pqid || (pd.tos & IPTOS_LOWDELAY)) {
 				qid = r->pqid;
 				if (r->scrub_flags & PFSTATE_SETPRIO)
@@ -9016,6 +9031,17 @@ log_packet:
 			goto out;
 		}
 		PF_PDTAG_W(&pd)->flags |= PF_TAG_GENERATED;	/* 5BSD: m_tag */
+		/*
+		 * 5BSD: dummynet.  The translated packet is shaped and then
+		 * reinjected into the new family's input (or output) path,
+		 * which forwards it as below.
+		 */
+		if (pf_dn_output(&pd, st, r, NULL, NULL, NULL, &pd.m,
+		    PF_DN_X_OUTPUT)) {
+			pd.m = NULL;
+			action = PF_PASS;
+			break;
+		}
 		switch (pd.naf) {
 		case AF_INET:
 			if (pd.dir == PF_IN) {
@@ -9083,8 +9109,8 @@ log_packet:
 		}
 		if (pd.m != NULL)	/* 5BSD: dummynet */
 			(void)pf_dn_output(&pd, st, r, NULL, NULL, NULL, &pd.m,
-			    pf_status.reass && fwdir == PF_FWD &&
-			    pd.af == AF_INET6);
+			    (pf_status.reass && fwdir == PF_FWD &&
+			    pd.af == AF_INET6) ? PF_DN_X_REFRAG : 0);
 		break;
 	}
 

@@ -75,6 +75,7 @@ goes in its own file in `sys/netpfil/openbsd-pf` (`pf_dummynet.c`,
 |---|---|---|
 | `jail <name\|jid>` rule option | 5BSD | matches the jail of the local socket; re-resolved on jail events |
 | `dnpipe`, `dnqueue` | FreeBSD pf | dummynet(4) shaping, also on route-to (an outbound pipe chosen during route-to is deferred to the next hop), on match rules for stateless passes and on reassembled IPv6 (refragmented after dummynet); pfsync states take their rule's pipes; packets bridged across members pass unshaped (shape them with `ether` rules); dummynet is loaded through the SystemExtension broker |
+| af-to states float under `if-bound`; af-to through dummynet, min-ttl and no DF after reassembly | 5BSD (FreeBSD pf behaviour) | `5BSD: af-to` in `contrib/openbsd-pf/sys/net/pf.c` |
 | `ether` rules | FreeBSD pf | separate layer-2 ruleset on the link-layer pfil hooks; `pfctl -s ethernet`, `-F ethernet`; ioctls `DIOC*ETHRULE*`; bridged frames leaving a member with `net.link.bridge.pfil_layer2=1` (5BSD name of FreeBSD's `net.link.bridge.ipfw`) |
 | SCTP, multihoming, `allow-related`, `sctp.*` timeouts | FreeBSD pf | association tracking with verification tags; extra states for INIT/ASCONF addresses |
 | Per-VNET pf | 5BSD | each VNET jail has its own rules, states, tables and interfaces; jails without their own VNET cannot open `/dev/pf`; pool limits are host-owned; pflog, pfsync and pflow cannot move between VNETs (`IFKF_NOVMOVE`, `sys/net/if.c`) |

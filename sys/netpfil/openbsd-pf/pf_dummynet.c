@@ -233,18 +233,21 @@ pf_dn_routing(struct mbuf *m, int on)
  * Hand a passed packet to its dummynet pipe or queue.  st and r give the
  * pipes (the state's actions; for a stateless pass, the actions of the
  * rules that matched, in pd).  ifp, dst and rt are set for route-to (rt
- * gives the gateway, if any).  refrag: a forwarded IPv6 packet pf
- * reassembled leaves as fragments after dummynet.  Returns 1 if the
+ * gives the gateway, if any).  xflags: PF_DN_X_REFRAG, a forwarded IPv6
+ * packet pf reassembled leaves as fragments after dummynet;
+ * PF_DN_X_OUTPUT, an af-to packet (from this host's address of the new
+ * family) is reinjected into the output path.  Returns 1 if the
  * packet was taken (*m0 is NULL: queued in dummynet or dropped), 0 if it
  * continues.
  */
 int
 pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
     struct ifnet *ifp, struct sockaddr *dst, struct rtentry *rt,
-    struct mbuf **m0, int refrag)
+    struct mbuf **m0, int xflags)
 {
 	struct ip_fw_args dnflow;
 	struct pf_state_key *sk = NULL;
+	struct pf_addr *srca = pd->src, *dsta = pd->dst;
 	struct pkthdr_pf *t;
 	struct pf_rule *dr = r;
 	u_int16_t pipe, rpipe, sel = 0;
@@ -359,7 +362,7 @@ pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
 	 * A connection redirected to loopback must be delivered locally when
 	 * dummynet reinjects it.
 	 */
-	if (pd->dir == PF_IN && pd->destchg &&
+	if (pd->dir == PF_IN && pd->destchg && pd->dst != NULL &&
 	    ((pd->af == AF_INET && IN_LOOPBACK(ntohl(pd->dst->v4.s_addr))) ||
 	    (pd->af == AF_INET6 && IN6_IS_ADDR_LOOPBACK(&pd->dst->v6))))
 		(*m0)->m_pkthdr.rcvif = V_loif;
@@ -368,33 +371,41 @@ pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
 		dnflow.f_id.src_port = ntohs(*pd->sport);
 	if (pd->dport != NULL)
 		dnflow.f_id.dst_port = ntohs(*pd->dport);
-	dnflow.flags = (pd->dir == PF_IN) ? IPFW_ARGS_IN : IPFW_ARGS_OUT;
+	dnflow.flags = (pd->dir == PF_IN && (xflags & PF_DN_X_OUTPUT) == 0) ?
+	    IPFW_ARGS_IN : IPFW_ARGS_OUT;
 	dnflow.rule.info |= IPFW_IS_DUMMYNET;
 	if (ispipe)
 		dnflow.rule.info |= IPFW_IS_PIPE;
 	dnflow.f_id.proto = pd->proto;
 	dnflow.f_id.extra = dnflow.rule.info;
 
-	/* Classify on the pre-translation (stack side) addresses. */
+	/*
+	 * Classify on the pre-translation (stack side) addresses.  After
+	 * af-to (pf_translate_af()) pd->src and pd->dst are gone: the new
+	 * addresses are in pd->nsaddr and pd->ndaddr.
+	 */
 	af = pd->naf;
 	if (st != NULL) {
 		sk = st->key[PF_SK_STACK];
 		af = sk->af;
+	} else if (pd->src == NULL || pd->dst == NULL) {
+		srca = &pd->nsaddr;
+		dsta = &pd->ndaddr;
 	}
 	switch (af) {
 	case AF_INET:
 		dnflow.f_id.addr_type = 4;
 		dnflow.f_id.src_ip = ntohl(sk != NULL ?
-		    sk->addr[pd->sidx].v4.s_addr : pd->src->v4.s_addr);
+		    sk->addr[pd->sidx].v4.s_addr : srca->v4.s_addr);
 		dnflow.f_id.dst_ip = ntohl(sk != NULL ?
-		    sk->addr[pd->didx].v4.s_addr : pd->dst->v4.s_addr);
+		    sk->addr[pd->didx].v4.s_addr : dsta->v4.s_addr);
 		break;
 	case AF_INET6:
 		dnflow.f_id.addr_type = 6;
 		dnflow.f_id.src_ip6 = sk != NULL ?
-		    sk->addr[pd->sidx].v6 : pd->src->v6;
+		    sk->addr[pd->sidx].v6 : srca->v6;
 		dnflow.f_id.dst_ip6 = sk != NULL ?
-		    sk->addr[pd->didx].v6 : pd->dst->v6;
+		    sk->addr[pd->didx].v6 : dsta->v6;
 		break;
 	}
 	/* Dummynet reinjects through the post-translation family (af-to). */
@@ -402,7 +413,8 @@ pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
 		dnflow.flags |= IPFW_ARGS_IP6;
 
 	t->dn_flags |= PF_DN_TAG_INFLIGHT | PF_DN_TAG_DONE;
-	if (refrag && m_tag_find(*m0, PACKET_TAG_PF_REASSEMBLED, NULL) != NULL)
+	if ((xflags & PF_DN_X_REFRAG) &&
+	    m_tag_find(*m0, PACKET_TAG_PF_REASSEMBLED, NULL) != NULL)
 		t->dn_flags |= PF_DN_TAG_REFRAG;
 	SDT_PROBE4(pf, ip, dummynet, submit, pd, st, dnflow.rule.info,
 	    dnflow.flags);

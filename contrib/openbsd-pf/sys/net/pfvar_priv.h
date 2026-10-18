@@ -724,6 +724,9 @@ int	pf_dn_output(struct pf_pdesc *, struct pf_state *, struct pf_rule *,
 	    struct ifnet *, struct sockaddr *, struct rtentry *, struct mbuf **,
 	    int);
 void	pf_dn_routing(struct mbuf *, int);
+/* pf_dn_output() xflags */
+#define	PF_DN_X_REFRAG	0x01	/* forwarded, reassembled IPv6: refragment */
+#define	PF_DN_X_OUTPUT	0x02	/* reinject into output (af-to) */
 
 /* 5BSD: sctp (sys/netpfil/openbsd-pf/pf_sctp.c) */
 int	pf_sctp_setup_pdesc(struct pf_pdesc *, u_short *);
