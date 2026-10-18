@@ -848,6 +848,7 @@ struct obsd_ifhook {
 	struct ifnet	*h_ifp;
 	struct task	*h_task;
 	int		 h_kind;
+	int		 h_cancelled;	/* deleted while its detach runs */
 };
 #define	OBSD_HOOK_ADDR		1
 #define	OBSD_HOOK_DETACH	2
@@ -858,6 +859,7 @@ static TAILQ_HEAD(, obsd_ifhook) obsd_ifhooks =
 struct obsd_ifclosing {
 	TAILQ_ENTRY(obsd_ifclosing) c_entry;
 	struct ifnet *c_ifp;
+	TAILQ_HEAD(, obsd_ifhook) c_detached;	/* hooks taken off the list */
 };
 static TAILQ_HEAD(, obsd_ifclosing) obsd_ifclosing =
     TAILQ_HEAD_INITIALIZER(obsd_ifclosing);
@@ -912,6 +914,7 @@ static void
 obsd_hook_del(struct ifnet *ifp, struct task *t, int kind)
 {
 	struct obsd_ifhook *h, *n;
+	struct obsd_ifclosing *closing;
 
 	mtx_lock(&obsd_ifhook_mtx);
 	TAILQ_FOREACH_SAFE(h, &obsd_ifhooks, h_entry, n) {
@@ -919,6 +922,18 @@ obsd_hook_del(struct ifnet *ifp, struct task *t, int kind)
 			TAILQ_REMOVE(&obsd_ifhooks, h, h_entry);
 			free(h, M_PF);
 		}
+	}
+	/*
+	 * A departure of ifp has taken the hook already: OpenBSD never runs
+	 * a hook that was deleted (pfsync reconfigured onto another
+	 * interface meanwhile would be brought down by its old one).
+	 */
+	TAILQ_FOREACH(closing, &obsd_ifclosing, c_entry) {
+		if (closing->c_ifp != ifp)
+			continue;
+		TAILQ_FOREACH(h, &closing->c_detached, h_entry)
+			if (h->h_task == t && h->h_kind == kind)
+				h->h_cancelled = 1;
 	}
 	mtx_unlock(&obsd_ifhook_mtx);
 	task_del(systq, t);
@@ -929,9 +944,9 @@ void	obsd_ifhooks_run(struct ifnet *, int);
 void
 obsd_ifhooks_run(struct ifnet *ifp, int kind)
 {
-	TAILQ_HEAD(, obsd_ifhook) detached = TAILQ_HEAD_INITIALIZER(detached);
 	struct obsd_ifhook *h, *next;
 	struct obsd_ifclosing closing = { .c_ifp = ifp };
+	int cancelled = 0;
 
 	if (kind != OBSD_HOOK_DETACH) {
 		mtx_lock(&obsd_ifhook_mtx);
@@ -952,28 +967,40 @@ obsd_ifhooks_run(struct ifnet *ifp, int kind)
 	 * before removing the interface from its index map.
 	 */
 	/* Serialize closing with pfsync_up(), which registers under netlock. */
+	TAILQ_INIT(&closing.c_detached);
 	NET_LOCK();
 	mtx_lock(&obsd_ifhook_mtx);
 	TAILQ_INSERT_TAIL(&obsd_ifclosing, &closing, c_entry);
 	TAILQ_FOREACH_SAFE(h, &obsd_ifhooks, h_entry, next) {
 		if (h->h_ifp == ifp) {
 			TAILQ_REMOVE(&obsd_ifhooks, h, h_entry);
-			TAILQ_INSERT_TAIL(&detached, h, h_entry);
+			TAILQ_INSERT_TAIL(&closing.c_detached, h, h_entry);
 		}
 	}
 	mtx_unlock(&obsd_ifhook_mtx);
 	NET_UNLOCK();
 
-	TAILQ_FOREACH(h, &detached, h_entry)
+	/* The list only shrinks here; obsd_hook_del() marks, never frees. */
+	TAILQ_FOREACH(h, &closing.c_detached, h_entry)
 		taskq_del_barrier(systq, h->h_task);
 
-	while ((h = TAILQ_FIRST(&detached)) != NULL) {
-		TAILQ_REMOVE(&detached, h, h_entry);
-		if (h->h_kind == OBSD_HOOK_DETACH) {
-			NET_LOCK();
-			h->h_task->t_func(h->h_task->t_arg);
-			NET_UNLOCK();
+	/*
+	 * Take each hook and read its mark under netlock: deletion runs under
+	 * netlock too (pfsync_down()), so it is either seen or comes after.
+	 */
+	for (;;) {
+		NET_LOCK();
+		mtx_lock(&obsd_ifhook_mtx);
+		if ((h = TAILQ_FIRST(&closing.c_detached)) != NULL) {
+			TAILQ_REMOVE(&closing.c_detached, h, h_entry);
+			cancelled = h->h_cancelled;
 		}
+		mtx_unlock(&obsd_ifhook_mtx);
+		if (h != NULL && h->h_kind == OBSD_HOOK_DETACH && !cancelled)
+			h->h_task->t_func(h->h_task->t_arg);
+		NET_UNLOCK();
+		if (h == NULL)
+			break;
 		free(h, M_PF);
 	}
 
