@@ -1511,6 +1511,15 @@ comparable_rule(struct pf_rule *dst, const struct pf_rule *src, int type)
 void
 exclude_supersets(struct pf_rule *super, struct pf_rule *sub)
 {
+	/*
+	 * 5BSD: af-to embeds the destination's IPv4 address by the length of
+	 * the rule's destination network, so a rule for a more specific
+	 * network is not a duplicate of a broader one (a /40 NAT64 rule was
+	 * dropped after a /32 one).
+	 */
+	struct pf_rule_addr sub_dst = sub->dst;
+	int afto = ((super->rule_flag | sub->rule_flag) & PFRULE_AFTO) != 0;
+
 	if (super->ifname[0] == '\0')
 		memset(sub->ifname, 0, sizeof(sub->ifname));
 	if (super->direction == PF_INOUT)
@@ -1593,6 +1602,8 @@ exclude_supersets(struct pf_rule *super, struct pf_rule *sub)
 
 	if (super->af == 0)
 		sub->af = 0;
+	if (afto)
+		sub->dst = sub_dst;	/* 5BSD */
 }
 
 
