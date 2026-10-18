@@ -500,6 +500,10 @@ key_head()
 
 key_body()
 {
+	# 5BSD: OpenBSD's pfctl kills states by host, label or id; FreeBSD's
+	# -k key (a state key string) is not part of it.
+	atf_skip "pfctl -k key is a FreeBSD pfctl extension"
+
 	pft_init
 
 	epair=$(vnet_mkepair)

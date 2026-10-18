@@ -33,6 +33,8 @@ many_head()
 {
 	atf_set descr 'Test retrieving many states'
 	atf_set require.user root
+	# 20000 SYNs from scapy take most of 300 s on an emulated test VM.
+	atf_set timeout 900
 	atf_set require.progs python3 scapy
 }
 
@@ -110,9 +112,11 @@ rule_body()
 	    "block in proto tcp" \
 	    "pass"
 
-	# Even after the rules changes we should see the original rule:
-	# still rule 0, and still carrying the original rule's label.
-	atf_check -o match:", rule 0$" \
+	# Even after the rules changes the state keeps its original rule,
+	# with the original rule's label.  5BSD: OpenBSD pf numbers a rule
+	# that is no longer in the ruleset -1 (pf_rm_rule()), so pfctl
+	# prints no rule number for the state.
+	atf_check -o not-match:", rule [0-9]+$" \
 	    -e ignore \
 	    jexec alcatraz pfctl -ss -vv
 	atf_check -s exit:0 -e match:"killed 1 states" \
