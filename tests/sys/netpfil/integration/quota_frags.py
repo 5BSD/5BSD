@@ -37,8 +37,10 @@ def main():
         print("usage: quota_frags.py SRC DST COUNT", file=sys.stderr)
         return 2
     src, dst, count = sys.argv[1], sys.argv[2], int(sys.argv[3])
-    # IPPROTO_RAW implies IP_HDRINCL; the header is in network byte order.
+    # FreeBSD's IPPROTO_RAW does not imply IP_HDRINCL (Linux's and
+    # OpenBSD's do); the header is in network byte order.
     s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+    s.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
     sent = 0
     for i in range(count):
         s.sendto(head(src, dst, 0x5b00 + i % 0xa000), (dst, 0))
