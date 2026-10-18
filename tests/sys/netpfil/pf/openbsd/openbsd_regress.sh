@@ -25,11 +25,24 @@ run_suite()
 	corpus=$(srctree)
 	[ -d "${corpus}/regress/${dir}" ] || atf_skip "corpus not installed"
 	kldstat -q -m pf || atf_skip "pf is not loaded"
+	# Kyua runs this in a new VNET jail: give it what an OpenBSD regress
+	# machine has (tools/test/pf-parity/openbsd-regress/setup-dut-5bsd.sh):
+	# lo0 addresses, pf enabled with an anchor "regress", pflog0.
+	if [ "$(sysctl -n security.jail.jailed)" = 1 ]; then
+		ifconfig lo0 inet 127.0.0.1/8 up
+		ifconfig lo0 inet6 ::1 prefixlen 128 no_dad 2>/dev/null || true
+		printf 'pass\nanchor "regress"\n' | pfctl -q -f -
+		pfctl -q -e 2>/dev/null || true
+		ifconfig pflog0 create >/dev/null 2>&1 || true
+	fi
 	# Upstream Makefiles locate helpers through relative paths, so keep the
 	# upstream layout (regress/... next to sbin/ and sys/).
 	work=$(pwd)/src
 	mkdir -p "${work}"
-	cp -R "${corpus}/regress" "${work}/"
+	# and the sources they build from (pf_print: sys/net/pf.c).
+	for d in regress sbin sys usr.sbin; do
+		[ -d "${corpus}/${d}" ] && cp -R "${corpus}/${d}" "${work}/"
+	done
 	log=$(pwd)/regress.log
 	: > "${log}"
 	(cd "${work}/regress/${dir}" && \
@@ -49,7 +62,8 @@ run_suite()
 local_case()
 {
 	local name=$1 dir=$2 descr=$3
-	eval "${name}_head() { atf_set descr '${descr}'; atf_set require.user root; }"
+	# Whole upstream suites: pf_opts alone takes ten minutes on a test VM.
+	eval "${name}_head() { atf_set descr '${descr}'; atf_set require.user root; atf_set timeout 1200; }"
 	eval "${name}_body() { run_suite ${dir}; }"
 	atf_add_test_case "${name}"
 }

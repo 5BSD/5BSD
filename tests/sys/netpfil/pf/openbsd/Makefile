@@ -6,7 +6,9 @@ PACKAGE=	tests
 TESTSDIR=	${TESTSBASE}/sys/netpfil/pf/openbsd
 
 ATF_TESTS_SH+=	openbsd_regress
+# A VNET jail: pf refuses /dev/pf in other jails.
 TEST_METADATA.openbsd_regress+=	execenv="jail" \
+				execenv_jail_params="vnet allow.raw_sockets allow.read_msgbuf" \
 				required_user="root" \
 				is_exclusive="true"
 

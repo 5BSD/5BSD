@@ -23,7 +23,11 @@ import time
 SSH = ['ssh', '-F', '/usr/obj/5BSD-pf-parity/keys/ssh_config',
        '-o', 'ConnectTimeout=300']
 OBJ = '/usr/obj/usr/obj/5BSD-pf-land/amd64.amd64/sys/GENERIC'
-PFOBJ = OBJ + '/modules/usr/obj/5BSD-pf-land/sys/modules/pf'
+# PFCOV_OBJ: the objects of the pf.ko under test, e.g. one built with
+# DEBUG_FLAGS='-g -fno-inline -fno-inline-functions' so that fbt sees the
+# functions the compiler would inline.
+PFOBJ = os.environ.get('PFCOV_OBJ',
+                       OBJ + '/modules/usr/obj/5BSD-pf-land/sys/modules/pf')
 # Kernel (not module) objects whose functions land/pf added or changed.
 STACK_OBJS = ['if_egress.o', 'in.o', 'in6.o', 'if.o', 'if_vlan.o',
               'if_ethersubr.o', 'route_rdomain.o', 'ip_carp.o', 'uipc_domain.o',
