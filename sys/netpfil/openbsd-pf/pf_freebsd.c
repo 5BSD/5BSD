@@ -1114,11 +1114,12 @@ pf_fbsd_use(struct pf_fbsd_open *po)
 
 /*
  * OpenBSD's pf copies to and from the ioctl's user buffers with pf's locks
- * held; there they may sleep, here they may not: a fault on a user page
- * that is not resident (or not mapped) with them held is fatal
- * (trap_pfault()).  Wire the user buffers of these commands first, as
- * sysctl(9) does for its old buffer; a range that cannot be wired is
- * EFAULT before pf runs.
+ * held; there they may sleep, here they may not: a kernel page fault with
+ * them held is fatal (trap_pfault()).  Run pfioctl() with page faults
+ * disabled, so that a fault on a user address fails the copy with EFAULT,
+ * and wire the user buffers of these commands first (best effort, as
+ * sysctl(9) wires its old buffer), so that a valid buffer that is not
+ * resident does not fail.
  */
 #define	PF_FBSD_WIRE_MAX	(256 * 1024 * 1024)
 struct pf_fbsd_wire {
@@ -1225,22 +1226,31 @@ pf_fbsd_ioctl_wired(dev_t dev, u_long cmd, caddr_t data, int flags,
     struct thread *td)
 {
 	struct pf_fbsd_wire w[2];
-	int error, i, n, nw;
+	int error, i, n, save;
 
 	n = pf_fbsd_user_bufs(cmd, data, w);
-	for (nw = 0; nw < n; nw++) {
-		if (w[nw].len == 0 || w[nw].addr == NULL)
+	for (i = 0; i < n; i++) {
+		/* A capacity larger than the data is not copied: wire some. */
+		if (w[i].len > PF_FBSD_WIRE_MAX)
+			w[i].len = PF_FBSD_WIRE_MAX;
+		if (w[i].addr == NULL) {
+			w[i].len = 0;
 			continue;
-		if (w[nw].len > PF_FBSD_WIRE_MAX ||
-		    vslock(w[nw].addr, w[nw].len) != 0) {
-			error = EFAULT;
-			goto unwire;
 		}
+		/*
+		 * A capacity may exceed the mapping (pf copies only what it
+		 * has): wire as much of the start as is mapped.  What is left
+		 * unwired faults to EFAULT.
+		 */
+		while (w[i].len != 0 && vslock(w[i].addr, w[i].len) != 0)
+			w[i].len = w[i].len > PAGE_SIZE ?
+			    rounddown2(w[i].len / 2, PAGE_SIZE) : 0;
 	}
+	save = vm_fault_disable_pagefaults();
 	error = pfioctl(dev, cmd, data, flags, td->td_proc);
-unwire:
-	for (i = 0; i < nw; i++)
-		if (w[i].len != 0 && w[i].addr != NULL)
+	vm_fault_enable_pagefaults(save);
+	for (i = 0; i < n; i++)
+		if (w[i].len != 0)
 			vsunlock(w[i].addr, w[i].len);
 	return (error);
 }

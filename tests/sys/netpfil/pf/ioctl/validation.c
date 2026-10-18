@@ -495,9 +495,12 @@ ATF_TC_BODY(getaddrs, tc)
 	if (ioctl(dev, DIOCRGETADDRS, &io) == 0)
 		atf_tc_fail("Request with size -1 succeeded");
 
-	/* Overly large size. */
+	/*
+	 * 5BSD: OpenBSD pf has no request_maxcount: an overly large size is
+	 * the buffer's capacity, and pf copies only the entries it has.
+	 */
 	io.pfrio_size = 1 << 24;
-	if (ioctl(dev, DIOCRGETADDRS, &io) == 0)
+	if (ioctl(dev, DIOCRGETADDRS, &io) != 0)
 		atf_tc_fail("Request with size 1 << 24 failed");
 }
 
@@ -533,9 +536,12 @@ ATF_TC_BODY(getastats, tc)
 	if (ioctl(dev, DIOCRGETASTATS, &io) == 0)
 		atf_tc_fail("Request with size -1 succeeded");
 
-	/* Overly large size. */
+	/*
+	 * 5BSD: OpenBSD pf has no request_maxcount: an overly large size is
+	 * the buffer's capacity, and pf copies only the entries it has.
+	 */
 	io.pfrio_size = 1 << 24;
-	if (ioctl(dev, DIOCRGETASTATS, &io) == 0)
+	if (ioctl(dev, DIOCRGETASTATS, &io) != 0)
 		atf_tc_fail("Request with size 1 << 24 failed");
 }
 

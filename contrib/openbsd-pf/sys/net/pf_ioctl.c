@@ -1984,22 +1984,20 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 	int			 error = 0;
 
 	/*
-	 * 5BSD: negative element counts are invalid (the loops below would
-	 * skip them and report success), as FreeBSD's pf refuses them.
+	 * 5BSD: negative counts of input elements are invalid (the loops
+	 * below would skip them and report success), as FreeBSD's pf refuses
+	 * them.  For the DIOCRGET* commands the count is the caller's buffer
+	 * capacity; a smaller one returns the count needed.
 	 */
 	switch (cmd) {
-	case DIOCRCLRTABLES:
 	case DIOCRADDTABLES:
 	case DIOCRDELTABLES:
-	case DIOCRGETTABLES:
-	case DIOCRGETTSTATS:
 	case DIOCRCLRTSTATS:
 	case DIOCRSETTFLAGS:
-	case DIOCRCLRADDRS:
 	case DIOCRADDADDRS:
 	case DIOCRDELADDRS:
 	case DIOCRSETADDRS:
-	case DIOCRGETADDRS:
+	case DIOCRGETADDRS:	/* FreeBSD refuses these too */
 	case DIOCRGETASTATS:
 	case DIOCRCLRASTATS:
 	case DIOCRTSTADDRS:
@@ -3053,6 +3051,12 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 #endif /* INET6 */
 		default:
 			error = EAFNOSUPPORT;
+			goto fail;
+		}
+
+		/* 5BSD: as FreeBSD's pf, only PF_IN and PF_OUT. */
+		if (direction != PF_IN && direction != PF_OUT) {
+			error = EINVAL;
 			goto fail;
 		}
 
