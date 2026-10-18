@@ -82,7 +82,9 @@ def run(host, out, suites):
                 "awk 'NR>1{print $4}'; dtrace -l -n 'fbt:kernel::entry' "
                 "2>/dev/null | awk 'NR>1{print $4}'",
                 capture_output=True).stdout.split()
-    sh(host, 'rm -f /root/pfcov.out /root/pfcov.done; daemon -f -p '
+    # kyua refuses an existing results file; daemon -o appends to its log.
+    sh(host, 'rm -f /root/pfcov.out /root/pfcov.done /root/pfcov.db '
+       '/root/pfcov.kyua.log; daemon -f -p '
        '/root/pfcov.pid dtrace -Z -q -x aggsize=8m -x dynvarsize=8m '
        '-s /root/pfcov.d -o /root/pfcov.out', check=True)
     time.sleep(20)
