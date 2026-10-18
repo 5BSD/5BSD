@@ -282,10 +282,57 @@ done:
 }
 #endif
 
+static void
+obsd_tso_reseed(struct mbuf *m, int af)
+{
+	struct tcphdr *th;
+	int off, nxt;
+
+	switch (af) {
+	case AF_INET: {
+		struct ip *ip = mtod(m, struct ip *);
+
+		off = ip->ip_hl << 2;
+		if (ip->ip_p != IPPROTO_TCP ||
+		    m->m_len < off + (int)sizeof(struct tcphdr))
+			return;
+		th = (struct tcphdr *)(mtod(m, caddr_t) + off);
+		th->th_sum = in_pseudo(ip->ip_src.s_addr, ip->ip_dst.s_addr,
+		    htons(IPPROTO_TCP));
+		break;
+	}
+#ifdef INET6
+	case AF_INET6:
+		nxt = -1;
+		off = ip6_lasthdr(m, 0, IPPROTO_IPV6, &nxt);
+		if (nxt != IPPROTO_TCP || off < (int)sizeof(struct ip6_hdr) ||
+		    m->m_len < off + (int)sizeof(struct tcphdr))
+			return;
+		th = (struct tcphdr *)(mtod(m, caddr_t) + off);
+		th->th_sum = in6_cksum_pseudo(mtod(m, struct ip6_hdr *), 0,
+		    IPPROTO_TCP, 0);
+		break;
+#endif
+	}
+}
+
 /* Finalise every checksum before handing a pf packet to the stack. */
 static void
 obsd_cksum_out(struct mbuf *m, int af)
 {
+	/*
+	 * A TSO packet keeps its offload: the interface checksums each
+	 * segment from the pseudo-header seed, re-seeded here after a
+	 * translation as the pfil output hooks do.  A software checksum
+	 * over the whole packet with CSUM_TSO left set is refused by
+	 * drivers (vtnet drops TSO without checksum offload).
+	 */
+	if (m->m_pkthdr.csum_flags & CSUM_TSO) {
+		obsd_tso_reseed(m, af);
+		if (af == AF_INET)
+			obsd_in_hdr_cksum_out(m);
+		return;
+	}
 	switch (af) {
 	case AF_INET:
 		in_proto_cksum_out(m, NULL);
@@ -300,10 +347,29 @@ obsd_cksum_out(struct mbuf *m, int af)
 }
 
 #ifdef INET6
+/*
+ * OpenBSD's: FreeBSD's ip6_deletefraghdr() assumes the headers before the
+ * fragment header are in the first mbuf, which a packet with long
+ * extension headers on a chained receive buffer breaks (pf_fbsd_pullup()
+ * pulls up only the IPv6 header).  The caller recomputes the length.
+ */
 int
 frag6_deletefraghdr(struct mbuf *m, int offset)
 {
-	return (ip6_deletefraghdr(m, offset, M_NOWAIT));
+	struct mbuf *t;
+
+	if (m->m_len >= offset + (int)sizeof(struct ip6_frag))
+		return (ip6_deletefraghdr(m, offset, M_NOWAIT));
+	/* No copy if the boundary is on a cluster. */
+	if ((t = m_split(m, offset, M_NOWAIT)) == NULL)
+		return (ENOBUFS);
+	m_adj(t, sizeof(struct ip6_frag));
+	/* FreeBSD's m_split() gives the tail its own packet header. */
+	if (t->m_flags & M_PKTHDR)
+		m_demote_pkthdr(t);
+	m_cat(m, t);
+	m->m_flags |= M_FRAGMENTED;
+	return (0);
 }
 #endif
 
