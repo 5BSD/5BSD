@@ -52,7 +52,8 @@ SFHELPER=$(atf_get_srcdir)/../../common/sendfile_helper
 ST_CHURN_SECS=540
 ST_TRAFFIC_SECS=90
 # Seconds jail teardown may take to return interfaces and free jails.
-ST_LEAK_SECS=120
+# A dying jail lasts until its TCP connections to killed peers time out.
+ST_LEAK_SECS=300
 
 st_ifs()
 {
@@ -61,7 +62,7 @@ st_ifs()
 
 st_jails()
 {
-	jls -d name 2>/dev/null | LC_ALL=C sort
+	jls -d jid name 2>/dev/null | LC_ALL=C sort
 }
 
 # st_init: pft_init plus the snapshots the final checks compare against.
@@ -263,8 +264,11 @@ st_noleaks()
 	while :; do
 		st_ifs > st.ifs.after
 		st_jails > st.jails.after
-		if cmp -s st.ifs.before st.ifs.after &&
-		    cmp -s st.jails.before st.jails.after; then
+		# Only additions count: a dying jail of an earlier case may
+		# finish dying meanwhile.
+		if [ -z "$(LC_ALL=C comm -13 st.ifs.before st.ifs.after)" ] &&
+		    [ -z "$(LC_ALL=C comm -13 st.jails.before st.jails.after)" ]
+		then
 			return 0
 		fi
 		[ $(date +%s) -lt ${_end} ] || break
