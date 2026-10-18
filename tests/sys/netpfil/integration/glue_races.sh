@@ -240,6 +240,51 @@ new_group_dynaddr_cleanup()
 	integ_cleanup
 }
 
+atf_test_case "group_reattach" "cleanup"
+group_reattach_head()
+{
+	atf_set descr 'A group left by its last member is joined again while its detach is pending, with rules naming it loading'
+	atf_set require.user root
+	atf_set timeout 300
+}
+
+group_reattach_body()
+{
+	pft_init
+	e=$(vnet_mkepair)
+	f=$(vnet_mkepair)
+	vnet_mkjail a ${e}a ${f}a
+	a="jexec a"
+	${a} ifconfig ${e}a 192.0.2.1/24 up
+	${a} ifconfig ${f}a 198.51.100.1/24 up
+	${a} pfctl -e > /dev/null 2>&1
+
+	# Each interface leaves and joins the group by itself: often one
+	# leaves it empty (its detach waits for the net epoch) while the
+	# other creates it again.
+	for i in ${e}a ${f}a; do
+		${a} sh -c "while :; do
+			ifconfig ${i} group rg
+			ifconfig ${i} -group rg
+		done" > /dev/null 2>&1 &
+	done
+	end=$(($(date +%s) + 60))
+	while [ $(date +%s) -lt ${end} ]; do
+		pft_set_rules a \
+		    "set skip on rg" \
+		    "pass in on rg from (rg:network) to (rg)" \
+		    "pass out on rg" \
+		    "pass"
+		${a} pfctl -sI -i rg > /dev/null 2>&1
+	done
+	atf_check -s exit:0 -o match:"Status: Enabled" ${a} pfctl -s info
+}
+
+group_reattach_cleanup()
+{
+	integ_cleanup
+}
+
 atf_test_case "teardown_pcb" "cleanup"
 teardown_pcb_head()
 {
@@ -289,5 +334,6 @@ atf_init_test_cases()
 	atf_add_test_case "teardown_busy"
 	atf_add_test_case "addr_group_churn"
 	atf_add_test_case "new_group_dynaddr"
+	atf_add_test_case "group_reattach"
 	atf_add_test_case "teardown_pcb"
 }
