@@ -14,6 +14,7 @@
 #	Open /dev/pf until open(2) fails.  Prints "opened N errno E", closes
 #	every descriptor and prints "reopen ok" if one more open then succeeds.
 
+import array
 import fcntl
 import os
 import resource
@@ -41,7 +42,13 @@ def recv_start(path, ready):
     srv.settimeout(30)
     open(ready, "w").close()
     conn, _ = srv.accept()
-    _, fds, _, _ = socket.recv_fds(conn, 1, 1)
+    # socket.recv_fds() sizes its buffer with CMSG_LEN; the kernel
+    # delivers the padded CMSG_SPACE and truncates the descriptor away.
+    _, anc, _, _ = conn.recvmsg(1, socket.CMSG_SPACE(array.array("i").itemsize))
+    fds = []
+    for level, ctype, data in anc:
+        if level == socket.SOL_SOCKET and ctype == socket.SCM_RIGHTS:
+            fds.extend(array.array("i", data))
     conn.close()
     srv.close()
     if len(fds) != 1:

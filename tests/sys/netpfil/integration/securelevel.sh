@@ -48,12 +48,13 @@ locked_body()
 	atf_check -s exit:0 -o inline:'2\n' jexec sl sysctl -n kern.securelevel
 	atf_check -s exit:0 -o inline:"${hostlevel}\n" sysctl -n kern.securelevel
 
-	# Changes are refused.  pfctl -f fails opening its transaction
-	# (DIOCXBEGIN), which it reports without errno.
+	# Changes are refused.  pfctl -f fails on its first change: the OS
+	# fingerprint flush (EPERM), or opening its transaction (DIOCXBEGIN,
+	# reported without errno).
 	echo "pass all" | atf_check -s not-exit:0 \
-	    -e match:'pfctl_rules' jexec sl pfctl -f -
+	    -e match:'Operation not permitted|pfctl_rules' jexec sl pfctl -f -
 	echo "ether block to 00:01:02:03:04:05" | atf_check -s not-exit:0 \
-	    -e match:'pfctl_rules' jexec sl pfctl -f -
+	    -e match:'Operation not permitted|pfctl_rules' jexec sl pfctl -f -
 	atf_check -s exit:0 -o inline:'DIOCADDETHRULE=EPERM\n' \
 	    jexec sl ${PFIO} ethadd
 	atf_check -s exit:0 -o inline:'DIOCSTART=EPERM\n' jexec sl ${PFIO} start
@@ -87,7 +88,8 @@ locked_body()
 	atf_check -s exit:0 -e ignore jexec sl pfctl -z
 
 	# The securelevel cannot be lowered again inside the jail.
-	atf_check -s not-exit:0 -e ignore jexec sl sysctl kern.securelevel=1
+	atf_check -s not-exit:0 -o ignore -e ignore \
+	    jexec sl sysctl kern.securelevel=1
 }
 locked_cleanup()
 {

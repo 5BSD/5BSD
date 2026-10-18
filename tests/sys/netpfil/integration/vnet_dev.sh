@@ -54,7 +54,9 @@ isolation_body()
 	jexec a ifconfig lo0 inet 203.0.113.77/32 alias
 	jexec b ifconfig lo0 127.0.0.1/8 up
 
+	# The ping's state must outlive a slow test VM.
 	pft_set_rules a \
+	    "set timeout { icmp.first 600, icmp.error 600 }" \
 	    "table <integ_ta> persist { 192.0.2.10, 192.0.2.11 }" \
 	    "anchor \"integ_anchor\" {" \
 	    "  pass quick proto udp label \"integ_anchor_rule\"" \

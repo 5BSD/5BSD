@@ -174,8 +174,8 @@ divert_reply_body()
 	sk_wait_pid ${srv}
 	# The server saw the original client address.
 	atf_check -s exit:0 -o match:'^peer=203\.0\.113\.50$' cat srv.out
-	# The state carries the foreign source.
-	atf_check -s exit:0 -o match:'203\.0\.113\.50:[0-9]+ -> 198\.51\.100\.2:8080' \
+	# As on OpenBSD, closing the socket removed its divert-reply state.
+	atf_check -s exit:0 -o not-match:'198\.51\.100\.2:8080' \
 	    jexec px pfctl -ss
 }
 divert_reply_cleanup()
@@ -332,7 +332,9 @@ divert_packet_unbound_body()
 	wait $p
 	atf_check -s exit:0 -o match:'^timeout$' -o not-match:'^from=' \
 	    cat other.out
-	atf_check -s exit:0 -o match:'Packets: [1-9]' \
+	# The rule matched.  OpenBSD does not count a diverted packet in the
+	# rule's packets, only the state it created.
+	atf_check -s exit:0 -o match:'State Creations: [1-9]' \
 	    sh -c "jexec fw pfctl -vsr | grep -A2 'divert-packet port 701'"
 }
 divert_packet_unbound_cleanup()

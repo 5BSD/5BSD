@@ -119,24 +119,28 @@ state_kill_rdomain_body()
 		atf_check -s exit:0 jexec fw ifconfig lo$d inet 127.0.0.1/8 up
 	done
 	atf_check -s exit:0 -e ignore jexec fw pfctl -e
-	pft_set_rules fw "pass all"
+	# The states must outlive a slow test VM.
+	pft_set_rules fw "set timeout { udp.first 600, udp.single 600 }" \
+	    "pass all"
 
 	# The same addresses and ports in both domains: two separate states.
+	# pfctl -ss prints a state's routing domain before each address.
 	for d in 1 2; do
 		echo x | jexec fw route -T $d exec nc -u -w 1 -p 7100 127.0.0.1 7101
 	done
 	atf_check -s exit:0 -o match:'^2$' \
-	    sh -c "jexec fw pfctl -ss | grep -c '127.0.0.1:7100 -> 127.0.0.1:7101'"
+	    sh -c "jexec fw pfctl -ss | grep -cE '127\\.0\\.0\\.1:7100 -> \\([12]\\) 127\\.0\\.0\\.1:7101'"
 
 	# Killing in domain 1 leaves domain 2's state.
 	atf_check -s exit:0 -e match:'killed [1-9][0-9]* states' \
 	    jexec fw pfctl -V 1 -k 127.0.0.1
 	atf_check -s exit:0 -o match:'^1$' \
-	    sh -c "jexec fw pfctl -ss | grep -c '127.0.0.1:7100 -> 127.0.0.1:7101'"
+	    sh -c "jexec fw pfctl -ss | grep -cE '127\\.0\\.0\\.1:7100 -> \\([12]\\) 127\\.0\\.0\\.1:7101'"
 	atf_check -s exit:0 -e match:'killed [1-9][0-9]* states' \
 	    jexec fw pfctl -V 2 -k 127.0.0.1
-	atf_check -s exit:0 -o match:'^0$' \
-	    sh -c "jexec fw pfctl -ss | grep -c '127.0.0.1:7100 -> 127.0.0.1:7101'"
+	# grep -c exits 1 when it counts nothing.
+	atf_check -s exit:1 -o match:'^0$' \
+	    sh -c "jexec fw pfctl -ss | grep -cE '127\\.0\\.0\\.1:7100 -> \\([12]\\) 127\\.0\\.0\\.1:7101'"
 }
 state_kill_rdomain_cleanup()
 {
@@ -211,8 +215,11 @@ rtable_privilege_body()
 
 	# setfib(1) follows the same rule.
 	atf_check -s exit:0 jexec -U nobody fw setfib 4 true
-	atf_check -s not-exit:0 -e match:'Operation not permitted' \
-	    jexec -U nobody fw setfib 6 true
+	# setfib(1) only warns when setfib(2) fails and runs the command in
+	# its own FIB.
+	atf_check -s exit:0 -o inline:'0\n' \
+	    -e match:'Operation not permitted' \
+	    jexec -U nobody fw setfib 6 sysctl -n net.my_fibnum
 	atf_check -s exit:0 jexec fw setfib 6 true
 	atf_check -s exit:0 -o inline:'6\n' \
 	    jexec fw route -T 6 exec sysctl -n net.my_fibnum
