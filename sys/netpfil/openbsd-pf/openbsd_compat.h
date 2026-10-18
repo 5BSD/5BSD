@@ -564,18 +564,32 @@ obsd_malloc_flags(int flags)
 	return (flags);
 }
 #ifndef OPENBSD_PF_GLUE
+/*
+ * OpenBSD's malloc(9) refuses an M_CANFAIL request larger than MALLOC_MAX
+ * with NULL; FreeBSD's M_WAITOK would sleep for it, or exhaust memory.
+ * Sizes come from ioctl arguments (DIOCIGETIFACES pfiio_size, ...).
+ */
+#define	OBSD_MALLOC_MAX		(65535UL * PAGE_SIZE)
+static __inline void *
+obsd_malloc(size_t size, struct malloc_type *type, int flags)
+{
+	if ((flags & M_CANFAIL) && size > OBSD_MALLOC_MAX)
+		return (NULL);
+	return ((malloc)(size, type, obsd_malloc_flags(flags)));
+}
 #undef	malloc
-#define	malloc(s, t, f)		(malloc)((s), (t), obsd_malloc_flags(f))
+#define	malloc(s, t, f)		obsd_malloc((s), (t), (f))
 /*
  * OpenBSD mallocarray(9) returns NULL on overflow for a caller that
- * handles failure (M_CANFAIL, M_NOWAIT); FreeBSD's panics.  Counts come
- * from ioctl arguments (DIOCIGETIFACES pfiio_size, ...).
+ * handles failure (M_CANFAIL, M_NOWAIT); FreeBSD's panics.
  */
 static __inline void *
 obsd_mallocarray(size_t n, size_t size, struct malloc_type *type, int flags)
 {
 	if (size != 0 && n > SIZE_MAX / size &&
 	    (flags & (M_CANFAIL | M_NOWAIT)) != 0)
+		return (NULL);
+	if ((flags & M_CANFAIL) && n * size > OBSD_MALLOC_MAX)
 		return (NULL);
 	return ((mallocarray)(n, size, type, obsd_malloc_flags(flags)));
 }
