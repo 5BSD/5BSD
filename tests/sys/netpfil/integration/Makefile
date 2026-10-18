@@ -21,7 +21,8 @@ ATF_TESTS_SH+=	vnet_dev \
 		names \
 		glue_races \
 		stress \
-		dummynet
+		dummynet \
+		fastfwd
 
 # The seam tests create their own VNET jails, read host-wide state (pool
 # limits, loaded modules, DTrace providers) and mount devfs for jails with

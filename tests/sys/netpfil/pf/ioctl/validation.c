@@ -727,7 +727,8 @@ ATF_TC_BODY(igetifaces_huge, tc)
 	io.pfiio_buffer = &kif;
 	io.pfiio_esize = sizeof(kif);
 	io.pfiio_size = 0x7fffffff;
-	ATF_CHECK_ERRNO(ENOMEM, ioctl(dev, DIOCIGETIFACES, &io) == -1);
+	/* OpenBSD reports the failed allocation as EINVAL. */
+	ATF_CHECK_ERRNO(EINVAL, ioctl(dev, DIOCIGETIFACES, &io) == -1);
 
 	/* pf still answers. */
 	io.pfiio_size = 1;
