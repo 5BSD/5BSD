@@ -552,12 +552,47 @@ pf_fbsd_ip_hdr_cksum(struct mbuf *m)
 	ip->ip_sum = in_cksum_hdr(ip);
 }
 
+/*
+ * OpenBSD's ip_input()/ip6_input() hand pf a contiguous IP header and pf
+ * reads it in place (pf_setup_pdesc()); a pfil hook ahead of pf may have
+ * shortened the first mbuf (dummymbuf(4) does).  0 with *m NULL: freed.
+ */
+static int
+pf_fbsd_pullup(int af, struct mbuf **m)
+{
+	int len;
+
+	switch (af) {
+#ifdef INET
+	case AF_INET:
+		len = sizeof(struct ip);
+		if ((*m)->m_len < len && (*m = m_pullup(*m, len)) == NULL)
+			return (0);
+		len = mtod(*m, struct ip *)->ip_hl << 2;
+		if (len > (int)sizeof(struct ip) && (*m)->m_len < len &&
+		    (*m)->m_pkthdr.len >= len && (*m = m_pullup(*m, len)) == NULL)
+			return (0);
+		break;
+#endif
+#ifdef INET6
+	case AF_INET6:
+		len = sizeof(struct ip6_hdr);
+		if ((*m)->m_len < len && (*m = m_pullup(*m, len)) == NULL)
+			return (0);
+		break;
+#endif
+	}
+	return (1);
+}
+
 static pfil_return_t
 pf_fbsd_check_in(struct mbuf **m, struct ifnet *ifp, int flags,
     void *ruleset, struct inpcb *inp)
 {
 	pfil_return_t rv;
 
+	if (!pf_fbsd_pullup(AF_INET, m))
+		return (PFIL_CONSUMED);
 	pf_fbsd_in_csum(*m);
 	rv = pf_fbsd_result(pf_fbsd_test(AF_INET, PF_IN, ifp, m), m);
 	if (rv == PFIL_PASS) {
@@ -571,9 +606,13 @@ static pfil_return_t
 pf_fbsd_check_out(struct mbuf **m, struct ifnet *ifp, int flags,
     void *ruleset, struct inpcb *inp)
 {
-	struct mbuf *n = *m;
+	struct mbuf *n;
 	struct ip *ip;
 	pfil_return_t rv;
+
+	if (!pf_fbsd_pullup(AF_INET, m))
+		return (PFIL_CONSUMED);
+	n = *m;
 
 	if ((n->m_pkthdr.csum_flags & CSUM_TSO) == 0 &&
 	    (n->m_pkthdr.csum_flags & CSUM_DELAY_DATA)) {
@@ -610,6 +649,8 @@ pf_fbsd_check6_in(struct mbuf **m, struct ifnet *ifp, int flags,
 {
 	pfil_return_t rv;
 
+	if (!pf_fbsd_pullup(AF_INET6, m))
+		return (PFIL_CONSUMED);
 	pf_fbsd_in_csum(*m);
 	rv = pf_fbsd_result(pf_fbsd_test(AF_INET6, PF_IN, ifp, m), m);
 	if (rv == PFIL_PASS)
@@ -621,9 +662,13 @@ static pfil_return_t
 pf_fbsd_check6_out(struct mbuf **m, struct ifnet *ifp, int flags,
     void *ruleset, struct inpcb *inp)
 {
-	struct mbuf *n = *m;
+	struct mbuf *n;
 	pfil_return_t rv;
 	int off, nxt;
+
+	if (!pf_fbsd_pullup(AF_INET6, m))
+		return (PFIL_CONSUMED);
+	n = *m;
 
 	if ((n->m_pkthdr.csum_flags & CSUM_TSO) == 0 &&
 	    (n->m_pkthdr.csum_flags & CSUM_DELAY_DATA_IPV6)) {
