@@ -74,6 +74,7 @@
 #include <sys/systm.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
+#include <sys/taskqueue.h>
 #include <sys/time.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
@@ -568,9 +569,7 @@ in6_control_ioctl(u_long cmd, void *data,
 		goto out;
 
 	case SIOCDIFADDR_IN6:
-		in6_purgeifaddr(ia);
-		EVENTHANDLER_INVOKE(ifaddr_event_ext, ifp, &ia->ia_ifa,
-		    IFADDR_EVENT_DEL);
+		in6_purgeifaddr(ia);	/* 5BSD: notifies ifaddr_event_ext */
 		break;
 
 	default:
@@ -1437,6 +1436,8 @@ out:
 	return (error);
 }
 
+static void	in6_delete_event(struct ifnet *, struct ifaddr *);
+
 void
 in6_purgeaddr(struct ifaddr *ifa)
 {
@@ -1493,7 +1494,67 @@ in6_purgeaddr(struct ifaddr *ifa)
 	}
 
 	in6_newaddrmsg(ia, RTM_DELETE);
+	/*
+	 * 5BSD: every removal (lifetime expiry, DAD, prefix and interface
+	 * purges, not only SIOCDIFADDR_IN6) notifies ifaddr_event_ext:
+	 * pf's interface address tables follow it.
+	 */
+	ifa_ref(ifa);
 	in6_unlink_ifa(ia, ifp);
+	in6_delete_event(ifp, ifa);
+}
+
+/*
+ * 5BSD: ifaddr_event_ext handlers may sleep; nd6_timer() purges expired
+ * addresses from a callout, so the event goes to a task from there.
+ * Consumes the caller's reference to ifa.
+ */
+struct in6_delev {
+	struct task	 de_task;
+	struct ifnet	*de_ifp;
+	struct ifaddr	*de_ifa;
+};
+
+static void
+in6_delete_event_task(void *arg, int pending __unused)
+{
+	struct in6_delev *de = arg;
+
+	/*
+	 * The interface's vnet, not the one of the purge: a vnet that went
+	 * away meanwhile destroyed its interfaces or returned them home.
+	 */
+	if ((de->de_ifp->if_flags & IFF_DYING) == 0) {
+		CURVNET_SET(de->de_ifp->if_vnet);
+		EVENTHANDLER_INVOKE(ifaddr_event_ext, de->de_ifp, de->de_ifa,
+		    IFADDR_EVENT_DEL);
+		CURVNET_RESTORE();
+	}
+	ifa_free(de->de_ifa);
+	if_rele(de->de_ifp);
+	free(de, M_TEMP);
+}
+
+static void
+in6_delete_event(struct ifnet *ifp, struct ifaddr *ifa)
+{
+	struct in6_delev *de;
+
+	if (THREAD_CAN_SLEEP()) {
+		EVENTHANDLER_INVOKE(ifaddr_event_ext, ifp, ifa,
+		    IFADDR_EVENT_DEL);
+		ifa_free(ifa);
+		return;
+	}
+	if ((de = malloc(sizeof(*de), M_TEMP, M_NOWAIT)) == NULL) {
+		ifa_free(ifa);
+		return;
+	}
+	if_ref(ifp);
+	de->de_ifp = ifp;
+	de->de_ifa = ifa;
+	TASK_INIT(&de->de_task, 0, in6_delete_event_task, de);
+	taskqueue_enqueue(taskqueue_thread, &de->de_task);
 }
 
 /*
