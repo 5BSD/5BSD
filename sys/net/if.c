@@ -1377,6 +1377,8 @@ if_linked_locked(struct ifnet *ifp)
 	return (false);
 }
 
+static void	if_group_release(struct ifg_group *);
+
 /*
  * Add a group to an interface
  */
@@ -1444,6 +1446,12 @@ if_addgroup_internal(struct ifnet *ifp, const char *groupname, bool linked)
 	}
 
 	ifg->ifg_refcnt++;
+	/*
+	 * 5BSD: a new group is held across group_attach_event: the member
+	 * may leave (and the group be freed) as soon as the lock is dropped.
+	 */
+	if (new)
+		ifg->ifg_refcnt++;
 	ifgl->ifgl_group = ifg;
 	ifgm->ifgm_ifp = ifp;
 
@@ -1451,11 +1459,33 @@ if_addgroup_internal(struct ifnet *ifp, const char *groupname, bool linked)
 	CK_STAILQ_INSERT_TAIL(&ifp->if_groups, ifgl, ifgl_next);
 	IFNET_WUNLOCK();
 
-	if (new)
+	if (new) {
 		EVENTHANDLER_INVOKE(group_attach_event, ifg);
+		if_group_release(ifg);
+	}
 	EVENTHANDLER_INVOKE(group_change_event, groupname);
 
 	return (0);
+}
+
+/*
+ * 5BSD: drop the hold if_addgroup_internal() took on a new group; free the
+ * group if its members left meanwhile, as _if_delgroup_locked() would have.
+ */
+static void
+if_group_release(struct ifg_group *ifg)
+{
+	IFNET_WLOCK();
+	if (--ifg->ifg_refcnt > 0) {
+		IFNET_WUNLOCK();
+		return;
+	}
+	CK_STAILQ_REMOVE(&V_ifg_head, ifg, ifg_group, ifg_next);
+	IFNET_WUNLOCK();
+
+	NET_EPOCH_WAIT();
+	EVENTHANDLER_INVOKE(group_detach_event, ifg);
+	free(ifg, M_TEMP);
 }
 
 int
