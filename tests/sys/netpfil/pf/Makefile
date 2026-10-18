@@ -12,6 +12,9 @@ ATF_TESTS_SH+=	anchor \
 		dup \
 		egress \
 		ether \
+		features_glue \
+		features_pools \
+		features_rules \
 		forward \
 		fragmentation_pass \
 		fragmentation_no_reassembly \
