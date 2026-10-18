@@ -239,7 +239,7 @@ max_src_states_rule_body()
 	# We will check the resulting source nodes, though.
 	# Order of source nodes in output is not guaranteed, find each one separately.
 	nodes=$(mktemp) || exit 1
-	jexec router pfctl -qvsS | normalize_pfctl_s > $nodes
+	jexec router pfctl -qv -s Sources | normalize_pfctl_s > $nodes
 	for node_regexp in \
 		'2001:db8:44::1 \( states 3, connections 3, rate [0-9/\.]+s \) age [0-9:]+, 9 pkts, [0-9]+ bytes, rule 3$' \
 		'2001:db8:44::1 \( states 3, connections 3, rate [0-9/\.]+s \) age [0-9:]+, 9 pkts, [0-9]+ bytes, rule 4$' \
@@ -296,7 +296,7 @@ max_src_states_global_body()
 	ping_server_check_reply exit:1 --ping-type=tcp3way --send-sport=4221 --fromaddr 2001:db8:44::1
 
 	nodes=$(mktemp) || exit 1
-	jexec router pfctl -qvsS | normalize_pfctl_s > $nodes
+	jexec router pfctl -qv -s Sources | normalize_pfctl_s > $nodes
 	cat $nodes
 	node_regexp='2001:db8:44::1 \( states 3, connections 3, rate [0-9/\.]+s \) age [0-9:]+, 9 pkts, [0-9]+ bytes'
 	grep -qE "$node_regexp" $nodes || atf_fail "Source nodes not matching expected output"
@@ -361,7 +361,7 @@ sn_types_pass_body()
 	states=$(mktemp) || exit 1
 	jexec router pfctl -qvss | normalize_pfctl_s > $states
 	nodes=$(mktemp) || exit 1
-	jexec router pfctl -qvvsS | normalize_pfctl_s > $nodes
+	jexec router pfctl -qvv -s Sources | normalize_pfctl_s > $nodes
 
 	echo " === states ==="
 	cat $states
@@ -448,7 +448,7 @@ check_valid_body()
 
 	# A source node is created using the original redirection target
 	nodes=$(mktemp) || exit 1
-	jexec router pfctl -qvvsS | normalize_pfctl_s > $nodes
+	jexec router pfctl -qvv -s Sources | normalize_pfctl_s > $nodes
 	node_regexp='2001:db8:44::1 route-to 2001:db8:4201::42:1 \( states 1,'
 	grep -qE "${node_regexp}" $nodes || atf_fail "Source node not found for '${node_regexp}'"
 
@@ -462,7 +462,7 @@ check_valid_body()
 
 	# The original source node was deleted, a new one was created.
 	# It has 1 states.
-	jexec router pfctl -qvvsS | normalize_pfctl_s > $nodes
+	jexec router pfctl -qvv -s Sources | normalize_pfctl_s > $nodes
 	node_regexp='2001:db8:44::1 route-to 2001:db8:4201::42:2 \( states 1,'
 	grep -qE "${node_regexp}" $nodes || atf_fail "Source node not found for '${node_regexp}'"
 
@@ -473,7 +473,7 @@ check_valid_body()
 
 	# Without redirection table change the source node is reused.
 	# It has 2 states.
-	jexec router pfctl -qvvsS | normalize_pfctl_s > $nodes
+	jexec router pfctl -qvv -s Sources | normalize_pfctl_s > $nodes
 	node_regexp='2001:db8:44::1 route-to 2001:db8:4201::42:2 \( states 2,'
 	grep -qE "${node_regexp}" $nodes || atf_fail "Source node not found for '${node_regexp}'"
 }
