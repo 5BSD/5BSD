@@ -81,6 +81,7 @@ int	pflow_output(struct ifnet *ifp, struct mbuf *m, struct sockaddr *dst,
 void	pflow_output_process(void *);
 int	pflow_clone_create(struct if_clone *, int);
 int	pflow_clone_destroy(struct ifnet *);
+static struct sx pflow_jail_sx;	/* 5BSD: pflow_jail_remove() */
 int	pflow_set(struct pflow_softc *, struct pflowreq *);
 int	pflow_calc_mtu(struct pflow_softc *, int, int);
 void	pflow_setmtu(struct pflow_softc *, int);
@@ -353,6 +354,7 @@ pflow_clone_destroy(struct ifnet *ifp)
 
 	error = 0;
 
+	sx_xlock(&pflow_jail_sx);	/* 5BSD: pflow_jail_remove() */
 	rw_enter_write(&sc->sc_lock);
 	sc->sc_dying = 1;
 	rw_exit_write(&sc->sc_lock);
@@ -388,6 +390,7 @@ pflow_clone_destroy(struct ifnet *ifp)
 		free(sc->sc_flowsrc, M_DEVBUF, sc->sc_flowsrc->sa_len);
 	if_detach(ifp);
 	free(sc, M_DEVBUF, sizeof(*sc));
+	sx_xunlock(&pflow_jail_sx);	/* 5BSD */
 	return (error);
 }
 
@@ -419,11 +422,19 @@ pflow_jail_close(if_t ifp, void *arg __unused)
 	return (0);
 }
 
+/*
+ * 5BSD: if_foreach_sleep() holds the interfaces, not their softcs, which
+ * pflow_clone_destroy() frees: the two exclude each other.
+ */
+SX_SYSINIT(pflow_jail_sx, &pflow_jail_sx, "pflow jail");
+
 void	pflow_jail_remove(void);
 void
 pflow_jail_remove(void)
 {
+	sx_xlock(&pflow_jail_sx);
 	(void)if_foreach_sleep(pflow_jail_match, NULL, pflow_jail_close, NULL);
+	sx_xunlock(&pflow_jail_sx);
 }
 
 int
