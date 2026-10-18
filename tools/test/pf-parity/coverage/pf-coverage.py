@@ -117,6 +117,45 @@ def merge(out, ins):
     print('merged %d runs: %d functions hit' % (len(ins), len(total['counts'])))
 
 
+SRC = '/usr/obj/5BSD-pf-land'
+# land/pf's base on dev: stack functions changed since then are pf's scope.
+BASE = 'dev'
+
+
+def changed_stack_funcs():
+    """Names of functions in the stack sources that land/pf changed."""
+    base = subprocess.run(['git', '-C', SRC, 'merge-base', 'HEAD', BASE],
+                          text=True, capture_output=True).stdout.strip()
+    names = set()
+    for o in STACK_OBJS:
+        src = subprocess.run(['git', '-C', SRC, 'ls-files', '--',
+                              'sys/*/%s.c' % o[:-2], 'sys/*/*/%s.c' % o[:-2]],
+                             text=True, capture_output=True).stdout.split()
+        for path in src:
+            diff = subprocess.run(['git', '-C', SRC, 'diff', '-U0', base,
+                                   'HEAD', '--', path], text=True,
+                                  capture_output=True).stdout
+            changed = []
+            for m in re.finditer(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@',
+                                 diff, re.M):
+                start, n = int(m.group(1)), int(m.group(2) or 1)
+                changed.append((start, start + max(n, 1) - 1))
+            if not changed:
+                continue
+            # Function bodies in style(9): name( at column 0 ... } at column 0.
+            text = open(os.path.join(SRC, path)).read().split('\n')
+            func, begin = None, 0
+            for i, line in enumerate(text, 1):
+                m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\(', line)
+                if m:
+                    func, begin = m.group(1), i
+                elif line.startswith('}') and func:
+                    if any(a <= i and b >= begin for a, b in changed):
+                        names.add(func)
+                    func = None
+    return names
+
+
 def report(cov, md=None):
     d = json.load(open(cov))
     funcs = universe()
@@ -146,6 +185,21 @@ def report(cov, md=None):
             base, kind, n, len(f['hit']), 100 * len(f['hit']) // n,
             ', '.join(sorted(f['miss']))))
     lines.append('')
+    # The goal's scope: all of pf.ko, and the stack functions land/pf changed.
+    scoped = changed_stack_funcs()
+    sh_ = sm_ = 0
+    unrun = []
+    for (module, base), f in files.items():
+        keep = (lambda n: True) if module == 'pf' else (lambda n: n in scoped)
+        sh_ += sum(1 for n in f['hit'] if keep(n))
+        miss = [n for n in f['miss'] if keep(n)]
+        sm_ += len(miss)
+        if module == 'kernel':
+            unrun += ['%s:%s' % (base, n) for n in miss]
+    lines.append('Scoped (pf.ko and the %d stack functions land/pf changed): '
+                 '%d of %d run (%d%%).' % (len(scoped), sh_, sh_ + sm_,
+                                          100 * sh_ // max(1, sh_ + sm_)))
+    lines.append('Changed stack functions not run: ' + ', '.join(sorted(unrun)))
     lines.append('Total: %d of %d probed functions run (%d%%).' % (
         th, th + tm, 100 * th // max(1, th + tm)))
     text = '\n'.join(lines)
