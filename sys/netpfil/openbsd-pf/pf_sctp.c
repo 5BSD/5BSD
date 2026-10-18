@@ -519,7 +519,13 @@ pf_sctp_test_state(struct pf_pdesc *pd, struct pf_state **stp,
 	 */
 	vsrc = pf_sctp_src_peer(pd, st, pd->dir);
 	if (vsrc->scrub != NULL) {
-		if (vsrc->state <= PF_SCTPS_COOKIE_WAIT)
+		/*
+		 * A tag of 0 is learnt, as in FreeBSD: pfsync does not carry
+		 * the verification tags, so a state imported on the backup
+		 * has none and would drop all traffic after a failover.
+		 */
+		if (vsrc->state <= PF_SCTPS_COOKIE_WAIT ||
+		    vsrc->scrub->pfss_v_tag == 0)
 			vsrc->scrub->pfss_v_tag = pd->hdr.sctp.v_tag;
 		else if (vsrc->scrub->pfss_v_tag != pd->hdr.sctp.v_tag) {
 			REASON_SET(reason, PFRES_BADSTATE);
@@ -669,8 +675,11 @@ pf_sctp_multihome_add(struct pf_pdesc *pd, struct pf_state *st,
 	struct pf_rule *r = &pf_default_rule, *a = NULL;
 	struct pf_ruleset *rs = NULL;
 	struct pf_state *sm = NULL;
+	struct pkthdr_pf *pt;
 	u_short reason = 0;
 	uint32_t v_tag;
+	u_int ortable;
+	u_int16_t otag;
 	int ret;
 
 	v_tag = pd->sctp_initiate_tag;
@@ -694,7 +703,18 @@ pf_sctp_multihome_add(struct pf_pdesc *pd, struct pf_state *st,
 	if (st->rule.ptr->rule_flag & PFRULE_ALLOW_RELATED)
 		j->pd.related_rule = st->rule.ptr;
 	PF_ASSERT_LOCKED();
+	/*
+	 * The job's rules are evaluated against the real packet's mbuf: a
+	 * "tag" or "rtable" of the rule the listed address matched must not
+	 * stay on the packet that was passed for its own address (a "tagged"
+	 * rule would pass it on the strength of the other address).
+	 */
+	otag = PF_MTAG_R(pd->m)->tag;
+	ortable = pd->m->m_pkthdr.ph_rtableid;
 	ret = pf_test_rule(&j->pd, &r, &sm, &a, &rs, &reason);
+	if (PF_MTAG_R(pd->m)->tag != otag && (pt = PF_MTAG_W(pd->m)) != NULL)
+		pt->tag = otag;
+	pd->m->m_pkthdr.ph_rtableid = ortable;
 	SDT_PROBE4(pf, sctp, multihome, test, pd->kif, r, pd->m, ret);
 	if (ret == PF_DROP || sm == NULL)
 		return;
