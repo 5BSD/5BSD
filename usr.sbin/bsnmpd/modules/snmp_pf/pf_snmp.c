@@ -1471,6 +1471,8 @@ pfa_refresh(void)
 
 		numtbls = io.pfrio_size;
 	}
+	/* Only the tables copied: some may have gone since the sizing call. */
+	numtbls = io.pfrio_size;
 
 	cidx = 1;
 

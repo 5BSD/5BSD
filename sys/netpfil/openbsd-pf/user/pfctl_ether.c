@@ -132,7 +132,8 @@ pfctl_eth_brace_open(struct pfctl *pf)
 	char ta[PF_ANCHOR_NAME_SIZE];
 
 	pf->asd++;
-	if (pf->asd >= PFCTL_ANCHOR_STACK_DEPTH)
+	/* The anchor rule uses eastack[asd + 1]. */
+	if (pf->asd >= PFCTL_ANCHOR_STACK_DEPTH - 1)
 		errx(1, "etherpfa_anchor: anchors too deep");
 	pf->bn++;
 	/* A holding ruleset, until the anchor rule tells where it goes. */

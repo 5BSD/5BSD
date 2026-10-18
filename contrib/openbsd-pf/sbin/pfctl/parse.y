@@ -986,7 +986,8 @@ pfa_anchor	: '{'
 
 			/* steping into a brace anchor */
 			pf->asd++;
-			if (pf->asd >= PFCTL_ANCHOR_STACK_DEPTH)
+			/* 5BSD: anchorrule uses astack[asd + 1]. */
+			if (pf->asd >= PFCTL_ANCHOR_STACK_DEPTH - 1)
 				errx(1, "pfa_anchor: anchors too deep");
 			pf->bn++;
 			pf->brace = 1;

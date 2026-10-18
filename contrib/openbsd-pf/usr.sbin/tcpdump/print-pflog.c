@@ -93,13 +93,22 @@ pflog_if_print(u_char *user, const struct pcap_pkthdr *h,
 
 	hdr = (struct pfloghdr *)p;
 	if (eflag) {
+		/*
+		 * 5BSD: the fields below go to the end of struct pfloghdr;
+		 * a header length from 45 is accepted above.
+		 */
+		if (caplen < sizeof(*hdr)) {
+			printf("[|pflog]");
+			goto out;
+		}
 		printf("rule ");
 		if (ntohl(hdr->rulenr) == (u_int32_t) -1)
 			printf("def");
 		else {
 			printf("%u", ntohl(hdr->rulenr));
 			if (hdr->ruleset[0]) {
-				printf(".%s", hdr->ruleset);
+				printf(".%.*s", (int)sizeof(hdr->ruleset),
+				    hdr->ruleset);	/* 5BSD: bounded */
 				if (ntohl(hdr->subrulenr) == (u_int32_t) -1)
 					printf(".def");
 				else
@@ -140,9 +149,9 @@ pflog_if_print(u_char *user, const struct pcap_pkthdr *h,
 			printf("rdr");
 			break;
 		}
-		printf(" %s on %s: ",
+		printf(" %s on %.*s: ",
 		    hdr->dir == PF_OUT ? "out" : "in",
-		    hdr->ifname);
+		    (int)sizeof(hdr->ifname), hdr->ifname);	/* 5BSD: bounded */
 		if (vflag && hdr->pid != NO_PID)
 			printf("[uid %u, pid %u] ", (unsigned)hdr->uid,
 			    (unsigned)hdr->pid);
