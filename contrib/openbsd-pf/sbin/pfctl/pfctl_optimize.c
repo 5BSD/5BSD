@@ -1367,6 +1367,12 @@ rules_combineable(struct pf_rule *p1, struct pf_rule *p2)
 {
 	struct pf_rule a, b;
 
+	/*
+	 * 5BSD: an af-to rule embeds the IPv4 address by the length of its
+	 * destination network; a table of networks has no one length.
+	 */
+	if ((p1->rule_flag | p2->rule_flag) & PFRULE_AFTO)
+		return (0);
 	comparable_rule(&a, p1, COMBINED);
 	comparable_rule(&b, p2, COMBINED);
 	return (memcmp(&a, &b, sizeof(a)) == 0);
