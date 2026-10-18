@@ -1425,7 +1425,12 @@ if_addgroup_internal(struct ifnet *ifp, const char *groupname, bool linked)
 			break;
 
 	if (ifg == NULL) {
-		if ((ifg = malloc(sizeof(*ifg), M_TEMP, M_NOWAIT)) == NULL) {
+		/*
+		 * 5BSD: zeroed.  The group is on if_groups before the
+		 * attach event sets ifg_pf_kif; pf reads it meanwhile.
+		 */
+		if ((ifg = malloc(sizeof(*ifg), M_TEMP,
+		    M_NOWAIT | M_ZERO)) == NULL) {
 			free(ifgl, M_TEMP);
 			free(ifgm, M_TEMP);
 			IFNET_WUNLOCK();

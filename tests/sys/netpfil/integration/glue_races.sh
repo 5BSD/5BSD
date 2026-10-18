@@ -200,6 +200,46 @@ addr_group_churn_cleanup()
 	integ_cleanup
 }
 
+atf_test_case "new_group_dynaddr" "cleanup"
+new_group_dynaddr_head()
+{
+	atf_set descr 'Dynamic address setup walks the groups of an interface that is joining new groups'
+	atf_set require.user root
+	atf_set timeout 300
+}
+
+new_group_dynaddr_body()
+{
+	pft_init
+	e=$(vnet_mkepair)
+	vnet_mkjail a ${e}a
+	a="jexec a"
+	${a} ifconfig ${e}a 192.0.2.1/24 up
+	${a} pfctl -e > /dev/null 2>&1
+
+	# Every round makes a new group: one is on the interface's group
+	# list before pf's attach handler has given it a kif.
+	${a} sh -c "i=0; while :; do
+		i=\$(((i + 1) % 1000))
+		ifconfig ${e}a group ng\${i}x
+		ifconfig ${e}a -group ng\${i}x
+	done" > /dev/null 2>&1 &
+	# Each load sets up the dynamic addresses, which walks those groups.
+	end=$(($(date +%s) + 60))
+	while [ $(date +%s) -lt ${end} ]; do
+		pft_set_rules a \
+		    "pass in on ${e}a from (${e}a:network) to (${e}a)" \
+		    "pass out from (${e}a:0) to (${e}a:broadcast)" \
+		    "pass"
+	done
+	atf_check -s exit:0 -o match:"Status: Enabled" ${a} pfctl -s info
+}
+
+new_group_dynaddr_cleanup()
+{
+	integ_cleanup
+}
+
 atf_test_case "teardown_pcb" "cleanup"
 teardown_pcb_head()
 {
@@ -248,5 +288,6 @@ atf_init_test_cases()
 	atf_add_test_case "pfsync_syncdev_reuse"
 	atf_add_test_case "teardown_busy"
 	atf_add_test_case "addr_group_churn"
+	atf_add_test_case "new_group_dynaddr"
 	atf_add_test_case "teardown_pcb"
 }
