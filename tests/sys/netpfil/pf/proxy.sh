@@ -118,16 +118,17 @@ tftp_body()
 	jexec srv /usr/sbin/inetd -p ${PWD}/inetd-srv.pid \
 	    $(atf_get_srcdir)/tftpd_inetd.conf
 
-	# OpenBSD's tftp-proxy is a daemon listening on localhost port 6969,
-	# not an inetd service.
-	jexec fwd /usr/libexec/tftp-proxy
-
 	jexec fwd pfctl -e
 	pft_set_rules fwd \
 		"match out on ${epair_link}a inet from 192.0.2.0/24 to any nat-to (${epair_link}a)" \
 		"anchor \"tftp-proxy/*\"" \
 		"pass in quick on ${epair_client}b inet proto udp from 192.0.2.0/24 to any port 69 divert-to 127.0.0.1 port 6969" \
 		"pass out quick on ${epair_link}a inet proto udp from 192.0.2.0/24 to any port 69 group proxy divert-reply"
+
+	# OpenBSD's tftp-proxy is a daemon listening on localhost port 6969,
+	# not an inetd service; it refuses to start while pf is disabled.
+	jexec fwd /usr/libexec/tftp-proxy
+	sleep 1
 
 	# Create a dummy file to download
 	echo 'foo' > /tmp/remote.txt
