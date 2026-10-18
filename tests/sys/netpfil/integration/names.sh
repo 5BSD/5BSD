@@ -41,14 +41,20 @@ owner_leaves_head()
 owner_leaves_body()
 {
 	pft_init
-	a=$(vnet_mkepair)
-	b=$(vnet_mkepair)
-	vnet_mkjail host ${a}a ${b}a
-	vnet_mkjail peer ${a}b ${b}b
+	vnet_mkjail host
 	jail -m name=host children.max=4 ||
 	    atf_skip "nested jails are not available"
-	jexec peer ifconfig ${a}b 192.0.2.2/24 up
-	jexec peer ifconfig ${b}b 198.51.100.2/24 up
+	# The epairs are created in "host" so that it is their home vnet:
+	# removing a jail returns an interface to the vnet it was created in.
+	a=$(jexec host ifconfig epair create) || atf_fail "epair create"
+	a=${a%a}
+	b=$(jexec host ifconfig epair create) || atf_fail "epair create"
+	b=${b%a}
+	jexec host jail -c name=peer vnet persist
+	jexec host ifconfig ${a}b vnet peer
+	jexec host ifconfig ${b}b vnet peer
+	jexec host jexec peer ifconfig ${a}b 192.0.2.2/24 up
+	jexec host jexec peer ifconfig ${b}b 198.51.100.2/24 up
 	jexec host ifconfig ${a}a 192.0.2.1/24 up
 
 	# ${b}a gets the name "dup" in jail "inner", ${a}a in "host"; jail
@@ -90,6 +96,7 @@ owner_leaves_body()
 owner_leaves_cleanup()
 {
 	jexec host jail -r inner 2>/dev/null
+	jexec host jail -r peer 2>/dev/null
 	pft_cleanup
 }
 
