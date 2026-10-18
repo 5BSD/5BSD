@@ -22,6 +22,9 @@
 SDT_PROBE_DECLARE(pf, rule, jail, resolve);
 int	pf_fbsd_vnet_ready(void);
 
+static struct task pf_jail_task;
+static int pf_jail_loaded;	/* rules by jail name loaded since a resolve */
+
 struct pf_jail_ent {
 	int	jid;
 	char	name[PF_JAIL_NAME_SIZE];
@@ -68,7 +71,21 @@ pf_jail_rule_copyin(struct pf_rule *r)
 		strlcpy(r->jail.name, full, sizeof(r->jail.name));
 	}
 	r->jail.jid[0] = r->jail.jid[1] = pf_jail_lookup(r->jail.name);
+	atomic_store_int(&pf_jail_loaded, 1);
 	return (0);
+}
+
+/*
+ * DIOCXCOMMIT: the lookup above runs before the rule is on a queue, so a
+ * jail created, renamed or removed meanwhile is resolved for the queues
+ * without it.  Resolve again once rules by jail name are committed.
+ */
+void
+pf_jail_committed(void)
+{
+	if (atomic_load_int(&pf_jail_loaded) &&
+	    atomic_cmpset_int(&pf_jail_loaded, 1, 0))
+		task_add(systq, &pf_jail_task);
 }
 
 /* DIOCGETRULE: give the caller the name relative to its own jail. */

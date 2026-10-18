@@ -1994,6 +1994,7 @@ int	pf_match_uid(u_int8_t, uid_t, uid_t, uid_t);
 int	pf_match_gid(u_int8_t, gid_t, gid_t, gid_t);
 int	pf_match_jail(struct pf_rule *, int32_t); /* 5BSD: jail */
 int	pf_jail_rule_copyin(struct pf_rule *);	/* 5BSD: jail */
+void	pf_jail_committed(void);	/* 5BSD: jail */
 void	pf_jail_rule_copyout(struct pf_rule *);	/* 5BSD: jail */
 
 struct pf_state_scrub *

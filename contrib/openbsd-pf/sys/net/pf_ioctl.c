@@ -3849,6 +3849,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 		pf_trans_set_commit();
 		PF_UNLOCK();
 		NET_UNLOCK();
+		pf_jail_committed();	/* 5BSD: jail */
 		free(table, M_PF, sizeof(*table));
 		free(ioe, M_PF, sizeof(*ioe));
 		break;
