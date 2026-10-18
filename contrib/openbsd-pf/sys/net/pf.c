@@ -9064,7 +9064,11 @@ log_packet:
 		action = PF_PASS;
 		break;
 #ifdef INET6
-	case PF_AFRT:
+	case PF_AFRT: {
+		/* 5BSD: af-to; may an IPv4 packet be fragmented? */
+		int afrt_df = pd.af == AF_INET &&
+		    (mtod(pd.m, struct ip *)->ip_off & htons(IP_DF)) != 0;
+
 		if (pf_translate_af(&pd)) {
 			action = PF_DROP;
 			goto out;
@@ -9126,6 +9130,13 @@ log_packet:
 					action = PF_DROP;
 					goto out;
 				}
+				/* 5BSD: af-to; see pf_refragment6_af() */
+				if (!afrt_df &&
+				    pd.m->m_pkthdr.len > IPV6_MMTU) {
+					(void)pf_refragment6_af(&pd.m,
+					    IPV6_MMTU);
+					break;
+				}
 				ip6_forward(pd.m, NULL, flags);
 			} else
 				ip6_output(pd.m, NULL, NULL, 0, NULL, NULL);
@@ -9134,6 +9145,7 @@ log_packet:
 		pd.m = NULL;
 		action = PF_PASS;
 		break;
+	}
 #endif /* INET6 */
 	case PF_DROP:
 		m_freem(pd.m);

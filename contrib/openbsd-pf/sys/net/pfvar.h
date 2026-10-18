@@ -2000,6 +2000,7 @@ struct pf_state_scrub *
 	pf_state_scrub_get(void);
 void	pf_state_scrub_put(struct pf_state_scrub *);
 
+int	pf_refragment6_af(struct mbuf **, int);	/* 5BSD: af-to */
 int	pf_refragment6(struct mbuf **, struct m_tag *mtag,
 	    struct sockaddr_in6 *, struct ifnet *, struct rtentry *);
 void	pf_normalize_init(void);

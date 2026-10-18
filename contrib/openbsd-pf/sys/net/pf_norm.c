@@ -959,6 +959,36 @@ fail:
 	return (PF_DROP);
 }
 
+/*
+ * 5BSD: af-to.  An IPv4 packet without DF translated to IPv6 that does
+ * not fit the IPv6 minimum MTU leaves as IPv6 fragments of it (RFC 7915
+ * 4.1): pf reassembled the IPv4 fragments, the IPv6 path cannot fragment
+ * a forwarded packet.  Forwards the fragments as pf_refragment6() does.
+ */
+int
+pf_refragment6_af(struct mbuf **m0, int mtu)
+{
+	struct m_tag		*mtag;
+	struct pf_fragment_tag	*ftag;
+	int			 maxlen;
+
+	mtag = m_tag_get(PACKET_TAG_PF_REASSEMBLED,
+	    sizeof(struct pf_fragment_tag), M_NOWAIT);
+	if (mtag == NULL) {
+		m_freem(*m0);
+		*m0 = NULL;
+		return (PF_DROP);
+	}
+	maxlen = (mtu - (int)sizeof(struct ip6_hdr) -
+	    (int)sizeof(struct ip6_frag)) & ~7;
+	ftag = (struct pf_fragment_tag *)(mtag + 1);
+	ftag->ft_hdrlen = sizeof(struct ip6_hdr);
+	ftag->ft_extoff = 0;
+	ftag->ft_maxlen = maxlen;
+	m_tag_prepend(*m0, mtag);
+	return (pf_refragment6(m0, mtag, NULL, NULL, NULL));
+}
+
 int
 pf_refragment6(struct mbuf **m0, struct m_tag *mtag, struct sockaddr_in6 *dst,
     struct ifnet *ifp, struct rtentry *rt)
