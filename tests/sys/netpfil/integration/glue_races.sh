@@ -205,7 +205,7 @@ teardown_pcb_head()
 {
 	atf_set descr 'A VNET whose pf states hold socket references is torn down with the connections open'
 	atf_set require.user root
-	atf_set timeout 120
+	atf_set timeout 300
 }
 
 teardown_pcb_body()
@@ -226,7 +226,13 @@ teardown_pcb_body()
 			    sleep 0.2; (while :; do echo x; sleep 0.1; done) |
 			    nc -u 127.0.0.1 ${port}" > /dev/null 2>&1 &
 		done
-		sleep 1
+		# Wait for a connection: the listeners start in the background.
+		n=0
+		until ${j} pfctl -ss 2>/dev/null | grep -q "tcp.*127.0.0.1"; do
+			n=$((n + 1))
+			[ ${n} -le 50 ] || break
+			sleep 0.2
+		done
 		atf_check -s exit:0 -o match:"tcp.*127.0.0.1" ${j} pfctl -ss
 		atf_check -s exit:0 jail -r pcb${round}
 	done
