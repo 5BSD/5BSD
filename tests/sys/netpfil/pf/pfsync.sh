@@ -1066,10 +1066,10 @@ af_to_in_floating_body()
 	jexec two pfctl -qvvss | normalize_pfctl_s > $states_two
 
 	# Sanity check
-	grep -qE 'all ipv6-icmp 203.0.113.1 \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe\) .* rule 3 ' $states_one ||
+	grep -qE 'all ipv6-icmp 203.0.113.1(:[0-9]+)? \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe(\[[0-9]+\])?\) .* rule 3 ' $states_one ||
 		atf_fail "State missing on router one"
 
-	grep -qE 'all ipv6-icmp 203.0.113.1 \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe\) ' $states_two ||
+	grep -qE 'all ipv6-icmp 203.0.113.1(:[0-9]+)? \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe(\[[0-9]+\])?\) ' $states_two ||
 		atf_fail "State missing on router two"
 }
 
@@ -1120,13 +1120,13 @@ af_to_in_if_bound_body()
 	jexec one pfctl -qvvss | normalize_pfctl_s > $states_one
 	jexec two pfctl -qvvss | normalize_pfctl_s > $states_two
 
-	# OpenBSD binds an if-bound af-to state to the inbound interface; pfctl
-	# has no "origif".
+	# 5BSD: an af-to state floats even with if-bound (pf.c); pfctl has
+	# no "origif".
 	# Sanity check
-	grep -qE 'inif ipv6-icmp 203.0.113.1 \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe\) .* rule 3 ' $states_one ||
+	grep -qE 'all ipv6-icmp 203.0.113.1(:[0-9]+)? \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe(\[[0-9]+\])?\) .* rule 3 ' $states_one ||
 		atf_fail "State missing on router one"
 
-	grep -qE 'inif ipv6-icmp 203.0.113.1 \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe\) ' $states_two ||
+	grep -qE 'all ipv6-icmp 203.0.113.1(:[0-9]+)? \(2001:db8:4201::fe\) -> 203.0.113.254:8 \(64:ff9b::cb00:71fe(\[[0-9]+\])?\) ' $states_two ||
 		atf_fail "State missing on router two"
 }
 
