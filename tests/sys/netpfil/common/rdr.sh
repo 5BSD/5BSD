@@ -80,6 +80,10 @@ local_redirect_body()
 {
 	firewall=$1
 	[ "$firewall" = "ipfnat" ] && atf_expect_fail "https://bugs.freebsd.org/296944"
+	# 5BSD: OpenBSD pf matches a reply only in the state's other
+	# direction; a local connection redirected to another host gets its
+	# reply inbound on that interface, as the request came in on lo0.
+	[ "$firewall" = "pf" ] && atf_skip "local redirect to another host is a FreeBSD pf extension"
 
 	firewall_init $firewall
 	nat_init $firewall
