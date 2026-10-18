@@ -2961,7 +2961,19 @@ pfctl_lookup_id(const char *cmd, const struct pfctl_opt_id *opt_ids)
 	size_t cmdlen = strlen(cmd);
 
 	for (opt_id = opt_ids; opt_id->id != 0; opt_id++) {
+		/* 5BSD: an exact name is never ambiguous. */
+		if (strcmp(cmd, opt_id->name) == 0)
+			return (opt_id->id);
+	}
+	for (opt_id = opt_ids; opt_id->id != 0; opt_id++) {
 		if (strncmp(cmd, opt_id->name, cmdlen) == 0) {
+			/*
+			 * 5BSD: a one-letter modifier keeps its traditional
+			 * meaning, the first in the list (-sS is Sources, not
+			 * Stlimiters or Srclimiters).
+			 */
+			if (id != 0 && cmdlen == 1)
+				break;
 			if (id != 0)
 				errx(1, "%s is ambiguous", cmd);
 
