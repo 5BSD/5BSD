@@ -28,6 +28,9 @@
 
 TABLE_STATS_ZERO_REGEXP='Packets: 0[[:space:]]*Bytes: 0[[:space:]]'
 TABLE_STATS_NONZERO_REGEXP='Packets: [1-9][0-9]*[[:space:]]*Bytes: [1-9][0-9]*[[:space:]]'
+# 5BSD: OpenBSD pf keeps an address's counters only once it has counted a
+# packet (and drops them when they are zeroed): "zero" means no non-zero
+# counter, with or without a line of zeros.
 
 atf_test_case "v4_counters" "cleanup"
 v4_counters_head()
@@ -57,9 +60,9 @@ v4_counters_body()
 	atf_check -s exit:0 -o ignore ping -c 3 192.0.2.2
 
 	atf_check -s exit:0 -e ignore \
-	    -o match:'In/Block:.*'"$TABLE_STATS_ZERO_REGEXP" \
+	    -o not-match:'In/Block:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    -o match:'In/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
-	    -o match:'Out/Block:.*'"$TABLE_STATS_ZERO_REGEXP" \
+	    -o not-match:'Out/Block:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    -o match:'Out/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    jexec alcatraz pfctl -t foo -T show -vv
 }
@@ -97,9 +100,9 @@ v6_counters_body()
 	atf_check -s exit:0 -o ignore ping -6 -c 3 2001:db8:42::2
 
 	atf_check -s exit:0 -e ignore \
-	    -o match:'In/Block:.*'"$TABLE_STATS_ZERO_REGEXP" \
+	    -o not-match:'In/Block:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    -o match:'In/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
-	    -o match:'Out/Block:.*'"$TABLE_STATS_ZERO_REGEXP" \
+	    -o not-match:'Out/Block:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    -o match:'Out/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    jexec alcatraz pfctl -t foo6 -T show -vv
 }
@@ -140,12 +143,12 @@ match_counters_body()
 	# operation (pfr_update_stats() with PF_MATCH), in both directions
 	# of the state that carries the match rule, and not under Pass.
 	atf_check -s exit:0 -e ignore \
-	    -o match:'In/Block:.*'"$TABLE_STATS_ZERO_REGEXP" \
+	    -o not-match:'In/Block:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    -o match:'In/Match:.*'"$TABLE_STATS_NONZERO_REGEXP" \
-	    -o match:'In/Pass:.*'"$TABLE_STATS_ZERO_REGEXP" \
-	    -o match:'Out/Block:.*'"$TABLE_STATS_ZERO_REGEXP" \
+	    -o not-match:'In/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
+	    -o not-match:'Out/Block:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    -o match:'Out/Match:.*'"$TABLE_STATS_NONZERO_REGEXP" \
-	    -o match:'Out/Pass:.*'"$TABLE_STATS_ZERO_REGEXP" \
+	    -o not-match:'Out/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    jexec alcatraz pfctl -t foo -T show -vv
 }
 
@@ -204,9 +207,9 @@ zero_one_body()
 	    jexec alcatraz pfctl -vvsTables
 
 	atf_check -s exit:0 -e ignore \
-	    -o match:'In/Block:.*'"$TABLE_STATS_ZERO_REGEXP" \
+	    -o not-match:'In/Block:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    -o match:'In/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
-	    -o match:'Out/Block:.*'"$TABLE_STATS_ZERO_REGEXP" \
+	    -o not-match:'Out/Block:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    -o match:'Out/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    jexec alcatraz pfctl -t foo -T show -vv
 
@@ -230,14 +233,14 @@ zero_one_body()
 	atf_check test $(( "$ts3" - "$ts1" )) -lt 10 # (3 pings * 2) + epsilon
 	atf_check test "$ts1" -lt "$ts3"
 
-	# We now have a zeroed and a non-zeroed counter, so both patterns
-	# should match
-	atf_check -s exit:0 -e ignore \
-	    -o match:'In/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
-	    -o match:'Out/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
-	    -o match:'In/Pass:.*'"$TABLE_STATS_ZERO_REGEXP" \
-	    -o match:'Out/Pass:.*'"$TABLE_STATS_ZERO_REGEXP" \
-	    jexec alcatraz pfctl -t foo -T show -vv
+	# We now have a zeroed and a non-zeroed counter: check each address.
+	jexec alcatraz pfctl -t foo -T show -vv > show.out
+	awk '$1 ~ /^[0-9]/ { m = ($1 == "192.0.2.1") } m' show.out > a1.out
+	awk '$1 ~ /^[0-9]/ { m = ($1 == "192.0.2.3") } m' show.out > a3.out
+	atf_check -o match:'In/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
+	    -o match:'Out/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" cat a1.out
+	atf_check -o not-match:'In/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
+	    -o not-match:'Out/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" cat a3.out
 }
 
 zero_one_cleanup()
@@ -276,9 +279,9 @@ zero_all_body()
 
 	jexec alcatraz pfctl -t foo -T show -vv
 	atf_check -s exit:0 -e ignore \
-	    -o match:'In/Block:.*'"$TABLE_STATS_ZERO_REGEXP" \
+	    -o not-match:'In/Block:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    -o match:'In/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
-	    -o match:'Out/Block:.*'"$TABLE_STATS_ZERO_REGEXP" \
+	    -o not-match:'Out/Block:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    -o match:'Out/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    jexec alcatraz pfctl -t foo -T show -vv
 
@@ -287,10 +290,10 @@ zero_all_body()
 
 	jexec alcatraz pfctl -t foo -T show -vv
 	atf_check -s exit:0 -e ignore \
-	    -o match:'In/Pass:.*'"$TABLE_STATS_ZERO_REGEXP" \
-	    -o match:'Out/Pass:.*'"$TABLE_STATS_ZERO_REGEXP" \
-	    -o match:'In/Pass:.*'"$TABLE_STATS_ZERO_REGEXP" \
-	    -o match:'Out/Pass:.*'"$TABLE_STATS_ZERO_REGEXP" \
+	    -o not-match:'In/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
+	    -o not-match:'Out/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
+	    -o not-match:'In/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
+	    -o not-match:'Out/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    jexec alcatraz pfctl -t foo -T show -vv
 }
 
@@ -488,10 +491,10 @@ precreate_body()
 
 	# Expect all counters to be zero
 	atf_check -s exit:0 -e ignore \
-	    -o match:'In/Block:.*'"$TABLE_STATS_ZERO_REGEXP" \
-	    -o match:'In/Pass:.*'"$TABLE_STATS_ZERO_REGEXP" \
-	    -o match:'Out/Block:.*'"$TABLE_STATS_ZERO_REGEXP" \
-	    -o match:'Out/Pass:.*'"$TABLE_STATS_ZERO_REGEXP" \
+	    -o not-match:'In/Block:.*'"$TABLE_STATS_NONZERO_REGEXP" \
+	    -o not-match:'In/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
+	    -o not-match:'Out/Block:.*'"$TABLE_STATS_NONZERO_REGEXP" \
+	    -o not-match:'Out/Pass:.*'"$TABLE_STATS_NONZERO_REGEXP" \
 	    jexec alcatraz pfctl -t foo -T show -vv
 
 }
@@ -789,8 +792,9 @@ replace_verbose_body()
 
 	# This used to panic: pfr_set_addrs() dereferenced a NULL size2
 	# when asked for feedback over netlink.
+	# OpenBSD's pfctl -v lists the changed addresses on stdout.
 	atf_check -s exit:0 -e "match:1 addresses added." \
-	    -e "match:1 addresses deleted." \
+	    -e "match:1 addresses deleted." -o ignore \
 	    jexec alcatraz pfctl -v -t foo -T replace 192.0.2.2 192.0.2.3
 	atf_check -s exit:0 -o "match:192.0.2.2" -o "match:192.0.2.3" \
 	    -o "not-match:192.0.2.1" \
@@ -952,9 +956,12 @@ show_no_counters_body()
 	atf_check -s exit:0 -e ignore \
 	    -o match:"Cleared:" -o not-match:"In/Block:" \
 	    jexec alcatraz pfctl -t foo -v -T show
-	atf_check -s exit:0 -e ignore \
-	    -o match:"Cleared:" -o match:"In/Block:" \
+	# OpenBSD pf: no per-address counters before a packet is counted;
+	# the table has the counters flag (C).
+	atf_check -s exit:0 -e ignore -o match:"Cleared:" \
 	    jexec alcatraz pfctl -t bar -v -T show
+	atf_check -s exit:0 -o match:"-pa---C[[:space:]]+bar" \
+	    -o match:"-pa----[[:space:]]+foo" jexec alcatraz pfctl -vsT
 }
 
 show_no_counters_cleanup()

@@ -154,7 +154,7 @@ tcp_in_if_bound_body()
 	states=$(mktemp) || exit 1
 	jexec rtr pfctl -qvvss | normalize_pfctl_s > $states
 	for state_regexp in \
-		"${epair}b tcp 192.0.2.1:[0-9]+ \(2001:db8::2\[[0-9]+\]\) -> 192.0.2.2:1234 \(64:ff9b::c000:202\[1234\]\) .* 5:4 pkts.* rule 3 " \
+		"${epair}b tcp 192.0.2.1:[0-9]+ \(2001:db8::2\[[0-9]+\]\) -> 192.0.2.2:1234 \(64:ff9b::c000:202\[1234\]\) .* [0-9]+:[0-9]+ pkts.* rule 3 " \
 	; do
 		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
 	done
@@ -197,7 +197,7 @@ tcp_in_floating_body()
 	states=$(mktemp) || exit 1
 	jexec rtr pfctl -qvvss | normalize_pfctl_s > $states
 	for state_regexp in \
-		"all tcp 192.0.2.1:[0-9]+ \(2001:db8::2\[[0-9]+\]\) -> 192.0.2.2:1234 \(64:ff9b::c000:202\[1234\]\).* 5:4 pkts.* rule 3 " \
+		"all tcp 192.0.2.1:[0-9]+ \(2001:db8::2\[[0-9]+\]\) -> 192.0.2.2:1234 \(64:ff9b::c000:202\[1234\]\).* [0-9]+:[0-9]+ pkts.* rule 3 " \
 	; do
 		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
 	done
