@@ -1441,11 +1441,12 @@ carp_demotion_body()
 	atf_check -o inline:"100\n" jexec one sysctl -n net.inet.carp.demotion
 	atf_check -o ignore jexec one sysctl net.pfsync.carp_demotion_factor=240
 	atf_check -o inline:"240\n" jexec one sysctl -n net.inet.carp.demotion
-	atf_check -s not-exit:0 -e ignore \
+	atf_check -s not-exit:0 -o ignore -e ignore \
 	    jexec one sysctl net.pfsync.carp_demotion_factor=-1
 
-	# The failed bulk update ends the demotion.
-	pfsynct_wait_demotion one 0 40
+	# The failed bulk update ends the demotion (12 requests 2 s apart,
+	# after up to 30 s waiting for the link; slow on an emulated VM).
+	pfsynct_wait_demotion one 0 90
 
 	# Destroying a demoted pfsync0 removes its demotion.
 	jexec one ifconfig pfsync0 down
@@ -1462,27 +1463,61 @@ carp_demotion_body()
 	atf_check -o inline:"0\n" jexec one sysctl -n net.inet.carp.demotion
 
 	# A peer answers: the bulk update completes and the demotion ends
-	# well before the request retries would run out.
+	# well before the request retries would run out.  A peer with no
+	# states sends only a bulk end, which OpenBSD ignores until the
+	# start, so give "two" a state to send.
+	jexec two ifconfig lo0 127.0.0.1/8 up
+	pft_set_rules two \
+		"set skip on ${epair_sync}b" \
+		"set timeout icmp.first 600" \
+		"pass"
+	atf_check -o ignore jexec two ping -c 1 127.0.0.1
 	pfsynct_mkif two
 	jexec two ifconfig pfsync0 syncdev ${epair_sync}b up
 	jexec one ifconfig pfsync0 up
 	pfsynct_wait_demotion one 0 10
 
-	# The sync link going down demotes; coming back up undoes it.
-	jexec one ifconfig ${epair_sync}a down
+	# The sync link going down demotes; coming back up undoes it.  An
+	# epair's link stays up when it is configured down (OpenBSD's pair
+	# reports it down), so the link is a tap's, up while its device is
+	# open.  Nobody answers on the tap: wait out the bulk update first.
+	jexec one ifconfig pfsync0 destroy
+	tap=$(ifconfig tap create)
+	list_interface ${tap}
+	ifconfig ${tap} vnet one
+	jexec one ifconfig ${tap} 192.0.2.1/24 up
+	carp_demotion_tap_open ${tap}
+	pfsynct_mkif one
+	jexec one ifconfig pfsync0 syncdev ${tap} up
+	pfsynct_wait_demotion one 0 90
+	carp_demotion_tap_close
 	pfsynct_wait_demotion one 240 5
-	jexec one ifconfig ${epair_sync}a up
+	carp_demotion_tap_open ${tap}
 	pfsynct_wait_demotion one 0 5
 
 	# Destroy with the link down leaves nothing behind either.
-	jexec one ifconfig ${epair_sync}a down
+	carp_demotion_tap_close
 	pfsynct_wait_demotion one 240 5
 	jexec one ifconfig pfsync0 destroy
 	atf_check -o inline:"0\n" jexec one sysctl -n net.inet.carp.demotion
 }
 
+# A tap's link is up while a process holds its device open.
+carp_demotion_tap_open()
+{
+	daemon -p carp_demotion_tap.pid sh -c "exec 3<>/dev/$1; sleep 600"
+	sleep 1
+}
+
+carp_demotion_tap_close()
+{
+	kill $(cat carp_demotion_tap.pid)
+	rm -f carp_demotion_tap.pid
+}
+
 carp_demotion_cleanup()
 {
+	[ -f carp_demotion_tap.pid ] && kill $(cat carp_demotion_tap.pid)
 	pfsynct_cleanup
 }
 
