@@ -47,7 +47,10 @@ The OpenBSD sources are compiled almost unchanged.
 vendor file and maps OpenBSD's kernel interfaces (mutexes, rwlocks, SMR,
 pools, timeouts, tasks, mbuf and interface helpers) onto FreeBSD's.
 `pf_freebsd.c` attaches pf to pfil(9) per VNET and dispatches the
-`/dev/pf` ioctls. Where the layer cannot express a difference, the vendor
+`/dev/pf` ioctls. A packet pf refuses is reported to pfil as
+`PFIL_DROPPED` (the sender gets `EACCES`, and pfil counts the drop), and
+a passed packet pf took over (dummynet, divert, route-to, af-to) as
+`PFIL_CONSUMED`. Where the layer cannot express a difference, the vendor
 file has a one-line edit with a marker comment:
 
 | Marker | Meaning |
@@ -92,6 +95,7 @@ goes in its own file in `sys/netpfil/openbsd-pf` (`pf_dummynet.c`,
 |---|---|
 | Routing domains (`rdomain`, `rtable`) built on FIBs; `SO_RTABLE` | `sys/net`, `sbin/ifconfig`, `sbin/route` (see [Routing Domains](rdomains.md)) |
 | Loopback MTU 32768 and LRO/TSO on lo(4) | `sys/net/if_loop.c` |
+| A looped-back packet keeps pf's packet tag (`PACKET_TAG_PF`), as OpenBSD's loopback keeps `pkthdr_pf`; other non-persistent tags are still removed | `sys/net/if_loop.c` (`if_simloop()`) |
 | vether(4) | `sys/net` |
 | "egress" interface group from the default routes of FIB 0, per VNET | `sys/net/if_egress.c` |
 | ifconfig status in OpenBSD's format; `nd6 options` only with `-v` | `sbin/ifconfig` |
