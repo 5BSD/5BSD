@@ -7471,7 +7471,9 @@ pf_routable_ifp(struct pf_addr *addr, sa_family_t af, struct pfi_kif *kif,
 		/* Perform uRPF check if passed input interface */
 		ret = 0;
 		do {
-			if (rt->rt_ifidx == pifp->if_index) {	/* 5BSD: names */
+			/* 5BSD: names; rt_aifidx for local addresses (lo0) */
+			if (rt->rt_ifidx == pifp->if_index ||
+			    rt->rt_aifidx == pifp->if_index) {
 				ret = 1;
 #if NCARP > 0
 			} else {

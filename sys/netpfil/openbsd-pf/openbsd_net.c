@@ -77,6 +77,12 @@ obsd_rt_from_nh(struct nhop_object *nh)
 	rt->rt_nh = nh;
 	rt->rt_ifa = nh->nh_ifa;
 	rt->rt_ifidx = nh->nh_ifp != NULL ? nh->nh_ifp->if_index : 0;
+	/*
+	 * A route to a local address leaves through lo0 here; OpenBSD's
+	 * (RTF_LOCAL) names the interface that has the address (uRPF).
+	 */
+	rt->rt_aifidx = nh->nh_aifp != NULL ? nh->nh_aifp->if_index :
+	    rt->rt_ifidx;
 	rt->rt_flags = OBSD_RTF_UP;
 	if (nh->nh_flags & NHF_GATEWAY)
 		rt->rt_flags |= OBSD_RTF_GATEWAY;

@@ -1177,6 +1177,7 @@ struct obsd_rtentry {
 	struct nhop_object	*rt_nh;
 	struct ifaddr		*rt_ifa;
 	u_int			 rt_ifidx;
+	u_int			 rt_aifidx;	/* interface of the address */
 	u_int			 rt_flags;
 	u_int16_t		 rt_labelid;
 	struct sockaddr_storage	 rt_gwbuf;
