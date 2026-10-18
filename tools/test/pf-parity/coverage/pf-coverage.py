@@ -2,8 +2,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Live function coverage of OpenBSD PF on 5BSD, measured with DTrace.
 
-  pf-coverage.py run   HOST OUT.json SUITE...   run kyua SUITEs on HOST under
+  pf-coverage.py run   HOST OUT.json [--skip A.json,B.json] SUITE...
+                                                run kyua SUITEs on HOST under
                                                 DTrace fbt and save the counts
+                                                (--skip: no probes on functions
+                                                these runs saw; merge them)
   pf-coverage.py boot  HOST OUT.json            count the functions run while
                                                 HOST boots (anonymous DTrace:
                                                 pf.ko's load and attach code)
@@ -70,11 +73,23 @@ def universe():
     return funcs
 
 
-def run(host, out, suites):
+def run(host, out, suites, skip=None):
     funcs = universe()
     kfuncs = sorted({n for (m, n) in funcs if m == 'kernel'})
-    # One clause for pf.ko, one per kernel function (fbt:kernel:NAME:entry).
-    clauses = ['fbt:pf::entry { @c["pf", probefunc] = count(); }']
+    if skip:
+        # Probe only what earlier runs did not see: the functions they saw
+        # include the hot ones, whose probes make an emulated guest crawl.
+        kfuncs = [n for n in kfuncs if 'kernel:' + n not in skip]
+        pfuncs = sorted({n for (m, n) in funcs
+                         if m == 'pf' and 'pf:' + n not in skip})
+        clauses = []
+        for i in range(0, len(pfuncs), 50):
+            probes = ','.join('fbt:pf:%s:entry' % n
+                              for n in pfuncs[i:i + 50])
+            clauses.append(probes + ' { @c["pf", probefunc] = count(); }')
+    else:
+        # One clause for pf.ko, one per kernel function.
+        clauses = ['fbt:pf::entry { @c["pf", probefunc] = count(); }']
     for i in range(0, len(kfuncs), 50):
         probes = ','.join('fbt:kernel:%s:entry' % n for n in kfuncs[i:i + 50])
         clauses.append(probes + ' { @c["kernel", probefunc] = count(); }')
@@ -288,7 +303,14 @@ def main():
         sys.exit(__doc__)
     cmd = sys.argv[1]
     if cmd == 'run':
-        run(sys.argv[2], sys.argv[3], sys.argv[4:])
+        args = sys.argv[4:]
+        skip = set()
+        if args[:1] == ['--skip']:
+            for p in args[1].split(','):
+                skip |= {k for k, v in json.load(open(p))['counts'].items()
+                         if v}
+            args = args[2:]
+        run(sys.argv[2], sys.argv[3], args, skip)
     elif cmd == 'boot':
         boot(sys.argv[2], sys.argv[3])
     elif cmd == 'merge':
