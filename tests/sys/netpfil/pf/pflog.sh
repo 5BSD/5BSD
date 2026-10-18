@@ -71,8 +71,11 @@ malformed_body()
 	    --send-nop \
 	    --recvif ${epair}b
 
-	atf_check -o match:".*rule 0/\(ip-option\) block in on ${epair}a: 192.0.2.1 > 192.0.2.2: icmp: echo request.*" \
-	    cat pflog.txt
+	# 5BSD: OpenBSD pf accepts NOP-only IPv4 options (pf_walk_option());
+	# FreeBSD's pf dropped any option.  The NOP-padded echo request is
+	# passed and logged as such.
+	atf_check -o match:".*rule 0/\(match\) pass in on ${epair}a: 192.0.2.1 > 192.0.2.2: icmp: echo request.*" \
+	    -o not-match:"ip-option" cat pflog.txt
 }
 
 malformed_cleanup()
@@ -190,8 +193,9 @@ matches_logif_body()
 	    cat pflog1.txt
 	atf_check -o match:".*rule 2/\(match\) pass in on ${epair}a: 192.0.2.2 > 192.0.2.1: icmp: echo request.*" \
 	    cat pflog0.txt
-	atf_check -s exit:1 -o empty \
-	    grep "rule 1/" pflog1.txt
+	# ... including rule 1, logged to its own pflog0 as well.
+	atf_check -o match:".*rule 1/\(match\) match in on ${epair}a: 192.0.2.2 > 192.0.2.1: icmp: echo request.*" \
+	    cat pflog1.txt
 }
 
 matches_logif_cleanup()
@@ -303,7 +307,7 @@ unspecified_v4_body()
 	atf_check -s not-exit:0 -o ignore -e ignore \
 	    jexec alcatraz ping -S 127.0.0.1 -c 1 0.0.0.0
 
-	atf_check -o match:".*: block out on lo0: 127.0.0.1 > 0.0.0.0: icmp: echo request.*" \
+	atf_check -o match:".* block out on lo0: 127.0.0.1 > 0.0.0.0: icmp: echo request.*" \
 	    cat pflog.txt
 }
 
@@ -338,7 +342,7 @@ unspecified_v6_body()
 	    jexec alcatraz ping -6 -S ::1 -c 1 ::0
 
 	cat pflog.txt
-	atf_check -o match:".*: block out on lo0: ::1 > ::: icmp6: echo request.*" \
+	atf_check -o match:".* block out on lo0: ::1 > ::: icmp6: echo request.*" \
 	    cat pflog.txt
 }
 
