@@ -4,6 +4,9 @@
 
   pf-coverage.py run   HOST OUT.json SUITE...   run kyua SUITEs on HOST under
                                                 DTrace fbt and save the counts
+  pf-coverage.py boot  HOST OUT.json            count the functions run while
+                                                HOST boots (anonymous DTrace:
+                                                pf.ko's load and attach code)
   pf-coverage.py merge OUT.json IN.json...      union of several runs
   pf-coverage.py report COV.json [--md FILE]    covered/uncovered per file
 
@@ -107,6 +110,25 @@ def run(host, out, suites):
                'kyua': report.strip(), 'probes': sorted(set(probes)),
                'counts': counts}, open(out, 'w'), indent=1)
     print('saved %s: %d functions hit' % (out, len(counts)))
+
+
+def boot(host, out):
+    """Functions pf runs while it loads, before a consumer can attach."""
+    sh(host, "dtrace -A -q -n 'fbt:pf::entry { @c[\"pf\", probefunc] = "
+       "count(); }' >/dev/null && shutdown -r now", check=False)
+    time.sleep(90)
+    while sh(host, 'true').returncode != 0:
+        time.sleep(30)
+    raw = sh(host, 'dtrace -a -q -e 2>/dev/null; rm -f /boot/dtrace.dof',
+             capture_output=True).stdout
+    counts = {}
+    for line in raw.splitlines():
+        m = re.match(r'\s*(pf|kernel)\s+(\S+)\s+(\d+)\s*$', line)
+        if m:
+            counts['%s:%s' % (m.group(1), m.group(2))] = int(m.group(3))
+    json.dump({'suites': ['boot'], 'seconds': 0, 'kyua': '', 'probes': [],
+               'counts': counts}, open(out, 'w'), indent=1)
+    print('saved %s: %d functions run at boot' % (out, len(counts)))
 
 
 def merge(out, ins):
@@ -267,6 +289,8 @@ def main():
     cmd = sys.argv[1]
     if cmd == 'run':
         run(sys.argv[2], sys.argv[3], sys.argv[4:])
+    elif cmd == 'boot':
+        boot(sys.argv[2], sys.argv[3])
     elif cmd == 'merge':
         merge(sys.argv[2], sys.argv[3:])
     elif cmd == 'report':
