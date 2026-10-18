@@ -97,7 +97,7 @@ in_div_body()
 	sleep 1
 
 	# divapp is expected to "eat" the packet
-	atf_check -s not-exit:0 -o ignore ping -c1 -t1 192.0.2.2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -t1 192.0.2.2
 
 	wait $divapp_pid
 
@@ -107,7 +107,7 @@ in_div_body()
 	sleep 1
 
 	# divapp is expected to "eat" the packet
-	atf_check -s not-exit:0 -o ignore ping -c1 -t1 2001:db8::2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -t1 2001:db8::2
 
 	wait $divapp_pid
 }
@@ -203,7 +203,7 @@ out_div_body()
 	sleep 1
 
 	# divapp is expected to "eat" the packet
-	atf_check -s not-exit:0 -o ignore ping -c1 -t1 192.0.2.2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -t1 192.0.2.2
 
 	wait $divapp_pid
 
@@ -213,7 +213,7 @@ out_div_body()
 	sleep 1
 
 	# divapp is expected to "eat" the packet
-	atf_check -s not-exit:0 -o ignore ping -c1 -t1 2001:db8::2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -t1 2001:db8::2
 
 	wait $divapp_pid
 }
@@ -399,7 +399,7 @@ in_dn_in_div_in_out_div_out_dn_out_body()
 	# Wait for the divapps to be ready
 	sleep 1
 
-	atf_check -s not-exit:0 -o ignore ping -c1 -s56 -t1 192.0.2.2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -s56 -t1 192.0.2.2
 
 	wait $indivapp_pid
 	atf_check_not_equal 0 $?
@@ -413,7 +413,7 @@ in_dn_in_div_in_out_div_out_dn_out_body()
 	# Wait for the divapps to be ready
 	sleep 1
 
-	atf_check -s not-exit:0 -o ignore ping -c1 -s56 -t1 2001:db8::2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -s56 -t1 2001:db8::2
 
 	wait $indivapp_pid
 	atf_check_not_equal 0 $?

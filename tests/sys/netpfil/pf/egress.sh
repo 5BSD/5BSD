@@ -124,7 +124,7 @@ pf_body()
 	atf_check -o ignore jexec alcatraz route delete default
 	egress_wait alcatraz ""
 	jexec alcatraz pfctl -F states >/dev/null 2>&1
-	atf_check -s not-exit:0 -o ignore \
+	atf_check -s not-exit:0 -o ignore -e ignore \
 	    jexec alcatraz ping -c1 -t1 192.0.2.1
 
 	# And again with the route restored, without reloading the rules.

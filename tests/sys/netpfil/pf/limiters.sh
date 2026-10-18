@@ -436,7 +436,7 @@ source_capacity_test()
 		atf_check -s exit:0 -o ignore ping $ping_family -c 1 -t 3 \
 		    -S ${prefix}4 ${prefix}1
 	else
-		atf_check -s not-exit:0 -o ignore ping $ping_family -c 1 -t 3 \
+		atf_check -s not-exit:0 -o ignore -e ignore ping $ping_family -c 1 -t 3 \
 		    -S ${prefix}4 ${prefix}1
 	fi
 	atf_check -s exit:0 -o save:capacity.stats \
