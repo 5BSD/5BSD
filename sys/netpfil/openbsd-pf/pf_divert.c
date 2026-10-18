@@ -210,6 +210,9 @@ pfdiv_cksum4(struct mbuf **mp, int inbound)
 		*(u_short *)(mtod(m, caddr_t) + off + m->m_pkthdr.csum_data) =
 		    in_pseudo(ip->ip_src.s_addr, ip->ip_dst.s_addr,
 		    htons(ip->ip_p + len - off));
+		/* in_delayed_cksum() sends a UDP sum of 0 as 0xffff only so. */
+		if (ip->ip_p == IPPROTO_UDP)
+			m->m_pkthdr.csum_flags |= CSUM_UDP;
 		in_delayed_cksum(m);
 	}
 	m->m_pkthdr.csum_flags &= ~(CSUM_DELAY_DATA | CSUM_DATA_VALID |
@@ -270,11 +273,14 @@ pfdiv_send4(struct socket *so, struct mbuf *m, struct sockaddr_in *sin)
 		return (error);
 	}
 
-	/* Inbound: received on the interface that has the address. */
+	/*
+	 * Inbound: received on the interface that has the address, in the
+	 * socket's routing domain (OpenBSD: ifa_ifwithaddr(sa, rtableid)).
+	 */
 	NET_EPOCH_ENTER(et);
-	ifa = ifa_ifwithaddr((struct sockaddr *)&(struct sockaddr_in){
+	ifa = ifa_ifwithaddr_fib((struct sockaddr *)&(struct sockaddr_in){
 	    .sin_len = sizeof(struct sockaddr_in), .sin_family = AF_INET,
-	    .sin_addr = sin->sin_addr });
+	    .sin_addr = sin->sin_addr }, rt_fib_scope(so->so_fibnum));
 	if (ifa == NULL) {
 		NET_EPOCH_EXIT(et);
 		m_freem(m);
@@ -299,9 +305,25 @@ pfdiv_cksum6(struct mbuf **mp)
 	u_short *sum;
 	u_short csum;
 
-	off = ip6_lasthdr(m, 0, IPPROTO_IPV6, &nxt);
-	if (off < 0)
-		return (0);
+	/*
+	 * As ip6_lasthdr(), but a fragment has no whole transport header to
+	 * fix: ip6_nexthdr() walks past the header of a first fragment.
+	 */
+	off = 0;
+	nxt = IPPROTO_IPV6;
+	for (;;) {
+		int noff, nnxt = -1;
+
+		if (nxt == IPPROTO_FRAGMENT)
+			return (0);
+		noff = ip6_nexthdr(m, off, nxt, &nnxt);
+		if (noff < 0)
+			break;		/* off is the last header */
+		if (noff <= off)
+			return (0);
+		off = noff;
+		nxt = nnxt;
+	}
 	len = sizeof(*ip6) + ntohs(ip6->ip6_plen) - off;
 	switch (nxt) {
 	case IPPROTO_TCP:
@@ -387,7 +409,8 @@ pfdiv_send6(struct socket *so, struct mbuf *m, struct sockaddr_in6 *sin6)
 		return (EINVAL);
 	}
 	NET_EPOCH_ENTER(et);
-	ifa = ifa_ifwithaddr((struct sockaddr *)&a);
+	ifa = ifa_ifwithaddr_fib((struct sockaddr *)&a,
+	    rt_fib_scope(so->so_fibnum));	/* the socket's routing domain */
 	if (ifa == NULL) {
 		NET_EPOCH_EXIT(et);
 		m_freem(m);
