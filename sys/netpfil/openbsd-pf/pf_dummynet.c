@@ -214,16 +214,73 @@ pf_dn_ip_hdr_cksum(struct mbuf *m)
 	ip->ip_sum = in_cksum_hdr(ip);
 }
 
-/* pf_route(): the nested outbound pf_test() keeps its pipe for us. */
+/*
+ * The pipe or queue for this packet from its state (or, for a stateless
+ * pass, the actions of the rules that matched): 0 if none.
+ */
+static u_int16_t
+pf_dn_select(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
+    int *ispipe)
+{
+	struct pf_rule *dr = r;
+	u_int16_t pipe, rpipe, sel = 0;
+	u_int8_t flags;
+	int dndir;
+
+	*ispipe = 0;
+	if (st != NULL) {
+		pipe = st->dnpipe;
+		rpipe = st->dnrpipe;
+		flags = st->dnflags;
+		if (st->rule.ptr != NULL)
+			dr = st->rule.ptr;
+	} else if (pd->dn_rule != NULL) {
+		pipe = pd->dn_pipe;
+		rpipe = pd->dn_rpipe;
+		flags = pd->dn_flags;
+		dr = pd->dn_rule;
+	} else if (r != NULL) {
+		pipe = r->dn.pipe;
+		rpipe = r->dn.rpipe;
+		flags = r->dn.flags;
+	} else
+		return (0);
+	if (pipe != 0 || rpipe != 0) {
+		dndir = dr->direction;
+		if (dndir == PF_INOUT)
+			dndir = (st != NULL) ? st->direction : pd->dir;
+		if (pd->dir != dndir && rpipe != 0)
+			sel = rpipe;
+		else if (pd->dir == dndir && pipe != 0)
+			sel = pipe;
+		*ispipe = (flags & PF_DN_IS_PIPE) != 0;
+	}
+	return (sel);
+}
+
+/*
+ * pf_route(): the nested outbound pf_test() keeps its pipe for us, and
+ * this state's pipe is kept for whichever route-to path sends the packet
+ * (the nested test's own route-to may send it).
+ */
 void
-pf_dn_routing(struct mbuf *m, int on)
+pf_dn_routing(struct pf_pdesc *pd, struct pf_state *st, struct mbuf *m,
+    int on)
 {
 	struct pkthdr_pf *t;
+	u_int16_t sel;
+	int ispipe;
 
 	if (on) {
 		if ((t = PF_MTAG_W(m)) != NULL) {
 			t->dn_flags |= PF_DN_TAG_ROUTING;
 			t->dn_dflags = 0;
+			if ((t->dn_flags & PF_DN_TAG_DONE) == 0 &&
+			    (sel = pf_dn_select(pd, st, NULL, &ispipe)) != 0) {
+				t->dn_dpipe = sel;
+				t->dn_dflags = PF_DN_DEFER_SET |
+				    (ispipe ? PF_DN_DEFER_PIPE : 0);
+			}
 		}
 	} else if (PF_MTAG_R(m)->dn_flags & PF_DN_TAG_ROUTING)
 		PF_MTAG_W(m)->dn_flags &= ~PF_DN_TAG_ROUTING;
@@ -249,41 +306,14 @@ pf_dn_output(struct pf_pdesc *pd, struct pf_state *st, struct pf_rule *r,
 	struct pf_state_key *sk = NULL;
 	struct pf_addr *srca = pd->src, *dsta = pd->dst;
 	struct pkthdr_pf *t;
-	struct pf_rule *dr = r;
-	u_int16_t pipe, rpipe, sel = 0;
-	u_int8_t flags;
+	u_int16_t sel;
 	sa_family_t af;
-	int dndir, ispipe = 0;
+	int ispipe;
 
 	if (PF_MTAG_R(*m0)->dn_flags & PF_DN_TAG_DONE)
 		return (0);
 
-	if (st != NULL) {
-		pipe = st->dnpipe;
-		rpipe = st->dnrpipe;
-		flags = st->dnflags;
-		if (st->rule.ptr != NULL)
-			dr = st->rule.ptr;
-	} else if (pd->dn_rule != NULL) {
-		pipe = pd->dn_pipe;
-		rpipe = pd->dn_rpipe;
-		flags = pd->dn_flags;
-		dr = pd->dn_rule;
-	} else {
-		pipe = r->dn.pipe;
-		rpipe = r->dn.rpipe;
-		flags = r->dn.flags;
-	}
-	if (pipe != 0 || rpipe != 0) {
-		dndir = dr->direction;
-		if (dndir == PF_INOUT)
-			dndir = (st != NULL) ? st->direction : pd->dir;
-		if (pd->dir != dndir && rpipe != 0)
-			sel = rpipe;
-		else if (pd->dir == dndir && pipe != 0)
-			sel = pipe;
-		ispipe = (flags & PF_DN_IS_PIPE) != 0;
-	}
+	sel = pf_dn_select(pd, st, r, &ispipe);
 	/* route-to: the pipe the outbound pf_test() chose, if ours is none. */
 	if (ifp != NULL && (PF_MTAG_R(*m0)->dn_dflags & PF_DN_DEFER_SET)) {
 		if (sel == 0) {

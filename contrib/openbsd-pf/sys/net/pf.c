@@ -7646,12 +7646,12 @@ pf_route(struct pf_pdesc *pd, struct pf_state *st)
 		ip->ip_src = ifatoia(rt->rt_ifa)->ia_addr.sin_addr;
 
 	if (st->rt != PF_DUPTO && pd->dir == PF_IN) {
-		pf_dn_routing(m0, 1);	/* 5BSD: dummynet */
+		pf_dn_routing(pd, st, m0, 1);	/* 5BSD: dummynet */
 		if (pf_test(AF_INET, PF_OUT, ifp, &m0) != PF_PASS)
 			goto bad;
 		else if (m0 == NULL)
 			goto done;
-		pf_dn_routing(m0, 0);	/* 5BSD: dummynet */
+		pf_dn_routing(pd, st, m0, 0);	/* 5BSD: dummynet */
 		if (m0->m_len < sizeof(struct ip)) {
 			DPFPRINTF(LOG_ERR,
 			    "%s: m0->m_len < sizeof(struct ip)", __func__);
@@ -7773,12 +7773,12 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 		ip6->ip6_src = ifatoia6(rt->rt_ifa)->ia_addr.sin6_addr;
 
 	if (st->rt != PF_DUPTO && pd->dir == PF_IN) {
-		pf_dn_routing(m0, 1);	/* 5BSD: dummynet */
+		pf_dn_routing(pd, st, m0, 1);	/* 5BSD: dummynet */
 		if (pf_test(AF_INET6, PF_OUT, ifp, &m0) != PF_PASS)
 			goto bad;
 		else if (m0 == NULL)
 			goto done;
-		pf_dn_routing(m0, 0);	/* 5BSD: dummynet */
+		pf_dn_routing(pd, st, m0, 0);	/* 5BSD: dummynet */
 		if (m0->m_len < sizeof(struct ip6_hdr)) {
 			DPFPRINTF(LOG_ERR,
 			    "%s: m0->m_len < sizeof(struct ip6_hdr)", __func__);
