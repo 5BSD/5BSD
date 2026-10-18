@@ -413,6 +413,28 @@ pfi_attach_ifnet_cond(struct ifnet *ifp, int existing)
 	if_addrhook_add(ifp, t);
 	kif->pfik_ah_cookie = t;
 
+	/*
+	 * 5BSD: an interface that arrives in its groups (moved into this
+	 * vnet, or created before pf) skips as they do: pfi_xcommit() does
+	 * this for interfaces joining a group ("set skip on epair").
+	 */
+	{
+		struct epoch_tracker et;
+		struct ifg_list *g;
+		struct pfi_kif *gkif;
+
+		NET_EPOCH_ENTER(et);
+		CK_STAILQ_FOREACH(g, &ifp->if_groups, ifgl_next) {
+			gkif = (struct pfi_kif *)g->ifgl_group->ifg_pf_kif;
+			if (gkif != NULL &&
+			    ISSET(gkif->pfik_flags, PFI_IFLAG_SKIP)) {
+				SET(kif->pfik_flags, PFI_IFLAG_SKIP);
+				SET(kif->pfik_flags_new, PFI_IFLAG_SKIP);
+			}
+		}
+		NET_EPOCH_EXIT(et);
+	}
+
 	pfi_kif_update(kif);
 	PF_UNLOCK();
 }
