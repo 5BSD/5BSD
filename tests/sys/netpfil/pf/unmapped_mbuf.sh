@@ -78,9 +78,9 @@ v6_body() {
 
 	l=$(vnet_mkepair)
 	vnet_mkjail a ${l}a
-	jexec a ifconfig ${l}a inet6 2001:db8::1/64 up
+	jexec a ifconfig ${l}a inet6 2001:db8::1/64 up no_dad
 	vnet_mkjail b ${l}b
-	jexec b ifconfig ${l}b inet6 2001:db8::2/64 up
+	jexec b ifconfig ${l}b inet6 2001:db8::2/64 up no_dad
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore jexec a ping -c 1 2001:db8::2

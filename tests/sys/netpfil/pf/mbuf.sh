@@ -105,10 +105,13 @@ inet6_in_mbuf_len_body()
 	epair=$(vnet_mkepair)
 	ifconfig ${epair}a inet6 2001:db8::1/64 up no_dad
 
-	# Ensure we don't unintentionally send MLD packets to alcatraz
+	# Ensure we don't unintentionally send MLD packets to alcatraz.
+	# OpenBSD pf: a neighbor advertisement does not match the
+	# solicitation's state, so ND is passed in as well.
 	pfctl -e
 	echo "block
 	pass out inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv, echoreq, echorep }
+	pass in inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }
 	" | pfctl -g -f -
 
 	# Set up a simple jail with one interface
