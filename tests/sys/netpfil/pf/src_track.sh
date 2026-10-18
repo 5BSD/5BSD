@@ -53,14 +53,14 @@ source_track_body()
 
 	ping -c 3 192.0.2.1
 	atf_check -s exit:0 -o match:'192.0.2.2 \( states 1,.*' \
-	    jexec alcatraz pfctl -sS
+	    jexec alcatraz pfctl -s Sources
 
 	# Flush all source nodes
 	jexec alcatraz pfctl -FS
 
 	# We can't find the previous source node any more
 	atf_check -s exit:0 -o not-match:'192.0.2.2 \( states 1,.*' \
-	    jexec alcatraz pfctl -sS
+	    jexec alcatraz pfctl -s Sources
 
 	# But we still have the state
 	atf_check -s exit:0 -o match:'all icmp 192.0.2.1:8 <- 192.0.2.2:.*' \
@@ -104,23 +104,23 @@ kill_body()
 
 	# Check that both source nodes exist
 	atf_check -s exit:0 -o match:'192.0.2.2 \( states 1,.*' \
-	    jexec alcatraz pfctl -sS
+	    jexec alcatraz pfctl -s Sources
 	atf_check -s exit:0 -o match:'192.0.2.3 \( states 1,.*' \
-	    jexec alcatraz pfctl -sS
+	    jexec alcatraz pfctl -s Sources
 
 
-jexec alcatraz pfctl -sS
+jexec alcatraz pfctl -s Sources
 
 	# Kill the 192.0.2.2 source
 	jexec alcatraz pfctl -K 192.0.2.2
 
 	# The other source still exists
 	atf_check -s exit:0 -o match:'192.0.2.3 \( states 1,.*' \
-	    jexec alcatraz pfctl -sS
+	    jexec alcatraz pfctl -s Sources
 
 	# But not the one we killed
 	atf_check -s exit:0 -o not-match:'192.0.2.2 \( states 1,.*' \
-	    jexec alcatraz pfctl -sS
+	    jexec alcatraz pfctl -s Sources
 }
 
 kill_cleanup()
@@ -370,7 +370,7 @@ sn_types_pass_body()
 	echo " === end === "
 
 	# OpenBSD pfctl -ss prints the route-to address as "{addr}" and only
-	# whether a state has source nodes ("source-track"); pfctl -sS prints
+	# whether a state has source nodes ("source-track"); pfctl -s Sources prints
 	# each node's type through its translation address ("route-to addr",
 	# "rdr-to addr", none for a limit node) and its rule.
 	# Order of states in output is not guaranteed, find each one separately.

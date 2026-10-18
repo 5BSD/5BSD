@@ -962,7 +962,7 @@ st_states_reader()
 {
 	case $((st_i % 4)) in
 	0)	jexec stfw pfctl -ss -v ;;
-	1)	jexec stfw pfctl -sS ;;
+	1)	jexec stfw pfctl -s Sources ;;
 	2)	jexec stfw pfctl -si ;;
 	3)	jexec stfw pfctl -t bad -T show ;;
 	esac > /dev/null
