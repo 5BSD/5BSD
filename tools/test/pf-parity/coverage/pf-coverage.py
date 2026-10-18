@@ -156,6 +156,48 @@ def changed_stack_funcs():
     return names
 
 
+# Functions RB_GENERATE() emits, and the tree macros that reach each.
+RB_OPS = {
+    'INSERT': ['INSERT', 'INSERT_NEXT', 'INSERT_PREV'],
+    'INSERT_COLOR': ['INSERT', 'INSERT_NEXT', 'INSERT_PREV'],
+    'INSERT_FINISH': ['INSERT', 'INSERT_NEXT', 'INSERT_PREV'],
+    'INSERT_NEXT': ['INSERT_NEXT'], 'INSERT_PREV': ['INSERT_PREV'],
+    'REMOVE': ['REMOVE', 'REINSERT'], 'REMOVE_COLOR': ['REMOVE', 'REINSERT'],
+    'REINSERT': ['REINSERT'], 'FIND': ['FIND'], 'NFIND': ['NFIND'],
+    'MINMAX': ['MIN', 'MAX', 'ROOT', 'FOREACH', 'FOREACH_SAFE',
+               'FOREACH_REVERSE', 'FOREACH_REVERSE_SAFE'],
+    'NEXT': ['NEXT', 'FOREACH', 'FOREACH_SAFE', 'FOREACH_FROM'],
+    'PREV': ['PREV', 'FOREACH_REVERSE', 'FOREACH_REVERSE_SAFE',
+             'FOREACH_REVERSE_FROM'],
+}
+
+
+def rb_unreachable(names):
+    """Generated tree functions whose operation pf's source never uses."""
+    out = subprocess.run(['grep', '-rhoE',
+                          r'\bRBT?_[A-Z_]+\([ ]*[a-z_0-9]+([ ]*,[ ]*[a-z_0-9]+)?',
+                          os.path.join(SRC, 'contrib/openbsd-pf/sys'),
+                          os.path.join(SRC, 'sys/netpfil/openbsd-pf')],
+                         text=True, capture_output=True).stdout
+    used = set()
+    for m in re.finditer(r'RBT?_([A-Z_]+)\( *([a-z_0-9]+)(?: *, *([a-z_0-9]+))?',
+                         out):
+        op = m.group(1)
+        # RB_FOREACH*(var, name, head): the tree is the second argument.
+        tree = m.group(3) if op.startswith('FOREACH') else m.group(2)
+        if tree:
+            used.add((tree, op))
+    dead = set()
+    for n in names:
+        m = re.match(r'^(.*)_RB_([A-Z_]+)$', n)
+        if not m or m.group(2) not in RB_OPS:
+            continue
+        tree, op = m.group(1), m.group(2)
+        if not any((tree, u) in used for u in RB_OPS[op]):
+            dead.add(n)
+    return dead
+
+
 def report(cov, md=None):
     d = json.load(open(cov))
     funcs = universe()
@@ -187,10 +229,12 @@ def report(cov, md=None):
     lines.append('')
     # The goal's scope: all of pf.ko, and the stack functions land/pf changed.
     scoped = changed_stack_funcs()
+    dead = rb_unreachable([n for (m, n) in funcs if m == 'pf'])
     sh_ = sm_ = 0
     unrun = []
     for (module, base), f in files.items():
-        keep = (lambda n: True) if module == 'pf' else (lambda n: n in scoped)
+        keep = (lambda n: n not in dead) if module == 'pf' else \
+            (lambda n: n in scoped)
         sh_ += sum(1 for n in f['hit'] if keep(n))
         miss = [n for n in f['miss'] if keep(n)]
         sm_ += len(miss)
@@ -200,6 +244,9 @@ def report(cov, md=None):
                  '%d of %d run (%d%%).' % (len(scoped), sh_, sh_ + sm_,
                                           100 * sh_ // max(1, sh_ + sm_)))
     lines.append('Changed stack functions not run: ' + ', '.join(sorted(unrun)))
+    lines.append('Excluded from the scope, %d generated tree functions whose '
+                 'operation pf never uses: %s' % (len(dead),
+                 ', '.join(sorted(dead))))
     lines.append('Total: %d of %d probed functions run (%d%%).' % (
         th, th + tm, 100 * th // max(1, th + tm)))
     text = '\n'.join(lines)
