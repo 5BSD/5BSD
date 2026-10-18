@@ -35,7 +35,11 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include <atf-c.h>
 
@@ -699,6 +703,176 @@ ATF_TC_CLEANUP(igetifaces, tc)
 	COMMON_CLEANUP();
 }
 
+/*
+ * 5BSD: the largest positive size asks for more than OpenBSD's malloc(9)
+ * allows (MALLOC_MAX): pf fails it instead of waiting for the memory with
+ * its ioctl lock held.
+ */
+ATF_TC_WITH_CLEANUP(igetifaces_huge);
+ATF_TC_HEAD(igetifaces_huge, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "pf");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+
+ATF_TC_BODY(igetifaces_huge, tc)
+{
+	struct pfioc_iface io;
+	struct pfi_kif kif;
+
+	COMMON_HEAD();
+
+	bzero(&io, sizeof(io));
+	io.pfiio_buffer = &kif;
+	io.pfiio_esize = sizeof(kif);
+	io.pfiio_size = 0x7fffffff;
+	ATF_CHECK_ERRNO(ENOMEM, ioctl(dev, DIOCIGETIFACES, &io) == -1);
+
+	/* pf still answers. */
+	io.pfiio_size = 1;
+	ATF_CHECK(ioctl(dev, DIOCIGETIFACES, &io) == 0);
+}
+
+ATF_TC_CLEANUP(igetifaces_huge, tc)
+{
+	COMMON_CLEANUP();
+}
+
+/* 5BSD: interface entries carry no kernel addresses. */
+ATF_TC_WITH_CLEANUP(igetifaces_noptrs);
+ATF_TC_HEAD(igetifaces_noptrs, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "pf");
+}
+
+ATF_TC_BODY(igetifaces_noptrs, tc)
+{
+	struct pfioc_iface io;
+	static struct pfi_kif kif[64];
+	static const struct pfi_kif zero_kif;
+	__typeof(zero_kif.pfik_tree) zero_tree = zero_kif.pfik_tree;
+	int i;
+
+	COMMON_HEAD();
+
+	memset(kif, 0xa5, sizeof(kif));
+	bzero(&io, sizeof(io));
+	io.pfiio_buffer = kif;
+	io.pfiio_esize = sizeof(kif[0]);
+	io.pfiio_size = nitems(kif);
+	ATF_REQUIRE(ioctl(dev, DIOCIGETIFACES, &io) == 0);
+	ATF_REQUIRE(io.pfiio_size > 0);	/* "all" at least */
+	for (i = 0; i < io.pfiio_size; i++) {
+		ATF_CHECK_MSG(kif[i].pfik_ifp == NULL,
+		    "%s: interface pointer", kif[i].pfik_name);
+		ATF_CHECK_MSG(kif[i].pfik_group == NULL,
+		    "%s: group pointer", kif[i].pfik_name);
+		ATF_CHECK_MSG(kif[i].pfik_ah_cookie == NULL,
+		    "%s: hook pointer", kif[i].pfik_name);
+		ATF_CHECK_MSG(memcmp(&kif[i].pfik_tree, &zero_tree,
+		    sizeof(zero_tree)) == 0, "%s: tree links",
+		    kif[i].pfik_name);
+		ATF_CHECK_MSG(kif[i].pfik_dynaddrs.tqh_first == NULL &&
+		    kif[i].pfik_dynaddrs.tqh_last == NULL,
+		    "%s: dynamic address list", kif[i].pfik_name);
+	}
+}
+
+ATF_TC_CLEANUP(igetifaces_noptrs, tc)
+{
+	COMMON_CLEANUP();
+}
+
+/* 5BSD: DIOCRGETASTATS entries have no stale padding. */
+ATF_TC_WITH_CLEANUP(getastats_padding);
+ATF_TC_HEAD(getastats_padding, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "pf");
+}
+
+ATF_TC_BODY(getastats_padding, tc)
+{
+	struct pfioc_table io;
+	struct pfr_astats as[4];
+	const unsigned char *p;
+	size_t off, end;
+	int i;
+
+	COMMON_HEAD();
+
+	if (system("pfctl -q -a valtest -t leak -T add 192.0.2.1 "
+	    "192.0.2.2 2001:db8::1") != 0)
+		atf_tc_fail("pfctl -T add failed");
+
+	memset(as, 0xa5, sizeof(as));
+	bzero(&io, sizeof(io));
+	strlcpy(io.pfrio_table.pfrt_anchor, "valtest",
+	    sizeof(io.pfrio_table.pfrt_anchor));
+	strlcpy(io.pfrio_table.pfrt_name, "leak",
+	    sizeof(io.pfrio_table.pfrt_name));
+	io.pfrio_buffer = as;
+	io.pfrio_esize = sizeof(as[0]);
+	io.pfrio_size = nitems(as);
+	ATF_REQUIRE(ioctl(dev, DIOCRGETASTATS, &io) == 0);
+	ATF_REQUIRE_EQ(io.pfrio_size, 3);
+
+	off = sizeof(as[0].pfras_a);
+	end = offsetof(struct pfr_astats, pfras_packets);
+	for (i = 0; i < io.pfrio_size; i++) {
+		p = (const unsigned char *)&as[i];
+		for (size_t b = off; b < end; b++)
+			ATF_CHECK_MSG(p[b] == 0, "entry %d byte %zu is %#x",
+			    i, b, p[b]);
+	}
+}
+
+ATF_TC_CLEANUP(getastats_padding, tc)
+{
+	system("pfctl -q -a valtest -t leak -T kill");
+	COMMON_CLEANUP();
+}
+
+/* 5BSD: a rule's dynamic address gives its count, not a kernel address. */
+ATF_TC_WITH_CLEANUP(getrule_dynaddr);
+ATF_TC_HEAD(getrule_dynaddr, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "pf");
+}
+
+ATF_TC_BODY(getrule_dynaddr, tc)
+{
+	static struct pfioc_rule pr;
+
+	COMMON_HEAD();
+
+	if (system("echo 'pass from (lo0) to any' | "
+	    "pfctl -q -a valtest -f -") != 0)
+		atf_tc_fail("pfctl -f failed");
+
+	bzero(&pr, sizeof(pr));
+	strlcpy(pr.anchor, "valtest", sizeof(pr.anchor));
+	ATF_REQUIRE(ioctl(dev, DIOCGETRULES, &pr) == 0);
+	ATF_REQUIRE_EQ(pr.nr, 1);
+	pr.nr = 0;
+	ATF_REQUIRE(ioctl(dev, DIOCGETRULE, &pr) == 0);
+	ATF_REQUIRE_EQ(pr.rule.src.addr.type, PF_ADDR_DYNIFTL);
+	/* The count overlays the pointer: nothing above it. */
+	ATF_CHECK_MSG((uintptr_t)pr.rule.src.addr.p.dyn ==
+	    (uintptr_t)(u_int)pr.rule.src.addr.p.dyncnt,
+	    "p.dyn %p, dyncnt %d", pr.rule.src.addr.p.dyn,
+	    pr.rule.src.addr.p.dyncnt);
+}
+
+ATF_TC_CLEANUP(getrule_dynaddr, tc)
+{
+	system("pfctl -q -a valtest -Fr");
+	COMMON_CLEANUP();
+}
+
 ATF_TC_WITH_CLEANUP(cxbegin);
 ATF_TC_HEAD(cxbegin, tc)
 {
@@ -1030,6 +1204,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, tstaddrs);
 	ATF_TP_ADD_TC(tp, inadefine);
 	ATF_TP_ADD_TC(tp, igetifaces);
+	ATF_TP_ADD_TC(tp, igetifaces_huge);
+	ATF_TP_ADD_TC(tp, igetifaces_noptrs);
+	ATF_TP_ADD_TC(tp, getastats_padding);
+	ATF_TP_ADD_TC(tp, getrule_dynaddr);
 	ATF_TP_ADD_TC(tp, cxbegin);
 	ATF_TP_ADD_TC(tp, cxrollback);
 	ATF_TP_ADD_TC(tp, commit);
