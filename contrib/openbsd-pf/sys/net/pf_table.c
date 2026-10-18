@@ -1443,6 +1443,7 @@ pfr_walktree(struct radix_node *rn, void *arg, u_int id)
 		if (w->pfrw_free-- > 0) {
 			struct pfr_astats as;
 
+			bzero(&as, sizeof(as));	/* 5BSD: padding */
 			pfr_copyout_addr(&as.pfras_a, ke);
 
 			if (ke->pfrke_counters) {

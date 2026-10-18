@@ -544,6 +544,13 @@ pfi_attach_ifgroup(struct ifg_group *ifg)
 	if ((kif = pfi_kif_get(ifg->ifg_group, NULL)) == NULL)
 		panic("%s: pfi_kif_get failed", __func__);
 
+	/*
+	 * 5BSD: a group of this name that is unlinked but not yet detached
+	 * (see pfi_detach_ifgroup()) gives the kif up; it is freed only after
+	 * its detach, which needs PF_LOCK.
+	 */
+	if (kif->pfik_group != NULL && kif->pfik_group != ifg)
+		kif->pfik_group->ifg_pf_kif = NULL;
 	kif->pfik_group = ifg;
 	ifg->ifg_pf_kif = (caddr_t)kif;
 	PF_UNLOCK();
@@ -554,15 +561,21 @@ pfi_detach_ifgroup(struct ifg_group *ifg)
 {
 	struct pfi_kif	*kif;
 
-	if ((kif = (struct pfi_kif *)ifg->ifg_pf_kif) == NULL)
-		return;
-
 	PF_LOCK();
+	if ((kif = (struct pfi_kif *)ifg->ifg_pf_kif) == NULL) {
+		PF_UNLOCK();
+		return;
+	}
 	pfi_update++;
-
-	kif->pfik_group = NULL;
 	ifg->ifg_pf_kif = NULL;
-	pfi_kif_unref(kif, PFI_KIF_REF_NONE);
+	/*
+	 * 5BSD: FreeBSD detaches a group after it is unlinked and the net
+	 * epoch has passed: a new group with this name may have the kif.
+	 */
+	if (kif->pfik_group == ifg) {
+		kif->pfik_group = NULL;
+		pfi_kif_unref(kif, PFI_KIF_REF_NONE);
+	}
 	PF_UNLOCK();
 }
 
@@ -901,10 +914,14 @@ pfi_dynaddr_remove(struct pf_addr_wrap *aw)
 void
 pfi_dynaddr_copyout(struct pf_addr_wrap *aw)
 {
+	int cnt;
+
 	if (aw->type != PF_ADDR_DYNIFTL || aw->p.dyn == NULL ||
 	    aw->p.dyn->pfid_kif == NULL)
 		return;
-	aw->p.dyncnt = aw->p.dyn->pfid_acnt4 + aw->p.dyn->pfid_acnt6;
+	cnt = aw->p.dyn->pfid_acnt4 + aw->p.dyn->pfid_acnt6;
+	aw->p.dyn = NULL;	/* 5BSD: no kernel address to userland */
+	aw->p.dyncnt = cnt;
 }
 
 void
@@ -1005,7 +1022,15 @@ pfi_get_ifaces(const char *name, struct pfi_kif *buf, int *size)
 		n++;
 		if (!p->pfik_tzero)
 			p->pfik_tzero = gettime();
-		memcpy(buf++, p, sizeof(*buf));
+		memcpy(buf, p, sizeof(*buf));
+		/* 5BSD: no kernel addresses to userland. */
+		memset(&buf->pfik_tree, 0, sizeof(buf->pfik_tree));
+		buf->pfik_ah_cookie = NULL;
+		buf->pfik_ifp = NULL;
+		buf->pfik_group = NULL;
+		TAILQ_INIT(&buf->pfik_dynaddrs);
+		buf->pfik_dynaddrs.tqh_last = NULL;
+		buf++;
 	}
 	*size = n;
 }
