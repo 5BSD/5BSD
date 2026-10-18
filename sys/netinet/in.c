@@ -853,15 +853,23 @@ in_difaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred
 		    (cred == NULL || prison_check_ip4(cred,
 		    &addr->sin_addr) == 0))
 			ia = it;
-
-		if (it != ia)
-			iaIsLast = false;
 	}
 
 	if (ia == NULL) {
 		IF_ADDR_WUNLOCK(ifp);
 		return (EADDRNOTAVAIL);
 	}
+	/*
+	 * 5BSD: after the walk.  OpenBSD's SIOCSIFADDR can leave two
+	 * identical addresses, each the chosen one when it was visited: the
+	 * all-hosts group was left with the other still configured.
+	 */
+	CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link)
+		if (ifa->ifa_addr->sa_family == AF_INET &&
+		    ifa != &ia->ia_ifa) {
+			iaIsLast = false;
+			break;
+		}
 
 	CK_STAILQ_REMOVE(&ifp->if_addrhead, &ia->ia_ifa, ifaddr, ifa_link);
 	IF_ADDR_WUNLOCK(ifp);
