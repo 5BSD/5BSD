@@ -62,8 +62,11 @@ struct pfloghdr {
 
 #ifdef _KERNEL
 
+#include <ck_queue.h>	/* 5BSD */
+
 struct pflog_softc {
-	LIST_ENTRY(pflog_softc)		sc_entry;
+	/* 5BSD: CK, read from the packet path in the net epoch only. */
+	CK_LIST_ENTRY(pflog_softc)	sc_entry;
 	struct ifnet			*sc_ifp;	/* 5BSD: if_alloc()ed */
 	int				sc_unit;
 };

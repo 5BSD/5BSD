@@ -82,7 +82,7 @@ struct	pflog_softc	*pflog_getif(int);
 struct if_clone			pflog_cloner =
     IF_CLONE_INITIALIZER("pflog", pflog_clone_create, pflog_clone_destroy);
 
-LIST_HEAD(pflog_ifs_head, pflog_softc); /* 5BSD: VNET */
+CK_LIST_HEAD(pflog_ifs_head, pflog_softc); /* 5BSD: VNET, CK */
 PF_VNET_DEFINE(struct pflog_ifs_head, pflog_ifs);
 
 void
@@ -117,7 +117,7 @@ pflog_clone_create(struct if_clone *ifc, int unit)
 #endif
 
 	NET_LOCK();
-	LIST_INSERT_HEAD(&pflog_ifs, pflogif, sc_entry);
+	CK_LIST_INSERT_HEAD(&pflog_ifs, pflogif, sc_entry);	/* 5BSD: CK */
 	NET_UNLOCK();
 
 	return (0);
@@ -129,7 +129,7 @@ pflog_clone_destroy(struct ifnet *ifp)
 	struct pflog_softc	*pflogif = ifp->if_softc;
 
 	NET_LOCK();
-	LIST_REMOVE(pflogif, sc_entry);
+	CK_LIST_REMOVE(pflogif, sc_entry);	/* 5BSD: CK */
 	NET_UNLOCK();
 
 	if_detach(ifp);
@@ -170,7 +170,7 @@ pflog_getif(int unit)
 
 	NET_ASSERT_LOCKED();
 
-	LIST_FOREACH(pflogif, &pflog_ifs, sc_entry) {
+	CK_LIST_FOREACH(pflogif, &pflog_ifs, sc_entry) {	/* 5BSD: CK */
 		if (pflogif->sc_unit == unit)
 			break;
 	}
