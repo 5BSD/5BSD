@@ -646,7 +646,9 @@ else:
 PY
 
 	jexec alcatraz pfctl -e
-	pft_set_rules alcatraz "pass"
+	# OpenBSD pf blocks IPv6 destination options and routing headers
+	# without allow-opts (pf_walk_header6()).
+	pft_set_rules alcatraz "pass allow-opts"
 
 	jexec srv nc -6 -u -l 2001:db8:42::2 4000 > udp.out &
 	jexec srv nc -6 -l 2001:db8:42::2 4001 > tcp.out &
