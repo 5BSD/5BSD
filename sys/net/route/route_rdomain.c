@@ -168,6 +168,7 @@ rt_rdomain_create_locked(u_int rdomain, struct ifnet *ifp)
 {
 	char loname[IFNAMSIZ];
 	struct ifnet *loifp;
+	uint32_t old;
 	bool added, pending;
 	int error;
 
@@ -210,12 +211,22 @@ rt_rdomain_create_locked(u_int rdomain, struct ifnet *ifp)
 		error = EINVAL;
 		goto fail;
 	}
+	/* An existing lo<N> may be another domain's loopback, renamed. */
+	if (loifp == V_loif || rt_rdomain_isloif(loifp)) {
+		if_rele(loifp);
+		error = EPERM;
+		goto fail;
+	}
 
+	old = V_rt_l2map[rdomain];
 	rt_rdomain_map(rdomain, rdomain | ((uint32_t)loifp->if_index << 16));
 
 	error = rt_rdomain_setif(loifp, rdomain, true);
 	if_rele(loifp);
-	return (error);
+	if (error == 0)
+		return (0);
+	/* The map entry must not name a loopback that is not in the domain. */
+	rt_rdomain_map(rdomain, old);
 fail:
 	if (pending)
 		rt_rdomain_map(rdomain, 0);
