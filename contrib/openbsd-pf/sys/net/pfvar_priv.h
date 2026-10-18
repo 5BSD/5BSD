@@ -572,6 +572,12 @@ struct pf_pdesc {
 	u_int16_t	 sctp_dummy_sum; /* pcksum; CRC32c needs no fixup */
 	u_int32_t	 sctp_initiate_tag;
 	struct pf_rule	*related_rule;	/* 5BSD: sctp; allow-related */
+	/*
+	 * 5BSD: the actions of a stateless pass, match rules included
+	 * (act_set once pf_test_rule() has evaluated the ruleset).
+	 */
+	struct pf_rule_actions	 act;
+	int		 act_set;
 	/* 5BSD: dummynet; the pipes of a stateless pass, match rules included */
 	struct pf_rule	*dn_rule;
 	u_int16_t	 dn_pipe;

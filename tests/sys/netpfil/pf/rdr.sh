@@ -89,9 +89,12 @@ tcp_v6_common()
 	jexec ${j}c tcpdump -w ${PWD}/${j}.pcap tcp and port 8000 &
 	tcpdumppid=$!
 
-	# start a web server and give it a second to start
+	# start a web server and wait until it listens (slow on emulated VMs)
 	jexec ${j}c python3 -m http.server &
-	sleep 1
+	for _i in $(seq 1 100); do
+		jexec ${j}c sockstat -l -P tcp -p 8000 | grep -q ":8000" && break
+		sleep 0.1
+	done
 
 	# http directly from a to c -> a ---> b
 	atf_check -s exit:0 -o ignore \

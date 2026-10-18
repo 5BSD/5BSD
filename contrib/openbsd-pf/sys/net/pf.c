@@ -5156,6 +5156,8 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 
 	/* apply actions for last matching pass/block rule */
 	pf_rule_to_actions(r, &ctx.act);
+	pd->act = ctx.act;	/* 5BSD: a stateless pass's actions */
+	pd->act_set = 1;
 	pd->dn_rule = r;	/* 5BSD: dummynet */
 	pd->dn_pipe = ctx.act.dnpipe;
 	pd->dn_rpipe = ctx.act.dnrpipe;
@@ -8942,20 +8944,32 @@ done:
 			}
 			PF_PDTAG_W(&pd)->delay = st->delay;	/* 5BSD: m_tag */
 		} else {
-			pf_scrub(pd.m, r->scrub_flags, pd.af, r->min_ttl,
-			    r->set_tos);
-			if (r->min_ttl && pd.ttl < r->min_ttl)
-				pd.ttl = r->min_ttl;	/* 5BSD: af-to */
+			/*
+			 * 5BSD: as a state would, take the actions of every
+			 * matching rule, match rules included (FreeBSD's pf
+			 * does); OpenBSD took the pass rule's alone.
+			 */
+			const struct pf_rule_actions *sa = pd.act_set ?
+			    &pd.act : NULL;
+			u_int16_t sflags = sa ? sa->flags : r->scrub_flags;
+			u_int8_t smin = sa ? sa->min_ttl : r->min_ttl;
+
+			pf_scrub(pd.m, sflags, pd.af, smin,
+			    sa ? sa->set_tos : r->set_tos);
+			if (smin && pd.ttl < smin)
+				pd.ttl = smin;	/* 5BSD: af-to */
 			if (pqid || (pd.tos & IPTOS_LOWDELAY)) {
-				qid = r->pqid;
-				if (r->scrub_flags & PFSTATE_SETPRIO)
-					pf_mtag_setprio(PF_PDTAG_W(&pd), r->set_prio[1]);	/* 5BSD: m_tag */
+				qid = sa ? sa->pqid : r->pqid;
+				if (sflags & PFSTATE_SETPRIO)
+					pf_mtag_setprio(PF_PDTAG_W(&pd), sa ?
+					    sa->set_prio[1] : r->set_prio[1]);
 			} else {
-				qid = r->qid;
-				if (r->scrub_flags & PFSTATE_SETPRIO)
-					pf_mtag_setprio(PF_PDTAG_W(&pd), r->set_prio[0]);	/* 5BSD: m_tag */
+				qid = sa ? sa->qid : r->qid;
+				if (sflags & PFSTATE_SETPRIO)
+					pf_mtag_setprio(PF_PDTAG_W(&pd), sa ?
+					    sa->set_prio[0] : r->set_prio[0]);
 			}
-			PF_PDTAG_W(&pd)->delay = r->delay;	/* 5BSD: m_tag */
+			PF_PDTAG_W(&pd)->delay = sa ? sa->delay : r->delay;
 		}
 	}
 
