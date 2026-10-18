@@ -5578,12 +5578,16 @@ pf_create_state(struct pf_pdesc *pd, struct pf_rule *r, struct pf_rule *a,
 #endif
 
 	/*
-	 * 5BSD: an af-to state floats even with if-bound: its reply arrives
-	 * on the interface of the other address family, which an if-bound
-	 * state would refuse (FreeBSD pf's nat64 behaviour).
+	 * 5BSD: with if-bound, af-to, reply-to and outbound route-to states
+	 * float: their replies arrive on another interface (the other
+	 * address family's, the route's) than the one the state was created
+	 * on, which an if-bound state would refuse.  FreeBSD's pf binds them
+	 * to that interface once known (BOUND_IFACE()); floating keeps them
+	 * working without its second interface.  Inbound states stay bound.
 	 */
-	if (pf_state_insert((r->rule_flag & PFRULE_AFTO) ? pfi_all :
-	    BOUND_IFACE(r, pd->kif), skw, sks, st)) {
+	if (pf_state_insert(((r->rule_flag & PFRULE_AFTO) ||
+	    r->rt == PF_REPLYTO || (r->rt == PF_ROUTETO && pd->dir == PF_OUT)) ?
+	    pfi_all : BOUND_IFACE(r, pd->kif), skw, sks, st)) {
 		*sks = *skw = NULL;
 		REASON_SET(&reason, PFRES_STATEINS);
 		goto csfailed;

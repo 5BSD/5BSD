@@ -57,9 +57,11 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	from pfr_clr_tstats(), DIOCRCLRTSTATS with an oversized count).
 	Such a request now fails with EFAULT.  Table and transaction
 	ioctls refuse negative counts with EINVAL.
-	af-to (NAT64) works with "set state-policy if-bound": an af-to state
-	is never bound to an interface (its reply arrives on the interface
-	of the other address family), as with FreeBSD's pf.  af-to packets
+	af-to (NAT64), reply-to and outbound route-to work with "set
+	state-policy if-bound": such a state is not bound to an interface
+	(its reply arrives on another one); FreeBSD's pf binds it to that
+	interface instead.  pf's uRPF check (urpf-failed) accepts packets
+	a router sends from its own address.  af-to packets
 	go through dnpipe/dnqueue, take a rule's scrub min-ttl, and an IPv6
 	packet pf reassembled is translated without DF (RFC 7915).
 
