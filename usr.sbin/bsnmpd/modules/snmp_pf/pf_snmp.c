@@ -1177,10 +1177,15 @@ pfi_refresh(void)
 			goto err2;
 		}
 
-		if (numifs >= io.pfiio_size)
+		/*
+		 * 5BSD: OpenBSD pf returns the number of interfaces copied,
+		 * at most the buffer's; a full buffer may have left some out.
+		 */
+		if (io.pfiio_size < numifs) {
+			numifs = io.pfiio_size;
 			break;
-
-		numifs = io.pfiio_size;
+		}
+		numifs *= 2;
 	}
 
 	for (i = 0; i < numifs; i++) {

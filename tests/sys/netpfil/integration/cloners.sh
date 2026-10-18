@@ -57,8 +57,9 @@ absent_until_created_cleanup()
 # One create/destroy case per cloner.
 create_destroy_body()
 {
-	type=$1
-	ifn=${type}$(unit_of ${type})
+	# Not "type": vnet.subr's _vnet_check_req() sets that global.
+	ctype=$1
+	ifn=${ctype}$(unit_of ${ctype})
 	cloners_init
 	vnet_mkjail a
 
@@ -66,7 +67,7 @@ create_destroy_body()
 	atf_check -s exit:0 -o match:"(^| )${ifn}( |\$)" jexec a ifconfig -l
 	atf_check -s exit:0 -o match:"^${ifn}: flags=" jexec a ifconfig ${ifn}
 	# Interface group named after the driver (OpenBSD if_clone).
-	atf_check -s exit:0 -o match:"groups:.* ${type}" jexec a ifconfig ${ifn}
+	atf_check -s exit:0 -o match:"groups:.* ${ctype}" jexec a ifconfig ${ifn}
 	# Up and down.
 	atf_check -s exit:0 jexec a ifconfig ${ifn} up
 	atf_check -s exit:0 -o match:'flags=.*[<,]UP[,>]' jexec a ifconfig ${ifn}

@@ -283,18 +283,18 @@ bsnmpd_pf_walk_body()
 	    cat walk.out
 
 	# The jail's own interface is listed; the peer jail's is not.
-	atf_check -o match:"^pfInterfacesIfDescr\\.[0-9]+ = ${epair}a\$" \
+	atf_check -o match:"^pfInterfacesIfDescr[.[][0-9]+]? = ${epair}a\$" \
 	    cat walk.out
-	atf_check -s exit:1 grep -q "^pfInterfacesIfDescr\\.[0-9]* = ${epair}b\$" \
+	atf_check -s exit:1 grep -q "^pfInterfacesIfDescr[.[][0-9]*]? = ${epair}b\$" \
 	    walk.out
 
 	# Labels, with the counters of the blocked label.
 	atf_check -o match:'^pfLabelsLblNumber\.0 = 2$' cat walk.out
-	atf_check -o match:'^pfLabelsLblName\.[0-9]+ = integ_block$' cat walk.out
-	atf_check -o match:'^pfLabelsLblName\.[0-9]+ = integ_icmp$' cat walk.out
-	idx=$(awk -F'[. =]+' '/^pfLabelsLblName.* integ_block$/ { print $2 }' \
+	atf_check -o match:'^pfLabelsLblName[.[][0-9]+]? = integ_block$' cat walk.out
+	atf_check -o match:'^pfLabelsLblName[.[][0-9]+]? = integ_icmp$' cat walk.out
+	idx=$(awk -F'[].[ =]+' '/^pfLabelsLblName.* integ_block$/ { print $2 }' \
 	    walk.out)
-	atf_check -o match:"^pfLabelsLblPktsIn\\.${idx} = [1-9]" cat walk.out
+	atf_check -o match:"^pfLabelsLblPktsIn[.[]${idx}]? = [1-9]" cat walk.out
 
 	# Queues are refused on 5BSD, so the ALTQ group is empty.
 	atf_check -o match:'^pfAltqQueueNumber\.0 = 0$' cat walk.out

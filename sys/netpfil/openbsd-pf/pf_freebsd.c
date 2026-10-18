@@ -506,13 +506,21 @@ pf_fbsd_ours(struct mbuf *m, int af)
 static pfil_return_t
 pf_fbsd_result(int action, struct mbuf **m)
 {
-	if (*m == NULL)
-		return (PFIL_CONSUMED);
+	/*
+	 * A refused packet is PFIL_DROPPED (the sender sees EACCES, pfil
+	 * counts the drop) even if pf already freed it, as OpenBSD's pf_test()
+	 * does on PF_DROP; PFIL_CONSUMED is a passed packet pf took over
+	 * (route-to, dummynet, divert, af-to, deferral).
+	 */
 	if (action != PF_PASS) {
-		m_freem(*m);
-		*m = NULL;
+		if (*m != NULL) {
+			m_freem(*m);
+			*m = NULL;
+		}
 		return (PFIL_DROPPED);
 	}
+	if (*m == NULL)
+		return (PFIL_CONSUMED);
 	return (PFIL_PASS);
 }
 
