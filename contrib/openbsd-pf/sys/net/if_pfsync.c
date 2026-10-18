@@ -2841,12 +2841,14 @@ pfsync_input(struct mbuf *m, uint8_t ttl, unsigned int hlen)
 	}
 
 	len = ntohs(ph->len);
-	if (m->m_pkthdr.len < len) {
+	/* 5BSD: a length short of the header made the rest negative. */
+	if (m->m_pkthdr.len < len || len < sizeof(*ph)) {
 		pfsyncstat_inc(pfsyncs_badlen);
 		goto leave;
 	}
+	/* 5BSD: trim the chain, not only the length the header claims. */
 	if (m->m_pkthdr.len > len)
-		m->m_pkthdr.len = len;
+		m_adj(m, (int)len - m->m_pkthdr.len);
 
 	/* ok, it's serious now */
 	refcnt_take(&sc->sc_refs);
@@ -2897,13 +2899,23 @@ pfsync_input(struct mbuf *m, uint8_t ttl, unsigned int hlen)
 			pfsyncstat_inc(pfsyncs_badlen);
 			goto rele;
 		}
+		/*
+		 * 5BSD: FreeBSD's m_pullup() fails beyond MHLEN, less than
+		 * one state (OpenBSD's goes to MAXMCLBYTES): handle a
+		 * message that is not contiguous from a copy.
+		 */
 		if (m->m_len < len) {
-			m = m_pullup(m, len);
-			if (m == NULL)
-				goto rele;
-		}
+			caddr_t buf;
 
-		(*in)(sc, mtod(m, caddr_t), mlen, count);
+			if ((buf = malloc(len, M_TEMP, M_NOWAIT)) == NULL) {
+				pfsyncstat_inc(pfsyncs_badlen);
+				goto rele;
+			}
+			m_copydata(m, 0, len, buf);
+			(*in)(sc, buf, mlen, count);
+			free(buf, M_TEMP, len);
+		} else
+			(*in)(sc, mtod(m, caddr_t), mlen, count);
 		m_adj(m, len);
 	}
 
