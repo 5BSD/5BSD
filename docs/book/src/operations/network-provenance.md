@@ -106,6 +106,7 @@ goes in its own file in `sys/netpfil/openbsd-pf` (`pf_dummynet.c`,
 | pflow and pfsync configured with ifconfig (pflowctl retired) | `sbin/ifconfig` |
 | ping/ping6 `-w` and `-V`; `vmstat -m -v` pool listing; `route -T` | `sbin`, `usr.bin` |
 | Larger interface unit numbers (`IF_MAXUNIT`) | `sys/net/if_clone.c` |
+| A new interface group starts zeroed: pf reads its `ifg_pf_kif` before `group_attach_event` sets it (OpenBSD attaches the group's kif before the group is visible) | `sys/net/if.c` (`if_addgroup_internal()`) |
 | A packet reused as a reply drops pf's state key, as OpenBSD's `m_resethdr()` does: ICMP reflection and TCP resets (`tcp_respond()`) | `sys/netinet/ip_icmp.c`, `sys/netinet6/icmp6.c`, `sys/netinet/tcp_subr.c` (`M_PF_UNLINK`) |
 | tcpdump is OpenBSD's (OpenBSD pflog output) | `contrib/openbsd-pf/usr.sbin/tcpdump` |
 
