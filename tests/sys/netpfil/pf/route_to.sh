@@ -1600,6 +1600,12 @@ divert_to_head()
 }
 divert_to_body()
 {
+	# 5BSD: OpenBSD pf passes a packet reinjected from a divert socket
+	# without looking at its state (PF_TAG_DIVERTED_PACKET), so the
+	# state's route-to does not apply after divert-packet; FreeBSD's pf
+	# routes it.  Not supported.
+	atf_skip "route-to after divert-packet is a FreeBSD pf extension"
+
 	pft_init
 
 	# Set up our topology:

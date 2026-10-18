@@ -493,6 +493,11 @@ If the default option of fragment reassembly is enabled, scrubbing with
 is also enabled for
 .Cm divert-packet
 rules.
+A packet the
+.Xr divert 4
+socket sends back is passed without further filtering, so a
+.Cm route-to
+on the same rule does not apply to it.
 .Pp
 .It Cm divert-reply
 Used to receive replies for sockets that are bound to addresses
