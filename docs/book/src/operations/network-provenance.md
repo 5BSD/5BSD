@@ -135,6 +135,7 @@ are vendor edits to re-check on every import:
 | Fix | Upstream behaviour |
 |---|---|
 | `source-track global` limit nodes are shared by all rules using it, as pf.conf(5) and FreeBSD pf say | OpenBSD keys every source node by rule, so the limit is per rule |
+| Neighbor discovery and MLD are never translated (`pf_icmp6_link_control()`), so `nat-to` on a router's IPv6 interface keeps its neighbor solicitations on the solicited-node group and MLD on its link-local source | OpenBSD writes the ND state key's addresses (the target) into the packet: a translated solicitation goes to its target and waits for itself to be resolved |
 
 ## Number allocation
 
