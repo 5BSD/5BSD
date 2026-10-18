@@ -519,13 +519,7 @@ pf_sctp_test_state(struct pf_pdesc *pd, struct pf_state **stp,
 	 */
 	vsrc = pf_sctp_src_peer(pd, st, pd->dir);
 	if (vsrc->scrub != NULL) {
-		/*
-		 * A tag of 0 is learnt, as in FreeBSD: pfsync does not carry
-		 * the verification tags, so a state imported on the backup
-		 * has none and would drop all traffic after a failover.
-		 */
-		if (vsrc->state <= PF_SCTPS_COOKIE_WAIT ||
-		    vsrc->scrub->pfss_v_tag == 0)
+		if (vsrc->state <= PF_SCTPS_COOKIE_WAIT)
 			vsrc->scrub->pfss_v_tag = pd->hdr.sctp.v_tag;
 		else if (vsrc->scrub->pfss_v_tag != pd->hdr.sctp.v_tag) {
 			REASON_SET(reason, PFRES_BADSTATE);
