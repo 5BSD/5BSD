@@ -99,9 +99,10 @@ nat66_head()
 nat66_body()
 {
 	ff_topology
+	# The last matching rule wins: the translation comes after "pass".
 	pft_set_rules rtr \
-	    "pass out on ${epb}a inet6 nat-to (${epb}a:0)" \
-	    "pass"
+	    "pass" \
+	    "pass out on ${epb}a inet6 nat-to 2001:db8:2::1"
 	# The server only talks to the router's address: the client gets
 	# through only translated.
 	jexec srv pfctl -e > /dev/null 2>&1
@@ -136,8 +137,8 @@ rdr66_body()
 	jexec cl route -q -6 add 2001:db8:3::/64 2001:db8:1::1
 	jexec rtr route -q -6 add 2001:db8:3::/64 2001:db8:2::2
 	pft_set_rules rtr \
-	    "pass in on ${epa}b inet6 proto tcp to 2001:db8:3::80 port 80 rdr-to 2001:db8:2::2 port 8888" \
-	    "pass"
+	    "pass" \
+	    "pass in on ${epa}b inet6 proto tcp to 2001:db8:3::80 port 80 rdr-to 2001:db8:2::2 port 8888"
 	ff_serve srv 8888
 
 	atf_check -s exit:0 -o inline:"ff\n" \
@@ -167,9 +168,10 @@ route_to_body()
 	ifconfig ${epc}b vnet srv
 	jexec rtr ifconfig ${epc}a inet6 2001:db8:4::1/64 up no_dad
 	jexec srv ifconfig ${epc}b inet6 2001:db8:4::2/64 up no_dad
+	# OpenBSD route-to names the next hop; its route picks the interface.
 	pft_set_rules rtr \
-	    "pass in on ${epa}b inet6 proto tcp to 2001:db8:2::2 port 8888 route-to (${epc}a 2001:db8:4::2)" \
-	    "pass"
+	    "pass" \
+	    "pass in on ${epa}b inet6 proto tcp to 2001:db8:2::2 port 8888 route-to 2001:db8:4::2"
 	ff_serve srv 8888
 
 	atf_check -s exit:0 -o inline:"ff\n" \

@@ -5702,6 +5702,36 @@ csfailed:
 	return (PF_DROP);
 }
 
+/*
+ * 5BSD: link-local control is not translated.  The state keys of neighbor
+ * discovery use the target, not the packet's addresses
+ * (pf_state_key_addr_setup()): translating a neighbor solicitation sent it
+ * to its target instead of the solicited-node group, where it then waited
+ * for itself to be resolved (nat-to on a router's IPv6 interface broke its
+ * neighbor discovery).  MLD must keep its link-local source.
+ */
+static int
+pf_icmp6_link_control(struct pf_pdesc *pd)
+{
+#ifdef INET6
+	if (pd->proto != IPPROTO_ICMPV6 || pd->af != AF_INET6)
+		return (0);
+	switch (pd->hdr.icmp6.icmp6_type) {
+	case ND_ROUTER_SOLICIT:
+	case ND_ROUTER_ADVERT:
+	case ND_NEIGHBOR_SOLICIT:
+	case ND_NEIGHBOR_ADVERT:
+	case ND_REDIRECT:
+	case MLD_LISTENER_QUERY:
+	case MLD_LISTENER_REPORT:
+	case MLD_LISTENER_DONE:
+	case MLDV2_LISTENER_REPORT:
+		return (1);
+	}
+#endif	/* INET6 */
+	return (0);
+}
+
 int
 pf_translate(struct pf_pdesc *pd, struct pf_addr *saddr, u_int16_t sport,
     struct pf_addr *daddr, u_int16_t dport, u_int16_t virtual_type,
@@ -5742,6 +5772,10 @@ pf_translate(struct pf_pdesc *pd, struct pf_addr *saddr, u_int16_t sport,
 #ifdef INET6
 	case IPPROTO_ICMPV6:
 		if (pd->af != AF_INET6)
+			return (0);
+
+		/* 5BSD: see pf_icmp6_link_control(). */
+		if (pf_icmp6_link_control(pd))
 			return (0);
 
 		if (afto) {
@@ -6583,7 +6617,8 @@ pf_test_state_icmp(struct pf_pdesc *pd, struct pf_state **stp,
 		pf_update_state_timeout(*stp, PFTM_ICMP_ERROR_REPLY);
 
 		/* translate source/destination address, if necessary */
-		if ((*stp)->key[PF_SK_WIRE] != (*stp)->key[PF_SK_STACK]) {
+		if ((*stp)->key[PF_SK_WIRE] != (*stp)->key[PF_SK_STACK] &&
+		    !pf_icmp6_link_control(pd)) {	/* 5BSD */
 			struct pf_state_key	*nk;
 			int			 afto, sidx, didx;
 
