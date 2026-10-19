@@ -77,6 +77,15 @@ def universe():
     return funcs
 
 
+def dtrace_alive(host):
+    """Stop with dtrace's own messages if it is not running."""
+    if sh(host, 'test -s /root/pfcov.pid && '
+          'kill -0 $(cat /root/pfcov.pid)').returncode != 0:
+        log = sh(host, 'cat /root/pfcov.dtrace.log',
+                 capture_output=True).stdout
+        sys.exit('dtrace is not running on %s; its log:\n%s' % (host, log))
+
+
 def run(host, out, suites, skip=None):
     funcs = universe()
     kfuncs = sorted({n for (m, n) in funcs if m == 'kernel'})
@@ -106,16 +115,21 @@ def run(host, out, suites, skip=None):
                 capture_output=True).stdout.split()
     # kyua refuses an existing results file; daemon -o appends to its log.
     sh(host, 'rm -f /root/pfcov.out /root/pfcov.done /root/pfcov.db '
-       '/root/pfcov.kyua.log; daemon -f -p '
-       '/root/pfcov.pid dtrace -Z -q -x aggsize=8m -x dynvarsize=8m '
-       '-s /root/pfcov.d -o /root/pfcov.out', check=True)
+       '/root/pfcov.kyua.log /root/pfcov.dtrace.log; daemon -f -o '
+       '/root/pfcov.dtrace.log -p /root/pfcov.pid dtrace -Z -q '
+       '-x aggsize=8m -x dynvarsize=8m -s /root/pfcov.d -o /root/pfcov.out',
+       check=True)
     time.sleep(20)
+    # A dtrace that did not start (or died) records nothing: a whole run
+    # would end with an empty count file that reads as "nothing ran".
+    dtrace_alive(host)
     t0 = time.time()
     sh(host, 'daemon -f -o /root/pfcov.kyua.log sh -c "kyua test -r '
        '/root/pfcov.db -k /usr/tests/Kyuafile %s; touch /root/pfcov.done"'
        % ' '.join(suites), check=True)
     while sh(host, 'test -f /root/pfcov.done').returncode != 0:
         time.sleep(120)
+    dtrace_alive(host)
     sh(host, 'kill -INT $(cat /root/pfcov.pid); sleep 10')
     raw = sh(host, 'cat /root/pfcov.out', capture_output=True).stdout
     counts = {}
