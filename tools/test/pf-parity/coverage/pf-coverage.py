@@ -77,13 +77,18 @@ def universe():
     return funcs
 
 
-def dtrace_alive(host):
-    """Stop with dtrace's own messages if it is not running."""
+def dtrace_alive(host, fatal=True):
+    """Whether dtrace runs; if not, stop (fatal) or warn with its log."""
     if sh(host, 'test -s /root/pfcov.pid && '
-          'kill -0 $(cat /root/pfcov.pid)').returncode != 0:
-        log = sh(host, 'cat /root/pfcov.dtrace.log',
-                 capture_output=True).stdout
-        sys.exit('dtrace is not running on %s; its log:\n%s' % (host, log))
+          'kill -0 $(cat /root/pfcov.pid)').returncode == 0:
+        return True
+    log = sh(host, 'cat /root/pfcov.dtrace.log', capture_output=True).stdout
+    msg = 'dtrace is not running on %s; its log:\n%s' % (host, log)
+    if fatal:
+        sys.exit(msg)
+    print('warning: %s\ncounts are those of its last minute print' % msg,
+          file=sys.stderr)
+    return False
 
 
 def run(host, out, suites, skip=None):
@@ -106,6 +111,10 @@ def run(host, out, suites, skip=None):
     for i in range(0, len(kfuncs), 50):
         probes = ','.join('fbt:kernel:%s:entry' % n for n in kfuncs[i:i + 50])
         clauses.append(probes + ' { @c["kernel", probefunc] = count(); }')
+    # Cumulative totals every minute: a run whose dtrace is aborted later
+    # (its deadman, when a loaded guest starves the consumer) keeps what it
+    # counted until then; the parser keeps the last value of each function.
+    clauses.append('tick-60s { printa(@c); }')
     script = '\n'.join(clauses) + '\n'
     sh(host, 'cat > /root/pfcov.d', input=script, check=True)
     # Probes that exist (to tell "not run" from "no probe").
@@ -116,7 +125,7 @@ def run(host, out, suites, skip=None):
     # kyua refuses an existing results file; daemon -o appends to its log.
     sh(host, 'rm -f /root/pfcov.out /root/pfcov.done /root/pfcov.db '
        '/root/pfcov.kyua.log /root/pfcov.dtrace.log; daemon -f -o '
-       '/root/pfcov.dtrace.log -p /root/pfcov.pid dtrace -Z -q '
+       '/root/pfcov.dtrace.log -p /root/pfcov.pid rtprio 10 dtrace -Z -q '
        '-x aggsize=8m -x dynvarsize=8m -s /root/pfcov.d -o /root/pfcov.out',
        check=True)
     time.sleep(20)
@@ -129,8 +138,9 @@ def run(host, out, suites, skip=None):
        % ' '.join(suites), check=True)
     while sh(host, 'test -f /root/pfcov.done').returncode != 0:
         time.sleep(120)
-    dtrace_alive(host)
-    sh(host, 'kill -INT $(cat /root/pfcov.pid); sleep 10')
+    partial = not dtrace_alive(host, fatal=False)
+    if not partial:
+        sh(host, 'kill -INT $(cat /root/pfcov.pid); sleep 10')
     raw = sh(host, 'cat /root/pfcov.out', capture_output=True).stdout
     counts = {}
     for line in raw.splitlines():
@@ -140,6 +150,7 @@ def run(host, out, suites, skip=None):
     report = sh(host, 'kyua report -r /root/pfcov.db --results-filter= | '
                 'tail -3', capture_output=True).stdout
     json.dump({'suites': suites, 'seconds': int(time.time() - t0),
+               'partial': partial,
                'kyua': report.strip(), 'probes': sorted(set(probes)),
                'counts': counts}, open(out, 'w'), indent=1)
     print('saved %s: %d functions hit' % (out, len(counts)))
