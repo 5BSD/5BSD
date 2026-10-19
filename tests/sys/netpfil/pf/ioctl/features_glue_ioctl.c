@@ -56,6 +56,9 @@
 
 #include <atf-c.h>
 
+/* Tag ids pf hands out (pf_ioctl.c TAGID_MAX). */
+#define	TAGID_MAX	50000
+
 #ifndef PF_ANCHOR_STACK_MAX
 #define	PF_ANCHOR_STACK_MAX	64
 #endif
@@ -762,6 +765,62 @@ ATF_TC_CLEANUP(limiters, tc)
 	COMMON_CLEANUP();
 }
 
+/*
+ * A rule DIOCADDRULE refuses after pf_rule_copyin() (here: a stale ticket)
+ * releases the tag ids copyin took.  Leaked, enough of them exhaust the
+ * ids and no new tag name can be used (EBUSY).
+ */
+ATF_TC_WITH_CLEANUP(refused_rule_tags);
+ATF_TC_HEAD(refused_rule_tags, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "pf");
+	atf_tc_set_md_var(tc, "timeout", "900");
+}
+
+ATF_TC_BODY(refused_rule_tags, tc)
+{
+	static struct pfioc_rule pr;
+	struct pfioc_trans io;
+	struct pfioc_trans_e ioe;
+	u_int32_t ticket;
+	int i;
+
+	COMMON_HEAD();
+
+	trans_one(&io, &ioe, "");
+	ATF_REQUIRE_MSG(ioctl(dev, DIOCXBEGIN, &io) == 0, "DIOCXBEGIN: %s",
+	    strerror(errno));
+	ticket = ioe.ticket;
+
+	for (i = 0; i <= TAGID_MAX; i++) {
+		memset(&pr, 0, sizeof(pr));
+		init_rule(&pr.rule);
+		snprintf(pr.rule.tagname, sizeof(pr.rule.tagname), "lt%05d", i);
+		snprintf(pr.rule.match_tagname, sizeof(pr.rule.match_tagname),
+		    "lm%05d", i);
+		pr.ticket = ticket + 1;		/* stale: refused */
+		ATF_REQUIRE_MSG(ioctl(dev, DIOCADDRULE, &pr) == -1 &&
+		    errno == EBUSY, "stale DIOCADDRULE %d: %s", i,
+		    strerror(errno));
+	}
+
+	memset(&pr, 0, sizeof(pr));
+	init_rule(&pr.rule);
+	strlcpy(pr.rule.tagname, "after", sizeof(pr.rule.tagname));
+	pr.ticket = ticket;
+	ATF_CHECK_MSG(ioctl(dev, DIOCADDRULE, &pr) == 0,
+	    "a new tag after %d refused rules: %s (tag ids leaked)",
+	    TAGID_MAX + 1, strerror(errno));
+	(void)ioctl(dev, DIOCXROLLBACK, &io);
+	COMMON_CLEANUP();
+}
+
+ATF_TC_CLEANUP(refused_rule_tags, tc)
+{
+	quiet("pfctl -q -F all");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, getrule_ticket);
@@ -770,6 +829,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, queues);
 	ATF_TP_ADD_TC(tp, srcnodes);
 	ATF_TP_ADD_TC(tp, limiters);
+	ATF_TP_ADD_TC(tp, refused_rule_tags);
 
 	return (atf_no_error());
 }
