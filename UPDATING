@@ -27,6 +27,22 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261019:
+	pf ICMP error fixes.  pf's own "block return" errors pass its own
+	block rules again (IPv4 errors were dropped by the rule that sent
+	them).  Packet-too-big errors for packets pf translates (NAT66,
+	NPTv6, route-to, reassembled packets) quote the packet as its
+	source sent it and reach that source.  af-to (NAT64): a packet
+	whose hop limit ends at the translator gets its time-exceeded
+	error in its own family; the first packet of an SCTP association,
+	or of a TCP or UDP connection whose port did not change, is
+	translated; ICMP errors quoting SCTP and the UDP checksum quoted in
+	errors are translated.  A neighbor advertisement that matches no
+	state no longer counts as a short packet.  Rules pf refused after
+	reading them no longer leak tag ids, and a VNET jail destroyed with
+	an unfinished table transaction no longer leaks its anchors.
+	pf.ko and the kernel must be updated together (struct pkthdr_pf).
+
 20261017:
 	pf dnpipe/dnqueue fixes.  An inbound route-to packet shaped by an
 	outbound rule's pipe now reaches the route-to next hop (it went
