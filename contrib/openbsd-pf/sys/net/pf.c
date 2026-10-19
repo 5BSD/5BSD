@@ -181,6 +181,10 @@ void			 pf_translate_icmp(struct pf_pdesc *, struct pf_addr *,
 int			 pf_translate_icmp_af(struct pf_pdesc*, int, void *);
 void			 pf_send_icmp(struct mbuf *, u_int8_t, u_int8_t, int,
 			    sa_family_t, struct pf_rule *, u_int);
+void			 pf_send_icmp_orig(struct mbuf *, u_int8_t, u_int8_t, int,
+			    sa_family_t, struct pf_rule *, u_int);	/* 5BSD */
+static void		 pf_send_icmp_x(struct mbuf *, u_int8_t, u_int8_t, int,
+			    sa_family_t, struct pf_rule *, u_int, int);	/* 5BSD */
 void			 pf_detach_state(struct pf_state *);
 struct pf_state_key	*pf_state_key_attach(struct pf_state_key *,
 			     struct pf_state *, int);
@@ -3926,9 +3930,30 @@ pf_send_challenge_ack(struct pf_pdesc *pd, struct pf_state *st,
 	    pd->rdomain, reason);
 }
 
+/*
+ * 5BSD: the error goes out as pf_send_icmp()'s, but about a packet pf has
+ * not translated: it already has the addresses the host sent, so it keeps
+ * pf's mark through the stack (m_pf_icmp_error()) and is neither filtered
+ * nor translated again.  Errors about translated packets (pf_route()) must
+ * meet their state to be translated back.
+ */
+void
+pf_send_icmp_orig(struct mbuf *m, u_int8_t type, u_int8_t code, int param,
+    sa_family_t af, struct pf_rule *r, u_int rdomain)
+{
+	pf_send_icmp_x(m, type, code, param, af, r, rdomain, 1);
+}
+
 void
 pf_send_icmp(struct mbuf *m, u_int8_t type, u_int8_t code, int param,
     sa_family_t af, struct pf_rule *r, u_int rdomain)
+{
+	pf_send_icmp_x(m, type, code, param, af, r, rdomain, 0);
+}
+
+static void
+pf_send_icmp_x(struct mbuf *m, u_int8_t type, u_int8_t code, int param,
+    sa_family_t af, struct pf_rule *r, u_int rdomain, int orig)
 {
 	struct mbuf	*m0;
 
@@ -3940,7 +3965,8 @@ pf_send_icmp(struct mbuf *m, u_int8_t type, u_int8_t code, int param,
 		return;
 	}
 	PF_MTAG_W(m0)->flags |= PF_TAG_GENERATED;	/* 5BSD: m_tag */
-	PF_MTAG_W(m0)->xflags |= PF_XTAG_ICMP_ERROR;	/* 5BSD */
+	if (orig)	/* 5BSD: see pf_send_icmp_orig() */
+		PF_MTAG_W(m0)->xflags |= PF_XTAG_ICMP_ERROR;
 	m0->m_pkthdr.ph_rtableid = rdomain;
 	if (r && (r->scrub_flags & PFSTATE_SETPRIO))
 		pf_mtag_setprio(PF_MTAG_W(m0), r->set_prio[0]);	/* 5BSD: m_tag */
@@ -5237,13 +5263,13 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 		} else if ((pd->proto != IPPROTO_ICMP ||
 		    ICMP_INFOTYPE(ctx.icmptype)) && pd->af == AF_INET &&
 		    r->return_icmp)
-			pf_send_icmp(pd->m, r->return_icmp >> 8,
+			pf_send_icmp_orig(pd->m, r->return_icmp >> 8,
 			    r->return_icmp & 255, 0, pd->af, r, pd->rdomain);
 		else if ((pd->proto != IPPROTO_ICMPV6 ||
 		    (ctx.icmptype >= ICMP6_ECHO_REQUEST &&
 		    ctx.icmptype != ND_REDIRECT)) && pd->af == AF_INET6 &&
 		    r->return_icmp6)
-			pf_send_icmp(pd->m, r->return_icmp6 >> 8,
+			pf_send_icmp_orig(pd->m, r->return_icmp6 >> 8,
 			    r->return_icmp6 & 255, 0, pd->af, r, pd->rdomain);
 	}
 
@@ -8853,6 +8879,25 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 	if (PF_PDTAG_R(&pd) != &m_pf_default)
 		PF_PDTAG_W(&pd)->flags |= PF_TAG_PROCESSED;
 
+#ifdef INET6
+	/*
+	 * 5BSD: as FreeBSD pf, a forwarded reassembled packet whose fragments
+	 * will not fit the outgoing link gets its "packet too big" here,
+	 * before any translation, about the packet as its source sent it.
+	 * pf_refragment6() runs after NAT, and the stack's error about a
+	 * translated fragment goes to the translated source, often a prefix
+	 * (NPTv6) this router has no route to.
+	 */
+	if (pf_status.reass && fwdir == PF_FWD && pd.af == AF_INET6 &&
+	    pf_refragment6_size(pd.m) > (int)in6_ifmtu(ifp)) {
+		pf_send_icmp_orig(pd.m, ICMP6_PACKET_TOO_BIG, 0,
+		    in6_ifmtu(ifp), AF_INET6, NULL, pd.rdomain);
+		action = PF_DROP;
+		REASON_SET(&reason, PFRES_FRAG);
+		goto done;
+	}
+#endif	/* INET6 */
+
 	/*
 	 * Avoid pcb-lookups from the forwarding path.  They should never
 	 * match and would cause MP locking problems.
@@ -9229,11 +9274,11 @@ log_packet:
 		    mtod(pd.m, struct ip *)->ip_ttl <= IPTTLDEC :
 		    mtod(pd.m, struct ip6_hdr *)->ip6_hlim <= IPV6_HLIMDEC)) {
 			if (pd.af == AF_INET)
-				pf_send_icmp(pd.m, ICMP_TIMXCEED,
+				pf_send_icmp_orig(pd.m, ICMP_TIMXCEED,
 				    ICMP_TIMXCEED_INTRANS, 0, AF_INET, r,
 				    pd.rdomain);
 			else
-				pf_send_icmp(pd.m, ICMP6_TIME_EXCEEDED,
+				pf_send_icmp_orig(pd.m, ICMP6_TIME_EXCEEDED,
 				    ICMP6_TIME_EXCEED_TRANSIT, 0, AF_INET6, r,
 				    pd.rdomain);
 			action = PF_DROP;

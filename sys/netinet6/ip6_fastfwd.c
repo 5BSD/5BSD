@@ -103,9 +103,11 @@ ip6_findroute(struct nhop_object **pnh, const struct sockaddr_in6 *dst,
 
 /*
  * 5BSD: a copy of the start of the packet for an ICMPv6 error about it,
- * taken before outbound filtering, as OpenBSD's ip6_forward() does.
+ * taken before outbound filtering, as OpenBSD's ip6_forward() does.  The
+ * data is copied: pf rewrites addresses in place, and would rewrite a
+ * cluster shared by m_copym() too.
  */
-static struct mbuf *
+struct mbuf *
 ip6_fastfwd_quote(struct mbuf *m)
 {
 	struct mbuf *n;

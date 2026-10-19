@@ -989,6 +989,23 @@ pf_refragment6_af(struct mbuf **m0, int mtu)
 	return (pf_refragment6(m0, mtag, NULL, NULL, NULL));
 }
 
+/*
+ * 5BSD: the size of the largest fragment pf_refragment6() will send for a
+ * reassembled packet, or 0 if pf did not reassemble it.
+ */
+int
+pf_refragment6_size(struct mbuf *m)
+{
+	struct m_tag		*mtag;
+	struct pf_fragment_tag	*ftag;
+
+	if ((mtag = m_tag_find(m, PACKET_TAG_PF_REASSEMBLED, NULL)) == NULL)
+		return (0);
+	ftag = (struct pf_fragment_tag *)(mtag + 1);
+	return (ftag->ft_hdrlen + (int)sizeof(struct ip6_frag) +
+	    ftag->ft_maxlen);
+}
+
 int
 pf_refragment6(struct mbuf **m0, struct m_tag *mtag, struct sockaddr_in6 *dst,
     struct ifnet *ifp, struct rtentry *rt)

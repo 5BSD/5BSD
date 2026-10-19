@@ -149,8 +149,16 @@ ip6_forward(struct mbuf *m, int srcrt)
 	 * It is important to save it before IPsec processing as IPsec
 	 * processing may modify the mbuf.
 	 */
-	mcopy = m_copym(m, 0, imin(m->m_pkthdr.len, ICMPV6_PLD_MAXLEN),
-	    M_NOWAIT);
+	if (PFIL_HOOKED_OUT(V_inet6_pfil_head))
+		/*
+		 * 5BSD: a packet filter rewrites the packet in place (NAT
+		 * changes its addresses); errors must quote the packet as
+		 * received and go to its original source.
+		 */
+		mcopy = ip6_fastfwd_quote(m);
+	else
+		mcopy = m_copym(m, 0, imin(m->m_pkthdr.len,
+		    ICMPV6_PLD_MAXLEN), M_NOWAIT);
 #ifdef IPSTEALTH
 	if (V_ip6stealth == 0)
 #endif

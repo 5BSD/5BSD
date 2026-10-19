@@ -932,6 +932,7 @@ void	in6_ifarrival(void *, struct ifnet *);
  * Extended API for IPv6 FIB support.
  */
 struct mbuf *ip6_tryforward(struct mbuf *);
+struct mbuf *ip6_fastfwd_quote(struct mbuf *);	/* 5BSD */
 #endif /* _KERNEL */
 
 #endif /* _NETINET6_IN6_VAR_H_ */
