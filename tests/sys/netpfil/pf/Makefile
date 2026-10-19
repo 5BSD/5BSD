@@ -66,6 +66,7 @@ ATF_TESTS_SH+=	anchor \
 
 ATF_TESTS_PYTEST+=	frag4.py
 ATF_TESTS_PYTEST+=	frag6.py
+ATF_TESTS_PYTEST+=	fuzz_packets.py
 ATF_TESTS_PYTEST+=	header.py
 ATF_TESTS_PYTEST+=	icmp.py
 ATF_TESTS_PYTEST+=	igmp.py
