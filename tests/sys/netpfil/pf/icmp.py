@@ -286,6 +286,10 @@ class TestICMPBlockedOut(VnetTestTemplate):
             ])
         ToolsHelper.print_output("/sbin/sysctl net.inet.ip.forwarding=1")
 
+    def vnet3_handler(self, vnet):
+        # Only one vnet (the test's own) may run without a handler.
+        ToolsHelper.print_output("/sbin/route add default 198.51.100.1")
+
     @pytest.mark.require_user("root")
     @pytest.mark.require_progs(["scapy"])
     def test_blocked_out_no_needfrag(self):
