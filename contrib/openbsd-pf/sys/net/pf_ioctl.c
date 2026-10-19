@@ -364,6 +364,12 @@ pf_rule_free(struct pf_rule *rule)
 	pfi_kif_free(rule->rdr.kif);
 	pfi_kif_free(rule->nat.kif);
 	pfi_kif_free(rule->route.kif);
+	/*
+	 * 5BSD: and the tag ids pf_rule_copyin() took; a rule refused
+	 * after it (bad address family, stale ticket, ...) leaked them.
+	 */
+	pf_tag_unref(rule->tag);
+	pf_tag_unref(rule->match_tag);
 
 	pool_put(&pf_rule_pl, rule);
 }

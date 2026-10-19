@@ -1408,16 +1408,27 @@ pf_fbsd_vnet_init(void *arg __unused)
 VNET_SYSINIT(pf_fbsd_vnet_init, SI_SUB_PROTO_FIREWALL, SI_ORDER_THIRD,
     pf_fbsd_vnet_init, NULL);
 
-/* Empty one ruleset (and with it, the anchor once nothing refers to it). */
+/*
+ * Empty one ruleset (and with it, the anchor once nothing refers to it).
+ * A table transaction a process began and never ended keeps the anchor
+ * (topen): roll it back first, or the anchor outlives the vnet.
+ */
 static void
 pf_fbsd_flush_ruleset(const char *path)
 {
 	char anchor[MAXPATHLEN];
+	struct pfr_table t;
+	struct pf_ruleset *rs;
 	u_int32_t ticket;
 
 	strlcpy(anchor, path, sizeof(anchor));
 	NET_LOCK();
 	PF_LOCK();
+	if ((rs = pf_find_ruleset(anchor)) != NULL && rs->topen) {
+		memset(&t, 0, sizeof(t));
+		strlcpy(t.pfrt_anchor, anchor, sizeof(t.pfrt_anchor));
+		(void)pfr_ina_rollback(&t, rs->tticket, NULL, 0);
+	}
 	if (pf_begin_rules(&ticket, anchor) == 0)
 		(void)pf_commit_rules(ticket, anchor);
 	PF_UNLOCK();
