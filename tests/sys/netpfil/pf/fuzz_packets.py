@@ -427,6 +427,7 @@ class TestFuzzPackets(VnetTestTemplate):
 
     @pytest.mark.require_user("root")
     @pytest.mark.require_progs(["scapy"])
+    @pytest.mark.timeout(3600)	# soak runs send tens of thousands
     def test_fuzz(self):
         import scapy.all as sp
         import scapy.contrib.igmp  # noqa: F401
