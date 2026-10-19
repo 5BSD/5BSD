@@ -172,9 +172,13 @@ repeat_body()
 	    ping -c 1 2001:db8::1
 
 	jexec alcatraz pfctl -e
+	# 5BSD: as on OpenBSD, an advertisement matches no solicitation's
+	# state; the rules pass it.  The case checks repeated solicitations
+	# against if-bound states.
 	pft_set_rules alcatraz \
 		"block all" \
-		"pass quick inet6 proto ipv6-icmp all icmp6-type neighbrsol keep state (if-bound)"
+		"pass quick inet6 proto ipv6-icmp all icmp6-type neighbrsol keep state (if-bound)" \
+		"pass quick inet6 proto ipv6-icmp all icmp6-type neighbradv no state"
 
 	jexec alcatraz pfctl -x debug
 	  ndisc6 -m -n -r 1 2001:db8::1 ${epair}a

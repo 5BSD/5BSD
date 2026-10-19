@@ -6755,6 +6755,17 @@ pf_test_state_icmp(struct pf_pdesc *pd, struct pf_state **stp,
 				return (PF_AFRT);
 #endif /* INET6 */
 		}
+#ifdef INET6
+	} else if (pd->proto == IPPROTO_ICMPV6 &&
+	    icmptype == ND_NEIGHBOR_ADVERT) {
+		/*
+		 * 5BSD: pf_icmp_mapping() returns 1 for an advertisement so
+		 * that it creates no state; it is no error message.  It
+		 * matches no state and the rules decide (as on OpenBSD),
+		 * without counting it as a short packet.
+		 */
+		return (PF_DROP);
+#endif /* INET6 */
 	} else {
 		/*
 		 * ICMP error message in response to a TCP/UDP packet.
