@@ -7880,7 +7880,9 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 	struct ip6_hdr		*ip6;
 	struct ifnet		*ifp = NULL;
 	struct m_tag		*mtag;
+	struct mbuf		*qcopy = NULL;	/* 5BSD */
 	unsigned int		 rtableid;
+	int			 len;
 
 	PF_SDT2(ip6, route_to, entry, pd, st);	/* 5BSD: DTrace */
 
@@ -7948,6 +7950,16 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 		ip6->ip6_src = ifatoia6(rt->rt_ifa)->ia_addr.sin6_addr;
 
 	if (st->rt != PF_DUPTO && pd->dir == PF_IN) {
+		/*
+		 * 5BSD: a packet too big for ifp gets its error about the
+		 * packet as its source sent it; the outbound pass may
+		 * translate it (NAT66, NPTv6) to a source this host cannot
+		 * route.  An error is sent only if that pass lets it out.
+		 */
+		if ((len = pf_refragment6_size(m0)) == 0)
+			len = m0->m_pkthdr.len;
+		if (len > (int)ifp->if_mtu)
+			qcopy = ip6_fastfwd_quote(m0);
 		pf_dn_routing(pd, st, m0, 1);	/* 5BSD: dummynet */
 		if (pf_test(AF_INET6, PF_OUT, ifp, &m0) != PF_PASS)
 			goto bad;
@@ -7971,6 +7983,13 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 	 * use pf_refragment6() here to turn it back to fragments.
 	 */
 	if ((mtag = m_tag_find(m0, PACKET_TAG_PF_REASSEMBLED, NULL))) {
+		if (qcopy != NULL &&	/* 5BSD: see above */
+		    pf_refragment6_size(m0) > (int)ifp->if_mtu) {
+			ip6stat_inc(ip6s_cantfrag);
+			pf_send_icmp_orig(qcopy, ICMP6_PACKET_TOO_BIG, 0,
+			    ifp->if_mtu, pd->af, st->rule.ptr, pd->rdomain);
+			goto bad;
+		}
 		(void) pf_refragment6(&m0, mtag, dst, ifp, rt);
 		goto done;
 	}
@@ -7980,12 +7999,16 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 		goto done;
 
 	ip6stat_inc(ip6s_cantfrag);
-	if (st->rt != PF_DUPTO)
+	if (st->rt != PF_DUPTO && qcopy != NULL)	/* 5BSD: see above */
+		pf_send_icmp_orig(qcopy, ICMP6_PACKET_TOO_BIG, 0,
+		    ifp->if_mtu, pd->af, st->rule.ptr, pd->rdomain);
+	else if (st->rt != PF_DUPTO)
 		pf_send_icmp(m0, ICMP6_PACKET_TOO_BIG, 0,
 		    ifp->if_mtu, pd->af, st->rule.ptr, pd->rdomain);
 	goto bad;
 
 done:
+	m_freem(qcopy);	/* 5BSD */
 	if_put(ifp);
 	rtfree(rt);
 	return;
