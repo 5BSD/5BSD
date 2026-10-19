@@ -7,8 +7,8 @@
 #
 # usage: image-5bsd.sh SRCTOP MAKEOBJDIRPREFIX OUTDIR PKGDIR [KERNCONF]
 #   PKGDIR holds FreeBSD:16:amd64 packages fetched (and catalogue-verified)
-#   by pkg(8): perl5, p5-Socket6, p5-Net-Flow, oksh, python312, py312-scapy
-#   and their dependencies.  They are test tools only.
+#   by pkg(8): perl5, p5-Socket6, p5-Net-Flow, oksh, python312, py312-scapy,
+#   py312-pytest and their dependencies.  They are test tools only.
 set -eu
 [ $# -ge 4 ] || { echo "usage: $0 SRCTOP OBJPREFIX OUTDIR PKGDIR [KERNCONF]" >&2; exit 64; }
 src=$1 objp=$2 out=$3 pkgdir=$4 kernconf=${5:-GENERIC}
@@ -56,6 +56,12 @@ ln -sf python3.12 "$R/usr/local/bin/python3"; add usr/local/bin/python3 link 075
 # "/usr/bin/env python", which the python meta-port provides.
 ln -sf python3.12 "$R/usr/local/bin/python"; add usr/local/bin/python link 0755 link=python3.12
 ln -sf /usr/local/bin/oksh "$R/bin/ksh"; add bin/ksh link 0755 link=/usr/local/bin/oksh
+# atf_pytest_wrapper runs "pytest" (the FreeBSD pytest suites); the package's
+# install script, which is not run here, would make this link.
+if [ -e "$R/usr/local/bin/pytest-3.12" ]; then
+	ln -sf pytest-3.12 "$R/usr/local/bin/pytest"
+	add usr/local/bin/pytest link 0755 link=pytest-3.12
+fi
 
 put etc/fstab 0644 <<'EOF'
 /dev/ufs/root	/	ufs	rw	1	1

@@ -38,7 +38,8 @@ No VM run of this branch has happened.
 
 1. Image: `JOBS=4 sh tools/test/pf-parity/openbsd-regress/image-5bsd.sh
    /usr/obj/5BSD-pf-consumers /usr/obj/usr/obj/5BSD-pf-consumers-objs
-   /usr/obj/5BSD-pf-parity/consumers/imgN /usr/obj/5BSD-pf-parity/xfer/fbsdpkg/flat`
+   /usr/obj/5BSD-pf-parity/consumers/imgN /usr/obj/5BSD-pf-parity/xfer/fbsdpkg-20261019/flat`
+   (the 2026-10-19 set adds py312-pytest, checked against the signed catalogue)
    (img1 there predates the rebase).
 2. Boot as dut2, 2 vCPUs: `python3.12 tools/test/pf-parity/openbsd-regress/vm.py
    start --cpus 2 dut2 5bsd <disk>`; ssh with
