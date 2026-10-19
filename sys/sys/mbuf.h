@@ -173,8 +173,13 @@ struct pkthdr_pf {
 	uint16_t	 dn_ifidx;	/* route-to interface ... */
 	uint16_t	 dn_ifgen;	/* ... and its generation */
 	uint16_t	 dn_dpipe;	/* pipe chosen during pf_route() */
+	uint8_t		 xflags;	/* 5BSD: PF_XTAG_* */
 	uint64_t	 dn_dst[4];	/* route-to next hop (sockaddr_in[6]) */
 };
+
+/* pkthdr_pf.xflags (5BSD) */
+#define	PF_XTAG_ICMP_ERROR		0x01	/* pf asks the stack for an
+						   ICMP error (pf_send_icmp) */
 
 /* pkthdr_pf.flags */
 #define	PF_TAG_GENERATED		0x01

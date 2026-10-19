@@ -94,6 +94,9 @@ class TestNAT64(VnetTestTemplate):
         ifname = vnet.iface_alias_map["if1"].name
 
         ToolsHelper.print_output("/sbin/sysctl net.inet6.ip6.forwarding=1")
+        # 5BSD: OpenBSD pf forwards af-to packets only with forwarding on
+        # for the family they leave in, too.
+        ToolsHelper.print_output("/sbin/sysctl net.inet.ip.forwarding=1")
         ToolsHelper.print_output("/sbin/route add default 192.0.2.2")
         ToolsHelper.print_output("/sbin/pfctl -e")
         ToolsHelper.pf_rules([

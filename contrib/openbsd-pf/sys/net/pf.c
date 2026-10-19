@@ -157,6 +157,12 @@ int			 pf_check_tcp_cksum(struct mbuf *, int, int,
 			    sa_family_t);
 __inline void		 pf_cksum_fixup(u_int16_t *, u_int16_t, u_int16_t,
 			    u_int8_t);
+#ifdef INET6
+void			 pf_cksum_inner_af(u_int16_t *, const struct pf_addr *,
+			    const struct pf_addr *, sa_family_t,
+			    const struct pf_addr *, const struct pf_addr *,
+			    sa_family_t, u_int8_t);	/* 5BSD */
+#endif	/* INET6 */
 void			 pf_cksum_fixup_a(u_int16_t *, const struct pf_addr *,
 			    const struct pf_addr *, sa_family_t, u_int8_t);
 int			 pf_modulate_sack(struct pf_pdesc *,
@@ -2897,6 +2903,27 @@ pf_cksum_fixup_a(u_int16_t *cksum, const struct pf_addr *a,
 	*cksum = (u_int16_t)(x);
 }
 
+#ifdef INET6
+/*
+ * 5BSD: adjust a transport checksum for its pseudo-header addresses moving
+ * to another address family (an ICMP error's quoted datagram after af-to).
+ * The length and protocol words sum the same in both pseudo-headers.
+ */
+void
+pf_cksum_inner_af(u_int16_t *cksum, const struct pf_addr *osrc,
+    const struct pf_addr *odst, sa_family_t oaf, const struct pf_addr *nsrc,
+    const struct pf_addr *ndst, sa_family_t naf, u_int8_t proto)
+{
+	const struct pf_addr *o[2] = { osrc, odst }, *n[2] = { nsrc, ndst };
+	int i, w, ow = oaf == AF_INET ? 2 : 8, nw = naf == AF_INET ? 2 : 8;
+
+	for (i = 0; i < 2; i++)
+		for (w = 0; w < 8; w++)
+			pf_cksum_fixup(cksum, w < ow ? o[i]->addr16[w] : 0,
+			    w < nw ? n[i]->addr16[w] : 0, proto);
+}
+#endif	/* INET6 */
+
 int
 pf_patch_8(struct pf_pdesc *pd, u_int8_t *f, u_int8_t v, bool hi)
 {
@@ -3913,6 +3940,7 @@ pf_send_icmp(struct mbuf *m, u_int8_t type, u_int8_t code, int param,
 		return;
 	}
 	PF_MTAG_W(m0)->flags |= PF_TAG_GENERATED;	/* 5BSD: m_tag */
+	PF_MTAG_W(m0)->xflags |= PF_XTAG_ICMP_ERROR;	/* 5BSD */
 	m0->m_pkthdr.ph_rtableid = rdomain;
 	if (r && (r->scrub_flags & PFSTATE_SETPRIO))
 		pf_mtag_setprio(PF_MTAG_W(m0), r->set_prio[0]);	/* 5BSD: m_tag */
@@ -5286,7 +5314,15 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 		}
 
 #ifdef INET6
-		if (rewrite && skw->af != sks->af)
+		/*
+		 * 5BSD: af-to translates also when the ports stay (SCTP keeps
+		 * them, and a TCP or UDP source port may be reused):
+		 * pf_translate_af() rewrites the headers and checksums.  Only
+		 * an ICMP message pf_translate() refused stays (neighbor
+		 * discovery, MLD, an untranslatable type).
+		 */
+		if (skw->af != sks->af && (rewrite ||
+		    (pd->proto != IPPROTO_ICMP && pd->proto != IPPROTO_ICMPV6)))
 			action = PF_AFRT;
 #endif /* INET6 */
 
@@ -7036,6 +7072,13 @@ pf_test_state_icmp(struct pf_pdesc *pd, struct pf_state **stp,
 					m_copyback(pd->m, pd->off,
 					    sizeof(struct icmp6_hdr),
 					    &pd->hdr.icmp6, M_NOWAIT);
+					/* 5BSD: the quoted pseudo-header */
+					u_int16_t isum = uh->uh_sum;
+
+					pf_cksum_inner_af(&isum, pd2.src,
+					    pd2.dst, pd2.af, &nk->addr[sidx],
+					    &nk->addr[didx], nk->af,
+					    IPPROTO_UDP);
 					if (pf_change_icmp_af(pd->m, ipoff2,
 					    pd, &pd2, &nk->addr[sidx],
 					    &nk->addr[didx], pd->af, nk->af))
@@ -7063,6 +7106,17 @@ pf_test_state_icmp(struct pf_pdesc *pd, struct pf_state **stp,
 					}
 					pd->naf = nk->af;
 
+					/*
+					 * 5BSD: the quoted datagram's checksum
+					 * follows its new addresses and ports,
+					 * so that the error matches what the
+					 * host sent.
+					 */
+					pf_cksum_fixup(&isum, uh->uh_sport,
+					    nk->port[sidx], IPPROTO_UDP);
+					pf_cksum_fixup(&isum, uh->uh_dport,
+					    nk->port[didx], IPPROTO_UDP);
+					pf_patch_16(pd, &uh->uh_sum, isum);
 					pf_patch_16(pd,
 					    &uh->uh_sport, nk->port[sidx]);
 					pf_patch_16(pd,
@@ -7378,6 +7432,66 @@ pf_test_state_icmp(struct pf_pdesc *pd, struct pf_state **stp,
 			    (*stp)->key[PF_SK_STACK]) {
 				struct pf_state_key *nk =
 				    (*stp)->key[pd->didx];
+
+#ifdef INET6
+				/*
+				 * 5BSD: af-to, as for UDP above.  The quoted
+				 * ports follow the state; SCTP's CRC32c covers
+				 * no pseudo-header, so no checksum follows the
+				 * new addresses.
+				 */
+				struct pf_state_key *ank =
+				    PF_REVERSED_KEY((*stp)->key, pd->af) ?
+				    (*stp)->key[pd->sidx] :
+				    (*stp)->key[pd->didx];
+
+				if (pd->af != ank->af) {
+					u_int16_t ports[2];
+					int sidx = pd2.didx, didx = pd2.sidx;
+					int hasports =
+					    pd2.proto == IPPROTO_SCTP;
+
+					if (hasports && !pf_pull_hdr(pd2.m,
+					    pd2.off, ports, sizeof(ports),
+					    reason, pd2.af))
+						return (PF_DROP);
+					if (pf_translate_icmp_af(pd, ank->af,
+					    &pd->hdr.icmp))
+						return (PF_DROP);
+					m_copyback(pd->m, pd->off,
+					    sizeof(struct icmp6_hdr),
+					    &pd->hdr.icmp6, M_NOWAIT);
+					if (pf_change_icmp_af(pd->m, ipoff2,
+					    pd, &pd2, &ank->addr[sidx],
+					    &ank->addr[didx], pd->af, ank->af))
+						return (PF_DROP);
+					pd->m->m_pkthdr.ph_rtableid =
+					    ank->rdomain;
+					pd->destchg = 1;
+					pf_addrcpy(&pd->nsaddr,
+					    &ank->addr[pd2.sidx], ank->af);
+					pf_addrcpy(&pd->ndaddr,
+					    &ank->addr[pd2.didx], ank->af);
+					if (ank->af == AF_INET) {
+						pd->proto = IPPROTO_ICMP;
+					} else {
+						pd->proto = IPPROTO_ICMPV6;
+						pd->nsaddr.addr32[3] =
+						    pd->src->addr32[0];
+					}
+					pd->naf = ank->af;
+					if (hasports) {
+						pf_patch_16(pd, &ports[0],
+						    ank->port[sidx]);
+						pf_patch_16(pd, &ports[1],
+						    ank->port[didx]);
+						m_copyback(pd2.m, pd2.off,
+						    sizeof(ports), ports,
+						    M_NOWAIT);
+					}
+					return (PF_AFRT);
+				}
+#endif /* INET6 */
 
 				if (PF_ANEQ(pd2.src,
 				    &nk->addr[pd2.sidx], pd2.af))
@@ -9103,6 +9217,28 @@ log_packet:
 		/* 5BSD: af-to; may an IPv4 packet be fragmented? */
 		int afrt_df = pd.af == AF_INET &&
 		    (mtod(pd.m, struct ip *)->ip_off & htons(IP_DF)) != 0;
+
+		/*
+		 * 5BSD: a packet whose time to live ends here gets its error
+		 * in its own family, about the packet it sent.  pf_route()
+		 * checks only after the translation, and sent the error about
+		 * the translated packet to its translated source: this host
+		 * (FreeBSD PR 291527).
+		 */
+		if (pd.dir == PF_IN && (pd.af == AF_INET ?
+		    mtod(pd.m, struct ip *)->ip_ttl <= IPTTLDEC :
+		    mtod(pd.m, struct ip6_hdr *)->ip6_hlim <= IPV6_HLIMDEC)) {
+			if (pd.af == AF_INET)
+				pf_send_icmp(pd.m, ICMP_TIMXCEED,
+				    ICMP_TIMXCEED_INTRANS, 0, AF_INET, r,
+				    pd.rdomain);
+			else
+				pf_send_icmp(pd.m, ICMP6_TIME_EXCEEDED,
+				    ICMP6_TIME_EXCEED_TRANSIT, 0, AF_INET6, r,
+				    pd.rdomain);
+			action = PF_DROP;
+			goto out;
+		}
 
 		if (pf_translate_af(&pd)) {
 			action = PF_DROP;
