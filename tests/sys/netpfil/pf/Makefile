@@ -57,6 +57,7 @@ ATF_TESTS_SH+=	anchor \
 		statefile \
 		status \
 		syncookie \
+		stress \
 		synproxy \
 		table \
 		tcp \
