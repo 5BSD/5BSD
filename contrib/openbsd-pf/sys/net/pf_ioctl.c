@@ -2516,6 +2516,16 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 
 		t = pf_open_trans(minor(dev));
 		if (t == NULL) {
+			/*
+			 * 5BSD: and the anchor reference taken above; leaked,
+			 * it kept every anchor that reached the per-descriptor
+			 * transaction limit from being freed.
+			 */
+			NET_LOCK();
+			PF_LOCK();
+			pf_anchor_rele(ruleset->anchor);
+			PF_UNLOCK();
+			NET_UNLOCK();
 			error = EBUSY;
 			goto fail;
 		}

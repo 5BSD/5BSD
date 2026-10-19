@@ -39,8 +39,10 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	translated; ICMP errors quoting SCTP and the UDP checksum quoted in
 	errors are translated.  A neighbor advertisement that matches no
 	state no longer counts as a short packet.  Rules pf refused after
-	reading them no longer leak tag ids, and a VNET jail destroyed with
-	an unfinished table transaction no longer leaks its anchors.
+	reading them no longer leak tag ids, a VNET jail destroyed with
+	an unfinished table transaction no longer leaks its anchors, and
+	DIOCGETRULES refused at the transaction limit no longer leaks the
+	anchor it lists.
 	pf.ko and the kernel must be updated together (struct pkthdr_pf).
 
 20261017:

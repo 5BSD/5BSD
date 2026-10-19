@@ -821,6 +821,61 @@ ATF_TC_CLEANUP(refused_rule_tags, tc)
 	quiet("pfctl -q -F all");
 }
 
+/*
+ * DIOCGETRULES takes an anchor reference for its transaction; when the
+ * descriptor already holds the most transactions it may (EBUSY), the
+ * reference must be dropped, or the anchor is never freed.
+ */
+static u_int
+anchor_count(void)
+{
+	u_int n = 0;
+	size_t len = sizeof(n);
+
+	ATF_REQUIRE_MSG(sysctlbyname("net.pf.vnet_count.anchors", &n, &len,
+	    NULL, 0) == 0, "net.pf.vnet_count.anchors: %s", strerror(errno));
+	return (n);
+}
+
+ATF_TC_WITH_CLEANUP(getrules_limit_anchor);
+GLUE_HEAD(getrules_limit_anchor)
+
+ATF_TC_BODY(getrules_limit_anchor, tc)
+{
+	static struct pfioc_rule pr;
+	u_int before;
+	int fd, i, busy = 0;
+
+	COMMON_HEAD();
+	before = anchor_count();
+	run("printf 'pass in proto tcp\\n' | pfctl -q -a fglim -f -");
+	ATF_REQUIRE(anchor_count() > before);
+
+	fd = open("/dev/pf", O_RDWR);
+	ATF_REQUIRE(fd != -1);
+	for (i = 0; i < 600; i++) {
+		memset(&pr, 0, sizeof(pr));
+		strlcpy(pr.anchor, "fglim", sizeof(pr.anchor));
+		if (ioctl(fd, DIOCGETRULES, &pr) == -1) {
+			ATF_REQUIRE_EQ(errno, EBUSY);
+			busy++;
+		}
+	}
+	ATF_REQUIRE_MSG(busy > 0, "the transaction limit was never reached");
+	close(fd);
+
+	run("pfctl -q -a fglim -F rules");
+	ATF_CHECK_EQ_MSG(anchor_count(), before,
+	    "%u anchors before, %u after (anchor references leaked)",
+	    before, anchor_count());
+	COMMON_CLEANUP();
+}
+
+ATF_TC_CLEANUP(getrules_limit_anchor, tc)
+{
+	quiet("pfctl -q -a fglim -F all");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, getrule_ticket);
@@ -830,6 +885,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, srcnodes);
 	ATF_TP_ADD_TC(tp, limiters);
 	ATF_TP_ADD_TC(tp, refused_rule_tags);
+	ATF_TP_ADD_TC(tp, getrules_limit_anchor);
 
 	return (atf_no_error());
 }
