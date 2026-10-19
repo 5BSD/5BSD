@@ -25,6 +25,8 @@
 # SUCH DAMAGE.
 
 . $(atf_get_srcdir)/../common/vnet.subr
+# 5BSD: as OpenBSD, an interface's first IPv6 address goes through DAD
+# (UPDATING); these tests use their addresses at once, so skip it.
 
 atf_test_case "6to4" "cleanup"
 6to4_head()
@@ -41,11 +43,11 @@ atf_test_case "6to4" "cleanup"
 	epair=$(vnet_mkepair)
 
 	vnet_mkjail relay ${epair}a
-	jexec relay ifconfig lo0 inet6 2001:db8::1/64 up
+	jexec relay ifconfig lo0 inet6 2001:db8::1/64 no_dad up
 	jexec relay ifconfig ${epair}a 192.0.2.1/24 up
 	# Simple gif to terminate 6to4
 	gif=$(jexec relay ifconfig gif create)
-	jexec relay ifconfig $gif inet6 2002:c000:0201::1/64 up
+	jexec relay ifconfig $gif inet6 2002:c000:0201::1/64 no_dad up
 	jexec relay ifconfig $gif tunnel 192.0.2.1 192.0.2.2
 	jexec relay route -6 add default -interface $gif
 
@@ -53,7 +55,7 @@ atf_test_case "6to4" "cleanup"
 	jexec client ifconfig lo0 up
 	jexec client ifconfig ${epair}b 192.0.2.2/24 up
 	stf=$(jexec client ifconfig stf create)
-	jexec client ifconfig $stf inet6 2002:c000:0202::1/32 up
+	jexec client ifconfig $stf inet6 2002:c000:0202::1/32 no_dad up
 	jexec client route -6 add default 2002:c000:0201::1
 
 	# Sanity check
@@ -91,8 +93,8 @@ atf_test_case "6rd" "cleanup"
 
 	# Simple gif to terminate the 6RD tunnel
 	gif=$(jexec br ifconfig gif create)
-	jexec br ifconfig lo0 inet6 2001:db9::1/64 up
-	jexec br ifconfig $gif inet6 2001:db8::/64 up
+	jexec br ifconfig lo0 inet6 2001:db9::1/64 no_dad up
+	jexec br ifconfig $gif inet6 2001:db8::/64 no_dad up
 	jexec br ifconfig $gif tunnel 192.0.2.1 192.0.2.2
 	jexec br route -6 add default -interface $gif
 
@@ -108,7 +110,7 @@ atf_test_case "6rd" "cleanup"
 
 	jexec client ifconfig $stf stfv4br 192.0.2.1
 	jexec client ifconfig $stf stfv4net 192.0.2.2/32
-	jexec client ifconfig $stf inet6 2001:db8:c000:0202::1/32 up
+	jexec client ifconfig $stf inet6 2001:db8:c000:0202::1/32 no_dad up
 	jexec client route -6 add default -interface $stf
 
 	atf_check -s exit:0 -o ignore \
@@ -140,7 +142,7 @@ atf_test_case "6rd_peer" "cleanup"
 	stf_one=$(jexec one ifconfig stf create)
 	jexec one ifconfig $stf_one stfv4br 192.0.2.3
 	jexec one ifconfig $stf_one stfv4net 192.0.2.1/32
-	jexec one ifconfig $stf_one inet6 2001:db8:c000:0201::1/32 up
+	jexec one ifconfig $stf_one inet6 2001:db8:c000:0201::1/32 no_dad up
 	jexec one route -6 add default -interface $stf_one
 
 	vnet_mkjail two ${epair}b
@@ -149,7 +151,7 @@ atf_test_case "6rd_peer" "cleanup"
 	stf_two=$(jexec two ifconfig stf create)
 	jexec two ifconfig $stf_two stfv4br 192.0.2.3
 	jexec two ifconfig $stf_two stfv4net 192.0.2.2/32
-	jexec two ifconfig $stf_two inet6 2001:db8:c000:0202::1/32 up
+	jexec two ifconfig $stf_two inet6 2001:db8:c000:0202::1/32 no_dad up
 	jexec two route -6 add default -interface $stf_two
 
 	# Sanity check
@@ -164,10 +166,10 @@ atf_test_case "6rd_peer" "cleanup"
 
 	# Shorter prefixes, for both v4 and v6
 	jexec one ifconfig $stf_one inet6 2001:db8:c000:0201::1 delete
-	jexec one ifconfig $stf_one inet6 2001:0201::1/16
+	jexec one ifconfig $stf_one inet6 2001:0201::1/16 no_dad
 	jexec one ifconfig $stf_one stfv4net 192.0.2.1/16
 	jexec two ifconfig $stf_two inet6 2001:db8:c000:0202::1 delete
-	jexec two ifconfig $stf_two inet6 2001:0202::1/16
+	jexec two ifconfig $stf_two inet6 2001:0202::1/16 no_dad
 	jexec two ifconfig $stf_two stfv4net 192.0.2.2/16
 
 	atf_check -s exit:0 -o ignore \

@@ -5,6 +5,8 @@
 #
 
 . $(atf_get_srcdir)/../common/vnet.subr
+# 5BSD: as OpenBSD, an interface's first IPv6 address goes through DAD
+# (UPDATING); these tests use their addresses at once, so skip it.
 
 atf_test_case "gre4_basic" "cleanup"
 gre4_basic_head()
@@ -45,9 +47,9 @@ gre4_basic_body()
 	    inet tunnel ${endpoint2} ${endpoint1} up
 
 	atf_check ifconfig -j gretest1 gre1 inet ${v4tunnel1} ${v4tunnel2}
-	atf_check ifconfig -j gretest1 gre1 inet6 ${v6tunnel1}
+	atf_check ifconfig -j gretest1 gre1 inet6 ${v6tunnel1} no_dad
 	atf_check ifconfig -j gretest2 gre1 inet ${v4tunnel2} ${v4tunnel1}
-	atf_check ifconfig -j gretest2 gre1 inet6 ${v6tunnel2}
+	atf_check ifconfig -j gretest2 gre1 inet6 ${v6tunnel2} no_dad
 
 	# Tunnel test
 	atf_check -o ignore jexec gretest1 ping -nc 1 -t 1 $v4tunnel2
@@ -84,8 +86,8 @@ gre6_basic_body()
 	vnet_mkjail gretest1 ${epair}a
 	vnet_mkjail gretest2 ${epair}b
 
-	ifconfig -j gretest1 ${epair}a inet6 ${endpoint1} up
-	ifconfig -j gretest2 ${epair}b inet6 ${endpoint2} up
+	ifconfig -j gretest1 ${epair}a inet6 ${endpoint1} no_dad up
+	ifconfig -j gretest2 ${epair}b inet6 ${endpoint2} no_dad up
 
 	# Sanity check
 	atf_check -o ignore \
@@ -99,9 +101,9 @@ gre6_basic_body()
 	    inet6 tunnel ${endpoint2} ${endpoint1} up
 
 	atf_check ifconfig -j gretest1 gre1 inet ${v4tunnel1} ${v4tunnel2}
-	atf_check ifconfig -j gretest1 gre1 inet6 ${v6tunnel1}
+	atf_check ifconfig -j gretest1 gre1 inet6 ${v6tunnel1} no_dad
 	atf_check ifconfig -j gretest2 gre1 inet ${v4tunnel2} ${v4tunnel1}
-	atf_check ifconfig -j gretest2 gre1 inet6 ${v6tunnel2}
+	atf_check ifconfig -j gretest2 gre1 inet6 ${v6tunnel2} no_dad
 
 	# Tunnel test
 	atf_check -o ignore jexec gretest1 ping -nc 1 -t 1 $v4tunnel2
@@ -138,8 +140,8 @@ gre6_csum_body()
 	vnet_mkjail gretest1 ${epair}a
 	vnet_mkjail gretest2 ${epair}b
 
-	ifconfig -j gretest1 ${epair}a inet6 ${endpoint1} up
-	ifconfig -j gretest2 ${epair}b inet6 ${endpoint2} up
+	ifconfig -j gretest1 ${epair}a inet6 ${endpoint1} no_dad up
+	ifconfig -j gretest2 ${epair}b inet6 ${endpoint2} no_dad up
 
 	# Sanity check
 	atf_check -o ignore \
@@ -153,9 +155,9 @@ gre6_csum_body()
 	    inet6 tunnel ${endpoint2} ${endpoint1} enable_csum up
 
 	atf_check ifconfig -j gretest1 gre1 inet ${v4tunnel1} ${v4tunnel2}
-	atf_check ifconfig -j gretest1 gre1 inet6 ${v6tunnel1}
+	atf_check ifconfig -j gretest1 gre1 inet6 ${v6tunnel1} no_dad
 	atf_check ifconfig -j gretest2 gre1 inet ${v4tunnel2} ${v4tunnel1}
-	atf_check ifconfig -j gretest2 gre1 inet6 ${v6tunnel2}
+	atf_check ifconfig -j gretest2 gre1 inet6 ${v6tunnel2} no_dad
 
 	# ifconfig test
 	atf_check -o match:"ENABLE_CSUM" ifconfig -j gretest1 gre1
@@ -196,8 +198,8 @@ gre6_key_body()
 	vnet_mkjail gretest1 ${epair}a
 	vnet_mkjail gretest2 ${epair}b
 
-	ifconfig -j gretest1 ${epair}a inet6 ${endpoint1} up
-	ifconfig -j gretest2 ${epair}b inet6 ${endpoint2} up
+	ifconfig -j gretest1 ${epair}a inet6 ${endpoint1} no_dad up
+	ifconfig -j gretest2 ${epair}b inet6 ${endpoint2} no_dad up
 
 	# Sanity check
 	atf_check -o ignore \
@@ -211,9 +213,9 @@ gre6_key_body()
 	    inet6 tunnel ${endpoint2} ${endpoint1} grekey 10 up
 
 	atf_check ifconfig -j gretest1 gre1 inet ${v4tunnel1} ${v4tunnel2}
-	atf_check ifconfig -j gretest1 gre1 inet6 ${v6tunnel1}
+	atf_check ifconfig -j gretest1 gre1 inet6 ${v6tunnel1} no_dad
 	atf_check ifconfig -j gretest2 gre1 inet ${v4tunnel2} ${v4tunnel1}
-	atf_check ifconfig -j gretest2 gre1 inet6 ${v6tunnel2}
+	atf_check ifconfig -j gretest2 gre1 inet6 ${v6tunnel2} no_dad
 
 	# ifconfig test
 	atf_check -o match:"grekey: 0xa \(10\)" ifconfig -j gretest1 gre1
@@ -254,8 +256,8 @@ gre6_seq_body()
 	vnet_mkjail gretest1 ${epair}a
 	vnet_mkjail gretest2 ${epair}b
 
-	ifconfig -j gretest1 ${epair}a inet6 ${endpoint1} up
-	ifconfig -j gretest2 ${epair}b inet6 ${endpoint2} up
+	ifconfig -j gretest1 ${epair}a inet6 ${endpoint1} no_dad up
+	ifconfig -j gretest2 ${epair}b inet6 ${endpoint2} no_dad up
 
 	# Sanity check
 	atf_check -o ignore \
@@ -269,9 +271,9 @@ gre6_seq_body()
 	    inet6 tunnel ${endpoint2} ${endpoint1} enable_seq up
 
 	atf_check ifconfig -j gretest1 gre1 inet ${v4tunnel1} ${v4tunnel2}
-	atf_check ifconfig -j gretest1 gre1 inet6 ${v6tunnel1}
+	atf_check ifconfig -j gretest1 gre1 inet6 ${v6tunnel1} no_dad
 	atf_check ifconfig -j gretest2 gre1 inet ${v4tunnel2} ${v4tunnel1}
-	atf_check ifconfig -j gretest2 gre1 inet6 ${v6tunnel2}
+	atf_check ifconfig -j gretest2 gre1 inet6 ${v6tunnel2} no_dad
 
 	# ifconfig test
 	atf_check -o match:"ENABLE_SEQ" ifconfig -j gretest1 gre1
@@ -312,8 +314,8 @@ gre6_udpencap_body()
 	vnet_mkjail gretest1 ${epair}a
 	vnet_mkjail gretest2 ${epair}b
 
-	ifconfig -j gretest1 ${epair}a inet6 ${endpoint1} up
-	ifconfig -j gretest2 ${epair}b inet6 ${endpoint2} up
+	ifconfig -j gretest1 ${epair}a inet6 ${endpoint1} no_dad up
+	ifconfig -j gretest2 ${epair}b inet6 ${endpoint2} no_dad up
 
 	# Sanity check
 	atf_check -o ignore \
@@ -327,9 +329,9 @@ gre6_udpencap_body()
 	    inet6 tunnel ${endpoint2} ${endpoint1} udpencap udpport 55555 up
 
 	atf_check ifconfig -j gretest1 gre1 inet ${v4tunnel1} ${v4tunnel2}
-	atf_check ifconfig -j gretest1 gre1 inet6 ${v6tunnel1}
+	atf_check ifconfig -j gretest1 gre1 inet6 ${v6tunnel1} no_dad
 	atf_check ifconfig -j gretest2 gre1 inet ${v4tunnel2} ${v4tunnel1}
-	atf_check ifconfig -j gretest2 gre1 inet6 ${v6tunnel2}
+	atf_check ifconfig -j gretest2 gre1 inet6 ${v6tunnel2} no_dad
 
 	# ifconfig test
 	atf_check -o match:"UDPENCAP" ifconfig -j gretest1 gre1
@@ -369,7 +371,7 @@ gre_blind_options_body()
 		enable_seq grekey 10 enable_csum udpencap udpport 55555 up)
 
 	atf_check ifconfig -j gretest $gre inet ${v4tunnel1} ${v4tunnel2}
-	atf_check ifconfig -j gretest $gre inet6 ${v6tunnel1}
+	atf_check ifconfig -j gretest $gre inet6 ${v6tunnel1} no_dad
 
 	# ifconfig test
 	atf_check -o match:"grekey: 0xa \(10\)" ifconfig -j gretest $gre
