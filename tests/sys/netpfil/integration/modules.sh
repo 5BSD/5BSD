@@ -33,6 +33,19 @@ pf_loaded_body()
 	atf_check -s exit:0 -o match:'^Status: ' pfctl -si
 }
 
+atf_test_case "dummynet_loaded"
+dummynet_loaded_head()
+{
+	atf_set descr 'dummynet is loaded at boot (loader defaults) and dnctl works'
+	atf_set require.user root
+}
+
+dummynet_loaded_body()
+{
+	atf_check -s exit:0 kldstat -q -m dummynet
+	atf_check -s exit:0 -o ignore dnctl pipe show
+}
+
 atf_test_case "dtrace_loaded"
 dtrace_loaded_head()
 {
@@ -306,6 +319,7 @@ rc_pfsync_cleanup()
 atf_init_test_cases()
 {
 	atf_add_test_case "pf_loaded"
+	atf_add_test_case "dummynet_loaded"
 	atf_add_test_case "dtrace_loaded"
 	atf_add_test_case "no_separate_modules"
 	atf_add_test_case "cloners_listed"

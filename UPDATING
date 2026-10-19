@@ -28,6 +28,12 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
 20261019:
+	dummynet(4) is preloaded from the loader defaults, like pf and
+	DTrace, so pf's dnpipe and dnqueue and dnctl(8) work on every
+	installed system (late kldload is denied).  Loading it shapes
+	nothing until pipes or queues are configured.  Set
+	dummynet_load="NO" in /boot/loader.conf to leave it out.
+
 	pf ICMP error fixes.  pf's own "block return" errors pass its own
 	block rules again (IPv4 errors were dropped by the rule that sent
 	them).  Packet-too-big errors for packets pf translates (NAT66,
