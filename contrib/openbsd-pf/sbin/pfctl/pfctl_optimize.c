@@ -138,6 +138,12 @@ struct pf_rule_field {
     PF_RULE_FIELD(logif,		BREAK),
     PF_RULE_FIELD(route,		BREAK),
     PF_RULE_FIELD(rtableid,		BREAK),
+    /*
+     * 5BSD: dummynet.  The pipe a packet goes through is an action, like
+     * qname: reordering a dnpipe 1 and a dnpipe 2 rule changes which one
+     * the last match takes.
+     */
+    PF_RULE_FIELD(dn,			BREAK),
 
     /*
      * Any fields not listed in this structure act as BREAK fields
@@ -161,7 +167,6 @@ struct pf_rule_field {
     PF_RULE_FIELD(uid,			NOMERGE),
     PF_RULE_FIELD(gid,			NOMERGE),
     PF_RULE_FIELD(jail,			NOMERGE),	/* 5BSD: jail */
-    PF_RULE_FIELD(dn,			NOMERGE),	/* 5BSD: dummynet */
     PF_RULE_FIELD(direction,		NOMERGE),
     PF_RULE_FIELD(proto,		NOMERGE),
     PF_RULE_FIELD(type,			NOMERGE),

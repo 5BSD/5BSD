@@ -33,6 +33,11 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	installed system (late kldload is denied).  Loading it shapes
 	nothing until pipes or queues are configured.  Set
 	dummynet_load="NO" in /boot/loader.conf to leave it out.
+	pfctl's optimizer no longer reorders rules with different dnpipe or
+	dnqueue values: it treated them as interchangeable and could move a
+	general rule after more specific ones, so that the general rule's
+	pipe won the last match.  Reload rulesets that send traffic of one
+	rule set to different pipes or queues.
 
 	pf ICMP error fixes.  pf's own "block return" errors pass its own
 	block rules again (IPv4 errors were dropped by the rule that sent
