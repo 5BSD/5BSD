@@ -333,6 +333,69 @@ class TestFuzzPackets(VnetTestTemplate):
                 b[i:i] = self.rbytes(self.r.randrange(1, 8))
         return bytes(b)
 
+    def addr16(self, af):
+        """A struct pf_addr (16 bytes) of the test networks."""
+        import ipaddress
+        if af == 2:
+            a = self.r.choice(["192.0.2.2", "198.51.100.2", "198.51.100.1",
+                               "203.0.113.%d" % self.r.randrange(256)])
+            return ipaddress.ip_address(a).packed + bytes(12)
+        a = self.r.choice(["2001:db8::2", "2001:db8:1::2", "fe80::1",
+                           "2001:db8:1::%x" % self.r.randrange(65536)])
+        return ipaddress.ip_address(a).packed
+
+    def pfsync_state(self):
+        """struct pfsync_state (264 bytes, network order), nearly valid:
+        real families, protocols, keys and peers, with a few fields or
+        bytes wrong, to get past pf_state_import()'s first checks."""
+        r = self.r
+        af = r.choice([2, 28, 2, 28, r.randrange(256)])
+        key_af = af if r.randrange(8) else r.choice([2, 28])
+        proto = r.choice([6, 17, 1, 58, 132, 6, r.randrange(256)])
+
+        def key():
+            return (self.addr16(key_af) + self.addr16(key_af) +
+                    struct.pack("!HHHBB", r.randrange(65536),
+                                r.randrange(65536),
+                                0 if r.randrange(6) else r.randrange(65536),
+                                key_af, 0))
+
+        def peer():
+            return struct.pack("!HBBI", r.randrange(4), r.randrange(256),
+                               r.choice([0, 1]), r.randrange(2 ** 32)) + \
+                struct.pack("!IIIHHBB", r.randrange(2 ** 32),
+                            r.randrange(2 ** 32), r.randrange(2 ** 32),
+                            r.randrange(65536), r.choice([0, 536, 1460, 65535]),
+                            r.randrange(12) if r.randrange(4) else r.randrange(256),
+                            r.choice([0, 7, 14, 15, 255])) + bytes(6)
+
+        ifname = r.choice([b"any", b"epair0b", b"lo0", b"pfsync0",
+                           self.rbytes(16)])[:16].ljust(16, b"\0")
+        st = struct.pack("!Q", r.randrange(2 ** 64)) + ifname + key() + key()
+        st += peer() + peer() + self.addr16(af if af in (2, 28) else 2)
+        st += struct.pack("!IIIII", r.choice([0xffffffff, 0, 1, r.randrange(2 ** 32)]),
+                          r.choice([0xffffffff, 0, r.randrange(2 ** 32)]),
+                          r.choice([0xffffffff, 0, r.randrange(2 ** 32)]),
+                          r.randrange(100000), r.randrange(100000))
+        st += self.rbytes(32)				# packets, bytes
+        st += struct.pack("!I", r.choice([0, 1, r.randrange(2 ** 32)]))
+        st += struct.pack("!ii", r.choice([-1, 0, r.randrange(-5, 300)]),
+                          r.choice([-1, 0, r.randrange(-5, 300)]))
+        st += struct.pack("!HBBBBBBBBBB", r.choice([0, 1400, r.randrange(65536)]),
+                          af, proto, r.choice([1, 2, r.randrange(256)]),
+                          r.randrange(4), r.choice([0, 1, 2, 3, r.randrange(256)]),
+                          r.randrange(30) if r.randrange(4) else r.randrange(256),
+                          r.randrange(256), r.randrange(256), r.randrange(256),
+                          r.randrange(256))
+        st += struct.pack("!H", r.randrange(65536)) + self.rbytes(2)
+        assert len(st) == 264, len(st)
+        if r.randrange(4) == 0:
+            b = bytearray(st)
+            for _ in range(r.randrange(1, 4)):
+                b[r.randrange(264)] = r.randrange(256)
+            st = bytes(b)
+        return st
+
     def pfsync(self):
         sp = self.sp
         body = b""
@@ -342,7 +405,11 @@ class TestFuzzPackets(VnetTestTemplate):
             size = PFSYNC_SIZES.get(action, 4 * self.r.randrange(1, 20))
             count = self.r.choice([0, 1, 2, 3, self.r.randrange(65536)])
             dw = size // 4 if self.r.randrange(4) else self.r.randrange(256)
-            msgs = self.rbytes(size * min(count, 3))
+            if action in (6, 13, 14) and self.r.randrange(4):
+                msgs = b"".join(self.pfsync_state()
+                                for _ in range(min(count, 3)))
+            else:
+                msgs = self.rbytes(size * min(count, 3))
             body += struct.pack("!BBH", action, dw, count) + msgs
         version = 6 if self.r.randrange(8) else self.r.randrange(256)
         length = 20 + len(body)

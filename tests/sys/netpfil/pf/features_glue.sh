@@ -965,6 +965,46 @@ queue_refused_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "ether_queue" "cleanup"
+ether_queue_head()
+{
+	atf_set descr 'Ether rules carry queue names: their ids are shared and released'
+	atf_set require.user root
+}
+
+ether_queue_body()
+{
+	pft_init
+
+	epair=$(vnet_mkepair)
+	ifconfig ${epair}a 192.0.2.2/24 up
+	vnet_mkjail alcatraz ${epair}b
+	jexec alcatraz ifconfig ${epair}b 192.0.2.1/24 up
+	jexec alcatraz pfctl -e
+
+	printf "%s\n" \
+	    "ether pass in on ${epair}b queue q1" \
+	    "ether pass out on ${epair}b queue q2 tag eqtag" \
+	    "ether pass in queue q1" \
+	    "pass" > equeue.conf
+	# pf_qname2qid() makes the ids, pf_free_eth_rule() drops them on
+	# every reload and flush; a leak would run the ids out.
+	for i in 1 2 3 4 5; do
+		atf_check -s exit:0 jexec alcatraz pfctl -f ${PWD}/equeue.conf
+		atf_check -s exit:0 -o ignore ping -c 2 192.0.2.1
+	done
+	atf_check -s exit:0 -o match:"queue q1" -o match:"queue q2" \
+	    jexec alcatraz pfctl -s ether
+	atf_check -s exit:0 -e ignore jexec alcatraz pfctl -F ethernet
+	atf_check -s exit:0 -o not-match:"queue" jexec alcatraz pfctl -s ether
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.1
+}
+
+ether_queue_cleanup()
+{
+	pft_cleanup
+}
+
 atf_test_case "port_range" "cleanup"
 port_range_head()
 {
@@ -1012,5 +1052,6 @@ atf_init_test_cases()
 	atf_add_test_case "pflog_logif"
 	atf_add_test_case "route_label"
 	atf_add_test_case "queue_refused"
+	atf_add_test_case "ether_queue"
 	atf_add_test_case "port_range"
 }

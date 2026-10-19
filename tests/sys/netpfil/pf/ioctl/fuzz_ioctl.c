@@ -52,6 +52,7 @@
 
 #include <net/if.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <net/pfvar.h>
 
 #include <errno.h>
@@ -307,6 +308,89 @@ gen_rule(struct pfioc_rule *io)
 	name(io->anchor_call, below(2) ? 8 : sizeof(io->anchor_call));
 }
 
+/* An address of the test networks, or anything. */
+static void
+gen_addr(struct pf_addr *a, sa_family_t af)
+{
+	memset(a, 0, sizeof(*a));
+	if (af == AF_INET) {
+		a->addr32[0] = htonl(below(4) ? 0xc0000200 | below(256) :
+		    (uint32_t)rnd());
+	} else {
+		a->addr32[0] = htonl(0x20010db8);
+		a->addr32[3] = below(4) ? htonl(below(65536)) : (uint32_t)rnd();
+	}
+}
+
+static void
+gen_peer(struct pfsync_state_peer *p)
+{
+	fill(p, sizeof(*p));
+	p->scrub.scrub_flag = below(2);
+	p->state = below(4) ? below(12) : (uint8_t)rnd();
+	p->wscale = below(4) ? below(15) : (uint8_t)rnd();
+	p->mss = below(2) ? htons(1460) : (uint16_t)rnd();
+}
+
+/*
+ * A nearly valid state for DIOCADDSTATE, the userland side of what
+ * pfsync input hands pf_state_import(): real families, protocols, keys
+ * and peers, with a few fields wrong.
+ */
+static void
+gen_state(struct pfsync_state *st)
+{
+	sa_family_t af = below(5) ? (below(2) ? AF_INET : AF_INET6) :
+	    (sa_family_t)rnd();
+	struct pfsync_state_peer p;
+	struct pf_addr a;
+
+	memset(st, 0, sizeof(*st));
+	st->id = rnd();
+	name(st->ifname, sizeof(st->ifname));
+	for (int k = 0; k < 2; k++) {
+		sa_family_t kaf = below(8) ? af : AF_INET;
+
+		gen_addr(&a, kaf);
+		memcpy(&st->key[k].addr[0], &a, sizeof(a));
+		gen_addr(&a, kaf);
+		memcpy(&st->key[k].addr[1], &a, sizeof(a));
+		st->key[k].port[0] = (uint16_t)rnd();
+		st->key[k].port[1] = (uint16_t)rnd();
+		st->key[k].rdomain = below(6) ? 0 : (uint16_t)rnd();
+		st->key[k].af = kaf;
+	}
+	gen_peer(&p);
+	memcpy(&st->src, &p, sizeof(p));
+	gen_peer(&p);
+	memcpy(&st->dst, &p, sizeof(p));
+	gen_addr(&a, af);
+	memcpy(&st->rt_addr, &a, sizeof(a));
+	st->rule = below(2) ? htonl(UINT32_MAX) : (uint32_t)rnd();
+	st->anchor = below(2) ? htonl(UINT32_MAX) : (uint32_t)rnd();
+	st->nat_rule = below(2) ? htonl(UINT32_MAX) : (uint32_t)rnd();
+	st->creation = htonl(below(100000));
+	st->expire = htonl(below(100000));
+	st->creatorid = below(4) ? (uint32_t)rnd() : 0;
+	st->rtableid[0] = below(2) ? -1 : (int32_t)below(300) - 5;
+	st->rtableid[1] = below(2) ? -1 : (int32_t)below(300) - 5;
+	st->af = af;
+	st->proto = below(6) ? (uint8_t[]){ IPPROTO_TCP, IPPROTO_UDP,
+	    IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_SCTP }[below(5)] :
+	    (uint8_t)rnd();
+	st->direction = below(4) ? 1 + below(2) : (uint8_t)rnd();
+	st->rt = below(4);
+	st->timeout = below(4) ? below(PFTM_MAX + 1) : (uint8_t)rnd();
+	st->sync_flags = (uint8_t)rnd();
+	st->state_flags = (uint16_t)rnd();
+	if (below(4) == 0) {	/* and a few bytes anywhere */
+		uint8_t *b = (uint8_t *)st;
+
+		for (int i = 1 + below(3); i > 0; i--)
+			b[below(sizeof(*st))] = (uint8_t)rnd();
+	}
+}
+
 static void
 gen(unsigned long cmd, void *arg, size_t len)
 {
@@ -329,6 +413,9 @@ gen(unsigned long cmd, void *arg, size_t len)
 	case DIOCADDRULE: case DIOCGETRULES: case DIOCGETRULE:
 	case DIOCCHANGERULE:
 		gen_rule(arg);
+		break;
+	case DIOCADDSTATE: case DIOCGETSTATE:
+		gen_state(&((struct pfioc_state *)arg)->state);
 		break;
 	case DIOCGETSTATES: case DIOCGETSTATESEXPORT: {
 		struct pfioc_states *ps = arg;
