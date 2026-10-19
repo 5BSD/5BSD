@@ -29,9 +29,13 @@ import time
 SSH = ['ssh', '-F', '/usr/obj/5BSD-pf-parity/keys/ssh_config',
        '-o', 'ConnectTimeout=300']
 OBJ = '/usr/obj/usr/obj/5BSD-pf-land/amd64.amd64/sys/GENERIC'
-# PFCOV_OBJ: the objects of the pf.ko under test, e.g. one built with
-# DEBUG_FLAGS='-g -fno-inline -fno-inline-functions' so that fbt sees the
-# functions the compiler would inline.
+# PFCOV_OBJ: the objects of the pf.ko under test, built with
+# DEBUG_FLAGS='-g -fno-inline -fno-inline-functions -mllvm
+# -enable-shrink-wrap=false' so that fbt sees every function: without
+# -fno-inline the compiler inlines small ones, and with shrink-wrapping
+# clang moves a leaf function's frame setup off its entry, where fbt's
+# entry probe then never fires (one function in ten in pf.c; they were
+# reported as not run although they ran).
 PFOBJ = os.environ.get('PFCOV_OBJ',
                        OBJ + '/modules/usr/obj/5BSD-pf-land/sys/modules/pf')
 # Kernel (not module) objects whose functions land/pf added or changed.
