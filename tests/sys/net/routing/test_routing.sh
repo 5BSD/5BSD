@@ -250,14 +250,16 @@ test_ecmp_routes_by_event_body()
 	atf_check -o ignore \
 	    ifconfig ${epair1}b vnet ${jname}
 
+	# 5BSD: as OpenBSD, an interface's first IPv6 address goes through
+	# DAD; the test pings at once, so skip it.
 	atf_check -o ignore \
-	    ifconfig ${epair0}a inet6 ${ep0_prefix}a/127 up
+	    ifconfig ${epair0}a inet6 ${ep0_prefix}a/127 no_dad up
 	atf_check -o ignore \
-	    ifconfig ${epair1}a inet6 ${ep1_prefix}a/127 up
+	    ifconfig ${epair1}a inet6 ${ep1_prefix}a/127 no_dad up
 	atf_check -o ignore \
-	    ifconfig -j ${jname} ${epair0}b inet6 ${ep0_prefix}b/127 up
+	    ifconfig -j ${jname} ${epair0}b inet6 ${ep0_prefix}b/127 no_dad up
 	atf_check -o ignore \
-	    ifconfig -j ${jname} ${epair1}b inet6 ${ep1_prefix}b/127 up
+	    ifconfig -j ${jname} ${epair1}b inet6 ${ep1_prefix}b/127 no_dad up
 	atf_check -o ignore \
 	    ifconfig lo0 inet6 ${lo0_addr}/128 up
 	atf_check -o ignore \
@@ -378,8 +380,8 @@ add_v6route_with_prefsrc_body()
 	vnet_mkjail ${jname} ${epair0}b
 
 	atf_check ifconfig lo0 inet6 ${lo0_addr}/128 up
-	atf_check ifconfig ${epair0}a inet6 ${ep0_prefix}a/127 up
-	atf_check ifconfig -j ${jname} ${epair0}b inet6 ${ep0_prefix}b/127 up
+	atf_check ifconfig ${epair0}a inet6 ${ep0_prefix}a/127 no_dad up
+	atf_check ifconfig -j ${jname} ${epair0}b inet6 ${ep0_prefix}b/127 no_dad up
 
 	# Create an IPv6 route via epair0 with loopback address as its prefsrc
 	atf_check -o ignore \
@@ -425,8 +427,8 @@ add_v4v6route_with_prefsrc_body()
 	vnet_mkjail ${jname} ${epair0}b
 
 	atf_check ifconfig lo0 inet ${lo0_addr}/32 alias up
-	atf_check ifconfig ${epair0}a inet6 ${ep0_prefix}a/127 up
-	atf_check ifconfig -j ${jname} ${epair0}b inet6 ${ep0_prefix}b/127 up
+	atf_check ifconfig ${epair0}a inet6 ${ep0_prefix}a/127 no_dad up
+	atf_check ifconfig -j ${jname} ${epair0}b inet6 ${ep0_prefix}b/127 no_dad up
 
 	# Create an IPv4 route via epair0 with IPv6 nexthop
 	# and loopback address as its prefsrc

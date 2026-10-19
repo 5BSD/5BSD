@@ -8,7 +8,7 @@
 # usage: image-5bsd.sh SRCTOP MAKEOBJDIRPREFIX OUTDIR PKGDIR [KERNCONF]
 #   PKGDIR holds FreeBSD:16:amd64 packages fetched (and catalogue-verified)
 #   by pkg(8): perl5, p5-Socket6, p5-Net-Flow, oksh, python312, py312-scapy,
-#   py312-pytest, ndisc6 and their dependencies.  They are test tools only.
+#   py312-pytest, ndisc6, jq and their dependencies.  They are test tools only.
 set -eu
 [ $# -ge 4 ] || { echo "usage: $0 SRCTOP OBJPREFIX OUTDIR PKGDIR [KERNCONF]" >&2; exit 64; }
 src=$1 objp=$2 out=$3 pkgdir=$4 kernconf=${5:-GENERIC}
@@ -82,6 +82,12 @@ dummynet_load="YES"
 sctp_load="YES"
 # fragmentation_pass:reassemble_slowpath and the IPsec-aware pf paths.
 ipsec_load="YES"
+# Kernel unit tests (atf_python ktest): tcp_hpts_test, sglist_boundary_test,
+# test_netlink_message_writer.
+ktest_load="YES"
+ktest_tcphpts_load="YES"
+ktest_sglist_boundary_load="YES"
+ktest_netlink_message_writer_load="YES"
 EOF
 put etc/rc.conf 0644 <<'EOF'
 hostname="pf-dut-5bsd"
