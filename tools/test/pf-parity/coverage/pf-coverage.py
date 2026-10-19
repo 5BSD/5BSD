@@ -241,6 +241,52 @@ def rb_unreachable(names):
     return dead
 
 
+DECL = re.compile(r'^\s*(static\s+|extern\s+|__inline\s+|inline\s+)*'
+                  r'(void|int|struct|u_int\w*|uint\w*|u_short|u_char|const|'
+                  r'char|size_t|caddr_t|sa_family_t|bool|unsigned|long|'
+                  r'u_int8_t|u_int16_t|u_int32_t|u_int64_t)\b')
+
+
+def no_caller(names):
+    """pf.ko functions whose name pf's source mentions only where it
+    defines or declares them: dead code no test can run.  Any other
+    mention (a call, a function pointer, a comment) keeps a function in
+    the scope, so this errs towards counting it."""
+    text = []
+    for top in ('contrib/openbsd-pf/sys', 'sys/netpfil/openbsd-pf'):
+        for d, _, fs in os.walk(os.path.join(SRC, top)):
+            for f in fs:
+                if f.endswith(('.c', '.h')):
+                    text.append(open(os.path.join(d, f),
+                                     errors='replace').read())
+    lines = '\n'.join(text).split('\n')
+    out = set()
+    for n in names:
+        # Only functions pf's source defines; generated tree functions are
+        # used through macros (rb_unreachable() covers them), inlines from
+        # kernel headers are not pf's code.
+        if '_RB_' in n or not any(re.match(r'^%s\s*\(' % re.escape(n), l)
+                                  for l in lines):
+            continue
+        w = re.compile(r'\b%s\b' % re.escape(n))
+        refs = 0
+        for line in lines:
+            if not w.search(line):
+                continue
+            if re.match(r'^%s\s*\(' % re.escape(n), line):
+                continue		# the definition
+            if re.match(r'^\s*#\s*define\s+%s\b' % re.escape(n), line):
+                continue
+            if DECL.match(line) and re.search(r'\b%s\s*\(' % re.escape(n),
+                                              line):
+                continue		# a prototype
+            refs += 1
+            break
+        if refs == 0:
+            out.add(n)
+    return out
+
+
 def report(cov, md=None):
     d = json.load(open(cov))
     funcs = universe()
@@ -273,6 +319,10 @@ def report(cov, md=None):
     # The goal's scope: all of pf.ko, and the stack functions land/pf changed.
     scoped = changed_stack_funcs()
     dead = rb_unreachable([n for (m, n) in funcs if m == 'pf'])
+    missed = [n for (m, b), f in files.items() if m == 'pf'
+              for n in f['miss'] if n not in dead]
+    uncalled = no_caller(missed)
+    dead |= uncalled
     sh_ = sm_ = 0
     unrun = []
     for (module, base), f in files.items():
@@ -288,8 +338,11 @@ def report(cov, md=None):
                                           100 * sh_ // max(1, sh_ + sm_)))
     lines.append('Changed stack functions not run: ' + ', '.join(sorted(unrun)))
     lines.append('Excluded from the scope, %d generated tree functions whose '
-                 'operation pf never uses: %s' % (len(dead),
-                 ', '.join(sorted(dead))))
+                 'operation pf never uses: %s' % (len(dead - uncalled),
+                 ', '.join(sorted(dead - uncalled))))
+    lines.append('Excluded from the scope, %d functions pf\'s source never '
+                 'calls or refers to (dead code): %s' % (len(uncalled),
+                 ', '.join(sorted(uncalled))))
     lines.append('Total: %d of %d probed functions run (%d%%).' % (
         th, th + tm, 100 * th // max(1, th + tm)))
     text = '\n'.join(lines)
