@@ -492,6 +492,38 @@ m_pf_delete(struct mbuf *m)
 }
 
 /*
+ * The pf state of an ICMP error m about packet n (m may be n): a new packet
+ * for pf, except that an error pf asked for (pf_send_icmp()) stays generated
+ * with the priority and queue pf gave it, as OpenBSD moves PF_TAG_GENERATED
+ * to the error.  Packets pf translated with af-to are generated too; errors
+ * about them must meet pf to be translated back.
+ */
+void
+m_pf_icmp_error(struct mbuf *m, struct mbuf *n)
+{
+	const struct pkthdr_pf *opf = m_pf_find(n);
+	struct pkthdr_pf *npf;
+	uint32_t qid;
+	uint8_t prio, prio_set;
+
+	if (opf == NULL || (opf->xflags & PF_XTAG_ICMP_ERROR) == 0) {
+		m_pf_delete(m);
+		return;
+	}
+	qid = opf->qid;
+	prio = opf->prio;
+	prio_set = opf->prio_set;
+	m_pf_delete(m);
+	if ((npf = m_pf_get(m)) != NULL) {
+		npf->flags = PF_TAG_GENERATED;
+		npf->xflags = PF_XTAG_ICMP_ERROR;
+		npf->qid = qid;
+		npf->prio = prio;
+		npf->prio_set = prio_set;
+	}
+}
+
+/*
  * Copy two tag chains. The destination mbuf (to) loses any attached
  * tags even if the operation fails. This should not be a problem, as
  * m_tag_copy_chain() is typically called with a newly-allocated

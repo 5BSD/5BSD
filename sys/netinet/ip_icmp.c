@@ -393,6 +393,8 @@ stdreply:	icmpelen = max(8, min(V_icmp_quotelen, ntohs(oip->ip_len) -
 
 	if (V_error_keeptags)
 		m_tag_copy_chain(m, n, M_NOWAIT);
+	/* As OpenBSD: an error pf asked for stays generated. */
+	m_pf_icmp_error(m, n);
 
 	icmp_reflect(m);
 
@@ -952,7 +954,23 @@ match:
 		}
 		ip_stripoptions(m);
 	}
-	m_tag_delete_nonpersistent(m);
+	{
+		/*
+		 * 5BSD: the error pf asked for keeps pf's mark through
+		 * the tag cleanup (m_pf_icmp_error()).
+		 */
+		struct m_tag *pft = m_tag_locate(m, MTAG_ABI_COMPAT,
+		    PACKET_TAG_PF, NULL);
+
+		if (pft != NULL && (((struct pkthdr_pf *)(pft + 1))->xflags &
+		    PF_XTAG_ICMP_ERROR) != 0)
+			m_tag_unlink(m, pft);
+		else
+			pft = NULL;
+		m_tag_delete_nonpersistent(m);
+		if (pft != NULL)
+			m_tag_prepend(m, pft);
+	}
 	m->m_flags &= ~(M_BCAST|M_MCAST);
 	icmp_send(m, opts);
 done:

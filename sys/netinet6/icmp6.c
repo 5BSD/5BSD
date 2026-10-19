@@ -377,27 +377,9 @@ icmp6_error(struct mbuf *m, int type, int code, int param)
 	 * The error is a new packet for the packet filter: drop the pf marks
 	 * of the packet it quotes (pf marks the packets it translates with
 	 * af-to as generated, which would let the error pass untranslated).
-	 * An error pf asked for itself stays generated, with the priority
-	 * and queue pf gave it, as in IPv4.
+	 * An error pf asked for itself stays generated (m_pf_icmp_error()).
 	 */
-	{
-		const struct pkthdr_pf *opf = m_pf_find(m);
-		struct pkthdr_pf *npf;
-
-		if (opf != NULL && (opf->xflags & PF_XTAG_ICMP_ERROR)) {
-			uint32_t qid = opf->qid;
-			uint8_t prio = opf->prio, prio_set = opf->prio_set;
-
-			m_pf_delete(m);
-			if ((npf = m_pf_get(m)) != NULL) {
-				npf->flags = PF_TAG_GENERATED;
-				npf->qid = qid;
-				npf->prio = prio;
-				npf->prio_set = prio_set;
-			}
-		} else
-			m_pf_delete(m);
-	}
+	m_pf_icmp_error(m, m);
 
 	nip6 = mtod(m, struct ip6_hdr *);
 	nip6->ip6_src  = oip6->ip6_src;

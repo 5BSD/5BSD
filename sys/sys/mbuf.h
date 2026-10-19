@@ -1584,6 +1584,7 @@ extern void (*pf_mtag_unlink_hook)(struct pkthdr_pf *);
 extern void (*pf_mtag_copy_hook)(struct pkthdr_pf *);
 struct pkthdr_pf *m_pf_get(struct mbuf *);
 void	m_pf_delete(struct mbuf *);
+void	m_pf_icmp_error(struct mbuf *, struct mbuf *);
 
 /* The packet's pf state, or NULL: the packet has the default values. */
 static __inline struct pkthdr_pf *
