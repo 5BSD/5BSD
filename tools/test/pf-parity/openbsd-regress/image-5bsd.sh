@@ -8,7 +8,7 @@
 # usage: image-5bsd.sh SRCTOP MAKEOBJDIRPREFIX OUTDIR PKGDIR [KERNCONF]
 #   PKGDIR holds FreeBSD:16:amd64 packages fetched (and catalogue-verified)
 #   by pkg(8): perl5, p5-Socket6, p5-Net-Flow, oksh, python312, py312-scapy,
-#   py312-pytest, ndisc6, jq and their dependencies.  They are test tools only.
+#   py312-pytest, ndisc6, jq, openvpn, pimd, nmap and their dependencies.  They are test tools only.
 set -eu
 [ $# -ge 4 ] || { echo "usage: $0 SRCTOP OBJPREFIX OUTDIR PKGDIR [KERNCONF]" >&2; exit 64; }
 src=$1 objp=$2 out=$3 pkgdir=$4 kernconf=${5:-GENERIC}
@@ -88,6 +88,27 @@ ktest_load="YES"
 ktest_tcphpts_load="YES"
 ktest_sglist_boundary_load="YES"
 ktest_netlink_message_writer_load="YES"
+# Interfaces and protocols the net, netinet and netinet6 suites test (they
+# skip without them): tunnels, lagg, multicast routing, TCP-MD5, ovpn.
+if_gre_load="YES"
+if_lagg_load="YES"
+if_geneve_load="YES"
+if_stf_load="YES"
+if_wg_load="YES"
+if_ovpn_load="YES"
+ip_mroute_load="YES"
+ip6_mroute_load="YES"
+tcpmd5_load="YES"
+# Several FIBs: the multi-FIB routing and socket cases (routing domains are
+# FIBs on 5BSD; pf's rdomain tests pass with them).
+net.fibs="4"
+EOF
+# kyua: the test VM is disposable, cases may change sysctls.
+put etc/kyua/kyua.conf 0644 <<'EOF'
+syntax(2)
+
+unprivileged_user = 'tests'
+test_suites.FreeBSD.allow_sysctl_side_effects = '1'
 EOF
 put etc/rc.conf 0644 <<'EOF'
 hostname="pf-dut-5bsd"
