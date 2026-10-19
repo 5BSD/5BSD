@@ -305,6 +305,73 @@ source_basic_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "trees_and_overload" "cleanup"
+trees_and_overload_head()
+{
+	atf_set descr 'Many named limiters, reloads that remove some, and a source limiter overload table'
+	atf_set require.user root
+}
+
+trees_and_overload_body()
+{
+	pft_init
+
+	epair=$(vnet_mkepair)
+	ifconfig ${epair}a 192.0.2.2/24 up
+	vnet_mkjail alcatraz ${epair}b
+	jexec alcatraz ifconfig ${epair}b 192.0.2.1/24 up
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.1
+	jexec alcatraz pfctl -e
+
+	# A dozen state and source limiters each: their id and name trees
+	# take inserts that rebalance them.  The last source limiter puts a
+	# source above one state into <ovl> and takes it out below one.
+	limiters=""
+	for i in $(jot 12); do
+		limiters="${limiters}state limiter \"sl$i\" id $i limit 100
+source limiter \"src$i\" id $i entries 64 limit 100
+"
+	done
+	printf "%s%s\n" "$limiters" "table <ovl> persist
+source limiter \"ovl\" id 13 entries 64 limit 100 table <ovl> above 1 below 1
+set timeout icmp.error 120
+block in proto icmp
+pass in proto icmp state limiter \"sl7\" source limiter \"ovl\"" > all.conf
+	atf_check -s exit:0 jexec alcatraz pfctl -f ${PWD}/all.conf
+	# The listings show limiters by id.
+	atf_check -s exit:0 -o match:"^ +12 " -e ignore \
+	    jexec alcatraz pfctl -sStlimiters
+	atf_check -s exit:0 -o match:"^ +12 " -o match:"^ +13 " -e ignore \
+	    jexec alcatraz pfctl -sSrclimiters
+
+	# Two pings (two ICMP ids, two states) from one source: above 1.
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.1
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.1
+	atf_check -s exit:0 -o match:"192.0.2.2" -e ignore \
+	    jexec alcatraz pfctl -t ovl -T show
+
+	# Its states go: below 1, out of the table.
+	atf_check -s exit:0 -e ignore jexec alcatraz pfctl -k 192.0.2.2
+	atf_check -s exit:0 -o not-match:"192.0.2.2" -e ignore \
+	    jexec alcatraz pfctl -t ovl -T show
+
+	# Reloads that drop every other limiter, then load a different set.
+	grep -vE '"(sl|src)(2|4|6|8|10|12)"' all.conf > half.conf
+	atf_check -s exit:0 jexec alcatraz pfctl -f ${PWD}/half.conf
+	atf_check -s exit:0 -o not-match:"^ +12 " -o match:"^ +11 " -e ignore \
+	    jexec alcatraz pfctl -sStlimiters
+	sed -e 's/"sl\([0-9]*\)" id \([0-9]*\)/"slb\1" id 2\2/' \
+	    -e 's/"src\([0-9]*\)" id \([0-9]*\)/"srcb\1" id 2\2/' \
+	    -e 's/"sl7"/"slb7"/' half.conf > other.conf
+	atf_check -s exit:0 jexec alcatraz pfctl -f ${PWD}/other.conf
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.1
+}
+
+trees_and_overload_cleanup()
+{
+	pft_cleanup
+}
+
 atf_test_case "out" "cleanup"
 out_head()
 {
@@ -566,6 +633,7 @@ atf_init_test_cases()
 	atf_add_test_case "source_capacity_inet6_block"
 	atf_add_test_case "source_capacity_inet6_no_match"
 	atf_add_test_case "show_aliases"
+	atf_add_test_case "trees_and_overload"
 	atf_add_test_case "state_basic"
 	atf_add_test_case "state_rate"
 	atf_add_test_case "state_block"

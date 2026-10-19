@@ -40,6 +40,7 @@
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/sockio.h>
 #include <sys/sysctl.h>
 
 #include <net/if.h>
@@ -876,6 +877,54 @@ ATF_TC_CLEANUP(getrules_limit_anchor, tc)
 	quiet("pfctl -q -a fglim -F all");
 }
 
+/*
+ * pfsync's parent interface ioctls (OpenBSD's SIOCSIFPARENT,
+ * SIOCGIFPARENT, SIOCDIFPARENT; ifconfig sets the sync device with
+ * syncdev instead): set, read back, refuse a missing one, delete.
+ */
+ATF_TC_WITH_CLEANUP(pfsync_parent);
+GLUE_HEAD(pfsync_parent)
+
+ATF_TC_BODY(pfsync_parent, tc)
+{
+	struct if_parent ifp;
+	struct ifreq ifr;
+	int s;
+
+	COMMON_HEAD();
+	run("ifconfig pfsync0 create");
+	s = socket(AF_INET, SOCK_DGRAM, 0);
+	ATF_REQUIRE(s != -1);
+
+	memset(&ifp, 0, sizeof(ifp));
+	strlcpy(ifp.ifp_name, "pfsync0", sizeof(ifp.ifp_name));
+	ATF_CHECK_ERRNO(EADDRNOTAVAIL, ioctl(s, SIOCGIFPARENT, &ifp) == -1);
+
+	strlcpy(ifp.ifp_parent, "lo0", sizeof(ifp.ifp_parent));
+	ATF_REQUIRE_MSG(ioctl(s, SIOCSIFPARENT, &ifp) == 0,
+	    "SIOCSIFPARENT: %s", strerror(errno));
+	memset(ifp.ifp_parent, 0, sizeof(ifp.ifp_parent));
+	ATF_REQUIRE_MSG(ioctl(s, SIOCGIFPARENT, &ifp) == 0,
+	    "SIOCGIFPARENT: %s", strerror(errno));
+	ATF_CHECK_STREQ(ifp.ifp_parent, "lo0");
+
+	strlcpy(ifp.ifp_parent, "nosuch0", sizeof(ifp.ifp_parent));
+	ATF_CHECK_ERRNO(ENXIO, ioctl(s, SIOCSIFPARENT, &ifp) == -1);
+
+	memset(&ifr, 0, sizeof(ifr));
+	strlcpy(ifr.ifr_name, "pfsync0", sizeof(ifr.ifr_name));
+	ATF_REQUIRE_MSG(ioctl(s, SIOCDIFPARENT, &ifr) == 0,
+	    "SIOCDIFPARENT: %s", strerror(errno));
+	ATF_CHECK_ERRNO(EADDRNOTAVAIL, ioctl(s, SIOCGIFPARENT, &ifp) == -1);
+	close(s);
+	COMMON_CLEANUP();
+}
+
+ATF_TC_CLEANUP(pfsync_parent, tc)
+{
+	quiet("ifconfig pfsync0 destroy");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, getrule_ticket);
@@ -886,6 +935,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, limiters);
 	ATF_TP_ADD_TC(tp, refused_rule_tags);
 	ATF_TP_ADD_TC(tp, getrules_limit_anchor);
+	ATF_TP_ADD_TC(tp, pfsync_parent);
 
 	return (atf_no_error());
 }

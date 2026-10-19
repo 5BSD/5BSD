@@ -934,6 +934,51 @@ test_verbose_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "nested_masks" "cleanup"
+nested_masks_head()
+{
+	atf_set descr 'Tables with nested prefixes and one key under several masks'
+	atf_set require.user root
+}
+
+nested_masks_body()
+{
+	pft_init
+
+	vnet_mkjail alcatraz
+	jexec alcatraz pfctl -e
+	pft_set_rules alcatraz "table <t> persist" "pass"
+
+	# Nested networks, and 10.0.0.0 under /8, /16 and /24: the radix
+	# tree keeps a key with several masks (rn_search_m, and the leaf
+	# checks of rn_match when an address falls under the shorter one).
+	atf_check -s exit:0 -o ignore -e ignore jexec alcatraz pfctl -t t -T add \
+	    10.0.0.0/8 10.0.0.0/16 10.0.0.0/24 10.1.0.0/16 10.1.2.0/24 \
+	    10.1.2.3 2001:db8::/32 2001:db8::/48 2001:db8:1::/48 2001:db8:1::1
+	atf_check -s exit:0 -o match:"10.0.0.0/16" -o match:"2001:db8::/48" \
+	    jexec alcatraz pfctl -t t -T show
+
+	# Each address matches its most specific entry.
+	atf_check -s exit:0 -o ignore -e match:"6/6 addresses match" \
+	    jexec alcatraz pfctl -t t -T test 10.0.0.1 10.0.1.1 10.9.9.9 \
+	    10.1.2.4 2001:db8:2::1 2001:db8:1::2
+	atf_check -s not-exit:0 -o ignore -e match:"0/2 addresses match" \
+	    jexec alcatraz pfctl -t t -T test 11.0.0.1 2001:db9::1
+
+	# Take out the middle masks; the outer ones still match.
+	atf_check -s exit:0 -o ignore -e ignore jexec alcatraz pfctl -t t -T delete \
+	    10.0.0.0/16 10.1.0.0/16 2001:db8::/48
+	atf_check -s exit:0 -o ignore -e match:"3/3 addresses match" \
+	    jexec alcatraz pfctl -t t -T test 10.0.1.1 10.1.9.9 2001:db8:9::1
+	atf_check -s exit:0 -o not-match:"10.0.0.0/16" \
+	    jexec alcatraz pfctl -t t -T show
+}
+
+nested_masks_cleanup()
+{
+	pft_cleanup
+}
+
 atf_test_case "show_no_counters" "cleanup"
 show_no_counters_head()
 {
@@ -993,4 +1038,5 @@ atf_init_test_cases()
 	atf_add_test_case "test"
 	atf_add_test_case "test_verbose"
 	atf_add_test_case "show_no_counters"
+	atf_add_test_case "nested_masks"
 }

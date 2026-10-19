@@ -271,6 +271,11 @@ divert_socket_body()
 	    jexec fw ${HELPER} divert-open inet
 	atf_check -s not-exit:0 -o inline:'socket=EPERM\n' \
 	    jexec -U nobody fw ${HELPER} divert-open inet
+	# The bound port is what getsockname() reports.
+	atf_check -s exit:0 -o inline:'socket=ok\nport=701\n' \
+	    jexec fw ${HELPER} divert-open inet 701
+	atf_check -s exit:0 -o inline:'socket=ok\nport=702\n' \
+	    jexec fw ${HELPER} divert-open inet6 702
 
 	pft_set_rules fw "pass all" \
 	    "pass in on ${epair}b inet proto udp to 192.0.2.1 port 9998 divert-packet port 700" \

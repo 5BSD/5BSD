@@ -53,7 +53,7 @@ usage(void)
 	    "       sockhelper udp-recvdst inet|inet6 addr port\n"
 	    "       sockhelper rxq-ovfl [-n] port\n"
 	    "       sockhelper divert inet|inet6 port [reinject]\n"
-	    "       sockhelper divert-open inet|inet6\n"
+	    "       sockhelper divert-open inet|inet6 [port]\n"
 	    "       sockhelper divert-churn inet|inet6 port count\n"
 	    "       sockhelper rtable n\n");
 	exit(2);
@@ -485,16 +485,48 @@ divert_socket(int af)
 	return (socket(af, SOCK_RAW, IPPROTO_DIVERT));
 }
 
+/*
+ * Open a divert(4) socket; with a port, bind it there and print the port
+ * getsockname() reports.
+ */
 static int
 mode_divert_open(int argc, char **argv)
 {
-	int s;
+	struct sockaddr_storage ss;
+	socklen_t len;
+	int af, s;
 
-	if (argc != 1)
+	if (argc != 1 && argc != 2)
 		usage();
-	s = divert_socket(parse_af(argv[0]));
+	af = parse_af(argv[0]);
+	s = divert_socket(af);
 	printf("socket=%s\n", errname(s == -1 ? errno : 0));
-	return (s == -1);
+	if (s == -1 || argc == 1)
+		return (s == -1);
+	memset(&ss, 0, sizeof(ss));
+	ss.ss_family = af;
+	if (af == AF_INET) {
+		((struct sockaddr_in *)&ss)->sin_len = sizeof(struct sockaddr_in);
+		((struct sockaddr_in *)&ss)->sin_port = htons(atoi(argv[1]));
+	} else {
+		((struct sockaddr_in6 *)&ss)->sin6_len =
+		    sizeof(struct sockaddr_in6);
+		((struct sockaddr_in6 *)&ss)->sin6_port = htons(atoi(argv[1]));
+	}
+	if (bind(s, (struct sockaddr *)&ss, ss.ss_len) == -1) {
+		printf("bind=%s\n", errname(errno));
+		return (1);
+	}
+	len = sizeof(ss);
+	memset(&ss, 0, sizeof(ss));
+	if (getsockname(s, (struct sockaddr *)&ss, &len) == -1) {
+		printf("getsockname=%s\n", errname(errno));
+		return (1);
+	}
+	printf("port=%u\n", ntohs(ss.ss_family == AF_INET ?
+	    ((struct sockaddr_in *)&ss)->sin_port :
+	    ((struct sockaddr_in6 *)&ss)->sin6_port));
+	return (0);
 }
 
 /*
