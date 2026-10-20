@@ -8801,6 +8801,30 @@ pf_counters_inc(int action, struct pf_pdesc *pd, struct pf_state *st,
 	}
 }
 
+/*
+ * 5BSD: a private copy of what an ICMP error about m can quote (at most
+ * the IPv6 minimum MTU), with m's packet header.  m_dup() insists that a
+ * chain hold exactly m_pkthdr.len bytes, which reassembled and trimmed
+ * packets need not.
+ */
+static struct mbuf *
+pf_ttl_copy(struct mbuf *m)
+{
+	struct mbuf *n;
+	int len;
+
+	len = min(min(m->m_pkthdr.len, m_length(m, NULL)), IPV6_MMTU);
+	if ((n = m_get2(len, M_NOWAIT, MT_DATA, M_PKTHDR)) == NULL)
+		return (NULL);
+	if (!m_dup_pkthdr(n, m, M_NOWAIT)) {
+		m_freem(n);
+		return (NULL);
+	}
+	m_copydata(m, 0, len, mtod(n, caddr_t));
+	n->m_len = n->m_pkthdr.len = len;
+	return (n);
+}
+
 int
 pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 {
@@ -8915,7 +8939,7 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 	if (dir == PF_IN && (pd.af == AF_INET ?
 	    mtod(pd.m, struct ip *)->ip_ttl <= IPTTLDEC :
 	    mtod(pd.m, struct ip6_hdr *)->ip6_hlim <= IPV6_HLIMDEC))
-		ttlm = m_dup(pd.m, M_NOWAIT);
+		ttlm = pf_ttl_copy(pd.m);
 
 	/* if packet has been reassembled, update packet description */
 	if (pf_status.reass && pd.virtual_proto == PF_VPROTO_FRAGMENT) {
