@@ -27,6 +27,13 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261020:
+	A FIB created at boot (net.fibs) can become a routing domain:
+	ifconfig rdomain N removes the loopback and IPv6 reject routes
+	through lo0 that rc.d/routing adds to every FIB, which belong to
+	domain 0, instead of failing with EINVAL.  A FIB with any other
+	route still cannot become a routing domain.
+
 20261019:
 	dummynet(4) is preloaded from the loader defaults, like pf and
 	DTrace, so pf's dnpipe and dnqueue and dnctl(8) work on every

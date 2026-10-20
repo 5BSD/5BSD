@@ -28,6 +28,12 @@ ifconfig vether0
 route -T 3 -n show
 ```
 
+The table must not hold routes yet. A FIB that already exists because of
+`net.fibs` holds only the loopback and IPv6 reject routes through `lo0` that
+`rc.d/routing` adds to every FIB; those are removed when it becomes a domain,
+since `lo0` belongs to domain 0 and the new domain has `lo<N>`. A FIB with any
+other route stays a routing table of domain 0, and `ifconfig rdomain` fails.
+
 A cloneable interface that does not exist yet is created by configuring it,
 as on OpenBSD: `ifconfig lo11 rdomain 11` creates `lo11`. The loopback of a
 domain cannot be destroyed or moved. Moving an interface to another domain

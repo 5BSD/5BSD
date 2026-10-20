@@ -38,7 +38,13 @@ Routing domain numbers range from 0 to 255.
 .Pp
 A routing domain is created by moving an interface into it with
 .Nm ifconfig Ar interface Cm rdomain Ar N .
-The routing table must not hold routes yet.
+The routing table must not hold routes yet, other than the loopback
+and IPv6 reject routes through
+.Li lo0
+that
+.Pa /etc/rc.d/routing
+adds to every FIB at boot; those are removed, as they belong to routing
+domain 0.
 Creating routing domain
 .Ar N
 also creates its loopback interface

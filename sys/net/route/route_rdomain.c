@@ -14,6 +14,9 @@
  * sockets see only packets of their domain (see rt_fib_scope()).
  */
 
+#include "opt_inet.h"
+#include "opt_inet6.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -29,8 +32,11 @@
 #include <net/if_clone.h>
 #include <net/vnet.h>
 #include <net/route.h>
+#include <net/route/nhop.h>
 #include <net/route/route_ctl.h>
 #include <net/route/route_var.h>
+
+#include <netinet/in.h>
 
 static struct sx rdomain_lock;
 SX_SYSINIT(rdomain_lock, &rdomain_lock, "rdomain");
@@ -48,6 +54,87 @@ rt_fib_empty(u_int fib)
 			return (false);
 	}
 	return (true);
+}
+
+/*
+ * Is the route one of those rc.d/routing adds to every FIB through lo0:
+ * the loopback addresses and the IPv6 reject routes?
+ */
+static int
+rt_lo0_route(const struct rtentry *rt, const struct nhop_object *nh,
+    void *arg __unused)
+{
+#ifdef INET6
+	static const struct {
+		uint8_t	pfx[16];
+		int	plen;
+	} rej6[] = {
+		{ { 0 }, 96 },					/* ::/96 */
+		{ { [10] = 0xff, [11] = 0xff }, 96 },		/* ::ffff:0.0.0.0/96 */
+		{ { 0xfe, 0x80 }, 10 },				/* fe80::/10 */
+		{ { 0xff, 0x02 }, 16 },				/* ff02::/16 */
+	};
+	struct in6_addr a6;
+#endif
+#ifdef INET
+	struct in_addr a4;
+#endif
+	uint32_t scope __unused;
+	int plen __unused;
+
+	if (NH_IS_NHGRP(nh) || nh->nh_ifp != V_loif)
+		return (0);
+	switch (rt_get_family(rt)) {
+#ifdef INET
+	case AF_INET:
+		rt_get_inet_prefix_plen(rt, &a4, &plen, &scope);
+		return (plen == 32 && a4.s_addr == htonl(INADDR_LOOPBACK));
+#endif
+#ifdef INET6
+	case AF_INET6:
+		rt_get_inet6_prefix_plen(rt, &a6, &plen, &scope);
+		if (plen == 128 && IN6_IS_ADDR_LOOPBACK(&a6))
+			return (1);
+		if ((nhop_get_rtflags(nh) & RTF_REJECT) == 0)
+			return (0);
+		for (u_int i = 0; i < nitems(rej6); i++)
+			if (plen == rej6[i].plen &&
+			    memcmp(&a6, rej6[i].pfx, sizeof(a6)) == 0)
+				return (1);
+		return (0);
+#endif
+	}
+	return (0);
+}
+
+static int
+rt_count_other(struct rtentry *rt, void *arg)
+{
+	if (!rt_lo0_route(rt, rt->rt_nhop, NULL))
+		(*(u_int *)arg)++;
+	return (0);
+}
+
+/*
+ * Clear an existing FIB that is to become a routing domain when all it
+ * holds is what rc.d/routing gives every FIB through lo0 (net.fibs): the
+ * loopback addresses and IPv6 reject routes.  They are domain 0's, whose
+ * loopback lo0 is; the new domain gets its own on lo<N>, as a new OpenBSD
+ * routing domain starts empty.  A FIB with any other route is left alone
+ * and cannot become a domain.
+ */
+static void
+rt_fib_clear_lo0(u_int fib)
+{
+	int af[] = { AF_INET, AF_INET6 };
+	u_int other = 0;
+
+	for (u_int i = 0; i < nitems(af); i++)
+		rib_walk(fib, af[i], false, rt_count_other, &other);
+	if (other != 0)
+		return;
+	for (u_int i = 0; i < nitems(af); i++)
+		rib_walk_del(fib, af[i], rt_lo0_route, NULL, true);
 }
 
 static bool
@@ -192,6 +279,8 @@ rt_rdomain_create_locked(u_int rdomain, struct ifnet *ifp)
 		goto fail;
 	added = pending;
 	error = EEXIST;
+	if (!pending)
+		rt_fib_clear_lo0(rdomain);
 	if (!rt_fib_empty(rdomain))
 		goto fail;
 

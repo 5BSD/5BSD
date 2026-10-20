@@ -297,6 +297,56 @@ vmove_cleanup()
 	vnet_cleanup
 }
 
+atf_test_case "boot_fib" "cleanup"
+boot_fib_head()
+{
+	atf_set descr 'A FIB holding only the routes rc.d/routing adds to every FIB can become a routing domain'
+	atf_set require.user root
+}
+
+# The routes rc.d/routing gives every FIB (net.fibs) through lo0.
+boot_fib_routes()
+{
+	route -q add -fib $1 -inet 127.0.0.1 -iface lo0
+	route -q add -fib $1 -inet6 ::1 -prefixlen 128 -iface lo0
+	route -q add -fib $1 -inet6 ::ffff:0.0.0.0 -prefixlen 96 ::1 -reject
+	route -q add -fib $1 -inet6 ::0.0.0.0 -prefixlen 96 ::1 -reject
+	route -q add -fib $1 -inet6 fe80:: -prefixlen 10 ::1 -reject
+	route -q add -fib $1 -inet6 ff02:: -prefixlen 16 ::1 -reject
+}
+
+boot_fib_body()
+{
+	rdomain_init
+
+	atf_check -o ignore sysctl net.fibs=4
+	boot_fib_routes 3
+	boot_fib_routes 2
+	atf_check -o match:'::ffff:0.0.0.0/96' netstat -rn -F 3
+
+	# Those routes are domain 0's (lo0); the new domain starts without
+	# them, with its own loopback.
+	atf_check -o ignore ifconfig vether0 create rdomain 3
+	atf_check ifconfig vether0 inet 192.0.2.1/24 up
+	atf_check -o match:'rdomain 3 ' ifconfig vether0
+	atf_check -o not-match:' lo0' -o match:'192.0.2.1 .* lo3' \
+	    netstat -rn -F 3
+
+	# Any other route, here one through lo0, keeps a FIB from becoming
+	# a domain, and is kept.
+	atf_check route -q add -fib 2 -net 198.51.100.0/24 127.0.0.1 -reject
+	atf_check -s ignore -o ignore -e match:'SIOCSIFRDOMAIN' \
+	    ifconfig vether1 create rdomain 2
+	atf_check -o not-match:'rdomain' ifconfig vether1
+	atf_check -o match:'198.51.100.0/24' -o match:'::1 .* lo0' \
+	    netstat -rn -F 2
+}
+
+boot_fib_cleanup()
+{
+	:
+}
+
 atf_test_case "lo0_stays" "cleanup"
 lo0_stays_head()
 {
@@ -404,6 +454,7 @@ atf_init_test_cases()
 	atf_add_test_case "route_exec"
 	atf_add_test_case "privilege"
 	atf_add_test_case "vmove"
+	atf_add_test_case "boot_fib"
 	atf_add_test_case "lo0_stays"
 	atf_add_test_case "allfibs"
 	atf_add_test_case "reuseport_lb"
