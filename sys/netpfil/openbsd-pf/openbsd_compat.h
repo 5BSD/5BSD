@@ -979,7 +979,13 @@ struct mbuf	*obsd_mclgetl(struct mbuf *, int, u_int);
 /* OpenBSD m_copyback() may allocate and returns an error code. */
 #define	m_copyback(m, off, len, cp, how)				\
 	(m_copyback((m), (off), (len), (c_caddr_t)(cp)), 0)
-#define	m_dup_pkt(m, extra, how)	m_dup((m), (how))
+/*
+ * A deep copy.  Not m_dup(): it asserts that a chain holds exactly
+ * m_pkthdr.len bytes, which pf's reassembled packets need not (dup-to).
+ */
+#define	m_dup_pkt(m, extra, how)					\
+	({ struct mbuf *_n = m_copym((m), 0, M_COPYALL, (how));	\
+	    _n != NULL ? m_unshare(_n, (how)) : NULL; })
 #define	m_calchdrlen(m)			m_fixhdr(m)
 
 /* OpenBSD M_PREPEND() is an expression yielding the (new) mbuf. */
@@ -1288,8 +1294,11 @@ void	obsd_icmp6_error(struct mbuf *, int, int, int);
 #define	icmp6_error(m, t, c, p)		obsd_icmp6_error((m), (t), (c), (p))
 int	obsd_ip_fragment(struct mbuf *, struct mbuf_list *, struct ifnet *, u_long);
 #define	ip_fragment(m, ml, ifp, mtu)	obsd_ip_fragment((m), (ml), (ifp), (mtu))
-int	obsd_ip6_fragment(struct mbuf *, struct mbuf_list *, int, u_char, u_long);
-#define	ip6_fragment(m, ml, hl, p, mtu)	obsd_ip6_fragment((m), (ml), (hl), (p), (mtu))
+/* The last argument: the fragment id (network order), or 0 for a new one. */
+int	obsd_ip6_fragment(struct mbuf *, struct mbuf_list *, int, u_char, u_long,
+	    uint32_t);
+#define	ip6_fragment(m, ml, hl, p, mtu)					\
+	obsd_ip6_fragment((m), (ml), (hl), (p), (mtu), 0)
 int	obsd_output_tso(struct ifnet *, struct mbuf **, int,
 	    const struct sockaddr *, u_int);
 int	if_output_tso(struct ifnet *, struct mbuf **, struct sockaddr *,

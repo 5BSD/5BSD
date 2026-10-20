@@ -2003,6 +2003,10 @@ void	pf_state_scrub_put(struct pf_state_scrub *);
 
 int	pf_refragment6_af(struct mbuf **, int);	/* 5BSD: af-to */
 int	pf_refragment6_size(struct mbuf *);	/* 5BSD */
+void	pf_refragment6_toobig(struct mbuf *, u_int32_t, struct pf_rule *,
+	    u_int);	/* 5BSD */
+void	pf_send_icmp_orig(struct mbuf *, u_int8_t, u_int8_t, int,
+	    sa_family_t, struct pf_rule *, u_int);	/* 5BSD */
 int	pf_refragment6(struct mbuf **, struct m_tag *mtag,
 	    struct sockaddr_in6 *, struct ifnet *, struct rtentry *);
 void	pf_normalize_init(void);

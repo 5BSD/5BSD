@@ -705,7 +705,7 @@ obsd_ip_fragment(struct mbuf *m, struct mbuf_list *ml, struct ifnet *ifp,
 #ifdef INET6
 int
 obsd_ip6_fragment(struct mbuf *m, struct mbuf_list *ml, int hlen,
-    u_char nextproto, u_long mtu)
+    u_char nextproto, u_long mtu, uint32_t id)
 {
 	struct mbuf *n;
 	int error;
@@ -719,7 +719,7 @@ obsd_ip6_fragment(struct mbuf *m, struct mbuf_list *ml, int hlen,
 	/* OpenBSD passes the MTU, 5BSD the payload of one fragment. */
 	error = ip6_fragment(NULL, m, hlen, nextproto,
 	    (mtu - hlen - sizeof(struct ip6_frag)) & ~7,
-	    htonl(ip6_randomid()));
+	    id != 0 ? id : htonl(ip6_randomid()));
 	/* Native ip6_fragment() appends fragments after the original packet. */
 	n = m->m_nextpkt;
 	m->m_nextpkt = NULL;

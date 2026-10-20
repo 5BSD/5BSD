@@ -38,6 +38,10 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	its way out no longer survive into its input (pf's synproxy SYN to
 	a local server excepted).  Rulesets that matched "tagged" on lo(4)
 	input for packets tagged on output must tag them again.
+	pf refragments a reassembled IPv6 packet with its source's fragment
+	identification instead of a new one, and its "packet too big" errors
+	quote the fragments as the source sent them, one per oversized
+	fragment as on OpenBSD, also through route-to and before NAT.
 
 20261019:
 	dummynet(4) is preloaded from the loader defaults, like pf and

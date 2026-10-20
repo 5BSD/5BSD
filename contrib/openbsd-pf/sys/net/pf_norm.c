@@ -103,6 +103,7 @@ struct pf_fragment_tag {
 	u_int16_t	 ft_hdrlen;	/* header length of reassembled pkt */
 	u_int16_t	 ft_extoff;	/* last extension header offset or 0 */
 	u_int16_t	 ft_maxlen;	/* maximum fragment payload length */
+	u_int32_t	 ft_id;		/* 5BSD: the fragments' id, or 0 */
 };
 
 TAILQ_HEAD(pf_fragqueue, pf_fragment);
@@ -860,6 +861,7 @@ pf_reassemble6(struct mbuf **m0, struct ip6_frag *fraghdr, u_int16_t hdrlen,
 	struct pf_fragment	*frag;
 	struct pf_frnode	 key;
 	int			 off;
+	u_int32_t		 fragid;
 	u_int16_t		 total, maxlen;
 	u_int8_t		 proto;
 
@@ -905,6 +907,7 @@ pf_reassemble6(struct mbuf **m0, struct ip6_frag *fraghdr, u_int16_t hdrlen,
 	total = TAILQ_LAST(&frag->fr_queue, pf_fragq)->fe_off +
 	    TAILQ_LAST(&frag->fr_queue, pf_fragq)->fe_len;
 	hdrlen = frent->fe_hdrlen - sizeof(struct ip6_frag);
+	fragid = frag->fr_id;	/* 5BSD: refragmented with it */
 	m = *m0 = pf_join_fragment(frag);
 	frag = NULL;
 
@@ -928,6 +931,7 @@ pf_reassemble6(struct mbuf **m0, struct ip6_frag *fraghdr, u_int16_t hdrlen,
 	ftag->ft_hdrlen = hdrlen;
 	ftag->ft_extoff = extoff;
 	ftag->ft_maxlen = maxlen;
+	ftag->ft_id = fragid;
 	m_tag_prepend(m, mtag);
 
 	ip6 = mtod(m, struct ip6_hdr *);
@@ -985,6 +989,7 @@ pf_refragment6_af(struct mbuf **m0, int mtu)
 	ftag->ft_hdrlen = sizeof(struct ip6_hdr);
 	ftag->ft_extoff = 0;
 	ftag->ft_maxlen = maxlen;
+	ftag->ft_id = 0;
 	m_tag_prepend(*m0, mtag);
 	return (pf_refragment6(m0, mtag, NULL, NULL, NULL));
 }
@@ -1006,6 +1011,67 @@ pf_refragment6_size(struct mbuf *m)
 	    ftag->ft_maxlen);
 }
 
+/*
+ * 5BSD: "packet too big" for the reassembled packet m, as pf_refragment6()
+ * sends it for each fragment larger than mtu, but about the fragments as
+ * the source sent them (its addresses and fragment id, before any NAT), so
+ * that the source can match the errors to what it sent.  m is not changed.
+ */
+void
+pf_refragment6_toobig(struct mbuf *m, u_int32_t mtu, struct pf_rule *r,
+    u_int rdomain)
+{
+	struct mbuf		*n, *x;
+	struct mbuf_list	 ml;
+	struct m_tag		*mtag;
+	struct pf_fragment_tag	*ftag;
+	u_int16_t		 hdrlen, extoff, maxlen;
+	u_int32_t		 id;
+	u_int8_t		 proto;
+	int			 off;
+
+	/* A copy whose clusters are its own: the headers change below. */
+	if ((n = m_copym(m, 0, M_COPYALL, M_NOWAIT)) == NULL)
+		return;
+	if ((n = m_unshare(n, M_NOWAIT)) == NULL)
+		return;
+	if ((mtag = m_tag_find(n, PACKET_TAG_PF_REASSEMBLED, NULL)) == NULL) {
+		m_freem(n);
+		return;
+	}
+	ftag = (struct pf_fragment_tag *)(mtag + 1);
+	hdrlen = ftag->ft_hdrlen;
+	extoff = ftag->ft_extoff;
+	maxlen = ftag->ft_maxlen;
+	id = ftag->ft_id;
+	m_tag_delete(n, mtag);
+
+	in6_proto_cksum_out(n, NULL);
+	if (extoff) {
+		if ((x = m_getptr(n, extoff + offsetof(struct ip6_ext,
+		    ip6e_nxt), &off)) == NULL) {
+			m_freem(n);
+			return;
+		}
+		proto = *(mtod(x, caddr_t) + off);
+		*(mtod(x, caddr_t) + off) = IPPROTO_FRAGMENT;
+	} else {
+		struct ip6_hdr *hdr = mtod(n, struct ip6_hdr *);
+
+		proto = hdr->ip6_nxt;
+		hdr->ip6_nxt = IPPROTO_FRAGMENT;
+	}
+	if (obsd_ip6_fragment(n, &ml, hdrlen, proto,
+	    hdrlen + sizeof(struct ip6_frag) + maxlen, id) != 0)
+		return;		/* ip6_fragment() consumed n */
+	while ((x = ml_dequeue(&ml)) != NULL) {
+		if ((u_int32_t)x->m_pkthdr.len > mtu)
+			pf_send_icmp_orig(x, ICMP6_PACKET_TOO_BIG, 0, mtu,
+			    AF_INET6, r, rdomain);
+		m_freem(x);
+	}
+}
+
 int
 pf_refragment6(struct mbuf **m0, struct m_tag *mtag, struct sockaddr_in6 *dst,
     struct ifnet *ifp, struct rtentry *rt)
@@ -1015,12 +1081,14 @@ pf_refragment6(struct mbuf **m0, struct m_tag *mtag, struct sockaddr_in6 *dst,
 	struct pf_fragment_tag	*ftag = (struct pf_fragment_tag *)(mtag + 1);
 	u_int32_t		 mtu;
 	u_int16_t		 hdrlen, extoff, maxlen;
+	u_int32_t		 id;
 	u_int8_t		 proto;
 	int			 error;
 
 	hdrlen = ftag->ft_hdrlen;
 	extoff = ftag->ft_extoff;
 	maxlen = ftag->ft_maxlen;
+	id = ftag->ft_id;	/* 5BSD: the source's fragment id */
 	m_tag_delete(m, mtag);
 	mtag = NULL;
 	ftag = NULL;
@@ -1054,7 +1122,7 @@ pf_refragment6(struct mbuf **m0, struct m_tag *mtag, struct sockaddr_in6 *dst,
 	 * we drop the packet.
 	 */
 	mtu = hdrlen + sizeof(struct ip6_frag) + maxlen;
-	error = ip6_fragment(m, &ml, hdrlen, proto, mtu);
+	error = obsd_ip6_fragment(m, &ml, hdrlen, proto, mtu, id);	/* 5BSD */
 	*m0 = NULL;	/* ip6_fragment() has consumed original packet. */
 	if (error) {
 		DPFPRINTF(LOG_NOTICE, "refragment error %d", error);

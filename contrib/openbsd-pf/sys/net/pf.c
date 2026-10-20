@@ -181,11 +181,8 @@ void			 pf_translate_icmp(struct pf_pdesc *, struct pf_addr *,
 int			 pf_translate_icmp_af(struct pf_pdesc*, int, void *);
 void			 pf_send_icmp(struct mbuf *, u_int8_t, u_int8_t, int,
 			    sa_family_t, struct pf_rule *, u_int);
-void			 pf_send_icmp_orig(struct mbuf *, u_int8_t, u_int8_t, int,
-			    sa_family_t, struct pf_rule *, u_int);	/* 5BSD */
 static void		 pf_send_icmp_x(struct mbuf *, u_int8_t, u_int8_t, int,
 			    sa_family_t, struct pf_rule *, u_int, int);	/* 5BSD */
-void			 pf_detach_state(struct pf_state *);
 struct pf_state_key	*pf_state_key_attach(struct pf_state_key *,
 			     struct pf_state *, int);
 void			 pf_state_key_detach(struct pf_state *, int);
@@ -7976,7 +7973,9 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 		if ((len = pf_refragment6_size(m0)) == 0)
 			len = m0->m_pkthdr.len;
 		if (len > (int)ifp->if_mtu)
-			qcopy = ip6_fastfwd_quote(m0);
+			qcopy = pf_refragment6_size(m0) != 0 ?
+			    m_dup_pkt(m0, max_linkhdr, M_NOWAIT) :
+			    ip6_fastfwd_quote(m0);
 		pf_dn_routing(pd, st, m0, 1);	/* 5BSD: dummynet */
 		if (pf_test(AF_INET6, PF_OUT, ifp, &m0) != PF_PASS)
 			goto bad;
@@ -8003,8 +8002,8 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 		if (qcopy != NULL &&	/* 5BSD: see above */
 		    pf_refragment6_size(m0) > (int)ifp->if_mtu) {
 			ip6stat_inc(ip6s_cantfrag);
-			pf_send_icmp_orig(qcopy, ICMP6_PACKET_TOO_BIG, 0,
-			    ifp->if_mtu, pd->af, st->rule.ptr, pd->rdomain);
+			pf_refragment6_toobig(qcopy, ifp->if_mtu,
+			    st->rule.ptr, pd->rdomain);
 			goto bad;
 		}
 		(void) pf_refragment6(&m0, mtag, dst, ifp, rt);
@@ -8967,8 +8966,8 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 	 */
 	if (pf_status.reass && fwdir == PF_FWD && pd.af == AF_INET6 &&
 	    pf_refragment6_size(pd.m) > (int)in6_ifmtu(ifp)) {
-		pf_send_icmp_orig(pd.m, ICMP6_PACKET_TOO_BIG, 0,
-		    in6_ifmtu(ifp), AF_INET6, NULL, pd.rdomain);
+		/* About the fragments, as its source sent them. */
+		pf_refragment6_toobig(pd.m, in6_ifmtu(ifp), NULL, pd.rdomain);
 		action = PF_DROP;
 		REASON_SET(&reason, PFRES_FRAG);
 		goto done;
