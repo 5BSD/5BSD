@@ -626,9 +626,10 @@ ipsec_body()
 	# Run the common test, to set up pfsync
 	common_body
 
-	# But we want unicast pfsync
-	jexec one ifconfig pfsync0 syncpeer 192.0.2.2
-	jexec two ifconfig pfsync0 syncpeer 192.0.2.1
+	# But we want unicast pfsync.  As on OpenBSD, the peer of a running
+	# pfsync interface cannot change (EBUSY): take it down first.
+	atf_check jexec one ifconfig pfsync0 down syncpeer 192.0.2.2 up
+	atf_check jexec two ifconfig pfsync0 down syncpeer 192.0.2.1 up
 
 	# Flush existing states
 	jexec one pfctl -Fs
