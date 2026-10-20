@@ -97,6 +97,7 @@ goes in its own file in `sys/netpfil/openbsd-pf` (`pf_dummynet.c`,
 | Loopback MTU 32768 and LRO/TSO on lo(4) | `sys/net/if_loop.c` |
 | A looped-back packet starts afresh for pf, as OpenBSD's `if_input_local()` resets `pkthdr_pf`: pf's packet tag goes with the other non-persistent tags, except on pf's synproxy SYN to a local server (`PF_XTAG_LOOP`) | `sys/net/if_loop.c` (`if_simloop()`) |
 | An af-to packet for an address of this host that FreeBSD's `ip_forward()` would not forward (link-local) is delivered through `ip_output()`, as OpenBSD's `ip_forward()` routes it to the local address | `sys/netpfil/openbsd-pf/openbsd_net.c` (`obsd_ip_forward()`) |
+| ng_ether(4) detaches the node of a lagg(4) port (`IFT_IEEE8023ADLAG`) destroyed while in the lagg; FreeBSD skipped it and the node's shutdown wrote into the freed ifnet | `sys/netgraph/ng_ether.c` |
 | vether(4) | `sys/net` |
 | "egress" interface group from the default routes of FIB 0, per VNET | `sys/net/if_egress.c` |
 | ifconfig status in OpenBSD's format; `nd6 options` only with `-v` | `sbin/ifconfig` |

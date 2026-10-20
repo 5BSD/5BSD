@@ -346,10 +346,17 @@ ng_ether_arrival(void *arg __unused, struct ifnet *ifp)
 	(void)ng_ether_attach(ifp, NULL);
 }
 
+/*
+ * 5BSD: a lagg(4) port is IFT_IEEE8023ADLAG while it is one; it was an
+ * Ethernet interface when its node was made.  Destroyed as a port, its
+ * departure must still detach the node, or the node's shutdown writes
+ * IFP2NG() into the freed ifnet.
+ */
 #define	RETURN_IF_NOT_ETHERNET_OR_DETACHED(ifp)	do {			\
 	if ((ifp)->if_type != IFT_ETHER &&				\
 	    (ifp)->if_type != IFT_L2VLAN &&				\
-	    (ifp)->if_type != IFT_BRIDGE)				\
+	    (ifp)->if_type != IFT_BRIDGE &&				\
+	    (ifp)->if_type != IFT_IEEE8023ADLAG)			\
 		return;							\
 	if (IFP2NG(ifp) == NULL)					\
 		return;							\
