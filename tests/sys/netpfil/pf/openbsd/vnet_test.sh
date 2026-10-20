@@ -52,6 +52,8 @@ isolation_body()
 
 	printf 'table <hosttab> persist { 198.51.100.1 }\npass all\nanchor "hostanchor"\n' |
 	    atf_check -s exit:0 -o ignore -e ignore pfctl -f -
+	# Restored by the cleanup: later cases expect the host pf as it was.
+	pfctl -si 2>/dev/null | grep -q "^Status: Enabled" || touch pf.was_disabled
 	pfctl -e >/dev/null 2>&1 || true
 
 	printf 'table <v1tab> persist { 198.51.100.2 }\nblock in proto icmp all\npass out all\n' |
@@ -103,6 +105,7 @@ isolation_cleanup()
 {
 	pfctl -a hostanchor -Fa >/dev/null 2>&1
 	pfctl -Fa >/dev/null 2>&1
+	[ -f pf.was_disabled ] && pfctl -q -d >/dev/null 2>&1
 	vnet_cleanup
 }
 

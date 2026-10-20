@@ -40,6 +40,8 @@ setup()
 	    "pass in on ${epair}a inet proto udp to port 53 divert-to 127.0.0.1 port 5353" \
 	    "pass in on ${epair}a inet6 proto udp to port 53 divert-to ::1 port 5353" |
 	    atf_check -s exit:0 -o ignore -e ignore pfctl -f -
+	# Restored by the cleanup: later cases expect the host pf as it was.
+	pfctl -si 2>/dev/null | grep -q "^Status: Enabled" || touch pf.was_disabled
 	pfctl -e >/dev/null 2>&1 || true
 }
 
@@ -66,6 +68,7 @@ cleanup()
 {
 	stop_proxy
 	pfctl -Fa >/dev/null 2>&1
+	[ -f pf.was_disabled ] && pfctl -q -d >/dev/null 2>&1
 	route -q delete -inet 198.51.100.0/24 >/dev/null 2>&1
 	route -q delete -inet6 2001:db8:dead::/48 >/dev/null 2>&1
 	vnet_cleanup

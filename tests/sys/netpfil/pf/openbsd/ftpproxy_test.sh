@@ -37,6 +37,8 @@ ftp_setup()
 	    'pass all' \
 	    "match out on ${es}a inet from 192.0.2.0/24 nat-to (${es}a)" |
 	    atf_check -s exit:0 -o ignore -e ignore pfctl -f -
+	# Restored by the cleanup: later cases expect the host pf as it was.
+	pfctl -si 2>/dev/null | grep -q "^Status: Enabled" || touch pf.was_disabled
 	pfctl -e >/dev/null 2>&1 || true
 
 	# The server sees only the router's address.
@@ -62,6 +64,7 @@ ftp_cleanup()
 	pkill -f "ftpd.py 198.51.100.21" >/dev/null 2>&1
 	pfctl -a 'ftp-proxy/*' -Fa >/dev/null 2>&1
 	pfctl -Fa >/dev/null 2>&1
+	[ -f pf.was_disabled ] && pfctl -q -d >/dev/null 2>&1
 	pfctl -f /etc/pf.conf >/dev/null 2>&1
 	vnet_cleanup
 }

@@ -24,6 +24,7 @@ jail_cleanup()
 		jail -r $j >/dev/null 2>&1
 	done
 	pfctl -a regress -Fr >/dev/null 2>&1
+	[ -f pf.was_disabled ] && pfctl -q -d >/dev/null 2>&1
 	pfctl -Fr >/dev/null 2>&1
 	pfctl -f /etc/pf.conf >/dev/null 2>&1
 	[ -f created_lo ] && ifconfig lo1 destroy >/dev/null 2>&1
@@ -46,6 +47,8 @@ load()
 {
 	printf '%s\n' "$@" | pfctl -f - ||
 	    atf_fail "ruleset did not load: $*"
+	# Restored by the cleanup: later cases expect the host pf as it was.
+	pfctl -si 2>/dev/null | grep -q "^Status: Enabled" || touch pf.was_disabled
 	pfctl -e >/dev/null 2>&1 || true
 }
 
@@ -249,6 +252,9 @@ churn_head()
 churn_body()
 {
 	jail_init
+	# Only what the churn logs counts: the buffer keeps earlier boots'
+	# and earlier cases' messages.
+	dmesg > dmesg.before 2>/dev/null || : > dmesg.before
 	load "pass all" "block in quick proto tcp to ${ADDR} jail pfjc"
 	n=0
 	while [ $n -lt 40 ]; do
@@ -259,7 +265,12 @@ churn_body()
 		jail -r pfjc
 		n=$((n + 1))
 	done
-	atf_check -s exit:0 -o not-match:'lock order reversal|non-sleepable' dmesg
+	dmesg 2>/dev/null | awk -v re='lock order reversal|non-sleepable' '
+		FILENAME == ARGV[1] { if ($0 ~ re) seen[$0]++; next }
+		$0 !~ re { next }
+		seen[$0] > 0 { seen[$0]--; next }
+		{ print }' dmesg.before - > dmesg.new
+	atf_check -s exit:0 -o empty cat dmesg.new
 }
 churn_cleanup()
 {
