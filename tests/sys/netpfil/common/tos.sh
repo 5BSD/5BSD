@@ -57,7 +57,8 @@ tos_body()
 	# Check if the firewall is able to set the ToS bits
 	firewall_config "iron" ${firewall} \
 		"pf" \
-			"scrub out proto icmp set-tos 36" \
+			"match out proto icmp set tos 36" \
+			"pass out" \
 		# dscp is set to 9 because last two bits are for
 		# EN and hence tos would be 36
 
@@ -71,7 +72,8 @@ tos_body()
 	# and persists the EN bits (if already set)
 	firewall_config "iron" ${firewall} \
 		"pf" \
-			"scrub out proto icmp set-tos 36"
+			"match out proto icmp set tos 36" \
+			"pass out"
 
 	atf_check -s exit:0 $(atf_get_srcdir)/pft_ping.py \
 		--sendif ${epair_send}a \

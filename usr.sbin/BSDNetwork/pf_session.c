@@ -3,13 +3,24 @@
  *
  * The PF endpoint belongs to BSDNetwork, but its sessions use dedicated
  * workers.  The parent requests /dev/pf from BSDFilesystem.  Each worker
- * inherits only a descriptor narrowed to one read-only state-export ioctl
- * and one transfer to its client.
+ * inherits only a descriptor narrowed to one read-only state-export ioctl,
+ * the bind to a jail's vnet, and one transfer to its client.
+ *
+ * /dev/pf acts on the vnet of the jail that opened it, here the host's.
+ * The worker learns the client's jail from the kernel-stamped sender of its
+ * request; for a jailed client it binds the still-unused descriptor to that
+ * jail's vnet (DIOCBINDJAIL, which the kernel allows only for a descendant
+ * of the opener's and the caller's jail and only before any other ioctl),
+ * then drops the bind right, so the client reads its own vnet's states.  A
+ * client in a jail without its own vnet shares its parent's.
  */
 #include <sys/types.h>
 #include <sys/capsicum.h>
 #include <sys/param.h>
 #include <sys/event.h>
+#include <sys/socket.h>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <net/pfvar.h>
 
 #include <errno.h>
@@ -36,7 +47,8 @@ struct pf_request_state {
 int
 network_pf_open(struct service_context *context)
 {
-	static const unsigned long commands[] = { PF_MONITOR_GETSTATES };
+	static const unsigned long commands[] = { PF_MONITOR_GETSTATES,
+	    PF_MONITOR_BINDJAIL };
 	cap_rights_t rights;
 	int fd, error;
 
@@ -56,6 +68,26 @@ network_pf_open(struct service_context *context)
 		return (errno = error, -1);
 	}
 	return (fd);
+}
+
+/*
+ * Give the descriptor the client's vnet and leave it only the state export.
+ * Returns 0 or an errno; on error the descriptor must not be delivered.
+ */
+static int
+pf_bind_client(int pf_fd, const struct channel_sender *sender)
+{
+	static const unsigned long commands[] = { PF_MONITOR_GETSTATES };
+	int jid;
+
+	if (sender == NULL)
+		return (EPERM);
+	jid = sender->prison_id;
+	if (jid != 0 && ioctl(pf_fd, PF_MONITOR_BINDJAIL, &jid) == -1)
+		return (errno);
+	if (cap_ioctls_limit(pf_fd, commands, nitems(commands)) == -1)
+		return (errno);
+	return (0);
 }
 
 static void
@@ -79,7 +111,10 @@ pf_request(struct channel *channel __unused,
 	    channel_message_fd_count(message) == 0) {
 		memcpy(&input, channel_message_data(message), sizeof(input));
 		if (input.magic == PF_MONITOR_MAGIC && input.error == 0)
-			reply.error = state->pf_fd >= 0 ? 0 : state->open_error;
+			reply.error = state->pf_fd >= 0 ?
+			    pf_bind_client(state->pf_fd,
+			    channel_message_sender(message)) :
+			    state->open_error;
 	}
 	outgoing = (struct channel_outgoing)
 	    CHANNEL_OUTGOING_INITIALIZER(&reply, sizeof(reply));

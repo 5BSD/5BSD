@@ -974,8 +974,10 @@ route_to_body()
 	atf_check -s exit:2 -o ignore jexec b ping -c 1 -S 198.51.100.2 198.51.100.254
 
 	jexec b pfctl -e
+	# OpenBSD PF: route-to follows the addresses and names only the
+	# next hop; the route to 198.51.100.1 goes through tun0.
 	pft_set_rules b \
-		"pass out route-to (tun0 198.51.100.1) proto icmp from 198.51.100.2 "
+		"pass out proto icmp from 198.51.100.2 route-to 198.51.100.1"
 	atf_check -s exit:0 -o ignore jexec b ping -c 3 -S 198.51.100.2 198.51.100.254
 }
 

@@ -1,0 +1,1 @@
+#define NKSTAT 0

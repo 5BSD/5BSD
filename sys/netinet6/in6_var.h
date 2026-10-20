@@ -907,6 +907,8 @@ int	in6_if2idlen(struct ifnet *);
 struct in6_ifaddr *in6ifa_ifpforlinklocal(struct ifnet *, int);
 struct in6_ifaddr *in6ifa_ifpwithaddr(struct ifnet *, const struct in6_addr *);
 struct in6_ifaddr *in6ifa_ifwithaddr(const struct in6_addr *, uint32_t, bool);
+struct in6_ifaddr *in6ifa_ifwithaddr_fib(const struct in6_addr *, uint32_t, bool,
+    int);
 struct in6_ifaddr *in6ifa_llaonifp(struct ifnet *);
 int	in6_addr2zoneid(struct ifnet *, struct in6_addr *, u_int32_t *);
 int	in6_matchlen(struct in6_addr *, struct in6_addr *);
@@ -930,6 +932,7 @@ void	in6_ifarrival(void *, struct ifnet *);
  * Extended API for IPv6 FIB support.
  */
 struct mbuf *ip6_tryforward(struct mbuf *);
+struct mbuf *ip6_fastfwd_quote(struct mbuf *);	/* 5BSD */
 #endif /* _KERNEL */
 
 #endif /* _NETINET6_IN6_VAR_H_ */

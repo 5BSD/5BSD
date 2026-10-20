@@ -19,8 +19,11 @@ setup_relayed_format_test()
 
     confirm_INET_support_or_skip
 
-    # Begin packet capture for single packet
-    tcpdump --immediate-mode -c 1 -i lo0 -w "${pcapfile}" dst port \
+    # Begin packet capture for single packet.  OpenBSD tcpdump (5BSD) keeps
+    # only 116 bytes per packet by default, which can cut off the end of
+    # the syslog payload that the -A checks below anchor on; capture whole
+    # packets.
+    tcpdump -c 1 -s 1500 -i lo0 -w "${pcapfile}" dst port \
         "${SERVER_1_PORT}" &
     tcpdump_pid="$!"
 

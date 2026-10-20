@@ -24,7 +24,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd March 11, 2026
+.Dd October 15, 2026
 .Dt CARP 4
 .Os
 .Sh NAME
@@ -153,6 +153,14 @@ experiences problem with sending announcements, when an interface
 running a vhid goes down, or while the
 .Xr pfsync 4
 interface is not synchronized.
+.Xr pfsync 4
+adds
+.Va net.pfsync.carp_demotion_factor
+(default 240) from the moment it is brought up until its bulk update
+from a peer has completed or has been given up, and while its
+.Cm syncdev
+link is down; it removes the adjustment again when it is
+synchronized or brought down.
 The demotion factor can be adjusted writing to the sysctl oid.
 The signed value supplied to the
 .Xr sysctl 8

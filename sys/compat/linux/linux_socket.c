@@ -192,7 +192,8 @@ linux_to_bsd_ip_sockopt_impl(int opt)
 		/*
 		 * The socket-visible part of IP_TRANSPARENT is the ability
 		 * to bind to non-local addresses; interception itself is a
-		 * firewall (ipfw fwd / pf rdr) matter on both systems.
+		 * packet filter matter on both systems (pf divert-to or
+		 * rdr-to here, iptables TPROXY there).
 		 * Both require privilege.
 		 */
 		return (IP_BINDANY);
@@ -547,10 +548,10 @@ linux_to_bsd_so_sockopt_impl(int opt)
 		return (SO_DOMAIN);
 	case LINUX_SO_MARK:
 		/*
-		 * Both are 32-bit socket tags consumed by the packet
-		 * filter (ipfw sockarg / dummynet here, fwmark there).
-		 * FreeBSD does not require privilege to set it and has no
-		 * getsockopt for it.
+		 * Both are 32-bit socket tags (fwmark on Linux).  On 5BSD
+		 * nothing consumes SO_USER_COOKIE since ipfw was retired:
+		 * pf does not match it, so the mark is stored and ignored.
+		 * Setting it needs no privilege and there is no getsockopt.
 		 */
 		return (SO_USER_COOKIE);
 	case LINUX_SO_MAX_PACING_RATE:

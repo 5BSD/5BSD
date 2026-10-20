@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+comment = "Regression tests for libcapimage"
+
+desc = <<EOD
+Regression tests for libcapimage.
+EOD

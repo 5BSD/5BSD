@@ -80,7 +80,7 @@ valid_redirect_body() {
 	jexec ${jname} route add -4 -net ${net4} ${remote_rtr_ip}
 	
 	local_ip=${ip4b}
-	local_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	local_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/lladdr/{print$2}'`
 
 	# echo "LOCAL: ${local_ip} ${local_mac}"
 	# echo "REMOTE: ${remote_rtr_ip} ${remote_rtr_mac}"

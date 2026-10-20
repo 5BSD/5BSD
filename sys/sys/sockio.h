@@ -151,4 +151,24 @@
 #define	SIOCSUMBPARAM	 _IOW('i', 158, struct ifreq)	/* set MBIM param */
 #define	SIOCGUMBPARAM	_IOWR('i', 159, struct ifreq)	/* get MBIM param */
 
+/* OpenBSD PF pseudo-interfaces and parent interfaces (OpenBSD numbers). */
+#define	SIOCSIFPARENT	 _IOW('i', 178, struct if_parent) /* set parent if */
+#define	SIOCGIFPARENT	_IOWR('i', 179, struct if_parent) /* get parent if */
+#define	SIOCDIFPARENT	 _IOW('i', 180, struct ifreq)	/* del parent if */
+#define	SIOCSETPFSYNC	 _IOW('i', 247, struct ifreq)
+#define	SIOCGETPFSYNC	_IOWR('i', 248, struct ifreq)
+#define	SIOCSETPFLOW	 _IOW('i', 253, struct ifreq)
+#define	SIOCGETPFLOW	_IOWR('i', 254, struct ifreq)
+
+/*
+ * 5BSD: routing domains (rdomain(4)).  OpenBSD numbers 159/160 collide with
+ * SIOCGUMBPARAM, so these use free numbers.
+ */
+#define	SIOCSIFRDOMAIN	 _IOW('i', 240, struct ifreq)	/* set rdomain */
+#define	SIOCGIFRDOMAIN	_IOWR('i', 241, struct ifreq)	/* get rdomain */
+
+/* 5BSD: pfsync(4) with an IPv6 sync peer (struct pfsyncreq6). */
+#define	SIOCSETPFSYNC6	 _IOW('i', 242, struct ifreq)
+#define	SIOCGETPFSYNC6	_IOWR('i', 243, struct ifreq)
+
 #endif /* !_SYS_SOCKIO_H_ */

@@ -1,0 +1,8 @@
+/* SPDX-License-Identifier: ISC */
+comment = "PF development package transition"
+desc = <<EOD
+This metadata-only upgrade package retires the previous netpfil/pf headers.
+Current PF vendor headers are provided by clibs-dev under net/.
+It keeps the historical package identity so pkg removes only files owned by
+that package during a normal upgrade. No administrator policy is removed.
+EOD

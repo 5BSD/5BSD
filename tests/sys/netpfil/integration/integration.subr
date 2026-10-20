@@ -1,0 +1,145 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Helpers for the 5BSD PF seam tests (tests/sys/netpfil/integration).
+# They build on the FreeBSD VNET helpers (tests/sys/common/vnet.subr) and the
+# pf test helpers (tests/sys/netpfil/pf/utils.subr).
+
+. $(atf_get_srcdir)/../pf/utils.subr
+
+# integ_require_prog prog...: skip unless every program is installed.
+integ_require_prog()
+{
+	for _p in "$@"; do
+		command -v "${_p}" >/dev/null 2>&1 ||
+		    atf_skip "${_p} is not installed"
+	done
+}
+
+# integ_has_cloner name: true if ifconfig -C lists the interface cloner.
+integ_has_cloner()
+{
+	ifconfig -C | tr ' ' '\n' | grep -qx "$1"
+}
+
+# integ_mkroot name: create an empty directory to serve as a jail root with
+# its own devfs mount (jails made by vnet_mkjail share the host's /dev).
+integ_mkroot()
+{
+	_root=${PWD}/root.$1
+	mkdir -p ${_root}/dev
+	echo ${_root}
+}
+
+# integ_mkjail_devfs name ruleset [jail params...]: create a persistent jail
+# rooted at an empty directory with devfs mounted under the given devfs
+# ruleset.  Recorded in created_jails.lst so pft_cleanup removes it (jail -r
+# also unmounts the devfs mount).
+integ_mkjail_devfs()
+{
+	_name=$1
+	_ruleset=$2
+	shift 2
+	_root=$(integ_mkroot ${_name})
+	jail -c name=${_name} path=${_root} persist mount.devfs \
+	    devfs_ruleset=${_ruleset} "$@" ||
+	    atf_fail "cannot create jail ${_name} (devfs ruleset ${_ruleset})"
+	echo ${_name} >> created_jails.lst
+	echo ${_root}
+}
+
+# integ_pf_rules jail rule...: flush and load the given rules into the pf of
+# a VNET jail, failing the test if pfctl rejects them.
+integ_pf_rules()
+{
+	pft_set_rules "$@"
+}
+
+# integ_cleanup: pft_cleanup plus the devfs mounts of integ_mkjail_devfs
+# jails (jail -r by name does not know about the mount.devfs pseudo-param).
+integ_cleanup()
+{
+	pft_cleanup
+	for _d in ${PWD}/root.*/dev; do
+		[ -d "${_d}" ] || continue
+		umount -f "${_d}" 2>/dev/null
+	done
+	return 0
+}
+
+# quota_sysctl_set name value: set the host's net.pf.<name> (a per-VNET
+# quota percentage), saving the old value once for quota_pct_restore.
+# Skips when pf has no per-VNET quotas.
+quota_sysctl_set()
+{
+	sysctl -n net.pf.$1 > /dev/null 2>&1 ||
+	    atf_skip "pf has no per-VNET quotas (net.pf.$1)"
+	[ -f $1.original ] || sysctl -n net.pf.$1 > $1.original
+	sysctl net.pf.$1=$2 > /dev/null ||
+	    atf_fail "cannot set net.pf.$1 to $2"
+}
+
+# quota_pct_set pct: net.pf.vnet_limit_pct, a VNET jail's pf limits in
+# percent of the host's.
+quota_pct_set()
+{
+	quota_sysctl_set vnet_limit_pct $1
+}
+
+# quota_total_pct_set pct: net.pf.vnet_total_pct, all VNET jails' pf items
+# together in percent of the host's limits.
+quota_total_pct_set()
+{
+	quota_sysctl_set vnet_total_pct $1
+}
+
+quota_pct_restore()
+{
+	for _s in vnet_limit_pct vnet_total_pct; do
+		[ -f ${_s}.original ] || continue
+		sysctl net.pf.${_s}=$(cat ${_s}.original) > /dev/null
+	done
+}
+
+# Kernel messages a seam test must not cause: WITNESS lock order reversals
+# and warnings, panics and traps, and pf's own complaints.  Tests may set
+# INTEG_DMESG_IGNORE to an extended regular expression of lines to skip.
+INTEG_DMESG_RE='lock order reversal|panic|pf:|Fatal trap|non-sleepable locks|acquiring duplicate lock|sleeping thread'
+
+# integ_dmesg_snapshot: save the kernel message buffer for integ_dmesg_check.
+integ_dmesg_snapshot()
+{
+	dmesg > dmesg.before 2>/dev/null || : > dmesg.before
+}
+
+# integ_dmesg_new: print the INTEG_DMESG_RE lines of the kernel message
+# buffer that were not in the snapshot.  The buffer is a ring, so the two
+# are compared as multisets of lines rather than by position: lines that
+# scrolled out are not reported, and a line that was already there counts
+# as new only if it now appears more often.  (WITNESS reports each lock
+# order reversal once per boot, so a known one never shows up again.)
+integ_dmesg_new()
+{
+	dmesg 2>/dev/null | awk -v re="${INTEG_DMESG_RE}" \
+	    -v ign="${INTEG_DMESG_IGNORE}" '
+		FILENAME == ARGV[1] { if ($0 ~ re) seen[$0]++; next }
+		$0 !~ re { next }
+		ign != "" && $0 ~ ign { next }
+		seen[$0] > 0 { seen[$0]--; next }
+		{ print }' dmesg.before -
+}
+
+# integ_dmesg_check: fail if the kernel logged INTEG_DMESG_RE lines since
+# integ_dmesg_snapshot.  The end of the buffer goes to stdout for the
+# lines that follow a reversal (the locks and their stacks).
+integ_dmesg_check()
+{
+	[ -f dmesg.before ] || atf_fail "integ_dmesg_check without a snapshot"
+	integ_dmesg_new > dmesg.new
+	if [ -s dmesg.new ]; then
+		echo "New kernel messages:"
+		cat dmesg.new
+		echo "End of the kernel message buffer:"
+		dmesg | tail -n 80
+		atf_fail "new kernel messages: $(head -n 1 dmesg.new)"
+	fi
+}

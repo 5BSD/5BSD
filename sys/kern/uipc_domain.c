@@ -280,11 +280,26 @@ pffindproto(int family, int type, int proto)
 	if (dp == NULL)
 		return (NULL);
 
+	/*
+	 * 5BSD: an exact protocol match first, then a wildcard protocol
+	 * (raw IP), then, for protocol 0, the first of the type.  A protocol
+	 * registered later into a spare slot (OpenBSD divert(4) from pf.ko,
+	 * SOCK_RAW/IPPROTO_DIVERT) could otherwise come before raw IP and
+	 * be what socket(PF_INET, SOCK_RAW, 0) creates.
+	 */
 	for (int i = 0; i < dp->dom_nprotosw; i++)
 		if ((pr = dp->dom_protosw[i]) != NULL && pr->pr_type == type &&
-		    (pr->pr_protocol == 0 || proto == 0 ||
-		     pr->pr_protocol == proto))
+		    pr->pr_protocol == proto)
 			return (pr);
+	for (int i = 0; i < dp->dom_nprotosw; i++)
+		if ((pr = dp->dom_protosw[i]) != NULL && pr->pr_type == type &&
+		    pr->pr_protocol == 0)
+			return (pr);
+	if (proto == 0)
+		for (int i = 0; i < dp->dom_nprotosw; i++)
+			if ((pr = dp->dom_protosw[i]) != NULL &&
+			    pr->pr_type == type)
+				return (pr);
 
 	return (NULL);
 }

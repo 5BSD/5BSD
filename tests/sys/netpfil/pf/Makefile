@@ -2,16 +2,20 @@ PACKAGE=	tests
 
 TESTSDIR=       ${TESTSBASE}/sys/netpfil/pf
 TESTS_SUBDIRS+=	ioctl
+TESTS_SUBDIRS+=	openbsd
 
-ATF_TESTS_SH+=	altq \
-		anchor \
+ATF_TESTS_SH+=	anchor \
 		counters \
 		debug \
+		delay \
 		divert-to \
 		dup \
+		egress \
 		ether \
+		features_glue \
+		features_pools \
+		features_rules \
 		forward \
-		fragmentation_compat \
 		fragmentation_pass \
 		fragmentation_no_reassembly \
 		get_state \
@@ -25,7 +29,6 @@ ATF_TESTS_SH+=	altq \
 		macro \
 		match \
 		max_pkt_rate \
-		max_pkt_size \
 		max_states \
 		mbuf \
 		modulate \
@@ -39,29 +42,32 @@ ATF_TESTS_SH+=	altq \
 		pflow \
 		pfsync	\
 		prio \
+		priority \
 		proxy \
 		rdr \
-		ridentifier \
 		route_to \
 		rtable \
 		rules_counter \
-		scrub_compat \
 		scrub_pass \
 		sctp \
 		set_skip \
 		set_tos \
 		snmp \
 		src_track \
+		statefile \
 		status \
 		syncookie \
+		stress \
 		synproxy \
 		table \
 		tcp \
 		tos \
+		transaction \
 		unmapped_mbuf
 
 ATF_TESTS_PYTEST+=	frag4.py
 ATF_TESTS_PYTEST+=	frag6.py
+ATF_TESTS_PYTEST+=	fuzz_packets.py
 ATF_TESTS_PYTEST+=	header.py
 ATF_TESTS_PYTEST+=	icmp.py
 ATF_TESTS_PYTEST+=	igmp.py
@@ -77,6 +83,17 @@ ATF_TESTS_PYTEST+=	tcp.py
 TEST_METADATA+= execenv="jail"
 TEST_METADATA+= execenv_jail_params="vnet allow.raw_sockets allow.read_msgbuf"
 
+# Delay observes global SDT probes and changes the privileged shared pool limit.
+TEST_METADATA.delay+= execenv="" execenv_jail_params="" is_exclusive="true"
+# Priority observes kernel FBT probes while creating its own VNET fixture.
+TEST_METADATA.priority+= execenv="" execenv_jail_params="" is_exclusive="true"
+TEST_METADATA.prio+= execenv="" execenv_jail_params="" is_exclusive="true"
+TEST_METADATA.statefile+= execenv="" execenv_jail_params="" is_exclusive="true"
+TEST_METADATA.transaction+= execenv="" execenv_jail_params="" is_exclusive="true"
+# pf pool limits are owned by the host vnet (a vnet jail cannot change them).
+TEST_METADATA.limits+= execenv="" execenv_jail_params="" is_exclusive="true"
+TEST_METADATA.syncookie+= execenv="" execenv_jail_params="" is_exclusive="true"
+
 ${PACKAGE}FILES+=	\
 			bsnmpd.conf \
 			CVE-2019-5597.py \
@@ -84,6 +101,9 @@ ${PACKAGE}FILES+=	\
 			daytime_inetd.conf \
 			echo_inetd.conf \
 			fragcommon.py \
+			frag-direction.py \
+			mld-group.py \
+			tcp-original-ack.py \
 			frag-overindex.py \
 			frag-overlimit.py \
 			frag-overreplace.py \
@@ -110,5 +130,17 @@ ${PACKAGE}FILESMODE_frag-adjhole.py=	0555
 ${PACKAGE}FILESMODE_pfsync_defer.py=	0555
 ${PACKAGE}FILESMODE_pft_ether.py=	0555
 ${PACKAGE}FILESMODE_pft_read_ipfix.py=	0555
+
+PROGS+=	delay_pool_limit statusif_transaction
+BINDIR=	${TESTSDIR}
+MAN.delay_pool_limit=
+CFLAGS.delay_pool_limit+= -I${SRCTOP}/sys/netpfil/openbsd-pf/user
+CFLAGS.delay_pool_limit+= -I${SRCTOP}/contrib/openbsd-pf/sys
+CFLAGS.delay_pool_limit+= -include ${SRCTOP}/sys/netpfil/openbsd-pf/user/openbsd_compat.h
+
+MAN.statusif_transaction=
+CFLAGS.statusif_transaction+= -I${SRCTOP}/sys/netpfil/openbsd-pf/user
+CFLAGS.statusif_transaction+= -I${SRCTOP}/contrib/openbsd-pf/sys
+CFLAGS.statusif_transaction+= -include ${SRCTOP}/sys/netpfil/openbsd-pf/user/openbsd_compat.h
 
 .include <bsd.test.mk>

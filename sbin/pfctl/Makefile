@@ -1,3 +1,7 @@
+# pfctl(8) from OpenBSD (contrib/openbsd-pf/sbin/pfctl), built for 5BSD.
+# 5BSD glue lives in sys/netpfil/openbsd-pf/user (force-included header and
+# shadow headers that select OpenBSD's net/pfvar.h).
+
 .include <src.opts.mk>
 
 PACKAGE=pf
@@ -5,28 +9,26 @@ CONFS=	pf.os
 PROG=	pfctl
 MAN=	pfctl.8
 
-SRCS = pfctl.c parse.y pfctl_parser.c pf_print_state.c pfctl_altq.c
-SRCS+= pfctl_osfp.c pfctl_radix.c pfctl_table.c pfctl_qstats.c
-SRCS+= pfctl_optimize.c
-SRCS+= pf_ruleset.c
+PFCTL_SRC=	${SRCTOP}/contrib/openbsd-pf/sbin/pfctl
+.PATH: ${PFCTL_SRC} ${SRCTOP}/contrib/openbsd-pf/sys/net \
+	${SRCTOP}/contrib/openbsd-pf/etc
 
+SRCS=	pfctl.c parse.y pfctl_parser.c pf_print_state.c
+SRCS+=	pfctl_osfp.c pfctl_radix.c pfctl_table.c
+SRCS+=	pfctl_optimize.c pf_ruleset.c pfctl_queue.c
+# 5BSD glue: the "jail" rule option and "ether" rules
+.PATH: ${SRCTOP}/sys/netpfil/openbsd-pf/user
+SRCS+=	pfctl_jail.c pfctl_ether.c
+
+CFLAGS+= -I${SRCTOP}/sys/netpfil/openbsd-pf/user -I${PFCTL_SRC}
+CFLAGS+= -include ${SRCTOP}/sys/netpfil/openbsd-pf/user/openbsd_compat.h
 WARNS?=	2
-CFLAGS+= -Wall -Wmissing-prototypes -Wno-uninitialized
-CFLAGS+= -Wstrict-prototypes
-CFLAGS+= -DENABLE_ALTQ -I${.CURDIR}
-CFLAGS+= -I${SRCTOP}/lib/libpfctl -I${OBJTOP}/lib/libpfctl
-
-# Need to use "WITH_" prefix to not conflict with the l/y INET/INET6 keywords
-.if ${MK_INET6_SUPPORT} != "no"
-CFLAGS+= -DWITH_INET6
-.endif
-.if ${MK_INET_SUPPORT} != "no"
-CFLAGS+= -DWITH_INET
-.endif
-
+# OpenBSD formats 64-bit values with %ll; these are LP64-safe here.
+NO_WFORMAT=
+CWARNFLAGS+= -Wno-incompatible-pointer-types-discards-qualifiers
 YFLAGS=
 
-LIBADD=	m md pfctl
+LIBADD=	m md
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests

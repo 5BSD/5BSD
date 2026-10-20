@@ -12,12 +12,19 @@ name="dnctl"
 desc="Dummynet packet queuing and scheduling"
 rcvar="${name}_enable"
 load_rc_config $name
+start_precmd="${name}_prestart"
 start_cmd="${name}_start"
 required_files="$dnctl_rules"
-required_modules="dummynet"
 
 # doesn't make sense to run in a svcj: config setting
 dnctl_svcj="NO"
+
+# Late kldload(2) is reserved to the SystemExtension broker; a dummynet
+# preloaded from loader.conf is claimed through it.
+dnctl_prestart()
+{
+	load_kld -b dummynet
+}
 
 dnctl_start()
 {

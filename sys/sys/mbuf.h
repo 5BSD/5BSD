@@ -148,6 +148,65 @@ struct m_snd_tag {
  * Compile-time assertions in uipc_mbuf.c test these values to ensure that
  * they are correct.
  */
+/*
+ * Packet filter (OpenBSD PF) per-packet state.  Layout and flag values
+ * follow OpenBSD sys/sys/mbuf.h.  5BSD keeps it in an mbuf tag
+ * (PACKET_TAG_PF, allocated when pf first sets a field of a packet), so
+ * struct pkthdr and MSIZE are unchanged; a packet without the tag has the
+ * default values (m_pf_default).  See m_pf_find() and m_pf_get().
+ */
+struct pf_state_key;
+struct inpcb;
+struct pkthdr_pf {
+	struct pf_state_key *statekey;	/* pf stackside statekey */
+	struct inpcb	*inp;		/* connected pcb for outgoing packet */
+	uint32_t	 qid;		/* queue id */
+	uint16_t	 tag;		/* tag id */
+	uint16_t	 delay;		/* delay packet by X ms */
+	uint8_t		 flags;
+	uint8_t		 routed;
+	uint8_t		 prio;
+	uint8_t		 prio_set;	/* 5BSD: prio assigned (pf rule, VLAN PCP) */
+	/* 5BSD: dummynet(4) through pf dnpipe/dnqueue */
+	uint8_t		 dn_flags;	/* PF_DN_TAG_* */
+	uint8_t		 dn_dflags;	/* PF_DN_DEFER_* */
+	uint16_t	 dn_ifidx;	/* route-to interface ... */
+	uint16_t	 dn_ifgen;	/* ... and its generation */
+	uint16_t	 dn_dpipe;	/* pipe chosen during pf_route() */
+	uint8_t		 xflags;	/* 5BSD: PF_XTAG_* */
+	uint64_t	 dn_dst[4];	/* route-to next hop (sockaddr_in[6]) */
+};
+
+/* pkthdr_pf.xflags (5BSD) */
+#define	PF_XTAG_ICMP_ERROR		0x01	/* pf asks the stack for an
+						   ICMP error (pf_send_icmp) */
+#define	PF_XTAG_LOOP			0x02	/* the mark survives the
+						   loopback (pf's synproxy
+						   SYN to a local server) */
+
+/* pkthdr_pf.flags */
+#define	PF_TAG_GENERATED		0x01
+#define	PF_TAG_SYNCOOKIE_RECREATED	0x02
+#define	PF_TAG_TRANSLATE_LOCALHOST	0x04
+#define	PF_TAG_DIVERTED			0x08
+#define	PF_TAG_DIVERTED_PACKET		0x10
+#define	PF_TAG_REROUTE			0x20
+#define	PF_TAG_REFRAGMENTED		0x40	/* refragmented ipv6 packet */
+#define	PF_TAG_PROCESSED		0x80	/* packet was checked by pf */
+
+/* pkthdr_pf.dn_flags (5BSD: dummynet) */
+#define	PF_DN_TAG_INFLIGHT		0x01	/* handed to dummynet */
+#define	PF_DN_TAG_DONE			0x02	/* shaped once; never again */
+#define	PF_DN_TAG_ROUTE_TO		0x04	/* send to dn_ifidx/dn_dst */
+#define	PF_DN_TAG_ETHER			0x08	/* 5BSD: ether; dummynet at layer 2 */
+#define	PF_DN_TAG_DUPTO			0x10	/* route-to copy (dup-to): no errors */
+#define	PF_DN_TAG_ROUTING		0x20	/* in pf_route(): defer the pipe */
+#define	PF_DN_TAG_REFRAG		0x40	/* refragment (IPv6) on reinjection */
+
+/* pkthdr_pf.dn_dflags (5BSD: dummynet) */
+#define	PF_DN_DEFER_SET			0x01	/* dn_dpipe is valid ... */
+#define	PF_DN_DEFER_PIPE		0x02	/* ... and is a pipe, not a queue */
+
 struct pkthdr {
 	union {
 		struct m_snd_tag *snd_tag;	/* send tag, if any */
@@ -1386,7 +1445,7 @@ extern bool		mb_use_ext_pgs;	/* Use ext_pgs for sendfile */
 #define	PACKET_TAG_DIVERT			17 /* divert info */
 #define	PACKET_TAG_IPFORWARD			18 /* ipforward info */
 #define	PACKET_TAG_MACLABEL	(19 | MTAG_PERSISTENT) /* MAC label */
-#define	PACKET_TAG_PF				21 /* PF/ALTQ information */
+#define	PACKET_TAG_PF				21 /* PF: struct pkthdr_pf */
 /* was	PACKET_TAG_RTSOCKFAM			25    rtsock sa family */
 #define	PACKET_TAG_IPOPTIONS			27 /* Saved IP options */
 #define	PACKET_TAG_CARP				28 /* CARP info */
@@ -1396,6 +1455,7 @@ extern bool		mb_use_ext_pgs;	/* Use ext_pgs for sendfile */
 #define	PACKET_TAG_IPSEC_ACCEL_OUT		32  /* IPSEC accel out */
 #define	PACKET_TAG_IPSEC_ACCEL_IN		33  /* IPSEC accel in */
 #define	PACKET_TAG_OVPN				34 /* if_ovpn */
+#define	PACKET_TAG_PF_DIVERT			35 /* pf divert-to/-reply */
 
 /* Specific cookies and tags. */
 
@@ -1516,6 +1576,56 @@ m_snd_tag_rele(struct m_snd_tag *mst)
 	if (refcount_release(&mst->refcount))
 		m_snd_tag_destroy(mst);
 }
+
+/*
+ * OpenBSD PF per-packet state in PACKET_TAG_PF.  The tag holds references
+ * on a pf state key and a pcb; the pf module installs the hooks that drop
+ * them (tag freed, M_PF_UNLINK()) and take new ones (tag copied).
+ */
+extern const struct pkthdr_pf m_pf_default;
+extern void (*pf_mtag_unlink_hook)(struct pkthdr_pf *);
+extern void (*pf_mtag_copy_hook)(struct pkthdr_pf *);
+struct pkthdr_pf *m_pf_get(struct mbuf *);
+void	m_pf_delete(struct mbuf *);
+void	m_pf_icmp_error(struct mbuf *, struct mbuf *);
+
+/* The packet's pf state, or NULL: the packet has the default values. */
+static __inline struct pkthdr_pf *
+m_pf_find(struct mbuf *m)
+{
+	struct m_tag *t;
+
+	if (SLIST_EMPTY(&m->m_pkthdr.tags))
+		return (NULL);
+	t = m_tag_locate(m, MTAG_ABI_COMPAT, PACKET_TAG_PF, NULL);
+	return (t != NULL ? (struct pkthdr_pf *)(t + 1) : NULL);
+}
+
+/* The packet's pf state for reading. */
+static __inline const struct pkthdr_pf *
+m_pf_ro(struct mbuf *m)
+{
+	struct pkthdr_pf *p = m_pf_find(m);
+
+	return (p != NULL ? p : &m_pf_default);
+}
+
+/*
+ * Drop pf's state-key and pcb references (OpenBSD pf_pkt_addr_changed).
+ * The callers turn a received packet into a reply (icmp_reflect(),
+ * icmp6_reflect(), tcp_respond()): the reply is a new packet for
+ * dummynet too, so forget that the request was shaped.
+ */
+#define	M_PF_UNLINK(m) do {						\
+	struct pkthdr_pf *_mpf = m_pf_find(m);				\
+	if (_mpf != NULL) {						\
+		_mpf->dn_flags = 0;					\
+		_mpf->dn_dflags = 0;					\
+	}								\
+	if (_mpf != NULL && (_mpf->statekey != NULL ||			\
+	    _mpf->inp != NULL) && pf_mtag_unlink_hook != NULL)		\
+		pf_mtag_unlink_hook(_mpf);				\
+} while (0)
 
 static __inline struct mbuf *
 m_free(struct mbuf *m)

@@ -1,5 +1,12 @@
 # PF consolidation status
 
+> **Superseded (2026-10-15).** This records the 2026-10-10 IPFW retirement
+> on FreeBSD pf, before 5BSD replaced FreeBSD pf with OpenBSD PF. It is kept
+> as history; its evidence, limitations and next steps no longer describe
+> the tree. For the current packet filter see
+> [Packet Filter](book/src/operations/pf.md) and
+> [Network Stack Provenance](book/src/operations/network-provenance.md).
+
 The target is source retirement of IPFW and the complete PF feature/behavior
 program in the Desktop kernel cleanup audit. Dummynet remains the shaping
 engine. Build disablement alone is not completion.

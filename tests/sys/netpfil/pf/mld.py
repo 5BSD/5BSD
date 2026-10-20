@@ -44,10 +44,14 @@ class TestMLD(VnetTestTemplate):
         ToolsHelper.pf_rules([
             "pass",
             ])
-        ToolsHelper.print_output("/sbin/pfctl -x loud")
+        ToolsHelper.print_output("/sbin/pfctl -x debug")
 
         while True:
-            cmd = self.wait_object(vnet.pipe)
+            # 5BSD: wait for the test's commands for as long as it runs; it
+            # imports scapy before its first command, which takes longer
+            # than the default 5 s on emulated test VMs.  The test's own
+            # timeout and the vnet cleanup end this process.
+            cmd = self.wait_object(vnet.pipe, None)
             result = ToolsHelper.get_output(cmd)
             vnet.pipe.send(result)
 

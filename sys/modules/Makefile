@@ -150,6 +150,7 @@ SUBDIR=	\
 	if_lagg \
 	if_ovpn \
 	if_tuntap \
+	if_vether \
 	if_vlan \
 	if_vxlan \
 	if_geneve \
@@ -162,7 +163,6 @@ SUBDIR=	\
 	${_io} \
 	${_ioat} \
         ${_ipoib} \
-	ipdivert \
 	${_ipmi} \
 	ip6_mroute_mod \
 	ip_mroute_mod \
@@ -270,9 +270,6 @@ SUBDIR=	\
 	${_padlock} \
 	${_pchtherm} \
 	${_pf} \
-	${_pflog} \
-	${_pflow} \
-	${_pfsync} \
 	${_pms} \
 	proto \
 	pseudofs \
@@ -541,11 +538,6 @@ _netgraph=	netgraph
 .if (${MK_PF} != "no" && (${MK_INET_SUPPORT} != "no" || \
 	${MK_INET6_SUPPORT} != "no")) || defined(ALL_MODULES)
 _pf=		pf
-_pflog=		pflog
-_pflow=		pflow
-.if ${MK_INET_SUPPORT} != "no"
-_pfsync=	pfsync
-.endif
 .endif
 
 .if ${MK_SOURCELESS_UCODE} != "no"

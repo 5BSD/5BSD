@@ -341,11 +341,19 @@ UDP packets from the same IP address they were sent to.
 Use of this option
 is also recommended when securing NFS exports on a firewalling machine such
 that the NFS sockets can only be accessed by the inside interface.
-The
-.Nm ipfw
-utility
-would then be used to block NFS-related packets that come in on the outside
-interface.
+A
+.Xr pf.conf 5
+rule would then block NFS-related packets that come in on the outside
+interface, for example:
+.Bd -literal -offset indent
+block in quick on $ext_if proto { tcp udp } to port { sunrpc nfsd }
+.Ed
+.Pp
+.Xr mountd 8
+and the lock and status daemons use further ports unless they are
+fixed with their
+.Fl p
+options.
 .Pp
 If the server has stopped servicing clients and has generated a console message
 like
@@ -392,11 +400,11 @@ just do a
 .Xr pnfs 4 ,
 .Xr pnfsserver 4 ,
 .Xr exports 5 ,
+.Xr pf.conf 5 ,
 .Xr rc.conf 5 ,
 .Xr stablerestart 5 ,
 .Xr kerberos 7 ,
 .Xr gssd 8 ,
-.Xr ipfw 8 ,
 .Xr jail 8 ,
 .Xr mountd 8 ,
 .Xr nfsiod 8 ,

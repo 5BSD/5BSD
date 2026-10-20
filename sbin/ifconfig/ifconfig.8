@@ -28,7 +28,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd September 10, 2026
+.Dd October 15, 2026
 .Dt IFCONFIG 8
 .Os
 .Sh NAME
@@ -409,6 +409,11 @@ It is also possible to use the CIDR notation (also known as the
 slash notation) to include the netmask.
 That is, one can specify an address like
 .Li 192.168.0.1/16 .
+An address given without a netmask gets the historical classful netmask
+of its network
+.Pq Li /8 , /16 No or Li /24 ,
+as on
+.Ox .
 .Pp
 For the
 .Cm inet6
@@ -468,6 +473,19 @@ Synonymous with
 .It Ar dest_address
 Specify the address of the correspondent on the other end
 of a point to point link.
+As on
+.Ox ,
+an address can be configured on a point to point interface before its
+destination is known; the status output then shows the destination as
+.Li 0.0.0.0
+or
+.Li :: ,
+and no route to the peer is installed until it is set.
+Several addresses on the interface may share a destination.
+An
+.Cm inet6
+address with a destination gets a prefix length of 128 unless one is
+given.
 .It Ar interface
 This
 parameter is a string of the form
@@ -489,6 +507,40 @@ When no arguments are given,
 is implied.
 .Pp
 Only the super-user may modify the configuration of a network interface.
+.Ss Output format
+Interface status is shown in the
+.Ox
+format:
+a header line with the interface name, its flags
+(OpenBSD's flag bits and names, including the extended flags
+.Dq MONITOR
+and
+.Dq LRO ;
+5BSD-only flags are not shown),
+.Dq rdomain
+when the interface is in a non-default routing domain,
+.Dq metric
+when it is not zero, and the MTU;
+then the link-level address
+.Pq Dq lladdr ,
+the description, the interface index, interface specific status
+(for example
+.Xr carp 4 ,
+.Xr pfsync 4
+and
+.Xr pflow 4 ) ,
+the interface groups, media and link status, wireless status,
+the addresses and bridge status.
+5BSD additions follow:
+enabled capabilities
+.Pq Dq options= ,
+IPv6 neighbor discovery flags
+.Pq Dq nd6 options= ,
+the FIB and the MAC label.
+When the named interface does not exist,
+.Nm
+prints
+.Dq Ar interface Ns Li : no such interface .
 .Sh PARAMETERS
 The following
 .Ar parameter Ns s
@@ -568,6 +620,13 @@ configuration.
 Specify the address to use to represent broadcasts to the
 network.
 The default broadcast address is the address with a host part of all 1's.
+As on
+.Ox ,
+no broadcast address is shown for a
+.Li /31
+or
+.Li /32
+address unless one was set explicitly.
 .It Cm debug
 Enable driver dependent debugging code; usually, this turns on
 extra console error logging.
@@ -613,6 +672,23 @@ For example, a VLAN interface such as
 .Em vlan10
 is a member of the VLAN interface family group,
 .Em vlan .
+All interfaces are members of the
+.Em all
+group.
+The
+.Em egress
+group contains the interfaces that the IPv4 and IPv6 default routes of
+routing table 0 point to, as on
+.Ox ;
+the kernel updates it in each
+.Xr vnet 9
+when a default route is added, changed or deleted.
+Reject and blackhole routes do not count.
+.Xr pf.conf 5
+rules can use it, for example
+.Dq Li pass out on egress
+or
+.Dq Li nat-to (egress) .
 .It Cm -group Ar groupname
 Remove the interface from the given
 .Dq group .
@@ -621,6 +697,12 @@ Remove the interface from the given
 Fill interface index
 (lowermost 64bit of an IPv6 address)
 automatically.
+As on
+.Ox ,
+if the interface has no link-local address yet, IPv6 is first enabled on
+it
+.Pq Cm -ifdisabled auto_linklocal
+and the link-local address is configured, even when the interface is down.
 .It Cm fib Ar fib_number
 Specify interface FIB.
 A FIB
@@ -634,6 +716,23 @@ using the
 kernel configuration option, or the
 .Va net.fibs
 tunable.
+A FIB of another routing domain moves the interface into that domain, as
+.Cm rdomain
+does.
+.It Cm rdomain Ar N
+Move the interface into routing domain
+.Ar N
+.Pq 0 to 255, see Xr rdomain 4 .
+The routing domain and its loopback interface
+.Li lo Ns Ar N
+are created if needed.
+The interface loses its addresses and routes, which belong to the old
+domain.
+The status line shows
+.Dq rdomain Ar N
+for interfaces outside routing domain 0.
+.It Fl rdomain
+Move the interface back into routing domain 0.
 .It Cm tunnelfib Ar fib_number
 Specify tunnel FIB.
 A FIB
@@ -885,6 +984,12 @@ printed to standard output unless the interface is renamed or destroyed
 in the same
 .Nm
 invocation.
+As on
+.Ox ,
+configuring a pseudo-device with a unit number that does not exist yet,
+for example
+.Dq Nm Li vether0 192.0.2.1/24 ,
+creates it first.
 .It Cm destroy
 Destroy the specified network pseudo-device.
 .It Cm plumb
@@ -915,8 +1020,6 @@ interface.
 Not all interfaces support setting the MTU, and some interfaces have
 range restrictions.
 .It Cm netmask Ar mask
-.\" (Inet and ISO.)
-(Inet only.)
 Specify how much of the address to reserve for subdividing
 networks into sub-networks.
 The mask includes the network part of the local address
@@ -933,21 +1036,39 @@ and 0's for the host part.
 The mask should contain at least the standard network portion,
 and the subnet field should be contiguous with the network
 portion.
+As on
+.Ox ,
+a mask that is not contiguous is rejected.
+.Pp
+For the
+.Cm inet6
+family the mask is an IPv6 address, for example
+.Li ffff:ffff:ffff:ffff::\& ,
+and is equivalent to the corresponding
+.Cm prefixlen .
 .Pp
 The netmask can also be specified in CIDR notation after the address.
 See the
 .Ar address
 option above for more information.
 .It Cm prefixlen Ar len
-(Inet6 only.)
 Specify that
 .Ar len
-bits are reserved for subdividing networks into sub-networks.
-The
+bits are reserved for subdividing networks into sub-networks,
+as an alternative to
+.Cm netmask .
+For the
+.Cm inet
+family
 .Ar len
-must be integer, and for syntactical reason it must be between 0 to 128.
-It is almost always 64 under the current IPv6 assignment rule.
-If the parameter is omitted, 64 is used.
+must be between 0 and 32.
+For the
+.Cm inet6
+family it must be between 0 and 128;
+it is almost always 64 under the current IPv6 assignment rule.
+If the parameter is omitted, 64 is used,
+or 128 for an address with a
+.Ar dest_address .
 .Pp
 The prefix can also be specified using the slash notation after the address.
 See the
@@ -1046,6 +1167,16 @@ default router.
 .It Cm -defaultif
 Clear a flag
 .Cm defaultif .
+.It Cm -inet6
+Disable IPv6 on the interface and remove all of its IPv6 addresses,
+including the link-local ones, as on
+.Ox :
+set
+.Cm ifdisabled
+and clear
+.Cm auto_linklocal .
+.Dq Li inet6 -ifdisabled auto_linklocal
+enables IPv6 again.
 .It Cm ifdisabled
 Set a flag to disable all of IPv6 network communications on the
 specified interface.
@@ -3104,35 +3235,60 @@ Note that
 .Xr gre 4 will always accept GRE packets with invalid or absent keys.
 This command will result in a four byte MTU reduction on the interface.
 .El
-.Ss Packet Filter State Table Sychronisation Parameters
+.Ss Packet Filter State Table Synchronisation Parameters
 The following parameters are specific to
 .Xr pfsync 4
-interfaces:
+interfaces.
+.Cm syncdev
+and
+.Cm syncpeer
+can only be changed while the
+.Xr pfsync 4
+interface is down; the interface comes up only once
+.Cm syncdev
+is set.
 .Bl -tag -width indent
 .It Cm syncdev Ar iface
 Use the specified interface
 to send and receive pfsync state synchronisation messages.
+.Cm syncif
+is an alias.
 .It Fl syncdev
 Stop sending pfsync state synchronisation messages over the network.
+.Fl syncif
+is an alias.
 .It Cm syncpeer Ar peer_address
-Set the destination address for the state synchronization messages sent.
+Set the destination address for the state synchronisation messages sent.
 The
 .Ar peer_address
 is normally the IPv4 or IPv6 address of the other host taking
 part in the pfsync cluster.
+By default the messages are sent to the IPv4 multicast group
+224.0.0.240.
 .Pp
 When the
 .Ar peer_address
-is set to a unicast IP address, the pfsync link will behave
+is a unicast address, the pfsync link will behave
 as point-to-point rather than using multicast to broadcast the messages.
+When it is an IPv4 or IPv6 multicast group, the
+.Ar syncdev
+joins the group; the IPv6 group conventionally used is ff12::f0.
 .Pp
-When the
+IPv6 sync peers are a 5BSD extension;
+.Ox
+peers only use IPv4.
+A link-local or multicast IPv6
 .Ar peer_address
-is set to ff12::f0, the state synchronization
-messages will be broadcast using multicast over IPv6.
+is taken to be in the scope zone of the
+.Cm syncdev .
+With an IPv6
+.Ar peer_address
+the pfsync MTU is kept 20 bytes below the MTU of the
+.Cm syncdev ,
+so that packets with the longer IPv6 header are not fragmented.
 .It Fl syncpeer
 Unset the syncpeer.
-Packets will then be broadcast using multicast over IPv4.
+Packets will then be sent to the IPv4 multicast group 224.0.0.240.
 .It Cm maxupd Ar n
 Set the maximum number of updates for a single state which
 can be collapsed into one.
@@ -3143,11 +3299,39 @@ acknowledged that the associated state has been inserted.
 .It Fl defer
 Do not defer the first packet in a state.
 This is the default.
-.It Fl version Ar n
-Configure message format for compatibility with older versions of FreeBSD.
-Refer to
-.Xr pfsync 4
-for details.
+.El
+.Ss Packet Flow Export Parameters
+The following parameters are specific to
+.Xr pflow 4
+interfaces:
+.Bl -tag -width indent
+.It Cm flowdst Ar addr : Ns Ar port
+Set the receiver address and the port for
+.Xr pflow 4
+packets.
+Both must be defined to export pflow data.
+.Ar addr
+is the IP address and
+.Ar port
+is the port number of the flow collector.
+An IPv6
+.Ar addr
+is written in brackets, for example
+.Li [2001:db8::1]:2055 .
+Pflow data will be sent to this address and port.
+.It Fl flowdst
+Unset the receiver address and stop sending pflow data.
+.It Cm flowsrc Ar addr Ns Op : Ns Ar port
+Set the source IP address and, optionally, the source port of
+.Xr pflow 4
+packets.
+The collector may use the address to identify the source of the data.
+.It Fl flowsrc
+Unset the source address.
+.It Cm pflowproto Ar n
+Set the export protocol:
+5 (NetFlow version 5) or 10 (IPFIX).
+The default is 5.
 .El
 .Ss VLAN Parameters
 The following parameters are specific to
@@ -3178,17 +3362,38 @@ Default.
 Same as
 .Cm 802.1ad .
 .El
-.It Cm vlanpcp Ar priority_code_point
+.It Cm vlanpcp Ar priority_code_point | Cm auto
 Priority code point
 .Pq Dv PCP
 is an 3-bit field which refers to the IEEE 802.1p
 class of service and maps to the frame priority level.
 .Pp
+The default
+.Cm auto
+selects the packet's internal priority, including a priority assigned by
+.Xr pf.conf 5 .
+Internal priorities zero and one map to PCP one and zero, respectively;
+other priorities retain their value.
+A packet at the default internal priority of three is sent with PCP zero
+.Pq best effort ,
+as is one assigned priority three by
+.Xr pf.conf 5 .
+A PCP chosen by the sending socket with the
+.Dv IP_VLAN_PCP
+or
+.Dv IPV6_VLAN_PCP
+option takes precedence over both automatic selection and a numeric PCP.
+An explicit numeric PCP overrides automatic selection, including an explicit
+zero.
+Use
+.Cm vlanpcp auto
+to restore automatic selection.
+.Pp
 Values in order of priority are:
 .Cm 1
 .Pq Dv Background (lowest) ,
 .Cm 0
-.Pq Dv Best effort (default) ,
+.Pq Dv Best effort ,
 .Cm 2
 .Pq Dv Excellent effort ,
 .Cm 3
@@ -3599,7 +3804,7 @@ Display inet and inet6 address subnet masks in CIDR notation
 Display interfaces that are up with the exception of loopback
 .Dl # ifconfig -a -u -G lo
 .Pp
-Display a list of interface names beloning to the wlan group:
+Display a list of interface names belonging to the wlan group:
 .Bd -literal -offset indent -compact
 # ifconfig -g wlan
 wlan0
@@ -3609,31 +3814,31 @@ wlan1
 Display details about the interfaces belonging to the wlan group:
 .Bd -literal -offset indent -compact
 # ifconfig -a -g wlan
-wlan0: flags=8843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> metric 0 mtu 1500
-        ether 75:4c:61:6b:7a:73
-        inet6 fe80::4c75:636a:616e:ffd8%wlan0 prefixlen 64 scopeid 0x3
-        inet6 2001:5761:6e64:6152:6f6d:616e:fea4:ffe2 prefixlen 64 autoconf
-        inet 192.168.10.5 netmask 0xffffff00 broadcast 192.168.10.255
+wlan0: flags=8843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+        lladdr 75:4c:61:6b:7a:73
+        index 3
         groups: wlan
+        media: IEEE 802.11 Wireless Ethernet DS/2Mbps mode 11g
+        status: associated
         ssid "Hotspot" channel 11 (2462 MHz 11g) bssid 12:34:ff:ff:43:21
         regdomain ETSI country DE authmode WPA2/802.11i privacy ON
         deftxkey UNDEF AES-CCM 2:128-bit AES-CCM 3:128-bit txpower 30 bmiss 10
         scanvalid 60 protmode CTS wme roaming MANUAL
         parent interface: iwm0
-        media: IEEE 802.11 Wireless Ethernet DS/2Mbps mode 11g
-        status: associated
-        nd6 options=23<PERFORMNUD,ACCEPT_RTADV,AUTO_LINKLOCAL>
-wlan1: flags=8843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> metric 0 mtu 1500
-        ether 00:50:69:6f:74:72
+        inet 192.168.10.5 netmask 0xffffff00 broadcast 192.168.10.255
+        inet6 fe80::4c75:636a:616e:ffd8%wlan0 prefixlen 64 scopeid 0x3
+        inet6 2001:5761:6e64:6152:6f6d:616e:fea4:ffe2 prefixlen 64 autoconf
+wlan1: flags=8843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+        lladdr 00:50:69:6f:74:72
+        index 4
         groups: wlan
+        media: IEEE 802.11 Wireless Ethernet autoselect (autoselect)
+        status: no carrier
         ssid "" channel 2 (2417 MHz 11g)
         regdomain FCC country US authmode OPEN privacy OFF txpower 30 bmiss 7
         scanvalid 60 bgscan bgscanintvl 300 bgscanidle 250 roam:rssi 7
         roam:rate 5 protmode CTS wme bintval 0
         parent interface: rum0
-        media: IEEE 802.11 Wireless Ethernet autoselect (autoselect)
-        status: no carrier
-        nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
 .Ed
 .Pp
 Set a randomly-generated MAC address on tap0:

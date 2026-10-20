@@ -190,6 +190,16 @@ udp6_append(struct inpcb *inp, struct mbuf *n, int off,
 	if (inp->inp_flags & INP_CONTROLOPTS ||
 	    inp->inp_socket->so_options & SO_TIMESTAMP)
 		ip6_savecontrol(inp, n, &opts);
+	if ((inp->inp_vflag & INP_IPV6) && (inp->inp_flags2 & INP_RECVDSTPORT)) {
+		/* OpenBSD IPV6_RECVDSTPORT: the destination port. */
+		tmp_opts = sbcreatecontrol(&fromsa[1].sin6_port,
+		    sizeof(u_int16_t), IPV6_RECVDSTPORT, IPPROTO_IPV6,
+		    M_NOWAIT);
+		if (tmp_opts) {
+			tmp_opts->m_next = opts;
+			opts = tmp_opts;
+		}
+	}
 	if ((inp->inp_vflag & INP_IPV6) && (inp->inp_flags2 & INP_ORIGDSTADDR)) {
 		tmp_opts = sbcreatecontrol(&fromsa[1],
 		    sizeof(struct sockaddr_in6), IPV6_ORIGDSTADDR,

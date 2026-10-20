@@ -78,7 +78,12 @@
 #endif
 
 static int in_aifaddr_ioctl(u_long, caddr_t, struct ifnet *, struct ucred *);
+static int in_aifaddr_add(struct ifnet *, const struct in_aliasreq *, int,
+    bool *);
 static int in_difaddr_ioctl(u_long, caddr_t, struct ifnet *, struct ucred *);
+static int in_difaddr_ia(u_long, struct ifnet *, struct in_ifaddr *);
+static void in_difaddr_finish(u_long, struct ifnet *, struct in_ifaddr *, bool);
+static int in_sifaddr_ioctl(u_long, caddr_t, struct ifnet *, struct ucred *);
 static int in_gifaddr_ioctl(u_long, caddr_t, struct ifnet *, struct ucred *);
 
 static void	in_socktrim(struct sockaddr_in *);
@@ -390,9 +395,14 @@ in_control_ioctl(u_long cmd, void *data, struct ifnet *ifp,
 		return (error);
 	case SIOCSIFADDR:
 	case SIOCSIFBRDADDR:
-	case SIOCSIFDSTADDR:
 	case SIOCSIFNETMASK:
-		/* We no longer support that old commands. */
+		/* 5BSD: OpenBSD's historical requests, see in_sifaddr_ioctl(). */
+		sx_xlock(&in_control_sx);
+		error = in_sifaddr_ioctl(cmd, data, ifp, cred);
+		sx_xunlock(&in_control_sx);
+		return (error);
+	case SIOCSIFDSTADDR:
+		/* Not supported (nor by OpenBSD's tun(4)). */
 		return (EINVAL);
 	default:
 		if (ifp->if_ioctl == NULL)
@@ -491,48 +501,35 @@ in_control(struct socket *so, u_long cmd, void *data, struct ifnet *ifp,
 	return (in_control_ioctl(cmd, data, ifp, td ? td->td_ucred : NULL));
 }
 
+/*
+ * 5BSD follows OpenBSD's in_ioctl(): a netmask must be contiguous, and its
+ * sockaddr carries only the address (the family is not checked).
+ */
 static int
-in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred)
+in_check_mask(const struct sockaddr_in *mask)
 {
-	const struct in_aliasreq *ifra = (struct in_aliasreq *)data;
-	const struct sockaddr_in *addr = &ifra->ifra_addr;
-	const struct sockaddr_in *broadaddr = &ifra->ifra_broadaddr;
-	const struct sockaddr_in *mask = &ifra->ifra_mask;
-	const struct sockaddr_in *dstaddr = &ifra->ifra_dstaddr;
-	const int vhid = (cmd == SIOCAIFADDR) ? ifra->ifra_vhid : 0;
-	struct epoch_tracker et;
-	struct ifaddr *ifa;
-	struct in_ifaddr *ia;
-	bool iaIsFirst;
-	int error = 0;
+	in_addr_t m;
 
-	error = priv_check_cred(cred, PRIV_NET_ADDIFADDR);
-	if (error)
-		return (error);
+	if (mask->sin_len < offsetof(struct sockaddr_in, sin_zero) ||
+	    mask->sin_len > sizeof(struct sockaddr_in) ||
+	    (mask->sin_family != AF_INET && mask->sin_family != AF_UNSPEC))
+		return (EINVAL);
+	m = ntohl(mask->sin_addr.s_addr);
+	if (m & (~m >> 1))
+		return (EINVAL);
+	return (0);
+}
 
-	/*
-	 * ifra_addr must be present and be of INET family.
-	 * ifra_broadaddr/ifra_dstaddr and ifra_mask are optional.
-	 */
-	if (addr->sin_len != sizeof(struct sockaddr_in) ||
-	    addr->sin_family != AF_INET)
-		return (EINVAL);
-	if (broadaddr->sin_len != 0 &&
-	    (broadaddr->sin_len != sizeof(struct sockaddr_in) ||
-	    broadaddr->sin_family != AF_INET))
-		return (EINVAL);
-	if (mask->sin_len != 0 &&
-	    (mask->sin_len != sizeof(struct sockaddr_in) ||
-	    mask->sin_family != AF_INET))
-		return (EINVAL);
-	if ((ifp->if_flags & IFF_POINTOPOINT) &&
-	    (dstaddr->sin_len != sizeof(struct sockaddr_in) ||
-	     dstaddr->sin_addr.s_addr == INADDR_ANY))
-		return (EDESTADDRREQ);
-	if (vhid != 0 && carp_attach_p == NULL)
-		return (EPROTONOSUPPORT);
-
+/*
+ * Policy checks for adding @addr to @ifp.
+ */
+static int
+in_aifaddr_check(struct ifnet *ifp, const struct sockaddr_in *addr,
+    struct ucred *cred)
+{
 #ifdef MAC
+	int error;
+
 	/* Check if a MAC policy disallows setting the IPv4 address. */
 	error = mac_inet_check_add_addr(cred, &addr->sin_addr, ifp);
 	if (error != 0)
@@ -553,10 +550,51 @@ in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred
 			return (EINVAL);
 	}
 
+	return (0);
+}
+
+static int
+in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred)
+{
+	const struct in_aliasreq *ifra = (struct in_aliasreq *)data;
+	const struct sockaddr_in *addr = &ifra->ifra_addr;
+	const struct sockaddr_in *broadaddr = &ifra->ifra_broadaddr;
+	const struct sockaddr_in *mask = &ifra->ifra_mask;
+	const int vhid = (cmd == SIOCAIFADDR) ? ifra->ifra_vhid : 0;
+	struct epoch_tracker et;
+	struct ifaddr *ifa;
+	struct in_ifaddr *ia;
+	int error = 0;
+
+	error = priv_check_cred(cred, PRIV_NET_ADDIFADDR);
+	if (error)
+		return (error);
+
+	/*
+	 * ifra_addr must be present and be of INET family.
+	 * ifra_broadaddr/ifra_dstaddr and ifra_mask are optional.
+	 * As in OpenBSD, a point-to-point address may be configured
+	 * before its destination.
+	 */
+	if (addr->sin_len != sizeof(struct sockaddr_in) ||
+	    addr->sin_family != AF_INET)
+		return (EINVAL);
+	if (broadaddr->sin_len != 0 &&
+	    (broadaddr->sin_len != sizeof(struct sockaddr_in) ||
+	    broadaddr->sin_family != AF_INET))
+		return (EINVAL);
+	if (mask->sin_len != 0 && in_check_mask(mask) != 0)
+		return (EINVAL);
+	if (vhid != 0 && carp_attach_p == NULL)
+		return (EPROTONOSUPPORT);
+
+	error = in_aifaddr_check(ifp, addr, cred);
+	if (error != 0)
+		return (error);
+
 	/*
 	 * See whether address already exist.
 	 */
-	iaIsFirst = true;
 	ia = NULL;
 	NET_EPOCH_ENTER(et);
 	CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
@@ -569,13 +607,47 @@ in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred
 		if (it->ia_addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
 		    prison_check_ip4(cred, &addr->sin_addr) == 0)
 			ia = it;
-		else
-			iaIsFirst = false;
 	}
 	NET_EPOCH_EXIT(et);
 
 	if (ia != NULL)
 		(void )in_difaddr_ioctl(cmd, data, ifp, cred);
+
+	return (in_aifaddr_add(ifp, ifra, vhid, NULL));
+}
+
+/*
+ * Add the address described by @ifra to @ifp.  The caller has checked
+ * the request; an existing identical address is not replaced.
+ * *@installedp, if not NULL, tells whether the address was installed: like
+ * SIOCAIFADDR, this fails also after installing it when the all-hosts
+ * group cannot be joined.
+ */
+static int
+in_aifaddr_add(struct ifnet *ifp, const struct in_aliasreq *ifra, int vhid,
+    bool *installedp)
+{
+	const struct sockaddr_in *addr = &ifra->ifra_addr;
+	const struct sockaddr_in *broadaddr = &ifra->ifra_broadaddr;
+	const struct sockaddr_in *mask = &ifra->ifra_mask;
+	const struct sockaddr_in *dstaddr = &ifra->ifra_dstaddr;
+	struct epoch_tracker et;
+	struct ifaddr *ifa;
+	struct in_ifaddr *ia;
+	bool iaIsFirst;
+	int error = 0;
+
+	if (installedp != NULL)
+		*installedp = false;
+	iaIsFirst = true;
+	NET_EPOCH_ENTER(et);
+	CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
+		if (ifa->ifa_addr->sa_family == AF_INET) {
+			iaIsFirst = false;
+			break;
+		}
+	}
+	NET_EPOCH_EXIT(et);
 
 	ifa = ifa_alloc(sizeof(struct in_ifaddr), M_WAITOK);
 	ia = (struct in_ifaddr *)ifa;
@@ -587,8 +659,10 @@ in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred
 
 	ia->ia_ifp = ifp;
 	ia->ia_addr = *addr;
+	ia->ia_sockmask.sin_len = sizeof(struct sockaddr_in);
+	ia->ia_sockmask.sin_family = AF_INET;
 	if (mask->sin_len != 0) {
-		ia->ia_sockmask = *mask;
+		ia->ia_sockmask.sin_addr = mask->sin_addr;
 		ia->ia_subnetmask = ntohl(ia->ia_sockmask.sin_addr.s_addr);
 	} else {
 		in_addr_t i = ntohl(addr->sin_addr.s_addr);
@@ -629,7 +703,12 @@ in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred
 		}
 	}
 
-	if (ifp->if_flags & IFF_POINTOPOINT)
+	/*
+	 * A point-to-point address without a destination (OpenBSD allows
+	 * one) has no host route until the destination is set.
+	 */
+	if ((ifp->if_flags & IFF_POINTOPOINT) && dstaddr->sin_len != 0 &&
+	    dstaddr->sin_addr.s_addr != INADDR_ANY)
 		ia->ia_dstaddr = *dstaddr;
 
 	if (vhid != 0) {
@@ -664,7 +743,11 @@ in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred
 	 * Add route for the network.
 	 */
 	if (vhid == 0) {
-		error = in_addprefix(ia);
+		if ((ifp->if_flags & IFF_POINTOPOINT) &&
+		    ia->ia_dstaddr.sin_family != AF_INET)
+			rt_addrmsg(RTM_ADD, &ia->ia_ifa, ifp->if_fib);
+		else
+			error = in_addprefix(ia);
 		if (error)
 			goto fail1;
 	}
@@ -703,6 +786,8 @@ in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred
 	 * thread.
 	 */
 	EVENTHANDLER_INVOKE(ifaddr_event_ext, ifp, ifa, IFADDR_EVENT_ADD);
+	if (installedp != NULL)
+		*installedp = true;
 
 	return (error);
 
@@ -768,18 +853,70 @@ in_difaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred
 		    (cred == NULL || prison_check_ip4(cred,
 		    &addr->sin_addr) == 0))
 			ia = it;
-
-		if (it != ia)
-			iaIsLast = false;
 	}
 
 	if (ia == NULL) {
 		IF_ADDR_WUNLOCK(ifp);
 		return (EADDRNOTAVAIL);
 	}
+	/*
+	 * 5BSD: after the walk.  OpenBSD's SIOCSIFADDR can leave two
+	 * identical addresses, each the chosen one when it was visited: the
+	 * all-hosts group was left with the other still configured.
+	 */
+	CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link)
+		if (ifa->ifa_addr->sa_family == AF_INET &&
+		    ifa != &ia->ia_ifa) {
+			iaIsLast = false;
+			break;
+		}
 
 	CK_STAILQ_REMOVE(&ifp->if_addrhead, &ia->ia_ifa, ifaddr, ifa_link);
 	IF_ADDR_WUNLOCK(ifp);
+
+	in_difaddr_finish(cmd, ifp, ia, iaIsLast);
+	return (0);
+}
+
+/*
+ * Delete the address @ia from @ifp; the caller holds a reference to it.
+ */
+static int
+in_difaddr_ia(u_long cmd, struct ifnet *ifp, struct in_ifaddr *ia)
+{
+	struct ifaddr *ifa;
+	bool found, iaIsLast;
+
+	found = false;
+	iaIsLast = true;
+	IF_ADDR_WLOCK(ifp);
+	CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
+		if (ifa->ifa_addr->sa_family != AF_INET)
+			continue;
+		if (ifa == &ia->ia_ifa)
+			found = true;
+		else
+			iaIsLast = false;
+	}
+	if (!found) {
+		IF_ADDR_WUNLOCK(ifp);
+		return (EADDRNOTAVAIL);
+	}
+	CK_STAILQ_REMOVE(&ifp->if_addrhead, &ia->ia_ifa, ifaddr, ifa_link);
+	IF_ADDR_WUNLOCK(ifp);
+
+	in_difaddr_finish(cmd, ifp, ia, iaIsLast);
+	return (0);
+}
+
+/*
+ * Finish deleting @ia, already unlinked from @ifp's address list.
+ */
+static void
+in_difaddr_finish(u_long cmd, struct ifnet *ifp, struct in_ifaddr *ia,
+    bool iaIsLast)
+{
+
 	ifa_free(&ia->ia_ifa);		/* if_addrhead */
 
 	sx_assert(&in_control_sx, SA_XLOCKED);
@@ -826,8 +963,154 @@ in_difaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred
 	EVENTHANDLER_INVOKE(ifaddr_event_ext, ifp, &ia->ia_ifa,
 	    IFADDR_EVENT_DEL);
 	ifa_free(&ia->ia_ifa);		/* in_ifaddrhead */
+}
 
-	return (0);
+/*
+ * The historical requests SIOCSIFADDR, SIOCSIFNETMASK and SIOCSIFBRDADDR,
+ * with OpenBSD's semantics (5BSD follows OpenBSD's in_ioctl()):
+ *
+ * SIOCSIFADDR replaces the address of the interface's first IPv4 address,
+ * keeping its netmask and destination and recomputing its broadcast
+ * address, or adds the address with its classful netmask if the
+ * interface has none.  An identical address elsewhere on the interface
+ * is not removed.
+ *
+ * SIOCSIFNETMASK and SIOCSIFBRDADDR change the netmask or broadcast
+ * address of the address named by ifr_addr, or of the first address if
+ * none matches.  A new netmask must be contiguous; the broadcast address
+ * is kept.
+ *
+ * The address and netmask are changed by deleting the address and adding
+ * it again, so routes and the all-hosts membership are kept consistent;
+ * the address moves to the end of the interface's list, as in OpenBSD.
+ * SIOCSIFDSTADDR remains unsupported.
+ */
+static int
+in_sifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp,
+    struct ucred *cred)
+{
+	struct ifreq *ifr = (struct ifreq *)data;
+	const struct sockaddr_in *sin =
+	    (const struct sockaddr_in *)&ifr->ifr_addr;
+	struct in_aliasreq ifra, oifra;
+	struct epoch_tracker et;
+	struct ifaddr *ifa;
+	struct in_ifaddr *ia;
+	int error, vhid;
+	bool installed;
+
+	error = priv_check_cred(cred, PRIV_NET_ADDIFADDR);
+	if (error)
+		return (error);
+
+	switch (cmd) {
+	case SIOCSIFADDR:
+		if (sin->sin_len != sizeof(struct sockaddr_in) ||
+		    sin->sin_family != AF_INET)
+			return (EINVAL);
+		error = in_aifaddr_check(ifp, sin, cred);
+		if (error != 0)
+			return (error);
+		break;
+	case SIOCSIFNETMASK:
+		if (in_check_mask(sin) != 0)
+			return (EINVAL);
+		break;
+	case SIOCSIFBRDADDR:
+		if ((ifp->if_flags & IFF_BROADCAST) == 0)
+			return (EINVAL);
+		if (sin->sin_len != sizeof(struct sockaddr_in) ||
+		    sin->sin_family != AF_INET)
+			return (EINVAL);
+		break;
+	default:
+		return (EINVAL);
+	}
+
+	/* An exact match for ifr_addr, or the first address. */
+	ia = NULL;
+	NET_EPOCH_ENTER(et);
+	CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
+		struct in_ifaddr *it;
+
+		if (ifa->ifa_addr->sa_family != AF_INET)
+			continue;
+		it = (struct in_ifaddr *)ifa;
+		if (cred != NULL &&
+		    prison_check_ip4(cred, &it->ia_addr.sin_addr) != 0)
+			continue;
+		if (ia == NULL)
+			ia = it;
+		if (cmd == SIOCSIFADDR || sin->sin_family != AF_INET ||
+		    sin->sin_addr.s_addr == INADDR_ANY)
+			break;
+		if (it->ia_addr.sin_addr.s_addr == sin->sin_addr.s_addr) {
+			ia = it;
+			break;
+		}
+	}
+	if (ia != NULL)
+		ifa_ref(&ia->ia_ifa);
+	NET_EPOCH_EXIT(et);
+
+	memset(&ifra, 0, sizeof(ifra));
+	ifra.ifra_mask.sin_len = sizeof(struct sockaddr_in);
+	ifra.ifra_mask.sin_family = AF_INET;
+
+	if (ia == NULL) {
+		in_addr_t i;
+
+		if (cmd != SIOCSIFADDR)
+			return (EADDRNOTAVAIL);
+		i = ntohl(sin->sin_addr.s_addr);
+		ifra.ifra_addr = *sin;
+		ifra.ifra_mask.sin_addr.s_addr = htonl(IN_CLASSA(i) ?
+		    IN_CLASSA_NET : IN_CLASSB(i) ? IN_CLASSB_NET :
+		    IN_CLASSC_NET);
+		return (in_aifaddr_add(ifp, &ifra, 0, NULL));
+	}
+
+	if (cmd == SIOCSIFBRDADDR) {
+		IF_ADDR_WLOCK(ifp);
+		ia->ia_broadaddr = *sin;
+		IF_ADDR_WUNLOCK(ifp);
+		ifa_free(&ia->ia_ifa);
+		return (0);
+	}
+
+	/* The address as it is now, to restore if the change fails. */
+	memset(&oifra, 0, sizeof(oifra));
+	oifra.ifra_addr = ia->ia_addr;
+	oifra.ifra_mask = ifra.ifra_mask;
+	oifra.ifra_mask.sin_addr.s_addr = htonl(ia->ia_subnetmask);
+	if ((ifp->if_flags & IFF_POINTOPOINT) &&
+	    ia->ia_dstaddr.sin_family == AF_INET)
+		oifra.ifra_dstaddr = ia->ia_dstaddr;
+	else if ((ifp->if_flags & IFF_BROADCAST) &&
+	    ia->ia_broadaddr.sin_len == sizeof(struct sockaddr_in))
+		oifra.ifra_broadaddr = ia->ia_broadaddr;
+	vhid = 0;
+	if (ia->ia_ifa.ifa_carp != NULL && carp_get_vhid_p != NULL)
+		vhid = (*carp_get_vhid_p)(&ia->ia_ifa);
+
+	ifra = oifra;
+	if (cmd == SIOCSIFADDR) {
+		ifra.ifra_addr = *sin;
+		/* A new address gets the broadcast address of its subnet. */
+		if ((ifp->if_flags & IFF_POINTOPOINT) == 0)
+			memset(&ifra.ifra_broadaddr, 0,
+			    sizeof(ifra.ifra_broadaddr));
+	} else
+		ifra.ifra_mask.sin_addr = sin->sin_addr;
+
+	error = in_difaddr_ia(SIOCAIFADDR, ifp, ia);
+	ifa_free(&ia->ia_ifa);
+	if (error != 0)
+		return (error);
+	error = in_aifaddr_add(ifp, &ifra, vhid, &installed);
+	if (error != 0 && !installed)
+		(void)in_aifaddr_add(ifp, &oifra, vhid, NULL);
+	return (error);
 }
 
 static int
@@ -1274,35 +1557,54 @@ in_scrubprefix(struct in_ifaddr *target, u_int flags)
 	return (error);
 }
 
+/*
+ * 5BSD: scrub one interface.  in_ifscrub_all() runs it through
+ * if_foreach_sleep(), holding a reference rather than IFNET_RLOCK: an
+ * address change holds in_control and its route message reaches SCTP's
+ * sctp_addr_change(), which takes IFNET_RLOCK, and if_bridge's ioctl
+ * (under in_multi_sx when a multicast group is joined) can reach a
+ * netlink interface dump that takes IFNET_RLOCK.  Holding IFNET_RLOCK
+ * here around in_control and in_multi_sx reversed both orders whenever a
+ * VNET jail was removed.
+ */
+static int
+in_ifscrub_one(if_t ifp, void *arg __unused)
+{
+	struct epoch_tracker et;
+	struct ifaddr *ifa;
+	int error;
+
+	/*
+	 * Delete the exact address and start over: an address deleted
+	 * by value may be a later one with the same value (the SIOCSIFADDR
+	 * path allows duplicates), and the walk is not in an epoch.
+	 */
+	do {
+		NET_EPOCH_ENTER(et);
+		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
+			if (ifa->ifa_addr->sa_family == AF_INET) {
+				ifa_ref(ifa);
+				break;
+			}
+		}
+		NET_EPOCH_EXIT(et);
+		if (ifa == NULL)
+			break;
+		error = in_difaddr_ia(SIOCDIFADDR, ifp, (struct in_ifaddr *)ifa);
+		ifa_free(ifa);
+	} while (error == 0);
+	in_purgemaddrs(ifp);
+	igmp_domifdetach(ifp);
+	return (0);
+}
+
 void
 in_ifscrub_all(void)
 {
-	struct ifnet *ifp;
-	struct ifaddr *ifa, *nifa;
-	struct ifreq ifr;
 
-	IFNET_RLOCK();
-	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		/* Cannot lock here - lock recursion. */
-		/* NET_EPOCH_ENTER(et); */
-		CK_STAILQ_FOREACH_SAFE(ifa, &ifp->if_addrhead, ifa_link, nifa) {
-			if (ifa->ifa_addr->sa_family != AF_INET)
-				continue;
-
-			/*
-			 * This is ugly but the only way for legacy IP to
-			 * cleanly remove addresses and everything attached.
-			 */
-			bzero(&ifr, sizeof(ifr));
-			ifr.ifr_addr = *ifa->ifa_addr;
-			(void)in_control(NULL, SIOCDIFADDR, (caddr_t)&ifr,
-			    ifp, NULL);
-		}
-		/* NET_EPOCH_EXIT(et); */
-		in_purgemaddrs(ifp);
-		igmp_domifdetach(ifp);
-	}
-	IFNET_RUNLOCK();
+	sx_xlock(&in_control_sx);
+	(void)if_foreach_sleep(NULL, NULL, in_ifscrub_one, NULL);
+	sx_xunlock(&in_control_sx);
 }
 
 bool

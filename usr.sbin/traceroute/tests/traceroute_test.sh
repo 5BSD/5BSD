@@ -122,7 +122,7 @@ start_tcpdump()
 	rm -f "${PWD}/traceroute.pcap"
 
 	jexec trrtr daemon -p "${PWD}/tcpdump.pid" \
-	    tcpdump --immediate-mode -w "${PWD}/traceroute.pcap" -nv \
+	    tcpdump -w "${PWD}/traceroute.pcap" -nv \
 	    -i $interface
 
 	# Give tcpdump time to start
@@ -131,8 +131,8 @@ start_tcpdump()
 
 stop_tcpdump()
 {
-	# Sleep to give tcpdump a chance to finish flushing
-	jexec trrtr kill -USR2 $(cat "${PWD}/tcpdump.pid")
+	# tcpdump -w writes each packet unbuffered; give the last ones time
+	# to arrive.
 	sleep 1
 	jexec trrtr kill $(cat "${PWD}/tcpdump.pid")
 
@@ -142,6 +142,22 @@ stop_tcpdump()
 	(tcpdump -nv -r "${PWD}/traceroute.pcap"; echo) | \
 	    sed -E -e :a -e N -e 's/\n +/ /' -e ta -e P -e D \
 	    > tcpdump.output
+}
+
+# check_sctp_probe chunk dport ttl: OpenBSD tcpdump has no SCTP decoder (it
+# prints "ip-proto-132 LEN"), so select the probe with a filter on the IPv4
+# TTL, the SCTP destination port and the first chunk type (1 = INIT,
+# 8 = SHUTDOWN ACK) and check that it was captured.
+check_sctp_probe()
+{
+	chunk=$1
+	dport=$2
+	ttl=$3
+
+	atf_check -s exit:0 -e ignore \
+	    -o match:"${LINK_TRSRC_TRSRC} > ${LINK_TRDST_TRDST}: ip-proto-132 [0-9]+" \
+	    tcpdump -nv -r "${PWD}/traceroute.pcap" \
+	    "ip proto 132 and ip[8] = ${ttl} and ip[22:2] = ${dport} and ip[32] = ${chunk}"
 }
 
 ##
@@ -205,8 +221,8 @@ ipv4_icmp_body()
 		stop_tcpdump
 
 		atf_check -s exit:0 -e ignore 				\
-		    -o match:"IP \\(tos 0x0, ttl 1, .*, proto ICMP.*\\).* ${LINK_TRSRC_TRSRC} > ${LINK_TRDST_TRDST}: ICMP echo request" \
-		    -o match:"IP \\(tos 0x0, ttl 2, .*, proto ICMP.*\\).* ${LINK_TRSRC_TRSRC} > ${LINK_TRDST_TRDST}: ICMP echo request" \
+		    -o match:"${LINK_TRSRC_TRSRC} > ${LINK_TRDST_TRDST}: icmp: echo request .*\\[ttl 1\\]" \
+		    -o match:"${LINK_TRSRC_TRSRC} > ${LINK_TRDST_TRDST}: icmp: echo request .*\\(ttl 2, " \
 		    cat tcpdump.output
 	done
 }
@@ -243,8 +259,8 @@ ipv4_udp_body()
 	stop_tcpdump
 
 	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x0, ttl 1, .*, proto UDP .*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33435: UDP" \
-	    -o match:"IP \\(tos 0x0, ttl 2, .*, proto UDP .*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33436: UDP" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.33435: .*udp [0-9]+ \\[ttl 1\\]" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.33436: .*udp [0-9]+ \\(ttl 2, " \
 	    cat tcpdump.output
 
 	# Test with -e, the destination port should not increment.
@@ -261,8 +277,8 @@ ipv4_udp_body()
 	stop_tcpdump
 
 	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x0, ttl 1, .*, proto UDP .*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.40000: UDP" \
-	    -o match:"IP \\(tos 0x0, ttl 2, .*, proto UDP .*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.40000: UDP" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.40000: .*udp [0-9]+ \\[ttl 1\\]" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.40000: .*udp [0-9]+ \\(ttl 2, " \
 	    cat tcpdump.output
 }
 
@@ -296,10 +312,8 @@ ipv4_sctp_body()
 	    jexec trsrc traceroute $TR_FLAGS -Psctp ${LINK_TRDST_TRDST}
 
 	stop_tcpdump
-	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x0, ttl 1, .*, proto SCTP.*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33435: sctp \(1\) \[SHUTDOWN ACK\]" \
-	    -o match:"IP \\(tos 0x0, ttl 2, .*, proto SCTP.*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33436: sctp \(1\) \[SHUTDOWN ACK\]" \
-	    cat tcpdump.output
+	check_sctp_probe 8 33435 1
+	check_sctp_probe 8 33436 2
 
 	# For a larger packet size we should send INIT packets.
 
@@ -311,10 +325,8 @@ ipv4_sctp_body()
 	    jexec trsrc traceroute $TR_FLAGS -Psctp ${LINK_TRDST_TRDST} 128
 
 	stop_tcpdump
-	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x0, ttl 1, .*, proto SCTP.*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33435: sctp \(1\) \[INIT\]" \
-	    -o match:"IP \\(tos 0x0, ttl 2, .*, proto SCTP.*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33436: sctp \(1\) \[INIT\]" \
-	    cat tcpdump.output
+	check_sctp_probe 1 33435 1
+	check_sctp_probe 1 33436 2
 
 	# Test with -e, the destination port should not increment.
 
@@ -326,10 +338,8 @@ ipv4_sctp_body()
 	    jexec trsrc traceroute $TR_FLAGS -Psctp -e -p 40000 ${LINK_TRDST_TRDST}
 
 	stop_tcpdump
-	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x0, ttl 1, .*, proto SCTP.*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.40000: sctp \(1\) \[SHUTDOWN ACK\]" \
-	    -o match:"IP \\(tos 0x0, ttl 2, .*, proto SCTP.*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.40000: sctp \(1\) \[SHUTDOWN ACK\]" \
-	    cat tcpdump.output
+	check_sctp_probe 8 40000 1
+	check_sctp_probe 8 40000 2
 }
 
 ipv4_sctp_cleanup()
@@ -364,8 +374,8 @@ ipv4_tcp_body()
 
 	stop_tcpdump
 	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x0, ttl 1, .*, proto TCP.*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33435: Flags \[S\]" \
-	    -o match:"IP \\(tos 0x0, ttl 2, .*, proto TCP.*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33436: Flags \[S\]" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.33435: S .*\\[ttl 1\\]" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.33436: S .*\\(ttl 2, " \
 	    cat tcpdump.output
 
 	# Test with -e, the destination port should not increment.
@@ -379,8 +389,8 @@ ipv4_tcp_body()
 
 	stop_tcpdump
 	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x0, ttl 1, .*, proto TCP.*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.40000: Flags \[S\]" \
-	    -o match:"IP \\(tos 0x0, ttl 2, .*, proto TCP.*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.40000: Flags \[S\]" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.40000: S .*\\[ttl 1\\]" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.40000: S .*\\(ttl 2, " \
 	    cat tcpdump.output
 }
 
@@ -416,8 +426,8 @@ ipv4_srcaddr_body()
 
 	stop_tcpdump
 	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x0, ttl 1, .*, proto UDP.*\\).* ${LINK_TRSRC2_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33435: UDP" \
-	    -o match:"IP \\(tos 0x0, ttl 2, .*, proto UDP.*\\).* ${LINK_TRSRC2_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33436: UDP" \
+	    -o match:"${LINK_TRSRC2_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.33435: .*udp [0-9]+ \\[ttl 1\\]" \
+	    -o match:"${LINK_TRSRC2_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.33436: .*udp [0-9]+ \\(ttl 2, " \
 	    cat tcpdump.output
 }
 
@@ -454,8 +464,8 @@ ipv4_srcinterface_body()
 
 	stop_tcpdump
 	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x0, ttl 1, .*, proto UDP.*\\).* ${LINK_TRSRC2_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33435: UDP" \
-	    -o match:"IP \\(tos 0x0, ttl 2, .*, proto UDP.*\\).* ${LINK_TRSRC2_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33436: UDP" \
+	    -o match:"${LINK_TRSRC2_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.33435: .*udp [0-9]+ \\[ttl 1\\]" \
+	    -o match:"${LINK_TRSRC2_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.33436: .*udp [0-9]+ \\(ttl 2, " \
 	    cat tcpdump.output
 }
 
@@ -579,8 +589,8 @@ ipv4_firsthop_body()
 
 		stop_tcpdump
 		atf_check -s exit:0 -e ignore 				\
-		    -o not-match:"^..:..:..\....... IP \\(tos 0x0, ttl 1, .*, proto UDP.*\\)" \
-		    -o match:"IP \\(tos 0x0, ttl 2, .*, proto UDP.*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33435: UDP" \
+		    -o not-match:" udp [0-9]+ .*\\[ttl 1\\]" \
+		    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.33435: .*udp [0-9]+ \\(ttl 2, " \
 		    cat tcpdump.output
 	done
 }
@@ -651,8 +661,8 @@ ipv4_baseport_body()
 	stop_tcpdump
 
 	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x0, ttl 1, .*, proto UDP.*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.40001: UDP" \
-	    -o match:"IP \\(tos 0x0, ttl 2, .*, proto UDP.*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.40002: UDP" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.40001: .*udp [0-9]+ \\[ttl 1\\]" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.40002: .*udp [0-9]+ \\(ttl 2, " \
 	    cat tcpdump.output
 }
 
@@ -688,8 +698,8 @@ ipv4_gre_body()
 
 	stop_tcpdump
 	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x0, ttl 1, .*, proto GRE .*\\).* ${LINK_TRSRC_TRSRC} > ${LINK_TRDST_TRDST}: GREv1" \
-	    -o match:"IP \\(tos 0x0, ttl 2, .*, proto GRE .*\\).* ${LINK_TRSRC_TRSRC} > ${LINK_TRDST_TRDST}: GREv1" \
+	    -o match:"${LINK_TRSRC_TRSRC} > ${LINK_TRDST_TRDST}: .*pptp.*\\[ttl 1\\]" \
+	    -o match:"${LINK_TRSRC_TRSRC} > ${LINK_TRDST_TRDST}: .*pptp.*\\(ttl 2, " \
 	    cat tcpdump.output
 }
 
@@ -724,8 +734,8 @@ ipv4_udplite_body()
 
 	stop_tcpdump
 	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x0, ttl 1, .*, proto unknown \(136\), .*\\).* ${LINK_TRSRC_TRSRC} > ${LINK_TRDST_TRDST}:  ip-proto-136" \
-	    -o match:"IP \\(tos 0x0, ttl 2, .*, proto unknown \(136\), .*\\).* ${LINK_TRSRC_TRSRC} > ${LINK_TRDST_TRDST}:  ip-proto-136" \
+	    -o match:"${LINK_TRSRC_TRSRC} > ${LINK_TRDST_TRDST}: ip-proto-136 [0-9]+ \\[ttl 1\\]" \
+	    -o match:"${LINK_TRSRC_TRSRC} > ${LINK_TRDST_TRDST}: ip-proto-136 [0-9]+ \\(ttl 2, " \
 	    cat tcpdump.output
 }
 
@@ -760,8 +770,8 @@ ipv4_iptos_body()
 
 	stop_tcpdump
 	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x4, ttl 1, .*, proto UDP .*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33435: UDP" \
-	    -o match:"IP \\(tos 0x4, ttl 2, .*, proto UDP .*\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRDST_TRDST}.33436: UDP" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.33435: .*udp [0-9]+ \\[tos 0x4\\] \\[ttl 1\\]" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRDST_TRDST}\\.33436: .*udp [0-9]+ \\[tos 0x4\\] \\(ttl 2, " \
 	    cat tcpdump.output
 }
 
@@ -802,8 +812,8 @@ ipv4_srcroute_body()
 
 	stop_tcpdump
 	atf_check -s exit:0 -e ignore 				\
-	    -o match:"IP \\(tos 0x0, ttl 1, .*, proto UDP .*, options \\(NOP,LSRR ${LINK_TRDST_TRDST}\\)\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRSRC_TRRTR}.33435: UDP" \
-	    -o match:"IP \\(tos 0x0, ttl 2, .*, proto UDP .*, options \\(NOP,LSRR ${LINK_TRDST_TRDST}\\)\\).* ${LINK_TRSRC_TRSRC}.[0-9]+ > ${LINK_TRSRC_TRRTR}.33436: UDP" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRSRC_TRRTR}\\.33435: .*udp [0-9]+ \\[ttl 1\\].*optlen=8 NOP LSRR\\{[^}]*${LINK_TRDST_TRDST}[^}]*\\}" \
+	    -o match:"${LINK_TRSRC_TRSRC}\\.[0-9]+ > ${LINK_TRSRC_TRRTR}\\.33436: .*udp [0-9]+ \\(ttl 2, .*optlen=8 NOP LSRR\\{[^}]*${LINK_TRDST_TRDST}[^}]*\\}" \
 	    cat tcpdump.output
 }
 

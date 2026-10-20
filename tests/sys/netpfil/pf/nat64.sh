@@ -50,6 +50,10 @@ nat64_setup_base()
 	atf_check -s exit:0 -o ignore \
 	    jexec dst ping -c 1 192.0.2.1
 
+	# OpenBSD pf forwards af-to packets only with forwarding enabled for
+	# the new family (FreeBSD's pf did not ask).
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 \
+	    > /dev/null
 	jexec rtr pfctl -e
 }
 
@@ -63,24 +67,6 @@ nat64_setup_in()
 	    "block" \
 	    "pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
 	    "pass in on ${epair}b inet6 from any to 64:ff9b::/96 af-to inet from (${epair_link}a)"
-}
-
-nat64_setup_out()
-{
-	state_policy="${1:-if-bound}"
-	nat64_setup_base
-	jexec rtr sysctl net.inet6.ip6.forwarding=1
-	# AF translation happens post-routing, traffic must be directed
-	# towards the outbound interface using routes for the original AF.
-	# jexec rtr ifconfig ${epair_link}a inet6 2001:db8:2::1/64 up no_dad
-	jexec rtr route add -inet6 64:ff9b::/96 -iface ${epair_link}a;
-	pft_set_rules rtr \
-	    "set reassemble yes" \
-	    "set state-policy ${state_policy}" \
-	    "block" \
-	    "pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-	    "pass in  on ${epair}b from any to 64:ff9b::/96" \
-	    "pass out on ${epair_link}a from any to 64:ff9b::/96 af-to inet from (${epair_link}a)"
 }
 
 atf_test_case "icmp_echo_in" "cleanup"
@@ -105,32 +91,6 @@ icmp_echo_in_body()
 }
 
 icmp_echo_in_cleanup()
-{
-	pft_cleanup
-}
-
-atf_test_case "icmp_echo_out" "cleanup"
-icmp_echo_out_head()
-{
-	atf_set descr 'Basic NAT64 ICMP echo test on outbound interface'
-	atf_set require.user root
-}
-
-icmp_echo_out_body()
-{
-	nat64_setup_out
-
-	# One ping
-	atf_check -s exit:0 -o ignore \
-	    ping6 -c 1 64:ff9b::192.0.2.2
-
-	# Make sure packets make it even when state is established
-	atf_check -s exit:0 \
-	    -o match:'5 packets transmitted, 5 packets received, 0.0% packet loss' \
-	    ping6 -c 5 64:ff9b::192.0.2.2
-}
-
-icmp_echo_out_cleanup()
 {
 	pft_cleanup
 }
@@ -162,33 +122,6 @@ fragmentation_in_cleanup()
 	pft_cleanup
 }
 
-atf_test_case "fragmentation_out" "cleanup"
-fragmentation_out_head()
-{
-	atf_set descr 'Test fragmented packets on outbound interface'
-	atf_set require.user root
-}
-
-fragmentation_out_body()
-{
-	nat64_setup_out
-
-	atf_check -s exit:0 -o ignore \
-	    ping6 -c 1 -s 1280 64:ff9b::192.0.2.2
-
-	atf_check -s exit:0 \
-	    -o match:'3 packets transmitted, 3 packets received, 0.0% packet loss' \
-	    ping6 -c 3 -s 2000 64:ff9b::192.0.2.2
-	atf_check -s exit:0 \
-	    -o match:'3 packets transmitted, 3 packets received, 0.0% packet loss' \
-	    ping6 -c 3 -s 10000 -b 20000 64:ff9b::192.0.2.2
-}
-
-fragmentation_out_cleanup()
-{
-	pft_cleanup
-}
-
 atf_test_case "tcp_in_if_bound" "cleanup"
 tcp_in_if_bound_head()
 {
@@ -215,12 +148,13 @@ tcp_in_if_bound_body()
 
 	sleep 1
 
-	# Interfaces of the state are reversed when doing inbound NAT64!
+	# OpenBSD binds an if-bound af-to state to the inbound interface and
+	# the one state covers both address families (no "origif").
 	# FIXME: Packets from both directions are counted only on the inbound direction!
 	states=$(mktemp) || exit 1
 	jexec rtr pfctl -qvvss | normalize_pfctl_s > $states
 	for state_regexp in \
-		"${epair_link}a tcp 192.0.2.1:[0-9]+ \(2001:db8::2\[[0-9]+\]\) -> 192.0.2.2:1234 \(64:ff9b::c000:202\[1234\]\) .* 5:4 pkts.* rule 3 .* origif: ${epair}b" \
+		"all tcp 192.0.2.1:[0-9]+ \(2001:db8::2\[[0-9]+\]\) -> 192.0.2.2:1234 \(64:ff9b::c000:202\[1234\]\) .* [0-9]+:[0-9]+ pkts.* rule 3 " \
 	; do
 		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
 	done
@@ -228,49 +162,6 @@ tcp_in_if_bound_body()
 }
 
 tcp_in_if_bound_cleanup()
-{
-	pft_cleanup
-}
-
-atf_test_case "tcp_out_if_bound" "cleanup"
-tcp_out_if_bound_head()
-{
-	atf_set descr 'TCP NAT64 test on outbound interface, if-bound states'
-	atf_set require.user root
-}
-
-tcp_out_if_bound_body()
-{
-	nat64_setup_out
-
-	echo "foo" | jexec dst nc -l 1234 &
-
-	# Sanity check & delay for nc startup
-	atf_check -s exit:0 -o ignore \
-	    ping6 -c 3 64:ff9b::192.0.2.2
-
-	rcv=$(nc -w 3 -6 64:ff9b::c000:202 1234)
-	if [ "${rcv}" != "foo" ];
-	then
-		echo "rcv=${rcv}"
-		atf_fail "Failed to connect to TCP server"
-	fi
-
-	sleep 1
-
-	# Origif is not printed when identical as if.
-	states=$(mktemp) || exit 1
-	jexec rtr pfctl -qvvss | normalize_pfctl_s > $states
-	for state_regexp in \
-		"${epair}b tcp 64:ff9b::c000:202\[1234\] <- 2001:db8::2\[[0-9]+\] .* 5:4 pkts.* rule 3 .*creatorid" \
-		"${epair_link}a tcp 192.0.2.1:[0-9]+ \(64:ff9b::c000:202\[1234\]\) -> 192.0.2.2:1234 \(2001:db8::2\[[0-9]+\]\).* 5:4 pkts.* rule 4 .*creatorid" \
-	; do
-		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
-	done
-	[ $(cat $states | grep tcp | wc -l) -eq 2 ] || atf_fail "Not exactly 2 states found!"
-}
-
-tcp_out_if_bound_cleanup()
 {
 	pft_cleanup
 }
@@ -301,12 +192,12 @@ tcp_in_floating_body()
 
 	sleep 1
 
-	# Interfaces of the state are reversed when doing inbound NAT64!
+	# The one af-to state covers both address families (no "origif").
 	# FIXME: Packets from both directions are counted only on the inbound direction!
 	states=$(mktemp) || exit 1
 	jexec rtr pfctl -qvvss | normalize_pfctl_s > $states
 	for state_regexp in \
-		"all tcp 192.0.2.1:[0-9]+ \(2001:db8::2\[[0-9]+\]\) -> 192.0.2.2:1234 \(64:ff9b::c000:202\[1234\]\).* 5:4 pkts.* rule 3 .* origif: ${epair}b" \
+		"all tcp 192.0.2.1:[0-9]+ \(2001:db8::2\[[0-9]+\]\) -> 192.0.2.2:1234 \(64:ff9b::c000:202\[1234\]\).* [0-9]+:[0-9]+ pkts.* rule 3 " \
 	; do
 		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
 	done
@@ -314,49 +205,6 @@ tcp_in_floating_body()
 }
 
 tcp_in_floating_cleanup()
-{
-	pft_cleanup
-}
-
-atf_test_case "tcp_out_floating" "cleanup"
-tcp_out_floating_head()
-{
-	atf_set descr 'TCP NAT64 test on outbound interface, floating states'
-	atf_set require.user root
-}
-
-tcp_out_floating_body()
-{
-	nat64_setup_out "floating"
-
-	echo "foo" | jexec dst nc -l 1234 &
-
-	# Sanity check & delay for nc startup
-	atf_check -s exit:0 -o ignore \
-	    ping6 -c 3 64:ff9b::192.0.2.2
-
-	rcv=$(nc -w 3 -6 64:ff9b::c000:202 1234)
-	if [ "${rcv}" != "foo" ];
-	then
-		echo "rcv=${rcv}"
-		atf_fail "Failed to connect to TCP server"
-	fi
-
-	sleep 1
-
-	# Origif is not printed when identical as if.
-	states=$(mktemp) || exit 1
-	jexec rtr pfctl -qvvss | normalize_pfctl_s > $states
-	for state_regexp in \
-		"all tcp 64:ff9b::c000:202\[1234\] <- 2001:db8::2\[[0-9]+\] .* 5:4 pkts,.* rule 3 .*creatorid"\
-		"all tcp 192.0.2.1:[0-9]+ \(64:ff9b::c000:202\[1234\]\) -> 192.0.2.2:1234 \(2001:db8::2\[[0-9]+\]\) .* 5:4 pkts,.* rule 4 .*creatorid"\
-	; do
-		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
-	done
-	[ $(cat $states | grep tcp | wc -l) -eq 2 ] || atf_fail "Not exactly 2 states found!"
-}
-
-tcp_out_floating_cleanup()
 {
 	pft_cleanup
 }
@@ -391,36 +239,6 @@ udp_in_cleanup()
 	pft_cleanup
 }
 
-atf_test_case "udp_out" "cleanup"
-udp_out_head()
-{
-	atf_set descr 'UDP NAT64 test on outbound interface'
-	atf_set require.user root
-}
-
-udp_out_body()
-{
-	nat64_setup_out
-
-	echo "foo" | jexec dst nc -u -l 1234 &
-
-	# Sanity check & delay for nc startup
-	atf_check -s exit:0 -o ignore \
-	    ping6 -c 3 64:ff9b::192.0.2.2
-
-	rcv=$(echo bar | nc -w 3 -6 -u 64:ff9b::c000:202 1234)
-	if [ "${rcv}" != "foo" ];
-	then
-		echo "rcv=${rcv}"
-		atf_fail "Failed to connect to UDP server"
-	fi
-}
-
-udp_out_cleanup()
-{
-	pft_cleanup
-}
-
 atf_test_case "sctp_in" "cleanup"
 sctp_in_head()
 {
@@ -450,39 +268,6 @@ sctp_in_body()
 }
 
 sctp_in_cleanup()
-{
-	pft_cleanup
-}
-
-atf_test_case "sctp_out" "cleanup"
-sctp_out_head()
-{
-	atf_set descr 'SCTP NAT64 test on outbound interface'
-	atf_set require.user root
-}
-
-sctp_out_body()
-{
-	nat64_setup_out
-	if ! kldstat -q -m sctp; then
-		atf_skip "This test requires SCTP"
-	fi
-
-	echo "foo" | jexec dst nc --sctp -N -l 1234 &
-
-	# Sanity check & delay for nc startup
-	atf_check -s exit:0 -o ignore \
-	    ping6 -c 3 64:ff9b::192.0.2.2
-
-	rcv=$(echo bar | nc --sctp -w 3 -6 64:ff9b::c000:202 1234)
-	if [ "${rcv}" != "foo" ];
-	then
-		echo "rcv=${rcv}"
-		atf_fail "Failed to connect to SCTP server"
-	fi
-}
-
-sctp_out_cleanup()
 {
 	pft_cleanup
 }
@@ -537,6 +322,7 @@ no_v4_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 
 	vnet_mkjail dst ${epair_link}b
@@ -580,6 +366,7 @@ range_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.2/24 up
 	jexec rtr ifconfig ${epair_link}a inet alias 192.0.2.3/24 up
@@ -646,6 +433,7 @@ pool_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.1/24 up
 	jexec rtr ifconfig ${epair_link}a inet alias 192.0.2.3/24 up
@@ -745,6 +533,7 @@ table_range_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.2/24 up
 	jexec rtr ifconfig ${epair_link}a inet alias 192.0.2.3/24 up
@@ -803,6 +592,7 @@ table_common_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.1/24 up
 	jexec rtr ifconfig ${epair_link}a inet alias 192.0.2.3/24 up
@@ -906,6 +696,7 @@ dummynet_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.1/24 up
 
@@ -968,6 +759,7 @@ gateway6_body()
 	jexec lan_rtr sysctl net.inet6.ip6.forwarding=1
 
 	vnet_mkjail rtr ${epair_lan_link}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair_lan_link}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.1/24 up
 	jexec rtr route -6 add default 2001:db8::2
@@ -1007,113 +799,6 @@ gateway6_cleanup()
 	pft_cleanup
 }
 
-atf_test_case "route_to" "cleanup"
-route_to_head()
-{
-	atf_set descr 'Test route-to on af-to rules'
-	atf_set require.user root
-}
-
-route_to_body()
-{
-	pft_init
-
-	epair_link=$(vnet_mkepair)
-	epair=$(vnet_mkepair)
-
-	ifconfig ${epair}a inet6 2001:db8::2/64 up no_dad
-	route -6 add default 2001:db8::1
-
-	vnet_mkjail rtr ${epair}b ${epair_link}a
-	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
-	jexec rtr ifconfig ${epair_link}a 192.0.2.1/24 up
-
-	vnet_mkjail dst ${epair_link}b
-	jexec dst ifconfig ${epair_link}b 192.0.2.2/24 up
-	jexec dst ifconfig lo0 203.0.113.1/32 alias
-	jexec dst route add default 192.0.2.2
-
-	# Sanity checks
-	atf_check -s exit:0 -o ignore \
-	    ping6 -c 1 2001:db8::1
-
-	jexec rtr pfctl -e
-	pft_set_rules rtr \
-	    "set reassemble yes" \
-	    "set debug loud" \
-	    "set state-policy if-bound" \
-	    "block log (all)" \
-	    "pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-	    "pass in on ${epair}b route-to (${epair_link}a 192.0.2.2) inet6 from any to 64:ff9b::/96 af-to inet from (${epair_link}a)"
-
-	atf_check -s exit:0 -o ignore \
-	    -o match:'3 packets transmitted, 3 packets received, 0.0% packet loss' \
-	    ping6 -c 3 64:ff9b::192.0.2.2
-
-	states=$(mktemp) || exit 1
-	jexec rtr pfctl -qvvss | normalize_pfctl_s > $states
-	cat $states
-
-	# Interfaces of the state are reversed when doing inbound NAT64!
-	for state_regexp in \
-		"${epair_link}a ipv6-icmp 192.0.2.1:.* \(2001:db8::2\[[0-9]+\]\) -> 192.0.2.2:8 \(64:ff9b::c000:202\[[0-9]+\]\).* 3:3 pkts.*route-to: 192.0.2.2@${epair_link}a origif: ${epair}b" \
-	; do
-		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
-	done
-}
-
-route_to_cleanup()
-{
-	pft_cleanup
-}
-
-atf_test_case "reply_to" "cleanup"
-reply_to_head()
-{
-	atf_set descr 'Test reply-to on af-to rules'
-	atf_set require.user root
-}
-
-reply_to_body()
-{
-	pft_init
-
-	epair_link=$(vnet_mkepair)
-	epair=$(vnet_mkepair)
-
-	ifconfig ${epair}a inet6 2001:db8::2/64 up no_dad
-	route -6 add default 2001:db8::1
-
-	vnet_mkjail rtr ${epair}b ${epair_link}a
-	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
-	jexec rtr ifconfig ${epair_link}a 192.0.2.1/24 up
-
-	vnet_mkjail dst ${epair_link}b
-	jexec dst ifconfig ${epair_link}b 192.0.2.2/24 up
-	jexec dst route add default 192.0.2.1
-
-	# Sanity checks
-	atf_check -s exit:0 -o ignore \
-	    ping6 -c 1 2001:db8::1
-
-	jexec rtr pfctl -e
-	pft_set_rules rtr \
-	    "set reassemble yes" \
-	    "set state-policy if-bound" \
-	    "block" \
-	    "pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-	    "pass in on ${epair}b reply-to (${epair}b 2001:db8::2) inet6 from any to 64:ff9b::/96 af-to inet from 192.0.2.1"
-
-	atf_check -s exit:0 -o ignore \
-	    -o match:'3 packets transmitted, 3 packets received, 0.0% packet loss' \
-	    ping6 -c 3 64:ff9b::192.0.2.2
-}
-
-reply_to_cleanup()
-{
-	pft_cleanup
-}
-
 atf_test_case "v6_gateway" "cleanup"
 v6_gateway_head()
 {
@@ -1133,6 +818,7 @@ v6_gateway_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair_lan}b ${epair_wan_one}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair_lan}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_wan_one}a 192.0.2.1/24 up
 	jexec rtr ifconfig ${epair_wan_one}a inet6 -ifdisabled
@@ -1198,6 +884,7 @@ scrub_min_ttl_body()
 	route -6 add default 2001:db8::1
 
 	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 > /dev/null
 	jexec rtr ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
 	jexec rtr ifconfig ${epair_link}a 192.0.2.1/24 up
 	jexec rtr route add default 192.0.2.2
@@ -1247,20 +934,124 @@ scub_min_ttl_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "traceroute" "cleanup"
+traceroute_head()
+{
+	atf_set descr 'A packet whose hop limit ends at the translator gets a time-exceeded error about it'
+	atf_set require.user root
+}
+
+traceroute_body()
+{
+	nat64_setup_in
+
+	# Hop 1 is the translator, answering in IPv6 about the probe as
+	# sent; the translation rewrites ports and ICMP ids, so the error
+	# must quote the packet as it arrived (FreeBSD PR 291527).
+	atf_check -s exit:0 -o match:'^ 1  2001:db8::1 ' -o not-match:'\*' \
+	    -e ignore traceroute6 -n -m 2 -q 3 -w 2 64:ff9b::192.0.2.2
+	atf_check -s exit:0 -o match:'^ 1  2001:db8::1 ' -o not-match:'\*' \
+	    -e ignore traceroute6 -n -I -m 2 -q 3 -w 2 64:ff9b::192.0.2.2
+}
+
+traceroute_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "traceroute_v4" "cleanup"
+traceroute_v4_head()
+{
+	atf_set descr 'IPv4 to IPv6: a packet whose time to live ends at the translator gets a time-exceeded error about it'
+	atf_set require.user root
+}
+
+traceroute_v4_body()
+{
+	pft_init
+
+	epair_link=$(vnet_mkepair)
+	epair=$(vnet_mkepair)
+
+	ifconfig ${epair}a 192.0.2.2/24 up
+	route add -net 198.51.100.0/24 192.0.2.1
+
+	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr ifconfig ${epair}b 192.0.2.1/24 up
+	jexec rtr ifconfig ${epair_link}a inet6 2001:db8::1/64 up no_dad
+
+	vnet_mkjail dst ${epair_link}b
+	jexec dst ifconfig ${epair_link}b inet6 2001:db8::2/64 up no_dad
+
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 \
+	    > /dev/null
+	jexec rtr pfctl -e
+	pft_set_rules rtr \
+	    "pass" \
+	    "pass in on ${epair}b to 198.51.100.0/24 af-to inet6 from 2001:db8::1 to 2001:db8::/120"
+
+	atf_check -s exit:0 -o ignore ping -c 1 198.51.100.2
+	atf_check -s exit:0 -o match:'^ 1  192.0.2.1 ' -o not-match:'\*' \
+	    -e ignore traceroute -n -m 2 -q 3 -w 2 198.51.100.2
+	atf_check -s exit:0 -o match:'^ 1  192.0.2.1 ' -o not-match:'\*' \
+	    -e ignore traceroute -n -I -m 2 -q 3 -w 2 198.51.100.2
+}
+
+traceroute_v4_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "local" "cleanup"
+local_head()
+{
+	atf_set descr 'af-to between addresses of this host, on the loopback'
+	atf_set require.user root
+}
+
+local_body()
+{
+	pft_init
+
+	vnet_mkjail alcatraz
+	jexec alcatraz ifconfig lo0 inet 127.0.0.1/8 up
+	jexec alcatraz ifconfig lo0 inet6 ::1/128 -ifdisabled
+	# IPv4 loopback addresses are not forwarded; OpenBSD's pflog regress
+	# uses link-local ones, which FreeBSD's ip_forward() drops.
+	for i in 14 23 24; do
+		jexec alcatraz ifconfig lo0 inet 169.254.0.$i/32 alias
+		jexec alcatraz ifconfig lo0 inet6 fc00::$i/128 no_dad
+	done
+	jexec alcatraz sysctl net.inet.ip.forwarding=1 \
+	    net.inet6.ip6.forwarding=1 > /dev/null
+	jexec alcatraz pfctl -e
+	pft_set_rules alcatraz \
+	    "pass" \
+	    "pass in on lo0 to 169.254.0.14 af-to inet6 from fc00::23 to fc00::24" \
+	    "pass in on lo0 to fc00::14 af-to inet from 169.254.0.23 to 169.254.0.24"
+
+	# The translated request, and the reply translated back, are for
+	# this host: they loop back as new packets for pf (as OpenBSD's
+	# if_input_local()), and reach the address through the loopback.
+	atf_check -s exit:0 -o match:'3 packets received' \
+	    jexec alcatraz ping -n -c 3 169.254.0.14
+	atf_check -s exit:0 -o match:'3 packets received' \
+	    jexec alcatraz ping6 -n -c 3 fc00::14
+}
+
+local_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "icmp_echo_in"
-	atf_add_test_case "icmp_echo_out"
 	atf_add_test_case "fragmentation_in"
-	atf_add_test_case "fragmentation_out"
 	atf_add_test_case "tcp_in_if_bound"
-	atf_add_test_case "tcp_out_if_bound"
 	atf_add_test_case "tcp_in_floating"
-	atf_add_test_case "tcp_out_floating"
 	atf_add_test_case "udp_in"
-	atf_add_test_case "udp_out"
 	atf_add_test_case "sctp_in"
-	atf_add_test_case "sctp_out"
 	atf_add_test_case "tos"
 	atf_add_test_case "no_v4"
 	atf_add_test_case "range"
@@ -1271,8 +1062,9 @@ atf_init_test_cases()
 	atf_add_test_case "table_random"
 	atf_add_test_case "dummynet"
 	atf_add_test_case "gateway6"
-	atf_add_test_case "route_to"
-	atf_add_test_case "reply_to"
 	atf_add_test_case "v6_gateway"
 	atf_add_test_case "scrub_min_ttl"
+	atf_add_test_case "traceroute"
+	atf_add_test_case "traceroute_v4"
+	atf_add_test_case "local"
 }

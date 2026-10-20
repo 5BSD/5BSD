@@ -27,6 +27,262 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261020:
+	A FIB created at boot (net.fibs) can become a routing domain:
+	ifconfig rdomain N removes the loopback and IPv6 reject routes
+	through lo0 that rc.d/routing adds to every FIB, which belong to
+	domain 0, instead of failing with EINVAL.  A FIB with any other
+	route still cannot become a routing domain.
+	A packet looped back through lo(4) starts afresh for pf again, as
+	on OpenBSD: tags, the generated mark and queue assignments set on
+	its way out no longer survive into its input (pf's synproxy SYN to
+	a local server excepted).  Rulesets that matched "tagged" on lo(4)
+	input for packets tagged on output must tag them again.
+	pf refragments a reassembled IPv6 packet with its source's fragment
+	identification instead of a new one, and its "packet too big" errors
+	quote the fragments as the source sent them, one per oversized
+	fragment as on OpenBSD, also through route-to and before NAT.
+	pf af-to: a packet whose time to live ends at the translator gets
+	its time-exceeded error about the packet as sent (traceroute through
+	NAT64 works again), and a translated packet for an address of this
+	host, link-local ones included, is delivered on the loopback.
+	pf no longer drops packets on an interface while it is renamed.
+	pfctl -a ANCHOR -sA lists anchors that exist only as ether anchors.
+	ng_ether(4): destroying an Ethernet interface while it is a lagg(4)
+	port no longer corrupts kernel memory (the netgraph node kept the
+	freed interface).  Systems loading ng_ether with lagg should update.
+
+20261019:
+	dummynet(4) is preloaded from the loader defaults, like pf and
+	DTrace, so pf's dnpipe and dnqueue and dnctl(8) work on every
+	installed system (late kldload is denied).  Loading it shapes
+	nothing until pipes or queues are configured.  Set
+	dummynet_load="NO" in /boot/loader.conf to leave it out.
+	pfctl's optimizer no longer reorders rules with different dnpipe or
+	dnqueue values: it treated them as interchangeable and could move a
+	general rule after more specific ones, so that the general rule's
+	pipe won the last match.  Reload rulesets that send traffic of one
+	rule set to different pipes or queues.
+
+	pf ICMP error fixes.  pf's own "block return" errors pass its own
+	block rules again (IPv4 errors were dropped by the rule that sent
+	them).  Packet-too-big errors for packets pf translates (NAT66,
+	NPTv6, route-to, reassembled packets) quote the packet as its
+	source sent it and reach that source.  af-to (NAT64): a packet
+	whose hop limit ends at the translator gets its time-exceeded
+	error in its own family; the first packet of an SCTP association,
+	or of a TCP or UDP connection whose port did not change, is
+	translated; ICMP errors quoting SCTP and the UDP checksum quoted in
+	errors are translated.  A neighbor advertisement that matches no
+	state no longer counts as a short packet.  Rules pf refused after
+	reading them no longer leak tag ids, a VNET jail destroyed with
+	an unfinished table transaction no longer leaks its anchors, and
+	DIOCGETRULES refused at the transaction limit no longer leaks the
+	anchor it lists.
+	pf.ko and the kernel must be updated together (struct pkthdr_pf).
+
+20261017:
+	pf dnpipe/dnqueue fixes.  An inbound route-to packet shaped by an
+	outbound rule's pipe now reaches the route-to next hop (it went
+	through the routing table).  IPv6 packets pf reassembled are shaped
+	whole and refragmented afterwards (route-to sent them unshaped).  A
+	stateless pass keeps the pipe a match rule set.  Kernel ICMP and TCP
+	replies are new packets for dummynet (an IPv6 echo reply skipped
+	the reverse pipe).  States from pfsync take the pipes of their rule
+	(pfsync does not carry them).  dnctl names the pipe, queue or
+	scheduler a failed delete was for.  pf.ko and the kernel must be
+	updated together (struct pkthdr_pf).
+	if_bridge(4) again runs the link-layer filter on bridged frames
+	leaving a member, now with net.link.bridge.pfil_layer2=1 (FreeBSD's
+	net.link.bridge.ipfw, removed with IPFW): pf ether rules, with their
+	pipes, see bridged traffic again.  A pipe on an IP rule does not
+	shape packets bridged across members (pfil_member): they pass
+	unshaped, where they were lost before; use ether rules.  IP-rule
+	pipes on the bridge interface itself (pfil_bridge) are not
+	supported: pf cannot tell bridged packets there from local ones.
+	FIBs follow OpenBSD rtables: a FIB that is not a routing domain
+	shares the interfaces of its domain (domain 0 without routing
+	domains) for route gateways, also with net.add_addr_allfibs=0, as
+	"route -T 1 add" does on OpenBSD.  Use routing domains to isolate
+	tables.
+	pf ioctls wire their user buffers before pf runs: OpenBSD's pf
+	copies them with pf's locks held, and a buffer that was not
+	resident or not mapped panicked the kernel (page fault in copyin
+	from pfr_clr_tstats(), DIOCRCLRTSTATS with an oversized count).
+	Such a request now fails with EFAULT.  Table and transaction
+	ioctls refuse negative counts with EINVAL.
+	af-to (NAT64), reply-to and outbound route-to work with "set
+	state-policy if-bound": such a state is not bound to an interface
+	(its reply arrives on another one); FreeBSD's pf binds it to that
+	interface instead.  pf's uRPF check (urpf-failed) accepts packets
+	a router sends from its own address.  af-to packets
+	go through dnpipe/dnqueue, take a rule's scrub min-ttl, and an IPv6
+	packet pf reassembled is translated without DF (RFC 7915).
+
+20261015:
+	OpenBSD's pf replaces FreeBSD's (see the 20261012 entries).  The
+	FreeBSD pf extensions are kept on top of it with FreeBSD's syntax:
+	"dnpipe"/"dnqueue" (dummynet(4)), layer-2 "ether" rules
+	(pfctl -s ethernet, -F ethernet) and SCTP tracking with multihoming,
+	the sctp.* timeouts and the "allow-related" state option.  pfctl and
+	pf.ko must be updated together; struct pf_rule and the DIOC*ETHRULE*
+	ioctls changed.
+
+	The loader now preloads pf and every DTrace provider by default
+	(dtraceall_load, pf_load); loading pf does not enable it.  The
+	capability plane denies kldload(2) after boot, so modules a system
+	needs must be preloaded or loaded through the SystemExtension broker.
+	dummynet_enable="YES" now loads dummynet through the broker, and
+	dummynet is on BSDExtension's allow-list; the retired pty is not.
+
+	SO_BINDANY and SO_RXQ_OVFL, both 5BSD-only, moved to 0x20000000 and
+	0x40000000 so new FreeBSD socket options cannot collide with them.
+	Rebuild programs that use them.
+
+	pf's behaviour now follows OpenBSD in these places: pflog0 and
+	pfsync0 are not precreated (create them with ifconfig; rc.d does);
+	pflog, pfsync and pflow are part of pf.ko, so "kldstat -m pflog"
+	finds nothing; the ruleset is locked from kern.securelevel 2 (was 3);
+	the FreeBSD tunables and sysctls net.pf.* (default_to_drop,
+	filter_local, *_hashsize, request_maxcount), net.pfsync.defer_delay,
+	net.pfsync.pfsync_buckets and net.pflog.if_count are gone.
+	ifconfig gives a mask-less IPv4 address its classful mask, accepts a
+	point-to-point address without a peer, and prints "nd6 options" only
+	with -v.  The loopback interface does LRO/TSO.
+
+	/dev/pf can no longer be opened from a jail without its own vnet
+	(such a jail would administer the host's pf); vnet jails keep their
+	own pf.  A vnet jail may restate but not change the host-owned pool
+	limits; pfctl keeps the host's value for a limit a jail's ruleset
+	does not set.  "source-track global" now shares its limits across
+	rules, as pf.conf(5) says.
+
+	pfsync(4) demotes carp(4) again while it is not synchronised: from
+	"up" until its bulk update completes or is given up, and while its
+	syncdev link is down, net.inet.carp.demotion carries
+	net.pfsync.carp_demotion_factor (per vnet, default 240, 0..255).
+	pfsync(4) accepts IPv6 sync peers again as a 5BSD extension
+	(ifconfig pfsync0 syncpeer <IPv6 address|ff12::f0>), through the new
+	SIOCSETPFSYNC6/SIOCGETPFSYNC6 ioctls; SIOC[GS]ETPFSYNC keep OpenBSD's
+	ABI.  syncdev/syncpeer change only while pfsync0 is down; rc.d/pfsync
+	brings it down first.
+
+	pflogd(8) is now OpenBSD's pflogd.  rc.d/pflog, -p pidfile,
+	pflog_instances and the newsyslog(8) entry work as before; the
+	SIGUSR1 statistics dump is gone and a corrupt log file suspends
+	logging (move it away and send SIGHUP) instead of being renamed.
+	tftp-proxy(8) starts with tftpproxy_enable in rc.conf(5).  rc.d/pf,
+	pflog, pfsync and dnctl load pf.ko/dummynet through the
+	SystemExtension broker ("pf" is on the BSDExtension allow-list); in
+	jails or with capability_plane=NO they only check for the module.
+	devfsrules_jail_vnet now unhides bpf(4).  system.Network.PF returns
+	the state table of the client's own vnet (new pf ioctl DIOCBINDJAIL).
+
+	The pfctl tests (/usr/tests/sbin/pfctl) run OpenBSD's regress corpus;
+	the FreeBSD pfctl_test corpus is removed.  New seam tests are in
+	/usr/tests/sys/netpfil/integration.  Test images must preload
+	if_epair and if_bridge (and if_enc, carp, dummynet, sctp as needed);
+	VNET tests skip and name the missing module otherwise.  The
+	bsdinstruments profile ipfw-audit.d and tools/test/netfibs are
+	retired.
+
+	Ports (5BSD-ports branch 5bsd/openbsd-pf-consumers): net/libpfctl is
+	ignored; consumers use OpenBSD's <net/pfvar.h> ioctls.  Rebuild
+	packages that embed the pf ABI (5bsd-instruments, p0f, spamd,
+	sslsplit, sslproxy, proxy-suite).  Run Tools/scripts/5bsd-pf-check.sh
+	in the ports tree after imports.
+
+	The kernel maintains the OpenBSD "egress" interface group: the
+	interfaces the IPv4 and IPv6 default routes of FIB 0 point to, per
+	VNET.  pf rules can use "on egress" and "(egress)".  An interface
+	added to the group by hand is removed at the next default route
+	change.
+
+	ipdivert(4) has been retired: the ipdivert module, "options IPDIVERT",
+	<netinet/ip_divert.h>, AF_DIVERT/PF_DIVERT (44 stays reserved),
+	netstat's divert statistics and sockstat's "divert" protocol.  Use pf
+	"divert-packet" rules with OpenBSD divert(4) sockets,
+	socket(AF_INET or AF_INET6, SOCK_RAW, IPPROTO_DIVERT), provided by
+	pf.ko.  Remove "options IPDIVERT" from custom kernel configurations
+	and ipdivert from kld_list.  ng_ksocket(4) nodes use "inet/raw/divert"
+	(or "inet6/raw/divert6") instead of "divert/raw/0".
+
+	ALTQ has been removed: sys/net/altq, "options ALTQ*", altq(4),
+	altq(9), <net/altq/*.h>, if_altq_is_enabled() and the
+	hw.vtnet.altq_disable tunable.  Remove ALTQ options from custom kernel
+	configurations.  struct ifaltq remains the name of the interface send
+	queue (<net/ifq.h>); IFQ_SET_READY() is now a no-op.  struct ifnet
+	changed: rebuild out-of-tree kernel modules.
+
+	As on OpenBSD, pf is locked at securelevel 2 (only reads and address
+	changes in existing tables are allowed); securelevel 3 additionally
+	refuses dummynet configuration with dnctl(8).
+
+	The loader also preloads nullfs, if_bridge and if_epair, which
+	podman's containers need and which cannot be loaded after boot.
+	pf now follows interfaces renamed after creation (ifconfig ... name,
+	podman's cni-podman0, jail managers): rules and (if) addresses use
+	the new name.
+	Two interfaces with the same name (possible after a VNET jail's
+	interface returns) share pf's interface entry, as with FreeBSD pf.
+	struct pfi_kif grew (pfik_nifp); rebuild programs that read pf's
+	interface list (DIOCIGETIFACES), such as ports of pftop.
+
+	ifconfig(8) and the IPv4/IPv6 address code follow OpenBSD further.
+	"prefixlen" applies to inet; "netmask" applies to inet6; a
+	non-contiguous netmask is rejected (also by SIOCAIFADDR).  No
+	broadcast address is shown for a /31 or /32 unless set explicitly.
+	A point-to-point address may be added without a destination
+	(shown as "--> 0.0.0.0" or "--> ::"; SIOCAIFADDR no longer returns
+	EDESTADDRREQ), an inet6 address with a destination defaults to
+	prefixlen 128, and several inet6 addresses may share a destination.
+	"inet6 eui64" enables IPv6 and creates the link-local address.
+	SIOCSIFADDR, SIOCSIFNETMASK and SIOCSIFBRDADDR work again with
+	OpenBSD's semantics (SIOCSIFDSTADDR remains unsupported).  The first
+	IPv6 address added to an interface with IPv6 disabled now performs
+	DAD (it is tentative until DAD completes); use "no_dad" to skip it.
+	The kernel and ifconfig must be updated together.
+
+	pflog(4), pfsync(4) and pflow(4) interfaces belong to the VNET
+	that created them and can no longer be moved to another VNET:
+	"ifconfig pflogN vnet <jail>" and "ifconfig pflogN -vnet <jail>"
+	(SIOCSIFVNET/SIOCSIFRVNET) now fail with EOPNOTSUPP.  Create the
+	interfaces inside the VNET jail that uses them instead.
+
+	pf route-to rules combined with dnpipe/dnqueue now fragment
+	oversized packets after the dummynet delay, send ICMP
+	"fragmentation needed"/"packet too big" errors as plain route-to
+	does, and use the gateway of the route to the route-to address.
+	DIOCBINDJAIL refuses jails without their own vnet.
+
+	vlan(4): with the default "vlanpcp auto", frames at the default
+	priority are sent with PCP 0 again (they were 3), and IP_VLAN_PCP /
+	IPV6_VLAN_PCP take precedence over automatic and numeric PCP.  Only
+	pf "set prio" values other than 3 reach the wire; use an explicit
+	"vlanpcp 3" to send PCP 3.  An rdomain's loopback can no longer be
+	moved to another vnet (EBUSY), and lo0 can no longer leave routing
+	domain 0 (EPERM).  Without routing domains, a route in FIB N again
+	needs its gateway reachable through an interface of FIB N.  With a
+	packet filter loaded, "fragmentation needed" and "packet too big"
+	errors are sent only for packets the outbound rules pass.
+
+	pf(4): each VNET is now held to its own pool limits.  The pools are
+	still shared, but states, source nodes, fragments, tables, table
+	entries, delayed packets and anchors are counted per VNET: the
+	host's "set limit" values are its own and jails do not count against
+	them; a VNET jail's limits are the host's scaled by the new host-only
+	sysctl net.pf.vnet_limit_pct (1-100, default 100) and shared with its
+	descendant VNET jails; all VNET jails together are held to the
+	host's limits scaled by net.pf.vnet_total_pct (1-10000, default
+	200), and their fragment entries to the mbuf clusters the host's
+	frags limit leaves.  Lower these on hosts with many jails.  In a jail,
+	pfctl -sm shows the jail's limits, and its default adaptive timeouts
+	are scaled to its states limit; net.pf.vnet_{count,limit,refused} and
+	net.pf.vnet_total_{count,limit,refused} show the usage.  The
+	table-entries limit now counts all table entry types.  Tag, queue and
+	route label ids are per VNET.  The host may lower a limit below a
+	jail's usage, but not below its own.
+
 20261013:
 	The BSD fixed-name pty(4) compatibility driver has been removed.
 	Use posix_openpt(2), openpty(3), or /dev/ptmx and /dev/pts/N.
@@ -59,6 +315,104 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	service_namespace_info) and libvmcmp (service_vsock_*).  libservice's
 	major number is now 2 (libservice.so.2); relink consumers and add the
 	new library to LIBADD/LDADD and its header to the includes.
+
+20261012:
+	Routing domains (rdomain(4)) as on OpenBSD, built on FIBs.  A FIB is
+	a routing table; "ifconfig IF rdomain N" makes FIB N routing domain N
+	with its loopback lo<N> and moves IF into it (dropping its addresses).
+	Inside a domain, addresses are local and sockets receive packets only
+	in that domain, so domains can reuse addresses.  FIBs made with
+	net.fibs stay tables of domain 0: nothing changes until a domain is
+	created.  Entering a FIB of another routing domain (setfib(2),
+	SO_SETFIB, now also called SO_RTABLE) requires privilege.
+
+	New: ifconfig "rdomain N", "-rdomain" and an " rdomain N" field in
+	the status line; ifconfig creates a missing cloneable interface when
+	it is configured (OpenBSD); route -T rtable ("add" creates the table),
+	"route -T N exec cmd" and an OpenBSD-style "route show" table dump;
+	route -iface accepts the interface's address as gateway; ping -V
+	rtable; SIOC[SG]IFRDOMAIN, the sysctl NET_RT_TABLE (struct
+	rt_tableinfo) and the vether(4) interface (device vether, in GENERIC).
+	pf's "on rdomain N", "rtable N" and its state keys use the routing
+	domain.
+
+	The FreeBSD pf implementation is retired; OpenBSD PF (pf.ko, or
+	"device pf" in a kernel configuration) is the only pf.  pflog(4),
+	pflow(4) and pfsync(4) are part of it: remove "device pflog",
+	"device pfsync" and "options PF_DEFAULT_TO_DROP" from custom kernel
+	configurations, and pflog_load/pfsync_load/pflow_load from
+	loader.conf.  pf's netlink families, libpfctl and pflowctl(8) are gone;
+	configure pflow(4) with ifconfig(8) (flowsrc, flowdst, pflowproto).
+
+	<net/pfvar.h>, <net/if_pflog.h>, <net/if_pfsync.h> and
+	<net/if_pflow.h> are OpenBSD's: programs that use /dev/pf speak the
+	OpenBSD ioctl ABI (DIOCGETRULES needs DIOCXEND, DIOCGETSTATES returns
+	struct pfsync_state, ...).  <netpfil/pf/*.h> and <net/pflow.h> are no
+	longer installed.  In base, bsnmpd's snmp_pf, BSDNetwork/BSDFilesystem
+	("system.Network.PF" now passes DIOCGETSTATES), netstat -s -p pfsync and
+	-p pflow (OpenBSD counters, no per-action histogram), truss/kdump and
+	the rescue pfctl were converted.  snmp_pf's pfAltq objects describe
+	pf.conf "queue" definitions.
+
+	tcpdump(8) is OpenBSD's (manual in section 8): its output, options and
+	filter syntax follow OpenBSD, including the pflog(4) and pfsync(4)
+	printers.  FreeBSD tcpdump's long options (--immediate-mode, ...), -U,
+	-Q, -G, -W and -z are not available, and some letters mean something
+	else: -B is OpenBSD's filter drop setting (not the buffer size), -D
+	selects a direction (not the interface list) and -I prints the
+	interface name (not monitor mode).  Live captures are delivered as
+	packets arrive.  pcap and pcapng files are read through libpcap.  The
+	FreeBSD tcpdump remains available from ports (net/tcpdump).
+
+	ifconfig(8) prints interfaces in OpenBSD's format: no "metric 0" in the
+	header line; "lladdr" instead of "ether" for Ethernet addresses; an
+	"index" line; interface specific status, groups, media and link status
+	before the addresses; enabled capabilities ("options="), nd6 options,
+	fib and MAC label last.  Scripts that parse "ether" must look for
+	"lladdr" ("ifconfig IF ether" still selects the link-level address).
+	A missing interface is reported as "IF: no such interface".
+	"ifconfig IF -inet6" disables IPv6 on an interface and removes its IPv6
+	addresses, as on OpenBSD.  The flags in the status line are OpenBSD's
+	IFF_ and IFXF_ bits and names (STATICARP, MONITOR, LRO); 5BSD-only
+	flags such as PPROMISC, STICKYARP, DYING and LOWER_UP are not shown.
+
+20261012:
+	pf is OpenBSD's packet filter (pf/parity).  New and changed interfaces:
+
+	Each vnet runs its own pf: a vnet jail has its own rules, states,
+	tables, anchors and pflog/pfsync/pflow interfaces, and /dev/pf acts on
+	the vnet of the process that opens it.  "set limit" belongs to the host;
+	a vnet jail may restate the current limits but not change them.
+
+	pf.conf accepts the 5BSD extension "jail <name|jid>", which matches the
+	jail of a TCP or UDP packet's local socket.  OpenBSD does not know it.
+
+	Transparent proxying works as on OpenBSD: divert-to, divert-reply and
+	divert-packet.  New socket interfaces: SO_BINDANY (socket level; its
+	value differs from OpenBSD's, use the name), IP_RECVDSTPORT and
+	IPV6_RECVDSTPORT, and OpenBSD divert(4) sockets
+	(SOCK_RAW/IPPROTO_DIVERT in AF_INET and AF_INET6).  IPPROTO_DIVERT is
+	defined again; an ipdivert(4) program that opens
+	socket(PF_INET, SOCK_RAW, IPPROTO_DIVERT) gets pf's divert(4) while pf
+	is loaded and must use PF_DIVERT.
+
+	Forwarded packets are filtered before a reject or blackhole route
+	discards them, and "too big" ICMP errors for forwarded packets are sent
+	before outbound filtering, as OpenBSD does.
+
+	ping and ping6 accept OpenBSD's -w maxwait.  vmstat -m -v prints
+	OpenBSD's pool listing; vmstat -m alone is unchanged.
+
+	pf queueing (HFSC, FQ-CoDel; OpenBSD "queue" rules) is not available
+	yet: a ruleset with queue definitions fails to load with
+	"DIOCADDQUEUE: Operation not supported" and the running ruleset stays.
+	ALTQ is retired.  Queueing follows in the next pf series.
+
+	The loopback interface MTU is 32768, as on OpenBSD (was 16384).
+
+	The pf manual pages are OpenBSD's: pf(4), pflog(4), pflow(4),
+	pfsync(4), divert(4), pf.conf(5), pf.os(5).  The former divert(4),
+	about ipfw's PF_DIVERT sockets, is now ipdivert(4).
 
 20261011:
 	5BSD has retired native procfs, a.out execution, COMPAT_43TTY and the

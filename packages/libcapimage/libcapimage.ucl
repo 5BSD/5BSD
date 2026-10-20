@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+comment = "Library for embedded ELF image signatures and policy verification"
+
+desc = <<EOD
+Library for embedded ELF image signatures and policy verification.
+EOD

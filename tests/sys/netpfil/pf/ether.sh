@@ -40,7 +40,7 @@ mac_body()
 	pft_init
 
 	epair=$(vnet_mkepair)
-	epair_a_mac=$(ifconfig ${epair}a ether | awk '/ether/ { print $2; }')
+	epair_a_mac=$(ifconfig ${epair}a ether | awk '/lladdr/ { print $2; }')
 
 	ifconfig ${epair}a 192.0.2.1/24 up
 
@@ -138,7 +138,7 @@ proto_body()
 	pft_init
 
 	epair=$(vnet_mkepair)
-	epair_a_mac=$(ifconfig ${epair}a ether | awk '/ether/ { print $2; }')
+	epair_a_mac=$(ifconfig ${epair}a ether | awk '/lladdr/ { print $2; }')
 
 	ifconfig ${epair}a 192.0.2.1/24 up
 
@@ -181,8 +181,8 @@ direction_body()
 	pft_init
 
 	epair=$(vnet_mkepair)
-	epair_a_mac=$(ifconfig ${epair}a ether | awk '/ether/ { print $2; }')
-	epair_b_mac=$(ifconfig ${epair}b ether | awk '/ether/ { print $2; }')
+	epair_a_mac=$(ifconfig ${epair}a ether | awk '/lladdr/ { print $2; }')
+	epair_b_mac=$(ifconfig ${epair}b ether | awk '/lladdr/ { print $2; }')
 
 	ifconfig ${epair}a 192.0.2.1/24 up
 
@@ -257,7 +257,7 @@ captive_body()
 
 	epair_gw=$(vnet_mkepair)
 	epair_srv=$(vnet_mkepair)
-	epair_gw_a_mac=$(ifconfig ${epair_gw}a ether | awk '/ether/ { print $2; }')
+	epair_gw_a_mac=$(ifconfig ${epair_gw}a ether | awk '/lladdr/ { print $2; }')
 
 	vnet_mkjail gw ${epair_gw}b ${epair_srv}a
 	vnet_mkjail srv ${epair_srv}b
@@ -278,7 +278,7 @@ captive_body()
 	pft_set_rules gw \
 		"ether pass quick proto 0x0806" \
 		"ether pass tag captive" \
-		"rdr on ${epair_gw}b proto tcp to port echo tagged captive -> 127.0.0.1 port echo"
+		"pass in on ${epair_gw}b proto tcp to port echo tagged captive rdr-to 127.0.0.1 port echo"
 	jexec gw pfctl -e
 
 	# ICMP should still work, because we don't redirect it.
@@ -299,7 +299,7 @@ captive_body()
 		"ether pass quick proto 0x0806" \
 		"ether pass quick from ${epair_gw_a_mac}" \
 		"ether pass tag captive" \
-		"rdr on ${epair_gw}b proto tcp to port echo tagged captive -> 127.0.0.1 port echo"
+		"pass in on ${epair_gw}b proto tcp to port echo tagged captive rdr-to 127.0.0.1 port echo"
 
 	# No redirect, so failure.
 	atf_check -s exit:1 -x "echo foo | nc -N 198.51.100.2 7"
@@ -333,7 +333,7 @@ captive_long_body()
 
 	epair_gw=$(vnet_mkepair)
 	epair_srv=$(vnet_mkepair)
-	epair_gw_a_mac=$(ifconfig ${epair_gw}a ether | awk '/ether/ { print $2; }')
+	epair_gw_a_mac=$(ifconfig ${epair_gw}a ether | awk '/lladdr/ { print $2; }')
 
 	vnet_mkjail gw ${epair_gw}b ${epair_srv}a
 	vnet_mkjail srv ${epair_srv}b
@@ -358,7 +358,7 @@ captive_long_body()
 			"ether pass quick proto { 0x0806, 0x8035, 0x888e, 0x88c7, 0x8863, 0x8864 }" \
 			"ether pass tag \"captive\"" \
 		"}" \
-		"rdr on ${epair_gw}b proto tcp to port daytime tagged captive -> 127.0.0.1 port echo"
+		"pass in on ${epair_gw}b proto tcp to port daytime tagged captive rdr-to 127.0.0.1 port echo"
 	jexec gw pfctl -e
 
 	# ICMP should still work, because we don't redirect it.
@@ -380,7 +380,7 @@ captive_long_body()
 			"ether pass quick from { ${epair_gw_a_mac} } dnpipe 1" \
 			"ether pass tag \"captive\"" \
 		"}" \
-		"rdr on ${epair_gw}b proto tcp to port daytime tagged captive -> 127.0.0.1 port echo"
+		"pass in on ${epair_gw}b proto tcp to port daytime tagged captive rdr-to 127.0.0.1 port echo"
 
 	# We're not being redirected and get datime information now
 	atf_check -s exit:0 -o match:"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)" -x "echo foo | nc -N 198.51.100.2 13"
@@ -460,7 +460,7 @@ anchor_body()
 	pft_init
 
 	epair=$(vnet_mkepair)
-	epair_a_mac=$(ifconfig ${epair}a ether | awk '/ether/ { print $2; }')
+	epair_a_mac=$(ifconfig ${epair}a ether | awk '/lladdr/ { print $2; }')
 
 	vnet_mkjail alcatraz ${epair}b
 
@@ -505,6 +505,67 @@ anchor_body()
 }
 
 anchor_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "anchor_wildcard" "cleanup"
+anchor_wildcard_head()
+{
+	atf_set descr 'Ether wildcard anchors over many children, listed, flushed and re-added'
+	atf_set require.user root
+}
+
+anchor_wildcard_body()
+{
+	pft_init
+
+	epair=$(vnet_mkepair)
+	epair_a_mac=$(ifconfig ${epair}a ether | awk '/lladdr/ { print $2; }')
+
+	vnet_mkjail alcatraz ${epair}b
+	ifconfig ${epair}a 192.0.2.1/24 up
+	jexec alcatraz ifconfig ${epair}b 192.0.2.2/24 up
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.2
+
+	jexec alcatraz pfctl -e
+	pft_set_rules alcatraz \
+		"ether block in" \
+		"ether anchor \"w/*\" in on ${epair}b"
+
+	# Eight children, evaluated in order; only w/e passes our MAC.
+	for c in a b c d f g h; do
+		echo "ether pass in from 02:00:00:00:00:01" | \
+		    atf_check -s exit:0 jexec alcatraz pfctl -a w/$c -f -
+	done
+	echo "ether pass in from ${epair_a_mac}" | \
+	    atf_check -s exit:0 jexec alcatraz pfctl -a w/e -f -
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.2
+
+	# The ether-only anchor w lists its children.
+	atf_check -s exit:0 -o match:"w/a" -o match:"w/h" \
+	    jexec alcatraz pfctl -a w -sA
+	atf_check -s exit:1 -e match:"Anchor does not exist" \
+	    jexec alcatraz pfctl -a nosuch -sA
+
+	# Flushing children removes them; w/e still passes.
+	for c in b d f h a; do
+		atf_check -s exit:0 -e ignore \
+		    jexec alcatraz pfctl -a w/$c -F ethernet
+	done
+	atf_check -s exit:0 -o not-match:"w/b" -o match:"w/e" \
+	    jexec alcatraz pfctl -a w -sA
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.2
+
+	# Without w/e the block applies; with it back, the pass.
+	atf_check -s exit:0 -e ignore jexec alcatraz pfctl -a w/e -F ethernet
+	atf_check -s exit:2 -o ignore ping -c 1 -t 2 192.0.2.2
+	echo "ether pass in from ${epair_a_mac}" | \
+	    atf_check -s exit:0 jexec alcatraz pfctl -a w/e -f -
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.2
+}
+
+anchor_wildcard_cleanup()
 {
 	pft_cleanup
 }
@@ -746,4 +807,5 @@ atf_init_test_cases()
 	atf_add_test_case "match_tag"
 	atf_add_test_case "short_pkt"
 	atf_add_test_case "bridge_to"
+	atf_add_test_case "anchor_wildcard"
 }

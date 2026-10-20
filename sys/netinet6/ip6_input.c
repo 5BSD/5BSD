@@ -352,11 +352,30 @@ ip6proto_unregister(uint8_t proto)
 }
 
 #ifdef VIMAGE
+/*
+ * 5BSD: remove one interface's IPv6 addresses when a VNET goes away.  Run
+ * through if_foreach_sleep(), holding a reference rather than IFNET_RLOCK:
+ * leaving the addresses' multicast groups takes in6_multi_sx, and if_bridge's
+ * ioctl (under in6_multi_sx when a group is joined) can reach a netlink
+ * interface dump that takes IFNET_RLOCK.  See in_ifscrub_all().
+ */
+static int
+ip6_destroy_ifaddrs(if_t ifp, void *arg __unused)
+{
+	struct ifaddr *ifa, *nifa;
+
+	CK_STAILQ_FOREACH_SAFE(ifa, &ifp->if_addrhead, ifa_link, nifa) {
+		if (ifa->ifa_addr->sa_family != AF_INET6)
+			continue;
+		in6_purgeaddr(ifa);
+	}
+	in6_ifdetach_destroy(ifp);
+	return (0);
+}
+
 static void
 ip6_destroy(void *unused __unused)
 {
-	struct ifaddr *ifa, *nifa;
-	struct ifnet *ifp;
 	int error;
 
 #ifdef RSS
@@ -378,20 +397,8 @@ ip6_destroy(void *unused __unused)
 		    "error %d returned\n", __func__, error);
 	}
 
-	/* Cleanup addresses. */
-	IFNET_RLOCK();
-	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		/* Cannot lock here - lock recursion. */
-		/* IF_ADDR_LOCK(ifp); */
-		CK_STAILQ_FOREACH_SAFE(ifa, &ifp->if_addrhead, ifa_link, nifa) {
-			if (ifa->ifa_addr->sa_family != AF_INET6)
-				continue;
-			in6_purgeaddr(ifa);
-		}
-		/* IF_ADDR_UNLOCK(ifp); */
-		in6_ifdetach_destroy(ifp);
-	}
-	IFNET_RUNLOCK();
+	/* Cleanup addresses (see ip6_destroy_ifaddrs()). */
+	(void)if_foreach_sleep(NULL, NULL, ip6_destroy_ifaddrs, NULL);
 
 	/* Make sure any routes are gone as well. */
 	rib_flush_routes_family(AF_INET6);
@@ -790,7 +797,9 @@ passin:
 	 * XXX: For now we keep link-local IPv6 addresses with embedded
 	 *      scope zone id, therefore we use zero zoneid here.
 	 */
-	ia = in6ifa_ifwithaddr(&ip6->ip6_dst, 0 /* XXX */, false);
+	/* 5BSD: addresses are local only in their routing domain. */
+	ia = in6ifa_ifwithaddr_fib(&ip6->ip6_dst, 0 /* XXX */, false,
+	    rt_fib_scope(M_GETFIB(m)));
 	if (ia != NULL) {
 		if (ia->ia6_flags & IN6_IFF_NOTREADY) {
 			char ip6bufs[INET6_ADDRSTRLEN];

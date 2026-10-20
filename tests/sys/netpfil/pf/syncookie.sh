@@ -32,8 +32,16 @@ syncookie_state()
 {
 	jail=$1
 
-	jexec $jail pfctl -si -v | grep -A 2 '^Syncookies' | grep active \
-	    | awk '{ print($2); }'
+	# OpenBSD's pfctl does not print whether syncookie mode is active;
+	# pfctl -si -v counts the syncookies sent (Limit Counters).  Report
+	# "active" once syncookies were sent, "inactive" while none were.
+	sent=$(jexec $jail pfctl -si -v | \
+	    awk '$1 == "syncookies" && $2 == "sent" { print($3); }')
+	case "$sent" in
+	''|*[!0-9]*)	echo "missing" ;;
+	0)		echo "inactive" ;;
+	*)		echo "active" ;;
+	esac
 }
 
 atf_test_case "basic" "cleanup"
@@ -432,8 +440,9 @@ adaptive_body()
 	jexec alcatraz ifconfig ${epair}b 192.0.2.1/24 up
 
 	jexec alcatraz pfctl -e
+	limits_save
+	limits_set "states 100"
 	pft_set_rules alcatraz \
-		"set limit states 100" \
 		"set syncookies adaptive (start 10%%, end 5%%)" \
 		"pass in" \
 		"pass out"
@@ -473,6 +482,7 @@ adaptive_body()
 
 adaptive_cleanup()
 {
+	limits_restore
 	pft_cleanup
 }
 
@@ -490,14 +500,15 @@ limits_body()
 	vnet_mkjail alcatraz
 
 	jexec alcatraz pfctl -e
+	limits_save
+	limits_set "states 1"
 	pft_set_rules alcatraz \
-		"set limit states 1" \
 		"set syncookies adaptive (start 10%%, end 5%%)" \
 		"pass in" \
 		"pass out"
 
+	limits_set "states 326000000"
 	pft_set_rules alcatraz \
-		"set limit states 326000000" \
 		"set syncookies adaptive (start 10%%, end 5%%)" \
 		"pass in" \
 		"pass out"
@@ -505,6 +516,7 @@ limits_body()
 
 limits_cleanup()
 {
+	limits_restore
 	pft_cleanup
 }
 
@@ -530,7 +542,7 @@ port_reuse_body()
 	ifconfig ${epair}a 192.0.2.2/24 up
 
 	jexec alcatraz pfctl -e
-	jexec alcatraz pfctl -x loud
+	jexec alcatraz pfctl -x debug
 	pft_set_rules alcatraz \
 		"set syncookies always" \
 		"pass in" \

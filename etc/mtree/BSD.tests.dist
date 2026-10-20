@@ -964,8 +964,14 @@
         netpfil
             common
             ..
+            integration
+            ..
             pf
                 ioctl
+                ..
+                openbsd
+                    mk
+                    ..
                 ..
             ..
         ..

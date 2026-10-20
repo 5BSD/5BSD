@@ -1,0 +1,9 @@
+# 5BSD: ether rules
+ether block in on lo0 from ! 00:11:22:33:44:55
+ether pass quick proto 0x0806
+ether pass in on lo0 l3 from 192.0.2.0/24 tag lan
+ether block out to { 00:01:02:03:04:05, 00:01:02:03:04:06 }
+ether block to 00:01:02:00:00:00/24
+ether block to 00:01:02:00:00:00&ff:ff:ff:00:00:00
+ether pass in proto { 0x0800, 0x86dd }
+pass in on lo0 tagged lan

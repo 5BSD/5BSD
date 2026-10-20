@@ -30,7 +30,9 @@ get_counters()
 {
 	echo " === rules ==="
 	rules=$(mktemp) || exit
-	(jexec router pfctl -qvvsn ; jexec router pfctl -qvvsr) | normalize_pfctl_s > $rules
+	# OpenBSD has no separate NAT ruleset (pfctl -sn): translation rules
+	# are filter rules.
+	jexec router pfctl -qvvsr | normalize_pfctl_s > $rules
 	cat $rules
 
 	echo " === tables ==="
@@ -45,8 +47,41 @@ get_counters()
 
 	echo " === nodes ==="
 	nodes=$(mktemp) || exit 1
-	jexec router pfctl -qvvsS | normalize_pfctl_s > $nodes
+	# "-sS" is ambiguous in OpenBSD's pfctl (Sources, Stlimiters, Srclimiters).
+	jexec router pfctl -qvvs Sources | normalize_pfctl_s > $nodes
 	cat $nodes
+}
+
+# OpenBSD's pfctl -vvsT prints eight counter lines per table, with the
+# In/Match and Out/Match counters of match rules, so take twelve lines
+# after the table name.  A match rule's table hits are accounted under
+# Match, through the state that carries the match rule (OpenBSD's
+# pf_counters_inc()); without a state, match rules account no packets.
+# The address is looked up in the state key on the wire side of outbound
+# states (after NAT) and on the stack side of inbound states (after RDR);
+# when the table does not hold it, the packet is accounted as XPass (see
+# pfctl(8)).
+check_table_counters()
+{
+	table_name=$1
+	table_regexp=$2
+	table=$(mktemp) || exit 1
+	cat $tables | grep -A12 $table_name | tr '\n' ' ' | awk '{gsub("[\\[\\]]", " ", $0); gsub("[[:blank:]]+"," ",$0); print $0}' > ${table}
+	grep -qE "${table_regexp}" ${table} || atf_fail "Bad counters for table ${table_name}"
+}
+
+# table_counters <match evaluations> <in block> <in match> <in pass> <in xpass>
+#     <out block> <out match> <out pass> <out xpass>; each counter is "packets/bytes".
+table_counters()
+{
+	printf "Evaluations: NoMatch: 0 Match: %s" "$1"
+	shift
+	for dir in In Out; do
+		for op in Block Match Pass XPass; do
+			printf " %s/%s: Packets: %s Bytes: %s" $dir $op ${1%/*} ${1#*/}
+			shift
+		done
+	done
 }
 
 atf_test_case "match_pass_state" "cleanup"
@@ -62,10 +97,13 @@ match_pass_state_body()
 
 	# Thest counters for a statefull firewall. Expose the behaviour of
 	# increasing table counters if a table is used multiple times.
-	# The table "tbl_in" is used both in match and pass rule. It's counters
-	# are incremented twice. The tables "tbl_out_match" and "tbl_out_pass"
-	# are used only once and have their countes increased only once.
+	# The table "tbl_in" is used both in match and pass rule. It's Match
+	# and Pass counters are both incremented. The tables "tbl_out_match"
+	# and "tbl_out_pass" are used only once and have their countes
+	# increased only once.
 	# Test source node counters for this simple scenario too.
+	# (OpenBSD rejects "scrub (random-id)" for inet6; match rules need no
+	# action to be recorded on the state.)
 	pft_set_rules router \
 		"set state-policy if-bound" \
 		"table <tbl_in>  { ${net_tester_host_tester} }" \
@@ -73,9 +111,9 @@ match_pass_state_body()
 		"table <tbl_out_match> { ${net_server_host_server} }" \
 		"block" \
 		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-		"match in  on ${epair_tester}b inet6 proto tcp from <tbl_in>  scrub (random-id)" \
+		"match in  on ${epair_tester}b inet6 proto tcp from <tbl_in>" \
 		"pass  in  on ${epair_tester}b inet6 proto tcp from <tbl_in>  keep state (max-src-states 3 source-track rule)" \
-		"match out on ${epair_server}a inet6 proto tcp to   <tbl_out_match> scrub (random-id)" \
+		"match out on ${epair_server}a inet6 proto tcp to   <tbl_out_match>" \
 		"pass  out on ${epair_server}a inet6 proto tcp to   <tbl_out_pass> keep state"
 
 	# Use a real TCP connection so that it will be properly closed, guaranteeing the amount of packets.
@@ -94,29 +132,27 @@ match_pass_state_body()
 		grep -qE "${rule_regexp}" $rules || atf_fail "Rule regexp not found for '${rule_regexp}'"
 	done
 
-	table_counters_single="Evaluations: NoMatch: 0 Match: 1 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 4 Bytes: 311 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 6 Bytes: 455 Out/XPass: Packets: 0 Bytes: 0"
-	table_counters_double="Evaluations: NoMatch: 0 Match: 2 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 12 Bytes: 910 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 8 Bytes: 622 Out/XPass: Packets: 0 Bytes: 0"
-	for table_test in \
-		"tbl_in___${table_counters_double}" \
-		"tbl_out_match___${table_counters_single}" \
-		"tbl_out_pass___${table_counters_single}" \
-	; do
-		table_name=${table_test%%___*}
-		table_regexp=${table_test##*___}
-		table=$(mktemp) || exit 1
-		cat $tables | grep -A10 $table_name | tr '\n' ' ' | awk '{gsub("[\\[\\]]", " ", $0); gsub("[[:blank:]]+"," ",$0); print $0}' > ${table}
-		grep -qE "${table_regexp}" ${table} || atf_fail "Bad counters for table ${table_name}"
-	done;
+	# tbl_in: Match from the match rule and Pass from the pass rule, both
+	# through the inbound state.
+	check_table_counters tbl_in "$(table_counters 2 \
+	    0/0 6/455 6/455 0/0  0/0 4/311 4/311 0/0)"
+	check_table_counters tbl_out_match "$(table_counters 1 \
+	    0/0 4/311 0/0 0/0  0/0 6/455 0/0 0/0)"
+	check_table_counters tbl_out_pass "$(table_counters 1 \
+	    0/0 0/0 4/311 0/0  0/0 0/0 6/455 0/0)"
 
+	# OpenBSD ends the state's counter line with ", rule N" and then the
+	# optional flags (", source-track") or, with -vv, the "id:" line.
 	for state_regexp in \
-		"${epair_tester}b tcp ${net_server_host_server}.* <- ${net_tester_host_tester}.* 6:4 pkts, 455:311 bytes, rule 4," \
-		"${epair_server}a tcp ${net_server_host_tester}.* -> ${net_server_host_server}.* 6:4 pkts, 455:311 bytes, rule 6," \
+		"${epair_tester}b tcp ${net_server_host_server}.* <- ${net_tester_host_tester}.* 6:4 pkts, 455:311 bytes, rule 4, source-track" \
+		"${epair_server}a tcp ${net_server_host_tester}.* -> ${net_server_host_server}.* 6:4 pkts, 455:311 bytes, rule 6[, ]" \
 	; do
 		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
 	done
 
+	# OpenBSD: "addr ( states N, ... ) age ..., P pkts, B bytes, rule N"
 	for node_regexp in \
-		"${net_tester_host_tester} -> :: .* 10 pkts, 766 bytes, filter rule 4, limit source-track"\
+		"${net_tester_host_tester} \( states 1, .* 10 pkts, 766 bytes, rule 4"\
 	; do
 		grep -qE "${node_regexp}" $nodes || atf_fail "Source node not found for '${node_regexp}'"
 	done
@@ -166,30 +202,31 @@ match_pass_no_state_body()
 	sleep 1
 	get_counters
 
+	# OpenBSD: without a state, a match rule accounts no packets (its
+	# actions and counters live on the state of the passing rule); only
+	# the passing rule counts, and only its tables account packets.  The
+	# tables' evaluation counts are unchanged.
 	for rule_regexp in \
-		"@3 match in on ${epair_tester}b .* Packets: 6 Bytes: 455 " \
-		"@4 match in on ${epair_tester}b .* Packets: 6 Bytes: 455 " \
+		"@3 match in on ${epair_tester}b .* Packets: 0 Bytes: 0 " \
+		"@4 match in on ${epair_tester}b .* Packets: 0 Bytes: 0 " \
 		"@5 pass in on ${epair_tester}b .* Packets: 6 Bytes: 455 " \
 		"@6 pass out on ${epair_tester}b .* Packets: 4 Bytes: 311 " \
-		"@7 match in on ${epair_server}a .* Packets: 4 Bytes: 311 " \
+		"@7 match in on ${epair_server}a .* Packets: 0 Bytes: 0 " \
 		"@8 pass in on ${epair_server}a .* Packets: 4 Bytes: 311 " \
+		"@9 match out on ${epair_server}a .* Packets: 0 Bytes: 0 " \
 		"@10 pass out on ${epair_server}a .* Packets: 6 Bytes: 455 " \
 	; do
 		grep -qE "${rule_regexp}" $rules || atf_fail "Rule regexp not found for '${rule_regexp}'"
 	done
 
-	for table_test in \
-		"tbl_in___Evaluations: NoMatch: 0 Match: 16 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 12 Bytes: 910 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 4 Bytes: 311 Out/XPass: Packets: 0 Bytes: 0" \
-		"tbl_out_match___Evaluations: NoMatch: 0 Match: 4 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 4 Bytes: 311 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 0 Bytes: 0 Out/XPass: Packets: 0 Bytes: 0" \
-		"tbl_out_pass___Evaluations: NoMatch: 0 Match: 10 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 4 Bytes: 311 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 6 Bytes: 455 Out/XPass: Packets: 0 Bytes: 0" \
-		"tbl_inout___Evaluations: NoMatch: 0 Match: 12 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 6 Bytes: 455 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 6 Bytes: 455 Out/XPass: Packets: 0 Bytes: 0" \
-	; do
-		table_name=${table_test%%___*}
-		table_regexp=${table_test##*___}
-		table=$(mktemp) || exit 1
-		cat $tables | grep -A10 $table_name | tr '\n' ' ' | awk '{gsub("[\\[\\]]", " ", $0); gsub("[[:blank:]]+"," ",$0); print $0}' > ${table}
-		grep -qE "${table_regexp}" ${table} || atf_fail "Bad counters for table ${table_name}"
-	done;
+	check_table_counters tbl_in "$(table_counters 16 \
+	    0/0 0/0 6/455 0/0  0/0 0/0 4/311 0/0)"
+	check_table_counters tbl_out_match "$(table_counters 4 \
+	    0/0 0/0 0/0 0/0  0/0 0/0 0/0 0/0)"
+	check_table_counters tbl_out_pass "$(table_counters 10 \
+	    0/0 0/0 4/311 0/0  0/0 0/0 6/455 0/0)"
+	check_table_counters tbl_inout "$(table_counters 12 \
+	    0/0 0/0 0/0 0/0  0/0 0/0 0/0 0/0)"
 }
 
 match_pass_no_state_cleanup()
@@ -210,15 +247,16 @@ match_block_body()
 
 	# Stateful firewall with a blocking rule. The rule will have its
 	# counters increased because it matches and applies correctly.
-	# The "match" rule before the "pass" rule will have its counters
-	# increased for blocked traffic too.
+	# OpenBSD: blocked traffic creates no state, so the "match" rule
+	# before the "block" rule accounts no packets and its table only
+	# counts evaluations.
 	pft_set_rules router \
 		"set state-policy if-bound" \
 		"table <tbl_in_match> { ${net_server_host_server} }" \
 		"table <tbl_in_block> { ${net_server_host_server} }" \
 		"block" \
 		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-		"match  in on ${epair_tester}b inet6 proto tcp to   <tbl_in_match> scrub (random-id)" \
+		"match  in on ${epair_tester}b inet6 proto tcp to   <tbl_in_match>" \
 		"block  in on ${epair_tester}b inet6 proto tcp to   <tbl_in_block>" \
 		"pass  out on ${epair_server}a inet6 proto tcp keep state"
 
@@ -228,25 +266,16 @@ match_block_body()
 	get_counters
 
 	for rule_regexp in \
-		"@3 match in on ${epair_tester}b .* Packets: 2 Bytes: 160 States: 0 " \
+		"@3 match in on ${epair_tester}b .* Packets: 0 Bytes: 0 States: 0 " \
 		"@4 block drop in on ${epair_tester}b .* Packets: 2 Bytes: 160 States: 0 " \
 	; do
 		grep -qE "${rule_regexp}" $rules || atf_fail "Rule regexp not found for '${rule_regexp}'"
 	done
 
-	# OpenBSD has (In|Out)/Match. We don't (yet) have it in FreeBSD
-	# so we follow the action of the "pass" rule ("block" for this test)
-	# in "match" rules.
-	for table_test in \
-		"tbl_in_match___Evaluations: NoMatch: 0 Match: 2 In/Block: Packets: 2 Bytes: 160 In/Pass: Packets: 0 Bytes: 0 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 0 Bytes: 0 Out/XPass: Packets: 0 Bytes: 0" \
-		"tbl_in_block___Evaluations: NoMatch: 0 Match: 2 In/Block: Packets: 2 Bytes: 160 In/Pass: Packets: 0 Bytes: 0 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 0 Bytes: 0 Out/XPass: Packets: 0 Bytes: 0" \
-	; do
-		table_name=${table_test%%___*}
-		table_regexp=${table_test##*___}
-		table=$(mktemp) || exit 1
-		cat $tables | grep -A10 $table_name | tr '\n' ' ' | awk '{gsub("[\\[\\]]", " ", $0); gsub("[[:blank:]]+"," ",$0); print $0}' > ${table}
-		grep -qE "${table_regexp}" ${table} || atf_fail "Bad counters for table ${table_name}"
-	done;
+	check_table_counters tbl_in_match "$(table_counters 2 \
+	    0/0 0/0 0/0 0/0  0/0 0/0 0/0 0/0)"
+	check_table_counters tbl_in_block "$(table_counters 2 \
+	    2/160 0/0 0/0 0/0  0/0 0/0 0/0 0/0)"
 }
 
 match_block_cleanup()
@@ -273,7 +302,7 @@ match_fail_body()
 		"table <tbl_in_fail> { ${net_server_host_server} }" \
 		"block" \
 		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-		"match  in on ${epair_tester}b inet6 proto tcp to <tbl_in_match> scrub (random-id)" \
+		"match  in on ${epair_tester}b inet6 proto tcp to <tbl_in_match>" \
 		"pass   in on ${epair_tester}b inet6 proto tcp to <tbl_in_fail> keep state (max 1)" \
 		"pass  out on ${epair_server}a inet6 proto tcp keep state"
 
@@ -293,17 +322,13 @@ match_fail_body()
 		grep -qE "${rule_regexp}" $rules || atf_fail "Rule regexp not found for '${rule_regexp}'"
 	done
 
-	$table_counters_single="Evaluations: NoMatch: 0 Match: 3 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 6 Bytes: 455 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 4 Bytes: 311 Out/XPass: Packets: 0 Bytes: 0"
-	for table_test in \
-		"tbl_in_match___${table_counters_single}" \
-		"tbl_in_fail___${table_counters_single}" \
-	; do
-		table_name=${table_test%%___*}
-		table_regexp=${table_test##*___}
-		table=$(mktemp) || exit 1
-		cat $tables | grep -A10 $table_name | tr '\n' ' ' | awk '{gsub("[\\[\\]]", " ", $0); gsub("[[:blank:]]+"," ",$0); print $0}' > ${table}
-		grep -qE "${table_regexp}" ${table} || atf_fail "Bad counters for table ${table_name}"
-	done;
+	# (This used to assign "$table_counters_single=...", which ran a
+	# command instead and left the expected counters empty, so the table
+	# checks below matched anything.)
+	check_table_counters tbl_in_match "$(table_counters 3 \
+	    0/0 6/455 0/0 0/0  0/0 4/311 0/0 0/0)"
+	check_table_counters tbl_in_fail "$(table_counters 3 \
+	    0/0 0/0 6/455 0/0  0/0 0/0 4/311 0/0)"
 }
 
 match_fail_cleanup()
@@ -314,7 +339,7 @@ match_fail_cleanup()
 atf_test_case "nat_natonly" "cleanup"
 nat_natonly_head()
 {
-	atf_set descr 'Counters on only a NAT rule creating state'
+	atf_set descr 'Counters on only a NAT match rule, which creates no state'
 	atf_set require.user root
 }
 
@@ -322,14 +347,17 @@ nat_natonly_body()
 {
 	setup_router_server_ipv6
 
-	# NAT is applied on the "nat" rule.
-	# The "nat" rule matches on pre-NAT addresses. There is no separate
-	# "pass" rule so the "nat" rule creates the state.
+	# The "match ... nat-to" rule matches on pre-NAT addresses.  There is
+	# no "pass" rule, and in OpenBSD the implicit default rule passes
+	# without state.  A match rule's actions only apply through the state
+	# of a passing rule, so nothing is translated, no state is created,
+	# every packet is evaluated against the rule, and the rule and its
+	# tables account no packets (FreeBSD's "nat" rule created the state).
 	pft_set_rules router \
 		"set state-policy if-bound" \
 		"table <tbl_src_nat> { ${net_tester_host_tester} }" \
 		"table <tbl_dst_nat> { ${net_server_host_server} }" \
-		"nat on ${epair_server}a inet6 proto tcp from <tbl_src_nat> to <tbl_dst_nat> -> ${net_server_host_router}"
+		"match out on ${epair_server}a inet6 proto tcp from <tbl_src_nat> to <tbl_dst_nat> nat-to ${net_server_host_router}"
 
 	# Use a real TCP connection so that it will be properly closed, guaranteeing the amount of packets.
 	atf_check -s exit:0 -o match:"This is a test" -x \
@@ -338,29 +366,20 @@ nat_natonly_body()
 	get_counters
 
 	for rule_regexp in \
-		"@0 nat on ${epair_server}a .* Packets: 10 Bytes: 766 States: 1 " \
+		"@0 match out on ${epair_server}a .* Packets: 0 Bytes: 0 States: 0 " \
 	; do
 		grep -qE "${rule_regexp}" $rules || atf_fail "Rule regexp not found for '${rule_regexp}'"
 	done
 
-	# All tables have counters increased for In/Pass and Out/Pass, not XPass.
-	table_counters="Evaluations: NoMatch: 0 Match: 1 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 4 Bytes: 311 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 6 Bytes: 455 Out/XPass: Packets: 0 Bytes: 0"
-	for table_test in \
-		"tbl_src_nat___${table_counters}" \
-		"tbl_dst_nat___${table_counters}" \
-	; do
-		table_name=${table_test%%___*}
-		table_regexp=${table_test##*___}
-		table=$(mktemp) || exit 1
-		cat $tables | grep -A10 $table_name | tr '\n' ' ' | awk '{gsub("[\\[\\]]", " ", $0); gsub("[[:blank:]]+"," ",$0); print $0}' > ${table}
-		grep -qE "${table_regexp}" ${table} || atf_fail "Bad counters for table ${table_name}"
-	done;
-
-	for state_regexp in \
-		"all tcp ${net_server_host_router}.* -> ${net_server_host_server}.* 6:4 pkts, 455:311 bytes" \
-	; do
-		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
+	# Both tables are evaluated for each of the 6 outbound packets.
+	for table_name in tbl_src_nat tbl_dst_nat; do
+		check_table_counters ${table_name} "$(table_counters 6 \
+		    0/0 0/0 0/0 0/0  0/0 0/0 0/0 0/0)"
 	done
+
+	if grep -q " tcp " $states; then
+		atf_fail "Unexpected state for a match rule without a pass rule"
+	fi
 }
 
 nat_natonly_cleanup()
@@ -379,7 +398,8 @@ nat_nat_body()
 {
 	setup_router_server_ipv6
 
-	# NAT is applied in the NAT ruleset.
+	# NAT is applied by the first rule (FreeBSD's separate NAT ruleset;
+	# in OpenBSD a "match ... nat-to" rule numbered @0 in the one ruleset).
 	# The "nat" rule matches on pre-NAT addresses.
 	# The "match" rule matches on post-NAT addresses.
 	# The "pass" rule matches on post-NAT addresses and creates the state.
@@ -391,11 +411,11 @@ nat_nat_body()
 		"table <tbl_dst_match> { ${net_server_host_server} }" \
 		"table <tbl_src_pass> { ${net_server_host_router} }" \
 		"table <tbl_dst_pass> { ${net_server_host_server} }" \
-		"nat on ${epair_server}a inet6 proto tcp from <tbl_src_nat> to <tbl_dst_nat> -> ${net_server_host_router}" \
+		"match out on ${epair_server}a inet6 proto tcp from <tbl_src_nat> to <tbl_dst_nat> nat-to ${net_server_host_router}" \
 		"block" \
 		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
 		"pass  in  on ${epair_tester}b inet6 proto tcp keep state" \
-		"match out on ${epair_server}a inet6 proto tcp from <tbl_src_match> to <tbl_dst_match> scrub (random-id)" \
+		"match out on ${epair_server}a inet6 proto tcp from <tbl_src_match> to <tbl_dst_match>" \
 		"pass  out on ${epair_server}a inet6 proto tcp from <tbl_src_pass>  to <tbl_dst_pass>  keep state"
 
 	# Use a real TCP connection so that it will be properly closed, guaranteeing the amount of packets.
@@ -405,32 +425,28 @@ nat_nat_body()
 	get_counters
 
 	for rule_regexp in \
-		"@0 nat on ${epair_server}a .* Packets: 10 Bytes: 766 States: 1 " \
-		"@4 match out on ${epair_server}a .* Packets: 10 Bytes: 766 States: 1 " \
-		"@5 pass out on ${epair_server}a .* Packets: 10 Bytes: 766 States: 1 " \
+		"@0 match out on ${epair_server}a .* Packets: 10 Bytes: 766 States: 1 " \
+		"@5 match out on ${epair_server}a .* Packets: 10 Bytes: 766 States: 1 " \
+		"@6 pass out on ${epair_server}a .* Packets: 10 Bytes: 766 States: 1 " \
 	; do
 		grep -qE "${rule_regexp}" $rules || atf_fail "Rule regexp not found for '${rule_regexp}'"
 	done
 
-	# All tables have counters increased for In/Pass and Out/Pass, not XPass nor Block.
-	table_counters="Evaluations: NoMatch: 0 Match: 1 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 4 Bytes: 311 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 6 Bytes: 455 Out/XPass: Packets: 0 Bytes: 0"
-	for table_test in \
-		"tbl_src_nat___${table_counters}" \
-		"tbl_dst_nat___${table_counters}" \
-		"tbl_src_match___${table_counters}" \
-		"tbl_dst_match___${table_counters}" \
-		"tbl_src_pass___${table_counters}" \
-		"tbl_dst_pass___${table_counters}" \
-	; do
-		table_name=${table_test%%___*}
-		table_regexp=${table_test##*___}
-		table=$(mktemp) || exit 1
-		cat $tables | grep -A10 $table_name | tr '\n' ' ' | awk '{gsub("[\\[\\]]", " ", $0); gsub("[[:blank:]]+"," ",$0); print $0}' > ${table}
-		grep -qE "${table_regexp}" ${table} || atf_fail "Bad counters for table ${table_name}"
-	done;
+	# Outbound state: tables are looked up with the post-NAT source, so
+	# the pre-NAT source table counts XPass.
+	check_table_counters tbl_src_nat "$(table_counters 1 \
+	    0/0 0/0 0/0 4/311  0/0 0/0 0/0 6/455)"
+	for table_name in tbl_dst_nat tbl_src_match tbl_dst_match; do
+		check_table_counters ${table_name} "$(table_counters 1 \
+		    0/0 4/311 0/0 0/0  0/0 6/455 0/0 0/0)"
+	done
+	for table_name in tbl_src_pass tbl_dst_pass; do
+		check_table_counters ${table_name} "$(table_counters 1 \
+		    0/0 0/0 4/311 0/0  0/0 0/0 6/455 0/0)"
+	done
 
 	for state_regexp in \
-		"${epair_server}a tcp ${net_server_host_router}.* -> ${net_server_host_server}.* 6:4 pkts, 455:311 bytes, rule 5," \
+		"${epair_server}a tcp ${net_server_host_router}.* -> ${net_server_host_server}.* 6:4 pkts, 455:311 bytes, rule 6[, ]" \
 	; do
 		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
 	done
@@ -469,9 +485,9 @@ nat_match_body()
 		"block" \
 		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
 		"pass  in  on ${epair_tester}b inet6 proto tcp keep state" \
-		"match out on ${epair_server}a inet6 proto tcp from <tbl_src_match1> to <tbl_dst_match1> scrub (random-id)" \
+		"match out on ${epair_server}a inet6 proto tcp from <tbl_src_match1> to <tbl_dst_match1>" \
 		"match out on ${epair_server}a inet6 proto tcp from <tbl_src_match2> to <tbl_dst_match2> nat-to ${net_server_host_router}" \
-		"match out on ${epair_server}a inet6 proto tcp from <tbl_src_match3> to <tbl_dst_match3> scrub (random-id)" \
+		"match out on ${epair_server}a inet6 proto tcp from <tbl_src_match3> to <tbl_dst_match3>" \
 		"pass  out on ${epair_server}a inet6 proto tcp from <tbl_src_pass>  to <tbl_dst_pass>  keep state"
 
 	# Use a real TCP connection so that it will be properly closed, guaranteeing the amount of packets.
@@ -489,27 +505,23 @@ nat_match_body()
 		grep -qE "${rule_regexp}" $rules || atf_fail "Rule regexp not found for '${rule_regexp}'"
 	done
 
-	# All tables have counters increased for In/Pass and Out/Pass, not XPass nor Block.
-	table_counters="Evaluations: NoMatch: 0 Match: 1 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 4 Bytes: 311 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 6 Bytes: 455 Out/XPass: Packets: 0 Bytes: 0"
-	for table_test in \
-		"tbl_src_match1___${table_counters}" \
-		"tbl_dst_match1___${table_counters}" \
-		"tbl_src_match2___${table_counters}" \
-		"tbl_dst_match2___${table_counters}" \
-		"tbl_src_match3___${table_counters}" \
-		"tbl_dst_match3___${table_counters}" \
-		"tbl_src_pass___${table_counters}" \
-		"tbl_dst_pass___${table_counters}" \
-	; do
-		table_name=${table_test%%___*}
-		table_regexp=${table_test##*___}
-		table=$(mktemp) || exit 1
-		cat $tables | grep -A10 $table_name | tr '\n' ' ' | awk '{gsub("[\\[\\]]", " ", $0); gsub("[[:blank:]]+"," ",$0); print $0}' > ${table}
-		grep -qE "${table_regexp}" ${table} || atf_fail "Bad counters for table ${table_name}"
-	done;
+	# Outbound state: tables are looked up with the post-NAT source, so
+	# the pre-NAT source tables count XPass.
+	for table_name in tbl_src_match1 tbl_src_match2; do
+		check_table_counters ${table_name} "$(table_counters 1 \
+		    0/0 0/0 0/0 4/311  0/0 0/0 0/0 6/455)"
+	done
+	for table_name in tbl_dst_match1 tbl_dst_match2 tbl_src_match3 tbl_dst_match3; do
+		check_table_counters ${table_name} "$(table_counters 1 \
+		    0/0 4/311 0/0 0/0  0/0 6/455 0/0 0/0)"
+	done
+	for table_name in tbl_src_pass tbl_dst_pass; do
+		check_table_counters ${table_name} "$(table_counters 1 \
+		    0/0 0/0 4/311 0/0  0/0 0/0 6/455 0/0)"
+	done
 
 	for state_regexp in \
-		"${epair_server}a tcp ${net_server_host_tester}.* -> ${net_server_host_server}.* 6:4 pkts, 455:311 bytes, rule 7, " \
+		"${epair_server}a tcp ${net_server_host_tester}.* -> ${net_server_host_server}.* 6:4 pkts, 455:311 bytes, rule 7[, ]" \
 	; do
 		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
 	done
@@ -542,7 +554,7 @@ nat_pass_body()
 		"block" \
 		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
 		"pass  in  on ${epair_tester}b inet6 proto tcp keep state" \
-		"match out on ${epair_server}a inet6 proto tcp from <tbl_src_match> to <tbl_dst_match> scrub (random-id)" \
+		"match out on ${epair_server}a inet6 proto tcp from <tbl_src_match> to <tbl_dst_match>" \
 		"pass  out on ${epair_server}a inet6 proto tcp from <tbl_src_pass>  to <tbl_dst_pass>  nat-to ${net_server_host_router} keep state"
 
 	# Use a real TCP connection so that it will be properly closed, guaranteeing the amount of packets.
@@ -558,22 +570,19 @@ nat_pass_body()
 		grep -qE "${rule_regexp}" $rules || atf_fail "Rule regexp not found for '${rule_regexp}'"
 	done
 
-	table_counters="Evaluations: NoMatch: 0 Match: 1 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 4 Bytes: 311 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 6 Bytes: 455 Out/XPass: Packets: 0 Bytes: 0"
-	for table_test in \
-		"tbl_src_match___${table_counters}" \
-		"tbl_dst_match___${table_counters}" \
-		"tbl_src_pass___${table_counters}" \
-		"tbl_dst_pass___${table_counters}" \
-	; do
-		table_name=${table_test%%___*}
-		table_regexp=${table_test##*___}
-		table=$(mktemp) || exit 1
-		cat $tables | grep -A10 $table_name | tr '\n' ' ' | awk '{gsub("[\\[\\]]", " ", $0); gsub("[[:blank:]]+"," ",$0); print $0}' > ${table}
-		grep -qE "${table_regexp}" ${table} || atf_fail "Bad counters for table ${table_name}"
-	done;
+	# Outbound state: tables are looked up with the post-NAT source, so
+	# the pre-NAT source tables count XPass.
+	check_table_counters tbl_src_match "$(table_counters 1 \
+	    0/0 0/0 0/0 4/311  0/0 0/0 0/0 6/455)"
+	check_table_counters tbl_dst_match "$(table_counters 1 \
+	    0/0 4/311 0/0 0/0  0/0 6/455 0/0 0/0)"
+	check_table_counters tbl_src_pass "$(table_counters 1 \
+	    0/0 0/0 0/0 4/311  0/0 0/0 0/0 6/455)"
+	check_table_counters tbl_dst_pass "$(table_counters 1 \
+	    0/0 0/0 4/311 0/0  0/0 0/0 6/455 0/0)"
 
 	for state_regexp in \
-		"${epair_server}a tcp ${net_server_host_router}.* -> ${net_server_host_server}.* 6:4 pkts, 455:311 bytes, rule 5," \
+		"${epair_server}a tcp ${net_server_host_router}.* -> ${net_server_host_server}.* 6:4 pkts, 455:311 bytes, rule 5[, ]" \
 	; do
 		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
 	done
@@ -616,9 +625,9 @@ rdr_match_body()
 		"block" \
 		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
 		"pass  out on ${epair_server}a inet6 proto tcp keep state" \
-		"match  in on ${epair_tester}b inet6 proto tcp from <tbl_src_match1> to <tbl_dst_match1> scrub (random-id)" \
+		"match  in on ${epair_tester}b inet6 proto tcp from <tbl_src_match1> to <tbl_dst_match1>" \
 		"match  in on ${epair_tester}b inet6 proto tcp from <tbl_src_match2> to <tbl_dst_match2> rdr-to ${net_server_host_server}" \
-		"match  in on ${epair_tester}b inet6 proto tcp from <tbl_src_match3> to <tbl_dst_match3> scrub (random-id)" \
+		"match  in on ${epair_tester}b inet6 proto tcp from <tbl_src_match3> to <tbl_dst_match3>" \
 		"pass   in on ${epair_tester}b inet6 proto tcp from <tbl_src_pass>  to <tbl_dst_pass>  keep state"
 
 	# Use a real TCP connection so that it will be properly closed, guaranteeing the amount of packets.
@@ -636,27 +645,23 @@ rdr_match_body()
 		grep -qE "${rule_regexp}" $rules || atf_fail "Rule regexp not found for '${rule_regexp}'"
 	done
 
-	# All tables have counters increased for In/Pass and Out/Pass, not XPass nor Block.
-	table_counters="Evaluations: NoMatch: 0 Match: 1 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 6 Bytes: 455 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 4 Bytes: 311 Out/XPass: Packets: 0 Bytes: 0"
-	for table_test in \
-		"tbl_src_match1___${table_counters}" \
-		"tbl_dst_match1___${table_counters}" \
-		"tbl_src_match2___${table_counters}" \
-		"tbl_dst_match2___${table_counters}" \
-		"tbl_src_match3___${table_counters}" \
-		"tbl_dst_match3___${table_counters}" \
-		"tbl_src_pass___${table_counters}" \
-		"tbl_dst_pass___${table_counters}" \
-	; do
-		table_name=${table_test%%___*}
-		table_regexp=${table_test##*___}
-		table=$(mktemp) || exit 1
-		cat $tables | grep -A10 $table_name | tr '\n' ' ' | awk '{gsub("[\\[\\]]", " ", $0); gsub("[[:blank:]]+"," ",$0); print $0}' > ${table}
-		grep -qE "${table_regexp}" ${table} || atf_fail "Bad counters for table ${table_name}"
-	done;
+	# Inbound state: tables are looked up with the post-RDR destination,
+	# so the pre-RDR destination tables count XPass.
+	for table_name in tbl_src_match1 tbl_src_match2 tbl_src_match3 tbl_dst_match3; do
+		check_table_counters ${table_name} "$(table_counters 1 \
+		    0/0 6/455 0/0 0/0  0/0 4/311 0/0 0/0)"
+	done
+	for table_name in tbl_dst_match1 tbl_dst_match2; do
+		check_table_counters ${table_name} "$(table_counters 1 \
+		    0/0 0/0 0/0 6/455  0/0 0/0 0/0 4/311)"
+	done
+	for table_name in tbl_src_pass tbl_dst_pass; do
+		check_table_counters ${table_name} "$(table_counters 1 \
+		    0/0 0/0 6/455 0/0  0/0 0/0 4/311 0/0)"
+	done
 
 	for state_regexp in \
-		"${epair_tester}b tcp ${net_server_host_server}.* 6:4 pkts, 455:311 bytes, rule 7, " \
+		"${epair_tester}b tcp ${net_server_host_server}.* 6:4 pkts, 455:311 bytes, rule 7[, ]" \
 	; do
 		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
 	done
@@ -678,15 +683,17 @@ nat64_in_body()
 {
 	setup_router_server_nat64
 
+	# OpenBSD binds an if-bound af-to state to the inbound interface
+	# (${epair_tester}b), where the IPv4 replies arriving on
+	# ${epair_server1}a would not find it, so use floating states.
 	pft_set_rules router \
-		"set state-policy if-bound" \
 		"table <tbl_src_match> { ${net_tester_6_host_tester} }" \
 		"table <tbl_dst_match> { 64:ff9b::${net_server1_4_host_server} }" \
 		"table <tbl_src_pass>  { ${net_tester_6_host_tester} }" \
 		"table <tbl_dst_pass>  { 64:ff9b::${net_server1_4_host_server} }" \
 		"block log" \
 		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-		"match  in on ${epair_tester}b inet6 proto tcp from <tbl_src_match> to <tbl_dst_match> scrub (random-id)" \
+		"match  in on ${epair_tester}b inet6 proto tcp from <tbl_src_match> to <tbl_dst_match>" \
 		"pass   in on ${epair_tester}b inet6 proto tcp from <tbl_src_pass>  to <tbl_dst_pass> \
 			af-to inet from (${epair_server1}a) \
 			keep state"
@@ -697,8 +704,8 @@ nat64_in_body()
 	sleep 1
 	get_counters
 
-	# The amount of packets is counted properly but sizes are not because
-	# pd->tot_len is always post-nat, even when updating pre-nat counters.
+	# Each packet is counted with its size before the af-to translation:
+	# 6 IPv6 packets (455 bytes) in and 4 IPv4 replies (231 bytes).
 	for rule_regexp in \
 		"@3 match in on ${epair_tester}b .* Packets: 10 Bytes: 686 States: 1 " \
 		"@4 pass in on ${epair_tester}b .* Packets: 10 Bytes: 686 States: 1 " \
@@ -706,23 +713,19 @@ nat64_in_body()
 		grep -qE "${rule_regexp}" $rules || atf_fail "Rule regexp not found for '${rule_regexp}'"
 	done
 
-	# All tables have counters increased for In/Pass and Out/Pass, not XPass nor Block.
-	table_counters="Evaluations: NoMatch: 0 Match: 1 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 4 Bytes: 231 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 6 Bytes: 455 Out/XPass: Packets: 0 Bytes: 0"
-	for table_test in \
-		"tbl_src_match___${table_counters}" \
-		"tbl_dst_match___${table_counters}" \
-		"tbl_src_pass___${table_counters}" \
-		"tbl_dst_pass___${table_counters}" \
-	; do
-		table_name=${table_test%%___*}
-		table_regexp=${table_test##*___}
-		table=$(mktemp) || exit 1
-		cat $tables | grep -A10 $table_name | tr '\n' ' ' | awk '{gsub("[\\[\\]]", " ", $0); gsub("[[:blank:]]+"," ",$0); print $0}' > ${table}
-		grep -qE "${table_regexp}" ${table} || atf_fail "Bad counters for table ${table_name}"
-	done;
+	# OpenBSD binds an af-to state to the inbound interface and keeps one
+	# inbound state for both address families: both directions arrive
+	# inbound (the replies on ${epair_server1}a), so they are counted in
+	# the In direction, and the tables are looked up with the translated
+	# (stack side, IPv4) addresses of the state, which the IPv6 tables do
+	# not hold: XPass.
+	for table_name in tbl_src_match tbl_dst_match tbl_src_pass tbl_dst_pass; do
+		check_table_counters ${table_name} "$(table_counters 1 \
+		    0/0 0/0 0/0 10/686  0/0 0/0 0/0 0/0)"
+	done
 
 	for state_regexp in \
-		"${epair_server1}a tcp ${net_server_host_tester}.* 6:4 pkts, 455:231 bytes, rule 4, " \
+		"all tcp ${net_server_host_tester}.* 10:0 pkts, 686:0 bytes, rule 4[, ]" \
 	; do
 		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
 	done
@@ -740,81 +743,6 @@ nat64_in_cleanup()
 	pft_cleanup
 }
 
-atf_test_case "nat64_out" "cleanup"
-nat64_out_head()
-{
-	atf_set descr 'Counters on match and outbound af-to rules'
-	atf_set require.user root
-}
-
-nat64_out_body()
-{
-	setup_router_server_nat64
-
-	# af-to in outbound path requires routes for the pre-af-to traffic.
-	jexec router route add -inet6 64:ff9b::/96 -iface ${epair_server1}a
-
-	pft_set_rules router \
-		"set state-policy if-bound" \
-		"table <tbl_src_match> { ${net_tester_6_host_tester} }" \
-		"table <tbl_dst_match> { 64:ff9b::${net_server1_4_host_server} }" \
-		"table <tbl_src_pass>  { ${net_tester_6_host_tester} }" \
-		"table <tbl_dst_pass>  { 64:ff9b::${net_server1_4_host_server} }" \
-		"block log " \
-		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-		"pass  in  on ${epair_tester}b inet6 proto tcp keep state" \
-		"match out on ${epair_server1}a inet6 proto tcp from <tbl_src_match> to <tbl_dst_match> scrub (random-id)" \
-		"pass  out on ${epair_server1}a inet6 proto tcp from <tbl_src_pass>  to <tbl_dst_pass> \
-			af-to inet from (${epair_server1}a) \
-			keep state"
-
-	# Use a real TCP connection so that it will be properly closed, guaranteeing the amount of packets.
-	atf_check -s exit:0 -o match:"This is a test" -x \
-		"echo 'This is a test' | nc -w3 64:ff9b::${net_server1_4_host_server} echo"
-	sleep 1
-	get_counters
-
-	for rule_regexp in \
-		"@4 match out on ${epair_server1}a .* Packets: 10 Bytes: 686 States: 1 " \
-		"@5 pass out on ${epair_server1}a .* Packets: 10 Bytes: 686 States: 1 " \
-	; do
-		grep -qE "${rule_regexp}" $rules || atf_fail "Rule regexp not found for '${rule_regexp}'"
-	done
-
-	# All tables have counters increased for In/Pass and Out/Pass, not XPass nor Block.
-	table_counters="Evaluations: NoMatch: 0 Match: 1 In/Block: Packets: 0 Bytes: 0 In/Pass: Packets: 4 Bytes: 231 In/XPass: Packets: 0 Bytes: 0 Out/Block: Packets: 0 Bytes: 0 Out/Pass: Packets: 6 Bytes: 455 Out/XPass: Packets: 0 Bytes: 0"
-	for table_test in \
-		"tbl_src_match___${table_counters}" \
-		"tbl_dst_match___${table_counters}" \
-		"tbl_src_pass___${table_counters}" \
-		"tbl_dst_pass___${table_counters}" \
-	; do
-		table_name=${table_test%%___*}
-		table_regexp=${table_test##*___}
-		table=$(mktemp) || exit 1
-		cat $tables | grep -A10 $table_name | tr '\n' ' ' | awk '{gsub("[\\[\\]]", " ", $0); gsub("[[:blank:]]+"," ",$0); print $0}' > ${table}
-		grep -qE "${table_regexp}" ${table} || atf_fail "Bad counters for table ${table_name}"
-	done;
-
-	for state_regexp in \
-		"${epair_server1}a tcp 198.51.100.17:[0-9]+ \(64:ff9b::c633:6412\[7\]\) -> 198.51.100.18:7 \(2001:db8:4200::2\[[0-9]+\]\) .* 6:4 pkts, 455:231 bytes, rule 5," \
-	; do
-		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
-	done
-
-	echo " === interfaces === "
-	echo " === tester === "
-	jexec router pfctl -qvvsI -i ${epair_tester}b
-	echo " === server === "
-	jexec router pfctl -qvvsI -i ${epair_server1}a
-	echo " === "
-}
-
-nat64_out_cleanup()
-{
-	pft_cleanup
-}
-
 atf_init_test_cases()
 {
 	atf_add_test_case "match_pass_state"
@@ -827,5 +755,4 @@ atf_init_test_cases()
 	atf_add_test_case "nat_pass"
 	atf_add_test_case "rdr_match"
 	atf_add_test_case "nat64_in"
-	atf_add_test_case "nat64_out"
 }

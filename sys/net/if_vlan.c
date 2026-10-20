@@ -300,10 +300,6 @@ static	int vlan_setflag(struct ifnet *ifp, int flag, int status,
 static	int vlan_setflags(struct ifnet *ifp, int status);
 static	int vlan_setmulti(struct ifnet *ifp);
 static	int vlan_transmit(struct ifnet *ifp, struct mbuf *m);
-#ifdef ALTQ
-static void vlan_altq_start(struct ifnet *ifp);
-static	int vlan_altq_transmit(struct ifnet *ifp, struct mbuf *m);
-#endif
 static	int vlan_output(struct ifnet *ifp, struct mbuf *m,
     const struct sockaddr *dst, struct route *ro);
 static	void vlan_unconfig(struct ifnet *ifp);
@@ -825,7 +821,12 @@ vlan_pcp(struct ifnet *ifp, uint16_t *pcpp)
 	if (ifp->if_type != IFT_L2VLAN)
 		return (EINVAL);
 	ifv = ifp->if_softc;
-	*pcpp = ifv->ifv_pcp;
+	/*
+	 * 5BSD: automatic PCP is chosen per packet.  Offload consumers
+	 * (TOE) build one tag per connection: give them best effort, the
+	 * PCP that ether_8021q_frame() uses for the default priority.
+	 */
+	*pcpp = ifv->ifv_pcp == IFNET_PCP_NONE ? 0 : ifv->ifv_pcp;
 	return (0);
 }
 
@@ -1154,15 +1155,7 @@ vlan_clone_create(struct if_clone *ifc, char *name, size_t len,
 	ifp->if_dunit = unit;
 
 	ifp->if_init = vlan_init;
-#ifdef ALTQ
-	ifp->if_start = vlan_altq_start;
-	ifp->if_transmit = vlan_altq_transmit;
-	IFQ_SET_MAXLEN(&ifp->if_snd, ifqmaxlen);
-	ifp->if_snd.ifq_drv_maxlen = 0;
-	IFQ_SET_READY(&ifp->if_snd);
-#else
 	ifp->if_transmit = vlan_transmit;
-#endif
 	ifp->if_qflush = vlan_qflush;
 	ifp->if_ioctl = vlan_ioctl;
 #if defined(KERN_TLS) || defined(RATELIMIT)
@@ -1379,9 +1372,6 @@ vlan_clone_destroy(struct if_clone *ifc, struct ifnet *ifp, uint32_t flags)
 	if (ifp->if_vlantrunk)
 		return (EBUSY);
 
-#ifdef ALTQ
-	IFQ_PURGE(&ifp->if_snd);
-#endif
 	ether_ifdetach(ifp);	/* first, remove it from system-wide lists */
 	vlan_unconfig(ifp);	/* now it can be unconfigured and freed */
 	/*
@@ -1469,7 +1459,7 @@ vlan_transmit(struct ifnet *ifp, struct mbuf *m)
 	/*
 	 * Send it, precisely as ether_output() would have.
 	 */
-	error = (p->if_transmit)(p, m);
+	error = if_transmit(p, m);
 	if (error == 0) {
 		if_inc_counter(ifp, IFCOUNTER_OPACKETS, 1);
 		if_inc_counter(ifp, IFCOUNTER_OBYTES, len);
@@ -1503,38 +1493,6 @@ vlan_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 
 	return p->if_output(ifp, m, dst, ro);
 }
-
-#ifdef ALTQ
-static void
-vlan_altq_start(if_t ifp)
-{
-	struct ifaltq *ifq = &ifp->if_snd;
-	struct mbuf *m;
-
-	IFQ_LOCK(ifq);
-	IFQ_DEQUEUE_NOLOCK(ifq, m);
-	while (m != NULL) {
-		vlan_transmit(ifp, m);
-		IFQ_DEQUEUE_NOLOCK(ifq, m);
-	}
-	IFQ_UNLOCK(ifq);
-}
-
-static int
-vlan_altq_transmit(if_t ifp, struct mbuf *m)
-{
-	int err;
-
-	if (ALTQ_IS_ENABLED(&ifp->if_snd)) {
-		IFQ_ENQUEUE(&ifp->if_snd, m, err);
-		if (err == 0)
-			vlan_altq_start(ifp);
-	} else
-		err = vlan_transmit(ifp, m);
-
-	return (err);
-}
-#endif	/* ALTQ */
 
 /*
  * The ifp->if_qflush entry point for vlan(4) is a no-op.
@@ -1612,6 +1570,30 @@ vlan_input(struct ifnet *ifp, struct mbuf *m)
 		if_inc_counter(ifp, IFCOUNTER_NOPROTO, 1);
 		m_freem(m);
 		return;
+	}
+
+	/*
+	 * VLAN wire PCP and PF internal priority have opposite zero/one
+	 * order.  Allocate the pf tag only when pf is loaded (it installs
+	 * the tag hooks); frames without pf carry no tag.  Every PCP is
+	 * recorded, 0 included (it is pf priority 1, which "prio 1" rules
+	 * match), and marked as set, so that PCP 3 is kept rather than taken
+	 * for pf's default.
+	 */
+	if (pf_mtag_unlink_hook != NULL) {
+		struct pkthdr_pf *pfh;
+		uint8_t prio;
+
+		prio = EVL_PRIOFTAG(tag);
+		if (prio <= 1)
+			prio = !prio;
+		if ((pfh = m_pf_get(m)) == NULL) {
+			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+			m_freem(m);
+			return;
+		}
+		pfh->prio = prio;
+		pfh->prio_set = 1;
 	}
 
 	if (V_vlan_mtag_pcp) {
@@ -1734,7 +1716,7 @@ vlan_config(struct ifvlan *ifv, struct ifnet *p, uint16_t vid,
 	}
 
 	ifv->ifv_vid = vid;	/* must set this before vlan_inshash() */
-	ifv->ifv_pcp = 0;       /* Default: best effort delivery. */
+	ifv->ifv_pcp = IFNET_PCP_NONE; /* Default: internal packet priority. */
 	error = vlan_inshash(trunk, ifv);
 	if (error)
 		goto done;
@@ -2434,7 +2416,8 @@ vlan_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		error = priv_check(curthread, PRIV_NET_SETVLANPCP);
 		if (error)
 			break;
-		if (ifr->ifr_vlan_pcp > VLAN_PCP_MAX) {
+		if (ifr->ifr_vlan_pcp > VLAN_PCP_MAX &&
+		    ifr->ifr_vlan_pcp != IFNET_PCP_NONE) {
 			error = EINVAL;
 			break;
 		}

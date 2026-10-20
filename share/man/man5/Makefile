@@ -119,4 +119,7 @@ MANGROUPS+=		MAC_ABAC
 MAC_ABACPACKAGE=	mac-abac
 MAC_ABAC=		mac_abac.conf.5
 
+# OpenBSD PF manual pages (pf.conf, pf.os).
+.PATH: ${SRCTOP}/contrib/openbsd-pf/share/man/man5
+
 .include <bsd.prog.mk>

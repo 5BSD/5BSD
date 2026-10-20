@@ -389,17 +389,6 @@ ACCEPT_FILTER_DATA
 ACCEPT_FILTER_DNS
 ACCEPT_FILTER_HTTP
 ACCEPT_FILTER_TLS
-ALTQ			opt_global.h
-ALTQ_CBQ		opt_altq.h
-ALTQ_CDNR		opt_altq.h
-ALTQ_CODEL		opt_altq.h
-ALTQ_DEBUG		opt_altq.h
-ALTQ_HFSC		opt_altq.h
-ALTQ_FAIRQ		opt_altq.h
-ALTQ_NOPCC		opt_altq.h
-ALTQ_PRIQ		opt_altq.h
-ALTQ_RED		opt_altq.h
-ALTQ_RIO		opt_altq.h
 BOOTP			opt_bootp.h
 BOOTP_BLOCKSIZE		opt_bootp.h
 BOOTP_COMPAT		opt_bootp.h
@@ -413,7 +402,6 @@ RATELIMIT_DEBUG		opt_ratelimit.h
 INET			opt_inet.h
 INET6			opt_inet6.h
 STATS			opt_global.h
-IPDIVERT
 IPSEC			opt_ipsec.h
 IPSEC_DEBUG		opt_ipsec.h
 IPSEC_SUPPORT		opt_ipsec.h
@@ -427,7 +415,6 @@ MBUF_STRESS_TEST
 MROUTING		opt_mrouting.h
 NFSLOCKD
 NETLINK			opt_global.h
-PF_DEFAULT_TO_DROP	opt_pf.h
 ROUTETABLES		opt_route.h
 FIB_ALGO		opt_route.h
 RSS			opt_rss.h
@@ -663,8 +650,6 @@ DEV_CARP		opt_carp.h
 DEV_NETMAP		opt_global.h
 DEV_PCI			opt_pci.h
 DEV_PF			opt_pf.h
-DEV_PFLOG		opt_pf.h
-DEV_PFSYNC		opt_pf.h
 DEV_SPLASH		opt_splash.h
 DEV_VLAN		opt_vlan.h
 

@@ -72,7 +72,7 @@ basic_v4_body()
 
 	# Now with scrub rules present, so normalization is done
 	pft_set_rules ${j}a \
-		"scrub on ${j}a" \
+		"match on ${j}a scrub (reassemble tcp)" \
 		"block" \
 		"pass in proto sctp to port 1234"
 
@@ -147,7 +147,7 @@ basic_v6_body()
 
 	# Now with scrub rules present, so normalization is done
 	pft_set_rules ${j}a \
-		"scrub on ${j}a" \
+		"match on ${j}a scrub (reassemble tcp)" \
 		"block proto sctp" \
 		"pass in proto sctp to port 1234"
 
@@ -387,7 +387,7 @@ nat_v4_body()
 
 	jexec ${j}gw pfctl -e
 	pft_set_rules ${j}gw \
-		"nat on ${epair_srv}b from 192.0.2.0/24 -> (${epair_srv}b)" \
+		"match out on ${epair_srv}b from 192.0.2.0/24 nat-to (${epair_srv}b)" \
 		"pass"
 
 	# Sanity check
@@ -440,7 +440,7 @@ nat_v6_body()
 
 	jexec ${j}gw pfctl -e
 	pft_set_rules ${j}gw \
-		"nat on ${epair_srv}b from 2001:db8:1::/64 -> (${epair_srv}b)" \
+		"match out on ${epair_srv}b from 2001:db8:1::/64 nat-to (${epair_srv}b)" \
 		"pass"
 
 	# Sanity check
@@ -492,9 +492,10 @@ rdr_v4_body()
 	jexec ${j}c route add default 192.0.2.1
 
 	jexec ${j}gw pfctl -e
+	# OpenBSD pf: the last matching rule wins, so the rdr-to rule last.
 	pft_set_rules ${j}gw \
-		"rdr pass on ${epair_srv}b proto sctp from 198.51.100.0/24 to any port 1234 -> 192.0.2.2 port 1234" \
-		"pass"
+		"pass" \
+		"pass in on ${epair_srv}b proto sctp from 198.51.100.0/24 to any port 1234 rdr-to 192.0.2.2 port 1234"
 
 	echo "foo" | jexec ${j}c nc --sctp -N -l 1234 &
 
@@ -510,8 +511,8 @@ rdr_v4_body()
 	echo "bar" | jexec ${j}c nc --sctp -N -l 1234 &
 
 	pft_set_rules ${j}gw \
-		"rdr pass on ${epair_srv}b proto sctp from 198.51.100.0/24 to any port 1234 -> 192.0.2.2 port 4321" \
-		"pass"
+		"pass" \
+		"pass in on ${epair_srv}b proto sctp from 198.51.100.0/24 to any port 1234 rdr-to 192.0.2.2 port 4321"
 
 	# This will fail
 	out=$(jexec ${j}srv nc --sctp -N -w 3 198.51.100.2 4321)

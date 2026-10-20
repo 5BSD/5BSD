@@ -1055,13 +1055,6 @@ socreate(int dom, struct socket **aso, int type, int proto,
 	struct socket *so;
 	int error;
 
-#ifdef COMPAT_FREEBSD15
-	/* divert(4) historically abuses PF_INET.  Use PF_DIVERT instead. */
-	if (__predict_false(dom == PF_INET && type == SOCK_RAW &&
-	    proto == __IPPROTO_DIVERT))
-		dom = PF_DIVERT;
-#endif
-
 	prp = pffindproto(dom, type, proto);
 	if (prp == NULL) {
 		/* No support for domain. */
@@ -1091,6 +1084,7 @@ socreate(int dom, struct socket **aso, int type, int proto,
 
 	so->so_type = type;
 	so->so_cred = crhold(cred);
+	so->so_cpid = td != NULL ? td->td_proc->p_pid : 0;
 	if ((prp->pr_domain->dom_family == PF_INET) ||
 	    (prp->pr_domain->dom_family == PF_INET6) ||
 	    (prp->pr_domain->dom_family == PF_ROUTE))
@@ -1321,6 +1315,7 @@ solisten_clone(struct socket *head)
 	so->so_fibnum = head->so_fibnum;
 	so->so_proto = head->so_proto;
 	so->so_cred = crhold(head->so_cred);
+	so->so_cpid = head->so_cpid;
 #ifdef SOCKET_HHOOK
 	if (V_socket_hhh[HHOOK_SOCKET_NEWCONN]->hhh_nhooks > 0) {
 		if (hhook_run_socket(so, head, HHOOK_SOCKET_NEWCONN)) {
@@ -1455,6 +1450,7 @@ sopeeloff(struct socket *head, struct protosw *so_proto)
 	so->so_fibnum = head->so_fibnum;
 	so->so_proto = so_proto;
 	so->so_cred = crhold(head->so_cred);
+	so->so_cpid = head->so_cpid;
 #ifdef MAC
 	mac_socket_newconn(head, so);
 #endif
@@ -4029,6 +4025,40 @@ so_setsockopt(struct socket *so, int level, int optname, void *optval,
 	return (sosetopt(so, &sopt));
 }
 
+/*
+ * SO_BINDANY (OpenBSD): allow binding to and sending from addresses that
+ * are not local.  It is the socket-level spelling of IP_BINDANY and
+ * IPV6_BINDANY and is handled by the protocol.
+ */
+static int
+so_bindany_opt(struct socket *so, struct sockopt *sopt)
+{
+	struct sockopt popt;
+	int error;
+
+	popt = *sopt;
+	switch (so->so_proto->pr_domain->dom_family) {
+#ifdef INET
+	case AF_INET:
+		popt.sopt_level = IPPROTO_IP;
+		popt.sopt_name = IP_BINDANY;
+		break;
+#endif
+#ifdef INET6
+	case AF_INET6:
+		popt.sopt_level = IPPROTO_IPV6;
+		popt.sopt_name = IPV6_BINDANY;
+		break;
+#endif
+	default:
+		return (ENOPROTOOPT);
+	}
+	error = so->so_proto->pr_ctloutput(so, &popt);
+	/* getsockopt(2) returns the size the protocol copied out. */
+	sopt->sopt_valsize = popt.sopt_valsize;
+	return (error);
+}
+
 int
 sosetopt(struct socket *so, struct sockopt *sopt)
 {
@@ -4111,6 +4141,10 @@ stdopt:
 
 		case SO_SETFIB:
 			error = so->so_proto->pr_ctloutput(so, sopt);
+			break;
+
+		case SO_BINDANY:
+			error = so_bindany_opt(so, sopt);
 			break;
 
 		case SO_USER_COOKIE:
@@ -4346,6 +4380,10 @@ integer:
 			optval = so->so_fibnum;
 			SOCK_UNLOCK(so);
 			goto integer;
+
+		case SO_BINDANY:
+			error = so_bindany_opt(so, sopt);
+			break;
 
 		case SO_DOMAIN:
 			optval = so->so_proto->pr_domain->dom_family;

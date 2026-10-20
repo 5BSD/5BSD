@@ -54,7 +54,6 @@ In
 .Cd hw.vtnet. Ns Ar X Ns Va .lro_entry_count
 .Cd hw.vtnet.lro_mbufq_depth
 .Cd hw.vtnet. Ns Ar X Ns Va .lro_mbufq_depth
-.Cd hw.vtnet.altq_disable
 .Cd if_vtnet_load="YES"
 .Sh DESCRIPTION
 The
@@ -141,10 +140,6 @@ The default value is 128, the minimum value is 8.
 .It Va hw.vtnet.lro_mbufq_depth
 .It Va hw.vtnet. Ns Ar X Ns Va .lro_mbufq_depth
 This tunable sets the depth of the software TCP LRO mbuf queue.
-The default value is 0.
-.It Va hw.vtnet.altq_disable
-This tunable disables ALTQ support, allowing the use of multiqueue instead.
-This option applies to all interfaces.
 The default value is 0.
 .El
 .Sh TRANSMIT QUEUE STATISTICS

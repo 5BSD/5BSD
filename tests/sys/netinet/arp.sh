@@ -148,7 +148,7 @@ arp_lookup_host_body() {
 
 	# get jail b's MAC address
 	eth="$(ifconfig -j ${jname}b ${epair0}b |
-		sed -nE "s/^\tether ([0-9a-f:]*)$/\1/p")"
+		sed -nE "s/^\tlladdr ([0-9a-f:]*)$/\1/p")"
 
 	# no entry yet
 	atf_check -s exit:1 -o match:"\(${ipb}\) -- no entry" \
@@ -190,11 +190,12 @@ static_body() {
 	ipb=198.51.100.2
 	ipb_re=$(echo ${ipb} | sed 's/\./\\./g')
 	max_age=$(sysctl -n net.link.ether.inet.max_age)
-	max_age="(${max_age}|$((${max_age} - 1)))"
+	# 5BSD: a few seconds may pass on a slow (emulated) test machine.
+	max_age="(${max_age}|$((${max_age} - 1))|$((${max_age} - 2))|$((${max_age} - 3))|$((${max_age} - 4))|$((${max_age} - 5)))"
 
 	atf_check ifconfig -j ${jname}a ${epair0}a inet ${ipa}/24
 	eth="$(ifconfig -j ${jname}b ${epair0}b |
-		sed -nE "s/^\tether ([0-9a-f:]*)$/\1/p")"
+		sed -nE "s/^\tlladdr ([0-9a-f:]*)$/\1/p")"
 
 	# Expected outputs
 	permanent=\

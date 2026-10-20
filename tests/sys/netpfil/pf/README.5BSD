@@ -1,0 +1,114 @@
+tests/sys/netpfil/pf on 5BSD (OpenBSD PF)
+=========================================
+
+FreeBSD's pf tests, kept where the feature exists in OpenBSD PF and adapted
+to OpenBSD pf.conf syntax and OpenBSD tcpdump/pfctl output; retired where
+they test FreeBSD-only behaviour.  The 5BSD extensions (ether rules,
+dummynet, SCTP multihome, VNET, divert, jail) keep their tests.  Ether
+rules (ether.sh), dummynet (../common/dummynet.sh) and SCTP with
+multihoming (sctp.sh, sctp.py) are ported as the "5BSD: ether",
+"5BSD: dummynet" and "5BSD: sctp" extensions
+(contrib/openbsd-pf/README.5BSD).  pfsync.sh's basic_ipv6,
+basic_ipv6_unicast and ipv6_syncpeer test the "5BSD: pfsync6" IPv6 sync
+peers; carp_demotion tests the "5BSD: carp" mapping of pfsync's carp
+demotion onto net.inet.carp.demotion (it needs carp(4) loaded).
+OpenBSD's own suites are in openbsd/ (contrib/openbsd-pf/regress).
+
+OpenBSD applies a match rule's actions (set tos, set prio, ...) through
+the state of the rule that passes the packet; its implicit default rule
+passes without state, so a ruleset of match rules alone changes nothing.
+FreeBSD applied them anyway.  Tests that only had match rules
+(set_tos.sh, ../common/tos.sh) gain "pass out", so the outbound pass
+creates the state that carries the actions.
+
+STATUS: converted.  Every ruleset loads with OpenBSD pfctl (checked with
+pfctl -n); runtime results are recorded with each gate run in
+/usr/obj/5BSD-pf-parity/results.  See tools/test/pf-parity/HANDOFF-consumers.md
+for the history.
+
+Retired (test|disposition|reason):
+altq.sh (all 6)|retired|ALTQ: FreeBSD altq(4) disciplines configured through FreeBSD pf; OpenBSD PF queues (HFSC/FQ-CoDel) replace them
+ridentifier.sh:ridentifier|retired|FreeBSD-only "ridentifier" rule option and its pflog field
+fragmentation_compat.sh (all 7)|retired|legacy "scrub" rules (retired keywords); the same reassembly cases run in fragmentation_pass.sh with "match ... scrub"
+scrub_compat.sh (all 8)|retired|legacy "scrub" rules; covered by scrub_pass.sh with "match ... scrub"
+max_pkt_size.sh (all 2)|retired|FreeBSD-only "max-pkt-size" rule option
+rules_counter.sh:keepcounters, 4G|retired|FreeBSD-only "set keepcounters"
+nat.sh:nested_anchor|retired|legacy nat-anchor and pfctl -sn (FreeBSD translation rulesets)
+nat.sh:endpoint_independent_{compat,exhaust,static_port,pass}|retired|FreeBSD-only "endpoint-independent" NAT option
+nat.sh:map_e_compat, map_e_pass|retired|FreeBSD-only MAP-E port-set option (map-e-portset)
+nat.sh:binat_compat|retired|legacy "binat on" rule; binat_match covers binat-to
+rdr.sh:tcp_v6_compat, srcport_compat|retired|legacy "rdr on" rules; the *_pass cases cover rdr-to
+route_to.sh:prefer_ipv6_nexthop_* (11)|retired|FreeBSD-only "prefer-ipv6-nexthop" pool option
+src_track.sh:sn_types_compat|retired|legacy nat/rdr source-node types
+src_track.sh:mixed_af|retired|uses FreeBSD-only prefer-ipv6-nexthop
+pflow.sh:max_entries|retired|FreeBSD pflowctl sender limit (pflow(4) is a cloned interface)
+pflow.sh:obs_dom|retired|FreeBSD-only IPFIX observation domain setting
+pfsync.sh:route_to_1301, route_to_1301_bad_ruleset, route_to_1301_bad_rpool, route_to_1400_bad_ruleset, route_to_1400_bad_ifname|retired|FreeBSD pfsync message versions 13.01/14.00 ("ifconfig pfsync0 version"); pfsync uses OpenBSD's protocol
+pfsync.sh:altq_queues|retired|ALTQ queue ids in pfsync state
+set_tos.sh, scrub_pass.sh|adapted|legacy "scrub ... set-tos" and "set ( tos )" became OpenBSD "match ... set tos"
+common/{nat,rdr,fragments,tos}.sh (pf variants)|adapted|OpenBSD nat-to/rdr-to/set tos syntax
+pfsync.sh:rt_af|retired|uses FreeBSD-only prefer-ipv6-nexthop
+
+nat64.sh:icmp_echo_out, fragmentation_out, tcp_out_if_bound, tcp_out_floating, udp_out, sctp_out|retired|af-to on outbound rules (OpenBSD af-to is inbound only)
+nat64.sh:route_to, reply_to|retired|route-to/reply-to on af-to rules (rejected by OpenBSD pfctl)
+pfsync.sh:af_to_out_if_bound|retired|af-to on outbound rules
+pfsync.sh:tag|retired|state tag in pfsync messages (FreeBSD pfsync 14.00); OpenBSD pfsync_state has no tag
+rdr.sh:srcport_pass|retired|FreeBSD rdr source-port rewriting on state-key collision; OpenBSD rdr-to only translates the destination (rdr-srcport.py unused)
+table.sh:reset_nonzero|retired|FreeBSD-only "pfctl -T reset"
+table.sh:load|retired|FreeBSD-only "pfctl -T load"
+counters.sh:nat64_out|retired|af-to on an outbound rule
+killstate.sh:multilabel|retired|several labels per rule (FreeBSD-only)
+killstate.sh:gateway|retired|FreeBSD-only "pfctl -k gateway"
+killstate.sh:nat|retired|FreeBSD-only "pfctl -k nat"
+names.sh:start_number|retired|interface names starting with a digit in (if) (FreeBSD parser extension)
+scrub.sh:no_scrub_v4, no_scrub_v6|retired|legacy "no scrub" keyword; OpenBSD has no scrub ruleset
+fragmentation_no_reassembly.sh:compat_override_v4|retired|FreeBSD scrub-rules-override-"set reassemble" compatibility (legacy "no scrub")
+
+Adapted (unverified):
+anchor, counters, icmp, icmp6, if_enc, killstate, match, nat, proxy, rdr,
+route_to, sctp, src_track, fragmentation_pass, dup, nat64, pfsync,
+unmapped_mbuf: FreeBSD "nat on/rdr on/binat on ... ->" became OpenBSD
+"match/pass ... nat-to/rdr-to/binat-to"; "route-to (if addr)" became
+"route-to addr".
+set_tos, scrub_pass: "scrub ... set-tos", "set ( tos x )" became
+"match ... set tos x".
+sctp: legacy "scrub on <if>" (a scrub rule being present) became
+"match on <if> scrub (reassemble tcp)"; sctp.py needs no conversion.
+pflog: expectations in OpenBSD tcpdump format ("rule N/(reason) action",
+"icmp: echo request"), no --immediate-mode/-U.
+pflow: pflowctl replaced by ifconfig pflow0 flowdst/pflowproto.
+debug: OpenBSD debug levels (err/debug); set limit removed (host-owned).
+pfctl -x loud became pfctl -x debug; ridentifier option dropped (icmp6).
+utils.subr: pflog/pfsync/pflow availability from ifconfig -C (they are
+part of pf.ko).
+pfsync: the FreeBSD "version" parameter removed from the route-to helper.
+common/{nat,rdr,fragments,tos}.sh: pf variants converted the same way.
+ether: the 5BSD ether rules keep FreeBSD's syntax; the captive cases'
+"rdr on ... ->" became "pass in ... rdr-to".
+
+Adapted in the conversion (all rulesets checked with pfctl -n):
+route_to: route options after the hosts; multi-entry pools became one
+round-robin table; a failed pool counts as "no-route"; route-to keeps
+state; divert-to became divert-packet (common/divapp uses divert(4)).
+pfsync: pfsync0 created per jail; pings from the synced host; defer
+checks that the state update precedes the deferred packet.
+fragmentation_pass, fragmentation_no_reassembly, synproxy,
+common/fragments: reassembly is global and on by default ("set reassemble
+yes|no"); scrub options via match rules.  rdr: "rdr pass" became
+"pass quick ... rdr-to"; "no rdr" a quick pass without rdr-to.  proxy:
+OpenBSD ftp-proxy/tftp-proxy rules (divert-to, single anchor).  nat66.py:
+binat-to ... bitmask.  table/counters: match-rule table hits count under
+Match, translated traffic under XPass, match rules count only through
+the passing rule's state.  anchor: plain anchors and -sr; -sl per anchor.
+get_state: ", rule N" and label kill.  killstate: -k matches the stack
+side; -i -Fs needs if-bound states.  syncookie: "active" from the
+syncookies-sent counter.  pflog: pflog0 created; per-rule logif;
+state_max asserts the limit counter (OpenBSD does not log state-limit
+drops); rdr_action logs the pre-NAT packet with [rewritten: ...].
+pflow/pft_read_ipfix.py: OpenBSD IPFIX template ids.  match:allow_opts
+asserts pfctl refuses "match ... allow-opts".  once: no "keep state" in
+OpenBSD output.  set_tos, common/tos: "pass out" so match actions apply.
+limits, syncookie: pool limits are host-owned; these run exclusively in
+the host vnet, set limits with pfctl -f (OpenBSD has no -O) and restore them.
+mld-group.py, tcp-original-ack.py: pfctl -ss (-S takes a file).
+nat64.py: requires only pf; creates pfsync0.

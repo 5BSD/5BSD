@@ -359,8 +359,6 @@
         ..
     ..
     net
-        altq
-        ..
         route
         ..
     ..
@@ -388,10 +386,6 @@
     ..
     netlink
         route
-        ..
-    ..
-    netpfil
-        pf              tags=package=pf-dev
         ..
     ..
     nfs

@@ -1,0 +1,10 @@
+# 5BSD: the optimizer keeps rules with different dummynet pipes or queues
+# in order (last match wins): the general rule stays before the specific
+# ones, the backup host's rule stays last.  Rules with the same queue may
+# still be reordered among themselves.
+pass in on lo0 from 192.168.10.0/24 dnqueue (12, 21)
+pass in on lo0 proto tcp from 192.168.10.0/24 to port { 22, 53 } dnqueue (11, 21)
+pass in on lo0 proto udp from 192.168.10.0/24 to port 53 dnqueue (11, 21)
+pass in on lo0 from 192.168.10.50 dnqueue (13, 21)
+pass in on lo0 from 192.168.20.0/24 dnpipe 1
+pass in on lo0 proto udp from 192.168.20.0/24 dnpipe 2

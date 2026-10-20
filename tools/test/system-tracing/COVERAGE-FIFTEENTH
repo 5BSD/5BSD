@@ -164,3 +164,7 @@ was identified; this pre-existing host path is not diagnosed here.
 /dev/dtrace is unavailable. No live probe firing, driver fault injection,
 pool scrub/rebuild, PF reconfiguration, or hardware hotplug was performed.
 No live kernel event ordering or tracing overhead qualification is claimed.
+
+Update 2026-10-15: FreeBSD pf was retired when OpenBSD PF landed.  The PF
+contracts above keep their names and arguments and now fire from
+contrib/openbsd-pf/sys/net (marked "5BSD: DTrace"); see dtrace_pf(4).

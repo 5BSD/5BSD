@@ -62,7 +62,6 @@ ATF_TC_BODY(allowlisted_module_is_permitted, tc)
 	ATF_CHECK(extension_allowed(&cfg, "zfs"));
 	ATF_CHECK(extension_allowed(&cfg, "linux64"));
 	ATF_CHECK(extension_allowed(&cfg, "vmm"));
-	ATF_CHECK(extension_allowed(&cfg, "pty"));
 	ATF_CHECK(extension_allowed(&cfg, "fdescfs"));
 	ATF_CHECK(extension_allowed(&cfg, "linprocfs"));
 	ATF_CHECK(extension_allowed(&cfg, "linsysfs"));
@@ -74,6 +73,8 @@ ATF_TC_BODY(allowlisted_module_is_permitted, tc)
 	ATF_CHECK(extension_allowed(&cfg, "coretemp"));
 	ATF_CHECK(extension_allowed(&cfg, "amdsmn"));
 	ATF_CHECK(extension_allowed(&cfg, "amdtemp"));
+	ATF_CHECK(extension_allowed(&cfg, "dummynet"));
+	ATF_CHECK(extension_allowed(&cfg, "pf"));
 }
 
 /*

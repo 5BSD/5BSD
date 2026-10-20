@@ -64,7 +64,6 @@ const char *sysdecode_ipproto(int _protocol);
 void	sysdecode_kevent_fflags(FILE *_fp, short _filter, int _fflags,
 	    int _base);
 const char *sysdecode_itimer(int _which);
-const char *sysdecode_pfnl_cmd(int _cmd);
 void	sysdecode_nlm_flag(FILE *_fp, int _flag);
 const char *sysdecode_kevent_filter(int _filter);
 bool	sysdecode_kevent_flags(FILE *_fp, int _flags, int *_rem);

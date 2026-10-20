@@ -76,16 +76,54 @@ pfsynct_init()
 {
 	pft_init
 
-	if ! kldstat -q -m pfsync; then
+	# 5BSD provides pfsync through the integrated pf module.
+	if ! kldstat -q -m pfsync &&
+	    ! ifconfig -C | grep -Eq '(^|[[:space:]])pfsync([[:space:]]|$)'; then
 		atf_skip "This test requires pfsync"
 	fi
+}
+
+# 5BSD pfsync is a cloner; unlike FreeBSD it does not precreate pfsync0
+# in each vnet.
+pfsynct_mkif()
+{
+	jexec $1 ifconfig pfsync0 create ||
+	    atf_fail "creating pfsync0 in jail $1"
+}
+
+# 5BSD: pf's pool limits are host-wide and owned by the host vnet.  Tests
+# that change them run exclusively in the host vnet (Makefile), save the
+# limits first and restore them in cleanup.  OpenBSD's pfctl has no
+# options-only load (FreeBSD's -O): these load a ruleset of only options,
+# which also empties the host's main ruleset.
+limits_save()
+{
+	pfctl -sm | awk '{ print "set limit " $1 " " $NF }' > limits.original
+	[ -s limits.original ] || atf_fail "Cannot read the current limits"
+}
+
+limits_restore()
+{
+	if [ -f limits.original ]; then
+		pfctl -f limits.original
+	fi
+}
+
+limits_set()
+{
+	while [ $# -gt 0 ]; do
+		printf "set limit %s\n" "$1"
+		shift
+	done | pfctl -f - || atf_fail "Failed to set limits"
 }
 
 pflog_init()
 {
 	pft_init
 
-	if ! kldstat -q -m pflog; then
+	# 5BSD: pflog(4) is part of pf.ko.
+	if ! kldstat -q -m pflog &&
+	    ! ifconfig -C | grep -Eq '(^|[[:space:]])pflog([[:space:]]|$)'; then
 		atf_skip "This test requires pflog"
 	fi
 }
@@ -94,7 +132,9 @@ pflow_init()
 {
 	pft_init
 
-	if ! kldstat -q -m pflow; then
+	# 5BSD: pflow(4) is part of pf.ko.
+	if ! kldstat -q -m pflow &&
+	    ! ifconfig -C | grep -Eq '(^|[[:space:]])pflow([[:space:]]|$)'; then
 		atf_skip "This test requires pflow"
 	fi
 }

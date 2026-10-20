@@ -657,7 +657,8 @@ main(int ac, char *av[])
 		ifmaybeload(args, args->ifname);
 
 		char *arg = args_peek(args);
-		if (if_nametoindex(args->ifname) == 0) {
+		if (if_nametoindex(args->ifname) == 0 &&
+		    !ifautocreate(args->ifname, arg)) {
 			/*
 			 * NOTE:  We must special-case the `create' command
 			 * right here as we would otherwise fail when trying
@@ -684,7 +685,13 @@ main(int ac, char *av[])
 				exit(exit_code);
 			}
 #endif
-			errx(1, "interface %s does not exist", args->ifname);
+			/* OpenBSD ifconfig(8) wording */
+			if (arg == NULL) {
+				fprintf(stderr, "%s: no such interface\n",
+				    args->ifname);
+				exit(1);
+			}
+			errx(1, "%s: no such interface", args->ifname);
 		} else {
 			/*
 			 * Do not allow use `create` command as hostname if
@@ -954,6 +961,53 @@ af_getbyfamily(int af)
 		if (afp->af_af == af)
 			return afp;
 	return NULL;
+}
+
+/*
+ * Interface status in OpenBSD ifconfig(8) order: interface specific lines
+ * (carp, pfsync, pflow, vlan, lagg, tunnels, ...), groups, media and
+ * wireless status, then, after the addresses, bridge status and the 5BSD
+ * additions (nd6 options, fib, MAC label).
+ */
+static int
+af_status_phase(const struct afswtch *afp)
+{
+	static const struct {
+		const char	*name;
+		int		 phase;
+	} phases[] = {
+		{ "af_group",		AF_PHASE_GROUPS },
+		{ "af_media",		AF_PHASE_MEDIA },
+		{ "af_ieee80211",	AF_PHASE_WIRELESS },
+		{ "af_bridge",		AF_PHASE_BRIDGE },
+		{ "inet6",		AF_PHASE_EXTRA },
+		{ "af_fib",		AF_PHASE_EXTRA },
+		{ "af_maclabel",	AF_PHASE_EXTRA },
+	};
+
+	for (size_t i = 0; i < nitems(phases); i++)
+		if (strcmp(afp->af_name, phases[i].name) == 0)
+			return (phases[i].phase);
+	return (AF_PHASE_IFACE);
+}
+
+void
+af_other_status_phase(if_ctx *ctx, int phase)
+{
+	struct afswtch *afp;
+	uint8_t afmask[howmany(AF_MAX, NBBY)];
+
+	memset(afmask, 0, sizeof(afmask));
+	for (afp = afs; afp != NULL; afp = afp->af_next) {
+		if (afp->af_other_status == NULL)
+			continue;
+		if (af_status_phase(afp) != phase)
+			continue;
+		if (afp->af_af != AF_UNSPEC && isset(afmask, afp->af_af))
+			continue;
+		afp->af_other_status(ctx);
+		setbit(afmask, afp->af_af);
+	}
 }
 
 void
@@ -1339,6 +1393,20 @@ setifnetmask(if_ctx *ctx, const char *addr, int dummy __unused)
 	}
 }
 
+/*
+ * OpenBSD "prefixlen": the netmask as a prefix length, for the address
+ * families that have one.
+ */
+static void
+setifprefixlen(if_ctx *ctx, const char *plen, int dummy __unused)
+{
+	const struct afswtch *afp = ctx->afp;
+
+	if (afp->af_getprefix == NULL)
+		errx(1, "prefixlen: invalid option for %s", afp->af_name);
+	afp->af_getprefix(plen, MASK);
+}
+
 static void
 setifbroadaddr(if_ctx *ctx, const char *addr, int dummy __unused)
 {
@@ -1624,28 +1692,6 @@ unsetifdescr(if_ctx *ctx, const char *val __unused, int value __unused)
 
 #ifdef WITHOUT_NETLINK
 
-static const char *IFFBITS[] = {
-	[0]  = "UP",
-	[1]  = "BROADCAST",
-	[2]  = "DEBUG",
-	[3]  = "LOOPBACK",
-	[4]  = "POINTOPOINT",
-	[6]  = "RUNNING",
-	[7]  = "NOARP",
-	[8]  = "PROMISC",
-	[9]  = "ALLMULTI",
-	[10] = "OACTIVE",
-	[11] = "SIMPLEX",
-	[12] = "LINK0",
-	[13] = "LINK1",
-	[14] = "LINK2",
-	[15] = "MULTICAST",
-	[17] = "PPROMISC",
-	[18] = "MONITOR",
-	[19] = "STATICARP",
-	[20] = "STICKYARP",
-};
-
 static const char *IFCAPBITS[] = {
 	[0]  = "RXCSUM",
 	[1]  = "TXCSUM",
@@ -1749,7 +1795,7 @@ print_ifcap(if_ctx *ctx)
 
 	if ((ifr.ifr_curcap & IFCAP_NV) != 0)
 		print_ifcap_nv(ctx);
-	else {
+	else if (ifr.ifr_curcap != 0) {
 		printf("\toptions=%x", ifr.ifr_curcap);
 		print_bits("options", &ifr.ifr_curcap, 1, IFCAPBITS, nitems(IFCAPBITS));
 		putchar('\n');
@@ -1777,8 +1823,16 @@ print_metric(if_ctx *ctx)
 {
 	struct ifreq ifr = {};
 
-	if (ioctl_ctx_ifr(ctx, SIOCGIFMETRIC, &ifr) != -1)
+	if (ioctl_ctx_ifr(ctx, SIOCGIFMETRIC, &ifr) != -1 && ifr.ifr_metric != 0)
 		printf(" metric %d", ifr.ifr_metric);
+}
+
+/* OpenBSD: "\tindex N" (5BSD has no interface priority or llprio). */
+void
+print_index(if_ctx *ctx __unused, u_int idx)
+{
+	if (idx != 0)
+		printf("\tindex %u\n", idx);
 }
 
 #ifdef WITHOUT_NETLINK
@@ -1843,20 +1897,46 @@ status(if_ctx *ctx, const struct sockaddr_dl *sdl __unused, struct ifaddrs *ifa)
 	old_s = ctx->io_s;
 	ctx->io_s = s;
 
-	printf("%s: flags=%x", ctx->ifname, ifa->ifa_flags);
-	print_bits("flags", &ifa->ifa_flags, 1, IFFBITS, nitems(IFFBITS));
+	{
+		struct ifreq cifr = {};
+
+		printf("%s: ", ctx->ifname);
+		print_ifflags(ifa->ifa_flags,
+		    ioctl_ctx_ifr(ctx, SIOCGIFCAP, &cifr) == 0 ? cifr.ifr_curcap : 0);
+	}
+	print_rdomain(ctx);
 	print_metric(ctx);
 	print_mtu(ctx);
 	putchar('\n');
 
+	/* OpenBSD ifconfig(8) order (see af_other_status_phase()). */
+	if (allfamilies || args->afp->af_af == AF_LINK) {
+		for (ift = ifa; ift != NULL; ift = ift->ifa_next) {
+			if (ift->ifa_addr == NULL ||
+			    ift->ifa_addr->sa_family != AF_LINK ||
+			    strcmp(ifa->ifa_name, ift->ifa_name) != 0)
+				continue;
+			af_getbyfamily(AF_LINK)->af_status(ctx, ift);
+			break;
+		}
+	}
 	print_description(ctx);
-
-	print_ifcap(ctx);
+	if (allfamilies)
+		print_index(ctx, if_nametoindex(ctx->ifname));
 
 	tunnel_status(ctx);
 
+	if (allfamilies) {
+		af_other_status_phase(ctx, AF_PHASE_IFACE);
+		af_other_status_phase(ctx, AF_PHASE_GROUPS);
+		af_other_status_phase(ctx, AF_PHASE_MEDIA);
+		af_other_status_phase(ctx, AF_PHASE_WIRELESS);
+	}
+
 	for (ift = ifa; ift != NULL; ift = ift->ifa_next) {
 		if (ift->ifa_addr == NULL)
+			continue;
+		if (ift->ifa_addr->sa_family == AF_LINK)
 			continue;
 		if (strcmp(ifa->ifa_name, ift->ifa_name) != 0)
 			continue;
@@ -1868,26 +1948,12 @@ status(if_ctx *ctx, const struct sockaddr_dl *sdl __unused, struct ifaddrs *ifa)
 		} else if (args->afp->af_af == ift->ifa_addr->sa_family)
 			args->afp->af_status(ctx, ift);
 	}
-#if 0
-	if (allfamilies || afp->af_af == AF_LINK) {
-		const struct afswtch *lafp;
-
-		/*
-		 * Hack; the link level address is received separately
-		 * from the routing information so any address is not
-		 * handled above.  Cobble together an entry and invoke
-		 * the status method specially.
-		 */
-		lafp = af_getbyname("lladdr");
-		if (lafp != NULL) {
-			info.rti_info[RTAX_IFA] = (struct sockaddr *)sdl;
-			lafp->af_status(s, &info);
-		}
-	}
-#endif
-	if (allfamilies)
-		af_other_status(ctx);
-	else if (args->afp->af_other_status != NULL)
+	if (allfamilies) {
+		af_other_status_phase(ctx, AF_PHASE_BRIDGE);
+		/* 5BSD additions */
+		print_ifcap(ctx);
+		af_other_status_phase(ctx, AF_PHASE_EXTRA);
+	} else if (args->afp->af_other_status != NULL)
 		args->afp->af_other_status(ctx);
 
 	print_ifstatus(ctx);
@@ -1928,6 +1994,41 @@ void
 Perror(const char *cmd)
 {
 	Perrorc(cmd, errno);
+}
+
+/*
+ * The "flags=" field of the status line in OpenBSD ifconfig(8) form: the
+ * value and names are OpenBSD's IFF_* bits plus its extended flags
+ * (IFXF_*) shifted by 16.  5BSD's flags map onto them where the meaning is
+ * the same; 5BSD-only flags (PPROMISC, STICKYARP, DYING, LOWER_UP, ...)
+ * are not shown, and the LRO extended flag reflects the LRO capability.
+ */
+static const char *OBSD_IFFBITS[] = {
+	"UP", "BROADCAST", "DEBUG", "LOOPBACK", "POINTOPOINT", "STATICARP",
+	"RUNNING", "NOARP", "PROMISC", "ALLMULTI", "OACTIVE", "SIMPLEX",
+	"LINK0", "LINK1", "LINK2", "MULTICAST",
+	/* IFXF_* << 16 */
+	"MPSAFE", "CLONED", "AUTOCONF6TEMP", "MPLS", "WOL", "AUTOCONF6",
+	"INET6_NOSOII", "AUTOCONF4", "MONITOR", "LRO",
+};
+#define	OBSD_IFXF_MONITOR	0x100
+#define	OBSD_IFXF_LRO		0x200
+
+void
+print_ifflags(uint32_t flags, uint32_t curcap)
+{
+	uint32_t obsd;
+
+	/* Bits 0-15 are shared, except OpenBSD's STATICARP (0x20). */
+	obsd = flags & 0xffff & ~0x20;
+	if (flags & IFF_STATICARP)
+		obsd |= 0x20;
+	if (flags & IFF_MONITOR)
+		obsd |= OBSD_IFXF_MONITOR << 16;
+	if (curcap & IFCAP_LRO)
+		obsd |= OBSD_IFXF_LRO << 16;
+	printf("flags=%x", obsd);
+	print_bits("flags", &obsd, 1, OBSD_IFFBITS, nitems(OBSD_IFFBITS));
 }
 
 void
@@ -2096,6 +2197,7 @@ static struct cmd basic_cmds[] = {
 	DEF_CMD("delete",	-IFF_UP,	notealias),
 	DEF_CMD("remove",	-IFF_UP,	notealias),
 	DEF_CMD_ARG("netmask",			setifnetmask),
+	DEF_CMD_ARG("prefixlen",		setifprefixlen),
 	DEF_CMD_ARG("metric",			setifmetric),
 	DEF_CMD_ARG("broadcast",		setifbroadaddr),
 	DEF_CMD_ARG2("tunnel",			settunnel),

@@ -239,7 +239,8 @@ PFPACKAGE=			pf
 PF=		pf \
 		pflog \
 		pfsync \
-		ftp-proxy
+		ftp-proxy \
+		tftpproxy
 
 CONFGROUPS+=			POWERD
 POWERDPACKAGE=			powerd

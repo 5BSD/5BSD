@@ -2332,6 +2332,7 @@ carp_detach(struct ifaddr *ifa, bool keep_cif)
 	struct ifnet *ifp = ifa->ifa_ifp;
 	struct carp_if *cif = ifp->if_carp;
 	struct carp_softc *sc = ifa->ifa_carp;
+	sa_family_t af = ifa->ifa_addr->sa_family;
 	int i, index;
 
 	KASSERT(sc != NULL, ("%s: %p not attached", __func__, ifa));
@@ -2365,7 +2366,6 @@ carp_detach(struct ifaddr *ifa, bool keep_cif)
 	}
 
 	carp_ifa_delroute(ifa);
-	carp_multicast_cleanup(cif, ifa->ifa_addr->sa_family);
 
 	ifa->ifa_carp = NULL;
 	ifa_free(ifa);
@@ -2378,6 +2378,14 @@ carp_detach(struct ifaddr *ifa, bool keep_cif)
 		carp_destroy(sc);
 	else
 		CARP_UNLOCK(sc);
+
+	/*
+	 * 5BSD: leave the multicast groups without the softc mutex: it
+	 * takes in_multi_sx/in6_multi_sx (WITNESS: sleepable after
+	 * non-sleepable, whenever an interface with a CARP address went).
+	 * carp_sx, which the cleanup needs, is still held.
+	 */
+	carp_multicast_cleanup(cif, af);
 
 	if (!keep_cif)
 		CIF_FREE(cif);

@@ -292,6 +292,56 @@ urpf_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "no_route" "cleanup"
+no_route_head()
+{
+	atf_set descr "Test blocking sources pf has no route back to (from no-route)"
+	atf_set require.user root
+	atf_set require.progs python3 scapy
+}
+
+no_route_body()
+{
+	pft_init
+
+	epair=$(vnet_mkepair)
+	vnet_mkjail alcatraz ${epair}b
+	ifconfig ${epair}a 192.0.2.2/24 up
+	jexec alcatraz ifconfig ${epair}b 192.0.2.1/24 up
+	jexec alcatraz route -q add -net 203.0.113.0/24 192.0.2.2
+
+	pft_set_rules alcatraz \
+		"block in quick from no-route" \
+		"pass" \
+		"set skip on lo"
+	jexec alcatraz pfctl -e
+
+	# Routable sources pass, and are answered.
+	atf_check -s exit:0 -o ignore ping -c 1 -t 1 192.0.2.1
+	atf_check -s exit:0 ${common_dir}/pft_ping.py \
+		--sendif ${epair}a \
+		--to 192.0.2.1 \
+		--fromaddr 203.0.113.5 \
+		--replyif ${epair}a
+	atf_check -s exit:0 -o match:"Packets: 0 " \
+		-x "jexec alcatraz pfctl -vsr | grep -A1 no-route"
+
+	# Without the route the source is unroutable: the rule blocks it.
+	jexec alcatraz route -q delete -net 203.0.113.0/24
+	atf_check -s exit:1 ${common_dir}/pft_ping.py \
+		--sendif ${epair}a \
+		--to 192.0.2.1 \
+		--fromaddr 203.0.113.5 \
+		--replyif ${epair}a
+	atf_check -s exit:0 -o match:"Packets: [1-9]" \
+		-x "jexec alcatraz pfctl -vsr | grep -A1 no-route"
+}
+
+no_route_cleanup()
+{
+	pft_cleanup
+}
+
 atf_test_case "received_on" "cleanup"
 received_on_head()
 {
@@ -604,6 +654,71 @@ blocklist_helpers_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "v6_exthdr_cksum" "cleanup"
+v6_exthdr_cksum_head()
+{
+	atf_set descr 'Delayed IPv6 TCP/UDP checksums are finished behind extension headers'
+	atf_set require.user root
+	atf_set require.progs python3
+}
+
+v6_exthdr_cksum_body()
+{
+	pft_init
+
+	epair=$(vnet_mkepair)
+	vnet_mkjail alcatraz ${epair}a
+	vnet_mkjail srv ${epair}b
+	# The sender leaves the checksums to the "hardware" (txcsum6), so pf
+	# finishes them; both ends verify received checksums in software.
+	jexec alcatraz ifconfig ${epair}a inet6 2001:db8:42::1/64 \
+	    -rxcsum -rxcsum6 txcsum6 up no_dad
+	jexec srv ifconfig ${epair}b inet6 2001:db8:42::2/64 \
+	    -rxcsum -rxcsum6 up no_dad
+
+	cat > sender.py <<'PY'
+import socket, sys
+IPV6_DSTOPTS = getattr(socket, "IPV6_DSTOPTS", 50)
+# Destination options header: next header, length 0 (8 bytes), PadN(4).
+opts = bytes([0, 0, 1, 4, 0, 0, 0, 0])
+proto, dst, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
+if proto == "udp":
+    s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+    s.setsockopt(socket.IPPROTO_IPV6, IPV6_DSTOPTS, opts)
+    s.sendto(b"udp-dstopts\n", (dst, port))
+else:
+    s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    s.setsockopt(socket.IPPROTO_IPV6, IPV6_DSTOPTS, opts)
+    s.settimeout(5)
+    s.connect((dst, port))
+    s.sendall(b"tcp-dstopts\n")
+    s.close()
+PY
+
+	jexec alcatraz pfctl -e
+	# OpenBSD pf blocks IPv6 destination options and routing headers
+	# without allow-opts (pf_walk_header6()).
+	pft_set_rules alcatraz "pass allow-opts"
+
+	jexec srv nc -6 -u -l 2001:db8:42::2 4000 > udp.out &
+	jexec srv nc -6 -l 2001:db8:42::2 4001 > tcp.out &
+	sleep 0.5
+
+	atf_check -s exit:0 jexec alcatraz python3 $(pwd)/sender.py udp \
+	    2001:db8:42::2 4000
+	atf_check -s exit:0 jexec alcatraz python3 $(pwd)/sender.py tcp \
+	    2001:db8:42::2 4001
+	sleep 1
+	atf_check -o match:'udp-dstopts' cat udp.out
+	atf_check -o match:'tcp-dstopts' cat tcp.out
+}
+
+v6_exthdr_cksum_cleanup()
+{
+	pkill -j srv nc 2>/dev/null
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "blocklist_helpers"
@@ -611,9 +726,11 @@ atf_init_test_cases()
 	atf_add_test_case "enable_disable"
 	atf_add_test_case "v4"
 	atf_add_test_case "v6"
+	atf_add_test_case "v6_exthdr_cksum"
 	atf_add_test_case "noalias"
 	atf_add_test_case "nested_inline"
 	atf_add_test_case "urpf"
+	atf_add_test_case "no_route"
 	atf_add_test_case "received_on"
 	atf_add_test_case "optimize_any"
 	atf_add_test_case "any_if"

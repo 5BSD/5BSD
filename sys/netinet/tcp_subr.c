@@ -1876,6 +1876,12 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 		th = nth;
 		m_freem(m);
 		m = n;
+		/*
+		 * 5BSD: the reply reverses the addresses, so the pf state key
+		 * the input packet carried does not describe it (OpenBSD's
+		 * tcp_respond() builds the reply without the input's header).
+		 */
+		M_PF_UNLINK(m);
 	} else {
 		/*
 		 *  reuse the mbuf.
@@ -1886,6 +1892,7 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 		m->m_data = (caddr_t)ipgen;
 		/* clear any receive flags for proper bpf timestamping */
 		m->m_flags &= ~(M_TSTMP | M_TSTMP_LRO);
+		M_PF_UNLINK(m);		/* 5BSD: as above */
 		/* m_len is set later */
 #ifdef INET6
 		if (isipv6) {

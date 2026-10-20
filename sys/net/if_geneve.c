@@ -2874,7 +2874,7 @@ geneve_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 		af = RO_GET_FAMILY(ro, dst);
 
 	BPF_MTAP2(ifp, &af, sizeof(af), m);
-	error = (ifp->if_transmit)(ifp, m);
+	error = if_transmit(ifp, m);
 	if (error)
 		return (ENOBUFS);
 	return (0);

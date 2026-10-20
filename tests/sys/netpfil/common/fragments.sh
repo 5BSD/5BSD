@@ -51,7 +51,7 @@ fragments_body()
 
 	firewall_config "iron" ${firewall} \
 		"pf" \
-			"scrub all fragment reassemble"
+			"set reassemble yes"
 
 	jexec iron sysctl net.inet.ip.maxfragsperpacket=1024
 

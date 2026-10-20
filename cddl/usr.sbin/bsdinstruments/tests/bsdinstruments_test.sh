@@ -198,6 +198,29 @@ watch_conflicting_args_body()
 	    bsdinstruments watch foo --param broken
 }
 
+atf_test_case pf_profiles_compile
+pf_profiles_compile_head()
+{
+	atf_set descr "pf profiles and pf-observe compile against the live pf provider"
+	atf_set require.progs dtrace
+	atf_set require.user root
+}
+pf_profiles_compile_body()
+{
+	kldstat -q -m pf || atf_skip "pf is not loaded"
+	for profile in pf-audit pf-drops pf-frags pf-latency \
+	    pf-limiter-decisions pf-nat pf-pfsync pf-queues pf-rules \
+	    pf-states pf-table-cookie-events pf-tables \
+	    pfsync-recovery-events; do
+		path="/usr/share/bsdinstruments/profiles/$profile.d"
+		[ -f "$path" ] || atf_fail "missing installed profile: $path"
+		# No -Z: every pf probe named by the profile must exist.
+		atf_check -s exit:0 -o empty -e empty dtrace -e -s "$path"
+	done
+	atf_check -s exit:0 -o empty -e empty \
+	    dtrace -e -s /usr/share/dtrace/pf-observe
+}
+
 atf_test_case capability_services_live_probes
 capability_services_live_probes_head()
 {
@@ -283,5 +306,6 @@ atf_init_test_cases()
 	atf_add_test_case watch_conflicting_args
 	atf_add_test_case broker_no_fallback
 	atf_add_test_case profiles_compile
+	atf_add_test_case pf_profiles_compile
 	atf_add_test_case capability_services_live_probes
 }

@@ -912,28 +912,17 @@ Set to either
 .Dq Li monthly
 or
 .Dq Li NO .
-.It Va security_status_ipfwdenied_enable
-.Pq Vt bool
-Set to
-.Dq Li YES
-to show log entries for packets denied by
-.Xr ipfw 8
-since yesterday's check.
-.It Va security_status_ipfwdenied_period
-.Pq Vt str
-Set to either
-.Dq Li daily ,
-.Dq Li weekly ,
-.Dq Li monthly
-or
-.Dq Li NO .
 .It Va security_status_pfdenied_enable
 .Pq Vt bool
 Set to
 .Dq Li YES
-to show log entries for packets denied by
+to show the
 .Xr pf 4
-since yesterday's check.
+block rules that matched packets since the previous check
+.Po
+.Ql pfctl -sr -v -z ,
+which also clears the rule counters
+.Pc .
 .It Va security_status_pfdenied_additionalanchors
 .Pq Vt str
 Space-separated list of additional anchors whose denied packets log entries to
@@ -942,21 +931,6 @@ The main ruleset (i.e., the empty-string anchor) and any
 .Xr blocklistd 8
 anchors, if present, are always shown.
 .It Va security_status_pfdenied_period
-.Pq Vt str
-Set to either
-.Dq Li daily ,
-.Dq Li weekly ,
-.Dq Li monthly
-or
-.Dq Li NO .
-.It Va security_status_ipfwlimit_enable
-.Pq Vt bool
-Set to
-.Dq Li YES
-to display
-.Xr ipfw 8
-rules that have reached their verbosity limit.
-.It Va security_status_ipfwlimit_period
 .Pq Vt str
 Set to either
 .Dq Li daily ,

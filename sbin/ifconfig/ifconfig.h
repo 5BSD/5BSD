@@ -295,6 +295,21 @@ struct afswtch	*af_getbyfamily(int af);
 void	af_other_status(if_ctx *ctx);
 void	print_ifstatus(if_ctx *ctx);
 void	print_metric(if_ctx *ctx);
+/* 5BSD: routing domains (ifrdomain.c) */
+int	get_rdomain(if_ctx *ctx);
+void	print_rdomain(if_ctx *ctx);
+bool	ifautocreate(const char *name, const char *arg);
+void	print_ifflags(uint32_t flags, uint32_t curcap);
+void	print_index(if_ctx *ctx, u_int idx);
+enum {
+	AF_PHASE_IFACE,		/* interface specific status */
+	AF_PHASE_GROUPS,	/* groups: */
+	AF_PHASE_MEDIA,		/* media:, status: */
+	AF_PHASE_WIRELESS,	/* ieee80211 */
+	AF_PHASE_BRIDGE,	/* after the addresses */
+	AF_PHASE_EXTRA,		/* 5BSD additions: nd6, fib, MAC label */
+};
+void	af_other_status_phase(if_ctx *ctx, int phase);
 ifType	convert_iftype(ifType iftype);
 
 /* Netlink-related functions */

@@ -29,6 +29,7 @@ Kernel providers are defined with `SDT_PROVIDER_DEFINE` and appear in
 | Virtualisation | `vmm`, `virtio`, `virtqueue`, `vtblk`, `vsock`, `xbb` | Hypervisor, VirtIO device models, AF_VSOCK |
 | Linux | `linuxulator`, `linuxkpi_fw`, `linuxkpi_sdio`, `linuxkpi_fullmac` | Emulation and LinuxKPI drivers |
 | Bluetooth | `bluetooth` | Netgraph HCI and L2CAP |
+| Packet filter | `pf` (56 probes: packet verdicts, ruleset and anchor evaluation, reason codes, state lifecycle, fragments, NAT and af-to, route-to, tables, SYN cookies, pflog, pfsync, pflow, ioctls and ruleset transactions, the `jail` option, dummynet hand-off, ether rules and SCTP multihoming), `dummynet` | Every pf decision; see dtrace_pf(4) and the PF section below |
 
 Userland USDT providers ship as `<name>_provider.d` next to the program and
 register when it runs: `capsule` (57 probes: claims, minting, shield,
@@ -79,6 +80,41 @@ to a provider's probe signature.
 
 Ten more example scripts for the `oes` provider are in
 `/usr/share/examples/oes/dtrace`.
+
+## Packet filter (pf)
+
+5BSD's pf is OpenBSD's packet filter (see contrib/openbsd-pf). Its `pf`
+provider is documented, probe by probe, in dtrace_pf(4). All probes are
+static SDT probes and cost nothing until enabled. The arguments are
+OpenBSD structures (`struct pf_pdesc`, `struct pf_rule`,
+`struct pf_state`, `struct pfr_ktable`), which D scripts can read through
+CTF.
+
+| Question | Probe or tool |
+|---|---|
+| Which packets pass or are blocked, and how long evaluation takes | `pf:ip:test:entry` and `pf:ip:test:finish`; profile `pf-latency`, `pf-audit` |
+| Why a packet was dropped | `pf::reason:set` (reason code, source file and line); profile `pf-drops` |
+| Which rulesets and anchors run, and which rules log | `pf:ip:rules:entry`, `pf:ip:anchor:enter`, `pf:log:pflog:packet`; profile `pf-rules` |
+| State creation, TCP transitions, expiry and purge | `pf:state:*`; profile `pf-states` |
+| Fragment reassembly | `pf:frag:*`; profile `pf-frags` |
+| nat-to, rdr-to, binat-to and af-to | `pf:nat:*`; profile `pf-nat` |
+| Table lookups | `pf:table:addr:*`; profile `pf-tables` |
+| pfsync and pflow traffic | `pf:pfsync:*`, `pf:pflow:flow:export`; profile `pf-pfsync` |
+| Configuration changes | `pf:ioctl:ioctl:*`, `pf:ioctl:xact:*`; profile `pf-audit` |
+| Delayed packets ("set delay") | profile `pf-queues` |
+
+`/usr/share/dtrace/pf-observe` prints one summary of all of these on
+Ctrl-C:
+
+```sh
+dtrace -s /usr/share/dtrace/pf-observe -c 'sleep 30'
+bsdinstruments watch pf-drops --duration 60
+dtrace -n 'pf::reason:set { @[arg0, stringof(arg1), arg2] = count(); }'
+```
+
+The `pf_profiles_compile` case of `bsdinstruments_test` compiles every pf
+profile and `pf-observe` without `-Z` while pf is loaded, so a renamed or
+removed probe fails the test.
 
 ## bsdinstruments
 

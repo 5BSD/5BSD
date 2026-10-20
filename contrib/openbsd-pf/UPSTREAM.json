@@ -1,0 +1,447 @@
+{
+  "repository": "https://github.com/openbsd/src.git",
+  "upstream_vcs": "OpenBSD CVS (anoncvs.openbsd.org:/cvs), mirrored to git",
+  "commit": "facc8d7ec5d1f7a22cd5b7f1e8c6ac4990d91244",
+  "commit_date": "2026-10-10T19:06:34Z",
+  "reference_build": {
+    "snapshot": "OpenBSD 8.0-current amd64",
+    "buildinfo": "Build date: 1791662218 - Sat Oct 10 19:56:58 UTC 2026",
+    "kernel": "GENERIC.MP#88 Sat Oct 10 13:45:22 MDT 2026",
+    "media_verification": "install80.iso SHA256 checked against Ed25519-signed SHA256.sig with etc/signify/openbsd-80-base.pub"
+  },
+  "pf_source_alignment": "No commit touched sys/net/pf*, sys/net/if_pf*, sbin/pfctl, usr.sbin/authpf, regress/sbin/pfctl or regress/sys/net between fcd4e55 (2026-10-08) and c27e9422e69 (2026-10-10T22:51:25Z).",
+  "imported": "2026-10-11",
+  "subtrees": [
+    {
+      "path": "regress/sbin/pfctl",
+      "git_tree": "dec823215056417899a94220816b098ca0f95525",
+      "local": "regress/sbin/pfctl"
+    },
+    {
+      "path": "regress/sys/net/pf_divert",
+      "git_tree": "837c97e949924fb23a611ca137b2db90de9a9c75",
+      "local": "regress/sys/net/pf_divert"
+    },
+    {
+      "path": "regress/sys/net/pf_forward",
+      "git_tree": "13aacae081cb5da606e983f6e566fe2873543729",
+      "local": "regress/sys/net/pf_forward"
+    },
+    {
+      "path": "regress/sys/net/pf_fragment",
+      "git_tree": "b42cb429eabec104787fb62f016830a9f22fd1f7",
+      "local": "regress/sys/net/pf_fragment"
+    },
+    {
+      "path": "regress/sys/net/pf_opts",
+      "git_tree": "3e94722e07ba9f377ef923888582af82171286d5",
+      "local": "regress/sys/net/pf_opts"
+    },
+    {
+      "path": "regress/sys/net/pf_policy",
+      "git_tree": "11e749aa1567045d3698ad6a295056c41d3ed501",
+      "local": "regress/sys/net/pf_policy"
+    },
+    {
+      "path": "regress/sys/net/pf_print",
+      "git_tree": "8a6419c494a39c11c8744a5c0b0f73c4ad68a00d",
+      "local": "regress/sys/net/pf_print"
+    },
+    {
+      "path": "regress/sys/net/pf_state",
+      "git_tree": "d1e381cbacc8404e0a5df033e3ae8cb54fc3c36c",
+      "local": "regress/sys/net/pf_state"
+    },
+    {
+      "path": "regress/sys/net/pf_table",
+      "git_tree": "d188df2563a50c0c10eec96392de13016faeb4c7",
+      "local": "regress/sys/net/pf_table"
+    },
+    {
+      "path": "regress/sys/net/pf_trans",
+      "git_tree": "51040d98d13b5821f70275da0c4d91bcc3f53348",
+      "local": "regress/sys/net/pf_trans"
+    },
+    {
+      "path": "regress/sys/net/pflog",
+      "git_tree": "40bdeeaca27d71a61bbae4bbc743095f4d157247",
+      "local": "regress/sys/net/pflog"
+    },
+    {
+      "path": "regress/sys/net/pflow",
+      "git_tree": "3e18189996135597d58cf249e709512c99fb8b70",
+      "local": "regress/sys/net/pflow"
+    },
+    {
+      "path": "regress/sys/netinet/frag",
+      "git_tree": "2758cd6ca3041591557365419e549dd337b8a1e6",
+      "local": "regress/sys/netinet/frag"
+    },
+    {
+      "path": "regress/sys/netinet/pmtu",
+      "git_tree": "8ea51db9fa846df2ecf5d39dab38d24613de4e2a",
+      "local": "regress/sys/netinet/pmtu"
+    },
+    {
+      "path": "regress/sys/netinet/tcpstate",
+      "git_tree": "bf6fe69d624430da78db0f4cba55da15eeff4dcf",
+      "local": "regress/sys/netinet/tcpstate"
+    },
+    {
+      "path": "regress/sys/netinet6/frag6",
+      "git_tree": "ad79154355bdc8f7bc378166357b3028dd20a55d",
+      "local": "regress/sys/netinet6/frag6"
+    },
+    {
+      "path": "regress/sys/netinet6/rh0",
+      "git_tree": "be97cb8197d423ea08e5918c9da8ee04cd9da719",
+      "local": "regress/sys/netinet6/rh0"
+    },
+    {
+      "path": "share/mk/bsd.regress.mk",
+      "git_blob": "1b75eb9b3caa3aa75eba1b49aeb81611307ea3c7",
+      "local": "share/mk/bsd.regress.mk"
+    },
+    {
+      "path": "regress/sys/netinet/ipsec",
+      "git_tree": "da5c7f80a878d6cac76442ee807b4c2ca4a5083d",
+      "local": "regress/sys/netinet/ipsec",
+      "tier": "secondary"
+    },
+    {
+      "path": "regress/sys/net/pair",
+      "git_tree": "28736260b4cf10dd2f5895dc8bb667def914a311",
+      "local": "regress/sys/net/pair",
+      "tier": "secondary"
+    },
+    {
+      "path": "sys/net/if_pflog.c",
+      "git_blob": "803d7e2e44bac880c247e46cb1dff3f39e6f21ca",
+      "local": "sys/net/if_pflog.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/if_pflog.h",
+      "git_blob": "440d8f056c2fda5486b035040b253dfde36a6e0a",
+      "local": "sys/net/if_pflog.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/if_pflow.c",
+      "git_blob": "fced85a31866f041057472a808165a881655ec42",
+      "local": "sys/net/if_pflow.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/if_pflow.h",
+      "git_blob": "61f7c452309c05c14506a9d531064e45e8c88fef",
+      "local": "sys/net/if_pflow.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/if_pfsync.c",
+      "git_blob": "59e314aab4ca8e2c685569c7a7aaaec65b47dd43",
+      "local": "sys/net/if_pfsync.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/if_pfsync.h",
+      "git_blob": "5d96c02d45a3ce773a4fe7671618d64b512d1fc9",
+      "local": "sys/net/if_pfsync.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf.c",
+      "git_blob": "837c2e3229ab6503925aa1b08e707108f7380189",
+      "local": "sys/net/pf.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_if.c",
+      "git_blob": "455cdbd87b4bf4179fe81309bbd488d14a174e7e",
+      "local": "sys/net/pf_if.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_ioctl.c",
+      "git_blob": "2683a3096c302a74f903be4bd68aeff0a33a6ece",
+      "local": "sys/net/pf_ioctl.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_lb.c",
+      "git_blob": "ebd23ac14c99b469128e193bbf05e0b993669ca7",
+      "local": "sys/net/pf_lb.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_norm.c",
+      "git_blob": "ef20e1055f5073294a266c8292a0f8449a5e39a4",
+      "local": "sys/net/pf_norm.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_osfp.c",
+      "git_blob": "f86bb028ca9f8150b360bc12c15ecda2620cf102",
+      "local": "sys/net/pf_osfp.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_ruleset.c",
+      "git_blob": "e30fff24059c84d4127e3da1cf353709a6638adc",
+      "local": "sys/net/pf_ruleset.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_syncookies.c",
+      "git_blob": "b373f08ca15425e0a34abbe1df7fa15017962984",
+      "local": "sys/net/pf_syncookies.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pf_table.c",
+      "git_blob": "3036319c5db26a4bfbf394166e8f47efbd591d8f",
+      "local": "sys/net/pf_table.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pfvar.h",
+      "git_blob": "750fe0ef144c5e6bdd78744dcbbab0674fb9e28a",
+      "local": "sys/net/pfvar.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/pfvar_priv.h",
+      "git_blob": "d8bc3cb4365d3298eb5f69af28c30b937b2a532d",
+      "local": "sys/net/pfvar_priv.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sbin/pfctl",
+      "git_tree": "1fe7e881d458c91161ce773a63013123e4aa1cf0",
+      "local": "sbin/pfctl",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "regress/sys/net/rdomains",
+      "git_tree": "24530935018cf61bb5b4a5a8cbfc6a028f584fc6",
+      "local": "regress/sys/net/rdomains",
+      "tier": "rdomain"
+    },
+    {
+      "path": "regress/sys/net/rtable",
+      "git_tree": "155f18d2897d5c75402c6c1bcd313c13925d0700",
+      "local": "regress/sys/net/rtable",
+      "tier": "rdomain"
+    },
+    {
+      "path": "regress/sbin/route",
+      "git_tree": "5b4da36c3c14b0d0654803b3190e6ed4b8348651",
+      "local": "regress/sbin/route",
+      "tier": "rdomain"
+    },
+    {
+      "path": "regress/sbin/ifconfig",
+      "git_tree": "0675209b884512e40fe58c8023fb5ac5095d80c1",
+      "local": "regress/sbin/ifconfig",
+      "tier": "rdomain"
+    },
+    {
+      "path": "usr.sbin/authpf",
+      "git_tree": "ea327f569532402ae35b12a9383a8147411cf911",
+      "local": "usr.sbin/authpf",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "usr.sbin/ftp-proxy",
+      "git_tree": "a85ae55222ad8a858959c6087bc9a13a117f76ae",
+      "local": "usr.sbin/ftp-proxy",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "usr.sbin/tftp-proxy",
+      "git_tree": "2c3dd5affe6dd872a6f93fd18fc301a70fd90630",
+      "local": "usr.sbin/tftp-proxy",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sbin/pflogd",
+      "git_tree": "59a5465e77f9177681b76314f35ab52f6b985821",
+      "local": "sbin/pflogd",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/hfsc.h",
+      "git_blob": "1c70a672965a7c3ad3e4199735d7fd320c854cb6",
+      "local": "sys/net/hfsc.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/hfsc.c",
+      "git_blob": "d88a5e324066fc05c2f7f0014e0593f04c8e33fa",
+      "local": "sys/net/hfsc.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/fq_codel.h",
+      "git_blob": "97d6ba44943e441ee033ab9d0509a779eed34d01",
+      "local": "sys/net/fq_codel.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/fq_codel.c",
+      "git_blob": "2ebed88d9ac2459284819517dc4737dd661a37bf",
+      "local": "sys/net/fq_codel.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/radix.c",
+      "git_blob": "1ba41008c9034fb7389fef725259a9e0653b2050",
+      "local": "sys/net/radix.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/net/radix.h",
+      "git_blob": "da9babbbf9ea8b8a30d23784bb0d8861c17ad37a",
+      "local": "sys/net/radix.h",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/netinet/inet_nat64.c",
+      "git_blob": "cc99fe855a7d82b4b61f7bfdff3ece19205c4be8",
+      "local": "sys/netinet/inet_nat64.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "sys/netinet/in4_cksum.c",
+      "git_blob": "bbbf50b39c34e53391976ded48d3c15b69c6ddb5",
+      "local": "sys/netinet/in4_cksum.c",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "etc/pf.os",
+      "git_blob": "41c1bc6a482790865e8341ed02c2b331a4800a4a",
+      "local": "etc/pf.os",
+      "tier": "vendor-source"
+    },
+    {
+      "path": "share/man/man4/divert.4",
+      "git_blob": "c15772bc635618de030702145470ae069d3d6869",
+      "local": "share/man/man4/divert.4"
+    },
+    {
+      "path": "share/man/man4/pf.4",
+      "git_blob": "e0a506f8a1e662511060946a388c50e7720ea0d6",
+      "local": "share/man/man4/pf.4"
+    },
+    {
+      "path": "share/man/man4/pflog.4",
+      "git_blob": "6fb0c845eb55d16b8de5ccc3add6b9dd662400ee",
+      "local": "share/man/man4/pflog.4"
+    },
+    {
+      "path": "share/man/man4/pflow.4",
+      "git_blob": "bdcf5e959469ca894ec10647db56d8de5e9b0f08",
+      "local": "share/man/man4/pflow.4"
+    },
+    {
+      "path": "share/man/man4/pfsync.4",
+      "git_blob": "59909deb348408aece594d919779fb126a2b2ece",
+      "local": "share/man/man4/pfsync.4"
+    },
+    {
+      "path": "share/man/man5/pf.conf.5",
+      "git_blob": "3a383b23517791d12503adc67f2a3bb5d3b2c778",
+      "local": "share/man/man5/pf.conf.5"
+    },
+    {
+      "path": "share/man/man5/pf.os.5",
+      "git_blob": "aaf432cb3eccc7007b883e138e1a1a0483163019",
+      "local": "share/man/man5/pf.os.5"
+    },
+    {
+      "path": "usr.sbin/tcpdump",
+      "git_tree": "d61a3691371f1ded58fead03940a9c8ccfa33598",
+      "local": "usr.sbin/tcpdump",
+      "tier": "vendor-source",
+      "note": "base tcpdump(8), built by usr.sbin/tcpdump/tcpdump"
+    },
+    {
+      "path": "sys/net/ofp.h",
+      "git_blob": "2349127215c8eb31166d024c4761dc4b508e868c",
+      "local": "sys/net/ofp.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/net/ethertypes.h",
+      "git_blob": "c69fc0f6b6bb9928ad2ef9173d700fe612f27245",
+      "local": "sys/net/ethertypes.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/net/if_enc.h",
+      "git_blob": "26fea18354d4d765e354f679cc569ffafbeb24e4",
+      "local": "sys/net/if_enc.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/netinet/ip_ipsp.h",
+      "git_blob": "bb9f57db8308d75f208aabedc02c61d88d251e8c",
+      "local": "sys/netinet/ip_ipsp.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/netinet/ip_ether.h",
+      "git_blob": "5e5e3ae2c3a8471897e5b9f0cbfc40e62a5dda14",
+      "local": "sys/netinet/ip_ether.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/netmpls/mpls.h",
+      "git_blob": "906e83df3d445aeadce3fe70618d3597c56b6eff",
+      "local": "sys/netmpls/mpls.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/dev/usb/usbpcap.h",
+      "git_blob": "c29361d973d20b8f80fb746c2795b59de61b29ef",
+      "local": "sys/dev/usb/usbpcap.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/net80211/ieee80211.h",
+      "git_blob": "71fded46c04ef6d17d08b0b616cfcf0508f3fe76",
+      "local": "sys/net80211/ieee80211.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "sys/net80211/ieee80211_radiotap.h",
+      "git_blob": "a6b90a0a6a0d53d7f3316bab9bc2ce77a5ffeb8d",
+      "local": "sys/net80211/ieee80211_radiotap.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    },
+    {
+      "path": "usr.sbin/hostapd/iapp.h",
+      "git_blob": "b144c2aba7b8dcbccc07adbfaec4802dc49c26b2",
+      "local": "usr.sbin/hostapd/iapp.h",
+      "tier": "vendor-source",
+      "note": "header used by tcpdump(8) only"
+    }
+  ],
+  "verification": "git -C <openbsd-src> diff --stat <commit> -- <path> must be empty against the local copy; tree hashes are git tree object IDs at the pinned commit.",
+  "not_imported": {
+    "regress/usr.sbin/bgpd/integrationtests": "bgpd pftable maintenance; OpenBGPD is not part of 5BSD base (only relevant with a bgpd port); records pf table updates by another daemon, not PF behaviour",
+    "regress/usr.sbin/relayd": "relay tests; no pf/pfctl/anchor references at this revision",
+    "regress/sys/kern/pledge/ioctl": "PF ioctls under pledge(2); OpenBSD-specific pledge promise 'pf'. 5BSD has no pledge; the analogous control is the capability/MAC authority on /dev/pf (tracked as PF075)",
+    "regress/sys/kern/sosplice, sys/net/gif, sys/net/loop, sys/net/mpath, usr.sbin/snmpd": "only check that pf is enabled or that a regress anchor exists; not PF tests"
+  }
+}

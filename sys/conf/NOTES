@@ -765,23 +765,6 @@ options 	IPOIB
 options 	IPOIB_DEBUG
 options 	IPOIB_CM
 
-# altq(9). Enable the base part of the hooks with the ALTQ option.
-# Individual disciplines must be built into the base system and can not be
-# loaded as modules at this point. ALTQ requires a stable TSC so if yours is
-# broken or changes with CPU throttling then you must also have the ALTQ_NOPCC
-# option.
-options 	ALTQ
-options 	ALTQ_CBQ	# Class Based Queueing
-options 	ALTQ_RED	# Random Early Detection
-options 	ALTQ_RIO	# RED In/Out
-options 	ALTQ_CODEL	# CoDel Active Queueing
-options 	ALTQ_HFSC	# Hierarchical Packet Scheduler
-options 	ALTQ_FAIRQ	# Fair Packet Scheduler
-options 	ALTQ_CDNR	# Traffic conditioner
-options 	ALTQ_PRIQ	# Priority Queueing
-options 	ALTQ_NOPCC	# Required if the TSC is unusable
-options 	ALTQ_DEBUG
-
 # netgraph(4). Enable the base netgraph code with the NETGRAPH option.
 # Individual node types can be enabled with the corresponding option
 # listed below; however, this is not strictly necessary as netgraph
@@ -909,6 +892,10 @@ device		disc
 # like interface pair.
 device		epair
 
+# The `vether' device is a virtual Ethernet interface without hardware
+# (OpenBSD vether(4)); frames sent are dropped unless bridged.
+device		vether
+
 #  The `edsc' device implements a minimal Ethernet interface,
 #  which discards all packets sent and receives none.
 device		edsc
@@ -931,14 +918,11 @@ device		gre
 device		me
 options 	XBONEHACK
 
-# The pf packet filter consists of three devices:
-#  The `pf' device provides /dev/pf and the firewall code itself.
-#  The `pflog' device provides the pflog0 interface which logs packets.
-#  The `pfsync' device provides the pfsync0 interface used for
-#   synchronization of firewall state tables (over the net).
+# The `pf' device provides the pf(4) packet filter (OpenBSD PF) and /dev/pf,
+# with the pflog(4), pflow(4) and pfsync(4) interfaces built in.
+# The vendor default passes unmatched packets, as documented in pf.conf(5).
+# Set the desired policy in pf.conf; PF_DEFAULT_TO_DROP is not supported.
 device		pf
-device		pflog
-device		pfsync
 
 # Bridge interface.
 device		if_bridge
@@ -964,14 +948,12 @@ device		dummymbuf
 # MROUTING enables the kernel multicast packet forwarder, which works
 # with mrouted and XORP.
 #
-# IPDIVERT retains packet-diversion socket infrastructure.
 # Packet filtering is provided by PF; shaping is provided by Dummynet.
+# PF's divert-packet rules deliver packets to divert(4) sockets.
 #
 # IPSTEALTH enables code to support stealth forwarding (i.e., forwarding
 # packets without touching the TTL).  This can be useful to hide firewalls
 # from traceroute and similar tools.
-#
-# PF_DEFAULT_TO_DROP causes the default pf(4) rule to deny everything.
 #
 # TCP_BLACKBOX enables enhanced TCP event logging.
 #
@@ -979,9 +961,7 @@ device		dummymbuf
 # SOCKET_HHOOK enables the hhook(9) framework hooks for socket operations.
 #
 options 	MROUTING		# Multicast routing
-options 	IPDIVERT		#divert sockets
 options 	IPSTEALTH		#support for stealth forwarding
-options 	PF_DEFAULT_TO_DROP	#drop everything by default
 options 	TCP_BLACKBOX
 options 	TCP_HHOOK
 options		SOCKET_HHOOK

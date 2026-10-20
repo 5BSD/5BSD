@@ -67,6 +67,8 @@ static struct nlmsghdr hdr = (struct nlmsghdr) {
 };
 
 #define	BUFLEN	1000
+/* 5BSD: the size of one RTM_GETLINK reply, measured by fullsocket(). */
+static int replysize;
 
 static int
 fullsocket(void)
@@ -87,6 +89,7 @@ fullsocket(void)
 	ATF_REQUIRE(recv(fd, buf, sizeof(hdr), MSG_WAITALL | MSG_PEEK) ==
 	    sizeof(hdr));
 	ATF_REQUIRE(ioctl(fd, FIONREAD, &rsize) != -1);
+	replysize = rsize;
 
 
 	/*
@@ -123,7 +126,6 @@ ATF_TC_HEAD(overflow, tc)
 }
 ATF_TC_BODY(overflow, tc)
 {
-	char buf[BUFLEN];
 	int fd;
 
 	fd = fullsocket();
@@ -138,9 +140,18 @@ ATF_TC_BODY(overflow, tc)
 
 	/*
 	 * Now, reading something from the receive buffer should wake up the
-	 * taskqueue and send buffer should start getting drained.
+	 * taskqueue and send buffer should start getting drained.  5BSD: it
+	 * must make room for a whole reply, which lists every interface and
+	 * outgrows BUFLEN on a host with a few (1812 bytes on the test VMs).
 	 */
-	ATF_REQUIRE(recv(fd, buf, BUFLEN, 0) > sizeof(hdr));
+	{
+		char *big;
+
+		ATF_REQUIRE((big = malloc(MAX(BUFLEN, replysize))) != NULL);
+		ATF_REQUIRE(recv(fd, big, MAX(BUFLEN, replysize), 0) >
+		    sizeof(hdr));
+		free(big);
+	}
 	timer_done = 0;
 	ATF_REQUIRE(setitimer(ITIMER_REAL, &itv, NULL) == 0);
 	ATF_REQUIRE(send(fd, &hdr, sizeof(hdr), 0) == sizeof(hdr));

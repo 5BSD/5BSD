@@ -145,6 +145,10 @@ nd6_status(if_ctx *ctx)
 	int isdefif;
 	uint32_t bits;
 
+	/* OpenBSD's status output has no ND6 line; show it with -v. */
+	if (ctx->args->verbose == 0)
+		return;
+
 	strlcpy(nd.ifname, ctx->ifname, sizeof(nd.ifname));
 	if ((s6 = socket(AF_INET6, SOCK_DGRAM, 0)) < 0) {
 		if (errno != EAFNOSUPPORT && errno != EPROTONOSUPPORT)

@@ -11,6 +11,11 @@ unlist_interface()
 	sed -i "" /^$1\$/d created_interfaces.lst
 }
 
+# 5BSD: the capability plane denies kldload(2) after boot, so if_epair and
+# if_bridge must be preloaded on a test image (loader.conf: if_epair_load="YES",
+# if_bridge_load="YES"; see tests/README).  Say so explicitly instead of
+# skipping with a generic message, so a misconfigured image is obvious in the
+# report.
 _vnet_check_req()
 {
 	type=$1
@@ -19,8 +24,17 @@ _vnet_check_req()
 		return
 	fi
 
-	if ! kldload -n -q if_${type}; then
-		atf_skip "if_${type}.ko is required to run this test."
+	if ifconfig -C 2>/dev/null | tr ' ' '\n' | grep -qx "${type}"; then
+		# Compiled into the kernel.
+		return
+	fi
+
+	_err=$(kldload -n if_${type} 2>&1)
+	if [ $? -ne 0 ]; then
+		atf_skip "if_${type} is not loaded and cannot be loaded" \
+		    "(${_err:-kldload failed}): preload if_epair/if_bridge" \
+		    "(capability plane; set if_${type}_load=\"YES\" in" \
+		    "loader.conf, see tests/README)"
 		return
 	fi
 }
@@ -56,9 +70,7 @@ vnet_mkepair()
 
 vnet_init_bridge()
 {
-	if ! kldstat -q -m if_bridge; then
-		atf_skip "This test requires if_bridge"
-	fi
+	_vnet_check_req bridge
 }
 
 vnet_mkbridge()

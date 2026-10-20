@@ -221,3 +221,7 @@ qualification, ZFS scrub/resilver/trim/import/recovery and device-specific I/O,
 and comprehensive hardware/runtime validation. Existing upstream probes in
 those areas are not proof that all nine categories are complete. The manifest
 and session-only reverse-checked patch preserve the exact reviewed snapshot.
+
+Update 2026-10-15: FreeBSD pf was retired when OpenBSD PF landed.  The PF
+contracts above keep their names and arguments and now fire from
+contrib/openbsd-pf/sys/net (marked "5BSD: DTrace"); see dtrace_pf(4).

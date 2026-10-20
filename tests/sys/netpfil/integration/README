@@ -1,0 +1,54 @@
+tests/sys/netpfil/integration: 5BSD PF seam tests
+==================================================
+
+5BSD runs OpenBSD PF on the FreeBSD network stack, under 5BSD's capability
+plane and jails (docs/book/src/operations/network-provenance.md).  The
+FreeBSD suites (tests/sys/net*, tests/sys/netinet*) test the stack and
+tests/sys/netpfil/pf plus pf/openbsd test PF itself.  The programs here test
+the seams between them:
+
+  vnet_dev      /dev/pf per VNET, devfs rulesets 4 and 5, descriptor binding
+  host_limits   pool limits owned by the host vnet
+  quotas        per-VNET pool quotas, shared by child jails and capped for all
+                jails together (net.pf.vnet_limit_pct, vnet_total_pct), tag ids
+  modules       preloaded modules, pf.ko cloners, kldload vs. the broker, rc.d
+  cloners       pflog/pfsync/pflow cloned interfaces in VNET jails
+  jail_rule     the "jail" rule option (5BSD extension)
+  rdomain       routing domains in jails, rtable/rdomain rules, SO_RTABLE
+  sockets       SO_BINDANY, SO_RXQ_OVFL, IP_RECVDSTPORT, divert(4) sockets
+  securelevel   pf locked at the prison's securelevel 2 (OpenBSD semantics)
+  consumers     periodic, blocklistd-helper, bsnmpd, netstat, tcpdump, pflogd
+  dtrace        dtrace_pf(4) probes and the installed pf DTrace scripts
+  bridge        pf on if_bridge members, if_enc, prio
+  containers    podman's CNI networking: <cni-nat> masquerade, cni-rdr anchors
+  names         interfaces sharing a name, interfaces named after groups
+  glue_races    interface index reuse under pfsync, VNET teardown with work in
+                flight, interface walks during address and group churn
+  stress        survival under concurrency: ruleset and table reloads,
+                interface and VNET jail churn, state kills, pfsync,
+                divert sockets, dummynet and sendfile, all with traffic
+  dummynet      dnpipe/dnqueue shaping measured on traffic: bandwidth, delay,
+                loss, schedulers, directions, NAT, route-to, bridge, ether,
+                reconfiguration, VNET isolation, counters, securelevel 3
+
+The programs read host-wide state and create their own VNET jails, so they
+run exclusively in the host vnet (see Makefile).  Run them in a test VM, not
+on a working host:
+
+	kyua test -k /usr/tests/sys/netpfil/integration/Kyuafile
+
+Test images must preload the modules the capability plane does not allow
+to be loaded after boot (loader.conf): pf_load, dtraceall_load,
+if_epair_load, if_bridge_load and, for dummynet, dummynet_load (see
+tests/README).
+
+stress runs its loops concurrently and is sized for a 4-CPU VM under
+emulation (each case a few minutes, about half an hour in all).  Each
+case fails if a loop hangs, pf stops answering, traffic does not flow
+afterwards, an interface or jail is left behind, or the kernel logs a
+new lock order reversal, panic or "pf:" line (integ_dmesg_check in
+integration.subr).  Its dummynet cases also need dummynet_load.
+Scale the iteration counts with
+
+	kyua test -v test_suites.FreeBSD.stress_scale=4 \
+	    -k /usr/tests/sys/netpfil/integration/Kyuafile stress

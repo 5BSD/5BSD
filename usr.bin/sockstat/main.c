@@ -115,7 +115,7 @@ static bool	 show_path_state = false;
  * Protocols that we support.
  */
 enum sockstatproto {
-	SCTP = 0, TCP, UDP, UDPLITE, DIVERT, STREAM, DGRAM, SEQPACK, VSOCK
+	SCTP = 0, TCP, UDP, UDPLITE, STREAM, DGRAM, SEQPACK, VSOCK
 };
 struct proto;
 typedef void gather_func_t(struct proto *);
@@ -145,11 +145,6 @@ static struct proto {
 		.name = "udplite",
 		.gather = gather_inet,
 		.pcblist = "net.inet.udplite.pcblist",
-	},
-	[DIVERT] = {
-		.name = "divert",
-		.gather = gather_inet,
-		.pcblist = "net.inet.divert.pcblist",
 	},
 	[STREAM] = {
 		.name = "unix/stream",
@@ -2147,8 +2142,6 @@ main(int argc, char *argv[])
 	 * With -[46] and without -u disables unix(4).
 	 * With -P only specified are gathered and -4 and -6 are ignored,
 	 * however -u is not ignored (historical bug).
-	 *
-	 * divert(4) is controlled by -4 (historical bug).
 	 *
 	 * vsock(4) is selected by -V, which composes with -[46] and -u like
 	 * -u does; with -P, -V adds vsock(4) to the specified protocols.

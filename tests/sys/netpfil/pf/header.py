@@ -43,7 +43,7 @@ class TestHeader(VnetTestTemplate):
         ToolsHelper.print_output("/sbin/sysctl net.inet.ip.forwarding=1")
         ToolsHelper.print_output("/usr/sbin/arp -s 198.51.100.3 00:01:02:03:04:05")
         ToolsHelper.print_output("/sbin/pfctl -e")
-        ToolsHelper.print_output("/sbin/pfctl -x loud")
+        ToolsHelper.print_output("/sbin/pfctl -x debug")
         ToolsHelper.pf_rules([
             "pass",
             ])
@@ -135,7 +135,7 @@ class TestHeader6(VnetTestTemplate):
         ToolsHelper.print_output("/sbin/sysctl net.inet6.ip6.forwarding=1")
         ToolsHelper.print_output("/usr/sbin/ndp -s 2001:db8:1::3 00:01:02:03:04:05")
         ToolsHelper.print_output("/sbin/pfctl -e")
-        ToolsHelper.print_output("/sbin/pfctl -x loud")
+        ToolsHelper.print_output("/sbin/pfctl -x debug")
         ToolsHelper.pf_rules([
             "pass",
             ])

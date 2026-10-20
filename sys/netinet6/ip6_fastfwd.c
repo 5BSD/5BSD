@@ -73,6 +73,16 @@ ip6_findroute(struct nhop_object **pnh, const struct sockaddr_in6 *dst,
 		    ICMP6_DST_UNREACH_NOROUTE, 0);
 		return (EHOSTUNREACH);
 	}
+	/*
+	 * As OpenBSD: the packet filter sees a forwarded packet before a
+	 * reject or blackhole route discards it, so route-to/reply-to rules
+	 * can take it elsewhere.
+	 */
+	if ((nh->nh_flags & (NHF_BLACKHOLE | NHF_REJECT)) != 0 &&
+	    PFIL_HOOKED_OUT(V_inet6_pfil_head) &&
+	    pfil_mbuf_fwd(V_inet6_pfil_head, &m, nh->nh_ifp, NULL) !=
+	    PFIL_PASS)
+		return (EHOSTUNREACH);
 	if (nh->nh_flags & NHF_BLACKHOLE) {
 		IP6STAT_INC(ip6s_cantforward);
 		m_freem(m);
@@ -91,6 +101,31 @@ ip6_findroute(struct nhop_object **pnh, const struct sockaddr_in6 *dst,
 	return (0);
 }
 
+/*
+ * 5BSD: a copy of the start of the packet for an ICMPv6 error about it,
+ * taken before outbound filtering, as OpenBSD's ip6_forward() does.  The
+ * data is copied: pf rewrites addresses in place, and would rewrite a
+ * cluster shared by m_copym() too.
+ */
+struct mbuf *
+ip6_fastfwd_quote(struct mbuf *m)
+{
+	struct mbuf *n;
+	int len;
+
+	len = min(m->m_pkthdr.len, ICMPV6_PLD_MAXLEN);
+	n = m_get2(len, M_NOWAIT, MT_DATA, M_PKTHDR);
+	if (n == NULL)
+		return (NULL);
+	if (m_dup_pkthdr(n, m, M_NOWAIT) == 0) {
+		m_free(n);
+		return (NULL);
+	}
+	m_copydata(m, 0, len, mtod(n, caddr_t));
+	n->m_len = n->m_pkthdr.len = len;
+	return (n);
+}
+
 struct mbuf*
 ip6_tryforward(struct mbuf *m)
 {
@@ -98,6 +133,7 @@ ip6_tryforward(struct mbuf *m)
 	struct nhop_object *nh;
 	struct m_tag *fwd_tag;
 	struct ip6_hdr *ip6;
+	struct mbuf *qcopy = NULL;
 	struct ifnet *rcvif;
 	uint32_t plen;
 	int error;
@@ -214,11 +250,22 @@ passin:
 		}
 		goto passout;
 	}
+	/*
+	 * Too big for the next hop: as OpenBSD, keep a copy from before
+	 * outbound filtering for the error, so that it quotes the packet
+	 * before outbound translation (nat-to) and returns to its sender.
+	 * The size is checked after the filter, which may drop the packet
+	 * or send it elsewhere.  A packet the filter reassembled is
+	 * fragmented again by the filter itself.
+	 */
+	if (m->m_pkthdr.len > nh->nh_mtu &&
+	    m_tag_find(m, PACKET_TAG_PF_REASSEMBLED, NULL) == NULL)
+		qcopy = ip6_fastfwd_quote(m);
 
 	/*
 	 * Outgoing packet firewall processing.
 	 */
-	if (pfil_mbuf_out(V_inet6_pfil_head, &m, nh->nh_ifp,
+	if (pfil_mbuf_fwd(V_inet6_pfil_head, &m, nh->nh_ifp,
 	    NULL) != PFIL_PASS)
 		goto dropout;
 
@@ -228,9 +275,18 @@ passin:
 	 */
 	if (m->m_pkthdr.len > nh->nh_mtu) {
 		in6_ifstat_inc(nh->nh_ifp, ifs6_in_toobig);
+		if (qcopy != NULL) {
+			m_freem(m);
+			m = qcopy;
+			qcopy = NULL;
+		}
 		icmp6_error(m, ICMP6_PACKET_TOO_BIG, 0, nh->nh_mtu);
 		m = NULL;
 		goto dropout;
+	}
+	if (qcopy != NULL) {
+		m_freem(qcopy);
+		qcopy = NULL;
 	}
 
 	/*
@@ -327,5 +383,7 @@ dropout:
 drop:
 	if (m != NULL)
 		m_freem(m);
+	if (qcopy != NULL)
+		m_freem(qcopy);
 	return (NULL);
 }

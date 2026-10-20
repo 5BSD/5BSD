@@ -61,7 +61,6 @@ LSUBDIRS=	dev/acpica dev/ciss dev/filemon dev/firewire \
 	geom/mirror geom/multipath geom/nop \
 	geom/raid \
 	geom/zoned \
-	net/altq \
 	net/route \
 	netgraph/netflow \
 	netinet/cc \
@@ -201,13 +200,21 @@ VERIEXEC=	veriexec_ioctl.h
 VERIEXECDIR=	${INCLUDEDIR}/dev/veriexec
 
 
-.PATH: ${SRCTOP}/sys/netpfil/pf
-PF=		pf.h \
-		pf_altq.h \
-		pf_mtag.h \
-		pf_nl.h
-PFPACKAGE=	pf
-PFDIR=	${INCLUDEDIR}/netpfil/pf
+# OpenBSD PF (contrib/openbsd-pf): the pf(4) ioctl ABI and the headers it
+# needs outside the kernel.
+.PATH: ${SRCTOP}/contrib/openbsd-pf/sys/net
+PF=		fq_codel.h \
+		hfsc.h \
+		if_pflog.h \
+		if_pflow.h \
+		if_pfsync.h \
+		pfvar.h
+PFDIR=		${INCLUDEDIR}/net
+
+.PATH: ${SRCTOP}/sys/netpfil/openbsd-pf/user/sys
+PFSYS=		refcnt.h \
+		timeout.h
+PFSYSDIR=	${INCLUDEDIR}/sys
 
 .PATH: ${SRCTOP}/sys/rpc
 RPC=		rpcsec_tls.h \
@@ -245,6 +252,8 @@ INCSGROUPS=	INCS \
 		HID \
 		HYPERV \
 		OPENCRYPTO \
+		PF \
+		PFSYS \
 		NVME \
 		NVMF \
 		PCI \
@@ -255,10 +264,6 @@ INCSGROUPS=	INCS \
 		VERIEXEC \
 		WG
 
-
-.if ${MK_PF} != "no"
-INCSGROUPS+=	PF
-.endif
 
 .if ${MK_CDDL} != "no"
 INCSGROUPS+=	NVPAIR
@@ -427,11 +432,6 @@ symlinks: .PHONY .META
 	cd ${SRCTOP}; ${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \
 	    $$(printf '../../../../../%s ' sys/$i/*.h) ${SDESTDIR}${INCLUDEDIR}/$i
 .endfor
-.if ${MK_PF} != "no"
-	cd ${SRCTOP}; ${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \
-	    $$(printf '../../../../%s ' sys/netpfil/pf/*.h) \
-	    ${SDESTDIR}${INCLUDEDIR}/netpfil/pf;
-.endif
 	${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} ../../../sys/opencrypto/cryptodev.h \
 	    ${SDESTDIR}${INCLUDEDIR}/crypto; \
 	cd ${SRCTOP}; ${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \

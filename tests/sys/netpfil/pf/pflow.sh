@@ -46,33 +46,31 @@ basic_body()
 	# Sanity check
 	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.1
 
-	pflow=$(jexec alcatraz pflowctl -c)
+	pflow=pflow0
+	jexec alcatraz ifconfig ${pflow} create
 
 	# Reject invalid flow destinations
 	atf_check -s exit:1 -e ignore \
-	    jexec alcatraz pflowctl -s ${pflow} dst 256.0.0.1:4000
+	    jexec alcatraz ifconfig ${pflow} flowdst 256.0.0.1:4000
 	atf_check -s exit:1 -e ignore \
-	    jexec alcatraz pflowctl -s ${pflow} dst 192.0.0.2:400000
+	    jexec alcatraz ifconfig ${pflow} flowdst 192.0.0.2:400000
 
 	# A valid destination is accepted
 	atf_check -s exit:0 \
-	    jexec alcatraz pflowctl -s ${pflow} dst 192.0.2.2:4000
+	    jexec alcatraz ifconfig ${pflow} flowdst 192.0.2.2:4000
 
 	# Reject invalid version numbers
 	atf_check -s exit:1 -e ignore \
-	    jexec alcatraz pflowctl -s ${pflow} proto 9
+	    jexec alcatraz ifconfig ${pflow} pflowproto 9
 
 	# Valid version passes
 	atf_check -s exit:0 \
-	    jexec alcatraz pflowctl -s ${pflow} proto 5
+	    jexec alcatraz ifconfig ${pflow} pflowproto 5
 	atf_check -s exit:0 \
-	    jexec alcatraz pflowctl -s ${pflow} proto 10
+	    jexec alcatraz ifconfig ${pflow} pflowproto 10
 
-	# We can change the observation domain
-	atf_check -s exit:0 \
-	    jexec alcatraz pflowctl -s ${pflow} domain 13
-	atf_check -s exit:0 -o match:".*domain 13.*" \
-	    jexec alcatraz pflowctl -l
+	atf_check -s exit:0 -o match:"pflow: receiver: 192.0.2.2:4000 version: 10" \
+	    jexec alcatraz ifconfig ${pflow}
 }
 
 basic_cleanup()
@@ -105,8 +103,9 @@ state_defaults_body()
 	pft_set_rules alcatraz \
 		"pass"
 
-	pflow=$(jexec alcatraz pflowctl -c)
-	jexec alcatraz pflowctl -s ${pflow} dst 192.0.2.2:2055
+	pflow=pflow0
+	jexec alcatraz ifconfig ${pflow} create
+	jexec alcatraz ifconfig ${pflow} flowdst 192.0.2.2:2055
 
 	# No flow data is generated because no states are marked for it.
 	ping -c 1 192.0.2.1
@@ -128,7 +127,7 @@ state_defaults_body()
 	    $(atf_get_srcdir)/pft_read_ipfix.py --recvif ${epair}a --port 2055
 
 	# Switch to version 10
-	jexec alcatraz pflowctl -s ${pflow} proto 10
+	jexec alcatraz ifconfig ${pflow} pflowproto 10
 
 	ping -c 1 192.0.2.1
 
@@ -163,9 +162,10 @@ v6_body()
 	atf_check -s exit:0 -o ignore \
 	    ping -6 -c 1 2001:db8::1
 
-	pflow=$(jexec alcatraz pflowctl -c )
+	pflow=pflow0
+	jexec alcatraz ifconfig ${pflow} create
 	# Note proto 10, because there's no IPv6 information in v5
-	jexec alcatraz pflowctl -s ${pflow} dst [2001:db8::2]:2055 proto 10
+	jexec alcatraz ifconfig ${pflow} flowdst [2001:db8::2]:2055 pflowproto 10
 
 	jexec alcatraz pfctl -e
 	pft_set_rules alcatraz \
@@ -215,17 +215,19 @@ nat_body()
 	jexec rtr pfctl -e
 	pft_set_rules rtr \
 		"set state-defaults pflow" \
-		"nat pass on ${epair_srv}b inet from 192.0.2.0/24 to any -> (${epair_srv}b)" \
+		"match out on ${epair_srv}b inet from 192.0.2.0/24 to any nat-to (${epair_srv}b)" \
 		"pass"
 
-	pflow=$(jexec rtr pflowctl -c)
-	jexec rtr pflowctl -s ${pflow} dst 192.0.2.2:2055 proto 10
+	pflow=pflow0
+	jexec rtr ifconfig ${pflow} create
+	jexec rtr ifconfig ${pflow} flowdst 192.0.2.2:2055 pflowproto 10
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore \
 	    ping -c 1 198.51.100.2
 
-	atf_check -o match:".*v=10,NAT=4,proto=1,src=192.0.2.2-198.51.100.1.*" \
+	# OpenBSD's NAT44 template has no natEvent field.
+	atf_check -o match:".*v=10,NAT,proto=1,src=192.0.2.2-198.51.100.1.*" \
 	    $(atf_get_srcdir)/pft_read_ipfix.py --recvif ${epair}b --port 2055
 }
 
@@ -261,8 +263,9 @@ rule_body()
 		"pass in from 192.0.2.2 keep state (pflow)" \
 		"pass in from 192.0.2.3 keep state"
 
-	pflow=$(jexec alcatraz pflowctl -c)
-	jexec alcatraz pflowctl -s ${pflow} dst 192.0.2.2:2055
+	pflow=pflow0
+	jexec alcatraz ifconfig ${pflow} create
+	jexec alcatraz ifconfig ${pflow} flowdst 192.0.2.2:2055
 
 	# No flow is generated if we ping from 192.0.2.3
 	ping -c 1 -S 192.0.2.3 192.0.2.1
@@ -282,58 +285,60 @@ rule_cleanup()
 	pft_cleanup
 }
 
-atf_test_case "max_entries" "cleanup"
-max_entries_head()
+atf_test_case "destroy_busy" "cleanup"
+destroy_busy_head()
 {
-	atf_set descr 'Test that we can only create X pflow senders'
+	atf_set descr 'Destroy pflow interfaces while states are flushed and timers run'
 	atf_set require.user root
 }
 
-max_entries_body()
+destroy_busy_body()
 {
 	pflow_init
 
-	vnet_mkjail alcatraz
+	epair=$(vnet_mkepair)
+	ifconfig ${epair}a 192.0.2.2/24 up
 
-	for i in `seq 1 128`
-	do
-		atf_check -s exit:0 -o ignore \
-		    jexec alcatraz pflowctl -c
+	vnet_mkjail alcatraz ${epair}b
+	jexec alcatraz ifconfig ${epair}b 192.0.2.1/24 up
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.1
+
+	jexec alcatraz pfctl -e
+	pft_set_rules alcatraz \
+		"set state-defaults pflow" \
+		"pass"
+
+	# States keep being created and removed from the ioctl path, where
+	# export_pflow() runs outside the net epoch.
+	( while :; do
+		ping -c 1 -t 1 192.0.2.1 > /dev/null 2>&1
+		ping -c 1 -t 1 -S 192.0.2.2 192.0.2.1 > /dev/null 2>&1
+		jexec alcatraz pfctl -q -Fstates > /dev/null 2>&1
+	done ) &
+	echo $! > load.pid
+
+	i=0
+	while [ ${i} -lt 40 ]; do
+		for p in pflow1 pflow2; do
+			jexec alcatraz ifconfig ${p} create
+			jexec alcatraz ifconfig ${p} flowdst 192.0.2.2:2055
+		done
+		jexec alcatraz ifconfig pflow2 pflowproto 10
+		sleep 0.1
+		for p in pflow1 pflow2; do
+			atf_check -s exit:0 jexec alcatraz ifconfig ${p} destroy
+		done
+		i=$((i + 1))
 	done
 
-	# We cannot create the 129th pflow sender
-	atf_check -s exit:1 -o ignore -e ignore \
-	    jexec alcatraz pflowctl -c
-
-	jexec alcatraz pflowctl -l
+	kill $(cat load.pid)
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.1
+	atf_check -s exit:0 -o not-match:'pflow' jexec alcatraz ifconfig -l
 }
 
-max_entries_cleanup()
+destroy_busy_cleanup()
 {
-	pft_cleanup
-}
-
-atf_test_case "obs_dom" "cleanup"
-obs_dom_head()
-{
-	atf_set descr 'Test configuring observation domain values'
-	atf_set require.user root
-}
-
-obs_dom_body()
-{
-	pflow_init
-
-	vnet_mkjail alcatraz
-
-	pflow=$(jexec alcatraz pflowctl -c)
-	jexec alcatraz pflowctl -s ${pflow} domain 2300000000
-	atf_check -o match:".*domain 2300000000.*" -s exit:0 \
-	    jexec alcatraz pflowctl -l
-}
-
-obs_dom_cleanup()
-{
+	[ -f load.pid ] && kill $(cat load.pid) 2>/dev/null
 	pft_cleanup
 }
 
@@ -344,6 +349,5 @@ atf_init_test_cases()
 	atf_add_test_case "v6"
 	atf_add_test_case "nat"
 	atf_add_test_case "rule"
-	atf_add_test_case "max_entries"
-	atf_add_test_case "obs_dom"
+	atf_add_test_case "destroy_busy"
 }

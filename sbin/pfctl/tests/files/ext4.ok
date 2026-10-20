@@ -1,0 +1,8 @@
+set timeout sctp.first 60
+set timeout sctp.opening 20
+set timeout sctp.established 3600
+set timeout sctp.closing 300
+set timeout sctp.closed 10
+pass in proto sctp from any to any port = 9 keep state (allow-related)
+pass in proto sctp from any to any port = 10 keep state (allow-related, sctp.established 600)
+block return in proto sctp from any to any port = 11

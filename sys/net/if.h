@@ -53,7 +53,7 @@
 #define		IF_NAMESIZE	16
 #if __BSD_VISIBLE
 #define		IFNAMSIZ	IF_NAMESIZE
-#define		IF_MAXUNIT	0x7fff	/* historical value */
+#define		IF_MAXUNIT	9999999	/* 7 digits, as OpenBSD (e.g. lo1000000) */
 #endif
 #if __BSD_VISIBLE
 
@@ -457,6 +457,12 @@ struct ifreq_nv_req {
  * definitions which begin with ifr_name.  The
  * remainder may be interface specific.
  */
+/* Parent interface request (OpenBSD; pfsync syncdev). */
+struct if_parent {
+	char	ifp_name[IFNAMSIZ];
+	char	ifp_parent[IFNAMSIZ];
+};
+
 struct ifreq {
 	char	ifr_name[IFNAMSIZ];		/* if name, e.g. "en0" */
 	union {
@@ -497,6 +503,7 @@ struct ifreq {
 #define	ifr_curcap	ifr_ifru.ifru_cap[1]	/* current capabilities */
 #define	ifr_index	ifr_ifru.ifru_index	/* interface index */
 #define	ifr_fib		ifr_ifru.ifru_fib	/* interface fib */
+#define	ifr_rdomainid	ifr_ifru.ifru_fib	/* routing domain (5BSD) */
 #define	ifr_vlan_pcp	ifr_ifru.ifru_vlan_pcp	/* VLAN priority */
 #define	ifr_lan_pcp	ifr_ifru.ifru_vlan_pcp	/* VLAN priority */
 #define	ifr_cap_nv	ifr_ifru.ifru_nv	/* nv-based cap interface */
@@ -566,7 +573,7 @@ struct ifconf {
  */
 
 #define	IFG_ALL		"all"		/* group contains all interfaces */
-/* XXX: will we implement this? */
+/* 5BSD: maintained from the default routes of FIB 0 (net/if_egress.c) */
 #define	IFG_EGRESS	"egress"	/* if(s) default route(s) point to */
 
 struct ifg_req {

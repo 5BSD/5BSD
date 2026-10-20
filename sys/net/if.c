@@ -181,8 +181,6 @@ caddr_t	(*carp_macmatch6_p)(struct ifnet *ifp, struct mbuf *m,
     const struct in6_addr *taddr);
 #endif
 
-struct mbuf *(*tbr_dequeue_ptr)(struct ifaltq *, int) = NULL;
-
 /*
  * XXX: Style; these should be sorted alphabetically, and unprototyped
  * static functions should be prototyped. Currently they are sorted by
@@ -203,6 +201,7 @@ static void	if_detach_internal(struct ifnet *, bool);
 static void	if_siocaddmulti(void *, int);
 static void	if_link_ifnet(struct ifnet *);
 static bool	if_unlink_ifnet(struct ifnet *, bool);
+static bool	if_linked_locked(struct ifnet *);
 #ifdef VIMAGE
 static void	if_vmove(struct ifnet *, struct vnet *);
 #endif
@@ -641,12 +640,6 @@ ifq_init(struct ifaltq *ifq, struct ifnet *ifp)
 
 	if (ifq->ifq_maxlen == 0) 
 		ifq->ifq_maxlen = ifqmaxlen;
-
-	ifq->altq_type = 0;
-	ifq->altq_disc = NULL;
-	ifq->altq_flags &= ALTQF_CANTCHANGE;
-	ifq->altq_tbr  = NULL;
-	ifq->altq_ifp  = ifp;
 }
 
 void
@@ -1046,13 +1039,6 @@ if_detach_internal(struct ifnet *ifp, bool vmove)
 	/*
 	 * Remove routes and flush queues.
 	 */
-#ifdef ALTQ
-	if (ALTQ_IS_ENABLED(&ifp->if_snd))
-		altq_disable(&ifp->if_snd);
-	if (ALTQ_IS_ATTACHED(&ifp->if_snd))
-		altq_detach(&ifp->if_snd);
-#endif
-
 	rt_flushifroutes(ifp);
 
 	if_purgeaddrs(ifp);
@@ -1113,9 +1099,44 @@ if_vmove(struct ifnet *ifp, struct vnet *new_vnet)
 	 * Switch to the context of the target vnet.
 	 */
 	CURVNET_SET_QUIET(new_vnet);
+	/*
+	 * 5BSD: net.fibs is per VNET.  An interface moved from a VNET with
+	 * more FIBs (or routing domains, which are FIBs) would stamp its
+	 * received packets with a FIB this one does not have, and the
+	 * routing lookups that index by it would read past the tables.
+	 */
+	if (ifp->if_fib >= V_rt_numfibs)
+		ifp->if_fib = RT_DEFAULT_FIB;
 	if_attach_internal(ifp, true);
 	bpf_vmove(ifp->if_bpf);
 	CURVNET_RESTORE();
+}
+
+/*
+ * 5BSD: refuse to move an interface to another vnet when
+ *  - its driver keeps its softc in per-VNET state of the creating VNET
+ *    (OpenBSD PF's pflog, pfsync and pflow set IFKF_NOVMOVE): moved away,
+ *    it would be destroyed against the other VNET's state (EOPNOTSUPP);
+ *  - it is the loopback interface of a routing domain, whose map
+ *    (V_rt_l2map) refers to it by index (EBUSY).
+ * ifp is only known to be valid while it is on the current VNET's list,
+ * which ifnet_detach_sxlock keeps stable.
+ */
+static int
+if_vmove_check(struct ifnet *ifp)
+{
+	int error = 0;
+
+	sx_assert(&ifnet_detach_sxlock, SX_XLOCKED);
+	IFNET_WLOCK();
+	if (if_linked_locked(ifp)) {
+		if ((ifp->if_kflags & IFKF_NOVMOVE) != 0)
+			error = EOPNOTSUPP;
+		else if (rt_rdomain_isloif(ifp))
+			error = EBUSY;
+	}
+	IFNET_WUNLOCK();
+	return (error);
 }
 
 /*
@@ -1126,6 +1147,7 @@ if_vmove_loan(struct thread *td, char *ifname, int jid)
 {
 	struct prison *pr;
 	struct ifnet *ifp, *difp;
+	int error;
 	bool found;
 
 	MPASS(curthread == td);
@@ -1167,6 +1189,11 @@ if_vmove_loan(struct thread *td, char *ifname, int jid)
 	}
 	sx_xlock(&ifnet_detach_sxlock);
 
+	if ((error = if_vmove_check(ifp)) != 0) {
+		sx_xunlock(&ifnet_detach_sxlock);
+		prison_free(pr);
+		return (error);
+	}
 	found = if_unlink_ifnet(ifp, true);
 	if (! found) {
 		sx_xunlock(&ifnet_detach_sxlock);
@@ -1192,7 +1219,7 @@ if_vmove_reclaim(struct thread *td, char *ifname, int jid)
 	struct prison *pr;
 	struct vnet *vnet_dst;
 	struct ifnet *ifp;
-	int found;
+	int found, error;
 
 	/* Try to find the prison within our visibility. */
 	sx_slock(&allprison_lock);
@@ -1222,6 +1249,12 @@ if_vmove_reclaim(struct thread *td, char *ifname, int jid)
 
 	/* Get interface back from child jail/vnet. */
 	sx_xlock(&ifnet_detach_sxlock);
+	if ((error = if_vmove_check(ifp)) != 0) {
+		sx_xunlock(&ifnet_detach_sxlock);
+		CURVNET_RESTORE();
+		prison_free(pr);
+		return (error);
+	}
 	found = if_unlink_ifnet(ifp, true);
 	if (! found) {
 		sx_xunlock(&ifnet_detach_sxlock);
@@ -1242,10 +1275,30 @@ if_vmove_reclaim(struct thread *td, char *ifname, int jid)
 #endif /* VIMAGE */
 
 /*
+ * 5BSD: is @ifp on this vnet's interface list?  An interface that
+ * if_unlink_ifnet() took off the list is being destroyed or moved, and
+ * if_detach_internal() may already have run if_delgroups() for it.
+ */
+static bool
+if_linked_locked(struct ifnet *ifp)
+{
+	struct ifnet *iter;
+
+	IFNET_WLOCK_ASSERT();
+
+	CK_STAILQ_FOREACH(iter, &V_ifnet, if_link)
+		if (iter == ifp)
+			return (true);
+	return (false);
+}
+
+static void	if_group_release(struct ifg_group *);
+
+/*
  * Add a group to an interface
  */
-int
-if_addgroup(struct ifnet *ifp, const char *groupname)
+static int
+if_addgroup_internal(struct ifnet *ifp, const char *groupname, bool linked)
 {
 	struct ifg_list		*ifgl;
 	struct ifg_group	*ifg = NULL;
@@ -1257,6 +1310,16 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 		return (EINVAL);
 
 	IFNET_WLOCK();
+	/*
+	 * 5BSD: never put a dying interface, or one owned by another vnet,
+	 * into this vnet's groups: if_delgroups() has already run for it
+	 * or runs elsewhere, and the membership would be left behind.
+	 */
+	if ((ifp->if_flags & IFF_DYING) != 0 || ifp->if_vnet != curvnet ||
+	    (linked && !if_linked_locked(ifp))) {
+		IFNET_WUNLOCK();
+		return (ENXIO);
+	}
 	CK_STAILQ_FOREACH(ifgl, &ifp->if_groups, ifgl_next)
 		if (!strcmp(ifgl->ifgl_group->ifg_group, groupname)) {
 			IFNET_WUNLOCK();
@@ -1279,7 +1342,12 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 			break;
 
 	if (ifg == NULL) {
-		if ((ifg = malloc(sizeof(*ifg), M_TEMP, M_NOWAIT)) == NULL) {
+		/*
+		 * 5BSD: zeroed.  The group is on if_groups before the
+		 * attach event sets ifg_pf_kif; pf reads it meanwhile.
+		 */
+		if ((ifg = malloc(sizeof(*ifg), M_TEMP,
+		    M_NOWAIT | M_ZERO)) == NULL) {
 			free(ifgl, M_TEMP);
 			free(ifgm, M_TEMP);
 			IFNET_WUNLOCK();
@@ -1293,6 +1361,12 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 	}
 
 	ifg->ifg_refcnt++;
+	/*
+	 * 5BSD: a new group is held across group_attach_event: the member
+	 * may leave (and the group be freed) as soon as the lock is dropped.
+	 */
+	if (new)
+		ifg->ifg_refcnt++;
 	ifgl->ifgl_group = ifg;
 	ifgm->ifgm_ifp = ifp;
 
@@ -1300,11 +1374,50 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 	CK_STAILQ_INSERT_TAIL(&ifp->if_groups, ifgl, ifgl_next);
 	IFNET_WUNLOCK();
 
-	if (new)
+	if (new) {
 		EVENTHANDLER_INVOKE(group_attach_event, ifg);
+		if_group_release(ifg);
+	}
 	EVENTHANDLER_INVOKE(group_change_event, groupname);
 
 	return (0);
+}
+
+/*
+ * 5BSD: drop the hold if_addgroup_internal() took on a new group; free the
+ * group if its members left meanwhile, as _if_delgroup_locked() would have.
+ */
+static void
+if_group_release(struct ifg_group *ifg)
+{
+	IFNET_WLOCK();
+	if (--ifg->ifg_refcnt > 0) {
+		IFNET_WUNLOCK();
+		return;
+	}
+	CK_STAILQ_REMOVE(&V_ifg_head, ifg, ifg_group, ifg_next);
+	IFNET_WUNLOCK();
+
+	NET_EPOCH_WAIT();
+	EVENTHANDLER_INVOKE(group_detach_event, ifg);
+	free(ifg, M_TEMP);
+}
+
+int
+if_addgroup(struct ifnet *ifp, const char *groupname)
+{
+	return (if_addgroup_internal(ifp, groupname, false));
+}
+
+/*
+ * 5BSD: if_addgroup() for a caller that holds only a reference to @ifp and
+ * can race with its detach or vnet move: fail with ENXIO unless @ifp is
+ * still on this vnet's interface list.
+ */
+int
+if_addgroup_attached(struct ifnet *ifp, const char *groupname)
+{
+	return (if_addgroup_internal(ifp, groupname, true));
 }
 
 /*
@@ -1663,7 +1776,7 @@ ifa_ifwithaddr_fib(const struct sockaddr *addr, int fibnum)
 
 	NET_EPOCH_ASSERT();
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		if ((fibnum != RT_ALL_FIBS) && (ifp->if_fib != fibnum))
+		if (!rt_fib_match(ifp->if_fib, fibnum))
 			continue;
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			if (ifa->ifa_addr->sa_family != addr->sa_family)
@@ -1726,7 +1839,7 @@ ifa_ifwithbroadaddr(const struct sockaddr *addr, int fibnum)
 
 	NET_EPOCH_ASSERT();
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		if ((fibnum != RT_ALL_FIBS) && (ifp->if_fib != fibnum))
+		if (!rt_fib_match(ifp->if_fib, fibnum))
 			continue;
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			if (ifa->ifa_addr->sa_family != addr->sa_family)
@@ -1758,7 +1871,7 @@ ifa_ifwithdstaddr(const struct sockaddr *addr, int fibnum)
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
 		if ((ifp->if_flags & IFF_POINTOPOINT) == 0)
 			continue;
-		if ((fibnum != RT_ALL_FIBS) && (ifp->if_fib != fibnum))
+		if (!rt_fib_match(ifp->if_fib, fibnum))
 			continue;
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			if (ifa->ifa_addr->sa_family != addr->sa_family)
@@ -1803,7 +1916,7 @@ ifa_ifwithnet(const struct sockaddr *addr, int ignore_ptp, int fibnum)
 	 * in this address family and the requested fib.
 	 */
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		if ((fibnum != RT_ALL_FIBS) && (ifp->if_fib != fibnum))
+		if (!rt_fib_match(ifp->if_fib, fibnum))
 			continue;
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			const char *cp, *cp2, *cp3;
@@ -2069,10 +2182,6 @@ if_qflush(struct ifnet *ifp)
 
 	ifq = &ifp->if_snd;
 	IFQ_LOCK(ifq);
-#ifdef ALTQ
-	if (ALTQ_IS_ENABLED(ifq))
-		ALTQ_PURGE(ifq);
-#endif
 	n = ifq->ifq_head;
 	while ((m = n) != NULL) {
 		n = m->m_nextpkt;
@@ -2578,7 +2687,25 @@ ifhwioctl(u_long cmd, struct ifnet *ifp, caddr_t data, struct thread *td)
 		if (ifr->ifr_fib >= rt_numfibs)
 			return (EINVAL);
 
-		ifp->if_fib = ifr->ifr_fib;
+		/* 5BSD: a FIB of another routing domain moves the interface. */
+		error = rt_rdomain_setif(ifp, ifr->ifr_fib, false);
+		break;
+
+	/* 5BSD: routing domains (rdomain(4)), OpenBSD SIOC[GS]IFRDOMAIN. */
+	case SIOCGIFRDOMAIN:
+		ifr->ifr_rdomainid = rt_fib_l2(ifp->if_fib);
+		break;
+
+	case SIOCSIFRDOMAIN:
+		error = priv_check(td, PRIV_NET_SETIFFIB);
+		if (error)
+			return (error);
+		/* Create and join atomically with default-loopback destruction. */
+		sx_xlock(&ifnet_detach_sxlock);
+		error = rt_rdomain_create(ifr->ifr_rdomainid, ifp);
+		if (error == 0 || error == EEXIST)
+			error = rt_rdomain_setif(ifp, ifr->ifr_rdomainid, true);
+		sx_xunlock(&ifnet_detach_sxlock);
 		break;
 
 	case SIOCSIFFLAGS:
@@ -4730,9 +4857,13 @@ if_input(if_t ifp, struct mbuf* sendmp)
 	(*ifp->if_input)(ifp, sendmp);
 }
 
+int (*pf_delay_transmit_hook)(struct ifnet *, struct mbuf *);
+
 int
 if_transmit(if_t ifp, struct mbuf *m)
 {
+	if (pf_delay_transmit_hook != NULL && m_pf_ro(m)->delay != 0)
+		return (pf_delay_transmit_hook(ifp, m));
 	return ((*ifp->if_transmit)(ifp, m));
 }
 
@@ -5010,12 +5141,6 @@ if_getcounter(if_t ifp, ift_counter counter)
 	return (ifp->if_get_counter(ifp, counter));
 }
 
-bool
-if_altq_is_enabled(if_t ifp)
-{
-	return (ALTQ_IS_ENABLED(&ifp->if_snd));
-}
-
 struct vnet *
 if_getvnet(if_t ifp)
 {
@@ -5120,8 +5245,6 @@ if_show_ifnet(struct ifnet *ifp)
 	IF_DB_PRINTF("%p", if_snd.ifq_drv_tail);
 	IF_DB_PRINTF("%d", if_snd.ifq_drv_len);
 	IF_DB_PRINTF("%d", if_snd.ifq_drv_maxlen);
-	IF_DB_PRINTF("%d", if_snd.altq_type);
-	IF_DB_PRINTF("%x", if_snd.altq_flags);
 #undef IF_DB_PRINTF
 }
 

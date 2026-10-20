@@ -76,7 +76,6 @@
 #include <net/rss_config.h>
 #include <net/vnet.h>
 
-#include <netpfil/pf/pf_mtag.h>
 
 #if defined(INET) || defined(INET6)
 #include <netinet/in.h>
@@ -281,7 +280,6 @@ ether_output(struct ifnet *ifp, struct mbuf *m,
 	int error = 0;
 	char linkhdr[ETHER_HDR_LEN], *phdr;
 	struct ether_header *eh;
-	struct pf_mtag *t;
 	bool loop_copy;
 	int hlen;	/* link layer header length */
 	uint32_t pflags;
@@ -380,7 +378,7 @@ ether_output(struct ifnet *ifp, struct mbuf *m,
 	 * reasons and compatibility with the original behavior.
 	 */
 	if ((m->m_flags & M_BCAST) && loop_copy && (ifp->if_flags & IFF_SIMPLEX) &&
-	    ((t = pf_find_mtag(m)) == NULL || !t->routed)) {
+	    m_pf_ro(m)->routed == 0) {
 		struct mbuf *n;
 
 		/*
@@ -483,7 +481,7 @@ ether_output_frame(struct ifnet *ifp, struct mbuf *m)
 	 * any uninitialized bytes.
 	 */
 	kmsan_check_mbuf(m, "ether_output");
-	return ((ifp->if_transmit)(ifp, m));
+	return (if_transmit(ifp, m));
 }
 
 /*
@@ -1346,6 +1344,23 @@ ether_8021q_frame(struct mbuf **mp, struct ifnet *ife, struct ifnet *p,
 	uint16_t tag;
 	uint8_t pcp = qtag->pcp;
 	static const char pad[8];	/* just zeros */
+
+	/*
+	 * 5BSD: automatic VLAN PCP.  A priority pf gave the packet maps to
+	 * the wire as on OpenBSD (internal 0 and 1 are swapped on the
+	 * wire); a packet whose priority nothing set (pf rule, received
+	 * VLAN PCP) keeps FreeBSD's best effort PCP 0, although pf's default
+	 * priority is 3.  A PCP already in the mbuf (IP_VLAN_PCP, an inner
+	 * VLAN) still takes precedence below.
+	 */
+	if (pcp == IFNET_PCP_NONE) {
+		const struct pkthdr_pf *pfh = m_pf_ro(*mp);
+
+		if (!pfh->prio_set)
+			pcp = 0;
+		else if ((pcp = pfh->prio) <= 1)
+			pcp = !pcp;
+	}
 
 	/*
 	 * Pad the frame to the minimum size allowed if told to.

@@ -113,7 +113,6 @@ CRUNCH_PROGS_sbin+= rtsol
 
 .if ${MK_PF} != "no"
 CRUNCH_PROGS_sbin+= pfctl
-CRUNCH_LIBS_pfctl+= ${LIBPFCTL} ${LIBNV}
 .endif
 
 .if ${MK_ZFS} != "no"

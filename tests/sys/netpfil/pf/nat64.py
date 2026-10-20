@@ -33,7 +33,8 @@ from atf_python.sys.net.tools import ToolsHelper
 from atf_python.sys.net.vnet import VnetTestTemplate
 
 class TestNAT64(VnetTestTemplate):
-    REQUIRED_MODULES = [ "pf", "pflog", "pfsync" ]
+    # 5BSD: pflog and pfsync are part of the pf module.
+    REQUIRED_MODULES = [ "pf" ]
     TOPOLOGY = {
         "vnet1": {"ifaces": ["if1"]},
         "vnet2": {"ifaces": ["if1", "if2"]},
@@ -93,6 +94,9 @@ class TestNAT64(VnetTestTemplate):
         ifname = vnet.iface_alias_map["if1"].name
 
         ToolsHelper.print_output("/sbin/sysctl net.inet6.ip6.forwarding=1")
+        # 5BSD: OpenBSD pf forwards af-to packets only with forwarding on
+        # for the family they leave in, too.
+        ToolsHelper.print_output("/sbin/sysctl net.inet.ip.forwarding=1")
         ToolsHelper.print_output("/sbin/route add default 192.0.2.2")
         ToolsHelper.print_output("/sbin/pfctl -e")
         ToolsHelper.pf_rules([
@@ -101,6 +105,8 @@ class TestNAT64(VnetTestTemplate):
             "pass in on %s inet6 af-to inet from 192.0.2.1" % ifname,
         ])
 
+        # 5BSD pfsync is a cloner; there is no pfsync0 until it is created.
+        ToolsHelper.print_output("/sbin/ifconfig pfsync0 create")
         vnet.pipe.send(socket.if_nametoindex("pfsync0"))
 
     @pytest.mark.require_user("root")

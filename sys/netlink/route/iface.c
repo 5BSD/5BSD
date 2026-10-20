@@ -1739,10 +1739,11 @@ handle_newaddr_inet(struct nlmsghdr *hdr, struct nl_parsed_ifa *attrs,
 
 	if (if_flags & IFF_POINTOPOINT) {
 		/*
-		 * Only P2P IFAs are allowed by the implementation.
+		 * Only P2P IFAs are allowed by the implementation.  As with
+		 * SIOCAIFADDR (and OpenBSD), the peer may be set later.
 		 */
-		if (attrs->ifa_address == NULL || attrs->ifa_local == NULL) {
-			nlmsg_report_err_msg(npt, "Empty IFA_LOCAL/IFA_ADDRESS");
+		if (attrs->ifa_local == NULL) {
+			nlmsg_report_err_msg(npt, "Empty IFA_LOCAL");
 			return (EINVAL);
 		}
 		addr = (struct sockaddr_in *)attrs->ifa_local;

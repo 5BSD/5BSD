@@ -1013,7 +1013,19 @@ nonh6lookup:
 
 	needfiblookup = 0;
 	/* See if destination IP address was changed by packet filter. */
-	if (!IN6_ARE_ADDR_EQUAL(&odst, &ip6->ip6_dst)) {
+	if (!IN6_ARE_ADDR_EQUAL(&odst, &ip6->ip6_dst) &&
+	    (m_pf_ro(m)->flags & PF_TAG_REROUTE) != 0) {
+		/*
+		 * As OpenBSD: route again to the new destination and filter
+		 * there, a local one included (through the loopback).
+		 */
+		m_pf_find(m)->flags &= ~PF_TAG_REROUTE;
+		if (ro != NULL)
+			RO_INVALIDATE_CACHE(ro);
+		/* In the routing table pf chose, still filtered there. */
+		fibnum = M_GETFIB(m);
+		needfiblookup = 1;
+	} else if (!IN6_ARE_ADDR_EQUAL(&odst, &ip6->ip6_dst)) {
 		m->m_flags |= M_SKIP_FIREWALL;
 		/* If destination is now ourself drop to ip6_input(). */
 		if (in6_localip(&ip6->ip6_dst)) {
@@ -1518,6 +1530,11 @@ ip6_ctloutput(struct socket *so, struct sockopt *sopt)
 				    sizeof(optval), sizeof(optval));
 				if (error != 0)
 					break;
+				/* 5BSD: entering another rdomain is privileged. */
+				error = rt_fib_change_check(curthread,
+				    so->so_fibnum, optval);
+				if (error != 0)
+					break;
 
 				INP_WLOCK(inp);
 				if ((inp->inp_flags & INP_BOUNDFIB) != 0 &&
@@ -1614,6 +1631,7 @@ ip6_ctloutput(struct socket *so, struct sockopt *sopt)
 			case IPV6_V6ONLY:
 			case IPV6_AUTOFLOWLABEL:
 			case IPV6_ORIGDSTADDR:
+			case IPV6_RECVDSTPORT:
 			case IPV6_BINDANY:
 			case IPV6_VLAN_PCP:
 				if (optname == IPV6_BINDANY && td != NULL) {
@@ -1784,6 +1802,9 @@ do {									\
 
 				case IPV6_ORIGDSTADDR:
 					OPTSET2(INP_ORIGDSTADDR, optval);
+					break;
+				case IPV6_RECVDSTPORT:
+					OPTSET2(INP_RECVDSTPORT, optval);
 					break;
 				case IPV6_BINDANY:
 					OPTSET(INP_BINDANY);
@@ -2018,6 +2039,7 @@ do {									\
 			case IPV6_RECVTCLASS:
 			case IPV6_AUTOFLOWLABEL:
 			case IPV6_BINDANY:
+			case IPV6_RECVDSTPORT:
 			case IPV6_FLOWID:
 			case IPV6_FLOWTYPE:
 			case IPV6_RECVFLOWID:
@@ -2085,6 +2107,10 @@ do {									\
 
 				case IPV6_ORIGDSTADDR:
 					optval = OPTBIT2(INP_ORIGDSTADDR);
+					break;
+
+				case IPV6_RECVDSTPORT:
+					optval = OPTBIT2(INP_RECVDSTPORT);
 					break;
 
 				case IPV6_BINDANY:

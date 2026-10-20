@@ -76,16 +76,11 @@ function frees all the enqueued mbufs and then frees the buf_ring.
 .Pp
 The
 .Fn drbr_enqueue
-function is used to enqueue an mbuf to a buf_ring, falling back to the
-ifnet's IFQ if
-.Xr ALTQ 4
-is enabled.
+function is used to enqueue an mbuf to a buf_ring.
 .Pp
 The
 .Fn drbr_dequeue
-function is used to dequeue an mbuf from a buf_ring or, if
-.Xr ALTQ 4
-is enabled, from the ifnet's IFQ.
+function is used to dequeue an mbuf from a buf_ring.
 .Pp
 The
 .Fn drbr_dequeue_cond

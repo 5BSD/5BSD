@@ -74,7 +74,6 @@ _INTERNALLIBS=	\
 		otelexport \
 		parse \
 		pe \
-		pfctl \
 		pkgecc \
 		pmcstat \
 		sl \
@@ -474,7 +473,6 @@ _DP_pam+=	ssh
 .if ${MK_NIS} != "no"
 _DP_pam+=	ypclnt
 .endif
-_DP_pfctl=	nv
 _DP_pjdlog=	util
 _DP_proc=	cxxrt
 .if ${MK_CTF} != "no"
@@ -577,7 +575,6 @@ _DP_zutil=	avl geom m
 _DP_be=		zfs spl nvpair zfsbootenv
 _DP_netmap=
 _DP_ifconfig=	m
-_DP_pfctl=	nv
 _DP_krb5ss=		edit
 
 # OFED support
@@ -772,9 +769,6 @@ LIBOPTS?=	${LIBOPTSDIR}/libopts${PIE_SUFFIX}.a
 
 LIBPARSEDIR=	${_LIB_OBJTOP}/usr.sbin/ntp/libparse
 LIBPARSE?=	${LIBPARSEDIR}/libparse${PIE_SUFFIX}.a
-
-LIBPFCTLDIR=	${_LIB_OBJTOP}/lib/libpfctl
-LIBPFCTL?=	${LIBPFCTLDIR}/libpfctl${PIE_SUFFIX}.a
 
 LIBLPRDIR=	${_LIB_OBJTOP}/usr.sbin/lpr/common_source
 LIBLPR?=	${LIBLPRDIR}/liblpr${PIE_SUFFIX}.a

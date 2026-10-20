@@ -36,7 +36,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd October 13, 2025
+.Dd October 17, 2026
 .Dt IF_BRIDGE 4
 .Os
 .Sh NAME
@@ -455,6 +455,31 @@ to additionally filter on the physical interface for locally destined packets.
 Set to
 .Li 0
 to disable this feature.
+.It Va net.link.bridge.pfil_layer2
+Set to
+.Li 1
+to run the link-layer filter, such as
+.Xr pf 4
+.Cm ether
+rules, on bridged frames leaving a member interface, before the IP
+filter; their Ethernet header is intact, and an
+.Cm ether
+rule's
+.Cm dnpipe
+or
+.Cm dnqueue
+shapes them through
+.Xr dummynet 4 .
+Set to
+.Li 0
+to disable it.
+It is independent of
+.Va pfil_member
+and
+.Va pfil_bridge ,
+and replaces
+.Fx Ns 's
+.Va net.link.bridge.ipfw .
 .El
 .Pp
 ARP and REVARP packets are forwarded without being filtered and others

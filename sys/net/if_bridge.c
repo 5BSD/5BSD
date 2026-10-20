@@ -336,10 +336,6 @@ static bool	bridge_same(const void *, const void *);
 static void	*bridge_get_softc(struct ifnet *);
 static void	bridge_stop(struct ifnet *);
 static int	bridge_transmit(struct ifnet *, struct mbuf *);
-#ifdef ALTQ
-static void	bridge_altq_start(if_t);
-static int	bridge_altq_transmit(if_t, struct mbuf *);
-#endif
 static void	bridge_qflush(struct ifnet *);
 static struct mbuf *bridge_input(struct ifnet *, struct mbuf *);
 static void	bridge_inject(struct ifnet *, struct mbuf *);
@@ -481,6 +477,17 @@ VNET_DEFINE_STATIC(int, pfil_member) = 0;
 SYSCTL_INT(_net_link_bridge, OID_AUTO, pfil_member,
     CTLFLAG_RWTUN | CTLFLAG_VNET, &VNET_NAME(pfil_member), 0,
     "Packet filter on the member interface");
+
+/*
+ * 5BSD: run the link-layer pfil hooks (pf ether rules) on bridged frames
+ * leaving a member interface: FreeBSD's net.link.bridge.ipfw, which also
+ * served pf, without IPFW.
+ */
+VNET_DEFINE_STATIC(int, pfil_layer2) = 0;
+#define	V_pfil_layer2	VNET(pfil_layer2)
+SYSCTL_INT(_net_link_bridge, OID_AUTO, pfil_layer2,
+    CTLFLAG_RWTUN | CTLFLAG_VNET, &VNET_NAME(pfil_layer2), 0,
+    "Link-layer packet filter on bridged frames leaving a member");
 
 /* run pfil hooks on the physical interface for locally destined packets */
 VNET_DEFINE_STATIC(int, pfil_local_phys);
@@ -834,15 +841,7 @@ bridge_clone_create(struct if_clone *ifc, char *name, size_t len,
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
 	ifp->if_capabilities = ifp->if_capenable = IFCAP_VLAN_HWTAGGING;
 	ifp->if_ioctl = bridge_ioctl;
-#ifdef ALTQ
-	ifp->if_start = bridge_altq_start;
-	ifp->if_transmit = bridge_altq_transmit;
-	IFQ_SET_MAXLEN(&ifp->if_snd, ifqmaxlen);
-	ifp->if_snd.ifq_drv_maxlen = 0;
-	IFQ_SET_READY(&ifp->if_snd);
-#else
 	ifp->if_transmit = bridge_transmit;
-#endif
 	ifp->if_qflush = bridge_qflush;
 	ifp->if_init = bridge_init;
 	ifp->if_type = IFT_BRIDGE;
@@ -920,9 +919,6 @@ bridge_clone_destroy(struct if_clone *ifc, struct ifnet *ifp, uint32_t flags)
 	BRIDGE_LIST_UNLOCK();
 
 	bstp_detach(&sc->sc_stp);
-#ifdef ALTQ
-	IFQ_PURGE(&ifp->if_snd);
-#endif
 	ether_ifdetach(ifp);
 	if_free(ifp);
 
@@ -2606,38 +2602,6 @@ bridge_transmit(struct ifnet *ifp, struct mbuf *m)
 	return (error);
 }
 
-#ifdef ALTQ
-static void
-bridge_altq_start(if_t ifp)
-{
-	struct ifaltq *ifq = &ifp->if_snd;
-	struct mbuf *m;
-
-	IFQ_LOCK(ifq);
-	IFQ_DEQUEUE_NOLOCK(ifq, m);
-	while (m != NULL) {
-		bridge_transmit(ifp, m);
-		IFQ_DEQUEUE_NOLOCK(ifq, m);
-	}
-	IFQ_UNLOCK(ifq);
-}
-
-static int
-bridge_altq_transmit(if_t ifp, struct mbuf *m)
-{
-	int err;
-
-	if (ALTQ_IS_ENABLED(&ifp->if_snd)) {
-		IFQ_ENQUEUE(&ifp->if_snd, m, err);
-		if (err == 0)
-			bridge_altq_start(ifp);
-	} else
-		err = bridge_transmit(ifp, m);
-
-	return (err);
-}
-#endif	/* ALTQ */
-
 /*
  * The ifp->if_qflush entry point for if_bridge(4) is no-op.
  */
@@ -3917,7 +3881,7 @@ bridge_pfil(struct mbuf **mp, struct ifnet *bifp, struct ifnet *ifp, int dir)
 	KASSERT(M_WRITABLE(*mp), ("%s: modifying a shared mbuf", __func__));
 #endif
 
-	if (V_pfil_bridge == 0 && V_pfil_member == 0)
+	if (V_pfil_bridge == 0 && V_pfil_member == 0 && V_pfil_layer2 == 0)
 		return (0); /* filtering is disabled */
 
 	if ((*mp)->m_len < ETHER_HDR_LEN) {
@@ -3992,6 +3956,21 @@ bridge_pfil(struct mbuf **mp, struct ifnet *bifp, struct ifnet *ifp, int dir)
 			if (V_pfil_onlyip)
 				goto bad;
 	}
+
+	/* Run the packet through pfil before stripping link headers */
+	if (PFIL_HOOKED_OUT(V_link_pfil_head) && V_pfil_layer2 != 0 &&
+	    dir == PFIL_OUT && ifp != NULL) {
+		switch (pfil_mbuf_out(V_link_pfil_head, mp, ifp, NULL)) {
+		case PFIL_DROPPED:
+			return (EACCES);
+		case PFIL_CONSUMED:
+			return (0);
+		default:
+			break;
+		}
+	}
+	if (V_pfil_bridge == 0 && V_pfil_member == 0)
+		return (0);
 
 	/* Strip off the Ethernet header and keep a copy. */
 	m_copydata(*mp, 0, ETHER_HDR_LEN, (caddr_t) &eh2);

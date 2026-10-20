@@ -1,32 +1,40 @@
 /*
- * pf firewall audit — rule evaluation events and actions.
+ * pf audit - packet verdicts by interface and direction, and pf
+ * configuration changes (ioctls and ruleset transactions).
  *
- * Traces pf_test to show which processes trigger firewall
- * evaluation and the resulting action. Aggregates results
- * by process. Requires pf loaded and active.
+ * Uses the pf SDT provider (dtrace_pf(4)).  Requires pf loaded.
  */
 
-fbt::pf_test:entry
+pf:ip:test:finish
 /* @bsdinstruments-predicate */
 {
-    self->pf_ts = timestamp;
-    /* @bsdinstruments-stack */
-    /* @bsdinstruments-ustack */
+	@verdicts[stringof(args[2]->if_xname),
+	    arg1 == 1 ? "in" : arg1 == 2 ? "out" : "fwd",
+	    arg0 == 0 ? "pass" : arg0 == 1 ? "block" : "other"] = count();
 }
 
-fbt::pf_test:return
-/self->pf_ts/
+pf:ioctl:xact:begin
 {
-    this->us = (timestamp - self->pf_ts) / 1000;
-    printf("%s[%d]: pf_test result=%d %dus\n",
-        execname, pid, arg1, this->us);
-    @pf_results[execname, arg1] = count();
-    self->pf_ts = 0;
+	printf("%Y %s[%d] begin ruleset %s\n", walltimestamp, execname, pid,
+	    stringof(arg0));
+}
+
+pf:ioctl:xact:commit
+{
+	printf("%Y %s[%d] commit ruleset %s\n", walltimestamp, execname, pid,
+	    stringof(arg1));
+}
+
+pf:ioctl:ioctl:return
+/arg2 != 0/
+{
+	@ioctl_errors[execname, arg0, arg2] = count();
 }
 
 dtrace:::END
 {
-    printf("\n--- pf evaluations by process/result ---\n");
-    printf("%-20s %8s %8s\n", "EXECNAME", "RESULT", "COUNT");
-    printa("%-20s %8d %@8d\n", @pf_results);
+	printf("\n--- verdicts (interface, direction, action) ---\n");
+	printa("  %-12s %-4s %-6s %@d\n", @verdicts);
+	printf("\n--- failed pf ioctls (program, cmd, errno) ---\n");
+	printa("  %-16s 0x%x %d %@d\n", @ioctl_errors);
 }

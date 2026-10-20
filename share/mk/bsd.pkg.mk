@@ -143,6 +143,12 @@ _pkgfilename:=	${_pkgfullname}-${PKG_VERSION}.pkg
 
 all: ${_pkgfilename}
 
+# Metadata-only packages must be named explicitly.  They are useful for
+# upgrade transitions whose former files have moved or been retired.
+.if !empty(PKG_METADATA_ONLY:M${_pkg})
+${_pkgfilename}: ${_pkgfullname}.pkgucl
+	${_PKG_CREATE} -M ${.ALLSRC:M*.pkgucl}
+.else
 ${_pkgfilename}: ${_pkgfullname}.pkgucl ${_pkg}.plist
 	# We should never create an empty package; this means we intended to
 	# build the package, but we didn't build the things which are supposed
@@ -156,6 +162,7 @@ ${_pkgfilename}: ${_pkgfullname}.pkgucl ${_pkg}.plist
 		exit 1; \
 	fi
 	${_PKG_CREATE} -M ${.ALLSRC:M*.pkgucl} -p ${.ALLSRC:M*.plist}
+.endif
 
 ${_pkgfullname}.ucl.in: ${UCLSRC.${_pkg}:U${UCLSRC:U${_pkg}.ucl}}
 	@echo 'Generating ${.TARGET} from ${.ALLSRC}'
@@ -207,7 +214,8 @@ ${_pkgfullname}.pkgucl: ${_pkgfullname}.ucl.in
 
 # Stage the packages from objdir into repodir.
 
-stagepackages: .PHONY
+# Staging may be requested directly or alongside all under -j.
+stagepackages: all .PHONY
 	mkdir -p ${_STAGEDIR}
 	cp ${_ALLPACKAGES:S/^/${PKG_NAME_PREFIX}-/:S/$/-${PKG_VERSION}.pkg/} \
 		${_STAGEDIR}

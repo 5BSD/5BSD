@@ -119,7 +119,7 @@ ttl_exceeded_body()
 
 	jexec nat pfctl -e
 	pft_set_rules nat \
-	    "nat on ${epair_int}b from 2001:db8:3::/64 -> (${epair_int}b:0)" \
+	    "match out on ${epair_int}b from 2001:db8:3::/64 nat-to (${epair_int}b:0)" \
 	    "block" \
 	    "pass inet6 proto udp" \
 	    "pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv, echoreq }"
@@ -172,11 +172,15 @@ repeat_body()
 	    ping -c 1 2001:db8::1
 
 	jexec alcatraz pfctl -e
+	# 5BSD: as on OpenBSD, an advertisement matches no solicitation's
+	# state; the rules pass it.  The case checks repeated solicitations
+	# against if-bound states.
 	pft_set_rules alcatraz \
 		"block all" \
-		"pass quick inet6 proto ipv6-icmp all icmp6-type neighbrsol keep state (if-bound) ridentifier 1000000107"
+		"pass quick inet6 proto ipv6-icmp all icmp6-type neighbrsol keep state (if-bound)" \
+		"pass quick inet6 proto ipv6-icmp all icmp6-type neighbradv no state"
 
-	jexec alcatraz pfctl -x loud
+	jexec alcatraz pfctl -x debug
 	  ndisc6 -m -n -r 1 2001:db8::1 ${epair}a
 	jexec alcatraz pfctl -ss -vv
 
@@ -196,8 +200,41 @@ repeat_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "mld_group" "cleanup"
+mld_group_head()
+{
+	atf_set descr 'MLD states distinguish groups with identical outer IPv6 tuples'
+	atf_set require.user root
+	atf_set require.progs python3 scapy
+	atf_set timeout 300
+}
+
+mld_group_body()
+{
+	pft_init
+	epair=$(vnet_mkepair)
+	ifconfig ${epair}a inet6 2001:db8::2/64 up no_dad
+	vnet_mkjail alcatraz ${epair}b
+	jexec alcatraz ifconfig ${epair}b inet6 2001:db8::1/64 up no_dad
+	atf_check -s exit:0 -o ignore ping -6 -c 1 -t 3 2001:db8::1
+	jexec alcatraz pfctl -e
+	pft_set_rules alcatraz \
+	    'set timeout icmp.first 600' \
+	    'set timeout icmp.error 600' \
+	    'block' \
+	    "pass in quick on ${epair}b inet6 proto icmp6 from fe80::1234 to ff02::1 keep state"
+	atf_check -s exit:0 -e ignore -o match:'MLD_GROUP_CASE report passed' \
+	    python3 $(atf_get_srcdir)/mld-group.py --interface ${epair}a --jail alcatraz
+}
+
+mld_group_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case "mld_group"
 	atf_add_test_case "zero_id"
 	atf_add_test_case "ttl_exceeded"
 	atf_add_test_case "repeat"

@@ -253,7 +253,7 @@ __END_DECLS
 /* last return value of *_input(), meaning "all job for this pkt is done".  */
 #define	IPPROTO_DONE		257
 
-#define __IPPROTO_DIVERT	258		/* Deprecated, use PF_DIVERT */
+#define	IPPROTO_DIVERT		258		/* divert(4) of pf (OpenBSD) */
 
 /* Only used internally, so can be outside the range of valid IP protocols. */
 #define	IPPROTO_SEND		259		/* SeND pseudo-protocol */
@@ -463,11 +463,16 @@ VNET_DECLARE(uint32_t, in_loopback_mask);
 				     /* unused; was IP_RSS_LISTEN_BUCKET */
 #define	IP_ORIGDSTADDR		27   /* bool; receive IP dst addr/port w/dgram */
 #define	IP_RECVORIGDSTADDR      IP_ORIGDSTADDR
+#define	IP_RECVDSTPORT		33   /* bool; receive IP dst port w/dgram (OpenBSD) */
 
 /*
  * Options for controlling the firewall and dummynet.
  * Historical options (from 40 to 64) will eventually be
  * replaced by only two options, IP_FW3 and IP_DUMMYNET3.
+ *
+ * 5BSD: ipfw(4) is retired; only IP_DUMMYNET3 (dnctl(8)) is served and the
+ * other numbers fail with ENOPROTOOPT.  They stay defined so that the
+ * values are not reused and FreeBSD merges of this list stay trivial.
  */
 #define	IP_FW_TABLE_ADD		40   /* add entry */
 #define	IP_FW_TABLE_DEL		41   /* delete entry */

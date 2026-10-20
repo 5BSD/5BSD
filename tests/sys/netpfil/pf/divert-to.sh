@@ -25,7 +25,11 @@
 # SUCH DAMAGE.
 
 #
-# pf divert-to action test cases
+# pf divert-packet action test cases
+#
+# FreeBSD's pf "divert-to <addr> port <port>" sent packets to ipdivert(4)
+# sockets; OpenBSD PF does that with "divert-packet port <port>" and
+# divert(4) sockets (OpenBSD "divert-to" redirects to a local socket).
 #
 #  -----------|           |--     |----|     ----|            |-----------
 # ( ) inbound |pf_check_in|  ) -> |host| -> ( )  |pf_check_out| outbound  )
@@ -65,7 +69,6 @@ in_div_head()
 {
 	atf_set descr 'Test inbound > diverted | divapp terminated'
 	atf_set require.user root
-	atf_set require.kmods ipdivert
 }
 in_div_body()
 {
@@ -85,8 +88,8 @@ in_div_body()
 	jexec div pfctl -e
 	pft_set_rules div \
 	    "pass all" \
-	    "pass in inet proto icmp icmp-type echoreq divert-to 127.0.0.1 port 2000" \
-	    "pass in inet6 proto icmp6 icmp6-type echoreq divert-to ::1 port 2000"
+	    "pass in inet proto icmp icmp-type echoreq divert-packet port 2000" \
+	    "pass in inet6 proto icmp6 icmp6-type echoreq divert-packet port 2000"
 
 	jexec div $(atf_get_srcdir)/../common/divapp 2000 expect-single-pkt &
 	divapp_pid=$!
@@ -94,7 +97,7 @@ in_div_body()
 	sleep 1
 
 	# divapp is expected to "eat" the packet
-	atf_check -s not-exit:0 -o ignore ping -c1 -t1 192.0.2.2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -t1 192.0.2.2
 
 	wait $divapp_pid
 
@@ -104,7 +107,7 @@ in_div_body()
 	sleep 1
 
 	# divapp is expected to "eat" the packet
-	atf_check -s not-exit:0 -o ignore ping -c1 -t1 2001:db8::2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -t1 2001:db8::2
 
 	wait $divapp_pid
 }
@@ -118,7 +121,6 @@ in_div_in_head()
 {
 	atf_set descr 'Test inbound > diverted > inbound | host terminated'
 	atf_set require.user root
-	atf_set require.kmods ipdivert
 }
 in_div_in_body()
 {
@@ -138,8 +140,8 @@ in_div_in_body()
 	jexec div pfctl -e
 	pft_set_rules div \
 	    "pass all" \
-	    "pass in inet proto icmp icmp-type echoreq divert-to 127.0.0.1 port 2000 no state" \
-	    "pass in inet6 proto icmp6 icmp6-type echoreq divert-to ::1 port 2000 no state"
+	    "pass in inet proto icmp icmp-type echoreq divert-packet port 2000 no state" \
+	    "pass in inet6 proto icmp6 icmp6-type echoreq divert-packet port 2000 no state"
 
 	jexec div $(atf_get_srcdir)/../common/divapp 2000 expect-single-pkt divert-back &
 	divapp_pid=$!
@@ -171,7 +173,6 @@ out_div_head()
 {
 	atf_set descr 'Test outbound > diverted | divapp terminated'
 	atf_set require.user root
-	atf_set require.kmods ipdivert
 }
 out_div_body()
 {
@@ -192,9 +193,9 @@ out_div_body()
 	pft_set_rules div \
 	    "pass all" \
 	    "pass in inet proto icmp icmp-type echoreq no state" \
-	    "pass out inet proto icmp icmp-type echorep divert-to 127.0.0.1 port 2000 no state" \
+	    "pass out inet proto icmp icmp-type echorep divert-packet port 2000 no state" \
 	    "pass in inet6 proto icmp6 icmp6-type echoreq no state" \
-	    "pass out inet6 proto icmp6 icmp6-type echorep divert-to ::1 port 2000 no state"
+	    "pass out inet6 proto icmp6 icmp6-type echorep divert-packet port 2000 no state"
 
 	jexec div $(atf_get_srcdir)/../common/divapp 2000 expect-single-pkt &
 	divapp_pid=$!
@@ -202,7 +203,7 @@ out_div_body()
 	sleep 1
 
 	# divapp is expected to "eat" the packet
-	atf_check -s not-exit:0 -o ignore ping -c1 -t1 192.0.2.2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -t1 192.0.2.2
 
 	wait $divapp_pid
 
@@ -212,7 +213,7 @@ out_div_body()
 	sleep 1
 
 	# divapp is expected to "eat" the packet
-	atf_check -s not-exit:0 -o ignore ping -c1 -t1 2001:db8::2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -t1 2001:db8::2
 
 	wait $divapp_pid
 }
@@ -226,7 +227,6 @@ out_div_out_head()
 {
 	atf_set descr 'Test outbound > diverted > outbound | network terminated'
 	atf_set require.user root
-	atf_set require.kmods ipdivert
 }
 out_div_out_body()
 {
@@ -247,9 +247,9 @@ out_div_out_body()
 	pft_set_rules div \
 	    "pass all" \
 	    "pass in inet proto icmp icmp-type echoreq no state" \
-	    "pass out inet proto icmp icmp-type echorep divert-to 127.0.0.1 port 2000 no state" \
+	    "pass out inet proto icmp icmp-type echorep divert-packet port 2000 no state" \
 	    "pass in inet6 proto icmp6 icmp6-type echoreq no state" \
-	    "pass out inet6 proto icmp6 icmp6-type echorep divert-to ::1 port 2000 no state"
+	    "pass out inet6 proto icmp6 icmp6-type echorep divert-packet port 2000 no state"
 
 	jexec div $(atf_get_srcdir)/../common/divapp 2000 expect-single-pkt divert-back &
 	divapp_pid=$!
@@ -281,7 +281,6 @@ in_div_in_fwd_out_div_out_head()
 {
 	atf_set descr 'Test inbound > diverted > inbound > forwarded > outbound > diverted > outbound | network terminated'
 	atf_set require.user root
-	atf_set require.kmods ipdivert
 }
 in_div_in_fwd_out_div_out_body()
 {
@@ -321,10 +320,10 @@ in_div_in_fwd_out_div_out_body()
 	jexec router pfctl -e
 	pft_set_rules router \
 	    "pass all" \
-	    "pass in inet proto icmp icmp-type echoreq divert-to 127.0.0.1 port 2001 no state" \
-	    "pass out inet proto icmp icmp-type echoreq divert-to 127.0.0.1 port 2002 no state" \
-	    "pass in inet6 proto icmp6 icmp6-type echoreq divert-to ::1 port 2001 no state" \
-	    "pass out inet6 proto icmp6 icmp6-type echoreq divert-to ::1 port 2002 no state"
+	    "pass in inet proto icmp icmp-type echoreq divert-packet port 2001 no state" \
+	    "pass out inet proto icmp icmp-type echoreq divert-packet port 2002 no state" \
+	    "pass in inet6 proto icmp6 icmp6-type echoreq divert-packet port 2001 no state" \
+	    "pass out inet6 proto icmp6 icmp6-type echoreq divert-packet port 2002 no state"
 
 	jexec router $(atf_get_srcdir)/../common/divapp 2001 expect-single-pkt divert-back &
 	indivapp_pid=$!
@@ -360,7 +359,7 @@ in_dn_in_div_in_out_div_out_dn_out_head()
 {
 	atf_set descr 'Test inbound > delayed+diverted > outbound > diverted+delayed > outbound | network terminated'
 	atf_set require.user root
-	atf_set require.kmods dummynet ipdivert
+	atf_set require.kmods dummynet
 }
 in_dn_in_div_in_out_div_out_dn_out_body()
 {
@@ -388,10 +387,10 @@ in_dn_in_div_in_out_div_out_dn_out_body()
 	    "ether pass in from 02:00:00:00:00:01 l3 all dnpipe 1001" \
 	    "ether pass out to 02:00:00:00:00:01 l3 all dnpipe 1002 " \
 	    "pass all" \
-	    "pass in inet proto icmp icmp-type echoreq divert-to 127.0.0.1 port 1001 no state" \
-	    "pass out inet proto icmp icmp-type echorep divert-to 127.0.0.1 port 1002 no state" \
-	    "pass in inet6 proto icmp6 icmp6-type echoreq divert-to ::1 port 1001 no state" \
-	    "pass out inet6 proto icmp6 icmp6-type echorep divert-to ::1 port 1002 no state"
+	    "pass in inet proto icmp icmp-type echoreq divert-packet port 1001 no state" \
+	    "pass out inet proto icmp icmp-type echorep divert-packet port 1002 no state" \
+	    "pass in inet6 proto icmp6 icmp6-type echoreq divert-packet port 1001 no state" \
+	    "pass out inet6 proto icmp6 icmp6-type echorep divert-packet port 1002 no state"
 
 	jexec alcatraz $(atf_get_srcdir)/../common/divapp 1001 expect-single-pkt divert-back &
 	indivapp_pid=$!
@@ -400,7 +399,7 @@ in_dn_in_div_in_out_div_out_dn_out_body()
 	# Wait for the divapps to be ready
 	sleep 1
 
-	atf_check -s not-exit:0 -o ignore ping -c1 -s56 -t1 192.0.2.2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -s56 -t1 192.0.2.2
 
 	wait $indivapp_pid
 	atf_check_not_equal 0 $?
@@ -414,7 +413,7 @@ in_dn_in_div_in_out_div_out_dn_out_body()
 	# Wait for the divapps to be ready
 	sleep 1
 
-	atf_check -s not-exit:0 -o ignore ping -c1 -s56 -t1 2001:db8::2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -s56 -t1 2001:db8::2
 
 	wait $indivapp_pid
 	atf_check_not_equal 0 $?
@@ -433,10 +432,10 @@ in_dn_in_div_in_out_div_out_dn_out_body()
 	    "ether pass in from 02:00:00:00:00:01 l3 all dnpipe 2001" \
 	    "ether pass out to 02:00:00:00:00:01 l3 all dnpipe 2002 " \
 	    "pass all" \
-	    "pass in inet proto icmp icmp-type echoreq divert-to 127.0.0.1 port 2001 no state" \
-	    "pass out inet proto icmp icmp-type echorep divert-to 127.0.0.1 port 2002 no state" \
-	    "pass in inet6 proto icmp6 icmp6-type echoreq divert-to ::1 port 2001 no state" \
-	    "pass out inet6 proto icmp6 icmp6-type echorep divert-to ::1 port 2002 no state"
+	    "pass in inet proto icmp icmp-type echoreq divert-packet port 2001 no state" \
+	    "pass out inet proto icmp icmp-type echorep divert-packet port 2002 no state" \
+	    "pass in inet6 proto icmp6 icmp6-type echoreq divert-packet port 2001 no state" \
+	    "pass out inet6 proto icmp6 icmp6-type echorep divert-packet port 2002 no state"
 
 	jexec alcatraz $(atf_get_srcdir)/../common/divapp 2001 expect-single-pkt divert-back &
 	indivapp_pid=$!
@@ -478,7 +477,6 @@ pr260867_head()
 {
 	atf_set descr 'Test for the loop reported in PR260867'
 	atf_set require.user root
-	atf_set require.kmods ipdivert
 }
 pr260867_body()
 {
@@ -502,7 +500,7 @@ pr260867_body()
 
 	jexec alcatraz pfctl -e
 	pft_set_rules alcatraz \
-	    "pass in on ${epair}b proto tcp from any to port 7 divert-to 0.0.0.0 port 1001"
+	    "pass in on ${epair}b proto tcp from any to port 7 divert-packet port 1001"
 
 	reply=$(echo "foo" | nc -N 192.0.2.2 7)
 	if [ "${reply}" != "foo" ]; then
@@ -524,7 +522,6 @@ pr260867_icmp_head()
 {
 	atf_set descr 'Variant of the PR260867 test'
 	atf_set require.user root
-	atf_set require.kmods ipdivert
 }
 pr260867_icmp_body()
 {
@@ -547,8 +544,8 @@ pr260867_icmp_body()
 
 	jexec alcatraz pfctl -e
 	pft_set_rules alcatraz \
-	    "pass in on ${epair}b proto icmp from any to any divert-to 0.0.0.0 port 1001" \
-	    "pass in on ${epair}b proto icmp6 from any to any divert-to :: port 1001"
+	    "pass in on ${epair}b proto icmp from any to any divert-packet port 1001" \
+	    "pass in on ${epair}b proto icmp6 from any to any divert-packet port 1001"
 
 	atf_check -o ignore ping -c 3 192.0.2.2
 	atf_check -o ignore ping -c 3 2001:db8::2

@@ -44,7 +44,6 @@ MAN=	aac.4 \
 	ale.4 \
 	alpm.4 \
 	appleir.4 \
-	altq.4 \
 	amdpm.4 \
 	${_amdsbwd.4} \
 	${_amdsmb.4} \
@@ -490,6 +489,7 @@ MAN=	aac.4 \
 	ral.4 \
 	random.4 \
 	rctl.4 \
+	rdomain.4 \
 	re.4 \
 	rge.4 \
 	rgephy.4 \
@@ -619,6 +619,7 @@ MAN=	aac.4 \
 	${_vmci.4} \
 	vmgenc.4 \
 	vkbd.4 \
+	vether.4 \
 	vlan.4 \
 	vxlan.4 \
 	${_vmd.4} \
@@ -661,7 +662,6 @@ MLINKS=	ads111x.4 ads1013.4 \
 MLINKS+=ae.4 if_ae.4
 MLINKS+=alc.4 if_alc.4
 MLINKS+=ale.4 if_ale.4
-MLINKS+=altq.4 ALTQ.4
 MLINKS+=ath.4 if_ath.4
 MLINKS+=aue.4 if_aue.4
 MLINKS+=axe.4 if_axe.4
@@ -1008,6 +1008,7 @@ _dtrace_provs=	dtrace_audit.4 \
 		dtrace_cam.4 \
 		dtrace_dtmalloc.4 \
 		dtrace_dtrace.4 \
+		dtrace_pf.4 \
 		dtrace_fbt.4 \
 		dtrace_io.4 \
 		dtrace_ip.4 \
@@ -1134,5 +1135,8 @@ MLINKS+=zyd.4 if_zyd.4
 MANGROUPS+=		MAC_ABAC
 MAC_ABACPACKAGE=	mac-abac
 MAC_ABAC=		mac_abac.4
+
+# OpenBSD PF manual pages (pf, pflog, pflow, pfsync, divert).
+.PATH: ${SRCTOP}/contrib/openbsd-pf/share/man/man4
 
 .include <bsd.prog.mk>
