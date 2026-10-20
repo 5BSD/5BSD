@@ -287,6 +287,14 @@ st_noleaks()
 # leaks and kernel messages.
 st_finish()
 {
+	# Drop the jails' TCP connections first.  A socket left closing when
+	# its peer's jail is gone retransmits for minutes, and its credential
+	# keeps its jail (and vnet) dying until TCP gives up.
+	if [ -f created_jails.lst ]; then
+		while read _j _ifs; do
+			jexec ${_j} tcpdrop -a > /dev/null 2>&1
+		done < created_jails.lst
+	fi
 	pft_cleanup
 	st_noleaks
 	integ_dmesg_check
