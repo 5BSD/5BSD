@@ -8856,7 +8856,13 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 		kif = (struct pfi_kif *)ifp->if_pf_kif;
 
 	if (kif == NULL) {
-		DPFPRINTF(LOG_ERR,
+		/*
+		 * 5BSD: an interface arriving in this vnet (created, or moved
+		 * in from another) is on its list before pf's arrival handler
+		 * attaches it; a packet in between is dropped.  That is a
+		 * transition, not an error as on OpenBSD.
+		 */
+		DPFPRINTF(LOG_DEBUG,
 		    "%s: kif == NULL, if_xname %s", __func__, ifp->if_xname);
 		return (PF_DROP);
 	}
