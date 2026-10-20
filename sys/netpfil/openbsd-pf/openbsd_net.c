@@ -458,10 +458,23 @@ void
 obsd_ip_forward(struct mbuf *m, struct ifnet *ifp, struct route *ro, int flags)
 {
 	struct epoch_tracker et;
+	struct ip *ip;
 
 	obsd_cksum_out(m, AF_INET);
 	NET_EPOCH_ENTER(et);
-	ip_forward(m, 0);
+	/*
+	 * An af-to packet for an address of this host: OpenBSD's
+	 * ip_forward() routes it to the local address, through the
+	 * loopback.  FreeBSD's drops destinations it cannot forward, such
+	 * as link-local ones (in_canforward()), before routing; send those
+	 * out the same way ip_output() delivers local traffic.
+	 */
+	ip = mtod(m, struct ip *);
+	if (!in_canforward(ip->ip_dst) &&
+	    in_localip_fib(ip->ip_dst, M_GETFIB(m)))
+		(void)ip_output(m, NULL, NULL, 0, NULL, NULL);
+	else
+		ip_forward(m, 0);
 	NET_EPOCH_EXIT(et);
 }
 

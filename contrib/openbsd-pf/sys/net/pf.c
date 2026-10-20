@@ -3748,6 +3748,9 @@ pf_modulate_sack(struct pf_pdesc *pd, struct pf_state_peer *dst)
 	return (copyback);
 }
 
+/* 5BSD: pf_build_tcp()'s tag: generated, and so through the loopback. */
+#define	PF_TCP_GENERATED_LOOP	2
+
 struct mbuf *
 pf_build_tcp(const struct pf_rule *r, sa_family_t af,
     const struct pf_addr *saddr, const struct pf_addr *daddr,
@@ -3797,6 +3800,8 @@ pf_build_tcp(const struct pf_rule *r, sa_family_t af,
 	}
 	if (tag)
 		PF_MTAG_W(m)->flags |= PF_TAG_GENERATED;	/* 5BSD: m_tag */
+	if (tag == PF_TCP_GENERATED_LOOP)	/* 5BSD: through the loopback */
+		PF_MTAG_W(m)->xflags |= PF_XTAG_LOOP;
 	PF_MTAG_W(m)->tag = rtag;	/* 5BSD: m_tag */
 	m->m_pkthdr.ph_rtableid = rdom;
 	if (r && (r->scrub_flags & PFSTATE_SETPRIO))
@@ -6354,7 +6359,8 @@ pf_synproxy(struct pf_pdesc *pd, struct pf_state **stp, u_short *reason)
 			    sk->port[pd->sidx], sk->port[pd->didx],
 			    (*stp)->dst.seqhi, 0, TH_SYN, 0,
 			    (*stp)->src.mss, 0,
-			    pf_addr_is_local(pd->af, &sk->addr[pd->didx]),
+			    pf_addr_is_local(pd->af, &sk->addr[pd->didx]) ?
+			    PF_TCP_GENERATED_LOOP : 0,
 			    (*stp)->tag, sk->rdomain, reason);
 			REASON_SET(reason, PFRES_SYNPROXY);
 			return (PF_SYNPROXY_DROP);
@@ -8808,6 +8814,7 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 	int			 dir = (fwdir == PF_FWD) ? PF_OUT : fwdir;
 	u_int32_t		 qid, pqid = 0;
 	int			 have_pf_lock = 0;
+	struct mbuf		*ttlm = NULL;	/* 5BSD: see below */
 
 	if (!pf_status.running)
 		return (PF_PASS);
@@ -8897,6 +8904,18 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 #endif	/* NPFLOG > 0 */
 		goto done;
 	}
+
+	/*
+	 * 5BSD: a packet whose time to live ends here gets, if pf translates
+	 * it to the other family (af-to), a time-exceeded error in its own
+	 * family about the packet as it arrived.  The translation rewrites
+	 * ports, ICMP ids and types in place, so keep a copy first; such
+	 * packets are rare.
+	 */
+	if (dir == PF_IN && (pd.af == AF_INET ?
+	    mtod(pd.m, struct ip *)->ip_ttl <= IPTTLDEC :
+	    mtod(pd.m, struct ip6_hdr *)->ip6_hlim <= IPV6_HLIMDEC))
+		ttlm = m_dup(pd.m, M_NOWAIT);
 
 	/* if packet has been reassembled, update packet description */
 	if (pf_status.reass && pd.virtual_proto == PF_VPROTO_FRAGMENT) {
@@ -9073,8 +9092,10 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 					action = pf_find_state(&pd, &key, &st);
 					st = pf_state_ref(st);
 					PF_STATE_EXIT_READ();
-					if (st == NULL)
+					if (st == NULL) {
+						m_freem(ttlm);	/* 5BSD */
 						return (PF_DROP);
+					}
 					st->src.seqhi = st->dst.seqhi =
 					    ntohl(pd.hdr.tcp.th_ack) - 1;
 					st->src.seqlo =
@@ -9299,20 +9320,23 @@ log_packet:
 
 		/*
 		 * 5BSD: a packet whose time to live ends here gets its error
-		 * in its own family, about the packet it sent.  pf_route()
-		 * checks only after the translation, and sent the error about
-		 * the translated packet to its translated source: this host
-		 * (FreeBSD PR 291527).
+		 * in its own family, about the packet it sent (ttlm, taken
+		 * before the translation).  Forwarding checks only after the
+		 * translation, and sent the error about the translated packet
+		 * to its translated source: this host, which answered itself
+		 * from its loopback address (FreeBSD PR 291527).
 		 */
 		if (pd.dir == PF_IN && (pd.af == AF_INET ?
 		    mtod(pd.m, struct ip *)->ip_ttl <= IPTTLDEC :
 		    mtod(pd.m, struct ip6_hdr *)->ip6_hlim <= IPV6_HLIMDEC)) {
-			if (pd.af == AF_INET)
-				pf_send_icmp_orig(pd.m, ICMP_TIMXCEED,
+			if (ttlm == NULL)
+				;	/* no memory: dropped without an error */
+			else if (pd.af == AF_INET)
+				pf_send_icmp_orig(ttlm, ICMP_TIMXCEED,
 				    ICMP_TIMXCEED_INTRANS, 0, AF_INET, r,
 				    pd.rdomain);
 			else
-				pf_send_icmp_orig(pd.m, ICMP6_TIME_EXCEEDED,
+				pf_send_icmp_orig(ttlm, ICMP6_TIME_EXCEEDED,
 				    ICMP6_TIME_EXCEED_TRANSIT, 0, AF_INET6, r,
 				    pd.rdomain);
 			action = PF_DROP;
@@ -9444,6 +9468,7 @@ out:
 	*m0 = pd.m;
 
 	pf_state_unref(st);
+	m_freem(ttlm);	/* 5BSD */
 
 	return (action);
 }

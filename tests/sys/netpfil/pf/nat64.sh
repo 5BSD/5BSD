@@ -934,6 +934,116 @@ scub_min_ttl_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "traceroute" "cleanup"
+traceroute_head()
+{
+	atf_set descr 'A packet whose hop limit ends at the translator gets a time-exceeded error about it'
+	atf_set require.user root
+}
+
+traceroute_body()
+{
+	nat64_setup_in
+
+	# Hop 1 is the translator, answering in IPv6 about the probe as
+	# sent; the translation rewrites ports and ICMP ids, so the error
+	# must quote the packet as it arrived (FreeBSD PR 291527).
+	atf_check -s exit:0 -o match:'^ 1  2001:db8::1 ' -o not-match:'\*' \
+	    -e ignore traceroute6 -n -m 2 -q 3 -w 2 64:ff9b::192.0.2.2
+	atf_check -s exit:0 -o match:'^ 1  2001:db8::1 ' -o not-match:'\*' \
+	    -e ignore traceroute6 -n -I -m 2 -q 3 -w 2 64:ff9b::192.0.2.2
+}
+
+traceroute_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "traceroute_v4" "cleanup"
+traceroute_v4_head()
+{
+	atf_set descr 'IPv4 to IPv6: a packet whose time to live ends at the translator gets a time-exceeded error about it'
+	atf_set require.user root
+}
+
+traceroute_v4_body()
+{
+	pft_init
+
+	epair_link=$(vnet_mkepair)
+	epair=$(vnet_mkepair)
+
+	ifconfig ${epair}a 192.0.2.2/24 up
+	route add -net 198.51.100.0/24 192.0.2.1
+
+	vnet_mkjail rtr ${epair}b ${epair_link}a
+	jexec rtr ifconfig ${epair}b 192.0.2.1/24 up
+	jexec rtr ifconfig ${epair_link}a inet6 2001:db8::1/64 up no_dad
+
+	vnet_mkjail dst ${epair_link}b
+	jexec dst ifconfig ${epair_link}b inet6 2001:db8::2/64 up no_dad
+
+	jexec rtr sysctl net.inet.ip.forwarding=1 net.inet6.ip6.forwarding=1 \
+	    > /dev/null
+	jexec rtr pfctl -e
+	pft_set_rules rtr \
+	    "pass" \
+	    "pass in on ${epair}b to 198.51.100.0/24 af-to inet6 from 2001:db8::1 to 2001:db8::/120"
+
+	atf_check -s exit:0 -o ignore ping -c 1 198.51.100.2
+	atf_check -s exit:0 -o match:'^ 1  192.0.2.1 ' -o not-match:'\*' \
+	    -e ignore traceroute -n -m 2 -q 3 -w 2 198.51.100.2
+	atf_check -s exit:0 -o match:'^ 1  192.0.2.1 ' -o not-match:'\*' \
+	    -e ignore traceroute -n -I -m 2 -q 3 -w 2 198.51.100.2
+}
+
+traceroute_v4_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "local" "cleanup"
+local_head()
+{
+	atf_set descr 'af-to between addresses of this host, on the loopback'
+	atf_set require.user root
+}
+
+local_body()
+{
+	pft_init
+
+	vnet_mkjail alcatraz
+	jexec alcatraz ifconfig lo0 inet 127.0.0.1/8 up
+	jexec alcatraz ifconfig lo0 inet6 ::1/128 -ifdisabled
+	# IPv4 loopback addresses are not forwarded; OpenBSD's pflog regress
+	# uses link-local ones, which FreeBSD's ip_forward() drops.
+	for i in 14 23 24; do
+		jexec alcatraz ifconfig lo0 inet 169.254.0.$i/32 alias
+		jexec alcatraz ifconfig lo0 inet6 fc00::$i/128 no_dad
+	done
+	jexec alcatraz sysctl net.inet.ip.forwarding=1 \
+	    net.inet6.ip6.forwarding=1 > /dev/null
+	jexec alcatraz pfctl -e
+	pft_set_rules alcatraz \
+	    "pass" \
+	    "pass in on lo0 to 169.254.0.14 af-to inet6 from fc00::23 to fc00::24" \
+	    "pass in on lo0 to fc00::14 af-to inet from 169.254.0.23 to 169.254.0.24"
+
+	# The translated request, and the reply translated back, are for
+	# this host: they loop back as new packets for pf (as OpenBSD's
+	# if_input_local()), and reach the address through the loopback.
+	atf_check -s exit:0 -o match:'3 packets received' \
+	    jexec alcatraz ping -n -c 3 169.254.0.14
+	atf_check -s exit:0 -o match:'3 packets received' \
+	    jexec alcatraz ping6 -n -c 3 fc00::14
+}
+
+local_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "icmp_echo_in"
@@ -954,4 +1064,7 @@ atf_init_test_cases()
 	atf_add_test_case "gateway6"
 	atf_add_test_case "v6_gateway"
 	atf_add_test_case "scrub_min_ttl"
+	atf_add_test_case "traceroute"
+	atf_add_test_case "traceroute_v4"
+	atf_add_test_case "local"
 }

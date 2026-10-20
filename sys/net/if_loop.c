@@ -321,16 +321,22 @@ if_simloop(struct ifnet *ifp, struct mbuf *m, int af, int hlen)
 
 	M_ASSERTPKTHDR(m);
 	/*
-	 * 5BSD: OpenBSD's loopback keeps pf's per-packet header (a packet pf
-	 * generated, a synproxy SYN to a local server, stays "generated").
-	 * The packet stays in this vnet, so keep pf's tag.
+	 * 5BSD: as OpenBSD's if_input_local() (m_resethdr()), a looped
+	 * packet starts afresh for pf: its per-packet mark goes with the
+	 * other non-persistent tags.  Only pf's synproxy SYN to a server on
+	 * this host keeps it (PF_XTAG_LOOP), so that it stays "generated"
+	 * and does not meet its own state again; FreeBSD's pf supports
+	 * synproxy to local services.
 	 */
 	{
 		struct m_tag *pft;
 
 		pft = m_tag_locate(m, MTAG_ABI_COMPAT, PACKET_TAG_PF, NULL);
-		if (pft != NULL)
+		if (pft != NULL &&
+		    (((struct pkthdr_pf *)(pft + 1))->xflags & PF_XTAG_LOOP))
 			m_tag_unlink(m, pft);
+		else
+			pft = NULL;
 		m_tag_delete_nonpersistent(m);
 		if (pft != NULL)
 			m_tag_prepend(m, pft);

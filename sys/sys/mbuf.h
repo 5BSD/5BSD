@@ -180,6 +180,9 @@ struct pkthdr_pf {
 /* pkthdr_pf.xflags (5BSD) */
 #define	PF_XTAG_ICMP_ERROR		0x01	/* pf asks the stack for an
 						   ICMP error (pf_send_icmp) */
+#define	PF_XTAG_LOOP			0x02	/* the mark survives the
+						   loopback (pf's synproxy
+						   SYN to a local server) */
 
 /* pkthdr_pf.flags */
 #define	PF_TAG_GENERATED		0x01
