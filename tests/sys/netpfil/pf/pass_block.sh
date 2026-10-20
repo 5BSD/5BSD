@@ -292,6 +292,56 @@ urpf_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "no_route" "cleanup"
+no_route_head()
+{
+	atf_set descr "Test blocking sources pf has no route back to (from no-route)"
+	atf_set require.user root
+	atf_set require.progs python3 scapy
+}
+
+no_route_body()
+{
+	pft_init
+
+	epair=$(vnet_mkepair)
+	vnet_mkjail alcatraz ${epair}b
+	ifconfig ${epair}a 192.0.2.2/24 up
+	jexec alcatraz ifconfig ${epair}b 192.0.2.1/24 up
+	jexec alcatraz route -q add -net 203.0.113.0/24 192.0.2.2
+
+	pft_set_rules alcatraz \
+		"block in quick from no-route" \
+		"pass" \
+		"set skip on lo"
+	jexec alcatraz pfctl -e
+
+	# Routable sources pass, and are answered.
+	atf_check -s exit:0 -o ignore ping -c 1 -t 1 192.0.2.1
+	atf_check -s exit:0 ${common_dir}/pft_ping.py \
+		--sendif ${epair}a \
+		--to 192.0.2.1 \
+		--fromaddr 203.0.113.5 \
+		--replyif ${epair}a
+	atf_check -s exit:0 -o match:"Packets: 0 " \
+		-x "jexec alcatraz pfctl -vsr | grep -A1 no-route"
+
+	# Without the route the source is unroutable: the rule blocks it.
+	jexec alcatraz route -q delete -net 203.0.113.0/24
+	atf_check -s exit:1 ${common_dir}/pft_ping.py \
+		--sendif ${epair}a \
+		--to 192.0.2.1 \
+		--fromaddr 203.0.113.5 \
+		--replyif ${epair}a
+	atf_check -s exit:0 -o match:"Packets: [1-9]" \
+		-x "jexec alcatraz pfctl -vsr | grep -A1 no-route"
+}
+
+no_route_cleanup()
+{
+	pft_cleanup
+}
+
 atf_test_case "received_on" "cleanup"
 received_on_head()
 {
@@ -680,6 +730,7 @@ atf_init_test_cases()
 	atf_add_test_case "noalias"
 	atf_add_test_case "nested_inline"
 	atf_add_test_case "urpf"
+	atf_add_test_case "no_route"
 	atf_add_test_case "received_on"
 	atf_add_test_case "optimize_any"
 	atf_add_test_case "any_if"
