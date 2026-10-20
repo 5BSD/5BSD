@@ -51,6 +51,11 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	ng_ether(4): destroying an Ethernet interface while it is a lagg(4)
 	port no longer corrupts kernel memory (the netgraph node kept the
 	freed interface).  Systems loading ng_ether with lagg should update.
+	DTrace: unregistering a provider walks only its own probes.  Every
+	process with USDT probes (libc, rtld and libthr carry them) retires
+	its providers at exit, and each retirement scanned the whole probe
+	array (about 100,000 probes with dtraceall loaded) under dtrace_lock;
+	process creation was slow and the fasttrap cleanup thread busy.
 
 20261019:
 	dummynet(4) is preloaded from the loader defaults, like pf and

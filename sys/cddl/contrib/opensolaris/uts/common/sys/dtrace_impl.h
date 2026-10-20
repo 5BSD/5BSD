@@ -122,6 +122,8 @@ struct dtrace_probe {
 	dtrace_probe_t *dtpr_nextname;		/* next in name hash */
 	dtrace_probe_t *dtpr_prevname;		/* previous in name hash */
 	dtrace_genid_t dtpr_gen;		/* probe generation ID */
+	dtrace_probe_t *dtpr_nextprov;		/* 5BSD: next of provider */
+	dtrace_probe_t *dtpr_prevprov;		/* 5BSD: previous of provider */
 };
 
 typedef int dtrace_probekey_f(const char *, const char *, int);
@@ -1180,6 +1182,7 @@ struct dtrace_provider {
 	void *dtpv_arg;				/* provider argument */
 	hrtime_t dtpv_defunct;			/* when made defunct */
 	struct dtrace_provider *dtpv_next;	/* next provider */
+	dtrace_probe_t *dtpv_probes;		/* 5BSD: this provider's probes */
 };
 
 struct dtrace_meta {
