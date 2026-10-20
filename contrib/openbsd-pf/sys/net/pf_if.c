@@ -439,8 +439,20 @@ pfi_attach_ifnet_cond(struct ifnet *ifp, int existing)
 	PF_UNLOCK();
 }
 
+static void	pfi_detach_ifnet_cond(struct ifnet *, int);
+
 void
 pfi_detach_ifnet(struct ifnet *ifp)
+{
+	pfi_detach_ifnet_cond(ifp, 0);
+}
+
+/*
+ * 5BSD: rename.  keep: leave ifp pointing at its kif, which the caller
+ * holds and replaces (pfi_rename_ifnet()).
+ */
+static void
+pfi_detach_ifnet_cond(struct ifnet *ifp, int keep)
 {
 	struct pfi_kif		*kif;
 	struct task		*t, *nt;
@@ -461,7 +473,8 @@ pfi_detach_ifnet(struct ifnet *ifp)
 	}
 	/* 5BSD: names.  This interface shares the kif of its name. */
 	if (kif->pfik_ifp != ifp) {
-		ifp->if_pf_kif = NULL;
+		if (!keep)
+			ifp->if_pf_kif = NULL;
 		if (kif->pfik_nifp > 0)
 			kif->pfik_nifp--;
 		pfi_kif_unref(kif, PFI_KIF_REF_NONE);
@@ -495,7 +508,7 @@ pfi_detach_ifnet(struct ifnet *ifp)
 	pfi_kif_update(kif);
 
 	kif->pfik_ifp = NULL;
-	if (ifp->if_pf_kif == (caddr_t)kif)	/* 5BSD: existing */
+	if (!keep && ifp->if_pf_kif == (caddr_t)kif)	/* 5BSD: existing */
 		ifp->if_pf_kif = NULL;
 	/* 5BSD: names.  Another interface with this name takes the kif over. */
 	if (kif->pfik_nifp > 0 &&
@@ -522,15 +535,33 @@ pfi_detach_ifnet(struct ifnet *ifp)
 void
 pfi_rename_ifnet(struct ifnet *ifp, const char *old_name)
 {
-	struct pfi_kif		*kif;
+	struct pfi_kif		*kif, *okif;
 
-	pfi_detach_ifnet(ifp);
+	/*
+	 * Packets keep arriving on ifp meanwhile.  Between the detach and
+	 * the attach it would have no kif, and pf_test() would drop them
+	 * ("kif == NULL"); OpenBSD renames under the net lock.  Hold the old
+	 * kif and leave ifp on it until the attach moves it to the new one.
+	 */
+	PF_LOCK();
+	if ((okif = (struct pfi_kif *)ifp->if_pf_kif) != NULL)
+		pfi_kif_ref(okif, PFI_KIF_REF_FLAG);
+	PF_UNLOCK();
+	pfi_detach_ifnet_cond(ifp, 1);
 	PF_LOCK();
 	pfi_update++;
 	if ((kif = pfi_kif_find(old_name)) != NULL)
 		pfi_kif_update(kif);
 	PF_UNLOCK();
 	pfi_attach_ifnet(ifp);
+	PF_LOCK();
+	if (okif != NULL) {
+		/* Not attached again (dying): no kif, as after a detach. */
+		if (ifp->if_pf_kif == (caddr_t)okif)
+			ifp->if_pf_kif = NULL;
+		pfi_kif_unref(okif, PFI_KIF_REF_FLAG);
+	}
+	PF_UNLOCK();
 }
 
 void
