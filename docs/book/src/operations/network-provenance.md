@@ -63,7 +63,7 @@ file has a one-line edit with a marker comment:
 | `5BSD: dummynet` | `dnpipe`/`dnqueue` (FreeBSD pf feature) |
 | `5BSD: sctp` | SCTP tracking, multihoming, `allow-related` (FreeBSD pf feature) |
 | `5BSD: ether` | layer-2 `ether` rules (FreeBSD pf feature) |
-| `5BSD: rename` | FreeBSD interfaces can be renamed; `pfi_rename_ifnet()` moves the interface to the kif of its new name (glue listens to `ifnet_rename_event`) |
+| `5BSD: rename` | FreeBSD interfaces can be renamed; `pfi_rename_ifnet()` moves the interface to the kif of its new name (glue listens to `ifnet_rename_event`), holding the old kif until then so that arriving packets always find one |
 | `5BSD: names` | FreeBSD can give two interfaces one name (a VNET jail's interface returning next to a renamed one); they share the kif of the name, as in FreeBSD pf, counted in `pfik_nifp`; groups, flags and `urpf-failed` are judged on the packet's own interface (`pf_pdesc.ifp`) |
 | `5BSD` | other small adaptations, listed in `README.5BSD` |
 

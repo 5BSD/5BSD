@@ -42,6 +42,15 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	identification instead of a new one, and its "packet too big" errors
 	quote the fragments as the source sent them, one per oversized
 	fragment as on OpenBSD, also through route-to and before NAT.
+	pf af-to: a packet whose time to live ends at the translator gets
+	its time-exceeded error about the packet as sent (traceroute through
+	NAT64 works again), and a translated packet for an address of this
+	host, link-local ones included, is delivered on the loopback.
+	pf no longer drops packets on an interface while it is renamed.
+	pfctl -a ANCHOR -sA lists anchors that exist only as ether anchors.
+	ng_ether(4): destroying an Ethernet interface while it is a lagg(4)
+	port no longer corrupts kernel memory (the netgraph node kept the
+	freed interface).  Systems loading ng_ether with lagg should update.
 
 20261019:
 	dummynet(4) is preloaded from the loader defaults, like pf and
