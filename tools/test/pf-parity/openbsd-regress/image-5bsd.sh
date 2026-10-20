@@ -130,6 +130,9 @@ EOF
 put etc/rc.conf 0644 <<'EOF'
 hostname="pf-dut-5bsd"
 ifconfig_vtnet0="DHCP"
+# QEMU's restricted user network offers no router: a default route as on
+# any connected host (udp_bindings connects jailed sockets off-link).
+defaultrouter="10.0.2.2"
 sshd_enable="YES"
 sendmail_enable="NONE"
 dumpdev="NO"
