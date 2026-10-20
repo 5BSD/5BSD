@@ -705,7 +705,8 @@ EOF
 # In stfw: epairs created, renamed into the rule names, grouped, destroyed.
 st_if_create()
 {
-	_n=$(jexec stfw ifconfig epair create) || return
+	# A unit of its own, as in st_if_groupname().
+	_n=$(jexec stfw ifconfig epair$((6000 + st_i % 100)) create) || return
 	_x=stc$((st_i % 3))
 	jexec stfw ifconfig ${_n} name ${_x} > /dev/null || _x=${_n}
 	jexec stfw ifconfig ${_x} inet 10.20.$((st_i % 3)).1/24 up
@@ -719,7 +720,10 @@ st_if_create()
 # In stfw: an interface named after the group the rules use.
 st_if_groupname()
 {
-	_n=$(jexec stfw ifconfig epair create) || return
+	# A unit of its own: epair units are per vnet, so a plain "epair
+	# create" here may take epair0 while st_if_stable has renamed the
+	# link away from epair0b, and the link cannot get its name back.
+	_n=$(jexec stfw ifconfig epair$((5000 + st_i % 100)) create) || return
 	_x=stchurn
 	jexec stfw ifconfig ${_n} name ${_x} > /dev/null || _x=${_n}
 	jexec stfw ifconfig ${_x} inet 10.22.0.1/24 up
