@@ -3336,10 +3336,30 @@ main(int argc, char *argv[])
 	case SHOWOPT_NONE:
 		break;
 
-	case SHOWOPT_ANCHORS:
-		pfctl_show_anchors(dev, opts, anchorname);
-		pfctl_eth_show_anchors(dev, opts, anchorname);	/* 5BSD: ether */
+	case SHOWOPT_ANCHORS: {
+		/*
+		 * 5BSD: ether anchors are a separate tree.  A named anchor
+		 * may exist in only one of them; it is missing only when it
+		 * is in neither.
+		 */
+		struct pfioc_ruleset pr;
+		int ip = 1;
+
+		if (anchorname[0] != '\0') {
+			memset(&pr, 0, sizeof(pr));
+			strlcpy(pr.path, anchorname, sizeof(pr.path));
+			if (ioctl(dev, DIOCGETRULESETS, &pr) == -1) {
+				if (errno != EINVAL && errno != ENOENT)
+					errx(1, "%s", pf_strerror(errno));
+				ip = 0;
+			}
+		}
+		if (ip)
+			pfctl_show_anchors(dev, opts, anchorname);
+		if (pfctl_eth_show_anchors(dev, opts, anchorname) == -1 && !ip)
+			errx(1, "%s", pf_strerror(ENOENT));
 		break;
+	}
 	case SHOWOPT_ETHER:	/* 5BSD: ether */
 		pfctl_eth_show_rules(dev, path, opts, PFCTL_SHOW_RULES,
 		    anchorname, 0, anchor_wildcard);
