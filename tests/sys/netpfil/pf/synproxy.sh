@@ -153,9 +153,52 @@ local_v6_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "no_syn" "cleanup"
+no_syn_head()
+{
+	atf_set descr 'A synproxy rule with flags any keeps state for a mid-connection packet without proxying'
+	atf_set require.user root
+	atf_set require.progs python3 scapy
+}
+
+no_syn_body()
+{
+	pft_init
+
+	epair=$(vnet_mkepair)
+	ifconfig ${epair}a 192.0.2.1/24 up
+	vnet_mkjail alcatraz ${epair}b
+	jexec alcatraz ifconfig ${epair}b 192.0.2.2/24 up
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.2
+
+	jexec alcatraz pfctl -e
+	pft_set_rules alcatraz \
+		"set skip on lo" \
+		"pass out" \
+		"pass in on ${epair}b proto tcp to port 9 flags any synproxy state"
+
+	# Only a SYN is proxied (the handshake is answered by pf); any other
+	# first packet creates an ordinary state and is passed on.
+	cat > ack.py <<EOF
+from scapy.all import IP, TCP, send
+send(IP(src="192.0.2.1", dst="192.0.2.2") /
+    TCP(sport=4242, dport=9, flags="A", seq=1000, ack=2000),
+    iface="${epair}a", verbose=False)
+EOF
+	atf_check -s exit:0 -e ignore python3 ack.py
+	atf_check -s exit:0 -o match:"192.0.2.1:4242" \
+	    -o not-match:"PROXY" jexec alcatraz pfctl -ss -v
+}
+
+no_syn_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "synproxy"
 	atf_add_test_case "local"
 	atf_add_test_case "local_v6"
+	atf_add_test_case "no_syn"
 }
