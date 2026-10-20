@@ -278,28 +278,35 @@ DECL = re.compile(r'^\s*(static\s+|extern\s+|__inline\s+|inline\s+)*'
 
 def no_caller(names):
     """pf.ko functions whose name pf's source mentions only where it
-    defines or declares them: dead code no test can run.  Any other
-    mention (a call, a function pointer, a comment) keeps a function in
-    the scope, so this errs towards counting it."""
-    text = []
+    defines or declares them, or only inside functions that are dead
+    themselves: dead code no test can run.  Any other mention (a call
+    from live code, a function pointer, a comment, a file-scope macro)
+    keeps a function in the scope, so this errs towards counting it."""
+    lines = []		# (text, enclosing function or None)
     for top in ('contrib/openbsd-pf/sys', 'sys/netpfil/openbsd-pf'):
         for d, _, fs in os.walk(os.path.join(SRC, top)):
             for f in fs:
-                if f.endswith(('.c', '.h')):
-                    text.append(open(os.path.join(d, f),
-                                     errors='replace').read())
-    lines = '\n'.join(text).split('\n')
-    out = set()
-    for n in names:
-        # Only functions pf's source defines; generated tree functions are
-        # used through macros (rb_unreachable() covers them), inlines from
-        # kernel headers are not pf's code.
-        if '_RB_' in n or not any(re.match(r'^%s\s*\(' % re.escape(n), l)
-                                  for l in lines):
-            continue
+                if not f.endswith(('.c', '.h')):
+                    continue
+                cur = None
+                for l in open(os.path.join(d, f),
+                              errors='replace').read().split('\n'):
+                    m = re.match(r'^([A-Za-z_]\w*)\s*\(', l)
+                    if m and not l.rstrip().endswith(';'):
+                        cur = m.group(1)
+                    lines.append((l, cur))
+                    if l.startswith('}'):
+                        cur = None
+    # Only functions pf's source defines; generated tree functions are
+    # used through macros (rb_unreachable() covers them), inlines from
+    # kernel headers are not pf's code.
+    cand = [n for n in names if '_RB_' not in n and
+            any(re.match(r'^%s\s*\(' % re.escape(n), l) for l, _ in lines)]
+    users = {}		# function -> functions whose body mentions it
+    for n in cand:
         w = re.compile(r'\b%s\b' % re.escape(n))
-        refs = 0
-        for line in lines:
+        u = set()
+        for line, cur in lines:
             if not w.search(line):
                 continue
             if re.match(r'^%s\s*\(' % re.escape(n), line):
@@ -309,10 +316,21 @@ def no_caller(names):
             if DECL.match(line) and re.search(r'\b%s\s*\(' % re.escape(n),
                                               line):
                 continue		# a prototype
-            refs += 1
-            break
-        if refs == 0:
-            out.add(n)
+            if cur is None or cur == n:
+                u = None		# file scope, or itself: keep it
+                break
+            u.add(cur)
+        if u is not None:
+            users[n] = u
+    # Dead: no users, or only dead ones (to a fixed point).
+    out = set()
+    changed = True
+    while changed:
+        changed = False
+        for n, u in users.items():
+            if n not in out and u <= out:
+                out.add(n)
+                changed = True
     return out
 
 
@@ -370,7 +388,7 @@ def report(cov, md=None):
                  'operation pf never uses: %s' % (len(dead - uncalled),
                  ', '.join(sorted(dead - uncalled))))
     lines.append('Excluded from the scope, %d functions pf\'s source never '
-                 'calls or refers to (dead code): %s' % (len(uncalled),
+                 'calls or refers to, or calls only from such code (dead code): %s' % (len(uncalled),
                  ', '.join(sorted(uncalled))))
     lines.append('Total: %d of %d probed functions run (%d%%).' % (
         th, th + tm, 100 * th // max(1, th + tm)))
