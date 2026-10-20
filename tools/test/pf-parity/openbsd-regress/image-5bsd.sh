@@ -99,6 +99,23 @@ if_ovpn_load="YES"
 ip_mroute_load="YES"
 ip6_mroute_load="YES"
 tcpmd5_load="YES"
+# netgraph(4) and the node types tests/sys/netgraph uses (late kldload
+# is denied).
+netgraph_load="YES"
+ng_socket_load="YES"
+ng_ether_load="YES"
+ng_bridge_load="YES"
+ng_hub_load="YES"
+ng_vlan_rotate_load="YES"
+ng_ksocket_load="YES"
+ng_macfilter_load="YES"
+ng_one2many_load="YES"
+ng_eiface_load="YES"
+ng_bluetooth_load="YES"
+ng_hci_load="YES"
+ng_l2cap_load="YES"
+ng_hci_virt_load="YES"
+ng_btsocket_load="YES"
 # Several FIBs: the multi-FIB routing and socket cases (routing domains are
 # FIBs on 5BSD; pf's rdomain tests pass with them).
 net.fibs="4"
