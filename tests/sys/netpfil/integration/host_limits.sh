@@ -239,11 +239,13 @@ state_pool_isolated_body()
 		jexec $j pfctl -e
 	done
 
-	# A small limit the host's own states leave room under.
-	lim=$(($(sysctl -n net.pf.vnet_count.states) + 5))
+	# A small limit the host's own states leave room under.  A loopback
+	# ping holds two states, out and in on lo0 (as on OpenBSD, pf sees
+	# both): b's three pings below need six.
+	lim=$(($(sysctl -n net.pf.vnet_count.states) + 8))
 	limits_set "states ${lim}"
 
-	# Every ping uses a new ICMP id, so a new state.  At most ${lim} fit.
+	# Every ping uses a new ICMP id, so new states.  At most ${lim} fit.
 	for i in $(seq 1 $((lim + 10))); do
 		jexec a ping -c 1 -t 1 127.0.0.1 > /dev/null 2>&1
 	done
