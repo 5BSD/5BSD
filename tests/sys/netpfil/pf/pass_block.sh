@@ -328,6 +328,8 @@ no_route_body()
 
 	# Without the route the source is unroutable: the rule blocks it.
 	jexec alcatraz route -q delete -net 203.0.113.0/24
+	# The first probe's state would pass the next one without a rule.
+	jexec alcatraz pfctl -q -Fs
 	atf_check -s exit:1 ${common_dir}/pft_ping.py \
 		--sendif ${epair}a \
 		--to 192.0.2.1 \
