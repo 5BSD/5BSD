@@ -8001,9 +8001,27 @@ pf_route6(struct pf_pdesc *pd, struct pf_state *st)
 	if ((mtag = m_tag_find(m0, PACKET_TAG_PF_REASSEMBLED, NULL))) {
 		if (qcopy != NULL &&	/* 5BSD: see above */
 		    pf_refragment6_size(m0) > (int)ifp->if_mtu) {
+			struct ip6_hdr *q6 = mtod(qcopy, struct ip6_hdr *);
+
 			ip6stat_inc(ip6s_cantfrag);
-			pf_refragment6_toobig(qcopy, ifp->if_mtu,
-			    st->rule.ptr, pd->rdomain);
+			ip6 = mtod(m0, struct ip6_hdr *);
+			/*
+			 * Untranslated, the error quotes each fragment as the
+			 * source sent it (OpenBSD's per-fragment errors, with
+			 * the source's id), which the source can match.  If
+			 * the outbound pass translated it, the fragments
+			 * would carry addresses the source never used: quote
+			 * the packet as reassembled, before NAT, as FreeBSD's
+			 * route-to does through its forwarding check.
+			 */
+			if (IN6_ARE_ADDR_EQUAL(&q6->ip6_src, &ip6->ip6_src) &&
+			    IN6_ARE_ADDR_EQUAL(&q6->ip6_dst, &ip6->ip6_dst))
+				pf_refragment6_toobig(qcopy, ifp->if_mtu,
+				    st->rule.ptr, pd->rdomain);
+			else
+				pf_send_icmp_orig(qcopy, ICMP6_PACKET_TOO_BIG,
+				    0, ifp->if_mtu, pd->af, st->rule.ptr,
+				    pd->rdomain);
 			goto bad;
 		}
 		(void) pf_refragment6(&m0, mtag, dst, ifp, rt);
@@ -8972,8 +8990,13 @@ pf_test(sa_family_t af, int fwdir, struct ifnet *ifp, struct mbuf **m0)
 	 */
 	if (pf_status.reass && fwdir == PF_FWD && pd.af == AF_INET6 &&
 	    pf_refragment6_size(pd.m) > (int)in6_ifmtu(ifp)) {
-		/* About the fragments, as its source sent them. */
-		pf_refragment6_toobig(pd.m, in6_ifmtu(ifp), NULL, pd.rdomain);
+		/*
+		 * About the packet as reassembled, as FreeBSD pf does: NAT
+		 * may yet rewrite it (NPTv6), and the error must name the
+		 * addresses the source used.
+		 */
+		pf_send_icmp_orig(pd.m, ICMP6_PACKET_TOO_BIG, 0,
+		    in6_ifmtu(ifp), AF_INET6, NULL, pd.rdomain);
 		action = PF_DROP;
 		REASON_SET(&reason, PFRES_FRAG);
 		goto done;
