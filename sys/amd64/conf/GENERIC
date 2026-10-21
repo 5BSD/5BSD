@@ -50,7 +50,7 @@ options 	MSDOSFS			# MSDOS Filesystem
 options 	CD9660			# ISO 9660 Filesystem
 options 	PSEUDOFS		# Pseudo-filesystem framework
 options 	TMPFS			# Efficient memory filesystem
-options 	GEOM_LABEL_GPT		# GPT labels used for /boot/efi
+options 	GEOM_LABEL		# Provides labelization
 options 	EFIRT			# EFI Runtime Services support
 # FreeBSD 15 is the oldest supported compatibility ABI.
 options 	COMPAT_FREEBSD15	# Compatible with FreeBSD15
