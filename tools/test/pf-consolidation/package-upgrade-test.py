@@ -84,7 +84,7 @@ def main():
            {'5BSD-dummynet': '2', '5BSD-fixture-rc': '2'}, repo)
     run([args.pkg, '-C', str(config), 'repo', str(repo)])
     (repos / 'fixture.conf').write_text(
-        'fixture: {url: ' + json.dumps(repo.as_uri()) +
+        'fixture: {url: ' + json.dumps('file://' + str(repo.resolve())) +
         ', enabled: yes, signature_type: "none"}\n')
     cmd = [args.pkg, '-r', str(root), '-C', str(config), '-R', str(repos)]
     run(cmd + ['add'] + [str(old / (n + '-1.pkg')) for n in
