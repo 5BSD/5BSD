@@ -43,6 +43,11 @@ TEST_METADATA.pfsync_test+=	required_user="root" \
 				required_programs="python3" \
 				is_exclusive="true"
 
+# Sync-interface and VNET destruction must retire asynchronous PF work.
+ATF_TESTS_SH+=	pfsync_lifecycle_test
+TEST_METADATA.pfsync_lifecycle_test+= execenv="" execenv_jail_params="" \
+				required_user="root" is_exclusive="true"
+
 # 5BSD extension: the "jail" rule option.
 ATF_TESTS_SH+=	jail_test
 TEST_METADATA.jail_test+=	required_user="root" \

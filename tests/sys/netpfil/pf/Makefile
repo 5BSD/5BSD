@@ -55,6 +55,7 @@ ATF_TESTS_SH+=	anchor \
 		snmp \
 		src_track \
 		statefile \
+		state_import \
 		status \
 		syncookie \
 		stress \
@@ -88,6 +89,7 @@ TEST_METADATA.delay+= execenv="" execenv_jail_params="" is_exclusive="true"
 # Priority observes kernel FBT probes while creating its own VNET fixture.
 TEST_METADATA.priority+= execenv="" execenv_jail_params="" is_exclusive="true"
 TEST_METADATA.prio+= execenv="" execenv_jail_params="" is_exclusive="true"
+TEST_METADATA.state_import+= execenv="" execenv_jail_params="" is_exclusive="true"
 TEST_METADATA.statefile+= execenv="" execenv_jail_params="" is_exclusive="true"
 TEST_METADATA.transaction+= execenv="" execenv_jail_params="" is_exclusive="true"
 # pf pool limits are owned by the host vnet (a vnet jail cannot change them).
@@ -131,7 +133,7 @@ ${PACKAGE}FILESMODE_pfsync_defer.py=	0555
 ${PACKAGE}FILESMODE_pft_ether.py=	0555
 ${PACKAGE}FILESMODE_pft_read_ipfix.py=	0555
 
-PROGS+=	delay_pool_limit statusif_transaction
+PROGS+=	delay_pool_limit statusif_transaction state_import_validation
 BINDIR=	${TESTSDIR}
 MAN.delay_pool_limit=
 CFLAGS.delay_pool_limit+= -I${SRCTOP}/sys/netpfil/openbsd-pf/user
@@ -142,5 +144,10 @@ MAN.statusif_transaction=
 CFLAGS.statusif_transaction+= -I${SRCTOP}/sys/netpfil/openbsd-pf/user
 CFLAGS.statusif_transaction+= -I${SRCTOP}/contrib/openbsd-pf/sys
 CFLAGS.statusif_transaction+= -include ${SRCTOP}/sys/netpfil/openbsd-pf/user/openbsd_compat.h
+
+MAN.state_import_validation=
+CFLAGS.state_import_validation+= -I${SRCTOP}/sys/netpfil/openbsd-pf/user
+CFLAGS.state_import_validation+= -I${SRCTOP}/contrib/openbsd-pf/sys
+CFLAGS.state_import_validation+= -include ${SRCTOP}/sys/netpfil/openbsd-pf/user/openbsd_compat.h
 
 .include <bsd.test.mk>

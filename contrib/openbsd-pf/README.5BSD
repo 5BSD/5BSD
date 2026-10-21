@@ -197,7 +197,9 @@ to a re-import.
                  and PF_MISMATCHAW_IFP() (pf.c, pfvar.h) judge urpf-failed
                  by it too)
   pf_ioctl.c     p_pid; pfioctl_rw is sleepable; overload table PR_NOWAIT
-                 under PF_LOCK; DTrace probe hooks
+                 under PF_LOCK; DTrace probe hooks; DIOCADDSTATE rejects
+                 (EINVAL) the states pfsync input rejects: timeout, peer
+                 states, direction, address families (OpenBSD: timeout)
   pf_norm.c      refragmented packets leave through if_output_obsd()
   pf_lb.c, pf_table.c, pf_syncookies.c   DTrace probe hooks
   if_pflog.[ch], if_pflow.[ch], if_pfsync.c

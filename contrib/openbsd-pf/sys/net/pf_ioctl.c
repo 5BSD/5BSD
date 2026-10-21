@@ -2951,8 +2951,22 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 	case DIOCADDSTATE: {
 		struct pfioc_state	*ps = (struct pfioc_state *)addr;
 		struct pfsync_state	*sp = &ps->state;
+		sa_family_t		 af1 = sp->key[0].af;
+		sa_family_t		 af2 = sp->key[1].af;
 
-		if (sp->timeout >= PFTM_MAX) {
+		/*
+		 * 5BSD: the checks pfsync applies to a peer's states (OpenBSD
+		 * checks only the timeout here).  The direction and the peer
+		 * states index pf's tables.
+		 */
+		if (sp->timeout >= PFTM_MAX ||
+		    sp->src.state > PF_TCPS_PROXY_DST ||
+		    sp->dst.state > PF_TCPS_PROXY_DST ||
+		    sp->direction > PF_OUT ||
+		    (((af1 || af2) &&
+		     ((af1 != AF_INET && af1 != AF_INET6) ||
+		      (af2 != AF_INET && af2 != AF_INET6))) ||
+		     (sp->af != AF_INET && sp->af != AF_INET6))) {
 			error = EINVAL;
 			goto fail;
 		}
