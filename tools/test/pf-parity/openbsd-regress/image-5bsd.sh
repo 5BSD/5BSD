@@ -64,7 +64,6 @@ if [ -e "$R/usr/local/bin/pytest-3.12" ]; then
 fi
 
 put etc/fstab 0644 <<'EOF'
-/dev/ufs/root	/	ufs	rw	1	1
 tmpfs		/tmp	tmpfs	rw,mode=1777	0	0
 EOF
 put boot/loader.conf 0644 <<'EOF'
@@ -151,10 +150,15 @@ add usr/local/share/pf-parity dir 0755
 add usr/local/share/pf-parity/mk dir 0755
 sed -f "$src/tests/sys/netpfil/pf/openbsd/bsd.regress.mk.sed" "$src/contrib/openbsd-pf/share/mk/bsd.regress.mk" | put usr/local/share/pf-parity/mk/bsd.regress.mk 0644
 
-( cd "$R" && makefs -t ffs -B little -s 16g -o version=2,label=root,softupdates=1 \
-    -D "$out/root.ufs" METALOG ) > "$out/makefs.log" 2>&1
-mkimg -s gpt -f raw -b "$R/boot/pmbr" -p freebsd-boot:="$R/boot/gptboot" \
-    -p freebsd-ufs:="$out/root.ufs" -o "$out/disk.img"
-rm -f "$out/root.ufs"
+# 5BSD boots from ZFS (GENERIC has no UFS volume labels): the release VM
+# image layout, with only the root dataset.
+( cd "$R" && makefs -t zfs -s 16g -o poolname=zroot \
+    -o bootfs=zroot/ROOT/default -o rootpath=/ \
+    -o 'fs=zroot;mountpoint=none' -o 'fs=zroot/ROOT;mountpoint=none' \
+    -o 'fs=zroot/ROOT/default;mountpoint=/;canmount=noauto' \
+    -D "$out/root.zfs" METALOG ) > "$out/makefs.log" 2>&1
+mkimg -s gpt -f raw -b "$R/boot/pmbr" -p freebsd-boot:="$R/boot/gptzfsboot" \
+    -p freebsd-zfs:="$out/root.zfs" -o "$out/disk.img"
+rm -f "$out/root.zfs"
 sha256 -q "$out/disk.img" > "$out/disk.img.sha256"
 echo "$out/disk.img"

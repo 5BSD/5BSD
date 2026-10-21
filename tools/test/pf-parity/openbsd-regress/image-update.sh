@@ -19,6 +19,8 @@ export MAKEOBJDIRPREFIX=$objp
 rm -rf "$R/boot/kernel"
 # OpenBSD PF: pflog, pfsync and pflow are part of pf.ko.
 sed -i '' '/^pflog_load=/d; /^pfsync_load=/d; /^pflow_load=/d' "$R/boot/loader.conf"
+# Roots from older images name a UFS root; the new image is ZFS.
+sed -i '' '\|^/dev/ufs/root[[:space:]]|d' "$R/etc/fstab"
 make -C "$src" -DNO_ROOT DESTDIR="$R" KERNCONF=GENERIC installkernel \
     > "$out/install.log" 2>&1
 for d in "$@"; do
@@ -26,9 +28,14 @@ for d in "$@"; do
 	    BUILDENV_SHELL="make -C $src/$d -DNO_ROOT DESTDIR=$R install" \
 	    >> "$out/install.log" 2>&1
 done
-( cd "$R" && makefs -t ffs -B little -s 16g -o version=2,label=root,softupdates=1 \
-    -D "$out/root.ufs" METALOG ) > "$out/makefs.log" 2>&1
-mkimg -s gpt -f raw -b "$R/boot/pmbr" -p freebsd-boot:="$R/boot/gptboot" \
-    -p freebsd-ufs:="$out/root.ufs" -o "$out/disk.img"
-rm -f "$out/root.ufs"
+# 5BSD boots from ZFS (GENERIC has no UFS volume labels): the release VM
+# image layout, with only the root dataset.
+( cd "$R" && makefs -t zfs -s 16g -o poolname=zroot \
+    -o bootfs=zroot/ROOT/default -o rootpath=/ \
+    -o 'fs=zroot;mountpoint=none' -o 'fs=zroot/ROOT;mountpoint=none' \
+    -o 'fs=zroot/ROOT/default;mountpoint=/;canmount=noauto' \
+    -D "$out/root.zfs" METALOG ) > "$out/makefs.log" 2>&1
+mkimg -s gpt -f raw -b "$R/boot/pmbr" -p freebsd-boot:="$R/boot/gptzfsboot" \
+    -p freebsd-zfs:="$out/root.zfs" -o "$out/disk.img"
+rm -f "$out/root.zfs"
 echo "$out/disk.img"
