@@ -35,6 +35,7 @@
 #define	_VMM_DEV_H_
 
 #include <sys/domainset.h>
+#include <sys/hypertrace.h>
 
 #include <machine/vmm.h>
 
@@ -161,6 +162,13 @@ struct vm_cpu_topology {
 	uint16_t	maxcpus;
 };
 
+#define VM_RISCV_TIMEBASE_VERSION 1U
+struct vm_riscv_timebase {
+	int		cpuid;
+	uint32_t	version;
+	uint32_t	frequency;
+};
+
 enum {
 	/* general routines */
 	IOCNUM_ABIVERS = 0,
@@ -169,6 +177,8 @@ enum {
 	IOCNUM_GET_CAPABILITY = 3,
 	IOCNUM_SUSPEND = 4,
 	IOCNUM_REINIT = 5,
+	IOCNUM_GET_ID = 6,
+	IOCNUM_GET_ATTESTATION = 7,
 
 	/* memory apis */
 	IOCNUM_GET_GPA_PMAP = 12,
@@ -192,6 +202,7 @@ enum {
 	/* CPU Topology */
 	IOCNUM_SET_TOPOLOGY = 63,
 	IOCNUM_GET_TOPOLOGY = 64,
+	IOCNUM_GET_RISCV_TIMEBASE = 65,
 
 	/* interrupt injection */
 	IOCNUM_ASSERT_IRQ = 80,
@@ -207,6 +218,11 @@ enum {
 
 	/* vm_attach_aplic */
 	IOCNUM_ATTACH_APLIC = 110,
+
+	/* checkpoint/restore (BHYVE_SNAPSHOT kernels only) */
+	IOCNUM_SNAPSHOT_REQ = 113,
+	IOCNUM_SNAPSHOT_SESSION = 114,
+	IOCNUM_RESTORE_TIME = 115,
 	IOCNUM_DIRTY_LOG_REQUEST = VMM_DIRTY_LOG_REQUEST_IOCNUM,
 };
 
@@ -254,6 +270,8 @@ enum {
 	_IOW('v', IOCNUM_SET_TOPOLOGY, struct vm_cpu_topology)
 #define VM_GET_TOPOLOGY \
 	_IOR('v', IOCNUM_GET_TOPOLOGY, struct vm_cpu_topology)
+#define VM_GET_RISCV_TIMEBASE \
+	_IOWR('v', IOCNUM_GET_RISCV_TIMEBASE, struct vm_riscv_timebase)
 #define	VM_GLA2GPA_NOFAULT \
 	_IOWR('v', IOCNUM_GLA2GPA_NOFAULT, struct vm_gla2gpa)
 #define	VM_ACTIVATE_CPU	\
@@ -268,4 +286,19 @@ enum {
 	_IOW('v', IOCNUM_ATTACH_APLIC, struct vm_aplic_descr)
 #define VM_DIRTY_LOG_REQUEST \
 	_IOW('v', IOCNUM_DIRTY_LOG_REQUEST, struct vmm_dirty_log_request)
+#define VM_GET_IDENTIFIER \
+	_IOR('v', IOCNUM_GET_ID, uint16_t)
+#define VM_GET_IDENTITY \
+	_IOR('v', IOCNUM_GET_ID, struct hypertrace_vm_identity)
+#define VM_GET_ATTESTATION \
+	_IOR('v', IOCNUM_GET_ATTESTATION, struct hypertrace_vm_attestation)
+
+struct vm_snapshot_meta;
+struct vm_snapshot_session;
+#define	VM_SNAPSHOT_REQ \
+	_IOWR('v', IOCNUM_SNAPSHOT_REQ, struct vm_snapshot_meta)
+#define	VM_SNAPSHOT_SESSION \
+	_IOWR('v', IOCNUM_SNAPSHOT_SESSION, struct vm_snapshot_session)
+#define	VM_RESTORE_TIME \
+	_IOWR('v', IOCNUM_RESTORE_TIME, int)
 #endif

@@ -109,8 +109,76 @@ struct vmmctl_vm_destroy {
 	int reserved[16];
 };
 
+/* Recovery must never destroy a reused name or a reset VM incarnation. */
+struct vmmctl_vm_destroy_identity {
+	uint64_t epoch;
+	uint16_t vmid;
+	uint16_t reserved[3];
+	char name[VM_MAX_NAMELEN + 1];
+};
+
+/*
+ * Look up a VM by name and return its current identity, the same VM ID and
+ * lifetime epoch that VMMCTL_VM_DESTROY_IDENTITY checks (5BSD).  Input:
+ * name (NUL-terminated); reserved must be zero.  Output: vmid, epoch.
+ * ENOENT if no visible VM has the name or it is being destroyed; the
+ * caller must be the VM's creator (same uid and jail) or hold
+ * PRIV_VMM_DESTROY.  The command number is in a 5BSD block (200+) of the
+ * vmmctl 'V' namespace.
+ */
+struct vmmctl_vm_lifetime_query {
+	uint64_t epoch;
+	uint16_t vmid;
+	uint16_t reserved[3];
+	char name[VM_MAX_NAMELEN + 1];
+};
+
 #define	VMMCTL_VM_CREATE	_IOWR('V', 0, struct vmmctl_vm_create)
 #define	VMMCTL_VM_DESTROY	_IOWR('V', 1, struct vmmctl_vm_destroy)
+#define VMMCTL_VM_DESTROY_IDENTITY \
+	_IOW('V', 2, struct vmmctl_vm_destroy_identity)
+#define	VMMCTL_VM_LIFETIME_QUERY \
+	_IOWR('V', 200, struct vmmctl_vm_lifetime_query)
+
+/*
+ * Free one device-memory segment allocated with VM_ALLOC_MEMSEG.  The command
+ * number is a 5BSD addition outside every machine vmm_dev.h IOCNUM namespace
+ * (and clear of the vsock 'v' commands).  Guest system memory, unallocated
+ * and still-mapped segments are refused; the segment's devmem node is
+ * destroyed asynchronously after the segment is freed.
+ */
+#define	VMM_FREE_MEMSEG_IOCNUM	200
+
+struct vm_free_memseg {
+	int	segid;
+	int	reserved[3];	/* must be zero */
+};
+
+#define	VM_FREE_MEMSEG	\
+	_IOW('v', VMM_FREE_MEMSEG_IOCNUM, struct vm_free_memseg)
+
+#ifdef __amd64__
+/*
+ * Run witness of a VM incarnation (5BSD, amd64): guest_entries counts every
+ * attempt of any vCPU to enter the guest since the VM was created or last
+ * reinitialized (VM_REINIT resets it and changes vmid/epoch), and
+ * running_vcpus is the number of vCPUs in the running state now.  All four
+ * values are read under the memseg lock that VM_REINIT holds exclusively,
+ * so they describe one incarnation.  guest_entries == 0 proves that no vCPU
+ * of (vmid, epoch) has entered the guest.
+ */
+#define	VMM_RUN_WITNESS_IOCNUM	201
+struct vm_run_witness {
+	uint64_t epoch;
+	uint64_t guest_entries;
+	uint16_t vmid;
+	uint16_t reserved0;
+	uint32_t running_vcpus;
+	uint32_t reserved[4];
+};
+#define	VM_GET_RUN_WITNESS	\
+	_IOR('v', VMM_RUN_WITNESS_IOCNUM, struct vm_run_witness)
+#endif
 
 /*
  * Versioned startup-controller management.  The command number is outside

@@ -256,6 +256,152 @@ ATF_TC_BODY(defensive_helpers_reject_bad_values, tc)
 	    &owner, &execution), EINVAL);
 }
 
+ATF_TC_WITHOUT_HEAD(status_state_space);
+ATF_TC_BODY(status_state_space, tc)
+{
+	struct vmm_startup_handshake_status status, saved_status;
+	struct vmm_startup_request request, saved_request, output, expected;
+	unsigned sample, value, phase, owner, execution, locked, total, entered, bsp;
+	bool valid;
+
+	(void)tc;
+	request = request_fixture(VMM_STARTUP_REQUEST_STATUS);
+	saved_request = request;
+	/* Enumerate the small protocol state space, including invalid enums. */
+	for (sample = 0; sample < 4860; sample++) {
+		value = sample;
+		phase = value % 5; value /= 5;
+		owner = value % 3; value /= 3;
+		execution = value % 3; value /= 3;
+		locked = value % 3; value /= 3;
+		total = value % 3; value /= 3;
+		entered = value % 4; value /= 4;
+		bsp = value % 3;
+		/* The wire contract admits only these three state families. */
+		valid = (phase == 0 && owner == 0 && execution == 0 &&
+		    locked == 0 && total == 0 && entered == 0 && bsp == 0) ||
+		    (phase == 1 && owner == 1 && execution == 1 &&
+		    locked == 0 && total > 0 && entered <= total &&
+		    bsp <= 1 && bsp <= entered) ||
+		    (phase == 2 && owner == 1 && execution == 1 &&
+		    locked == 1 && total > 0 && entered == total && bsp == 1);
+		memset(&status, 0, sizeof(status));
+		status.generation = 17;
+		status.phase = phase;
+		status.mode.owner = owner;
+		status.mode.execution = execution;
+		status.mode.locked = locked;
+		status.expected_vcpus = total;
+		status.entered_vcpus = entered;
+		status.bootstrap_entered = bsp;
+		saved_status = status;
+		memset(&output, 0xa5, sizeof(output));
+		expected = output;
+		if (valid) {
+			expected = request;
+			expected.generation = 17;
+			expected.expected_vcpus = total;
+			expected.entered_vcpus = entered;
+			expected.bootstrap_entered = bsp;
+			expected.phase = phase;
+			expected.owner = owner;
+			expected.execution = execution;
+		}
+		ATF_REQUIRE_EQ_MSG(vmm_startup_request_encode_status(&request, 2,
+		    &status, &output), valid ? 0 : EINVAL, "sample %u", sample);
+		ATF_CHECK_EQ(memcmp(&output, &expected, sizeof(output)), 0);
+		ATF_CHECK_EQ(memcmp(&status, &saved_status, sizeof(status)), 0);
+		ATF_CHECK_EQ(memcmp(&request, &saved_request, sizeof(request)), 0);
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(header_and_status_fault_fields);
+ATF_TC_BODY(header_and_status_fault_fields, tc)
+{
+	struct vmm_startup_handshake_status status;
+	struct vmm_startup_request request, output, before;
+	unsigned i;
+
+	(void)tc;
+	memset(&status, 0, sizeof(status));
+	status.generation = 1;
+	memset(&output, 0xa5, sizeof(output));
+	before = output;
+	for (i = 0; i < 5; i++) {
+		request = request_fixture(VMM_STARTUP_REQUEST_STATUS);
+		switch (i) {
+		case 0: request.size++; break;
+		case 1: request.phase = 1; break;
+		case 2: request.owner = 1; break;
+		case 3: request.execution = 1; break;
+		case 4: request.generation = 1; break;
+		}
+		ATF_CHECK_EQ(vmm_startup_request_encode_status(&request, 2,
+		    &status, &output), EINVAL);
+		ATF_CHECK_EQ(memcmp(&output, &before, sizeof(output)), 0);
+	}
+	request = request_fixture(VMM_STARTUP_REQUEST_STATUS);
+	for (i = 0; i < 5; i++) {
+		memset(&status, 0, sizeof(status));
+		status.generation = 1;
+		switch (i) {
+		case 0: status.generation = 0; break;
+		case 1: status.reserved16 = 1; break;
+		case 2: status.reserved32 = 1; break;
+		case 3: status.mode.reserved8 = 1; break;
+		case 4: status.mode.reserved32 = 1; break;
+		}
+		ATF_CHECK_EQ(vmm_startup_request_encode_status(&request, 2,
+		    &status, &output), EINVAL);
+		ATF_CHECK_EQ(memcmp(&output, &before, sizeof(output)), 0);
+	}
+	ATF_CHECK_EQ(vmm_startup_request_validate(NULL, 2), EINVAL);
+	ATF_CHECK_EQ(vmm_startup_request_validate(&request, 0), EINVAL);
+	ATF_CHECK_EQ(vmm_startup_request_encode_status(NULL, 2, &status,
+	    &output), EINVAL);
+	ATF_CHECK_EQ(vmm_startup_request_encode_status(&request, 2, &status,
+	    NULL), EINVAL);
+	ATF_CHECK_EQ(vmm_startup_request_encode_status(&request, 2, NULL,
+	    &output), EINVAL);
+	ATF_CHECK_EQ(memcmp(&output, &before, sizeof(output)), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(limits_and_status_output_alias);
+ATF_TC_BODY(limits_and_status_output_alias, tc)
+{
+	union {
+		struct vmm_startup_handshake_status status;
+		struct vmm_startup_request output;
+	} overlap, saved;
+	struct vmm_startup_request request, output, before;
+
+	(void)tc;
+	request = request_fixture(VMM_STARTUP_REQUEST_CONFIGURE);
+	ATF_CHECK_EQ(vmm_startup_request_validate(&request, 2), EINVAL);
+	request = request_fixture(VMM_STARTUP_REQUEST_WAIT_READY);
+	request.generation = 1;
+	request.expected_vcpus = 1;
+	ATF_CHECK_EQ(vmm_startup_request_validate(&request, 2), EINVAL);
+	request.operation = VMM_STARTUP_REQUEST_COMMIT;
+	ATF_CHECK_EQ(vmm_startup_request_validate(&request, 2), EINVAL);
+	request = request_fixture(VMM_STARTUP_REQUEST_STATUS);
+	memset(&overlap, 0, sizeof(overlap));
+	overlap.status.generation = 1;
+	saved = overlap;
+	ATF_CHECK_EQ(vmm_startup_request_encode_status(&request, 2,
+	    &overlap.status, &overlap.output), EINVAL);
+	ATF_CHECK_EQ(memcmp(&overlap, &saved, sizeof(overlap)), 0);
+	overlap.status.phase = VMM_STARTUP_HANDSHAKE_COLLECTING;
+	overlap.status.mode.owner = VMM_STARTUP_OWNER_KERNEL;
+	overlap.status.mode.execution = VMM_STARTUP_EXECUTION_PRESTARTED_WAIT;
+	overlap.status.expected_vcpus = 3;
+	memset(&output, 0xa5, sizeof(output));
+	before = output;
+	ATF_CHECK_EQ(vmm_startup_request_encode_status(&request, 2,
+	    &overlap.status, &output), EINVAL);
+	ATF_CHECK_EQ(memcmp(&output, &before, sizeof(output)), 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -265,5 +411,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, status_encoding_is_failure_atomic);
 	ATF_TP_ADD_TC(tp, committed_phase_encoding);
 	ATF_TP_ADD_TC(tp, defensive_helpers_reject_bad_values);
+	ATF_TP_ADD_TC(tp, status_state_space);
+	ATF_TP_ADD_TC(tp, header_and_status_fault_fields);
+	ATF_TP_ADD_TC(tp, limits_and_status_output_alias);
 	return (atf_no_error());
 }

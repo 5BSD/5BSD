@@ -197,3 +197,21 @@ vgic_sync_hwstate(struct hypctx *hypctx)
 {
 	VGIC_SYNC_HWSTATE(vgic_dev, hypctx);
 }
+
+int
+vgic_snapshot_capture(struct hyp *hyp,
+    struct vmm_snapshot_arm64_vgic_transaction *transaction,
+    struct vmm_snapshot_arm64_vgic_stage *stage, size_t count)
+{
+	return (VGIC_SNAPSHOT_CAPTURE(vgic_dev, hyp, transaction, stage,
+	    count));
+}
+
+int
+vgic_snapshot_restore(struct hyp *hyp,
+    struct vmm_snapshot_arm64_vgic_transaction *transaction,
+    struct vmm_snapshot_arm64_vgic_stage *stage, size_t count)
+{
+	return (VGIC_SNAPSHOT_RESTORE(vgic_dev, hyp, transaction, stage,
+	    count));
+}

@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <sys/param.h>
 #include <sys/types.h>
 
 #include <atf-c.h>
@@ -164,11 +165,76 @@ ATF_TC_BODY(address_ranges_cover_32_and_64_bit_callers, tc)
 	    TEST_ADDRESS_MAX_64), EINVAL);
 }
 
+ATF_TC_WITHOUT_HEAD(null_and_zero_limits);
+ATF_TC_BODY(null_and_zero_limits, tc)
+{
+	struct vmm_startup_run_request request, saved;
+
+	(void)tc;
+	request = valid_request();
+	saved = request;
+	ATF_CHECK_EQ(vmm_startup_run_request_validate(NULL, 64, 128, 256,
+	    UINT64_MAX), EINVAL);
+	ATF_CHECK_EQ(vmm_startup_run_request_validate(&request, 0, 128, 256,
+	    UINT64_MAX), EINVAL);
+	ATF_CHECK_EQ(vmm_startup_run_request_validate(&request, 64, 0, 256,
+	    UINT64_MAX), EINVAL);
+	ATF_CHECK_EQ(vmm_startup_run_request_validate(&request, 64, 128, 0,
+	    UINT64_MAX), EINVAL);
+	ATF_CHECK_EQ(vmm_startup_run_request_validate(&request, 64, 128, 256,
+	    0), EINVAL);
+	ATF_CHECK_EQ(memcmp(&request, &saved, sizeof(request)), 0);
+	request.cpuset_size = 0;
+	saved = request;
+	ATF_CHECK_EQ(vmm_startup_run_request_validate(&request, 64, 128, 256,
+	    UINT64_MAX), EINVAL);
+	ATF_CHECK_EQ(memcmp(&request, &saved, sizeof(request)), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(range_reference_matrix);
+ATF_TC_BODY(range_reference_matrix, tc)
+{
+	static const uint64_t addresses[] = {
+		0, 1, 2, 127, 128, 255, 256, 257,
+		UINT32_MAX - 127, UINT32_MAX, (uint64_t)UINT32_MAX + 1,
+		UINT64_MAX - 255, UINT64_MAX - 127, UINT64_MAX
+	};
+	static const uint64_t limits[] = { UINT32_MAX, UINT64_MAX };
+	struct vmm_startup_run_request request, saved;
+	__uint128_t cpu_end, exit_end;
+	unsigned i, j, k;
+	bool valid;
+
+	(void)tc;
+	/* A wider endpoint oracle avoids reproducing subtraction-based checks. */
+	for (k = 0; k < nitems(limits); k++) {
+		for (i = 0; i < nitems(addresses); i++) {
+			for (j = 0; j < nitems(addresses); j++) {
+				request = valid_request();
+				request.cpuset_address = addresses[i];
+				request.exit_address = addresses[j];
+				saved = request;
+				cpu_end = (__uint128_t)addresses[i] + 127;
+				exit_end = (__uint128_t)addresses[j] + 255;
+				valid = addresses[i] != 0 && addresses[j] != 0 &&
+				    cpu_end <= limits[k] && exit_end <= limits[k] &&
+				    (cpu_end < addresses[j] || exit_end < addresses[i]);
+				ATF_CHECK_EQ_MSG(vmm_startup_run_request_validate(
+				    &request, 64, 128, 256, limits[k]),
+				    valid ? 0 : EINVAL, "limit %u cpu %u exit %u", k, i, j);
+				ATF_CHECK_EQ(memcmp(&request, &saved, sizeof(request)), 0);
+			}
+		}
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, layout_is_fixed_width);
 	ATF_TP_ADD_TC(tp, version_flags_and_reserved_are_closed);
 	ATF_TP_ADD_TC(tp, generation_vcpu_and_sizes_are_exact);
 	ATF_TP_ADD_TC(tp, address_ranges_cover_32_and_64_bit_callers);
+	ATF_TP_ADD_TC(tp, null_and_zero_limits);
+	ATF_TP_ADD_TC(tp, range_reference_matrix);
 	return (atf_no_error());
 }

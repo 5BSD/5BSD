@@ -34,38 +34,45 @@
 #include <sys/sysctl.h>
 #include <sys/malloc.h>
 #include <sys/pcpu.h>
+#include <sys/hypertrace.h>
 #include <sys/lock.h>
+#include <sys/malloc.h>
+#include <sys/module.h>
 #include <sys/mutex.h>
+#include <sys/pcpu.h>
 #include <sys/proc.h>
 #include <sys/rwlock.h>
 #include <sys/sched.h>
 #include <sys/sleepqueue.h>
 #include <sys/smp.h>
 #include <sys/sx.h>
+#include <sys/sysctl.h>
 #include <sys/vnode.h>
 
 #include <vm/vm.h>
-#include <vm/vm_param.h>
-#include <vm/vm_extern.h>
-#include <vm/vm_object.h>
-#include <vm/vm_page.h>
 #include <vm/pmap.h>
-#include <vm/vm_map.h>
-#include <vm/vm_pager.h>
-#include <vm/vm_kern.h>
-#include <vm/vnode_pager.h>
 #include <vm/swap_pager.h>
 #include <vm/uma.h>
+#include <vm/vm_extern.h>
+#include <vm/vm_kern.h>
+#include <vm/vm_map.h>
+#include <vm/vm_object.h>
+#include <vm/vm_page.h>
+#include <vm/vm_pager.h>
+#include <vm/vm_param.h>
+#include <vm/vnode_pager.h>
 
 #include <x86/apicreg.h>
 #include <x86/clock.h>
 #include <machine/cpu.h>
+#include <machine/frame.h>
 #include <machine/ifunc.h>
 #include <machine/md_var.h>
 #include <machine/pcb.h>
 #include <x86/psl.h>
 #include <machine/smp.h>
 
+#include <machine/bhyve_hypercall.h>
 #include <machine/vmm.h>
 #include <machine/vmm_instruction_emul.h>
 #include <machine/vmm_snapshot.h>
@@ -96,6 +103,12 @@
 #include "vhpet.h"
 #include "vioapic.h"
 #include "vlapic.h"
+#include "vmm_host.h"
+#include "vmm_ioport.h"
+#include "vmm_lapic.h"
+#include "vmm_mem.h"
+#include "vmm_stat.h"
+#include "vmm_util.h"
 #include "vpmtmr.h"
 #include "vrtc.h"
 #include "vpvclock.h"
@@ -314,6 +327,125 @@ SYSCTL_INT(_hw_vmm, OID_AUTO, trace_guest_exceptions, CTLFLAG_RDTUN,
     &trace_guest_exceptions, 0,
     "Trap into hypervisor on all guest exceptions and reflect them back");
 
+int hypercalls_enabled = 1;
+SYSCTL_INT(_hw_vmm, OID_AUTO, hypercalls_enabled, CTLFLAG_RWTUN,
+    &hypercalls_enabled, 0,
+    "Enable hypercalls on all guests");
+
+static uint64_t vmm_priv_getepoch(const void *);
+
+/*
+ * The maximum amount of arguments currently supproted
+ * through the hypercall functionality in the VMM.
+ * Everything higher than HYPERCALL_MAX_ARGS will be
+ * discarded.
+ */
+#define	HYPERCALL_MAX_ARGS	6
+
+typedef int (*hc_handler_t)(uint64_t, struct vcpu *, struct vm_exit *, bool *);
+typedef int64_t (*hc_dispatcher_t)(struct vcpu *, uintptr_t *,
+    struct vm_guest_paging *);
+
+/*
+ * The default hypervisor mode used is BHYVE_MODE.
+ */
+int hypervisor_mode = BHYVE_MODE;
+
+static int bhyve_handle_hypercall(uint64_t hcid, struct vcpu *vcpu,
+    struct vm_exit *vmexit, bool *retu);
+
+/*
+ * Hypercall handlers based on the hypervisor mode.
+ * The naming convention should include a prefix of
+ * the mode that the corresponding handler is bound
+ * to. This should be kept in sync with the global
+ * variable hc_dispatcher(see below).
+ */
+hc_handler_t hc_handler[VMM_MAX_MODES] = {
+	[BHYVE_MODE] = bhyve_handle_hypercall
+};
+
+static int hypercall_copy_arg(struct vcpu *, uint64_t, uintptr_t, uint64_t,
+    struct vm_guest_paging *, void *);
+
+static int64_t hc_handle_prototype(struct vcpu *, uintptr_t *,
+    struct vm_guest_paging *);
+
+static int64_t hc_handle_test(struct vcpu *, uintptr_t *,
+    struct vm_guest_paging *);
+
+static int64_t hc_handle_dtrace_probe(struct vcpu *, uintptr_t *,
+    struct vm_guest_paging *);
+
+/*
+ * Each hypercall mode implements different hypercalls
+ * with differently mapped hypercall numbers. If the
+ * hypercall is not implemented it should be kept as
+ * NULL. It is not necessary to add an entry to this
+ * table, as the hypercall will automatically be
+ * assigned as NULL. This will return the error to
+ * the guest without exception. Keep in sync with
+ * hc_handler(see above) and ring_plevel(see below).
+ */
+hc_dispatcher_t hc_dispatcher[VMM_MAX_MODES][HYPERCALL_INDEX_MAX] = {
+	[BHYVE_MODE] = {
+		[HYPERCALL_PROTOTYPE]    = hc_handle_prototype,
+		[HYPERCALL_DTRACE_PROBE] = hc_handle_dtrace_probe,
+		[HYPERCALL_TEST]         = hc_handle_test,
+	}
+};
+
+/*
+ * Each of the hypercalls can only be called from well
+ * defined protection rings. Each hypercall should be
+ * assigned a minimal possible ring that is required
+ * for correct operation of the hypercall. This should
+ * be kept in snyc with hc_dispatcher(see above).
+ */
+static int8_t ring_plevel[VMM_MAX_MODES][HYPERCALL_INDEX_MAX] = {
+	[BHYVE_MODE] = {
+		[HYPERCALL_PROTOTYPE]    = 0,
+		[HYPERCALL_DTRACE_PROBE] = 0,
+		[HYPERCALL_TEST]         = 0,
+	}
+};
+
+
+static lwpid_t vmm_priv_gettid(const void *);
+static uint16_t vmm_priv_getid(const void *);
+static const char *vmm_priv_getname(const void *);
+static int vmm_priv_getreg(const void *, int, uint64_t *);
+static int vmm_priv_guest_copyin(const void *, uint64_t, void *, size_t);
+static int vmm_priv_guest_user_copyin(const void *, uint64_t, void *, size_t);
+static int vmm_priv_guest_user_copyout(const void *, uint64_t, const void *, size_t);
+
+static int
+sysctl_vmm_hypervisor_mode(SYSCTL_HANDLER_ARGS)
+{
+	int error;
+	char buf[HV_MAX_NAMELEN];
+
+	if (hypervisor_mode == BHYVE_MODE) {
+		strlcpy(buf, "bhyve", sizeof(buf));
+	} else {
+		strlcpy(buf, "undefined", sizeof(buf));
+	}
+
+	error = sysctl_handle_string(oidp, buf, sizeof(buf), req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+
+	/* Only the loader tunable reaches here (the OID is read-only at run
+	 * time).  bhyve is the only mode; reject anything else. */
+	if (strcmp(buf, "bhyve") != 0)
+		return (EINVAL);
+	hypervisor_mode = BHYVE_MODE;
+	return (0);
+}
+
+SYSCTL_PROC(_hw_vmm, OID_AUTO, hv_mode, CTLTYPE_STRING | CTLFLAG_RDTUN,
+    NULL, 0, sysctl_vmm_hypervisor_mode, "A", NULL);
+
 static int trap_wbinvd;
 SYSCTL_INT(_hw_vmm, OID_AUTO, trap_wbinvd, CTLFLAG_RDTUN, &trap_wbinvd, 0,
     "WBINVD triggers a VM-exit");
@@ -489,12 +621,34 @@ vmm_modinit(void)
 			lapic_ipi_free(vmm_ipinum);
 		vmm_ipinum = IPI_AST;
 	}
+	if (error == 0) {
+		dtrace_hypertrace_config_lock();
+		vmm_gettid = vmm_priv_gettid;
+		vmm_getid = vmm_priv_getid;
+		vmm_getepoch = vmm_priv_getepoch;
+		vmm_getname = vmm_priv_getname;
+		vmm_getreg = vmm_priv_getreg;
+		vmm_guest_copyin = vmm_priv_guest_copyin;
+		vmm_guest_user_copyin = vmm_priv_guest_user_copyin;
+		vmm_guest_user_copyout = vmm_priv_guest_user_copyout;
+		dtrace_hypertrace_config_unlock();
+	}
 	return (error);
 }
 
 int
 vmm_modcleanup(void)
 {
+	dtrace_hypertrace_config_lock();
+	vmm_gettid = NULL;
+	vmm_getid = NULL;
+	vmm_getepoch = NULL;
+	vmm_getname = NULL;
+	vmm_getreg = NULL;
+	vmm_guest_copyin = NULL;
+	vmm_guest_user_copyin = NULL;
+	vmm_guest_user_copyout = NULL;
+	dtrace_hypertrace_config_unlock();
 	vmm_suspend_p = NULL;
 	vmm_resume_p = NULL;
 	iommu_cleanup();
@@ -568,19 +722,28 @@ vm_create(const char *name, struct vm **retvm)
 {
 	struct vm *vm;
 	int error;
+	uint16_t id;
+	uint64_t epoch;
 
+	error = hypertrace_vm_alloc(&id, &epoch);
+	if (error != 0)
+		return (error);
 	vm = malloc(sizeof(struct vm), M_VM, M_WAITOK | M_ZERO);
+	vm->id = id;
+	vm->hypertrace_epoch = epoch;
 	vm->sockets = 1;
 	vm->cores = 1;		/* XXX backwards compatibility */
 	vm->threads = 1;	/* XXX backwards compatibility */
 	error = vm_event_coordinator_init(vm, vm_maxcpu);
 	if (error != 0) {
+		(void)hypertrace_vm_release(vm->id, vm->hypertrace_epoch);
 		free(vm, M_VM);
 		return (error);
 	}
 	error = vm_mem_init(&vm->mem, 0, VM_MAXUSER_ADDRESS_LA48);
 	if (error != 0) {
 		vm_event_coordinator_cleanup(vm);
+		(void)hypertrace_vm_release(vm->id, vm->hypertrace_epoch);
 		free(vm, M_VM);
 		return (error);
 	}
@@ -595,6 +758,12 @@ vm_create(const char *name, struct vm **retvm)
 	*retvm = vm;
 	SDT_PROBE2(vmm, kernel, vm_create, create, vm->name, 0);
 	return (0);
+}
+
+uint64_t
+vm_get_id(struct vm *vm)
+{
+	return (vm->id);
 }
 
 static int
@@ -670,6 +839,10 @@ vm_destroy(struct vm *vm)
 	int error;
 
 	SDT_PROBE1(vmm, kernel, vm_destroy, destroy, vm->name);
+	/* Silence and drain this VM's host ECBs before tearing down memory. */
+	error = hypertrace_vm_release(vm->id, vm->hypertrace_epoch);
+	if (error != 0)
+		panic("%s: cannot revoke HyperTrace epoch: %d", __func__, error);
 	error = vm_vcpu_event_cleanup(vm);
 	if (error != 0)
 		panic("%s: cannot release architecture event owner: %d",
@@ -686,16 +859,37 @@ int
 vm_reset(struct vm *vm)
 {
 	int error;
+	uint16_t id;
+	uint64_t epoch;
 
+	/* Reserve first: exhaustion must not partially reset the VM. */
+	error = hypertrace_vm_alloc(&id, &epoch);
+	if (error != 0)
+		return (error);
 	error = vm_vcpu_event_cleanup(vm);
-	if (error != 0)
+	if (error != 0) {
+		(void)hypertrace_vm_release(id, epoch);
 		return (error);
+	}
 	error = vm_event_coordinator_reset(vm);
-	if (error != 0)
+	if (error != 0) {
+		(void)hypertrace_vm_release(id, epoch);
 		return (error);
+	}
 	error = vm_cleanup(vm, false);
-	if (error != 0)
+	if (error != 0) {
+		(void)hypertrace_vm_release(id, epoch);
 		return (error);
+	}
+	error = hypertrace_vm_release(vm->id, vm->hypertrace_epoch);
+	if (error != 0) {
+		(void)hypertrace_vm_release(id, epoch);
+		return (error);
+	}
+	vm->id = id;
+	vm->hypertrace_epoch = epoch;
+	/* A new incarnation has never entered the guest. */
+	atomic_store_64(&vm->guest_entries, 0);
 	vm_init(vm, false);
 	return (0);
 }
@@ -1380,6 +1574,217 @@ vm_handle_reqidle(struct vcpu *vcpu, bool *retu)
 	return (0);
 }
 
+static __inline int64_t
+hypercall_dispatch(uint64_t hcid, struct vcpu *vcpu, uintptr_t *args,
+    struct vm_guest_paging *paging)
+{
+	/*
+	 * Do not allow hypercalls that aren't implemented.
+	 */
+	if (hc_dispatcher[hypervisor_mode][hcid] == NULL) {
+		return (HYPERCALL_RET_NOT_IMPL);
+	}
+	return (hc_dispatcher[hypervisor_mode][hcid](vcpu, args, paging));
+}
+
+static __inline int
+hypercall_handle(uint64_t hcid, struct vcpu *vcpu, struct vm_exit *vmexit,
+    bool *retu)
+{
+
+	return (hc_handler[hypervisor_mode](hcid, vcpu, vmexit, retu));
+}
+
+/*
+ * The hypercall_copy_arg function assumes that appropriate
+ * checks have been made before calling the function.
+ */
+static int
+hypercall_copy_arg(struct vcpu *vcpu, uint64_t ds_base, uintptr_t arg,
+    uint64_t arg_len, struct vm_guest_paging *paging, void *dst)
+{
+	struct vm_copyinfo copyinfo[2];
+	uintptr_t gla;
+	int error, fault;
+
+	/* Callers pass the constant size of their argument structure. */
+	KASSERT(arg_len != 0 && arg_len <= PAGE_SIZE,
+	    ("%s: bad argument length %ju", __func__, (uintmax_t)arg_len));
+	if (arg == 0 || ds_base > UINTPTR_MAX - arg ||
+	    ds_base + arg > UINTPTR_MAX - (arg_len - 1))
+		return (HYPERCALL_RET_ERROR);
+
+	gla = ds_base + arg;
+	error = vm_copy_setup(vcpu, paging, (uint64_t)gla, arg_len,
+	    PROT_READ, copyinfo, nitems(copyinfo), &fault);
+	if (error || fault)
+		return (HYPERCALL_RET_ERROR);
+
+	vm_copyin(copyinfo, dst, arg_len);
+	vm_copy_teardown(copyinfo, nitems(copyinfo));
+
+	return (HYPERCALL_RET_SUCCESS);
+}
+
+static int
+bhyve_handle_hypercall(uint64_t hcid, struct vcpu *vcpu, struct vm_exit *vmexit,
+    bool *retu)
+{
+	struct vm_guest_paging *paging;
+	uint64_t args[HYPERCALL_MAX_ARGS] = { 0 };
+	int64_t retval;
+	int error __unused, i;
+
+	/*
+	 * The SystemV ABI specifies a calling convetion that
+	 * uses the registers %rdi, %rsi, %rdx, %rcx, %r8 and %r9
+	 * for INTEGER and POINTER class parameter passing.
+	 */
+	int arg_regs[HYPERCALL_MAX_ARGS] = {
+		[0] = VM_REG_GUEST_RDI,
+		[1] = VM_REG_GUEST_RSI,
+		[2] = VM_REG_GUEST_RDX,
+		[3] = VM_REG_GUEST_RCX,
+		[4] = VM_REG_GUEST_R8,
+		[5] = VM_REG_GUEST_R9
+	};
+
+	paging = &vmexit->u.hypercall.paging;
+
+	for (i = 0; i < HYPERCALL_MAX_ARGS; i++) {
+		error = vm_get_register(vcpu, arg_regs[i], &args[i]);
+		KASSERT(error == 0, ("%s: error %d getting register",
+		    __func__, error));
+	}
+
+	/*
+	 * From this point on, all the arguments passed in from the
+	 * guest are contained in the args array.
+	 */
+	retval = hypercall_dispatch(hcid, vcpu, args, paging);
+	error = vm_set_register(vcpu, VM_REG_GUEST_RAX, retval);
+	KASSERT(error == 0, ("%s: error %d setting RAX",
+	    __func__, error));
+	return (0);
+}
+
+static int
+vm_handle_hypercall(struct vcpu *vcpu, struct vm_exit *vmexit, bool *retu)
+{
+	struct seg_desc cs_desc;
+	uint64_t hcid;
+	int error __unused;
+
+	error = vm_get_register(vcpu, VM_REG_GUEST_RAX, &hcid);
+	KASSERT(error == 0, ("%s: error %d getting RAX",
+	    __func__, error));
+
+	/*
+	 * Ensure that the hypercall called by the guest never exceed
+	 * the maximum number of hypercalls defined.
+	 */
+	if (!hypercalls_enabled || hypervisor_mode < 0 ||
+	    hypervisor_mode >= VMM_MAX_MODES || hcid >= HYPERCALL_INDEX_MAX) {
+		error = vm_set_register(vcpu, VM_REG_GUEST_RAX,
+		    HYPERCALL_RET_ERROR);
+		KASSERT(error == 0, ("%s: error %d setting RAX",
+		    __func__, error));
+		return (0);
+	}
+
+	error = vm_get_seg_desc(vcpu, VM_REG_GUEST_CS, &cs_desc);
+	KASSERT(error == 0, ("%s: error %d getting CS descriptor",
+	    __func__, error));
+
+	/*
+	 * The check ensures that each of the hypercalls that is called
+	 * from the guest is called from the correct protection ring.
+	 */
+	if (SEG_DESC_DPL(cs_desc.access) !=
+	    ring_plevel[hypervisor_mode][hcid]) {
+		error = vm_set_register(vcpu, VM_REG_GUEST_RAX,
+		    HYPERCALL_RET_ERROR);
+		KASSERT(error == 0, ("%s: error %d setting RAX",
+		    __func__, error));
+		return (0);
+	}
+
+	return (hypercall_handle(hcid, vcpu, vmexit, retu));
+}
+
+static __inline int64_t
+hc_handle_prototype(struct vcpu *vcpu, uintptr_t *args,
+    struct vm_guest_paging *paging)
+{
+
+	return (HYPERCALL_RET_SUCCESS);
+}
+
+static __inline int64_t
+hc_handle_test(struct vcpu *vcpu, uintptr_t *args,
+    struct vm_guest_paging *paging)
+{
+	static struct timeval lasttime;
+	static int curpps;
+	int copied_int = 0;
+	struct seg_desc ds_desc;
+	int err __unused;
+
+	err = vm_get_seg_desc(vcpu, VM_REG_GUEST_DS, &ds_desc);
+	KASSERT(err == 0, ("%s: error %d getting DS descriptor",
+	    __func__, err));
+
+	err = hypercall_copy_arg(vcpu, ds_desc.base, args[0], sizeof(int),
+	    paging, &copied_int);
+	if (err != HYPERCALL_RET_SUCCESS)
+		return (HYPERCALL_RET_ERROR);
+
+	/* A guest can call this in a loop: limit the host console output. */
+	if (ppsratecheck(&lasttime, &curpps, 1))
+		printf("got int: %d\n", copied_int);
+	return (HYPERCALL_RET_SUCCESS);
+}
+
+/* hypercall_copy_arg() copies at most one page. */
+CTASSERT(sizeof(hypertrace_args_t) <= PAGE_SIZE);
+
+static int64_t
+hc_handle_dtrace_probe(struct vcpu *vcpu, uintptr_t *args,
+    struct vm_guest_paging *paging)
+{
+	struct vm_hdl handle = { 0 };
+	struct vm_hdl *vhdl = &handle;
+	struct seg_desc ds_desc;
+
+	hypertrace_args_t htr_args;
+	int err __unused;
+
+	vhdl->vcpu = vcpu;
+	vhdl->paging = paging;
+	paging->pmap = vmspace_pmap(vm_vmspace(vcpu->vm));
+	if (args[0] == 0 || args[0] > INT_MAX || args[2] > INT_MAX)
+		return (HYPERCALL_RET_ERROR);
+	vhdl->tid = args[2];
+	err = 0;
+
+	err = vm_get_seg_desc(vcpu, VM_REG_GUEST_DS, &ds_desc);
+	KASSERT(err == 0, ("%s: error %d getting DS descriptor",
+	    __func__, err));
+
+	err = hypercall_copy_arg(vcpu, ds_desc.base,
+	    args[1], sizeof(hypertrace_args_t), paging, &htr_args);
+	if (err != HYPERCALL_RET_SUCCESS)
+		return (HYPERCALL_RET_ERROR);
+	if (htr_args.htr_entry > 1 ||
+	    !hypertrace_pcstack_valid(&htr_args) ||
+	    (htr_args.htr_present & ~HYPERTRACE_ARGS_WALLTIME_VALID) != 0)
+		return (HYPERCALL_RET_ERROR);
+	htr_args.htr_curcpu = vcpu_vcpuid(vcpu);
+
+	return (hypertrace_probe(vhdl, (int)args[0], &htr_args) == 0 ?
+	    HYPERCALL_RET_SUCCESS : HYPERCALL_RET_ERROR);
+}
+
 /*
  * Resolve one kernel-owned startup event while the target is frozen, before
  * looking at its wait-for-SIPI predicate.  In particular, a SIPI published to
@@ -1743,6 +2148,9 @@ restart:
 	    vmm_startup_entry_owner_publish_running(&startup_owner) != 0)
 		panic("%s: invalid startup owner before VCPU_RUNNING", __func__);
 	vcpu_require_state(vcpu, VCPU_RUNNING);
+	/* Run witness: count every attempt to enter the guest, before the
+	 * backend can enter it (a failed entry is counted too). */
+	atomic_add_64(&vm->guest_entries, 1);
 	error = vmmops_run(vcpu->cookie, vcpu->nextrip, pmap, &evinfo,
 	    startup_owner_active ? &startup_owner : NULL);
 	vcpu_require_state(vcpu, VCPU_FROZEN);
@@ -1846,6 +2254,9 @@ restart:
 		case VM_EXITCODE_MWAIT:
 		case VM_EXITCODE_VMINSN:
 			vm_inject_ud(vcpu);
+			break;
+		case VM_EXITCODE_HYPERCALL:
+			error = vm_handle_hypercall(vcpu, vme, &retu);
 			break;
 		default:
 			retu = true;	/* handled in userland */
@@ -3179,6 +3590,136 @@ vm_copyout(const void *kaddr, struct vm_copyinfo *copyinfo, size_t len)
 	}
 }
 
+static lwpid_t
+vmm_priv_gettid(const void *xvhdl)
+{
+
+	const struct vm_hdl *vhdl = xvhdl;
+	return (vhdl->tid);
+}
+
+static uint16_t
+vmm_priv_getid(const void *xvhdl)
+{
+
+	const struct vm_hdl *vhdl = xvhdl;
+	return (vhdl->vcpu->vm->id);
+}
+
+static const char *
+vmm_priv_getname(const void *xvhdl)
+{
+
+	const struct vm_hdl *vhdl = xvhdl;
+	return (vhdl->vcpu->vm->name);
+}
+
+static int
+vmm_priv_getreg(const void *xvhdl, int reg, uint64_t *value)
+{
+	const struct vm_hdl *vhdl = xvhdl;
+
+	if (vhdl == NULL || vhdl->vcpu == NULL || value == NULL ||
+	    reg < 0 || reg >= VM_REG_LAST)
+		return (EINVAL);
+	return (vm_get_register(vhdl->vcpu, reg, value));
+}
+
+/* A DIF scalar or trapframe may straddle guest pages. Hold each translation
+ * only while copying it, and publish the destination only after all pages
+ * succeed; never hand DTrace a host pointer into guest memory. */
+static int
+vmm_priv_guest_copyin(const void *handle, uint64_t gla, void *dst,
+    size_t length)
+{
+	const struct vm_hdl *vhdl = handle;
+	uint8_t staged[sizeof(struct trapframe)];
+	uint64_t gpa;
+	void *cookie, *hva;
+	size_t done, chunk;
+	int error, fault;
+
+	if (vhdl == NULL || vhdl->vcpu == NULL || vhdl->paging == NULL ||
+	    dst == NULL || gla == 0 || length == 0 ||
+	    length > sizeof(struct trapframe) ||
+	    gla > UINT64_MAX - (length - 1))
+		return (EINVAL);
+	for (done = 0; done < length; done += chunk) {
+		error = vm_gla2gpa_nofault(vhdl->vcpu, vhdl->paging,
+		    gla + done, VM_PROT_READ, &gpa, &fault);
+		if (error != 0 || fault != 0)
+			return (EFAULT);
+		chunk = MIN(length - done, PAGE_SIZE - (gpa & PAGE_MASK));
+		cookie = NULL;
+		hva = vm_gpa_hold(vhdl->vcpu, gpa, chunk, VM_PROT_READ,
+		    &cookie);
+		if (hva == NULL)
+			return (EFAULT);
+		memcpy(staged + done, hva, chunk);
+		vm_gpa_release(cookie);
+	}
+	memcpy(dst, staged, length);
+	return (0);
+}
+
+static int
+vmm_priv_guest_user_copyin(const void *handle, uint64_t gla, void *dst,
+    size_t length)
+{
+	const struct vm_hdl *vhdl = handle;
+	struct vm_guest_paging user_paging;
+	struct vm_hdl user_handle;
+
+	if (vhdl == NULL || vhdl->paging == NULL || vhdl->vcpu == NULL ||
+	    dst == NULL || length == 0 || length > sizeof(uint64_t))
+		return (EINVAL);
+	if (vhdl->paging->paging_mode == PAGING_MODE_FLAT)
+		return (EOPNOTSUPP);
+	user_paging = *vhdl->paging;
+	user_paging.cpl = 3;
+	user_handle = *vhdl;
+	user_handle.paging = &user_paging;
+	return (vmm_priv_guest_copyin(&user_handle, gla, dst, length));
+}
+
+/* A virtual probe may only write a guest user page that the guest itself
+ * could write.  The vCPU is frozen in the HyperTrace exit callback. */
+static int
+vmm_priv_guest_user_copyout(const void *handle, uint64_t gla,
+    const void *src, size_t length)
+{
+	const struct vm_hdl *vhdl = handle;
+	struct vm_guest_paging user_paging;
+	uint64_t gpa;
+	void *cookie, *hva;
+	size_t done, chunk;
+	int error, fault;
+
+	if (vhdl == NULL || vhdl->vcpu == NULL || vhdl->paging == NULL ||
+	    src == NULL || gla == 0 || length == 0 || length > 8 ||
+	    gla > UINT64_MAX - (length - 1))
+		return (EINVAL);
+	if (vhdl->paging->paging_mode == PAGING_MODE_FLAT)
+		return (EOPNOTSUPP);
+	user_paging = *vhdl->paging;
+	user_paging.cpl = 3;
+	for (done = 0; done < length; done += chunk) {
+		error = vm_gla2gpa_nofault(vhdl->vcpu, &user_paging,
+		    gla + done, VM_PROT_WRITE, &gpa, &fault);
+		if (error != 0 || fault != 0)
+			return (EFAULT);
+		chunk = MIN(length - done, PAGE_SIZE - (gpa & PAGE_MASK));
+		cookie = NULL;
+		hva = vm_gpa_hold(vhdl->vcpu, gpa, chunk, VM_PROT_WRITE,
+		    &cookie);
+		if (hva == NULL)
+			return (EFAULT);
+		memcpy(hva, (const uint8_t *)src + done, chunk);
+		vm_gpa_release(cookie);
+	}
+	return (0);
+}
+
 /*
  * Return the amount of in-use and wired memory for the VM. Since
  * these are global stats, only return the values with for vCPU 0
@@ -4081,3 +4622,38 @@ vm_restore_time(struct vm *vm)
 	return (0);
 }
 #endif
+
+uint64_t
+vm_get_hypertrace_epoch(struct vm *vm)
+{
+	return (vm->hypertrace_epoch);
+}
+
+/*
+ * Whether any vCPU of this VM incarnation has tried to enter the guest
+ * (entries, reset by vm_reinit()), and how many vCPUs are running now.
+ * The caller holds the memseg lock, which vm_reinit() takes exclusively,
+ * so the count belongs to the identity read under the same lock.
+ */
+void
+vm_get_run_witness(struct vm *vm, uint64_t *entries, uint32_t *running)
+{
+	struct vcpu *vcpu;
+	uint32_t n = 0;
+
+	for (int i = 0; i < vm->maxcpus; i++) {
+		vcpu = (struct vcpu *)atomic_load_acq_ptr(
+		    (uintptr_t *)&vm->vcpu[i]);
+		if (vcpu != NULL && vcpu_get_state(vcpu, NULL) == VCPU_RUNNING)
+			n++;
+	}
+	*entries = atomic_load_acq_64(&vm->guest_entries);
+	*running = n;
+}
+
+static uint64_t
+vmm_priv_getepoch(const void *handle)
+{
+	const struct vm_hdl *vhdl = handle;
+	return (vhdl->vcpu->vm->hypertrace_epoch);
+}

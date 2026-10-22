@@ -79,6 +79,7 @@
 #define	SSTATUS_XS_SHIFT		15
 #define	SSTATUS_XS_MASK			(0x3 << SSTATUS_XS_SHIFT)
 #define	SSTATUS_SUM			(1 << 18)
+#define	SSTATUS_MXR			(1 << 19)
 #if __riscv_xlen == 64
 #define	SSTATUS_SD			(1ul << 63)
 #else

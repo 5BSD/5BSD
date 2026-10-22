@@ -8034,11 +8034,11 @@ restore_transaction=$(sed -n \
     fail "destination restore transaction is missing"
 printf '%s\n' "$restore_transaction" | awk '
 	/vm_pause_devices\(\)/ { pause = NR }
-	/vm_restore_preflight\(rstate\)/ { preflight = NR }
+	/vm_restore_preflight_internal\(rstate,/ { preflight = NR }
 	/vm_restore_memory_preflight\(ctx, rstate\)/ { memory_preflight = NR }
 	/vm_snapshot_session_begin_exact\(ctx, &session,/ { begin = NR }
 	/restore_vm_mem\(ctx, rstate\)/ { memory = NR }
-	/vm_restore_devices\(rstate\)/ { devices = NR }
+	/vm_restore_devices_prevalidated\(rstate\)/ { devices = NR }
 	/vm_restore_kern_structs\(ctx, rstate\)/ { kernel = NR }
 	/vm_snapshot_session_release_exact\(ctx, &session, true,/ { commit = NR }
 	/vm_resume_devices\(\)/ { resume = NR }

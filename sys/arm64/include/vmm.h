@@ -36,6 +36,8 @@
 #include "pmap.h"
 
 struct vcpu;
+struct vm_arm64_cpu_features;
+int vmm_get_arm64_cpu_features(struct vm_arm64_cpu_features *);
 
 enum vm_suspend_how {
 	VM_SUSPEND_NONE,
@@ -115,6 +117,8 @@ enum vm_reg_name {
 	struct vfpstate	*guestfpu	/* (a,i) guest fpu state */
 
 #define	VMM_VM_MD_FIELDS						\
+	uint16_t id;		/* HyperTrace host namespace */	\
+	uint64_t hypertrace_epoch; /* VM lifetime token */	\
 	struct vmm_mmio_region mmio_region[VM_MAX_MMIO_REGIONS];	\
 	struct vmm_special_reg special_reg[VM_MAX_SPECIAL_REGS]
 
@@ -139,6 +143,13 @@ struct vmm_special_reg {
 	ret_type vmmops_##opname args
 
 struct vm;
+uint64_t vm_get_id(struct vm *);
+uint64_t vm_get_hypertrace_epoch(struct vm *);
+/* Checkpoint support (BHYVE_SNAPSHOT kernels only). */
+struct vm_snapshot_meta;
+int vm_snapshot_req(struct vm *vm, struct vm_snapshot_meta *meta);
+int vm_restore_time(struct vm *vm);
+void vm_event_checkpoint_deferred_apply(void *, uint16_t, uint64_t);
 struct vm_eventinfo;
 struct vm_exception;
 struct vm_exit;
@@ -153,6 +164,8 @@ DECLARE_VMMOPS_FUNC(int, modcleanup, (void));
 DECLARE_VMMOPS_FUNC(void *, init, (struct vm *vm, struct pmap *pmap));
 DECLARE_VMMOPS_FUNC(int, gla2gpa, (void *vcpui, struct vm_guest_paging *paging,
     uint64_t gla, int prot, uint64_t *gpa, int *is_fault));
+DECLARE_VMMOPS_FUNC(void, get_paging, (void *vcpui,
+    struct vm_guest_paging *paging));
 DECLARE_VMMOPS_FUNC(int, run, (void *vcpui, register_t pc, struct pmap *pmap,
     struct vm_eventinfo *info));
 DECLARE_VMMOPS_FUNC(void, cleanup, (void *vmi));
@@ -217,6 +230,22 @@ struct vm_guest_paging {
 	int		flags;
 	int		padding;
 };
+
+/* Valid only while the VMM owns a frozen guest probe firing. */
+struct vm_hdl {
+	struct vcpu *vcpu;
+	struct vm_guest_paging *paging;
+	lwpid_t tid;
+};
+
+extern uint64_t (*vmm_getepoch)(const void *);
+extern lwpid_t (*vmm_gettid)(const void *);
+extern uint16_t (*vmm_getid)(const void *);
+extern const char *(*vmm_getname)(const void *);
+extern int (*vmm_getreg)(const void *, int, uint64_t *);
+extern int (*vmm_guest_copyin)(const void *, uint64_t, void *, size_t);
+extern int (*vmm_guest_user_copyin)(const void *, uint64_t, void *, size_t);
+extern int (*vmm_guest_user_copyout)(const void *, uint64_t, const void *, size_t);
 
 struct vie {
 	uint8_t access_size:4, sign_extend:1, dir:1, unused:2;

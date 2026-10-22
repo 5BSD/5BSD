@@ -56,6 +56,8 @@ struct vcpu;
 #define CPUID_8000_001D	(0x8000001D)
 #define CPUID_8000_001E	(0x8000001E)
 
+#define CPUID_4000_0000	(0x40000000)
+#define CPUID_4000_0001	(0x40000001)
 /*
  * CPUID instruction Fn0000_0001:
  */

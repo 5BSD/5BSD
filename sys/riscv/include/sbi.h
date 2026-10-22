@@ -93,6 +93,15 @@
 #define	SBI_RFNC_REMOTE_HFENCE_VVMA_ASID	5
 #define	SBI_RFNC_REMOTE_HFENCE_VVMA		6
 
+/* Experimental 5BSD HyperTrace extension (SBI experimental EID range). */
+/* Each envelope size gets a distinct experimental ID: an older guest must
+ * not send its shorter argument block to a newer host. */
+#define	SBI_EXT_ID_HYPERTRACE		0x08485455
+#define	SBI_HYPERTRACE_PROBE		2
+#define	SBI_HYPERTRACE_QUERY		1
+/* Version 5 carries bounded raw guest kernel PCs for stack(). */
+#define	SBI_HYPERTRACE_VERSION		5
+
 /* Hart State Management (HSM) Extension */
 #define	SBI_EXT_ID_HSM			0x48534D
 #define	SBI_HSM_HART_START		0

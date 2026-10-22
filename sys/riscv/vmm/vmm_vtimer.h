@@ -39,9 +39,18 @@ struct vtimer {
 	struct callout	callout;
 	struct mtx	mtx;
 	uint32_t	freq;
+	/*
+	 * Last SBI set_timer deadline.  The callout alone cannot be
+	 * serialized, so a checkpoint records this value and re-arms it.
+	 */
+	bool		armed;
+	uint64_t	deadline;
 };
 
 void vtimer_cpuinit(struct hypctx *hypctx);
+uint32_t vtimer_get_frequency(void);
 int vtimer_set_timer(struct hypctx *hypctx, uint64_t next_val);
+/* Checkpoint support (BHYVE_SNAPSHOT kernels only). */
+void vtimer_snapshot_quiesce(struct hypctx *hypctx);
 
 #endif /* !_VMM_VTIMER_H_ */

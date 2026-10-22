@@ -27,6 +27,8 @@
  * SUCH DAMAGE.
  */
 
+#include "opt_bhyve_snapshot.h"
+
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/conf.h>
@@ -44,12 +46,25 @@
 #include <machine/vmparam.h>
 #include <machine/vmm.h>
 
+#ifdef BHYVE_SNAPSHOT
+#include <sys/fcntl.h>
+
+#include <machine/vmm_snapshot.h>
+#endif
+
 #include <dev/vmm/vmm_dev.h>
 #include <dev/vmm/vmm_mem.h>
+#include <dev/vmm/vmm_vm.h>
 
 #include "vmm_aplic.h"
+#include "vmm_vtimer.h"
 
 const struct vmmdev_ioctl vmmdev_machdep_ioctls[] = {
+	VMMDEV_IOCTL(VM_GET_IDENTIFIER, VMMDEV_IOCTL_SLOCK_MEMSEGS),
+	VMMDEV_IOCTL(VM_GET_IDENTITY, VMMDEV_IOCTL_SLOCK_MEMSEGS),
+	VMMDEV_IOCTL(VM_GET_ATTESTATION, VMMDEV_IOCTL_SLOCK_MEMSEGS),
+	VMMDEV_IOCTL(VM_GET_RISCV_TIMEBASE,
+	    VMMDEV_IOCTL_LOCK_ONE_VCPU),
 	VMMDEV_IOCTL(VM_RUN, VMMDEV_IOCTL_LOCK_ONE_VCPU),
 	VMMDEV_IOCTL(VM_INJECT_EXCEPTION, VMMDEV_IOCTL_LOCK_ONE_VCPU),
 	VMMDEV_IOCTL(VM_GLA2GPA_NOFAULT, VMMDEV_IOCTL_LOCK_ONE_VCPU),
@@ -60,6 +75,11 @@ const struct vmmdev_ioctl vmmdev_machdep_ioctls[] = {
 	VMMDEV_IOCTL(VM_RAISE_MSI, 0),
 	VMMDEV_IOCTL(VM_ASSERT_IRQ, 0),
 	VMMDEV_IOCTL(VM_DEASSERT_IRQ, 0),
+#ifdef BHYVE_SNAPSHOT
+	VMMDEV_IOCTL(VM_SNAPSHOT_REQ, VMMDEV_IOCTL_LOCK_ALL_VCPUS),
+	VMMDEV_IOCTL(VM_SNAPSHOT_SESSION, VMMDEV_IOCTL_LOCK_ALL_VCPUS),
+	VMMDEV_IOCTL(VM_RESTORE_TIME, VMMDEV_IOCTL_LOCK_ALL_VCPUS),
+#endif
 };
 const size_t vmmdev_machdep_ioctl_count = nitems(vmmdev_machdep_ioctls);
 
@@ -71,6 +91,35 @@ vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd, caddr_t data,
 
 	error = 0;
 	switch (cmd) {
+	case VM_GET_IDENTIFIER:
+		*(uint16_t *)data = vm_get_id(vm);
+		break;
+	case VM_GET_RISCV_TIMEBASE: {
+		struct vm_riscv_timebase *timebase = (void *)data;
+
+		if (timebase->version != VM_RISCV_TIMEBASE_VERSION) {
+			error = EINVAL;
+			break;
+		}
+		timebase->frequency = vtimer_get_frequency();
+		break;
+	}
+	case VM_GET_IDENTITY: {
+		struct hypertrace_vm_identity *identity = (void *)data;
+		memset(identity, 0, sizeof(*identity));
+		identity->vmid = vm_get_id(vm);
+		identity->epoch = vm_get_hypertrace_epoch(vm);
+		break;
+	}
+	case VM_GET_ATTESTATION: {
+		struct hypertrace_vm_attestation *attestation = (void *)data;
+		memset(attestation, 0, sizeof(*attestation));
+		attestation->vmid = vm_get_id(vm);
+		attestation->epoch = vm_get_hypertrace_epoch(vm);
+		strlcpy(attestation->name, vm_name(vm),
+		    sizeof(attestation->name));
+		break;
+	}
 	case VM_RUN: {
 		struct vm_exit *vme;
 		struct vm_run *vmrun;
@@ -131,6 +180,75 @@ vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd, caddr_t data,
 		error = vm_deassert_irq(vm, vi->irq);
 		break;
 	}
+#ifdef BHYVE_SNAPSHOT
+	case VM_SNAPSHOT_REQ: {
+		struct vm_snapshot_meta *snapshot_meta;
+
+		if ((fflag & FWRITE) == 0) {
+			error = EBADF;
+			break;
+		}
+		error = vmmdev_snapshot_session_require(vm);
+		if (error != 0)
+			break;
+		snapshot_meta = (struct vm_snapshot_meta *)data;
+		error = vm_snapshot_req(vm, snapshot_meta);
+		if (error == 0 && snapshot_meta->op == VM_SNAPSHOT_RESTORE &&
+		    snapshot_meta->dev_req == STRUCT_VM)
+			error = vmmdev_snapshot_restore_time_mark(vm);
+		break;
+	}
+	case VM_SNAPSHOT_SESSION: {
+		struct vm_snapshot_session *session;
+
+		session = (struct vm_snapshot_session *)data;
+		if ((fflag & FWRITE) == 0) {
+			error = EBADF;
+			break;
+		}
+		if (session->version != VM_SNAPSHOT_SESSION_VERSION ||
+		    session->flags != 0 || session->reserved[0] != 0 ||
+		    session->reserved[1] != 0) {
+			error = EINVAL;
+			break;
+		}
+		switch (session->op) {
+		case VM_SNAPSHOT_SESSION_BEGIN:
+			error = vmmdev_snapshot_session_begin(vm,
+			    vm_event_checkpoint_deferred_apply, vm,
+			    &session->session_id);
+			break;
+		case VM_SNAPSHOT_SESSION_COMMIT:
+			error = vmmdev_snapshot_session_finish(vm,
+			    session->session_id, false);
+			break;
+		case VM_SNAPSHOT_SESSION_ABORT:
+			error = vmmdev_snapshot_session_finish(vm,
+			    session->session_id, true);
+			break;
+		case VM_SNAPSHOT_SESSION_ABORT_CURRENT:
+			if (session->session_id != 0) {
+				error = EINVAL;
+				break;
+			}
+			error = vmmdev_snapshot_session_abort_current(vm);
+			break;
+		default:
+			error = EINVAL;
+			break;
+		}
+		break;
+	}
+	case VM_RESTORE_TIME:
+		if ((fflag & FWRITE) == 0) {
+			error = EBADF;
+			break;
+		}
+		error = vmmdev_snapshot_restore_time_consume(vm);
+		if (error == 0)
+			error = vm_restore_time(vm);
+		break;
+#endif
 	default:
 		error = ENOTTY;
 		break;

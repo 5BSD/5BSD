@@ -56,6 +56,12 @@ SRCS+=	vgic.c \
 	vgic_v3.c \
 	vtimer.c
 
+# Experimental checkpoint support; not enabled by default on this target.
+SRCS+=	opt_bhyve_snapshot.h
+SRCS.BHYVE_SNAPSHOT=	vmm_snapshot_buf.c vmm_snapshot_envelope.c \
+			vmm_snapshot_state.c vmm_snapshot_arm64.c \
+			vmm_snapshot_machdep.c
+
 CLEANFILES+=	vmm_nvhe_exception.o vmm_nvhe.o
 
 CLEANFILES+=	vmm_hyp_blob.elf.full
@@ -287,6 +293,12 @@ SRCS+=	vmm_aplic.c	\
 	vmm_sbi.c	\
 	vmm_switch.S	\
 	vmm_vtimer.c
+
+# Experimental checkpoint support; not enabled by default on this target.
+SRCS+=	opt_bhyve_snapshot.h
+SRCS.BHYVE_SNAPSHOT=	vmm_snapshot_buf.c vmm_snapshot_envelope.c \
+			vmm_snapshot_state.c vmm_snapshot_riscv.c \
+			vmm_snapshot_machdep.c
 
 .endif
 

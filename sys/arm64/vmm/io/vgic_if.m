@@ -31,6 +31,20 @@ HEADER {
 	struct hyp;
 	struct hypctx;
 	struct vm_vgic_descr;
+	struct vmm_snapshot_arm64_vgic_transaction;
+	struct vmm_snapshot_arm64_vgic_stage;
+};
+
+CODE {
+	#include <sys/errno.h>
+
+	static int
+	null_vgic_snapshot(device_t dev, struct hyp *hyp,
+	    struct vmm_snapshot_arm64_vgic_transaction *transaction,
+	    struct vmm_snapshot_arm64_vgic_stage *stage, size_t count)
+	{
+		return (EOPNOTSUPP);
+	}
 };
 
 METHOD void init {
@@ -102,3 +116,24 @@ METHOD void sync_hwstate {
 	device_t dev;
 	struct hypctx *hypctx;
 }
+
+#
+# Checkpoint support.  The caller holds every vCPU frozen.  Capture fills
+# the transaction and up to "count" stage entries; restore validates the
+# complete decoded image against this vGIC before changing any state.
+#
+METHOD int snapshot_capture {
+	device_t dev;
+	struct hyp *hyp;
+	struct vmm_snapshot_arm64_vgic_transaction *transaction;
+	struct vmm_snapshot_arm64_vgic_stage *stage;
+	size_t count;
+} DEFAULT null_vgic_snapshot;
+
+METHOD int snapshot_restore {
+	device_t dev;
+	struct hyp *hyp;
+	struct vmm_snapshot_arm64_vgic_transaction *transaction;
+	struct vmm_snapshot_arm64_vgic_stage *stage;
+	size_t count;
+} DEFAULT null_vgic_snapshot;

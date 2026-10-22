@@ -27,6 +27,8 @@
  * SUCH DAMAGE.
  */
 
+#include "opt_bhyve_snapshot.h"
+
 #include <sys/cdefs.h>
 
 #include <sys/types.h>
@@ -77,6 +79,10 @@
 #include "vgic_v3_reg.h"
 
 #include "vgic_if.h"
+
+#ifdef BHYVE_SNAPSHOT
+#include <arm64/vmm/vmm_snapshot_arm64.h>
+#endif
 
 #define VGIC_SGI_NUM		(GIC_LAST_SGI - GIC_FIRST_SGI + 1)
 #define VGIC_PPI_NUM		(GIC_LAST_PPI - GIC_FIRST_PPI + 1)
@@ -2093,6 +2099,290 @@ vgic_v3_sync_hwstate(device_t dev, struct hypctx *hypctx)
 	vgic_cpu->ich_lr_used = 0;
 }
 
+#ifdef BHYVE_SNAPSHOT
+_Static_assert(VGIC_NIRQS == VMM_SNAPSHOT_ARM64_VGIC_NIRQS,
+    "portable vGIC interrupt count");
+_Static_assert(VGIC_PRV_I_NUM == VMM_SNAPSHOT_ARM64_VGIC_PRIVATE_COUNT,
+    "portable vGIC private interrupt count");
+_Static_assert(VGIC_SGI_NUM == VMM_SNAPSHOT_ARM64_VGIC_SGI_COUNT,
+    "portable vGIC SGI count");
+_Static_assert(VGIC_ICH_LR_NUM_MAX <= VMM_SNAPSHOT_ARM64_VGIC_LR_MAX,
+    "portable vGIC list register bound");
+_Static_assert(VGIC_ICH_APR_NUM_MAX <= VMM_SNAPSHOT_ARM64_VGIC_APR_MAX,
+    "portable vGIC APR bound");
+_Static_assert(VGIC_CONFIG_LEVEL == VMM_SNAPSHOT_ARM64_IRQ_CONFIG_LEVEL &&
+    VGIC_CONFIG_EDGE == VMM_SNAPSHOT_ARM64_IRQ_CONFIG_EDGE,
+    "portable vGIC trigger encoding");
+_Static_assert(GICD_AFF == VMM_SNAPSHOT_ARM64_GICD_AFF,
+    "portable affinity mask");
+_Static_assert(GICD_CTLR_G1A == VMM_SNAPSHOT_ARM64_GICD_CTLR_G1A &&
+    GICD_CTLR_ARE_NS == VMM_SNAPSHOT_ARM64_GICD_CTLR_ARE_NS,
+    "portable GICD_CTLR bits");
+_Static_assert(ICH_HCR_EL2_En == VMM_SNAPSHOT_ARM64_ICH_HCR_EN,
+    "portable ICH_HCR_EL2.En");
+
+static void
+vgic_v3_snapshot_irq_capture(const struct vgic_v3_irq *irq,
+    struct vmm_snapshot_arm64_vgic_irq *out)
+{
+
+	memset(out, 0, sizeof(*out));
+	out->mpidr = irq->mpidr;
+	out->target_vcpu = irq->target_vcpu;
+	out->priority = irq->priority;
+	out->config = irq->config;
+	if (irq->active)
+		out->flags |= VMM_SNAPSHOT_ARM64_IRQ_F_ACTIVE;
+	if (irq->pending)
+		out->flags |= VMM_SNAPSHOT_ARM64_IRQ_F_PENDING;
+	if (irq->enabled)
+		out->flags |= VMM_SNAPSHOT_ARM64_IRQ_F_ENABLED;
+	if (irq->level)
+		out->flags |= VMM_SNAPSHOT_ARM64_IRQ_F_LEVEL;
+	if (irq->on_aplist)
+		out->flags |= VMM_SNAPSHOT_ARM64_IRQ_F_APLIST;
+}
+
+static void
+vgic_v3_snapshot_irq_apply(struct vgic_v3_irq *irq,
+    const struct vmm_snapshot_arm64_vgic_irq *in)
+{
+
+	irq->mpidr = in->mpidr;
+	irq->target_vcpu = in->target_vcpu;
+	irq->priority = in->priority;
+	irq->config = in->config;
+	irq->active = (in->flags & VMM_SNAPSHOT_ARM64_IRQ_F_ACTIVE) != 0;
+	irq->pending = (in->flags & VMM_SNAPSHOT_ARM64_IRQ_F_PENDING) != 0;
+	irq->enabled = (in->flags & VMM_SNAPSHOT_ARM64_IRQ_F_ENABLED) != 0;
+	irq->level = (in->flags & VMM_SNAPSHOT_ARM64_IRQ_F_LEVEL) != 0;
+	/* on_aplist is rebuilt from the ordered list records. */
+	irq->on_aplist = false;
+}
+
+static int
+vgic_v3_snapshot_capture(device_t dev, struct hyp *hyp,
+    struct vmm_snapshot_arm64_vgic_transaction *transaction,
+    struct vmm_snapshot_arm64_vgic_stage *stage, size_t capacity)
+{
+	struct vmm_snapshot_arm64_vgic_dist *dist;
+	struct vmm_snapshot_arm64_vgic_cpu *cpu;
+	struct vgic_v3_cpu *vgic_cpu;
+	struct vgic_v3_irq *irq;
+	struct hypctx *hypctx;
+	struct vgic_v3 *vgic;
+	struct vtimer_cpu *vtimer_cpu;
+	uint32_t count;
+	uint16_t maxcpus;
+
+	if (!hyp->vgic_attached)
+		return (ENODEV);
+	vgic = hyp->vgic;
+	maxcpus = vm_get_maxcpus(hyp->vm);
+	memset(transaction, 0, sizeof(*transaction));
+	count = 0;
+	for (uint16_t i = 0; i < maxcpus; i++) {
+		hypctx = hyp->ctx[i];
+		if (hypctx == NULL)
+			continue;
+		if (count >= capacity)
+			return (E2BIG);
+		/* A frozen vCPU has folded its list registers back. */
+		if (hypctx->vgic_cpu->ich_lr_used != 0)
+			return (EBUSY);
+		memset(&stage[count], 0, sizeof(stage[count]));
+		stage[count].instance = i;
+		count++;
+	}
+	if (count == 0)
+		return (EINVAL);
+	transaction->vm.max_vcpus = maxcpus;
+	transaction->vm.vcpu_count = count;
+	transaction->vcpu_count = count;
+	dist = &transaction->dist;
+	dist->dist_start = vgic->dist_start;
+	dist->dist_size = vgic->dist_end - vgic->dist_start;
+	dist->redist_start = vgic->redist_start;
+	dist->redist_size = vgic->redist_end - vgic->redist_start;
+	dist->min_prio = virt_features.min_prio;
+	dist->lr_num = virt_features.ich_lr_num;
+	dist->apr_num = virt_features.ich_apr_num;
+	mtx_lock_spin(&vgic->dist_mtx);
+	dist->gicd_ctlr = vgic->gicd_ctlr & ~GICD_CTLR_RWP;
+	mtx_unlock_spin(&vgic->dist_mtx);
+	for (u_int i = 0; i < VGIC_NIRQS - VGIC_PRV_I_NUM; i++) {
+		irq = &vgic->irqs[i];
+		mtx_lock_spin(&irq->irq_spinmtx);
+		vgic_v3_snapshot_irq_capture(irq, &dist->spis[i]);
+		mtx_unlock_spin(&irq->irq_spinmtx);
+	}
+	for (uint32_t c = 0; c < count; c++) {
+		hypctx = hyp->ctx[stage[c].instance];
+		vgic_cpu = hypctx->vgic_cpu;
+		vtimer_cpu = &hypctx->vtimer_cpu;
+		cpu = &stage[c].cpu;
+		/* Exclude this vCPU's timer callouts, the only PPI source left. */
+		mtx_lock(&vtimer_cpu->phys_timer.mtx);
+		mtx_lock(&vtimer_cpu->virt_timer.mtx);
+		/*
+		 * EOIcount and UIE are transient: sync/flush clear them before
+		 * the next entry, and sync skips the clear when no list
+		 * register was used.  Only the enable bit is state.
+		 */
+		cpu->ich_hcr = hypctx_read_sys_reg(hypctx, HOST_ICH_HCR_EL2) &
+		    ~(ICH_HCR_EL2_EOICOUNT_MASK | ICH_HCR_EL2_UIE);
+		cpu->ich_vmcr = hypctx_read_sys_reg(hypctx, HOST_ICH_VMCR_EL2);
+		for (u_int j = 0; j < hypctx->vgic_v3.ich_apr_num; j++) {
+			cpu->ap0r[j] = (uint32_t)hypctx_read_sys_reg(hypctx,
+			    HOST_ICH_AP0R_EL2(j));
+			cpu->ap1r[j] = (uint32_t)hypctx_read_sys_reg(hypctx,
+			    HOST_ICH_AP1R_EL2(j));
+		}
+		for (u_int j = 0; j < VGIC_PRV_I_NUM; j++) {
+			irq = &vgic_cpu->private_irqs[j];
+			mtx_lock_spin(&irq->irq_spinmtx);
+			vgic_v3_snapshot_irq_capture(irq, &cpu->private_irqs[j]);
+			mtx_unlock_spin(&irq->irq_spinmtx);
+		}
+		mtx_lock_spin(&vgic_cpu->lr_mtx);
+		TAILQ_FOREACH(irq, &vgic_cpu->irq_act_pend, act_pend_list) {
+			if (cpu->aplist_count >= VGIC_NIRQS)
+				break;
+			cpu->aplist[cpu->aplist_count++] = irq->irq;
+		}
+		mtx_unlock_spin(&vgic_cpu->lr_mtx);
+		mtx_unlock(&vtimer_cpu->virt_timer.mtx);
+		mtx_unlock(&vtimer_cpu->phys_timer.mtx);
+	}
+	/* A torn or impossible capture is refused rather than published. */
+	return (vmm_snapshot_arm64_vgic_validate(transaction, stage, count));
+}
+
+static int
+vgic_v3_snapshot_restore(device_t dev, struct hyp *hyp,
+    struct vmm_snapshot_arm64_vgic_transaction *transaction,
+    struct vmm_snapshot_arm64_vgic_stage *stage, size_t count)
+{
+	const struct vmm_snapshot_arm64_vgic_dist *dist;
+	const struct vmm_snapshot_arm64_vgic_cpu *cpu;
+	struct vgic_v3_cpu *vgic_cpu;
+	struct vgic_v3_irq *irq, *next;
+	struct hypctx *hypctx;
+	struct vgic_v3 *vgic;
+	uint32_t existing, id;
+	uint16_t maxcpus;
+	int error;
+
+	if (!hyp->vgic_attached)
+		return (ENODEV);
+	error = vmm_snapshot_arm64_vgic_validate(transaction, stage, count);
+	if (error != 0)
+		return (error);
+	vgic = hyp->vgic;
+	maxcpus = vm_get_maxcpus(hyp->vm);
+	dist = &transaction->dist;
+	/* Destination checks: geometry, CPU interface shape, vCPU set. */
+	if (transaction->vm.max_vcpus != maxcpus ||
+	    dist->dist_start != vgic->dist_start ||
+	    dist->dist_size != vgic->dist_end - vgic->dist_start ||
+	    dist->redist_start != vgic->redist_start ||
+	    dist->redist_size != vgic->redist_end - vgic->redist_start ||
+	    dist->min_prio != virt_features.min_prio ||
+	    dist->lr_num != virt_features.ich_lr_num ||
+	    dist->apr_num != virt_features.ich_apr_num)
+		return (EINVAL);
+	existing = 0;
+	for (uint16_t i = 0; i < maxcpus; i++) {
+		if (hyp->ctx[i] != NULL)
+			existing++;
+	}
+	if (existing != count)
+		return (EINVAL);
+	for (size_t c = 0; c < count; c++) {
+		hypctx = hyp->ctx[stage[c].instance];
+		if (hypctx == NULL || hypctx->vgic_cpu->ich_lr_used != 0)
+			return (EINVAL);
+		cpu = &stage[c].cpu;
+		if (cpu->ich_hcr != ICH_HCR_EL2_En)
+			return (EINVAL);
+		for (u_int j = 0; j < VGIC_PRV_I_NUM; j++) {
+			if (cpu->private_irqs[j].mpidr !=
+			    (hypctx_read_sys_reg(hypctx, HOST_VMPIDR_EL2) &
+			    GICD_AFF))
+				return (EINVAL);
+		}
+	}
+	for (u_int i = 0; i < VGIC_NIRQS - VGIC_PRV_I_NUM; i++) {
+		if (dist->spis[i].target_vcpu >= 0 &&
+		    hyp->ctx[dist->spis[i].target_vcpu] == NULL)
+			return (EINVAL);
+	}
+
+	/* Commit; nothing below can fail. */
+	for (uint16_t i = 0; i < maxcpus; i++) {
+		hypctx = hyp->ctx[i];
+		if (hypctx == NULL)
+			continue;
+		vgic_cpu = hypctx->vgic_cpu;
+		mtx_lock_spin(&vgic_cpu->lr_mtx);
+		TAILQ_FOREACH_SAFE(irq, &vgic_cpu->irq_act_pend, act_pend_list,
+		    next) {
+			TAILQ_REMOVE(&vgic_cpu->irq_act_pend, irq,
+			    act_pend_list);
+			irq->on_aplist = false;
+		}
+		mtx_unlock_spin(&vgic_cpu->lr_mtx);
+	}
+	mtx_lock_spin(&vgic->dist_mtx);
+	vgic->gicd_ctlr = dist->gicd_ctlr;
+	mtx_unlock_spin(&vgic->dist_mtx);
+	for (u_int i = 0; i < VGIC_NIRQS - VGIC_PRV_I_NUM; i++) {
+		irq = &vgic->irqs[i];
+		mtx_lock_spin(&irq->irq_spinmtx);
+		vgic_v3_snapshot_irq_apply(irq, &dist->spis[i]);
+		mtx_unlock_spin(&irq->irq_spinmtx);
+	}
+	for (size_t c = 0; c < count; c++) {
+		hypctx = hyp->ctx[stage[c].instance];
+		vgic_cpu = hypctx->vgic_cpu;
+		cpu = &stage[c].cpu;
+		hypctx_write_sys_reg(hypctx, HOST_ICH_HCR_EL2, cpu->ich_hcr);
+		hypctx_write_sys_reg(hypctx, HOST_ICH_VMCR_EL2, cpu->ich_vmcr);
+		for (u_int j = 0; j < hypctx->vgic_v3.ich_apr_num; j++) {
+			hypctx_write_sys_reg(hypctx, HOST_ICH_AP0R_EL2(j),
+			    cpu->ap0r[j]);
+			hypctx_write_sys_reg(hypctx, HOST_ICH_AP1R_EL2(j),
+			    cpu->ap1r[j]);
+		}
+		for (u_int j = 0; j < VGIC_PRV_I_NUM; j++) {
+			irq = &vgic_cpu->private_irqs[j];
+			mtx_lock_spin(&irq->irq_spinmtx);
+			vgic_v3_snapshot_irq_apply(irq, &cpu->private_irqs[j]);
+			mtx_unlock_spin(&irq->irq_spinmtx);
+		}
+	}
+	/* Rebuild every active/pending list in its recorded order. */
+	for (size_t c = 0; c < count; c++) {
+		hypctx = hyp->ctx[stage[c].instance];
+		vgic_cpu = hypctx->vgic_cpu;
+		cpu = &stage[c].cpu;
+		for (uint32_t k = 0; k < cpu->aplist_count; k++) {
+			id = cpu->aplist[k];
+			irq = id < VGIC_PRV_I_NUM ? &vgic_cpu->private_irqs[id] :
+			    &vgic->irqs[id - VGIC_PRV_I_NUM];
+			mtx_lock_spin(&irq->irq_spinmtx);
+			mtx_lock_spin(&vgic_cpu->lr_mtx);
+			irq->on_aplist = true;
+			TAILQ_INSERT_TAIL(&vgic_cpu->irq_act_pend, irq,
+			    act_pend_list);
+			mtx_unlock_spin(&vgic_cpu->lr_mtx);
+			mtx_unlock_spin(&irq->irq_spinmtx);
+		}
+	}
+	return (0);
+}
+#endif
+
 static void
 vgic_v3_init(device_t dev)
 {
@@ -2184,6 +2474,10 @@ static device_method_t vgic_v3_methods[] = {
 	DEVMETHOD(vgic_inject_msi,	vgic_v3_inject_msi),
 	DEVMETHOD(vgic_flush_hwstate,	vgic_v3_flush_hwstate),
 	DEVMETHOD(vgic_sync_hwstate,	vgic_v3_sync_hwstate),
+#ifdef BHYVE_SNAPSHOT
+	DEVMETHOD(vgic_snapshot_capture,	vgic_v3_snapshot_capture),
+	DEVMETHOD(vgic_snapshot_restore,	vgic_v3_snapshot_restore),
+#endif
 
 	/* End */
 	DEVMETHOD_END

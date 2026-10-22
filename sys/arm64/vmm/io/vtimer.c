@@ -28,6 +28,8 @@
  * SUCH DAMAGE.
  */
 
+#include "opt_bhyve_snapshot.h"
+
 #include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/systm.h>
@@ -51,6 +53,10 @@
 
 #include "vgic.h"
 #include "vtimer.h"
+
+#ifdef BHYVE_SNAPSHOT
+#include <arm64/vmm/vmm_snapshot_arm64.h>
+#endif
 
 #define	RES1		0xffffffffffffffffUL
 
@@ -512,6 +518,95 @@ vtimer_phys_tval_write(struct vcpu *vcpu, uint64_t wval, void *arg)
 
 	return (0);
 }
+
+#ifdef BHYVE_SNAPSHOT
+_Static_assert(VMM_SNAPSHOT_ARM64_CNT_CTL_VALID ==
+    (CNTP_CTL_ENABLE | CNTP_CTL_IMASK | CNTP_CTL_ISTATUS),
+    "portable timer control mask");
+
+/*
+ * Checkpoint support.  The caller holds every vCPU frozen.  The callout
+ * mutexes exclude the timer callouts, which can otherwise inject a PPI
+ * while the record is captured.
+ */
+void
+vtimer_snapshot_capture(struct hypctx *hypctx,
+    struct vmm_snapshot_arm64_timer *timer)
+{
+	struct vtimer_cpu *vtimer_cpu;
+
+	vtimer_cpu = &hypctx->vtimer_cpu;
+	mtx_lock(&vtimer_cpu->phys_timer.mtx);
+	mtx_lock(&vtimer_cpu->virt_timer.mtx);
+	timer->cntkctl = vtimer_cpu->cntkctl_el1;
+	/* ISTATUS is derived from the counter on read; store control only. */
+	timer->virt_ctl = vtimer_cpu->virt_timer.cntx_ctl_el0 &
+	    (CNTP_CTL_ENABLE | CNTP_CTL_IMASK);
+	timer->virt_cval = vtimer_cpu->virt_timer.cntx_cval_el0;
+	timer->phys_ctl = vtimer_cpu->phys_timer.cntx_ctl_el0 &
+	    (CNTP_CTL_ENABLE | CNTP_CTL_IMASK);
+	timer->phys_cval = vtimer_cpu->phys_timer.cntx_cval_el0;
+	mtx_unlock(&vtimer_cpu->virt_timer.mtx);
+	mtx_unlock(&vtimer_cpu->phys_timer.mtx);
+}
+
+bool
+vtimer_snapshot_supported(struct hypctx *hypctx)
+{
+
+	/* FEAT_ECV physical-timer passthrough state is not represented. */
+	return ((hypctx_read_sys_reg(hypctx, HOST_CNTHCTL_EL2) &
+	    CNTHCTL_ECV_EN) == 0);
+}
+
+/* Stop callouts armed against the pre-restore counter offset. */
+void
+vtimer_snapshot_quiesce(struct hypctx *hypctx)
+{
+	struct vtimer_cpu *vtimer_cpu;
+
+	vtimer_cpu = &hypctx->vtimer_cpu;
+	callout_drain(&vtimer_cpu->phys_timer.callout);
+	callout_drain(&vtimer_cpu->virt_timer.callout);
+}
+
+void
+vtimer_snapshot_apply(struct hypctx *hypctx,
+    const struct vmm_snapshot_arm64_timer *timer)
+{
+	struct vtimer_cpu *vtimer_cpu;
+
+	vtimer_cpu = &hypctx->vtimer_cpu;
+	mtx_lock(&vtimer_cpu->phys_timer.mtx);
+	mtx_lock(&vtimer_cpu->virt_timer.mtx);
+	vtimer_cpu->cntkctl_el1 = timer->cntkctl;
+	vtimer_cpu->virt_timer.cntx_ctl_el0 = timer->virt_ctl &
+	    (CNTP_CTL_ENABLE | CNTP_CTL_IMASK);
+	vtimer_cpu->virt_timer.cntx_cval_el0 = timer->virt_cval;
+	vtimer_cpu->phys_timer.cntx_ctl_el0 = timer->phys_ctl &
+	    (CNTP_CTL_ENABLE | CNTP_CTL_IMASK);
+	vtimer_cpu->phys_timer.cntx_cval_el0 = timer->phys_cval;
+	mtx_unlock(&vtimer_cpu->virt_timer.mtx);
+	mtx_unlock(&vtimer_cpu->phys_timer.mtx);
+}
+
+/*
+ * Re-arm software timers after VM_RESTORE_TIME, once every record has been
+ * installed.  The level of an already-asserted timer PPI travels in the vGIC
+ * record; injecting it again is idempotent.
+ */
+void
+vtimer_snapshot_rearm(struct hypctx *hypctx)
+{
+	struct vtimer_cpu *vtimer_cpu;
+
+	vtimer_cpu = &hypctx->vtimer_cpu;
+	if (timer_enabled(vtimer_cpu->phys_timer.cntx_ctl_el0))
+		vtimer_schedule_irq(hypctx, true);
+	if (timer_enabled(vtimer_cpu->virt_timer.cntx_ctl_el0))
+		vtimer_schedule_irq(hypctx, false);
+}
+#endif
 
 struct vtimer_softc {
 	struct resource *res;

@@ -30,6 +30,8 @@
  * SUCH DAMAGE.
  */
 
+#include "opt_bhyve_snapshot.h"
+
 #include <sys/types.h>
 #include <sys/errno.h>
 #include <sys/systm.h>
@@ -49,6 +51,10 @@
 
 #include <dev/vmm/vmm_dev.h>
 #include <dev/vmm/vmm_vm.h>
+
+#ifdef BHYVE_SNAPSHOT
+#include <riscv/vmm/vmm_snapshot_riscv.h>
+#endif
 
 MALLOC_DEFINE(M_APLIC, "RISC-V VMM APLIC", "RISC-V AIA APLIC");
 
@@ -423,8 +429,14 @@ aplic_attach_to_vm(struct hyp *hyp, struct vm_aplic_descr *descr)
 	aplic->nirqs = APLIC_NIRQS;
 	aplic->mem_start = descr->mem_start;
 	aplic->mem_end = descr->mem_start + descr->mem_size;
-	aplic->irqs = malloc(sizeof(struct aplic_irq) * aplic->nirqs, M_APLIC,
-	    M_WAITOK | M_ZERO);
+	/*
+	 * Interrupt sources are numbered 1..nirqs and every accessor indexes
+	 * irqs[] by source number, so slot 0 is unused.  Allocating only
+	 * nirqs entries let guest SOURCECFG/TARGET/SETIENUM writes to source
+	 * nirqs land past the end of the array.
+	 */
+	aplic->irqs = malloc(sizeof(struct aplic_irq) * (aplic->nirqs + 1),
+	    M_APLIC, M_WAITOK | M_ZERO);
 
 	hyp->aplic_attached = true;
 
@@ -491,6 +503,8 @@ aplic_inject_irq(struct hyp *hyp, int vcpuid, uint32_t irqid, bool level)
 	aplic = hyp->aplic;
 
 	error = 0;
+	if (!hyp->aplic_attached || irqid == 0 || irqid > aplic->nirqs)
+		return (EINVAL);
 
 	mtx_lock_spin(&aplic->mtx);
 	if ((aplic->domaincfg & DOMAINCFG_IE) == 0) {
@@ -579,3 +593,70 @@ aplic_sync_hwstate(struct hypctx *hypctx)
 {
 
 }
+
+#ifdef BHYVE_SNAPSHOT
+_Static_assert(APLIC_NIRQS == VMM_SNAPSHOT_RISCV_APLIC_NIRQS,
+    "portable APLIC source count");
+_Static_assert(DOMAINCFG_IE == VMM_SNAPSHOT_RISCV_APLIC_DOMAINCFG_IE &&
+    SOURCECFG_D == VMM_SNAPSHOT_RISCV_APLIC_SOURCECFG_D &&
+    SOURCECFG_SM_M == VMM_SNAPSHOT_RISCV_APLIC_SOURCECFG_SM &&
+    SOURCECFG_CHILD_INDEX_M == VMM_SNAPSHOT_RISCV_APLIC_SOURCECFG_CHILD,
+    "portable APLIC register encodings");
+_Static_assert((APLIC_IRQ_STATE_PENDING | APLIC_IRQ_STATE_ENABLED |
+    APLIC_IRQ_STATE_INPUT) == VMM_SNAPSHOT_RISCV_APLIC_STATE_VALID,
+    "portable APLIC source state");
+
+/* The caller holds every vCPU frozen. */
+int
+aplic_snapshot_capture(struct hyp *hyp, struct vmm_snapshot_riscv_aplic *state)
+{
+	struct aplic *aplic;
+
+	if (!hyp->aplic_attached)
+		return (ENODEV);
+	aplic = hyp->aplic;
+	state->mem_start = aplic->mem_start;
+	state->mem_size = aplic->mem_end - aplic->mem_start;
+	state->nirqs = aplic->nirqs;
+	mtx_lock_spin(&aplic->mtx);
+	state->domaincfg = aplic->domaincfg;
+	memset(state->sources, 0, sizeof(state->sources));
+	for (int i = 1; i <= aplic->nirqs; i++) {
+		state->sources[i].sourcecfg = aplic->irqs[i].sourcecfg;
+		state->sources[i].state = aplic->irqs[i].state;
+		state->sources[i].target = aplic->irqs[i].target;
+	}
+	mtx_unlock_spin(&aplic->mtx);
+	return (vmm_snapshot_riscv_aplic_validate(state));
+}
+
+int
+aplic_snapshot_restore(struct hyp *hyp,
+    const struct vmm_snapshot_riscv_aplic *state)
+{
+	struct aplic *aplic;
+	int error;
+
+	if (!hyp->aplic_attached)
+		return (ENODEV);
+	error = vmm_snapshot_riscv_aplic_validate(state);
+	if (error != 0)
+		return (error);
+	aplic = hyp->aplic;
+	if (state->nirqs != (uint32_t)aplic->nirqs ||
+	    state->mem_start != aplic->mem_start ||
+	    state->mem_size != aplic->mem_end - aplic->mem_start)
+		return (EINVAL);
+	mtx_lock_spin(&aplic->mtx);
+	aplic->domaincfg = state->domaincfg;
+	for (int i = 1; i <= aplic->nirqs; i++) {
+		aplic->irqs[i].sourcecfg = state->sources[i].sourcecfg;
+		aplic->irqs[i].state = state->sources[i].state;
+		aplic->irqs[i].target = state->sources[i].target;
+		aplic->irqs[i].target_hart = state->sources[i].target >>
+		    TARGET_HART_S;
+	}
+	mtx_unlock_spin(&aplic->mtx);
+	return (0);
+}
+#endif

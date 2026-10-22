@@ -30,6 +30,8 @@
 #define	_VMM_DEV_H_
 
 #include <sys/domainset.h>
+#include <sys/types.h>
+#include <sys/hypertrace.h>
 
 #include <machine/vmm.h>
 #include <machine/vmm_snapshot.h>
@@ -289,6 +291,8 @@ enum {
 	IOCNUM_GET_CAPABILITY = 3,
 	IOCNUM_SUSPEND = 4,
 	IOCNUM_REINIT = 5,
+	IOCNUM_GET_ID = 6,
+	IOCNUM_GET_ATTESTATION = 7,
 
 	/* memory apis */
 	IOCNUM_MAP_MEMORY = 10,			/* deprecated */
@@ -515,4 +519,10 @@ enum {
 	_IOWR('v', IOCNUM_RESTORE_TIME, int)
 #define VM_DIRTY_LOG_REQUEST \
 	_IOW('v', IOCNUM_DIRTY_LOG_REQUEST, struct vmm_dirty_log_request)
+#define	VM_GET_IDENTIFIER \
+	_IOR('v', IOCNUM_GET_ID, uint16_t)
+#define VM_GET_IDENTITY \
+	_IOR('v', IOCNUM_GET_ID, struct hypertrace_vm_identity)
+#define VM_GET_ATTESTATION \
+	_IOR('v', IOCNUM_GET_ATTESTATION, struct hypertrace_vm_attestation)
 #endif

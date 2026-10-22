@@ -21,6 +21,9 @@ ATF_TESTS_C+=	vmm_dirty_log_map_test
 ATF_TESTS_C+=	vmm_dirty_log_owner_test
 ATF_TESTS_C+=	vmm_dirty_log_request_test
 ATF_TESTS_C+=	vmm_dirty_log_management_abi_test
+# Portable ARM64/RISC-V checkpoint codecs; host-independent.
+ATF_TESTS_C+=	vmm_snapshot_arm64_state_test
+ATF_TESTS_C+=	vmm_snapshot_riscv_state_test
 
 .if ${MACHINE_CPUARCH} == "amd64"
 ATF_TESTS_C+=	vmm_snapshot_op_test
@@ -55,6 +58,8 @@ CFLAGS.vmm_mtrr_test+=	-I${SRCTOP}/sys \
 CFLAGS.vpvclock_model_test+=	-I${SRCTOP}/sys \
 	-I${SRCTOP}/sys/amd64/vmm
 CFLAGS.vmm_exception_test+=	-I${SRCTOP}/sys
+CFLAGS.vmm_snapshot_arm64_state_test+=	-I${SRCTOP}/sys
+CFLAGS.vmm_snapshot_riscv_state_test+=	-I${SRCTOP}/sys
 CFLAGS.vmm_snapshot_session_abi_test+=	-I${SRCTOP}/sys \
 	-I${SRCTOP}/sys/${MACHINE_CPUARCH}/include
 CFLAGS.vmm_snapshot_session_live_test+=	-I${SRCTOP}/sys \

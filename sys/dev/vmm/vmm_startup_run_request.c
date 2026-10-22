@@ -6,6 +6,7 @@
 #include <sys/types.h>
 
 #ifndef _KERNEL
+#include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
 #else

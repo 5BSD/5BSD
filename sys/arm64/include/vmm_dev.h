@@ -28,6 +28,7 @@
 #define	_VMM_DEV_H_
 
 #include <sys/domainset.h>
+#include <sys/hypertrace.h>
 
 #include <machine/vmm.h>
 
@@ -167,6 +168,20 @@ struct vm_cpu_topology {
 	uint16_t	maxcpus;
 };
 
+/* Values returned to the guest by the VMM, not the unmasked host IDs. */
+#define VM_ARM64_CPU_FEATURES_VERSION 1U
+struct vm_arm64_cpu_features {
+	int		cpuid;
+	uint32_t	version;
+	uint32_t	reserved;
+	uint64_t	id_aa64pfr0;
+	uint64_t	id_aa64dfr0;
+	uint64_t	id_aa64isar0;
+	uint64_t	id_aa64mmfr0;
+	uint64_t	id_aa64mmfr1;
+	uint64_t	cntfrq;
+};
+
 enum {
 	/* general routines */
 	IOCNUM_ABIVERS = 0,
@@ -175,6 +190,8 @@ enum {
 	IOCNUM_GET_CAPABILITY = 3,
 	IOCNUM_SUSPEND = 4,
 	IOCNUM_REINIT = 5,
+	IOCNUM_GET_ID = 6,
+	IOCNUM_GET_ATTESTATION = 7,
 
 	/* memory apis */
 	IOCNUM_GET_GPA_PMAP = 12,
@@ -198,6 +215,7 @@ enum {
 	/* CPU Topology */
 	IOCNUM_SET_TOPOLOGY = 63,
 	IOCNUM_GET_TOPOLOGY = 64,
+	IOCNUM_GET_ARM64_CPU_FEATURES = 65,
 
 	/* interrupt injection */
 	IOCNUM_ASSERT_IRQ = 80,
@@ -214,6 +232,11 @@ enum {
 	/* vm_attach_vgic */
 	IOCNUM_GET_VGIC_VERSION = 110,
 	IOCNUM_ATTACH_VGIC = 111,
+
+	/* checkpoint/restore (BHYVE_SNAPSHOT kernels only) */
+	IOCNUM_SNAPSHOT_REQ = 113,
+	IOCNUM_SNAPSHOT_SESSION = 114,
+	IOCNUM_RESTORE_TIME = 115,
 	IOCNUM_DIRTY_LOG_REQUEST = VMM_DIRTY_LOG_REQUEST_IOCNUM,
 };
 
@@ -273,8 +296,25 @@ enum {
 	_IOW('v', IOCNUM_RESUME_CPU, struct vm_activate_cpu)
 #define	VM_GET_VGIC_VERSION	\
 	_IOR('v', IOCNUM_GET_VGIC_VERSION, struct vm_vgic_version)
+#define VM_GET_ARM64_CPU_FEATURES \
+	_IOWR('v', IOCNUM_GET_ARM64_CPU_FEATURES, struct vm_arm64_cpu_features)
 #define	VM_ATTACH_VGIC	\
 	_IOW('v', IOCNUM_ATTACH_VGIC, struct vm_vgic_descr)
 #define VM_DIRTY_LOG_REQUEST \
 	_IOW('v', IOCNUM_DIRTY_LOG_REQUEST, struct vmm_dirty_log_request)
+#define VM_GET_IDENTIFIER \
+	_IOR('v', IOCNUM_GET_ID, uint16_t)
+#define VM_GET_IDENTITY \
+	_IOR('v', IOCNUM_GET_ID, struct hypertrace_vm_identity)
+#define VM_GET_ATTESTATION \
+	_IOR('v', IOCNUM_GET_ATTESTATION, struct hypertrace_vm_attestation)
+
+struct vm_snapshot_meta;
+struct vm_snapshot_session;
+#define	VM_SNAPSHOT_REQ \
+	_IOWR('v', IOCNUM_SNAPSHOT_REQ, struct vm_snapshot_meta)
+#define	VM_SNAPSHOT_SESSION \
+	_IOWR('v', IOCNUM_SNAPSHOT_SESSION, struct vm_snapshot_session)
+#define	VM_RESTORE_TIME \
+	_IOWR('v', IOCNUM_RESTORE_TIME, int)
 #endif

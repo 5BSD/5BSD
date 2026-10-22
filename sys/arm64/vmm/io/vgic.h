@@ -31,6 +31,8 @@
 struct hyp;
 struct hypctx;
 struct vm_vgic_descr;
+struct vmm_snapshot_arm64_vgic_transaction;
+struct vmm_snapshot_arm64_vgic_stage;
 
 extern device_t vgic_dev;
 
@@ -48,5 +50,11 @@ int vgic_inject_irq(struct hyp *hyp, int vcpuid, uint32_t irqid, bool level);
 int vgic_inject_msi(struct hyp *hyp, uint64_t msg, uint64_t addr);
 void vgic_flush_hwstate(struct hypctx *hypctx);
 void vgic_sync_hwstate(struct hypctx *hypctx);
+int vgic_snapshot_capture(struct hyp *,
+    struct vmm_snapshot_arm64_vgic_transaction *,
+    struct vmm_snapshot_arm64_vgic_stage *, size_t);
+int vgic_snapshot_restore(struct hyp *,
+    struct vmm_snapshot_arm64_vgic_transaction *,
+    struct vmm_snapshot_arm64_vgic_stage *, size_t);
 
 #endif /* _VGIC_H_ */

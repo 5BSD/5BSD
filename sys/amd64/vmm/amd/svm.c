@@ -531,6 +531,8 @@ vmcb_init(struct svm_softc *sc, struct svm_vcpu *vcpu, uint64_t iopm_base_pa,
 	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT, VMCB_INTCPT_MONITOR);
 	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT, VMCB_INTCPT_MWAIT);
 
+	/* Enable VMMCALL */
+	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT, VMCB_INTCPT_VMMCALL);
 	/*
 	 * Intercept SVM instructions since AMD enables them in guests otherwise.
 	 * Non-intercepted VMMCALL causes #UD, skip it.
@@ -935,6 +937,28 @@ svm_handle_inst_emul(struct vmcb *vmcb, uint64_t gpa, struct vm_exit *vmexit)
 		inst_bytes = NULL;
 	}
 	vie_init(&vmexit->u.inst_emul.vie, inst_bytes, inst_len);
+}
+
+static void
+svm_handle_hypercall(struct svm_vcpu *vcpu, struct vmcb *vmcb, struct vm_exit *vmexit)
+{
+	struct vm_guest_paging *paging;
+	struct vmcb_segment seg;
+	uint64_t rsp;
+	int error __unused;
+
+	paging = &vmexit->u.hypercall.paging;
+	vmexit->exitcode = VM_EXITCODE_HYPERCALL;
+
+	error = vmcb_read(vcpu, VM_REG_GUEST_RSP, &rsp);
+	KASSERT(error == 0, ("%s: error %d getting RSP",
+	    __func__, error));
+
+	error = vmcb_seg(vmcb, VM_REG_GUEST_SS, &seg);
+	KASSERT(error == 0, ("%s: error %d getting segment SS",
+	    __func__, error));
+
+	svm_paging_info(vmcb, paging);
 }
 
 #ifdef KTR
@@ -1420,6 +1444,15 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 	case VMCB_EXIT_NMI:	/* external NMI */
 		handled = 1;
 		break;
+	case VMCB_EXIT_VMMCALL:
+		if (hypercalls_enabled == 0) {
+			vm_inject_ud(vcpu->vcpu);
+			handled = 1;
+		}
+		else {
+			svm_handle_hypercall(vcpu, vmcb, vmexit);
+		}
+		break;
 	case 0x40 ... 0x5F:
 		vmm_stat_incr(vcpu->vcpu, VMEXIT_EXCEPTION, 1);
 		reflect = 1;
@@ -1698,7 +1731,6 @@ software_exception:
 	}
 	case VMCB_EXIT_SHUTDOWN:
 	case VMCB_EXIT_VMRUN:
-	case VMCB_EXIT_VMMCALL:
 	case VMCB_EXIT_VMLOAD:
 	case VMCB_EXIT_VMSAVE:
 	case VMCB_EXIT_STGI:

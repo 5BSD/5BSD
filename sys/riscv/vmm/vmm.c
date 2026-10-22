@@ -34,6 +34,7 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/cpuset.h>
+#include <sys/hypertrace.h>
 #include <sys/kernel.h>
 #include <sys/linker.h>
 #include <sys/lock.h>
@@ -55,7 +56,9 @@
 #include <vm/vm_param.h>
 
 #include <machine/riscvreg.h>
+#include <machine/sbi.h>
 #include <machine/cpu.h>
+#include <machine/frame.h>
 #include <machine/fpe.h>
 #include <machine/machdep.h>
 #include <machine/pcb.h>
@@ -134,15 +137,144 @@ vm_exitinfo(struct vcpu *vcpu)
 	return (&vcpu->exitinfo);
 }
 
+static lwpid_t
+vmm_priv_gettid(const void *handle)
+{
+	return (((const struct vm_hdl *)handle)->tid);
+}
+
+static uint16_t
+vmm_priv_getid(const void *handle)
+{
+	return (((const struct vm_hdl *)handle)->vcpu->vm->id);
+}
+
+static uint64_t
+vmm_priv_getepoch(const void *handle)
+{
+	return (((const struct vm_hdl *)handle)->vcpu->vm->hypertrace_epoch);
+}
+
+static const char *
+vmm_priv_getname(const void *handle)
+{
+	return (((const struct vm_hdl *)handle)->vcpu->vm->name);
+}
+
+static int
+vmm_priv_getreg(const void *handle, int reg, uint64_t *value)
+{
+	const struct vm_hdl *vhdl = handle;
+
+	if (vhdl == NULL || vhdl->vcpu == NULL || value == NULL ||
+	    reg < 0 || reg >= VM_REG_LAST)
+		return (EINVAL);
+	return (vm_get_register(vhdl->vcpu, reg, value));
+}
+
+static int vm_hypertrace_copyin(struct vcpu *, struct vm_guest_paging *,
+    uint64_t, void *, size_t);
+
+static int
+vmm_priv_guest_copyin(const void *handle, uint64_t gla, void *dst,
+    size_t length)
+{
+	const struct vm_hdl *vhdl = handle;
+
+	if (vhdl == NULL || vhdl->vcpu == NULL || vhdl->paging == NULL ||
+	    dst == NULL || length == 0 ||
+	    length > sizeof(struct trapframe))
+		return (EINVAL);
+	return (vm_hypertrace_copyin(vhdl->vcpu, vhdl->paging, gla, dst,
+	    length));
+}
+
+static int
+vmm_priv_guest_user_copyin(const void *handle, uint64_t gla, void *dst,
+    size_t length)
+{
+	const struct vm_hdl *vhdl = handle;
+	struct vm_guest_paging user_paging;
+	struct vm_hdl user_handle;
+
+	if (vhdl == NULL || vhdl->paging == NULL || vhdl->vcpu == NULL ||
+	    dst == NULL || length == 0 || length > sizeof(uint64_t))
+		return (EINVAL);
+	user_paging = *vhdl->paging;
+	user_paging.flags |= VM_GP_HYPERTRACE_USER;
+	user_handle = *vhdl;
+	user_handle.paging = &user_paging;
+	return (vmm_priv_guest_copyin(&user_handle, gla, dst, length));
+}
+
+static int
+vmm_priv_guest_user_copyout(const void *handle, uint64_t gla,
+    const void *src, size_t length)
+{
+	const struct vm_hdl *vhdl = handle;
+	struct vm_guest_paging user_paging;
+	uint64_t gpa;
+	void *cookie, *hva;
+	size_t done, chunk;
+	int error, fault;
+
+	if (vhdl == NULL || vhdl->vcpu == NULL || vhdl->paging == NULL ||
+	    src == NULL || gla == 0 || length == 0 || length > 8 ||
+	    gla > UINT64_MAX - (length - 1))
+		return (EINVAL);
+	user_paging = *vhdl->paging;
+	user_paging.flags |= VM_GP_HYPERTRACE_USER;
+	for (done = 0; done < length; done += chunk) {
+		error = vm_gla2gpa_nofault(vhdl->vcpu, &user_paging,
+		    gla + done, VM_PROT_WRITE, &gpa, &fault);
+		if (error != 0 || fault != 0)
+			return (EFAULT);
+		chunk = MIN(length - done, PAGE_SIZE - (gpa & PAGE_MASK));
+		cookie = NULL;
+		hva = vm_gpa_hold(vhdl->vcpu, gpa, chunk, VM_PROT_WRITE,
+		    &cookie);
+		if (hva == NULL)
+			return (EFAULT);
+		memcpy(hva, (const uint8_t *)src + done, chunk);
+		vm_gpa_release(cookie);
+	}
+	return (0);
+}
+
 int
 vmm_modinit(void)
 {
-	return (vmmops_modinit());
+	int error;
+
+	error = vmmops_modinit();
+	if (error == 0) {
+		dtrace_hypertrace_config_lock();
+		vmm_gettid = vmm_priv_gettid;
+		vmm_getid = vmm_priv_getid;
+		vmm_getepoch = vmm_priv_getepoch;
+		vmm_getname = vmm_priv_getname;
+		vmm_getreg = vmm_priv_getreg;
+		vmm_guest_copyin = vmm_priv_guest_copyin;
+		vmm_guest_user_copyin = vmm_priv_guest_user_copyin;
+		vmm_guest_user_copyout = vmm_priv_guest_user_copyout;
+		dtrace_hypertrace_config_unlock();
+	}
+	return (error);
 }
 
 int
 vmm_modcleanup(void)
 {
+	dtrace_hypertrace_config_lock();
+	vmm_gettid = NULL;
+	vmm_getid = NULL;
+	vmm_getepoch = NULL;
+	vmm_getname = NULL;
+	vmm_getreg = NULL;
+	vmm_guest_copyin = NULL;
+	vmm_guest_user_copyin = NULL;
+	vmm_guest_user_copyout = NULL;
+	dtrace_hypertrace_config_unlock();
 	return (vmmops_modcleanup());
 }
 
@@ -205,19 +337,28 @@ vm_create(const char *name, struct vm **retvm)
 {
 	struct vm *vm;
 	int error;
+	uint16_t id;
+	uint64_t epoch;
 
+	error = hypertrace_vm_alloc(&id, &epoch);
+	if (error != 0)
+		return (error);
 	vm = malloc(sizeof(struct vm), M_VMM, M_WAITOK | M_ZERO);
+	vm->id = id;
+	vm->hypertrace_epoch = epoch;
 	vm->sockets = 1;
 	vm->cores = 1;			/* XXX backwards compatibility */
 	vm->threads = 1;		/* XXX backwards compatibility */
 	error = vm_event_coordinator_init(vm, vm_maxcpu);
 	if (error != 0) {
+		(void)hypertrace_vm_release(id, epoch);
 		free(vm, M_VMM);
 		return (error);
 	}
 	error = vm_mem_init(&vm->mem, 0, 1ul << 39);
 	if (error != 0) {
 		vm_event_coordinator_cleanup(vm);
+		(void)hypertrace_vm_release(id, epoch);
 		free(vm, M_VMM);
 		return (error);
 	}
@@ -265,6 +406,11 @@ vm_cleanup(struct vm *vm, bool destroy)
 void
 vm_destroy(struct vm *vm)
 {
+	int error;
+
+	error = hypertrace_vm_release(vm->id, vm->hypertrace_epoch);
+	if (error != 0)
+		panic("%s: cannot revoke HyperTrace epoch: %d", __func__, error);
 	vm_event_coordinator_cleanup(vm);
 	vm_cleanup(vm, true);
 	free(vm, M_VMM);
@@ -281,13 +427,39 @@ int
 vm_reset(struct vm *vm)
 {
 	int error;
+	uint16_t id;
+	uint64_t epoch;
 
-	error = vm_event_coordinator_reset(vm);
+	error = hypertrace_vm_alloc(&id, &epoch);
 	if (error != 0)
 		return (error);
+	error = vm_event_coordinator_reset(vm);
+	if (error != 0) {
+		(void)hypertrace_vm_release(id, epoch);
+		return (error);
+	}
 	vm_cleanup(vm, false);
+	error = hypertrace_vm_release(vm->id, vm->hypertrace_epoch);
+	if (error != 0) {
+		(void)hypertrace_vm_release(id, epoch);
+		return (error);
+	}
+	vm->id = id;
+	vm->hypertrace_epoch = epoch;
 	vm_init(vm, false);
 	return (0);
+}
+
+uint64_t
+vm_get_id(struct vm *vm)
+{
+	return (vm->id);
+}
+
+uint64_t
+vm_get_hypertrace_epoch(struct vm *vm)
+{
+	return (vm->hypertrace_epoch);
 }
 
 int
@@ -685,6 +857,86 @@ vm_handle_suspend(struct vcpu *vcpu, bool *retu)
 	return (error);
 }
 
+/* Copy a bounded guest envelope or trapframe, with the vCPU frozen. */
+static int
+vm_hypertrace_copyin(struct vcpu *vcpu, struct vm_guest_paging *paging,
+    uint64_t gla, void *dst, size_t len)
+{
+	uint8_t staged[MAX(sizeof(hypertrace_args_t),
+	    sizeof(struct trapframe))];
+	uint64_t gpa;
+	void *cookie, *hva;
+	size_t done, chunk;
+	int error, fault;
+
+	if (gla == 0 || len == 0 ||
+	    len > MAX(sizeof(hypertrace_args_t), sizeof(struct trapframe)) ||
+	    gla > UINT64_MAX - (len - 1))
+		return (EFAULT);
+	for (done = 0; done < len; done += chunk) {
+		error = vm_gla2gpa_nofault(vcpu, paging, gla + done,
+		    VM_PROT_READ, &gpa, &fault);
+		if (error != 0 || fault != 0)
+			return (EFAULT);
+		chunk = MIN(len - done, PAGE_SIZE - (gpa & PAGE_MASK));
+		cookie = NULL;
+		hva = vm_gpa_hold(vcpu, gpa, chunk, VM_PROT_READ, &cookie);
+		if (hva == NULL)
+			return (EFAULT);
+		memcpy(staged + done, hva, chunk);
+		vm_gpa_release(cookie);
+	}
+	memcpy(dst, staged, len);
+	return (0);
+}
+
+static void
+vm_handle_hypertrace_ecall(struct vcpu *vcpu, struct vm_exit *vme)
+{
+	struct vm_guest_paging paging = { 0 };
+	struct vm_hdl handle = {
+		.vcpu = vcpu,
+		.paging = &paging,
+	};
+	hypertrace_args_t args;
+	uint64_t result, value;
+	int error;
+
+	value = 0;
+	result = SBI_ERR_NOT_SUPPORTED;
+	if (vme->u.ecall.args[6] == SBI_HYPERTRACE_QUERY) {
+		result = SBI_SUCCESS;
+		value = SBI_HYPERTRACE_VERSION;
+	} else if (vme->u.ecall.args[6] == SBI_HYPERTRACE_PROBE) {
+		result = SBI_ERR_INVALID_PARAM;
+		if (vme->u.ecall.args[0] > 0 &&
+		    vme->u.ecall.args[0] <= INT_MAX &&
+		    vme->u.ecall.args[2] <= INT_MAX) {
+			result = SBI_ERR_INVALID_ADDRESS;
+			if (vm_hypertrace_copyin(vcpu, &paging,
+			    vme->u.ecall.args[1],
+			    &args, sizeof(args)) == 0) {
+				result = SBI_ERR_INVALID_PARAM;
+			if (args.htr_entry <= 1 &&
+			    hypertrace_pcstack_valid(&args) &&
+			    (args.htr_present &
+			    ~HYPERTRACE_ARGS_WALLTIME_VALID) == 0) {
+					args.htr_curcpu = vcpu->vcpuid;
+					handle.tid = vme->u.ecall.args[2];
+					result = hypertrace_probe(&handle,
+					    (hypertrace_id_t)vme->u.ecall.args[0],
+					    &args) == 0 ? SBI_SUCCESS :
+					    SBI_ERR_DENIED;
+				}
+			}
+		}
+	}
+	error = vm_set_register(vcpu, VM_REG_GUEST_A0, result);
+	KASSERT(error == 0, ("%s: setting SBI error: %d", __func__, error));
+	error = vm_set_register(vcpu, VM_REG_GUEST_A1, value);
+	KASSERT(error == 0, ("%s: setting SBI value: %d", __func__, error));
+}
+
 int
 vm_run(struct vcpu *vcpu)
 {
@@ -738,9 +990,12 @@ restart:
 			error = vm_handle_wfi(vcpu, vme, &retu);
 			break;
 		case VM_EXITCODE_ECALL:
-			/* Handle in userland. */
 			vcpu->nextpc = vme->pc + vme->inst_length;
-			retu = true;
+			if (vme->u.ecall.args[7] == SBI_EXT_ID_HYPERTRACE) {
+				vm_handle_hypertrace_ecall(vcpu, vme);
+				retu = false;
+			} else
+				retu = true;
 			break;
 		case VM_EXITCODE_PAGING:
 			vcpu->nextpc = vme->pc;

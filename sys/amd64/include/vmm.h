@@ -33,6 +33,7 @@
 #include <sys/sdt.h>
 #include <x86/segments.h>
 
+#include <dev/vmm/vmm_param.h>
 #include <dev/vmm/vmm_startup_mode.h>
 
 struct vcpu;
@@ -174,6 +175,9 @@ enum vm_exception_class {
 	uint64_t	tsc_offset	/* (o) TSC offsetting */
 
 #define	VMM_VM_MD_FIELDS						\
+	uint16_t	id;		/* (o) host HyperTrace namespace */ \
+	uint64_t	hypertrace_epoch; /* immutable VM lifetime token */ \
+	volatile uint64_t guest_entries; /* (i) guest entry attempts */ \
 	volatile uint64_t event_generation; /* (o) all-vCPU event epoch */ \
 	void		*iommu;		/* (x) iommu-specific data */	\
 	struct vioapic	*vioapic;	/* (i) virtual ioapic */	\
@@ -183,6 +187,8 @@ enum vm_exception_class {
 	struct vrtc	*vrtc;		/* (o) virtual RTC */		\
 	struct vpvclock	*vpvclock;	/* (o) KVM paravirtual clock */	\
 	struct vhpet	*vhpet		/* (i) virtual HPET */
+
+#define HV_MAX_NAMELEN VM_MAX_NAMELEN
 
 struct vm;
 struct vm_exception;
@@ -288,6 +294,21 @@ struct vmm_ops {
 extern const struct vmm_ops vmm_ops_intel;
 extern const struct vmm_ops vmm_ops_amd;
 
+#define BHYVE_MODE 0
+#define VMM_MAX_MODES 1
+extern int hypervisor_mode;
+extern int hypercalls_enabled;
+uint64_t vm_get_id(struct vm *vm);
+uint64_t vm_get_hypertrace_epoch(struct vm *vm);
+void vm_get_run_witness(struct vm *vm, uint64_t *entries, uint32_t *running);
+extern uint64_t (*vmm_getepoch)(const void *);
+extern lwpid_t (*vmm_gettid)(const void *);
+extern uint16_t (*vmm_getid)(const void *);
+extern const char *(*vmm_getname)(const void *);
+extern int (*vmm_getreg)(const void *, int, uint64_t *);
+extern int (*vmm_guest_copyin)(const void *, uint64_t, void *, size_t);
+extern int (*vmm_guest_user_copyin)(const void *, uint64_t, void *, size_t);
+extern int (*vmm_guest_user_copyout)(const void *, uint64_t, const void *, size_t);
 int vm_map_mmio(struct vm *vm, vm_paddr_t gpa, size_t len, vm_paddr_t hpa);
 int vm_unmap_mmio(struct vm *vm, vm_paddr_t gpa, size_t len);
 int vm_assign_pptdev(struct vm *vm, int bus, int slot, int func);
@@ -554,8 +575,16 @@ enum vm_paging_mode {
 struct vm_guest_paging {
 	uint64_t	cr3;
 	int		cpl;
+	void		*pmap;
 	enum vm_cpu_mode cpu_mode;
 	enum vm_paging_mode paging_mode;
+};
+
+struct vm_hdl {
+	struct vcpu *vcpu;
+	struct vm_guest_paging *paging;
+	int vcpuid;
+	lwpid_t tid;
 };
 
 /*
@@ -654,6 +683,7 @@ enum vm_exitcode {
 	VM_EXITCODE_SVM,
 	VM_EXITCODE_REQIDLE,
 	VM_EXITCODE_DEBUG,
+	VM_EXITCODE_HYPERCALL,
 	VM_EXITCODE_VMINSN,
 	VM_EXITCODE_BPT,
 	VM_EXITCODE_IPI,
@@ -703,6 +733,10 @@ struct vm_task_switch {
 	int		errcode_valid;	/* push 'errcode' on the new stack */
 	enum task_switch_reason reason;
 	struct vm_guest_paging paging;
+};
+
+struct vm_hypercall {
+	struct vm_guest_paging	paging;
 };
 
 struct vm_exit {
@@ -787,7 +821,8 @@ struct vm_exit {
 			uint32_t mode;
 			uint8_t vector;
 		} ipi;
-		struct vm_task_switch task_switch;
+		struct vm_task_switch	task_switch;
+		struct vm_hypercall	hypercall;
 	} u;
 };
 
@@ -820,5 +855,7 @@ vm_inject_ss(struct vcpu *vcpu, int errcode)
 }
 
 void vm_inject_pf(struct vcpu *vcpu, int error_code, uint64_t cr2);
+void vm_dtrace_init_install(void *vm, int vcpuid);
+void vm_dtrace_init_uninstall(void *vm, int vcpuid);
 
 #endif	/* _VMM_H_ */

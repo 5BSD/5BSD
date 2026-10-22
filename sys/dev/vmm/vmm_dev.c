@@ -81,6 +81,7 @@ struct devmem_softc {
 	char	*name;
 	struct cdev *cdev;
 	struct vmmdev_softc *sc;
+	bool	freed;		/* segment freed; cdev being destroyed */
 	SLIST_ENTRY(devmem_softc) link;
 };
 
@@ -91,6 +92,7 @@ struct vmmdev_softc {
 	SLIST_ENTRY(vmmdev_softc) link;
 	LIST_ENTRY(vmmdev_softc) priv_link;
 	SLIST_HEAD(, devmem_softc) devmem;
+	int		devmem_pending;	/* freed devmem cdevs not yet destroyed */
 	int		flags;
 };
 
@@ -500,6 +502,73 @@ alloc_memseg(struct vmmdev_softc *sc, struct vm_memseg *mseg, size_t len,
 done:
 	free(name, M_VMMDEV);
 	return (error);
+}
+
+static void
+devmem_free_cb(void *arg)
+{
+	struct devmem_softc *dsc = arg;
+	struct vmmdev_softc *sc = dsc->sc;
+
+	free(dsc->name, M_VMMDEV);
+	free(dsc, M_VMMDEV);
+
+	/* vmmdev_destroy() may free 'sc' as soon as the count reaches zero. */
+	sx_xlock(&vmmdev_mtx);
+	if (--sc->devmem_pending == 0)
+		wakeup(&sc->devmem_pending);
+	sx_xunlock(&vmmdev_mtx);
+}
+
+/*
+ * Free a device-memory segment.  Called with the memsegs exclusively locked
+ * and every vCPU frozen.  The devmem cdev cannot be destroyed synchronously
+ * here: destroy_dev() waits for devmem_mmap_single(), which waits for the
+ * memseg lock this thread holds.  The softc is unlinked and marked freed, so
+ * a racing mmap fails with ENXIO, and the cdev is destroyed asynchronously;
+ * the softc is released once destruction has drained its users.
+ */
+static int
+free_memseg(struct vmmdev_softc *sc, struct vm_free_memseg *fm)
+{
+	struct devmem_softc *dsc;
+	vm_ooffset_t segoff;
+	vm_paddr_t gpa;
+	size_t len, maplen;
+	int error, flags, prot, segid;
+	bool sysmem;
+
+	if (fm->reserved[0] != 0 || fm->reserved[1] != 0 ||
+	    fm->reserved[2] != 0)
+		return (EINVAL);
+	error = vm_get_memseg(sc->vm, fm->segid, &len, &sysmem, NULL);
+	if (error != 0)
+		return (error);
+	if (len == 0)
+		return (ENOENT);
+	if (sysmem)
+		return (EINVAL);
+	for (gpa = 0; vm_mmap_getnext(sc->vm, &gpa, &segid, &segoff, &maplen,
+	    &prot, &flags) == 0; gpa += maplen) {
+		if (segid == fm->segid)
+			return (EBUSY);
+	}
+
+	sx_xlock(&vmmdev_mtx);
+	SLIST_FOREACH(dsc, &sc->devmem, link) {
+		if (dsc->segid == fm->segid)
+			break;
+	}
+	KASSERT(dsc != NULL && dsc->cdev != NULL,
+	    ("%s: devmem segment %d not found", __func__, fm->segid));
+	SLIST_REMOVE(&sc->devmem, dsc, devmem_softc, link);
+	dsc->freed = true;
+	sc->devmem_pending++;
+	sx_xunlock(&vmmdev_mtx);
+
+	vm_free_memseg(sc->vm, fm->segid);
+	destroy_dev_sched_cb(dsc->cdev, devmem_free_cb, dsc);
+	return (0);
 }
 
 #if defined(__amd64__) && \
@@ -1172,6 +1241,8 @@ static const struct vmmdev_ioctl vmmdev_ioctls[] = {
 	    VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_LOCK_ALL_VCPUS),
 	VMMDEV_IOCTL(VM_MUNMAP_MEMSEG,
 	    VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_LOCK_ALL_VCPUS),
+	VMMDEV_IOCTL(VM_FREE_MEMSEG,
+	    VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_LOCK_ALL_VCPUS),
 	VMMDEV_IOCTL(VM_REINIT,
 	    VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_LOCK_ALL_VCPUS),
 	VMMDEV_IOCTL(VM_DIRTY_LOG_REQUEST,
@@ -1329,7 +1400,10 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 		break;
 	}
 	case VM_REINIT:
-		error = vm_reinit(sc->vm);
+		/* Identity-checked destruction marks cdev unavailable while holding
+		 * the memseg lock. An already queued reset must not change the
+		 * incarnation after that check and before destroy_dev drains it. */
+		error = sc->cdev == cdev ? vm_reinit(sc->vm) : ENXIO;
 		break;
 	case VM_DIRTY_LOG_REQUEST:
 		error = vmmdev_dirty_log_request(sc->vm,
@@ -1374,6 +1448,10 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 
 		mu = (struct vm_munmap *)data;
 		error = vm_munmap_memseg(sc->vm, mu->gpa, mu->len);
+		break;
+	}
+	case VM_FREE_MEMSEG: {
+		error = free_memseg(sc, (struct vm_free_memseg *)data);
 		break;
 	}
 #ifdef __amd64__
@@ -1718,6 +1796,15 @@ vmmdev_destroy(struct vmmdev_softc *sc)
 			panic("%s: devmem cdev already destroyed", __func__);
 		devmem_destroy(dsc);
 	}
+	/*
+	 * Segments freed with VM_FREE_MEMSEG may still be draining; their
+	 * callbacks use 'sc', so wait for this VM's own pending destructions
+	 * (destroy_dev_drain() would wait for every devmem cdev of every VM).
+	 */
+	sx_xlock(&vmmdev_mtx);
+	while (sc->devmem_pending != 0)
+		sx_sleep(&sc->devmem_pending, &vmmdev_mtx, 0, "vmmdfr", 0);
+	sx_xunlock(&vmmdev_mtx);
 
 	vm_disable_vcpu_creation(sc->vm);
 	error = vcpu_lock_all(sc);
@@ -1748,7 +1835,8 @@ vmmdev_destroy(struct vmmdev_softc *sc)
 }
 
 static int
-vmmdev_lookup_and_destroy(const char *name, struct ucred *cred)
+vmmdev_lookup_and_destroy_impl(const char *name, struct ucred *cred,
+    uint16_t vmid, uint64_t epoch)
 {
 	struct cdev *cdev;
 	struct vmmdev_softc *sc;
@@ -1778,6 +1866,17 @@ vmmdev_lookup_and_destroy(const char *name, struct ucred *cred)
 		sx_xunlock(&vmmdev_mtx);
 		return (error);
 	}
+	if (vmid != 0) {
+		/* VM_REINIT changes both fields under the memseg write lock.
+		 * Keep that lock through marking this cdev unavailable. */
+		vm_slock_memsegs(sc->vm);
+		if (vm_get_id(sc->vm) != vmid ||
+		    vm_get_hypertrace_epoch(sc->vm) != epoch) {
+			vm_unlock_memsegs(sc->vm);
+			sx_xunlock(&vmmdev_mtx);
+			return (ESTALE);
+		}
+	}
 
 	/*
 	 * Setting 'sc->cdev' to NULL is used to indicate that the VM
@@ -1785,6 +1884,8 @@ vmmdev_lookup_and_destroy(const char *name, struct ucred *cred)
 	 */
 	cdev = sc->cdev;
 	sc->cdev = NULL;
+	if (vmid != 0)
+		vm_unlock_memsegs(sc->vm);
 	sx_xunlock(&vmmdev_mtx);
 
 	(void)vm_suspend(sc->vm, VM_SUSPEND_DESTROY);
@@ -1806,6 +1907,12 @@ vmmdev_lookup_and_destroy(const char *name, struct ucred *cred)
 	vmmdev_destroy(sc);
 
 	return (0);
+}
+
+static int
+vmmdev_lookup_and_destroy(const char *name, struct ucred *cred)
+{
+	return (vmmdev_lookup_and_destroy_impl(name, cred, 0, 0));
 }
 
 static int
@@ -2056,6 +2163,37 @@ vmmctl_open(struct cdev *cdev, int flags, int fmt, struct thread *td)
 	return (0);
 }
 
+/* VMMCTL_VM_LIFETIME_QUERY: the current identity of a visible VM. */
+static int
+vmmdev_lifetime_query(const char *name, struct ucred *cred, uint16_t *vmid,
+    uint64_t *epoch)
+{
+	struct vmmdev_softc *sc;
+	int error;
+
+	sx_xlock(&vmmdev_mtx);
+	sc = vmmdev_lookup(name, cred);
+	if (sc == NULL || sc->cdev == NULL) {
+		sx_xunlock(&vmmdev_mtx);
+		return (ENOENT);
+	}
+	/* The identity is a capability for VMMCTL_VM_DESTROY_IDENTITY: the
+	 * same caller check applies. */
+	if ((cred->cr_uid != sc->ucred->cr_uid ||
+	    cred->cr_prison != sc->ucred->cr_prison) &&
+	    (error = priv_check_cred(cred, PRIV_VMM_DESTROY)) != 0) {
+		sx_xunlock(&vmmdev_mtx);
+		return (error);
+	}
+	/* VM_REINIT changes both fields under the memseg write lock. */
+	vm_slock_memsegs(sc->vm);
+	*vmid = vm_get_id(sc->vm);
+	*epoch = vm_get_hypertrace_epoch(sc->vm);
+	vm_unlock_memsegs(sc->vm);
+	sx_xunlock(&vmmdev_mtx);
+	return (0);
+}
+
 static int
 vmmctl_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
     struct thread *td)
@@ -2076,6 +2214,30 @@ vmmctl_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 		}
 
 		error = vmmdev_create(vmc->name, vmc->flags, td->td_ucred);
+		break;
+	}
+	case VMMCTL_VM_DESTROY_IDENTITY: {
+		struct vmmctl_vm_destroy_identity *vmd = (void *)data;
+		if (vmd->vmid == 0 || vmd->epoch == 0 ||
+		    memchr(vmd->name, '\0', sizeof(vmd->name)) == NULL)
+			return (EINVAL);
+		for (size_t i = 0; i < nitems(vmd->reserved); i++)
+			if (vmd->reserved[i] != 0)
+				return (EINVAL);
+		error = vmmdev_lookup_and_destroy_impl(vmd->name, td->td_ucred,
+		    vmd->vmid, vmd->epoch);
+		break;
+	}
+	case VMMCTL_VM_LIFETIME_QUERY: {
+		struct vmmctl_vm_lifetime_query *q = (void *)data;
+
+		if (memchr(q->name, '\0', sizeof(q->name)) == NULL)
+			return (EINVAL);
+		for (size_t i = 0; i < nitems(q->reserved); i++)
+			if (q->reserved[i] != 0)
+				return (EINVAL);
+		error = vmmdev_lifetime_query(q->name, td->td_ucred, &q->vmid,
+		    &q->epoch);
 		break;
 	}
 	case VMMCTL_VM_DESTROY: {
@@ -2218,6 +2380,9 @@ static moduledata_t vmm_kmod = {
 DECLARE_MODULE(vmm, vmm_kmod, MAX(SI_SUB_DRIVERS, SI_SUB_SMP) + 1,
     SI_ORDER_ANY);
 MODULE_VERSION(vmm, 1);
+#ifdef __amd64__
+MODULE_DEPEND(vmm, hypertrace, 1, 1, 1);
+#endif
 
 static int
 devmem_mmap_single(struct cdev *cdev, vm_ooffset_t *offset, vm_size_t len,
@@ -2249,6 +2414,11 @@ devmem_mmap_single(struct cdev *cdev, vm_ooffset_t *offset, vm_size_t len,
 #endif
 
 	vm_slock_memsegs(dsc->sc->vm);
+	if (dsc->freed) {
+		/* VM_FREE_MEMSEG freed it; the cdev is being destroyed. */
+		vm_unlock_memsegs(dsc->sc->vm);
+		return (ENXIO);
+	}
 
 	error = vm_get_memseg(dsc->sc->vm, dsc->segid, &seglen, &sysmem, objp);
 	KASSERT(error == 0 && !sysmem && *objp != NULL,

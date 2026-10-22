@@ -76,4 +76,14 @@ int 	vtimer_phys_cval_read(struct vcpu *vcpu, uint64_t *rval, void *arg);
 int 	vtimer_phys_cval_write(struct vcpu *vcpu, uint64_t wval, void *arg);
 int 	vtimer_phys_tval_read(struct vcpu *vcpu, uint64_t *rval, void *arg);
 int 	vtimer_phys_tval_write(struct vcpu *vcpu, uint64_t wval, void *arg);
+
+/* Checkpoint support (BHYVE_SNAPSHOT kernels only). */
+struct vmm_snapshot_arm64_timer;
+void	vtimer_snapshot_capture(struct hypctx *,
+	    struct vmm_snapshot_arm64_timer *);
+bool	vtimer_snapshot_supported(struct hypctx *);
+void	vtimer_snapshot_quiesce(struct hypctx *);
+void	vtimer_snapshot_apply(struct hypctx *,
+	    const struct vmm_snapshot_arm64_timer *);
+void	vtimer_snapshot_rearm(struct hypctx *);
 #endif

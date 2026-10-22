@@ -111,6 +111,11 @@ struct vm_run_13 {
 #endif /* COMPAT_FREEBSD13 */
 
 const struct vmmdev_ioctl vmmdev_machdep_ioctls[] = {
+	/* VM_REINIT changes ID and epoch under the memseg write lock. */
+	VMMDEV_IOCTL(VM_GET_IDENTIFIER, VMMDEV_IOCTL_SLOCK_MEMSEGS),
+	VMMDEV_IOCTL(VM_GET_IDENTITY, VMMDEV_IOCTL_SLOCK_MEMSEGS),
+	VMMDEV_IOCTL(VM_GET_ATTESTATION, VMMDEV_IOCTL_SLOCK_MEMSEGS),
+	VMMDEV_IOCTL(VM_GET_RUN_WITNESS, VMMDEV_IOCTL_SLOCK_MEMSEGS),
 	VMMDEV_IOCTL(VM_RUN, VMMDEV_IOCTL_LOCK_ONE_VCPU),
 	VMMDEV_IOCTL(VM_RUN_GENERATION, VMMDEV_IOCTL_LOCK_ONE_VCPU),
 #ifdef COMPAT_FREEBSD13
@@ -212,6 +217,34 @@ vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd, caddr_t data,
 
 	error = 0;
 	switch (cmd) {
+	case VM_GET_IDENTITY: {
+		struct hypertrace_vm_identity *identity = (void *)data;
+		memset(identity, 0, sizeof(*identity));
+		identity->vmid = vm_get_id(vm);
+		identity->epoch = vm_get_hypertrace_epoch(vm);
+		break;
+	}
+	case VM_GET_ATTESTATION: {
+		struct hypertrace_vm_attestation *attestation = (void *)data;
+		memset(attestation, 0, sizeof(*attestation));
+		attestation->vmid = vm_get_id(vm);
+		attestation->epoch = vm_get_hypertrace_epoch(vm);
+		strlcpy(attestation->name, vm_name(vm),
+		    sizeof(attestation->name));
+		break;
+	}
+	case VM_GET_IDENTIFIER:
+		*(uint16_t *)data = vm_get_id(vm);
+		break;
+	case VM_GET_RUN_WITNESS: {
+		struct vm_run_witness *w = (void *)data;
+
+		memset(w, 0, sizeof(*w));
+		w->vmid = vm_get_id(vm);
+		w->epoch = vm_get_hypertrace_epoch(vm);
+		vm_get_run_witness(vm, &w->guest_entries, &w->running_vcpus);
+		break;
+	}
 	case VM_RUN_GENERATION: {
 		struct vmm_startup_run_request *request;
 		struct vm_exit *vme;

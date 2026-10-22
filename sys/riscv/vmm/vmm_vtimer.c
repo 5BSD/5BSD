@@ -59,27 +59,32 @@ vtimer_get_timebase(uint32_t *freq)
 	if (len != 4)
 		return (ENXIO);
 
-	OF_getencprop(node, "timebase-frequency", freq, len);
+	if (OF_getencprop(node, "timebase-frequency", freq, len) != len)
+		return (ENXIO);
 
 	return (0);
+}
+
+uint32_t
+vtimer_get_frequency(void)
+{
+	uint32_t freq;
+
+	if (vtimer_get_timebase(&freq) != 0 || freq == 0)
+		return (VTIMER_DEFAULT_FREQ);
+	return (freq);
 }
 
 void
 vtimer_cpuinit(struct hypctx *hypctx)
 {
 	struct vtimer *vtimer;
-	uint32_t freq;
-	int error;
 
 	vtimer = &hypctx->vtimer;
 	mtx_init(&vtimer->mtx, "vtimer callout mutex", NULL, MTX_DEF);
 	callout_init_mtx(&vtimer->callout, &vtimer->mtx, 0);
 
-	error = vtimer_get_timebase(&freq);
-	if (error)
-		freq = VTIMER_DEFAULT_FREQ;
-
-	vtimer->freq = freq;
+	vtimer->freq = vtimer_get_frequency();
 }
 
 static void
@@ -104,6 +109,8 @@ vtimer_set_timer(struct hypctx *hypctx, uint64_t next_val)
 	uint64_t delta;
 
 	vtimer = &hypctx->vtimer;
+	vtimer->armed = true;
+	vtimer->deadline = next_val;
 
 	curtime = rdtime();
 	if (curtime < next_val) {
@@ -116,4 +123,12 @@ vtimer_set_timer(struct hypctx *hypctx, uint64_t next_val)
 		atomic_set_32(&hypctx->interrupts_pending, HVIP_VSTIP);
 
 	return (0);
+}
+
+/* Stop a callout armed before a checkpoint restore replaced the deadline. */
+void
+vtimer_snapshot_quiesce(struct hypctx *hypctx)
+{
+
+	callout_drain(&hypctx->vtimer.callout);
 }

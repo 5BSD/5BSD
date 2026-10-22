@@ -36,6 +36,7 @@
 struct hyp;
 struct hypctx;
 struct vm_aplic_descr;
+struct vmm_snapshot_riscv_aplic;
 
 int aplic_attach_to_vm(struct hyp *hyp, struct vm_aplic_descr *descr);
 void aplic_detach_from_vm(struct hyp *hyp);
@@ -49,5 +50,11 @@ void aplic_cpuinit(struct hypctx *hypctx);
 void aplic_cpucleanup(struct hypctx *hypctx);
 void aplic_flush_hwstate(struct hypctx *hypctx);
 void aplic_sync_hwstate(struct hypctx *hypctx);
+
+/* Checkpoint support (BHYVE_SNAPSHOT kernels only). */
+int aplic_snapshot_capture(struct hyp *hyp,
+    struct vmm_snapshot_riscv_aplic *state);
+int aplic_snapshot_restore(struct hyp *hyp,
+    const struct vmm_snapshot_riscv_aplic *state);
 
 #endif /* !_VMM_APLIC_H_ */

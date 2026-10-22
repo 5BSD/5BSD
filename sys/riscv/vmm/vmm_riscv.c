@@ -61,6 +61,7 @@
 #include <machine/vmm.h>
 #include <machine/atomic.h>
 #include <machine/pmap.h>
+#include <machine/pte.h>
 #include <machine/intr.h>
 #include <machine/encoding.h>
 #include <machine/db_machdep.h>
@@ -527,10 +528,97 @@ int
 vmmops_gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
     int prot, uint64_t *gpa, int *is_fault)
 {
+	struct hypctx *hypctx;
+	uint64_t vsatp, table, pte, ppn, index, offset, mask;
+	void *cookie, *hva;
+	int level, levels, shift;
+	bool supervisor;
 
-	/* Implement me. */
+	if (vcpui == NULL || paging == NULL || gpa == NULL || is_fault == NULL)
+		return (EFAULT);
+	*is_fault = 1;
+	*gpa = 0;
+	hypctx = vcpui;
+	vsatp = hypctx->guest_csrs.vsatp;
+	supervisor = (paging->flags & VM_GP_HYPERTRACE_USER) == 0 &&
+	    (hypctx->guest_regs.hyp_hstatus & HSTATUS_SPVP) != 0;
+	if ((prot & ~(VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE)) != 0 ||
+	    prot == 0)
+		return (EFAULT);
 
-	return (ENOSYS);
+	switch (vsatp & SATP_MODE_M) {
+	case 0:		/* Bare VS stage. */
+		if ((paging->flags & VM_GP_HYPERTRACE_USER) != 0)
+			return (0);
+		*gpa = gla;
+		*is_fault = 0;
+		return (0);
+	case SATP_MODE_SV39:
+		levels = 3;
+		shift = 38;
+		break;
+	case SATP_MODE_SV48:
+		levels = 4;
+		shift = 47;
+		break;
+	default:
+		return (0);
+	}
+	/* Sv39/Sv48 require sign extension of the top virtual-address bit. */
+	if ((int64_t)gla >> shift != 0 &&
+	    (int64_t)gla >> shift != -1)
+		return (0);
+	table = (vsatp & SATP_PPN_M) << PAGE_SHIFT;
+	for (level = levels - 1; level >= 0; level--) {
+		index = (gla >> (PAGE_SHIFT + level * 9)) & 0x1ff;
+		cookie = NULL;
+		hva = vm_gpa_hold(hypctx->vcpu, table + index * sizeof(pte),
+		    sizeof(pte), VM_PROT_READ, &cookie);
+		if (hva == NULL)
+			return (0);
+		pte = *(volatile uint64_t *)hva;
+		vm_gpa_release(cookie);
+		/* Reserved high bits and write-only entries are not valid in the
+		 * currently supported VS-stage formats. */
+		if ((pte & (PTE_V | PTE_HI_MASK)) != PTE_V ||
+		    ((pte & PTE_W) != 0 && (pte & PTE_R) == 0))
+			return (0);
+		ppn = (pte >> PTE_PPN0_S) & SATP_PPN_M;
+		if ((pte & PTE_RWX) == 0) {
+			if (level == 0 || (pte & (PTE_U | PTE_A | PTE_D)) != 0)
+				return (0);
+			table = ppn << PAGE_SHIFT;
+			continue;
+		}
+		if ((pte & PTE_A) == 0 ||
+		    ((prot & VM_PROT_WRITE) != 0 &&
+		    ((pte & (PTE_W | PTE_D)) != (PTE_W | PTE_D))) ||
+		    ((prot & VM_PROT_READ) != 0 &&
+		    (pte & PTE_R) == 0 &&
+		    ((hypctx->guest_csrs.vsstatus & SSTATUS_MXR) == 0 ||
+		    (pte & PTE_X) == 0)) ||
+		    ((prot & VM_PROT_EXECUTE) != 0 && (pte & PTE_X) == 0))
+			return (0);
+		if (supervisor) {
+			if ((pte & PTE_U) != 0 &&
+			    ((prot & VM_PROT_EXECUTE) != 0 ||
+			    (hypctx->guest_csrs.vsstatus & SSTATUS_SUM) == 0))
+				return (0);
+		} else if ((pte & PTE_U) == 0)
+			return (0);
+		/* A superpage must not contain physical page-number bits for
+		 * a level below the leaf. */
+		if (level != 0 && (ppn & ((1ULL << (level * 9)) - 1)) != 0)
+			return (0);
+		shift = PAGE_SHIFT + level * 9;
+		mask = (1ULL << shift) - 1;
+		offset = gla & mask;
+		*gpa = (ppn << PAGE_SHIFT) | offset;
+		*is_fault = 0;
+		return (0);
+	}
+
+	return (0);
 }
 
 void

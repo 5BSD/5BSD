@@ -45,6 +45,7 @@
 #include "vmm_host.h"
 #include "vmm_util.h"
 #include "vpvclock.h"
+#include <machine/bhyve_hypercall.h>
 #include "x86.h"
 #include "x86_cpuid.h"
 
@@ -82,6 +83,7 @@ SYSCTL_ULONG(_hw_vmm, OID_AUTO, bhyve_xcpuids, CTLFLAG_RW, &bhyve_xcpuids, 0,
 static int cpuid_leaf_b = 1;
 SYSCTL_INT(_hw_vmm_topology, OID_AUTO, cpuid_leaf_b, CTLFLAG_RDTUN,
     &cpuid_leaf_b, 0, NULL);
+
 
 /*
  * Compute ceil(log2(x)).  Returns -1 if x is zero.
@@ -677,9 +679,9 @@ x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 				regs[3] = 0;
 			} else {
 				regs[0] = CPUID_BHYVE_FEAT_EXT_DEST_ID;
-				regs[1] = 0;
-				regs[2] = 0;
-				regs[3] = 0;
+				regs[1] = BHYVE_HYPERTRACE_SIGNATURE;
+				regs[2] = BHYVE_HYPERTRACE_VERSION;
+				regs[3] = hypercalls_enabled != 0;
 			}
 			break;
 
@@ -697,9 +699,9 @@ x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 
 		case CPUID_BHYVE_FEATURES_ALT:
 			regs[0] = CPUID_BHYVE_FEAT_EXT_DEST_ID;
-			regs[1] = 0;
-			regs[2] = 0;
-			regs[3] = 0;
+			regs[1] = BHYVE_HYPERTRACE_SIGNATURE;
+			regs[2] = BHYVE_HYPERTRACE_VERSION;
+			regs[3] = hypercalls_enabled != 0;
 			break;
 
 		default:

@@ -626,6 +626,24 @@ arm64_print_hyp_regs(struct vm_exit *vme)
 	printf("elr_el2:   0x%016lx\n", vme->pc);
 }
 
+void
+vmmops_get_paging(void *vcpui, struct vm_guest_paging *paging)
+{
+	struct hypctx *hypctx = vcpui;
+
+	memset(paging, 0, sizeof(*paging));
+	paging->ttbr0_addr = hypctx_read_sys_reg(hypctx, TTBR0_EL1) &
+	    ~(TTBR_ASID_MASK | TTBR_CnP);
+	paging->ttbr1_addr = hypctx_read_sys_reg(hypctx, TTBR1_EL1) &
+	    ~(TTBR_ASID_MASK | TTBR_CnP);
+	paging->tcr_el1 = hypctx_read_sys_reg(hypctx, TCR_EL1);
+	paging->tcr2_el1 = hypctx_read_sys_reg(hypctx, TCR2_EL1);
+	paging->flags = hypctx_read_sys_reg(hypctx, HOST_SPSR_EL2) &
+	    (PSR_M_MASK | PSR_M_32);
+	if ((hypctx_read_sys_reg(hypctx, SCTLR_EL1) & SCTLR_M) != 0)
+		paging->flags |= VM_GP_MMU_ENABLED;
+}
+
 static void
 arm64_gen_inst_emul_data(struct hypctx *hypctx, uint32_t esr_iss,
     struct vm_exit *vme_ret)
@@ -653,15 +671,7 @@ arm64_gen_inst_emul_data(struct hypctx *hypctx, uint32_t esr_iss,
 	vie->reg = reg_num;
 
 	paging = &vme_ret->u.inst_emul.paging;
-	paging->ttbr0_addr = hypctx_read_sys_reg(hypctx, TTBR0_EL1) &
-		~(TTBR_ASID_MASK | TTBR_CnP);
-	paging->ttbr1_addr = hypctx_read_sys_reg(hypctx, TTBR1_EL1) &
-		~(TTBR_ASID_MASK | TTBR_CnP);
-	paging->tcr_el1 = hypctx_read_sys_reg(hypctx, TCR_EL1);
-	paging->tcr2_el1 = hypctx_read_sys_reg(hypctx, TCR2_EL1);
-	paging->flags = hypctx_read_sys_reg(hypctx, HOST_SPSR_EL2) & (PSR_M_MASK | PSR_M_32);
-	if ((hypctx_read_sys_reg(hypctx, SCTLR_EL1) & SCTLR_M) != 0)
-		paging->flags |= VM_GP_MMU_ENABLED;
+	vmmops_get_paging(hypctx, paging);
 }
 
 static void
@@ -876,7 +886,7 @@ vmmops_gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
 	void *cookie;
 	uint64_t mask, *ptep, pte, pte_addr;
 	int address_bits, granule_shift, ia_bits, levels, pte_shift, tsz;
-	bool is_el0;
+	bool is_el0, is_kernel;
 
 	/* Check if the MMU is off */
 	if ((paging->flags & VM_GP_MMU_ENABLED) == 0) {
@@ -886,8 +896,9 @@ vmmops_gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
 	}
 
 	is_el0 = (paging->flags & PSR_M_MASK) == PSR_M_EL0t;
+	is_kernel = ADDR_IS_KERNEL(gla);
 
-	if (ADDR_IS_KERNEL(gla)) {
+	if (is_kernel) {
 		/* If address translation is disabled raise an exception */
 		if ((paging->tcr_el1 & TCR_EPD1) != 0) {
 			*is_fault = 1;
@@ -982,6 +993,15 @@ vmmops_gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
 	 * with the top tsz bits being all 0 or all 1.
 	  */
 	ia_bits = 64 - tsz;
+	/* Reject noncanonical bits before truncating the address for the walk.
+	 * TBI ignores only the top byte, not the gap above the input width. */
+	mask = ~((1ul << ia_bits) - 1);
+	if ((paging->tcr_el1 & (is_kernel ? TCR_TBI1 : TCR_TBI0)) != 0)
+		mask &= ~(0xfful << 56);
+	if ((gla & mask) != (is_kernel ? mask : 0)) {
+		*is_fault = 1;
+		return (0);
+	}
 
 	/*
 	 * Calculate the number of address bits used in the page table
@@ -1010,7 +1030,8 @@ vmmops_gla2gpa(void *vcpui, struct vm_guest_paging *paging, uint64_t gla,
 		    granule_shift;
 		idx = (gla >> pte_shift) &
 		    ((1ul << (granule_shift - PTE_SHIFT)) - 1);
-		while (idx > PAGE_SIZE / sizeof(pte)) {
+		/* A 16K guest table can span multiple held host pages. */
+		while (idx >= (int)(PAGE_SIZE / sizeof(pte))) {
 			idx -= PAGE_SIZE / sizeof(pte);
 			pte_addr += PAGE_SIZE;
 		}
