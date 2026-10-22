@@ -32,6 +32,8 @@
 #include <sys/sysctl.h>
 #include <sys/user.h>
 
+#include <link.h>
+
 #include <assert.h>
 #include <err.h>
 #include <fcntl.h>
@@ -133,14 +135,156 @@ rd_event_enable(rd_agent_t *rdap, int onoff)
 	return (RD_OK);
 }
 
-rd_err_e
-rd_event_getmsg(rd_agent_t *rdap __unused, rd_event_msg_t *msg)
+/*
+ * Find rtld's struct r_debug as debuggers do: rtld stores its address in
+ * the main executable's DT_DEBUG dynamic entry.  The executable's program
+ * headers are found through AT_PHDR, and PT_PHDR gives its load bias.
+ */
+static uintptr_t
+rd_find_rdebug(rd_agent_t *rdap)
 {
+	struct kinfo_proc *kp;
+	Elf_Auxinfo *auxv = NULL;
+	uint64_t phdr, phnum, phent, bias, dynaddr, tag, val;
+	uint64_t ptype, vaddr;
+	unsigned char buf[sizeof(Elf64_Phdr)];
+	uintptr_t result;
+	size_t dynent, i;
+	int count, ilp32, have_phdr, have_dyn;
+
+	result = 0;
+	kp = procstat_getprocs(rdap->rda_procstat, KERN_PROC_PID,
+	    proc_getpid(rdap->rda_php), &count);
+	if (kp == NULL)
+		return (0);
+	auxv = procstat_getauxv(rdap->rda_procstat, kp, &count);
+	if (auxv == NULL)
+		goto out;
+	phdr = phnum = phent = 0;
+	for (i = 0; i < (size_t)count; i++) {
+		if (auxv[i].a_type == AT_PHDR)
+			phdr = auxv[i].a_un.a_val;
+		else if (auxv[i].a_type == AT_PHNUM)
+			phnum = auxv[i].a_un.a_val;
+		else if (auxv[i].a_type == AT_PHENT)
+			phent = auxv[i].a_un.a_val;
+	}
+	ilp32 = proc_getmodel(rdap->rda_php) == PR_MODEL_ILP32;
+	if (phdr == 0 || phnum == 0 || phent != (ilp32 ?
+	    sizeof(Elf32_Phdr) : sizeof(Elf64_Phdr)))
+		goto out;
+
+	bias = dynaddr = 0;
+	have_phdr = have_dyn = 0;
+	for (i = 0; i < phnum; i++) {
+		if (proc_read(rdap->rda_php, buf, phent, phdr + i * phent) !=
+		    (ssize_t)phent)
+			goto out;
+		if (ilp32) {
+			ptype = ((Elf32_Phdr *)(void *)buf)->p_type;
+			vaddr = ((Elf32_Phdr *)(void *)buf)->p_vaddr;
+		} else {
+			ptype = ((Elf64_Phdr *)(void *)buf)->p_type;
+			vaddr = ((Elf64_Phdr *)(void *)buf)->p_vaddr;
+		}
+		if (ptype == PT_PHDR) {
+			bias = phdr - vaddr;
+			have_phdr = 1;
+		} else if (ptype == PT_DYNAMIC) {
+			dynaddr = vaddr;
+			have_dyn = 1;
+		}
+	}
+	if (!have_dyn)
+		goto out;
+	if (have_phdr)
+		dynaddr += bias;
+
+	dynent = ilp32 ? sizeof(Elf32_Dyn) : sizeof(Elf64_Dyn);
+	for (i = 0; i < 4096; i++) {
+		if (proc_read(rdap->rda_php, buf, dynent, dynaddr + i * dynent) !=
+		    (ssize_t)dynent)
+			break;
+		if (ilp32) {
+			tag = (uint64_t)(int64_t)((Elf32_Dyn *)(void *)buf)->d_tag;
+			val = ((Elf32_Dyn *)(void *)buf)->d_un.d_ptr;
+		} else {
+			tag = ((Elf64_Dyn *)(void *)buf)->d_tag;
+			val = ((Elf64_Dyn *)(void *)buf)->d_un.d_ptr;
+		}
+		if (tag == DT_NULL)
+			break;
+		if (tag == DT_DEBUG) {
+			result = val;
+			break;
+		}
+	}
+out:
+	if (auxv != NULL)
+		procstat_freeauxv(rdap->rda_procstat, auxv);
+	procstat_freeprocs(rdap->rda_procstat, kp);
+	return (result);
+}
+
+/*
+ * Report the event at which the process is stopped.  rtld calls
+ * _r_debug_postinit() once after initialization, and r_debug_state() around
+ * every change to the object list (and once at startup), having first set
+ * r_debug.r_state to RT_ADD or RT_DELETE before a change and RT_CONSISTENT
+ * after it.  Both event addresses are breakpoints, so the event is the one
+ * whose address is the stopped PC (before or after the breakpoint
+ * adjustment, depending on whether the caller has rewound the PC).
+ */
+rd_err_e
+rd_event_getmsg(rd_agent_t *rdap, rd_event_msg_t *msg)
+{
+	unsigned long pc, adj;
+	size_t off;
+	int state;
+
 	DPRINTF("%s\n", __func__);
 
-	msg->type = RD_POSTINIT;
-	msg->u.state = RD_CONSISTENT;
+	if (proc_regget(rdap->rda_php, REG_PC, &pc) != 0)
+		return (RD_ERR);
+	adj = pc;
+	proc_bkptregadj(&adj);
 
+	if (rdap->rda_postinit_addr != 0 &&
+	    (pc == rdap->rda_postinit_addr || adj == rdap->rda_postinit_addr)) {
+		msg->type = RD_POSTINIT;
+		msg->u.state = RD_CONSISTENT;
+		return (RD_OK);
+	}
+	if (rdap->rda_dlactivity_addr == 0 ||
+	    (pc != rdap->rda_dlactivity_addr &&
+	    adj != rdap->rda_dlactivity_addr))
+		return (RD_NOCAPAB);
+	if (rdap->rda_rdebug_addr == 0 &&
+	    (rdap->rda_rdebug_addr = rd_find_rdebug(rdap)) == 0)
+		return (RD_DBERR);
+
+	/* struct r_debug: int, two pointers, then the state enum. */
+	off = proc_getmodel(rdap->rda_php) == PR_MODEL_ILP32 ? 3 * 4 :
+	    offsetof(struct r_debug, r_state);
+	if (proc_read(rdap->rda_php, &state, sizeof(state),
+	    rdap->rda_rdebug_addr + off) != sizeof(state))
+		return (RD_ERR);
+
+	msg->type = RD_DLACTIVITY;
+	switch (state) {
+	case RT_CONSISTENT:
+		msg->u.state = RD_CONSISTENT;
+		break;
+	case RT_ADD:
+		msg->u.state = RD_ADD;
+		break;
+	case RT_DELETE:
+		msg->u.state = RD_DELETE;
+		break;
+	default:
+		msg->u.state = RD_NOSTATE;
+		break;
+	}
 	return (RD_OK);
 }
 
@@ -413,6 +557,7 @@ rd_reset(rd_agent_t *rdap)
 	rdap->rda_preinit_addr = 0;
 	rdap->rda_postinit_addr = 0;
 	rdap->rda_dlactivity_addr = 0;
+	rdap->rda_rdebug_addr = 0;
 	i = rd_static_image(rdap, kp);
 	if (i != 0) {
 		if (i > 0)

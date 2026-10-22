@@ -103,6 +103,12 @@ dt_pragma_attributes(const char *prname, dt_node_t *dnp)
 
 	if (strcmp(name, "provider") == 0) {
 		dnp = dnp->dn_list;
+		if (dnp == NULL || dnp->dn_kind != DT_NODE_IDENT ||
+		    dnp->dn_list == NULL ||
+		    dnp->dn_list->dn_kind != DT_NODE_IDENT) {
+			xyerror(D_PRAGMA_MALFORM, "malformed #pragma %s "
+			    "<attributes> provider <name> <component>\n", prname);
+		}
 		name = dnp->dn_string;
 
 		dnp = dnp->dn_list;

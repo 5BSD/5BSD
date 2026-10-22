@@ -2,15 +2,34 @@ SHLIBDIR?=	/lib
 
 .include <src.opts.mk>
 
+
 .PATH: ${SRCTOP}/cddl/contrib/opensolaris/lib/libdtrace/common
 .PATH: ${SRCTOP}/cddl/contrib/opensolaris/lib/libgen/common
 
 PACKAGE=	dtrace
-LIB=		dtrace
+LIB_CXX=	dtrace
 MAN=		dtrace_fdopen.3
+CXXFLAGS+=	-Werror					\
+		-Wall					\
+		-Wextra					\
+		-Wpedantic				\
+		-Wno-gnu-include-next			\
+		-Wno-nullability-extension		\
+		-Wno-gcc-compat				\
+		-Wno-unknown-pragmas			\
+		-Wno-c11-extensions			\
+		-Wno-zero-length-array			\
+		-Wno-gnu-anonymous-struct		\
+		-Wno-nested-anon-types			\
+		-Wno-c99-extensions			\
+		-Wno-gnu-zero-variadic-macro-arguments  \
+		-Wno-variadic-macros
 
 SRCS=		dt_aggregate.c \
+		dt_analysis.c \
 		dt_as.c \
+		dt_basic_block.cc \
+		dt_benchmark.c \
 		dt_buf.c \
 		dt_cc.c \
 		dt_cg.c \
@@ -18,15 +37,20 @@ SRCS=		dt_aggregate.c \
 		dt_decl.c \
 		dt_dis.c \
 		dt_dof.c \
+		dt_elf.cc \
 		dt_error.c \
 		dt_errtags.c \
 		dt_grammar.y \
 		dt_handle.c \
+		dt_hashmap.c \
+		dt_hypertrace_linker.cc \
 		dt_ident.c \
+		dt_dfg.cc \
 		dt_isadep.c \
 		dt_inttab.c \
 		dt_lex.l \
 		dt_link.c \
+		dt_linker_subr.cc \
 		dt_list.c \
 		dt_map.c \
 		dt_module.c \
@@ -44,13 +68,23 @@ SRCS=		dt_aggregate.c \
 		dt_program.c \
 		dt_provider.c \
 		dt_regset.c \
+		dt_resolver.c \
 		dt_string.c \
 		dt_strtab.c \
 		dt_subr.c \
 		dt_sugar.c \
+		dt_typefile.cc \
+		dt_typing.cc \
+		dt_typing_helpers.cc \
+		dt_typing_reg.cc \
+		dt_typing_stack.cc \
+		dt_typing_subr.cc \
+		dt_typing_var.cc \
 		dt_work.c \
 		dt_xlator.c \
 		gmatch.c
+
+CXXSTD=	c++20
 
 DSRCS=		cam.d			\
 		errno.d			\
@@ -74,6 +108,7 @@ FILESMODE=	${NOBINMODE}
 INCSGROUPS=	INCS SYSINCS
 SYSINCSDIR=	${INCLUDEDIR}/sys
 INCS+=		${SRCTOP}/cddl/contrib/opensolaris/lib/libdtrace/common/dtrace.h
+INCS+=		${SRCTOP}/cddl/contrib/opensolaris/lib/libdtrace/common/dt_hypertrace.h
 SYSINCS+=	${SRCTOP}/sys/cddl/contrib/opensolaris/uts/common/sys/dtrace.h
 SYSINCS+=	${SRCTOP}/sys/cddl/contrib/opensolaris/uts/common/sys/ctf_api.h
 
@@ -87,7 +122,14 @@ CFLAGS+= -I${ZFSTOP}/lib/libspl/include/os/freebsd
 CFLAGS+= -I${SRCTOP}/sys
 CFLAGS+= -include ${ZFSTOP}/include/os/freebsd/spl/sys/ccompile.h
 CFLAGS+= -DHAVE_ISSETUGID
-
+CXXFLAGS+=	-fno-rtti
+# The C++ parts (the ELF reader/writer and the HyperTrace linker) are built
+# with exceptions: their C entry points (dtrace_elf_parse(),
+# dtrace_elf_create(), hypertrace_link()) catch allocation failure
+# (std::bad_alloc) and return it, unwinding parser- and linker-owned
+# resources, instead of terminating the consumer.  dtrace_program_exec()
+# links programs that are not linked yet, so a consumer such as lockstat
+# reaches the linker too.
 
 .if defined(DTRACE_TARGET_ARCH)
 .if ${DTRACE_TARGET_ARCH} == "aarch64"
@@ -115,9 +157,11 @@ CFLAGS+=	-I${.OBJDIR} -I${.CURDIR} \
 		-I${OPENSOLARIS_USR_DISTDIR}/head \
 		-I${OPENSOLARIS_USR_DISTDIR}/lib/libctf/common \
 		-I${OPENSOLARIS_USR_DISTDIR}/lib/libdtrace/common \
-		-I${OPENSOLARIS_SYS_DISTDIR}/uts/common
+		-I${OPENSOLARIS_SYS_DISTDIR}/uts/common \
+		-I${SRCTOP}/usr.sbin/dtraced
 
 #CFLAGS+=	-DYYDEBUG
+
 
 .if ${MACHINE_CPUARCH} == "aarch64"
 CFLAGS+=	-I${OPENSOLARIS_SYS_DISTDIR}/uts/aarch64
@@ -160,15 +204,26 @@ DSRCS+=		regs_riscv.d
 SRCS+=		instr_size.c
 DSRCS+=		regs_aarch64.d
 .endif
+.if ${MK_DTRACE_BENCHMARKS} != "no"
+CFLAGS+=	-D__DTRACE_RUN_BENCHMARKS__
+.endif
+
+.if ${MK_DTRACE_OPTIMIZED} != "no" && ${MACHINE_ARCH} != "mips" && \
+    ${MACHINE_ARCH} != "mips64" && ${MACHINE_ARCH} != "powerpc64" && \
+    ${MACHINE_ARCH} != "riscv64"
+CFLAGS+=	-flto
+LDFLAGS+=	-flto
+.endif
 
 YFLAGS+=-d
 
+LIBADD=	ctf elf proc pthread rtld_db crypto xo
 .if ${MK_DTRACE_ASAN} != "no"
 CFLAGS+=	-fsanitize=address -fsanitize=undefined
+CXXFLAGS+=	-fsanitize=address -fsanitize=undefined
 LDFLAGS+=	-fsanitize=address -fsanitize=undefined
 .endif
 
-LIBADD=	ctf elf proc pthread rtld_db xo
 
 CLEANFILES=	dt_errtags.c dt_names.c priv.d
 

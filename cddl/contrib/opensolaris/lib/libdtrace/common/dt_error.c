@@ -27,11 +27,36 @@
 /*
  * Copyright (c) 2012 by Delphix. All rights reserved.
  * Copyright (c) 2013, Joyent, Inc. All rights reserved.
+ * Copyright (c) 2020 Domagoj Stolfa. All rights reserved.
+ *
+ * This software was developed by SRI International and the University of
+ * Cambridge Computer Laboratory (Department of Computer Science and
+ * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+ * DARPA SSITH research programme.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from Arm Limited.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from the Kenneth Hayter Scholarship Fund.
  */
 
+#include <assert.h>
+#include <dt_elf.h>
+#include <dt_hypertrace.h>
+#include <dt_impl.h>
+#include <dt_program.h>
+#include <dtraced.h>
+#include <err.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <dt_impl.h>
+#include <unistd.h>
 
 static const struct {
 	int err;
@@ -113,6 +138,8 @@ static const struct {
 	{ EDT_ENABLING_ERR, "Failed to enable probe" },
 	{ EDT_NOPROBES, "No probe sites found for declared provider" },
 	{ EDT_CANTLOAD, "Failed to load module" },
+	{ EDT_NOSTMT, "Statement is missing" },
+	{ EDT_ACTLAST, "Last action of a statement is empty" },
 };
 
 static const int _dt_nerr = sizeof (_dt_errlist) / sizeof (_dt_errlist[0]);
@@ -238,4 +265,134 @@ dtrace_faultstr(dtrace_hdl_t *dtp, int fault)
 	}
 
 	return ("unknown fault");
+}
+
+/*
+ * Append "; reason" to dp_err.  The reason is never lost: when the program
+ * error leaves no room for it, the program error is cut short (ending in
+ * "...") so that the whole reason fits.
+ */
+static void
+dt_progerr_append(dtrace_prog_t *pgp, const char *reason)
+{
+	static const char sep[] = "; ", ell[] = "...";
+	size_t size = sizeof (pgp->dp_err);
+	size_t need = sizeof (sep) - 1 + strlen(reason);
+	size_t len = strlen(pgp->dp_err);
+
+	/* A reason is at most 255 bytes (dt_progerr_forward()). */
+	if (len + need > size - 1) {
+		len = size - 1 - need - (sizeof (ell) - 1);
+		(void) memcpy(pgp->dp_err + len, ell, sizeof (ell));
+	}
+	(void) strlcat(pgp->dp_err, sep, size);
+	(void) strlcat(pgp->dp_err, reason, size);
+}
+
+/*
+ * A guest's program error is forwarded to dtraced: the erroneous program is
+ * written to a temporary ELF file (in TMPDIR, or /tmp) and sent.  Returns 0,
+ * or -1 with errno set and the reason appended to dp_err (and printed).  The
+ * temporary file is removed in every case.
+ */
+static int
+dt_progerr_forward(dtrace_hdl_t *dtp, dtrace_prog_t *pgp)
+{
+	char path[MAXPATHLEN], reason[256];
+	const char *tmpdir = getenv("TMPDIR");
+	hypertrace_errmsg_t errmsg;
+	int sock, fd = -1, err, saved;
+
+	reason[0] = '\0';
+	if (tmpdir == NULL || *tmpdir == '\0')
+		tmpdir = "/tmp";
+	if ((size_t)snprintf(path, sizeof (path),
+	    "%s/ddtrace-set-prog-err.XXXXXXX", tmpdir) >= sizeof (path)) {
+		errno = ENAMETOOLONG;
+		(void) snprintf(reason, sizeof (reason),
+		    "temporary file name too long");
+		goto append;
+	}
+
+	if ((sock = open_dtraced(DTD_SUB_READDATA)) == -1) {
+		(void) snprintf(reason, sizeof (reason),
+		    "failed to open dtraced: %s", strerror(errno));
+		goto append;
+	}
+
+	if ((fd = mkstemp(path)) == -1) {
+		(void) snprintf(reason, sizeof (reason),
+		    "mkstemp() failed: %s", strerror(errno));
+		goto out;
+	}
+
+	if ((err = dtrace_elf_create(dtp, pgp, ELFDATA2LSB, fd, path,
+	    errmsg)) != 0) {
+		(void) snprintf(reason, sizeof (reason),
+		    "dt_elf_create() failed: %s: %s",
+		    dtrace_hypertrace_errstr(err), errmsg);
+		errno = EIO;
+	} else if (fsync(fd) != 0) {
+		(void) snprintf(reason, sizeof (reason), "fsync() failed: %s",
+		    strerror(errno));
+	} else if (lseek(fd, 0, SEEK_SET) != 0) {
+		(void) snprintf(reason, sizeof (reason), "lseek() failed: %s",
+		    strerror(errno));
+	} else if (dtrace_send_elf(pgp, fd, sock, "outbound", 0) != 0) {
+		(void) snprintf(reason, sizeof (reason),
+		    "dtrace_send_elf() failed: %s", strerror(errno));
+	}
+
+out:
+	saved = errno;
+	if (fd != -1) {
+		(void) unlink(path);
+		(void) close(fd);
+	}
+	(void) close(sock);
+	errno = saved;
+	if (reason[0] == '\0')
+		return (0);
+append:
+	saved = errno;
+	dt_progerr_append(pgp, reason);
+	warnx("%s", reason);
+	errno = saved;
+	return (-1);
+}
+
+/*
+ * Record a program error: the program is marked (dp_haserror), the message
+ * kept in dp_err and printed on stderr.  A guest also forwards the program
+ * to dtraced.  The caller returns the error to its own caller; the process
+ * is never ended here.  Returns 0, or -1 if a guest could not forward the
+ * program (see dt_progerr_forward()).
+ */
+int
+dt_set_progerr(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, const char *fmt, ...)
+{
+	va_list args;
+	int formatted;
+
+	if (pgp == NULL)
+		return (0);
+
+	pgp->dp_haserror = 1;
+
+	va_start(args, fmt);
+	formatted = vsnprintf(pgp->dp_err, sizeof(pgp->dp_err), fmt, args);
+	va_end(args);
+
+	/* The message printed is the one recorded (dp_err). */
+	if (formatted < 0)
+		strlcpy(pgp->dp_err, "failed to format program error",
+		    sizeof(pgp->dp_err));
+	fprintf(stderr, "%s\n", pgp->dp_err);
+	if (formatted > 0 && (size_t)formatted >= sizeof(pgp->dp_err))
+		warnx("program error message truncated to %zu bytes",
+		    sizeof(pgp->dp_err) - 1);
+
+	if (dtp->dt_is_guest == 0)
+		return (0);
+	return (dt_progerr_forward(dtp, pgp));
 }

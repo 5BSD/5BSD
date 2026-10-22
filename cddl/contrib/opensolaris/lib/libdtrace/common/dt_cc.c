@@ -24,6 +24,20 @@
  * Copyright (c) 2011, 2016 by Delphix. All rights reserved.
  * Copyright (c) 2013, Joyent Inc. All rights reserved.
  * Copyright 2015 Gary Mills
+ * Copyright (c) 2021, Domagoj Stolfa. All rights reserved.
+ *
+ * This software was developed by SRI International and the University of
+ * Cambridge Computer Laboratory (Department of Computer Science and
+ * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+ * DARPA SSITH research programme.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from Arm Limited.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from the Kenneth Hayter Scholarship Fund.
  */
 
 /*
@@ -108,12 +122,13 @@
 #include <dt_ident.h>
 #include <dt_string.h>
 #include <dt_impl.h>
+#include <dt_resolver.h>
 
-static const dtrace_diftype_t dt_void_rtype = {
+const dtrace_diftype_t dt_void_rtype = {
 	DIF_TYPE_CTF, CTF_K_INTEGER, 0, 0, 0
 };
 
-static const dtrace_diftype_t dt_int_rtype = {
+const dtrace_diftype_t dt_int_rtype = {
 	DIF_TYPE_CTF, CTF_K_INTEGER, 0, 0, sizeof (uint64_t)
 };
 
@@ -489,9 +504,43 @@ dt_action_trunc(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 	ap->dtad_arg = DT_ACT_TRUNC;
 }
 
+/*
+ * In a joined printa(), the n-th %@ conversion consumes the value of the n-th
+ * aggregation argument, so its final format depends on that aggregation's
+ * function (count() is unsigned, every other aggregating function signed).
+ * dt_printf_validate() types all %@ conversions by one function: validate a
+ * scratch copy of the format for aggregation n and copy its n-th %@
+ * conversion format into the statement's format data.
+ */
+static void
+dt_printa_aggconv(dtrace_hdl_t *dtp, dt_pfargv_t *pfv, const char *format,
+    dt_ident_t *idp, int nth, dtrace_actkind_t kind, dt_node_t *args)
+{
+	dt_pfargv_t *tmp = dt_printf_create(dtp, format);
+	dt_pfargd_t *pd, *td;
+	int k = 0;
+
+	dt_printf_validate(dtp, tmp, DT_PRINTF_AGGREGATION, idp, 1, kind, args);
+
+	for (pd = pfv->pfv_argv, td = tmp->pfv_argv; pd != NULL && td != NULL;
+	    pd = pd->pfd_next, td = td->pfd_next) {
+		if (pd->pfd_conv == NULL || !(pd->pfd_flags & DT_PFCONV_AGG))
+			continue;
+		if (k++ == nth) {
+			(void) strlcpy(pd->pfd_fmt, td->pfd_fmt,
+			    sizeof (pd->pfd_fmt));
+			break;
+		}
+	}
+
+	dt_printf_destroy(tmp);
+}
+
 static void
 dt_action_printa(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 {
+	const char *joined;
+	int aggn;
 	dt_ident_t *aid, *fid;
 	dtrace_actdesc_t *ap;
 	const char *format;
@@ -528,6 +577,9 @@ dt_action_printa(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 
 	assert(anp != NULL);
 
+	joined = NULL;
+	aggn = 0;
+
 	while (anp != NULL) {
 		if (anp->dn_kind != DT_NODE_AGG) {
 			dnerror(dnp, D_PRINTA_AGGARG,
@@ -561,11 +613,18 @@ dt_action_printa(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 
 			sdp->dtsd_fmtdata =
 			    dt_printf_create(yypcb->pcb_hdl, format);
-			dt_printf_validate(sdp->dtsd_fmtdata,
-			    DT_PRINTF_AGGREGATION, dnp->dn_ident, 1,
-			    fid->di_id, ((dt_idsig_t *)aid->di_data)->dis_args);
+
+			dt_printf_validate(dtp, sdp->dtsd_fmtdata,
+			    DT_PRINTF_AGGREGATION, dnp->dn_ident, 1, fid->di_id,
+			    ((dt_idsig_t *)aid->di_data)->dis_args);
+			joined = format;
 			format = NULL;
+		} else if (joined != NULL) {
+			dt_printa_aggconv(dtp, sdp->dtsd_fmtdata, joined,
+			    dnp->dn_ident, aggn, fid->di_id,
+			    ((dt_idsig_t *)aid->di_data)->dis_args);
 		}
+		aggn++;
 
 		ap = dt_stmt_action(dtp, sdp);
 		dt_action_difconst(ap, anp->dn_ident->di_id, DTRACEACT_PRINTA);
@@ -597,7 +656,6 @@ dt_action_printflike(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp,
 	yylineno = dnp->dn_line;
 	str = dnp->dn_args->dn_string;
 
-
 	/*
 	 * If this is an freopen(), we use an empty string to denote that
 	 * stdout should be restored.  For other printf()-like actions, an
@@ -627,7 +685,7 @@ dt_action_printflike(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp,
 
 	sdp->dtsd_fmtdata = dt_printf_create(dtp, str);
 
-	dt_printf_validate(sdp->dtsd_fmtdata, DT_PRINTF_EXACTLEN,
+	dt_printf_validate(dtp, sdp->dtsd_fmtdata, DT_PRINTF_EXACTLEN,
 	    dnp->dn_ident, 1, DTRACEACT_AGGREGATION, arg1);
 
 	if (arg1 == NULL) {
@@ -657,6 +715,7 @@ dt_action_printflike(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp,
 		dt_cg(yypcb, anp);
 		ap->dtad_difo = dt_as(yypcb);
 		ap->dtad_kind = kind;
+		ap->dtad_return = 1;
 	}
 }
 
@@ -666,15 +725,17 @@ dt_action_trace(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 	int ctflib;
 
 	dtrace_actdesc_t *ap = dt_stmt_action(dtp, sdp);
+	dt_node_t *anp;
 	boolean_t istrace = (dnp->dn_ident->di_id == DT_ACT_TRACE);
-	const char *act = istrace ?  "trace" : "print";
+	boolean_t isbottom = dt_node_is_bottom(dnp->dn_args);
+	const char *act = istrace ? "trace" : "print";
 
-	if (dt_node_is_void(dnp->dn_args)) {
+	if (!isbottom && dt_node_is_void(dnp->dn_args)) {
 		dnerror(dnp->dn_args, istrace ? D_TRACE_VOID : D_PRINT_VOID,
 		    "%s( ) may not be applied to a void expression\n", act);
 	}
 
-	if (dt_node_resolve(dnp->dn_args, DT_IDENT_XLPTR) != NULL) {
+	if (!isbottom && dt_node_resolve(dnp->dn_args, DT_IDENT_XLPTR) != NULL) {
 		dnerror(dnp->dn_args, istrace ? D_TRACE_DYN : D_PRINT_DYN,
 		    "%s( ) may not be applied to a translated pointer\n", act);
 	}
@@ -700,6 +761,11 @@ dt_action_trace(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 	 * the case where we are referring to userland CTF data, we also need to
 	 * to identify which ctf container in question we care about and encode
 	 * that within the name.
+	 *
+	 * TODO(dstolfa, important): We need to support this for arbitrary
+	 * guests. This means that we need to patch in the correct CTF type from
+	 * the correct container that the guest will give us in order to print
+	 * the type correctly.
 	 */
 	if (dnp->dn_ident->di_id == DT_ACT_PRINT) {
 		dt_node_t *dret;
@@ -735,6 +801,12 @@ dt_action_trace(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 
 	ap->dtad_difo = dt_as(yypcb);
 	ap->dtad_kind = DTRACEACT_DIFEXPR;
+	/*
+	 * Since we will be tracing this, we want to return a non-void
+	 * type from this action.
+	 */
+
+	ap->dtad_return = 1;
 }
 
 static void
@@ -790,25 +862,31 @@ dt_action_tracemem(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 }
 
 static void
-dt_action_stack_args(dtrace_hdl_t *dtp, dtrace_actdesc_t *ap, dt_node_t *arg0)
+dt_action_stack_args(dtrace_hdl_t *dtp, dtrace_actdesc_t *ap,
+    uint_t stack_kind, dt_node_t *arg0)
 {
-	ap->dtad_kind = DTRACEACT_STACK;
+	uint_t stackopt = stack_kind == DT_ACT_STACK ?
+	    DTRACEOPT_STACKFRAMES : DTRACEOPT_IMMSTACKFRAMES;
+	ap->dtad_kind = stack_kind == DT_ACT_STACK ?
+	    DTRACEACT_STACK : DTRACEACT_IMMSTACK;
 
-	if (dtp->dt_options[DTRACEOPT_STACKFRAMES] != DTRACEOPT_UNSET) {
-		ap->dtad_arg = dtp->dt_options[DTRACEOPT_STACKFRAMES];
+	if (dtp->dt_options[stackopt] != DTRACEOPT_UNSET) {
+		ap->dtad_arg = dtp->dt_options[stackopt];
 	} else {
 		ap->dtad_arg = 0;
 	}
 
 	if (arg0 != NULL) {
 		if (arg0->dn_list != NULL) {
-			dnerror(arg0, D_STACK_PROTO, "stack( ) prototype "
-			    "mismatch: too many arguments\n");
+			dnerror(arg0, D_STACK_PROTO, "%s( ) prototype "
+			    "mismatch: too many arguments\n",
+			    stack_kind == DT_ACT_STACK ? "stack" : "immstack");
 		}
 
 		if (dt_node_is_posconst(arg0) == 0) {
-			dnerror(arg0, D_STACK_SIZE, "stack( ) size must be a "
-			    "non-zero positive integral constant expression\n");
+			dnerror(arg0, D_STACK_SIZE, "%s( ) size must be a "
+			    "non-zero positive integral constant expression\n",
+			    stack_kind == DT_ACT_STACK ? "stack" : "immstack");
 		}
 
 		ap->dtad_arg = arg0->dn_value;
@@ -819,7 +897,14 @@ static void
 dt_action_stack(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 {
 	dtrace_actdesc_t *ap = dt_stmt_action(dtp, sdp);
-	dt_action_stack_args(dtp, ap, dnp->dn_args);
+	dt_action_stack_args(dtp, ap, DT_ACT_STACK, dnp->dn_args);
+}
+
+static void
+dt_action_immstack(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
+{
+	dtrace_actdesc_t *ap = dt_stmt_action(dtp, sdp);
+	dt_action_stack_args(dtp, ap, DT_ACT_IMMSTACK, dnp->dn_args);
 }
 
 static void
@@ -1124,7 +1209,8 @@ dt_compile_fun(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 		dt_action_printa(dtp, dnp->dn_expr, sdp);
 		break;
 	case DT_ACT_PRINTF:
-		dt_action_printflike(dtp, dnp->dn_expr, sdp, DTRACEACT_PRINTF);
+		dt_action_printflike(dtp, dnp->dn_expr,
+		    sdp, DTRACEACT_PRINTF);
 		break;
 	case DT_ACT_PRINTM:
 		dt_action_printm(dtp, dnp->dn_expr, sdp);
@@ -1140,6 +1226,9 @@ dt_compile_fun(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 		break;
 	case DT_ACT_STACK:
 		dt_action_stack(dtp, dnp->dn_expr, sdp);
+		break;
+	case DT_ACT_IMMSTACK:
+		dt_action_immstack(dtp, dnp->dn_expr, sdp);
 		break;
 	case DT_ACT_STOP:
 		dt_action_stop(dtp, dnp->dn_expr, sdp);
@@ -1211,7 +1300,8 @@ dt_compile_agg(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 	fid = dnp->dn_aggfun->dn_ident;
 
 	if (dnp->dn_aggfun->dn_args != NULL &&
-	    dt_node_is_scalar(dnp->dn_aggfun->dn_args) == 0) {
+	    dt_node_is_scalar(dnp->dn_aggfun->dn_args) == 0 &&
+	    dt_node_is_bottom(dnp->dn_aggfun->dn_args) == 0) {
 		dnerror(dnp->dn_aggfun, D_AGG_SCALAR, "%s( ) argument #1 must "
 		    "be of scalar type\n", fid->di_name);
 	}
@@ -1228,8 +1318,10 @@ dt_compile_agg(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 		n++;
 
 		if (anp->dn_kind == DT_NODE_FUNC) {
-			if (anp->dn_ident->di_id == DT_ACT_STACK) {
-				dt_action_stack_args(dtp, ap, anp->dn_args);
+			if (anp->dn_ident->di_id == DT_ACT_STACK ||
+			    anp->dn_ident->di_id == DT_ACT_IMMSTACK) {
+				uint_t sk = anp->dn_ident->di_id;
+				dt_action_stack_args(dtp, ap, sk, anp->dn_args);
 				continue;
 			}
 
@@ -1273,6 +1365,7 @@ dt_compile_agg(dtrace_hdl_t *dtp, dt_node_t *dnp, dtrace_stmtdesc_t *sdp)
 		dt_cg(yypcb, anp);
 		ap->dtad_difo = dt_as(yypcb);
 		ap->dtad_kind = DTRACEACT_DIFEXPR;
+		ap->dtad_return = 1;
 	}
 
 	if (fid->di_id == DTRACEAGG_LQUANTIZE) {
@@ -1731,19 +1824,25 @@ dt_setcontext(dtrace_hdl_t *dtp, dtrace_probedesc_t *pdp)
 		err = 0;
 	}
 
-	if (err == EDT_NOPROBE && !(yypcb->pcb_cflags & DTRACE_C_ZDEFS)) {
-		xyerror(D_PDESC_ZERO, "probe description %s:%s:%s:%s does not "
-		    "match any probes\n", pdp->dtpd_provider, pdp->dtpd_mod,
+	if (dtrace_hypertrace_enabled(dtp) == 0 && err == EDT_NOPROBE &&
+	    !(yypcb->pcb_cflags & DTRACE_C_ZDEFS)) {
+		/* The HyperTrace target is named only when one was given. */
+		xyerror(D_PDESC_ZERO,
+		    "probe description %s%s%s:%s:%s:%s does not "
+		    "match any probes\n",
+		    pdp->dtpd_target, pdp->dtpd_target[0] != '\0' ? ":" : "",
+		    pdp->dtpd_provider, pdp->dtpd_mod,
 		    pdp->dtpd_func, pdp->dtpd_name);
 	}
 
 	if (err != EDT_NOPROBE && err != EDT_UNSTABLE && err != 0)
 		xyerror(D_PDESC_INVAL, "%s\n", dtrace_errmsg(dtp, err));
 
-	dt_dprintf("set context to %s:%s:%s:%s [%u] prp=%p attr=%s argc=%d\n",
-	    pdp->dtpd_provider, pdp->dtpd_mod, pdp->dtpd_func, pdp->dtpd_name,
-	    pdp->dtpd_id, (void *)prp, dt_attr_str(yypcb->pcb_pinfo.dtp_attr,
-	    attrstr, sizeof (attrstr)), yypcb->pcb_pinfo.dtp_argc);
+	dt_dprintf("set context to %s:%s:%s:%s:%s [%u] prp=%p attr=%s argc=%d\n",
+	    pdp->dtpd_target, pdp->dtpd_provider, pdp->dtpd_mod, pdp->dtpd_func,
+	    pdp->dtpd_name, pdp->dtpd_id, (void *)prp, dt_attr_str(
+	    yypcb->pcb_pinfo.dtp_attr, attrstr, sizeof (attrstr)),
+	    yypcb->pcb_pinfo.dtp_argc);
 
 	/*
 	 * Reset the stability attributes of D global variables that vary
@@ -1985,7 +2084,8 @@ dt_preproc(dtrace_hdl_t *dtp, FILE *ifp)
 
 err:
 	free(argv);
-	(void) fclose(ofp);
+	if (ofp != NULL)	/* tmpfile() itself may have failed */
+		(void) fclose(ofp);
 	return (NULL);
 }
 
@@ -2212,7 +2312,6 @@ dt_load_libs_dir(dtrace_hdl_t *dtp, const char *path)
 
 	char fname[PATH_MAX];
 	FILE *fp;
-	void *rv;
 	dt_lib_depend_t *dld;
 
 	if ((dirp = opendir(path)) == NULL) {
@@ -2260,11 +2359,17 @@ dt_load_libs_dir(dtrace_hdl_t *dtp, const char *path)
 			return (-1); /* preserve dt_errno */
 		}
 
-		rv = dt_compile(dtp, DT_CTX_DPROG,
+		/*
+		 * The control-directive pass yields no program; its outcome is
+		 * dt_errno.  Errors other than an unsatisfied depends_on (for
+		 * example an allocation failure) fail the library load rather
+		 * than silently dropping the library.
+		 */
+		(void) dt_compile(dtp, DT_CTX_DPROG,
 		    DTRACE_PROBESPEC_NAME, NULL,
 		    DTRACE_C_EMPTY | DTRACE_C_CTL, 0, NULL, fp, NULL);
 
-		if (rv != NULL && dtp->dt_errno &&
+		if (dtp->dt_errno &&
 		    (dtp->dt_errno != EDT_COMPILER ||
 		    dtp->dt_errtag != dt_errtag(D_PRAGMA_DEPEND))) {
 			(void) fclose(fp);
@@ -2396,8 +2501,14 @@ dt_compile(dtrace_hdl_t *dtp, int context, dtrace_probespec_t pspec, void *arg,
 	dt_node_t *dnp;
 	dt_decl_t *ddp;
 	dt_pcb_t pcb;
-	void *volatile rv;
+	/*
+	 * A DTRACE_C_CTL compilation only processes control directives and
+	 * produces no program: it must return NULL rather than an
+	 * uninitialized pointer.
+	 */
+	void *volatile rv = NULL;
 	int err;
+	size_t prov_len;
 
 	if ((fp == NULL && s == NULL) || (cflags & ~DTRACE_C_MASK) != 0) {
 		(void) dt_set_errno(dtp, EINVAL);
@@ -2619,4 +2730,30 @@ dtrace_type_fcompile(dtrace_hdl_t *dtp, FILE *fp, dtrace_typeinfo_t *dtt)
 	(void) dt_compile(dtp, DT_CTX_DTYPE,
 	    DTRACE_PROBESPEC_NONE, dtt, 0, 0, NULL, fp, NULL);
 	return (dtp->dt_errno ? -1 : 0);
+}
+
+int
+dtrace_compile_idents_set(dtrace_hdl_t *dtp, char *idents, size_t num_idents)
+{
+	char *ident;
+	dt_identlist_t *ident_entry;
+	size_t i;
+
+	if (idents == NULL) {
+		fprintf(stderr, "dtrace: compile_idents called with NULL idents\n");
+		return (-1);
+	}
+
+	ident = idents;
+	for (i = 0; i < num_idents; i++) {
+		ident_entry = malloc(sizeof(dt_identlist_t));
+		if (ident_entry == NULL)
+			return (errno);
+
+		memcpy(ident_entry->dtil_ident, ident, DT_PROG_IDENTLEN);
+		dt_list_append(&dtp->dt_compile_idents, ident_entry);
+		ident += DT_PROG_IDENTLEN;
+	}
+
+	return (0);
 }

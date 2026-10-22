@@ -71,7 +71,8 @@ dt_xlator_create_member(const char *name, ctf_id_t type, ulong_t off, void *arg)
 	enp->dn_op = DT_TOK_XLATE;
 	enp->dn_xlator = dxp;
 	enp->dn_xmember = mnp;
-	dt_node_type_assign(enp, dxp->dx_dst_ctfp, type, B_FALSE);
+	dt_node_type_assign(enp, dxp->dx_dst_object, dxp->dx_dst_ctfp, type,
+	    B_FALSE);
 
 	/*
 	 * For the member itself, we use a DT_NODE_MEMBER as usual with the
@@ -85,7 +86,8 @@ dt_xlator_create_member(const char *name, ctf_id_t type, ulong_t off, void *arg)
 
 	mnp->dn_membname = strdup(name);
 	mnp->dn_membexpr = enp;
-	dt_node_type_assign(mnp, dxp->dx_dst_ctfp, type, B_FALSE);
+	dt_node_type_assign(mnp, dxp->dx_dst_object, dxp->dx_dst_ctfp, type,
+	    B_FALSE);
 
 	if (mnp->dn_membname == NULL)
 		return (dt_set_errno(dtp, EDT_NOMEM));
@@ -125,6 +127,7 @@ dt_xlator_create(dtrace_hdl_t *dtp,
 
 	if (dt_type_pointer(&ptr) == -1) {
 		ptr.dtt_ctfp = NULL;
+		ptr.dtt_object = NULL;
 		ptr.dtt_type = CTF_ERR;
 	}
 
@@ -136,6 +139,7 @@ dt_xlator_create(dtrace_hdl_t *dtp,
 		goto err; /* no memory for identifier */
 
 	dxp->dx_ident->di_ctfp = src->dtt_ctfp;
+	dxp->dx_ident->di_object = src->dtt_object;
 	dxp->dx_ident->di_type = src->dtt_type;
 
 	/*
@@ -159,6 +163,7 @@ dt_xlator_create(dtrace_hdl_t *dtp,
 	dxp->dx_souid.di_ops = &dt_idops_thaw;
 	dxp->dx_souid.di_data = dxp;
 	dxp->dx_souid.di_ctfp = dst->dtt_ctfp;
+	dxp->dx_souid.di_object = dst->dtt_object;
 	dxp->dx_souid.di_type = dst->dtt_type;
 	dxp->dx_souid.di_gen = dtp->dt_gen;
 
@@ -170,6 +175,7 @@ dt_xlator_create(dtrace_hdl_t *dtp,
 	dxp->dx_ptrid.di_ops = &dt_idops_thaw;
 	dxp->dx_ptrid.di_data = dxp;
 	dxp->dx_ptrid.di_ctfp = ptr.dtt_ctfp;
+	dxp->dx_ptrid.di_object = ptr.dtt_object;
 	dxp->dx_ptrid.di_type = ptr.dtt_type;
 	dxp->dx_ptrid.di_gen = dtp->dt_gen;
 
@@ -186,10 +192,12 @@ dt_xlator_create(dtrace_hdl_t *dtp,
 	}
 
 	dxp->dx_src_ctfp = src->dtt_ctfp;
+	dxp->dx_src_object = src->dtt_object;
 	dxp->dx_src_type = src->dtt_type;
 	dxp->dx_src_base = ctf_type_resolve(src->dtt_ctfp, src->dtt_type);
 
 	dxp->dx_dst_ctfp = dst->dtt_ctfp;
+	dxp->dx_dst_object = dst->dtt_object;
 	dxp->dx_dst_type = dst->dtt_type;
 	dxp->dx_dst_base = ctf_type_resolve(dst->dtt_ctfp, dst->dtt_type);
 
@@ -320,8 +328,8 @@ dt_xlator_lookup(dtrace_hdl_t *dtp, dt_node_t *src, dt_node_t *dst, int flags)
 
 	for (dxp = dt_list_next(&dtp->dt_xlators); dxp != NULL;
 	    dxp = dt_list_next(dxp)) {
-		dt_node_type_assign(&xn, dxp->dx_src_ctfp, dxp->dx_src_type,
-		    B_FALSE);
+		dt_node_type_assign(&xn, dxp->dx_src_object, dxp->dx_src_ctfp,
+		    dxp->dx_src_type, B_FALSE);
 		if (ctf_type_compat(dxp->dx_dst_ctfp, dxp->dx_dst_base,
 		    dst_ctfp, dst_base) && dt_node_is_argcompat(src, &xn))
 			goto out;

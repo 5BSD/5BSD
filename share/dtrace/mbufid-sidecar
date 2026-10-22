@@ -1,0 +1,32 @@
+#!/usr/sbin/dtrace -s
+/* SPDX-License-Identifier: BSD-2-Clause
+ * Count V1 and V2 packet-ID tag reuse, allocation, upgrade and failure.
+ * Usage: mbufid-sidecar (Ctrl-C prints a summary)
+ *        dtrace -s /usr/share/dtrace/mbufid-sidecar -c 'sleep 30'
+ * This does not measure network throughput or packet latency. Run a
+ * representative workload with and without this script for cost analysis.
+ */
+#pragma D option quiet
+
+BEGIN
+{
+    began = timestamp;
+    printf("Packet-ID sidecar observation started. Ctrl-C for summary.\n");
+}
+
+sdt:mbufid:ensure:reuse,
+sdt:mbufid:ensure:alloc,
+sdt:mbufid:ensure:alloc-failure,
+sdt:mbufid:v2:reuse,
+sdt:mbufid:v2:alloc,
+sdt:mbufid:v2:alloc-failure,
+sdt:mbufid:v2:upgrade
+{
+    @outcomes[probefunc, probename] = count();
+}
+
+END
+{
+    printf("MBUFID_SIDECAR elapsed_ms=%d\n", (timestamp - began) / 1000000);
+    printa("%-8s %-20s %@d\n", @outcomes);
+}

@@ -78,6 +78,7 @@ typedef struct dt_scope {
 	dt_decl_t *ds_decl;		/* pointer to top of decl stack */
 	struct dt_scope *ds_next;	/* pointer to next scope */
 	char *ds_ident;			/* identifier for this scope (if any) */
+	const char *ds_object;		/* object for the CTF container */
 	ctf_file_t *ds_ctfp;		/* CTF container for this scope */
 	ctf_id_t ds_type;		/* CTF id of enclosing type */
 	dt_dclass_t ds_class;		/* declaration class for this scope */
@@ -119,7 +120,7 @@ extern int dt_decl_type(dt_decl_t *, dtrace_typeinfo_t *);
 
 extern void dt_scope_create(dt_scope_t *);
 extern void dt_scope_destroy(dt_scope_t *);
-extern void dt_scope_push(ctf_file_t *, ctf_id_t);
+extern void dt_scope_push(const char *, ctf_file_t *, ctf_id_t);
 extern dt_decl_t *dt_scope_pop(void);
 
 #ifdef	__cplusplus

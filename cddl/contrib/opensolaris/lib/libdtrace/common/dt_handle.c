@@ -301,12 +301,15 @@ dt_droptag(dtrace_dropkind_t kind)
 {
 	int i;
 
-	for (i = 0; _dt_droptags[i].dtdrg_tag != NULL; i++) {
-		if (_dt_droptags[i].dtdrg_kind == kind)
-			return (_dt_droptags[i].dtdrg_tag);
-	}
+	/*
+	 * Both callers pass kinds from the tables in this file (principal
+	 * and aggregation drops, and _dt_droptab's kinds), all of which
+	 * are tagged.
+	 */
+	for (i = 0; _dt_droptags[i].dtdrg_kind != kind; i++)
+		assert(_dt_droptags[i + 1].dtdrg_tag != NULL);
 
-	return ("DTRACEDROP_UNKNOWN");
+	return (_dt_droptags[i].dtdrg_tag);
 }
 
 int
@@ -515,4 +518,19 @@ dt_handle(dtrace_hdl_t *dtp, dtrace_probedata_t *data)
 		return (DTRACE_CONSUME_NEXT);
 
 	return (DTRACE_CONSUME_ERROR);
+}
+
+void
+dtrace_set_guest(dtrace_hdl_t *dtp)
+{
+
+	dtp->dt_is_guest = 1;
+	(void) dtrace_setopt(dtp, "minion", "yes");
+}
+
+int
+dtrace_is_guest(dtrace_hdl_t *dtp)
+{
+
+	return (dtp->dt_is_guest);
 }

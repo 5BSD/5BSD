@@ -62,6 +62,7 @@ static const char *olddevname = "/devices/pseudo/dtrace@0:helper";
 
 static const char *modname;	/* Name of this load object */
 static int gen;			/* DOF helper generation */
+static boolean_t dof_registered = B_FALSE;
 extern dof_hdr_t __SUNW_dof;	/* DOF defined in the .SUNW_dof section */
 static boolean_t dof_init_debug = B_FALSE;	/* From DTRACE_DOF_INIT_DEBUG */
 
@@ -107,8 +108,6 @@ dtrace_dof_init(void)
 	Link_map *lmp = NULL;
 #ifdef illumos
 	Lmid_t lmid;
-#else
-	u_long lmid = 0;
 #endif
 	int fd;
 	const char *p;
@@ -169,6 +168,7 @@ dtrace_dof_init(void)
 	dh.dofhp_addr = elf->e_type == ET_DYN ? (uintptr_t) lmp->l_addr : 0;
 #endif
 
+#ifdef illumos
 	if (lmid == 0) {
 		(void) snprintf(dh.dofhp_mod, sizeof (dh.dofhp_mod),
 		    "%s", modname);
@@ -176,6 +176,10 @@ dtrace_dof_init(void)
 		(void) snprintf(dh.dofhp_mod, sizeof (dh.dofhp_mod),
 		    "LM%lu`%s", lmid, modname);
 	}
+#else
+	/* FreeBSD has a single link-map list; there is no LM%lu` prefix. */
+	(void) snprintf(dh.dofhp_mod, sizeof (dh.dofhp_mod), "%s", modname);
+#endif
 
 	if ((p = getenv("DTRACE_DOF_INIT_DEVNAME")) != NULL)
 		devnamep = p;
@@ -203,6 +207,7 @@ dtrace_dof_init(void)
 	if ((gen = ioctl(fd, DTRACEHIOC_ADDDOF, &dh)) == -1)
 		dbg_printf(1, "DTrace ioctl failed for DOF at %p", dof);
 	else {
+		dof_registered = B_TRUE;
 		dbg_printf(1, "DTrace ioctl succeeded for DOF at %p\n", dof);
 #ifdef __FreeBSD__
 		gen = dh.dofhp_gen;
@@ -222,6 +227,10 @@ static void
 dtrace_dof_fini(void)
 {
 	int fd;
+
+	/* Initialization may have been disabled or failed before registration. */
+	if (!dof_registered)
+		return;
 
 	if ((fd = open64(devnamep, O_RDWR)) < 0) {
 		dbg_printf(1, "failed to open helper device %s", devnamep);

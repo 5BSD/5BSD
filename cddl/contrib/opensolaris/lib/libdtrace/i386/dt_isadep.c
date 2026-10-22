@@ -54,7 +54,11 @@
 
 #define	DT_MOVL_EBP_ESP	0xe58b
 
-#define	DT_ISJ32(op16)	(((op16) & 0xfff0) == 0x0f80)
+/*
+ * A jcc rel32 is the byte 0x0f followed by 0x80-0x8f.  (Testing a 16-bit
+ * load against 0x0f80 never matched on little-endian x86.)
+ */
+#define	DT_ISJ32(p)	((p)[0] == 0x0f && ((p)[1] & 0xf0) == 0x80)
 #define	DT_ISJ8(op8)	(((op8) & 0xf0) == 0x70)
 
 #define	DT_MODRM_REG(modrm)	(((modrm) >> 3) & 0x7)
@@ -251,7 +255,7 @@ dt_pid_create_return_probe(struct ps_prochandle *P, dtrace_hdl_t *dtp,
 				goto is_ret;
 
 			/* 32-bit disp. conditional jmp outside of the func. */
-			if (size == 6 && DT_ISJ32(*(uint16_t *)&text[i]) &&
+			if (size == 6 && DT_ISJ32(&text[i]) &&
 			    symp->st_size <=
 			    (uintptr_t)(i + size + *(int32_t *)&text[i + 2]))
 				goto is_ret;

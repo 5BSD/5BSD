@@ -37,18 +37,20 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-#ifdef	__cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
+#include <dt_decl.h>
 #include <dt_errtags.h>
 #include <dt_ident.h>
-#include <dt_decl.h>
-#include <dt_xlator.h>
 #include <dt_list.h>
+#include <dt_xlator.h>
+#include <dtrace.h>
 
 typedef struct dt_node {
 	ctf_file_t *dn_ctfp;	/* CTF type container for node's type */
+	const char *dn_object;	/* object name for the CTF container */
 	ctf_id_t dn_type;	/* CTF type reference for node's type */
 	uchar_t dn_kind;	/* node kind (DT_NODE_*, defined below) */
 	uchar_t dn_flags;	/* node flags (DT_NF_*, defined below) */
@@ -56,6 +58,9 @@ typedef struct dt_node {
 	int dn_line;		/* line number for error messages */
 	int dn_reg;		/* register allocated by cg */
 	dtrace_attribute_t dn_attr; /* node stability attributes */
+
+	char dn_target[DTRACE_TARGETNAMELEN]; /* what target is this node for? */
+	dtrace_hdl_t *dn_dtp;	/* backpointer to the handle */
 
 	/*
 	 * D compiler nodes, as is the usual style, contain a union of the
@@ -66,6 +71,8 @@ typedef struct dt_node {
 		struct {
 			uintmax_t _value;	/* integer value */
 			char *_string;		/* string value */
+			char _typecast[DT_TYPE_NAMELEN]; /* type to cast */
+			int _needscast;		/* need to cast? */
 		} _const;
 
 		struct {
@@ -118,6 +125,8 @@ typedef struct dt_node {
 } dt_node_t;
 
 #define	dn_value	dn_u._const._value	/* DT_NODE_INT */
+#define	dn_typecast	dn_u._const._typecast	/* DT_NODE_INT */
+#define	dn_needscast	dn_u._const._needscast	/* DT_NODE_INT */
 #define	dn_string	dn_u._const._string	/* STRING, IDENT, TYPE */
 #define	dn_ident	dn_u._nodes._ident	/* VAR,SYM,FUN,AGG,INL,PROBE */
 #define	dn_args		dn_u._nodes._links[0]	/* DT_NODE_VAR, FUNC */
@@ -184,8 +193,6 @@ typedef struct dt_node {
 #define	DT_NF_USERLAND	0x40	/* data is a userland address */
 #define	DT_NF_IDENTADDR	0x80	/* node is an identifier address */
 
-#define	DT_TYPE_NAMELEN	128	/* reasonable size for ctf_type_name() */
-
 extern int dt_node_is_integer(const dt_node_t *);
 extern int dt_node_is_float(const dt_node_t *);
 extern int dt_node_is_scalar(const dt_node_t *);
@@ -199,8 +206,9 @@ extern int dt_node_is_string(const dt_node_t *);
 extern int dt_node_is_strcompat(const dt_node_t *);
 extern int dt_node_is_pointer(const dt_node_t *);
 extern int dt_node_is_void(const dt_node_t *);
+extern int dt_node_is_bottom(const dt_node_t *);
 extern int dt_node_is_ptrcompat(const dt_node_t *, const dt_node_t *,
-	ctf_file_t **, ctf_id_t *);
+	const char **, ctf_file_t **, ctf_id_t *);
 extern int dt_node_is_argcompat(const dt_node_t *, const dt_node_t *);
 extern int dt_node_is_posconst(const dt_node_t *);
 extern int dt_node_is_actfunc(const dt_node_t *);
@@ -239,8 +247,10 @@ extern void dt_node_list_free(dt_node_t **);
 extern void dt_node_link_free(dt_node_t **);
 
 extern void dt_node_attr_assign(dt_node_t *, dtrace_attribute_t);
-extern void dt_node_type_assign(dt_node_t *, ctf_file_t *, ctf_id_t, boolean_t);
+extern void dt_node_type_assign(dt_node_t *, const char *, ctf_file_t *,
+    ctf_id_t, boolean_t);
 extern void dt_node_type_propagate(const dt_node_t *, dt_node_t *);
+extern const char *dt_node_addr_type_name(const dt_node_t *);
 extern const char *dt_node_type_name(const dt_node_t *, char *, size_t);
 extern size_t dt_node_type_size(const dt_node_t *);
 
@@ -278,7 +288,6 @@ typedef enum {
 } yystate_t;
 
 extern void dnerror(const dt_node_t *, dt_errtag_t, const char *, ...);
-extern void dnwarn(const dt_node_t *, dt_errtag_t, const char *, ...);
 
 extern void xyerror(dt_errtag_t, const char *, ...);
 extern void xywarn(dt_errtag_t, const char *, ...);

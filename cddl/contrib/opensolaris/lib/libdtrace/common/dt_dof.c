@@ -38,6 +38,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdint.h>
 
 #include <dt_impl.h>
 #include <dt_strtab.h>
@@ -45,6 +46,11 @@
 #include <dt_provider.h>
 #include <dt_xlator.h>
 #include <dt_dof.h>
+#include <dt_hypertrace.h>
+#include <stdio.h>
+#include <string.h>
+
+#define sizeof_field(s,m) (sizeof((((s*)0)->m)))
 
 void
 dt_dof_init(dtrace_hdl_t *dtp)
@@ -164,7 +170,6 @@ dof_add_lsect(dt_dof_t *ddo, const void *data, uint32_t type,
 /*
  * Add an unloadable DOF section to the file using the specified data buffer
  * and DOF section attributes.  DOF_SECF_LOAD must *not* be set in flags.
- * If 'data' is NULL, the caller is responsible for manipulating the udata buf.
  */
 static dof_secidx_t
 dof_add_usect(dt_dof_t *ddo, const void *data, uint32_t type,
@@ -181,9 +186,8 @@ dof_add_usect(dt_dof_t *ddo, const void *data, uint32_t type,
 	s.dofs_size = size;
 
 	dt_buf_write(dtp, &ddo->ddo_secs, &s, sizeof (s), sizeof (uint64_t));
-
-	if (data != NULL)
-		dt_buf_write(dtp, &ddo->ddo_udata, data, size, align);
+	/* Both callers (comments, utsname) pass their data. */
+	dt_buf_write(dtp, &ddo->ddo_udata, data, size, align);
 
 	return (ddo->ddo_nsecs++);
 }
@@ -211,11 +215,53 @@ dof_attr(const dtrace_attribute_t *ap)
 	return (DOF_ATTR(ap->dtat_name, ap->dtat_data, ap->dtat_class));
 }
 
+typedef struct dtrace_kdifv {
+	uint32_t dtdkv_name;
+	uint32_t dtdkv_id;
+	uint8_t dtdkv_kind;
+	uint8_t dtdkv_scope;
+	uint16_t dtdkv_flags;
+	dtrace_diftype_t dtdkv_type;
+} dtrace_kdifv_t;
+
+static dtrace_kdifv_t *
+dof_construct_kvartab(const dtrace_difo_t *dp)
+{
+	dtrace_kdifv_t *kvt;
+	dtrace_difv_t *vt;
+	int i;
+
+	i = 0;
+	kvt = NULL;
+	vt = NULL;
+
+	/* The caller fails the DOF on NULL; a library must not exit. */
+	kvt = calloc(dp->dtdo_varlen != 0 ? dp->dtdo_varlen : 1,
+	    sizeof(dtrace_kdifv_t));
+	if (kvt == NULL)
+		return (NULL);
+
+	vt = dp->dtdo_vartab;
+
+	for (i = 0; i < dp->dtdo_varlen; i++) {
+		kvt[i].dtdkv_name = vt[i].dtdv_name;
+		kvt[i].dtdkv_id = vt[i].dtdv_id;
+		kvt[i].dtdkv_kind = vt[i].dtdv_kind;
+		kvt[i].dtdkv_scope = vt[i].dtdv_scope;
+		kvt[i].dtdkv_flags = vt[i].dtdv_flags;
+		memcpy(&kvt[i].dtdkv_type,
+		    &vt[i].dtdv_type, sizeof(dtrace_diftype_t));
+	}
+
+	return (kvt);
+}
+
 static dof_secidx_t
 dof_add_difo(dt_dof_t *ddo, const dtrace_difo_t *dp)
 {
 	dof_secidx_t dsecs[5]; /* enough for all possible DIFO sections */
 	uint_t nsecs = 0;
+	size_t var_size = 0;
 
 	dof_difohdr_t *dofd;
 	dof_relohdr_t dofr;
@@ -225,10 +271,28 @@ dof_add_difo(dt_dof_t *ddo, const dtrace_difo_t *dp)
 	dof_secidx_t intsec = DOF_SECIDX_NONE;
 	dof_secidx_t hdrsec = DOF_SECIDX_NONE;
 
+	dtrace_kdifv_t *kvt = NULL;
+
 	if (dp->dtdo_buf != NULL) {
-		dsecs[nsecs++] = dof_add_lsect(ddo, dp->dtdo_buf,
+		/*
+		 * TYPECAST is a type annotation for the HyperTrace linker
+		 * (which turns it into a nop), not an instruction: the kernel's
+		 * DIF validator refuses it.  A program that needs no linking
+		 * (dt_prog_link_for_kernel()) reaches the kernel with a nop in
+		 * its place; the program itself keeps its annotations (for its
+		 * ELF and a later link).
+		 */
+		dsecs[nsecs++] = dof_add_lsect(ddo, NULL,
 		    DOF_SECT_DIF, sizeof (dif_instr_t), 0,
 		    sizeof (dif_instr_t), sizeof (dif_instr_t) * dp->dtdo_len);
+		for (uint_t i = 0; i < dp->dtdo_len; i++) {
+			dif_instr_t instr = dp->dtdo_buf[i];
+
+			if (DIF_INSTR_OP(instr) == DIF_OP_TYPECAST)
+				instr = DIF_INSTR_NOP;
+			dt_buf_write(ddo->ddo_hdl, &ddo->ddo_ldata, &instr,
+			    sizeof (instr), sizeof (dif_instr_t));
+		}
 	}
 
 	if (dp->dtdo_inttab != NULL) {
@@ -243,9 +307,28 @@ dof_add_difo(dt_dof_t *ddo, const dtrace_difo_t *dp)
 	}
 
 	if (dp->dtdo_vartab != NULL) {
-		dsecs[nsecs++] = dof_add_lsect(ddo, dp->dtdo_vartab,
-		    DOF_SECT_VARTAB, sizeof (uint_t), 0, sizeof (dtrace_difv_t),
-		    sizeof (dtrace_difv_t) * dp->dtdo_varlen);
+		/*
+		 * Compute the size of kernel elements for a dtrace_difv_t
+		 *
+		 * FIXME: This is absolutely horrible. Please forgive me.
+		 */
+		var_size = sizeof(dtrace_kdifv_t);
+		kvt = dof_construct_kvartab(dp);
+
+		if (kvt == NULL) {
+			/*
+			 * A sticky buffer error: dtrace_dof_create() then
+			 * fails with EDT_NOMEM when it claims the DOF.
+			 */
+			ddo->ddo_ldata.dbu_err = EDT_NOMEM;
+			(void) dt_set_errno(ddo->ddo_hdl, EDT_NOMEM);
+		} else {
+			dsecs[nsecs++] = dof_add_lsect(ddo, kvt,
+			    DOF_SECT_VARTAB, sizeof (uint_t), 0, var_size,
+			    var_size * dp->dtdo_varlen);
+			/* dof_add_lsect() copied the table into ddo_ldata. */
+			free(kvt);
+		}
 	}
 
 	if (dp->dtdo_xlmtab != NULL) {
@@ -619,8 +702,108 @@ dof_hdr(dtrace_hdl_t *dtp, uint8_t dofversion, dof_hdr_t *hp)
 	return (0);
 }
 
+/*
+ * Does a DIFO hold instructions only the HyperTrace linker can resolve?  The
+ * compiler emits USETX (an unresolved member offset) and ULOAD/UULOAD (a
+ * load whose size is known only once the type is), which the kernel's DIF
+ * validator refuses.  TYPECAST, also refused, is only an annotation: it
+ * needs no resolution and becomes a nop in the DOF (dof_add_difo()), as in
+ * a program that never references such a member, which is executed as the
+ * compiler made it (the linker does not handle every instruction, e.g.
+ * dynamic translators' XLATE/XLARG).
+ */
+static int
+dt_difo_unlinked(const dtrace_difo_t *dp)
+{
+	if (dp == NULL || dp->dtdo_buf == NULL)
+		return (0);
+	for (uint_t i = 0; i < dp->dtdo_len; i++) {
+		switch (DIF_INSTR_OP(dp->dtdo_buf[i])) {
+		case DIF_OP_USETX:
+		case DIF_OP_ULOAD:
+		case DIF_OP_UULOAD:
+			return (1);
+		}
+	}
+	return (0);
+}
+
+int
+dt_prog_unlinked(const dtrace_prog_t *pgp)
+{
+	for (const dt_stmt_t *stp = dt_list_next(&pgp->dp_stmts); stp != NULL;
+	    stp = dt_list_next(stp)) {
+		const dtrace_stmtdesc_t *sdp = stp->ds_desc;
+
+		if (dt_difo_unlinked(sdp->dtsd_ecbdesc->dted_pred.dtpdd_difo))
+			return (1);
+		for (const dtrace_actdesc_t *ap = sdp->dtsd_action; ap != NULL;
+		    ap = ap->dtad_next) {
+			if (dt_difo_unlinked(ap->dtad_difo))
+				return (1);
+			if (ap == sdp->dtsd_action_last)
+				break;
+		}
+	}
+	return (0);
+}
+
+/*
+ * Linking is a property of what reaches the kernel, not of dtrace(1): a
+ * program that still holds instructions only the linker resolves (lockstat's,
+ * any consumer's that does not call hypertrace_link() itself) is linked here,
+ * with the same resolution dtrace(1) applies.  A linked program -- dtrace(1)'s,
+ * or a guest's program the host linked and returned -- holds none and is left
+ * exactly as it is, so a program is never linked twice.  A failed link is
+ * returned as a compiler error: the program's error (dp_err) when the type
+ * checker found one, otherwise the linker's message.
+ */
+static int
+dt_prog_link_for_kernel(dtrace_hdl_t *dtp, dtrace_prog_t *pgp)
+{
+	hypertrace_errmsg_t msg;
+	int err;
+
+	if (!dt_prog_unlinked(pgp))
+		return (0);
+	msg[0] = '\0';
+	dtp->dt_errno = 0;
+	if ((err = hypertrace_link(dtp, pgp, msg)) == 0)
+		return (0);
+	/* Allocation failure (the linker's, or a libdtrace allocation it
+	 * made) is reported as such, not as a defect of the program. */
+	if ((err == E_HYPERTRACE_SYS && errno == ENOMEM) ||
+	    dtp->dt_errno == EDT_NOMEM)
+		return (dt_set_errno(dtp, EDT_NOMEM));
+	if (pgp->dp_haserror)
+		(void) strlcpy(dtp->dt_errmsg, pgp->dp_err,
+		    sizeof (dtp->dt_errmsg));
+	else
+		(void) snprintf(dtp->dt_errmsg, sizeof (dtp->dt_errmsg),
+		    "failed to link the program: %s: %s",
+		    dtrace_hypertrace_errstr(err), msg);
+	dtp->dt_errtag = NULL;
+	return (dt_set_errno(dtp, EDT_COMPILER));
+}
+
 void *
 dtrace_dof_create(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t flags)
+{
+	if (flags & ~DTRACE_D_MASK) {
+		(void) dt_set_errno(dtp, EINVAL);
+		return (NULL);
+	}
+	if (dt_prog_link_for_kernel(dtp, pgp) != 0)
+		return (NULL);
+	return (dt_dof_create(dtp, pgp, flags));
+}
+
+/*
+ * The DOF of a program as it is (dtrace_program_compiled_digest() identifies
+ * the compiled program before it is forwarded for linking).
+ */
+void *
+dt_dof_create(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t flags)
 {
 	dt_dof_t *ddo = &dtp->dt_dof;
 
@@ -642,6 +825,8 @@ dtrace_dof_create(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t flags)
 	dt_buf_t dof;
 	char *fmt;
 	uint_t i;
+	size_t format_size;
+	void *result;
 
 	if (flags & ~DTRACE_D_MASK) {
 		(void) dt_set_errno(dtp, EINVAL);
@@ -667,9 +852,15 @@ dtrace_dof_create(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t flags)
 		dtrace_actdesc_t *ap = sdp->dtsd_action;
 
 		if (sdp->dtsd_fmtdata != NULL) {
-			i = dtrace_printf_format(dtp,
+			format_size = dtrace_printf_format(dtp,
 			    sdp->dtsd_fmtdata, NULL, 0);
-			maxfmt = MAX(maxfmt, i);
+			if (format_size == SIZE_MAX)
+				return (NULL);
+			if (format_size >= UINT_MAX) {
+				(void) dt_set_errno(dtp, EOVERFLOW);
+				return (NULL);
+			}
+			maxfmt = MAX(maxfmt, (uint_t)format_size);
 		}
 
 		if ((edp = sdp->dtsd_ecbdesc) == last)
@@ -682,7 +873,11 @@ dtrace_dof_create(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t flags)
 	}
 
 	dofa = alloca(sizeof (dof_actdesc_t) * maxacts);
-	fmt = alloca(maxfmt + 1);
+	fmt = malloc((size_t)maxfmt + 1);
+	if (fmt == NULL) {
+		(void) dt_set_errno(dtp, EDT_NOMEM);
+		return (NULL);
+	}
 
 	ddo->ddo_strsec = dof_add_lsect(ddo, NULL, DOF_SECT_STRTAB, 1, 0, 0, 0);
 	(void) dof_add_string(ddo, "");
@@ -733,6 +928,7 @@ dtrace_dof_create(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t flags)
 		dofp.dofp_func = dof_add_string(ddo, pdp->dtpd_func);
 		dofp.dofp_name = dof_add_string(ddo, pdp->dtpd_name);
 		dofp.dofp_id = pdp->dtpd_id;
+		dofp.dofp_vmid = pdp->dtpd_vmid;
 
 		probesec = dof_add_lsect(ddo, &dofp, DOF_SECT_PROBEDESC,
 		    sizeof (dof_secidx_t), 0,
@@ -767,8 +963,12 @@ dtrace_dof_create(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t flags)
 			 */
 			if (sdp != NULL && ap == sdp->dtsd_action) {
 				if (sdp->dtsd_fmtdata != NULL) {
-					(void) dtrace_printf_format(dtp,
-					    sdp->dtsd_fmtdata, fmt, maxfmt + 1);
+					if (dtrace_printf_format(dtp,
+					    sdp->dtsd_fmtdata, fmt,
+					    (size_t)maxfmt + 1) == SIZE_MAX) {
+						free(fmt);
+						return (NULL);
+					}
 					strndx = dof_add_string(ddo, fmt);
 				} else if (sdp->dtsd_strdata != NULL) {
 					strndx = dof_add_string(ddo,
@@ -824,7 +1024,7 @@ dtrace_dof_create(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t flags)
 		for (pvp = dt_list_next(&dtp->dt_provlist);
 		    pvp != NULL; pvp = dt_list_next(pvp)) {
 			if (dof_add_provider(ddo, pvp) != 0)
-				return (NULL);
+				goto failed;
 		}
 	}
 
@@ -865,7 +1065,7 @@ dtrace_dof_create(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t flags)
 	 */
 	if ((i = dt_buf_error(&ddo->ddo_secs)) != 0) {
 		(void) dt_set_errno(dtp, i);
-		return (NULL);
+		goto failed;
 	}
 
 	sp = dt_buf_ptr(&ddo->ddo_secs);
@@ -902,7 +1102,13 @@ dtrace_dof_create(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t flags)
 	dt_buf_concat(dtp, &dof, &ddo->ddo_strs, sizeof (char));
 	dt_buf_concat(dtp, &dof, &ddo->ddo_udata, sizeof (uint64_t));
 
-	return (dt_buf_claim(dtp, &dof));
+	result = dt_buf_claim(dtp, &dof);
+	free(fmt);
+	return (result);
+
+failed:
+	free(fmt);
+	return (NULL);
 }
 
 void

@@ -341,6 +341,7 @@ dt_pid_per_mod(void *arg, const prmap_t *pmp, const char *obj)
 				sym.st_info =
 				    GELF_ST_INFO(STB_LOCAL, STT_FUNC);
 				sym.st_other = 0;
+				sym.st_shndx = SHN_ABS;
 				sym.st_value = 0;
 #ifdef illumos
 				sym.st_size = Pstatus(pp->dpp_pr)->pr_dmodel ==
@@ -566,7 +567,9 @@ dt_pid_create_pid_probes(dtrace_probedesc_t *pdp, dtrace_hdl_t *dtp,
 static int
 dt_pid_usdt_mapping(void *data, const prmap_t *pmp, const char *oname)
 {
-	struct ps_prochandle *P = data;
+	dt_proc_t *dpr = data;
+	struct ps_prochandle *P = dpr->dpr_proc;
+	dt_proc_dof_t *dpd;
 	GElf_Sym sym;
 	prsyminfo_t sip;
 	dof_helper_t dh;
@@ -606,6 +609,16 @@ dt_pid_usdt_mapping(void *data, const prmap_t *pmp, const char *oname)
 		dt_pid_objname(dh.dofhp_mod, sizeof (dh.dofhp_mod),
 		    sip.prs_lmid, mname);
 
+		/* Each object's DOF is registered once per process. */
+		for (dpd = dt_list_next(&dpr->dpr_dofs); dpd != NULL;
+		    dpd = dt_list_next(dpd)) {
+			if (dpd->dpd_dof == dh.dofhp_dof &&
+			    dpd->dpd_addr == dh.dofhp_addr)
+				break;
+		}
+		if (dpd != NULL)
+			continue;
+
 #ifdef __FreeBSD__
 		dh.dofhp_pid = proc_getpid(P);
 
@@ -616,8 +629,10 @@ dt_pid_usdt_mapping(void *data, const prmap_t *pmp, const char *oname)
 			return (-1); /* errno is set for us */
 		}
 
-		if (ioctl(fd, DTRACEHIOC_ADDDOF, &dh, sizeof (dh)) < 0)
+		if (ioctl(fd, DTRACEHIOC_ADDDOF, &dh, sizeof (dh)) < 0) {
 			dt_dprintf("DOF was rejected for %s\n", dh.dofhp_mod);
+			continue;
+		}
 #else
 		if (fd == -1 &&
 		    (fd = pr_open(P, "/dev/dtrace/helper", O_RDWR, 0)) < 0) {
@@ -626,9 +641,16 @@ dt_pid_usdt_mapping(void *data, const prmap_t *pmp, const char *oname)
 			return (-1); /* errno is set for us */
 		}
 
-		if (pr_ioctl(P, fd, DTRACEHIOC_ADDDOF, &dh, sizeof (dh)) < 0)
+		if (pr_ioctl(P, fd, DTRACEHIOC_ADDDOF, &dh, sizeof (dh)) < 0) {
 			dt_dprintf("DOF was rejected for %s\n", dh.dofhp_mod);
+			continue;
+		}
 #endif
+		if ((dpd = malloc(sizeof (*dpd))) != NULL) {
+			dpd->dpd_dof = dh.dofhp_dof;
+			dpd->dpd_addr = dh.dofhp_addr;
+			dt_list_append(&dpr->dpr_dofs, dpd);
+		}
 	}
 
 	if (fd != -1)
@@ -650,7 +672,7 @@ dt_pid_create_usdt_probes(dtrace_probedesc_t *pdp, dtrace_hdl_t *dtp,
 
 	assert(DT_MUTEX_HELD(&dpr->dpr_lock));
 	(void) Pupdate_maps(P);
-	if (Pobject_iter(P, dt_pid_usdt_mapping, P) != 0) {
+	if (Pobject_iter(P, dt_pid_usdt_mapping, dpr) != 0) {
 		ret = -1;
 		(void) dt_pid_error(dtp, pcb, dpr, NULL, D_PROC_USDT,
 		    "failed to instantiate probes for pid %d: %s",
@@ -667,6 +689,21 @@ dt_pid_create_usdt_probes(dtrace_probedesc_t *pdp, dtrace_hdl_t *dtp,
 	(void) dt_pid_fix_mod(pdp, P);
 
 	return (ret);
+}
+
+/*
+ * Ask the kernel to match its retained enablings against newly created
+ * probes.  DTRACEIOC_ENABLE copies in a dtrace_enable_io_t, and a NULL DOF
+ * pointer in it (not a NULL ioctl argument, which fails the copyin) selects
+ * re-evaluation; no probe list is returned on that path.
+ */
+static void
+dt_pid_rematch(dtrace_hdl_t *dtp)
+{
+	dtrace_enable_io_t args;
+
+	bzero(&args, sizeof (args));
+	(void) dt_ioctl(dtp, DTRACEIOC_ENABLE, &args);
 }
 
 static pid_t
@@ -750,7 +787,7 @@ dt_pid_create_probes(dtrace_probedesc_t *pdp, dtrace_hdl_t *dtp, dt_pcb_t *pcb)
 			 * Alert other retained enablings which may match
 			 * against the newly created probes.
 			 */
-			(void) dt_ioctl(dtp, DTRACEIOC_ENABLE, NULL);
+			dt_pid_rematch(dtp);
 		}
 
 		(void) pthread_mutex_unlock(&dpr->dpr_lock);
@@ -786,7 +823,7 @@ dt_pid_create_probes(dtrace_probedesc_t *pdp, dtrace_hdl_t *dtp, dt_pcb_t *pcb)
 int
 dt_pid_create_probes_module(dtrace_hdl_t *dtp, dt_proc_t *dpr)
 {
-	dtrace_enable_io_t args;
+	dt_proc_dof_t *dpd, *next;
 	dtrace_prog_t *pgp;
 	dt_stmt_t *stp;
 	dtrace_probedesc_t *pdp, pd;
@@ -796,6 +833,18 @@ dt_pid_create_probes_module(dtrace_hdl_t *dtp, dt_proc_t *dpr)
 
 	(void) snprintf(provname, sizeof (provname), "pid%d",
 	    (int)dpr->dpr_pid);
+
+	/*
+	 * Forget DOF of objects that have been unloaded, so that an object
+	 * loaded again is registered again.
+	 */
+	for (dpd = dt_list_next(&dpr->dpr_dofs); dpd != NULL; dpd = next) {
+		next = dt_list_next(dpd);
+		if (Paddr_to_map(dpr->dpr_proc, dpd->dpd_dof) == NULL) {
+			dt_list_delete(&dpr->dpr_dofs, dpd);
+			free(dpd);
+		}
+	}
 
 	for (pgp = dt_list_next(&dtp->dt_programs); pgp != NULL;
 	    pgp = dt_list_next(pgp)) {
@@ -831,9 +880,7 @@ dt_pid_create_probes_module(dtrace_hdl_t *dtp, dt_proc_t *dpr)
 		 * Give DTrace a shot to the ribs to get it to check
 		 * out the newly created probes.
 		 */
-		args.dof = NULL;
-		args.n_matched = 0;
-		(void) dt_ioctl(dtp, DTRACEIOC_ENABLE, &args);
+		dt_pid_rematch(dtp);
 	}
 
 	return (ret);
@@ -963,10 +1010,12 @@ dt_pid_get_types(dtrace_hdl_t *dtp, const dtrace_probedesc_t *pdp,
 		/*
 		 * We explicitly leave out the library here, we only care that
 		 * it is some int. We are assuming that there is no ctf
-		 * container in here that is lying about what an int is.
+		 * container in here that is lying about what an int is.  The
+		 * D keyword is "userland"; "user" is a syntax error that left
+		 * the offset argument untyped.
 		 */
 		(void) snprintf(adp->dtargd_native, DTRACE_ARGTYPELEN,
-		    "user %s`%s", pdp->dtpd_provider, "int");
+		    "userland %s`%s", pdp->dtpd_provider, "int");
 		adp++;
 		bzero(adp, sizeof (dtrace_argdesc_t));
 		adp->dtargd_ndx = 1;

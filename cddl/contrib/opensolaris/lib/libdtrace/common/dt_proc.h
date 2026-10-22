@@ -66,7 +66,19 @@ typedef struct dt_proc {
 	pthread_t dpr_tid;		/* control thread (or zero if none) */
 	dt_list_t dpr_bps;		/* list of dt_bkpt_t structures */
 	enum dt_close_action dpr_close;	/* do this to child when exiting */
+	dt_list_t dpr_dofs;		/* USDT DOF registered (dt_proc_dof_t) */
 } dt_proc_t;
+
+/*
+ * A USDT DOF section registered with the kernel on behalf of a process, so
+ * that run-time linker events registering the probes of newly loaded
+ * objects do not register the objects already seen again.
+ */
+typedef struct dt_proc_dof {
+	dt_list_t dpd_list;		/* prev/next pointers */
+	uint64_t dpd_dof;		/* address of the DOF in the process */
+	uint64_t dpd_addr;		/* base address of the object */
+} dt_proc_dof_t;
 
 typedef struct dt_proc_notify {
 	dt_proc_t *dprn_dpr;		/* process associated with the event */

@@ -39,6 +39,10 @@
 extern "C" {
 #endif
 
+#ifndef illumos
+extern int dt_hypertrace_uaddr_format(char *, size_t, uint64_t, uint64_t);
+#endif
+
 struct dt_node;
 struct dt_ident;
 
@@ -110,26 +114,28 @@ typedef struct dt_pfwalk {
 
 extern int dt_pfdict_create(dtrace_hdl_t *);
 extern void dt_pfdict_destroy(dtrace_hdl_t *);
+extern const dt_pfconv_t *dt_pfdict_lookup(dtrace_hdl_t *, const char *);
 
 extern dt_pfargv_t *dt_printf_create(dtrace_hdl_t *, const char *);
+extern dt_pfargv_t *dt_printf_dup(dt_pfargv_t *);
 extern void dt_printf_destroy(dt_pfargv_t *);
 
 #define	DT_PRINTF_EXACTLEN	0x1	/* do not permit extra arguments */
 #define	DT_PRINTF_AGGREGATION	0x2	/* enable aggregation conversion */
 
-extern void dt_printf_validate(dt_pfargv_t *, uint_t,
+extern void dt_printf_validate(dtrace_hdl_t *, dt_pfargv_t *, uint_t,
     struct dt_ident *, int, dtrace_actkind_t, struct dt_node *);
 
 extern void dt_printa_validate(struct dt_node *, struct dt_node *);
 
 extern int dt_print_stack(dtrace_hdl_t *, FILE *,
-    const char *, caddr_t, int, int);
+    const char *, caddr_t, uint64_t, int);
 extern int dt_print_ustack(dtrace_hdl_t *, FILE *,
     const char *, caddr_t, uint64_t);
 extern int dt_print_mod(dtrace_hdl_t *, FILE *, const char *, caddr_t);
 extern int dt_print_umod(dtrace_hdl_t *, FILE *, const char *, caddr_t);
 
-extern int dt_format_stack(dtrace_hdl_t *, caddr_t, int, int);
+extern int dt_format_stack(dtrace_hdl_t *, caddr_t, uint64_t, int);
 extern int dt_format_ustack(dtrace_hdl_t *, caddr_t, uint64_t);
 extern int dt_format_mod(dtrace_hdl_t *, caddr_t);
 extern int dt_format_umod(dtrace_hdl_t *, caddr_t);

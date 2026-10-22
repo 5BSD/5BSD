@@ -35,12 +35,15 @@
 
 #include <sys/dtrace.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <gelf.h>
 #include <libproc.h>
 #ifndef illumos
 #include <rtld_db.h>
 #endif
+
+#include <dt_hypertrace.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -66,6 +69,18 @@ typedef struct dtrace_prog dtrace_prog_t;
 typedef struct dtrace_vector dtrace_vector_t;
 typedef struct dtrace_aggdata dtrace_aggdata_t;
 
+#ifndef illumos
+extern char	curthread_str[MAXPATHLEN];
+extern char	intmtx_str[MAXPATHLEN];
+extern char	threadmtx_str[MAXPATHLEN];
+extern char	rwlock_str[MAXPATHLEN];
+extern char	sxlock_str[MAXPATHLEN];
+extern char     thread_str[MAXPATHLEN];
+extern char	mtx_str[MAXPATHLEN];
+extern char	rw_str[MAXPATHLEN];
+extern char	sx_str[MAXPATHLEN];
+#endif
+
 #define	DTRACE_O_NODEV		0x01	/* do not open dtrace(7D) device */
 #define	DTRACE_O_NOSYS		0x02	/* do not load /system/object modules */
 #define	DTRACE_O_LP64		0x04	/* force D compiler to be LP64 */
@@ -80,6 +95,12 @@ extern dtrace_hdl_t *dtrace_vopen(int, int, int *,
 
 extern int dtrace_go(dtrace_hdl_t *);
 extern int dtrace_stop(dtrace_hdl_t *);
+#ifndef illumos
+/* Kernel-state identity only; retirement does not attest user-space output. */
+extern int dtrace_handle_identity(dtrace_hdl_t *, dtrace_handle_lifetime_t *);
+extern int dtrace_handle_retired(dtrace_hdl_t *,
+    const dtrace_handle_lifetime_t *, int *);
+#endif
 extern void dtrace_sleep(dtrace_hdl_t *);
 extern void dtrace_close(dtrace_hdl_t *);
 
@@ -110,6 +131,7 @@ typedef struct dtrace_proginfo {
 	uint_t dpi_recgens;	/* number of record generating probes in prog */
 	uint_t dpi_matches;	/* number of probes matched by program */
 	uint_t dpi_speculations; /* number of speculations specified in prog */
+	dtrace_probedesc_t *dpi_pds; /* matched probes */
 } dtrace_proginfo_t;
 
 #define	DTRACE_C_DIFV	0x0001	/* DIF verbose mode: show each compiled DIFO */
@@ -181,6 +203,69 @@ extern int dtrace_stmt_iter(dtrace_hdl_t *, dtrace_prog_t *,
 extern void dtrace_stmt_destroy(dtrace_hdl_t *, dtrace_stmtdesc_t *);
 
 /*
+ * DTrace Program Analysis Interface
+ */
+
+/*
+ * DTrace actions can reference or modify variables (global, thread-local or
+ * clause-local), external memory or internal state (in a dtrace_state_t).
+ */
+
+#define	DTRACE_MODREF_GLOBAL_MOD	0x01
+#define	DTRACE_MODREF_GLOBAL_REF	0x02
+#define	DTRACE_MODREF_THREAD_LOCAL_MOD	0x04
+#define	DTRACE_MODREF_THREAD_LOCAL_REF	0x08
+#define	DTRACE_MODREF_CLAUSE_LOCAL_MOD	0x10
+#define	DTRACE_MODREF_CLAUSE_LOCAL_REF	0x20
+#define	DTRACE_MODREF_MEMORY_MOD	0x40
+#define	DTRACE_MODREF_MEMORY_REF	0x80
+#define	DTRACE_MODREF_STATE_MOD		0x100
+#define	DTRACE_MODREF_STATE_REF		0x200
+
+#define	DTRACE_MODREF_ANY_MOD ( \
+	DTRACE_MODREF_GLOBAL_MOD \
+	| DTRACE_MODREF_THREAD_LOCAL_MOD \
+	| DTRACE_MODREF_CLAUSE_LOCAL_MOD \
+	| DTRACE_MODREF_MEMORY_MOD \
+	| DTRACE_MODREF_STATE_MOD \
+	)
+
+#define	DTRACE_MODREF_ANY_REF ( \
+	DTRACE_MODREF_GLOBAL_REF \
+	| DTRACE_MODREF_THREAD_LOCAL_REF \
+	| DTRACE_MODREF_CLAUSE_LOCAL_REF \
+	| DTRACE_MODREF_MEMORY_REF \
+	| DTRACE_MODREF_STATE_REF \
+	)
+
+#define	DTRACE_MODREF_ALL ( \
+	DTRACE_MODREF_ANY_MOD | DTRACE_MODREF_ANY_REF)
+
+/*
+ * A callback function that checks for conformance with mod/ref policies.
+ *
+ * `modref` is the mod/ref behaviour of a DTrace action and `cumulative_modref`
+ * is the accumulated mod/ref behaviour of the program up to (but not including)
+ * the action in question. The probe description and `FILE*` parameters can be
+ * used for reporting error details.
+ *
+ * This callback should return `true` iff `modref` is acceptable.
+ */
+typedef bool dtrace_modref_check_f(int modref, int cumulative_modref,
+	const dtrace_probedesc_t *, FILE *output);
+
+/* Analyze the mod/ref behaviour of a DTrace program */
+extern bool dtrace_analyze_program_modref(dtrace_prog_t *,
+	dtrace_modref_check_f *, FILE *output);
+
+extern void dtrace_dump_actions_ecbdesc(dtrace_ecbdesc_t *);
+extern void dtrace_dump_actions(dtrace_prog_t *);
+extern void dtrace_dump_ecbs(dtrace_prog_t *);
+/* Output GraphViz .dot representation of a DTrace program's actions. */
+extern void dtrace_graph_program(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, FILE *);
+
+
+/*
  * DTrace Data Consumption Interface
  */
 typedef enum {
@@ -209,15 +294,27 @@ typedef struct dtrace_probedata {
 typedef int dtrace_consume_probe_f(const dtrace_probedata_t *, void *);
 typedef int dtrace_consume_rec_f(const dtrace_probedata_t *,
     const dtrace_recdesc_t *, void *);
+typedef void dtrace_put_buf_f(dtrace_hdl_t *, dtrace_bufdesc_t *);
+typedef int dtrace_get_buf_f(dtrace_hdl_t *, int, dtrace_bufdesc_t **);
 
-extern int dtrace_consume(dtrace_hdl_t *, FILE *,
-    dtrace_consume_probe_f *, dtrace_consume_rec_f *, void *);
+typedef struct dtrace_consumer {
+	dtrace_consume_probe_f *dc_consume_probe;
+	dtrace_consume_rec_f *dc_consume_rec;
+	dtrace_put_buf_f *dc_put_buf;
+	dtrace_get_buf_f *dc_get_buf;
+} dtrace_consumer_t;
+
+extern int dtrace_consume(dtrace_hdl_t *, FILE *, dtrace_consume_probe_f *,
+    dtrace_consume_rec_f *, void *);
+extern int dtrace_consume_consumer(dtrace_hdl_t *, FILE *, dtrace_consumer_t *,
+    void *);
 
 #define	DTRACE_STATUS_NONE	0	/* no status; not yet time */
 #define	DTRACE_STATUS_OKAY	1	/* status okay */
 #define	DTRACE_STATUS_EXITED	2	/* exit() was called; tracing stopped */
 #define	DTRACE_STATUS_FILLED	3	/* fill buffer filled; tracing stoped */
 #define	DTRACE_STATUS_STOPPED	4	/* tracing already stopped */
+#define	DTRACE_STATUS_INACTIVE	5	/* tracing not started */
 
 extern int dtrace_status(dtrace_hdl_t *);
 
@@ -282,6 +379,11 @@ typedef enum {
 
 extern dtrace_workstatus_t dtrace_work(dtrace_hdl_t *, FILE *,
     dtrace_consume_probe_f *, dtrace_consume_rec_f *, void *);
+extern dtrace_workstatus_t dtrace_work_consumer(dtrace_hdl_t *, FILE *,
+    dtrace_consumer_t *, void *);
+/* Caller must fence producers and serialize access to the DTrace handle. */
+extern int dtrace_consume_quiesced(dtrace_hdl_t *, FILE *,
+    dtrace_consumer_t *, void *);
 
 /*
  * DTrace Handler Interface
@@ -519,6 +621,7 @@ typedef struct dtrace_typeinfo {
 	ctf_file_t *dtt_ctfp;			/* CTF container handle */
 	ctf_id_t dtt_type;			/* CTF type identifier */
 	uint_t dtt_flags;			/* Misc. flags */
+	int dtt_copied_ctf;			/* did we copy this ctf info? */
 } dtrace_typeinfo_t;
 
 #define	DTT_FL_USER	0x1			/* user type */
@@ -538,6 +641,7 @@ extern int dtrace_type_fcompile(dtrace_hdl_t *,
 extern struct dt_node *dt_compile_sugar(dtrace_hdl_t *,
     struct dt_node *);
 
+extern int dtrace_compile_idents_set(dtrace_hdl_t *, char *, size_t);
 
 /*
  * DTrace Probe Interface
@@ -613,6 +717,39 @@ extern const char *dtrace_stability_name(dtrace_stability_t);
 extern const char *dtrace_class_name(dtrace_class_t);
 
 extern int dtrace_provider_modules(dtrace_hdl_t *, const char **, int);
+extern void dtrace_set_guest(dtrace_hdl_t *);
+extern int dtrace_is_guest(dtrace_hdl_t *);
+extern int dtrace_augment_tracing(dtrace_hdl_t *, dtrace_prog_t *);
+extern int dtrace_vprobes_create(dtrace_hdl_t *, dtrace_prog_t *);
+extern void dtrace_enable_hypertrace(dtrace_hdl_t *);
+extern void dtrace_set_failmsg_needed(dtrace_hdl_t *);
+extern int dtrace_hypertrace_enabled(dtrace_hdl_t *);
+extern int dtrace_hypertrace_options_update(dtrace_hdl_t *);
+extern int open_dtraced(uint64_t);
+extern int open_dtraced_session(uint64_t, uint8_t[16]);
+extern int dtrace_send_elf(dtrace_prog_t *, int, int, const char *, int);
+struct dtraced_derived_parent;
+extern int dtrace_send_elf_derived(dtrace_prog_t *, int, int,
+    const struct dtraced_derived_parent *);
+extern int dtrace_program_source_id(const dtrace_prog_t *, uint8_t[16]);
+extern int dtrace_program_compiled_digest(dtrace_hdl_t *, dtrace_prog_t *,
+    uint8_t[32]);
+struct dtraced_hdr;
+extern int dtrace_send_message(int, const struct dtraced_hdr *,
+    const void *, size_t);
+extern int dtrace_send_elf_async(dtrace_prog_t *, int, int, char *, const char *, int);
+extern void dtrace_async_teardown(void);
+/* Terminal process-wide discard: 1 idle, 0 pending, -1 error. */
+extern int dtrace_async_discard_step(void);
+extern char *dtrace_get_srcident(char *);
+extern int dtrace_elf_create(dtrace_hdl_t *, dtrace_prog_t *, int, int,
+    const char *, hypertrace_errmsg_t);
+extern dtrace_prog_t *dtrace_elf_parse(dtrace_hdl_t *, int, const char *, int,
+    int *, hypertrace_errmsg_t, dtrace_prog_t *);
+extern int hypertrace_link(dtrace_hdl_t *, dtrace_prog_t *,
+    hypertrace_errmsg_t);
+extern void dtrace_resolver_setflags(uint32_t);
+extern dtrace_prog_t *dtrace_vprog_from(dtrace_hdl_t *, dtrace_prog_t *, int);
 
 extern const char *const _dtrace_version;
 extern int _dtrace_debug;
@@ -632,6 +769,10 @@ extern int dtrace_oformat(dtrace_hdl_t *);
 extern void dtrace_set_outfp(const FILE *);
 extern void dtrace_oformat_setup(dtrace_hdl_t *);
 extern void dtrace_oformat_teardown(dtrace_hdl_t *);
+/* Discard on the formatter-owning thread; does not flush or close its FILE. */
+extern void dtrace_oformat_discard(dtrace_hdl_t *);
+/* Quiesced handle only: terminally discard owned and caller output buffers. */
+extern int dtrace_output_discard(dtrace_hdl_t *, FILE *);
 extern void dtrace_oformat_probe(dtrace_hdl_t *, const dtrace_probedata_t *,
     processorid_t, dtrace_probedesc_t *);
 

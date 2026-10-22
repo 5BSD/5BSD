@@ -116,8 +116,10 @@ dt_epid_add(dtrace_hdl_t *dtp, dtrace_epid_t id)
 	dtrace_eprobedesc_t *enabled, *nenabled;
 	dtrace_probedesc_t *probe;
 
-	while (id >= (max = dtp->dt_maxprobe) || dtp->dt_pdesc == NULL) {
-		dtrace_id_t new_max = max ? (max << 1) : 1;
+	/* dt_maxprobe is 0 exactly when dt_pdesc is NULL (dt_epid_destroy). */
+	while (dtp->dt_pdesc == NULL || id >= dtp->dt_maxprobe) {
+		dtrace_id_t new_max = (max = dtp->dt_maxprobe) != 0 ?
+		    (max << 1) : 1;
 		size_t nsize = new_max * sizeof (void *);
 		dtrace_probedesc_t **new_pdesc;
 		dtrace_eprobedesc_t **new_edesc;
@@ -146,8 +148,8 @@ dt_epid_add(dtrace_hdl_t *dtp, dtrace_epid_t id)
 		dtp->dt_maxprobe = new_max;
 	}
 
-	if (dtp->dt_pdesc[id] != NULL)
-		return (0);
+	/* Both callers come here only for an empty slot. */
+	assert(dtp->dt_pdesc[id] == NULL);
 
 	if ((enabled = malloc(sizeof (dtrace_eprobedesc_t))) == NULL)
 		return (dt_set_errno(dtp, EDT_NOMEM));
@@ -198,6 +200,7 @@ dt_epid_add(dtrace_hdl_t *dtp, dtrace_epid_t id)
 		return (dt_set_errno(dtp, EDT_NOMEM));
 	}
 
+	probe->dtpd_vmid = enabled->dtepd_vmid;
 	probe->dtpd_id = enabled->dtepd_probeid;
 
 	if (dt_ioctl(dtp, DTRACEIOC_PROBES, probe) == -1) {
@@ -322,12 +325,15 @@ dt_format_destroy(dtrace_hdl_t *dtp)
 static int
 dt_aggid_add(dtrace_hdl_t *dtp, dtrace_aggid_t id)
 {
+	dtrace_aggdesc_t *agg, *nagg;
 	dtrace_id_t max;
 	dtrace_epid_t epid;
 	int rval;
 
-	while (id >= (max = dtp->dt_maxagg) || dtp->dt_aggdesc == NULL) {
-		dtrace_id_t new_max = max ? (max << 1) : 1;
+	/* dt_maxagg is 0 exactly when dt_aggdesc is NULL (dt_aggid_destroy). */
+	while (dtp->dt_aggdesc == NULL || id >= dtp->dt_maxagg) {
+		dtrace_id_t new_max = (max = dtp->dt_maxagg) != 0 ?
+		    (max << 1) : 1;
 		size_t nsize = new_max * sizeof (void *);
 		dtrace_aggdesc_t **new_aggdesc;
 
@@ -346,84 +352,95 @@ dt_aggid_add(dtrace_hdl_t *dtp, dtrace_aggid_t id)
 		dtp->dt_maxagg = new_max;
 	}
 
-	if (dtp->dt_aggdesc[id] == NULL) {
-		dtrace_aggdesc_t *agg, *nagg;
+	/* The only caller comes here only for an empty slot. */
+	assert(dtp->dt_aggdesc[id] == NULL);
 
-		if ((agg = malloc(sizeof (dtrace_aggdesc_t))) == NULL)
-			return (dt_set_errno(dtp, EDT_NOMEM));
+	if ((agg = malloc(sizeof (dtrace_aggdesc_t))) == NULL)
+		return (dt_set_errno(dtp, EDT_NOMEM));
 
-		bzero(agg, sizeof (dtrace_aggdesc_t));
-		agg->dtagd_id = id;
-		agg->dtagd_nrecs = 1;
+	bzero(agg, sizeof (dtrace_aggdesc_t));
+	agg->dtagd_id = id;
+	agg->dtagd_nrecs = 1;
 
 #ifdef illumos
-		if (dt_ioctl(dtp, DTRACEIOC_AGGDESC, agg) == -1) {
+	if (dt_ioctl(dtp, DTRACEIOC_AGGDESC, agg) == -1) {
 #else
-		if (dt_ioctl(dtp, DTRACEIOC_AGGDESC, &agg) == -1) {
+	if (dt_ioctl(dtp, DTRACEIOC_AGGDESC, &agg) == -1) {
 #endif
+		rval = dt_set_errno(dtp, errno);
+		free(agg);
+		return (rval);
+	}
+
+	if (DTRACE_SIZEOF_AGGDESC(agg) != sizeof (*agg)) {
+		/*
+		 * There must be more than one action.  Allocate the
+		 * appropriate amount of space and try again.
+		 */
+		if ((nagg = malloc(DTRACE_SIZEOF_AGGDESC(agg))) != NULL)
+			bcopy(agg, nagg, sizeof (*agg));
+
+		free(agg);
+
+		if ((agg = nagg) == NULL)
+			return (dt_set_errno(dtp, EDT_NOMEM));
+
+#ifdef illumos
+		rval = dt_ioctl(dtp, DTRACEIOC_AGGDESC, agg);
+#else
+		rval = dt_ioctl(dtp, DTRACEIOC_AGGDESC, &agg);
+#endif
+
+		if (rval == -1) {
 			rval = dt_set_errno(dtp, errno);
 			free(agg);
 			return (rval);
 		}
-
-		if (DTRACE_SIZEOF_AGGDESC(agg) != sizeof (*agg)) {
-			/*
-			 * There must be more than one action.  Allocate the
-			 * appropriate amount of space and try again.
-			 */
-			if ((nagg = malloc(DTRACE_SIZEOF_AGGDESC(agg))) != NULL)
-				bcopy(agg, nagg, sizeof (*agg));
-
-			free(agg);
-
-			if ((agg = nagg) == NULL)
-				return (dt_set_errno(dtp, EDT_NOMEM));
-
-#ifdef illumos
-			rval = dt_ioctl(dtp, DTRACEIOC_AGGDESC, agg);
-#else
-			rval = dt_ioctl(dtp, DTRACEIOC_AGGDESC, &agg);
-#endif
-
-			if (rval == -1) {
-				rval = dt_set_errno(dtp, errno);
-				free(agg);
-				return (rval);
-			}
-		}
-
-		/*
-		 * If we have a uarg, it's a pointer to the compiler-generated
-		 * statement; we'll use this value to get the name and
-		 * compiler-generated variable ID for the aggregation.  If
-		 * we're grabbing an anonymous enabling, this pointer value
-		 * is obviously meaningless -- and in this case, we can't
-		 * provide the compiler-generated aggregation information.
-		 */
-		if (dtp->dt_options[DTRACEOPT_GRABANON] == DTRACEOPT_UNSET &&
-		    agg->dtagd_rec[0].dtrd_uarg != 0) {
-			dtrace_stmtdesc_t *sdp;
-			dt_ident_t *aid;
-
-			sdp = (dtrace_stmtdesc_t *)(uintptr_t)
-			    agg->dtagd_rec[0].dtrd_uarg;
-			aid = sdp->dtsd_aggdata;
-			agg->dtagd_name = aid->di_name;
-			agg->dtagd_varid = aid->di_id;
-		} else {
-			agg->dtagd_varid = DTRACE_AGGVARIDNONE;
-		}
-
-		if ((epid = agg->dtagd_epid) >= dtp->dt_maxprobe ||
-		    dtp->dt_pdesc[epid] == NULL) {
-			if ((rval = dt_epid_add(dtp, epid)) != 0) {
-				free(agg);
-				return (rval);
-			}
-		}
-
-		dtp->dt_aggdesc[id] = agg;
 	}
+
+	/*
+	 * Every aggregation has at least its aggregating record; consumers
+	 * index dtagd_rec[dtagd_nrecs - 1].  Refuse a description without
+	 * records before trusting anything else in it.
+	 */
+	if (agg->dtagd_nrecs == 0) {
+		free(agg);
+		return (dt_set_errno(dtp, EDT_BADAGG));
+	}
+
+	/*
+	 * If we have a uarg, it's a pointer to the compiler-generated
+	 * statement; we'll use this value to get the name and
+	 * compiler-generated variable ID for the aggregation.  If
+	 * we're grabbing an anonymous enabling, this pointer value
+	 * is obviously meaningless -- and in this case, we can't
+	 * provide the compiler-generated aggregation information.
+	 */
+	if (dtp->dt_options[DTRACEOPT_GRABANON] == DTRACEOPT_UNSET &&
+	    agg->dtagd_rec[0].dtrd_uarg != 0) {
+		dtrace_stmtdesc_t *sdp;
+		dt_ident_t *aid;
+
+		sdp = (dtrace_stmtdesc_t *)(uintptr_t)
+		    agg->dtagd_rec[0].dtrd_uarg;
+		aid = sdp->dtsd_aggdata;
+		agg->dtagd_name = aid->di_name;
+		agg->dtagd_varid = aid->di_id;
+	} else {
+		agg->dtagd_varid = DTRACE_AGGVARIDNONE;
+	}
+
+	/* Test dt_pdesc before indexing it. */
+	epid = agg->dtagd_epid;
+	if (dtp->dt_pdesc == NULL || epid >= dtp->dt_maxprobe ||
+	    dtp->dt_pdesc[epid] == NULL) {
+		if ((rval = dt_epid_add(dtp, epid)) != 0) {
+			free(agg);
+			return (rval);
+		}
+	}
+
+	dtp->dt_aggdesc[id] = agg;
 
 	return (0);
 }
@@ -434,7 +451,9 @@ dt_aggid_lookup(dtrace_hdl_t *dtp, dtrace_aggid_t aggid,
 {
 	int rval;
 
-	if (aggid >= dtp->dt_maxagg || dtp->dt_aggdesc[aggid] == NULL) {
+	if (dtp->dt_aggdesc == NULL ||
+	    aggid >= dtp->dt_maxagg ||
+	    dtp->dt_aggdesc[aggid] == NULL) {
 		if ((rval = dt_aggid_add(dtp, aggid)) != 0)
 			return (rval);
 	}

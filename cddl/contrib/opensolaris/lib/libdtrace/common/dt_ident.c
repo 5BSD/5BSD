@@ -50,6 +50,8 @@
 #include <dt_strtab.h>
 #include <dt_impl.h>
 
+#include <dt_resolver.h>
+
 /*
  * Common code for cooking an identifier that uses a typed signature list (we
  * use this for associative arrays and functions).  If the argument list is
@@ -106,7 +108,8 @@ dt_idcook_sign(dt_node_t *dnp, dt_ident_t *idp,
 		}
 	}
 
-	dt_node_type_assign(dnp, idp->di_ctfp, idp->di_type, B_FALSE);
+	dt_node_type_assign(dnp, idp->di_object, idp->di_ctfp, idp->di_type,
+	    B_FALSE);
 }
 
 /*
@@ -117,6 +120,10 @@ dt_idcook_sign(dt_node_t *dnp, dt_ident_t *idp,
 static void
 dt_idcook_assc(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *args)
 {
+	int isbottom;
+
+	isbottom = 0;
+
 	if (idp->di_data == NULL) {
 		dt_idsig_t *isp = idp->di_data = malloc(sizeof (dt_idsig_t));
 		char n[DT_TYPE_NAMELEN];
@@ -147,11 +154,14 @@ dt_idcook_assc(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *args)
 		 */
 		if (!(idp->di_flags & DT_IDFLG_DECL)) {
 			idp->di_ctfp = DT_DYN_CTFP(yypcb->pcb_hdl);
+			idp->di_object = DT_DYN_OBJECT(yypcb->pcb_hdl);
 			idp->di_type = DT_DYN_TYPE(yypcb->pcb_hdl);
 		}
 
 		for (i = 0; i < argc; i++, args = args->dn_list) {
-			if (dt_node_is_dynamic(args) || dt_node_is_void(args)) {
+			isbottom = dt_node_is_bottom(args);
+			if (!isbottom &&
+			    dt_node_is_dynamic(args) || dt_node_is_void(args)) {
 				xyerror(D_KEY_TYPE, "%s expression may not be "
 				    "used as %s index: key #%d\n",
 				    dt_node_type_name(args, n, sizeof (n)),
@@ -165,7 +175,8 @@ dt_idcook_assc(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *args)
 		if (argc != 0)
 			isp->dis_args[argc - 1].dn_list = NULL;
 
-		dt_node_type_assign(dnp, idp->di_ctfp, idp->di_type, B_FALSE);
+		dt_node_type_assign(dnp, idp->di_object, idp->di_ctfp,
+		    idp->di_type, B_FALSE);
 
 	} else {
 		dt_idcook_sign(dnp, idp, argc, args,
@@ -244,9 +255,11 @@ dt_idcook_func(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *args)
 
 		if (idp->di_kind == DT_IDENT_AGGFUNC) {
 			idp->di_ctfp = DT_DYN_CTFP(dtp);
+			idp->di_object = DT_DYN_OBJECT(dtp);
 			idp->di_type = DT_DYN_TYPE(dtp);
 		} else {
 			idp->di_ctfp = dtt.dtt_ctfp;
+			idp->di_object = dtt.dtt_object;
 			idp->di_type = dtt.dtt_type;
 		}
 
@@ -277,6 +290,7 @@ dt_idcook_func(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *args)
 
 			if (strcmp(p1, "@") == 0 || strcmp(p1, "...") == 0) {
 				isp->dis_args[i].dn_ctfp = NULL;
+				isp->dis_args[i].dn_object = NULL;
 				isp->dis_args[i].dn_type = CTF_ERR;
 				if (*p1 == '.')
 					isp->dis_varargs = i;
@@ -307,7 +321,7 @@ dt_idcook_func(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *args)
 				    p1, dtrace_errmsg(dtp, dtrace_errno(dtp)));
 			}
 
-			dt_node_type_assign(&isp->dis_args[i],
+			dt_node_type_assign(&isp->dis_args[i], dtt.dtt_object,
 			    dtt.dtt_ctfp, dtt.dtt_type, B_FALSE);
 		}
 	}
@@ -334,9 +348,9 @@ dt_idcook_args(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *ap)
 	char n2[DT_TYPE_NAMELEN];
 
 	if (argc != 1) {
-		xyerror(D_PROTO_LEN, "%s[ ] prototype mismatch: %d arg%s"
-		    "passed, 1 expected\n", idp->di_name, argc,
-		    argc == 1 ? " " : "s ");
+		/* argc != 1 here, so the plural form always applies. */
+		xyerror(D_PROTO_LEN, "%s[ ] prototype mismatch: %d args "
+		    "passed, 1 expected\n", idp->di_name, argc);
 	}
 
 	if (ap->dn_kind != DT_NODE_INT) {
@@ -350,6 +364,10 @@ dt_idcook_args(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *ap)
 		xyerror(D_ARGS_NONE, "%s[ ] may not be referenced outside "
 		    "of a probe clause\n", idp->di_name);
 	}
+
+	/* dt_resolve() matches the empty target (dt_resolver.c). */
+	if (dt_resolve(ap->dn_target, 0) != 0)
+		return;
 
 	if (prp == NULL) {
 		xyerror(D_ARGS_MULTI,
@@ -394,6 +412,7 @@ dt_idcook_args(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *ap)
 			longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
 
 		dt_node_type_assign(dnp,
+		    prp->pr_argv[ap->dn_value].dtt_object,
 		    prp->pr_argv[ap->dn_value].dtt_ctfp,
 		    prp->pr_argv[ap->dn_value].dtt_type,
 		    prp->pr_argv[ap->dn_value].dtt_flags & DTT_FL_USER ?
@@ -423,10 +442,11 @@ dt_idcook_args(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *ap)
 		 */
 		dnp->dn_ident->di_data = xidp->di_data;
 		dnp->dn_ident->di_ctfp = xidp->di_ctfp;
+		dnp->dn_ident->di_object = xidp->di_object;
 		dnp->dn_ident->di_type = xidp->di_type;
 
-		dt_node_type_assign(dnp, DT_DYN_CTFP(dtp), DT_DYN_TYPE(dtp),
-		    B_FALSE);
+		dt_node_type_assign(dnp, DT_DYN_OBJECT(dtp), DT_DYN_CTFP(dtp),
+		    DT_DYN_TYPE(dtp), B_FALSE);
 
 	} else {
 		xyerror(D_ARGS_XLATOR, "translator for %s[%lld] from %s to %s "
@@ -447,9 +467,9 @@ dt_idcook_regs(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *ap)
 	char n[DT_TYPE_NAMELEN];
 
 	if (argc != 1) {
-		xyerror(D_PROTO_LEN, "%s[ ] prototype mismatch: %d arg%s"
-		    "passed, 1 expected\n", idp->di_name,
-		    argc, argc == 1 ? " " : "s ");
+		/* argc != 1 here, so the plural form always applies. */
+		xyerror(D_PROTO_LEN, "%s[ ] prototype mismatch: %d args "
+		    "passed, 1 expected\n", idp->di_name, argc);
 	}
 
 	if (ap->dn_kind != DT_NODE_INT) {
@@ -470,9 +490,11 @@ dt_idcook_regs(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *ap)
 	}
 
 	idp->di_ctfp = dtt.dtt_ctfp;
+	idp->di_object = dtt.dtt_object;
 	idp->di_type = dtt.dtt_type;
 
-	dt_node_type_assign(dnp, idp->di_ctfp, idp->di_type, B_FALSE);
+	dt_node_type_assign(dnp, idp->di_object, idp->di_ctfp, idp->di_type,
+	    B_FALSE);
 }
 
 /*ARGSUSED*/
@@ -491,10 +513,12 @@ dt_idcook_type(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *args)
 		}
 
 		idp->di_ctfp = dtt.dtt_ctfp;
+		idp->di_object = dtt.dtt_object;
 		idp->di_type = dtt.dtt_type;
 	}
 
-	dt_node_type_assign(dnp, idp->di_ctfp, idp->di_type, B_FALSE);
+	dt_node_type_assign(dnp, idp->di_object, idp->di_ctfp, idp->di_type,
+	    B_FALSE);
 }
 
 /*ARGSUSED*/
@@ -502,7 +526,8 @@ static void
 dt_idcook_thaw(dt_node_t *dnp, dt_ident_t *idp, int argc, dt_node_t *args)
 {
 	if (idp->di_ctfp != NULL && idp->di_type != CTF_ERR)
-		dt_node_type_assign(dnp, idp->di_ctfp, idp->di_type, B_FALSE);
+		dt_node_type_assign(dnp, idp->di_object, idp->di_ctfp,
+		    idp->di_type, B_FALSE);
 }
 
 static void
@@ -624,7 +649,12 @@ const dt_idops_t dt_idops_probe = {
 	.di_size = dt_idsize_none,
 };
 
-static void
+/*
+ * Fill the hash with its initial population.  Returns 0, or -1 with errno
+ * set to ENOMEM when an identifier cannot be allocated: the template entries
+ * not yet inserted stay pending (dh_tmpl), so a later use resumes there.
+ */
+static int
 dt_idhash_populate(dt_idhash_t *dhp)
 {
 	const dt_ident_t *idp = dhp->dh_tmpl;
@@ -636,9 +666,29 @@ dt_idhash_populate(dt_idhash_t *dhp)
 		if (dt_idhash_insert(dhp, idp->di_name,
 		    idp->di_kind, idp->di_flags, idp->di_id, idp->di_attr,
 		    idp->di_vers, idp->di_ops ? idp->di_ops : &dt_idops_thaw,
-		    idp->di_iarg, 0) == NULL)
-			longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
+		    idp->di_iarg, 0) == NULL) {
+			dhp->dh_tmpl = idp;
+			errno = ENOMEM;
+			return (-1);
+		}
 	}
+	return (0);
+}
+
+/*
+ * Populate the hash before a use that needs it.  While compiling, a failure
+ * ends the compilation (EDT_NOMEM); outside of a compilation (yypcb is NULL,
+ * e.g. in dtrace_open()) there is no compiler state to unwind to, so it
+ * returns -1 with errno set to ENOMEM and the caller reports the failure.
+ */
+static int
+dt_idhash_fill(dt_idhash_t *dhp)
+{
+	if (dhp->dh_tmpl == NULL || dt_idhash_populate(dhp) == 0)
+		return (0);
+	if (yypcb != NULL)
+		longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
+	return (-1);
 }
 
 dt_idhash_t *
@@ -730,8 +780,8 @@ dt_idhash_lookup(dt_idhash_t *dhp, const char *name)
 	ulong_t h = dt_strtab_hash(name, &len) % dhp->dh_hashsz;
 	dt_ident_t *idp;
 
-	if (dhp->dh_tmpl != NULL)
-		dt_idhash_populate(dhp); /* fill hash w/ initial population */
+	if (dt_idhash_fill(dhp) != 0)
+		return (NULL);
 
 	for (idp = dhp->dh_hash[h]; idp != NULL; idp = idp->di_next) {
 		if (strcmp(idp->di_name, name) == 0)
@@ -771,8 +821,8 @@ dt_idhash_insert(dt_idhash_t *dhp, const char *name, ushort_t kind,
 	dt_ident_t *idp;
 	ulong_t h;
 
-	if (dhp->dh_tmpl != NULL)
-		dt_idhash_populate(dhp); /* fill hash w/ initial population */
+	if (dt_idhash_fill(dhp) != 0)
+		return (NULL);
 
 	idp = dt_ident_create(name, kind, flags, id,
 	    attr, vers, ops, iarg, gen);
@@ -797,8 +847,9 @@ dt_idhash_xinsert(dt_idhash_t *dhp, dt_ident_t *idp)
 {
 	ulong_t h;
 
-	if (dhp->dh_tmpl != NULL)
-		dt_idhash_populate(dhp); /* fill hash w/ initial population */
+	/* Outside of a compilation the template stays pending; the next use
+	 * populates the hash around this identifier. */
+	(void) dt_idhash_fill(dhp);
 
 	h = dt_strtab_hash(idp->di_name, NULL) % dhp->dh_hashsz;
 	idp->di_next = dhp->dh_hash[h];
@@ -856,8 +907,15 @@ dt_idhash_iter(dt_idhash_t *dhp, dt_idhash_f *func, void *data)
 	ulong_t i, j, n;
 	int rv;
 
+	/*
+	 * An identifier can only have been added after the hash was populated
+	 * (dt_idhash_insert() populates it first), so when populating fails
+	 * here the entries present are all there is to visit.  This is also
+	 * reached from dt_pcb_pop() while a failed compilation is unwound, where
+	 * it must not unwind again.
+	 */
 	if (dhp->dh_tmpl != NULL)
-		dt_idhash_populate(dhp); /* fill hash w/ initial population */
+		(void) dt_idhash_populate(dhp);
 
 	n = dhp->dh_nelems;
 	ids = alloca(sizeof (dt_ident_t *) * n);
@@ -929,6 +987,7 @@ dt_ident_create(const char *name, ushort_t kind, ushort_t flags, uint_t id,
 	idp->di_iarg = iarg;
 	idp->di_data = NULL;
 	idp->di_ctfp = NULL;
+	idp->di_object = NULL;
 	idp->di_type = CTF_ERR;
 	idp->di_next = NULL;
 	idp->di_gen = gen;
@@ -982,9 +1041,11 @@ dt_ident_cook(dt_node_t *dnp, dt_ident_t *idp, dt_node_t **pargp)
 }
 
 void
-dt_ident_type_assign(dt_ident_t *idp, ctf_file_t *fp, ctf_id_t type)
+dt_ident_type_assign(dt_ident_t *idp, const char *object, ctf_file_t *fp,
+    ctf_id_t type)
 {
 	idp->di_ctfp = fp;
+	idp->di_object = object;
 	idp->di_type = type;
 }
 

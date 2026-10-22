@@ -389,9 +389,9 @@ proc_objname(struct proc_handle *p, uintptr_t addr, char *objname,
 int
 proc_iter_objs(struct proc_handle *p, proc_map_f *func, void *cd)
 {
-	char last[MAXPATHLEN], path[MAXPATHLEN], *base;
-	prmap_t *map;
-	size_t i;
+	char path[MAXPATHLEN], *base;
+	struct map_info *mapping;
+	size_t i, j;
 	int error;
 
 	if (p->nmappings == 0)
@@ -399,22 +399,25 @@ proc_iter_objs(struct proc_handle *p, proc_map_f *func, void *cd)
 			return (-1);
 
 	error = 0;
-	memset(last, 0, sizeof(last));
 	for (i = 0; i < p->nmappings; i++) {
-		map = &p->mappings[i].map;
-		strlcpy(path, map->pr_mapname, sizeof(path));
-		base = basename(path);
+		mapping = &p->mappings[i];
 		/*
-		 * We shouldn't call the callback twice with the same object.
-		 * To do that we are assuming the fact that if there are
-		 * repeated object names (i.e. different mappings for the
-		 * same object) they occur next to each other.
+		 * Call the callback once per object, with its first (lowest)
+		 * mapping.  All mappings of a file share its map_info file;
+		 * anonymous mappings, which may lie between the segments of
+		 * an object, have none and belong to no object.
 		 */
-		if (strcmp(base, last) == 0)
+		if (mapping->file == NULL)
 			continue;
-		if ((error = (*func)(cd, map, base)) != 0)
+		for (j = 0; j < i; j++)
+			if (p->mappings[j].file == mapping->file)
+				break;
+		if (j < i)
+			continue;
+		strlcpy(path, mapping->map.pr_mapname, sizeof(path));
+		base = basename(path);
+		if ((error = (*func)(cd, &mapping->map, base)) != 0)
 			break;
-		strlcpy(last, path, sizeof(last));
 	}
 	return (error);
 }

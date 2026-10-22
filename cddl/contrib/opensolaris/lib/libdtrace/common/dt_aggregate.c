@@ -663,6 +663,19 @@ hashnext:
 					    percpu[j], rec->dtrd_size);
 				} else {
 					bzero(percpu[j], rec->dtrd_size);
+
+					/*
+					 * An empty lquantize()/llquantize()
+					 * copy still needs the parameter
+					 * word: merges into it read it.
+					 */
+					if (rec->dtrd_action ==
+					    DTRACEAGG_LQUANTIZE ||
+					    rec->dtrd_action ==
+					    DTRACEAGG_LLQUANTIZE)
+						bcopy(&addr[rec->dtrd_offset],
+						    percpu[j],
+						    sizeof (uint64_t));
 				}
 			}
 
@@ -907,12 +920,21 @@ dt_aggregate_valcmp(const void *lhs, const void *rhs)
 	int64_t *laddr, *raddr;
 	int rval;
 
-	assert(lagg->dtagd_nrecs == ragg->dtagd_nrecs);
+	/*
+	 * Value-first walks compare entries of different aggregations.  Order
+	 * those by key count and then by aggregating action, so that values
+	 * are only compared when they share a representation.
+	 */
+	if (lagg->dtagd_nrecs != ragg->dtagd_nrecs)
+		return (lagg->dtagd_nrecs < ragg->dtagd_nrecs ?
+		    DT_LESSTHAN : DT_GREATERTHAN);
 
 	lrec = &lagg->dtagd_rec[lagg->dtagd_nrecs - 1];
 	rrec = &ragg->dtagd_rec[ragg->dtagd_nrecs - 1];
 
-	assert(lrec->dtrd_action == rrec->dtrd_action);
+	if (lrec->dtrd_action != rrec->dtrd_action)
+		return (lrec->dtrd_action < rrec->dtrd_action ?
+		    DT_LESSTHAN : DT_GREATERTHAN);
 
 	laddr = (int64_t *)(uintptr_t)(ldata + lrec->dtrd_offset);
 	raddr = (int64_t *)(uintptr_t)(rdata + rrec->dtrd_offset);
@@ -1048,8 +1070,10 @@ dt_aggregate_bundlecmp(const void *lhs, const void *rhs)
 		 * If we're sorting on keys, we need to scan until we find the
 		 * last entry -- that's the representative key.  (The order of
 		 * the bundle is values followed by key to accommodate the
-		 * default behavior of sorting by value.)  If the keys are
-		 * equal, we'll fall into the value comparison loop, below.
+		 * default behavior of sorting by value.)  Bundles are the
+		 * maximal runs of key-equal entries of a key-sorted array, so
+		 * the representative keys of two bundles always differ and
+		 * decide the order alone.
 		 */
 		for (i = 0; lh[i + 1] != NULL; i++)
 			continue;
@@ -1057,23 +1081,16 @@ dt_aggregate_bundlecmp(const void *lhs, const void *rhs)
 		assert(i != 0);
 		assert(rh[i + 1] == NULL);
 
-		if ((rval = dt_aggregate_keycmp(&lh[i], &rh[i])) != 0)
-			return (rval);
+		return (dt_aggregate_keycmp(&lh[i], &rh[i]));
 	}
 
 	for (i = 0; ; i++) {
 		if (lh[i + 1] == NULL) {
 			/*
-			 * All of the values are equal; if we're sorting on
-			 * keys, then we're only here because the keys were
-			 * found to be equal and these records are therefore
-			 * equal.  If we're not sorting on keys, we'll use the
-			 * key comparison from the representative key as the
+			 * All of the values are equal; we'll use the key
+			 * comparison from the representative key as the
 			 * tie-breaker.
 			 */
-			if (dt_keysort)
-				return (0);
-
 			assert(i != 0);
 			assert(rh[i + 1] == NULL);
 			return (dt_aggregate_keycmp(&lh[i], &rh[i]));
@@ -1167,7 +1184,13 @@ dt_aggwalk_rval(dtrace_hdl_t *dtp, dt_ahashent_t *h, int rval)
 		size = rec->dtrd_size;
 		data = &h->dtahe_data;
 
-		if (rec->dtrd_action == DTRACEAGG_LQUANTIZE) {
+		/*
+		 * The first word of an lquantize() or llquantize() value is
+		 * its parameter word, not data; later snapshots merge into
+		 * the entry by it and the printers validate it.
+		 */
+		if (rec->dtrd_action == DTRACEAGG_LQUANTIZE ||
+		    rec->dtrd_action == DTRACEAGG_LLQUANTIZE) {
 			offs = sizeof (uint64_t);
 			size -= sizeof (uint64_t);
 		}
@@ -1833,6 +1856,21 @@ dtrace_aggregate_walk_joined(dtrace_hdl_t *dtp, dtrace_aggvarid_t *aggvars,
 					continue;
 
 				/*
+				 * As in dt_aggregate_snap_cpu(), a value record
+				 * that is not an aggregating action cannot be
+				 * formatted or compared.  The other columns
+				 * still point at live hash entries' data.
+				 */
+				if (!DTRACEACT_ISAGG(agg->dtagd_rec[
+				    agg->dtagd_nrecs - 1].dtrd_action)) {
+					for (j = 0; j < naggvars; j++)
+						zaggdata[j].dtahe_data.
+						    dtada_data = NULL;
+					(void) dt_set_errno(dtp, EDT_BADAGG);
+					goto out;
+				}
+
+				/*
 				 * We have our description -- now we need to
 				 * cons up the zaggdata entry for it.
 				 */
@@ -1863,12 +1901,9 @@ dtrace_aggregate_walk_joined(dtrace_hdl_t *dtp, dtrace_aggvarid_t *aggvars,
 				 * course, we know there to be at least one
 				 * (or nentries would have been zero).
 				 */
-				for (j = 0; j < naggvars; j++) {
-					if (zaggdata[j].dtahe_size != 0)
-						break;
-				}
+				for (j = 0; zaggdata[j].dtahe_size == 0; j++)
+					assert(j + 1 < naggvars);
 
-				assert(j < naggvars);
 				zaggdata[i] = zaggdata[j];
 
 				data = zaggdata[i].dtahe_data.dtada_data;
@@ -1917,11 +1952,12 @@ dtrace_aggregate_walk_joined(dtrace_hdl_t *dtp, dtrace_aggvarid_t *aggvars,
 
 		/*
 		 * Now for the more complicated part.  If (and only if) this
-		 * is an lquantize() aggregating action, zero-filled data is
-		 * not equivalent to an empty record:  we must also get the
-		 * parameters for the lquantize().
+		 * is an lquantize() or llquantize() aggregating action,
+		 * zero-filled data is not equivalent to an empty record:  we
+		 * must also get the parameters for the aggregating action.
 		 */
-		if (rec->dtrd_action == DTRACEAGG_LQUANTIZE) {
+		if (rec->dtrd_action == DTRACEAGG_LQUANTIZE ||
+		    rec->dtrd_action == DTRACEAGG_LLQUANTIZE) {
 			if (aggdata->dtada_data != NULL) {
 				/*
 				 * The easier case here is if we actually have
@@ -2162,17 +2198,27 @@ dtrace_aggregate_clear(dtrace_hdl_t *dtp)
 	int i, max_cpus = agp->dtat_maxcpu;
 
 	for (h = hash->dtah_all; h != NULL; h = h->dtahe_nextall) {
+		uint32_t size, offs = 0;
+
 		aggdesc = h->dtahe_data.dtada_desc;
 		rec = &aggdesc->dtagd_rec[aggdesc->dtagd_nrecs - 1];
+		size = rec->dtrd_size;
 		data = &h->dtahe_data;
 
-		bzero(&data->dtada_data[rec->dtrd_offset], rec->dtrd_size);
+		/* Keep lquantize()/llquantize() parameter words, as above. */
+		if (rec->dtrd_action == DTRACEAGG_LQUANTIZE ||
+		    rec->dtrd_action == DTRACEAGG_LLQUANTIZE) {
+			offs = sizeof (uint64_t);
+			size -= sizeof (uint64_t);
+		}
+
+		bzero(&data->dtada_data[rec->dtrd_offset] + offs, size);
 
 		if (data->dtada_percpu == NULL)
 			continue;
 
 		for (i = 0; i < max_cpus; i++)
-			bzero(data->dtada_percpu[i], rec->dtrd_size);
+			bzero(data->dtada_percpu[i] + offs, size);
 	}
 }
 

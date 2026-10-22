@@ -279,17 +279,20 @@ dt_module_symsort64(dt_module_t *dmp)
 	dt_module_strtab = NULL;
 }
 
+/*
+ * The symbol conversion and lookup helpers below are reached only through
+ * dm_ops from dtrace_lookup_by_name() and dtrace_lookup_by_addr(), which
+ * always pass a non-NULL result symbol and symbol index.
+ */
 static GElf_Sym *
 dt_module_symgelf32(const Elf32_Sym *src, GElf_Sym *dst)
 {
-	if (dst != NULL) {
-		dst->st_name = src->st_name;
-		dst->st_info = src->st_info;
-		dst->st_other = src->st_other;
-		dst->st_shndx = src->st_shndx;
-		dst->st_value = src->st_value;
-		dst->st_size = src->st_size;
-	}
+	dst->st_name = src->st_name;
+	dst->st_info = src->st_info;
+	dst->st_other = src->st_other;
+	dst->st_shndx = src->st_shndx;
+	dst->st_value = src->st_value;
+	dst->st_size = src->st_size;
 
 	return (dst);
 }
@@ -297,8 +300,7 @@ dt_module_symgelf32(const Elf32_Sym *src, GElf_Sym *dst)
 static GElf_Sym *
 dt_module_symgelf64(const Elf64_Sym *src, GElf_Sym *dst)
 {
-	if (dst != NULL)
-		bcopy(src, dst, sizeof (GElf_Sym));
+	bcopy(src, dst, sizeof (GElf_Sym));
 
 	return (dst);
 }
@@ -324,8 +326,7 @@ dt_module_symname32(dt_module_t *dmp, const char *name,
 		sym = symtab + dsp->ds_symid;
 
 		if (strcmp(name, strtab + sym->st_name) == 0) {
-			if (idp != NULL)
-				*idp = dsp->ds_symid;
+			*idp = dsp->ds_symid;
 			return (dt_module_symgelf32(sym, symp));
 		}
 	}
@@ -354,8 +355,7 @@ dt_module_symname64(dt_module_t *dmp, const char *name,
 		sym = symtab + dsp->ds_symid;
 
 		if (strcmp(name, strtab + sym->st_name) == 0) {
-			if (idp != NULL)
-				*idp = dsp->ds_symid;
+			*idp = dsp->ds_symid;
 			return (dt_module_symgelf64(sym, symp));
 		}
 	}
@@ -397,8 +397,7 @@ dt_module_symaddr32(dt_module_t *dmp, GElf_Addr addr,
 		sym = asmap[i];
 
 	if (addr - sym->st_value < MAX(sym->st_size, 1)) {
-		if (idp != NULL)
-			*idp = (uint_t)(sym - symtab);
+		*idp = (uint_t)(sym - symtab);
 		return (dt_module_symgelf32(sym, symp));
 	}
 
@@ -439,8 +438,7 @@ dt_module_symaddr64(dt_module_t *dmp, GElf_Addr addr,
 		sym = asmap[i];
 
 	if (addr - sym->st_value < MAX(sym->st_size, 1)) {
-		if (idp != NULL)
-			*idp = (uint_t)(sym - symtab);
+		*idp = (uint_t)(sym - symtab);
 		return (dt_module_symgelf64(sym, symp));
 	}
 
@@ -503,8 +501,9 @@ dt_module_create(dtrace_hdl_t *dtp, const char *name)
 	if (strncmp(dmp->dm_name, "pid", 3) == 0) {
 		errno = 0;
 		if (dmp->dm_name[3] == '\0') {
+			/* dt_vopen() defines "target" before any module. */
 			idp = dt_idhash_lookup(dtp->dt_macros, "target");
-			if (idp != NULL && idp->di_id != 0)
+			if (idp->di_id != 0)
 				dmp->dm_pid = idp->di_id;
 		} else {
 			pid = strtol(dmp->dm_name + 3, &eptr, 10);
@@ -630,14 +629,21 @@ dt_module_load_proc_build(void *arg, const prmap_t *prmap, const char *obj)
 	char buf[MAXPATHLEN], *p;
 	dt_module_cb_arg_t *dcp = arg;
 	int count = dcp->dpa_count;
+#ifdef illumos
 	Lmid_t lmid;
+#endif
 
 	fp = Pname_to_ctf(dcp->dpa_proc, obj);
 	if (fp == NULL)
 		return (0);
+	/*
+	 * The counting pass included this object, so a failure to copy its
+	 * container must stop the build: the caller relies on the counts
+	 * matching.
+	 */
 	fp = ctf_dup(fp);
 	if (fp == NULL)
-		return (0);
+		return (1);
 	dcp->dpa_dmp->dm_libctfp[count] = fp;
 	/*
 	 * While it'd be nice to simply use objname here, because of our prior
@@ -658,6 +664,7 @@ dt_module_load_proc_build(void *arg, const prmap_t *prmap, const char *obj)
 	 * would be really quite weird. We instead just say the link map id is
 	 * zero.
 	 */
+#ifdef illumos
 	if (Plmid(dcp->dpa_proc, prmap->pr_vaddr, &lmid) != 0)
 		lmid = 0;
 
@@ -666,6 +673,13 @@ dt_module_load_proc_build(void *arg, const prmap_t *prmap, const char *obj)
 	else
 		(void) asprintf(&dcp->dpa_dmp->dm_libctfn[count],
 		    "LM%x`%s", lmid, p);
+#else
+	/*
+	 * There are no alternate link maps here: Plmid() is defined as -1 in
+	 * libproc_compat.h, so the link map id is always taken as zero.
+	 */
+	dcp->dpa_dmp->dm_libctfn[count] = strdup(p);
+#endif
 	if (dcp->dpa_dmp->dm_libctfn[count] == NULL)
 		return (1);
 	ctf_setspecific(fp, dcp->dpa_dmp);
@@ -737,13 +751,21 @@ dt_module_load_proc(dtrace_hdl_t *dtp, dt_module_t *dmp)
 	dmp->dm_nctflibs = arg.dpa_count;
 
 	arg.dpa_count = 0;
-	if (Pobject_iter_resolved(p, dt_module_load_proc_build, &arg) != 0) {
+	/*
+	 * The build pass must find every container the counting pass found;
+	 * a container that can no longer be opened (for example, out of
+	 * memory) would leave an empty slot behind.
+	 */
+	if (Pobject_iter_resolved(p, dt_module_load_proc_build, &arg) != 0 ||
+	    arg.dpa_count != dmp->dm_nctflibs) {
+		pid_t pid = dmp->dm_pid;
+
 		dt_proc_unlock(dtp, p);
 		dt_module_unload(dtp, dmp);
+		dmp->dm_pid = pid;	/* still a process module: may retry */
 		dt_proc_release(dtp, p);
 		return (dt_set_errno(dtp, EDT_CANTLOAD));
 	}
-	assert(arg.dpa_count == dmp->dm_nctflibs);
 	dt_dprintf("loaded %d ctf modules for pid %d\n", arg.dpa_count,
 	    (int)dmp->dm_pid);
 
@@ -794,12 +816,16 @@ dt_module_load(dtrace_hdl_t *dtp, dt_module_t *dmp)
 	 * this will result in a successful load_sect but data of size zero.
 	 * We will then fail if dt_module_getctf() is called, as shown below.
 	 */
-	if (dt_module_load_sect(dtp, dmp, &dmp->dm_ctdata) == -1 ||
-	    dt_module_load_sect(dtp, dmp, &dmp->dm_symtab) == -1 ||
-	    dt_module_load_sect(dtp, dmp, &dmp->dm_strtab) == -1) {
+	if (dt_module_load_sect(dtp, dmp, &dmp->dm_ctdata) == -1) {
 		dt_module_unload(dtp, dmp);
 		return (-1); /* dt_errno is set for us */
 	}
+	/*
+	 * dt_module_load_sect() fails only if elf_getshdrstrndx() fails,
+	 * which the call above has just done successfully on the same Elf.
+	 */
+	(void) dt_module_load_sect(dtp, dmp, &dmp->dm_symtab);
+	(void) dt_module_load_sect(dtp, dmp, &dmp->dm_strtab);
 
 	/*
 	 * Allocate the hash chains and hash buckets for symbol name lookup.
@@ -1075,6 +1101,7 @@ dt_module_extern(dtrace_hdl_t *dtp, dt_module_t *dmp,
 
 	idp->di_data = sip;
 	idp->di_ctfp = tip->dtt_ctfp;
+	idp->di_object = tip->dtt_object;
 	idp->di_type = tip->dtt_type;
 
 	return (idp);
@@ -1146,6 +1173,7 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 	uintptr_t mapbase, alignmask;
 	int i = 0;
 	int is_elf_obj;
+	size_t shnum, nscn = 0;
 
 	(void) strlcpy(name, k_stat->name, sizeof(name));
 	(void) strlcpy(fname, k_stat->pathname, sizeof(fname));
@@ -1196,8 +1224,9 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 	gelf_getehdr(dmp->dm_elf, &ehdr);
 	is_elf_obj = (ehdr.e_type == ET_REL);
 	if (is_elf_obj) {
+		/* Zeroed: sections that are not allocated have no offset. */
 		dmp->dm_sec_offsets =
-		    malloc(ehdr.e_shnum * sizeof(*dmp->dm_sec_offsets));
+		    calloc(ehdr.e_shnum, sizeof(*dmp->dm_sec_offsets));
 		if (dmp->dm_sec_offsets == NULL) {
 			dt_dprintf("failed to allocate memory\n");
 			dt_module_destroy(dtp, dmp);
@@ -1209,13 +1238,19 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 	 * interest and use their attributes to flesh out the dt_module_t.
 	 */
 	for (sp = NULL; (sp = elf_nextscn(dmp->dm_elf, sp)) != NULL; ) {
+		nscn++;
 		if (gelf_getshdr(sp, &sh) == NULL || sh.sh_type == SHT_NULL ||
 		    (s = elf_strptr(dmp->dm_elf, shstrs, sh.sh_name)) == NULL)
 			continue; /* skip any malformed sections */
-		if (sh.sh_size == 0)
+		if (sh.sh_size == 0) {
+			/* An empty allocated section sits at the current base. */
+			if (is_elf_obj && (sh.sh_flags & SHF_ALLOC))
+				dmp->dm_sec_offsets[elf_ndxscn(sp)] = mapbase;
 			continue;
+		}
 		if (sh.sh_flags & SHF_ALLOC) {
-			alignmask = sh.sh_addralign - 1;
+			/* sh_addralign 0 and 1 both mean no constraint. */
+			alignmask = sh.sh_addralign > 1 ? sh.sh_addralign - 1 : 0;
 			mapbase += alignmask;
 			mapbase &= ~alignmask;
 			sh.sh_addr = mapbase;
@@ -1239,6 +1274,20 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 		}
 	}
 
+	/*
+	 * elf_nextscn() also returns NULL if libelf could not load the
+	 * section headers (for example, out of memory).  A partially loaded
+	 * section list must not be used: libelf cannot resume loading it.
+	 */
+	/* Cannot fail: elf_getshdrstrndx() succeeded above on this Elf. */
+	(void) elf_getshdrnum(dmp->dm_elf, &shnum);
+	if (shnum > 0 && nscn != shnum - 1) {
+		dt_dprintf("failed to load sections of %s: %s\n",
+		    fname, elf_errmsg(elf_errno()));
+		dt_module_destroy(dtp, dmp);
+		return;
+	}
+
 	dmp->dm_flags |= DT_DM_KERNEL;
 	/*
 	 * Include .rodata and special sections into .text.
@@ -1246,7 +1295,13 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 	 * for ELF objects and libraries:
 	 * [Text][R/O data][R/W data][Dynamic][BSS][Non loadable]
 	 */
-	dmp->dm_text_size = dmp->dm_data_va - dmp->dm_text_va;
+	if (dmp->dm_data_va > dmp->dm_text_va)
+		dmp->dm_text_size = dmp->dm_data_va - dmp->dm_text_va;
+	/*
+	 * Otherwise there is no .data after .text (for example a module
+	 * without initialized data): keep the size of .text itself rather
+	 * than a range that wraps over every higher address.
+	 */
 
 	if (!is_elf_obj) {
 		/*
@@ -1277,16 +1332,20 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 		if (dt_kmodule_lookup(dtp, ms.name) != NULL)
 			continue;
 
-		dkmp = malloc(sizeof (*dkmp));
-		if (dkmp == NULL) {
+		/*
+		 * On allocation failure keep the module but stop adding
+		 * aliases: destroying it here would leave the aliases already
+		 * added for this file pointing at freed memory.
+		 */
+		if ((dkmp = malloc(sizeof (*dkmp))) == NULL ||
+		    (dkmp->dkm_name = strdup(ms.name)) == NULL) {
 			dt_dprintf("failed to allocate memory\n");
-			dt_module_destroy(dtp, dmp);
-			return;
+			free(dkmp);
+			break;
 		}
 
 		h = dt_strtab_hash(ms.name, NULL) % dtp->dt_modbuckets;
 		dkmp->dkm_next = dtp->dt_kmods[h];
-		dkmp->dkm_name = strdup(ms.name);
 		dkmp->dkm_module = dmp;
 		dtp->dt_kmods[h] = dkmp;
 	}
@@ -1379,8 +1438,7 @@ dtrace_update(dtrace_hdl_t *dtp)
 	 * queries encounter genunix and thereby optimize for the common case
 	 * in dtrace_lookup_by_name() and dtrace_lookup_by_type(), below.
 	 */
-	if (dtp->dt_exec != NULL &&
-	    dtp->dt_cdefs == NULL && dtp->dt_ddefs == NULL) {
+	if (dtp->dt_exec != NULL && dtp->dt_cdefs == NULL) {
 		dt_list_delete(&dtp->dt_modlist, dtp->dt_exec);
 		dt_list_prepend(&dtp->dt_modlist, dtp->dt_exec);
 	}
@@ -1674,6 +1732,7 @@ dtrace_symbol_type(dtrace_hdl_t *dtp, const GElf_Sym *symp,
 		if (idp == NULL)
 			return (dt_set_errno(dtp, EDT_NOSYM));
 
+		tip->dtt_object = idp->di_object;
 		tip->dtt_ctfp = idp->di_ctfp;
 		tip->dtt_type = idp->di_type;
 
@@ -1681,6 +1740,7 @@ dtrace_symbol_type(dtrace_hdl_t *dtp, const GElf_Sym *symp,
 		if (dt_module_getctf(dtp, dmp) == NULL)
 			return (-1); /* errno is set for us */
 
+		tip->dtt_object = dmp->dm_name;
 		tip->dtt_ctfp = dmp->dm_ctfp;
 		tip->dtt_type = ctf_lookup_by_symbol(dmp->dm_ctfp, sip->dts_id);
 
@@ -1690,6 +1750,7 @@ dtrace_symbol_type(dtrace_hdl_t *dtp, const GElf_Sym *symp,
 		}
 
 	} else {
+		tip->dtt_object = DT_FPTR_OBJECT(dtp);
 		tip->dtt_ctfp = DT_FPTR_CTFP(dtp);
 		tip->dtt_type = DT_FPTR_TYPE(dtp);
 	}

@@ -23,6 +23,7 @@
 /*
  * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
+ * Copyright (c) 2021, Domagoj Stolfa. All rights reserved.
  */
 
 #pragma ident	"%Z%%M%	%I%	%E% SMI"
@@ -43,12 +44,32 @@ static const struct {
 	{ DTRACEOPT_MAX, 0 }
 };
 
+/* Deliver queued process notifications; dph_lock is held. */
+static void
+dt_proc_notify_deliver(dtrace_hdl_t *dtp, dt_proc_hash_t *dph)
+{
+	dt_proc_notify_t *dprn;
+
+	while ((dprn = dph->dph_notify) != NULL) {
+		if (dtp->dt_prochdlr != NULL) {
+			char *err = dprn->dprn_errmsg;
+			if (*err == '\0')
+				err = NULL;
+
+			dtp->dt_prochdlr(dprn->dprn_dpr->dpr_proc, err,
+			    dtp->dt_procarg);
+		}
+
+		dph->dph_notify = dprn->dprn_next;
+		dt_free(dtp, dprn);
+	}
+}
+
 void
 dtrace_sleep(dtrace_hdl_t *dtp)
 {
 	dt_proc_hash_t *dph = dtp->dt_procs;
 	dtrace_optval_t policy = dtp->dt_options[DTRACEOPT_BUFPOLICY];
-	dt_proc_notify_t *dprn;
 
 	hrtime_t earliest = INT64_MAX;
 	struct timespec tv;
@@ -78,6 +99,8 @@ dtrace_sleep(dtrace_hdl_t *dtp)
 	now = gethrtime();
 
 	if (earliest < now) {
+		/* No time to wait, but notifications must not be stranded. */
+		dt_proc_notify_deliver(dtp, dph);
 		(void) pthread_mutex_unlock(&dph->dph_lock);
 		return; /* sleep duration has already past */
 	}
@@ -110,20 +133,7 @@ dtrace_sleep(dtrace_hdl_t *dtp)
 	(void) pthread_cond_timedwait(&dph->dph_cv, &dph->dph_lock, &tv);
 #endif
 
-	while ((dprn = dph->dph_notify) != NULL) {
-		if (dtp->dt_prochdlr != NULL) {
-			char *err = dprn->dprn_errmsg;
-			if (*err == '\0')
-				err = NULL;
-
-			dtp->dt_prochdlr(dprn->dprn_dpr->dpr_proc, err,
-			    dtp->dt_procarg);
-		}
-
-		dph->dph_notify = dprn->dprn_next;
-		dt_free(dtp, dprn);
-	}
-
+	dt_proc_notify_deliver(dtp, dph);
 	(void) pthread_mutex_unlock(&dph->dph_lock);
 }
 
@@ -135,7 +145,7 @@ dtrace_status(dtrace_hdl_t *dtp)
 	hrtime_t now = gethrtime();
 
 	if (!dtp->dt_active)
-		return (DTRACE_STATUS_NONE);
+		return (DTRACE_STATUS_INACTIVE);
 
 	if (dtp->dt_stopped)
 		return (DTRACE_STATUS_STOPPED);
@@ -158,9 +168,9 @@ dtrace_status(dtrace_hdl_t *dtp)
 	    &dtp->dt_status[gen]) == -1)
 		return (-1);
 
+	/* dtrace_stop() returns 0 at once if tracing is already stopped. */
 	if (dtp->dt_status[gen].dtst_exiting) {
-		if (!dtp->dt_stopped)
-			(void) dtrace_stop(dtp);
+		(void) dtrace_stop(dtp);
 
 		return (DTRACE_STATUS_EXITED);
 	}
@@ -171,10 +181,8 @@ dtrace_status(dtrace_hdl_t *dtp)
 	if (dtp->dt_options[DTRACEOPT_BUFPOLICY] != DTRACEOPT_BUFPOLICY_FILL)
 		return (DTRACE_STATUS_OKAY);
 
-	if (!dtp->dt_stopped) {
-		if (dtrace_stop(dtp) == -1)
-			return (-1);
-	}
+	if (dtrace_stop(dtp) == -1)
+		return (-1);
 
 	return (DTRACE_STATUS_FILLED);
 }
@@ -182,9 +190,10 @@ dtrace_status(dtrace_hdl_t *dtp)
 int
 dtrace_go(dtrace_hdl_t *dtp)
 {
-	dtrace_enable_io_t args;
+	dtrace_enable_io_t args = { 0 };
 	void *dof;
 	int error, r;
+	int expected_nprobes = 0;
 
 	if (dtp->dt_active)
 		return (dt_set_errno(dtp, EINVAL));
@@ -204,11 +213,23 @@ dtrace_go(dtrace_hdl_t *dtp)
 	if ((dof = dtrace_getopt_dof(dtp)) == NULL)
 		return (-1); /* dt_errno has been set for us */
 
+	expected_nprobes = DTRACE_MIN_NPROBES;
+
 	args.dof = dof;
 	args.n_matched = 0;
+	args.vmid = 0;
+	args.ps = malloc(sizeof(dtrace_probedesc_t) * expected_nprobes);
+	if (args.ps == NULL) {
+		dtrace_dof_destroy(dtp, dof);
+		return (dt_set_errno(dtp, EDT_NOMEM));
+	}
+
+	memset(args.ps, 0, sizeof(dtrace_probedesc_t) * expected_nprobes);
+	args.ps_bufsize = expected_nprobes * sizeof(dtrace_probedesc_t);
 	r = dt_ioctl(dtp, DTRACEIOC_ENABLE, &args);
 	error = errno;
 	dtrace_dof_destroy(dtp, dof);
+	free(args.ps);
 
 	if (r == -1 && (error != ENOTTY || dtp->dt_vector == NULL))
 		return (dt_set_errno(dtp, error));
@@ -234,8 +255,9 @@ dtrace_go(dtrace_hdl_t *dtp)
 
 	dtp->dt_active = 1;
 
+	/* dt_options_load() sets dt_errno itself (e.g. EDT_NOMEM). */
 	if (dt_options_load(dtp) == -1)
-		return (dt_set_errno(dtp, errno));
+		return (-1);
 
 	return (dt_aggregate_go(dtp));
 }
@@ -268,9 +290,12 @@ dtrace_stop(dtrace_hdl_t *dtp)
 
 
 dtrace_workstatus_t
-dtrace_work(dtrace_hdl_t *dtp, FILE *fp,
-    dtrace_consume_probe_f *pfunc, dtrace_consume_rec_f *rfunc, void *arg)
+dtrace_work_consumer(dtrace_hdl_t *dtp, FILE *fp, dtrace_consumer_t *con, void *arg)
 {
+	if (dtp->dt_output_discarded) {
+		(void) dt_set_errno(dtp, ESHUTDOWN);
+		return (DTRACE_WORKSTATUS_ERROR);
+	}
 	int status = dtrace_status(dtp);
 	dtrace_optval_t policy = dtp->dt_options[DTRACEOPT_BUFPOLICY];
 	dtrace_workstatus_t rval;
@@ -294,7 +319,9 @@ dtrace_work(dtrace_hdl_t *dtp, FILE *fp,
 		rval = DTRACE_WORKSTATUS_OKAY;
 		break;
 
-	case -1:
+	case DTRACE_STATUS_INACTIVE:
+		return (dt_set_errno(dtp, EINVAL));
+	default:
 		return (DTRACE_WORKSTATUS_ERROR);
 	}
 
@@ -313,8 +340,137 @@ dtrace_work(dtrace_hdl_t *dtp, FILE *fp,
 	if (dtrace_aggregate_snap(dtp) == -1)
 		return (DTRACE_WORKSTATUS_ERROR);
 
-	if (dtrace_consume(dtp, fp, pfunc, rfunc, arg) == -1)
+	if (dtrace_consume_consumer(dtp, fp, con, arg) == -1)
 		return (DTRACE_WORKSTATUS_ERROR);
 
 	return (rval);
 }
+
+/*
+ * Take one complete buffer snapshot after the caller has stopped and
+ * synchronized the producers.  The ordinary work loop observes switchrate
+ * and can return before taking a snapshot; ring/fill buffers cannot be read
+ * while tracing remains active.  Under temporal ordering the snapshot is
+ * consumed with dt_drain_final set, so the ordering queue emits every retained
+ * record instead of waiting for a later buffer that the fence guarantees will
+ * never come.  This operation does not itself establish the producer fence.
+ */
+int
+dtrace_consume_quiesced(dtrace_hdl_t *dtp, FILE *fp, dtrace_consumer_t *con,
+    void *arg)
+{
+	int consumed;
+
+	if (dtp == NULL || con == NULL)
+		return (-1);
+	if (dtp->dt_oformat != 0 ||
+	    dtp->dt_options[DTRACEOPT_BUFPOLICY] !=
+	    DTRACEOPT_BUFPOLICY_SWITCH)
+		return (dt_set_errno(dtp, EOPNOTSUPP));
+	if (!dtp->dt_active)
+		return (dt_set_errno(dtp, EINVAL));
+	/* The drain only certifies principal-buffer output.  A compiled
+	 * aggregation or retained aggregate value needs a separate transfer
+	 * lease before this consumer may acknowledge a source handoff. */
+	if (dt_idhash_size(dtp->dt_aggs) != 0 ||
+	    dtp->dt_aggregate.dtat_hash.dtah_all != NULL)
+		return (dt_set_errno(dtp, EOPNOTSUPP));
+#ifndef illumos
+	/* Speculative buffers are not part of the principal-buffer snapshot.
+	 * Query the actual kernel state so externally enabled DOF is covered. */
+	if (dt_ioctl(dtp, DTRACEIOC_DRAINABLE, NULL) == -1)
+		return (dt_set_errno(dtp, errno));
+#endif
+
+	dtp->dt_lastswitch = 0;
+	dtp->dt_lastagg = 0;
+	if (dtrace_aggregate_snap(dtp) != 0)
+		return (-1);
+	/* An externally enabled DOF can have no compiler-side identifier. */
+	if (dtp->dt_aggregate.dtat_hash.dtah_all != NULL)
+		return (dt_set_errno(dtp, EOPNOTSUPP));
+#ifndef illumos
+	if (dt_ioctl(dtp, DTRACEIOC_DRAINABLE, NULL) == -1)
+		return (dt_set_errno(dtp, errno));
+#endif
+	/*
+	 * dtrace_consume_consumer() returns 0 or -1 with dt_errno set: its
+	 * failures, and those of dt_consume_cpu()/dt_consume_begin() it
+	 * returns, come from dt_set_errno(), dt_epid_lookup() (0 or
+	 * dt_set_errno()) or dt_handle_cpudrop() (0 or dt_set_errno()).
+	 */
+	dtp->dt_drain_final = 1;
+	consumed = dtrace_consume_consumer(dtp, fp, con, arg);
+	dtp->dt_drain_final = 0;
+	if (consumed != 0) {
+		/* A consumer callback that stopped the drain cancelled it; a
+		 * negative result already carries its own dt_errno. */
+		return (consumed > 0 ? dt_set_errno(dtp, ECANCELED) : -1);
+	}
+	if (fp != NULL && fflush(fp) == EOF)
+		return (dt_set_errno(dtp, errno != 0 ? errno : EIO));
+	return (0);
+}
+
+/* Preserve the standard callback interface for existing DTrace consumers. */
+dtrace_workstatus_t
+dtrace_work(dtrace_hdl_t *dtp, FILE *fp, dtrace_consume_probe_f *probe,
+    dtrace_consume_rec_f *record, void *arg)
+{
+	dtrace_consumer_t consumer = {
+		.dc_consume_probe = probe,
+		.dc_consume_rec = record
+	};
+
+	return (dtrace_work_consumer(dtp, fp, &consumer, arg));
+}
+
+#ifndef illumos
+/* Keep outputs untouched on failed/unsupported ioctls. A caller must durably
+ * bind the returned identity before execution; PID or fd numbers are not keys. */
+int
+dtrace_handle_identity(dtrace_hdl_t *dtp, dtrace_handle_lifetime_t *identity)
+{
+	dtrace_handle_lifetime_t candidate = {0};
+
+	if (dtp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (identity == NULL)
+		return (dt_set_errno(dtp, EINVAL));
+	if (dt_ioctl(dtp, DTRACEIOC_HANDLE_ID, &candidate) == -1)
+		return (dt_set_errno(dtp, errno));
+	if ((candidate.generation[0] | candidate.generation[1]) == 0 ||
+	    candidate.serial == 0 || candidate.retired != 0 || candidate.reserved != 0)
+		return (dt_set_errno(dtp, EPROTO));
+	*identity = candidate;
+	return (0);
+}
+
+int
+dtrace_handle_retired(dtrace_hdl_t *dtp,
+    const dtrace_handle_lifetime_t *identity, int *retired)
+{
+	dtrace_handle_lifetime_t candidate;
+
+	if (dtp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (identity == NULL || retired == NULL || identity->serial == 0 ||
+	    (identity->generation[0] | identity->generation[1]) == 0 ||
+	    identity->retired != 0 || identity->reserved != 0)
+		return (dt_set_errno(dtp, EINVAL));
+	candidate = *identity;
+	if (dt_ioctl(dtp, DTRACEIOC_HANDLE_QUERY, &candidate) == -1)
+		return (dt_set_errno(dtp, errno));
+	if (candidate.serial != identity->serial ||
+	    memcmp(candidate.generation, identity->generation,
+	    sizeof(candidate.generation)) != 0 || candidate.reserved != 0 ||
+	    candidate.retired > 1)
+		return (dt_set_errno(dtp, EPROTO));
+	*retired = candidate.retired;
+	return (0);
+}
+#endif

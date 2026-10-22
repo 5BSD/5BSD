@@ -27,6 +27,7 @@
 /*
  * Copyright (c) 2013, Joyent, Inc. All rights reserved.
  * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2020 Domagoj Stolfa. All rights reserved.
  */
 
 #include <sys/resource.h>
@@ -38,12 +39,21 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <limits.h>
+#ifdef illumos
+#include <alloca.h>
+#endif
 #include <errno.h>
 #include <fcntl.h>
+#include <assert.h>
 
 #include <dt_impl.h>
 #include <dt_string.h>
+#include <dt_elf.h>
 #include <dt_oformat.h>
+
+extern dt_elf_opt_t dtelf_ctopts[];
+extern dt_elf_opt_t dtelf_rtopts[];
+extern dt_elf_opt_t dtelf_drtopts[];
 
 static int
 dt_opt_agg(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
@@ -113,10 +123,18 @@ dt_opt_core(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 	if (arg != NULL)
 		return (dt_set_errno(dtp, EDT_BADOPTVAL));
 
-	if (enabled++ || atexit(dt_coredump) == 0)
+	/*
+	 * Only a successful registration counts: if atexit() fails, a later
+	 * request must try again rather than report success.
+	 */
+	if (enabled)
 		return (0);
 
-	return (dt_set_errno(dtp, errno));
+	if (atexit(dt_coredump) != 0)
+		return (dt_set_errno(dtp, errno));
+
+	enabled = 1;
+	return (0);
 }
 
 /*ARGSUSED*/
@@ -165,7 +183,8 @@ dt_opt_cpp_opts(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 	const char *opt = (const char *)option;
 	int ret;
 
-	if (opt == NULL || arg == NULL) {
+	/* opt is the table's "-D", "-I" or "-U" (_dtrace_ctoptions). */
+	if (arg == NULL) {
 		ret = dt_set_errno(dtp, EDT_BADOPTVAL);
 		goto out;
 	}
@@ -410,6 +429,24 @@ dt_opt_evaltime(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 }
 
 /*ARGSUSED*/
+static int dt_optval_parse(const char *, dtrace_optval_t *);
+
+/*
+ * guestrefsize=size: the largest by-reference record a guest may declare
+ * for a result the host cannot type (dt_prog_verify()).
+ */
+static int
+dt_opt_guestrefsize(dtrace_hdl_t *dtp, const char *arg,
+    uintptr_t option __unused)
+{
+	dtrace_optval_t val;
+
+	if (arg == NULL || dt_optval_parse(arg, &val) != 0 || val == 0)
+		return (dt_set_errno(dtp, EDT_BADOPTVAL));
+	dtp->dt_guestrefsize = (uint64_t)val;
+	return (0);
+}
+
 static int
 dt_opt_pgmax(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 {
@@ -427,6 +464,7 @@ dt_opt_setenv(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 {
 	char **p;
 	char *var;
+	size_t namelen;
 	int nvars;
 
 	/*
@@ -445,16 +483,21 @@ dt_opt_setenv(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 	for (nvars = 0, p = dtp->dt_proc_env; *p != NULL; nvars++, p++)
 		continue;
 
-	for (p = dtp->dt_proc_env; *p != NULL; p++) {
-		var = strchr(*p, '=');
-		if (var == NULL)
-			var = *p + strlen(*p);
-		if (strncmp(*p, arg, var - *p) == 0) {
+	/*
+	 * Remove any existing definition of the variable named by arg.  Names
+	 * must match exactly: FOO must not match FOOBAR or FO.  A removed
+	 * slot is refilled from the end of the list and examined again.
+	 */
+	namelen = strcspn(arg, "=");
+	for (p = dtp->dt_proc_env; *p != NULL; ) {
+		if (strcspn(*p, "=") == namelen &&
+		    strncmp(*p, arg, namelen) == 0) {
 			dt_free(dtp, *p);
 			*p = dtp->dt_proc_env[nvars - 1];
 			dtp->dt_proc_env[nvars - 1] = NULL;
 			nvars--;
-		}
+		} else
+			p++;
 	}
 
 	if (option) {
@@ -660,9 +703,9 @@ dt_opt_runtime(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 		}
 
 		errno = 0;
-		val = strtoull(arg, &end, 0);
+		val = strtoll(arg, &end, 0);
 
-		if (*end != '\0' || errno != 0 || val < 0)
+		if (end == arg || *end != '\0' || errno != 0 || val < 0)
 			return (dt_set_errno(dtp, EDT_BADOPTVAL));
 	}
 
@@ -679,6 +722,8 @@ dt_optval_parse(const char *arg, dtrace_optval_t *rval)
 	char *end;
 
 	len = strlen(arg);
+	if (len == 0)
+		return (-1);
 	errno = 0;
 
 	switch (arg[len - 1]) {
@@ -703,12 +748,14 @@ dt_optval_parse(const char *arg, dtrace_optval_t *rval)
 	}
 
 	errno = 0;
-	*rval = strtoull(arg, &end, 0) * mul;
+	*rval = strtoll(arg, &end, 0);
 
-	if ((mul > 1 && end != &arg[len - 1]) || (mul == 1 && *end != '\0') ||
-	    *rval < 0 || errno != 0)
+	if (end == arg || (mul > 1 && end != &arg[len - 1]) ||
+	    (mul == 1 && *end != '\0') || *rval < 0 || errno != 0 ||
+	    *rval > INT64_MAX / mul)
 		return (-1);
 
+	*rval *= mul;
 	return (0);
 }
 
@@ -767,7 +814,9 @@ dt_opt_rate(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 
 	if (arg != NULL) {
 		errno = 0;
-		val = strtoull(arg, &end, 0);
+		val = strtoll(arg, &end, 0);
+		if (end == arg || errno != 0 || val < 0)
+			return (dt_set_errno(dtp, EDT_BADOPTVAL));
 
 		for (i = 0; suffix[i].name != NULL; i++) {
 			if (strcasecmp(suffix[i].name, end) == 0) {
@@ -776,7 +825,7 @@ dt_opt_rate(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 			}
 		}
 
-		if (suffix[i].name == NULL && *end != '\0' || val < 0)
+		if (suffix[i].name == NULL && *end != '\0')
 			return (dt_set_errno(dtp, EDT_BADOPTVAL));
 
 		if (mul == 0) {
@@ -786,6 +835,8 @@ dt_opt_rate(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 			if (val != 0)
 				val = NANOSEC / val;
 		} else {
+			if (val > INT64_MAX / mul)
+				return (dt_set_errno(dtp, EDT_BADOPTVAL));
 			val *= mul;
 		}
 	}
@@ -954,17 +1005,39 @@ dt_options_load(dtrace_hdl_t *dtp)
 		goto out;
 	}
 
+	/*
+	 * The section table and the option section must lie within the
+	 * buffer we were given; a DOF without an OPTDESC section, or with a
+	 * malformed one, is rejected rather than interpreted.
+	 */
+	sec = NULL;
+	if (dof->dofh_secsize < sizeof (dof_sec_t) ||
+	    dof->dofh_secoff > hdr.dofh_loadsz ||
+	    dof->dofh_secnum > (hdr.dofh_loadsz - dof->dofh_secoff) /
+	    dof->dofh_secsize) {
+		ret = dt_set_errno(dtp, EINVAL);
+		goto out;
+	}
+
 	for (i = 0; i < dof->dofh_secnum; i++) {
 		sec = (dof_sec_t *)(uintptr_t)((uintptr_t)dof +
 		    dof->dofh_secoff + i * dof->dofh_secsize);
 
-		if (sec->dofs_type != DOF_SECT_OPTDESC)
-			continue;
-
-		break;
+		if (sec->dofs_type == DOF_SECT_OPTDESC)
+			break;
+		sec = NULL;
 	}
 
-	for (offs = 0; offs < sec->dofs_size; offs += sec->dofs_entsize) {
+	if (sec == NULL || sec->dofs_entsize < sizeof (dof_optdesc_t) ||
+	    sec->dofs_offset > hdr.dofh_loadsz ||
+	    sec->dofs_size > hdr.dofh_loadsz - sec->dofs_offset) {
+		ret = dt_set_errno(dtp, EINVAL);
+		goto out;
+	}
+
+	for (offs = 0; offs < sec->dofs_size &&
+	    sec->dofs_size - offs >= sizeof (dof_optdesc_t);
+	    offs += sec->dofs_entsize) {
 		dof_optdesc_t *opt = (dof_optdesc_t *)(uintptr_t)
 		    ((uintptr_t)dof + sec->dofs_offset + offs);
 
@@ -1011,6 +1084,7 @@ static const dt_option_t _dtrace_ctoptions[] = {
 	{ "encoding", dt_opt_encoding },
 	{ "errtags", dt_opt_cflags, DTRACE_C_ETAGS },
 	{ "evaltime", dt_opt_evaltime },
+	{ "guestrefsize", dt_opt_guestrefsize },
 	{ "incdir", dt_opt_cpp_opts, (uintptr_t)"-I" },
 	{ "iregs", dt_opt_iregs },
 	{ "kdefs", dt_opt_invcflags, DTRACE_C_KNODEF },
@@ -1057,6 +1131,7 @@ static const dt_option_t _dtrace_rtoptions[] = {
 	{ "dynvarsize", dt_opt_size, DTRACEOPT_DYNVARSIZE },
 	{ "grabanon", dt_opt_runtime, DTRACEOPT_GRABANON },
 	{ "jstackframes", dt_opt_runtime, DTRACEOPT_JSTACKFRAMES },
+	{ "ddtracearg", dt_opt_runtime, DTRACEOPT_DDTRACEARG},
 	{ "jstackstrsize", dt_opt_size, DTRACEOPT_JSTACKSTRSIZE },
 	{ "nspec", dt_opt_runtime, DTRACEOPT_NSPEC },
 	{ "oformat", dt_opt_oformat, 0 },
@@ -1066,6 +1141,10 @@ static const dt_option_t _dtrace_rtoptions[] = {
 	{ "strsize", dt_opt_strsize, DTRACEOPT_STRSIZE },
 	{ "ustackframes", dt_opt_runtime, DTRACEOPT_USTACKFRAMES },
 	{ "temporal", dt_opt_runtime, DTRACEOPT_TEMPORAL },
+	{ "hypertrace", dt_opt_runtime, DTRACEOPT_HYPERTRACE },
+	{ "immstackframes", dt_opt_runtime, DTRACEOPT_IMMSTACKFRAMES },
+	{ "immstackstrsize", dt_opt_runtime, DTRACEOPT_IMMSTACKSTRSIZE },
+	{ "minion", dt_opt_runtime, DTRACEOPT_MINION },
 	{ NULL, NULL, 0 }
 };
 
@@ -1122,9 +1201,48 @@ int
 dtrace_setopt(dtrace_hdl_t *dtp, const char *opt, const char *val)
 {
 	const dt_option_t *op;
+	dt_elf_opt_t *eop = NULL;
 
 	if (opt == NULL)
 		return (dt_set_errno(dtp, EINVAL));
+
+	if (dtrace_hypertrace_enabled(dtp)) {
+		if (dtp->dt_active)
+			return (dt_set_errno(dtp, EDT_ACTIVE));
+
+		for (eop = dtelf_ctopts; eop->dteo_name != NULL; eop++) {
+			if (strcmp(eop->dteo_name, opt) == 0) {
+				if (eop->dteo_arg)
+					free(eop->dteo_arg);
+
+				eop->dteo_arg = __DECONST(char *,
+				    val ? strdup(val) : val);
+				eop->dteo_set = 1;
+			}
+		}
+
+		for (eop = dtelf_drtopts; eop->dteo_name != NULL; eop++) {
+			if (strcmp(eop->dteo_name, opt) == 0) {
+				if (eop->dteo_arg)
+					free(eop->dteo_arg);
+
+				eop->dteo_arg = __DECONST(char *,
+				    val ? strdup(val) : val);
+				eop->dteo_set = 1;
+			}
+		}
+
+		for (eop = dtelf_rtopts; eop->dteo_name != NULL; eop++) {
+			if (strcmp(eop->dteo_name, opt) == 0) {
+				if (eop->dteo_arg)
+					free(eop->dteo_arg);
+
+				eop->dteo_arg = __DECONST(char *,
+				    val ? strdup(val) : val);
+				eop->dteo_set = 1;
+			}
+		}
+	}
 
 	for (op = _dtrace_ctoptions; op->o_name != NULL; op++) {
 		if (strcmp(op->o_name, opt) == 0)
@@ -1151,3 +1269,4 @@ dtrace_setopt(dtrace_hdl_t *dtp, const char *opt, const char *val)
 
 	return (dt_set_errno(dtp, EDT_BADOPTNAME));
 }
+

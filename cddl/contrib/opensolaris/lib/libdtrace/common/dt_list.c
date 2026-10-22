@@ -21,7 +21,21 @@
  */
 /*
  * Copyright 2003 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2020 Domagoj Stolfa. All rights reserved.
  * Use is subject to license terms.
+ *
+ * This software was developed by SRI International and the University of
+ * Cambridge Computer Laboratory (Department of Computer Science and
+ * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+ * DARPA SSITH research programme.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from Arm Limited.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from the Kenneth Hayter Scholarship Fund.
  */
 
 #pragma ident	"%Z%%M%	%I%	%E% SMI"
@@ -37,6 +51,8 @@
 
 #include <unistd.h>
 #include <assert.h>
+#include <string.h>
+
 #include <dt_list.h>
 
 void
@@ -109,3 +125,16 @@ dt_list_delete(dt_list_t *dlp, void *existing)
 	else
 		dlp->dl_prev = p->dl_prev;
 }
+
+void *
+dt_in_list(dt_list_t *lst, void *find, size_t size)
+{
+	void *e;
+
+	for (e = dt_list_next(lst); e; e = dt_list_next(e))
+		if (memcmp((char *)e + sizeof(dt_list_t), find, size) == 0)
+			return (e);
+
+	return (NULL);
+}
+

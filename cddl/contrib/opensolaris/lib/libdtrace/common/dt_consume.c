@@ -29,6 +29,8 @@
  * Copyright (c) 2012 by Delphix. All rights reserved.
  */
 
+#include <machine/param.h>
+
 #include <stdlib.h>
 #include <strings.h>
 #include <errno.h>
@@ -40,15 +42,23 @@
 #include <alloca.h>
 #endif
 #include <dt_impl.h>
+#include <dt_printf.h>
 #include <dt_pq.h>
 #include <dt_oformat.h>
 #ifndef illumos
 #include <libproc_compat.h>
+#include <sys/hypertrace.h>
+#endif
+
+#ifdef illumos
+#define HYPERTRACE_STACK_NFRAMES(v) ((uint32_t)(v))
+#define HYPERTRACE_STACK_GUEST(v) 0
+#define HYPERTRACE_STACK_VMID(v) 0
 #endif
 
 #define	DT_MASK_LO 0x00000000FFFFFFFFULL
 
-#define	dt_format_sym(dtp, addr) dt_print_sym((dtp), NULL, NULL, addr)
+#define	dt_format_sym(dtp, addr) dt_print_sym((dtp), NULL, addr)
 
 typedef struct dt_prepare_args {
 	int first_bin;
@@ -109,8 +119,11 @@ dt_ndigits(long long val)
 		rval++;
 	}
 
-	while (val > cmp && cmp > 0) {
+	/* Stop before cmp * 10 would overflow (signed overflow is UB). */
+	while (val > cmp) {
 		rval++;
+		if (cmp > LLONG_MAX / 10)
+			break;
 		cmp *= 10;
 	}
 
@@ -214,8 +227,9 @@ dt_add_128(uint64_t *addend1, uint64_t *addend2, uint64_t *sum)
 	uint64_t result[2];
 
 	result[0] = addend1[0] + addend2[0];
+	/* An unsigned sum wrapped iff it is below either addend. */
 	result[1] = addend1[1] + addend2[1] +
-	    (result[0] < addend1[0] || result[0] < addend2[0] ? 1 : 0);
+	    (result[0] < addend1[0] ? 1 : 0);
 
 	sum[0] = result[0];
 	sum[1] = result[1];
@@ -815,7 +829,8 @@ dt_format_quantize_prepare(dtrace_hdl_t *dtp, const void *addr, size_t size,
 	while (first_bin < DTRACE_QUANTIZE_NBUCKETS - 1 && data[first_bin] == 0)
 		first_bin++;
 
-	if (first_bin == DTRACE_QUANTIZE_NBUCKETS - 1) {
+	if (first_bin == DTRACE_QUANTIZE_NBUCKETS - 1 &&
+	    data[first_bin] == 0) {
 		/*
 		 * There isn't any data.  This is possible if the aggregation
 		 * has been clear()'d or if negative increment values have been
@@ -1111,7 +1126,7 @@ dt_print_lquantize_packed(dtrace_hdl_t *dtp, FILE *fp, const void *addr,
 {
 	const int64_t *data = addr;
 	long double total = 0, count = 0;
-	int min, max, base, err;
+	int min, max, base;
 	uint64_t arg;
 	uint16_t step, levels;
 	char c[32];
@@ -1130,17 +1145,12 @@ dt_print_lquantize_packed(dtrace_hdl_t *dtp, FILE *fp, const void *addr,
 	if (size != sizeof (uint64_t) * (levels + 2))
 		return (dt_set_errno(dtp, EDT_DMISMATCH));
 
+	/* aggpack always shows lquantize's whole range, from "< base". */
 	min = 0;
 	max = levels + 1;
 
-	if (min == 0) {
-		(void) snprintf(c, sizeof (c), "< %d", base);
-		err = dt_printf(dtp, fp, "%8s :", c);
-	} else {
-		err = dt_printf(dtp, fp, "%8d :", base + (min - 1) * step);
-	}
-
-	if (err < 0)
+	(void) snprintf(c, sizeof (c), "< %d", base);
+	if (dt_printf(dtp, fp, "%8s :", c) < 0)
 		return (-1);
 
 	for (i = min; i <= max; i++) {
@@ -1165,7 +1175,7 @@ dt_format_llquantize_prepare(dtrace_hdl_t *dtp, const void *addr, size_t size,
 	uint16_t factor, low, high, nsteps;
 	const int64_t *data = addr;
 	int64_t value = 1, next, step;
-	uint64_t arg;
+	uint64_t arg, magnitude, upper, width, expected = 2;
 
 	if (size < sizeof(uint64_t)) {
 		(void) dt_set_errno(dtp, EDT_DMISMATCH);
@@ -1184,13 +1194,34 @@ dt_format_llquantize_prepare(dtrace_hdl_t *dtp, const void *addr, size_t size,
 	 * We don't expect to be handed invalid llquantize() parameters here,
 	 * but sanity check them (to a degree) nonetheless.
 	 */
-	if (size > INT32_MAX || factor < 2 || low >= high ||
+	if (size > INT32_MAX || size % sizeof (uint64_t) != 0 ||
+	    factor < 2 || low >= high ||
 	    nsteps == 0 || factor > nsteps) {
 		(void) dt_set_errno(dtp, EDT_DMISMATCH);
 		return (NULL);
 	}
 
 	levels = (int)size / sizeof (uint64_t);
+
+	/* Validate bucket geometry and the complete array before reading counts. */
+	for (magnitude = factor; magnitude < nsteps; magnitude *= factor)
+		continue;
+	if (nsteps % factor != 0 || magnitude % nsteps != 0)
+		goto mismatch;
+
+	magnitude = 1;
+	for (order = 0; order <= high; order++) {
+		if (magnitude > INT64_MAX / factor)
+			goto mismatch;
+		upper = magnitude * factor;
+		if (order >= low) {
+			width = upper > nsteps ? upper / nsteps : 1;
+			expected += (upper - magnitude) / width;
+		}
+		magnitude = upper;
+	}
+	if (expected != levels)
+		goto mismatch;
 
 	first_bin = 0;
 	last_bin = levels - 1;
@@ -1231,6 +1262,10 @@ dt_format_llquantize_prepare(dtrace_hdl_t *dtp, const void *addr, size_t size,
 	args->llquantize_value = value;
 
 	return (data);
+
+mismatch:
+	(void) dt_set_errno(dtp, EDT_DMISMATCH);
+	return (NULL);
 }
 
 int
@@ -1288,9 +1323,10 @@ dt_format_llquantize(dtrace_hdl_t *dtp, const void *addr, size_t size,
 		if ((value += step) != next)
 			continue;
 
+		if (order++ == high)
+			break;
 		next = value * factor;
 		step = next > nsteps ? next / nsteps : 1;
-		order++;
 	}
 
 	if (last_bin < bin) {
@@ -1376,9 +1412,10 @@ dt_print_llquantize(dtrace_hdl_t *dtp, FILE *fp, const void *addr,
 		if ((value += step) != next)
 			continue;
 
+		if (order++ == high)
+			break;
 		next = value * factor;
 		step = next > nsteps ? next / nsteps : 1;
-		order++;
 	}
 
 	if (last_bin < bin)
@@ -1558,12 +1595,70 @@ raw:
 }
 
 int
-dt_format_stack(dtrace_hdl_t *dtp, caddr_t addr, int depth, int size)
+dt_print_immstack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
+    caddr_t addr, int depth, int size)
+{
+	int stacksize, strsize, nframes, indent, i;
+	char *stack_entry;
+	size_t stack_entry_len;
+	uint64_t off;
+	uintptr_t addr_off;
+
+	if (dt_printf(dtp, fp, "\n") < 0)
+		return (-1);
+
+	if (format == NULL)
+		format = "%s";
+
+	if (dtp->dt_options[DTRACEOPT_STACKINDENT] != DTRACEOPT_UNSET)
+		indent = (int)dtp->dt_options[DTRACEOPT_STACKINDENT];
+	else
+		indent = _dtrace_stkindent;
+
+	strsize = dtp->dt_options[DTRACEOPT_IMMSTACKSTRSIZE];
+	nframes = dtp->dt_options[DTRACEOPT_IMMSTACKFRAMES];
+	if (strsize * nframes > size)
+		stacksize = dtp->dt_options[DTRACEOPT_IMMSTACKSTRSIZE];
+	else
+		stacksize = size / nframes;
+
+	addr = (caddr_t)ALIGN(addr);
+
+	for (i = 0; i < depth * stacksize; i += stacksize) {
+		stack_entry = (char *)(addr + i);
+		if (*stack_entry == 0)
+			break;
+
+		stack_entry_len = strlen(stack_entry);
+		addr_off = (uintptr_t)ALIGN(stack_entry + stack_entry_len + 1);
+		off = *((uint64_t *)addr_off);
+		if (dt_printf(dtp, fp, "%*s", indent, "") < 0)
+			return (-1);
+
+		if (dt_printf(dtp, fp, format, stack_entry) < 0)
+			return (-1);
+
+		if (dt_printf(dtp, fp, "+0x%llx", off) < 0)
+			return (-1);
+
+		if (dt_printf(dtp, fp, "\n") < 0)
+			return (-1);
+
+	}
+
+	return (0);
+}
+
+int
+dt_format_stack(dtrace_hdl_t *dtp, caddr_t addr, uint64_t arg, int size)
 {
 	dtrace_syminfo_t dts;
 	GElf_Sym sym;
 	int i;
 	uint64_t pc;
+	int depth = (int)HYPERTRACE_STACK_NFRAMES(arg);
+	int guest = HYPERTRACE_STACK_GUEST(arg);
+	uint16_t guest_vmid = HYPERTRACE_STACK_VMID(arg);
 
 	xo_open_list("stack-frames");
 	for (i = 0; i < depth; i++) {
@@ -1586,7 +1681,12 @@ dt_format_stack(dtrace_hdl_t *dtp, caddr_t addr, int depth, int size)
 		addr += size;
 
 		xo_open_instance("stack-frames");
-		if (dtrace_lookup_by_addr(dtp, pc, &sym, &dts) == 0) {
+		if (guest) {
+			xo_emit("{:symbol/guest[%u]`0x%llx} "
+			    "{:module/guest[%u]} {:offset/0x%llx}",
+			    guest_vmid, (u_longlong_t)pc, guest_vmid,
+			    (u_longlong_t)pc);
+		} else if (dtrace_lookup_by_addr(dtp, pc, &sym, &dts) == 0) {
 			if (pc > sym.st_value) {
 				xo_emit("{:symbol/%s`%s+0x%llx} {:module/%s} "
 					"{:name/%s} {:offset/0x%llx}",
@@ -1638,18 +1738,31 @@ dt_format_ustack(dtrace_hdl_t *dtp, caddr_t addr, uint64_t arg)
 	GElf_Sym sym;
 	int i, indent;
 	pid_t pid;
+	uint64_t stack_id;
+	uint16_t guest_vmid = 0;
+	int guest = 0;
 
 	if (depth == 0)
 		return (0);
 
-	pid = (pid_t)*pc++;
+	stack_id = *pc++;
+	pid = (pid_t)stack_id;
+#ifndef illumos
+	guest = HYPERTRACE_USTACK_GUEST(stack_id);
+	if (guest) {
+		guest_vmid = HYPERTRACE_USTACK_VMID(stack_id);
+		pid = (pid_t)HYPERTRACE_USTACK_PID(stack_id);
+		xo_emit("{:guest-vmid/%u} {:guest-pid/%u} ",
+		    (unsigned)guest_vmid, (unsigned)pid);
+	}
+#endif
 
 	/*
 	 * Ultimately, we need to add an entry point in the library vector for
 	 * determining <symbol, offset> from <pid, address>.  For now, if
 	 * this is a vector open, we just print the raw address or string.
 	 */
-	if (dtp->dt_vector == NULL)
+	if (dtp->dt_vector == NULL && !guest)
 		P = dt_proc_grab(dtp, pid, PGRAB_RDONLY | PGRAB_FORCE, 0);
 	else
 		P = NULL;
@@ -1660,6 +1773,12 @@ dt_format_ustack(dtrace_hdl_t *dtp, caddr_t addr, uint64_t arg)
 	xo_open_list("ustack-frames");
 	for (i = 0; i < depth && pc[i] != 0; i++) {
 		const prmap_t *map;
+		/*
+		 * The kernel does not terminate a helper string that fills
+		 * the rest of the string table; never read past strsize.
+		 */
+		int slen = str != NULL ?
+		    (int)strnlen(str, strsize - (str - strbase)) : 0;
 
 		xo_open_instance("ustack-frames");
 		if (P != NULL && Plookup_by_addr(P, pc[i],
@@ -1695,7 +1814,8 @@ dt_format_ustack(dtrace_hdl_t *dtp, caddr_t addr, uint64_t arg)
 			 * writable, we assume that we have fallen into this
 			 * case and we refuse to use the string.
 			 */
-			xo_emit("{:symbol/%s}", str);
+			(void) snprintf(c, sizeof (c), "%.*s", slen, str);
+			xo_emit("{:symbol/%s}", c);
 		} else {
 			if (P != NULL && Pobjname(P, pc[i], objname,
 			    sizeof (objname)) != 0) {
@@ -1716,11 +1836,13 @@ dt_format_ustack(dtrace_hdl_t *dtp, caddr_t addr, uint64_t arg)
 			 * and it is printed out beneath the frame and offset
 			 * with brackets.
 			 */
-			xo_emit("{:annotation/%s}", &str[1]);
+			(void) snprintf(c, sizeof (c), "%.*s", slen - 1,
+			    &str[1]);
+			xo_emit("{:annotation/%s}", c);
 		}
 
 		if (str != NULL) {
-			str += strlen(str) + 1;
+			str += slen + 1;
 			if (str - strbase >= strsize)
 				str = NULL;
 		}
@@ -1738,13 +1860,16 @@ dt_format_ustack(dtrace_hdl_t *dtp, caddr_t addr, uint64_t arg)
 
 int
 dt_print_stack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
-    caddr_t addr, int depth, int size)
+    caddr_t addr, uint64_t arg, int size)
 {
 	dtrace_syminfo_t dts;
 	GElf_Sym sym;
 	int i, indent;
 	char c[PATH_MAX * 2];
 	uint64_t pc;
+	int depth = (int)HYPERTRACE_STACK_NFRAMES(arg);
+	int guest = HYPERTRACE_STACK_GUEST(arg);
+	uint16_t guest_vmid = HYPERTRACE_STACK_VMID(arg);
 
 	if (dt_printf(dtp, fp, "\n") < 0)
 		return (-1);
@@ -1781,7 +1906,10 @@ dt_print_stack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 		if (dt_printf(dtp, fp, "%*s", indent, "") < 0)
 			return (-1);
 
-		if (dtrace_lookup_by_addr(dtp, pc, &sym, &dts) == 0) {
+		if (guest) {
+			(void) snprintf(c, sizeof (c), "guest[%u]`0x%llx",
+			    guest_vmid, (u_longlong_t)pc);
+		} else if (dtrace_lookup_by_addr(dtp, pc, &sym, &dts) == 0) {
 			if (pc > sym.st_value) {
 				(void) snprintf(c, sizeof (c), "%s`%s+0x%llx",
 				    dts.dts_object, dts.dts_name,
@@ -1832,11 +1960,22 @@ dt_print_ustack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 	GElf_Sym sym;
 	int i, indent;
 	pid_t pid;
+	uint64_t stack_id;
+	uint16_t guest_vmid = 0;
+	int guest = 0;
 
 	if (depth == 0)
 		return (0);
 
-	pid = (pid_t)*pc++;
+	stack_id = *pc++;
+	pid = (pid_t)stack_id;
+#ifndef illumos
+	guest = HYPERTRACE_USTACK_GUEST(stack_id);
+	if (guest) {
+		guest_vmid = HYPERTRACE_USTACK_VMID(stack_id);
+		pid = (pid_t)HYPERTRACE_USTACK_PID(stack_id);
+	}
+#endif
 
 	if (dt_printf(dtp, fp, "\n") < 0)
 		return (-1);
@@ -1848,13 +1987,16 @@ dt_print_ustack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 		indent = (int)dtp->dt_options[DTRACEOPT_STACKINDENT];
 	else
 		indent = _dtrace_stkindent;
+	if (guest && dt_printf(dtp, fp, "%*s[guest vmid=%u pid=%u]\n",
+	    indent, "", (unsigned)guest_vmid, (unsigned)pid) < 0)
+		return (-1);
 
 	/*
 	 * Ultimately, we need to add an entry point in the library vector for
 	 * determining <symbol, offset> from <pid, address>.  For now, if
 	 * this is a vector open, we just print the raw address or string.
 	 */
-	if (dtp->dt_vector == NULL)
+	if (dtp->dt_vector == NULL && !guest)
 		P = dt_proc_grab(dtp, pid, PGRAB_RDONLY | PGRAB_FORCE, 0);
 	else
 		P = NULL;
@@ -1864,6 +2006,9 @@ dt_print_ustack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 
 	for (i = 0; i < depth && pc[i] != 0; i++) {
 		const prmap_t *map;
+		/* As in dt_format_ustack(): helper strings are bounded. */
+		int slen = str != NULL ?
+		    (int)strnlen(str, strsize - (str - strbase)) : 0;
 
 		if ((err = dt_printf(dtp, fp, "%*s", indent, "")) < 0)
 			break;
@@ -1896,7 +2041,7 @@ dt_print_ustack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 			 * writable, we assume that we have fallen into this
 			 * case and we refuse to use the string.
 			 */
-			(void) snprintf(c, sizeof (c), "%s", str);
+			(void) snprintf(c, sizeof (c), "%.*s", slen, str);
 		} else {
 			if (P != NULL && Pobjname(P, pc[i], objname,
 			    sizeof (objname)) != 0) {
@@ -1924,7 +2069,8 @@ dt_print_ustack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 			if ((err = dt_printf(dtp, fp, "%*s", indent, "")) < 0)
 				break;
 
-			(void) snprintf(c, sizeof (c), "  [ %s ]", &str[1]);
+			(void) snprintf(c, sizeof (c), "  [ %.*s ]", slen - 1,
+			    &str[1]);
 
 			if ((err = dt_printf(dtp, fp, format, c)) < 0)
 				break;
@@ -1934,7 +2080,7 @@ dt_print_ustack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 		}
 
 		if (str != NULL) {
-			str += strlen(str) + 1;
+			str += slen + 1;
 			if (str - strbase >= strsize)
 				str = NULL;
 		}
@@ -1956,6 +2102,16 @@ dt_format_usym(dtrace_hdl_t *dtp, caddr_t addr, dtrace_actkind_t act)
 	char *s;
 	int n, len = 256;
 
+#ifndef illumos
+	if (act == DTRACEACT_UADDR && HYPERTRACE_UADDR_GUEST(pid)) {
+		char guest[96];
+
+		(void)dt_hypertrace_uaddr_format(guest, sizeof(guest), pid, pc);
+		xo_emit("{:usym/%s}", guest);
+		return (0);
+	}
+#endif
+
 	if (act == DTRACEACT_USYM && dtp->dt_vector == NULL) {
 		struct ps_prochandle *P;
 
@@ -1973,10 +2129,11 @@ dt_format_usym(dtrace_hdl_t *dtp, caddr_t addr, dtrace_actkind_t act)
 		}
 	}
 
+	/* dtrace_uaddr2str() returns the length without the NUL. */
 	do {
-		n = len;
+		n = len + 1;
 		s = alloca(n);
-	} while ((len = dtrace_uaddr2str(dtp, pid, pc, s, n)) > n);
+	} while ((len = dtrace_uaddr2str(dtp, pid, pc, s, n)) >= n);
 
 	xo_emit("{:usym/%s}", s);
 	return (0);
@@ -1994,6 +2151,15 @@ dt_print_usym(dtrace_hdl_t *dtp, FILE *fp, caddr_t addr, dtrace_actkind_t act)
 	char *s;
 	int n, len = 256;
 
+#ifndef illumos
+	if (act == DTRACEACT_UADDR && HYPERTRACE_UADDR_GUEST(pid)) {
+		char guest[96];
+
+		(void)dt_hypertrace_uaddr_format(guest, sizeof(guest), pid, pc);
+		return (dt_printf(dtp, fp, format, guest));
+	}
+#endif
+
 	if (act == DTRACEACT_USYM && dtp->dt_vector == NULL) {
 		struct ps_prochandle *P;
 
@@ -2011,10 +2177,11 @@ dt_print_usym(dtrace_hdl_t *dtp, FILE *fp, caddr_t addr, dtrace_actkind_t act)
 		}
 	}
 
+	/* dtrace_uaddr2str() returns the length without the NUL. */
 	do {
-		n = len;
+		n = len + 1;
 		s = alloca(n);
-	} while ((len = dtrace_uaddr2str(dtp, pid, pc, s, n)) > n);
+	} while ((len = dtrace_uaddr2str(dtp, pid, pc, s, n)) >= n);
 
 	return (dt_printf(dtp, fp, format, s));
 }
@@ -2099,16 +2266,15 @@ dt_print_umod(dtrace_hdl_t *dtp, FILE *fp, const char *format, caddr_t addr)
 }
 
 static int
-dt_print_sym(dtrace_hdl_t *dtp, FILE *fp, const char *format, caddr_t addr)
+dt_print_sym(dtrace_hdl_t *dtp, FILE *fp, caddr_t addr)
 {
 	/* LINTED - alignment */
 	uint64_t pc = *((uint64_t *)addr);
 	dtrace_syminfo_t dts;
 	GElf_Sym sym;
 	char c[PATH_MAX * 2];
-
-	if (format == NULL)
-		format = "  %-50s";
+	/* Every caller uses the default sym() format. */
+	const char *format = "  %-50s";
 
 	if (dtrace_lookup_by_addr(dtp, pc, &sym, &dts) == 0) {
 		if (dtp->dt_oformat)
@@ -2441,7 +2607,7 @@ dt_trunc(dtrace_hdl_t *dtp, caddr_t base, dtrace_recdesc_t *rec)
 		remaining = *((int8_t *)addr);
 		break;
 	default:
-		return (dt_set_errno(dtp, EDT_BADNORMAL));
+		return (dt_set_errno(dtp, EDT_BADTRUNC));
 	}
 
 	if (remaining < 0) {
@@ -2475,8 +2641,11 @@ dt_format_datum(dtrace_hdl_t *dtp, dtrace_recdesc_t *rec, caddr_t addr,
 
 	switch (act) {
 	case DTRACEACT_STACK:
+		if (HYPERTRACE_STACK_NFRAMES(rec->dtrd_arg) == 0)
+			return (dt_set_errno(dtp, EDT_BADSTACKPC));
 		return (dt_format_stack(dtp, addr, rec->dtrd_arg,
-		    rec->dtrd_size / rec->dtrd_arg));
+		    rec->dtrd_size /
+		    HYPERTRACE_STACK_NFRAMES(rec->dtrd_arg)));
 
 	case DTRACEACT_USTACK:
 	case DTRACEACT_JSTACK:
@@ -2600,8 +2769,24 @@ dt_print_datum(dtrace_hdl_t *dtp, FILE *fp, dtrace_recdesc_t *rec,
 		char negatives = aggdata->dtada_flags & DTRACE_A_HASNEGATIVES;
 		int64_t val;
 
-		assert(act == DTRACEAGG_SUM || act == DTRACEAGG_COUNT);
-		val = (long long)*((uint64_t *)addr);
+		/*
+		 * dt_aggregate_total() gives avg() and stddev() a total too:
+		 * draw the value it summed (the average or the standard
+		 * deviation); dt_print_quantline() applies the normalization.
+		 */
+		switch (act) {
+		case DTRACEAGG_AVG:
+			val = ((int64_t *)addr)[0] == 0 ? 0 :
+			    ((int64_t *)addr)[1] / ((int64_t *)addr)[0];
+			break;
+		case DTRACEAGG_STDDEV:
+			val = (int64_t)dt_stddev((uint64_t *)addr, 1);
+			break;
+		default:
+			assert(act == DTRACEAGG_SUM || act == DTRACEAGG_COUNT);
+			val = (long long)*((uint64_t *)addr);
+			break;
+		}
 
 		if (dt_printf(dtp, fp, " ") < 0)
 			return (-1);
@@ -2625,8 +2810,16 @@ dt_print_datum(dtrace_hdl_t *dtp, FILE *fp, dtrace_recdesc_t *rec,
 
 	switch (act) {
 	case DTRACEACT_STACK:
+		if (HYPERTRACE_STACK_NFRAMES(rec->dtrd_arg) == 0)
+			return (dt_set_errno(dtp, EDT_BADSTACKPC));
 		return (dt_print_stack(dtp, fp, NULL, addr,
-		    rec->dtrd_arg, rec->dtrd_size / rec->dtrd_arg));
+		    rec->dtrd_arg, rec->dtrd_size /
+		    HYPERTRACE_STACK_NFRAMES(rec->dtrd_arg)));
+
+	case DTRACEACT_IMMSTACK:
+	case DTRACEACT_PRINTIMMSTACK:
+		return (dt_print_immstack(dtp, fp, NULL, addr,
+		    rec->dtrd_arg, rec->dtrd_size));
 
 	case DTRACEACT_USTACK:
 	case DTRACEACT_JSTACK:
@@ -2640,7 +2833,7 @@ dt_print_datum(dtrace_hdl_t *dtp, FILE *fp, dtrace_recdesc_t *rec,
 		return (dt_print_umod(dtp, fp, NULL, addr));
 
 	case DTRACEACT_SYM:
-		return (dt_print_sym(dtp, fp, NULL, addr));
+		return (dt_print_sym(dtp, fp, addr));
 
 	case DTRACEACT_MOD:
 		return (dt_print_mod(dtp, fp, NULL, addr));
@@ -2750,7 +2943,14 @@ dt_format_aggs(const dtrace_aggdata_t **aggsdata, int naggvars, void *arg)
 	}
 	xo_close_list("keys");
 
-	assert(aggact != 0);
+	/*
+	 * A description without the aggregation-ID key record (no
+	 * aggregating record after it) is malformed kernel input.
+	 */
+	if (aggact == 0) {
+		xo_close_instance("aggregation-data");
+		return (dt_set_errno(dtp, EDT_BADAGG));
+	}
 
 	for (i = (naggvars == 1 ? 0 : 1); i < naggvars; i++) {
 		uint64_t normal;
@@ -2852,7 +3052,9 @@ dt_print_aggs(const dtrace_aggdata_t **aggsdata, int naggvars, void *arg)
 			return (-1);
 	}
 
-	assert(aggact != 0);
+	/* As in dt_format_aggs(): malformed kernel input. */
+	if (aggact == 0)
+		return (dt_set_errno(dtp, EDT_BADAGG));
 
 	for (i = (naggvars == 1 ? 0 : 1); i < naggvars; i++) {
 		uint64_t normal;
@@ -2915,7 +3117,15 @@ dt_format_agg(const dtrace_aggdata_t *aggdata, void *arg)
 			return (0);
 	}
 
-	return (dt_format_aggs(&aggdata, 1, arg));
+	/*
+	 * A walk callback that fails must leave errno set: the walker
+	 * reports DTRACE_AGGWALK_ERROR through errno, not dt_errno.
+	 */
+	if (dt_format_aggs(&aggdata, 1, arg) != 0) {
+		errno = dtrace_errno(pd->dtpa_dtp);
+		return (-1);
+	}
+	return (0);
 }
 
 int
@@ -2942,7 +3152,12 @@ dt_print_agg(const dtrace_aggdata_t *aggdata, void *arg)
 			return (0);
 	}
 
-	return (dt_print_aggs(&aggdata, 1, arg));
+	/* As in dt_format_agg(): failures are reported through errno. */
+	if (dt_print_aggs(&aggdata, 1, arg) != 0) {
+		errno = dtrace_errno(pd->dtpa_dtp);
+		return (-1);
+	}
+	return (0);
 }
 
 int
@@ -2973,7 +3188,7 @@ dt_setopt(dtrace_hdl_t *dtp, const dtrace_probedata_t *data,
 	len = strlen(option) + strlen(value) + strlen(errstr) + 80;
 	msg = alloca(len);
 
-	(void) snprintf(msg, len, "couldn't set option \"%s\" to \"%s\": %s\n",
+	(void) snprintf(msg, len, "couldn't set option \"%s\" to \"%s\": %s",
 	    option, value, errstr);
 
 	if ((rval = dt_handle_liberr(dtp, data, msg)) == 0)
@@ -3012,7 +3227,7 @@ dt_oformat_agg_name(dt_print_aggdata_t *pd)
 static int
 dt_consume_cpu(dtrace_hdl_t *dtp, FILE *fp, int cpu,
     dtrace_bufdesc_t *buf, boolean_t just_one,
-    dtrace_consume_probe_f *efunc, dtrace_consume_rec_f *rfunc, void *arg)
+    dtrace_consumer_t *dc, void *arg)
 {
 	dtrace_epid_t id;
 	size_t offs;
@@ -3073,7 +3288,7 @@ dt_consume_cpu(dtrace_hdl_t *dtp, FILE *fp, int cpu,
 
 		if (dtp->dt_oformat)
 			xo_open_instance("probes");
-		rval = (*efunc)(&data, arg);
+		rval = (*dc->dc_consume_probe)(&data, arg);
 
 		if (flow) {
 			if (data.dtpda_flow == DTRACEFLOW_ENTRY)
@@ -3209,7 +3424,7 @@ dt_consume_cpu(dtrace_hdl_t *dtp, FILE *fp, int cpu,
 				continue;
 			}
 
-			rval = (*rfunc)(&data, rec, arg);
+			rval = (*dc->dc_consume_rec)(&data, rec, arg);
 
 			if (rval == DTRACE_CONSUME_NEXT)
 				continue;
@@ -3220,23 +3435,38 @@ dt_consume_cpu(dtrace_hdl_t *dtp, FILE *fp, int cpu,
 			if (rval != DTRACE_CONSUME_THIS)
 				return (dt_set_errno(dtp, EDT_BADRVAL));
 
+			if (act == DTRACEACT_STACK &&
+			    HYPERTRACE_STACK_NFRAMES(rec->dtrd_arg) == 0)
+				return (dt_set_errno(dtp, EDT_BADSTACKPC));
 			if (dtp->dt_oformat && rec->dtrd_size > 0)
 				xo_open_instance("output");
 			if (act == DTRACEACT_STACK) {
-				int depth = rec->dtrd_arg;
+				uint32_t depth = HYPERTRACE_STACK_NFRAMES(
+				    rec->dtrd_arg);
 
 				if (dtp->dt_oformat) {
-					if (dt_format_stack(dtp, addr, depth,
+					if (dt_format_stack(dtp, addr,
+					    rec->dtrd_arg,
 					    rec->dtrd_size / depth) < 0) {
 						xo_close_instance("output");
 						return (-1);
 					}
 				} else {
 					if (dt_print_stack(dtp,
-					    fp, NULL, addr, depth,
+					    fp, NULL, addr, rec->dtrd_arg,
 					    rec->dtrd_size / depth) < 0)
 					return (-1);
 				}
+				goto nextrec;
+			}
+
+			if (act == DTRACEACT_IMMSTACK ||
+			    act == DTRACEACT_PRINTIMMSTACK) {
+				int depth = rec->dtrd_arg;
+
+				if (dt_print_immstack(dtp, fp, NULL, addr,
+				    depth, rec->dtrd_size) < 0)
+					return (-1);
 				goto nextrec;
 			}
 
@@ -3263,7 +3493,7 @@ dt_consume_cpu(dtrace_hdl_t *dtp, FILE *fp, int cpu,
 						return (-1);
 					}
 				} else {
-					if (dt_print_sym(dtp, fp, NULL, addr) < 0)
+					if (dt_print_sym(dtp, fp, addr) < 0)
 						return (-1);
 				}
 				goto nextrec;
@@ -3559,6 +3789,10 @@ nofmt:
 
 					s = dt_format_bytes_get(dtp, addr,
 					    tracememsize);
+					if (s == NULL) {
+						xo_close_instance("output");
+						return (-1);
+					}
 					n = xo_emit("{:tracemem/%s}", s);
 					dt_free(dtp, s);
 				} else {
@@ -3624,6 +3858,10 @@ nofmt:
 
 					s = dt_format_bytes_get(dtp, addr,
 					    rec->dtrd_size);
+					if (s == NULL) {
+						xo_close_instance("output");
+						return (-1);
+					}
 					xo_emit("{:value/%s}", s);
 					dt_free(dtp, s);
 					n = 0;
@@ -3649,7 +3887,7 @@ nextrec:
 		 * Call the record callback with a NULL record to indicate
 		 * that we're done processing this EPID.
 		 */
-		rval = (*rfunc)(&data, NULL, arg);
+		rval = (*dc->dc_consume_rec)(&data, NULL, arg);
 nextepid:
 		offs += epd->dtepd_size;
 		dtp->dt_last_epid = id;
@@ -3813,6 +4051,7 @@ dt_get_buf(dtrace_hdl_t *dtp, int cpu, dtrace_bufdesc_t **bufp)
 	return (0);
 }
 
+
 typedef struct dt_begin {
 	dtrace_consume_probe_f *dtbgn_probefunc;
 	dtrace_consume_rec_f *dtbgn_recfunc;
@@ -3876,8 +4115,7 @@ dt_consume_begin_error(const dtrace_errdata_t *data, void *arg)
 }
 
 static int
-dt_consume_begin(dtrace_hdl_t *dtp, FILE *fp,
-    dtrace_consume_probe_f *pf, dtrace_consume_rec_f *rf, void *arg)
+dt_consume_begin(dtrace_hdl_t *dtp, FILE *fp, dtrace_consumer_t *dc, void *arg)
 {
 	/*
 	 * There's this idea that the BEGIN probe should be processed before
@@ -3906,10 +4144,11 @@ dt_consume_begin(dtrace_hdl_t *dtp, FILE *fp,
 	int rval, i;
 	static int max_ncpus;
 	dtrace_bufdesc_t *buf;
+	dtrace_consumer_t begin_dc;
 
 	dtp->dt_beganon = -1;
 
-	if (dt_get_buf(dtp, cpu, &buf) != 0)
+	if (dc->dc_get_buf(dtp, cpu, &buf) != 0)
 		return (-1);
 	if (buf == NULL)
 		return (0);
@@ -3920,14 +4159,13 @@ dt_consume_begin(dtrace_hdl_t *dtp, FILE *fp,
 		 * we are, we actually processed any END probes on another
 		 * CPU.  We can simply consume this buffer and return.
 		 */
-		rval = dt_consume_cpu(dtp, fp, cpu, buf, B_FALSE,
-		    pf, rf, arg);
-		dt_put_buf(dtp, buf);
+		rval = dt_consume_cpu(dtp, fp, cpu, buf, B_FALSE, dc, arg);
+		dc->dc_put_buf(dtp, buf);
 		return (rval);
 	}
 
-	begin.dtbgn_probefunc = pf;
-	begin.dtbgn_recfunc = rf;
+	begin.dtbgn_probefunc = dc->dc_consume_probe;
+	begin.dtbgn_recfunc = dc->dc_consume_rec;
 	begin.dtbgn_arg = arg;
 	begin.dtbgn_beginonly = 1;
 
@@ -3940,37 +4178,43 @@ dt_consume_begin(dtrace_hdl_t *dtp, FILE *fp,
 	dtp->dt_errhdlr = dt_consume_begin_error;
 	dtp->dt_errarg = &begin;
 
-	rval = dt_consume_cpu(dtp, fp, cpu, buf, B_FALSE,
-	    dt_consume_begin_probe, dt_consume_begin_record, &begin);
+	begin_dc.dc_consume_probe = dt_consume_begin_probe;
+	begin_dc.dc_consume_rec = dt_consume_begin_record;
+	begin_dc.dc_put_buf = dc->dc_put_buf;
+	begin_dc.dc_get_buf = dc->dc_get_buf;
+
+	rval = dt_consume_cpu(dtp, fp, cpu, buf, B_FALSE, &begin_dc, &begin);
 
 	dtp->dt_errhdlr = begin.dtbgn_errhdlr;
 	dtp->dt_errarg = begin.dtbgn_errarg;
 
 	if (rval != 0) {
-		dt_put_buf(dtp, buf);
+		dc->dc_put_buf(dtp, buf);
 		return (rval);
 	}
 
-	if (max_ncpus == 0 && (max_ncpus = dt_cpu_maxid(dtp) + 1) <= 0)
+	if (max_ncpus == 0 && (max_ncpus = dt_cpu_maxid(dtp) + 1) <= 0) {
+		max_ncpus = 0;
+		dc->dc_put_buf(dtp, buf);
 		return (-1);
+	}
 
 	for (i = 0; i < max_ncpus; i++) {
 		dtrace_bufdesc_t *nbuf;
 		if (i == cpu)
 			continue;
 
-		if (dt_get_buf(dtp, i, &nbuf) != 0) {
-			dt_put_buf(dtp, buf);
+		if (dc->dc_get_buf(dtp, i, &nbuf) != 0) {
+			dc->dc_put_buf(dtp, buf);
 			return (-1);
 		}
 		if (nbuf == NULL)
 			continue;
 
-		rval = dt_consume_cpu(dtp, fp, i, nbuf, B_FALSE,
-		    pf, rf, arg);
-		dt_put_buf(dtp, nbuf);
+		rval = dt_consume_cpu(dtp, fp, i, nbuf, B_FALSE, dc, arg);
+		dc->dc_put_buf(dtp, nbuf);
 		if (rval != 0) {
-			dt_put_buf(dtp, buf);
+			dc->dc_put_buf(dtp, buf);
 			return (rval);
 		}
 	}
@@ -3989,8 +4233,7 @@ dt_consume_begin(dtrace_hdl_t *dtp, FILE *fp,
 	dtp->dt_errhdlr = dt_consume_begin_error;
 	dtp->dt_errarg = &begin;
 
-	rval = dt_consume_cpu(dtp, fp, cpu, buf, B_FALSE,
-	    dt_consume_begin_probe, dt_consume_begin_record, &begin);
+	rval = dt_consume_cpu(dtp, fp, cpu, buf, B_FALSE, &begin_dc, &begin);
 
 	dtp->dt_errhdlr = begin.dtbgn_errhdlr;
 	dtp->dt_errarg = begin.dtbgn_errarg;
@@ -4021,8 +4264,7 @@ dt_buf_oldest(void *elem, void *arg)
 }
 
 int
-dtrace_consume(dtrace_hdl_t *dtp, FILE *fp,
-    dtrace_consume_probe_f *pf, dtrace_consume_rec_f *rf, void *arg)
+dtrace_consume_consumer(dtrace_hdl_t *dtp, FILE *fp, dtrace_consumer_t *dc, void *arg)
 {
 	dtrace_optval_t size;
 	static int max_ncpus;
@@ -4045,11 +4287,17 @@ dtrace_consume(dtrace_hdl_t *dtp, FILE *fp,
 	if (max_ncpus == 0 && (max_ncpus = dt_cpu_maxid(dtp) + 1) <= 0)
 		return (-1);
 
-	if (pf == NULL)
-		pf = (dtrace_consume_probe_f *)dt_nullprobe;
+	if (dc->dc_consume_probe == NULL)
+		dc->dc_consume_probe = (dtrace_consume_probe_f *)dt_nullprobe;
 
-	if (rf == NULL)
-		rf = (dtrace_consume_rec_f *)dt_nullrec;
+	if (dc->dc_consume_rec == NULL)
+		dc->dc_consume_rec = (dtrace_consume_rec_f *)dt_nullrec;
+
+	if (dc->dc_put_buf == NULL)
+		dc->dc_put_buf = (dtrace_put_buf_f *)dt_put_buf;
+
+	if (dc->dc_get_buf == NULL)
+		dc->dc_get_buf = (dtrace_get_buf_f *)dt_get_buf;
 
 	if (dtp->dt_options[DTRACEOPT_TEMPORAL] == DTRACEOPT_UNSET) {
 		/*
@@ -4062,8 +4310,9 @@ dtrace_consume(dtrace_hdl_t *dtp, FILE *fp,
 		 * If we have just begun, we want to first process the CPU that
 		 * executed the BEGIN probe (if any).
 		 */
-		if (dtp->dt_active && dtp->dt_beganon != -1 &&
-		    (rval = dt_consume_begin(dtp, fp, pf, rf, arg)) != 0)
+		/* dt_active was checked above. */
+		if (dtp->dt_beganon != -1 &&
+		    (rval = dt_consume_begin(dtp, fp, dc, arg)) != 0)
 			return (rval);
 
 		for (i = 0; i < max_ncpus; i++) {
@@ -4077,8 +4326,9 @@ dtrace_consume(dtrace_hdl_t *dtp, FILE *fp,
 			if (dtp->dt_stopped && (i == dtp->dt_endedon))
 				continue;
 
-			if (dt_get_buf(dtp, i, &buf) != 0)
+			if (dc->dc_get_buf(dtp, i, &buf) != 0)
 				return (-1);
+
 			if (buf == NULL)
 				continue;
 
@@ -4086,22 +4336,22 @@ dtrace_consume(dtrace_hdl_t *dtp, FILE *fp,
 			dtp->dt_indent = 0;
 			dtp->dt_prefix = NULL;
 			rval = dt_consume_cpu(dtp, fp, i,
-			    buf, B_FALSE, pf, rf, arg);
-			dt_put_buf(dtp, buf);
+			    buf, B_FALSE, dc, arg);
+			dc->dc_put_buf(dtp, buf);
 			if (rval != 0)
 				return (rval);
 		}
 		if (dtp->dt_stopped) {
 			dtrace_bufdesc_t *buf;
 
-			if (dt_get_buf(dtp, dtp->dt_endedon, &buf) != 0)
+			if (dc->dc_get_buf(dtp, dtp->dt_endedon, &buf) != 0)
 				return (-1);
 			if (buf == NULL)
 				return (0);
 
 			rval = dt_consume_cpu(dtp, fp, dtp->dt_endedon,
-			    buf, B_FALSE, pf, rf, arg);
-			dt_put_buf(dtp, buf);
+			    buf, B_FALSE, dc, arg);
+			dc->dc_put_buf(dtp, buf);
 			return (rval);
 		}
 	} else {
@@ -4163,6 +4413,9 @@ dtrace_consume(dtrace_hdl_t *dtp, FILE *fp,
 				break;
 
 			timestamp = dt_buf_oldest(buf, dtp);
+			assert(timestamp >= dtp->dt_last_timestamp);
+			dtp->dt_last_timestamp = timestamp;
+
 			if (timestamp == buf->dtbd_timestamp) {
 				/*
 				 * We've reached the end of the time covered
@@ -4170,17 +4423,18 @@ dtrace_consume(dtrace_hdl_t *dtp, FILE *fp,
 				 * buffer, we must do another pass
 				 * to retrieve more data.
 				 */
-				dt_put_buf(dtp, buf);
+				dc->dc_put_buf(dtp, buf);
+				/* Stopped tracing, or a quiesced drain behind a
+				 * producer fence, has no later record to wait
+				 * for: emit everything retained. */
 				if (timestamp == first_timestamp &&
-				    !dtp->dt_stopped)
+				    !dtp->dt_stopped && !dtp->dt_drain_final)
 					break;
 				continue;
 			}
-			assert(timestamp >= dtp->dt_last_timestamp);
-			dtp->dt_last_timestamp = timestamp;
 
 			if ((rval = dt_consume_cpu(dtp, fp,
-			    buf->dtbd_cpu, buf, B_TRUE, pf, rf, arg)) != 0)
+			    buf->dtbd_cpu, buf, B_TRUE, dc, arg)) != 0)
 				return (rval);
 			dt_pq_insert(dtp->dt_bufq, buf);
 		}
@@ -4231,4 +4485,17 @@ dt_oformat_drop(dtrace_hdl_t *dtp, processorid_t cpu)
 	xo_emit("{:cpu/%d} {:id/%d} {:provider/%s} "
 		"{:module/%s} {:function/%s} {:name/%s}",
 	    cpu, -1, "dtrace", "INTERNAL", "INTERNAL", "DROP");
+}
+
+/* HyperTrace buffer callbacks are optional extensions to the standard API. */
+int
+dtrace_consume(dtrace_hdl_t *dtp, FILE *fp, dtrace_consume_probe_f *probe,
+    dtrace_consume_rec_f *record, void *arg)
+{
+	dtrace_consumer_t consumer = {
+		.dc_consume_probe = probe,
+		.dc_consume_rec = record
+	};
+
+	return (dtrace_consume_consumer(dtp, fp, &consumer, arg));
 }

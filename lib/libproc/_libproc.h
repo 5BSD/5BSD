@@ -78,6 +78,8 @@ struct proc_handle {
 	char	execpath[PATH_MAX];	/* Path to program executable. */
 };
 
+void	proc_clearmappings(struct proc_handle *);
+
 #ifdef DEBUG
 #define	DPRINTF(...) 	warn(__VA_ARGS__)
 #define	DPRINTFX(...)	warnx(__VA_ARGS__)

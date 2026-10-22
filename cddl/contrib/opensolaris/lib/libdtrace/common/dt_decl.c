@@ -148,6 +148,7 @@ dt_decl_pop(void)
 	dsp->ds_decl = NULL;
 	free(dsp->ds_ident);
 	dsp->ds_ident = NULL;
+	dsp->ds_object = NULL;
 	dsp->ds_ctfp = NULL;
 	dsp->ds_type = CTF_ERR;
 	dsp->ds_class = DT_DC_DEFAULT;
@@ -255,7 +256,6 @@ dt_decl_spec(ushort_t kind, char *name)
 
 	ddp->dd_kind = kind;
 	ddp->dd_name = name;
-
 	return (dt_decl_check(ddp));
 }
 
@@ -314,6 +314,9 @@ dt_decl_prototype(dt_node_t *plist,
 	int is_void, v = 0, i = 1;
 	int form = plist != flist;
 	dt_node_t *dnp;
+	int isbottom;
+
+	isbottom = 0;
 
 	for (dnp = plist; dnp != NULL; dnp = dnp->dn_list, i++) {
 
@@ -329,7 +332,8 @@ dt_decl_prototype(dt_node_t *plist,
 			    dnp->dn_string ? dnp->dn_string : "(anonymous)", i);
 		}
 
-		is_void = dt_node_is_void(dnp);
+		isbottom = dt_node_is_bottom(dnp);
+		is_void = isbottom ? 0 : dt_node_is_void(dnp);
 		v += is_void;
 
 		if (is_void && !(flags & DT_DP_VOID)) {
@@ -462,13 +466,17 @@ dt_decl_sou(uint_t kind, char *name)
 	dt_decl_t *ddp = dt_decl_spec(kind, name);
 	char n[DT_TYPE_NAMELEN];
 	ctf_file_t *ctfp;
+	const char *object;
 	ctf_id_t type;
 	uint_t flag;
 
-	if (yypcb->pcb_idepth != 0)
+	if (yypcb->pcb_idepth != 0) {
 		ctfp = yypcb->pcb_hdl->dt_cdefs->dm_ctfp;
-	else
+		object = yypcb->pcb_hdl->dt_cdefs->dm_name;
+	} else {
 		ctfp = yypcb->pcb_hdl->dt_ddefs->dm_ctfp;
+		object = yypcb->pcb_hdl->dt_ddefs->dm_name;
+	}
 
 	if (yypcb->pcb_dstack.ds_next != NULL)
 		flag = CTF_ADD_NONROOT;
@@ -484,9 +492,9 @@ dt_decl_sou(uint_t kind, char *name)
 		xyerror(D_DECL_TYPERED, "type redeclared: %s\n", n);
 
 	if (kind == CTF_K_STRUCT)
-		type = ctf_add_struct(ctfp, flag, name);
+		type = ctf_add_struct_cp(ctfp, flag, name);
 	else
-		type = ctf_add_union(ctfp, flag, name);
+		type = ctf_add_union_cp(ctfp, flag, name);
 
 	if (type == CTF_ERR || ctf_update(ctfp) == CTF_ERR) {
 		xyerror(D_UNKNOWN, "failed to define %s: %s\n",
@@ -496,7 +504,7 @@ dt_decl_sou(uint_t kind, char *name)
 	ddp->dd_ctfp = ctfp;
 	ddp->dd_type = type;
 
-	dt_scope_push(ctfp, type);
+	dt_scope_push(object, ctfp, type);
 	return (ddp);
 }
 
@@ -610,6 +618,7 @@ dt_decl_member(dt_node_t *dnp)
 			    ctf_errmsg(ctf_errno(dsp->ds_ctfp)));
 		}
 
+		dtt.dtt_object = dsp->ds_object;
 		dtt.dtt_ctfp = dsp->ds_ctfp;
 		dt_node_free(dnp);
 	}
@@ -623,9 +632,11 @@ dt_decl_member(dt_node_t *dnp)
 	if (dtt.dtt_ctfp != dsp->ds_ctfp &&
 	    dtt.dtt_ctfp != ctf_parent_file(dsp->ds_ctfp)) {
 
-		dtt.dtt_type = ctf_add_type(dsp->ds_ctfp,
+		dtt.dtt_type = ctf_add_type_cp(dsp->ds_ctfp,
 		    dtt.dtt_ctfp, dtt.dtt_type);
+		dtt.dtt_object = dsp->ds_object;
 		dtt.dtt_ctfp = dsp->ds_ctfp;
+		dtt.dtt_copied_ctf = 1;
 
 		if (dtt.dtt_type == CTF_ERR ||
 		    ctf_update(dtt.dtt_ctfp) == CTF_ERR) {
@@ -659,13 +670,17 @@ dt_decl_enum(char *name)
 	dt_decl_t *ddp = dt_decl_spec(CTF_K_ENUM, name);
 	char n[DT_TYPE_NAMELEN];
 	ctf_file_t *ctfp;
+	const char *object;
 	ctf_id_t type;
 	uint_t flag;
 
-	if (yypcb->pcb_idepth != 0)
+	if (yypcb->pcb_idepth != 0) {
 		ctfp = yypcb->pcb_hdl->dt_cdefs->dm_ctfp;
-	else
+		object = yypcb->pcb_hdl->dt_cdefs->dm_name;
+	} else {
 		ctfp = yypcb->pcb_hdl->dt_ddefs->dm_ctfp;
+		object = yypcb->pcb_hdl->dt_ddefs->dm_name;
+	}
 
 	if (yypcb->pcb_dstack.ds_next != NULL)
 		flag = CTF_ADD_NONROOT;
@@ -674,7 +689,12 @@ dt_decl_enum(char *name)
 
 	(void) snprintf(n, sizeof (n), "enum %s", name ? name : "(anon)");
 
-	if (name != NULL && (type = ctf_lookup_by_name(ctfp, n)) != CTF_ERR) {
+	/*
+	 * A forward tag created by an earlier "enum name" reference is
+	 * completed by ctf_add_enum() below, as it is for struct and union.
+	 */
+	if (name != NULL && (type = ctf_lookup_by_name(ctfp, n)) != CTF_ERR &&
+	    ctf_type_kind(ctfp, type) != CTF_K_FORWARD) {
 		if (ctf_enum_iter(ctfp, type, dt_decl_hasmembers, NULL))
 			xyerror(D_DECL_TYPERED, "type redeclared: %s\n", n);
 	} else if ((type = ctf_add_enum(ctfp, flag, name)) == CTF_ERR) {
@@ -685,7 +705,7 @@ dt_decl_enum(char *name)
 	ddp->dd_ctfp = ctfp;
 	ddp->dd_type = type;
 
-	dt_scope_push(ctfp, type);
+	dt_scope_push(object, ctfp, type);
 	return (ddp);
 }
 
@@ -708,7 +728,7 @@ dt_decl_enumerator(char *s, dt_node_t *dnp)
 		longjmp(yypcb->pcb_jmpbuf, EDT_NOSCOPE);
 
 	assert(dsp->ds_decl->dd_kind == CTF_K_ENUM);
-	value = dsp->ds_enumval + 1; /* default is previous value plus one */
+	value = 0;
 
 	if (strchr(name, '`') != NULL) {
 		xyerror(D_DECL_SCOPE, "D scoping operator may not be used in "
@@ -740,6 +760,13 @@ dt_decl_enumerator(char *s, dt_node_t *dnp)
 			value = (int)dnp->dn_value;
 		}
 		dt_node_free(dnp);
+	} else {
+		/* The default is the previous value plus one, within int. */
+		if (dsp->ds_enumval == INT_MAX) {
+			xyerror(D_DECL_ENOFLOW, "enumerator '%s' value "
+			    "overflows INT_MAX (%d)\n", name, INT_MAX);
+		}
+		value = dsp->ds_enumval + 1;
 	}
 
 	if (ctf_add_enumerator(dsp->ds_ctfp, dsp->ds_type,
@@ -780,7 +807,8 @@ dt_decl_enumerator(char *s, dt_node_t *dnp)
 	yyintdecimal = 0;
 
 	dnp = dt_node_int(value);
-	dt_node_type_assign(dnp, dsp->ds_ctfp, dsp->ds_type, B_FALSE);
+	dt_node_type_assign(dnp, dsp->ds_object, dsp->ds_ctfp, dsp->ds_type,
+	    B_FALSE);
 
 	if ((inp = malloc(sizeof (dt_idnode_t))) == NULL)
 		longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
@@ -799,6 +827,7 @@ dt_decl_enumerator(char *s, dt_node_t *dnp)
 
 	idp->di_iarg = inp;
 	idp->di_ctfp = dsp->ds_ctfp;
+	idp->di_object = dsp->ds_object;
 	idp->di_type = dsp->ds_type;
 }
 
@@ -932,9 +961,11 @@ dt_decl_type(dt_decl_t *ddp, dtrace_typeinfo_t *tip)
 		if (tip->dtt_ctfp != dmp->dm_ctfp &&
 		    tip->dtt_ctfp != ctf_parent_file(dmp->dm_ctfp)) {
 
-			tip->dtt_type = ctf_add_type(dmp->dm_ctfp,
+			tip->dtt_type = ctf_add_type_cp(dmp->dm_ctfp,
 			    tip->dtt_ctfp, tip->dtt_type);
 			tip->dtt_ctfp = dmp->dm_ctfp;
+			tip->dtt_object = dmp->dm_name;
+			tip->dtt_copied_ctf = 1;
 
 			if (tip->dtt_type == CTF_ERR ||
 			    ctf_update(tip->dtt_ctfp) == CTF_ERR) {
@@ -987,7 +1018,13 @@ dt_decl_type(dt_decl_t *ddp, dtrace_typeinfo_t *tip)
 			(void) strcat(name, "long ");
 		if (ddp->dd_attr & DT_DA_LONGLONG)
 			(void) strcat(name, "long long ");
-		if (ddp->dd_attr == 0 && ddp->dd_name == NULL)
+		/*
+		 * A declaration with no type specifier other than qualifiers
+		 * (e.g. "const x" or "volatile x") is an implicit int.
+		 */
+		if ((ddp->dd_attr & (DT_DA_SIGNED | DT_DA_UNSIGNED |
+		    DT_DA_SHORT | DT_DA_LONG | DT_DA_LONGLONG)) == 0 &&
+		    ddp->dd_name == NULL)
 			(void) strcat(name, "int");
 		break;
 	case CTF_K_STRUCT:
@@ -1027,7 +1064,7 @@ dt_decl_type(dt_decl_t *ddp, dtrace_typeinfo_t *tip)
 	case CTF_K_STRUCT:
 	case CTF_K_UNION:
 	case CTF_K_ENUM:
-		type = ctf_add_forward(dmp->dm_ctfp, flag,
+		type = ctf_add_forward_cp(dmp->dm_ctfp, flag,
 		    ddp->dd_name, ddp->dd_kind);
 		break;
 	default:
@@ -1059,6 +1096,7 @@ dt_scope_create(dt_scope_t *dsp)
 	dsp->ds_next = NULL;
 	dsp->ds_ident = NULL;
 	dsp->ds_ctfp = NULL;
+	dsp->ds_object = NULL;
 	dsp->ds_type = CTF_ERR;
 	dsp->ds_class = DT_DC_DEFAULT;
 	dsp->ds_enumval = -1;
@@ -1079,7 +1117,7 @@ dt_scope_destroy(dt_scope_t *dsp)
 }
 
 void
-dt_scope_push(ctf_file_t *ctfp, ctf_id_t type)
+dt_scope_push(const char *object, ctf_file_t *ctfp, ctf_id_t type)
 {
 	dt_scope_t *rsp = &yypcb->pcb_dstack;
 	dt_scope_t *dsp = malloc(sizeof (dt_scope_t));
@@ -1091,6 +1129,7 @@ dt_scope_push(ctf_file_t *ctfp, ctf_id_t type)
 	dsp->ds_next = rsp->ds_next;
 	dsp->ds_ident = rsp->ds_ident;
 	dsp->ds_ctfp = ctfp;
+	dsp->ds_object = object;
 	dsp->ds_type = type;
 	dsp->ds_class = rsp->ds_class;
 	dsp->ds_enumval = rsp->ds_enumval;
@@ -1120,6 +1159,7 @@ dt_scope_pop(void)
 	rsp->ds_next = dsp->ds_next;
 	rsp->ds_ident = dsp->ds_ident;
 	rsp->ds_ctfp = dsp->ds_ctfp;
+	rsp->ds_object = dsp->ds_object;
 	rsp->ds_type = dsp->ds_type;
 	rsp->ds_class = dsp->ds_class;
 	rsp->ds_enumval = dsp->ds_enumval;

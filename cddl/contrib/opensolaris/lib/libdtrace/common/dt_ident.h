@@ -77,6 +77,7 @@ typedef struct dt_ident {
 	const dt_idops_t *di_ops; /* identifier's class-specific ops vector */
 	void *di_iarg;		/* initial argument pointer for ops vector */
 	void *di_data;		/* private data pointer for ops vector */
+	const char *di_object;	/* object name for the CTF container */
 	ctf_file_t *di_ctfp;	/* CTF container for the variable data type */
 	ctf_id_t di_type;	/* CTF identifier for the variable data type */
 	struct dt_ident *di_next; /* pointer to next ident in hash chain */
@@ -169,7 +170,8 @@ extern void dt_ident_morph(dt_ident_t *, ushort_t, const dt_idops_t *, void *);
 extern dtrace_attribute_t dt_ident_cook(struct dt_node *,
     dt_ident_t *, struct dt_node **);
 
-extern void dt_ident_type_assign(dt_ident_t *, ctf_file_t *, ctf_id_t);
+extern void dt_ident_type_assign(dt_ident_t *, const char *, ctf_file_t *,
+    ctf_id_t);
 extern dt_ident_t *dt_ident_resolve(dt_ident_t *);
 extern size_t dt_ident_size(dt_ident_t *);
 extern int dt_ident_unref(const dt_ident_t *);

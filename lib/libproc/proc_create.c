@@ -238,23 +238,8 @@ bad:
 void
 proc_free(struct proc_handle *phdl)
 {
-	struct file_info *file;
-	size_t i;
 
-	for (i = 0; i < phdl->nmappings; i++) {
-		file = phdl->mappings[i].file;
-		if (file != NULL && --file->refs == 0) {
-			if (file->elf != NULL) {
-				(void)elf_end(file->elf);
-				(void)close(file->fd);
-				if (file->symtab.nsyms > 0)
-					free(file->symtab.index);
-				if (file->dynsymtab.nsyms > 0)
-					free(file->dynsymtab.index);
-			}
-			free(file);
-		}
-	}
+	proc_clearmappings(phdl);
 	if (phdl->maparrsz > 0)
 		free(phdl->mappings);
 	if (phdl->procstat != NULL)

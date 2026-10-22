@@ -54,9 +54,15 @@ A result of this is that
 .Cm dtrace -l -P kinst
 will not match any probes.
 .Sh IMPLEMENTATION NOTES
-The provider is currently implemented only for amd64.
+The provider has implementations for amd64, arm64, and riscv64.
+The instruction offsets and supported instruction forms differ by
+architecture; obtain offsets from the disassembly of the running
+kernel or module.
+On arm64, BTI and pointer-authentication landing pads, register branches,
+and returns are not probeable because replacing or relocating them is unsafe.
+On riscv64, system instructions and LR/SC sequences are not probeable.
 .Sh EXAMPLES
-Find the offset corresponding to the third instruction in
+On amd64, find the offset corresponding to the third instruction in
 .Fn vm_fault
 and trace it, printing the contents of the RSI register:
 .Bd -literal -offset indent

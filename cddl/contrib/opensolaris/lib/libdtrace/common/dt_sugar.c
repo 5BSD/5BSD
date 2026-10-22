@@ -110,11 +110,10 @@ dt_sugar_new_condition_var(int condid)
 {
 	char *str;
 
-	if (condid == 0)
-		return (NULL);
+	/* Every caller passes an allocated condition ID (>= 1). */
 	assert(condid > 0);
 
-	(void) asprintf(&str, "%%condition_%d", ABS(condid));
+	(void) asprintf(&str, "%%condition_%d", condid);
 	return (dt_node_op2(DT_TOK_PTR, dt_node_ident(strdup("this")),
 	    dt_node_ident(str)));
 }
@@ -473,7 +472,8 @@ dt_compile_sugar(dtrace_hdl_t *dtp, dt_node_t *clause)
 
 	dt_sugar_visit_all(&dp, clause);
 
-	if (dp.dtsp_num_ifs == 0 && dp.dtsp_num_conditions == 0) {
+	/* dp starts zeroed and dt_sugar_visit_all() only counts "if"s. */
+	if (dp.dtsp_num_ifs == 0) {
 		/*
 		 * There is nothing that modifies the number of clauses.  Use
 		 * the existing clause as-is, with its predicate intact.  This
@@ -489,17 +489,12 @@ dt_compile_sugar(dtrace_hdl_t *dtp, dt_node_t *clause)
 			    clause->dn_pred, condid);
 		}
 
-		if (clause->dn_acts == NULL) {
-			/*
-			 * dt_sugar_visit_stmts() does not emit a clause with
-			 * an empty body (e.g. if there's an empty "if" body),
-			 * but we need the empty body here so that we
-			 * continue to get the default tracing action.
-			 */
-			dt_sugar_new_basic_block(&dp, condid, NULL);
-		} else {
-			dt_sugar_visit_stmts(&dp, clause->dn_acts, condid);
-		}
+		/*
+		 * An "if" is a statement (dt_grammar.y), so num_ifs > 0
+		 * implies a non-empty action list.
+		 */
+		assert(clause->dn_acts != NULL);
+		dt_sugar_visit_stmts(&dp, clause->dn_acts, condid);
 	}
 
 	if (dp.dtsp_num_conditions != 0) {

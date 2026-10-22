@@ -35,7 +35,22 @@
 #define	OP2(op, l, r)	dt_node_op2(op, l, r)
 #define	OP3(x, y, z)	dt_node_op3(x, y, z)
 #define	LINK(l, r)	dt_node_link(l, r)
-#define	DUP(s)		strdup(s)
+#define	DUP(s)		dt_grammar_dup(s)
+
+/*
+ * A type or keyword name copied by the grammar.  A NULL name has its own
+ * meaning in the declaration code (e.g. "no type name"), so an allocation
+ * failure must abort the compilation rather than return NULL.
+ */
+static char *
+dt_grammar_dup(const char *s)
+{
+	char *p = strdup(s);
+
+	if (p == NULL)
+		longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
+	return (p);
+}
 
 %}
 
@@ -246,7 +261,7 @@ external_declaration:
 
 inline_definition:
 		DT_KEY_INLINE declaration_specifiers declarator
-		    { dt_scope_push(NULL, CTF_ERR); } DT_TOK_ASGN
+		    { dt_scope_push(NULL, NULL, CTF_ERR); } DT_TOK_ASGN
 		    assignment_expression ';' {
 			/*
 			 * We push a new declaration scope before shifting the
@@ -846,7 +861,7 @@ direct_abstract_declarator:
 	|	function { dt_decl_func(NULL, $1); }
 	;
 
-array:		DT_TOK_LBRAC { dt_scope_push(NULL, CTF_ERR); }
+array:		DT_TOK_LBRAC { dt_scope_push(NULL, NULL, CTF_ERR); }
 		    array_parameters DT_TOK_RBRAC {
 			dt_scope_pop();
 			$$ = $3;
@@ -859,7 +874,7 @@ array_parameters:
 	|	parameter_type_list	{ $$ = $1; }
 	;
 
-function:	DT_TOK_LPAR { dt_scope_push(NULL, CTF_ERR); }
+function:	DT_TOK_LPAR { dt_scope_push(NULL, NULL, CTF_ERR); }
 		    function_parameters DT_TOK_RPAR {
 			dt_scope_pop();
 			$$ = $3;

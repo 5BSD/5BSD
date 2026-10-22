@@ -126,10 +126,47 @@ proc_rdagent(struct proc_handle *phdl)
 	return (phdl->rdap);
 }
 
+/*
+ * Release every mapping and the file information it holds.  The mapping
+ * array itself is kept for reuse.
+ */
+void
+proc_clearmappings(struct proc_handle *phdl)
+{
+	struct file_info *file;
+	size_t i;
+
+	for (i = 0; i < phdl->nmappings; i++) {
+		file = phdl->mappings[i].file;
+		if (file != NULL && --file->refs == 0) {
+			if (file->elf != NULL) {
+				(void)elf_end(file->elf);
+				(void)close(file->fd);
+				if (file->symtab.nsyms > 0)
+					free(file->symtab.index);
+				if (file->dynsymtab.nsyms > 0)
+					free(file->dynsymtab.index);
+			}
+			free(file);
+		}
+	}
+	phdl->nmappings = 0;
+	phdl->exec_map = 0;
+}
+
+/*
+ * Rebuild the mappings after the object list changed (for example after a
+ * dlopen()).  Merely clearing the array, as was done before, leaked every
+ * object's descriptor and ELF handle and left nmappings counting the stale
+ * entries, so each update grew the array.
+ */
 void
 proc_updatesyms(struct proc_handle *phdl)
 {
 
+	if (phdl->rdap == NULL || phdl->mappings == NULL)
+		return;
+	proc_clearmappings(phdl);
 	memset(phdl->mappings, 0, sizeof(*phdl->mappings) * phdl->maparrsz);
 	rd_loadobj_iter(phdl->rdap, map_iter, phdl);
 }

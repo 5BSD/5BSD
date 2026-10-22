@@ -40,7 +40,7 @@ stresc2chr(char *s)
 {
 	char *p, *q, c;
 	int esc = 0;
-	int x;
+	unsigned int x;
 
 	for (p = q = s; (c = *p) != '\0'; p++) {
 		if (esc) {
@@ -107,6 +107,8 @@ stresc2chr(char *s)
 				break;
 
 			case '"':
+			case '\'':
+			case '?':
 			case '\\':
 				*q++ = c;
 				break;

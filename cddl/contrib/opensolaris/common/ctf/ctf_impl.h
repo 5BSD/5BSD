@@ -159,6 +159,7 @@ typedef struct ctf_dtdef {
 	ctf_list_t dtd_list;	/* list forward/back pointers */
 	struct ctf_dtdef *dtd_hash; /* hash chain pointer for ctf_dthash */
 	char *dtd_name;		/* name associated with definition (if any) */
+	int dtd_copied;		/* HyperTrace provenance, never serialized */
 	ctf_id_t dtd_type;	/* type identifier for this definition */
 	struct ctf_type_v3 dtd_data;	/* type node (see <sys/ctf.h>) */
 	int dtd_ref;		/* recfount for dyanmic types */
@@ -174,6 +175,7 @@ typedef struct ctf_bundle {
 	ctf_file_t *ctb_file;	/* CTF container handle */
 	ctf_id_t ctb_type;	/* CTF type identifier */
 	ctf_dtdef_t *ctb_dtd;	/* CTF dynamic type definition (if any) */
+	int mark_copy;		/* CTF copy tag */
 } ctf_bundle_t;
 
 /*

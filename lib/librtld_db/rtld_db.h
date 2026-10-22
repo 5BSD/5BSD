@@ -56,6 +56,8 @@ typedef struct rd_agent {
 	uintptr_t rda_postinit_addr;
 
 	struct procstat *rda_procstat;
+
+	uintptr_t rda_rdebug_addr;	/* rtld's struct r_debug */
 } rd_agent_t;
 
 typedef struct rd_loadobj {

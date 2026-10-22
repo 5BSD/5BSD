@@ -27,50 +27,58 @@
 /*
  * Copyright (c) 2013, Joyent, Inc. All rights reserved.
  * Copyright (c) 2011, 2016 by Delphix. All rights reserved.
+ * Copyright (c) 2021 Domagoj Stolfa.  All rights reserved.
  */
 
 #ifndef	_DT_IMPL_H
 #define	_DT_IMPL_H
 
+#undef NDEBUG
+
 #include <sys/param.h>
 #include <sys/objfs.h>
 #ifndef illumos
 #include <sys/bitmap.h>
-#include <sys/utsname.h>
 #include <sys/ioccom.h>
 #include <sys/time.h>
+#include <sys/utsname.h>
+
 #include <string.h>
 #endif
-#include <setjmp.h>
-#include <libctf.h>
 #include <dtrace.h>
 #include <gelf.h>
+#include <libctf.h>
+#include <setjmp.h>
 #ifdef illumos
 #include <synch.h>
 #endif
 
-#ifdef	__cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
-#include <dt_parser.h>
-#include <dt_regset.h>
-#include <dt_inttab.h>
-#include <dt_strtab.h>
-#include <dt_ident.h>
-#include <dt_list.h>
-#include <dt_decl.h>
 #include <dt_as.h>
-#include <dt_proc.h>
+#include <dt_decl.h>
 #include <dt_dof.h>
+#include <dt_ident.h>
+#include <dt_inttab.h>
+#include <dt_list.h>
+#include <dt_parser.h>
 #include <dt_pcb.h>
 #include <dt_pq.h>
+#include <dt_proc.h>
+#include <dt_program.h>
+#include <dt_regset.h>
+#include <dt_strtab.h>
 
 struct dt_module;		/* see below */
 struct dt_pfdict;		/* see <dt_printf.h> */
 struct dt_arg;			/* see below */
 struct dt_provider;		/* see <dt_provider.h> */
 struct dt_xlator;		/* see <dt_xlator.h> */
+
+extern const dtrace_diftype_t dt_void_rtype;
+extern const dtrace_diftype_t dt_int_rtype;
 
 typedef struct dt_intrinsic {
 	const char *din_name;	/* string name of the intrinsic type */
@@ -85,6 +93,7 @@ typedef struct dt_typedef {
 
 typedef struct dt_intdesc {
 	const char *did_name;	/* string name of the integer type */
+	const char *did_object;	/* object name of CTF container for this type */
 	ctf_file_t *did_ctfp;	/* CTF container for this type reference */
 	ctf_id_t did_type;	/* CTF type reference for this type */
 	uintmax_t did_limit;	/* maximum positive value held by type */
@@ -233,6 +242,11 @@ typedef struct dt_lib_depend {
 
 typedef uint32_t dt_version_t;		/* encoded version (see below) */
 
+typedef struct dt_identlist {
+	dt_list_t dtil_list;				/* next */
+	unsigned char dtil_ident[DT_PROG_IDENTLEN];	/* identifier */
+} dt_identlist_t;
+
 struct dtrace_hdl {
 	const dtrace_vector_t *dt_vector; /* library vector, if vectored open */
 	void *dt_varg;	/* vector argument, if vectored open */
@@ -274,6 +288,7 @@ struct dtrace_hdl {
 	ctf_id_t dt_type_str;	/* cached CTF identifier for string type */
 	ctf_id_t dt_type_dyn;	/* cached CTF identifier for <DYN> type */
 	ctf_id_t dt_type_stack;	/* cached CTF identifier for stack type */
+	ctf_id_t dt_type_immstack; /* cached CTF identifier for immstack type */
 	ctf_id_t dt_type_symaddr; /* cached CTF identifier for _symaddr type */
 	ctf_id_t dt_type_usymaddr; /* cached CTF ident. for _usymaddr type */
 	size_t dt_maxprobe;	/* max enabled probe ID */
@@ -303,6 +318,7 @@ struct dtrace_hdl {
 	uint_t dt_droptags;	/* boolean:  set via -xdroptags */
 	uint_t dt_active;	/* boolean:  set once tracing is active */
 	uint_t dt_stopped;	/* boolean:  set once tracing is stopped */
+	uint_t dt_drain_final;	/* boolean:  quiesced drain; flush temporal queue */
 	processorid_t dt_beganon; /* CPU that executed BEGIN probe (if any) */
 	processorid_t dt_endedon; /* CPU that executed END probe (if any) */
 	uint_t dt_oflags;	/* dtrace open-time options (see dtrace.h) */
@@ -310,8 +326,11 @@ struct dtrace_hdl {
 	uint_t dt_dflags;	/* dtrace link-time options (see dtrace.h) */
 	uint_t dt_prcmode;	/* dtrace process create mode (see dt_proc.h) */
 	uint_t dt_linkmode;	/* dtrace symbol linking mode (see below) */
+	uint64_t dt_guestrefsize; /* largest guest by-reference result (0: */
+				/* DT_GUESTREFSIZE_DEFAULT; "guestrefsize") */
 	uint_t dt_linktype;	/* dtrace link output file type (see below) */
 	uint_t dt_link_machine;	/* ELF machine selected from -G input objects */
+	uint_t dt_link_flags;	/* ELF ABI flags selected from -G input objects */
 	uint_t dt_xlatemode;	/* dtrace translator linking mode (see below) */
 	uint_t dt_stdcmode;	/* dtrace stdc compatibility mode (see below) */
 	uint_t dt_encoding;	/* dtrace output encoding (see below) */
@@ -366,8 +385,14 @@ struct dtrace_hdl {
 	int dt_indent;		/* recommended flow indent */
 	dtrace_epid_t dt_last_epid;	/* most recently consumed EPID */
 	uint64_t dt_last_timestamp;	/* most recently consumed timestamp */
+	char *dt_instance;	/* Current instance name or NULL */
 	boolean_t dt_has_sugar;	/* syntactic sugar used? */
+	boolean_t dt_hypertrace;	/* are we currently hypertracing? */
+	boolean_t dt_is_guest;	/* is a guest? */
+	dt_list_t dt_compile_idents;	/* acceptable program idents */
+	int dt_failmsg_needed;	/* do we need to send a fail message? */
 	int dt_oformat;		/* output format (none, json, xml, html) */
+	int dt_output_discarded; /* terminal fresh-session output fence */
 };
 
 /*
@@ -375,6 +400,13 @@ struct dtrace_hdl {
  */
 #define	DT_ECB_DEFAULT		0
 #define	DT_ECB_ERROR		1
+
+/*
+ * The largest record a guest may declare for a by-reference result whose
+ * host type is unknown (a BOTTOM return type): dt_prog_verify() accepts no
+ * more, the "guestrefsize" option changes it.
+ */
+#define	DT_GUESTREFSIZE_DEFAULT	(64 * 1024)
 
 /*
  * Values for the dt_linkmode property, which is used by the assembler when
@@ -429,23 +461,33 @@ struct dtrace_hdl {
  * compiler.  The DT_INT_* macro relies upon "int" being at index 0 in the
  * _dtrace_ints_* tables in dt_open.c; the others are also set up there.
  */
+
+#define	DT_OBJECT_D(dtp)	((dtp)->dt_ddefs->dm_name)
+
 #define	DT_INT_CTFP(dtp)	((dtp)->dt_ints[0].did_ctfp)
+#define	DT_INT_OBJECT(dtp)	((dtp)->dt_ints[0].did_object)
 #define	DT_INT_TYPE(dtp)	((dtp)->dt_ints[0].did_type)
 
 #define	DT_FUNC_CTFP(dtp)	((dtp)->dt_ddefs->dm_ctfp)
 #define	DT_FUNC_TYPE(dtp)	((dtp)->dt_type_func)
 
 #define	DT_FPTR_CTFP(dtp)	((dtp)->dt_ddefs->dm_ctfp)
+#define	DT_FPTR_OBJECT(dtp)	((dtp)->dt_ddefs->dm_name)
 #define	DT_FPTR_TYPE(dtp)	((dtp)->dt_type_fptr)
 
 #define	DT_STR_CTFP(dtp)	((dtp)->dt_ddefs->dm_ctfp)
+#define	DT_STR_OBJECT(dtp)	((dtp)->dt_ddefs->dm_name)
 #define	DT_STR_TYPE(dtp)	((dtp)->dt_type_str)
 
 #define	DT_DYN_CTFP(dtp)	((dtp)->dt_ddefs->dm_ctfp)
+#define	DT_DYN_OBJECT(dtp)	((dtp)->dt_ddefs->dm_name)
 #define	DT_DYN_TYPE(dtp)	((dtp)->dt_type_dyn)
 
 #define	DT_STACK_CTFP(dtp)	((dtp)->dt_ddefs->dm_ctfp)
 #define	DT_STACK_TYPE(dtp)	((dtp)->dt_type_stack)
+
+#define	DT_IMMSTACK_CTFP(dtp)	((dtp)->dt_ddefs->dm_ctfp)
+#define	DT_IMMSTACK_TYPE(dtp)	((dtp)->dt_type_immstack)
 
 #define	DT_SYMADDR_CTFP(dtp)	((dtp)->dt_ddefs->dm_ctfp)
 #define	DT_SYMADDR_TYPE(dtp)	((dtp)->dt_type_symaddr)
@@ -493,6 +535,7 @@ struct dtrace_hdl {
 #define	DT_ACT_SETOPT		DT_ACT(28)	/* setopt() action */
 #define	DT_ACT_PRINT		DT_ACT(29)	/* print() action */
 #define	DT_ACT_PRINTM		DT_ACT(30)	/* printm() action */
+#define	DT_ACT_IMMSTACK		DT_ACT(31)	/* immstack() action */
 
 /*
  * Sentinel to tell freopen() to restore the saved stdout.  This must not
@@ -579,7 +622,9 @@ enum {
 	EDT_OVERSION,		/* client is requesting deprecated version */
 	EDT_ENABLING_ERR,	/* failed to enable probe */
 	EDT_NOPROBES,		/* no probes sites for declared provider */
-	EDT_CANTLOAD		/* failed to load a module */
+	EDT_CANTLOAD,		/* failed to load a module */
+	EDT_NOSTMT,		/* statement is missing */
+	EDT_ACTLAST,		/* last action of a statement is empty */
 };
 
 /*
@@ -632,6 +677,10 @@ void dt_get_errloc(dtrace_hdl_t *, const char **, int *);
 #endif
 extern void dt_set_errmsg(dtrace_hdl_t *, const char *, const char *,
     const char *, int, const char *, va_list);
+extern void *dt_dof_create(dtrace_hdl_t *, dtrace_prog_t *, uint_t);
+extern int dt_prog_unlinked(const dtrace_prog_t *);
+extern int dt_set_progerr(dtrace_hdl_t *, dtrace_prog_t *, const char *, ...)
+    __attribute__((__format__(__printf__, 3, 4)));
 
 #ifdef illumos
 extern int dt_ioctl(dtrace_hdl_t *, int, void *);
@@ -647,6 +696,7 @@ extern void *dt_zalloc(dtrace_hdl_t *, size_t);
 extern void *dt_alloc(dtrace_hdl_t *, size_t);
 extern void dt_free(dtrace_hdl_t *, void *);
 extern void dt_difo_free(dtrace_hdl_t *, dtrace_difo_t *);
+extern dtrace_difo_t *dt_difo_dup(dtrace_hdl_t *, dtrace_difo_t *, int *);
 
 extern int dt_gmatch(const char *, const char *);
 extern char *dt_basename(char *);
@@ -722,6 +772,9 @@ extern void dt_oformat_drop(dtrace_hdl_t *, processorid_t);
 
 extern int dt_lib_depend_add(dtrace_hdl_t *, dt_list_t *, const char *);
 extern dt_lib_depend_t *dt_lib_depend_lookup(dt_list_t *, const char *);
+extern ctf_file_t *dt_lib_membinfo(ctf_file_t *, ctf_id_t,
+    const char *, ctf_membinfo_t *);
+extern dtrace_difv_t *dt_get_variable(dtrace_difo_t *, uint16_t, int, int);
 
 extern dt_pcb_t *yypcb;		/* pointer to current parser control block */
 extern char yyintprefix;	/* int token prefix for macros (+/-) */
@@ -745,6 +798,7 @@ extern const char *const _dtrace_version;	 /* current version string */
 extern int _dtrace_strbuckets;		/* number of hash buckets for strings */
 extern int _dtrace_intbuckets;		/* number of hash buckets for ints */
 extern uint_t _dtrace_stkindent;	/* default indent for stack/ustack */
+extern uint_t _dtrace_strsize;		/* default size of string intrinsic */
 extern uint_t _dtrace_pidbuckets;	/* number of hash buckets for pids */
 extern uint_t _dtrace_pidlrulim;	/* number of proc handles to cache */
 extern int _dtrace_debug;		/* debugging messages enabled */

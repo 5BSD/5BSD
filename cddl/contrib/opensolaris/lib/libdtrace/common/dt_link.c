@@ -29,6 +29,7 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 
+#include <ar.h>
 #include <assert.h>
 #include <elf.h>
 #include <sys/types.h>
@@ -38,6 +39,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <strings.h>
 #include <errno.h>
 #include <unistd.h>
@@ -92,8 +94,9 @@
 #define	ESHDR_DOF	2
 #define	ESHDR_STRTAB	3
 #define	ESHDR_SYMTAB	4
-#define	ESHDR_REL	5
-#define	ESHDR_NUM	6
+#define	ESHDR_NOTE	5	/* .note.GNU-stack: no executable stack */
+#define	ESHDR_REL	6
+#define	ESHDR_NUM	7
 
 #define	PWRITE_SCN(index, data) \
 	(lseek64(fd, (off64_t)elf_file.shdr[(index)].sh_offset, SEEK_SET) != \
@@ -106,14 +109,16 @@ static const char DTRACE_SHSTRTAB32[] = "\0"
 ".SUNW_dof\0"		/* 11 */
 ".strtab\0"		/* 21 */
 ".symtab\0"		/* 29 */
-".rel.SUNW_dof";	/* 37 */
+".rel.SUNW_dof\0"	/* 37 */
+".note.GNU-stack";	/* 51 */
 
 static const char DTRACE_SHSTRTAB64[] = "\0"
 ".shstrtab\0"		/* 1 */
 ".SUNW_dof\0"		/* 11 */
 ".strtab\0"		/* 21 */
 ".symtab\0"		/* 29 */
-".rela.SUNW_dof";	/* 37 */
+".rela.SUNW_dof\0"	/* 37 */
+".note.GNU-stack";	/* 52 */
 
 static const char DOFSTR[] = "__SUNW_dof";
 static const char DOFLAZYSTR[] = "___SUNW_dof";
@@ -163,6 +168,29 @@ dt_output_machine(const dtrace_hdl_t *dtp, int elfclass)
 {
 	return (dtp->dt_link_machine != EM_NONE ? dtp->dt_link_machine :
 	    dt_native_machine(elfclass));
+}
+
+static uint_t
+dt_output_flags(const dtrace_hdl_t *dtp, uint_t machine)
+{
+	uint_t flags = 0;
+
+	if (machine != EM_RISCV)
+		return (0);
+	if (dtp->dt_link_machine == EM_RISCV)
+		return (dtp->dt_link_flags);
+
+	/* No input object: use the native ABI only for a native RISC-V tool. */
+#if defined(__riscv_compressed)
+	flags |= EF_RISCV_RVC;
+#endif
+#if defined(__riscv_float_abi_single)
+	flags |= EF_RISCV_FLOAT_ABI_SINGLE;
+#endif
+#if defined(__riscv_float_abi_double)
+	flags |= EF_RISCV_FLOAT_ABI_DOUBLE;
+#endif
+	return (flags);
 }
 
 static uint_t
@@ -567,9 +595,9 @@ dump_elf32(dtrace_hdl_t *dtp, const dof_hdr_t *dof, int fd)
 
 	/*
 	 * If there are no relocations, we only need enough sections for
-	 * the shstrtab and the DOF.
+	 * the shstrtab, the DOF and the stack note.
 	 */
-	nshdr = de.de_nrel == 0 ? ESHDR_SYMTAB + 1 : ESHDR_NUM;
+	nshdr = de.de_nrel == 0 ? ESHDR_NOTE + 1 : ESHDR_NUM;
 
 	bzero(&elf_file, sizeof (elf_file));
 
@@ -587,20 +615,8 @@ dump_elf32(dtrace_hdl_t *dtp, const dof_hdr_t *dof, int fd)
 	elf_file.ehdr.e_ident[EI_OSABI] = ELFOSABI_FREEBSD;
 	elf_file.ehdr.e_type = ET_REL;
 	elf_file.ehdr.e_machine = dt_output_machine(dtp, ELFCLASS32);
-
-	/* Set the ELF flags according to our current ABI */
-#if defined(__riscv_compressed)
-	elf_file.ehdr.e_flags |= EF_RISCV_RVC;
-#endif
-#if defined(__riscv_float_abi_soft)
-	elf_file.ehdr.e_flags |= EF_RISCV_FLOAT_ABI_SOFT;
-#endif
-#if defined(__riscv_float_abi_single)
-	elf_file.ehdr.e_flags |= EF_RISCV_FLOAT_ABI_SINGLE;
-#endif
-#if defined(__riscv_float_abi_double)
-	elf_file.ehdr.e_flags |= EF_RISCV_FLOAT_ABI_DOUBLE;
-#endif
+	elf_file.ehdr.e_flags = dt_output_flags(dtp,
+	    elf_file.ehdr.e_machine);
 	elf_file.ehdr.e_version = EV_CURRENT;
 	elf_file.ehdr.e_shoff = sizeof (Elf32_Ehdr);
 	elf_file.ehdr.e_ehsize = sizeof (Elf32_Ehdr);
@@ -647,6 +663,17 @@ dump_elf32(dtrace_hdl_t *dtp, const dof_hdr_t *dof, int fd)
 	shp->sh_size = de.de_nsym * sizeof (Elf32_Sym);
 	shp->sh_addralign = 4;
 	off = roundup2(shp->sh_offset + shp->sh_size, 4);
+
+	/*
+	 * An object without this note is taken by the linker to require an
+	 * executable stack, which would then be imposed on every program
+	 * linked with it.  The DOF needs no such thing.
+	 */
+	shp = &elf_file.shdr[ESHDR_NOTE];
+	shp->sh_name = 51; /* DTRACE_SHSTRTAB32[51] = ".note.GNU-stack" */
+	shp->sh_type = SHT_PROGBITS;
+	shp->sh_offset = off;
+	shp->sh_addralign = 1;
 
 	if (de.de_nrel == 0) {
 		if (dt_write(dtp, fd, &elf_file,
@@ -711,9 +738,9 @@ dump_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, int fd)
 
 	/*
 	 * If there are no relocations, we only need enough sections for
-	 * the shstrtab and the DOF.
+	 * the shstrtab, the DOF and the stack note.
 	 */
-	nshdr = de.de_nrel == 0 ? ESHDR_SYMTAB + 1 : ESHDR_NUM;
+	nshdr = de.de_nrel == 0 ? ESHDR_NOTE + 1 : ESHDR_NUM;
 
 	bzero(&elf_file, sizeof (elf_file));
 
@@ -736,19 +763,8 @@ dump_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, int fd)
 		elf_file.ehdr.e_flags = 2;
 #endif
 
-	/* Set the ELF flags according to our current ABI */
-#if defined(__riscv_compressed)
-	elf_file.ehdr.e_flags |= EF_RISCV_RVC;
-#endif
-#if defined(__riscv_float_abi_soft)
-	elf_file.ehdr.e_flags |= EF_RISCV_FLOAT_ABI_SOFT;
-#endif
-#if defined(__riscv_float_abi_single)
-	elf_file.ehdr.e_flags |= EF_RISCV_FLOAT_ABI_SINGLE;
-#endif
-#if defined(__riscv_float_abi_double)
-	elf_file.ehdr.e_flags |= EF_RISCV_FLOAT_ABI_DOUBLE;
-#endif
+	elf_file.ehdr.e_flags |= dt_output_flags(dtp,
+	    elf_file.ehdr.e_machine);
 	elf_file.ehdr.e_version = EV_CURRENT;
 	elf_file.ehdr.e_shoff = sizeof (Elf64_Ehdr);
 	elf_file.ehdr.e_ehsize = sizeof (Elf64_Ehdr);
@@ -795,6 +811,17 @@ dump_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, int fd)
 	shp->sh_size = de.de_nsym * sizeof (Elf64_Sym);
 	shp->sh_addralign = 8;
 	off = roundup2(shp->sh_offset + shp->sh_size, 8);
+
+	/*
+	 * An object without this note is taken by the linker to require an
+	 * executable stack, which would then be imposed on every program
+	 * linked with it.  The DOF needs no such thing.
+	 */
+	shp = &elf_file.shdr[ESHDR_NOTE];
+	shp->sh_name = 52; /* DTRACE_SHSTRTAB64[52] = ".note.GNU-stack" */
+	shp->sh_type = SHT_PROGBITS;
+	shp->sh_offset = off;
+	shp->sh_addralign = 1;
 
 	if (de.de_nrel == 0) {
 		if (dt_write(dtp, fd, &elf_file,
@@ -1273,11 +1300,23 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 	unsigned int objkey;
 	dt_link_pair_t *pair, *bufs = NULL;
 	dt_strtab_t *strtab;
+	char armag[SARMAG];
 	void *tmp;
 
 	if ((fd = open64(obj, O_RDWR)) == -1) {
 		return (dt_link_error(dtp, elf, fd, bufs,
 		    "failed to open %s: %s", obj, strerror(errno)));
+	}
+
+	/*
+	 * libelf refuses to open an archive for update, so recognize one
+	 * before elf_begin() to say what to do instead.
+	 */
+	if (pread(fd, armag, SARMAG, 0) == SARMAG &&
+	    memcmp(armag, ARMAG, SARMAG) == 0) {
+		return (dt_link_error(dtp, elf, fd, bufs, "archives are not "
+		    "permitted; use the contents of the archive instead: %s",
+		    obj));
 	}
 
 	if ((elf = elf_begin(fd, ELF_C_RDWR, NULL)) == NULL) {
@@ -1288,10 +1327,6 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 	switch (elf_kind(elf)) {
 	case ELF_K_ELF:
 		break;
-	case ELF_K_AR:
-		return (dt_link_error(dtp, elf, fd, bufs, "archives are not "
-		    "permitted; use the contents of the archive instead: %s",
-		    obj));
 	default:
 		return (dt_link_error(dtp, elf, fd, bufs,
 		    "invalid file type: %s", obj));
@@ -1339,11 +1374,19 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 		    "incorrect ELF machine type for object file: %s", obj));
 	}
 
-	if (dtp->dt_link_machine == EM_NONE)
+	if (dtp->dt_link_machine == EM_NONE) {
 		dtp->dt_link_machine = ehdr.e_machine;
-	else if (dtp->dt_link_machine != ehdr.e_machine) {
+		dtp->dt_link_flags = ehdr.e_flags;
+	} else if (dtp->dt_link_machine != ehdr.e_machine) {
 		return (dt_link_error(dtp, elf, fd, bufs,
 		    "mixed ELF machine types in provider link: %s", obj));
+	} else if (ehdr.e_machine == EM_RISCV) {
+		if (((dtp->dt_link_flags ^ ehdr.e_flags) &
+		    (EF_RISCV_FLOAT_ABI_MASK | EF_RISCV_RVE)) != 0) {
+			return (dt_link_error(dtp, elf, fd, bufs,
+			    "mixed RISC-V ABI flags in provider link: %s", obj));
+		}
+		dtp->dt_link_flags |= ehdr.e_flags;
 	}
 
 	/*
@@ -1844,6 +1887,7 @@ dtrace_program_link(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t dflags,
 	}
 
 	dtp->dt_link_machine = EM_NONE;
+	dtp->dt_link_flags = 0;
 	for (i = 0; i < objc; i++) {
 		if (process_obj(dtp, objv[i], &eprobes) != 0)
 			return (-1); /* errno is set for us */

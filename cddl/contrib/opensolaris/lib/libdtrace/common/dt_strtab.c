@@ -298,7 +298,8 @@ dt_strtab_write(const dt_strtab_t *sp, dt_strtab_write_f *func, void *private)
 			break;
 	}
 
-	if (total == 0 && sp->str_size != 0)
+	/* str_size is at least 1: the table always holds the empty string. */
+	if (total == 0)
 		return (-1);
 
 	return (total);

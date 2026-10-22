@@ -80,6 +80,7 @@
 #endif
 
 static int id_or_type(const char *);
+static char *dt_scoped_extend(char *);
 #ifdef illumos
 static int input(void);
 static void unput(int);
@@ -98,6 +99,14 @@ static void unput(int);
 %}
 
 %option yylineno
+/*
+ * libdtrace scans only through yylex() with its own YY_INPUT: do not generate
+ * the unused buffer-scanning and accessor entry points of the flex API.
+ */
+%option noyy_scan_buffer noyy_scan_bytes noyy_scan_string
+%option noyyget_extra noyyset_extra noyyget_leng noyyget_text
+%option noyyget_lineno noyyset_lineno noyyget_in noyyset_in
+%option noyyget_out noyyset_out noyyget_debug noyyset_debug
 
 %e 1500		/* maximum nodes */
 %p 4900		/* maximum positions */
@@ -496,13 +505,15 @@ if (yypcb->pcb_token != 0) {
 			 * If we encounter EOF, ";", "{", or "/", then this "/"
 			 * closes the predicate and we return DT_TOK_EPRED.
 			 * If we encounter anything else, it's DT_TOK_DIV.
+			 * flex's input() reports end of input as EOF, not 0.
 			 */
-			while ((c = input()) != 0) {
+			while ((c = input()) != 0 && c != EOF) {
 				if (strchr("\f\n\r\t\v ", c) == NULL)
 					break;
 			}
 
-			if (c == 0 || c == ';' || c == '{' || c == '/') {
+			if (c == 0 || c == EOF || c == ';' || c == '{' ||
+			    c == '/') {
 				if (yypcb->pcb_parens != 0) {
 					yyerror("closing ) expected in "
 					    "predicate before /\n");
@@ -600,6 +611,7 @@ if (yypcb->pcb_token != 0) {
 <S1>"/*"	yyerror("/* encountered inside a comment\n");
 <S1>"*/"	BEGIN(yypcb->pcb_cstate);
 <S1>.|\n	; /* discard */
+<S1><<EOF>>	yyerror("end-of-file encountered before matching */\n");
 
 <S2>{RGX_PSPEC}	{
 			/*
@@ -638,6 +650,9 @@ if (yypcb->pcb_token != 0) {
 					if (p != NULL && p > yytext) {
 						for (*p = '*'; q >= p; q--)
 							unput(*q);
+					} else {
+						yylval.l_str = dt_scoped_extend(
+						    yylval.l_str);
 					}
 
 					yybegin(YYS_EXPR);
@@ -688,6 +703,7 @@ if (yypcb->pcb_token != 0) {
 		}
 
 <S3>.		yyerror("syntax error near \"%c\"\n", yytext[0]);
+<S3><<EOF>>	yyerror("end-of-file encountered before end of control line\n");
 
 %%
 
@@ -758,6 +774,142 @@ yyinit(dt_pcb_t *pcb)
  * unlike in C.  The code here is ordered carefully as lookups are not cheap.
  */
 static int
+dt_basekw(const char *s, size_t n)
+{
+	static const char *const kw[] = { "char", "double", "float", "int",
+	    "long", "short", "signed", "unsigned", NULL };
+	int i;
+
+	for (i = 0; kw[i] != NULL; i++) {
+		if (strlen(kw[i]) == n && strncmp(kw[i], s, n) == 0)
+			return (1);
+	}
+	return (0);
+}
+
+/*
+ * Extend the identifier s (allocated by strdup()) with text that belongs to
+ * the same scoped type name but that cannot be expressed by the lexer's
+ * regular expressions, pushing back any characters that turn out not to
+ * belong to it:
+ *
+ * - In a type-name context (dtrace_type_strcompile()), the input is a single
+ *   type name, so a module name may contain '-' as in the
+ *   "userland pid123`sshd-session`long" names built by dt_pid.c.  The text
+ *   "-..." is only joined if it reaches another backquote, so an expression
+ *   such as an array dimension "n-1" is unaffected.  Program text never takes
+ *   this path: there a-b`c remains a subtraction.
+ * - In any context, a scoped C base type keyword may be followed by further
+ *   base type keywords, as in "kernel`unsigned short" (ctf_type_qname()
+ *   output).  No symbol can be named after a C keyword, so this cannot
+ *   change the meaning of an expression.
+ */
+/*
+ * Read the next identifier-like word after any blanks into buf (at most
+ * size - 1 characters); *spacep says whether blanks preceded it.  The
+ * blanks themselves are not kept: dt_scoped_unword() pushes the word back
+ * behind a single blank, which lexes identically.
+ */
+static size_t
+dt_scoped_word(char *buf, size_t size, int *spacep)
+{
+	size_t n = 0;
+	int c;
+
+	*spacep = 0;
+	while ((c = input()) == ' ' || c == '\t' || c == '\f' || c == '\v')
+		*spacep = 1;
+	while (c != EOF && (isalnum(c) || c == '_') && n < size - 1) {
+		buf[n++] = c;
+		c = input();
+	}
+	unput(c);
+	buf[n] = '\0';
+	return (n);
+}
+
+static void
+dt_scoped_unword(const char *buf, size_t n, int space)
+{
+	while (n > 0)
+		unput(buf[--n]);
+	if (space)
+		unput(' ');
+}
+
+static char *
+dt_scoped_extend(char *s)
+{
+	char buf[256];
+	const char *last;
+	size_t n;
+	int c, space;
+
+	while (yypcb->pcb_context == DT_CTX_DTYPE) {
+		if ((c = input()) != '-') {
+			unput(c);
+			break;
+		}
+		n = 0;
+		buf[n++] = '-';
+		while ((c = input()) != EOF && n < sizeof (buf) - 2 &&
+		    (isalnum(c) || c == '_' || c == '.' || c == '-'))
+			buf[n++] = c;
+		if (c != '`') {
+			unput(c);
+			while (n > 0)
+				unput(buf[--n]);
+			break;
+		}
+		buf[n++] = '`';
+		while ((c = input()) != EOF && n < sizeof (buf) - 1 &&
+		    (isalnum(c) || c == '_' || c == '.' || c == '`'))
+			buf[n++] = c;
+		unput(c);
+		buf[n] = '\0';
+		if ((s = realloc(s, strlen(s) + n + 1)) == NULL)
+			longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
+		(void) strcat(s, buf);
+	}
+
+	if ((last = strrchr(s, '`')) == NULL)
+		return (s);
+
+	/*
+	 * A scoped tag, as in "pid123`prog`struct foo" (ctf_type_qname()):
+	 * join the tag name that follows struct, union or enum.
+	 */
+	if (strcmp(last + 1, "struct") == 0 || strcmp(last + 1, "union") == 0 ||
+	    strcmp(last + 1, "enum") == 0) {
+		if ((n = dt_scoped_word(buf, sizeof (buf), &space)) == 0 ||
+		    !space || n == sizeof (buf) - 1) {
+			dt_scoped_unword(buf, n, space);
+			return (s);
+		}
+		if ((s = realloc(s, strlen(s) + n + 2)) == NULL)
+			longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
+		(void) strcat(s, " ");
+		(void) strcat(s, buf);
+		return (s);
+	}
+
+	if (!dt_basekw(last + 1, strlen(last + 1)))
+		return (s);
+
+	for (;;) {
+		n = dt_scoped_word(buf, sizeof (buf), &space);
+		if (n == 0 || !dt_basekw(buf, n)) {
+			dt_scoped_unword(buf, n, space);
+			return (s);
+		}
+		if ((s = realloc(s, strlen(s) + n + 2)) == NULL)
+			longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
+		(void) strcat(s, " ");
+		(void) strcat(s, buf);
+	}
+}
+
+static int
 id_or_type(const char *s)
 {
 	dtrace_hdl_t *dtp = yypcb->pcb_hdl;
@@ -767,6 +919,9 @@ id_or_type(const char *s)
 
 	if ((s = yylval.l_str = strdup(s)) == NULL)
 		longjmp(yypcb->pcb_jmpbuf, EDT_NOMEM);
+
+	if (strchr(s, '`') != NULL || yypcb->pcb_context == DT_CTX_DTYPE)
+		s = yylval.l_str = dt_scoped_extend(yylval.l_str);
 
 	/*
 	 * If the lexeme is a global variable or likely identifier or *not* a

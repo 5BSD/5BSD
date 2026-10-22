@@ -89,6 +89,12 @@
 #define	CTF_IS_CHAR(e) \
 	(((e).cte_format & (CTF_INT_CHAR | CTF_INT_SIGNED)) == \
 	(CTF_INT_CHAR | CTF_INT_SIGNED) && (e).cte_bits == NBBY)
+/* memory index of the byte of significance i in an n-byte integer */
+#if BYTE_ORDER == _BIG_ENDIAN
+#define	DT_WIDE_BYTE(i, n)	((n) - 1 - (i))
+#else
+#define	DT_WIDE_BYTE(i, n)	(i)
+#endif
 /* determines whether the given CTF kind is a struct or union */
 #define	CTF_IS_STRUCTLIKE(k) \
 	((k) == CTF_K_STRUCT || (k) == CTF_K_UNION)
@@ -104,6 +110,8 @@ typedef struct dt_printarg {
 	int		pa_nest;	/* nested array depth */
 	FILE		*pa_file;	/* output file */
 	const char	*pa_object;	/* object name */
+	int		*pa_nomem;	/* shared: an allocation failed */
+	xo_handle_t	*pa_xo;		/* value output; NULL is libxo's default */
 } dt_printarg_t;
 
 static int dt_format_member(const char *, ctf_id_t, ulong_t, int, void *);
@@ -159,73 +167,113 @@ print_bitfield(dt_printarg_t *pap, ulong_t off, ctf_encoding_t *ep)
 {
 	FILE *fp = pap->pa_file;
 	caddr_t addr = pap->pa_addr + off / NBBY;
-	uint64_t mask = (1ULL << ep->cte_bits) - 1;
+	uint64_t mask;
 	uint64_t value = 0;
 	size_t size = (ep->cte_bits + (NBBY - 1)) / NBBY;
-	uint8_t *buf = (uint8_t *)&value;
 	uint8_t shift;
 
-	/*
-	 * On big-endian machines, we need to adjust the buf pointer to refer
-	 * to the lowest 'size' bytes in 'value', and we need to shift based on
-	 * the offset from the end of the data, not the offset of the start.
-	 */
-#if BYTE_ORDER == _BIG_ENDIAN
-	buf += sizeof (value) - size;
-	off += ep->cte_bits;
-#endif
-	bcopy(addr, buf, size);
-	shift = off % NBBY;
+	/* The value is printed from 64 bits; wider fields are reported. */
+	if (ep->cte_bits > 64) {
+		xo_emit_h(pap->pa_xo, "<{:warning} {:size/%u}>",
+		    "unsupported bit-field width", (uint_t)ep->cte_bits);
+		xo_flush_h(pap->pa_xo);
+		return;
+	}
+	mask = ep->cte_bits == 64 ? UINT64_MAX : (1ULL << ep->cte_bits) - 1;
 
-	/*
-	 * Offsets are counted from opposite ends on little- and
-	 * big-endian machines.
-	 */
 #if BYTE_ORDER == _BIG_ENDIAN
-	shift = NBBY - shift;
-#endif
+	{
+		uint8_t *buf = (uint8_t *)&value;
 
-	/*
-	 * If the bits we want do not begin on a byte boundary, shift the data
-	 * right so that the value is in the lowest 'cte_bits' of 'value'.
-	 */
-	if (off % NBBY != 0)
-		value >>= shift;
+		/*
+		 * On big-endian machines, we need to adjust the buf pointer
+		 * to refer to the lowest 'size' bytes in 'value', and we
+		 * need to shift based on the offset from the end of the data,
+		 * not the offset of the start.
+		 */
+		buf += sizeof (value) - size;
+		off += ep->cte_bits;
+		bcopy(addr, buf, size);
+		shift = NBBY - off % NBBY;
+		if (off % NBBY != 0)
+			value >>= shift;
+	}
+#else
+	{
+		/*
+		 * A field that starts mid-byte may reach into one more byte:
+		 * up to nine bytes, gathered wider than the result.
+		 */
+		unsigned __int128 wide = 0;
+
+		shift = off % NBBY;
+		size = (shift + ep->cte_bits + (NBBY - 1)) / NBBY;
+		bcopy(addr, &wide, size);
+		value = (uint64_t)(wide >> shift);
+	}
+#endif
 	value &= mask;
 
-	xo_emit("{:value/%#llx}", (u_longlong_t)value);
+	xo_emit_h(pap->pa_xo, "{:value/%#llx}", (u_longlong_t)value);
 
 	/* Flush in order to ensure output is aligned properly */
-	xo_flush();
+	xo_flush_h(pap->pa_xo);
 }
 
 /*
  * Dump the contents of memory as a fixed-size integer in hex.
  */
 static void
-dt_print_hex(FILE *fp, caddr_t addr, size_t size)
+dt_print_hex(dt_printarg_t *pap, caddr_t addr, size_t size)
 {
 	switch (size) {
 	case sizeof (uint8_t):
-		xo_emit("{:value/%#x}", *(uint8_t *)addr);
+		xo_emit_h(pap->pa_xo, "{:value/%#x}", *(uint8_t *)addr);
 		break;
 	case sizeof (uint16_t):
-		xo_emit("{:value/%#x}", *(uint16_t *)addr);
+		xo_emit_h(pap->pa_xo, "{:value/%#x}", *(uint16_t *)addr);
 		break;
 	case sizeof (uint32_t):
-		xo_emit("{:value/%#x}", *(uint32_t *)addr);
+		xo_emit_h(pap->pa_xo, "{:value/%#x}", *(uint32_t *)addr);
 		break;
 	case sizeof (uint64_t):
-		xo_emit("{:value/%#llx}",
+		xo_emit_h(pap->pa_xo, "{:value/%#llx}",
 		    (unsigned long long)*(uint64_t *)addr);
 		break;
 	default:
-		xo_emit("<{:warning} {:size/%u}>", "invalid size",
+		xo_emit_h(pap->pa_xo, "<{:warning} {:size/%u}>", "invalid size",
 		    (uint_t)size);
 	}
 
 	/* Flush in order to ensure output is aligned properly */
-	xo_flush();
+	xo_flush_h(pap->pa_xo);
+}
+
+/*
+ * Dump a little-endian integer wider than 64 bits in hex, without leading
+ * zeros, in the %#llx style of dt_print_hex() (zero is "0").
+ */
+static void
+dt_print_wide_hex(dt_printarg_t *pap, caddr_t addr, size_t size)
+{
+	char *buf = alloca(size * 2 + 3), *p = buf;
+	const uint8_t *b = (const uint8_t *)addr;
+	size_t i = size;
+
+	while (i > 1 && b[DT_WIDE_BYTE(i - 1, size)] == 0)
+		i--;
+	if (i == 1 && b[DT_WIDE_BYTE(0, size)] == 0) {
+		*p++ = '0';
+	} else {
+		*p++ = '0';
+		*p++ = 'x';
+		p += sprintf(p, "%x", b[DT_WIDE_BYTE(i - 1, size)]);
+		while (--i > 0)
+			p += sprintf(p, "%02x", b[DT_WIDE_BYTE(i - 1, size)]);
+	}
+	*p = '\0';
+	xo_emit_h(pap->pa_xo, "{:value/%s}", buf);
+	xo_flush_h(pap->pa_xo);
 }
 
 /*
@@ -242,13 +290,12 @@ dt_print_int(ctf_id_t base, ulong_t off, dt_printarg_t *pap)
 	size_t size;
 	caddr_t addr = pap->pa_addr + off / NBBY;
 
-	if (ctf_type_encoding(ctfp, base, &e) == CTF_ERR) {
-		xo_emit("<{:warning}>", "unknown encoding");
-
-		/* Flush in order to ensure output is aligned properly */
-		xo_flush();
-		return;
-	}
+	/*
+	 * dt_printfuncs[] is called only with a resolved type of the kind it
+	 * is indexed by; ctf_type_encoding() fails only for an unknown ID or
+	 * a kind other than integer or float.
+	 */
+	(void) ctf_type_encoding(ctfp, base, &e);
 
 	/*
 	 * This comes from MDB - it's not clear under what circumstances this
@@ -261,11 +308,23 @@ dt_print_int(ctf_id_t base, ulong_t off, dt_printarg_t *pap)
 	}
 
 	/*
-	 * We print this as a bitfield if the bit encoding indicates it's not
-	 * an even power of two byte size, or is larger than 8 bytes.
+	 * Byte-aligned integers wider than 64 bits (__int128) are printed
+	 * from their bytes; print_bitfield() holds at most 64 bits.
 	 */
 	size = e.cte_bits / NBBY;
-	if (size > 8 || (e.cte_bits % NBBY) != 0 || (size & (size - 1)) != 0) {
+	if (size > 8 && (e.cte_bits % NBBY) == 0 && off % NBBY == 0) {
+		dt_print_wide_hex(pap, addr, size);
+		return;
+	}
+
+	/*
+	 * We print this as a bitfield if the bit encoding indicates it's not
+	 * an even power of two byte size, or is larger than 8 bytes, or if it
+	 * does not start on a byte boundary (dt_print_member() labels all of
+	 * these with their width).
+	 */
+	if (size > 8 || (e.cte_bits % NBBY) != 0 || (size & (size - 1)) != 0 ||
+	    off % NBBY != 0) {
 		print_bitfield(pap, off, &e);
 		return;
 	}
@@ -276,18 +335,18 @@ dt_print_int(ctf_id_t base, ulong_t off, dt_printarg_t *pap)
 	if (CTF_IS_CHAR(e)) {
 		char c = *(char *)addr;
 		if (isprint(c))
-			xo_emit("'{:value/%c}'", c);
+			xo_emit_h(pap->pa_xo, "'{:value/%c}'", c);
 		else if (c == 0)
-			xo_emit("'\\{:value/0}'");
+			xo_emit_h(pap->pa_xo, "'\\{:value/0}'");
 		else
-			xo_emit("'\\{:value/%03o}'", c);
+			xo_emit_h(pap->pa_xo, "'\\{:value/%03o}'", c);
 
 		/* Flush in order to ensure output is aligned properly */
-		xo_flush();
+		xo_flush_h(pap->pa_xo);
 		return;
 	}
 
-	dt_print_hex(fp, addr, size);
+	dt_print_hex(pap, addr, size);
 }
 
 /*
@@ -303,19 +362,24 @@ dt_print_float(ctf_id_t base, ulong_t off, dt_printarg_t *pap)
 	caddr_t addr = pap->pa_addr + off / NBBY;
 	dtrace_hdl_t *dtp = pap->pa_dtp;
 
-	if (ctf_type_encoding(ctfp, base, &e) == 0) {
-		if (e.cte_format == CTF_FP_SINGLE &&
-		    e.cte_bits == sizeof (float) * NBBY) {
-			xo_emit("{:value/%+.7e}", *((float *)addr));
-		} else if (e.cte_format == CTF_FP_DOUBLE &&
-		    e.cte_bits == sizeof (double) * NBBY) {
-			xo_emit("{:value/%+.7e}", *((double *)addr));
-		} else if (e.cte_format == CTF_FP_LDOUBLE &&
-		    e.cte_bits == sizeof (long double) * NBBY) {
-			xo_emit("{:value/%+.16LE}", *((long double *)addr));
-		} else {
-			xo_emit("<{:warning}>", "unknown encoding");
-		}
+	/*
+	 * Structured output emits a float or double as a bare number, and a
+	 * JSON number may not carry a '+'; text output keeps "%+.7e".
+	 */
+	const char *fmt = dtp->dt_oformat ? "{:value/%.7e}" : "{:value/%+.7e}";
+
+	(void) ctf_type_encoding(ctfp, base, &e);	/* as in dt_print_int() */
+	if (e.cte_format == CTF_FP_SINGLE &&
+	    e.cte_bits == sizeof (float) * NBBY) {
+		xo_emit_h(pap->pa_xo, fmt, *((float *)addr));
+	} else if (e.cte_format == CTF_FP_DOUBLE &&
+	    e.cte_bits == sizeof (double) * NBBY) {
+		xo_emit_h(pap->pa_xo, fmt, *((double *)addr));
+	} else if (e.cte_format == CTF_FP_LDOUBLE &&
+	    e.cte_bits == sizeof (long double) * NBBY) {
+		xo_emit_h(pap->pa_xo, "{:value/%+.16LE}", *((long double *)addr));
+	} else {
+		xo_emit_h(pap->pa_xo, "<{:warning}>", "unknown encoding");
 	}
 }
 
@@ -336,14 +400,14 @@ dt_print_ptr(ctf_id_t base, ulong_t off, dt_printarg_t *pap)
 	GElf_Sym sym;
 
 	if (bid == CTF_ERR || ctf_type_kind(ctfp, bid) != CTF_K_FUNCTION) {
-		dt_print_hex(fp, addr, size);
+		dt_print_hex(pap, addr, size);
 	} else {
 		/* LINTED - alignment */
 		pc = *((uint64_t *)addr);
 		if (dtrace_lookup_by_addr(pap->pa_dtp, pc, &sym, &dts) != 0) {
-			dt_print_hex(fp, addr, size);
+			dt_print_hex(pap, addr, size);
 		} else {
-			xo_emit("{:value/%s`%s}", dts.dts_object, dts.dts_name);
+			xo_emit_h(pap->pa_xo, "{:value/%s`%s}", dts.dts_object, dts.dts_name);
 		}
 	}
 }
@@ -390,27 +454,25 @@ dt_print_array(ctf_id_t base, ulong_t off, dt_printarg_t *pap)
 	ctf_id_t rtype;
 	dtrace_hdl_t *dtp = pap->pa_dtp;
 
-	if (ctf_array_info(ctfp, base, &car) == CTF_ERR) {
-		xo_emit("{:value/%p}", (void *)addr);
-		return;
-	}
+	(void) ctf_array_info(ctfp, base, &car);	/* kind is ARRAY */
 
-	if ((eltsize = ctf_type_size(ctfp, car.ctr_contents)) < 0 ||
-	    (rtype = ctf_type_resolve(ctfp, car.ctr_contents)) == CTF_ERR ||
-	    (kind = ctf_type_kind(ctfp, rtype)) == CTF_ERR) {
-		xo_emit("<{:warning} {:type-identifier/%lu}>", "invalid type",
+	/* ctf_type_size() resolves the type first: it fails if that fails. */
+	if ((eltsize = ctf_type_size(ctfp, car.ctr_contents)) < 0) {
+		xo_emit_h(pap->pa_xo, "<{:warning} {:type-identifier/%lu}>", "invalid type",
 		    car.ctr_contents);
 		return;
 	}
+	rtype = ctf_type_resolve(ctfp, car.ctr_contents);
+	kind = ctf_type_kind(ctfp, rtype);
 
 	/* see if this looks like a string */
 	isstring = B_FALSE;
 	if (kind == CTF_K_INTEGER &&
-	    ctf_type_encoding(ctfp, rtype, &e) != CTF_ERR && CTF_IS_CHAR(e)) {
+	    (ctf_type_encoding(ctfp, rtype, &e), CTF_IS_CHAR(e))) {
 		char c;
 		for (i = 0; i < car.ctr_nelems; i++) {
 			c = *((char *)addr + eltsize * i);
-			if (!isprint(c) || c == '\0')
+			if (!isprint(c))	/* including the NUL */
 				break;
 		}
 
@@ -429,11 +491,14 @@ dt_print_array(ctf_id_t base, ulong_t off, dt_printarg_t *pap)
 	 */
 	if (dtp->dt_oformat) {
 		if (!isstring)
-			xo_open_list("value");
+			xo_open_list_h(pap->pa_xo, "value");
 		else {
 			str = malloc(car.ctr_nelems);
-			if (str == NULL)
+			if (str == NULL) {
+				/* dtrace_format_print() reports EDT_NOMEM. */
+				*pap->pa_nomem = 1;
 				return;
+			}
 			*str = 0;
 		}
 	} else {
@@ -488,9 +553,9 @@ dt_print_array(ctf_id_t base, ulong_t off, dt_printarg_t *pap)
 
 	if (dtp->dt_oformat) {
 		if (!isstring)
-			xo_close_list("value");
+			xo_close_list_h(pap->pa_xo, "value");
 		else {
-			xo_emit("{:value/%s}", str);
+			xo_emit_h(pap->pa_xo, "{:value/%s}", str);
 			free(str);
 		}
 	} else {
@@ -551,19 +616,19 @@ dt_print_enum(ctf_id_t base, ulong_t off, dt_printarg_t *pap)
 		value = *(int32_t *)addr;
 		break;
 	default:
-		xo_emit("<{:warning} {:size/%u}>", "invalid enum size",
+		xo_emit_h(pap->pa_xo, "<{:warning} {:size/%u}>", "invalid enum size",
 		    (uint_t)size);
 		return;
 	}
 
 	if ((ename = ctf_enum_name(ctfp, base, value)) != NULL) {
-		xo_emit("{:value/%s}", ename);
+		xo_emit_h(pap->pa_xo, "{:value/%s}", ename);
 	} else {
-		xo_emit("{:value/%d}", value);
+		xo_emit_h(pap->pa_xo, "{:value/%d}", value);
 	}
 
 	/* Flush in order to ensure output is aligned properly */
-	xo_flush();
+	xo_flush_h(pap->pa_xo);
 }
 
 /*
@@ -606,30 +671,42 @@ dt_format_member(const char *name, ctf_id_t id, ulong_t off, int depth,
 	ctf_encoding_t e;
 	ctf_id_t rtype;
 
-	if ((rtype = ctf_type_resolve(ctfp, id)) == CTF_ERR ||
-	    (kind = ctf_type_kind(ctfp, rtype)) == CTF_ERR ||
-	    kind < CTF_K_INTEGER || kind > CTF_K_FORWARD) {
-		xo_emit("{:name/%s} <{:warning} {:type-identifier/%lu}>"
-			" {:value/0x%llx}",
-		    name, "invalid type", id, pap->pa_addr);
+	/*
+	 * ctf_type_visit() calls us only for types it resolved; a kind outside
+	 * dt_printfuncs[] (CTF_K_UNKNOWN, or CTF_ERR) is still possible.
+	 */
+	rtype = ctf_type_resolve(ctfp, id);
+	kind = ctf_type_kind(ctfp, rtype);
+	if ((uint_t)(kind - CTF_K_INTEGER) >=
+	    sizeof (dt_printfuncs) / sizeof (dt_printfuncs[0])) {
+		/*
+		 * As in dt_print_member(): the member and the bad type.  (The
+		 * value was the consumer's buffer address, not trace data.)
+		 */
+		xo_open_instance_h(pap->pa_xo, "type");
+		if (*name != 0)
+			xo_emit_h(pap->pa_xo, "{:member-name/%s}", name);
+		xo_emit_h(pap->pa_xo, "<{:warning} {:type-identifier/%lu}>",
+		    "invalid type", id);
+		xo_close_instance_h(pap->pa_xo, "type");
 		return (0);
 	}
 
 	dt_print_type_name(ctfp, id, type, sizeof (type));
-	xo_open_instance("type");
+	xo_open_instance_h(pap->pa_xo, "type");
 	if (pap->pa_object) {
-		xo_emit("{:object-name/%s}", pap->pa_object);
+		xo_emit_h(pap->pa_xo, "{:object-name/%s}", pap->pa_object);
 		/* Clear the object to avoid duplication */
 		pap->pa_object = NULL;
 	}
 
 	if (*name != 0)
-		xo_emit("{:member-name/%s}", name);
-	xo_emit("{:name/%s} {:ctfid/%ld}", type, id);
+		xo_emit_h(pap->pa_xo, "{:member-name/%s}", name);
+	xo_emit_h(pap->pa_xo, "{:name/%s} {:ctfid/%ld}", type, id);
 	dt_printfuncs[kind - 1](rtype, off, pap);
 
-	xo_close_instance("type");
-	return (0);
+	xo_close_instance_h(pap->pa_xo, "type");
+	return (*pap->pa_nomem);	/* nonzero stops ctf_type_visit() */
 }
 
 /*
@@ -659,9 +736,11 @@ dt_print_member(const char *name, ctf_id_t id, ulong_t off, int depth,
 		(void) fprintf(fp, "\n");
 	pap->pa_depth = depth;
 
-	if ((rtype = ctf_type_resolve(ctfp, id)) == CTF_ERR ||
-	    (kind = ctf_type_kind(ctfp, rtype)) == CTF_ERR ||
-	    kind < CTF_K_INTEGER || kind > CTF_K_FORWARD) {
+	/* As in dt_format_member(). */
+	rtype = ctf_type_resolve(ctfp, id);
+	kind = ctf_type_kind(ctfp, rtype);
+	if ((uint_t)(kind - CTF_K_INTEGER) >=
+	    sizeof (dt_printfuncs) / sizeof (dt_printfuncs[0])) {
 		dt_print_indent(pap);
 		(void) fprintf(fp, "%s = <invalid type %lu>", name, id);
 		return (0);
@@ -768,14 +847,15 @@ dt_print_prepare(dtrace_hdl_t *dtp, const char *typename, caddr_t addr,
 	if (dmp->dm_pid != 0) {
 		libid = atoi(s + 1);
 		s = strchr(s + 1, '`');
-		if (s == NULL || libid > dmp->dm_nctflibs)
+		if (s == NULL || libid < 0 || libid >= dmp->dm_nctflibs)
 			return (CTF_ERR);
 		ctfp = dmp->dm_libctfp[libid];
 	} else {
 		ctfp = dt_module_getctf(dtp, dmp);
 	}
 
-	id = atoi(s + 1);
+	/* Type IDs are written with %ld and may exceed INT_MAX (children). */
+	id = strtol(s + 1, NULL, 10);
 
 	/*
 	 * Try to get the CTF kind for this id.  If something has gone horribly
@@ -791,6 +871,8 @@ dt_print_prepare(dtrace_hdl_t *dtp, const char *typename, caddr_t addr,
 	pa->pa_nest = 0;
 	pa->pa_depth = 0;
 	pa->pa_object = strdup(object);
+	pa->pa_xo = NULL;
+	pa->pa_nomem = NULL;
 	return (id);
 }
 
@@ -803,16 +885,47 @@ dtrace_print(dtrace_hdl_t *dtp, FILE *fp, const char *typename,
 {
 	dt_printarg_t pa;
 	ctf_id_t id;
+	char *text;
+	size_t textlen;
+	int rc;
 
 	id = dt_print_prepare(dtp, typename, addr, len, &pa);
 	if (id == CTF_ERR)
 		return (0);
 
-	pa.pa_file = fp;
+	/*
+	 * Text output is composed in memory -- structure text and values (a
+	 * per-call xo handle, flushed after each value to keep the two in
+	 * order) -- then emitted with one dt_printf(), so that it honours
+	 * buffered output (fp == NULL), freopen() and the output-discard
+	 * fence like every other record.
+	 */
+	text = NULL;
+	textlen = 0;
+	if ((pa.pa_file = open_memstream(&text, &textlen)) == NULL) {
+		dt_free(dtp, (void *)pa.pa_object);
+		return (dt_set_errno(dtp, EDT_NOMEM));
+	}
+	pa.pa_xo = xo_create_to_file(pa.pa_file, XO_STYLE_TEXT, XOF_FLUSH);
+	if (pa.pa_xo == NULL) {
+		(void) fclose(pa.pa_file);
+		free(text);
+		dt_free(dtp, (void *)pa.pa_object);
+		return (dt_set_errno(dtp, EDT_NOMEM));
+	}
 	(void) ctf_type_visit(pa.pa_ctfp, id, dt_print_member, &pa);
 
 	dt_print_trailing_braces(&pa, 0);
+	xo_destroy(pa.pa_xo);
 	dt_free(dtp, (void *)pa.pa_object);
+	/* The memory stream fails only to allocate. */
+	if (fclose(pa.pa_file) != 0)
+		rc = dt_set_errno(dtp, EDT_NOMEM);
+	else
+		rc = dt_printf(dtp, fp, "%s", text);
+	free(text);
+	if (rc < 0)
+		return (-1);
 
 	return (len);
 }
@@ -826,19 +939,25 @@ dtrace_format_print(dtrace_hdl_t *dtp, FILE *fp, const char *typename,
 {
 	dt_printarg_t pa;
 	ctf_id_t id;
-	char toplevel[1024];
+	char *object;
+	int nomem = 0;
 
 	id = dt_print_prepare(dtp, typename, addr, len, &pa);
 	if (id == CTF_ERR)
 		return (0);
 
-	if (ctf_type_name(pa.pa_ctfp, id, toplevel, sizeof(toplevel)) < 0)
-		return (0);
-
+	/*
+	 * dt_format_member() clears pa_object once it has been emitted, and
+	 * names each type itself (dt_print_type_name() falls back to "<id>").
+	 */
+	object = (char *)pa.pa_object;
+	pa.pa_nomem = &nomem;
 	xo_open_list("type");
 	(void) ctf_type_visit(pa.pa_ctfp, id, dt_format_member, &pa);
 	xo_close_list("type");
-	dt_free(dtp, (void *)pa.pa_object);
+	dt_free(dtp, object);
+	if (nomem)
+		return (dt_set_errno(dtp, EDT_NOMEM));
 
 	return (len);
 }

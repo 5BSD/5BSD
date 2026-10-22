@@ -50,6 +50,8 @@
 #include <dtrace.h>
 #include <kinst.h>
 
+static void dt_probe_free(dtrace_hdl_t *, dt_probe_t *);
+
 static dt_provider_t *
 dt_provider_insert(dtrace_hdl_t *dtp, dt_provider_t *pvp, uint_t h)
 {
@@ -135,17 +137,17 @@ dt_provider_destroy(dtrace_hdl_t *dtp, dt_provider_t *pvp)
 	h = dt_strtab_hash(pvp->pv_desc.dtvd_name, NULL) % dtp->dt_provbuckets;
 	pp = &dtp->dt_provs[h];
 
-	while (*pp != NULL && *pp != pvp)
+	/* Every provider is on its hash chain (dt_provider_insert). */
+	while (*pp != pvp)
 		pp = &(*pp)->pv_next;
 
-	assert(*pp != NULL && *pp == pvp);
 	*pp = pvp->pv_next;
 
 	dt_list_delete(&dtp->dt_provlist, pvp);
 	dtp->dt_nprovs--;
 
-	if (pvp->pv_probes != NULL)
-		dt_idhash_destroy(pvp->pv_probes);
+	/* dt_provider_create() never inserts a provider without probes. */
+	dt_idhash_destroy(pvp->pv_probes);
 
 	dt_node_link_free(&pvp->pv_nodes);
 	dt_free(dtp, pvp->pv_xrefs);
@@ -284,7 +286,8 @@ dt_probe_discover(dt_provider_t *pvp, const dtrace_probedesc_t *pdp)
 	 * here. If for some crazy reason the kernel knows about our userland
 	 * types then we just ignore this.
 	 */
-	if (xc == 0 && nc == 0 &&
+	/* xc == 0 implies nc == 0: no descriptor raised nc above -1. */
+	if (xc == 0 &&
 	    strncmp(pvp->pv_desc.dtvd_name, "pid", 3) == 0) {
 		nc = adc;
 		dt_pid_get_types(dtp, pdp, adv, &nc);
@@ -335,9 +338,10 @@ dt_probe_discover(dt_provider_t *pvp, const dtrace_probedesc_t *pdp)
 			dtt.dtt_object = NULL;
 			dtt.dtt_ctfp = NULL;
 			dtt.dtt_type = CTF_ERR;
+			dtt.dtt_flags = 0;	/* not the previous argument's */
 		} else {
 			dt_node_type_assign(prp->pr_nargv[adp->dtargd_mapping],
-			    dtt.dtt_ctfp, dtt.dtt_type,
+			    dtt.dtt_object, dtt.dtt_ctfp, dtt.dtt_type,
 			    dtt.dtt_flags & DTT_FL_USER ? B_TRUE : B_FALSE);
 		}
 
@@ -355,8 +359,9 @@ dt_probe_discover(dt_provider_t *pvp, const dtrace_probedesc_t *pdp)
 			dtt.dtt_object = NULL;
 			dtt.dtt_ctfp = NULL;
 			dtt.dtt_type = CTF_ERR;
+			dtt.dtt_flags = 0;	/* not the previous argument's */
 		} else {
-			dt_node_type_assign(prp->pr_xargv[i],
+			dt_node_type_assign(prp->pr_xargv[i], dtt.dtt_object,
 			    dtt.dtt_ctfp, dtt.dtt_type, B_FALSE);
 		}
 
@@ -383,6 +388,13 @@ dt_probe_lookup(dt_provider_t *pvp, const char *s)
 
 	if (dtrace_str2desc(dtp, DTRACE_PROBESPEC_NAME, s, &pd) != 0)
 		return (NULL); /* dt_errno is set for us */
+
+	/*
+	 * The lookup is scoped to this provider: without its name the kernel
+	 * would match the description against every provider.
+	 */
+	(void) strlcpy(pd.dtpd_provider, pvp->pv_desc.dtvd_name,
+	    sizeof (pd.dtpd_provider));
 
 	keylen = dt_probe_keylen(&pd);
 	key = dt_probe_key(&pd, alloca(keylen));
@@ -459,7 +471,11 @@ dt_probe_create(dtrace_hdl_t *dtp, dt_ident_t *idp, int protoc,
 	    (prp->pr_xargc != 0 && prp->pr_xargv == NULL) ||
 	    (prp->pr_xargc != 0 && prp->pr_mapping == NULL) ||
 	    (prp->pr_argc != 0 && prp->pr_argv == NULL)) {
-		dt_probe_destroy(prp);
+		/*
+		 * The probe is not declared yet and this may run outside the
+		 * compiler (probe discovery), so free it with our handle.
+		 */
+		dt_probe_free(dtp, prp);
 		return (NULL);
 	}
 
@@ -505,13 +521,20 @@ dt_probe_declare(dt_provider_t *pvp, dt_probe_t *prp)
 void
 dt_probe_destroy(dt_probe_t *prp)
 {
-	dt_probe_instance_t *pip, *pip_next;
 	dtrace_hdl_t *dtp;
 
 	if (prp->pr_pvp != NULL)
 		dtp = prp->pr_pvp->pv_hdl;
 	else
 		dtp = yypcb->pcb_hdl;
+
+	dt_probe_free(dtp, prp);
+}
+
+static void
+dt_probe_free(dtrace_hdl_t *dtp, dt_probe_t *prp)
+{
+	dt_probe_instance_t *pip, *pip_next;
 
 	dt_node_list_free(&prp->pr_nargs);
 	dt_node_list_free(&prp->pr_xargs);
@@ -606,7 +629,7 @@ dt_probe_define(dt_provider_t *pvp, dt_probe_t *prp,
 	    pvp->pv_desc.dtvd_name, prp->pr_ident->di_name, fname, offset,
 	    rname);
 
-	assert(*noffs < *maxoffs);
+	/* *noffs < *maxoffs: the array was grown above when they were equal. */
 	(*offs)[(*noffs)++] = offset;
 
 	return (0);
@@ -656,7 +679,8 @@ dt_probe_tag(dt_probe_t *prp, uint_t argn, dt_node_t *dnp)
 	bzero(dnp, sizeof (dt_node_t));
 	dnp->dn_kind = DT_NODE_TYPE;
 
-	dt_node_type_assign(dnp, dtt.dtt_ctfp, dtt.dtt_type, B_FALSE);
+	dt_node_type_assign(dnp, dtt.dtt_object, dtt.dtt_ctfp, dtt.dtt_type,
+	    B_FALSE);
 	dt_node_attr_assign(dnp, _dtrace_defattr);
 
 	return (dnp);
@@ -666,7 +690,12 @@ dt_probe_tag(dt_probe_t *prp, uint_t argn, dt_node_t *dnp)
 static int
 dt_probe_desc(dtrace_hdl_t *dtp, const dtrace_probedesc_t *pdp, void *arg)
 {
-	if (((dtrace_probedesc_t *)arg)->dtpd_id == DTRACE_IDNONE) {
+	/*
+	 * The first match fills in the (zeroed) description.  Probes that
+	 * are declared in D carry DTRACE_IDNONE, so the id cannot tell
+	 * whether a match was already recorded; the provider name can.
+	 */
+	if (((dtrace_probedesc_t *)arg)->dtpd_provider[0] == '\0') {
 		bcopy(pdp, arg, sizeof (dtrace_probedesc_t));
 		return (0);
 	}
@@ -812,7 +841,11 @@ dt_probe_info(dtrace_hdl_t *dtp,
 			return (NULL); /* dt_errno is set for us */
 	}
 
-	assert(pvp != NULL && prp != NULL);
+	/*
+	 * pvp and prp are non-NULL here: a cached prp is only found under a
+	 * successful provider lookup, and the uncached path returns early on
+	 * a failed provider lookup or a NULL prp.
+	 */
 
 	/*
 	 * Compute the probe description attributes by taking the minimum of
@@ -906,6 +939,7 @@ dtrace_probe_iter(dtrace_hdl_t *dtp,
 		if (pdp != NULL)
 			bcopy(pdp, &pd, sizeof (pd));
 
+		pd.dtpd_vmid = 0;
 		pd.dtpd_id = id;
 
 		if (dt_ioctl(dtp, cmd, &pd) != 0)

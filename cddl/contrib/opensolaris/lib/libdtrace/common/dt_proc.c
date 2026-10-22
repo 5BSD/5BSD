@@ -118,6 +118,22 @@ dt_proc_bpcreate(dt_proc_t *dpr, uintptr_t addr, dt_bkpt_f *func, void *data)
 	return (dbp);
 }
 
+/*
+ * Forget the USDT DOF registered for the process, on release or when exec(2)
+ * replaces its address space.
+ */
+static void
+dt_proc_dofs_free(dt_proc_t *dpr)
+{
+	dt_proc_dof_t *dpd, *next;
+
+	for (dpd = dt_list_next(&dpr->dpr_dofs); dpd != NULL; dpd = next) {
+		next = dt_list_next(dpd);
+		dt_list_delete(&dpr->dpr_dofs, dpd);
+		free(dpd);
+	}
+}
+
 static void
 dt_proc_bpdestroy(dt_proc_t *dpr, int delbkpts)
 {
@@ -344,10 +360,17 @@ dt_proc_attach(dt_proc_t *dpr, int exec)
 	if (exec) {
 
 		dt_proc_bpdestroy(dpr, B_FALSE);
+		dt_proc_dofs_free(dpr);
 	}
 	if ((dpr->dpr_rtld = Prd_agent(dpr->dpr_proc)) != NULL &&
 	    (err = rd_event_enable(dpr->dpr_rtld, B_TRUE)) == RD_OK) {
 		dt_proc_rdwatch(dpr, RD_POSTINIT, "RD_POSTINIT");
+		/*
+		 * Objects loaded later (dlopen()) get their pid and USDT
+		 * probes when the run-time linker reports the object list
+		 * consistent again.
+		 */
+		dt_proc_rdwatch(dpr, RD_DLACTIVITY, "RD_DLACTIVITY");
 	} else {
 		dt_dprintf("pid %d: failed to enable rtld events: %s\n",
 		    (int)dpr->dpr_pid, dpr->dpr_rtld ? rd_errstr(err) :
@@ -546,6 +569,7 @@ dt_proc_error(dtrace_hdl_t *dtp, dt_proc_t *dpr, const char *format, ...)
 	if (dpr->dpr_proc != NULL)
 		Prelease(dpr->dpr_proc, 0);
 
+	dt_proc_dofs_free(dpr);
 	dt_free(dtp, dpr);
 	(void) dt_set_errno(dtp, EDT_COMPILER);
 	return (NULL);
@@ -661,6 +685,7 @@ dt_proc_destroy(dtrace_hdl_t *dtp, struct ps_prochandle *P)
 
 	dt_list_delete(&dph->dph_lrulist, dpr);
 	Prelease(dpr->dpr_proc, rflag);
+	dt_proc_dofs_free(dpr);
 	dt_free(dtp, dpr);
 }
 
@@ -957,9 +982,9 @@ dt_proc_init(dtrace_hdl_t *dtp)
 	return;
 
 err:
-	while (--i != 0) {
+	/* Entries 0 .. i - 1 were duplicated; entry i failed. */
+	while (i-- > 0)
 		dt_free(dtp, dtp->dt_proc_env[i]);
-	}
 	dt_free(dtp, dtp->dt_proc_env);
 	dtp->dt_proc_env = NULL;
 }
@@ -977,8 +1002,11 @@ dt_proc_fini(dtrace_hdl_t *dtp)
 	dtp->dt_procs = NULL;
 	dt_free(dtp, dph);
 
-	for (p = dtp->dt_proc_env; *p != NULL; p++)
-		dt_free(dtp, *p);
+	/* dt_proc_init() leaves no environment if it fails part way. */
+	if (dtp->dt_proc_env != NULL) {
+		for (p = dtp->dt_proc_env; *p != NULL; p++)
+			dt_free(dtp, *p);
+	}
 
 	dt_free(dtp, dtp->dt_proc_env);
 	dtp->dt_proc_env = NULL;

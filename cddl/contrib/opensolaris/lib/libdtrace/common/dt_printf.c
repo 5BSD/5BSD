@@ -40,6 +40,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdint.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -48,6 +49,11 @@
 #include <dt_printf.h>
 #include <dt_string.h>
 #include <dt_impl.h>
+#ifndef illumos
+#include <sys/hypertrace.h>
+#else
+#define HYPERTRACE_STACK_NFRAMES(v) ((uint32_t)(v))
+#endif
 
 #ifndef NS_IN6ADDRSZ
 #define NS_IN6ADDRSZ 16
@@ -120,8 +126,11 @@ pfcheck_str(dt_pfargv_t *pfv, dt_pfargd_t *pfd, dt_node_t *dnp)
 	base = ctf_type_resolve(ctfp, dnp->dn_type);
 	kind = ctf_type_kind(ctfp, base);
 
-	return (kind == CTF_K_ARRAY && ctf_array_info(ctfp, base, &r) == 0 &&
-	    (base = ctf_type_resolve(ctfp, r.ctr_contents)) != CTF_ERR &&
+	/* ctf_array_info() fails only for an unknown ID or a non-array. */
+	if (kind != CTF_K_ARRAY)
+		return (0);
+	(void) ctf_array_info(ctfp, base, &r);
+	return ((base = ctf_type_resolve(ctfp, r.ctr_contents)) != CTF_ERR &&
 	    ctf_type_encoding(ctfp, base, &e) == 0 && IS_CHAR(e));
 }
 
@@ -136,10 +145,18 @@ pfcheck_wstr(dt_pfargv_t *pfv, dt_pfargd_t *pfd, dt_node_t *dnp)
 	ctf_encoding_t e;
 	ctf_arinfo_t r;
 
-	return (kind == CTF_K_ARRAY && ctf_array_info(ctfp, base, &r) == 0 &&
-	    (base = ctf_type_resolve(ctfp, r.ctr_contents)) != CTF_ERR &&
-	    ctf_type_kind(ctfp, base) == CTF_K_INTEGER &&
-	    ctf_type_encoding(ctfp, base, &e) == 0 && e.cte_bits == 32);
+	/*
+	 * ctf_array_info() and ctf_type_encoding() fail only for an unknown
+	 * ID or the wrong kind, both checked here first.
+	 */
+	if (kind != CTF_K_ARRAY)
+		return (0);
+	(void) ctf_array_info(ctfp, base, &r);
+	if ((base = ctf_type_resolve(ctfp, r.ctr_contents)) == CTF_ERR ||
+	    ctf_type_kind(ctfp, base) != CTF_K_INTEGER)
+		return (0);
+	(void) ctf_type_encoding(ctfp, base, &e);
+	return (e.cte_bits == 32);
 }
 
 /*ARGSUSED*/
@@ -241,30 +258,72 @@ pfcheck_type(dt_pfargv_t *pfv, dt_pfargd_t *pfd, dt_node_t *dnp)
 	    dnp->dn_type), pfd->pfd_conv->pfc_dctfp, pfd->pfd_conv->pfc_dtype));
 }
 
-/*ARGSUSED*/
+/*
+ * Pass an integer record to dt_printf() with the C type that the conversion's
+ * length modifier names.  Formats that reach the consumer without a size
+ * prefix -- dtrace_printf_create() callers and HyperTrace compilations, where
+ * dt_printf_validate() adds no "ll" -- may still describe 64-bit records.
+ * Such a record is printed with an "ll" conversion, as dt_printf_validate()
+ * would have produced, rather than passing a 64-bit value to an int
+ * conversion (or a 32-bit value to a long long one).
+ */
 static int
-pfprint_sint(dtrace_hdl_t *dtp, FILE *fp, const char *format,
-    const dt_pfargd_t *pfd, const void *addr, size_t size, uint64_t unormal)
+pfprint_int(dtrace_hdl_t *dtp, FILE *fp, const char *format,
+    const void *addr, size_t size, uint64_t normal, int sign)
 {
-	int64_t normal = (int64_t)unormal;
-	int32_t n = (int32_t)normal;
+	size_t len = strlen(format);
+	char conv = format[len - 1];
+	char mod = len > 2 ? format[len - 2] : '\0';
+	char *wide;
+	uint64_t v;
 
 	switch (size) {
-	case sizeof (int8_t):
-		return (dt_printf(dtp, fp, format,
-		    (int32_t)*((int8_t *)addr) / n));
-	case sizeof (int16_t):
-		return (dt_printf(dtp, fp, format,
-		    (int32_t)*((int16_t *)addr) / n));
-	case sizeof (int32_t):
-		return (dt_printf(dtp, fp, format,
-		    *((int32_t *)addr) / n));
-	case sizeof (int64_t):
-		return (dt_printf(dtp, fp, format,
-		    *((int64_t *)addr) / normal));
+	case sizeof (uint8_t):
+		v = sign ? (uint64_t)(int64_t)*((int8_t *)addr) :
+		    *((uint8_t *)addr);
+		break;
+	case sizeof (uint16_t):
+		v = sign ? (uint64_t)(int64_t)*((int16_t *)addr) :
+		    *((uint16_t *)addr);
+		break;
+	case sizeof (uint32_t):
+		v = sign ? (uint64_t)(int64_t)*((int32_t *)addr) :
+		    *((uint32_t *)addr);
+		break;
+	case sizeof (uint64_t):
+		v = *((uint64_t *)addr);
+		break;
 	default:
 		return (dt_set_errno(dtp, EDT_DMISMATCH));
 	}
+
+	v = sign ? (uint64_t)((int64_t)v / (int64_t)normal) : v / normal;
+
+	if (conv == 'c')
+		return (dt_printf(dtp, fp, format, (int)v));	/* or wint_t */
+	if (conv == 'p')
+		return (dt_printf(dtp, fp, format, (void *)(uintptr_t)v));
+	if (mod == 'l' && len > 3 && format[len - 3] == 'l')
+		return (dt_printf(dtp, fp, format, (long long)v));
+	if (mod == 'l')
+		return (dt_printf(dtp, fp, format, (long)v));
+	if (mod != 'h' && size == sizeof (uint64_t)) {
+		wide = alloca(len + 3);
+		bcopy(format, wide, len - 1);
+		(void) strcpy(wide + len - 1, "ll");
+		wide[len + 1] = conv;
+		wide[len + 2] = '\0';
+		return (dt_printf(dtp, fp, wide, (long long)v));
+	}
+	return (dt_printf(dtp, fp, format, (int)v));
+}
+
+/*ARGSUSED*/
+static int
+pfprint_sint(dtrace_hdl_t *dtp, FILE *fp, const char *format,
+    const dt_pfargd_t *pfd, const void *addr, size_t size, uint64_t normal)
+{
+	return (pfprint_int(dtp, fp, format, addr, size, normal, 1));
 }
 
 /*ARGSUSED*/
@@ -272,59 +331,56 @@ static int
 pfprint_uint(dtrace_hdl_t *dtp, FILE *fp, const char *format,
     const dt_pfargd_t *pfd, const void *addr, size_t size, uint64_t normal)
 {
-	uint32_t n = (uint32_t)normal;
-
-	switch (size) {
-	case sizeof (uint8_t):
-		return (dt_printf(dtp, fp, format,
-		    (uint32_t)*((uint8_t *)addr) / n));
-	case sizeof (uint16_t):
-		return (dt_printf(dtp, fp, format,
-		    (uint32_t)*((uint16_t *)addr) / n));
-	case sizeof (uint32_t):
-		return (dt_printf(dtp, fp, format,
-		    *((uint32_t *)addr) / n));
-	case sizeof (uint64_t):
-		return (dt_printf(dtp, fp, format,
-		    *((uint64_t *)addr) / normal));
-	default:
-		return (dt_set_errno(dtp, EDT_DMISMATCH));
-	}
+	return (pfprint_int(dtp, fp, format, addr, size, normal, 0));
 }
 
-static int
-pfprint_dint(dtrace_hdl_t *dtp, FILE *fp, const char *format,
-    const dt_pfargd_t *pfd, const void *addr, size_t size, uint64_t normal)
-{
-	if (pfd->pfd_flags & DT_PFCONV_SIGNED)
-		return (pfprint_sint(dtp, fp, format, pfd, addr, size, normal));
-	else
-		return (pfprint_uint(dtp, fp, format, pfd, addr, size, normal));
-}
+/*
+ * %d reaches the consumer only from formats dt_printf_validate() did not
+ * rewrite to %i or %u (see pfcheck_dint()); no signedness is known for it,
+ * and it has always been printed as unsigned.
+ */
+#define	pfprint_dint	pfprint_uint
 
+/* A distinct long double record size; none where it is double. */
+static const size_t dt_long_double_size =
+    sizeof (long double) != sizeof (double) ? sizeof (long double) : SIZE_MAX;
+
+/*
+ * As with integers, pass a floating-point record with the type that the
+ * conversion names: long double for an "L" conversion, and for a long double
+ * record whose format carries no "L" (see pfprint_int()); double otherwise.
+ */
 /*ARGSUSED*/
 static int
 pfprint_fp(dtrace_hdl_t *dtp, FILE *fp, const char *format,
     const dt_pfargd_t *pfd, const void *addr, size_t size, uint64_t normal)
 {
-	double n = (double)normal;
-	long double ldn = (long double)normal;
+	size_t len = strlen(format);
+	int ldfmt = len > 2 && format[len - 2] == 'L';
+	long double v;
+	char *ld;
 
-	switch (size) {
-	case sizeof (float):
-		return (dt_printf(dtp, fp, format,
-		    (double)*((float *)addr) / n));
-	case sizeof (double):
-		return (dt_printf(dtp, fp, format,
-		    *((double *)addr) / n));
-#if !defined(__arm__) && !defined(__powerpc__) && !defined(__riscv)
-	case sizeof (long double):
-		return (dt_printf(dtp, fp, format,
-		    *((long double *)addr) / ldn));
-#endif
-	default:
+	if (size == sizeof (float))
+		v = *((float *)addr);
+	else if (size == sizeof (double))
+		v = *((double *)addr);
+	else if (size == dt_long_double_size)
+		v = *((long double *)addr);
+	else
 		return (dt_set_errno(dtp, EDT_DMISMATCH));
+
+	v /= (long double)normal;
+	if (ldfmt)
+		return (dt_printf(dtp, fp, format, v));
+	if (size == sizeof (long double)) {
+		ld = alloca(len + 2);
+		bcopy(format, ld, len - 1);
+		ld[len - 1] = 'L';
+		ld[len] = format[len - 1];
+		ld[len + 1] = '\0';
+		return (dt_printf(dtp, fp, ld, v));
 	}
+	return (dt_printf(dtp, fp, format, (double)v));
 }
 
 /*ARGSUSED*/
@@ -347,10 +403,11 @@ pfprint_addr(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 		return (dt_set_errno(dtp, EDT_DMISMATCH));
 	}
 
+	/* The length returned excludes the NUL, as with snprintf(3). */
 	do {
-		n = len;
+		n = len + 1;
 		s = alloca(n);
-	} while ((len = dtrace_addr2str(dtp, val, s, n)) > n);
+	} while ((len = dtrace_addr2str(dtp, val, s, n)) >= n);
 
 	return (dt_printf(dtp, fp, format, s));
 }
@@ -370,6 +427,18 @@ pfprint_umod(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 {
 	return (dt_print_umod(dtp, fp, format, (caddr_t)addr));
 }
+
+#ifndef illumos
+int
+dt_hypertrace_uaddr_format(char *buf, size_t size, uint64_t tagged_pid,
+    uint64_t pc)
+{
+	return (snprintf(buf, size, "guest[%u]:pid[%u]`0x%llx",
+	    (unsigned)HYPERTRACE_UADDR_VMID(tagged_pid),
+	    (unsigned)HYPERTRACE_UADDR_PID(tagged_pid),
+	    (u_longlong_t)pc));
+}
+#endif
 
 /*ARGSUSED*/
 static int
@@ -400,10 +469,19 @@ pfprint_uaddr(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 	if (pid == 0 && dtp->dt_vector == NULL && idp != NULL)
 		pid = idp->di_id;
 
+#ifndef illumos
+	if (HYPERTRACE_UADDR_GUEST(pid)) {
+		char guest[96];
+
+		(void)dt_hypertrace_uaddr_format(guest, sizeof(guest), pid, val);
+		return (dt_printf(dtp, fp, format, guest));
+	}
+#endif
+
 	do {
-		n = len;
+		n = len + 1;
 		s = alloca(n);
-	} while ((len = dtrace_uaddr2str(dtp, pid, val, s, n)) > n);
+	} while ((len = dtrace_uaddr2str(dtp, pid, val, s, n)) >= n);
 
 	return (dt_printf(dtp, fp, format, s));
 }
@@ -446,12 +524,19 @@ pfprint_stack(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 		break;
 
 	case DTRACEACT_STACK:
+		if (HYPERTRACE_STACK_NFRAMES(rec->dtrd_arg) == 0) {
+			err = dt_set_errno(dtp, EDT_BADSTACKPC);
+			break;
+		}
 		err = dt_print_stack(dtp, fp, format, addr, rec->dtrd_arg,
-		    rec->dtrd_size / rec->dtrd_arg);
+		    rec->dtrd_size /
+		    HYPERTRACE_STACK_NFRAMES(rec->dtrd_arg));
 		break;
 
 	default:
-		assert(0);
+		/* %k given a record that is not a stack (dtrace_fprintf()). */
+		err = dt_set_errno(dtp, EDT_DMISMATCH);
+		break;
 	}
 
 	dtp->dt_options[DTRACEOPT_STACKINDENT] = saved;
@@ -512,7 +597,8 @@ pfprint_time822(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 	char buf[64];
 
 	(void) localtime_r(&sec, &tm);
-	(void) strftime(buf, sizeof (buf), "%a, %d %b %G %T %Z", &tm);
+	/* RFC 822 dates carry the calendar year (%Y), not the ISO year (%G). */
+	(void) strftime(buf, sizeof (buf), "%a, %d %b %Y %T %Z", &tm);
 	return (dt_printf(dtp, fp, format, buf));
 }
 
@@ -528,7 +614,9 @@ pfprint_port(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 #ifdef illumos
 	if ((sv = getservbyport_r(port, NULL, &res, buf, sizeof (buf))) != NULL)
 #else
-	if (getservbyport_r(port, NULL, &res, buf, sizeof (buf), &sv) > 0)
+	/* 0 with a result is success; 0 without one is "not found". */
+	if (getservbyport_r(port, NULL, &res, buf, sizeof (buf), &sv) == 0 &&
+	    sv != NULL)
 #endif
 		return (dt_printf(dtp, fp, format, sv->s_name));
 
@@ -550,19 +638,27 @@ pfprint_inetaddr(dtrace_hdl_t *dtp, FILE *fp, const char *format,
 	bcopy(addr, s, size);
 	s[size] = '\0';
 
-	if (strchr(s, ':') == NULL && inet_pton(AF_INET, s, inetaddr) != -1) {
+	/*
+	 * inet_pton(3) returns 1 only for a valid address; 0 (not an address)
+	 * must not send the uninitialized buffer to the resolver.
+	 */
+	if (strchr(s, ':') == NULL && inet_pton(AF_INET, s, inetaddr) == 1) {
 #ifdef illumos
 		if ((host = gethostbyaddr_r(inetaddr, NS_INADDRSZ,
 		    AF_INET, &res, buf, sizeof (buf), &e)) != NULL)
 #else
 		if (gethostbyaddr_r(inetaddr, NS_INADDRSZ,
-		    AF_INET, &res, buf, sizeof (buf), &host, &e) > 0)
+		    AF_INET, &res, buf, sizeof (buf), &host, &e) == 0 &&
+		    host != NULL)
 #endif
 			return (dt_printf(dtp, fp, format, host->h_name));
-	} else if (inet_pton(AF_INET6, s, inetaddr) != -1) {
+	} else if (inet_pton(AF_INET6, s, inetaddr) == 1) {
 		if ((host = getipnodebyaddr(inetaddr, NS_IN6ADDRSZ,
-		    AF_INET6, &e)) != NULL)
-			return (dt_printf(dtp, fp, format, host->h_name));
+		    AF_INET6, &e)) != NULL) {
+			e = dt_printf(dtp, fp, format, host->h_name);
+			freehostent(host);
+			return (e);
+		}
 	}
 
 	return (dt_printf(dtp, fp, format, s));
@@ -748,6 +844,7 @@ dt_pfdict_create(dtrace_hdl_t *dtp)
 		pdi->pdi_buckets[h] = pfc;
 
 		dtt.dtt_ctfp = NULL;
+		dtt.dtt_object = NULL;
 		dtt.dtt_type = CTF_ERR;
 
 		/*
@@ -778,11 +875,7 @@ dt_pfdict_create(dtrace_hdl_t *dtp)
 			pfc->pfc_ctype = pfc->pfc_dtype;
 		}
 
-		if (pfc->pfc_check == NULL || pfc->pfc_print == NULL ||
-		    pfc->pfc_ofmt == NULL || pfc->pfc_tstr == NULL) {
-			dt_pfdict_destroy(dtp);
-			return (dt_set_errno(dtp, EDT_BADCONV));
-		}
+		/* Every _dtrace_conversions[] entry is complete (above). */
 
 		dt_dprintf("loaded printf conversion %%%s\n", pfc->pfc_name);
 	}
@@ -812,7 +905,7 @@ dt_pfdict_destroy(dtrace_hdl_t *dtp)
 	dtp->dt_pfdict = NULL;
 }
 
-static const dt_pfconv_t *
+const dt_pfconv_t *
 dt_pfdict_lookup(dtrace_hdl_t *dtp, const char *name)
 {
 	dt_pfdict_t *pdi = dtp->dt_pfdict;
@@ -857,7 +950,8 @@ dt_printf_create(dtrace_hdl_t *dtp, const char *s)
 	pfv->pfv_flags = 0;
 	pfv->pfv_dtp = dtp;
 
-	for (q = format; (p = strchr(q, '%')) != NULL; q = *p ? p + 1 : p) {
+	/* Each pass ends on a conversion character; '\0' returns above. */
+	for (q = format; (p = strchr(q, '%')) != NULL; q = p + 1) {
 		uint_t namelen = 0;
 		int digits = 0;
 		int dot = 0;
@@ -889,9 +983,10 @@ dt_printf_create(dtrace_hdl_t *dtp, const char *s)
 		switch (c = *++p) {
 		case '0': case '1': case '2': case '3': case '4':
 		case '5': case '6': case '7': case '8': case '9':
+			/* As in printf(3), '-' overrides '0' in either order. */
 			if (dot == 0 && digits == 0 && c == '0') {
-				pfd->pfd_flags |= DT_PFCONV_ZPAD;
-				pfd->pfd_flags &= ~DT_PFCONV_LEFT;
+				if (!(pfd->pfd_flags & DT_PFCONV_LEFT))
+					pfd->pfd_flags |= DT_PFCONV_ZPAD;
 				goto fmt_switch;
 			}
 
@@ -917,7 +1012,7 @@ dt_printf_create(dtrace_hdl_t *dtp, const char *s)
 			if (pfd->pfd_flags & n) {
 				yywarn("format conversion #%u has more than "
 				    "one '*' specified for the output %s\n",
-				    pfv->pfv_argc, n ? "precision" : "width");
+				    pfv->pfv_argc, dot ? "precision" : "width");
 
 				dt_printf_destroy(pfv);
 				return (dt_printf_error(dtp, EDT_COMPILER));
@@ -1034,6 +1129,76 @@ dt_printf_create(dtrace_hdl_t *dtp, const char *s)
 	return (pfv);
 }
 
+dt_pfargv_t *
+dt_printf_dup(dt_pfargv_t *pfv)
+{
+	dt_pfargd_t *pfd, *nfd, *inner;
+	dt_pfargv_t *nfv;
+
+	if (pfv == NULL)
+		return (NULL);
+
+	nfv = malloc(sizeof(dt_pfargv_t));
+	if (nfv == NULL)
+		return (dt_printf_error(pfv->pfv_dtp, EDT_NOMEM));
+
+	memset(nfv, 0, sizeof(dt_pfargv_t));
+
+	nfv->pfv_dtp = pfv->pfv_dtp;
+	nfv->pfv_format = strdup(pfv->pfv_format);
+	if (nfv->pfv_format == NULL) {
+		free(nfv);
+		return (dt_printf_error(pfv->pfv_dtp, EDT_NOMEM));
+	}
+	nfv->pfv_argc = pfv->pfv_argc;
+	nfv->pfv_flags = pfv->pfv_flags;
+
+	for (pfd = pfv->pfv_argv; pfd != NULL; pfd = pfd->pfd_next) {
+		nfd = malloc(sizeof(dt_pfargd_t));
+		if (nfd == NULL) {
+			dt_printf_destroy(nfv);
+			return (dt_printf_error(pfv->pfv_dtp, EDT_NOMEM));
+		}
+
+		memset(nfd, 0, sizeof(dt_pfargd_t));
+
+		nfd->pfd_prefix = pfd->pfd_prefix;
+		if (pfd->pfd_prefix != NULL) {
+			uintptr_t base = (uintptr_t)pfv->pfv_format;
+			uintptr_t prefix = (uintptr_t)pfd->pfd_prefix;
+			size_t length = strlen(pfv->pfv_format);
+			if (prefix >= base && prefix - base <= length &&
+			    pfd->pfd_preflen <= length - (prefix - base))
+				nfd->pfd_prefix = nfv->pfv_format +
+				    (prefix - base);
+		}
+		nfd->pfd_preflen = pfd->pfd_preflen;
+		memcpy(nfd->pfd_fmt, pfd->pfd_fmt, 8);
+		nfd->pfd_flags = pfd->pfd_flags;
+		nfd->pfd_width = pfd->pfd_width;
+		nfd->pfd_dynwidth = pfd->pfd_dynwidth;
+		nfd->pfd_prec = pfd->pfd_prec;
+		nfd->pfd_conv = pfd->pfd_conv;
+		nfd->pfd_rec = pfd->pfd_rec;
+		/*
+		 * Make sure we don't cross the two lists.
+		 */
+		nfd->pfd_next = NULL;
+
+		for (inner = nfv->pfv_argv; inner && inner->pfd_next != NULL;
+		     inner = inner->pfd_next)
+			;
+
+		if (inner != NULL) {
+			assert(inner->pfd_next == NULL);
+			inner->pfd_next = nfd;
+		} else
+			nfv->pfv_argv = nfd;
+	}
+
+	return (nfv);
+}
+
 void
 dt_printf_destroy(dt_pfargv_t *pfv)
 {
@@ -1049,7 +1214,7 @@ dt_printf_destroy(dt_pfargv_t *pfv)
 }
 
 void
-dt_printf_validate(dt_pfargv_t *pfv, uint_t flags,
+dt_printf_validate(dtrace_hdl_t *dtp, dt_pfargv_t *pfv, uint_t flags,
     dt_ident_t *idp, int foff, dtrace_actkind_t kind, dt_node_t *dnp)
 {
 	dt_pfargd_t *pfd = pfv->pfv_argv;
@@ -1082,7 +1247,8 @@ dt_printf_validate(dt_pfargv_t *pfv, uint_t flags,
 		xyerror(D_TYPE_ERR, "failed to lookup agg type %s\n", aggtype);
 
 	bzero(&aggnode, sizeof (aggnode));
-	dt_node_type_assign(&aggnode, dtt.dtt_ctfp, dtt.dtt_type, B_FALSE);
+	dt_node_type_assign(&aggnode, dtt.dtt_object, dtt.dtt_ctfp,
+	    dtt.dtt_type, B_FALSE);
 
 	for (i = 0, j = 0; i < pfv->pfv_argc; i++, pfd = pfd->pfd_next) {
 		const dt_pfconv_t *pfc = pfd->pfd_conv;
@@ -1163,16 +1329,18 @@ dt_printf_validate(dt_pfargv_t *pfv, uint_t flags,
 		 * pfc_check() function below may optionally modify the format
 		 * as part of validating the type of the input argument.
 		 */
-		if (pfc->pfc_print == &pfprint_sint ||
-		    pfc->pfc_print == &pfprint_uint ||
-		    pfc->pfc_print == &pfprint_dint) {
-			if (dt_node_type_size(vnp) == sizeof (uint64_t))
-				(void) strcpy(pfd->pfd_fmt, "ll");
-		} else if (pfc->pfc_print == &pfprint_fp) {
-			if (dt_node_type_size(vnp) == sizeof (long double))
-				(void) strcpy(pfd->pfd_fmt, "L");
+		if (dtrace_hypertrace_enabled(dtp) == 0) {
+			/* pfprint_dint is pfprint_uint. */
+			if (pfc->pfc_print == &pfprint_sint ||
+			    pfc->pfc_print == &pfprint_uint) {
+				if (dt_node_type_size(vnp) == sizeof(uint64_t))
+					(void)strcpy(pfd->pfd_fmt, "ll");
+			} else if (pfc->pfc_print == &pfprint_fp) {
+				if (dt_node_type_size(vnp) ==
+				    sizeof(long double))
+					(void)strcpy(pfd->pfd_fmt, "L");
+			}
 		}
-
 		(void) strcat(pfd->pfd_fmt, pfc->pfc_ofmt);
 
 		/*
@@ -1181,13 +1349,17 @@ dt_printf_validate(dt_pfargv_t *pfv, uint_t flags,
 		 * string by concatenating together any required printf(3C)
 		 * size prefixes with the conversion's native format string.
 		 */
-		if (pfc->pfc_check(pfv, pfd, vnp) == 0) {
-			xyerror(D_PRINTF_ARG_TYPE,
-			    "%s( ) %s is incompatible with "
-			    "conversion #%d prototype:\n\tconversion: %%%s\n"
-			    "\t prototype: %s\n\t  argument: %s\n", func,
-			    vname, i + 1, pfc->pfc_name, pfc->pfc_tstr,
-			    dt_node_type_name(vnp, n, sizeof (n)));
+		if (dtrace_hypertrace_enabled(dtp) == 0) {
+			if (pfc->pfc_check(pfv, pfd, vnp) == 0) {
+				xyerror(D_PRINTF_ARG_TYPE,
+				    "%s( ) %s is incompatible with "
+				    "conversion #%d prototype:\n"
+				    "\tconversion: %%%s\n"
+				    "\t prototype: %s\n\t  argument: %s\n",
+				    func, vname, i + 1, pfc->pfc_name,
+				    pfc->pfc_tstr,
+				    dt_node_type_name(vnp, n, sizeof(n)));
+			}
 		}
 	}
 
@@ -1614,6 +1786,8 @@ dtrace_sprintf(dtrace_hdl_t *dtp, FILE *fp, void *fmtdata,
 	dtrace_optval_t size;
 	int rval;
 
+	if (dtp->dt_output_discarded)
+		return (dt_set_errno(dtp, ESHUTDOWN));
 	rval = dtrace_getopt(dtp, "strsize", &size);
 	assert(rval == 0);
 	assert(dtp->dt_sprintf_buflen == 0);
@@ -1630,8 +1804,11 @@ dtrace_sprintf(dtrace_hdl_t *dtp, FILE *fp, void *fmtdata,
 	    NULL, 0);
 	dtp->dt_sprintf_buflen = 0;
 
-	if (rval == -1)
+	/* The next call (or dtrace_close()) frees dt_sprintf_buf again. */
+	if (rval == -1) {
 		free(dtp->dt_sprintf_buf);
+		dtp->dt_sprintf_buf = NULL;
+	}
 
 	return (rval);
 }
@@ -1874,10 +2051,15 @@ dtrace_printf_create(dtrace_hdl_t *dtp, const char *s)
 		 * it is one of our custom formats (e.g. pfprint_addr), so we
 		 * must set pfd_fmt to be the output format conversion "s".
 		 */
-		if (strcmp(pfc->pfc_ofmt, "s") != 0)
-			(void) strcat(pfd->pfd_fmt, pfc->pfc_name);
-		else
+		if (strcmp(pfc->pfc_ofmt, "s") == 0) {
 			(void) strcat(pfd->pfd_fmt, pfc->pfc_ofmt);
+		} else if (pfc->pfc_name[0] == 'w') {
+			/* %wc and %ws are printf(3)'s %lc and %ls. */
+			(void) strcat(pfd->pfd_fmt, "l");
+			(void) strcat(pfd->pfd_fmt, pfc->pfc_name + 1);
+		} else {
+			(void) strcat(pfd->pfd_fmt, pfc->pfc_name);
+		}
 	}
 
 	return (pfv);
@@ -1896,66 +2078,90 @@ dtrace_printa_create(dtrace_hdl_t *dtp, const char *s)
 	return (pfv);
 }
 
-/*ARGSUSED*/
+typedef struct dt_printf_output {
+	char *dpo_buf;
+	size_t dpo_len;
+	size_t dpo_used;
+	int dpo_overflow;
+} dt_printf_output_t;
+
+static void
+dt_printf_output_append(dt_printf_output_t *out, const char *part, size_t size)
+{
+	if (out->dpo_overflow || size > SIZE_MAX - out->dpo_used) {
+		out->dpo_overflow = 1;
+		return;
+	}
+	if (size != 0 && out->dpo_used < out->dpo_len)
+		memcpy(out->dpo_buf + out->dpo_used, part,
+		    MIN(size, out->dpo_len - out->dpo_used));
+	out->dpo_used += size;
+}
+
 size_t
 dtrace_printf_format(dtrace_hdl_t *dtp, void *fmtdata, char *s, size_t len)
 {
 	dt_pfargv_t *pfv = fmtdata;
-	dt_pfargd_t *pfd = pfv->pfv_argv;
+	dt_pfargd_t *pfd;
+	dt_printf_output_t out = { s, len, 0, 0 };
+	uint_t i;
 
-	/*
-	 * An upper bound on the string length is the length of the original
-	 * format string, plus three times the number of conversions (each
-	 * conversion could add up an additional "ll" and/or pfd_width digit
-	 * in the case of converting %? to %16) plus one for a terminating \0.
-	 */
-	size_t formatlen = strlen(pfv->pfv_format) + 3 * pfv->pfv_argc + 1;
-	char *format = alloca(formatlen);
-	char *f = format;
-	int i, j;
-
-	for (i = 0; i < pfv->pfv_argc; i++, pfd = pfd->pfd_next) {
-		const dt_pfconv_t *pfc = pfd->pfd_conv;
+	if (pfv == NULL || (s == NULL && len != 0)) {
+		(void) dt_set_errno(dtp, EINVAL);
+		return (SIZE_MAX);
+	}
+	pfd = pfv->pfv_argv;
+	for (i = 0; i < pfv->pfv_argc; i++) {
+		const dt_pfconv_t *pfc;
 		const char *str;
-		int width = pfd->pfd_width;
-		int prec = pfd->pfd_prec;
+		char number[32];
+		int n;
 
-		if (pfd->pfd_preflen != 0) {
-			for (j = 0; j < pfd->pfd_preflen; j++)
-				*f++ = pfd->pfd_prefix[j];
+		if (pfd == NULL ||
+		    (pfd->pfd_preflen != 0 && pfd->pfd_prefix == NULL)) {
+			(void) dt_set_errno(dtp, EINVAL);
+			return (SIZE_MAX);
 		}
-
-		if (pfc == NULL)
+		pfc = pfd->pfd_conv;
+		dt_printf_output_append(&out, pfd->pfd_prefix,
+		    pfd->pfd_preflen);
+		if (pfc == NULL) {
+			pfd = pfd->pfd_next;
 			continue;
-
-		*f++ = '%';
-
-		if (pfd->pfd_flags & DT_PFCONV_ALT)
-			*f++ = '#';
-		if (pfd->pfd_flags & DT_PFCONV_ZPAD)
-			*f++ = '0';
-		if (pfd->pfd_flags & DT_PFCONV_LEFT)
-			*f++ = '-';
-		if (pfd->pfd_flags & DT_PFCONV_SPOS)
-			*f++ = '+';
-		if (pfd->pfd_flags & DT_PFCONV_DYNWIDTH)
-			*f++ = '*';
-		if (pfd->pfd_flags & DT_PFCONV_DYNPREC) {
-			*f++ = '.';
-			*f++ = '*';
 		}
+		if (pfc->pfc_ofmt == NULL || pfc->pfc_name == NULL) {
+			(void) dt_set_errno(dtp, EINVAL);
+			return (SIZE_MAX);
+		}
+		dt_printf_output_append(&out, "%", 1);
+		if (pfd->pfd_flags & DT_PFCONV_ALT)
+			dt_printf_output_append(&out, "#", 1);
+		if (pfd->pfd_flags & DT_PFCONV_ZPAD)
+			dt_printf_output_append(&out, "0", 1);
+		if (pfd->pfd_flags & DT_PFCONV_LEFT)
+			dt_printf_output_append(&out, "-", 1);
+		if (pfd->pfd_flags & DT_PFCONV_SPOS)
+			dt_printf_output_append(&out, "+", 1);
+		if (pfd->pfd_flags & DT_PFCONV_DYNWIDTH)
+			dt_printf_output_append(&out, "*", 1);
+		if (pfd->pfd_flags & DT_PFCONV_DYNPREC)
+			dt_printf_output_append(&out, ".*", 2);
 		if (pfd->pfd_flags & DT_PFCONV_GROUP)
-			*f++ = '\'';
+			dt_printf_output_append(&out, "'", 1);
 		if (pfd->pfd_flags & DT_PFCONV_SPACE)
-			*f++ = ' ';
+			dt_printf_output_append(&out, " ", 1);
 		if (pfd->pfd_flags & DT_PFCONV_AGG)
-			*f++ = '@';
-
-		if (width != 0)
-			f += snprintf(f, sizeof (format), "%d", width);
-
-		if (prec != 0)
-			f += snprintf(f, sizeof (format), ".%d", prec);
+			dt_printf_output_append(&out, "@", 1);
+		if (pfd->pfd_width != 0) {
+			n = snprintf(number, sizeof (number), "%d",
+			    pfd->pfd_width);
+			dt_printf_output_append(&out, number, (size_t)n);
+		}
+		if (pfd->pfd_prec != 0) {
+			n = snprintf(number, sizeof (number), ".%d",
+			    pfd->pfd_prec);
+			dt_printf_output_append(&out, number, (size_t)n);
+		}
 
 		/*
 		 * If the output format is %s, then either %s is the underlying
@@ -1966,19 +2172,24 @@ dtrace_printf_format(dtrace_hdl_t *dtp, void *fmtdata, char *s, size_t len)
 		 */
 		if (strcmp(pfc->pfc_ofmt, "s") == 0)
 			str = pfc->pfc_name;
-		else
+		else {
+			if (strnlen(pfd->pfd_fmt,
+			    sizeof (pfd->pfd_fmt)) == sizeof (pfd->pfd_fmt)) {
+				(void) dt_set_errno(dtp, EINVAL);
+				return (SIZE_MAX);
+			}
 			str = pfd->pfd_fmt;
-
-		for (j = 0; str[j] != '\0'; j++)
-			*f++ = str[j];
+		}
+		dt_printf_output_append(&out, str, strlen(str));
+		pfd = pfd->pfd_next;
 	}
-
-	*f = '\0'; /* insert nul byte; do not count in return value */
-
-	assert(f < format + formatlen);
-	(void) strncpy(s, format, len);
-
-	return ((size_t)(f - format));
+	if (out.dpo_overflow) {
+		(void) dt_set_errno(dtp, EOVERFLOW);
+		return (SIZE_MAX);
+	}
+	if (out.dpo_used < len)
+		memset(s + out.dpo_used, 0, len - out.dpo_used);
+	return (out.dpo_used);
 }
 
 static int
@@ -1995,9 +2206,15 @@ dt_fprinta(const dtrace_aggdata_t *adp, void *arg)
 	    adp->dtada_data, adp->dtada_size, &id) != 0 || pfw->pfw_aid != id)
 		return (0); /* no aggregation id or id does not match */
 
+	/*
+	 * Stop the walk with a walker return value; the formatting error is
+	 * restored by dtrace_fprinta() (an errno is not a DTRACE_AGGWALK_*).
+	 */
 	if (dt_printf_format(dtp, pfw->pfw_fp, pfw->pfw_argv,
-	    recp, nrecs, adp->dtada_data, adp->dtada_size, &adp, 1) == -1)
-		return (pfw->pfw_err = dtp->dt_errno);
+	    recp, nrecs, adp->dtada_data, adp->dtada_size, &adp, 1) == -1) {
+		pfw->pfw_err = dtp->dt_errno;
+		return (DTRACE_AGGWALK_ABORT);
+	}
 
 	/*
 	 * Cast away the const to set the bit indicating that this aggregation
@@ -2021,8 +2238,11 @@ dt_fprintas(const dtrace_aggdata_t **aggsdata, int naggvars, void *arg)
 
 	if (dt_printf_format(dtp, pfw->pfw_fp, pfw->pfw_argv,
 	    rec, nrecs, aggdata->dtada_data, aggdata->dtada_size,
-	    aggsdata, naggvars) == -1)
-		return (pfw->pfw_err = dtp->dt_errno);
+	    aggsdata, naggvars) == -1) {
+		/* dtrace_aggregate_walk_joined() stops only for -1. */
+		pfw->pfw_err = dtp->dt_errno;
+		return (-1);
+	}
 
 	/*
 	 * For each aggregation, indicate that it has been printed, casting
@@ -2076,13 +2296,14 @@ dtrace_fprinta(dtrace_hdl_t *dtp, FILE *fp, void *fmtdata,
 	if (naggvars == 1) {
 		pfw.pfw_aid = aggvars[0];
 
-		if (dtrace_aggregate_walk_sorted(dtp,
-		    dt_fprinta, &pfw) == -1 || pfw.pfw_err != 0)
-			return (-1); /* errno is set for us */
+		if (dtrace_aggregate_walk_sorted(dtp, dt_fprinta, &pfw) == -1)
+			return (pfw.pfw_err != 0 ?
+			    dt_set_errno(dtp, pfw.pfw_err) : -1);
 	} else {
 		if (dtrace_aggregate_walk_joined(dtp, aggvars, naggvars,
-		    dt_fprintas, &pfw) == -1 || pfw.pfw_err != 0)
-			return (-1); /* errno is set for us */
+		    dt_fprintas, &pfw) == -1)
+			return (pfw.pfw_err != 0 ?
+			    dt_set_errno(dtp, pfw.pfw_err) : -1);
 	}
 
 	return (i);

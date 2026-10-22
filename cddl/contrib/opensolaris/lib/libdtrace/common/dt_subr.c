@@ -29,15 +29,21 @@
 #include <sys/sysmacros.h>
 #endif
 #include <sys/isa_defs.h>
+#include <sys/socket.h>
+#include <sys/procdesc.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 
+#include <ctype.h>
+#include <errno.h>
+#include <stdarg.h>
+#include <stdatomic.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <strings.h>
 #include <unistd.h>
-#include <stdarg.h>
-#include <stddef.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <errno.h>
-#include <ctype.h>
 #ifdef illumos
 #include <alloca.h>
 #else
@@ -48,14 +54,24 @@
 #include <libgen.h>
 #include <limits.h>
 #include <stdint.h>
+#include <pthread.h>
+#include <openssl/sha.h>
+#include <unistd.h>
 
 #include <dt_impl.h>
+#include <dtraced.h>
+#include <sys/hypertrace_wire.h>
+#include "dtraced_io.h"
+#include "dtraced_wire.h"
+#include "dtraced_derived.h"
+#include <dt_hypertrace.h>
 #include <dt_oformat.h>
 
 static const struct {
 	size_t dtps_offset;
 	size_t dtps_len;
 } dtrace_probespecs[] = {
+	{ offsetof(dtrace_probedesc_t, dtpd_target),	DTRACE_TARGETNAMELEN },
 	{ offsetof(dtrace_probedesc_t, dtpd_provider),	DTRACE_PROVNAMELEN },
 	{ offsetof(dtrace_probedesc_t, dtpd_mod),	DTRACE_MODNAMELEN },
 	{ offsetof(dtrace_probedesc_t, dtpd_func),	DTRACE_FUNCNAMELEN },
@@ -111,12 +127,16 @@ dtrace_xstr2desc(dtrace_hdl_t *dtp, dtrace_probespec_t spec,
 			if (isdigit(v[1])) {
 				long i;
 
-				errno = 0;
+				/*
+				 * A digit string is never negative, and an
+				 * overflow yields LONG_MAX, which exceeds any
+				 * int argc.
+				 */
 				i = strtol(v + 1, (char **)&w, 10);
 
 				wlen = vlen - (w - v);
 
-				if (i < 0 || i >= argc || errno != 0)
+				if (i >= argc)
 					return (dt_set_errno(dtp, EDT_BADSPCV));
 
 				v = argv[i];
@@ -171,6 +191,10 @@ dtrace_id2desc(dtrace_hdl_t *dtp, dtrace_id_t id, dtrace_probedesc_t *pdp)
 {
 	bzero(pdp, sizeof (dtrace_probedesc_t));
 	pdp->dtpd_id = id;
+	/*
+	 * NOTE: We only support id2desc for host probes.
+	 */
+	pdp->dtpd_vmid = 0;
 
 	if (dt_ioctl(dtp, DTRACEIOC_PROBES, pdp) == -1 ||
 	    pdp->dtpd_id != id)
@@ -359,8 +383,10 @@ dt_attr_str(dtrace_attribute_t a, char *buf, size_t len)
 	static const char stability[] = "ipoxuesS";
 	static const char class[] = "uCpgIc";
 
-	if (a.dtat_name < sizeof (stability) &&
-	    a.dtat_data < sizeof (stability) && a.dtat_class < sizeof (class)) {
+	/* The letter tables are strings: exclude their terminating NUL. */
+	if (a.dtat_name < sizeof (stability) - 1 &&
+	    a.dtat_data < sizeof (stability) - 1 &&
+	    a.dtat_class < sizeof (class) - 1) {
 		(void) snprintf(buf, len, "[%c/%c/%c]", stability[a.dtat_name],
 		    stability[a.dtat_data], class[a.dtat_class]);
 	} else {
@@ -393,9 +419,12 @@ dt_version_str2num(const char *s, dt_version_t *vp)
 	char c;
 
 	while ((c = *s++) != '\0') {
-		if (isdigit(c))
+		if (isdigit(c)) {
+			/* Every component is below 2^12: refuse before overflow. */
+			if (n[i] > DT_VERSION_MINMAX)
+				return (-1);
 			n[i] = n[i] * 10 + c - '0';
-		else if (c != '.' || i++ >= sizeof (n) / sizeof (n[0]) - 1)
+		} else if (c != '.' || i++ >= sizeof (n) / sizeof (n[0]) - 1)
 			return (-1);
 	}
 
@@ -599,6 +628,8 @@ dt_printf(dtrace_hdl_t *dtp, FILE *fp, const char *format, ...)
 	va_list ap2;
 	int n;
 
+	if (dtp->dt_output_discarded)
+		return (dt_set_errno(dtp, ESHUTDOWN));
 #ifndef illumos
 	/*
 	 * On FreeBSD, check if output is currently being re-directed
@@ -794,12 +825,146 @@ dt_difo_free(dtrace_hdl_t *dtp, dtrace_difo_t *dp)
 	dt_free(dtp, dp->dtdo_buf);
 	dt_free(dtp, dp->dtdo_inttab);
 	dt_free(dtp, dp->dtdo_strtab);
+	dt_free(dtp, dp->dtdo_symtab);
 	dt_free(dtp, dp->dtdo_vartab);
 	dt_free(dtp, dp->dtdo_kreltab);
 	dt_free(dtp, dp->dtdo_ureltab);
 	dt_free(dtp, dp->dtdo_xlmtab);
+	/* The HyperTrace type checker's per-instruction type names. */
+	if (dp->dtdo_types != NULL) {
+		for (uint_t i = 0; i < dp->dtdo_len; i++)
+			free(dp->dtdo_types[i]);
+		dt_free(dtp, dp->dtdo_types);
+	}
 
 	dt_free(dtp, dp);
+}
+
+dtrace_difo_t *
+dt_difo_dup(dtrace_hdl_t *dtp, dtrace_difo_t *dp, int *alloc_fail)
+{
+	dtrace_difo_t *ndp;
+
+	*alloc_fail = 0;
+
+	if (dp == NULL)
+		return (NULL);
+
+	ndp = dt_zalloc(dtp, sizeof(dtrace_difo_t));
+	if (ndp == NULL) {
+		*alloc_fail = 1;
+		goto cleanup;
+	}
+
+	memcpy(ndp, dp, sizeof(dtrace_difo_t));
+	ndp->dtdo_buf = NULL;
+	ndp->dtdo_inttab = NULL;
+	ndp->dtdo_strtab = NULL;
+	ndp->dtdo_symtab = NULL;
+	ndp->dtdo_vartab = NULL;
+	ndp->dtdo_kreltab = NULL;
+	ndp->dtdo_ureltab = NULL;
+	ndp->dtdo_xlmtab = NULL;
+	ndp->dtdo_types = NULL;	/* not copied: they describe dp's link */
+
+	if (dp->dtdo_len == 0)
+		goto cleanup;
+
+	ndp->dtdo_buf = dt_alloc(dtp, dp->dtdo_len * sizeof(dif_instr_t));
+	if (ndp->dtdo_buf == NULL) {
+		*alloc_fail = 1;
+		goto cleanup;
+	}
+
+	if (dp->dtdo_intlen > 0) {
+		ndp->dtdo_inttab = dt_alloc(dtp,
+		    dp->dtdo_intlen * sizeof(uint64_t));
+		if (ndp->dtdo_inttab == NULL) {
+			*alloc_fail = 1;
+			goto cleanup;
+		}
+	}
+
+	if (dp->dtdo_strlen > 0) {
+		ndp->dtdo_strtab = dt_alloc(dtp, dp->dtdo_strlen);
+		if (ndp->dtdo_strtab == NULL) {
+			*alloc_fail = 1;
+			goto cleanup;
+		}
+	}
+
+	if (dp->dtdo_symlen > 0) {
+		ndp->dtdo_symtab = dt_alloc(dtp, dp->dtdo_symlen);
+		if (ndp->dtdo_symtab == NULL) {
+			*alloc_fail = 1;
+			goto cleanup;
+		}
+	}
+
+	if (dp->dtdo_varlen > 0) {
+		ndp->dtdo_vartab = dt_alloc(dtp,
+		    dp->dtdo_varlen * sizeof(dtrace_difv_t));
+		if (ndp->dtdo_vartab == NULL) {
+			*alloc_fail = 1;
+			goto cleanup;
+		}
+	}
+
+	if (dp->dtdo_krelen > 0) {
+		ndp->dtdo_kreltab = dt_alloc(dtp,
+		    dp->dtdo_krelen * sizeof(dof_relodesc_t));
+		if (ndp->dtdo_kreltab == NULL) {
+			*alloc_fail = 1;
+			goto cleanup;
+		}
+	}
+
+	if (dp->dtdo_urelen > 0) {
+		ndp->dtdo_ureltab = dt_alloc(dtp,
+		    dp->dtdo_urelen * sizeof(dof_relodesc_t));
+		if (ndp->dtdo_ureltab == NULL) {
+			*alloc_fail = 1;
+			goto cleanup;
+		}
+	}
+
+	if (dp->dtdo_xlmlen > 0) {
+		ndp->dtdo_xlmtab = dt_alloc(dtp,
+		    dp->dtdo_xlmlen * sizeof(struct dt_node *));
+		if (ndp->dtdo_xlmtab == NULL) {
+			*alloc_fail = 1;
+			goto cleanup;
+		}
+	}
+
+	memcpy(ndp->dtdo_buf, dp->dtdo_buf, dp->dtdo_len * sizeof(dif_instr_t));
+	if (dp->dtdo_intlen > 0)
+		memcpy(ndp->dtdo_inttab, dp->dtdo_inttab,
+		    dp->dtdo_intlen * sizeof(uint64_t));
+	if (dp->dtdo_strlen > 0)
+		memcpy(ndp->dtdo_strtab, dp->dtdo_strtab, dp->dtdo_strlen);
+	if (dp->dtdo_symlen > 0)
+		memcpy(ndp->dtdo_symtab, dp->dtdo_symtab, dp->dtdo_symlen);
+
+	if (dp->dtdo_varlen > 0)
+		memcpy(ndp->dtdo_vartab, dp->dtdo_vartab,
+		    dp->dtdo_varlen * sizeof(dtrace_difv_t));
+	if (dp->dtdo_krelen > 0)
+		memcpy(ndp->dtdo_kreltab, dp->dtdo_kreltab,
+		    dp->dtdo_krelen * sizeof(dof_relodesc_t));
+	if (dp->dtdo_urelen > 0)
+		memcpy(ndp->dtdo_ureltab, dp->dtdo_ureltab,
+		    dp->dtdo_urelen * sizeof(dof_relodesc_t));
+	if (dp->dtdo_xlmlen > 0)
+		memcpy(ndp->dtdo_xlmtab, dp->dtdo_xlmtab,
+		    dp->dtdo_xlmlen * sizeof(struct dt_node *));
+
+	return (ndp);
+
+cleanup:
+	dt_difo_free(dtp, ndp);
+
+	return (NULL);
 }
 
 /*
@@ -935,10 +1100,18 @@ dtrace_addr2str(dtrace_hdl_t *dtp, uint64_t addr, char *str, int nbytes)
 
 	size_t n = 20; /* for 0x%llx\0 */
 	char *s;
-	int err;
+	int err, modonly = 0;
 
-	if ((err = dtrace_lookup_by_addr(dtp, addr, &sym, &dts)) == 0)
+	if ((err = dtrace_lookup_by_addr(dtp, addr, &sym, &dts)) == 0) {
 		n += strlen(dts.dts_object) + strlen(dts.dts_name) + 2; /* +` */
+	} else if (dtrace_lookup_by_addr(dtp, addr, NULL, &dts) == 0) {
+		/*
+		 * No symbol: repeat the lookup with a NULL GElf_Sym, asking
+		 * only for the containing module, and size for "mod`0x...".
+		 */
+		modonly = 1;
+		n += strlen(dts.dts_object) + 1;
+	}
 
 	s = alloca(n);
 
@@ -948,18 +1121,11 @@ dtrace_addr2str(dtrace_hdl_t *dtp, uint64_t addr, char *str, int nbytes)
 	} else if (err == 0) {
 		(void) snprintf(s, n, "%s`%s",
 		    dts.dts_object, dts.dts_name);
+	} else if (modonly) {
+		(void) snprintf(s, n, "%s`0x%llx", dts.dts_object,
+		    (u_longlong_t)addr);
 	} else {
-		/*
-		 * We'll repeat the lookup, but this time we'll specify a NULL
-		 * GElf_Sym -- indicating that we're only interested in the
-		 * containing module.
-		 */
-		if (dtrace_lookup_by_addr(dtp, addr, NULL, &dts) == 0) {
-			(void) snprintf(s, n, "%s`0x%llx", dts.dts_object,
-			    (u_longlong_t)addr);
-		} else {
-			(void) snprintf(s, n, "0x%llx", (u_longlong_t)addr);
-		}
+		(void) snprintf(s, n, "0x%llx", (u_longlong_t)addr);
 	}
 
 	return (dt_string2str(s, str, nbytes));
@@ -1008,6 +1174,353 @@ dtrace_uaddr2str(dtrace_hdl_t *dtp, pid_t pid,
 	return (dt_string2str(c, str, nbytes));
 }
 
+/* The incarnation is the kernel monotonic process birth, queried afresh so
+ * a forked child cannot inherit its parent's identity. No PID-only fallback. */
+static int
+dtraced_birth_ident(char ident[DTRACED_FDIDENTLEN])
+{
+	static const char hex[] = "0123456789abcdef";
+	uint8_t nonce[16];
+	uint32_t pid;
+	int error, prefix, fd;
+	struct pd_birth_identity birth = {0};
+
+	if (pdself(&fd, PD_DAEMON | PD_CLOEXEC) != 0)
+		return (-1);
+	error = ioctl(fd, PDIOC_GET_BIRTH_IDENTITY, &birth) != 0 ? errno : 0;
+	if (close(fd) != 0 && error == 0)
+		error = errno;
+	pid = (uint32_t)getpid();
+	if (error == 0 && (birth.pid != (pid_t)pid || birth.reserved != 0 ||
+	    birth.start_usec >= 1000000 ||
+	    (birth.start_sec == 0 && birth.start_usec == 0)))
+		error = EPROTO;
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	for (unsigned i = 0; i < 8; i++) {
+		nonce[i] = (uint8_t)(birth.start_sec >> (8 * i));
+		nonce[8 + i] = (uint8_t)(birth.start_usec >> (8 * i));
+	}
+	/* "dtrace-<uint32>-" plus 32 hex digits and NUL always fit. */
+	_Static_assert(sizeof("dtrace-4294967295-") - 1 + 32 <
+	    DTRACED_FDIDENTLEN, "birth identity does not fit");
+	memset(ident, 0, DTRACED_FDIDENTLEN);
+	prefix = snprintf(ident, DTRACED_FDIDENTLEN, "dtrace-%u-", pid);
+	for (unsigned i = 0; i < sizeof(nonce); i++) {
+		ident[prefix + 2 * i] = hex[nonce[i] >> 4];
+		ident[prefix + 2 * i + 1] = hex[nonce[i] & 15];
+	}
+	ident[prefix + 32] = '\0';
+	return (0);
+}
+
+int
+open_dtraced_session(uint64_t subs, uint8_t session_id[16])
+{
+	struct sockaddr_un addr = { .sun_family = AF_UNIX };
+	dtd_initmsg_t initmsg = { 0 };
+	const uint8_t zero_session[16] = { 0 };
+	int fd, error;
+	size_t transferred;
+	int64_t deadline;
+
+	if (session_id == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	/* A caller that reconnects retains this identity across attempts. */
+	if (memcmp(session_id, zero_session, sizeof(zero_session)) == 0) {
+		do {
+			arc4random_buf(session_id, 16);
+		} while (memcmp(session_id, zero_session,
+		    sizeof(zero_session)) == 0);
+	}
+	fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+	if (fd < 0)
+		return (-1);
+	_Static_assert(sizeof(DTRACED_SOCKPATH) <= sizeof(addr.sun_path),
+	    "daemon socket path does not fit");
+	(void) strlcpy(addr.sun_path, DTRACED_SOCKPATH, sizeof(addr.sun_path));
+	addr.sun_len = SUN_LEN(&addr);
+	if (connect(fd, (struct sockaddr *)&addr, addr.sun_len) != 0)
+		goto fail;
+	deadline = dtraced_io_milliseconds() + 2000;
+	if (dtraced_wire_read_init(fd, &initmsg, deadline,
+	    &transferred) != 0)
+		goto fail;
+	if (!dtraced_wire_valid_server_init(&initmsg)) {
+		errno = EPROTO;
+		goto fail;
+	}
+	memset(&initmsg, 0, sizeof(initmsg));
+	initmsg.protocol_version = DTRACED_PROTOCOL_VERSION;
+	initmsg.kind = DTRACED_KIND_CONSUMER;
+	initmsg.subs = subs;
+	memcpy(initmsg.session_id, session_id, sizeof(initmsg.session_id));
+	if (dtraced_birth_ident(initmsg.ident) != 0)
+		goto fail;
+	if (dtraced_wire_write_init(fd, &initmsg, deadline,
+	    &transferred) != 0)
+		goto fail;
+	return (fd);
+fail:
+	error = errno;
+	close(fd);
+	errno = error;
+	return (-1);
+}
+
+int
+open_dtraced(uint64_t subs)
+{
+	uint8_t session_id[16] = { 0 };
+
+	return (open_dtraced_session(subs, session_id));
+}
+
+/* Serialize complete frames and their replies, including async and KILL. */
+static pthread_mutex_t dt_transport_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+int
+dtrace_send_message(int fd, const dtraced_hdr_t *header,
+    const void *payload, size_t payload_len)
+{
+	unsigned char ack;
+	unsigned char header_wire[DTRACED_MSGHDRSIZE];
+	size_t transferred;
+	size_t length;
+	int error = 0;
+	int64_t deadline;
+
+	if (fd < 0 || header == NULL ||
+	    (payload_len != 0 && payload == NULL) ||
+	    payload_len > 64U * 1024U * 1024U - DTRACED_MSGHDRSIZE) {
+		errno = EINVAL;
+		return (-1);
+	}
+	length = DTRACED_MSGHDRSIZE + payload_len;
+	dtraced_wire_encode_header(header_wire, header);
+	pthread_mutex_lock(&dt_transport_mtx);
+	deadline = dtraced_io_milliseconds() + 10000;
+	if (dtraced_io_write_size(fd, length, deadline,
+	    &transferred) != 0 ||
+	    dtraced_io_transfer(fd, header_wire, sizeof(header_wire), true,
+	    deadline, &transferred) != 0 ||
+	    (payload_len != 0 &&
+	    dtraced_io_transfer(fd, (void *)payload, payload_len, true,
+	    deadline, &transferred) != 0) ||
+	    dtraced_io_transfer(fd, &ack, sizeof(ack), false, deadline,
+	    &transferred) != 0)
+		error = errno;
+	else if (ack != 1)
+		error = EPROTO;
+	if (error != 0)
+		(void)shutdown(fd, SHUT_RDWR);
+	pthread_mutex_unlock(&dt_transport_mtx);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	return (0);
+}
+
+typedef struct {
+	dt_list_t list;
+	char ident[DT_PROG_IDENTLEN];
+	char srcident[DT_PROG_IDENTLEN];
+	uint16_t vmid;
+	uint64_t epoch;
+	int fromfd;
+	int tofd;
+	char *location;
+	int send_ident;
+	int has_program;
+	char *filepath;
+} dtrace_elfqueue_t;
+
+static pthread_mutex_t _elf_async_mtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t _elf_async_cv = PTHREAD_COND_INITIALIZER;
+static dt_list_t _elf_async_queue;
+static pthread_t _elf_async_tid;
+static int _elf_async_initialized;
+static int _elf_async_closing;
+static int _elf_async_discarded;
+static int _elf_async_done = 1;
+static dtrace_elfqueue_t *_elf_async_active;
+static size_t _elf_async_count;
+static atomic_int _elf_async_shutdown;
+
+static void
+_dtrace_elfqueue_free(dtrace_elfqueue_t *entry)
+{
+	unlink(entry->filepath);
+	free(entry->filepath);
+	free(entry->location);
+	close(entry->fromfd);
+	close(entry->tofd);
+	free(entry);
+}
+
+static void *
+_dtrace_send_elf_async(void *arg __unused)
+{
+	dtrace_elfqueue_t *entry;
+	dtrace_prog_t program;
+
+	pthread_mutex_lock(&_elf_async_mtx);
+	for (;;) {
+		while (dt_list_next(&_elf_async_queue) == NULL &&
+		    !atomic_load(&_elf_async_shutdown))
+			pthread_cond_wait(&_elf_async_cv, &_elf_async_mtx);
+		if (atomic_load(&_elf_async_shutdown))
+			break;
+		entry = dt_list_next(&_elf_async_queue);
+		dt_list_delete(&_elf_async_queue, entry);
+		_elf_async_count--;
+		_elf_async_active = entry;
+		pthread_mutex_unlock(&_elf_async_mtx);
+		memset(&program, 0, sizeof(program));
+		memcpy(program.dp_ident, entry->ident, sizeof(entry->ident));
+		memcpy(program.dp_srcident, entry->srcident,
+		    sizeof(entry->srcident));
+		program.dp_vmid = entry->vmid;
+		program.dp_vmepoch = entry->epoch;
+		if (dtrace_send_elf(entry->has_program ? &program : NULL,
+		    entry->fromfd, entry->tofd,
+		    entry->location, entry->send_ident) != 0 &&
+		    !atomic_load(&_elf_async_shutdown))
+			fprintf(stderr, "dtrace: asynchronous ELF send failed: %s\n",
+			    strerror(errno));
+		pthread_mutex_lock(&_elf_async_mtx);
+		_elf_async_active = NULL;
+		_dtrace_elfqueue_free(entry);
+	}
+	while ((entry = dt_list_next(&_elf_async_queue)) != NULL) {
+		dt_list_delete(&_elf_async_queue, entry);
+		_dtrace_elfqueue_free(entry);
+	}
+	_elf_async_count = 0;
+	_elf_async_done = 1;
+	pthread_cond_broadcast(&_elf_async_cv);
+	pthread_mutex_unlock(&_elf_async_mtx);
+	return (NULL);
+}
+
+/* Terminal, process-wide admission fence. Never wait here: the collector's
+ * existing stop deadline governs repeated calls. Keep the active descriptor
+ * owned by the worker; shutdown interrupts I/O without descriptor reuse races. */
+int
+dtrace_async_discard_step(void)
+{
+	int error = pthread_mutex_trylock(&_elf_async_mtx);
+	if (error == EBUSY)
+		return (0);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	_elf_async_discarded = 1;
+	atomic_store(&_elf_async_shutdown, 1);
+	if (_elf_async_active != NULL)
+		(void)shutdown(_elf_async_active->tofd, SHUT_RDWR);
+	pthread_cond_broadcast(&_elf_async_cv);
+	int done = _elf_async_done && _elf_async_active == NULL &&
+	    dt_list_next(&_elf_async_queue) == NULL;
+	pthread_mutex_unlock(&_elf_async_mtx);
+	return (done);
+}
+
+void
+dtrace_async_teardown(void)
+{
+	dtrace_elfqueue_t *entry;
+
+	pthread_mutex_lock(&_elf_async_mtx);
+	if (!_elf_async_initialized || _elf_async_closing) {
+		pthread_mutex_unlock(&_elf_async_mtx);
+		return;
+	}
+	_elf_async_closing = 1;
+	atomic_store(&_elf_async_shutdown, 1);
+	pthread_cond_broadcast(&_elf_async_cv);
+	pthread_mutex_unlock(&_elf_async_mtx);
+	pthread_join(_elf_async_tid, NULL);
+	pthread_mutex_lock(&_elf_async_mtx);
+	while ((entry = dt_list_next(&_elf_async_queue)) != NULL) {
+		dt_list_delete(&_elf_async_queue, entry);
+		_dtrace_elfqueue_free(entry);
+	}
+	_elf_async_count = 0;
+	_elf_async_initialized = _elf_async_closing = 0;
+	pthread_mutex_unlock(&_elf_async_mtx);
+}
+
+int
+dtrace_send_elf_async(dtrace_prog_t *pgp, int fromfd, int tofd,
+    char *filepath, const char *location, int send_ident)
+{
+	dtrace_elfqueue_t *entry;
+	int error;
+
+	if (fromfd < 0 || tofd < 0 || filepath == NULL || location == NULL ||
+	    (send_ident != 0 && send_ident != 1) || (send_ident && pgp == NULL))
+		return (EINVAL);
+	entry = calloc(1, sizeof(*entry));
+	if (entry == NULL)
+		return (EDT_NOMEM);
+	entry->tofd = fcntl(tofd, F_DUPFD_CLOEXEC, 0);
+	error = entry->tofd < 0 ? errno : 0;
+	entry->location = strdup(location);
+	entry->filepath = strdup(filepath);
+	entry->send_ident = send_ident;
+	entry->has_program = pgp != NULL;
+	entry->fromfd = fromfd;
+	if (pgp != NULL) {
+		entry->vmid = pgp->dp_vmid;
+		entry->epoch = pgp->dp_vmepoch;
+		memcpy(entry->srcident, pgp->dp_srcident,
+		    sizeof(entry->srcident));
+	}
+	if (pgp != NULL)
+		memcpy(entry->ident, pgp->dp_ident, sizeof(entry->ident));
+	if (entry->tofd < 0 || entry->location == NULL || entry->filepath == NULL) {
+		error = entry->tofd < 0 ? error : EDT_NOMEM;
+		goto fail;
+	}
+	pthread_mutex_lock(&_elf_async_mtx);
+	if (_elf_async_discarded || _elf_async_closing || _elf_async_count >= 64) {
+		error = _elf_async_discarded ? ESHUTDOWN :
+		    _elf_async_closing ? EBUSY : ENOBUFS;
+		goto unlock_fail;
+	}
+	if (!_elf_async_initialized) {
+		atomic_store(&_elf_async_shutdown, 0);
+		error = pthread_create(&_elf_async_tid, NULL,
+		    _dtrace_send_elf_async, NULL);
+		if (error != 0)
+			goto unlock_fail;
+		_elf_async_initialized = 1;
+		_elf_async_done = 0;
+	}
+	dt_list_append(&_elf_async_queue, entry);
+	_elf_async_count++;
+	pthread_cond_signal(&_elf_async_cv);
+	pthread_mutex_unlock(&_elf_async_mtx);
+	/* Success transfers ownership of fromfd and its temporary pathname. */
+	return (0);
+unlock_fail:
+	pthread_mutex_unlock(&_elf_async_mtx);
+fail:
+	if (entry->tofd >= 0)
+		close(entry->tofd);
+	free(entry->location);
+	free(entry->filepath);
+	free(entry);
+	return (error);
+}
+
 int
 dtrace_oformat_configure(dtrace_hdl_t *dtp)
 {
@@ -1017,6 +1530,274 @@ dtrace_oformat_configure(dtrace_hdl_t *dtp)
 	    DTRACE_OFORMAT_STRUCTURED;
 	xo_set_flags(NULL, XOF_DTRT);
 	return (0);
+}
+
+int
+dtrace_program_source_id(const dtrace_prog_t *pgp, uint8_t id[16])
+{
+	const char *ident;
+	const char zero[DT_PROG_IDENTLEN] = { 0 };
+	unsigned char digest[SHA256_DIGEST_LENGTH];
+
+	if (pgp == NULL || id == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	ident = memcmp(pgp->dp_srcident, zero, sizeof(zero)) == 0 ?
+	    pgp->dp_ident : pgp->dp_srcident;
+	if (memcmp(ident, zero, sizeof(zero)) == 0 ||
+	    SHA256((const unsigned char *)ident, DT_PROG_IDENTLEN,
+	    digest) == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memcpy(id, digest, 16);
+	explicit_bzero(digest, sizeof(digest));
+	return (0);
+}
+
+/* A compiled-program identity for a supervised consumer. The ELF wrapper
+ * carries random dp_ident/dp_srcident values. Stripped DOF excludes those,
+ * but each action still has a process-local uarg used to route userland
+ * callbacks. Clear only that non-execution field in our disposable DOF
+ * image before hashing; the generated program itself is unchanged. */
+int
+dtrace_program_compiled_digest(dtrace_hdl_t *dtp, dtrace_prog_t *pgp,
+    uint8_t id[32])
+{
+	dof_hdr_t *dof;
+	dof_sec_t *sections;
+	unsigned char bound[4 + SHA256_DIGEST_LENGTH];
+	size_t length;
+	int error = 0;
+
+	if (id == NULL || dtp == NULL || pgp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(id, 0, 32);
+	/* The compiled program, before it is forwarded to be linked. */
+	dof = dt_dof_create(dtp, pgp, DTRACE_D_STRIP);
+	if (dof == NULL)
+		return (-1);
+	if (dof->dofh_filesz < sizeof(*dof) ||
+	    dof->dofh_filesz > 64U * 1024U * 1024U ||
+	    dof->dofh_hdrsize != sizeof(*dof) ||
+	    dof->dofh_secsize != sizeof(dof_sec_t) ||
+	    dof->dofh_loadsz > dof->dofh_filesz ||
+	    dof->dofh_secoff < sizeof(*dof) ||
+	    dof->dofh_secoff > dof->dofh_filesz ||
+	    dof->dofh_secnum > (dof->dofh_filesz - dof->dofh_secoff) /
+	    sizeof(dof_sec_t)) {
+		error = EPROTO;
+		goto done;
+	}
+	length = (size_t)dof->dofh_filesz;
+	sections = (dof_sec_t *)((uint8_t *)dof + dof->dofh_secoff);
+	for (uint32_t i = 0; i < dof->dofh_secnum; i++) {
+		dof_sec_t *sec = &sections[i];
+		if (sec->dofs_offset > length ||
+		    sec->dofs_size > length - sec->dofs_offset) {
+			error = EPROTO;
+			goto done;
+		}
+		if (sec->dofs_type != DOF_SECT_ACTDESC)
+			continue;
+		if (sec->dofs_entsize != sizeof(dof_actdesc_t) ||
+		    sec->dofs_size % sizeof(dof_actdesc_t) != 0 ||
+		    sec->dofs_offset < dof->dofh_secoff +
+		    (uint64_t)dof->dofh_secnum * sizeof(dof_sec_t) ||
+		    sec->dofs_offset % _Alignof(dof_actdesc_t) != 0) {
+			error = EPROTO;
+			goto done;
+		}
+		dof_actdesc_t *actions = (dof_actdesc_t *)
+		    ((uint8_t *)dof + sec->dofs_offset);
+		for (size_t j = 0; j < sec->dofs_size /
+		    sizeof(dof_actdesc_t); j++)
+			actions[j].dofa_uarg = 0;
+	}
+	memcpy(bound, "HPI1", 4);
+	if (SHA256((const unsigned char *)dof, length, bound + 4) == NULL ||
+	    SHA256(bound, sizeof(bound), id) == NULL)
+		error = EIO;
+done:
+	dtrace_dof_destroy(dtp, dof);
+	explicit_bzero(bound, sizeof(bound));
+	if (error != 0) {
+		memset(id, 0, 32);
+		errno = error;
+		return (-1);
+	}
+	return (0);
+}
+
+static int
+dtrace_send_elf_impl(dtrace_prog_t *pgp, int fromfd, int tofd,
+    const char *location, int send_ident,
+    const dtraced_derived_parent_t *parent)
+{
+	unsigned char *buf;
+	size_t payload, offset, prefix = 0;
+	struct hypertrace_vm_envelope target = { 0 };
+	struct stat sb;
+	dtraced_hdr_t header = { 0 };
+	ssize_t n;
+	int error, result;
+
+	if (fromfd < 0 || tofd < 0 || location == NULL ||
+	    (send_ident != 0 && send_ident != 1) || (send_ident && pgp == NULL) ||
+	    /* With a parent, the only caller sends "outbound" without ident. */
+	    (parent != NULL && (pgp == NULL ||
+	    !dtraced_derived_parent_valid(parent)))) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (pgp != NULL &&
+	    dtrace_program_source_id(pgp, header.elf.source_id) != 0)
+		return (-1);
+	if (pgp != NULL && pgp->dp_vmid != 0 && strcmp(location, "outbound") == 0) {
+		if (pgp->dp_vmid >= HYPERTRACE_MAX_VMS || pgp->dp_vmepoch == 0) {
+			errno = ESTALE;
+			return (-1);
+		}
+		prefix = HYPERTRACE_VM_ENVELOPE_WIRE_SIZE;
+		target.magic = HYPERTRACE_TARGET_MAGIC;
+		target.version = HYPERTRACE_ENVELOPE_VERSION;
+		target.vmid = pgp->dp_vmid;
+		target.epoch = pgp->dp_vmepoch;
+	}
+	if (fstat(fromfd, &sb) != 0)
+		return (-1);
+	if (!S_ISREG(sb.st_mode) || sb.st_size <= 0 ||
+	    (uint64_t)sb.st_size > 64U * 1024U * 1024U -
+	    DTRACED_MSGHDRSIZE - prefix) {
+		errno = EMSGSIZE;
+		return (-1);
+	}
+	if (strlcpy(header.elf.location, location, sizeof(header.elf.location)) >=
+	    sizeof(header.elf.location)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	payload = (size_t)sb.st_size;
+	buf = malloc(prefix + payload);
+	if (buf == NULL)
+		return (-1);
+	for (offset = 0; offset < payload; offset += n) {
+		n = pread(fromfd, buf + prefix + offset,
+		    payload - offset, offset);
+		if (n < 0 && errno == EINTR) {
+			n = 0;
+			continue;
+		}
+		if (n <= 0) {
+			error = n == 0 ? EIO : errno;
+			free(buf);
+			errno = error;
+			return (-1);
+		}
+	}
+	header.msg_type = DTRACED_MSG_ELF;
+	header.elf.len = prefix + payload;
+	if (prefix != 0)
+		hypertrace_envelope_encode(buf, &target);
+	if (parent != NULL &&
+	    (dtraced_derived_parent_to_header(&header, parent) != 0 ||
+	    dtraced_derived_program_id(parent, buf,
+	    prefix + payload, header.elf.program_id) != 0)) {
+		error = errno;
+		free(buf);
+		errno = error;
+		return (-1);
+	}
+	DTRACED_MSG_IDENT_PRESENT(header) = send_ident;
+	if (send_ident)
+		memcpy(DTRACED_MSG_IDENT(header), pgp->dp_ident, DT_PROG_IDENTLEN);
+	result = dtrace_send_message(tofd, &header, buf, prefix + payload);
+	error = errno;
+	free(buf);
+	errno = error;
+	return (result);
+}
+
+int
+dtrace_send_elf(dtrace_prog_t *pgp, int fromfd, int tofd,
+    const char *location, int send_ident)
+{
+	return (dtrace_send_elf_impl(pgp, fromfd, tofd, location,
+	    send_ident, NULL));
+}
+
+int
+dtrace_send_elf_derived(dtrace_prog_t *pgp, int fromfd, int tofd,
+    const dtraced_derived_parent_t *parent)
+{
+	return (dtrace_send_elf_impl(pgp, fromfd, tofd, "outbound", 0,
+	    parent));
+}
+
+void
+dtrace_enable_hypertrace(dtrace_hdl_t *dtp)
+{
+
+	(void) dtrace_setopt(dtp, "hypertrace", "yes");
+	dtp->dt_hypertrace = 1;
+	log_hypertrace_elf = getenv("_HYPERTRACE_LOG_ELF") != NULL;
+	log_hypertrace_linker = getenv("_HYPERTRACE_LOG_LINKER") != NULL;
+	log_hypertrace_typing = getenv("_HYPERTRACE_LOG_TYPING") != NULL;
+}
+
+void
+dtrace_set_failmsg_needed(dtrace_hdl_t *dtp)
+{
+
+	dtp->dt_failmsg_needed = 1;
+}
+
+int
+dtrace_hypertrace_enabled(dtrace_hdl_t *dtp)
+{
+
+	return (dtp->dt_hypertrace);
+}
+
+int
+dtrace_hypertrace_options_update(dtrace_hdl_t *dtp)
+{
+
+	/*
+	 * For now, all we neeed to do is reload the kernel options.
+	 */
+	return (dt_options_load(dtp));
+}
+
+const char *
+dtrace_hypertrace_errstr(int err)
+{
+	switch (err) {
+	case E_HYPERTRACE_NONE:
+		return ("No error");
+	case E_HYPERTRACE_SYS:
+		return ("System error");
+	case E_HYPERTRACE_ELFCREATE:
+		return ("ELF Creation failed");
+	case E_HYPERTRACE_ELFPARSE:
+		return ("ELF Parsing failed");
+	case E_HYPERTRACE_LIBDTRACE:
+		return ("Internal libdtrace error");
+	case E_HYPERTRACE_CHECKSUM:
+		return ("Checksum error");
+	case E_HYPERTRACE_AGAIN:
+		return ("Call the subroutine again");
+	case E_HYPERTRACE_PROPAGATED:
+		return ("Propagated error");
+	case E_HYPERTRACE_IDENT_NOTFOUND:
+		return ("Identifier not found");
+	case E_HYPERTRACE_LINKING:
+		return ("Linking error");
+	}
+	return ("Unknown error");
 }
 
 int
@@ -1039,6 +1820,52 @@ dtrace_oformat_setup(dtrace_hdl_t *dtp)
 
 	xo_open_container("dtrace");
 	xo_open_list("probes");
+}
+
+/* Fresh-session shutdown discards formatter state on its owning thread.
+ * xo_destroy normally flushes, so replace every output callback first. Switch
+ * away from encoder style as its flush callback bypasses the normal writer. */
+static xo_ssize_t
+dt_oformat_discard_write(void *unused, const char *data)
+{
+	(void)unused;
+	return ((xo_ssize_t)strlen(data));
+}
+
+void
+dtrace_oformat_discard(dtrace_hdl_t *dtp)
+{
+	(void)dtp;
+	xo_set_style(NULL, XO_STYLE_TEXT);
+	xo_set_writer(NULL, NULL, dt_oformat_discard_write, NULL, NULL);
+	xo_destroy(NULL);
+}
+
+int
+dtrace_output_discard(dtrace_hdl_t *dtp, FILE *fp)
+{
+	int error = 0;
+
+	if (dtp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	/* Keep the fence set on failure: retry may purge, but cannot resume output. */
+	dtp->dt_output_discarded = 1;
+	if (fp != NULL && fpurge(fp) != 0)
+		error = errno;
+#ifndef illumos
+	if (dtp->dt_freopen_fp != NULL && dtp->dt_freopen_fp != fp &&
+	    fpurge(dtp->dt_freopen_fp) != 0 && error == 0)
+		error = errno;
+#endif
+	dt_buffered_destroy(dtp);
+	dtrace_oformat_discard(dtp);
+	if (error != 0) {
+		errno = error;
+		return (dt_set_errno(dtp, error));
+	}
+	return (0);
 }
 
 void

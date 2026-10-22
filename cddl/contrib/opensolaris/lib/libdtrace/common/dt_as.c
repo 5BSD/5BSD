@@ -1,5 +1,5 @@
 /*
- * CDDL HEADER START
+* CDDL HEADER START
  *
  * The contents of this file are subject to the terms of the
  * Common Development and Distribution License, Version 1.0 only
@@ -26,6 +26,20 @@
 /*
  * Copyright (c) 2013 by Delphix. All rights reserved.
  * Copyright (c) 2013 Joyent, Inc. All rights reserved.
+ * Copyright (c) 2020, 2021 Domagoj Stolfa. All rights reserved.
+ *
+ * This software was developed by SRI International and the University of
+ * Cambridge Computer Laboratory (Department of Computer Science and
+ * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+ * DARPA SSITH research programme.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from Arm Limited.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from the Kenneth Hayter Scholarship Fund.
  */
 
 #include <sys/types.h>
@@ -34,8 +48,10 @@
 #include <assert.h>
 
 #include <dt_impl.h>
+#include <dt_module.h>
 #include <dt_parser.h>
 #include <dt_as.h>
+#include <libelf.h>
 
 void
 dt_irlist_create(dt_irlist_t *dlp)
@@ -58,6 +74,14 @@ dt_irlist_destroy(dt_irlist_t *dlp)
 void
 dt_irlist_append(dt_irlist_t *dlp, dt_irnode_t *dip)
 {
+	/*
+	 * In the case that dlp->dl_last is NULL, di_prev is set to NULL
+	 * as it is the very first entry in the irlist. If it  is not NULL,
+	 * we simply append this instruction in the irlist, so its di_prev
+	 * ought to be the current last element.
+	 */
+	dip->di_prev = dlp->dl_last;
+
 	if (dlp->dl_last != NULL)
 		dlp->dl_last->di_next = dip;
 	else
@@ -109,7 +133,15 @@ dt_copyvar(dt_idhash_t *dhp, dt_ident_t *idp, void *data)
 
 	dvp->dtdv_name = (uint_t)stroff;
 	dvp->dtdv_id = idp->di_id;
+	/*
+	 * A variable whose type is not yet known (e.g. the bottom type of a
+	 * foreign target's args[]) has no object name: record an empty one.
+	 */
+	(void) strlcpy(dvp->dtdv_object, idp->di_object != NULL ?
+	    idp->di_object : "", DTRACE_MODNAMELEN);
+	dvp->dtdv_ctfp = idp->di_ctfp;
 	dvp->dtdv_flags = 0;
+	dvp->dtdv_ctfid = idp->di_type;
 
 	dvp->dtdv_kind = (idp->di_kind == DT_IDENT_ARRAY) ?
 	    DIFV_KIND_ARRAY : DIFV_KIND_SCALAR;
@@ -127,7 +159,8 @@ dt_copyvar(dt_idhash_t *dhp, dt_ident_t *idp, void *data)
 		dvp->dtdv_flags |= DIFV_F_MOD;
 
 	bzero(&dn, sizeof (dn));
-	dt_node_type_assign(&dn, idp->di_ctfp, idp->di_type, B_FALSE);
+	dt_node_type_assign(&dn, idp->di_object, idp->di_ctfp, idp->di_type,
+	    B_FALSE);
 	dt_node_diftype(pcb->pcb_hdl, &dn, &dvp->dtdv_type);
 
 	idp->di_flags &= ~(DT_IDFLG_DIFR | DT_IDFLG_DIFW);
@@ -135,9 +168,9 @@ dt_copyvar(dt_idhash_t *dhp, dt_ident_t *idp, void *data)
 }
 
 static ssize_t
-dt_copystr(const char *s, size_t n, size_t off, dt_pcb_t *pcb)
+dt_copystr(const char *s, size_t n, size_t off, char *dst)
 {
-	bcopy(s, pcb->pcb_difo->dtdo_strtab + off, n);
+	memcpy(dst + off, s, n);
 	return (n);
 }
 
@@ -165,11 +198,15 @@ dt_as_xlate(dt_pcb_t *pcb, dtrace_difo_t *dp,
 	assert(dnp->dn_membid < dxp->dx_nmembers);
 
 	if (pcb->pcb_asxrefs == NULL) {
-		pcb->pcb_asxreflen = dtp->dt_xlatorid;
+		/*
+		 * Record the length only once the array exists: dt_pcb_pop()
+		 * frees pcb_asxreflen entries of it after a failed compile.
+		 */
 		pcb->pcb_asxrefs =
-		    dt_zalloc(dtp, sizeof (ulong_t *) * pcb->pcb_asxreflen);
+		    dt_zalloc(dtp, sizeof (ulong_t *) * dtp->dt_xlatorid);
 		if (pcb->pcb_asxrefs == NULL)
 			longjmp(pcb->pcb_jmpbuf, EDT_NOMEM);
+		pcb->pcb_asxreflen = dtp->dt_xlatorid;
 	}
 
 	if (pcb->pcb_asxrefs[dxp->dx_id] == NULL) {
@@ -220,6 +257,8 @@ dt_as(dt_pcb_t *pcb)
 
 	uint_t kmask, kbits, umask, ubits;
 	uint_t krel = 0, urel = 0, xlrefs = 0;
+
+	static size_t difo_id = 0;
 
 	/*
 	 * Select bitmasks based upon the desired symbol linking policy.  We
@@ -277,6 +316,8 @@ dt_as(dt_pcb_t *pcb)
 	if ((labels = dt_alloc(dtp, sizeof (uint_t) * dlp->dl_label)) == NULL)
 		longjmp(pcb->pcb_jmpbuf, EDT_NOMEM);
 
+	dp->dtdo_idx = difo_id++;
+
 	/*
 	 * Make an initial pass through the instruction list, filling in the
 	 * instruction buffer with valid instructions and skipping labeled nops.
@@ -302,13 +343,16 @@ dt_as(dt_pcb_t *pcb)
 			else if ((idp->di_flags & umask) == ubits)
 				urel++;
 			break;
+		/*
+		 * dt_cg.c attaches di_extern only to the SETX it emits in
+		 * dt_cg_xsetx() and to the XLATE/XLARG it emits for a
+		 * translator member reference, so no other opcode can carry
+		 * an external reference here.
+		 */
 		case DIF_OP_XLATE:
 		case DIF_OP_XLARG:
 			xlrefs++;
 			break;
-		default:
-			xyerror(D_UNKNOWN, "unexpected assembler relocation "
-			    "for opcode 0x%x\n", DIF_INSTR_OP(dip->di_instr));
 		}
 	}
 
@@ -351,7 +395,7 @@ dt_as(dt_pcb_t *pcb)
 	(void) dt_idhash_iter(pcb->pcb_locals, dt_countvar, &n);
 
 	if (n != 0) {
-		dp->dtdo_vartab = dt_alloc(dtp, n * sizeof (dtrace_difv_t));
+		dp->dtdo_vartab = dt_zalloc(dtp, n * sizeof (dtrace_difv_t));
 		dp->dtdo_varlen = (uint32_t)n;
 
 		if (dp->dtdo_vartab == NULL)
@@ -470,8 +514,17 @@ dt_as(dt_pcb_t *pcb)
 			longjmp(pcb->pcb_jmpbuf, EDT_NOMEM);
 
 		(void) dt_strtab_write(pcb->pcb_strtab,
-		    (dt_strtab_write_f *)dt_copystr, pcb);
+		    (dt_strtab_write_f *)dt_copystr, dp->dtdo_strtab);
 		dp->dtdo_strlen = (uint32_t)n;
+	}
+
+	if ((n = dt_strtab_size(pcb->pcb_symtab)) != 0) {
+		if ((dp->dtdo_symtab = dt_alloc(dtp, n)) == NULL)
+			longjmp(pcb->pcb_jmpbuf, EDT_NOMEM);
+
+		(void) dt_strtab_write(pcb->pcb_symtab,
+		    (dt_strtab_write_f *)dt_copystr, dp->dtdo_symtab);
+		dp->dtdo_symlen = (uint32_t)n;
 	}
 
 	/*
@@ -498,6 +551,7 @@ dt_as(dt_pcb_t *pcb)
 
 	if (pcb->pcb_cflags & DTRACE_C_DIFV)
 		dt_dis(dp, stderr);
+
 
 	return (dp);
 }

@@ -291,6 +291,9 @@ ctf_type_resolve(ctf_file_t *fp, ctf_id_t type)
 	const void *tp;
 	uint_t kind, ctype;
 
+	if (type == CTF_BOTTOM_TYPE || type == CTF_ERR)
+		return (type);
+
 	while ((tp = ctf_lookup_by_id(&fp, type)) != NULL) {
 		ctf_get_ctt_info(fp, tp, &kind, NULL, NULL);
 		switch (kind) {
@@ -456,6 +459,18 @@ ctf_type_qname(ctf_file_t *fp, ctf_id_t type, char *buf, size_t len,
 	return (rv >= 0 && rv < len ? buf : NULL);
 }
 
+int
+ctf_type_copied(ctf_file_t *fp, ctf_id_t type)
+{
+	const ctf_dtdef_t *dtd;
+
+	if ((dtd = ctf_dtd_lookup(fp, type)) == NULL)
+		return (ctf_set_errno(fp, ECTF_BADID));
+
+	return (dtd->dtd_copied);
+}
+
+
 const char *
 ctf_type_rname(ctf_file_t *fp, const void *v)
 {
@@ -597,6 +612,12 @@ ctf_type_kind(ctf_file_t *fp, ctf_id_t type)
 	const void *tp;
 	uint_t kind;
 
+	if (type == CTF_BOTTOM_TYPE)
+		return (CTF_K_UNKNOWN);
+
+	if (type == CTF_ERR)
+		return (CTF_ERR);
+
 	if ((tp = ctf_lookup_by_id(&fp, type)) == NULL)
 		return (CTF_ERR); /* errno is set for us */
 
@@ -676,6 +697,9 @@ ctf_type_encoding(ctf_file_t *fp, ctf_id_t type, ctf_encoding_t *ep)
 	ssize_t increment;
 	uint_t data, kind;
 
+	if (type == CTF_BOTTOM_TYPE || type == CTF_ERR)
+		return (CTF_ERR);
+
 	if ((tp = ctf_lookup_by_id(&fp, type)) == NULL)
 		return (CTF_ERR); /* errno is set for us */
 
@@ -748,6 +772,9 @@ ctf_type_compat(ctf_file_t *lfp, ctf_id_t ltype,
 	uint_t lkind, rkind;
 
 	if (ctf_type_cmp(lfp, ltype, rfp, rtype) == 0)
+		return (1);
+
+	if (ltype == CTF_BOTTOM_TYPE || rtype == CTF_BOTTOM_TYPE)
 		return (1);
 
 	ltype = ctf_type_resolve(lfp, ltype);
