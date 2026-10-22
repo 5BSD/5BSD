@@ -210,18 +210,29 @@ pf_jail_changed(void *obj __unused, void *data __unused)
 
 /*
  * A VNET jail being removed: close the kernel sockets of its vnet that hold
- * a credential of the jail (pflow), or it never finishes dying.
+ * a credential of the jail (pflow), or it never finishes dying, and remove
+ * its states.  The jail may stay dying for a long time (its TCP connections
+ * time out first); its states would meanwhile count against the quota all
+ * VNET jails share (pf_quota.c).  pfsync peers keep theirs (an HA peer may
+ * take over).  Called with allprison_lock held: pf takes no jail lock under
+ * its own locks (pf_jail_lookup() runs with none held), so the order is
+ * always allprison_lock, then pf's.
  */
 void	pflow_jail_remove(void);
+int	pf_states_clr_sync(struct pfioc_state_kill *, int);
 static int
 pf_jail_removed(void *obj, void *data)
 {
 	struct prison *pr = obj;
+	struct pfioc_state_kill psk;
 
 	if (prison_owns_vnet(pr)) {
 		CURVNET_SET(pr->pr_vnet);
-		if (pf_fbsd_vnet_ready())
+		if (pf_fbsd_vnet_ready()) {
 			pflow_jail_remove();
+			memset(&psk, 0, sizeof(psk));
+			(void)pf_states_clr_sync(&psk, 0);
+		}
 		CURVNET_RESTORE();
 	}
 	return (pf_jail_changed(obj, data));

@@ -112,6 +112,7 @@ u_int16_t		 pf_qname2qid(char *, int);
 void			 pf_qid2qname(u_int16_t, char *);
 void			 pf_qid_unref(u_int16_t);
 int			 pf_states_clr(struct pfioc_state_kill *);
+int			 pf_states_clr_sync(struct pfioc_state_kill *, int);
 int			 pf_states_get(struct pfioc_states *, int);
 
 struct pf_trans		*pf_open_trans(uint32_t);
@@ -1864,6 +1865,16 @@ unlock:
 int
 pf_states_clr(struct pfioc_state_kill *psk)
 {
+	return (pf_states_clr_sync(psk, 1));
+}
+
+/*
+ * 5BSD: sync 0 removes the states without asking pfsync peers to clear
+ * theirs, for a VNET whose jail is removed: an HA peer keeps the states.
+ */
+int
+pf_states_clr_sync(struct pfioc_state_kill *psk, int sync)
+{
 	struct pf_state		*st, *nextst;
 	struct pf_state		*head, *tail;
 	u_int			 killed = 0;
@@ -1920,7 +1931,8 @@ pf_states_clr(struct pfioc_state_kill *psk)
 	psk->psk_killed = killed;
 
 #if NPFSYNC > 0
-	pfsync_clear_states(pf_status.hostid, psk->psk_ifname);
+	if (sync)
+		pfsync_clear_states(pf_status.hostid, psk->psk_ifname);
 #endif	/* NPFSYNC > 0 */
 unlock:
 	NET_UNLOCK();

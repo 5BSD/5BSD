@@ -33,6 +33,10 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	them has OpenBSD's checksum and pfsync peers running OpenBSD match
 	states to rules again.  Checksums of rulesets without those
 	options change once; pfsync peers should run the same release.
+	Removing a VNET jail removes the pf states of its vnet at once
+	(pfsync peers keep theirs).  The jail may stay dying while its TCP
+	connections time out; its states no longer count against the
+	quota all VNET jails share (net.pf.vnet_total_pct) meanwhile.
 
 20261020:
 	A FIB created at boot (net.fibs) can become a routing domain:
