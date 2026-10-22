@@ -44,6 +44,13 @@ Plane-on VM validation of the converted daemons is recorded in
 the last two conversions (system.Network.PF and the versioning change) carry
 their own records there.
 Rust runtime bindings remain unported.
+.Pp
+Remaining work is listed in priority order in
+.Pa /usr/src/tools/build/fuchsia/REMAINING.md :
+verification of the committed tree in isolation, quiet-host latency
+measurement, a typed descriptor schema library, build-time message size
+checks, a schema ABI gate at publication, persistent encoding, generated
+protocol documentation, the BSDBluetooth conversion and Rust bindings.
 .Ss Versioning
 Every production library is declared
 .Ql @available(platform="bsd", added=1) .
@@ -104,8 +111,16 @@ and
 remain in place.
 Importing FIDL does not supply Fuchsia's Component Manager or service namespace.
 .Pp
-There is no measured 5BSD performance advantage over the current stack.
-The expected benefit is protocol maintenance and shared validation.
+Measured on October 22, 2026: FIDL C makes no heap allocations per call on
+either side, matching raw
+.Xr libchannel 3 ,
+and a synchronous call makes one system call on a kernel that reports
+.Dv MAC_CAPABILITY_INFO_F_CHANNEL_CALL
+(two for split send and receive on that kernel, four on older kernels).
+No wall-clock advantage over the hand-written protocols has been measured on
+a quiet host; see
+.Pa /usr/src/tools/build/fuchsia/BENCH.md .
+The expected benefit remains protocol maintenance and shared validation.
 Costs include the binding runtime, build dependencies, upstream maintenance,
 and preserving the C API boundary.
 .Sh CAPABILITY SEMANTICS

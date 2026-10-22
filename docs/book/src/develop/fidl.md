@@ -536,6 +536,30 @@ SAME_RIGHTS. Unsupported rights and Zircon-only object types fail closed.
 An additional object type needs a real native capability contract; importing
 an emulated Zircon object merely to compile a binding is not the goal.
 
+## What is next
+
+The 2026-10-22 performance work landed as four commits (libchannel send
+buffers and synchronous calls, libfidl slabs and owned descriptors, the
+`MAC_CAPABILITY_CHANNEL_CALL` ioctl, `@available` versioning and the PF
+conversion).  The prioritized list of what remains is
+`tools/build/fuchsia/REMAINING.md`; in short:
+
+1. Build and VM-validate the committed tree by itself, then measure latency
+   on a quiet host and on a kernel that has the call ioctl (the host kernel
+   predates it, so the one-syscall path and descriptor-move savings are only
+   visible in the VM today).
+2. Remove the last FIDL C++ allocations, the natural-type copies of string
+   and vector payloads, with wire-domain views or an arena.
+3. A `bsd` descriptor schema library with typed subtypes (file, memory,
+   pipe, semaphore, process, device, event, timer, capability, jail,
+   dataset, environment) and Capsicum-named rights, once approved; today
+   only generic, socket and channel descriptors are typed.
+4. Generation-time rejection of schemas whose maximum message exceeds the
+   kernel ceiling, and a schema ABI gate at package publication using the
+   imported `fidl_api_summarize` and `fidl_api_diff`.
+5. Persistent encoding for on-disk state, generated protocol documentation
+   with `fidldoc`, the BSDBluetooth conversion, and Rust bindings.
+
 ## Requirements before service migration
 
 The native backend is now exercised with generated bindings, malformed input,

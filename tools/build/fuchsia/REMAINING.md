@@ -1,177 +1,159 @@
-# FIDL / IPC work: what is left (2026-10-10 15:45 UTC)
-
-Status 2026-10-10 23:00 UTC: steps 1-3 and 5 DONE.
-- 1: libnetgraph fix (1ca64091990); dev builds clean.
-- 2: committed (58977d8dfd1) and VM-validated (fd4 on dev d51b2cf8c22).
-- 3: MATURITY box checked, HANDOFF gates closed, VALIDATION.json updated.
-- 4: HELD by the user until further notice.
+# FIDL / IPC work: what is left (2026-10-22 22:00 UTC)
 
 Read `/home/koryheard/AGENTS.md` first (build in /usr/obj, all CPUs, never
 install or reboot the host, publish only through the maintained /usr/src
-package targets). Then `HANDOFF.md`, `VALIDATION.json` and
-`lib/libfidl/MATURITY` in this directory for history and evidence.
+package targets).  Then `HANDOFF.md`, `DAEMONS.md`, `BENCH.md`,
+`VALIDATION.json` and `lib/libfidl/MATURITY` for history and evidence.
 
-Branch: `fix/kldload-broker-guidance` in `/usr/src` (shared with other agents;
-coalition/daemon-runtime and Starnix agents were still committing at 15:35).
-Never commit other agents' uncommitted files; stage paths explicitly.
+Branch: `dev` in `/usr/src`, shared with other agents whose work is
+uncommitted in the same tree.  Stage paths explicitly, never a directory.
+Never run `git reset` in the shared tree: a `git reset -q` racing another
+agent's commit moved HEAD backwards once on 2026-10-22 (recovered with
+`git update-ref`).  Verify a patch with `git apply --check`, or against a
+throwaway index (`GIT_INDEX_FILE=/tmp/x git read-tree HEAD; GIT_INDEX_FILE=/tmp/x
+git apply --cached --check PATCH`).
 
-## 1. Fix the broken build at HEAD (blocks everything)
+## State on 2026-10-22
 
-The PF commit `c445c44591c` ("Retire IPFW engine…") deleted
-`sys/netgraph/ng_ipfw.h`, but `lib/libnetgraph/debug.c` at HEAD still has
-`#include <netgraph/ng_ipfw.h>` and `COOKIE(IPFW),`. A clean buildworld
-fails at `debug.o`. The working tree already removes both lines
-(uncommitted). Ask the user whether the PF agent or you commits it, then:
+Committed on dev:
 
-    cd /usr/src && make -j16 buildworld buildkernel KERNCONF=GENERIC-NODEBUG
+- `330b8dd0dd2` libchannel: one allocation per queued message, bounded
+  request freelist, `channel_outgoing_reserve/commit/abort` send buffers,
+  `channel_get_stats`, `channel_call_request`/`channel_call` with fallback.
+- `9cfc0f21749` libfidl: bounded per-connection slabs, encoding into the
+  reserved send buffer, `fidl_bsd_fd_owned` (moved C descriptors),
+  `fidl_bsd_connection_call`/`Connection::CallSync`, 53-scenario `ipc_bench`
+  with JSON output and ktrace syscall counts, `check-bench-compare`.
+- `2ee2c71c7a4` kernel: `MAC_CAPABILITY_CHANNEL_CALL` (send, sleep for the
+  reply token, receive in one system call; late reply discarded after
+  timeout; `MAC_CAPABILITY_INFO_F_CHANNEL_CALL` in GETINFO).
+- `b5bf397ad30` schemas `@available(platform="bsd", added=1)` compiled at
+  `FIDL_AVAILABLE` (default `bsd:1`); system.Network.PF served as
+  `NetworkPf` with `networkcmp_pf_open(3)`; `pf_protocol.h` retired;
+  records refreshed.
 
-buildworld stops at the first error; repeat until it passes in case the
-IPFW removal left other references (search case-insensitively for `ipfw`).
-Commit as e.g. "Remove stale ng_ipfw reference from libnetgraph".
+Measured (details and commands in `BENCH.md`; baseline
+`/usr/obj/5bsd-fidl-bench/20261022T182557Z-baseline.json`):
 
-## 2. Validate and commit the shell-visibility change (user-approved)
+| metric | before | after |
+|---|---|---|
+| client syscalls per synchronous call | 4.0 (Oct 7 host kernel), 2.0 (new kernel, split path) | 1.02 (VM run1, new kernel) |
+| FIDL C heap allocations per call, client/server | 0 / 2 | 0 / 0 |
+| FIDL C++ 8-byte round trip | 0 / 1 | 0 / 0 |
+| client allocations per 1,000-event burst | 1,000 | 0.01 |
+| C borrowed descriptor, client syscalls each | 6 | unchanged on kernels without SENDMSG_V2; one send with `fidl_bsd_fd_owned` on V2 kernels (VM proof pending) |
 
-The user decided operators reach system.Time, system.Power and
-system.Sysctl from a login shell. Uncommitted files (all this work):
+Latency columns are not comparable yet: every after-run was taken at host
+load 25-49 or under TCG.  Evidence: `/usr/obj/5bsd-fidl-vm/run1` (kernel
+call, libchannel, libfidl, switchboard, BSDTime) and `pf1` (PF and the
+migrated daemons), both 4-vCPU plane-on VMs with the new kernel;
+`PLANEON_GATE_PASS`, lifecycle checks and every libchannel, libfidl and
+`pf_test` case passed.  Failures in those runs belong to other agents'
+same-day uncommitted work: `bundle_test:*security_contract` in BSDCrypto,
+BSDLog and BSDNetwork (audit client API renamed, source-grep tests not
+updated), `BSDExtension/startup_test` timeouts, `switchboard/crypto_config_test`;
+`lib/libchannel/ipc_soak_test "Invalid test program format"` was a staging
+artifact (raw `.sh` copied over the atf-sh program), not a build defect.
 
-- `usr.sbin/BSDTime/capbundle/BSDTime.ucl`, `usr.sbin/BSDPower/capbundle/BSDPower.ucl`,
-  `usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl`: `visible = ["user"];`
-- `usr.sbin/switchboard/tests/service_reachability_test.sh`: time/power/sysctl
-  reachable cases
-- `docs/book/src/providers/time.md`, `tools/build/fuchsia/HANDOFF.md`
-- `tools/build/fuchsia/vm-provider.sh`: removed the BSDTIME_USER_VISIBLE
-  overlay (no longer needed; it would now fail)
+## What is next, in priority order
 
-Validate after step 1 builds:
+1. **Prove the committed tree alone.**  A clean `buildworld buildkernel` of
+   HEAD `b5bf397ad30` runs in the detached worktree
+   `/usr/obj/5bsd-fidl-headcheck` (objects under
+   `/usr/obj/5bsd-fidl-headcheck-obj`, log
+   `/usr/obj/5bsd-fidl-headcheck-build.log`).  When it passes, restage from
+   it into an empty directory and run `vm-provider.sh` with `vm-daemons.sh`
+   (CPUS=4) for `lib/libchannel lib/libfidl usr.sbin/switchboard
+   usr.sbin/BSDTime usr.sbin/BSDNetwork`; record the run in
+   `VALIDATION.json`.  Until then the VM evidence above was built from a
+   working tree that also carried other agents' changes.
+2. **Latency on a quiet host and on a CHANNEL_CALL kernel.**  Run
+   `make -C tools/build/fuchsia check-bench` with no other builds running
+   and compare against the baseline; the host kernel (Oct 7) lacks the
+   ioctl and SENDMSG_V2, so the one-syscall path and the descriptor-move
+   savings only show after the host runs a current kernel.  Installing and
+   rebooting is the user's decision.  Re-take the baseline on that kernel.
+3. **Lease check in the call ioctl.**  Another agent's uncommitted
+   cap_authority lease work adds `cap_authority_lease_valid()` checks to
+   the receive loop; `mac_capability_instance_do_channel_call`'s wait loop
+   needs the same check (it was in the working tree and deliberately left
+   out of the HEAD-based patch).  Add it in the same commit as the lease
+   work.
+4. **PF consumers.**  Rebuild `sysutils/5bsd-instruments` against the new
+   world (its distfiles were absent on the build host, GitHub assets 404);
+   the port patch in `/usr/obj/5BSD-ports` is edited but not committed.  A
+   pre-conversion Instruments speaks `PFS1`, which the provider now
+   rejects.  Add a `system.Network.PF` case to
+   `usr.sbin/switchboard/tests/service_reachability_test.sh`.
+5. **Remaining FIDL C++ allocations.**  Natural types copy string and
+   vector payloads (256-byte string: 2 client allocations; ceiling-size
+   vector: 3 allocations, 43 KB per call).  Options: generate wire-domain
+   views over the receive buffer for the C++ adapters, or an arena
+   allocator for natural types; measure with `roundtrip-256` and
+   `large-14304`.
+6. **Typed descriptor schema library (needs the user's go-ahead).**  Only
+   NONE, SOCKET and CHANNEL handle subtypes exist, because
+   `mac_capability_fd_spec` knows those types.  Proposed: a `bsd` library
+   with its own resource definition, an ObjType enum and Rights bits named
+   after Capsicum rights, mapped FILE (VNODE), MEMORY (SHM), PIPE
+   (PIPE/FIFO), SEMAPHORE (SEM), PROCESS (PROCDESC), DEVICE (DEV), EVENT
+   (EVENTFD), TIMER (TIMERFD), CAPABILITY (non-channel MAC_CAPABILITY),
+   JAIL, DATASET (ZFSHANDLE), ENVIRONMENT (ENVFD); kqueue stays unpassable
+   (FreeBSD `DFLAG_PASSABLE`).  Touches the kernel type check,
+   libchannel, `ValidateDescriptor`, the generators and tests.  MEMORY is
+   the one with a consumer today (BSDLog's shared-memory ring).
+7. **Build-time message size check.**  The generators read
+   `type_shape_v2`; reject a protocol whose maximum message exceeds 14,336
+   bytes or 32 descriptors at generation instead of at the first large
+   reply.
+8. **Schema ABI gate at publication.**  Wire `contrib/fuchsia/tools/fidl/
+   fidl_api_summarize` and `fidl_api_diff` into `publish-packages` (and the
+   `build-bsd` verification stage and manual) to compare each `bsd.*`
+   schema with the one in the last published repository; an incompatible
+   change fails publication.
+9. **Persistent encoding.**  Standalone value encoding entry points in C
+   and C++ so on-disk state uses the validated codec.
+10. **Protocol documentation.**  Run the imported `fidldoc` into
+    `docs/book` so protocol reference pages come from the schemas.
+11. **BSDBluetooth.**  Isolate the plane/controller code its test matrix
+    compiles directly, then convert ATTACH and Controller (last
+    record-protocol provider).
+12. **Rust runtime bindings.**  Deferred by the user; the generator builds.
+13. **Latency records** for VM, Namespace, Extension and Filesystem
+    (`latency_bench` exists; no record-protocol comparison was run).
+14. **Package republication** stays a user-held release step: `latest`
+    points at `16.snap20261012080606.complete` while newer complete
+    snapshots exist (AGENTS.md targets, `PORTSDIR=/usr/obj/5BSD-ports`).
 
-    S=/usr/obj/5bsd-fidl-vm/stage2
-    chflags -R noschg $S; rm -rf $S          # always restage from scratch:
-    cd /usr/src && make -j16 installworld distribution DESTDIR=$S -DNO_ROOT \
-      && make installkernel DESTDIR=$S -DNO_ROOT KERNCONF=GENERIC-NODEBUG
-    cd /usr/obj/5bsd-fidl-vm && cp /usr/src/tools/build/fuchsia/vm-provider.sh vm-provider.fd4.sh
-    KYUA_VARS=test_suites.FreeBSD.vm_clock_test=true CPUS=4 sh vm-provider.fd4.sh $S \
-      /usr/obj/5bsd-fidl-vm/fd4 "usr.sbin/switchboard usr.sbin/BSDTime lib/libtimecmp \
-      usr.sbin/BSDPower usr.sbin/BSDSysctl lib/libfidl lib/libchannel" 7200 > fd4.out 2>&1
+## Pitfalls
 
-Pass criteria: `PLANEON_GATE_PASS`, `BSDTIME_LIFECYCLE_PASS`, the console
-`BSDTIME_CONTROL [BSDPowerctl states]` and `[sysctlcmpctl get kern.ostype]`
-lines now `ok` (they were ENOENT before), `time_reachable`,
-`power_reachable`, `sysctl_reachable` pass, no failed/broken cases
-(`tr -d '\r' < fd4/serial.log | grep -aE '\-> +(failed|broken)'`). Then
-commit those files only.
-
-## 3. Close the last maturity gate (needs user confirmation)
-
-`lib/libfidl/MATURITY` has one open box: "Final review, source reproduction,
-manuals/book, complete validation record". HANDOFF lists a "release
-upgrade/rollback VM" gate. The previous agent recommended NOT running the
-full software-authority release pipeline for FIDL (hours; mostly re-proves
-generic installer/BE behavior). Upgrade compatibility is already covered by
-the 8 evolve:1/evolve:2 schema-evolution pairings, the existing
-`tools/test/software-authority/software-be-guest.sh` BE candidate/rollback
-test (BSDTime is among its checked units), and the plane-on VM runs. If the
-user agrees: check the box citing that evidence, remove the gate from
-HANDOFF "Remaining production gates", and update `VALIDATION.json`
-(`fidl_native_runtime.status` still says VM validation "pending" — stale;
-`not_delivered` still lists "production capability-plane VM validation of
-migrated FIDL services" and "release-transaction upgrade/rollback VM
-validation" — update).
-
-## 4. Republish packages (ask the user first)
-
-The published `/usr/obj/usr/src/repo/FreeBSD:16:amd64/16.snap20261010074756.complete`
-predates all of today's work. The user held republishing until other agents
-settled. When told to proceed, use the maintained targets with
-`PORTSDIR=/usr/obj/5BSD-ports`: `system-packages`, `hardware-packages`,
-`hardware-packages-check`, `publish-packages` (see AGENTS.md). Only complete
-publication advances `latest`. Do not install.
-
-## 5. Records
-
-After each step update `VALIDATION.json`, `HANDOFF.md`, `lib/libfidl/MATURITY`
-and the Desktop checklist `~/Desktop/Fuchsia tests for next VM.txt`
-(strike through passed items with VM evidence).
-
-## 6. Capability daemons on FIDL (branch `fidl/daemons`, 2026-10-12)
-
-Nine providers serve FIDL; see `DAEMONS.md` (Progress) and VALIDATION.json
-`fidl_daemons`.  Open items (as of 2026-10-12; see section 7 for what
-closed since):
-
-- User decisions: library layout for the libservice-embedded clients
-  (BSDVM, BSDNamespace, BSDExtension, BSDFilesystem); system.Network.PF,
-  whose only consumer is the out-of-tree sysutils/5bsd-instruments.
-  (Both decided: the four converted and merged 2026-10-12, PF converted
-  2026-10-22; section 7.)
-- BSDBluetooth: isolate the plane/controller code its test matrix compiles
-  directly, then convert ATTACH and Controller.
-- Latency: FIDL calls are 1.0-2.5x slower at p50 in the TCG guest with
-  fewer system calls per call; profile the C bridge/codec path on hardware.
-  `dtraceall` fails to load in the plane-on guest, which blocks the
-  libchannel probe measurements in `vm-daemons.sh`.
-- Pre-existing, not FIDL: logctl_test `unavailable`/`severity_names`
-  expect no system.Log and fail in any plane-on VM; BSDNetwork resolves
-  `localhost` only if BSDFilesystem served /etc/hosts when it started
-  (resolver.c netresolve_init).
-
-## Done today (for orientation)
-
-Commits: `9ec24a62c93` IPC speedups, descriptor batching (SENDMSG_V2 /
-RECVMSG_V4) and two channel use-after-free fixes; `3c95dbd0267` test
-expectations; `7ff512fd7ff` zsh default; `98d6ac1a3b5` installer docs;
-`cf97f876797` FIDL + Fuchsia import + BSDTime migration; `a7b358373a7`
-OpenThread and license-clean Matter IDL subset. License review of all three
-imports recorded in `contrib/README.5BSD` and `VALIDATION.json`.
-
-## Pitfalls seen today
-
-- Incremental world can keep stale objects; `lib/libfidl/tests/Makefile` now
-  declares header deps for its shared binding objects. If C tests SIGBUS,
-  suspect stale objects.
+- Never `git reset` in the shared tree (see top).  Stage explicit paths;
+  files such as `mac_capability_dev.c` and `networkcmp.c` carry several
+  agents' hunks at once, so split them with a patch against HEAD.
 - Restage into an empty directory every time (NO_ROOT METALOG appends).
-- Other agents build in the same /usr/obj world objdir; a test binary can be
-  newer than the kernel it runs on.
+  Do not copy raw `.sh` tests into a stage; `ATF_TESTS_SH` programs are
+  rewritten with the `atf-sh` shebang by the build.
+- `lib/libchannel/tests` links the in-tree libc (pthread): on an older host
+  kernel it dies with SIGSYS on `cap_clofork_limit`; run it on a matching
+  kernel (VM).
+- Under ASan `cap_ioctls_get` reports an implausible count; both libchannel
+  probes now treat counts above 256 as unrestricted.  Keep that when
+  touching them.
+- Incremental world can keep stale objects; if C tests SIGBUS, suspect
+  stale objects.  Other agents build in the same /usr/obj world objdir.
 - Run heavy builds and VMs one at a time (an earlier host hard reset).
-- Plane-off VM runs: `PLANE_OFF=1`; load `mac_capability_test_kernelstore`
-  via `EXTRA_SCRIPT` (`/usr/obj/5bsd-fidl-vm/extra-kernelstore.sh`) so the
-  forwarding tests run.  From integrate/dev-20261011 on, that module (and
-  the keystore one) is no longer built or installed with the system
-  modules: build it from tests/sys/mac_capability/fixtures, ship it into the
-  guest (e.g. vm-provider.sh `EXTRA_DIR`) and point
-  `MAC_CAPABILITY_FIXTURE_DIR` at it for the isolated capability tests.
-  Coalition-test failures there belong to the
-  coalition agent.
-- Auto mode treats widening service visibility as a permission grant; the
-  user approved it explicitly for these three services.
+- Plane-off VM runs: `PLANE_OFF=1`; build `mac_capability_test_kernelstore`
+  from `tests/sys/mac_capability/fixtures`, ship it with `EXTRA_DIR` and
+  set `MAC_CAPABILITY_FIXTURE_DIR`.
+- Pre-existing, not FIDL: logctl_test `unavailable`/`severity_names` fail
+  in any plane-on VM; BSDNetwork resolves `localhost` only if BSDFilesystem
+  served /etc/hosts when it started.
 
-## 7. State on 2026-10-22: versioning and system.Network.PF
+## History
 
-Done on dev (uncommitted by the agent; the user commits):
-
-- Every production library (15 `bsd.<name>.v1`) is
-  `@available(platform="bsd", added=1)`; `fidl-bindings.mk` compiles each set
-  at `FIDL_AVAILABLE` (default `bsd:1`), `fidlgen-build.py --available`
-  carries the default, `test-bindings.py` compiles production schemas at
-  `bsd:1`.  `lib/libfidl/tests/evolution` moved to platform `bsd` and proves
-  the `added=2` elements absent at `bsd:1`/present at `bsd:2`.  Scheme:
-  `lib/libfidl/README` "Versioning", fidl(7).
-- system.Network.PF serves `NetworkPf` (`bsd.network.v1`); client
-  `networkcmp_pf_open(3)`; `pf_protocol.h` retired; `pf_test` (9 cases).
-  Port patch for `sysutils/5bsd-instruments` updated in the ports checkout
-  (uncommitted).
-- Records refreshed: `DAEMONS.md` (14 of 15 daemons converted; Bluetooth
-  remaining), fidl(7), fidl.md, MATURITY, VALIDATION.json (`fidl_versioning`,
-  `fidl_pf`).
-
-Open:
-
-- Rebuild `sysutils/5bsd-instruments` against the new world (its distfiles
-  were not on the build host: the GitHub release assets return 404) and ship
-  it with the converted provider; a pre-conversion Instruments speaks `PFS1`,
-  which the provider now rejects.
-- BSDBluetooth ATTACH/Controller conversion (unchanged from section 6).
-- Latency records for VM, Namespace, Extension and Filesystem (their
-  `latency_bench` programs exist; no record-protocol comparison was run).
-- A switchboard reachability case for system.Network.PF does not exist
-  (service_reachability_test.sh checks system.Network and .Admin only).
-- Republishing packages remains a user-held release step (section 4).
+2026-10-09/10: import, native backend, BSDTime migration, maturity gates
+(`cf97f876797`, `9ec24a62c93`, `58977d8dfd1`; HANDOFF.md, VALIDATION.json).
+2026-10-11/12: nine daemons converted (`fidl/daemons`, DAEMONS.md), then
+VM, Namespace, Extension and Filesystem.  2026-10-22: performance items,
+versioning, PF (above).  Earlier versions of this file (git log) hold the
+step-by-step instructions those phases used.
