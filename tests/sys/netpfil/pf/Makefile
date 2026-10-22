@@ -5,6 +5,7 @@ TESTS_SUBDIRS+=	ioctl
 TESTS_SUBDIRS+=	openbsd
 
 ATF_TESTS_SH+=	anchor \
+		checksum \
 		counters \
 		debug \
 		delay \
@@ -98,6 +99,9 @@ TEST_METADATA.syncookie+= execenv="" execenv_jail_params="" is_exclusive="true"
 
 ${PACKAGE}FILES+=	\
 			bsnmpd.conf \
+			pfchksum1.in \
+			pfchksum2.in \
+			pfchksum3.in \
 			CVE-2019-5597.py \
 			CVE-2019-5598.py \
 			daytime_inetd.conf \
@@ -149,5 +153,8 @@ MAN.state_import_validation=
 CFLAGS.state_import_validation+= -I${SRCTOP}/sys/netpfil/openbsd-pf/user
 CFLAGS.state_import_validation+= -I${SRCTOP}/contrib/openbsd-pf/sys
 CFLAGS.state_import_validation+= -include ${SRCTOP}/sys/netpfil/openbsd-pf/user/openbsd_compat.h
+
+# The OpenBSD rulesets the checksum test loads.
+.PATH: ${SRCTOP}/contrib/openbsd-pf/regress/sbin/pfctl
 
 .include <bsd.test.mk>

@@ -870,16 +870,26 @@ pf_hash_rule(MD5_CTX *ctx, struct pf_rule *rule)
 	PF_MD5_UPD_HTONL(rule, gid.gid[0], y);
 	PF_MD5_UPD_HTONL(rule, gid.gid[1], y);
 	PF_MD5_UPD(rule, gid.op);
-	if (rule->jail.byname)			/* 5BSD: jail; ids vary by host */
-		PF_MD5_UPD_STR(rule, jail.name);
-	else {
-		PF_MD5_UPD_HTONL(rule, jail.jid[0], y);
-		PF_MD5_UPD_HTONL(rule, jail.jid[1], y);
+	/*
+	 * 5BSD extensions count only in rules that use them, so that a
+	 * ruleset without them has OpenBSD's checksum: pfsync peers match
+	 * states to rules by it, and an OpenBSD peer may run the same rules.
+	 */
+	if (rule->jail.op != PF_OP_NONE) {
+		if (rule->jail.byname)		/* 5BSD: jail; ids vary by host */
+			PF_MD5_UPD_STR(rule, jail.name);
+		else {
+			PF_MD5_UPD_HTONL(rule, jail.jid[0], y);
+			PF_MD5_UPD_HTONL(rule, jail.jid[1], y);
+		}
+		PF_MD5_UPD(rule, jail.op);
 	}
-	PF_MD5_UPD(rule, jail.op);		/* 5BSD: jail */
-	PF_MD5_UPD_HTONS(rule, dn.pipe, x);	/* 5BSD: dummynet */
-	PF_MD5_UPD_HTONS(rule, dn.rpipe, x);	/* 5BSD: dummynet */
-	PF_MD5_UPD(rule, dn.flags);		/* 5BSD: dummynet */
+	if (rule->dn.pipe != 0 || rule->dn.rpipe != 0 ||
+	    rule->dn.flags != 0) {		/* 5BSD: dummynet */
+		PF_MD5_UPD_HTONS(rule, dn.pipe, x);
+		PF_MD5_UPD_HTONS(rule, dn.rpipe, x);
+		PF_MD5_UPD(rule, dn.flags);
+	}
 	PF_MD5_UPD_HTONL(rule, rule_flag, y);
 	PF_MD5_UPD(rule, action);
 	PF_MD5_UPD(rule, direction);

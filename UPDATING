@@ -27,6 +27,13 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261021:
+	pf ruleset checksums ("pfctl -vsi") count the 5BSD jail and
+	dummynet fields only in rules that use them, so a ruleset without
+	them has OpenBSD's checksum and pfsync peers running OpenBSD match
+	states to rules again.  Checksums of rulesets without those
+	options change once; pfsync peers should run the same release.
+
 20261020:
 	A FIB created at boot (net.fibs) can become a routing domain:
 	ifconfig rdomain N removes the loopback and IPv6 reject routes
