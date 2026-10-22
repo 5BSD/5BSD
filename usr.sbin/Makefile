@@ -68,8 +68,6 @@ SUBDIR=	adduser \
 	networkcmpctl \
 	BSDNotify \
 	notifyctl \
-	BSDTrace \
-	tracectl \
 	newsyslog \
 	nfscbd \
 	nfsd \
@@ -163,6 +161,7 @@ SUBDIR.${MK_BLUETOOTH}+=	bluetooth
 SUBDIR.${MK_BOOTPARAMD}+=	bootparamd
 SUBDIR.${MK_BSDINSTALL}+=	bsdinstall
 SUBDIR.${MK_BSNMP}+=	bsnmpd
+SUBDIR.${MK_DTRACE}+=	BSDTrace dtraced dtracedctl tracectl
 .if ${MK_CAROOT} != "no"
 SUBDIR.${MK_OPENSSL}+=	certctl capsign elfcache
 .endif

@@ -83,7 +83,6 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libkvm \
 	liblogcmp \
 	libnotify \
-	libtracecmp \
 	liblua \
 	liblzma \
 	libmemstat \
@@ -231,6 +230,7 @@ SUBDIR+=	clang
 
 SUBDIR.${MK_AUDIT}+=	libauditd
 SUBDIR.${MK_CUSE}+= 	libcuse
+SUBDIR.${MK_DTRACE}+=	libtracecmp
 SUBDIR.${MK_TOOLCHAIN}+=libpe
 SUBDIR.${MK_FDT}+=	libfdt
 SUBDIR.${MK_FILE}+=	libmagic

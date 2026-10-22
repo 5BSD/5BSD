@@ -6,6 +6,7 @@
 #include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
@@ -535,7 +536,14 @@ ATF_TC_WITHOUT_HEAD(consumer_open_retains_only_delegated_rights);
 ATF_TC_BODY(consumer_open_retains_only_delegated_rights, tc)
 {
 	cap_rights_t rights;
-	int devdir, fd;
+	int devdir, fd, supported = 0;
+	size_t length = sizeof(supported);
+	bool transfer_limits;
+
+	transfer_limits = sysctlbyname(
+	    "kern.features.capability_transfer_limits", &supported,
+	    &length, NULL, 0) == 0 && length == sizeof(supported) &&
+	    supported == 1;
 
 	ATF_REQUIRE_EQ(0, mkdir("dtrace", 0700));
 	fd = open("dtrace/dtrace", O_CREAT | O_RDWR | O_EXCL, 0600);
@@ -553,6 +561,13 @@ ATF_TC_BODY(consumer_open_retains_only_delegated_rights, tc)
 	devdir = open(".", O_RDONLY | O_DIRECTORY);
 	ATF_REQUIRE(devdir >= 0);
 	fd = tracecmp_test_open_consumer(devdir);
+	if (!transfer_limits) {
+		int error = errno;
+		ATF_CHECK_EQ(-1, fd);
+		ATF_CHECK_EQ(ENOSYS, error);
+		close(devdir);
+		return;
+	}
 	ATF_REQUIRE_MSG(fd >= 0, "consumer open: %s", strerror(errno));
 	ATF_REQUIRE_EQ(0, cap_rights_get(fd, &rights));
 	ATF_CHECK(cap_rights_is_set(&rights, CAP_READ, CAP_WRITE, CAP_FSTAT,

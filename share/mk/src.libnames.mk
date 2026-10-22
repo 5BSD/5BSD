@@ -121,6 +121,7 @@ _LIBRARIES=	\
 		archive \
 		auditcmp \
 		asn1 \
+		auditd \
 		avl \
 		BlocksRuntime \
 		be \
@@ -425,7 +426,7 @@ _DP_blemesh+=	crypto
 _DP_blocklist+=	pthread
 .endif
 _DP_devstat=	kvm
-_DP_dtrace=	ctf elf proc pthread rtld_db xo
+_DP_dtrace=	ctf elf proc pthread rtld_db crypto xo
 _DP_dwarf=	elf z
 _DP_edit=	tinfow
 _DP_execinfo=	elf

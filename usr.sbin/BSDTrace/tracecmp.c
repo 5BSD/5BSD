@@ -7,6 +7,7 @@
 #include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
 #include <sys/ioccom.h>
 #include <sys/dtrace.h>
 #include <sys/wait.h>
@@ -87,6 +88,25 @@ struct worker_state {
 };
 
 static int
+require_transfer_limits(void)
+{
+	int supported = 0;
+	size_t length = sizeof(supported);
+
+	if (sysctlbyname("kern.features.capability_transfer_limits",
+	    &supported, &length, NULL, 0) == -1) {
+		if (errno == ENOENT)
+			errno = ENOSYS;
+		return (-1);
+	}
+	if (length != sizeof(supported) || supported != 1) {
+		errno = ENOSYS;
+		return (-1);
+	}
+	return (0);
+}
+
+static int
 open_dtrace_directory_at(int devdir)
 {
 	cap_rights_t rights;
@@ -101,6 +121,15 @@ open_dtrace_directory_at(int devdir)
 	    O_NOFOLLOW);
 	if (fd == -1)
 		return (-1);
+	/* An older kernel can have Capsicum without 5BSD's descriptor-limit
+	 * syscalls. Avoid an unknown syscall and SIGSYS on a mixed boot. */
+	if (require_transfer_limits() == -1) {
+		int error = errno;
+
+		close(fd);
+		errno = error;
+		return (-1);
+	}
 	/*
 	 * O_RDWR openat requires CAP_SEEK even for a non-seekable device.
 	 * The consumer is separately narrowed below before delegation.
@@ -505,6 +534,8 @@ start_session(int fd, int dtrace_directory, bool authorized,
 	pid_t pid;
 	uint64_t instance_id;
 
+	if (require_transfer_limits() == -1)
+		return (-1);
 	instance_id = ++next_instance;
 	device_error = 0;
 	dtrace_fd = -1;
@@ -751,7 +782,8 @@ main(void)
 			memset(&policy, 0, sizeof(policy));
 	}
 	dtrace_directory = open_dtrace_directory();
-	if (dtrace_directory == -1 && errno != ENOENT && errno != ENXIO)
+	if (dtrace_directory == -1 && errno != ENOENT && errno != ENXIO &&
+	    errno != ENOSYS)
 		goto fail;
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -802,6 +834,13 @@ main(void)
 			worker->pd = -1;
 			worker->liveness = -1;
 		}
+		/* The DTrace module may have been loaded after this service started.
+		 * Retry the /dev/dtrace lookup only for a session that may receive a
+		 * consumer; the supervisor still opens and narrows it before fork. */
+		if (worker != NULL && dtrace_directory < 0 &&
+		    (tracecmp_policy_allows(&policy, identity.client_label) ||
+		    service_rights_allow(identity.rights, SERVICE_RIGHTS_ADMIN)))
+			dtrace_directory = open_dtrace_directory();
 		if (worker == NULL || start_session(fd, dtrace_directory,
 		    tracecmp_policy_allows(&policy, identity.client_label),
 		    identity.client_label, identity.rights, &worker->pd,

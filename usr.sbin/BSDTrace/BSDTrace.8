@@ -96,6 +96,13 @@ again creates a new consumer.
 .Pp
 A tool that opens the device by pathname still needs a conventional execution
 environment and device permissions.
+If the DTrace kernel module is loaded after
+.Nm
+starts, the next authorized session retries the device lookup.
+If the running kernel lacks 5BSD's descriptor transfer limits, sessions
+fail with
+.Er ENOSYS
+before an unsupported system call can terminate the service.
 An application born in capability mode must use descriptor delegation and
 .Xr dtrace_fdopen 3
 or

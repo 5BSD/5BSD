@@ -1249,6 +1249,12 @@ _dtrace-cross-tool:
 	@echo "--------------------------------------------------------------"
 	@echo ">>> stage 3.1: building target-aware DTrace provider linker"
 	@echo "--------------------------------------------------------------"
+	${_+_}${MAKE} -C ${.CURDIR}/cddl/lib/libctf \
+	    MAKEOBJDIRPREFIX=${DTRACE_CROSS_OBJROOT} \
+	    MACHINE=${MACHINE} MACHINE_ARCH=${MACHINE_ARCH} \
+	    TARGET=${MACHINE} TARGET_ARCH=${MACHINE_ARCH} \
+	    DTRACE_TARGET_ARCH=${TARGET_ARCH} NO_SHARED=yes \
+	    MK_MAN=no MK_TESTS=no
 	${_+_}${MAKE} -C ${.CURDIR}/cddl/lib/libdtrace \
 	    MAKEOBJDIRPREFIX=${DTRACE_CROSS_OBJROOT} \
 	    MACHINE=${MACHINE} MACHINE_ARCH=${MACHINE_ARCH} \
@@ -3484,7 +3490,7 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		lib/libkiconv lib/libkldelf lib/libkvm \
 		lib/liblzma lib/libmd lib/libnotify lib/libnv \
 		lib/libucl lib/libcapsulert lib/libcapimage \
-		lib/libtrustedzfs lib/libbsdfilesystem \
+		lib/libtrustedzfs lib/libfilesystemcmp lib/libbsdfilesystem \
 		lib/libzstd \
 		${_lib_casper} \
 		lib/ncurses/tinfo \
@@ -3523,9 +3529,11 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 
 lib/libservice__L: lib/libcapability__L lib/libchannel__L lib/libthr__L \
 	lib/libtrustedzfs__L lib/libcapsulert__L
-lib/libbsdfilesystem__L: lib/libchannel__L lib/libservice__L lib/libtrustedzfs__L
+lib/libbsdfilesystem__L: lib/libchannel__L lib/libservice__L lib/libtrustedzfs__L \
+	lib/libfilesystemcmp__L lib/libfidl__L
+lib/libfilesystemcmp__L: lib/libservice__L lib/libtrustedzfs__L lib/libfidl__L
 lib/libfidl__L: lib/libc++__L lib/libchannel__L lib/libthr__L
-lib/libnotify__L: lib/libservice__L lib/libthr__L
+lib/libnotify__L: lib/libservice__L lib/libthr__L lib/libfidl__L
 
 .if ${MK_GOOGLETEST} != "no"
 _prebuild_libs+= lib/libregex
@@ -3624,7 +3632,8 @@ _cddl_lib_libctf= cddl/lib/libctf
 _cddl_lib= cddl/lib
 cddl/lib/libctf__L: lib/libz__L cddl/lib/libspl__L
 cddl/lib/libdtrace__L: cddl/lib/libctf__L lib/libelf__L lib/libproc__L
-cddl/lib/libdtrace__L: lib/libthr__L lib/librtld_db__L lib/libxo__L
+cddl/lib/libdtrace__L: lib/libthr__L lib/librtld_db__L lib/libxo__L \
+	secure/lib/libcrypto__L lib/libc++__L
 .endif
 # cddl/lib/libdtrace requires lib/libproc and lib/librtld_db
 _prebuild_libs+=	lib/libprocstat lib/libproc lib/librtld_db

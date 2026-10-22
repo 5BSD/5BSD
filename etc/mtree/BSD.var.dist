@@ -37,6 +37,10 @@
     ..
 /set mode=0755
     db
+        bhyve           tags=package=bhyve
+            migration   mode=0700 tags=package=bhyve
+            ..
+        ..
         backlight       tags=package=rc
         ..
         blued           mode=0700 tags=package=bluetooth

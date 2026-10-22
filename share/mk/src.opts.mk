@@ -202,8 +202,15 @@ __DEFAULT_NO_OPTIONS = \
     CLEAN \
     DETECT_TZ_CHANGES \
     DISK_IMAGE_TOOLS_BOOTSTRAP \
+    DTRACE_BENCHMARKS \
+    DTRACE_DEBUG_TSAN \
+    DTRACE_OPTIMIZED \
     DTRACE_ASAN \
     DTRACE_TESTS \
+    DTRACED_ASAN \
+    DTRACED_DEBUG \
+    DTRACED_TSAN \
+    DTRACED_ROBUST \
     HESIOD \
     LLVM_FULL_DEBUGINFO \
     LLVM_LINK_STATIC_LIBRARIES \
@@ -410,6 +417,12 @@ MK_MITKRB5:=	no
 .if ${MK_DTRACE} == "no"
 MK_CTF:=	no
 MK_DTRACE_TESTS:= no
+.endif
+
+# TODO: Something to make this work with `make makeman` and perhaps cleaner?
+.if !make(showconfig) && ${MK_DTRACE_ASAN} != "no" && ${MK_DTRACE_DEBUG_TSAN} != "no"
+.error ${.newline}ERROR: WITH_DTRACE_ASAN and WITH_DTRACE_DEBUG_TSAN\
+can not be set together.
 .endif
 
 .if ${MK_MAIL} == "no"

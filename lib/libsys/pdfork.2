@@ -46,6 +46,7 @@
 .Sh LIBRARY
 .Lb libc
 .Sh SYNOPSIS
+.In sys/ioctl.h
 .In sys/procdesc.h
 .Ft pid_t
 .Fn pdfork "int *fdp" "int pdflags"
@@ -204,6 +205,26 @@ the follow-on-fork mode enabled.
 .Fn pdgetpid
 queries the process ID (PID) in the process descriptor
 .Fa fd .
+.Pp
+The
+.Dv PDIOC_GET_BIRTH_IDENTITY
+request to
+.Xr ioctl 2
+fills a
+.Vt struct pd_birth_identity
+with the descriptor's PID and its raw monotonic process start time in
+.Va start_sec
+and
+.Va start_usec .
+The
+.Va reserved
+field is zero.
+The request returns
+.Er ESRCH
+when the process is exiting or has exited.
+Applications that persist this identity should also record
+.Va kern.boot_id
+to distinguish separate boots.
 .Pp
 .Fn pdincapmode
 queries whether the process referenced by the process descriptor

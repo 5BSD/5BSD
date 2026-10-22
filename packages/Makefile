@@ -35,7 +35,6 @@ SUBDIR=	\
 	bsdnetwork \
 	bsdnotify \
 	bsdmemory \
-	bsdtrace-provider \
 	mac-abac \
 	devd \
 	devmatch \
@@ -72,7 +71,6 @@ SUBDIR=	\
 	libcapsulert \
 	libservice \
 	libshmring \
-	libtracecmp \
 	libbegemot \
 	libblocksruntime \
 	libbsdstat \
@@ -148,7 +146,7 @@ SUBDIR.${MK_BSNMP}+=		bsnmp
 SUBDIR.${MK_CUSE}+=		libcuse
 SUBDIR.${MK_CXGBETOOL}+=	cxgbe-tools
 SUBDIR.${MK_DMAGENT}+=		dma
-SUBDIR.${MK_DTRACE}+=		bsdinstruments ctf dtrace dwatch
+SUBDIR.${MK_DTRACE}+=		bsdinstruments bsdtrace-provider ctf dtrace dwatch libtracecmp
 SUBDIR.${MK_EE}+=		ee
 SUBDIR.${MK_EFI}+=		efi-tools
 SUBDIR.${MK_EXAMPLES}+=		examples
@@ -200,7 +198,7 @@ SUBDIR.${MK_TESTS}+=		waspnest-tests
 .endif
 SUBDIR.${MK_TESTS}+=		capsule-tests capsulectl-tests
 .if ${MK_DTRACE} != "no"
-SUBDIR.${MK_TESTS}+=		bsdinstruments-tests
+SUBDIR.${MK_TESTS}+=		bsdinstruments-tests bsdtrace-provider-tests libtracecmp-tests
 .endif
 SUBDIR.${MK_TESTS}+=		hwstat-tests
 SUBDIR.${MK_TESTS}+=		switchboard-tests switchboardctl-tests
@@ -212,7 +210,6 @@ SUBDIR.${MK_TESTS}+=		libnetworkcmp-tests libsysctlcmp-tests libtimecmp-tests li
 SUBDIR.${MK_TESTS}+=		libcapreclaim-tests
 SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotify-tests libcache-tests bsdmemory-tests
 SUBDIR.${MK_TESTS}+=		libotelexport-tests
-SUBDIR.${MK_TESTS}+=		libtracecmp-tests
 SUBDIR.${MK_TESTS}+=		libtrustedzfs-tests
 SUBDIR.${MK_TESTS}+=		libcapsulert-tests libservice-tests
 SUBDIR.${MK_TESTS}+=		mac-capability-tests
@@ -222,7 +219,6 @@ SUBDIR.${MK_TESTS}+=		bsdnetwork-tests
 SUBDIR.${MK_TESTS}+=		bsdcrypto-tests bsddevice-tests
 SUBDIR.${MK_TESTS}+=		libdevicecmp-tests
 SUBDIR.${MK_TESTS}+=		bsdlog-tests bsdnotify-tests
-SUBDIR.${MK_TESTS}+=		bsdtrace-provider-tests
 SUBDIR.${MK_TESTS}+=		bsdextension-tests tzfs-tests
 SUBDIR.${MK_TESTS}+=		sysextctl-tests
 SUBDIR.${MK_TESTS}+=		bsdnamespace-tests

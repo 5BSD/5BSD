@@ -62,7 +62,7 @@ __wrap_mac_syscall(const char *policy, int call, void *arg)
 static int
 image_fixture(void)
 {
-	unsigned char bytes[256]={0};
+	_Alignas(Elf64_Ehdr) unsigned char bytes[256]={0};
 	Elf64_Ehdr *eh=(Elf64_Ehdr *)bytes;
 	Elf64_Phdr *ph=(Elf64_Phdr *)(bytes+sizeof(*eh));
 	memcpy(eh->e_ident,ELFMAG,SELFMAG);eh->e_ident[EI_CLASS]=ELFCLASS64;
