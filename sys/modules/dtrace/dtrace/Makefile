@@ -1,3 +1,5 @@
+.include <src.opts.mk>
+
 SYSDIR?=	${SRCTOP}/sys
 
 ARCHDIR=	${MACHINE_CPUARCH}
@@ -24,7 +26,7 @@ CFLAGS+=       -I${SYSDIR}/cddl/contrib/opensolaris/uts/intel \
 .endif
 
 .if ${MACHINE_CPUARCH} == "riscv" || ${MACHINE_CPUARCH} == "aarch64"
-SRCS+=		instr_size.c
+SRCS+=		instr_size.c dtrace_immstack.c
 .endif
 
 CFLAGS+= ${OPENZFS_CFLAGS}

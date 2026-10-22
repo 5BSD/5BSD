@@ -39,7 +39,11 @@
 #include "opt_bpf.h"
 #include "opt_netgraph.h"
 
+#include <sys/types.h>
 #include <sys/param.h>
+#include <sys/lock.h>
+#include <sys/rwlock.h>
+#include <sys/systm.h>
 #include <sys/conf.h>
 #include <sys/fcntl.h>
 #include <sys/jail.h>
@@ -59,6 +63,7 @@
 #include <sys/sysent.h>
 #include <sys/systm.h>
 #include <sys/sdt.h>
+#include <sys/mbufid.h>
 
 #include <sys/file.h>
 #include <sys/poll.h>
@@ -82,6 +87,7 @@
 #include <sys/kernel.h>
 #include <sys/sysctl.h>
 
+#include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
 
 MALLOC_DEFINE(M_BPF, "BPF", "BPF data");
@@ -990,6 +996,7 @@ bpfwrite(struct cdev *dev, struct uio *uio, int ioflag)
 	struct bpf_if *bp;
 	struct bpf_d *d;
 	struct mbuf *m, *mc;
+	mbufid_t *mid;
 	ssize_t len;
 	int error;
 
@@ -1029,6 +1036,21 @@ bpfwrite(struct cdev *dev, struct uio *uio, int ioflag)
 	if (bpf_filter(d->bd_wfilter, mtod(m, u_char *), len, len) == 0) {
 		error = EPERM;
 		goto fail_wref;
+	}
+
+	/* Allocate a provenance tag only when audit or tracing needs it. */
+	if ((SDT_PACKET_ID_PROBES_ENABLED()
+#ifdef AUDIT
+	    || AUDITING_TD(curthread)
+#endif
+	    ) && mbufid_origin_ready()) {
+		mid = m_mbufid_ensure(m, M_WAITOK);
+		if (mid == NULL) {
+			error = ENOBUFS;
+			goto fail_wref;
+		}
+		mbufid_generate(mid);
+		AUDIT_RET_MBUFID(mid);
 	}
 
 	if (d->bd_flags & BPFD_FEEDBACK) {

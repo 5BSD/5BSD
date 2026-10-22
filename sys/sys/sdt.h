@@ -81,6 +81,7 @@
 #include <machine/sdt_machdep.h>
 
 extern volatile bool sdt_probes_enabled;
+extern volatile bool sdt_packet_id_probes_enabled;
 
 #ifndef KDTRACE_HOOKS
 
@@ -91,6 +92,7 @@ extern volatile bool sdt_probes_enabled;
 #define SDT_PROBE_DEFINE(prov, mod, func, name)
 #define SDT_PROBE_DECLARE(prov, mod, func, name)
 #define SDT_PROBES_ENABLED()	0
+#define SDT_PACKET_ID_PROBES_ENABLED()	0
 #define SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
 #define SDT_PROBE_ARGTYPE(prov, mod, func, name, num, type, xtype)
 
@@ -183,6 +185,8 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	extern struct sdt_probe _SDT_PROBE_NAME(prov, mod, func, name)
 
 #define	SDT_PROBES_ENABLED()	__predict_false(sdt_probes_enabled)
+#define	SDT_PACKET_ID_PROBES_ENABLED()	\
+	__predict_false(sdt_packet_id_probes_enabled)
 
 #ifdef _ILP32
 #define	_SDT_ASM_WORD			".long"

@@ -55,3 +55,5 @@ options 	MAC_ABAC		# Attribute-based access control MAC policy
 options 	MAC_VERIEXEC
 options 	MAC_VERIEXEC_SHA256
 device		mac_veriexec_parser
+
+device		virtio_dtrace		# HyperTrace VirtIO guest frontend

@@ -85,7 +85,7 @@ static int cache_domain_bind(struct thread *, int, void *);
 static int cache_domain_get(struct thread *, int, int, void *);
 static int cache_domain_publish(struct thread *, int, void *);
 static int cache_domain_cache(struct thread *, struct file **);
-static struct fileops cache_ops;
+static struct fileops cache_fileops;
 static struct file *selected_cache;
 static struct mtx cache_lock;
 MTX_SYSINIT(library_cache, &cache_lock, "library cache", MTX_DEF);
@@ -1075,7 +1075,7 @@ cache_fill_kinfo(struct file *fp, struct kinfo_file *kif,
 	struct library_cache *cache = fp->f_data;
 	return (fo_fill_kinfo(cache->backing, kif, fdp));
 }
-static struct fileops cache_ops = {
+static struct fileops cache_fileops = {
 	.fo_read = cache_read, .fo_write = invfo_rdwr,
 	.fo_truncate = invfo_truncate, .fo_ioctl = invfo_ioctl,
 	.fo_poll = invfo_poll, .fo_kqfilter = invfo_kqfilter,
@@ -1155,7 +1155,7 @@ cache_prepare(struct thread *td, int issuer_fd, void *data)
 	cache->issuer = issuer->f_data;
 	refcount_acquire(&cache->issuer->refs);
 	backing = dirs[0] = dirs[1] = NULL;
-	finit(fresh, FREAD, DTYPE_DEV, cache, &cache_ops);
+	finit(fresh, FREAD, DTYPE_DEV, cache, &cache_fileops);
 	error = install_file(td, fresh);
 out:
 	if (backing != NULL)
@@ -1181,7 +1181,7 @@ cache_publish(struct thread *td, int issuer_fd, void *data)
 	if (error != 0)
 		return (error);
 	if (request.cache_fd >= 0) {
-		error = get_object(td, request.cache_fd, &cache_ops, CAP_READ, &cache);
+		error = get_object(td, request.cache_fd, &cache_fileops, CAP_READ, &cache);
 		if (error != 0)
 			goto out;
 		if (((struct library_cache *)cache->f_data)->issuer != issuer->f_data) {
@@ -1440,9 +1440,9 @@ cache_domain_create(struct thread *td, int issuer_fd, void *data)
 	error = get_object(td, issuer_fd, &issuer_ops, CAP_WRITE, &issuer);
 	if (error != 0) return (error);
 	if (!domain_issuer_valid(td, issuer->f_data)) { error = EPERM; goto out; }
-	error = get_object(td, request.cache_fd, &cache_ops, CAP_READ, &cache);
+	error = get_object(td, request.cache_fd, &cache_fileops, CAP_READ, &cache);
 	if (error != 0) goto out;
-	error = get_object(td, request.layout_fd, &cache_ops, CAP_READ, &layout);
+	error = get_object(td, request.layout_fd, &cache_fileops, CAP_READ, &layout);
 	if (error != 0) goto out;
 	c = cache->f_data; l = layout->f_data;
 	if (c->issuer != issuer->f_data || l->issuer != c->issuer || cache == layout) {

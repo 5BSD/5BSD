@@ -39,6 +39,7 @@ SDT_PROVIDER_DEFINE(sdt);
  */
 sdt_probe_func_t sdt_probe_func = sdt_probe_stub;
 volatile bool __read_frequently sdt_probes_enabled;
+volatile bool __read_frequently sdt_packet_id_probes_enabled;
 
 /*
  * This is a stub for probe calls in case kernel DTrace support isn't

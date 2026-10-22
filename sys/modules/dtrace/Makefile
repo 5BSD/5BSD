@@ -1,9 +1,11 @@
+.include <src.opts.mk>
 SUBDIR=		dtaudit		\
 		dtmalloc	\
 		dtnfscl		\
 		dtrace		\
 		dtraceall	\
 		dtrace_test	\
+		hypertrace	\
 		fbt		\
 		profile		\
 		prototype	\

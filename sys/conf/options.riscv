@@ -4,3 +4,6 @@ PV_STATS			opt_pmap.h
 
 # SoC Support
 SOC_ALLWINNER_D1		opt_soc.h
+
+# Experimental bhyve checkpoint/restore (not enabled in GENERIC).
+BHYVE_SNAPSHOT		opt_bhyve_snapshot.h

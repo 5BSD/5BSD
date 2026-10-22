@@ -541,6 +541,45 @@ sglist_append_mbuf(struct sglist *sg, struct mbuf *m0)
 	return (0);
 }
 
+int
+sglist_append_mbuf_with_id(struct sglist *sg, struct mbuf *m0, int *mbuf_fail)
+{
+	static mbufid_t empty_id = { 0 };
+	struct sgsave save;
+	struct mbuf *m;
+	mbufid_t *id;
+	int error;
+
+	*mbuf_fail = 0;
+	if (sg->sg_maxseg == 0)
+		return (EINVAL);
+
+	m = m0;
+	while (m && m->m_len <= 0)
+		m = m->m_next;
+
+	if (m == NULL)
+		return (0);
+
+	SGLIST_SAVE(sg, save);
+	/* The packet header belongs to m0 even when its data length is zero. */
+	if (m0->m_flags & M_PKTHDR) {
+		id = m_mbufid(m0);
+		error = sglist_append(sg, id != NULL ? id : &empty_id,
+		    sizeof(mbufid_t));
+		if (error) {
+			SGLIST_RESTORE(sg, save);
+			return (error);
+		}
+	}
+
+	*mbuf_fail = 1;
+	error = sglist_append_mbuf(sg, m);
+	if (error != 0)
+		SGLIST_RESTORE(sg, save);
+	return (error);
+}
+
 /*
  * Append the segments that describe a single mbuf to a scatter/gather
  * list.  If there are insufficient segments, then this fails with

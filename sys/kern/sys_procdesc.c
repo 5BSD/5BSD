@@ -114,6 +114,7 @@ MALLOC_DEFINE(M_PROCDESC, "procdesc", "process descriptors");
 static fo_poll_t	procdesc_poll;
 static fo_kqfilter_t	procdesc_kqfilter;
 static fo_stat_t	procdesc_stat;
+static fo_ioctl_t	procdesc_ioctl;
 static fo_close_t	procdesc_close;
 static fo_fill_kinfo_t	procdesc_fill_kinfo;
 static fo_cmp_t		procdesc_cmp;
@@ -122,7 +123,7 @@ static const struct fileops procdesc_ops = {
 	.fo_read = invfo_rdwr,
 	.fo_write = invfo_rdwr,
 	.fo_truncate = invfo_truncate,
-	.fo_ioctl = invfo_ioctl,
+	.fo_ioctl = procdesc_ioctl,
 	.fo_poll = procdesc_poll,
 	.fo_kqfilter = procdesc_kqfilter,
 	.fo_stat = procdesc_stat,
@@ -317,6 +318,15 @@ procdesc_exit(struct proc *p)
 	PROCDESC_LOCK(pd);
 	KASSERT(pd->pd_fpcount > 0, ("%s: closed procdesc %p", __func__, pd));
 
+	/* proctree_lock excludes fork, reap, and reaper ownership changes.
+	 * Reaper descendants are abandoned only when this process is reaped;
+	 * record the census now, while ownership is still meaningful. */
+	pd->pd_reaper_exit = PD_REAPER_EXITED;
+	if ((p->p_treeflag & P_TREE_REAPER) != 0) {
+		pd->pd_reaper_exit |= PD_REAPER_OWNED;
+		if (LIST_EMPTY(&p->p_reaplist))
+			pd->pd_reaper_exit |= PD_REAPER_EMPTY;
+	}
 	pd->pd_flags |= PDF_EXITED;
 	pd->pd_xexit = p->p_xexit;
 	pd->pd_xsig = p->p_xsig;
@@ -719,6 +729,52 @@ procdesc_stat(struct file *fp, struct stat *sb, struct ucred *active_cred)
 		sb->st_mode = S_IFREG;
 	sx_sunlock(&proctree_lock);
 	return (0);
+}
+
+static int
+procdesc_ioctl(struct file *fp, u_long command, void *data,
+    struct ucred *active_cred __unused, struct thread *td __unused)
+{
+	struct pd_birth_identity *identity;
+	struct procdesc *pd;
+	struct proc *p;
+	int error = 0;
+
+	if (command == PDIOC_GET_REAPER_EXIT) {
+		struct pd_reaper_exit *snapshot = data;
+
+		bzero(snapshot, sizeof(*snapshot));
+		pd = fp->f_data;
+		PROCDESC_LOCK(pd);
+		if ((pd->pd_flags & PDF_EXITED) != 0)
+			snapshot->flags = pd->pd_reaper_exit;
+		PROCDESC_UNLOCK(pd);
+		return (0);
+	}
+	if (command != PDIOC_GET_BIRTH_IDENTITY)
+		return (ENOTTY);
+	identity = data;
+	bzero(identity, sizeof(*identity));
+	pd = fp->f_data;
+	sx_slock(&proctree_lock);
+	p = pd->pd_proc;
+	if (p == NULL)
+		error = ESRCH;
+	else {
+		PROC_LOCK(p);
+		if ((p->p_flag & P_WEXIT) != 0 || p->p_stats == NULL)
+			error = ESRCH;
+		else {
+			identity->pid = p->p_pid;
+			identity->start_sec =
+			    (uint64_t)p->p_stats->p_start.tv_sec;
+			identity->start_usec =
+			    (uint64_t)p->p_stats->p_start.tv_usec;
+		}
+		PROC_UNLOCK(p);
+	}
+	sx_sunlock(&proctree_lock);
+	return (error);
 }
 
 static int

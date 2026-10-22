@@ -34,6 +34,7 @@
 #define	_SYS_MBUF_H_
 
 /* XXX: These includes suck. Sorry! */
+#include <sys/mbufid.h>
 #include <sys/queue.h>
 #ifdef _KERNEL
 #include <sys/systm.h>
@@ -411,6 +412,14 @@ struct mbuf {
 };
 
 #ifdef _KERNEL
+/* Packet provenance is a persistent tag, allocated only when written. */
+mbufid_t *m_mbufid(struct mbuf *m);
+mbufid_t *m_mbufid_ensure(struct mbuf *m, int how);
+mbufid_v2_t *m_mbufid_v2(struct mbuf *m);
+mbufid_v2_t *m_mbufid_v2_ensure(struct mbuf *m, int how);
+uint64_t m_mbufid_v2_local_epoch(struct mbuf *m);
+void m_mbufid_v2_local_epoch_set(struct mbuf *m, uint64_t epoch);
+
 static inline int
 m_epg_pagelen(const struct mbuf *m, int pidx, int pgoff)
 {

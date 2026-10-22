@@ -71,12 +71,19 @@
 #include <sys/filedesc.h>
 #include <sys/kernel.h>
 #include <sys/sysctl.h>
+#include <sys/syscallsubr.h>
 #include <sys/conf.h>
 #include <sys/uio.h>
 #include <sys/malloc.h>
 #include <sys/random.h>
 #include <sys/ctype.h>
 #include <sys/osd.h>
+#include <sys/ddtrace.h>
+#include <sys/hypertrace.h>
+
+#if defined(__amd64__) || defined(__aarch64__) || defined(__riscv)
+#include <machine/vmm_dev.h>
+#endif
 
 #include <net/ethernet.h>
 #include <net/if.h>
@@ -139,11 +146,20 @@ struct tuntap_softc {
 #define	TUN_L2		0x0400
 #define	TUN_VMNET	0x0800
 #define	TUN_TRANSIENT	0x1000
+#define	TUN_PROPAGATE_TAG	0x2000
+#define	TUN_PROPAGATE_TAG_V2	0x4000
 
 #define	TUN_DRIVER_IDENT_MASK	(TUN_L2 | TUN_VMNET)
 #define	TUN_READY		(TUN_OPEN | TUN_INITED)
 
 	pid_t			 tun_pid;	/* owning pid */
+	uint16_t		 tun_bound_vmid;
+	uint64_t		 tun_bound_epoch;
+	unsigned		 tun_tag_io;
+	unsigned		 tun_tx_inflight;
+	bool			 tun_rx_frozen;
+	bool			 tun_rx_freezing;
+	bool			 tun_closing;
 	struct epoch_context	 tun_epoch_ctx;
 	struct ifnet		*tun_ifp;	/* the interface */
 	struct sigio		*tun_sigio;	/* async I/O info */
@@ -1007,10 +1023,85 @@ tunstart_l2(struct ifnet *ifp)
 static int
 tap_transmit(struct ifnet *ifp, struct mbuf *m)
 {
+	struct tuntap_softc *tp = ifp->if_softc;
 	int error;
 
+	TUN_LOCK(tp);
+	if (tp->tun_rx_frozen) {
+		TUN_UNLOCK(tp);
+		m_freem(m);
+		if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
+		return (ENETDOWN);
+	}
+	KASSERT(tp->tun_tx_inflight != UINT_MAX,
+	    ("%s: TAP transmit count overflow", __func__));
+	tp->tun_tx_inflight++;
+	TUN_UNLOCK(tp);
 	BPF_MTAP(ifp, m);
 	IFQ_HANDOFF(ifp, m, error);
+	TUN_LOCK(tp);
+	KASSERT(tp->tun_tx_inflight != 0,
+	    ("%s: TAP transmit count underflow", __func__));
+	if (--tp->tun_tx_inflight == 0)
+		cv_broadcast(&tp->tun_cv);
+	TUN_UNLOCK(tp);
+	return (error);
+}
+
+static int
+tap_v2_rx_freeze(struct tuntap_softc *tp, int enable)
+{
+	int error;
+
+	if (enable != 0 && enable != 1)
+		return (EINVAL);
+	error = 0;
+	TUN_LOCK(tp);
+	if (tp->tun_closing)
+		error = EBUSY;
+	else if (tp->tun_rx_freezing)
+		error = EBUSY;
+	else if (enable != 0 &&
+	    (tp->tun_flags & (TUN_OPEN | TUN_L2 | TUN_PROPAGATE_TAG_V2)) !=
+	    (TUN_OPEN | TUN_L2 | TUN_PROPAGATE_TAG_V2))
+		error = EBUSY;
+	else if (enable != 0 &&
+	    !mbufid_v2_vm_epoch_current(tp->tun_bound_vmid,
+	    tp->tun_bound_epoch))
+		error = ESTALE;
+	else {
+		tp->tun_rx_frozen = enable != 0;
+		if (enable != 0) {
+			tp->tun_rx_freezing = true;
+			while (tp->tun_tx_inflight != 0)
+				cv_wait(&tp->tun_cv, &tp->tun_mtx);
+			tp->tun_rx_freezing = false;
+		}
+	}
+	TUN_UNLOCK(tp);
+	return (error);
+}
+
+static int
+tap_v2_rx_queued(struct tuntap_softc *tp, int *queued)
+{
+	struct ifnet *ifp = TUN2IFP(tp);
+	struct mbuf *mb;
+	int error;
+
+	error = 0;
+	TUN_LOCK(tp);
+	if (!tp->tun_rx_frozen || tp->tun_closing ||
+	    (tp->tun_flags & (TUN_OPEN | TUN_L2 | TUN_PROPAGATE_TAG_V2)) !=
+	    (TUN_OPEN | TUN_L2 | TUN_PROPAGATE_TAG_V2))
+		error = EBUSY;
+	else {
+		IFQ_LOCK(&ifp->if_snd);
+		IFQ_POLL_NOLOCK(&ifp->if_snd, mb);
+		*queued = mb != NULL;
+		IFQ_UNLOCK(&ifp->if_snd);
+	}
+	TUN_UNLOCK(tp);
 	return (error);
 }
 
@@ -1234,6 +1325,11 @@ tundtor(void *data)
 	ifp = TUN2IFP(tp);
 
 	TUN_LOCK(tp);
+	/* Finish already admitted host-to-guest enqueues before draining. */
+	tp->tun_closing = true;
+	tp->tun_rx_frozen = true;
+	while (tp->tun_tx_inflight != 0)
+		cv_wait(&tp->tun_cv, &tp->tun_mtx);
 
 	/*
 	 * Realistically, we can't be obstinate here.  This only means that the
@@ -1288,6 +1384,8 @@ tundtor(void *data)
 	}
 
 out:
+	while (tp->tun_tag_io != 0)
+		cv_wait(&tp->tun_cv, &tp->tun_mtx);
 	if_link_state_change(ifp, LINK_STATE_DOWN);
 	CURVNET_RESTORE();
 
@@ -1295,8 +1393,14 @@ out:
 	selwakeuppri(&tp->tun_rsel, PZERO);
 	KNOTE_LOCKED(&tp->tun_rsel.si_note, 0);
 	TUNDEBUG (ifp, "closed\n");
-	tp->tun_flags &= ~TUN_OPEN;
+	tp->tun_flags &= ~(TUN_OPEN | TUN_PROPAGATE_TAG |
+	    TUN_PROPAGATE_TAG_V2);
 	tp->tun_pid = 0;
+	tp->tun_bound_vmid = 0;
+	tp->tun_bound_epoch = 0;
+	tp->tun_rx_frozen = false;
+	tp->tun_rx_freezing = false;
+	tp->tun_closing = false;
 	tun_vnethdr_set(ifp, 0);
 
 	tun_unbusy_locked(tp);
@@ -1721,6 +1825,7 @@ tunioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 		/* Fall through to the common ioctls if unhandled */
 	}
 
+	error = 0;
 	switch (cmd) {
 	case TUNGIFNAME:
 		ifrp = (struct ifreq *)data;
@@ -1755,6 +1860,89 @@ tunioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 		tunp->baudrate = TUN2IFP(tp)->if_baudrate;
 		TUN_UNLOCK(tp);
 		break;
+	case TAPSTAGGING:
+		TUN_LOCK(tp);
+		if (tp->tun_tag_io != 0 ||
+		    (tp->tun_flags & TUN_PROPAGATE_TAG_V2) != 0)
+			error = EBUSY;
+		else if (*(int *)data)
+			tp->tun_flags |= TUN_PROPAGATE_TAG;
+		else {
+			tp->tun_flags &= ~TUN_PROPAGATE_TAG;
+			tp->tun_bound_vmid = 0;
+			tp->tun_bound_epoch = 0;
+		}
+		TUN_UNLOCK(tp);
+		break;
+	case TAPSTAGGINGV2:
+		TUN_LOCK(tp);
+		if (tp->tun_tag_io != 0 ||
+		    tp->tun_rx_frozen ||
+		    (tp->tun_flags & TUN_PROPAGATE_TAG) != 0 ||
+		    (tp->tun_flags & (TUN_OPEN | TUN_L2)) !=
+		    (TUN_OPEN | TUN_L2))
+			error = EBUSY;
+		else if (*(int *)data) {
+			if (!mbufid_v2_vm_epoch_current(tp->tun_bound_vmid,
+			    tp->tun_bound_epoch))
+				error = ESTALE;
+			else
+				tp->tun_flags |= TUN_PROPAGATE_TAG_V2;
+		} else {
+			tp->tun_flags &= ~TUN_PROPAGATE_TAG_V2;
+			tp->tun_bound_vmid = 0;
+			tp->tun_bound_epoch = 0;
+		}
+		TUN_UNLOCK(tp);
+		break;
+	case TAPSV2RXFREEZE:
+		error = tap_v2_rx_freeze(tp, *(int *)data);
+		break;
+	case TAPGV2RXQUEUED:
+		error = tap_v2_rx_queued(tp, (int *)data);
+		break;
+	case TAPSBINDVM:
+#if defined(__amd64__) || defined(__aarch64__) || defined(__riscv)
+		{
+			struct hypertrace_vm_attestation identity = { 0 };
+			int vmfd = *(int *)data;
+
+			/* kern_ioctl performs the descriptor's Capsicum and MAC
+			 * checks; an integer VMID supplied by userspace has no
+			 * authority. Never call it while holding the TAP mutex. */
+			error = kern_ioctl(td, vmfd, VM_GET_ATTESTATION,
+			    (caddr_t)&identity);
+			if (error != 0)
+				break;
+			if (identity.vmid == 0 ||
+			    identity.vmid >= HYPERTRACE_MAX_VMS ||
+			    identity.epoch == 0 || identity.reserved[0] != 0 ||
+			    identity.reserved[1] != 0 || identity.reserved[2] != 0) {
+				error = EPROTO;
+				break;
+			}
+			TUN_LOCK(tp);
+			if ((tp->tun_flags & (TUN_OPEN | TUN_L2)) !=
+			    (TUN_OPEN | TUN_L2))
+				error = EBUSY;
+			else if ((tp->tun_flags & (TUN_PROPAGATE_TAG |
+			    TUN_PROPAGATE_TAG_V2)) != 0) {
+				/* An active framing mode may only verify its owner.
+				 * Rebinding it would relabel packets already in flight. */
+				if (tp->tun_bound_vmid != identity.vmid ||
+				    tp->tun_bound_epoch != identity.epoch)
+					error = ESTALE;
+			}
+			else {
+				tp->tun_bound_vmid = identity.vmid;
+				tp->tun_bound_epoch = identity.epoch;
+			}
+			TUN_UNLOCK(tp);
+		}
+#else
+		error = EOPNOTSUPP;
+#endif
+		break;
 	case TUNSDEBUG:
 		tundebug = *(int *)data;
 		break;
@@ -1784,17 +1972,19 @@ tunioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 			tp->tun_flags &= ~TUN_ASYNC;
 		TUN_UNLOCK(tp);
 		break;
-	case FIONREAD:
-		if (!IFQ_IS_EMPTY(&TUN2IFP(tp)->if_snd)) {
-			struct mbuf *mb;
-			IFQ_LOCK(&TUN2IFP(tp)->if_snd);
-			IFQ_POLL_NOLOCK(&TUN2IFP(tp)->if_snd, mb);
-			for (*(int *)data = 0; mb != NULL; mb = mb->m_next)
-				*(int *)data += mb->m_len;
-			IFQ_UNLOCK(&TUN2IFP(tp)->if_snd);
-		} else
-			*(int *)data = 0;
+	case FIONREAD: {
+		struct mbuf *mb;
+
+		/* Observe emptiness and the first packet under the same queue
+		 * lock. A checkpoint caller must not see an unlocked empty test
+		 * followed by a queued packet. */
+		IFQ_LOCK(&TUN2IFP(tp)->if_snd);
+		IFQ_POLL_NOLOCK(&TUN2IFP(tp)->if_snd, mb);
+		for (*(int *)data = 0; mb != NULL; mb = mb->m_next)
+			*(int *)data += mb->m_len;
+		IFQ_UNLOCK(&TUN2IFP(tp)->if_snd);
 		break;
+	}
 	case FIOSETOWN:
 		return (fsetown(*(int *)data, &tp->tun_sigio));
 
@@ -1831,7 +2021,7 @@ tunioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 	default:
 		return (ENOTTY);
 	}
-	return (0);
+	return (error);
 }
 
 /*
@@ -1844,7 +2034,12 @@ tunread(struct cdev *dev, struct uio *uio, int flag)
 	struct tuntap_softc *tp = dev->si_drv1;
 	struct ifnet	*ifp = TUN2IFP(tp);
 	struct mbuf	*m;
+	mbufid_t	mid = { 0 };
+	mbufid_v2_t	midv2 = { 0 };
+	const mbufid_t	*packet_id;
+	const mbufid_v2_t *packet_v2;
 	size_t		len;
+	bool		propagate_tag, propagate_v2;
 	int		error = 0;
 
 	TUNDEBUG (ifp, "read\n");
@@ -1875,9 +2070,51 @@ tunread(struct cdev *dev, struct uio *uio, int flag)
 			return (error);
 		}
 	}
+	propagate_tag = (tp->tun_flags & TUN_PROPAGATE_TAG) != 0;
+	propagate_v2 = (tp->tun_flags & TUN_PROPAGATE_TAG_V2) != 0;
+	if (propagate_v2) {
+		if (!mbufid_v2_vm_epoch_current(tp->tun_bound_vmid,
+		    tp->tun_bound_epoch)) {
+			TUN_UNLOCK(tp);
+			m_freem(m);
+			return (ESTALE);
+		}
+		tp->tun_tag_io++;
+	}
 	TUN_UNLOCK(tp);
-
 	len = min(tp->tun_vhdrlen, uio->uio_resid);
+	if ((propagate_tag && uio->uio_resid - len < sizeof(mid)) ||
+	    (propagate_v2 && uio->uio_resid - len < sizeof(midv2))) {
+		error = EMSGSIZE;
+		goto out;
+	}
+	if (propagate_tag) {
+		packet_id = m_mbufid(m);
+		if (mbufid_iscanonical(packet_id))
+			mid = *packet_id;
+		else if (packet_id != NULL && !mbufid_isempty(packet_id)) {
+			error = EINVAL;
+			goto out;
+		} else if (packet_id == NULL && mbufid_origin_ready())
+			mbufid_generate(&mid);
+	}
+	if (propagate_v2) {
+		packet_v2 = m_mbufid_v2(m);
+		if (packet_v2 != NULL) {
+			if (mbufid_v2_isstamped(packet_v2))
+				error = mbufid_v2_verify(packet_v2);
+			else if (!mbufid_v2_isempty(packet_v2))
+				error = EINVAL;
+			if (error != 0)
+				goto out;
+			midv2 = *packet_v2;
+		} else if (m_mbufid(m) == NULL) {
+			error = mbufid_v2_make_host(&midv2);
+			if (error != 0)
+				goto out;
+		}
+	}
+
 	if (len > 0) {
 		struct virtio_net_hdr_mrg_rxbuf vhdr;
 
@@ -1904,9 +2141,28 @@ tunread(struct cdev *dev, struct uio *uio, int flag)
 		    vhdr.hdr.csum_offset);
 		error = uiomove(&vhdr, len, uio);
 	}
+	/* A single provenance identifier prefixes the whole packet. */
+	if (error == 0 && (propagate_tag || propagate_v2)) {
+		if (uio->uio_resid < (ssize_t)(propagate_v2 ? sizeof(midv2) :
+		    sizeof(mid)))
+			error = EMSGSIZE;
+		else if (propagate_v2)
+			error = uiomove(&midv2, sizeof(midv2), uio);
+		else
+			error = uiomove(&mid, sizeof(mid), uio);
+	}
 	if (error == 0)
 		error = m_mbuftouio(uio, m, 0);
+out:
 	m_freem(m);
+	if (propagate_v2) {
+		TUN_LOCK(tp);
+		KASSERT(tp->tun_tag_io != 0,
+		    ("%s: V2 packet reference underflow", __func__));
+		if (--tp->tun_tag_io == 0)
+			cv_broadcast(&tp->tun_cv);
+		TUN_UNLOCK(tp);
+	}
 	return (error);
 }
 
@@ -2057,7 +2313,12 @@ tunwrite(struct cdev *dev, struct uio *uio, int flag)
 	struct mbuf	*m;
 	uint32_t	mru;
 	int		align, vhdrlen, error;
-	bool		l2tun;
+	bool		l2tun, propagate_tag, propagate_v2;
+	u_short		tunflags;
+	uint16_t	bound_vmid;
+	uint64_t	bound_epoch;
+	mbufid_t	mid;
+	mbufid_v2_t	midv2;
 
 	tp = dev->si_drv1;
 	ifp = TUN2IFP(tp);
@@ -2069,24 +2330,43 @@ tunwrite(struct cdev *dev, struct uio *uio, int flag)
 	if (uio->uio_resid == 0)
 		return (0);
 
-	l2tun = (tp->tun_flags & TUN_L2) != 0;
-	mru = l2tun ? TAPMRU : TUNMRU;
+	TUN_LOCK(tp);
+	tunflags = tp->tun_flags;
 	vhdrlen = tp->tun_vhdrlen;
+	bound_vmid = tp->tun_bound_vmid;
+	bound_epoch = tp->tun_bound_epoch;
+	propagate_tag = (tunflags & TUN_PROPAGATE_TAG) != 0;
+	propagate_v2 = (tunflags & TUN_PROPAGATE_TAG_V2) != 0;
+	if (propagate_v2) {
+		if (!mbufid_v2_vm_epoch_current(bound_vmid, bound_epoch)) {
+			TUN_UNLOCK(tp);
+			return (ESTALE);
+		}
+		tp->tun_tag_io++;
+	}
+	TUN_UNLOCK(tp);
+	l2tun = (tunflags & TUN_L2) != 0;
+	mru = l2tun ? TAPMRU : TUNMRU;
 	align = 0;
 	if (l2tun) {
 		align = ETHER_ALIGN;
 		mru += vhdrlen;
-	} else if ((tp->tun_flags & TUN_IFHEAD) != 0)
+	} else if ((tunflags & TUN_IFHEAD) != 0)
 		mru += sizeof(uint32_t);	/* family */
+	if (propagate_tag)
+		mru += sizeof(mid);
+	if (propagate_v2)
+		mru += sizeof(midv2);
 	if (uio->uio_resid < 0 || uio->uio_resid > mru) {
 		TUNDEBUG(ifp, "len=%zd!\n", uio->uio_resid);
-		return (EIO);
+		error = EIO;
+		goto done;
 	}
 
 	if (vhdrlen > 0) {
 		error = uiomove(&vhdr, vhdrlen, uio);
 		if (error != 0)
-			return (error);
+			goto done;
 		TUNDEBUG(ifp, "txvhdr: f %u, gt %u, hl %u, "
 		    "gs %u, cs %u, co %u\n", vhdr.hdr.flags,
 		    vhdr.hdr.gso_type, vhdr.hdr.hdr_len,
@@ -2094,20 +2374,102 @@ tunwrite(struct cdev *dev, struct uio *uio, int flag)
 		    vhdr.hdr.csum_offset);
 	}
 
-	if ((m = m_uiotombuf(uio, M_NOWAIT, 0, align, M_PKTHDR)) == NULL) {
-		if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
-		return (ENOBUFS);
+	/* Match tunread: optional VirtIO header, then provenance, then packet. */
+	if (propagate_tag) {
+		if (uio->uio_resid <= (ssize_t)sizeof(mid)) {
+			error = EINVAL;
+			goto done;
+		}
+		error = uiomove(&mid, sizeof(mid), uio);
+		if (error != 0)
+			goto done;
+		if (!mbufid_isempty(&mid) && !mbufid_iscanonical(&mid)) {
+			error = EINVAL;
+			goto done;
+		}
+	}
+	if (propagate_v2) {
+		if (uio->uio_resid <= (ssize_t)sizeof(midv2)) {
+			error = EINVAL;
+			goto done;
+		}
+		error = uiomove(&midv2, sizeof(midv2), uio);
+		if (error != 0)
+			goto done;
+		if (mbufid_v2_isfresh(&midv2)) {
+			if (midv2.mv2_id.mid_hostid != bound_vmid ||
+			    !mbufid_v2_vm_epoch_current(bound_vmid,
+			    bound_epoch))
+				error = EACCES;
+			else
+				error = mbufid_v2_stamp(&midv2, bound_epoch);
+		} else if (mbufid_v2_isstamped(&midv2))
+			error = mbufid_v2_verify(&midv2);
+		else if (!mbufid_v2_isempty(&midv2))
+			error = EINVAL;
+		if (error != 0)
+			goto done;
 	}
 
+	if ((m = m_uiotombuf(uio, M_NOWAIT, 0, align, M_PKTHDR)) == NULL) {
+		if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+		error = ENOBUFS;
+		goto done;
+	}
+
+	KASSERT(m->m_flags & M_PKTHDR,
+	    ("%s: mbuf is not a packet header", __func__));
 	m->m_pkthdr.rcvif = ifp;
+
+	if (propagate_tag) {
+		mbufid_t *packet_id;
+
+		/* Keep the reserved empty V1 record so a later V2 TAP does
+		 * not mistake an unidentified guest packet for host traffic. */
+		packet_id = m_mbufid_ensure(m, M_NOWAIT);
+		if (packet_id == NULL) {
+			m_freem(m);
+			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+			error = ENOBUFS;
+			goto done;
+		}
+		*packet_id = mid;
+		SDT_PROBE1(ddtrace, , tap, send, &mid);
+	}
+	if (propagate_v2) {
+		mbufid_v2_t *packet_id;
+
+		/* An empty guest record must stay distinguishable from an
+		 * untagged host packet when it later reaches another TAP. */
+		packet_id = m_mbufid_v2_ensure(m, M_NOWAIT);
+		if (packet_id == NULL) {
+			m_freem(m);
+			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+			error = ENOBUFS;
+			goto done;
+		}
+		*packet_id = midv2;
+		SDT_PROBE1(ddtrace, , tap, send, &midv2.mv2_id);
+	}
+
 #ifdef MAC
 	mac_ifnet_create_mbuf(ifp, m);
 #endif
 
 	if (l2tun)
-		return (tunwrite_l2(tp, m, vhdrlen > 0 ? &vhdr : NULL));
-
-	return (tunwrite_l3(tp, m));
+		error = tunwrite_l2(tp, m, vhdrlen > 0 ? &vhdr : NULL);
+	else
+		error = tunwrite_l3(tp, m);
+done:
+	if (propagate_v2) {
+		TUN_LOCK(tp);
+		KASSERT(tp->tun_tag_io != 0,
+		    ("%s: V2 packet reference underflow", __func__));
+		if (--tp->tun_tag_io == 0)
+			cv_broadcast(&tp->tun_cv);
+		TUN_UNLOCK(tp);
+	}
+	return (error);
 }
 
 /*

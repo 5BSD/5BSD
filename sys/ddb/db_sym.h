@@ -67,6 +67,17 @@ typedef int		db_strategy_t;	/* search strategy */
 #define	DB_STGY_PROC	2			/* only procedures */
 
 /*
+ * Multiple symbol tables
+ */
+#ifndef MAXNOSYMTABS
+#define	MAXNOSYMTABS	3	/* mach, ux, emulator */
+#endif
+
+extern int db_nsymtab;
+extern db_symtab_t db_symtabs[MAXNOSYMTABS];
+extern db_symtab_t	*db_last_symtab;
+
+/*
  * Functions exported by the symtable module
  */
 void		db_add_symbol_table(char *, char *, char *, char *);
@@ -92,6 +103,7 @@ bool		db_eqname(const char *, const char *, int);
 void		db_printsym(db_expr_t, db_strategy_t);
 					/* print closest symbol to a value */
 
+bool		db_line_at_pc(c_db_sym_t, char **, int *, db_expr_t);
 bool		db_sym_numargs(c_db_sym_t, int *, char **);
 
 bool		X_db_line_at_pc(db_symtab_t *symtab, c_db_sym_t cursym,

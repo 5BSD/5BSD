@@ -57,6 +57,37 @@ uint8_t dtrace_fuword8_nocheck(void *);
 uint16_t dtrace_fuword16_nocheck(void *);
 uint32_t dtrace_fuword32_nocheck(void *);
 uint64_t dtrace_fuword64_nocheck(void *);
+int dtrace_immstack_format(char *, int, pc_t);
+
+void
+dtrace_getpcimmstack(char *stack, int stack_limit, int size, int aframes,
+    uint32_t *intrpc)
+{
+	struct unwind_state state;
+	int depth;
+
+	if (stack == NULL || stack_limit <= 0 || size <= 0)
+		return;
+	bzero(stack, (size_t)stack_limit * size);
+	depth = 0;
+	if (intrpc != NULL &&
+	    dtrace_immstack_format(stack, size, (pc_t)intrpc) == 0)
+		depth++;
+	aframes++;
+	state.fp = (uintptr_t)__builtin_frame_address(0);
+	state.pc = (uintptr_t)dtrace_getpcimmstack;
+	while (depth < stack_limit && unwind_frame(curthread, &state)) {
+		if (!INKERNEL(state.pc))
+			break;
+		if (aframes > 0)
+			aframes--;
+		else if (dtrace_immstack_format(stack + (size_t)depth * size,
+		    size, state.pc) != 0)
+			break;
+		else
+			depth++;
+	}
+}
 
 void
 dtrace_getpcstack(pc_t *pcstack, int pcstack_limit, int aframes,
@@ -241,6 +272,10 @@ dtrace_getustackdepth(void)
 
 	pc = tf->tf_elr;
 	fp = tf->tf_x[29];
+	if (DTRACE_CPUFLAG_ISSET(CPU_DTRACE_ENTRY)) {
+		pc = tf->tf_lr;
+		n++;
+	}
 	n += dtrace_getustack_common(NULL, 0, pc, fp);
 
 	return (n);
@@ -249,8 +284,58 @@ dtrace_getustackdepth(void)
 void
 dtrace_getufpstack(uint64_t *pcstack, uint64_t *fpstack, int pcstack_limit)
 {
+	proc_t *p = curproc;
+	struct trapframe *tf;
+	uintptr_t pc, fp, oldfp;
+	volatile uint16_t *flags =
+	    (volatile uint16_t *)&cpu_core[curcpu].cpuc_dtrace_flags;
+	int depth = 0;
 
-	printf("IMPLEMENT ME: %s\n", __func__);
+	if ((*flags & CPU_DTRACE_FAULT) != 0 || pcstack_limit <= 0)
+		return;
+	if (p == NULL || (tf = curthread->td_frame) == NULL)
+		goto zero;
+	*pcstack++ = (uint64_t)p->p_pid;
+	if (--pcstack_limit == 0)
+		return;
+	pc = tf->tf_elr;
+	fp = tf->tf_x[29];
+	if (DTRACE_CPUFLAG_ISSET(CPU_DTRACE_ENTRY)) {
+		*pcstack++ = (uint64_t)pc;
+		*fpstack++ = 0;
+		if (--pcstack_limit == 0)
+			return;
+		pc = tf->tf_lr;
+	}
+	while (pc != 0 && pcstack_limit > 0) {
+		if (depth++ >= MAX_USTACK_DEPTH) {
+			*flags |= CPU_DTRACE_BADSTACK;
+			cpu_core[curcpu].cpuc_dtrace_illval = fp;
+			break;
+		}
+		*pcstack++ = (uint64_t)pc;
+		*fpstack++ = (uint64_t)fp;
+		pcstack_limit--;
+		if (fp == 0)
+			break;
+		oldfp = fp;
+		pc = dtrace_fuword64((void *)(fp +
+		    offsetof(struct unwind_state, pc)));
+		fp = dtrace_fuword64((void *)fp);
+		if (fp == oldfp) {
+			*flags |= CPU_DTRACE_BADSTACK;
+			cpu_core[curcpu].cpuc_dtrace_illval = fp;
+			break;
+		}
+		if ((*flags & CPU_DTRACE_FAULT) != 0) {
+			*flags &= ~CPU_DTRACE_FAULT;
+			break;
+		}
+	}
+
+zero:
+	while (pcstack_limit-- > 0)
+		*pcstack++ = 0;
 }
 
 uint64_t
@@ -258,6 +343,10 @@ dtrace_getarg(int arg, int aframes __unused)
 {
 	struct trapframe *tf;
 
+	if (arg < 0) {
+		DTRACE_CPUFLAG_SET(CPU_DTRACE_ILLOP);
+		return (0);
+	}
 	/*
 	 * We only handle invop providers here.
 	 */
@@ -276,7 +365,8 @@ dtrace_getarg(int arg, int aframes __unused)
 			cpu_core[curcpu].cpuc_dtrace_illval = p;
 			return (0);
 		}
-		if (!kstack_contains(curthread, p, sizeof(uint64_t))) {
+		if (p < tf->tf_sp || !kstack_contains(curthread, p,
+		    sizeof(uint64_t))) {
 			DTRACE_CPUFLAG_SET(CPU_DTRACE_BADADDR);
 			cpu_core[curcpu].cpuc_dtrace_illval = p;
 			return (0);

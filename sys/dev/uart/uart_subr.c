@@ -299,6 +299,9 @@ uart_getenv(int devtype, struct uart_devinfo *di, struct uart_class *class)
 	 */
 	if (class == NULL)
 		return (ENXIO);
+	/* Some FDT platforms establish the bus-space tag during probing. */
+	if (di->bas.bst == 0)
+		return (ENXIO);
 
 	/*
 	 * Accept only the well-known baudrates. Any invalid baudrate

@@ -88,11 +88,29 @@
 #include <dev/virtio/network/if_vtnetvar.h>
 #include "virtio_if.h"
 
+CTASSERT(sizeof(mbufid_t) == VIRTIO_NET_5BSD_ID_LEN);
+CTASSERT(sizeof(mbufid_v2_t) == VIRTIO_NET_5BSD_V2_ID_LEN);
+
+static inline unsigned
+vtnet_packet_id_len(const struct vtnet_softc *sc)
+{
+
+	if ((sc->vtnet_flags & VTNET_FLAG_PACKET_ID_V2) != 0)
+		return (VIRTIO_NET_5BSD_V2_ID_LEN);
+	if ((sc->vtnet_flags & VTNET_FLAG_PACKET_ID) != 0)
+		return (VIRTIO_NET_5BSD_ID_LEN);
+	return (0);
+}
+
 #if defined(INET) || defined(INET6)
 #include <machine/in_cksum.h>
 #endif
 
 SDT_PROVIDER_DEFINE(vtnet);
+SDT_PROBE_DEFINE1(vtnet, if_vtnet, rxq, enqueue, "mbufid_t *");
+SDT_PROBE_DEFINE1(vtnet, if_vtnet, , receive, "mbufid_t *");
+SDT_PROBE_DEFINE1(vtnet, if_vtnet, , invalid__packet__id, "mbufid_t *");
+SDT_PROBE_DEFINE1(vtnet, if_vtnet, txq, enqueue, "mbufid_t *");
 SDT_PROBE_DEFINE1(vtnet, , , reinit__start, "struct vtnet_softc *");
 SDT_PROBE_DEFINE2(vtnet, , , reinit__done, "struct vtnet_softc *", "int");
 
@@ -218,6 +236,7 @@ static int	vtnet_ctrl_mq_cmd(struct vtnet_softc *, uint16_t);
 static int	vtnet_ctrl_rss_cmd(struct vtnet_softc *, uint16_t);
 static int	vtnet_ctrl_hash_cmd(struct vtnet_softc *);
 static int	vtnet_ctrl_announce_ack_cmd(struct vtnet_softc *);
+static int	vtnet_ctrl_packet_id_cmd(struct vtnet_softc *, bool);
 static bool	vtnet_announce_pending(struct vtnet_softc *);
 static void	vtnet_announce(void *, int);
 static int	vtnet_ctrl_rx_cmd(struct vtnet_softc *, uint8_t, bool);
@@ -1443,9 +1462,10 @@ vtnet_rx_cluster_size(struct vtnet_softc *sc, int mtu)
 	 * but that would only matter for very small queues.
 	 */
 	if (vtnet_modern(sc)) {
-		MPASS(sc->vtnet_hdr_size == sizeof(struct virtio_net_hdr_v1) ||
-		    sc->vtnet_hdr_size ==
-		    sizeof(struct virtio_net_hdr_hash_report));
+		MPASS(sc->vtnet_hdr_size - vtnet_packet_id_len(sc) ==
+		    ((sc->vtnet_flags & VTNET_FLAG_HASH_REPORT) != 0 ?
+		    sizeof(struct virtio_net_hdr_hash_report) :
+		    sizeof(struct virtio_net_hdr_v1)));
 		framesz = sc->vtnet_hdr_size;
 	} else
 		framesz = sizeof(struct vtnet_rx_header);
@@ -1991,6 +2011,9 @@ vtnet_rxq_enqueue_buf(struct vtnet_rxq *rxq, struct mbuf *m)
 	KASSERT(m->m_next == NULL || sc->vtnet_flags & VTNET_FLAG_LRO_NOMRG,
 	    ("%s: mbuf chain without LRO_NOMRG", __func__));
 	VTNET_RXQ_LOCK_ASSERT(rxq);
+	if ((m->m_flags & M_PKTHDR) != 0)
+		SDT_PROBE1(vtnet, if_vtnet, rxq, enqueue,
+		    m_mbufid(m));
 
 	sglist_reset(sg);
 	header_inlined = vtnet_modern(sc) ||
@@ -2285,13 +2308,33 @@ vtnet_rxq_input(struct vtnet_rxq *rxq, struct mbuf *m,
 	rxq->vtnrx_stats.vrxs_ibytes += m->m_pkthdr.len;
 
 #if defined(INET) || defined(INET6)
-	if (vtnet_software_lro(sc) && if_getcapenable(ifp) & IFCAP_LRO) {
+	/* Coalescing distinct identified packets would erase their lineage. */
+	if (vtnet_software_lro(sc) &&
+	    ((sc->vtnet_flags & VTNET_FLAG_PACKET_ID) == 0 ||
+	    !mbufid_isvalid(m_mbufid(m))) &&
+	    if_getcapenable(ifp) & IFCAP_LRO) {
 		if (vtnet_lro_rx(rxq, m) == 0)
 			return;
 	}
 #endif
 
 	if_input(ifp, m);
+}
+
+static int
+vtnet_rx_packet_id_v2(struct mbuf *m, const mbufid_v2_t *wire)
+{
+	mbufid_v2_t *stored;
+
+	if (!mbufid_v2_isempty(wire) && !mbufid_v2_isstamped(wire))
+		return (EINVAL);
+	/* Keep an explicit empty record across a guest relay. Without a
+	 * sidecar the next sender would invent a new local origin. */
+	stored = m_mbufid_v2_ensure(m, M_NOWAIT);
+	if (stored == NULL)
+		return (ENOBUFS);
+	*stored = *wire;
+	return (0);
 }
 
 static int
@@ -2402,6 +2445,44 @@ vtnet_rxq_eof(struct vtnet_rxq *rxq)
 		}
 
 		kmsan_mark_mbuf(m, KMSAN_STATE_INITED);
+		if ((sc->vtnet_flags & VTNET_FLAG_PACKET_ID_V2) != 0) {
+			mbufid_v2_t mid;
+			int error;
+
+			memcpy(&mid, mtod(m, uint8_t *) +
+			    sc->vtnet_hdr_size - sizeof(mid), sizeof(mid));
+			error = vtnet_rx_packet_id_v2(m, &mid);
+			if (error != 0) {
+				if (error == EINVAL)
+					SDT_PROBE1(vtnet, if_vtnet, ,
+					    invalid__packet__id, &mid.mv2_id);
+				rxq->vtnrx_stats.vrxs_iqdrops++;
+				m_freem(m);
+				continue;
+			}
+		} else if ((sc->vtnet_flags & VTNET_FLAG_PACKET_ID) != 0) {
+			mbufid_t mid, *stored;
+
+			memcpy(&mid, mtod(m, uint8_t *) +
+			    sc->vtnet_hdr_size - sizeof(mid), sizeof(mid));
+			if (!mbufid_isempty(&mid) && !mbufid_iscanonical(&mid)) {
+				SDT_PROBE1(vtnet, if_vtnet, ,
+				    invalid__packet__id, &mid);
+				rxq->vtnrx_stats.vrxs_iqdrops++;
+				m_freem(m);
+				continue;
+			}
+			if (mbufid_iscanonical(&mid)) {
+				stored = m_mbufid_ensure(m, M_NOWAIT);
+				if (stored == NULL) {
+					rxq->vtnrx_stats.vrxs_iqdrops++;
+					m_freem(m);
+					continue;
+				}
+				*stored = mid;
+			}
+		}
+		SDT_PROBE1(vtnet, if_vtnet, , receive, m_mbufid(m));
 
 		/*
 		 * Save an endian swapped version of the header prior to it
@@ -2683,6 +2764,9 @@ vtnet_txq_enqueue_buf(struct vtnet_txq *txq, struct mbuf **m_head,
 	vq = txq->vtntx_vq;
 	sg = txq->vtntx_sg;
 	m = *m_head;
+	if ((m->m_flags & M_PKTHDR) != 0)
+		SDT_PROBE1(vtnet, if_vtnet, txq, enqueue,
+		    m_mbufid(m));
 
 	sglist_reset(sg);
 
@@ -2786,6 +2870,78 @@ fail:
 }
 
 static int
+vtnet_tx_packet_id(struct mbuf *m, int flags, mbufid_t *wire)
+{
+	const mbufid_t *existing;
+	mbufid_t *stored;
+
+	existing = m_mbufid(m);
+	if (mbufid_iscanonical(existing)) {
+		*wire = *existing;
+		return (0);
+	}
+	if (!mbufid_origin_ready()) {
+		/* The guest has not received its node identity.  A future lazy
+		 * sidecar must not be allocated for an ID we cannot export. */
+		if (existing != NULL && !mbufid_isempty(existing)) {
+			stored = m_mbufid_ensure(m, flags);
+			if (stored == NULL)
+				return (ENOBUFS);
+			memset(stored, 0, sizeof(*stored));
+		}
+		memset(wire, 0, sizeof(*wire));
+		return (0);
+	}
+	stored = m_mbufid_ensure(m, flags);
+	if (stored == NULL)
+		return (ENOBUFS);
+	mbufid_generate(stored);
+	/* A concurrent rekey may have removed the node identity after the
+	 * readiness check. Keep the reserved wire value unambiguous. */
+	if (stored->mid_hostid == 0)
+		memset(stored, 0, sizeof(*stored));
+	*wire = *stored;
+	return (0);
+}
+
+static int
+vtnet_tx_packet_id_v2(struct mbuf *m, int flags, mbufid_v2_t *wire)
+{
+	const mbufid_v2_t *existing;
+	mbufid_v2_t *stored;
+	uint64_t local_epoch;
+
+	local_epoch = mbufid_origin_epoch();
+	existing = m_mbufid_v2(m);
+	if (mbufid_v2_isempty(existing)) {
+		*wire = *existing;
+		return (0);
+	}
+	if (local_epoch != 0 && mbufid_origin_ready() &&
+	    mbufid_v2_isstamped(existing) &&
+	    m_mbufid_v2_local_epoch(m) == local_epoch) {
+		*wire = *existing;
+		return (0);
+	}
+	/* A V1 tag or a stamp observed before guest rekey has no current
+	 * authenticated lineage. Give it a fresh local ID. */
+	if (!mbufid_origin_ready()) {
+		memset(wire, 0, sizeof(*wire));
+		return (0);
+	}
+	stored = m_mbufid_v2_ensure(m, flags);
+	if (stored == NULL)
+		return (ENOBUFS);
+	memset(stored, 0, sizeof(*stored));
+	mbufid_generate(&stored->mv2_id);
+	if (stored->mv2_id.mid_hostid == 0)
+		memset(stored, 0, sizeof(*stored));
+	m_mbufid_v2_local_epoch_set(m, local_epoch);
+	*wire = *stored;
+	return (0);
+}
+
+static int
 vtnet_txq_encap(struct vtnet_txq *txq, struct mbuf **m_head, int flags)
 {
 	struct vtnet_tx_header *txhdr;
@@ -2859,6 +3015,25 @@ vtnet_txq_encap(struct vtnet_txq *txq, struct mbuf **m_head, int flags)
 #endif /* defined(INET) || defined(INET6) */
 	}
 
+	if (txq->vtntx_sc->vtnet_flags & VTNET_FLAG_PACKET_ID_V2) {
+		mbufid_v2_t wire;
+
+		error = vtnet_tx_packet_id_v2(m, flags, &wire);
+		if (error != 0)
+			goto fail;
+		memcpy(txhdr->vth_uhdr.wire +
+		    txq->vtntx_sc->vtnet_hdr_size - sizeof(wire),
+		    &wire, sizeof(wire));
+	} else if (txq->vtntx_sc->vtnet_flags & VTNET_FLAG_PACKET_ID) {
+		mbufid_t wire;
+
+		error = vtnet_tx_packet_id(m, flags, &wire);
+		if (error != 0)
+			goto fail;
+		memcpy(txhdr->vth_uhdr.wire +
+		    txq->vtntx_sc->vtnet_hdr_size - VIRTIO_NET_5BSD_ID_LEN,
+		    &wire, VIRTIO_NET_5BSD_ID_LEN);
+	}
 	error = vtnet_txq_enqueue_buf(txq, m_head, txhdr);
 fail:
 	if (error)
@@ -3543,7 +3718,7 @@ vtnet_init_rx_queues(struct vtnet_softc *sc)
 
 	if (sc->vtnet_flags & VTNET_FLAG_LRO_NOMRG) {
 		sc->vtnet_rx_nmbufs = howmany(sizeof(struct vtnet_rx_header) +
-		    VTNET_MAX_RX_SIZE, clustersz);
+		    VTNET_MAX_RX_SIZE + vtnet_packet_id_len(sc), clustersz);
 		KASSERT(sc->vtnet_rx_nmbufs < sc->vtnet_rx_nsegs,
 		    ("%s: too many rx mbufs %d for %d segments", __func__,
 		    sc->vtnet_rx_nmbufs, sc->vtnet_rx_nsegs));
@@ -3687,9 +3862,27 @@ vtnet_reinit(struct vtnet_softc *sc)
 	error = vtnet_virtio_reinit(sc);
 	if (error)
 		goto out;
+	/* A VirtIO reset always returns the host to ordinary framing. */
+	if ((sc->vtnet_flags & VTNET_FLAG_PACKET_ID) != 0) {
+		sc->vtnet_hdr_size -= vtnet_packet_id_len(sc);
+		sc->vtnet_flags &= ~(VTNET_FLAG_PACKET_ID |
+		    VTNET_FLAG_PACKET_ID_V2);
+	}
 
 	vtnet_set_macaddr(sc);
 	vtnet_set_active_vq_pairs(sc);
+	if ((sc->vtnet_flags & (VTNET_FLAG_CTRL_VQ | VTNET_FLAG_MODERN |
+	    VTNET_FLAG_NETMAP)) ==
+	    (VTNET_FLAG_CTRL_VQ | VTNET_FLAG_MODERN) &&
+	    (error = vtnet_ctrl_packet_id_cmd(sc, true)) == 0) {
+		sc->vtnet_hdr_size += VIRTIO_NET_5BSD_V2_ID_LEN;
+		sc->vtnet_flags |= VTNET_FLAG_PACKET_ID |
+		    VTNET_FLAG_PACKET_ID_V2;
+	} else if (error == EOPNOTSUPP &&
+	    vtnet_ctrl_packet_id_cmd(sc, false) == 0) {
+		sc->vtnet_hdr_size += VIRTIO_NET_5BSD_ID_LEN;
+		sc->vtnet_flags |= VTNET_FLAG_PACKET_ID;
+	}
 
 	if (sc->vtnet_flags & VTNET_FLAG_CTRL_VQ)
 		vtnet_init_rx_filters(sc);
@@ -3729,9 +3922,11 @@ vtnet_init_locked(struct vtnet_softc *sc, int init_mode)
 	switch (init_mode) {
 	case VTNET_INIT_NETMAP_ENTER:
 		nm_set_native_flags(NA(ifp));
+		sc->vtnet_flags |= VTNET_FLAG_NETMAP;
 		break;
 	case VTNET_INIT_NETMAP_EXIT:
 		nm_clear_native_flags(NA(ifp));
+		sc->vtnet_flags &= ~VTNET_FLAG_NETMAP;
 		break;
 	}
 #endif /* DEV_NETMAP */
@@ -3825,16 +4020,23 @@ vtnet_exec_ctrl_cmd(struct vtnet_softc *sc, uint8_t *ack, struct sglist *sg,
 	MPASS(sc->vtnet_flags & VTNET_FLAG_CTRL_VQ);
 	VTNET_CORE_LOCK_ASSERT(sc);
 
-	if (!virtqueue_empty(vq))
+	if (!virtqueue_empty(vq)) {
+		error = EBUSY;
 		goto error_unload;
+	}
 
 	/*
 	 * Poll for the response, but the command is likely completed before
 	 * returning from the notify.
 	 */
-	if (virtqueue_enqueue(vq, (void *)ack, sg, readable, writable) == 0)  {
-		virtqueue_notify(vq);
-		virtqueue_poll(vq, NULL);
+	error = virtqueue_enqueue(vq, (void *)ack, sg, readable, writable);
+	if (error != 0)
+		goto error_unload;
+	virtqueue_notify(vq);
+	if (virtqueue_poll(vq, NULL) != ack) {
+		/* A reset or broken queue did not complete this command. */
+		error = EIO;
+		goto error_unload;
 	}
 
 	bus_dmamap_sync(sc->vtnet_ack_dmat, ack_dmap, BUS_DMASYNC_POSTREAD);
@@ -3844,6 +4046,51 @@ error_unload:
 error_destroy:
 	bus_dmamap_destroy(sc->vtnet_ack_dmat, ack_dmap);
 error_out:
+	return (error);
+}
+
+static int
+vtnet_ctrl_packet_id_cmd(struct vtnet_softc *sc, bool v2)
+{
+	struct sglist_seg segs[2];
+	struct sglist sg;
+	bus_dmamap_t map;
+	bus_addr_t paddr;
+	struct {
+		struct virtio_net_ctrl_hdr hdr;
+		uint8_t magic[VIRTIO_NET_5BSD_MAGIC_LEN];
+		uint8_t id_len;
+	} __packed command;
+	uint8_t ack;
+	int error;
+
+	CTASSERT(sizeof(command) == VIRTIO_NET_5BSD_CMD_LEN);
+	command.hdr.class = VIRTIO_NET_CTRL_5BSD;
+	command.hdr.cmd = v2 ? VIRTIO_NET_CTRL_5BSD_PACKET_ID_V2 :
+	    VIRTIO_NET_CTRL_5BSD_PACKET_ID;
+	memcpy(command.magic, v2 ? VIRTIO_NET_5BSD_V2_MAGIC :
+	    VIRTIO_NET_5BSD_MAGIC, sizeof(command.magic));
+	command.id_len = v2 ? VIRTIO_NET_5BSD_V2_ID_LEN :
+	    VIRTIO_NET_5BSD_ID_LEN;
+	ack = VIRTIO_NET_ERR;
+
+	error = bus_dmamap_create(sc->vtnet_hdr_dmat, 0, &map);
+	if (error != 0)
+		return (error);
+	error = bus_dmamap_load(sc->vtnet_hdr_dmat, map, &command,
+	    sizeof(command), vtnet_load_callback, &paddr, BUS_DMA_NOWAIT);
+	if (error != 0)
+		goto destroy;
+	bus_dmamap_sync(sc->vtnet_hdr_dmat, map, BUS_DMASYNC_PREWRITE);
+	sglist_init(&sg, nitems(segs), segs);
+	error = sglist_append_phys(&sg, paddr, sizeof(command));
+	if (error == 0)
+		error = vtnet_exec_ctrl_cmd(sc, &ack, &sg, sg.sg_nseg, 1);
+	if (error == 0 && ack != VIRTIO_NET_OK)
+		error = EOPNOTSUPP;
+	bus_dmamap_unload(sc->vtnet_hdr_dmat, map);
+destroy:
+	bus_dmamap_destroy(sc->vtnet_hdr_dmat, map);
 	return (error);
 }
 

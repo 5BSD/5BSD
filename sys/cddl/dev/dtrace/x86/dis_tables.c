@@ -3596,29 +3596,6 @@ dtrace_get_operand(dis86_t *x, uint_t mode, uint_t r_m, int wbit, int opindex)
 }
 
 /*
- * Similar, but for 2 operands plus two immediates.
- */
-#define	FOUROPERAND(x, mode, reg, r_m, rex_prefix, wbit, w2, immsize) { \
-		dtrace_get_modrm(x, &mode, &reg, &r_m);			\
-		dtrace_rex_adjust(rex_prefix, mode, &reg, &r_m);	\
-		dtrace_get_operand(x, mode, r_m, wbit, 2);		\
-		dtrace_get_operand(x, REG_ONLY, reg, w2, 3);		\
-		dtrace_imm_opnd(x, wbit, immsize, 1);			\
-		dtrace_imm_opnd(x, wbit, immsize, 0);			\
-}
-
-/*
- * 1 operands plus two immediates.
- */
-#define	ONEOPERAND_TWOIMM(x, mode, reg, r_m, rex_prefix, wbit, immsize) { \
-		dtrace_get_modrm(x, &mode, &reg, &r_m);			\
-		dtrace_rex_adjust(rex_prefix, mode, &reg, &r_m);	\
-		dtrace_get_operand(x, mode, r_m, wbit, 2);		\
-		dtrace_imm_opnd(x, wbit, immsize, 1);			\
-		dtrace_imm_opnd(x, wbit, immsize, 0);			\
-}
-
-/*
  * Dissassemble a single x86 or amd64 instruction.
  *
  * Mode determines the default operating mode (SIZE16, SIZE32 or SIZE64)
@@ -3949,6 +3926,14 @@ dtrace_disx86(dis86_t *x, uint_t cpu_mode)
 			}
 			break;
 		default:
+			/*
+			 * No implied prefix: only the 0F map has entries here.
+			 * Using it for the 0F38/0F3A maps (or the reserved map
+			 * 0) decoded unrelated instructions, with the wrong
+			 * length when the real one takes an immediate.
+			 */
+			if (vex_m != VEX_m_0F)
+				goto error;
 			dp = &dis_opEVEX0F[(opcode1 << 4) | opcode2];
 			break;
 		}
@@ -4343,6 +4328,29 @@ not_avx512:
 		goto error;
 	if (dp->it_indirect != TERM)
 		goto error;
+
+	/*
+	 * 0F 78 and 0F 79 are VMREAD/VMWRITE, which take no 66 or F2 prefix;
+	 * with one they are AMD SSE4a EXTRQ/INSERTQ (whose immediate forms
+	 * take two imm8).  Their entries are in the SIMD prefix tables, but
+	 * the VMREAD/VMWRITE addressing modes are not SIMD modes, so route
+	 * them there explicitly.
+	 */
+	if (vex_prefix == 0 && (rep_prefix == 0xf2 ||
+	    (rep_prefix == 0 && opnd_size_prefix != 0)) &&
+	    (dp == &dis_op0F[7][8] || dp == &dis_op0F[7][9])) {
+		off = ((uintptr_t)dp - (uintptr_t)dis_op0F) /
+		    sizeof (instable_t);
+		if (rep_prefix == 0xf2) {
+			dp = (instable_t *)&dis_opSIMDrepnz[off];
+			rep_prefix = 0;
+		} else {
+			dp = (instable_t *)&dis_opSIMDdata16[off];
+			opnd_size_prefix = 0;
+			if (opnd_size == SIZE16)
+				opnd_size = SIZE32;
+		}
+	}
 
 	/*
 	 * Deal with MMX/SSE opcodes which are changed by prefixes. Note, we do
@@ -5448,13 +5456,47 @@ xmmprm:
 		break;
 
 	case XMMX2I:
-		FOUROPERAND(x, mode, reg, r_m, rex_prefix, XMM_OPND, XMM_OPND,
-		    1);
+		/*
+		 * INSERTQ (F2 0F 78 /r ib ib) takes register operands.  With a
+		 * memory operand the encoding is VMREAD (F2 ignored), which
+		 * has no immediates.
+		 */
+		dtrace_get_modrm(x, &mode, &reg, &r_m);
+		dtrace_rex_adjust(rex_prefix, mode, &reg, &r_m);
+		if (mode != REG_ONLY) {
+#ifdef DIS_TEXT
+			(void) strlcpy(x->d86_mnem, "vmread", OPLEN);
+#endif
+			dtrace_get_operand(x, mode, r_m, LONG_OPND, 1);
+			dtrace_get_operand(x, REG_ONLY, reg, LONG_OPND, 0);
+			break;
+		}
+		dtrace_get_operand(x, mode, r_m, XMM_OPND, 2);
+		dtrace_get_operand(x, REG_ONLY, reg, XMM_OPND, 3);
+		dtrace_imm_opnd(x, XMM_OPND, 1, 1);
+		dtrace_imm_opnd(x, XMM_OPND, 1, 0);
 		NOMEM;
 		break;
 
 	case XMM2I:
-		ONEOPERAND_TWOIMM(x, mode, reg, r_m, rex_prefix, XMM_OPND, 1);
+		/*
+		 * EXTRQ (66 0F 78 /0 ib ib) takes a register operand.  With a
+		 * memory operand the encoding is VMREAD (66 ignored), which
+		 * has no immediates.
+		 */
+		dtrace_get_modrm(x, &mode, &reg, &r_m);
+		dtrace_rex_adjust(rex_prefix, mode, &reg, &r_m);
+		if (mode != REG_ONLY) {
+#ifdef DIS_TEXT
+			(void) strlcpy(x->d86_mnem, "vmread", OPLEN);
+#endif
+			dtrace_get_operand(x, mode, r_m, LONG_OPND, 1);
+			dtrace_get_operand(x, REG_ONLY, reg, LONG_OPND, 0);
+			break;
+		}
+		dtrace_get_operand(x, mode, r_m, XMM_OPND, 2);
+		dtrace_imm_opnd(x, XMM_OPND, 1, 1);
+		dtrace_imm_opnd(x, XMM_OPND, 1, 0);
 		NOMEM;
 		break;
 

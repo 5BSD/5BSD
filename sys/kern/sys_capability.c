@@ -242,6 +242,8 @@ sys_cap_getmode(struct thread *td, struct cap_getmode_args *uap)
 #ifdef CAPABILITIES
 
 FEATURE(security_capabilities, "Capsicum Capabilities");
+FEATURE(capability_transfer_limits,
+    "5BSD descriptor transfer and fork/exec capability limits");
 
 MALLOC_DECLARE(M_FILECAPS);
 

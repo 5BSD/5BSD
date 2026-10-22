@@ -60,6 +60,15 @@
 #define	TAPSTRANSIENT		TUNSTRANSIENT
 #define	TAPGTRANSIENT		TUNGTRANSIENT
 
+#define	TAPSTAGGING	       	TUNSTAGGING
+/* Bind a tagged TAP endpoint to a VMM attestation descriptor. */
+#define	TAPSBINDVM		_IOW('t', 105, int)
+/* Separate authenticated framing; requires TAPSBINDVM first. */
+#define	TAPSTAGGINGV2		_IOW('t', 116, int)
+/* Freeze host-to-guest enqueue across a V2 checkpoint cut. */
+#define	TAPSV2RXFREEZE		_IOW('t', 117, int)
+/* Boolean queue occupancy, valid only under the V2 checkpoint freeze. */
+#define	TAPGV2RXQUEUED		_IOR('t', 118, int)
 /* VMware ioctl's */
 #define VMIO_SIOCSIFFLAGS	_IOWINT('V', 0)
 #define VMIO_SIOCSKEEP		_IO('V', 1)

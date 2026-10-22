@@ -1565,6 +1565,7 @@ dev/dcons/dcons_os.c		optional dcons
 dev/dialog/da9063/da9063_if.m	optional da9063_pmic
 dev/dialog/da9063/da9063_iic.c	optional da9063_pmic iicbus fdt
 dev/dialog/da9063/da9063_rtc.c	optional da9063_rtc fdt
+dev/dttransport/dttransport.c	standard
 dev/dwc/if_dwc.c		optional dwc fdt
 dev/dwc/if_dwc_if.m		optional dwc fdt
 dev/dwc/dwc1000_core.c		optional dwc fdt
@@ -3470,6 +3471,7 @@ dev/virtio/block/virtio_blk.c		optional	virtio_blk
 dev/virtio/console/virtio_console.c	optional	virtio_console
 dev/virtio/crypto/virtio_crypto.c	optional	virtio_crypto
 dev/virtio/fs/virtio_fs.c		optional	virtio_fs fusefs
+dev/virtio/dtrace/virtio_dtrace.c	optional	virtio_dtrace
 dev/virtio/gpu/virtio_gpu.c		optional	virtio_gpu
 dev/virtio/iommu/virtio_iommu.c		optional	virtio_iommu
 dev/virtio/mem/virtio_mem.c		optional	virtio_mem
@@ -3919,6 +3921,8 @@ kern/subr_module.c		standard
 kern/subr_msan.c		optional kmsan \
 	compile-with "${NOSAN_C:N-fstack-protector*}"
 kern/subr_msgbuf.c		standard
+kern/subr_msgid.c		standard
+kern/subr_mbufid.c		standard
 kern/subr_param.c		standard
 kern/subr_pcpu.c		standard
 kern/subr_pctrie.c		standard
@@ -5198,6 +5202,7 @@ security/audit/bsm_errno.c	optional audit
 security/audit/bsm_fcntl.c	optional audit
 security/audit/bsm_socket_type.c	optional audit
 security/audit/bsm_token.c	optional audit
+security/audit/audit_ret.c	optional audit
 security/mac/mac_audit.c	optional mac audit
 security/mac/mac_cred.c		optional mac
 security/mac/mac_kdb.c		optional mac

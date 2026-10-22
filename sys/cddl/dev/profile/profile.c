@@ -253,6 +253,7 @@ profile_probe(profile_probe_t *prof, hrtime_t late)
 	} else if (TD_IS_IDLETHREAD(td))
 		pc = (uintfptr_t)&cpu_idle;
 
+	curthread->t_hypertrace_vmhdl = NULL;
 	dtrace_probe(prof->prof_id, pc, upc, late, 0, 0);
 	td->t_dtrace_trapframe = NULL;
 }
@@ -291,7 +292,8 @@ profile_create(hrtime_t interval, char *name, int kind)
 	if (interval < profile_interval_min)
 		return;
 
-	if (dtrace_probe_lookup(profile_id, NULL, NULL, name) != 0)
+	if (dtrace_probe_lookup(HYPERTRACE_HOSTID,
+	    profile_id, NULL, NULL, name) != 0)
 		return;
 
 	atomic_add_32(&profile_total, 1);

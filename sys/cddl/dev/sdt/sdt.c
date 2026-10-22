@@ -82,6 +82,7 @@ static void	sdt_kld_unload_try(void *, struct linker_file *, int *);
 static MALLOC_DEFINE(M_SDT, "SDT", "DTrace SDT providers");
 
 static int sdt_probes_enabled_count;
+static int sdt_packet_id_probes_enabled_count;
 static int lockstat_enabled_count;
 
 static dtrace_pattr_t sdt_attr = {
@@ -192,7 +193,8 @@ sdt_create_probe(struct sdt_probe *probe)
 	}
 	*to = '\0';
 
-	if (dtrace_probe_lookup(prov->id, mod, func, name) != DTRACE_IDNONE)
+	if (dtrace_probe_lookup(
+	    HYPERTRACE_HOSTID, prov->id, mod, func, name) != DTRACE_IDNONE)
 		return;
 
 	aframes = 1; /* unwind past sdt_probe() */
@@ -277,6 +279,32 @@ sdt_probe_update(struct sdt_probe *probe, bool enable)
 }
 
 static void
+sdt_packet_id_probe_enabled(struct sdt_probe *probe, bool enable)
+{
+	const char *provider = probe->prov->name;
+	bool packet_id_probe;
+
+	packet_id_probe =
+	    (strcmp(provider, "ddtrace") == 0 &&
+	    strcmp(probe->func, "pkttag") == 0 &&
+	    (strcmp(probe->name, "gen") == 0 ||
+	    strcmp(probe->name, "recv") == 0)) ||
+	    (strcmp(provider, "udp") == 0 &&
+	    strcmp(probe->name, "send") == 0) ||
+	    (strcmp(provider, "vtnet") == 0 &&
+	    strcmp(probe->mod, "if_vtnet") == 0 &&
+	    strcmp(probe->func, "txq") == 0 &&
+	    strcmp(probe->name, "enqueue") == 0);
+	if (!packet_id_probe)
+		return;
+	if (enable) {
+		if (++sdt_packet_id_probes_enabled_count == 1)
+			sdt_packet_id_probes_enabled = true;
+	} else if (--sdt_packet_id_probes_enabled_count == 0)
+		sdt_packet_id_probes_enabled = false;
+}
+
+static void
 sdt_enable(void *arg __unused, dtrace_id_t id, void *parg)
 {
 	struct sdt_probe *probe;
@@ -293,6 +321,7 @@ sdt_enable(void *arg __unused, dtrace_id_t id, void *parg)
 	sdt_probes_enabled_count++;
 	if (sdt_probes_enabled_count == 1)
 		sdt_probes_enabled = true;
+	sdt_packet_id_probe_enabled(probe, true);
 
 	sdt_probe_update(probe, true);
 }
@@ -306,6 +335,7 @@ sdt_disable(void *arg __unused, dtrace_id_t id, void *parg)
 	KASSERT(probe->sdtp_lf->nenabled > 0, ("no probes enabled"));
 
 	sdt_probe_update(probe, false);
+	sdt_packet_id_probe_enabled(probe, false);
 
 	sdt_probes_enabled_count--;
 	if (sdt_probes_enabled_count == 0)

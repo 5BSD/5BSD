@@ -21,6 +21,26 @@
  */
 /*
  * Copyright 2005 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright (c) 2021, Domagoj Stolfa. All rights reserved.
+ *
+ * This software were developed by BAE Systems, the University of Cambridge
+ * Computer Laboratory, and Memorial University under DARPA/AFRL contract
+ * FA8650-15-C-7558 ("CADETS"), as part of the DARPA Transparent Computing
+ * (TC) research program.
+ *
+ * This software was developed by SRI International and the University of
+ * Cambridge Computer Laboratory (Department of Computer Science and
+ * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+ * DARPA SSITH research programme.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from Arm Limited.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from the Kenneth Hayter Scholarship Fund.
+
  * Use is subject to license terms.
  */
 #include <sys/cdefs.h>
@@ -32,6 +52,10 @@
 #include <sys/msan.h>
 #include <sys/stack.h>
 #include <sys/pcpu.h>
+#include <sys/dtrace_link_elf.h>
+#include <sys/link_elf.h>
+#include <ddb/ddb.h>
+#include <ddb/db_sym.h>
 
 #include <cddl/dev/dtrace/dtrace_cddl.h>
 
@@ -46,6 +70,8 @@
 
 #include "regset.h"
 
+#include <dtrace_db.c>
+
 uint8_t dtrace_fuword8_nocheck(void *);
 uint16_t dtrace_fuword16_nocheck(void *);
 uint32_t dtrace_fuword32_nocheck(void *);
@@ -53,9 +79,158 @@ uint64_t dtrace_fuword64_nocheck(void *);
 
 int	dtrace_ustackdepth_max = 2048;
 
-void
-dtrace_getpcstack(pc_t *pcstack, int pcstack_limit, int aframes,
-    uint32_t *intrpc)
+typedef int (*stack_entry_fn_t)(void *, int, int *, pc_t);
+
+static db_expr_t dtrace_db_maxoff = 0x10000; /* taken from db_sym.c */
+
+static int
+dtrace_populate_stack_str(void *_stack, int size, int *depth, pc_t pc)
+{
+	const char *symname = NULL, *unk, *c_copy;
+	char *stack = _stack, *c, *stack_start, *stack_end;
+	c_db_sym_t sym;
+	db_expr_t off = 0;
+	int i;
+	uintptr_t addr;
+	int needs_caching;
+	volatile uint16_t *flags;
+	int failed = 0;
+
+	stack_start = stack + *depth;
+	stack_end = stack + *depth + size - 8; /* -8 to fit a uintptr_t */
+	flags = (volatile uint16_t *)&cpu_core[curcpu].cpuc_dtrace_flags;
+
+	/*
+	 * The record buffer is aligned by the caller (ALIGN() of the record
+	 * offset, or the ALIGN()ed per-CPU immstack buffer), and depth only
+	 * advances by size after a slot whose (aligned) stack_end passed the
+	 * check below, so the slot start is aligned too.
+	 */
+	ASSERT(((uintptr_t)stack & ALIGNBYTES) == 0);
+	ASSERT(((uintptr_t)stack_start & ALIGNBYTES) == 0);
+	if (((uintptr_t)stack_end & ALIGNBYTES) != 0) {
+		*flags |= CPU_DTRACE_BADSTACK;
+		return (-1);
+	}
+
+	if (stack_end <= stack_start)
+		return (-1);
+
+	if (pc == 0) {
+		*stack_start = 0;
+		*depth += size;
+		return (0);
+	}
+
+	if (dtrace_immstack_caching_enabled == 0) {
+		needs_caching = 0;
+		goto lookup;
+	}
+
+	symname = dtrace_immstack_get_cached(pc, &off);
+	needs_caching = 1;
+
+	/*
+	 * FIXME: This duplicates a lot of the stuff...
+	 */
+lookup:
+	/* off is 0 unless the cache returned a name (dtrace_immstack_get_cached()
+	 * sets it to 0 on a miss). */
+	ASSERT(symname != NULL || off == 0);
+	if (symname != NULL) {
+		needs_caching = 0;
+		goto finalize;
+	}
+
+	*flags |= CPU_DTRACE_NOFAULT;
+	sym = dtrace_search_symbol(pc, DB_STGY_PROC, &off);
+	if (*flags & CPU_DTRACE_FAULT) {
+		*flags &= ~CPU_DTRACE_NOFAULT;
+		*flags &= ~CPU_DTRACE_FAULT;
+		*flags |= CPU_DTRACE_BADSTACK;
+		return (-1);
+	}
+
+	if (sym == C_DB_SYM_NULL) {
+		*flags &= ~CPU_DTRACE_NOFAULT;
+		goto finalize;
+	}
+
+	dtrace_symbol_values(sym, &symname, NULL);
+	if (*flags & CPU_DTRACE_FAULT) {
+		*flags &= ~CPU_DTRACE_FAULT;
+		*flags |= CPU_DTRACE_BADSTACK;
+		return (-1);
+	}
+
+finalize:
+	if (symname == NULL || off >= (db_addr_t)dtrace_db_maxoff ||
+	    failed != 0) {
+		/* pc == 0 returned above, and stack_end > stack_start leaves
+		 * more than 8 bytes, so "??" always fits. */
+		ASSERT(pc != 0 && size > (int)sizeof("??"));
+		unk = "??";
+		for (c = stack_start, i = 0; i < sizeof("??") - 1; c++, i++)
+			*c = unk[i];
+		*c = 0;
+		needs_caching = 0;
+		goto end;
+	}
+
+	*flags |= CPU_DTRACE_NOFAULT;
+	for (c = stack_start, c_copy = symname; c < stack_end && *c_copy;
+	     c++, c_copy++) {
+		*c = *c_copy;
+		if (*flags & CPU_DTRACE_FAULT) {
+			*flags &= ~CPU_DTRACE_FAULT;
+			*flags &= ~CPU_DTRACE_NOFAULT;
+			failed = 1;
+			goto finalize;
+		}
+	}
+	*flags &= ~CPU_DTRACE_NOFAULT;
+
+	if (c == stack_end)
+		*(c - 1) = 0;
+	else
+		*c = 0;
+end:
+	/*
+	 * Ensure we are 8-byte aligned.
+	 */
+	c++;
+	addr = (uintptr_t)ALIGN(c);
+	if ((addr + sizeof(db_expr_t)) > (uintptr_t)stack_end) {
+		*flags &= ~CPU_DTRACE_FAULT;
+		*flags |= CPU_DTRACE_BADSTACK;
+		return (-1);
+	}
+
+	ASSERT((addr & 7) == 0);
+	ASSERT(addr >= (uintptr_t)c);
+	*((db_expr_t *)addr) = off; /* store the offset after our string */
+
+	if (needs_caching != 0) {
+		/* cache the stack entry */
+		dtrace_immstack_cache(pc, symname, off);
+	}
+	*depth += size;
+	return (0);
+}
+
+static int
+dtrace_populate_stack_addr(void *_pcstack, int size __unused, int *depth,
+    pc_t pc)
+{
+	pc_t *pcstack = _pcstack;
+
+	pcstack[(*depth)++] = pc;
+	return (0);
+}
+
+static void
+dtrace_getpcstack_generic(void *stack, int stack_limit, int size, int aframes,
+    uint32_t *intrpc, stack_entry_fn_t populate_stack)
 {
 	struct thread *td;
 	int depth = 0;
@@ -63,19 +238,23 @@ dtrace_getpcstack(pc_t *pcstack, int pcstack_limit, int aframes,
 	struct amd64_frame *frame;
 	vm_offset_t callpc;
 	pc_t caller = (pc_t) solaris_cpu[curcpu].cpu_dtrace_caller;
+	c_db_sym_t cursym;
+	const char *name;
+	db_expr_t off;
+	int err;
 
-	if (intrpc != 0)
-		pcstack[depth++] = (pc_t) intrpc;
+	if (intrpc != 0) {
+		err = populate_stack(stack, size, &depth, (pc_t)intrpc);
+		if (err)
+			return;
+	}
 
 	aframes++;
-
 	__asm __volatile("movq %%rbp,%0" : "=r" (rbp));
-
 	frame = (struct amd64_frame *)rbp;
 	td = curthread;
-	while (depth < pcstack_limit) {
+	while (depth < stack_limit * size) {
 		kmsan_mark(frame, sizeof(*frame), KMSAN_STATE_INITED);
-
 		if (!kstack_contains(curthread, (vm_offset_t)frame,
 		    sizeof(*frame)))
 			break;
@@ -88,10 +267,15 @@ dtrace_getpcstack(pc_t *pcstack, int pcstack_limit, int aframes,
 		if (aframes > 0) {
 			aframes--;
 			if ((aframes == 0) && (caller != 0)) {
-				pcstack[depth++] = caller;
+				err = populate_stack(stack, size, &depth,
+				    caller);
+				if (err)
+					return;
 			}
 		} else {
-			pcstack[depth++] = callpc;
+			err = populate_stack(stack, size, &depth, callpc);
+			if (err)
+				return;
 		}
 
 		if ((vm_offset_t)frame->f_frame <= (vm_offset_t)frame)
@@ -99,9 +283,34 @@ dtrace_getpcstack(pc_t *pcstack, int pcstack_limit, int aframes,
 		frame = frame->f_frame;
 	}
 
-	for (; depth < pcstack_limit; depth++) {
-		pcstack[depth] = 0;
+	/*
+	 * Fill the remaining slots as empty frames.  A slot the formatter
+	 * refuses does not advance depth, so stop there instead of retrying
+	 * it forever (probe context).
+	 */
+	while (depth < stack_limit * size) {
+		if (populate_stack(stack, size, &depth, 0) != 0)
+			break;
 	}
+}
+
+void
+dtrace_getpcimmstack(char *stack, int stack_limit, int size, int aframes,
+    uint32_t *intrpc)
+{
+
+	dtrace_getpcstack_generic(stack, stack_limit, size, aframes, intrpc,
+	    dtrace_populate_stack_str);
+	kmsan_check(stack, (size_t)stack_limit * size, "dtrace");
+}
+
+void
+dtrace_getpcstack(pc_t *pcstack, int pcstack_limit, int aframes,
+    uint32_t *intrpc)
+{
+
+	dtrace_getpcstack_generic(pcstack, pcstack_limit, 1, aframes, intrpc,
+	    dtrace_populate_stack_addr);
 	kmsan_check(pcstack, pcstack_limit * sizeof(*pcstack), "dtrace");
 }
 

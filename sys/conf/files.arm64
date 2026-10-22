@@ -202,6 +202,11 @@ dev/vmm/vmm_dirty_log_request.c		optional vmm
 dev/vmm/vmm_mem.c				optional vmm
 dev/vmm/vmm_stat.c				optional vmm
 dev/vmm/vmm_vm.c				optional vmm
+dev/vmm/vmm_snapshot_buf.c		optional vmm bhyve_snapshot
+dev/vmm/vmm_snapshot_envelope.c		optional vmm bhyve_snapshot
+dev/vmm/vmm_snapshot_state.c		optional vmm bhyve_snapshot
+arm64/vmm/vmm_snapshot_arm64.c		optional vmm bhyve_snapshot
+arm64/vmm/vmm_snapshot_machdep.c		optional vmm bhyve_snapshot
 
 crypto/armv8/armv8_crypto.c			optional armv8crypto
 armv8_crypto_wrap.o				optional armv8crypto	\
@@ -248,6 +253,7 @@ dev/ahci/ahci_generic.c				optional ahci
 
 cddl/dev/dtrace/aarch64/dtrace_asm.S		optional dtrace compile-with "${DTRACE_S}"
 cddl/dev/dtrace/aarch64/dtrace_isa.c		optional dtrace compile-with "${DTRACE_C}"
+cddl/dev/dtrace/dtrace_immstack.c		optional dtrace compile-with "${DTRACE_C}"
 cddl/dev/dtrace/aarch64/dtrace_subr.c		optional dtrace compile-with "${DTRACE_C}"
 cddl/dev/fbt/aarch64/fbt_isa.c			optional dtrace_fbt | dtraceall compile-with "${FBT_C}"
 

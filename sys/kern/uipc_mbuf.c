@@ -37,10 +37,14 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
+#include <sys/hypertrace.h>
 #include <sys/limits.h>
+#include <sys/libkern.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
+#include <sys/msgid.h>
+#include <sys/random.h>
 #include <sys/sysctl.h>
 #include <sys/domain.h>
 #include <sys/protosw.h>
@@ -51,6 +55,8 @@
 #include <vm/vm.h>
 #include <vm/vm_pageout.h>
 #include <vm/vm_page.h>
+
+#include <crypto/siphash/siphash.h>
 
 SDT_PROBE_DEFINE5_XLATE(sdt, , , m__init,
     "struct mbuf *", "mbufinfo_t *",
@@ -217,6 +223,277 @@ CTASSERT(sizeof(struct m_ext) == 176);
 CTASSERT(sizeof(struct m_ext) == 172);
 #endif
 #endif
+
+/* Packet provenance uses a persistent tag so ordinary mbufs stay at MSIZE. */
+#define	MTAG_MBUFID_COOKIE	0x68747263U /* "htrc" */
+#define	MTAG_MBUFID_TYPE	(1 | MTAG_PERSISTENT)
+
+/* The local incarnation is sidecar metadata, never part of the 48-byte
+ * VirtIO/TAP record. It lets a restored guest retire stamps copied in
+ * persistent tags before its node identity was rekeyed. */
+struct mbufid_v2_tag {
+	mbufid_v2_t wire;
+	uint64_t local_epoch;
+};
+CTASSERT(offsetof(struct mbufid_v2_tag, wire) == 0);
+
+static uint8_t mbufid_v2_key[SIPHASH_KEY_LENGTH];
+static uint64_t mbufid_v2_host_epoch;
+/* VMIDs are below HYPERTRACE_MAX_VMS; host IDs occupy a disjoint space. */
+static uint64_t mbufid_v2_hostid;
+static bool mbufid_v2_key_ready;
+static volatile uint64_t mbufid_v2_vm_epochs[HYPERTRACE_MAX_VMS];
+
+/* VMM incarnation publication is serialized by HyperTrace's VM allocator.
+ * TAP can validate the cached binding with one acquire load per V2 packet,
+ * without taking DTrace configuration locks or issuing an ioctl. */
+void
+mbufid_v2_vm_epoch_publish(uint16_t vmid, uint64_t epoch)
+{
+
+	KASSERT(vmid != 0 && vmid < HYPERTRACE_MAX_VMS && epoch != 0,
+	    ("%s: invalid VM identity", __func__));
+	KASSERT(atomic_load_acq_64(&mbufid_v2_vm_epochs[vmid]) == 0,
+	    ("%s: VM identity already published", __func__));
+	atomic_store_rel_64(&mbufid_v2_vm_epochs[vmid], epoch);
+}
+
+void
+mbufid_v2_vm_epoch_revoke(uint16_t vmid, uint64_t epoch)
+{
+
+	KASSERT(vmid != 0 && vmid < HYPERTRACE_MAX_VMS && epoch != 0,
+	    ("%s: invalid VM identity", __func__));
+	KASSERT(atomic_load_acq_64(&mbufid_v2_vm_epochs[vmid]) == epoch,
+	    ("%s: stale VM identity", __func__));
+	atomic_store_rel_64(&mbufid_v2_vm_epochs[vmid], 0);
+}
+
+int
+mbufid_v2_vm_epoch_current(uint16_t vmid, uint64_t epoch)
+{
+
+	return (vmid != 0 && vmid < HYPERTRACE_MAX_VMS && epoch != 0 &&
+	    atomic_load_acq_64(&mbufid_v2_vm_epochs[vmid]) == epoch);
+}
+
+static void
+mbufid_v2_key_init(void *arg __unused)
+{
+
+	arc4random_buf(mbufid_v2_key, sizeof(mbufid_v2_key));
+	do {
+		arc4random_buf(&mbufid_v2_host_epoch,
+		    sizeof(mbufid_v2_host_epoch));
+	} while (mbufid_v2_host_epoch == 0);
+	arc4random_buf(&mbufid_v2_hostid, sizeof(mbufid_v2_hostid));
+	mbufid_v2_hostid |= 1ULL << 63;
+	mbufid_v2_key_ready = true;
+}
+SYSINIT(mbufid_v2_key, SI_SUB_MBUF, SI_ORDER_ANY, mbufid_v2_key_init,
+    NULL);
+
+/* The first 40 wire bytes carry the V1 ID and source epoch. The private
+ * per-boot key never leaves the kernel; a distinct domain prefix prevents
+ * this MAC from being confused with another SipHash user. */
+static uint64_t
+mbufid_v2_mac(const mbufid_v2_t *id)
+{
+	SIPHASH_CTX ctx;
+	uint64_t stamp;
+
+	SipHash24_Init(&ctx);
+	SipHash_SetKey(&ctx, mbufid_v2_key);
+	SipHash_Update(&ctx, "5BSDPID2", 8);
+	SipHash_Update(&ctx, id, offsetof(mbufid_v2_t, mv2_stamp));
+	stamp = SipHash_End(&ctx);
+	return (stamp == 0 ? 1 : stamp);
+}
+
+int
+mbufid_v2_stamp(mbufid_v2_t *id, uint64_t epoch)
+{
+
+	if (id == NULL || epoch == 0 || !mbufid_v2_isfresh(id))
+		return (EINVAL);
+	if (!mbufid_v2_key_ready)
+		return (EAGAIN);
+	id->mv2_epoch = htole64(epoch);
+	id->mv2_stamp = htole64(mbufid_v2_mac(id));
+	return (0);
+}
+
+int
+mbufid_v2_verify(const mbufid_v2_t *id)
+{
+	uint64_t expected;
+	uint64_t epoch;
+
+	if (id == NULL || !mbufid_v2_isstamped(id))
+		return (EINVAL);
+	if (!mbufid_v2_key_ready)
+		return (EAGAIN);
+	expected = htole64(mbufid_v2_mac(id));
+	if (timingsafe_bcmp(&expected, &id->mv2_stamp,
+	    sizeof(expected)) != 0)
+		return (EACCES);
+	epoch = le64toh(id->mv2_epoch);
+	if (id->mv2_id.mid_hostid == mbufid_v2_hostid)
+		return (epoch == mbufid_v2_host_epoch ? 0 : ESTALE);
+	if (id->mv2_id.mid_hostid >= HYPERTRACE_MAX_VMS ||
+	    !mbufid_v2_vm_epoch_current(id->mv2_id.mid_hostid, epoch))
+		return (ESTALE);
+	return (0);
+}
+
+int
+mbufid_v2_make_host(mbufid_v2_t *id)
+{
+
+	if (id == NULL)
+		return (EINVAL);
+	if (!mbufid_v2_key_ready)
+		return (EAGAIN);
+	bzero(id, sizeof(*id));
+	id->mv2_id.mid_hostid = mbufid_v2_hostid;
+	msgid_generate(&id->mv2_id.mid_msgid);
+	id->mv2_id.mid_magic = MBUFID_MAGIC_NUMBER;
+	return (mbufid_v2_stamp(id, mbufid_v2_host_epoch));
+}
+
+SDT_PROBE_DEFINE2(sdt, mbufid, ensure, reuse,
+    "struct mbuf *", "mbufid_t *");
+SDT_PROBE_DEFINE2(sdt, mbufid, ensure, alloc,
+    "struct mbuf *", "mbufid_t *");
+SDT_PROBE_DEFINE2(sdt, mbufid, ensure, alloc__failure,
+    "struct mbuf *", "int");
+SDT_PROBE_DEFINE2(sdt, mbufid, v2, reuse,
+    "struct mbuf *", "mbufid_v2_t *");
+SDT_PROBE_DEFINE2(sdt, mbufid, v2, alloc,
+    "struct mbuf *", "mbufid_v2_t *");
+SDT_PROBE_DEFINE2(sdt, mbufid, v2, alloc__failure,
+    "struct mbuf *", "int");
+SDT_PROBE_DEFINE2(sdt, mbufid, v2, upgrade,
+    "struct mbuf *", "mbufid_v2_t *");
+
+mbufid_t *
+m_mbufid(struct mbuf *m)
+{
+	struct m_tag *tag;
+
+	if (m == NULL || (m->m_flags & M_PKTHDR) == 0)
+		return (NULL);
+	tag = m_tag_locate(m, MTAG_MBUFID_COOKIE, MTAG_MBUFID_TYPE, NULL);
+	if (tag == NULL || (tag->m_tag_len != sizeof(mbufid_t) &&
+	    tag->m_tag_len != sizeof(struct mbufid_v2_tag)))
+		return (NULL);
+	return ((mbufid_t *)(tag + 1));
+}
+
+mbufid_t *
+m_mbufid_ensure(struct mbuf *m, int how)
+{
+	struct m_tag *tag;
+	mbufid_t *id;
+
+	if (m == NULL || (m->m_flags & M_PKTHDR) == 0)
+		return (NULL);
+	tag = m_tag_locate(m, MTAG_MBUFID_COOKIE, MTAG_MBUFID_TYPE, NULL);
+	if (tag != NULL) {
+		if (tag->m_tag_len != sizeof(mbufid_t))
+			return (NULL);
+		id = (mbufid_t *)(tag + 1);
+		SDT_PROBE2(sdt, mbufid, ensure, reuse, m, id);
+		return (id);
+	}
+	tag = m_tag_alloc(MTAG_MBUFID_COOKIE, MTAG_MBUFID_TYPE,
+	    sizeof(mbufid_t), how);
+	if (tag == NULL) {
+		SDT_PROBE2(sdt, mbufid, ensure, alloc__failure, m, how);
+		return (NULL);
+	}
+	id = (mbufid_t *)(tag + 1);
+	bzero(id, sizeof(*id));
+	m_tag_prepend(m, tag);
+	SDT_PROBE2(sdt, mbufid, ensure, alloc, m, id);
+	return (id);
+}
+
+mbufid_v2_t *
+m_mbufid_v2(struct mbuf *m)
+{
+	struct m_tag *tag;
+
+	if (m == NULL || (m->m_flags & M_PKTHDR) == 0)
+		return (NULL);
+	tag = m_tag_locate(m, MTAG_MBUFID_COOKIE, MTAG_MBUFID_TYPE, NULL);
+	if (tag == NULL || tag->m_tag_len != sizeof(struct mbufid_v2_tag))
+		return (NULL);
+	return ((mbufid_v2_t *)(tag + 1));
+}
+
+uint64_t
+m_mbufid_v2_local_epoch(struct mbuf *m)
+{
+	struct m_tag *tag;
+
+	if (m == NULL || (m->m_flags & M_PKTHDR) == 0)
+		return (0);
+	tag = m_tag_locate(m, MTAG_MBUFID_COOKIE, MTAG_MBUFID_TYPE, NULL);
+	if (tag == NULL || tag->m_tag_len != sizeof(struct mbufid_v2_tag))
+		return (0);
+	return (((struct mbufid_v2_tag *)(tag + 1))->local_epoch);
+}
+
+void
+m_mbufid_v2_local_epoch_set(struct mbuf *m, uint64_t epoch)
+{
+	struct m_tag *tag;
+
+	if (m == NULL || (m->m_flags & M_PKTHDR) == 0)
+		return;
+	tag = m_tag_locate(m, MTAG_MBUFID_COOKIE, MTAG_MBUFID_TYPE, NULL);
+	if (tag != NULL && tag->m_tag_len == sizeof(struct mbufid_v2_tag))
+		((struct mbufid_v2_tag *)(tag + 1))->local_epoch = epoch;
+}
+
+mbufid_v2_t *
+m_mbufid_v2_ensure(struct mbuf *m, int how)
+{
+	struct m_tag *old, *tag;
+	mbufid_v2_t *id;
+
+	if (m == NULL || (m->m_flags & M_PKTHDR) == 0)
+		return (NULL);
+	old = m_tag_locate(m, MTAG_MBUFID_COOKIE, MTAG_MBUFID_TYPE, NULL);
+	if (old != NULL &&
+	    old->m_tag_len == sizeof(struct mbufid_v2_tag)) {
+		id = (mbufid_v2_t *)(old + 1);
+		SDT_PROBE2(sdt, mbufid, v2, reuse, m, id);
+		return (id);
+	}
+	if (old != NULL && old->m_tag_len != sizeof(mbufid_t))
+		return (NULL);
+	tag = m_tag_alloc(MTAG_MBUFID_COOKIE, MTAG_MBUFID_TYPE,
+	    sizeof(struct mbufid_v2_tag), how);
+	if (tag == NULL) {
+		SDT_PROBE2(sdt, mbufid, v2, alloc__failure, m, how);
+		return (NULL);
+	}
+	id = (mbufid_v2_t *)(tag + 1);
+	bzero(id, sizeof(struct mbufid_v2_tag));
+	((struct mbufid_v2_tag *)(tag + 1))->local_epoch =
+	    mbufid_origin_epoch();
+	if (old != NULL) {
+		id->mv2_id = *(mbufid_t *)(old + 1);
+		m_tag_delete(m, old);
+	}
+	m_tag_prepend(m, tag);
+	SDT_PROBE2(sdt, mbufid, v2, alloc, m, id);
+	if (old != NULL)
+		SDT_PROBE2(sdt, mbufid, v2, upgrade, m, id);
+	return (id);
+}
 
 /*
  * Assert that the queue(3) macros produce code of the same size as an old

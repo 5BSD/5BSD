@@ -89,6 +89,8 @@ int	sglist_append_boundary(struct sglist *sg, void *buf, size_t len);
 int	sglist_append_bio(struct sglist *sg, struct bio *bp);
 int	sglist_append_bio_boundary(struct sglist *sg, struct bio *bp);
 int	sglist_append_mbuf(struct sglist *sg, struct mbuf *m0);
+int	sglist_append_mbuf_with_id(struct sglist *sg, struct mbuf *m0,
+	    int *mbuf_fail);
 int	sglist_append_mbuf_epg(struct sglist *sg, struct mbuf *m0, size_t off,
 	    size_t len);
 int	sglist_append_phys(struct sglist *sg, vm_paddr_t paddr,

@@ -154,9 +154,10 @@ kinst_emulate(struct trapframe *frame, const struct kinst_probe *kp)
 			break;
 		case 0b0010111:	/* auipc */
 			imm = instr & 0xfffff000;
-			rd = frame->tf_sepc +
-			    (imm & 0x0000000080000000 ?
-			    imm | 0xffffffff80000000 : imm);
+			if (rd_index != 0)
+				rd = frame->tf_sepc +
+				    (imm & 0x0000000080000000 ?
+				    imm | 0xffffffff80000000 : imm);
 			frame->tf_sepc += INSN_SIZE;
 			break;
 		}
@@ -217,7 +218,7 @@ kinst_emulate(struct trapframe *frame, const struct kinst_probe *kp)
 			if (funct == 0b100 && rs1_index != 0) {
 				/* c.jr/c.jalr */
 				prevpc = frame->tf_sepc;
-				frame->tf_sepc = rs1;
+				frame->tf_sepc = rs1 & ~1UL;
 				if (((instr >> 12) & 0x01) != 0)
 					frame->tf_ra = prevpc + INSN_C_SIZE;
 			}
@@ -445,8 +446,8 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 	struct kinst_probe *kp;
 	dtrace_kinst_probedesc_t *pd;
 	const char *func;
-	kinst_patchval_t *insn, v;
-	uint8_t *instr, *limit;
+	kinst_patchval_t v;
+	uint8_t *instr, *limit, *scan;
 	int instrsize, n, off;
 	bool lrsc_block, store_found;
 
@@ -460,14 +461,29 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 
 	instr = (uint8_t *)(symval->value);
 	limit = (uint8_t *)(symval->value + symval->size);
-	if (instr >= limit)
+	/* Every RISC-V instruction occupies at least one 16-bit parcel. */
+	if (instr >= limit || symval->size < INSN_C_SIZE ||
+	    (symval->size & (INSN_C_SIZE - 1)) != 0)
 		return (0);
 
-	/* Check for the usual function prologue. */
+	/*
+	 * Scan on instruction boundaries, including 16-bit compressed
+	 * instructions. A final compressed instruction must not read beyond the
+	 * function symbol into an unrelated byte or unmapped page.
+	 */
 	store_found = false;
-	for (insn = (kinst_patchval_t *)instr;
-	    insn < (kinst_patchval_t *)limit; insn++) {
-		if (dtrace_instr_sdsp(&insn) || dtrace_instr_c_sdsp(&insn)) {
+	for (scan = instr; scan < limit; scan += instrsize) {
+		instrsize = dtrace_instr_size(scan);
+		if (limit - scan < instrsize)
+			return (0);
+		v = 0;
+		memcpy(&v, scan, instrsize);
+		if ((instrsize == INSN_SIZE &&
+		    dtrace_match_opcode(v, MATCH_SD | RS2_RA | RS1_SP,
+		    MASK_SD | RS2_MASK | RS1_MASK)) ||
+		    (instrsize == INSN_C_SIZE &&
+		    dtrace_match_opcode(v, MATCH_C_SDSP | RS2_C_RA,
+		    MASK_C_SDSP | RS2_C_MASK))) {
 			store_found = true;
 			break;
 		}
@@ -479,14 +495,17 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 	lrsc_block = false;
 	while (instr < limit) {
 		instrsize = dtrace_instr_size(instr);
+		if (limit - instr < instrsize)
+			return (0);
 		off = (int)(instr - (uint8_t *)symval->value);
 
 		/*
-		 * Avoid undefined behavior (i.e simply casting `*instr` to
-		 * `kinst_patchval_t`) in case the pointer is unaligned.
-		 * memcpy() can safely operate on unaligned pointers.
+		 * A compressed instruction owns only two bytes. Zero the upper
+		 * half so classification and saved patch state cannot consume the
+		 * next instruction.
 		 */
-		memcpy(&v, instr, sizeof(kinst_patchval_t));
+		v = 0;
+		memcpy(&v, instr, instrsize);
 
 		/* Skip SYSTEM instructions. */
 		if (kinst_instr_system(v))

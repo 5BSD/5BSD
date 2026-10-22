@@ -39,6 +39,8 @@
 #define VIRTIO_ID_RPMSG		7
 #define VIRTIO_ID_SCSI		8
 #define VIRTIO_ID_9P		9
+/* Experimental device type; 10 is reserved for mac80211 WLAN. */
+#define	VIRTIO_ID_DTRACE	65535
 #define VIRTIO_ID_RPROC_SERIAL	11
 #define VIRTIO_ID_CAIF		12
 #define VIRTIO_ID_GPU		16

@@ -110,6 +110,7 @@ device		virtio_pci		# VirtIO PCI device
 device		vtnet			# VirtIO Ethernet device
 device		virtio_blk		# VirtIO Block device
 device		virtio_mmio		# VirtIO MMIO bus
+device		virtio_dtrace		# HyperTrace VirtIO guest frontend
 
 # ATA/SCSI peripherals
 device		pass			# Passthrough device (direct ATA/SCSI access)

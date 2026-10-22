@@ -22,12 +22,21 @@
 # SUCH DAMAGE.
 #
 
+.include <src.opts.mk>
+
 SUBDIR=	virtio pci network block balloon scsi random console gpu input p9fs \
 	rtc vsock sound fs mem iommu crypto
 
 # The current PMEM frontend consumes the amd64-only nvdimm provider.
 .if ${MACHINE_CPUARCH} == "amd64"
 SUBDIR+=	pmem
+.endif
+
+# HyperTrace's VirtIO frontend is supported by the VMM and dttransport on
+# these architectures; it is not tied to the amd64-only PMEM frontend.
+.if ${MK_DTRACE} != "no" && (${MACHINE_CPUARCH} == "amd64" || \
+    ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "riscv")
+SUBDIR+=	dtrace
 .endif
 
 .include <bsd.subdir.mk>

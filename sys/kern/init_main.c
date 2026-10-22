@@ -83,7 +83,15 @@
 #include <sys/vmmeter.h>
 #include <sys/vnode.h>
 
+#include <sys/ddtrace.h>
+
 #include <machine/cpu.h>
+#ifdef __amd64__
+#include <machine/cputypes.h>
+#include <machine/bhyve_hypercall.h>
+
+#include <x86/x86_var.h>
+#endif
 
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
@@ -97,6 +105,12 @@
 
 #include <ddb/ddb.h>
 #include <ddb/db_sym.h>
+
+SDT_PROVIDER_DEFINE(ddtrace);
+
+SDT_PROBE_DEFINE1(ddtrace, , pkttag, gen, "mbufid_t *");
+SDT_PROBE_DEFINE1(ddtrace, , pkttag, recv, "mbufid_t *");
+SDT_PROBE_DEFINE1(ddtrace, , tap, send, "mbufid_t *");
 
 void mi_startup(void);				/* Should be elsewhere */
 
@@ -162,6 +176,14 @@ FEATURE(invariants, "Kernel compiled with INVARIANTS, may affect performance");
 SET_DECLARE(sysinit_set, struct sysinit);
 
 /*
+ * This ensure that the hypercall symbol is defined so that it can be
+ * used to patch all the hypercall instructions in the kernel
+ */
+SET_DECLARE(hypercall, uint32_t);
+
+/*
+ * Merge a new sysinit set into the current set, reallocating it if
+ * necessary.  This can only be called after malloc is running.
  * The sysinit lists.  Items are moved to sysinit_done_list when done.
  */
 static STAILQ_HEAD(sysinitlist, sysinit) sysinit_list;
@@ -259,6 +281,9 @@ void
 mi_startup(void)
 {
 	struct sysinit *sip;
+#ifdef __amd64__
+	uint32_t **hypercall_instr = NULL;
+#endif
 	int last;
 #if defined(VERBOSE_SYSINIT)
 	int verbose;
@@ -269,6 +294,17 @@ mi_startup(void)
 	if (boothowto & RB_VERBOSE)
 		bootverbose++;
 
+#ifdef __amd64__
+	if (cpu_vendor_id == CPU_VENDOR_AMD && vm_guest == VM_GUEST_BHYVE) {
+		if (hypercall_instr == NULL) {
+			SET_FOREACH(hypercall_instr, hypercall) {
+				if (hypercall_instr == NULL)
+					break;
+				(**hypercall_instr) ^= (0x18 << 16);
+			}
+		}
+	}
+#endif
 	/* Construct and sort sysinit list. */
 	sysinit_mklist(&sysinit_list, SET_BEGIN(sysinit_set), SET_LIMIT(sysinit_set));
 

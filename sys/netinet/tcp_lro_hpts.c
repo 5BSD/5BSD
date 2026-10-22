@@ -312,13 +312,13 @@ do_bpf_strip_and_compress(struct tcpcb *tp, struct lro_ctrl *lc,
 			IP_PROBE(receive, NULL, NULL, le->outer.ip4, lc->ifp,
 			    le->outer.ip4, NULL);
 			UDP_PROBE(receive, NULL, NULL, le->outer.ip4, NULL,
-			    le->outer.udp);
+			    le->outer.udp, NULL);
 			break;
 		case LRO_TYPE_IPV6_UDP:
 			IP_PROBE(receive, NULL, NULL, le->outer.ip6, lc->ifp,
 			    NULL, le->outer.ip6);
 			UDP_PROBE(receive, NULL, NULL, le->outer.ip6, NULL,
-			    le->outer.udp);
+			    le->outer.udp, NULL);
 			break;
 		default:
 			__assert_unreachable();
@@ -335,13 +335,13 @@ do_bpf_strip_and_compress(struct tcpcb *tp, struct lro_ctrl *lc,
 			IP_PROBE(receive, NULL, NULL, le->outer.ip4, lc->ifp,
 			    le->outer.ip4, NULL);
 			UDP_PROBE(receive, NULL, NULL, le->outer.ip4, NULL,
-			    le->outer.udp);
+			    le->outer.udp, NULL);
 			break;
 		case LRO_TYPE_IPV6_UDP:
 			IP_PROBE(receive, NULL, NULL, le->outer.ip6, lc->ifp,
 			    NULL, le->outer.ip6);
 			UDP_PROBE(receive, NULL, NULL, le->outer.ip6, NULL,
-			    le->outer.udp);
+			    le->outer.udp, NULL);
 			break;
 		default:
 			__assert_unreachable();

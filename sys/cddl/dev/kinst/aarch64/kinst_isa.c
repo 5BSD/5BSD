@@ -42,11 +42,30 @@ kinst_instr_type(kinst_patchval_t instr)
 	return (KINST_INSTR_COMMON);
 }
 
+static uint64_t
+kinst_reg_read(const struct trapframe *frame, uint8_t reg)
+{
+	if (reg == 30)
+		return (frame->tf_lr);
+	if (reg == 31)
+		return (0);
+	return (frame->tf_x[reg]);
+}
+
+static void
+kinst_reg_write(struct trapframe *frame, uint8_t reg, uint64_t value)
+{
+	if (reg == 30)
+		frame->tf_lr = value;
+	else if (reg != 31)
+		frame->tf_x[reg] = value;
+}
+
 static void
 kinst_emulate(struct trapframe *frame, const struct kinst_probe *kp)
 {
 	kinst_patchval_t instr = kp->kp_savedval;
-	uint64_t imm;
+	uint64_t imm, value;
 	uint8_t cond, reg, bitpos;
 	bool res;
 
@@ -59,13 +78,14 @@ kinst_emulate(struct trapframe *frame, const struct kinst_probe *kp)
 			/* adr */
 			if (imm & 0x0000000000100000)
 				imm |= 0xfffffffffff00000;
-			frame->tf_x[reg] = frame->tf_elr + imm;
+			kinst_reg_write(frame, reg, frame->tf_elr + imm);
 		} else {
 			/* adrp */
 			imm <<= 12;
 			if (imm & 0x0000000100000000)
 				imm |= 0xffffffff00000000;
-			frame->tf_x[reg] = (frame->tf_elr & ~0xfff) + imm;
+			kinst_reg_write(frame, reg,
+			    (frame->tf_elr & ~0xfff) + imm);
 		}
 		frame->tf_elr += INSN_SIZE;
 		break;
@@ -127,13 +147,16 @@ kinst_emulate(struct trapframe *frame, const struct kinst_probe *kp)
 	case KINST_INSTR_CBZ:
 		cond = (instr >> 24) & 0x1;
 		reg = instr & 0x1f;
+		value = kinst_reg_read(frame, reg);
+		if ((instr & 0x80000000U) == 0)
+			value &= 0xffffffffU;
 		imm = (instr >> 5) & 0x0007ffff;
 		if (imm & 0x0000000000040000)
 			imm |= 0xfffffffffffc0000;
-		if (cond == 1 && frame->tf_x[reg] != 0)
+		if (cond == 1 && value != 0)
 			/* cbnz */
 			frame->tf_elr += imm << 2;
-		else if (cond == 0 && frame->tf_x[reg] == 0)
+		else if (cond == 0 && value == 0)
 			/* cbz */
 			frame->tf_elr += imm << 2;
 		else
@@ -147,10 +170,12 @@ kinst_emulate(struct trapframe *frame, const struct kinst_probe *kp)
 		imm = (instr >> 5) & 0x3fff;
 		if (imm & 0x0000000000002000)
 			imm |= 0xffffffffffffe000;
-		if (cond == 1 && (frame->tf_x[reg] & (1 << bitpos)) != 0)
+		if (cond == 1 &&
+		    (kinst_reg_read(frame, reg) & (1ULL << bitpos)) != 0)
 			/* tbnz */
 			frame->tf_elr += imm << 2;
-		else if (cond == 0 && (frame->tf_x[reg] & (1 << bitpos)) == 0)
+		else if (cond == 0 &&
+		    (kinst_reg_read(frame, reg) & (1ULL << bitpos)) == 0)
 			/* tbz */
 			frame->tf_elr += imm << 2;
 		else
@@ -293,7 +318,8 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 
 	instr = (kinst_patchval_t *)(symval->value);
 	limit = (kinst_patchval_t *)(symval->value + symval->size);
-	if (instr >= limit)
+	if (symval->size < INSN_SIZE || symval->size % INSN_SIZE != 0 ||
+	    instr >= limit)
 		return (0);
 
 	tmp = instr;
@@ -303,8 +329,11 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 	 * we need to keep it there for any indirect branches calling
 	 * the function on Armv8.5+
 	 */
-	if ((*tmp & BTI_MASK) == BTI_INSTR)
+	if ((*tmp & BTI_MASK) == BTI_INSTR) {
 		tmp++;
+		if (tmp >= limit)
+			return (0);
+	}
 
 	/* Look for stp (pre-indexed) operation */
 	found = false;
@@ -359,6 +388,29 @@ kinst_make_probe(linker_file_t lf, int symindx, linker_symval_t *symval,
 			continue;
 		}
 		if (ldxstx_block)
+			continue;
+
+		/*
+		 * Keep BTI and the PACIASP/PACIBSP landing-pad forms intact.
+		 * Replacing one with BRK can make an indirect branch fault before
+		 * the kinst breakpoint is handled on a guarded page.
+		 */
+		if ((*instr & BTI_MASK) == BTI_INSTR ||
+		    *instr == 0xd503233fU || *instr == 0xd503237fU)
+			continue;
+
+		/*
+		 * A register branch or exception return cannot run in the
+		 * trampoline: it would leave before the trailing breakpoint and
+		 * strand this CPU in KINST_PROBE_FIRED. This encoding class also
+		 * includes authenticated register branches and returns.
+		 */
+		if ((*instr & 0xfe000000U) == 0xd6000000U)
+			continue;
+
+		/* SVC, HVC, SMC, BRK, HLT, and DCPS raise an exception before a
+		 * trampoline can reach its trailing breakpoint. */
+		if ((*instr & 0xff000000U) == 0xd4000000U)
 			continue;
 
 		/*

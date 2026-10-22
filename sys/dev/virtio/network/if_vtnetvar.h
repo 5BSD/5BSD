@@ -29,6 +29,8 @@
 #ifndef _IF_VTNETVAR_H
 #define _IF_VTNETVAR_H
 
+#include <dev/virtio/network/virtio_net_5bsd.h>
+
 #define VTNET_ALTQ_CAPABLE (0)
 #ifdef ALTQ
 #undef VTNET_ALTQ_CAPABLE
@@ -164,6 +166,9 @@ struct vtnet_softc {
 #define VTNET_FLAG_SW_LRO	 0x4000
 #define VTNET_FLAG_RSS		 0x8000
 #define VTNET_FLAG_HASH_REPORT	 0x10000
+#define VTNET_FLAG_PACKET_ID	 0x20000
+#define VTNET_FLAG_NETMAP	 0x40000
+#define VTNET_FLAG_PACKET_ID_V2	 0x80000
 
 	u_int			 vtnet_hdr_size;
 	int			 vtnet_rx_nmbufs;
@@ -213,7 +218,8 @@ struct vtnet_softc {
 #define VTNET_FLAGS_BITS \
     "\20\1MODERN\2MAC\3CTRL_VQ\4CTRL_RX\5CTRL_MAC\6VLAN_FILTER\7TSO_ECN" \
     "\10MRG_RXBUFS\11LRO_NOMRG\12MQ\13INDIRECT\14EVENT_IDX\15SUSPENDED" \
-    "\16FIXUP_NEEDS_CSUM\17SW_LRO\20RSS\21HASH_REPORT"
+    "\16FIXUP_NEEDS_CSUM\17SW_LRO\20RSS\21HASH_REPORT\22PACKET_ID" \
+    "\23NETMAP"
 
 static bool
 vtnet_modern(struct vtnet_softc *sc)
@@ -299,6 +305,8 @@ struct vtnet_tx_header {
 		struct virtio_net_hdr_mrg_rxbuf	mhdr;
 		struct virtio_net_hdr_v1	v1hdr;
 		struct virtio_net_hdr_hash_report hashhdr;
+		uint8_t wire[sizeof(struct virtio_net_hdr_hash_report) +
+		    VIRTIO_NET_5BSD_V2_ID_LEN];
 	} vth_uhdr;
 
 	struct mbuf *vth_mbuf;

@@ -127,6 +127,7 @@
 #include <sys/ktls.h>
 #include <sys/event.h>
 #include <sys/eventhandler.h>
+#include <sys/msgid.h>
 #include <sys/poll.h>
 #include <sys/proc.h>
 #include <sys/protosw.h>
@@ -152,8 +153,11 @@
 #include <netinet/in_pcb.h>
 #include <netinet/tcp.h>
 
+#include <sys/ddtrace.h>
+
 #include <net/vnet.h>
 
+#include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
 #include <security/mac/mac_internal.h>
 
@@ -2344,6 +2348,9 @@ sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 	long space;
 	ssize_t resid;
 	int clen = 0, error, dontroute;
+#ifdef KDTRACE_HOOKS
+	mbufid_t *mid;
+#endif
 
 	KASSERT(so->so_type == SOCK_DGRAM, ("sosend_dgram: !SOCK_DGRAM"));
 	KASSERT(so->so_proto->pr_flags & PR_ATOMIC,
@@ -2439,6 +2446,25 @@ sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		space -= resid - uio->uio_resid;
 		resid = uio->uio_resid;
 	}
+
+#ifdef KDTRACE_HOOKS
+	/* Avoid allocating a provenance tag on every unobserved datagram. */
+	if ((SDT_PACKET_ID_PROBES_ENABLED()
+#ifdef AUDIT
+	    || AUDITING_TD(curthread)
+#endif
+	    ) && mbufid_origin_ready()) {
+		M_ASSERTPKTHDR(top);
+		mid = m_mbufid_ensure(top, M_WAITOK);
+		if (mid == NULL) {
+			error = ENOBUFS;
+			goto out;
+		}
+		mbufid_generate(mid);
+		AUDIT_RET_MBUFID(mid);
+	}
+#endif
+
 	KASSERT(resid == 0, ("sosend_dgram: resid != 0"));
 	/*
 	 * XXXRW: Frobbing SO_DONTROUTE here is even worse without sblock
@@ -2509,6 +2535,9 @@ sosend_generic_locked(struct socket *so, struct sockaddr *addr, struct uio *uio,
 	int clen = 0, error, dontroute;
 	int atomic = sosendallatonce(so) || top;
 	int pr_send_flag;
+#ifdef KDTRACE_HOOKS
+	mbufid_t *mid;
+#endif
 #ifdef KERN_TLS
 	struct ktls_session *tls;
 	int tls_enq_cnt, tls_send_flag;
@@ -2683,6 +2712,24 @@ restart:
 				space -= resid - uio->uio_resid;
 				resid = uio->uio_resid;
 			}
+
+#ifdef KDTRACE_HOOKS
+			if (so->so_type == SOCK_DGRAM &&
+			    ((SDT_PACKET_ID_PROBES_ENABLED()
+#ifdef AUDIT
+			    || AUDITING_TD(curthread)
+#endif
+			    ) && mbufid_origin_ready())) {
+				M_ASSERTPKTHDR(top);
+				mid = m_mbufid_ensure(top, M_WAITOK);
+				if (mid == NULL) {
+					error = ENOBUFS;
+					goto out;
+				}
+				mbufid_generate(mid);
+				AUDIT_RET_MBUFID(mid);
+			}
+#endif
 			if (dontroute) {
 				SOCK_LOCK(so);
 				so->so_options |= SO_DONTROUTE;
@@ -3223,6 +3270,14 @@ dontblock:
 			len = so->so_oobmark - offset;
 		if (len > m->m_len - moff)
 			len = m->m_len - moff;
+
+#ifdef KDTRACE_HOOKS
+		if (so->so_type == SOCK_DGRAM) {
+			M_ASSERTPKTHDR(m);
+			AUDIT_RET_MBUFID(m_mbufid(m));
+		}
+#endif
+
 		/*
 		 * If mp is set, just pass back the mbufs.  Otherwise copy
 		 * them out via the uio, then free.  Sockbuf must be
@@ -3852,6 +3907,14 @@ soreceive_dgram(struct socket *so, struct sockaddr **psa, struct uio *uio,
 	}
 	KASSERT(m == NULL || m->m_type == MT_DATA,
 	    ("soreceive_dgram: !data"));
+
+	{
+		M_ASSERTPKTHDR(m);
+		AUDIT_RET_MBUFID(m_mbufid(m));
+	}
+
+	SDT_PROBE1(ddtrace, , pkttag, recv, m_mbufid(m));
+
 	while (m != NULL && uio->uio_resid > 0) {
 		len = uio->uio_resid;
 		if (len > m->m_len)

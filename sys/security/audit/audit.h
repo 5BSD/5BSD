@@ -51,6 +51,7 @@
 
 #include <sys/file.h>
 #include <sys/sysctl.h>
+#include <sys/mbufid.h>
 
 /*
  * Audit subsystem condition flags.  The audit_trail_enabled flag is set and
@@ -147,6 +148,14 @@ void	 audit_cred_proc1(struct ucred *cred);
 void	 audit_proc_coredump(struct thread *td, char *path, int errcode);
 void	 audit_thread_alloc(struct thread *td);
 void	 audit_thread_free(struct thread *td);
+
+#ifdef KDTRACE_HOOKS
+void	 audit_ret_fd1(int fd);
+void	 audit_ret_fd2(int fd);
+void	 audit_ret_msgid(msgid_t *msgidp);
+void	 audit_ret_mbufid(mbufid_t *mbufidp);
+#endif
+void	 audit_ret_svipc_id(int id);
 
 /*
  * Define macros to wrap the audit_arg_* calls by checking the global
@@ -390,6 +399,27 @@ void	 audit_thread_free(struct thread *td);
 } while (0)
 
 #define	AUDIT_SYSCALL_ENABLED()	audit_syscalls_enabled
+#ifdef KDTRACE_HOOKS
+#define	AUDIT_RET_FD1(fd) do {						\
+	if (AUDITING_TD(curthread))					\
+		audit_ret_fd1((fd));					\
+} while (0)
+
+#define	AUDIT_RET_FD2(fd) do {						\
+	if (AUDITING_TD(curthread))					\
+		audit_ret_fd2((fd));					\
+} while (0)
+
+#define	AUDIT_RET_MSGID(msgidp) do {					\
+	if (AUDITING_TD(curthread))					\
+		audit_ret_msgid((msgidp));				\
+} while (0)
+
+#define	AUDIT_RET_MBUFID(mbufidp) do {					\
+	if (AUDITING_TD(curthread))					\
+		audit_ret_mbufid((mbufidp));				\
+} while (0)
+#endif /* !KDTRACE_HOOKS */
 
 #define	AUDIT_SYSCALL_ENTER(code, td)	({				\
 	bool _audit_entered = false;					\
@@ -468,7 +498,13 @@ void	 audit_thread_free(struct thread *td);
 #define	AUDIT_ARG_VNODE1(vp)
 #define	AUDIT_ARG_VNODE2(vp)
 
-#define	AUDITING_TD(td)		0
+#ifdef KDTRACE_HOOKS
+#define	AUDIT_RET_FD1(fd)
+#define	AUDIT_RET_FD2(fd)
+#define	AUDIT_RET_MSGID(msgidp)
+#define	AUDIT_RET_MBUFID(mbufidp)
+#endif /* KDTRACE_HOOKS */
+#define	AUDIT_RET_SVIPC_ID(id)
 
 #define	AUDIT_SYSCALL_ENABLED()	0
 #define	AUDIT_SYSCALL_ENTER(code, td)	0

@@ -1,0 +1,276 @@
+/*-
+ * SPDX-License-Identifier: MIT-CMU
+ *
+ * Mach Operating System
+ * Copyright (c) 1991,1990 Carnegie Mellon University
+ * Copyright (c) 2021 Domagoj Stolfa
+ * All Rights Reserved.
+ *
+ * Permission to use, copy, modify and distribute this software and its
+ * documentation is hereby granted, provided that both the copyright
+ * notice and this permission notice appear in all copies of the
+ * software, derivative works or modified versions, and any portions
+ * thereof, and that both notices appear in supporting documentation.
+ *
+ * CARNEGIE MELLON ALLOWS FREE USE OF THIS SOFTWARE IN ITS
+ * CONDITION.  CARNEGIE MELLON DISCLAIMS ANY LIABILITY OF ANY KIND FOR
+ * ANY DAMAGES WHATSOEVER RESULTING FROM THE USE OF THIS SOFTWARE.
+ *
+ * Carnegie Mellon requests users of this software to return to
+ *
+ *  Software Distribution Coordinator  or  Software.Distribution@CS.CMU.EDU
+ *  School of Computer Science
+ *  Carnegie Mellon University
+ *  Pittsburgh PA 15213-3890
+ *
+ * any improvements or extensions that they make and grant Carnegie the
+ * rights to redistribute these changes.
+ *
+ * This software were developed by BAE Systems, the University of Cambridge
+ * Computer Laboratory, and Memorial University under DARPA/AFRL contract
+ * FA8650-15-C-7558 ("CADETS"), as part of the DARPA Transparent Computing
+ * (TC) research program.
+ *
+ * This software was developed by SRI International and the University of
+ * Cambridge Computer Laboratory (Department of Computer Science and
+ * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+ * DARPA SSITH research programme.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from Arm Limited.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from the Kenneth Hayter Scholarship Fund.
+ */
+
+#include <sys/cdefs.h>
+#include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/kernel.h>
+#include <sys/module.h>
+
+#include <sys/linker.h>
+
+#include <ddb/ddb.h>
+#include <ddb/db_sym.h>
+
+#include <sys/link_elf.h>
+#include <sys/dtrace_link_elf.h>
+
+#include "linker_if.h"
+
+struct dtrace_db_private {
+	char*		strtab;
+	vm_offset_t	relbase;
+};
+
+typedef struct dtrace_db_private *dtrace_db_private_t;
+
+#define DTRACE_DB_PRIVATE(x) ((dtrace_db_private_t)(x->private))
+
+#ifdef __riscv
+/* ELF mapping symbols describe code/data regions, not call frames. */
+static bool
+dtrace_mapping_symbol(const char *name)
+{
+	return (name[0] == '$' && (name[1] == 'x' || name[1] == 'd') &&
+	    (name[2] == '\0' || name[2] == '.'));
+}
+#endif
+
+static int
+dtrace_linker_symbol_values(c_linker_sym_t sym, linker_symval_t *symval)
+{
+	linker_file_t lf;
+
+	TAILQ_FOREACH(lf, &linker_files, link) {
+		if (LINKER_SYMBOL_VALUES(lf, sym, symval) == 0)
+			return (0);
+	}
+	return (ENOENT);
+}
+
+static int
+dtrace_linker_search_symbol(caddr_t value, c_linker_sym_t *sym, long *diffp)
+{
+	linker_file_t lf;
+	c_linker_sym_t best, es;
+	u_long diff, bestdiff, off;
+
+	best = 0;
+	off = (uintptr_t)value;
+	bestdiff = off;
+	TAILQ_FOREACH(lf, &linker_files, link) {
+		if (DTRACE_CPUFLAG_ISSET(CPU_DTRACE_FAULT)) {
+			DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_FAULT);
+			return (-1);
+		}
+		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
+		if (LINKER_SEARCH_SYMBOL(lf, value, &es, &diff) != 0)
+			continue;
+		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT);
+
+		if (es != 0 && diff < bestdiff) {
+			best = es;
+			bestdiff = diff;
+		}
+		if (bestdiff == 0)
+			break;
+	}
+	if (best) {
+		*sym = best;
+		*diffp = bestdiff;
+		return (0);
+	} else {
+		*sym = 0;
+		*diffp = off;
+		return (ENOENT);
+	}
+}
+
+static c_db_sym_t
+_dtrace_search_symbol(db_symtab_t *symtab, db_addr_t off, db_strategy_t strat,
+    db_expr_t *diffp)
+{
+	c_linker_sym_t lsym;
+	Elf_Sym *sym, *match;
+	unsigned long diff;
+	db_addr_t stoffs = off;
+
+	if (symtab->private == NULL) {
+		if (!dtrace_linker_search_symbol((caddr_t)off, &lsym, &diff)) {
+			*diffp = (db_expr_t)diff;
+			return ((c_db_sym_t)lsym);
+		}
+		return (NULL);
+	} else
+		stoffs -= DTRACE_DB_PRIVATE(symtab)->relbase;
+
+	diff = ~0UL;
+	match = NULL;
+	for (sym = (Elf_Sym*)symtab->start; (char*)sym < symtab->end; sym++) {
+		if (sym->st_name == 0 || sym->st_shndx == SHN_UNDEF)
+			continue;
+#ifdef __riscv
+		if (dtrace_mapping_symbol(DTRACE_DB_PRIVATE(symtab)->strtab +
+		    sym->st_name))
+			continue;
+#endif
+		if (stoffs < sym->st_value)
+			continue;
+		if (ELF_ST_TYPE(sym->st_info) != STT_OBJECT &&
+		    ELF_ST_TYPE(sym->st_info) != STT_FUNC &&
+		    ELF_ST_TYPE(sym->st_info) != STT_NOTYPE)
+			continue;
+		if ((stoffs - sym->st_value) > diff)
+			continue;
+		if ((stoffs - sym->st_value) < diff) {
+			diff = stoffs - sym->st_value;
+			match = sym;
+		} else {
+			if (match == NULL)
+				match = sym;
+			else if (ELF_ST_BIND(match->st_info) == STB_LOCAL &&
+			    ELF_ST_BIND(sym->st_info) != STB_LOCAL)
+				match = sym;
+		}
+		if (diff == 0) {
+			if (strat == DB_STGY_PROC &&
+			    ELF_ST_TYPE(sym->st_info) == STT_FUNC &&
+			    ELF_ST_BIND(sym->st_info) != STB_LOCAL)
+				break;
+			if (strat == DB_STGY_ANY &&
+			    ELF_ST_BIND(sym->st_info) != STB_LOCAL)
+				break;
+		}
+	}
+
+	*diffp = (match == NULL) ? off : diff;
+	return ((c_db_sym_t)match);
+}
+
+/*
+ * Find the closest symbol to val, and return its name
+ * and the difference between val and the symbol found.
+ */
+static c_db_sym_t
+dtrace_search_symbol(db_addr_t val, db_strategy_t strategy, db_expr_t *offp)
+{
+	unsigned int diff;
+	size_t newdiff;
+	int i;
+	c_db_sym_t ret, sym;
+
+	/*
+	 * The kernel will never map the first page, so any symbols in that
+	 * range cannot refer to addresses.  Some third-party assembly files
+	 * define internal constants which appear in their symbol table.
+	 * Avoiding the lookup for those symbols avoids replacing small offsets
+	 * with those symbols during disassembly.
+	 */
+	if (val < PAGE_SIZE) {
+		*offp = 0;
+		return (C_DB_SYM_NULL);
+	}
+
+	ret = C_DB_SYM_NULL;
+	newdiff = diff = val;
+	for (i = 0; i < db_nsymtab; i++) {
+		sym = _dtrace_search_symbol(&db_symtabs[i], val, strategy,
+		    &newdiff);
+
+		if ((uintmax_t)newdiff < (uintmax_t)diff) {
+			db_last_symtab = &db_symtabs[i];
+			diff = newdiff;
+			ret = sym;
+		}
+	}
+	*offp = diff;
+	return ret;
+}
+
+static void dtrace_symbol_values(c_db_sym_t, const char **, db_expr_t *);
+
+static void
+_dtrace_symbol_values(db_symtab_t *symtab, c_db_sym_t sym, const char **namep,
+    db_expr_t *valp)
+{
+	linker_symval_t lval;
+
+	if (symtab->private == NULL) {
+		dtrace_linker_symbol_values((c_linker_sym_t)sym, &lval);
+		if (namep != NULL)
+			*namep = (const char*)lval.name;
+		if (valp != NULL)
+			*valp = (db_expr_t)lval.value;
+	} else {
+		if (namep != NULL)
+			*namep =
+			    (const char *)DTRACE_DB_PRIVATE(symtab)->strtab +
+			    ((const Elf_Sym *)sym)->st_name;
+		if (valp != NULL)
+			*valp = (db_expr_t)((const Elf_Sym *)sym)->st_value +
+			    DTRACE_DB_PRIVATE(symtab)->relbase;
+	}
+}
+
+/*
+ * Return name and value of a symbol
+ */
+static void
+dtrace_symbol_values(c_db_sym_t sym, const char **namep, db_expr_t *valuep)
+{
+	db_expr_t	value;
+
+	if (sym == DB_SYM_NULL) {
+		*namep = NULL;
+		return;
+	}
+
+	_dtrace_symbol_values(db_last_symtab, sym, namep, &value);
+
+	if (valuep)
+		*valuep = value;
+}

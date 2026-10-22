@@ -372,6 +372,7 @@ device		virtio_scsi		# VirtIO SCSI device
 device		virtio_balloon		# VirtIO Memory Balloon device
 device		vsock			# AF_VSOCK socket domain
 device		virtio_vsock		# VirtIO Socket transport
+device		virtio_dtrace		# VirtIO DTrace frontend
 
 # Linux KVM paravirtualization support
 device		kvm_clock		# KVM paravirtual clock driver

@@ -120,6 +120,12 @@ typedef struct ctf_lblinfo {
 #define	CTF_ERR	(-1L)
 
 /*
+ * The bottom type in CTF can construct any other CTF type on demand.
+ */
+#define	CTF_BOTTOM_TYPE	(-10L)
+
+
+/*
  * The CTF data model is inferred to be the caller's data model or the data
  * model of the given object, unless ctf_setmodel() is explicitly called.
  */
@@ -183,6 +189,7 @@ extern ssize_t ctf_type_lname(ctf_file_t *, ctf_id_t, char *, size_t);
 extern char *ctf_type_name(ctf_file_t *, ctf_id_t, char *, size_t);
 extern char *ctf_type_qname(ctf_file_t *, ctf_id_t, char *, size_t,
     const char *);
+extern int ctf_type_copied(ctf_file_t *, ctf_id_t);
 extern ssize_t ctf_type_size(ctf_file_t *, ctf_id_t);
 extern ssize_t ctf_type_align(ctf_file_t *, ctf_id_t);
 extern int ctf_type_kind(ctf_file_t *, ctf_id_t);
@@ -209,22 +216,39 @@ extern int ctf_type_iter(ctf_file_t *, ctf_type_f *, void *);
 extern int ctf_label_iter(ctf_file_t *, ctf_label_f *, void *);
 
 extern ctf_id_t ctf_add_array(ctf_file_t *, uint_t, const ctf_arinfo_t *);
+extern ctf_id_t ctf_add_array_cp(ctf_file_t *, uint_t, const ctf_arinfo_t *);
 extern ctf_id_t ctf_add_const(ctf_file_t *, uint_t, ctf_id_t);
+extern ctf_id_t ctf_add_const_cp(ctf_file_t *, uint_t, ctf_id_t);
 extern ctf_id_t ctf_add_enum(ctf_file_t *, uint_t, const char *);
+extern ctf_id_t ctf_add_enum_cp(ctf_file_t *, uint_t, const char *);
 extern ctf_id_t ctf_add_float(ctf_file_t *, uint_t,
     const char *, const ctf_encoding_t *);
+extern ctf_id_t ctf_add_float_cp(ctf_file_t *, uint_t,
+    const char *, const ctf_encoding_t *);
 extern ctf_id_t ctf_add_forward(ctf_file_t *, uint_t, const char *, uint_t);
+extern ctf_id_t ctf_add_forward_cp(ctf_file_t *, uint_t, const char *, uint_t);
 extern ctf_id_t ctf_add_function(ctf_file_t *, uint_t,
+    const ctf_funcinfo_t *, const ctf_id_t *);
+extern ctf_id_t ctf_add_function_cp(ctf_file_t *, uint_t,
     const ctf_funcinfo_t *, const ctf_id_t *);
 extern ctf_id_t ctf_add_integer(ctf_file_t *, uint_t,
     const char *, const ctf_encoding_t *);
+extern ctf_id_t ctf_add_integer_cp(ctf_file_t *, uint_t,
+    const char *, const ctf_encoding_t *);
 extern ctf_id_t ctf_add_pointer(ctf_file_t *, uint_t, ctf_id_t);
+extern ctf_id_t ctf_add_pointer_cp(ctf_file_t *, uint_t, ctf_id_t);
 extern ctf_id_t ctf_add_type(ctf_file_t *, ctf_file_t *, ctf_id_t);
+extern ctf_id_t ctf_add_type_cp(ctf_file_t *, ctf_file_t *, ctf_id_t);
 extern ctf_id_t ctf_add_typedef(ctf_file_t *, uint_t, const char *, ctf_id_t);
+extern ctf_id_t ctf_add_typedef_cp(ctf_file_t *, uint_t, const char *, ctf_id_t);
 extern ctf_id_t ctf_add_restrict(ctf_file_t *, uint_t, ctf_id_t);
+extern ctf_id_t ctf_add_restrict_cp(ctf_file_t *, uint_t, ctf_id_t);
 extern ctf_id_t ctf_add_struct(ctf_file_t *, uint_t, const char *);
+extern ctf_id_t ctf_add_struct_cp(ctf_file_t *, uint_t, const char *);
 extern ctf_id_t ctf_add_union(ctf_file_t *, uint_t, const char *);
+extern ctf_id_t ctf_add_union_cp(ctf_file_t *, uint_t, const char *);
 extern ctf_id_t ctf_add_volatile(ctf_file_t *, uint_t, ctf_id_t);
+extern ctf_id_t ctf_add_volatile_cp(ctf_file_t *, uint_t, ctf_id_t);
 
 extern int ctf_add_enumerator(ctf_file_t *, ctf_id_t, const char *, int);
 extern int ctf_add_member(ctf_file_t *, ctf_id_t, const char *, ctf_id_t);

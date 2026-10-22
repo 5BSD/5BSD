@@ -32,6 +32,9 @@
 #ifndef _SYS_PROCDESC_H_
 #define	_SYS_PROCDESC_H_
 
+#include <sys/ioccom.h>
+#include <sys/types.h>
+
 #ifdef _KERNEL
 
 #include <sys/selinfo.h>	/* struct selinfo */
@@ -78,6 +81,7 @@ struct procdesc {
 	/* Exit status. */
 	u_int		 pd_xexit;
 	u_int		 pd_xsig;
+	uint32_t	 pd_reaper_exit;	/* (p) Immutable exit census flags. */
 	struct __wrusage pd_wrusage;
 	siginfo_t	 pd_siginfo;
 };
@@ -160,6 +164,30 @@ int	 pdptrace(int, int, int, void *, int);
 __END_DECLS
 
 #endif /* _KERNEL */
+
+/* Raw monotonic process start time, unchanged by wall-clock adjustments.
+ * Querying through a process descriptor pins the process while its birth
+ * identity is compared against a durable child record. */
+struct pd_birth_identity {
+	pid_t pid;
+	uint32_t reserved;
+	uint64_t start_sec;
+	uint64_t start_usec;
+};
+#define PDIOC_GET_BIRTH_IDENTITY _IOR('P', 80, struct pd_birth_identity)
+
+/* Snapshot at exit, before reaper abandonment. This is not a live census or
+ * proof that descendants of a non-reaper have exited. Reserved fields are zero.
+ * A retained descriptor preserves the snapshot after the process is reaped. */
+struct pd_reaper_exit {
+	uint32_t flags;
+	uint32_t reserved;
+};
+#define PD_REAPER_EXITED		0x01
+#define PD_REAPER_OWNED		0x02
+#define PD_REAPER_EMPTY		0x04
+#define PDIOC_GET_REAPER_EXIT _IOR('P', 81, struct pd_reaper_exit)
+
 
 /*
  * Flags which can be passed to pdfork(2).

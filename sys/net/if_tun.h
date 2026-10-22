@@ -45,5 +45,6 @@ struct tuninfo {
 #define	TUNGIFHEAD	_IOR('t', 97, int)
 #define	TUNSTRANSIENT	_IOW('t', 98, int)
 #define	TUNGTRANSIENT	_IOR('t', 99, int)
+#define	TUNSTAGGING	_IOW('t', 100, int)
 
 #endif /* !_NET_IF_TUN_H_ */

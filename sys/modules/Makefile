@@ -105,6 +105,7 @@ SUBDIR=	\
 	${_dpdk_lpm4} \
 	${_dpdk_lpm6} \
 	${_dpms} \
+	dttransport \
 	dummymbuf \
 	${_dummynet} \
 	${_dwwdt} \

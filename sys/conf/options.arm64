@@ -46,3 +46,6 @@ SOC_ROCKCHIP_RK3328		opt_soc.h	# Depends on SOC_ROCKCHIP
 SOC_ROCKCHIP_RK3399		opt_soc.h	# Depends on SOC_ROCKCHIP
 SOC_ROCKCHIP_RK3568		opt_soc.h	# Depends on SOC_ROCKCHIP
 SOC_XILINX_ZYNQ			opt_soc.h
+
+# Experimental bhyve checkpoint/restore (not enabled in GENERIC).
+BHYVE_SNAPSHOT		opt_bhyve_snapshot.h

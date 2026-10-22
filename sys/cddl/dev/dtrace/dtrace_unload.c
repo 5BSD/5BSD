@@ -25,6 +25,7 @@ dtrace_unload(void)
 {
 	dtrace_state_t *state;
 	int error = 0;
+	size_t i = 0;
 
 	destroy_dev(dtrace_dev);
 	destroy_dev(helper_dev);
@@ -52,6 +53,7 @@ dtrace_unload(void)
 	dtrace_provider = NULL;
 	EVENTHANDLER_DEREGISTER(kld_load, dtrace_kld_load_tag);
 	EVENTHANDLER_DEREGISTER(kld_unload_try, dtrace_kld_unload_try_tag);
+	EVENTHANDLER_DEREGISTER(kld_unload, dtrace_kld_unload_tag);
 
 	if ((state = dtrace_anon_grab()) != NULL) {
 		/*
@@ -61,28 +63,36 @@ dtrace_unload(void)
 		 */
 		ASSERT(state->dts_necbs == 0);
 		dtrace_state_destroy(state);
+		kmem_free(state, 0);	/* allocated by dtrace_state_create() */
 	}
 
 	bzero(&dtrace_anon, sizeof (dtrace_anon_t));
 
 	mutex_exit(&cpu_lock);
 
-	if (dtrace_probes != NULL) {
-		kmem_free(dtrace_probes, 0);
-		dtrace_probes = NULL;
-		dtrace_nprobes = 0;
+	for (i = 0; i < HYPERTRACE_MAX_VMS; i++) {
+		if (dtrace_vprobes[i] != NULL) {
+			kmem_free(dtrace_vprobes[i],
+			    sizeof (dtrace_probe_t *) * dtrace_nvprobes[i]);
+			dtrace_vprobes[i] = NULL;
+			dtrace_nvprobes[i] = 0;
+		}
+
+		dtrace_hash_destroy(dtrace_bymod[i]);
+		dtrace_hash_destroy(dtrace_byfunc[i]);
+		dtrace_hash_destroy(dtrace_byname[i]);
+		dtrace_bymod[i] = NULL;
+		dtrace_byfunc[i] = NULL;
+		dtrace_byname[i] = NULL;
+
 	}
 
-	dtrace_hash_destroy(dtrace_bymod);
-	dtrace_hash_destroy(dtrace_byfunc);
-	dtrace_hash_destroy(dtrace_byname);
-	dtrace_bymod = NULL;
-	dtrace_byfunc = NULL;
-	dtrace_byname = NULL;
-
-	kmem_cache_destroy(dtrace_state_cache);
-
 	delete_unrhdr(dtrace_arena);
+	mtx_destroy(&dtrace_unr_mtx);
+
+	kmem_free(dtrace_immstackhash,
+	    dtrace_immstackhash_size * sizeof(dtrace_immstackhash_t));
+	kmem_cache_destroy(dtrace_state_cache);
 
 	if (dtrace_toxrange != NULL) {
 		kmem_free(dtrace_toxrange, 0);
@@ -99,6 +109,7 @@ dtrace_unload(void)
 	mutex_exit(&dtrace_provider_lock);
 
 	mutex_destroy(&dtrace_meta_lock);
+	mutex_destroy(&dtrace_dist_lock);
 	mutex_destroy(&dtrace_provider_lock);
 	mutex_destroy(&dtrace_lock);
 #ifdef DEBUG
@@ -119,6 +130,7 @@ dtrace_unload(void)
 
 	/* Unhook from the trap handler. */
 	dtrace_trap_func = NULL;
+	dtrace_fault_func = NULL;
 
 	return (error);
 }

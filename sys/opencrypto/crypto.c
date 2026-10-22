@@ -94,9 +94,9 @@
 
 #if defined(__i386__) || defined(__amd64__) || defined(__aarch64__)
 #include <machine/pcb.h>
+#endif
 
 #include <sys/queue.h>
-#include <sys/sdt.h>
 
 SDT_PROVIDER_DEFINE(crypto);
 SDT_PROBE_DEFINE2(crypto, , , submit, "void *", "void *");
@@ -105,7 +105,6 @@ SDT_PROBE_DEFINE3(crypto, , , invoke__start, "void *", "void *", "int");
 SDT_PROBE_DEFINE2(crypto, , , invoke__done, "void *", "int");
 SDT_PROBE_DEFINE2(crypto, , , complete, "void *", "int");
 SDT_PROBE_DEFINE1(crypto, , , defer, "void *");
-#endif
 
 SDT_PROVIDER_DEFINE(opencrypto);
 SDT_PROBE_DEFINE2(opencrypto, , , session__start, "int", "int");

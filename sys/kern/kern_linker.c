@@ -57,6 +57,7 @@
 #include <sys/sysctl.h>
 #include <sys/sysproto.h>
 #include <sys/vnode.h>
+#include <sys/dtrace_bsd.h>
 
 #ifdef DDB
 #include <ddb/ddb.h>
@@ -123,7 +124,7 @@ static struct thread *kld_busy_owner;
 static int loadcnt;
 
 static linker_class_list_t classes;
-static linker_file_list_t linker_files;
+linker_file_list_t linker_files;
 static int next_file_id = 1;
 static int linker_no_more_classes = 0;
 
@@ -1068,6 +1069,7 @@ linker_debug_search_symbol(caddr_t value, c_linker_sym_t *sym, long *diffp)
 	TAILQ_FOREACH(lf, &linker_files, link) {
 		if (LINKER_SEARCH_SYMBOL(lf, value, &es, &diff) != 0)
 			continue;
+
 		if (es != 0 && diff < bestdiff) {
 			best = es;
 			bestdiff = diff;

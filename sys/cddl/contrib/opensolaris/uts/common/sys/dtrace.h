@@ -27,6 +27,25 @@
 /*
  * Copyright (c) 2013, Joyent, Inc. All rights reserved.
  * Copyright (c) 2013 by Delphix. All rights reserved.
+ * Copyright (c) 2018, 2020, 2021 by Domagoj Stolfa. All rights reserved.
+ *
+ * This software were developed by BAE Systems, the University of Cambridge
+ * Computer Laboratory, and Memorial University under DARPA/AFRL contract
+ * FA8650-15-C-7558 ("CADETS"), as part of the DARPA Transparent Computing
+ * (TC) research program.
+ *
+ * This software was developed by SRI International and the University of
+ * Cambridge Computer Laboratory (Department of Computer Science and
+ * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+ * DARPA SSITH research programme.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from Arm Limited.
+ *
+ * This software was developed by the University of Cambridge Computer
+ * Laboratory (Department of Computer Science and Technology) with support
+ * from the Kenneth Hayter Scholarship Fund.
  */
 
 #ifndef _SYS_DTRACE_H
@@ -73,12 +92,16 @@ typedef int processorid_t;
 #ifdef __FreeBSD__
 #include <sys/_mutex.h>
 #endif
+#ifdef _KERNEL
 #include <sys/proc.h>
+#endif
 #include <sys/types.h>
 #include <sys/ucred.h>
 #endif
 typedef int model_t;
 #include <sys/ctf_api.h>
+
+#include <sys/hypertrace.h>
 
 /*
  * DTrace Universal Constants and Typedefs
@@ -93,25 +116,36 @@ typedef int model_t;
 #define	DTRACE_METAPROVNONE	0	/* invalid meta-provider identifier */
 #define	DTRACE_ARGNONE		-1	/* invalid argument index */
 
+#define	DTRACEFILT_MAX		16
+#define	DTRACE_MAXFILTNAME	256
+
+#define	DTRACE_KONNAMELEN	64
+#define	DTRACE_TARGETNAMELEN	64
 #define	DTRACE_PROVNAMELEN	64
 #define	DTRACE_MODNAMELEN	64
 #define	DTRACE_FUNCNAMELEN	192
 #define	DTRACE_NAMELEN		64
-#define	DTRACE_FULLNAMELEN	(DTRACE_PROVNAMELEN + DTRACE_MODNAMELEN + \
-				DTRACE_FUNCNAMELEN + DTRACE_NAMELEN + 4)
-#define	DTRACE_ARGTYPELEN	128
+#ifndef DTRACE_FULLNAMELEN
+#define DTRACE_FULLNAMELEN                                               \
+    (DTRACE_TARGETNAMELEN + DTRACE_PROVNAMELEN + DTRACE_MODNAMELEN +     \
+     DTRACE_FUNCNAMELEN + DTRACE_NAMELEN + 5)
+#endif
+#define DTRACE_ARGTYPELEN 128
 
 typedef uint32_t dtrace_id_t;		/* probe identifier */
+typedef uint16_t dtrace_vmid_t;		/* VM identifier */
 typedef uint32_t dtrace_epid_t;		/* enabled probe identifier */
 typedef uint32_t dtrace_aggid_t;	/* aggregation identifier */
 typedef int64_t dtrace_aggvarid_t;	/* aggregation variable identifier */
 typedef uint16_t dtrace_actkind_t;	/* action kind */
 typedef int64_t dtrace_optval_t;	/* option value */
 typedef uint32_t dtrace_cacheid_t;	/* predicate cache identifier */
+struct hypertrace_args;
 
 typedef enum dtrace_probespec {
 	DTRACE_PROBESPEC_NONE = -1,
-	DTRACE_PROBESPEC_PROVIDER = 0,
+	DTRACE_PROBESPEC_TARGET = 0,
+	DTRACE_PROBESPEC_PROVIDER,
 	DTRACE_PROBESPEC_MOD,
 	DTRACE_PROBESPEC_FUNC,
 	DTRACE_PROBESPEC_NAME
@@ -133,85 +167,94 @@ typedef enum dtrace_probespec {
 #define	DIF_DIR_NREGS	8		/* number of DIF integer registers */
 #define	DIF_DTR_NREGS	8		/* number of DIF tuple registers */
 
-#define	DIF_OP_OR	1		/* or	r1, r2, rd */
-#define	DIF_OP_XOR	2		/* xor	r1, r2, rd */
-#define	DIF_OP_AND	3		/* and	r1, r2, rd */
-#define	DIF_OP_SLL	4		/* sll	r1, r2, rd */
-#define	DIF_OP_SRL	5		/* srl	r1, r2, rd */
-#define	DIF_OP_SUB	6		/* sub	r1, r2, rd */
-#define	DIF_OP_ADD	7		/* add	r1, r2, rd */
-#define	DIF_OP_MUL	8		/* mul	r1, r2, rd */
-#define	DIF_OP_SDIV	9		/* sdiv	r1, r2, rd */
-#define	DIF_OP_UDIV	10		/* udiv r1, r2, rd */
-#define	DIF_OP_SREM	11		/* srem r1, r2, rd */
-#define	DIF_OP_UREM	12		/* urem r1, r2, rd */
-#define	DIF_OP_NOT	13		/* not	r1, rd */
-#define	DIF_OP_MOV	14		/* mov	r1, rd */
-#define	DIF_OP_CMP	15		/* cmp	r1, r2 */
-#define	DIF_OP_TST	16		/* tst  r1 */
-#define	DIF_OP_BA	17		/* ba	label */
-#define	DIF_OP_BE	18		/* be	label */
-#define	DIF_OP_BNE	19		/* bne	label */
-#define	DIF_OP_BG	20		/* bg	label */
-#define	DIF_OP_BGU	21		/* bgu	label */
-#define	DIF_OP_BGE	22		/* bge	label */
-#define	DIF_OP_BGEU	23		/* bgeu	label */
-#define	DIF_OP_BL	24		/* bl	label */
-#define	DIF_OP_BLU	25		/* blu	label */
-#define	DIF_OP_BLE	26		/* ble	label */
-#define	DIF_OP_BLEU	27		/* bleu	label */
-#define	DIF_OP_LDSB	28		/* ldsb	[r1], rd */
-#define	DIF_OP_LDSH	29		/* ldsh	[r1], rd */
-#define	DIF_OP_LDSW	30		/* ldsw [r1], rd */
-#define	DIF_OP_LDUB	31		/* ldub	[r1], rd */
-#define	DIF_OP_LDUH	32		/* lduh	[r1], rd */
-#define	DIF_OP_LDUW	33		/* lduw	[r1], rd */
-#define	DIF_OP_LDX	34		/* ldx	[r1], rd */
-#define	DIF_OP_RET	35		/* ret	rd */
-#define	DIF_OP_NOP	36		/* nop */
-#define	DIF_OP_SETX	37		/* setx	intindex, rd */
-#define	DIF_OP_SETS	38		/* sets strindex, rd */
-#define	DIF_OP_SCMP	39		/* scmp	r1, r2 */
-#define	DIF_OP_LDGA	40		/* ldga	var, ri, rd */
-#define	DIF_OP_LDGS	41		/* ldgs var, rd */
-#define	DIF_OP_STGS	42		/* stgs var, rs */
-#define	DIF_OP_LDTA	43		/* ldta var, ri, rd */
-#define	DIF_OP_LDTS	44		/* ldts var, rd */
-#define	DIF_OP_STTS	45		/* stts var, rs */
-#define	DIF_OP_SRA	46		/* sra	r1, r2, rd */
-#define	DIF_OP_CALL	47		/* call	subr, rd */
-#define	DIF_OP_PUSHTR	48		/* pushtr type, rs, rr */
-#define	DIF_OP_PUSHTV	49		/* pushtv type, rs, rv */
-#define	DIF_OP_POPTS	50		/* popts */
-#define	DIF_OP_FLUSHTS	51		/* flushts */
-#define	DIF_OP_LDGAA	52		/* ldgaa var, rd */
-#define	DIF_OP_LDTAA	53		/* ldtaa var, rd */
-#define	DIF_OP_STGAA	54		/* stgaa var, rs */
-#define	DIF_OP_STTAA	55		/* sttaa var, rs */
-#define	DIF_OP_LDLS	56		/* ldls	var, rd */
-#define	DIF_OP_STLS	57		/* stls	var, rs */
-#define	DIF_OP_ALLOCS	58		/* allocs r1, rd */
-#define	DIF_OP_COPYS	59		/* copys  r1, r2, rd */
-#define	DIF_OP_STB	60		/* stb	r1, [rd] */
-#define	DIF_OP_STH	61		/* sth	r1, [rd] */
-#define	DIF_OP_STW	62		/* stw	r1, [rd] */
-#define	DIF_OP_STX	63		/* stx	r1, [rd] */
-#define	DIF_OP_ULDSB	64		/* uldsb [r1], rd */
-#define	DIF_OP_ULDSH	65		/* uldsh [r1], rd */
-#define	DIF_OP_ULDSW	66		/* uldsw [r1], rd */
-#define	DIF_OP_ULDUB	67		/* uldub [r1], rd */
-#define	DIF_OP_ULDUH	68		/* ulduh [r1], rd */
-#define	DIF_OP_ULDUW	69		/* ulduw [r1], rd */
-#define	DIF_OP_ULDX	70		/* uldx  [r1], rd */
-#define	DIF_OP_RLDSB	71		/* rldsb [r1], rd */
-#define	DIF_OP_RLDSH	72		/* rldsh [r1], rd */
-#define	DIF_OP_RLDSW	73		/* rldsw [r1], rd */
-#define	DIF_OP_RLDUB	74		/* rldub [r1], rd */
-#define	DIF_OP_RLDUH	75		/* rlduh [r1], rd */
-#define	DIF_OP_RLDUW	76		/* rlduw [r1], rd */
-#define	DIF_OP_RLDX	77		/* rldx  [r1], rd */
-#define	DIF_OP_XLATE	78		/* xlate xlrindex, rd */
-#define	DIF_OP_XLARG	79		/* xlarg xlrindex, rd */
+#define	DIF_OP_OR		1		/* or	r1, r2, rd */
+#define	DIF_OP_XOR		2		/* xor	r1, r2, rd */
+#define	DIF_OP_AND		3		/* and	r1, r2, rd */
+#define	DIF_OP_SLL		4		/* sll	r1, r2, rd */
+#define	DIF_OP_SRL		5		/* srl	r1, r2, rd */
+#define	DIF_OP_SUB		6		/* sub	r1, r2, rd */
+#define	DIF_OP_ADD		7		/* add	r1, r2, rd */
+#define	DIF_OP_MUL		8		/* mul	r1, r2, rd */
+#define	DIF_OP_SDIV		9		/* sdiv	r1, r2, rd */
+#define	DIF_OP_UDIV		10		/* udiv r1, r2, rd */
+#define	DIF_OP_SREM		11		/* srem r1, r2, rd */
+#define	DIF_OP_UREM		12		/* urem r1, r2, rd */
+#define	DIF_OP_NOT		13		/* not	r1, rd */
+#define	DIF_OP_MOV		14		/* mov	r1, rd */
+#define	DIF_OP_CMP		15		/* cmp	r1, r2 */
+#define	DIF_OP_TST		16		/* tst  r1 */
+#define	DIF_OP_BA		17		/* ba	label */
+#define	DIF_OP_BE		18		/* be	label */
+#define	DIF_OP_BNE		19		/* bne	label */
+#define	DIF_OP_BG		20		/* bg	label */
+#define	DIF_OP_BGU		21		/* bgu	label */
+#define	DIF_OP_BGE		22		/* bge	label */
+#define	DIF_OP_BGEU		23		/* bgeu	label */
+#define	DIF_OP_BL		24		/* bl	label */
+#define	DIF_OP_BLU		25		/* blu	label */
+#define	DIF_OP_BLE		26		/* ble	label */
+#define	DIF_OP_BLEU		27		/* bleu	label */
+#define	DIF_OP_LDSB		28		/* ldsb	[r1], rd */
+#define	DIF_OP_LDSH		29		/* ldsh	[r1], rd */
+#define	DIF_OP_LDSW		30		/* ldsw [r1], rd */
+#define	DIF_OP_LDUB		31		/* ldub	[r1], rd */
+#define	DIF_OP_LDUH		32		/* lduh	[r1], rd */
+#define	DIF_OP_LDUW		33		/* lduw	[r1], rd */
+#define	DIF_OP_LDX		34		/* ldx	[r1], rd */
+#define	DIF_OP_RET		35		/* ret	rd */
+#define	DIF_OP_NOP		36		/* nop */
+#define	DIF_OP_SETX		37		/* setx	intindex, rd */
+#define	DIF_OP_SETS		38		/* sets strindex, rd */
+#define	DIF_OP_SCMP		39		/* scmp	r1, r2 */
+#define	DIF_OP_LDGA		40		/* ldga	var, ri, rd */
+#define	DIF_OP_LDGS		41		/* ldgs var, rd */
+#define	DIF_OP_STGS		42		/* stgs var, rs */
+#define	DIF_OP_LDTA		43		/* ldta var, ri, rd */
+#define	DIF_OP_LDTS		44		/* ldts var, rd */
+#define	DIF_OP_STTS		45		/* stts var, rs */
+#define	DIF_OP_SRA		46		/* sra	r1, r2, rd */
+#define	DIF_OP_CALL		47		/* call	subr, rd */
+#define	DIF_OP_PUSHTR		48		/* pushtr type, rs, rr */
+#define	DIF_OP_PUSHTV		49		/* pushtv type, rs, rv */
+#define	DIF_OP_POPTS		50		/* popts */
+#define	DIF_OP_FLUSHTS		51		/* flushts */
+#define	DIF_OP_LDGAA		52		/* ldgaa var, rd */
+#define	DIF_OP_LDTAA		53		/* ldtaa var, rd */
+#define	DIF_OP_STGAA		54		/* stgaa var, rs */
+#define	DIF_OP_STTAA		55		/* sttaa var, rs */
+#define	DIF_OP_LDLS		56		/* ldls	var, rd */
+#define	DIF_OP_STLS		57		/* stls	var, rs */
+#define	DIF_OP_ALLOCS		58		/* allocs r1, rd */
+#define	DIF_OP_COPYS		59		/* copys  r1, r2, rd */
+#define	DIF_OP_STB		60		/* stb	r1, [rd] */
+#define	DIF_OP_STH		61		/* sth	r1, [rd] */
+#define	DIF_OP_STW		62		/* stw	r1, [rd] */
+#define	DIF_OP_STX		63		/* stx	r1, [rd] */
+#define	DIF_OP_ULDSB		64		/* uldsb [r1], rd */
+#define	DIF_OP_ULDSH		65		/* uldsh [r1], rd */
+#define	DIF_OP_ULDSW		66		/* uldsw [r1], rd */
+#define	DIF_OP_ULDUB		67		/* uldub [r1], rd */
+#define	DIF_OP_ULDUH		68		/* ulduh [r1], rd */
+#define	DIF_OP_ULDUW		69		/* ulduw [r1], rd */
+#define	DIF_OP_ULDX		70		/* uldx  [r1], rd */
+#define	DIF_OP_RLDSB		71		/* rldsb [r1], rd */
+#define	DIF_OP_RLDSH		72		/* rldsh [r1], rd */
+#define	DIF_OP_RLDSW		73		/* rldsw [r1], rd */
+#define	DIF_OP_RLDUB		74		/* rldub [r1], rd */
+#define	DIF_OP_RLDUH		75		/* rlduh [r1], rd */
+#define	DIF_OP_RLDUW		76		/* rlduw [r1], rd */
+#define	DIF_OP_RLDX		77		/* rldx  [r1], rd */
+#define	DIF_OP_XLATE		78		/* xlate xlrindex, rd */
+#define	DIF_OP_XLARG		79		/* xlarg xlrindex, rd */
+#define	DIF_OP_HYPERCALL	80		/* hcall */
+
+/*
+ * Relocations
+ */
+#define	DIF_OP_USETX     81
+#define	DIF_OP_ULOAD     82
+#define	DIF_OP_UULOAD    83
+#define	DIF_OP_TYPECAST  84
 
 #define	DIF_INTOFF_MAX		0xffff	/* highest integer table offset */
 #define	DIF_STROFF_MAX		0xffff	/* highest string table offset */
@@ -226,6 +269,21 @@ typedef enum dtrace_probespec {
 #define	DIF_VAR_OTHER_MIN	0x0100	/* lowest numbered scalar or assc */
 #define	DIF_VAR_OTHER_UBASE	0x0500	/* lowest user-defined scalar or assc */
 #define	DIF_VAR_OTHER_MAX	0xffff	/* highest numbered scalar or assc */
+
+#define	DIF_VAR_ARRAY_GMIN	0x0150 /* lowest numbered guest array */
+#define	DIF_VAR_ARRAY_GMAX	0x024f /* highest numbered guest array */
+
+#define	DIF_VAR_OTHER_GMIN	0x0150 /* lowest numbered guest builtin */
+#define	DIF_VAR_OTHER_GMAX	0x0300 /* highest numbered guest builtin */
+
+#define	DIF_VAR_ARRAY_HMIN	0x0300 /* lowest numbered host array */
+#define	DIF_VAR_ARRAY_HMAX	0x03ff /* highest numbered host array */
+
+#define	DIF_VAR_OTHER_HMIN	0x0400 /* lowest numbered host builtin */
+#define	DIF_VAR_OTHER_HMAX	0x0450 /* highest numbered host builtin */
+
+#define	DIF_VAR_HOSTVAR_OFFS	0x300   /* offset to the host variables */
+#define	DIF_VAR_GUESTVAR_OFFS	0x150   /* offset to the guest variables */
 
 #define	DIF_VAR_ARGS		0x0000	/* arguments array */
 #define	DIF_VAR_REGS		0x0001	/* registers array */
@@ -266,10 +324,57 @@ typedef enum dtrace_probespec {
 #define	DIF_VAR_EXECARGS	0x0121	/* process arguments */
 #define	DIF_VAR_JID		0x0122	/* process jail id */
 #define	DIF_VAR_JAILNAME	0x0123	/* process jail name */
+#define	DIF_VAR_VMNAME		0x0124	/* current VM name */
+#define	DIF_VAR_HOSTID		0x0125	/* current DTrace host id */
 
 #ifndef illumos
-#define	DIF_VAR_CPU		0x0200
+#define	DIF_VAR_CPU		0x014f
 #endif
+
+#define	DIF_VAR_HARGS		0x0300 /* common across h/g */
+#define	DIF_VAR_HREGS		0x0301 /* host regs */
+#define	DIF_VAR_HUREGS		0x0302 /* host uregs */
+#define	DIF_VAR_HCURTHREAD	0x0400 /* host curthread */
+#define	DIF_VAR_HTIMESTAMP	0x0401 /* common across h/g */
+#define	DIF_VAR_HVTIMESTAMP	0x0402 /* common across h/g */
+#define	DIF_VAR_HIPL		0x0403 /* not supported */
+#define	DIF_VAR_HEPID		0x0404 /* host epid */
+#define	DIF_VAR_HPRID		0x0405 /* common across h/g */
+#define	DIF_VAR_HARG0		0x0406 /* common across h/g */
+#define	DIF_VAR_HARG1		0x0407 /* common across h/g */
+#define	DIF_VAR_HARG2		0x0408 /* common across h/g */
+#define	DIF_VAR_HARG3		0x0409 /* common across h/g */
+#define	DIF_VAR_HARG4		0x040a /* common across h/g */
+#define	DIF_VAR_HARG5		0x040b /* common across h/g */
+#define	DIF_VAR_HARG6		0x040c /* common across h/g */
+#define	DIF_VAR_HARG7		0x040d /* common across h/g */
+#define	DIF_VAR_HARG8		0x040e /* common across h/g */
+#define	DIF_VAR_HARG9		0x040f /* common across h/g */
+#define	DIF_VAR_HSTACKDEPTH	0x0410 /* host stack depth */
+#define	DIF_VAR_HCALLER		0x0411 /* host caller */
+#define	DIF_VAR_HPROBEPROV	0x0412 /* common across h/g */
+#define	DIF_VAR_HPROBEMOD	0x0413 /* common across h/g */
+#define	DIF_VAR_HPROBEFUNC	0x0414 /* common across h/g */
+#define	DIF_VAR_HPROBENAME	0x0415 /* common across h/g */
+#define	DIF_VAR_HPID		0x0416 /* host pid */
+#define	DIF_VAR_HTID		0x0417 /* host tid */
+#define	DIF_VAR_HEXECNAME	0x0418 /* host execname */
+#define	DIF_VAR_HZONENAME	0x0419 /* host zonename */
+#define	DIF_VAR_HWALLTIMESTAMP	0x041a /* common across h/g */
+#define	DIF_VAR_HUSTACKDEPTH	0x041b /* host ustackdepth */
+#define DIF_VAR_HUCALLER	0x041c /* host ucaller */
+#define	DIF_VAR_HPPID		0x041d /* host ppid */
+#define	DIF_VAR_HUID		0x041e /* host uid */
+#define	DIF_VAR_HGID		0x041f /* host gid */
+#define	DIF_VAR_HERRNO		0x0420 /* host errno */
+#define	DIF_VAR_HEXECARGS	0x0421 /* host execargs */
+#define	DIF_VAR_HJID		0x0422 /* process jail id */
+#define	DIF_VAR_HJAILNAME	0x0423 /* process jail name */
+#define	DIF_VAR_HVMNAME		0x0424 /* current VM name */
+#define	DIF_VAR_HHOSTID		0x0425 /* current DTrace host id */
+
+#define	DIF_VAR_HCPU		0x044f /* host cpu */
+#define	DIF_VAR_MAX		0x0450
 
 #define	DIF_SUBR_RAND			0
 #define	DIF_SUBR_MUTEX_OWNED		1
@@ -325,7 +430,9 @@ typedef enum dtrace_probespec {
 #define	DIF_SUBR_GETF			51
 #define	DIF_SUBR_JSON			52
 #define	DIF_SUBR_STRTOLL		53
-#define	DIF_SUBR_MAX			53	/* max subroutine value */
+#define	DIF_SUBR_RANDOM			54
+#define	DIF_SUBR_PTINFO			55
+#define	DIF_SUBR_MAX			55	/* max subroutine value */
 
 typedef uint32_t dif_instr_t;
 
@@ -338,6 +445,7 @@ typedef uint32_t dif_instr_t;
 #define	DIF_INSTR_VAR(i)		(((i) >>  8) & 0xffff)
 #define	DIF_INSTR_INTEGER(i)		(((i) >>  8) & 0xffff)
 #define	DIF_INSTR_STRING(i)		(((i) >>  8) & 0xffff)
+#define	DIF_INSTR_SYMBOL(i)		(((i) >>  8) & 0xffff)
 #define	DIF_INSTR_SUBR(i)		(((i) >>  8) & 0xffff)
 #define	DIF_INSTR_TYPE(i)		(((i) >> 16) & 0xff)
 #define	DIF_INSTR_XLREF(i)		(((i) >>  8) & 0xffff)
@@ -353,6 +461,8 @@ typedef uint32_t dif_instr_t;
 #define	DIF_INSTR_LOAD(op, r1, d)	(DIF_INSTR_FMT(op, r1, 0, d))
 #define	DIF_INSTR_STORE(op, r1, d)	(DIF_INSTR_FMT(op, r1, 0, d))
 #define	DIF_INSTR_SETX(i, d)		((DIF_OP_SETX << 24) | ((i) << 8) | (d))
+#define	DIF_INSTR_USETX(ref, d)		((DIF_OP_USETX << 24) | ((ref) << 8) | (d))
+#define	DIF_INSTR_TYPECAST(ref, d)	((DIF_OP_TYPECAST << 24) | ((ref) << 8) | (d))
 #define	DIF_INSTR_SETS(s, d)		((DIF_OP_SETS << 24) | ((s) << 8) | (d))
 #define	DIF_INSTR_RET(d)		(DIF_INSTR_FMT(DIF_OP_RET, 0, 0, d))
 #define	DIF_INSTR_NOP			(DIF_OP_NOP << 24)
@@ -385,9 +495,18 @@ typedef struct dtrace_diftype {
 
 #define	DIF_TYPE_CTF		0	/* type is a CTF type */
 #define	DIF_TYPE_STRING		1	/* type is a D string */
+#define	DIF_TYPE_NONE		0xFE	/* type is none */
+#define	DIF_TYPE_BOTTOM		0xFF	/* type can construct any other type */
 
 #define	DIF_TF_BYREF		0x1	/* type is passed by reference */
 #define	DIF_TF_BYUREF		0x2	/* user type is passed by reference */
+#define DIF_TF_BMASK		0x3	/* bitmask of relevant flags for variables */
+
+
+/*
+ * Only used in userspace.
+ */
+#define	DT_TYPE_NAMELEN	128	/* reasonable size for ctf_type_name() */
 
 /*
  * A DTrace Intermediate Format variable record is used to describe each of the
@@ -402,6 +521,19 @@ typedef struct dtrace_difv {
 	uint8_t dtdv_scope;		/* variable scope (see below) */
 	uint16_t dtdv_flags;		/* variable flags (see below) */
 	dtrace_diftype_t dtdv_type;	/* variable type (see above) */
+#ifndef _KERNEL
+	/*
+	 * These variables are only used in the compiler/linker in order
+	 * to type-check the DIFOs and apply relocations where necessary.
+	 */
+	ctf_id_t dtdv_ctfid;		/* variable CTF identifier */
+	char *dtdv_sym;			/* variable symbol name (if exists) */
+	char dtdv_object[DTRACE_MODNAMELEN]; /* object name for CTF container */
+	ctf_file_t *dtdv_ctfp;		/* variable CTF container */
+	void *dtdv_tf;			/* variable's typefile */
+	void *dtdv_stack; 		/* expected stack (if applicable) */
+	dtrace_diftype_t dtdv_storedtype;	/* variable type (see above) */
+#endif
 } dtrace_difv_t;
 
 #define	DIFV_KIND_ARRAY		0	/* variable is an array of quantities */
@@ -410,6 +542,7 @@ typedef struct dtrace_difv {
 #define	DIFV_SCOPE_GLOBAL	0	/* variable has global scope */
 #define	DIFV_SCOPE_THREAD	1	/* variable has thread scope */
 #define	DIFV_SCOPE_LOCAL	2	/* variable has local scope */
+#define	DIFV_NSCOPES		3	/* number of scopes */
 
 #define	DIFV_F_REF		0x1	/* variable is referenced by DIFO */
 #define	DIFV_F_MOD		0x2	/* variable is written by DIFO */
@@ -438,6 +571,7 @@ typedef struct dtrace_difv {
 #define	DTRACEACT_TRACEMEM		6	/* tracemem() action */
 #define	DTRACEACT_TRACEMEM_DYNSIZE	7	/* dynamic tracemem() size */
 #define	DTRACEACT_PRINTM		8	/* printm() action (BSD) */
+#define	DTRACEACT_PRINTIMMSTACK		9	/* compiler-generated only */
 
 #define	DTRACEACT_PROC			0x0100
 #define	DTRACEACT_USTACK		(DTRACEACT_PROC + 1)
@@ -458,6 +592,7 @@ typedef struct dtrace_difv {
 #define	DTRACEACT_STACK			(DTRACEACT_KERNEL + 1)
 #define	DTRACEACT_SYM			(DTRACEACT_KERNEL + 2)
 #define	DTRACEACT_MOD			(DTRACEACT_KERNEL + 3)
+#define	DTRACEACT_IMMSTACK		(DTRACEACT_KERNEL + 4)
 
 #define	DTRACEACT_KERNEL_DESTRUCTIVE	0x0500
 #define	DTRACEACT_BREAKPOINT		(DTRACEACT_KERNEL_DESTRUCTIVE + 1)
@@ -765,6 +900,7 @@ typedef struct dof_probedesc {
 	dof_stridx_t dofp_func;		/* function string */
 	dof_stridx_t dofp_name;		/* name string */
 	uint32_t dofp_id;		/* probe identifier (or zero) */
+	uint16_t dofp_vmid;		/* VM identifier */
 } dof_probedesc_t;
 
 typedef struct dof_actdesc {
@@ -896,6 +1032,12 @@ typedef struct dtrace_difo {
 	uint_t dtdo_krelen;		/* length of krelo table */
 	uint_t dtdo_urelen;		/* length of urelo table */
 	uint_t dtdo_xlmlen;		/* length of translator table */
+	char *dtdo_symtab;		/* symbol table (optional) */
+	uint64_t dtdo_symlen;		/* length of symbol table */
+	char **dtdo_types;		/* array of types (dtdo_len size) */
+	void *dtdo_bb;			/* first basic block */
+	size_t dtdo_idx;		/* difo identifier */
+	struct dt_inttab *dtdo_inthash;	/* integer hash table (userspace only) */
 #endif
 } dtrace_difo_t;
 
@@ -920,11 +1062,13 @@ typedef struct dtrace_difo {
 struct dtrace_predicate;
 
 typedef struct dtrace_probedesc {
-	dtrace_id_t dtpd_id;			/* probe identifier */
-	char dtpd_provider[DTRACE_PROVNAMELEN]; /* probe provider name */
-	char dtpd_mod[DTRACE_MODNAMELEN];	/* probe module name */
-	char dtpd_func[DTRACE_FUNCNAMELEN];	/* probe function name */
-	char dtpd_name[DTRACE_NAMELEN];		/* probe name */
+	dtrace_id_t dtpd_id;			  /* probe identifier */
+	dtrace_vmid_t dtpd_vmid;		  /* where is the probe? */
+	char dtpd_target[DTRACE_TARGETNAMELEN];   /* probe target name */
+	char dtpd_provider[DTRACE_PROVNAMELEN];   /* probe provider name */
+	char dtpd_mod[DTRACE_MODNAMELEN];	  /* probe module name */
+	char dtpd_func[DTRACE_FUNCNAMELEN];	  /* probe function name */
+	char dtpd_name[DTRACE_NAMELEN];		  /* probe name */
 } dtrace_probedesc_t;
 
 typedef struct dtrace_repldesc {
@@ -944,7 +1088,10 @@ typedef struct dtrace_actdesc {
 	uint32_t dtad_ntuple;			/* number in tuple */
 	uint64_t dtad_arg;			/* action argument */
 	uint64_t dtad_uarg;			/* user argument */
+	int dtad_return;			/* non-void return? */
 	int dtad_refcnt;			/* reference count */
+	int dtad_patched;			/* did we patch this? */
+	void *dtad_elfact;			/* serialized version */
 } dtrace_actdesc_t;
 
 typedef struct dtrace_ecbdesc {
@@ -984,6 +1131,7 @@ typedef struct dtrace_recdesc {
 
 typedef struct dtrace_eprobedesc {
 	dtrace_epid_t dtepd_epid;		/* enabled probe ID */
+	dtrace_vmid_t dtepd_vmid;		/* probe VMID */
 	dtrace_id_t dtepd_probeid;		/* probe ID */
 	uint64_t dtepd_uarg;			/* library argument */
 	uint32_t dtepd_size;			/* total size */
@@ -1030,39 +1178,45 @@ typedef struct dtrace_fmtdesc {
  * predefined tokens as their values; these are defined with
  * DTRACEOPT_{option}_{token}.
  */
-#define	DTRACEOPT_BUFSIZE	0	/* buffer size */
-#define	DTRACEOPT_BUFPOLICY	1	/* buffer policy */
-#define	DTRACEOPT_DYNVARSIZE	2	/* dynamic variable size */
-#define	DTRACEOPT_AGGSIZE	3	/* aggregation size */
-#define	DTRACEOPT_SPECSIZE	4	/* speculation size */
-#define	DTRACEOPT_NSPEC		5	/* number of speculations */
-#define	DTRACEOPT_STRSIZE	6	/* string size */
-#define	DTRACEOPT_CLEANRATE	7	/* dynvar cleaning rate */
-#define	DTRACEOPT_CPU		8	/* CPU to trace */
-#define	DTRACEOPT_BUFRESIZE	9	/* buffer resizing policy */
-#define	DTRACEOPT_GRABANON	10	/* grab anonymous state, if any */
-#define	DTRACEOPT_FLOWINDENT	11	/* indent function entry/return */
-#define	DTRACEOPT_QUIET		12	/* only output explicitly traced data */
-#define	DTRACEOPT_STACKFRAMES	13	/* number of stack frames */
-#define	DTRACEOPT_USTACKFRAMES	14	/* number of user stack frames */
-#define	DTRACEOPT_AGGRATE	15	/* aggregation snapshot rate */
-#define	DTRACEOPT_SWITCHRATE	16	/* buffer switching rate */
-#define	DTRACEOPT_STATUSRATE	17	/* status rate */
-#define	DTRACEOPT_DESTRUCTIVE	18	/* destructive actions allowed */
-#define	DTRACEOPT_STACKINDENT	19	/* output indent for stack traces */
-#define	DTRACEOPT_RAWBYTES	20	/* always print bytes in raw form */
-#define	DTRACEOPT_JSTACKFRAMES	21	/* number of jstack() frames */
-#define	DTRACEOPT_JSTACKSTRSIZE	22	/* size of jstack() string table */
-#define	DTRACEOPT_AGGSORTKEY	23	/* sort aggregations by key */
-#define	DTRACEOPT_AGGSORTREV	24	/* reverse-sort aggregations */
-#define	DTRACEOPT_AGGSORTPOS	25	/* agg. position to sort on */
-#define	DTRACEOPT_AGGSORTKEYPOS	26	/* agg. key position to sort on */
-#define	DTRACEOPT_TEMPORAL	27	/* temporally ordered output */
-#define	DTRACEOPT_AGGHIST	28	/* histogram aggregation output */
-#define	DTRACEOPT_AGGPACK	29	/* packed aggregation output */
-#define	DTRACEOPT_AGGZOOM	30	/* zoomed aggregation scaling */
-#define	DTRACEOPT_ZONE		31	/* zone in which to enable probes */
-#define	DTRACEOPT_MAX		32	/* number of options */
+#define	DTRACEOPT_BUFSIZE		0	/* buffer size */
+#define	DTRACEOPT_BUFPOLICY		1	/* buffer policy */
+#define	DTRACEOPT_DYNVARSIZE		2	/* dynamic variable size */
+#define	DTRACEOPT_AGGSIZE		3	/* aggregation size */
+#define	DTRACEOPT_SPECSIZE		4	/* speculation size */
+#define	DTRACEOPT_NSPEC			5	/* number of speculations */
+#define	DTRACEOPT_STRSIZE		6	/* string size */
+#define	DTRACEOPT_CLEANRATE		7	/* dynvar cleaning rate */
+#define	DTRACEOPT_CPU			8	/* CPU to trace */
+#define	DTRACEOPT_BUFRESIZE		9	/* buffer resizing policy */
+#define	DTRACEOPT_GRABANON		10	/* grab anonymous state, if any */
+#define	DTRACEOPT_FLOWINDENT		11	/* indent function entry/return */
+#define	DTRACEOPT_QUIET			12	/* only output explicitly traced data */
+#define	DTRACEOPT_STACKFRAMES		13	/* number of stack frames */
+#define	DTRACEOPT_USTACKFRAMES		14	/* number of user stack frames */
+#define	DTRACEOPT_AGGRATE		15	/* aggregation snapshot rate */
+#define	DTRACEOPT_SWITCHRATE		16	/* buffer switching rate */
+#define	DTRACEOPT_STATUSRATE		17	/* status rate */
+#define	DTRACEOPT_DESTRUCTIVE		18	/* destructive actions allowed */
+#define	DTRACEOPT_STACKINDENT		19	/* output indent for stack traces */
+#define	DTRACEOPT_RAWBYTES		20	/* always print bytes in raw form */
+#define	DTRACEOPT_JSTACKFRAMES		21	/* number of jstack() frames */
+#define	DTRACEOPT_JSTACKSTRSIZE		22	/* size of jstack() string table */
+#define	DTRACEOPT_AGGSORTKEY		23	/* sort aggregations by key */
+#define	DTRACEOPT_AGGSORTREV		24	/* reverse-sort aggregations */
+#define	DTRACEOPT_AGGSORTPOS		25	/* agg. position to sort on */
+#define	DTRACEOPT_AGGSORTKEYPOS		26	/* agg. key position to sort on */
+#define	DTRACEOPT_TEMPORAL		27	/* temporally ordered output */
+#define	DTRACEOPT_AGGHIST		28	/* histogram aggregation output */
+#define	DTRACEOPT_AGGPACK		29	/* packed aggregation output */
+#define	DTRACEOPT_AGGZOOM		30	/* zoomed aggregation scaling */
+#define	DTRACEOPT_ZONE			31	/* zone in which to enable probes */
+#define	DTRACEOPT_OFORMAT		32	/* output format (JSON, XML, etc.) */
+#define	DTRACEOPT_DDTRACEARG		33	/* opaque DDTrace argument */
+#define	DTRACEOPT_HYPERTRACE		34	/* are we hypertracing? */
+#define	DTRACEOPT_IMMSTACKSTRSIZE	35	/* immediate stack string size */
+#define	DTRACEOPT_IMMSTACKFRAMES	36	/* number of immediate stack frames */
+#define DTRACEOPT_MINION		37	/* run in minion mode */
+#define	DTRACEOPT_MAX			38	/* number of options */
 
 #define	DTRACEOPT_UNSET		(dtrace_optval_t)-2	/* unset option */
 
@@ -1280,6 +1434,16 @@ typedef struct dtrace_providerdesc {
 } dtrace_providerdesc_t;
 
 /*
+ * Disabled future feature: the unwired "machine filter" (see
+ * dtrace_filterfind() in dtrace.c).  DTRACEIOC_FILTER has no handler and
+ * returns ENOTTY until the feature is designed.
+ */
+typedef struct dtrace_machine_filter {
+	char	dtfl_entries[DTRACEFILT_MAX][DTRACE_MAXFILTNAME];
+	size_t	dtfl_count;
+} dtrace_machine_filter_t;
+
+/*
  * DTrace Pseudodevice Interface
  *
  * DTrace is controlled through ioctl(2)'s to the in-kernel dtrace:dtrace
@@ -1306,41 +1470,66 @@ typedef struct dtrace_providerdesc {
 #define	DTRACEIOC_REPLICATE	(DTRACEIOC | 18)	/* replicate enab */
 #else
 #define	DTRACEIOC_PROVIDER	_IOWR('x',1,dtrace_providerdesc_t)
-							/* provider query */
+						/* provider query */
 #define	DTRACEIOC_PROBES	_IOWR('x',2,dtrace_probedesc_t)
-							/* probe query */
+						/* probe query */
 #define	DTRACEIOC_BUFSNAP	_IOW('x',4,dtrace_bufdesc_t *)	
-							/* snapshot buffer */
+						/* snapshot buffer */
 #define	DTRACEIOC_PROBEMATCH	_IOWR('x',5,dtrace_probedesc_t)
-							/* match probes */
+						/* match probes */
+#define	DTRACE_MIN_NPROBES	200000		/* minimum size for ps */
 typedef struct {
 	void	*dof;		/* DOF userland address written to driver. */
+	dtrace_probedesc_t *ps;	/* matched probes filled by driver */
 	int	n_matched;	/* # matches returned by driver. */
+	int	n_desc;		/* # of probe descriptions */
+	int	ps_bufsize;	/* size of ps */
+	uint16_t vmid;		/* origin vm */
+	uint64_t epoch;		/* origin VM lifetime token */
 } dtrace_enable_io_t;
 #define	DTRACEIOC_ENABLE	_IOWR('x',6,dtrace_enable_io_t)
-							/* enable probes */
+						/* enable probes */
 #define	DTRACEIOC_AGGSNAP	_IOW('x',7,dtrace_bufdesc_t *)
-							/* snapshot agg. */
+						/* snapshot agg. */
 #define	DTRACEIOC_EPROBE	_IOW('x',8,dtrace_eprobedesc_t)
-							/* get eprobe desc. */
+						/* get eprobe desc. */
 #define	DTRACEIOC_PROBEARG	_IOWR('x',9,dtrace_argdesc_t)
-							/* get probe arg */
+						/* get probe arg */
 #define	DTRACEIOC_CONF		_IOR('x',10,dtrace_conf_t)
-							/* get config. */
+						/* get config. */
 #define	DTRACEIOC_STATUS	_IOR('x',11,dtrace_status_t)
-							/* get status */
+						/* get status */
 #define	DTRACEIOC_GO		_IOR('x',12,processorid_t)
-							/* start tracing */
+						/* start tracing */
 #define	DTRACEIOC_STOP		_IOWR('x',13,processorid_t)
-							/* stop tracing */
+						/* stop tracing */
 #define	DTRACEIOC_AGGDESC	_IOW('x',15,dtrace_aggdesc_t *)	
-							/* get agg. desc. */
+						/* get agg. desc. */
 #define	DTRACEIOC_FORMAT	_IOWR('x',16,dtrace_fmtdesc_t)	
-							/* get format str */
+						/* get format str */
 #define	DTRACEIOC_DOFGET	_IOW('x',17,dof_hdr_t *)
-							/* get DOF */
+						/* get DOF */
 #define	DTRACEIOC_REPLICATE	_IOW('x',18,dtrace_repldesc_t)	
-							/* replicate enab */
+						/* replicate enab */
+#define	DTRACEIOC_FILTER	_IOW('x',19,dtrace_machine_filter_t)
+						/* future feature: ENOTTY */
+						/* apply filter */
+#define	DTRACEIOC_AUGMENT	_IOW('x',20,dtrace_enable_io_t)
+						/* augment instrumentation */
+typedef struct {
+	dtrace_probedesc_t	*eprobes;	/* enabled vprobes */
+	size_t			neprobes;	/* number of enabled vprobes */
+	uint16_t		vmid;		/* vmid for these vprobes */
+	uint64_t		epoch;		/* origin VM lifetime token */
+} dtrace_vprobe_io_t;
+#define DTRACEIOC_VPROBE_CREATE	_IOW('x',21,dtrace_vprobe_io_t)
+						/* create vprobes */
+/* Refuse a quiesced output drain when speculative state may remain. */
+#define DTRACEIOC_DRAINABLE	_IO('x',22)
+/* A state lifetime, shared by duplicated/inherited references to its handle.
+ * QUERY is read-only and never treats a different module lifetime as retired. */
+#define DTRACEIOC_HANDLE_ID	_IOR('x',23,dtrace_handle_lifetime_t)
+#define DTRACEIOC_HANDLE_QUERY	_IOWR('x',24,dtrace_handle_lifetime_t)
 #endif
 
 /*
@@ -2132,6 +2321,14 @@ typedef struct dof_helper {
  *   instrument the kernel arbitrarily should be sure to not instrument these
  *   routines.
  */
+ 
+struct dtrace_state;
+
+typedef struct dtrace_dops {
+	void (*dtdops_open)(void *, struct dtrace_state *);
+	void (*dtdops_close)(void *, struct dtrace_state *);
+} dtrace_dops_t;
+
 typedef struct dtrace_pops {
 	void (*dtps_provide)(void *arg, dtrace_probedesc_t *spec);
 	void (*dtps_provide_module)(void *arg, modctl_t *mp);
@@ -2153,17 +2350,24 @@ typedef struct dtrace_pops {
 #define	DTRACE_MODE_NOPRIV_RESTRICT		0x20
 #define	DTRACE_MODE_LIMITEDPRIV_RESTRICT	0x40
 
+typedef uintptr_t	dtrace_dist_id_t;
 typedef uintptr_t	dtrace_provider_id_t;
 
+extern int dtrace_dist_register(const char *, const dtrace_dops_t *,
+    void *, dtrace_dist_id_t *);
+extern int dtrace_dist_unregister(dtrace_dist_id_t *);
 extern int dtrace_register(const char *, const dtrace_pattr_t *, uint32_t,
     cred_t *, const dtrace_pops_t *, void *, dtrace_provider_id_t *);
 extern int dtrace_unregister(dtrace_provider_id_t);
 extern int dtrace_condense(dtrace_provider_id_t);
 extern void dtrace_invalidate(dtrace_provider_id_t);
-extern dtrace_id_t dtrace_probe_lookup(dtrace_provider_id_t, char *,
-    char *, char *);
+extern dtrace_id_t dtrace_probe_lookup(dtrace_vmid_t, dtrace_provider_id_t,
+    char *, char *, char *);
 extern dtrace_id_t dtrace_probe_create(dtrace_provider_id_t, const char *,
     const char *, const char *, int, void *);
+extern dtrace_id_t dtrace_vprobe_create(dtrace_vmid_t, dtrace_id_t,
+    const char *, const char *, const char *, const char *, int *);
+extern void dtrace_vprobespace_destroy(uint16_t);
 extern void *dtrace_probe_arg(dtrace_provider_id_t, dtrace_id_t);
 extern void dtrace_probe(dtrace_id_t, uintptr_t arg0, uintptr_t arg1,
     uintptr_t arg2, uintptr_t arg3, uintptr_t arg4);
@@ -2405,6 +2609,9 @@ extern int dtrace_mach_aframes(void);
 extern int dtrace_instr_size_isa(uint8_t *, model_t, int *);
 #ifdef __i386
 extern void dtrace_invop_callsite(void);
+
+struct vm_guest_paging;
+extern int dtrace_gla2hva(struct vm_guest_paging *, uint64_t gla, uint64_t *);
 #endif
 #endif
 extern void dtrace_invop_add(int (*)(uintptr_t, struct trapframe *, uintptr_t));
@@ -2431,6 +2638,21 @@ extern void dtrace_helpers_destroy(proc_t *);
 	__compiler_membar();					\
 } while (0)
 
+/* static: a C99 inline definition alone leaves an unresolved external
+ * symbol whenever a caller is not inlined (e.g. -O0 module builds). */
+static inline size_t
+dtrace_nextpow2(size_t n)
+{
+	n--;
+	n |= n >> 1;
+	n |= n >> 2;
+	n |= n >> 4;
+	n |= n >> 8;
+	n |= n >> 16;
+	return (++n);
+}
+
+	
 #endif /* _KERNEL */
 
 extern int dtrace_instr_size(uint8_t *instr);

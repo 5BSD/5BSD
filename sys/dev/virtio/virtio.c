@@ -72,6 +72,7 @@ static struct virtio_ident {
 	{ VIRTIO_ID_RPROC_SERIAL,	"Remote Processor Serial"	},
 	{ VIRTIO_ID_CAIF,		"CAIF"				},
 	{ VIRTIO_ID_GPU,		"GPU"				},
+	{ VIRTIO_ID_DTRACE,		"DTrace"			},
 	{ VIRTIO_ID_INPUT,		"Input"				},
 	{ VIRTIO_ID_VSOCK,		"VSOCK Transport"		},
 	{ VIRTIO_ID_CRYPTO,		"Crypto"			},

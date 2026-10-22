@@ -69,7 +69,9 @@ typedef	__uint_fast64_t		uint_fast64_t;
 #define	WCHAR_MIN	__WCHAR_MIN
 #define	WCHAR_MAX	__WCHAR_MAX
 #if __ISO_C_VISIBLE >= 2023
+#ifndef WCHAR_WIDTH
 #define	WCHAR_WIDTH	__WCHAR_WIDTH
+#endif
 #endif
 
 #if __EXT1_VISIBLE

@@ -43,6 +43,7 @@
 #include <sys/rwlock.h>
 #include <sys/sysctl.h>
 #include <sys/vnode.h>
+#include <sys/dtrace_bsd.h>
 
 #include <machine/elf.h>
 
@@ -1608,9 +1609,26 @@ link_elf_search_symbol(linker_file_t lf, caddr_t value,
 	int i;
 
 	for (i = 0, es = ef->ddbsymtab; i < ef->ddbsymcnt; i++, es++) {
+		/* The linker may run before DTrace registers its fault callback. */
+#ifdef KDTRACE_HOOKS
+		if (dtrace_fault_func != NULL && dtrace_fault_func()) {
+			return (-1);
+		}
+#endif
 		if (es->st_name == 0)
 			continue;
+#ifdef __riscv
+		/* Mapping symbols are not functions or useful stack frames. */
+		const char *name = ef->ddbstrtab + es->st_name;
+		if (name[0] == '$' && (name[1] == 'x' || name[1] == 'd') &&
+		    (name[2] == '\0' || name[2] == '.'))
+			continue;
+#endif
 		st_value = es->st_value;
+#ifdef KDTRACE_HOOKS
+		if (dtrace_fault_func != NULL && dtrace_fault_func())
+			return (-1);
+#endif
 		if (off >= st_value) {
 			if (off - st_value < diff) {
 				diff = off - st_value;
