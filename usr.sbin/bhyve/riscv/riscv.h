@@ -37,5 +37,8 @@
 #define	HART_TO_CPU(x)	(x)
 
 void vmexit_set_bsp(int hart_id);
+/* SBI HSM power state, for checkpoint/restore. */
+bool vmexit_hart_running(int hart_id);
+void vmexit_hart_set_running(int hart_id, bool running);
 
 #endif /* !_RISCV_H_ */

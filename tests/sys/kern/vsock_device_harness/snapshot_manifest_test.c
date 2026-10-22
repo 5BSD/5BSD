@@ -161,6 +161,7 @@ ATF_TC_BODY(manifest_validation, tc)
 	memset(maximum_base, 'x', sizeof(maximum_base) - 1);
 	maximum_base[sizeof(maximum_base) - 1] = '\0';
 	memset(&manifest, 0, sizeof(manifest));
+	manifest.format_version = 3;
 	strlcpy(manifest.data,
 	    "checkpoint.data.00000000000000000000000000000000",
 	    sizeof(manifest.data));
@@ -397,8 +398,11 @@ ATF_TC_BODY(manifest_member_integrity, tc)
 	char directory[] = "/tmp/bhyve-manifest-integrity.XXXXXX";
 	char canonical[PATH_MAX], data_path[PATH_MAX], kern_path[PATH_MAX];
 	char meta_path[PATH_MAX];
+	char disk_digest[SHA256_DIGEST_STRING_LENGTH], handoff_hex[65];
 	char *alias_tmp, *temporary;
-	int data_fd, dirfd, kern_fd, meta_fd;
+	uint8_t handoff_token[16], prepared_token[16], handoff_digest[32];
+	uint8_t recovered_token[16], recovered_digest[32];
+	int data_fd, dirfd, kern_fd, meta_fd, trace_fd;
 
 	ATF_REQUIRE(mkdtemp(directory) != NULL);
 	dirfd = open(directory, O_RDONLY | O_DIRECTORY);
@@ -407,6 +411,8 @@ ATF_TC_BODY(manifest_member_integrity, tc)
 	    directory) > 0);
 	ATF_REQUIRE_EQ(checkpoint_generation_names("checkpoint", &manifest,
 	    &temporary), 0);
+	ATF_REQUIRE_EQ(checkpoint_manifest_handoff_token("checkpoint",
+	    &manifest, prepared_token), 0);
 	make_file_at(dirfd, manifest.data, "data-member");
 	make_file_at(dirfd, manifest.kern, "kern-member");
 	make_file_at(dirfd, manifest.meta, "meta-member");
@@ -414,18 +420,50 @@ ATF_TC_BODY(manifest_member_integrity, tc)
 	    &manifest, &published), 0);
 	ATF_CHECK(published);
 	ATF_CHECK_EQ(verify_manifest_at(dirfd, &manifest), 0);
+	ATF_REQUIRE_EQ(checkpoint_manifest_open_verified_trace_at(dirfd,
+	    &manifest, &data_fd, &kern_fd, &meta_fd, &trace_fd), 0);
+	ATF_CHECK_EQ(trace_fd, -1);
+	ATF_REQUIRE_EQ(close(data_fd), 0);
+	ATF_REQUIRE_EQ(close(kern_fd), 0);
+	ATF_REQUIRE_EQ(close(meta_fd), 0);
 	ATF_CHECK_EQ(strlen(manifest.data_sha256),
 	    CHECKPOINT_SHA256_HEX_LEN);
 	ATF_CHECK_EQ(strlen(manifest.kern_sha256),
 	    CHECKPOINT_SHA256_HEX_LEN);
 	ATF_CHECK_EQ(strlen(manifest.meta_sha256),
 	    CHECKPOINT_SHA256_HEX_LEN);
+	ATF_REQUIRE_EQ(checkpoint_manifest_handoff_identity("checkpoint",
+	    &manifest, handoff_token, handoff_digest), 0);
+	ATF_CHECK_EQ(memcmp(handoff_token, prepared_token,
+	    sizeof(handoff_token)), 0);
+	data_fd = openat(dirfd, "checkpoint", O_RDONLY | O_NOFOLLOW);
+	ATF_REQUIRE(data_fd >= 0);
+	ATF_REQUIRE(SHA256_Fd(data_fd, disk_digest) != NULL);
+	ATF_REQUIRE_EQ(close(data_fd), 0);
+	for (size_t i = 0; i < sizeof(handoff_digest); i++)
+		ATF_REQUIRE_EQ(snprintf(handoff_hex + 2 * i,
+		    sizeof(handoff_hex) - 2 * i, "%02x", handoff_digest[i]), 2);
+	ATF_CHECK_STREQ(handoff_hex, disk_digest);
 
 	ATF_REQUIRE_EQ(checkpoint_manifest_read(canonical, &parsed,
 	    &is_manifest), 0);
 	ATF_CHECK(is_manifest);
 	ATF_CHECK_EQ(parsed.format_version, 3);
 	ATF_CHECK_EQ(verify_manifest_at(dirfd, &parsed), 0);
+	ATF_REQUIRE_EQ(checkpoint_manifest_handoff_identity("checkpoint",
+	    &parsed, recovered_token, recovered_digest), 0);
+	ATF_CHECK_EQ(memcmp(handoff_token, recovered_token,
+	    sizeof(handoff_token)), 0);
+	ATF_CHECK_EQ(memcmp(handoff_digest, recovered_digest,
+	    sizeof(handoff_digest)), 0);
+	parsed.data_sha256[0] = parsed.data_sha256[0] == 'a' ? 'b' : 'a';
+	ATF_REQUIRE_EQ(checkpoint_manifest_handoff_identity("checkpoint",
+	    &parsed, recovered_token, recovered_digest), 0);
+	ATF_CHECK_EQ(memcmp(handoff_token, recovered_token,
+	    sizeof(handoff_token)), 0);
+	ATF_CHECK(memcmp(handoff_digest, recovered_digest,
+	    sizeof(handoff_digest)) != 0);
+	parsed = manifest;
 	ATF_REQUIRE_EQ(symlinkat("checkpoint", dirfd, "checkpoint-link"), 0);
 	parsed = manifest;
 	is_manifest = true;
@@ -495,6 +533,83 @@ ATF_TC_BODY(manifest_member_integrity, tc)
 	ATF_REQUIRE_EQ(unlinkat(dirfd, "alias", 0), 0);
 	free(alias_tmp);
 
+	ATF_REQUIRE_EQ(unlinkat(dirfd, manifest.kern, 0), 0);
+	ATF_REQUIRE_EQ(unlinkat(dirfd, manifest.meta, 0), 0);
+	ATF_REQUIRE_EQ(unlinkat(dirfd, "checkpoint", 0), 0);
+	ATF_REQUIRE_EQ(close(dirfd), 0);
+	ATF_REQUIRE_EQ(rmdir(directory), 0);
+	free(temporary);
+}
+
+ATF_TC_WITHOUT_HEAD(manifest_trace_member);
+ATF_TC_BODY(manifest_trace_member, tc)
+{
+	struct checkpoint_manifest manifest, parsed;
+	char directory[] = "/tmp/bhyve-manifest-trace.XXXXXX";
+	char canonical[PATH_MAX], trace_path[PATH_MAX];
+	char *temporary;
+	uint8_t token[16], digest[32], changed_token[16], changed_digest[32];
+	bool is_manifest, published;
+	int dirfd, data_fd, kern_fd, meta_fd, trace_fd;
+
+	ATF_REQUIRE(mkdtemp(directory) != NULL);
+	dirfd = open(directory, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(dirfd >= 0);
+	ATF_REQUIRE_EQ(checkpoint_generation_names_trace("checkpoint",
+	    &manifest, &temporary), 0);
+	ATF_CHECK_EQ(manifest.format_version, 4);
+	ATF_CHECK(checkpoint_manifest_valid_for("checkpoint", &manifest));
+	ATF_REQUIRE_EQ(checkpoint_manifest_handoff_token("checkpoint",
+	    &manifest, token), 0);
+	make_file_at(dirfd, manifest.data, "data-member");
+	make_file_at(dirfd, manifest.kern, "kern-member");
+	make_file_at(dirfd, manifest.meta, "meta-member");
+	make_file_at(dirfd, manifest.trace, "HTX1-trace-member");
+	ATF_REQUIRE_EQ(checkpoint_publish(dirfd, "checkpoint", temporary,
+	    &manifest, &published), 0);
+	ATF_CHECK(published);
+	ATF_CHECK_EQ(strlen(manifest.trace_sha256),
+	    CHECKPOINT_SHA256_HEX_LEN);
+	ATF_REQUIRE_EQ(checkpoint_manifest_handoff_identity("checkpoint",
+	    &manifest, token, digest), 0);
+	ATF_REQUIRE(snprintf(canonical, sizeof(canonical), "%s/checkpoint",
+	    directory) > 0);
+	ATF_REQUIRE_EQ(checkpoint_manifest_read(canonical, &parsed,
+	    &is_manifest), 0);
+	ATF_CHECK(is_manifest);
+	ATF_CHECK_EQ(parsed.format_version, 4);
+	ATF_CHECK(checkpoint_manifest_valid_for("checkpoint", &parsed));
+	parsed.trace_sha256[0] = parsed.trace_sha256[0] == 'a' ? 'b' : 'a';
+	ATF_REQUIRE_EQ(checkpoint_manifest_handoff_identity("checkpoint",
+	    &parsed, changed_token, changed_digest), 0);
+	ATF_CHECK_EQ(memcmp(token, changed_token, sizeof(token)), 0);
+	ATF_CHECK(memcmp(digest, changed_digest, sizeof(digest)) != 0);
+	parsed = manifest;
+	ATF_CHECK_EQ(checkpoint_manifest_open_verified_at(dirfd, &parsed,
+	    &data_fd, &kern_fd, &meta_fd), EINVAL);
+	ATF_REQUIRE_EQ(checkpoint_manifest_open_verified_trace_at(dirfd,
+	    &parsed, &data_fd, &kern_fd, &meta_fd, &trace_fd), 0);
+	ATF_CHECK(trace_fd >= 0);
+	ATF_REQUIRE_EQ(close(trace_fd), 0);
+	ATF_REQUIRE_EQ(close(data_fd), 0);
+	ATF_REQUIRE_EQ(close(kern_fd), 0);
+	ATF_REQUIRE_EQ(close(meta_fd), 0);
+	ATF_CHECK_EQ(checkpoint_manifest_open_verified_trace_at(dirfd,
+	    &parsed, &data_fd, &kern_fd, &meta_fd, &data_fd), EINVAL);
+	ATF_REQUIRE(snprintf(trace_path, sizeof(trace_path), "%s/%s",
+	    directory, manifest.trace) > 0);
+	ATF_REQUIRE_EQ(replace_file(trace_path, "HTX1-trace-membeR"), 0);
+	ATF_CHECK_EQ(checkpoint_manifest_open_verified_trace_at(dirfd,
+	    &parsed, &data_fd, &kern_fd, &meta_fd, &trace_fd), EILSEQ);
+	ATF_CHECK_EQ(trace_fd, -1);
+	ATF_REQUIRE_EQ(replace_file(trace_path, "HTX1-trace-member"), 0);
+	ATF_REQUIRE_EQ(unlinkat(dirfd, manifest.trace, 0), 0);
+	ATF_REQUIRE_EQ(linkat(dirfd, manifest.kern, dirfd,
+	    manifest.trace, 0), 0);
+	ATF_CHECK_EQ(checkpoint_manifest_open_verified_trace_at(dirfd,
+	    &parsed, &data_fd, &kern_fd, &meta_fd, &trace_fd), EINVAL);
+	ATF_REQUIRE_EQ(unlinkat(dirfd, manifest.trace, 0), 0);
+	ATF_REQUIRE_EQ(unlinkat(dirfd, manifest.data, 0), 0);
 	ATF_REQUIRE_EQ(unlinkat(dirfd, manifest.kern, 0), 0);
 	ATF_REQUIRE_EQ(unlinkat(dirfd, manifest.meta, 0), 0);
 	ATF_REQUIRE_EQ(unlinkat(dirfd, "checkpoint", 0), 0);
@@ -713,6 +828,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, raw_three_file_format_rejected);
 	ATF_TP_ADD_TC(tp, manifest_rejects_nonregular_files);
 	ATF_TP_ADD_TC(tp, manifest_member_integrity);
+	ATF_TP_ADD_TC(tp, manifest_trace_member);
 	ATF_TP_ADD_TC(tp, manifest_atomic_publication);
 	ATF_TP_ADD_TC(tp, manifest_publication_rejects_invalid_topology);
 	ATF_TP_ADD_TC(tp, manifest_failure_atomicity);

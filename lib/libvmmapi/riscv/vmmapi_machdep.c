@@ -45,6 +45,10 @@ const char *vm_capstrmap[] = {
 };
 
 #define	VM_MD_IOCTLS		\
+	VM_GET_IDENTIFIER,	\
+	VM_GET_IDENTITY,	\
+	VM_GET_ATTESTATION,	\
+	VM_GET_RISCV_TIMEBASE, \
 	VM_ATTACH_APLIC,	\
 	VM_ASSERT_IRQ,		\
 	VM_DEASSERT_IRQ,	\

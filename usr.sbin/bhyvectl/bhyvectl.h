@@ -42,7 +42,7 @@ struct option;
 struct vmctx;
 struct vmexit;
 
-void bhyvectl_md_main(struct vmctx *ctx, struct vcpu *vcpu, int vcpuid,
+int bhyvectl_md_main(struct vmctx *ctx, struct vcpu *vcpu, int vcpuid,
     bool get_all);
 struct option *bhyvectl_opts(const struct option *options, size_t count);
 void bhyvectl_handle_opt(const struct option *opts, int opt);

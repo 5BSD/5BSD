@@ -123,6 +123,8 @@ vm_setup_freebsd_registers_i386(struct vcpu *vcpu, uint32_t eip,
 	desc_access = DESC_GRAN | DESC_DEF32 | DESC_PRESENT | SDT_MEMERA;
 	error = vm_set_desc(vcpu, VM_REG_GUEST_CS,
 			    desc_base, desc_limit, desc_access);
+	if (error)
+		goto done;
 
 	desc_access = DESC_GRAN | DESC_DEF32 | DESC_PRESENT | SDT_MEMRWA;
 	error = vm_set_desc(vcpu, VM_REG_GUEST_DS,

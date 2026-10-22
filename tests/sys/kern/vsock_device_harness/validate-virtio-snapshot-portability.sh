@@ -107,8 +107,32 @@ in_restore {
 	depth += delta($0)
 	if ($0 ~ /checkpoint_restore_startup_held\(\)/)
 		held = FNR
+	if ($0 ~ /if \(handoff_has_ingress\)/)
+		fence = FNR
+	if ($0 ~ /error = vm_pause_devices\(\)/)
+		pause = FNR
+	if ($0 ~ /DTRACED_HANDOFF_RESERVE/)
+		reserve = FNR
+	if ($0 ~ /pci_vtdtr_checkpoint_private_image_query\(/)
+		query = FNR
+	if ($0 ~ /hypertrace_handoff_destination_import_prestart\(/)
+		import = FNR
+	if ($0 ~ /DTRACED_HANDOFF_MUTATE/)
+		mutate = FNR
 	if ($0 ~ /vm_snapshot_session_release_exact\(ctx, &session, true,/)
 		commit = FNR
+	if ($0 ~ /DTRACED_HANDOFF_CLAIM/)
+		claim = FNR
+	if ($0 ~ /DTRACED_HANDOFF_BIND_KILLS_ALL/)
+		kills = FNR
+	if ($0 ~ /pci_vtdtr_checkpoint_private_image_bind\(/)
+		bind = FNR
+	if ($0 ~ /hypertrace_handoff_destination_promote_prestart\(/)
+		promote = FNR
+	if ($0 ~ /hypertrace_start_ready\(/)
+		admit = FNR
+	if ($0 ~ /pci_vtdtr_checkpoint_publish_paused\(/)
+		publish = FNR
 	if ($0 ~ /error = vm_resume_devices\(\)/)
 		resume = FNR
 	if ($0 ~ /error = checkpoint_restore_startup_release\(\)/)
@@ -116,9 +140,18 @@ in_restore {
 	if (opened && depth == 0)
 		in_restore = 0
 }
-END { exit(held != 0 && commit != 0 && resume != 0 && release != 0 && held < commit && commit < resume && resume < release ? 0 : 1) }
+END { exit(held != 0 && fence != 0 && pause != 0 && reserve != 0 &&
+    query != 0 && import != 0 &&
+    mutate != 0 && commit != 0 && claim != 0 && kills != 0 &&
+    bind != 0 && promote != 0 && admit != 0 && publish != 0 &&
+    resume != 0 && release != 0 && held < fence && fence < pause &&
+    pause < reserve &&
+    reserve < query && query < import && import < mutate &&
+    mutate < commit && commit < claim &&
+    claim < kills && kills < bind && bind < promote && promote < admit &&
+    admit < publish && publish < resume && resume < release ? 0 : 1) }
 ' "$snapshot"; then
-	echo "snapshot portability: restore startup fence is not held through commit and device resume" >&2
+	echo "snapshot portability: restore handoff order or startup fence is invalid" >&2
 	exit 1
 fi
 

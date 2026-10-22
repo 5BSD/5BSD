@@ -178,6 +178,7 @@
 #define	VIRTIO_PCI_TRANSITIONAL_SCSI	0x1004
 #define	VIRTIO_PCI_TRANSITIONAL_ENTROPY	0x1005
 #define	VIRTIO_PCI_TRANSITIONAL_9P	0x1009
+#define VIRTIO_DEV_DTRACE 0x1020
 
 /*
  * Historical explicit-legacy compatibility identities.  VirtIO 1.4 defines
@@ -779,6 +780,7 @@ vq_ring_ready(struct vqueue_info *vq)
  * how many, just returns True if there are some.)
  */
 int	vq_has_descs(struct vqueue_info *);
+int	vq_checkpoint_has_descs(struct vqueue_info *, bool *);
 
 /*
  * Deliver an interrupt to the guest for a specific MSI-X queue or

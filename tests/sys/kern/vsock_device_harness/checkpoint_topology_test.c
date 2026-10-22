@@ -127,65 +127,52 @@ ATF_TC_BODY(cpu_topology_product_and_bounds, tc)
 ATF_TC_WITHOUT_HEAD(numa_topology_is_an_exact_partition);
 ATF_TC_BODY(numa_topology_is_an_exact_partition, tc)
 {
-	const uint16_t cpus0[] = { 0, 2 };
-	const uint16_t cpus1[] = { 1, 3 };
-	const uint16_t duplicate[] = { 0, 3 };
-	const uint16_t outside[] = { 1, 4 };
-	const uint16_t missing[] = { 1 };
-	const struct checkpoint_numa_domain valid[] = {
-		{ .memory_size = 3ULL << 30, .vcpus = cpus0,
-		    .vcpu_count = nitems(cpus0) },
-		{ .memory_size = 1ULL << 30, .vcpus = cpus1,
-		    .vcpu_count = nitems(cpus1) },
-	};
-	struct checkpoint_numa_domain changed[nitems(valid)];
+	/* Two domains (3 GiB, 1 GiB); vCPUs 0 and 2 in domain 0, 1 and 3 in 1. */
+	const uint64_t sizes[] = { 3ULL << 30, 1ULL << 30 };
+	const uint16_t mapping[] = { 0, 1, 0, 1 };
+	const uint16_t outside[] = { 0, 1, 0, 2 };
+	const uint16_t unpopulated[] = { 0, 0, 0, 0 };
+	uint64_t changed[nitems(sizes)];
 
 	/* Private checkpoint-format policy, not a guest architecture cap. */
 	ATF_REQUIRE_EQ(CHECKPOINT_NUMA_MAX_DOMAINS, 8);
-	ATF_REQUIRE_EQ(checkpoint_numa_topology_validate(valid, nitems(valid),
-	    4, 4ULL << 30), 0);
+	ATF_REQUIRE_EQ(checkpoint_numa_mapping_validate(sizes, nitems(sizes),
+	    mapping, nitems(mapping), 4ULL << 30), 0);
 
-	memcpy(changed, valid, sizeof(changed));
-	changed[1].vcpus = duplicate;
-	ATF_CHECK_EQ(checkpoint_numa_topology_validate(changed,
-	    nitems(changed), 4, 4ULL << 30), EINVAL);
-	changed[1].vcpus = outside;
-	ATF_CHECK_EQ(checkpoint_numa_topology_validate(changed,
-	    nitems(changed), 4, 4ULL << 30), EINVAL);
-	changed[1].vcpus = missing;
-	changed[1].vcpu_count = nitems(missing);
-	ATF_CHECK_EQ(checkpoint_numa_topology_validate(changed,
-	    nitems(changed), 4, 4ULL << 30), EINVAL);
+	/* Every vCPU names an existing domain and every domain has a vCPU. */
+	ATF_CHECK_EQ(checkpoint_numa_mapping_validate(sizes, nitems(sizes),
+	    outside, nitems(outside), 4ULL << 30), EINVAL);
+	ATF_CHECK_EQ(checkpoint_numa_mapping_validate(sizes, nitems(sizes),
+	    unpopulated, nitems(unpopulated), 4ULL << 30), EINVAL);
 
-	memcpy(changed, valid, sizeof(changed));
-	changed[1].memory_size--;
-	ATF_CHECK_EQ(checkpoint_numa_topology_validate(changed,
-	    nitems(changed), 4, 4ULL << 30), EINVAL);
-	changed[0].memory_size = UINT64_MAX;
-	ATF_CHECK_EQ(checkpoint_numa_topology_validate(changed,
-	    nitems(changed), 4, 4ULL << 30), EINVAL);
+	/* Domain memory covers guest memory exactly, without overflow. */
+	memcpy(changed, sizes, sizeof(changed));
+	changed[1]--;
+	ATF_CHECK_EQ(checkpoint_numa_mapping_validate(changed,
+	    nitems(changed), mapping, nitems(mapping), 4ULL << 30), ERANGE);
+	changed[0] = UINT64_MAX;
+	ATF_CHECK_EQ(checkpoint_numa_mapping_validate(changed,
+	    nitems(changed), mapping, nitems(mapping), 4ULL << 30), EINVAL);
+	memcpy(changed, sizes, sizeof(changed));
+	changed[0] = 0;
+	ATF_CHECK_EQ(checkpoint_numa_mapping_validate(changed,
+	    nitems(changed), mapping, nitems(mapping), 4ULL << 30), EINVAL);
 
-	memcpy(changed, valid, sizeof(changed));
-	changed[0].memory_size = 0;
-	ATF_CHECK_EQ(checkpoint_numa_topology_validate(changed,
-	    nitems(changed), 4, 4ULL << 30), EINVAL);
-	changed[0] = valid[0];
-	changed[0].vcpu_count = 0;
-	ATF_CHECK_EQ(checkpoint_numa_topology_validate(changed,
-	    nitems(changed), 4, 4ULL << 30), EINVAL);
-	changed[0].vcpu_count = SIZE_MAX;
-	ATF_CHECK_EQ(checkpoint_numa_topology_validate(changed,
-	    nitems(changed), 4, 4ULL << 30), EINVAL);
-	ATF_CHECK_EQ(checkpoint_numa_topology_validate(NULL, 1, 4,
+	ATF_CHECK_EQ(checkpoint_numa_mapping_validate(NULL, 1, mapping,
+	    nitems(mapping), 4ULL << 30), EINVAL);
+	ATF_CHECK_EQ(checkpoint_numa_mapping_validate(sizes, 0, mapping,
+	    nitems(mapping), 4ULL << 30), EINVAL);
+	ATF_CHECK_EQ(checkpoint_numa_mapping_validate(sizes,
+	    CHECKPOINT_NUMA_MAX_DOMAINS + 1, mapping, nitems(mapping),
 	    4ULL << 30), EINVAL);
-	ATF_CHECK_EQ(checkpoint_numa_topology_validate(valid, 0, 4,
-	    4ULL << 30), EINVAL);
-	ATF_CHECK_EQ(checkpoint_numa_topology_validate(valid,
-	    CHECKPOINT_NUMA_MAX_DOMAINS + 1, 4, 4ULL << 30), EINVAL);
-	ATF_CHECK_EQ(checkpoint_numa_topology_validate(valid, nitems(valid),
-	    0, 4ULL << 30), EINVAL);
-	ATF_CHECK_EQ(checkpoint_numa_topology_validate(valid, nitems(valid),
-	    4, 0), EINVAL);
+	ATF_CHECK_EQ(checkpoint_numa_mapping_validate(sizes, nitems(sizes),
+	    NULL, nitems(mapping), 4ULL << 30), EINVAL);
+	ATF_CHECK_EQ(checkpoint_numa_mapping_validate(sizes, nitems(sizes),
+	    mapping, 0, 4ULL << 30), EINVAL);
+	ATF_CHECK_EQ(checkpoint_numa_mapping_validate(sizes, nitems(sizes),
+	    mapping, UINT16_MAX + 1, 4ULL << 30), EINVAL);
+	ATF_CHECK_EQ(checkpoint_numa_mapping_validate(sizes, nitems(sizes),
+	    mapping, nitems(mapping), 0), EINVAL);
 }
 
 ATF_TC_WITHOUT_HEAD(memory_geometry_is_exact_and_portable);

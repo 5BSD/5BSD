@@ -29,6 +29,7 @@
 #define __NET_BACKENDS_PRIV_H__
 
 #include <sys/linker_set.h>
+#include <dev/virtio/network/virtio_net_5bsd.h>
 
 /*
  * Each network backend registers a set of function pointers that are
@@ -62,6 +63,10 @@ struct net_backend {
 	 * function returns 0.
 	 */
 	ssize_t (*peek_recvlen)(struct net_backend *be);
+	/* Reject a checkpoint if a peeked receive record is held privately. */
+	int (*checkpoint_rx_quiescent)(struct net_backend *be);
+	/* Fence kernel enqueue until checkpoint resume or TAP close. */
+	int (*checkpoint_rx_freeze)(struct net_backend *be, bool freeze);
 
 	/*
 	 * Called to receive a packet from the backend. When the function
@@ -98,6 +103,19 @@ struct net_backend {
 	int (*set_cap)(struct net_backend *be, uint64_t features,
 	    unsigned int vnet_hdr_len);
 
+	/*
+	 * Figure out if a particular backend supports packet tagging.
+	 */
+	int (*tagging_supported)(struct net_backend *be);
+	int (*tagging_bind_vm)(struct net_backend *be, int vmfd);
+
+	/*
+	 * Ask a particular backend to enable its packet tagging.
+	 */
+	int (*tagging_enable)(struct net_backend *be);
+	int (*tagging_enable_v2)(struct net_backend *be);
+	int (*tagging_disable)(struct net_backend *be);
+
 	struct pci_vtnet_softc *sc;
 	int fd;
 
@@ -113,6 +131,10 @@ struct net_backend {
 
 	/* Size of backend-specific private data. */
 	size_t priv_size;
+
+	/* Does this backend have tagging enabled? */
+	int tagging_enabled;
+	int tagging_v2_enabled;
 
 	/* Backend-specific private data follows. */
 };
@@ -136,7 +158,8 @@ struct tap_priv {
 	 * callback. In the future we may get the same information from
 	 * the kevent data.
 	 */
-	char bbuf[1 << 16];
+	/* Maximum GSO record, plus the largest optional TAP ID prefix. */
+	char bbuf[NETBE_MAX_RECORD_SIZE + VIRTIO_NET_5BSD_V2_ID_LEN];
 	ssize_t bbuflen;
 };
 

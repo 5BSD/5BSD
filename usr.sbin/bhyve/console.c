@@ -31,6 +31,7 @@
 #include <errno.h>
 #include <err.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include "bhyvegc.h"
@@ -56,6 +57,34 @@ static struct {
 } console;
 
 static pthread_rwlock_t console_lock = PTHREAD_RWLOCK_INITIALIZER;
+static bool console_input_paused, console_input_retired;
+
+/* Drain input before device pause can hold locks needed by an input callback. */
+void
+console_input_pause(void)
+{
+	pthread_rwlock_wrlock(&console_lock);
+	console_input_paused = true;
+	pthread_rwlock_unlock(&console_lock);
+}
+
+void
+console_input_resume(void)
+{
+	pthread_rwlock_wrlock(&console_lock);
+	if (!console_input_retired)
+		console_input_paused = false;
+	pthread_rwlock_unlock(&console_lock);
+}
+
+void
+console_input_retire(void)
+{
+	pthread_rwlock_wrlock(&console_lock);
+	console_input_paused = console_input_retired = true;
+	pthread_rwlock_unlock(&console_lock);
+}
+
 
 void
 console_init(int w, int h, void *fbaddr)
@@ -239,7 +268,7 @@ void
 console_key_event(int down, uint32_t keysym, uint32_t keycode)
 {
 	pthread_rwlock_rdlock(&console_lock);
-	if (console.kbd_event_cb)
+	if (!console_input_paused && console.kbd_event_cb)
 		(*console.kbd_event_cb)(down, keysym, keycode, console.kbd_arg);
 	pthread_rwlock_unlock(&console_lock);
 }
@@ -248,7 +277,7 @@ void
 console_ptr_event(uint8_t button, int x, int y)
 {
 	pthread_rwlock_rdlock(&console_lock);
-	if (console.ptr_event_cb)
+	if (!console_input_paused && console.ptr_event_cb)
 		(*console.ptr_event_cb)(button, x, y, console.ptr_arg);
 	pthread_rwlock_unlock(&console_lock);
 }

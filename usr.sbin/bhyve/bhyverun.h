@@ -66,6 +66,13 @@ struct vcpu;
 struct vcpu *fbsdrun_vcpu(int vcpuid);
 void fbsdrun_addcpu(int vcpuid);
 void fbsdrun_deletecpu(int vcpuid);
+/* Cutover waits for userspace exit handlers; failed resume retains the fence. */
+int fbsdrun_migration_pause_cpus(struct vmctx *, bool *);
+int fbsdrun_migration_resume_cpus(struct vmctx *);
+/* Irreversible source retirement: worker exits preserve the IPC controller. */
+void fbsdrun_retire_cpus_begin(void);
+bool fbsdrun_cpus_retiring(void);
+int fbsdrun_retire_cpus_wait(void);
 int fbsdrun_suspendcpu(int vcpuid);
 
 int  fbsdrun_virtio_msix(void);

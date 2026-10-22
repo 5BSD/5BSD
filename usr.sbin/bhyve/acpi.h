@@ -64,5 +64,6 @@ void	dsdt_fixed_mem32(uint32_t base, uint32_t length);
 void	dsdt_indent(int levels);
 void	dsdt_unindent(int levels);
 void	sci_init(struct vmctx *ctx);
+void	sci_retire(void);
 
 #endif /* _ACPI_H_ */

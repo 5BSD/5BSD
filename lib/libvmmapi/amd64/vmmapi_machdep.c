@@ -57,6 +57,9 @@ const char *vm_capstrmap[] = {
 };
 
 #define	VM_MD_IOCTLS			\
+	VM_GET_IDENTIFIER,		\
+	VM_GET_IDENTITY,			\
+	VM_GET_ATTESTATION,		\
 	VM_SET_SEGMENT_DESCRIPTOR,	\
 	VM_GET_SEGMENT_DESCRIPTOR,	\
 	VM_SET_KERNEMU_DEV,		\

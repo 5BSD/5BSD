@@ -44,6 +44,10 @@ const char *vm_capstrmap[] = {
 };
 
 #define	VM_MD_IOCTLS		\
+	VM_GET_IDENTIFIER,	\
+	VM_GET_IDENTITY,	\
+	VM_GET_ATTESTATION,	\
+	VM_GET_ARM64_CPU_FEATURES, \
 	VM_GET_VGIC_VERSION,	\
 	VM_ATTACH_VGIC,		\
 	VM_ASSERT_IRQ,		\

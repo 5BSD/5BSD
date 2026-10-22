@@ -14,12 +14,6 @@ struct checkpoint_record_range {
 	uint64_t length;
 };
 
-struct checkpoint_numa_domain {
-	uint64_t memory_size;
-	const uint16_t *vcpus;
-	size_t vcpu_count;
-};
-
 struct checkpoint_memory_geometry {
 	uint64_t page_size;
 	uint64_t lowmem_size;
@@ -36,8 +30,6 @@ int	checkpoint_topology_validate(const char * const *, size_t,
 	    const char * const *, size_t);
 int	checkpoint_cpu_topology_validate(uint64_t, uint64_t, uint64_t,
 	    uint64_t);
-int	checkpoint_numa_topology_validate(
-	    const struct checkpoint_numa_domain *, size_t, size_t, uint64_t);
 int	checkpoint_numa_mapping_validate(const uint64_t *, size_t,
 	    const uint16_t *, size_t, uint64_t);
 int	checkpoint_memory_geometry_validate(

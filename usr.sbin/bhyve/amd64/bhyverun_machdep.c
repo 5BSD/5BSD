@@ -133,9 +133,9 @@ bhyve_optparse(int argc, char **argv)
 	int c;
 
 #ifdef BHYVE_SNAPSHOT
-	optstr = "aehuwxACDHIMNPSWYk:f:o:p:G:c:s:m:n:l:K:U:r:R:";
+	optstr = "aedhuwxACDHIMNPSWYk:f:o:p:G:c:s:m:n:l:K:U:r:R:";
 #else
-	optstr = "aehuwxACDHIMNPSWYk:f:o:p:G:c:s:m:n:l:K:U:";
+	optstr = "aedhuwxACDHIMNPSWYk:f:o:p:G:c:s:m:n:l:K:U:";
 #endif
 	while ((c = getopt(argc, argv, optstr)) != -1) {
 		switch (c) {
@@ -163,6 +163,9 @@ bhyve_optparse(int argc, char **argv)
 			    errx(EX_USAGE, "invalid cpu topology "
 				"'%s'", optarg);
 			}
+			break;
+		case 'd':
+			set_config_bool("enable_hypertrace", true);
 			break;
 		case 'C':
 			set_config_bool("memory.guest_in_core", true);

@@ -213,6 +213,9 @@ struct pci_devemu {
 	 * before the first device commit.
 	 */
 	int	(*pe_snapshot_validate)(struct vm_snapshot_meta *meta);
+	/* Called while paused, before SAVE. Returns extra bytes above the
+	 * standard device buffer for bounded variable-length private state. */
+	int	(*pe_snapshot_extra_capacity)(struct pci_devinst *, size_t *);
 	/*
 	 * Release any temporary cross-device validation view after the
 	 * coordinator has preflighted all records.  Most devices leave this

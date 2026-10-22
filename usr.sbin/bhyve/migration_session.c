@@ -76,7 +76,7 @@ static bool
 migration_message_type_valid(uint16_t type)
 {
 
-	return (type >= MIGRATION_MSG_HELLO && type <= MIGRATION_MSG_ABORT);
+	return (type >= MIGRATION_MSG_HELLO && type <= MIGRATION_MSG_RELEASE_ACK);
 }
 
 static bool
@@ -128,7 +128,7 @@ migration_frame_encode(uint16_t version, uint16_t type, uint32_t seq,
 	if (out == NULL || written == NULL ||
 	    (payload == NULL && payload_len != 0))
 		return (EINVAL);
-	if (version < MIGRATION_PROTO_VERSION_MIN ||
+	if (version < MIGRATION_FRAME_VERSION_MIN ||
 	    version > MIGRATION_PROTO_VERSION || !migration_message_type_valid(type) ||
 	    !migration_frame_flags_valid(type, flags))
 		return (EINVAL);
@@ -153,25 +153,27 @@ int
 migration_frame_decode_header(const uint8_t *buf, size_t len,
     struct migration_frame_header *hdr)
 {
+	struct migration_frame_header candidate;
 
 	if (buf == NULL || hdr == NULL || len < MIGRATION_FRAME_HDR_SIZE)
 		return (EINVAL);
-	hdr->magic = le32dec(buf + 0);
-	hdr->version = le16dec(buf + 4);
-	hdr->type = le16dec(buf + 6);
-	hdr->flags = le32dec(buf + 8);
-	hdr->seq = le32dec(buf + 12);
-	hdr->length = le32dec(buf + 16);
-	hdr->crc32 = le32dec(buf + 20);
-	if (hdr->magic != MIGRATION_PROTO_MAGIC)
+	candidate.magic = le32dec(buf + 0);
+	candidate.version = le16dec(buf + 4);
+	candidate.type = le16dec(buf + 6);
+	candidate.flags = le32dec(buf + 8);
+	candidate.seq = le32dec(buf + 12);
+	candidate.length = le32dec(buf + 16);
+	candidate.crc32 = le32dec(buf + 20);
+	if (candidate.magic != MIGRATION_PROTO_MAGIC)
 		return (EINVAL);
-	if (hdr->version < MIGRATION_PROTO_VERSION_MIN ||
-	    hdr->version > MIGRATION_PROTO_VERSION ||
-	    !migration_message_type_valid(hdr->type) ||
-	    !migration_frame_flags_valid(hdr->type, hdr->flags))
+	if (candidate.version < MIGRATION_FRAME_VERSION_MIN ||
+	    candidate.version > MIGRATION_PROTO_VERSION ||
+	    !migration_message_type_valid(candidate.type) ||
+	    !migration_frame_flags_valid(candidate.type, candidate.flags))
 		return (EPROTO);
-	if (hdr->length > MIGRATION_MAX_PAYLOAD)
+	if (candidate.length > MIGRATION_MAX_PAYLOAD)
 		return (EMSGSIZE);
+	*hdr = candidate;
 	return (0);
 }
 
@@ -202,6 +204,8 @@ migration_hello_encode(const struct migration_hello *hello, uint8_t *out,
 		return (EINVAL);
 	if (hello->role != MIGRATION_ROLE_SOURCE &&
 	    hello->role != MIGRATION_ROLE_DEST)
+		return (EINVAL);
+	if ((hello->capability_flags & ~MIGRATION_CAP_ALL) != 0)
 		return (EINVAL);
 	if (!migration_string_canonical(hello->machine_abi,
 	    sizeof(hello->machine_abi)))
@@ -246,6 +250,11 @@ migration_hello_decode(const uint8_t *buf, size_t len,
 	if (candidate.role != MIGRATION_ROLE_SOURCE &&
 	    candidate.role != MIGRATION_ROLE_DEST)
 		return (EBADMSG);
+	if ((candidate.capability_flags & ~MIGRATION_CAP_ALL) != 0)
+		return (EBADMSG);
+	if (buf[5] != 0 || buf[6] != 0 || buf[7] != 0 ||
+	    le32dec(buf + 28) != 0 || le32dec(buf + 44) != 0)
+		return (EBADMSG);
 	if (!migration_string_canonical(candidate.machine_abi,
 	    sizeof(candidate.machine_abi)))
 		return (EBADMSG);
@@ -260,6 +269,8 @@ migration_caps_accept_encode(const struct migration_caps_accept *caps,
 
 	if (caps == NULL || out == NULL || cap < MIGRATION_CAPS_ACCEPT_SIZE)
 		return (EINVAL);
+	if ((caps->capability_flags & ~MIGRATION_CAP_ALL) != 0)
+		return (EINVAL);
 	memset(out, 0, MIGRATION_CAPS_ACCEPT_SIZE);
 	le16enc(out + 0, caps->negotiated_version);
 	le64enc(out + 4, caps->capability_flags);
@@ -273,6 +284,9 @@ migration_caps_accept_decode(const uint8_t *buf, size_t len,
 
 	if (buf == NULL || caps == NULL || len != MIGRATION_CAPS_ACCEPT_SIZE)
 		return (EINVAL);
+	if (le16dec(buf + 2) != 0 ||
+	    (le64dec(buf + 4) & ~MIGRATION_CAP_ALL) != 0)
+		return (EBADMSG);
 	memset(caps, 0, sizeof(*caps));
 	caps->negotiated_version = le16dec(buf + 0);
 	caps->capability_flags = le64dec(buf + 4);
@@ -313,6 +327,14 @@ migration_topology_wire_size(const struct migration_topology *topology)
 	    (size_t)topology->device_count * MIGRATION_DEVREC_SIZE);
 }
 
+static bool
+migration_topology_memory_valid(const struct migration_topology *topology)
+{
+
+	return (topology->lowmem <= UINT64_MAX - topology->highmem &&
+	    topology->mem_size == topology->lowmem + topology->highmem);
+}
+
 int
 migration_topology_encode(const struct migration_topology *topology,
     uint8_t *out, size_t cap, size_t *written)
@@ -321,7 +343,8 @@ migration_topology_encode(const struct migration_topology *topology,
 	uint8_t *record;
 
 	if (topology == NULL || out == NULL || written == NULL ||
-	    topology->device_count > MIGRATION_MAX_DEVICES)
+	    topology->device_count > MIGRATION_MAX_DEVICES ||
+	    !migration_topology_memory_valid(topology))
 		return (EINVAL);
 	size = migration_topology_wire_size(topology);
 	if (cap < size)
@@ -386,6 +409,10 @@ migration_topology_decode(const uint8_t *buf, size_t len,
 	candidate->cores = le16dec(buf + 30);
 	candidate->threads = le16dec(buf + 32);
 	candidate->device_count = device_count;
+	if (!migration_topology_memory_valid(candidate)) {
+		free(candidate);
+		return (EBADMSG);
+	}
 	record = buf + MIGRATION_TOPOLOGY_HDR_SIZE;
 	error = 0;
 	for (uint32_t i = 0; i < device_count; i++) {
@@ -564,6 +591,27 @@ migration_set_reason(uint32_t *reason, uint32_t value)
 		*reason = value;
 }
 
+static int
+migration_source_caps_validate(const struct migration_hello *offered,
+    const struct migration_caps_accept *accepted, uint32_t *reason)
+{
+
+	if (accepted->negotiated_version > offered->version_max ||
+	    accepted->negotiated_version < offered->version_min) {
+		migration_set_reason(reason, MIGRATION_REASON_VERSION);
+		return (EPROTONOSUPPORT);
+	}
+	if ((accepted->capability_flags & MIGRATION_CAP_PRECOPY) == 0 ||
+	    ((accepted->capability_flags ^ offered->capability_flags) &
+	    MIGRATION_CAP_HYPERTRACE_FRESH) != 0 ||
+	    (accepted->capability_flags & ~offered->capability_flags) != 0 ||
+	    (accepted->capability_flags & ~MIGRATION_CAP_ALL) != 0) {
+		migration_set_reason(reason, MIGRATION_REASON_CAPS);
+		return (EPROTO);
+	}
+	return (0);
+}
+
 int
 migration_hello_validate(const struct migration_hello *local,
     const struct migration_hello *remote, uint16_t *negotiated,
@@ -575,6 +623,16 @@ migration_hello_validate(const struct migration_hello *local,
 	migration_set_reason(reason, MIGRATION_REASON_NONE);
 	if (local == NULL || remote == NULL || negotiated == NULL)
 		return (EINVAL);
+	if (((local->capability_flags | remote->capability_flags) &
+	    ~MIGRATION_CAP_ALL) != 0) {
+		migration_set_reason(reason, MIGRATION_REASON_CAPS);
+		return (EINVAL);
+	}
+	if (((local->capability_flags ^ remote->capability_flags) &
+	    MIGRATION_CAP_HYPERTRACE_FRESH) != 0) {
+		migration_set_reason(reason, MIGRATION_REASON_CAPS);
+		return (EPROTONOSUPPORT);
+	}
 	error = migration_negotiate_version(local->version_max,
 	    local->version_min, remote->version_max, remote->version_min,
 	    &chosen);
@@ -633,18 +691,28 @@ migration_topology_validate(const struct migration_topology *local,
 		migration_set_reason(reason, MIGRATION_REASON_TOPOLOGY);
 		return (EINVAL);
 	}
-	/* Guest-visible memory geometry must be identical on both hosts. */
-	if (remote->mem_size != local->mem_size ||
-	    remote->lowmem != local->lowmem ||
-	    remote->highmem != local->highmem) {
+	if (!migration_topology_memory_valid(local) ||
+	    !migration_topology_memory_valid(remote)) {
 		migration_set_reason(reason, MIGRATION_REASON_MEMSIZE);
 		return (EINVAL);
 	}
-	if (remote->ncpus != local->ncpus ||
-	    remote->sockets != local->sockets ||
+	/* Guest-visible memory geometry must be identical on both hosts.  Both
+	 * are valid (mem_size == lowmem + highmem), so equal mem_size and
+	 * lowmem imply equal highmem. */
+	if (remote->mem_size != local->mem_size ||
+	    remote->lowmem != local->lowmem) {
+		migration_set_reason(reason, MIGRATION_REASON_MEMSIZE);
+		return (EINVAL);
+	}
+	if (remote->ncpus != local->ncpus) {
+		migration_set_reason(reason, MIGRATION_REASON_CPUCOUNT);
+		return (EINVAL);
+	}
+	/* Same vCPU count, different sockets/cores/threads shape. */
+	if (remote->sockets != local->sockets ||
 	    remote->cores != local->cores ||
 	    remote->threads != local->threads) {
-		migration_set_reason(reason, MIGRATION_REASON_CPUCOUNT);
+		migration_set_reason(reason, MIGRATION_REASON_TOPOLOGY);
 		return (EINVAL);
 	}
 	/*
@@ -787,9 +855,19 @@ struct migration_session {
 	const struct migration_transport *xp;
 	const struct migration_session_config *config;
 	uint16_t version;		/* negotiated (0 until handshake) */
+	uint16_t peer_version;		/* frame version of the first frame received */
 	uint32_t send_seq;
 	uint32_t recv_seq;
 };
+
+/* The final stop-and-copy generation uses one round after pre-copy. Keep
+ * both that value and the pre-copy loop's increment representable. */
+static bool
+migration_max_rounds_valid(uint64_t rounds)
+{
+
+	return (rounds < UINT32_MAX);
+}
 
 static void
 migration_progress_report(const struct migration_session *sess, uint32_t phase,
@@ -817,6 +895,8 @@ migration_progress_report(const struct migration_session *sess, uint32_t phase,
 /*
  * Frame and send one message.  version is the negotiated protocol version once
  * the handshake completes, or MIGRATION_PROTO_VERSION for the opening HELLO.
+ * A CAPS_REJECT before negotiation goes out in the peer's own frame version,
+ * so a peer we refuse for its version can still decode the refusal.
  */
 static int
 migration_send(struct migration_session *sess, uint16_t type, uint32_t flags,
@@ -829,7 +909,14 @@ migration_send(struct migration_session *sess, uint16_t type, uint32_t flags,
 
 	if (payload_len > MIGRATION_MAX_PAYLOAD)
 		return (EMSGSIZE);
-	version = sess->version != 0 ? sess->version : MIGRATION_PROTO_VERSION;
+	if (sess->send_seq == UINT32_MAX)
+		return (EOVERFLOW);
+	if (sess->version != 0)
+		version = sess->version;
+	else if (type == MIGRATION_MSG_CAPS_REJECT && sess->peer_version != 0)
+		version = sess->peer_version;
+	else
+		version = MIGRATION_PROTO_VERSION;
 	frame_len = (size_t)MIGRATION_FRAME_HDR_SIZE + payload_len;
 	frame = malloc(frame_len);
 	if (frame == NULL)
@@ -873,6 +960,7 @@ static int
 migration_recv(struct migration_session *sess,
     struct migration_frame_header *hdr, uint8_t **payload, size_t *payload_len)
 {
+	struct migration_frame_header candidate;
 	uint8_t header[MIGRATION_FRAME_HDR_SIZE];
 	uint8_t *buf;
 	int error;
@@ -882,33 +970,40 @@ migration_recv(struct migration_session *sess,
 	error = sess->xp->xp_recv(sess->xp->xp_cookie, header, sizeof(header));
 	if (error != 0)
 		return (error);
-	error = migration_frame_decode_header(header, sizeof(header), hdr);
+	error = migration_frame_decode_header(header, sizeof(header),
+	    &candidate);
 	if (error != 0)
 		return (error);
-	if (hdr->seq != sess->recv_seq + 1)
+	if (sess->recv_seq == UINT32_MAX)
+		return (EOVERFLOW);
+	if (candidate.seq != sess->recv_seq + 1)
 		return (EBADMSG);
-	if (sess->version != 0 && hdr->version != sess->version)
+	if (sess->version != 0 && candidate.version != sess->version)
 		return (EPROTO);
+	if (sess->peer_version == 0)
+		sess->peer_version = candidate.version;
 	buf = NULL;
-	if (hdr->length != 0) {
-		buf = malloc(hdr->length);
+	if (candidate.length != 0) {
+		buf = malloc(candidate.length);
 		if (buf == NULL)
 			return (ENOMEM);
 		error = sess->xp->xp_recv(sess->xp->xp_cookie, buf,
-		    hdr->length);
+		    candidate.length);
 		if (error != 0) {
 			free(buf);
 			return (error);
 		}
 	}
-	error = migration_frame_verify_payload(hdr, buf, hdr->length);
+	error = migration_frame_verify_payload(&candidate, buf,
+	    candidate.length);
 	if (error != 0) {
 		free(buf);
 		return (error);
 	}
 	sess->recv_seq++;
+	*hdr = candidate;
 	*payload = buf;
-	*payload_len = hdr->length;
+	*payload_len = candidate.length;
 	return (0);
 }
 
@@ -965,6 +1060,16 @@ migration_source_send_generation(struct migration_session *sess,
 			return (error);
 		gen.round = round;
 		gen.final = final_flag;
+		/* The callback writes into a fixed scratch region. Reject a bad
+		 * length before memmove or framing, and forbid a non-progressing
+		 * continuation that would keep the source in this loop forever. */
+		if (page_bytes > datacap || (more && page_bytes == 0) ||
+		    dirty_pages > UINT64_MAX - total_dirty ||
+		    offset > UINT64_MAX - page_bytes) {
+			if (reason != NULL)
+				*reason = MIGRATION_REASON_PROTOCOL;
+			return (EPROTO);
+		}
 		total_dirty += dirty_pages;
 		if (offset == 0 && !more) {
 			/* One frame: unchunked, byte-identical to legacy. */
@@ -1126,6 +1231,9 @@ migration_source_run(const struct migration_transport *xp,
 	size_t payload_len, topo_len, wrote;
 	uint32_t max_rounds, round;
 	bool quiesced, precopy_enabled, cutover_ready;
+	uint8_t challenge[MIGRATION_FRESH_CHALLENGE_SIZE] = {0};
+	uint8_t release_wire[MIGRATION_FRESH_RELEASE_SIZE] = {0};
+	struct migration_commit_binding commit_binding;
 	int error;
 
 	if (xp == NULL || xp->xp_send == NULL || xp->xp_recv == NULL ||
@@ -1136,6 +1244,12 @@ migration_source_run(const struct migration_transport *xp,
 	out.phase = MIGRATION_PHASE_INIT;
 	out.source_runnable = true;
 	out.reason = MIGRATION_REASON_NONE;
+	if (!migration_max_rounds_valid(config->max_rounds)) {
+		out.phase = MIGRATION_PHASE_FAILED;
+		out.reason = MIGRATION_REASON_STATE;
+		*result = out;
+		return (EINVAL);
+	}
 
 	memset(&sess, 0, sizeof(sess));
 	sess.xp = xp;
@@ -1155,6 +1269,17 @@ migration_source_run(const struct migration_transport *xp,
 	error = ops->so_local_hello(arg, &hello);
 	if (error != 0)
 		goto fail_runnable;
+	/*
+	 * Protocol 2 confirms every handoff: the source accepts a challenge-
+	 * bound COMMIT, records each transition, retires, and waits for
+	 * RELEASE_ACK, so a lost RELEASE can never leave both copies discarded.
+	 */
+	if (ops->so_retire == NULL || ops->so_accept_commit == NULL ||
+	    ops->so_record == NULL) {
+		error = EOPNOTSUPP;
+		out.reason = MIGRATION_REASON_CAPS;
+		goto fail_runnable;
+	}
 	hello.role = MIGRATION_ROLE_SOURCE;
 	hello.version_max = config->version_max != 0 ? config->version_max :
 	    MIGRATION_PROTO_VERSION;
@@ -1192,12 +1317,9 @@ migration_source_run(const struct migration_transport *xp,
 	free(payload);
 	payload = NULL;
 	/* The destination must have chosen a version inside our own window. */
-	if (caps.negotiated_version > hello.version_max ||
-	    caps.negotiated_version < hello.version_min) {
-		out.reason = MIGRATION_REASON_VERSION;
-		error = EPROTONOSUPPORT;
+	error = migration_source_caps_validate(&hello, &caps, &out.reason);
+	if (error != 0)
 		goto fail_runnable;
-	}
 	sess.version = caps.negotiated_version;
 	out.negotiated_version = caps.negotiated_version;
 
@@ -1375,21 +1497,64 @@ migration_source_run(const struct migration_transport *xp,
 		error = EPROTO;
 		goto fail_rollback;
 	}
+	/* Every COMMIT binds the destination identity, a fresh challenge and
+	 * the digest of the device state this source sent. */
+	if (migration_commit_decode(payload, payload_len, &commit_binding) != 0) {
+		out.reason = MIGRATION_REASON_PROTOCOL;
+		error = EPROTO;
+		goto fail_rollback;
+	}
+	error = ops->so_accept_commit(arg, &commit_binding);
+	if (error != 0) {
+		out.reason = MIGRATION_REASON_STATE;
+		goto fail_rollback;
+	}
+	memcpy(challenge, commit_binding.challenge, sizeof(challenge));
 	free(payload);
 	payload = NULL;
 
-	/*
-	 * The destination has committed all state but will not run the guest
-	 * until it receives RELEASE.  Only after RELEASE is successfully sent do
-	 * we relinquish the source: this keeps exactly one runnable copy.  If
-	 * RELEASE cannot be sent, the destination never resumes and we roll the
-	 * source back.
-	 */
-	error = migration_send_reason(&sess, MIGRATION_MSG_RELEASE,
-	    MIGRATION_REASON_NONE, 0);
+	/* An adapter may retire the source before authorizing destination
+	 * execution. A send error can be ambiguous after delivery; it cannot
+	 * authorize rollback once retirement starts. */
+	/* Even failed intent persistence can leave a visible record. Never
+	 * resume the source behind recovery's irreversible-intent fence. */
+	error = ops->so_record(arg, MIGRATION_REC_SOURCE_INTENT, challenge);
 	if (error != 0)
-		goto fail_rollback;
+		goto fail_wedged;
+	/* From retirement on, every failure wedges the source (fail_wedged):
+	 * it is never resumed once the destination may hold the only copy. */
+	error = ops->so_retire(arg);
+	if (error != 0)
+		goto fail_wedged;
+	error = ops->so_record(arg, MIGRATION_REC_SOURCE_RETIRED, challenge);
+	if (error == 0)
+		error = ops->so_record(arg, MIGRATION_REC_SOURCE_RELEASED, challenge);
+	if (error != 0)
+		goto fail_wedged;
+	/* Zero reason/detail, followed by the exact destination challenge.
+	 * The source is retired, so any failure from here wedges it. */
+	memcpy(release_wire + MIGRATION_REASON_SIZE, challenge, sizeof(challenge));
+	error = migration_send(&sess, MIGRATION_MSG_RELEASE, 0,
+	    release_wire, sizeof(release_wire));
+	if (error != 0)
+		goto fail_wedged;
 
+	/* RELEASE_ACK means the destination resumed its committed copy. */
+	error = migration_recv(&sess, &hdr, &payload, &payload_len);
+	if (error != 0)
+		goto fail_wedged;
+	if (hdr.type != MIGRATION_MSG_RELEASE_ACK ||
+	    payload_len != sizeof(challenge) ||
+	    memcmp(payload, challenge, sizeof(challenge)) != 0) {
+		out.reason = MIGRATION_REASON_PROTOCOL;
+		error = EPROTO;
+		goto fail_wedged;
+	}
+	free(payload);
+	payload = NULL;
+	error = ops->so_record(arg, MIGRATION_REC_SOURCE_CONFIRMED, challenge);
+	if (error != 0)
+		goto fail_wedged;
 	ops->so_defunct(arg);
 	out.source_runnable = false;
 	out.phase = MIGRATION_PHASE_COMPLETED;
@@ -1461,7 +1626,7 @@ fail_runnable:
 
 fail_wedged:
 	/*
-	 * so_quiesce failed AND could not roll the partial quiesce back: the
+	 * Quiesce failed without rollback, or irreversible retirement began: the
 	 * source is stopped and unrecoverable.  Retire dirty logging, tell the
 	 * destination to abort, and report the source as NOT runnable so the
 	 * control plane never resumes a second copy elsewhere.
@@ -1486,6 +1651,22 @@ fail_wedged:
 /* Destination state machine						     */
 /* ------------------------------------------------------------------------- */
 
+static bool
+migration_memgen_same_generation(const struct migration_memgen *a,
+    const struct migration_memgen *b)
+{
+	/* page_count describes one frame; every other field describes the
+	 * logical generation and must stay fixed until its final chunk. */
+	return (a->round == b->round && a->mode == b->mode &&
+	    a->gpa == b->gpa && a->length == b->length &&
+	    a->cpu_identity == b->cpu_identity &&
+	    a->cpu_map_generation == b->cpu_map_generation &&
+	    a->cpu_dirty_generation == b->cpu_dirty_generation &&
+	    a->device_identity == b->device_identity &&
+	    a->device_dirty_generation == b->device_dirty_generation &&
+	    a->final == b->final);
+}
+
 int
 migration_dest_run(const struct migration_transport *xp,
     const struct migration_dest_ops *ops, void *arg,
@@ -1498,9 +1679,13 @@ migration_dest_run(const struct migration_transport *xp,
 	struct migration_hello local_hello, remote_hello;
 	struct migration_topology *local_topo, *remote_topo;
 	struct migration_caps_accept caps;
+	struct migration_memgen active_memgen;
 	struct migration_reason_msg reason_msg;
 	uint8_t *payload;
 	uint8_t caps_wire[MIGRATION_CAPS_ACCEPT_SIZE];
+	uint8_t challenge[MIGRATION_FRESH_CHALLENGE_SIZE] = {0};
+	uint8_t commit_wire[MIGRATION_FRESH_COMMIT_SIZE];
+	struct migration_commit_binding commit_binding = {0};
 	uint8_t *dev_reasm;		/* chunked DEV_STATE reassembly buffer */
 	size_t payload_len;
 	uint64_t mem_offset;		/* next contiguous byte in a chunked gen */
@@ -1508,6 +1693,8 @@ migration_dest_run(const struct migration_transport *xp,
 	uint16_t negotiated;
 	uint32_t reason;
 	bool committed, staged, dev_state_seen, dev_state_started;
+	bool retain_eligible = false;
+	bool mem_stream_active;
 	int error;
 
 	if (xp == NULL || xp->xp_send == NULL || xp->xp_recv == NULL ||
@@ -1527,6 +1714,7 @@ migration_dest_run(const struct migration_transport *xp,
 	remote_topo = NULL;
 	dev_reasm = NULL;
 	mem_offset = 0;
+	mem_stream_active = false;
 	dev_total = 0;
 	dev_offset = 0;
 	committed = false;
@@ -1560,6 +1748,16 @@ migration_dest_run(const struct migration_transport *xp,
 	error = ops->do_local_hello(arg, &local_hello);
 	if (error != 0)
 		goto fail;
+	/* Protocol 2: every destination binds COMMIT, records each transition
+	 * and retains its committed image instead of discarding it. */
+	if (ops->do_prepare_commit == NULL || ops->do_retain == NULL ||
+	    ops->do_record == NULL) {
+		out.reason = MIGRATION_REASON_CAPS;
+		error = EOPNOTSUPP;
+		(void)migration_send_reason(&sess, MIGRATION_MSG_CAPS_REJECT,
+		    out.reason, 0);
+		goto fail;
+	}
 	local_hello.role = MIGRATION_ROLE_DEST;
 	if (config->version_max != 0)
 		local_hello.version_max = config->version_max;
@@ -1644,6 +1842,12 @@ migration_dest_run(const struct migration_transport *xp,
 		error = migration_recv(&sess, &hdr, &payload, &payload_len);
 		if (error != 0)
 			goto fail;
+		if (mem_stream_active && hdr.type != MIGRATION_MSG_MEM_GEN &&
+		    hdr.type != MIGRATION_MSG_ABORT) {
+			out.reason = MIGRATION_REASON_PROTOCOL;
+			error = EBADMSG;
+			goto fail;
+		}
 		if (hdr.type == MIGRATION_MSG_MEM_GEN) {
 			struct migration_memgen gen;
 			const uint8_t *data;
@@ -1686,6 +1890,16 @@ migration_dest_run(const struct migration_transport *xp,
 					error = EBADMSG;
 					goto fail;
 				}
+				if (chunk.total_length != 0 || chunk.final > 1 ||
+				    (chunk.final == 0 && data_len == 0) ||
+				    mem_offset > UINT64_MAX - data_len ||
+				    (mem_stream_active &&
+				    !migration_memgen_same_generation(&active_memgen,
+				    &gen))) {
+					out.reason = MIGRATION_REASON_PROTOCOL;
+					error = EBADMSG;
+					goto fail;
+				}
 				/* Streaming: total 0, ordered by offset only. */
 				error = migration_chunk_validate(mem_offset, 0,
 				    &chunk, chunkmax, MIGRATION_MAX_DEV_STATE);
@@ -1699,12 +1913,20 @@ migration_dest_run(const struct migration_transport *xp,
 					out.reason = MIGRATION_REASON_STATE;
 					goto fail;
 				}
+				if (!mem_stream_active)
+					active_memgen = gen;
 				mem_offset += data_len;
+				mem_stream_active = chunk.final == 0;
 				if (chunk.final != 0) {
 					mem_offset = 0;
 					out.rounds++;
 				}
 			} else {
+				if (mem_stream_active) {
+					out.reason = MIGRATION_REASON_PROTOCOL;
+					error = EBADMSG;
+					goto fail;
+				}
 				error = ops->do_stage_mem(arg, &gen,
 				    payload + MIGRATION_MEMGEN_HDR_SIZE,
 				    payload_len - MIGRATION_MEMGEN_HDR_SIZE);
@@ -1854,14 +2076,47 @@ migration_dest_run(const struct migration_transport *xp,
 		goto fail;
 	}
 	committed = true;
-	error = migration_send(&sess, MIGRATION_MSG_COMMIT, 0, NULL, 0);
+	do {
+		arc4random_buf(challenge, sizeof(challenge));
+	} while (memcmp(challenge,
+	    (const uint8_t[MIGRATION_FRESH_CHALLENGE_SIZE]){0},
+	    sizeof(challenge)) == 0);
+	memcpy(commit_binding.challenge, challenge, sizeof(challenge));
+	error = ops->do_prepare_commit(arg, &commit_binding);
+	if (error == 0 && memcmp(commit_binding.challenge, challenge,
+	    sizeof(challenge)) != 0)
+		error = EPROTO;
+	if (error == 0)
+		error = migration_commit_encode(&commit_binding, commit_wire);
+	if (error != 0) {
+		out.reason = MIGRATION_REASON_STATE;
+		(void)migration_send_reason(&sess, MIGRATION_MSG_ABORT, out.reason, 0);
+		goto fail;
+	}
+	/* An optional durable image must precede STAGED: COMMIT, and
+	 * therefore source retirement, can only follow a preserved image. */
+	if (ops->do_preserve != NULL)
+		error = ops->do_preserve(arg, &commit_binding);
+	if (error == 0)
+		error = ops->do_record(arg, MIGRATION_REC_DEST_STAGED, challenge);
+	if (error != 0) {
+		out.reason = MIGRATION_REASON_STATE;
+		(void)migration_send_reason(&sess, MIGRATION_MSG_ABORT, out.reason, 0);
+		goto fail;
+	}
+	/* A failed send can still deliver COMMIT. From here the source may
+	 * retire, so retain the exact paused image on any later failure: a
+	 * committed image is never discarded. */
+	retain_eligible = true;
+	error = migration_send(&sess, MIGRATION_MSG_COMMIT, 0,
+	    commit_wire, sizeof(commit_wire));
 	if (error != 0)
 		goto fail;
 
 	/*
 	 * The source resumes exactly one copy: we run the guest only after the
-	 * source has released it.  A source abort here means the source will
-	 * keep running, so we must not resume.
+	 * source has released it. An abort can follow a failed retirement, so
+	 * it does not imply the source can resume either.
 	 */
 	error = migration_recv(&sess, &hdr, &payload, &payload_len);
 	if (error != 0)
@@ -1876,14 +2131,53 @@ migration_dest_run(const struct migration_transport *xp,
 		error = ECONNRESET;
 		goto fail;
 	}
+	/* A message type alone is not permission to run. Require the exact
+	 * successful release result, rejecting empty, extended, or failed ones. */
+	if (payload_len != MIGRATION_FRESH_RELEASE_SIZE ||
+	    memcmp(payload + MIGRATION_REASON_SIZE, challenge,
+	    sizeof(challenge)) != 0) {
+		out.reason = MIGRATION_REASON_PROTOCOL;
+		error = EPROTO;
+		goto fail;
+	}
+	payload_len = MIGRATION_REASON_SIZE;
+	if (migration_reason_decode(payload, payload_len, &reason_msg) != 0 ||
+	    reason_msg.reason_code != MIGRATION_REASON_NONE ||
+	    reason_msg.detail != 0) {
+		out.reason = MIGRATION_REASON_PROTOCOL;
+		error = EPROTO;
+		goto fail;
+	}
 	free(payload);
 	payload = NULL;
+	error = ops->do_record(arg, MIGRATION_REC_DEST_RELEASED, challenge);
+	if (error != 0) {
+		out.reason = MIGRATION_REASON_STATE;
+		goto fail;
+	}
+	/* COMMIT already made source retirement possible. Even failed resume
+	 * may have changed state: retain the image for quarantine instead of
+	 * discarding the only surviving copy. */
 	error = ops->do_resume(arg);
 	if (error != 0) {
 		out.reason = MIGRATION_REASON_STATE;
 		goto fail;
 	}
 	out.resumed = true;
+	/* Durable RUNNING precedes the acknowledgment. */
+	error = ops->do_record(arg, MIGRATION_REC_DEST_RUNNING, challenge);
+	if (error != 0)
+		out.reason = MIGRATION_REASON_STATE;
+	if (error == 0) {
+		error = migration_send(&sess, MIGRATION_MSG_RELEASE_ACK, 0,
+		    challenge, sizeof(challenge));
+		if (error != 0)
+			out.reason = MIGRATION_REASON_TRANSPORT;
+	}
+	out.release_ack_sent = error == 0;
+	/* The guest is already running. Lost acknowledgment must not run
+	 * discard or make the caller tear down the destination. The source
+	 * remains retired and reports uncertainty until it is resolved. */
 	out.phase = MIGRATION_PHASE_COMPLETED;
 	migration_progress_report(&sess, MIGRATION_PHASE_COMPLETED, out.rounds,
 	    out.bytes_received, 0, true);
@@ -1891,14 +2185,16 @@ migration_dest_run(const struct migration_transport *xp,
 	return (0);
 
 fail:
-	/*
-	 * Any destination failure discards all staged (and even committed but
-	 * not-yet-resumed) state: nothing was published to a running guest, and
-	 * the source remains authoritative.
-	 */
-	if (staged || committed)
+	/* Once COMMIT might have arrived, neither an abort nor a failed RELEASE
+	 * proves that the source is runnable. Retain the image, including an
+	 * uncertain failed resume, without claiming completion or retry authority. */
+	if (retain_eligible) {
+		ops->do_retain(arg, &commit_binding);
+		out.retained = true;
+		out.phase = MIGRATION_PHASE_RECOVERY;
+	} else if (staged || committed)
 		ops->do_discard(arg);
-	if (out.phase != MIGRATION_PHASE_COMPLETED)
+	if (out.phase != MIGRATION_PHASE_COMPLETED && !out.retained)
 		out.phase = MIGRATION_PHASE_FAILED;
 	out.resumed = false;
 	if (out.reason == MIGRATION_REASON_NONE)
@@ -1932,16 +2228,39 @@ fail:
 #include <sys/param.h>
 
 #include <err.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <time.h>
 #include <machine/cpufunc.h>
+#ifdef __amd64__
+#include <dev/vmm/vmm_dev.h>
+#endif
 
 #include <vmmapi.h>
 
 #include "bhyverun.h"
 #include "checkpoint_compat.h"
 #include "checkpoint_manifest.h"
+#include "config.h"
+#include "console.h"
+#ifdef BHYVE_GDB
+#include "gdb.h"
+#endif
+#include "hypertrace.h"
 #include "ipc.h"
 #include "migration_dirty.h"
 #include "migration_precopy.h"
+#include "migration_snapshot.h"
+#include "migration_recovery.h"
+#include "migration_source_owner.h"
+#include "migration_source_storage.h"
+#include "migration_fresh_preflight.h"
+#include "migration_recovery_exchange.h"
+#include "migration_recovery_execute.h"
+#include "migration_dest_image.h"
+#include "migration_handoff.h"
+#include "migration_channel.h"
+#include "migration_credentials_nv.h"
 #include "pci_emul.h"
 #include "qemu_fwcfg.h"
 #include "qemu_fwcfg_snapshot.h"
@@ -1967,6 +2286,8 @@ _Static_assert(MIGRATION_DEVF_ALL == PCI_MIGRATION_F_ALL,
     "migration device flag mirror drift");
 
 struct migration_prod_source {
+	bool controller_held;
+	int controller_fd;
 	struct vmctx *ctx;
 	uint64_t track_gpa;	/* tracked range base (0) */
 	uint64_t track_len;	/* tracked range length (spans the MMIO hole) */
@@ -1980,7 +2301,27 @@ struct migration_prod_source {
 	uint64_t gen_total;	/* dirty pages emitted so far this generation */
 	bool gen_active;
 	bool quiesced;
+	bool retirement_started;
+	bool intent_pending;
+	bool retired;
+	bool fresh_stopped;
+	uint8_t fresh_record[HYPERTRACE_SESSION_RECORD_SIZE];
+	int recovery_dirfd;
+	struct migration_recovery_record recovery;
 };
+
+/* Accessed only by the serialized IPC thread, including recovery requests. */
+static struct migration_prod_source migration_ipc_source;
+static struct migration_source_storage migration_source_storage = {
+	.directory = -1, .error = ENXIO
+};
+
+int
+migration_prod_source_prepare(void)
+{
+	return (migration_source_storage_prepare(&migration_source_storage));
+}
+
 
 /* Advance a page-aligned GPA to the next backed guest-RAM page, or track_len. */
 static uint64_t
@@ -2033,6 +2374,13 @@ migration_prod_fill_hello(struct vmctx *ctx, struct migration_hello *hello)
 		feats[4] = regs[3];
 		hello->cpu_feature_hash = migration_crc32(feats, sizeof(feats));
 	}
+#elif defined(__aarch64__)
+	/* Distinct identities so ARM64 and RISC-V peers never pair. */
+	hello->arch_id = 0xaa64;
+	hello->intr_controller = 3;	/* GICv3 */
+#elif defined(__riscv)
+	hello->arch_id = 0x5264;
+	hello->intr_controller = 4;	/* APLIC */
 #else
 	hello->arch_id = 0;
 	hello->intr_controller = 0;
@@ -2147,7 +2495,11 @@ prod_local_hello(void *arg, struct migration_hello *hello)
 {
 	struct migration_prod_source *src = arg;
 
-	return (migration_prod_fill_hello(src->ctx, hello));
+	int error = migration_prod_fill_hello(src->ctx, hello);
+	if (error != 0)
+		return (error);
+	return (migration_fresh_advertise(hello, hypertrace_initialized(),
+	    src->recovery_dirfd, &src->recovery));
 }
 
 static int
@@ -2304,11 +2656,23 @@ prod_quiesce(void *arg, bool *source_runnable)
 	/* Assume the worst until a path proves the source is still running. */
 	*source_runnable = false;
 
-	error = vm_suspend_all_cpus(src->ctx);
+	/* STOPPED and collector proofs need live guest CPUs and device workers. */
+	if (hypertrace_initialized()) {
+		error = vm_migrate_stop_tracing(src->ctx, src->fresh_record);
+		if (error != 0) {
+			*source_runnable = true;
+			return (error);
+		}
+		src->fresh_stopped = true;
+	}
+	console_input_pause();
+	error = fbsdrun_migration_pause_cpus(src->ctx, source_runnable);
 	if (error != 0) {
-		/* vCPUs never stopped; the source is untouched and running. */
-		*source_runnable = true;
-		return (errno != 0 ? errno : EIO);
+		if (*source_runnable)
+			console_input_resume();
+		else
+			src->quiesced = true;
+		return (error);
 	}
 	error = vm_pause_devices();
 	if (error != 0) {
@@ -2325,7 +2689,12 @@ prod_quiesce(void *arg, bool *source_runnable)
 			src->quiesced = true;
 			return (resume_error);
 		}
-		(void)vm_resume_all_cpus(src->ctx);
+		resume_error = fbsdrun_migration_resume_cpus(src->ctx);
+		if (resume_error != 0) {
+			src->quiesced = true;
+			return (resume_error);
+		}
+		console_input_resume();
 		*source_runnable = true;
 		return (error);
 	}
@@ -2339,12 +2708,15 @@ prod_resume(void *arg)
 	struct migration_prod_source *src = arg;
 	int error;
 
+	if (src->retirement_started)
+		return (ECANCELED);
 	error = vm_resume_devices();
 	if (error != 0)
 		return (error);
-	error = vm_resume_all_cpus(src->ctx);
+	error = fbsdrun_migration_resume_cpus(src->ctx);
 	if (error != 0)
-		return (errno != 0 ? errno : EIO);
+		return (error);
+	console_input_resume();
 	src->quiesced = false;
 	return (0);
 }
@@ -2353,6 +2725,7 @@ static int
 prod_dev_state(void *arg, uint8_t **buf, size_t *len)
 {
 	struct migration_prod_source *src = arg;
+	int error;
 
 	/*
 	 * Serialize device + CPU/vCPU/kernel structure state at the cutover by
@@ -2362,7 +2735,213 @@ prod_dev_state(void *arg, uint8_t **buf, size_t *len)
 	 * DEV_STATE frames as it needs.  On any error the source rolls back via
 	 * prod_resume() and keeps running.
 	 */
-	return (vm_snapshot_dev_state_to_mem(src->ctx, buf, len));
+	if (src->fresh_stopped) {
+		error = vm_snapshot_fresh_dev_state_to_mem(src->ctx,
+		    src->fresh_record, buf, len);
+		if (error == 0) {
+			SHA256_CTX hash;
+			SHA256_Init(&hash);
+			SHA256_Update(&hash, *buf, *len);
+			SHA256_Final(src->recovery.state_digest, &hash);
+			memcpy(src->recovery.session, src->fresh_record, sizeof(src->fresh_record));
+		}
+		return (error);
+	}
+	error = vm_snapshot_dev_state_to_mem(src->ctx, buf, len);
+	if (error == 0) {
+		/* Every COMMIT must echo the digest of exactly this blob. */
+		SHA256_CTX hash;
+		SHA256_Init(&hash);
+		SHA256_Update(&hash, *buf, *len);
+		SHA256_Final(src->recovery.state_digest, &hash);
+	}
+	return (error);
+}
+
+static int
+prod_accept_commit(void *arg, const struct migration_commit_binding *binding)
+{
+	struct migration_prod_source *src = arg;
+	struct hypertrace_session_record stopped;
+
+	if (!src->fresh_stopped) {
+		/* Ordinary migration: the binding must name a real destination
+		 * VM and echo the digest of the device state this source sent. */
+		if (src->recovery.phase != 0 || binding->destination_vmid == 0 ||
+		    binding->destination_epoch == 0 ||
+		    memcmp(binding->state_digest, src->recovery.state_digest,
+		    32) != 0)
+			return (EPROTO);
+		src->recovery.destination_vmid = binding->destination_vmid;
+		src->recovery.destination_epoch = binding->destination_epoch;
+		memcpy(src->recovery.challenge, binding->challenge, 32);
+		return (0);
+	}
+	if (src->recovery.phase != 0 ||
+	    hypertrace_session_record_decode(src->fresh_record,
+	    sizeof(src->fresh_record), &stopped) != 0 ||
+	    binding->destination_vmid == 0 ||
+	    binding->destination_vmid >= HYPERTRACE_MAX_VMS ||
+	    binding->destination_epoch == 0 ||
+	    binding->destination_epoch == stopped.epoch ||
+	    memcmp(binding->state_digest, src->recovery.state_digest, 32) != 0)
+		return (EPROTO);
+	src->recovery.destination_vmid = binding->destination_vmid;
+	src->recovery.destination_epoch = binding->destination_epoch;
+	memcpy(src->recovery.challenge, binding->challenge, 32);
+	return (migration_recovery_file_check(src->recovery_dirfd, true));
+}
+
+/*
+ * Ordinary migrations keep the handoff journal (migration_handoff.h) in the
+ * recovery directory when one is configured; without one the transition is
+ * known only to this process and its standard error.  A journal failure is
+ * still a failure: after INTENT the source is never resumed.
+ */
+static int
+prod_handoff_phase(int dirfd, uint8_t role,
+    const struct migration_recovery_record *r)
+{
+	static const uint8_t zero[32];
+	struct migration_handoff_entry e;
+
+	if (dirfd < 0)
+		return (0);
+	memset(&e, 0, sizeof(e));
+	e.kind = MIGRATION_HANDOFF_PHASE;
+	e.role = role;
+	e.phase = r->phase;
+	e.destination_vmid = r->destination_vmid;
+	e.destination_epoch = r->destination_epoch;
+	memcpy(e.challenge, r->challenge, 32);
+	memcpy(e.state_digest, r->state_digest, 32);
+	e.tls = memcmp(r->source_certificate_sha256, zero, 32) != 0 &&
+	    memcmp(r->destination_certificate_sha256, zero, 32) != 0;
+	return (migration_handoff_append(dirfd, &e));
+}
+
+static int
+prod_source_record(void *arg, enum migration_recovery_phase phase,
+    const uint8_t challenge[32])
+{
+	struct migration_prod_source *src = arg;
+	if (phase < MIGRATION_REC_SOURCE_INTENT || phase > MIGRATION_REC_SOURCE_CONFIRMED ||
+	    !src->quiesced || memcmp(challenge, src->recovery.challenge, 32) != 0 ||
+	    (phase == MIGRATION_REC_SOURCE_INTENT ? src->retired : !src->retired))
+		return (EPROTO);
+	if (phase == MIGRATION_REC_SOURCE_INTENT) {
+		ipc_quarantine_vm();
+		src->retirement_started = true;
+		src->intent_pending = true;
+	}
+	if (!src->fresh_stopped) {
+		int error;
+
+		src->recovery.phase = phase;
+		error = prod_handoff_phase(src->recovery_dirfd,
+		    MIGRATION_HANDOFF_SOURCE, &src->recovery);
+		if (error == 0 && phase == MIGRATION_REC_SOURCE_INTENT)
+			src->intent_pending = false;
+		return (error);
+	}
+	if (!src->controller_held) {
+		struct hypertrace_session_record lifetime;
+		int error = hypertrace_session_record_decode(src->recovery.session,
+		    sizeof(src->recovery.session), &lifetime);
+		if (error == 0)
+			error = migration_source_controller_lock_at(src->recovery_dirfd,
+			    lifetime.vmid, lifetime.epoch, &src->controller_fd);
+		if (error != 0)
+			return (error);
+		/* Quarantine prevents another migration from clearing this owner.
+		 * Keep the lock until process exit, including after confirmation. */
+		src->controller_held = true;
+	}
+	src->recovery.phase = phase;
+	int error = migration_source_owner_at(src->recovery_dirfd, &src->recovery,
+	    phase == MIGRATION_REC_SOURCE_INTENT);
+	if (error != 0)
+		return (error);
+	error = migration_recovery_store_at(src->recovery_dirfd, &src->recovery);
+	if (error == 0 && phase == MIGRATION_REC_SOURCE_INTENT)
+		src->intent_pending = false;
+	return (error);
+}
+
+/* The IPC controller owns this context after kernel destruction succeeds.
+ * Keep it across failed joins; recovery must drain users before closing it. */
+static struct vmctx *migration_retiring_ctx;
+
+static int
+prod_retire_drain(void)
+{
+	int error;
+
+	if (migration_retiring_ctx == NULL)
+		return (0);
+	error = fbsdrun_retire_cpus_wait();
+	if (error != 0)
+		return (error);
+	vm_close(migration_retiring_ctx);
+	migration_retiring_ctx = NULL;
+	return (0);
+}
+
+static int
+prod_retire_destroy(struct vmctx **ctx, bool fresh, uint16_t vmid,
+    uint64_t epoch)
+{
+	if (migration_retiring_ctx != NULL)
+		return (EBUSY);
+#ifdef BHYVE_GDB
+	/* The debug server never reopens or touches this context again. */
+	gdb_migration_retire();
+#endif
+	fbsdrun_retire_cpus_begin();
+	if ((fresh ? vm_destroy_identity_request_checked(*ctx, vmid, epoch) :
+	    vm_destroy_request_checked(*ctx)) != 0)
+		return (errno != 0 ? errno : EIO);
+	migration_retiring_ctx = *ctx;
+	*ctx = NULL;
+	return (prod_retire_drain());
+}
+
+static int
+prod_retire(void *arg)
+{
+	struct migration_prod_source *src = arg;
+	struct hypertrace_session_record stopped = {0};
+	int error;
+
+	/*
+	 * COMMIT confirms the destination has staged its state. Destroy the
+	 * source before RELEASE permits destination execution. Once attempted,
+	 * even an error must leave the source stopped rather than roll back.
+	 */
+	ipc_quarantine_vm();
+	src->retirement_started = true;
+	if (!src->quiesced)
+		return (EBUSY);
+	if (src->fresh_stopped) {
+		error = hypertrace_session_record_decode(src->fresh_record,
+		    sizeof(src->fresh_record), &stopped);
+		if (error != 0)
+			return (error);
+	}
+	error = pci_vtdtr_checkpoint_stop();
+	if (error == 0)
+		error = hypertrace_retire_transport();
+	if (error != 0)
+		return (error);
+	error = prod_retire_destroy(&src->ctx, src->fresh_stopped,
+	    stopped.vmid, stopped.epoch);
+	if (error != 0)
+		return (error);
+	if (src->fresh_stopped && hypertrace_session_retired(stopped.vmid,
+	    stopped.epoch) != 0)
+		return (errno != 0 ? errno : EIO);
+	src->retired = true;
+	return (0);
 }
 
 static void
@@ -2370,12 +2949,46 @@ prod_defunct(void *arg)
 {
 	struct migration_prod_source *src = arg;
 
-	/*
-	 * RELEASE is the irreversible handoff.  Leaving this VM merely paused
-	 * lets an independent controller resurrect a second runnable copy.
-	 */
-	vm_destroy(src->ctx);
+	if (!src->retired)
+		errx(1, "migration source was not retired before RELEASE");
 	exit(BHYVE_EXIT_SUSPEND);
+}
+
+/*
+ * Repair of a failed pre-COMMIT rollback. Retirement never began in this
+ * process (no INTENT was attempted and no RELEASE can exist for the attempt),
+ * so the destination cannot run and resuming this source keeps one copy.
+ * The resume sequence is idempotent: devices resume only where pause
+ * ownership remains, the CPU barrier keeps its hold until the kernel resume
+ * succeeds, and console input reopens last. Bounded retries back off.
+ */
+static const unsigned migration_repair_delay_ms[] = { 0, 100, 1000 };
+
+static int
+prod_repair_rollback(struct migration_prod_source *src, unsigned *attempts)
+{
+	int error = EPERM;
+
+	for (size_t i = 0; i < nitems(migration_repair_delay_ms); i++) {
+		if (src->retirement_started || src->retired || src->intent_pending ||
+		    src->ctx == NULL || fbsdrun_cpus_retiring())
+			return (EPERM);
+		if (!src->quiesced)
+			return (EALREADY);
+		if (migration_repair_delay_ms[i] != 0) {
+			struct timespec delay = {
+				.tv_sec = migration_repair_delay_ms[i] / 1000,
+				.tv_nsec = (long)(migration_repair_delay_ms[i] % 1000) *
+				    1000000L,
+			};
+			(void)nanosleep(&delay, NULL);
+		}
+		(*attempts)++;
+		error = prod_resume(src);
+		if (error == 0 || error == ECANCELED)
+			break;
+	}
+	return (error);
 }
 
 static const struct migration_source_ops migration_prod_source_ops = {
@@ -2388,6 +3001,9 @@ static const struct migration_source_ops migration_prod_source_ops = {
 	.so_resume = prod_resume,
 	.so_dev_state = prod_dev_state,
 	.so_defunct = prod_defunct,
+	.so_retire = prod_retire,
+	.so_accept_commit = prod_accept_commit,
+	.so_record = prod_source_record,
 };
 
 /*
@@ -2402,38 +3018,167 @@ static const struct migration_source_ops migration_prod_source_ops = {
 static nvlist_t *
 vm_do_migrate(struct vmctx *ctx, const nvlist_t *nvl)
 {
-	struct migration_prod_source src;
+	/* The IPC thread serializes access; retain ownership after lost replies. */
+	struct migration_prod_source *src = &migration_ipc_source;
+	int recovery_root = migration_source_storage.directory;
 	struct migration_transport xp;
-	struct migration_transport_fd fdx;
+	struct migration_channel channel;
+	struct migration_tls_credentials credentials;
+	bool tls_enabled;
 	struct migration_session_config config;
 	struct migration_source_result result;
 	nvlist_t *reply;
 	int fd, error;
 
 	reply = nvlist_create(0);
+	if (src->retirement_started || src->quiesced) {
+		nvlist_add_string(reply, "error", "migration source is quarantined");
+		nvlist_add_bool(reply, "source_runnable", false);
+		return (reply);
+	}
+#ifndef BHYVE_GDB
+	/* Without a debug server build no debugger fence exists to coordinate
+	 * with a configured port; keep refusing rather than assume one. */
+	if (get_config_value("gdb.port") != NULL) {
+		nvlist_add_string(reply, "error",
+		    "migration with a configured GDB server is unsupported");
+		nvlist_add_bool(reply, "source_runnable", true);
+		return (reply);
+	}
+#endif
 	if (!nvlist_exists_descriptor(nvl, "fd")) {
 		nvlist_add_string(reply, "error", strerror(EINVAL));
 		return (reply);
 	}
 	fd = nvlist_get_descriptor(nvl, "fd");
 
-	memset(&src, 0, sizeof(src));
-	src.ctx = ctx;
-	migration_transport_fd_init(&xp, &fdx, fd, 30000);
+	memset(src, 0, sizeof(*src));
+	src->ctx = ctx;
+	src->recovery_dirfd = recovery_root;
 
 	memset(&config, 0, sizeof(config));
 	config.version_max = MIGRATION_PROTO_VERSION;
 	config.version_min = MIGRATION_PROTO_VERSION_MIN;
 	config.max_rounds = 8;
-	if (nvlist_exists_number(nvl, "max_rounds"))
-		config.max_rounds = (uint32_t)nvlist_get_number(nvl,
-		    "max_rounds");
+	if (nvlist_exists_number(nvl, "max_rounds")) {
+		uint64_t requested = nvlist_get_number(nvl, "max_rounds");
+		if (!migration_max_rounds_valid(requested)) {
+			nvlist_add_string(reply, "error",
+			    "max_rounds exceeds the supported range");
+			nvlist_add_number(reply, "phase", MIGRATION_PHASE_FAILED);
+			nvlist_add_number(reply, "reason", MIGRATION_REASON_STATE);
+			nvlist_add_bool(reply, "source_runnable", true);
+			return (reply);
+		}
+		config.max_rounds = (uint32_t)requested;
+	}
 	if (nvlist_exists_number(nvl, "converge_pages"))
 		config.converge_pages = nvlist_get_number(nvl, "converge_pages");
 
+	error = migration_credentials_nv(nvl, &credentials, &tls_enabled);
+	/* HyperTrace binds the fresh session to the TLS certificate pins. */
+	if (error == 0 && hypertrace_initialized() && !tls_enabled)
+		error = EACCES;
+	if (error == 0)
+		error = migration_channel_policy(fd, tls_enabled,
+		    nvlist_exists_bool(nvl, "plaintext_unix") &&
+		    nvlist_get_bool(nvl, "plaintext_unix"));
+	if (error == 0 && hypertrace_initialized())
+		error = migration_source_storage_check(&migration_source_storage,
+		    recovery_root);
+	if (error == 0)
+		error = migration_channel_init(&channel, &xp, fd, false,
+		    tls_enabled ? &credentials : NULL, 30000);
+	if (error != 0) {
+		nvlist_add_stringf(reply, "error", "migration transport setup failed: %s",
+		    strerror(error));
+		nvlist_add_number(reply, "phase", MIGRATION_PHASE_FAILED);
+		nvlist_add_number(reply, "reason", MIGRATION_REASON_TRANSPORT);
+		nvlist_add_bool(reply, "source_runnable", true);
+		return (reply);
+	}
+	/* Pin one private directory for the process lifetime. Descriptor numbers
+	 * and path strings are not identities; compare the underlying directory.
+	 * Retain our own descriptor when nvlist_destroy closes the request's copy. */
+	if (nvlist_exists_descriptor(nvl, "recovery_fddir")) {
+		int requested = nvlist_get_descriptor(nvl, "recovery_fddir");
+		error = migration_source_storage_check(&migration_source_storage, requested);
+		if (error != 0) {
+			migration_channel_cleanup(&channel);
+			nvlist_add_stringf(reply, "error", "migration recovery root: %s",
+			    strerror(error));
+			nvlist_add_bool(reply, "source_runnable", true);
+			return (reply);
+		}
+		src->recovery_dirfd = recovery_root;
+	}
 	memset(&result, 0, sizeof(result));
-	error = migration_source_run(&xp, &migration_prod_source_ops, &src,
-	    &config, &result);
+	error = 0;
+	if (channel.secure)
+		error = migration_channel_binding(&channel, true,
+		    src->recovery.source_certificate_sha256,
+		    src->recovery.destination_certificate_sha256);
+	if (error != 0) {
+		result.phase = MIGRATION_PHASE_FAILED;
+		result.reason = MIGRATION_REASON_TRANSPORT;
+		result.source_runnable = true;
+	}
+#ifdef BHYVE_GDB
+	/* A debugger that owns the guest (client, breakpoints, single-step or
+	 * held vCPUs) refuses precisely before quiesce; otherwise new debugger
+	 * connections are fenced for the cutover and through retirement. */
+	bool debugger_fenced = false;
+	if (error == 0) {
+		const char *reason;
+
+		if (gdb_migration_fence(&reason) == 0)
+			debugger_fenced = true;
+		else {
+			migration_channel_cleanup(&channel);
+			nvlist_add_stringf(reply, "error",
+			    "migration refused: %s", reason);
+			nvlist_add_number(reply, "phase", MIGRATION_PHASE_FAILED);
+			nvlist_add_number(reply, "reason", MIGRATION_REASON_STATE);
+			nvlist_add_bool(reply, "source_runnable", true);
+			return (reply);
+		}
+	}
+#endif
+	if (error == 0)
+		error = migration_source_run(&xp, &migration_prod_source_ops, src,
+		    &config, &result);
+	migration_channel_cleanup(&channel);
+#ifdef BHYVE_GDB
+	/* Only a source proven runnable again may be debugged again; a wedged
+	 * or retiring source keeps the fence (retirement makes it permanent). */
+	if (debugger_fenced && result.source_runnable)
+		gdb_migration_unfence();
+#endif
+	/* A failed pre-COMMIT rollback retains CPU/device/input fences. Repair it
+	 * automatically while retirement has never begun; otherwise keep the
+	 * reversible quarantine for migrate_repair. Retirement is irreversible. */
+	unsigned repair_attempts = 0;
+	int repair_error = 0;
+	bool repair_tried = !result.source_runnable && !src->retirement_started &&
+	    src->quiesced;
+	if (repair_tried) {
+		repair_error = prod_repair_rollback(src, &repair_attempts);
+		if (repair_error == 0) {
+			result.source_runnable = true;
+			warnx("migration rollback repaired after %u attempt(s)",
+			    repair_attempts);
+		}
+	}
+#ifdef BHYVE_GDB
+	if (debugger_fenced && repair_tried && result.source_runnable)
+		gdb_migration_unfence();
+#endif
+	if (!result.source_runnable) {
+		if (src->retirement_started || !src->quiesced)
+			ipc_quarantine_vm();
+		else
+			ipc_wedge_vm();
+	}
 	if (error != 0) {
 		warnx("migration failed at phase %u (reason %u); source %s",
 		    result.phase, result.reason,
@@ -2448,9 +3193,45 @@ vm_do_migrate(struct vmctx *ctx, const nvlist_t *nvl)
 	nvlist_add_number(reply, "phase", result.phase);
 	nvlist_add_number(reply, "reason", result.reason);
 	nvlist_add_bool(reply, "source_runnable", result.source_runnable);
+	if (repair_tried) {
+		nvlist_add_bool(reply, "repaired", repair_error == 0);
+		nvlist_add_number(reply, "repair_attempts", repair_attempts);
+		if (repair_error != 0)
+			nvlist_add_number(reply, "repair_error", repair_error);
+	}
 	return (reply);
 }
 IPC_COMMAND(migrate, vm_do_migrate);
+
+/* Operator retry of a failed pre-COMMIT rollback. Never valid once
+ * retirement began; the source is never resumed after INTENT. */
+static nvlist_t *
+vm_do_migrate_repair(struct vmctx *ctx __unused, const nvlist_t *nvl __unused)
+{
+	struct migration_prod_source *src = &migration_ipc_source;
+	nvlist_t *reply = nvlist_create(0);
+	unsigned attempts = 0;
+	int error;
+
+	error = prod_repair_rollback(src, &attempts);
+	if (error == 0) {
+#ifdef BHYVE_GDB
+		gdb_migration_unfence();
+#endif
+		error = ipc_unwedge_vm();
+	}
+	if (error != 0) {
+		nvlist_add_stringf(reply, "error", "migration repair: %s",
+		    strerror(error));
+		nvlist_add_number(reply, "error_code", error);
+	}
+	nvlist_add_bool(reply, "repaired", error == 0);
+	nvlist_add_number(reply, "repair_attempts", attempts);
+	nvlist_add_bool(reply, "source_runnable",
+	    !src->retirement_started && !src->quiesced);
+	return (reply);
+}
+IPC_COMMAND(migrate_repair, vm_do_migrate_repair);
 
 /* ------------------------------------------------------------------------- */
 /* Production destination adapter + listener				     */
@@ -2472,6 +3253,22 @@ struct migration_prod_dest {
 	uint32_t mem_round;
 	bool mem_round_active;
 	bool committed;
+	struct pci_devinst *fresh_device;
+	uint8_t fresh_record[HYPERTRACE_SESSION_RECORD_SIZE];
+	int recovery_dirfd;
+	bool running;
+	bool retained;
+	struct migration_commit_binding retained_binding;
+	struct migration_recovery_run_state run_state;
+	struct migration_recovery_record recovery;
+	/* Attempt controller lock for a preserved image; -1 when absent. Held
+	 * until process exit once COMMIT may have reached the source. */
+	int controller_fd;
+	/* A successor owns the attempt through a new kernel incarnation; its
+	 * recovery record keeps the original destination binding. */
+	bool reconstructed;
+	uint16_t incarnation_vmid;
+	uint64_t incarnation_epoch;
 };
 
 static int
@@ -2479,7 +3276,11 @@ prod_dest_local_hello(void *arg, struct migration_hello *hello)
 {
 	struct migration_prod_dest *dst = arg;
 
-	return (migration_prod_fill_hello(dst->ctx, hello));
+	int error = migration_prod_fill_hello(dst->ctx, hello);
+	if (error != 0)
+		return (error);
+	return (migration_fresh_advertise(hello, hypertrace_initialized(),
+	    dst->recovery_dirfd, &dst->recovery));
 }
 
 static int
@@ -2566,6 +3367,7 @@ static int
 prod_dest_commit(void *arg)
 {
 	struct migration_prod_dest *dst = arg;
+	struct migration_snapshot_view view;
 	int error;
 
 	/*
@@ -2573,7 +3375,16 @@ prod_dest_commit(void *arg)
 	 * Devices are left paused and the startup fence held: the guest does not
 	 * run until RELEASE drives prod_dest_resume().
 	 */
-	error = vm_migrate_commit_state(dst->ctx, dst->dev_blob, dst->dev_len);
+	if (hypertrace_initialized()) {
+		error = migration_snapshot_decode(dst->dev_blob, dst->dev_len,
+		    true, &view);
+		if (error != 0)
+			return (error);
+		memcpy(dst->fresh_record, view.fresh_record, sizeof(dst->fresh_record));
+		error = vm_migrate_fresh_commit_state(dst->ctx, dst->dev_blob,
+		    dst->dev_len, &dst->fresh_device);
+	} else
+		error = vm_migrate_commit_state(dst->ctx, dst->dev_blob, dst->dev_len);
 	if (error == 0)
 		dst->committed = true;
 	return (error);
@@ -2583,8 +3394,104 @@ static int
 prod_dest_resume(void *arg)
 {
 	struct migration_prod_dest *dst = arg;
+	int error;
 
-	return (vm_migrate_resume(dst->ctx));
+	if (!dst->committed)
+		return (EBUSY);
+	if (hypertrace_initialized()) {
+		if (dst->fresh_device == NULL)
+			return (EPROTO);
+		/* Cleared by the initial session after confirmed success, or by the
+		 * recovery executor only after its post-resume observation succeeds. */
+		dst->run_state.resume_uncertain = true;
+		error = vm_migrate_fresh_resume(dst->ctx, dst->fresh_device,
+		    dst->fresh_record);
+	} else {
+		/* A failed resume may still have entered the guest; only the
+		 * run witness can later prove it did not (migrate_resolve). */
+		dst->run_state.resume_uncertain = true;
+		error = vm_migrate_resume(dst->ctx);
+	}
+	if (error == 0)
+		dst->running = true;
+	return (error);
+}
+
+static int
+prod_prepare_commit(void *arg, struct migration_commit_binding *binding)
+{
+	struct migration_prod_dest *dst = arg;
+	SHA256_CTX hash;
+	int error;
+
+	if (!dst->committed || dst->running)
+		return (EBUSY);
+	/* Fresh mode also journals the binding; ordinary mode binds COMMIT
+	 * only, so its source retires against the exact staged state. */
+	if (dst->fresh_device != NULL) {
+		error = migration_recovery_file_check(dst->recovery_dirfd, true);
+		if (error != 0)
+			return (error);
+	}
+	if (vm_get_identity(dst->ctx, &binding->destination_vmid,
+	    &binding->destination_epoch) != 0)
+		return (errno != 0 ? errno : EIO);
+	SHA256_Init(&hash);
+	SHA256_Update(&hash, dst->dev_blob, dst->dev_len);
+	SHA256_Final(binding->state_digest, &hash);
+	dst->recovery.destination_vmid = binding->destination_vmid;
+	dst->recovery.destination_epoch = binding->destination_epoch;
+	memcpy(dst->recovery.session, dst->fresh_record, sizeof(dst->fresh_record));
+	memcpy(dst->recovery.challenge, binding->challenge, 32);
+	memcpy(dst->recovery.state_digest, binding->state_digest, 32);
+	dst->retained_binding = *binding;
+	return (0);
+}
+
+static int
+prod_dest_record(void *arg, enum migration_recovery_phase phase,
+    const uint8_t challenge[32])
+{
+	struct migration_prod_dest *dst = arg;
+	if (phase < MIGRATION_REC_DEST_STAGED || phase > MIGRATION_REC_DEST_RUNNING ||
+	    !dst->committed || memcmp(challenge, dst->recovery.challenge, 32) != 0 ||
+	    dst->running != (phase == MIGRATION_REC_DEST_RUNNING))
+		return (EPROTO);
+	dst->recovery.phase = phase;
+	if (dst->fresh_device == NULL)
+		return (prod_handoff_phase(dst->recovery_dirfd,
+		    MIGRATION_HANDOFF_DEST, &dst->recovery));
+	return (migration_recovery_store_at(dst->recovery_dirfd, &dst->recovery));
+}
+
+/* The operator's decision (before acting) and its outcome (after). */
+static int
+prod_handoff_resolution(const struct migration_prod_dest *dst, uint8_t kind,
+    uint8_t action, const struct migration_handoff_entry *witness, int result)
+{
+	static const uint8_t zero[32];
+	struct migration_handoff_entry e;
+
+	if (dst->recovery_dirfd < 0)
+		return (0);
+	memset(&e, 0, sizeof(e));
+	e.kind = kind;
+	e.role = MIGRATION_HANDOFF_DEST;
+	e.action = action;
+	e.result = result;
+	e.destination_vmid = dst->recovery.destination_vmid;
+	e.destination_epoch = dst->recovery.destination_epoch;
+	memcpy(e.challenge, dst->recovery.challenge, 32);
+	memcpy(e.state_digest, dst->recovery.state_digest, 32);
+	e.tls = memcmp(dst->recovery.source_certificate_sha256, zero, 32) != 0 &&
+	    memcmp(dst->recovery.destination_certificate_sha256, zero, 32) != 0;
+	if (witness != NULL) {
+		e.witness_vmid = witness->witness_vmid;
+		e.witness_epoch = witness->witness_epoch;
+		e.witness_entries = witness->witness_entries;
+		e.witness_running = witness->witness_running;
+	}
+	return (migration_handoff_append(dst->recovery_dirfd, &e));
 }
 
 static void
@@ -2609,27 +3516,936 @@ static const struct migration_dest_ops migration_prod_dest_ops = {
 	.do_commit = prod_dest_commit,
 	.do_resume = prod_dest_resume,
 	.do_discard = prod_dest_discard,
+	.do_prepare_commit = prod_prepare_commit,
+	.do_record = prod_dest_record,
 };
+
+/* The owner and binding storage were allocated before receiving any state.
+ * Handoff cannot fail or allocate after COMMIT may have reached the source. */
+static void
+prod_dest_retain(void *arg, const struct migration_commit_binding *binding)
+{
+	struct migration_prod_dest *dst = arg;
+	dst->retained_binding = *binding;
+	dst->retained = true;
+}
+
+static void *
+prod_dest_map(void *arg, uint64_t gpa, size_t length)
+{
+	return (vm_map_gpa(arg, gpa, length));
+}
+
+static void
+prod_dest_geometry(struct vmctx *ctx, struct migration_dest_geometry *geometry)
+{
+	geometry->lowmem_length = vm_get_lowmem_size(ctx);
+	geometry->highmem_length = vm_get_highmem_size(ctx);
+	geometry->highmem_base = geometry->highmem_length != 0 ?
+	    vm_get_highmem_base(ctx) : 0;
+}
+
+/* Runs after do_prepare_commit and before durable STAGED. The lock is never
+ * released while this owner exists, so a successor cannot run concurrently. */
+static int
+prod_dest_preserve(void *arg, const struct migration_commit_binding *binding)
+{
+	struct migration_prod_dest *dst = arg;
+	struct migration_recovery_record staged;
+	struct migration_dest_geometry geometry;
+	int error;
+
+	if (!dst->committed || dst->running || dst->fresh_device == NULL ||
+	    dst->controller_fd >= 0 || dst->dev_blob == NULL ||
+	    memcmp(binding->challenge, dst->recovery.challenge, 32) != 0 ||
+	    memcmp(binding->state_digest, dst->recovery.state_digest, 32) != 0)
+		return (EPROTO);
+	staged = dst->recovery;
+	staged.phase = MIGRATION_REC_DEST_STAGED;
+	error = migration_dest_controller_lock_at(dst->recovery_dirfd,
+	    binding->challenge, true, &dst->controller_fd);
+	if (error != 0)
+		return (error);
+	prod_dest_geometry(dst->ctx, &geometry);
+	return (migration_dest_image_write_at(dst->recovery_dirfd, &staged,
+	    &geometry, prod_dest_map, dst->ctx, dst->dev_blob, dst->dev_len));
+}
+
+/* Housekeeping only: RELEASED preceded this resume, so no successor may use
+ * the image again. Failure leaves an inert file and never changes state. */
+static void
+prod_dest_image_retire(struct migration_prod_dest *dst)
+{
+	int error;
+
+	if (!dst->running || dst->controller_fd < 0)
+		return;
+	error = migration_dest_image_retire_at(dst->recovery_dirfd,
+	    dst->recovery.challenge);
+	if (error != 0)
+		warnx("migration destination image cleanup failed: %s",
+		    strerror(error));
+}
+
+static void
+prod_dest_free(struct migration_prod_dest *dst, int owned_dirfd)
+{
+	free(dst->dev_blob);
+	if (owned_dirfd >= 0)
+		close(owned_dirfd);
+	if (dst->controller_fd >= 0)
+		close(dst->controller_fd);
+	free(dst);
+}
+
+static int
+migration_prod_dest_serve_impl(struct vmctx *ctx, int fd,
+    const struct migration_session_config *config,
+    struct migration_dest_result *result, struct migration_prod_dest **owner,
+    bool recovery_prepared)
+{
+	struct migration_prod_dest *dst;
+	struct migration_dest_ops ops = migration_prod_dest_ops;
+	struct migration_transport xp;
+	struct migration_channel channel;
+	int error, owned_dirfd = -1;
+
+	/* Every destination may retain its image, so every caller owns one. */
+	if (ctx == NULL || result == NULL || config == NULL || owner == NULL)
+		return (EINVAL);
+	if (*owner != NULL)
+		return (EBUSY);
+	/* Only the managed receiver can attest that listener, credentials and
+	 * recovery worker exist before COMMIT can make failure irreversible. */
+	if (hypertrace_initialized()) {
+		memset(result, 0, sizeof(*result));
+		result->phase = MIGRATION_PHASE_FAILED;
+		result->reason = MIGRATION_REASON_STATE;
+		if (!recovery_prepared)
+			return (EOPNOTSUPP);
+		if (!config->recovery_enabled || config->tls_credentials == NULL)
+			return (EACCES);
+		if (!checkpoint_restore_startup_held())
+			return (EBUSY);
+		error = migration_recovery_file_check(config->recovery_dirfd, true);
+		if (error != 0)
+			return (error);
+	}
+	memset(result, 0, sizeof(*result));
+	dst = calloc(1, sizeof(*dst));
+	if (dst == NULL) {
+		result->phase = MIGRATION_PHASE_FAILED;
+		result->reason = MIGRATION_REASON_RESOURCE;
+		return (ENOMEM);
+	}
+	dst->ctx = ctx;
+	dst->controller_fd = -1;
+	dst->recovery_dirfd = config->recovery_enabled ?
+	    config->recovery_dirfd : -1;
+	/* Image preservation is meaningful only for a retained fresh owner. */
+	if (config->recovery_image && (!hypertrace_initialized() ||
+	    !recovery_prepared || !config->recovery_enabled)) {
+		result->phase = MIGRATION_PHASE_FAILED;
+		result->reason = MIGRATION_REASON_STATE;
+		free(dst);
+		return (EINVAL);
+	}
+	ops.do_retain = prod_dest_retain;
+	if (config->recovery_image)
+		ops.do_preserve = prod_dest_preserve;
+	if (config->recovery_enabled) {
+		/* The owner keeps its own directory descriptor beyond this call. */
+		owned_dirfd = fcntl(config->recovery_dirfd, F_DUPFD_CLOEXEC, 0);
+		if (owned_dirfd < 0) {
+			error = errno;
+			result->phase = MIGRATION_PHASE_FAILED;
+			result->reason = MIGRATION_REASON_STATE;
+			free(dst);
+			return (error);
+		}
+		dst->recovery_dirfd = owned_dirfd;
+	}
+	/* HyperTrace binds the fresh session to the TLS certificate pins. */
+	if (hypertrace_initialized() && config->tls_credentials == NULL)
+		error = EACCES;
+	else
+		error = migration_channel_policy(fd,
+		    config->tls_credentials != NULL, config->plaintext_unix);
+	if (error == 0)
+		error = migration_channel_init(&channel, &xp, fd, true,
+		    config->tls_credentials, 30000);
+	if (error != 0) {
+		memset(result, 0, sizeof(*result));
+		result->phase = MIGRATION_PHASE_FAILED;
+		result->reason = MIGRATION_REASON_TRANSPORT;
+		if (owned_dirfd >= 0)
+			close(owned_dirfd);
+		free(dst);
+		return (error);
+	}
+	if (channel.secure)
+		error = migration_channel_binding(&channel, false,
+		    dst->recovery.source_certificate_sha256,
+		    dst->recovery.destination_certificate_sha256);
+	if (error == 0)
+		error = migration_dest_run(&xp, &ops, dst, config, result);
+	else {
+		result->phase = MIGRATION_PHASE_FAILED;
+		result->reason = MIGRATION_REASON_TRANSPORT;
+	}
+	migration_channel_cleanup(&channel);
+	if (error == 0 && result->resumed && hypertrace_initialized() &&
+	    !result->release_ack_sent)
+		warnx("migration destination running; source acknowledgment failed");
+	/* A successful ACK send does not prove receipt. Keep a fresh running
+	 * owner too, so reconnect can confirm it without resuming it again. */
+	if (dst->running && dst->fresh_device != NULL) {
+		dst->retained = true;
+		dst->run_state.observed = MIGRATION_REC_VM_RUNNING;
+		dst->run_state.resume_uncertain = false;
+		dst->run_state.ack_sent = result->release_ack_sent;
+		prod_dest_image_retire(dst);
+	}
+	if (dst->retained) {
+		/* The preallocated owner now keeps the image, exact binding, and
+		 * its own journal descriptor beyond this failed transport. */
+		*owner = dst;
+		return (error);
+	}
+	prod_dest_free(dst, owned_dirfd);
+	return (error);
+}
+
+/*
+ * A destination whose COMMIT may have reached the source but which did not
+ * complete keeps its paused image here instead of discarding it (the source
+ * may already be retired).  migrate_resolve decides what happens to it.
+ */
+static struct migration_prod_dest *migration_dest_retained;
 
 int
 migration_prod_dest_serve(struct vmctx *ctx, int fd,
     const struct migration_session_config *config,
     struct migration_dest_result *result)
 {
-	struct migration_prod_dest dst;
-	struct migration_transport xp;
-	struct migration_transport_fd fdx;
+	struct migration_prod_dest *owner = NULL;
 	int error;
 
-	if (ctx == NULL || result == NULL)
-		return (EINVAL);
-	memset(&dst, 0, sizeof(dst));
-	dst.ctx = ctx;
-	migration_transport_fd_init(&xp, &fdx, fd, 30000);
-	error = migration_dest_run(&xp, &migration_prod_dest_ops, &dst, config,
-	    result);
-	free(dst.dev_blob);
+	error = migration_prod_dest_serve_impl(ctx, fd, config, result, &owner,
+	    false);
+	if (owner != NULL)
+		migration_dest_retained = owner;
 	return (error);
 }
+
+bool
+migration_prod_dest_retained(void)
+{
+	return (migration_dest_retained != NULL);
+}
+
+/*
+ * Operator resolution of a retained inbound migration (migrate_resolve).
+ * The IPC thread acts; the main thread waits in
+ * migration_prod_dest_wait_resolution() and then runs or exits the guest.
+ */
+static pthread_mutex_t migration_resolve_mtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t migration_resolve_cv = PTHREAD_COND_INITIALIZER;
+static int migration_resolution;	/* 0 pending, 1 resumed, -1 discarded */
+
+int
+migration_prod_dest_wait_resolution(void)
+{
+	int resolution;
+
+	pthread_mutex_lock(&migration_resolve_mtx);
+	while (migration_resolution == 0)
+		pthread_cond_wait(&migration_resolve_cv, &migration_resolve_mtx);
+	resolution = migration_resolution;
+	pthread_mutex_unlock(&migration_resolve_mtx);
+	return (resolution > 0 ? 0 : ECANCELED);
+}
+
+static void
+migration_resolve_finish(int resolution)
+{
+	pthread_mutex_lock(&migration_resolve_mtx);
+	migration_resolution = resolution;
+	pthread_cond_broadcast(&migration_resolve_cv);
+	pthread_mutex_unlock(&migration_resolve_mtx);
+}
+
+/* Called only for a named action, so the request exists. */
+static bool
+nv_true(const nvlist_t *nvl, const char *name)
+{
+	return (nvlist_exists_bool(nvl, name) && nvlist_get_bool(nvl, name));
+}
+
+/*
+ * Actions:
+ *   resume   run the retained copy.  The operator must confirm the source
+ *            is retired (source_retired), since only one copy may run.  If
+ *            a resume was already attempted it may have run the guest, so
+ *            it is retried only when the run witness proves no vCPU of this
+ *            incarnation ever entered the guest.
+ *   discard  destroy the retained copy; requires acknowledge_loss, since it
+ *            may be the only surviving copy.
+ * Export of a retained, never-started guest is not offered yet: the
+ * checkpoint path assumes running vCPU threads.
+ * Each decision is logged before it takes effect.
+ */
+static nvlist_t *
+vm_do_migrate_resolve(struct vmctx *ctx, const nvlist_t *nvl)
+{
+	struct migration_prod_dest *dst = migration_dest_retained;
+	struct migration_handoff_entry witness, *witness_p = NULL;
+	nvlist_t *reply = nvlist_create(0);
+	const char *action;
+	int error = 0, journal_error = 0;
+	bool resolved = false;
+
+	memset(&witness, 0, sizeof(witness));
+	action = nvl != NULL && nvlist_exists_string(nvl, "action") ?
+	    nvlist_get_string(nvl, "action") : "";
+	if (dst == NULL)
+		error = ENOENT;
+	else if (strcmp(action, "resume") == 0) {
+		if (!nv_true(nvl, "source_retired"))
+			error = EINVAL;
+#ifdef __amd64__
+		else if (dst->run_state.resume_uncertain) {
+			struct vm_run_witness w;
+			uint16_t vmid;
+			uint64_t epoch;
+
+			if (vm_get_run_witness(ctx, &w) != 0 ||
+			    vm_get_identity(ctx, &vmid, &epoch) != 0)
+				error = errno != 0 ? errno : EIO;
+			else if (w.vmid != vmid || w.epoch != epoch)
+				error = ESTALE;
+			else if (w.guest_entries != 0 || w.running_vcpus != 0)
+				error = EBUSY;	/* the guest may already have run */
+			else {
+				witness.witness_vmid = w.vmid;
+				witness.witness_epoch = w.epoch;
+				witness.witness_entries = w.guest_entries;
+				witness.witness_running = w.running_vcpus;
+				witness_p = &witness;
+			}
+		}
+#else
+		else if (dst->run_state.resume_uncertain)
+			error = EOPNOTSUPP;	/* no run witness on this platform */
+#endif
+		/* Journal the decision before acting; a journal that cannot
+		 * take it leaves the image retained and nothing changed. */
+		if (error == 0)
+			error = prod_handoff_resolution(dst,
+			    MIGRATION_HANDOFF_RESOLVE, MIGRATION_HANDOFF_RESUME,
+			    witness_p, 0);
+		if (error == 0) {
+			fprintf(stderr, "migrate_resolve: resuming the retained "
+			    "inbound migration (operator confirmed the source "
+			    "is retired)\n");
+			/* The operator's confirmation stands in for a RELEASE
+			 * that never arrived. */
+			if (dst->recovery.phase == MIGRATION_REC_DEST_STAGED)
+				error = prod_dest_record(dst,
+				    MIGRATION_REC_DEST_RELEASED,
+				    dst->recovery.challenge);
+			if (error == 0)
+				error = prod_dest_resume(dst);
+			if (error == 0) {
+				/* The guest runs now; what follows is reported,
+				 * never grounds to call it unresolved. */
+				resolved = true;
+				journal_error = prod_dest_record(dst,
+				    MIGRATION_REC_DEST_RUNNING,
+				    dst->recovery.challenge);
+			}
+			if (journal_error == 0)
+				journal_error = prod_handoff_resolution(dst,
+				    MIGRATION_HANDOFF_OUTCOME,
+				    MIGRATION_HANDOFF_RESUME, NULL, error);
+			else
+				(void)prod_handoff_resolution(dst,
+				    MIGRATION_HANDOFF_OUTCOME,
+				    MIGRATION_HANDOFF_RESUME, NULL, error);
+		}
+		if (resolved) {
+			/* A retained owner holds its own recovery directory
+			 * duplicate (or -1); release it with the owner. */
+			migration_dest_retained = NULL;
+			prod_dest_free(dst, dst->recovery_dirfd);
+			migration_resolve_finish(1);
+		}
+	} else if (strcmp(action, "discard") == 0) {
+		if (!nv_true(nvl, "acknowledge_loss"))
+			error = EINVAL;
+		else
+			error = prod_handoff_resolution(dst,
+			    MIGRATION_HANDOFF_RESOLVE, MIGRATION_HANDOFF_DISCARD,
+			    NULL, 0);
+		if (error == 0) {
+			fprintf(stderr, "migrate_resolve: discarding the retained "
+			    "inbound migration (operator acknowledged loss)\n");
+			migration_dest_retained = NULL;
+			prod_dest_discard(dst);
+			journal_error = prod_handoff_resolution(dst,
+			    MIGRATION_HANDOFF_OUTCOME, MIGRATION_HANDOFF_DISCARD,
+			    NULL, 0);
+			prod_dest_free(dst, dst->recovery_dirfd);
+			migration_resolve_finish(-1);
+			resolved = true;
+		}
+	} else
+		error = EINVAL;
+	if (!resolved && error == 0)
+		error = EIO;
+	if (!resolved) {
+		nvlist_add_stringf(reply, "error", "migration resolve: %s",
+		    strerror(error));
+		nvlist_add_number(reply, "error_code", error);
+	}
+	if (journal_error != 0) {
+		fprintf(stderr, "migrate_resolve: handoff journal: %s\n",
+		    strerror(journal_error));
+		nvlist_add_number(reply, "journal_error", journal_error);
+	}
+	nvlist_add_bool(reply, "resolved", resolved);
+	nvlist_add_bool(reply, "retained", migration_dest_retained != NULL);
+	return (reply);
+}
+IPC_COMMAND(migrate_resolve, vm_do_migrate_resolve);
+
+/* Internal managed-receiver entry; resources must already be prepared. */
+int
+migration_prod_dest_serve_prepared(struct vmctx *ctx, int fd,
+    const struct migration_session_config *config,
+    struct migration_dest_result *result, struct migration_prod_dest **owner)
+{
+	if (owner == NULL)
+		return (EINVAL);
+	return (migration_prod_dest_serve_impl(ctx, fd, config, result, owner, true));
+}
+
+static int
+prod_dest_recovery_validate(struct migration_prod_dest *dst)
+{
+	uint16_t vmid;
+	uint64_t epoch;
+	uint8_t digest[32];
+	SHA256_CTX hash;
+
+	if (dst == NULL)
+		return (EINVAL);
+	if (!dst->retained || !dst->committed ||
+	    dst->fresh_device == NULL || dst->dev_blob == NULL || dst->dev_len == 0)
+		return (EBUSY);
+	if (vm_get_identity(dst->ctx, &vmid, &epoch) != 0)
+		return (errno != 0 ? errno : EIO);
+	/* A successor runs the same attempt in its durably published lifetime;
+	 * the original destination binding itself must stay unchanged. */
+	if (vmid != (dst->reconstructed ? dst->incarnation_vmid :
+	    dst->recovery.destination_vmid) ||
+	    epoch != (dst->reconstructed ? dst->incarnation_epoch :
+	    dst->recovery.destination_epoch) ||
+	    dst->recovery.destination_vmid != dst->retained_binding.destination_vmid ||
+	    dst->recovery.destination_epoch != dst->retained_binding.destination_epoch ||
+	    memcmp(dst->recovery.challenge, dst->retained_binding.challenge, 32) != 0 ||
+	    memcmp(dst->recovery.session, dst->fresh_record, sizeof(dst->fresh_record)) != 0)
+		return (ESTALE);
+	SHA256_Init(&hash);
+	SHA256_Update(&hash, dst->dev_blob, dst->dev_len);
+	SHA256_Final(digest, &hash);
+	if (memcmp(digest, dst->recovery.state_digest, 32) != 0 ||
+	    memcmp(digest, dst->retained_binding.state_digest, 32) != 0)
+		return (ESTALE);
+	return (0);
+}
+
+static int
+prod_dest_recovery_observe(void *arg, enum migration_recovery_destination *observed)
+{
+	struct migration_prod_dest *dst = arg;
+	int error;
+
+	*observed = MIGRATION_REC_VM_UNAVAILABLE;
+	if (!hypertrace_initialized())
+		return (EOPNOTSUPP);
+	error = prod_dest_recovery_validate(dst);
+	if (error != 0)
+		return (error);
+	if (checkpoint_restore_startup_held() == dst->running)
+		return (EBUSY);
+	*observed = dst->running ? MIGRATION_REC_VM_RUNNING : MIGRATION_REC_VM_PAUSED;
+	return (0);
+}
+
+static int
+prod_dest_recovery_resume(void *arg)
+{
+	enum migration_recovery_destination observed;
+	int error = prod_dest_recovery_observe(arg, &observed);
+	if (error != 0)
+		return (error);
+	if (observed != MIGRATION_REC_VM_PAUSED)
+		return (EBUSY);
+	error = prod_dest_resume(arg);
+	if (error == 0)
+		prod_dest_image_retire(arg);
+	return (error);
+}
+
+int
+migration_prod_dest_recover_release(struct migration_prod_dest *dst, int fd,
+    const struct migration_tls_credentials *credentials)
+{
+	static const struct migration_recovery_run_ops ops = {
+		.observe = prod_dest_recovery_observe,
+		.resume = prod_dest_recovery_resume,
+	};
+	struct migration_channel channel;
+	struct migration_transport xp;
+	enum migration_recovery_destination observed;
+	int error;
+
+	if (dst == NULL)
+		return (EINVAL);
+	/* ACK status describes this attempt, including validation/TLS failures
+	 * before the executor runs. Do not erase VM or quarantine state. */
+	dst->run_state.ack_sent = false;
+	if (credentials == NULL)
+		return (EINVAL);
+	if (dst->run_state.resume_uncertain)
+		return (EBUSY);
+	error = prod_dest_recovery_observe(dst, &observed);
+	if (error != 0)
+		return (error);
+	error = migration_channel_init(&channel, &xp, fd, true, credentials, 30000);
+	if (error != 0)
+		return (error);
+	error = migration_recovery_destination_run(&channel, &xp,
+	    dst->recovery_dirfd, &dst->recovery, &ops, dst, &dst->run_state);
+	migration_channel_cleanup(&channel);
+	return (error);
+}
+
+void
+migration_prod_dest_recovery_status(const struct migration_prod_dest *dst,
+    bool *running, bool *uncertain, bool *acknowledged)
+{
+	*running = dst->running;
+	*uncertain = dst->run_state.resume_uncertain;
+	*acknowledged = dst->run_state.ack_sent;
+}
+
+/* ---- Destination controller-loss reconstruction ---------------------- */
+
+struct migration_prod_reconstruct {
+	struct migration_dest_reconstruction admitted;
+	int dirfd;	/* owned duplicate of the admitted recovery directory */
+};
+
+static int
+prod_reconstruct_retired(void *arg __unused, uint16_t vmid, uint64_t epoch)
+{
+	if (hypertrace_session_retired(vmid, epoch) == 0)
+		return (0);
+	return (errno != 0 ? errno : EIO);
+}
+
+static int
+prod_reconstruct_destroy(void *arg __unused, const char *name, uint16_t vmid,
+    uint64_t epoch)
+{
+	if (vm_destroy_name_identity_checked(name, vmid, epoch) == 0)
+		return (0);
+	return (errno != 0 ? errno : EIO);
+}
+
+static void
+prod_reconstruct_free(struct migration_prod_reconstruct *state)
+{
+	if (state->admitted.controller >= 0)
+		close(state->admitted.controller);
+	if (state->dirfd >= 0)
+		close(state->dirfd);
+	free(state);
+}
+
+/* Before Capsicum: the optional orphan destruction opens /dev/vmmctl. The
+ * new context must be fenced; its lifetime is published durably here. */
+int
+migration_prod_dest_reconstruct_begin(struct vmctx *ctx, int recovery_dirfd,
+    const uint8_t challenge[32], const char *name,
+    struct migration_prod_reconstruct **state)
+{
+	static const struct migration_dest_reconstruct_ops ops = {
+		.retired = prod_reconstruct_retired,
+		.destroy = prod_reconstruct_destroy,
+	};
+	struct migration_prod_reconstruct *begun;
+	uint16_t vmid;
+	uint64_t epoch;
+	int error;
+
+	if (ctx == NULL || challenge == NULL || state == NULL || *state != NULL)
+		return (EINVAL);
+	if (!hypertrace_initialized())
+		return (EOPNOTSUPP);
+	if (!checkpoint_restore_startup_held())
+		return (EBUSY);
+	if (vm_get_identity(ctx, &vmid, &epoch) != 0)
+		return (errno != 0 ? errno : EIO);
+	begun = calloc(1, sizeof(*begun));
+	if (begun == NULL)
+		return (ENOMEM);
+	begun->admitted.controller = -1;
+	begun->dirfd = fcntl(recovery_dirfd, F_DUPFD_CLOEXEC, 0);
+	if (begun->dirfd < 0) {
+		error = errno;
+		free(begun);
+		return (error);
+	}
+	error = migration_dest_reconstruct_begin(begun->dirfd, challenge, name,
+	    vmid, epoch, &ops, NULL, &begun->admitted);
+	if (error != 0) {
+		begun->admitted.controller = -1;
+		prod_reconstruct_free(begun);
+		return (error);
+	}
+	*state = begun;
+	return (0);
+}
+
+/* Before any guest state was loaded: release the controller lock. The
+ * durably published incarnation is retired by any later successor. */
+void
+migration_prod_dest_reconstruct_abandon(struct migration_prod_reconstruct *state)
+{
+	if (state != NULL)
+		prod_reconstruct_free(state);
+}
+
+/* Always consumes state. On success the returned owner is paused, retained
+ * and fenced; only authenticated HXR1 recovery after source retirement may
+ * resume it. On error guest memory may be partial and must never run. */
+int
+migration_prod_dest_reconstruct_prepared(struct vmctx *ctx,
+    struct migration_prod_reconstruct *state,
+    const struct migration_session_config *config,
+    struct migration_dest_result *result, struct migration_prod_dest **owner)
+{
+	struct migration_prod_dest *dst = NULL;
+	struct migration_dest_geometry geometry;
+	struct migration_snapshot_view view;
+	struct stat supplied, admitted;
+	uint16_t vmid;
+	uint64_t epoch;
+	int error;
+
+	if (result != NULL) {
+		memset(result, 0, sizeof(*result));
+		result->phase = MIGRATION_PHASE_FAILED;
+		result->reason = MIGRATION_REASON_STATE;
+	}
+	if (state == NULL)
+		return (EINVAL);
+	if (ctx == NULL || config == NULL || result == NULL || owner == NULL ||
+	    *owner != NULL) {
+		error = EINVAL;
+		goto fail;
+	}
+	if (!hypertrace_initialized()) {
+		error = EOPNOTSUPP;
+		goto fail;
+	}
+	if (!config->recovery_enabled || config->tls_credentials == NULL) {
+		error = EACCES;
+		goto fail;
+	}
+	if (!checkpoint_restore_startup_held()) {
+		error = EBUSY;
+		goto fail;
+	}
+	/* The admitted directory is the only journal root this owner may use. */
+	if (fstat(config->recovery_dirfd, &supplied) != 0 ||
+	    fstat(state->dirfd, &admitted) != 0) {
+		error = errno;
+		goto fail;
+	}
+	if (supplied.st_dev != admitted.st_dev ||
+	    supplied.st_ino != admitted.st_ino) {
+		error = EXDEV;
+		goto fail;
+	}
+	if (vm_get_identity(ctx, &vmid, &epoch) != 0) {
+		error = errno != 0 ? errno : EIO;
+		goto fail;
+	}
+	if (vmid != state->admitted.successor.current_vmid ||
+	    epoch != state->admitted.successor.current_epoch) {
+		error = ESTALE;
+		goto fail;
+	}
+	prod_dest_geometry(ctx, &geometry);
+	if (geometry.lowmem_length != state->admitted.geometry.lowmem_length ||
+	    geometry.highmem_base != state->admitted.geometry.highmem_base ||
+	    geometry.highmem_length != state->admitted.geometry.highmem_length) {
+		error = ESTALE;
+		goto fail;
+	}
+	dst = calloc(1, sizeof(*dst));
+	if (dst == NULL) {
+		error = ENOMEM;
+		goto fail;
+	}
+	dst->ctx = ctx;
+	dst->controller_fd = -1;
+	dst->recovery_dirfd = -1;
+	error = migration_dest_image_load_at(state->dirfd, &state->admitted.record,
+	    &geometry, prod_dest_map, ctx, &dst->dev_blob, &dst->dev_len);
+	if (error == 0)
+		error = migration_snapshot_decode(dst->dev_blob, dst->dev_len, true,
+		    &view);
+	if (error == 0 && memcmp(view.fresh_record, state->admitted.record.session,
+	    sizeof(dst->fresh_record)) != 0)
+		error = ESTALE;
+	if (error == 0) {
+		memcpy(dst->fresh_record, view.fresh_record, sizeof(dst->fresh_record));
+		error = vm_migrate_fresh_commit_state(ctx, dst->dev_blob, dst->dev_len,
+		    &dst->fresh_device);
+	}
+	if (error != 0)
+		goto fail;
+	dst->committed = true;
+	dst->recovery = state->admitted.record;
+	dst->retained_binding.destination_vmid = dst->recovery.destination_vmid;
+	dst->retained_binding.destination_epoch = dst->recovery.destination_epoch;
+	memcpy(dst->retained_binding.challenge, dst->recovery.challenge, 32);
+	memcpy(dst->retained_binding.state_digest, dst->recovery.state_digest, 32);
+	dst->reconstructed = true;
+	dst->incarnation_vmid = vmid;
+	dst->incarnation_epoch = epoch;
+	dst->retained = true;
+	dst->run_state.observed = MIGRATION_REC_VM_PAUSED;
+	dst->recovery_dirfd = state->dirfd;
+	dst->controller_fd = state->admitted.controller;
+	state->dirfd = -1;
+	state->admitted.controller = -1;
+	prod_reconstruct_free(state);
+	result->phase = MIGRATION_PHASE_RECOVERY;
+	result->reason = MIGRATION_REASON_NONE;
+	result->retained = true;
+	*owner = dst;
+	return (0);
+fail:
+	if (dst != NULL)
+		prod_dest_free(dst, -1);
+	prod_reconstruct_free(state);
+	return (error);
+}
+
+int
+migration_prod_source_finish_intent(struct vmctx **ctx, int recovery_dirfd,
+    const struct migration_recovery_record *expected)
+{
+	struct migration_recovery_record record;
+	struct hypertrace_session_record stopped;
+	uint16_t phase, vmid;
+	uint64_t epoch;
+	int error;
+
+	if (expected == NULL || expected->phase < MIGRATION_REC_SOURCE_INTENT ||
+	    expected->phase > MIGRATION_REC_SOURCE_CONFIRMED)
+		return (EINVAL);
+	/* Establish the exact durable attempt before consulting kernel absence.
+	 * The caller must obtain expected from trusted local migration ownership,
+	 * never from an unauthenticated peer's requested VM identity. */
+	error = migration_source_owner_at(recovery_dirfd, expected, false);
+	if (error != 0)
+		return (error);
+	error = migration_recovery_load_at(recovery_dirfd, expected, &phase);
+	if (error != 0)
+		return (error);
+	if (phase >= MIGRATION_REC_SOURCE_RETIRED && phase <= MIGRATION_REC_SOURCE_CONFIRMED)
+		return (0);
+	if (phase != MIGRATION_REC_SOURCE_INTENT)
+		return (EPROTO);
+	error = hypertrace_session_record_decode(expected->session,
+	    sizeof(expected->session), &stopped);
+	if (error != 0)
+		return (error);
+	if (hypertrace_session_retired(stopped.vmid, stopped.epoch) != 0) {
+		error = errno != 0 ? errno : EIO;
+		if (error != EBUSY)
+			return (error);
+		if (ctx == NULL || *ctx == NULL)
+			return (EBUSY);
+		if (vm_get_identity(*ctx, &vmid, &epoch) != 0)
+			return (errno != 0 ? errno : EIO);
+		if (vmid != stopped.vmid || epoch != stopped.epoch)
+			return (ESTALE);
+		error = pci_vtdtr_checkpoint_stop();
+		if (error == 0)
+			error = hypertrace_retire_transport();
+		if (error != 0)
+			return (error);
+		/* The kernel repeats the identity check atomically with scheduling
+		 * destruction, closing the reset/name-reuse race after our query. */
+		error = prod_retire_destroy(ctx, true, stopped.vmid, stopped.epoch);
+		if (error != 0)
+			return (error);
+		if (hypertrace_session_retired(stopped.vmid, stopped.epoch) != 0)
+			return (errno != 0 ? errno : EIO);
+	}
+	error = prod_retire_drain();
+	if (error != 0)
+		return (error);
+	/* This also closes the crash window after checked destruction but before
+	 * RETIRED publication. A different/new context is never destroyed here. */
+	record = *expected;
+	record.phase = MIGRATION_REC_SOURCE_RETIRED;
+	return (migration_recovery_store_at(recovery_dirfd, &record));
+}
+
+/* The optional local name is only a lookup hint for atomic lifetime-checked
+ * retirement. Authenticate the original attempt before touching the VM. */
+int
+migration_prod_source_recover_restart_named(int fd, int recovery_dirfd,
+    uint16_t vmid, uint64_t epoch,
+    const struct migration_tls_credentials *credentials, const char *name)
+{
+	struct migration_recovery_record expected;
+	struct migration_channel channel;
+	struct migration_transport xp;
+	uint8_t source_pin[32], destination_pin[32];
+	int error, controller = -1;
+
+	if (credentials == NULL)
+		return (EINVAL);
+	error = migration_source_owner_load_at(recovery_dirfd, vmid, epoch, &expected);
+	if (error != 0)
+		return (error);
+	error = migration_source_controller_lock_at(recovery_dirfd, vmid, epoch, &controller);
+	if (error != 0)
+		return (error);
+	error = migration_channel_init(&channel, &xp, fd, false, credentials, 30000);
+	if (error != 0) {
+		close(controller);
+		return (error);
+	}
+	error = migration_channel_binding(&channel, true, source_pin, destination_pin);
+	if (error == 0 &&
+	    (memcmp(source_pin, expected.source_certificate_sha256, 32) != 0 ||
+	    memcmp(destination_pin, expected.destination_certificate_sha256, 32) != 0))
+		error = EACCES;
+	if (error == 0) {
+		error = migration_prod_source_finish_intent(NULL, recovery_dirfd, &expected);
+		if (error == EBUSY && name != NULL) {
+			/* Only authenticated, durable INTENT with an extant lifetime
+			 * can reach destruction. Still require a drained witness. */
+			uint16_t phase;
+			error = migration_recovery_load_at(recovery_dirfd, &expected, &phase);
+			if (error == 0 && phase != MIGRATION_REC_SOURCE_INTENT)
+				error = EPROTO;
+			if (error == 0 && hypertrace_session_retired(vmid, epoch) != 0) {
+				error = errno != 0 ? errno : EIO;
+				if (error == EBUSY) {
+					error = vm_destroy_name_identity_checked(name, vmid, epoch) == 0 ?
+					    0 : (errno != 0 ? errno : EIO);
+				}
+			}
+			if (error == 0)
+				error = migration_prod_source_finish_intent(NULL, recovery_dirfd, &expected);
+		}
+	}
+	if (error == 0)
+		error = migration_recovery_source_run(&channel, &xp, recovery_dirfd, &expected);
+	migration_channel_cleanup(&channel);
+	close(controller);
+	return (error);
+}
+
+/* A recovery request cannot replace the VM, attempt binding or journal root.
+ * The authenticated connection must match the original certificate pair before
+ * even INTENT completion is allowed to consult retirement evidence. */
+static nvlist_t *
+vm_do_migrate_recover(struct vmctx *ctx __unused, const nvlist_t *nvl)
+{
+	struct migration_prod_source *src = &migration_ipc_source;
+	struct migration_tls_credentials credentials;
+	struct migration_channel channel;
+	struct migration_transport xp;
+	uint8_t source_pin[32], destination_pin[32];
+	bool enabled = false, connected = false;
+	nvlist_t *reply = nvlist_create(0);
+	int error;
+
+	if (!src->retirement_started || !src->fresh_stopped ||
+	    src->recovery_dirfd < 0) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	if (!nvlist_exists_descriptor(nvl, "fd") ||
+	    nvlist_exists(nvl, "recovery_fddir")) {
+		error = EINVAL;
+		goto out;
+	}
+	error = migration_credentials_nv(nvl, &credentials, &enabled);
+	if (error != 0)
+		goto out;
+	if (!enabled) {
+		error = EACCES;
+		goto out;
+	}
+	error = migration_channel_init(&channel, &xp,
+	    nvlist_get_descriptor(nvl, "fd"), false, &credentials, 30000);
+	if (error != 0)
+		goto out;
+	connected = true;
+	error = migration_channel_binding(&channel, true, source_pin, destination_pin);
+	if (error != 0)
+		goto out;
+	if (memcmp(source_pin, src->recovery.source_certificate_sha256, 32) != 0 ||
+	    memcmp(destination_pin, src->recovery.destination_certificate_sha256, 32) != 0) {
+		error = EACCES;
+		goto out;
+	}
+	/* Only the original process can retry an unpublished INTENT, using its
+	 * retained authenticated COMMIT. Disk-only recovery cannot invent it. */
+	if (src->intent_pending) {
+		if (src->ctx == NULL || src->retired || !src->quiesced) {
+			error = ESTALE;
+			goto out;
+		}
+		error = prod_source_record(src, MIGRATION_REC_SOURCE_INTENT,
+		    src->recovery.challenge);
+		if (error != 0)
+			goto out;
+	}
+	error = migration_prod_source_finish_intent(&src->ctx, src->recovery_dirfd,
+	    &src->recovery);
+	if (error != 0)
+		goto out;
+	src->retired = true;
+	error = migration_recovery_source_run(&channel, &xp, src->recovery_dirfd,
+	    &src->recovery);
+ out:
+	if (connected)
+		migration_channel_cleanup(&channel);
+	if (error != 0) {
+		nvlist_add_stringf(reply, "error", "migration recovery: %s", strerror(error));
+		nvlist_add_number(reply, "error_code", error);
+	}
+	nvlist_add_bool(reply, "confirmed", error == 0);
+	/* This handler never resumes a source, including on authentication failure. */
+	nvlist_add_bool(reply, "source_runnable",
+	    !src->retirement_started && !src->quiesced);
+	return (reply);
+}
+IPC_COMMAND(migrate_recover, vm_do_migrate_recover);
 
 #endif /* BHYVE_SNAPSHOT */

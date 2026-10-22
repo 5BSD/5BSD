@@ -53,6 +53,9 @@ int console_fb_unregister(const char *owner, void *arg);
 void console_refresh(void);
 
 void console_kbd_register(kbd_event_func_t event_cb, void *arg, int pri);
+void console_input_pause(void);
+void console_input_resume(void);
+void console_input_retire(void);
 void console_key_event(int down, uint32_t keysym, uint32_t keycode);
 
 void console_ptr_register(ptr_event_func_t event_cb, void *arg, int pri);

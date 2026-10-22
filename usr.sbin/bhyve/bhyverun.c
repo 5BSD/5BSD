@@ -3,6 +3,7 @@
  *
  * Copyright (c) 2011 NetApp, Inc.
  * Copyright (c) 2026 Hans Rosenfeld
+ * Copyright (c) 2022 Domagoj Stolfa <ds815@cam.ac.uk>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -59,12 +60,14 @@
 #include <fcntl.h>
 #include <libgen.h>
 #include <libutil.h>
+#include <time.h>
 #include <unistd.h>
 #include <assert.h>
 #include <pthread.h>
 #include <pthread_np.h>
 #include <sysexits.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #ifdef BHYVE_SNAPSHOT
 #include <ucl.h>
@@ -77,6 +80,7 @@
 #include <vmmapi.h>
 
 #include "acpi.h"
+#include "console.h"
 #include "bhyverun.h"
 #include "bootrom.h"
 #include "config.h"
@@ -85,6 +89,8 @@
 #include "gdb.h"
 #endif
 #include "ipc.h"
+#include "globals.h"
+#include "hypertrace.h"
 #include "mem.h"
 #include "mevent.h"
 #include "pci_emul.h"
@@ -92,9 +98,14 @@
 #include "amd64/pci_lpc.h"
 #endif
 #include "qemu_fwcfg.h"
+#include "snapshot_md.h"
 #ifdef BHYVE_SNAPSHOT
 #include "snapshot.h"
 #include "migration_session.h"
+#include "migration_recovery.h"
+#include "migration_credentials.h"
+#include "migration_restart_command.h"
+#include "migration_dest_image.h"
 #endif
 #include "tpm_device.h"
 #include "vmgenc.h"
@@ -103,6 +114,7 @@
 #define MB		(1024UL * 1024)
 #define GB		(1024UL * MB)
 
+char *g_vmname = NULL;
 int guest_ncpus;
 uint16_t cpu_cores, cpu_sockets, cpu_threads;
 
@@ -134,9 +146,179 @@ static struct vcpu_info {
 	struct vmctx	*ctx;
 	struct vcpu	*vcpu;
 	int		vcpuid;
+	pthread_t	thread;
+	bool		thread_created, thread_joined;
 } *vcpu_info;
 
 static cpuset_t **vcpumap;
+static atomic_bool migration_retiring_cpus;
+static void fbsdrun_migration_retire_wake(void);
+
+void
+fbsdrun_retire_cpus_begin(void)
+{
+	console_input_retire();
+#ifdef __amd64__
+	sci_retire();
+#endif
+	atomic_store_explicit(&migration_retiring_cpus, true, memory_order_release);
+	fbsdrun_migration_retire_wake();
+}
+
+bool
+fbsdrun_cpus_retiring(void)
+{
+	return (atomic_load_explicit(&migration_retiring_cpus, memory_order_acquire));
+}
+
+int
+fbsdrun_retire_cpus_wait(void)
+{
+	int error;
+
+	if (!fbsdrun_cpus_retiring())
+		return (EINVAL);
+	for (int i = 0; i < guest_ncpus; i++) {
+		if (!vcpu_info[i].thread_created || vcpu_info[i].thread_joined)
+			continue;
+		error = pthread_join(vcpu_info[i].thread, NULL);
+		if (error != 0)
+			return (error);
+		vcpu_info[i].thread_joined = true;
+	}
+	return (0);
+}
+
+static void
+fbsdrun_retirecpu_if_requested(int vcpuid)
+{
+	if (fbsdrun_cpus_retiring()) {
+		fbsdrun_deletecpu(vcpuid);
+		pthread_exit(NULL);
+	}
+}
+
+/* Migration acknowledgments are taken between complete VM-exit handlers.
+ * The suspend ioctl alone only requests debug exits; it does not drain them. */
+static pthread_mutex_t migration_cpu_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t migration_cpu_cond;
+static pthread_once_t migration_cpu_once = PTHREAD_ONCE_INIT;
+static atomic_bool migration_cpu_hold;
+static int migration_cpu_parked, migration_cpu_init_error;
+
+static void
+fbsdrun_migration_cpu_init(void)
+{
+	pthread_condattr_t attr;
+	int error;
+
+	error = pthread_condattr_init(&attr);
+	if (error == 0) {
+		error = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+		if (error == 0)
+			error = pthread_cond_init(&migration_cpu_cond, &attr);
+		pthread_condattr_destroy(&attr);
+	}
+	migration_cpu_init_error = error;
+}
+
+static void
+fbsdrun_migration_retire_wake(void)
+{
+	pthread_once(&migration_cpu_once, fbsdrun_migration_cpu_init);
+	if (migration_cpu_init_error != 0)
+		return;
+	pthread_mutex_lock(&migration_cpu_mutex);
+	pthread_cond_broadcast(&migration_cpu_cond);
+	pthread_mutex_unlock(&migration_cpu_mutex);
+}
+
+static void
+fbsdrun_migration_cpu_point(void)
+{
+	/* Avoid a lock on the normal VM-exit path when no cutover is pending. */
+	if (!atomic_load_explicit(&migration_cpu_hold, memory_order_acquire))
+		return;
+	pthread_mutex_lock(&migration_cpu_mutex);
+	if (atomic_load_explicit(&migration_cpu_hold, memory_order_relaxed)) {
+		migration_cpu_parked++;
+		pthread_cond_broadcast(&migration_cpu_cond);
+		while (atomic_load_explicit(&migration_cpu_hold, memory_order_relaxed) &&
+		    !fbsdrun_cpus_retiring())
+			pthread_cond_wait(&migration_cpu_cond, &migration_cpu_mutex);
+		migration_cpu_parked--;
+	}
+	pthread_mutex_unlock(&migration_cpu_mutex);
+}
+
+int
+fbsdrun_migration_resume_cpus(struct vmctx *ctx)
+{
+	int error;
+
+	pthread_once(&migration_cpu_once, fbsdrun_migration_cpu_init);
+	if (migration_cpu_init_error != 0)
+		return (migration_cpu_init_error);
+
+	pthread_mutex_lock(&migration_cpu_mutex);
+	if (fbsdrun_cpus_retiring())
+		error = ECANCELED;
+#ifdef __amd64__
+	else if (vm_resume_all_cpus(ctx) != 0)
+#else
+	else if (bhyve_resume_powered_cpus(ctx) != 0)
+#endif
+		error = errno != 0 ? errno : EIO;
+	else {
+		atomic_store_explicit(&migration_cpu_hold, false, memory_order_release);
+		pthread_cond_broadcast(&migration_cpu_cond);
+		error = 0;
+	}
+	pthread_mutex_unlock(&migration_cpu_mutex);
+	return (error);
+}
+
+int
+fbsdrun_migration_pause_cpus(struct vmctx *ctx, bool *runnable)
+{
+	struct timespec deadline;
+	int error, resume_error;
+
+	*runnable = false;
+	pthread_mutex_lock(&migration_cpu_mutex);
+	if (atomic_load_explicit(&migration_cpu_hold, memory_order_relaxed) ||
+	    fbsdrun_cpus_retiring()) {
+		pthread_mutex_unlock(&migration_cpu_mutex);
+		*runnable = false;
+		return (EBUSY);
+	}
+	/* Only an unfenced source can remain runnable on setup failure. */
+	*runnable = true;
+	pthread_once(&migration_cpu_once, fbsdrun_migration_cpu_init);
+	error = migration_cpu_init_error;
+	if (error == 0 && clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
+		error = errno != 0 ? errno : EIO;
+	if (error != 0) {
+		pthread_mutex_unlock(&migration_cpu_mutex);
+		return (error);
+	}
+	deadline.tv_sec += 30;
+	atomic_store_explicit(&migration_cpu_hold, true, memory_order_release);
+	*runnable = false;
+	error = vm_suspend_all_cpus(ctx) == 0 ? 0 : (errno != 0 ? errno : EIO);
+	while (error == 0 && migration_cpu_parked != guest_ncpus)
+		error = pthread_cond_timedwait(&migration_cpu_cond,
+		    &migration_cpu_mutex, &deadline);
+	pthread_mutex_unlock(&migration_cpu_mutex);
+	if (error != 0) {
+		/* Even a failed suspend request may have changed CPU state. */
+		resume_error = fbsdrun_migration_resume_cpus(ctx);
+		*runnable = resume_error == 0;
+		if (resume_error != 0)
+			return (resume_error);
+	}
+	return (error);
+}
 
 #ifdef __amd64__
 static int
@@ -849,6 +1031,7 @@ fbsdrun_start_thread(void *param)
 #endif
 
 	vm_loop(vi->ctx, vi->vcpu);
+	fbsdrun_retirecpu_if_requested(vi->vcpuid);
 	/* We get here if the VM was destroyed asynchronously. */
 	exit(BHYVE_EXIT_ERROR);
 }
@@ -857,7 +1040,6 @@ void
 fbsdrun_addcpu(int vcpuid)
 {
 	struct vcpu_info *vi;
-	pthread_t thr;
 	int error;
 
 	vi = &vcpu_info[vcpuid];
@@ -872,10 +1054,12 @@ fbsdrun_addcpu(int vcpuid)
 	if (error != 0)
 		err(EX_OSERR, "could not suspend CPU %d", vi->vcpuid);
 
-	error = pthread_create(&thr, NULL, fbsdrun_start_thread, vi);
+	vi->thread_joined = false;
+	error = pthread_create(&vi->thread, NULL, fbsdrun_start_thread, vi);
 	if (error != 0)
 		errc(EX_OSERR, error, "could not create CPU %d thread",
 		    vi->vcpuid);
+	vi->thread_created = true;
 }
 
 void
@@ -924,7 +1108,9 @@ vm_loop(struct vmctx *ctx, struct vcpu *vcpu)
 	enum vm_exitcode exitcode;
 	cpuset_t active_cpus, dmask;
 
+	fbsdrun_retirecpu_if_requested(vcpu_id(vcpu));
 	error = vm_active_cpus(ctx, &active_cpus);
+	fbsdrun_retirecpu_if_requested(vcpu_id(vcpu));
 	assert(CPU_ISSET(vcpu_id(vcpu), &active_cpus));
 
 	vmrun.vm_exit = &vme;
@@ -936,6 +1122,8 @@ vm_loop(struct vmctx *ctx, struct vcpu *vcpu)
 #endif
 
 	while (1) {
+		fbsdrun_migration_cpu_point();
+		fbsdrun_retirecpu_if_requested(vcpu_id(vcpu));
 #ifdef __amd64__
 		if (!startup_admitted) {
 			memset(&startup_run, 0, sizeof(startup_run));
@@ -954,6 +1142,7 @@ vm_loop(struct vmctx *ctx, struct vcpu *vcpu)
 		} else
 #endif
 			error = vm_run(vcpu, &vmrun);
+		fbsdrun_retirecpu_if_requested(vcpu_id(vcpu));
 		if (error != 0)
 			break;
 
@@ -1007,6 +1196,10 @@ do_open(const char *vmname)
 	bool romboot, monitor;
 
 	monitor = get_config_bool_default("monitor.enabled", false);
+	/*
+	 * Populate our vmname for use in DTrace probes.
+	 */
+	g_vmname = (char *)(uintptr_t)vmname;
 	romboot = bootrom_boot();
 
 	/*
@@ -1109,6 +1302,36 @@ bhyve_parse_gdb_options(const char *opt)
 }
 #endif
 
+/* Prepare the control endpoint and sandbox before any inbound guest runs.
+ * IPC's startup gate remains closed until main finishes its remaining work. */
+static void
+bhyve_prepare_control(struct vmctx *ctx)
+{
+	/* Absolute journal lookup must precede Capsicum and IPC publication.
+	 * Remember missing/invalid storage for a later migration error; ordinary
+	 * VM operation does not require a migration journal directory. */
+#ifdef BHYVE_SNAPSHOT
+	(void)migration_prod_source_prepare();
+#endif
+
+	/*
+	 * Thread for handling bhyvectl commands.
+	 */
+	if (init_ipc_thread(ctx, get_config_value("rundir")) != 0)
+		errx(EX_OSERR, "Failed to start IPC thread");
+
+#ifndef WITHOUT_CAPSICUM
+	caph_cache_catpages();
+
+	if (caph_limit_stdout() == -1 || caph_limit_stderr() == -1)
+		errx(EX_OSERR, "Unable to apply rights for sandbox");
+
+	if (caph_enter() == -1)
+		errx(EX_OSERR, "cap_enter() failed");
+#endif
+
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -1118,9 +1341,18 @@ main(int argc, char *argv[])
 	struct vmctx *ctx;
 	size_t memsize;
 	const char *value, *vmname;
+	int enable_hypertrace = 0;
+	bool defer_hypertrace = false;
 #ifdef BHYVE_SNAPSHOT
 	struct restore_state rstate;
 	int migrate_recv_fd = -1;
+	int migrate_recovery_fd = -1;
+	int migrate_recovery_listener = -1;
+	struct migration_tls_credentials migrate_credentials;
+	bool migrate_tls_enabled = false, migrate_plaintext_unix = false;
+	bool migrate_reconstruct = false, migrate_recovery_image = false;
+	uint8_t migrate_reconstruct_challenge[32];
+	struct migration_prod_reconstruct *migrate_reconstruction = NULL;
 #endif
 
 	bhyve_init_config();
@@ -1131,7 +1363,41 @@ main(int argc, char *argv[])
 	if (argc > 1)
 		bhyve_usage(1);
 
+#ifndef BHYVE_SNAPSHOT
+	if (get_config_value("migrate.recover_source_fd") != NULL ||
+	    get_config_value("migrate.recover_source_vmid") != NULL ||
+	    get_config_value("migrate.recover_source_epoch") != NULL ||
+	    get_config_value("migrate.recover_source_name") != NULL)
+		errx(EX_USAGE, "source migration recovery requires snapshot support");
+	if (get_config_value("migrate.reconstruct") != NULL ||
+	    get_config_value("migrate.reconstruct_previous_name") != NULL ||
+	    get_config_value("migrate.recovery_image") != NULL)
+		errx(EX_USAGE, "destination migration reconstruction requires snapshot support");
+#endif
 #ifdef BHYVE_SNAPSHOT
+	{
+		const char *values[] = {
+		    get_config_value("migrate.recover_source_fd"),
+		    get_config_value("migrate.recover_source_vmid"),
+		    get_config_value("migrate.recover_source_epoch"),
+		    get_config_value("migrate.tls.certificate_fd"),
+		    get_config_value("migrate.tls.private_key_fd"),
+		    get_config_value("migrate.tls.trust_fd"),
+		    get_config_value("migrate.tls.peer_sha256") };
+		if (values[0] != NULL || values[1] != NULL || values[2] != NULL ||
+		    get_config_value("migrate.recover_source_name") != NULL) {
+			bool conflict = argc != 0 || restore_file != NULL ||
+			    get_config_value("migrate.receive_fd") != NULL ||
+			    get_config_value("migrate.recovery_fd") != NULL ||
+			    get_config_value("migrate.recovery_listen_fd") != NULL;
+			error = migration_restart_command_named(values, conflict,
+			    get_config_value("migrate.recover_source_name"));
+			if (error != 0)
+				errx(EX_OSERR, "source migration recovery: %s", strerror(error));
+			printf("source migration recovery confirmed; source remains retired\n");
+			return (0);
+		}
+	}
 	{
 		const char *rv = get_config_value("migrate.receive_fd");
 		const char *errstr;
@@ -1156,10 +1422,95 @@ main(int argc, char *argv[])
 			if (fcntl(migrate_recv_fd, F_SETFD, fdflags | FD_CLOEXEC) < 0)
 				errx(EX_OSERR, "cannot set close-on-exec on migrate receive fd");
 		}
+		/* A successor of a lost destination controller. The challenge names
+		 * one preserved attempt from trusted local records, never the peer. */
+		rv = get_config_value("migrate.reconstruct");
+		if (rv != NULL) {
+			if (migrate_recv_fd >= 0 || restore_file != NULL)
+				errx(EX_USAGE, "migrate.reconstruct excludes restore and migration receive");
+			if (migration_dest_challenge_parse(rv,
+			    migrate_reconstruct_challenge) != 0)
+				errx(EX_USAGE, "migrate.reconstruct requires a 64-digit lowercase attempt challenge");
+			migrate_reconstruct = true;
+		}
+		if (get_config_value("migrate.reconstruct_previous_name") != NULL &&
+		    !migrate_reconstruct)
+			errx(EX_USAGE, "migrate.reconstruct_previous_name requires migrate.reconstruct");
+		migrate_recovery_image = get_config_bool_default(
+		    "migrate.recovery_image", false);
+		if (migrate_recovery_image && migrate_recv_fd < 0)
+			errx(EX_USAGE, "migrate.recovery_image requires a migration receiver");
+		rv = get_config_value("migrate.recovery_fd");
+		if (rv != NULL) {
+			descriptor = strtonum(rv, 0, INT_MAX, &errstr);
+			if (errstr != NULL || (migrate_recv_fd < 0 && !migrate_reconstruct))
+				errx(EX_USAGE, "migrate.recovery_fd requires a valid fd and migration receiver");
+			migrate_recovery_fd = (int)descriptor;
+			if (migration_recovery_file_check(migrate_recovery_fd, true) != 0)
+				errx(EX_USAGE, "migration recovery fd must be a private directory owned by this user");
+			fdflags = fcntl(migrate_recovery_fd, F_GETFD);
+			if (fdflags < 0 || fcntl(migrate_recovery_fd, F_SETFD,
+			    fdflags | FD_CLOEXEC) < 0)
+				errx(EX_OSERR, "cannot set close-on-exec on migration recovery fd");
+		}
+		rv = get_config_value("migrate.recovery_listen_fd");
+		if (rv != NULL) {
+			descriptor = strtonum(rv, 0, INT_MAX, &errstr);
+			if (errstr != NULL || (migrate_recv_fd < 0 && !migrate_reconstruct) ||
+			    migrate_recovery_fd < 0)
+				errx(EX_USAGE, "migration recovery listener requires receive and recovery directory fds");
+			migrate_recovery_listener = (int)descriptor;
+			if (migration_recovery_listener_check(migrate_recovery_listener) != 0)
+				errx(EX_USAGE, "migration recovery listener must be a listening stream socket");
+			fdflags = fcntl(migrate_recovery_listener, F_GETFD);
+			if (fdflags < 0 || fcntl(migrate_recovery_listener, F_SETFD,
+			    fdflags | FD_CLOEXEC) < 0)
+				errx(EX_OSERR, "cannot set close-on-exec on migration recovery listener");
+		}
 	}
 	if (restore_file != NULL && migrate_recv_fd >= 0)
 		errx(EX_USAGE, "-r (restore) and -R (migrate-receive) are "
 		    "mutually exclusive");
+	if (migration_credentials_config(
+	    get_config_value("migrate.tls.certificate_fd"),
+	    get_config_value("migrate.tls.private_key_fd"),
+	    get_config_value("migrate.tls.trust_fd"),
+	    get_config_value("migrate.tls.peer_sha256"),
+	    &migrate_credentials, &migrate_tls_enabled) != 0)
+		errx(EX_USAGE, "migration TLS requires all three credential fds and a 64-digit peer certificate SHA-256");
+	if (migrate_tls_enabled) {
+#ifdef NO_OPENSSL
+		errx(EX_USAGE, "migration TLS requires an OpenSSL-enabled build");
+#endif
+		if (migrate_recv_fd < 0 && !migrate_reconstruct)
+			errx(EX_USAGE, "migration TLS configuration requires a migration receiver");
+		const int fds[] = {migrate_credentials.certificate_fd,
+		    migrate_credentials.private_key_fd, migrate_credentials.trust_fd};
+		for (size_t i = 0; i < nitems(fds); i++) {
+			int flags = fcntl(fds[i], F_GETFD);
+			if (flags < 0 || fcntl(fds[i], F_SETFD, flags | FD_CLOEXEC) < 0)
+				errx(EX_OSERR, "invalid migration TLS credential descriptor");
+		}
+	}
+	migrate_plaintext_unix = get_config_bool_default("migrate.plaintext_unix",
+	    false);
+	if (migrate_plaintext_unix && migrate_tls_enabled)
+		errx(EX_USAGE, "migrate.plaintext_unix and migration TLS credentials "
+		    "are mutually exclusive");
+	if (migrate_plaintext_unix && migrate_recv_fd < 0)
+		errx(EX_USAGE, "migrate.plaintext_unix requires a migration receiver");
+	/* Migration streams carry guest memory and CPU state; they are
+	 * authenticated unless a same-host plaintext socket is requested. */
+	if (migrate_recv_fd >= 0 && !migrate_tls_enabled && !migrate_plaintext_unix)
+		errx(EX_USAGE, "migration receive requires mutual TLS credentials "
+		    "(migrate.tls.*) or migrate.plaintext_unix for a local "
+		    "AF_UNIX socket");
+	if (migrate_recovery_listener >= 0 && !migrate_tls_enabled)
+		errx(EX_USAGE, "migration recovery listener requires mutual TLS credentials");
+	if ((migrate_reconstruct || migrate_recovery_image) &&
+	    (migrate_recovery_fd < 0 || migrate_recovery_listener < 0 ||
+	    !migrate_tls_enabled))
+		errx(EX_USAGE, "destination reconstruction and recovery images require a recovery directory, listener and mutual TLS");
 #endif
 
 #ifdef BHYVE_SNAPSHOT
@@ -1211,6 +1562,9 @@ main(int argc, char *argv[])
 		errx(EX_USAGE, "invalid memsize '%s'", value);
 
 	ctx = do_open(vmname);
+
+	enable_hypertrace = get_config_bool_default(
+	    "enable_hypertrace", false);
 
 #ifdef BHYVE_SNAPSHOT
 	if (restore_file != NULL) {
@@ -1361,6 +1715,16 @@ main(int argc, char *argv[])
 #endif
 		}
 	}
+	/*
+	 * The monitor forks; a connector started before fork would not survive
+	 * in the VM child even though its mutexes and started flag would.
+	 */
+	if (enable_hypertrace != 0 && hypertrace_init(ctx) != 0)
+		err(EX_OSERR, "hypertrace_init");
+#ifdef BHYVE_SNAPSHOT
+	defer_hypertrace = restore_file != NULL || migrate_recv_fd >= 0 ||
+	    migrate_reconstruct;
+#endif
 
 	bsp = vm_vcpu_open(ctx, BSP);
 	if (bsp == NULL) {
@@ -1441,6 +1805,9 @@ main(int argc, char *argv[])
 		EPRINTLN("Failed to init TPM device");
 		exit(BHYVE_EXIT_ERROR);
 	}
+	if (enable_hypertrace != 0 && !defer_hypertrace &&
+	    hypertrace_start(ctx) != 0)
+		err(EX_OSERR, "hypertrace_start");
 
 	/*
 	 * Initialize after PCI, to allow a bootrom file to reserve the high
@@ -1464,7 +1831,7 @@ main(int argc, char *argv[])
 	 * interval.  vm_restore_transaction() releases this only after COMMIT and
 	 * device resume; an error exits with all vCPUs still held.
 	 */
-	if (restore_file != NULL || migrate_recv_fd >= 0)
+	if (restore_file != NULL || migrate_recv_fd >= 0 || migrate_reconstruct)
 		checkpoint_restore_startup_hold();
 #endif
 	for (int vcpuid = 0; vcpuid < guest_ncpus; vcpuid++)
@@ -1473,12 +1840,18 @@ main(int argc, char *argv[])
 	if (kernel_startup)
 		kernel_startup_commit(ctx);
 #endif
+	/* Finish firmware/platform writes before restoring RAM or releasing CPUs. */
+	if (bhyve_init_platform_late(ctx, bsp) != 0)
+		exit(BHYVE_EXIT_ERROR);
 
 #ifdef BHYVE_SNAPSHOT
 	if (restore_file != NULL) {
 		FPRINTLN(stdout, "Validating checkpoint topology...");
 		if (vm_restore_transaction(ctx, &rstate) != 0)
 			exit(BHYVE_EXIT_ERROR);
+		/* The restore transaction admitted both HyperTrace channels before
+		 * releasing its startup fence. */
+		defer_hypertrace = false;
 	} else if (migrate_recv_fd >= 0) {
 		struct migration_session_config mcfg;
 		struct migration_dest_result mres;
@@ -1486,40 +1859,90 @@ main(int argc, char *argv[])
 		memset(&mcfg, 0, sizeof(mcfg));
 		mcfg.version_max = MIGRATION_PROTO_VERSION;
 		mcfg.version_min = MIGRATION_PROTO_VERSION_MIN;
+		mcfg.recovery_enabled = migrate_recovery_fd >= 0;
+		mcfg.recovery_dirfd = migrate_recovery_fd;
+		mcfg.recovery_image = migrate_recovery_image;
+		mcfg.tls_credentials = migrate_tls_enabled ? &migrate_credentials : NULL;
+		mcfg.plaintext_unix = migrate_plaintext_unix;
 		memset(&mres, 0, sizeof(mres));
+		bhyve_prepare_control(ctx);
 		FPRINTLN(stdout, "Awaiting inbound live migration...");
-		if (migration_prod_dest_serve(ctx, migrate_recv_fd, &mcfg,
-		    &mres) != 0) {
+		if (migrate_recovery_listener >= 0)
+			error = migration_prod_dest_serve_managed(ctx, migrate_recv_fd,
+			    migrate_recovery_listener, &mcfg, &mres);
+		else
+			error = migration_prod_dest_serve(ctx, migrate_recv_fd, &mcfg, &mres);
+		if (error != 0 && migrate_recovery_listener < 0 &&
+		    migration_prod_dest_retained()) {
+			/* COMMIT may have retired the source: this paused copy may
+			 * be the only one.  Keep it until the operator decides. */
+			fprintf(stderr, "Inbound migration failed after COMMIT at "
+			    "phase %u (reason %u); the paused guest is retained. "
+			    "Resolve it with migrate_resolve (resume or discard).\n",
+			    mres.phase, mres.reason);
+			if (migration_prod_dest_wait_resolution() != 0)
+				exit(BHYVE_EXIT_ERROR);
+			error = 0;
+		}
+		if (error != 0) {
 			fprintf(stderr, "Inbound migration failed at phase %u "
 			    "(reason %u).\n", mres.phase, mres.reason);
 			exit(BHYVE_EXIT_ERROR);
 		}
+		if (enable_hypertrace != 0 && mres.resumed)
+			defer_hypertrace = false;
+	} else if (migrate_reconstruct) {
+		struct migration_session_config mcfg;
+		struct migration_dest_result mres;
+
+		if (enable_hypertrace == 0)
+			errx(EX_USAGE, "migrate.reconstruct requires enable_hypertrace");
+		/* Admission may destroy an exact orphan through /dev/vmmctl, so it
+		 * precedes Capsicum. No guest state is loaded until it succeeds. */
+		error = migration_prod_dest_reconstruct_begin(ctx, migrate_recovery_fd,
+		    migrate_reconstruct_challenge,
+		    get_config_value("migrate.reconstruct_previous_name"),
+		    &migrate_reconstruction);
+		if (error != 0) {
+			fprintf(stderr, "Destination reconstruction refused: %s\n",
+			    strerror(error));
+			exit(BHYVE_EXIT_ERROR);
+		}
+		memset(&mcfg, 0, sizeof(mcfg));
+		mcfg.version_max = MIGRATION_PROTO_VERSION;
+		mcfg.version_min = MIGRATION_PROTO_VERSION_MIN;
+		mcfg.recovery_enabled = true;
+		mcfg.recovery_dirfd = migrate_recovery_fd;
+		mcfg.tls_credentials = &migrate_credentials;
+		memset(&mres, 0, sizeof(mres));
+		bhyve_prepare_control(ctx);
+		FPRINTLN(stdout, "Reconstructed destination fenced; awaiting authenticated recovery...");
+		error = migration_prod_dest_reconstruct_managed(ctx,
+		    migrate_reconstruction, migrate_recovery_listener, &mcfg, &mres);
+		migrate_reconstruction = NULL;	/* consumed */
+		if (error != 0) {
+			fprintf(stderr, "Destination reconstruction failed: %s\n",
+			    strerror(error));
+			exit(BHYVE_EXIT_ERROR);
+		}
+		if (mres.resumed)
+			defer_hypertrace = false;
 	}
 #endif
+	if (enable_hypertrace != 0 && defer_hypertrace &&
+	    hypertrace_start(ctx) != 0)
+		err(EX_OSERR, "hypertrace_start after restore");
 
-	if (bhyve_init_platform_late(ctx, bsp) != 0)
-		exit(BHYVE_EXIT_ERROR);
 
 	/*
 	 * Change the proc title to include the VM name.
 	 */
 	setproctitle("%s", vmname);
 
-	/*
-	 * Thread for handling bhyvectl commands.
-	 */
-	if (init_ipc_thread(ctx, get_config_value("rundir")) != 0)
-		errx(EX_OSERR, "Failed to start IPC thread");
-
-#ifndef WITHOUT_CAPSICUM
-	caph_cache_catpages();
-
-	if (caph_limit_stdout() == -1 || caph_limit_stderr() == -1)
-		errx(EX_OSERR, "Unable to apply rights for sandbox");
-
-	if (caph_enter() == -1)
-		errx(EX_OSERR, "cap_enter() failed");
+#ifdef BHYVE_SNAPSHOT
+	if (migrate_recv_fd < 0 && !migrate_reconstruct)
 #endif
+		bhyve_prepare_control(ctx);
 
 #ifdef BHYVE_SNAPSHOT
 	if (restore_file != NULL) {
@@ -1527,18 +1950,21 @@ main(int argc, char *argv[])
 		if (vm_restore_time(ctx) < 0)
 			err(EX_OSERR, "Unable to restore time");
 
+#ifdef __amd64__
 		for (int vcpuid = 0; vcpuid < guest_ncpus; vcpuid++)
 			vm_resume_cpu(vcpu_info[vcpuid].vcpu);
-	} else if (migrate_recv_fd >= 0) {
-		/*
-		 * The migration commit already released the restore startup
-		 * fence and resumed devices; release the migrated vCPUs to run.
-		 */
-		for (int vcpuid = 0; vcpuid < guest_ncpus; vcpuid++)
-			vm_resume_cpu(vcpu_info[vcpuid].vcpu);
-	} else
+#else
+		/* Only vCPUs powered on in the checkpoint may run. */
+		if (bhyve_resume_powered_cpus(ctx) != 0)
+			err(EX_OSERR, "Unable to resume restored vCPUs");
+#endif
+	} else if (migrate_recv_fd < 0 && !migrate_reconstruct)
+		/* Migration's coordinator already checked CPU resume before ACK. */
 #endif
 		vm_resume_cpu(bsp);
+
+	/* Commands may retire ctx; main must finish all VM startup use first. */
+	ipc_startup_complete();
 
 	/*
 	 * Head off to the main event dispatch loop

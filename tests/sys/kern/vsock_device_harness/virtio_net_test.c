@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -205,9 +206,14 @@ static int g_chain_next;
 static int g_getchain_calls;
 static ssize_t g_peek_len;
 static ssize_t g_recv_result;
+static bool g_recv_preserve_peek;
+static int g_recv_errno;
 static ssize_t g_send_result;
 static int g_recv_calls;
 static int g_discard_calls;
+static bool g_discard_override;
+static ssize_t g_discard_result;
+static int g_discard_errno;
 static int g_send_calls;
 static size_t g_send_bytes;
 static struct virtio_net_rxhdr g_send_header;
@@ -221,6 +227,14 @@ static uint32_t g_prepare_len[8];
 static int g_publish_calls;
 static int g_rx_disable_calls;
 static int g_rx_enable_calls;
+static int g_checkpoint_freeze_calls;
+static int g_checkpoint_freeze_error;
+static bool g_checkpoint_frozen;
+static bool g_tagging_enabled;
+static bool g_tagging_supported;
+static int g_tagging_enable_result;
+static int g_tagging_disable_calls;
+static int g_tagging_disable_result;
 static int g_reset_calls;
 static int g_set_cap_calls;
 static int g_set_cap_result;
@@ -243,6 +257,7 @@ static bool g_snapshot_validate_saw_tx_lock;
 #endif
 static uint8_t g_packet[128];
 static uint8_t g_backend_packet[NETBE_MAX_RECORD_SIZE];
+static uint8_t g_send_record[256];
 static uint64_t g_used_storage[16];
 #define	g_used	(*(struct vring_used *)(void *)g_used_storage)
 
@@ -281,15 +296,21 @@ reset_mocks(void)
 	memset(g_chains, 0, sizeof(g_chains));
 	memset(g_packet, 0, sizeof(g_packet));
 	memset(g_backend_packet, 0, sizeof(g_backend_packet));
+	memset(g_send_record, 0, sizeof(g_send_record));
 	memset(g_used_storage, 0, sizeof(g_used_storage));
 	g_chain_count = 0;
 	g_chain_next = 0;
 	g_getchain_calls = 0;
 	g_peek_len = 0;
 	g_recv_result = 0;
+	g_recv_preserve_peek = false;
+	g_recv_errno = 0;
 	g_send_result = 0;
 	g_recv_calls = 0;
 	g_discard_calls = 0;
+	g_discard_override = false;
+	g_discard_result = 0;
+	g_discard_errno = 0;
 	g_send_calls = 0;
 	g_send_bytes = 0;
 	memset(&g_send_header, 0, sizeof(g_send_header));
@@ -299,6 +320,14 @@ reset_mocks(void)
 	g_publish_calls = 0;
 	g_rx_disable_calls = 0;
 	g_rx_enable_calls = 0;
+	g_checkpoint_freeze_calls = 0;
+	g_checkpoint_freeze_error = 0;
+	g_checkpoint_frozen = false;
+	g_tagging_enabled = false;
+	g_tagging_supported = false;
+	g_tagging_enable_result = 0;
+	g_tagging_disable_calls = 0;
+	g_tagging_disable_result = 0;
 	g_reset_calls = 0;
 	g_set_cap_calls = 0;
 	g_set_cap_result = 0;
@@ -446,6 +475,15 @@ vq_has_descs(struct vqueue_info *vq __unused)
 }
 
 int
+vq_checkpoint_has_descs(struct vqueue_info *vq, bool *has_descs)
+{
+	if (has_descs == NULL)
+		return (EINVAL);
+	*has_descs = vq_is_allocated(vq) && vq_has_descs(vq);
+	return (0);
+}
+
+int
 vq_getchain(struct vqueue_info *vq __unused, struct iovec *iov, int niov,
     struct vi_req *req)
 {
@@ -528,7 +566,9 @@ netbe_recv(net_backend_t *be __unused, const struct iovec *iov, int niov)
 	size_t len;
 
 	g_recv_calls++;
-	g_peek_len = 0;
+	if (!g_recv_preserve_peek)
+		g_peek_len = 0;
+	errno = g_recv_errno;
 	if (g_recv_result > 0) {
 		len = MIN((size_t)g_recv_result, sizeof(g_backend_packet));
 		(void)buf_to_iov(g_backend_packet, len, iov, niov);
@@ -542,6 +582,10 @@ netbe_rx_discard(net_backend_t *be __unused)
 	ssize_t len;
 
 	g_discard_calls++;
+	if (g_discard_override) {
+		errno = g_discard_errno;
+		return (g_discard_result);
+	}
 	len = g_peek_len;
 	if (!g_continuous_rx)
 		g_peek_len = 0;
@@ -554,6 +598,8 @@ netbe_send(net_backend_t *be __unused, const struct iovec *iov, int niov)
 
 	g_send_calls++;
 	g_send_bytes = count_iov(iov, niov);
+	(void)pci_vtnet_iov_read(iov, niov, 0, g_send_record,
+	    MIN(g_send_bytes, sizeof(g_send_record)));
 	g_send_header_valid = pci_vtnet_iov_read(iov, niov, 0,
 	    &g_send_header, VIRTIO14_NET_MODERN_HDR_SIZE);
 	return (g_send_result);
@@ -568,6 +614,68 @@ void
 netbe_rx_enable(net_backend_t *be __unused)
 {
 	g_rx_enable_calls++;
+}
+
+int
+netbe_tagging_enabled(net_backend_t *be __unused)
+{
+	return (g_tagging_enabled);
+}
+
+int
+netbe_tagging_supported(net_backend_t *be __unused)
+{
+	return (g_tagging_supported);
+}
+
+int
+netbe_tagging_v2_supported(net_backend_t *be __unused)
+{
+	return (0);
+}
+
+int
+netbe_tagging_v2_enabled(net_backend_t *be __unused)
+{
+	return (0);
+}
+
+/* This fixture has no VMM attestation device. Supply an owned descriptor
+ * only to exercise its legacy tagging and snapshot paths. */
+int
+vm_export_attestation_fd(struct vmctx *ctx __unused)
+{
+	return (open("/dev/null", O_RDONLY | O_CLOEXEC));
+}
+
+int
+netbe_tagging_bind_vm(net_backend_t *be __unused, int fd)
+{
+	return (fd >= 0 ? 0 : -1);
+}
+
+int
+netbe_tagging_enable_v2(net_backend_t *be __unused)
+{
+	errno = EOPNOTSUPP;
+	return (-1);
+}
+
+int
+netbe_tagging_enable(net_backend_t *be __unused)
+{
+	if (g_tagging_enable_result == 0)
+		g_tagging_enabled = true;
+	return (g_tagging_enable_result);
+}
+
+int
+netbe_tagging_disable(net_backend_t *be __unused)
+{
+	g_tagging_disable_calls++;
+	if (g_tagging_disable_result == 0)
+		g_tagging_enabled = false;
+	return (g_tagging_disable_result);
 }
 
 int
@@ -601,6 +709,22 @@ netbe_checkpoint_identity(net_backend_t *be __unused)
 {
 
 	return (g_checkpoint_identity);
+}
+
+int
+netbe_checkpoint_rx_quiescent(net_backend_t *be __unused)
+{
+	return (0);
+}
+
+int
+netbe_checkpoint_rx_freeze(net_backend_t *be __unused, bool freeze)
+{
+	g_checkpoint_freeze_calls++;
+	if (g_checkpoint_freeze_error != 0)
+		return (g_checkpoint_freeze_error);
+	g_checkpoint_frozen = freeze;
+	return (0);
 }
 
 void
@@ -1004,6 +1128,48 @@ ATF_TC_BODY(receive_length_bounds, tc)
 	ATF_CHECK_EQ(g_discard_calls, 1);
 	ATF_CHECK_EQ(g_chain_next, 0);
 	ATF_CHECK_EQ(g_recv_calls, 0);
+
+	/* A peek/discard race must yield instead of repeatedly reading the
+	 * unchanged malformed record in one callback. A backend I/O failure
+	 * additionally fences the device until reset. */
+	for (int kind = 0; kind < 2; kind++) {
+		for (int failure = 0; failure < 4; failure++) {
+			reset_mocks();
+			setup_softc(&sc);
+			g_peek_len = kind == 0 ?
+			    VIRTIO14_NET_MODERN_HDR_SIZE - 1 :
+			    (ssize_t)VIRTIO14_NET_MAX_BASE_RECORD_SIZE + 1;
+			sc.be_vhdrlen = VIRTIO14_NET_MODERN_HDR_SIZE;
+			g_discard_override = true;
+			g_discard_result = failure == 0 ? 0 : -1;
+			g_discard_errno = failure == 1 ? EAGAIN :
+			    failure == 2 ? EINTR : EIO;
+			pci_vtnet_rx(&sc);
+			ATF_CHECK_EQ(g_discard_calls, 1);
+			ATF_CHECK_EQ(g_recv_calls, 0);
+			ATF_CHECK_EQ(g_chain_next, 0);
+			ATF_CHECK_EQ(g_needs_reset_calls, failure == 3 ? 1 : 0);
+			ATF_CHECK_EQ(g_rx_disable_calls, failure == 3 ? 1 : 0);
+		}
+	}
+
+	/* A backend that keeps advertising a packet after a failed read must
+	 * also yield promptly; a permanent read error needs a device reset. */
+	for (int failure = 0; failure < 4; failure++) {
+		reset_mocks();
+		setup_softc(&sc);
+		g_peek_len = 60;
+		g_recv_preserve_peek = true;
+		g_recv_result = failure == 0 ? 0 : -1;
+		g_recv_errno = failure == 1 ? EAGAIN :
+		    failure == 2 ? EINTR : EIO;
+		pci_vtnet_rx(&sc);
+		ATF_CHECK_EQ(g_recv_calls, 1);
+		ATF_CHECK_EQ(g_discard_calls, 0);
+		ATF_CHECK_EQ(g_chain_next, 0);
+		ATF_CHECK_EQ(g_needs_reset_calls, failure == 3 ? 1 : 0);
+		ATF_CHECK_EQ(g_rx_disable_calls, failure == 3 ? 1 : 0);
+	}
 
 	/*
 	 * The standard's largest advertised MTU still fits the device's
@@ -1862,7 +2028,7 @@ ATF_TC_BODY(snapshot_restore_failure_is_atomic, tc)
 	struct virtio_net_config original_config;
 	uint8_t image[4096], invalid_image[4096], obsolete[4096];
 	uint64_t original_features;
-	size_t identity_record_size, invalid_used, used;
+	size_t identity_record_size, invalid_used, packet_flag_offset, used;
 
 	reset_mocks();
 	setup_multiqueue_softc(&source, 2);
@@ -1873,13 +2039,22 @@ ATF_TC_BODY(snapshot_restore_failure_is_atomic, tc)
 	    VM_SNAPSHOT_SAVE, &used), 0);
 	ATF_REQUIRE(used > 8);
 	ATF_CHECK(memcmp(image, (const uint8_t[]){
-	    'N', 'E', 'T', '1', 2, 0, 0, 0
+	    'N', 'E', 'T', '1', VTNET_SNAPSHOT_VERSION, 0, 0, 0
 	}, 8) == 0);
 	identity_record_size = 4 + strlen("net-test");
 	ATF_REQUIRE(used > 8 + identity_record_size);
 	ATF_CHECK_EQ(image[8], (uint8_t)strlen("net-test"));
 	ATF_CHECK(memcmp(image + 12, "net-test",
 	    strlen("net-test")) == 0);
+	/* Version 2 predates both packet-ID mode bytes. */
+	packet_flag_offset = 8 + identity_record_size + sizeof(uint64_t) +
+	    sizeof(uint8_t) + sizeof(struct virtio_net_config) +
+	    sizeof(uint8_t) + 2 * sizeof(uint32_t);
+	ATF_REQUIRE(used > packet_flag_offset + 1);
+	memcpy(obsolete, image, packet_flag_offset);
+	memcpy(obsolete + packet_flag_offset, image + packet_flag_offset + 2,
+	    used - packet_flag_offset - 2);
+	obsolete[4] = 2;
 
 	setup_multiqueue_softc(&destination, 2);
 	ATF_REQUIRE(pci_vtnet_apply_features(&destination,
@@ -1888,6 +2063,11 @@ ATF_TC_BODY(snapshot_restore_failure_is_atomic, tc)
 	original_config = destination.vsc_config;
 	ATF_REQUIRE_EQ(run_net_snapshot(&destination, image, used,
 	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	ATF_REQUIRE_EQ(run_net_snapshot(&destination, obsolete, used - 2,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	ATF_REQUIRE_EQ(run_net_snapshot(&destination, obsolete, used - 2,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK(!destination.packet_id_enabled && !g_tagging_enabled);
 	ATF_CHECK_EQ(destination.vsc_features, original_features);
 	ATF_CHECK(memcmp(&destination.vsc_config, &original_config,
 	    VIRTIO14_NET_CONFIG_SIZE) == 0);
@@ -1941,7 +2121,7 @@ ATF_TC_BODY(snapshot_restore_failure_is_atomic, tc)
 	ATF_CHECK_EQ(destination.vsc_rx_buf[0], 0xa5);
 
 	/* Unknown record versions fail before publishing any device state. */
-	image[4] = 3;
+	image[4] = VTNET_SNAPSHOT_VERSION + 1;
 	ATF_CHECK_EQ(run_net_snapshot(&destination, image, used,
 	    VM_SNAPSHOT_RESTORE, NULL), ENOTSUP);
 	ATF_CHECK_EQ(destination.vsc_features, original_features);
@@ -2205,11 +2385,14 @@ ATF_TC_BODY(device_reset_clears_negotiated_state, tc)
 	sc.vsc_features = VIRTIO_NET_F_MRG_RXBUF | VIRTIO_NET_F_MTU;
 	sc.rx_merge = 1;
 	sc.vhdrlen = VIRTIO14_NET_MODERN_HDR_SIZE;
+	g_tagging_enabled = true;
 
 	pci_vtnet_reset(&sc);
 
 	ATF_CHECK_EQ(g_reset_calls, 1);
 	ATF_CHECK_EQ(g_rx_disable_calls, 1);
+	ATF_CHECK_EQ(g_tagging_disable_calls, 1);
+	ATF_CHECK(!g_tagging_enabled);
 	ATF_CHECK(!sc.features_negotiated);
 	ATF_CHECK_EQ(sc.vsc_features, 0);
 	ATF_CHECK_EQ(sc.rx_merge, 0);
@@ -2218,6 +2401,315 @@ ATF_TC_BODY(device_reset_clears_negotiated_state, tc)
 
 	ATF_REQUIRE(pthread_mutex_destroy(&sc.tx_mtx) == 0);
 	ATF_REQUIRE(pthread_mutex_destroy(&sc.rx_mtx) == 0);
+}
+
+static uint8_t
+run_packet_id_command(struct pci_vtnet_softc *sc, bool valid,
+    bool writable_ack)
+{
+	uint8_t request[VIRTIO_NET_5BSD_CMD_LEN], ack;
+	struct vqueue_info *ctlq;
+
+	memset(request, 0, sizeof(request));
+	request[0] = VIRTIO_NET_CTRL_5BSD;
+	request[1] = VIRTIO_NET_CTRL_5BSD_PACKET_ID;
+	memcpy(request + 2, VIRTIO_NET_5BSD_MAGIC,
+	    VIRTIO_NET_5BSD_MAGIC_LEN);
+	request[2 + VIRTIO_NET_5BSD_MAGIC_LEN] =
+	    VIRTIO_NET_5BSD_ID_LEN;
+	if (!valid)
+		request[2] ^= 1;
+	ack = 0xff;
+	g_chains[0].n = 2;
+	g_chains[0].req.idx = 10;
+	g_chains[0].req.readable = 1;
+	g_chains[0].req.writable = 1;
+	g_chains[0].req.ordered = true;
+	g_chains[0].iov[0] = (struct iovec){ request, sizeof(request) };
+	g_chains[0].iov[1] = (struct iovec){
+	    writable_ack ? &ack : NULL, sizeof(ack) };
+	g_chain_count = 1;
+	ctlq = &sc->vsc_queues[pci_vtnet_ctlq_index(sc)];
+	(void)pci_vtnet_process_ctlq(sc, ctlq);
+	return (ack);
+}
+
+ATF_TC_WITHOUT_HEAD(private_packet_id_negotiation);
+ATF_TC_BODY(private_packet_id_negotiation, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vtnet_softc sc;
+	struct vm_snapshot_meta meta = {
+		.dev_data = &pi,
+		.op = VM_SNAPSHOT_VALIDATE,
+	};
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 1);
+	sc.vsc_vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	sc.vsc_features |= VIRTIO_F_VERSION_1;
+	g_tagging_supported = true;
+	ATF_CHECK_EQ(run_packet_id_command(&sc, false, true),
+	    VTNET_CTRL_ERR);
+	ATF_CHECK(!sc.packet_id_enabled);
+	ATF_CHECK_EQ(sc.vhdrlen, VIRTIO14_NET_MODERN_HDR_SIZE);
+
+	reset_mocks();
+	g_tagging_supported = true;
+	g_tagging_enable_result = -1;
+	ATF_CHECK_EQ(run_packet_id_command(&sc, true, true),
+	    VTNET_CTRL_ERR);
+	ATF_CHECK(!sc.packet_id_enabled);
+	ATF_CHECK(!g_tagging_enabled);
+	ATF_CHECK_EQ(sc.vhdrlen, VIRTIO14_NET_MODERN_HDR_SIZE);
+
+	reset_mocks();
+	g_tagging_supported = true;
+	ATF_CHECK_EQ(run_packet_id_command(&sc, true, false), 0xff);
+	ATF_CHECK_EQ(g_tagging_disable_calls, 1);
+	ATF_CHECK(!sc.packet_id_enabled);
+	ATF_CHECK_EQ(sc.vhdrlen, VIRTIO14_NET_MODERN_HDR_SIZE);
+
+	reset_mocks();
+	g_tagging_supported = true;
+	ATF_CHECK_EQ(run_packet_id_command(&sc, true, true),
+	    VTNET_CTRL_OK);
+	ATF_CHECK(sc.packet_id_enabled);
+	ATF_CHECK(g_tagging_enabled);
+	ATF_CHECK_EQ(sc.vhdrlen, VIRTIO14_NET_MODERN_HDR_SIZE +
+	    VIRTIO_NET_5BSD_ID_LEN);
+	g_chain_next = 0;
+	g_chain_count = 0;
+	ATF_CHECK_EQ(run_packet_id_command(&sc, true, true),
+	    VTNET_CTRL_OK);
+	ATF_CHECK_EQ(sc.vhdrlen, VIRTIO14_NET_MODERN_HDR_SIZE +
+	    VIRTIO_NET_5BSD_ID_LEN);
+	ATF_CHECK_EQ(pci_vtnet_snapshot(&sc, NULL), EINVAL);
+	pi.pi_arg = &sc;
+	ATF_CHECK_EQ(pci_vtnet_snapshot_validate(&meta), 0);
+	pci_vtnet_reset(&sc);
+	ATF_CHECK(!sc.packet_id_enabled);
+	ATF_CHECK(!g_tagging_enabled);
+	ATF_CHECK_EQ(sc.vhdrlen, VIRTIO14_NET_MODERN_HDR_SIZE);
+	destroy_multiqueue_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(private_packet_id_framing);
+ATF_TC_BODY(private_packet_id_framing, tc)
+{
+	struct pci_vtnet_softc sc;
+	mbufid_t id = {
+		.mid_hostid = 0x12,
+		.mid_msgid = 0x35,
+		.mid_magic = MBUFID_MAGIC_NUMBER,
+	};
+	size_t frame_len;
+
+	frame_len = 60;
+	ATF_REQUIRE_EQ(sizeof(id), VIRTIO_NET_5BSD_ID_LEN);
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.packet_id_enabled = true;
+	sc.vhdrlen += sizeof(id);
+	memcpy(g_packet + VIRTIO14_NET_MODERN_HDR_SIZE, &id, sizeof(id));
+	memset(g_packet + sc.vhdrlen, 0x5a, frame_len);
+	add_chain(1, 1, 0, true, g_packet, sc.vhdrlen + frame_len);
+	g_send_result = sizeof(id) + frame_len;
+	pci_vtnet_proctx(&sc, &sc.vsc_queues[VTNET_TXQ]);
+	ATF_CHECK_EQ(g_send_calls, 1);
+	ATF_CHECK_EQ(g_send_bytes, sizeof(id) + frame_len);
+	ATF_CHECK_EQ(memcmp(g_send_record, &id, sizeof(id)), 0);
+	ATF_CHECK_EQ(g_send_record[sizeof(id)], 0x5a);
+
+	/* A malformed nonzero guest ID cannot leave on the tagged backend. */
+	reset_mocks();
+	setup_softc(&sc);
+	sc.packet_id_enabled = true;
+	sc.vhdrlen += sizeof(id);
+	id.mid_magic = 0;
+	memcpy(g_packet + VIRTIO14_NET_MODERN_HDR_SIZE, &id, sizeof(id));
+	memset(g_packet + sc.vhdrlen, 0x5a, frame_len);
+	add_chain(1, 1, 0, true, g_packet, sc.vhdrlen + frame_len);
+	pci_vtnet_proctx(&sc, &sc.vsc_queues[VTNET_TXQ]);
+	ATF_CHECK_EQ(g_send_calls, 0);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len[0], 0);
+	id.mid_magic = MBUFID_MAGIC_NUMBER;
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.packet_id_enabled = true;
+	sc.vhdrlen += sizeof(id);
+	memcpy(g_backend_packet, &id, sizeof(id));
+	memset(g_backend_packet + sizeof(id), 0x5a, frame_len);
+	g_peek_len = sizeof(id) + frame_len;
+	g_recv_result = g_peek_len;
+	add_chain(1, 0, 1, true, g_packet, sizeof(g_packet));
+	pci_vtnet_rx(&sc);
+	ATF_CHECK_EQ(g_recv_calls, 1);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len[0], sc.vhdrlen + frame_len);
+	ATF_CHECK_EQ(memcmp(g_packet + VIRTIO14_NET_MODERN_HDR_SIZE,
+	    &id, sizeof(id)), 0);
+	ATF_CHECK_EQ(g_packet[sc.vhdrlen], 0x5a);
+
+	/* A malformed backend ID is consumed without publishing to the guest. */
+	reset_mocks();
+	setup_softc(&sc);
+	sc.packet_id_enabled = true;
+	sc.vhdrlen += sizeof(id);
+	id.__mid_pad[0] = 1;
+	memcpy(g_backend_packet, &id, sizeof(id));
+	memset(g_backend_packet + sizeof(id), 0x5a, frame_len);
+	g_peek_len = sizeof(id) + frame_len;
+	g_recv_result = g_peek_len;
+	add_chain(1, 0, 1, true, g_packet, sizeof(g_packet));
+	pci_vtnet_rx(&sc);
+	ATF_CHECK_EQ(g_recv_calls, 1);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(private_packet_id_snapshot);
+ATF_TC_BODY(private_packet_id_snapshot, tc)
+{
+	struct pci_vtnet_softc source, destination;
+	uint8_t image[4096], invalid_image[4096], tagged_image[4096];
+	size_t mode_offset, used;
+	size_t tagged_used;
+	uint64_t features;
+
+	reset_mocks();
+	g_tagging_supported = true;
+	setup_multiqueue_softc(&source, 1);
+	source.vsc_vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	features = VIRTIO_F_VERSION_1 | VIRTIO_NET_F_CTRL_VQ;
+	source.vsc_vs.vs_negotiated_caps = features;
+	ATF_REQUIRE(pci_vtnet_apply_features(&source, features));
+	ATF_REQUIRE_EQ(netbe_tagging_enable(source.vsc_be), 0);
+	source.packet_id_enabled = true;
+	source.vhdrlen += VIRTIO_NET_5BSD_ID_LEN;
+	ATF_REQUIRE_EQ(run_net_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_CHECK_EQ(image[4], VTNET_SNAPSHOT_VERSION);
+	ATF_CHECK(used < sizeof(image));
+
+	/* Validation reads the tagged image without changing backend framing. */
+	reset_mocks();
+	g_tagging_supported = true;
+	setup_multiqueue_softc(&destination, 1);
+	destination.vsc_vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	destination.vsc_vs.vs_negotiated_caps = features;
+	ATF_REQUIRE(pci_vtnet_apply_features(&destination, features));
+	g_tagging_supported = false;
+	ATF_CHECK_EQ(run_net_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
+	g_tagging_supported = true;
+	mode_offset = 8 + 4 + strlen("net-test") + sizeof(uint64_t) +
+	    sizeof(uint8_t) + sizeof(struct virtio_net_config) +
+	    sizeof(uint8_t) + 2 * sizeof(uint32_t);
+	ATF_REQUIRE(used > mode_offset);
+	memcpy(invalid_image, image, used);
+	invalid_image[mode_offset] = 2;
+	ATF_CHECK_EQ(run_net_snapshot(&destination, invalid_image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
+	ATF_REQUIRE_EQ(run_net_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	ATF_CHECK(!destination.packet_id_enabled);
+	ATF_CHECK(!g_tagging_enabled);
+	ATF_REQUIRE_EQ(run_net_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK(destination.packet_id_enabled);
+	ATF_CHECK(g_tagging_enabled);
+	ATF_CHECK_EQ(destination.vhdrlen,
+	    VIRTIO14_NET_MODERN_HDR_SIZE + VIRTIO_NET_5BSD_ID_LEN);
+
+	/* The same image can replace an already-tagged destination. */
+	int old_disables = g_tagging_disable_calls;
+	ATF_REQUIRE_EQ(run_net_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK(destination.packet_id_enabled);
+	ATF_CHECK(g_tagging_enabled);
+	ATF_CHECK_EQ(g_tagging_disable_calls, old_disables);
+	ATF_CHECK_EQ(destination.vhdrlen,
+	    VIRTIO14_NET_MODERN_HDR_SIZE + VIRTIO_NET_5BSD_ID_LEN);
+
+	/* Staged private frames retain and validate their packet identity. */
+	mbufid_t mid = {
+		.mid_hostid = 0x12,
+		.mid_msgid = 0x35,
+		.mid_magic = MBUFID_MAGIC_NUMBER,
+	};
+	source.rx_staged_len = source.vhdrlen + 60;
+	memset(source.vsc_rx_buf, 0, source.rx_staged_len);
+	memcpy(source.vsc_rx_buf + source.vhdrlen - sizeof(mid),
+	    &mid, sizeof(mid));
+	memset(source.vsc_rx_buf + source.vhdrlen, 0x5a, 60);
+	ATF_REQUIRE_EQ(run_net_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_REQUIRE_EQ(run_net_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	ATF_REQUIRE_EQ(run_net_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK_EQ(destination.rx_staged_len, source.rx_staged_len);
+	ATF_CHECK_EQ(memcmp(destination.vsc_rx_buf, source.vsc_rx_buf,
+	    source.rx_staged_len), 0);
+	memcpy(invalid_image, image, used);
+	invalid_image[used - source.rx_staged_len + source.vhdrlen -
+	    sizeof(mid) + offsetof(mbufid_t, __mid_pad)] = 1;
+	ATF_CHECK_EQ(run_net_snapshot(&destination, invalid_image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
+	mid.__mid_pad[0] = 1;
+	memcpy(source.vsc_rx_buf + source.vhdrlen - sizeof(mid),
+	    &mid, sizeof(mid));
+	ATF_CHECK_EQ(run_net_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), EINVAL);
+	ATF_CHECK(destination.packet_id_enabled && g_tagging_enabled);
+	/* Use the original unstaged image for backend failure injection. */
+	source.rx_staged_len = 0;
+	ATF_REQUIRE_EQ(run_net_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	memcpy(tagged_image, image, used);
+	tagged_used = used;
+
+	/* A plain snapshot removes an old private framing contract. */
+	ATF_REQUIRE_EQ(netbe_tagging_disable(source.vsc_be), 0);
+	source.packet_id_enabled = false;
+	source.vhdrlen -= VIRTIO_NET_5BSD_ID_LEN;
+	ATF_REQUIRE_EQ(run_net_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_REQUIRE_EQ(netbe_tagging_enable(destination.vsc_be), 0);
+	ATF_REQUIRE_EQ(run_net_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK(!destination.packet_id_enabled && !g_tagging_enabled);
+	ATF_CHECK_EQ(destination.vhdrlen, VIRTIO14_NET_MODERN_HDR_SIZE);
+
+	/* Failed backend reactivation restores the original plain contract. */
+	g_tagging_enable_result = EIO;
+	ATF_CHECK_EQ(run_net_snapshot(&destination, tagged_image, tagged_used,
+	    VM_SNAPSHOT_RESTORE, NULL), EIO);
+	ATF_CHECK(!destination.packet_id_enabled);
+	ATF_CHECK(!g_tagging_enabled);
+	ATF_CHECK_EQ(destination.vhdrlen, VIRTIO14_NET_MODERN_HDR_SIZE);
+	ATF_CHECK(!destination.vsc_vs.vs_restore_incomplete);
+
+	destroy_multiqueue_softc(&destination);
+	destroy_multiqueue_softc(&source);
+}
+
+ATF_TC_WITHOUT_HEAD(tagged_backend_rejects_plain_framing);
+ATF_TC_BODY(tagged_backend_rejects_plain_framing, tc)
+{
+	struct pci_vtnet_softc sc;
+
+	reset_mocks();
+	setup_softc(&sc);
+	g_tagging_enabled = true;
+	ATF_CHECK(!pci_vtnet_apply_features(&sc, VIRTIO14_NET_F_CTRL_VQ));
+	ATF_CHECK(!sc.features_negotiated);
+	ATF_CHECK(!sc.tx_features_negotiated);
+	ATF_CHECK_EQ(g_set_cap_calls, 0);
+	ATF_CHECK_EQ(g_needs_reset_calls, 1);
 }
 
 ATF_TC_WITHOUT_HEAD(suspend_resume_restarts_receive_source);
@@ -4274,8 +4766,56 @@ ATF_TC_BODY(rx_callback_drives_receive, tc)
 	ATF_CHECK_EQ(g_rel_len[0], VIRTIO14_NET_MODERN_HDR_SIZE + 64);
 }
 
+ATF_TC_WITHOUT_HEAD(snapshot_v2_rx_freeze_retry);
+ATF_TC_BODY(snapshot_v2_rx_freeze_retry, tc)
+{
+	struct pci_vtnet_softc sc;
+
+	reset_mocks();
+	setup_softc(&sc);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.rx_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.tx_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.tx_cond, NULL), 0);
+	sc.packet_id_v2_enabled = true;
+	g_checkpoint_freeze_error = ESTALE;
+	ATF_CHECK_EQ(pci_vtnet_pause(&sc), ESTALE);
+	ATF_CHECK(!sc.v2_rx_frozen && !sc.snapshot_locks_held);
+	ATF_CHECK(!sc.tx_control_pause && g_rx_disable_calls == 0);
+	ATF_REQUIRE_EQ(pthread_mutex_trylock(&sc.rx_mtx), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.rx_mtx), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_trylock(&sc.tx_mtx), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.tx_mtx), 0);
+
+	g_checkpoint_freeze_error = 0;
+	ATF_REQUIRE_EQ(pci_vtnet_pause(&sc), 0);
+	ATF_CHECK(sc.v2_rx_frozen && sc.snapshot_locks_held &&
+	    g_checkpoint_frozen && g_rx_disable_calls == 1);
+	ATF_REQUIRE_EQ(pci_vtnet_resume(&sc), 0);
+	ATF_CHECK(!sc.v2_rx_frozen && !sc.snapshot_locks_held &&
+	    !g_checkpoint_frozen && !sc.tx_control_pause);
+
+	ATF_REQUIRE_EQ(pci_vtnet_pause(&sc), 0);
+	g_checkpoint_freeze_error = EIO;
+	ATF_CHECK_EQ(pci_vtnet_resume(&sc), EIO);
+	ATF_CHECK(sc.v2_rx_frozen && !sc.snapshot_locks_held &&
+	    sc.tx_control_pause && g_checkpoint_frozen);
+	ATF_REQUIRE_EQ(pthread_mutex_trylock(&sc.rx_mtx), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.rx_mtx), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_trylock(&sc.tx_mtx), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.tx_mtx), 0);
+	g_checkpoint_freeze_error = 0;
+	ATF_REQUIRE_EQ(pci_vtnet_resume(&sc), 0);
+	ATF_CHECK(!sc.v2_rx_frozen && !sc.snapshot_locks_held &&
+	    !sc.tx_control_pause && !g_checkpoint_frozen);
+	ATF_CHECK_EQ(g_checkpoint_freeze_calls, 6);
+	ATF_REQUIRE_EQ(pthread_cond_destroy(&sc.tx_cond), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.tx_mtx), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.rx_mtx), 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, snapshot_v2_rx_freeze_retry);
 	ATF_TP_ADD_TC(tp, transmit_validation);
 	ATF_TP_ADD_TC(tp, transmit_consumes_one_chain);
 	ATF_TP_ADD_TC(tp, transmit_offload_metadata);
@@ -4300,6 +4840,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, continuous_receive_yields_after_bounded_batch);
 	ATF_TP_ADD_TC(tp, continuous_malformed_rx_chains_are_queue_bounded);
 	ATF_TP_ADD_TC(tp, device_reset_clears_negotiated_state);
+	ATF_TP_ADD_TC(tp, private_packet_id_negotiation);
+	ATF_TP_ADD_TC(tp, private_packet_id_framing);
+	ATF_TP_ADD_TC(tp, private_packet_id_snapshot);
+	ATF_TP_ADD_TC(tp, tagged_backend_rejects_plain_framing);
 	ATF_TP_ADD_TC(tp, suspend_resume_restarts_receive_source);
 	ATF_TP_ADD_TC(tp, event_idx_rx_enable_recheck);
 	ATF_TP_ADD_TC(tp, document_wire_vectors);

@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Live-migration control plane for bhyve: a versioned, authenticated
+ * Live-migration control plane for bhyve: a versioned, checksummed
  * source/destination session protocol driven on top of the existing
  * migration_precopy/migration_dirty/snapshot foundations.
  *
@@ -14,7 +14,9 @@
  *      pre-quiesce validation, iterative pre-copy, event-fenced stop-and-copy,
  *      atomic destination commit, and source rollback.
  *
- * The transport is an injectable vtable (struct migration_transport).  A thin
+ * The transport is an injectable vtable (struct migration_transport).  It
+ * does not authenticate the peer; the caller must provide that property
+ * before any authority-bearing state can cross hosts.  A thin
  * file-descriptor adapter (migration_transport_fd_*) is the only piece that
  * touches sockets; it is deliberately separated so the state machine and codec
  * run in-process over a socketpair or an injected transport with no network,
@@ -35,8 +37,20 @@
 /* ---- Wire constants ------------------------------------------------------ */
 
 #define	MIGRATION_PROTO_MAGIC		0x4D494731u	/* "MIG1" */
-#define	MIGRATION_PROTO_VERSION		1u
-#define	MIGRATION_PROTO_VERSION_MIN	1u
+/*
+ * Version 2 confirms every handoff (challenge-bound COMMIT and RELEASE,
+ * RELEASE_ACK, and a destination that retains rather than discards a
+ * committed image).  Version 1 peers are refused (MIGRATION_REASON_VERSION):
+ * they could discard a committed image after the source retired.
+ */
+#define	MIGRATION_PROTO_VERSION		2u
+#define	MIGRATION_PROTO_VERSION_MIN	2u
+/*
+ * The frame layout is unchanged since version 1, so the codec accepts any
+ * frame version from this floor: a version-1 peer's HELLO is decoded, refused
+ * by negotiation, and answered with CAPS_REJECT in its own frame version.
+ */
+#define	MIGRATION_FRAME_VERSION_MIN	1u
 
 #define	MIGRATION_FRAME_HDR_SIZE	24u
 #define	MIGRATION_MAX_PAYLOAD		(16u * 1024u * 1024u)
@@ -85,6 +99,7 @@ enum migration_msg_type {
 	MIGRATION_MSG_COMMIT		= 11,
 	MIGRATION_MSG_RELEASE		= 12,
 	MIGRATION_MSG_ABORT		= 13,
+	MIGRATION_MSG_RELEASE_ACK	= 14, /* fresh mode: destination resumed */
 };
 
 /* HELLO role field. */
@@ -112,8 +127,19 @@ enum migration_msg_type {
 /* Capability flags carried in HELLO.capability_flags. */
 #define	MIGRATION_CAP_PRECOPY		(1ull << 0)
 #define	MIGRATION_CAP_DEVICE_DIRTY	(1ull << 1)
+/* Active tracing mode, not a best-effort optimization: both endpoints must
+ * advertise it and the source must implement retirement before RELEASE.
+ * Production must not advertise it until fresh state/reset wiring is complete. */
+#define	MIGRATION_CAP_HYPERTRACE_FRESH	(1ull << 2)
+/* Fresh COMMIT carries a per-attempt destination challenge. RELEASE echoes
+ * it after the ordinary success result, only after source retirement.
+ * This binds the exchange on a trusted stream; it is not peer authentication. */
+#define MIGRATION_FRESH_CHALLENGE_SIZE 32u
+#define MIGRATION_FRESH_RELEASE_SIZE (MIGRATION_REASON_SIZE + \
+    MIGRATION_FRESH_CHALLENGE_SIZE)
 #define	MIGRATION_CAP_ALL		(MIGRATION_CAP_PRECOPY | \
-					 MIGRATION_CAP_DEVICE_DIRTY)
+					 MIGRATION_CAP_DEVICE_DIRTY | \
+					 MIGRATION_CAP_HYPERTRACE_FRESH)
 
 /* Structured rejection/abort reasons.  Stable wire values. */
 enum migration_reason {
@@ -127,8 +153,8 @@ enum migration_reason {
 	MIGRATION_REASON_INTR		= 7,
 	MIGRATION_REASON_CAPS		= 8,
 	MIGRATION_REASON_MEMSIZE	= 9,
-	MIGRATION_REASON_CPUCOUNT	= 10,
-	MIGRATION_REASON_TOPOLOGY	= 11,
+	MIGRATION_REASON_CPUCOUNT	= 10,	/* vCPU count differs */
+	MIGRATION_REASON_TOPOLOGY	= 11,	/* CPU shape or device count */
 	MIGRATION_REASON_DEVICE		= 12,
 	MIGRATION_REASON_RESOURCE	= 13,
 	MIGRATION_REASON_PROTOCOL	= 14,
@@ -370,6 +396,7 @@ struct migration_progress {
 	void *mp_cookie;
 };
 
+struct migration_tls_credentials;
 struct migration_session_config {
 	uint16_t version_max;
 	uint16_t version_min;
@@ -379,6 +406,15 @@ struct migration_session_config {
 					 * a cutover after max_rounds */
 	const volatile int *cancel;	/* operator cancellation flag (or NULL) */
 	struct migration_progress *progress;	/* optional */
+	bool recovery_enabled;
+	int recovery_dirfd;	/* borrowed private directory; valid only if enabled */
+	/* Fresh destination only: preserve a durable HDI1 image before STAGED so a
+	 * successor can reconstruct a lost controller (migration_dest_image.h). */
+	bool recovery_image;
+	const struct migration_tls_credentials *tls_credentials;
+	/* Accept a plaintext AF_UNIX stream when tls_credentials is NULL
+	 * (migration_channel_policy()); otherwise mutual TLS is required. */
+	bool plaintext_unix;
 };
 
 /*
@@ -412,8 +448,18 @@ struct migration_session_config {
  *                     chunks and frames it and then frees *buf.  The buffer may
  *                     exceed one frame; the session performs multi-frame
  *                     chunking transparently.
- *   so_defunct        mark the source permanently stopped (post-commit)
+ *   so_retire         optional irreversible source retirement after destination
+ *                     COMMIT, before RELEASE. Once invoked, even failure must
+ *                     never roll the source back. Return an errno on failure.
+ *                     Production destroys the source through this hook.
+ *   so_defunct        finish source teardown after sending RELEASE
  */
+#include "migration_recovery_phase.h"
+#include "migration_commit.h"
+
+/* Recovery hooks must durably record the exact attempt and VM/state binding
+ * before returning success. Required for fresh mode; ordinary adapters may
+ * omit them. An error can mean publication happened but durability is unknown. */
 struct migration_source_ops {
 	int (*so_local_hello)(void *, struct migration_hello *);
 	int (*so_local_topology)(void *, struct migration_topology *);
@@ -426,6 +472,10 @@ struct migration_source_ops {
 	int (*so_resume)(void *);
 	int (*so_dev_state)(void *, uint8_t **buf, size_t *len);
 	void (*so_defunct)(void *);
+	int (*so_retire)(void *);
+	int (*so_record)(void *, enum migration_recovery_phase, const uint8_t[32]);
+	/* Validate peer identity and DEV_STATE digest before retirement intent. */
+	int (*so_accept_commit)(void *, const struct migration_commit_binding *);
 };
 
 /*
@@ -448,6 +498,19 @@ struct migration_dest_ops {
 	int (*do_commit)(void *);
 	int (*do_resume)(void *);
 	void (*do_discard)(void *);
+	int (*do_record)(void *, enum migration_recovery_phase, const uint8_t[32]);
+	/* Fill local identity and DEV_STATE digest; preserve the challenge. */
+	int (*do_prepare_commit)(void *, struct migration_commit_binding *);
+	/* Required for fresh migration. Transfer committed state to a recovery
+	 * owner after an attempted COMMIT send, including uncertain resume failure.
+	 * The adapter must preserve resume uncertainty and forbid a second attempt.
+	 * Must not allocate or fail: reserve ownership during do_prepare_commit.
+	 * No resume here. */
+	void (*do_retain)(void *, const struct migration_commit_binding *);
+	/* Optional, fresh mode only. Make the committed paused image durable for
+	 * controller-loss reconstruction after do_prepare_commit and before durable
+	 * STAGED. Failure aborts before COMMIT, so the source remains runnable. */
+	int (*do_preserve)(void *, const struct migration_commit_binding *);
 };
 
 /* Terminal session phases (also used in migration_stat.phase). */
@@ -461,6 +524,7 @@ enum migration_phase {
 	MIGRATION_PHASE_COMPLETED	= 6,
 	MIGRATION_PHASE_ROLLED_BACK	= 7,
 	MIGRATION_PHASE_FAILED		= 8,
+	MIGRATION_PHASE_RECOVERY		= 9,
 };
 
 struct migration_source_result {
@@ -478,6 +542,8 @@ struct migration_dest_result {
 	uint32_t rounds;
 	uint32_t reason;
 	bool resumed;		/* destination is now the running copy */
+	bool release_ack_sent;	/* fresh acknowledgment sent; not proof of receipt */
+	bool retained;		/* recovery owner holds paused VM; caller must not exit */
 	uint64_t bytes_received;
 };
 
@@ -495,8 +561,10 @@ int	migration_source_run(const struct migration_transport *,
 
 /*
  * Run a complete destination migration session.  Returns 0 if the destination
- * committed and resumed; a non-zero errno otherwise, in which case all staged
- * state has been discarded and nothing was published.
+ * committed and resumed; a non-zero errno otherwise. If result->retained is
+ * set, do_retain owns the committed paused image and the caller must keep that
+ * recovery owner alive. Otherwise staged state is discarded. A retained image
+ * is not permission to run and must be reconciled with the authenticated source.
  */
 int	migration_dest_run(const struct migration_transport *,
 	    const struct migration_dest_ops *, void *ops_arg,
@@ -511,6 +579,9 @@ struct vmctx;
  * device's pe_migration_flags) from a running VM.  Used by the operator
  * "migrate" IPC command and available to any live source driver.
  */
+/* Before sandbox entry and IPC publication; a failure disables source
+ * migration, not ordinary VM operation. No directory is created here. */
+int	migration_prod_source_prepare(void);
 int	migration_prod_fill_hello(struct vmctx *, struct migration_hello *);
 int	migration_prod_fill_topology(struct vmctx *, struct migration_topology *);
 
@@ -527,6 +598,73 @@ int	migration_prod_fill_topology(struct vmctx *, struct migration_topology *);
 int	migration_prod_dest_serve(struct vmctx *, int fd,
 	    const struct migration_session_config *,
 	    struct migration_dest_result *);
+/* True when a failed inbound migration kept its committed, paused image
+ * (result->retained): the process must hold it until migrate_resolve. */
+bool	migration_prod_dest_retained(void);
+/* Block until migrate_resolve decides: 0 when the retained copy was resumed
+ * (continue running the guest), ECANCELED when it was discarded. */
+int	migration_prod_dest_wait_resolution(void);
+
+/* Opaque retained destination, paused or running. A fresh running owner is
+ * returned even on success so a lost ACK can be recovered. Keep ctx and the receiver
+ * process alive while this owner exists, even when serve returns an error.
+ * Initialize *owner to NULL; an existing owner cannot be overwritten by a new
+ * serve call. No recovery transport or permission to resume is implied. */
+struct migration_prod_dest;
+/* Internal receiver entry: caller has already created the recovery worker,
+ * retained credential descriptors, and validated/retained its listener. */
+int	migration_prod_dest_serve_prepared(struct vmctx *, int fd,
+	    const struct migration_session_config *, struct migration_dest_result *,
+	    struct migration_prod_dest **);
+struct migration_recovery_record;
+/* Exclusive owner access; preserves the owner on transport failure and after
+ * success. A failed/uncertain resume quarantines it against automatic retry. */
+int	migration_prod_dest_recover_release(struct migration_prod_dest *, int fd,
+	    const struct migration_tls_credentials *);
+void	migration_prod_dest_recovery_status(const struct migration_prod_dest *,
+	    bool *running, bool *uncertain, bool *acknowledged);
+int	migration_recovery_listener_check(int fd);
+/* Preopened exclusive stream listener; allocates the worker before COMMIT.
+ * Waits while paused and services reconnects for the remaining VM lifetime. */
+int	migration_prod_dest_serve_managed(struct vmctx *, int fd, int listener,
+	    const struct migration_session_config *, struct migration_dest_result *);
+/* Destination controller-loss reconstruction (migration_dest_image.h). The
+ * fenced context is a new incarnation. Begin runs before Capsicum: it takes
+ * the attempt controller lock, requires durable STAGED, obtains an exact
+ * retirement witness for the previous incarnation (destroying it only by the
+ * optional name plus exact identity), and publishes HDS1. Prepared consumes
+ * the state, loads and verifies the HDI1 image and returns a paused retained
+ * owner. Neither call resumes a guest; RELEASED/RUNNING attempts return
+ * ENOTRECOVERABLE because the guest may already have executed. */
+struct migration_prod_reconstruct;
+int	migration_prod_dest_reconstruct_begin(struct vmctx *, int recovery_dirfd,
+	    const uint8_t challenge[32], const char *name,
+	    struct migration_prod_reconstruct **);
+void	migration_prod_dest_reconstruct_abandon(struct migration_prod_reconstruct *);
+int	migration_prod_dest_reconstruct_prepared(struct vmctx *,
+	    struct migration_prod_reconstruct *, const struct migration_session_config *,
+	    struct migration_dest_result *, struct migration_prod_dest **);
+/* Managed successor: like serve_managed, waits until authenticated recovery
+ * resumes the reconstructed guest, then keeps serving lost-ACK reconnects. */
+int	migration_prod_dest_reconstruct_managed(struct vmctx *,
+	    struct migration_prod_reconstruct *, int listener,
+	    const struct migration_session_config *, struct migration_dest_result *);
+/* Restarted controller: requires exclusive ownership of the canonical journal
+ * root and an independently known source lifetime. Authenticates the original
+ * certificate pair before finishing INTENT with an exact retirement witness.
+ * Holds the per-lifetime controller lock across TLS and phase transitions.
+ * Never destroys or resumes a VM; a still-live source returns EBUSY. */
+/* The optional operator name permits orphan retirement by atomic exact
+ * identity; authentication and drained retirement proof remain mandatory. */
+int	migration_prod_source_recover_restart_named(int fd, int recovery_dirfd,
+	    uint16_t vmid, uint64_t epoch, const struct migration_tls_credentials *,
+	    const char *name);
+/* Under exclusive source-owner access: finish a durable INTENT. On successful
+ * destruction *ctx becomes NULL, even if subsequent journal persistence fails.
+ * A NULL ctx is usable only when the exact kernel retirement witness succeeds.
+ * This never infers retirement from missing names, PIDs, or ioctl errors. */
+int	migration_prod_source_finish_intent(struct vmctx **ctx, int recovery_dirfd,
+	    const struct migration_recovery_record *);
 #endif
 
 #endif /* _BHYVE_MIGRATION_SESSION_H_ */

@@ -59,5 +59,11 @@ void	uart_pl011_write(struct uart_pl011_softc *sc, int offset,
 struct uart_pl011_softc *uart_pl011_init(uart_intr_func_t intr_assert,
 	    uart_intr_func_t intr_deassert, void *arg);
 int	uart_pl011_tty_open(struct uart_pl011_softc *sc, const char *device);
+#ifdef BHYVE_SNAPSHOT
+int	uart_pl011_snapshot(struct uart_pl011_softc *sc,
+	    struct vm_snapshot_meta *meta);
+int	uart_pl011_pause(struct uart_pl011_softc *sc);
+int	uart_pl011_resume(struct uart_pl011_softc *sc);
+#endif
 
 #endif /* _UART_EMUL_H_ */

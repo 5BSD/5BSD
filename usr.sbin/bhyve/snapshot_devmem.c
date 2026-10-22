@@ -58,7 +58,7 @@ devmem_pread_all(int fd, void *buffer, size_t length, off_t offset)
 		if (done < 0) {
 			if (errno == EINTR)
 				continue;
-			return (errno);
+			return (errno != 0 ? errno : EIO);
 		}
 		if (done == 0)
 			return (EIO);
@@ -81,7 +81,7 @@ devmem_pwrite_all(int fd, const void *buffer, size_t length, off_t offset)
 		if (done < 0) {
 			if (errno == EINTR)
 				continue;
-			return (errno);
+			return (errno != 0 ? errno : EIO);
 		}
 		if (done == 0)
 			return (EIO);

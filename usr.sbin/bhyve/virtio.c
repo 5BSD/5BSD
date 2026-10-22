@@ -1474,6 +1474,56 @@ done:
 	return (result);
 }
 
+/* Inspect a paused ring without treating checkpoint pause as an empty queue.
+ * Unlike vq_has_descs(), an unreadable or malformed ring is an error. */
+int
+vq_checkpoint_has_descs(struct vqueue_info *vq, bool *has_descs)
+{
+	struct vi_req guard;
+	uint16_t flags;
+	int error;
+
+	if (vq == NULL || has_descs == NULL)
+		return (EINVAL);
+	*has_descs = false;
+	if (!vq_is_allocated(vq))
+		return (0);
+	if (vq_is_resetting(vq) ||
+	    (vq->vq_vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0)
+		return (EBUSY);
+	memset(&guard, 0, sizeof(guard));
+	if (!vi_req_dma_acquire(vq->vq_vs, &guard))
+		return (EBUSY);
+	error = 0;
+	if (!vq_refresh_dma_mappings(vq)) {
+		error = EFAULT;
+		goto done;
+	}
+	if (vq->vq_layout == VIRTIO_QUEUE_SPLIT) {
+		if (vq->vq_avail == NULL) {
+			error = EFAULT;
+			goto done;
+		}
+		*has_descs = vq->vq_last_avail !=
+		    vi16_to_cpu(vq->vq_vs,
+		    atomic_load_acq_16(&vq->vq_avail->idx));
+	} else if (vq->vq_layout == VIRTIO_QUEUE_PACKED) {
+		if (vq->vq_packed_desc == NULL ||
+		    vq->vq_packed_next_avail >= vq->vq_qsize) {
+			error = EINVAL;
+			goto done;
+		}
+		flags = le16toh(atomic_load_acq_16(
+		    &vq->vq_packed_desc[vq->vq_packed_next_avail].flags));
+		*has_descs = vi_packed_desc_available(flags,
+		    vq->vq_packed_avail_wrap);
+	} else
+		error = EINVAL;
+done:
+	vi_req_dma_release(vq->vq_vs, &guard);
+	return (error);
+}
+
 void
 vq_kick_enable(struct vqueue_info *vq)
 {

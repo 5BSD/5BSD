@@ -72,6 +72,7 @@ ATF_TC_BODY(hello_rejects_uncanonical_abi_and_truncation, tc)
 {
 	struct migration_hello in, out;
 	uint8_t wire[MIGRATION_HELLO_SIZE];
+	const size_t offsets[] = {5, 28, 44};
 
 	(void)tc;
 	in = sample_hello();
@@ -92,6 +93,110 @@ ATF_TC_BODY(hello_rejects_uncanonical_abi_and_truncation, tc)
 	ATF_REQUIRE_EQ(migration_hello_encode(&in, wire, sizeof(wire)), 0);
 	ATF_CHECK_EQ(migration_hello_decode(wire, MIGRATION_HELLO_SIZE - 1,
 	    &out), EINVAL);
+	/* Every reserved field must remain zero and a failed decode is atomic. */
+	for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); i++) {
+		out.role = 0x7f;
+		wire[offsets[i]] = 1;
+		ATF_CHECK_EQ(migration_hello_decode(wire, sizeof(wire), &out),
+		    EBADMSG);
+		ATF_CHECK_EQ(out.role, 0x7f);
+		wire[offsets[i]] = 0;
+	}
+	in.capability_flags |= 1ull << 40;
+	ATF_CHECK_EQ(migration_hello_encode(&in, wire, sizeof(wire)), EINVAL);
+	le64enc(wire + 48, in.capability_flags);
+	out.role = 0x7f;
+	ATF_CHECK_EQ(migration_hello_decode(wire, sizeof(wire), &out),
+	    EBADMSG);
+	ATF_CHECK_EQ(out.role, 0x7f);
+}
+
+ATF_TC_WITHOUT_HEAD(caps_accept_requires_canonical_offered_capabilities);
+ATF_TC_BODY(caps_accept_requires_canonical_offered_capabilities, tc)
+{
+	struct migration_hello offered;
+	struct migration_hello remote;
+	struct migration_caps_accept accepted, decoded;
+	uint8_t wire[MIGRATION_CAPS_ACCEPT_SIZE];
+	uint32_t reason;
+	uint16_t negotiated;
+
+	(void)tc;
+	offered = sample_hello();
+	accepted.negotiated_version = 2;
+	accepted.capability_flags = MIGRATION_CAP_PRECOPY;
+	ATF_REQUIRE_EQ(migration_caps_accept_encode(&accepted, wire,
+	    sizeof(wire)), 0);
+	decoded.negotiated_version = 99;
+	wire[2] = 1;
+	ATF_CHECK_EQ(migration_caps_accept_decode(wire, sizeof(wire), &decoded),
+	    EBADMSG);
+	ATF_CHECK_EQ(decoded.negotiated_version, 99);
+	wire[2] = 0;
+	ATF_REQUIRE_EQ(migration_caps_accept_decode(wire, sizeof(wire),
+	    &decoded), 0);
+	ATF_CHECK_EQ(migration_source_caps_validate(&offered, &decoded,
+	    &reason), 0);
+	le64enc(wire + 4, MIGRATION_CAP_PRECOPY | (1ull << 40));
+	decoded.negotiated_version = 99;
+	ATF_CHECK_EQ(migration_caps_accept_decode(wire, sizeof(wire), &decoded),
+	    EBADMSG);
+	ATF_CHECK_EQ(decoded.negotiated_version, 99);
+	accepted.capability_flags = 0;
+	ATF_CHECK_EQ(migration_source_caps_validate(&offered, &accepted,
+	    &reason), EPROTO);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_CAPS);
+	accepted.capability_flags = MIGRATION_CAP_PRECOPY | (1ull << 40);
+	ATF_CHECK_EQ(migration_caps_accept_encode(&accepted, wire,
+	    sizeof(wire)), EINVAL);
+	ATF_CHECK_EQ(migration_source_caps_validate(&offered, &accepted,
+	    &reason), EPROTO);
+	offered.capability_flags = MIGRATION_CAP_PRECOPY;
+	accepted.capability_flags = MIGRATION_CAP_ALL;
+	ATF_CHECK_EQ(migration_source_caps_validate(&offered, &accepted,
+	    &reason), EPROTO);
+	accepted.capability_flags = MIGRATION_CAP_PRECOPY;
+	accepted.negotiated_version = offered.version_max + 1;
+	ATF_CHECK_EQ(migration_source_caps_validate(&offered, &accepted,
+	    &reason), EPROTONOSUPPORT);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_VERSION);
+	remote = sample_hello();
+	remote.capability_flags |= 1ull << 40;
+	negotiated = 99;
+	ATF_CHECK_EQ(migration_hello_validate(&offered, &remote,
+	    &negotiated, &reason), EINVAL);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_CAPS);
+	ATF_CHECK_EQ(negotiated, 99);
+}
+
+ATF_TC_WITHOUT_HEAD(fresh_tracing_requires_matching_capabilities);
+ATF_TC_BODY(fresh_tracing_requires_matching_capabilities, tc)
+{
+	struct migration_hello source = sample_hello(), destination = sample_hello();
+	struct migration_caps_accept accepted = {0}, decoded;
+	uint8_t wire[MIGRATION_CAPS_ACCEPT_SIZE];
+	uint16_t version = 99;
+	uint32_t reason;
+
+	(void)tc;
+	source.capability_flags |= MIGRATION_CAP_HYPERTRACE_FRESH;
+	ATF_CHECK_EQ(migration_hello_validate(&destination, &source, &version,
+	    &reason), EPROTONOSUPPORT);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_CAPS);
+	ATF_CHECK_EQ(version, 99);
+	ATF_CHECK_EQ(migration_hello_validate(&source, &destination, &version,
+	    &reason), EPROTONOSUPPORT);
+	destination.capability_flags |= MIGRATION_CAP_HYPERTRACE_FRESH;
+	ATF_REQUIRE_EQ(migration_hello_validate(&destination, &source, &version,
+	    &reason), 0);
+	accepted.negotiated_version = version;
+	accepted.capability_flags = source.capability_flags;
+	ATF_REQUIRE_EQ(migration_caps_accept_encode(&accepted, wire, sizeof(wire)), 0);
+	ATF_REQUIRE_EQ(migration_caps_accept_decode(wire, sizeof(wire), &decoded), 0);
+	ATF_CHECK_EQ(migration_source_caps_validate(&source, &decoded, &reason), 0);
+	decoded.capability_flags &= ~MIGRATION_CAP_HYPERTRACE_FRESH;
+	ATF_CHECK_EQ(migration_source_caps_validate(&source, &decoded, &reason), EPROTO);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_CAPS);
 }
 
 ATF_TC_WITHOUT_HEAD(frame_roundtrip_and_crc);
@@ -104,7 +209,7 @@ ATF_TC_BODY(frame_roundtrip_and_crc, tc)
 	(void)tc;
 	for (size_t i = 0; i < sizeof(payload); i++)
 		payload[i] = (uint8_t)(i * 7 + 1);
-	ATF_REQUIRE_EQ(migration_frame_encode(1, MIGRATION_MSG_DEV_STATE, 5,
+	ATF_REQUIRE_EQ(migration_frame_encode(MIGRATION_PROTO_VERSION, MIGRATION_MSG_DEV_STATE, 5,
 	    0, payload, sizeof(payload), frame, sizeof(frame), &written), 0);
 	ATF_CHECK_EQ(written, MIGRATION_FRAME_HDR_SIZE + sizeof(payload));
 	ATF_REQUIRE_EQ(migration_frame_decode_header(frame, written, &hdr), 0);
@@ -121,9 +226,21 @@ ATF_TC_BODY(frame_roundtrip_and_crc, tc)
 	    frame + MIGRATION_FRAME_HDR_SIZE, hdr.length), EBADMSG);
 
 	/* Corrupt magic: header decode must fail. */
+	struct migration_frame_header prior = hdr;
 	frame[0] ^= 0xff;
 	ATF_CHECK_EQ(migration_frame_decode_header(frame, written, &hdr),
 	    EINVAL);
+	ATF_CHECK_EQ(memcmp(&hdr, &prior, sizeof(hdr)), 0);
+	frame[0] ^= 0xff;
+	le16enc(frame + 4, MIGRATION_PROTO_VERSION + 1);
+	ATF_CHECK_EQ(migration_frame_decode_header(frame, written, &hdr),
+	    EPROTO);
+	ATF_CHECK_EQ(memcmp(&hdr, &prior, sizeof(hdr)), 0);
+	le16enc(frame + 4, MIGRATION_PROTO_VERSION);
+	le32enc(frame + 8, MIGRATION_FFLAG_CHUNK << 1);
+	ATF_CHECK_EQ(migration_frame_decode_header(frame, written, &hdr),
+	    EPROTO);
+	ATF_CHECK_EQ(memcmp(&hdr, &prior, sizeof(hdr)), 0);
 }
 
 ATF_TC_WITHOUT_HEAD(frame_rejects_oversize_and_short_header);
@@ -135,11 +252,11 @@ ATF_TC_BODY(frame_rejects_oversize_and_short_header, tc)
 
 	(void)tc;
 	/* Oversize payload is rejected (non-NULL pointer, size check hits). */
-	ATF_CHECK_EQ(migration_frame_encode(1, MIGRATION_MSG_HELLO, 1, 0,
+	ATF_CHECK_EQ(migration_frame_encode(MIGRATION_PROTO_VERSION, MIGRATION_MSG_HELLO, 1, 0,
 	    frame, (size_t)MIGRATION_MAX_PAYLOAD + 1, frame, sizeof(frame),
 	    &written), EMSGSIZE);
 	/* NULL payload with nonzero length is a caller error. */
-	ATF_CHECK_EQ(migration_frame_encode(1, MIGRATION_MSG_HELLO, 1, 0,
+	ATF_CHECK_EQ(migration_frame_encode(MIGRATION_PROTO_VERSION, MIGRATION_MSG_HELLO, 1, 0,
 	    NULL, 8, frame, sizeof(frame), &written), EINVAL);
 	ATF_CHECK_EQ(migration_frame_decode_header(frame,
 	    MIGRATION_FRAME_HDR_SIZE - 1, &hdr), EINVAL);
@@ -206,7 +323,7 @@ ATF_TC_BODY(frame_rejects_unknown_version_type_and_flags, tc)
 	ATF_CHECK_EQ(migration_frame_decode_header(frame, sizeof(frame), &hdr),
 	    EPROTO);
 	le16enc(frame + 4, MIGRATION_PROTO_VERSION);
-	le16enc(frame + 6, MIGRATION_MSG_ABORT + 1);
+	le16enc(frame + 6, MIGRATION_MSG_RELEASE_ACK + 1);
 	ATF_CHECK_EQ(migration_frame_decode_header(frame, sizeof(frame), &hdr),
 	    EPROTO);
 	le16enc(frame + 6, MIGRATION_MSG_HELLO);
@@ -226,7 +343,7 @@ ATF_TC_BODY(topology_roundtrip_and_bounds, tc)
 	in = calloc(1, sizeof(*in));
 	out = calloc(1, sizeof(*out));
 	ATF_REQUIRE(in != NULL && out != NULL);
-	in->mem_size = 2ull << 30;
+	in->mem_size = 4ull << 30;
 	in->lowmem = 3ull << 30;
 	in->highmem = 1ull << 30;
 	in->ncpus = 4;
@@ -259,6 +376,21 @@ ATF_TC_BODY(topology_roundtrip_and_bounds, tc)
 	ATF_CHECK_EQ(migration_topology_decode(wire, size - 1, out), EBADMSG);
 	/* Fixed-version topology records do not admit silently ignored trailers. */
 	ATF_CHECK_EQ(migration_topology_decode(wire, size + 1, out), EBADMSG);
+	/* Reject an inconsistent memory total before accepting a peer layout. */
+	le64enc(wire, in->mem_size - 1);
+	ATF_CHECK_EQ(migration_topology_decode(wire, size, out), EBADMSG);
+	ATF_CHECK_EQ(out->mem_size, in->mem_size);
+	le64enc(wire, in->mem_size);
+	in->mem_size--;
+	ATF_CHECK_EQ(migration_topology_encode(in, wire, size, &written), EINVAL);
+	in->mem_size++;
+	/* A wrapped low+high sum must not be mistaken for a valid total. */
+	le64enc(wire + 8, UINT64_MAX);
+	le64enc(wire + 16, 1);
+	le64enc(wire, 0);
+	ATF_CHECK_EQ(migration_topology_decode(wire, size, out), EBADMSG);
+	ATF_CHECK_EQ(out->mem_size, in->mem_size);
+	ATF_REQUIRE_EQ(migration_topology_encode(in, wire, size, &written), 0);
 
 	/* An over-large device_count in the header is rejected. */
 	le32enc(wire + 36, MIGRATION_MAX_DEVICES + 1);
@@ -391,6 +523,11 @@ ATF_TC_BODY(topology_validate_enforces_device_identity, tc)
 	reason = 0xffffffff;
 	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason), 0);
 	ATF_CHECK_EQ(reason, MIGRATION_REASON_NONE);
+	remote.mem_size--;
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason),
+	    EINVAL);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_MEMSIZE);
+	remote.mem_size++;
 
 	/*
 	 * A differing BAR-layout hash means the destination instantiated the
@@ -453,15 +590,24 @@ struct source_model {
 	bool quiesced;
 	bool defunct;
 	bool resumed_after_rollback;
+	bool retired;
+	int fail_retire;
+	int fail_record, recorded, fail_binding;
+	uint8_t challenge[32];
 };
 
 struct dest_model {
 	struct model_guest staged;	/* not published until commit */
 	struct model_guest published;
 	int fail_commit;		/* errno to fail do_commit with */
+	int fail_resume, resume_attempts;
 	bool committed;
 	bool resumed;
 	bool discarded;
+	int fail_record, recorded, fail_binding;
+	bool retained;
+	uint8_t challenge[32];
+	int fail_preserve, preserved;	/* optional durable image hook */
 };
 
 /* ---- source ops ---- */
@@ -495,6 +641,14 @@ model_fill_topology(struct migration_topology *t)
 	    MIGRATION_DEVF_QUIESCE_CALLBACK;
 	t->devices[0].compat_schema = 1;
 	t->devices[0].compat_crc32 = 0x11223344;
+}
+
+static int
+src_fresh_hello(void *arg, struct migration_hello *hello)
+{
+	int error = src_hello(arg, hello);
+	hello->capability_flags |= MIGRATION_CAP_HYPERTRACE_FRESH;
+	return (error);
 }
 
 static int
@@ -667,6 +821,26 @@ src_defunct(void *arg)
 	m->defunct = true;
 }
 
+/* Protocol 2: every migration retires the source after a bound COMMIT and
+ * retains, never discards, a committed destination (defined below). */
+static int model_retire(void *);
+static int model_accept_commit(void *, const struct migration_commit_binding *);
+static int model_prepare_commit(void *, struct migration_commit_binding *);
+static void model_dest_retain(void *, const struct migration_commit_binding *);
+static int model_source_record(void *, enum migration_recovery_phase, const uint8_t[32]);
+static int model_dest_record(void *, enum migration_recovery_phase, const uint8_t[32]);
+
+/* Journal records are written for every migration; models without a
+ * journal accept them. */
+static int
+noop_record(void *arg, enum migration_recovery_phase phase, const uint8_t challenge[32])
+{
+	(void)arg;
+	(void)phase;
+	(void)challenge;
+	return (0);
+}
+
 static const struct migration_source_ops source_ops = {
 	.so_local_hello = src_hello,
 	.so_local_topology = src_topology,
@@ -677,6 +851,9 @@ static const struct migration_source_ops source_ops = {
 	.so_resume = src_resume,
 	.so_dev_state = src_dev_state,
 	.so_defunct = src_defunct,
+	.so_retire = model_retire,
+	.so_accept_commit = model_accept_commit,
+	.so_record = model_source_record,
 };
 
 /* ---- dest ops ---- */
@@ -698,6 +875,14 @@ dst_topology(void *arg, struct migration_topology *t)
 	(void)arg;
 	model_fill_topology(t);
 	return (0);
+}
+
+static int
+dst_fresh_hello(void *arg, struct migration_hello *hello)
+{
+	int error = dst_hello(arg, hello);
+	hello->capability_flags |= MIGRATION_CAP_HYPERTRACE_FRESH;
+	return (error);
 }
 
 /* A topology model that mismatches memory, forcing a pre-quiesce rejection. */
@@ -764,6 +949,9 @@ dst_resume(void *arg)
 {
 	struct dest_model *m = arg;
 
+	m->resume_attempts++;
+	if (m->fail_resume != 0)
+		return (m->fail_resume);
 	m->resumed = true;
 	return (0);
 }
@@ -785,6 +973,9 @@ static const struct migration_dest_ops dest_ops = {
 	.do_commit = dst_commit,
 	.do_resume = dst_resume,
 	.do_discard = dst_discard,
+	.do_prepare_commit = model_prepare_commit,
+	.do_retain = model_dest_retain,
+	.do_record = model_dest_record,
 };
 
 /* ---- loopback harness ---- */
@@ -872,6 +1063,34 @@ base_config(void)
 	c.version_min = MIGRATION_PROTO_VERSION_MIN;
 	c.max_rounds = 8;
 	return (c);
+}
+
+ATF_TC_WITHOUT_HEAD(source_rejects_wrapping_round_limit);
+ATF_TC_BODY(source_rejects_wrapping_round_limit, tc)
+{
+	struct migration_session_config cfg;
+	struct migration_source_result result;
+	struct source_model source;
+	struct migration_transport transport;
+
+	(void)tc;
+	ATF_CHECK(migration_max_rounds_valid(0));
+	ATF_CHECK(migration_max_rounds_valid(UINT32_MAX - 1));
+	ATF_CHECK(!migration_max_rounds_valid(UINT32_MAX));
+	ATF_CHECK(!migration_max_rounds_valid(UINT64_MAX));
+	cfg = base_config();
+	cfg.max_rounds = UINT32_MAX;
+	memset(&source, 0, sizeof(source));
+	memset(&transport, 0, sizeof(transport));
+	transport.xp_send = migration_fd_send;
+	transport.xp_recv = migration_fd_recv;
+	memset(&result, 0, sizeof(result));
+	ATF_CHECK_EQ(migration_source_run(&transport, &source_ops, &source,
+	    &cfg, &result), EINVAL);
+	ATF_CHECK_EQ(result.phase, (uint32_t)MIGRATION_PHASE_FAILED);
+	ATF_CHECK_EQ(result.reason, (uint32_t)MIGRATION_REASON_STATE);
+	ATF_CHECK(result.source_runnable);
+	ATF_CHECK(!source.quiesced);
 }
 
 ATF_TC_WITHOUT_HEAD(loopback_migration_succeeds);
@@ -1057,7 +1276,7 @@ ATF_TC_BODY(recv_enforces_sequence_monotonicity, tc)
 	struct migration_transport xp;
 	struct migration_transport_fd fdx;
 	struct migration_frame_header hdr;
-	uint8_t frame[MIGRATION_FRAME_HDR_SIZE];
+	uint8_t frame[MIGRATION_FRAME_HDR_SIZE + 1], byte = 0x5a;
 	uint8_t *payload;
 	size_t payload_len, written;
 	int sv[2];
@@ -1067,6 +1286,7 @@ ATF_TC_BODY(recv_enforces_sequence_monotonicity, tc)
 	migration_transport_fd_init(&xp, &fdx, sv[0], 5000);
 	memset(&sess, 0, sizeof(sess));
 	sess.xp = &xp;
+	memset(&hdr, 0xa5, sizeof(hdr));
 
 	/* A frame that skips ahead (seq 2 when 1 is expected) is rejected. */
 	ATF_REQUIRE_EQ(migration_frame_encode(MIGRATION_PROTO_VERSION,
@@ -1075,6 +1295,9 @@ ATF_TC_BODY(recv_enforces_sequence_monotonicity, tc)
 	ATF_REQUIRE_EQ(write(sv[1], frame, written), (ssize_t)written);
 	ATF_CHECK_EQ(migration_recv(&sess, &hdr, &payload, &payload_len),
 	    EBADMSG);
+	ATF_CHECK_EQ(hdr.magic, UINT32_C(0xa5a5a5a5));
+	ATF_CHECK_EQ(payload, NULL);
+	ATF_CHECK_EQ(payload_len, 0u);
 
 	/* The correctly-sequenced frame (seq 1) is accepted. */
 	ATF_REQUIRE_EQ(migration_frame_encode(MIGRATION_PROTO_VERSION,
@@ -1087,6 +1310,7 @@ ATF_TC_BODY(recv_enforces_sequence_monotonicity, tc)
 	ATF_REQUIRE_EQ(write(sv[1], frame, written), (ssize_t)written);
 	ATF_CHECK_EQ(migration_recv(&sess, &hdr, &payload, &payload_len),
 	    EBADMSG);
+	ATF_CHECK_EQ(hdr.seq, 1u);
 
 	/* The next in-order frame (seq 2) is accepted. */
 	ATF_REQUIRE_EQ(migration_frame_encode(MIGRATION_PROTO_VERSION,
@@ -1094,6 +1318,42 @@ ATF_TC_BODY(recv_enforces_sequence_monotonicity, tc)
 	    &written), 0);
 	ATF_REQUIRE_EQ(write(sv[1], frame, written), (ssize_t)written);
 	ATF_CHECK_EQ(migration_recv(&sess, &hdr, &payload, &payload_len), 0);
+	ATF_CHECK_EQ(hdr.seq, 2u);
+
+	/* A matching sequence with a bad CRC cannot publish its header. */
+	ATF_REQUIRE_EQ(migration_frame_encode(MIGRATION_PROTO_VERSION,
+	    MIGRATION_MSG_MEM_ACK, 3, 0, &byte, sizeof(byte), frame,
+	    sizeof(frame),
+	    &written), 0);
+	frame[MIGRATION_FRAME_HDR_SIZE] ^= 1;
+	ATF_REQUIRE_EQ(write(sv[1], frame, written), (ssize_t)written);
+	ATF_CHECK_EQ(migration_recv(&sess, &hdr, &payload, &payload_len),
+	    EBADMSG);
+	ATF_CHECK_EQ(hdr.seq, 2u);
+	ATF_CHECK_EQ(sess.recv_seq, 2u);
+	ATF_CHECK_EQ(payload, NULL);
+	ATF_CHECK_EQ(payload_len, 0u);
+	frame[MIGRATION_FRAME_HDR_SIZE] ^= 1;
+	ATF_REQUIRE_EQ(write(sv[1], frame, written), (ssize_t)written);
+	ATF_CHECK_EQ(migration_recv(&sess, &hdr, &payload, &payload_len), 0);
+	ATF_CHECK_EQ(hdr.seq, 3u);
+	ATF_CHECK_EQ(payload_len, sizeof(byte));
+	ATF_CHECK_EQ(payload[0], byte);
+	free(payload);
+
+	/* Sequence exhaustion is terminal; zero must never be accepted next. */
+	sess.recv_seq = UINT32_MAX;
+	ATF_REQUIRE_EQ(migration_frame_encode(MIGRATION_PROTO_VERSION,
+	    MIGRATION_MSG_MEM_ACK, 0, 0, NULL, 0, frame, sizeof(frame),
+	    &written), 0);
+	ATF_REQUIRE_EQ(write(sv[1], frame, written), (ssize_t)written);
+	ATF_CHECK_EQ(migration_recv(&sess, &hdr, &payload, &payload_len),
+	    EOVERFLOW);
+	ATF_CHECK_EQ(hdr.seq, 3u);
+	sess.send_seq = UINT32_MAX;
+	ATF_CHECK_EQ(migration_send(&sess, MIGRATION_MSG_MEM_ACK, 0,
+	    NULL, 0), EOVERFLOW);
+	ATF_CHECK_EQ(sess.send_seq, UINT32_MAX);
 
 	close(sv[0]);
 	close(sv[1]);
@@ -1106,7 +1366,7 @@ ATF_TC_BODY(recv_enforces_sequence_monotonicity, tc)
  * commit it will not run the guest without RELEASE.
  */
 static void
-fake_source_commit_then_abort(int fd)
+fake_source_commit_then_finish(int fd, int mode)
 {
 	struct migration_session s;
 	struct migration_transport xp;
@@ -1189,11 +1449,46 @@ fake_source_commit_then_abort(int fd)
 	    MIGRATION_REASON_NONE, 0), 0);
 	ATF_REQUIRE_EQ(migration_recv(&s, &hdr, &payload, &payload_len), 0);
 	ATF_REQUIRE_EQ(hdr.type, MIGRATION_MSG_COMMIT);
+	/* Protocol 2: COMMIT is the 80-byte FMC1 binding with the challenge. */
+	ATF_REQUIRE_EQ(payload_len, MIGRATION_FRESH_COMMIT_SIZE);
+	ATF_REQUIRE(memcmp(payload, "FMC1", 4) == 0);
+	uint8_t release[MIGRATION_FRESH_RELEASE_SIZE] = {0};
+	memcpy(release + MIGRATION_REASON_SIZE, payload + 16,
+	    MIGRATION_FRESH_CHALLENGE_SIZE);
 	free(payload);
 
-	/* Abort instead of releasing: the destination must not run the guest. */
-	(void)migration_send_reason(&s, MIGRATION_MSG_ABORT,
-	    MIGRATION_REASON_CANCELLED, 0);
+	if (mode == 0)
+		(void)migration_send_reason(&s, MIGRATION_MSG_ABORT,
+		    MIGRATION_REASON_CANCELLED, 0);
+	else if (mode == 1)
+		(void)migration_send(&s, MIGRATION_MSG_RELEASE, 0, NULL, 0);
+	else if (mode == 2)
+		(void)migration_send_reason(&s, MIGRATION_MSG_RELEASE,
+		    MIGRATION_REASON_STATE, 0);
+	else if (mode == 3)
+		(void)migration_send_reason(&s, MIGRATION_MSG_RELEASE,
+		    MIGRATION_REASON_NONE, 1);
+	else if (mode == 4) {
+		uint8_t extended[MIGRATION_REASON_SIZE + 1] = {0};
+		(void)migration_send(&s, MIGRATION_MSG_RELEASE, 0, extended,
+		    sizeof(extended));
+	} else if (mode == 6) {
+		/* A protocol 1 success RELEASE: no challenge. */
+		(void)migration_send_reason(&s, MIGRATION_MSG_RELEASE,
+		    MIGRATION_REASON_NONE, 0);
+	} else if (mode == 7) {
+		release[MIGRATION_REASON_SIZE] ^= 1;	/* another challenge */
+		(void)migration_send(&s, MIGRATION_MSG_RELEASE, 0, release,
+		    sizeof(release));
+	} else {
+		/* Success: zero reason/detail and the exact challenge; the
+		 * destination acknowledges after resuming. */
+		ATF_REQUIRE_EQ(migration_send(&s, MIGRATION_MSG_RELEASE, 0, release,
+		    sizeof(release)), 0);
+		ATF_REQUIRE_EQ(migration_recv(&s, &hdr, &payload, &payload_len), 0);
+		ATF_REQUIRE_EQ(hdr.type, MIGRATION_MSG_RELEASE_ACK);
+		free(payload);
+	}
 }
 
 ATF_TC_WITHOUT_HEAD(destination_without_release_does_not_run);
@@ -1217,22 +1512,54 @@ ATF_TC_BODY(destination_without_release_does_not_run, tc)
 	dparg.ops_arg = &dst;
 	ATF_REQUIRE_EQ(pthread_create(&dtid, NULL, dest_thread, &dparg), 0);
 
-	fake_source_commit_then_abort(sv[0]);
+	fake_source_commit_then_finish(sv[0], 0);
 
 	ATF_REQUIRE_EQ(pthread_join(dtid, NULL), 0);
 	close(sv[0]);
 	close(sv[1]);
 
 	/*
-	 * The destination committed all state but never received RELEASE.  The
-	 * one-copy invariant demands it must NOT resume, and must discard the
-	 * committed-but-unreleased state so it never becomes a second runnable
-	 * copy of the guest.
+	 * The destination committed all state but never received RELEASE.  It
+	 * must NOT resume (one copy), and since protocol 2 it must not discard
+	 * either: after COMMIT the source may already be retired, so the
+	 * committed image is retained for operator resolution.
 	 */
 	ATF_CHECK(dparg.error != 0);
 	ATF_CHECK(dst.committed);
 	ATF_CHECK(!dst.resumed);
-	ATF_CHECK(dst.discarded);
+	ATF_CHECK(!dst.discarded);
+	ATF_CHECK(dst.retained);
+}
+
+ATF_TC_WITHOUT_HEAD(destination_requires_successful_release);
+ATF_TC_BODY(destination_requires_successful_release, tc)
+{
+	(void)tc;
+	/* 1-4 malformed results, 5 success, 6 a protocol 1 RELEASE without the
+	 * challenge, 7 another challenge. */
+	for (int mode = 1; mode <= 7; mode++) {
+		struct dest_model dst = {0};
+		struct migration_session_config cfg = base_config();
+		struct party_arg dparg = {0};
+		pthread_t dtid;
+		int sv[2];
+
+		ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
+		migration_transport_fd_init(&dparg.xp, &dparg.fdx, sv[1], 5000);
+		dparg.ops = &dest_ops;
+		dparg.config = &cfg;
+		dparg.ops_arg = &dst;
+		ATF_REQUIRE_EQ(pthread_create(&dtid, NULL, dest_thread, &dparg), 0);
+		fake_source_commit_then_finish(sv[0], mode);
+		ATF_REQUIRE_EQ(pthread_join(dtid, NULL), 0);
+		close(sv[0]);
+		close(sv[1]);
+		ATF_CHECK(dst.committed);
+		ATF_CHECK_EQ(dst.resumed, mode == 5);
+		ATF_CHECK(!dst.discarded);
+		ATF_CHECK_EQ(dst.retained, mode != 5);
+		ATF_CHECK_EQ(dparg.error, mode == 5 ? 0 : EPROTO);
+	}
 }
 
 /*
@@ -1460,6 +1787,53 @@ ATF_TC_BODY(chunk_validate_rejects_gap_dup_oversize, tc)
 	    EBADMSG);
 }
 
+static int
+bad_source_round(void *arg, bool final, struct migration_memgen *gen,
+    uint8_t *buf, size_t cap, size_t *written, uint64_t *dirty_pages,
+    bool *converged, bool *more)
+{
+	int variant = *(int *)arg;
+
+	(void)final;
+	(void)gen;
+	(void)buf;
+	*written = variant == 0 ? cap + 1 : 0;
+	*dirty_pages = 0;
+	*converged = false;
+	*more = variant != 0;
+	return (0);
+}
+
+ATF_TC_WITHOUT_HEAD(source_rejects_invalid_memory_chunk_contract);
+ATF_TC_BODY(source_rejects_invalid_memory_chunk_contract, tc)
+{
+	struct migration_session sess;
+	struct migration_source_ops ops;
+	uint8_t *scratch;
+	uint64_t sent, dirty;
+	uint32_t reason;
+	bool converged;
+
+	(void)tc;
+	memset(&sess, 0, sizeof(sess));
+	memset(&ops, 0, sizeof(ops));
+	ops.so_precopy_round = bad_source_round;
+	scratch = malloc(MIGRATION_MAX_PAYLOAD);
+	ATF_REQUIRE(scratch != NULL);
+	for (int variant = 0; variant < 2; variant++) {
+		sent = 0;
+		dirty = 0;
+		reason = MIGRATION_REASON_NONE;
+		converged = false;
+		ATF_CHECK_EQ(migration_source_send_generation(&sess, &ops,
+		    &variant, false, 1, 0, scratch, &sent, &dirty,
+		    &converged, &reason), EPROTO);
+		ATF_CHECK_EQ(reason, MIGRATION_REASON_PROTOCOL);
+		ATF_CHECK_EQ(sent, (uint64_t)0);
+	}
+	free(scratch);
+}
+
 /* ---- large-device-state dest ops (heap staging, no 128-byte cap) ---- */
 
 struct big_dest_model {
@@ -1469,6 +1843,7 @@ struct big_dest_model {
 	bool committed;
 	bool resumed;
 	bool discarded;
+	bool retained;
 };
 
 static int
@@ -1556,6 +1931,30 @@ big_dst_discard(void *arg)
 	m->discarded = true;
 }
 
+/* Protocol 2 binding for models without a journal: fixed identity and a
+ * digest the matching source hook checks. */
+static int
+big_dst_prepare(void *arg, struct migration_commit_binding *binding)
+{
+	struct big_dest_model *m = arg;
+
+	ATF_REQUIRE(m->committed && !m->resumed);
+	binding->destination_vmid = 8;
+	binding->destination_epoch = 10;
+	memset(binding->state_digest, 0x5a, 32);
+	return (0);
+}
+
+static void
+big_dst_retain(void *arg, const struct migration_commit_binding *binding)
+{
+	struct big_dest_model *m = arg;
+
+	(void)binding;
+	ATF_REQUIRE(m->committed && !m->discarded);
+	m->retained = true;
+}
+
 static const struct migration_dest_ops big_dest_ops = {
 	.do_local_hello = big_dst_hello,
 	.do_local_topology = big_dst_topology,
@@ -1564,6 +1963,9 @@ static const struct migration_dest_ops big_dest_ops = {
 	.do_commit = big_dst_commit,
 	.do_resume = big_dst_resume,
 	.do_discard = big_dst_discard,
+	.do_prepare_commit = big_dst_prepare,
+	.do_retain = big_dst_retain,
+	.do_record = noop_record,
 };
 
 struct big_party {
@@ -1670,7 +2072,441 @@ ATF_TC_BODY(loopback_multiframe_dev_state_reassembles, tc)
 	close(sv[1]);
 }
 
+/* A retirement-aware adapter must never roll back after an ambiguous RELEASE.
+ * This model hook is deliberately not wired into the production adapter. */
+static int
+model_retire(void *arg)
+{
+	struct source_model *src = arg;
+
+	ATF_REQUIRE(src->quiesced);
+	src->retired = true;
+	return (src->fail_retire);
+}
+
+static int
+model_source_record(void *arg, enum migration_recovery_phase phase,
+    const uint8_t challenge[32])
+{
+	struct source_model *src = arg;
+	ATF_REQUIRE(src->quiesced);
+	ATF_REQUIRE_EQ((int)phase, src->recorded + 1);
+	ATF_REQUIRE_EQ(src->retired, phase != MIGRATION_REC_SOURCE_INTENT);
+	if (src->recorded == 0)
+		memcpy(src->challenge, challenge, 32);
+	ATF_REQUIRE(memcmp(src->challenge, challenge, 32) == 0);
+	src->recorded = phase;
+	return (src->fail_record == (int)phase ? EIO : 0);
+}
+
+static int
+model_accept_commit(void *arg, const struct migration_commit_binding *binding)
+{
+	struct source_model *src = arg;
+	ATF_REQUIRE(src->quiesced && !src->retired);
+	ATF_REQUIRE_EQ(binding->destination_vmid, 8);
+	ATF_REQUIRE_EQ(binding->destination_epoch, 10);
+	for (size_t i = 0; i < 32; i++) ATF_REQUIRE_EQ(binding->state_digest[i], 0x5a);
+	return (src->fail_binding);
+}
+
+static int
+model_prepare_commit(void *arg, struct migration_commit_binding *binding)
+{
+	struct dest_model *dst = arg;
+	ATF_REQUIRE(dst->committed && !dst->resumed);
+	/* Ordinary mode keeps no journal record; the challenge is bound here. */
+	if (dst->recorded == 0)
+		memcpy(dst->challenge, binding->challenge, 32);
+	binding->destination_vmid = 8;
+	binding->destination_epoch = 10;
+	memset(binding->state_digest, 0x5a, 32);
+	return (dst->fail_binding);
+}
+
+static int
+model_dest_record(void *arg, enum migration_recovery_phase phase,
+    const uint8_t challenge[32])
+{
+	struct dest_model *dst = arg;
+	ATF_REQUIRE(dst->committed);
+	ATF_REQUIRE_EQ((int)phase, dst->recorded == 0 ?
+	    MIGRATION_REC_DEST_STAGED : dst->recorded + 1);
+	ATF_REQUIRE_EQ(dst->resumed, phase == MIGRATION_REC_DEST_RUNNING);
+	if (dst->recorded == 0)
+		memcpy(dst->challenge, challenge, 32);
+	ATF_REQUIRE(memcmp(dst->challenge, challenge, 32) == 0);
+	dst->recorded = phase;
+	return (dst->fail_record == (int)phase ? EIO : 0);
+}
+
+/* The durable image must follow the complete binding and precede STAGED. */
+static int
+model_dest_preserve(void *arg, const struct migration_commit_binding *binding)
+{
+	struct dest_model *dst = arg;
+	ATF_REQUIRE(dst->committed && !dst->resumed && !dst->retained);
+	ATF_REQUIRE_EQ(dst->recorded, 0);
+	ATF_REQUIRE_EQ(binding->destination_vmid, 8);
+	ATF_REQUIRE_EQ(binding->destination_epoch, 10);
+	ATF_REQUIRE(memcmp(binding->challenge, (const uint8_t[32]){0}, 32) != 0);
+	dst->preserved++;
+	memcpy(dst->challenge, binding->challenge, 32);
+	return (dst->fail_preserve);
+}
+
+static void
+model_dest_retain(void *arg, const struct migration_commit_binding *binding)
+{
+	struct dest_model *dst = arg;
+	ATF_REQUIRE(dst->committed && !dst->resumed && !dst->discarded && !dst->retained);
+	ATF_REQUIRE(memcmp(binding->challenge, dst->challenge, 32) == 0);
+	ATF_REQUIRE_EQ(binding->destination_vmid, 8);
+	ATF_REQUIRE_EQ(binding->destination_epoch, 10);
+	dst->retained = true;
+}
+
+struct retirement_xp {
+	struct migration_transport_fd fd;
+	struct source_model *source;
+	int mode;
+	bool release_sent;
+};
+
+static int
+retirement_send(void *arg, const void *buf, size_t len)
+{
+	struct retirement_xp *xp = arg;
+	const uint8_t *wire = buf;
+	bool release = len >= MIGRATION_FRAME_HDR_SIZE &&
+	    le16dec(wire + 6) == MIGRATION_MSG_RELEASE;
+	int error;
+
+	if (len >= MIGRATION_FRAME_HDR_SIZE &&
+	    le16dec(wire + 6) == MIGRATION_MSG_COMMIT && xp->mode >= 8) {
+		if (xp->mode == 8)
+			return (EPIPE);
+		error = migration_fd_send(&xp->fd, buf, len);
+		return (error == 0 ? EPIPE : error);
+	}
+	if (len >= MIGRATION_FRAME_HDR_SIZE &&
+	    le16dec(wire + 6) == MIGRATION_MSG_RELEASE_ACK) {
+		if (xp->mode == 6)
+			return (EPIPE);
+		if (xp->mode == 7) {
+			error = migration_fd_send(&xp->fd, buf, len);
+			return (error == 0 ? EPIPE : error);
+		}
+	}
+	if (release) {
+		ATF_REQUIRE(xp->source->retired);
+		if (xp->mode == 2)
+			return (EPIPE);
+		if (xp->mode == 4 || xp->mode == 5) {
+			uint8_t altered[MIGRATION_FRAME_HDR_SIZE + MIGRATION_FRESH_RELEASE_SIZE];
+			size_t send_length = sizeof(altered);
+			ATF_REQUIRE_EQ(len, sizeof(altered));
+			memcpy(altered, buf, len);
+			if (xp->mode == 4)
+				altered[MIGRATION_FRAME_HDR_SIZE + MIGRATION_REASON_SIZE] ^= 1;
+			else {
+				/* Attempt to downgrade fresh RELEASE to the legacy result. */
+				le32enc(altered + 16, MIGRATION_REASON_SIZE);
+				send_length = MIGRATION_FRAME_HDR_SIZE + MIGRATION_REASON_SIZE;
+			}
+			le32enc(altered + 20, migration_crc32(altered +
+			    MIGRATION_FRAME_HDR_SIZE, send_length - MIGRATION_FRAME_HDR_SIZE));
+			error = migration_fd_send(&xp->fd, altered, send_length);
+			xp->release_sent = error == 0;
+			return (error);
+		}
+	}
+	error = migration_fd_send(&xp->fd, buf, len);
+	if (release && error == 0) {
+		xp->release_sent = true;
+		if (xp->mode == 3)
+			return (EPIPE); /* Delivered, but sender observes failure. */
+	}
+	return (error);
+}
+
+static int
+retirement_recv(void *arg, void *buf, size_t len)
+{
+	struct retirement_xp *xp = arg;
+	return (migration_fd_recv(&xp->fd, buf, len));
+}
+
+ATF_TC_WITHOUT_HEAD(source_retirement_precedes_release);
+ATF_TC_BODY(source_retirement_precedes_release, tc)
+{
+	(void)tc;
+	{
+		struct source_model src = {0};
+		struct dest_model dst = {0};
+		struct migration_dest_ops dops = dest_ops;
+		struct migration_session_config cfg = base_config();
+		struct migration_source_result result;
+		int source_error, destination_error;
+		dops.do_local_hello = dst_fresh_hello;
+		dops.do_record = model_dest_record;
+		dops.do_prepare_commit = model_prepare_commit;
+		dops.do_retain = NULL;	/* the hook under test */
+		run_loopback_ops(&src, &dst, &dops, &cfg, &cfg, &result,
+		    NULL, &source_error, &destination_error);
+		ATF_CHECK(source_error != 0);
+		ATF_CHECK_EQ(destination_error, EOPNOTSUPP);
+		ATF_CHECK(!src.quiesced && !dst.committed && !dst.retained);
+	}
+	{
+		struct source_model src = {0};
+		struct migration_source_ops ops = source_ops;
+		struct migration_session_config cfg = base_config();
+		struct migration_source_result result;
+		struct migration_transport transport;
+		struct migration_transport_fd fd;
+		migration_transport_fd_init(&transport, &fd, -1, 100);
+		ops.so_local_hello = src_fresh_hello;
+		ops.so_retire = NULL;	/* the hook under test */
+		ATF_CHECK_EQ(migration_source_run(&transport, &ops, &src, &cfg,
+		    &result), EOPNOTSUPP);
+		ATF_CHECK_EQ(result.reason, MIGRATION_REASON_CAPS);
+		ATF_CHECK(result.source_runnable && !src.quiesced && !src.retired);
+	}
+	for (int variant = 0; variant < 14; variant++) {
+		bool fresh = variant >= 4;
+		int mode = fresh ? variant - 4 : variant;
+		struct source_model src = {0};
+		struct dest_model dst = {0};
+		struct party_arg dest = {0};
+		struct migration_source_ops ops = source_ops;
+		struct migration_dest_ops dops = dest_ops;
+		struct migration_session_config cfg = base_config();
+		struct migration_source_result result;
+		struct migration_transport transport;
+		struct retirement_xp xp = {0};
+		struct retirement_xp dest_xp = {0};
+		pthread_t thread;
+		int sockets[2], error;
+
+		src.converge_after = 1;
+		src.fail_retire = mode == 1 ? EIO : 0;
+		ops.so_retire = model_retire;
+		if (fresh) {
+			ops.so_local_hello = src_fresh_hello;
+			ops.so_record = model_source_record;
+			ops.so_accept_commit = model_accept_commit;
+			dops.do_local_hello = dst_fresh_hello;
+			dops.do_record = model_dest_record;
+			dops.do_prepare_commit = model_prepare_commit;
+			dops.do_retain = model_dest_retain;
+		}
+		ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+		migration_transport_fd_init(&dest.xp, &dest.fdx, sockets[1], 2000);
+		if (mode >= 6) {
+			dest_xp.fd.fd = sockets[1];
+			dest_xp.fd.recv_timeout_ms = 2000;
+			dest_xp.mode = mode;
+			dest.xp = (struct migration_transport){
+			    .xp_send = retirement_send, .xp_recv = retirement_recv,
+			    .xp_cookie = &dest_xp };
+		}
+		dest.ops = &dops;
+		dest.config = &cfg;
+		dest.ops_arg = &dst;
+		ATF_REQUIRE_EQ(pthread_create(&thread, NULL, dest_thread, &dest), 0);
+		xp.fd.fd = sockets[0];
+		xp.fd.recv_timeout_ms = 2000;
+		xp.source = &src;
+		xp.mode = mode;
+		transport = (struct migration_transport){
+		    .xp_send = retirement_send, .xp_recv = retirement_recv,
+		    .xp_cookie = &xp };
+		error = migration_source_run(&transport, &ops, &src, &cfg, &result);
+		ATF_REQUIRE_EQ(pthread_join(thread, NULL), 0);
+		ATF_CHECK_EQ(src.retired, mode != 8);
+		ATF_CHECK_EQ(src.resumed_after_rollback, mode == 8);
+		ATF_CHECK_EQ(result.source_runnable, mode == 8);
+		ATF_CHECK_EQ(error, mode == 0 || mode == 7 ? 0 : mode >= 4 ? ETIMEDOUT :
+		    mode == 1 ? EIO : EPIPE);
+		ATF_CHECK_EQ(src.defunct, mode == 0 || mode == 7);
+		ATF_CHECK_EQ(xp.release_sent, mode == 0 || (mode >= 3 && mode != 8));
+		ATF_CHECK_EQ(dst.resumed, mode == 0 || mode == 3 || mode == 6 || mode == 7);
+		/* Protocol 2: ordinary destinations retain exactly as fresh ones. */
+		ATF_CHECK_EQ(dst.retained, mode == 1 || mode == 2 ||
+		    mode == 4 || mode == 5 || mode >= 8);
+		ATF_CHECK_EQ(dest.result.retained, dst.retained);
+		if (dst.retained) {
+			ATF_CHECK(!dst.discarded);
+			ATF_CHECK_EQ(dest.result.phase, MIGRATION_PHASE_RECOVERY);
+		}
+		if (mode == 4 || mode == 5)
+			ATF_CHECK_EQ(dest.error, EPROTO);
+		if (mode == 6 || mode == 7) {
+			ATF_CHECK_EQ(dest.error, 0);
+			ATF_CHECK(!dst.discarded && !dest.result.release_ack_sent);
+		}
+		if (mode >= 8)
+			ATF_CHECK_EQ(dest.error, EPIPE);
+		ATF_CHECK_EQ(result.phase, (uint32_t)(mode == 0 || mode == 7 ?
+		    MIGRATION_PHASE_COMPLETED : mode == 8 ? MIGRATION_PHASE_ROLLED_BACK :
+		    MIGRATION_PHASE_FAILED));
+		close(sockets[0]);
+		close(sockets[1]);
+	}
+}
+
 /* ---- fault-injecting transport for mid-DEV_STATE failure ---- */
+
+ATF_TC_WITHOUT_HEAD(fresh_recovery_persistence_boundaries);
+ATF_TC_BODY(fresh_recovery_persistence_boundaries, tc)
+{
+	(void)tc;
+	for (int failure = 0; failure < 9; failure++) {
+		struct source_model src = { .converge_after = 1 };
+		struct dest_model dst = {0};
+		struct migration_source_ops sops = source_ops;
+		struct migration_dest_ops dops = dest_ops;
+		struct migration_session_config cfg = base_config();
+		struct migration_source_result result;
+		struct migration_transport xp;
+		struct migration_transport_fd fd;
+		struct party_arg dest = {0};
+		pthread_t thread;
+		int sockets[2], error;
+
+		sops.so_local_hello = src_fresh_hello;
+		sops.so_retire = model_retire;
+		sops.so_record = model_source_record;
+		sops.so_accept_commit = model_accept_commit;
+		dops.do_local_hello = dst_fresh_hello;
+		dops.do_record = model_dest_record;
+		dops.do_prepare_commit = model_prepare_commit;
+		dops.do_retain = model_dest_retain;
+		if (failure < 4) src.fail_record = failure + 1;
+		else if (failure < 7) dst.fail_record = MIGRATION_REC_DEST_STAGED + failure - 4;
+		else if (failure == 7) src.fail_binding = EPROTO;
+		else dst.fail_binding = EIO;
+		ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+		migration_transport_fd_init(&xp, &fd, sockets[0], 1000);
+		migration_transport_fd_init(&dest.xp, &dest.fdx, sockets[1], 1000);
+		dest.ops = &dops; dest.config = &cfg; dest.ops_arg = &dst;
+		ATF_REQUIRE_EQ(pthread_create(&thread, NULL, dest_thread, &dest), 0);
+		error = migration_source_run(&xp, &sops, &src, &cfg, &result);
+		ATF_REQUIRE_EQ(pthread_join(thread, NULL), 0);
+		ATF_CHECK_EQ(error, failure < 4 ? EIO : failure == 4 || failure == 8 ?
+		    ECONNRESET : failure == 7 ? EPROTO : ETIMEDOUT);
+		ATF_CHECK_EQ(src.retired, failure != 0 && failure != 4 && failure < 7);
+		ATF_CHECK_EQ(src.resumed_after_rollback, failure == 4 || failure >= 7);
+		ATF_CHECK_EQ(result.source_runnable, failure == 4 || failure >= 7);
+		ATF_CHECK(!src.defunct);
+		ATF_CHECK_EQ(dst.resumed, failure == 3 || failure == 6);
+		ATF_CHECK_EQ(dst.discarded, failure == 4 || failure == 8);
+		ATF_CHECK_EQ(dst.retained, failure < 3 || failure == 5 || failure == 7);
+		ATF_CHECK_EQ(dest.result.retained, dst.retained);
+		if (dst.retained)
+			ATF_CHECK_EQ(dest.result.phase, MIGRATION_PHASE_RECOVERY);
+		if (failure == 6) {
+			ATF_CHECK_EQ(dest.error, 0);
+			ATF_CHECK(!dest.result.release_ack_sent);
+			ATF_CHECK_EQ(dest.result.reason, MIGRATION_REASON_STATE);
+		}
+		close(sockets[0]); close(sockets[1]);
+	}
+}
+
+/* A failed image preservation aborts before STAGED and COMMIT: the source
+ * never begins retirement and rolls back; the destination discards. */
+ATF_TC_WITHOUT_HEAD(fresh_preserve_precedes_staged);
+ATF_TC_BODY(fresh_preserve_precedes_staged, tc)
+{
+	(void)tc;
+	for (int failure = 0; failure < 2; failure++) {
+		struct source_model src = { .converge_after = 1 };
+		struct dest_model dst = { .fail_preserve = failure ? EIO : 0 };
+		struct migration_source_ops sops = source_ops;
+		struct migration_dest_ops dops = dest_ops;
+		struct migration_session_config cfg = base_config();
+		struct migration_source_result result;
+		struct migration_transport xp;
+		struct migration_transport_fd fd;
+		struct party_arg dest = {0};
+		pthread_t thread;
+		int sockets[2], error;
+
+		sops.so_local_hello = src_fresh_hello;
+		sops.so_retire = model_retire;
+		sops.so_record = model_source_record;
+		sops.so_accept_commit = model_accept_commit;
+		dops.do_local_hello = dst_fresh_hello;
+		dops.do_record = model_dest_record;
+		dops.do_prepare_commit = model_prepare_commit;
+		dops.do_retain = model_dest_retain;
+		dops.do_preserve = model_dest_preserve;
+		ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+		migration_transport_fd_init(&xp, &fd, sockets[0], 1000);
+		migration_transport_fd_init(&dest.xp, &dest.fdx, sockets[1], 1000);
+		dest.ops = &dops; dest.config = &cfg; dest.ops_arg = &dst;
+		ATF_REQUIRE_EQ(pthread_create(&thread, NULL, dest_thread, &dest), 0);
+		error = migration_source_run(&xp, &sops, &src, &cfg, &result);
+		ATF_REQUIRE_EQ(pthread_join(thread, NULL), 0);
+		ATF_CHECK_EQ(dst.preserved, 1);
+		if (failure == 0) {
+			ATF_CHECK_EQ(error, 0);
+			ATF_CHECK(src.retired && dst.resumed && !dst.discarded);
+			ATF_CHECK_EQ(dst.recorded, MIGRATION_REC_DEST_RUNNING);
+		} else {
+			ATF_CHECK(error != 0);
+			ATF_CHECK(!src.retired && src.resumed_after_rollback);
+			ATF_CHECK(result.source_runnable);
+			ATF_CHECK_EQ(dst.recorded, 0);
+			ATF_CHECK(dst.discarded && !dst.retained && !dst.resumed);
+			ATF_CHECK_EQ(dest.error, EIO);
+			ATF_CHECK_EQ(dest.result.phase, MIGRATION_PHASE_FAILED);
+		}
+		close(sockets[0]); close(sockets[1]);
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(fresh_initial_resume_failure_retains_owner);
+ATF_TC_BODY(fresh_initial_resume_failure_retains_owner, tc)
+{
+	(void)tc;
+	struct source_model src = { .converge_after = 1 };
+	struct dest_model dst = { .fail_resume = EIO };
+	struct migration_source_ops sops = source_ops;
+	struct migration_dest_ops dops = dest_ops;
+	struct migration_session_config cfg = base_config();
+	struct migration_source_result result;
+	struct migration_transport xp;
+	struct migration_transport_fd fd;
+	struct party_arg dest = {0};
+	pthread_t thread;
+	int sockets[2];
+
+	sops.so_local_hello = src_fresh_hello;
+	sops.so_retire = model_retire;
+	sops.so_record = model_source_record;
+	sops.so_accept_commit = model_accept_commit;
+	dops.do_local_hello = dst_fresh_hello;
+	dops.do_record = model_dest_record;
+	dops.do_prepare_commit = model_prepare_commit;
+	dops.do_retain = model_dest_retain;
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+	migration_transport_fd_init(&xp, &fd, sockets[0], 1000);
+	migration_transport_fd_init(&dest.xp, &dest.fdx, sockets[1], 1000);
+	dest.ops = &dops; dest.config = &cfg; dest.ops_arg = &dst;
+	ATF_REQUIRE_EQ(pthread_create(&thread, NULL, dest_thread, &dest), 0);
+	ATF_CHECK(migration_source_run(&xp, &sops, &src, &cfg, &result) != 0);
+	ATF_REQUIRE_EQ(pthread_join(thread, NULL), 0);
+	ATF_CHECK(src.retired && !src.resumed_after_rollback && !result.source_runnable);
+	ATF_CHECK(dst.committed && dst.retained && !dst.discarded && !dst.resumed);
+	ATF_CHECK_EQ(dst.resume_attempts, 1);
+	ATF_CHECK_EQ(dest.error, EIO);
+	ATF_CHECK(dest.result.retained && !dest.result.release_ack_sent);
+	ATF_CHECK_EQ(dest.result.phase, MIGRATION_PHASE_RECOVERY);
+	close(sockets[0]); close(sockets[1]);
+}
 
 struct fault_xp {
 	struct migration_transport_fd fdx;
@@ -2077,6 +2913,145 @@ ATF_TC_BODY(destination_rejects_truncated_dev_state, tc)
 	close(sv[1]);
 }
 
+/* A memory generation must finish before device state, and every chunk of
+ * that generation must carry the same CPU/memory identity. */
+static void
+fake_source_bad_mem_generation(int fd, int variant)
+{
+	struct migration_session s;
+	struct migration_transport xp;
+	struct migration_transport_fd fdx;
+	struct migration_frame_header hdr;
+	struct migration_hello h;
+	struct migration_topology *topology;
+	struct migration_caps_accept caps;
+	struct migration_memgen gen;
+	struct migration_chunk chunk;
+	uint8_t hello_wire[MIGRATION_HELLO_SIZE];
+	uint8_t *topo_wire, *payload;
+	uint8_t frame[MIGRATION_MEMGEN_HDR_SIZE + MIGRATION_CHUNK_HDR_SIZE +
+	    8 + MODEL_PAGE_SIZE];
+	size_t topo_len, written, payload_len;
+
+	migration_transport_fd_init(&xp, &fdx, fd, 5000);
+	memset(&s, 0, sizeof(s));
+	s.xp = &xp;
+	h = sample_hello();
+	h.role = MIGRATION_ROLE_SOURCE;
+	h.version_max = MIGRATION_PROTO_VERSION;
+	h.version_min = MIGRATION_PROTO_VERSION_MIN;
+	ATF_REQUIRE_EQ(migration_hello_encode(&h, hello_wire,
+	    sizeof(hello_wire)), 0);
+	ATF_REQUIRE_EQ(migration_send(&s, MIGRATION_MSG_HELLO, 0, hello_wire,
+	    sizeof(hello_wire)), 0);
+	ATF_REQUIRE_EQ(migration_recv(&s, &hdr, &payload, &payload_len), 0);
+	ATF_REQUIRE_EQ(hdr.type, MIGRATION_MSG_CAPS_ACCEPT);
+	ATF_REQUIRE_EQ(migration_caps_accept_decode(payload, payload_len,
+	    &caps), 0);
+	free(payload);
+	s.version = caps.negotiated_version;
+	topology = calloc(1, sizeof(*topology));
+	ATF_REQUIRE(topology != NULL);
+	model_fill_topology(topology);
+	topo_len = migration_topology_wire_size(topology);
+	topo_wire = malloc(topo_len);
+	ATF_REQUIRE(topo_wire != NULL);
+	ATF_REQUIRE_EQ(migration_topology_encode(topology, topo_wire,
+	    topo_len, &written), 0);
+	ATF_REQUIRE_EQ(migration_send(&s, MIGRATION_MSG_TOPOLOGY, 0,
+	    topo_wire, written), 0);
+	free(topo_wire);
+	free(topology);
+	ATF_REQUIRE_EQ(migration_recv(&s, &hdr, &payload, &payload_len), 0);
+	ATF_REQUIRE_EQ(hdr.type, MIGRATION_MSG_TOPO_ACCEPT);
+	free(payload);
+
+	memset(&gen, 0, sizeof(gen));
+	gen.round = 1;
+	gen.length = MODEL_MEM;
+	gen.cpu_identity = 1;
+	gen.page_count = 1;
+	memset(&chunk, 0, sizeof(chunk));
+	chunk.chunk_length = 8 + MODEL_PAGE_SIZE;
+	ATF_REQUIRE_EQ(migration_memgen_encode(&gen, frame,
+	    MIGRATION_MEMGEN_HDR_SIZE), 0);
+	ATF_REQUIRE_EQ(migration_chunk_encode(&chunk,
+	    frame + MIGRATION_MEMGEN_HDR_SIZE,
+	    MIGRATION_CHUNK_HDR_SIZE), 0);
+	le64enc(frame + MIGRATION_MEMGEN_HDR_SIZE +
+	    MIGRATION_CHUNK_HDR_SIZE, 0);
+	memset(frame + MIGRATION_MEMGEN_HDR_SIZE +
+	    MIGRATION_CHUNK_HDR_SIZE + 8, 0x5a, MODEL_PAGE_SIZE);
+	ATF_REQUIRE_EQ(migration_send(&s, MIGRATION_MSG_MEM_GEN,
+	    MIGRATION_FFLAG_CHUNK, frame, sizeof(frame)), 0);
+	ATF_REQUIRE_EQ(migration_recv(&s, &hdr, &payload, &payload_len), 0);
+	ATF_REQUIRE_EQ(hdr.type, MIGRATION_MSG_MEM_ACK);
+	free(payload);
+
+	if (variant == 0) {
+		const uint8_t device[] = { 1, 2, 3, 4 };
+		(void)migration_send(&s, MIGRATION_MSG_DEV_STATE, 0,
+		    device, sizeof(device));
+		return;
+	}
+	if (variant == 1)
+		gen.cpu_identity++;
+	chunk.offset = 8 + MODEL_PAGE_SIZE;
+	chunk.final = 1;
+	ATF_REQUIRE_EQ(migration_memgen_encode(&gen, frame,
+	    MIGRATION_MEMGEN_HDR_SIZE), 0);
+	ATF_REQUIRE_EQ(migration_chunk_encode(&chunk,
+	    frame + MIGRATION_MEMGEN_HDR_SIZE,
+	    MIGRATION_CHUNK_HDR_SIZE), 0);
+	le64enc(frame + MIGRATION_MEMGEN_HDR_SIZE +
+	    MIGRATION_CHUNK_HDR_SIZE, MODEL_PAGE_SIZE);
+	memset(frame + MIGRATION_MEMGEN_HDR_SIZE +
+	    MIGRATION_CHUNK_HDR_SIZE + 8, 0x7b, MODEL_PAGE_SIZE);
+	if (variant == 2) {
+		memmove(frame + MIGRATION_MEMGEN_HDR_SIZE,
+		    frame + MIGRATION_MEMGEN_HDR_SIZE + MIGRATION_CHUNK_HDR_SIZE,
+		    8 + MODEL_PAGE_SIZE);
+		(void)migration_send(&s, MIGRATION_MSG_MEM_GEN, 0, frame,
+		    MIGRATION_MEMGEN_HDR_SIZE + 8 + MODEL_PAGE_SIZE);
+	} else
+		(void)migration_send(&s, MIGRATION_MSG_MEM_GEN,
+		    MIGRATION_FFLAG_CHUNK, frame, sizeof(frame));
+}
+
+ATF_TC_WITHOUT_HEAD(destination_rejects_incomplete_memory_generation);
+ATF_TC_BODY(destination_rejects_incomplete_memory_generation, tc)
+{
+	struct big_dest_model dst;
+	struct big_party dparg;
+	struct migration_session_config cfg;
+	pthread_t dtid;
+	int sv[2];
+
+	(void)tc;
+	cfg = base_config();
+	for (int variant = 0; variant < 3; variant++) {
+		memset(&dst, 0, sizeof(dst));
+		ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
+		memset(&dparg, 0, sizeof(dparg));
+		migration_transport_fd_init(&dparg.xp, &dparg.fdx, sv[1],
+		    5000);
+		dparg.dst = &dst;
+		dparg.config = &cfg;
+		ATF_REQUIRE_EQ(pthread_create(&dtid, NULL, big_dest_thread,
+		    &dparg), 0);
+		fake_source_bad_mem_generation(sv[0], variant);
+		shutdown(sv[0], SHUT_RDWR);
+		ATF_REQUIRE_EQ(pthread_join(dtid, NULL), 0);
+		ATF_CHECK(dparg.error != 0);
+		ATF_CHECK(!dst.committed && !dst.resumed && dst.discarded);
+		ATF_CHECK(dst.dev == NULL && dst.dev_len == 0);
+		ATF_CHECK(dst.ram.pages[0][0] == 0x5a);
+		ATF_CHECK(dst.ram.pages[1][0] == 0);
+		close(sv[0]);
+		close(sv[1]);
+	}
+}
+
 /* ------------------------------------------------------------------------- */
 /* High-memory + low-memory dirty coverage across the MMIO hole		     */
 /* ------------------------------------------------------------------------- */
@@ -2097,12 +3072,14 @@ struct hm_source {
 	bool quiesced;
 	bool defunct;
 	bool resumed_after_rollback;
+	bool retired;
 };
 
 struct hm_dest {
 	struct hm_sample samples[HM_NSAMPLES];
 	bool committed;
 	bool resumed;
+	bool retained;
 };
 
 static const uint64_t hm_gpas[HM_NSAMPLES] = {
@@ -2252,6 +3229,25 @@ hm_src_defunct(void *arg)
 	m->defunct = true;
 }
 
+static int
+hm_src_retire(void *arg)
+{
+	struct hm_source *m = arg;
+
+	ATF_REQUIRE(m->quiesced);
+	m->retired = true;
+	return (0);
+}
+
+static int
+hm_src_accept(void *arg, const struct migration_commit_binding *binding)
+{
+	(void)arg;
+	ATF_REQUIRE_EQ(binding->destination_vmid, 8);
+	ATF_REQUIRE_EQ(binding->destination_epoch, 10);
+	return (0);
+}
+
 static const struct migration_source_ops hm_source_ops = {
 	.so_local_hello = hm_src_hello,
 	.so_local_topology = hm_src_topology,
@@ -2262,6 +3258,9 @@ static const struct migration_source_ops hm_source_ops = {
 	.so_resume = hm_src_resume,
 	.so_dev_state = hm_src_dev_state,
 	.so_defunct = hm_src_defunct,
+	.so_retire = hm_src_retire,
+	.so_accept_commit = hm_src_accept,
+	.so_record = noop_record,
 };
 
 static int
@@ -2345,6 +3344,27 @@ hm_dst_discard(void *arg)
 	(void)arg;
 }
 
+static int
+hm_dst_prepare(void *arg, struct migration_commit_binding *binding)
+{
+	struct hm_dest *m = arg;
+
+	ATF_REQUIRE(m->committed && !m->resumed);
+	binding->destination_vmid = 8;
+	binding->destination_epoch = 10;
+	memset(binding->state_digest, 0x5a, 32);
+	return (0);
+}
+
+static void
+hm_dst_retain(void *arg, const struct migration_commit_binding *binding)
+{
+	struct hm_dest *m = arg;
+
+	(void)binding;
+	m->retained = true;
+}
+
 static const struct migration_dest_ops hm_dest_ops = {
 	.do_local_hello = hm_dst_hello,
 	.do_local_topology = hm_dst_topology,
@@ -2353,6 +3373,9 @@ static const struct migration_dest_ops hm_dest_ops = {
 	.do_commit = hm_dst_commit,
 	.do_resume = hm_dst_resume,
 	.do_discard = hm_dst_discard,
+	.do_prepare_commit = hm_dst_prepare,
+	.do_retain = hm_dst_retain,
+	.do_record = noop_record,
 };
 
 struct hm_party {
@@ -2433,6 +3456,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, hello_roundtrip);
 	ATF_TP_ADD_TC(tp, hello_rejects_uncanonical_abi_and_truncation);
+	ATF_TP_ADD_TC(tp, caps_accept_requires_canonical_offered_capabilities);
 	ATF_TP_ADD_TC(tp, frame_roundtrip_and_crc);
 	ATF_TP_ADD_TC(tp, frame_rejects_oversize_and_short_header);
 	ATF_TP_ADD_TC(tp, frame_rejects_unknown_version_type_and_flags);
@@ -2443,21 +3467,30 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, device_flags_eligibility);
 	ATF_TP_ADD_TC(tp, topology_validate_enforces_device_identity);
 	ATF_TP_ADD_TC(tp, loopback_migration_succeeds);
+	ATF_TP_ADD_TC(tp, fresh_tracing_requires_matching_capabilities);
+	ATF_TP_ADD_TC(tp, source_retirement_precedes_release);
+	ATF_TP_ADD_TC(tp, fresh_recovery_persistence_boundaries);
+	ATF_TP_ADD_TC(tp, fresh_initial_resume_failure_retains_owner);
+	ATF_TP_ADD_TC(tp, fresh_preserve_precedes_staged);
+	ATF_TP_ADD_TC(tp, source_rejects_wrapping_round_limit);
 	ATF_TP_ADD_TC(tp, destination_rejects_topology_before_quiesce);
 	ATF_TP_ADD_TC(tp, source_rolls_back_when_destination_commit_fails);
 	ATF_TP_ADD_TC(tp, convergence_limit_aborts_and_keeps_source);
 	ATF_TP_ADD_TC(tp, cancellation_midcopy_keeps_source);
 	ATF_TP_ADD_TC(tp, recv_enforces_sequence_monotonicity);
 	ATF_TP_ADD_TC(tp, destination_without_release_does_not_run);
+	ATF_TP_ADD_TC(tp, destination_requires_successful_release);
 	ATF_TP_ADD_TC(tp, source_rolls_back_when_dev_state_fails);
 	ATF_TP_ADD_TC(tp, source_resume_failure_stays_fail_closed);
 	ATF_TP_ADD_TC(tp, source_quiesce_failure_rolls_back_runnable);
 	ATF_TP_ADD_TC(tp, source_quiesce_wedged_reports_not_runnable);
 	ATF_TP_ADD_TC(tp, chunk_validate_rejects_gap_dup_oversize);
+	ATF_TP_ADD_TC(tp, source_rejects_invalid_memory_chunk_contract);
 	ATF_TP_ADD_TC(tp, loopback_multiframe_dev_state_reassembles);
 	ATF_TP_ADD_TC(tp, source_rolls_back_on_midchunk_dev_state_failure);
 	ATF_TP_ADD_TC(tp, destination_rejects_zero_total_dev_state);
 	ATF_TP_ADD_TC(tp, destination_rejects_truncated_dev_state);
+	ATF_TP_ADD_TC(tp, destination_rejects_incomplete_memory_generation);
 	ATF_TP_ADD_TC(tp, highmem_lowmem_dirty_coverage);
 	return (atf_no_error());
 }

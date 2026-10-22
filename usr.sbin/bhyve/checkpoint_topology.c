@@ -94,59 +94,6 @@ checkpoint_cpu_topology_validate(uint64_t ncpus, uint64_t sockets,
 }
 
 int
-checkpoint_numa_topology_validate(
-    const struct checkpoint_numa_domain *domains, size_t domain_count,
-    size_t vcpu_count, uint64_t memory_size)
-{
-	bool *assigned;
-	uint64_t accumulated;
-	size_t assigned_count;
-	int error;
-
-	if (domains == NULL || domain_count == 0 ||
-	    domain_count > CHECKPOINT_NUMA_MAX_DOMAINS ||
-	    vcpu_count == 0 || vcpu_count > UINT16_MAX || memory_size == 0)
-		return (EINVAL);
-	assigned = calloc(vcpu_count, sizeof(*assigned));
-	if (assigned == NULL)
-		return (ENOMEM);
-
-	accumulated = 0;
-	assigned_count = 0;
-	error = 0;
-	for (size_t domain = 0; domain < domain_count; domain++) {
-		if (domains[domain].memory_size == 0 ||
-		    domains[domain].vcpu_count == 0 ||
-		    domains[domain].vcpus == NULL ||
-		    domains[domain].vcpu_count >
-		    vcpu_count - assigned_count ||
-		    domains[domain].memory_size > memory_size - accumulated) {
-			error = EINVAL;
-			break;
-		}
-		accumulated += domains[domain].memory_size;
-		for (size_t i = 0; i < domains[domain].vcpu_count; i++) {
-			uint16_t vcpu;
-
-			vcpu = domains[domain].vcpus[i];
-			if (vcpu >= vcpu_count || assigned[vcpu]) {
-				error = EINVAL;
-				break;
-			}
-			assigned[vcpu] = true;
-			assigned_count++;
-		}
-		if (error != 0)
-			break;
-	}
-	if (error == 0 &&
-	    (accumulated != memory_size || assigned_count != vcpu_count))
-		error = EINVAL;
-	free(assigned);
-	return (error);
-}
-
-int
 checkpoint_numa_mapping_validate(const uint64_t *domain_sizes,
     size_t domain_count, const uint16_t *vcpu_domains, size_t vcpu_count,
     uint64_t memory_size)

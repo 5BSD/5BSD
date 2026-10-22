@@ -49,6 +49,7 @@
 #include "config.h"
 #include "bhyverun.h"
 #include "fdt.h"
+#include "guest_cpu_abi.h"
 
 #define	SET_PROP_U32(prop, idx, val)	\
     ((uint32_t *)(prop))[(idx)] = cpu_to_fdt32(val)
@@ -97,7 +98,7 @@ add_cpu(void *fdt, int cpuid, const char *isa, uint32_t *intc_phandle)
 	fdt_property_string(fdt, "compatible", "riscv");
 	fdt_property_u32(fdt, "reg", cpuid);
 	fdt_property_string(fdt, "riscv,isa", isa);
-	fdt_property_string(fdt, "mmu-type", "riscv,sv39");
+	fdt_property_string(fdt, "mmu-type", RISCV_GUEST_MMU_TYPE);
 
 	fdt_begin_node(fdt, "interrupt-controller");
 	*intc_phandle = assign_phandle(fdt);
@@ -111,7 +112,7 @@ add_cpu(void *fdt, int cpuid, const char *isa, uint32_t *intc_phandle)
 }
 
 static void
-add_cpus(void *fdt, int ncpu, const char *isa)
+add_cpus(void *fdt, int ncpu, const char *isa, uint32_t timebase_frequency)
 {
 	int cpuid;
 
@@ -119,8 +120,7 @@ add_cpus(void *fdt, int ncpu, const char *isa)
 	/* XXX: Needed given the root #address-cells? */
 	fdt_property_u32(fdt, "#address-cells", 1);
 	fdt_property_u32(fdt, "#size-cells", 0);
-	/* TODO: take timebase from kernel? */
-	fdt_property_u32(fdt, "timebase-frequency", 1000000);
+	fdt_property_u32(fdt, "timebase-frequency", timebase_frequency);
 
 	intc_phandles = malloc(sizeof(uint32_t) * ncpu);
 	for (cpuid = 0; cpuid < ncpu; cpuid++)
@@ -131,7 +131,7 @@ add_cpus(void *fdt, int ncpu, const char *isa)
 
 int
 fdt_init(struct vmctx *ctx, int ncpu, vm_paddr_t fdtaddr, vm_size_t fdtsize,
-    const char *isa)
+    const char *isa, uint32_t timebase_frequency)
 {
 	void *fdt;
 	const char *bootargs;
@@ -166,7 +166,7 @@ fdt_init(struct vmctx *ctx, int ncpu, vm_paddr_t fdtaddr, vm_size_t fdtsize,
 	set_single_reg(fdt, vm_get_highmem_base(ctx), vm_get_highmem_size(ctx));
 	fdt_end_node(fdt);
 
-	add_cpus(fdt, ncpu, isa);
+	add_cpus(fdt, ncpu, isa, timebase_frequency);
 
 	/* Finalized by fdt_finalized(). */
 	fdtroot = fdt;

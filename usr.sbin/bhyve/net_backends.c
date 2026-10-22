@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2019 Vincenzo Maffione <vmaffione@FreeBSD.org>
+ * Copyright (c) 2022 Domagoj Stolfa <ds815@cam.ac.uk>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,9 +34,11 @@
  */
 
 #include <sys/types.h>
+#include <sys/param.h>
 #ifndef WITHOUT_CAPSICUM
 #include <sys/capsicum.h>
 #endif
+#include <sys/_mbufid.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/uio.h>
@@ -60,8 +63,27 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#ifdef WITH_DTRACE
+#include <sys/sdt.h>
+extern int __dtraceenabled_netbe___tap__recv(void);
+extern int __dtraceenabled_netbe___tap__send(void);
+extern int __dtraceenabled_netbe___tap__recv__v2(void);
+extern int __dtraceenabled_netbe___tap__send__v2(void);
+#define NETBE_TAP_RECV_ENABLED() __dtraceenabled_netbe___tap__recv()
+#define NETBE_TAP_SEND_ENABLED() __dtraceenabled_netbe___tap__send()
+#define NETBE_TAP_RECV_V2_ENABLED() __dtraceenabled_netbe___tap__recv__v2()
+#define NETBE_TAP_SEND_V2_ENABLED() __dtraceenabled_netbe___tap__send__v2()
+#else
+#define DTRACE_PROBE2(...) ((void)0)
+#define NETBE_TAP_RECV_ENABLED() 0
+#define NETBE_TAP_SEND_ENABLED() 0
+#define NETBE_TAP_RECV_V2_ENABLED() 0
+#define NETBE_TAP_SEND_V2_ENABLED() 0
+#endif
+
 #include "config.h"
 #include "debug.h"
+#include "globals.h"
 #include "iov.h"
 #include "mevent.h"
 #include "net_backends.h"
@@ -109,6 +131,8 @@ tap_cleanup(struct net_backend *be)
 		close(be->fd);
 		be->fd = -1;
 	}
+	be->tagging_enabled = 0;
+	be->tagging_v2_enabled = 0;
 }
 
 static int
@@ -121,6 +145,9 @@ tap_init(struct net_backend *be, const char *devname,
 
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_t rights;
+	cap_ioctl_t ioctls[] = { TAPSTAGGING, TAPSBINDVM, TAPSTAGGINGV2,
+	    TAPSV2RXFREEZE, TAPGV2RXQUEUED };
+	size_t nioctls = nitems(ioctls);
 #endif
 
 	if (cb == NULL) {
@@ -156,9 +183,12 @@ tap_init(struct net_backend *be, const char *devname,
 	}
 
 #ifndef WITHOUT_CAPSICUM
-	cap_rights_init(&rights, CAP_EVENT, CAP_READ, CAP_WRITE);
+	cap_rights_init(&rights, CAP_EVENT, CAP_READ, CAP_WRITE, CAP_IOCTL);
 	if (caph_rights_limit(be->fd, &rights) == -1)
 		errx(EX_OSERR, "Unable to apply rights for sandbox");
+
+	if (cap_ioctls_limit(be->fd, ioctls, nioctls) == -1)
+		errx(EX_OSERR, "Unable to apply ioctl limits for sandbox");
 #endif
 
 	memset(priv->bbuf, 0, sizeof(priv->bbuf));
@@ -177,12 +207,82 @@ error:
 	return (-1);
 }
 
+/* Copy only a complete identifier from the bytes actually in this record. */
+static int
+tap_probe_id_bytes(const struct iovec *iov, int iovcnt, size_t valid,
+    size_t prefix, void *id, size_t idlen)
+{
+	size_t available, copylen, length, offset, skip;
+	int i;
+
+	if (iov == NULL || iovcnt <= 0 || id == NULL || idlen == 0 ||
+	    prefix > valid || idlen > valid - prefix)
+		return (0);
+	available = valid;
+	skip = prefix;
+	offset = 0;
+	for (i = 0; i < iovcnt && available != 0; i++) {
+		length = MIN(iov[i].iov_len, available);
+		available -= length;
+		if (skip >= length) {
+			skip -= length;
+			continue;
+		}
+		if (iov[i].iov_base == NULL)
+			return (0);
+		copylen = MIN(length - skip, idlen - offset);
+		memcpy((uint8_t *)id + offset,
+		    (const uint8_t *)iov[i].iov_base + skip, copylen);
+		offset += copylen;
+		skip = 0;
+		if (offset == idlen)
+			return (1);
+	}
+	return (0);
+}
+
+static int
+tap_probe_mbufid(const struct iovec *iov, int iovcnt, size_t valid,
+    size_t prefix, mbufid_t *mid)
+{
+
+	return (tap_probe_id_bytes(iov, iovcnt, valid, prefix, mid,
+	    sizeof(*mid)));
+}
+
+static int
+tap_probe_mbufid_v2(const struct iovec *iov, int iovcnt, size_t valid,
+    size_t prefix, mbufid_v2_t *mid)
+{
+
+	return (tap_probe_id_bytes(iov, iovcnt, valid, prefix, mid,
+	    sizeof(*mid)));
+}
+
 /*
  * Called to send a buffer chain out to the tap device
  */
 ssize_t
 tap_send(struct net_backend *be, const struct iovec *iov, int iovcnt)
 {
+	mbufid_t mid;
+	mbufid_v2_t midv2;
+	size_t valid;
+
+	if (be->tagging_enabled && iov != NULL && iovcnt > 0 &&
+	    (NETBE_TAP_SEND_ENABLED() ||
+	    (be->tagging_v2_enabled && NETBE_TAP_SEND_V2_ENABLED()))) {
+		valid = count_iov(iov, iovcnt);
+		if (NETBE_TAP_SEND_ENABLED() &&
+		    tap_probe_mbufid(iov, iovcnt, valid,
+		    be->be_vnet_hdr_len, &mid))
+			DTRACE_PROBE2(netbe, tap__send, g_vmname, &mid);
+		if (be->tagging_v2_enabled && NETBE_TAP_SEND_V2_ENABLED() &&
+		    tap_probe_mbufid_v2(iov, iovcnt,
+		    valid, be->be_vnet_hdr_len, &midv2))
+			DTRACE_PROBE2(netbe, tap__send__v2, g_vmname, &midv2);
+	}
+
 	return (writev(be->fd, iov, iovcnt));
 }
 
@@ -216,19 +316,63 @@ tap_peek_recvlen(struct net_backend *be)
 	return (ret);
 }
 
+static int
+tap_checkpoint_rx_quiescent(struct net_backend *be)
+{
+	struct tap_priv *priv = NET_BE_PRIV(be);
+	int queued;
+
+	if (priv->bbuflen != 0)
+		return (EBUSY);
+	queued = 0;
+	if (ioctl(be->fd, TAPGV2RXQUEUED, &queued) < 0)
+		return (errno);
+	if (queued < 0)
+		return (EIO);
+	return (queued == 0 ? 0 : EBUSY);
+}
+
+static int
+tap_checkpoint_rx_freeze(struct net_backend *be, bool freeze)
+{
+	int value;
+
+	if (be->fd < 0)
+		return (EBADF);
+	value = freeze ? 1 : 0;
+	if (ioctl(be->fd, TAPSV2RXFREEZE, &value) < 0)
+		return (errno);
+	return (0);
+}
+
 ssize_t
 tap_recv(struct net_backend *be, const struct iovec *iov, int iovcnt)
 {
 	struct tap_priv *priv = NET_BE_PRIV(be);
+	struct iovec record;
 	ssize_t ret;
+	mbufid_t mid;
+	mbufid_v2_t midv2;
 
 	if (priv->bbuflen > 0) {
+		record = (struct iovec){
+		    .iov_base = priv->bbuf,
+		    .iov_len = priv->bbuflen,
+		};
 		/*
 		 * A packet is available in the bounce buffer, so
 		 * we read it from there.
 		 */
 		ret = buf_to_iov(priv->bbuf, priv->bbuflen,
 		    iov, iovcnt);
+		if (be->tagging_enabled && NETBE_TAP_RECV_ENABLED() &&
+		    tap_probe_mbufid(&record, 1,
+		    (size_t)ret, be->be_vnet_hdr_len, &mid))
+			DTRACE_PROBE2(netbe, tap__recv, g_vmname, &mid);
+		if (be->tagging_v2_enabled && NETBE_TAP_RECV_V2_ENABLED() &&
+		    tap_probe_mbufid_v2(&record, 1,
+		    (size_t)ret, be->be_vnet_hdr_len, &midv2))
+			DTRACE_PROBE2(netbe, tap__recv__v2, g_vmname, &midv2);
 
 		/* Mark the bounce buffer as empty. */
 		priv->bbuflen = 0;
@@ -240,6 +384,15 @@ tap_recv(struct net_backend *be, const struct iovec *iov, int iovcnt)
 	if (ret < 0 && errno == EWOULDBLOCK) {
 		return (0);
 	}
+
+	if (ret > 0 && be->tagging_enabled && NETBE_TAP_RECV_ENABLED() &&
+	    tap_probe_mbufid(iov,
+	    iovcnt, (size_t)ret, be->be_vnet_hdr_len, &mid))
+		DTRACE_PROBE2(netbe, tap__recv, g_vmname, &mid);
+	if (ret > 0 && be->tagging_v2_enabled &&
+	    NETBE_TAP_RECV_V2_ENABLED() && tap_probe_mbufid_v2(iov,
+	    iovcnt, (size_t)ret, be->be_vnet_hdr_len, &midv2))
+		DTRACE_PROBE2(netbe, tap__recv__v2, g_vmname, &midv2);
 
 	return (ret);
 }
@@ -275,6 +428,82 @@ tap_set_cap(struct net_backend *be __unused, uint64_t features,
 	return ((features || vnet_hdr_len) ? -1 : 0);
 }
 
+static int
+tap_tagging_supported(struct net_backend *be __unused)
+{
+#ifdef TAPSTAGGING
+	return (1);
+#else
+	return (0);
+#endif
+}
+
+static int
+tap_tagging_bind_vm(struct net_backend *be, int vmfd)
+{
+
+	return (ioctl(be->fd, TAPSBINDVM, &vmfd));
+}
+
+static int
+tap_tagging_enable(struct net_backend *be)
+{
+	int flag = 1;
+
+#ifdef TAPSTAGGING
+	struct tap_priv *priv = NET_BE_PRIV(be);
+	/* A previously peeked record lacks the prefix of the new format. */
+	if (priv->bbuflen != 0) {
+		errno = EBUSY;
+		return (-1);
+	}
+	if (ioctl(be->fd, TAPSTAGGING, &flag) != 0)
+		return (-1);
+	be->tagging_enabled = 1;
+	return (0);
+#else
+	be->tagging_enabled = 0;
+	return (0);
+#endif
+}
+
+static int
+tap_tagging_enable_v2(struct net_backend *be)
+{
+	struct tap_priv *priv = NET_BE_PRIV(be);
+	int flag = 1;
+
+	if (priv->bbuflen != 0) {
+		errno = EBUSY;
+		return (-1);
+	}
+	if (ioctl(be->fd, TAPSTAGGINGV2, &flag) != 0)
+		return (-1);
+	be->tagging_enabled = 1;
+	be->tagging_v2_enabled = 1;
+	return (0);
+}
+
+static int
+tap_tagging_disable(struct net_backend *be)
+{
+	struct tap_priv *priv = NET_BE_PRIV(be);
+	int flag = 0;
+
+	if (!be->tagging_enabled)
+		return (0);
+#ifdef TAPSTAGGING
+	if (ioctl(be->fd, be->tagging_v2_enabled ? TAPSTAGGINGV2 :
+	    TAPSTAGGING, &flag) != 0)
+		return (-1);
+#endif
+	/* A peeked record still carries the old tagged framing. */
+	priv->bbuflen = 0;
+	be->tagging_enabled = 0;
+	be->tagging_v2_enabled = 0;
+	return (0);
+}
+
 static struct net_backend tap_backend = {
 	.prefix = "tap",
 	.priv_size = sizeof(struct tap_priv),
@@ -282,11 +511,18 @@ static struct net_backend tap_backend = {
 	.cleanup = tap_cleanup,
 	.send = tap_send,
 	.peek_recvlen = tap_peek_recvlen,
+	.checkpoint_rx_quiescent = tap_checkpoint_rx_quiescent,
+	.checkpoint_rx_freeze = tap_checkpoint_rx_freeze,
 	.recv = tap_recv,
 	.recv_enable = tap_recv_enable,
 	.recv_disable = tap_recv_disable,
 	.get_cap = tap_get_cap,
 	.set_cap = tap_set_cap,
+	.tagging_supported = tap_tagging_supported,
+	.tagging_bind_vm = tap_tagging_bind_vm,
+	.tagging_enable = tap_tagging_enable,
+	.tagging_enable_v2 = tap_tagging_enable_v2,
+	.tagging_disable = tap_tagging_disable,
 };
 
 /* A clone of the tap backend, with a different prefix. */
@@ -297,11 +533,18 @@ static struct net_backend vmnet_backend = {
 	.cleanup = tap_cleanup,
 	.send = tap_send,
 	.peek_recvlen = tap_peek_recvlen,
+	.checkpoint_rx_quiescent = tap_checkpoint_rx_quiescent,
+	.checkpoint_rx_freeze = tap_checkpoint_rx_freeze,
 	.recv = tap_recv,
 	.recv_enable = tap_recv_enable,
 	.recv_disable = tap_recv_disable,
 	.get_cap = tap_get_cap,
 	.set_cap = tap_set_cap,
+	.tagging_supported = tap_tagging_supported,
+	.tagging_bind_vm = tap_tagging_bind_vm,
+	.tagging_enable = tap_tagging_enable,
+	.tagging_enable_v2 = tap_tagging_enable_v2,
+	.tagging_disable = tap_tagging_disable,
 };
 
 /* A clone of the tap backend, with a different prefix. */
@@ -312,6 +555,8 @@ static struct net_backend ngd_backend = {
 	.cleanup = tap_cleanup,
 	.send = tap_send,
 	.peek_recvlen = tap_peek_recvlen,
+	.checkpoint_rx_quiescent = tap_checkpoint_rx_quiescent,
+	.checkpoint_rx_freeze = tap_checkpoint_rx_freeze,
 	.recv = tap_recv,
 	.recv_enable = tap_recv_enable,
 	.recv_disable = tap_recv_disable,
@@ -511,6 +756,98 @@ netbe_peek_recvlen(struct net_backend *be)
 	return (be->peek_recvlen(be));
 }
 
+int
+netbe_checkpoint_rx_quiescent(struct net_backend *be)
+{
+
+	/* A backend without a checkpoint cut cannot promise a safe V2 cut. */
+	if (be == NULL || be->checkpoint_rx_quiescent == NULL)
+		return (EOPNOTSUPP);
+	return (be->checkpoint_rx_quiescent(be));
+}
+
+int
+netbe_checkpoint_rx_freeze(struct net_backend *be, bool freeze)
+{
+
+	if (be == NULL || be->checkpoint_rx_freeze == NULL)
+		return (EOPNOTSUPP);
+	return (be->checkpoint_rx_freeze(be, freeze));
+}
+
+int
+netbe_tagging_enabled(struct net_backend *be)
+{
+
+	return (be->tagging_enabled);
+}
+
+int
+netbe_tagging_supported(struct net_backend *be)
+{
+
+	return (be->tagging_supported != NULL && be->tagging_supported(be));
+}
+
+int
+netbe_tagging_bind_vm(struct net_backend *be, int vmfd)
+{
+
+	if (be->tagging_bind_vm == NULL) {
+		errno = EOPNOTSUPP;
+		return (-1);
+	}
+	return (be->tagging_bind_vm(be, vmfd));
+}
+
+int
+netbe_tagging_enable(struct net_backend *be)
+{
+
+	if (be->tagging_enable == NULL)
+		return (EOPNOTSUPP);
+	return (be->tagging_enable(be));
+}
+
+int
+netbe_tagging_v2_supported(struct net_backend *be)
+{
+
+	/* V2 identities must have a stable receive cut for checkpointing. */
+	return (be != NULL && be->tagging_enable_v2 != NULL &&
+	    be->checkpoint_rx_freeze != NULL &&
+	    be->checkpoint_rx_quiescent != NULL);
+}
+
+int
+netbe_tagging_enable_v2(struct net_backend *be)
+{
+
+	if (!netbe_tagging_v2_supported(be)) {
+		errno = EOPNOTSUPP;
+		return (-1);
+	}
+	return (be->tagging_enable_v2(be));
+}
+
+int
+netbe_tagging_v2_enabled(struct net_backend *be)
+{
+
+	return (be->tagging_v2_enabled);
+}
+
+int
+netbe_tagging_disable(struct net_backend *be)
+{
+
+	if (!be->tagging_enabled)
+		return (0);
+	if (be->tagging_disable == NULL)
+		return (EOPNOTSUPP);
+	return (be->tagging_disable(be));
+}
+
 /*
  * Try to read a packet from the backend, without blocking.
  * If no packets are available, return 0. In case of success, return
@@ -536,10 +873,10 @@ netbe_rx_discard(struct net_backend *be)
 	 * so there is no need for it to be per-vtnet or locked.
 	 * VirtIO 1.4 section 5.1.9.3 defines the largest packet as
 	 * 65,589 bytes and the base virtio-net header as 12 bytes.
-	 * Keep enough room for the complete 65,601-byte backend record so
+	 * Keep enough room for the complete backend record and V2 provenance so
 	 * discarding it never relies on backend-specific truncation behavior.
 	 */
-	static uint8_t dummybuf[NETBE_MAX_RECORD_SIZE];
+	static uint8_t dummybuf[NETBE_MAX_RECORD_SIZE + sizeof(mbufid_v2_t)];
 	struct iovec iov;
 
 	iov.iov_base = dummybuf;

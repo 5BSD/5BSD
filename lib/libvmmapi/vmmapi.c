@@ -40,6 +40,7 @@
 
 #include <capsicum_helpers.h>
 #include <err.h>
+#include <ctype.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -160,19 +161,30 @@ struct vmctx *
 vm_openf(const char *name, int flags)
 {
 	struct vmctx *vm;
+	size_t namelen;
 	int saved_errno;
 	bool created;
 
+	if (name == NULL) {
+		errno = EINVAL;
+		return (NULL);
+	}
+	namelen = strnlen(name, VM_MAX_NAMELEN + 1);
+	if (namelen > VM_MAX_NAMELEN) {
+		errno = ENAMETOOLONG;
+		return (NULL);
+	}
 	created = false;
 
-	vm = malloc(sizeof(struct vmctx) + strlen(name) + 1);
-	assert(vm != NULL);
+	vm = malloc(sizeof(struct vmctx) + namelen + 1);
+	if (vm == NULL)
+		return (NULL);
 
+	/* No guest memory until vm_setup_memory*(): translations fail. */
+	memset(vm, 0, sizeof(*vm));
 	vm->fd = vm->ctlfd = -1;
-	vm->memflags = 0;
 	vm->name = (char *)(vm + 1);
 	strcpy(vm->name, name);
-	memset(vm->memsegs, 0, sizeof(vm->memsegs));
 
 	if ((vm->ctlfd = vm_ctl_open()) < 0)
 		goto err;
@@ -215,17 +227,98 @@ vm_close(struct vmctx *vm)
 	free(vm);
 }
 
-void
-vm_destroy(struct vmctx *vm)
+int
+vm_destroy_request_checked(struct vmctx *vm)
 {
 	struct vmmctl_vm_destroy vmd;
 
+	if (vm == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
 	memset(&vmd, 0, sizeof(vmd));
 	(void)strlcpy(vmd.name, vm->name, sizeof(vmd.name));
 	if (ioctl(vm->ctlfd, VMMCTL_VM_DESTROY, &vmd) != 0)
-		warn("ioctl(VMMCTL_VM_DESTROY)");
+		return (-1);
 
+	return (0);
+}
+
+int
+vm_destroy_checked(struct vmctx *vm)
+{
+	if (vm_destroy_request_checked(vm) != 0)
+		return (-1);
 	vm_close(vm);
+	return (0);
+}
+
+int
+vm_destroy_identity_request_checked(struct vmctx *vm, uint16_t vmid, uint64_t epoch)
+{
+	struct vmmctl_vm_destroy_identity vmd;
+
+	if (vm == NULL || vmid == 0 || vmid >= HYPERTRACE_MAX_VMS || epoch == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&vmd, 0, sizeof(vmd));
+	/* vm_openf() admitted at most VM_MAX_NAMELEN bytes; this fits. */
+	(void)strlcpy(vmd.name, vm->name, sizeof(vmd.name));
+	vmd.vmid = vmid;
+	vmd.epoch = epoch;
+	if (ioctl(vm->ctlfd, VMMCTL_VM_DESTROY_IDENTITY, &vmd) != 0)
+		return (-1);
+	return (0);
+}
+
+int
+vm_destroy_identity_checked(struct vmctx *vm, uint16_t vmid, uint64_t epoch)
+{
+	if (vm_destroy_identity_request_checked(vm, vmid, epoch) != 0)
+		return (-1);
+	vm_close(vm);
+	return (0);
+}
+
+/* Recovery must not create/reinitialize a VM or auto-load vmm.  The name is
+ * only a lookup hint; the kernel checks the complete lifetime atomically. */
+int
+vm_destroy_name_identity_checked(const char *name, uint16_t vmid, uint64_t epoch)
+{
+	struct vmmctl_vm_destroy_identity vmd;
+	int fd, result, saved_errno;
+
+	if (name == NULL || *name == '\0' || vmid == 0 ||
+	    vmid >= HYPERTRACE_MAX_VMS || epoch == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&vmd, 0, sizeof(vmd));
+	if (strlcpy(vmd.name, name, sizeof(vmd.name)) >= sizeof(vmd.name)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	vmd.vmid = vmid;
+	vmd.epoch = epoch;
+	fd = open("/dev/vmmctl", O_RDWR | O_NOFOLLOW | O_CLOEXEC);
+	if (fd < 0)
+		return (-1);
+	result = ioctl(fd, VMMCTL_VM_DESTROY_IDENTITY, &vmd);
+	saved_errno = errno;
+	(void)close(fd);
+	errno = saved_errno;
+	return (result);
+}
+
+void
+vm_destroy(struct vmctx *vm)
+{
+	if (vm_destroy_checked(vm) != 0) {
+		warn("ioctl(VMMCTL_VM_DESTROY)");
+		if (vm != NULL)
+			vm_close(vm);
+	}
 }
 
 struct vcpu *
@@ -257,11 +350,22 @@ vcpu_id(struct vcpu *vcpu)
 int
 vm_parse_memsize(const char *opt, size_t *ret_memsize)
 {
+	const char *number;
 	char *endptr;
 	size_t optval;
 	int error;
 
+	/* strtoul accepts a minus sign and returns its unsigned negation. */
+	for (number = opt; isspace((unsigned char)*number); number++)
+		;
+	if (*number == '-') {
+		errno = ERANGE;
+		return (-1);
+	}
+	errno = 0;
 	optval = strtoul(opt, &endptr, 0);
+	if (errno == ERANGE)
+		return (-1);
 	if (*opt != '\0' && *endptr == '\0') {
 		/*
 		 * For the sake of backward compatibility if the memory size
@@ -326,7 +430,8 @@ vm_mmap_memseg(struct vmctx *ctx, vm_paddr_t gpa, int segid, vm_ooffset_t off,
 	error = vm_mmap_getnext(ctx, &gpa, &segid, &off, &len, &prot, &flags);
 	if (error == 0 && gpa == memmap.gpa) {
 		if (segid != memmap.segid || off != memmap.segoff ||
-		    prot != memmap.prot || flags != memmap.flags) {
+		    len != memmap.len || prot != memmap.prot ||
+		    flags != memmap.flags) {
 			errno = EEXIST;
 			return (-1);
 		} else {
@@ -401,12 +506,15 @@ cmpseg(size_t len, const char *str, size_t len2, const char *str2)
 }
 
 static int
-vm_alloc_memseg(struct vmctx *ctx, int segid, size_t len, const char *name,
-    int ds_policy, domainset_t *ds_mask, size_t ds_size)
+vm_alloc_memseg_created(struct vmctx *ctx, int segid, size_t len,
+    const char *name, int ds_policy, domainset_t *ds_mask, size_t ds_size,
+    bool *created)
 {
 	struct vm_memseg memseg;
 	size_t n;
 	int error;
+
+	*created = false;
 
 	/*
 	 * If the memory segment has already been created then just return.
@@ -446,7 +554,52 @@ vm_alloc_memseg(struct vmctx *ctx, int segid, size_t len, const char *name,
 	}
 
 	error = ioctl(ctx->fd, VM_ALLOC_MEMSEG, &memseg);
+	*created = error == 0;
 	return (error);
+}
+
+static int
+vm_alloc_memseg(struct vmctx *ctx, int segid, size_t len, const char *name,
+    int ds_policy, domainset_t *ds_mask, size_t ds_size)
+{
+	bool created;
+
+	return (vm_alloc_memseg_created(ctx, segid, len, name, ds_policy,
+	    ds_mask, ds_size, &created));
+}
+
+/*
+ * Release a device-memory segment that is not mapped into the guest.  The
+ * kernel refuses system memory and mapped segments.  Its /dev/vmm.io node is
+ * destroyed asynchronously, so re-creating a segment with the same name at
+ * once can briefly fail with EEXIST; callers may retry.  Without
+ * VM_FREE_MEMSEG in the kernel headers this reports ENOSYS.
+ */
+int
+vm_free_devmem(struct vmctx *ctx, int segid)
+{
+	if (ctx == NULL || !vmmapi_devmem_segid_valid(segid)) {
+		errno = EINVAL;
+		return (-1);
+	}
+#ifdef VM_FREE_MEMSEG
+	{
+		/* Reserved words must be zero (16-byte ABI). */
+		struct vm_free_memseg request;
+
+		memset(&request, 0, sizeof(request));
+		request.segid = segid;
+
+		if (ioctl(ctx->fd, VM_FREE_MEMSEG, &request) != 0)
+			return (-1);
+		ctx->memsegs[segid].host_base = NULL;
+		ctx->memsegs[segid].size = 0;
+		return (0);
+	}
+#else
+	errno = ENOSYS;
+	return (-1);
+#endif
 }
 
 int
@@ -580,6 +733,13 @@ vm_setup_memory_domains(struct vmctx *ctx, enum vm_mmap_style vms,
 		}
 
 		/*
+		 * A domain which begins exactly at VM_LOWMEM_LIMIT lies wholly
+		 * above the hole; it has no low part to map.
+		 */
+		if (gpa == VM_LOWMEM_LIMIT)
+			gpa = VM_HIGHMEM_BASE;
+
+		/*
 		 * If a domain is split by VM_LOWMEM_LIMIT then break
 		 * its segment mapping into two parts, one below VM_LOWMEM_LIMIT
 		 * and one above VM_HIGHMEM_BASE.
@@ -711,7 +871,8 @@ vm_create_devmem(struct vmctx *ctx, int segid, const char *name, size_t len)
 	char pathname[MAXPATHLEN];
 	size_t len2;
 	char *base, *ptr;
-	int fd, error, flags;
+	int fd, error, flags, saved_errno;
+	bool created = false;
 
 	fd = -1;
 	base = MAP_FAILED;
@@ -726,7 +887,8 @@ vm_create_devmem(struct vmctx *ctx, int segid, const char *name, size_t len)
 		goto done;
 	}
 
-	error = vm_alloc_memseg(ctx, segid, len, name, 0, NULL, 0);
+	error = vm_alloc_memseg_created(ctx, segid, len, name, 0, NULL, 0,
+	    &created);
 	if (error)
 		goto done;
 
@@ -755,15 +917,21 @@ vm_create_devmem(struct vmctx *ctx, int segid, const char *name, size_t len)
 
 	/* mmap the devmem region in the host address space */
 	ptr = mmap(base + VM_MMAP_GUARD_SIZE, len, PROT_RW, flags, fd, 0);
-	if (ptr != MAP_FAILED && vmmapi_devmem_segid_valid(segid)) {
+	if (ptr != MAP_FAILED) {
 		ctx->memsegs[segid].host_base = ptr;
 		ctx->memsegs[segid].size = len;
 	}
 done:
+	saved_errno = errno;
 	if (ptr == MAP_FAILED && base != MAP_FAILED)
 		(void)munmap(base, len2);
 	if (fd >= 0)
 		close(fd);
+	/* Release a segment this call allocated rather than strand the slot.
+	 * A pre-existing matching segment belongs to its creator. */
+	if (ptr == MAP_FAILED && created)
+		(void)vm_free_devmem(ctx, segid);
+	errno = saved_errno;
 	return (ptr);
 }
 
@@ -817,12 +985,16 @@ vm_create_devmem_auto(struct vmctx *ctx, const char *name, size_t len,
 		 * query and allocation rather than making the API race-prone.
 		 * vm_alloc_memseg() reports a mismatched pre-existing segment as
 		 * EINVAL, so re-query the slot instead of classifying by errno.
+		 * A slot holding this name is the segment this call allocated
+		 * before its device node or mapping failed: names are unique,
+		 * so it is not a competitor's.  There is no request to free a
+		 * segment, so stop instead of stranding further slots.
 		 */
 		saved_errno = errno;
 		if (vm_get_memseg(ctx, segid, &existing_len, existing,
 		    sizeof(existing)) != 0)
 			return (MAP_FAILED);
-		if (existing_len == 0) {
+		if (existing_len == 0 || strcmp(existing, name) == 0) {
 			errno = saved_errno;
 			return (MAP_FAILED);
 		}
@@ -1081,6 +1253,53 @@ vm_get_cpu_compat(struct vcpu *vcpu, struct vm_cpu_compat *compat)
 	error = vcpu_ioctl(vcpu, VM_GET_CPU_COMPAT, &query);
 	if (error == 0)
 		*compat = query.compat;
+	return (error);
+}
+#endif
+
+#ifdef __aarch64__
+int
+vm_get_arm64_cpu_features(struct vcpu *vcpu,
+    struct vm_arm64_cpu_features *features)
+{
+	struct vm_arm64_cpu_features query;
+	int error;
+
+	if (vcpu == NULL || features == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	bzero(&query, sizeof(query));
+	query.version = VM_ARM64_CPU_FEATURES_VERSION;
+	error = vcpu_ioctl(vcpu, VM_GET_ARM64_CPU_FEATURES, &query);
+	if (error == 0)
+		*features = query;
+	return (error);
+}
+#endif
+
+#ifdef __riscv
+int
+vm_get_riscv_timebase(struct vcpu *vcpu, uint32_t *frequency)
+{
+	struct vm_riscv_timebase query;
+	int error;
+
+	if (vcpu == NULL || frequency == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	bzero(&query, sizeof(query));
+	query.version = VM_RISCV_TIMEBASE_VERSION;
+	error = vcpu_ioctl(vcpu, VM_GET_RISCV_TIMEBASE, &query);
+	if (error == 0) {
+		if (query.version != VM_RISCV_TIMEBASE_VERSION ||
+		    query.frequency == 0) {
+			errno = EPROTO;
+			return (-1);
+		}
+		*frequency = query.frequency;
+	}
 	return (error);
 }
 #endif
@@ -1421,6 +1640,7 @@ vm_set_intinfo(struct vcpu *vcpu, uint64_t info1)
 #endif
 
 #ifdef WITH_VMMAPI_SNAPSHOT
+#ifdef __amd64__
 int
 vm_restart_instruction(struct vcpu *vcpu)
 {
@@ -1428,6 +1648,7 @@ vm_restart_instruction(struct vcpu *vcpu)
 
 	return (vcpu_ioctl(vcpu, VM_RESTART_INSTRUCTION, &arg));
 }
+#endif
 
 int
 vm_snapshot_req(struct vmctx *ctx, struct vm_snapshot_meta *meta)
@@ -1505,6 +1726,32 @@ vm_limit_rights(struct vmctx *ctx)
 	return (0);
 }
 
+/* Export only a read-only VM identity capability for the local forwarder. */
+int
+vm_export_attestation_fd(struct vmctx *ctx)
+{
+	cap_rights_t rights;
+	cap_ioctl_t cmd = VM_GET_ATTESTATION;
+	int fd, error;
+
+	if (ctx == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	fd = fcntl(ctx->fd, F_DUPFD_CLOEXEC, 0);
+	if (fd < 0)
+		return (-1);
+	cap_rights_init(&rights, CAP_IOCTL);
+	if (caph_rights_limit(fd, &rights) != 0 ||
+	    caph_ioctls_limit(fd, &cmd, 1) != 0) {
+		error = errno;
+		close(fd);
+		errno = error;
+		return (-1);
+	}
+	return (fd);
+}
+
 /*
  * Avoid using in new code.  Operations on the fd should be wrapped here so that
  * capability rights can be kept in sync.
@@ -1535,3 +1782,50 @@ vm_get_ioctls(size_t *len)
 	*len = vm_ioctl_ncmds;
 	return (NULL);
 }
+
+uint16_t
+vm_get_vmid(struct vmctx *ctx)
+{
+	if (ioctl(ctx->fd, VM_GET_IDENTIFIER, &ctx->id) < 0)
+		return (0);
+	return (ctx->id);
+}
+
+int
+vm_get_identity(struct vmctx *ctx, uint16_t *vmid, uint64_t *epoch)
+{
+	struct hypertrace_vm_identity identity;
+
+	if (ctx == NULL || vmid == NULL || epoch == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (ioctl(ctx->fd, VM_GET_IDENTITY, &identity) < 0)
+		return (-1);
+	if (identity.vmid == 0 || identity.vmid >= HYPERTRACE_MAX_VMS ||
+	    identity.epoch == 0) {
+		errno = EPROTO;
+		return (-1);
+	}
+	*vmid = identity.vmid;
+	*epoch = identity.epoch;
+	return (0);
+}
+
+#ifdef __amd64__
+/*
+ * Whether any vCPU of this VM incarnation ever entered the guest:
+ * guest_entries == 0 proves it never ran.  The values describe one
+ * (vmid, epoch) incarnation.
+ */
+int
+vm_get_run_witness(struct vmctx *ctx, struct vm_run_witness *witness)
+{
+	if (ctx == NULL || witness == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(witness, 0, sizeof(*witness));
+	return (ioctl(ctx->fd, VM_GET_RUN_WITNESS, witness));
+}
+#endif

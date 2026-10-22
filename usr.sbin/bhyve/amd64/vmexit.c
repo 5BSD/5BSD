@@ -34,6 +34,7 @@
 #include <amd64/vmm/intel/vmcs.h>
 #include <x86/apicreg.h>
 
+#include <pthread.h>
 #include <assert.h>
 #include <err.h>
 #include <errno.h>
@@ -420,6 +421,8 @@ vmexit_suspend(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
 	case VM_SUSPEND_TRIPLEFAULT:
 		exit(BHYVE_EXIT_TRIPLEFAULT);
 	case VM_SUSPEND_DESTROY:
+		if (fbsdrun_cpus_retiring())
+			pthread_exit(NULL);
 		exit(BHYVE_EXIT_ERROR);
 	default:
 		EPRINTLN("vmexit_suspend: invalid reason %d", how);

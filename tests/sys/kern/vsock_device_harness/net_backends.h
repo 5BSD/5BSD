@@ -4,6 +4,7 @@
 
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <stdbool.h>
 
 #include "config.h"
 #include "mevent.h"
@@ -48,12 +49,22 @@ uint64_t netbe_get_cap(net_backend_t *);
 int netbe_set_cap(net_backend_t *, uint64_t, unsigned int);
 size_t netbe_get_vnet_hdr_len(net_backend_t *);
 const char *netbe_checkpoint_identity(net_backend_t *);
+int netbe_checkpoint_rx_quiescent(net_backend_t *);
+int netbe_checkpoint_rx_freeze(net_backend_t *, bool);
 ssize_t netbe_send(net_backend_t *, const struct iovec *, int);
 ssize_t netbe_peek_recvlen(net_backend_t *);
 ssize_t netbe_recv(net_backend_t *, const struct iovec *, int);
 ssize_t netbe_rx_discard(net_backend_t *);
 void netbe_rx_disable(net_backend_t *);
 void netbe_rx_enable(net_backend_t *);
+int netbe_tagging_enabled(net_backend_t *);
+int netbe_tagging_supported(net_backend_t *);
+int netbe_tagging_bind_vm(net_backend_t *, int);
+int netbe_tagging_enable(net_backend_t *);
+int netbe_tagging_v2_supported(net_backend_t *);
+int netbe_tagging_enable_v2(net_backend_t *);
+int netbe_tagging_v2_enabled(net_backend_t *);
+int netbe_tagging_disable(net_backend_t *);
 int netbe_legacy_config(nvlist_t *, const char *);
 
 #endif

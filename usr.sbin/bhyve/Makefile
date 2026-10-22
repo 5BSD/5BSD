@@ -2,6 +2,9 @@
 #
 
 .include <src.opts.mk>
+CFLAGS+=-I${SRCTOP}/sys
+.PATH:  ${SRCTOP}/sys/libkern ${SRCTOP}/sys/cam/ctl
+CFLAGS+=-I${.CURDIR}/../../contrib/lib9p
 
 # bhyve is the underlying hypervisor engine and keeps its name.  The "waspnest"
 # name belongs to the VM capability daemon (system.VM, usr.sbin/BSDVM),
@@ -34,12 +37,14 @@ SRCS=	\
 	ctl_scsi_all.c		\
 	ctl_util.c		\
 	hda_codec.c		\
+	hypertrace.c		\
 	iov.c			\
 	ipc.c			\
 	mem.c			\
 	migration_dirty.c	\
 	migration_precopy.c	\
 	migration_session.c	\
+	migration_receiver.c	\
 	mevent.c		\
 	net_backend_netmap.c	\
 	net_backend_slirp.c	\
@@ -61,6 +66,7 @@ SRCS=	\
 	pci_virtio_crypto.c	\
 	pci_virtio_fs.c		\
 	pci_virtio_gpu.c	\
+	pci_virtio_dtrace.c	\
 	pci_virtio_input.c	\
 	pci_virtio_iommu.c	\
 	pci_virtio_mem.c	\
@@ -136,6 +142,8 @@ SRCS=	\
 	vmexit.c		\
 	vmgenc.c
 
+LDFLAGS+= -l proc -l ctf -l elf -l z -l rtld_db -l pthread -l util
+
 .if ${MK_BHYVE_SNAPSHOT} != "no"
 .PATH:	${.CURDIR}/${MACHINE_CPUARCH}
 SRCS+=	checkpoint_compat.c checkpoint_machine.c checkpoint_cpu.c checkpoint_cpu_machdep.c \
@@ -188,12 +196,19 @@ LIBADD+=	netgraph
 CFLAGS+=-DNO_OPENSSL
 .else
 LIBADD+=	crypto
+.if ${MK_BHYVE_SNAPSHOT} != "no"
+SRCS+= migration_tls.c
+LIBADD+= ssl
+.endif
 CFLAGS+=-DOPENSSL_API_COMPAT=0x10100000L
 .endif
 
 CFLAGS+= -I${BHYVE_SYSDIR}/sys/dev/e1000
 CFLAGS+= -I${BHYVE_SYSDIR}/sys/dev/mii
 CFLAGS+= -I${BHYVE_SYSDIR}/sys/dev/usb/controller
+CFLAGS+= -I${BHYVE_SYSDIR}/sys/dev/virtio/dtrace
+CFLAGS+= -I${SRCTOP}/usr.sbin/dtraced
+
 .if ${MK_BHYVE_SNAPSHOT} != "no"
 CFLAGS+= -I${SRCTOP}/contrib/libucl/include
 CFLAGS+= -DBHYVE_SNAPSHOT
@@ -244,7 +259,7 @@ ${BHYVE_SNAPSHOT_MODE_FILE}: bhyve_snapshot_mode_force
 		:; \
 	else \
 		rm -f ${OBJS} ${PROG}.full; \
-		printf '%s\\n' "${BHYVE_SNAPSHOT_MODE}" >${.TARGET}.tmp && \
+		printf '%s\n' "${BHYVE_SNAPSHOT_MODE}" >${.TARGET}.tmp && \
 		mv ${.TARGET}.tmp ${.TARGET}; \
 	fi
 

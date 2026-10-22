@@ -170,6 +170,8 @@ static struct vcpu_state *vcpu_state;
 static struct vcpu **vcpus;
 static int cur_vcpu, stopped_vcpu;
 static bool gdb_active = false;
+/* Migration ownership of the guest; both are protected by gdb_lock. */
+static bool gdb_migration_fenced, gdb_migration_retired;
 
 struct gdb_reg {
 	enum vm_reg_name id;
@@ -1634,6 +1636,12 @@ update_sw_breakpoint(uint64_t gva, int kind, bool insert)
 				return;
 			}
 			bp = malloc(sizeof(*bp));
+			if (bp == NULL) {
+				if (TAILQ_EMPTY(&breakpoints))
+					set_breakpoint_caps(false);
+				send_error(ENOMEM);
+				return;
+			}
 			bp->gpa = gpa;
 			memcpy(bp->shadow_inst, cp, sizeof(bp->shadow_inst));
 			write_instr(cp, GDB_BP_INSTR, sizeof(bp->shadow_inst));
@@ -1736,6 +1744,10 @@ check_features(const uint8_t *data, size_t len)
 	bool supported;
 
 	str = malloc(len + 1);
+	if (str == NULL) {
+		send_error(ENOMEM);
+		return;
+	}
 	memcpy(str, data, len);
 	str[len] = '\0';
 	next_feature = str;
@@ -2210,6 +2222,14 @@ new_connection(int fd, enum ev_type event __unused, void *arg)
 	}
 
 	pthread_mutex_lock(&gdb_lock);
+	/* A migration owns vCPU suspension and guest memory until rollback;
+	 * after source retirement the vmctx alias must never be used again. */
+	if (gdb_migration_fenced) {
+		close(s);
+		warnx("Refusing GDB connection while migration owns the guest.");
+		pthread_mutex_unlock(&gdb_lock);
+		return;
+	}
 	if (cur_fd != -1) {
 		close(s);
 		warnx("Ignoring additional GDB connection.");
@@ -2242,6 +2262,78 @@ new_connection(int fd, enum ev_type event __unused, void *arg)
 	first_stop = true;
 	report_next_stop = false;
 	gdb_suspend_vcpus();
+	pthread_mutex_unlock(&gdb_lock);
+}
+
+/*
+ * Debugger ownership during migration. Source cutover suspends every vCPU
+ * through the same debug-exit mechanism the debugger uses, copies guest
+ * memory, and may then destroy the VM. A debugger that owns the guest would
+ * conflict with all three: its software breakpoints live in guest RAM and
+ * would be migrated, vCPUs parked in debugger waits never reach the
+ * migration barrier or exit for retirement, and its connection retains the
+ * vmctx. Migration therefore proceeds only while no client is attached, no
+ * breakpoint or single-step is installed, and no vCPU is held by the server
+ * (including a gdb.wait start that never saw a debugger). The fence makes
+ * that state stable: new connections are refused until a rollback releases
+ * it, and retirement makes it permanent and drops the vmctx alias.
+ */
+int
+gdb_migration_fence(const char **reason)
+{
+	int error = 0;
+
+	*reason = NULL;
+	if (!gdb_active)
+		return (0);
+	pthread_mutex_lock(&gdb_lock);
+	if (gdb_migration_retired || gdb_migration_fenced)
+		*reason = "the GDB server is already fenced by a migration";
+	else if (cur_fd != -1)
+		*reason = "a GDB client is attached";
+	else if (!TAILQ_EMPTY(&breakpoints))
+		*reason = "GDB software breakpoints are installed in guest memory";
+	else if (!CPU_EMPTY(&vcpus_suspended) || !CPU_EMPTY(&vcpus_waiting))
+		*reason = "a vCPU is held by the GDB server";
+	else {
+		for (int i = 0; i < guest_ncpus; i++) {
+			if (vcpu_state[i].stepping || vcpu_state[i].stepped ||
+			    vcpu_state[i].hit_swbreak) {
+				*reason = "a GDB single-step or breakpoint event is pending";
+				break;
+			}
+		}
+	}
+	if (*reason != NULL)
+		error = EBUSY;
+	else
+		gdb_migration_fenced = true;
+	pthread_mutex_unlock(&gdb_lock);
+	return (error);
+}
+
+/* Only a source that is runnable again after rollback may reopen debugging. */
+void
+gdb_migration_unfence(void)
+{
+	if (!gdb_active)
+		return;
+	pthread_mutex_lock(&gdb_lock);
+	if (!gdb_migration_retired)
+		gdb_migration_fenced = false;
+	pthread_mutex_unlock(&gdb_lock);
+}
+
+/* Before source destruction: the fence becomes permanent. */
+void
+gdb_migration_retire(void)
+{
+	if (!gdb_active)
+		return;
+	pthread_mutex_lock(&gdb_lock);
+	gdb_migration_fenced = true;
+	gdb_migration_retired = true;
+	ctx = NULL;
 	pthread_mutex_unlock(&gdb_lock);
 }
 
@@ -2325,6 +2417,8 @@ init_gdb(struct vmctx *_ctx)
 	TAILQ_INIT(&breakpoints);
 	vcpus = calloc(guest_ncpus, sizeof(*vcpus));
 	vcpu_state = calloc(guest_ncpus, sizeof(*vcpu_state));
+	if (vcpus == NULL || vcpu_state == NULL)
+		errx(4, "Failed to allocate memory");
 	if (wait) {
 		/*
 		 * Set vcpu 0 in vcpus_suspended.  This will trigger the

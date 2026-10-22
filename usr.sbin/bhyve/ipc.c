@@ -60,7 +60,70 @@ SET_DECLARE(ipc_cmd_set, struct ipc_command);
 static struct ipc_thread_ctx {
 	struct vmctx *vmctx;
 	int sockfd;
+	bool quarantined;
+	/* Reversible quarantine of a failed pre-COMMIT rollback. */
+	bool wedged;
+	struct vmctx *wedged_ctx;
 } thr_ctx;
+
+/* Bind the endpoint before Capsicum, but do not admit commands while main
+ * still restores time or resumes vCPUs using the original context. */
+static pthread_mutex_t ipc_startup_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t ipc_startup_cond = PTHREAD_COND_INITIALIZER;
+static bool ipc_startup_ready;
+
+void
+ipc_startup_complete(void)
+{
+	pthread_mutex_lock(&ipc_startup_mutex);
+	ipc_startup_ready = true;
+	pthread_cond_broadcast(&ipc_startup_cond);
+	pthread_mutex_unlock(&ipc_startup_mutex);
+}
+
+static void
+ipc_wait_for_startup(void)
+{
+	pthread_mutex_lock(&ipc_startup_mutex);
+	while (!ipc_startup_ready)
+		pthread_cond_wait(&ipc_startup_cond, &ipc_startup_mutex);
+	pthread_mutex_unlock(&ipc_startup_mutex);
+}
+
+void
+ipc_quarantine_vm(void)
+{
+	/* Only the serialized IPC handler calls this. Recovery owns any live
+	 * context from here; ordinary commands must never receive that alias. */
+	thr_ctx.quarantined = true;
+	thr_ctx.wedged = false;
+	thr_ctx.wedged_ctx = NULL;
+	thr_ctx.vmctx = NULL;
+}
+
+void
+ipc_wedge_vm(void)
+{
+	/* Never weaken an irreversible retirement quarantine. */
+	if (thr_ctx.quarantined)
+		return;
+	thr_ctx.wedged = true;
+	thr_ctx.wedged_ctx = thr_ctx.vmctx;
+	thr_ctx.quarantined = true;
+	thr_ctx.vmctx = NULL;
+}
+
+int
+ipc_unwedge_vm(void)
+{
+	if (!thr_ctx.quarantined || !thr_ctx.wedged)
+		return (EPERM);
+	thr_ctx.vmctx = thr_ctx.wedged_ctx;
+	thr_ctx.wedged_ctx = NULL;
+	thr_ctx.wedged = false;
+	thr_ctx.quarantined = false;
+	return (0);
+}
 
 static nvlist_t *
 ipc_get_vm_pid(struct vmctx *ctx __unused, const nvlist_t *nvl __unused)
@@ -78,6 +141,18 @@ handle_message(struct vmctx *ctx, const char *cmd, nvlist_t *nvl)
 {
 	struct ipc_command **ipc_cmd;
 
+	if (thr_ctx.quarantined && strcmp(cmd, "get_vm_pid") != 0 &&
+	    strcmp(cmd, "migrate_recover") != 0 &&
+	    !(thr_ctx.wedged && strcmp(cmd, "migrate_repair") == 0)) {
+		nvlist_t *reply = nvlist_create(0);
+		nvlist_add_string(reply, "error", thr_ctx.wedged ?
+		    "VM is quarantined after a failed migration rollback; use migrate_repair" :
+		    "VM is quarantined after migration retirement");
+		nvlist_add_number(reply, "error_code", ECANCELED);
+		return (reply);
+	}
+	if (thr_ctx.quarantined)
+		ctx = NULL;
 	IPC_COMMAND_FOREACH(ipc_cmd, ipc_cmd_set)
 	{
 		if (strcmp(cmd, (*ipc_cmd)->name) == 0)
@@ -100,6 +175,7 @@ ipc_thread(void *param)
 
 	pthread_set_name_np(pthread_self(), "IPC thread");
 	ctx = (struct ipc_thread_ctx *)param;
+	ipc_wait_for_startup();
 	for (;;) {
 		fd = accept4(ctx->sockfd, NULL, NULL, SOCK_CLOEXEC);
 		if (fd < 0) {

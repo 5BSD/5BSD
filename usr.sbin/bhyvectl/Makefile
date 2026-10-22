@@ -15,7 +15,9 @@ LIBADD=	vmmapi util nv
 CFLAGS+= -I${.CURDIR} -I${SRCTOP}/sys/amd64/vmm
 
 .if ${MK_BHYVE_SNAPSHOT} != "no"
-CFLAGS+= -DBHYVE_SNAPSHOT
+CFLAGS+= -DBHYVE_SNAPSHOT -I${SRCTOP}/sys
+# --migrate-journal validates handoff journal entries (crc32).
+LIBADD+= z
 
 # usr.sbin/bhyve/snapshot.h needs ucl header
 CFLAGS+= -I${SRCTOP}/contrib/libucl/include

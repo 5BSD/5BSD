@@ -75,8 +75,9 @@ bhyvectl_opt_desc(int opt __unused)
 	return ("???");
 }
 
-void
+int
 bhyvectl_md_main(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
     int vcpuid __unused, bool get_all __unused)
 {
+	return (0);
 }

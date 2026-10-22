@@ -31,7 +31,10 @@
 #include <sys/select.h>
 #include <sys/uio.h>
 #include <sys/ioctl.h>
+#include <vmmapi.h>
 #include <machine/vmm_snapshot.h>
+#include <sys/mbufid.h>
+#include <dev/virtio/network/virtio_net_5bsd.h>
 #include <net/ethernet.h>
 #include <net/if.h> /* IFNAMSIZ */
 #include <netinet/in.h>
@@ -69,6 +72,11 @@
 #ifdef BHYVE_SNAPSHOT
 #include "snapshot.h"
 #endif
+
+_Static_assert(sizeof(mbufid_t) == VIRTIO_NET_5BSD_ID_LEN,
+    "5BSD packet ID wire size must match mbufid_t");
+_Static_assert(sizeof(mbufid_v2_t) == VIRTIO_NET_5BSD_V2_ID_LEN,
+    "5BSD V2 packet ID wire size must match mbufid_v2_t");
 
 #define VTNET_RINGSZ	1024
 
@@ -293,9 +301,14 @@ struct pci_vtnet_softc {
 	uint8_t		rss_key[VTNET_RSS_KEY_SIZE];
 	uint8_t		vsc_rx_buf[VTNET_MAX_PKT_LEN +
 			    sizeof(struct virtio_net_rxhdr) +
-			    sizeof(struct virtio_net_hash_report)];
+			    sizeof(struct virtio_net_hash_report) +
+			    VIRTIO_NET_5BSD_V2_ID_LEN];
 	size_t		rx_staged_len;
 	uint64_t	rx_bad_backend_records;
+	bool		packet_id_enabled;
+	bool		packet_id_v2_enabled;
+	bool		v2_rx_frozen;
+	bool		snapshot_locks_held;
 
 	size_t		vhdrlen;
 	size_t		be_vhdrlen;
@@ -723,6 +736,50 @@ static int pci_vtnet_resume_device(void *);
 static void pci_vtnet_resume_complete(void *);
 static bool pci_vtnet_process_ctlq(struct pci_vtnet_softc *,
     struct vqueue_info *);
+
+static int
+pci_vtnet_tagging_bind(struct pci_vtnet_softc *sc)
+{
+	int fd, ret, saved_errno;
+
+	fd = vm_export_attestation_fd(sc->vsc_vs.vs_pi->pi_vmctx);
+	if (fd < 0)
+		return (-1);
+	ret = netbe_tagging_bind_vm(sc->vsc_be, fd);
+	saved_errno = errno;
+	close(fd);
+	if (ret != 0)
+		errno = saved_errno;
+	return (ret);
+}
+
+static int
+pci_vtnet_tagging_enable(struct pci_vtnet_softc *sc, bool v2)
+{
+
+	if (pci_vtnet_tagging_bind(sc) != 0)
+		return (-1);
+	return (v2 ? netbe_tagging_enable_v2(sc->vsc_be) :
+	    netbe_tagging_enable(sc->vsc_be));
+}
+
+static size_t
+pci_vtnet_packet_id_len(const struct pci_vtnet_softc *sc)
+{
+	return (sc->packet_id_v2_enabled ? VIRTIO_NET_5BSD_V2_ID_LEN :
+	    sc->packet_id_enabled ? VIRTIO_NET_5BSD_ID_LEN : 0);
+}
+
+static bool
+pci_vtnet_packet_id_valid(const mbufid_v2_t *id, bool v2,
+    bool from_guest)
+{
+	if (v2)
+		return (mbufid_v2_isempty(id) || mbufid_v2_isstamped(id) ||
+		    (from_guest && mbufid_v2_isfresh(id)));
+	return (mbufid_isempty(&id->mv2_id) ||
+	    mbufid_iscanonical(&id->mv2_id));
+}
 #ifdef BHYVE_SNAPSHOT
 static int pci_vtnet_pause(void *);
 static int pci_vtnet_resume(void *);
@@ -788,6 +845,7 @@ static void
 pci_vtnet_reset(void *vsc)
 {
 	struct pci_vtnet_softc *sc = vsc;
+	bool tagging_disable_failed = false;
 
 	DPRINTF(("vtnet: device reset requested !"));
 
@@ -812,8 +870,14 @@ pci_vtnet_reset(void *vsc)
 	 */
 	pthread_mutex_lock(&sc->rx_mtx);
 	sc->features_negotiated = false;
-	if (sc->vsc_be != NULL)
+	if (sc->vsc_be != NULL) {
 		netbe_rx_disable(sc->vsc_be);
+		/* Reset must not leave the backend in a tagged wire format. */
+		if (netbe_tagging_disable(sc->vsc_be) != 0) {
+			WPRINTF(("vtnet: cannot disable backend packet tagging"));
+			tagging_disable_failed = true;
+		}
+	}
 
 	/*
 	 * The worker remains fenced by resetting while the common queues and
@@ -827,7 +891,11 @@ pci_vtnet_reset(void *vsc)
 	 * sc->resetting.
 	 */
 	vi_reset_dev(&sc->vsc_vs);
+	if (tagging_disable_failed)
+		vi_set_needs_reset(&sc->vsc_vs);
 	sc->vsc_features = 0;
+	sc->packet_id_enabled = false;
+	sc->packet_id_v2_enabled = false;
 	sc->rx_merge = 0;
 	sc->vhdrlen = pci_vtnet_header_len(sc, 0);
 	sc->rx_active_pairs = 1;
@@ -993,6 +1061,8 @@ pci_vtnet_iov_read(const struct iovec *iov, int niov, size_t offset,
 			continue;
 		}
 		copy = MIN(len, iov[i].iov_len - offset);
+		if (iov[i].iov_base == NULL)
+			return (false);
 		memcpy(dst, (const uint8_t *)iov[i].iov_base + offset, copy);
 		dst += copy;
 		len -= copy;
@@ -1016,6 +1086,8 @@ pci_vtnet_iov_write(const struct iovec *iov, int niov, size_t offset,
 			continue;
 		}
 		copy = MIN(len, iov[i].iov_len - offset);
+		if (iov[i].iov_base == NULL)
+			return (false);
 		memcpy((uint8_t *)iov[i].iov_base + offset, src, copy);
 		src += copy;
 		len -= copy;
@@ -1341,6 +1413,27 @@ pci_vtnet_all_rxqs_resetting(struct pci_vtnet_softc *sc)
 	return (true);
 }
 
+/* A failed discard must not spin on the same malformed backend record.
+ * EAGAIN means the record disappeared after peek; a persistent backend
+ * failure requires reset before the receive path can safely resume. */
+static bool
+pci_vtnet_discard_invalid_record(struct pci_vtnet_softc *sc)
+{
+	ssize_t discarded;
+
+	discarded = netbe_rx_discard(sc->vsc_be);
+	if (discarded > 0)
+		return (true);
+	if (discarded < 0 && errno != EAGAIN && errno != EWOULDBLOCK &&
+	    errno != EINTR) {
+		VIRTIO_PROBE_ERROR(sc->vsc_vs.vs_vc->vc_name,
+		    "backend-discard-failed");
+		netbe_rx_disable(sc->vsc_be);
+		vi_set_needs_reset(&sc->vsc_vs);
+	}
+	return (false);
+}
+
 static void
 pci_vtnet_rx(struct pci_vtnet_softc *sc)
 {
@@ -1434,7 +1527,8 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 				return;
 			}
 			if ((size_t)backend_len >
-			    VTNET_MAX_PKT_LEN + sc->be_vhdrlen) {
+			    VTNET_MAX_PKT_LEN + sc->be_vhdrlen +
+			    pci_vtnet_packet_id_len(sc)) {
 				/*
 				 * Do not leave an impossible record permanently
 				 * at the head of the backend queue.
@@ -1446,10 +1540,12 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 					    (uintmax_t)sc->rx_bad_backend_records));
 				VIRTIO_PROBE_ERROR(sc->vsc_vs.vs_vc->vc_name,
 				    "oversized-backend-record");
-				(void)netbe_rx_discard(sc->vsc_be);
+				if (!pci_vtnet_discard_invalid_record(sc))
+					return;
 				continue;
 			}
-			if ((size_t)backend_len < sc->be_vhdrlen) {
+			if ((size_t)backend_len < sc->be_vhdrlen +
+			    pci_vtnet_packet_id_len(sc)) {
 				if (pci_vtnet_bad_backend_record_report(sc))
 					WPRINTF(("vtnet: dropping truncated backend "
 					    "header (%zd bytes, count %ju)",
@@ -1457,7 +1553,8 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 					    (uintmax_t)sc->rx_bad_backend_records));
 				VIRTIO_PROBE_ERROR(sc->vsc_vs.vs_vc->vc_name,
 				    "truncated-backend-header");
-				(void)netbe_rx_discard(sc->vsc_be);
+				if (!pci_vtnet_discard_invalid_record(sc))
+					return;
 				continue;
 			}
 
@@ -1474,10 +1571,45 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			if (rlen != backend_len) {
 				WPRINTF(("netbe_recv: expected %zd bytes, got %zd",
 				    backend_len, rlen));
+				if (rlen <= 0) {
+					if (rlen < 0 && errno != EAGAIN &&
+					    errno != EWOULDBLOCK && errno != EINTR) {
+						VIRTIO_PROBE_ERROR(
+						    sc->vsc_vs.vs_vc->vc_name,
+						    "backend-read-failed");
+						netbe_rx_disable(sc->vsc_be);
+						vi_set_needs_reset(&sc->vsc_vs);
+					}
+					return;
+				}
 				continue;
 			}
-			frame_len = (size_t)rlen - sc->be_vhdrlen;
-			if (sc->vhdrlen != sc->be_vhdrlen) {
+			frame_len = (size_t)rlen - sc->be_vhdrlen -
+			    pci_vtnet_packet_id_len(sc);
+			if (sc->packet_id_enabled) {
+				mbufid_v2_t mid;
+				size_t standard_len;
+
+				standard_len = sc->vhdrlen -
+				    pci_vtnet_packet_id_len(sc);
+				memset(&mid, 0, sizeof(mid));
+				memcpy(&mid, sc->vsc_rx_buf + sc->be_vhdrlen,
+				    pci_vtnet_packet_id_len(sc));
+				if (!pci_vtnet_packet_id_valid(&mid,
+				    sc->packet_id_v2_enabled, false)) {
+					DPRINTF(("vtnet: malformed backend packet ID"));
+					VIRTIO_PROBE_ERROR(sc->vsc_vs.vs_vc->vc_name,
+					    "malformed-backend-packet-id");
+					sc->rx_staged_len = 0;
+					continue;
+				}
+				memmove(sc->vsc_rx_buf + sc->vhdrlen,
+				    sc->vsc_rx_buf + sc->be_vhdrlen +
+				    pci_vtnet_packet_id_len(sc), frame_len);
+				memset(sc->vsc_rx_buf, 0, standard_len);
+				memcpy(sc->vsc_rx_buf + standard_len, &mid,
+				    pci_vtnet_packet_id_len(sc));
+			} else if (sc->vhdrlen != sc->be_vhdrlen) {
 				memmove(sc->vsc_rx_buf + sc->vhdrlen,
 				    sc->vsc_rx_buf + sc->be_vhdrlen,
 				    frame_len);
@@ -1739,6 +1871,7 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 	struct iovec *siov = iov;
 	struct vi_req req;
 	struct virtio_net_rxhdr hdr;
+	mbufid_v2_t packet_id;
 	uint8_t gso_type;
 	uint32_t flow_hash;
 	size_t send_len, total_len;
@@ -1773,6 +1906,23 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 		return;
 	}
 	gso_type = hdr.vrh_gso_type;
+	memset(&packet_id, 0, sizeof(packet_id));
+	if (sc->packet_id_enabled &&
+	    !pci_vtnet_iov_read(iov, n,
+	    sc->vhdrlen - pci_vtnet_packet_id_len(sc), &packet_id,
+	    pci_vtnet_packet_id_len(sc))) {
+		vq_relchain_req(vq, &req, 0);
+		return;
+	}
+	if (sc->packet_id_enabled &&
+	    !pci_vtnet_packet_id_valid(&packet_id,
+	    sc->packet_id_v2_enabled, true)) {
+		DPRINTF(("vtnet: malformed guest packet ID"));
+		VIRTIO_PROBE_ERROR(sc->vsc_vs.vs_vc->vc_name,
+		    "malformed-guest-packet-id");
+		vq_relchain_req(vq, &req, 0);
+		return;
+	}
 	flow_hash = pci_vtnet_iov_flow_hash(iov, n, sc->vhdrlen);
 	/*
 	 * Always separate the guest header from the packet.  If the backend
@@ -1782,7 +1932,16 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 	 * device-readable descriptors.
 	 */
 	siov = iov_trim_hdr(siov, &n, sc->vhdrlen);
-	if (siov != NULL && sc->be_vhdrlen != 0) {
+	if (siov != NULL && sc->packet_id_enabled) {
+		send_iov[0] = (struct iovec){
+		    .iov_base = &packet_id,
+		    .iov_len = pci_vtnet_packet_id_len(sc)
+		};
+		for (i = 0; i < n; i++)
+			send_iov[i + 1] = siov[i];
+		siov = send_iov;
+		n++;
+	} else if (siov != NULL && sc->be_vhdrlen != 0) {
 		hdr.vrh_flags &= VTNET_HDR_F_NEEDS_CSUM;
 		send_iov[0] = (struct iovec){
 		    .iov_base = &hdr,
@@ -1796,7 +1955,9 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 
 	send_len = siov != NULL ? count_iov(siov, n) : 0;
 	if (siov != NULL && pci_vtnet_frame_within_mtu(sc, siov, n,
-	    sc->be_vhdrlen, send_len, gso_type) && sc->vsc_be != NULL) {
+	    sc->be_vhdrlen +
+	    pci_vtnet_packet_id_len(sc),
+	    send_len, gso_type) && sc->vsc_be != NULL) {
 		sent = netbe_send(sc->vsc_be, siov, n);
 		if (sent == (ssize_t)send_len && (vq->vq_num & 1) != 0 &&
 		    vq->vq_num < pci_vtnet_ctlq_index(sc))
@@ -2218,7 +2379,7 @@ pci_vtnet_process_ctlq(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 	uint8_t command[VTNET_RSS_COMMAND_MAX], ack;
 	uint16_t pairs;
 	size_t insize, outsize;
-	bool command_valid;
+	bool activated, command_valid, packet_id_v2_request, rx_locked;
 	int budget, n;
 
 	if (vq->vq_num != pci_vtnet_ctlq_index(sc) ||
@@ -2253,6 +2414,8 @@ pci_vtnet_process_ctlq(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 			insize = count_iov(iov, req.readable);
 			outsize = count_iov(&iov[req.readable], req.writable);
 			ack = VTNET_CTRL_ERR;
+			activated = false;
+			rx_locked = false;
 			command_valid = insize <= sizeof(command) &&
 			    insize >= VTNET_CTRL_HEADER_SIZE &&
 			    outsize >= sizeof(ack) &&
@@ -2266,7 +2429,78 @@ pci_vtnet_process_ctlq(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 			    command[VTNET_CTRL_CLASS_OFFSET] : UINT8_MAX,
 			    command_valid ?
 			    command[VTNET_CTRL_COMMAND_OFFSET] : UINT8_MAX));
+			packet_id_v2_request = command_valid &&
+			    command[VTNET_CTRL_CLASS_OFFSET] ==
+			    VIRTIO_NET_CTRL_5BSD &&
+			    command[VTNET_CTRL_COMMAND_OFFSET] ==
+			    VIRTIO_NET_CTRL_5BSD_PACKET_ID_V2;
 			if (command_valid &&
+			    command[VTNET_CTRL_CLASS_OFFSET] ==
+			    VIRTIO_NET_CTRL_5BSD &&
+			    (packet_id_v2_request ||
+			    command[VTNET_CTRL_COMMAND_OFFSET] ==
+			    VIRTIO_NET_CTRL_5BSD_PACKET_ID) &&
+			    insize == VIRTIO_NET_5BSD_CMD_LEN &&
+			    memcmp(command + VTNET_CTRL_HEADER_SIZE,
+			    packet_id_v2_request ? VIRTIO_NET_5BSD_V2_MAGIC :
+			    VIRTIO_NET_5BSD_MAGIC,
+			    VIRTIO_NET_5BSD_MAGIC_LEN) == 0 &&
+			    command[VTNET_CTRL_HEADER_SIZE +
+			    VIRTIO_NET_5BSD_MAGIC_LEN] ==
+			    (packet_id_v2_request ? VIRTIO_NET_5BSD_V2_ID_LEN :
+			    VIRTIO_NET_5BSD_ID_LEN) &&
+			    (sc->vsc_features & VIRTIO_F_VERSION_1) != 0 &&
+			    sc->vsc_be != NULL && sc->be_vhdrlen == 0 &&
+			    (packet_id_v2_request ?
+			    netbe_tagging_v2_supported(sc->vsc_be) :
+			    netbe_tagging_supported(sc->vsc_be))) {
+				/*
+				 * The guest issues this before publishing any data
+				 * buffers.  Do not change framing across queued data.
+				 */
+				pthread_mutex_lock(&sc->rx_mtx);
+				rx_locked = true;
+				if (sc->packet_id_enabled &&
+				    sc->packet_id_v2_enabled ==
+				    packet_id_v2_request) {
+					/* An exact retry does not change framing. */
+					ack = VTNET_CTRL_OK;
+				} else if (!sc->packet_id_enabled &&
+				    sc->rx_staged_len == 0) {
+					bool empty = true;
+
+					for (uint16_t pair = 0;
+					    pair < sc->vsc_max_pairs; pair++) {
+						struct vqueue_info *rx, *tx;
+
+						rx = &sc->vsc_queues[
+						    pci_vtnet_rxq_index(pair)];
+						tx = &sc->vsc_queues[
+						    pci_vtnet_txq_index(pair)];
+						if ((vq_ring_ready(rx) &&
+						    vq_has_descs(rx)) ||
+						    (vq_ring_ready(tx) &&
+						    vq_has_descs(tx))) {
+							empty = false;
+							break;
+						}
+					}
+					if (empty &&
+				    pci_vtnet_tagging_enable(sc,
+				    packet_id_v2_request) == 0 &&
+				    netbe_tagging_enabled(sc->vsc_be) &&
+				    netbe_tagging_v2_enabled(sc->vsc_be) ==
+				    packet_id_v2_request) {
+						sc->packet_id_enabled = true;
+						sc->packet_id_v2_enabled =
+						    packet_id_v2_request;
+						sc->vhdrlen +=
+						    pci_vtnet_packet_id_len(sc);
+						activated = true;
+						ack = VTNET_CTRL_OK;
+					}
+				}
+			} else if (command_valid &&
 			    command[VTNET_CTRL_CLASS_OFFSET] == VTNET_CTRL_MQ &&
 			    command[VTNET_CTRL_COMMAND_OFFSET] ==
 			    VTNET_CTRL_MQ_VQ_PAIRS_SET &&
@@ -2313,9 +2547,24 @@ pci_vtnet_process_ctlq(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 			if (outsize < sizeof(ack) ||
 			    !pci_vtnet_iov_write(&iov[req.readable],
 			    req.writable, 0, &ack, sizeof(ack))) {
+				if (activated) {
+					if (netbe_tagging_disable(sc->vsc_be) != 0) {
+						netbe_rx_disable(sc->vsc_be);
+						vi_set_needs_reset(&sc->vsc_vs);
+					} else {
+						sc->vhdrlen -=
+						    pci_vtnet_packet_id_len(sc);
+						sc->packet_id_enabled = false;
+						sc->packet_id_v2_enabled = false;
+					}
+				}
+				if (rx_locked)
+					pthread_mutex_unlock(&sc->rx_mtx);
 				vq_relchain_req(vq, &req, 0);
 				continue;
 			}
+			if (rx_locked)
+				pthread_mutex_unlock(&sc->rx_mtx);
 			vq_relchain_req(vq, &req, sizeof(ack));
 			DPRINTF(("vtnet: control complete idx=%u ack=%u used=%u "
 			    "published=%u", req.idx, ack, vq->vq_next_used,
@@ -2715,6 +2964,13 @@ pci_vtnet_apply_features(struct pci_vtnet_softc *sc,
 	}
 
 	sc->vsc_features = negotiated_features;
+	if (sc->vsc_be != NULL && netbe_tagging_enabled(sc->vsc_be)) {
+		/* Ordinary VirtIO framing cannot consume the TAP ID prefix. */
+		sc->features_negotiated = false;
+		sc->tx_features_negotiated = false;
+		vi_set_needs_reset(&sc->vsc_vs);
+		return (false);
+	}
 
 	sc->vhdrlen = pci_vtnet_header_len(sc, negotiated_features);
 	sc->rx_merge =
@@ -2883,7 +3139,7 @@ pci_vtnet_resume_device(void *vsc)
 
 #ifdef BHYVE_SNAPSHOT
 #define	VTNET_SNAPSHOT_MAGIC	0x3154454eU	/* "NET1" on disk */
-#define	VTNET_SNAPSHOT_VERSION	2U
+#define	VTNET_SNAPSHOT_VERSION	4U
 
 static int
 pci_vtnet_pause(void *vsc)
@@ -2911,9 +3167,23 @@ pci_vtnet_pause(void *vsc)
 	 * them in the established rx-then-tx order after the worker is fenced.
 	 */
 	pthread_mutex_lock(&sc->rx_mtx);
+	if (sc->packet_id_v2_enabled) {
+		error = sc->v2_rx_frozen ? EBUSY :
+		    netbe_checkpoint_rx_freeze(sc->vsc_be, true);
+		if (error != 0) {
+			pthread_mutex_unlock(&sc->rx_mtx);
+			pthread_mutex_lock(&sc->tx_mtx);
+			sc->tx_control_pause = sc->vsc_vs.vs_suspended;
+			pthread_cond_signal(&sc->tx_cond);
+			pthread_mutex_unlock(&sc->tx_mtx);
+			return (error);
+		}
+		sc->v2_rx_frozen = true;
+	}
 	if (sc->vsc_be != NULL)
 		netbe_rx_disable(sc->vsc_be);
 	pthread_mutex_lock(&sc->tx_mtx);
+	sc->snapshot_locks_held = true;
 	return (0);
 }
 
@@ -2921,6 +3191,7 @@ static int
 pci_vtnet_resume(void *vsc)
 {
 	struct pci_vtnet_softc *sc = vsc;
+	int error;
 
 	DPRINTF(("vtnet: device resume requested !\n"));
 
@@ -2930,11 +3201,25 @@ pci_vtnet_resume(void *vsc)
 	 * acquires these locks to serialize staged host state, but releasing the
 	 * checkpoint must not restart TX until the guest explicitly resumes.
 	 */
-	sc->tx_control_pause = sc->vsc_vs.vs_suspended;
+	if (!sc->snapshot_locks_held) {
+		/* A failed thaw released these locks while PCI kept pause ownership.
+		 * A later retry may run on another control thread. */
+		pthread_mutex_lock(&sc->rx_mtx);
+		pthread_mutex_lock(&sc->tx_mtx);
+	}
+	error = 0;
+	if (sc->v2_rx_frozen) {
+		error = netbe_checkpoint_rx_freeze(sc->vsc_be, false);
+		if (error == 0)
+			sc->v2_rx_frozen = false;
+	}
+	if (error == 0)
+		sc->tx_control_pause = sc->vsc_vs.vs_suspended;
 	pthread_mutex_unlock(&sc->tx_mtx);
 	/* The RX lock should have been acquired in vtnet_pause. */
 	pthread_mutex_unlock(&sc->rx_mtx);
-	return (0);
+	sc->snapshot_locks_held = false;
+	return (error);
 }
 
 struct pci_vtnet_snapshot_backup {
@@ -2957,12 +3242,16 @@ struct pci_vtnet_snapshot_backup {
 	uint8_t rss_key_length;
 	uint8_t rss_key[VTNET_RSS_KEY_SIZE];
 	uint8_t rx_buf[VTNET_MAX_PKT_LEN + sizeof(struct virtio_net_rxhdr) +
-	    sizeof(struct virtio_net_hash_report)];
+	    sizeof(struct virtio_net_hash_report) + VIRTIO_NET_5BSD_V2_ID_LEN];
 	bool features_negotiated;
 	bool tx_features_negotiated;
 	bool tx_control_pause;
 	bool rss_enabled;
 	bool hash_configured;
+	bool packet_id_enabled;
+	bool packet_id_v2_enabled;
+	bool backend_tagging_enabled;
+	bool backend_tagging_v2_enabled;
 	struct vqueue_info *tx_current_vq;
 };
 
@@ -2996,6 +3285,12 @@ pci_vtnet_snapshot_backup(struct pci_vtnet_softc *sc,
 	backup->tx_control_pause = sc->tx_control_pause;
 	backup->rss_enabled = sc->rss_enabled;
 	backup->hash_configured = sc->hash_configured;
+	backup->packet_id_enabled = sc->packet_id_enabled;
+	backup->packet_id_v2_enabled = sc->packet_id_v2_enabled;
+	backup->backend_tagging_enabled = sc->vsc_be != NULL &&
+	    netbe_tagging_enabled(sc->vsc_be);
+	backup->backend_tagging_v2_enabled = sc->vsc_be != NULL &&
+	    netbe_tagging_v2_enabled(sc->vsc_be);
 	backup->tx_current_vq = sc->tx_current_vq;
 }
 
@@ -3029,7 +3324,29 @@ pci_vtnet_snapshot_restore_backup(struct pci_vtnet_softc *sc,
 	sc->tx_control_pause = backup->tx_control_pause;
 	sc->rss_enabled = backup->rss_enabled;
 	sc->hash_configured = backup->hash_configured;
+	sc->packet_id_enabled = backup->packet_id_enabled;
+	sc->packet_id_v2_enabled = backup->packet_id_v2_enabled;
 	sc->tx_current_vq = backup->tx_current_vq;
+}
+
+static int
+pci_vtnet_v2_tx_quiescent(struct pci_vtnet_softc *sc)
+{
+	if (!sc->packet_id_v2_enabled)
+		return (0);
+	for (uint16_t pair = 0; pair < sc->vsc_max_pairs; pair++) {
+		struct vqueue_info *tx =
+		    &sc->vsc_queues[pci_vtnet_txq_index(pair)];
+		bool pending;
+		int error;
+
+		error = vq_checkpoint_has_descs(tx, &pending);
+		if (error != 0)
+			return (error);
+		if (pending)
+			return (EBUSY);
+	}
+	return (0);
 }
 
 static int
@@ -3041,14 +3358,53 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	struct pci_vtnet_softc *sc = vsc;
 	struct pci_vtnet_snapshot_backup *backup;
 	struct virtio_net_config config, destination_config;
-	uint8_t features_negotiated, hash_configured, rss_enabled;
+	uint8_t features_negotiated, hash_configured, packet_id_enabled,
+	    packet_id_v2_enabled, rss_enabled;
 	uint8_t rx_merge;
-	bool backend_touched;
+	bool backend_touched, backend_tagging_touched;
 	uint32_t be_vhdrlen, magic, rx_staged_len, version, vhdrlen;
 
 	DPRINTF(("vtnet: device snapshot requested !\n"));
+	if (meta == NULL)
+		return (EINVAL);
+	if (sc->packet_id_enabled != (sc->vsc_be != NULL &&
+	    netbe_tagging_enabled(sc->vsc_be)))
+		return (EIO);
+	if (sc->packet_id_v2_enabled != (sc->vsc_be != NULL &&
+	    netbe_tagging_v2_enabled(sc->vsc_be)))
+		return (EIO);
+	if (meta->op == VM_SNAPSHOT_SAVE && sc->packet_id_enabled &&
+	    sc->rx_staged_len != 0) {
+		mbufid_t mid;
+
+		/* A V2 stamp may be stale after VM epoch/key rotation. */
+		if (sc->packet_id_v2_enabled)
+			return (EBUSY);
+		if (sc->vhdrlen < sizeof(mid) ||
+		    sc->rx_staged_len < sc->vhdrlen ||
+		    sc->rx_staged_len > sizeof(sc->vsc_rx_buf))
+			return (EINVAL);
+		memcpy(&mid, sc->vsc_rx_buf + sc->vhdrlen -
+		    sizeof(mid), sizeof(mid));
+		if (!mbufid_isempty(&mid) && !mbufid_iscanonical(&mid))
+			return (EINVAL);
+	}
+	if (meta->op == VM_SNAPSHOT_SAVE && sc->packet_id_v2_enabled) {
+		/* A TAP peek may hold a V2 record outside the saved device state. */
+		ret = netbe_checkpoint_rx_quiescent(sc->vsc_be);
+		if (ret != 0)
+			return (ret);
+		/* The guest rekeys mbuf tags after restore, but it cannot rebase
+		 * V2 sidecars already committed to a TX descriptor. A destination
+		 * with a different per-boot MAC key would reject those packets.
+		 * Capture only after the paused worker has drained every TX ring. */
+		ret = pci_vtnet_v2_tx_quiescent(sc);
+		if (ret != 0)
+			return (ret);
+	}
 	backup = NULL;
 	backend_touched = false;
+	backend_tagging_touched = false;
 	if (vm_snapshot_is_loading(meta)) {
 		backup = malloc(sizeof(*backup));
 		if (backup == NULL)
@@ -3067,7 +3423,8 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	SNAPSHOT_LE32_OR_LEAVE(magic, meta, ret, done);
 	SNAPSHOT_LE32_OR_LEAVE(version, meta, ret, done);
 	if (magic != VTNET_SNAPSHOT_MAGIC ||
-	    version != VTNET_SNAPSHOT_VERSION) {
+	    (version != 2 && version != 3 &&
+	    version != VTNET_SNAPSHOT_VERSION)) {
 		ret = ENOTSUP;
 		goto done;
 	}
@@ -3106,8 +3463,20 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	be_vhdrlen = (uint32_t)sc->be_vhdrlen;
 	SNAPSHOT_LE32_OR_LEAVE(vhdrlen, meta, ret, done);
 	SNAPSHOT_LE32_OR_LEAVE(be_vhdrlen, meta, ret, done);
+	packet_id_enabled = (uint8_t)sc->packet_id_enabled;
+	if (version >= 3)
+		SNAPSHOT_U8_OR_LEAVE(packet_id_enabled, meta, ret, done);
+	else
+		packet_id_enabled = 0;
+	packet_id_v2_enabled = (uint8_t)sc->packet_id_v2_enabled;
+	if (version >= 4)
+		SNAPSHOT_U8_OR_LEAVE(packet_id_v2_enabled, meta, ret, done);
+	else
+		packet_id_v2_enabled = 0;
 	sc->vhdrlen = vhdrlen;
 	sc->be_vhdrlen = be_vhdrlen;
+	sc->packet_id_enabled = packet_id_enabled;
+	sc->packet_id_v2_enabled = packet_id_v2_enabled;
 	SNAPSHOT_LE16_OR_LEAVE(sc->rx_active_pairs, meta, ret, done);
 	SNAPSHOT_LE16_OR_LEAVE(sc->rx_enabled_mask, meta, ret, done);
 	rss_enabled = sc->rss_enabled;
@@ -3137,6 +3506,10 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	}
 	SNAPSHOT_BUF_OR_LEAVE(sc->vsc_rx_buf, sc->rx_staged_len, meta, ret,
 	    done);
+	if (packet_id_v2_enabled && sc->rx_staged_len != 0) {
+		ret = EINVAL;
+		goto done;
+	}
 
 	/*
 	 * Force reapplication only after all saved fields have been consumed.
@@ -3150,6 +3523,8 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 		size_t expected_backend_vhdrlen, expected_vhdrlen;
 
 		if (features_negotiated > 1 || rx_merge > 1 ||
+		    packet_id_enabled > 1 || packet_id_v2_enabled > 1 ||
+		    (packet_id_v2_enabled && !packet_id_enabled) ||
 		    rss_enabled > 1 || hash_configured > 1) {
 			ret = EINVAL;
 			goto done;
@@ -3159,7 +3534,8 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 		sc->rss_enabled = rss_enabled;
 		sc->hash_configured = hash_configured;
 		expected_vhdrlen = pci_vtnet_header_len(sc,
-		    sc->vsc_features);
+		    sc->vsc_features) +
+		    pci_vtnet_packet_id_len(sc);
 		expected_backend_vhdrlen =
 		    sc->vsc_be != NULL &&
 		    (sc->vsc_features & VTNET_BACKEND_CAPS) != 0 ?
@@ -3173,6 +3549,16 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 		 * driver after restore.
 		 */
 		if (sc->vsc_features != sc->vsc_vs.vs_negotiated_caps ||
+		    (packet_id_enabled &&
+		    (!features_negotiated || sc->vsc_be == NULL ||
+		    !(packet_id_v2_enabled ?
+		    netbe_tagging_v2_supported(sc->vsc_be) :
+		    netbe_tagging_supported(sc->vsc_be)) ||
+		    sc->vsc_vs.vs_transport != VIRTIO_PCI_TRANSPORT_MODERN ||
+		    (sc->vsc_features & (VIRTIO_F_VERSION_1 |
+		    VIRTIO_NET_F_CTRL_VQ)) !=
+		    (VIRTIO_F_VERSION_1 | VIRTIO_NET_F_CTRL_VQ) ||
+		    (sc->vsc_features & VTNET_BACKEND_CAPS) != 0)) ||
 		    sc->vhdrlen != expected_vhdrlen ||
 		    sc->be_vhdrlen != expected_backend_vhdrlen ||
 		    sc->rx_merge !=
@@ -3235,6 +3621,19 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 				goto done;
 			}
 		}
+		/* VM memory is installed before the real device restore. Inspect
+		 * the restored queue and ring now, while both checkpoint locks are
+		 * held, so a forged or stale image cannot reintroduce a V2 sidecar
+		 * that was already queued under another host's MAC key. Preflight
+		 * runs before memory installation and cannot make this check. */
+		if (meta->op == VM_SNAPSHOT_RESTORE &&
+		    packet_id_v2_enabled) {
+			ret = pci_vtnet_v2_tx_quiescent(sc);
+			if (ret == EBUSY)
+				ret = EPROTO;
+			if (ret != 0)
+				goto done;
+		}
 		sc->tx_active_pairs = sc->rss_enabled ?
 		    sc->rss_max_tx_vq : sc->rx_active_pairs;
 		sc->tx_next_pair = 0;
@@ -3251,14 +3650,68 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 		memset(sc->vsc_flow_map, 0, sizeof(sc->vsc_flow_map));
 		if (sc->features_negotiated &&
 		    vm_snapshot_is_restoring(meta)) {
-			backend_touched = true;
-			if (!pci_vtnet_apply_features(sc, sc->vsc_features)) {
-				ret = EINVAL;
-				goto done;
+			if (packet_id_enabled && !packet_id_v2_enabled &&
+			    backup->backend_tagging_enabled &&
+			    packet_id_v2_enabled ==
+			    backup->backend_tagging_v2_enabled) {
+				/* The backend already owns this exact framing mode.
+				 * Toggling TAPSTAGGING would discard a peeked packet. */
+				if (netbe_get_vnet_hdr_len(sc->vsc_be) != 0) {
+					ret = EINVAL;
+					goto done;
+				}
+				if (pci_vtnet_tagging_bind(sc) != 0) {
+					ret = errno != 0 ? errno : EIO;
+					goto done;
+				}
+				sc->tx_features_negotiated = true;
+			} else {
+				backend_touched = true;
+				if (sc->vsc_be != NULL &&
+				    netbe_tagging_enabled(sc->vsc_be)) {
+					backend_tagging_touched = true;
+					if (netbe_tagging_disable(sc->vsc_be) != 0) {
+						vi_snapshot_restore_incomplete(&sc->vsc_vs);
+						ret = EIO;
+						goto done;
+					}
+				}
+				sc->packet_id_enabled = false;
+				sc->packet_id_v2_enabled = false;
+				if (!pci_vtnet_apply_features(sc, sc->vsc_features)) {
+					ret = EINVAL;
+					goto done;
+				}
+				if (packet_id_enabled) {
+					backend_tagging_touched = true;
+					if (pci_vtnet_tagging_enable(sc,
+					    packet_id_v2_enabled) != 0 ||
+					    !netbe_tagging_enabled(sc->vsc_be) ||
+					    netbe_tagging_v2_enabled(sc->vsc_be) !=
+					    packet_id_v2_enabled) {
+						ret = EIO;
+						goto done;
+					}
+					sc->packet_id_enabled = true;
+					sc->packet_id_v2_enabled =
+					    packet_id_v2_enabled;
+					sc->vhdrlen +=
+					    pci_vtnet_packet_id_len(sc);
+				}
 			}
 		} else if (!sc->features_negotiated &&
-		    vm_snapshot_is_restoring(meta))
+		    vm_snapshot_is_restoring(meta)) {
+			if (sc->vsc_be != NULL &&
+			    netbe_tagging_enabled(sc->vsc_be)) {
+				backend_tagging_touched = true;
+				if (netbe_tagging_disable(sc->vsc_be) != 0) {
+					vi_snapshot_restore_incomplete(&sc->vsc_vs);
+					ret = EIO;
+					goto done;
+				}
+			}
 			sc->tx_features_negotiated = false;
+		}
 
 		/*
 		 * A staged packet is device state, not opaque snapshot data.
@@ -3297,6 +3750,17 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 					goto done;
 				}
 			}
+			if (packet_id_enabled) {
+				mbufid_t mid;
+
+				memcpy(&mid, sc->vsc_rx_buf + sc->vhdrlen -
+				    sizeof(mid), sizeof(mid));
+				if (!mbufid_isempty(&mid) &&
+				    !mbufid_iscanonical(&mid)) {
+					ret = EINVAL;
+					goto done;
+				}
+			}
 			frame_iov.iov_base = sc->vsc_rx_buf;
 			frame_iov.iov_len = sc->rx_staged_len;
 			if (!pci_vtnet_frame_within_mtu(sc, &frame_iov, 1,
@@ -3316,16 +3780,32 @@ done:
 		 * external backend, restore its previous framing contract before
 		 * publishing the destination's original in-memory state.
 		 */
-		if (backend_touched && sc->vsc_be != NULL) {
+		if ((backend_touched || backend_tagging_touched) &&
+		    sc->vsc_be != NULL) {
 			uint64_t backend_features;
 			size_t backend_vhdrlen;
 
+			if (backend_tagging_touched &&
+			    netbe_tagging_enabled(sc->vsc_be) &&
+			    netbe_tagging_disable(sc->vsc_be) != 0) {
+				vi_snapshot_restore_incomplete(&sc->vsc_vs);
+				ret = EIO;
+			}
 			backend_features = backup->features_negotiated ?
 			    backup->features & VTNET_BACKEND_CAPS : 0;
 			backend_vhdrlen = backup->features_negotiated ?
 			    backup->be_vhdrlen : 0;
 			if (netbe_set_cap(sc->vsc_be, backend_features,
 			    backend_vhdrlen) != 0) {
+				vi_snapshot_restore_incomplete(&sc->vsc_vs);
+				ret = EIO;
+			}
+			if (backup->backend_tagging_enabled &&
+			    (pci_vtnet_tagging_enable(sc,
+			    backup->backend_tagging_v2_enabled) != 0 ||
+			    !netbe_tagging_enabled(sc->vsc_be) ||
+			    netbe_tagging_v2_enabled(sc->vsc_be) !=
+			    backup->backend_tagging_v2_enabled)) {
 				vi_snapshot_restore_incomplete(&sc->vsc_vs);
 				ret = EIO;
 			}

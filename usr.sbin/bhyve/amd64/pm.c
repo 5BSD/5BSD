@@ -34,6 +34,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <vmmapi.h>
 
 #include "acpi.h"
@@ -43,8 +44,20 @@
 #include "pci_lpc.h"
 
 static pthread_mutex_t pm_lock = PTHREAD_MUTEX_INITIALIZER;
+static bool sci_retiring;
 static struct mevent *power_button;
 static sig_t old_power_handler;
+
+/* Drain an active power callback and fence future callbacks before the
+ * source controller destroys its VM. The event may remain registered while
+ * the controller serves recovery; it must no longer dereference its ctx. */
+void
+sci_retire(void)
+{
+	pthread_mutex_lock(&pm_lock);
+	sci_retiring = true;
+	pthread_mutex_unlock(&pm_lock);
+}
 
 static unsigned gpe0_active;
 static unsigned gpe0_enabled;
@@ -212,7 +225,7 @@ power_button_handler(int signal __unused, enum ev_type type __unused, void *arg)
 
 	ctx = arg;
 	pthread_mutex_lock(&pm_lock);
-	if (!(pm1_status & PM1_PWRBTN_STS)) {
+	if (!sci_retiring && !(pm1_status & PM1_PWRBTN_STS)) {
 		pm1_status |= PM1_PWRBTN_STS;
 		sci_update(ctx);
 	}

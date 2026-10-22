@@ -560,9 +560,9 @@ over the already-connected stream socket referenced by file descriptor
 The command performs the live handshake, capability and topology validation,
 device-eligibility check, and iterative pre-copy against a destination
 .Nm
-brought up with the
-.Fl R
-option.
+configured with
+.Va migrate.receive_fd
+and held at its startup fence.
 The optional
 .Cm max_rounds
 and
@@ -570,7 +570,179 @@ and
 values bound, respectively, the number of pre-copy iterations and the
 dirty-page count at which the transfer is considered converged.
 The source is left running if the migration does not commit.
+Once the destination sends COMMIT, which binds its VM identity, a fresh
+challenge and the digest of the received device state, the source retires and
+then releases the destination, and it completes only after the destination
+acknowledges that the guest is running.
+From then on the source is never resumed.
+Peers speaking migration protocol 1 are refused; a protocol 1 source
+connecting here receives a version rejection it can decode, while a protocol 1
+destination simply closes on this source's HELLO.
+If an inbound migration fails after COMMIT may have been sent, the
+destination does not discard the paused guest, since it may be the only copy.
+It logs the failure and waits for the
+.Cm migrate_resolve
+control request:
+.Cm resume ,
+which requires the operator to confirm that the source is retired, and is
+refused when an earlier resume attempt may already have run the guest (the
+run witness shows a guest entry); or
+.Cm discard ,
+which requires an explicit acknowledgment of loss.
+A checkpoint or suspend of the retained guest is refused until then, because
+it would start the guest.
+When a recovery directory is configured, the source's canonical
+.Pa /var/db/bhyve/migration
+or the destination's
+.Va migrate.recovery_fd ,
+every migration appends its phase transitions to a handoff journal there, one
+append-only file per attempt and side
+.Pq Pa h-s- Ns Ar challenge Ns Pa .log , Pa h-d- Ns Ar challenge Ns Pa .log ,
+and the destination appends each
+.Cm migrate_resolve
+decision before acting on it and its outcome afterwards.
+The journal records what happened; it holds no guest state.
+Without a recovery directory, transitions are reported only on standard error.
+HyperTrace fresh-session migrations keep their own phase records instead.
+The frame checksum detects corruption but does not authenticate the peer, so
+every migration requires mutual TLS: the source command needs all TLS
+credential descriptors and the peer fingerprint, and the destination needs the
+.Va migrate.tls.*
+settings.
+The only exception is a plaintext stream over a local
+.Dv AF_UNIX
+stream socket, with both ends on the same host, which must be requested
+explicitly: the
+.Cm plaintext_unix
+request key on the source, and
+.Va migrate.plaintext_unix Ns = Ns Cm true
+on the destination, which cannot be combined with the TLS settings.
+Any other descriptor is refused.
+HyperTrace fresh-session migration always requires TLS, and also requires
+all TLS credential descriptors and
+peer fingerprint settings, plus a recovery directory descriptor for
+.Pa /var/db/bhyve/migration .
+Its destination requires TLS, a private recovery directory, and an already
+listening recovery socket through
+.Va migrate.recovery_listen_fd .
+The managed receiver prepares recovery resources before accepting state.
+With a configured GDB server, the source refuses migration before quiescing
+while a debugger owns the guest: an attached client, installed software
+breakpoints, pending single-step state, or a vCPU held by the server
+(including a
+.Va gdb.wait
+start that has not yet seen a debugger).
+Otherwise new debugger connections are refused for the cutover; a rollback
+that leaves the source runnable reopens them, and retirement keeps them
+refused permanently.
+Old tracing buffers are discarded, and source retirement precedes RELEASE.
+After retirement begins, errors never resume the source.
+If a rollback before COMMIT fails and leaves the source stopped, the source
+retries the idempotent resume sequence automatically with bounded backoff,
+reporting
+.Cm repaired
+and
+.Cm repair_attempts
+in the reply.
+.It Cm migrate_repair
+Retry the rollback of a source left stopped by a failed pre-COMMIT rollback.
+Only this command, PID queries and migration recovery are accepted while the
+source remains stopped after a failed rollback; ordinary commands are
+admitted again only after the repair succeeds.
+The command is refused once source retirement has begun.
+This experimental path has component coverage but is not live-qualified.
 .El
+.Ss Source recovery after controller exit
+With snapshot support, a separate invocation can recover an already committed
+source attempt without starting a virtual machine.
+Set all of the following with
+.Fl o :
+.Bl -tag -width indent
+.It Va migrate.recover_source_fd
+An inherited connected stream socket to the original destination recovery listener.
+.It Va migrate.recover_source_vmid
+The original source VM identifier, in unsigned decimal.
+.It Va migrate.recover_source_epoch
+The original source lifetime epoch, in unsigned decimal.
+.It Va migrate.tls.certificate_fd
+An inherited descriptor for the source TLS certificate.
+.It Va migrate.tls.private_key_fd
+An inherited descriptor for its private key.
+.It Va migrate.tls.trust_fd
+An inherited descriptor for the peer trust store.
+.It Va migrate.tls.peer_sha256
+The original destination certificate SHA-256 fingerprint, as 64 hexadecimal digits.
+.El
+.Pp
+Do not supply a guest name, restore file, migration receive descriptor,
+or receiver recovery directory/listener settings.
+Recovery exits before ordinary VM initialization.
+The source lifetime must come from trusted local migration records, not a
+request from the remote peer.
+Ownership and phase records are read from
+.Pa /var/db/bhyve/migration ;
+an alternate journal directory cannot be selected.
+The directory must retain its private ownership and permanent controller locks.
+Both original certificate fingerprints are checked before retirement recovery.
+.Pp
+An INTENT-only record requires an exact kernel retirement witness through
+.Pa /dev/dtrace/hypertrace .
+An unavailable witness or ambiguous evidence is an error.
+Without an optional
+.Va migrate.recover_source_name
+setting, a live source is also an error.
+With this setting, recovery may retire the named orphan only after authenticating
+the original certificate pair and validating durable INTENT.
+The kernel atomically checks the original VM identifier and epoch against the
+name before scheduling destruction.
+A drained retirement witness and durable RETIRED remain mandatory before RELEASE.
+A missing name or device never proves retirement.
+The command never loads modules, starts, or resumes a VM.
+Already-durable retirement does not require reopening that query device.
+A failed connection can be retried with the same source lifetime and credentials.
+Success means the destination acknowledged recovery while the source remained
+retired; it does not restore old trace buffers or aggregates.
+This recovery command does not initiate another migration or establish live
+qualification.
+.Ss Destination reconstruction after controller loss
+A fresh-session migration destination may set
+.Va migrate.recovery_image Ns = Ns Cm true
+together with its recovery directory, recovery listener and TLS settings.
+Before publishing durable STAGED, and therefore before COMMIT can reach the
+source, the destination then takes a per-attempt controller lock and writes a
+checksummed image of the committed paused guest RAM and device state into the
+recovery directory.
+Writing the image adds stop-and-copy downtime proportional to guest memory and
+must finish within the source's COMMIT deadline; otherwise the source rolls
+back and stays runnable.
+The image is removed after RELEASED and a successful resume.
+.Pp
+If that destination process is lost, a new
+.Nm
+instance configured with the same guest settings,
+.Va enable_hypertrace ,
+the same recovery directory and destination TLS credentials, a recovery
+listener, and
+.Va migrate.reconstruct Ns = Ns Ar challenge
+can take over the attempt.
+.Ar challenge
+is the 64-digit lowercase attempt identifier from the
+.Pa d- Ns Ar challenge Ns Pa .image
+file name in that trusted local directory, never a value from the peer.
+Reconstruction is refused while any earlier controller for the attempt is
+alive, when durable STAGED is missing, and when the destination phase is
+RELEASED or RUNNING, because the guest may already have executed.
+The previous destination incarnation must have an exact kernel retirement
+witness; reinitializing the same guest name retires it.
+The optional
+.Va migrate.reconstruct_previous_name
+is only a lookup hint that lets the kernel destroy the previous incarnation
+after atomically checking its exact identity.
+The new incarnation is recorded durably before any guest state is loaded.
+The reconstructed guest stays fenced until the authenticated source recovery
+proves durable retirement; reconstruction never resumes a source or starts
+the guest on its own.
+This experimental path has component coverage but is not live-qualified.
 .Sh PCI EMULATION
 .Nm
 provides emulation for various PCI devices.

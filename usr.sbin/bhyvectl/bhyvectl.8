@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd September 11, 2026
+.Dd October 19, 2026
 .Dt BHYVECTL 8
 .Os
 .Sh NAME
@@ -44,6 +44,36 @@
 .Op Fl -checkpoint= Ns Ar <file>
 .Op Fl -rundir= Ns Ar <path>
 .Op Fl -suspend= Ns Ar <file>
+.Nm
+.Fl -vm= Ns Ar vmname
+.Bro Fl -migrate-fd= Ns Ar socket-fd |
+.Fl -migrate-recover-fd= Ns Ar socket-fd Brc
+.Fl -migrate-certificate-fd= Ns Ar certificate-fd
+.Fl -migrate-key-fd= Ns Ar key-fd
+.Fl -migrate-trust-fd= Ns Ar trust-fd
+.Fl -migrate-peer-sha256= Ns Ar fingerprint
+.Op Fl -rundir= Ns Ar path
+.Nm
+.Fl -vm= Ns Ar vmname
+.Fl -migrate-fd= Ns Ar socket-fd
+.Fl -migrate-plaintext-unix
+.Op Fl -rundir= Ns Ar path
+.Nm
+.Fl -vm= Ns Ar vmname
+.Fl -migrate-repair
+.Op Fl -rundir= Ns Ar path
+.Nm
+.Fl -vm= Ns Ar vmname
+.Fl -migrate-resolve= Ns Cm resume
+.Fl -migrate-source-retired
+.Op Fl -rundir= Ns Ar path
+.Nm
+.Fl -vm= Ns Ar vmname
+.Fl -migrate-resolve= Ns Cm discard
+.Fl -migrate-acknowledge-loss
+.Op Fl -rundir= Ns Ar path
+.Nm
+.Fl -migrate-journal= Ns Ar journal-file
 .Sh DESCRIPTION
 The
 .Nm
@@ -85,6 +115,120 @@ Save a snapshot of a virtual machine similar to
 .Fl -checkpoint .
 The virtual machine will terminate after the snapshot has been
 saved.
+If stopping the source fails after the snapshot has been published, the
+.Xr bhyve 8
+process exits with an error instead of resuming the guest; the saved snapshot
+is the surviving copy.
+.It Fl -migrate-fd= Ns Ar socket-fd
+Initiate an experimental migration through the source bhyve process using an
+inherited connected stream socket to a prepared destination receiver.
+The command requires snapshot support and all four migration credential
+options below, unless
+.Fl -migrate-plaintext-unix
+is given, and uses the source controller's canonical recovery directory.
+It cannot be combined with recovery, VM actions, or query options.
+It does not connect to a remote host or configure the destination.
+Success requires a completed migration with the source no longer runnable.
+An error or lost reply does not authorize resuming or recreating the source;
+use the retained controller's recovery operation when retirement has begun.
+.It Fl -migrate-recover-fd= Ns Ar socket-fd
+Retry an experimental fresh-session migration through the retained source
+bhyve process, using an inherited connected stream socket to the destination
+recovery listener.
+This operation uses IPC without opening the source kernel VM, which may
+already have been destroyed.
+It requires snapshot support and all four migration credential options below.
+It cannot be combined with other VM actions or query options.
+The source process must still own the original migration attempt.
+Recovery does not resume the source or restore old tracing buffers.
+Success requires confirmation that the destination acknowledged release and
+the source remains retired.
+.It Fl -migrate-repair
+Retry the rollback of an experimental migration whose pre-COMMIT rollback
+failed and left the source stopped and quarantined.
+The source controller retries the same idempotent device, vCPU and console
+resume sequence, with bounded backoff, and reopens ordinary control commands
+only after it succeeds.
+The controller refuses once source retirement has begun; a retired source is
+never resumed.
+The source already attempts this repair automatically after the failed
+migration; this option is for a later operator retry.
+It uses IPC without opening the kernel VM and accepts only
+.Fl -vm
+and
+.Fl -rundir .
+Success requires a repaired, runnable source.
+.It Fl -migrate-resolve= Ns Cm resume | discard
+Resolve an inbound migration that the destination bhyve process retained
+because it failed after COMMIT may have reached the source.
+The destination keeps the paused guest, which may be the only surviving
+copy, and runs nothing until this command decides.
+.Cm resume
+runs the retained copy and requires
+.Fl -migrate-source-retired ,
+the operator's confirmation that the source will never run again.
+The destination refuses it when an earlier resume attempt may already have
+entered the guest.
+.Cm discard
+destroys the retained copy and requires
+.Fl -migrate-acknowledge-loss .
+The two confirmation options are specific to their action; giving the wrong
+one, or neither, is a usage error and nothing is sent.
+When the destination has a recovery directory, it journals the decision before
+acting and the outcome afterwards; a journal that cannot take the decision
+leaves the guest retained.
+This operation uses IPC without opening the kernel VM and accepts only
+.Fl -vm
+and
+.Fl -rundir .
+.It Fl -migrate-journal= Ns Ar journal-file
+Print a migration handoff journal, one line per entry, and exit.
+The file is one attempt's journal from a recovery directory, named
+.Pa h-s- Ns Ar challenge Ns Pa .log
+for the source side or
+.Pa h-d- Ns Ar challenge Ns Pa .log
+for the destination side, as described in
+.Xr bhyve 8 .
+Each line gives the entry's position, side and kind: a phase transition, an
+operator decision with the run witness that admitted it, or that decision's
+outcome; followed by the destination VM identity and whether the migration
+used TLS.
+The journal is validated as its writer validates it; a damaged, truncated
+or foreign journal is reported as an error and nothing is printed.
+This option names no virtual machine, opens none, and accepts no other
+option.
+.It Fl -migrate-source-retired
+Confirm, for
+.Fl -migrate-resolve= Ns Cm resume ,
+that the migration source is retired.
+.It Fl -migrate-acknowledge-loss
+Acknowledge, for
+.Fl -migrate-resolve= Ns Cm discard ,
+that the retained guest state is lost.
+.It Fl -migrate-plaintext-unix
+With
+.Fl -migrate-fd ,
+migrate without TLS over a local
+.Dv AF_UNIX
+stream socket whose peer is on the same host.
+No credential options may be given, and the source refuses any other kind of
+socket, as well as any virtual machine with HyperTrace enabled.
+The destination must be started with
+.Va migrate.plaintext_unix Ns = Ns Cm true .
+Migration recovery always requires TLS.
+.It Fl -migrate-certificate-fd= Ns Ar certificate-fd
+Inherited descriptor for the source TLS certificate in PEM format.
+.It Fl -migrate-key-fd= Ns Ar key-fd
+Inherited descriptor for the source private key in PEM format.
+The key must be in a private regular file owned by the source process user.
+.It Fl -migrate-trust-fd= Ns Ar trust-fd
+Inherited descriptor for the PEM trust bundle used to authenticate the peer.
+.It Fl -migrate-peer-sha256= Ns Ar fingerprint
+The destination leaf certificate DER SHA-256 fingerprint as 64 hexadecimal
+digits.
+For recovery, both authenticated certificates must match the original
+migration attempt.
+Neither the recovery directory nor the attempt identity can be replaced.
 .It Fl -rundir= Ns Ar <path>
 Specify path to the directory containing the bhyve IPC socket.
 If not specified,

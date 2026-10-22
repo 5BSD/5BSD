@@ -64,8 +64,10 @@
 #include <errno.h>
 #include <pthread.h>
 #include <pthread_np.h>
+#include <sha256.h>
 #include <sysexits.h>
 #include <stdbool.h>
+#include <time.h>
 #include <sys/ioctl.h>
 
 /*
@@ -94,6 +96,7 @@
 #include "checkpoint_compat.h"
 #include "checkpoint_machine.h"
 #include "checkpoint_cpu.h"
+#include "console.h"
 #include "snapshot_metadata.h"
 #include "checkpoint_numa.h"
 #include "checkpoint_topology.h"
@@ -101,6 +104,7 @@
 #include "amd64/atkbdc.h"
 #endif
 #include "debug.h"
+#include "hypertrace.h"
 #include "ipc.h"
 #include "mem.h"
 #include "pci_emul.h"
@@ -108,11 +112,15 @@
 #include "qemu_fwcfg_snapshot.h"
 #include "snapshot.h"
 #include "snapshot_devmem.h"
+#include "snapshot_md.h"
 #include "snapshot_portable.h"
 #include "tpm_device.h"
 
 #include <libxo/xo.h>
 #include <ucl.h>
+
+_Static_assert(CHECKPOINT_RELEASE_WIRE_SIZE ==
+    DTRACED_RELEASE_ATTESTED_SIZE, "HSA1 checkpoint member size mismatch");
 
 /*
  * Keep bhyve-only incremental builds usable when the installed vmmapi header
@@ -135,10 +143,12 @@ static sig_t old_winch_handler;
 #define	PROG_BUF_SZ	(8192)
 
 #define	SNAPSHOT_BUFFER_SIZE (40 * MB)
+#define	SNAPSHOT_DEVICE_EXTRA_MAX (160 * MB)
 
 #define	JSON_KERNEL_ARR_KEY		"kern_structs"
 #define	JSON_DEV_ARR_KEY		"devices"
 #define	JSON_BASIC_METADATA_KEY 	"basic metadata"
+#define	JSON_HYPERTRACE_HANDOFF_VERSION_KEY "hypertrace_handoff_version"
 #define	JSON_SNAPSHOT_REQ_KEY		"device"
 #define	JSON_SIZE_KEY			"size"
 #define	JSON_FILE_OFFSET_KEY		"file_offset"
@@ -181,6 +191,17 @@ static sig_t old_winch_handler;
  })
 
 static const struct vm_snapshot_kern_info snapshot_kern_structs[] = {
+#if defined(__aarch64__)
+	/* VMS2: vCPU/system registers, FP/SIMD, timers, guest counter. */
+	{ "vm",		STRUCT_VM	},
+	/* VMS2: GICv3 distributor, SPIs and per-CPU interfaces. */
+	{ "vgic",	STRUCT_VGIC	},
+#elif defined(__riscv)
+	/* VMS2: GPRs, VS CSRs, FP, SBI timer and pending interrupts. */
+	{ "vm",		STRUCT_VM	},
+	/* VMS2: APLIC domain, sources and targets. */
+	{ "aplic",	STRUCT_APLIC	},
+#else
 	{ "vhpet",	STRUCT_VHPET	},
 	{ "vioapic",	STRUCT_VIOAPIC	},
 	{ "vlapic",	STRUCT_VLAPIC	},
@@ -191,7 +212,19 @@ static const struct vm_snapshot_kern_info snapshot_kern_structs[] = {
 	{ "vatpic",	STRUCT_VATPIC	},
 	{ "vpmtmr",	STRUCT_VPMTMR	},
 	{ "vrtc",	STRUCT_VRTC	},
+#endif
 };
+
+#ifndef __amd64__
+static size_t
+snapshot_md_device_count(void)
+{
+	size_t count;
+
+	(void)bhyve_snapshot_md_devices(&count);
+	return (count);
+}
+#endif
 
 static cpuset_t vcpus_active, vcpus_suspended;
 static pthread_mutex_t vcpu_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -237,7 +270,7 @@ checkpoint_lock(int fd, int operation)
 	do {
 		error = flock(fd, operation);
 	} while (error != 0 && errno == EINTR);
-	return (error == 0 ? 0 : errno);
+	return (error == 0 ? 0 : errno != 0 ? errno : EIO);
 }
 
 static int
@@ -246,7 +279,7 @@ checkpoint_regular_fd(int fd)
 	struct stat sb;
 
 	if (fstat(fd, &sb) != 0)
-		return (errno);
+		return (errno != 0 ? errno : EIO);
 	return (S_ISREG(sb.st_mode) ? 0 : EINVAL);
 }
 
@@ -265,11 +298,29 @@ destroy_restore_state(struct restore_state *rstate)
 		close(rstate->kdata_fd);
 	if (rstate->vmmem_fd >= 0)
 		close(rstate->vmmem_fd);
+	if (rstate->checkpoint_lock_fd >= 0)
+		close(rstate->checkpoint_lock_fd);
 
 	if (rstate->meta_root_obj != NULL)
 		ucl_object_unref(rstate->meta_root_obj);
 	if (rstate->meta_parser != NULL)
 		ucl_parser_free(rstate->meta_parser);
+	explicit_bzero(rstate->handoff_token, sizeof(rstate->handoff_token));
+	explicit_bzero(rstate->handoff_digest, sizeof(rstate->handoff_digest));
+	if (rstate->hypertrace_transfer != NULL) {
+		explicit_bzero(rstate->hypertrace_transfer,
+		    rstate->hypertrace_transfer_length);
+		free(rstate->hypertrace_transfer);
+	}
+	rstate->hypertrace_transfer = NULL;
+	rstate->hypertrace_transfer_length = 0;
+	rstate->hypertrace_session_present = false;
+	explicit_bzero(rstate->hypertrace_session, sizeof(rstate->hypertrace_session));
+	rstate->checkpoint_format_version = 0;
+	rstate->handoff_identity_valid = false;
+	rstate->hypertrace_private_image = NULL;
+	rstate->hypertrace_private_length = 0;
+	rstate->hypertrace_private_dev = NULL;
 }
 
 static int
@@ -392,6 +443,76 @@ err_load_metadata:
 	return (err);
 }
 
+static int
+load_hypertrace_transfer_fd(int fd, const uint8_t token[16],
+    const char expected_digest[CHECKPOINT_SHA256_HEX_LEN + 1],
+    struct restore_state *rstate)
+{
+	struct stat sb;
+	char actual_digest[SHA256_DIGEST_STRING_LENGTH];
+	uint8_t *bytes;
+	size_t length, offset;
+	ssize_t nread;
+	int error;
+
+	if (fstat(fd, &sb) != 0)
+		return (errno != 0 ? errno : EIO);
+	bool fresh = rstate->checkpoint_format_version == 5;
+	if (!S_ISREG(sb.st_mode) || (fresh ?
+	    sb.st_size != HYPERTRACE_SESSION_RECORD_SIZE :
+	    sb.st_size < (off_t)HYPERTRACE_TRANSFER_MIN_BYTES) ||
+	    (uintmax_t)sb.st_size > HYPERTRACE_TRANSFER_MAX_BYTES)
+		return (EPROTO);
+	length = (size_t)sb.st_size;
+	bytes = malloc(length);
+	if (bytes == NULL)
+		return (ENOMEM);
+	if (lseek(fd, 0, SEEK_SET) < 0) {
+		error = errno != 0 ? errno : EIO;
+		goto fail;
+	}
+	offset = 0;
+	while (offset < length) {
+		nread = read(fd, bytes + offset, length - offset);
+		if (nread < 0 && errno == EINTR)
+			continue;
+		if (nread <= 0) {
+			error = nread < 0 ? errno : EIO;
+			goto fail;
+		}
+		offset += (size_t)nread;
+	}
+	if (SHA256_Data(bytes, length, actual_digest) == NULL ||
+	    strcmp(actual_digest, expected_digest) != 0) {
+		error = EILSEQ;
+		goto fail;
+	}
+	bool has_transfer_state;
+	if (fresh) {
+		struct hypertrace_session_record record;
+		error = hypertrace_session_record_decode(bytes, length, &record);
+		if (error != 0)
+			goto fail;
+		memcpy(rstate->hypertrace_session, bytes, length);
+		rstate->hypertrace_session_present = true;
+		explicit_bzero(bytes, length);
+		free(bytes);
+		return (0);
+	}
+	if (hypertrace_transfer_inspect(bytes, length, token,
+	    &has_transfer_state) != 0) {
+		error = errno != 0 ? errno : EIO;
+		goto fail;
+	}
+	rstate->hypertrace_transfer = bytes;
+	rstate->hypertrace_transfer_length = length;
+	return (0);
+fail:
+	explicit_bzero(bytes, length);
+	free(bytes);
+	return (error);
+}
+
 int
 load_restore_file(const char *filename, struct restore_state *rstate)
 {
@@ -400,12 +521,13 @@ load_restore_file(const char *filename, struct restore_state *rstate)
 	bool exists, is_manifest;
 	char *base_copy, *lock_filename, *manifest_directory_copy;
 	int lock_fd, manifest_data_fd, manifest_dirfd, manifest_kern_fd;
-	int manifest_meta_fd;
+	int manifest_meta_fd, manifest_trace_fd;
 
 	assert(filename != NULL);
 	assert(rstate != NULL);
 
 	memset(rstate, 0, sizeof(*rstate));
+	rstate->checkpoint_lock_fd = -1;
 	rstate->kdata_fd = -1;
 	rstate->vmmem_fd = -1;
 	rstate->kdata_map = MAP_FAILED;
@@ -418,6 +540,7 @@ load_restore_file(const char *filename, struct restore_state *rstate)
 	manifest_dirfd = -1;
 	manifest_kern_fd = -1;
 	manifest_meta_fd = -1;
+	manifest_trace_fd = -1;
 	/*
 	 * Keep the checkpoint lock, manifest, and its named generation members
 	 * rooted at one directory file descriptor.  Looking up the manifest by
@@ -474,9 +597,21 @@ load_restore_file(const char *filename, struct restore_state *rstate)
 		    "Checkpoint architecture or machine ABI is incompatible.\n");
 		goto err_restore;
 	}
-	err = checkpoint_manifest_open_verified_at(manifest_dirfd,
+	/*
+	 * Trace continuity across restore/migration is a future feature,
+	 * disabled because the current product contract is fresh-session.
+	 * Format 4 carries a HyperTrace transfer ticket for continuity.
+	 */
+	if (manifest.format_version == 4) {
+		fprintf(stderr, "Checkpoint uses the trace-continuity format "
+		    "(manifest format 4), which this bhyve does not restore; "
+		    "restore requires a fresh-session checkpoint.\n");
+		errno = ENOTSUP;
+		goto err_restore;
+	}
+	err = checkpoint_manifest_open_verified_trace_at(manifest_dirfd,
 	    &manifest, &manifest_data_fd, &manifest_kern_fd,
-	    &manifest_meta_fd);
+	    &manifest_meta_fd, &manifest_trace_fd);
 	if (err != 0) {
 		fprintf(stderr,
 		    "Checkpoint generation integrity verification failed: %s\n",
@@ -506,13 +641,79 @@ load_restore_file(const char *filename, struct restore_state *rstate)
 		fprintf(stderr, "Failed to load guest metadata file.\n");
 		goto err_restore;
 	}
+	err = checkpoint_manifest_handoff_identity(basename(base_copy),
+	    &manifest, rstate->handoff_token, rstate->handoff_digest);
+	if (err != 0) {
+		fprintf(stderr, "Failed to derive checkpoint handoff identity: %s\n",
+		    strerror(err));
+		goto err_restore;
+	}
+	rstate->handoff_identity_valid = true;
+	rstate->checkpoint_format_version = manifest.format_version;
+	/* Trace continuity (disabled future feature): format 4 was refused
+	 * above; intentionally unreachable until enabled. */
+	if (manifest.format_version == 4) {
+		err = checkpoint_release_read_at(manifest_dirfd,
+		    rstate->handoff_token, rstate->hypertrace_release);
+		if (err == ENOENT) {
+			uint8_t recovered[CHECKPOINT_RELEASE_WIRE_SIZE];
+			if (hypertrace_release_recover(rstate->handoff_token,
+			    rstate->handoff_digest, recovered) == 0) {
+				err = checkpoint_release_publish_at(manifest_dirfd,
+				    rstate->handoff_token, recovered);
+				if (err == 0) {
+					memcpy(rstate->hypertrace_release,
+					    recovered, sizeof(recovered));
+					rstate->hypertrace_release_present = true;
+				}
+			} else {
+				/* Another host or an unsigned local checkpoint has no
+				 * source-side recovery credential. Admission remains fenced. */
+				err = 0;
+			}
+		} else if (err == 0) {
+			if (hypertrace_release_attestation_inspect(
+			    rstate->hypertrace_release, rstate->handoff_token,
+			    rstate->handoff_digest) != 0)
+				err = EPROTO;
+			else
+				rstate->hypertrace_release_present = true;
+		}
+		if (err != 0) {
+			fprintf(stderr, "HyperTrace source release is invalid: %s\n",
+			    strerror(err));
+			goto err_restore;
+		}
+	}
+	if (manifest_trace_fd >= 0) {
+		err = load_hypertrace_transfer_fd(manifest_trace_fd,
+		    rstate->handoff_token, manifest.trace_sha256, rstate);
+		if (close(manifest_trace_fd) != 0 && err == 0)
+			err = errno != 0 ? errno : EIO;
+		manifest_trace_fd = -1;
+		if (err != 0) {
+			fprintf(stderr, "Failed to load HyperTrace transfer: %s\n",
+			    strerror(err));
+			goto err_restore;
+		}
+	}
+	if (rstate->hypertrace_release_present &&
+	    hypertrace_release_transfer_inspect(rstate->hypertrace_release,
+	    rstate->handoff_token, rstate->handoff_digest,
+	    rstate->hypertrace_transfer,
+	    rstate->hypertrace_transfer_length) != 0) {
+		fprintf(stderr, "Signed HyperTrace release disagrees with "
+		    "checkpoint transfer member.\n");
+		goto err_restore;
+	}
 
 	free(base_copy);
 	free(lock_filename);
 	free(manifest_directory_copy);
 	if (manifest_dirfd >= 0)
 		close(manifest_dirfd);
-	close(lock_fd);
+	rstate->checkpoint_lock_fd = lock_fd;
+	lock_fd = -1;
 	return (0);
 
 err_restore:
@@ -528,6 +729,8 @@ err_restore:
 		close(manifest_kern_fd);
 	if (manifest_meta_fd >= 0)
 		close(manifest_meta_fd);
+	if (manifest_trace_fd >= 0)
+		close(manifest_trace_fd);
 	if (lock_fd >= 0)
 		close(lock_fd);
 	return (-1);
@@ -730,6 +933,33 @@ lookup_basic_metadata_object(struct restore_state *rstate)
 	}
 
 	return (basic_meta_obj);
+}
+
+static int
+lookup_hypertrace_handoff(struct restore_state *rstate, bool *required)
+{
+	const ucl_object_t *basic, *version_obj;
+	int64_t version;
+
+	if (rstate == NULL || required == NULL || rstate->meta_root_obj == NULL)
+		return (EINVAL);
+	*required = false;
+	basic = lookup_basic_metadata_object(rstate);
+	if (basic == NULL)
+		return (EINVAL);
+	version_obj = ucl_object_lookup(basic,
+	    JSON_HYPERTRACE_HANDOFF_VERSION_KEY);
+	/* Earlier images could not carry a restorable HyperTrace device. */
+	if (version_obj == NULL)
+		return (rstate->checkpoint_format_version == 5 ? EPROTO : 0);
+	if (!ucl_object_toint_safe(version_obj, &version) ||
+	    (version != 0 && version != 1 && version != 2))
+		return (EINVAL);
+	if ((version == 2) != (rstate->checkpoint_format_version == 5) ||
+	    (version == 2 && !rstate->hypertrace_session_present))
+		return (EPROTO);
+	*required = version == 1;
+	return (0);
 }
 
 const char *
@@ -1019,6 +1249,8 @@ print_progress(size_t crtval, const size_t maxval)
 			prog_buf[i] = '_';
 
 		prog_buf[win_width - 2] = '|';
+		/* Drop what a wider window left in the static buffer. */
+		prog_buf[win_width - 1] = '\0';
 	}
 
 	output_len = strnlen(prog_buf, win_width);
@@ -1165,7 +1397,7 @@ collect_generic_devmem(struct vmctx *ctx,
 		    regions[count].name, sizeof(regions[count].name)) != 0) {
 			if (errno == ENOENT)
 				continue;
-			int error = errno;
+			int error = errno != 0 ? errno : EIO;
 
 			free(regions);
 			return (error);
@@ -1342,6 +1574,18 @@ vm_restore_record_presence(struct restore_state *rstate)
 	if (lookup_dev("atkbdc", JSON_DEV_ARR_KEY, rstate, &size) == NULL ||
 	    size == 0)
 		return (EINVAL);
+#else
+	{
+		const struct snapshot_md_device *md;
+		size_t md_count;
+
+		md = bhyve_snapshot_md_devices(&md_count);
+		for (size_t i = 0; i < md_count; i++) {
+			if (lookup_dev(md[i].name, JSON_DEV_ARR_KEY, rstate,
+			    &size) == NULL || size == 0)
+				return (EINVAL);
+		}
+	}
 #endif
 	if (qemu_fwcfg_enabled() &&
 	    (lookup_dev(QEMU_FWCFG_SNAPSHOT_NAME, JSON_DEV_ARR_KEY, rstate,
@@ -1433,23 +1677,21 @@ vm_restore_device(struct restore_state *rstate, vm_snapshot_dev_cb func,
 
 	dev_ptr = lookup_dev(name, JSON_DEV_ARR_KEY, rstate, &dev_size);
 
-	if (dev_ptr == NULL) {
-		EPRINTLN("Failed to lookup dev: %s", name);
-		return (EINVAL);
-	}
-
-	if (dev_size == 0) {
-		EPRINTLN("Restore device size is 0: %s", name);
-		return (EINVAL);
-	}
-
+	/*
+	 * The restore preflight validated these same bytes: the metadata is
+	 * the ucl tree parsed once by load_metadata_fd(), and the record lives
+	 * in the digest-verified kern mapping taken once.  Nothing is re-read
+	 * from the file between the two passes, so a failure here is a caller
+	 * that skipped the preflight, not a bad checkpoint.
+	 */
+	assert(dev_ptr != NULL && dev_size != 0);
 	basic = lookup_basic_metadata_object(rstate);
-	if (basic == NULL)
-		return (EINVAL);
+	assert(basic != NULL);
 	field = ucl_object_lookup(basic, JSON_COMPAT_VERSION_KEY);
-	if (field == NULL || !ucl_object_toint_safe(field, &version) ||
-	    version != PCI_SNAPSHOT_COMPAT_SCHEMA)
-		return (EINVAL);
+	assert(field != NULL);
+	version = 0;
+	(void)ucl_object_toint_safe(field, &version);
+	assert(version == PCI_SNAPSHOT_COMPAT_SCHEMA);
 	if (func == pci_snapshot) {
 		error = pci_snapshot_compat(data, &compatibility);
 		if (error == 0) {
@@ -1510,6 +1752,8 @@ vm_restore_device_topology(struct restore_state *rstate)
 		destination_count++;
 #ifdef __amd64__
 	destination_count++;
+#else
+	destination_count += snapshot_md_device_count();
 #endif
 	if (qemu_fwcfg_enabled())
 		destination_count++;
@@ -1524,6 +1768,15 @@ vm_restore_device_topology(struct restore_state *rstate)
 		destination[destination_count++] = pdi->pi_name;
 #ifdef __amd64__
 	destination[destination_count++] = "atkbdc";
+#else
+	{
+		const struct snapshot_md_device *md;
+		size_t md_count;
+
+		md = bhyve_snapshot_md_devices(&md_count);
+		for (size_t i = 0; i < md_count; i++)
+			destination[destination_count++] = md[i].name;
+	}
 #endif
 	if (qemu_fwcfg_enabled())
 		destination[destination_count++] = QEMU_FWCFG_SNAPSHOT_NAME;
@@ -1549,6 +1802,8 @@ vm_machine_topology_digest_current(char *digest, size_t capacity)
 		count++;
 #ifdef __amd64__
 	count++;
+#else
+	count += snapshot_md_device_count();
 #endif
 	if (qemu_fwcfg_enabled())
 		count++;
@@ -1571,6 +1826,15 @@ vm_machine_topology_digest_current(char *digest, size_t capacity)
 	}
 #ifdef __amd64__
 	devices[index++].name = "atkbdc";
+#else
+	{
+		const struct snapshot_md_device *md;
+		size_t md_count;
+
+		md = bhyve_snapshot_md_devices(&md_count);
+		for (size_t i = 0; i < md_count; i++)
+			devices[index++].name = md[i].name;
+	}
 #endif
 	if (qemu_fwcfg_enabled()) {
 		devices[index].name = QEMU_FWCFG_SNAPSHOT_NAME;
@@ -1609,6 +1873,8 @@ vm_machine_topology_digest_source(struct restore_state *rstate, char *digest,
 		count++;
 #ifdef __amd64__
 	count++;
+#else
+	count += snapshot_md_device_count();
 #endif
 	if (qemu_fwcfg_enabled())
 		count++;
@@ -1641,6 +1907,15 @@ vm_machine_topology_digest_source(struct restore_state *rstate, char *digest,
 	}
 #ifdef __amd64__
 	devices[index++].name = "atkbdc";
+#else
+	{
+		const struct snapshot_md_device *md;
+		size_t md_count;
+
+		md = bhyve_snapshot_md_devices(&md_count);
+		for (size_t i = 0; i < md_count; i++)
+			devices[index++].name = md[i].name;
+	}
 #endif
 	if (qemu_fwcfg_enabled()) {
 		devices[index].name = QEMU_FWCFG_SNAPSHOT_NAME;
@@ -1877,6 +2152,9 @@ vm_restore_device_compatibility(struct restore_state *rstate)
 		if (error == 0)
 			error = pci_snapshot_compat_validate(&payload,
 			    &destination);
+		if (error == 0 && pci_vtdtr_checkpoint_is_device(pdi))
+			error = pci_vtdtr_checkpoint_features_validate(
+			    payload.negotiated_features);
 		if (error != 0) {
 			EPRINTLN("Checkpoint device '%s' is incompatible: %s",
 			    pdi->pi_name, strerror(error));
@@ -1888,12 +2166,15 @@ vm_restore_device_compatibility(struct restore_state *rstate)
 
 static int
 vm_restore_device_payload_validate_one(struct restore_state *rstate,
-    struct pci_devinst *pdi, int64_t version)
+    struct pci_devinst *pdi, int64_t version, bool capture_hypertrace)
 {
 	struct pci_snapshot_compat compatibility;
 	void *record;
 	size_t record_size;
 	int error;
+	bool capture, complete = false;
+	const void *private_image = NULL;
+	size_t private_length = 0;
 
 	record = lookup_dev(pdi->pi_name, JSON_DEV_ARR_KEY, rstate,
 	    &record_size);
@@ -1923,7 +2204,23 @@ vm_restore_device_payload_validate_one(struct restore_state *rstate,
 		.op = VM_SNAPSHOT_VALIDATE,
 	};
 
+	capture = capture_hypertrace && pci_vtdtr_checkpoint_is_device(pdi);
+	if (capture) {
+		error = pci_vtdtr_checkpoint_capture_begin(pdi);
+		if (error != 0)
+			return (error);
+	}
 	error = pci_snapshot_validate(&meta);
+	if (capture) {
+		int capture_error = pci_vtdtr_checkpoint_capture_end(pdi,
+		    &private_image, &private_length, &complete);
+		if (capture_error != 0)
+			return (capture_error);
+		/* This device's deliberate EOPNOTSUPP follows a completed generic
+		 * validator. No other EOPNOTSUPP may open the preflight gate. */
+		if (error == EOPNOTSUPP && complete)
+			error = 0;
+	}
 	if (error != 0) {
 		EPRINTLN("Checkpoint device '%s' payload is invalid: %s",
 		    pdi->pi_name, strerror(error));
@@ -1936,11 +2233,24 @@ vm_restore_device_payload_validate_one(struct restore_state *rstate,
 		    pdi->pi_name, meta.buffer.buf_rem);
 		return (error);
 	}
+	if (capture) {
+		uintptr_t begin = (uintptr_t)record;
+		uintptr_t selected = (uintptr_t)private_image;
+		if (!complete || private_image == NULL || private_length == 0 ||
+		    selected < begin || selected - begin > record_size ||
+		    private_length > record_size - (selected - begin) ||
+		    rstate->hypertrace_private_image != NULL)
+			return (EPROTO);
+		rstate->hypertrace_private_image = private_image;
+		rstate->hypertrace_private_length = private_length;
+		rstate->hypertrace_private_dev = pdi;
+	}
 	return (0);
 }
 
 static int
-vm_restore_device_payloads_validate(struct restore_state *rstate)
+vm_restore_device_payloads_validate(struct restore_state *rstate,
+    bool capture_hypertrace)
 {
 	const ucl_object_t *basic, *field;
 	enum pci_restore_phase phase;
@@ -1969,7 +2279,7 @@ vm_restore_device_payloads_validate(struct restore_state *rstate)
 				goto cleanup;
 			}
 			error = vm_restore_device_payload_validate_one(rstate,
-			    pdi, version);
+			    pdi, version, capture_hypertrace);
 			if (error != 0)
 				goto cleanup;
 		}
@@ -2006,6 +2316,44 @@ vm_restore_device_payloads_validate(struct restore_state *rstate)
 			EPRINTLN("Checkpoint device 'atkbdc' payload is invalid: %s",
 			    strerror(error));
 			goto cleanup;
+		}
+	}
+#else
+	if (error == 0) {
+		const struct snapshot_md_device *md;
+		size_t md_count;
+
+		md = bhyve_snapshot_md_devices(&md_count);
+		for (size_t i = 0; error == 0 && i < md_count; i++) {
+			void *record;
+			size_t record_size;
+
+			record = lookup_dev(md[i].name, JSON_DEV_ARR_KEY,
+			    rstate, &record_size);
+			if (record == NULL || record_size == 0) {
+				error = EINVAL;
+				goto cleanup;
+			}
+			struct vm_snapshot_meta meta = {
+				.dev_name = md[i].name,
+				.dev_data = NULL,
+				.buffer = {
+					.buf_start = record,
+					.buf_size = record_size,
+					.buf = record,
+					.buf_rem = record_size,
+				},
+				.op = VM_SNAPSHOT_VALIDATE,
+			};
+			error = md[i].snapshot(&meta);
+			if (error == 0)
+				error = checkpoint_record_consumption_validate(
+				    record_size, meta.buffer.buf_rem);
+			if (error != 0) {
+				EPRINTLN("Checkpoint device '%s' payload is "
+				    "invalid: %s", md[i].name, strerror(error));
+				goto cleanup;
+			}
 		}
 	}
 #endif
@@ -2052,13 +2400,17 @@ cleanup:
 	return (error);
 }
 
-int
-vm_restore_preflight(struct restore_state *rstate)
+static int
+vm_restore_preflight_internal(struct restore_state *rstate,
+    bool capture_hypertrace)
 {
 	int error;
 
 	if (rstate == NULL)
 		return (EINVAL);
+	rstate->hypertrace_private_image = NULL;
+	rstate->hypertrace_private_length = 0;
+	rstate->hypertrace_private_dev = NULL;
 	/*
 	 * CRB, PPI, and backend state do not yet have one atomic portable
 	 * checkpoint contract.  Refuse before publishing any incoming state.
@@ -2077,23 +2429,33 @@ vm_restore_preflight(struct restore_state *rstate)
 	if (error == 0)
 		error = vm_restore_device_compatibility(rstate);
 	if (error == 0)
-		error = vm_restore_device_payloads_validate(rstate);
+		error = vm_restore_device_payloads_validate(rstate,
+		    capture_hypertrace);
+	if (error != 0) {
+		rstate->hypertrace_private_image = NULL;
+		rstate->hypertrace_private_length = 0;
+		rstate->hypertrace_private_dev = NULL;
+	}
 	return (error);
 }
 
 int
-vm_restore_devices(struct restore_state *rstate)
+vm_restore_preflight(struct restore_state *rstate)
+{
+
+	return (vm_restore_preflight_internal(rstate, false));
+}
+
+/* The restore transaction already performed the complete device preflight
+ * before any destination mutation. Repeating the ordinary public preflight
+ * here would reject a captured HyperTrace private image at its deliberate
+ * EOPNOTSUPP boundary, after the transaction had begun. */
+static int
+vm_restore_devices_prevalidated(struct restore_state *rstate)
 {
 	enum pci_restore_phase phase;
 	int ret;
 	struct pci_devinst *pdi;
-
-	BHYVE_PHASE_START(__func__, "vm_restore_preflight");
-	ret = vm_restore_preflight(rstate);
-	BHYVE_PHASE_DONE(__func__, "vm_restore_preflight",
-	    ret, ret < 0 ? errno : 0);
-	if (ret != 0)
-		return (ret);
 
 	/*
 	 * Restore cross-device fabrics before endpoints.  In particular,
@@ -2118,13 +2480,23 @@ vm_restore_devices(struct restore_state *rstate)
 #ifdef __amd64__
 	ret = vm_restore_device(rstate, atkbdc_snapshot, "atkbdc", NULL);
 #else
-	ret = 0;
+	{
+		const struct snapshot_md_device *md;
+		size_t md_count;
+
+		ret = 0;
+		md = bhyve_snapshot_md_devices(&md_count);
+		for (size_t i = 0; ret == 0 && i < md_count; i++)
+			ret = vm_restore_device(rstate, md[i].snapshot,
+			    md[i].name, NULL);
+	}
 #endif
 	if (ret == 0 && qemu_fwcfg_enabled())
 		ret = vm_restore_device(rstate, qemu_fwcfg_snapshot,
 		    QEMU_FWCFG_SNAPSHOT_NAME, NULL);
 	return (ret);
 }
+
 
 int
 vm_pause_devices(void)
@@ -2164,6 +2536,27 @@ vm_pause_devices(void)
 			}
 		}
 	}
+#ifndef __amd64__
+	{
+		const struct snapshot_md_device *md;
+		size_t md_count;
+
+		md = bhyve_snapshot_md_devices(&md_count);
+		for (size_t i = 0; i < md_count; i++) {
+			if (md[i].pause == NULL)
+				continue;
+			ret = md[i].pause();
+			if (ret != 0) {
+				EPRINTLN("Cannot pause dev %s: %d", md[i].name,
+				    ret);
+				/* Resume hooks are idempotent; unwind all. */
+				if (vm_resume_devices() != 0)
+					EPRINTLN("Cannot unwind paused devices");
+				return (ret);
+			}
+		}
+	}
+#endif
 
 	return (0);
 }
@@ -2175,6 +2568,29 @@ vm_resume_devices(void)
 	int error, ret;
 	struct pci_devinst *pdi;
 
+#ifndef __amd64__
+	{
+		const struct snapshot_md_device *md;
+		size_t md_count;
+
+		/* Platform devices pause last, so they resume first. */
+		error = 0;
+		md = bhyve_snapshot_md_devices(&md_count);
+		for (size_t i = md_count; i != 0; i--) {
+			if (md[i - 1].resume == NULL)
+				continue;
+			ret = md[i - 1].resume();
+			if (ret != 0) {
+				EPRINTLN("Cannot resume '%s': %d",
+				    md[i - 1].name, ret);
+				if (error == 0)
+					error = ret;
+			}
+		}
+		if (error != 0)
+			return (error);
+	}
+#endif
 	for (unsigned int i = 0; i < PCI_RESTORE_PHASE_COUNT; i++) {
 		phase = pci_checkpoint_lifecycle_phase(i, true);
 		pdi = NULL;
@@ -2311,11 +2727,173 @@ vm_snapshot_session_release_exact(struct vmctx *ctx,
  * destination with partially restored memory never executes because this
  * routine returns with its vCPUs stopped.
  */
+static void
+hypertrace_private_image_digest(const struct restore_state *rstate,
+    uint8_t digest[SHA256_DIGEST_LENGTH])
+{
+	SHA256_CTX hash;
+
+	SHA256_Init(&hash);
+	SHA256_Update(&hash, rstate->hypertrace_private_image,
+	    rstate->hypertrace_private_length);
+	SHA256_Final(digest, &hash);
+}
+
+static int
+hypertrace_private_image_unchanged(const struct restore_state *rstate,
+    const uint8_t expected[SHA256_DIGEST_LENGTH])
+{
+	uint8_t actual[SHA256_DIGEST_LENGTH];
+	int error;
+
+	if (rstate->hypertrace_private_image == NULL ||
+	    rstate->hypertrace_private_length == 0)
+		return (EINVAL);
+	hypertrace_private_image_digest(rstate, actual);
+	error = timingsafe_bcmp(actual, expected, sizeof(actual)) == 0 ?
+	    0 : EPROTO;
+	explicit_bzero(actual, sizeof(actual));
+	return (error);
+}
+
+/* Trace continuity across restore/migration is a future feature, disabled
+ * because the current product contract is fresh-session.  Destination-side
+ * handoff: restore refuses continuity (format-4 / handoff v1) images, so
+ * this is intentionally unreachable until enabled. */
+/* No kernel restore session or vCPU release may precede this handoff cut.
+ * A fresh reservation remains cancelable until the caller starts MUTATE. */
+static int
+hypertrace_restore_prepare_handoff(struct vmctx *ctx,
+    struct restore_state *rstate, bool has_transfer_state,
+    const uint8_t private_digest[SHA256_DIGEST_LENGTH], bool *rebinding,
+    bool *reserved)
+{
+	int error;
+
+	*rebinding = false;
+	*reserved = false;
+	if (hypertrace_handoff_rebind_begin_optional(ctx,
+	    rstate->handoff_token, rstate->handoff_digest, rebinding) != 0) {
+		error = errno != 0 ? errno : EIO;
+		EPRINTLN("Could not classify HyperTrace restore ticket: %s",
+		    strerror(error));
+		return (error);
+	}
+	if (*rebinding) {
+		if (hypertrace_handoff_rebind_stage(ctx, rstate->handoff_token,
+		    rstate->handoff_digest) != 0 ||
+		    (has_transfer_state ?
+		    (hypertrace_handoff_rebind_pending(ctx,
+		    rstate->handoff_token, rstate->handoff_digest) != 0 ||
+		    hypertrace_handoff_rebind_nonempty_preflight(ctx,
+		    rstate->handoff_token, rstate->handoff_digest) != 0) :
+		    hypertrace_handoff_rebind_empty_ready(ctx,
+		    rstate->handoff_token, rstate->handoff_digest) != 0)) {
+			error = errno != 0 ? errno : EIO;
+			EPRINTLN("Could not stage HyperTrace rebind plan: %s",
+			    strerror(error));
+			return (error);
+		}
+		/* Nonempty HRP1/HTD5 lacks a recoverable owner commit. */
+		if (has_transfer_state)
+			return (EOPNOTSUPP);
+	} else {
+		if (hypertrace_handoff_destination_ensure(ctx,
+		    DTRACED_HANDOFF_RESERVE, rstate->handoff_token,
+		    rstate->handoff_digest) != 0) {
+			error = errno != 0 ? errno : EIO;
+			EPRINTLN("Could not reserve HyperTrace checkpoint "
+			    "ticket: %s", strerror(error));
+			return (error);
+		}
+		*reserved = true;
+	}
+	/* The saved device query needs the staged foreign journal to answer
+	 * source-delivery, KILL, and cleanup status accurately. */
+	if (has_transfer_state && !*rebinding &&
+	    hypertrace_handoff_destination_import_prestart(ctx,
+	    rstate->handoff_token, rstate->handoff_digest,
+	    rstate->hypertrace_transfer,
+	    rstate->hypertrace_transfer_length) != 0) {
+		error = errno != 0 ? errno : EIO;
+		EPRINTLN("Could not stage HyperTrace destination import: %s",
+		    strerror(error));
+		return (error);
+	}
+	if (rstate->hypertrace_private_image != NULL) {
+		if (rstate->checkpoint_format_version != 4 ||
+		    !pci_vtdtr_checkpoint_is_device(
+		    rstate->hypertrace_private_dev))
+			return (EPROTO);
+		error = hypertrace_private_image_unchanged(rstate,
+		    private_digest);
+		if (error != 0)
+			return (error);
+		error = pci_vtdtr_checkpoint_private_image_query(
+		    __DECONST(void *, rstate->hypertrace_private_image),
+		    rstate->hypertrace_private_length, ctx,
+		    rstate->handoff_token, rstate->handoff_digest);
+		if (error != 0) {
+			EPRINTLN("HyperTrace device image failed "
+			    "handoff query: %s", strerror(error));
+			return (error);
+		}
+	}
+	/* Pending import is inspectable, but its execution lease is not yet
+	 * complete. The caller can still CANCEL before kernel mutation. */
+	return (has_transfer_state ? EOPNOTSUPP : 0);
+}
+
+/* A fresh ticket is reversible only before MUTATE or CLAIM. Report a
+ * failed cancellation as the restore error: the caller must not mistake
+ * the original preflight failure for a clean rollback. */
+static int
+hypertrace_restore_cancel_if_safe(struct vmctx *ctx,
+    const struct restore_state *rstate, bool reserved, bool mutating,
+    bool claimed)
+{
+	if (!reserved || mutating || claimed)
+		return (0);
+	if (hypertrace_handoff_destination_ensure(ctx, DTRACED_HANDOFF_CANCEL,
+	    rstate->handoff_token, rstate->handoff_digest) != 0)
+		return (errno != 0 ? errno : EIO);
+	return (0);
+}
+
+/* Trace continuity across restore/migration is a future feature, disabled
+ * because the current product contract is fresh-session.  Destination-side
+ * handoff: restore refuses continuity (format-4 / handoff v1) images, so
+ * this is intentionally unreachable until enabled. */
+/* A lost MUTATE reply can mean the daemon already advanced the ticket.
+ * Set the irreversible boundary before sending, so failure recovery never
+ * races an in-flight MUTATE with CANCEL. */
+static int
+hypertrace_restore_begin_mutation(struct vmctx *ctx,
+    const struct restore_state *rstate, bool *mutating)
+{
+	*mutating = true;
+	if (hypertrace_handoff_destination_ensure(ctx, DTRACED_HANDOFF_MUTATE,
+	    rstate->handoff_token, rstate->handoff_digest) != 0)
+		return (errno != 0 ? errno : EIO);
+	return (0);
+}
+
 int
 vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 {
 	struct vm_snapshot_session session;
+	dtraced_replay_kill_t *replay_kills = NULL;
+	size_t replay_count = 0;
+	uint8_t private_digest[SHA256_DIGEST_LENGTH] = { 0 };
 	bool released, resolved, session_active;
+	bool handoff_required = false, handoff_reserved = false;
+	bool fresh_session;
+	bool handoff_rebinding = false;
+	bool handoff_has_transfer_state = false;
+	size_t handoff_replay_controls = 0;
+	bool handoff_mutating = false, handoff_claimed = false;
+	bool ticket_attached = false;
+	bool devices_paused = false;
 	int error, release_error;
 
 	BHYVE_TRACE(RESTORE_BEGIN, (uintptr_t)ctx);
@@ -2323,6 +2901,7 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 		BHYVE_TRACE(RESTORE_RESULT, EINVAL);
 		return (EINVAL);
 	}
+	fresh_session = rstate->checkpoint_format_version == 5;
 	/*
 	 * bhyverun must have fenced every newly created vCPU before this
 	 * transaction starts.  Refuse a direct caller rather than allowing a
@@ -2331,6 +2910,54 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 	if (!checkpoint_restore_startup_held()) {
 		BHYVE_TRACE(RESTORE_RESULT, EBUSY);
 		return (EBUSY);
+	}
+	error = lookup_hypertrace_handoff(rstate, &handoff_required);
+	/*
+	 * Trace continuity across restore/migration is a future feature,
+	 * disabled because the current product contract is fresh-session:
+	 * refuse a transfer-ticket image (format 4, or handoff metadata
+	 * version 1) before any mutation.  The handoff code below is
+	 * intentionally unreachable until enabled.
+	 */
+	if (rstate->checkpoint_format_version == 4 ||
+	    (error == 0 && handoff_required)) {
+		EPRINTLN("Trace-continuity checkpoints are not restored; "
+		    "restore requires a fresh-session checkpoint.");
+		BHYVE_TRACE(RESTORE_RESULT, ENOTSUP);
+		return (ENOTSUP);
+	}
+	if (error != 0 || ((handoff_required || fresh_session) &&
+	    (!hypertrace_initialized() || !rstate->handoff_identity_valid ||
+	    rstate->checkpoint_lock_fd < 0 ||
+	    checkpoint_regular_fd(rstate->checkpoint_lock_fd) != 0))) {
+		error = error != 0 ? error : ENOTSUP;
+		BHYVE_TRACE(RESTORE_RESULT, error);
+		return (error);
+	}
+	if (fresh_session && (!rstate->hypertrace_session_present ||
+	    handoff_required || rstate->hypertrace_transfer != NULL ||
+	    rstate->hypertrace_release_present)) {
+		BHYVE_TRACE(RESTORE_RESULT, EPROTO);
+		return (EPROTO);
+	}
+	/* Trace continuity (disabled future feature): continuity images are refused above. */
+	if (rstate->checkpoint_format_version == 4) {
+		if (!handoff_required || rstate->hypertrace_transfer == NULL ||
+		    rstate->hypertrace_transfer_length <
+		    HYPERTRACE_TRANSFER_MIN_BYTES ||
+		    hypertrace_transfer_inspect(rstate->hypertrace_transfer,
+		    rstate->hypertrace_transfer_length,
+		    rstate->handoff_token, &handoff_has_transfer_state) != 0) {
+			BHYVE_TRACE(RESTORE_RESULT, EPROTO);
+			return (EPROTO);
+		}
+		if (hypertrace_transfer_replay_controls(
+		    rstate->hypertrace_transfer,
+		    rstate->hypertrace_transfer_length,
+		    rstate->handoff_token, &handoff_replay_controls) != 0) {
+			BHYVE_TRACE(RESTORE_RESULT, EPROTO);
+			return (EPROTO);
+		}
 	}
 	session_active = false;
 	memset(&session, 0, sizeof(session));
@@ -2344,14 +2971,36 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 		BHYVE_TRACE(RESTORE_RESULT, error);
 		return (error);
 	}
+	devices_paused = true;
 	BHYVE_PHASE_START(__func__, "vm_restore_preflight");
-	error = vm_restore_preflight(rstate);
+	error = vm_restore_preflight_internal(rstate,
+	    handoff_required || fresh_session);
 	BHYVE_PHASE_DONE(__func__, "vm_restore_preflight",
 	    error, error < 0 ? errno : 0);
 	if (error != 0) {
 		EPRINTLN("Checkpoint topology or device contract is invalid.");
 		goto failed;
 	}
+	/* A nonempty import must fit its saved device queue and every
+	 * projected HJX1 replay control before the daemon enters MUTATE. */
+	/* Trace continuity (disabled future feature): continuity images are refused above. */
+	if (handoff_has_transfer_state) {
+		if (rstate->hypertrace_private_image == NULL) {
+			error = EPROTO;
+			goto failed;
+		}
+		error = pci_vtdtr_checkpoint_private_image_replay_room(
+		    __DECONST(void *, rstate->hypertrace_private_image),
+		    rstate->hypertrace_private_length, handoff_replay_controls);
+		if (error != 0) {
+			EPRINTLN("HyperTrace replay exceeds restored device queue: %s",
+			    strerror(error));
+			goto failed;
+		}
+	}
+	if ((handoff_required || fresh_session) &&
+	    rstate->hypertrace_private_image != NULL)
+		hypertrace_private_image_digest(rstate, private_digest);
 	BHYVE_PHASE_START(__func__, "vm_restore_memory_preflight");
 	error = vm_restore_memory_preflight(ctx, rstate);
 	BHYVE_PHASE_DONE(__func__, "vm_restore_memory_preflight",
@@ -2359,6 +3008,35 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 	if (error != 0) {
 		EPRINTLN("Checkpoint memory layout is invalid.");
 		goto failed;
+	}
+	/* Complete read-only device, queue, and memory preflight before
+	 * reserving a destination ticket or staging a transfer. */
+	if (fresh_session) {
+		error = pci_vtdtr_session_restore_stage_paused(
+		    rstate->hypertrace_private_dev, rstate->hypertrace_session,
+		    sizeof(rstate->hypertrace_session),
+		    __DECONST(void *, rstate->hypertrace_private_image),
+		    rstate->hypertrace_private_length);
+		if (error != 0)
+			goto failed;
+	}
+	/* Trace continuity (disabled future feature): continuity images are refused above. */
+	if (handoff_required && rstate->hypertrace_release_present &&
+	    hypertrace_handoff_destination_stage_release_prestart(ctx,
+	    rstate->handoff_token, rstate->handoff_digest,
+	    rstate->hypertrace_release) != 0) {
+		error = errno != 0 ? errno : EIO;
+		EPRINTLN("Could not stage signed HyperTrace source release: %s",
+		    strerror(error));
+		goto failed;
+	}
+	/* Trace continuity (disabled future feature): continuity images are refused above. */
+	if (handoff_required) {
+		error = hypertrace_restore_prepare_handoff(ctx, rstate,
+		    handoff_has_transfer_state, private_digest,
+		    &handoff_rebinding, &handoff_reserved);
+		if (error != 0)
+			goto failed;
 	}
 
 	BHYVE_PHASE_START(__func__, "vm_snapshot_session_begin_exact");
@@ -2374,6 +3052,18 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 		goto failed;
 	}
 	session_active = true;
+	/* Once memory changes, CANCEL is no longer a valid rollback.  Publish
+	 * that transition durably before the first destination mutation. */
+	/* Trace continuity (disabled future feature): continuity images are refused above. */
+	if (handoff_required && !handoff_rebinding) {
+		error = hypertrace_restore_begin_mutation(ctx, rstate,
+		    &handoff_mutating);
+		if (error != 0) {
+			EPRINTLN("Could not begin HyperTrace destination mutation: %s",
+			    strerror(error));
+			goto failed;
+		}
+	}
 
 	FPRINTLN(stdout, "Restoring vm mem...");
 	BHYVE_PHASE_START(__func__, "restore_vm_mem");
@@ -2385,14 +3075,34 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 		EPRINTLN("Failed to restore VM memory.");
 		goto failed;
 	}
+	if ((handoff_required || fresh_session) &&
+	    rstate->hypertrace_private_image != NULL) {
+		error = hypertrace_private_image_unchanged(rstate,
+		    private_digest);
+		if (error != 0) {
+			EPRINTLN("HyperTrace private image changed before device "
+			    "restore.");
+			goto failed;
+		}
+	}
 	FPRINTLN(stdout, "Restoring pci devs...");
 	BHYVE_PHASE_START(__func__, "vm_restore_devices");
-	error = vm_restore_devices(rstate);
+	error = vm_restore_devices_prevalidated(rstate);
 	BHYVE_PHASE_DONE(__func__, "vm_restore_devices",
 	    error, error < 0 ? errno : 0);
 	if (error != 0) {
 		EPRINTLN("Failed to restore PCI device state.");
 		goto failed;
+	}
+	if ((handoff_required || fresh_session) &&
+	    rstate->hypertrace_private_image != NULL) {
+		error = hypertrace_private_image_unchanged(rstate,
+		    private_digest);
+		if (error != 0) {
+			EPRINTLN("HyperTrace private image changed during device "
+			    "restore.");
+			goto failed;
+		}
 	}
 	FPRINTLN(stdout, "Restoring kernel structs...");
 	BHYVE_PHASE_START(__func__, "vm_restore_kern_structs");
@@ -2402,6 +3112,12 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 	if (error != 0) {
 		EPRINTLN("Failed to restore kernel structs.");
 		goto failed;
+	}
+	if (fresh_session) {
+		error = pci_vtdtr_session_discard_paused(
+		    rstate->hypertrace_private_dev);
+		if (error != 0)
+			goto failed;
 	}
 
 	BHYVE_PHASE_START(__func__, "vm_snapshot_session_release_exact");
@@ -2417,25 +3133,180 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 		    strerror(error));
 		goto failed;
 	}
+	/* Trace continuity (disabled future feature): continuity images are refused above. */
+	if (handoff_required) {
+		int handoff_error = handoff_rebinding ?
+		    hypertrace_handoff_rebind_commit_empty(ctx,
+		    rstate->handoff_token, rstate->handoff_digest) :
+		    hypertrace_handoff_destination_ensure(ctx,
+		    DTRACED_HANDOFF_CLAIM, rstate->handoff_token,
+		    rstate->handoff_digest);
+		if (handoff_error != 0) {
+			error = errno != 0 ? errno : EIO;
+			EPRINTLN("Could not commit HyperTrace destination "
+			    "ticket: %s", strerror(error));
+			goto failed;
+		}
+		handoff_claimed = true;
+		/* Committed ticket ownership does not prove that source KILLs are
+		 * present in the destination incarnation. Hold device and vCPU
+		 * startup until the attested daemon has durably copied every source
+		 * revocation. An
+		 * uncertain reply permits an exact retry: the bind is idempotent. */
+		if (hypertrace_handoff_destination_prestart(ctx,
+		    DTRACED_HANDOFF_BIND_KILLS_ALL, rstate->handoff_token,
+		    rstate->handoff_digest) != 0 &&
+		    hypertrace_handoff_destination_prestart(ctx,
+		    DTRACED_HANDOFF_BIND_KILLS_ALL, rstate->handoff_token,
+		    rstate->handoff_digest) != 0) {
+			error = errno != 0 ? errno : EIO;
+			EPRINTLN("Could not bind HyperTrace destination KILLs: %s",
+			    strerror(error));
+			goto failed;
+		}
+		/* The saved device queue can contain host-bound ELF deliveries.
+		 * Bind their exact source receipts to this claimed destination
+		 * before daemon admission or any guest vCPU release. The operation
+		 * is idempotent after a reply is lost. */
+		if (rstate->hypertrace_private_image != NULL) {
+			error = hypertrace_private_image_unchanged(rstate,
+			    private_digest);
+			if (error != 0) {
+				EPRINTLN("HyperTrace private image changed before "
+				    "delivery binding.");
+				goto failed;
+			}
+			error = pci_vtdtr_checkpoint_private_image_bind(
+			    __DECONST(void *, rstate->hypertrace_private_image),
+			    rstate->hypertrace_private_length, ctx,
+			    rstate->handoff_token, rstate->handoff_digest);
+			if (error != 0)
+				error = pci_vtdtr_checkpoint_private_image_bind(
+				    __DECONST(void *,
+				    rstate->hypertrace_private_image),
+				    rstate->hypertrace_private_length, ctx,
+				    rstate->handoff_token, rstate->handoff_digest);
+			if (error != 0) {
+				EPRINTLN("Could not bind HyperTrace device deliveries: %s",
+				    strerror(error));
+				goto failed;
+			}
+		}
+		/* The empty transfer is an exact no-op; a later nonempty import
+		 * needs HLC1 before the connector or guest can run. Ask the daemon
+		 * for the same durable promotion barrier in both cases. */
+		if (hypertrace_handoff_destination_promote_prestart(ctx,
+		    rstate->handoff_token, rstate->handoff_digest) != 0) {
+			error = errno != 0 ? errno : EIO;
+			EPRINTLN("Could not promote HyperTrace destination import: %s",
+			    strerror(error));
+			goto failed;
+		}
+	}
+	if (hypertrace_initialized() &&
+	    hypertrace_start_ready(ctx, 30000) != 0) {
+		error = errno != 0 ? errno : EIO;
+		EPRINTLN("HyperTrace daemon did not admit the restored VM: %s",
+		    strerror(error));
+		goto failed;
+	}
+	/* Take the attested journal cut and attach it before the device reader
+	 * can inspect the restored queue. The pause still owns its mutex. */
+	if (hypertrace_initialized() &&
+	    (error = hypertrace_take_replay_kills(ctx,
+	    &replay_kills, &replay_count)) != 0) {
+		EPRINTLN("Could not obtain HyperTrace admission replay: %s",
+		    strerror(error));
+		goto failed;
+	}
+	if (replay_count != 0 &&
+	    (fresh_session || rstate->hypertrace_private_dev == NULL)) {
+		error = EPROTO;
+		EPRINTLN("HyperTrace replay KILLs have no destination device.");
+		goto failed;
+	}
+	/* Trace continuity (disabled future feature): continuity images are refused above. */
+	if (handoff_required && rstate->hypertrace_private_dev != NULL) {
+		error = pci_vtdtr_handoff_ticket_attach_paused(
+		    rstate->hypertrace_private_dev, rstate->handoff_token,
+		    rstate->handoff_digest, replay_kills, replay_count);
+		if (error != 0) {
+			EPRINTLN("Could not attach HyperTrace handoff ticket: %s",
+			    strerror(error));
+			goto failed;
+		}
+		ticket_attached = true;
+		/* Admission KILLs were inserted into the private saved queue.
+		 * Publish the queue and attested ticket as one paused-device cut,
+		 * after every daemon binding and the complete admission manifest. */
+		error = pci_vtdtr_checkpoint_publish_paused(
+		    rstate->hypertrace_private_dev);
+		if (error != 0) {
+			EPRINTLN("Could not publish HyperTrace device queue: %s",
+			    strerror(error));
+			goto failed;
+		}
+	}
 	FPRINTLN(stdout, "Resuming pci devs...");
 	BHYVE_PHASE_START(__func__, "vm_resume_devices");
 	error = vm_resume_devices();
 	BHYVE_PHASE_DONE(__func__, "vm_resume_devices",
 	    error, error < 0 ? errno : 0);
-	if (error != 0)
+	if (error != 0) {
 		EPRINTLN("Failed to resume PCI device state.");
-	else {
-		BHYVE_PHASE_START(__func__, "checkpoint_restore_startup_release");
-		error = checkpoint_restore_startup_release();
-		BHYVE_PHASE_DONE(__func__, "checkpoint_restore_startup_release",
-		    error, error < 0 ? errno : 0);
-		if (error != 0)
-			EPRINTLN("Failed to release restore startup fence.");
+		goto failed;
 	}
+	devices_paused = false;
+	/* Guest replies require running vCPUs. Queue PREPARE now; the device
+	 * communicator authorizes the new session only after guest ACTIVE. */
+	if (fresh_session &&
+	    (error = pci_vtdtr_session_attach_begin(ctx)) != 0)
+		goto failed;
+	/* The VirtIO-DTrace reader could not ACK imported ELF work while the
+	 * device was paused. It may now drain the claimed replay into the
+	 * published queue, but no guest vCPU runs before this durable cut. */
+	/* Trace continuity (disabled future feature): continuity images are refused above. */
+	if (handoff_required && hypertrace_handoff_replay_drain(ctx,
+	    rstate->handoff_token, rstate->handoff_digest, 30000) != 0) {
+		error = errno != 0 ? errno : EIO;
+		EPRINTLN("HyperTrace imported ELF replay is not durable: %s",
+		    strerror(error));
+		if (ticket_attached)
+			pci_vtdtr_handoff_ticket_clear(
+			    rstate->hypertrace_private_dev);
+		goto failed;
+	}
+	/* Record the exact claimed VM lifetime before any restored vCPU can
+	 * run. An absent marker then proves a failed claim never crossed the
+	 * execution boundary; a present or uncertain one forbids rebinding. */
+	/* Trace continuity (disabled future feature): continuity images are refused above. */
+	if (handoff_required && hypertrace_handoff_execution_start(ctx,
+	    rstate->handoff_token, rstate->handoff_digest) != 0) {
+		error = errno != 0 ? errno : EIO;
+		EPRINTLN("Could not mark HyperTrace execution start: %s",
+		    strerror(error));
+		if (ticket_attached)
+			pci_vtdtr_handoff_ticket_clear(
+			    rstate->hypertrace_private_dev);
+		goto failed;
+	}
+	BHYVE_PHASE_START(__func__, "checkpoint_restore_startup_release");
+	error = checkpoint_restore_startup_release();
+	BHYVE_PHASE_DONE(__func__, "checkpoint_restore_startup_release",
+	    error, error < 0 ? errno : 0);
+	if (error != 0) {
+		EPRINTLN("Failed to release restore startup fence.");
+		/* Trace continuity (disabled future feature): continuity images are refused above. */
+		if (ticket_attached)
+			pci_vtdtr_handoff_ticket_clear(
+			    rstate->hypertrace_private_dev);
+	}
+	free(replay_kills);
 	BHYVE_TRACE(RESTORE_RESULT, error);
 	return (error);
 
 failed:
+	free(replay_kills);
 	if (session_active) {
 		BHYVE_PHASE_START(__func__, "vm_snapshot_session_release_exact");
 		release_error = vm_snapshot_session_release_exact(ctx, &session,
@@ -2449,6 +3320,18 @@ failed:
 				error = release_error;
 		}
 	}
+	release_error = hypertrace_restore_cancel_if_safe(ctx, rstate,
+	    handoff_reserved, handoff_mutating, handoff_claimed);
+	if (release_error != 0) {
+		EPRINTLN("Could not cancel HyperTrace checkpoint reservation; "
+		    "the destination remains stopped: %s",
+		    strerror(release_error));
+		error = release_error;
+	}
+	/* The failed destination exits with vCPUs fenced. Release the DTrace
+	 * pause owner before its atexit handler joins the device workers. */
+	if (devices_paused)
+		(void)pci_vtdtr_checkpoint_stop();
 	BHYVE_TRACE(RESTORE_RESULT, error != 0 ? error : EIO);
 	return (error != 0 ? error : EIO);
 }
@@ -2478,18 +3361,29 @@ snapshot_write_all(int fd, const void *buffer, size_t length)
 }
 
 static void
-checkpoint_remove_old_generation(int fddir,
+checkpoint_remove_old_generation(int fddir, const char *checkpoint_file,
     const struct checkpoint_manifest *old)
 {
-	const char *members[3];
+	const char *members[4];
+	uint8_t token[16];
 
 	members[0] = old->data;
 	members[1] = old->kern;
 	members[2] = old->meta;
-	for (unsigned int i = 0; i < nitems(members); i++) {
+	members[3] = old->trace;
+	for (unsigned int i = 0;
+	    i < (old->format_version == 4 || old->format_version == 5 ?
+	    nitems(members) : 3); i++) {
 		if (unlinkat(fddir, members[i], 0) != 0 && errno != ENOENT)
 			EPRINTLN("Cannot remove old checkpoint member '%s': %s",
 			    members[i], strerror(errno));
+	}
+	if (old->format_version == 4 &&
+	    checkpoint_manifest_handoff_token(checkpoint_file, old, token) == 0) {
+		int release_error = checkpoint_release_remove_at(fddir, token);
+		if (release_error != 0)
+			EPRINTLN("Cannot remove old HyperTrace release: %s",
+			    strerror(release_error));
 	}
 	if (fsync(fddir) != 0)
 		EPRINTLN("Cannot persist old checkpoint cleanup: %s",
@@ -2659,6 +3553,8 @@ vm_snapshot_basic_metadata(struct vmctx *ctx, xo_handle_t *xop, size_t memsz)
 		return (error);
 	}
 	xo_open_container_h(xop, JSON_BASIC_METADATA_KEY);
+	xo_emit_h(xop, "{:" JSON_HYPERTRACE_HANDOFF_VERSION_KEY "/%u}\n",
+	    hypertrace_initialized() ? 2U : 0U);
 	xo_emit_h(xop, "{:" JSON_NCPUS_KEY "/%d}\n", guest_ncpus);
 	xo_emit_h(xop, "{:" JSON_CPU_SOCKETS_KEY "/%u}\n",
 	    (unsigned int)cpu_sockets);
@@ -2853,8 +3749,35 @@ vm_snapshot_devices(int data_fd, xo_handle_t *xop)
 	/* Save PCI devices */
 	pdi = NULL;
 	while ((pdi = pci_next(pdi)) != NULL) {
-		ret = vm_snapshot_device(pci_snapshot, pdi->pi_name, pdi,
-		    data_fd, xop, meta, &offset);
+		size_t extra = 0;
+		if (pdi->pi_d->pe_snapshot_extra_capacity != NULL) {
+			ret = pdi->pi_d->pe_snapshot_extra_capacity(pdi, &extra);
+			if (ret != 0)
+				goto snapshot_err;
+		}
+		if (extra > SNAPSHOT_DEVICE_EXTRA_MAX ||
+		    extra > SIZE_MAX - buf_size) {
+			ret = E2BIG;
+			goto snapshot_err;
+		}
+		if (extra == 0) {
+			ret = vm_snapshot_device(pci_snapshot, pdi->pi_name,
+			    pdi, data_fd, xop, meta, &offset);
+		} else {
+			uint8_t *large = malloc(buf_size + extra);
+			if (large == NULL) {
+				ret = ENOMEM;
+				goto snapshot_err;
+			}
+			struct vm_snapshot_meta expanded = {
+				.buffer.buf_start = large,
+				.buffer.buf_size = buf_size + extra,
+				.op = VM_SNAPSHOT_SAVE,
+			};
+			ret = vm_snapshot_device(pci_snapshot, pdi->pi_name,
+			    pdi, data_fd, xop, &expanded, &offset);
+			free(large);
+		}
 		if (ret != 0)
 			goto snapshot_err;
 	}
@@ -2863,7 +3786,16 @@ vm_snapshot_devices(int data_fd, xo_handle_t *xop)
 	ret = vm_snapshot_device(atkbdc_snapshot, "atkbdc", NULL,
 	    data_fd, xop, meta, &offset);
 #else
-	ret = 0;
+	{
+		const struct snapshot_md_device *md;
+		size_t md_count;
+
+		ret = 0;
+		md = bhyve_snapshot_md_devices(&md_count);
+		for (size_t i = 0; ret == 0 && i < md_count; i++)
+			ret = vm_snapshot_device(md[i].snapshot, md[i].name,
+			    NULL, data_fd, xop, meta, &offset);
+	}
 #endif
 	if (ret == 0 && qemu_fwcfg_enabled())
 		ret = vm_snapshot_device(qemu_fwcfg_snapshot,
@@ -3009,7 +3941,11 @@ vm_vcpu_resume(struct vmctx *ctx)
 	pthread_mutex_lock(&vcpu_lock);
 	checkpoint_active = false;
 	pthread_mutex_unlock(&vcpu_lock);
+#ifdef __amd64__
 	vm_resume_all_cpus(ctx);
+#else
+	bhyve_resume_powered_cpus(ctx);
+#endif
 	/*
 	 * Publish the wakeup while holding the same mutex that protects
 	 * checkpoint_active.  A vCPU either observes the cleared predicate or
@@ -3022,6 +3958,54 @@ vm_vcpu_resume(struct vmctx *ctx)
 	pthread_mutex_unlock(&vcpu_lock);
 }
 
+/* Run while guest CPUs and VirtIO workers can still deliver STOPPED. A
+ * failure never releases the tracing gate or replays the abandoned session. */
+static int
+hypertrace_checkpoint_stop(struct vmctx *ctx,
+    uint8_t record[HYPERTRACE_SESSION_RECORD_SIZE])
+{
+	struct timespec now, deadline, delay = {.tv_nsec = 10000000};
+	struct timespec collector_delay = {.tv_nsec = 100000000};
+	bool complete = false;
+	int error;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
+		return (errno != 0 ? errno : EIO);
+	deadline.tv_sec += 600;
+	error = pci_vtdtr_session_checkpoint_begin(ctx);
+	if (error != 0)
+		return (error);
+	for (;;) {
+		error = pci_vtdtr_session_stop_status(ctx);
+		if (error != EBUSY)
+			break;
+		if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+			return (errno != 0 ? errno : EIO);
+		if (now.tv_sec > deadline.tv_sec ||
+		    (now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec))
+			return (ETIMEDOUT);
+		if (nanosleep(&delay, NULL) != 0 && errno != EINTR)
+			return (errno != 0 ? errno : EIO);
+	}
+	if (error != 0)
+		return (error);
+	while (!complete) {
+		if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+			return (errno != 0 ? errno : EIO);
+		if (now.tv_sec > deadline.tv_sec ||
+		    (now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec))
+			return (ETIMEDOUT);
+		error = pci_vtdtr_session_collectors_stop_step(ctx, &complete);
+		if (error != 0)
+			return (error);
+		if (!complete && nanosleep(&collector_delay, NULL) != 0 &&
+		    errno != EINTR)
+			return (errno != 0 ? errno : EIO);
+	}
+	return (pci_vtdtr_session_checkpoint_export(ctx, record,
+	    HYPERTRACE_SESSION_RECORD_SIZE));
+}
+
 static int
 vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
     bool stop_vm)
@@ -3029,6 +4013,8 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	struct vm_snapshot_session snapshot_session;
 	struct checkpoint_manifest manifest, old_manifest;
 	int fd_checkpoint = -1, kdata_fd = -1, fd_meta = -1;
+	int fd_trace = -1;
+	int release_fd = -1;
 	int lock_fd = -1;
 	int ret = 0;
 	int error = 0;
@@ -3039,12 +4025,33 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	bool data_created = false;
 	bool kern_created = false;
 	bool meta_created = false;
+	bool trace_created = false;
 	bool old_exists = false;
 	bool old_is_manifest = false;
 	bool published = false;
 	bool snapshot_session_active = false;
 	bool snapshot_session_unresolved = false;
 	bool vcpus_paused = false;
+	bool handoff_prepared = false;
+	bool handoff_committed = false;
+	bool handoff_unresolved = false;
+	bool source_gate_active = false;
+	bool fresh_session = hypertrace_initialized();
+	/*
+	 * Trace continuity across restore/migration is a future feature,
+	 * disabled because the current product contract is fresh-session (no
+	 * trace continuity across restore or migration).  New checkpoints use
+	 * stopped-session metadata instead of transfer tickets; every
+	 * handoff_enabled block below is intentionally unreachable until enabled.
+	 */
+	bool handoff_enabled = false;
+	uint8_t fresh_record[HYPERTRACE_SESSION_RECORD_SIZE];
+	uint8_t handoff_token[16], handoff_digest[32];
+	uint8_t release_wire[CHECKPOINT_RELEASE_WIRE_SIZE];
+	bool signed_release = false;
+	uint8_t handoff_transfer_digest[32];
+	void *transfer_bytes = NULL;
+	size_t transfer_length = 0;
 	xo_handle_t *xop = NULL;
 	char *lock_filename = NULL, *manifest_tmp = NULL;
 	FILE *meta_file = NULL;
@@ -3053,6 +4060,25 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	/* Fail before creating files or stopping the guest. */
 	if (tpm_device_present()) {
 		EPRINTLN("TPM-equipped VMs cannot be checkpointed safely yet.");
+		BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, false, ENOTSUP);
+		return (ENOTSUP);
+	}
+	/*
+	 * A guest held by the restore startup fence (an inbound migration that
+	 * is retained or not yet released) has never run.  The checkpoint's
+	 * resume path would release the parked vCPUs, so refuse before touching
+	 * anything; migrate_resolve owns that decision.
+	 */
+	if (checkpoint_restore_startup_held()) {
+		EPRINTLN("Cannot checkpoint a guest held by the startup fence; "
+		    "resolve the inbound migration first.");
+		BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, false, EBUSY);
+		return (EBUSY);
+	}
+	/* A running source cannot share a committed tracing ticket with its
+	 * checkpoint copy.  Clone semantics need a separate ticket protocol. */
+	if ((handoff_enabled || fresh_session) && !stop_vm) {
+		EPRINTLN("HyperTrace checkpoints require stop_vm.");
 		BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, false, ENOTSUP);
 		return (ENOTSUP);
 	}
@@ -3067,7 +4093,7 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	lock_fd = openat(fddir, lock_filename,
 	    O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
 	if (lock_fd < 0) {
-		error = errno;
+		error = errno != 0 ? errno : EIO;
 		fprintf(stderr, "Failed to open checkpoint lock: %s\n",
 		    strerror(error));
 		goto done;
@@ -3096,18 +4122,31 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 		error = EINVAL;
 		goto done;
 	}
-	error = checkpoint_generation_names(checkpoint_file, &manifest,
+	error = fresh_session ?
+	    checkpoint_generation_names_fresh(checkpoint_file, &manifest,
+	    &manifest_tmp) : handoff_enabled ?
+	    checkpoint_generation_names_trace(checkpoint_file, &manifest,
+	    &manifest_tmp) :
+	    checkpoint_generation_names(checkpoint_file, &manifest,
 	    &manifest_tmp);
 	if (error != 0) {
 		fprintf(stderr, "Failed to construct checkpoint generation names.\n");
 		goto done;
+	}
+	/* Trace continuity (disabled future feature): unreachable until
+	 * handoff_enabled; see its definition. */
+	if (handoff_enabled) {
+		error = checkpoint_manifest_handoff_token(checkpoint_file,
+		    &manifest, handoff_token);
+		if (error != 0)
+			goto done;
 	}
 
 	kdata_fd = openat(fddir, manifest.kern,
 	    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0700);
 	if (kdata_fd < 0) {
 		perror("Failed to open kernel data snapshot file.");
-		error = errno;
+		error = errno != 0 ? errno : EIO;
 		goto done;
 	}
 	kern_created = true;
@@ -3116,7 +4155,7 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	    O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0700);
 	if (fd_checkpoint < 0) {
 		perror("Failed to create checkpoint file");
-		error = errno;
+		error = errno != 0 ? errno : EIO;
 		goto done;
 	}
 	data_created = true;
@@ -3125,6 +4164,15 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0700);
 	if (fd_meta >= 0)
 		meta_created = true;
+	if (handoff_enabled || fresh_session) {
+		fd_trace = openat(fddir, manifest.trace,
+		    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0700);
+		if (fd_trace < 0) {
+			error = errno != 0 ? errno : EIO;
+			goto done;
+		}
+		trace_created = true;
+	}
 	if (fd_meta != -1)
 		meta_file = fdopen(fd_meta, "w");
 	if (meta_file == NULL) {
@@ -3142,11 +4190,28 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 		goto done;
 	}
 
+	if (fresh_session) {
+		error = hypertrace_checkpoint_stop(ctx, fresh_record);
+		if (error != 0) {
+			fprintf(stderr, "Could not stop HyperTrace session: %s\n",
+			    strerror(error));
+			goto done;
+		}
+		if (snapshot_write_all(fd_trace, fresh_record, sizeof(fresh_record)) != 0 ||
+		    fsync(fd_trace) != 0) {
+			error = errno != 0 ? errno : EIO;
+			goto done;
+		}
+	}
 	BHYVE_PHASE_START(__func__, "vm_vcpu_pause");
 	vm_vcpu_pause(ctx);
 	BHYVE_PHASE_DONE(__func__, "vm_vcpu_pause", 0, 0);
 	vcpus_paused = true;
 
+	/* The HTX1 export and PREPARE digest must describe the same device and
+	 * kernel-ingress cut as the checkpoint image.  In particular, the
+	 * virtio-dtrace reader must stop before the daemon snapshots its accepted
+	 * ingress and program evidence. */
 	BHYVE_PHASE_START(__func__, "vm_pause_devices");
 	ret = vm_pause_devices();
 	BHYVE_PHASE_DONE(__func__, "vm_pause_devices",
@@ -3179,6 +4244,102 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 		goto done;
 	}
 	snapshot_session_active = true;
+
+	/* Trace continuity (disabled future feature): unreachable until
+	 * handoff_enabled; see its definition. */
+	if (handoff_enabled) {
+		bool absent = false;
+		/* Journal the exact source epoch before exporting any accepted
+		 * ingress. An uncertain ACK keeps the VM stopped: the daemon may
+		 * have suspended the kernel gate after the connection failed. */
+		if (hypertrace_handoff_source_gate_ensure(ctx,
+		    DTRACED_HANDOFF_SOURCE_GATE_BEGIN,
+		    handoff_token) != 0) {
+			error = errno != 0 ? errno : EIO;
+			handoff_unresolved = true;
+			fprintf(stderr, "Could not establish HyperTrace source gate: %s\n",
+			    strerror(error));
+			goto done;
+		}
+		source_gate_active = true;
+		if (hypertrace_handoff_source_bundle_fresh(ctx, handoff_token,
+		    &transfer_bytes, &transfer_length) != 0 ||
+		    transfer_bytes == NULL ||
+		    transfer_length < HYPERTRACE_TRANSFER_MIN_BYTES) {
+			error = errno != 0 ? errno : EIO;
+			fprintf(stderr,
+			    "Could not export HyperTrace ingress bundle: %s\n",
+			    strerror(error));
+			goto done;
+		}
+		{
+			struct pci_devinst *trace_pi = NULL;
+			size_t replay_controls;
+
+			while ((trace_pi = pci_next(trace_pi)) != NULL &&
+			    !pci_vtdtr_checkpoint_is_device(trace_pi))
+				;
+			if (trace_pi == NULL) {
+				error = ENODEV;
+				fprintf(stderr,
+				    "HyperTrace device missing from paused source\n");
+				goto done;
+			}
+			if (hypertrace_transfer_replay_controls(transfer_bytes,
+			    transfer_length, handoff_token, &replay_controls) != 0) {
+				error = errno != 0 ? errno : EPROTO;
+				fprintf(stderr,
+				    "Could not inspect HyperTrace replay budget: %s\n",
+				    strerror(error));
+				goto done;
+			}
+			error = pci_vtdtr_checkpoint_source_replay_room(trace_pi,
+			    replay_controls);
+			if (error != 0) {
+				fprintf(stderr,
+				    "HyperTrace replay exceeds paused device queue: %s\n",
+				    strerror(error));
+				goto done;
+			}
+		}
+		if (snapshot_write_all(fd_trace, transfer_bytes,
+		    transfer_length) != 0 ||
+		    fsync(fd_trace) != 0 || fsync(fddir) != 0) {
+			error = errno != 0 ? errno : EIO;
+			fprintf(stderr,
+			    "Could not durably save HyperTrace ingress bundle: %s\n",
+			    strerror(error));
+			goto done;
+		}
+		memcpy(handoff_transfer_digest,
+		    (const uint8_t *)transfer_bytes + transfer_length -
+		    sizeof(handoff_transfer_digest), sizeof(handoff_transfer_digest));
+		free(transfer_bytes);
+		transfer_bytes = NULL;
+		transfer_length = 0;
+		/* Challenge each exact HCP1 consumer on a separate attested
+		 * request. HGD1 is durable before a step replies; PREPARE still
+		 * enforces the destination execution-state lease. */
+		if (hypertrace_handoff_source_drain(ctx, handoff_token,
+		    handoff_transfer_digest) != 0) {
+			error = errno != 0 ? errno : EIO;
+			fprintf(stderr,
+			    "Could not drain HyperTrace consumers: %s\n",
+			    strerror(error));
+			goto done;
+		}
+
+		if (hypertrace_handoff_source_ensure(ctx,
+		    DTRACED_HANDOFF_PREPARE, handoff_token,
+		    handoff_transfer_digest, &absent) != 0) {
+			error = errno != 0 ? errno : EIO;
+			handoff_unresolved = !absent;
+			fprintf(stderr, "Could not prepare HyperTrace source ticket: %s\n",
+			    strerror(error));
+			goto done;
+		}
+		handoff_prepared = true;
+	}
 
 	BHYVE_PHASE_START(__func__, "vm_snapshot_mem");
 	memsz = vm_snapshot_mem(ctx, fd_checkpoint, 0, true);
@@ -3240,6 +4401,7 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 
 done:
 	free(devmem_regions);
+	free(transfer_bytes);
 	/*
 	 * Complete and durably flush every generation member before publishing
 	 * the manifest.  Until renameat() below, an older manifest remains the
@@ -3271,6 +4433,12 @@ done:
 		if (close(kdata_fd) != 0 && error == 0)
 			error = errno != 0 ? errno : EIO;
 	}
+	if (fd_trace >= 0) {
+		if (error == 0 && fsync(fd_trace) != 0)
+			error = errno != 0 ? errno : EIO;
+		if (close(fd_trace) != 0 && error == 0)
+			error = errno != 0 ? errno : EIO;
+	}
 	if (error == 0 && fsync(fddir) != 0)
 		error = errno != 0 ? errno : EIO;
 	if (error == 0) {
@@ -3279,9 +4447,66 @@ done:
 		    &manifest, &published);
 		BHYVE_PHASE_DONE(__func__, "checkpoint_publish", error, 0);
 		BHYVE_TRACE(CHECKPOINT_PUBLISH, published, error);
-		if (published && error == 0 && old_exists)
-			checkpoint_remove_old_generation(fddir, &old_manifest);
 	}
+	/* Trace continuity (disabled future feature): handoff_prepared and
+	 * source_gate_active are set only under handoff_enabled. */
+	if (handoff_prepared) {
+		int handoff_error;
+		bool absent = false;
+
+		if (published) {
+			uint8_t published_token[16];
+
+			handoff_error = checkpoint_manifest_handoff_identity(
+			    checkpoint_file, &manifest, published_token,
+			    handoff_digest);
+			if (handoff_error == 0 && memcmp(published_token,
+			    handoff_token, sizeof(handoff_token)) != 0)
+				handoff_error = EPROTO;
+			if (handoff_error == 0 &&
+			    hypertrace_handoff_source_ensure(ctx,
+			    DTRACED_HANDOFF_COMMIT, handoff_token,
+			    handoff_digest, &absent) != 0)
+				handoff_error = errno != 0 ? errno : EIO;
+			handoff_committed = handoff_error == 0;
+		} else {
+			handoff_error = hypertrace_handoff_source_ensure(ctx,
+			    DTRACED_HANDOFF_ABORT, handoff_token,
+			    (const uint8_t[32]){0}, &absent) == 0 ? 0 :
+			    (errno != 0 ? errno : EIO);
+		}
+		if (handoff_error != 0) {
+			handoff_unresolved = true;
+			fprintf(stderr, "Could not settle HyperTrace source ticket: %s\n",
+			    strerror(handoff_error));
+			if (error == 0)
+				error = handoff_error;
+		}
+	}
+	/* Trace continuity (disabled future feature): source_gate_active is
+	 * set only under handoff_enabled. */
+	if (source_gate_active && !handoff_committed &&
+	    !handoff_unresolved) {
+		if (hypertrace_handoff_source_gate_ensure(ctx,
+		    DTRACED_HANDOFF_SOURCE_GATE_ABORT,
+		    handoff_token) != 0) {
+			int gate_error = errno != 0 ? errno : EIO;
+			handoff_unresolved = true;
+			fprintf(stderr, "Could not release HyperTrace source gate: %s\n",
+			    strerror(gate_error));
+			if (error == 0)
+				error = gate_error;
+		} else {
+			source_gate_active = false;
+		}
+	}
+	/* A published manifest can precede an uncertain daemon COMMIT. Keep
+	 * the previous generation's files for recovery until this checkpoint's
+	 * ticket is confirmed. A legacy checkpoint has no generated members. */
+	if (published && error == 0 && old_is_manifest &&
+	    (!handoff_enabled || handoff_committed))
+		checkpoint_remove_old_generation(fddir, checkpoint_file,
+		    &old_manifest);
 	/*
 	 * Retain the kernel event-ingress fence until every generation member is
 	 * durable and the manifest rename has published the checkpoint.  A
@@ -3292,7 +4517,7 @@ done:
 	 * which never became visible; it merges events deferred after the capture
 	 * point into the running source.
 	 */
-	if (snapshot_session_active) {
+	if (snapshot_session_active && !handoff_unresolved) {
 		int session_error;
 		bool released = false;
 
@@ -3312,9 +4537,71 @@ done:
 	}
 
 	if (stop_vm && published && error == 0) {
+		/* Authenticate a dedicated daemon channel while the VMM identity
+		 * still exists. VirtIO shutdown closes the normal forwarder socket. */
+		/* Trace continuity (disabled future feature): unreachable
+		 * until handoff_enabled. */
+		if (handoff_enabled) {
+			if (!handoff_committed) {
+				error = EPROTO;
+			} else {
+				release_fd = hypertrace_handoff_source_release_open(ctx);
+				if (release_fd < 0)
+					error = errno != 0 ? errno : EIO;
+			}
+		}
+		/* The DTrace device owns its mutex through checkpoint pause;
+		 * stop its workers before exit runs their shutdown handler. */
+		if (error == 0)
+			error = pci_vtdtr_checkpoint_stop();
+		if (error == 0) {
+			if (vm_destroy_checked(ctx) != 0) {
+				error = errno != 0 ? errno : EIO;
+				EPRINTLN("Could not destroy checkpoint source VM: %s",
+				    strerror(error));
+			} else {
+				/* Trace continuity (disabled future feature):
+				 * release_fd is opened only under handoff_enabled. */
+				if (release_fd >= 0) {
+					if (hypertrace_handoff_source_release_finish(
+					    release_fd, handoff_token, handoff_digest,
+					    release_wire, &signed_release) != 0) {
+						EPRINTLN("Could not record HyperTrace source release: %s",
+						    strerror(errno));
+						exit(1);
+					}
+					release_fd = -1;
+					if (signed_release) {
+						int release_error =
+						    checkpoint_release_publish_at(fddir,
+						    handoff_token, release_wire);
+						if (release_error != 0) {
+							EPRINTLN("Could not publish HyperTrace release: %s",
+							    strerror(release_error));
+							exit(1);
+						}
+					}
+				}
+				release_fd = -1;
+				BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, published, 0);
+				exit(BHYVE_EXIT_SUSPEND);
+			}
+		}
+		if (release_fd >= 0)
+			close(release_fd);
+	}
+	if (stop_vm && published) {
+		/*
+		 * The stopped-session checkpoint is durable and the guest was to
+		 * terminate after it.  Failing to stop the tracing workers or to
+		 * destroy the VM must not resume a source whose session is
+		 * recorded as stopped: report it and end the process.  The saved
+		 * checkpoint is the surviving copy.
+		 */
+		EPRINTLN("Checkpoint published but the source could not be "
+		    "stopped cleanly: %s. Not resuming it.", strerror(error));
 		BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, published, error);
-		vm_destroy(ctx);
-		exit(BHYVE_EXIT_SUSPEND);
+		exit(BHYVE_EXIT_ERROR);
 	}
 
 	/*
@@ -3324,6 +4611,7 @@ done:
 	 * corresponding pause operation started.
 	 */
 	if (!snapshot_session_active && !snapshot_session_unresolved &&
+	    !handoff_unresolved && !handoff_committed &&
 	    (devices_paused || vcpus_paused)) {
 		BHYVE_PHASE_START(__func__, "vm_resume_devices");
 		ret = vm_resume_devices();
@@ -3335,7 +4623,8 @@ done:
 			if (error == 0)
 				error = ret;
 		}
-	} else if (snapshot_session_active || snapshot_session_unresolved) {
+	} else if (snapshot_session_active || snapshot_session_unresolved ||
+	    handoff_unresolved || handoff_committed) {
 		devices_resumed = false;
 	}
 	/*
@@ -3352,6 +4641,8 @@ done:
 			(void)unlinkat(fddir, manifest.kern, 0);
 		if (meta_created)
 			(void)unlinkat(fddir, manifest.meta, 0);
+		if (trace_created)
+			(void)unlinkat(fddir, manifest.trace, 0);
 		if (manifest_tmp != NULL)
 			(void)unlinkat(fddir, manifest_tmp, 0);
 	}
@@ -3369,7 +4660,8 @@ done:
  *
  * These functions reuse the existing device/kernel serialization and restore
  * steps (vm_snapshot_basic_metadata / vm_save_kern_structs / vm_snapshot_devices
- * on save; vm_restore_preflight / vm_restore_devices / vm_restore_kern_structs
+ * on save; vm_restore_preflight / vm_restore_devices_prevalidated /
+ * vm_restore_kern_structs
  * on restore) but move the container from on-disk checkpoint generation files
  * to an in-memory blob streamed over the migration session.  Guest RAM is NOT
  * part of this blob: it is carried separately as pre-copy memory generations,
@@ -3379,10 +4671,25 @@ done:
  *
  * Wire layout of the blob (fixed-width little-endian, no host pointers/fds):
  *   [u64 meta_len][u64 kdata_len][meta bytes (UCL/JSON)][kdata bytes]
+ * Fresh tracing appends one canonical 40-byte FSS1 record. It is permitted
+ * only with MIGRATION_CAP_HYPERTRACE_FRESH; legacy receivers reject the tail.
+ * FSS1 describes a stopped session, not proof of source VM retirement.
  * ------------------------------------------------------------------------
  */
 
-#define	MIGRATE_BLOB_HDR	16u	/* two le64 length fields */
+#include "migration_snapshot.h"
+
+int
+vm_migrate_stop_tracing(struct vmctx *ctx,
+    uint8_t record[HYPERTRACE_SESSION_RECORD_SIZE])
+{
+	if (ctx == NULL || record == NULL)
+		return (EINVAL);
+	memset(record, 0, HYPERTRACE_SESSION_RECORD_SIZE);
+	if (!hypertrace_initialized())
+		return (ENXIO);
+	return (hypertrace_checkpoint_stop(ctx, record));
+}
 
 /*
  * Create an anonymous, regular, mmap-able temp file seeded with buf.
@@ -3413,9 +4720,9 @@ migrate_tempfd(const void *buf, size_t len)
 	return (fd);
 }
 
-int
-vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **blob_out,
-    size_t *len_out)
+static int
+vm_snapshot_dev_state_capture(struct vmctx *ctx, const uint8_t *fresh_record,
+    uint8_t **blob_out, size_t *len_out)
 {
 	struct vm_snapshot_session session;
 	FILE *meta_file;
@@ -3426,11 +4733,28 @@ vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **blob_out,
 	off_t kdata_size;
 	int kdata_fd, meta_fd, error;
 	bool resolved, released, session_active;
+	size_t trace_len = fresh_record != NULL ? HYPERTRACE_SESSION_RECORD_SIZE : 0;
 
 	if (ctx == NULL || blob_out == NULL || len_out == NULL)
 		return (EINVAL);
 	*blob_out = NULL;
 	*len_out = 0;
+	/* Fresh tracing must be explicitly selected; never silently strip it. */
+	if (hypertrace_initialized() != (fresh_record != NULL))
+		return (EOPNOTSUPP);
+	if (fresh_record != NULL) {
+		struct hypertrace_session_record record;
+		uint16_t vmid;
+		uint64_t epoch;
+
+		error = hypertrace_session_record_decode(fresh_record, trace_len, &record);
+		if (error != 0)
+			return (error);
+		if (vm_get_identity(ctx, &vmid, &epoch) != 0)
+			return (errno != 0 ? errno : EIO);
+		if (record.vmid != vmid || record.epoch != epoch)
+			return (ESTALE);
+	}
 	meta_buf = kdata_buf = blob = NULL;
 	meta_file = NULL;
 	xop = NULL;
@@ -3515,6 +4839,14 @@ vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **blob_out,
 		goto out;
 	}
 	kdata_len = (size_t)kdata_size;
+	/* The migration record and its single pread must be representable
+	 * before any member is allocated or exposed to the transport. */
+	if ((uintmax_t)kdata_size > SSIZE_MAX ||
+	    meta_len > SIZE_MAX - MIGRATE_BLOB_HDR - trace_len ||
+	    kdata_len > SIZE_MAX - MIGRATE_BLOB_HDR - trace_len - meta_len) {
+		error = EOVERFLOW;
+		goto out;
+	}
 	meta_buf = malloc(meta_len != 0 ? meta_len : 1);
 	kdata_buf = malloc(kdata_len != 0 ? kdata_len : 1);
 	if (meta_buf == NULL || kdata_buf == NULL) {
@@ -3531,7 +4863,7 @@ vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **blob_out,
 		goto out;
 	}
 
-	blob_len = MIGRATE_BLOB_HDR + meta_len + kdata_len;
+	blob_len = MIGRATE_BLOB_HDR + meta_len + kdata_len + trace_len;
 	blob = malloc(blob_len);
 	if (blob == NULL) {
 		error = ENOMEM;
@@ -3541,9 +4873,9 @@ vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **blob_out,
 	le64enc(blob + 8, (uint64_t)kdata_len);
 	memcpy(blob + MIGRATE_BLOB_HDR, meta_buf, meta_len);
 	memcpy(blob + MIGRATE_BLOB_HDR + meta_len, kdata_buf, kdata_len);
-	*blob_out = blob;
-	*len_out = blob_len;
-	blob = NULL;
+	if (trace_len != 0)
+		memcpy(blob + MIGRATE_BLOB_HDR + meta_len + kdata_len,
+		    fresh_record, trace_len);
 	error = 0;
 
 out:
@@ -3557,6 +4889,13 @@ out:
 		    rel, rel < 0 ? errno : 0);
 		if (rel != 0 && error == 0)
 			error = rel;
+	}
+	/* A failed kernel fence release invalidates this capture. Do not hand a
+	 * blob to migration until the source cut has settled successfully. */
+	if (error == 0) {
+		*blob_out = blob;
+		*len_out = blob_len;
+		blob = NULL;
 	}
 	if (xop != NULL)
 		xo_destroy(xop);
@@ -3572,6 +4911,22 @@ out:
 	return (error);
 }
 
+int
+vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **blob, size_t *len)
+{
+	return (vm_snapshot_dev_state_capture(ctx, NULL, blob, len));
+}
+
+int
+vm_snapshot_fresh_dev_state_to_mem(struct vmctx *ctx,
+    const uint8_t record[HYPERTRACE_SESSION_RECORD_SIZE], uint8_t **blob,
+    size_t *len)
+{
+	if (record == NULL)
+		return (EINVAL);
+	return (vm_snapshot_dev_state_capture(ctx, record, blob, len));
+}
+
 /*
  * Reconstruct device + CPU/vCPU/kernel state on the destination from an
  * in-memory blob produced by vm_snapshot_dev_state_to_mem().  Guest RAM has
@@ -3580,38 +4935,46 @@ out:
  * PAUSED and the restore startup fence remains held; the guest is not yet
  * running.  Call vm_migrate_resume() after RELEASE to start it.
  */
-int
-vm_migrate_commit_state(struct vmctx *ctx, const uint8_t *blob, size_t len)
+static int
+vm_migrate_commit_state_impl(struct vmctx *ctx, const uint8_t *blob, size_t len,
+    struct pci_devinst **fresh_device)
 {
 	struct restore_state rstate;
 	struct vm_snapshot_session session;
-	uint64_t meta_len, kdata_len;
+	struct migration_snapshot_view view;
 	int meta_fd, kdata_fd, error, rel;
-	bool resolved, released, session_active;
+	bool resolved, released, session_active, handoff_required;
+	bool fresh = fresh_device != NULL;
+	uint8_t private_digest[SHA256_DIGEST_LENGTH];
 
+	if (fresh)
+		*fresh_device = NULL;
 	if (ctx == NULL || blob == NULL || len < MIGRATE_BLOB_HDR)
 		return (EINVAL);
 	if (!checkpoint_restore_startup_held())
 		return (EBUSY);
-	meta_len = le64dec(blob + 0);
-	kdata_len = le64dec(blob + 8);
-	if (meta_len > len - MIGRATE_BLOB_HDR ||
-	    kdata_len > len - MIGRATE_BLOB_HDR - meta_len)
-		return (EBADMSG);
-	/* The framed state blob is one exact record, not a prefix container. */
-	if (meta_len + kdata_len != len - MIGRATE_BLOB_HDR)
-		return (EBADMSG);
+	if (hypertrace_initialized() != fresh)
+		return (EOPNOTSUPP);
+	error = migration_snapshot_decode(blob, len, fresh, &view);
+	if (error != 0)
+		return (error);
 
 	memset(&rstate, 0, sizeof(rstate));
+	if (fresh) {
+		rstate.checkpoint_format_version = 5;
+		rstate.hypertrace_session_present = true;
+		memcpy(rstate.hypertrace_session, view.fresh_record,
+		    sizeof(rstate.hypertrace_session));
+	}
+	rstate.checkpoint_lock_fd = -1;
 	rstate.kdata_fd = -1;
 	rstate.vmmem_fd = -1;
 	rstate.kdata_map = MAP_FAILED;
 	meta_fd = kdata_fd = -1;
 	session_active = false;
 
-	meta_fd = migrate_tempfd(blob + MIGRATE_BLOB_HDR, (size_t)meta_len);
-	kdata_fd = migrate_tempfd(blob + MIGRATE_BLOB_HDR + meta_len,
-	    (size_t)kdata_len);
+	meta_fd = migrate_tempfd(view.metadata, view.metadata_length);
+	kdata_fd = migrate_tempfd(view.kernel, view.kernel_length);
 	if (meta_fd < 0 || kdata_fd < 0) {
 		error = errno != 0 ? errno : EIO;
 		goto out;
@@ -3632,7 +4995,17 @@ vm_migrate_commit_state(struct vmctx *ctx, const uint8_t *blob, size_t len)
 		error = EIO;
 		goto out;
 	}
+	/* An older sender can still carry a HyperTrace checkpoint marker.
+	 * Reject it before pausing devices or mutating destination state. */
+	error = lookup_hypertrace_handoff(&rstate, &handoff_required);
+	if (error != 0 || handoff_required) {
+		error = error != 0 ? error : EOPNOTSUPP;
+		goto out;
+	}
 
+	/* The startup CPU fence does not stop external keyboard/pointer input.
+	 * Drain it before taking device pause locks or restoring device state. */
+	console_input_pause();
 	BHYVE_PHASE_START(__func__, "vm_pause_devices");
 	error = vm_pause_devices();
 	BHYVE_PHASE_DONE(__func__, "vm_pause_devices",
@@ -3640,11 +5013,26 @@ vm_migrate_commit_state(struct vmctx *ctx, const uint8_t *blob, size_t len)
 	if (error != 0)
 		goto out;
 	BHYVE_PHASE_START(__func__, "vm_restore_preflight");
-	error = vm_restore_preflight(&rstate);
+	error = vm_restore_preflight_internal(&rstate, fresh);
 	BHYVE_PHASE_DONE(__func__, "vm_restore_preflight",
 	    error, error < 0 ? errno : 0);
 	if (error != 0)
 		goto out;
+	if (fresh) {
+		if (rstate.hypertrace_private_dev == NULL ||
+		    rstate.hypertrace_private_image == NULL) {
+			error = EPROTO;
+			goto out;
+		}
+		hypertrace_private_image_digest(&rstate, private_digest);
+		error = pci_vtdtr_session_migration_stage_paused(
+		    rstate.hypertrace_private_dev, rstate.hypertrace_session,
+		    sizeof(rstate.hypertrace_session),
+		    __DECONST(void *, rstate.hypertrace_private_image),
+		    rstate.hypertrace_private_length);
+		if (error != 0)
+			goto out;
+	}
 	BHYVE_PHASE_START(__func__, "vm_snapshot_session_begin_exact");
 	error = vm_snapshot_session_begin_exact(ctx, &session, &resolved);
 	BHYVE_PHASE_DONE(__func__, "vm_snapshot_session_begin_exact",
@@ -3653,17 +5041,26 @@ vm_migrate_commit_state(struct vmctx *ctx, const uint8_t *blob, size_t len)
 		goto out;
 	session_active = true;
 	/* Guest RAM is already present; only devices and kernel structs. */
+	if (fresh && (error = hypertrace_private_image_unchanged(&rstate,
+	    private_digest)) != 0)
+		goto out;
 	BHYVE_PHASE_START(__func__, "vm_restore_devices");
-	error = vm_restore_devices(&rstate);
+	error = vm_restore_devices_prevalidated(&rstate);
 	BHYVE_PHASE_DONE(__func__, "vm_restore_devices",
 	    error, error < 0 ? errno : 0);
 	if (error != 0)
+		goto out;
+	if (fresh && (error = hypertrace_private_image_unchanged(&rstate,
+	    private_digest)) != 0)
 		goto out;
 	BHYVE_PHASE_START(__func__, "vm_restore_kern_structs");
 	error = vm_restore_kern_structs(ctx, &rstate);
 	BHYVE_PHASE_DONE(__func__, "vm_restore_kern_structs",
 	    error, error < 0 ? errno : 0);
 	if (error != 0)
+		goto out;
+	if (fresh && (error = pci_vtdtr_session_discard_paused(
+	    rstate.hypertrace_private_dev)) != 0)
 		goto out;
 	BHYVE_PHASE_START(__func__, "vm_snapshot_session_release_exact");
 	rel = vm_snapshot_session_release_exact(ctx, &session, true, &released);
@@ -3676,6 +5073,8 @@ vm_migrate_commit_state(struct vmctx *ctx, const uint8_t *blob, size_t len)
 		goto out;
 	}
 	error = 0;
+	if (fresh)
+		*fresh_device = rstate.hypertrace_private_dev;
 
 out:
 	if (session_active)
@@ -3689,12 +5088,72 @@ out:
 	return (error);
 }
 
+int
+vm_migrate_commit_state(struct vmctx *ctx, const uint8_t *blob, size_t len)
+{
+	return (vm_migrate_commit_state_impl(ctx, blob, len, NULL));
+}
+
+int
+vm_migrate_fresh_commit_state(struct vmctx *ctx, const uint8_t *blob,
+    size_t len, struct pci_devinst **device)
+{
+	if (device == NULL)
+		return (EINVAL);
+	return (vm_migrate_commit_state_impl(ctx, blob, len, device));
+}
+
+int
+vm_migrate_fresh_resume(struct vmctx *ctx, struct pci_devinst *device,
+    const uint8_t record[HYPERTRACE_SESSION_RECORD_SIZE])
+{
+	dtraced_replay_kill_t *kills = NULL;
+	size_t count = 0;
+	int error;
+
+	if (ctx == NULL || device == NULL || record == NULL)
+		return (EINVAL);
+	if (!hypertrace_initialized() || !checkpoint_restore_startup_held())
+		return (EBUSY);
+	if (hypertrace_start_ready(ctx, 30000) != 0)
+		return (errno != 0 ? errno : EIO);
+	error = hypertrace_take_replay_kills(ctx, &kills, &count);
+	free(kills);
+	if (error != 0 || count != 0)
+		return (error != 0 ? error : EPROTO);
+	if (vm_restore_time(ctx) < 0)
+		return (errno != 0 ? errno : EIO);
+	error = pci_vtdtr_session_migration_release_paused(device, record,
+	    HYPERTRACE_SESSION_RECORD_SIZE);
+	if (error == 0)
+		error = vm_resume_devices();
+	if (error == 0)
+		error = pci_vtdtr_session_attach_begin(ctx);
+	/* Kernel CPUs remain behind the userspace startup fence until this
+	 * checked resume succeeds. Never report RUNNING before both gates open. */
+#ifdef __amd64__
+	if (error == 0 && vm_resume_all_cpus(ctx) != 0)
+#else
+	if (error == 0 && bhyve_resume_powered_cpus(ctx) != 0)
+#endif
+		error = errno != 0 ? errno : EIO;
+	if (error == 0)
+		error = checkpoint_restore_startup_release();
+	if (error == 0)
+		console_input_resume();
+	return (error);
+}
+
 /* Release the destination for execution after a committed migration. */
 int
 vm_migrate_resume(struct vmctx *ctx)
 {
 	int error;
 
+	if (hypertrace_initialized())
+		return (EOPNOTSUPP);
+	if (!checkpoint_restore_startup_held())
+		return (EBUSY);
 	/* Consume the committed restore's one-shot time-rebase credential first. */
 	if (vm_restore_time(ctx) < 0)
 		return (errno != 0 ? errno : EIO);
@@ -3702,12 +5161,20 @@ vm_migrate_resume(struct vmctx *ctx)
 	error = vm_resume_devices();
 	BHYVE_PHASE_DONE(__func__, "vm_resume_devices",
 	    error, error < 0 ? errno : 0);
+#ifdef __amd64__
+	if (error == 0 && vm_resume_all_cpus(ctx) != 0)
+#else
+	if (error == 0 && bhyve_resume_powered_cpus(ctx) != 0)
+#endif
+		error = errno != 0 ? errno : EIO;
 	if (error == 0) {
 		BHYVE_PHASE_START(__func__, "checkpoint_restore_startup_release");
 		error = checkpoint_restore_startup_release();
 		BHYVE_PHASE_DONE(__func__, "checkpoint_restore_startup_release",
 		    error, error < 0 ? errno : 0);
 	}
+	if (error == 0)
+		console_input_resume();
 	return (error);
 }
 

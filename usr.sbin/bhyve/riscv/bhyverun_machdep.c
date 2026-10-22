@@ -46,17 +46,31 @@
 #include <unistd.h>
 
 #include <vmmapi.h>
+#ifdef BHYVE_SNAPSHOT
+#include <machine/vmm_snapshot.h>
+#endif
 
 #include "bhyverun.h"
 #include "config.h"
 #include "debug.h"
 #include "fdt.h"
+#include "guest_cpu_abi.h"
 #include "ipc.h"
 #include "mem.h"
 #include "pci_emul.h"
 #include "pci_irq.h"
+#include "snapshot_md.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 #include "uart_emul.h"
 #include "riscv.h"
+
+/* Platform device kept for checkpointing. */
+static struct uart_ns16550_softc *mmio_uart_softc;
+#ifdef BHYVE_SNAPSHOT
+static bool mmio_uart_paused;
+#endif
 
 #define	FDT_SIZE	(64 * 1024)
 #define	FDT_DTB_ALIGN	8
@@ -310,6 +324,7 @@ init_mmio_uart(struct vmctx *ctx)
 	mr.arg2 = mr.base;
 	error = register_mem(&mr);
 	assert(error == 0);
+	mmio_uart_softc = sc;
 
 	return (true);
 }
@@ -324,6 +339,7 @@ bhyve_init_platform(struct vmctx *ctx, struct vcpu *bsp)
 	int pcie_intrs[4] = {PCIE_INTA, PCIE_INTB, PCIE_INTC, PCIE_INTD};
 	vm_paddr_t fdt_gpa;
 	char isa[32];
+	uint32_t timebase_frequency;
 	int retval;
 
 	bootrom = get_config_value("bootrom");
@@ -339,12 +355,18 @@ bhyve_init_platform(struct vmctx *ctx, struct vcpu *bsp)
 	}
 
 	error = vm_get_capability(bsp, VM_CAP_SSTC, &retval);
-	assert(error == 0);
-	snprintf(isa, sizeof(isa), "%s%s", "rv64imafdc",
-	    retval == 1 ? "_sstc" : "");
+	if (error != 0)
+		return (errno != 0 ? errno : EIO);
+	if (retval != 0 && retval != 1)
+		return (EPROTO);
+	snprintf(isa, sizeof(isa), "%s",
+	    retval == 1 ? RISCV_GUEST_ISA_SSTC : RISCV_GUEST_ISA_BASE);
+	if (vm_get_riscv_timebase(bsp, &timebase_frequency) != 0)
+		return (errno != 0 ? errno : EIO);
 
 	fdt_gpa = vm_get_highmem_base(ctx) + roundup2(len, FDT_DTB_ALIGN);
-	error = fdt_init(ctx, guest_ncpus, fdt_gpa, FDT_SIZE, isa);
+	error = fdt_init(ctx, guest_ncpus, fdt_gpa, FDT_SIZE, isa,
+	    timebase_frequency);
 	if (error != 0)
 		return (error);
 
@@ -377,3 +399,116 @@ bhyve_init_platform_late(struct vmctx *ctx __unused, struct vcpu *bsp __unused)
 
 	return (0);
 }
+
+int
+bhyve_resume_powered_cpus(struct vmctx *ctx __unused)
+{
+	int error;
+
+	for (int vcpuid = 0; vcpuid < guest_ncpus; vcpuid++) {
+		if (!vmexit_hart_running(CPU_TO_HART(vcpuid)))
+			continue;
+		error = vm_resume_cpu(fbsdrun_vcpu(vcpuid));
+		if (error != 0)
+			return (error);
+	}
+	return (0);
+}
+
+#ifdef BHYVE_SNAPSHOT
+/*
+ * SBI HSM hart state.  Wire: le32 hart count, then one byte per hart
+ * (0 = stopped, 1 = started).  At least one hart must be started.
+ */
+static int
+cpu_power_snapshot(struct vm_snapshot_meta *meta)
+{
+	uint8_t state[CPU_SETSIZE];
+	uint32_t ncpus;
+	bool any;
+	int ret;
+
+	ncpus = (uint32_t)guest_ncpus;
+	SNAPSHOT_LE32_OR_LEAVE(ncpus, meta, ret, done);
+	if (ncpus != (uint32_t)guest_ncpus || ncpus > CPU_SETSIZE) {
+		ret = EINVAL;
+		goto done;
+	}
+	any = false;
+	for (uint32_t i = 0; i < ncpus; i++) {
+		state[i] = vmexit_hart_running(CPU_TO_HART(i)) ? 1 : 0;
+		SNAPSHOT_U8_OR_LEAVE(state[i], meta, ret, done);
+		if (state[i] > 1) {
+			ret = EINVAL;
+			goto done;
+		}
+		any |= state[i] != 0;
+	}
+	if (!any) {
+		ret = EINVAL;
+		goto done;
+	}
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		for (uint32_t i = 0; i < ncpus; i++)
+			vmexit_hart_set_running(CPU_TO_HART(i), state[i] != 0);
+	}
+done:
+	return (ret);
+}
+
+static int
+uart_snapshot_cb(struct vm_snapshot_meta *meta)
+{
+
+	return (uart_ns16550_snapshot(mmio_uart_softc, meta));
+}
+
+static int
+uart_pause_cb(void)
+{
+	int error;
+
+	if (mmio_uart_paused)
+		return (0);
+	error = uart_ns16550_pause(mmio_uart_softc);
+	if (error == 0)
+		mmio_uart_paused = true;
+	return (error);
+}
+
+static int
+uart_resume_cb(void)
+{
+	int error;
+
+	if (!mmio_uart_paused)
+		return (0);
+	error = uart_ns16550_resume(mmio_uart_softc);
+	if (error == 0)
+		mmio_uart_paused = false;
+	return (error);
+}
+
+const struct snapshot_md_device *
+bhyve_snapshot_md_devices(size_t *count)
+{
+	static struct snapshot_md_device devices[2];
+	size_t n;
+
+	n = 0;
+	devices[n++] = (struct snapshot_md_device){
+		.name = "cpu_power",
+		.snapshot = cpu_power_snapshot,
+	};
+	/* The MMIO UART exists only when a console backend is configured. */
+	if (mmio_uart_softc != NULL)
+		devices[n++] = (struct snapshot_md_device){
+			.name = "uart",
+			.snapshot = uart_snapshot_cb,
+			.pause = uart_pause_cb,
+			.resume = uart_resume_cb,
+		};
+	*count = n;
+	return (devices);
+}
+#endif

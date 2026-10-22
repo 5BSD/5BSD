@@ -38,6 +38,7 @@
 #include <machine/vmm_dev.h>
 #include <machine/vmm_instruction_emul.h>
 
+#include <pthread.h>
 #include <assert.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -123,6 +124,8 @@ vmexit_suspend(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
 	case VM_SUSPEND_HALT:
 		exit(BHYVE_EXIT_HALT);
 	case VM_SUSPEND_DESTROY:
+		if (fbsdrun_cpus_retiring())
+			pthread_exit(NULL);
 		exit(BHYVE_EXIT_ERROR);
 	default:
 		fprintf(stderr, "vmexit_suspend: invalid reason %d\n", how);

@@ -103,6 +103,24 @@ may be used.
 .Ss Architecture Neutral Settings
 .Bl -column "memory.guest_in_core" "integer" "Default"
 .It Sy Name Ta Sy Format Ta Sy Default Ta Sy Description
+.It Va enable_hypertrace Ta bool Ta false
+Enable the experimental HyperTrace forwarding connection to
+.Pa /var/ddtrace/sub.sock .
+The
+.Pa /var/ddtrace
+and
+.Pa /var/ddtrace/inbound
+directories must exist before startup.
+Configure one
+.Cm virtio-dtrace
+PCI device to exchange tracing programs with the guest.
+The guest requires the matching
+.Cm dttransport
+and
+.Cm virtio_dtrace
+modules.
+The forwarding connection retries when the tracing daemon is unavailable.
+HyperTrace device checkpoint and migration state are not yet supported.
 .It Va name Ta string Ta Ta
 The name of the VM.
 .It Va cpus Ta integer Ta 1 Ta

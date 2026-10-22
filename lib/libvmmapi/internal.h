@@ -23,6 +23,7 @@ struct vmctx {
 	int	memflags;
 	char	*baseaddr;
 	char	*name;
+	uint16_t id;
 };
 
 struct vcpu {

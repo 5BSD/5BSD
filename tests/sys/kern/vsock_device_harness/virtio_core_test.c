@@ -137,6 +137,81 @@ netbe_checkpoint_identity(net_backend_t *be __unused)
 	return ("virtio-core-test-backend");
 }
 
+int
+netbe_tagging_enabled(net_backend_t *be __unused)
+{
+	return (0);
+}
+
+int
+netbe_tagging_supported(net_backend_t *be __unused)
+{
+	return (0);
+}
+
+int
+netbe_tagging_v2_supported(net_backend_t *be __unused)
+{
+	return (0);
+}
+
+int
+netbe_tagging_v2_enabled(net_backend_t *be __unused)
+{
+	return (0);
+}
+
+int
+vm_export_attestation_fd(struct vmctx *ctx __unused)
+{
+	errno = EOPNOTSUPP;
+	return (-1);
+}
+
+int
+netbe_tagging_bind_vm(net_backend_t *be __unused, int fd __unused)
+{
+	errno = EOPNOTSUPP;
+	return (-1);
+}
+
+int
+netbe_tagging_enable_v2(net_backend_t *be __unused)
+{
+	errno = EOPNOTSUPP;
+	return (-1);
+}
+
+void
+__dtrace_virtio___transport__error(unsigned long name __unused,
+    unsigned long reason __unused)
+{
+}
+
+int
+netbe_tagging_enable(net_backend_t *be __unused)
+{
+	return (EOPNOTSUPP);
+}
+
+int
+netbe_tagging_disable(net_backend_t *be __unused)
+{
+	return (0);
+}
+
+int
+netbe_checkpoint_rx_freeze(net_backend_t *be __unused, bool freeze __unused)
+{
+	return (EOPNOTSUPP);
+}
+
+int
+netbe_checkpoint_rx_quiescent(net_backend_t *be __unused)
+{
+	return (EOPNOTSUPP);
+}
+
 /* The real core is compiled above; test-side wire values are the 1.4 oracle. */
 #undef VIRTIO_CONFIG_STATUS_ACK
 #define	VIRTIO_CONFIG_STATUS_ACK	VIRTIO14_STATUS_ACKNOWLEDGE

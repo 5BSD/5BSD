@@ -42,6 +42,7 @@
 #include <machine/vmm_dev.h>
 #include <machine/vmm_instruction_emul.h>
 
+#include <pthread.h>
 #include <assert.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -57,10 +58,8 @@
 #include "mem.h"
 #include "vmexit.h"
 #include "riscv.h"
+#include "guest_cpu_abi.h"
 
-#define	BHYVE_VERSION	((uint64_t)__FreeBSD_version)
-#define	SBI_VERS_MAJOR	2
-#define	SBI_VERS_MINOR	0
 
 static cpuset_t running_hartmask = CPUSET_T_INITIALIZER(0);
 
@@ -69,6 +68,23 @@ vmexit_set_bsp(int hart_id)
 {
 
 	CPU_SET_ATOMIC(hart_id, &running_hartmask);
+}
+
+bool
+vmexit_hart_running(int hart_id)
+{
+
+	return (CPU_ISSET(hart_id, &running_hartmask));
+}
+
+void
+vmexit_hart_set_running(int hart_id, bool running)
+{
+
+	if (running)
+		CPU_SET_ATOMIC(hart_id, &running_hartmask);
+	else
+		CPU_CLR_ATOMIC(hart_id, &running_hartmask);
 }
 
 static int
@@ -122,6 +138,8 @@ vmexit_suspend(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
 	case VM_SUSPEND_HALT:
 		exit(BHYVE_EXIT_HALT);
 	case VM_SUSPEND_DESTROY:
+		if (fbsdrun_cpus_retiring())
+			pthread_exit(NULL);
 		exit(BHYVE_EXIT_ERROR);
 	default:
 		fprintf(stderr, "vmexit_suspend: invalid reason %d\n", how);
@@ -173,6 +191,23 @@ vmm_sbi_probe_extension(int ext_id)
 	}
 
 	return (1);
+}
+
+uint32_t
+vmexit_sbi_extension_mask(void)
+{
+	/* Bit order is part of the RISC-V checkpoint CPU contract. */
+	static const int extensions[] = {
+		SBI_EXT_ID_HSM, SBI_EXT_ID_TIME, SBI_EXT_ID_IPI,
+		SBI_EXT_ID_RFNC, SBI_EXT_ID_SRST,
+		SBI_CONSOLE_PUTCHAR, SBI_CONSOLE_GETCHAR,
+	};
+	uint32_t mask = 0;
+
+	for (size_t i = 0; i < sizeof(extensions) / sizeof(extensions[0]); i++)
+		if (vmm_sbi_probe_extension(extensions[i]) != 0)
+			mask |= 1U << i;
+	return (mask);
 }
 
 static int
@@ -244,14 +279,14 @@ vmexit_ecall_base(struct vmctx *ctx __unused, struct vcpu *vcpu,
 
 	switch (sbi_function_id) {
 	case SBI_BASE_GET_SPEC_VERSION:
-		val = SBI_VERS_MAJOR << SBI_SPEC_VERS_MAJOR_OFFSET;
-		val |= SBI_VERS_MINOR << SBI_SPEC_VERS_MINOR_OFFSET;
+		val = RISCV_GUEST_SBI_VERS_MAJOR << SBI_SPEC_VERS_MAJOR_OFFSET;
+		val |= RISCV_GUEST_SBI_VERS_MINOR << SBI_SPEC_VERS_MINOR_OFFSET;
 		break;
 	case SBI_BASE_GET_IMPL_ID:
 		val = SBI_IMPL_ID_BHYVE;
 		break;
 	case SBI_BASE_GET_IMPL_VERSION:
-		val = BHYVE_VERSION;
+		val = RISCV_GUEST_SBI_IMPL_VERSION;
 		break;
 	case SBI_BASE_PROBE_EXTENSION:
 		ext_id = vme->u.ecall.args[0];

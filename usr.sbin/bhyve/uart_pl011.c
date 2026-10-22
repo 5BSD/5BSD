@@ -31,12 +31,20 @@
 #include <sys/param.h>
 
 #include <assert.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef BHYVE_SNAPSHOT
+#include <machine/vmm_snapshot.h>
+#endif
+
 #include "uart_backend.h"
 #include "uart_emul.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 
 #define	UART_FIFO_SIZE		16
 
@@ -121,6 +129,9 @@ struct uart_pl011_softc {
 	void	*arg;
 	uart_intr_func_t intr_assert;
 	uart_intr_func_t intr_deassert;
+#ifdef BHYVE_SNAPSHOT
+	bool	snapshot_paused;
+#endif
 };
 
 static void
@@ -396,3 +407,100 @@ uart_pl011_tty_open(struct uart_pl011_softc *sc, const char *device)
 {
 	return (uart_tty_open(sc->backend, device, uart_drain, sc));
 }
+
+#ifdef BHYVE_SNAPSHOT
+/*
+ * Record: interrupt/status and programmable registers, then the shared
+ * receive FIFO.  The interrupt line level itself travels in the vGIC record;
+ * restore therefore installs state without driving the line.
+ */
+int
+uart_pl011_snapshot(struct uart_pl011_softc *sc, struct vm_snapshot_meta *meta)
+{
+	struct {
+		uint16_t irq_state, rsr, cr, ifls, imsc, lcr_h, ibrd, fbrd;
+	} candidate;
+	bool lock_owned;
+	int ret;
+
+	if (sc == NULL || meta == NULL)
+		return (EINVAL);
+	lock_owned = sc->snapshot_paused;
+	if (!lock_owned)
+		uart_softc_lock(sc->backend);
+	candidate.irq_state = sc->irq_state;
+	candidate.rsr = sc->rsr;
+	candidate.cr = sc->cr;
+	candidate.ifls = sc->ifls;
+	candidate.imsc = sc->imsc;
+	candidate.lcr_h = sc->lcr_h;
+	candidate.ibrd = sc->ibrd;
+	candidate.fbrd = sc->fbrd;
+	SNAPSHOT_LE16_OR_LEAVE(candidate.irq_state, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(candidate.rsr, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(candidate.cr, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(candidate.ifls, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(candidate.imsc, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(candidate.lcr_h, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(candidate.ibrd, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(candidate.fbrd, meta, ret, done);
+	if (meta->op != VM_SNAPSHOT_SAVE &&
+	    ((candidate.irq_state & ~UARTIMSC_MASK) != 0 ||
+	    (candidate.rsr & ~0x000fU) != 0 ||
+	    (candidate.cr & ~UARTCR_MASK) != 0 ||
+	    (candidate.ifls & ~UARTIFLS_MASK) != 0 ||
+	    (candidate.imsc & ~UARTIMSC_MASK) != 0 ||
+	    (candidate.lcr_h & ~UARTLCR_H_MASK) != 0 ||
+	    (candidate.fbrd & ~UARTFBRD_MASK) != 0)) {
+		ret = EINVAL;
+		goto done;
+	}
+	ret = uart_rxfifo_snapshot(sc->backend, meta);
+	if (ret != 0)
+		goto done;
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		sc->irq_state = candidate.irq_state;
+		sc->rsr = candidate.rsr;
+		sc->cr = candidate.cr;
+		sc->ifls = candidate.ifls;
+		sc->imsc = candidate.imsc;
+		sc->lcr_h = candidate.lcr_h;
+		sc->ibrd = candidate.ibrd;
+		sc->fbrd = candidate.fbrd;
+	}
+done:
+	if (!lock_owned)
+		uart_softc_unlock(sc->backend);
+	return (ret);
+}
+
+int
+uart_pl011_pause(struct uart_pl011_softc *sc)
+{
+	int error;
+
+	if (sc == NULL)
+		return (EINVAL);
+	if (sc->snapshot_paused)
+		return (0);
+	error = uart_snapshot_pause(sc->backend);
+	if (error == 0)
+		sc->snapshot_paused = true;
+	return (error);
+}
+
+int
+uart_pl011_resume(struct uart_pl011_softc *sc)
+{
+	int error;
+
+	if (sc == NULL)
+		return (EINVAL);
+	if (!sc->snapshot_paused)
+		return (0);
+	error = uart_snapshot_resume(sc->backend);
+	if (error == 0)
+		sc->snapshot_paused = false;
+	return (error);
+}
+#endif

@@ -50,7 +50,7 @@ source of truth.
 | 5BSD `driver-gap` | 39 |
 | 5BSD `not-applicable` | 3 |
 | Exercised by both Linux and 5BSD | 6 |
-| Implementation-defined interface rows | 114 |
+| Implementation-defined interface rows | 116 |
 
 The three non-implemented requirement dispositions are explicit and
 fail-closed: platform ordering and SR-IOV are not applicable to the emulated

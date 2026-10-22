@@ -42,6 +42,9 @@
 #include <unistd.h>
 
 #include <vmmapi.h>
+#ifdef BHYVE_SNAPSHOT
+#include <machine/vmm_snapshot.h>
+#endif
 
 #include "bhyve_machdep.h"
 #include "bhyverun.h"
@@ -53,6 +56,10 @@
 #include "pci_emul.h"
 #include "pci_irq.h"
 #include "rtc_pl031.h"
+#include "snapshot_md.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 #include "uart_emul.h"
 
 /* Start of mem + 1M */
@@ -78,6 +85,10 @@
 #define	PCIE_INTD	37
 
 uint64_t *cpu_to_mpidr;
+
+/* Platform devices kept for checkpointing. */
+static struct uart_pl011_softc *mmio_uart_softc;
+static struct rtc_pl031_softc *mmio_rtc_softc;
 
 void
 bhyve_init_config(void)
@@ -314,6 +325,7 @@ init_mmio_uart(struct vmctx *ctx)
 	error = register_mem(&mr);
 	if (error != 0)
 		return (error);
+	mmio_uart_softc = sc;
 
 	return (0);
 }
@@ -370,6 +382,7 @@ init_mmio_rtc(struct vmctx *ctx)
 	mr.arg2 = mr.base;
 	error = register_mem(&mr);
 	assert(error == 0);
+	mmio_rtc_softc = sc;
 }
 
 static vm_paddr_t
@@ -457,3 +470,119 @@ bhyve_init_platform_late(struct vmctx *ctx, struct vcpu *bsp __unused)
 
 	return (0);
 }
+
+int
+bhyve_resume_powered_cpus(struct vmctx *ctx __unused)
+{
+	int error;
+
+	for (int vcpuid = 0; vcpuid < guest_ncpus; vcpuid++) {
+		if (!CPU_ISSET(vcpuid, &running_cpumask))
+			continue;
+		error = vm_resume_cpu(fbsdrun_vcpu(vcpuid));
+		if (error != 0)
+			return (error);
+	}
+	return (0);
+}
+
+#ifdef BHYVE_SNAPSHOT
+/*
+ * PSCI power state.  Wire: le32 vCPU count, then one byte per vCPU (0 = off,
+ * 1 = on).  At least one vCPU must be on in a runnable checkpoint.
+ */
+static int
+cpu_power_snapshot(struct vm_snapshot_meta *meta)
+{
+	cpuset_t candidate;
+	uint32_t ncpus;
+	uint8_t on;
+	bool any;
+	int ret;
+
+	ncpus = (uint32_t)guest_ncpus;
+	SNAPSHOT_LE32_OR_LEAVE(ncpus, meta, ret, done);
+	if (ncpus != (uint32_t)guest_ncpus) {
+		ret = EINVAL;
+		goto done;
+	}
+	CPU_ZERO(&candidate);
+	any = false;
+	for (uint32_t i = 0; i < ncpus; i++) {
+		on = CPU_ISSET(i, &running_cpumask) ? 1 : 0;
+		SNAPSHOT_U8_OR_LEAVE(on, meta, ret, done);
+		if (on > 1) {
+			ret = EINVAL;
+			goto done;
+		}
+		if (on != 0) {
+			CPU_SET(i, &candidate);
+			any = true;
+		}
+	}
+	if (!any) {
+		ret = EINVAL;
+		goto done;
+	}
+	if (meta->op == VM_SNAPSHOT_RESTORE)
+		CPU_COPY(&candidate, &running_cpumask);
+done:
+	return (ret);
+}
+
+static int
+pl011_snapshot_cb(struct vm_snapshot_meta *meta)
+{
+
+	return (uart_pl011_snapshot(mmio_uart_softc, meta));
+}
+
+static int
+pl011_pause_cb(void)
+{
+
+	return (uart_pl011_pause(mmio_uart_softc));
+}
+
+static int
+pl011_resume_cb(void)
+{
+
+	return (uart_pl011_resume(mmio_uart_softc));
+}
+
+static int
+pl031_snapshot_cb(struct vm_snapshot_meta *meta)
+{
+
+	return (rtc_pl031_snapshot(mmio_rtc_softc, meta));
+}
+
+const struct snapshot_md_device *
+bhyve_snapshot_md_devices(size_t *count)
+{
+	static struct snapshot_md_device devices[3];
+	size_t n;
+
+	n = 0;
+	devices[n++] = (struct snapshot_md_device){
+		.name = "cpu_power",
+		.snapshot = cpu_power_snapshot,
+	};
+	/* The PL011 exists only when a console backend is configured. */
+	if (mmio_uart_softc != NULL)
+		devices[n++] = (struct snapshot_md_device){
+			.name = "pl011",
+			.snapshot = pl011_snapshot_cb,
+			.pause = pl011_pause_cb,
+			.resume = pl011_resume_cb,
+		};
+	if (mmio_rtc_softc != NULL)
+		devices[n++] = (struct snapshot_md_device){
+			.name = "pl031",
+			.snapshot = pl031_snapshot_cb,
+		};
+	*count = n;
+	return (devices);
+}
+#endif

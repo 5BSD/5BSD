@@ -177,7 +177,9 @@ cpu_vendor_intel(void)
 	if (memcmp(v, "AuthenticAMD", sizeof(v)) == 0 ||
 	    memcmp(v, "HygonGenuine", sizeof(v)) == 0)
 		return (false);
-	fprintf(stderr, "Unknown cpu vendor \"%s\"\n", (const char *)v);
+	/* The vendor identification is 12 bytes without a terminator. */
+	fprintf(stderr, "Unknown cpu vendor \"%.*s\"\n", (int)sizeof(v),
+	    (const char *)v);
 	exit(1);
 }
 
@@ -220,6 +222,7 @@ bhyvectl_dump_vm_run_exitcode(struct vm_exit *vmexit, int vcpu)
 	}
 }
 
+/* The index comes from a successful gmtime_r(): tm_wday is 0-6. */
 static const char *
 wday_str(int idx)
 {
@@ -227,12 +230,10 @@ wday_str(int idx)
 		"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
 	};
 
-	if (idx >= 0 && idx < 7)
-		return (weekdays[idx]);
-	else
-		return ("UNK");
+	return (weekdays[idx]);
 }
 
+/* The index comes from a successful gmtime_r(): tm_mon is 0-11. */
 static const char *
 mon_str(int idx)
 {
@@ -241,10 +242,7 @@ mon_str(int idx)
 		"Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
 	};
 
-	if (idx >= 0 && idx < 12)
-		return (months[idx]);
-	else
-		return ("UNK");
+	return (months[idx]);
 }
 
 static void
@@ -1014,6 +1012,20 @@ get_misc_vmcs(struct vcpu *vcpu, int vcpuid, bool get_all)
 				vcpuid, u64);
 	}
 
+	/* The Intel spellings of these options read the VMCS fields; without
+	 * them the advertised options printed nothing. */
+	if (!error && (get_apic_access_addr || get_all)) {
+		error = vm_get_vmcs_field(vcpu, VMCS_APIC_ACCESS, &addr);
+		if (error == 0)
+			printf("apic_access_addr[%d]\t%#lx\n", vcpuid, addr);
+	}
+
+	if (!error && (get_virtual_apic_addr || get_all)) {
+		error = vm_get_vmcs_field(vcpu, VMCS_VIRTUAL_APIC, &addr);
+		if (error == 0)
+			printf("virtual_apic_addr[%d]\t%#lx\n", vcpuid, addr);
+	}
+
 	return (error);
 }
 
@@ -1542,7 +1554,7 @@ bhyvectl_opt_desc(int opt)
 	}
 }
 
-void
+int
 bhyvectl_md_main(struct vmctx *ctx, struct vcpu *vcpu, int vcpuid, bool get_all)
 {
 	struct tm tm;
@@ -1555,7 +1567,7 @@ bhyvectl_md_main(struct vmctx *ctx, struct vcpu *vcpu, int vcpuid, bool get_all)
 	cpu_intel = cpu_vendor_intel();
 	error = 0;
 
-	if (!error && set_efer)
+	if (set_efer)
 		error = vm_set_register(vcpu, VM_REG_GUEST_EFER, set_efer_val);
 
 	if (!error && set_cr0)
@@ -1869,8 +1881,9 @@ bhyvectl_md_main(struct vmctx *ctx, struct vcpu *vcpu, int vcpuid, bool get_all)
 
 	if (!error && (get_rtc_time || get_all)) {
 		error = vm_rtc_gettime(ctx, &rtc_secs);
-		if (error == 0) {
-			gmtime_r(&rtc_secs, &tm);
+		if (error == 0 && gmtime_r(&rtc_secs, &tm) == NULL)
+			printf("rtc time %#lx: not representable\n", rtc_secs);
+		else if (error == 0) {
 			printf("rtc time %#lx: %s %s %02d %02d:%02d:%02d %d\n",
 			    rtc_secs, wday_str(tm.tm_wday), mon_str(tm.tm_mon),
 			    tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
@@ -1885,4 +1898,6 @@ bhyvectl_md_main(struct vmctx *ctx, struct vcpu *vcpu, int vcpuid, bool get_all)
 			print_intinfo("current", info[1]);
 		}
 	}
+
+	return (error);
 }

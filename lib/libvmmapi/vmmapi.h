@@ -50,6 +50,7 @@ struct iovec;
 struct vcpu;
 struct vmctx;
 struct vm_cpu_compat;
+struct vm_arm64_cpu_features;
 struct vm_snapshot_meta;
 struct vm_snapshot_session;
 enum x2apic_state;
@@ -112,6 +113,7 @@ int	vm_get_guestmem_from_ctx(struct vmctx *ctx, char **guest_baseaddr,
  */
 void	*vm_create_devmem(struct vmctx *ctx, int segid, const char *name,
 	    size_t len);
+int	vm_free_devmem(struct vmctx *ctx, int segid);
 /*
  * Allocate an unused generic device-memory segment identifier and create the
  * named segment.  Fixed-purpose segments such as VM_FRAMEBUFFER are excluded.
@@ -144,6 +146,13 @@ struct vmctx *vm_open(const char *name);
 struct vmctx *vm_openf(const char *name, int flags);
 void	vm_close(struct vmctx *ctx);
 void	vm_destroy(struct vmctx *ctx);
+/* Request destruction but retain ctx for callers draining userspace workers. */
+int	vm_destroy_request_checked(struct vmctx *ctx);
+int	vm_destroy_identity_request_checked(struct vmctx *ctx, uint16_t vmid, uint64_t epoch);
+int	vm_destroy_checked(struct vmctx *ctx);
+/* Closes ctx only after successful destruction of this exact incarnation. */
+int	vm_destroy_identity_checked(struct vmctx *ctx, uint16_t vmid, uint64_t epoch);
+int	vm_destroy_name_identity_checked(const char *name, uint16_t vmid, uint64_t epoch);
 int	vm_limit_rights(struct vmctx *ctx);
 struct vcpu *vm_vcpu_open(struct vmctx *ctx, int vcpuid);
 void	vm_vcpu_close(struct vcpu *vcpu);
@@ -245,6 +254,13 @@ int	vm_set_capability(struct vcpu *vcpu, enum vm_cap_type cap,
 int	vm_get_cpuid(struct vcpu *vcpu, uint32_t flags, uint32_t *eax,
 	    uint32_t *ebx, uint32_t *ecx, uint32_t *edx);
 int	vm_get_cpu_compat(struct vcpu *vcpu, struct vm_cpu_compat *);
+#endif
+#ifdef __aarch64__
+int	vm_get_arm64_cpu_features(struct vcpu *,
+	    struct vm_arm64_cpu_features *);
+#endif
+#ifdef __riscv
+int	vm_get_riscv_timebase(struct vcpu *, uint32_t *);
 #endif
 int	vm_assign_pptdev(struct vmctx *ctx, int bus, int slot, int func);
 int	vm_unassign_pptdev(struct vmctx *ctx, int bus, int slot, int func);
@@ -349,4 +365,11 @@ const cap_ioctl_t *vm_get_ioctls(size_t *len);
 
 __END_DECLS
 
+uint16_t	vm_get_vmid(struct vmctx *ctx);
+int vm_get_identity(struct vmctx *, uint16_t *, uint64_t *);
+#ifdef __amd64__
+struct vm_run_witness;
+int vm_get_run_witness(struct vmctx *, struct vm_run_witness *);
+#endif
+int vm_export_attestation_fd(struct vmctx *);
 #endif	/* _VMMAPI_H_ */

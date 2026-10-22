@@ -36,5 +36,10 @@ struct rtc_pl031_softc *rtc_pl031_init(rtc_pl031_intr_func_t intr_assert,
 void	rtc_pl031_write(struct rtc_pl031_softc *sc, int offset,
 	    uint32_t value);
 uint32_t rtc_pl031_read(struct rtc_pl031_softc *sc, int offset);
+#ifdef BHYVE_SNAPSHOT
+struct vm_snapshot_meta;
+int	rtc_pl031_snapshot(struct rtc_pl031_softc *sc,
+	    struct vm_snapshot_meta *meta);
+#endif
 
 #endif /* _RTC_PL031_H_ */

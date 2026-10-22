@@ -264,6 +264,7 @@ vq_interrupt(struct virtio_softc *vs, struct vqueue_info *vq)
 	mock_vq_interrupt(vs, vq);
 }
 int  vq_has_descs(struct vqueue_info *);
+int  vq_checkpoint_has_descs(struct vqueue_info *, bool *);
 int  vq_getchain(struct vqueue_info *, struct iovec *, int, struct vi_req *);
 void vq_retchains(struct vqueue_info *, uint16_t);
 static inline void

@@ -28,14 +28,22 @@
 #include <sys/param.h>
 
 #include <assert.h>
+#include <errno.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <time.h>
 
+#ifdef BHYVE_SNAPSHOT
+#include <machine/vmm_snapshot.h>
+#endif
+
 #include "config.h"
 #include "mevent.h"
 #include "rtc_pl031.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 
 #define	RTCDR		0x000
 #define	RTCMR		0x004
@@ -277,3 +285,64 @@ rtc_pl031_init(rtc_pl031_intr_func_t intr_assert,
 
 	return (sc);
 }
+
+#ifdef BHYVE_SNAPSHOT
+/*
+ * The guest RTC follows the host wall clock.  Record its signed 32-bit
+ * offset from host time rather than an absolute count, so a restore after a
+ * delay (or on another host) continues from current wall-clock time, like
+ * the amd64 vRTC.
+ */
+int
+rtc_pl031_snapshot(struct rtc_pl031_softc *sc, struct vm_snapshot_meta *meta)
+{
+	struct {
+		uint32_t delta, mr, lr;
+		uint8_t imsc, ris, prev_mis;
+	} candidate;
+	time_t now;
+	int ret;
+
+	if (sc == NULL || meta == NULL)
+		return (EINVAL);
+	pthread_mutex_lock(&sc->mtx);
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		/* Bring DR up to date; restore/validate must not tick. */
+		rtc_pl031_tick(sc, false);
+		now = sc->last_tick;
+	} else
+		now = rtc_pl031_time();
+	candidate.delta = sc->dr - (uint32_t)now;
+	candidate.mr = sc->mr;
+	candidate.lr = sc->lr;
+	candidate.imsc = sc->imsc;
+	candidate.ris = sc->ris;
+	candidate.prev_mis = sc->prev_mis;
+	SNAPSHOT_LE32_OR_LEAVE(candidate.delta, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(candidate.mr, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(candidate.lr, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(candidate.imsc, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(candidate.ris, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(candidate.prev_mis, meta, ret, done);
+	if (meta->op != VM_SNAPSHOT_SAVE &&
+	    (candidate.imsc > 1 || candidate.ris > 1 ||
+	    candidate.prev_mis > 1 ||
+	    candidate.prev_mis != (candidate.ris & candidate.imsc))) {
+		ret = EINVAL;
+		goto done;
+	}
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		sc->last_tick = now;
+		sc->dr = (uint32_t)now + candidate.delta;
+		sc->mr = candidate.mr;
+		sc->lr = candidate.lr;
+		sc->imsc = candidate.imsc;
+		sc->ris = candidate.ris;
+		sc->prev_mis = candidate.prev_mis;
+		rtc_pl031_update_timer(sc);
+	}
+done:
+	pthread_mutex_unlock(&sc->mtx);
+	return (ret);
+}
+#endif

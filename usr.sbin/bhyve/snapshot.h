@@ -38,10 +38,14 @@
 
 #include <machine/vmm_snapshot.h>
 #include <libxo/xo.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <ucl.h>
 
 #include "checkpoint_topology.h"
 #include "checkpoint_cpu.h"
+#include "checkpoint_manifest.h"
+#include "hypertrace_session.h"
 
 /*
  * A source-paired build obtains this enumerator from vmm_snapshot.h.
@@ -56,8 +60,11 @@
 #define MAX_SNAPSHOT_FILENAME PATH_MAX
 
 struct vmctx;
+struct pci_devinst;
 
 struct restore_state {
+	/* Hold the verified generation's shared publication lock through use. */
+	int checkpoint_lock_fd;
 	int kdata_fd;
 	int vmmem_fd;
 
@@ -65,6 +72,21 @@ struct restore_state {
 	size_t kdata_len;
 
 	size_t vmmem_len;
+	/* Filled only after the manifest and all three members are verified. */
+	bool handoff_identity_valid;
+	uint8_t handoff_token[16];
+	uint8_t handoff_digest[32];
+	bool hypertrace_release_present;
+	uint8_t hypertrace_release[CHECKPOINT_RELEASE_WIRE_SIZE];
+	unsigned int checkpoint_format_version;
+	void *hypertrace_transfer;
+	size_t hypertrace_transfer_length;
+	bool hypertrace_session_present;
+	uint8_t hypertrace_session[HYPERTRACE_SESSION_RECORD_SIZE];
+	/* Borrowed from the validated PCI record; never freed separately. */
+	const void *hypertrace_private_image;
+	size_t hypertrace_private_length;
+	struct pci_devinst *hypertrace_private_dev;
 
 	struct ucl_parser *meta_parser;
 	ucl_object_t *meta_root_obj;
@@ -122,7 +144,6 @@ int vm_restore_memory_preflight(struct vmctx *ctx,
     struct restore_state *rstate);
 int vm_restore_kern_structs(struct vmctx *ctx, struct restore_state *rstate);
 
-int vm_restore_devices(struct restore_state *rstate);
 int vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate);
 int vm_pause_devices(void);
 int vm_resume_devices(void);
@@ -138,7 +159,18 @@ int load_restore_file(const char *filename, struct restore_state *rstate);
  * releases the destination to run after the source's RELEASE.
  */
 int vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **blob, size_t *len);
+/* Stop tracing while guest CPUs still run, then capture after device pause. */
+int vm_migrate_stop_tracing(struct vmctx *ctx,
+    uint8_t record[HYPERTRACE_SESSION_RECORD_SIZE]);
+int vm_snapshot_fresh_dev_state_to_mem(struct vmctx *ctx,
+    const uint8_t record[HYPERTRACE_SESSION_RECORD_SIZE], uint8_t **blob,
+    size_t *len);
 int vm_migrate_commit_state(struct vmctx *ctx, const uint8_t *blob, size_t len);
+int vm_migrate_fresh_commit_state(struct vmctx *ctx, const uint8_t *blob,
+    size_t len, struct pci_devinst **device);
+/* Called only after the migration coordinator verifies source RELEASE. */
+int vm_migrate_fresh_resume(struct vmctx *ctx, struct pci_devinst *device,
+    const uint8_t record[HYPERTRACE_SESSION_RECORD_SIZE]);
 int vm_migrate_resume(struct vmctx *ctx);
 
 int vm_snapshot_guest2host_addr(struct vmctx *ctx, void **addrp, size_t len,

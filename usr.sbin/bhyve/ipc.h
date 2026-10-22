@@ -46,6 +46,18 @@ struct ipc_command {
 	static struct ipc_command name##_ipc_command = { #name, function }; \
 	DATA_SET(ipc_cmd_set, name##_ipc_command)
 
+/* IPC-handler only: irreversible quarantine before migration retirement. */
+void ipc_quarantine_vm(void);
+/* IPC-handler only: reversible quarantine after a failed pre-COMMIT rollback.
+ * Admits migrate_repair; never weakens an irreversible quarantine. */
+void ipc_wedge_vm(void);
+/* Restore ordinary command admission after a verified repair; EPERM unless
+ * only the reversible quarantine is active. */
+int ipc_unwedge_vm(void);
+
+/* Main releases command admission after its final startup VM operation. */
+void ipc_startup_complete(void);
+
 int init_ipc_thread(struct vmctx *ctx, const char *bhyve_run_dir);
 
 #endif /* _IPC_H_ */

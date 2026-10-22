@@ -131,6 +131,17 @@ END {
 awk -F '\t' 'NR > 1 { print $9 }' "$catalog" |
 while IFS=: read -r program test_case; do
 	case "$program" in
+	hypertrace-bhyve-device)
+		test -n "$source_root" || {
+			echo "virtio private interfaces: HyperTrace test requires source root" >&2
+			exit 1
+		}
+		source=$source_root/contrib/hypertrace/tests/bhyve-device.c
+		test -r "$source" && grep -Fq "TEST-ANCHOR: $test_case" "$source" || {
+			echo "virtio private interfaces: missing HyperTrace test $program:$test_case" >&2
+			exit 1
+		}
+		;;
 	*.sh)
 		source=$script_dir/$program
 		if [ ! -r "$source" ] && [ -n "$source_root" ]; then

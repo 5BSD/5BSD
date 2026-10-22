@@ -34,5 +34,9 @@ void	gdb_cpu_mtrap(struct vcpu *vcpu);
 void	gdb_cpu_suspend(struct vcpu *vcpu);
 void	gdb_cpu_debug(struct vcpu *vcpu, struct vm_exit *vmexit);
 void	init_gdb(struct vmctx *ctx);
+/* Migration ownership: EBUSY with a reason when a debugger owns the guest. */
+int	gdb_migration_fence(const char **reason);
+void	gdb_migration_unfence(void);
+void	gdb_migration_retire(void);
 
 #endif /* !__GDB_H__ */
