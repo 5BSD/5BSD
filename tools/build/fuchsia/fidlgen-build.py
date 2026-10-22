@@ -32,6 +32,20 @@ def load_generator():
     return module
 
 
+def select_available(flags, available):
+    """FLAGS with `--available AVAILABLE` added unless they select one.
+
+    Every bsd.* library is versioned under the platform "bsd", and fidlc
+    refuses a versioned library without a selected version (fi-0201); the
+    build's default is bsd:1 (FIDL_AVAILABLE in lib/libfidl/fidl-bindings.mk).
+    An explicit --available in FLAGS (an evolution test's bsd:2) wins.
+    """
+    if not available or any(f == '--available' or f.startswith('--available=')
+                            for f in flags):
+        return list(flags)
+    return ['--available', available, *flags]
+
+
 def generate(fidlc, schemas, flags, root):
     """Compile SCHEMAS and write the bindings below ROOT."""
     generator = load_generator()
@@ -83,13 +97,19 @@ def main():
     p.add_argument('--fidlc-flag', action='append', default=[],
                    help='extra fidlc argument, e.g. --fidlc-flag=--available '
                    '--fidlc-flag=bsd:2')
+    p.add_argument('--available', metavar='PLATFORM:VERSION', default='bsd:1',
+                   help='platform version selected unless a --fidlc-flag '
+                   'already selects --available (default bsd:1; empty for '
+                   'none)')
     p.add_argument('schemas', nargs='+', type=Path)
     a = p.parse_args()
     a.out.parent.mkdir(parents=True, exist_ok=True)
     try:
         with tempfile.TemporaryDirectory(prefix='.fidlgen-',
                                          dir=a.out.parent) as temporary:
-            tree = generate(a.fidlc, a.schemas, a.fidlc_flag, Path(temporary))
+            tree = generate(a.fidlc, a.schemas,
+                            select_available(a.fidlc_flag, a.available),
+                            Path(temporary))
             publish(tree, a.out)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         p.exit(1, f'{p.prog}: {", ".join(map(str, a.schemas))}: {error}\n')

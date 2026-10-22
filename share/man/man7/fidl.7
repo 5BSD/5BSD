@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 9, 2026
+.Dd October 22, 2026
 .Dt FIDL 7
 .Os
 .Sh NAME
@@ -23,16 +23,61 @@ On 5BSD these operations use native channels, descriptors, and kqueue.
 No Zircon kernel, syscall emulation, Fuchsia dispatcher, or central routing
 daemon is needed by this backend.
 .Ss Status
-As of October 9, 2026, the compiler, formatter, linter, C++ and Rust generators,
-native C++ runtime, and generated C bridge build on 5BSD.
-The native backend is experimental and supports a subset of FIDL schemas.
-BSDTime and libtimecmp now use FIDL in the source tree while preserving the
-public C library ABI.
-Installed-plane activation and provider VM validation remain incomplete.
-Native runtime and development-file build targets and packages are registered.
-Staged C/C++ consumers and optional SDK generation are tested.
-Full world/package and external tool dependency validation remain incomplete.
+As of October 22, 2026, the compiler, formatter, linter, C++ and Rust
+generators, native C++ runtime, and generated C bridge build on 5BSD, and
+buildworld
+generates every binding the system uses from the schemas in the tree.
+The native backend supports the schema subset the system's providers use.
+Fourteen of the fifteen capability daemons serve FIDL while preserving their
+public C client library ABIs: BSDTime, BSDPower, BSDDevice, BSDTrace,
+BSDSysctl, BSDCrypto, BSDAudit, BSDNetwork (system.Network, .Admin, .State
+and, since October 22, .PF), BSDNotify, BSDLog, BSDVM, BSDNamespace,
+BSDExtension and BSDFilesystem (with system.OES).
+BSDBluetooth is not converted; BSDMemory serves no endpoint.
+The fifteen production libraries are versioned under the FIDL platform
+.Dq bsd
+(see
+.Sx Versioning ) .
+Plane-on VM validation of the converted daemons is recorded in
+.Pa /usr/src/tools/build/fuchsia/VALIDATION.json
+.Pq Li fidl_daemons ;
+the last two conversions (system.Network.PF and the versioning change) carry
+their own records there.
 Rust runtime bindings remain unported.
+.Ss Versioning
+Every production library is declared
+.Ql @available(platform="bsd", added=1) .
+The library name's
+.Ql .vN
+suffix is the wire major: ordinals and layouts are a stable contract and an
+incompatible change is a new library name.
+The platform version
+.Ql bsd:N
+is the additive level shared by all
+.Ql bsd.*
+libraries: an element added later is marked
+.Ql @available(added=N)
+with the next level.
+.Xr fidlc 1
+refuses a versioned library without a selected version, so every compile
+passes
+.Fl -available Ar bsd:N :
+.Pa lib/libfidl/fidl-bindings.mk
+compiles each binding set at
+.Va FIDL_AVAILABLE
+.Pq default Ql bsd:1 ,
+an evolution test's next schema selects
+.Ql bsd:2
+through
+.Va FIDL_FLAGS.NAME ,
+and a schema installed under
+.Pa /usr/share/fidl
+is compiled by hand with
+.Ql --available bsd:1 .
+Peers built at different levels interoperate under FIDL's unknown-interaction
+rules; see
+.Pa /usr/src/lib/libfidl/README
+.Pq Versioning .
 .Pp
 Use existing typed client libraries and
 .Xr libservice 3
@@ -96,6 +141,18 @@ including generation and compilation with extracted pkgbase SDK files.
 ASan and UBSan pass these suites.
 LeakSanitizer is unavailable on this host; descriptor leaks are checked
 explicitly through native pipe lifetime tests.
+The schema evolution test compiles one schema at
+.Ql bsd:1
+and
+.Ql bsd:2 ,
+proves the elements added at 2 are absent from the
+.Ql bsd:1
+bindings and present at 2, and runs the separately built C peers against each
+other in every pairing;
+.Pa tools/build/fuchsia/test-bindings.py
+generates every binding set twice and proves each provider's next schema is
+its production schema at
+.Ql bsd:1 .
 .Pp
 With
 .Va MK_TESTS ,
@@ -112,9 +169,13 @@ target in
 .Pa tools/build/fuchsia
 runs native, sanitizer, SDK and extracted-package checks.
 .Pp
-Installed-plane activation, complete capability-plane VM validation, and
-full world/release-package integration remain required.
-Standalone backend tests do not establish a completed service migration.
+Each converted daemon is validated in a plane-on VM with its provider,
+client, control-tool and evolution suites
+.Pq Pa tools/build/fuchsia/vm-provider.sh ;
+the records are in
+.Pa tools/build/fuchsia/VALIDATION.json .
+Standalone backend tests do not establish a completed service migration;
+BSDBluetooth remains on its record protocols.
 .Sh FILES
 .Bl -tag -width indent
 .It Pa /usr/src/contrib/fuchsia

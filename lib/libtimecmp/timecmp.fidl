@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
+@available(platform="bsd", added=1)
 library bsd.time.v1;
 
 // The schema name and ordinals are stable for this wire major version.

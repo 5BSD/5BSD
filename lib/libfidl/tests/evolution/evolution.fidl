@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: BSD-2-Clause
-// One schema compiled at two versions. Peers built from evolve:1 and
-// evolve:2 must interoperate in both directions.
-@available(platform="evolve", added=1)
+// One schema compiled at two versions of the platform "bsd" (the platform
+// every bsd.* library is versioned under; lib/libfidl/README "Versioning").
+// Peers built from bsd:1 and bsd:2 must interoperate in both directions, and
+// evolution_test.py proves that the elements added at 2 are absent from the
+// bsd:1 bindings and present in the bsd:2 ones.
+@available(platform="bsd", added=1)
 library bsd.evolution;
 
 type Color = flexible enum : uint32 {

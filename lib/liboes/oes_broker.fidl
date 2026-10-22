@@ -4,6 +4,7 @@
 // ordinals and layouts are a stable contract for wire major 1; incompatible
 // changes need a new major.  Admission is the session's label and the
 // system.oes attribute, never a payload.  A session answers one OpenNotify.
+@available(platform="bsd", added=1)
 library bsd.oes.v1;
 
 using zx;

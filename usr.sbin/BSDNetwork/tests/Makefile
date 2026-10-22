@@ -112,6 +112,16 @@ LIBADD.evolution_test= ${LIBADD.provider_test}
 NO_SHARED.evolution_test= yes
 TEST_METADATA.evolution_test+= timeout="120"
 
+# system.Network.PF: the real worker (pf_session.c) over a real channel,
+# driven by the real networkcmp_pf_open() (its source, with discovery
+# replaced by the test channel) and by the generated NetworkPf bindings.
+ATF_TESTS_C+= pf_test
+SRCS.pf_test= pf_test.c pf_session.c
+CFLAGS.pf_test+= ${CFLAGS.provider_test:N-DNETWORKCMP_TESTING}
+LIBADD.pf_test= ${LIBADD.provider_test}
+NO_SHARED.pf_test= yes
+TEST_METADATA.pf_test+= timeout="120"
+
 PROGS+= next_peer
 BINDIR_next_peer= ${TESTSDIR}
 MAN.next_peer=
@@ -135,7 +145,8 @@ LIBADD.latency_bench= auditcmp channel fidl_bsd networkcmp pthread filesystemcmp
 
 # Production bindings for everything except next_peer.
 .for t in provider_test state_test state_plane_test state_sampler_test \
-    coalesce_test connect_deadline_test worker_test evolution_test latency_bench
+    coalesce_test connect_deadline_test worker_test evolution_test pf_test \
+    latency_bench
 CFLAGS.${t}+= -I${FIDLGEN.networkcmp}
 .endfor
 

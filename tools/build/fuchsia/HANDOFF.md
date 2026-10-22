@@ -35,12 +35,21 @@ never installed into base.  `Makefile.inc1` checks for it first
 (`_python_check`; `PYTHON=` overrides).  OpenJDK is approved as a build-only
 prerequisite for Bazel if Bazel is ever reintroduced; Bazel is not used.
 
-## Capability daemons (2026-10-12)
+## Capability daemons (2026-10-12, updated 2026-10-22)
 
 Branch `fidl/daemons`: Power, Device, Trace, Sysctl, Crypto, Audit,
 Network, Notify and Log serve FIDL, each with its clients in one commit.
-Plan, progress and latency: `DAEMONS.md`; evidence: VALIDATION.json
-`fidl_daemons`; open items: `REMAINING.md` section 6.
+Merged into dev on 2026-10-12 (`c222f34d395`) together with VM, Namespace,
+Extension and Filesystem (+OES) after the libservice client split
+(`779d28c87d7`).  On 2026-10-22 system.Network.PF was converted as well
+(`NetworkPf` in `bsd.network.v1`, `networkcmp_pf_open(3)`), so fourteen of
+the fifteen daemons serve FIDL; BSDBluetooth is the remaining record
+protocol.  The same day every production library gained
+`@available(platform="bsd", added=1)` and the build compiles at
+`FIDL_AVAILABLE` (`bsd:1`; `lib/libfidl/README` "Versioning").  Plan,
+progress and latency: `DAEMONS.md`; evidence: VALIDATION.json
+`fidl_daemons`, `fidl_versioning`, `fidl_pf`; open items: `REMAINING.md`
+section 7.
 
 ## What is validated (2026-10-10)
 

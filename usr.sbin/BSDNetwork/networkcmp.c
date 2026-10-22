@@ -41,7 +41,6 @@
 #include <networkcmp.h>
 
 #include "resolver.h"
-#include "pf_protocol.h"
 #include "pf_session.h"
 #include "state.h"
 #include <network_state.h>
@@ -1806,7 +1805,7 @@ main(void)
 	struct service_listener *listener, *listeners[4];
 	struct network_state_server *state_server = NULL;
 	static const char *const listener_names[4] = {
-		BSDNETWORK_NAME, BSDNETWORK_ADMIN_NAME, PF_MONITOR_SERVICE,
+		BSDNETWORK_NAME, BSDNETWORK_ADMIN_NAME, NETWORKCMP_PF_INTERFACE,
 	    NETWORK_STATE_INTERFACE };
 	struct service_provider *provider;
 	struct service_context *ctx;
@@ -1972,8 +1971,7 @@ main(void)
 			continue;
 		}
 		if (listener == listeners[2] &&
-		    !service_rights_allow(identity.rights,
-		    PF_MONITOR_RIGHT_READ)) {
+		    !network_pf_admit(identity.rights)) {
 			net_log(main_logger(), LOG_WARNING,
 			    "PF session for %s lacks read right",
 			    identity.client_label);

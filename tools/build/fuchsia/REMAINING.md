@@ -95,11 +95,14 @@ and the Desktop checklist `~/Desktop/Fuchsia tests for next VM.txt`
 ## 6. Capability daemons on FIDL (branch `fidl/daemons`, 2026-10-12)
 
 Nine providers serve FIDL; see `DAEMONS.md` (Progress) and VALIDATION.json
-`fidl_daemons`.  Open items:
+`fidl_daemons`.  Open items (as of 2026-10-12; see section 7 for what
+closed since):
 
 - User decisions: library layout for the libservice-embedded clients
   (BSDVM, BSDNamespace, BSDExtension, BSDFilesystem); system.Network.PF,
   whose only consumer is the out-of-tree sysutils/5bsd-instruments.
+  (Both decided: the four converted and merged 2026-10-12, PF converted
+  2026-10-22; section 7.)
 - BSDBluetooth: isolate the plane/controller code its test matrix compiles
   directly, then convert ATTACH and Controller.
 - Latency: FIDL calls are 1.0-2.5x slower at p50 in the TCG guest with
@@ -140,3 +143,35 @@ imports recorded in `contrib/README.5BSD` and `VALIDATION.json`.
   coalition agent.
 - Auto mode treats widening service visibility as a permission grant; the
   user approved it explicitly for these three services.
+
+## 7. State on 2026-10-22: versioning and system.Network.PF
+
+Done on dev (uncommitted by the agent; the user commits):
+
+- Every production library (15 `bsd.<name>.v1`) is
+  `@available(platform="bsd", added=1)`; `fidl-bindings.mk` compiles each set
+  at `FIDL_AVAILABLE` (default `bsd:1`), `fidlgen-build.py --available`
+  carries the default, `test-bindings.py` compiles production schemas at
+  `bsd:1`.  `lib/libfidl/tests/evolution` moved to platform `bsd` and proves
+  the `added=2` elements absent at `bsd:1`/present at `bsd:2`.  Scheme:
+  `lib/libfidl/README` "Versioning", fidl(7).
+- system.Network.PF serves `NetworkPf` (`bsd.network.v1`); client
+  `networkcmp_pf_open(3)`; `pf_protocol.h` retired; `pf_test` (9 cases).
+  Port patch for `sysutils/5bsd-instruments` updated in the ports checkout
+  (uncommitted).
+- Records refreshed: `DAEMONS.md` (14 of 15 daemons converted; Bluetooth
+  remaining), fidl(7), fidl.md, MATURITY, VALIDATION.json (`fidl_versioning`,
+  `fidl_pf`).
+
+Open:
+
+- Rebuild `sysutils/5bsd-instruments` against the new world (its distfiles
+  were not on the build host: the GitHub release assets return 404) and ship
+  it with the converted provider; a pre-conversion Instruments speaks `PFS1`,
+  which the provider now rejects.
+- BSDBluetooth ATTACH/Controller conversion (unchanged from section 6).
+- Latency records for VM, Namespace, Extension and Filesystem (their
+  `latency_bench` programs exist; no record-protocol comparison was run).
+- A switchboard reachability case for system.Network.PF does not exist
+  (service_reachability_test.sh checks system.Network and .Admin only).
+- Republishing packages remains a user-held release step (section 4).

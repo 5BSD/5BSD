@@ -82,6 +82,20 @@ int	networkcmp_getaddrinfo(struct networkcmp_client *, const char *host,
 /* Release only lists returned by networkcmp_getaddrinfo(). */
 void	networkcmp_freeaddrinfo(struct addrinfo *result);
 
+/*
+ * system.Network.PF (NETWORKCMP_PF_INTERFACE; the caller's software identity
+ * must hold system.network.pf.read): one short session that returns, in
+ * *out_fd, a pf(4) descriptor reporting the state table of the caller's own
+ * vnet.  The descriptor carries exactly CAP_READ, CAP_FSTAT and CAP_IOCTL,
+ * admits only DIOCGETSTATES (struct pfioc_states of struct pfsync_state,
+ * <net/pfvar.h>), no fcntls, and cannot be transferred again; the library
+ * refuses anything else with EPROTO.  Independent of the process client:
+ * each call opens and closes its own session.  Returns 0, or -1 with errno
+ * (ENOENT when the endpoint is not resolvable for this identity, the
+ * provider's errno for a refused or failed open).
+ */
+int	networkcmp_pf_open(int *out_fd);
+
 __END_DECLS
 
 #endif /* !_NETWORKCMP_H_ */

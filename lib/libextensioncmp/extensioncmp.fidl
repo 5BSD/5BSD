@@ -4,6 +4,7 @@
 // new major.  Identity never travels in a payload: the provider decides from
 // the accepted session's rights (ADMIN for policy changes) and the bundle its
 // label belongs to.
+@available(platform="bsd", added=1)
 library bsd.extension.v1;
 
 type ProtocolInfo = struct { wire_version uint32; };

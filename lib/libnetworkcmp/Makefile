@@ -18,6 +18,7 @@ MLINKS+=libnetworkcmp.3 networkcmp_freeaddrinfo.3
 MLINKS+=libnetworkcmp.3 networkcmp_client_open.3
 MLINKS+=libnetworkcmp.3 networkcmp_client_limits.3
 MLINKS+=libnetworkcmp.3 networkcmp_client_close.3
+MLINKS+=libnetworkcmp.3 networkcmp_pf_open.3
 
 SRCS=	networkcmp.c networkcmp_legacy.c network_state.c \
 	${FIDLGEN_SRCS.networkcmp}

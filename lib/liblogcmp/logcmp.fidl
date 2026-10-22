@@ -5,6 +5,7 @@
 // layouts are a stable contract for wire major 1; incompatible changes need
 // a new major.  Identity never travels in a payload: the provider stamps the
 // accepted session's label and scopes every query to it.
+@available(platform="bsd", added=1)
 library bsd.log.v1;
 
 using zx;

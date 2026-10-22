@@ -1,15 +1,20 @@
 # Capability daemons: FIDL migration plan
 
-Status: plan, 2026-10-11.  Branch `fidl/daemons` (worktree
-`/usr/obj/5BSD-fidl-daemons`).  The reference migration is BSDTime (`cf97f876797`,
-visibility `58977d8dfd1`); every conversion copies its pattern.
+Status: plan written 2026-10-11 on branch `fidl/daemons`; the conversions
+were merged into `dev` on 2026-10-12 (`c222f34d395`, "thirteen daemon
+conversions and OES bindings") and system.Network.PF followed on 2026-10-22.
+The "Progress" table below is the current state as read from the tree on
+2026-10-22; the inventory and plan sections are the 2026-10-11 record and
+are kept as written, with superseded statements marked.  The reference
+migration is BSDTime (`cf97f876797`, visibility `58977d8dfd1`); every
+conversion copies its pattern.
 
 ## Inventory (tree at `4e87e953034`)
 
 Fifteen daemons call `service_provider_expose`, exposing 21 endpoints.
-BSDTime is the only one already on FIDL.  BSDMemory serves nothing (it is a
-client of system.Sysctl and system.Notify).  Every other protocol is a
-hand-written fixed-layout C struct protocol over libchannel
+BSDTime is the only one already on FIDL (superseded: see "Progress").
+BSDMemory serves nothing (it is a client of system.Sysctl and system.Notify).
+Every other protocol is a hand-written fixed-layout C struct protocol over libchannel
 (`service_session_call` / `channel_send_reply`), with descriptors as channel
 attachments.  Every protocol's largest message fits libfidl_bsd's
 14,336-byte / 32-attachment limit (largest: Log 8192, Sysctl ~8.5 KiB,
@@ -47,6 +52,9 @@ Facts that shape every conversion:
   part of libservice's ABI; converting them makes libservice depend on
   libfidl_bsd or moves those clients into separate libraries.  Either is a
   library-layout change to raise with the user before doing it.
+  (Decided and done 2026-10-12, `779d28c87d7`: the four clients became
+  libfilesystemcmp, libextensioncmp, libnamespacecmp and libvmcmp;
+  libservice stays C-only, SHLIB_MAJOR 2.)
 - BSDLog's shared-memory ring is a data plane, not a message protocol; only
   its control messages (HELLO/ATTACH/query) are FIDL candidates.
 - Bluetooth's `ipc_proto` runs over an ordinary socket handed out by ATTACH,
@@ -61,6 +69,9 @@ speaking the old protocol:
 1. `.fidl` library `bsd.<name>.v1` next to the client library, installed under
    `/usr/share/fidl`; closed protocol, strict methods, `GetProtocolInfo`
    negotiation first (as `bsd.time.v1`); application errors are errno values.
+   Since 2026-10-22 the library is declared
+   `@available(platform="bsd", added=1)` and later additions are
+   `@available(added=N)` (lib/libfidl/README "Versioning").
    Generated C/C++ bindings checked in under `generated/` with a
    `SOURCE.sha256` stamp (see "Generated bindings" below); the library is
    listed in `tools/build/fuchsia/test-bindings.py`.
@@ -112,8 +123,11 @@ The fragment runs `fidlgen-build.py` in `beforebuild` (fidlc to JSON IR,
 then `generate-bsd.py --c`) into `${.OBJDIR}/fidlgen/<set>`, rerunning when
 a schema or any generator file changes, and exports `FIDLGEN.<set>` (the
 include root) and `FIDLGEN_SRCS.<set>` (natural/common types and the C
-bridge to compile).  An evolution test's next schema is a `<set>_next` set
-with `FIDL_FLAGS.<set>_next= --available bsd:2`.  The natural C++ types come
+bridge to compile).  Every set is compiled at `FIDL_AVAILABLE` (default
+`bsd:1`, the platform level every bsd.* library is versioned under, since
+2026-10-22); an evolution test's next schema is a `<set>_next` set with
+`FIDL_FLAGS.<set>_next= --available bsd:2`, which takes precedence.  The
+natural C++ types come
 from upstream's `fidlgen_cpp` templates, executed by `fidlgen_natural.py`
 (a port of the `fidlgen_cpp` model the native backend uses) and
 `gotemplate.py` (Go `text/template` semantics); the Go `fidlgen_cpp` is no
@@ -209,25 +223,67 @@ last:
 
 ## Progress
 
-Commits are on `fidl/daemons`, one per provider (after the runtime and
-generator commits).  VM evidence: the plane-on daemon VM (2 vCPUs, all
-provider, client, ctl and runtime suites; `vm-daemons.sh` live and
-lifecycle checks); see VALIDATION.json `fidl_daemons`.
+State of the `dev` tree on 2026-10-22, read from the sources (a daemon is
+"converted" when its Makefile names a `FIDL_BINDINGS` set, its server uses
+the generated bindings and its tests directory has the evolution pairing):
+fourteen of the fifteen daemons that expose endpoints serve FIDL.  The first
+nine landed on `fidl/daemons` one commit per provider; VM, Namespace,
+Extension and Filesystem (+OES) came with the 2026-10-12 merge
+`c222f34d395` after the library split `779d28c87d7`; system.Network.PF
+was converted on 2026-10-22.  VM evidence: the plane-on daemon VM (2 vCPUs,
+all provider, client, ctl and runtime suites; `vm-daemons.sh` live and
+lifecycle checks), VALIDATION.json `fidl_daemons` (first nine, VM7-VM11);
+the merge commit records a 1201-case plane-on run for the thirteen (105
+prerequisite skips, the one Network failure fixed and rerun: 102 passed)
+and the provider book pages mark VM, Namespace, Extension and Filesystem
+VM-proven; the PF conversion's run is VALIDATION.json `fidl_pf`.
 
-| # | Provider | Status | Latency p50 record protocol -> FIDL (op, µs, VM7, direct C wire codec) |
-|---|---|---|---|
-| 1 | BSDPower | converted | States: 120 -> 127 (1.06x; natural bridge 1.16x) |
-| 2 | BSDDevice | converted | List: 171 -> 138 (0.81x; natural bridge 2.24x) |
-| 3 | BSDTrace | converted | Open: 3159 -> 3959 (1.25x, noisy; natural bridge 1.81x) |
-| 4 | BSDSysctl | converted | Get: 153 -> 172 (1.12x; natural bridge 1.97x) |
-| 5 | BSDCrypto | converted | Random: 127 -> 124 (0.98x; natural bridge 2.16x) |
-| 6 | BSDAudit | converted | Submit: 131 -> 146 (1.11x; natural bridge 2.54x) |
-| 7 | BSDNetwork | converted | GetLimits: 132 -> 147 (1.11x; natural bridge 1.35x) |
-| 8 | BSDNotify | converted | GetStats: 140 -> 130 (0.93x; natural bridge 1.42x) |
-| 9 | BSDLog | converted | GetStats: 137 -> 144 (1.05x; natural bridge 1.04x) |
-| - | BSDVM, BSDNamespace, BSDExtension, BSDFilesystem | not converted | user decision: library layout of the libservice-embedded clients |
-| - | BSDBluetooth | not converted | its test matrix compiles the plane/controller sources directly; isolate first |
-| - | system.Network.PF | kept on the record protocol | its only consumer is out of tree (sysutils/5bsd-instruments): user decision |
+| # | Provider | Endpoint(s) | Library | Status | Latency p50 record protocol -> FIDL (op, µs, VM7, direct C wire codec) |
+|---|---|---|---|---|---|
+| 0 | BSDTime | system.Time | `bsd.time.v1` | converted (reference, `cf97f876797`) | not benched against a record protocol (first conversion) |
+| 1 | BSDPower | system.Power | `bsd.power.v1` | converted | States: 120 -> 127 (1.06x; natural bridge 1.16x) |
+| 2 | BSDDevice | system.Device | `bsd.device.v1` | converted | List: 171 -> 138 (0.81x; natural bridge 2.24x) |
+| 3 | BSDTrace | system.Trace | `bsd.trace.v1` | converted | Open: 3159 -> 3959 (1.25x, noisy; natural bridge 1.81x) |
+| 4 | BSDSysctl | system.Sysctl | `bsd.sysctl.v1` | converted | Get: 153 -> 172 (1.12x; natural bridge 1.97x) |
+| 5 | BSDCrypto | system.Crypto | `bsd.crypto.v1` | converted | Random: 127 -> 124 (0.98x; natural bridge 2.16x) |
+| 6 | BSDAudit | system.Audit | `bsd.audit.v1` | converted | Submit: 131 -> 146 (1.11x; natural bridge 2.54x) |
+| 7 | BSDNetwork | system.Network, .Admin, .State, .PF | `bsd.network.v1` | converted; .PF converted 2026-10-22 (`NetworkPf`: one `OpenStates` per session, untyped `zx.Handle`, `networkcmp_pf_open(3)`) | GetLimits: 132 -> 147 (1.11x; natural bridge 1.35x); PF is a one-shot session and is not benched |
+| 8 | BSDNotify | system.Notify, .System | `bsd.notify.v1` | converted | GetStats: 140 -> 130 (0.93x; natural bridge 1.42x) |
+| 9 | BSDLog | system.Log (control plane; the ring stays shared memory) | `bsd.log.v1` | converted | GetStats: 137 -> 144 (1.05x; natural bridge 1.04x) |
+| 10 | BSDVM | system.VM | `bsd.vm.v1` (libvmcmp) | converted (merge `c222f34d395`) | not recorded: the merge ran no latency benches; `latency_bench` is installed with its tests |
+| 11 | BSDNamespace | system.Namespace | `bsd.namespace.v1` (libnamespacecmp) | converted (merge `c222f34d395`) | not recorded (as above) |
+| 12 | BSDExtension | system.SystemExtension | `bsd.extension.v1` (libextensioncmp) | converted (merge `c222f34d395`) | not recorded (as above) |
+| 13 | BSDFilesystem | system.Filesystem, system.OES | `bsd.filesystem.v1` (libfilesystemcmp), `bsd.oes.v1` (liboes) | converted (merge `c222f34d395`) | not recorded (as above) |
+| - | BSDBluetooth | system.Bluetooth, .Controller | none | not converted: ATTACH and the Controller message are still `blued_plane.h` records; its test matrix compiles the plane/controller sources directly (isolate first).  No FIDL reference under usr.sbin/bluetooth or lib/libble. | - |
+| - | BSDMemory | none | - | serves no endpoint (client of Sysctl and Notify) | - |
+
+Superseded rows of the 2026-10-12 table, kept for the record: "BSDVM,
+BSDNamespace, BSDExtension, BSDFilesystem: not converted (user decision:
+library layout)" -- decided and merged 2026-10-12; "system.Network.PF: kept
+on the record protocol (user decision)" -- converted 2026-10-22 on the
+user's decision.  The out-of-tree consumer, `sysutils/5bsd-instruments`,
+has its port patch updated to call `networkcmp_pf_open()` and link
+libnetworkcmp (not committed in the ports checkout, not yet rebuilt).
+
+### system.Network.PF (2026-10-22)
+
+`NetworkPf` in `bsd.network.v1`: `GetProtocolInfo`, then one `OpenStates()
+-> (PfStates) error uint32`, `PfStates = resource struct { pf zx.Handle; }`.
+The descriptor is an untyped `zx.Handle` (NONE, SAME_RIGHTS) on purpose:
+the backend's explicit READ mapping (`lib/libfidl/runtime.cc`
+`ValidateDescriptor`/`CheckReported`) narrows a descriptor to `CAP_READ`
+alone on send and on receipt, which would strip the `CAP_IOCTL` that
+`DIOCGETSTATES` needs.  The provider keeps the rights it always set
+(`CAP_READ|CAP_FSTAT|CAP_IOCTL`, `DIOCGETSTATES` only, no fcntls,
+`XFER_ONCE|CLOFORK_ONCE`, `DIOCBINDJAIL` to a jailed client's vnet before
+delivery) and `networkcmp_pf_open()` refuses a descriptor with anything else
+(`EPROTO`).  The worker model is unchanged (pdfork per session, capability
+mode, 5-second lifetime); a second `OpenStates` is `EALREADY`, a request
+before negotiation or a malformed frame ends the session.  `pf_protocol.h`
+is retired (it was never installed; the port carries its own copy for its
+unused legacy function).  Tests: `usr.sbin/BSDNetwork/tests/pf_test` (9
+cases, real worker on a real channel with a stand-in for /dev/pf narrowed
+as production narrows it).
 
 ### Latency
 

@@ -3,6 +3,7 @@
 // stable contract for wire major 1; incompatible changes need a new major.
 // Identity and authority never travel in a payload: the provider decides
 // from the accepted session's label and its per-label power.conf policy.
+@available(platform="bsd", added=1)
 library bsd.power.v1;
 
 type ProtocolInfo = struct { wire_version uint32; };

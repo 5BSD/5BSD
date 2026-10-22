@@ -59,9 +59,19 @@ descriptor. `networkcmp_protocol.h` keeps the structures the C API uses
 feature and flag bits); its `NCMP` message framing and the
 `networkcmp_server.h` validators describe the pre-FIDL wire format and are kept
 for compatibility. `system.Network.State` serves `NetworkState` from the same
-library (see below). `system.Network.PF` still uses its single pre-FIDL
-request (magic `PFS1`): its only consumer is the out-of-tree
-`sysutils/5bsd-instruments` port, which speaks it directly.
+library (see below). `system.Network.PF` serves `NetworkPf` from the same
+library since 2026-10-22 (`GetProtocolInfo`, then one `OpenStates` returning
+the narrowed `/dev/pf` descriptor as an untyped `zx.Handle`; a second
+`OpenStates` is `EALREADY`, the worker exits five seconds after it was
+accepted, and the pre-FIDL `PFS1` record is a protocol violation). The
+descriptor stays an untyped handle on the wire because the backend's explicit
+`READ` mapping narrows a descriptor to `CAP_READ` alone, which would defeat
+`DIOCGETSTATES`; the provider sets exactly `CAP_READ|CAP_FSTAT|CAP_IOCTL`
+with that single ioctl, and `networkcmp_pf_open()` refuses anything else
+(`EPROTO`). Its only consumer, the out-of-tree `sysutils/5bsd-instruments`
+port, calls that function (port patch updated with the conversion; not yet
+rebuilt). The library is versioned under the FIDL platform `bsd`
+(`@available(platform="bsd", added=1)`; see [FIDL](../develop/fidl.md)).
 `usr.sbin/BSDNetwork/tests/evolution/networkcmp_next.fidl` is the schema at
 `bsd:1` plus a method at `bsd:2` for the pairing test.
 
@@ -76,6 +86,7 @@ Header `<networkcmp.h>` (installs `networkcmp.h`, `networkcmp_protocol.h`, `netw
 | Session | `networkcmp_client_open`, `networkcmp_client_limits`, `networkcmp_client_close`, `networkcmp_hello` |
 | Sockets | `networkcmp_connect`, `networkcmp_connect_ex` (adds `timeout_ms`), `networkcmp_udp`, `networkcmp_listen` |
 | Resolution | `networkcmp_resolve`, `networkcmp_getaddrinfo`, `networkcmp_freeaddrinfo` |
+| PF states | `networkcmp_pf_open` (`system.Network.PF`; needs the `system.network.pf.read` attribute; one short session of its own, independent of the process client) |
 
 The library keeps one process-wide session; repeated opens return borrows of it and `networkcmp_client_close()` releases a borrow. Opening negotiates the wire version (`EPROTONOSUPPORT` for an incompatible provider) and reads the limits. Calls from several threads proceed concurrently on the shared session: one waiting thread reads the channel and completes every caller's reply. Each call is bounded by 30 seconds, shortened by an active `service_budget_begin()`; a timeout cancels that call (`ETIMEDOUT`) and keeps the session. `networkcmp_getaddrinfo()` accepts `AI_PASSIVE`, `AI_CANONNAME`, `AI_NUMERICHOST`, `AI_NUMERICSERV`, `AI_V4MAPPED` and `AI_ALL`, returns an `EAI_*` status, and its list must be freed with `networkcmp_freeaddrinfo()`. A malformed reply marks the session terminal: every later call fails with `EPROTO`; a lost provider makes it terminal with the transport error. A child after `fork(2)` cannot reuse the parent's session (`EINVAL`).
 
@@ -148,7 +159,7 @@ The entry schema is closed (an unknown key, a non-boolean, a duplicate or invali
 
 | Where | Programs | What they prove |
 |---|---|---|
-| `usr.sbin/BSDNetwork/tests` (package `bsdnetwork-tests`, `/usr/tests/usr.sbin/BSDNetwork`) | `provider_test` (18 cases), `state_test` (4), `state_plane_test` (1), `state_sampler_test`, `coalesce_test` (2), `connect_deadline_test` (1), `worker_test`, `evolution_test` (2), `config_test` (12), `policy_test` (7), `bundle_test.sh` (3) | provider_test drives the real worker with the generated bindings over a mac_capability channel: limits, CONNECT and UDP return a narrowed fd, denied labels get `EACCES`, loopback is refused to non-admin sessions, per-label config denies connect while allowing resolve, connect timeouts succeed/refuse/expire, the resolver does not block the session, identical resolves coalesce, its deadline terminates the worker; hand-built frames (attached descriptor, pre-FIDL record) and record-rule violations end the session. state_test drives the NetworkState reactor over real channels (coalescing watch, `EBUSY`, timeouts, label and total admission, negotiation, idle expiry, provider teardown). evolution_test pairs `bsd:1` and `bsd:2` peers both ways. config_test and policy_test cover the parser's closed schema and fail-soft behaviour. |
+| `usr.sbin/BSDNetwork/tests` (package `bsdnetwork-tests`, `/usr/tests/usr.sbin/BSDNetwork`) | `provider_test` (18 cases), `state_test` (4), `state_plane_test` (1), `state_sampler_test`, `coalesce_test` (2), `connect_deadline_test` (1), `worker_test`, `evolution_test` (2), `pf_test` (9), `config_test` (12), `policy_test` (7), `bundle_test.sh` (3) | provider_test drives the real worker with the generated bindings over a mac_capability channel: limits, CONNECT and UDP return a narrowed fd, denied labels get `EACCES`, loopback is refused to non-admin sessions, per-label config denies connect while allowing resolve, connect timeouts succeed/refuse/expire, the resolver does not block the session, identical resolves coalesce, its deadline terminates the worker; hand-built frames (attached descriptor, pre-FIDL record) and record-rule violations end the session. state_test drives the NetworkState reactor over real channels (coalescing watch, `EBUSY`, timeouts, label and total admission, negotiation, idle expiry, provider teardown). evolution_test pairs `bsd:1` and `bsd:2` peers both ways. pf_test runs the real PF worker on a real channel with a stand-in for `/dev/pf` narrowed as production narrows it: `networkcmp_pf_open()` receives exactly `CAP_READ|CAP_FSTAT|CAP_IOCTL` with `DIOCGETSTATES` alone and `DIOCBINDJAIL` refused, an open error arrives as the application errno with no descriptor, a wider descriptor is refused by the library (`EPROTO`), a second `OpenStates` is `EALREADY` without a descriptor, a request before negotiation, an attached descriptor, the `PFS1` record and an unknown ordinal end the session (worker exit 1), an idle session ends after five seconds, and the per-session read right is required for admission; binding to a jail's vnet needs a vnet jail and is not covered. config_test and policy_test cover the parser's closed schema and fail-soft behaviour. |
 | `lib/libnetworkcmp/tests` (`libnetworkcmp-tests`) | `networkcmp_test` (8), `client_lifecycle_test` (5), `state_client_test` (3) | retained record rules and argument checks before transport; against scripted `bsd.network.v1` providers: borrow/release lifecycle, concurrent calls overlapping on the shared session, fork, terminal transport and `EPROTO` errors, the NetworkState reconnect, timeout and validation rules |
 | `usr.sbin/networkcmpctl/tests` | `networkcmpctl_test.sh` (5) | argument handling, provider-unavailable exit, successful verbs against a fake broker, failure cleanup |
 
@@ -160,7 +171,8 @@ Status: shipped, committed on `dev`, VM-proven; the inventory (section 4 and sec
 
 Known gaps and drift:
 
-- `system.Network.PF` still uses its pre-FIDL message; converting it needs the `sysutils/5bsd-instruments` port, which implements that message itself, to move in step.
+- `system.Network.PF` moved to FIDL on 2026-10-22; the `sysutils/5bsd-instruments` port patch now calls `networkcmp_pf_open()` and links `libnetworkcmp`, but the port has not been rebuilt against the new world yet (its distfiles were not available on the build host), and the provider and port ship together: a pre-conversion Instruments speaks `PFS1`, which the converted provider rejects.
+- The PF conversion's provider cases (`pf_test`) are in the tree; see the VALIDATION record for the VM run they were executed in.
 
 - `bundle_test.sh` refers to the pre-rename source directory `usr.sbin/bsdnetwork` and binary name, so it skips or fails outside the source tree layout it was written for.
 - A timeout op for resolve (as opposed to the fixed 30 second deadline) is deferred, per the inventory.

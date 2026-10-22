@@ -2,13 +2,19 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Run C peers built from two versions of one schema against each other.
 
-evolution/evolution.fidl is compiled at evolve:1 and evolve:2. Each pairing
-uses a real native channel between separate processes and checks unknown
-table fields, flexible union variants, flexible enum/bits values, added
-flexible methods/events and continued connection use.
+evolution/evolution.fidl is compiled at bsd:1 and bsd:2 (--available bsd:N,
+the platform every bsd.* library is versioned under). The compiler output
+is checked first: every element marked @available(added=2) -- the Added
+method, the Announced event, the GREEN/WRITE/square/extra/tint members -- is
+absent from the bsd:1 IR and C header and present at bsd:2, so a bsd:1 build
+cannot even name them. Each pairing then uses a real native channel between
+separate processes and checks unknown table fields, flexible union variants,
+flexible enum/bits values, added flexible methods/events and continued
+connection use: the wire stays compatible across the version.
 """
 import argparse
 import concurrent.futures
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -46,16 +52,55 @@ else:
         ['make', '-C', str(a.src / 'lib/libchannel'), '-V', '.OBJDIR'], text=True).strip()) / 'libchannel.a'
 libraries = [str(a.obj / 'libfidl_bsd.a'), str(channel), '-lc++', '-lcxxrt', '-lm', '-pthread']
 
+# Elements the schema adds at bsd:2, as (IR declaration, member) and as the
+# C identifier generated for them.
+ADDED = {
+    ('bsd.evolution/Evolve', 'Added'): 'bsd_evolution_Evolve_Added',
+    ('bsd.evolution/Evolve', 'Announced'): 'bsd_evolution_Evolve_Announced',
+    ('bsd.evolution/Color', 'GREEN'): 'bsd_evolution_Color_GREEN',
+    ('bsd.evolution/Perms', 'WRITE'): 'bsd_evolution_Perms_WRITE',
+    ('bsd.evolution/Shape', 'square'): 'bsd_evolution_Shape_square_tag',
+    ('bsd.evolution/Record', 'extra'): 'has_extra',
+    ('bsd.evolution/Record', 'tint'): 'has_tint',
+}
+
+
+def members(ir, declaration):
+    """The member names of DECLARATION (methods for a protocol) in IR."""
+    for kind in ('protocol', 'enum', 'bits', 'union', 'table'):
+        for decl in ir['%s_declarations' % kind]:
+            if decl['name'] == declaration:
+                return {m['name'] for m in decl.get('methods', decl.get('members', []))}
+    raise KeyError(declaration)
+
+
+def check_available(version, ir_path, header):
+    """At bsd:1 nothing added at 2 exists; at bsd:2 everything does."""
+    ir = json.loads(ir_path.read_text())
+    text = header.read_text()
+    for (declaration, member), identifier in ADDED.items():
+        present = member in members(ir, declaration)
+        if present != (version >= 2):
+            raise AssertionError('%s.%s %s at bsd:%d IR' % (
+                declaration, member, 'present' if present else 'absent', version))
+        if (identifier in text) != (version >= 2):
+            raise AssertionError('%s %s in the bsd:%d C header' % (
+                identifier, 'present' if identifier in text else 'absent', version))
+    return len(ADDED)
+
+
 jobs = []
+checked = 0
 for version in (1, 2):
     ir = work / ('v%d.json' % version)
-    subprocess.run([str(a.tools / 'fidlc'), '--json', str(ir), '--available', 'evolve:%d' % version,
+    subprocess.run([str(a.tools / 'fidlc'), '--json', str(ir), '--available', 'bsd:%d' % version,
                     '--files', str(source / 'evolution.fidl')], check=True)
     generated = work / ('gen%d' % version)
     subprocess.run([sys.executable, str(a.src / 'tools/build/fuchsia/generate-bsd.py'),
                     '--json', str(ir),
                     '--root', str(generated), '--c'], check=True)
     base = generated / 'fidl/bsd.evolution'
+    checked += check_available(version, ir, base / 'c/bsd.h')
     inputs = [source / 'peer.c', base / 'cpp/natural_types.cc', base / 'cpp/common_types.cc', base / 'c/bsd.cc']
     jobs += [(version, generated, item) for item in inputs]
 
@@ -87,5 +132,6 @@ for local in (1, 2):
             subprocess.run([str(peers[local]), 'launch', role, str(peers[remote]), str(remote)],
                            env=env, check=True, timeout=90)
             cases += 1
-print('%d schema evolution pairings (evolve:1/evolve:2 C peers over native channels): PASS; %s'
-      % (cases, work), flush=True)
+print('%d schema evolution pairings (bsd:1/bsd:2 C peers over native channels), '
+      '%d added elements absent at bsd:1 and present at bsd:2: PASS; %s'
+      % (cases, checked, work), flush=True)

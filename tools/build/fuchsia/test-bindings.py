@@ -28,6 +28,9 @@ p.add_argument('--fidlc', type=Path, help='fidlc to use instead of TOOLS/fidlc')
 a = p.parse_args()
 os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
 fidlc = a.fidlc or a.tools / 'fidlc'
+# The build's default platform version (FIDL_AVAILABLE in fidl-bindings.mk):
+# every production library is @available(platform="bsd", added=1).
+AVAILABLE = ['--available', 'bsd:1']
 a.obj.mkdir(parents=True, exist_ok=True)
 
 
@@ -59,7 +62,7 @@ def schema_paths(schemas):
 
 def generate(schemas, flags, out):
     command = [sys.executable, str(a.src / 'tools/build/fuchsia/fidlgen-build.py'),
-               '--fidlc', str(fidlc), '--out', str(out),
+               '--fidlc', str(fidlc), '--out', str(out), '--available', AVAILABLE[1],
                *[f'--fidlc-flag={f}' for f in flags],
                *map(str, schema_paths(schemas))]
     subprocess.run(command, check=True)
@@ -79,8 +82,8 @@ def semantic(value):
 
 def compatible(next_schemas, production, work):
     irs = []
-    for tag, schemas, extra in (('v1', next_schemas, ['--available', 'bsd:1']),
-                                ('prod', production, [])):
+    for tag, schemas, extra in (('v1', next_schemas, AVAILABLE),
+                                ('prod', production, AVAILABLE)):
         out = work / (tag + '.json')
         files = []
         for schema in schema_paths(schemas):

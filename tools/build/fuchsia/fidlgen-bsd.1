@@ -65,6 +65,18 @@ fidlgen-bsd --json example.json --root generated --c
 pkgconf --cflags --libs fidl
 .Ed
 .Pp
+The system's own schemas under
+.Pa /usr/share/fidl
+are versioned under the FIDL platform
+.Dq bsd
+.Pq see Xr fidl 7 ;
+.Cm fidlc
+refuses them without a selected version:
+.Bd -literal -offset indent
+fidlc --json network.json --available bsd:1 \
+    --files /usr/share/fidl/zx.fidl --files /usr/share/fidl/networkcmp.fidl
+.Ed
+.Pp
 Compile generated natural types and the C bridge as C++20.
 Compile a C application as C11 and link its objects with the generated
 objects and the libraries returned by pkgconf.

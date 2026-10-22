@@ -4,6 +4,7 @@
 // Identity never travels in a payload: the provider decides from the accepted
 // session's label and its per-label device.conf policy (default-deny), and
 // List is scoped to that label.
+@available(platform="bsd", added=1)
 library bsd.device.v1;
 
 using zx;

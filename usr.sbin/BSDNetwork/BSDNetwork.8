@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 11, 2026
+.Dd October 22, 2026
 .Dt BSDNETWORK 8
 .Os
 .Sh NAME
@@ -103,9 +103,10 @@ request ignores it.
 The protocol exposes DNS, connect, udp and listen.
 .Pp
 .Dq system.Network ,
-.Dq system.Network.Admin
-and
+.Dq system.Network.Admin ,
 .Dq system.Network.State
+and
+.Dq system.Network.PF
 speak the FIDL library
 .Sy bsd.network.v1
 .Pq Pa /usr/share/fidl/networkcmp.fidl ;
@@ -117,11 +118,10 @@ bytes, a resolve request outside the historical bounds, an unknown method, a
 malformed frame, a pre-FIDL record or an attached descriptor ends the session
 as a protocol violation, audited as
 .Dq malformed-request .
-.Dq system.Network.PF
-keeps its single pre-FIDL request.
 .Pp
 The same daemon also serves
-.Dq system.Network.PF .
+.Dq system.Network.PF
+.Pq the Sy NetworkPf No protocol , Sy GetProtocolInfo No then Sy OpenStates .
 SwitchBoard admits only clients anointed with
 .Dq system.network.pf.read ;
 the daemon additionally requires the PF read session right.
@@ -144,6 +144,13 @@ The delivered descriptor is limited to the read-only PF state export ioctl
 .Pq Dv DIOCGETSTATES
 and one transfer to the client; the client cannot change PF rules or settings,
 or rebind the descriptor, through it.
+A session negotiates first and delivers one descriptor: a second
+.Sy OpenStates
+fails with
+.Er EALREADY ,
+and the worker exits five seconds after it was accepted.
+Clients call
+.Xr networkcmp_pf_open 3 .
 The daemon itself runs as the unprivileged
 .Dq capability
 user and does not hold a directory descriptor for
@@ -378,5 +385,7 @@ A matching hosts entry satisfies the lookup before DNS is attempted.
 .Sh SEE ALSO
 .Xr libnetworkcmp 3 ,
 .Xr network_state 3 ,
+.Xr networkcmp_pf_open 3 ,
+.Xr pf 4 ,
 .Xr fidl 7 ,
 .Xr switchboard 8
