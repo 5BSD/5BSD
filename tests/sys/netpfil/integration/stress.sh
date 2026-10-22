@@ -395,7 +395,9 @@ echo	stream	tcp	nowait	root	internal
 echo	dgram	udp	wait	root	internal
 discard	stream	tcp	nowait	root	internal
 EOF
-	jexec stsrv inetd -p ${PWD}/inetd-stsrv.pid ${PWD}/st-inetd.conf
+	# The traffic loops connect hundreds of times a minute: no rate limit
+	# (inetd's default, 256, terminates the service for 10 minutes).
+	jexec stsrv inetd -R 0 -p ${PWD}/inetd-stsrv.pid ${PWD}/st-inetd.conf
 
 	pft_set_rules stfw "pass"
 	jexec stfw pfctl -e > /dev/null 2>&1
@@ -1143,7 +1145,7 @@ pfsync_body()
 	cat > st-inetd.conf <<EOF
 echo	stream	tcp	nowait	root	internal
 EOF
-	jexec stone inetd -p ${PWD}/inetd-stone.pid ${PWD}/st-inetd.conf
+	jexec stone inetd -R 0 -p ${PWD}/inetd-stone.pid ${PWD}/st-inetd.conf
 	st_expect '' st_retry 5 st_sync_ping
 
 	n=$(st_n 80)
