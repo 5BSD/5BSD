@@ -70,6 +70,47 @@ pft_init()
 	if [ ! -c /dev/pf ]; then
 		atf_skip "This test requires pf"
 	fi
+	pft_host_reset init
+}
+
+# 5BSD: tests that run in the host vnet (Makefile: execenv="", for pf's
+# host-owned pool limits) use the host's pf, where upstream's run in a
+# fresh vnet jail.  Each starts from an empty, disabled host pf and leaves
+# an empty one: rules, states, tables and syncookie mode left behind would
+# change the next test (a "keep state" rule makes its traffic hold host
+# states that a lower limit then refuses; syncookies answer SYNs before any
+# rule, and a later ruleset without "set syncookies" keeps the mode).  The
+# host's pf is left enabled or disabled, and with the limits, the test
+# found it with.
+pft_host_reset()
+{
+	[ "$(sysctl -n security.jail.jailed)" = "0" ] || return 0
+	if [ "$1" = "init" ] && [ ! -f pft_host_pf.state ]; then
+		if pfctl -si 2>/dev/null | grep -q "^Status: Enabled"; then
+			echo enabled > pft_host_pf.state
+		else
+			echo disabled > pft_host_pf.state
+		fi
+		# Every ruleset load also sets all limits, to the defaults for
+		# those it omits: the host's are put back when the test ends.
+		pfctl -sm 2>/dev/null |
+		    awk '{ print "set limit " $1 " " $NF }' > pft_host_pf.limits
+	fi
+	pfctl -q -F all >/dev/null 2>&1
+	{
+		cat pft_host_pf.limits 2>/dev/null
+		echo "set syncookies never"
+	} | pfctl -q -f - >/dev/null 2>&1
+	# Disabled, as in a fresh vnet, until the test enables it.
+	[ "$1" = "init" ] && pfctl -q -d >/dev/null 2>&1
+	if [ "$1" = "cleanup" ] && [ -f pft_host_pf.state ]; then
+		if [ "$(cat pft_host_pf.state)" = "enabled" ]; then
+			pfctl -q -e >/dev/null 2>&1
+		else
+			pfctl -q -d >/dev/null 2>&1
+		fi
+	fi
+	return 0
 }
 
 pfsynct_init()
@@ -174,6 +215,7 @@ pft_set_rules()
 
 pft_cleanup()
 {
+	pft_host_reset cleanup
 	vnet_cleanup
 }
 
