@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* This translation unit must compile as ISO C, not C++. */
 #include <sys/capsicum.h>
+#include <sys/event.h>
 
 #include <channel.h>
 #include <errno.h>
@@ -11,6 +12,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #define CHECK(x)                                                               \
 	do {                                                                   \
@@ -610,6 +613,245 @@ test_flexible(void)
 	    "C flexible protocols: empty/payload/application-error replies, events, unknown interactions and nonterminal errors: PASS");
 }
 
+/* Owned outgoing descriptors: fidl_bsd_fd_owned() hands the descriptor to
+ * the call, which consumes it in every outcome. */
+struct owned_state {
+	unsigned replies, errors;
+	int error;
+	char byte;
+	int taken[3];
+};
+static void
+owned_take(void *context, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_runtime_test_ReadOnly *value)
+{
+	cap_rights_t rights;
+	char c = '?';
+	(void)context;
+	CHECK(cap_rights_get(value->fd, &rights) == 0);
+	CHECK(cap_rights_is_set(&rights, CAP_READ));
+	CHECK(!cap_rights_is_set(&rights, CAP_WRITE));
+	CHECK(read(value->fd, &c, 1) == 1);
+	struct bsd_runtime_test_Response r = { &c, 1 };
+	CHECK(
+	    bsd_runtime_test_Service_Take_reply(connection, request, &r) == 0);
+}
+static void
+owned_response(void *context, int error, struct bsd_runtime_test_Response *value)
+{
+	struct owned_state *s = context;
+	if (error) {
+		++s->errors;
+		s->error = error;
+		CHECK(value == NULL);
+		return;
+	}
+	CHECK(value != NULL && value->text_size == 1);
+	s->byte = value->text[0];
+	++s->replies;
+}
+static void
+owned_echo(void *context, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_runtime_test_Collection *value)
+{
+	(void)context;
+	CHECK(value->descriptors_size == 3);
+	for (size_t i = 0; i < 3; ++i)
+		CHECK(value->descriptors[i] >= 0);
+	CHECK(bsd_runtime_test_Collections_Echo_reply(connection, request,
+		  value) == 0);
+}
+static void
+owned_echoed(void *context, int error, struct bsd_runtime_test_Collection *value)
+{
+	struct owned_state *s = context;
+	CHECK(error == 0 && value != NULL && value->descriptors_size == 3);
+	for (size_t i = 0; i < 3; ++i)
+		s->taken[i] = fidl_bsd_take_fd(&value->descriptors[i]);
+	++s->replies;
+}
+static int
+closed(int fd)
+{
+	return fcntl(fd, F_GETFD) == -1 && errno == EBADF;
+}
+static int
+eof(int fd)
+{
+	char c;
+	CHECK(fcntl(fd, F_SETFL, O_NONBLOCK) == 0);
+	return read(fd, &c, 1) == 0;
+}
+static void
+test_owned_descriptors(void)
+{
+	int ends[2], pipefd[2];
+	uint32_t txid;
+	struct fidl_bsd_connection *client, *server;
+	struct owned_state state = { 0 };
+	CHECK(fidl_bsd_fd_owned(-1) == FIDL_BSD_FD_ABSENT);
+	CHECK(fidl_bsd_fd_owned(0) == -2 && fidl_bsd_fd_owned(7) == -9);
+	CHECK(mac_capability_channel_create(ends) == 0);
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	options.max_pending_requests = 1;
+	CHECK(fidl_bsd_connection_create_with_options(ends[0], FIDL_BSD_CLIENT,
+		  &options, &client) == 0);
+	CHECK(
+	    fidl_bsd_connection_create(ends[1], FIDL_BSD_SERVER, &server) == 0);
+	struct bsd_runtime_test_Service_server handlers = { .Take = owned_take };
+	CHECK(bsd_runtime_test_Service_bind(server, &handlers, &state) == 0);
+	/* Binding a protocol replaces a connection's server, so the
+	 * Collections cases use a second pair. */
+	int ends2[2];
+	struct fidl_bsd_connection *client2, *server2;
+	CHECK(mac_capability_channel_create(ends2) == 0);
+	CHECK(fidl_bsd_connection_create(ends2[0], FIDL_BSD_CLIENT, &client2) ==
+	    0);
+	CHECK(fidl_bsd_connection_create(ends2[1], FIDL_BSD_SERVER, &server2) ==
+	    0);
+	struct bsd_runtime_test_Collections_server collections = {
+		.Echo = owned_echo
+	};
+	CHECK(bsd_runtime_test_Collections_bind(server2, &collections, &state) ==
+	    0);
+
+	/* Success: the caller's descriptor is moved, not duplicated. */
+	CHECK(pipe(pipefd) == 0);
+	CHECK(write(pipefd[1], "O", 1) == 1);
+	int moved = pipefd[0];
+	struct bsd_runtime_test_ReadOnly owned = { fidl_bsd_fd_owned(moved) };
+	CHECK(owned.fd < -1);
+	CHECK(bsd_runtime_test_Service_Take(client, &owned, owned_response,
+		  &state, &txid) == 0);
+	CHECK(closed(moved));
+	pump(client, server);
+	CHECK(state.replies == 1 && state.byte == 'O');
+	close(pipefd[1]);
+
+	/* Borrowed: unchanged, as before. */
+	CHECK(pipe(pipefd) == 0);
+	CHECK(write(pipefd[1], "B", 1) == 1);
+	struct bsd_runtime_test_ReadOnly borrowed = { pipefd[0] };
+	CHECK(bsd_runtime_test_Service_Take(client, &borrowed, owned_response,
+		  &state, &txid) == 0);
+	CHECK(borrowed.fd == pipefd[0] && fcntl(pipefd[0], F_GETFD) >= 0);
+	pump(client, server);
+	CHECK(state.replies == 2 && state.byte == 'B');
+	cap_rights_t rights;
+	CHECK(cap_rights_get(pipefd[0], &rights) == 0);
+	CHECK(cap_rights_is_set(&rights, CAP_WRITE));
+	close(pipefd[0]);
+	close(pipefd[1]);
+
+	/* Immediate send failure (the pending limit is one): closed by the
+	 * call, no callback. */
+	CHECK(pipe(pipefd) == 0);
+	struct bsd_runtime_test_ReadOnly held = { pipefd[0] };
+	CHECK(bsd_runtime_test_Service_Take(client, &held, owned_response,
+		  &state, &txid) == 0);
+	int second[2];
+	CHECK(pipe(second) == 0);
+	owned.fd = fidl_bsd_fd_owned(second[0]);
+	CHECK(bsd_runtime_test_Service_Take(client, &owned, owned_response,
+		  &state, &txid) == ENOBUFS);
+	CHECK(txid == 0 && closed(second[0]));
+	close(second[1]);
+	CHECK(write(pipefd[1], "H", 1) == 1);
+	pump(client, server);
+	CHECK(state.replies == 3 && state.errors == 0);
+	close(pipefd[0]);
+	close(pipefd[1]);
+
+	/* An argument error before any descriptor is attached: the release
+	 * pass closes every owned descriptor the caller described. */
+	int pipes[5][2], descriptors[5];
+	for (int i = 0; i < 5; ++i) {
+		CHECK(pipe(pipes[i]) == 0);
+		descriptors[i] = fidl_bsd_fd_owned(pipes[i][1]);
+	}
+	struct bsd_runtime_test_Collection value = { .descriptors = descriptors,
+		.descriptors_size = 5, /* bound is 4 */
+		.mode = bsd_runtime_test_Mode_ON };
+	CHECK(bsd_runtime_test_Collections_Echo(client2, &value, owned_echoed,
+		  &state, &txid) == EINVAL);
+	for (int i = 0; i < 5; ++i) {
+		CHECK(eof(pipes[i][0]));
+		close(pipes[i][0]);
+	}
+	/* A rejected call still consumes them. */
+	CHECK(pipe(pipefd) == 0);
+	owned.fd = fidl_bsd_fd_owned(pipefd[0]);
+	CHECK(bsd_runtime_test_Service_Take(NULL, &owned, owned_response,
+		  &state, &txid) == EINVAL);
+	CHECK(closed(pipefd[0]));
+	close(pipefd[1]);
+
+	/* Kernel policy: a kqueue is not passable (EINVAL) and CAP_XFER_NONE
+	 * denies the transfer (ENOTCAPABLE); both close the owned
+	 * descriptor and leave the connection usable. */
+	int kq = kqueue();
+	CHECK(kq >= 0);
+	owned.fd = fidl_bsd_fd_owned(kq);
+	CHECK(bsd_runtime_test_Service_Take(client, &owned, owned_response,
+		  &state, &txid) == EINVAL);
+	CHECK(closed(kq));
+	CHECK(pipe(pipefd) == 0);
+	CHECK(cap_xfer_limit(pipefd[0], CAP_XFER_NONE) == 0);
+	owned.fd = fidl_bsd_fd_owned(pipefd[0]);
+	CHECK(bsd_runtime_test_Service_Take(client, &owned, owned_response,
+		  &state, &txid) == ENOTCAPABLE);
+	CHECK(closed(pipefd[0]));
+	close(pipefd[1]);
+	pump(client, server);
+	CHECK(fidl_bsd_connection_error(client) == 0 && state.errors == 0);
+
+	/* Mixed owned and borrowed descriptors in one message. */
+	int a[2], b[2], c[2];
+	CHECK(pipe(a) == 0 && pipe(b) == 0 && pipe(c) == 0);
+	int mixed[3] = { a[1], fidl_bsd_fd_owned(b[1]), c[1] };
+	value.descriptors = mixed;
+	value.descriptors_size = 3;
+	CHECK(bsd_runtime_test_Collections_Echo(client2, &value, owned_echoed,
+		  &state, &txid) == 0);
+	CHECK(fcntl(a[1], F_GETFD) >= 0 && fcntl(c[1], F_GETFD) >= 0);
+	CHECK(closed(b[1]));
+	pump(client2, server2);
+	CHECK(state.replies == 4);
+	char byte;
+	CHECK(write(state.taken[1], "b", 1) == 1);
+	CHECK(read(b[0], &byte, 1) == 1 && byte == 'b');
+	for (int i = 0; i < 3; ++i)
+		close(state.taken[i]);
+	CHECK(eof(b[0]));
+	close(a[0]);
+	close(a[1]);
+	close(b[0]);
+	close(c[0]);
+	close(c[1]);
+
+	/* Queued, then failed: the runtime closes the moved descriptor. */
+	struct bsd_runtime_test_Request filler = { "x", 1 };
+	for (unsigned i = 0; !fidl_bsd_connection_wants_write(client) && i < 1024;
+	    ++i)
+		CHECK(bsd_runtime_test_Service_Notify(client, &filler) == 0);
+	CHECK(fidl_bsd_connection_wants_write(client));
+	CHECK(pipe(pipefd) == 0);
+	owned.fd = fidl_bsd_fd_owned(pipefd[1]);
+	CHECK(bsd_runtime_test_Service_Take(client, &owned, owned_response,
+		  &state, &txid) == 0);
+	CHECK(!eof(pipefd[0]));
+	CHECK(fidl_bsd_connection_cancel(client, txid) == 0);
+	CHECK(state.errors == 1 && state.error == ECANCELED);
+	CHECK(eof(pipefd[0]));
+	close(pipefd[0]);
+	fidl_bsd_connection_destroy(client);
+	fidl_bsd_connection_destroy(server);
+	fidl_bsd_connection_destroy(client2);
+	fidl_bsd_connection_destroy(server2);
+	puts("C owned descriptors: move, borrow, immediate/argument/queued "
+	     "failure, non-passable, transfer-denied, mixed: PASS");
+}
+
 static struct fidl_bsd_connection *destroying;
 static int destroyed_calls, destroyed_error, destroyed_connection_error;
 static void
@@ -643,6 +885,199 @@ test_destroy_with_pending_call(void)
 	fidl_bsd_connection_destroy(server);
 	fidl_bsd_connection_destroy(NULL);
 }
+/*
+ * fidl_bsd_connection_call: one synchronous call per system call where the
+ * kernel offers MAC_CAPABILITY_CHANNEL_CALL, the ordinary path otherwise.
+ * The caller blocks in the kernel, so the server is a forked process.
+ */
+static void
+sync_server_round_trip(void *context, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_runtime_test_Request *value)
+{
+	(void)context;
+	if (value->text_size == 1 && value->text[0] == 'd') {
+		struct timespec ts = { 0, 300000000L };
+		while (nanosleep(&ts, &ts) == -1 && errno == EINTR)
+			;
+	}
+	struct bsd_runtime_test_Response r = { value->text, value->text_size };
+	if (bsd_runtime_test_Service_RoundTrip_reply(connection, request, &r)
+	    != 0)
+		_exit(30);
+}
+static void
+sync_server_take(void *context, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_runtime_test_ReadOnly *value)
+{
+	char c = '?';
+	(void)context;
+	if (read(value->fd, &c, 1) != 1)
+		_exit(31);
+	struct bsd_runtime_test_Response r = { &c, 1 };
+	if (bsd_runtime_test_Service_Take_reply(connection, request, &r) != 0)
+		_exit(32);
+}
+static void
+sync_server_notify(void *context, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct bsd_runtime_test_Request *value)
+{
+	(void)context;
+	(void)connection;
+	(void)request;
+	(void)value;
+}
+static pid_t
+sync_server_fork(int fd, int close_fd)
+{
+	pid_t child = fork();
+	CHECK(child != -1);
+	if (child != 0)
+		return child;
+	close(close_fd);
+	struct fidl_bsd_connection *server;
+	if (fidl_bsd_connection_create(fd, FIDL_BSD_SERVER, &server) != 0)
+		_exit(33);
+	struct bsd_runtime_test_Service_server handlers = {
+		sync_server_round_trip, sync_server_take, sync_server_notify };
+	if (bsd_runtime_test_Service_bind(server, &handlers, NULL) != 0)
+		_exit(34);
+	while (fidl_bsd_connection_poll(server, 1000) == 0)
+		;
+	_exit(0);
+}
+struct sync_state {
+	struct fidl_bsd_connection *client;
+	struct bsd_runtime_test_Request request;
+	struct bsd_runtime_test_ReadOnly take;
+	unsigned replies, errors, async_replies;
+	int last_error;
+	uint32_t txid;
+	char text[8];
+	size_t text_size;
+};
+static void
+sync_response(void *context, int error, struct bsd_runtime_test_Response *value)
+{
+	struct sync_state *s = context;
+	s->last_error = error;
+	if (error) {
+		++s->errors;
+		CHECK(value == NULL);
+		return;
+	}
+	CHECK(value != NULL && value->text_size <= sizeof(s->text));
+	memcpy(s->text, value->text, value->text_size);
+	s->text_size = value->text_size;
+	++s->replies;
+}
+static void
+sync_async_response(void *context, int error,
+    struct bsd_runtime_test_Response *value)
+{
+	struct sync_state *s = context;
+	CHECK(error == 0 && value != NULL);
+	++s->async_replies;
+}
+static int
+sync_issue(void *context)
+{
+	struct sync_state *s = context;
+	return bsd_runtime_test_Service_RoundTrip(s->client, &s->request,
+	    sync_response, s, &s->txid);
+}
+static int
+sync_issue_take(void *context)
+{
+	struct sync_state *s = context;
+	return bsd_runtime_test_Service_Take(s->client, &s->take,
+	    sync_response, s, &s->txid);
+}
+static int
+sync_issue_nothing(void *context)
+{
+	(void)context;
+	return 0;
+}
+static void
+test_sync_call(void)
+{
+	int ends[2], pipefd[2];
+	struct sync_state s;
+	struct fidl_bsd_connection *other_server;
+	memset(&s, 0, sizeof(s));
+	CHECK(mac_capability_channel_create(ends) == 0);
+	pid_t child = sync_server_fork(ends[1], ends[0]);
+	close(ends[1]);
+	CHECK(fidl_bsd_connection_create(ends[0], FIDL_BSD_CLIENT, &s.client)
+	    == 0);
+	s.request.text = "C";
+	s.request.text_size = 1;
+	for (unsigned i = 0; i < 100; ++i) {
+		s.text_size = 0;
+		CHECK(fidl_bsd_connection_call(s.client, 5000, sync_issue, &s)
+		    == 0);
+		CHECK(s.replies == i + 1 && s.errors == 0);
+		CHECK(s.text_size == 1 && s.text[0] == 'C' && s.txid != 0);
+	}
+	/* A lent descriptor goes with the request; the reply echoes its byte. */
+	CHECK(pipe(pipefd) == 0 && write(pipefd[1], "T", 1) == 1);
+	s.take.fd = pipefd[0];
+	CHECK(fidl_bsd_connection_call(s.client, 5000, sync_issue_take, &s)
+	    == 0);
+	CHECK(s.replies == 101 && s.text_size == 1 && s.text[0] == 'T');
+	CHECK(fcntl(pipefd[0], F_GETFD) >= 0);	/* Lent, not moved. */
+	close(pipefd[0]);
+	close(pipefd[1]);
+	/* A timeout cancels only this call; the connection stays open. */
+	s.request.text = "d";
+	CHECK(fidl_bsd_connection_call(s.client, 50, sync_issue, &s) ==
+	    ETIMEDOUT);
+	CHECK(s.errors == 1 &&
+	    (s.last_error == ETIMEDOUT || s.last_error == ECANCELED));
+	CHECK(fidl_bsd_connection_error(s.client) == 0);
+	s.request.text = "C";
+	CHECK(fidl_bsd_connection_call(s.client, 5000, sync_issue, &s) == 0);
+	CHECK(s.replies == 102 && s.text[0] == 'C');
+	/* With another call outstanding the ordinary path is used. */
+	struct bsd_runtime_test_Request slow = { "d", 1 };
+	uint32_t txid;
+	CHECK(bsd_runtime_test_Service_RoundTrip(s.client, &slow,
+		  sync_async_response, &s, &txid) == 0);
+	CHECK(fidl_bsd_connection_call(s.client, 5000, sync_issue, &s) == 0);
+	CHECK(s.replies == 103);
+	for (int i = 0; i < 200 && s.async_replies == 0; ++i)
+		fidl_bsd_connection_poll(s.client, 10);
+	CHECK(s.async_replies == 1);
+	/* Argument and role errors. */
+	CHECK(fidl_bsd_connection_call(s.client, 5000, sync_issue_nothing, &s)
+	    == EINVAL);
+	CHECK(fidl_bsd_connection_call(NULL, 5000, sync_issue, &s) == EINVAL);
+	CHECK(fidl_bsd_connection_call(s.client, 5000, NULL, &s) == EINVAL);
+	s.request.text_size = 300;	/* Over the schema bound. */
+	CHECK(fidl_bsd_connection_call(s.client, 5000, sync_issue, &s) ==
+	    EINVAL);
+	s.request.text_size = 1;
+	CHECK(fidl_bsd_connection_error(s.client) == 0);
+	CHECK(fidl_bsd_connection_call(s.client, 5000, sync_issue, &s) == 0);
+	CHECK(s.replies == 104);
+	int other[2];
+	CHECK(mac_capability_channel_create(other) == 0);
+	CHECK(fidl_bsd_connection_create(other[1], FIDL_BSD_SERVER,
+		  &other_server) == 0);
+	struct sync_state role = { .client = other_server,
+		.request = { "C", 1 } };
+	CHECK(fidl_bsd_connection_call(other_server, 5000, sync_issue, &role)
+	    == EINVAL);
+	fidl_bsd_connection_destroy(other_server);
+	close(other[0]);
+	/* Peer death completes the call with the transport error. */
+	kill(child, SIGKILL);
+	waitpid(child, NULL, 0);
+	int rc = fidl_bsd_connection_call(s.client, 5000, sync_issue, &s);
+	CHECK(rc == ECONNRESET || rc == EPIPE);
+	CHECK(fidl_bsd_connection_error(s.client) != 0);
+	fidl_bsd_connection_destroy(s.client);
+}
 int
 main(void)
 {
@@ -651,13 +1086,16 @@ main(void)
 	struct state state = { .taken_fd = -1 };
 	struct fidl_bsd_connection *client = NULL, *server = NULL;
 	/* Unbuffered, so a test the alarm kills shows how far it got. */
-	setvbuf(stdout, NULL, _IONBF, 0);
-	alarm(20);
+	setvbuf(stdout, NULL, _IONBF,  0);
+	alarm(40);
 	test_collections();
 	puts("C collections: PASS");
 	test_flexible();
 	test_destroy_with_pending_call();
 	puts("C destroy with a pending call: PASS");
+	test_sync_call();
+	puts("C synchronous call (fidl_bsd_connection_call): PASS");
+	test_owned_descriptors();
 	CHECK(pipe(pipefd) == 0);
 	CHECK(fidl_bsd_connection_create(pipefd[0], FIDL_BSD_CLIENT, &client) !=
 	    0);

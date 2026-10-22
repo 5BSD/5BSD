@@ -9,13 +9,17 @@
 
 #include <algorithm>
 #include <fcntl.h>
+#include <fidl/bsd.runtime.test/c/bridge.h>
 #include <fidl/bsd.runtime.test/c/bsd.h>
 #include <fidl/bsd.runtime.test/cpp/bsd.h>
 #include <fidl/bsd/c_bridge.h>
+#include <fidl/bsd/c_wire.h>
 #include <fidl/bsd/runtime.h>
 #include <gtest/gtest.h>
+#include <atomic>
 #include <random>
 #include <signal.h>
+#include <thread>
 #include <unistd.h>
 
 #include "allocation_fault.h"
@@ -845,6 +849,30 @@ TEST(Codec, DeterministicMalformedInputCorpus)
 namespace fidl::bsd {
 struct ConnectionTestPeer {
 	static void LastId(Connection &c) { c.next_id_ = UINT32_MAX; }
+	static size_t PendingLive(Connection &c) { return c.pending_.live(); }
+	static size_t PendingAllocated(Connection &c)
+	{
+		return c.pending_.allocated();
+	}
+	static size_t IncomingLive(Connection &c)
+	{
+		return c.identity_->incoming.live();
+	}
+	static size_t IncomingAllocated(Connection &c)
+	{
+		return c.identity_->incoming.allocated();
+	}
+	static channel_stats Stats(Connection &c)
+	{
+		channel_stats stats = CHANNEL_STATS_INITIALIZER;
+		if (c.channel_)
+			channel_get_stats(c.channel_, &stats);
+		return stats;
+	}
+	static bool ScratchReserved(Connection &c)
+	{
+		return c.scratch_.buffer() != nullptr;
+	}
 };
 }
 TEST(Protocol, TransactionExhaustionNeverWraps)
@@ -1769,4 +1797,1113 @@ TEST(Protocol, UnknownReplyChecksConnectionAndSingleCompletion)
 	EXPECT_EQ(pair.client->error(), 0);
 	EXPECT_EQ(pair.server->error(), 0);
 	EXPECT_EQ(other.server->error(), 0);
+}
+
+// ---- Allocation slabs and owned C descriptors -----------------------------
+namespace {
+// Connections made through the public C constructors, so the C request
+// context slab exists (an aggregate-initialized fidl_bsd_connection has none
+// and uses the heap, as every context did before the slab).
+struct CPair {
+	fidl_bsd_connection *client = nullptr, *server = nullptr;
+	explicit CPair(const fidl_bsd_options *client_options = nullptr)
+	{
+		int fds[2];
+		if (mac_capability_channel_create(fds))
+			throw std::runtime_error("native channel create");
+		if (fidl_bsd_connection_create_with_options(fds[0],
+			FIDL_BSD_CLIENT, client_options, &client) ||
+		    fidl_bsd_connection_create(fds[1], FIDL_BSD_SERVER,
+			&server))
+			throw std::runtime_error("fidl_bsd_connection_create");
+	}
+	~CPair()
+	{
+		fidl_bsd_connection_destroy(client);
+		fidl_bsd_connection_destroy(server);
+	}
+	void Pump(unsigned n = 8)
+	{
+		for (unsigned i = 0; i < n; ++i) {
+			fidl_bsd_connection_poll(server, 5);
+			fidl_bsd_connection_poll(client, 5);
+		}
+	}
+};
+bool
+Closed(int fd)
+{
+	return fcntl(fd, F_GETFD) == -1 && errno == EBADF;
+}
+// The Service.Take handler: reads the byte the test wrote and replies with
+// it; the received descriptor must have been narrowed to the schema's
+// READ right.
+void
+CTakeHandler(void *, fidl_bsd_connection *connection,
+    fidl_bsd_request *request, bsd_runtime_test_ReadOnly *value)
+{
+	cap_rights_t rights;
+	EXPECT_EQ(cap_rights_get(value->fd, &rights), 0);
+	EXPECT_TRUE(cap_rights_is_set(&rights, CAP_READ));
+	EXPECT_FALSE(cap_rights_is_set(&rights, CAP_WRITE));
+	char byte = '?';
+	EXPECT_EQ(read(value->fd, &byte, 1), 1);
+	bsd_runtime_test_Response response { &byte, 1 };
+	EXPECT_EQ(bsd_runtime_test_Service_Take_reply(connection, request,
+		      &response),
+	    0);
+}
+struct CTakeResult {
+	unsigned calls = 0;
+	int error = 0;
+	char byte = 0;
+};
+void
+CTakeDone(void *context, int error, bsd_runtime_test_Response *value)
+{
+	auto *result = static_cast<CTakeResult *>(context);
+	++result->calls;
+	result->error = error;
+	if (value && value->text_size == 1)
+		result->byte = value->text[0];
+}
+// Service bound with the Take handler only (RoundTrip and Notify unused).
+void
+BindTake(CPair &pair)
+{
+	static bsd_runtime_test_Service_server handlers {};
+	handlers.Take = CTakeHandler;
+	ASSERT_EQ(bsd_runtime_test_Service_bind(pair.server, &handlers,
+		      nullptr),
+	    0);
+}
+}
+
+TEST(Allocation, SlabChunksAreBoundedAndFaultInjectable)
+{
+	Slab<Incoming> slab(12);
+	fidl::bsd::testing::FailNewAfter(0);
+	EXPECT_THROW(slab.Take(), std::bad_alloc);
+	EXPECT_TRUE(fidl::bsd::testing::DisableAllocationFault());
+	EXPECT_EQ(slab.allocated(), 0u);
+	EXPECT_EQ(slab.live(), 0u);
+	std::vector<void *> taken;
+	for (unsigned i = 0; i < 12; ++i) {
+		void *block = slab.Take();
+		ASSERT_NE(block, nullptr);
+		taken.push_back(block);
+	}
+	// Chunks of kChunk, the last one short, never past the limit.
+	EXPECT_EQ(slab.allocated(), 12u);
+	EXPECT_EQ(slab.live(), 12u);
+	EXPECT_EQ(slab.Take(), nullptr);
+	slab.Put(taken.back());
+	EXPECT_EQ(slab.Take(), taken.back());
+	for (void *block : taken)
+		slab.Put(block);
+	EXPECT_EQ(slab.live(), 0u);
+	auto before = fidl::bsd::testing::AllocationCount();
+	for (unsigned i = 0; i < 12; ++i)
+		ASSERT_NE(slab.Take(), nullptr);
+	EXPECT_EQ(fidl::bsd::testing::AllocationCount() - before, 0u);
+}
+
+TEST(Allocation, SteadyStateCppCallsDoNotAllocate)
+{
+	Pair pair;
+	Server server(*pair.server);
+	server.Attach();
+	bindings::ServiceClient client(*pair.client);
+	unsigned completed = 0;
+	bool failed = false;
+	auto call = [&] {
+		unsigned target = completed + 1;
+		auto id = client.RoundTrip(types::Request("short"),
+		    [&](auto r) {
+			    if (r.is_error() || r->text() != "short")
+				    failed = true;
+			    ++completed;
+		    });
+		if (id.is_error())
+			failed = true;
+		for (int i = 0; i < 100 && completed < target; ++i) {
+			pair.server->Poll(5);
+			pair.client->Poll(5);
+		}
+		if (completed != target)
+			failed = true;
+	};
+	for (int i = 0; i < 16; ++i)
+		call();
+	ASSERT_FALSE(failed);
+	auto before = fidl::bsd::testing::AllocationCount();
+	for (int i = 0; i < 500; ++i)
+		call();
+	EXPECT_FALSE(failed);
+	EXPECT_EQ(fidl::bsd::testing::AllocationCount() - before, 0u);
+	// One chunk each for call records and received messages.
+	EXPECT_EQ(ConnectionTestPeer::PendingAllocated(*pair.client),
+	    Slab<Incoming>::kChunk);
+	EXPECT_EQ(ConnectionTestPeer::IncomingAllocated(*pair.server),
+	    Slab<Incoming>::kChunk);
+	EXPECT_EQ(ConnectionTestPeer::PendingLive(*pair.client), 0u);
+	EXPECT_EQ(ConnectionTestPeer::IncomingLive(*pair.server), 0u);
+}
+
+TEST(Allocation, SteadyStateCCallsDoNotAllocate)
+{
+	CPair pair;
+	BindTake(pair);
+	static bsd_runtime_test_Service_server handlers {};
+	handlers.RoundTrip = [](void *, fidl_bsd_connection *connection,
+			         fidl_bsd_request *request,
+			         bsd_runtime_test_Request *value) {
+		bsd_runtime_test_Response response { value->text,
+			value->text_size };
+		if (bsd_runtime_test_Service_RoundTrip_reply(connection,
+			request, &response))
+			abort();
+	};
+	ASSERT_EQ(bsd_runtime_test_Service_bind(pair.server, &handlers,
+		      nullptr),
+	    0);
+	struct Result {
+		unsigned completed = 0;
+		bool failed = false;
+	} result;
+	bsd_runtime_test_Request request { "short", 5 };
+	auto call = [&] {
+		unsigned target = result.completed + 1;
+		uint32_t txid;
+		if (bsd_runtime_test_Service_RoundTrip(
+			pair.client, &request,
+			[](void *context, int error,
+			    bsd_runtime_test_Response *value) {
+				auto *r = static_cast<Result *>(context);
+				if (error || !value || value->text_size != 5)
+					r->failed = true;
+				++r->completed;
+			},
+			&result, &txid))
+			result.failed = true;
+		for (int i = 0; i < 100 && result.completed < target; ++i) {
+			fidl_bsd_connection_poll(pair.server, 5);
+			fidl_bsd_connection_poll(pair.client, 5);
+		}
+		if (result.completed != target)
+			result.failed = true;
+	};
+	for (int i = 0; i < 16; ++i)
+		call();
+	ASSERT_FALSE(result.failed);
+	auto before = fidl::bsd::testing::AllocationCount();
+	for (int i = 0; i < 500; ++i)
+		call();
+	EXPECT_FALSE(result.failed);
+	EXPECT_EQ(fidl::bsd::testing::AllocationCount() - before, 0u);
+	EXPECT_EQ(ConnectionTestPeer::PendingAllocated(*pair.client->value),
+	    Slab<Incoming>::kChunk);
+	EXPECT_EQ(ConnectionTestPeer::IncomingAllocated(*pair.server->value),
+	    Slab<Incoming>::kChunk);
+	EXPECT_EQ(pair.server->requests->allocated(), Slab<Incoming>::kChunk);
+	EXPECT_EQ(pair.server->requests->live(), 0u);
+}
+
+TEST(Allocation, SlabHoldsOutstandingCallsToTheBoundAndRejectsBeyond)
+{
+	constexpr unsigned kBound = 200;
+	channel_options options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_CLIENT);
+	options.max_pending_requests = kBound;
+	Pair pair(&options);
+	Server server(*pair.server);
+	server.hold = true;
+	server.held.reserve(2 * kBound);
+	server.Attach();
+	bindings::ServiceClient client(*pair.client);
+	unsigned completed = 0;
+	auto round = [&](bool first) {
+		auto before = fidl::bsd::testing::AllocationCount();
+		for (unsigned i = 0; i < kBound; ++i) {
+			auto id = client.RoundTrip(types::Request("x"),
+			    [&](auto r) {
+				    if (r.is_ok())
+					    ++completed;
+			    });
+			ASSERT_TRUE(id.is_ok()) << "call " << i;
+			// Keep the kernel queue short so no send is queued
+			// in libchannel (whose queue entries are heap).
+			pair.server->Poll(0);
+		}
+		for (int i = 0; i < 200 && server.held.size() < kBound; ++i)
+			pair.server->Poll(5);
+		ASSERT_EQ(server.held.size(), kBound);
+		// Retained messages keep their libchannel receive blocks (one
+		// heap block each beyond its single spare); the runtime's own
+		// records come from the slabs, which the counters below show
+		// did not grow on the second round.
+		auto grown = fidl::bsd::testing::AllocationCount() - before;
+		if (first)
+			EXPECT_GT(grown, kBound);
+		else
+			EXPECT_LE(grown, kBound);
+		// The bound: the libchannel limit rejects the next call and
+		// its record goes back without growing the slab.
+		auto rejected = client.RoundTrip(types::Request("x"),
+		    [](auto) { });
+		ASSERT_TRUE(rejected.is_error());
+		EXPECT_EQ(rejected.error_value(), ENOBUFS);
+		EXPECT_EQ(ConnectionTestPeer::PendingLive(*pair.client), kBound);
+		EXPECT_EQ(ConnectionTestPeer::PendingAllocated(*pair.client),
+		    kBound);
+		EXPECT_EQ(ConnectionTestPeer::IncomingLive(*pair.server),
+		    kBound);
+		EXPECT_EQ(ConnectionTestPeer::IncomingAllocated(*pair.server),
+		    kBound);
+		unsigned target = completed + kBound;
+		for (auto &held : server.held)
+			ASSERT_EQ(server.ReplyRoundTrip(*pair.server, *held,
+				      types::Response("y")),
+			    0);
+		server.held.clear();
+		for (int i = 0; i < 400 && completed < target; ++i)
+			pair.Pump(1);
+		ASSERT_EQ(completed, target);
+		EXPECT_EQ(ConnectionTestPeer::PendingLive(*pair.client), 0u);
+		EXPECT_EQ(ConnectionTestPeer::IncomingLive(*pair.server), 0u);
+	};
+	round(true);
+	round(false);
+	EXPECT_EQ(pair.client->error(), 0);
+	EXPECT_EQ(pair.server->error(), 0);
+}
+
+TEST(Allocation, IncomingSlabFallsBackToHeapBeyondItsBound)
+{
+	int fds[2];
+	ASSERT_EQ(mac_capability_channel_create(fds), 0);
+	channel_options options = CHANNEL_OPTIONS_INITIALIZER(
+	    CHANNEL_ROLE_PROVIDER);
+	options.max_pending_requests = 16;
+	auto created = Connection::Create(fds[0], CHANNEL_ROLE_CLIENT);
+	auto server = Connection::Create(fds[1], CHANNEL_ROLE_PROVIDER,
+	    &options);
+	ASSERT_TRUE(created.is_ok() && server.is_ok());
+	std::vector<std::unique_ptr<Incoming>> held;
+	held.reserve(64);
+	auto retain = [&](auto m) { held.push_back(std::move(m)); };
+	server.value()->SetRequestHandler(retain);
+	server.value()->SetEventHandler(retain);
+	bindings::ServiceClient client(*created.value());
+	auto deliver = [&](unsigned count) {
+		for (unsigned i = 0; i < count; ++i) {
+			ASSERT_EQ(client.Notify(types::Request("x")), 0);
+			server.value()->Poll(0);
+		}
+		for (int i = 0; i < 100 && held.size() < count; ++i)
+			server.value()->Poll(5);
+	};
+	deliver(40);
+	ASSERT_EQ(held.size(), 40u);
+	// Sixteen from the slab, the rest from the heap as before.
+	EXPECT_EQ(ConnectionTestPeer::IncomingLive(*server.value()), 16u);
+	EXPECT_EQ(ConnectionTestPeer::IncomingAllocated(*server.value()), 16u);
+	held.clear();
+	EXPECT_EQ(ConnectionTestPeer::IncomingLive(*server.value()), 0u);
+	auto before = fidl::bsd::testing::AllocationCount();
+	deliver(16);
+	ASSERT_EQ(held.size(), 16u);
+	// At most libchannel's receive block per retained message; the slab
+	// neither grew nor fell back to the heap.
+	EXPECT_LE(fidl::bsd::testing::AllocationCount() - before, 16u);
+	EXPECT_EQ(ConnectionTestPeer::IncomingLive(*server.value()), 16u);
+	EXPECT_EQ(ConnectionTestPeer::IncomingAllocated(*server.value()), 16u);
+	// Retained messages outlive their connection and still return their
+	// blocks to the slab the identity keeps alive.
+	server.value().reset();
+	held.clear();
+}
+
+TEST(Allocation, PendingSlabChunkFailureCompletesCallWithEnomem)
+{
+	unsigned failures = 0, successes = 0;
+	for (int count = 0; count < 12; ++count) {
+		// The completion runs when the pair is destroyed, so its
+		// counter must outlive the connection.
+		unsigned calls = 0;
+		Pair pair;
+		Pipe pipe;
+		fidl::bsd::testing::FailNewAfter(count);
+		auto call = pair.client->Call<types::Resource, types::Response>(
+		    ordinal, types::Resource(std::move(pipe.write)),
+		    [&](auto) { ++calls; });
+		bool triggered = fidl::bsd::testing::DisableAllocationFault();
+		if (triggered) {
+			++failures;
+			ASSERT_TRUE(call.is_error());
+			EXPECT_EQ(call.error_value(), ENOMEM);
+			EXPECT_EQ(ConnectionTestPeer::PendingLive(*pair.client),
+			    0u);
+			EXPECT_TRUE(Eof(pipe)) << "allocation index " << count;
+		} else {
+			++successes;
+			ASSERT_TRUE(call.is_ok());
+			EXPECT_EQ(ConnectionTestPeer::PendingLive(*pair.client),
+			    1u);
+			EXPECT_EQ(
+			    ConnectionTestPeer::PendingAllocated(*pair.client),
+			    Slab<Incoming>::kChunk);
+		}
+		EXPECT_EQ(calls, 0u);
+	}
+	EXPECT_GE(failures, 2u);
+	EXPECT_GT(successes, 0u);
+}
+
+TEST(Allocation, IncomingSlabChunkFailureClosesConnectionAndAttachments)
+{
+	unsigned failures = 0, successes = 0;
+	for (int count = 0; count < 8; ++count) {
+		unsigned delivered = 0;
+		Pair pair;
+		Pipe pipe;
+		pair.server->SetEventHandler([&](auto) { ++delivered; });
+		ASSERT_EQ(pair.client->Send(ordinal,
+			      types::Resource(std::move(pipe.write))),
+		    0);
+		fidl::bsd::testing::FailNewAfter(count);
+		for (int i = 0; i < 20 && !delivered && !pair.server->error();
+		    ++i)
+			pair.server->Poll(5);
+		bool triggered = fidl::bsd::testing::DisableAllocationFault();
+		if (triggered) {
+			++failures;
+			EXPECT_EQ(pair.server->error(), ENOMEM);
+			EXPECT_EQ(delivered, 0u);
+		} else {
+			++successes;
+			EXPECT_EQ(delivered, 1u);
+			EXPECT_EQ(
+			    ConnectionTestPeer::IncomingAllocated(*pair.server),
+			    Slab<Incoming>::kChunk);
+		}
+		EXPECT_TRUE(Eof(pipe)) << "allocation index " << count;
+	}
+	EXPECT_GE(failures, 1u);
+	EXPECT_GT(successes, 0u);
+}
+
+namespace {
+int c_reply_error;
+void
+CTakeNoRead(void *, fidl_bsd_connection *connection, fidl_bsd_request *request,
+    bsd_runtime_test_ReadOnly *)
+{
+	bsd_runtime_test_Response response { "k", 1 };
+	c_reply_error = bsd_runtime_test_Service_Take_reply(connection, request,
+	    &response);
+}
+}
+TEST(Allocation, CRequestContextChunkFailureClosesConnectionAndAttachments)
+{
+	unsigned closed_with_enomem = 0, reply_enomem = 0, successes = 0;
+	for (int count = 0; count < 8; ++count) {
+		// Declared before the pair: completions may run when it is destroyed.
+		CTakeResult result;
+		CPair pair;
+		static bsd_runtime_test_Service_server handlers {};
+		handlers.Take = CTakeNoRead;
+		ASSERT_EQ(bsd_runtime_test_Service_bind(pair.server, &handlers,
+			      nullptr),
+		    0);
+		// The pipe's write end is lent (its READ right is narrowed on
+		// the way); EOF on the read end shows every copy was closed.
+		Pipe pipe;
+		bsd_runtime_test_ReadOnly value { pipe.write.get() };
+		uint32_t txid;
+		ASSERT_EQ(bsd_runtime_test_Service_Take(pair.client, &value,
+			      CTakeDone, &result, &txid),
+		    0);
+		c_reply_error = -1;
+		fidl::bsd::testing::FailNewAfter(count);
+		for (int i = 0; i < 20 &&
+		    !fidl_bsd_connection_error(pair.server) && c_reply_error < 0;
+		    ++i)
+			fidl_bsd_connection_poll(pair.server, 5);
+		bool triggered = fidl::bsd::testing::DisableAllocationFault();
+		int server_error = fidl_bsd_connection_error(pair.server);
+		if (triggered && server_error == ENOMEM) {
+			// Before the handler: an Incoming or request-context
+			// chunk.
+			++closed_with_enomem;
+			EXPECT_EQ(c_reply_error, -1);
+			EXPECT_EQ(pair.server->requests->live(), 0u);
+		} else if (triggered) {
+			// In the reply: the handler saw ENOMEM, the
+			// connection stays open.
+			++reply_enomem;
+			EXPECT_EQ(server_error, 0);
+			EXPECT_EQ(c_reply_error, ENOMEM);
+		} else {
+			++successes;
+			EXPECT_EQ(server_error, 0);
+			EXPECT_EQ(c_reply_error, 0);
+			EXPECT_EQ(pair.server->requests->allocated(),
+			    Slab<Incoming>::kChunk);
+		}
+		pair.Pump(2);
+		pipe.write.reset();
+		EXPECT_TRUE(Eof(pipe)) << "allocation index " << count;
+	}
+	EXPECT_GE(closed_with_enomem, 2u);
+	EXPECT_GT(successes, 0u);
+	(void)reply_enomem;
+}
+
+TEST(COwned, MoveClosesCallerDescriptorAndDelivers)
+{
+	// Declared before the pair: completions may run when it is destroyed.
+	CTakeResult result;
+	CPair pair;
+	BindTake(pair);
+	Pipe pipe;
+	ASSERT_EQ(write(pipe.write.get(), "C", 1), 1);
+	int fd = pipe.read.release();
+	bsd_runtime_test_ReadOnly value { fidl_bsd_fd_owned(fd) };
+	EXPECT_LT(value.fd, -1);
+	uint32_t txid;
+	ASSERT_EQ(bsd_runtime_test_Service_Take(pair.client, &value, CTakeDone,
+		      &result, &txid),
+	    0);
+	// Moved: the caller's number is gone, no duplicate was made.
+	EXPECT_TRUE(Closed(fd));
+	pair.Pump();
+	EXPECT_EQ(result.calls, 1u);
+	EXPECT_EQ(result.error, 0);
+	EXPECT_EQ(result.byte, 'C');
+	EXPECT_EQ(fidl_bsd_connection_error(pair.client), 0);
+	// Absent stays absent through the wrapper.
+	EXPECT_EQ(fidl_bsd_fd_owned(-1), FIDL_BSD_FD_ABSENT);
+	EXPECT_EQ(fidl_bsd_fd_owned(INT_MAX), FIDL_BSD_FD_ABSENT);
+	EXPECT_EQ(fidl_bsd_fd_owned(0), -2);
+}
+
+TEST(COwned, BorrowedDescriptorIsUnchanged)
+{
+	// Declared before the pair: completions may run when it is destroyed.
+	CTakeResult result;
+	CPair pair;
+	BindTake(pair);
+	Pipe pipe;
+	ASSERT_EQ(write(pipe.write.get(), "C", 1), 1);
+	bsd_runtime_test_ReadOnly value { pipe.read.get() };
+	uint32_t txid;
+	ASSERT_EQ(bsd_runtime_test_Service_Take(pair.client, &value, CTakeDone,
+		      &result, &txid),
+	    0);
+	pair.Pump();
+	EXPECT_EQ(result.calls, 1u);
+	EXPECT_EQ(result.byte, 'C');
+	cap_rights_t rights;
+	ASSERT_EQ(cap_rights_get(pipe.read.get(), &rights), 0);
+	EXPECT_TRUE(cap_rights_is_set(&rights, CAP_WRITE));
+	EXPECT_FALSE(Eof(pipe));
+}
+
+TEST(COwned, ImmediateFailureClosesOwnedDescriptors)
+{
+	// An argument error: the owned descriptor is closed before return.
+	{
+		CPair pair;
+		Pipe pipe;
+		int descriptor = fidl_bsd_fd_owned(pipe.write.release());
+		bsd_runtime_test_DictionaryEntry entries[5] {};
+		bsd_runtime_test_Collection value {};
+		value.descriptors = &descriptor;
+		value.descriptors_size = 1;
+		value.entries = entries;
+		value.entries_size = 5; // bound is 4
+		uint32_t txid;
+		EXPECT_EQ(bsd_runtime_test_Collections_Echo(
+			      pair.client, &value,
+			      [](void *, int, bsd_runtime_test_Collection *) { },
+			      nullptr, &txid),
+		    EINVAL);
+		EXPECT_TRUE(Eof(pipe));
+	}
+	// A vector rejected as a whole: none of its owned descriptors was
+	// attached, so the release pass closes every one of them.
+	{
+		CPair pair;
+		Pipe pipes[5];
+		int descriptors[5];
+		for (int i = 0; i < 5; ++i)
+			descriptors[i] = fidl_bsd_fd_owned(
+			    pipes[i].write.release());
+		bsd_runtime_test_Collection value {};
+		value.descriptors = descriptors;
+		value.descriptors_size = 5; // bound is 4
+		value.mode = bsd_runtime_test_Mode_ON;
+		uint32_t txid;
+		EXPECT_EQ(bsd_runtime_test_Collections_Echo(
+			      pair.client, &value,
+			      [](void *, int, bsd_runtime_test_Collection *) { },
+			      nullptr, &txid),
+		    EINVAL);
+		for (auto &pipe : pipes)
+			EXPECT_TRUE(Eof(pipe));
+	}
+	// A rejected call (null connection) still consumes them.
+	{
+		Pipe pipe;
+		bsd_runtime_test_ReadOnly value { fidl_bsd_fd_owned(
+		    pipe.read.release()) };
+		uint32_t txid;
+		EXPECT_EQ(bsd_runtime_test_Service_Take(nullptr, &value,
+			      CTakeDone, nullptr, &txid),
+		    EINVAL);
+		EXPECT_TRUE(Closed(-2 - value.fd));
+	}
+	// An immediate send failure: the pending-call limit.
+	{
+		fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+		options.max_pending_requests = 1;
+		// Declared before the pair: completions may run when it is destroyed.
+		CTakeResult result;
+		CPair pair(&options);
+		BindTake(pair);
+		Pipe first, second;
+		bsd_runtime_test_ReadOnly borrowed { first.read.get() };
+		uint32_t txid;
+		ASSERT_EQ(bsd_runtime_test_Service_Take(pair.client, &borrowed,
+			      CTakeDone, &result, &txid),
+		    0);
+		bsd_runtime_test_ReadOnly owned { fidl_bsd_fd_owned(
+		    second.read.release()) };
+		EXPECT_EQ(bsd_runtime_test_Service_Take(pair.client, &owned,
+			      CTakeDone, &result, &txid),
+		    ENOBUFS);
+		EXPECT_TRUE(Closed(-2 - owned.fd));
+		EXPECT_EQ(result.calls, 0u);
+		EXPECT_EQ(fidl_bsd_connection_error(pair.client), 0);
+	}
+	// A reply on a closed connection consumes the response's descriptors.
+	{
+		CPair pair;
+		static bsd_runtime_test_EndpointExchange_server handlers {};
+		static Pipe *held_pipe;
+		static int reply_error;
+		Pipe pipe;
+		held_pipe = &pipe;
+		handlers.RoundTrip = [](void *, fidl_bsd_connection *connection,
+				         fidl_bsd_request *request,
+				         bsd_runtime_test_EndpointRequest *) {
+			fidl_bsd_connection_close(connection, ECANCELED);
+			bsd_runtime_test_EndpointRequest response {
+				fidl_bsd_fd_owned(held_pipe->write.release()) };
+			reply_error =
+			    bsd_runtime_test_EndpointExchange_RoundTrip_reply(
+				connection, request, &response);
+		};
+		ASSERT_EQ(bsd_runtime_test_EndpointExchange_bind(pair.server,
+			      &handlers, nullptr),
+		    0);
+		int ends[2];
+		ASSERT_EQ(mac_capability_channel_create(ends), 0);
+		bsd_runtime_test_EndpointRequest value { ends[0] };
+		uint32_t txid;
+		ASSERT_EQ(bsd_runtime_test_EndpointExchange_RoundTrip(
+			      pair.client, &value,
+			      [](void *, int,
+				  bsd_runtime_test_EndpointRequest *) { },
+			      nullptr, &txid),
+		    0);
+		reply_error = 0;
+		pair.Pump();
+		EXPECT_EQ(reply_error, ECANCELED);
+		EXPECT_TRUE(Eof(pipe));
+		close(ends[0]);
+		close(ends[1]);
+	}
+}
+
+TEST(COwned, QueuedSendFailureIsClosedByTheRuntime)
+{
+	for (bool by_cancel : { true, false }) {
+		// Declared before the pair: completions may run when it is destroyed.
+		CTakeResult result;
+		CPair pair;
+		BindTake(pair);
+		bsd_runtime_test_Request filler { "x", 1 };
+		unsigned i = 0;
+		while (!fidl_bsd_connection_wants_write(pair.client) &&
+		    i++ < 1024)
+			ASSERT_EQ(bsd_runtime_test_Service_Notify(pair.client,
+				      &filler),
+			    0);
+		ASSERT_TRUE(fidl_bsd_connection_wants_write(pair.client));
+		// The pipe's only write end is moved; EOF on the read end
+		// then shows when every holder of it is gone.
+		Pipe pipe;
+		int fd = pipe.write.release();
+		bsd_runtime_test_ReadOnly value { fidl_bsd_fd_owned(fd) };
+		uint32_t txid;
+		// Accepted and queued: the runtime owns the descriptor now.
+		ASSERT_EQ(bsd_runtime_test_Service_Take(pair.client, &value,
+			      CTakeDone, &result, &txid),
+		    0);
+		EXPECT_FALSE(Eof(pipe));
+		if (by_cancel) {
+			EXPECT_EQ(fidl_bsd_connection_cancel(pair.client, txid),
+			    0);
+			EXPECT_EQ(result.calls, 1u);
+			EXPECT_EQ(result.error, ECANCELED);
+			EXPECT_EQ(fidl_bsd_connection_error(pair.client), 0);
+		} else {
+			fidl_bsd_connection_destroy(pair.server);
+			pair.server = nullptr;
+			for (int n = 0; n < 50 && !result.calls; ++n)
+				fidl_bsd_connection_poll(pair.client, 5);
+			EXPECT_EQ(result.calls, 1u);
+			EXPECT_NE(result.error, 0);
+			EXPECT_NE(fidl_bsd_connection_error(pair.client), 0);
+		}
+		EXPECT_TRUE(Eof(pipe));
+	}
+}
+
+TEST(COwned, NonPassableDescriptorIsRejectedAndClosed)
+{
+	// Kernel policy: a kqueue has no DFLAG_PASSABLE, so the send fails
+	// with EINVAL; the owned descriptor is closed by the call.
+	// Declared before the pair: completions may run when it is destroyed.
+	CTakeResult result;
+	CPair pair;
+	BindTake(pair);
+	int queue = kqueue();
+	ASSERT_GE(queue, 0);
+	bsd_runtime_test_ReadOnly value { fidl_bsd_fd_owned(queue) };
+	uint32_t txid;
+	EXPECT_EQ(bsd_runtime_test_Service_Take(pair.client, &value, CTakeDone,
+		      &result, &txid),
+	    EINVAL);
+	EXPECT_TRUE(Closed(queue));
+	EXPECT_EQ(result.calls, 0u);
+	pair.Pump(2);
+	EXPECT_EQ(fidl_bsd_connection_error(pair.client), 0);
+}
+
+TEST(COwned, TransferDeniedDescriptorIsRejectedAndClosed)
+{
+	// Kernel policy: CAP_XFER_NONE refuses the move with ENOTCAPABLE.
+	// Declared before the pair: completions may run when it is destroyed.
+	CTakeResult result;
+	CPair pair;
+	BindTake(pair);
+	Pipe pipe;
+	ASSERT_EQ(cap_xfer_limit(pipe.read.get(), CAP_XFER_NONE), 0);
+	int fd = pipe.read.release();
+	bsd_runtime_test_ReadOnly value { fidl_bsd_fd_owned(fd) };
+	uint32_t txid;
+	EXPECT_EQ(bsd_runtime_test_Service_Take(pair.client, &value, CTakeDone,
+		      &result, &txid),
+	    ENOTCAPABLE);
+	EXPECT_TRUE(Closed(fd));
+	EXPECT_EQ(result.calls, 0u);
+	pair.Pump(2);
+	EXPECT_EQ(fidl_bsd_connection_error(pair.client), 0);
+}
+
+TEST(COwned, MixedOwnedAndBorrowedDescriptorsInOneMessage)
+{
+	CPair pair;
+	static bsd_runtime_test_Collections_server handlers {};
+	handlers.Echo = [](void *, fidl_bsd_connection *connection,
+			    fidl_bsd_request *request,
+			    bsd_runtime_test_Collection *value) {
+		EXPECT_EQ(value->descriptors_size, 3u);
+		for (size_t i = 0; i < value->descriptors_size; ++i)
+			EXPECT_GE(value->descriptors[i], 0);
+		EXPECT_EQ(bsd_runtime_test_Collections_Echo_reply(connection,
+			      request, value),
+		    0);
+	};
+	ASSERT_EQ(bsd_runtime_test_Collections_bind(pair.server, &handlers,
+		      nullptr),
+	    0);
+	Pipe a, b, c;
+	int owned = b.write.release();
+	int descriptors[3] = { a.write.get(), fidl_bsd_fd_owned(owned),
+		c.write.get() };
+	bsd_runtime_test_Collection value {};
+	value.descriptors = descriptors;
+	value.descriptors_size = 3;
+	value.mode = bsd_runtime_test_Mode_ON;
+	struct Result {
+		unsigned calls = 0;
+		int error = -1;
+		int taken[3] = { -1, -1, -1 };
+	} result;
+	uint32_t txid;
+	ASSERT_EQ(bsd_runtime_test_Collections_Echo(
+		      pair.client, &value,
+		      [](void *context, int error,
+			  bsd_runtime_test_Collection *payload) {
+			      auto *r = static_cast<Result *>(context);
+			      ++r->calls;
+			      r->error = error;
+			      if (payload && payload->descriptors_size == 3)
+				      for (int i = 0; i < 3; ++i)
+					      r->taken[i] = fidl_bsd_take_fd(
+						  &payload->descriptors[i]);
+		      },
+		      &result, &txid),
+	    0);
+	// Borrowed originals stay open with their rights; the owned one is
+	// gone.
+	EXPECT_GE(fcntl(a.write.get(), F_GETFD), 0);
+	EXPECT_GE(fcntl(c.write.get(), F_GETFD), 0);
+	EXPECT_TRUE(Closed(owned));
+	pair.Pump();
+	ASSERT_EQ(result.calls, 1u);
+	EXPECT_EQ(result.error, 0);
+	for (int i = 0; i < 3; ++i)
+		ASSERT_GE(result.taken[i], 0);
+	char byte;
+	EXPECT_EQ(write(result.taken[1], "b", 1), 1);
+	EXPECT_EQ(read(b.read.get(), &byte, 1), 1);
+	EXPECT_EQ(byte, 'b');
+	for (int fd : result.taken)
+		close(fd);
+	EXPECT_FALSE(Eof(a));
+	EXPECT_TRUE(Eof(b));
+}
+
+/*
+ * Connection::CallSync: the C++ generated client call completes inside
+ * the call when the kernel does request and reply in one system call, and
+ * through Poll otherwise.  The caller blocks, so the server polls from a
+ * thread of its own (one connection per thread).
+ */
+struct SyncIssue {
+	bindings::ServiceClient *client;
+	unsigned calls = 0;
+	int error = 0;
+	char text[8] = {};
+	size_t text_size = 0;
+	static int Issue(void *context)
+	{
+		auto *self = static_cast<SyncIssue *>(context);
+		try {
+			auto r = self->client->RoundTrip(types::Request("sync"),
+			    [self](Result<types::Response> reply) {
+				    ++self->calls;
+				    if (reply.is_error()) {
+					    self->error = reply.error_value();
+					    return;
+				    }
+				    self->text_size = std::min(
+					reply->text().size(),
+					sizeof(self->text));
+				    memcpy(self->text, reply->text().data(),
+					self->text_size);
+			    });
+			return r.is_ok() ? 0 : r.error_value();
+		} catch (const std::bad_alloc &) {
+			return ENOMEM;
+		}
+	}
+};
+struct ServerThread {
+	Pair &pair;
+	Server server;
+	std::atomic<bool> stop { false };
+	std::thread thread;
+	explicit ServerThread(Pair &p)
+	    : pair(p)
+	    , server(*p.server)
+	{
+		server.Attach();
+		thread = std::thread([this] {
+			while (!stop)
+				pair.server->Poll(5);
+		});
+	}
+	~ServerThread()
+	{
+		stop = true;
+		thread.join();
+	}
+};
+TEST(Protocol, SyncCallCompletesBeforeReturning)
+{
+	Pair pair;
+	ServerThread serving(pair);
+	bindings::ServiceClient client(*pair.client);
+	SyncIssue issue { &client };
+	for (unsigned i = 1; i <= 20; ++i) {
+		EXPECT_EQ(pair.client->CallSync(5000, SyncIssue::Issue, &issue),
+		    0);
+		EXPECT_EQ(issue.calls, i);
+		EXPECT_EQ(issue.error, 0);
+		EXPECT_EQ(std::string(issue.text, issue.text_size), "sync");
+	}
+	EXPECT_EQ(pair.client->CallSync(5000, nullptr, &issue), EINVAL);
+	EXPECT_EQ(pair.client->CallSync(-1, SyncIssue::Issue, &issue), EINVAL);
+	EXPECT_EQ(pair.client->CallSync(
+		      5000, [](void *) -> int { return 0; }, nullptr),
+	    EINVAL);
+	EXPECT_EQ(pair.server->CallSync(5000, SyncIssue::Issue, &issue),
+	    EINVAL);
+	EXPECT_EQ(issue.calls, 20u);
+	EXPECT_EQ(pair.client->error(), 0);
+}
+TEST(Protocol, SyncCallAllocationFailures)
+{
+	unsigned failures = 0, successes = 0;
+	for (int count = 0; count < 24; ++count) {
+		Pair pair;
+		ServerThread serving(pair);
+		bindings::ServiceClient client(*pair.client);
+		SyncIssue issue { &client };
+		fidl::bsd::testing::FailNewAfter(count);
+		int error = pair.client->CallSync(5000, SyncIssue::Issue, &issue);
+		bool triggered = fidl::bsd::testing::DisableAllocationFault();
+		if (triggered) {
+			++failures;
+			// Either refused before the send or completed with
+			// ENOMEM (which closes the connection); never a
+			// wrong answer, a hang or an unreported failure.
+			EXPECT_TRUE(error == 0 || error == ENOMEM)
+			    << "allocation index " << count << ": " << error;
+			if (error == 0) {
+				EXPECT_EQ(issue.calls, 1u);
+				EXPECT_EQ(std::string(issue.text,
+					      issue.text_size),
+				    "sync");
+			} else
+				EXPECT_LE(issue.calls, 1u);
+		} else {
+			++successes;
+			EXPECT_EQ(error, 0) << "allocation index " << count;
+			EXPECT_EQ(issue.calls, 1u);
+		}
+		// Whatever happened, a healthy connection still serves calls.
+		if (pair.client->error() == 0) {
+			SyncIssue again { &client };
+			EXPECT_EQ(pair.client->CallSync(5000, SyncIssue::Issue,
+				      &again),
+			    0);
+			EXPECT_EQ(again.calls, 1u);
+		}
+	}
+	EXPECT_GT(failures, 0u);
+	EXPECT_GT(successes, 0u);
+}
+
+// ---- Encoding into libchannel's send buffer ------------------------------
+TEST(SendBuffer, SteadyStateCallsAreSentDirectFromTheReservation)
+{
+	Pair pair;
+	Server server(*pair.server);
+	server.Attach();
+	bindings::ServiceClient client(*pair.client);
+	auto client_before = ConnectionTestPeer::Stats(*pair.client);
+	auto server_before = ConnectionTestPeer::Stats(*pair.server);
+	unsigned completed = 0;
+	for (unsigned i = 0; i < 50; ++i) {
+		auto id = client.RoundTrip(types::Request("direct"),
+		    [&](auto r) {
+			    if (r.is_ok() && r->text() == "direct")
+				    ++completed;
+		    });
+		ASSERT_TRUE(id.is_ok());
+		for (int n = 0; n < 100 && completed < i + 1; ++n) {
+			pair.server->Poll(5);
+			pair.client->Poll(5);
+		}
+	}
+	ASSERT_EQ(completed, 50u);
+	auto client_after = ConnectionTestPeer::Stats(*pair.client);
+	auto server_after = ConnectionTestPeer::Stats(*pair.server);
+	// Every request and reply went from the reserved buffer straight
+	// into the kernel; nothing was queued or copied.
+	EXPECT_EQ(client_after.sent_direct - client_before.sent_direct, 50u);
+	EXPECT_EQ(client_after.sent_queued, client_before.sent_queued);
+	EXPECT_EQ(server_after.sent_direct - server_before.sent_direct, 50u);
+	EXPECT_EQ(server_after.sent_queued, server_before.sent_queued);
+	// No reservation outlives its call.
+	EXPECT_FALSE(ConnectionTestPeer::ScratchReserved(*pair.client));
+	EXPECT_FALSE(ConnectionTestPeer::ScratchReserved(*pair.server));
+}
+
+TEST(SendBuffer, FailedEncodeReturnsTheReservationWithoutAllocating)
+{
+	CPair pair;
+	BindTake(pair);
+	// Warm the connection's spare send block.
+	bsd_runtime_test_Request request { "x", 1 };
+	ASSERT_EQ(bsd_runtime_test_Service_Notify(pair.client, &request), 0);
+	auto before_stats = ConnectionTestPeer::Stats(*pair.client->value);
+	auto before = fidl::bsd::testing::AllocationCount();
+	bsd_runtime_test_Request bad { nullptr, 1 };
+	for (int i = 0; i < 100; ++i)
+		ASSERT_EQ(bsd_runtime_test_Service_Notify(pair.client, &bad),
+		    EINVAL);
+	EXPECT_EQ(fidl::bsd::testing::AllocationCount() - before, 0u);
+	auto after_stats = ConnectionTestPeer::Stats(*pair.client->value);
+	EXPECT_EQ(after_stats.sent_direct, before_stats.sent_direct);
+	EXPECT_EQ(after_stats.sent_queued, before_stats.sent_queued);
+	EXPECT_FALSE(ConnectionTestPeer::ScratchReserved(*pair.client->value));
+	// The connection is intact and the next send is direct again.
+	ASSERT_EQ(bsd_runtime_test_Service_Notify(pair.client, &request), 0);
+	EXPECT_EQ(ConnectionTestPeer::Stats(*pair.client->value).sent_direct,
+	    before_stats.sent_direct + 1);
+	EXPECT_EQ(fidl_bsd_connection_error(pair.client), 0);
+}
+
+TEST(SendBuffer, CommitFailureLeavesTheConnectionIntact)
+{
+	// The pending-request limit refuses the commit: the reservation is
+	// returned, the owned descriptor closed, nothing was sent or queued,
+	// and the connection goes on once the first call completes.
+	fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	options.max_pending_requests = 1;
+	// Declared before the pair: completions may run when it is destroyed.
+	CTakeResult result;
+	CPair pair(&options);
+	BindTake(pair);
+	Pipe first, second;
+	ASSERT_EQ(write(first.write.get(), "1", 1), 1);
+	ASSERT_EQ(write(second.write.get(), "2", 1), 1);
+	bsd_runtime_test_ReadOnly borrowed { first.read.get() };
+	uint32_t txid;
+	ASSERT_EQ(bsd_runtime_test_Service_Take(pair.client, &borrowed,
+		      CTakeDone, &result, &txid),
+	    0);
+	auto stats = ConnectionTestPeer::Stats(*pair.client->value);
+	int fd = second.read.release();
+	bsd_runtime_test_ReadOnly owned { fidl_bsd_fd_owned(fd) };
+	EXPECT_EQ(bsd_runtime_test_Service_Take(pair.client, &owned, CTakeDone,
+		      &result, &txid),
+	    ENOBUFS);
+	EXPECT_TRUE(Closed(fd));
+	auto after = ConnectionTestPeer::Stats(*pair.client->value);
+	EXPECT_EQ(after.sent_direct, stats.sent_direct);
+	EXPECT_EQ(after.sent_queued, stats.sent_queued);
+	EXPECT_FALSE(ConnectionTestPeer::ScratchReserved(*pair.client->value));
+	pair.Pump();
+	ASSERT_EQ(result.calls, 1u);
+	EXPECT_EQ(result.byte, '1');
+	// The kernel refusing the descriptor fails the commit the same way.
+	Pipe denied;
+	ASSERT_EQ(cap_xfer_limit(denied.read.get(), CAP_XFER_NONE), 0);
+	bsd_runtime_test_ReadOnly refused { denied.read.get() };
+	EXPECT_EQ(bsd_runtime_test_Service_Take(pair.client, &refused,
+		      CTakeDone, &result, &txid),
+	    ENOTCAPABLE);
+	EXPECT_FALSE(ConnectionTestPeer::ScratchReserved(*pair.client->value));
+	Pipe third;
+	ASSERT_EQ(write(third.write.get(), "3", 1), 1);
+	bsd_runtime_test_ReadOnly next { third.read.get() };
+	ASSERT_EQ(bsd_runtime_test_Service_Take(pair.client, &next, CTakeDone,
+		      &result, &txid),
+	    0);
+	pair.Pump();
+	EXPECT_EQ(result.calls, 2u);
+	EXPECT_EQ(result.byte, '3');
+	EXPECT_EQ(ConnectionTestPeer::Stats(*pair.client->value).sent_direct,
+	    stats.sent_direct + 1);
+	EXPECT_EQ(fidl_bsd_connection_error(pair.client), 0);
+}
+
+TEST(SendBuffer, QueuedSendUsesTheReservationAsItsQueueEntry)
+{
+	Pair pair;
+	unsigned i = 0;
+	while (!pair.client->wants_write() && i++ < 1024)
+		ASSERT_EQ(pair.client->Send(ordinal, types::Request("fill")), 0);
+	ASSERT_TRUE(pair.client->wants_write());
+	auto stats = ConnectionTestPeer::Stats(*pair.client);
+	EXPECT_GT(stats.sent_queued, 0u);
+	EXPECT_FALSE(ConnectionTestPeer::ScratchReserved(*pair.client));
+	unsigned delivered = 0;
+	pair.server->SetEventHandler([&](auto m) {
+		auto decoded = m->template Decode<types::Request>();
+		if (decoded.is_ok() && decoded->text() == "fill")
+			++delivered;
+	});
+	for (int n = 0; n < 200 && delivered < i; ++n)
+		pair.Pump(1);
+	EXPECT_EQ(delivered, i);
+	EXPECT_EQ(pair.client->error(), 0);
+}
+
+TEST(SendBuffer, LargeBodySpillsOutOfTheReservationAndArrives)
+{
+	Pair pair;
+	std::vector<uint8_t> bytes(10000);
+	for (size_t n = 0; n < bytes.size(); ++n)
+		bytes[n] = static_cast<uint8_t>(n * 7);
+	// Above the 4 KiB reservation: encoded into the packet's own
+	// storage and sent as before, bytes intact.
+	ASSERT_EQ(pair.client->Send(ordinal, types::Large(bytes)), 0);
+	auto message = Receive(pair);
+	ASSERT_TRUE(message);
+	auto decoded = message->Decode<types::Large>();
+	ASSERT_TRUE(decoded.is_ok());
+	EXPECT_EQ(decoded->bytes(), bytes);
+	EXPECT_FALSE(ConnectionTestPeer::ScratchReserved(*pair.client));
+	// Small again: the reservation path is back in use.
+	auto before = ConnectionTestPeer::Stats(*pair.client).sent_direct;
+	ASSERT_EQ(pair.client->Send(ordinal, types::Request("small")), 0);
+	EXPECT_EQ(ConnectionTestPeer::Stats(*pair.client).sent_direct,
+	    before + 1);
+	// And the C wire path spills too: a 14 KiB Large through CallRaw-style
+	// encoding of the generated codec.
+	bsd_runtime_test_Large large { bytes.data(), bytes.size() };
+	ASSERT_EQ(pair.client->SendRaw(ordinal, false,
+		      [&](Outgoing &out) -> int {
+			      fidl::bsd::cwire::Encoder e(out);
+			      size_t at = e.Alloc(16);
+			      fidl::bsd::generated::CWEnc_bsd_runtime_test_Large(
+				  e, &large, at, 0);
+			      return e.error();
+		      }),
+	    0);
+	message = Receive(pair);
+	ASSERT_TRUE(message);
+	decoded = message->Decode<types::Large>();
+	ASSERT_TRUE(decoded.is_ok());
+	EXPECT_EQ(decoded->bytes(), bytes);
+}
+
+TEST(SendBuffer, CloseInsideSyncCompletionReleasesTheReservation)
+{
+	// The completion of a CallSync() runs while the call's reservation
+	// is still held; closing the connection there destroys the channel
+	// first, and the reservation must still be returned afterwards.
+	Pair pair;
+	ServerThread serving(pair);
+	bindings::ServiceClient client(*pair.client);
+	struct Closing {
+		Connection *connection;
+		bindings::ServiceClient *client;
+		unsigned calls = 0;
+		static int Issue(void *context)
+		{
+			auto *self = static_cast<Closing *>(context);
+			auto r = self->client->RoundTrip(types::Request("bye"),
+			    [self](Result<types::Response>) {
+				    ++self->calls;
+				    self->connection->Close(ECANCELED);
+			    });
+			return r.is_ok() ? 0 : r.error_value();
+		}
+	} closing { pair.client.get(), &client };
+	int rc = pair.client->CallSync(5000, Closing::Issue, &closing);
+	EXPECT_TRUE(rc == 0 || rc == ECANCELED) << rc;
+	EXPECT_EQ(closing.calls, 1u);
+	EXPECT_EQ(pair.client->error(), ECANCELED);
+	EXPECT_FALSE(ConnectionTestPeer::ScratchReserved(*pair.client));
 }

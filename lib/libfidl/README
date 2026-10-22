@@ -129,6 +129,29 @@ C++ ownership rules to those duplicates. The original C descriptor remains
 owned by the caller and retains its rights. Transfer state remains enforced
 by the kernel; copying a descriptor is not a right to increase its ceiling.
 
+A C caller that no longer needs a descriptor passes fidl_bsd_fd_owned(fd)
+in the field instead (a value below -1; -1 stays "absent"). The call takes
+that descriptor exactly as a C++ Descriptor or ClientEnd/ServerEnd argument
+is taken: it is moved into the message with CHANNEL_SEND_MOVE and no
+duplicate is made, and the caller must not use or close it afterwards,
+whatever the result. The outcomes are exact:
+- the call returns an error before sending (a rejected argument, an encode
+  error, a closed or shut-down connection, the pending-request or queue
+  limit, a kernel refusal such as ENOTCAPABLE for CAP_XFER_NONE or EINVAL
+  for a non-passable object): the call has closed the descriptor;
+- the message is accepted (sent at once, or queued because the channel is
+  busy): the runtime owns the descriptor; the kernel closes the moved
+  original on delivery, and libchannel closes a queued copy when the send
+  fails later, is cancelled, or the connection dies;
+- the call succeeds: the caller's descriptor number is already closed.
+Borrowed and owned descriptors may be mixed in one message, including inside
+vectors, arrays, tables, unions and boxed structs: each generated bridge
+holds a release pass (CWRelease_TYPE in c/bridge.h) that a failed call runs
+over the whole C value, closing every owned descriptor the encoder had not
+yet attached (the packet closes those it had). Existing callers, who pass
+plain descriptors, are unaffected. Received descriptor fields are never
+encoded this way; they are plain descriptors or -1.
+
 Decoded C callback buffers last only until callback return. Descriptor fields
 are also released then unless fidl_bsd_take_fd(&value->fd) is used to take
 ownership; it replaces the field with -1. Do not close a borrowed descriptor
@@ -136,6 +159,33 @@ or overwrite it with another FD. Take it first. Copy strings before retaining
 them. C++ callbacks receive owning generated values. A retained Incoming or
 C request context still exposes the original kernel-stamped native message.
 Neither a peer UID/PID nor a message field grants authorization.
+
+Allocation
+----------
+Steady-state calls do not allocate and copy the body once. A connection
+encodes every request, reply and event straight into a send buffer reserved
+from libchannel (channel_outgoing_reserve(3), 4 KiB, the size libchannel
+recycles per channel): the wire codec or the natural encoder's copy writes
+where the kernel reads, the commit sends from there or makes the buffer the
+queue entry without copying, a failed send returns the reservation (the
+packet still owns its descriptors and closes them), and a body over 4 KiB
+spills into the packet's own storage and goes through the copying send as
+before. Three bounded slabs recycle its per-call objects: the client's
+outstanding-call records, received message objects (Incoming, which generated
+servers and clients receive as std::unique_ptr), and the C request contexts
+(fidl_bsd_request). Each slab is sized from the connection's
+max_pending_requests option (256 by default) and grows in chunks of eight
+only up to that bound; beyond it, or when a chunk cannot be allocated, the
+object comes from the heap exactly as before, so ENOMEM behaviour is
+unchanged (an allocation failure closes the connection with ENOMEM and every
+attached descriptor). A retained request context or Incoming may outlive its
+connection; it keeps the slab alive and returns its block on release. C
+decoded views live in a 2 KiB on-stack arena per message and use the heap
+only beyond it. What still allocates per call is outside the runtime: the
+natural C++ types themselves (a std::string longer than its inline
+capacity), and libchannel's output queue when a send cannot complete at
+once. ipc_bench (tests/ipc_bench.cc, `make -C tools/build/fuchsia
+check-bench`) counts these through link-time wrappers.
 
 All C status functions return errno values directly (zero means success).
 The fd accessor returns a borrowed descriptor or -1. C++ uses fit::result
@@ -173,6 +223,41 @@ known unhandled events are decoded and discarded, and unknown events follow
 the protocol's openness rules. In C this occurs on the first generated client
 call; bind event handlers explicitly to receive events before making a call.
 Explicitly bound event handlers take precedence.
+
+Versioning
+----------
+Every production library (the fifteen bsd.<name>.v1 libraries under lib/) is
+versioned with FIDL availability under one platform, "bsd":
+
+  @available(platform="bsd", added=1)
+  library bsd.network.v1;
+
+The platform is written explicitly so that it does not silently follow a
+library rename (fidlc would otherwise derive it from the first name
+component). The library name's .vN suffix is the wire major: ordinals and
+layouts are a stable contract, and an incompatible change is a new library
+name. The platform version bsd:N is the additive level shared by every bsd.*
+library: a method, event, table field, flexible union variant or enum/bits
+member added later is marked @available(added=N) with the next level, and
+one level covers the whole platform (a library with nothing new at level N
+is unchanged there). Removals and @available(deprecated=...) are not used;
+retiring something is a new wire major.
+
+fidlc refuses to compile a versioned library without a selected version
+(fi-0201), so every compile of a bsd.* schema passes --available bsd:N:
+lib/libfidl/fidl-bindings.mk compiles every binding set at FIDL_AVAILABLE
+(default bsd:1; a FIDL_FLAGS.NAME that names --available itself, an
+evolution test's bsd:2, takes precedence), fidlgen-build.py applies the same
+default (--available, empty for none), and anyone compiling an installed
+/usr/share/fidl/*.fidl schema by hand passes `--available bsd:1`. Changing
+FIDL_AVAILABLE alone does not regenerate an existing set; clean first.
+Peers built at different levels interoperate under the protocol-evolution
+rules above: lib/libfidl/tests/evolution compiles one schema at bsd:1 and
+bsd:2, proves that the elements added at 2 are absent from the bsd:1 IR and
+C header and present at bsd:2, and runs the separately built C peers against
+each other in all pairings; tools/build/fuchsia/test-bindings.py proves each
+provider's next schema is its production schema at bsd:1. The zx shim and
+the test-only libraries (bsd.runtime.test, cross.*) are not versioned.
 
 Supported and unsupported features
 ----------------------------------
@@ -247,8 +332,17 @@ cleanup, peer death, callback shutdown/exceptions, and epitaphs. Deterministic
 byte and resource mutation corpora run under the same codecs.
 
 The C11 test covers calls, replies, one-way messages, events, borrowed outbound
-FDs, taking a received descriptor, deferred replies, cancellation, invalid
-buffers/bounds, and shutdown. ASan and UBSan run the native suites. This host's
+FDs, owned outbound FDs (fidl_bsd_fd_owned: success closes the caller's
+descriptor; argument, immediate and queued send failures, a non-passable
+kqueue and a CAP_XFER_NONE descriptor are all consumed; mixed owned and
+borrowed descriptors in one message), taking a received descriptor, deferred
+replies, cancellation, invalid buffers/bounds, and shutdown. The C++ suite
+repeats the owned-descriptor cases through the C API and checks the slabs:
+no allocation across hundreds of steady-state C and C++ calls, 200
+outstanding calls at the bound with the next rejected and no growth on the
+second round, heap fallback beyond the bound, and allocation-fault injection
+at each slab's chunk allocation. c_wire_test checks the owned encode against
+the natural codec and the release pass of a failed encode. ASan and UBSan run the native suites. This host's
 LeakSanitizer is unavailable; detect_leaks is explicitly disabled and not
 reported as a passed check. Descriptor cleanup is checked by pipe EOF after
 all intended owners are gone, including rejection and backpressure cases.
@@ -291,6 +385,8 @@ Their native host-safe tests use the actual FIDL handlers with simulated clock
 gates; test-provider.py is included in check-native. Public C ABI 1 is retained;
 source wire framing changes to bsd.time.v1 with explicit version negotiation.
 Production activation, real-gate VM and coordinated rollback remain required.
+(Superseded 2026-10-22: fourteen of the fifteen capability daemons serve FIDL,
+including every system.Network endpoint; see tools/build/fuchsia/DAEMONS.md.)
 
 The provider package check, test-provider.py --packages, also validates split
 manual/debug packages and the registered bsdtime-tests package. Extracted

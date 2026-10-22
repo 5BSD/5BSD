@@ -8,13 +8,16 @@
 extern "C" {
 #include <channel.h>
 }
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <lib/fit/function.h>
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <new>
 #include <optional>
 #include <vector>
 
@@ -42,6 +45,67 @@ struct MessageDeleter {
 };
 using Message = std::unique_ptr<channel_message, MessageDeleter>;
 
+// Bounded object slab for one dispatch thread.  Blocks come from chunks
+// allocated on demand, never beyond limit objects, and are reused through a
+// free list, so steady-state traffic allocates nothing and the slab cannot
+// grow past the bound it was sized from.  Take() returns nullptr at the
+// limit (the caller then uses the heap exactly as before the slab existed)
+// and throws std::bad_alloc when a chunk cannot be allocated.
+template <typename T> class Slab {
+    public:
+	static constexpr size_t kChunk = 8;
+	explicit Slab(size_t limit)
+	    : limit_(limit)
+	{
+	}
+	Slab(const Slab &) = delete;
+	Slab &operator=(const Slab &) = delete;
+	void *Take()
+	{
+		if (free_) {
+			Block *block = free_;
+			free_ = block->next;
+			++live_;
+			return block;
+		}
+		if (allocated_ >= limit_)
+			return nullptr;
+		size_t count = std::min(kChunk, limit_ - allocated_);
+		chunks_.reserve(chunks_.size() + 1);
+		auto chunk = std::make_unique<Block[]>(count);
+		for (size_t i = 1; i < count; ++i) {
+			chunk[i].next = free_;
+			free_ = &chunk[i];
+		}
+		Block *block = &chunk[0];
+		chunks_.push_back(std::move(chunk));
+		allocated_ += count;
+		++live_;
+		return block;
+	}
+	void Put(void *storage) noexcept
+	{
+		auto *block = static_cast<Block *>(storage);
+		block->next = free_;
+		free_ = block;
+		--live_;
+	}
+	size_t limit() const { return limit_; }
+	// Objects currently taken, and blocks ever carved out of chunks.
+	size_t live() const { return live_; }
+	size_t allocated() const { return allocated_; }
+
+    private:
+	union Block {
+		Block *next;
+		alignas(T) std::byte storage[sizeof(T)];
+	};
+	static_assert(alignof(T) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
+	size_t limit_, allocated_ = 0, live_ = 0;
+	Block *free_ = nullptr;
+	std::vector<std::unique_ptr<Block[]>> chunks_;
+};
+
 // Values are errno codes. Decode errors are EPROTO; encode constraints EINVAL.
 template <typename T> using Result = fit::result<int, T>;
 
@@ -49,6 +113,10 @@ enum class Openness { Closed, Ajar, Open };
 
 class Outgoing {
     public:
+	Outgoing() = default;
+	~Outgoing() { Release(); }
+	Outgoing(const Outgoing &) = delete;
+	Outgoing &operator=(const Outgoing &) = delete;
 	template <typename T>
 	static Result<std::unique_ptr<Outgoing>> Encode(T value, uint32_t txid,
 	    uint64_t ordinal, bool flexible = false)
@@ -91,9 +159,11 @@ class Outgoing {
 			return ENOMEM;
 		}
 	}
-	// Close attached descriptors and forget the payload; keep capacity.
+	// Close attached descriptors and forget the payload; keep capacity
+	// (and a reserved send buffer, see Attach).
 	void Reset()
 	{
+		size_ = 0;
 		bytes_.clear();
 		fds_.clear();
 		specs_.clear();
@@ -103,9 +173,39 @@ class Outgoing {
 	// descriptor's type and rights and narrows the delivered copy.
 	channel_outgoing view() const
 	{
-		return { sizeof(channel_outgoing), bytes_.data(), bytes_.size(),
-			fds_.data(), fds_.size(),
-			specs_.empty() ? nullptr : specs_.data(), 0 };
+		return { sizeof(channel_outgoing), Data(), Size(), fds_.data(),
+			fds_.size(), specs_.empty() ? nullptr : specs_.data(),
+			0 };
+	}
+	// Encode into a send buffer the connection reserved from libchannel
+	// (channel_outgoing_reserve): the body is written where the kernel
+	// reads it and committed without a copy.  A body the buffer cannot
+	// hold spills into the packet's own storage and the reservation is
+	// returned; buffer() is then null and the packet is sent as before.
+	void Attach(channel_outgoing_buffer *buffer)
+	{
+		Reset();
+		Release();
+		buffer_ = buffer;
+		external_ = static_cast<uint8_t *>(
+		    channel_outgoing_buffer_data(buffer));
+		capacity_ = channel_outgoing_buffer_capacity(buffer);
+	}
+	channel_outgoing_buffer *buffer() const { return buffer_; }
+	// A commit consumed the reservation: the body now belongs to libchannel.
+	void Committed()
+	{
+		buffer_ = nullptr;
+		external_ = nullptr;
+		capacity_ = size_ = 0;
+	}
+	// Return a reservation the packet still holds (nothing was attached
+	// to it; valid after the channel is gone).
+	void Release()
+	{
+		if (buffer_)
+			channel_outgoing_abort(buffer_);
+		Committed();
 	}
 	// For one send that moves the descriptors: on success call Sent(),
 	// on failure they still belong to this packet.  lock delivers them
@@ -123,6 +223,15 @@ class Outgoing {
 			(void)owner.release();
 		Reset();
 	}
+	// Hand the attached descriptors to a send whose completion may run
+	// before the packet is reset (Connection::CallSync): the payload a
+	// view points at stays, the descriptors stop being the packet's.
+	void ReleaseDescriptors()
+	{
+		for (auto &owner : owners_)
+			(void)owner.release();
+		owners_.clear();
+	}
 	// Leave descriptor type and rights checks to the send system call
 	// (a connection's own packet); standalone packets check on encode.
 	void DeferDescriptorChecks() { defer_checks_ = true; }
@@ -134,35 +243,65 @@ class Outgoing {
 	// Append size bytes, zeroed and padded to 8; SIZE_MAX if the message
 	// would exceed the transport limit.
 	size_t RawAlloc(size_t size);
-	uint8_t *RawBody()
-	{
-		return bytes_.data() + sizeof(fidl_message_header_t);
-	}
+	uint8_t *RawBody() { return Data() + sizeof(fidl_message_header_t); }
 	size_t RawLength() const
 	{
-		return bytes_.size() - sizeof(fidl_message_header_t);
+		return Size() - sizeof(fidl_message_header_t);
 	}
 	size_t RawHandleCount() const { return fds_.size(); }
 	void RawSetTxid(uint32_t txid)
 	{
-		memcpy(bytes_.data(), &txid, sizeof(txid));
+		memcpy(Data(), &txid, sizeof(txid));
 	}
 	// Attach a private duplicate of a borrowed descriptor with the wire
 	// type and rights (C callers lend descriptors).
 	int RawHandle(int fd, uint32_t type, uint32_t rights);
+	// Attach an owned descriptor: on success the packet owns it (the send
+	// moves it and closes the original); on failure it stays the caller's.
+	int RawHandleMove(int fd, uint32_t type, uint32_t rights);
 
     private:
 	int Prepare(fidl::OutgoingMessage &, uint32_t, uint64_t);
 	int Prepare(fidl::OutgoingMessage &, uint32_t, uint64_t, bool);
 	int PrepareEmpty(uint32_t, uint64_t);
 	int PrepareEmpty(uint32_t, uint64_t, bool);
+	// The payload: the reserved buffer while one is attached and large
+	// enough, else the packet's own vector.
+	uint8_t *Data() { return external_ ? external_ : bytes_.data(); }
+	const uint8_t *Data() const
+	{
+		return external_ ? external_ : bytes_.data();
+	}
+	size_t Size() const { return external_ ? size_ : bytes_.size(); }
+	// Grow or shrink the payload to size bytes, zero-filling new ones.
+	void Resize(size_t size)
+	{
+		if (external_) {
+			if (size <= capacity_) {
+				if (size > size_)
+					memset(external_ + size_, 0,
+					    size - size_);
+				size_ = size;
+				return;
+			}
+			// Spill: keep what was encoded, give the buffer back.
+			bytes_.assign(external_, external_ + size_);
+			Release();
+		}
+		bytes_.resize(size);
+	}
 	std::vector<uint8_t> bytes_;
+	channel_outgoing_buffer *buffer_ = nullptr;
+	uint8_t *external_ = nullptr;
+	size_t capacity_ = 0, size_ = 0;
 	std::vector<int> fds_;
 	std::vector<channel_fd_spec> specs_;
 	std::vector<Descriptor> owners_;
 	bool defer_checks_ = false;
 };
 
+class Connection;
+struct ConnectionIdentity;
 // Keeps kernel metadata and native reply token in the original message.
 class Incoming {
     public:
@@ -170,6 +309,10 @@ class Incoming {
 	    : message_(std::move(message))
 	{
 	}
+	// A connection hands out Incoming objects from its slab; delete
+	// returns them there (the retained identity keeps the slab alive
+	// past the connection) or to the heap when they came from plain new.
+	static void operator delete(Incoming *, std::destroying_delete_t);
 	int Validate(uint64_t ordinal, std::optional<uint32_t> txid) const;
 	fidl_message_header_t header() const;
 	channel_message *native() const { return message_.get(); }
@@ -256,12 +399,23 @@ class Incoming {
 
     private:
 	friend class Connection;
-	std::shared_ptr<const unsigned char> origin_;
+	std::shared_ptr<const ConnectionIdentity> origin_;
+	Slab<Incoming> *slab_ = nullptr;
 	bool replied_ = false;
 	Message message_;
 	bool decoded_ = false;
 	std::array<fidl_handle_t, kMaxDescriptors> slots_ {};
 	std::array<Transport::HandleMetadata, kMaxDescriptors> metadata_ {};
+};
+// Retained by every outstanding request and received message of a
+// connection: an address alone cannot make a request belong to a later
+// connection, and received messages can return to the slab after it is gone.
+struct ConnectionIdentity {
+	explicit ConnectionIdentity(size_t limit)
+	    : incoming(limit)
+	{
+	}
+	mutable Slab<Incoming> incoming;
 };
 
 // One dispatch thread. References passed to callbacks last only for that
@@ -320,6 +474,15 @@ class Connection {
 	// for an accepted unknown two-way call. The caller owns payload
 	// cleanup.
 	int HandleUnknown(Incoming &, Openness);
+	// One synchronous call (fidl_bsd_connection_call): issue() makes one
+	// two-way call on this connection.  When no call is outstanding and no
+	// output is queued, request and reply go through channel_call_request(3)
+	// in one system call and the call's completion runs before issue()
+	// returns; otherwise the call is sent as usual and this polls until it
+	// completes.  Returns issue()'s error, the completion's error (a
+	// timeout cancels only this call), or EINVAL when issue() made no call.
+	// The completion must not destroy the connection, as for any callback.
+	int CallSync(int timeout_ms, int (*issue)(void *), void *context);
 	// Deliver every sent descriptor with close-on-exec and close-on-fork
 	// locked (the C bindings lend private duplicates).
 	void LockSentDescriptorInheritance() { lock_inherit_ = true; }
@@ -338,10 +501,13 @@ class Connection {
 			auto id = AllocateId();
 			if (!id)
 				return fit::error(EOVERFLOW);
+			ReserveScratch();
 			int err = scratch_.EncodeInto(std::move(value), id,
 			    ordinal, flexible);
-			if (err)
+			if (err) {
+				FinishScratch();
 				return fit::error(err);
+			}
 			err = SendRequest(id, ordinal, scratch_,
 			    [this, callback = std::move(callback)](int error,
 				Incoming *incoming) mutable {
@@ -361,11 +527,13 @@ class Connection {
 					    Close(result.error_value());
 				    callback(std::move(result));
 			    });
-			scratch_.Reset();
+			FinishScratch();
 			if (err)
 				return fit::error(err);
 			return fit::ok(id);
 		} catch (const std::bad_alloc &) {
+			// The packet may still hold the moved descriptors.
+			FinishScratch();
 			return fit::error(ENOMEM);
 		}
 	}
@@ -378,6 +546,7 @@ class Connection {
 		try {
 			// Argument errors come first, as when the C bindings
 			// converted to natural types before calling.
+			ReserveScratch();
 			int err = scratch_.RawStart(0, ordinal, flexible);
 			if (!err)
 				err = encode(scratch_);
@@ -391,61 +560,65 @@ class Connection {
 				err = SendRequest(id, ordinal, scratch_,
 				    std::move(completion));
 			}
-			scratch_.Reset();
+			FinishScratch();
 			if (err)
 				return fit::error(err);
 			return fit::ok(id);
 		} catch (const std::bad_alloc &) {
-			scratch_.Reset();
+			FinishScratch();
 			return fit::error(ENOMEM);
 		}
 	}
+	// As in CallRaw, the body is encoded before the connection state is
+	// checked: every descriptor a C caller handed over is then either
+	// attached to the packet (closed by Reset on failure) or closed by the
+	// encoder, whatever the outcome.
 	template <typename F>
 	int SendRaw(uint64_t ordinal, bool flexible, F &&encode)
 	{
-		if (error())
-			return error();
-		if (closing_)
-			return ESHUTDOWN;
+		ReserveScratch();
 		int err = scratch_.RawStart(0, ordinal, flexible);
 		if (!err)
 			err = encode(scratch_);
-		if (!err) {
-			auto view = scratch_.MoveView(lock_inherit_);
-			err = channel_send_event(channel_, &view) == 0 ? 0 :
-									 errno;
-			if (!err)
-				scratch_.Sent();
-		}
-		scratch_.Reset();
+		if (!err && error())
+			err = error();
+		if (!err && closing_)
+			err = ESHUTDOWN;
+		if (!err)
+			err = SendEvent(scratch_);
+		FinishScratch();
 		return err;
 	}
+	// ordinal, when nonzero, is the method the reply must answer.
 	template <typename F>
-	int ReplyRaw(Incoming &request, bool flexible, F &&encode)
+	int ReplyRaw(Incoming &request, bool flexible, F &&encode,
+	    uint64_t ordinal = 0)
 	{
-		if (role_ != CHANNEL_ROLE_PROVIDER || error())
-			return error() ? error() : EINVAL;
-		if (closing_)
-			return ESHUTDOWN;
-		if (request.origin_ != identity_)
-			return EINVAL;
-		if (request.replied_)
-			return EALREADY;
 		auto h = request.header();
-		if (request.Validate(h.ordinal, h.txid) || h.txid == 0)
-			return EPROTO;
-		int err = scratch_.RawStart(h.txid, h.ordinal, flexible);
+		// A header the validation below rejects still gets a packet
+		// to encode into (the txid and ordinal are then irrelevant).
+		ReserveScratch();
+		int err = scratch_.RawStart(h.txid ? h.txid : 1,
+		    h.ordinal && h.ordinal != kFidlOrdinalEpitaph ? h.ordinal :
+								     1,
+		    flexible);
 		if (!err)
 			err = encode(scratch_);
-		if (!err) {
-			auto view = scratch_.MoveView(lock_inherit_);
-			err = channel_send_reply(request.native(), &view) == 0 ?
-			    0 :
-			    errno;
-			if (!err)
-				scratch_.Sent();
-		}
-		scratch_.Reset();
+		if (!err && (role_ != CHANNEL_ROLE_PROVIDER || error()))
+			err = error() ? error() : EINVAL;
+		if (!err && closing_)
+			err = ESHUTDOWN;
+		if (!err && request.origin_ != identity_)
+			err = EINVAL;
+		if (!err && request.replied_)
+			err = EALREADY;
+		if (!err &&
+		    ((ordinal && h.ordinal != ordinal) ||
+			request.Validate(h.ordinal, h.txid) || h.txid == 0))
+			err = EPROTO;
+		if (!err)
+			err = SendReply(request, scratch_);
+		FinishScratch();
 		if (err)
 			return err;
 		request.replied_ = true;
@@ -458,15 +631,12 @@ class Connection {
 			return error();
 		if (closing_)
 			return ESHUTDOWN;
+		ReserveScratch();
 		int err = scratch_.EncodeInto(std::move(value), 0, ordinal,
 		    flexible);
-		if (err)
-			return err;
-		auto view = scratch_.MoveView(lock_inherit_);
-		err = channel_send_event(channel_, &view) == 0 ? 0 : errno;
 		if (!err)
-			scratch_.Sent();
-		scratch_.Reset();
+			err = SendEvent(scratch_);
+		FinishScratch();
 		return err;
 	}
 	template <typename T>
@@ -483,16 +653,12 @@ class Connection {
 		auto h = request.header();
 		if (request.Validate(h.ordinal, h.txid) || h.txid == 0)
 			return EPROTO;
+		ReserveScratch();
 		int err = scratch_.EncodeInto(std::move(value), h.txid,
 		    h.ordinal, flexible);
-		if (err)
-			return err;
-		auto view = scratch_.MoveView(lock_inherit_);
-		err = channel_send_reply(request.native(), &view) == 0 ? 0 :
-									 errno;
 		if (!err)
-			scratch_.Sent();
-		scratch_.Reset();
+			err = SendReply(request, scratch_);
+		FinishScratch();
 		if (err)
 			return err;
 		request.replied_ = true;
@@ -501,8 +667,9 @@ class Connection {
 
     private:
 	friend struct ConnectionTestPeer;
-	// Outstanding calls form an intrusive list; completed records are
-	// recycled so steady-state calls do not allocate bookkeeping.
+	// Outstanding calls form an intrusive list; their records come from
+	// a slab bounded by the pending-request limit, so steady-state calls
+	// do not allocate bookkeeping and the slab cannot outgrow the queue.
 	struct Pending {
 		Connection *owner = nullptr;
 		uint32_t id = 0;
@@ -510,25 +677,44 @@ class Connection {
 		channel_request *request = nullptr;
 		Completion completion;
 		Pending *prev = nullptr, *next = nullptr;
+		bool pooled = false;
+		bool sync = false;	// the CallSync() call in progress
+		static void operator delete(Pending *, std::destroying_delete_t);
 	};
-	static constexpr size_t kPendingPoolLimit = 64;
 	std::unique_ptr<Pending> TakePending();
-	void RecyclePending(std::unique_ptr<Pending>);
 	void Unlink(Pending *);
-	Connection(channel *channel, channel_role role)
-	    : channel_(channel)
+	std::unique_ptr<Incoming> NewIncoming(Message);
+	Connection(channel *channel, channel_role role, size_t limit)
+	    : identity_(std::make_shared<const ConnectionIdentity>(limit))
+	    , channel_(channel)
 	    , role_(role)
+	    , pending_(limit)
 	{
 		scratch_.DeferDescriptorChecks();
 	}
 	uint32_t AllocateId();
+	// Sends encode into a buffer reserved from libchannel so the body is
+	// committed without a copy (Outgoing::Attach).  libchannel recycles
+	// one released block of up to 4 KiB per channel, so reservations of
+	// that size never allocate at steady state; a larger body spills
+	// into the packet's own storage and is sent as before.
+	static constexpr size_t kReserveBytes = 4096;
+	void ReserveScratch();
+	// After a send attempt: a reservation the send did not consume is
+	// returned and the packet reset (closing descriptors it still owns).
+	void FinishScratch()
+	{
+		scratch_.Release();
+		scratch_.Reset();
+	}
+	int SendEvent(Outgoing &);
+	int SendReply(Incoming &, Outgoing &);
 	int SendRequest(uint32_t, uint64_t, Outgoing &, Completion);
 	static void OnReply(channel_request *, channel_message *, int, void *);
 	static void OnMessage(channel *, channel_message *, void *);
-	// An outstanding request retains this identity, preventing address
-	// reuse from making a request belong to a later connection.
-	std::shared_ptr<const unsigned char> identity_ =
-	    std::make_shared<const unsigned char>(0);
+	// Retained by every outstanding request and received message (see
+	// ConnectionIdentity); it also holds the Incoming slab.
+	std::shared_ptr<const ConnectionIdentity> identity_;
 	channel *channel_;
 	channel_role role_;
 	int error_ = 0;
@@ -536,12 +722,18 @@ class Connection {
 	std::optional<zx_status_t> peer_epitaph_;
 	uint32_t next_id_ = 1;
 	Pending *active_ = nullptr;
-	std::vector<std::unique_ptr<Pending>> free_pending_;
+	Slab<Pending> pending_;
 	// Single dispatch thread: one encode is complete and sent (copied by
 	// libchannel or the kernel) before any other send can start.
 	Outgoing scratch_;
 	Handler request_handler_, event_handler_;
 	bool lock_inherit_ = false;
+	// CallSync() state: the window the next SendRequest consumes, the id
+	// it issued, and that call's completion.
+	int sync_timeout_ms_ = -1;
+	uint32_t sync_id_ = 0;
+	bool sync_done_ = false;
+	int sync_result_ = 0;
 };
 }
 #endif

@@ -37,8 +37,18 @@ FIDL_TEMPLATESMODE= 0444
 # UTF helper (ICU license).
 FIDL_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 FIDL_NOTICEDIR= /usr/share/licenses/libfidl-tools/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= FIDL_NOTICEPARENT
+FIDL_NOTICEPARENT= ${FIDL_NOTICEDIR:H}
+FIDL_NOTICEPARENTTAGS= ${FIDL_NOTICEDIRTAGS}
+
 ICU_NOTICE= ${SRCTOP}/contrib/fuchsia/src/lib/fxl/third_party/icu/LICENSE
 ICU_NOTICEDIR= /usr/share/licenses/libfidl-tools/icu
+# Record the package license ancestor as well as the notice directory.
+DIRS+= ICU_NOTICEPARENT
+ICU_NOTICEPARENT= ${ICU_NOTICEDIR:H}
+ICU_NOTICEPARENTTAGS= ${ICU_NOTICEDIRTAGS}
+
 .for group in FIDL_NOTICE ICU_NOTICE
 ${group}PACKAGE= libfidl-tools
 ${group}MODE= 0444
@@ -46,7 +56,7 @@ ${group}MODE= 0444
 MAN= fidlgen-bsd.1
 
 .PHONY: bootstrap generators check check-bindings check-native check-soak \
-    check-fuzz check-bench
+    check-fuzz check-bench check-bench-compare
 bootstrap:
 	${PYTHON} ${.CURDIR}/build-fidl.py --src ${SRCTOP} --obj ${FIDL_TOOLS_OBJ}
 # Go is needed only for the conformance-test generator (gidl) and the Rust
@@ -84,10 +94,36 @@ check-fuzz:
 	${PYTHON} ${.CURDIR}/build-runtime.py --src ${SRCTOP} --tools ${FIDL_TOOLS_OBJ} --fuzz
 	${PYTHON} ${.CURDIR}/fuzz-runtime.py --seconds ${FIDL_FUZZ_SECONDS}
 
-# Comparative raw-libchannel/C++/C request-reply measurement (-O2 tree).
-# Run on an otherwise idle host; results are written to bench/bench.json.
+# Comparative raw-libchannel/C++/C measurement over one native channel in an
+# -O2 tree: synchronous and pipelined round trips, descriptor-heavy calls,
+# event bursts, payloads up to the 14,336-byte ceiling and a mixed workload,
+# with heap-allocation and system-call counts per request (ipc_bench list).
+# build-runtime.py --bench also records the original six round-trip runs in
+# bench/bench.json.  Each trial appends one JSON line per scenario to
+# ${FIDL_BENCH_DIR}/<timestamp>.json, which bench-compare.py summarizes
+# (medians with run-to-run spread).  Run on an otherwise idle host;
+# FIDL_BENCH_CPUS=C,S pins the client and the server to those CPUs.
 FIDL_BENCH_CALLS?= 20000
+FIDL_BENCH_WARMUP?= 1000
+FIDL_BENCH_TRIALS?= 3
+FIDL_BENCH_DIR?= /usr/obj/5bsd-fidl-bench
+FIDL_BENCH_OBJ?= /usr/obj/5bsd-fidl-runtime/bench
+FIDL_BENCH_ENV= IPC_BENCH_KTRACE_DIR=${FIDL_BENCH_DIR}
+.if defined(FIDL_BENCH_CPUS)
+FIDL_BENCH_ENV+= IPC_BENCH_CPUS=${FIDL_BENCH_CPUS}
+.endif
 check-bench:
 	${PYTHON} ${.CURDIR}/build-runtime.py --src ${SRCTOP} --tools ${FIDL_TOOLS_OBJ} --bench --bench-calls ${FIDL_BENCH_CALLS}
+	@mkdir -p ${FIDL_BENCH_DIR}
+	@out=${FIDL_BENCH_DIR}/$$(date -u +%Y%m%dT%H%M%SZ).json; \
+	trial=1; while [ $$trial -le ${FIDL_BENCH_TRIALS} ]; do \
+	    env ${FIDL_BENCH_ENV} ${FIDL_BENCH_OBJ}/ipc-bench suite ${FIDL_BENCH_CALLS} ${FIDL_BENCH_WARMUP} $$trial >> $$out || exit 1; \
+	    trial=$$((trial + 1)); \
+	done; \
+	echo "IPC bench results: $$out"; \
+	${PYTHON} ${.CURDIR}/bench-compare.py $$out
+# Deltas between two results files: make check-bench-compare BEFORE=a AFTER=b
+check-bench-compare:
+	${PYTHON} ${.CURDIR}/bench-compare.py ${BEFORE} ${AFTER}
 
 .include <bsd.prog.mk>

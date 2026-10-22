@@ -43,6 +43,9 @@ fidl_bsd_connection_create_with_options(int fd, enum fidl_bsd_role role,
 	}
 	return CBoundary([&]() -> int {
 		auto c = std::make_unique<fidl_bsd_connection>();
+		c->requests =
+		    std::make_shared<fidl::bsd::Slab<fidl_bsd_request>>(
+			limits.max_pending_requests);
 		auto native = fidl::bsd::Connection::Create(fd,
 		    static_cast<channel_role>(role), &limits);
 		if (native.is_error())
@@ -124,6 +127,18 @@ fidl_bsd_connection_preserve_sent_inheritance(fidl_bsd_connection *c)
 	if (c)
 		c->value->PreserveSentDescriptorInheritance();
 }
+int
+fidl_bsd_connection_call(fidl_bsd_connection *c, uint32_t timeout_ms,
+    int (*issue)(void *), void *context)
+{
+	if (!c || !issue)
+		return EINVAL;
+	return CBoundary([&] {
+		return c->value->CallSync(
+		    timeout_ms > INT_MAX ? INT_MAX : static_cast<int>(timeout_ms),
+		    issue, context);
+	});
+}
 void
 fidl_bsd_request_retain(fidl_bsd_request *request)
 {
@@ -133,8 +148,16 @@ fidl_bsd_request_retain(fidl_bsd_request *request)
 void
 fidl_bsd_request_release(fidl_bsd_request *request)
 {
-	if (request && --request->references == 0)
+	if (!request || --request->references != 0)
+		return;
+	// The slab outlives its connection while any context refers to it.
+	auto slab = std::move(request->slab);
+	if (!slab) {
 		delete request;
+		return;
+	}
+	request->~fidl_bsd_request();
+	slab->Put(request);
 }
 int
 fidl_bsd_take_fd(int *fd)

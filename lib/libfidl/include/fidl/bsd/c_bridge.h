@@ -9,12 +9,18 @@
 #include <system_error>
 
 // Private C++ implementation behind the opaque C ABI.
+struct fidl_bsd_request;
 struct fidl_bsd_connection {
 	std::unique_ptr<fidl::bsd::Connection> value;
+	// Request contexts come from this slab (sized from the connection's
+	// pending-request limit); a retained context may outlive the
+	// connection, so each one shares ownership of the slab.
+	std::shared_ptr<fidl::bsd::Slab<fidl_bsd_request>> requests;
 };
 struct fidl_bsd_request {
 	unsigned references = 1;
 	std::unique_ptr<fidl::bsd::Incoming> value;
+	std::shared_ptr<fidl::bsd::Slab<fidl_bsd_request>> slab;
 };
 namespace fidl::bsd {
 // Limit conversion work before allocating natural objects. The wire byte
@@ -24,7 +30,8 @@ struct CEncodeBudget {
 	size_t descriptors = kMaxDescriptors;
 	void DescriptorSlot(int fd)
 	{
-		if (fd < 0)
+		// -1 is absent; a value below it is an owned descriptor.
+		if (fd == -1)
 			return;
 		if (!descriptors)
 			throw std::system_error(EMSGSIZE,
@@ -107,6 +114,15 @@ DuplicateForC(int fd)
 		throw std::system_error(errno, std::generic_category());
 	return result;
 }
+// A C descriptor field for the natural-type conversion: an owned value
+// (fidl_bsd_fd_owned()) is taken as it stands, a borrowed one duplicated.
+inline Descriptor
+DescriptorForC(int value)
+{
+	if (value < -1)
+		return Descriptor(-2 - value);
+	return DuplicateForC(value);
+}
 template <typename F>
 int
 CBoundary(F action) noexcept
@@ -128,6 +144,23 @@ struct RequestRelease {
 	}
 };
 using CRequest = std::unique_ptr<fidl_bsd_request, RequestRelease>;
+// A request context for a received message, from the connection's slab
+// while it has room and from the heap otherwise (as every context was
+// before the slab); std::bad_alloc propagates as it did.
+inline CRequest
+NewCRequest(fidl_bsd_connection *connection, std::unique_ptr<Incoming> message)
+{
+	auto &slab = connection->requests;
+	void *block = slab ? slab->Take() : nullptr;
+	fidl_bsd_request *request;
+	if (block) {
+		request = ::new (block) fidl_bsd_request;
+		request->slab = slab;
+	} else
+		request = new fidl_bsd_request;
+	request->value = std::move(message);
+	return CRequest(request);
+}
 }
 namespace fidl::bsd::generated {
 inline Empty

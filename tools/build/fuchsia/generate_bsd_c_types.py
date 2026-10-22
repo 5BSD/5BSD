@@ -196,7 +196,7 @@ class CTypes:
         if direction == 'from':
             if k == 'primitive': return [f'{dst} = {src};']
             if k == 'internal': return [f'{dst} = static_cast<std::remove_cvref_t<decltype({dst})>>({src});']
-            if k in ('handle', 'endpoint'): return [f'budget.DescriptorSlot({src});', f'{dst} = std::remove_cvref_t<decltype({dst})>(fidl::bsd::DuplicateForC({src}));']
+            if k in ('handle', 'endpoint'): return [f'budget.DescriptorSlot({src});', f'{dst} = std::remove_cvref_t<decltype({dst})>(fidl::bsd::DescriptorForC({src}));']
             if k == 'identifier':
                 ident = t['identifier']; kind, _ = self.decls[ident]
                 if kind in ('enum', 'bits'): return [f'{dst} = static_cast<{self.cpp(ident)}>({src});']

@@ -29,8 +29,18 @@ LDFLAGS.runtime_test+= -Wl,--wrap=malloc,--wrap=_Znwm,--wrap=_Znam
 LIBADD= fidl_bsd
 TEST_METADATA+= timeout="180"
 
+# System calls per synchronous C call, for ktrace(1) (not a Kyua test):
+#   sync_call_bench wait|call CALLS
+PROGS+= sync_call_bench
+BINDIR_sync_call_bench= ${TESTSDIR}
+MAN.sync_call_bench=
+SRCS.sync_call_bench= sync_call_bench.c ${BINDING_SRCS}
+LIBADD.sync_call_bench+= channel
+
 # Comparative IPC measurement, installed for in-VM use (not a Kyua test):
-#   ipc_bench raw|cpp|c PAYLOAD CALLS WARMUP
+#   ipc_bench raw|cpp|c PAYLOAD CALLS WARMUP      (one synchronous round trip)
+#   ipc_bench suite CALLS WARMUP [TRIAL]         (every scenario, JSON lines)
+#   ipc_bench run NAME raw|cpp|c CALLS WARMUP; ipc_bench list
 PROGS_CXX+= ipc_bench
 BINDIR_ipc_bench= ${TESTSDIR}
 MAN.ipc_bench=
@@ -42,11 +52,21 @@ LDFLAGS.ipc_bench+= -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free
 FILESGROUPS+= FIDL_NOTICE
 FIDL_NOTICE= ${FUCHSIA}/LICENSE ${FUCHSIA}/PATENTS
 FIDL_NOTICEDIR= /usr/share/licenses/libfidl-tests/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= FIDL_NOTICEPARENT
+FIDL_NOTICEPARENT= ${FIDL_NOTICEDIR:H}
+FIDL_NOTICEPARENTTAGS= ${FIDL_NOTICEDIRTAGS}
+
 FIDL_NOTICEPACKAGE= ${PACKAGE}
 .if ${MK_GOOGLETEST} != "no"
 FILESGROUPS+= GTEST_NOTICE
 GTEST_NOTICE= ${SRCTOP}/contrib/googletest/LICENSE
 GTEST_NOTICEDIR= /usr/share/licenses/libfidl-tests/googletest
+# Record the package license ancestor as well as the notice directory.
+DIRS+= GTEST_NOTICEPARENT
+GTEST_NOTICEPARENT= ${GTEST_NOTICEDIR:H}
+GTEST_NOTICEPARENTTAGS= ${GTEST_NOTICEDIRTAGS}
+
 GTEST_NOTICEPACKAGE= ${PACKAGE}
 .endif
 

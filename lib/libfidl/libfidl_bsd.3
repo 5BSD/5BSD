@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 11, 2026
+.Dd October 22, 2026
 .Dt LIBFIDL_BSD 3
 .Os
 .Sh NAME
@@ -44,6 +44,8 @@ Native FIDL library
 .Fn fidl_bsd_request_release "struct fidl_bsd_request *request"
 .Ft int
 .Fn fidl_bsd_take_fd "int *fd"
+.Ft int
+.Fn fidl_bsd_fd_owned "int fd"
 .Ft "const struct channel_message *"
 .Fn fidl_bsd_request_native "const struct fidl_bsd_request *request"
 .Ft int
@@ -53,6 +55,8 @@ Native FIDL library
 .Fn fidl_bsd_sync_deadline "struct timespec *deadline" "uint32_t timeout_ms"
 .Ft int
 .Fn fidl_bsd_sync_wait "struct fidl_bsd_connection *connection" "const bool *done" "const struct timespec *deadline"
+.Ft int
+.Fn fidl_bsd_connection_call "struct fidl_bsd_connection *connection" "uint32_t timeout_ms" "int (*issue)(void *)" "void *context"
 .Sh DESCRIPTION
 The
 .Nm
@@ -166,6 +170,38 @@ On a timeout or transport failure the latter closes the connection, which
 completes the pending callback before its stack context expires, and returns
 the error.
 .Pp
+.Fn fidl_bsd_connection_call
+makes one synchronous call:
+.Fa issue
+is called once with
+.Fa context
+and issues exactly one generated client call on
+.Fa connection .
+When no other call is outstanding and no output is queued, the request and
+its reply travel in one system call
+.Pq Xr channel_call_request 3 , on kernels with Dv MAC_CAPABILITY_CHANNEL_CALL
+and the call's callback has run, with its reply or an error, when
+.Fa issue
+returns; otherwise the call is sent as usual and the connection is polled
+until it completes, as
+.Fn fidl_bsd_sync_wait_txid
+would.
+It returns the error of
+.Fa issue ,
+else that of the completion: zero with a reply,
+.Er ETIMEDOUT
+after
+.Fa timeout_ms
+milliseconds, which cancels only this call and leaves the connection open,
+or a transport error, which closes it;
+.Er EINVAL
+when
+.Fa issue
+made no call or the connection is a server.
+The callback runs inside
+.Fa issue
+on the fast path and must not destroy the connection, as for any callback.
+.Pp
 Closing from a callback is supported.
 Destroying the connection object from its own callback is not supported.
 Pending calls complete with an error on cancellation or peer death.
@@ -224,6 +260,31 @@ a non-passable object such as a kqueue fails with
 Immediate send failure preserves the C caller's original descriptor and
 returns an error without invoking a two-way call's callback.
 Accepted queued output can fail later during dispatch.
+.Pp
+A caller that has finished with a descriptor passes
+.Fn fidl_bsd_fd_owned fd
+in the field instead.
+The call then takes the descriptor as a C++
+.Vt Descriptor
+argument is taken: it is moved into the message without a duplicate, and
+the caller must not use or close it again whether the call succeeds or
+fails.
+When the call returns an error (a rejected argument, an encode error, a
+closed connection, a queue limit, or a kernel refusal such as
+.Er ENOTCAPABLE
+or
+.Er EINVAL )
+it has already closed the descriptor.
+When the message is accepted, sent or queued, the runtime owns the
+descriptor: the kernel closes the moved original on delivery, and a queued
+copy is closed when the queued send fails later, is cancelled, or the
+connection dies.
+Owned and borrowed descriptors may be mixed in one message, at any depth.
+.Fn fidl_bsd_fd_owned
+returns a value below \-1, or
+.Dv FIDL_BSD_FD_ABSENT
+(\-1) for a negative argument; received descriptor fields are plain
+descriptors or \-1 and are never encoded this way.
 .Pp
 Decoded C callback buffers last until callback return.
 Callback descriptors are also released on return unless taken with
@@ -332,12 +393,32 @@ CAP_FSTAT for that check.
 Channel type checks need GETINFO permission and currently require SAME_RIGHTS.
 The kernel continues to enforce transfer ceilings, revocation, and locked
 exec and fork restrictions.
+.Ss Allocation
+Steady-state calls do not allocate.
+Each connection encodes into a 4 KiB send buffer reserved from
+.Xr libchannel 3 ,
+from which the message is sent or queued without a copy (a larger body is
+encoded in the connection's own packet and sent as before), and recycles its
+outstanding-call records, received message objects and C request contexts
+through slabs bounded by its
+.Va max_pending_requests
+option; beyond that bound, or when a slab cannot grow, objects come from the
+heap as before, and an allocation failure closes the connection with
+.Er ENOMEM
+and every attached descriptor.
+A retained request context keeps its slab alive after the connection is
+destroyed.
+Decoded C views use a 2 KiB on-stack arena per message and the heap beyond
+it.
 .Sh RETURN VALUES
 Status functions return errno values directly, with zero for success.
 .Fn fidl_bsd_connection_fd
 returns a borrowed descriptor, or \-1 for an invalid connection.
 .Fn fidl_bsd_take_fd
 returns the taken descriptor, or \-1 if absent.
+.Fn fidl_bsd_fd_owned
+returns the owned-descriptor marker for a field, or \-1 for a negative
+argument.
 .Sh FILES
 .Bl -tag -width indent
 .It Pa /usr/src/lib/libfidl/README

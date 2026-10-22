@@ -21,6 +21,20 @@ namespace fidl::bsd::cwire {
 inline constexpr uint64_t kAllocPresent = UINT64_MAX;
 inline constexpr size_t kDepthMax = FIDL_RECURSION_DEPTH;
 
+// Outgoing C descriptor fields (fidl_bsd_fd_owned() in runtime_c.h): a
+// non-negative value is borrowed, -1 is absent, and a value below -1 is an
+// owned descriptor the call takes, whatever the outcome.
+inline bool
+OwnedFd(int value)
+{
+	return value < -1;
+}
+inline int
+FdOf(int value)
+{
+	return value < -1 ? -2 - value : value;
+}
+
 // An empty string is valid whatever its pointer: C callers pass NULL with
 // size 0 for "", which utfutils_is_valid_utf8() rejects.
 inline bool
@@ -70,9 +84,14 @@ class Encoder {
 		memcpy(&value, out_.RawBody() + offset, sizeof(value));
 		return value;
 	}
-	void Handle(size_t offset, int fd, uint32_t type, uint32_t rights,
+	// A borrowed descriptor is duplicated into the packet; an owned one
+	// is moved into it, and closed here instead when the message has
+	// already failed or this descriptor is refused.
+	void Handle(size_t offset, int value, uint32_t type, uint32_t rights,
 	    bool optional)
 	{
+		Descriptor owner(OwnedFd(value) ? FdOf(value) : -1);
+		int fd = OwnedFd(value) ? owner.get() : value;
 		if (error_)
 			return;
 		if (fd < 0) {
@@ -82,13 +101,20 @@ class Encoder {
 				Put<uint32_t>(offset, FIDL_HANDLE_ABSENT);
 			return;
 		}
-		int error = out_.RawHandle(fd, type, rights);
+		int error = owner ? out_.RawHandleMove(fd, type, rights) :
+				    out_.RawHandle(fd, type, rights);
 		if (error) {
 			Fail(error);
 			return;
 		}
+		if (owner)
+			moved_[nmoved_++] = owner.release();
 		Put<uint32_t>(offset, FIDL_HANDLE_PRESENT);
 	}
+	// Owned descriptors the packet took; the packet closes them if the
+	// send fails, so a failed call's release pass must skip them.
+	const int *moved() const { return moved_; }
+	size_t moved_count() const { return nmoved_; }
 	// A string body after its 16-byte header at offset.
 	void String(size_t offset, const char *data, size_t size,
 	    size_t limit, size_t depth)
@@ -135,6 +161,35 @@ class Encoder {
     private:
 	Outgoing &out_;
 	int error_ = 0;
+	int moved_[kMaxDescriptors];
+	size_t nmoved_ = 0;
+};
+
+// The release pass of a failed call: closes every owned descriptor the C
+// value still holds, except those an encoder already moved into the packet
+// (generated CWRelease_ functions walk the value, this closes each field).
+class OwnedRelease {
+    public:
+	OwnedRelease() = default;
+	explicit OwnedRelease(const Encoder &e)
+	    : moved_(e.moved())
+	    , nmoved_(e.moved_count())
+	{
+	}
+	void Release(int value) const
+	{
+		if (!OwnedFd(value))
+			return;
+		int fd = FdOf(value);
+		for (size_t i = 0; i < nmoved_; ++i)
+			if (moved_[i] == fd)
+				return;
+		close(fd);
+	}
+
+    private:
+	const int *moved_ = nullptr;
+	size_t nmoved_ = 0;
 };
 
 // Decoded views live in this arena; small messages never touch the heap.

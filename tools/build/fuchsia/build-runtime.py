@@ -50,7 +50,7 @@ sources += [r/'sdk/lib/zircon-assert/zx_panic_libc.cc',r/'sdk/lib/utf-utils/utf-
 # Use the maintained native library for ordinary builds. Sanitizer builds
 # instrument the same transport sources into a separate test archive.
 separate_transport = a.sanitize or a.bench
-transport_sources = [a.src/'lib/libchannel/channel.c', a.src/'lib/libchannel/channel_syscall.c'] if separate_transport else []
+transport_sources = [a.src/'lib/libchannel/channel.c', a.src/'lib/libchannel/channel_call.c', a.src/'lib/libchannel/channel_syscall.c'] if separate_transport else []
 if not separate_transport:
  subprocess.run(['make','-C',str(a.src/'lib/libchannel'),'-j'+str(os.cpu_count()),'MK_TESTS=no','all'],check=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
  channel_obj=Path(subprocess.check_output(['make','-C',str(a.src/'lib/libchannel'),'-V','.OBJDIR'],text=True).strip())

@@ -109,6 +109,17 @@ send failure returns the error and leaves the caller's original descriptor
 open; a two-way call that fails immediately does not invoke its callback.
 Queued output can fail later during dispatch, so acceptance is not delivery.
 
+A C caller that is finished with a descriptor passes `fidl_bsd_fd_owned(fd)`
+in the field instead. The call then takes it as a C++ `Descriptor` argument
+is taken: it is moved into the message (no duplicate, no `fcntl` or
+inheritance-lock calls) and the caller must not touch it again whatever the
+outcome. The outcomes are exact: a call that returns an error, for any
+reason including the kernel's `ENOTCAPABLE` or `EINVAL`, has already closed
+the descriptor; an accepted message, sent or queued, owns it, and the runtime
+closes a queued copy when that send later fails, is cancelled or the
+connection dies. Owned and borrowed descriptors mix freely in one message;
+plain descriptors keep the borrowing behaviour above.
+
 Descriptor work is folded into the message system calls, whatever the number
 of attachments. The sender passes each schema's type and rights as an
 expectation; the kernel checks all of them before accepting the message,
@@ -117,8 +128,8 @@ gets each descriptor's type and rights with the message and validates against
 that report, so a descriptor the sender narrowed to exactly the schema's
 rights needs no further call; otherwise one `cap_rights_limit(2)` narrows it.
 A C sender's lent descriptor costs one duplicate, delivered with inheritance
-locked by the send. On older kernels libchannel performs the same checks in
-userland.
+locked by the send; an owned one (`fidl_bsd_fd_owned`) costs nothing beyond
+the send. On older kernels libchannel performs the same checks in userland.
 
 Measured with `ktrace` in a VM (`ipc_bench cppfd|cfd`, one read-only pipe
 descriptor per two-way call, both processes counted; the four message ioctls,
@@ -192,8 +203,8 @@ stamp, rights attenuation, and rejection of a second transfer of a one-hop
 descriptor. It uses an upstream wire header and handle marker, not generated
 client/server bindings. Results are recorded in
 `tools/build/fuchsia/VALIDATION.json`. The subsequent runtime suite passes
-67 native tests, a C11 client/server integration test, and 36 generator
-contract checks. All 32 accepted binding fixtures also compile and link,
+native gtest suite (now 91 tests), a C11 client/server integration test,
+and 38 generator contract checks. All 34 accepted binding fixtures also compile and link,
 and repeated generation is identical. Eight dependency-graph checks and a
 three-library C round trip also pass, including composed/base protocol
 interoperation and generation from extracted pkgbase tools. ASan and UBSan
@@ -207,9 +218,11 @@ encode/decode entry points as the native runtime: 1,033 encode, decode and
 failure cases pass in ordinary and ASan/UBSan builds. The 193 cases that need
 Zircon handle objects or rights are compiled out (GIDL guards them with
 `__Fuchsia__`); native descriptor transfer has its own tests. A schema
-evolution test compiles one schema at two `@available` versions and runs
-separately built old and new C peers against each other over native
-channels: unknown table fields are dropped, unknown flexible union variants
+evolution test compiles one schema at `bsd:1` and `bsd:2` (the platform
+every `bsd.*` library is versioned under), proves that every element marked
+`@available(added=2)` is absent from the `bsd:1` IR and C header and present
+at `bsd:2`, and runs separately built old and new C peers against each other
+over native channels: unknown table fields are dropped, unknown flexible union variants
 report `_unknown_tag`, flexible enum and bits values pass through, added
 flexible methods return `EOPNOTSUPP` and added flexible events reach the
 `unknown_interaction` hook, with the connection remaining usable.
@@ -245,6 +258,21 @@ to `SRCS`. Schemas list dependencies first (`lib/libfidl/tests/zx.fidl` for
 `--available bsd:2` for a next schema. Generation runs in `beforebuild`,
 before anything is compiled, and again whenever a schema or the generator
 changes, so a `.fidl` edit cannot ship with stale bindings.
+
+### Versioning
+
+Every production library is declared `@available(platform="bsd", added=1)`
+(since 2026-10-22). The library name's `.vN` suffix is the wire major --
+ordinals and layouts are a stable contract, and an incompatible change is a
+new library name -- while the platform version `bsd:N` is the additive level
+shared by every `bsd.*` library: an element added later is marked
+`@available(added=N)` with the next level, and one level covers the whole
+platform. `fidlc` refuses a versioned library without a selected version, so
+`fidl-bindings.mk` compiles every set at `FIDL_AVAILABLE` (default `bsd:1`;
+a `FIDL_FLAGS.NAME` naming `--available` wins), `fidlgen-build.py` applies
+the same default, and a schema installed under `/usr/share/fidl` is compiled
+by hand with `--available bsd:1`. The `zx` shim and the test-only libraries
+are not versioned. `lib/libfidl/README` ("Versioning") is the reference.
 
 The pipeline is `fidlc` (C++, built from `contrib/fuchsia` in buildworld's
 bootstrap-tools stage by `tools/build/fuchsia/fidlc`; patched to use
@@ -314,6 +342,48 @@ receives, which cut raw allocation traffic 34-fold and raw p50 latency by
 about 10%. These numbers describe one ping-pong pattern on one host, not
 multi-day stability, pipelined throughput, or kernel memory.
 
+Since then the C bindings encode and decode directly on the wire, and on
+October 22, 2026 the runtime stopped allocating per call: every request,
+reply and event is encoded into a 4 KiB send buffer reserved from libchannel
+and committed from there (sent at once, or queued as that block, without a
+copy; a larger body spills into the connection's own packet and is sent as
+before), and three slabs bounded by the connection's `max_pending_requests`
+recycle the client's call records, the received-message objects (`Incoming`,
+which servers and event handlers receive as `std::unique_ptr`) and the C
+request contexts. Beyond the bound, or when a slab cannot grow, the heap is
+used exactly as before, so `ENOMEM` behaviour is unchanged. Measured the same
+way on the same host (other builds running, three runs of 20,000 calls, the
+`roundtrip` rows of `ipc_bench suite`):
+
+| Path | Heap allocations per call before (client/server) | After | Bytes allocated per call after (client/server) |
+|---|---|---|---|
+| raw libchannel | 0 / 0 | 0 / 0 | 0 / 0 |
+| FIDL C, 8 and 256 B | 0 / 2 | 0 / 0 | 0 / 0 |
+| FIDL C++, 8 B | 0 / 1 | 0 / 0 | 0 / 0 |
+| FIDL C++, 256 B | 2 / 2 | 2 / 1 | 528 / 264 |
+
+The C++ 256-byte row's remaining allocations are the natural types
+themselves: the benchmark's own `types::Request(text)` copy and the decoded
+`std::string` on each side, which the inline-string capacity does not hold.
+Natural-type copies (the 14 KiB vector of the `large-14304` row costs three
+allocations and 43 KB per call in C++) are a property of upstream natural
+types and were not changed. A received event costs no allocation in either
+binding (the `events-1000` row had cost 1,000 client allocations per burst).
+The after-run was taken at a load average of 25-43, so its latency and
+throughput columns are not comparable with the baseline; the allocation and
+system-call columns are. `tools/build/fuchsia/BENCH.md` records the full
+matrix and `make -C tools/build/fuchsia check-bench-compare BEFORE=...
+AFTER=...` compares two runs. The C descriptor-move path (`fidl_bsd_fd_owned`,
+the new `fds-*-move` `c` rows) removes the runtime's own `fcntl` duplicate per
+descriptor and lets the kernel close the originals. On this host's kernel of
+October 7, which predates `MAC_CAPABILITY_SENDMSG_V2`, libchannel's
+compatibility path still duplicates, locks and closes each descriptor itself
+to deliver it with inheritance locked (four system calls per descriptor), so
+the measured C move count equals the borrow count there; on a kernel with
+`SENDMSG_V2` all of that is one send, and the C move path then costs what
+the raw and C++ move paths cost. That kernel-dependent measurement belongs in
+the 4-vCPU VM.
+
 ## C and C++ interfaces
 
 `lib/libfidl/README` records the build and API contracts. The BSD generator
@@ -325,7 +395,9 @@ application itself compiles as C and links against the same native runtime.
 
 C++ descriptor fields move into calls and are consumed on error as well as
 success. The C interface borrows outgoing buffers and duplicates outgoing
-FDs; the caller keeps the original descriptor and rights. C callback buffers
+FDs; the caller keeps the original descriptor and rights, unless it marks a
+field with `fidl_bsd_fd_owned(fd)`, which hands the descriptor to the call
+under the C++ rules (see above). C callback buffers
 last only until callback return. Use `fidl_bsd_take_fd` to retain a received
 FD and copy any bytes that must survive. Retain/release a C request context
 for a deferred reply; that does not retain its decoded buffers.
@@ -407,6 +479,9 @@ Applications can bind their own event handlers.
 These rules follow [FIDL's unknown-interaction design](https://fuchsia.dev/fuchsia-src/contribute/governance/rfcs/0138_handling_unknown_interactions).
 They support adding methods while old and new peers coexist; they do not replace
 service versioning, authorization, or a tested migration and rollback policy.
+The tree's service versioning is the `bsd` platform level described under
+"Versioning" above: additions are `@available(added=N)`, incompatible changes
+are a new wire-major library name.
 
 ## Shared schema libraries
 
@@ -503,8 +578,12 @@ retains kernel rights enforcement. C keyword and generated size-field
 collisions are escaped deterministically with `_fidl` suffixes.
 
 The first source-tree provider migration is [BSDTime](../providers/time.md);
-the remaining capability daemons follow the plan in
+the other capability daemons followed the plan in
 `tools/build/fuchsia/DAEMONS.md`, starting with [BSDPower](../providers/power.md).
+As of 2026-10-22 fourteen of the fifteen daemons serve FIDL, including every
+`system.Network` endpoint (`.PF` last, see [Network](../providers/network.md));
+BSDBluetooth is the remaining record-protocol provider, and BSDMemory serves
+no endpoint. `DAEMONS.md` keeps the per-daemon status and latency table.
 Providers serving many sessions use `fidl_bsd_connections_wait()` (the FIDL
 form of `service_channels_wait()`), and synchronous C clients use the
 `<fidl/bsd/sync_c.h>` helpers, which honour a caller's

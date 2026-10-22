@@ -392,6 +392,102 @@ main(int argc, char **argv)
 	Exercise(KIT(bsd_runtime_test_Flag, types::Flag), flag, random,
 	    mutations);
 
+	// Owned descriptors (fidl_bsd_fd_owned()): both encoders move them
+	// into the packet and agree on the bytes; a failed direct encode's
+	// release pass closes those not yet attached and skips those it did.
+	auto closed = [](int fd) {
+		return fcntl(fd, F_GETFD) == -1 && errno == EBADF;
+	};
+	{
+		auto owned_fds = Descriptors(2);
+		int owned[2] = { fidl_bsd_fd_owned(owned_fds[0]),
+			fidl_bsd_fd_owned(owned_fds[1]) };
+		auto direct = collection;
+		direct.descriptors = owned;
+		direct.descriptors_size = 2;
+		auto raw = RawEncode(CWEnc_bsd_runtime_test_Collection,
+		    fidl::internal::NaturalCodingTraits<types::Collection,
+			fidl::internal::NaturalCodingConstraintEmpty>::
+			kInlineSize,
+		    direct);
+		CHECK(raw.error == 0 && raw.handles == 2);
+		CHECK(closed(owned_fds[0]) && closed(owned_fds[1]));
+		auto natural_fds = Descriptors(2);
+		int natural_owned[2] = { fidl_bsd_fd_owned(natural_fds[0]),
+			fidl_bsd_fd_owned(natural_fds[1]) };
+		direct.descriptors = natural_owned;
+		auto natural = NaturalEncode(direct);
+		CHECK(natural.error == 0 && natural.handles == 2);
+		CHECK(closed(natural_fds[0]) && closed(natural_fds[1]));
+		CHECK(raw.body == natural.body);
+		// Borrowed originals from the fixture are still open.
+		CHECK(fcntl(fds[0], F_GETFD) >= 0);
+	}
+	{
+		// Attached before the failure (bad enum follows the vector):
+		// the packet closes it; the release pass must not.
+		auto attached = Descriptors(1);
+		auto skipped = Descriptors(1);
+		int mixed[2] = { fidl_bsd_fd_owned(attached[0]),
+			fidl_bsd_fd_owned(skipped[0]) };
+		auto failing = collection;
+		failing.descriptors = mixed;
+		failing.descriptors_size = 2;
+		failing.mode = 7;
+		Outgoing packet;
+		CHECK(packet.RawStart(1, 0x1234, false) == 0);
+		{
+			cwire::Encoder encoder(packet);
+			size_t at = encoder.Alloc(
+			    fidl::internal::NaturalCodingTraits<types::Collection,
+				fidl::internal::NaturalCodingConstraintEmpty>::
+				kInlineSize);
+			CWEnc_bsd_runtime_test_Collection(encoder, &failing, at, 0);
+			CHECK(encoder.error() == EINVAL);
+			CHECK(encoder.moved_count() == 2);
+			CWRelease_bsd_runtime_test_Collection(
+			    cwire::OwnedRelease(encoder), &failing);
+			// Both were attached; still open until the packet resets.
+			CHECK(fcntl(attached[0], F_GETFD) >= 0);
+			CHECK(fcntl(skipped[0], F_GETFD) >= 0);
+		}
+		packet.Reset();
+		CHECK(closed(attached[0]) && closed(skipped[0]));
+		// The vector rejected as a whole: nothing attached, the release
+		// pass closes every owned descriptor the caller described.
+		auto unattached = Descriptors(5);
+		int five[5];
+		for (int i = 0; i < 5; ++i)
+			five[i] = fidl_bsd_fd_owned(unattached[i]);
+		failing = collection;
+		failing.descriptors = five;
+		failing.descriptors_size = 5;
+		Outgoing other;
+		CHECK(other.RawStart(1, 0x1234, false) == 0);
+		cwire::Encoder encoder(other);
+		size_t at = encoder.Alloc(
+		    fidl::internal::NaturalCodingTraits<types::Collection,
+			fidl::internal::NaturalCodingConstraintEmpty>::kInlineSize);
+		CWEnc_bsd_runtime_test_Collection(encoder, &failing, at, 0);
+		CHECK(encoder.error() == EINVAL && encoder.moved_count() == 0);
+		for (int fd : unattached)
+			CHECK(fcntl(fd, F_GETFD) >= 0);
+		CWRelease_bsd_runtime_test_Collection(cwire::OwnedRelease(encoder),
+		    &failing);
+		for (int fd : unattached)
+			CHECK(closed(fd));
+		// A table member and an absent optional: the release pass
+		// honours presence flags and ignores -1.
+		auto table_fd = Descriptors(1);
+		bsd_runtime_test_Extensible present { true,
+			fidl_bsd_fd_owned(table_fd[0]) };
+		CWRelease_bsd_runtime_test_Extensible(cwire::OwnedRelease(),
+		    &present);
+		CHECK(closed(table_fd[0]));
+		bsd_runtime_test_OptionalResource absent { -1 };
+		CWRelease_bsd_runtime_test_OptionalResource(cwire::OwnedRelease(),
+		    &absent);
+	}
 	printf("c_wire_test: %u checks, %u failures\n", checks, failures);
 	return failures ? 1 : 0;
 }
