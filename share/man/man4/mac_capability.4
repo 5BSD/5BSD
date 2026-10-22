@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd October 10, 2026
+.Dd October 22, 2026
 .Dt MAC_CAPABILITY 4
 .Os
 .Sh NAME
@@ -144,7 +144,7 @@ The mint ability can be removed with
 .Ss Introspection
 .Dv MAC_CAPABILITY_GETINFO
 returns the service name, badge, queue limits, and feature flags
-.Pq Dv MAC_CAPABILITY_INFO_F_SENDMSG , MAC_CAPABILITY_INFO_F_RECVMSG , MAC_CAPABILITY_INFO_F_CALL , MAC_CAPABILITY_INFO_F_KQUEUE .
+.Pq Dv MAC_CAPABILITY_INFO_F_SENDMSG , MAC_CAPABILITY_INFO_F_RECVMSG , MAC_CAPABILITY_INFO_F_CALL , MAC_CAPABILITY_INFO_F_KQUEUE , MAC_CAPABILITY_INFO_F_CHANNEL_CALL .
 Standard file-descriptor tools such as
 .Xr procstat 1
 show
@@ -296,6 +296,77 @@ when it is unrestricted.
 A receiver can validate attachments without further system calls.
 Descriptors whose ioctl allowlist names the older commands should also list
 these to use them.
+.It Dv MAC_CAPABILITY_CHANNEL_CALL
+Send a request and receive its reply in one system call, for peers that
+exchange messages through
+.Dv MAC_CAPABILITY_SENDMSG
+and
+.Dv MAC_CAPABILITY_RECVMSG
+(channel endpoints and any service with an asynchronous handler).
+.Va request
+is accepted exactly as
+.Dv MAC_CAPABILITY_SENDMSG_V2
+accepts it, with the same queue limits, descriptor expectations, transfer
+authority and
+.Dv MAC_CAPABILITY_SEND_F_MOVE
+semantics, and must carry a nonzero
+.Va reply_token
+chosen by the caller.
+The caller then sleeps, interruptibly, until a message carrying that token
+arrives on its own receive side and receives it into
+.Va reply
+as
+.Dv MAC_CAPABILITY_RECVMSG_V4
+would, with the same process and authority stamps and descriptor
+information.
+Only that message is taken; events and other replies that arrive meanwhile
+stay queued for
+.Dv MAC_CAPABILITY_RECVMSG .
+A matched reply is handed to the sleeping caller directly and never occupies
+the receive queue, so a caller whose queue holds unread events up to the
+limit still receives it.
+.Va timeout_ms
+bounds the wait
+.Pq Dv MAC_CAPABILITY_RECV_WAIT_FOREVER No for no limit
+with one absolute deadline across wakeups.
+On
+.Er ETIMEDOUT
+the request remains sent; the kernel remembers the token as cancelled, in a
+ring of
+.Dv MAC_CAPABILITY_CALL_CANCELLED
+entries per descriptor whose oldest entry is evicted, and discards the late
+reply, closing its descriptors.
+On
+.Er EINTR
+the request also remains sent, but its reply is delivered through
+.Dv MAC_CAPABILITY_RECVMSG
+so the caller can still match it.
+Peer death completes the call with
+.Er ECONNRESET .
+When the reply does not fit, the call fails with
+.Er EMSGSIZE ,
+reports the required sizes as a receive does, and leaves the reply at the
+head of the receive queue for a larger
+.Dv MAC_CAPABILITY_RECVMSG_V4 .
+.Va reply.v3.message.flags
+must be zero on input and reports
+.Dv MAC_CAPABILITY_RECV_F_STATUS
+and
+.Dv MAC_CAPABILITY_RECV_F_EMPTY
+on success.
+Either
+.Dv MAC_CAPABILITY_REVOKE_SEND
+or
+.Dv MAC_CAPABILITY_REVOKE_RECV
+disables the command
+.Pq Er EACCES .
+Kernels without it fail with
+.Er ENOTTY ;
+.Dv MAC_CAPABILITY_GETINFO
+reports its presence as
+.Dv MAC_CAPABILITY_INFO_F_CHANNEL_CALL .
+Descriptors whose ioctl allowlist names the messaging commands must also list
+this one to use it.
 .It Dv MAC_CAPABILITY_CALL
 Synchronous request/reply in the caller's thread.
 Returns

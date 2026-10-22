@@ -109,6 +109,19 @@ STAILQ_HEAD(mac_capability_msgq, mac_capability_msg);
 #define	MAC_CAPABILITY_RF_NO_CALL		0x0004
 #define	MAC_CAPABILITY_RF_NO_MINT		0x0008
 
+/*
+ * A thread sleeping in MAC_CAPABILITY_CHANNEL_CALL for the reply carrying
+ * cw_token.  Lives on the caller's stack, linked on ci_callers under ci_mtx;
+ * the TX insert paths hand a matching message over through cw_msg and the
+ * caller sleeps on &ci_txq, so every existing wakeup (insert, revoke, close)
+ * reaches it.
+ */
+struct mac_capability_call_waiter {
+	LIST_ENTRY(mac_capability_call_waiter) cw_link;
+	uint64_t	cw_token;
+	struct mac_capability_msg *cw_msg;	/* (M) delivered reply */
+};
+
 /* Refcounted callback result; holds no instance or service reference. */
 struct mac_capability_callback_state {
 	u_int cs_refs;
@@ -135,6 +148,11 @@ struct mac_capability_instance {
 	struct mac_capability_msgq ci_txq;	/* (M) outbound queue */
 	int		ci_txqlen;		/* (M) outbound count */
 	struct knlist	ci_rknotes;		/* (M) EVFILT_READ knotes */
+	/* (M) CHANNEL_CALL callers awaiting a reply, and timed-out tokens. */
+	LIST_HEAD(, mac_capability_call_waiter) ci_callers;
+	uint64_t	ci_call_cancelled[MAC_CAPABILITY_CALL_CANCELLED];
+	u_int		ci_call_ncancelled;	/* (M) ring entries in use */
+	u_int		ci_call_cancel_next;	/* (M) next ring slot */
 
 	struct mac_capability_msgq ci_rxq;	/* (M) inbound queue */
 	int		ci_rxqlen;		/* (M) inbound count */
@@ -221,6 +239,19 @@ int	mac_capability_instance_link(struct mac_capability_service *svc, struct mac_
 int	mac_capability_instance_create(struct mac_capability_service *svc, struct thread *td,
 	    uint64_t badge, int *fdp);
 void	mac_capability_dispatch_task(void *context, int pending);
+/*
+ * Before a message is placed on s's TX queue (ci_mtx held): hand it to a
+ * CHANNEL_CALL waiter for its token (MAC_CAPABILITY_TX_TAKEN), mark it for
+ * discard as the late reply to a timed-out call (MAC_CAPABILITY_TX_DISCARD;
+ * the caller frees it after dropping ci_mtx), or leave it to be queued.
+ */
+#define	MAC_CAPABILITY_TX_QUEUE		0
+#define	MAC_CAPABILITY_TX_TAKEN		1
+#define	MAC_CAPABILITY_TX_DISCARD	2
+int	mac_capability_call_intercept_locked(struct mac_capability_instance *s,
+	    struct mac_capability_msg *msg);
+void	mac_capability_call_cancel_locked(struct mac_capability_instance *s,
+	    uint64_t token);
 void	mac_capability_instance_drain_txq(struct mac_capability_instance *s);
 void	mac_capability_instance_drain_rxq(struct mac_capability_instance *s);
 void	mac_capability_free_msgq(struct mac_capability_msgq *q);

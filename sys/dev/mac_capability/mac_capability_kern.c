@@ -143,6 +143,59 @@ mac_capability_free_msgq(struct mac_capability_msgq *q)
 }
 
 /*
+ * A reply for a thread sleeping in MAC_CAPABILITY_CHANNEL_CALL bypasses the
+ * TX queue: the caller cannot drain that queue while it sleeps, so counting
+ * the reply against the queue limits could deadlock the peer's reply behind
+ * the caller's own unread events.  The late reply to a call that timed out
+ * is discarded instead, as fidl_bsd_sync_wait_txid() would discard it.
+ * Only messages with a token can be replies; events (token 0) always queue.
+ */
+int
+mac_capability_call_intercept_locked(struct mac_capability_instance *s,
+    struct mac_capability_msg *msg)
+{
+	struct mac_capability_call_waiter *cw;
+	u_int i;
+
+	mtx_assert(&s->ci_mtx, MA_OWNED);
+	if (msg->cm_reply_token == 0)
+		return (MAC_CAPABILITY_TX_QUEUE);
+	LIST_FOREACH(cw, &s->ci_callers, cw_link) {
+		if (cw->cw_token == msg->cm_reply_token) {
+			LIST_REMOVE(cw, cw_link);
+			cw->cw_msg = msg;
+			wakeup(&s->ci_txq);
+			return (MAC_CAPABILITY_TX_TAKEN);
+		}
+	}
+	if (s->ci_call_ncancelled == 0)
+		return (MAC_CAPABILITY_TX_QUEUE);
+	for (i = 0; i < MAC_CAPABILITY_CALL_CANCELLED; i++) {
+		if (s->ci_call_cancelled[i] == msg->cm_reply_token) {
+			s->ci_call_cancelled[i] = 0;
+			s->ci_call_ncancelled--;
+			return (MAC_CAPABILITY_TX_DISCARD);
+		}
+	}
+	return (MAC_CAPABILITY_TX_QUEUE);
+}
+
+/* Remember a timed-out call token; the oldest entry makes room. */
+void
+mac_capability_call_cancel_locked(struct mac_capability_instance *s,
+    uint64_t token)
+{
+	u_int slot;
+
+	mtx_assert(&s->ci_mtx, MA_OWNED);
+	slot = s->ci_call_cancel_next;
+	s->ci_call_cancel_next = (slot + 1) % MAC_CAPABILITY_CALL_CANCELLED;
+	if (s->ci_call_cancelled[slot] == 0)
+		s->ci_call_ncancelled++;
+	s->ci_call_cancelled[slot] = token;
+}
+
+/*
  * Enqueue a message on an instance's TX queue.  Caller must hold ci_mtx.
  *
  * If 'force' is true the message bypasses the soft limit (used by
@@ -152,17 +205,33 @@ mac_capability_free_msgq(struct mac_capability_msgq *q)
  *
  * Hard limit: prevents a client that never reads from growing
  * kernel memory without bound.  Set to 4× queue_depth.
+ *
+ * A message taken by a sleeping CHANNEL_CALL caller, or discarded as the
+ * late reply to a timed-out call, is accepted without being queued; the
+ * latter is returned on *discard for the caller to free outside ci_mtx.
  */
 static int
 mac_capability_instance_enqueue_tx(struct mac_capability_instance *s, struct mac_capability_msg *msg,
-    bool force)
+    bool force, struct mac_capability_msg **discard)
 {
 	int hard_limit;
 
 	mtx_assert(&s->ci_mtx, MA_OWNED);
+	if (discard != NULL)
+		*discard = NULL;
 	if ((s->ci_flags & MAC_CAPABILITY_SF_DEAD) || s->ci_service == NULL) {
 		mac_capability_msg_free(msg);
 		return (ECONNRESET);
+	}
+	switch (mac_capability_call_intercept_locked(s, msg)) {
+	case MAC_CAPABILITY_TX_TAKEN:
+		return (0);
+	case MAC_CAPABILITY_TX_DISCARD:
+		if (discard != NULL) {
+			*discard = msg;
+			return (0);
+		}
+		break;
 	}
 	hard_limit = (int)s->ci_service->csvc_queue_depth * MAC_CAPABILITY_TX_HARD_MULT;
 	if (!force && s->ci_txqlen >= (int)s->ci_service->csvc_tx_limit) {
@@ -265,7 +334,7 @@ mac_capability_msg_alloc(const void *data, size_t datalen,
 static void
 mac_capability_auto_reply(struct mac_capability_instance *s, uint64_t reply_token, int error)
 {
-	struct mac_capability_msg *msg;
+	struct mac_capability_msg *msg, *discard;
 	uint32_t err32;
 	int tx_error;
 
@@ -276,8 +345,10 @@ mac_capability_auto_reply(struct mac_capability_instance *s, uint64_t reply_toke
 	msg->cm_reply_token = reply_token;
 
 	mtx_lock(&s->ci_mtx);
-	tx_error = mac_capability_instance_enqueue_tx(s, msg, true);
+	tx_error = mac_capability_instance_enqueue_tx(s, msg, true, &discard);
 	mtx_unlock(&s->ci_mtx);
+	if (discard != NULL)
+		mac_capability_msg_free(discard);
 	if (tx_error != 0 && s->ci_service != NULL)
 		SDT_PROBE5(mac_capability, , , queue__pressure,
 		    s->ci_service->csvc_name, s->ci_badge, "auto-reply-drop",
@@ -825,7 +896,7 @@ mac_capability_reply(struct mac_capability_instance *s, uint64_t reply_token,
     const void *out, size_t outlen,
     struct file **out_fds, struct filecaps *out_fcaps, int out_nfds)
 {
-	struct mac_capability_msg *msg;
+	struct mac_capability_msg *msg, *discard;
 	sbintime_t start __sdt_used;
 	int error;
 
@@ -849,8 +920,10 @@ mac_capability_reply(struct mac_capability_instance *s, uint64_t reply_token,
 	/* cm_badge, cm_cred, cm_abi intentionally zero for service→client. */
 
 	mtx_lock(&s->ci_mtx);
-	error = mac_capability_instance_enqueue_tx(s, msg, true);
+	error = mac_capability_instance_enqueue_tx(s, msg, true, &discard);
 	mtx_unlock(&s->ci_mtx);
+	if (discard != NULL)
+		mac_capability_msg_free(discard);
 
 done:
 	if (error == 0 && s->ci_service != NULL)
@@ -868,7 +941,7 @@ int
 mac_capability_notify(struct mac_capability_instance *s, const void *data, size_t datalen,
     struct file **fds, struct filecaps *fcaps, int nfds)
 {
-	struct mac_capability_msg *msg;
+	struct mac_capability_msg *msg, *discard;
 	sbintime_t start __sdt_used;
 	int error;
 
@@ -890,8 +963,10 @@ mac_capability_notify(struct mac_capability_instance *s, const void *data, size_
 	/* cm_badge, cm_cred, cm_abi intentionally zero for service→client. */
 
 	mtx_lock(&s->ci_mtx);
-	error = mac_capability_instance_enqueue_tx(s, msg, false);
+	error = mac_capability_instance_enqueue_tx(s, msg, false, &discard);
 	mtx_unlock(&s->ci_mtx);
+	if (discard != NULL)
+		mac_capability_msg_free(discard);
 
 done:
 	if (error == 0 && s->ci_service != NULL)
@@ -908,7 +983,7 @@ done:
 int
 mac_capability_forward(struct mac_capability_instance *s, const struct mac_capability_msg *src)
 {
-	struct mac_capability_msg *msg;
+	struct mac_capability_msg *msg, *discard;
 	sbintime_t start __unused;
 	int error;
 
@@ -938,8 +1013,10 @@ mac_capability_forward(struct mac_capability_instance *s, const struct mac_capab
 	}
 
 	mtx_lock(&s->ci_mtx);
-	error = mac_capability_instance_enqueue_tx(s, msg, false);
+	error = mac_capability_instance_enqueue_tx(s, msg, false, &discard);
 	mtx_unlock(&s->ci_mtx);
+	if (discard != NULL)
+		mac_capability_msg_free(discard);
 
 	if (s->ci_service != NULL)
 		SDT_PROBE5(mac_capability, , , forward__done,
