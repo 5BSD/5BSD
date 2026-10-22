@@ -22,6 +22,10 @@ fail() { echo "FAIL $*"; rc=1; }
 $S dut 'sh -es' <<'EOF'
 ifconfig vtnet1 | grep -q 'inet 10.188.210.50 ' ||
     ifconfig vtnet1 inet 10.188.210.50/24 up
+# Keep the image's own default route (defaultrouter) to restore after.
+[ -e /var/tmp/podman-pf.defaultrouter ] ||
+    route -n get default 2>/dev/null |
+    awk '$1 == "gateway:" { print $2 }' > /var/tmp/podman-pf.defaultrouter
 route -q delete default >/dev/null 2>&1 || true
 route -q add default 10.188.210.10
 sysctl -q net.inet.ip.forwarding=1
@@ -116,5 +120,7 @@ fi
 d=$($S dut 'dmesg | grep -E "lock order reversal|panic|state key linking mismatch|pf: " | tail -5')
 [ -z "$d" ] && pass "dmesg: clean" || fail "dmesg: $d"
 
-$S dut 'route -q delete default >/dev/null 2>&1; true'
+# Restore the default route the DUT had: the ATF suites that follow expect
+# one (udp_bindings connects to an address only a default route reaches).
+$S dut 'route -q delete default >/dev/null 2>&1; gw=$(cat /var/tmp/podman-pf.defaultrouter 2>/dev/null); rm -f /var/tmp/podman-pf.defaultrouter; [ -z "$gw" ] || route -q add default "$gw"; true'
 exit $rc
