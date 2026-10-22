@@ -1,0 +1,9 @@
+{
+  "sha256": {
+    "/usr/obj/5BSD-hypertrace-validation/coverage-compiler-20261020/usr/obj/5BSD-hypertrace/amd64.amd64/cddl/lib/libdtrace/libdtrace.so.2": "ea68fa12145ca0c3b40c2de84b790bd9aed5658c8d11c009dc9837b01d687111",
+    "/usr/obj/5BSD-hypertrace/contrib/hypertrace/tests/dtraced-client.c": "e6a31dc9e85bbb3d1ecb8a4e8fe991a8d9fc9f046285dafedf5b6a0c3b42ca28",
+    "/usr/obj/5BSD-hypertrace/contrib/hypertrace/tests/dtraced-client-shim.c": "3e3701a732dc3ed3c18f7814ad0aa278c9df5d5c347a1fb02560694b7ab8a114",
+    "/usr/obj/5BSD-hypertrace/contrib/hypertrace/tests/dtraced-client.py": "89a71a8d7b897f2196c71500ea4b0d5892800f36c25fc4f57b4f73b8abe80a83"
+  },
+  "scope": "socketpair peers and a redirected test socket; preloaded birth-identity shim; no daemon or device"
+}

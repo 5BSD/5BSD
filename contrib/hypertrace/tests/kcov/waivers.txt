@@ -1,0 +1,115 @@
+# Changed lines that are infeasible by construction (coverage-kernel.py).
+# FILE|FUNCTION|CLASS|GUARD-REGEX (6 lines before the run + its first line)|REASON
+#
+# Classes:
+#  vm-tag     A guest-tagged value on a host probe, or a handle other than the
+#             firing probe's.  Only dtrace_dif_variable()/hypertrace_probe()
+#             tag values, only with the firing probe's own handle, and only on
+#             a virtual probe (dtpr_vmid != 0); one firing has one handle.
+#  privilege  A privilege denial.  On FreeBSD a consumer state's credential is
+#             the cdev's si_cred, which is NULL, so dtrace_state_create() gives
+#             every state DTRACE_CRV_ALL/DTRACE_CRA_ALL; with kernel access
+#             dtrace_canload()/dtrace_strcanload() of host memory always pass.
+#  guest-args A virtual probe without hypertrace arguments.  A vmid != 0 probe
+#             fires only through hypertrace_probe(), which always passes them.
+#  dominated-upstream  An upstream FreeBSD/illumos check whose condition was
+#             already refused earlier on every path (named in the reason); kept
+#             to stay close to upstream.  Redundant checks in 5BSD-written
+#             code were removed instead (round 3).
+#  live-only  Reachable only with real kernel memory behaviour (a mapped top
+#             page, a kernel fault handler): to be run under QEMU.
+#  future-feature  A disabled, unwired future feature kept in place.
+#  invariant  An internal-consistency panic or a bound that the only callers
+#             (named) cannot violate.
+#  gap        No executable code: LLVM attributes a zero-count gap region to a
+#             closing brace that follows a break or return.
+#  infeasible Reachable in principle but not in bounded time (named); kept as
+#             defence in depth.
+#
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_canload_tagged|vm-tag|vmhdl != mstate->dtms_vmhdl\) \{|ILLOP for a handle that is not the firing probe's
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_strcanload|privilege|not accessible to the caller|host string-region check below kernel access
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_vcanload|privilege|if \(type->dtdt_kind == DIF_TYPE_STRING\) \{|host (untagged) by-ref string without kernel access
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_guest_user_load_reg|privilege|if \(!dtrace_priv_proc\(state\)\)|proc privilege denial
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_guest_user_load_reg|guest-args|if \(mstate->dtms_htrargs == NULL\) \{|called only for virtual probes
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_guest_user_copy|privilege|if \(!dtrace_priv_proc\(state\)\)|proc privilege denial
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_guest_user_copy|guest-args|if \(mstate->dtms_htrargs == NULL\) \{|called only for virtual probes
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_guest_copyout|guest-args|if \(mstate->dtms_htrargs == NULL\) \{|called only for virtual probes
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_priv_kernel|privilege|return \(1\);|privilege denial (KPRIV)
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_priv_kernel_destructive|privilege|return \(1\);|privilege denial (KPRIV)
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_priv_probe|privilege|dtrace_probe_t \*probe = ecb->dte_probe;|reached only for states without DTRACE_CRA_ALL
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_guest_getupcstack|invariant|vmid >= HYPERTRACE_MAX_VMS\) \{|the only caller passes the record's slots (1..2049, validated at ECB creation) and the firing probe's vmid
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_guest_getupcstack|invariant|if \(walked >= 2048\) \{|guest ustack() is limited to 2048 frames at ECB creation, so the slots run out first
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_variable|privilege|if \(!dtrace_priv_(proc|kernel)\(state\)\)|privilege denial
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_variable|guest-args|if \(mstate->dtms_htrargs == NULL\) \{|virtual probes always carry arguments
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_subr|privilege|if \(!dtrace_canload\(tupregs\[0\].dttk_value,|host lock subroutines: dtrace_canload() of host memory passes with kernel access (guests are refused earlier)
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_subr|vm-tag|if \(tupregs\[0\].dttk_vmhdl\)|copyin/copyinto/copyinstr host branch with a tagged source
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_subr|vm-tag|if \(tupregs\[0\].dttk_vmhdl != NULL \|\||host copyout with a tagged operand
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_subr|vm-tag|if \(vmhdl != NULL \|\| tupregs\[1\].dttk_vmhdl != NULL\) \{|host copyoutstr with a tagged operand
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_subr|dominated-upstream|if \(!dtrace_canload_tagged\((addr, vhaddr, len|substr, vhsubstr, sublen) \+ 1,|upstream RINDEX/INDEX checked dtrace_canload(len + 1); len and sublen were bounded against wrap and addr != 0 just before
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_subr|dominated-upstream|!dtrace_canload_tagged\(elem, vhelem, elemlen \+ 1,|upstream json checked dtrace_canload(jsonlen + 1); elemlen/jsonlen come from strlen of regions already authorized
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_subr|live-only|if \(s > UINTPTR_MAX - i\) \{|tolower/toupper host string ending at the top of the address space: needs a mapped top page (the harness top page is toxic and faults first); guest strings are refused by strcanload
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_subr|vm-tag|if \(!guest && vmhdl != NULL\) \{|memref() of a tagged pointer on a host probe
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_subr|vm-tag|if \(vmhdl != mstate->dtms_vmhdl\) \{|memref() of another VM's pointer
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_subr|gap|regs\[rd\].dttr_value = hva;|closing brace after break (ptinfo)
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_vmhdl_merge|vm-tag|if \(vh1 != NULL && vh2 != NULL && vh1 != vh2\) \{|operands of two VMs in one firing
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_emulate|vm-tag|if \(regs\[r1\].dttr_vmhdl != NULL\) \{|ULD* of a tagged address on a host probe (guest probes branch to dtrace_guest_user_load_reg first)
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_store_by_ref|vm-tag|c = vmhdl != NULL \?|host probe store of a tagged by-ref value
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_probe_lookup_firing|invariant|if \(vmid >= HYPERTRACE_MAX_VMS \|\| id == 0\)|callers pass a VMM-allocated vmid and a provider-created id
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_probe_enter|invariant|panic\("Recursing into dtrace_probe|recursion panic
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_probe|invariant|if \(vmid >= HYPERTRACE_MAX_VMS\) \{|hypertrace_getns() returns a VM id that hypertrace_vm_alloc() handed out (< HYPERTRACE_MAX_VMS)
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_probe|privilege|if \(prov && \(ecb->dte_cond & DTRACE_COND_USERMODE\)|DTRACE_COND_USERMODE is set only for states without kernel visibility
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_probe|privilege|if \(!dtrace_priv_kernel\(state\)\)|privilege denial
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_match_priv|privilege|.|privilege-filtered matching (priv is always DTRACE_PRIV_ALL)
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|_dtrace_vprobe_create|invariant|_id > DTRACE_SENSIBLE_PROBELIMIT\)|VPROBE_CREATE refuses VM ids and probe ids out of range before calling (tested)
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|_dtrace_vprobe_create|invariant|if \(vmid > 0 && _id == DTRACE_IDNONE\) \{|VPROBE_CREATE refuses a zero id before calling
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|_dtrace_vprobe_create|invariant|if \(id - 1 >= dtrace_nvprobes\[vmid\]\)|internal-consistency panic
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_vprobespace_destroy|invariant|if \(vmid == 0 \|\| vmid >= HYPERTRACE_MAX_VMS\) \{|the only caller (dtrace_dtr) iterates 1..HYPERTRACE_MAX_VMS-1
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_vprobespace_destroy|invariant|if \(dtrace_vprobes\[vmid\] == NULL\)|dtrace_nvprobes[vmid] > 0 implies the table exists
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_vprobespace_destroy|invariant|err = hypertrace_rmprobe|a probe in the DTrace table is always in the hypertrace map; failure panics
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_state_create|invariant|if \(dtrace_handle_serial == UINT64_MAX\)|a 64-bit serial incremented once per open
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_ecb_create|privilege|if \(!\(state->dts_cred.dcr_visible & DTRACE_CRV_KERNEL\)\)|states always have kernel visibility
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_strncmp|live-only|if \(a1 == UINTPTR_MAX \|\| a2 == UINTPTR_MAX\) \{|host strings reaching UINTPTR_MAX need a mapped top page; guest strings are bounded by strcanload
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_bcopy|live-only|value = dtrace_load8\(vmhdl, source \+ i - 1\);|host backward copy faulting needs an unmapped page just below a DTrace buffer (kernel fault handler)
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_strcpy|live-only|if \(source == UINTPTR_MAX\) \{|host source reaching UINTPTR_MAX needs a mapped top page
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_bcmp|live-only|if \(len != 0 && source > UINTPTR_MAX - \(len - 1\)\) \{|dynamic-variable key at the top of the address space needs a mapped top page
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_guest_user_load_reg|invariant|size = 8;|the only callers are the six ULD* opcodes
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_varstr|privilege|tougher case: we copy the string|copy path for states without kernel access
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_subr|dominated-upstream|The user didn't use AH_INET or AH_INET6.|upstream inet_ntop: other address families were refused on entry
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_emulate|live-only|htr_args.htr_present =|the host stack-depth/caller walk faults only on a corrupt kernel stack (kernel fault handler)
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_emulate|live-only|\(uint32_t \*\)\(uintptr_t\)mstate->dtms_arg\[0\]\);|dtrace_getpcstack() of the host stack faults only on a corrupt kernel stack
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_enabling_match|invariant|enab->dten_origin_epoch\)\) \{|ENABLE (the only caller passing nmatched) checked the origin with hypertrace_check_epoch() under the same locks; the hypertrace and DTrace epoch tables change together under the config lock
+
+
+
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dif_varstr|privilege|DTRACE_CPUFLAG_SET\(CPU_DTRACE_NOSCRATCH\);\n\s*return \(0\);|copy path for states without kernel access
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_filterfind|future-feature|.|disabled future feature (unwired machine filter, kept in place; DTRACEIOC_FILTER returns ENOTTY, tested)
+# Round 3 additions.
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_guest_copyout|live-only|if \(\(\*flags & CPU_DTRACE_FAULT\) != 0\)\s*\n\s*return;|host source read faulting after dtrace_istoxic()/dtrace_canload() admitted it needs an unmapped kernel page (kernel fault handler)
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_dynvar|infeasible|if \(aligned > SIZE_MAX - ksize\) \{|key sizes are at most LONG_MAX each; a sum above SIZE_MAX needs by-reference keys totalling over 2^63 bytes, every byte of which dtrace_dynvar() first loads one at a time for the hash (it faults or never finishes in probe context)
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_match|dominated-upstream|if \(pkp->dtpk_id != DTRACE_IDNONE\) \{|every enabling's description is a zero-filled dtrace_ecbdesc_t (the DOF loaders never set dtpd_id, so it is DTRACE_IDNONE) and PROBEMATCH clears pkey.dtpk_id; no FreeBSD path matches by probe ID
+sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c|dtrace_probe|privilege|mstate.dtms_htrargs != NULL\);|proc privilege denial for a guest uaddr()
+sys/cddl/dev/dtrace/amd64/dtrace_isa.c|dtrace_populate_stack_str|live-only|sym = dtrace_search_symbol\(pc, DB_STGY_PROC, &off\);|fault while reading a kernel symbol table in probe context (kernel fault handler)
+sys/cddl/dev/dtrace/amd64/dtrace_isa.c|dtrace_populate_stack_str|live-only|dtrace_symbol_values\(sym, &symname, NULL\);|fault while reading a symbol's name/value (kernel fault handler)
+sys/cddl/dev/dtrace/amd64/dtrace_isa.c|dtrace_populate_stack_str|live-only|\*c = \*c_copy;|fault while copying a symbol name (kernel fault handler)
+sys/cddl/dev/dtrace/dtrace_db.c|dtrace_linker_search_symbol|live-only|if \(DTRACE_CPUFLAG_ISSET\(CPU_DTRACE_FAULT\)\) \{|fault in a linker file's symbol search (kernel fault handler)
+sys/cddl/dev/dtrace/dtrace_db.c|dtrace_linker_symbol_values|invariant|LINKER_SYMBOL_VALUES\(lf, sym, symval\) == 0|the symbol comes from dtrace_linker_search_symbol() over the same linker_files list in the same probe-context lookup, so one file owns it
+sys/cddl/dev/dtrace/dtrace_db.c|_dtrace_search_symbol|invariant|if \(strat == DB_STGY_ANY &&|both callers (dtrace_immstack_format, dtrace_populate_stack_str) search with DB_STGY_PROC
+sys/cddl/dev/dtrace/dtrace_db.c|dtrace_symbol_values|dominated-upstream|if \(sym == DB_SYM_NULL\) \{|ported from ddb's db_symbol_values(); both callers test C_DB_SYM_NULL first
+sys/cddl/dev/dtrace/dtrace_db.c|dtrace_symbol_values|invariant|if \(valuep\)|both callers pass a NULL value pointer
+sys/cddl/dev/dtrace/dtrace_immstack.c|dtrace_immstack_format|live-only|sym = dtrace_search_symbol\(pc, DB_STGY_PROC, &off\);|fault while reading a kernel symbol table in probe context (kernel fault handler)
+sys/cddl/dev/dtrace/dtrace_immstack.c|dtrace_immstack_format|live-only|dtrace_symbol_values\(sym, &name, NULL\);|fault while reading a symbol's name (kernel fault handler)
+sys/cddl/dev/dtrace/dtrace_immstack.c|dtrace_immstack_format|live-only|\*p = \*name;|fault while copying a symbol name (kernel fault handler)
+# Round 4: bodies of branch-waived conditions in hypertrace.c and dtrace_ioctl.c (same classes as branch-waivers.txt).
+sys/cddl/dev/hypertrace/hypertrace.c|hypertrace_modevent|invariant|if \(provtab\[i\] != NULL\)|failed creates drop providers that got no probe, rmprobe frees a provider with its last probe, and unload requires zero probes
+sys/cddl/dev/hypertrace/hypertrace.c|hypertrace_get_vprovider|race|if \(vprov != NULL \x7c\x7c first_free == HASH_SIZE\) \{|locked re-check after the unlocked lookup: another thread inserted the provider or filled the table in between
+sys/cddl/dev/hypertrace/hypertrace.c|hypertrace_provider_reserve|infeasible|if \(vprov->vm_refs\[vmid\] == UINT32_MAX\)|2^32 references to one provider from one VM
+sys/cddl/dev/hypertrace/hypertrace.c|hypertrace_vm_alloc|invariant|if \(dtrace_hypertrace_epoch_publish\(candidate, token\) != 0\)|the HyperTrace and DTrace epoch tables change together under the configuration lock
+sys/cddl/dev/hypertrace/hypertrace.c|hypertrace_priv_create_probes|invariant|error = map_insert\(hypertrace_map, htp\);|map_insert() has the same table limit as dtrace_vprobe_create(), which is checked first for the same IDs
+sys/cddl/dev/hypertrace/hypertrace.c|hypertrace_priv_rmprobe|invariant|if \(vprov == NULL\)|every mapped probe was inserted with its provider
+sys/cddl/dev/dtrace/dtrace_ioctl.c|dtrace_ioctl|invariant|else if \(ndesc > p->n_matched\)|dtrace_enabling_list() lists only the probes the match recorded
+sys/cddl/dev/dtrace/dtrace_ioctl.c|dtrace_ioctl|infeasible|n_vprobes_to_create > DTRACE_SENSIBLE_PROBELIMIT -|more virtual-probe registrations than DTRACE_SENSIBLE_PROBELIMIT on one consumer
+# Round 4 (vmm): closing braces after a break in the new ioctl cases.
+sys/amd64/vmm/vmm_dev_machdep.c|vmmdev_machdep_ioctl|gap|identity->epoch = vm_get_hypertrace_epoch\(vm\);\n\s*break;|closing brace after break (VM_GET_IDENTITY)
+sys/amd64/vmm/vmm_dev_machdep.c|vmmdev_machdep_ioctl|gap|sizeof\(attestation->name\)\);\n\s*break;|closing brace after break (VM_GET_ATTESTATION)
+sys/amd64/vmm/vmm_dev_machdep.c|vmmdev_machdep_ioctl|gap|vm_get_run_witness\(vm, &w->guest_entries, &w->running_vcpus\);\n\s*break;|closing brace after break (VM_GET_RUN_WITNESS)
+sys/dev/vmm/vmm_dev.c|vmmdev_ioctl|gap|error = free_memseg\(sc, \(struct vm_free_memseg \*\)data\);\n\s*break;|closing brace after break (VM_FREE_MEMSEG)

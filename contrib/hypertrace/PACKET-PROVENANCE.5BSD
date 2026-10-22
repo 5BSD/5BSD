@@ -1,0 +1,129 @@
+HyperTrace cross-guest packet provenance: remaining integrity contract
+=====================================================================
+
+Current boundary (2026-10-15)
+-----------------------------
+
+The guest creates a 32-byte mbufid_t after receiving a VirtIO DTrace VMID.
+VirtIO-net passes that ID to bhyve, which checks only its canonical shape.
+Tagged TAP accepts any canonical ID and stores it in a persistent mbuf tag.
+The tag survives ordinary packet forwarding. The integrated sidecar change
+restores MSIZE=256, and its allocation outcomes have DTrace probes, but no
+host component proves that the guest was entitled to assert an origin.
+
+A TX rule requiring mid_hostid to equal the sending VMID is insufficient:
+guest B may legitimately forward a packet originated by guest A while
+retaining A's ID. It would also leave msgid free for a guest to forge. A
+kernel-side verifier must distinguish a fresh locally originated claim from
+a relayed claim previously stamped by the host.
+
+Required authenticated V2 contract
+----------------------------------
+
+The integrated branch has the V1-neutral foundation for item 1:
+TAPSBINDVM takes a capability-limited VMM descriptor, checks its current
+VMID and epoch through VM_GET_ATTESTATION, and stores the binding only on
+an open, untagged TAP endpoint. bhyve binds before each tag enable, and
+the binding is cleared on tag disable or close. An already tagged endpoint
+can only confirm the same VMID and epoch; a changed incarnation fails the
+restore path rather than relabeling queued packets. This does not
+authenticate V1 IDs or implement any part of the V2 packet stamp. A
+successful restore to a new incarnation still needs a quiesced V2 rebind.
+
+1. A tagged TAP endpoint is bound to the exact VM incarnation through a
+   read-only VMM attestation descriptor. libvmmapi already exports a
+   CAP_IOCTL-only descriptor limited to VM_GET_ATTESTATION. The TAP binding
+   must revalidate the descriptor at setup, reject zero or out-of-range
+   VMIDs and epochs, and clear the binding when tagging is disabled or the
+   endpoint closes. The bhyve TAP capability ioctl allowlist must include
+   the new binding operation.
+
+2. A versioned packet-ID wire format carries the source incarnation epoch
+   and a host integrity stamp as well as hostid and msgid. V1 has only eight
+   zero-required padding bytes and cannot carry both a full epoch and a
+   strong stamp. V2 must have distinct VirtIO control negotiation and TAP mode;
+   silently interpreting V1 padding as authority is forbidden. The packet
+   ID remains an optional persistent mbuf tag; no bytes return to every
+   mbuf header.
+
+   The branch now reserves a 48-byte V2 shape: the existing 32-byte
+   canonical ID, an eight-byte source epoch, and an eight-byte stamp.
+   Empty records have all fields zero; a fresh guest claim has a canonical
+   ID with zero epoch and stamp; a stamped record has both fields nonzero.
+   Shape validation does not authenticate a stamp. A distinct command value
+   and magic string let the guest and bhyve negotiate V2 ahead of V1.
+   TAP has a separate V2 mode that requires a current bound VM
+   incarnation. The candidate kernel computes a
+   SipHash-2-4 stamp over a domain prefix and the first 40 record bytes,
+   with a per-boot secret key. Epoch and stamp fields use little-endian
+   encoding. The kernel TAP ingress policy checks that a guest stamp's
+   source incarnation remains live.
+
+3. On TAP ingress from a bound VM, an unstamped ID is accepted as a fresh
+   origin only when its claimed VMID and epoch match that binding. The host
+   stamps it using a kernel-held per-boot secret. A stamped ID from another
+   origin is accepted only if the stamp verifies; this permits forwarding
+   without letting a guest invent an unseen foreign origin. No host secret
+   or unrestricted signing oracle is exposed to bhyve or a guest.
+
+4. TAP egress preserves the stamp. VirtIO-net RX passes it to the guest
+   without claiming that a canonical V1 ID is authenticated. The guest's
+   persistent mbuf tag retains it across forwarding, and VirtIO-net TX
+   returns it unmodified. Source trace correlation uses the visible origin
+   fields; the new stamp is an integrity check, not a new origin.
+
+5. Replayed observed IDs can still be copied by a compromised relay. The
+   contract authenticates the claimed origin and incarnation, not the
+   current packet payload or a guest's transformation. Document and test
+   this limit rather than describing the stamp as content authenticity.
+
+Required qualification
+----------------------
+
+The kernel now has an optional persistent 56-byte V2 mbuf tag (48-byte wire
+record plus an eight-byte guest-local incarnation epoch), per-boot
+stamp and constant-time verification functions, and a lock-free current-VM
+epoch table. HyperTrace publishes and revokes exact VM incarnations at
+allocation and release. Source-extracted native tests exercise actual
+stamp code, tampering, relay preservation, host-origin creation, tag
+upgrade and OOM preservation. TAP V2 ingress rejects unstamped foreign
+claims and bad or revoked stamps, accepts a stamped relay from a live VM,
+and stamps a fresh claim only for its bound current VM. The guest now tries
+V2 first and bhyve requests TAP V2 mode when available. Snapshot format 4
+records the mode and rejects nonempty staged V2 records during save or
+restore. These paths compile and pass 44 native port suites, but ordinary
+traffic has not been qualified in a live VM. Per-boot keys also mean
+cross-host migration of already-stamped packets needs a secure host-to-host
+   handoff or an explicit provenance reset before promotion. The guest now
+   implements that reset for saved mbuf tags: an optional eight-byte local
+   identity epoch accompanies the 48-byte wire record in the V2 persistent
+   tag. VirtIO-DTrace updates the epoch when the guest identity changes;
+   VirtIO-net preserves a stamped tag only if its local epoch is current,
+   otherwise it starts a fresh local claim. No bytes are added to ordinary
+   mbufs or to the V2 wire record. Live restore still needs to prove the
+   rekey arrives and is applied before sustained packet transmission.
+
+Host-origin V2 IDs now use a random per-boot ID outside the VMID namespace;
+they do not depend on the guest-only DTrace node ID. Verification checks the
+origin ID before accepting the host epoch, so a guest incarnation whose epoch
+numerically matches the host epoch still becomes stale when its VMID is
+revoked. TAP records an all-zero V2 ID in a persistent sidecar on ingress;
+another TAP therefore forwards that guest's unknown origin as empty. Only an
+mbuf with no V2 sidecar receives a new host-origin ID on TAP egress. Failure
+to allocate the empty sidecar drops the packet rather than misattributing it.
+V1 TAP ingress likewise retains an explicit empty sidecar, and a V1 sidecar
+entering a V2 TAP is treated as unknown rather than authenticated host origin.
+VirtIO-net now keeps an empty V2 receive record in a guest sidecar and sends
+it onward as empty, so a guest relay does not invent its own origin for that
+packet. Source-extracted stamp, TAP ingress, TAP egress, and guest VirtIO-net
+tests cover these cases.
+
+Reject foreign unstamped IDs, altered stamps, wrong epochs, old feature
+versions, unbound TAP writers, and malformed empty IDs. Exercise a real
+A-to-B-to-C relay and a forged A ID from B. Check VMID reuse across source
+shutdown and restore. Compare throughput and allocation/failure rates for
+tagging off, V1, and authenticated V2 on the same workload; use the
+mbufid-sidecar script only for allocation counts, not as a throughput
+benchmark. The current host lacks /dev/vmm and /dev/dtrace/dtrace, so none
+of the live checks has passed. Do not promote this branch on the basis
+of this design or the current component tests.

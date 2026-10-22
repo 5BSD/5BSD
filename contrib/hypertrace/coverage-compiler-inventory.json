@@ -1,0 +1,354 @@
+{
+  "scope": "All SRCS declared in cddl/lib/libdtrace/Makefile; transitive/install inventories still required",
+  "build_file": "cddl/lib/libdtrace/Makefile",
+  "sources": [
+    {
+      "source": "dt_aggregate.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_aggregate.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_analysis.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_analysis.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_as.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_as.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_basic_block.cc",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_basic_block.cc",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_benchmark.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_benchmark.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_buf.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_buf.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_cc.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_cc.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_cg.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_cg.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_consume.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_consume.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_decl.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_decl.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_dis.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_dis.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_dof.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_dof.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_elf.cc",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_elf.cc",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_error.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_error.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_errtags.c",
+      "path": null,
+      "resolution": "generated-or-other-build-path",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_grammar.y",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_grammar.y",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_handle.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_handle.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_hashmap.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_hashmap.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_hypertrace_linker.cc",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_hypertrace_linker.cc",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_ident.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_ident.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_dfg.cc",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_dfg.cc",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_isadep.c",
+      "path": null,
+      "resolution": "generated-or-other-build-path",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_inttab.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_inttab.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_lex.l",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_lex.l",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_link.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_link.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_linker_subr.cc",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_linker_subr.cc",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_list.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_list.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_map.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_map.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_module.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_module.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_names.c",
+      "path": null,
+      "resolution": "generated-or-other-build-path",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_open.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_open.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_options.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_options.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_parser.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_parser.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_pcb.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_pcb.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_pid.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_pid.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_pq.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_pq.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_pragma.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_pragma.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_print.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_print.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_printf.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_printf.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_proc.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_proc.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_program.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_program.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_provider.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_provider.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_regset.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_regset.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_resolver.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_resolver.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_string.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_string.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_strtab.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_strtab.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_subr.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_subr.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_sugar.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_sugar.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_typefile.cc",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_typefile.cc",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_typing.cc",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_typing.cc",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_typing_helpers.cc",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_typing_helpers.cc",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_typing_reg.cc",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_typing_reg.cc",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_typing_stack.cc",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_typing_stack.cc",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_typing_subr.cc",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_typing_subr.cc",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_typing_var.cc",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_typing_var.cc",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_work.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_work.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "dt_xlator.c",
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dt_xlator.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    },
+    {
+      "source": "gmatch.c",
+      "path": "cddl/contrib/opensolaris/lib/libgen/common/gmatch.c",
+      "resolution": "source",
+      "whole_component_coverage": "not-established"
+    }
+  ]
+}

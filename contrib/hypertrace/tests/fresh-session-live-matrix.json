@@ -1,0 +1,386 @@
+{
+  "schema_version": 1,
+  "qualification": "not-run",
+  "execution_authorized": false,
+  "scope": "Fresh sessions only; no old buffers, queues, deliveries or aggregates restored.",
+  "prerequisites": [
+    "Explicit authorization for named disposable hosts/VMs and fault injections",
+    "Matched source revision plus dirty-tree patch digest for host kernels/modules/libraries/bhyve/daemons and guest kernel/driver/daemon",
+    "Matching runtime libraries, not just a linked bhyve binary",
+    "Production migration prerequisites satisfied (TLS, private journals, prepared recovery listener and startup fence); never bypass unsupported configurations or safety gates",
+    "Preserved private canonical source journal root and permanent locks/ownership records",
+    "Operator-controlled connected TLS descriptors and certificate fingerprints; never archive private keys",
+    "Live fault-injection mechanism with documented boundary and delivery outcome; component mocks are insufficient"
+  ],
+  "architecture_policy": {
+    "amd64": "Baseline and checkpoint/migration only when their gates permit live testing",
+    "arm64": "Baseline tracing only until snapshot support exists; snapshot modes remain unsupported",
+    "riscv64": "Baseline tracing only until snapshot support exists; snapshot modes remain unsupported"
+  },
+  "result_policy": {
+    "initial_status": "not-run",
+    "allowed_statuses": [
+      "not-run",
+      "blocked",
+      "failed",
+      "passed"
+    ],
+    "pass_requires": "Observed authoritative evidence for every invariant and artifact; refusal of an unsupported path is not recovery success.",
+    "blocked_is_not_pass": true,
+    "missing_evidence_is_not_pass": true
+  },
+  "cases": [
+    {
+      "id": "baseline-isolation",
+      "category": "baseline",
+      "status": "not-run",
+      "procedure": "Run bounded tagged workloads in two disposable VMs and collect guest-attributed events.",
+      "required_invariant": "Every event belongs to the expected VM/epoch; the other VM contributes no events.",
+      "required_evidence": [
+        "workload-seeds",
+        "events-by-vm-epoch",
+        "negotiated-features"
+      ]
+    },
+    {
+      "id": "checkpoint-stop",
+      "category": "checkpoint",
+      "status": "not-run",
+      "procedure": "Request a stopped checkpoint during active tracing.",
+      "required_invariant": "Exact guest stop and durable collector completion precede snapshot publication.",
+      "required_evidence": [
+        "guest-stop-ack",
+        "FSI1",
+        "FSA1",
+        "FSD1",
+        "snapshot-publication-order"
+      ]
+    },
+    {
+      "id": "restore-fresh",
+      "category": "checkpoint",
+      "status": "not-run",
+      "procedure": "Restore a format-5 image containing queued old work and partial programs.",
+      "required_invariant": "Destination identity changes; old buffers, partial programs, queues and aggregates are discarded.",
+      "required_evidence": [
+        "old-new-identities",
+        "queue-discard-evidence",
+        "old-new-event-tags",
+        "aggregate-baselines"
+      ]
+    },
+    {
+      "id": "authorization",
+      "category": "checkpoint",
+      "status": "not-run",
+      "procedure": "Delay the fresh handshake and try a program with invalid authorization, then a newly authorized program.",
+      "required_invariant": "No tracing executes before handshake and authorization; only the newly authorized program produces events.",
+      "required_evidence": [
+        "handshake-order",
+        "program-digests",
+        "authorization-results",
+        "events-by-vm-epoch"
+      ]
+    },
+    {
+      "id": "collector-proof-loss",
+      "category": "collector",
+      "status": "not-run",
+      "procedure": "Lose both replies after durable collector stop proof publication, then retry.",
+      "required_invariant": "Retry uses exact proof and never replays the old session.",
+      "required_evidence": [
+        "FSI1",
+        "FSA1",
+        "FSD1",
+        "fault-timeline",
+        "retry-result"
+      ]
+    },
+    {
+      "id": "collector-crash-before-proof",
+      "category": "collector",
+      "status": "not-run",
+      "procedure": "Crash a collector before durable stop proof; exercise both provable exit and surviving descendants.",
+      "required_invariant": "Only affirmative exact process/handle/reaper evidence permits completion; missing evidence or descendants leave stop pending.",
+      "required_evidence": [
+        "HCP1",
+        "HHL1",
+        "HPB1",
+        "HPE1",
+        "HRE1",
+        "kernel-handle-status",
+        "descendant-census",
+        "stop-result"
+      ]
+    },
+    {
+      "id": "daemon-restart",
+      "category": "collector",
+      "status": "not-run",
+      "procedure": "Restart the daemon at the receipt, cohort and completed-stop publication boundaries.",
+      "required_invariant": "Exact completed stops recover; incomplete evidence remains pending; old deliveries remain fenced.",
+      "required_evidence": [
+        "journal-inventory-before-after",
+        "daemon-startup-log",
+        "registration-order",
+        "delivery-rejections"
+      ]
+    },
+    {
+      "id": "migration-order",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Migrate between two matched hosts while tracing.",
+      "required_invariant": "Destination COMMIT precedes source retirement; durable RETIRED precedes RELEASE; destination authorization follows authenticated retirement/release.",
+      "required_evidence": [
+        "both-host-HMR2",
+        "immutable-source-owner",
+        "FSS1",
+        "FMC1",
+        "kernel-retirement-witness",
+        "resume-count",
+        "authorization-order"
+      ]
+    },
+    {
+      "id": "release-loss",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Drop RELEASE after source retirement and reconnect.",
+      "required_invariant": "Source never resumes; destination stays paused until exact authenticated retry, then resumes once.",
+      "required_evidence": [
+        "fault-timeline",
+        "both-host-HMR2",
+        "source-execution-observation",
+        "destination-resume-count",
+        "retry-result"
+      ]
+    },
+    {
+      "id": "ack-loss",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Drop or corrupt ACK after destination starts and retry recovery.",
+      "required_invariant": "Running destination is retained and never resumed twice; exact retry reaches CONFIRMED.",
+      "required_evidence": [
+        "fault-timeline",
+        "both-host-HMR2",
+        "destination-incarnation",
+        "destination-resume-count",
+        "retry-result"
+      ]
+    },
+    {
+      "id": "source-controller-exit",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Exit the source controller after durable retirement; invoke the recovery-only bhyve command with the original local lifetime.",
+      "required_invariant": "Canonical ownership and original certificate pair authorize recovery; no source VM is created or resumed; completion is acknowledged.",
+      "required_evidence": [
+        "operator-lifetime-provenance",
+        "canonical-root-metadata",
+        "controller-lock-result",
+        "recovery-command-exit",
+        "both-host-HMR2",
+        "source-execution-observation"
+      ]
+    },
+    {
+      "id": "restart-intent",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Exit the source controller after INTENT and after exact destruction but before RETIRED publication, separately.",
+      "required_invariant": "Exact kernel retirement can finish INTENT; absent explicit exact-name retirement authorization, a still-live VM or unavailable evidence returns an error and never releases the destination.",
+      "required_evidence": [
+        "fault-timeline",
+        "kernel-retirement-witness",
+        "recovery-command-exit",
+        "both-host-HMR2",
+        "source-execution-observation"
+      ]
+    },
+    {
+      "id": "recovery-identity-rejection",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Retry with wrong certificates, source epoch, challenge, destination incarnation, or a competing controller.",
+      "required_invariant": "Every mismatch fails without retirement/resume; contention returns busy and preserves ownership.",
+      "required_evidence": [
+        "rejection-reasons",
+        "both-host-HMR2-before-after",
+        "controller-lock-result",
+        "resume-count"
+      ]
+    },
+    {
+      "id": "destination-uncertain-resume",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Inject a partial/uncertain destination resume error.",
+      "required_invariant": "Destination remains quarantined; retry never assumes paused and never automatically resumes again.",
+      "required_evidence": [
+        "fault-timeline",
+        "resume-callback-results",
+        "quarantine-status",
+        "destination-resume-count"
+      ]
+    },
+    {
+      "id": "repeated-fresh-sessions",
+      "category": "checkpoint",
+      "status": "not-run",
+      "procedure": "Repeat checkpoint/restore and new program authorization across at least three fresh sessions.",
+      "required_invariant": "Each epoch is distinct; old event tags and aggregate values never leak into later sessions.",
+      "required_evidence": [
+        "all-session-identities",
+        "old-new-event-tags",
+        "aggregate-baselines",
+        "resource-counts"
+      ]
+    },
+    {
+      "id": "source-cpu-acknowledgment",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Delay one source userspace VM-exit handler during cutover, then release it.",
+      "required_invariant": "Final memory copying starts only after every vCPU acknowledges quiescence; no source CPU executes guest work while the barrier is held.",
+      "required_evidence": [
+        "per-vcpu-handler-and-ack-timeline",
+        "final-memory-copy-start",
+        "source-execution-observation"
+      ]
+    },
+    {
+      "id": "source-cpu-timeout-rollback",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Delay a vCPU beyond the monotonic quiescence deadline; test successful CPU rollback and an injected resume failure separately.",
+      "required_invariant": "Successful rollback restores input and CPU execution; failed rollback preserves CPU/input fences and reports non-runnable on subsequent migrate and migrate_recover requests.",
+      "required_evidence": [
+        "monotonic-deadline-observation",
+        "resume-ioctl-result",
+        "ipc-replies",
+        "input-admission-status",
+        "source-execution-observation"
+      ]
+    },
+    {
+      "id": "source-callback-retirement",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Deliver RFB input and ACPI power-button signals around quiescence and retirement, then retain the controller through a lost ACK.",
+      "required_invariant": "Active input callbacks drain before device pause; retirement prevents new input/ACPI callbacks from touching the VM context, and the controller remains available for authenticated recovery.",
+      "required_evidence": [
+        "callback-entry-exit-timeline",
+        "device-pause-order",
+        "vmctx-close-order",
+        "controller-liveness",
+        "recovery-result"
+      ]
+    },
+    {
+      "id": "destination-cpu-startup-order",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Inject a destination kernel CPU-resume error before opening the startup fence; also run a successful inbound migration. Deliver RFB keyboard/pointer input during state installation and each failed resume boundary.",
+      "required_invariant": "Firmware and Capsicum setup precede inbound execution; failed CPU resume leaves the startup fence held and cannot produce RUNNING/ACK; success checks CPU resume before opening the fence. External input drains before device pause and stays fenced until successful CPU resume and startup release.",
+      "required_evidence": [
+        "firmware-write-completion",
+        "capsicum-entry-observation",
+        "cpu-resume-result",
+        "startup-fence-release",
+        "HMR2-publication-order",
+        "wire-ack-observation",
+        "console-input-admission-timeline"
+      ]
+    },
+    {
+      "id": "recovery-in-capsicum",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Lose RELEASE or ACK and reconnect to the retained destination after Capsicum entry using the prepared listener and credential descriptors.",
+      "required_invariant": "Actual listener acceptance, TLS authentication and journal persistence succeed within the sandbox; no absolute-path fallback or duplicate destination resume occurs.",
+      "required_evidence": [
+        "capsicum-status",
+        "listener-accept-result",
+        "tls-peer-pins",
+        "both-host-HMR2",
+        "destination-resume-count"
+      ]
+    },
+    {
+      "id": "completed-ack-cleanup-restart",
+      "category": "collector",
+      "status": "not-run",
+      "procedure": "Complete collector stop, interrupt superseded FSA1 cleanup, then restart the daemon and retry a late acknowledgment.",
+      "required_invariant": "Only acknowledgments covered by exact durable FSD1/FSI1 completion are removed; permanent ownership/process evidence and incomplete acknowledgments survive; late ACK processing does not resurrect superseded files.",
+      "required_evidence": [
+        "FSI1-FSD1-validation",
+        "journal-inventory-before-after",
+        "cleanup-fault-boundary",
+        "startup-cleanup-log",
+        "late-ack-result"
+      ]
+    },
+    {
+      "id": "authenticated-orphan-retirement",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Exit the source controller with durable INTENT and a surviving VM; use the approved exact-name recovery path, then repeat against a replaced VM incarnation.",
+      "required_invariant": "Original certificates and immutable attempt ownership precede exact-identity destruction; drained kernel proof and durable RETIRED precede RELEASE. A replacement incarnation is never destroyed.",
+      "required_evidence": [
+        "original-attempt-binding",
+        "controller-lock-result",
+        "atomic-destroy-identity-result",
+        "kernel-retirement-witness",
+        "both-host-HMR2",
+        "replacement-vm-liveness"
+      ]
+    },
+    {
+      "id": "destination-controller-reconstruction",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Enable migrate.recovery_image on the destination. Kill the destination process after durable STAGED and source INTENT/RETIRED; start a successor with migrate.reconstruct and the same guest/TLS settings, then complete source recovery. Repeat with the original controller still alive, with the destination at RELEASED, with a corrupted image, and with a second successor after the first dies before resume.",
+      "required_invariant": "The image precedes STAGED; a successor runs only after the controller lock is free, durable STAGED, an exact retirement witness of the previous incarnation and durable HDS1 publication. The guest resumes once, only after durable source retirement; RELEASED/RUNNING attempts and corrupt images are refused.",
+      "required_evidence": [
+        "destination-HDI1-image-digest",
+        "controller-lock-result",
+        "kernel-retirement-witness",
+        "HDS1-successor-records",
+        "both-host-HMR2",
+        "destination-resume-count",
+        "source-execution-observations",
+        "commit-deadline-timing"
+      ]
+    },
+    {
+      "id": "source-debugger-fence",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Configure the source with a GDB server. Attempt migration with a debugger attached, with a breakpoint installed after detach, and with gdb.wait before first attach; then migrate with the server idle while repeatedly attempting debugger connections, and repeat with a forced pre-COMMIT failure.",
+      "required_invariant": "Owned-debugger cases refuse before quiesce with the source running. During cutover every debugger connection is refused; a runnable rollback reopens debugging, and retirement keeps it closed without touching the retired context.",
+      "required_evidence": [
+        "migration-refusal-replies",
+        "debugger-connection-log",
+        "source-execution-observations",
+        "vcpu-barrier-timing",
+        "both-host-HMR2"
+      ]
+    },
+    {
+      "id": "pre-commit-rollback-repair",
+      "category": "migration",
+      "status": "not-run",
+      "procedure": "Inject a transient device-resume or vCPU-resume failure during a pre-COMMIT rollback; observe automatic repair. Repeat with a persistent failure, then clear it and run bhyvectl --migrate-repair. Repeat after source INTENT to confirm refusal.",
+      "required_invariant": "Repair runs only while retirement never began; it reopens ordinary IPC only after devices, vCPUs and input resume; a persistent failure stays quarantined; repair after INTENT is refused and the source never resumes.",
+      "required_evidence": [
+        "migration-replies-with-repair-attempts",
+        "device-resume-fault-timeline",
+        "ipc-quarantine-observations",
+        "source-execution-observations",
+        "source-HMR2"
+      ]
+    }
+  ]
+}

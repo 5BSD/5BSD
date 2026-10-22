@@ -1,0 +1,32 @@
+[
+  {
+    "scenario": "message",
+    "status": 0,
+    "summary": "message: 12 checks, 0 failures"
+  },
+  {
+    "scenario": "elf",
+    "status": 0,
+    "summary": "elf: 19 checks, 0 failures"
+  },
+  {
+    "scenario": "envelope",
+    "status": 0,
+    "summary": "envelope: 8 checks, 0 failures"
+  },
+  {
+    "scenario": "async",
+    "status": 0,
+    "summary": "async: 6 checks, 0 failures"
+  },
+  {
+    "scenario": "discard",
+    "status": 0,
+    "summary": "discard: 5 checks, 0 failures"
+  },
+  {
+    "scenario": "session",
+    "status": 0,
+    "summary": "session: 12 checks, 0 failures"
+  }
+]

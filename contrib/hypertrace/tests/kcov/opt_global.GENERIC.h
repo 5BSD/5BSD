@@ -1,0 +1,41 @@
+/* Copied from the amd64 GENERIC kernel configuration's generated opt_global.h
+ * (config(8) output for sys/amd64/conf/GENERIC in this worktree) so kernel
+ * sources are measured in the production option configuration. */
+#define BUF_TRACKING 1
+#define FULL_BUF_TRACKING 1
+#define QUEUE_MACRO_DEBUG_TRASH 1
+#define CC_CUBIC 1
+#define COMPAT_FREEBSD10 1
+#define COMPAT_FREEBSD12 1
+#define COMPAT_FREEBSD14 1
+#define KDTRACE_HOOKS 1
+#define MAC 1
+#define DEBUGNET 1
+#define NETGDB 1
+#define TCP_BLACKBOX 1
+#define INVARIANT_SUPPORT 1
+#define EARLY_AP_STARTUP 1
+#define NUMA 1
+#define DEV_NETMAP 1
+#define RACCT 1
+#define RANDOM_ENABLE_KBD 1
+#define RANDOM_ENABLE_TPM 1
+#define XENHVM 1
+#define RANDOM_ENABLE_MOUSE 1
+#define RCTL 1
+#define VIMAGE 1
+#define WITNESS 1
+#define SMP 1
+#define INVARIANTS 1
+#define TCP_HHOOK 1
+#define NETLINK 1
+#define NETDUMP 1
+#define PCI_IOV 1
+#define KDTRACE_MIB_SDT 1
+#define COMPAT_FREEBSD15 1
+#define COMPAT_FREEBSD13 1
+#define COMPAT_FREEBSD11 1
+#define COMPAT_FREEBSD9 1
+#define AUDIT 1
+#define KDB 1
+#define EXTERR_STRINGS 1

@@ -17,8 +17,9 @@ Copyright and license notices are retained; licenses vary by source file.
 Do not build this old overlay as though it were a current 5BSD tree, or copy
 its modified kernel files over modern 5BSD. Compiler, DTrace ABI, VMM and
 network changes require review and integration against current interfaces.
-No buildworld/kernel inclusion, installation, module loading or daemon startup
-is enabled by this import. The public branch appears dormant since 2024;
+The pristine import itself does not enable installation, module loading or
+daemon startup. Native buildworld/kernel integration on the experimental
+branch is tracked in STATUS.5BSD; it is not yet qualified end to end. The public branch appears dormant since 2024;
 there may be other or private development not represented in this snapshot.
 
 Keep upstream/ pristine. Local fixes belong in patches/ as an ordered series.
@@ -30,5 +31,295 @@ and uses C++, rather than the older C layout described in that README.
 Integration requirements: port libdtrace ELF/type/relocation support and CLI;
 port dtraced and its distribution protocol; integrate guest forwarding and
 host guest-context handling; adapt virtio/VMM hypercalls to current bhyve;
-qualify provider compatibility, isolation, restart and snapshot/restore.
+qualify provider compatibility, isolation and fresh-session restart.
 A vendor import or component test does not establish a working HyperTrace VM.
+
+Scope revised 2026-10-19: tracing continuity across VM save/restore and
+migration is no longer a release requirement. The supported target is a
+fresh tracing session after startup or restore, with event gaps and reset
+aggregations. The host must re-enable desired programs after old guest
+probes and transport state have been cleared and a new identity established.
+Ordinary attachment no longer requires the experimental rekey features.
+The format-5 fresh-session restore coordinator is connected to staged device
+reset, old-ring discard, and asynchronous authorization after guest ACTIVE.
+It has component coverage but is not live-qualified. Keep the continuity code as experimental work,
+not as a dependency of ordinary tracing. The current scope and retained
+implementation history are in INTEGRATION-GATES.5BSD.md.
+
+Fresh-session migration is connected to the production source command and
+managed destination receiver. It remains experimental and is not live-qualified.
+Both endpoints advertise FRESH only after authenticated certificate identities
+and private, syncable recovery storage have been established. A tracing peer
+cannot silently negotiate ordinary migration with a non-tracing peer.
+
+The source IPC requires tls_certificate_fd, tls_private_key_fd, tls_trust_fd
+and the 64-hex-digit tls_peer_sha256. The canonical private directory
+/var/db/bhyve/migration must exist before bhyve starts. Bhyve opens and retains
+it before Capsicum entry and before publishing its IPC thread. An optional
+recovery_fddir must identify that same directory; it cannot replace the retained
+root. Missing/invalid startup storage disables source migration, while ordinary
+VM operation can continue. No absolute journal lookup occurs inside Capsicum.
+Verification
+failure never falls back to plaintext. Coordinated guest-probe and collector
+stop precedes FSS1 capture and cutover. After accepted COMMIT, source INTENT,
+exact-identity destruction, drained retirement proof, and durable RETIRED precede
+RELEASE. Once retirement begins, errors never resume the source. Immutable
+attempt ownership and a lifetime controller lock prevent competing recovery.
+IPC command admission waits until main completes its startup VM operations.
+Source quiescence waits for every vCPU thread to finish its userspace exit handler
+and park before device pause and final memory copying. The acknowledgment wait
+has a monotonic 30-second deadline. Failed CPU resume keeps the userspace fence
+held; retirement wakes parked threads directly into shutdown.
+Source quiescence drains console keyboard/pointer input before pausing devices;
+only successful rollback restores input. Retirement makes that fence permanent.
+Failed rollback leaves the source non-runnable. While retirement has never
+begun, the controller automatically retries the idempotent device, vCPU and
+console resume sequence (three attempts with 100 ms and 1 s backoff) and
+reports repaired/repair_attempts. If that fails, a reversible quarantine admits
+only status, recovery and the operator command migrate_repair (bhyvectl
+--migrate-repair), which retries the same sequence and reopens ordinary IPC
+only after success. Repeated migration requests cannot clear that state. Once
+INTENT was attempted the quarantine is irreversible and repair is refused;
+the retirement recovery command never infers retirement from a stopped state.
+Expected destruction fences the ACPI power-button callback and stops vCPU threads
+while preserving the migration controller.
+The controller joins those threads before closing their VM context; a failed join
+retains the context and durable INTENT for retry before RETIRED publication.
+A configured GDB server participates in source migration through a debugger
+fence. Migration is refused precisely, before quiesce, while a debugger owns
+the guest (attached client, guest-memory breakpoints, pending single-step, or
+a vCPU held by the server, including gdb.wait before first attach). Otherwise
+new debugger connections are refused during cutover; only a rollback that
+leaves the source runnable reopens them. Retirement fences the server
+permanently and drops its vmctx alias before vCPU retirement and destruction.
+On a destination, debugger connections are not serviced until the inbound
+coordinator returns, because the mevent loop has not started.
+
+The destination requires migrate.recovery_listen_fd (an already-listening
+stream socket), migrate.recovery_fd (a private journal directory), and all four
+migrate.tls settings: certificate_fd, private_key_fd, trust_fd, peer_sha256.
+The managed receiver duplicates descriptors and creates its recovery worker
+before accepting state. The VM startup fence must remain held. Destination firmware and control/sandbox
+setup finish before receiving state. After RELEASE, the coordinator checks
+kernel CPU resume before opening the userspace startup fence; a failure cannot
+be acknowledged as successful execution. External console input is drained
+before device restore and remains fenced until that resume succeeds. The unmanaged
+entry points refuse tracing migration. The worker never creates or binds a
+listener, retains committed state after ambiguous COMMIT/RELEASE failures, and
+accepts authenticated reconnects even after resume to recover a lost ACK.
+An uncertain resume, including failure of the initial RELEASE-driven attempt,
+retains the image and remains quarantined; recovery never resumes it twice.
+
+HMR2 records bind source/destination certificate fingerprints, VM lifetimes,
+FSS1 metadata, the state digest, and a destination challenge. HMX1 reconciliation
+is read-only; HXR1 execution applies ordered RELEASE/ACK persistence. Old trace
+buffers and aggregates are discarded. Destination authorization is released
+only through the fresh-state path after source retirement. Certificate or
+attempt mismatch cannot authorize recovery.
+
+A source controller can recover INTENT from exact kernel retirement evidence,
+or use the optional authenticated identity-checked orphan retirement command
+below. Missing names, PIDs, devices, and ioctls never prove retirement. A
+collector crash without durable exit proof remains unresolved rather than
+being counted as a stop; no procdesc, procctl reaper, kqueue or birth-identity
+mechanism can prove a same-boot exit after the daemon lost its descriptor.
+Only a verified registration from an earlier kernel boot (different
+kern.boot_id) is accepted as proof that the collector, its descendants and its
+kernel handle are gone, and it still does not publish a stop. A destination process crash loses its userspace/device
+state and may lose RAM; HMR2 journals alone cannot reconstruct it. With the
+opt-in migrate.recovery_image destination setting, a per-attempt controller lock
+and a checksummed HDI1 image of the committed paused guest are durable before
+STAGED, so COMMIT (and source retirement) can only follow a preserved image.
+A successor started with migrate.reconstruct=CHALLENGE takes over only when the
+lock shows no earlier controller is alive, the destination phase is exactly
+STAGED (RELEASED precedes every resume), and the previous incarnation has an
+exact kernel retirement witness. It records its own incarnation as HDS1 before
+loading state, stays fenced, and resumes only through authenticated recovery
+after durable source retirement. RELEASED/RUNNING attempts stay quarantined.
+Without an image, destination recovery still requires its retained owner.
+No live migration is qualified by the component tests or production links.
+
+Completed collector stops retain their permanent FSI1 admission fence and FSD1
+completion summary. Superseded FSA1 acknowledgments are retired after an exact
+completed stop request, with a startup retry if cleanup was interrupted. Cleanup
+never infers completion from a missing VM or process, never deletes incomplete
+or differently bound acknowledgments, and retains program/cohort and shared
+process/reaper/handle evidence. Storage errors defer cleanup without revoking
+an already durable completion.
+
+Fresh-session live acceptance checks (not yet executed)
+
+Use a disposable VM and matched host/guest builds from the same source
+revision. Record the revision, kernel configurations, negotiated features,
+daemon/collector commands, VM identity and epoch, and complete logs. Verify
+ordinary host and guest tracing before attempting any checkpoint. Do not
+use the vendor overlay as either side of the test.
+
+1. Start a bounded guest workload and a host collector. Verify expected
+   events, correct guest attribution, and isolation from a second VM.
+2. Request a stopped checkpoint while tracing is active. Verify exact guest
+   stop acknowledgment and durable host collector completion before snapshot
+   publication. Record the old identity; verify old work remains fenced.
+3. Restore the format-5 checkpoint. Verify a distinct
+   identity, empty old queues and partial programs, and no tracing execution
+   before the fresh handshake and authenticated authorization complete.
+4. Submit a newly authorized program. Verify new events arrive and old
+   buffered events, program deliveries, and aggregate values do not reappear.
+   Repeat stop and restart to exercise more than the first transition.
+5. Interrupt the guest handshake, disconnect a collector during stop, and
+   lose a release reply. Verify bounded failure, retained fences, and exact
+   retry where implemented. A lost collector stop acknowledgment without a
+   durable receipt is currently unresolved; refusal is not recovery success.
+   The collector now commits proof on an independent authenticated connection
+   after releasing the original reply's waiting worker, but before exit.
+   Test loss of both the commit response and the
+   original reply after durable publication; the old epoch must complete
+   from its receipt without replay. Also crash before publication and verify
+   the unresolved case retains its fence.
+6. Restart the daemon at each durable stop boundary. Confirm old deliveries
+   remain rejected and no missing acknowledgment is inferred from process
+   disappearance. Preserve journals and logs for failure analysis.
+7. Qualify migration separately on two matched hosts. Local epoch retirement
+   does not prove remote retirement. That path and proof are implemented but require matched live evidence;
+   same-host fresh restore alone does not qualify migration.
+
+Repeat applicable cases for each supported architecture. Archive exit status,
+event counts, identities, and failure logs alongside the native/build results.
+Do not report these checks as passed merely because component fixtures pass.
+
+Fresh migration initiation CLI (experimental)
+--------------------------------------------
+The snapshot-enabled bhyvectl frontend exposes the existing source migration
+IPC through --migrate-fd. With an already-connected destination receive stream
+on fd 3 and source certificate/key/trust PEM files on fds 4/5/6:
+
+  bhyvectl --vm=NAME --migrate-fd=3 \
+    --migrate-certificate-fd=4 --migrate-key-fd=5 --migrate-trust-fd=6 \
+    --migrate-peer-sha256=DESTINATION_CERTIFICATE_SHA256
+
+This template does not establish sockets, launch a destination, or grant live
+execution authorization. Prepare a matched destination with receive_fd,
+recovery_fd, recovery_listen_fd and mutual TLS configuration first, as described
+above. Source canonical journal ownership and all existing device/HyperTrace
+eligibility checks still apply. Only --vm and --rundir may accompany the
+migration options. Initiation and recovery are mutually exclusive.
+
+Success requires phase=COMPLETED, reason=NONE and source_runnable=false in the
+controller reply. After a failed pre-COMMIT rollback that automatic repair
+could not fix, "bhyvectl --vm=NAME --migrate-repair" retries it; success
+requires repaired=true and source_runnable=true, and the controller refuses
+once retirement began. A missing, malformed or lost reply is not success and does
+not authorize source rollback. If retirement began, use --migrate-recover-fd
+against the same retained owner; do not initiate a replacement attempt.
+The CLI uses inherited descriptors without opening /dev/vmm or accepting a
+replacement journal directory. Component checks do not qualify live migration.
+
+The compiled frontend can be checked without a VM or tracing device:
+
+  python3.12 contrib/hypertrace/tests/migration-cli-ipc.py \
+    /usr/obj/5BSD-hypertrace-validation/initiation-cli-ipc \
+    /path/to/built/snapshot-enabled/bhyvectl
+
+This uses a disposable local IPC controller and test descriptors. Sixteen
+initiation/recovery cases exercise actual libnv descriptor transfer and replies,
+including lost responses, refusals and malformed completion fields. The result
+records the executable hash. It does not exercise TLS or the production
+migration controller and cannot qualify live behavior.
+
+Fresh migration source recovery IPC (experimental)
+-------------------------------------------------
+The retained source process accepts cmd=migrate_recover with fd and the same
+complete tls_certificate_fd, tls_private_key_fd, tls_trust_fd, tls_peer_sha256
+credential fields used by migration. The connected peer must authenticate as
+the original destination, using the original source certificate. The request
+cannot select a VM incarnation, attempt binding or recovery directory. Those
+come from retained process ownership; recovery_fddir is rejected. Responses
+include confirmed, source_runnable, and error/error_code on failure. A lost
+reply can be retried against that retained owner. Retirement quarantine remains
+in force: only get_vm_pid and migrate_recover are accepted after retirement
+begins. The recovery command never resumes the source.
+
+This API has component tests and compiled production objects, not live VM
+qualification. The separate recovery-only command below now handles an exited
+controller when exact retirement can be established. Optional exact-identity orphan retirement is implemented as described below. Fresh initiation uses the mandatory production preconditions above.
+
+The snapshot-enabled bhyvectl frontend now sends this request without opening
+/dev/vmm, so a destroyed source VM is not an obstacle to contacting its retained
+process. Supply inherited descriptors, for example (3 is an already-connected
+stream socket, 4/5/6 are certificate/key/trust PEM files):
+
+  bhyvectl --vm=NAME --migrate-recover-fd=3 \
+    --migrate-certificate-fd=4 --migrate-key-fd=5 --migrate-trust-fd=6 \
+    --migrate-peer-sha256=DESTINATION_CERTIFICATE_SHA256
+
+Only --vm and --rundir may accompany these recovery options. The command does
+not establish a network connection or choose a replacement recovery directory.
+A successful exit requires confirmed=true and source_runnable=false in the
+source process reply. Failure or a lost reply does not permit source rollback;
+retry against the same retained owner. This does not recover a source process
+that has exited and does not enable fresh migration initiation.
+
+Source recovery after process exit (experimental)
+------------------------------------------------
+The snapshot-enabled bhyve binary has a one-shot recovery path that exits before
+normal VM initialization. An authorized operator supplies the original source
+VM ID and epoch from trusted local migration records, never from the remote
+peer. With connected socket fd 3 and certificate/key/trust fds 4/5/6:
+
+  bhyve -o migrate.recover_source_fd=3 \
+    -o migrate.recover_source_vmid=SOURCE_VMID \
+    -o migrate.recover_source_epoch=SOURCE_EPOCH \
+    -o migrate.tls.certificate_fd=4 \
+    -o migrate.tls.private_key_fd=5 \
+    -o migrate.tls.trust_fd=6 \
+    -o migrate.tls.peer_sha256=DESTINATION_CERTIFICATE_SHA256
+
+This is a reviewable invocation template, not a command run by these tests.
+Do not append a VM name or restore/receiver settings. Recovery uses only the
+private /var/db/bhyve/migration root, validates immutable source ownership,
+serializes with other controllers and authenticates the original certificate
+pair. INTENT needs an exact kernel retirement witness; durable retirement does
+not require reopening the query device. Errors never authorize source rollback.
+Without a name hint, a still-live orphan remains unresolved. To permit its
+retirement, supply -o migrate.recover_source_name=ORIGINAL_NAME. The name is
+only a lookup hint: the kernel atomically verifies the original VMID and epoch
+before scheduling destruction. Authentication of the original certificate pair
+and durable INTENT precede that request; an exact drained retirement witness
+and durable RETIRED still precede RELEASE. Missing names, devices, or unsupported
+ioctls do not prove retirement. This command never loads modules, starts or
+resumes a VM, or deletes journals. Source recovery still requires a destination
+recovery owner: the retained original, or a successor reconstructed from a
+preserved image as described above (bhyve(8), "Destination reconstruction").
+
+Matched live-test evidence matrix (prepared, not executed)
+---------------------------------------------------------
+tests/fresh-session-live-matrix.json defines 25 cases and the evidence
+required for each. Every case starts as not-run. Its execution_authorized=false
+records that this preparation grants no permission to operate hosts, VMs,
+daemons, modules or tracing devices. Obtain authorization for the named test
+environment and fault actions before execution. Record results separately from
+this template, with source revision and dirty-tree digest, kernel configurations,
+loaded module identities, binary/library hashes, guest image identity, negotiated
+features, exact commands, exit status, and monotonic event ordering per host.
+Do not compare unsynchronized timestamps between hosts as ordering proof; bind
+COMMIT/RELEASE and journal records by challenge, identity and certificate pair.
+Preserve journal copies and fault timelines without exporting private keys.
+
+Use distinct old/new workload tags and distinct aggregate initial values. Merely
+seeing post-restore events does not prove the absence of stale buffered data.
+Capture queue/partial-program discard and authorization boundaries as well as
+collector output. Test a second VM concurrently to check attribution isolation.
+For source-retirement faults, record independent source execution observations
+and destination resume counts; a successful client exit alone is insufficient.
+
+The matrix distinguishes transport loss before delivery from a lost reply after
+peer action. Live injection controls for these boundaries must be prepared and
+validated in the authorized lab; the local TLS fixtures do not supply live VM
+fault injection. Migration cases require the documented production prerequisites
+and explicit lab authorization; conditional admission is implemented but is not
+live-qualified.
+A refused still-live orphan is a verified safety refusal, not a recovery pass.
+ARM64 and RISC-V snapshot/migration cases remain unsupported; apply their baseline
+tracing cases without treating AMD64 build results as cross-architecture proof.
+The QEMU smoke helper does not emulate the bhyve VirtIO DTrace device and cannot
+qualify this host/guest matrix. No live result is currently claimed here.

@@ -1,0 +1,541 @@
+diff --git a/usr.sbin/dtraced/_dtraced_connection.h b/usr.sbin/dtraced/_dtraced_connection.h
+--- a/usr.sbin/dtraced/_dtraced_connection.h
++++ b/usr.sbin/dtraced/_dtraced_connection.h
+@@ -67,6 +67,8 @@
+ 	client_fd(const client_fd &) = delete;
+ 	client_fd &operator=(const client_fd &) = delete;
+ 
++	std::atomic_bool retired {false};
++	uintptr_t event_cookie {0};
+ 	std::mutex output_mtx; /* Serialize complete outbound protocol frames. */
+ 	bool cleaned_up;		/* has this fd been cleaned up */
+ 	uint64_t id;			/* initiator id */
+@@ -94,8 +96,8 @@
+ 	bool can_reap(void);
+ 	bool is_subscribed(unsigned long long);
+ 
+-	bool recv(void *, size_t);
+-	bool send(void *, size_t);
++	bool recv(void *, size_t, int64_t = 0);
++	bool send(void *, size_t, int64_t = 0);
+ 	bool respond(bool);
+ 	ssize_t send_ack(void);
+ 	ssize_t send_nak(void);
+diff --git a/usr.sbin/dtraced/dtraced_connection.cc b/usr.sbin/dtraced/dtraced_connection.cc
+--- a/usr.sbin/dtraced/dtraced_connection.cc
++++ b/usr.sbin/dtraced/dtraced_connection.cc
+@@ -54,6 +54,7 @@
+ 
+ #include "dtraced.h"
+ #include "dtraced_socket.h"
++#include "dtraced_io.h"
+ #include "dtraced_connection.h"
+ #include "dtraced_directory.h"
+ #include "dtraced_errmsg.h"
+@@ -105,6 +106,11 @@
+ bool
+ client_fd::re_enable_read(void)
+ {
++	if (this->retired.load()) {
++		errno = ENOTCONN;
++		return (false);
++	}
++
+ 	struct kevent change_event[1];
+ 
+ 	EV_SET(change_event, this->fd, EVFILT_READ,
+@@ -115,6 +121,11 @@
+ bool
+ client_fd::re_enable_write(void)
+ {
++	if (this->retired.load()) {
++		errno = ENOTCONN;
++		return (false);
++	}
++
+ 	struct kevent change_event[1];
+ 
+ 	EV_SET(change_event, this->fd, EVFILT_WRITE,
+@@ -213,9 +224,13 @@
+ }
+ 
+ bool
+-client_fd::send(void *b, size_t len)
+-{
+-	bool ok = socket_transfer(this->fd, b, len, true);
++client_fd::send(void *b, size_t len, int64_t deadline)
++{
++	size_t transferred;
++	if (deadline == 0)
++		deadline = dtraced_io_milliseconds() + 10000;
++	bool ok = dtraced_io_transfer(this->fd, b, len, true, deadline,
++	    &transferred) == 0;
+ 	if (!ok) {
+ 		/* A partial frame must never be reused as a fresh request. */
+ 		int error = errno;
+@@ -226,9 +241,13 @@
+ }
+ 
+ bool
+-client_fd::recv(void *b, size_t len)
+-{
+-	bool ok = socket_transfer(this->fd, b, len, false);
++client_fd::recv(void *b, size_t len, int64_t deadline)
++{
++	size_t transferred;
++	if (deadline == 0)
++		deadline = dtraced_io_milliseconds() + 10000;
++	bool ok = dtraced_io_transfer(this->fd, b, len, false, deadline,
++	    &transferred) == 0;
+ 	if (!ok) {
+ 		/* A partial frame must never be reused as a fresh request. */
+ 		int error = errno;
+diff --git a/usr.sbin/dtraced/dtraced_state.h b/usr.sbin/dtraced/dtraced_state.h
+--- a/usr.sbin/dtraced/dtraced_state.h
++++ b/usr.sbin/dtraced/dtraced_state.h
+@@ -49,6 +49,7 @@
+ 
+ #include "_dtraced_connection.h"
+ #include "dtraced.h"
++#include "dtraced_events.h"
+ #include "dtraced_directory.h"
+ 
+ #include <array>
+@@ -106,6 +107,7 @@
+ 	 */
+ 	std::mutex sockfdsmtx;
+ 	std::unordered_set<client_fd *> sockfds;
++	event_registry client_events;
+ 
+ 	/*
+ 	 * Configuration socket.
+diff --git a/usr.sbin/dtraced/dtraced_state.cc b/usr.sbin/dtraced/dtraced_state.cc
+--- a/usr.sbin/dtraced/dtraced_state.cc
++++ b/usr.sbin/dtraced/dtraced_state.cc
+@@ -47,6 +47,7 @@
+ #include <fcntl.h>
+ #include <pthread.h>
+ #include <signal.h>
++#include <memory>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -264,6 +265,15 @@
+ 			delete this->dispatched_jobs.front();
+ 	}
+ 
++	for (client_fd *client : this->sockfds) {
++		this->client_events.remove(client->event_cookie);
++		delete client;
++	}
++	this->sockfds.clear();
++	for (client_fd *client : this->deadfds)
++		delete client;
++	this->deadfds.clear();
++
+ 	delete this->outbounddir;
+ 	delete this->inbounddir;
+ 	delete this->basedir;
+@@ -349,7 +359,10 @@
+ 	}
+ 
+ 	client_fd &dfd = *dfdp;
+-	if (!dfd.enable_rw((void *)dfdp)) {
++	dfd.event_cookie = this->client_events.add(dfdp);
++	if (dfd.event_cookie == 0 ||
++	    !dfd.enable_rw(reinterpret_cast<void *>(dfd.event_cookie))) {
++		this->client_events.remove(dfd.event_cookie);
+ 		delete dfdp;
+ 		return (false);
+ 	}
+@@ -371,19 +384,23 @@
+ state::kill_socket(client_fd *dfdp)
+ {
+ 	client_fd &dfd = *dfdp;
+-
+-	/* Remove it from the socket list and shutdown */
+ 	{
+ 		std::lock_guard lk(this->sockfdsmtx);
++		if (dfd.retired.exchange(true))
++			return;
+ 		this->sockfds.erase(dfdp);
+-	}
+-
++		this->client_events.remove(dfd.event_cookie);
++	}
++
++	/* EV_ENABLE without EV_ADD cannot resurrect these retired filters. */
++	for (int filter : {EVFILT_READ, EVFILT_WRITE}) {
++		struct kevent change;
++		EV_SET(&change, dfd.fd, filter, EV_DELETE, 0, 0, nullptr);
++		if (kevent(this->kq_hdl, &change, 1, nullptr, 0, nullptr) == -1 &&
++		    errno != ENOENT && errno != EBADF)
++			ERR("retire socket event failed: %m");
++	}
+ 	dfd.shutdown();
+-
+-	/*
+-	 * Add it to the deadfds list and let it get cleaned up by other
+-	 * threads.
+-	 */
+ 	std::unique_lock lk(this->deadfdsmtx);
+ 	this->deadfds.insert(dfdp);
+ 	this->jobcleancv.notify_all();
+@@ -428,55 +445,36 @@
+ bool
+ state::handle_event(struct kevent &event)
+ {
+-	client_fd *dfdp = (client_fd *)event.udata;
+ 	int efd = event.ident;
+ 
+-	if (efd == sockfd && event.flags & EV_ERROR) {
+-		ERR("error on %s: %m", DTRACED_SOCKPATH);
+-		return (false);
+-	}
+-
+-	if (efd == sockfd && event.flags & EV_EOF) {
+-		ERR("EOF on %s: %m", DTRACED_SOCKPATH);
+-		return (false);
+-	}
+-
+-	if (event.flags & EV_ERROR || event.flags & EV_EOF) {
+-		assert(efd != sockfd && "EOF || ERROR on sockfd");
+-		assert(efd == dfdp->fd);
+-
+-		if (disable_rw(this->kq_hdl, efd)) {
+-			ERR("disable_rw() failed: %m");
++	if (efd == this->sockfd && event.udata == nullptr) {
++		if (event.flags & (EV_ERROR | EV_EOF))
+ 			return (false);
+-		}
+-
++		return (this->accept_new_connection());
++	}
++	client_fd *dfdp = this->client_events.lookup(
++	    reinterpret_cast<uintptr_t>(event.udata), efd);
++	if (dfdp == nullptr)
++		return (true); /* Stale event from a retired connection. */
++	std::unique_ptr<client_fd, void (*)(client_fd *)> reference(dfdp,
++	    [](client_fd *client) { client->release(); });
++	if (event.flags & (EV_ERROR | EV_EOF)) {
+ 		this->kill_socket(dfdp);
+-		if (event.flags & EV_ERROR)
+-			ERR("event error: %m");
+-	} else if (efd == sockfd) {
+-		/*
+-		 * New connection incoming. dfd is NULL so we
+-		 * don't have to release it.
+-		 */
+-		assert(event.filter == EVFILT_READ);
+-
+-		if (!this->accept_new_connection())
+-			return (true);
+-	} else if (event.filter == EVFILT_READ) {
+-		assert(efd != sockfd && "read on sockfd");
+-		assert(efd == dfdp->fd);
+-
+-		if (!this->dispatch_read(dfdp, event))
+-			return (false);
+-	} else if (event.filter == EVFILT_WRITE) {
+-		assert(efd != sockfd && "write on sockfd");
+-		assert(efd == dfdp->fd);
+-
+-		if (!this->dispatch_write(dfdp, event))
+-			return (false);
+-	}
+-
+-	return (true);
++		return (true);
++	}
++	/* Dispatch retains its own job reference before this guard is released. */
++	struct kevent dispatch = event;
++	dispatch.udata = dfdp;
++	bool ok;
++	if (event.filter == EVFILT_READ)
++		ok = this->dispatch_read(dfdp, dispatch);
++	else if (event.filter == EVFILT_WRITE)
++		ok = this->dispatch_write(dfdp, dispatch);
++	else
++		ok = false;
++	if (!ok)
++		this->kill_socket(dfdp);
++	return (ok);
+ }
+ 
+ void
+@@ -764,7 +762,7 @@
+ 			for (auto it = this->joblist.begin();
+ 			     it != this->joblist.end();) {
+ 				job *j = *it;
+-				if (j->initiator() == dfd.id) {
++				if (j->initiator() == dfd.id || j->connsockfd == dfdp) {
+ 					it = this->joblist.erase(it);
+ 					delete j;
+ 				} else
+@@ -823,8 +821,12 @@
+ 		this->dispatched_jobs.pop_front();
+ 		lk.unlock();
+ 
+-		if (!this->handle_job(curjob))
++		if (!curjob->connsockfd->retired.load() &&
++		    !this->handle_job(curjob)) {
+ 			ERR("failed to handle job kind %d", curjob->kind);
++			/* The job's reference pins the client through retirement. */
++			this->kill_socket(curjob->connsockfd);
++		}
+ 		delete curjob;
+ 	}
+ }
+diff --git a/usr.sbin/dtraced/dtraced_job.cc b/usr.sbin/dtraced/dtraced_job.cc
+--- a/usr.sbin/dtraced/dtraced_job.cc
++++ b/usr.sbin/dtraced/dtraced_job.cc
+@@ -56,6 +56,7 @@
+ #include "dtraced_errmsg.h"
+ #include "dtraced_id.h"
+ #include "dtraced_job.h"
++#include "dtraced_io.h"
+ #include "dtraced_state.h"
+ 
+ namespace dtraced {
+@@ -112,6 +113,7 @@
+ job::send_elf(void)
+ {
+ 	std::lock_guard output(this->connsockfd->output_mtx);
++	const int64_t deadline = dtraced_io_milliseconds() + 10000;
+ 	using uchar = unsigned char;
+ 
+ 	__cleanup(closefd_generic) int elffd = -1;
+@@ -162,13 +164,13 @@
+ 		return (false);
+ 	}
+ 
+-	if (!dfd.send(&header, DTRACED_MSGHDRSIZE)) {
++	if (!dfd.send(&header, DTRACED_MSGHDRSIZE, deadline)) {
+ 		ERR("failed to write to %s (%s, %zu): %m", dfd.ident, ne.path,
+ 		    ne.pathlen);
+ 		return (false);
+ 	}
+ 
+-	if (!dfd.send(&msg[0], msglen)) {
++	if (!dfd.send(&msg[0], msglen, deadline)) {
+ 		ERR("failed to write to %s (%s, %zu): %m", dfd.ident, ne.path,
+ 		    ne.pathlen);
+ 		return (false);
+@@ -186,6 +188,7 @@
+ job::send_kill(void)
+ {
+ 	std::lock_guard output(this->connsockfd->output_mtx);
++	const int64_t deadline = dtraced_io_milliseconds() + 10000;
+ 	dtraced_hdr_t header{};
+ 	client_fd &dfd = *this->connsockfd;
+ 	kill_job &k = this->kill_get();
+@@ -204,7 +207,7 @@
+ 	DTRACED_MSG_KILLPID(header) = k.pid;
+ 	DTRACED_MSG_KILLVMID(header) = k.vmid;
+ 
+-	if (!dfd.send(&header, DTRACED_MSGHDRSIZE)) {
++	if (!dfd.send(&header, DTRACED_MSGHDRSIZE, deadline)) {
+ 		if (errno == EPIPE)
+ 			ERR("failed to write to %s: %m", dfd.ident);
+ 		return (false);
+@@ -222,6 +225,7 @@
+ job::send_info(state &s)
+ {
+ 	std::lock_guard output(this->connsockfd->output_mtx);
++	const int64_t deadline = dtraced_io_milliseconds() + 10000;
+ 	dtraced_hdr_t hdr{};
+ 	client_fd &dfd = *this->connsockfd;
+ 	std::vector<dtraced_infomsg_t> imsgs;
+@@ -240,22 +244,23 @@
+ 	hdr.msg_type = DTRACED_MSG_INFO;
+ 	hdr.info.count = imsgs.size();
+ 
+-	if (!dfd.send(&hdr, DTRACED_MSGHDRSIZE))
++	if (!dfd.send(&hdr, DTRACED_MSGHDRSIZE, deadline))
+ 		return (false);
+ 	return (dfd.send(imsgs.data(),
+-	    hdr.info.count * sizeof(dtraced_infomsg_t)));
++	    hdr.info.count * sizeof(dtraced_infomsg_t), deadline));
+ }
+ 
+ bool
+ job::read_data(state &s)
+ {
++	const int64_t deadline = dtraced_io_milliseconds() + 10000;
+ 	using uchar = unsigned char;
+ 
+ 	client_fd &dfd = *this->connsockfd;
+ 	dtraced_hdr_t header{};
+ 
+ 	size_t totalbytes;
+-	if (!dfd.recv(&totalbytes, sizeof(totalbytes)))
++	if (!dfd.recv(&totalbytes, sizeof(totalbytes), deadline))
+ 		return (false);
+ 
+ 	if (totalbytes < DTRACED_MSGHDRSIZE || totalbytes > max_request_bytes) {
+@@ -266,7 +271,7 @@
+ 
+ 	std::vector<uchar> buf(totalbytes, 0);
+ 
+-	if (!dfd.recv(&buf[0], totalbytes)) {
++	if (!dfd.recv(&buf[0], totalbytes, deadline)) {
+ 		if (dfd.send_nak())
+ 			ERR("send_nak() failed on %s with: %m", dfd.ident);
+ 
+@@ -307,6 +312,7 @@
+ job::send_cleanup()
+ {
+ 	std::lock_guard output(this->connsockfd->output_mtx);
++	const int64_t deadline = dtraced_io_milliseconds() + 10000;
+ 	dtraced_hdr_t header{};
+ 	size_t buflen;
+ 	client_fd &dfd = *this->connsockfd;
+@@ -317,7 +323,7 @@
+ 	DTRACED_MSG_TYPE(header) = DTRACED_MSG_CLEANUP;
+ 	DTRACED_MSG_NUMENTRIES(header) = c.size();
+ 
+-	if (!dfd.send(&header, DTRACED_MSGHDRSIZE)) {
++	if (!dfd.send(&header, DTRACED_MSGHDRSIZE, deadline)) {
+ 		if (errno != EPIPE)
+ 			ERR("failed to write to %s: %m", dfd.ident);
+ 		return (false);
+@@ -325,13 +331,13 @@
+ 
+ 	for (std::string &entry : c) {
+ 		buflen = entry.length() + 1;
+-		if (!dfd.send(&buflen, sizeof(buflen))) {
++		if (!dfd.send(&buflen, sizeof(buflen), deadline)) {
+ 			if (errno != EPIPE)
+ 				ERR("failed to write to %m: %m", dfd.ident);
+ 			return (false);
+ 		}
+ 
+-		if (!dfd.send(&entry[0], buflen)) {
++		if (!dfd.send(&entry[0], buflen, deadline)) {
+ 			if (errno != EPIPE)
+ 				ERR("failed to write to %d: %m", dfd.ident);
+ 			return (false);
+diff --git a/usr.sbin/dtraced/dtraced_events.h b/usr.sbin/dtraced/dtraced_events.h
+new file mode 100644
+--- /dev/null
++++ b/usr.sbin/dtraced/dtraced_events.h
+@@ -0,0 +1,48 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++#ifndef DTRACED_EVENTS_H
++#define DTRACED_EVENTS_H
++#include <cerrno>
++#include <cstdint>
++#include <mutex>
++#include <unordered_map>
++#include "dtraced_connection.h"
++namespace dtraced {
++/* Kqueue carries non-reused tokens, never pointers to reclaimable clients. */
++class event_registry {
++    std::mutex mutex;
++    uintptr_t next = 1;
++    std::unordered_map<uintptr_t, client_fd *> clients;
++public:
++    ~event_registry() {
++        for (auto &entry : clients)
++            entry.second->release();
++    }
++    uintptr_t add(client_fd *client) {
++        std::lock_guard lock(mutex);
++        if (next == 0) { errno = EOVERFLOW; return 0; }
++        uintptr_t token = next++;
++        clients.emplace(token, client);
++        client->acquire();
++        return token;
++    }
++    /* The returned reference must be released after handling the event. */
++    client_fd *lookup(uintptr_t token, int fd) {
++        std::lock_guard lock(mutex);
++        auto found = clients.find(token);
++        if (found == clients.end() || found->second->get_fd() != fd ||
++            found->second->retired.load())
++            return nullptr;
++        found->second->acquire();
++        return found->second;
++    }
++    void remove(uintptr_t token) {
++        std::lock_guard lock(mutex);
++        auto found = clients.find(token);
++        if (found != clients.end()) {
++            found->second->release();
++            clients.erase(found);
++        }
++    }
++};
++}
++#endif
+diff --git a/usr.sbin/dtraced/dtraced_io.h b/usr.sbin/dtraced/dtraced_io.h
+new file mode 100644
+--- /dev/null
++++ b/usr.sbin/dtraced/dtraced_io.h
+@@ -0,0 +1,66 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++#ifndef DTRACED_IO_H
++#define DTRACED_IO_H
++#include <sys/socket.h>
++#include <errno.h>
++#include <poll.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <time.h>
++
++static inline int64_t
++dtraced_io_milliseconds(void)
++{
++	struct timespec now;
++	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
++		return (-1);
++	return ((int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000);
++}
++
++/* The caller shares one absolute deadline across the complete frame. */
++static inline int
++dtraced_io_transfer(int fd, void *data, size_t length, bool writing, int64_t deadline,
++    size_t *transferred)
++{
++	unsigned char *p = (unsigned char *)data;
++	struct pollfd event = { fd, (short)(writing ? POLLOUT : POLLIN), 0 };
++	ssize_t n;
++	int64_t now, left;
++	int status;
++
++	*transferred = 0;
++	while (*transferred < length) {
++		now = dtraced_io_milliseconds();
++		if (now < 0)
++			return (-1);
++		left = deadline - now;
++		if (left <= 0) {
++			errno = ETIMEDOUT;
++			return (-1);
++		}
++		n = writing ? send(fd, p + *transferred, length - *transferred,
++		    MSG_DONTWAIT | MSG_NOSIGNAL) : recv(fd, p + *transferred,
++		    length - *transferred, MSG_DONTWAIT);
++		if (n > 0) {
++			*transferred += n;
++			continue;
++		}
++		if (n == 0) {
++			errno = writing ? EPIPE : ECONNRESET;
++			return (-1);
++		}
++		if (errno == EINTR)
++			continue;
++		if (errno != EAGAIN && errno != EWOULDBLOCK)
++			return (-1);
++		status = poll(&event, 1, left > INT32_MAX ? INT32_MAX : (int)left);
++		if (status < 0 && errno != EINTR)
++			return (-1);
++		if (status > 0 && (event.revents & POLLNVAL) != 0) {
++			errno = EBADF;
++			return (-1);
++		}
++	}
++	return (0);
++}
++#endif
