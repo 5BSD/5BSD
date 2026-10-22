@@ -1,6 +1,7 @@
 .include <bsd.own.mk>
 
 TESTS_SUBDIRS+=	common
+TESTS_SUBDIRS+=	hypertrace
 
 .if ${MACHINE_CPUARCH} == "i386"
 TESTS_SUBDIRS+= i386

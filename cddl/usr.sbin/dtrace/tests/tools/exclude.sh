@@ -210,3 +210,172 @@ exclude SKIP common/ustack/tst.spin.ksh
 
 # https://bugs.freebsd.org/237641
 exclude SKIPCI common/misc/tst.dynopt.d
+
+exclude EXFAIL hypertrace/aggs/tst.subr.d
+exclude EXFAIL hypertrace/dtraceUtil/tst.ELFGenerationOut.d.ksh
+exclude EXFAIL hypertrace/dtraceUtil/tst.ELFGenerationWithO.d.ksh
+exclude EXFAIL hypertrace/funcs/tst.copyin.d
+exclude EXFAIL hypertrace/funcs/tst.copyinto.d
+exclude EXFAIL hypertrace/funcs/tst.ddi_pathname.d
+exclude EXFAIL hypertrace/io/tst.fds.d
+exclude EXFAIL hypertrace/mdb/tst.dtracedcmd.ksh
+exclude EXFAIL hypertrace/misc/tst.dofmax.ksh
+exclude EXFAIL hypertrace/misc/tst.include.ksh
+exclude EXFAIL hypertrace/safety/tst.copyin2.d
+exclude EXFAIL hypertrace/safety/tst.msgdsize.d
+exclude EXFAIL hypertrace/safety/tst.msgsize.d
+exclude EXFAIL hypertrace/scalars/tst.misc.d
+exclude EXFAIL hypertrace/scalars/tst.selfarray2.d
+exclude EXFAIL hypertrace/sched/tst.enqueue.d
+exclude EXFAIL hypertrace/speculation/tst.SpecSizeVariations3.d
+exclude EXFAIL hypertrace/tracemem/err.D_TRACEMEM_ADDR.badaddr.d
+exclude EXFAIL hypertrace/translators/tst.TestTransStability2.ksh
+exclude EXFAIL hypertrace/types/tst.struct.d
+exclude EXFAIL hypertrace/types/tst.typedef.d
+
+# We don't have a cpc provider.
+exclude SKIP hypertrace/cpc/err.D_PDESC_ZERO.lowfrequency.d
+exclude SKIP hypertrace/cpc/err.D_PDESC_ZERO.malformedoverflow.d
+exclude SKIP hypertrace/cpc/err.D_PDESC_ZERO.nonexistentevent.d
+exclude SKIP hypertrace/cpc/err.cpcvscpustatpart1.ksh
+exclude SKIP hypertrace/cpc/err.cpcvscpustatpart2.ksh
+exclude SKIP hypertrace/cpc/err.cputrackfailtostart.ksh
+exclude SKIP hypertrace/cpc/err.cputrackterminates.ksh
+exclude SKIP hypertrace/cpc/err.toomanyenablings.d
+exclude SKIP hypertrace/cpc/tst.allcpus.ksh
+exclude SKIP hypertrace/cpc/tst.genericevent.d
+exclude SKIP hypertrace/cpc/tst.platformevent.ksh
+
+# We don't have a mib provider.
+exclude EXFAIL hypertrace/mib/tst.icmp.ksh
+exclude EXFAIL hypertrace/mib/tst.tcp.ksh
+exclude EXFAIL hypertrace/mib/tst.udp.ksh
+
+# At the moment dtrace(1) always needs to run as root.
+exclude SKIP hypertrace/privs/tst.fds.ksh
+exclude SKIP hypertrace/privs/tst.func_access.ksh
+exclude SKIP hypertrace/privs/tst.getf.ksh
+exclude SKIP hypertrace/privs/tst.kpriv.ksh
+exclude SKIP hypertrace/privs/tst.op_access.ksh
+exclude SKIP hypertrace/privs/tst.procpriv.ksh
+exclude SKIP hypertrace/privs/tst.providers.ksh
+exclude SKIP hypertrace/privs/tst.unpriv_funcs.ksh
+
+# These tests hang for reasons unknown.
+exclude SKIP hypertrace/buffering/tst.ring3.d
+exclude SKIP hypertrace/funcs/tst.chill.ksh
+exclude SKIP hypertrace/funcs/tst.index.d
+
+# No Java support at the moment.
+exclude EXFAIL hypertrace/java_api/tst.Abort.ksh
+exclude EXFAIL hypertrace/java_api/tst.Bean.ksh
+exclude EXFAIL hypertrace/java_api/tst.Close.ksh
+exclude EXFAIL hypertrace/java_api/tst.Drop.ksh
+exclude EXFAIL hypertrace/java_api/tst.Enable.ksh
+exclude EXFAIL hypertrace/java_api/tst.FunctionLookup.ksh
+exclude EXFAIL hypertrace/java_api/tst.GetAggregate.ksh
+exclude EXFAIL hypertrace/java_api/tst.MaxConsumers.ksh
+exclude EXFAIL hypertrace/java_api/tst.MultiAggPrinta.ksh
+exclude EXFAIL hypertrace/java_api/tst.ProbeData.ksh
+exclude EXFAIL hypertrace/java_api/tst.ProbeDescription.ksh
+exclude EXFAIL hypertrace/java_api/tst.StateMachine.ksh
+exclude EXFAIL hypertrace/java_api/tst.StopLock.ksh
+
+# Expects specific formatting from banner(6).
+exclude EXFAIL hypertrace/aggs/tst.aggpackbanner.ksh
+
+# Test assumes we're running on a Solaris kernel.
+exclude EXFAIL hypertrace/misc/tst.roch.d
+exclude EXFAIL hypertrace/predicates/tst.argsnotcached.d
+exclude EXFAIL hypertrace/safety/tst.vahole.d
+
+# Tests that depend on the plockstat provider.
+exclude EXFAIL hypertrace/plockstat/tst.available.d
+exclude EXFAIL hypertrace/plockstat/tst.libmap.d
+exclude EXFAIL hypertrace/usdt/tst.andpid.ksh
+
+# Depends on java.
+exclude SKIP hypertrace/drops/drp.DTRACEDROP_STKSTROVERFLOW.d
+
+# Interrupt priority isn't relevant on FreeBSD.
+exclude SKIP hypertrace/builtinvar/tst.ipl.d
+exclude SKIP hypertrace/builtinvar/tst.ipl1.d
+
+# These tests rely on being able to find a host via broadcast pings.
+exclude EXFAIL hypertrace/ip/tst.ipv4remotesctp.ksh
+exclude EXFAIL hypertrace/ip/tst.ipv4remotetcp.ksh
+exclude EXFAIL hypertrace/ip/tst.ipv4remoteudp.ksh
+exclude EXFAIL hypertrace/ip/tst.ipv4remoteudplite.ksh
+exclude EXFAIL hypertrace/ip/tst.ipv6remoteicmp.ksh
+exclude EXFAIL hypertrace/ip/tst.ipv4remoteicmp.ksh
+exclude EXFAIL hypertrace/ip/tst.remotesctpstate.ksh
+exclude EXFAIL hypertrace/ip/tst.remotetcpstate.ksh
+
+# Tries to enable pid$target:libc::entry, though there's no "libc" module.
+# Currently unsure as to whether this might be a libproc bug.
+exclude EXFAIL hypertrace/pid/tst.probemod.ksh
+
+# Assumes date(1) has a pid$target::main:return probe.
+exclude EXFAIL hypertrace/pid/tst.newprobes.ksh
+
+# libproc+librtld_db don't handle dlopen(2) yet.
+exclude EXFAIL hypertrace/pid/tst.provregex2.ksh
+exclude EXFAIL hypertrace/pid/tst.provregex4.ksh
+
+# This test appears to be invalid. dtrace is supposed to press on if a
+# depends_on pragma cannot be satisfied, per the comment above
+# dt_load_libs_dir() in libdtrace.
+exclude EXFAIL hypertrace/pragma/err.invalidlibdep.ksh
+
+# This test checks for a leading tab on a line before #define. That is illegal
+# on Solaris, but the clang pre-processor on FreeBSD is happy with code like
+# that.
+exclude EXFAIL hypertrace/preprocessor/err.D_PRAGCTL_INVAL.tabdefine.d
+
+# This test uses proc:::signal-handle, which we don't appear to have.
+exclude EXFAIL hypertrace/proc/tst.signal.ksh
+
+# This test uses proc:::lwp-start, which we don't appear to have.
+exclude EXFAIL hypertrace/proc/tst.startexit.ksh
+
+# This test causes a panic at the moment because fbt instruments the lock class'
+# lc_owned method.
+exclude SKIP hypertrace/safety/tst.rw.d
+
+# Depends on some implementation details of the runtime linker.
+exclude EXFAIL hypertrace/vars/tst.ucaller.ksh
+
+# These rely on process attributes that FreeBSD doesn't carry.
+exclude EXFAIL hypertrace/scripting/tst.projid.ksh
+exclude EXFAIL hypertrace/scripting/tst.taskid.ksh
+
+# Depends on tst.chasestrings.exe being ELF32. See r326181 and r326285.
+exclude EXFAIL hypertrace/uctf/err.user64mode.ksh
+
+# This test expects its test program to be installed without CTF data, but
+# the rest of the programs for this feature need CTF data. Not yet sure how
+# to build that.
+exclude EXFAIL hypertrace/uctf/tst.libtype.ksh
+
+# libproc doesn't have linkmap support yet.
+exclude EXFAIL hypertrace/uctf/tst.linkmap.ksh
+
+# Uses Sun-specific compiler options.
+exclude EXFAIL hypertrace/usdt/tst.badguess.ksh
+exclude EXFAIL hypertrace/usdt/tst.guess32.ksh
+exclude EXFAIL hypertrace/usdt/tst.guess64.ksh
+
+# Depends on non-standard static linker behaviour.
+exclude EXFAIL hypertrace/usdt/tst.eliminate.ksh
+
+# Generated headers include <sys/sdt.h>, so _DTRACE_VERSION is always defined.
+exclude EXFAIL hypertrace/usdt/tst.nodtrace.ksh
+
+# Uses the Solaris-specific ppriv(1).
+exclude EXFAIL hypertrace/usdt/tst.user.ksh
+
+# Triggers a lock assertion by using the raise() action from a profile probe.
+exclude SKIP hypertrace/ustack/tst.spin.ksh
+
+# https://bugs.freebsd.org/237641
+exclude SKIPCI hypertrace/misc/tst.dynopt.d
