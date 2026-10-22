@@ -233,6 +233,9 @@ to a re-import.
                  replaced by an IPv6 one (hop limit 255), and the pfsync
                  MTU stays 20 bytes below the syncdev's.  SIOC[GS]ETPFSYNC
                  keep OpenBSD's struct and leave the IPv6 peer alone.
+                 A bulk request timeout that arrives after a state change
+                 (the callout ran as pfsync_down() deleted it) is dropped,
+                 not an invalid event: sc_bulk_req.req_tmo_at.
 The compatibility layer and 5BSD attachment live in sys/netpfil/openbsd-pf
 (openbsd_compat.[ch], openbsd_net.c, openbsd_ifq.c, pf_freebsd.c,
 pf_pfsync.c, pf_sdt.c, include/ shadow headers, user/ userland

@@ -217,6 +217,7 @@ struct pfsync_softc {
 	struct {
 		struct sx			 req_lock;	/* 5BSD: sleepable */
 		struct timeout			 req_tmo;
+		uint64_t			 req_tmo_at;	/* 5BSD */
 		enum pfsync_bulk_req_state	 req_state;
 		unsigned int			 req_tries;
 		unsigned int			 req_demoted;
@@ -1041,11 +1042,16 @@ pfsync_bulk_req_nstate(struct pfsync_softc *sc,
     enum pfsync_bulk_req_state nstate, int seconds)
 {
 	sc->sc_bulk_req.req_state = nstate;
-	if (seconds > 0)
+	if (seconds > 0) {
+		/* 5BSD: when it is due; see pfsync_bulk_req_evt(). */
+		sc->sc_bulk_req.req_tmo_at = getnsecuptime() +
+		    SEC_TO_NSEC(seconds);
 		pfsync_schedule_timeout(sc, &sc->sc_bulk_req.req_tmo,
 		    SEC_TO_NSEC(seconds));
-	else
+	} else {
+		sc->sc_bulk_req.req_tmo_at = 0;
 		timeout_del(&sc->sc_bulk_req.req_tmo);
+	}
 }
 
 static void
@@ -1096,6 +1102,26 @@ pfsync_bulk_req_evt(struct pfsync_softc *sc, enum pfsync_bulk_req_event evt)
 	pfsync_dprintf(sc, "%s state %s evt %s", __func__,
 	    pfsync_bulk_req_state_names[sc->sc_bulk_req.req_state],
 	    pfsync_bulk_req_event_names[evt]);
+
+	/*
+	 * 5BSD: timeouts run as tasks.  One that has started can wait for
+	 * NET_LOCK while pfsync_down() or a state change deletes it, and
+	 * arrive after the state it was armed for (state none or done, or a
+	 * timeout armed anew): drop it, rather than take it as an event the
+	 * state machine cannot accept (panic in pfsync_bulk_req_invstate).
+	 * The slack covers the coarse uptime clock.
+	 */
+	if (evt == PFSYNC_BREQ_EVT_TMO) {
+		if (sc->sc_bulk_req.req_tmo_at == 0 ||
+		    getnsecuptime() + SEC_TO_NSEC(1) / 10 <
+		    sc->sc_bulk_req.req_tmo_at) {
+			pfsync_dprintf(sc, "%s: stale timeout ignored",
+			    __func__);
+			rw_exit_write(&sc->sc_bulk_req.req_lock);
+			return;
+		}
+		sc->sc_bulk_req.req_tmo_at = 0;
+	}
 
 	if (evt == PFSYNC_BREQ_EVT_DOWN) {
 		/* unconditionally move down */
