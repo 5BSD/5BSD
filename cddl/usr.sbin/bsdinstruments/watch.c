@@ -30,6 +30,7 @@
 
 #include <dtrace.h>
 #include <tracecmp.h>
+#include <sys/hypertrace.h>
 
 #include "otelexport.h"
 #include "bsdinstruments.h"
@@ -460,7 +461,7 @@ struct agg_walk_ctx {
  */
 static void
 key_frames_to_buf(dtrace_hdl_t *dtp, struct oe_buf *b, caddr_t addr,
-    size_t nframes)
+    size_t nframes, uint16_t guest_vmid)
 {
 	dtrace_syminfo_t si;
 	GElf_Sym sym;
@@ -473,7 +474,10 @@ key_frames_to_buf(dtrace_hdl_t *dtp, struct oe_buf *b, caddr_t addr,
 			break;
 		if (i > 0)
 			oe_buf_appendstr(b, ";");
-		if (dtrace_lookup_by_addr(dtp, pc, &sym, &si) == 0)
+		if (guest_vmid != 0)
+			oe_buf_appendf(b, "guest[%u]`0x%jx", guest_vmid,
+			    (uintmax_t)pc);
+		else if (dtrace_lookup_by_addr(dtp, pc, &sym, &si) == 0)
 			oe_buf_appendf(b, "%s`%s+0x%jx", si.dts_object,
 			    si.dts_name, (uintmax_t)(pc - sym.st_value));
 		else
@@ -503,12 +507,15 @@ key_to_buf(dtrace_hdl_t *dtp, const dtrace_recdesc_t *rec, caddr_t base,
 
 	switch (rec->dtrd_action) {
 	case DTRACEACT_STACK:
-		framesize = rec->dtrd_arg != 0 ?
-		    rec->dtrd_size / rec->dtrd_arg : sizeof(uint64_t);
+		framesize = HYPERTRACE_STACK_NFRAMES(rec->dtrd_arg) != 0 ?
+		    rec->dtrd_size /
+		    HYPERTRACE_STACK_NFRAMES(rec->dtrd_arg) : sizeof(uint64_t);
 		if (framesize != sizeof(uint64_t))
 			goto hexdump;
 		key_frames_to_buf(dtp, b, addr,
-		    rec->dtrd_size / sizeof(uint64_t));
+		    rec->dtrd_size / sizeof(uint64_t),
+		    HYPERTRACE_STACK_GUEST(rec->dtrd_arg) ?
+		    HYPERTRACE_STACK_VMID(rec->dtrd_arg) : 0);
 		return;
 	case DTRACEACT_USTACK:
 	case DTRACEACT_JSTACK:

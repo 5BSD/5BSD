@@ -22,19 +22,30 @@ CFLAGS+=	-I${SRCTOP}/sys/cddl/compat/opensolaris \
 		-I${OPENSOLARIS_USR_DISTDIR}/lib/libdtrace/common \
 		-I${OPENSOLARIS_USR_DISTDIR}/lib/libproc/common \
 		-I${OPENSOLARIS_SYS_DISTDIR}/uts/common \
-		-I${OPENSOLARIS_SYS_DISTDIR}/compat
+		-I${OPENSOLARIS_SYS_DISTDIR}/compat \
+		-I${SRCTOP}/usr.sbin/dtraced
+
 CFLAGS+= -DHAVE_ISSETUGID
 
-# Optional debugging stuff...
-#CFLAGS+=	-DNEED_ERRLOC
-#YFLAGS+=	-d
+.if ${MK_DTRACE_BENCHMARKS} != "no"
+CFLAGS+=	-D__DTRACE_RUN_BENCHMARKS__
+.endif
 
 .if ${MK_DTRACE_ASAN} != "no"
 CFLAGS+=	-fsanitize=address -fsanitize=undefined
+CXXFLAGS+=	-fsanitize=address -fsanitize=undefined
 LDFLAGS+=	-fsanitize=address -fsanitize=undefined
+.elif ${MK_DTRACE_DEBUG_TSAN} != "no"
+CFLAGS+=	-fsanitize=thread
+CXXFLAGS+=	-fsanitize=thread
+LDFLAGS+=	-fsanitize=thread
 .endif
 
-LIBADD=	dtrace ctf elf proc spl xo pthread
+LIBADD=	dtrace ctf elf proc spl xo pthread crypto
+.if defined(DTRACE_TARGET_ARCH)
+# The cross-world provider linker consumes static libdtrace and its C++ code.
+LIBADD+=	cplusplus cxxrt m
+.endif
 
 .if ${MK_DTRACE_TESTS} != "no"
 SUBDIR+=	tests

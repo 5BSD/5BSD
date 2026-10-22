@@ -1,5 +1,7 @@
 .include <src.opts.mk>
 
+.include <src.opts.mk>
+
 .PATH: ${SRCTOP}/cddl/contrib/opensolaris/cmd/plockstat
 
 PACKAGE=	dtrace
@@ -29,7 +31,12 @@ CFLAGS+= -DHAVE_ISSETUGID
 
 .if ${MK_DTRACE_ASAN} != "no"
 CFLAGS+=	-fsanitize=address -fsanitize=undefined
+CXXFLAGS+=	-fsanitize=address -fsanitize=undefined
 LDFLAGS+=	-fsanitize=address -fsanitize=undefined
+.elif ${MK_DTRACE_DEBUG_TSAN} != "no"
+CFLAGS+=	-fsanitize=thread
+CXXFLAGS+=	-fsanitize=thread
+LDFLAGS+=	-fsanitize=thread
 .endif
 
 LIBADD=	dtrace proc

@@ -34,6 +34,7 @@
 .Op Fl b Ar bufsz
 .Op Fl c Ar cmd
 .Op Fl D Ar name Op Ns = Ns value
+.Op Fl g Ar file
 .Op Fl I Ar path
 .Op Fl L Ar path
 .Op Fl o Ar output
@@ -251,6 +252,13 @@ argument can be suffixed with an optional D probe clause.
 You can specify more than one
 .Fl f
 option on the command line at a time.
+.It Fl g Ar file
+Write a GraphViz
+.Xr dot 1
+representation of each compiled program's actions to
+.Ar file .
+If the file cannot be opened, a message is printed and the program is
+neither enabled nor reported.
 .It Fl F
 Coalesce trace output by identifying function entry and return.
 Function entry probe reports are indented and their output is prefixed with
@@ -601,6 +609,39 @@ Size of the per-CPU principal buffer.
 Same as the
 .Fl b
 flag.
+.It Sy checkmodref
+Before a program is enabled, report each action that references state
+after an earlier action of the same program modified state.
+The check is performed by
+.Nm
+itself, not by the DTrace library, and applies only when programs are
+compiled for execution (including
+.Fl e ,
+.Fl E ,
+.Fl y
+and
+.Fl Y ) ;
+it takes no value.
+Each such action is reported on standard error as
+.Dl dtrace: ref-after-mod in Ar provider : Ns Ar module : Ns Ar function : Ns Ar name : Ns Ar kinds
+where
+.Ar kinds
+lists, each preceded by a space, the kinds of state the action references:
+.Cm global
+(global variables),
+.Cm thread
+(thread-local variables),
+.Cm clause
+(clause-local variables),
+.Cm external
+(memory outside DTrace, such as user stacks), and
+.Cm internal
+(DTrace state such as speculations).
+Subroutine calls are treated as referencing every kind.
+The report is a warning; the program is still enabled.
+Programs received from guests or from
+.Xr dtraced 8
+are checked before they are executed.
 .It Sy cleanrate Ns = Ns Ar time
 Cleaning rate.
 Must be specified in number-per-second with the
@@ -684,6 +725,15 @@ Claim anonymous state.
 Same as the
 .Fl a
 flag.
+.It Sy guestrefsize Ns = Ns Ar size
+Largest record, in bytes, that a program returned by a guest may declare
+for a by-reference result whose type the host could not resolve when it
+compiled the program.
+Programs whose returned results are larger fail verification and are not
+executed.
+The default is 64 KiB.
+The size can include any of the size suffixes k, m, g, or t.
+A size of 0 or a value that is not a size is refused.
 .It Sy jstackframes Ns = Ns Ar scalar
 Number of default stack frames for
 .Fn jstack .
@@ -856,6 +906,18 @@ is the minor release value in hexadecimal, and
 .Ar uuu
 is the micro release value in hexadecimal.
 .El
+.It Fl y Ar file
+Run a linked HyperTrace program from an ELF
+.Ar file .
+The file is parsed and linked; if it is marked for execution, its program is
+enabled, tracing starts, and
+.Nm
+consumes output until the program ends, then exits.
+A file not marked for execution is reported under
+.Fl v
+and nothing runs.
+This is a development aid; the HyperTrace daemons use
+.Fl Y .
 .It Fl Z
 Permit probe descriptions that match zero probes.
 If the
