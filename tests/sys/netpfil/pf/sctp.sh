@@ -26,6 +26,18 @@
 
 . $(atf_get_srcdir)/utils.subr
 
+# sctp_wait_listen <jail> <port>: wait until a server listens there (a
+# fixed sleep loses to a slow start on a loaded host: refused, not dropped).
+sctp_wait_listen()
+{
+	_i=0
+	until jexec $1 sockstat -P sctp -l -p $2 | grep -q nc; do
+		_i=$((_i + 1))
+		[ ${_i} -lt 100 ] || atf_fail "no SCTP listener on port $2 in $1"
+		sleep 0.05
+	done
+}
+
 sctp_init()
 {
 	pft_init
@@ -63,7 +75,7 @@ basic_v4_body()
 	echo "foo" | jexec ${j}a nc --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	out=$(jexec ${j}b nc --sctp -N -w 3 192.0.2.1 1234)
 	if [ "$out" != "foo" ]; then
@@ -138,7 +150,7 @@ basic_v6_body()
 	echo "foo" | jexec ${j}a nc -6 --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	out=$(jexec ${j}b nc --sctp -N -w 3 2001:db8::a 1234)
 	if [ "$out" != "foo" ]; then
@@ -212,7 +224,7 @@ reuse_body()
 	echo "foo" | jexec ${j}a nc --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	out=$(jexec ${j}b nc --sctp -N -w 3 -p 1234 192.0.2.1 1234)
 	if [ "$out" != "foo" ]; then
@@ -225,7 +237,7 @@ reuse_body()
 	echo "foo" | jexec ${j}a nc --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	out=$(jexec ${j}b nc --sctp -N -w 3 -p 1234 192.0.2.1 1234)
 	if [ "$out" != "foo" ]; then
@@ -271,7 +283,7 @@ abort_v4_body()
 	echo "foo" | jexec ${j}a nc --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	# If we get the abort we'll exit immediately, if we don't timeout will
 	# stop nc.
@@ -330,7 +342,7 @@ abort_v6_body()
 	echo "foo" | jexec ${j}a nc -6 --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	# If we get the abort we'll exit immediately, if we don't timeout will
 	# stop nc.
@@ -397,7 +409,7 @@ nat_v4_body()
 	echo "foo" | jexec ${j}srv nc --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}srv 1234
 
 	out=$(jexec ${j}c nc --sctp -N -w 3 198.51.100.1 1234)
 	if [ "$out" != "foo" ]; then
@@ -450,7 +462,7 @@ nat_v6_body()
 	echo "foo" | jexec ${j}srv nc -6 --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}srv 1234
 
 	out=$(jexec ${j}c nc --sctp -N -w 3 2001:db8::1 1234)
 	if [ "$out" != "foo" ]; then
@@ -500,7 +512,7 @@ rdr_v4_body()
 	echo "foo" | jexec ${j}c nc --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}c 1234
 
 	out=$(jexec ${j}srv nc --sctp -N -w 3 198.51.100.2 1234)
 	if [ "$out" != "foo" ]; then
