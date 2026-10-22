@@ -14,6 +14,8 @@
  *   ioctl(fd, MAC_CAPABILITY_SENDMSG, &args)    send async message to service
  *   ioctl(fd, MAC_CAPABILITY_RECVMSG, &args)    receive async reply/notification
  *   ioctl(fd, MAC_CAPABILITY_CALL, &args)       synchronous call (caller context)
+ *   ioctl(fd, MAC_CAPABILITY_CHANNEL_CALL, &args) send a request and receive
+ *                                               its reply in one call
  *
  * A service may expose CALL, SENDMSG/RECVMSG, or both.  kqueue readiness
  * maps to async queue state: EVFILT_READ means RECVMSG can make progress,
@@ -222,6 +224,46 @@ struct mac_capability_recvmsg_v4_args {
 	_IOWR('Y', 16, struct mac_capability_recvmsg_v4_args)
 
 /*
+ * Peer-to-peer synchronous call: send a request and sleep for its reply in
+ * one system call.  The request is accepted exactly as MAC_CAPABILITY_SENDMSG_V2
+ * would accept it (same queue limits, descriptor expectations, transfer
+ * authority and SEND_F_MOVE semantics) and must carry a nonzero reply_token
+ * of the caller's choosing.  The caller then sleeps, interruptibly, until a
+ * message carrying that token arrives on its own receive side, and receives
+ * it as MAC_CAPABILITY_RECVMSG_V4 would, with the same metadata (process and
+ * authority stamps, descriptor info).  Only the matching reply is taken;
+ * events and other replies that arrive meanwhile stay queued for
+ * MAC_CAPABILITY_RECVMSG.  A matched reply is handed to the sleeping caller
+ * directly and never occupies the receive queue, so a caller whose queue is
+ * full of unread events cannot deadlock its peer's reply.
+ *
+ * timeout_ms bounds the sleep (MAC_CAPABILITY_RECV_WAIT_FOREVER: none).
+ * On ETIMEDOUT the request remains sent; the kernel remembers the token as
+ * cancelled (a small per-descriptor ring, oldest entry evicted) and discards
+ * its late reply, closing attached descriptors.  On EINTR the request also
+ * remains sent, but its reply is delivered through MAC_CAPABILITY_RECVMSG so
+ * the caller can still match it.  Peer death completes the call with
+ * ECONNRESET.  If the reply does not fit, the call fails with EMSGSIZE, the
+ * required sizes are reported as for RECVMSG, and the reply is placed at the
+ * head of the receive queue for a larger MAC_CAPABILITY_RECVMSG_V4.
+ * reply.v3.message.flags must be zero on input and reports RECV_F_* as for a
+ * receive.  MAC_CAPABILITY_REVOKE_SEND or _RECV disable this command
+ * (EACCES); kernels without it fail with ENOTTY, and
+ * MAC_CAPABILITY_INFO_F_CHANNEL_CALL in GETINFO reports its presence.
+ */
+struct mac_capability_channel_call_args {
+	struct mac_capability_sendmsg_v2_args request;	/* reply_token != 0 */
+	struct mac_capability_recvmsg_v4_args reply;	/* OUT as RECVMSG_V4 */
+	uint32_t	timeout_ms;	/* MAC_CAPABILITY_RECV_WAIT_FOREVER: none */
+	uint32_t	flags;		/* reserved, must be 0 */
+	uint64_t	_reserved[4];
+};
+#define	MAC_CAPABILITY_CHANNEL_CALL \
+	_IOWR('Y', 17, struct mac_capability_channel_call_args)
+/* Timed-out call tokens remembered per descriptor (late replies discarded). */
+#define	MAC_CAPABILITY_CALL_CANCELLED	16
+
+/*
  * Synchronous call — request and reply in one ioctl.
  * The handler runs in the caller's thread context.
  * Only available if the service registered co_call.
@@ -250,6 +292,7 @@ struct mac_capability_call_args {
 #define	MAC_CAPABILITY_INFO_F_CALL	0x00000002u	/* synchronous CALL path */
 #define	MAC_CAPABILITY_INFO_F_KQUEUE	0x00000004u	/* kqueue readiness support */
 #define	MAC_CAPABILITY_INFO_F_RECVMSG	0x00000008u	/* async RECVMSG path */
+#define	MAC_CAPABILITY_INFO_F_CHANNEL_CALL	0x00000010u /* CHANNEL_CALL ioctl */
 
 struct mac_capability_info_args {
 	char		name[MAC_CAPABILITY_MAXNAME]; /* OUT: service name */

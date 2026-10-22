@@ -183,6 +183,57 @@ int	channel_flush(struct channel *);
 int	channel_send_reply(struct channel_message *,
 	    const struct channel_outgoing *);
 
+/*
+ * Send-path statistics.  Set size before calling.  The sent_* counters are
+ * cumulative over the channel's lifetime: sent_direct counts messages the
+ * kernel accepted from the caller's memory, sent_queued those queued behind
+ * backpressure and sent_flushed the queued ones since accepted by
+ * channel_flush().  The remaining fields are current gauges.
+ */
+struct channel_stats {
+	size_t		size;
+	uint64_t	sent_direct;
+	uint64_t	sent_queued;
+	uint64_t	sent_flushed;
+	uint64_t	pending_requests;
+	uint64_t	queued_messages;
+	uint64_t	queued_bytes;
+	uint64_t	queued_fds;
+};
+#define	CHANNEL_STATS_INITIALIZER	{ .size = sizeof(struct channel_stats) }
+int	channel_get_stats(const struct channel *, struct channel_stats *);
+
+/*
+ * Encode into the send buffer.  channel_outgoing_reserve() yields a buffer
+ * with room for max_length payload bytes and nfds descriptors; the caller
+ * writes the payload at channel_outgoing_buffer_data() and commits it with
+ * its actual length (1..max_length) and up to nfds descriptors, after which
+ * the buffer is no longer the caller's.  When nothing is queued ahead and the
+ * kernel accepts the message it is sent from the buffer; otherwise the
+ * buffer itself becomes the queue entry.  A failed commit leaves the
+ * buffer, its payload and the caller's descriptors as they were; the caller
+ * commits again or aborts.  Descriptors, expectations, flags and the
+ * request or reply semantics are those of the channel_send_* functions.
+ */
+struct channel_outgoing_buffer;
+int	channel_outgoing_reserve(struct channel *, size_t /*max_length*/,
+	    size_t /*nfds*/, struct channel_outgoing_buffer **);
+void	*channel_outgoing_buffer_data(struct channel_outgoing_buffer *);
+size_t	channel_outgoing_buffer_capacity(
+	    const struct channel_outgoing_buffer *);
+int	channel_outgoing_commit_event(struct channel_outgoing_buffer *,
+	    size_t /*length*/, const int * /*fds*/, size_t /*nfds*/,
+	    const struct channel_fd_spec *, uint32_t /*CHANNEL_SEND_* */);
+int	channel_outgoing_commit_request(struct channel_outgoing_buffer *,
+	    size_t /*length*/, const int * /*fds*/, size_t /*nfds*/,
+	    const struct channel_fd_spec *, uint32_t /*CHANNEL_SEND_* */,
+	    channel_reply_handler, void *, struct channel_request **);
+int	channel_outgoing_commit_reply(struct channel_outgoing_buffer *,
+	    struct channel_message * /*request*/, size_t /*length*/,
+	    const int * /*fds*/, size_t /*nfds*/,
+	    const struct channel_fd_spec *, uint32_t /*CHANNEL_SEND_* */);
+void	channel_outgoing_abort(struct channel_outgoing_buffer *);
+
 enum channel_message_kind
 	channel_message_kind(const struct channel_message *);
 const void *channel_message_data(const struct channel_message *);
@@ -204,6 +255,34 @@ int	channel_message_take_fd(struct channel_message *, size_t);
 int	channel_message_fd_info(const struct channel_message *, size_t,
 	    struct channel_fd_info *);
 void	channel_message_free(struct channel_message *);
+
+/*
+ * Synchronous call (channel_call.c).  channel_call_request() is
+ * channel_send_request() whose reply, on kernels with
+ * MAC_CAPABILITY_CHANNEL_CALL, is received in the same system call: when
+ * nothing is queued ahead the calling thread sleeps in the kernel for the
+ * message carrying the request's token, events and other replies stay
+ * queued for channel_dispatch(), and the handler runs with the reply (or
+ * ETIMEDOUT after timeout_ms milliseconds; -1 waits without limit) before
+ * this returns, so *request may already have been handed to it.  When the
+ * kernel lacks the command, output is queued, or the kernel refuses the
+ * request with EAGAIN, the request is sent or queued as usual and completes
+ * from channel_dispatch(); the timeout then does not apply.
+ * channel_request_status() tells the two apart.  A late reply to a timed-out
+ * call is discarded, with its descriptors closed, on either path.
+ *
+ * channel_call() wraps it for callers without an event loop: it runs the
+ * wait/dispatch loop when needed, applying timeout_ms to the whole call,
+ * and returns the reply, a CHANNEL_MESSAGE_REPLY the caller frees.  Other
+ * messages received meanwhile reach the installed handlers as from
+ * channel_dispatch().  Fails with ETIMEDOUT (the request stays sent) or the
+ * terminal channel error.
+ */
+int	channel_call_request(struct channel *, const struct channel_outgoing *,
+	    channel_reply_handler, void *, struct channel_request **,
+	    int /*timeout_ms*/);
+int	channel_call(struct channel *, const struct channel_outgoing *,
+	    struct channel_message **, int /*timeout_ms*/);
 
 /*
  * Create a fresh, self-owned pair of two connected mac_capability channel

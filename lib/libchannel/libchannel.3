@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd October 10, 2026
+.Dd October 22, 2026
 .Dt LIBCHANNEL 3
 .Os
 .Sh NAME
@@ -46,6 +46,22 @@ Capability channel library
 .Ft int
 .Fn channel_send_reply "struct channel_message *request" "const struct channel_outgoing *message"
 .Ft int
+.Fo channel_call_request
+.Fa "struct channel *channel"
+.Fa "const struct channel_outgoing *message"
+.Fa "channel_reply_handler handler"
+.Fa "void *context"
+.Fa "struct channel_request **request"
+.Fa "int timeout_ms"
+.Fc
+.Ft int
+.Fo channel_call
+.Fa "struct channel *channel"
+.Fa "const struct channel_outgoing *message"
+.Fa "struct channel_message **reply"
+.Fa "int timeout_ms"
+.Fc
+.Ft int
 .Fn channel_request_cancel "struct channel_request *request"
 .Ft int
 .Fn channel_request_status "const struct channel_request *request"
@@ -57,6 +73,52 @@ Capability channel library
 .Fa "size_t slot"
 .Fa "struct channel_fd_info *info"
 .Fc
+.Ft int
+.Fn channel_get_stats "const struct channel *channel" "struct channel_stats *stats"
+.Ft int
+.Fo channel_outgoing_reserve
+.Fa "struct channel *channel"
+.Fa "size_t max_length"
+.Fa "size_t nfds"
+.Fa "struct channel_outgoing_buffer **buffer"
+.Fc
+.Ft "void *"
+.Fn channel_outgoing_buffer_data "struct channel_outgoing_buffer *buffer"
+.Ft size_t
+.Fn channel_outgoing_buffer_capacity "const struct channel_outgoing_buffer *buffer"
+.Ft int
+.Fo channel_outgoing_commit_event
+.Fa "struct channel_outgoing_buffer *buffer"
+.Fa "size_t length"
+.Fa "const int *fds"
+.Fa "size_t nfds"
+.Fa "const struct channel_fd_spec *fd_specs"
+.Fa "uint32_t flags"
+.Fc
+.Ft int
+.Fo channel_outgoing_commit_request
+.Fa "struct channel_outgoing_buffer *buffer"
+.Fa "size_t length"
+.Fa "const int *fds"
+.Fa "size_t nfds"
+.Fa "const struct channel_fd_spec *fd_specs"
+.Fa "uint32_t flags"
+.Fa "channel_reply_handler handler"
+.Fa "void *context"
+.Fa "struct channel_request **request"
+.Fc
+.Ft int
+.Fo channel_outgoing_commit_reply
+.Fa "struct channel_outgoing_buffer *buffer"
+.Fa "struct channel_message *request"
+.Fa "size_t length"
+.Fa "const int *fds"
+.Fa "size_t nfds"
+.Fa "const struct channel_fd_spec *fd_specs"
+.Fa "uint32_t flags"
+.Fc
+.Ft void
+.Fn channel_outgoing_abort "struct channel_outgoing_buffer *buffer"
 .Sh DESCRIPTION
 .Fn channel_wait
 returns CHANNEL_WAIT_READ and/or CHANNEL_WAIT_WRITE readiness bits, zero on
@@ -72,7 +134,10 @@ The
 library provides a nonblocking, event-loop-native abstraction over
 .Dv MAC_CAPABILITY_SENDMSG
 and
-.Dv MAC_CAPABILITY_RECVMSG .
+.Dv MAC_CAPABILITY_RECVMSG ,
+and a synchronous request through
+.Dv MAC_CAPABILITY_CHANNEL_CALL
+.Pq see Sx SYNCHRONOUS CALLS .
 It does not use or expose
 .Dv MAC_CAPABILITY_CALL .
 .Pp
@@ -108,9 +173,20 @@ otherwise be indistinguishable from a new request without adding a redundant
 transport envelope.
 .Pp
 Payloads and descriptors passed for sending remain caller-owned.
+While nothing is queued, a send hands the message to the kernel directly
+from the caller's memory in one system call, without allocating; messages
+are queued only once the kernel has refused one, and from then on behind the
+waiting ones, so delivery order is that of the sends.
 When backpressure requires queuing,
 .Nm
-copies the payload and duplicates the descriptors.
+copies the payload and duplicates the descriptors into one block per
+message.
+.Fn channel_get_stats
+counts both outcomes; see
+.Sx STATISTICS .
+The
+.Sx SEND BUFFERS
+interface lets a caller encode straight into the memory the kernel reads.
 Ownership of a received message is transferred to the installed handler.
 The handler may retain a provider request and respond later.
 Received messages own their installed descriptors.
@@ -123,9 +199,10 @@ Each message is one allocation sized from recent traffic on its channel,
 not the maximum message size, so a retained request costs about its own
 payload plus a fixed header.
 A channel keeps the most recently freed message block (up to 4 KiB, or
-larger while the traffic needs it) and the most recently released request
-for reuse, so a steady request/reply exchange does not allocate per call;
-both are freed with the channel.
+larger while the traffic needs it), one released outgoing block of the same
+size class, and released requests up to its pending-request limit, for
+reuse, so a steady request/reply exchange, however deeply pipelined, does not
+allocate per call once warm; all are freed with the channel.
 .Pp
 Handlers execute synchronously from
 .Fn channel_dispatch .
@@ -331,6 +408,83 @@ while pending and otherwise the completion error, with zero denoting a reply.
 releases the caller's handle reference.
 It may be called while the request is pending or by its callback; reclamation
 is deferred until completion when necessary.
+.Sh SYNCHRONOUS CALLS
+A request whose reply is awaited at once costs a send, a readiness wait and
+a receive system call, plus the clock reads bounding the wait.
+.Fn channel_call_request
+is
+.Fn channel_send_request
+whose reply, on kernels with
+.Dv MAC_CAPABILITY_CHANNEL_CALL ,
+is received in the same system call: when nothing is queued ahead of it the
+calling thread sleeps in the kernel for the message carrying the request's
+token, events and other replies that arrive meanwhile stay queued for
+.Fn channel_dispatch ,
+and
+.Fa handler
+runs with the reply before the function returns, so
+.Fa request
+may already have been passed to it.
+After
+.Fa timeout_ms
+milliseconds
+.Pq negative: no limit
+the handler runs with
+.Er ETIMEDOUT
+and no reply; the request remains sent and its late reply is discarded,
+with every attached descriptor closed, exactly as a reply to a cancelled
+request is.
+Peer death completes the handler with the terminal error.
+When the kernel lacks the command, output is queued behind backpressure, or
+the kernel refuses the request with
+.Er EAGAIN ,
+the request is sent or queued as by
+.Fn channel_send_request
+and completes from
+.Fn channel_dispatch ;
+.Fa timeout_ms
+then does not apply, and
+.Fn channel_request_status
+reports
+.Er EINPROGRESS .
+A reply larger than the receive block, or a call interrupted by a signal,
+also completes from
+.Fn channel_dispatch .
+The two paths are the same request as the kernel sees it: descriptor
+expectations, transfer authority, moves and queue limits apply identically,
+and a failed expectation fails the call before anything is sent.
+While the caller sleeps in the kernel it does not drain its receive queue;
+the reply itself is handed to it even when that queue is full, but a provider
+that sends more events than the queue holds
+.Pq the receive depth reported by Dv MAC_CAPABILITY_GETINFO
+before replying is held back until the caller dispatches, which a caller
+with a timeout observes as
+.Er ETIMEDOUT .
+Providers replying to synchronous callers should bound the events they emit
+before the reply, as they must for any client that waits for one message.
+.Pp
+.Fn channel_call
+is the form for callers without an event loop.
+It issues the request, runs the wait and dispatch loop itself when the kernel
+did not complete it, applying
+.Fa timeout_ms
+to the whole call, and returns the reply, a
+.Dv CHANNEL_MESSAGE_REPLY
+the caller frees.
+Other messages received meanwhile reach the installed handlers as from
+.Fn channel_dispatch .
+It fails with
+.Er ETIMEDOUT ,
+leaving the channel usable, or with the terminal channel error.
+.Pp
+Whether the kernel path is available is decided once per channel, from the
+descriptor's ioctl allowlist and the
+.Dv MAC_CAPABILITY_INFO_F_CHANNEL_CALL
+feature, without ever issuing an unsupported command.
+Setting the environment variable
+.Ev LIBCHANNEL_NO_CHANNEL_CALL
+.Pq ignored by set-user-ID programs
+forces the ordinary path, for comparison.
 .Sh EVENTS
 .Fn channel_send_event
 sends a token-zero message.
@@ -342,6 +496,91 @@ descriptors are closed.
 .Fn channel_set_request_handler
 installs the provider request handler.
 When no request handler is installed, incoming requests are discarded.
+.Sh SEND BUFFERS
+A caller that produces its payload incrementally, such as a message codec,
+can encode straight into the memory the kernel will read instead of into a
+buffer of its own that the send then copies when it must queue.
+.Fn channel_outgoing_reserve
+yields a buffer with room for
+.Fa max_length
+payload bytes, between one and the kernel maximum, and up to
+.Fa nfds
+descriptors; the channel's spare block serves it when it fits, so a steady
+exchange reserves and commits without allocating.
+.Fn channel_outgoing_buffer_data
+returns the writable payload area and
+.Fn channel_outgoing_buffer_capacity
+the reserved
+.Fa max_length .
+Nothing is sent or accounted at reservation; a reserved buffer counts toward
+no queue limit.
+.Pp
+A commit sends the payload's first
+.Fa length
+bytes, between one and the reservation, with up to the reserved number of
+descriptors.
+.Fn channel_outgoing_commit_event ,
+.Fn channel_outgoing_commit_request
+and
+.Fn channel_outgoing_commit_reply
+take the same descriptors, expectations and
+.Dv CHANNEL_SEND_*
+flags as the
+.Vt struct channel_outgoing
+members of
+.Fn channel_send_event ,
+.Fn channel_send_request
+and
+.Fn channel_send_reply ,
+have the same role and request requirements, register a request before the
+message is handed to the kernel, and report the same errors.
+The reply form requires the request message to belong to the buffer's
+channel.
+While nothing is queued ahead the message goes to the kernel from the buffer
+itself; when it must queue, the buffer becomes the queue entry without
+copying the payload, adopting moved descriptors or duplicating lent ones as
+the ordinary sends do.
+Either way a successful commit consumes the buffer: it is no longer the
+caller's, and
+.Dv CHANNEL_SEND_MOVE
+descriptors have been transferred.
+.Pp
+A failed commit changes nothing: the buffer stays reserved with its payload,
+the caller's descriptors remain open and the request is not registered, so
+the caller may fix the arguments and commit again, or abort.
+.Fn channel_outgoing_abort
+releases a reserved buffer; nothing is attached to it before commit, so
+abort only returns memory.
+A reserved buffer references its channel the way a received message does.
+It may be aborted, and a commit fails with the channel's terminal error,
+after
+.Fn channel_destroy ;
+in a
+.Xr fork 2
+child it may only be aborted, which frees memory and closes nothing.
+Every reserved buffer must eventually be committed or aborted.
+.Sh STATISTICS
+.Fn channel_get_stats
+fills a
+.Vt struct channel_stats
+whose
+.Va size
+the caller sets first
+.Pq Dv CHANNEL_STATS_INITIALIZER .
+.Va sent_direct
+counts messages the kernel accepted from the caller's memory,
+.Va sent_queued
+messages queued behind backpressure and
+.Va sent_flushed
+the queued ones since accepted by
+.Fn channel_flush ,
+cumulatively over the channel's lifetime.
+.Va pending_requests ,
+.Va queued_messages ,
+.Va queued_bytes
+and
+.Va queued_fds
+are the current gauges against the limits set at creation.
 .Sh MESSAGE OWNERSHIP
 The following accessors inspect a received message:
 .Bl -tag -width channel_message_fd_count
@@ -415,10 +654,18 @@ returns a nonnegative borrowed descriptor on success.
 returns zero or one.
 .Fn channel_request_status
 returns an errno value directly.
+.Fn channel_outgoing_buffer_data
+returns a null pointer, with
+.Er EINVAL ,
+for a buffer that is not reserved, and
+.Fn channel_outgoing_buffer_capacity
+zero.
 Message accessors return their documented neutral value for a null message.
 .Sh ERRORS
 Outgoing limits produce
 .Er ENOBUFS .
+A synchronous call that exceeds its timeout fails with
+.Er ETIMEDOUT .
 Backpressure is retained internally and is not reported as failure.
 Protocol-role and ownership violations produce
 .Er EINVAL .
@@ -428,7 +675,13 @@ Payloads larger than the kernel channel maximum, unknown outgoing flags, and
 an outgoing
 .Va size
 that is neither layout are rejected with
-.Er EINVAL .
+.Er EINVAL ,
+as are a commit of zero bytes, of more bytes or descriptors than were
+reserved, or of a buffer that is not reserved.
+A failed allocation while reserving, queuing or registering a request
+produces
+.Er ENOMEM
+and leaves the caller's descriptors and the channel's accounting unchanged.
 Descriptor expectation failures are described in
 .Sx DESCRIPTOR ATTACHMENTS ;
 they do not end the channel.
@@ -456,4 +709,5 @@ for status and adaptation requirements.
 .Xr fork 2 ,
 .Xr kqueue 2 ,
 .Xr libservice 3 ,
-.Xr capsicum 4
+.Xr capsicum 4 ,
+.Xr mac_capability 4
