@@ -967,14 +967,14 @@ start_reaper(void)
 }
 
 static int
-worker(int fd, int audit_fd, const char *owner, const char *actor)
+worker(int fd, const char *owner, const char *actor)
 {
 	struct auditcmp_client *audit;
 	int result;
 
 	setproctitle("-BSDCrypto: %s", actor);
 	audit = NULL;
-	if (auditcmp_client_adopt(audit_fd, &audit) == -1 ||
+	if (auditcmp_client_open(&audit) == -1 ||
 	    harden_control_descriptor(true) == -1) {
 		auditcmp_client_close(audit);
 		return (1);
@@ -994,11 +994,10 @@ worker(int fd, int audit_fd, const char *owner, const char *actor)
 static int
 start_session(int fd, const char *peer_label, const char *actor, int *pdp)
 {
-	int audit_fd, pd;
+	int pd;
 	pid_t pid;
 	char owner[CRYPTODESC_KEY_OWNER_MAX];
 
-	audit_fd = -1;
 	/*
 	 * `owner` is the connecting unit's bundle (the reclaim key); it may be
 	 * empty for a client with no bundle (e.g. a session), which then holds no
@@ -1008,8 +1007,6 @@ start_session(int fd, const char *peer_label, const char *actor, int *pdp)
 	if (strnlen(peer_label, sizeof(owner)) == sizeof(owner))
 		return (errno = EINVAL, -1);
 	strlcpy(owner, peer_label, sizeof(owner));
-	if (auditcmp_client_prepare(&audit_fd) == -1)
-		return (-1);
 	/*
 	 * pdfork (not fork): the parent watches the returned process descriptor on
 	 * its kqueue so it can bound the live-worker count.  A pdfork'd worker is
@@ -1017,13 +1014,10 @@ start_session(int fd, const char *peer_label, const char *actor, int *pdp)
 	 * on SIGCHLD disposition.  The reclaim child also uses a procdesc.
 	 */
 	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
-	if (pid == -1) {
-		close(audit_fd);
+	if (pid == -1)
 		return (-1);
-	}
 	if (pid == 0)
-		_exit(worker(fd, audit_fd, owner, actor));
-	close(audit_fd);
+		_exit(worker(fd, owner, actor));
 	*pdp = pd;
 	return (0);
 }

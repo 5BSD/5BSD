@@ -136,11 +136,21 @@ security_contract_body()
 	for token in SERVICE_PROTECT_NOFORK SERVICE_PROTECT_NOSOCK \
 	    CAP_XFER_NONE CAP_CLOFORK_ONCE CAP_CLOEXEC_LOCKED \
 	    service_worker_enter_capability_mode \
-	    service_provider_enter_capability_mode auditcmp_client_prepare \
-	    auditcmp_client_adopt auditcmp_submit
+	    service_provider_enter_capability_mode auditcmp_client_open auditcmp_submit
 	do
 		atf_check -s exit:0 -o match:"${token}" grep "${token}" "${source}"
 	done
+	# Under BIP a forked worker cannot adopt an inherited Audit client
+	# (auditcmp_server.h): it opens its own after fork and before dropping
+	# service lookup authority, so prepare/adopt must not reappear and the
+	# open must come before the worker's capability mode.
+	atf_check -s exit:1 -o empty -e empty \
+	    grep -E 'auditcmp_client_(prepare|adopt)[(]' "${source}"
+	atf_check -s exit:0 -o empty awk '
+	    /auditcmp_client_open[(]/ && !o { o = NR }
+	    /service_worker_enter_capability_mode[(]/ && !c { c = NR }
+	    END { if (!o || !c || o > c) { print "open " o ", mode " c; exit 1 } }' \
+	    "${source}"
 	atf_check -s exit:1 -o empty -e empty grep 'system.syslog' "${source}"
 	atf_check -s exit:1 -o empty -e empty grep 'audit_submit(' "${source}"
 	atf_check -s exit:0 -o match:'probe record__drop' \
