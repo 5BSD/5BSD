@@ -4260,3 +4260,18 @@ and all fail-before evidence; every area is then committed on
 experimental/hypertrace with the daemon at its honest figure and its
 remaining gap itemized as reachable work; the daemon push toward 97/97
 continues afterwards as a follow-on.
+
+Daemon final7/final8 (2026-10-22): final7 produced no coverage figure. The
+coverage-daemon driver gave daemon-extra a 6 h limit; the guest-startup
+sweep overran it and the driver stopped on the uncaught timeout before
+writing a summary. Every sweep that completed passed its oracle (callfault
+1,908 points, startup 2,136 points, fault 0 failures in outbound, guest and
+guest-installed; host-ingest and derived one load-only failure each,
+passing alone; the 27 fresh-session failures were the harness rule already
+fixed). Harness-only fixes before final8: an overrun no longer discards the
+measurement (daemon-extra limit 12 h, timed-out sweeps recorded and
+skipped), guest-startup's start wait 45 s -> 15 s with allocation faults at
+each of the first 200 allocations then every 5th, explicit effects for the
+fresh-session steps. final8 started 20:40Z, ETA ~5 h, output
+cov-daemon-final8-20261022. These harness changes are uncommitted
+follow-on work.

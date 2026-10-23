@@ -126,7 +126,7 @@ class Daemon:
     def wait_started(self):
         # startup recovery of a large journal under sweep load (12 sanitized
         # daemons) can exceed 15 s; a daemon that exits is reported at once
-        end = time.monotonic() + 45
+        end = time.monotonic() + getattr(self, 'start_timeout', 45)
         while time.monotonic() < end:
             p = subprocess.run(['procstat', '-f', str(self.proc.pid)],
                                capture_output=True, text=True)

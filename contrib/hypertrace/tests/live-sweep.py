@@ -703,7 +703,7 @@ def release_setup(world, ctx):
 
 
 def session_step(kind):
-    def run(world, ctx):
+    def once(world, ctx):
         body = (b'FST1' if kind == MSG_SESSION_STOP else b'FRE1') + bytes(4) + ctx['stop_token']
         v = world.vms['S'] if kind == MSG_SESSION_STOP else \
             vm_for(world, 'D', 8, 10, b'\x43')
@@ -715,6 +715,19 @@ def session_step(kind):
             return [ack, remaining]
         finally:
             s.close()
+
+    def run(world, ctx):
+        reply = once(world, ctx)
+        # bhyve's stop coordinator repeats SESSION_STOP while collectors
+        # remain; a consumer that was not yet registered when the step ran
+        # is contacted by a later attempt
+        for _ in range(5):
+            if kind != MSG_SESSION_STOP or reply != ['01', '01'] or \
+                    consumer_stop_acked(world, ctx):
+                break
+            time.sleep(1)
+            reply = once(world, ctx)
+        return reply
     return run
 
 
@@ -1155,7 +1168,7 @@ def tree_digest(world):
 
 def templates(world, ctx, flowname, step):
     t = []
-    if flowname == 'guest':
+    if FLOWS[flowname].get('guest'):
         body = b'\x7fELF' + b'guest-linked' * 8
         t.append(('control', bytes(elf_frame(len(body), b'\xc9')), body))
         t.append(('control', bytes(elf_frame(len(body), b'\xc9', b'inbound', b'\xd9')), body))
@@ -1351,6 +1364,7 @@ def one_startup(flowname, index, entry, kind, n):
         h = world.hosts['host']
         before = clean_restart_state(flowname, index)
         world.step_env(name)
+        h.start_timeout = 20
         Path(h.env['HT_FAULT_FILE']).write_text('%s %d %s\n' % (kind, n, entry))
         try:
             h.start()
@@ -1457,6 +1471,9 @@ def guest_daemon(case, fault):
                 reference(flowname)
         source = out / flowname / ('snap-' + step) / 'host'
     h = Daemon('guest', ['-m'], env=env, copy_from=source)
+    # startup sweeps: a fault either refuses promptly or leaves a start that
+    # never completes; do not spend the long load allowance on the latter
+    h.start_timeout = 15
     state = Path(h.root) / 'state'
     for d in ('', 'inbound', 'outbound'):
         (state / d).mkdir(mode=0o700, exist_ok=True)
@@ -1546,17 +1563,22 @@ def guest_startup_sweep(_flowname):
     for case in GUEST_CASES:
         for entry in ('initialize', 'finalize'):
             for kind in kinds:
+                # Allocation failures: the first 200 allocations each, then
+                # every 5th (a guest start makes a few thousand); every
+                # file-system call and thread creation is swept.
                 n, done = 0, False
                 while not done:
+                    stride = 5 if kind == 'oom' and n >= 200 else 1
+                    points = list(range(n, n + jobs * stride, stride))
                     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
                         batch = list(pool.map(lambda k: one_guest_startup(
-                            case, entry, kind, k), range(n, n + jobs)))
+                            case, entry, kind, k), points))
                     for r in batch:
                         results.append(r)
                         if not r.get('fired') and 'exception' not in r:
                             done = True
-                    n += jobs
-                    if n > 2000:
+                    n = points[-1] + stride
+                    if n > 4000:
                         break
     (out / 'guest-startup').mkdir(exist_ok=True)
     return {'steps': [{} for _ in GUEST_CASES]}, results
@@ -1585,6 +1607,7 @@ def one_callfault(flowname, index, call, n):
         h = world.hosts['host']
         before = clean_restart_state(flowname, index)
         world.step_env(name)
+        h.start_timeout = 20
         h.env['HT_CALL_FAULT'] = '%s:%d' % (call, n)
         try:
             h.start()

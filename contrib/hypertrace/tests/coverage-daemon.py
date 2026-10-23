@@ -133,8 +133,15 @@ def run_driver(name, argv, profiles, timeout=10800):
     cwd = out / (name + '-cwd')
     cwd.mkdir(exist_ok=True)
     with log.open('w') as handle:
-        status = subprocess.run(argv, env=env, stdout=handle, cwd=cwd,
-                                stderr=subprocess.STDOUT, timeout=timeout).returncode
+        try:
+            status = subprocess.run(argv, env=env, stdout=handle, cwd=cwd,
+                                    stderr=subprocess.STDOUT,
+                                    timeout=timeout).returncode
+        except subprocess.TimeoutExpired:
+            # keep the measurement: the profiles written so far still count,
+            # and the overrun is reported as a driver failure
+            handle.write('\nTIMEOUT after %d s\n' % timeout)
+            status = 124
     for n, stray in enumerate(sorted(cwd.rglob('*.profraw'))):
         stray.rename(profiles / ('%s-cwd-%d.profraw' % (name, n)))
     profile_errors = 'LLVM Profile Error' in log.read_text(errors='replace')
@@ -411,7 +418,7 @@ if 'daemon' in collections:
     statuses['daemon-extra'], profile_errors['daemon-extra'] = run_driver(
         'daemon-extra', [sys.executable, str(path), str(out / 'daemon-extra'),
                          objects_arg, *args.extra_suite], profiles,
-        timeout=6 * 3600)  # includes the live-sweep incarnation sweeps
+        timeout=12 * 3600)  # includes the live-sweep incarnation sweeps
     # Existing property/fuzz suites whose subjects are daemon headers
     # (transfer, rebind, protocol and configuration helpers). Their binaries
     # join the export so header copies they execute are credited; other

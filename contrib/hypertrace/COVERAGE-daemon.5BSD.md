@@ -772,3 +772,171 @@ Harness and records (contrib/hypertrace):
 - record: this file.
 Not mine (left untouched): native-daemon.py, control-cli-offline.py,
 native-daemon-compat.cc, connection.cc, child-ownership.cc.
+
+## Final measurement: cov-daemon-final8-20261022 (2026-10-23)
+
+Run: `/usr/obj/5BSD-hypertrace-validation/cov-daemon-final8-20261022`
+(coverage-daemon.py; sources = commits 4f3166ebea9/85de37f6eb7 plus the
+follow-on changes recorded after them in this file).
+
+| Configuration | Lines | Branches | Functions |
+| --- | --- | --- | --- |
+| dtraced live (HT-C excluded; the target) | 15,389/16,983 (90.61%) | 9,899/12,462 (79.43%) | 519/520 |
+| dtraced native-test (everything) | 26,336/30,778 (85.57%) | 16,016/22,264 (71.94%) | 790/797 |
+| dtraced production build | 26,339/30,781 (85.57%) | 16,016/22,264 (71.94%) | 790/797 |
+| dtracedctl | 238/239 (99.58%) | 121/122 (99.18%) | 7/7 |
+
+The live figure is the honest endpoint for this hand-back; 97/97 is not
+reached. Earlier checkpoints: final5 90.07%/78.75%.
+
+Code split. Trace continuity (HT-C, disabled future feature, waived):
+15,424 physical lines inside markers; mapped and excluded from the target:
+13,795 lines and 9,802 branch outcomes (native-test minus live), of which
+10,947 lines (79.4%) and 6,117 outcomes (62.4%) are nevertheless executed by
+the continuity harness (handoff-peers, handoff-sweep refuse and the hostile
+crafted-HANDOFF requests). Live (counted): 16,983 lines, 12,462 outcomes.
+
+Sweep results in final8 (oracles stated under "Live code"):
+- callfault 1,884 points, 0 failures; startup 2,136 points, 0 failures;
+  corrupt 570 points, 0 failures; handoff refuse 15,456 points, 0 failures;
+  hostile 30,219 mutated requests over the five original flows, 0 failures
+  (the two new guest flows failed in their template builder, a harness
+  KeyError since fixed; rerun below).
+- fault: outbound-delivery 2,328, host-ingest 1,476, guest 768,
+  guest-installed 852 points, 0 failures; derived 2,004 points, 1 failure
+  (restart did not complete within the load allowance; passes in 13
+  isolated and parallel reruns); fresh-session 2,976 points, 3 failures
+  (the stop step ran before the consumer re-registered; the harness now
+  repeats SESSION_STOP as bhyve's coordinator does). Oracle reruns against
+  final8's instrumented binary with the corrected harness
+  (cov-daemon-scratch-20261021/f8-oracle): fault derived 1,027 points and
+  fresh-session 1,453 points, 0 failures; hostile guest-installed 489
+  mutated requests, 0 failures.
+- guest-startup did not finish within its 4 h limit (TIMEOUT, recorded by
+  daemon-extra); the profiles of the points it executed are included in the
+  figure, its oracle results are not.
+
+Waivers with proof:
+- HT-C continuity code (table below): disabled future feature by the
+  user's decision; behaviour unchanged (removing the markers reproduces the
+  previous sources byte for byte); unreachable in production because bhyve
+  refuses format-4 restore and its checkpoint side hard-codes
+  `handoff_enabled = false`; HANDOFF input from old or crafted peers is
+  still exercised as a security property (refuse and hostile sweeps).
+- dtracedctl: the one uncovered line and branch were recorded with their
+  proof in the dtracedctl section above.
+No other waivers are claimed: every remaining live line and branch below is
+reachable work.
+
+HT-C waiver table (R = region, B = block inside a live function; line
+ranges at the measured revision):
+
+| File | Ranges |
+| --- | --- |
+| `dtraced_clientrequest.cc` | B 163-170, B 271-277, B 364-375, B 604-665, B 824-825, R 1146-1190, R 1308-2266, B 2549-2613, B 2694-2695, B 2705-2706 |
+| `dtraced_clientrequest.h` | R 115-118, R 130-134 |
+| `dtraced_connection.cc` | R 290-307, R 331-347, R 418-475 |
+| `dtraced_directory.cc` | B 1044-1056, R 1449-1768, B 1882-1920, R 1938-2010, R 2071-2740, B 2771-2822, R 2840-2973, R 3192-4440, B 4473-4507, R 4551-5117, B 5145-5191, R 5211-5228, B 5500-5507, R 5900-6241, B 7041-7048, R 8366-8856, B 8949-8950, B 9037-9038, B 9068-9102, B 9136-9155, R 9172-9600, R 10122-10831, R 11084-13580, B 13612-13636, B 13644-13647, B 13652-13655, R 13670-14437, B 14465-14524, R 14544-15070, B 15101-15179, B 15203-15256, B 15293-15353, R 15371-16337, B 16367-16389, B 16403-16407, R 16419-16635, R 16931-17009, R 18476-18967, R 19181-20978, B 21461-21461, B 21465-21465, B 21470-21470, B 21475-21475, B 21480-21480, B 21484-21484, B 21528-21528, B 21534-21534, B 21539-21539, B 21544-21544, B 21550-21550, B 21558-21558, B 22015-22015 |
+| `dtraced_job.cc` | R 159-204, B 366-367, B 388-390, B 474-474, B 575-582, B 602-615, B 809-859, B 1036-1043, B 1264-1265, B 1276-1277, B 1285-1286, B 1303-1305 |
+| `dtraced_rebind_wire.h` | R 34-115 |
+| `dtraced_release_attestation.h` | R 21-116 |
+| `dtraced_release_keys.h` | R 111-113 |
+| `dtraced_state.cc` | B 956-957, B 975-991, B 1133-1134, B 1217-1223, B 1272-1293, R 1450-1491, R 1654-1670, B 2313-2371 |
+| `dtraced_transfer_wire.h` | R 25-548 |
+| `dtraced_wire.h` | R 528-733 |
+
+Remaining live gap (reachable work, from final8's export; analysis and
+script: /usr/obj/5BSD-hypertrace-validation/cov-daemon-final8-gap-20261023,
+`live-gap.json`; line classes: error-return 473,
+errno set-up 340, braces of those blocks 369,
+log/shutdown 89, other 311):
+
+| File | Lines open | Branch outcomes open | Functions |
+| --- | ---: | ---: | ---: |
+| `dtraced_directory.cc` | 814 | 1275 | 155 |
+| `dtraced_state.cc` | 195 | 251 | 34 |
+| `dtraced_clientrequest.cc` | 114 | 290 | 17 |
+| `dtraced_job.cc` | 175 | 205 | 10 |
+| `dtraced_dttransport.cc` | 161 | 179 | 24 |
+| `dtraced_process.cc` | 61 | 175 | 18 |
+| `dtraced_child_ledger.cc` | 14 | 50 | 8 |
+| `dtraced_socket.h` | 5 | 25 | 4 |
+| `dtraced_io.h` | 9 | 19 | 4 |
+| `dtraced_connection.cc` | 4 | 21 | 13 |
+| `dtraced.cc` | 14 | 8 | 3 |
+| `dtraced_release_keys.h` | 2 | 17 | 2 |
+| `dtraced_misc.cc` | 7 | 8 | 2 |
+| `dtraced_wire.h` | 0 | 8 | 3 |
+| `dtraced_protocol.h` | 0 | 6 | 1 |
+| `dtraced_connection.h` | 3 | 2 | 1 |
+| `dtraced_derived.h` | 3 | 2 | 2 |
+| `dtraced_elf.h` | 1 | 2 | 1 |
+| `dtraced_errmsg.cc` | 0 | 3 | 3 |
+| `dtraced_collector_owner.h` | 0 | 1 | 1 |
+| `dtraced_directory.h` | 0 | 1 | 1 |
+| `dtraced_events.h` | 0 | 1 | 1 |
+
+Largest functions (lines and branch outcomes open, line classes):
+
+| File | Function | Lines | Outcomes | Classes |
+| --- | --- | ---: | ---: | --- |
+| `dtraced_job.cc` | `job::send_elf` | 112 | 134 | error-return 31, brace 28, other 28, errno 23, log/shutdown 2 |
+| `dtraced_dttransport.cc` | `listen_dttransport` | 78 | 37 | log/shutdown 35, other 21, brace 19, errno 3 |
+| `dtraced_clientrequest.cc` | `client_request::handle_elfmsg` | 49 | 65 | error-return 25, brace 12, errno 11, other 1 |
+| `dtraced_process.cc` | `launch_program` | 43 | 58 | error-return 15, other 11, brace 9, errno 8 |
+| `dtraced_directory.cc` | `process_inbound` | 38 | 33 | error-return 11, brace 10, log/shutdown 8, other 7, errno 2 |
+| `dtraced_state.cc` | `state::accept_new_connection` | 30 | 33 | other 16, brace 8, error-return 3, errno 2, log/shutdown 1 |
+| `dtraced_directory.cc` | `dir::verify_host_delivery_payload` | 14 | 48 | other 6, error-return 3, brace 3, errno 2 |
+| `dtraced_clientrequest.cc` | `client_request::handle_consumer_executionmsg` | 15 | 41 | other 6, error-return 4, brace 3, errno 2 |
+| `dtraced_directory.cc` | `queue_elfwrite_batch` | 17 | 38 | error-return 9, other 4, brace 2, errno 1, log/shutdown 1 |
+| `dtraced_directory.cc` | `consumer_owner_publish_at` | 22 | 29 | errno 11, error-return 4, brace 4, other 3 |
+| `dtraced_directory.cc` | `consumer_receipt_reserved_at` | 32 | 18 | errno 11, brace 9, other 8, error-return 4 |
+| `dtraced_directory.cc` | `dir::queue_pending_host_outbound` | 22 | 28 | error-return 8, other 7, brace 4, errno 2, log/shutdown 1 |
+| `dtraced_directory.cc` | `dir::source_transaction::publish_derived` | 13 | 36 | error-return 4, errno 3, brace 3, other 3 |
+| `dtraced_directory.cc` | `publish_spool` | 22 | 26 | other 9, errno 6, brace 5, error-return 2 |
+| `dtraced_directory.cc` | `dir::resolve_derived_outbound` | 20 | 28 | error-return 7, errno 5, brace 5, other 3 |
+| `dtraced_directory.cc` | `dir::record_consumer_program` | 16 | 29 | error-return 6, errno 5, brace 5 |
+| `dtraced_directory.cc` | `dir::hash_identified_data` | 13 | 28 | other 7, brace 4, errno 1, error-return 1 |
+| `dtraced_job.cc` | `reconcile_lost_consumer_ack` | 11 | 28 | error-return 5, errno 3, brace 3 |
+| `dtraced_directory.cc` | `dir::consumer_cohort` | 23 | 15 | errno 8, error-return 7, brace 7, other 1 |
+| `dtraced_directory.cc` | `dir::rekey_guest_delivery` | 16 | 22 | error-return 7, errno 4, brace 4, other 1 |
+| `dtraced_directory.cc` | `dir::populate_existing` | 9 | 29 | error-return 9 |
+| `dtraced_state.cc` | `validate_guest_recovery_identity` | 14 | 24 | error-return 6, errno 4, brace 4 |
+| `dtraced_state.cc` | `state::stop_fresh_session_step` | 9 | 27 | errno 4, other 3, error-return 1, brace 1 |
+| `dtraced_directory.cc` | `dir::rekey_guest_kills` | 12 | 23 | error-return 8, errno 2, brace 2 |
+| `dtraced_directory.cc` | `dir::record_consumer_receipt` | 18 | 17 | errno 6, error-return 6, brace 5, other 1 |
+| `dtraced_directory.cc` | `derived_claim_record_at` | 16 | 19 | errno 5, error-return 4, brace 4, other 3 |
+| `dtraced_directory.cc` | `dir::queue_recovered_outbound` | 15 | 19 | error-return 5, errno 4, brace 4, other 2 |
+| `dtraced_directory.cc` | `dir::queue_recovered_consumer` | 15 | 19 | error-return 8, errno 3, brace 3, other 1 |
+| `dtraced_directory.cc` | `dir::audit_derived_claims` | 14 | 18 | error-return 6, errno 4, brace 4 |
+| `dtraced_directory.cc` | `guest_rekey_preflight_at` | 16 | 16 | errno 5, error-return 5, brace 5, other 1 |
+| `dtraced_directory.cc` | `dir::fresh_consumer_stop_receipt` | 9 | 23 | errno 3, error-return 3, brace 2, other 1 |
+| `dtraced_directory.cc` | `host_outbound_spool` | 13 | 19 | brace 4, other 3, errno 3, error-return 3 |
+| `dtraced_dttransport.cc` | `recover_guest_rekey` | 11 | 21 | error-return 7, brace 2, errno 1, other 1 |
+| `dtraced_process.cc` | `handle_host_status` | 6 | 26 | error-return 4, errno 1, brace 1 |
+| `dtraced_dttransport.cc` | `write_dttransport` | 16 | 15 | other 9, brace 3, errno 2, log/shutdown 2 |
+| `dtraced_state.cc` | `validate_guest_cleanup_recovery_state` | 9 | 22 | error-return 5, errno 2, brace 2 |
+| `dtraced_clientrequest.cc` | `client_request::handle_uninstalledmsg` | 12 | 18 | other 5, brace 3, errno 2, error-return 2 |
+| `dtraced_state.cc` | `activate_guest_fresh_session` | 10 | 19 | error-return 6, errno 2, brace 2 |
+| `dtraced_directory.cc` | `dir::rekey_guest_journals_with_receipts` | 14 | 14 | error-return 6, errno 4, brace 4 |
+| `dtraced_job.cc` | `job::send_kill` | 14 | 14 | error-return 5, brace 4, log/shutdown 3, errno 2 |
+
+Follow-on order (coordinator): journal families in send_elf/spool
+validation, consumer program/execution records (needs a constructed
+client_fd), derived claims (paired directories), rekey sub-paths,
+collector-owner recovery, capacity limits; then transport event handling
+(listen_dttransport), handle_elfmsg, launch_program, accept_new_connection
+attestation variants.
+
+Follow-on changes after the commits (all harness): coverage-daemon.py
+keeps the measurement when a driver times out and allows daemon-extra 12 h;
+htpeerlib.py per-daemon start allowance (`start_timeout`); live-sweep.py
+bhyve-style SESSION_STOP repetition, shorter start allowances in the
+startup, callfault and guest-startup modes, guest-startup allocation
+stride (each of the first 200 allocations, then every 5th) and hostile
+templates for every guest flow. Everything else in this record (guest
+flows and their shim emulation, new call faults, journal-faults
+operations, fresh-session effects) is in 85de37f6eb7. No production source changed after the
+commits: the transport writer idle poll and the READDATA|CLEANUP refusal
+are in 4f3166ebea9 (`git diff HEAD -- usr.sbin/dtraced usr.sbin/dtracedctl`
+is empty).
