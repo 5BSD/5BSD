@@ -101,6 +101,19 @@ pft_host_reset()
 		cat pft_host_pf.limits 2>/dev/null
 		echo "set syncookies never"
 	} | pfctl -q -f - >/dev/null 2>&1
+	# A flush only unlinks states: pf's purge frees them (and they stop
+	# counting against the host's limits) within seconds.  A test that
+	# lowers a limit right away would otherwise be refused.
+	_i=0
+	while [ "$(sysctl -n net.pf.vnet_count.states)" != "0" ]; do
+		_i=$((_i + 1))
+		if [ ${_i} -ge 60 ]; then
+			echo "pft_host_reset: host pf still holds" \
+			    "$(sysctl -n net.pf.vnet_count.states) unlinked states" >&2
+			break
+		fi
+		sleep 0.5
+	done
 	# Disabled, as in a fresh vnet, until the test enables it.
 	[ "$1" = "init" ] && pfctl -q -d >/dev/null 2>&1
 	if [ "$1" = "cleanup" ] && [ -f pft_host_pf.state ]; then
