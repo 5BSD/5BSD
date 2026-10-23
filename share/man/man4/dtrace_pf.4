@@ -1,0 +1,534 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 The 5BSD Project
+.\"
+.Dd October 15, 2026
+.Dt DTRACE_PF 4
+.Os
+.Sh NAME
+.Nm dtrace_pf
+.Nd a DTrace provider for the pf packet filter
+.Sh SYNOPSIS
+.Li pf:ip:test:entry,finish
+.Pp
+.Li pf:ip:rules:entry
+.br
+.Li pf:ip:anchor:enter
+.br
+.Li pf:ip:limiter:decision,pressure,eligible
+.br
+.Li pf:ip:dummynet:submit,returned,reinject,error
+.Pp
+.Li pf::reason:set
+.Pp
+.Li pf:state:state:create,insert,transition,remove,free
+.br
+.Li pf:state:purge:run
+.br
+.Li pf:sctp:multihome:test,add,remove
+.br
+.Li pf:sctp:multihome_scan:entry,param,ipv4,ipv6
+.Pp
+.Li pf:frag:reassemble,reassemble6:entry
+.br
+.Li pf:nat:transaddr:entry
+.br
+.Li pf:nat:af_to:translate
+.br
+.Li pf:ip,ip6:route_to:entry
+.Pp
+.Li pf:eth:test_rule:entry,test,mismatch,match,final_match
+.br
+.Li pf:eth:dummynet:submit,reinject
+.br
+.Li pf:eth:bridge_to:transmit
+.br
+.Li pf:eth:hook:link
+.Pp
+.Li pf:table:addr:match,update
+.br
+.Li pf:rule:jail:match,resolve
+.br
+.Li pf:syncookie:cookie:send,validate
+.Pp
+.Li pf:log:pflog:packet
+.br
+.Li pf:pfsync:packet:send,input
+.br
+.Li pf:pflow:flow:export
+.br
+.Li pf:queue:packet:delay
+.Pp
+.Li pf:ioctl:ioctl:entry,return
+.br
+.Li pf:ioctl:xact:begin,commit,rollback
+.Pp
+.Li sdt:::pf-table-begin,pf-table-commit,pf-table-rollback
+.br
+.Li sdt:::pf-syncookie-active
+.br
+.Li sdt:::pfsync-queue-pressure
+.br
+.Li sdt:::pfsync-bulk-start,pfsync-bulk-status-send
+.br
+.Li sdt:::pfsync-bulk-retry,pfsync-bulk-failed
+.Sh DESCRIPTION
+The
+.Nm pf
+provider instruments
+.Xr pf 4 ,
+the
+.Ox
+packet filter.
+All probes are statically defined
+.Pq Xr SDT 9
+and cost nothing when not enabled.
+Structure arguments use the types of the
+.Ox
+.In net/pfvar.h
+and are available to D scripts through CTF.
+.Ss Packet path
+.Bl -tag -width "pf::reason:set"
+.It Li pf:ip:test:entry
+Fires before
+.Fn pf_test
+for a packet.
+.Fa arg0
+is the address family,
+.Fa arg1
+the direction (1 in, 2 out, 3 forwarded) and
+.Fa args[2]
+the
+.Vt struct ifnet .
+.It Li pf:ip:test:finish
+Fires after
+.Fn pf_test
+with
+.Fa arg0
+the action (0 pass, 1 drop),
+.Fa arg1
+the direction and
+.Fa args[2]
+the interface.
+.It Li pf:ip:rules:entry
+Ruleset evaluation of a packet without matching state;
+.Fa args[0]
+is the
+.Vt struct pf_pdesc .
+.It Li pf:ip:anchor:enter
+A ruleset (the main ruleset or an anchor) is evaluated;
+.Fa args[1]
+is the
+.Vt struct pf_ruleset .
+.It Li pf::reason:set
+Every point where pf records a reason code
+.Pq Dv PFRES_*
+for a drop, a match or a normalisation decision.
+.Fa arg0
+is the reason,
+.Fa arg1
+the source file and
+.Fa arg2
+the line.
+The reasons are: 0 match, 1 bad-offset, 2 fragment, 3 short, 4
+normalize, 5 memory, 6 bad-timestamp, 7 congestion, 8 ip-option, 9
+proto-cksum, 10 state-mismatch, 11 state-insert, 12 state-limit, 13
+src-limit, 14 synproxy, 15 translate, 16 no-route.
+.It Li pf:frag:reassemble:entry,Li pf:frag:reassemble6:entry
+An IPv4 or IPv6 fragment enters reassembly;
+.Fa args[0]
+is the mbuf and
+.Fa arg1
+the direction.
+.It Li pf:nat:transaddr:entry
+A nat-to, rdr-to or binat-to address is selected;
+.Fa args[0]
+is the rule,
+.Fa args[1]
+the packet description.
+.It Li pf:nat:af_to:translate
+A packet is translated between address families (af-to).
+.It Li pf:ip:route_to:entry,Li pf:ip6:route_to:entry
+route-to, reply-to or dup-to routing of a packet;
+.Fa args[1]
+is the state.
+.El
+.Ss Ethernet rules
+These probes cover the 5BSD
+.Ic ether
+rules
+.Pq see Xr pf.conf 5 ,
+with the names and arguments of the
+.Fx
+pf probes.
+A rule is a
+.Vt struct pf_keth_rule ,
+whose first member is the
+.Vt struct pf_eth_rule
+of
+.In net/pfvar.h .
+.Bl -tag -width "pf:eth:test_rule:final_match"
+.It Li pf:eth:test_rule:entry
+A frame is filtered;
+.Fa arg0
+is the direction (1 in, 2 out),
+.Fa args[1]
+the interface and
+.Fa args[2]
+the mbuf.
+.It Li pf:eth:test_rule:test
+Rule number
+.Fa arg0 ,
+.Fa args[1] ,
+is evaluated.
+.It Li pf:eth:test_rule:mismatch
+The rule does not match;
+.Fa arg2
+names the condition that failed:
+.Dq kif ,
+.Dq dir ,
+.Dq proto ,
+.Dq src ,
+.Dq dst ,
+.Dq ip_src ,
+.Dq ip_dst
+or
+.Dq match_tag .
+.It Li pf:eth:test_rule:match
+The rule matches; evaluation continues unless it is
+.Cm quick .
+.It Li pf:eth:test_rule:final_match
+The rule that decides,
+.Fa arg0
+-1 and
+.Fa args[1]
+NULL when no rule matched and the frame passes.
+.It Li pf:eth:dummynet:submit
+A frame is sent to
+.Xr dummynet 4 ;
+.Fa args[0]
+is the rule,
+.Fa arg1
+the pipe or queue number and
+.Fa arg2
+the direction.
+.It Li pf:eth:dummynet:reinject
+.Xr dummynet 4
+passes a shaped frame on;
+.Fa arg0
+is the direction and
+.Fa args[1]
+the interface.
+.It Li pf:eth:bridge_to:transmit
+A frame is sent out of the
+.Cm bridge-to
+interface
+.Fa args[1]
+(NULL if it does not exist, and the frame is dropped).
+.It Li pf:eth:hook:link
+The link-layer
+.Xr pfil 9
+hooks of the current vnet are linked
+.Pq Fa arg0 No 1
+or unlinked (0).
+.El
+.Ss States
+.Bl -tag -width "pf:state:state:transition"
+.It Li pf:state:state:create
+A rule creates a state:
+.Fa args[0]
+packet description,
+.Fa args[1]
+rule,
+.Fa args[2]
+anchor rule.
+.It Li pf:state:state:insert
+A state is inserted into the state table.
+.It Li pf:state:state:transition
+A TCP or SCTP peer changes protocol state:
+.Fa args[0]
+state,
+.Fa arg1
+peer (0 source, 1 destination),
+.Fa arg2
+new state.
+.It Li pf:state:state:remove,free
+A state is unlinked and later freed.
+.It Li pf:state:purge:run
+A purge pass of expired states with
+.Fa arg0
+the scan limit.
+.El
+.Ss SCTP multihoming
+These probes have the names and arguments of
+.Fx
+pf.
+.Bl -tag -width "pf:sctp:multihome_scan:entry"
+.It Li pf:sctp:multihome:test
+The ruleset was evaluated for an address of a multihomed association:
+.Fa args[0]
+interface,
+.Fa args[1]
+matching rule,
+.Fa args[2]
+packet that listed the address,
+.Fa arg3
+result
+.Pq Dv PF_PASS , PF_DROP , No ... .
+.It Li pf:sctp:multihome:add
+An address,
+.Fa args[1]
+.Pq Vt struct pf_sctp_source ,
+is remembered for the endpoint with verification tag
+.Fa arg0 .
+.It Li pf:sctp:multihome:remove
+State
+.Fa args[1]
+is removed and with it the address
+.Fa args[2]
+of the endpoint with verification tag
+.Fa arg0 .
+.It Li pf:sctp:multihome_scan:entry
+The address parameters of an INIT, INIT ACK or ASCONF chunk are walked,
+once when the packet is checked and again after it has passed:
+.Fa arg0
+offset,
+.Fa arg1
+length,
+.Fa args[2]
+packet description,
+.Fa arg3
+operation
+.Pq Dv SCTP_ADD_IP_ADDRESS No or Dv SCTP_DEL_IP_ADDRESS .
+.It Li pf:sctp:multihome_scan:param
+A parameter of type
+.Fa arg0
+and length
+.Fa arg1 .
+.It Li pf:sctp:multihome_scan:ipv4,ipv6
+After the packet has passed, an address
+.Fa args[0]
+to add or remove
+.Pq operation Fa arg1 .
+.El
+.Ss Packet delay
+.Bl -tag -width "pf:queue:packet:delay"
+.It Li pf:queue:packet:delay
+A packet has obtained delay storage and is about to be scheduled:
+.Fa arg0
+is the queue ID,
+.Fa arg1
+the requested delay in milliseconds, and
+.Fa arg2
+the interface index.
+The probe exposes packet metadata independently of its storage layout.
+Its availability does not imply that the native output path supports
+.Cm set delay .
+.El
+.Ss Tables, logging, synchronisation and control
+.Bl -tag -width "pf:table:addr:update"
+.It Li pf:table:addr:match
+An address is looked up in table
+.Fa args[0]
+.Pq Vt struct pfr_ktable .
+.It Li pf:table:addr:update
+Table statistics are updated for a packet.
+.It Li pf:rule:jail:match
+The 5BSD
+.Cm jail
+rule option of rule
+.Fa args[0]
+.Pq Vt struct pf_rule
+matched a socket of jail ID
+.Fa arg1 .
+.It Li pf:rule:jail:resolve
+Rule
+.Fa args[0]
+names a jail and was re-resolved after a jail was created, renamed or
+removed:
+.Fa arg1
+is the old jail ID and
+.Fa arg2
+the new one, -2 for no jail.
+.It Li pf:syncookie:cookie:send,validate
+A SYN cookie is sent or an ACK is validated against one.
+.It Li pf:log:pflog:packet
+A packet is logged to a
+.Xr pflog 4
+interface:
+.Fa args[0]
+packet description,
+.Fa arg1
+reason,
+.Fa args[2]
+matching rule,
+.Fa args[3]
+anchor rule.
+.It Li pf:pfsync:packet:send,input
+A
+.Xr pfsync 4
+packet is sent or received.
+.It Li pf:pflow:flow:export
+A state is exported as a
+.Xr pflow 4
+flow record.
+.It Li pf:ioctl:ioctl:entry,return
+A
+.Pa /dev/pf
+ioctl:
+.Fa arg0
+command,
+.Fa arg1
+per-open unit and, on return,
+.Fa arg2
+the error.
+.It Li pf:ioctl:xact:begin,commit,rollback
+A ruleset transaction step for the named anchor.
+.El
+.Ss State and source limiters
+These probes fire in rule evaluation for rules that use a state or source
+limiter.
+.Fa arg0
+is the limiter kind (0 state, 1 source) and
+.Fa arg1
+its identifier.
+.Bl -tag -width "pf:ip:limiter:decision"
+.It Li pf:ip:limiter:decision
+A limiter stops the rule from creating state:
+.Fa arg2
+rule number,
+.Fa arg3
+reason (0 missing limiter, 1 hard limit, 2 rate limit,
+3 source-address entry capacity),
+.Fa arg4
+configured action and
+.Fa arg5
+1 if the packet is blocked, 0 if evaluation falls through to the next rule.
+A missing limiter always falls through.
+.It Li pf:ip:limiter:pressure
+The values behind a hard, rate or capacity rejection:
+.Fa arg2
+reason,
+.Fa arg3
+observed value (states, elapsed nanoseconds or source entries),
+.Fa arg4
+threshold and
+.Fa arg5
+configured action.
+.It Li pf:ip:limiter:eligible
+The limiter checks passed for rule
+.Fa arg2 .
+This is not packet admission: later checks can still reject the packet.
+.El
+.Ss Dummynet
+Packets of rules with
+.Cm dnpipe
+or
+.Cm dnqueue
+.Pq a 5BSD extension .
+.Bl -tag -width "pf:ip:dummynet:reinject"
+.It Li pf:ip:dummynet:submit
+A packet is handed to
+.Xr dummynet 4 :
+.Fa args[0]
+packet description,
+.Fa args[1]
+state,
+.Fa arg2
+pipe or queue number with dummynet's flags,
+.Fa arg3
+direction flags.
+.It Li pf:ip:dummynet:returned
+Dummynet returned:
+.Fa arg0
+as above,
+.Fa arg1
+1 if the packet continues at once, 0 if dummynet kept it.
+.It Li pf:ip:dummynet:reinject
+A packet dummynet reinjects passes pf without evaluation;
+.Fa args[0]
+is the interface.
+.It Li pf:ip:dummynet:error
+A packet is dropped:
+.Fa arg1
+errno,
+.Fa arg2
+reason.
+.El
+.Ss Function-boundary contracts
+These
+.Li sdt
+provider probes carry scalar arguments only.
+.Bl -tag -width "pfsync-bulk-status-send"
+.It Li pf-table-begin , pf-table-rollback
+A table transaction began or was rolled back:
+.Fa arg0
+flags,
+.Fa arg1
+affected inactive tables,
+.Fa arg2
+0.
+.It Li pf-table-commit
+A table transaction commit:
+.Fa arg0
+flags,
+.Fa arg1
+added and changed tables,
+.Fa arg2
+0 or
+.Er EBUSY
+for an invalid or closed ticket.
+.It Li pf-syncookie-active
+SYN cookies were switched on or off:
+.Fa arg0
+active,
+.Fa arg1
+configured mode.
+.It Li pfsync-queue-pressure
+A
+.Xr pfsync 4
+slice must send its packet before queueing more:
+.Fa arg0
+slice,
+.Fa arg1
+bytes queued,
+.Fa arg2
+bytes requested.
+.It Li pfsync-bulk-start
+A bulk update send began for softc
+.Fa arg0 .
+.It Li pfsync-bulk-status-send
+A bulk update status message
+.Pq Dv PFSYNC_BUS_*
+.Fa arg1
+is about to be sent.
+This is an attempt, not confirmed delivery.
+.It Li pfsync-bulk-retry , pfsync-bulk-failed
+A bulk update request timed out:
+.Fa arg0
+is the attempt count; failed means no further retry.
+.El
+.Sh FILES
+.Bl -tag -width "/usr/share/bsdinstruments/profiles/pf-*.d" -compact
+.It Pa /usr/share/dtrace/pf-observe
+summary of verdicts, latency, reasons, states, NAT, tables, pflog,
+pfsync and pflow activity
+.It Pa /usr/share/bsdinstruments/profiles/pf-*.d
+focused profiles: pf-latency, pf-audit, pf-drops, pf-states,
+pf-frags, pf-nat, pf-tables, pf-rules, pf-pfsync, pf-queues,
+pf-limiter-decisions, pf-table-cookie-events, pfsync-recovery-events
+.El
+.Sh EXAMPLES
+Count drops by reason and source location:
+.Bd -literal -offset indent
+# dtrace -n 'pf::reason:set { @[arg0, stringof(arg1), arg2] = count(); }'
+.Ed
+.Sh SEE ALSO
+.Xr dtrace 1 ,
+.Xr pf 4 ,
+.Xr pflog 4 ,
+.Xr pflow 4 ,
+.Xr pfsync 4 ,
+.Xr pfctl 8 ,
+.Xr SDT 9

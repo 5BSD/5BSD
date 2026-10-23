@@ -1059,6 +1059,9 @@ static bool
 vrtc_snapshot_state_valid(const struct vrtc_snapshot_state *state)
 {
 
+	/* The address port stores only seven bits; reject unreachable states. */
+	if (state->addr > 0x7f)
+		return (false);
 	/*
 	 * base_rtctime is either the sentinel BROKEN value or a non-negative
 	 * time the RTC can represent.  An out-of-range value would flow into

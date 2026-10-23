@@ -55,7 +55,9 @@ The
 interface is a software loopback mechanism that allows hosts or
 firewalls to filter
 .Xr ipsec 4
-traffic using any firewall package that hooks in via the
+traffic with
+.Xr pf 4 ,
+which hooks in via the
 .Xr pfil 9
 framework.
 .Pp
@@ -80,7 +82,9 @@ interface.
 .Pp
 What can be seen with
 .Xr tcpdump 1
-and what will be passed on to the firewalls via the
+and what will be passed on to
+.Xr pf 4
+via the
 .Xr pfil 9
 framework can be independently controlled using the following
 .Xr sysctl 8
@@ -136,6 +140,5 @@ variables according to your need and run:
 .Sh SEE ALSO
 .Xr tcpdump 1 ,
 .Xr bpf 4 ,
-.Xr ipfw 4 ,
 .Xr ipsec 4 ,
 .Xr pf 4

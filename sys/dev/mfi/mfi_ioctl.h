@@ -77,22 +77,6 @@ struct mfi_ioc_packet {
 	struct iovec mfi_sgl[MAX_IOCTL_SGE];
 } __packed;
 
-#ifdef COMPAT_FREEBSD32
-struct mfi_ioc_packet32 {
-	uint16_t	mfi_adapter_no;
-	uint16_t	mfi_pad1;
-	uint32_t	mfi_sgl_off;
-	uint32_t	mfi_sge_count;
-	uint32_t	mfi_sense_off;
-	uint32_t	mfi_sense_len;
-	union {
-		uint8_t raw[128];
-		struct mfi_frame_header hdr;
-	} mfi_frame;
-
-	struct iovec32 mfi_sgl[MAX_IOCTL_SGE];
-} __packed;
-#endif
 
 struct mfi_ioc_aen {
 	uint16_t	aen_adapter_no;
@@ -102,9 +86,6 @@ struct mfi_ioc_aen {
 } __packed;
 
 #define MFI_CMD		_IOWR('M', 1, struct mfi_ioc_packet)
-#ifdef COMPAT_FREEBSD32
-#define MFI_CMD32	_IOWR('M', 1, struct mfi_ioc_packet32)
-#endif
 #define MFI_SET_AEN	_IOW('M', 3, struct mfi_ioc_aen)
 
 #define MAX_LINUX_IOCTL_SGE	16
@@ -134,19 +115,9 @@ struct mfi_ioc_passthru {
 	uint8_t			*buf;
 } __packed;
 
-#ifdef COMPAT_FREEBSD32
-struct mfi_ioc_passthru32 {
-	struct mfi_dcmd_frame	ioc_frame;
-	uint32_t		buf_size;
-	uint32_t		buf;
-} __packed;
-#endif
 
 #define MFIIO_STATS	_IOWR('Q', 101, union mfi_statrequest)
 #define MFIIO_PASSTHRU	_IOWR('C', 102, struct mfi_ioc_passthru)
-#ifdef COMPAT_FREEBSD32
-#define MFIIO_PASSTHRU32	_IOWR('C', 102, struct mfi_ioc_passthru32)
-#endif
 
 struct mfi_linux_ioc_aen {
 	uint16_t	laen_adapter_no;

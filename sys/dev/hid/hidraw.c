@@ -39,9 +39,6 @@
 #include "opt_hid.h"
 
 #include <sys/param.h>
-#ifdef COMPAT_FREEBSD32
-#include <sys/abi_compat.h>
-#endif
 #include <sys/bus.h>
 #include <sys/conf.h>
 #include <sys/fcntl.h>
@@ -122,30 +119,6 @@ struct hidraw_softc {
 	struct cdev *dev;
 };
 
-#ifdef COMPAT_FREEBSD32
-struct hidraw_gen_descriptor32 {
-	uint32_t hgd_data;	/* void * */
-	uint16_t hgd_lang_id;
-	uint16_t hgd_maxlen;
-	uint16_t hgd_actlen;
-	uint16_t hgd_offset;
-	uint8_t hgd_config_index;
-	uint8_t hgd_string_index;
-	uint8_t hgd_iface_index;
-	uint8_t hgd_altif_index;
-	uint8_t hgd_endpt_index;
-	uint8_t hgd_report_type;
-	uint8_t reserved[8];
-};
-#define	HIDRAW_GET_REPORT_DESC32 \
-    _IOC_NEWTYPE(HIDRAW_GET_REPORT_DESC, struct hidraw_gen_descriptor32)
-#define	HIDRAW_GET_REPORT32 \
-    _IOC_NEWTYPE(HIDRAW_GET_REPORT, struct hidraw_gen_descriptor32)
-#define	HIDRAW_SET_REPORT_DESC32 \
-    _IOC_NEWTYPE(HIDRAW_SET_REPORT_DESC, struct hidraw_gen_descriptor32)
-#define	HIDRAW_SET_REPORT32 \
-    _IOC_NEWTYPE(HIDRAW_SET_REPORT, struct hidraw_gen_descriptor32)
-#endif
 
 static d_open_t		hidraw_open;
 static d_read_t		hidraw_read;
@@ -540,35 +513,12 @@ hidraw_write(struct cdev *dev, struct uio *uio, int flag)
 	return (error);
 }
 
-#ifdef COMPAT_FREEBSD32
-static void
-update_hgd32(const struct hidraw_gen_descriptor *hgd,
-    struct hidraw_gen_descriptor32 *hgd32)
-{
-	/* Don't update hgd_data pointer */
-	CP(*hgd, *hgd32, hgd_lang_id);
-	CP(*hgd, *hgd32, hgd_maxlen);
-	CP(*hgd, *hgd32, hgd_actlen);
-	CP(*hgd, *hgd32, hgd_offset);
-	CP(*hgd, *hgd32, hgd_config_index);
-	CP(*hgd, *hgd32, hgd_string_index);
-	CP(*hgd, *hgd32, hgd_iface_index);
-	CP(*hgd, *hgd32, hgd_altif_index);
-	CP(*hgd, *hgd32, hgd_endpt_index);
-	CP(*hgd, *hgd32, hgd_report_type);
-	/* Don't update reserved */
-}
-#endif
 
 static int
 hidraw_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag,
     struct thread *td)
 {
 	uint8_t local_buf[HIDRAW_LOCAL_BUFSIZE];
-#ifdef COMPAT_FREEBSD32
-	struct hidraw_gen_descriptor local_hgd;
-	struct hidraw_gen_descriptor32 *hgd32 = NULL;
-#endif
 	void *buf;
 	struct hidraw_softc *sc;
 	struct hidraw_device_info *hdi;
@@ -590,30 +540,6 @@ hidraw_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag,
 
 	hgd = (struct hidraw_gen_descriptor *)addr;
 
-#ifdef COMPAT_FREEBSD32
-	switch (cmd) {
-	case HIDRAW_GET_REPORT_DESC32:
-	case HIDRAW_GET_REPORT32:
-	case HIDRAW_SET_REPORT_DESC32:
-	case HIDRAW_SET_REPORT32:
-		cmd = _IOC_NEWTYPE(cmd, struct hidraw_gen_descriptor);
-		hgd32 = (struct hidraw_gen_descriptor32 *)addr;
-		hgd = &local_hgd;
-		PTRIN_CP(*hgd32, *hgd, hgd_data);
-		CP(*hgd32, *hgd, hgd_lang_id);
-		CP(*hgd32, *hgd, hgd_maxlen);
-		CP(*hgd32, *hgd, hgd_actlen);
-		CP(*hgd32, *hgd, hgd_offset);
-		CP(*hgd32, *hgd, hgd_config_index);
-		CP(*hgd32, *hgd, hgd_string_index);
-		CP(*hgd32, *hgd, hgd_iface_index);
-		CP(*hgd32, *hgd, hgd_altif_index);
-		CP(*hgd32, *hgd, hgd_endpt_index);
-		CP(*hgd32, *hgd, hgd_report_type);
-		/* Don't copy reserved */
-		break;
-	}
-#endif
 
 	/* fixed-length ioctls handling */
 	switch (cmd) {
@@ -656,10 +582,6 @@ hidraw_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag,
 			size = sc->sc_rdesc->len;
 		}
 		hgd->hgd_actlen = size;
-#ifdef COMPAT_FREEBSD32
-		if (hgd32 != NULL)
-			update_hgd32(hgd, hgd32);
-#endif
 		if (hgd->hgd_data == NULL)
 			return (0);		/* descriptor length only */
 
@@ -763,10 +685,6 @@ hidraw_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag,
 			error = copyout(buf, hgd->hgd_data, actsize);
 		HIDRAW_LOCAL_FREE(local_buf, buf);
 		hgd->hgd_actlen = actsize;
-#ifdef COMPAT_FREEBSD32
-		if (hgd32 != NULL)
-			update_hgd32(hgd, hgd32);
-#endif
 		return (error);
 
 	case HIDRAW_SET_REPORT:

@@ -1,6 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
 # PROVIDE: dummynet
+# REQUIRE: kld
 # BEFORE: dnctl pf
 # KEYWORD: nojailvnet
 
@@ -9,8 +10,15 @@ name="dummynet"
 desc="Dummynet traffic shaping module"
 rcvar="dummynet_enable"
 load_rc_config $name
-required_modules="dummynet"
-start_cmd=":"
+# Late kldload(2) is reserved to the SystemExtension broker; a dummynet
+# preloaded from loader.conf is claimed through it.
+start_cmd="dummynet_start"
 stop_cmd=":"
 dummynet_svcj="NO"
+
+dummynet_start()
+{
+	load_kld -b dummynet
+}
+
 run_rc_command "$1"

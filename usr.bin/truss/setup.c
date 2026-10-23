@@ -86,21 +86,6 @@ static struct procabi freebsd = {
 	.syscalls = { NULL }
 };
 
-#if !defined(__SIZEOF_POINTER__)
-#error "Use a modern compiler."
-#endif
-
-#if __SIZEOF_POINTER__ > 4
-static struct procabi freebsd32 = {
-	.type = "FreeBSD32",
-	.abi = SYSDECODE_ABI_FREEBSD32,
-	.pointer_size = sizeof(uint32_t),
-	.compat_prefix = "freebsd32_",
-	.extra_syscalls = STAILQ_HEAD_INITIALIZER(freebsd32.extra_syscalls),
-	.syscalls = { NULL }
-};
-#endif
-
 static struct procabi linux = {
 	.type = "Linux",
 	.abi = SYSDECODE_ABI_LINUX,
@@ -109,40 +94,9 @@ static struct procabi linux = {
 	.syscalls = { NULL }
 };
 
-#if __SIZEOF_POINTER__ > 4
-static struct procabi linux32 = {
-	.type = "Linux32",
-	.abi = SYSDECODE_ABI_LINUX32,
-	.pointer_size = sizeof(uint32_t),
-	.extra_syscalls = STAILQ_HEAD_INITIALIZER(linux32.extra_syscalls),
-	.syscalls = { NULL }
-};
-#endif
-
 static struct procabi_table abis[] = {
-#if __SIZEOF_POINTER__ == 4
-	{ "FreeBSD ELF32", &freebsd },
-#elif __SIZEOF_POINTER__ == 8
 	{ "FreeBSD ELF64", &freebsd },
-	{ "FreeBSD ELF32", &freebsd32 },
-#else
-#error "Unsupported pointer size"
-#endif
-#if defined(__powerpc64__)
-	{ "FreeBSD ELF64 V2", &freebsd },
-#endif
-#if defined(__amd64__)
-	{ "FreeBSD a.out", &freebsd32 },
-#endif
-#if defined(__i386__)
-	{ "FreeBSD a.out", &freebsd },
-#endif
-#if __SIZEOF_POINTER__ >= 8
 	{ "Linux ELF64", &linux },
-	{ "Linux ELF32", &linux32 },
-#else
-	{ "Linux ELF32", &linux },
-#endif
 };
 
 int

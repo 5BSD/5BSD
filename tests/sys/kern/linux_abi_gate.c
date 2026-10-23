@@ -91,10 +91,13 @@ memfd_valid(void)
 static int
 memfd_unknown(void)
 {
-	/* Includes currently unsupported MFD_NOEXEC_SEAL and MFD_EXEC. */
-	for (unsigned bit = 3; bit < 26; bit++)
+	/* MFD_NOEXEC_SEAL (bit 3) and MFD_EXEC (bit 4) are valid. */
+	for (unsigned bit = 3; bit < 26; bit++) {
+		if (bit == 3 || bit == 4)
+			continue;
 		for (unsigned flags = 0; flags < 8; flags++)
 			CHECK(MEMFD("gate",(1U << bit) | flags) == -22);
+	}
 	CHECK(MEMFD("gate",0xffffffffU) == -22);
 	CHECK(MEMFD(0,0x20) == -22); /* Flags precede name faults. */
 	return (0);

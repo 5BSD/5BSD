@@ -55,6 +55,7 @@ typedef int tsw_mmap_t(struct tty *tp, vm_ooffset_t offset,
 typedef void tsw_pktnotify_t(struct tty *tp, char event);
 typedef void tsw_free_t(void *softc);
 typedef bool tsw_busy_t(struct tty *tp);
+typedef int tsw_check_open_t(struct tty *tp);
 
 struct ttydevsw {
 	unsigned int	tsw_flags;	/* Default TTY flags. */
@@ -76,9 +77,20 @@ struct ttydevsw {
 	tsw_free_t	*tsw_free;	/* Destructor. */
 
 	tsw_busy_t	*tsw_busy;	/* Draining output. */
+	tsw_check_open_t	*tsw_check_open; /* Check every device open. */
 
-	void		*tsw_spare[3];	/* For future use. */
+	void		*tsw_spare[2];	/* For future use. */
 };
+
+static __inline int
+ttydevsw_check_open(struct tty *tp)
+{
+
+	tty_assert_locked(tp);
+	if (tp->t_devsw->tsw_check_open == NULL)
+		return (0);
+	return (tp->t_devsw->tsw_check_open(tp));
+}
 
 static __inline int
 ttydevsw_open(struct tty *tp)

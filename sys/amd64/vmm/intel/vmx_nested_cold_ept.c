@@ -102,6 +102,8 @@ vmx_nested_cold_ept_resolve(struct vmx_nested_context *context,
 	struct vmx_nested_exit_information information;
 	struct vmx_nested_internal candidate;
 	struct vmx_nested_vmexit_handoff_request request;
+	struct vmx_nested_continuation_handoff_request continuation_request;
+	bool device;
 	int error;
 
 	if (context == NULL || continuation == NULL || runtime == NULL ||
@@ -134,6 +136,9 @@ vmx_nested_cold_ept_resolve(struct vmx_nested_context *context,
 
 	switch (handoff->result.plan.action) {
 	case VMX_NESTED_EPT_FAULT_POPULATE:
+	case VMX_NESTED_EPT_FAULT_DEVICE:
+		device = handoff->result.plan.action ==
+		    VMX_NESTED_EPT_FAULT_DEVICE;
 		if (handoff->result.plan.l2_page !=
 		    (handoff->result.guest_physical_address &
 		    ~UINT64_C(0xfff)) ||
@@ -149,11 +154,27 @@ vmx_nested_cold_ept_resolve(struct vmx_nested_context *context,
 		 * faults deliberately retain the unblocked state and report bit 12
 		 * to L1 instead.
 		 */
+		if (device) {
+			error = vmx_nested_continuation_handoff_request_build(
+			    continuation, &continuation_request);
+			if (error != 0)
+				return (error);
+			memset(&candidate, 0, sizeof(candidate));
+			vmx_nested_internal_init(&candidate);
+			error = vmx_nested_internal_publish_continuation(
+			    &candidate, &continuation_request);
+			if (error != 0)
+				return (error);
+		}
 		if (handoff->request.nmi_unblocking_due_to_iret)
 			portable->runtime.arch.interruptibility |=
 			    NVMXCE_NMI_BLOCKING;
-		vmx_nested_internal_init(&context->internal);
-		*disposition = VMX_NESTED_COLD_EPT_POPULATED;
+		if (device)
+			context->internal = candidate;
+		else
+			vmx_nested_internal_init(&context->internal);
+		*disposition = device ? VMX_NESTED_COLD_EPT_DEVICE :
+		    VMX_NESTED_COLD_EPT_POPULATED;
 		return (0);
 	case VMX_NESTED_EPT_FAULT_REFLECT_VIOLATION:
 	case VMX_NESTED_EPT_FAULT_REFLECT_MISCONFIGURATION:

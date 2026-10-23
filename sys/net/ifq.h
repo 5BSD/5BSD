@@ -46,8 +46,6 @@
  */
 #define	IF_DUNIT_NONE	-1
 
-#include <net/altq/if_altq.h>
-
 /*
  * Structure defining a queue for a network interface.
  */
@@ -57,6 +55,25 @@ struct	ifqueue {
 	int	ifq_len;
 	int	ifq_maxlen;
 	struct	mtx ifq_mtx;
+};
+
+/*
+ * The interface send queue (if_snd).  It keeps the historical ALTQ name;
+ * ALTQ itself is retired.  The first fields are those of struct ifqueue.
+ */
+struct	ifaltq {
+	/* fields compatible with struct ifqueue */
+	struct	mbuf *ifq_head;
+	struct	mbuf *ifq_tail;
+	int	ifq_len;
+	int	ifq_maxlen;
+	struct	mtx ifq_mtx;
+
+	/* driver owned queue (used for bulk dequeue and prepend) UNLOCKED */
+	struct	mbuf *ifq_drv_head;
+	struct	mbuf *ifq_drv_tail;
+	int	ifq_drv_len;
+	int	ifq_drv_maxlen;
 };
 
 #ifdef _KERNEL
@@ -161,29 +178,17 @@ void	if_start(struct ifnet *);
 #define	IFQ_ENQUEUE(ifq, m, err)					\
 do {									\
 	IF_LOCK(ifq);							\
-	if (ALTQ_IS_ENABLED(ifq))					\
-		ALTQ_ENQUEUE(ifq, m, NULL, err);			\
-	else {								\
-		if (_IF_QFULL(ifq)) {					\
-			m_freem(m);					\
-			(err) = ENOBUFS;				\
-		} else {						\
-			_IF_ENQUEUE(ifq, m);				\
-			(err) = 0;					\
-		}							\
+	if (_IF_QFULL(ifq)) {						\
+		m_freem(m);						\
+		(err) = ENOBUFS;					\
+	} else {							\
+		_IF_ENQUEUE(ifq, m);					\
+		(err) = 0;						\
 	}								\
 	IF_UNLOCK(ifq);							\
 } while (0)
 
-#define	IFQ_DEQUEUE_NOLOCK(ifq, m)					\
-do {									\
-	if (TBR_IS_ENABLED(ifq))					\
-		(m) = tbr_dequeue_ptr(ifq, ALTDQ_REMOVE);		\
-	else if (ALTQ_IS_ENABLED(ifq))					\
-		ALTQ_DEQUEUE(ifq, m);					\
-	else								\
-		_IF_DEQUEUE(ifq, m);					\
-} while (0)
+#define	IFQ_DEQUEUE_NOLOCK(ifq, m)	_IF_DEQUEUE(ifq, m)
 
 #define	IFQ_DEQUEUE(ifq, m)						\
 do {									\
@@ -192,15 +197,7 @@ do {									\
 	IF_UNLOCK(ifq);							\
 } while (0)
 
-#define	IFQ_POLL_NOLOCK(ifq, m)						\
-do {									\
-	if (TBR_IS_ENABLED(ifq))					\
-		(m) = tbr_dequeue_ptr(ifq, ALTDQ_POLL);			\
-	else if (ALTQ_IS_ENABLED(ifq))					\
-		ALTQ_POLL(ifq, m);					\
-	else								\
-		_IF_POLL(ifq, m);					\
-} while (0)
+#define	IFQ_POLL_NOLOCK(ifq, m)		_IF_POLL(ifq, m)
 
 #define	IFQ_POLL(ifq, m)						\
 do {									\
@@ -209,13 +206,7 @@ do {									\
 	IF_UNLOCK(ifq);							\
 } while (0)
 
-#define	IFQ_PURGE_NOLOCK(ifq)						\
-do {									\
-	if (ALTQ_IS_ENABLED(ifq)) {					\
-		ALTQ_PURGE(ifq);					\
-	} else								\
-		_IF_DRAIN(ifq);						\
-} while (0)
+#define	IFQ_PURGE_NOLOCK(ifq)		_IF_DRAIN(ifq)
 
 #define	IFQ_PURGE(ifq)							\
 do {									\
@@ -224,8 +215,8 @@ do {									\
 	IF_UNLOCK(ifq);							\
 } while (0)
 
-#define	IFQ_SET_READY(ifq)						\
-	do { ((ifq)->altq_flags |= ALTQF_READY); } while (0)
+/* Drivers marked their queue ready for ALTQ; ALTQ is retired. */
+#define	IFQ_SET_READY(ifq)		do { } while (0)
 
 #define	IFQ_LOCK(ifq)			IF_LOCK(ifq)
 #define	IFQ_UNLOCK(ifq)			IF_UNLOCK(ifq)
@@ -312,20 +303,6 @@ do {									\
 	IFQ_PURGE(ifq);							\
 } while (0)
 
-#ifdef ALTQ
-int drbr_enqueue(struct ifnet *ifp, struct buf_ring *br, struct mbuf *m);
-void drbr_putback(struct ifnet *ifp, struct buf_ring *br, struct mbuf *m_new);
-struct mbuf *drbr_peek(struct ifnet *ifp, struct buf_ring *br);
-void drbr_flush(struct ifnet *ifp, struct buf_ring *br);
-struct mbuf *drbr_dequeue(struct ifnet *ifp, struct buf_ring *br);
-void	drbr_advance(struct ifnet *ifp, struct buf_ring *br);
-struct mbuf *drbr_dequeue_cond(struct ifnet *ifp, struct buf_ring *br,
-    int (*func) (struct mbuf *, void *), void *arg);
-int	drbr_empty(struct ifnet *ifp, struct buf_ring *br);
-int	drbr_needs_enqueue(struct ifnet *ifp, struct buf_ring *br);
-int	drbr_inuse(struct ifnet *ifp, struct buf_ring *br);
-
-#else /* !ALTQ */
 static __inline int
 drbr_enqueue(struct ifnet *ifp, struct buf_ring *br, struct mbuf *m)
 {	
@@ -404,7 +381,6 @@ drbr_inuse(struct ifnet *ifp, struct buf_ring *br)
 {
 	return (buf_ring_count(br));
 }
-#endif /* ALTQ */
 
 static __inline void
 drbr_free(struct buf_ring *br, struct malloc_type *type)

@@ -119,7 +119,6 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libsbuf \
 	libservice \
 	libshmring \
-	libsmb \
 	libstdbuf \
 	libstdthreads \
 	libsysdecode \
@@ -192,7 +191,6 @@ SUBDIR_DEPEND_libpam= libcrypt ${_libradius} librpcsvc libtacplus libutil ${_lib
 SUBDIR_DEPEND_libpjdlog= libutil
 SUBDIR_DEPEND_libprocstat= libkvm libutil
 SUBDIR_DEPEND_libradius= libmd
-SUBDIR_DEPEND_libsmb= libkiconv
 SUBDIR_DEPEND_libcapbundle= libcapsulert libucl libcapimage
 SUBDIR_DEPEND_libservice= libcapability libchannel libtrustedzfs
 SUBDIR_DEPEND_libtracecmp= libservice libfidl
@@ -287,7 +285,6 @@ SUBDIR.${MK_OPENMP}+=	libomp
 SUBDIR.${MK_OPENSSH}+=	libcbor libfido2
 .endif
 SUBDIR.${MK_OPENSSL}+=	libmp
-SUBDIR.${MK_PF}+=	libpfctl
 SUBDIR.${MK_PMC}+=	libpmc libpmcstat
 SUBDIR.${MK_RADIUS_SUPPORT}+=	libradius
 SUBDIR.${MK_SENDMAIL}+=	libmilter libsm libsmdb libsmutil

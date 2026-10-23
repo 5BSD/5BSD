@@ -61,6 +61,14 @@ ATF_TESTS_SH+=	linux_mlockall_test
 ${PACKAGE}FILES+=	linux_mlockall.c
 ATF_TESTS_SH+=	linux_openflags_test
 ${PACKAGE}FILES+=	linux_openflags.c
+ATF_TESTS_SH+=	linux_small16_test
+${PACKAGE}FILES+=	linux_small16.c
+ATF_TESTS_SH+=	linux_timerhints_test
+${PACKAGE}FILES+=	linux_timerhints.c
+ATF_TESTS_SH+=	linux32_socket_cookie_test
+${PACKAGE}FILES+=	linux32_socket_cookie.c
+ATF_TESTS_SH+=	linux_quickwins_test
+${PACKAGE}FILES+=	linux_quickwins.c
 ATF_TESTS_SH+=	linux_prctl2_test
 ${PACKAGE}FILES+=	linux_prctl2.c
 ATF_TESTS_SH+=	linux_statx2_test
@@ -106,6 +114,8 @@ ATF_TESTS_SH+=	linux_break_signalfd_test
 ${PACKAGE}FILES+=	linux_break_signalfd.c
 ATF_TESTS_SH+=	linux_perf_event_test
 ${PACKAGE}FILES+=	linux_perf_event.c
+ATF_TESTS_SH+=	linux_more_options_test
+${PACKAGE}FILES+=	linux_more_options.c
 ${PACKAGE}FILES+=	perf_native_hold.c
 ATF_TESTS_SH+=	linux_procfs_test
 ${PACKAGE}FILES+=	linux_procfs.c
@@ -138,6 +148,14 @@ ${PACKAGE}FILES+=	linux_tracee.c
 ${PACKAGE}FILES+=	linux_mseal.c
 ATF_TESTS_SH+=	linux_busybox_test
 ${PACKAGE}FILES+=	linux_test.h
+.endif
+.if ${MACHINE_ARCH} == "aarch64"
+ATF_TESTS_SH+=	linux_arm64_parity_test
+${PACKAGE}FILES+=	linux_arm64_parity.c linux_test.h
+.endif
+.if ${MACHINE_ARCH} == "riscv64"
+ATF_TESTS_SH+=	linux_riscv64_smoke_test
+${PACKAGE}FILES+=	linux_riscv64_smoke.c linux_test.h
 .endif
 ATF_TESTS_C+=	cap_confinement_test
 LIBADD.cap_confinement_test+=	pthread

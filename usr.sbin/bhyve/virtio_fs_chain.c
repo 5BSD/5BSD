@@ -82,9 +82,10 @@ virtio_fs_chain_gather(const struct virtio_fs_chain *chain, void *buffer,
 	for (size_t i = 0; i < chain->readable_count; i++) {
 		if (chain->readable_iov[i].iov_len > buffer_size - copied)
 			return (EPROTO);
-		memcpy((uint8_t *)buffer + copied,
-		    chain->readable_iov[i].iov_base,
-		    chain->readable_iov[i].iov_len);
+		if (chain->readable_iov[i].iov_len != 0)
+			memcpy((uint8_t *)buffer + copied,
+			    chain->readable_iov[i].iov_base,
+			    chain->readable_iov[i].iov_len);
 		copied += chain->readable_iov[i].iov_len;
 	}
 	return (copied == buffer_size ? 0 : EPROTO);
@@ -106,8 +107,9 @@ virtio_fs_chain_scatter(const struct virtio_fs_chain *chain,
 		count = chain->writable_iov[i].iov_len;
 		if (count > buffer_size - copied)
 			count = buffer_size - copied;
-		memcpy(chain->writable_iov[i].iov_base,
-		    (const uint8_t *)buffer + copied, count);
+		if (count != 0)
+			memcpy(chain->writable_iov[i].iov_base,
+			    (const uint8_t *)buffer + copied, count);
 		copied += count;
 	}
 	return (copied == buffer_size ? 0 : EPROTO);

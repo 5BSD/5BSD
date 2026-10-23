@@ -39,14 +39,16 @@ def parse_ipfix(p):
 	c = p
 	while sp.NetflowDataflowsetV9 in c:
 		datafl = c[sp.NetflowDataflowsetV9]
-		if datafl.templateID == 258:
+		# OpenBSD pflow(4) template ids: 256 IPv4, 257 NAT IPv4
+		# (without natEvent), 258 IPv6.
+		if datafl.templateID == 257:
 			# NAT
 			for r in datafl.records:
-				print("v=10,NAT=%d,proto=%s,src=%s-%s,dst=%s-%s" %
-				    (int.from_bytes(r.natEvent, "big"), r.PROTOCOL,
+				print("v=10,NAT,proto=%s,src=%s-%s,dst=%s-%s" %
+				    (r.PROTOCOL,
 				     r.IPV4_SRC_ADDR, r.postNATSourceIPv4Address,
 				     r.IPV4_DST_ADDR, r.postNATDestinationIPv4Address))
-		elif datafl.templateID == 257:
+		elif datafl.templateID == 258:
 			# IPv6
 			for r in datafl.records:
 				print("v=10,IPv6,proto=%s,src=%s,dst=%s" %

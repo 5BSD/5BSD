@@ -44,8 +44,12 @@ stream_read(int fd, void *buf, ssize_t nbytes)
 
 	while (len < nbytes) {
 		n = read(fd, p + len, nbytes - len);
-		if (n == 0)
-			break;
+		if (n == 0) {
+			if (len == 0)
+				return (0);
+			errno = ECONNRESET;
+			return (-1);
+		}
 
 		if (n < 0) {
 			if (errno == EINTR || errno == EAGAIN)
@@ -68,8 +72,10 @@ stream_write(int fd, const void *buf, ssize_t nbytes)
 
 	while (len < nbytes) {
 		n = write(fd, p + len, nbytes - len);
-		if (n == 0)
-			break;
+		if (n == 0) {
+			errno = EPIPE;
+			return (-1);
+		}
 		if (n < 0) {
 			if (errno == EINTR || errno == EAGAIN)
 				continue;

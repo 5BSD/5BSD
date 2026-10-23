@@ -29,7 +29,6 @@ gnop9.sh		Waiting for patch commit					20201214
 graid1_3.sh		Hang seen							20250915
 graid1_8.sh		Known issue							20170909
 graid1_9.sh		panic: Bad effnlink						20180212
-gunion.sh		CAM stuk in vmwait						20251226
 ifconfig.sh		https://people.freebsd.org/~pho/stress/log/log0666.txt		20260721
 ifconfig2.sh		https://people.freebsd.org/~pho/stress/log/log0666.txt		20260721
 lockf5.sh		Spinning threads seen						20160718

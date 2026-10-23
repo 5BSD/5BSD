@@ -150,9 +150,6 @@
 #define	REQ_WIRED	2
 
 /* definitions for sysctl_req 'flags' member */
-#ifdef COMPAT_FREEBSD32
-#define	SCTL_MASK32	1	/* 32 bit emulation */
-#endif
 /*
  * Gate-authorized request (mac_capability "system" SYS_GATE_SYSCTL perform op).
  * Set ONLY by kernel_sysctl() callers that have already verified the caller

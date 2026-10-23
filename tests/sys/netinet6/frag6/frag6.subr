@@ -62,8 +62,9 @@ frag6_body()
 	jexec ${jname} ifconfig ${epair}b up
 	jexec ${jname} ifconfig ${epair}b inet6 ${ip6b}/64
 
-	# Set max fragment reassembly time to 2 seconds
-	jexec ${jname} sysctl net.inet6.ip6.fraglifetime_ms=2000
+	# Set max fragment reassembly time to 2 seconds, or what the test
+	# chose (FRAG6_LIFETIME_MS).
+	jexec ${jname} sysctl net.inet6.ip6.fraglifetime_ms=${FRAG6_LIFETIME_MS:-2000}
 
 	# Let IPv6 ND do its thing.
 	while [ `ifconfig ${epair}a inet6 | grep -c tentative` != "0" ]; do

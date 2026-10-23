@@ -70,22 +70,114 @@ pft_init()
 	if [ ! -c /dev/pf ]; then
 		atf_skip "This test requires pf"
 	fi
+	pft_host_reset init
+}
+
+# 5BSD: tests that run in the host vnet (Makefile: execenv="", for pf's
+# host-owned pool limits) use the host's pf, where upstream's run in a
+# fresh vnet jail.  Each starts from an empty, disabled host pf and leaves
+# an empty one: rules, states, tables and syncookie mode left behind would
+# change the next test (a "keep state" rule makes its traffic hold host
+# states that a lower limit then refuses; syncookies answer SYNs before any
+# rule, and a later ruleset without "set syncookies" keeps the mode).  The
+# host's pf is left enabled or disabled, and with the limits, the test
+# found it with.
+pft_host_reset()
+{
+	[ "$(sysctl -n security.jail.jailed)" = "0" ] || return 0
+	if [ "$1" = "init" ] && [ ! -f pft_host_pf.state ]; then
+		if pfctl -si 2>/dev/null | grep -q "^Status: Enabled"; then
+			echo enabled > pft_host_pf.state
+		else
+			echo disabled > pft_host_pf.state
+		fi
+		# Every ruleset load also sets all limits, to the defaults for
+		# those it omits: the host's are put back when the test ends.
+		pfctl -sm 2>/dev/null |
+		    awk '{ print "set limit " $1 " " $NF }' > pft_host_pf.limits
+	fi
+	pfctl -q -F all >/dev/null 2>&1
+	{
+		cat pft_host_pf.limits 2>/dev/null
+		echo "set syncookies never"
+	} | pfctl -q -f - >/dev/null 2>&1
+	# A flush only unlinks states: pf's purge frees them (and they stop
+	# counting against the host's limits) within seconds.  A test that
+	# lowers a limit right away would otherwise be refused.
+	_i=0
+	while [ "$(sysctl -n net.pf.vnet_count.states)" != "0" ]; do
+		_i=$((_i + 1))
+		if [ ${_i} -ge 60 ]; then
+			echo "pft_host_reset: host pf still holds" \
+			    "$(sysctl -n net.pf.vnet_count.states) unlinked states" >&2
+			break
+		fi
+		sleep 0.5
+	done
+	# Disabled, as in a fresh vnet, until the test enables it.
+	[ "$1" = "init" ] && pfctl -q -d >/dev/null 2>&1
+	if [ "$1" = "cleanup" ] && [ -f pft_host_pf.state ]; then
+		if [ "$(cat pft_host_pf.state)" = "enabled" ]; then
+			pfctl -q -e >/dev/null 2>&1
+		else
+			pfctl -q -d >/dev/null 2>&1
+		fi
+	fi
+	return 0
 }
 
 pfsynct_init()
 {
 	pft_init
 
-	if ! kldstat -q -m pfsync; then
+	# 5BSD provides pfsync through the integrated pf module.
+	if ! kldstat -q -m pfsync &&
+	    ! ifconfig -C | grep -Eq '(^|[[:space:]])pfsync([[:space:]]|$)'; then
 		atf_skip "This test requires pfsync"
 	fi
+}
+
+# 5BSD pfsync is a cloner; unlike FreeBSD it does not precreate pfsync0
+# in each vnet.
+pfsynct_mkif()
+{
+	jexec $1 ifconfig pfsync0 create ||
+	    atf_fail "creating pfsync0 in jail $1"
+}
+
+# 5BSD: pf's pool limits are host-wide and owned by the host vnet.  Tests
+# that change them run exclusively in the host vnet (Makefile), save the
+# limits first and restore them in cleanup.  OpenBSD's pfctl has no
+# options-only load (FreeBSD's -O): these load a ruleset of only options,
+# which also empties the host's main ruleset.
+limits_save()
+{
+	pfctl -sm | awk '{ print "set limit " $1 " " $NF }' > limits.original
+	[ -s limits.original ] || atf_fail "Cannot read the current limits"
+}
+
+limits_restore()
+{
+	if [ -f limits.original ]; then
+		pfctl -f limits.original
+	fi
+}
+
+limits_set()
+{
+	while [ $# -gt 0 ]; do
+		printf "set limit %s\n" "$1"
+		shift
+	done | pfctl -f - || atf_fail "Failed to set limits"
 }
 
 pflog_init()
 {
 	pft_init
 
-	if ! kldstat -q -m pflog; then
+	# 5BSD: pflog(4) is part of pf.ko.
+	if ! kldstat -q -m pflog &&
+	    ! ifconfig -C | grep -Eq '(^|[[:space:]])pflog([[:space:]]|$)'; then
 		atf_skip "This test requires pflog"
 	fi
 }
@@ -94,7 +186,9 @@ pflow_init()
 {
 	pft_init
 
-	if ! kldstat -q -m pflow; then
+	# 5BSD: pflow(4) is part of pf.ko.
+	if ! kldstat -q -m pflow &&
+	    ! ifconfig -C | grep -Eq '(^|[[:space:]])pflow([[:space:]]|$)'; then
 		atf_skip "This test requires pflow"
 	fi
 }
@@ -134,6 +228,7 @@ pft_set_rules()
 
 pft_cleanup()
 {
+	pft_host_reset cleanup
 	vnet_cleanup
 }
 

@@ -24,8 +24,10 @@ SRCS+=	smbus_if.h
 SRCS+=	ipmi_isa.c
 SRCS+=	isa_if.h
 
-SUBDIR+= ipmi_linux
+.endif
 
+.if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "aarch64"
+SUBDIR+= ipmi_linux
 .endif
 
 .include <bsd.kmod.mk>

@@ -342,10 +342,6 @@ epair_transmit(struct ifnet *ifp, struct mbuf *m)
 {
 	struct epair_softc *sc;
 	struct ifnet *oifp;
-#ifdef ALTQ
-	int len;
-	bool mcast;
-#endif
 
 	if (m == NULL)
 		return (0);
@@ -397,29 +393,6 @@ epair_transmit(struct ifnet *ifp, struct mbuf *m)
 		m_freem(m);
 		return (0);
 	}
-
-#ifdef ALTQ
-	len = m->m_pkthdr.len;
-	mcast = (m->m_flags & (M_BCAST | M_MCAST)) != 0;
-	int error = 0;
-
-	/* Support ALTQ via the classic if_start() path. */
-	IF_LOCK(&ifp->if_snd);
-	if (ALTQ_IS_ENABLED(&ifp->if_snd)) {
-		ALTQ_ENQUEUE(&ifp->if_snd, m, NULL, error);
-		if (error)
-			if_inc_counter(ifp, IFCOUNTER_OQDROPS, 1);
-		IF_UNLOCK(&ifp->if_snd);
-		if (!error) {
-			if_inc_counter(ifp, IFCOUNTER_OBYTES, len);
-			if (mcast)
-				if_inc_counter(ifp, IFCOUNTER_OMCASTS, 1);
-			epair_start(ifp);
-		}
-		return (error);
-	}
-	IF_UNLOCK(&ifp->if_snd);
-#endif
 
 	epair_menq(m, oifp->if_softc);
 	return (0);

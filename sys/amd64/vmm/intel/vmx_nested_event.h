@@ -146,6 +146,7 @@ struct vmx_nested_startup_input {
 	bool reinjection_pending;
 	bool wait_for_sipi;
 	bool mtf_pending;
+	bool l0_wait_for_sipi;
 };
 
 struct vmx_nested_startup_plan {

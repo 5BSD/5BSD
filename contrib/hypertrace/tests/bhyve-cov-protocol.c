@@ -50,6 +50,7 @@
 #include "migration_session.h"
 #include "migration_commit.h"
 #include "migration_recovery_phase.h"
+#include "checkpoint_manifest.h"
 
 /* Harness allocations bypass a malloc wrapper that faults session code. */
 extern void *__real_malloc(size_t) __attribute__((weak));
@@ -75,7 +76,10 @@ enum op {
 	S_DEV_EMPTY,
 	D_HELLO, D_TOPOLOGY, D_STAGE_MEM, D_STAGE_DEV, D_COMMIT, D_RESUME,
 	D_PREPARE, D_PREPARE_CHALLENGE, D_PRESERVE, D_RECORD_STAGED,
-	D_RECORD_RELEASED, D_RECORD_RUNNING, OP_LAST,
+	D_RECORD_RELEASED, D_RECORD_RUNNING,
+	/* Merged active-vsock hooks. */
+	S_VSOCK_STATE, S_PREPARE_RELAY, S_CANCEL_RELAY, S_ACTIVATE_RELAY, D_STAGE_VSOCK,
+	OP_LAST,
 };
 static const char *op_names[] = {
 	"none", "so_local_hello", "so_local_topology", "so_precopy_enable",
@@ -91,6 +95,8 @@ static const char *op_names[] = {
 	"do_commit", "do_resume", "do_prepare_commit",
 	"do_prepare_commit(challenge)", "do_preserve", "do_record(STAGED)",
 	"do_record(RELEASED)", "do_record(RUNNING)",
+	"so_vsock_state", "so_prepare_relay", "so_cancel_relay", "so_activate_relay",
+	"do_stage_vsock",
 };
 
 struct config_model {
@@ -99,11 +105,15 @@ struct config_model {
 	bool fresh;
 	bool preserve;
 	int fail;		/* enum op to fail */
+	int fail2;		/* a second operation to fail (0: none) */
 	int fail_error;
 	uint32_t ncpus_dest;	/* topology mismatch knob */
 	uint64_t hello_caps_dest;
 	uint64_t converge_pages;	/* session convergence ceiling */
 	bool cancel_on_converge;	/* operator cancels as pre-copy converges */
+	/* Active vsock: 0 none, 1 both endpoints, 2 source only, 3 destination only. */
+	int vsock_mode;
+	size_t vsock_len;
 };
 static volatile int run_cancel;
 
@@ -120,6 +130,11 @@ struct source_model {
 	uint8_t challenge[32];
 	uint8_t ram_at_quiesce_digest[32];
 	uint8_t *dev;
+	/* Active-vsock relay model: one sequence clock orders every hook. */
+	uint8_t *vsock;
+	int clock, prepare_at, cancel_at, activate_at, intent_at, released_at;
+	int vsock_at, dev_at, resume_at;
+	bool relay_prepared, resumed_with_relay, activated_unreleased;
 };
 
 struct dest_model {
@@ -131,12 +146,16 @@ struct dest_model {
 	int resumes, records[8], nrecords;
 	bool resumed_before_source_retired;
 	struct source_model *peer;	/* observes the source for O2 only */
+	uint8_t *vsock;
+	size_t vsock_len;
+	bool dev_before_vsock;
 };
 
 static int
 fail_if(const struct config_model *cfg, enum op op)
 {
-	return (cfg->fail == (int)op ? (cfg->fail_error != 0 ? cfg->fail_error : EIO) : 0);
+	return (cfg->fail == (int)op || cfg->fail2 == (int)op ?
+	    (cfg->fail_error != 0 ? cfg->fail_error : EIO) : 0);
 }
 
 static void
@@ -359,10 +378,14 @@ s_resume(void *arg)
 
 	if (s->retired)
 		s->resumed_after_retire = true;
+	/* A prepared standby relay must be cancelled before the source runs. */
+	if (s->relay_prepared)
+		s->resumed_with_relay = true;
 	if (e != 0)
 		return (e);
 	s->quiesced = false;
 	s->resumes++;
+	s->resume_at = ++s->clock;
 	return (0);
 }
 
@@ -375,6 +398,7 @@ s_dev_state(void *arg, uint8_t **buf, size_t *len)
 	if (e != 0)
 		return (e);
 	digest(s->ram, s->cfg->pages * PAGE, s->ram_at_quiesce_digest);
+	s->dev_at = ++s->clock;
 	if (s->cfg->fail == S_DEV_NULL) {
 		*buf = NULL;
 		*len = 1;
@@ -386,8 +410,11 @@ s_dev_state(void *arg, uint8_t **buf, size_t *len)
 		return (0);
 	}
 	if (s->cfg->fail == S_DEV_HUGE) {
-		*buf = hmalloc(1);
+		/* Honour the hook contract (a buffer of *len bytes): the session
+		 * scrubs an oversized state before refusing it. */
 		*len = (size_t)MIGRATION_MAX_DEV_STATE + 1;
+		*buf = hmalloc(*len);
+		PCHECK(*buf != NULL);
 		return (0);
 	}
 	*buf = hmalloc(s->cfg->dev_len != 0 ? s->cfg->dev_len : 1);
@@ -429,7 +456,73 @@ s_record(void *arg, enum migration_recovery_phase phase, const uint8_t challenge
 	PCHECK(memcmp(challenge, s->challenge, 32) == 0);
 	PCHECK(s->nrecords < 8);
 	s->records[s->nrecords++] = phase;
+	if (phase == MIGRATION_REC_SOURCE_INTENT)
+		s->intent_at = ++s->clock;
+	if (phase == MIGRATION_REC_SOURCE_RELEASED)
+		s->released_at = ++s->clock;
 	return (fail_if(s->cfg, ops[phase]));
+}
+
+/* ---- active-vsock source hooks ---- */
+static int
+s_vsock_state(void *arg, uint8_t **buf, size_t *len)
+{
+	struct source_model *s = arg;
+	int e = fail_if(s->cfg, S_VSOCK_STATE);
+
+	PCHECK(s->quiesced && s->dev_at == 0);	/* paused, before the device image */
+	if (e != 0) {
+		/* A failing hook may still hand back a buffer; the session
+		 * scrubs and frees it. */
+		*buf = hmalloc(16);
+		*len = 16;
+		return (e);
+	}
+	s->vsock_at = ++s->clock;
+	*buf = hmalloc(s->cfg->vsock_len);
+	memcpy(*buf, s->vsock, s->cfg->vsock_len);
+	*len = s->cfg->vsock_len;
+	return (0);
+}
+
+static int
+s_prepare_relay(void *arg)
+{
+	struct source_model *s = arg;
+
+	/* After the accepted COMMIT, before the irreversible INTENT. */
+	PCHECK(s->quiesced && s->intent_at == 0 && !s->retired);
+	s->prepare_at = ++s->clock;
+	s->relay_prepared = true;	/* even a failed prepare must be cancelled */
+	return (fail_if(s->cfg, S_PREPARE_RELAY));
+}
+
+static int
+s_cancel_relay(void *arg)
+{
+	struct source_model *s = arg;
+	int e = fail_if(s->cfg, S_CANCEL_RELAY);
+
+	PCHECK(s->relay_prepared && !s->retired);
+	if (e != 0)
+		return (e);
+	s->cancel_at = ++s->clock;
+	s->relay_prepared = false;
+	return (0);
+}
+
+static int
+s_activate_relay(void *arg)
+{
+	struct source_model *s = arg;
+	int e = fail_if(s->cfg, S_ACTIVATE_RELAY);
+
+	if (!s->relay_prepared || s->released_at == 0 || !s->retired)
+		s->activated_unreleased = true;
+	if (e != 0)
+		return (e);
+	s->activate_at = ++s->clock;
+	return (0);
 }
 
 static int
@@ -457,6 +550,16 @@ static const struct migration_source_ops source_ops = {
 	.so_resume = s_resume, .so_dev_state = s_dev_state,
 	.so_defunct = s_defunct, .so_retire = s_retire, .so_record = s_record,
 	.so_accept_commit = s_accept,
+};
+static const struct migration_source_ops source_vsock_ops = {
+	.so_local_hello = s_hello, .so_local_topology = s_topology,
+	.so_precopy_enable = s_enable, .so_precopy_round = s_round,
+	.so_precopy_disable = s_disable, .so_quiesce = s_quiesce,
+	.so_resume = s_resume, .so_dev_state = s_dev_state,
+	.so_defunct = s_defunct, .so_retire = s_retire, .so_record = s_record,
+	.so_accept_commit = s_accept, .so_vsock_state = s_vsock_state,
+	.so_prepare_relay = s_prepare_relay, .so_cancel_relay = s_cancel_relay,
+	.so_activate_relay = s_activate_relay,
 };
 
 /* ---- destination ops ---- */
@@ -517,10 +620,27 @@ d_stage_dev(void *arg, const uint8_t *buf, size_t len)
 
 	if (e != 0)
 		return (e);
+	if (d->cfg->vsock_mode == 1 && d->vsock == NULL)
+		d->dev_before_vsock = true;
 	free(d->dev);
 	d->dev = hmalloc(len != 0 ? len : 1);
 	memcpy(d->dev, buf, len);
 	d->dev_len = len;
+	return (0);
+}
+
+static int
+d_stage_vsock(void *arg, const uint8_t *buf, size_t len)
+{
+	struct dest_model *d = arg;
+	int e = fail_if(d->cfg, D_STAGE_VSOCK);
+
+	PCHECK(!d->committed && d->vsock == NULL);
+	if (e != 0)
+		return (e);
+	d->vsock = hmalloc(len != 0 ? len : 1);
+	memcpy(d->vsock, buf, len);
+	d->vsock_len = len;
 	return (0);
 }
 
@@ -812,7 +932,8 @@ mutate_field(uint16_t type, uint32_t flags, uint8_t **payload, size_t *len, int 
 		}
 		return (migration_memgen_encode(&g, p, MIGRATION_MEMGEN_HDR_SIZE) == 0);
 	}
-	case MIGRATION_MSG_DEV_STATE: {
+	case MIGRATION_MSG_DEV_STATE:
+	case MIGRATION_MSG_VSOCK_STATE: {
 		struct migration_chunk c;
 		if ((flags & MIGRATION_FFLAG_CHUNK) == 0 || *len < MIGRATION_CHUNK_HDR_SIZE ||
 		    migration_chunk_decode(p, MIGRATION_CHUNK_HDR_SIZE, &c) != 0)
@@ -1085,6 +1206,9 @@ run_once(const struct config_model *cfg, int direction, int index, int mutation,
 		r->s.ram[i] = (uint8_t)(i * 13 + i / PAGE);
 	for (size_t i = 0; i < cfg->dev_len; i++)
 		r->s.dev[i] = (uint8_t)(i * 7 + 3);
+	r->s.vsock = hmalloc(cfg->vsock_len != 0 ? cfg->vsock_len : 1);
+	for (size_t i = 0; i < cfg->vsock_len; i++)
+		r->s.vsock[i] = (uint8_t)(i * 11 + 5);
 	r->d.cfg = cfg;
 	r->d.ram = hcalloc(1, cfg->pages * PAGE);
 	r->d.peer = &r->s;
@@ -1135,12 +1259,15 @@ run_once(const struct config_model *cfg, int direction, int index, int mutation,
 		.do_record = d_record, .do_prepare_commit = d_prepare,
 		.do_retain = d_retain,
 		.do_preserve = cfg->preserve ? d_preserve : NULL,
+		.do_stage_vsock = cfg->vsock_mode == 1 || cfg->vsock_mode == 3 ?
+		    d_stage_vsock : NULL,
 	};
 	PCHECK(pthread_create(&f, NULL, mitm_main, &forward) == 0);
 	PCHECK(pthread_create(&b, NULL, mitm_main, &backward) == 0);
 	PCHECK(pthread_create(&dt, NULL, dest_thread, &da) == 0);
-	r->source_error = migration_source_run(&swrap, &source_ops, &r->s, &sa.config,
-	    &r->source);
+	r->source_error = migration_source_run(&swrap,
+	    cfg->vsock_mode == 1 || cfg->vsock_mode == 2 ? &source_vsock_ops : &source_ops,
+	    &r->s, &sa.config, &r->source);
 	shutdown(sd[0], SHUT_RDWR);
 	PCHECK(pthread_join(dt, NULL) == 0);
 	r->dest_error = da.error;
@@ -1173,8 +1300,10 @@ free_run(struct run_result *r)
 	free(r->s.dirty);
 	free(r->s.bitmap);
 	free(r->s.dev);
+	free(r->s.vsock);
 	free(r->d.ram);
 	free(r->d.dev);
+	free(r->d.vsock);
 }
 
 static bool
@@ -1228,7 +1357,14 @@ check_run(const struct run_result *r, bool integrity_mutation)
 {
 	PCHECK(!r->s.resumed_after_retire);			/* O4 */
 	PCHECK(r->d.resumes <= 1 && !r->d.resumed_before_source_retired);
-	if (r->source_error == 0) {				/* O1 */
+	/* A failed relay activation after RELEASE still completes the handoff:
+	 * the source is defunct and reports the relay failure. */
+	if (r->source_error != 0 && r->s.cfg->fail == S_ACTIVATE_RELAY && r->s.defunct) {
+		PCHECK(r->s.retired && !r->source.source_runnable &&
+		    r->source.phase == MIGRATION_PHASE_FAILED &&
+		    r->source.reason == MIGRATION_REASON_STATE);
+		PCHECK(r->s.activate_at == 0 && r->s.released_at != 0);
+	} else if (r->source_error == 0) {			/* O1 */
 		PCHECK(r->s.retired && r->s.defunct && !r->source.source_runnable);
 		PCHECK(r->source.phase == MIGRATION_PHASE_COMPLETED);
 		/* Protocol 2: the source completes only on RELEASE_ACK from a
@@ -1257,6 +1393,26 @@ check_run(const struct run_result *r, bool integrity_mutation)
 	}
 	if (integrity_mutation && r->mutated)			/* O5 */
 		PCHECK(r->source_error != 0 || r->dest_error != 0);
+	/* O6 (active vsock): a prepared relay is cancelled before any source
+	 * resume, activated only after RELEASED and never after cancellation;
+	 * the destination stages the exact table before the device image. */
+	PCHECK(!r->s.resumed_with_relay && !r->s.activated_unreleased);
+	if (r->s.prepare_at != 0)
+		PCHECK(r->s.intent_at == 0 || r->s.prepare_at < r->s.intent_at);
+	if (r->s.activate_at != 0)
+		PCHECK(r->s.cancel_at == 0 && r->s.activate_at > r->s.released_at);
+	if (r->s.vsock_at != 0 && r->s.dev_at != 0)
+		PCHECK(r->s.vsock_at < r->s.dev_at);
+	PCHECK(!r->d.dev_before_vsock);
+	if (r->d.vsock != NULL && !active_alteration)
+		PCHECK(r->d.vsock_len == r->s.cfg->vsock_len &&
+		    memcmp(r->d.vsock, r->s.vsock, r->d.vsock_len) == 0);
+	if (r->s.cfg->vsock_mode == 1 && r->source_error == 0)
+		PCHECK(r->s.activate_at != 0 && r->d.vsock != NULL);
+	if (r->s.cfg->vsock_mode == 1 && r->source.source_runnable && r->s.prepare_at != 0)
+		PCHECK(r->s.cancel_at > r->s.prepare_at);
+	if (r->s.cfg->vsock_mode != 1)
+		PCHECK(r->d.vsock == NULL && r->s.prepare_at == 0);
 }
 
 /* ------------------------------------------------------------- tests */
@@ -1439,12 +1595,16 @@ test_codecs(void)
 	ch = (struct migration_chunk){ .total_length = 16, .offset = 0, .chunk_length = 8, .final = 1 };
 	EXPECT(migration_chunk_validate(0, 0, &ch, 16, 64), EBADMSG);	/* final too early */
 	{
-		/* Streaming: an empty final chunk terminates at any offset. */
+		/* Merged: every chunk must advance the cursor; an empty chunk is
+		 * refused even as a streaming terminator, and final is a boolean. */
 		struct migration_chunk end = { .offset = 8, .chunk_length = 0,
 		    .total_length = 0, .final = 1 };
-		EXPECT(migration_chunk_validate(8, 0, &end, 16, 64), 0);
+		EXPECT(migration_chunk_validate(8, 0, &end, 16, 64), EBADMSG);
 		end.offset = 0;
-		EXPECT(migration_chunk_validate(0, 0, &end, 16, 64), 0);
+		EXPECT(migration_chunk_validate(0, 0, &end, 16, 64), EBADMSG);
+		end = (struct migration_chunk){ .offset = 0, .chunk_length = 8,
+		    .total_length = 8, .final = 2 };
+		EXPECT(migration_chunk_validate(0, 0, &end, 16, 64), EBADMSG);
 	}
 	ch = (struct migration_chunk){ .total_length = 16, .offset = 12, .chunk_length = 8, .final = 1 };
 	EXPECT(migration_chunk_validate(12, 16, &ch, 16, 64), EBADMSG);	/* past total */
@@ -1453,7 +1613,7 @@ test_codecs(void)
 	ch = (struct migration_chunk){ .total_length = 0, .offset = 0, .chunk_length = 8, .final = 0 };
 	EXPECT(migration_chunk_validate(0, 0, &ch, 16, 64), 0);
 	ch = (struct migration_chunk){ .total_length = 0, .offset = 0, .chunk_length = 0, .final = 1 };
-	EXPECT(migration_chunk_validate(0, 0, &ch, 16, 64), 0);		/* empty stream end */
+	EXPECT(migration_chunk_validate(0, 0, &ch, 16, 64), EBADMSG);	/* empty stream end */
 	/* Version negotiation. */
 	EXPECT(migration_negotiate_version(1, 2, 1, 1, &negotiated), EINVAL);
 	EXPECT(migration_negotiate_version(1, 1, 1, 2, &negotiated), EINVAL);
@@ -1984,8 +2144,10 @@ test_protocol1_peers(void)
 
 		PCHECK(migration_caps_accept_encode(&c, cw, sizeof(cw)) == 0);
 		PCHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
-		/* Queue the reply; the source reads it after sending HELLO. */
-		PCHECK(send_frame(pair[1], MIGRATION_PROTO_VERSION, MIGRATION_MSG_CAPS_ACCEPT,
+		/* Queue the reply, framed at the version it names; the source
+		 * reads it after sending HELLO.  Merged rule: a source requires
+		 * version 3, so a destination selecting 1 is refused. */
+		PCHECK(send_frame(pair[1], 1, MIGRATION_MSG_CAPS_ACCEPT,
 		    1, 0, cw, sizeof(cw)));
 		migration_transport_fd_init(&xp, &fdx, pair[0], 1000);
 		PCHECK(migration_source_run(&xp, &source_ops, &s, &config, &sr) ==
@@ -2049,6 +2211,47 @@ test_arguments(void)
 	PCHECK(migration_dest_run(&xp, NULL, NULL, &config, &dr) == EINVAL);
 	PCHECK(migration_dest_run(&xp, &dops, NULL, NULL, &dr) == EINVAL);
 	PCHECK(migration_dest_run(&xp, &dops, NULL, &config, NULL) == EINVAL);
+	/* Every required hook, alone missing, is an invalid argument; relay
+	 * hooks are all-or-nothing with the vsock capture. */
+	for (int k = 0; k < 9; k++) {
+		struct migration_source_ops o = source_ops;
+		switch (k) {
+		case 0: o.so_local_hello = NULL; break;
+		case 1: o.so_local_topology = NULL; break;
+		case 2: o.so_precopy_enable = NULL; break;
+		case 3: o.so_precopy_round = NULL; break;
+		case 4: o.so_precopy_disable = NULL; break;
+		case 5: o.so_quiesce = NULL; break;
+		case 6: o.so_resume = NULL; break;
+		case 7: o.so_dev_state = NULL; break;
+		case 8: o.so_defunct = NULL; break;
+		}
+		PCHECK(migration_source_run(&xp, &o, &s, &config, &sr) == EINVAL);
+	}
+	for (int k = 0; k < 3; k++) {
+		struct migration_source_ops o = source_vsock_ops;
+		if (k == 0) o.so_cancel_relay = NULL;
+		if (k == 1) o.so_activate_relay = NULL;
+		if (k == 2) o.so_vsock_state = NULL;
+		PCHECK(migration_source_run(&xp, &o, &s, &config, &sr) == EINVAL);
+	}
+	for (int k = 0; k < 7; k++) {
+		struct migration_dest_ops o = {
+			.do_local_hello = d_hello, .do_local_topology = d_topology,
+			.do_stage_mem = d_stage_mem, .do_stage_dev = d_stage_dev,
+			.do_commit = d_commit, .do_resume = d_resume, .do_discard = d_discard,
+		};
+		switch (k) {
+		case 0: o.do_local_hello = NULL; break;
+		case 1: o.do_local_topology = NULL; break;
+		case 2: o.do_stage_mem = NULL; break;
+		case 3: o.do_stage_dev = NULL; break;
+		case 4: o.do_commit = NULL; break;
+		case 5: o.do_resume = NULL; break;
+		case 6: o.do_discard = NULL; break;
+		}
+		PCHECK(migration_dest_run(&xp, &o, NULL, &config, &dr) == EINVAL);
+	}
 	/* A fresh source without retirement hooks refuses before sending. */
 	{
 		struct migration_source_ops partial = source_ops;
@@ -2112,7 +2315,8 @@ test_arguments(void)
 		h.role = MIGRATION_ROLE_SOURCE;
 		PCHECK(migration_hello_encode(&h, hw, sizeof(hw)) == 0);
 		PCHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
-		PCHECK(send_frame(pair[1], MIGRATION_PROTO_VERSION, MIGRATION_MSG_HELLO, 1, 0,
+		/* A HELLO is framed at the sender's lowest version. */
+		PCHECK(send_frame(pair[1], h.version_min, MIGRATION_MSG_HELLO, 1, 0,
 		    hw, sizeof(hw)));
 		migration_transport_fd_init(&xp, &fdx, pair[0], 1000);
 		PCHECK(migration_dest_run(&xp, &partial, &d, &config, &dr) == EOPNOTSUPP);
@@ -2135,11 +2339,15 @@ void protocol_allocation_faults(void (*arm)(int), int (*count)(void));
 void
 protocol_allocation_faults(void (*arm)(int), int (*count)(void))
 {
-	for (int fresh = 0; fresh < 2; fresh++) {
-		struct config_model cfg = base_config(fresh);
+	for (int fresh = 0; fresh < 3; fresh++) {
+		struct config_model cfg = base_config(fresh == 1);
 		struct run_result r;
 		int total, runs = 0;
 
+		if (fresh == 2) {	/* active vsock with a chunked table */
+			cfg.vsock_mode = 1;
+			cfg.vsock_len = (size_t)MIGRATION_MAX_PAYLOAD + 3000;
+		}
 		cfg.pages = 4200;
 		cfg.dev_len = (size_t)MIGRATION_MAX_PAYLOAD + 5000;
 		snprintf(current_label, sizeof(current_label), "allocation baseline fresh=%d", fresh);
@@ -2167,6 +2375,593 @@ protocol_allocation_faults(void (*arm)(int), int (*count)(void))
 	}
 }
 
+
+/* ------------------------------------------------- merged protocol 3 */
+static bool
+read_frame(int fd, struct migration_frame_header *fh, uint8_t *body, size_t cap)
+{
+	uint8_t hdr[MIGRATION_FRAME_HDR_SIZE];
+
+	if (!read_full(fd, hdr, sizeof(hdr)) ||
+	    migration_frame_decode_header(hdr, sizeof(hdr), fh) != 0 || fh->length > cap)
+		return (false);
+	return (fh->length == 0 || read_full(fd, body, fh->length));
+}
+
+/*
+ * Version admission (merged rules).  Oracles are the documented table:
+ * version 3 between current builds; version 2 never; version 1 only from a
+ * qualified v0.1.0 source ([1,1] window) behind the destination's V2_RESTORE
+ * gate, which also admits only that source's previous machine ABI.
+ */
+/* Machine ABI strings are canonical: NUL-padded to the field size. */
+static void
+set_abi(char abi[MIGRATION_MACHINE_ABI_MAX], const char *value)
+{
+	memset(abi, 0, MIGRATION_MACHINE_ABI_MAX);
+	strlcpy(abi, value, MIGRATION_MACHINE_ABI_MAX);
+}
+
+static void
+test_version_gate(void)
+{
+	struct migration_hello local, remote;
+	struct migration_caps_accept c;
+	uint16_t negotiated;
+	uint32_t reason;
+	int checks = 0;
+
+	strlcpy(current_label, "version gate", sizeof(current_label));
+	fill_hello(&local, false);
+	local.role = MIGRATION_ROLE_DEST;
+	fill_hello(&remote, false);
+	remote.role = MIGRATION_ROLE_SOURCE;
+	/* Current peers: [1,3] x [1,3] -> 3. */
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) == 0 &&
+	    negotiated == 3 && reason == MIGRATION_REASON_NONE);
+	/* v0.1.0 source without the gate: refused. */
+	remote.version_min = remote.version_max = 1;
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) ==
+	    EPROTONOSUPPORT && reason == MIGRATION_REASON_VERSION);
+	/* With the gate: admitted at 1. */
+	local.capability_flags |= MIGRATION_CAP_V2_RESTORE;
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) == 0 &&
+	    negotiated == 1);
+	/* Version 2 is never admitted, gate or not. */
+	remote.version_min = remote.version_max = 2;
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) ==
+	    EPROTONOSUPPORT && reason == MIGRATION_REASON_VERSION);
+	remote.version_min = 1;
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) ==
+	    EPROTONOSUPPORT && reason == MIGRATION_REASON_VERSION);
+	/* A gated destination still negotiates 3 with a current source. */
+	remote.version_max = 3;
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) == 0 &&
+	    negotiated == 3);
+	checks += 6;
+	/* Previous machine ABI: only gate + [1,1] + current/previous ABI pair. */
+	set_abi(local.machine_abi, CHECKPOINT_MACHINE_ABI);
+	set_abi(remote.machine_abi, CHECKPOINT_MACHINE_ABI_PREVIOUS);
+	remote.version_min = remote.version_max = 1;
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) == 0 &&
+	    negotiated == 1);
+	remote.version_max = 3;
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) == EINVAL &&
+	    reason == MIGRATION_REASON_MACHINE_ABI);
+	remote.version_max = 1;
+	remote.version_min = 1;
+	local.capability_flags &= ~MIGRATION_CAP_V2_RESTORE;
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) == EINVAL &&
+	    reason == MIGRATION_REASON_MACHINE_ABI);
+	local.capability_flags |= MIGRATION_CAP_V2_RESTORE;
+	set_abi(local.machine_abi, "bhyve-protocol-test");
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) == EINVAL &&
+	    reason == MIGRATION_REASON_MACHINE_ABI);
+	set_abi(local.machine_abi, CHECKPOINT_MACHINE_ABI);
+	set_abi(remote.machine_abi, "bhyve-virtio-v1");
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) == EINVAL &&
+	    reason == MIGRATION_REASON_MACHINE_ABI);
+	/* A source role on the local side never takes the ABI exception. */
+	set_abi(remote.machine_abi, CHECKPOINT_MACHINE_ABI_PREVIOUS);
+	local.role = MIGRATION_ROLE_SOURCE;
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) == EPROTO &&
+	    reason == MIGRATION_REASON_PROTOCOL);
+	checks += 6;
+	/* A local window outside this build, inverted, or a non-canonical
+	 * local ABI; a gated destination does not take the ABI exception for a
+	 * source that is not exactly [1,1]. */
+	fill_hello(&local, false);
+	local.role = MIGRATION_ROLE_DEST;
+	fill_hello(&remote, false);
+	remote.role = MIGRATION_ROLE_SOURCE;
+	local.version_min = 0;
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) == EPROTONOSUPPORT);
+	local.version_min = 3;
+	local.version_max = 2;
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) == EPROTONOSUPPORT);
+	local.version_min = 1;
+	local.version_max = 3;
+	local.machine_abi[sizeof(local.machine_abi) - 1] = 'x';
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) == EINVAL &&
+	    reason == MIGRATION_REASON_MACHINE_ABI);
+	local.capability_flags |= MIGRATION_CAP_V2_RESTORE;
+	set_abi(local.machine_abi, CHECKPOINT_MACHINE_ABI);
+	set_abi(remote.machine_abi, CHECKPOINT_MACHINE_ABI_PREVIOUS);
+	remote.version_min = remote.version_max = 3;
+	PCHECK(migration_hello_validate(&local, &remote, &negotiated, &reason) == EINVAL &&
+	    reason == MIGRATION_REASON_MACHINE_ABI);
+	checks += 4;
+	/* HELLO reserved bytes must be zero. */
+	{
+		uint8_t hw[MIGRATION_HELLO_SIZE];
+		struct migration_hello out;
+		static const int offsets[] = { 5, 6, 7, 28, 44 };
+		fill_hello(&remote, false);
+		remote.role = MIGRATION_ROLE_SOURCE;
+		for (size_t i = 0; i < nitems(offsets); i++) {
+			PCHECK(migration_hello_encode(&remote, hw, sizeof(hw)) == 0);
+			hw[offsets[i]] = 1;
+			PCHECK(migration_hello_decode(hw, sizeof(hw), &out) == EBADMSG);
+		}
+		checks += 5;
+	}
+	/* A chunk offset past a declared total. */
+	{
+		struct migration_chunk ch = { .total_length = 16, .offset = 20,
+		    .chunk_length = 1, .final = 1 };
+		PCHECK(migration_chunk_validate(20, 16, &ch, 16, 64) == EBADMSG);
+		checks++;
+	}
+	/* CAPS_ACCEPT validation by a source. */
+	fill_hello(&local, false);
+	local.role = MIGRATION_ROLE_SOURCE;
+	c = (struct migration_caps_accept){ .negotiated_version = 3,
+	    .capability_flags = MIGRATION_CAP_PRECOPY };
+	PCHECK(migration_caps_accept_validate(NULL, &c, &reason) == EINVAL);
+	PCHECK(migration_caps_accept_validate(&local, NULL, &reason) == EINVAL);
+	PCHECK(migration_caps_accept_validate(&local, &c, &reason) == 0 &&
+	    reason == MIGRATION_REASON_NONE);
+	c.negotiated_version = 4;
+	PCHECK(migration_caps_accept_validate(&local, &c, &reason) == EPROTONOSUPPORT &&
+	    reason == MIGRATION_REASON_VERSION);
+	c.negotiated_version = 0;
+	PCHECK(migration_caps_accept_validate(&local, &c, &reason) == EPROTONOSUPPORT);
+	c.negotiated_version = 2;
+	local.version_min = 3;
+	PCHECK(migration_caps_accept_validate(&local, &c, &reason) == EPROTONOSUPPORT);
+	local.version_min = 0;
+	c.negotiated_version = 3;
+	PCHECK(migration_caps_accept_validate(&local, &c, &reason) == EPROTONOSUPPORT);
+	local.version_min = 1;
+	local.version_max = 4;
+	PCHECK(migration_caps_accept_validate(&local, &c, &reason) == EPROTONOSUPPORT);
+	local.version_max = 3;
+	local.version_min = 3;
+	local.version_max = 2;
+	PCHECK(migration_caps_accept_validate(&local, &c, &reason) == EPROTONOSUPPORT);
+	local.version_min = 1;
+	local.version_max = 3;
+	c.capability_flags = MIGRATION_CAP_DEVICE_DIRTY;
+	PCHECK(migration_caps_accept_validate(&local, &c, &reason) == EPROTO &&
+	    reason == MIGRATION_REASON_CAPS);
+	c.capability_flags = MIGRATION_CAP_PRECOPY | (1ULL << 40);
+	PCHECK(migration_caps_accept_validate(&local, &c, &reason) == EPROTO);
+	c.capability_flags = MIGRATION_CAP_PRECOPY | MIGRATION_CAP_VSOCK_STATE;
+	PCHECK(migration_caps_accept_validate(&local, &c, &reason) == EPROTO);
+	checks += 12;
+	/* The wire numbers of the merged protocol. */
+	PCHECK(MIGRATION_PROTO_VERSION == 3 && MIGRATION_PROTO_VERSION_MIN == 1);
+	PCHECK(MIGRATION_MSG_VSOCK_STATE == 14 && MIGRATION_MSG_RELEASE_ACK == 15);
+	PCHECK(MIGRATION_CAP_V2_RESTORE == (1ULL << 2) &&
+	    MIGRATION_CAP_VSOCK_STATE == (1ULL << 3) &&
+	    MIGRATION_CAP_HYPERTRACE_FRESH == (1ULL << 4));
+	checks += 3;
+	/* Frame types by version: VSOCK_STATE from 2, RELEASE_ACK from 3. */
+	{
+		uint8_t frame[64];
+		size_t written;
+		PCHECK(migration_frame_encode(1, MIGRATION_MSG_VSOCK_STATE, 1, 0, NULL, 0,
+		    frame, sizeof(frame), &written) == EINVAL);
+		PCHECK(migration_frame_encode(2, MIGRATION_MSG_VSOCK_STATE, 1, 0, NULL, 0,
+		    frame, sizeof(frame), &written) == 0);
+		PCHECK(migration_frame_encode(2, MIGRATION_MSG_RELEASE_ACK, 1, 0, NULL, 0,
+		    frame, sizeof(frame), &written) == EINVAL);
+		PCHECK(migration_frame_encode(3, MIGRATION_MSG_RELEASE_ACK, 1, 0, NULL, 0,
+		    frame, sizeof(frame), &written) == 0);
+		checks += 4;
+	}
+	printf("protocol version gate: %d checks\n", checks);
+}
+
+/* A destination that admitted a qualified v0.1.0 source behind V2_RESTORE. */
+static struct migration_dest_ops gated_dest_ops;
+static int
+d_hello_gated(void *arg, struct migration_hello *h)
+{
+	int e = d_hello(arg, h);
+
+	if (e == 0)
+		h->capability_flags |= MIGRATION_CAP_V2_RESTORE;
+	return (e);
+}
+
+/*
+ * Version 1 destination path.  A scripted v0.1.0 source (frames at version
+ * 1) drives the real migration_dest_run.  Oracles: CAPS_ACCEPT names 1; the
+ * COMMIT payload is empty; a reason-only RELEASE resumes the destination and
+ * no RELEASE_ACK follows; after COMMIT any failure (ABORT, a challenge-style
+ * RELEASE, a failed resume) retains the committed image instead of
+ * discarding it.
+ */
+static void
+test_v1_destination(void)
+{
+	int checks = 0;
+
+	gated_dest_ops = (struct migration_dest_ops){
+		.do_local_hello = d_hello_gated, .do_local_topology = d_topology,
+		.do_stage_mem = d_stage_mem, .do_stage_dev = d_stage_dev,
+		.do_commit = d_commit, .do_resume = d_resume, .do_discard = d_discard,
+		.do_record = d_record, .do_prepare_commit = d_prepare,
+		.do_retain = d_retain,
+	};
+	for (int variant = 0; variant < 6; variant++) {
+		struct config_model cfg = base_config(false);
+		struct source_model peer = { .cfg = &cfg, .retired = true };
+		struct dest_model d = { .cfg = &cfg, .peer = &peer };
+		struct endpoint_args da;
+		struct migration_transport xp;
+		struct migration_transport_fd fdx;
+		struct migration_frame_header fh;
+		struct migration_hello h;
+		struct migration_topology *t = hcalloc(1, sizeof(*t));
+		struct migration_caps_accept caps;
+		struct migration_memgen g = { .round = 1, .mode = 2, .gpa = 0,
+		    .length = (uint64_t)cfg.pages * PAGE, .cpu_identity = 1,
+		    .cpu_map_generation = 1, .cpu_dirty_generation = 1,
+		    .page_count = 2, .final = 1 };
+		static uint8_t body[MIGRATION_MAX_PAYLOAD];
+		uint8_t hw[MIGRATION_HELLO_SIZE], dev[64], reason_wire[MIGRATION_FRESH_RELEASE_SIZE];
+		struct migration_reason_msg none = { .reason_code = MIGRATION_REASON_NONE };
+		size_t off, wrote;
+		uint32_t seq = 1;
+		pthread_t dt;
+		int pair[2], pending = -1;
+
+		snprintf(current_label, sizeof(current_label), "v1 destination %d", variant);
+		if (variant == 4)
+			cfg.fail = D_RESUME;
+		if (variant == 5)
+			cfg.fail = D_COMMIT;
+		d.ram = hcalloc(1, cfg.pages * PAGE);
+		PCHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0);
+		migration_transport_fd_init(&xp, &fdx, pair[0], 5000);
+		memset(&da, 0, sizeof(da));
+		da.xp = &xp;
+		da.model = &d;
+		da.fd = pair[0];
+		da.dops = gated_dest_ops;
+		PCHECK(pthread_create(&dt, NULL, dest_thread, &da) == 0);
+		/* HELLO [1,1] in version 1 framing. */
+		fill_hello(&h, false);
+		h.role = MIGRATION_ROLE_SOURCE;
+		h.version_min = h.version_max = 1;
+		PCHECK(migration_hello_encode(&h, hw, sizeof(hw)) == 0);
+		PCHECK(send_frame(pair[1], 1, MIGRATION_MSG_HELLO, seq++, 0, hw, sizeof(hw)));
+		PCHECK(read_frame(pair[1], &fh, body, sizeof(body)) &&
+		    fh.type == MIGRATION_MSG_CAPS_ACCEPT && fh.version == 1);
+		PCHECK(migration_caps_accept_decode(body, fh.length, &caps) == 0 &&
+		    caps.negotiated_version == 1 &&
+		    (caps.capability_flags & MIGRATION_CAP_V2_RESTORE) == 0);
+		/* TOPOLOGY. */
+		fill_topology(t, cfg.pages, 2);
+		PCHECK(migration_topology_encode(t, body, sizeof(body), &wrote) == 0);
+		PCHECK(send_frame(pair[1], 1, MIGRATION_MSG_TOPOLOGY, seq++, 0, body, wrote));
+		PCHECK(read_frame(pair[1], &fh, body, sizeof(body)) &&
+		    fh.type == MIGRATION_MSG_TOPO_ACCEPT && fh.length == 0);
+		/* One final generation of two pages. */
+		PCHECK(migration_memgen_encode(&g, body, MIGRATION_MEMGEN_HDR_SIZE) == 0);
+		off = MIGRATION_MEMGEN_HDR_SIZE;
+		for (int i = 0; i < 2; i++) {
+			le64enc(body + off, (uint64_t)(3 + i) * PAGE);
+			le32enc(body + off + 8, PAGE);
+			memset(body + off + 12, 0x40 + i, PAGE);
+			off += 12 + PAGE;
+		}
+		PCHECK(send_frame(pair[1], 1, MIGRATION_MSG_MEM_GEN, seq++, 0, body, off));
+		PCHECK(read_frame(pair[1], &fh, body, sizeof(body)) &&
+		    fh.type == MIGRATION_MSG_MEM_ACK);
+		for (size_t i = 0; i < sizeof(dev); i++)
+			dev[i] = (uint8_t)(i ^ 0x77);
+		PCHECK(send_frame(pair[1], 1, MIGRATION_MSG_DEV_STATE, seq++, 0, dev, sizeof(dev)));
+		PCHECK(migration_reason_encode(&none, reason_wire, MIGRATION_REASON_SIZE) == 0);
+		PCHECK(send_frame(pair[1], 1, MIGRATION_MSG_FINAL, seq++, 0, reason_wire,
+		    MIGRATION_REASON_SIZE));
+		if (variant == 5) {
+			/* A failed commit before COMMIT is discarded, never retained. */
+			PCHECK(read_frame(pair[1], &fh, body, sizeof(body)) &&
+			    fh.type == MIGRATION_MSG_ABORT);
+			PCHECK(pthread_join(dt, NULL) == 0);
+			PCHECK(da.error == EIO && d.discarded && !d.retained && !da.dresult.retained);
+			goto next;
+		}
+		/* The version 1 COMMIT is empty: no challenge binding. */
+		PCHECK(read_frame(pair[1], &fh, body, sizeof(body)) &&
+		    fh.type == MIGRATION_MSG_COMMIT && fh.version == 1 && fh.length == 0);
+		PCHECK(d.committed && d.nrecords == 1 && d.records[0] == MIGRATION_REC_DEST_STAGED);
+		switch (variant) {
+		case 0:
+		case 4:
+			/* Reason-only RELEASE. */
+			PCHECK(send_frame(pair[1], 1, MIGRATION_MSG_RELEASE, seq++, 0,
+			    reason_wire, MIGRATION_REASON_SIZE));
+			break;
+		case 1: {
+			/* ABORT after COMMIT. */
+			struct migration_reason_msg abort_reason = { .reason_code =
+			    MIGRATION_REASON_DEVICE };
+			uint8_t aw[MIGRATION_REASON_SIZE];
+			PCHECK(migration_reason_encode(&abort_reason, aw, sizeof(aw)) == 0);
+			PCHECK(send_frame(pair[1], 1, MIGRATION_MSG_ABORT, seq++, 0, aw, sizeof(aw)));
+			break;
+		}
+		case 2:
+			/* A version 3 shaped RELEASE (reason + challenge) is not a v1 one. */
+			memset(reason_wire + MIGRATION_REASON_SIZE, 9, MIGRATION_FRESH_CHALLENGE_SIZE);
+			PCHECK(send_frame(pair[1], 1, MIGRATION_MSG_RELEASE, seq++, 0,
+			    reason_wire, MIGRATION_FRESH_RELEASE_SIZE));
+			break;
+		case 3:
+			/* The source vanishes after COMMIT. */
+			break;
+		}
+		shutdown(pair[1], SHUT_WR);
+		PCHECK(pthread_join(dt, NULL) == 0);
+		if (variant == 0) {
+			PCHECK(da.error == 0 && da.dresult.resumed && d.resumes == 1);
+			PCHECK(da.dresult.negotiated_version == 1 && !da.dresult.release_ack_sent);
+			PCHECK(d.nrecords == 3 && d.records[1] == MIGRATION_REC_DEST_RELEASED &&
+			    d.records[2] == MIGRATION_REC_DEST_RUNNING);
+			PCHECK(d.dev_len == sizeof(dev) && memcmp(d.dev, dev, sizeof(dev)) == 0);
+			PCHECK(d.ram[3 * PAGE] == 0x40 && d.ram[4 * PAGE + PAGE - 1] == 0x41);
+			/* Nothing follows the resume: no RELEASE_ACK. */
+			PCHECK(ioctl(pair[1], FIONREAD, &pending) == 0 && pending == 0);
+		} else {
+			/* Every post-COMMIT failure retains; nothing is discarded. */
+			PCHECK(da.error != 0 && da.dresult.retained && d.retained && !d.discarded);
+			PCHECK(da.dresult.phase == MIGRATION_PHASE_RECOVERY && !da.dresult.resumed);
+			PCHECK(d.resumes == 0);
+			if (variant == 1)
+				PCHECK(da.dresult.reason == MIGRATION_REASON_DEVICE);
+			if (variant == 2)
+				PCHECK(da.error == EPROTO);
+		}
+next:
+		close(pair[0]);
+		close(pair[1]);
+		free(t);
+		free(d.ram);
+		free(d.dev);
+		checks += 8;
+	}
+	printf("protocol v1 destination: %d checks\n", checks);
+}
+
+/* Active-vsock session runs: baseline, every hook failure, mismatched
+ * endpoints, a chunked table, transport faults and frame mutations. */
+static void
+test_vsock_sessions(void)
+{
+	struct run_result base, r;
+	struct config_model cfg = base_config(false);
+	int runs = 0, totals[2][2];
+
+	cfg.vsock_mode = 1;
+	cfg.vsock_len = 700;
+	strlcpy(current_label, "vsock baseline", sizeof(current_label));
+	xp_fault_side = 0;
+	run_once(&cfg, -1, -1, MUT_NONE, 0, &base);
+	check_run(&base, false);
+	PCHECK(base.source_error == 0 && base.dest_error == 0);
+	PCHECK(base.s.prepare_at > 0 && base.s.activate_at > base.s.released_at &&
+	    base.s.cancel_at == 0 && base.s.vsock_at < base.s.dev_at);
+	memcpy(totals, xp_counts, sizeof(totals));
+	{
+		bool seen = false;
+		for (int i = 0; i < base.frames[0]; i++)
+			if (base.types[0][i] == MIGRATION_MSG_VSOCK_STATE) {
+				seen = true;
+				PCHECK(i + 1 < base.frames[0] &&
+				    base.types[0][i + 1] == MIGRATION_MSG_DEV_STATE);
+			}
+		PCHECK(seen);
+	}
+	runs++;
+	/* Every operation fails in turn (vsock hooks included). */
+	for (int op = S_HELLO; op < OP_LAST; op++) {
+		struct config_model f = cfg;
+		f.fail = op;
+		f.preserve = op == D_PRESERVE;
+		snprintf(current_label, sizeof(current_label), "vsock fail %s", op_names[op]);
+		run_once(&f, -1, -1, MUT_NONE, 0, &r);
+		check_run(&r, false);
+		if (op == S_PREPARE_RELAY)
+			PCHECK(r.source.source_runnable && r.s.cancel_at > r.s.prepare_at &&
+			    r.dest.retained);
+		if (op == S_CANCEL_RELAY)	/* only reached with another failure */
+			PCHECK(r.source_error == 0);
+		if (op == S_ACTIVATE_RELAY)
+			PCHECK(r.source_error == EIO && r.s.defunct && r.d.resumes == 1);
+		if (op == S_VSOCK_STATE || op == D_STAGE_VSOCK)
+			PCHECK(r.source_error != 0 && r.source.source_runnable && r.d.resumes == 0);
+		runs++;
+		free_run(&r);
+	}
+	/* A failed prepare whose cancellation also fails wedges the source. */
+	{
+		struct config_model f = cfg;
+		f.fail = S_PREPARE_RELAY;
+		f.fail2 = S_CANCEL_RELAY;
+		strlcpy(current_label, "vsock prepare+cancel", sizeof(current_label));
+		run_once(&f, -1, -1, MUT_NONE, 0, &r);
+		check_run(&r, false);
+		PCHECK(r.source_error == EIO && !r.source.source_runnable &&
+		    r.s.relay_prepared && r.s.quiesced && r.s.resumes == 0 &&
+		    r.s.intent_at == 0 && r.dest.retained);
+		free_run(&r);
+		runs++;
+	}
+	/* Mismatched endpoints: a vsock source needs the destination's
+	 * capability; a vsock-capable destination serves an ordinary source. */
+	for (int mode = 2; mode <= 3; mode++) {
+		struct config_model f = cfg;
+		f.vsock_mode = mode;
+		snprintf(current_label, sizeof(current_label), "vsock mode %d", mode);
+		run_once(&f, -1, -1, MUT_NONE, 0, &r);
+		check_run(&r, false);
+		if (mode == 2)
+			PCHECK(r.source_error == ENOTSUP && r.source.reason == MIGRATION_REASON_CAPS &&
+			    r.source.source_runnable && !r.s.quiesced);
+		else
+			PCHECK(r.source_error == 0 && r.dest_error == 0 && r.d.vsock == NULL);
+		free_run(&r);
+		runs++;
+	}
+	/* A table larger than one frame is chunked and reassembled. */
+	{
+		struct config_model f = cfg;
+		f.vsock_len = (size_t)MIGRATION_MAX_PAYLOAD + 3000;
+		strlcpy(current_label, "vsock chunked", sizeof(current_label));
+		run_once(&f, -1, -1, MUT_NONE, 0, &r);
+		check_run(&r, false);
+		PCHECK(r.source_error == 0 && r.d.vsock_len == f.vsock_len);
+		free_run(&r);
+		runs++;
+		/* Mutations of the chunked table frames. */
+		struct run_result chunked;
+		run_once(&f, -1, -1, MUT_NONE, 0, &chunked);
+		for (int index = 0; index < chunked.frames[0]; index++) {
+			if (chunked.types[0][index] != MIGRATION_MSG_VSOCK_STATE)
+				continue;
+			for (int mutation = MUT_FLIP_PAYLOAD; mutation < MUT_LAST; mutation++)
+			for (int variant = 0; variant < (mutation == MUT_FIELD ? 6 : 1); variant++) {
+				snprintf(current_label, sizeof(current_label),
+				    "vsock chunked frame %d %s/%d", index, mutation_names[mutation],
+				    variant);
+				active_alteration = mutation >= MUT_SEQ && mutation != MUT_ABORT;
+				run_once(&f, 0, index, mutation, variant, &r);
+				check_run(&r, mutation == MUT_FLIP_PAYLOAD ||
+				    mutation == MUT_FLIP_HEADER_CRC);
+				free_run(&r);
+				runs++;
+			}
+		}
+		active_alteration = false;
+		free_run(&chunked);
+	}
+	/* An empty table travels as one empty frame; a rollback whose
+	 * pre-copy disable also fails reports that failure. */
+	{
+		struct config_model f = cfg;
+		f.vsock_len = 0;
+		strlcpy(current_label, "vsock empty table", sizeof(current_label));
+		run_once(&f, -1, -1, MUT_NONE, 0, &r);
+		check_run(&r, false);
+		PCHECK(r.source_error == 0 && r.d.vsock != NULL && r.d.vsock_len == 0);
+		free_run(&r);
+		f = cfg;
+		f.fail = S_DEV_STATE;
+		f.fail2 = S_DISABLE;
+		strlcpy(current_label, "vsock dev-state+disable", sizeof(current_label));
+		run_once(&f, -1, -1, MUT_NONE, 0, &r);
+		check_run(&r, false);
+		PCHECK(r.source_error == EIO && r.source.phase == MIGRATION_PHASE_FAILED &&
+		    r.source.reason == MIGRATION_REASON_STATE);
+		free_run(&r);
+		/* A chunked table the destination cannot stage. */
+		f = cfg;
+		f.vsock_len = (size_t)MIGRATION_MAX_PAYLOAD + 3000;
+		f.fail = D_STAGE_VSOCK;
+		strlcpy(current_label, "vsock chunked stage failure", sizeof(current_label));
+		run_once(&f, -1, -1, MUT_NONE, 0, &r);
+		check_run(&r, false);
+		PCHECK(r.dest_error == EIO && r.dest.reason == MIGRATION_REASON_STATE &&
+		    r.source.source_runnable);
+		free_run(&r);
+		runs += 3;
+	}
+	/* Frame-type substitutions against a destination that has the hook but
+	 * did not negotiate vsock (mode 3), and against chunked tables. */
+	{
+		struct config_model f = cfg;
+		struct run_result b3, bc;
+		f.vsock_mode = 3;
+		run_once(&f, -1, -1, MUT_NONE, 0, &b3);
+		for (int index = 0; index < b3.frames[0]; index++)
+		for (int variant = 0; variant < 15; variant++) {
+			snprintf(current_label, sizeof(current_label), "vsock mode 3 frame %d type/%d",
+			    index, variant);
+			active_alteration = true;
+			run_once(&f, 0, index, MUT_TYPE, variant, &r);
+			check_run(&r, false);
+			free_run(&r);
+			runs++;
+		}
+		free_run(&b3);
+		f = cfg;
+		f.vsock_len = (size_t)MIGRATION_MAX_PAYLOAD + 3000;
+		run_once(&f, -1, -1, MUT_NONE, 0, &bc);
+		for (int index = 0; index < bc.frames[0]; index++) {
+			if (bc.types[0][index] != MIGRATION_MSG_VSOCK_STATE)
+				continue;
+			for (int variant = 0; variant < 15; variant++) {
+				snprintf(current_label, sizeof(current_label),
+				    "vsock chunk frame %d type/%d", index, variant);
+				active_alteration = true;
+				run_once(&f, 0, index, MUT_TYPE, variant, &r);
+				check_run(&r, false);
+				free_run(&r);
+				runs++;
+			}
+		}
+		active_alteration = false;
+		free_run(&bc);
+	}
+	/* Transport faults over every call of the baseline. */
+	for (int side = 0; side < 2; side++)
+	for (int recv = 0; recv < 2; recv++)
+	for (int at = 1; at <= totals[side][recv]; at++) {
+		snprintf(current_label, sizeof(current_label), "vsock %s %s #%d",
+		    side ? "dest" : "source", recv ? "recv" : "send", at);
+		xp_fault_side = side ? 'D' : 'S';
+		xp_fault_recv = recv;
+		xp_fault_at = at;
+		run_once(&cfg, -1, -1, MUT_NONE, 0, &r);
+		xp_fault_side = 0;
+		check_run(&r, false);
+		free_run(&r);
+		runs++;
+	}
+	/* Mutations of every frame of the baseline. */
+	for (int direction = 0; direction < 2; direction++)
+	for (int index = 0; index < base.frames[direction]; index++)
+	for (int mutation = MUT_FLIP_PAYLOAD; mutation < MUT_LAST; mutation++) {
+		int variants = mutation == MUT_TYPE ? 15 : mutation == MUT_FIELD ? 6 : 1;
+		for (int variant = 0; variant < variants; variant++) {
+			snprintf(current_label, sizeof(current_label), "vsock dir=%d frame=%d %s/%d",
+			    direction, index, mutation_names[mutation], variant);
+			active_alteration = mutation >= MUT_SEQ && mutation != MUT_ABORT;
+			run_once(&cfg, direction, index, mutation, variant, &r);
+			check_run(&r, mutation == MUT_FLIP_PAYLOAD || mutation == MUT_FLIP_HEADER_CRC);
+			free_run(&r);
+			runs++;
+		}
+	}
+	active_alteration = false;
+	free_run(&base);
+	printf("protocol vsock sessions: %d runs, all oracles held\n", runs);
+}
+
 int protocol_main(void);
 
 int
@@ -2178,6 +2973,9 @@ protocol_main(void)
 	test_codecs();
 	test_arguments();
 	test_protocol1_peers();
+	test_version_gate();
+	test_v1_destination();
+	test_vsock_sessions();
 	test_baseline(false, &plain);
 	test_baseline(true, &fresh);
 	test_operation_failures(false);

@@ -114,11 +114,21 @@ kernel_security_contract_body()
 	    broker_perform_connect harden_delivered_socket CAP_XFER_ONCE \
 	    CAP_CLOFORK_ONCE CAP_CLOEXEC_LOCKED service_harden_fd \
 	    service_worker_enter_capability_mode \
-	    service_provider_enter_capability_mode auditcmp_client_prepare \
-	    auditcmp_client_adopt auditcmp_submit
+	    service_provider_enter_capability_mode auditcmp_client_open auditcmp_submit
 	do
 		atf_check -s exit:0 -o match:"${token}" grep "${token}" "${source}"
 	done
+	# Under BIP a forked worker cannot adopt an inherited Audit client
+	# (auditcmp_server.h): it opens its own after fork and before dropping
+	# service lookup authority, so prepare/adopt must not reappear and the
+	# open must come before the worker's capability mode.
+	atf_check -s exit:1 -o empty -e empty \
+	    grep -E 'auditcmp_client_(prepare|adopt)[(]' "${source}"
+	atf_check -s exit:0 -o empty awk '
+	    /auditcmp_client_open[(]/ && !o { o = NR }
+	    /service_worker_enter_capability_mode[(]/ && !c { c = NR }
+	    END { if (!o || !c || o > c) { print "open " o ", mode " c; exit 1 } }' \
+	    "${source}"
 	atf_check -s exit:0 -o match:'socket' grep -F 'socket(' "${source}"
 	atf_check -s exit:0 -o match:'netresolve' grep -F 'netresolve(' "${source}"
 	for token in service_open_isolated hosts_lookup dns_query \

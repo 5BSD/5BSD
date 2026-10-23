@@ -4,18 +4,22 @@ PORTSDIR?= /usr/ports
 HARDWARE_PYTHON?= python3.12
 PKG_CMD?= /usr/local/sbin/pkg-static
 KERNCONF?= GENERIC
-REPODIR?= ${MAKEOBJDIRPREFIX:U/usr/obj}${.CURDIR}/repo
+# Derive object paths from OBJROOT/OBJTOP as Makefile.inc1 does.
+# src.sys.obj.mk folds MAKEOBJDIRPREFIX into OBJROOT and then clears it, so
+# MAKEOBJDIRPREFIX cannot be used here: an environment setting was dropped and
+# the paths fell back to the source tree.
+REPODIR?= ${OBJROOT}repo
 HARDWARE_ABI!= ${PKG_CMD} config ABI
 BASE_REPOSITORY?= ${REPODIR}/${HARDWARE_ABI}/latest-built
 HARDWARE_REPO?= ${BASE_REPOSITORY:tA}.hardware
 # Final publication can live independently of disposable base/hardware staging.
 PUBLISH_REPODIR?= ${REPODIR}
 COMPLETE_REPOSITORY?= ${PUBLISH_REPODIR}/${HARDWARE_ABI}/${BASE_REPOSITORY:tA:T}.complete
-KERNBUILDDIR?= ${MAKEOBJDIRPREFIX:U/usr/obj}${.CURDIR}/${MACHINE}.${MACHINE_ARCH}/sys/${KERNCONF}
+KERNBUILDDIR?= ${OBJTOP}/sys/${KERNCONF}
 HARDWARE_PORT_LIST?= ${.CURDIR}/release/tools/hardware-ports.${MACHINE_ARCH}
 # make(1) treats ':' in WRKDIRPREFIX as a dependency separator, so keep port
 # work out of the ABI-named repository directory.
-HARDWARE_WORKDIR?= ${MAKEOBJDIRPREFIX:U/usr/obj}${.CURDIR}/hardware-work/${BASE_REPOSITORY:tA:T}
+HARDWARE_WORKDIR?= ${OBJROOT}hardware-work/${BASE_REPOSITORY:tA:T}
 DISTDIR?= ${PORTSDIR}/distfiles
 # Publication requires a world built WITH_MALLOC_PRODUCTION; development
 # worlds keep the debug malloc(3) default.  ALLOW_DEBUG_MALLOC=yes turns the

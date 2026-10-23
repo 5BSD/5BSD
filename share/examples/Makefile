@@ -21,7 +21,6 @@ LDIRS=	BSD_daemon \
 	mdoc \
 	netgraph \
 	oci \
-	ppi \
 	ppp \
 	ses \
 	scsi_target \
@@ -202,23 +201,10 @@ SE_DIRS+=	pf
 .if ${MK_STAGING} == "no"
 SE_PFPACKAGE=	pf
 SE_PF= \
-	ackpri \
-	faq-example1 \
-	faq-example2 \
-	faq-example3 \
-	pf.conf \
-	queue1 \
-	queue2 \
-	queue3 \
-	queue4 \
-	spamd
+	README \
+	pf.conf
 .endif
 .endif
-
-SE_DIRS+=	ppi
-SE_PPI= \
-	Makefile \
-	ppilcd.c
 
 SE_DIRS+=	ppp
 SE_PPPPACKAGE=	ppp
@@ -426,7 +412,6 @@ copies:
 	fi
 .endfor
 
-SUBDIR+=	smbfs
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests

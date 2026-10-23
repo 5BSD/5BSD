@@ -53,7 +53,7 @@ static MALLOC_DEFINE(M_VTBUF, "vtbuf", "vt buffer");
 	(d).tp_row = (s).tp_row;	\
 } while (0)
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 static int vtbuf_htw(const struct vt_buf *vb, int row);
 static int vtbuf_wth(const struct vt_buf *vb, int row);
 static int vtbuf_in_this_range(int begin, int test, int end, int sz);
@@ -126,7 +126,7 @@ vthistory_seek(struct vt_buf *vb, int offset, int whence)
 void
 vthistory_addlines(struct vt_buf *vb, int offset)
 {
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 	int cur, sz;
 #endif
 
@@ -139,7 +139,7 @@ vthistory_addlines(struct vt_buf *vb, int offset)
 		vb->vb_roffset = vb->vb_curroffset;
 	}
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 	sz = vb->vb_history_size;
 	cur = vb->vb_roffset + vb->vb_scr_size.tp_row + sz - 1;
 	if (vtbuf_in_this_range(cur, vb->vb_mark_start.tp_row, cur + offset, sz) ||
@@ -158,7 +158,7 @@ vthistory_getpos(const struct vt_buf *vb, unsigned int *offset)
 	*offset = vb->vb_roffset;
 }
 
-#ifndef SC_NO_CUTPASTE	/* Only mouse support use it now. */
+#ifndef VT_NO_CUTPASTE	/* Only mouse support use it now. */
 /* Translate history row to current view row number. */
 static int
 vtbuf_htw(const struct vt_buf *vb, int row)
@@ -238,7 +238,7 @@ vtbuf_unmark_on_cross(struct vt_buf *vb, int target_begin, int target_end)
 int
 vtbuf_iscursor(const struct vt_buf *vb, int row, int col)
 {
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 	int sc, sr, sz, ec, er, tmp;
 #endif
 
@@ -246,7 +246,7 @@ vtbuf_iscursor(const struct vt_buf *vb, int row, int col)
 	    (vb->vb_cursor.tp_row == row) && (vb->vb_cursor.tp_col == col))
 		return (1);
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 	/* Mark cut/paste region. */
 	if (vb->vb_mark_start.tp_col == vb->vb_mark_end.tp_col &&
 	    vb->vb_mark_start.tp_row == vb->vb_mark_end.tp_row)
@@ -722,7 +722,7 @@ vtbuf_cursor_position(struct vt_buf *vb, const term_pos_t *p)
 	}
 }
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 static void
 vtbuf_flush_mark(struct vt_buf *vb)
 {

@@ -5,6 +5,11 @@
  * one monotonic deadline.  A timeout or transport failure closes the
  * connection, which completes any pending callback before its stack context
  * expires.  All returns are errno values.
+ *
+ * fidl_bsd_connection_call() (runtime_c.h) is the one-system-call form of
+ * issue-then-wait for a single call on an otherwise idle connection; these
+ * helpers remain for callers that interleave several calls or wait on
+ * flags of their own.
  */
 #ifndef FIDL_BSD_SYNC_C_H
 #define FIDL_BSD_SYNC_C_H

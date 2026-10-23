@@ -70,9 +70,6 @@
 #include <vm/vm_page.h>
 #include <vm/vm_param.h>
 
-#ifdef COMPAT_FREEBSD32
-#include <sys/procfs.h>
-#endif
 
 SDT_PROVIDER_DEFINE(ptrace);
 SDT_PROBE_DEFINE4(ptrace, , , request__start, "int", "pid_t", "int", "int");
@@ -318,65 +315,6 @@ proc_write_regset(struct thread *td, int note, struct iovec *iov)
 	return (error);
 }
 
-#ifdef COMPAT_FREEBSD32
-/* For 32 bit binaries, we need to expose the 32 bit regs layouts. */
-int
-proc_read_regs32(struct thread *td, struct reg32 *regs32)
-{
-	PROC_LOCK_ASSERT(td->td_proc, MA_OWNED);
-	return (fill_regs32(td, regs32));
-}
-
-int
-proc_write_regs32(struct thread *td, struct reg32 *regs32)
-{
-	int error;
-
-	PROC_LOCK_ASSERT(td->td_proc, MA_OWNED);
-	error = priv_check(curthread, PRIV_PROC_MEM_WRITE);
-	if (error != 0)
-		return (error);
-	return (set_regs32(td, regs32));
-}
-
-int
-proc_read_dbregs32(struct thread *td, struct dbreg32 *dbregs32)
-{
-	PROC_LOCK_ASSERT(td->td_proc, MA_OWNED);
-	return (fill_dbregs32(td, dbregs32));
-}
-
-int
-proc_write_dbregs32(struct thread *td, struct dbreg32 *dbregs32)
-{
-	int error;
-
-	PROC_LOCK_ASSERT(td->td_proc, MA_OWNED);
-	error = priv_check(curthread, PRIV_PROC_MEM_WRITE);
-	if (error != 0)
-		return (error);
-	return (set_dbregs32(td, dbregs32));
-}
-
-int
-proc_read_fpregs32(struct thread *td, struct fpreg32 *fpregs32)
-{
-	PROC_LOCK_ASSERT(td->td_proc, MA_OWNED);
-	return (fill_fpregs32(td, fpregs32));
-}
-
-int
-proc_write_fpregs32(struct thread *td, struct fpreg32 *fpregs32)
-{
-	int error;
-
-	PROC_LOCK_ASSERT(td->td_proc, MA_OWNED);
-	error = priv_check(curthread, PRIV_PROC_MEM_WRITE);
-	if (error != 0)
-		return (error);
-	return (set_fpregs32(td, fpregs32));
-}
-#endif
 
 int
 proc_sstep(struct thread *td)
@@ -930,27 +868,8 @@ ptrace_useraction(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
 	return (error);
 }
 
-#ifdef COMPAT_FREEBSD32
-/*
- *   PROC_READ(regs, td2, addr);
- * becomes either:
- *   proc_read_regs(td2, addr);
- * or
- *   proc_read_regs32(td2, addr);
- * .. except this is done at runtime.  There is an additional
- * complication in that PROC_WRITE disallows 32 bit consumers
- * from writing to 64 bit address space targets.
- */
-#define	PROC_READ(w, t, a)	wrap32 ? \
-	proc_read_ ## w ## 32(t, a) : \
-	proc_read_ ## w (t, a)
-#define	PROC_WRITE(w, t, a)	wrap32 ? \
-	(safe ? proc_write_ ## w ## 32(t, a) : EINVAL ) : \
-	proc_write_ ## w (t, a)
-#else
 #define	PROC_READ(w, t, a)	proc_read_ ## w (t, a)
 #define	PROC_WRITE(w, t, a)	proc_write_ ## w (t, a)
-#endif
 
 void
 proc_set_traced(struct proc *p, bool stop)
@@ -1134,9 +1053,6 @@ ptrace_action_impl(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
 	struct ptrace_child *children, *ptc;
 	int error, num, num1, tmp;
 	lwpid_t tid = 0, *buf;
-#ifdef COMPAT_FREEBSD32
-	int wrap32 = 0, safe = 0;
-#endif
 	bool listen, need_can_ptrace, proctree_locked, p2_req_set;
 	bool clear_step, clear_syscalls, seize;
 	struct ptrace_kern_seize *pks;
@@ -1258,17 +1174,6 @@ ptrace_action_impl(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
 		tid = td2->td_tid;
 	}
 
-#ifdef COMPAT_FREEBSD32
-	/*
-	 * Test if we're a 32 bit client and what the target is.
-	 * Set the wrap controls accordingly.
-	 */
-	if (SV_CURPROC_FLAG(SV_ILP32)) {
-		if (SV_PROC_FLAG(td2->td_proc, SV_ILP32))
-			safe = 1;
-		wrap32 = 1;
-	}
-#endif
 	/*
 	 * Permissions check
 	 */
@@ -1555,9 +1460,6 @@ ptrace_action_impl(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
 		    "PT_GET_SC_ARGS" : "PT_LINUX_GET_SC_ARGS", p->p_pid);
 		if (((td2->td_dbgflags & (TDB_SCE | TDB_SCX)) == 0 &&
 		     td2->td_sa.code == 0)
-#ifdef COMPAT_FREEBSD32
-		    || (wrap32 && !safe)
-#endif
 		    ) {
 			error = EINVAL;
 			break;
@@ -1581,9 +1483,6 @@ ptrace_action_impl(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
 
 	case PT_GET_SC_RET:
 		if ((td2->td_dbgflags & TDB_SCX) == 0
-#ifdef COMPAT_FREEBSD32
-		    || (wrap32 && !safe)
-#endif
 		    ) {
 			error = EINVAL;
 			break;
@@ -1603,9 +1502,6 @@ ptrace_action_impl(struct thread *td, int req, bool pd_mode, pid_t pid, int pfd,
 
 	case PT_SET_SC_RET:
 		if ((td2->td_dbgflags & TDB_SCE) == 0
-#ifdef COMPAT_FREEBSD32
-		    || (wrap32 && !safe)
-#endif
 		    ) {
 			error = EINVAL;
 			break;

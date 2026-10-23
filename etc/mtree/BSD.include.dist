@@ -203,8 +203,6 @@
     dev
         acpica
         ..
-        agp
-        ..
         ciss
         ..
         coreboot
@@ -251,8 +249,6 @@
         ..
         powermac_nvram
         ..
-        ppbus
-        ..
         pwm
         ..
         smbus
@@ -292,10 +288,6 @@
         nfs
         ..
         nullfs
-        ..
-        smbfs
-        ..
-        udf
         ..
         unionfs
         ..
@@ -367,8 +359,6 @@
         ..
     ..
     net
-        altq
-        ..
         route
         ..
     ..
@@ -397,12 +387,6 @@
     netlink
         route
         ..
-    ..
-    netpfil
-        pf              tags=package=pf-dev
-        ..
-    ..
-    netsmb
     ..
     nfs
     ..

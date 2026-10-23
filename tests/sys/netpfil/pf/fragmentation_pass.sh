@@ -191,7 +191,7 @@ v6_route_to_body()
 	pft_set_rules alcatraz \
 		"set reassemble yes" \
 		"pass" \
-		"pass in route-to (${epair_link}a 2001:db8:43::3) inet6 proto icmp6 from any to 2001:db8:43::3 keep state"
+		"pass in inet6 proto icmp6 from any to 2001:db8:43::3 route-to 2001:db8:43::3 keep state"
 
 	# Forwarding test
 	atf_check -s exit:0 -o ignore \
@@ -207,7 +207,7 @@ v6_route_to_body()
 	pft_set_rules alcatraz \
 		"set reassemble no" \
 		"pass" \
-		"pass in route-to (${epair_link}a 2001:db8:43::3) inet6 proto icmp6 from any to 2001:db8:43::3 keep state"
+		"pass in inet6 proto icmp6 from any to 2001:db8:43::3 route-to 2001:db8:43::3 keep state"
 
 	atf_check -s exit:0 -o ignore \
 		ping -6 -c 1 2001:db8:43::3
@@ -411,7 +411,9 @@ reassemble_body()
 	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.2
 
 	jexec alcatraz pfctl -e
+	# OpenBSD reassembles fragments by default; turn it off explicitly.
 	pft_set_rules alcatraz \
+		"set reassemble no" \
 		"pass out" \
 		"block in" \
 		"pass in inet proto icmp all icmp-type echoreq"
@@ -463,7 +465,8 @@ no_df_body()
 
 	# Enable packet reassembly with clearing of the no-df flag.
 	pft_set_rules router \
-		"scrub all fragment reassemble no-df" \
+		"set reassemble yes" \
+		"match all scrub (no-df)" \
 		"block" \
 		"pass inet proto icmp all icmp-type echoreq"
 	# Ping with non-fragmentable packets.
@@ -505,10 +508,11 @@ reassemble_slowpath_body()
 	# Sanity check.
 	ping_server_check_reply exit:0 --ping-type=icmp
 
-	# Enable packet reassembly with clearing of the no-df flag.
+	# Enable packet reassembly.  OpenBSD reassembles globally, not per
+	# interface, so the packet is reassembled on input and pf refragments
+	# it when it leaves through the slow path.
 	pft_set_rules router \
-		"scrub in on ${epair_tester}b fragment no reassemble" \
-		"scrub on ${epair_server}a fragment reassemble" \
+		"set reassemble yes" \
 		"pass"
 
 	# Ensure that the packet makes it through the slow path
@@ -593,9 +597,13 @@ dummynet_nat_body()
 	jexec alcatraz pfctl -e
 	pft_set_rules alcatraz \
 		"set reassemble yes" \
-		"nat on ${epair_two}a from 192.0.2.0/24 -> (${epair_two}a)" \
+		"match out on ${epair_two}a from 192.0.2.0/24 nat-to (${epair_two}a)" \
 		"block in" \
+		"pass out" \
 		"pass in inet proto icmp all icmp-type echoreq dnpipe (1, 2)"
+	# OpenBSD pf creates a state only for a rule that keeps state: the
+	# translated packet needs "pass out" (FreeBSD pf's default rule kept
+	# state for translations).
 
 	atf_check -s exit:0 -o ignore ping -c 1 198.51.100.2
 	atf_check -s exit:0 -o ignore ping -c 1 -s 2000 198.51.100.2
@@ -639,7 +647,7 @@ dummynet_fragmented_body()
 	# Count that fragmented packets have hit the rule only once and that
 	# they have not created states. There is no stateful firewall support
 	# for fragmented packets.
-	grep -qE 'pass in on epair0b inet proto udp all keep state dnpipe\(1, 1\) .* Packets: 8 Bytes: 10168 States: 0 ' $rules ||
+	grep -qE "pass in on ${epair_tester}b inet proto udp all dnpipe\(1, 1\) .* Packets: 8 Bytes: 10168 States: 0 " $rules ||
 		atf_fail "Fragmented packets not counted correctly"
 }
 
@@ -714,8 +722,103 @@ counters_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "direction_v4" "cleanup"
+direction_v4_head()
+{
+	atf_set descr 'Identical IPv4 fragment keys stay isolated across PF directions'
+	atf_set require.user root
+	atf_set require.progs 'python3 scapy'
+	atf_set timeout 600
+}
+
+direction_test()
+{
+	family=$1
+	pft_init
+	left=$(vnet_mkepair)
+	right=$(vnet_mkepair)
+	vnet_mkjail router ${left}b ${right}a
+	vnet_mkjail server ${right}b
+	if [ "$family" = inet ]; then
+		left_prefix=192.0.2.; right_prefix=198.51.100.; mask=24
+		ping_family=-4; forwarding=net.inet.ip.forwarding
+	else
+		left_prefix=2001:db8:1::; right_prefix=2001:db8:2::; mask=64
+		ping_family=-6; forwarding=net.inet6.ip6.forwarding
+	fi
+	ifconfig ${left}a $family ${left_prefix}1/$mask up
+	jexec router ifconfig ${left}b $family ${left_prefix}2/$mask up
+	jexec router ifconfig ${right}a $family ${right_prefix}1/$mask up
+	jexec server ifconfig ${right}b $family ${right_prefix}2/$mask up
+	jexec router sysctl $forwarding=1
+	if [ "$family" = inet6 ]; then
+		while { ifconfig ${left}a; jexec router ifconfig; jexec server ifconfig; } | grep -q tentative; do sleep 1; done
+	fi
+	atf_check -s exit:0 -o ignore ping $ping_family -c 1 -t 3 ${left_prefix}2
+	atf_check -s exit:0 -o ignore jexec router ping $ping_family -c 1 -t 3 ${right_prefix}2
+	jexec router pfctl -e
+	pft_set_rules router 'set reassemble yes' 'set timeout frag 600' 'pass no state'
+	jexec router pfctl -x debug
+	mac=$(jexec router ifconfig ${left}b | awk '/lladdr/ { print $2 }')
+	helper=$(atf_get_srcdir)/frag-direction.py
+	ready=$(pwd)/receiver.ready
+	jexec server python3 "$helper" receive --family "$family" --ready "$ready" >receiver.log 2>&1 &
+	rx=$!
+	echo "$rx" >receiver.pid
+	tries=0
+	while [ ! -f "$ready" ]; do
+		kill -0 "$rx" || atf_fail 'fragment receiver exited before readiness'
+		tries=$((tries + 1))
+		[ "$tries" -lt 120 ] || atf_fail 'fragment receiver did not become ready'
+		sleep 1
+	done
+	# The old shared key joins A's input head to B's output tail.
+	atf_check -s exit:0 -o ignore python3 "$helper" input --family "$family" --part head --interface ${left}a --mac "$mac"
+	atf_check -s exit:0 -o ignore jexec router python3 "$helper" output --family "$family" --part tail
+	atf_check -s exit:0 -o ignore python3 "$helper" input --family "$family" --part tail --interface ${left}a --mac "$mac"
+	atf_check -s exit:0 -o ignore jexec router python3 "$helper" output --family "$family" --part head
+	jexec router pfctl -si
+	if ! wait "$rx"; then
+		cat receiver.log
+		atf_fail "fragment payload mismatch or missing datagram; see receiver output"
+	fi
+	rm receiver.pid
+}
+
+direction_v4_body()
+{
+	direction_test inet
+}
+
+atf_test_case "direction_v6" "cleanup"
+direction_v6_head()
+{
+	atf_set descr 'Identical IPv6 fragment keys stay isolated across PF directions'
+	atf_set require.user root
+	atf_set require.progs 'python3 scapy'
+	atf_set timeout 600
+}
+
+direction_v6_body()
+{
+	direction_test inet6
+}
+
+direction_v6_cleanup()
+{
+	pft_cleanup
+}
+
+direction_v4_cleanup()
+{
+	# The receiver lives in the disposable server jail; jail removal stops it.
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case "direction_v4"
+	atf_add_test_case "direction_v6"
 	atf_add_test_case "too_many_fragments"
 	atf_add_test_case "v6"
 	atf_add_test_case "v6_route_to"

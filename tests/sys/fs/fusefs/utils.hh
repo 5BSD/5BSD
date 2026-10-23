@@ -58,6 +58,7 @@ class FuseTest : public ::testing::Test {
 	uint32_t m_maxread;
 	uint32_t m_maxreadahead;
 	uint32_t m_maxwrite;
+	uint16_t m_maxpages;
 	uint32_t m_init_flags;
 	bool m_allow_other;
 	bool m_default_permissions;
@@ -88,6 +89,7 @@ class FuseTest : public ::testing::Test {
 		m_maxread(0),
 		m_maxreadahead(0),
 		m_maxwrite(0),
+		m_maxpages(0),
 		m_init_flags(0),
 		m_allow_other(false),
 		m_default_permissions(false),

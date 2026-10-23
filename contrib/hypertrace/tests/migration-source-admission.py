@@ -24,7 +24,7 @@ struct vmctx { int unused; };
 #include <sys/param.h>
 #include <time.h>
 struct migration_prod_source {
- struct vmctx *ctx; int recovery_dirfd; bool retirement_started, quiesced;
+ struct vmctx *ctx; int recovery_dirfd; int stream_fd; bool retirement_started, quiesced;
  bool retired, intent_pending;
  struct migration_recovery_record recovery;
 };
@@ -49,19 +49,30 @@ static int prod_resume(void *arg) {
 static __attribute__((unused)) const char *get_config_value(const char *key) {
  assert(strcmp(key,"gdb.port")==0); return mode==7?"1234":NULL;
 }
-static bool hypertrace_initialized(void) { return true; }
+/* Mode 11 is the plaintext_unix active-vsock source: no HyperTrace, no TLS. */
+static bool hypertrace_initialized(void) { return mode!=11; }
+/* Merged: active vsock is an operator opt-in (modes 10 and 11). */
+static bool get_config_bool_default(const char *key, bool def) {
+ assert(strcmp(key,"checkpoint.migrate_active_vsock")==0 && !def);
+ return mode==10||mode==11;
+}
+static int prod_vsock_state(void *a, uint8_t **b, size_t *l) { (void)a; (void)b; (void)l; return 0; }
+static int prod_prepare_vsock_relay(void *a) { (void)a; return 0; }
+static int prod_cancel_vsock_relay(void *a) { (void)a; return 0; }
+static int prod_activate_vsock_relay(void *a) { (void)a; return 0; }
+static int stream_fd_expected;
 int migration_prod_fill_hello(struct vmctx *ctx, struct migration_hello *hello) {
  (void)ctx; memset(hello,0,sizeof(*hello)); hello->capability_flags=MIGRATION_CAP_PRECOPY; return 0;
 }
 static int migration_channel_init(struct migration_channel *channel,
  struct migration_transport *xp, int fd, bool server,
  const struct migration_tls_credentials *credentials, int timeout) {
- (void)xp; assert(fd>=0 && !server && credentials && timeout==30000);
- connects++; channel->secure=true; return mode==3?EACCES:0;
+ (void)xp; assert(fd>=0 && !server && (mode==11 ? !credentials : credentials!=NULL) && timeout==30000);
+ connects++; channel->secure=mode!=11; return mode==3?EACCES:0;
 }
-/* The fixture always supplies credentials; plaintext is never requested. */
+/* Credentials everywhere except mode 11, the explicit plaintext_unix opt-in. */
 static int migration_channel_policy(int fd, bool credentials, bool plaintext) {
- (void)fd; assert(credentials && !plaintext); return 0;
+ (void)fd; assert(credentials==(mode!=11) && plaintext==(mode==11)); return 0;
 }
 static int migration_channel_binding(struct migration_channel *channel, bool source,
  uint8_t src[32],uint8_t dst[32]) {
@@ -91,8 +102,17 @@ int migration_source_run(const struct migration_transport *xp,
  (void)xp; assert(config->max_rounds==8); runs++;
  struct migration_hello hello;
  assert(ops->so_local_hello(arg,&hello)==0);
- assert(hello.capability_flags&MIGRATION_CAP_HYPERTRACE_FRESH);
  struct migration_prod_source *src=arg;
+ assert(src->stream_fd==stream_fd_expected);
+ if (mode==11) {
+  /* Plaintext active vsock: no FRESH, and the relay hooks are installed. */
+  assert(!(hello.capability_flags&MIGRATION_CAP_HYPERTRACE_FRESH));
+  assert(ops->so_vsock_state==prod_vsock_state && ops->so_prepare_relay==prod_prepare_vsock_relay &&
+   ops->so_cancel_relay==prod_cancel_vsock_relay && ops->so_activate_relay==prod_activate_vsock_relay);
+ } else {
+  assert(hello.capability_flags&MIGRATION_CAP_HYPERTRACE_FRESH);
+  assert(!ops->so_vsock_state && !ops->so_prepare_relay && !ops->so_cancel_relay && !ops->so_activate_relay);
+ }
  src->retirement_started=mode==6;
  src->quiesced=mode==6||mode==8||mode==9;
  /* Mode 8: every repair attempt fails; mode 9: the second succeeds. */
@@ -107,11 +127,13 @@ int main(void) {
  assert(mkdtemp(canonical) && mkdtemp(other));
  int rootfd=open(canonical,O_RDONLY|O_DIRECTORY), otherfd=open(other,O_RDONLY|O_DIRECTORY);
  FILE *pem=tmpfile(); assert(rootfd>=0 && otherfd>=0 && pem);
- for (mode=0;mode<10;mode++) {
+ stream_fd_expected=-2;
+ for (mode=0;mode<12;mode++) {
   nvlist_t *request=nvlist_create(0); assert(request);
   nvlist_add_descriptor(request,"fd",fileno(pem));
+  if (mode==11) nvlist_add_bool(request,"plaintext_unix",true);
   nvlist_add_descriptor(request,"recovery_fddir",mode==2?otherfd:rootfd);
-  if (mode!=0) {
+  if (mode!=0 && mode!=11) {
    nvlist_add_descriptor(request,"tls_certificate_fd",fileno(pem));
    nvlist_add_descriptor(request,"tls_private_key_fd",fileno(pem));
    nvlist_add_descriptor(request,"tls_trust_fd",fileno(pem));
@@ -122,8 +144,32 @@ int main(void) {
    migration_source_storage=(struct migration_source_storage){.directory=dup(rootfd),.prepared=true,.error=mode==1?ENOENT:0};
    assert(migration_source_storage.directory>=0);
    assert(cap_enter()==0);
-   struct vmctx ctx={0}; nvlist_t *reply=vm_do_migrate(&ctx,request);
+   struct vmctx ctx={0};
+   /* The request's descriptor is received as a fresh number; record it. */
+   stream_fd_expected=nvlist_get_descriptor(request,"fd");
+   nvlist_t *reply=vm_do_migrate(&ctx,request);
    assert(nvlist_exists_string(reply,"error"));
+   if (mode==10) {
+    /* Active vsock with TLS: refused before any transport or quiesce. */
+    assert(strstr(nvlist_get_string(reply,"error"),"active vsock")!=NULL);
+    assert(nvlist_get_number(reply,"phase")==MIGRATION_PHASE_FAILED);
+    assert(nvlist_get_number(reply,"reason")==MIGRATION_REASON_CAPS);
+    assert(nvlist_get_bool(reply,"source_runnable"));
+    assert(connects==0 && runs==0 && cleanups==0 && quarantines==0 && wedges==0);
+    assert(!nvlist_exists_bool(reply,"repaired"));
+#ifdef BHYVE_GDB
+    assert(fences==0);
+#endif
+    nvlist_destroy(reply); nvlist_destroy(request); _exit(0);
+   }
+   if (mode==11) {
+    assert(nvlist_get_bool(reply,"source_runnable"));
+    assert(connects==1 && runs==1 && cleanups==1 && quarantines==0);
+#ifdef BHYVE_GDB
+    assert(fences==1 && unfences==1 && !fenced);
+#endif
+    nvlist_destroy(reply); nvlist_destroy(request); _exit(0);
+   }
    assert(nvlist_get_bool(reply,"source_runnable")== (mode!=6 && mode!=8));
    /* Automatic repair runs only for a wedged source whose retirement never
     * began: none after INTENT (mode 6), bounded failure (8), success (9). */

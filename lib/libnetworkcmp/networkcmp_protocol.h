@@ -15,6 +15,11 @@
 #define	NETWORKCMP_INTERFACE		"system.Network"
 /* Same protocol; resolvable only with the system.network.admin attribute. */
 #define	NETWORKCMP_ADMIN_INTERFACE	"system.Network.Admin"
+/*
+ * The pf(4) state-export endpoint (bsd.network.v1 NetworkPf); resolvable
+ * only with the system.network.pf.read attribute.
+ */
+#define	NETWORKCMP_PF_INTERFACE		"system.Network.PF"
 #define	NETWORKCMP_MAX_MESSAGE		2048
 #define	NETWORKCMP_NAME_MAX		253
 #define	NETWORKCMP_SERVICE_MAX		32
@@ -63,7 +68,12 @@ enum networkcmp_opcode {
 	NETWORKCMP_OP_RESOLVE,
 	NETWORKCMP_OP_CONNECT,
 	NETWORKCMP_OP_UDP,
-	NETWORKCMP_OP_LISTEN
+	NETWORKCMP_OP_LISTEN,
+	/*
+	 * system.Network.PF OpenStates: a DTrace probe argument only.  It was
+	 * never a record opcode; the record validators still end at LISTEN.
+	 */
+	NETWORKCMP_OP_PF_STATES
 };
 
 enum networkcmp_family {

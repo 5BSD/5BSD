@@ -123,19 +123,11 @@ typedef teken_color_t term_color_t;
 #define	BG_WHITE		(TFORMAT(TF_BOLD) | TCOLOR_BG(TC_WHITE))
 
 #ifndef TERMINAL_NORM_ATTR
-#ifdef SC_NORM_ATTR
-#define	TERMINAL_NORM_ATTR	SC_NORM_ATTR
-#else
 #define	TERMINAL_NORM_ATTR	(FG_LIGHTGREY | BG_BLACK)
-#endif
 #endif
 
 #ifndef TERMINAL_KERN_ATTR
-#ifdef SC_KERNEL_CONS_ATTR
-#define	TERMINAL_KERN_ATTR	SC_KERNEL_CONS_ATTR
-#else
 #define	TERMINAL_KERN_ATTR	(FG_WHITE | BG_BLACK)
-#endif
 #endif
 
 typedef teken_pos_t term_pos_t;

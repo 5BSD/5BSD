@@ -860,6 +860,44 @@ pipespace(struct pipe *cpipe, int size)
 	return (error);
 }
 
+/* Set and retain the forward pipe capacity requested by Linux fcntl. */
+int
+kern_pipe_set_size(struct file *fp, u_long size, u_long *sizep)
+{
+	struct pipe *pipe;
+	int error;
+
+	if (fp->f_type != DTYPE_PIPE)
+		return (EBADF);
+	if (size > INT_MAX)
+		return (EINVAL);
+	if (size > 1024 * 1024 && priv_check(curthread, PRIV_PIPEBUF) != 0)
+		return (EPERM);
+	pipe = fp->f_data;
+	pipe = &pipe->pipe_pair->pp_rpipe;
+	PIPE_LOCK(pipe);
+	error = pipelock(pipe, true);
+	if (error != 0) {
+		PIPE_UNLOCK(pipe);
+		return (error);
+	}
+	if (pipe->pipe_buffer.cnt > size ||
+	    (pipe->pipe_state & PIPE_DIRECTW) != 0) {
+		error = EBUSY;
+	} else if (pipe->pipe_buffer.size != size) {
+		PIPE_UNLOCK(pipe);
+		error = pipespace(pipe, size);
+		PIPE_LOCK(pipe);
+	}
+	if (error == 0) {
+		pipe->pipe_user_size = pipe->pipe_buffer.size;
+		*sizep = pipe->pipe_buffer.size;
+	}
+	pipeunlock(pipe);
+	PIPE_UNLOCK(pipe);
+	return (error);
+}
+
 /*
  * lock a pipe for I/O, blocking other access
  */
@@ -1010,7 +1048,8 @@ pipe_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	if (error)
 		goto locked_error;
 #endif
-	if (amountpipekva > (3 * maxpipekva) / 4) {
+	if (rpipe->pipe_user_size == 0 &&
+	    amountpipekva > (3 * maxpipekva) / 4) {
 		if ((rpipe->pipe_state & PIPE_DIRECTW) == 0 &&
 		    rpipe->pipe_buffer.size > SMALL_PIPE_SIZE &&
 		    rpipe->pipe_buffer.cnt <= SMALL_PIPE_SIZE &&
@@ -1412,8 +1451,11 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	++wpipe->pipe_busy;
 
 	/* Choose a larger size if it's advantageous */
-	desiredsize = max(SMALL_PIPE_SIZE, wpipe->pipe_buffer.size);
-	while (desiredsize < wpipe->pipe_buffer.cnt + uio->uio_resid) {
+	desiredsize = wpipe->pipe_user_size != 0 ?
+	    wpipe->pipe_buffer.size :
+	    max(SMALL_PIPE_SIZE, wpipe->pipe_buffer.size);
+	while (wpipe->pipe_user_size == 0 &&
+	    desiredsize < wpipe->pipe_buffer.cnt + uio->uio_resid) {
 		if (piperesizeallowed != 1)
 			break;
 		if (amountpipekva > maxpipekva / 2)
@@ -1424,7 +1466,8 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	}
 
 	/* Choose a smaller size if we're in a OOM situation */
-	if (amountpipekva > (3 * maxpipekva) / 4 &&
+	if (wpipe->pipe_user_size == 0 &&
+	    amountpipekva > (3 * maxpipekva) / 4 &&
 	    wpipe->pipe_buffer.size > SMALL_PIPE_SIZE &&
 	    wpipe->pipe_buffer.cnt <= SMALL_PIPE_SIZE &&
 	    piperesizeallowed == 1)
@@ -1458,7 +1501,8 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 		 * The direct write mechanism will detect the reader going
 		 * away on us.
 		 */
-		if (uio->uio_segflg == UIO_USERSPACE &&
+		if (wpipe->pipe_user_size == 0 &&
+		    uio->uio_segflg == UIO_USERSPACE &&
 		    uio->uio_iov->iov_len >= pipe_mindirect &&
 		    wpipe->pipe_buffer.size >= pipe_mindirect &&
 		    (fp->f_flag & FNONBLOCK) == 0 && (flags & FOF_NBIO) == 0) {

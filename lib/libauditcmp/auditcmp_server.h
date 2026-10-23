@@ -6,6 +6,11 @@
 #include "auditcmp_protocol.h"
 struct auditcmp_client;
 __BEGIN_DECLS
+/*
+ * Prepare/adopt must run in the admitted invocation. Under BIP an inherited
+ * client endpoint cannot be adopted by a child; workers open their own Audit
+ * connection after fork and before dropping service lookup authority.
+ */
 int auditcmp_client_prepare(int *);
 int auditcmp_client_adopt(int, struct auditcmp_client **);
 int auditcmp_message_init(struct auditcmp_msg *, uint16_t, uint32_t);

@@ -453,26 +453,13 @@ ksem_create_copyout_semid(struct thread *td, semid_t *semidp, int fd,
     int compat32)
 {
 	semid_t semid;
-#ifdef COMPAT_FREEBSD32
-	int32_t semid32;
-#endif
 	void *ptr;
 	size_t ptrs;
 
-#ifdef COMPAT_FREEBSD32
-	if (compat32) {
-		semid32 = fd;
-		ptr = &semid32;
-		ptrs = sizeof(semid32);
-	} else {
-#endif
 		semid = fd;
 		ptr = &semid;
 		ptrs = sizeof(semid);
 		compat32 = 0; /* silence gcc */
-#ifdef COMPAT_FREEBSD32
-	}
-#endif
 
 	return (copyout(ptr, semidp, ptrs));
 }
@@ -989,73 +976,6 @@ static struct syscall_helper_data ksem_syscalls[] = {
 	SYSCALL_INIT_LAST
 };
 
-#ifdef COMPAT_FREEBSD32
-#include <compat/freebsd32/freebsd32.h>
-#include <compat/freebsd32/freebsd32_proto.h>
-#include <compat/freebsd32/freebsd32_signal.h>
-#include <compat/freebsd32/freebsd32_syscall.h>
-#include <compat/freebsd32/freebsd32_util.h>
-
-
-
-int
-freebsd32_ksem_init(struct thread *td, struct freebsd32_ksem_init_args *uap)
-{
-
-	return (ksem_create(td, NULL, (semid_t *)uap->idp, S_IRWXU | S_IRWXG, uap->value,
-	    0, 1));
-}
-
-int
-freebsd32_ksem_open(struct thread *td, struct freebsd32_ksem_open_args *uap)
-{
-
-	if ((uap->oflag & ~(O_CREAT | O_EXCL)) != 0)
-		return (EINVAL);
-	return (ksem_create(td, uap->name, (semid_t *)uap->idp, uap->mode, uap->value,
-	    uap->oflag, 1));
-}
-
-int
-freebsd32_ksem_timedwait(struct thread *td,
-    struct freebsd32_ksem_timedwait_args *uap)
-{
-	struct timespec32 abstime32;
-	struct timespec *ts, abstime;
-	int error;
-
-	/*
-	 * We allow a null timespec (wait forever).
-	 */
-	if (uap->abstime == NULL)
-		ts = NULL;
-	else {
-		error = copyin(uap->abstime, &abstime32, sizeof(abstime32));
-		if (error != 0)
-			return (error);
-		CP(abstime32, abstime, tv_sec);
-		CP(abstime32, abstime, tv_nsec);
-		if (abstime.tv_nsec >= 1000000000 || abstime.tv_nsec < 0)
-			return (EINVAL);
-		ts = &abstime;
-	}
-	return (kern_sem_wait(td, uap->id, 0, ts));
-}
-
-static struct syscall_helper_data ksem32_syscalls[] = {
-	SYSCALL32_INIT_HELPER(freebsd32_ksem_init),
-	SYSCALL32_INIT_HELPER(freebsd32_ksem_open),
-	SYSCALL32_INIT_HELPER_COMPAT(ksem_unlink),
-	SYSCALL32_INIT_HELPER_COMPAT(ksem_close),
-	SYSCALL32_INIT_HELPER_COMPAT(ksem_post),
-	SYSCALL32_INIT_HELPER_COMPAT(ksem_wait),
-	SYSCALL32_INIT_HELPER(freebsd32_ksem_timedwait),
-	SYSCALL32_INIT_HELPER_COMPAT(ksem_trywait),
-	SYSCALL32_INIT_HELPER_COMPAT(ksem_getvalue),
-	SYSCALL32_INIT_HELPER_COMPAT(ksem_destroy),
-	SYSCALL_INIT_LAST
-};
-#endif
 
 static int
 ksem_module_init(void)
@@ -1073,11 +993,6 @@ ksem_module_init(void)
 	error = syscall_helper_register(ksem_syscalls, SY_THR_STATIC_KLD);
 	if (error)
 		return (error);
-#ifdef COMPAT_FREEBSD32
-	error = syscall32_helper_register(ksem32_syscalls, SY_THR_STATIC_KLD);
-	if (error)
-		return (error);
-#endif
 	return (0);
 }
 
@@ -1085,9 +1000,6 @@ static void
 ksem_module_destroy(void)
 {
 
-#ifdef COMPAT_FREEBSD32
-	syscall32_helper_unregister(ksem32_syscalls);
-#endif
 	syscall_helper_unregister(ksem_syscalls);
 
 	p31b_setcfg(CTL_P1003_1B_SEMAPHORES, 0);

@@ -59,9 +59,9 @@ fwd_ip_icmp_iface_fast_success_body() {
 
 	# Get router ip/mac
 	jail_ip=${ip4b}
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/lladdr/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`ifconfig ${epair}a ether | awk '$1~/lladdr/{print$2}'`
 
 	jexec ${jname} sysctl net.inet.ip.forwarding=1
 	# As we're doing router-on-the-stick, turn sending IP redirects off:
@@ -116,9 +116,9 @@ fwd_ip_icmp_gw_fast_success_body() {
 
 	# Get router ip/mac
 	jail_ip=${ip4b}
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/lladdr/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`ifconfig ${epair}a ether | awk '$1~/lladdr/{print$2}'`
 
 	jexec ${jname} sysctl net.inet.ip.forwarding=1
 	# As we're doing router-on-the-stick, turn sending IP redirects off:
@@ -175,9 +175,9 @@ fwd_ip_icmp_iface_slow_success_body() {
 
 	# Get router ip/mac
 	jail_ip=${ip4b}
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/lladdr/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`ifconfig ${epair}a ether | awk '$1~/lladdr/{print$2}'`
 
 	jexec ${jname} sysctl net.inet.ip.forwarding=1
 	# As we're doing router-on-the-stick, turn sending IP redirects off:
@@ -230,9 +230,9 @@ fwd_ip_icmp_gw_slow_success_body() {
 
 	# Get router ip/mac
 	jail_ip=${ip4b}
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/lladdr/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`ifconfig ${epair}a ether | awk '$1~/lladdr/{print$2}'`
 
 	jexec ${jname} sysctl net.inet.ip.forwarding=1
 	# As we're doing router-on-the-stick, turn sending IP redirects off:

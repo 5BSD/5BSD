@@ -19,12 +19,24 @@ if [ "${1-}" = "--normal-boot" ]; then
     dnctl pipe 65000 show | grep -q '65000:'
     echo PF_NORMAL_BOOT_PASS
 fi
-for module in pf pflog dummynet if_epair if_bridge; do
-    kldstat -q -m "$module" || kldload "$module"
+# 5BSD: the capability plane denies kldload(2) after boot.  pf (with the
+# pflog, pfsync and pflow cloners) and DTrace are loader defaults; the image
+# must preload if_epair and if_bridge (loader.conf); dummynet may come from
+# the SystemExtension broker.
+for module in pf if_epair if_bridge; do
+    kldstat -q -m "$module" || { echo "PF_SMOKE_NOT_PRELOADED $module"; exit 1; }
 done
+for cloner in pflog pfsync pflow; do
+    ifconfig -C | tr ' ' '\n' | grep -qx "$cloner" ||
+        { echo "PF_SMOKE_NO_CLONER $cloner"; exit 1; }
+done
+kldstat -q -m dummynet || sysextctl load dummynet
+kldstat -q -m dummynet
 test ! -e /sbin/ipfw
+test ! -e /boot/kernel/ipfw.ko
 if kldload ipfw; then echo UNEXPECTED_IPFW_LOAD; exit 1; fi
 if kldstat -q -m ipfw; then echo UNEXPECTED_IPFW_MODULE; exit 1; fi
+echo PF_IPFW_ABSENT
 ifconfig vtnet0 up
 if ! ifconfig vtnet0 inet | grep -q "inet 10.0.2.15 "; then
     dhclient -b vtnet0

@@ -52,7 +52,6 @@
 #include <net/if.h>
 #include <net/if_dl.h>
 #include <net/if_types.h>
-#include <net/firewire.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <arpa/nameser.h>
@@ -444,7 +443,6 @@ getnameinfo_link(const struct afd *afd,
 {
 	const struct sockaddr_dl *sdl =
 	    (const struct sockaddr_dl *)(const void *)sa;
-	const struct fw_hwaddr *iha;
 	int n;
 
 	if (serv != NULL && servlen > 0)
@@ -471,22 +469,12 @@ getnameinfo_link(const struct afd *afd,
 	}
 
 	switch (sdl->sdl_type) {
-	case IFT_IEEE1394:
-		if (sdl->sdl_alen < sizeof(iha->sender_unique_ID_hi) +
-		    sizeof(iha->sender_unique_ID_lo))
-			return EAI_FAMILY;
-		iha = (const struct fw_hwaddr *)(const void *)LLADDR(sdl);
-		return hexname((const u_int8_t *)&iha->sender_unique_ID_hi,
-		    sizeof(iha->sender_unique_ID_hi) +
-		    sizeof(iha->sender_unique_ID_lo),
-		    host, hostlen);
 	/*
 	 * The following have zero-length addresses.
 	 * IFT_GIF	(net/if_gif.c)
 	 * IFT_LOOP	(net/if_loop.c)
 	 * IFT_PPP	(net/if_tuntap.c)
 	 * IFT_SLIP	(net/if_sl.c, net/if_strip.c)
-	 * IFT_STF	(net/if_stf.c)
 	 * IFT_L2VLAN	(net/if_vlan.c)
 	 * IFT_BRIDGE (net/if_bridge.h>
 	 */

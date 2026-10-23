@@ -24,6 +24,8 @@ typedef unsigned long size_t;
 #define	O_CLOEXEC	02000000
 
 #define	EBADF		9
+#define	EFAULT		14
+#define	EIO		5
 #define	EINVAL		22
 #define	ENOTTY		25
 
@@ -33,6 +35,7 @@ typedef unsigned long size_t;
 
 #define	TIOCGPTN	0x80045430
 #define	TIOCSPTLCK	0x40045431
+#define	TIOCGPTLCK	0x80045439
 #define	TIOCGPTPEER	0x5441
 
 /* Linux x86_64 struct stat: st_rdev lives at byte offset 40. */
@@ -63,14 +66,20 @@ test(void)
 	char buf[8];
 	long m, peer, ro, slave, r;
 	unsigned int n;
-	int zero = 0, pp[2], i;
+	int zero = 0, one = 1, locked = -1, pp[2], i;
 
 	/* open("/dev/ptmx", O_RDWR|O_NOCTTY) yields a pty master. */
 	m = call(SYS_open, (long)"/dev/ptmx", O_RDWR | O_NOCTTY, 0, 0, 0, 0);
 	if (m < 0) return (1);
+	if (call(SYS_ioctl, m, TIOCGPTLCK, (long)&locked, 0, 0, 0) != 0 ||
+	    locked != 1) return (33);
+	if (call(SYS_ioctl, m, TIOCGPTPEER, O_RDWR | O_NOCTTY,
+	    0, 0, 0) != -EIO) return (34);
 	/* TIOCSPTLCK(0x40045431) unlocks the slave. */
 	if (call(SYS_ioctl, m, TIOCSPTLCK, (long)&zero, 0, 0, 0) != 0)
 		return (2);
+	if (call(SYS_ioctl, m, TIOCGPTLCK, (long)&locked, 0, 0, 0) != 0 ||
+	    locked != 0) return (35);
 	/* TIOCGPTN(0x80045430) reports the unit number. */
 	n = ~0u;
 	if (call(SYS_ioctl, m, TIOCGPTN, (long)&n, 0, 0, 0) != 0) return (3);
@@ -103,6 +112,21 @@ test(void)
 	if (call(SYS_fstat, peer, (long)&st1, 0, 0, 0, 0) != 0) return (13);
 	if (call(SYS_fstat, slave, (long)&st2, 0, 0, 0, 0) != 0) return (14);
 	if (st1.rdev != st2.rdev || st1.ino != st2.ino) return (15);
+	if (call(SYS_ioctl, m, TIOCSPTLCK, (long)&one, 0, 0, 0) != 0)
+		return (36);
+	if (call(SYS_ioctl, m, TIOCGPTLCK, (long)&locked, 0, 0, 0) != 0 ||
+	    locked != 1) return (37);
+	if (call(SYS_open, (long)path, O_RDWR | O_NOCTTY, 0, 0, 0, 0) !=
+	    -EIO) return (38);
+	if (call(SYS_ioctl, m, TIOCGPTPEER, O_RDWR | O_NOCTTY,
+	    0, 0, 0) != -EIO) return (39);
+	if (call(SYS_write, m, (long)"q\n", 2, 0, 0, 0) != 2 ||
+	    call(SYS_read, peer, (long)buf, sizeof(buf), 0, 0, 0) < 1 ||
+	    buf[0] != 'q') return (43);
+	if (call(SYS_ioctl, m, TIOCSPTLCK, (long)&zero, 0, 0, 0) != 0)
+		return (40);
+	if (call(SYS_ioctl, m, TIOCSPTLCK, 0, 0, 0, 0) != -EFAULT)
+		return (41);
 	/* And it is a character device (S_IFCHR). */
 	if ((st1.mode & 0170000) != 0020000) return (16);
 	/* Reading the slave through the fresh open also sees master data. */
@@ -144,6 +168,8 @@ test(void)
 	/* TIOCGPTPEER on the slave side is ENOTTY too (not a ptmx master). */
 	if (call(SYS_ioctl, peer, TIOCGPTPEER, O_RDWR, 0, 0, 0) != -ENOTTY)
 		return (30);
+	if (call(SYS_ioctl, peer, TIOCGPTLCK, (long)&locked, 0, 0, 0) !=
+	    -ENOTTY) return (42);
 	/* EBADF. */
 	if (call(SYS_ioctl, -1, TIOCGPTPEER, O_RDWR, 0, 0, 0) != -EBADF)
 		return (31);

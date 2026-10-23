@@ -52,15 +52,15 @@ source_track_body()
 		"pass out keep state (source-track)"
 
 	ping -c 3 192.0.2.1
-	atf_check -s exit:0 -o match:'192.0.2.2 -> 0.0.0.0 \( states 1,.*' \
-	    jexec alcatraz pfctl -sS
+	atf_check -s exit:0 -o match:'192.0.2.2 \( states 1,.*' \
+	    jexec alcatraz pfctl -s Sources
 
 	# Flush all source nodes
 	jexec alcatraz pfctl -FS
 
 	# We can't find the previous source node any more
-	atf_check -s exit:0 -o not-match:'192.0.2.2 -> 0.0.0.0 \( states 1,.*' \
-	    jexec alcatraz pfctl -sS
+	atf_check -s exit:0 -o not-match:'192.0.2.2 \( states 1,.*' \
+	    jexec alcatraz pfctl -s Sources
 
 	# But we still have the state
 	atf_check -s exit:0 -o match:'all icmp 192.0.2.1:8 <- 192.0.2.2:.*' \
@@ -103,24 +103,24 @@ kill_body()
 	    ping -c 1 -S 192.0.2.3 192.0.2.1
 
 	# Check that both source nodes exist
-	atf_check -s exit:0 -o match:'192.0.2.2 -> 0.0.0.0 \( states 1,.*' \
-	    jexec alcatraz pfctl -sS
-	atf_check -s exit:0 -o match:'192.0.2.3 -> 0.0.0.0 \( states 1,.*' \
-	    jexec alcatraz pfctl -sS
+	atf_check -s exit:0 -o match:'192.0.2.2 \( states 1,.*' \
+	    jexec alcatraz pfctl -s Sources
+	atf_check -s exit:0 -o match:'192.0.2.3 \( states 1,.*' \
+	    jexec alcatraz pfctl -s Sources
 
 
-jexec alcatraz pfctl -sS
+jexec alcatraz pfctl -s Sources
 
 	# Kill the 192.0.2.2 source
 	jexec alcatraz pfctl -K 192.0.2.2
 
 	# The other source still exists
-	atf_check -s exit:0 -o match:'192.0.2.3 -> 0.0.0.0 \( states 1,.*' \
-	    jexec alcatraz pfctl -sS
+	atf_check -s exit:0 -o match:'192.0.2.3 \( states 1,.*' \
+	    jexec alcatraz pfctl -s Sources
 
 	# But not the one we killed
-	atf_check -s exit:0 -o not-match:'192.0.2.2 -> 0.0.0.0 \( states 1,.*' \
-	    jexec alcatraz pfctl -sS
+	atf_check -s exit:0 -o not-match:'192.0.2.2 \( states 1,.*' \
+	    jexec alcatraz pfctl -s Sources
 }
 
 kill_cleanup()
@@ -239,11 +239,11 @@ max_src_states_rule_body()
 	# We will check the resulting source nodes, though.
 	# Order of source nodes in output is not guaranteed, find each one separately.
 	nodes=$(mktemp) || exit 1
-	jexec router pfctl -qvsS | normalize_pfctl_s > $nodes
+	jexec router pfctl -qv -s Sources | normalize_pfctl_s > $nodes
 	for node_regexp in \
-		'2001:db8:44::1 -> :: \( states 3, connections 3, rate [0-9/\.]+s \) age [0-9:]+, 9 pkts, [0-9]+ bytes, filter rule 3, limit source-track$' \
-		'2001:db8:44::1 -> :: \( states 3, connections 3, rate [0-9/\.]+s \) age [0-9:]+, 9 pkts, [0-9]+ bytes, filter rule 4, limit source-track$' \
-		'2001:db8:44::2 -> :: \( states 3, connections 3, rate [0-9/\.]+s \) age [0-9:]+, 9 pkts, [0-9]+ bytes, filter rule 4, limit source-track$' \
+		'2001:db8:44::1 \( states 3, connections 3, rate [0-9/\.]+s \) age [0-9:]+, 9 pkts, [0-9]+ bytes, rule 3$' \
+		'2001:db8:44::1 \( states 3, connections 3, rate [0-9/\.]+s \) age [0-9:]+, 9 pkts, [0-9]+ bytes, rule 4$' \
+		'2001:db8:44::2 \( states 3, connections 3, rate [0-9/\.]+s \) age [0-9:]+, 9 pkts, [0-9]+ bytes, rule 4$' \
 	; do
 		grep -qE "${node_regexp}" $nodes || atf_fail "Source node not found for '${node_regexp}'"
 	done
@@ -296,109 +296,13 @@ max_src_states_global_body()
 	ping_server_check_reply exit:1 --ping-type=tcp3way --send-sport=4221 --fromaddr 2001:db8:44::1
 
 	nodes=$(mktemp) || exit 1
-	jexec router pfctl -qvsS | normalize_pfctl_s > $nodes
+	jexec router pfctl -qv -s Sources | normalize_pfctl_s > $nodes
 	cat $nodes
-	node_regexp='2001:db8:44::1 -> :: \( states 3, connections 3, rate [0-9/\.]+s \) age [0-9:]+, 9 pkts, [0-9]+ bytes, limit source-track'
+	node_regexp='2001:db8:44::1 \( states 3, connections 3, rate [0-9/\.]+s \) age [0-9:]+, 9 pkts, [0-9]+ bytes'
 	grep -qE "$node_regexp" $nodes || atf_fail "Source nodes not matching expected output"
 }
 
 max_src_states_global_cleanup()
-{
-	pft_cleanup
-}
-
-sn_types_compat_head()
-{
-	atf_set descr 'Combination of source node types with compat NAT rules'
-	atf_set require.user root
-	atf_set require.progs python3 scapy
-}
-
-sn_types_compat_body()
-{
-	setup_router_dummy_ipv6
-
-	# Clients will connect from another network behind the router.
-	# This allows for using multiple source addresses.
-	jexec router route add -6 2001:db8:44::0/64 2001:db8:42::2
-
-	# Additional gateways for route-to.
-	rtgw=${net_server_host_server%::*}::2:1
-	jexec router ndp -s ${rtgw} 00:01:02:03:04:05
-
-	# This test will check for proper source node creation for:
-	# max-src-states -> PF_SN_LIMIT
-	# sticky-address -> PF_SN_NAT
-	# route-to -> PF_SN_ROUTE
-	# The test expands to all 8 combinations of those source nodes being
-	# present or not.
-
-	pft_set_rules router \
-		"table <rtgws> { ${rtgw} }" \
-		"table <rdrgws> { 2001:db8:45::1 }" \
-		"rdr on ${epair_tester}b inet6 proto tcp from 2001:db8:44::10/124 to 2001:db8:45::1 -> <rdrgws> port 4242 sticky-address" \
-		"block" \
-		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-		"pass in  quick  on ${epair_tester}b route-to ( ${epair_server}a <rtgws>)                inet6 proto tcp from port 4211 keep state                                      label rule_3" \
-		"pass in  quick  on ${epair_tester}b route-to ( ${epair_server}a <rtgws>) sticky-address inet6 proto tcp from port 4212 keep state                                      label rule_4" \
-		"pass in  quick  on ${epair_tester}b route-to ( ${epair_server}a <rtgws>)                inet6 proto tcp from port 4213 keep state (max-src-states 3 source-track rule) label rule_5" \
-		"pass in  quick  on ${epair_tester}b route-to ( ${epair_server}a <rtgws>) sticky-address inet6 proto tcp from port 4214 keep state (max-src-states 3 source-track rule) label rule_6" \
-		"pass out quick  on ${epair_server}a keep state"
-
-	# We don't check if state limits are properly enforced, this is tested
-	# by other tests in this file.
-	# Source address will not match the NAT rule
-	ping_dummy_check_request exit:0 --ping-type=tcpsyn --send-sport=4211 --fromaddr 2001:db8:44::01 --to 2001:db8:45::1
-	ping_dummy_check_request exit:0 --ping-type=tcpsyn --send-sport=4212 --fromaddr 2001:db8:44::02 --to 2001:db8:45::1
-	ping_dummy_check_request exit:0 --ping-type=tcpsyn --send-sport=4213 --fromaddr 2001:db8:44::03 --to 2001:db8:45::1
-	ping_dummy_check_request exit:0 --ping-type=tcpsyn --send-sport=4214 --fromaddr 2001:db8:44::04 --to 2001:db8:45::1
-	# Source address will match the NAT rule
-	ping_dummy_check_request exit:0 --ping-type=tcpsyn --send-sport=4211 --fromaddr 2001:db8:44::11 --to 2001:db8:45::1
-	ping_dummy_check_request exit:0 --ping-type=tcpsyn --send-sport=4212 --fromaddr 2001:db8:44::12 --to 2001:db8:45::1
-	ping_dummy_check_request exit:0 --ping-type=tcpsyn --send-sport=4213 --fromaddr 2001:db8:44::13 --to 2001:db8:45::1
-	ping_dummy_check_request exit:0 --ping-type=tcpsyn --send-sport=4214 --fromaddr 2001:db8:44::14 --to 2001:db8:45::1
-
-	states=$(mktemp) || exit 1
-	jexec router pfctl -qvss | normalize_pfctl_s > $states
-	nodes=$(mktemp) || exit 1
-	jexec router pfctl -qvvsS | normalize_pfctl_s > $nodes
-
-	# Order of states in output is not guaranteed, find each one separately.
-	for state_regexp in \
-		'all tcp 2001:db8:45::1\[9\] <- 2001:db8:44::1\[4211\] .* 1:0 pkts, 76:0 bytes, rule 3$' \
-		'all tcp 2001:db8:45::1\[9\] <- 2001:db8:44::2\[4212\] .* 1:0 pkts, 76:0 bytes, rule 4, route sticky-address$' \
-		'all tcp 2001:db8:45::1\[9\] <- 2001:db8:44::3\[4213\] .* 1:0 pkts, 76:0 bytes, rule 5, limit source-track$' \
-		'all tcp 2001:db8:45::1\[9\] <- 2001:db8:44::4\[4214\] .* 1:0 pkts, 76:0 bytes, rule 6, limit source-track, route sticky-address$' \
-		'all tcp 2001:db8:45::1\[4242\] \(2001:db8:45::1\[9\]\) <- 2001:db8:44::11\[4211\] .* 1:0 pkts, 76:0 bytes, rule 3, NAT/RDR sticky-address' \
-		'all tcp 2001:db8:45::1\[4242\] \(2001:db8:45::1\[9\]\) <- 2001:db8:44::12\[4212\] .* 1:0 pkts, 76:0 bytes, rule 4, NAT/RDR sticky-address, route sticky-address' \
-		'all tcp 2001:db8:45::1\[4242\] \(2001:db8:45::1\[9\]\) <- 2001:db8:44::13\[4213\] .* 1:0 pkts, 76:0 bytes, rule 5, limit source-track, NAT/RDR sticky-address' \
-		'all tcp 2001:db8:45::1\[4242\] \(2001:db8:45::1\[9\]\) <- 2001:db8:44::14\[4214\] .* 1:0 pkts, 76:0 bytes, rule 6, limit source-track, NAT/RDR sticky-address, route sticky-address' \
-	; do
-		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
-	done
-
-	# Order of source nodes in output is not guaranteed, find each one separately.
-	for node_regexp in \
-		'2001:db8:44::2 -> 2001:db8:43::2:1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 4, route sticky-address' \
-		'2001:db8:44::3 -> :: \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 5, limit source-track' \
-		'2001:db8:44::4 -> 2001:db8:43::2:1 \( states 1, connections 0, rate 0.0/0s ) age [0-9:]+, 1 pkts, 76 bytes, filter rule 6, route sticky-address' \
-		'2001:db8:44::4 -> :: \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 6, limit source-track' \
-		'2001:db8:44::11 -> 2001:db8:45::1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rdr rule 0, NAT/RDR sticky-address' \
-		'2001:db8:44::12 -> 2001:db8:45::1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rdr rule 0, NAT/RDR sticky-address' \
-		'2001:db8:44::12 -> 2001:db8:43::2:1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 4, route sticky-address' \
-		'2001:db8:44::13 -> 2001:db8:45::1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rdr rule 0, NAT/RDR sticky-address' \
-		'2001:db8:44::13 -> :: \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 5, limit source-track' \
-		'2001:db8:44::14 -> 2001:db8:45::1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rdr rule 0, NAT/RDR sticky-address' \
-		'2001:db8:44::14 -> 2001:db8:43::2:1 \( states 1, connections 0, rate 0.0/0s ) age [0-9:]+, 1 pkts, 76 bytes, filter rule 6, route sticky-address' \
-		'2001:db8:44::14 -> :: \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 6, limit source-track' \
-	; do
-		grep -qE "${node_regexp}" $nodes || atf_fail "Source node not found for '${node_regexp}'"
-	done
-
-	! grep -q 'filter rule 3' $nodes || atf_fail "Source node found for rule 3"
-}
-
-sn_types_compat_cleanup()
 {
 	pft_cleanup
 }
@@ -435,10 +339,10 @@ sn_types_pass_body()
 		"block" \
 		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
 		"match in       on ${epair_tester}b inet6 proto tcp from 2001:db8:44::10/124 to 2001:db8:45::1 rdr-to <rdrgws> port 4242 sticky-address                                label rule_3" \
-		"pass  in quick on ${epair_tester}b route-to ( ${epair_server}a <rtgws>)                inet6 proto tcp from port 4211 keep state                                      label rule_4" \
-		"pass  in quick on ${epair_tester}b route-to ( ${epair_server}a <rtgws>) sticky-address inet6 proto tcp from port 4212 keep state                                      label rule_5" \
-		"pass  in quick on ${epair_tester}b route-to ( ${epair_server}a <rtgws>)                inet6 proto tcp from port 4213 keep state (max-src-states 3 source-track rule) label rule_6" \
-		"pass  in quick on ${epair_tester}b route-to ( ${epair_server}a <rtgws>) sticky-address inet6 proto tcp from port 4214 keep state (max-src-states 3 source-track rule) label rule_7" \
+		"pass  in quick on ${epair_tester}b inet6 proto tcp from port 4211 route-to <rtgws>                keep state                                      label rule_4" \
+		"pass  in quick on ${epair_tester}b inet6 proto tcp from port 4212 route-to <rtgws> sticky-address keep state                                      label rule_5" \
+		"pass  in quick on ${epair_tester}b inet6 proto tcp from port 4213 route-to <rtgws>                keep state (max-src-states 3 source-track rule) label rule_6" \
+		"pass  in quick on ${epair_tester}b inet6 proto tcp from port 4214 route-to <rtgws> sticky-address keep state (max-src-states 3 source-track rule) label rule_7" \
 		"pass out quick on ${epair_server}a keep state"
 
 	# We don't check if state limits are properly enforced, this is tested
@@ -457,7 +361,7 @@ sn_types_pass_body()
 	states=$(mktemp) || exit 1
 	jexec router pfctl -qvss | normalize_pfctl_s > $states
 	nodes=$(mktemp) || exit 1
-	jexec router pfctl -qvvsS | normalize_pfctl_s > $nodes
+	jexec router pfctl -qvv -s Sources | normalize_pfctl_s > $nodes
 
 	echo " === states ==="
 	cat $states
@@ -465,125 +369,44 @@ sn_types_pass_body()
 	cat $nodes
 	echo " === end === "
 
+	# OpenBSD pfctl -ss prints the route-to address as "{addr}" and only
+	# whether a state has source nodes ("source-track"); pfctl -s Sources prints
+	# each node's type through its translation address ("route-to addr",
+	# "rdr-to addr", none for a limit node) and its rule.
 	# Order of states in output is not guaranteed, find each one separately.
 	for state_regexp in \
-		'all tcp 2001:db8:45::1\[9\] <- 2001:db8:44::1\[4211\] .* 1:0 pkts, 76:0 bytes, rule 4$' \
-		'all tcp 2001:db8:45::1\[9\] <- 2001:db8:44::2\[4212\] .* 1:0 pkts, 76:0 bytes, rule 5, route sticky-address$' \
-		'all tcp 2001:db8:45::1\[9\] <- 2001:db8:44::3\[4213\] .* 1:0 pkts, 76:0 bytes, rule 6, limit source-track$' \
-		'all tcp 2001:db8:45::1\[9\] <- 2001:db8:44::4\[4214\] .* 1:0 pkts, 76:0 bytes, rule 7, limit source-track, route sticky-address$' \
-		'all tcp 2001:db8:45::1\[4242\] \(2001:db8:45::1\[9\]\) <- 2001:db8:44::11\[4211\] .* 1:0 pkts, 76:0 bytes, rule 4, NAT/RDR sticky-address' \
-		'all tcp 2001:db8:45::1\[4242\] \(2001:db8:45::1\[9\]\) <- 2001:db8:44::12\[4212\] .* 1:0 pkts, 76:0 bytes, rule 5, NAT/RDR sticky-address, route sticky-address' \
-		'all tcp 2001:db8:45::1\[4242\] \(2001:db8:45::1\[9\]\) <- 2001:db8:44::13\[4213\] .* 1:0 pkts, 76:0 bytes, rule 6, limit source-track, NAT/RDR sticky-address' \
-		'all tcp 2001:db8:45::1\[4242\] \(2001:db8:45::1\[9\]\) <- 2001:db8:44::14\[4214\] .* 1:0 pkts, 76:0 bytes, rule 7, limit source-track, NAT/RDR sticky-address, route sticky-address' \
+		'all tcp 2001:db8:45::1\[9\] \{2001:db8:43::2:1\} <- 2001:db8:44::1\[4211\] .* 1:0 pkts, 76:0 bytes, rule 4$' \
+		'all tcp 2001:db8:45::1\[9\] \{2001:db8:43::2:1\} <- 2001:db8:44::2\[4212\] .* 1:0 pkts, 76:0 bytes, rule 5, source-track$' \
+		'all tcp 2001:db8:45::1\[9\] \{2001:db8:43::2:1\} <- 2001:db8:44::3\[4213\] .* 1:0 pkts, 76:0 bytes, rule 6, source-track$' \
+		'all tcp 2001:db8:45::1\[9\] \{2001:db8:43::2:1\} <- 2001:db8:44::4\[4214\] .* 1:0 pkts, 76:0 bytes, rule 7, source-track$' \
+		'all tcp 2001:db8:45::1\[4242\] \(2001:db8:45::1\[9\]\) \{2001:db8:43::2:1\} <- 2001:db8:44::11\[4211\] .* 1:0 pkts, 76:0 bytes, rule 4, source-track$' \
+		'all tcp 2001:db8:45::1\[4242\] \(2001:db8:45::1\[9\]\) \{2001:db8:43::2:1\} <- 2001:db8:44::12\[4212\] .* 1:0 pkts, 76:0 bytes, rule 5, source-track$' \
+		'all tcp 2001:db8:45::1\[4242\] \(2001:db8:45::1\[9\]\) \{2001:db8:43::2:1\} <- 2001:db8:44::13\[4213\] .* 1:0 pkts, 76:0 bytes, rule 6, source-track$' \
+		'all tcp 2001:db8:45::1\[4242\] \(2001:db8:45::1\[9\]\) \{2001:db8:43::2:1\} <- 2001:db8:44::14\[4214\] .* 1:0 pkts, 76:0 bytes, rule 7, source-track$' \
 	; do
 		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
 	done
 
 	# Order of source nodes in output is not guaranteed, find each one separately.
 	for node_regexp in \
-		'2001:db8:44::2 -> 2001:db8:43::2:1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 5, route sticky-address' \
-		'2001:db8:44::3 -> :: \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 6, limit source-track' \
-		'2001:db8:44::4 -> 2001:db8:43::2:1 \( states 1, connections 0, rate 0.0/0s ) age [0-9:]+, 1 pkts, 76 bytes, filter rule 7, route sticky-address' \
-		'2001:db8:44::4 -> :: \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 7, limit source-track' \
-		'2001:db8:44::11 -> 2001:db8:45::1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 3, NAT/RDR sticky-address' \
-		'2001:db8:44::12 -> 2001:db8:45::1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 3, NAT/RDR sticky-address' \
-		'2001:db8:44::12 -> 2001:db8:43::2:1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 5, route sticky-address' \
-		'2001:db8:44::13 -> 2001:db8:45::1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 3, NAT/RDR sticky-address' \
-		'2001:db8:44::13 -> :: \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 6, limit source-track' \
-		'2001:db8:44::14 -> 2001:db8:45::1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 3, NAT/RDR sticky-address' \
-		'2001:db8:44::14 -> 2001:db8:43::2:1 \( states 1, connections 0, rate 0.0/0s ) age [0-9:]+, 1 pkts, 76 bytes, filter rule 7, route sticky-address' \
-		'2001:db8:44::14 -> :: \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, filter rule 7, limit source-track' \
+		'2001:db8:44::2 route-to 2001:db8:43::2:1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rule 5$' \
+		'2001:db8:44::3 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rule 6$' \
+		'2001:db8:44::4 route-to 2001:db8:43::2:1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rule 7$' \
+		'2001:db8:44::4 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rule 7$' \
+		'2001:db8:44::11 rdr-to 2001:db8:45::1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rule 3$' \
+		'2001:db8:44::12 rdr-to 2001:db8:45::1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rule 3$' \
+		'2001:db8:44::12 route-to 2001:db8:43::2:1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rule 5$' \
+		'2001:db8:44::13 rdr-to 2001:db8:45::1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rule 3$' \
+		'2001:db8:44::13 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rule 6$' \
+		'2001:db8:44::14 rdr-to 2001:db8:45::1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rule 3$' \
+		'2001:db8:44::14 route-to 2001:db8:43::2:1 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rule 7$' \
+		'2001:db8:44::14 \( states 1, connections 0, rate 0.0/0s \) age [0-9:]+, 1 pkts, 76 bytes, rule 7$' \
 	; do
 		grep -qE "${node_regexp}" $nodes || atf_fail "Source node not found for '${node_regexp}'"
 	done
 }
 
 sn_types_pass_cleanup()
-{
-	pft_cleanup
-}
-
-atf_test_case "mixed_af" "cleanup"
-mixed_af_head()
-{
-       atf_set descr 'Test mixed address family source tracking'
-       atf_set require.user root
-       atf_set require.progs python3 scapy
-}
-
-mixed_af_body()
-{
-	setup_router_server_nat64
-
-	# Clients will connect from another network behind the router.
-	# This allows for using multiple source addresses.
-	jexec router route add -6 ${net_clients_6}::/${net_clients_6_mask} ${net_tester_6_host_tester}
-
-	jexec router pfctl -e
-	pft_set_rules router \
-		"set reassemble yes" \
-		"set state-policy if-bound" \
-		"block" \
-		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-		"pass in on ${epair_tester}b \
-			route-to { \
-				(${epair_server1}a ${net_server1_4_host_server}) \
-				(${epair_server2}a ${net_server2_6_host_server}) \
-			} prefer-ipv6-nexthop sticky-address \
-			inet6 proto tcp from any to 64:ff9b::/96 \
-			af-to inet from ${net_clients_4}.0/${net_clients_4_mask} round-robin sticky-address"
-
-	atf_check -s exit:0 ${common_dir}/pft_ping.py \
-		--sendif ${epair_tester}a \
-		--replyif ${epair_tester}a \
-		--fromaddr 2001:db8:44::1 \
-		--to 64:ff9b::192.0.2.100 \
-		--ping-type=tcp3way \
-		--send-sport=4201
-	atf_check -s exit:0 ${common_dir}/pft_ping.py \
-		--sendif ${epair_tester}a \
-		--replyif ${epair_tester}a \
-		--fromaddr 2001:db8:44::1 \
-		--to 64:ff9b::192.0.2.100 \
-		--ping-type=tcp3way \
-		--send-sport=4202
-	atf_check -s exit:0 ${common_dir}/pft_ping.py \
-		--sendif ${epair_tester}a \
-		--replyif ${epair_tester}a \
-		--fromaddr 2001:db8:44::2 \
-		--to 64:ff9b::192.0.2.100 \
-		--ping-type=tcp3way \
-		--send-sport=4203
-
-	states=$(mktemp) || exit 1
-	jexec router pfctl -qvvss | normalize_pfctl_s > $states
-	nodes=$(mktemp) || exit 1
-	jexec router pfctl -qvvsS | normalize_pfctl_s > $nodes
-
-	# States are checked for proper route-to information.
-	# The route-to gateway is IPv4.
-	# FIXME: Sticky-address is broken for af-to pools!
-	#        The SN is created but apparently not used, as seen in states.
-	for state_regexp in \
-		"${epair_server2}a tcp 203.0.113.0:4201 \(2001:db8:44::1\[4201\]\) -> 192.0.2.100:9 \(64:ff9b::c000:264\[9\]\) .* route-to: 2001:db8:4202::2@${epair_server2}a origif: ${epair_tester}b" \
-		"${epair_server2}a tcp 203.0.113.1:4202 \(2001:db8:44::1\[4202\]\) -> 192.0.2.100:9 \(64:ff9b::c000:264\[9\]\) .* route-to: 2001:db8:4202::2@${epair_server2}a origif: ${epair_tester}b" \
-		"${epair_server1}a tcp 203.0.113.2:4203 \(2001:db8:44::2\[4203\]\) -> 192.0.2.100:9 \(64:ff9b::c000:264\[9\]\) .* route-to: 198.51.100.18@${epair_server1}a origif: ${epair_tester}b" \
-	; do
-		grep -qE "${state_regexp}" $states || atf_fail "State not found for '${state_regexp}'"
-	done
-
-	# Source nodes map IPv6 source address onto IPv4 gateway and IPv4 SNAT address.
-	for node_regexp in \
-		'2001:db8:44::2 -> 203.0.113.2 .* states 1, .* NAT/RDR sticky-address' \
-		'2001:db8:44::2 -> 198.51.100.18 .* states 1, .* route sticky-address' \
-		'2001:db8:44::1 -> 203.0.113.0 .* states 2, .* NAT/RDR sticky-address' \
-		'2001:db8:44::1 -> 2001:db8:4202::2 .* states 2, .* route sticky-address' \
-	; do
-		grep -qE "${node_regexp}" $nodes || atf_fail "Source node not found for '${node_regexp}'"
-	done
-}
-
-mixed_af_cleanup()
 {
 	pft_cleanup
 }
@@ -609,13 +432,13 @@ check_valid_body()
 
 	jexec router pfctl -e
 	pft_set_rules router \
-		"set debug loud " \
+		"set debug debug" \
 		"set state-policy if-bound" \
 		"table <targets> { ${net_server1_6}::42:1 }" \
 		"pass in on ${epair_tester}b \
-			route-to { (${epair_server1}a <targets>) } \
-			sticky-address \
 			proto tcp \
+			route-to <targets> \
+			sticky-address \
 			keep state"
 
 	atf_check -s exit:0 ${common_dir}/pft_ping.py \
@@ -625,8 +448,8 @@ check_valid_body()
 
 	# A source node is created using the original redirection target
 	nodes=$(mktemp) || exit 1
-	jexec router pfctl -qvvsS | normalize_pfctl_s > $nodes
-	node_regexp='2001:db8:44::1 -> 2001:db8:4201::42:1 .* states 1,.* route sticky-address'
+	jexec router pfctl -qvv -s Sources | normalize_pfctl_s > $nodes
+	node_regexp='2001:db8:44::1 route-to 2001:db8:4201::42:1 \( states 1,'
 	grep -qE "${node_regexp}" $nodes || atf_fail "Source node not found for '${node_regexp}'"
 
 	# Change contents of the redirection table
@@ -639,8 +462,8 @@ check_valid_body()
 
 	# The original source node was deleted, a new one was created.
 	# It has 1 states.
-	jexec router pfctl -qvvsS | normalize_pfctl_s > $nodes
-	node_regexp='2001:db8:44::1 -> 2001:db8:4201::42:2 .* states 1,.* route sticky-address'
+	jexec router pfctl -qvv -s Sources | normalize_pfctl_s > $nodes
+	node_regexp='2001:db8:44::1 route-to 2001:db8:4201::42:2 \( states 1,'
 	grep -qE "${node_regexp}" $nodes || atf_fail "Source node not found for '${node_regexp}'"
 
 	atf_check -s exit:0 ${common_dir}/pft_ping.py \
@@ -650,8 +473,8 @@ check_valid_body()
 
 	# Without redirection table change the source node is reused.
 	# It has 2 states.
-	jexec router pfctl -qvvsS | normalize_pfctl_s > $nodes
-	node_regexp='2001:db8:44::1 -> 2001:db8:4201::42:2 .* states 2,.* route sticky-address'
+	jexec router pfctl -qvv -s Sources | normalize_pfctl_s > $nodes
+	node_regexp='2001:db8:44::1 route-to 2001:db8:4201::42:2 \( states 2,'
 	grep -qE "${node_regexp}" $nodes || atf_fail "Source node not found for '${node_regexp}'"
 }
 
@@ -691,9 +514,7 @@ atf_init_test_cases()
 	atf_add_test_case "max_src_conn_rule"
 	atf_add_test_case "max_src_states_rule"
 	atf_add_test_case "max_src_states_global"
-	atf_add_test_case "sn_types_compat"
 	atf_add_test_case "sn_types_pass"
-	atf_add_test_case "mixed_af"
 	atf_add_test_case "check_valid"
 	atf_add_test_case "pr298877"
 }

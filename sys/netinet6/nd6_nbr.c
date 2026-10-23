@@ -1154,7 +1154,6 @@ nd6_ifptomac(struct ifnet *ifp)
 {
 	switch (ifp->if_type) {
 	case IFT_ETHER:
-	case IFT_IEEE1394:
 	case IFT_L2VLAN:
 	case IFT_INFINIBAND:
 	case IFT_BRIDGE:
@@ -1591,7 +1590,6 @@ nd6_dad_duplicated(struct ifaddr *ifa, struct dadq *dp)
 		switch (ifp->if_type) {
 		case IFT_ETHER:
 		case IFT_ATM:
-		case IFT_IEEE1394:
 		case IFT_INFINIBAND:
 			in6 = ia->ia_addr.sin6_addr;
 			if (in6_get_hw_ifid(ifp, &in6) == 0 &&

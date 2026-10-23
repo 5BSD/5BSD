@@ -185,9 +185,12 @@ valid_module_name(const char *name)
  *   vhid       blued (usr.sbin/bluetooth/blued):   virtual-HID transport.
  *   zfs        bsdfilesystem (usr.sbin/bsdfilesystem):             storage backing /Capabilities.
  *   linux64    sysextctl:                        Linux application runtime.
- *   pty/fdescfs/linprocfs/linsysfs:               Linux terminals and filesystems.
+ *   vmm        WASPNest:                         Virtual machine monitor.
+ *   fdescfs/linprocfs/linsysfs:                   Linux terminals and filesystems.
  *   drm/i915kms/amdgpu/radeonkms:                 installed graphics drivers.
  *   cpuctl/coretemp/amdsmn/amdtemp:                hwstat CPU telemetry.
+ *   dummynet   rc.d/dummynet, rc.d/dnctl:        pf dnpipe/dnqueue shaping.
+ *   pf         rc.d/pf, rc.d/pflog, rc.d/pfsync: packet filter (pf_load="NO").
  *
  * Deliberately narrow — every entry corresponds to a concrete on-demand
  * consumer.  Do not broaden without a matching consumer.
@@ -196,10 +199,11 @@ SYSEXT_STATIC void
 sysext_config_defaults(struct sysext_config *cfg)
 {
 	static const char *const builtin[] = {
-		"cryptodev", "vhid", "zfs", "linux64",
-		"pty", "fdescfs", "linprocfs", "linsysfs",
+		"cryptodev", "vhid", "zfs", "linux64", "vmm",
+		"fdescfs", "linprocfs", "linsysfs",
 		"drm", "i915kms", "amdgpu", "radeonkms",
-		"cpuctl", "coretemp", "amdsmn", "amdtemp"
+		"cpuctl", "coretemp", "amdsmn", "amdtemp", "dummynet",
+		"pf"
 	};
 	size_t i;
 

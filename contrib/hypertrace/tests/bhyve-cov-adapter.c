@@ -73,8 +73,11 @@
 #include "migration_snapshot.h"
 #include "pci_emul.h"
 #include "qemu_fwcfg.h"
+#include "qemu_fwcfg_snapshot.h"
 #include "snapshot.h"
 #include "tpm_device.h"
+#include "migration_vsock_owner.h"
+#include "pci_virtio_vsock_migration.h"
 
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "[%c %d] %s:%d: CHECK(%s) failed\n", \
 	role, (int)getpid(), __FILE__, __LINE__, #x); abort(); } } while (0)
@@ -508,6 +511,10 @@ static struct pci_devemu devemu_callback = {
 	    PCI_MIGRATION_F_QUIESCE_CALLBACK,
 };
 static struct pci_devinst devices[2];
+/* Active-vsock device model (defined with the vsock boundaries below). */
+static struct pci_devemu devemu_vsock;
+static struct pci_devinst vsock_device;
+static bool vsock_present;
 static int topology_variant;	/* destination-only shape change */
 static bool compat_invalid;	/* return an unencodable compatibility envelope */
 
@@ -525,20 +532,25 @@ devices_init(void)
 	devices[1].pi_bar[1].size = 1 << 20;
 	if (role == 'D' && topology_variant == 1)
 		devices[1].pi_bar[1].size = 1 << 21;
+	memset(&vsock_device, 0, sizeof(vsock_device));
+	vsock_device.pi_d = &devemu_vsock;
+	strlcpy(vsock_device.pi_name, "vsock0", sizeof(vsock_device.pi_name));
 }
 
 /* Additional fixed-contract devices (topology size limits). */
 static int extra_devices;
 static struct pci_devinst many_devices[300];
 
+static bool many_vsock, many_same_name;	/* the extra devices are vsock devices */
 static void
 many_devices_init(int n)
 {
 	CHECK(n >= 0 && n <= 300);
 	memset(many_devices, 0, sizeof(many_devices));
 	for (int i = 0; i < n; i++) {
-		many_devices[i].pi_d = &devemu_fixed;
-		snprintf(many_devices[i].pi_name, sizeof(many_devices[i].pi_name), "many-%d", i);
+		many_devices[i].pi_d = many_vsock ? &devemu_vsock : &devemu_fixed;
+		snprintf(many_devices[i].pi_name, sizeof(many_devices[i].pi_name), "many-%d",
+		    many_same_name ? 0 : i);
 		many_devices[i].pi_bar[0].type = PCIBAR_MEM32;
 		many_devices[i].pi_bar[0].size = 4096;
 	}
@@ -552,7 +564,9 @@ pci_next(const struct pci_devinst *cursor)
 		return (&devices[0]);
 	if (cursor == &devices[0])
 		return (&devices[1]);
-	if (cursor == &devices[1])
+	if (cursor == &devices[1] && vsock_present)
+		return (&vsock_device);
+	if (cursor == &devices[1] || cursor == &vsock_device)
 		return (extra_devices > 0 ? &many_devices[0] : NULL);
 	if (cursor >= many_devices && cursor < many_devices + 300) {
 		ptrdiff_t i = cursor - many_devices;
@@ -614,6 +628,197 @@ bool
 tpm_device_present(void)
 {
 	return (tpm_present);
+}
+
+/* Merged TPM topology record: a fixed-contract device named "tpm" whose
+ * compatibility hash covers the 64-byte backend identity. */
+static uint8_t tpm_identity_seed = 0x5a;
+int
+tpm_device_migration_identity(uint8_t identity[TPM_MIGRATION_IDENTITY_SIZE])
+{
+	int error = boundary("tpm_device_migration_identity");
+
+	if (error != 0)
+		return (error);
+	memset(identity, tpm_identity_seed, TPM_MIGRATION_IDENTITY_SIZE);
+	return (0);
+}
+
+/* Configuration: active vsock and the v0.1.0 restore gate are opt-ins. */
+static bool config_active_vsock, config_restore_abi_v2;
+bool
+get_config_bool_default(const char *name, bool def)
+{
+	if (strcmp(name, "checkpoint.migrate_active_vsock") == 0)
+		return (config_active_vsock);
+	if (strcmp(name, "checkpoint.restore_abi_v2") == 0)
+		return (config_restore_abi_v2);
+	return (def);
+}
+
+/* Read-only ROM segments: the boot ROM exists on both hosts (its complete
+ * bytes are part of the topology identity); the PCI option ROM does not. */
+static uint8_t bootrom[2 * 4096];
+static uint8_t bootrom_seed = 0x3c;
+static int devmem_error, devmem_error_seg = -1;
+static bool bootrom_absent;
+int
+vm_get_devmem_info(struct vmctx *ctx, int segid, void **base, size_t *length,
+    char *name, size_t size)
+{
+	CHECK(ctx == &vm);
+	if (devmem_error != 0 && (devmem_error_seg < 0 || devmem_error_seg == segid)) {
+		errno = devmem_error;
+		return (-1);
+	}
+	if (segid != VM_BOOTROM || bootrom_absent) {
+		errno = ENOENT;
+		return (-1);
+	}
+	memset(bootrom, bootrom_seed, sizeof(bootrom));
+	*base = bootrom;
+	*length = sizeof(bootrom);
+	strlcpy(name, "bootrom", size);
+	return (0);
+}
+
+/* ------------------------------------------------- active vsock model */
+/*
+ * One virtio-vsock device with VSOCK_CONNS established connections.  The
+ * source capture encodes a real connection table and hands out one end of a
+ * socketpair per connection (the "guest-facing" end stays here so data
+ * written by a relay could be observed).  The destination restore decodes the
+ * table and must see exactly the source's connections.
+ */
+#define VSOCK_CONNS 2
+static struct pci_devemu devemu_vsock = {
+	.pe_emu = "virtio-vsock",
+	.pe_migration_flags = PCI_MIGRATION_F_STATE_CODEC |
+	    PCI_MIGRATION_F_COMPAT_FIXED | PCI_MIGRATION_F_DMA_NONE |
+	    PCI_MIGRATION_F_QUIESCE_NONE,
+};
+static int vsock_conns = VSOCK_CONNS;
+static int vsock_count_skew;	/* capture reports a count other than its table's */
+static int vsock_kept[VSOCK_MIGRATION_MAX_CONNS];
+static int vsock_restored;
+
+static void
+vsock_state(struct vsock_migration_conn_state *c, int i)
+{
+	memset(c, 0, sizeof(*c));
+	c->local_port = 2000 + (uint32_t)i;
+	c->guest_port = 3000 + (uint32_t)i;
+	c->type = (i & 1) ? VSOCK_MIGRATION_TYPE_SEQPACKET : VSOCK_MIGRATION_TYPE_STREAM;
+	c->state = VSOCK_MIGRATION_CONN_ESTABLISHED;
+	c->buf_alloc = 4096;
+}
+
+int
+pci_vtvsock_migration_capture(struct pci_devinst *pdi, uint8_t **wire, size_t *len,
+    int *fds, uint32_t capacity, uint32_t *count)
+{
+	struct vsock_migration_conn_state states[VSOCK_MIGRATION_MAX_CONNS];
+	int error = boundary("pci_vtvsock_migration_capture");
+
+	CHECK(pdi->pi_d == &devemu_vsock && vm.devices_paused && vm.cpus_paused);
+	if (error != 0)
+		return (error);
+	CHECK((uint32_t)vsock_conns <= capacity);
+	for (int i = 0; i < vsock_conns; i++)
+		vsock_state(&states[i], i);
+	CHECK(vsock_migration_table_size(states, (uint32_t)vsock_conns, len) == 0);
+	*wire = malloc(*len);
+	CHECK(*wire != NULL);
+	CHECK(vsock_migration_table_encode(states, (uint32_t)vsock_conns, *wire, *len) == 0);
+	for (int i = 0; i < vsock_conns; i++) {
+		int pair[2];
+		CHECK(socketpair(AF_UNIX, (states[i].type == VSOCK_MIGRATION_TYPE_SEQPACKET ?
+		    SOCK_SEQPACKET : SOCK_STREAM) | SOCK_CLOEXEC, 0, pair) == 0);
+		fds[i] = pair[0];
+		vsock_kept[i] = pair[1];
+	}
+	*count = (uint32_t)(vsock_conns + vsock_count_skew);
+	event("E vsock_captured %d", vsock_conns);
+	return (0);
+}
+
+int
+pci_vtvsock_migration_restore(struct pci_devinst *pdi, const uint8_t *wire, size_t len,
+    int *fds, uint32_t count)
+{
+	struct vsock_migration_conn_state states[VSOCK_MIGRATION_MAX_CONNS], expect;
+	uint32_t decoded;
+	int error = boundary("pci_vtvsock_migration_restore");
+
+	CHECK(pdi->pi_d == &devemu_vsock && vm.fenced);
+	if (error != 0)
+		return (error);
+	/* The device receives exactly the source's connection table. */
+	CHECK(vsock_migration_table_decode(wire, len, states, nitems(states), &decoded) == 0);
+	CHECK(decoded == count && count == (uint32_t)vsock_conns);
+	for (uint32_t i = 0; i < count; i++) {
+		vsock_state(&expect, (int)i);
+		CHECK(states[i].local_port == expect.local_port &&
+		    states[i].guest_port == expect.guest_port && states[i].type == expect.type);
+		CHECK(fds[i] >= 0);
+		vsock_kept[i] = fds[i];
+		fds[i] = -1;	/* consumed */
+	}
+	vsock_restored = (int)count;
+	event("E vsock_restored %u", count);
+	return (0);
+}
+
+/* Standby relay owner: prepare after COMMIT, activate after RELEASE (source)
+ * or before the guest runs (destination), cancel on any rollback. */
+static int relay_endpoints;
+int
+migration_vsock_owner_prepare(int stream, const struct migration_vsock_relay_endpoint *e,
+    size_t count)
+{
+	int error = boundary("migration_vsock_owner_prepare");
+
+	/* One or more devices, each with vsock_conns endpoints. */
+	CHECK(stream >= 0 && e != NULL && vsock_conns > 0 && count % (size_t)vsock_conns == 0);
+	for (size_t i = 0; i < count; i++)
+		CHECK(e[i].fd >= 0 && fcntl(e[i].fd, F_GETFD) >= 0 &&
+		    e[i].type == ((i & 1) ? VSOCK_MIGRATION_TYPE_SEQPACKET :
+		    VSOCK_MIGRATION_TYPE_STREAM));
+	if (error != 0)
+		return (error);
+	relay_endpoints = (int)count;
+	event("E relay_prepared %zu", count);
+	return (0);
+}
+
+int
+migration_vsock_owner_cancel(void)
+{
+	int error = boundary("migration_vsock_owner_cancel");
+
+	if (error != 0)
+		return (error);
+	relay_endpoints = 0;
+	event("E relay_cancelled");
+	return (0);
+}
+
+int
+migration_vsock_owner_activate(void)
+{
+	int error = boundary("migration_vsock_owner_activate");
+
+	if (error != 0)
+		return (error);
+	CHECK(relay_endpoints > 0);
+	event("E relay_activated");
+	return (0);
+}
+
+void
+migration_vsock_owner_detach(void)
+{
+	event("E relay_detached");
 }
 
 /* ----------------------------------------------- CPU/device/console */
@@ -853,23 +1058,77 @@ make_blob(uint8_t **buf, size_t *len, const uint8_t *record)
 	return (0);
 }
 
+/*
+ * Merged capture session: a successful capture keeps the event fence (the
+ * capture is active) until vm_snapshot_dev_state_finish(): commit after the
+ * source retired, rollback before anything resumes.
+ */
+static int captures_active;
+
 int
-vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **buf, size_t *len)
+vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **buf, size_t *len,
+    struct vm_snapshot_capture *capture)
 {
 	int error = boundary("vm_snapshot_dev_state_to_mem");
 
 	CHECK(ctx == &vm && vm.cpus_paused && vm.devices_paused);
-	return (error != 0 ? error : make_blob(buf, len, NULL));
+	CHECK(capture != NULL && !capture->active && !capture->unresolved);
+	if (error == 0)
+		error = make_blob(buf, len, NULL);
+	if (error == 0) {
+		capture->active = true;
+		captures_active++;
+		event("E capture_held");
+	}
+	return (error);
 }
 
 int
 vm_snapshot_fresh_dev_state_to_mem(struct vmctx *ctx,
-    const uint8_t record[HYPERTRACE_SESSION_RECORD_SIZE], uint8_t **buf, size_t *len)
+    const uint8_t record[HYPERTRACE_SESSION_RECORD_SIZE], uint8_t **buf, size_t *len,
+    struct vm_snapshot_capture *capture)
 {
 	int error = boundary("vm_snapshot_fresh_dev_state_to_mem");
 
 	CHECK(ctx == &vm && vm.cpus_paused && vm.devices_paused);
-	return (error != 0 ? error : make_blob(buf, len, record));
+	CHECK(capture != NULL && !capture->active && !capture->unresolved);
+	if (error == 0)
+		error = make_blob(buf, len, record);
+	if (error == 0) {
+		capture->active = true;
+		captures_active++;
+		event("E capture_held");
+	}
+	return (error);
+}
+
+int
+vm_snapshot_dev_state_finish(struct vmctx *ctx, struct vm_snapshot_capture *capture,
+    bool commit)
+{
+	int error;
+
+	if (capture == NULL || capture->unresolved)
+		return (EINVAL);
+	if (!capture->active)
+		return (0);
+	error = boundary("vm_snapshot_dev_state_finish");
+	CHECK(ctx != NULL);
+	/* Commit only for a retiring source whose kernel VM still exists;
+	 * rollback only while every vCPU and device is still paused. */
+	if (commit)
+		CHECK(!vm.destroyed);
+	else
+		CHECK(vm.cpus_paused && vm.devices_paused);
+	if (error == FAULT_NOERRNO) {
+		/* Model a release whose ownership the kernel could not resolve. */
+		capture->unresolved = true;
+		return (EIO);
+	}
+	capture->active = false;
+	captures_active--;
+	event("E capture_finished %d", commit);
+	return (error);
 }
 
 static uint8_t committed_blob[MIGRATE_BLOB_HDR + META_LEN + KERNEL_LEN +
@@ -1161,6 +1420,7 @@ struct scenario {
 	int topology_variant;
 	const char *gdb_refusal;
 	uint64_t max_rounds;	/* 0: default */
+	bool active_vsock;	/* checkpoint.migrate_active_vsock on both hosts */
 };
 
 static int control_fd = -1;
@@ -1748,6 +2008,7 @@ run_source(const struct scenario *s, int fd)
 	role = 'S';
 	vm_model_init(7, 70, 0x11);
 	devices_init();
+	config_active_vsock = vsock_present = s->active_vsock;
 	gdb_refusal = s->gdb_refusal;
 	if (s->tracing) {
 		setup_anchor();
@@ -1819,6 +2080,7 @@ run_destination(const struct scenario *s, int fd)
 	signal(SIGUSR1, lose_on_signal);
 	vm_model_init(9, 90, 0x99);
 	devices_init();
+	config_active_vsock = vsock_present = s->active_vsock;
 	vm.fenced = true;
 	if (s->no_highmem)
 		fake_highmem = 0;
@@ -1864,6 +2126,7 @@ run_destination(const struct scenario *s, int fd)
 	fprintf(out, "error %d\nphase %u\nreason %u\nresumed %d\nretained %d\nack %d\n",
 	    error, result.phase, result.reason, result.resumed, result.retained,
 	    result.release_ack_sent);
+	fprintf(out, "vsock_restored %d\n", vsock_restored);
 	fprintf(out, "resumes %d\nram_crc %08lx\nblob %zu\n", vm.resumes,
 	    crc32(crc32(0, vm.low, LOWMEM), vm.high, HIGHMEM), committed_len);
 	fclose(out);
@@ -1924,6 +2187,12 @@ check_events(const char *label, struct outcome *o)
 	double retire_begin = -1, destroyed = -1, first_dest_resume = -1;
 	int dest_resumes = 0;
 	bool source_resumed_after_retire = false;
+	/* Merged capture/relay order (source S, destination D). */
+	double s_prepared = -1, s_cancelled = -1, s_activated = -1, s_quarantined = -1;
+	double d_prepared = -1, d_activated = -1, held = -1, finished = -1;
+	int finished_commit = -1;
+	bool order_violation = false;
+	char order_what[96] = "";
 
 	snprintf(path, sizeof(path), "%s/events", workdir);
 	f = fopen(path, "r");
@@ -1951,7 +2220,82 @@ check_events(const char *label, struct outcome *o)
 			dest_resumes++;
 			if (first_dest_resume < 0)
 				first_dest_resume = ts;
+			/* A prepared destination relay is activated before the guest. */
+			if (who == 'D' && d_prepared >= 0 && d_activated < 0) {
+				order_violation = true;
+				strlcpy(order_what, "destination resumed before relay activation",
+				    sizeof(order_what));
+			}
 		}
+		if (who == 'S' && strcmp(what, "quarantined") == 0 && s_quarantined < 0)
+			s_quarantined = ts;
+		if (strcmp(what, "relay_prepared") == 0) {
+			if (who == 'S') {
+				s_prepared = ts;
+				s_cancelled = -1;
+				/* After COMMIT, before the irreversible INTENT. */
+				if (s_quarantined >= 0) {
+					order_violation = true;
+					strlcpy(order_what, "source relay prepared after INTENT",
+					    sizeof(order_what));
+				}
+			} else
+				d_prepared = ts;
+		}
+		if (who == 'S' && strcmp(what, "relay_cancelled") == 0)
+			s_cancelled = ts;
+		if (strcmp(what, "relay_activated") == 0) {
+			if (who == 'S') {
+				s_activated = ts;
+				/* Only after RELEASE, which follows destruction. */
+				if (destroyed < 0 || s_prepared < 0 || s_cancelled >= 0) {
+					order_violation = true;
+					strlcpy(order_what, "source relay activated before retirement",
+					    sizeof(order_what));
+				}
+			} else {
+				d_activated = ts;
+				if (d_prepared < 0) {
+					order_violation = true;
+					strlcpy(order_what, "destination relay activated unprepared",
+					    sizeof(order_what));
+				}
+			}
+		}
+		if (who == 'S' && strcmp(what, "capture_held") == 0) {
+			held = ts;
+			finished = -1;
+		}
+		if (who == 'S' && strcmp(what, "capture_finished") == 0) {
+			finished = ts;
+			finished_commit = atoi(arg);
+			/* A commit finish belongs to a retiring source that still
+			 * exists; it precedes kernel destruction. */
+			if (finished_commit == 1 && destroyed >= 0) {
+				order_violation = true;
+				strlcpy(order_what, "capture committed after destruction",
+				    sizeof(order_what));
+			}
+		}
+		if (who == 'S' && strcmp(what, "devices_resumed") == 0) {
+			/* Rollback merges deferred events and cancels a prepared
+			 * relay before any device runs again. */
+			if (held >= 0 && finished < 0) {
+				order_violation = true;
+				strlcpy(order_what, "source devices resumed with the capture held",
+				    sizeof(order_what));
+			}
+			if (s_prepared >= 0 && s_cancelled < 0 && s_activated < 0) {
+				order_violation = true;
+				strlcpy(order_what, "source resumed with a prepared relay",
+				    sizeof(order_what));
+			}
+			held = -1;
+		}
+	}
+	if (order_violation) {
+		fprintf(stderr, "%s: order violated: %s\n", label, order_what);
+		abort();
 	}
 	fclose(f);
 	o->events_dest_resumed = dest_resumes;
@@ -2742,15 +3086,45 @@ source_contracts(void)
 		CHECK(migration_prod_fill_hello(&vm, NULL) == EINVAL);
 		CHECK(migration_prod_fill_topology(NULL, topo) == EINVAL);
 		CHECK(migration_prod_fill_topology(&vm, NULL) == EINVAL);
-		/* TPM state has no portable contract: refused. */
-		tpm_present = true;
-		CHECK(migration_prod_fill_topology(&vm, topo) == ENOTSUP);
-		tpm_present = false;
+		/* Merged: a TPM is a fixed-contract topology record whose hash is
+		 * the CRC-32 of its 64-byte backend identity; the boot ROM record
+		 * carries a 64-bit FNV-1a digest of its bytes and length. */
 		devices_init();
 		CHECK(migration_prod_fill_topology(&vm, topo) == 0);
-		CHECK(topo->device_count == 3 && topo->sockets == 1 && topo->cores == 2);
-		CHECK(strcmp(topo->devices[2].name, "qemu_fwcfg") == 0 ||
+		CHECK(topo->device_count == 4 && topo->sockets == 1 && topo->cores == 2);
+		CHECK(strcmp(topo->devices[2].name, QEMU_FWCFG_SNAPSHOT_NAME) == 0 &&
 		    topo->devices[2].compat_crc32 == 0xfeedf00d);
+		{
+			uint64_t fnv = UINT64_C(14695981039346656037);
+			for (size_t i = 0; i < sizeof(bootrom); i++)
+				fnv = (fnv ^ bootrom_seed) * UINT64_C(1099511628211);
+			for (unsigned i = 0; i < 8; i++)
+				fnv = (fnv ^ (((uint64_t)sizeof(bootrom) >> (i * 8)) & 0xff)) *
+				    UINT64_C(1099511628211);
+			CHECK(strcmp(topo->devices[3].name, "_vmm.bootrom") == 0);
+			CHECK(topo->devices[3].compat_crc32 == (uint32_t)fnv &&
+			    topo->devices[3].bar_hash == (uint32_t)(fnv >> 32));
+		}
+		tpm_present = true;
+		CHECK(migration_prod_fill_topology(&vm, topo) == 0 && topo->device_count == 5);
+		{
+			uint8_t id[TPM_MIGRATION_IDENTITY_SIZE];
+			memset(id, tpm_identity_seed, sizeof(id));
+			CHECK(strcmp(topo->devices[3].name, TPM_SNAPSHOT_NAME) == 0);
+			CHECK(topo->devices[3].compat_schema == TPM_MIGRATION_COMPAT_SCHEMA);
+			CHECK(topo->devices[3].compat_crc32 == (uint32_t)crc32(0, id, sizeof(id)));
+			CHECK(topo->devices[3].migration_flags == (PCI_MIGRATION_F_STATE_CODEC |
+			    PCI_MIGRATION_F_COMPAT_FIXED | PCI_MIGRATION_F_DMA_NONE |
+			    PCI_MIGRATION_F_QUIESCE_CALLBACK));
+		}
+		inject("tpm_device_migration_identity", 1, EIO);
+		CHECK(migration_prod_fill_topology(&vm, topo) == EIO);
+		nfaults = 0;
+		tpm_present = false;
+		/* A ROM query failure other than absence is reported. */
+		devmem_error = EACCES;
+		CHECK(migration_prod_fill_topology(&vm, topo) == EACCES);
+		devmem_error = 0;
 		/* Topology query failure leaves CPU shape zero but succeeds. */
 		nfaults = 1;
 		faults[0].role = 'S';
@@ -2916,6 +3290,97 @@ test_faults(const struct scenario *s)
 	    dest_resumed, retained, blocked, noerrno_runs);
 }
 
+/*
+ * Active vsock (merged).  Plaintext same-host handoff of a paused vsock
+ * device: the destination restores exactly the source's connection table,
+ * both relay owners are prepared and activated in protocol order (checked in
+ * check_events), and an idle prestarted owner is detached when no endpoint
+ * exists.  With TLS both endpoints refuse before any state moves.
+ */
+static void
+vsock_tls_source_refusal(void)
+{
+	nvlist_t *request, *reply;
+	int pair[2];
+
+	role = 'S';
+	tracing_mode = false;
+	vm_model_init(7, 70, 0x11);
+	devices_init();
+	config_active_vsock = vsock_present = true;
+	CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0);
+	request = nvlist_create(0);
+	nvlist_move_descriptor(request, "fd", pair[0]);
+	source_credentials(request);
+	reply = ipc_call("migrate", request);
+	CHECK(strstr(nvlist_get_string(reply, "error"), "active vsock") != NULL);
+	CHECK(nvlist_get_number(reply, "phase") == MIGRATION_PHASE_FAILED &&
+	    nvlist_get_number(reply, "reason") == MIGRATION_REASON_CAPS &&
+	    nvlist_get_bool(reply, "source_runnable"));
+	/* Nothing was paused, captured or sent. */
+	CHECK(!vm.cpus_paused && !vm.devices_paused && *boundary_count("fbsdrun_migration_pause_cpus") == 0);
+	{
+		uint8_t byte;
+		CHECK(recv(pair[1], &byte, 1, MSG_DONTWAIT) <= 0);
+	}
+	nvlist_destroy(reply);
+	nvlist_destroy(request);
+	close(pair[1]);
+	exit(0);
+}
+
+static void
+vsock_tls_destination_refusal(void)
+{
+	struct migration_session_config config = {0};
+	struct migration_tls_credentials credentials;
+	struct migration_dest_result result;
+	int pair[2];
+
+	role = 'D';
+	tracing_mode = false;
+	vm_model_init(9, 90, 0x99);
+	devices_init();
+	vm.fenced = true;
+	config_active_vsock = vsock_present = true;
+	destination_credentials(&credentials);
+	config.tls_credentials = &credentials;
+	config.version_max = MIGRATION_PROTO_VERSION;
+	config.version_min = MIGRATION_PROTO_VERSION_MIN;
+	CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0);
+	CHECK(migration_prod_dest_serve(&vm, pair[0], &config, &result) == EPROTONOSUPPORT);
+	CHECK(result.phase == MIGRATION_PHASE_FAILED && result.reason == MIGRATION_REASON_CAPS);
+	CHECK(!result.retained && vm.resumes == 0 && vm.fenced);
+	CHECK(!migration_prod_dest_retained());
+	exit(0);
+}
+
+static void
+test_vsock(const struct scenario *s)
+{
+	struct outcome o;
+
+	run_scenario(s, NULL, &o);
+	CHECK(o.source_status == BHYVE_EXIT_SUSPEND && o.dest_resumed == 1);
+	CHECK(kv_int("destination-result", "vsock_restored") == VSOCK_CONNS);
+	CHECK(count_events("S E vsock_captured") == 1 && count_events("D E vsock_restored") == 1);
+	CHECK(count_events("S E relay_prepared") == 1 && count_events("S E relay_activated") == 1);
+	CHECK(count_events("D E relay_prepared") == 1 && count_events("D E relay_activated") == 1);
+	CHECK(count_events("S E relay_cancelled") == 0 && count_events("D E relay_detached") == 0);
+	CHECK(count_events("S E capture_finished 1") == 1);
+	/* No connection: an idle destination owner is detached after success. */
+	vsock_conns = 0;
+	run_scenario(s, NULL, &o);
+	CHECK(o.source_status == BHYVE_EXIT_SUSPEND && o.dest_resumed == 1);
+	CHECK(count_events("S E relay_prepared") == 0 && count_events("D E relay_prepared") == 0);
+	CHECK(count_events("D E relay_detached") == 1);
+	vsock_conns = VSOCK_CONNS;
+	in_child("vsock TLS source refusal", vsock_tls_source_refusal);
+	in_child("vsock TLS destination refusal", vsock_tls_destination_refusal);
+	printf("vsock: plaintext handoff with %d connections, empty bundle, TLS refusals\n",
+	    VSOCK_CONNS);
+}
+
 static void
 test_root_mismatch(void)
 {
@@ -3057,6 +3522,7 @@ main(int argc, char **argv)
 	static const struct scenario plain_tls = { .name = "plain-tls", .tls = true,
 	    .max_rounds = 7 };
 	static const struct scenario lowmem_only = { .name = "plain-lowmem", .no_highmem = true };
+	static const struct scenario vsock = { .name = "plain-vsock", .active_vsock = true };
 	static const struct scenario fresh = { .name = "fresh-managed", .tracing = true,
 	    .tls = true, .managed = true, .recover_ipc = true };
 
@@ -3077,6 +3543,8 @@ main(int argc, char **argv)
 	test_repair();
 	test_restart_recovery();
 	test_reconstruction();
+	test_vsock(&vsock);
+	test_faults(&vsock);
 	test_faults(&plain);
 	test_faults(&plain_tls);
 	test_faults(&fresh);

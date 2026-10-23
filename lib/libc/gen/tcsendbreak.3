@@ -142,8 +142,7 @@ function could write all buffered output.
 .Sh SEE ALSO
 .Xr tcsetattr 3 ,
 .Xr termios 4 ,
-.Xr tty 4 ,
-.Xr comcontrol 8
+.Xr tty 4
 .Sh STANDARDS
 The
 .Fn tcsendbreak ,
@@ -159,8 +158,6 @@ The
 function is expected to be compliant with
 .St -p1003.1-88
 when the drain wait value is set to zero with
-.Xr comcontrol 8 ,
-or with
 .Xr ioctl 2
 .Va TIOCSDRAINWAIT ,
 or with

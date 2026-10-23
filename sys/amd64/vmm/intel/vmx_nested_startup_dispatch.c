@@ -74,7 +74,9 @@ nvmxsd_ops_valid(const struct vmx_nested_startup_dispatch_ops *ops)
 
 	return (ops != NULL && ops->claim_begin != NULL &&
 	    ops->claim_check != NULL && ops->claim_abort != NULL &&
-	    ops->derive != NULL && ops->transaction.prepare_l0 != NULL &&
+	    ops->derive != NULL &&
+	    ops->transaction.discard_l0_sipi != NULL &&
+	    ops->transaction.prepare_l0 != NULL &&
 	    ops->transaction.apply_l0 != NULL &&
 	    ops->transaction.commit_active_l2 != NULL &&
 	    ops->transaction.claim_finish != NULL);
@@ -89,6 +91,8 @@ nvmxsd_ops_equal(const struct vmx_nested_startup_dispatch_ops *left,
 	    left->claim_check == right->claim_check &&
 	    left->claim_abort == right->claim_abort &&
 	    left->derive == right->derive &&
+	    left->transaction.discard_l0_sipi ==
+	    right->transaction.discard_l0_sipi &&
 	    left->transaction.prepare_l0 ==
 	    right->transaction.prepare_l0 &&
 	    left->transaction.apply_l0 == right->transaction.apply_l0 &&

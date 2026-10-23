@@ -233,6 +233,7 @@ vmx_nested_startup_plan(const struct vmx_nested_startup_input *input,
 	    input->kind >= VMX_NESTED_STARTUP_KIND_LAST ||
 	    (input->kind == VMX_NESTED_STARTUP_INIT && input->vector != 0) ||
 	    (input->active_l2 && input->nested_entry_pending) ||
+	    (input->active_l2 && input->l0_wait_for_sipi) ||
 	    ((input->active_l2 || input->nested_entry_pending) &&
 	    !input->vmx_operation) ||
 	    (!input->active_l2 && (input->continuation_pending ||
@@ -246,6 +247,12 @@ vmx_nested_startup_plan(const struct vmx_nested_startup_input *input,
 	if (input->nested_entry_pending || input->continuation_pending ||
 	    input->reinjection_pending) {
 		candidate.action = VMX_NESTED_STARTUP_ACTION_RETAIN_RETRY;
+	} else if (!input->active_l2 &&
+	    input->kind == VMX_NESTED_STARTUP_SIPI &&
+	    !input->l0_wait_for_sipi) {
+		/* A running L0 AP ignores a SIPI without changing CS or RIP. */
+		candidate.action = VMX_NESTED_STARTUP_ACTION_DISCARD;
+		candidate.consume_claim = true;
 	} else if (!input->active_l2 && input->vmx_operation &&
 	    input->kind == VMX_NESTED_STARTUP_INIT) {
 		/* INIT is blocked, rather than consumed, during VMX operation. */

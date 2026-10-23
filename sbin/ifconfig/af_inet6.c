@@ -93,22 +93,66 @@ extern void nd6_status(if_ctx *);
 
 static	char addr_buf[NI_MAXHOST];	/*for getnameinfo()*/
 
+#ifdef WITHOUT_NETLINK
+static	void in6_getprefix(const char *, int);
+#endif
+
+/* "prefixlen" (af_getprefix): the prefix length of the new address. */
 static void
-setifprefixlen(if_ctx *ctx __netlink_unused, const char *addr, int dummy __unused)
+in6_setprefixlen(const char *addr, int which __netlink_unused)
 {
 #ifdef WITHOUT_NETLINK
-	const struct afswtch *afp = ctx->afp;
-
-        if (afp->af_getprefix != NULL)
-                afp->af_getprefix(addr, MASK);
+	in6_getprefix(addr, which);
 #else
-	int plen = strtol(addr, NULL, 10);
+	const char *errstr;
+	int plen;
 
-	if ((plen < 0) || (plen > 128))
+	plen = (int)strtonum(addr, 0, 128, &errstr);
+	if (errstr != NULL)
 		errx(1, "%s: bad value", addr);
 	in6_add.addr.plen = plen;
 #endif
 	explicit_prefix = 1;
+}
+
+/*
+ * The prefix length of a netmask, or -1 if it is not contiguous (OpenBSD
+ * rejects those).
+ */
+static int
+in6_mask2plen(const struct in6_addr *mask)
+{
+	const u_char *p = mask->s6_addr;
+	int byte, bit, plen = 0;
+
+	for (byte = 0; byte < 16 && p[byte] == 0xff; byte++)
+		plen += 8;
+	if (byte < 16) {
+		for (bit = 7; bit >= 0 && (p[byte] & (1 << bit)); bit--)
+			plen++;
+		for (; bit >= 0; bit--)
+			if (p[byte] & (1 << bit))
+				return (-1);
+		for (byte++; byte < 16; byte++)
+			if (p[byte] != 0)
+				return (-1);
+	}
+	return (plen);
+}
+
+/* OpenBSD "netmask" for inet6: a contiguous mask, as a prefix length. */
+static int
+in6_getmask(const char *s)
+{
+	struct in6_addr mask;
+	int plen;
+
+	if (inet_pton(AF_INET6, s, &mask) != 1)
+		errx(1, "%s: bad value", s);
+	if ((plen = in6_mask2plen(&mask)) < 0)
+		errx(1, "%s: non-contiguous netmask", s);
+	explicit_prefix = 1;
+	return (plen);
 }
 
 static void
@@ -172,13 +216,61 @@ setip6vltime(if_ctx *ctx, const char *seconds, int dummy __unused)
 	setip6lifetime(ctx, "vltime", seconds);
 }
 
+/*
+ * Enable IPv6 on the interface and configure its link-local address, as
+ * OpenBSD's SIOCIFAFATTACH: clear ifdisabled, and set auto_linklocal
+ * from clear, since that transition creates the link-local address even
+ * on an interface that is down.
+ */
+static void
+in6_attach(if_ctx *ctx)
+{
+	struct in6_ndireq nd = {};
+	int s;
+
+	if ((s = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+		err(1, "socket(AF_INET6)");
+	strlcpy(nd.ifname, ctx->ifname, sizeof(nd.ifname));
+	if (ioctl(s, SIOCGIFINFO_IN6, &nd) == -1)
+		err(1, "ioctl(SIOCGIFINFO_IN6)");
+	nd.ndi.flags &= ~(ND6_IFF_IFDISABLED | ND6_IFF_AUTO_LINKLOCAL);
+	if (ioctl(s, SIOCSIFINFO_IN6, &nd) == -1)
+		err(1, "ioctl(SIOCSIFINFO_IN6)");
+	nd.ndi.flags |= ND6_IFF_AUTO_LINKLOCAL;
+	if (ioctl(s, SIOCSIFINFO_IN6, &nd) == -1)
+		err(1, "ioctl(SIOCSIFINFO_IN6)");
+	close(s);
+}
+
+static bool
+in6_find_lladdr(if_ctx *ctx, struct in6_addr *lladdr)
+{
+	struct ifaddrs *ifap, *ifa;
+	const struct sockaddr_in6 *sin6;
+	bool found = false;
+
+	if (getifaddrs(&ifap) != 0)
+		err(EXIT_FAILURE, "getifaddrs");
+	for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+		if (ifa->ifa_addr->sa_family == AF_INET6 &&
+		    strcmp(ifa->ifa_name, ctx->ifname) == 0) {
+			sin6 = (const struct sockaddr_in6 *)satosin6(ifa->ifa_addr);
+			if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr)) {
+				*lladdr = sin6->sin6_addr;
+				found = true;
+				break;
+			}
+		}
+	}
+	freeifaddrs(ifap);
+	return (found);
+}
+
 static void
 setip6eui64(if_ctx *ctx, const char *cmd, int dummy __unused)
 {
 	const struct afswtch *afp = ctx->afp;
-	struct ifaddrs *ifap, *ifa;
-	const struct sockaddr_in6 *sin6 = NULL;
-	const struct in6_addr *lladdr = NULL;
+	struct in6_addr lladdr;
 	struct in6_addr *in6;
 
 	if (afp->af_af != AF_INET6)
@@ -190,24 +282,15 @@ setip6eui64(if_ctx *ctx, const char *cmd, int dummy __unused)
 #endif
 	if (memcmp(&in6addr_any.s6_addr[8], &in6->s6_addr[8], 8) != 0)
 		errx(EXIT_FAILURE, "interface index is already filled");
-	if (getifaddrs(&ifap) != 0)
-		err(EXIT_FAILURE, "getifaddrs");
-	for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
-		if (ifa->ifa_addr->sa_family == AF_INET6 &&
-		    strcmp(ifa->ifa_name, ctx->ifname) == 0) {
-			sin6 = (const struct sockaddr_in6 *)satosin6(ifa->ifa_addr);
-			if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr)) {
-				lladdr = &sin6->sin6_addr;
-				break;
-			}
-		}
+	/* As OpenBSD, "eui64" attaches IPv6 to the interface first. */
+	if (!in6_find_lladdr(ctx, &lladdr)) {
+		in6_attach(ctx);
+		if (!in6_find_lladdr(ctx, &lladdr))
+			errx(EXIT_FAILURE,
+			    "could not determine link local address");
 	}
-	if (!lladdr)
-		errx(EXIT_FAILURE, "could not determine link local address"); 
 
- 	memcpy(&in6->s6_addr[8], &lladdr->s6_addr[8], 8);
-
-	freeifaddrs(ifap);
+ 	memcpy(&in6->s6_addr[8], &lladdr.s6_addr[8], 8);
 }
 
 static void
@@ -326,10 +409,12 @@ in6_status(if_ctx *ctx, const struct ifaddrs *ifa)
 		sin = satosin6(ifa->ifa_dstaddr);
 		/*
 		 * some of the interfaces do not have valid destination
-		 * address.
+		 * address; print OpenBSD's unset destination.
 		 */
 		if (sin != NULL && sin->sin6_family == AF_INET6)
 			print_p2p(sin);
+		else
+			printf(" --> ::");
 	}
 
 	sin = satosin6(ifa->ifa_netmask);
@@ -382,7 +467,7 @@ show_lifetime(struct ifa_cacheinfo *ci)
 }
 
 static void
-in6_status_nl(if_ctx *ctx __unused, if_link_t *link __unused, if_addr_t *ifa)
+in6_status_nl(if_ctx *ctx __unused, if_link_t *link, if_addr_t *ifa)
 {
 	int plen = ifa->ifa_prefixlen;
 	uint32_t scopeid;
@@ -391,6 +476,9 @@ in6_status_nl(if_ctx *ctx __unused, if_link_t *link __unused, if_addr_t *ifa)
 		/* Non-P2P address */
 		scopeid = satosin6(ifa->ifa_address)->sin6_scope_id;
 		print_addr(satosin6(ifa->ifa_address));
+		/* As OpenBSD, show the unset destination on a P2P link. */
+		if (link->ifi_flags & IFF_POINTOPOINT)
+			printf(" --> ::");
 	} else {
 		scopeid = satosin6(ifa->ifa_local)->sin6_scope_id;
 		print_addr(satosin6(ifa->ifa_local));
@@ -430,13 +518,16 @@ in6_getaddr(const char *addr_str, int which)
 {
         struct in6_px *px = sin6tab_nl[which];
 
-	if (which == MASK)
-		errx(1, "netmask: invalid option for inet6");
+	if (which == MASK) {
+		in6_add.addr.plen = in6_getmask(addr_str);
+		return;
+	}
 	if (which == BRDADDR)
 		errx(1, "broadcast: invalid option for inet6");
 
         px->set = true;
-        px->plen = 128;
+	if (which != ADDR || explicit_prefix == 0)
+		px->plen = 128;
         if (which == ADDR) {
                 char *p = NULL;
                 if((p = strrchr(addr_str, '/')) != NULL) {
@@ -546,6 +637,14 @@ in6_getaddr(const char *s, int which)
 	struct addrinfo hints, *res;
 	int error = -1;
 
+	if (which == MASK) {
+		char plen[4];
+
+		snprintf(plen, sizeof(plen), "%d", in6_getmask(s));
+		in6_getprefix(plen, MASK);
+		return;
+	}
+
 	sin->sin6_len = sizeof(*sin);
 	if (which != MASK)
 		sin->sin6_family = AF_INET6;
@@ -632,15 +731,26 @@ sec2str(time_t total)
 }
 
 static void
-in6_postproc(if_ctx *ctx, int newaddr __unused,
-    int ifflags __unused)
+in6_postproc(if_ctx *ctx __unused, int newaddr __unused, int ifflags)
 {
+#ifdef WITHOUT_NETLINK
+	bool dst = in6_addreq.ifra_dstaddr.sin6_family == AF_INET6;
+#else
+	bool dst = in6_add.dst_addr.set;
+#endif
+
 	if (explicit_prefix == 0) {
-		/* Aggregatable address architecture defines all prefixes
-		   are 64. So, it is convenient to set prefixlen to 64 if
-		   it is not specified. */
-		setifprefixlen(ctx, "64", 0);
-		/* in6_getprefix("64", MASK) if MASK is available here... */
+		/*
+		 * Aggregatable address architecture defines all prefixes
+		 * are 64. So, it is convenient to set prefixlen to 64 if
+		 * it is not specified.  As OpenBSD, an address with a
+		 * destination on a point-to-point interface gets 128,
+		 * which it requires.
+		 */
+		if (dst && (ifflags & IFF_POINTOPOINT))
+			in6_setprefixlen("128", MASK);
+		else
+			in6_setprefixlen("64", MASK);
 	}
 }
 
@@ -698,8 +808,48 @@ in6_set_vhid(int vhid)
 #endif
 }
 
+/*
+ * OpenBSD "-inet6": disable IPv6 on the interface and remove all of its
+ * IPv6 addresses, including the link-local ones.  On 5BSD this sets the
+ * ifdisabled and clears the auto_linklocal nd6 flags; "inet6 -ifdisabled
+ * auto_linklocal" enables IPv6 again.
+ */
+static void
+setinet6disable(if_ctx *ctx, const char *dummy __unused, int d __unused)
+{
+	struct in6_ndireq nd = {};
+	struct in6_ifreq ifr6;
+	struct ifaddrs *ifap, *ifa;
+	int s;
+
+	if ((s = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+		err(1, "socket(AF_INET6)");
+	strlcpy(nd.ifname, ctx->ifname, sizeof(nd.ifname));
+	if (ioctl(s, SIOCGIFINFO_IN6, &nd) == -1)
+		err(1, "ioctl(SIOCGIFINFO_IN6)");
+	nd.ndi.flags |= ND6_IFF_IFDISABLED;
+	nd.ndi.flags &= ~ND6_IFF_AUTO_LINKLOCAL;
+	if (ioctl(s, SIOCSIFINFO_IN6, &nd) == -1)
+		err(1, "ioctl(SIOCSIFINFO_IN6)");
+
+	if (getifaddrs(&ifap) != 0)
+		err(1, "getifaddrs");
+	for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
+		if (ifa->ifa_addr == NULL ||
+		    ifa->ifa_addr->sa_family != AF_INET6 ||
+		    strcmp(ifa->ifa_name, ctx->ifname) != 0)
+			continue;
+		memset(&ifr6, 0, sizeof(ifr6));
+		strlcpy(ifr6.ifr_name, ctx->ifname, sizeof(ifr6.ifr_name));
+		memcpy(&ifr6.ifr_addr, ifa->ifa_addr, sizeof(ifr6.ifr_addr));
+		if (ioctl(s, SIOCDIFADDR_IN6, &ifr6) == -1)
+			warn("SIOCDIFADDR_IN6");
+	}
+	freeifaddrs(ifap);
+	close(s);
+}
+
 static struct cmd inet6_cmds[] = {
-	DEF_CMD_ARG("prefixlen",			setifprefixlen),
 	DEF_CMD("anycast",	IN6_IFF_ANYCAST,	setip6flags),
 	DEF_CMD("tentative",	IN6_IFF_TENTATIVE,	setip6flags),
 	DEF_CMD("-tentative",	-IN6_IFF_TENTATIVE,	setip6flags),
@@ -730,6 +880,7 @@ static struct cmd inet6_cmds[] = {
 	DEF_CMD("eui64",	0,			setip6eui64),
 	DEF_CMD("stableaddr",	ND6_IFF_STABLEADDR,	setnd6flags),
 	DEF_CMD("-stableaddr",	-ND6_IFF_STABLEADDR,	setnd6flags),
+	DEF_CMD("-inet6",	0,			setinet6disable),
 };
 
 static struct afswtch af_inet6 = {
@@ -742,9 +893,7 @@ static struct afswtch af_inet6 = {
 #endif
 	.af_getaddr	= in6_getaddr,
 	.af_copyaddr	= in6_copyaddr,
-#ifdef WITHOUT_NETLINK
-	.af_getprefix	= in6_getprefix,
-#endif
+	.af_getprefix	= in6_setprefixlen,
 	.af_other_status = nd6_status,
 	.af_postproc	= in6_postproc,
 	.af_status_tunnel = in6_status_tunnel,

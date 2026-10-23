@@ -121,7 +121,7 @@ Module-specific drop-ins
 .Dl sysconf sysctl -d kern.maxfiles
 .Dl sysconf sysctl -L
 .Dl sysconf sysctl -LE
-.Dl sysconf sysctl -k ipfw net.inet.ip.fw.verbose=1
+.Dl sysconf sysctl -k dummynet net.inet.ip.dummynet.io_fast=1
 .Dl sysconf -x sysctl vfs.usermount
 .Dl sysconf -j www sysctl kern.ipc.somaxconn=1024
 .Pp

@@ -103,10 +103,6 @@ RUNTIMELINKS=	passwd.5 master.passwd.5
 RUNTIMELINKS+=	passwd.5 pwd.db.5
 RUNTIMELINKS+=	passwd.5 spwd.db.5
 
-MANGROUPS+=				SMB
-SMBPACKAGE=				smbutils
-SMB=		nsmb.conf.5
-
 MANGROUPS.${MK_OPENSSH}+=		SSH
 SSHPACKAGE=				ssh
 SSH=		moduli.5
@@ -122,5 +118,8 @@ _boot.config.5=	boot.config.5
 MANGROUPS+=		MAC_ABAC
 MAC_ABACPACKAGE=	mac-abac
 MAC_ABAC=		mac_abac.conf.5
+
+# OpenBSD PF manual pages (pf.conf, pf.os).
+.PATH: ${SRCTOP}/contrib/openbsd-pf/share/man/man5
 
 .include <bsd.prog.mk>

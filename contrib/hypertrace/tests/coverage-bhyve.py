@@ -217,15 +217,86 @@ OUTCOME_CLASSES = {
 }
 OUTCOME_WAIVERS = {
     BHYVE + 'migration_session.c': [
+        # --- merge (protocol 3, active vsock), arms shown unreachable ---
+        # a v1 frame cannot carry type 14 (the frame decoder refuses it), a
+        # memory chunk in progress is refused before the type dispatch, a
+        # started plain table is already seen, and the chunk header decoder
+        # accepts every buffer of its fixed size
+        ('migration_dest_run', ['if (sess.version < 2 || ops->do_stage_vsock == NULL ||'], 8, 'T', 'decoder-guarantee'),
+        ('migration_dest_run', ['(caps.capability_flags & MIGRATION_CAP_VSOCK_STATE) == 0 ||',
+         '!final_mem_seen || mem_chunk_started ||'], 27, 'T', 'state-invariant'),
+        ('migration_dest_run', ['(vsock_state_started && vsock_reasm == NULL)) {'], 33, 'T', 'state-invariant'),
+        ('migration_dest_run', ['MIGRATION_CHUNK_HDR_SIZE, &chunk);', 'if (error != 0 || chunk.total_length == 0 ||'],
+         9, 'T', 'decoder-total'),
+        # the second reserved-byte test repeats the first one verbatim
+        ('migration_hello_decode', ['if ((candidate.capability_flags & ~MIGRATION_CAP_ALL) != 0)', 'return (EBADMSG);',
+         'if (buf[5] != 0 || buf[6] != 0 || buf[7] != 0 ||'], 6, 'T', 'validator-implied'),
+        ('migration_hello_decode', ['if ((candidate.capability_flags & ~MIGRATION_CAP_ALL) != 0)', 'return (EBADMSG);',
+         'if (buf[5] != 0 || buf[6] != 0 || buf[7] != 0 ||'], 21, 'T', 'validator-implied'),
+        ('migration_hello_decode', ['if ((candidate.capability_flags & ~MIGRATION_CAP_ALL) != 0)', 'return (EBADMSG);',
+         'if (buf[5] != 0 || buf[6] != 0 || buf[7] != 0 ||'], 36, 'T', 'validator-implied'),
+        ('migration_hello_decode', ['if ((candidate.capability_flags & ~MIGRATION_CAP_ALL) != 0)', 'return (EBADMSG);',
+         'if (buf[5] != 0 || buf[6] != 0 || buf[7] != 0 ||', 'le32dec(buf + 28) != 0 || le32dec(buf + 44) != 0)'],
+         6, 'T', 'validator-implied'),
+        ('migration_hello_decode', ['if ((candidate.capability_flags & ~MIGRATION_CAP_ALL) != 0)', 'return (EBADMSG);',
+         'if (buf[5] != 0 || buf[6] != 0 || buf[7] != 0 ||', 'le32dec(buf + 28) != 0 || le32dec(buf + 44) != 0)'],
+         32, 'T', 'validator-implied'),
+        # max_rounds == UINT32_MAX is refused by migration_max_rounds_valid
+        ('migration_source_run', ['if (max_rounds == UINT32_MAX) {'], 6, 'T', 'validator-implied'),
+        # a source requires version 3 before any state is sent
+        ('migration_source_run', ['if (sess.version >= 2 && ops->so_vsock_state != NULL) {'], 6, 'F', 'state-invariant'),
+        # frame_payload is allocated before any goto fail_rollback/fail_wedged
+        ('migration_source_run', ['out.phase = MIGRATION_PHASE_ROLLED_BACK;', '}',
+         'if (out.reason == MIGRATION_REASON_NONE)', 'out.reason = MIGRATION_REASON_TRANSPORT;',
+         '(void)migration_send_reason(&sess, MIGRATION_MSG_ABORT, out.reason, 0);', 'free(payload);',
+         'if (frame_payload != NULL)'], 6, 'F', 'state-invariant'),
+        ('migration_source_run', ['out.reason = MIGRATION_REASON_STATE;',
+         '(void)migration_send_reason(&sess, MIGRATION_MSG_ABORT, out.reason, 0);', 'free(payload);',
+         'if (frame_payload != NULL)'], 6, 'F', 'state-invariant'),
+        # a NULL state with a non-zero length is refused first
+        ('migration_source_send_state', ['if (len > maximum) {', 'if (blob != NULL)'], 7, 'F', 'validator-implied'),
+        ('migration_source_send_state', ['if (frame == NULL) {', 'if (blob != NULL)'], 7, 'F', 'validator-implied'),
+        # the role check above refuses any other pair of roles
+        ('migration_hello_validate', ['!(local->role == MIGRATION_ROLE_DEST &&'], 8, 'F', 'validator-implied'),
+        ('migration_hello_validate', ['remote->role == MIGRATION_ROLE_SOURCE &&'], 6, 'F', 'validator-implied'),
+        # the source window lies inside this build's window (checked above)
+        ('migration_caps_accept_validate', ['caps->negotiated_version < MIGRATION_PROTO_VERSION_MIN ||'],
+         6, 'T', 'validator-implied'),
+        ('migration_caps_accept_validate', ['caps->negotiated_version > MIGRATION_PROTO_VERSION) {'],
+         6, 'T', 'validator-implied'),
+        ('migration_source_caps_validate', ['accepted->negotiated_version < offered->version_min) {'],
+         6, 'T', 'validator-implied'),
+        # migration_memory_record_validate refuses an unbacked page first;
+        # highmem_base + highmem comes from the VM memory map
+        ('migration_baseline_page_validate', ['if (expected == lowmem && highmem != 0)'], 28, 'F', 'validator-implied'),
+        ('migration_baseline_complete', ['return (highmem <= UINT64_MAX - highmem_base &&'], 10, 'F', 'arith-bound'),
+        # EAGAIN == EWOULDBLOCK on FreeBSD
+        ('migration_fd_send', ['if (errno == EAGAIN || errno == EWOULDBLOCK) {'], 27, 'T', 'constant-condition'),
+        ('migration_fd_recv', ['if (errno == EAGAIN || errno == EWOULDBLOCK) {'], 27, 'T', 'constant-condition'),
+        # a PCI name (PI_NAMESZ) fits a bundle/topology name of the same
+        # size; the ROM record names are short literals
+        ('prod_vsock_state', ['if (strlcpy(items[devices].name, pdi->pi_name,'], 7, 'T', 'type-bound'),
+        ('migration_prod_fill_topology', ['if (strlcpy(rec->name, pdi->pi_name,'], 7, 'T', 'type-bound'),
+        ('migration_prod_append_rom_identity', ['if (strlcpy(rec->name, record_name, sizeof(rec->name)) >='],
+         6, 'T', 'type-bound'),
+        # encode recomputes the size that just succeeded; a captured table
+        # is recorded before any later failure
+        ('prod_vsock_state', ['error = migration_vsock_bundle_encode(items, devices, wire, size);',
+         'if (error != 0) {'], 6, 'T', 'validator-implied'),
+        ('prod_vsock_state', ['if (tables[i] != NULL) {'], 7, 'F', 'state-invariant'),
+        # prod_dest_vsock_items matched every bundle item to a local device
+        # and the bundle decoder checked each table's endpoint count and the
+        # total
+        ('prod_dest_restore_vsock', ['if (pdi == NULL)'], 7, 'T', 'validator-implied'),
+        ('prod_dest_restore_vsock', ['if (error != 0 || count != items[i].endpoint_count)'], 7, 'T', 'validator-implied'),
+        ('prod_dest_restore_vsock', ['if (error != 0 || count != items[i].endpoint_count)'], 21, 'T', 'validator-implied'),
+        ('prod_dest_restore_vsock', ['if (offset != endpoints)'], 6, 'T', 'validator-implied'),
+        ('prod_dest_vsock_device', ['while ((pdi = pci_next(pdi)) != NULL) {'], 9, 'F', 'validator-implied'),
         ('migration_crc32', ['chunk = payload_len > UINT_MAX'], 11, 'T', 'frame-limit'),
         ('migration_source_caps_validate', ['(accepted->capability_flags & ~MIGRATION_CAP_ALL) != 0) {'],
          6, 'T', 'decoder-guarantee'),
-        ('migration_fd_send', ['return (errno != 0 ? errno : EIO);'], 12, 'F', 'syscall-errno'),
-        ('migration_fd_recv', ['return (errno != 0 ? errno : EIO);'], 12, 'F', 'syscall-errno'),
         ('migration_send_reason', ['error = migration_reason_encode(', 'if (error != 0)'],
          6, 'T', 'encode-fixed-buffer'),
-        ('migration_recv', ['if (sess->version != 0 && candidate.version != sess->version)'],
-         28, 'T', 'decoder-guarantee'),
         ('migration_cancelled', ['return (sess->config != NULL && sess->config->cancel != NULL'],
          10, 'F', 'config-nonnull'),
         ('migration_source_send_generation', ['offset > UINT64_MAX - page_bytes) {'],
@@ -244,7 +315,7 @@ OUTCOME_WAIVERS = {
          'if (error != 0)'], 8, 'T', 'encode-fixed-buffer'),
         ('migration_source_send_generation', ['scratch + MIGRATION_MEMGEN_HDR_SIZE,',
          'MIGRATION_CHUNK_HDR_SIZE);', 'if (error != 0)'], 8, 'T', 'encode-fixed-buffer'),
-        ('migration_source_send_dev_state', ['error = migration_chunk_encode(&chunk, frame,',
+        ('migration_source_send_state', ['error = migration_chunk_encode(&chunk, frame,',
          'MIGRATION_CHUNK_HDR_SIZE);', 'if (error != 0)'], 7, 'T', 'encode-fixed-buffer'),
         ('migration_dest_run', ['error = migration_caps_accept_encode(&caps, caps_wire, sizeof(caps_wire));',
          'if (error != 0)'], 6, 'T', 'encode-validated'),
@@ -277,30 +348,30 @@ OUTCOME_WAIVERS = {
         ('migration_source_run', ['if (topo_wire == NULL) {'], 6, 'T', 'malloc-only'),
         # fail_rollback is reached only by gotos after quiesced = true, each
         # with a non-zero error; the fail labels' error==0 arms are defensive
-        ('migration_source_run', ['fail_rollback:', '*', '*', '*', '*', 'if (quiesced) {'],
+        ('migration_source_run', ['goto fail_wedged;', '}', '}', 'if (quiesced) {'],
          6, 'F', 'state-invariant'),
         ('migration_source_run', ['* must keep vCPUs stopped in this state.', '*/', 'if (error == 0)'],
          8, 'T', 'state-invariant'),
         ('migration_source_run', ['out.phase = MIGRATION_PHASE_ROLLED_BACK;', '}',
          'if (out.reason == MIGRATION_REASON_NONE)', 'out.reason = MIGRATION_REASON_TRANSPORT;',
          '(void)migration_send_reason(&sess, MIGRATION_MSG_ABORT, out.reason, 0);', 'free(payload);',
+         'if (frame_payload != NULL)', 'explicit_bzero(frame_payload, MIGRATION_MAX_PAYLOAD);',
          'free(frame_payload);', 'free(topology);', 'if (error == 0)'], 6, 'T', 'state-invariant'),
         ('migration_source_run', ['out.source_runnable = true;', 'out.phase = MIGRATION_PHASE_FAILED;',
          'if (out.reason == MIGRATION_REASON_NONE)', 'out.reason = MIGRATION_REASON_TRANSPORT;',
          '(void)migration_send_reason(&sess, MIGRATION_MSG_ABORT, out.reason, 0);', 'free(payload);',
+         'if (frame_payload != NULL)', 'explicit_bzero(frame_payload, MIGRATION_MAX_PAYLOAD);',
          'free(frame_payload);', 'free(topology);', 'if (error == 0)'], 6, 'T', 'state-invariant'),
         ('migration_source_run', ['out.reason = MIGRATION_REASON_STATE;',
          '(void)migration_send_reason(&sess, MIGRATION_MSG_ABORT, out.reason, 0);', 'free(payload);',
+         'if (frame_payload != NULL)', 'explicit_bzero(frame_payload, MIGRATION_MAX_PAYLOAD);',
          'free(frame_payload);', 'free(topology);', 'if (error == 0)'], 6, 'T', 'state-invariant'),
-        # the RELEASE result is decoded from exactly MIGRATION_REASON_SIZE bytes
-        ('migration_dest_run', ['if (migration_reason_decode(payload, payload_len, &reason_msg) != 0 ||'],
-         6, 'T', 'decoder-total'),
         # committed implies staged; a COMPLETED phase never reaches fail;
         # every goto fail carries a non-zero error
         ('migration_dest_run', ['} else if (staged || committed)'], 23, 'T', 'state-invariant'),
         ('migration_dest_run', ['if (out.phase != MIGRATION_PHASE_COMPLETED && !out.retained)'],
          6, 'F', 'state-invariant'),
-        ('migration_dest_run', ['free(dev_reasm);', 'if (error == 0)'], 6, 'T', 'state-invariant'),
+        ('migration_dest_run', ['free(vsock_reasm);', 'if (error == 0)'], 6, 'T', 'state-invariant'),
         # prod_resume cancels only once retirement began, which the repair
         # loop tests immediately before; only a concurrent retirement differs
         ('prod_repair_rollback', ['if (error == 0 || error == ECANCELED)'], 21, 'T', 'race-only'),
@@ -622,13 +693,17 @@ OUTCOME_WAIVERS = {
         (311, 7, 'F', 'race-only'), (450, 25, 'T', 'race-only'),
     ],
     BHYVE + 'migration_precopy.c': [
-        (142, 34, 'T', 'validator-implied'),
+        # (anchored after the merge moved these lines)
+        ('migration_precopy_cpu_collect', ['result->length != length || result->bitmap_bytes != bitmap_bytes) {'],
+         34, 'T', 'validator-implied'),
         # cpu_owned is true in every ACTIVE or FAILED session
-        (269, 14, 'F', 'state-invariant'),
+        ('migration_precopy_disable_with_ops', ['cpu_error = cpu_owned ? ops->disable(arg) : 0;'],
+         14, 'F', 'state-invariant'),
         # range validation guarantees at least one bitmap byte; the clamped
         # range and the covered window keep every index inside the bitmap
-        (461, 6, 'F', 'state-invariant'), (519, 7, 'T', 'state-invariant'),
-        (549, 6, 'T', 'state-invariant'),
+        ('migration_precopy_free_set_init', ['if (bytes != 0) {'], 6, 'F', 'state-invariant'),
+        ('migration_precopy_free_set_mark', ['if (index >= set->bitmap_bytes)'], 7, 'T', 'state-invariant'),
+        ('migration_precopy_free_set_contains', ['if (index >= set->bitmap_bytes)'], 6, 'T', 'state-invariant'),
     ],
     BHYVE + 'migration_dirty.c': [
         (60, 6, 'T', 'type-bound'),
@@ -724,10 +799,10 @@ OUTCOME_WAIVERS = {
         ('vm_snapshot_guest2host_addr', ['if (vm_snapshot_is_restoring(meta))'], 7, 'F', 'state-invariant'),
         # --- round 8 item 4, slice 6: guards of file-local functions, checks
         # repeated after an earlier validator, and bounds of generated data ---
-        # collect_generic_devmem: vm_checkpoint passes ctx and both outputs
-        ('collect_generic_devmem', ['if (ctx == NULL || regionsp == NULL || countp == NULL)'], 6, 'T', 'static-guard'),
-        ('collect_generic_devmem', ['if (ctx == NULL || regionsp == NULL || countp == NULL)'], 21, 'T', 'static-guard'),
-        ('collect_generic_devmem', ['if (ctx == NULL || regionsp == NULL || countp == NULL)'], 41, 'T', 'static-guard'),
+        # collect_checkpoint_devmem: vm_checkpoint passes ctx and both outputs
+        ('collect_checkpoint_devmem', ['if (ctx == NULL || regionsp == NULL || countp == NULL)'], 6, 'T', 'static-guard'),
+        ('collect_checkpoint_devmem', ['if (ctx == NULL || regionsp == NULL || countp == NULL)'], 21, 'T', 'static-guard'),
+        ('collect_checkpoint_devmem', ['if (ctx == NULL || regionsp == NULL || countp == NULL)'], 41, 'T', 'static-guard'),
         # vm_snapshot_basic_metadata: both callers pass ctx, xop and the guest's
         # memory size (lowmem + highmem, never 0 and far below INT64_MAX)
         ('vm_snapshot_basic_metadata', ['if (ctx == NULL || xop == NULL || memsz == 0 || memsz > INT64_MAX)'], 6, 'T', 'static-guard'),
@@ -849,8 +924,6 @@ OUTCOME_WAIVERS = {
         # a capture always has metadata and kernel data; the sizes come from
         # files this process just wrote
         ('vm_snapshot_dev_state_capture', ['if ((uintmax_t)kdata_size > SSIZE_MAX ||'], 6, 'T', 'arith-bound'),
-        ('vm_snapshot_dev_state_capture', ['meta_len > SIZE_MAX - MIGRATE_BLOB_HDR - trace_len ||'], 6, 'T', 'arith-bound'),
-        ('vm_snapshot_dev_state_capture', ['kdata_len > SIZE_MAX - MIGRATE_BLOB_HDR - trace_len - meta_len) {'], 6, 'T', 'arith-bound'),
         ('vm_snapshot_dev_state_capture', ['meta_buf = malloc(meta_len != 0 ? meta_len : 1);'], 20, 'F', 'state-invariant'),
         ('vm_snapshot_dev_state_capture', ['kdata_buf = malloc(kdata_len != 0 ? kdata_len : 1);'], 21, 'F', 'state-invariant'),
         ('vm_snapshot_dev_state_capture', ['if (meta_len != 0 && fread(meta_buf, 1, meta_len, meta_file) != meta_len) {'], 6, 'F', 'state-invariant'),
@@ -1680,7 +1753,10 @@ def tls_material(out):
 ADAPTER_SOURCES = ['usr.sbin/bhyve/migration_session.c', 'usr.sbin/bhyve/migration_tls.c',
                    'usr.sbin/bhyve/migration_receiver.c', 'usr.sbin/bhyve/migration_precopy.c',
                    'usr.sbin/bhyve/migration_dirty.c', 'usr.sbin/bhyve/checkpoint_compat.c',
-                   'lib/libvmmapi/vmmapi_dirty_log.c']
+                   'lib/libvmmapi/vmmapi_dirty_log.c',
+                   # Merged active-vsock codecs (real encode/decode, not stubs).
+                   'usr.sbin/bhyve/migration_vsock_bundle.c',
+                   'usr.sbin/bhyve/vsock_migration_state.c']
 register('bhyve-cov-adapter', harness=['bhyve-cov-adapter.c', 'bhyve-cov-protocol.c'],
          sources=ADAPTER_SOURCES,
          wrap=['open', 'fstat', 'fsync', 'renameat', 'unlinkat', 'flock'],
@@ -1690,7 +1766,9 @@ register('bhyve-cov-adapter', harness=['bhyve-cov-adapter.c', 'bhyve-cov-protoco
 register('bhyve-cov-ops', harness=['bhyve-cov-ops.c', 'bhyve-cov-protocol.c'],
          sources=[x for x in ADAPTER_SOURCES if not x.endswith('migration_session.c')],
          wrap=['open', 'fstat', 'fsync', 'renameat', 'unlinkat', 'flock', 'malloc',
-               'calloc', 'poll', 'read', 'write'],
+               'calloc', 'poll', 'send', 'recv', 'clock_gettime', 'socketpair',
+               'setsockopt', 'getsockopt', 'cap_rights_limit', 'cap_xfer_limit',
+               'cap_cloexec_limit', 'cap_clofork_limit'],
          libs=['-lnv', '-lmd', '-lssl', '-lcrypto', '-lz'],
          setup=tls_material, runs=[[]], timeout=600)
 
@@ -2693,6 +2771,7 @@ def phase_report(args):
                 for rel, names in SCOPED[scope].items():
                     if rel.startswith(step + '/'):
                         scan[rel] = names
+            problems = []	# every waiver problem of this step, reported together
             for rel, names in scan.items():
                 if not (ROOT / rel).exists():
                     continue
@@ -2714,22 +2793,27 @@ def phase_report(args):
                     else:
                         key = (line, col, arm)
                     if key not in top:
-                        die('waived outcome %s:%d:%s:%s is not a branch outcome' % (rel, line, col, arm))
+                        problems.append('waived outcome %s:%d:%s:%s is not a branch outcome' %
+                                        (rel, line, col, arm))
+                        continue
                     if top[key]:
                         # Strict: a waived outcome that runs was never
                         # unreachable.  With slices, a slice harness may drive
                         # it through a substituted boundary; it then counts as
                         # covered, not waived.
                         if label == 'strict':
-                            die('waived outcome %s:%d:%s:%s executed' % (rel, line, col, arm))
+                            problems.append('waived outcome %s:%d:%s:%s executed' % (rel, line, col, arm))
                         continue
                     if inside(line):
-                        die('waived outcome %s:%d inside a continuity range' % (rel, line))
+                        problems.append('waived outcome %s:%d inside a continuity range' % (rel, line))
+                        continue
                     explicit.append({'line': line, 'col': col, 'arm': arm, 'class': cls})
                 folded = [{'site': site, 'branch': b, 'class': cls} for site, b, cls in folded
                           if site is None or not inside(site)]
                 outcome_files[rel] = {'explicit': explicit, 'folded': folded,
                                       'scoped_names': names}
+            if problems:
+                die('\n'.join(problems))
             for scope, members in SCOPED.items():
                 for rel, names in members.items():
                     if not rel.startswith(step + '/'):

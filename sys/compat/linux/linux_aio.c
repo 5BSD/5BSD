@@ -40,8 +40,8 @@
 #include <vm/vm_page.h>
 #include <vm/vm_pager.h>
 
-#include <amd64/linux/linux.h>
-#include <amd64/linux/linux_proto.h>
+#include <machine/../linux/linux.h>
+#include <machine/../linux/linux_proto.h>
 #include <compat/linux/linux_aio.h>
 #include <compat/linux/linux_common.h>
 #include <compat/linux/linux_emul.h>

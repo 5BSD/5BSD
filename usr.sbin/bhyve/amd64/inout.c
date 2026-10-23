@@ -33,7 +33,8 @@
 
 #include <x86/psl.h>
 
-#include <machine/vmm.h>
+/* Build against the matching source kernel ABI before installing a new world. */
+#include <amd64/include/vmm.h>
 #include <machine/vmm_instruction_emul.h>
 #include <vmmapi.h>
 
@@ -165,6 +166,9 @@ emulate_inout(struct vmctx *ctx, struct vcpu *vcpu, struct vm_exit *vmexit)
 			if (error) {
 				retval = -1;  /* Unrecoverable error */
 				break;
+			} else if (fault == VM_GLA2GPA_NESTED_EXIT) {
+				/* NPT12 reflection resumed L1; L2 registers are gone. */
+				return (0);
 			} else if (fault) {
 				retval = 0;  /* Resume guest to handle fault */
 				break;
@@ -195,25 +199,24 @@ emulate_inout(struct vmctx *ctx, struct vcpu *vcpu, struct vm_exit *vmexit)
 
 			count--;
 			iterations--;
-		}
-
-		/* Update index register */
-		error = vie_update_register(vcpu, idxreg, index, addrsize);
-		assert(error == 0);
-
-		/*
-		 * Update count register only if the instruction had a repeat
-		 * prefix.
-		 */
-		if (rep) {
-			error = vie_update_register(vcpu, VM_REG_GUEST_RCX,
-			    count, addrsize);
+			/* A later NPT12 fault may switch back to L1 in this loop. */
+			error = vie_update_register(vcpu, idxreg, index, addrsize);
 			assert(error == 0);
+			if (rep) {
+				error = vie_update_register(vcpu,
+				    VM_REG_GUEST_RCX, count, addrsize);
+				assert(error == 0);
+			}
 		}
 
 		/* Restart the instruction if more iterations remain */
 		if (retval == 0 && count != 0) {
 			error = vm_restart_instruction(vcpu);
+			assert(error == 0);
+		} else if (retval == 0) {
+			/* Commit the completed string instruction before checkpoint. */
+			error = vm_set_register(vcpu, VM_REG_GUEST_RIP,
+			    vmexit->rip + vmexit->inst_length);
 			assert(error == 0);
 		}
 	} else {

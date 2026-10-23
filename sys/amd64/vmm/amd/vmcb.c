@@ -115,13 +115,12 @@ vmcb_segptr(struct vmcb *vmcb, int type)
 }
 
 static int
-vmcb_access(struct svm_vcpu *vcpu, int write, int ident, uint64_t *val)
+vmcb_access(struct svm_vcpu *vcpu, struct vmcb *vmcb, int write, int ident,
+    uint64_t *val)
 {
-	struct vmcb *vmcb;
 	int off, bytes;
 	char *ptr;
 
-	vmcb	= svm_get_vmcb(vcpu);
 	off	= VMCB_ACCESS_OFFSET(ident);
 	bytes	= VMCB_ACCESS_BYTES(ident);
 
@@ -159,19 +158,18 @@ vmcb_access(struct svm_vcpu *vcpu, int write, int ident, uint64_t *val)
  * Read from segment selector, control and general purpose register of VMCB.
  */
 int
-vmcb_read(struct svm_vcpu *vcpu, int ident, uint64_t *retval)
+vmcb_read_from(struct svm_vcpu *vcpu, struct vmcb *vmcb, int ident,
+    uint64_t *retval)
 {
-	struct vmcb *vmcb;
 	struct vmcb_state *state;
 	struct vmcb_segment *seg;
 	int err;
 
-	vmcb = svm_get_vmcb(vcpu);
 	state = &vmcb->state;
 	err = 0;
 
 	if (VMCB_ACCESS_OK(ident))
-		return (vmcb_access(vcpu, 0, ident, retval));
+		return (vmcb_access(vcpu, vmcb, 0, ident, retval));
 
 	switch (ident) {
 	case VM_REG_GUEST_CR0:
@@ -199,7 +197,9 @@ vmcb_read(struct svm_vcpu *vcpu, int ident, uint64_t *retval)
 		break;
 
 	case VM_REG_GUEST_EFER:
-		*retval = state->efer;
+		*retval = vmcb == vcpu->nested_vmcb02 ?
+		    state->efer & ~EFER_SVM :
+		    svm_nested_msr_efer_read(&vcpu->nested_msr, state->efer);
 		break;
 
 	case VM_REG_GUEST_RAX:
@@ -245,7 +245,8 @@ vmcb_read(struct svm_vcpu *vcpu, int ident, uint64_t *retval)
 		break;
 
 	case VM_REG_GUEST_TPR:
-		*retval = vlapic_get_cr8(vm_lapic(vcpu->vcpu));
+		*retval = vmcb == vcpu->nested_vmcb02 ?
+		    vmcb->ctrl.v_tpr : vlapic_get_cr8(vm_lapic(vcpu->vcpu));
 		break;
 
 	case VM_REG_GUEST_GDTR:
@@ -261,24 +262,30 @@ vmcb_read(struct svm_vcpu *vcpu, int ident, uint64_t *retval)
 	return (err);
 }
 
+int
+vmcb_read(struct svm_vcpu *vcpu, int ident, uint64_t *retval)
+{
+
+	return (vmcb_read_from(vcpu, vcpu->vmcb, ident, retval));
+}
+
 /*
  * Write to segment selector, control and general purpose register of VMCB.
  */
 int
-vmcb_write(struct svm_vcpu *vcpu, int ident, uint64_t val)
+vmcb_write_to(struct svm_vcpu *vcpu, struct vmcb *vmcb, int ident,
+    uint64_t val)
 {
-	struct vmcb *vmcb;
 	struct vmcb_state *state;
 	struct vmcb_segment *seg;
 	int err, dirtyseg;
 
-	vmcb = svm_get_vmcb(vcpu);
 	state = &vmcb->state;
 	dirtyseg = 0;
 	err = 0;
 
 	if (VMCB_ACCESS_OK(ident))
-		return (vmcb_access(vcpu, 1, ident, &val));
+		return (vmcb_access(vcpu, vmcb, 1, ident, &val));
 
 	switch (ident) {
 	case VM_REG_GUEST_CR0:
@@ -313,6 +320,20 @@ vmcb_write(struct svm_vcpu *vcpu, int ident, uint64_t val)
 
 	case VM_REG_GUEST_EFER:
 		/* EFER_SVM must always be set when the guest is executing */
+		if (vmcb == vcpu->nested_vmcb02) {
+			/* L2 has no virtual SVM capability. */
+			if ((val & EFER_SVM) != 0)
+				return (EINVAL);
+		} else {
+			/* Legacy checkpoints can contain the physical SVME bit. */
+			if (vmcb == vcpu->vmcb &&
+			    vmcb != vcpu->snapshot_vmcb &&
+			    !svm_nested_msr_efer_write_allowed(&vcpu->nested_msr,
+			    val))
+				return (EINVAL);
+			/* Also import into a private snapshot candidate. */
+			svm_nested_msr_efer_import(&vcpu->nested_msr, val);
+		}
 		state->efer = val | EFER_SVM;
 		svm_set_dirty(vcpu, VMCB_CACHE_CR);
 		break;
@@ -331,6 +352,14 @@ vmcb_write(struct svm_vcpu *vcpu, int ident, uint64_t val)
 
 	case VM_REG_GUEST_RSP:
 		state->rsp = val;
+		break;
+
+	case VM_REG_GUEST_TPR:
+		if (vmcb != vcpu->nested_vmcb02 || val > 15) {
+			err = EINVAL;
+			break;
+		}
+		vmcb->ctrl.v_tpr = val;
 		break;
 
 	case VM_REG_GUEST_CS:
@@ -364,6 +393,13 @@ vmcb_write(struct svm_vcpu *vcpu, int ident, uint64_t val)
 }
 
 int
+vmcb_write(struct svm_vcpu *vcpu, int ident, uint64_t val)
+{
+
+	return (vmcb_write_to(vcpu, vcpu->vmcb, ident, val));
+}
+
+int
 vmcb_seg(struct vmcb *vmcb, int ident, struct vmcb_segment *seg2)
 {
 	struct vmcb_segment *seg;
@@ -378,13 +414,11 @@ vmcb_seg(struct vmcb *vmcb, int ident, struct vmcb_segment *seg2)
 }
 
 int
-vmcb_setdesc(struct svm_vcpu *vcpu, int reg, struct seg_desc *desc)
+vmcb_setdesc_to(struct svm_vcpu *vcpu, struct vmcb *vmcb, int reg,
+    struct seg_desc *desc)
 {
-	struct vmcb *vmcb;
 	struct vmcb_segment *seg;
 	uint16_t attrib;
-
-	vmcb = svm_get_vmcb(vcpu);
 
 	seg = vmcb_segptr(vmcb, reg);
 	KASSERT(seg != NULL, ("%s: invalid segment descriptor %d",
@@ -428,12 +462,11 @@ vmcb_setdesc(struct svm_vcpu *vcpu, int reg, struct seg_desc *desc)
 }
 
 int
-vmcb_getdesc(struct svm_vcpu *vcpu, int reg, struct seg_desc *desc)
+vmcb_getdesc_from(struct svm_vcpu *vcpu, struct vmcb *vmcb, int reg,
+    struct seg_desc *desc)
 {
-	struct vmcb *vmcb;
 	struct vmcb_segment *seg;
 
-	vmcb = svm_get_vmcb(vcpu);
 	seg = vmcb_segptr(vmcb, reg);
 	KASSERT(seg != NULL, ("%s: invalid segment descriptor %d",
 	    __func__, reg));
@@ -464,6 +497,20 @@ vmcb_getdesc(struct svm_vcpu *vcpu, int reg, struct seg_desc *desc)
 	}
 
 	return (0);
+}
+
+int
+vmcb_setdesc(struct svm_vcpu *vcpu, int reg, struct seg_desc *desc)
+{
+
+	return (vmcb_setdesc_to(vcpu, vcpu->vmcb, reg, desc));
+}
+
+int
+vmcb_getdesc(struct svm_vcpu *vcpu, int reg, struct seg_desc *desc)
+{
+
+	return (vmcb_getdesc_from(vcpu, vcpu->vmcb, reg, desc));
 }
 
 #ifdef BHYVE_SNAPSHOT

@@ -12,7 +12,6 @@ base="Base system"
 kernel="Kernel"
 ports="Ports tree"
 src="System source tree"
-lib32="32-bit compatibility libraries"
 tests="Test suite"
 
 desc_base="${base} (MANDATORY)"
@@ -21,8 +20,6 @@ desc_kernel="${kernel} (MANDATORY)"
 desc_kernel_dbg="${kernel} debug info"
 desc_kernel_alt="Alternate ${kernel}"
 desc_kernel_alt_dbg="Alternate ${kernel} debug info"
-desc_lib32="${lib32}"
-desc_lib32_dbg="${lib32} debug info"
 desc_ports="${ports}"
 desc_src="${src}"
 desc_tests="${tests}"
@@ -31,7 +28,6 @@ default_src=off
 default_ports=off
 default_tests=off
 default_base_dbg=off
-default_lib32_dbg=off
 default_kernel_alt=off
 default_kernel_dbg=on
 default_kernel_alt_dbg=off
@@ -69,4 +65,3 @@ for i in ${*}; do
 
 	printf "${dist}\t${hash}\t${nfiles}\t${distname}\t\"${desc}\"\t${default}\n"
 done
-

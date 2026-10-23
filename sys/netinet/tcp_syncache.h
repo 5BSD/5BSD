@@ -39,7 +39,7 @@ void	syncache_destroy(void);
 #endif
 void	 syncache_unreach(struct in_conninfo *, tcp_seq, uint16_t);
 int	 syncache_expand(struct in_conninfo *, struct tcpopt *,
-	     struct tcphdr *, struct socket **, struct mbuf *, uint16_t);
+	     struct tcphdr *, struct socket **, struct mbuf *, int, uint16_t);
 struct socket *	 syncache_add(struct in_conninfo *, struct tcpopt *,
 	     struct tcphdr *, struct inpcb *, struct socket *, struct mbuf *,
 	     void *, void *, uint8_t, uint16_t);
@@ -50,6 +50,9 @@ struct syncache {
 	TAILQ_ENTRY(syncache)	sc_hash;
 	struct in_conninfo	sc_inc;		/* addresses */
 	int		sc_rxttime;		/* retransmit time */
+	u_int		sc_created;		/* initial SYN reception, seconds */
+	u_int		sc_defer_accept;	/* wait for payload, seconds */
+	bool		sc_defer_timeout_rexmit;
 	u_int16_t	sc_rxmits;		/* retransmit counter */
 	u_int16_t	sc_port;		/* remote UDP encaps port */
 	u_int32_t	sc_tsreflect;		/* timestamp to reflect */

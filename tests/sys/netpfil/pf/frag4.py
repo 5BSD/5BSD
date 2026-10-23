@@ -45,7 +45,7 @@ class TestFrag4_NoReassemble(VnetTestTemplate):
         ToolsHelper.print_output("/sbin/pfctl -e")
         ToolsHelper.pf_rules([
             "set reassemble no",
-            "nat on %s from 192.0.2.0/24 to any -> (%s)" % (outifname, outifname),
+            "match out on %s from 192.0.2.0/24 to any nat-to (%s)" % (outifname, outifname),
             "pass out"
         ])
 

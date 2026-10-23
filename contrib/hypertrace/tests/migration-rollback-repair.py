@@ -31,8 +31,11 @@ fixture = r'''
 #include <string.h>
 #include <time.h>
 struct vmctx { int unused; };
+/* Merged: the capture session keeps the event fence until it is finished. */
+struct vm_snapshot_capture { bool active; };
 struct migration_prod_source {
     struct vmctx *ctx;
+    struct vm_snapshot_capture capture;
     bool quiesced, retirement_started, retired, intent_pending, fresh_stopped;
     uint8_t fresh_record[40];
 };
@@ -59,6 +62,16 @@ static int fbsdrun_migration_resume_cpus(struct vmctx *c) {
     hold = false; return 0;
 }
 static bool fbsdrun_cpus_retiring(void) { return retiring; }
+static int finish_failures, finishes;
+static int vm_snapshot_dev_state_finish(struct vmctx *c, struct vm_snapshot_capture *capture, bool commit) {
+    (void)c; assert(!commit);	/* rollback never commits deferred events */
+    finishes++;
+    /* Merge deferred events while everything is still paused. */
+    for (int i = 0; i < NDEV; i++) if (capture->active) assert(owned[i] || !hold);
+    if (!capture->active) return 0;
+    if (finish_failures > 0) { finish_failures--; return EIO; }
+    capture->active = false; return 0;
+}
 static int vm_resume_devices(void) {
     int error = 0;
     device_resumes++;
@@ -87,6 +100,7 @@ static double now(void) {
 static void reset(void) {
     memset(owned, 0, sizeof(owned)); memset(device_failures, 0, sizeof(device_failures));
     hold = input_paused = retiring = false; cpu_failures = 0; pause_fail_at = -1;
+    finish_failures = finishes = 0;
     device_resumes = cpu_resumes = 0;
 }
 /* Wedge the source exactly as a failed rollback leaves it. */
@@ -146,6 +160,23 @@ int main(void) {
         attempts = 0;
         assert(prod_repair_rollback(&src, &attempts) == 0 && attempts == 1);
         assert(!owned[0] && !hold && !input_paused && !src.quiesced);
+        checks++;
+    }
+    /* A failed capture finish is a failed resume attempt: nothing resumes
+     * and the fence stays held until a retry finishes it. */
+    {
+        struct migration_prod_source src = { .ctx = &vm };
+        bool runnable = true;
+        reset();
+        assert(prod_quiesce(&src, &runnable) == 0);
+        src.capture.active = true; finish_failures = 2;
+        assert(prod_resume(&src) == EIO && device_resumes == 0 && cpu_resumes == 0);
+        assert(src.capture.active && src.quiesced && hold && input_paused);
+        for (int i = 0; i < NDEV; i++) assert(owned[i]);
+        attempts = 0;
+        assert(prod_repair_rollback(&src, &attempts) == 0 && attempts == 2);
+        assert(!src.capture.active && !src.quiesced && !hold && !input_paused);
+        assert(finishes == 3 && device_resumes == 1 && cpu_resumes == 1);
         checks++;
     }
     /* Never after retirement began, and never without the owned context. */

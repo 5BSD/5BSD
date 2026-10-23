@@ -21,7 +21,7 @@ options: --config FILE --jobs COUNT|auto --kernel NAME
          --output /usr/obj/new-stage
          --signing unsigned|development|signed --key private.pem
          --development-key private.pem --relaxed-signatures
-         --cache [--cache-layout] [--library-list FILE] --ports DIRECTORY
+         --ports DIRECTORY
          --publish-repository DIRECTORY (packages/build)
          --root DIRECTORY (verify/deploy) --public-key trusted-code.pem
          --repository GENERATION --pkg-public-key FILE (deploy/bsdinstall/media)
@@ -95,9 +95,6 @@ mode=auto
 key=
 devkey=/usr/obj/usr/src/signing-keys/development.pem
 enforce=
-cache=no
-cache_layout=no
-libraries=
 ports_selected=no
 hardware_profile=
 distfiles=
@@ -143,16 +140,13 @@ load_config()
         ports) ports=$value;;
         hardware_profile) hardware_profile=$value;;
         distfiles) distfiles=$value;;
-        library_list) libraries=$value;;
         output) stage=$value;;
-        allow_debug_publication|production|incremental|cache|cache_layout|relaxed_signatures)
+        allow_debug_publication|production|incremental|relaxed_signatures)
             case "$value" in yes|no) ;; *) fail "$setting must be yes or no";; esac
             case "$setting" in
             allow_debug_publication) allow_debug_publication=$value;;
             production) if [ "$value" = yes ]; then build_profile=production; else build_profile=development; fi;;
             incremental) if [ "$value" = yes ]; then clean=no; else clean=yes; fi;;
-            cache) cache=$value;;
-            cache_layout) cache_layout=$value;;
             relaxed_signatures) if [ "$value" = yes ]; then enforce=no; else enforce=; fi;;
             esac;;
         *) fail "unknown config setting: $setting";;
@@ -170,7 +164,7 @@ scan_config()
             [ -z "$config" ] || fail 'only one --config is allowed'
             config=$2
             shift 2;;
-        --publish-repository|--format|--hardware-profile|--distfiles|--board|--build-profile|--media-format|--repository|--pkg-public-key|--bootenv|--arch|--root|--public-key|--pkg-key|--kernel-dir|--jobs|--src-conf|--make-conf|--kernel|--output|--signing|--key|--development-key|--library-list|--ports)
+        --publish-repository|--format|--hardware-profile|--distfiles|--board|--build-profile|--media-format|--repository|--pkg-public-key|--bootenv|--arch|--root|--public-key|--pkg-key|--kernel-dir|--jobs|--src-conf|--make-conf|--kernel|--output|--signing|--key|--development-key|--ports)
             [ $# -ge 2 ] || usage
             shift 2;;
         *) shift;;
@@ -201,9 +195,7 @@ parse()
         --allow-debug-publication) allow_debug_publication=yes; shift;;
         --incremental) clean=no; shift;;
         --relaxed-signatures) enforce=no; shift;;
-        --cache) cache=yes; shift;;
-        --cache-layout) cache_layout=yes; shift;;
-        --publish-repository|--format|--hardware-profile|--distfiles|--board|--build-profile|--media-format|--repository|--pkg-public-key|--bootenv|--arch|--root|--public-key|--pkg-key|--kernel-dir|--config|--jobs|--src-conf|--make-conf|--kernel|--output|--signing|--key|--development-key|--library-list|--ports)
+        --publish-repository|--format|--hardware-profile|--distfiles|--board|--build-profile|--media-format|--repository|--pkg-public-key|--bootenv|--arch|--root|--public-key|--pkg-key|--kernel-dir|--config|--jobs|--src-conf|--make-conf|--kernel|--output|--signing|--key|--development-key|--ports)
             [ $# -ge 2 ] && [ -n "$2" ] || usage
             case "$1" in
             --format) plan_format=$2;;
@@ -222,7 +214,7 @@ parse()
             --make-conf) make_conf=$2; make_conf_selected=yes;;
             --kernel) kernel=$2; kernel_selected=yes;; --output) stage=$2;; --signing) mode=$2;;
             --key) key=$2;; --development-key) devkey=$2; devkey_selected=yes;;
-            --library-list) libraries=$2;; --ports) ports=$2; ports_selected=yes;;
+            --ports) ports=$2; ports_selected=yes;;
             esac
             shift 2
             ;;
@@ -242,9 +234,6 @@ esac
 # a private VM/development image operation and never installs the host.
 [ "$action" != build ] || action=packages
 [ "$media_format_selected" = no ] || [ "$action" = media ] || fail '--media-format applies only to media'
-if [ "$cache" = yes ]; then
-    case "$action" in packages|stage) ;; *) fail '--cache applies only to build, packages or stage';; esac
-fi
 [ -z "$pkg_key" ] || [ "$action" = packages ] || fail '--pkg-key applies only to build or packages'
 # Board selection controls build defaults; board boot-image qualification is separate.
 case "$board" in
@@ -388,7 +377,6 @@ if [ "$mode" = development ]; then
     if [ -e "$devkey" ] || [ -L "$devkey" ]; then check_key_permissions "$devkey"; fi
 fi
 case "$key:$devkey" in /usr/obj/usr/src/repo:*|/usr/obj/usr/src/repo/*|*:/usr/obj/usr/src/repo|*:/usr/obj/usr/src/repo/*) fail 'private keys must be outside the publication repository';; esac
-if [ -n "$libraries" ]; then libraries=$(realpath "$libraries") || fail 'library list is not accessible'; fi
 [ "$publish_selected" = no ] || [ "$action" = packages ] || fail '--publish-repository applies only to packages/build'
 case "$publish_repository" in /*) ;; *) fail 'publication destination must be absolute';; esac
 publish_repository=$(future_directory "$publish_repository")
@@ -401,15 +389,8 @@ for signing_key in "$key" "$devkey" "$pkg_key"; do
     esac
 done
 if [ "$mode" = unsigned ]; then
-    [ "$cache" = no ] || fail '--cache requires development or signed mode'
     [ -z "$enforce" ] || fail '--relaxed-signatures applies to signed stages'
 fi
-if [ "$cache_layout" = yes ]; then
-    [ "$cache" = yes ] || fail '--cache-layout requires --cache'
-    [ "$target_arch" = amd64 ] || fail '--cache-layout currently requires amd64'
-    case "$action" in packages|stage) ;; *) fail '--cache-layout applies only to packages or stage';; esac
-fi
-[ -z "$libraries" ] || { [ "$cache" = yes ] && [ -f "$libraries" ] && [ -r "$libraries" ]; } || fail '--library-list requires --cache and a readable file'
 if [ "$action" = packages ]; then
     [ -z "$stage" ] || fail 'packages uses the maintained package staging directories'
 fi
@@ -492,7 +473,7 @@ if [ "$action" = verify ] || [ "$action" = deploy ] || [ "$action" = bsdinstall 
     run_step host-tools make -C "$native" -f /usr/src/tools/build/capimage/host-tools.mk -j "$jobs" SRCTOP=/usr/src
 fi
 if [ "$action" = verify ]; then
-    run_step verify env CAPSIGN="$native/capsign" ELFCACHE="$native/elfcache" sh /usr/src/tools/build/capimage/verify-stage.sh -r "$verify_root" -p "$public_key"
+    run_step verify env CAPSIGN="$native/capsign" sh /usr/src/tools/build/capimage/verify-stage.sh -r "$verify_root" -p "$public_key"
     if [ "$plan" = no ]; then
         printf 'complete action=verify logs=%s root=%s\n' "$run" "$verify_root" > "$run/status"
         cat "$run/status"
@@ -501,7 +482,7 @@ if [ "$action" = verify ]; then
 fi
 if [ "$action" = deploy ]; then
     if [ -n "$bootenv" ]; then set -- --bootenv "$bootenv"; else set -- --root "$verify_root"; fi
-    run_step deploy /usr/local/bin/python3.12 /usr/src/tools/build/capimage/deploy.py --repository "$repository" --pkg-public-key "$pkg_public_key" --public-key "$public_key" --kernel "$kernel" --capsign "$native/capsign" --elfcache "$native/elfcache" "$@"
+    run_step deploy /usr/local/bin/python3.12 /usr/src/tools/build/capimage/deploy.py --repository "$repository" --pkg-public-key "$pkg_public_key" --public-key "$public_key" --kernel "$kernel" --capsign "$native/capsign" "$@"
     if [ "$plan" = no ]; then
         printf 'complete action=deploy logs=%s root=%s bootenv=%s\n' "$run" "$verify_root" "$bootenv" > "$run/status"
         cat "$run/status"
@@ -509,7 +490,7 @@ if [ "$action" = deploy ]; then
     exit 0
 fi
 if [ "$action" = bsdinstall ]; then
-    run_step bsdinstall /usr/local/bin/python3.12 /usr/src/tools/build/capimage/installer.py --repository "$repository" --pkg-public-key "$pkg_public_key" --public-key "$public_key" --kernel "$kernel" --capsign "$native/capsign" --elfcache "$native/elfcache"
+    run_step bsdinstall /usr/local/bin/python3.12 /usr/src/tools/build/capimage/installer.py --repository "$repository" --pkg-public-key "$pkg_public_key" --public-key "$public_key" --kernel "$kernel" --capsign "$native/capsign"
     if [ "$plan" = no ]; then
         printf 'complete action=bsdinstall logs=%s\n' "$run" > "$run/status"
         cat "$run/status"
@@ -548,8 +529,7 @@ signing_step()
     shift
     make_step "$target" "$@" CAPIMAGE_SIGNING_MODE="$mode" CAPIMAGE_SIGNING_KEY="$key" \
         CAPIMAGE_DEVELOPMENT_KEY="$devkey" CAPIMAGE_REQUIRE_SIGNATURES="$enforce" \
-        CAPIMAGE_BUILD_CACHE="$cache" CAPIMAGE_BUILD_LAYOUT="$cache_layout" CAPIMAGE_CACHE_LIST="$libraries" \
-        CAPSIGN_HOST="$native/capsign" ELFCACHE_HOST="$native/elfcache"
+        CAPSIGN_HOST="$native/capsign"
 }
 case "$action" in
 stage)

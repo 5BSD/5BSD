@@ -43,9 +43,6 @@
 #include <vm/vm.h>
 #include <vm/pmap.h>
 
-#ifdef COMPAT_FREEBSD32
-#include <compat/freebsd32/freebsd32.h>
-#endif
 
 #include <machine/atomic.h>
 
@@ -402,13 +399,6 @@ sysctl_devstat(SYSCTL_HANDLER_ARGS)
 	 */
 	mygen = devstat_generation;
 
-#ifdef COMPAT_FREEBSD32
-	if ((req->flags & SCTL_MASK32) != 0) {
-		int32_t mygen32 = (int32_t)mygen;
-
-		error = SYSCTL_OUT(req, &mygen32, sizeof(mygen32));
-	} else
-#endif /* COMPAT_FREEBSD32 */
 		error = SYSCTL_OUT(req, &mygen, sizeof(mygen));
 	if (error != 0)
 		return (error);
@@ -425,40 +415,6 @@ sysctl_devstat(SYSCTL_HANDLER_ARGS)
 		return (error);
 
 	while (nds != NULL) {
-#ifdef COMPAT_FREEBSD32
-		if ((req->flags & SCTL_MASK32) != 0) {
-			struct devstat32 ds32;
-			unsigned int i;
-
-			memset(&ds32, 0, sizeof(ds32));
-			CP(*nds, ds32, sequence0);
-			CP(*nds, ds32, allocated);
-			CP(*nds, ds32, start_count);
-			CP(*nds, ds32, end_count);
-			BT_CP(*nds, ds32, busy_from);
-			PTROUT_CP(*nds, ds32, dev_links.stqe_next);
-			CP(*nds, ds32, device_number);
-			strcpy(ds32.device_name, nds->device_name);
-			CP(*nds, ds32, unit_number);
-			for (i = 0; i < DEVSTAT_N_TRANS_FLAGS; i++) {
-				FU64_CP(*nds, ds32, bytes[i]);
-				FU64_CP(*nds, ds32, operations[i]);
-				BT_CP(*nds, ds32, duration[i]);
-			}
-			BT_CP(*nds, ds32, busy_time);
-			BT_CP(*nds, ds32, creation_time);
-			CP(*nds, ds32, block_size);
-			for (i = 0; i < nitems(ds32.tag_types); i++) {
-				FU64_CP(*nds, ds32, tag_types[i]);
-			}
-			CP(*nds, ds32, flags);
-			CP(*nds, ds32, device_type);
-			CP(*nds, ds32, priority);
-			PTROUT_CP(*nds, ds32, id);
-			CP(*nds, ds32, sequence1);
-			error = SYSCTL_OUT(req, &ds32, sizeof(ds32));
-		} else
-#endif /* COMPAT_FREEBSD32 */
 			error = SYSCTL_OUT(req, nds, sizeof(*nds));
 		if (error != 0)
 			return (error);

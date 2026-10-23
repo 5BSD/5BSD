@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Schema evolution peer. Built once against evolve:1 and once against
- * evolve:2 of evolution.fidl. "peer launch ROLE OTHER" creates a channel,
+ * Schema evolution peer. Built once against bsd:1 and once against bsd:2
+ * of evolution.fidl. "peer launch ROLE OTHER" creates a channel,
  * runs OTHER with the opposite role on descriptor 3, and runs ROLE locally.
  */
 #include <sys/wait.h>

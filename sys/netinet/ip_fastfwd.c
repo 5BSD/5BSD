@@ -190,6 +190,28 @@ ip_redir_alloc(struct mbuf *m, struct nhop_object *nh, u_short ip_len,
 	return (mcopy);
 }
 
+/*
+ * 5BSD: a copy of the start of the packet for an ICMP error about it,
+ * taken before outbound filtering, as OpenBSD's ip_forward() does.
+ */
+static struct mbuf *
+ip_fastfwd_quote(struct mbuf *m, u_short ip_len)
+{
+	struct mbuf *mcopy;
+
+	mcopy = m_gethdr(M_NOWAIT, m->m_type);
+	if (mcopy == NULL)
+		return (NULL);
+	if (m_dup_pkthdr(mcopy, m, M_NOWAIT) == 0) {
+		m_free(mcopy);
+		return (NULL);
+	}
+	mcopy->m_len = min(ip_len, M_TRAILINGSPACE(mcopy));
+	mcopy->m_pkthdr.len = mcopy->m_len;
+	m_copydata(m, 0, mcopy->m_len, mtod(mcopy, caddr_t));
+	return (mcopy);
+}
+
 
 static int
 ip_findroute(struct nhop_object **pnh, struct in_addr dest, struct mbuf *m)
@@ -204,6 +226,17 @@ ip_findroute(struct nhop_object **pnh, struct in_addr dest, struct mbuf *m)
 		icmp_error(m, ICMP_UNREACH, ICMP_UNREACH_HOST, 0, 0);
 		return (EHOSTUNREACH);
 	}
+	/*
+	 * As OpenBSD: the packet filter sees a forwarded packet before a
+	 * reject or blackhole route discards it, so route-to/reply-to rules
+	 * can take it elsewhere.
+	 */
+	if ((nh->nh_flags & (NHF_BLACKHOLE | NHF_REJECT)) != 0 &&
+	    PFIL_HOOKED_OUT(V_inet_pfil_head) &&
+	    pfil_mbuf_fwd(V_inet_pfil_head, &m, nh->nh_ifp, NULL) !=
+	    PFIL_PASS)
+		return (EHOSTUNREACH);
+
 	/*
 	 * Drop blackholed traffic and directed broadcasts.
 	 */
@@ -245,6 +278,7 @@ ip_tryforward(struct mbuf *m)
 	int error = 0;
 	struct m_tag *fwd_tag = NULL;
 	struct mbuf *mcopy = NULL;
+	struct mbuf *qcopy = NULL;
 	struct in_addr redest;
 	/*
 	 * Are we active and forwarding packets?
@@ -402,6 +436,17 @@ passin:
 	rtdest.s_addr = dest.s_addr;
 
 	/*
+	 * Too big for the next hop with DF set: as OpenBSD, keep a copy from
+	 * before outbound filtering for the ICMP error, so that it quotes the
+	 * packet before outbound translation (nat-to) and returns to its
+	 * sender.  The MTU is checked after the filter, which may drop the
+	 * packet or send it elsewhere.
+	 */
+	if ((ip->ip_off & htons(IP_DF)) && PFIL_HOOKED_OUT(V_inet_pfil_head) &&
+	    ntohs(ip->ip_len) > nh->nh_mtu)
+		qcopy = ip_fastfwd_quote(m, ntohs(ip->ip_len));
+
+	/*
 	 * Step 5: outgoing firewall packet processing
 	 */
 	if (!PFIL_HOOKED_OUT(V_inet_pfil_head))
@@ -434,6 +479,8 @@ forwardlocal:
 			 * Return packet for processing by ip_input().
 			 */
 			m->m_flags |= M_FASTFWD_OURS;
+			if (qcopy != NULL)
+				m_freem(qcopy);
 			return (m);
 		}
 		/*
@@ -446,8 +493,11 @@ forwardlocal:
 			m->m_flags &= ~M_IP_NEXTHOP;
 		}
 		if (dest.s_addr != rtdest.s_addr &&
-		    ip_findroute(&nh, dest, m) != 0)
+		    ip_findroute(&nh, dest, m) != 0) {
+			if (qcopy != NULL)
+				m_freem(qcopy);
 			return (NULL);	/* icmp unreach already sent */
+		}
 	}
 
 passout:
@@ -519,6 +569,11 @@ passout:
 		 */
 		if (ip_off & IP_DF) {
 			IPSTAT_INC(ips_cantfrag);
+			if (qcopy != NULL) {
+				m_freem(m);
+				m = qcopy;
+				qcopy = NULL;
+			}
 			icmp_error(m, ICMP_UNREACH, ICMP_UNREACH_NEEDFRAG,
 				0, nh->nh_mtu);
 			goto consumed;
@@ -578,9 +633,13 @@ passout:
 consumed:
 	if (mcopy != NULL)
 		m_freem(mcopy);
+	if (qcopy != NULL)
+		m_freem(qcopy);
 	return NULL;
 drop:
 	if (m)
 		m_freem(m);
+	if (qcopy != NULL)
+		m_freem(qcopy);
 	return NULL;
 }

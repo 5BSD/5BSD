@@ -1,1 +1,1 @@
-SUBDIR+=	smbutil
+# The legacy SMB1 client is not part of the 5BSD base build.

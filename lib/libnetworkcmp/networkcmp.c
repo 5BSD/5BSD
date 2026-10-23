@@ -20,12 +20,17 @@
 #include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <net/pfvar.h>
 
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <fidl/bsd.network.v1/c/bsd.h>
+#include <fidl/bsd/sync_c.h>
 #include <limits.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -1170,4 +1175,186 @@ networkcmp_getaddrinfo(struct networkcmp_client *client, const char *host,
 	if (*result == NULL)
 		return (EAI_NONAME);
 	return (0);
+}
+
+/*
+ * system.Network.PF: a one-shot session of its own (bsd.network.v1
+ * NetworkPf).  It shares nothing with the process client above: the
+ * endpoint is admitted by a different attribute, and the provider's worker
+ * answers one OpenStates and ends the session five seconds after accepting
+ * it, so there is no session worth retaining.
+ */
+struct pf_call {
+	bool		 done;
+	bool		 malformed;
+	int		 error;		/* transport or application errno */
+	int		 fd;		/* received descriptor, owned here */
+};
+
+static void
+pf_info_reply(void *context, int error,
+    struct bsd_network_v1_ProtocolInfo *value)
+{
+	struct pf_call *call = context;
+
+	call->done = true;
+	call->error = error;
+	if (error == 0 && (value == NULL ||
+	    value->wire_version != NETWORKCMP_WIRE_VERSION)) {
+		call->malformed = true;
+		call->error = EPROTONOSUPPORT;
+	}
+}
+
+static void
+pf_states_reply(void *context, int error,
+    struct bsd_network_v1_NetworkPf_OpenStates_Result *value)
+{
+	struct pf_call *call = context;
+	int fd;
+
+	call->done = true;
+	call->error = error;
+	if (error != 0)
+		return;
+	if (value != NULL &&
+	    value->tag == bsd_network_v1_NetworkPf_OpenStates_Result_err_tag) {
+		/* An errno in 1..ELAST; anything else is malformed. */
+		if (value->value.err != 0 && value->value.err <= ELAST) {
+			call->error = (int)value->value.err;
+			return;
+		}
+	} else if (value != NULL && value->tag ==
+	    bsd_network_v1_NetworkPf_OpenStates_Result_response_tag) {
+		fd = fidl_bsd_take_fd(&value->value.response.pf);
+		if (fd >= 0) {
+			call->fd = fd;
+			return;
+		}
+	}
+	call->malformed = true;
+	call->error = EPROTO;
+}
+
+/*
+ * The delivered descriptor must be exactly what the provider promises:
+ * CAP_READ, CAP_FSTAT and CAP_IOCTL, DIOCGETSTATES the only ioctl, no
+ * fcntls.  The wire carries it as an untyped descriptor (the backend's
+ * explicit READ mapping would narrow it to CAP_READ), so the check is here.
+ */
+static int
+pf_check_descriptor(int fd)
+{
+	cap_rights_t actual, expected;
+	cap_ioctl_t commands[2];
+	uint32_t fcntls;
+
+	cap_rights_init(&expected, CAP_READ, CAP_FSTAT, CAP_IOCTL);
+	if (cap_rights_get(fd, &actual) == -1)
+		return (errno);
+	if (!cap_rights_contains(&actual, &expected) ||
+	    !cap_rights_contains(&expected, &actual))
+		return (EPROTO);
+	if (cap_ioctls_get(fd, commands, nitems(commands)) != 1 ||
+	    commands[0] != DIOCGETSTATES)
+		return (EPROTO);
+	if (cap_fcntls_get(fd, &fcntls) == -1)
+		return (errno);
+	if (fcntls != 0)
+		return (EPROTO);
+	return (0);
+}
+
+/* Wait for one PF call; returns 0 or an errno.  Any descriptor stays owned
+ * by call->fd for the caller to release. */
+static int
+pf_call_finish(struct fidl_bsd_connection *connection, uint16_t opcode,
+    int issue_error, struct pf_call *call, const struct timespec *deadline)
+{
+	int error = issue_error;
+
+	if (error == 0) {
+		NETWORKCMP_PROBE_SEND(opcode, 0, 0, 0);
+		error = fidl_bsd_sync_wait(connection, &call->done, deadline);
+	}
+	if (error == 0)
+		error = call->error;
+	if (error == 0) {
+		NETWORKCMP_PROBE_RECEIVE(opcode, 0, call->fd >= 0 ? 1 : 0, 0);
+	} else {
+		NETWORKCMP_PROBE_REJECT(opcode, 0, error);
+	}
+	return (error);
+}
+
+int
+networkcmp_pf_open(int *out_fd)
+{
+	struct fidl_bsd_options options = FIDL_BSD_OPTIONS_INITIALIZER;
+	struct fidl_bsd_connection *connection;
+	struct fidl_bsd_empty empty = { 0 };
+	struct pf_call call = { .fd = -1 };
+	struct timespec deadline;
+	uint32_t timeout_ms = NETWORKCMP_CALL_TIMEOUT_MS, txid;
+	int error, fd;
+
+	if (out_fd == NULL)
+		return (errno = EINVAL, -1);
+	*out_fd = -1;
+	/* A caller's service_budget_begin(3) bounds the whole operation. */
+	if (service_budget_timeout(&timeout_ms) == -1)
+		return (-1);
+	if ((error = fidl_bsd_sync_deadline(&deadline, timeout_ms)) != 0)
+		return (errno = error, -1);
+	if (service_open(NETWORKCMP_PF_INTERFACE, &fd) == -1) {
+		error = errno;
+		NETWORKCMP_PROBE_OPEN(__DECONST(char *, NETWORKCMP_PF_INTERFACE),
+		    error);
+		return (errno = error, -1);
+	}
+	if (service_harden_fd(fd, 0) == -1) {
+		error = errno;
+		(void)close(fd);
+		goto fail;
+	}
+	/* One call in flight; the one reply carries at most one descriptor. */
+	options.max_pending_requests = 1;
+	options.max_queued_messages = 2;
+	options.max_queued_bytes = 1024;
+	options.max_queued_fds = 1;
+	error = fidl_bsd_connection_create_with_options(fd, FIDL_BSD_CLIENT,
+	    &options, &connection);
+	if (error != 0) {
+		(void)close(fd);
+		goto fail;
+	}
+	error = pf_call_finish(connection, NETWORKCMP_OP_HELLO,
+	    bsd_network_v1_NetworkPf_GetProtocolInfo(connection, &empty,
+	    pf_info_reply, &call, &txid), &call, &deadline);
+	if (error == 0) {
+		call = (struct pf_call){ .fd = -1 };
+		error = pf_call_finish(connection, NETWORKCMP_OP_PF_STATES,
+		    bsd_network_v1_NetworkPf_OpenStates(connection, &empty,
+		    pf_states_reply, &call, &txid), &call, &deadline);
+	}
+	fidl_bsd_connection_destroy(connection);
+	if (error == 0 && call.fd < 0)
+		error = EPROTO;
+	if (error == 0)
+		error = pf_check_descriptor(call.fd);
+	/* Held for good: no further transfer, locked across fork and exec. */
+	if (error == 0 && service_harden_fd(call.fd, 0) == -1)
+		error = errno;
+	if (error != 0) {
+		if (call.fd >= 0)
+			(void)close(call.fd);
+		goto fail;
+	}
+	NETWORKCMP_PROBE_OPEN(__DECONST(char *, NETWORKCMP_PF_INTERFACE), 0);
+	*out_fd = call.fd;
+	return (0);
+
+fail:
+	NETWORKCMP_PROBE_OPEN(__DECONST(char *, NETWORKCMP_PF_INTERFACE), error);
+	return (errno = error, -1);
 }

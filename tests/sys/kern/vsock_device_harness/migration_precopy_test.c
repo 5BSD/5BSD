@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define vm_dirty_log_request mock_vm_dirty_log_request
@@ -135,6 +136,126 @@ valid_cpu(void)
 		.map_generation = 11,
 		.dirty_generation = 13,
 	});
+}
+
+struct window_cpu_mock {
+	uint64_t length;
+	uint64_t identity;
+	uint64_t dirty_generation;
+	unsigned int collects;
+	bool enabled;
+	bool bad_second_map;
+};
+
+static int
+window_cpu_enable(void *arg, uint64_t gpa, uint64_t length)
+{
+	struct window_cpu_mock *mock = arg;
+
+	if (gpa != 0 || length != mock->length)
+		return (EINVAL);
+	mock->enabled = true;
+	return (0);
+}
+
+static int
+window_cpu_collect(void *arg, uint64_t gpa, uint64_t length,
+    enum migration_dirty_collect_mode mode, uint8_t *bitmap,
+    size_t bitmap_bytes, struct migration_precopy_cpu_generation *generation)
+{
+	struct window_cpu_mock *mock = arg;
+	size_t required;
+
+	if (!mock->enabled || mode != MIGRATION_DIRTY_CLEAR ||
+	    migration_dirty_range_bitmap_bytes(gpa, length, &required) != 0 ||
+	    bitmap_bytes != required || mock->collects >= 2)
+		return (EINVAL);
+	if ((mock->collects == 0 && gpa != 0) ||
+	    (mock->collects == 1 && gpa !=
+	    VMM_DIRTY_LOG_MAX_BITMAP_BYTES * NBBY *
+	    MIGRATION_DIRTY_GRANULARITY))
+		return (EINVAL);
+	memset(bitmap, 0, bitmap_bytes);
+	bitmap[0] = 1;
+	*generation = (struct migration_precopy_cpu_generation) {
+		.identity = mock->identity++,
+		.map_generation = mock->bad_second_map && mock->collects == 1 ?
+		    12 : 11,
+		.dirty_generation = mock->dirty_generation++,
+	};
+	mock->collects++;
+	return (0);
+}
+
+static int
+window_cpu_disable(void *arg)
+{
+	struct window_cpu_mock *mock = arg;
+
+	mock->enabled = false;
+	return (0);
+}
+
+static const struct migration_precopy_cpu_ops window_cpu_ops = {
+	.enable = window_cpu_enable,
+	.collect = window_cpu_collect,
+	.disable = window_cpu_disable,
+};
+
+ATF_TC_WITHOUT_HEAD(large_window_chunks_and_rejects_generation_drift);
+ATF_TC_BODY(large_window_chunks_and_rejects_generation_drift, tc)
+{
+	const uint64_t chunk_length = VMM_DIRTY_LOG_MAX_BITMAP_BYTES * NBBY *
+	    MIGRATION_DIRTY_GRANULARITY;
+	const uint64_t length = chunk_length + 8 * MIGRATION_DIRTY_GRANULARITY;
+	struct migration_precopy_generation generation;
+	struct window_cpu_mock mock;
+	uint8_t *bitmap;
+	size_t bitmap_bytes;
+
+	(void)tc;
+	ATF_REQUIRE_EQ(migration_dirty_range_bitmap_bytes(0, length,
+	    &bitmap_bytes), 0);
+	bitmap = calloc(bitmap_bytes, 1);
+	ATF_REQUIRE(bitmap != NULL);
+	mock = (struct window_cpu_mock) {
+		.length = length,
+		.identity = 7,
+		.dirty_generation = 13,
+	};
+	ATF_REQUIRE_EQ(migration_precopy_enable_with_ops(owner, 0, length,
+	    &window_cpu_ops, &mock), 0);
+	ATF_REQUIRE_EQ(migration_dirty_mark(owner,
+	    chunk_length + MIGRATION_DIRTY_GRANULARITY,
+	    MIGRATION_DIRTY_GRANULARITY), 0);
+	ATF_REQUIRE_EQ(migration_precopy_collect_window_with_ops(owner, 0,
+	    length, bitmap, bitmap_bytes, &generation, &window_cpu_ops,
+	    &mock), 0);
+	ATF_CHECK_EQ(mock.collects, 2);
+	ATF_CHECK_EQ(bitmap[0], 1);
+	ATF_CHECK_EQ(bitmap[VMM_DIRTY_LOG_MAX_BITMAP_BYTES], 3);
+	ATF_CHECK_EQ(generation.cpu_identity, 8);
+	ATF_CHECK_EQ(generation.cpu_dirty_generation, 14);
+	ATF_REQUIRE_EQ(migration_precopy_disable_with_ops(owner,
+	    &window_cpu_ops, &mock), 0);
+
+	mock = (struct window_cpu_mock) {
+		.length = length,
+		.identity = 7,
+		.dirty_generation = 13,
+		.bad_second_map = true,
+	};
+	ATF_REQUIRE_EQ(migration_precopy_enable_with_ops(owner, 0, length,
+	    &window_cpu_ops, &mock), 0);
+	ATF_CHECK_EQ(migration_precopy_collect_window_with_ops(owner, 0,
+	    length, bitmap, bitmap_bytes, &generation, &window_cpu_ops,
+	    &mock), EPROTO);
+	ATF_CHECK_EQ(migration_precopy_collect_window_with_ops(owner, 0,
+	    length, bitmap, bitmap_bytes, &generation, &window_cpu_ops,
+	    &mock), EPROTO);
+	ATF_REQUIRE_EQ(migration_precopy_disable_with_ops(owner,
+	    &window_cpu_ops, &mock), 0);
+	free(bitmap);
 }
 
 struct collect_thread_arg {
@@ -401,6 +522,13 @@ mock_vm_dirty_log_request(struct vmctx *ctx,
 		errno = EINVAL;
 		return (-1);
 	}
+	if (vmm_dirty_log_request_validate(request) != 0 ||
+	    request->flags != (request->operation ==
+	    VMM_DIRTY_LOG_REQUEST_ENABLE ?
+	    VMM_DIRTY_LOG_REQUEST_F_SPARSE_RANGE : 0)) {
+		errno = EINVAL;
+		return (-1);
+	}
 	if (request->operation == VMM_DIRTY_LOG_REQUEST_ENABLE) {
 		default_enabled = true;
 		return (0);
@@ -529,6 +657,25 @@ ATF_TC_BODY(free_set_marks_only_whole_covered_pages, tc)
 	migration_precopy_free_set_reset(&set);
 	/* A reset set is inert and never claims a page free. */
 	ATF_CHECK(!migration_precopy_free_set_skip(&set, true, 3 * FS_GRAN));
+}
+
+ATF_TC_WITHOUT_HEAD(free_set_high_address_boundary);
+ATF_TC_BODY(free_set_high_address_boundary, tc)
+{
+	struct migration_precopy_free_set set;
+	uint64_t high_page;
+
+	(void)tc;
+	high_page = UINT64_MAX - FS_GRAN + 1;
+	ATF_REQUIRE_EQ(migration_precopy_free_set_init(&set, high_page,
+	    FS_GRAN), 0);
+	ATF_REQUIRE_EQ(migration_precopy_free_set_mark(&set,
+	    high_page - FS_GRAN, 2 * FS_GRAN), 0);
+	migration_precopy_free_set_commit(&set);
+	ATF_CHECK(migration_precopy_free_set_contains(&set, high_page));
+	ATF_CHECK(!migration_precopy_free_set_contains(&set,
+	    high_page - FS_GRAN));
+	migration_precopy_free_set_reset(&set);
 }
 
 ATF_TC_WITHOUT_HEAD(free_set_invalid_when_uncommitted);
@@ -669,9 +816,11 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, free_set_marks_only_whole_covered_pages);
+	ATF_TP_ADD_TC(tp, free_set_high_address_boundary);
 	ATF_TP_ADD_TC(tp, free_set_invalid_when_uncommitted);
 	ATF_TP_ADD_TC(tp, initial_copy_skips_free_then_dirtied_is_copied);
 	ATF_TP_ADD_TC(tp, enable_rollback_is_fail_closed);
+	ATF_TP_ADD_TC(tp, large_window_chunks_and_rejects_generation_drift);
 	ATF_TP_ADD_TC(tp, iterative_clear_keeps_device_dirties_cumulative);
 	ATF_TP_ADD_TC(tp, cpu_failure_aborts_device_cut_atomically);
 	ATF_TP_ADD_TC(tp, clear_failure_is_cleanup_only);

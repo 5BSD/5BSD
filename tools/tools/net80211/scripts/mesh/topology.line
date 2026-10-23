@@ -11,7 +11,7 @@ PATH=../:.:$PATH
 
 . common
 ifconfig $WLAN mac:allow
-MAC=`ifconfig $WLAN | grep ether | awk '{ print $2 }'`
+MAC=`ifconfig $WLAN | grep lladdr | awk '{ print $2 }'`
 case $MAC in
 	$NODE1_MAC)
 		ifconfig $WLAN inet $NODE1_IP

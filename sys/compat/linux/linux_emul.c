@@ -178,6 +178,16 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 
 		/* non-exec call */
 		em = malloc(sizeof(*em), M_LINUX, M_WAITOK | M_ZERO);
+		/*
+		 * Seed both values from the creating thread's current slack.
+		 * Native-to-Linux exec starts with Linux's 50 us default;
+		 * Linux-to-Linux exec preserves both values below.
+		 */
+		PROC_LOCK(td->td_proc);
+		em->timer_slack_ns = newtd != td && em_find(td) != NULL ?
+		    em_find(td)->timer_slack_ns : 50000;
+		PROC_UNLOCK(td->td_proc);
+		em->default_timer_slack_ns = em->timer_slack_ns;
 		em->em_proc_cookie = atomic_fetchadd_64(&linux_proc_cookie, 1) +
 		    1;
 		microuptime(&uptime);
@@ -207,11 +217,9 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 				struct linux_pemuldata *ppem;
 
 				ppem = pem_find(td->td_proc);
-#ifdef __amd64__
 				if (p->p_vmspace == td->td_proc->p_vmspace)
 					linux_aio_proc_share(ppem, pem);
-#endif
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 				/* Auto-attached children inherit their tracee's options. */
 				sx_xlock(&proctree_lock);
 				PROC_LOCK(p);
@@ -232,6 +240,11 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 					pem->mdwe = ppem->mdwe;
 				pem->mce_kill = ppem->mce_kill;
 				pem->io_flusher = ppem->io_flusher;
+				PROC_LOCK(td->td_proc);
+				pem->oom_score_adj = ppem->oom_score_adj;
+				pem->oom_score_adj_min = ppem->oom_score_adj_min;
+				pem->thp_disabled = ppem->thp_disabled;
+				PROC_UNLOCK(td->td_proc);
 				/* Sealed ranges live on the mappings: inherited. */
 				LINUX_PEM_SLOCK(ppem);
 				if (ppem->nseals > 0) {
@@ -280,11 +293,9 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 		 * bug-emulation bits for a secure exec; P_SUGID is not yet
 		 * updated for the new image here.
 		 */
-		pem->oom_score_adj = 0;
+		/* OOM adjustment and THP policy survive exec, as on Linux. */
 		linux_pemuldata_exec_md(pem);
-#ifdef __amd64__
 		linux_aio_proc_release(pem, td);
-#endif
 		/* A new image has no sealed mappings. */
 		LINUX_PEM_XLOCK(pem);
 		free(pem->seals, M_LINUX);
@@ -309,9 +320,7 @@ linux_on_exit(struct proc *p)
 	if (pem == NULL)
 		return;
 	(p->p_sysent->sv_thread_detach)(td);
-#ifdef __amd64__
 	linux_aio_proc_release(pem, td);
-#endif
 	p->p_emuldata = NULL;
 
 	free(pem->seals, M_LINUX);
@@ -360,9 +369,7 @@ linux_common_execve(struct thread *td, struct image_args *eargs)
 		PROC_UNLOCK(p);
 
 		free(em, M_LINUX);
-#ifdef __amd64__
 		linux_aio_proc_release(pem, td);
-#endif
 		free(pem, M_LINUX);
 	}
 	return (EJUSTRETURN);

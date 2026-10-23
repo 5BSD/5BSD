@@ -14,8 +14,10 @@
 
 #include "snapshot_devmem.h"
 
-#define	DEVMEM_MAGIC		UINT64_C(0x00314d4544564842) /* "BHVDEM1\0" */
-#define	DEVMEM_VERSION		1U
+#define	DEVMEM_MAGIC_V1		UINT64_C(0x00314d4544564842) /* "BHVDEM1\0" */
+#define	DEVMEM_MAGIC_V2		UINT64_C(0x00324d4544564842) /* "BHVDEM2\0" */
+#define	DEVMEM_VERSION_V1	1U
+#define	DEVMEM_VERSION_V2	2U
 #define	DEVMEM_HEADER_SIZE	32U
 #define	DEVMEM_ENTRY_SIZE	40U
 #define	DEVMEM_IO_CHUNK		(1024U * 1024U)
@@ -126,6 +128,8 @@ devmem_validate_regions(const struct bhyve_devmem_region *regions,
 	metadata_size = count * sizeof(*regions);
 	for (size_t i = 0; i < count; i++) {
 		if (regions[i].host_base == NULL || regions[i].length == 0 ||
+		    (regions[i].flags &
+		    ~BHYVE_DEVMEM_REGION_F_FIXED_ROM) != 0 ||
 		    memchr(regions[i].name, '\0',
 		    sizeof(regions[i].name)) == NULL ||
 		    regions[i].name[0] == '\0' ||
@@ -164,6 +168,7 @@ bhyve_devmem_snapshot_save(int fd, off_t normal_memory_size,
 	uint8_t header[DEVMEM_HEADER_SIZE], raw[DEVMEM_ENTRY_SIZE];
 	uint64_t cursor, total;
 	size_t table_size;
+	uint16_t version;
 	int error;
 
 	if (fd < 0 || normal_memory_size < 0 || extension_size == NULL)
@@ -183,7 +188,10 @@ bhyve_devmem_snapshot_save(int fd, off_t normal_memory_size,
 	}
 	memcpy(ordered, regions, region_count * sizeof(*ordered));
 	qsort(ordered, region_count, sizeof(*ordered), devmem_region_compare);
+	version = DEVMEM_VERSION_V1;
 	for (size_t i = 0; i < region_count; i++) {
+		if ((ordered[i].flags & BHYVE_DEVMEM_REGION_F_FIXED_ROM) != 0)
+			version = DEVMEM_VERSION_V2;
 		if (ordered[i].length > UINT64_MAX - cursor) {
 			error = EOVERFLOW;
 			goto done;
@@ -205,8 +213,9 @@ bhyve_devmem_snapshot_save(int fd, off_t normal_memory_size,
 	}
 
 	memset(header, 0, sizeof(header));
-	le64enc(header + 0, DEVMEM_MAGIC);
-	le16enc(header + 8, DEVMEM_VERSION);
+	le64enc(header + 0, version == DEVMEM_VERSION_V2 ?
+	    DEVMEM_MAGIC_V2 : DEVMEM_MAGIC_V1);
+	le16enc(header + 8, version);
 	le16enc(header + 10, DEVMEM_HEADER_SIZE);
 	le16enc(header + 12, DEVMEM_ENTRY_SIZE);
 	le32enc(header + 16, (uint32_t)region_count);
@@ -290,6 +299,7 @@ devmem_snapshot_load(int fd, off_t normal_memory_size,
 	uint8_t header[DEVMEM_HEADER_SIZE], raw[DEVMEM_ENTRY_SIZE];
 	uint64_t extension_length, digest, previous_end;
 	uint32_t count;
+	uint16_t version;
 	int error;
 
 	if (fd < 0 || normal_memory_size < 0 ||
@@ -307,9 +317,12 @@ devmem_snapshot_load(int fd, off_t normal_memory_size,
 	if (error != 0)
 		return (error);
 	count = le32dec(header + 16);
+	version = le16dec(header + 8);
 	extension_length = le64dec(header + 24);
-	if (le64dec(header + 0) != DEVMEM_MAGIC ||
-	    le16dec(header + 8) != DEVMEM_VERSION ||
+	if (!((version == DEVMEM_VERSION_V1 &&
+	    le64dec(header + 0) == DEVMEM_MAGIC_V1) ||
+	    (version == DEVMEM_VERSION_V2 &&
+	    le64dec(header + 0) == DEVMEM_MAGIC_V2)) ||
 	    le16dec(header + 10) != DEVMEM_HEADER_SIZE ||
 	    le16dec(header + 12) != DEVMEM_ENTRY_SIZE ||
 	    le16dec(header + 14) != 0 || le32dec(header + 20) != 0 ||
@@ -319,6 +332,14 @@ devmem_snapshot_load(int fd, off_t normal_memory_size,
 	    count > (extension_length - DEVMEM_HEADER_SIZE) /
 	    DEVMEM_ENTRY_SIZE)
 		return (EPROTO);
+	if (version == DEVMEM_VERSION_V1) {
+		/* Legacy files never carried fixed ROM bytes. */
+		for (size_t i = 0; i < region_count; i++) {
+			if ((regions[i].flags &
+			    BHYVE_DEVMEM_REGION_F_FIXED_ROM) != 0)
+				return (EPROTO);
+		}
+	}
 
 	entries = calloc(count, sizeof(*entries));
 	targets = calloc(count, sizeof(*targets));

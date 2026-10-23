@@ -97,7 +97,7 @@ vmm_stat_array_incr(struct vcpu *vcpu, struct vmm_stat_type *vst, int statidx,
 
 	stats = vcpu_stats(vcpu);
 
-	if (vst->index >= 0 && statidx < vst->nelems)
+	if (vst->index >= 0 && statidx >= 0 && statidx < vst->nelems)
 		stats[vst->index + statidx] += x;
 #endif
 }
@@ -111,7 +111,7 @@ vmm_stat_array_set(struct vcpu *vcpu, struct vmm_stat_type *vst, int statidx,
 
 	stats = vcpu_stats(vcpu);
 
-	if (vst->index >= 0 && statidx < vst->nelems)
+	if (vst->index >= 0 && statidx >= 0 && statidx < vst->nelems)
 		stats[vst->index + statidx] = val;
 #endif
 }

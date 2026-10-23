@@ -148,9 +148,21 @@ serialized data.
 The current checkpoint publication manifest is version 3.  It identifies the
 source architecture and a machine ABI before naming the atomically published
 data, kernel, and metadata members.  The current machine ABI is
-`bhyve-virtio-v2`.  Since this format has not been released, restore accepts
-only the current manifest and machine ABI and rejects every obsolete version,
-unknown architecture, and architecture/machine mismatch.  This is an initial
+`bhyve-virtio-v3`.  The ABI changed when the AMD kernel snapshot gained a
+versioned VM header and nested SVM state.  Restore accepts the current
+manifest and machine ABI by default.  An explicit
+`checkpoint.restore_abi_v2` destination setting also admits the v0.1.0
+`bhyve-virtio-v2` machine ABI through its legacy record decoders; that path
+has v0.1.0 hello/topology wire fixtures and a full rootless v1 session model
+which checks both opt-in rejection and successful commit.  The
+`tests/sys/kern/vsock_device_harness/cross_release/run-v010-interop.sh`
+gate also compiles the actual v0.1.0 source state machine from its release
+tag and verifies both pre-quiesce rejection without opt-in and a complete
+socketpair handoff with opt-in to the current destination.
+It still needs a release-produced VM checkpoint fixture and live-VM
+qualification.  Unknown manifest
+versions, unknown architectures, and architecture/machine mismatches are
+rejected.  This is an initial
 compatibility gate, not
 the final migration header described below.  The metadata device-section list
 and kernel-state section lists are also now treated as exact compatibility
@@ -177,12 +189,20 @@ canonicalizes the current-size XSAVE field, and derives both Intel topology
 leaves 0x0b and 0x1f from the configured guest topology.  Separate fixed records bind the
 maximum XCR0/XSAVE policy, configured x2APIC mode, guest-visible TSC
 frequency, and, when nested VMX is enabled, exact virtual-VMX capability and
-portable VMCS-schema signatures.  Restore compares the complete mandatory
+portable VMCS-schema signatures.  When nested SVM is enabled, the contract
+also records that policy, the nested snapshot schema version, and whether the
+host can restore virtual-NMI state.  Restore compares the complete mandatory
 contract after platform policy is configured and before any vCPU runs;
 absent, malformed, or partially encoded contracts fail closed.  The initial policy is
 an intentionally conservative exact match.  Future named CPU models or TSC
 scaling must introduce an explicit compatibility policy instead of
 reinterpreting these records.
+
+The kernel checkpoint session fixes the set of vCPUs while holding the VM's
+vCPU topology lock.  Creating a previously absent vCPU during that session
+returns `EBUSY`, including from another VM descriptor.  Once the session
+aborts or commits, vCPU creation can proceed.  This keeps the source CPU
+set identical through memory, event, and architecture-state capture.
 
 The remaining architectural limitations are:
 
@@ -236,10 +256,41 @@ active-L2 save/restore, repeated create/destroy, concurrency, fault, and soak
 runs.  The `nested` virtio-lab profile records those as distinct evidence
 groups and refuses to infer a pass from a generic boot.
 
-AMD SVM remains unimplemented beyond architecture-neutral state/build
-scaffolding and ordinary NPT operation.  References to "nested page faults" in
-the existing NPT code describe L0's second-level translation, not an
-L1-controlled VMCB12/VMCB02 nested-SVM implementation.
+AMD SVM now has a private VMCB02 and NPT02 run path, a frozen L2 exit
+handoff, VMCB12 exit reflection, and a versioned active-L2 checkpoint format.
+Exposure requires the boot-time `hw.vmm.svm.nested=1` policy and the per-guest
+`x86.nested_svm=true` setting.  Each vCPU's exposure policy freezes on its
+first run and at the architecture checkpoint boundary.  It remains default-off pending hardware
+qualification of L0-only exits,
+virtual interrupts, NPT12 translation, and active-L2 restore.  VMCB02
+composition rejects any L0 control intercept without a known L2 exit handler
+before L2 can run.  The ordinary AMD guest CPU model hides
+SVM in CPUID and intercepts EFER reads to hide the host-required SVME bit;
+attempts to enable guest SVME fail closed.
+SVM checkpoint restore validates required VMCB intercepts and destination-owned
+NPT and bitmap roots before publication, then discards source ASID and VMCB
+cache state.  Nested restore rebuilds a destination-local VMCB02 and NPT02;
+its active-L2 round trip still requires live qualification.
+
+### Remaining live qualification gates
+
+Run these only with a matching installed kernel, `vmm` module, bhyve binary,
+and test programs.  A rootless model pass or a module link does not replace a
+guest run.  Keep the nested SVM and kernel startup opt-ins off for ordinary
+guests until the corresponding hardware evidence passes.
+
+| Area | Required live evidence |
+| --- | --- |
+| AMD nested SVM | On AMD hardware with DecodeAssists, run installed `run-svm-nested-atf.sh` with `POLICY_ONLY=1` on a default-off policy boot and with `hw.vmm.svm.nested=1` before loading `vmm` on the enabled boot.  Retain its Kyua database and host hashes.  It runs `vmm_run_live_test` cases for L2 I/O, L0/L1 exit ownership, NPT12 faults and device access, IRQ/NMI delivery, CR8, MSRs, virtual GIF, and active-L2 checkpoint.  Its `svm_l2_npt12_readonly_alias` case proves L2 can read and execute an L0 read-only boot-ROM alias while a write permitted by L1 fails as an L0 paging error without changing ROM bytes.  It then unmaps that L0 page and remaps another object at the same GPA; L2 must execute the replacement bytes instead of a stale NPT02 alias.  On the enabled boot, run `run-svm-nested-live.sh` with a reviewed Linux/KVM L1 driver and pinned Linux and 5BSD L2 images.  Its `svm-nested-live-qualification.tsv` ledger requires 12 feature groups and 36 run-bound guest or host artifacts; missing or malformed evidence cannot publish a result.  Keep the sealed result, host hashes, guest logs, and ATF database together. |
+| Intel nested VMX | Run `tests/sys/vmm/run-vmx-nested-live.sh` with a reviewed `NESTED_L1_RUNNER`, pinned L1 and both L2 images, and a private `WORKDIR`.  Retain its complete evidence directory, including VM entry failures, EPT/VPID invalidation, interrupts, active-L2 restore, and soak results. |
+| Versioned checkpoint | Restore a checkpoint produced by the pinned v0.1.0 release binary into a fresh destination with `checkpoint.restore_abi_v2` enabled; verify the default rejection without opt-in.  Run `tests/sys/kern/vsock_device_harness/cross_release/run-v010-interop.sh` first for the rootless release-source session gate, then capture an actual release-produced VM fixture and verify guest state after resume. |
+| Active 9P | Under the destination's configured export policy, checkpoint and restore open regular files and directory reads while guest requests are in flight.  Exercise changed inode, changed export, stale fid, partial reply, failed restore, and a successful continuation without duplicate or lost responses. |
+| Active vsock | With `checkpoint.migrate_active_vsock=true` and the same `migration_endpoint_id` on both userspace backends, migrate STREAM and SEQPACKET connections with buffered data in both directions, EOF/half-close, timer expiry, queue reset, pre-commit rollback, and release cutover.  Verify one runnable VM and one endpoint owner at every failure boundary.  The operator-supplied migration stream carries live endpoint data and must be secured by the operator.  A failed handoff after one-shot descriptor transfer leaves the source usable but those connections cannot be exported again.  Active kernel-provider handoff remains unsupported. |
+| TPM | Use the separate storage, key, guest traffic, and fault-injection procedure in `docs/bhyve-tpm-checkpoint.md` for both disk checkpoint and live migration. |
+
+These gates are pending on this host: the current user cannot load the module
+and `/dev/vmm` is absent.  Building packages does not authorize installing an
+upgrade or rebooting to run them.
 
 ## Design principles
 
@@ -434,9 +485,14 @@ or feature negotiation alone is not activation evidence.
   rings, and translated DMA.
 - Console: qualify multiple active ports, guest/host close races, blocked I/O
   queue reset, backend reconnect, packed rings, and active-port restore.
-- 9P: define active fid/request checkpoint and export identity; qualify reset
-  during requests, reconnect, path confinement, packed rings, and long fid
-  soak.
+- 9P: version 6 records rebind quiescent active fids by root-relative path,
+  numeric credentials, open mode, and device/inode/type identity. An explicit
+  matching share ID permits mount-path and device-number rebinding. Open
+  directories carry an ordered prefix hash and either a 9P2000.L entry index
+  or classic Tread packed-stat byte position; restore reconstructs and verifies
+  both. Version 2 empty-fid records and later qualified formats remain readable.
+  Qualify active-request drain, reset during requests, reconnect, path
+  confinement, packed rings, long fid soak, and cross-host credential mapping.
 - Input: qualify active event restore, configuration-change delivery,
   saturation/drop policy, reset during injection, multiple devices, and
   packed rings.
@@ -834,10 +890,18 @@ Host file descriptors are not state. Save recipes and validate them:
   drain;
 - 9P/virtio-fs: export identity and security policy; reopen path handles under
   the destination's policy;
-- vsock: active host connections and Unix/native provider FDs cannot be
-  reconstructed transparently. Initially require no active connections or
-  explicitly reset them and expose the disconnect to the guest on restore.
-  For the kernel backend, freeze the empty destination provider, replay the
+- vsock: the userspace backend has a bounded active-connection state codec,
+  capture, one-shot descriptor handoff to a standby relay owner, and
+  destination reconstruction after the device restore.  It is explicitly
+  enabled with `checkpoint.migrate_active_vsock=true` on both VMs and requires
+  matching `migration_endpoint_id` values.  The relay starts only after
+  RELEASE; any pre-commit failure cancels the standby owner before source
+  rollback.  The setting remains off by default pending live qualification.
+  One-shot transfer prevents exporting the same connection again after a
+  failed handoff.  The kernel provider still freezes only with empty queues
+  and no active AF_VSOCK connections; active kernel-provider handoff remains
+  unsupported.
+  For the empty kernel backend, freeze the destination provider, replay the
   restored device-feature epoch while it remains fenced, and thaw only after
   that replay succeeds.  A feature or thaw failure retains the fence for a
   safe retry; restoring bhyve's feature field without reconstructing the
@@ -1041,9 +1105,234 @@ ID checks.
 
 Shadow VMCS is an optimization after the software VMCS12 path is correct.
 
+The software guest page walker now translates cold L2 addresses through
+EPT12, including nonidentity mappings.  A denied walk replaces the pending
+L0 emulation continuation with an EPT exit to L1.  When EPT12 resolves a
+data access to an L1 device address, the EPT handoff retains cold L2 state
+and invokes the ordinary instruction emulator with the translated address.
+No-fault inspection probes EPT permissions without writing EPT accessed or
+dirty bits.
+
 ## AMD SVM design
 
-Add `sys/amd64/vmm/amd/nested_svm.c` and `.h`.
+The AMD implementation is split across `svm.c` and the
+`sys/amd64/vmm/amd/nested_svm_*.c` helpers.  The helpers cover VMCB admission,
+composition and writeback, L1 memory access, intercept policy, and NPT12
+translation.
+
+The current `nested_svm_policy.c` supplies a bounded, copied VMCB12 view and
+VMRUN admission checks for guest physical ranges, intercepts, ASID, paging
+state, CR3 and debug-register reserved bits, EFER MBZ bits, event type,
+reserved event-injection bits, and supported exception
+vectors.  The SVM exit loop stages VMRUN, VMLOAD, and VMSAVE
+until the vCPU is frozen; `nested_svm_memory.c` then accesses the L1 guest
+physical VMCB page.  `nested_svm_aux.c` transfers only the VMLOAD/VMSAVE
+fields.  The frozen handoff fetches the intercepted instruction and applies
+its effective address size to AX/EAX/RAX, including the 67h override.  A
+valid VMRUN now stages a private VMCB02 and selects it, its NPT02 pmap, and a
+separate ASID for the next CPU-bound entry.  L2 exits reach a frozen handoff:
+NPT12 denials and L1-requested intercepts can be written back to VMCB12,
+while an NPT02 miss can populate a 4 KiB alias and retry L2.  Known L0-owned
+L2 exits are handled or reported without reflecting them to L1; an unhandled
+L0-only exit fails closed.  Live AMD qualification remains pending.
+`VM_CAP_NESTED_SVM` is opt-in, requires the boot-time
+`hw.vmm.svm.nested=1` host policy, and requires host DecodeAssists for L2 CR8
+instruction emulation.  The root-gated
+VMRUN, intercept reflection, virtual-GIF, and active-L2 checkpoint tests
+still need execution on a host running the new module.  CPUID gates
+the SVM bit and feature leaf on that capability, and bounds an exposed
+guest's MAXPHYADDR to 47 bits to match the private NPT02 root.  VMCB, NPT12,
+and VM_HSAVE_PA address checks use the same bound.  VMCB12 admission and L1
+bitmap lookup ignore bits 11:0 of IOPM/MSRPM base fields, as AMD hardware
+does; checkpoint writeback retains L1's original field values.
+Unlike Intel's VM-wide nested-VMX CPU-model switch, the SVM capability is a
+per-vCPU virtual MSR and CPUID state.  `bhyve` applies `x86.nested_svm=true`
+to each vCPU it creates, including later APs.  The per-vCPU capability and
+saved exposure bit preserve that model on restore; mixed exposure through a
+different VMM client is an explicit per-vCPU configuration, not a VM-wide
+promise.
+The NPT12 walker now resolves 4 KiB, 2 MiB, and 1 GiB leaves, accumulates
+permissions, and prepares accessed/dirty updates.  A frozen adapter commits
+those updates with compare-and-swap and can install a 4 KiB alias in an
+L0-owned NPT02 pmap.  VMRUN prepares that root; L2 NPF dispatch now walks
+NPT12, reflects L1 denials, and maps successful translations.  With NPT12
+disabled it maps L2 physical addresses directly to L1 physical addresses.
+If L1 changes an NPT12 entry during all bounded A/D commit retries, L2
+refaults on its next entry rather than poisoning the vCPU.
+An NPT02 alias allocation failure returns ENOMEM after replaying any
+interrupted event, so the caller can retry the still-active L2 later.
+The current root covers the lower LA48
+half-space.  The four-level walker rejects L2 physical addresses at or above
+48 bits and checks every source entry during its A/D commit.  It derives the
+L1-visible NPF error code from an NPT12 denial, including present and
+reserved-bit status, and gives reserved huge-page bits precedence over a
+simultaneous permission denial.  The backend
+must discard cached NPT02 aliases when L1 requests a TLB flush through
+VMCB12 TLB_CONTROL or changes the nested ASID.  L1 is responsible for
+requesting that flush after changes to its NPT translations, as specified by
+the AMD64 Architecture Programmer's Manual, volume 2, section 15.16.1.
+An L1 bitmap reader and exit policy now determine whether an I/O, MSR, or
+other intercepted L2 exit was requested by L1 rather than forced by L0;
+the frozen L2 exit path consults it before reflecting to L1.  A VMCB02 composition helper
+copies L2 state while replacing L1 hardware pointers and ASID with L0-owned
+values, preserving L0 safety intercepts and taking the VMLOAD auxiliary fields
+from L1's live VMCB01.  It excludes L0's temporary VINTR and IRET intercepts
+from L2 while retaining those requested by L1.  It clears pause-filter fields
+because the nested CPUID
+profile does not advertise that facility.  L1 and L2 now have separate ASID
+and pmap-generation bookkeeping.  The staged VMCB02 keeps ASID zero until a
+CPU-bound L2 entry path allocates its real ASID.  The CPU-bound run loop now
+selects that ASID and VMCB02 when L2 is active.  A frozen writeback helper now copies
+the VMRUN/#VMEXIT state and exit fields from VMCB02 to L1's VMCB12 while
+preserving the VMLOAD/VMSAVE fields and guest-supplied control pointers.  It
+keeps LBR state in VMCB12 only when L1 enabled LBR virtualization.  The
+helper is invoked for L1-owned L2 exits.  L0's L1-only single-step intercepts
+for PUSHF, POPF, and traced exceptions are omitted from VMCB02.  It retains
+L0's machine-check and breakpoint exception controls, while L1's own
+intercepts remain active.  Rare L0-only instruction exits without an L2
+handler fail closed.
+When L1 clears `V_INTR_MASKING`, L0 traps L2 CR8 reads and writes while
+running VMCB02 with physical interrupt masking enabled.  Reads use L1's
+virtual APIC TPR; writes update both that TPR and L2's `V_TPR`.  L1-requested
+CR8 intercepts still take precedence and reflect to VMCB12.
+The live AMD suite includes a 32-bit alternate-encoding CR8 check for both
+TPR copies; it still requires the matching kernel on AMD hardware.
+L0-only CPUID now uses L2's CR4 for the OSXSAVE bit.  Ordinary nonstring
+L2 port I/O that L1 did not intercept now reaches the existing port handler
+or userspace device model with L2 register and segment access, after
+validating the I/O size and nRIP.  Unintercepted L2 HLT and PAUSE follow
+the ordinary L0 halt and pause paths and leave L2 ready to resume at nRIP.
+Unintercepted string I/O reaches the ordinary L0 string exit path with or
+without NPT12.  Userland string emulation calls `VM_GLA2GPA` and
+`vm_copy_setup`; the backend translates L2 page-table and data addresses
+through NPT12 before any guest-memory access.  An NPT12 denial reflects an
+NPF to L1 and stops the current string operation.  The ordinary AMD checkpoint
+field walker still reads VMCB01 explicitly, so active L2 state remains in
+its separate portable record.
+INVD and WBINVD advance L2's RIP after a checked nRIP.  SVM,
+MONITOR, MWAIT, SKINIT, ICEBP, and VMMCALL instructions that L1 did not
+intercept follow the ordinary L0 #UD policy in L2.  The L2
+CPUID path hides SVM and its feature leaf even when L1 has nested SVM enabled,
+because this backend does not support a further nested level.  When L1 does
+not intercept L2 CPUID, it also hides L0's hypervisor and paravirtual-clock
+leaves; those clock MSRs are not an L2 interface.
+Physical host interrupt and NMI exits resume L2 directly, even if L1 requested
+the corresponding intercept; they are not written into L1's VMCB12.
+Physical SMI, INIT, and FERR freeze exits remain L0-owned generic SVM exits.
+An actual VMRUN rejection of the composed VMCB02 is an L0 failure and poisons
+the nested run owner; L1-visible invalid-VMCB exits are produced from VMCB12
+validation before L2 entry.  The VMCB02 failure is never reflected to L1.
+AMD kernel-owned INIT/SIPI remains disabled by default.  Setting the read-only
+module-load tunable `hw.vmm.svm.kernel_startup_experimental=1` before loading
+`vmm` admits it for root hardware qualification; the default zero value and
+every value other than one reject it.  The live startup cases must pass with a
+matching running kernel before the default can be changed.
+VMCB02 retains L1's virtual interrupt request fields, so L1 can request an
+L2 interrupt.  At an L2 entry boundary, a pending L0 virtual IRQ or NMI
+requested by L1's intercepts produces a frozen synthetic nested exit.  The
+event stays pending for L1 after the exit; NMI priority, pending event
+injection, L1's interrupt masking choice of L1 or L2 IF, and the L0 interrupt
+mask capability gate this path.  L1-requested exits can occur during L2's
+interrupt shadow.  When L1 leaves IRQ intercept clear, L0 can inject a pending
+virtual IRQ into L2.  For blocked IRQ delivery it borrows V_IRQ and the VINTR
+intercept for one hardware entry, then restores L1's virtual interrupt state
+before checkpoint or exit reflection.  L2.IF blocking with L1 interrupt
+masking disabled cannot use the hardware VINTR window because VMCB02 must use
+L0's masking mode; delivery resumes at another L0 exit.  On hosts with the
+AMD virtual NMI feature, L0 injects pending NMIs into L2 directly when L1
+does not intercept them.  VMCB02 tracks NMI blocking through IRET.  A bounded
+per-vCPU table preserves blocking for each L2 VMCB GPA across nested exits and
+version 2 snapshots; when all slots are occupied, a new NMI stays pending.
+L1 event-injected NMIs reserve a slot before entry so their blocking state
+survives an L2 exit and checkpoint.  While an NMI is blocked, an L1 interrupt
+intercept can still run when interrupts are enabled.
+Version 1 snapshots remain restorable.  Hosts without virtual NMI support
+defer direct NMI delivery until L1 resumes.
+The L1 SVM feature profile does not advertise virtual NMI controls, and
+VMCB12 admission rejects them instead of silently ignoring L1's request.
+Queued L0 exceptions and software interrupts inject into active VMCB02 after
+the guest-entry guard.  They take precedence over pending asynchronous L1
+exits, and their queue entry is consumed only for an actual L2 entry.
+The live AMD suite checks delivery of an L1 V_IRQ, an L0 APIC IRQ, an
+L1 event-injected NMI, and two successive L0 NMIs to an L2 real-mode handler.
+It also checks an active-L2 checkpoint while an NMI is blocked.  These cases
+are pending execution on the matching kernel.
+When L0 exception tracing catches an L2 fault that L1 did not intercept, the
+frozen exit path reinjects the fault into VMCB02, preserving its error code
+and updating CR2 for a page fault.  An L0 breakpoint intercept reports the
+same breakpoint exit ABI from L2, including its instruction length, even when
+L1 also intercepts #BP.  Changes
+to L0 breakpoint, HLT, and PAUSE exit capabilities update an active VMCB02
+without removing L1's intercepts.  L0 exception tracing remains scoped to
+L1; L2's own #DB and other trap-class exceptions follow L1's intercepts.
+L1 CLGI and STGI update a software GIF.  When GIF is clear, L0 keeps
+guest-directed interrupts and NMIs pending while still delivering exceptions;
+an L2 exit clears L1's GIF as the hardware #VMEXIT contract requires.  The
+GIF state is part of the AMD checkpoint record.  L1 INVLPGA conservatively
+refreshes L1 and L2 hardware ASIDs.
+Before an L0-owned exit resumes L2, the frozen handoff carries a valid
+EXITINTINFO into EVENTINJ and clears the consumed exit field.  It rejects a
+conflicting or malformed event, and leaves reflected exits' event information
+for L1.
+L0-only reads of EFER, PAT, FS/GS base, TSC, and the VMLOAD auxiliary MSRs
+now read the live saved VMCB02 state and advance L2 using checked nRIP.  TSC
+uses the composed VMCB02 offset; EFER masks the hardware-required SVME bit to
+match L2 CPUID.  L2 writes to STAR, LSTAR, CSTAR, SFMASK, FS/GS base,
+SYSENTER, PAT, and EFER now update the live VMCB02 image after checked nRIP.
+L2 reads of SFMASK and SYSENTER_CS expose only their low 32 bits, including
+when L1's initial VMCB image had upper bits set.
+When L1 disables NPT12, PAT remains shared with L1: composition takes it
+from VMCB01, L2 PAT writes update VMCB01, and VMCB12 G_PAT is preserved on
+exit and checkpoint.  With NPT12 enabled, VMCB12 G_PAT is the L2 value.
+EFER writes validate long-mode transitions and advertised feature bits while
+retaining the physical SVME bit that VMRUN needs.  Noncanonical FS/GS base,
+LSTAR, and CSTAR values, invalid PAT, and invalid EFER writes inject #GP into
+L2 without advancing RIP, or synthesize a #GP exit to L1 when L1 intercepts
+that exception.  L0-generated #UD follows the same L1 intercept rule.  An L2
+TSC write adjusts the shared L1 clock offset
+after subtracting L1's VMCB12 offset; the existing clock checkpoint record
+carries that change.
+Checkpoint copies the live VMLOAD fields, PAT, and EFER into the
+portable L2 record.  L0 handles the ordinary AMD shared MTRR and zero-valued
+status MSRs for L2 when L1 leaves them unintercepted.  APIC_BASE reads and
+writes use the shared L1 virtual LAPIC state and its existing write policy;
+an unknown MSR injects #GP into L2.  Interrupted event delivery is replayed
+before any L0-owned instruction exit is emulated.  L2 device MMIO and string
+port I/O use the ordinary L0 emulators.  With NPT12, the software guest page
+walk and final data address translate through L1's nested tables; a translated
+emulated-device address skips RAM alias creation and reaches instruction
+emulation.  Assigned PCI passthrough BARs have no NPT02 alias and are not
+supported for L2 access; that case fails closed.
+An NPT12 denial during a software page walk synthesizes an L1 NPF exit;
+no-fault inspection leaves guest state unchanged.  The userspace string-I/O
+path commits each completed element's index and count, then recognizes an L1
+transition before changing registers for the faulting element.  Other
+L0-only instruction exits without an emulation path fail closed.  Software
+NPT12 translation chooses the requested read, write, or execute access before
+walking L1's tables.  With read-only guest page tables disabled, guest
+page-table walks use a user data-write NPT access even when software only
+reads the PTE, and reflect those access bits to L1.
+The frozen exit dispatcher forwards nested string
+I/O, breakpoint, and SVM exits to the ordinary guest-exit handlers.  Broad
+guest qualification still requires the matching kernel on AMD hardware.
+
+The virtual SVM MSR state keeps the L0-required physical `EFER.SVME` separate
+from the bit visible to L1.  It also bounds `VM_HSAVE_PA` and models the
+`VM_CR` LOCK/SVMDIS interaction.  The current VM_CR model rejects writes to
+the other control bits.  AMD
+checkpoints now prefix each vCPU's established architecture record with a
+versioned nested state record.  A paused L2 record contains a copied VMCB12
+with current L2 guest state and virtual MSRs; restore stages a fresh NPT02
+root and VMCB02 with destination hardware pointers before VM-wide commit.
+Older ordinary AMD images remain readable.  This checkpoint path still needs
+live active-L2 save and restore qualification.  Active-L2 records require
+the virtual GIF to be clear, matching VMRUN entry.  VMCB12 admission checks
+the guest PAT when NPT12 is enabled.  VMCB12 admission and the ordinary AMD
+snapshot validator share checks for CR0 cache mode and long-mode PAE and
+protected-mode requirements.  AMD VMRUN permits CR0.PG=1 with CR0.PE=0 outside long mode
+and does not compare EFER.LMA with EFER.LME and CR0.PG; both validators
+preserve those SVM-specific states.  When nested SVM is exposed, restore also
+limits VMCB01 CR3 to the same 47-bit guest physical range advertised by CPUID.
 
 Per vCPU maintain:
 
@@ -1364,6 +1653,8 @@ The same ownership rule applies to VM-exit MSR loading: the immutable list and
 base state, rollback workspace, processor/software results, outcome, and
 failed-entry index use checked, pairwise-disjoint extents before any callback
 or mutation is allowed.
+When nested VMX is enabled, the L1 CPUID MAXPHYADDR now matches the 47-bit
+EPT02 vmspace bound already enforced by the virtual VMX capability model.
 Production Intel environment capture, final programming, portable rebind, and
 VMCS02 resource acquisition apply the same rule before touching VMCS01 or a
 destination-local lease.  This adapter coverage currently has a clean kernel

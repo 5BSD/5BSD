@@ -4,6 +4,7 @@
 // major.  Identity never travels in a payload: the jail every method acts on
 // is named from the accepted session's label, so a caller can only ever
 // create, attach to, describe or remove its own jail.
+@available(platform="bsd", added=1)
 library bsd.namespace.v1;
 
 using zx;

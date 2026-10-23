@@ -149,7 +149,7 @@ ip4_pfil_in_after_stripping_body()
 	jexec bgw sysctl net.enc.out.ipsec_filter_mask=1	# before outer header
 	jexec bgw pfctl -e
 	pft_set_rules bgw \
-		"rdr on enc0 proto tcp to 4.0.0.1 port 666 -> 4.0.0.44" \
+		"match in on enc0 proto tcp to 4.0.0.1 port 666 rdr-to 4.0.0.44" \
 		"pass"
 
 	# Prepare the catcher on host b

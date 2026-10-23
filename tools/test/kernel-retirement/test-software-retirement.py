@@ -28,10 +28,35 @@ class SoftwareRetirement(unittest.TestCase):
         r = make('sys/modules/geom', 'ALL_MODULES=yes', '-V', 'SUBDIR')
         self.assertEqual(r.returncode, 0, r.stderr)
         modules = r.stdout.split()
-        for n in ['ccd', 'journal', 'raid3', 'shsec', 'virstor']:
+        for n in ['ccd', 'journal', 'raid3', 'shsec', 'virstor', 'cache',
+                  'concat', 'mountver', 'stripe', 'union', 'zero']:
             self.assertNotIn('geom_' + n, modules)
-        for n in ['eli', 'part', 'label', 'mirror', 'multipath', 'uzip', 'zoned']:
+        for n in ['eli', 'part', 'label', 'linux_lvm', 'mirror', 'multipath',
+                  'nop', 'raid', 'uzip', 'zoned']:
             self.assertIn('geom_' + n, modules)
+        r = make('sys/modules/netgraph', 'ALL_MODULES=yes', '-V', 'SUBDIR')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        modules = r.stdout.split()
+        for n in ['cisco', 'frame_relay', 'lmi', 'rfc1490', 'pred1']:
+            self.assertNotIn(n, modules)
+        for n in ['bluetooth', 'netgraph', 'socket', 'ppp', 'pppoe', 'vjc']:
+            self.assertIn(n, modules)
+        r = make('sys/modules', 'ALL_MODULES=yes', '-V', 'SUBDIR')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for n in ['udf', 'udf_iconv', 'fdc', 'agp', 'cardbus', 'cbb', 'exca',
+                  'ppbus', 'ppc', 'linux', '3dfx', '3dfx_linux',
+                  'glxiic', 'glxsb', 'pst', 'sbni']:
+            self.assertNotIn(n, r.stdout.split())
+        for n in ['aac', 'aacraid', 'ipmi', 'mfi', 'mrsas', 'linux_ntsync']:
+            self.assertIn(n, r.stdout.split())
+        for n in ['aac', 'aacraid', 'ipmi', 'mfi', 'mrsas']:
+            r = make('sys/modules/' + n, '-V', 'SUBDIR')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn(n + '_linux', r.stdout.split())
+            adapter = (SRC / 'sys/dev' / n / (n + '_linux.c')).read_text()
+            self.assertIn('machine/../linux/linux_proto.h', adapter)
+            self.assertNotIn('linux32', adapter)
+            self.assertIn('MODULE_DEPEND(' + n + '_linux, linux64,', adapter)
 
     def test_world_and_rescue_selection(self):
         for directory, retired in [('lib', 'libugidfw'), ('usr.sbin', 'ugidfw'),
@@ -45,8 +70,23 @@ class SoftwareRetirement(unittest.TestCase):
         self.assertIn('pfctl', r.stdout.split())
         r = make('lib/geom', '-V', 'GEOM_CLASSES')
         self.assertEqual(r.returncode, 0, r.stderr)
-        for n in ['journal', 'raid3', 'shsec', 'virstor']:
+        for n in ['journal', 'raid3', 'shsec', 'virstor', 'cache', 'concat',
+                  'mountver', 'stripe', 'union']:
             self.assertNotIn(n, r.stdout.split())
+        for n in ['eli', 'label', 'part', 'mirror', 'multipath', 'nop', 'raid']:
+            self.assertIn(n, r.stdout.split())
+        for directory, retired in [('usr.bin', 'ldd32'),
+                                   ('libexec', 'rtld-elf32')]:
+            r = make(directory, '-V', 'SUBDIR')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn(retired, r.stdout.split())
+        self.assertNotIn('ld-elf32.so.1',
+                         (SRC / 'libexec/rc/rc.d/ldconfig').read_text())
+        self.assertNotIn('LD_32_PRELOAD',
+                         (SRC / 'usr.bin/stdbuf/stdbuf.c').read_text())
+        r = make('share/man/man4', '-V', 'MAN')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('aout.4', r.stdout.split())
 
     def test_installer_does_not_offer_retired_policies(self):
         # Check the shipped installer sources, not an assumed dialog name.
@@ -61,7 +101,11 @@ class SoftwareRetirement(unittest.TestCase):
         for option in ['PROCFS', 'COMPAT_AOUT', 'COMPAT_43TTY',
                        'COMPAT_FREEBSD4', 'COMPAT_FREEBSD5', 'COMPAT_FREEBSD6',
                        'COMPAT_FREEBSD7', 'GEOM_JOURNAL', 'UFS_GJOURNAL',
-                       'GEOM_RAID3', 'GEOM_SHSEC', 'GEOM_VIRSTOR'] + [x.upper() for x in POLICIES]:
+                       'GEOM_RAID3', 'GEOM_SHSEC', 'GEOM_VIRSTOR',
+                       'COMPAT_FREEBSD32', 'UDF', 'UDF_ICONV',
+                       'GEOM_CACHE', 'GEOM_CONCAT', 'GEOM_STRIPE',
+                       'GEOM_ZERO', 'GEOM_VINUM', 'NETGRAPH_CISCO',
+                       'NETGRAPH_PRED1'] + [x.upper() for x in POLICIES]:
             with self.subTest(option=option), tempfile.TemporaryDirectory() as tmp:
                 p = Path(tmp)
                 (p/'TEST').write_text('include GENERIC-NODEBUG\noptions '+option+'\n')

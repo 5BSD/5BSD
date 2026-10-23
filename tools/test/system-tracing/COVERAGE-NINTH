@@ -3,7 +3,7 @@ DTrace ninth expansion: 20 passes through different systems
 
 Scope and result
 ----------------
-Twenty different runtime components add 42 probe contracts: 26 kernel SDT
+Nineteen different runtime components add 40 probe contracts: 24 kernel SDT
 and 16 user-space USDT. The 12 kernel source files and eight base utility
 sources have zero overlap with the eighth expansion's runtime sources.
 Ten bsdinstruments profiles are included in the base-install catalog.
@@ -12,7 +12,7 @@ and the pass log. The eighth round's whole-tree census guided selection;
 this is targeted semantic coverage, not a claim every subsystem is complete.
 
 The new systems are virtual-interface cloning, bridge control, link aggregation,
-VLAN configuration, tun/tap blocking reads, tarfs, unionfs, nullfs, UDF, ISO9660,
+VLAN configuration, tun/tap blocking reads, tarfs, unionfs, nullfs, ISO9660,
 memory-disk management, terminal control, link construction, directory removal,
 file flags, process priority, module load/unload tools, sync, and file locking.
 Most were missing explicit semantic SDT/USDT sites in the census. Existing
@@ -29,8 +29,7 @@ Focused pass log
  6. Tarfs: backing/compressed stream read latency, requested extent and residual/error.
  7. Unionfs: actual lower-to-upper copy phase timing and error.
  8. Nullfs: initial vnode cache hit/miss and getnewvnode latency/error; no allocator internals.
- 9. UDF: buffer/cluster read extent, latency and error before touching the returned buffer.
-10. CD9660: buffer/cluster read extent, latency and error before touching the returned buffer.
+ 9. CD9660: buffer/cluster read extent, latency and error before touching the returned buffer.
 11. Memory disks: ioctl attach/detach/resize/query dispatch; excluded preload initialization.
 12. Terminal: validated tty ioctl dispatch latency and failure, no terminal bytes.
 13. ln/link: hard/symbolic link creation syscall latency/error; no path strings.
@@ -85,11 +84,10 @@ nullfs cache-hit/cache-miss(mount,lower_vnode) reports the initial hash lookup.
 A miss may subsequently race with another creator and use its existing vnode.
 node-start(mount)/done(mount,error) surrounds getnewvnode only: it excludes
 allocation of the nullfs private node, mount-queue insertion and hash insertion.
-udf and isofs block-start(vnode,logical_block,size)/done(vnode,logical_block,
+isofs block-start(vnode,logical_block,size)/done(vnode,logical_block,
 size,error) surround buffer/cluster/readahead reads. The pair completes before
 accessing a returned buffer. It includes cache-hit time and can represent
 readahead beyond the named block; it is not one physical-device I/O request.
-UDF embedded-data reads and uiomove to the caller are outside these pairs.
 The ISO9660 provider is named isofs: DTrace treats a provider ending in decimal
 digits, such as cd9660, as a userspace provider with a PID suffix.
 mdio control-start(command)/done(command,error) covers attach/detach/resize/query

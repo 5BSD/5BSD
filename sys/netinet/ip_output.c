@@ -136,6 +136,23 @@ ip_output_pfil(struct mbuf **mp, struct ifnet *ifp, int flags,
 	ip = mtod(m, struct ip *);
 
 	/* See if destination IP address was changed by packet filter. */
+	if (odst.s_addr != ip->ip_dst.s_addr &&
+	    (m_pf_ro(m)->flags & PF_TAG_REROUTE) != 0) {
+		/*
+		 * As OpenBSD: pf asks for the packet to be routed again to
+		 * its new destination and filtered there, a local one
+		 * included, which it then reaches through the loopback
+		 * interface and pf's inbound rules.
+		 */
+		m_pf_find(m)->flags &= ~PF_TAG_REROUTE;
+		bzero(dst, sizeof(*dst));
+		dst->sin_family = AF_INET;
+		dst->sin_len = sizeof(*dst);
+		dst->sin_addr = ip->ip_dst;
+		/* In the routing table pf chose, if any. */
+		*fibnum = M_GETFIB(m);
+		return -1; /* Reloop */
+	}
 	if (odst.s_addr != ip->ip_dst.s_addr) {
 		m->m_flags |= M_SKIP_FIREWALL;
 		/* If destination is now ourself drop to ip_input(). */
@@ -1111,6 +1128,11 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 				    sizeof(optval), sizeof(optval));
 				if (error != 0)
 					break;
+				/* 5BSD: entering another rdomain is privileged. */
+				error = rt_fib_change_check(curthread,
+				    so->so_fibnum, optval);
+				if (error != 0)
+					break;
 
 				INP_WLOCK(inp);
 				if ((inp->inp_flags & INP_BOUNDFIB) != 0 &&
@@ -1186,6 +1208,7 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 		case IP_RECVOPTS:
 		case IP_RECVRETOPTS:
 		case IP_ORIGDSTADDR:
+		case IP_RECVDSTPORT:
 		case IP_RECVDSTADDR:
 		case IP_RECVTTL:
 		case IP_RECVIF:
@@ -1250,6 +1273,10 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 
 			case IP_ORIGDSTADDR:
 				OPTSET2(INP_ORIGDSTADDR, optval);
+				break;
+
+			case IP_RECVDSTPORT:
+				OPTSET2(INP_RECVDSTPORT, optval);
 				break;
 
 			case IP_RECVTTL:
@@ -1406,6 +1433,7 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 		case IP_RECVOPTS:
 		case IP_RECVRETOPTS:
 		case IP_ORIGDSTADDR:
+		case IP_RECVDSTPORT:
 		case IP_RECVDSTADDR:
 		case IP_RECVTTL:
 		case IP_RECVIF:
@@ -1452,6 +1480,10 @@ ip_ctloutput(struct socket *so, struct sockopt *sopt)
 
 			case IP_ORIGDSTADDR:
 				optval = OPTBIT2(INP_ORIGDSTADDR);
+				break;
+
+			case IP_RECVDSTPORT:
+				optval = OPTBIT2(INP_RECVDSTPORT);
 				break;
 
 			case IP_RECVTTL:

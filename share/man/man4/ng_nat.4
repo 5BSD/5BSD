@@ -281,9 +281,9 @@ Currently, supported types are
 .Cm DLT_EN10MB
 (Ethernet). DLT_ definitions can be found in
 .In net/bpf.h .
-If you want to work on the
-.Xr ipfw 8
-level you must use no additional offset by specifying
+For raw IP datagrams (for example behind
+.Xr ng_iface 4 )
+use no additional offset by specifying
 .Cm DLT_RAW .
 If, however, you attach
 .Nm
@@ -335,26 +335,16 @@ This node shuts down upon receipt of a
 .Dv NGM_SHUTDOWN
 control message, or when both hooks are disconnected.
 .Sh EXAMPLES
-In the following example, the packets are injected into a
-.Nm nat
-node using the
-.Xr ng_ipfw 4
-node.
-.Bd -literal -offset indent
-# Create NAT node
-ngctl mkpeer ipfw: nat 60 out
-ngctl name ipfw:60 nat
-ngctl connect ipfw: nat: 61 in
-ngctl msg nat: setaliasaddr x.y.35.8
-
-# Divert traffic into NAT node
-ipfw add 300 netgraph 61 all from any to any in via fxp0
-ipfw add 400 netgraph 60 all from any to any out via fxp0
-
-# Let packets continue with after being (de)aliased
-sysctl net.inet.ip.fw.one_pass=0
-.Ed
-.Pp
+5BSD has no
+ipfw
+and no
+ng_ipfw
+node; for NAT on a host,
+.Xr pf.conf 5
+.Cm nat-to
+and
+.Cm rdr-to
+rules are the usual choice.
 The
 .Nm
 node can be inserted right after the
@@ -395,8 +385,7 @@ SEQ
 .Ed
 .Sh SEE ALSO
 .Xr libalias 3 ,
-.Xr ng_ipfw 4 ,
-.Xr natd 8 ,
+.Xr pf.conf 5 ,
 .Xr ng_ether 8 ,
 .Xr ngctl 8
 .Sh HISTORY

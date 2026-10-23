@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd December 4, 2025
+.Dd October 12, 2026
 .Dt PING 8
 .Os
 .Sh NAME
@@ -53,7 +53,9 @@ packets to network hosts
 .Op Fl S Ar src_addr
 .Op Fl s Ar packetsize
 .Op Fl t Ar timeout
+.Op Fl V Ar rtable
 .Op Fl W Ar waittime
+.Op Fl w Ar maxwait
 .Op Fl z Ar tos
 .Ar IPv4-host
 .Nm
@@ -72,7 +74,9 @@ packets to network hosts
 .Op Fl s Ar packetsize
 .Op Fl T Ar ttl
 .Op Fl t Ar timeout
+.Op Fl V Ar rtable
 .Op Fl W Ar waittime
+.Op Fl w Ar maxwait
 .Op Fl z Ar tos
 .Ar IPv4-mcast-group
 .Nm
@@ -92,7 +96,9 @@ packets to network hosts
 .Op Fl S Ar sourceaddr
 .Op Fl s Ar packetsize
 .Op Fl t Ar timeout
+.Op Fl V Ar rtable
 .Op Fl W Ar waittime
+.Op Fl w Ar maxwait
 .Op Ar IPv6-hops ...
 .Ar IPv6-host
 .Sh DESCRIPTION
@@ -327,6 +333,20 @@ ICMP
 packets other than
 ECHO_RESPONSE
 that are received are listed.
+.It Fl w Ar maxwait
+Specify the maximum number of seconds to wait for responses after the last
+request has been sent, as in
+.Ox .
+Unlike
+.Fl W ,
+late replies to earlier requests are still counted.
+.It Fl V Ar rtable
+Send and receive on routing table
+.Ar rtable
+.Pq a FIB, see Xr rdomain 4 ,
+as on
+.Ox .
+Using a table of another routing domain requires privilege.
 .It Fl W Ar waittime
 Time in milliseconds to wait for a reply for each packet sent.
 If a reply arrives later, the packet is not printed as replied, but

@@ -10,11 +10,11 @@ ATF_TESTS_SH+=	if_clone_test
 ATF_TESTS_SH+=	if_gif
 ATF_TESTS_SH+=	if_gre
 ATF_TESTS_SH+=	if_lagg_test
-ATF_TESTS_SH+=	if_stf
 ATF_TESTS_SH+=	if_tun_test
 ATF_TESTS_SH+=	if_vlan
 ATF_TESTS_SH+=	if_wg
 ATF_TESTS_SH+=	if_geneve
+ATF_TESTS_SH+=	rdomain_test
 TEST_METADATA+=	execenv="jail"
 TEST_METADATA+=	execenv_jail_params="vnet allow.raw_sockets"
 

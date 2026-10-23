@@ -97,6 +97,7 @@ int
 rib_handle_ifaddr_info(uint32_t fibnum, int cmd, struct rt_addrinfo *info)
 {
 	int error = 0, last_error = 0;
+	uint32_t ifafib = fibnum;
 	bool didwork = false;
 
 	if (V_rt_add_addr_allfibs == 0) {
@@ -104,6 +105,9 @@ rib_handle_ifaddr_info(uint32_t fibnum, int cmd, struct rt_addrinfo *info)
 		didwork = (error == 0);
 	} else {
 		for (fibnum = 0; fibnum < V_rt_numfibs; fibnum++) {
+			/* 5BSD: stay inside the routing domain. */
+			if (!rt_fib_same_rdomain(fibnum, ifafib))
+				continue;
 			error = rib_handle_ifaddr_one(fibnum, cmd, info);
 			if (error == 0)
 				didwork = true;
@@ -145,11 +149,18 @@ ifa_maintain_loopback_route(int cmd, const char *otype, struct ifaddr *ifa,
 	NET_EPOCH_ENTER(et);
 	bzero(&info, sizeof(info));
 	if (cmd != RTM_DELETE)
-		info.rti_ifp = V_loif;
+		info.rti_ifp = rt_fib_loif(ifp->if_fib);
 	if (cmd == RTM_ADD) {
 		/* explicitly specify (loopback) ifa */
 		if (info.rti_ifp != NULL)
 			info.rti_ifa = ifaof_ifpforaddr(ifa->ifa_addr, info.rti_ifp);
+		/*
+		 * 5BSD: the loopback interface of a routing domain may have
+		 * no address of this family; use the local address itself.
+		 */
+		if (info.rti_ifa == NULL ||
+		    info.rti_ifa->ifa_addr->sa_family != ifa->ifa_addr->sa_family)
+			info.rti_ifa = ifa;
 	}
 	info.rti_flags = ifa->ifa_flags | RTF_HOST | RTF_STATIC | RTF_PINNED;
 	info.rti_info[RTAX_DST] = ia;
@@ -206,7 +217,8 @@ pick_kernel_route(struct rtentry *rt, void *arg)
 	struct nhop_object *nh = rt->rt_nhop;
 	struct rib_head *rh_dst = (struct rib_head *)arg;
 
-	if (match_kernel_route(rt, nh)) {
+	if (match_kernel_route(rt, nh) &&
+	    rt_fib_same_rdomain(nhop_get_fibnum(nh), rh_dst->rib_fibnum)) {
 		struct rib_cmd_info rc = {};
 		struct route_nhop_data rnd = {
 			.rnd_nhop = nh,

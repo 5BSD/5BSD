@@ -207,7 +207,10 @@ frag6_19_head() {
 }
 
 frag6_19_body() {
-	frag6_body 19 frag6_19_check_stats
+	# The statistics are read after the 127 fragments are sent and must
+	# not count them timed out yet.  With the default 2 s lifetime a slow
+	# sender (a loaded or emulated host) loses that race: allow 10 s.
+	FRAG6_LIFETIME_MS=10000 frag6_body 19 frag6_19_check_stats
 }
 
 frag6_19_cleanup() {

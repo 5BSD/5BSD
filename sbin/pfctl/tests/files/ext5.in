@@ -1,0 +1,7 @@
+# 5BSD: jail and the other 5BSD options together, anchors, quoting
+anchor "jails" {
+	pass in proto tcp to port { 80, 443 } jail "web" keep state
+	pass out proto udp jail 0 dnqueue (1, 2)
+}
+pass in on lo0 proto sctp keep state (allow-related, if-bound)
+ether block in on lo0 proto 0x88cc

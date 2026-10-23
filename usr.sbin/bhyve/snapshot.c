@@ -107,6 +107,7 @@
 #include "hypertrace.h"
 #include "ipc.h"
 #include "mem.h"
+#include "migration_session.h"
 #include "pci_emul.h"
 #include "qemu_fwcfg.h"
 #include "qemu_fwcfg_snapshot.h"
@@ -592,7 +593,9 @@ load_restore_file(const char *filename, struct restore_state *rstate)
 		fprintf(stderr, "Checkpoint manifest has invalid members.\n");
 		goto err_restore;
 	}
-	if (!checkpoint_manifest_compatible(&manifest)) {
+	/* Previous-ABI admission requires an explicit destination opt-in. */
+	if (!checkpoint_manifest_restore_compatible(&manifest,
+	    get_config_bool_default("checkpoint.restore_abi_v2", false))) {
 		fprintf(stderr,
 		    "Checkpoint architecture or machine ABI is incompatible.\n");
 		goto err_restore;
@@ -1094,6 +1097,23 @@ lookup_cpu_contract(struct restore_state *rstate,
 }
 
 int
+checkpoint_restore_cpu_contract(struct restore_state *rstate,
+    struct vcpu *bsp)
+{
+	struct checkpoint_cpu_contract destination, source;
+	int error;
+
+	if (rstate == NULL || bsp == NULL)
+		return (EINVAL);
+	error = lookup_cpu_contract(rstate, &source);
+	if (error == 0)
+		error = checkpoint_cpu_contract_capture(bsp, &destination);
+	if (error == 0)
+		error = checkpoint_cpu_contract_match(&source, &destination);
+	return (error);
+}
+
+int
 lookup_numa_topology(struct restore_state *rstate, size_t expected_vcpus,
     uint64_t expected_memory,
     uint64_t domain_sizes[CHECKPOINT_NUMA_MAX_DOMAINS],
@@ -1287,10 +1307,7 @@ vm_snapshot_mem_part(const int snapfd, const size_t foff, void *src,
 		show_progress = false;
 
 	while (rem > 0) {
-		if (show_progress)
-			todo = min(SNAPSHOT_CHUNK, rem);
-		else
-			todo = rem;
+		todo = min(SNAPSHOT_CHUNK, rem);
 
 		if (op_wr)
 			done = write(snapfd, src, todo);
@@ -1376,7 +1393,7 @@ done:
 }
 
 static int
-collect_generic_devmem(struct vmctx *ctx,
+collect_checkpoint_devmem(struct vmctx *ctx,
     struct bhyve_devmem_region **regionsp, size_t *countp)
 {
 	struct bhyve_devmem_region *regions;
@@ -1387,12 +1404,15 @@ collect_generic_devmem(struct vmctx *ctx,
 		return (EINVAL);
 	*regionsp = NULL;
 	*countp = 0;
-	regions = calloc(VM_DEVMEM_END - VM_DEVMEM_START, sizeof(*regions));
+	regions = calloc(VM_DEVMEM_END - VM_BOOTROM, sizeof(*regions));
 	if (regions == NULL)
 		return (ENOMEM);
 
 	count = 0;
-	for (int segid = VM_DEVMEM_START; segid < VM_DEVMEM_END; segid++) {
+	for (int segid = VM_BOOTROM; segid < VM_DEVMEM_END; segid++) {
+		/* Framebuffer contents belong to its device snapshot codec. */
+		if (segid == VM_FRAMEBUFFER)
+			continue;
 		if (vm_get_devmem_info(ctx, segid, &host_base, &length,
 		    regions[count].name, sizeof(regions[count].name)) != 0) {
 			if (errno == ENOENT)
@@ -1404,6 +1424,8 @@ collect_generic_devmem(struct vmctx *ctx,
 		}
 		regions[count].host_base = host_base;
 		regions[count].length = length;
+		if (segid == VM_BOOTROM || segid == VM_PCIROM)
+			regions[count].flags = BHYVE_DEVMEM_REGION_F_FIXED_ROM;
 		count++;
 	}
 	if (count == 0) {
@@ -1425,7 +1447,7 @@ restore_vm_mem(struct vmctx *ctx, struct restore_state *rstate)
 	/*
 	 * The restore coordinator preflights memory before it calls us, but this
 	 * exported helper must preserve the same all-or-nothing boundary for any
-	 * future caller.  In particular, an incompatible generic-device-memory
+	 * future caller.  In particular, an incompatible device-memory
 	 * extension must not be discovered after ordinary guest RAM has changed.
 	 */
 	BHYVE_PHASE_START(__func__, "vm_restore_memory_preflight");
@@ -1450,7 +1472,7 @@ restore_vm_mem(struct vmctx *ctx, struct restore_state *rstate)
 		return (-1);
 	}
 
-	error = collect_generic_devmem(ctx, &regions, &region_count);
+	error = collect_checkpoint_devmem(ctx, &regions, &region_count);
 	if (error != 0) {
 		errno = error;
 		return (-1);
@@ -1479,7 +1501,7 @@ vm_restore_memory_preflight(struct vmctx *ctx, struct restore_state *rstate)
 	if (memsize == 0 || memsize > INT64_MAX ||
 	    rstate->vmmem_len < memsize)
 		return (EINVAL);
-	error = collect_generic_devmem(ctx, &regions, &region_count);
+	error = collect_checkpoint_devmem(ctx, &regions, &region_count);
 	if (error != 0)
 		return (error);
 	error = bhyve_devmem_snapshot_validate(rstate->vmmem_fd, memsize,
@@ -1757,6 +1779,8 @@ vm_restore_device_topology(struct restore_state *rstate)
 #endif
 	if (qemu_fwcfg_enabled())
 		destination_count++;
+	if (tpm_device_present())
+		destination_count++;
 	if (destination_count > SIZE_MAX / sizeof(*destination))
 		return (EOVERFLOW);
 	destination = calloc(destination_count, sizeof(*destination));
@@ -1780,6 +1804,8 @@ vm_restore_device_topology(struct restore_state *rstate)
 #endif
 	if (qemu_fwcfg_enabled())
 		destination[destination_count++] = QEMU_FWCFG_SNAPSHOT_NAME;
+	if (tpm_device_present())
+		destination[destination_count++] = TPM_SNAPSHOT_NAME;
 	error = vm_restore_named_topology(rstate, JSON_DEV_ARR_KEY, destination,
 	    destination_count);
 
@@ -1806,6 +1832,8 @@ vm_machine_topology_digest_current(char *digest, size_t capacity)
 	count += snapshot_md_device_count();
 #endif
 	if (qemu_fwcfg_enabled())
+		count++;
+	if (tpm_device_present())
 		count++;
 	devices = calloc(count, sizeof(*devices));
 	compats = calloc(count, sizeof(*compats));
@@ -1844,6 +1872,8 @@ vm_machine_topology_digest_current(char *digest, size_t capacity)
 		devices[index].compat = &compats[index];
 		index++;
 	}
+	if (tpm_device_present())
+		devices[index++].name = TPM_SNAPSHOT_NAME;
 	if (index != count) {
 		error = EINVAL;
 		goto out;
@@ -1877,6 +1907,8 @@ vm_machine_topology_digest_source(struct restore_state *rstate, char *digest,
 	count += snapshot_md_device_count();
 #endif
 	if (qemu_fwcfg_enabled())
+		count++;
+	if (tpm_device_present())
 		count++;
 	devices = calloc(count, sizeof(*devices));
 	compats = calloc(count, sizeof(*compats));
@@ -1932,6 +1964,8 @@ vm_machine_topology_digest_source(struct restore_state *rstate, char *digest,
 		devices[index].compat = &compats[index];
 		index++;
 	}
+	if (tpm_device_present())
+		devices[index++].name = TPM_SNAPSHOT_NAME;
 	if (index != count) {
 		error = EINVAL;
 		goto out;
@@ -2388,6 +2422,37 @@ vm_restore_device_payloads_validate(struct restore_state *rstate,
 			goto cleanup;
 		}
 	}
+	if (error == 0 && tpm_device_present()) {
+		void *record;
+		size_t record_size;
+
+		record = lookup_dev(TPM_SNAPSHOT_NAME, JSON_DEV_ARR_KEY,
+		    rstate, &record_size);
+		if (record == NULL || record_size == 0) {
+			error = EINVAL;
+			goto cleanup;
+		}
+		struct vm_snapshot_meta meta = {
+			.dev_name = TPM_SNAPSHOT_NAME,
+			.dev_data = NULL,
+			.buffer = {
+				.buf_start = record,
+				.buf_size = record_size,
+				.buf = record,
+				.buf_rem = record_size,
+			},
+			.op = VM_SNAPSHOT_VALIDATE,
+		};
+		error = tpm_device_snapshot(&meta);
+		if (error == 0)
+			error = checkpoint_record_consumption_validate(record_size,
+			    meta.buffer.buf_rem);
+		if (error != 0) {
+			EPRINTLN("Checkpoint TPM payload is invalid: %s",
+			    strerror(error));
+			goto cleanup;
+		}
+	}
 cleanup:
 	/*
 	 * Fabric validation can stage an immutable incoming translation view.
@@ -2411,12 +2476,9 @@ vm_restore_preflight_internal(struct restore_state *rstate,
 	rstate->hypertrace_private_image = NULL;
 	rstate->hypertrace_private_length = 0;
 	rstate->hypertrace_private_dev = NULL;
-	/*
-	 * CRB, PPI, and backend state do not yet have one atomic portable
-	 * checkpoint contract.  Refuse before publishing any incoming state.
-	 */
-	if (tpm_device_present())
-		return (ENOTSUP);
+	error = tpm_device_migration_check();
+	if (error != 0)
+		return (error);
 	error = vm_restore_kern_topology(rstate);
 	if (error == 0)
 		error = vm_restore_device_topology(rstate);
@@ -2494,6 +2556,9 @@ vm_restore_devices_prevalidated(struct restore_state *rstate)
 	if (ret == 0 && qemu_fwcfg_enabled())
 		ret = vm_restore_device(rstate, qemu_fwcfg_snapshot,
 		    QEMU_FWCFG_SNAPSHOT_NAME, NULL);
+	if (ret == 0 && tpm_device_present())
+		ret = vm_restore_device(rstate, tpm_device_snapshot,
+		    TPM_SNAPSHOT_NAME, NULL);
 	return (ret);
 }
 
@@ -2557,6 +2622,16 @@ vm_pause_devices(void)
 		}
 	}
 #endif
+	/* Drain TPM writes before the checkpoint copies guest memory. */
+	if (tpm_device_present()) {
+		ret = tpm_device_state_begin_read();
+		if (ret != 0) {
+			int resume_error;
+
+			resume_error = vm_resume_devices();
+			return (resume_error != 0 ? resume_error : ret);
+		}
+	}
 
 	return (0);
 }
@@ -2568,6 +2643,10 @@ vm_resume_devices(void)
 	int error, ret;
 	struct pci_devinst *pdi;
 
+	/* A failed TPM restart must keep every vCPU behind the outer fence. */
+	ret = tpm_device_state_end_if_active();
+	if (ret != 0)
+		return (ret);
 #ifndef __amd64__
 	{
 		const struct snapshot_md_device *md;
@@ -2900,6 +2979,11 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 	if (ctx == NULL || rstate == NULL) {
 		BHYVE_TRACE(RESTORE_RESULT, EINVAL);
 		return (EINVAL);
+	}
+	error = tpm_device_migration_check();
+	if (error != 0) {
+		BHYVE_TRACE(RESTORE_RESULT, error);
+		return (error);
 	}
 	fresh_session = rstate->checkpoint_format_version == 5;
 	/*
@@ -3800,12 +3884,18 @@ vm_snapshot_devices(int data_fd, xo_handle_t *xop)
 	if (ret == 0 && qemu_fwcfg_enabled())
 		ret = vm_snapshot_device(qemu_fwcfg_snapshot,
 		    QEMU_FWCFG_SNAPSHOT_NAME, NULL, data_fd, xop, meta, &offset);
+	if (ret == 0 && tpm_device_present())
+		ret = vm_snapshot_device(tpm_device_snapshot, TPM_SNAPSHOT_NAME,
+		    NULL, data_fd, xop, meta, &offset);
 
 	xo_close_list_h(xop, JSON_DEV_ARR_KEY);
 
 snapshot_err:
-	if (buffer != NULL)
+	if (buffer != NULL) {
+		/* Device records can contain TPM state and other guest secrets. */
+		explicit_bzero(buffer, buf_size);
 		free(buffer);
+	}
 	return (ret);
 }
 
@@ -3819,7 +3909,7 @@ checkpoint_cpu_add(int vcpu)
 	if (checkpoint_active) {
 		CPU_SET(vcpu, &vcpus_suspended);
 		/*
-		 * A vCPU can be added after vm_vcpu_pause() has set the
+		 * A vCPU can be added after checkpoint_vcpu_pause() has set the
 		 * checkpoint fence but before it has observed every active vCPU as
 		 * suspended.  This thread never enters vm_loop() while the fence is
 		 * held, so it is already quiescent; nevertheless it must wake the
@@ -3922,40 +4012,76 @@ checkpoint_cpu_resume(int vcpu)
 	pthread_mutex_unlock(&vcpu_lock);
 }
 
-static void
-vm_vcpu_pause(struct vmctx *ctx)
+int
+checkpoint_vcpu_pause(struct vmctx *ctx, bool *runnable, bool *owned)
 {
+	int error;
 
+	/*
+	 * VM_SUSPEND_CPU requests debug exits but returns before the vCPU
+	 * threads reach them.  The userspace rendezvous below is the actual
+	 * memory/device snapshot boundary.
+	 */
+	if (ctx == NULL || runnable == NULL || owned == NULL)
+		return (EINVAL);
+	*runnable = false;
+	*owned = false;
 	pthread_mutex_lock(&vcpu_lock);
+	if (checkpoint_active) {
+		pthread_mutex_unlock(&vcpu_lock);
+		return (EBUSY);
+	}
 	checkpoint_active = true;
-	vm_suspend_all_cpus(ctx);
+	*owned = true;
+	if (vm_suspend_all_cpus(ctx) != 0) {
+		error = errno != 0 ? errno : EIO;
+		if (vm_resume_all_cpus(ctx) == 0) {
+			checkpoint_active = false;
+			pthread_cond_broadcast(&vcpus_can_run);
+			*runnable = true;
+			*owned = false;
+		}
+		pthread_mutex_unlock(&vcpu_lock);
+		return (error);
+	}
 	while (CPU_CMP(&vcpus_active, &vcpus_suspended) != 0)
 		pthread_cond_wait(&vcpus_idle, &vcpu_lock);
 	pthread_mutex_unlock(&vcpu_lock);
+	return (0);
 }
 
-static void
-vm_vcpu_resume(struct vmctx *ctx)
+int
+checkpoint_vcpu_resume(struct vmctx *ctx)
 {
+	int error;
 
+	/* Keep the userspace gate closed if the kernel resume ioctl fails. */
+	if (ctx == NULL)
+		return (EINVAL);
 	pthread_mutex_lock(&vcpu_lock);
-	checkpoint_active = false;
-	pthread_mutex_unlock(&vcpu_lock);
+	if (!checkpoint_active || restore_startup_hold) {
+		pthread_mutex_unlock(&vcpu_lock);
+		return (EINVAL);
+	}
 #ifdef __amd64__
-	vm_resume_all_cpus(ctx);
+	if (vm_resume_all_cpus(ctx) != 0) {
 #else
-	bhyve_resume_powered_cpus(ctx);
+	/* Only vCPUs powered on in the checkpoint may run. */
+	if (bhyve_resume_powered_cpus(ctx) != 0) {
 #endif
+		error = errno != 0 ? errno : EIO;
+		pthread_mutex_unlock(&vcpu_lock);
+		return (error);
+	}
+	checkpoint_active = false;
 	/*
 	 * Publish the wakeup while holding the same mutex that protects
 	 * checkpoint_active.  A vCPU either observes the cleared predicate or
-	 * is already enrolled in the condition wait before this broadcast; doing
-	 * the broadcast unlocked makes that relationship depend on condvar
-	 * implementation timing.
+	 * is already enrolled in the condition wait before this broadcast.
 	 */
-	pthread_mutex_lock(&vcpu_lock);
 	pthread_cond_broadcast(&vcpus_can_run);
 	pthread_mutex_unlock(&vcpu_lock);
+	return (0);
 }
 
 /* Run while guest CPUs and VirtIO workers can still deliver STOPPED. A
@@ -4052,16 +4178,19 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	uint8_t handoff_transfer_digest[32];
 	void *transfer_bytes = NULL;
 	size_t transfer_length = 0;
+	bool vcpus_runnable = false;
 	xo_handle_t *xop = NULL;
 	char *lock_filename = NULL, *manifest_tmp = NULL;
 	FILE *meta_file = NULL;
 
 	BHYVE_TRACE(CHECKPOINT_BEGIN, stop_vm);
-	/* Fail before creating files or stopping the guest. */
-	if (tpm_device_present()) {
-		EPRINTLN("TPM-equipped VMs cannot be checkpointed safely yet.");
-		BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, false, ENOTSUP);
-		return (ENOTSUP);
+	/* Validate TPM state support before creating files or stopping the guest. */
+	error = tpm_device_migration_check();
+	if (error != 0) {
+		EPRINTLN("TPM state is not configured for checkpoint: %s",
+		    strerror(error));
+		BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, false, error);
+		return (error);
 	}
 	/*
 	 * A guest held by the restore startup fence (an inbound migration that
@@ -4143,7 +4272,7 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	}
 
 	kdata_fd = openat(fddir, manifest.kern,
-	    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0700);
+	    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
 	if (kdata_fd < 0) {
 		perror("Failed to open kernel data snapshot file.");
 		error = errno != 0 ? errno : EIO;
@@ -4152,7 +4281,7 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	kern_created = true;
 
 	fd_checkpoint = openat(fddir, manifest.data,
-	    O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0700);
+	    O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
 	if (fd_checkpoint < 0) {
 		perror("Failed to create checkpoint file");
 		error = errno != 0 ? errno : EIO;
@@ -4161,7 +4290,7 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	data_created = true;
 
 	fd_meta = openat(fddir, manifest.meta,
-	    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0700);
+	    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
 	if (fd_meta >= 0)
 		meta_created = true;
 	if (handoff_enabled || fresh_session) {
@@ -4204,9 +4333,13 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 		}
 	}
 	BHYVE_PHASE_START(__func__, "vm_vcpu_pause");
-	vm_vcpu_pause(ctx);
-	BHYVE_PHASE_DONE(__func__, "vm_vcpu_pause", 0, 0);
-	vcpus_paused = true;
+	ret = checkpoint_vcpu_pause(ctx, &vcpus_runnable, &vcpus_paused);
+	BHYVE_PHASE_DONE(__func__, "vm_vcpu_pause", ret,
+	    ret != 0 ? ret : 0);
+	if (ret != 0) {
+		error = ret;
+		goto done;
+	}
 
 	/* The HTX1 export and PREPARE digest must describe the same device and
 	 * kernel-ingress cut as the checkpoint image.  In particular, the
@@ -4350,9 +4483,9 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 		error = errno != 0 ? errno : EIO;
 		goto done;
 	}
-	ret = collect_generic_devmem(ctx, &devmem_regions, &devmem_count);
+	ret = collect_checkpoint_devmem(ctx, &devmem_regions, &devmem_count);
 	if (ret != 0) {
-		fprintf(stderr, "Could not enumerate generic device memory.\n");
+		fprintf(stderr, "Could not enumerate checkpoint device memory.\n");
 		error = ret;
 		goto done;
 	}
@@ -4361,7 +4494,7 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	free(devmem_regions);
 	devmem_regions = NULL;
 	if (ret != 0) {
-		fprintf(stderr, "Could not snapshot generic device memory.\n");
+		fprintf(stderr, "Could not snapshot checkpoint device memory.\n");
 		error = ret;
 		goto done;
 	}
@@ -4632,8 +4765,11 @@ done:
 	 * pause state.  The per-device ownership markers allow a later
 	 * checkpoint request to retry just the failed resume safely.
 	 */
-	if (vcpus_paused && devices_resumed)
-		vm_vcpu_resume(ctx);
+	if (vcpus_paused && devices_resumed) {
+		ret = checkpoint_vcpu_resume(ctx);
+		if (ret != 0 && error == 0)
+			error = ret;
+	}
 	if (!published) {
 		if (data_created)
 			(void)unlinkat(fddir, manifest.data, 0);
@@ -4704,27 +4840,53 @@ vm_migrate_stop_tracing(struct vmctx *ctx,
 static int
 migrate_tempfd(const void *buf, size_t len)
 {
-	int fd;
+	int fd, saved_errno;
 
 	fd = memfd_create("bhyve-migrate", MFD_CLOEXEC);
 	if (fd < 0)
 		return (-1);
 	if (len != 0 && snapshot_write_all(fd, buf, len) != 0) {
+		saved_errno = errno;
 		close(fd);
+		errno = saved_errno;
 		return (-1);
 	}
 	if (lseek(fd, 0, SEEK_SET) != 0) {
+		saved_errno = errno;
 		close(fd);
+		errno = saved_errno;
 		return (-1);
 	}
 	return (fd);
 }
 
 static int
-vm_snapshot_dev_state_capture(struct vmctx *ctx, const uint8_t *fresh_record,
-    uint8_t **blob_out, size_t *len_out)
+migrate_pread_all(int fd, void *buffer, size_t length)
 {
-	struct vm_snapshot_session session;
+	uint8_t *cursor;
+	size_t done;
+	ssize_t nread;
+
+	cursor = buffer;
+	done = 0;
+	while (done < length) {
+		nread = pread(fd, cursor + done, length - done, (off_t)done);
+		if (nread < 0) {
+			if (errno == EINTR)
+				continue;
+			return (errno != 0 ? errno : EIO);
+		}
+		if (nread == 0)
+			return (EIO);
+		done += (size_t)nread;
+	}
+	return (0);
+}
+
+static int
+vm_snapshot_dev_state_capture(struct vmctx *ctx, const uint8_t *fresh_record,
+    uint8_t **blob_out, size_t *len_out, struct vm_snapshot_capture *capture)
+{
 	FILE *meta_file;
 	xo_handle_t *xop;
 	uint8_t *meta_buf, *kdata_buf, *blob;
@@ -4732,11 +4894,17 @@ vm_snapshot_dev_state_capture(struct vmctx *ctx, const uint8_t *fresh_record,
 	size_t meta_len, kdata_len, blob_len;
 	off_t kdata_size;
 	int kdata_fd, meta_fd, error;
-	bool resolved, released, session_active;
+	bool resolved, released;
 	size_t trace_len = fresh_record != NULL ? HYPERTRACE_SESSION_RECORD_SIZE : 0;
 
-	if (ctx == NULL || blob_out == NULL || len_out == NULL)
+	if (ctx == NULL || blob_out == NULL || len_out == NULL ||
+	    capture == NULL)
 		return (EINVAL);
+	error = tpm_device_migration_check();
+	if (error != 0)
+		return (error);
+	if (capture->active || capture->unresolved)
+		return (EBUSY);
 	*blob_out = NULL;
 	*len_out = 0;
 	/* Fresh tracing must be explicitly selected; never silently strip it. */
@@ -4755,11 +4923,12 @@ vm_snapshot_dev_state_capture(struct vmctx *ctx, const uint8_t *fresh_record,
 		if (record.vmid != vmid || record.epoch != epoch)
 			return (ESTALE);
 	}
+	memset(capture, 0, sizeof(*capture));
 	meta_buf = kdata_buf = blob = NULL;
+	meta_len = kdata_len = blob_len = 0;
 	meta_file = NULL;
 	xop = NULL;
 	kdata_fd = meta_fd = -1;
-	session_active = false;
 
 	kdata_fd = migrate_tempfd(NULL, 0);
 	meta_fd = migrate_tempfd(NULL, 0);
@@ -4782,17 +4951,21 @@ vm_snapshot_dev_state_capture(struct vmctx *ctx, const uint8_t *fresh_record,
 	/*
 	 * Fence VM-wide event ingress exactly as a checkpoint would, then reuse
 	 * the checkpoint serializers.  The caller has already quiesced vCPUs and
-	 * devices for the cutover.  We release the fence unpublished: the source
-	 * stays consistent whether the cutover commits (source goes defunct) or
-	 * rolls back (source resumes).
+	 * devices for the cutover.  Keep the fence through the network handoff:
+	 * an event arriving after capture must not be admitted to the source
+	 * after the state blob has been sent to the destination.
 	 */
 	BHYVE_PHASE_START(__func__, "vm_snapshot_session_begin_exact");
-	error = vm_snapshot_session_begin_exact(ctx, &session, &resolved);
+	error = vm_snapshot_session_begin_exact(ctx, &capture->session,
+	    &resolved);
 	BHYVE_PHASE_DONE(__func__, "vm_snapshot_session_begin_exact",
 	    error, error < 0 ? errno : 0);
-	if (error != 0)
+	if (error != 0) {
+		/* Another descriptor's live lease is not ours to release. */
+		capture->unresolved = !resolved || error == EBUSY;
 		goto out;
-	session_active = true;
+	}
+	capture->active = true;
 
 	error = vm_snapshot_basic_metadata(ctx, xop,
 	    vm_get_lowmem_size(ctx) + vm_get_highmem_size(ctx));
@@ -4839,12 +5012,13 @@ vm_snapshot_dev_state_capture(struct vmctx *ctx, const uint8_t *fresh_record,
 		goto out;
 	}
 	kdata_len = (size_t)kdata_size;
-	/* The migration record and its single pread must be representable
-	 * before any member is allocated or exposed to the transport. */
+	/* Reject an oversized capture before allocating copies of the members;
+	 * the single pread of kernel data must also be representable. */
 	if ((uintmax_t)kdata_size > SSIZE_MAX ||
-	    meta_len > SIZE_MAX - MIGRATE_BLOB_HDR - trace_len ||
-	    kdata_len > SIZE_MAX - MIGRATE_BLOB_HDR - trace_len - meta_len) {
-		error = EOVERFLOW;
+	    meta_len > MIGRATION_MAX_DEV_STATE - MIGRATE_BLOB_HDR - trace_len ||
+	    kdata_len > MIGRATION_MAX_DEV_STATE - MIGRATE_BLOB_HDR - trace_len -
+	    meta_len) {
+		error = EMSGSIZE;
 		goto out;
 	}
 	meta_buf = malloc(meta_len != 0 ? meta_len : 1);
@@ -4858,8 +5032,7 @@ vm_snapshot_dev_state_capture(struct vmctx *ctx, const uint8_t *fresh_record,
 		goto out;
 	}
 	if (kdata_len != 0 &&
-	    pread(kdata_fd, kdata_buf, kdata_len, 0) != (ssize_t)kdata_len) {
-		error = errno != 0 ? errno : EIO;
+	    (error = migrate_pread_all(kdata_fd, kdata_buf, kdata_len)) != 0) {
 		goto out;
 	}
 
@@ -4879,16 +5052,23 @@ vm_snapshot_dev_state_capture(struct vmctx *ctx, const uint8_t *fresh_record,
 	error = 0;
 
 out:
-	if (session_active) {
+	if (error != 0 && capture->active) {
 		int rel;
 
 		BHYVE_PHASE_START(__func__, "vm_snapshot_session_release_exact");
-		rel = vm_snapshot_session_release_exact(ctx, &session, false,
-		    &released);
+		rel = vm_snapshot_session_release_exact(ctx, &capture->session,
+		    false, &released);
 		BHYVE_PHASE_DONE(__func__, "vm_snapshot_session_release_exact",
 		    rel, rel < 0 ? errno : 0);
-		if (rel != 0 && error == 0)
-			error = rel;
+		if (released)
+			capture->active = false;
+		else
+			capture->unresolved = true;
+	}
+	if (error != 0) {
+		free(*blob_out);
+		*blob_out = NULL;
+		*len_out = 0;
 	}
 	/* A failed kernel fence release invalidates this capture. Do not hand a
 	 * blob to migration until the source cut has settled successfully. */
@@ -4905,6 +5085,12 @@ out:
 		close(meta_fd);
 	if (kdata_fd >= 0)
 		close(kdata_fd);
+	if (meta_buf != NULL)
+		explicit_bzero(meta_buf, meta_len);
+	if (kdata_buf != NULL)
+		explicit_bzero(kdata_buf, kdata_len);
+	if (blob != NULL)
+		explicit_bzero(blob, blob_len);
 	free(meta_buf);
 	free(kdata_buf);
 	free(blob);
@@ -4912,19 +5098,40 @@ out:
 }
 
 int
-vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **blob, size_t *len)
+vm_snapshot_dev_state_to_mem(struct vmctx *ctx, uint8_t **blob, size_t *len,
+    struct vm_snapshot_capture *capture)
 {
-	return (vm_snapshot_dev_state_capture(ctx, NULL, blob, len));
+	return (vm_snapshot_dev_state_capture(ctx, NULL, blob, len, capture));
 }
 
 int
 vm_snapshot_fresh_dev_state_to_mem(struct vmctx *ctx,
     const uint8_t record[HYPERTRACE_SESSION_RECORD_SIZE], uint8_t **blob,
-    size_t *len)
+    size_t *len, struct vm_snapshot_capture *capture)
 {
 	if (record == NULL)
 		return (EINVAL);
-	return (vm_snapshot_dev_state_capture(ctx, record, blob, len));
+	return (vm_snapshot_dev_state_capture(ctx, record, blob, len, capture));
+}
+
+int
+vm_snapshot_dev_state_finish(struct vmctx *ctx,
+    struct vm_snapshot_capture *capture, bool commit)
+{
+	bool released;
+	int error;
+
+	if (ctx == NULL || capture == NULL || capture->unresolved)
+		return (EINVAL);
+	if (!capture->active)
+		return (0);
+	error = vm_snapshot_session_release_exact(ctx, &capture->session,
+	    commit, &released);
+	if (released)
+		capture->active = false;
+	else
+		capture->unresolved = true;
+	return (error);
 }
 
 /*
@@ -4951,6 +5158,11 @@ vm_migrate_commit_state_impl(struct vmctx *ctx, const uint8_t *blob, size_t len,
 		*fresh_device = NULL;
 	if (ctx == NULL || blob == NULL || len < MIGRATE_BLOB_HDR)
 		return (EINVAL);
+	if (len > MIGRATION_MAX_DEV_STATE)
+		return (EMSGSIZE);
+	error = tpm_device_migration_check();
+	if (error != 0)
+		return (error);
 	if (!checkpoint_restore_startup_held())
 		return (EBUSY);
 	if (hypertrace_initialized() != fresh)
@@ -5002,6 +5214,10 @@ vm_migrate_commit_state_impl(struct vmctx *ctx, const uint8_t *blob, size_t len,
 		error = error != 0 ? error : EOPNOTSUPP;
 		goto out;
 	}
+	/* HELLO binds host CPU fields; the saved guest CPU contract is separate. */
+	error = checkpoint_restore_cpu_contract(&rstate, fbsdrun_vcpu(0));
+	if (error != 0)
+		goto out;
 
 	/* The startup CPU fence does not stop external keyboard/pointer input.
 	 * Drain it before taking device pause locks or restoring device state. */
@@ -5355,6 +5571,10 @@ vm_snapshot_guest2host_addr(struct vmctx *ctx, void **addrp, size_t len,
 				ret = EFAULT;
 				goto done;
 			}
+		} else if (paddr_guest2host(ctx, gaddr, len) != *addrp) {
+			/* Validate the complete range before saving the pointer. */
+			ret = EFAULT;
+			goto done;
 		}
 
 		wire_gaddr = (uint64_t)gaddr;

@@ -78,16 +78,30 @@ fail_next_large_allocation(int nth)
 	atomic_store(&fail_malloc_at, nth);
 }
 
-/* Descriptor-level faults for the plain transport. */
+/* Descriptor-level faults for the plain transport (merged: send/recv with
+ * MSG_DONTWAIT and a monotonic deadline). */
 static int io_fd = -1;
-static int poll_result = 99, poll_errno, read_eintr, write_eintr, write_zero;
+static int poll_result = 99, poll_errno, poll_revents = -1, poll_eintr;
+static int recv_eintr, send_eintr, send_zero, send_eagain, recv_error, send_error;
+static int clock_fail_at, clock_calls, clock_errno;
 int __real_poll(struct pollfd *, nfds_t, int);
-ssize_t __real_read(int, void *, size_t);
-ssize_t __real_write(int, const void *, size_t);
+ssize_t __real_recv(int, void *, size_t, int);
+ssize_t __real_send(int, const void *, size_t, int);
+int __real_clock_gettime(clockid_t, struct timespec *);
 
 int
 __wrap_poll(struct pollfd *fds, nfds_t n, int timeout)
 {
+	if (n == 1 && fds[0].fd == io_fd && poll_eintr > 0) {
+		poll_eintr--;
+		errno = EINTR;
+		return (-1);
+	}
+	if (n == 1 && fds[0].fd == io_fd && poll_revents >= 0) {
+		fds[0].revents = (short)poll_revents;
+		poll_revents = -1;
+		return (1);
+	}
 	if (n == 1 && fds[0].fd == io_fd && poll_result != 99) {
 		int r = poll_result;
 		poll_result = 99;
@@ -99,29 +113,121 @@ __wrap_poll(struct pollfd *fds, nfds_t n, int timeout)
 }
 
 ssize_t
-__wrap_read(int fd, void *buf, size_t len)
+__wrap_recv(int fd, void *buf, size_t len, int flags)
 {
-	if (fd == io_fd && read_eintr > 0) {
-		read_eintr--;
+	if (fd == io_fd && recv_eintr > 0) {
+		recv_eintr--;
 		errno = EINTR;
 		return (-1);
 	}
-	return (__real_read(fd, buf, len));
+	if (fd == io_fd && recv_error != 0) {
+		errno = recv_error == FAULT_NOERRNO ? 0 : recv_error;
+		recv_error = 0;
+		return (-1);
+	}
+	return (__real_recv(fd, buf, len, flags));
 }
 
 ssize_t
-__wrap_write(int fd, const void *buf, size_t len)
+__wrap_send(int fd, const void *buf, size_t len, int flags)
 {
-	if (fd == io_fd && write_eintr > 0) {
-		write_eintr--;
+	if (fd == io_fd && send_eintr > 0) {
+		send_eintr--;
 		errno = EINTR;
 		return (-1);
 	}
-	if (fd == io_fd && write_zero > 0) {
-		write_zero--;
+	if (fd == io_fd && send_eagain > 0) {
+		send_eagain--;
+		errno = EAGAIN;
+		return (-1);
+	}
+	if (fd == io_fd && send_zero > 0) {
+		send_zero--;
 		return (0);
 	}
-	return (__real_write(fd, buf, len));
+	if (fd == io_fd && send_error != 0) {
+		errno = send_error == FAULT_NOERRNO ? 0 : send_error;
+		send_error = 0;
+		return (-1);
+	}
+	return (__real_send(fd, buf, len, flags));
+}
+
+/* Fail the Nth monotonic clock read after arming (deadline or remaining). */
+int
+__wrap_clock_gettime(clockid_t clock, struct timespec *ts)
+{
+	if (clock == CLOCK_MONOTONIC && clock_fail_at > 0 && ++clock_calls == clock_fail_at) {
+		clock_fail_at = 0;
+		errno = clock_errno;
+		return (-1);
+	}
+	return (__real_clock_gettime(clock, ts));
+}
+
+static void
+arm_clock(int nth, int error)
+{
+	clock_calls = 0;
+	clock_errno = error;
+	clock_fail_at = nth;
+}
+
+/* Socket-setup faults for the destination vsock pair (nth call of NAME). */
+static const char *sk_name;
+static int sk_at, sk_calls, sk_errno, gso_got = -1;
+static bool
+sk_hit(const char *name)
+{
+	if (sk_name == NULL || strcmp(sk_name, name) != 0 || ++sk_calls != sk_at)
+		return (false);
+	sk_name = NULL;
+	errno = sk_errno;
+	return (true);
+}
+int __real_socketpair(int, int, int, int *);
+int __real_setsockopt(int, int, int, const void *, socklen_t);
+int __real_getsockopt(int, int, int, void *, socklen_t *);
+int __real_cap_rights_limit(int, const cap_rights_t *);
+int __real_cap_xfer_limit(int, int);
+int __real_cap_cloexec_limit(int, int);
+int __real_cap_clofork_limit(int, int);
+int __wrap_socketpair(int d, int t, int p, int *sv)
+{ return (sk_hit("socketpair") ? -1 : __real_socketpair(d, t, p, sv)); }
+int __wrap_setsockopt(int fd, int l, int o, const void *v, socklen_t n)
+{ return (sk_hit("setsockopt") ? -1 : __real_setsockopt(fd, l, o, v, n)); }
+int __wrap_getsockopt(int fd, int l, int o, void *v, socklen_t *n)
+{
+	int r;
+
+	if (sk_hit("getsockopt"))
+		return (-1);
+	r = __real_getsockopt(fd, l, o, v, n);
+	if (r == 0 && gso_got == -2) {	/* a short reply */
+		*n = sizeof(char);
+		gso_got = -1;
+	} else if (r == 0 && gso_got >= 0) {	/* a smaller buffer than asked */
+		*(int *)v = gso_got;
+		gso_got = -1;
+	}
+	return (r);
+}
+int __wrap_cap_rights_limit(int fd, const cap_rights_t *r)
+{ return (sk_hit("cap_rights_limit") ? -1 : __real_cap_rights_limit(fd, r)); }
+int __wrap_cap_xfer_limit(int fd, int st)
+{ return (sk_hit("cap_xfer_limit") ? -1 : __real_cap_xfer_limit(fd, st)); }
+int __wrap_cap_cloexec_limit(int fd, int st)
+{ return (sk_hit("cap_cloexec_limit") ? -1 : __real_cap_cloexec_limit(fd, st)); }
+int __wrap_cap_clofork_limit(int fd, int st)
+{ return (sk_hit("cap_clofork_limit") ? -1 : __real_cap_clofork_limit(fd, st)); }
+
+static void
+arm_socket(const char *name, int nth, int error)
+{
+	sk_name = name;
+	sk_at = nth;
+	sk_calls = 0;
+	sk_errno = error;
 }
 
 /* ------------------------------------------------------- transport */
@@ -131,45 +237,122 @@ test_fd_transport(void)
 	struct migration_transport xp;
 	struct migration_transport_fd fdx;
 	uint8_t buf[8] = { 1, 2, 3, 4, 5, 6, 7, 8 }, in[8];
-	int pair[2];
+	uint64_t deadline;
+	int pair[2], timeout_ms, cases = 0;
+
+	/* Deadlines: none for a non-positive timeout; remaining time is
+	 * unbounded without one, ETIMEDOUT once passed, clamped to INT_MAX. */
+	CHECK(migration_fd_deadline(0, &deadline) == 0 && deadline == UINT64_MAX);
+	CHECK(migration_fd_deadline(-5, &deadline) == 0 && deadline == UINT64_MAX);
+	CHECK(migration_fd_remaining(UINT64_MAX, &timeout_ms) == 0 && timeout_ms == -1);
+	CHECK(migration_fd_remaining(1, &timeout_ms) == ETIMEDOUT);
+	CHECK(migration_fd_remaining(UINT64_MAX - 1, &timeout_ms) == 0 && timeout_ms == INT_MAX);
+	CHECK(migration_fd_deadline(1000, &deadline) == 0 && deadline != UINT64_MAX);
+	CHECK(migration_fd_remaining(deadline, &timeout_ms) == 0 &&
+	    timeout_ms > 0 && timeout_ms <= 1000);
+	arm_clock(1, ENXIO);
+	CHECK(migration_fd_deadline(10, &deadline) == ENXIO);
+	arm_clock(1, 0);
+	CHECK(migration_fd_deadline(10, &deadline) == EIO);
+	arm_clock(1, EFAULT);
+	CHECK(migration_fd_remaining(5, &timeout_ms) == EFAULT);
+	arm_clock(1, 0);
+	CHECK(migration_fd_remaining(5, &timeout_ms) == EIO);
+	cases += 11;
 
 	CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0);
 	migration_transport_fd_init(&xp, &fdx, pair[0], 20);
+	CHECK(fdx.fd == pair[0] && fdx.io_timeout_ms == 20);
 	io_fd = pair[0];
-	/* No timeout configured: wait never blocks. */
-	CHECK(migration_fd_wait(pair[0], 0) == 0);
 	/* Timeout with no data. */
 	CHECK(xp.xp_recv(xp.xp_cookie, in, sizeof(in)) == ETIMEDOUT);
-	/* poll failure is reported with its errno, or EIO without one. */
+	/* poll failure is reported with its errno, or EIO without one; an
+	 * interrupted poll is retried until the deadline. */
 	poll_result = -1;
 	poll_errno = ENOMEM;
 	CHECK(xp.xp_recv(xp.xp_cookie, in, 1) == ENOMEM);
 	poll_result = -1;
 	poll_errno = 0;
 	CHECK(xp.xp_recv(xp.xp_cookie, in, 1) == EIO);
-	/* Interrupted reads and writes are retried. */
-	write_eintr = 2;
+	poll_eintr = 2;
+	CHECK(xp.xp_recv(xp.xp_cookie, in, 1) == ETIMEDOUT && poll_eintr == 0);
+	/* An invalid descriptor reported by poll; revents without the
+	 * requested event, error or hangup keeps waiting. */
+	poll_revents = POLLNVAL;
+	CHECK(xp.xp_recv(xp.xp_cookie, in, 1) == EBADF);
+	poll_revents = POLLPRI;
+	CHECK(xp.xp_recv(xp.xp_cookie, in, 1) == ETIMEDOUT);
+	/* Clock failures while computing the deadline or the remaining time. */
+	arm_clock(1, ENXIO);
+	CHECK(xp.xp_recv(xp.xp_cookie, in, 1) == ENXIO);
+	arm_clock(2, ENXIO);
+	CHECK(xp.xp_send(xp.xp_cookie, buf, 1) == ENXIO);
+	arm_clock(1, EFAULT);
+	CHECK(xp.xp_send(xp.xp_cookie, buf, 1) == EFAULT);
+	arm_clock(2, EROFS);
+	CHECK(xp.xp_recv(xp.xp_cookie, in, 1) == EROFS);
+	/* recv EAGAIN, then the poll wait's own clock read fails. */
+	arm_clock(3, ENOSPC);
+	CHECK(xp.xp_recv(xp.xp_cookie, in, 1) == ENOSPC);
+	cases += 11;
+	/* Interrupted and would-block sends and receives are retried. */
+	send_eintr = 2;
+	send_eagain = 1;
 	CHECK(xp.xp_send(xp.xp_cookie, buf, sizeof(buf)) == 0);
+	CHECK(read(pair[1], in, sizeof(in)) == (ssize_t)sizeof(in) && memcmp(in, buf, 8) == 0);
 	CHECK(write(pair[1], buf, sizeof(buf)) == (ssize_t)sizeof(buf));
-	read_eintr = 2;
+	recv_eintr = 2;
 	CHECK(xp.xp_recv(xp.xp_cookie, in, sizeof(in)) == 0 && memcmp(in, buf, 8) == 0);
-	/* A zero-length write is a closed stream. */
-	write_zero = 1;
+	/* A zero-length send is a closed stream; other errors are returned,
+	 * EIO when errno is unset. */
+	send_zero = 1;
 	CHECK(xp.xp_send(xp.xp_cookie, buf, sizeof(buf)) == EPIPE);
-	/* Peer close: EOF on receive, EPIPE on send. */
+	send_error = ENOBUFS;
+	CHECK(xp.xp_send(xp.xp_cookie, buf, sizeof(buf)) == ENOBUFS);
+	send_error = FAULT_NOERRNO;
+	CHECK(xp.xp_send(xp.xp_cookie, buf, sizeof(buf)) == EIO);
+	recv_error = ENOTCONN;
+	CHECK(xp.xp_recv(xp.xp_cookie, in, 1) == ENOTCONN);
+	recv_error = FAULT_NOERRNO;
+	CHECK(xp.xp_recv(xp.xp_cookie, in, 1) == EIO);
+	cases += 7;
+	/* A full send buffer: the bounded wait times out. */
 	{
-		uint8_t drain[64];
+		uint8_t block[4096];
+		struct migration_transport_fd *c = xp.xp_cookie;
+		memset(block, 0x5a, sizeof(block));
+		while (send(pair[0], block, sizeof(block), MSG_DONTWAIT) > 0)
+			;
+		CHECK(xp.xp_send(xp.xp_cookie, block, sizeof(block)) == ETIMEDOUT);
+		/* No timeout: a poll failure is still reported. */
+		c->io_timeout_ms = 0;
+		poll_result = -1;
+		poll_errno = EINVAL;
+		CHECK(xp.xp_send(xp.xp_cookie, block, sizeof(block)) == EINVAL);
+		c->io_timeout_ms = 20;
+		cases += 2;
+	}
+	/* Peer close: EOF on receive, EPIPE on send (never SIGPIPE). */
+	{
+		uint8_t drain[4096];
 		while (recv(pair[1], drain, sizeof(drain), MSG_DONTWAIT) > 0)
 			;
 	}
 	close(pair[1]);
+	{
+		uint8_t drain[4096];
+		while (recv(pair[0], drain, sizeof(drain), MSG_DONTWAIT) > 0)
+			;
+	}
 	CHECK(xp.xp_recv(xp.xp_cookie, in, 1) == ECONNRESET);
 	CHECK(xp.xp_send(xp.xp_cookie, buf, sizeof(buf)) == EPIPE);
 	io_fd = -1;
-	/* A closed descriptor: read fails with EBADF after poll reports it. */
+	/* A closed descriptor fails at once. */
 	close(pair[0]);
 	CHECK(xp.xp_recv(xp.xp_cookie, in, 1) == EBADF);
-	printf("ops transport: 11 cases\n");
+	CHECK(xp.xp_send(xp.xp_cookie, buf, 1) == EBADF);
+	cases += 4;
+	printf("ops transport: %d cases\n", cases);
 }
 
 /* ----------------------------------------------------- send/recv core */
@@ -252,8 +435,9 @@ test_session_helpers(void)
 		peer.recv_seq = UINT32_MAX;
 		CHECK(migration_send_reason(&sess, MIGRATION_MSG_ABORT, 1, 2) == 0);
 		CHECK(migration_recv(&peer, &hdr, &payload, &len) == EOVERFLOW);
-		/* Drain the unread payload of that frame. */
-		uint8_t sink[MIGRATION_REASON_SIZE];
+		/* Merged: the exhausted sequence is refused before the header is
+		 * read, so the whole frame is still queued; drain it. */
+		uint8_t sink[MIGRATION_FRAME_HDR_SIZE + MIGRATION_REASON_SIZE];
 		CHECK(read(pair[1], sink, sizeof(sink)) == (ssize_t)sizeof(sink));
 		peer.recv_seq = 2;
 		peer.version = MIGRATION_PROTO_VERSION;
@@ -281,7 +465,7 @@ test_session_helpers(void)
 		{
 			/* Consume the header only, then make the payload read fail. */
 			struct migration_transport_fd *pc = pxp.xp_cookie;
-			pc->recv_timeout_ms = 1000;
+			pc->io_timeout_ms = 1000;
 		}
 		close(pair[0]);
 		/* The whole frame is still buffered: it is received intact. */
@@ -316,6 +500,7 @@ test_source_guards(void)
 	struct migration_commit_binding binding;
 	uint8_t challenge[32] = { 9 };
 	bool runnable;
+	int error;
 
 	role = 'S';
 	fresh_workdir();
@@ -342,10 +527,24 @@ test_source_guards(void)
 		CHECK(prod_dest_local_hello(&(struct migration_prod_dest){ .ctx = NULL }, &h) == EINVAL);
 	}
 	src->ctx = &vm;
-	/* Pre-copy over a VM without low memory is refused. */
+	/* Merged: pre-copy refuses a VM without low memory, or regions that
+	 * are not dirty-granule aligned, or a high region below or overlapping
+	 * low memory or past the address space (EINVAL, before arming). */
 	fake_lowmem = 0;
-	CHECK(prod_precopy_enable(src) == ENXIO);
+	CHECK(prod_precopy_enable(src) == EINVAL);
+	fake_lowmem = LOWMEM + MIGRATION_DIRTY_GRANULARITY / 2;
+	CHECK(prod_precopy_enable(src) == EINVAL);
 	fake_lowmem = LOWMEM;
+	fake_highmem = HIGHMEM + MIGRATION_DIRTY_GRANULARITY / 2;
+	CHECK(prod_precopy_enable(src) == EINVAL);
+	fake_highmem = HIGHMEM;
+	fake_highbase = LOWMEM - MIGRATION_DIRTY_GRANULARITY;
+	CHECK(prod_precopy_enable(src) == EINVAL);
+	fake_highbase = HIGHBASE + MIGRATION_DIRTY_GRANULARITY / 2;
+	CHECK(prod_precopy_enable(src) == EINVAL);
+	fake_highbase = UINT64_MAX - MIGRATION_DIRTY_GRANULARITY + 1;
+	CHECK(prod_precopy_enable(src) == EINVAL);
+	fake_highbase = HIGHBASE;
 	/* Pre-copy round: an invalid range, allocation failure, a full chunk. */
 	{
 		uint8_t buf[2 * (12 + PAGE)];
@@ -354,32 +553,51 @@ test_source_guards(void)
 		uint64_t dirty;
 		bool converged, more;
 
-		src->track_gpa = 1;	/* misaligned */
-		src->track_len = PAGE;
-		CHECK(prod_precopy_round(src, false, &gen, buf, sizeof(buf), &written,
-		    &dirty, &converged, &more) == EINVAL);
+		/* Merged baseline walk: the first generation copies every backed
+		 * page without a bitmap; only later generations collect dirty
+		 * bits.  The final (stop-copy) round needs a completed baseline. */
 		CHECK(prod_precopy_enable(src) == 0);
-		fail_next_large_allocation(1);
-		/* The tracked-range bitmap is 128 KiB here, a large allocation. */
-		CHECK(prod_precopy_round(src, false, &gen, buf, sizeof(buf), &written,
-		    &dirty, &converged, &more) == ENOMEM);
-		/* A chunk that fits two pages stops with more == true. */
+		CHECK(prod_precopy_round(src, true, &gen, buf, sizeof(buf), &written,
+		    &dirty, &converged, &more) == EPROTO);
 		CHECK(prod_precopy_round(src, false, &gen, buf, sizeof(buf), &written,
 		    &dirty, &converged, &more) == 0);
 		CHECK(more && dirty == 2 && written == sizeof(buf) && !converged);
-		CHECK(src->gen_active && src->cursor == 2 * PAGE);
-		/* The generation continues from the cursor until the dirty set is
-		 * exhausted; a later round with nothing dirty converges. */
+		CHECK(src->gen_active && src->cursor == 2 * PAGE && src->bitmap == NULL);
+		CHECK(le64dec(buf) == 0 && le64dec(buf + 12 + PAGE) == PAGE &&
+		    memcmp(buf + 12, vm.low, PAGE) == 0);
 		{
+			/* The baseline covers exactly the backed pages: all of low
+			 * memory and all of high memory, nothing in the hole. */
 			uint64_t total = dirty;
-			int calls = 0;
 			while (more) {
 				CHECK(prod_precopy_round(src, false, &gen, buf, sizeof(buf),
 				    &written, &dirty, &converged, &more) == 0);
 				total += dirty;
-				calls++;
 			}
-			CHECK(calls > 0 && total >= 2 && !src->gen_active && !converged);
+			CHECK(total == (LOWMEM + HIGHMEM) / PAGE);
+			CHECK(src->baseline_done && !src->gen_active && !converged);
+			CHECK(gen.cpu_identity == 0 && gen.length == TRACK_LEN);
+		}
+		/* A dirty generation: misaligned range, bitmap allocation failure
+		 * and a failed collection each leave no generation active. */
+		src->track_gpa = 1;
+		CHECK(prod_precopy_round(src, false, &gen, buf, sizeof(buf), &written,
+		    &dirty, &converged, &more) == EINVAL && !src->gen_active);
+		src->track_gpa = 0;
+		fail_next_large_allocation(1);
+		/* The tracked-range bitmap is 128 KiB here, a large allocation. */
+		CHECK(prod_precopy_round(src, false, &gen, buf, sizeof(buf), &written,
+		    &dirty, &converged, &more) == ENOMEM && !src->gen_active);
+		/* Generations continue until the dirty set is exhausted; with the
+		 * guest stopped a later round converges. */
+		{
+			int calls = 0;
+			do {
+				CHECK(prod_precopy_round(src, false, &gen, buf, sizeof(buf),
+				    &written, &dirty, &converged, &more) == 0);
+				calls++;
+			} while (more);
+			CHECK(calls > 0 && !src->gen_active && gen.cpu_identity != 0);
 			vm.cpus_paused = true;	/* the guest writes no more */
 			CHECK(prod_precopy_round(src, false, &gen, buf, sizeof(buf), &written,
 			    &dirty, &converged, &more) == 0);
@@ -392,7 +610,32 @@ test_source_guards(void)
 			}
 			vm.cpus_paused = false;
 			CHECK(dirty == 0 && converged && !more && written == 0);
+			/* The final round is admitted after the baseline. */
+			vm.cpus_paused = true;
+			CHECK(prod_precopy_round(src, true, &gen, buf, sizeof(buf), &written,
+			    &dirty, &converged, &more) == 0);
+			vm.cpus_paused = false;
+			/* A failed collection frees the bitmap; the tracker is then
+			 * cleanup-only (an earlier chunk may have cleared bits), so
+			 * every later generation is refused until re-enabled. */
+			inject("vm_dirty_log_request", 1, EIO);
+			CHECK(prod_precopy_round(src, false, &gen, buf, sizeof(buf), &written,
+			    &dirty, &converged, &more) == EIO);
+			nfaults = 0;
+			CHECK(!src->gen_active && src->bitmap == NULL);
+			CHECK(prod_precopy_round(src, false, &gen, buf, sizeof(buf), &written,
+			    &dirty, &converged, &more) != 0 && !src->gen_active);
 		}
+		/* A backed page that cannot be mapped fails the generation. */
+		CHECK(prod_precopy_disable(src) == 0);
+		CHECK(prod_precopy_enable(src) == 0);
+		src->lowmem_len = LOWMEM + PAGE;
+		do {
+			error = prod_precopy_round(src, false, &gen, buf, sizeof(buf),
+			    &written, &dirty, &converged, &more);
+		} while (error == 0 && more);
+		CHECK(error == EFAULT && !src->gen_active && src->bitmap == NULL);
+		src->lowmem_len = LOWMEM;
 		CHECK(prod_precopy_disable(src) == 0 && src->bitmap == NULL);
 		/* Without high memory the tracked range ends at low memory. */
 		fake_highmem = 0;
@@ -610,7 +853,9 @@ test_dest_guards(void)
 	dst->ctx = &vm;
 	dst->controller_fd = -1;
 	dst->recovery_dirfd = -1;
-	/* Memory staging guards. */
+	/* Memory staging guards (merged: round 1 is a complete, ordered RAM
+	 * baseline; later rounds are increasing, backed and contiguous in round
+	 * number). */
 	memset(&gen, 0, sizeof(gen));
 	gen.mode = MIGRATION_DIRTY_CLEAR;
 	gen.length = HIGHBASE + HIGHMEM;
@@ -627,30 +872,81 @@ test_dest_guards(void)
 	gen.length = LOWMEM;
 	CHECK(prod_dest_stage_mem(dst, &gen, NULL, 0) == EBADMSG);
 	gen.length = HIGHBASE + HIGHMEM;
-	gen.round = 3;
-	CHECK(prod_dest_stage_mem(dst, &gen, NULL, 0) == 0);	/* empty generation */
-	gen.round = 2;	/* a round never goes backwards */
+	gen.round = 1;
+	gen.final = 1;	/* the baseline can never be the final round */
 	CHECK(prod_dest_stage_mem(dst, &gen, NULL, 0) == EBADMSG);
-	gen.round = 4;
-	le64enc(page, 1);	/* misaligned record */
-	le32enc(page + 8, PAGE);
+	gen.final = 0;
+	gen.round = 3;	/* the first round is the baseline */
+	CHECK(prod_dest_stage_mem(dst, &gen, NULL, 0) == EBADMSG);
+	gen.round = 1;
 	gen.page_count = 1;
+	le64enc(page, PAGE);	/* the baseline starts at page 0 */
+	le32enc(page + 8, PAGE);
+	CHECK(prod_dest_stage_mem(dst, &gen, page, sizeof(page)) == EBADMSG);
+	le64enc(page, 1);	/* misaligned record */
 	CHECK(prod_dest_stage_mem(dst, &gen, page, sizeof(page)) == EBADMSG);
 	le64enc(page, 0);
 	le32enc(page + 8, PAGE + 1);	/* past the buffer */
 	CHECK(prod_dest_stage_mem(dst, &gen, page, sizeof(page)) == EBADMSG);
+	le32enc(page + 8, PAGE / 2);	/* not one granule */
+	CHECK(prod_dest_stage_mem(dst, &gen, page, 12 + PAGE / 2) == EBADMSG);
 	le32enc(page + 8, PAGE);
 	nfaults = 1;
 	faults[0] = (typeof(faults[0])){ 'D', "vm_map_gpa",
 	    *boundary_count("vm_map_gpa") + 1, EIO };
 	CHECK(prod_dest_stage_mem(dst, &gen, page, sizeof(page)) == EFAULT);
 	nfaults = 0;
-	gen.round = 5;
-	gen.page_count = 2;	/* count mismatch */
+	gen.page_count = 2;	/* count mismatch (the page itself is staged) */
 	CHECK(prod_dest_stage_mem(dst, &gen, page, sizeof(page)) == EBADMSG);
-	gen.round = 6;
+	CHECK(dst->mem_last_end == PAGE);
 	gen.page_count = 1;
+	le64enc(page, PAGE);
 	CHECK(prod_dest_stage_mem(dst, &gen, page, sizeof(page) - 1) == EBADMSG);	/* trailing */
+	/* An incomplete baseline cannot advance to round 2. */
+	gen.round = 2;
+	CHECK(prod_dest_stage_mem(dst, &gen, NULL, 0) == EBADMSG);
+	gen.round = 1;
+	/* Complete the baseline: low pages in order, then high memory. */
+	for (uint64_t gpa = PAGE; gpa < LOWMEM; gpa += PAGE) {
+		le64enc(page, gpa);
+		memset(page + 12, (int)(gpa / PAGE), PAGE);
+		CHECK(prod_dest_stage_mem(dst, &gen, page, sizeof(page)) == 0);
+	}
+	le64enc(page, LOWMEM);	/* the hole is never backed */
+	CHECK(prod_dest_stage_mem(dst, &gen, page, sizeof(page)) == EBADMSG);
+	for (uint64_t gpa = HIGHBASE; gpa < HIGHBASE + HIGHMEM; gpa += PAGE) {
+		le64enc(page, gpa);
+		CHECK(prod_dest_stage_mem(dst, &gen, page, sizeof(page)) == 0);
+	}
+	CHECK(vm.low[5 * PAGE] == 5 && dst->mem_last_end == HIGHBASE + HIGHMEM);
+	/* Round 2 is sparse but increasing; rounds never skip or go back. */
+	gen.round = 4;
+	CHECK(prod_dest_stage_mem(dst, &gen, NULL, 0) == EBADMSG);
+	gen.round = 2;
+	gen.page_count = 0;
+	CHECK(prod_dest_stage_mem(dst, &gen, NULL, 0) == 0);	/* empty generation */
+	gen.page_count = 1;
+	le64enc(page, 9 * PAGE);
+	CHECK(prod_dest_stage_mem(dst, &gen, page, sizeof(page)) == 0);
+	le64enc(page, 3 * PAGE);	/* behind the previous record */
+	CHECK(prod_dest_stage_mem(dst, &gen, page, sizeof(page)) == EBADMSG);
+	gen.round = 1;
+	CHECK(prod_dest_stage_mem(dst, &gen, NULL, 0) == EBADMSG);
+	gen.round = 3;
+	le64enc(page, 3 * PAGE);	/* a new round restarts the order */
+	CHECK(prod_dest_stage_mem(dst, &gen, page, sizeof(page)) == 0);
+	dst->mem_round = UINT32_MAX;	/* no round after the last */
+	gen.round = 0;
+	CHECK(prod_dest_stage_mem(dst, &gen, NULL, 0) == EBADMSG);
+	dst->mem_round = 3;
+	/* Without high memory the expected length is low memory. */
+	fake_highmem = 0;
+	gen.round = 4;
+	gen.length = LOWMEM;
+	gen.page_count = 0;
+	CHECK(prod_dest_stage_mem(dst, &gen, NULL, 0) == 0);
+	fake_highmem = HIGHMEM;
+	gen.length = HIGHBASE + HIGHMEM;
 	/* Device staging allocation failure keeps the previous blob. */
 	{
 		uint8_t blob[8192] = { 1 };
@@ -1087,27 +1383,34 @@ test_adapter_edges(void)
 		close(dirfd);
 		checks += 9;
 	}
-	/* The local topology: too many devices, with and without fwcfg; an
-	 * unencodable compatibility envelope; no fwcfg device. */
+	/* The local topology limit applies to every record kind: PCI devices,
+	 * fwcfg, the TPM and the boot ROM identity (merged); an unencodable
+	 * compatibility envelope is refused. */
 	{
 		struct migration_topology *t = calloc(1, sizeof(*t));
-		many_devices_init(MIGRATION_MAX_DEVICES);
+		many_devices_init(MIGRATION_MAX_DEVICES);	/* PCI alone overflows */
 		CHECK(migration_prod_fill_topology(&vm, t) == E2BIG);
-		many_devices_init(MIGRATION_MAX_DEVICES - 2);	/* exactly full */
-		CHECK(migration_prod_fill_topology(&vm, t) == E2BIG);
+		many_devices_init(MIGRATION_MAX_DEVICES - 2);	/* PCI exactly full */
+		CHECK(migration_prod_fill_topology(&vm, t) == E2BIG);	/* fwcfg */
 		fwcfg_enabled = false;
+		tpm_present = true;
+		CHECK(migration_prod_fill_topology(&vm, t) == E2BIG);	/* TPM */
+		tpm_present = false;
+		CHECK(migration_prod_fill_topology(&vm, t) == E2BIG);	/* boot ROM */
+		bootrom_absent = true;
 		memset(t, 0, sizeof(*t));
 		CHECK(migration_prod_fill_topology(&vm, t) == 0 &&
 		    t->device_count == MIGRATION_MAX_DEVICES);
 		many_devices_init(0);
 		memset(t, 0, sizeof(*t));
 		CHECK(migration_prod_fill_topology(&vm, t) == 0 && t->device_count == 2);
+		bootrom_absent = false;
 		fwcfg_enabled = true;
 		compat_invalid = true;
 		CHECK(migration_prod_fill_topology(&vm, t) != 0);
 		compat_invalid = false;
 		free(t);
-		checks += 5;
+		checks += 7;
 	}
 	/* A quarantined source refuses a new migration; repair reports it. */
 	{
@@ -1657,6 +1960,273 @@ test_migrate_resolve(void)
 	    total);
 }
 
+
+/* ---------------------------------------------------- active vsock */
+/*
+ * Merged active-vsock adapter: capture into a bundle at the source, staging,
+ * matching and restoring at the destination, and the relay socket pairs.
+ * Oracles: the documented refusal of each malformed input, the decoded
+ * bundle naming exactly the captured devices and endpoints, and no endpoint
+ * left recorded after a failure.
+ */
+static void
+test_vsock_adapter(void)
+{
+	struct migration_prod_source *src;
+	struct migration_prod_dest *dst;
+	struct migration_vsock_bundle_item items[MIGRATION_VSOCK_BUNDLE_MAX_DEVICES];
+	uint8_t *wire = NULL, *saved;
+	size_t len = 0, saved_len;
+	uint32_t count, endpoints;
+	int pair[2], checks = 0;
+
+	role = 'S';
+	fresh_workdir();
+	vm_model_init(7, 70, 0x11);
+	devices_init();
+	vsock_present = true;
+	src = calloc(1, sizeof(*src));
+	src->ctx = &vm;
+	src->stream_fd = -1;
+	/* Guards: outputs, quiesce, a capture already taken. */
+	CHECK(prod_vsock_state(src, NULL, &len) == EINVAL);
+	CHECK(prod_vsock_state(src, &wire, NULL) == EINVAL);
+	CHECK(prod_vsock_state(src, &wire, &len) == EINVAL);	/* not quiesced */
+	src->quiesced = true;
+	vm.cpus_paused = vm.devices_paused = true;
+	src->vsock_endpoint_count = 1;
+	CHECK(prod_vsock_state(src, &wire, &len) == EINVAL);
+	src->vsock_endpoint_count = 0;
+	checks += 4;
+	/* A capture: one device, VSOCK_CONNS endpoints of alternating type. */
+	CHECK(prod_vsock_state(src, &wire, &len) == 0 && wire != NULL);
+	CHECK(src->vsock_endpoint_count == VSOCK_CONNS);
+	CHECK(migration_vsock_bundle_decode(wire, len, items, nitems(items), &count,
+	    &endpoints) == 0 && count == 1 && endpoints == VSOCK_CONNS &&
+	    strcmp(items[0].name, "vsock0") == 0);
+	for (int i = 0; i < VSOCK_CONNS; i++)
+		CHECK(fcntl(src->vsock_endpoints[i].fd, F_GETFD) >= 0 &&
+		    src->vsock_endpoints[i].type == ((i & 1) ? VSOCK_MIGRATION_TYPE_SEQPACKET :
+		    VSOCK_MIGRATION_TYPE_STREAM));
+	saved = malloc(len);
+	memcpy(saved, wire, len);
+	saved_len = len;
+	free(wire);
+	wire = NULL;
+	checks += 4;
+	/* Device capture failure, and a table that names another count. */
+	src->vsock_endpoint_count = 0;
+	inject("pci_vtvsock_migration_capture", 1, EIO);
+	CHECK(prod_vsock_state(src, &wire, &len) == EIO && wire == NULL &&
+	    src->vsock_endpoint_count == 0);
+	nfaults = 0;
+	vsock_count_skew = 1;
+	CHECK(prod_vsock_state(src, &wire, &len) == EPROTO && src->vsock_endpoint_count == 0);
+	vsock_count_skew = 0;
+	checks += 2;
+	/* The wire allocation fails (a table large enough to be "large"). */
+	vsock_conns = 64;
+	fail_next_large_allocation(2);	/* the device table, then the wire */
+	CHECK(prod_vsock_state(src, &wire, &len) == ENOMEM && src->vsock_endpoint_count == 0);
+	vsock_conns = VSOCK_CONNS;
+	checks++;
+	/* Too many devices, too many endpoints, duplicate device names. */
+	many_vsock = true;
+	vsock_conns = 0;
+	many_devices_init(MIGRATION_VSOCK_BUNDLE_MAX_DEVICES);	/* + vsock0 */
+	CHECK(prod_vsock_state(src, &wire, &len) == E2BIG && src->vsock_endpoint_count == 0);
+	vsock_conns = 200;
+	many_devices_init(1);	/* vsock0 then many-0: 400 > 256 endpoints */
+	CHECK(prod_vsock_state(src, &wire, &len) == E2BIG && src->vsock_endpoint_count == 0);
+	vsock_conns = 1;
+	many_same_name = true;
+	many_devices_init(2);	/* many-0 twice */
+	CHECK(prod_vsock_state(src, &wire, &len) == EINVAL && src->vsock_endpoint_count == 0);
+	many_same_name = false;
+	vsock_conns = VSOCK_CONNS;
+	checks += 3;
+	/* Two devices: the destination matches each by name. */
+	many_devices_init(1);
+	CHECK(prod_vsock_state(src, &wire, &len) == 0 && src->vsock_endpoint_count ==
+	    2 * VSOCK_CONNS);
+	checks++;
+
+	/* Destination. */
+	role = 'D';
+	vm_model_init(9, 90, 0x99);
+	devices_init();
+	vm.fenced = true;
+	vsock_present = true;
+	many_devices_init(0);	/* only vsock0 here */
+	dst = calloc(1, sizeof(*dst));
+	dst->ctx = &vm;
+	dst->controller_fd = -1;
+	dst->recovery_dirfd = -1;
+	CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0);
+	dst->stream_fd = pair[0];
+	CHECK(prod_dest_stage_vsock(dst, NULL, 1) == EINVAL);
+	CHECK(prod_dest_stage_vsock(dst, wire, 0) == EINVAL);
+	/* The local device set must equal the bundle's: two named devices. */
+	CHECK(prod_dest_stage_vsock(dst, wire, len) == EINVAL && dst->vsock_blob == NULL);
+	CHECK(prod_dest_stage_vsock(dst, saved, saved_len - 1) == EINVAL);	/* undecodable */
+	many_devices_init(1);
+	CHECK(prod_dest_stage_vsock(dst, saved, saved_len) == EINVAL);	/* count differs */
+	fail_next_large_allocation(1);
+	{
+		/* Too large a bundle copy to allocate (the bundle is padded). */
+		uint8_t *big = __real_calloc(1, 8192);
+		CHECK(prod_dest_stage_vsock(dst, big, 8192) == ENOMEM);
+		free(big);
+	}
+	arm_large_allocation(0);
+	CHECK(prod_dest_stage_vsock(dst, wire, len) == 0 && dst->vsock_blob != NULL);
+	CHECK(prod_dest_stage_vsock(dst, wire, len) == EINVAL);	/* already staged */
+	checks += 8;
+	/* Restore: both devices, then the relay owner is prepared. */
+	CHECK(prod_dest_restore_vsock(dst) == 0);
+	CHECK(dst->vsock_endpoint_count == 2 * VSOCK_CONNS && dst->vsock_relay_prepared);
+	prod_dest_discard(dst);
+	CHECK(dst->vsock_blob == NULL && dst->vsock_endpoint_count == 0);
+	CHECK(prod_dest_restore_vsock(dst) == EINVAL);	/* nothing staged */
+	checks += 4;
+	/* A staged bundle no longer matching the devices; a device restore
+	 * failure; an owner that refuses the endpoints. */
+	CHECK(prod_dest_stage_vsock(dst, wire, len) == 0);
+	many_devices_init(0);
+	CHECK(prod_dest_restore_vsock(dst) == EINVAL);
+	many_devices_init(1);
+	inject("pci_vtvsock_migration_restore", 1, EIO);
+	CHECK(prod_dest_restore_vsock(dst) == EIO);
+	nfaults = 0;
+	prod_dest_discard(dst);
+	CHECK(prod_dest_stage_vsock(dst, wire, len) == 0);
+	inject("migration_vsock_owner_prepare", 1, EPIPE);
+	CHECK(prod_dest_restore_vsock(dst) == EPIPE && dst->vsock_relay_prepared);
+	nfaults = 0;
+	prod_dest_discard(dst);
+	checks += 3;
+	/* Relay socket pairs: every setup step can fail; the pair is closed. */
+	{
+		int p[2];
+		static const char *const steps[] = { "socketpair", "setsockopt",
+		    "getsockopt", "cap_rights_limit", "cap_xfer_limit",
+		    "cap_cloexec_limit", "cap_clofork_limit" };
+		CHECK(prod_dest_vsock_pair(0, p) == EINVAL);
+		CHECK(prod_dest_vsock_pair(VSOCK_MIGRATION_TYPE_SEQPACKET + 1, p) == EINVAL);
+		CHECK(prod_dest_vsock_pair(VSOCK_MIGRATION_TYPE_SEQPACKET, p) == 0);
+		close(p[0]);
+		close(p[1]);
+		for (size_t i = 0; i < nitems(steps); i++) {
+			arm_socket(steps[i], 1, ENOBUFS);
+			CHECK(prod_dest_vsock_pair(VSOCK_MIGRATION_TYPE_SEQPACKET, p) == ENOBUFS);
+			CHECK(i == 0 || (p[0] == -1 && p[1] == -1));
+		}
+		/* The second SO_RCVBUF and an errno-less failure. */
+		arm_socket("setsockopt", 2, ENOMEM);
+		CHECK(prod_dest_vsock_pair(VSOCK_MIGRATION_TYPE_STREAM, p) == ENOMEM);
+		arm_socket("setsockopt", 1, 0);
+		CHECK(prod_dest_vsock_pair(VSOCK_MIGRATION_TYPE_STREAM, p) == EIO);
+		/* A sequential-packet buffer smaller than required, or a short reply. */
+		gso_got = 1;
+		CHECK(prod_dest_vsock_pair(VSOCK_MIGRATION_TYPE_SEQPACKET, p) == ENOBUFS);
+		gso_got = -2;
+		CHECK(prod_dest_vsock_pair(VSOCK_MIGRATION_TYPE_SEQPACKET, p) == ENOBUFS);
+		checks += 13;
+	}
+	/* A pair failure in the middle of a device's endpoints closes the
+	 * device ends already created. */
+	CHECK(prod_dest_stage_vsock(dst, wire, len) == 0);
+	arm_socket("socketpair", 2, EMFILE);
+	CHECK(prod_dest_restore_vsock(dst) == EMFILE);
+	prod_dest_discard(dst);
+	checks++;
+	/* Relay cancel without a prepared owner, and a failed cancel. */
+	{
+		struct migration_prod_source r = { .vsock_relay_prepared = true };
+		inject("migration_vsock_owner_cancel", 1, EBUSY);
+		CHECK(prod_cancel_vsock_relay(&r) == EBUSY && r.vsock_relay_prepared);
+		nfaults = 0;
+		checks++;
+	}
+	/* A first endpoint whose pair cannot be created leaves nothing to close. */
+	CHECK(prod_dest_stage_vsock(dst, wire, len) == 0);
+	arm_socket("socketpair", 1, EMFILE);
+	CHECK(prod_dest_restore_vsock(dst) == EMFILE);
+	prod_dest_discard(dst);
+	/* Cancelling an unprepared relay is a no-op. */
+	{
+		struct migration_prod_source r = { .vsock_relay_prepared = false };
+		CHECK(prod_cancel_vsock_relay(&r) == 0);
+	}
+	/* A rollback whose deferred-event merge fails resumes nothing. */
+	{
+		struct migration_prod_source r = { .ctx = &vm, .quiesced = true };
+		r.capture.active = true;
+		vm.cpus_paused = vm.devices_paused = true;
+		inject("vm_snapshot_dev_state_finish", 1, EIO);
+		CHECK(prod_resume(&r) == EIO && r.quiesced && vm.devices_paused);
+		nfaults = 0;
+		checks += 2;
+	}
+	/* The destination HELLO advertises V2_RESTORE only on opt-in. */
+	{
+		struct migration_hello h;
+		struct migration_prod_dest d = { .ctx = &vm, .recovery_dirfd = -1 };
+		tracing_mode = false;
+		config_restore_abi_v2 = true;
+		CHECK(prod_dest_local_hello(&d, &h) == 0 &&
+		    (h.capability_flags & MIGRATION_CAP_V2_RESTORE) != 0);
+		config_restore_abi_v2 = false;
+		CHECK(prod_dest_local_hello(&d, &h) == 0 &&
+		    (h.capability_flags & MIGRATION_CAP_V2_RESTORE) == 0);
+		checks += 2;
+	}
+	/* Serving refuses missing arguments before any allocation. */
+	{
+		struct migration_session_config c = {0};
+		struct migration_dest_result res;
+		struct migration_prod_dest *owner = NULL;
+		CHECK(migration_prod_dest_serve_prepared(NULL, -1, &c, &res, &owner) == EINVAL);
+		CHECK(migration_prod_dest_serve_prepared(&vm, -1, &c, NULL, &owner) == EINVAL);
+		CHECK(migration_prod_dest_serve_prepared(&vm, -1, NULL, &res, &owner) == EINVAL);
+		CHECK(migration_prod_dest_serve_prepared(&vm, -1, &c, &res, NULL) == EINVAL);
+		checks += 4;
+	}
+	/* Topology: no vCPU, memory sizes that overflow, a PCI option ROM
+	 * whose identity cannot be read. */
+	{
+		struct migration_topology *t = __real_calloc(1, sizeof(*t));
+		guest_ncpus = 0;
+		CHECK(migration_prod_fill_topology(&vm, t) == EINVAL);
+		guest_ncpus = 2;
+		fake_lowmem = UINT64_MAX - PAGE;
+		CHECK(migration_prod_fill_topology(&vm, t) == EINVAL);
+		fake_lowmem = LOWMEM;
+		bootrom_absent = true;
+		devmem_error = EIO;
+		devmem_error_seg = VM_PCIROM;
+		CHECK(migration_prod_fill_topology(&vm, t) == EIO);
+		devmem_error = 0;
+		devmem_error_seg = -1;
+		bootrom_absent = false;
+		free(t);
+		checks += 3;
+	}
+	/* prod_is_vsock: an unconfigured slot is not a vsock device. */
+	{
+		struct pci_devinst bare = {0};
+		CHECK(!prod_is_vsock(NULL) && !prod_is_vsock(&bare));
+		checks++;
+	}
+	free(wire);
+	free(saved);
+	close(pair[0]);
+	close(pair[1]);
+	many_vsock = false;
+	many_devices_init(0);
+	printf("ops vsock adapter: %d checks\n", checks);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1684,6 +2254,7 @@ main(int argc, char **argv)
 	in_child("ops destination guards", test_dest_guards);
 	in_child("ops owner validation", test_owner_validation);
 	in_child("ops adapter edges", test_adapter_edges);
+	in_child("ops vsock adapter", test_vsock_adapter);
 	test_migrate_resolve();
 	{
 		extern void protocol_allocation_faults(void (*)(int), int (*)(void));

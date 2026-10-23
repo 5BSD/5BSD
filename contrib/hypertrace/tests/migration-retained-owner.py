@@ -36,7 +36,19 @@ fixture = r'''
 #include "migration_credentials.h"
 #include "migration_dest_image.h"
 #include "migration_snapshot.h"
+#include "migration_vsock_bundle.h"
+#include "migration_vsock_relay.h"
 struct vmctx { int unused; };
+/* Merged active-vsock destination: opt-in, staging hook, relay owner. */
+static bool active_vsock_config, stage_vsock_hook;
+static bool get_config_bool_default(const char *key, bool def) {
+ assert(strcmp(key, "checkpoint.migrate_active_vsock") == 0 && !def);
+ return active_vsock_config;
+}
+static int prod_dest_stage_vsock(void *a, const uint8_t *b, size_t l) { (void)a; (void)b; (void)l; abort(); }
+static int owner_activates, owner_activate_error, owner_detaches;
+static int migration_vsock_owner_activate(void) { owner_activates++; return owner_activate_error; }
+static void migration_vsock_owner_detach(void) { owner_detaches++; }
 /* Image preservation/reconstruction is exercised by migration-dest-reconstruct;
  * this fixture keeps those paths inert while compiling the actual code. */
 static void *vm_map_gpa(struct vmctx *c, uint64_t g, size_t l) { (void)c; (void)g; (void)l; return (NULL); }
@@ -56,6 +68,7 @@ static uint64_t live_epoch = 10;
 static bool startup_held = true, fail_resume;
 static int resume_calls, destination_runs;
 static bool preserve_hook;
+static int vsock_endpoint_fd = -1;
 static bool checkpoint_restore_startup_held(void) { return startup_held; }
 struct pci_devinst;
 static int vm_migrate_fresh_resume(struct vmctx *ctx, struct pci_devinst *device,
@@ -116,7 +129,17 @@ int migration_dest_run(const struct migration_transport *xp,
  const struct migration_session_config *config, struct migration_dest_result *result) {
  (void)xp; (void)config; calls++;
  preserve_hook = ops->do_preserve != NULL;
+ stage_vsock_hook = ops->do_stage_vsock == prod_dest_stage_vsock;
  struct migration_prod_dest *dst = arg;
+ if (mode == 12) {
+  /* A staged vsock bundle and its endpoints: the serve adapter scrubs the
+   * blob and closes the endpoint copies; the relay owner keeps its own. */
+  int pipefd[2]; assert(pipe(pipefd) == 0); close(pipefd[1]);
+  dst->vsock_blob = malloc(16); assert(dst->vsock_blob); dst->vsock_len = 16;
+  dst->vsock_endpoints[0].fd = pipefd[0]; dst->vsock_endpoint_count = 1;
+  vsock_endpoint_fd = pipefd[0];
+  result->resumed = false; return 0;
+ }
  journal_copy = dst->recovery_dirfd;
  if (ops->do_retain == NULL) return EOPNOTSUPP;
  dst->dev_blob = malloc(64); assert(dst->dev_blob);
@@ -266,7 +289,27 @@ int main(void) {
  assert(migration_prod_dest_serve_prepared(&ctx, -1, &config, &result, &owner) == EACCES && !owner);
  fail_alloc = true;
  assert(migration_prod_dest_serve_prepared(&ctx, -1, &config, &result, &owner) == ENOMEM && !owner);
- fail_alloc = false; mode = 0;
+ fail_alloc = false;
+ /* Plaintext active vsock installs the staging hook; a successful handoff
+  * without endpoints detaches the idle relay owner, a failed one does not. */
+ active_vsock_config = true;
+ for (mode = 1; mode <= 2; mode++) {
+  int detaches = owner_detaches;
+  assert(migration_prod_dest_serve_prepared(&ctx, -1, &config, &result, &owner) == (mode == 1 ? 0 : EIO));
+  assert(stage_vsock_hook && !owner);
+  assert(owner_detaches == detaches + (mode == 1));
+ }
+ mode = 12;
+ {
+  int detaches = owner_detaches;
+  assert(migration_prod_dest_serve_prepared(&ctx, -1, &config, &result, &owner) == 0 && !owner);
+  assert(owner_detaches == detaches);
+  assert(fcntl(vsock_endpoint_fd, F_GETFD) == -1 && errno == EBADF);
+ }
+ active_vsock_config = false; mode = 1;
+ assert(migration_prod_dest_serve_prepared(&ctx, -1, &config, &result, &owner) == 0);
+ assert(!stage_vsock_hook);
+ mode = 0;
  /* Item 4: an ordinary destination whose COMMIT may have reached the
   * source keeps the paused image for migrate_resolve instead of failing. */
  assert(!migration_prod_dest_retained());
@@ -286,7 +329,8 @@ int main(void) {
  assert(calls == before); tracing = false;
  close(fd); config.recovery_dirfd = -1;
  assert(migration_prod_dest_serve_prepared(&ctx, -1, &config, &result, &owner) == EBADF && !owner);
- assert(calls == before && cleaned == 9);
+ /* Nine earlier channels plus the four active-vsock serves. */
+ assert(calls == before && cleaned == 13);
  /* Prepared tracing entry: reject each missing prerequisite before core I/O. */
  tracing = true; startup_held = true;
  fd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC); assert(fd >= 0);
@@ -304,6 +348,13 @@ int main(void) {
  assert(migration_prod_dest_serve_prepared(&ctx, -1, &config, &result, &owner) != 0 && !owner);
  assert(fchmod(fd, 0700) == 0);
  assert(calls == before);
+ /* Active vsock with TLS is refused before the channel exists. */
+ active_vsock_config = true;
+ int cleaned_before = cleaned;
+ assert(migration_prod_dest_serve_prepared(&ctx, -1, &config, &result, &owner) == EPROTONOSUPPORT && !owner);
+ assert(calls == before && cleaned == cleaned_before);
+ assert(result.phase == MIGRATION_PHASE_FAILED && result.reason == MIGRATION_REASON_CAPS);
+ active_vsock_config = false;
  mode = 10;
  assert(migration_prod_dest_serve_prepared(&ctx, -1, &config, &result, &owner) == EIO && !owner);
  assert(calls == before && result.phase == MIGRATION_PHASE_FAILED && result.reason == MIGRATION_REASON_TRANSPORT);
@@ -334,6 +385,27 @@ int main(void) {
  assert(calls == before + 1);
  config.recovery_image = false; config.recovery_enabled = true;
  close(fd);
+ /* Destination resume: committed check first, then relay activation, then
+  * the guest; a failed activation never resumes. */
+ {
+  struct migration_prod_dest d = { .ctx = &ctx, .vsock_relay_prepared = true };
+  int activates = owner_activates, resumes = resume_calls;
+  tracing = true; startup_held = true; fail_resume = false;
+  assert(prod_dest_resume(&d) == EBUSY && owner_activates == activates && d.vsock_relay_prepared);
+  d.committed = true; d.fresh_device = (struct pci_devinst *)&d;
+  owner_activate_error = EPIPE;
+  assert(prod_dest_resume(&d) == EPIPE && owner_activates == activates + 1);
+  assert(d.vsock_relay_prepared && !d.running && resume_calls == resumes && startup_held);
+  owner_activate_error = 0;
+  assert(prod_dest_resume(&d) == 0 && owner_activates == activates + 2);
+  assert(!d.vsock_relay_prepared && d.running && resume_calls == resumes + 1);
+  /* Without a prepared relay nothing is activated. */
+  struct migration_prod_dest e = { .ctx = &ctx, .committed = true,
+   .fresh_device = (struct pci_devinst *)&e };
+  startup_held = true;
+  assert(prod_dest_resume(&e) == 0 && owner_activates == activates + 2);
+  tracing = false;
+ }
  puts("PASS: retained production ownership, independent journal fd, reconnect identity/image checks, cleanup, setup failures, unmanaged refusal and prepared tracing admission, recovery-image admission");
 }
 '''

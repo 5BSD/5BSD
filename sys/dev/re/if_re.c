@@ -842,7 +842,6 @@ re_diag(struct rl_softc *sc)
 
 	CSR_WRITE_2(sc, RL_ISR, 0xFFFF);
 	RL_UNLOCK(sc);
-	/* XXX: re_diag must not be called when in ALTQ mode */
 	if_handoff(ifp, m0, ifp);
 	RL_LOCK(sc);
 	m0 = NULL;

@@ -7,6 +7,10 @@ here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 verifier=$here/validate-vmx-nested-policy-pair.sh
 positive_ledger=$here/vmx-nested-live-qualification.tsv
 default_ledger=$here/vmx-nested-default-policy-live-qualification.tsv
+command -v sha256 >/dev/null 2>&1 || {
+	echo "nested-vmx policy pair selftest: sha256 is required" >&2
+	exit 1
+}
 work=$(mktemp -d /tmp/nested-vmx-policy-pair.XXXXXX)
 
 cleanup()

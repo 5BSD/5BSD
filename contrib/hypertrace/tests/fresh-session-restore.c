@@ -29,6 +29,9 @@ static int step(int n) {
     return n == fail_at ? EIO : 0;
 }
 static int forbidden(void) { abort(); }
+/* Merged TPM gate: refused before any restore step. */
+static int tpm_refusal;
+#define tpm_device_migration_check() tpm_refusal
 #define BHYVE_TRACE(...) ((void)0)
 #define BHYVE_PHASE_START(...) ((void)0)
 #define BHYVE_PHASE_DONE(...) ((void)0)
@@ -110,6 +113,9 @@ int main(void) {
     assert(position == REPLAY && !released);
     replay = 0;
     position = 0;
+    tpm_refusal = ENOTSUP;
+    assert(vm_restore_transaction(&ctx, &state) == ENOTSUP && position == 0);
+    tpm_refusal = 0;
     held = false;
     assert(vm_restore_transaction(&ctx, &state) == EBUSY && position == 0);
     held = true;

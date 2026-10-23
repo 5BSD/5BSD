@@ -88,6 +88,18 @@ case $kyua_vars in *[!A-Za-z0-9_.=\ -]*) die "KYUA_VARS has unexpected character
 
 stage=$(cd "$stage" 2>/dev/null && pwd) || die "no stage dir"
 [ -f "$stage/METALOG" ] || die "no METALOG in $stage (not a NO_ROOT stage)"
+# makefs does not infer root permissions from the staging directory. Losing
+# the "." record produces a root that unprivileged services cannot traverse;
+# fexecve then fails loading the interpreter after replacing the old vmspace.
+awk '
+    ($1 == "." || $1 == "./") && !seen++ {
+        for (i = 2; i <= NF; i++) {
+            if ($i == "type=dir") directory = 1;
+            if ($i ~ /^mode=0*[0-7]+$/ && $i ~ /[1357]$/) searchable = 1;
+        }
+    }
+    END { exit !(seen && directory && searchable) }
+' "$stage/METALOG" || die "METALOG must explicitly describe a searchable root directory (mode=0755)"
 for f in sbin/capsule boot/kernel/kernel boot/pmbr boot/gptboot usr/bin/kyua usr/tests/Kyuafile; do
 	[ -e "$stage/$f" ] || die "stage lacks /$f"
 done
@@ -331,7 +343,9 @@ vars=; for v in $KYUA_VARS; do vars="$vars -v $v"; done
 # Preserve the actual test status across tee without depending on pipefail.
 {
     test_status=0
-    kyua -v parallelism="$PARALLELISM" $vars test -r "$R/results.db" $suites 2>&1 || test_status=$?
+    # Verified file-handle lifetime cases require a disk-backed workdir.
+    # Keep /tmp as tmpfs for cases that explicitly exercise that filesystem.
+    TMPDIR=/var/tmp kyua -v parallelism="$PARALLELISM" $vars test -r "$R/results.db" $suites 2>&1 || test_status=$?
     printf '%s\n' "$test_status" > "$R/kyua-test.status"
 } | tee "$R/kyua-test.out" || true
 echo "KYUA_TEST_STATUS=$(cat "$R/kyua-test.status")"
@@ -391,8 +405,8 @@ re=$(for p in $over; do printf '%s|' "$p"; done | sed -e 's/|$//' -e 's/\./\\./g
 	fi
 } | awk 'NR == 1 { print; next } NF { print }' > "$work/METALOG.raw"
 # Keep one record per path (makefs rejects duplicates in manifest mode); the
-# first record wins, and the stage's duplicates differ only in tags=.
-{ head -n 1 "$work/METALOG.raw"; tail -n +2 "$work/METALOG.raw" | awk '!seen[$1]++' |
+# last record wins: signing can update executable sizes after installation.
+{ head -n 1 "$work/METALOG.raw"; tail -n +2 "$work/METALOG.raw" | awk '{ record[$1] = $0 } END { for (path in record) print record[path] }' |
     env -i LC_ALL=C sort -k1,1; } > "$work/METALOG"
 for p in $over; do
 	n=$(grep -c "^\./$p " "$work/METALOG" || true)
@@ -473,6 +487,7 @@ ev=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
 sys.exit(0 if any(e.get("event")=="SHUTDOWN" and e.get("data",{}).get("guest") is True and e["data"].get("reason")=="guest-shutdown" for e in ev) else 1)' "$work/qmp-events.jsonl" 2>/dev/null && guest_off=1
 verdict=VM_NOT_CLEAN
 if [ $forced = 0 ] && [ $rc = 0 ] && [ $guest_off = 1 ] &&
+    [ "$(cat "$work/results/kyua-results/kyua-test.status" 2>/dev/null)" = 0 ] &&
     tr -d '\r' < "$log" | grep -aqx 'KYUA_VM_DONE' &&
     { [ "$plane_off" = 1 ] && tr -d '\r' < "$log" | grep -aqx 'PLANEOFF_READY' ||
       { tr -d '\r' < "$log" | grep -aqx 'PLANEON_GATE_PASS' &&

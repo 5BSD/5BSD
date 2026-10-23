@@ -136,7 +136,7 @@ static struct inpcb	*in_pcblookup_internal(struct inpcbinfo_ctx *ipictx,
     u_int lport_arg, int lookupflags, uint8_t numa_domain, int fib);
 static struct inpcb	*in_pcblookup_exact(struct inpcbinfo *pcbinfo,
     struct in_addr faddr, u_short fport, struct in_addr laddr, u_short lport,
-    struct inpbucket **bucketp);
+    int fib, struct inpbucket **bucketp);
 static struct inpcb	*in_pcblookup_wild_locked(struct inpcbinfo *pcbinfo,
     struct in_addr laddr, u_short lport, int fib, struct inpbucket **bucketp);
 
@@ -375,6 +375,21 @@ in_pcblbgroup_resize(struct lbgroupbucket *bucket,
 }
 
 /*
+ * 5BSD: an unbound group of routing domain 0 has scope RT_ALL_FIBS until
+ * the first routing domain exists and RT_RDOMAIN_SEL(0) after; both match
+ * the same lookups, so sockets of either belong to one group.
+ */
+static bool
+in_pcblbgroup_fib_eq(int a, int b)
+{
+	if (a == RT_RDOMAIN_SEL(0))
+		a = RT_ALL_FIBS;
+	if (b == RT_RDOMAIN_SEL(0))
+		b = RT_ALL_FIBS;
+	return (a == b);
+}
+
+/*
  * Add PCB to load balance group for SO_REUSEPORT_LB option.
  */
 static int
@@ -391,7 +406,7 @@ in_pcbinslbgrouphash(struct inpcb *inp, uint8_t numa_domain)
 	INP_WLOCK_ASSERT(inp);
 
 	fib = (inp->inp_flags & INP_BOUNDFIB) != 0 ?
-	    inp->inp_inc.inc_fibnum : RT_ALL_FIBS;
+	    inp->inp_inc.inc_fibnum : rt_fib_scope(inp->inp_inc.inc_fibnum);
 
 #ifdef INET6
 	/*
@@ -412,7 +427,7 @@ in_pcbinslbgrouphash(struct inpcb *inp, uint8_t numa_domain)
 		    grp->il_vflag == inp->inp_vflag &&
 		    grp->il_lport == inp->inp_lport &&
 		    grp->il_numa_domain == numa_domain &&
-		    grp->il_fibnum == fib &&
+		    in_pcblbgroup_fib_eq(grp->il_fibnum, fib) &&
 		    memcmp(&grp->il_dependladdr,
 		    &inp->inp_inc.inc_ie.ie_dependladdr,
 		    sizeof(grp->il_dependladdr)) == 0) {
@@ -1042,7 +1057,7 @@ in_pcbbind_setup_locked(struct inpcbinfo_ctx *ipictx, struct inpcb *inp,
 		laddr = sin->sin_addr;
 
 		fib = (flags & INPBIND_FIB) != 0 ? inp->inp_inc.inc_fibnum :
-		    RT_ALL_FIBS;
+		    rt_fib_scope(inp->inp_inc.inc_fibnum);
 
 		/* See if this address/port combo is available. */
 		error = in_pcbbind_avail(ipictx, inp, laddr, lport, fib,
@@ -1218,7 +1233,8 @@ in_pcbconnect(struct inpcb *inp, struct sockaddr_in *sin, struct ucred *cred)
 			return (error);
 	} else {
 		if (in_pcblookup_exact(ipictx.pcbinfo, faddr, sin->sin_port,
-		    laddr, inp->inp_lport, &ipictx.ebucket) != NULL) {
+		    laddr, inp->inp_lport, rt_fib_scope(inp->inp_inc.inc_fibnum),
+		    &ipictx.ebucket) != NULL) {
 			inpcbinfo_ctx_release(&ipictx);
 			return (EADDRINUSE);
 		}
@@ -1888,6 +1904,9 @@ in_pcbrele_rlock(struct inpcb *inp)
 	return (false);
 }
 
+/* Installed by pf (OpenBSD PF): drop pf state links to a detaching pcb. */
+void (*pf_inpcb_free_hook)(struct inpcb *);
+
 /*
  * Unconditionally schedule an inpcb to be freed by decrementing its
  * reference count, which should occur only after the inpcb has been detached
@@ -1933,6 +1952,8 @@ in_pcbfree(struct inpcb *inp)
 	if (inp->inp_snd_tag != NULL)
 		in_pcbdetach_txrtlmt(inp);
 #endif
+	if (inp->inp_pf_sk != NULL && pf_inpcb_free_hook != NULL)
+		pf_inpcb_free_hook(inp);
 	inp->inp_flags |= INP_FREED;
 	inp->inp_socket->so_pcb = NULL;
 	inp->inp_socket = NULL;
@@ -2099,7 +2120,7 @@ in_pcblookup_local(struct inpcbinfo_ctx *ipictx, struct in_addr laddr,
 
 	KASSERT((lookupflags & ~(INPLOOKUP_WILDCARD)) == 0,
 	    ("%s: invalid lookup flags %d", __func__, lookupflags));
-	KASSERT(fib == RT_ALL_FIBS || (fib >= 0 && fib < V_rt_numfibs),
+	KASSERT(fib < 0 || fib < V_rt_numfibs,
 	    ("%s: invalid fib %d", __func__, fib));
 
 	/*
@@ -2124,8 +2145,8 @@ in_pcblookup_local(struct inpcbinfo_ctx *ipictx, struct in_addr laddr,
 				continue;
 #endif
 			if (inp->inp_laddr.s_addr == laddr.s_addr &&
-			    inp->inp_lport == lport && (fib == RT_ALL_FIBS ||
-			    inp->inp_inc.inc_fibnum == fib)) {
+			    inp->inp_lport == lport &&
+			    rt_fib_match(inp->inp_inc.inc_fibnum, fib)) {
 				/*
 				 * Found?
 				 */
@@ -2151,8 +2172,7 @@ in_pcblookup_local(struct inpcbinfo_ctx *ipictx, struct in_addr laddr,
 			if (!prison_equal_ip4(inp->inp_cred->cr_prison,
 			    cred->cr_prison))
 				continue;
-			if (fib != RT_ALL_FIBS &&
-			    inp->inp_inc.inc_fibnum != fib)
+			if (!rt_fib_match(inp->inp_inc.inc_fibnum, fib))
 				continue;
 			wildcard = 0;
 #ifdef INET6
@@ -2199,7 +2219,7 @@ static bool
 in_pcblookup_lb_match(const struct inpcblbgroup *grp, int domain, int fib)
 {
 	return ((domain == M_NODOM || domain == grp->il_numa_domain) &&
-	    (fib == RT_ALL_FIBS || fib == grp->il_fibnum));
+	    rt_fib_match(grp->il_fibnum, fib));
 }
 
 static struct inpcb *
@@ -2292,8 +2312,11 @@ out:
 
 static bool
 in_pcblookup_exact_match(const struct inpcb *inp, struct in_addr faddr,
-    u_short fport, struct in_addr laddr, u_short lport)
+    u_short fport, struct in_addr laddr, u_short lport, int fib)
 {
+	/* 5BSD: connections of other routing domains do not match. */
+	if (fib <= -2 && !rt_fib_match(inp->inp_inc.inc_fibnum, fib))
+		return (false);
 #ifdef INET6
 	/* XXX inp locking */
 	if ((inp->inp_vflag & INP_IPV4) == 0)
@@ -2316,7 +2339,7 @@ in_pcblookup_exact_match(const struct inpcb *inp, struct in_addr faddr,
 static struct inpcb *
 in_pcblookup_exact(struct inpcbinfo *pcbinfo, struct in_addr faddr,
     u_short fport, struct in_addr laddr, u_short lport,
-    struct inpbucket **bucketp)
+    int fib, struct inpbucket **bucketp)
 {
 	struct inpbucket *bucket;
 	struct inpcb *inp;
@@ -2331,7 +2354,8 @@ in_pcblookup_exact(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 		INPBUCKET_LOCK(bucket);
 	}
 	CK_LIST_FOREACH(inp, &bucket->head, inp_hash_exact) {
-		if (in_pcblookup_exact_match(inp, faddr, fport, laddr, lport))
+		if (in_pcblookup_exact_match(inp, faddr, fport, laddr, lport,
+		    fib))
 			return (inp);
 	}
 	return (NULL);
@@ -2354,7 +2378,7 @@ in_pcblookup_wild_match(const struct inpcb *inp, struct in_addr laddr,
 #endif
 	if (inp->inp_faddr.s_addr != INADDR_ANY || inp->inp_lport != lport)
 		return (INPLOOKUP_MATCH_NONE);
-	if (fib != RT_ALL_FIBS && inp->inp_inc.inc_fibnum != fib)
+	if (!rt_fib_match(inp->inp_inc.inc_fibnum, fib))
 		return (INPLOOKUP_MATCH_NONE);
 	if (inp->inp_laddr.s_addr == INADDR_ANY)
 		return (INPLOOKUP_MATCH_WILD);
@@ -2501,7 +2525,7 @@ in_pcblookup_internal(struct inpcbinfo_ctx *ipictx, struct in_addr faddr,
 	    ("%s: invalid local address", __func__));
 
 	inp = in_pcblookup_exact(ipictx->pcbinfo, faddr, fport, laddr, lport,
-	    &ipictx->ebucket);
+	    fib, &ipictx->ebucket);
 	if (inp != NULL)
 		return (inp);
 
@@ -2573,7 +2597,8 @@ in_pcblookup_smr(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 	    ("%s: LOCKPCB not set", __func__));
 
 	smr_enter(pcbinfo->ipi_smr);
-	inp = in_pcblookup_exact(pcbinfo, faddr, fport, laddr, lport, NULL);
+	inp = in_pcblookup_exact(pcbinfo, faddr, fport, laddr, lport, fib,
+	    NULL);
 	if (inp != NULL) {
 		if (__predict_true(inp_smr_lock(inp, lockflags))) {
 			/*
@@ -2581,7 +2606,7 @@ in_pcblookup_smr(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 			 * disconnected.
 			 */
 			if (__predict_true(in_pcblookup_exact_match(inp,
-			    faddr, fport, laddr, lport)))
+			    faddr, fport, laddr, lport, fib)))
 				return (inp);
 			inp_unlock(inp, lockflags);
 		}
@@ -2632,7 +2657,10 @@ in_pcblookup(struct inpcbinfo *pcbinfo, struct in_addr faddr, u_int fport,
 {
 	int fib;
 
-	fib = (lookupflags & INPLOOKUP_FIB) ? if_getfib(ifp) : RT_ALL_FIBS;
+	if (lookupflags & INPLOOKUP_FIB)
+		fib = if_getfib(ifp);
+	else
+		fib = ifp != NULL ? rt_fib_scope(if_getfib(ifp)) : RT_ALL_FIBS;
 	return (in_pcblookup_smr(pcbinfo, faddr, fport, laddr, lport,
 	    lookupflags, M_NODOM, fib));
 }
@@ -2645,7 +2673,8 @@ in_pcblookup_mbuf(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 	int fib;
 
 	M_ASSERTPKTHDR(m);
-	fib = (lookupflags & INPLOOKUP_FIB) ? M_GETFIB(m) : RT_ALL_FIBS;
+	fib = (lookupflags & INPLOOKUP_FIB) ? M_GETFIB(m) :
+	    rt_fib_scope(M_GETFIB(m));
 	return (in_pcblookup_smr(pcbinfo, faddr, fport, laddr, lport,
 	    lookupflags, m->m_pkthdr.numa_domain, fib));
 }

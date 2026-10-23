@@ -25,7 +25,8 @@ class TestRtNlRoute(NetlinkTestTemplate, SingleVnetTestTemplate):
         super().setup_method(method)
         self.setup_netlink(NlConst.NETLINK_ROUTE)
 
-    @pytest.mark.timeout(5)
+    # 5BSD: vnet setup alone can take over 5 seconds on emulated test VMs.
+    @pytest.mark.timeout(20)
     def test_add_route6_ll_gw(self):
         epair_ifname = self.vnet.iface_alias_map["if1"].name
         epair_ifindex = socket.if_nametoindex(epair_ifname)
@@ -46,7 +47,8 @@ class TestRtNlRoute(NetlinkTestTemplate, SingleVnetTestTemplate):
         ToolsHelper.print_net_debug()
         ToolsHelper.print_output("netstat -6onW")
 
-    @pytest.mark.timeout(5)
+    # 5BSD: vnet setup alone can take over 5 seconds on emulated test VMs.
+    @pytest.mark.timeout(20)
     def test_add_route6_ll_if_gw(self):
         self.require_module("if_tun")
         tun_ifname = IfaceFactory().create_iface("", "tun")[0].name
@@ -67,7 +69,8 @@ class TestRtNlRoute(NetlinkTestTemplate, SingleVnetTestTemplate):
         ToolsHelper.print_net_debug()
         ToolsHelper.print_output("netstat -6onW")
 
-    @pytest.mark.timeout(5)
+    # 5BSD: vnet setup alone can take over 5 seconds on emulated test VMs.
+    @pytest.mark.timeout(20)
     def test_add_route4_ll_if_gw(self):
         self.require_module("if_tun")
         tun_ifname = IfaceFactory().create_iface("", "tun")[0].name

@@ -68,13 +68,8 @@
 #include <sys/uio.h>
 #include <sys/user.h>
 
-#ifdef COMPAT_LINUX32
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 
 #include <compat/linux/linux_dtrace.h>
 #include <compat/linux/linux_file.h>

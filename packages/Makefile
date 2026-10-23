@@ -19,6 +19,8 @@
 SUBDIR=	\
 	bsdaudit \
 	bsdconfig \
+	bsd-build \
+	capsign \
 	bzip2 \
 	clibs \
 	cron \
@@ -51,6 +53,7 @@ SUBDIR=	\
 	libarchive \
 	libcapability \
 	libcapbundle \
+	libcapimage \
 	libchannel \
 	libfidl \
 	libcryptocmp \
@@ -100,12 +103,9 @@ SUBDIR=	\
 	powerd \
 	ppp \
 	rc \
-	rcmds \
 	resolvconf \
-	rip \
 	runtime \
 	smart \
-	smbutils \
 	syslogd \
 	tcpd \
 	toolchain \
@@ -151,7 +151,6 @@ SUBDIR.${MK_EE}+=		ee
 SUBDIR.${MK_EFI}+=		efi-tools
 SUBDIR.${MK_EXAMPLES}+=		examples
 SUBDIR.${MK_FILE}+=		libmagic
-SUBDIR.${MK_FLOPPY}+=		fd
 SUBDIR.${MK_FTP}+=		ftp
 SUBDIR.${MK_GAMES}+=		games
 SUBDIR.${MK_GOOGLETEST}+=	googletest
@@ -235,5 +234,7 @@ SUBDIR.${MK_ZONEINFO}+=		zoneinfo
 SUBDIR_PARALLEL=
 
 .ORDER:	all stagepackages
+
+SUBDIR.${MK_TESTS}+= libcapimage-tests capsign-tests bsd-build-tests
 
 .include <bsd.subdir.mk>

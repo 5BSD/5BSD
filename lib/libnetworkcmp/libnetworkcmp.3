@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd October 11, 2026
+.Dd October 22, 2026
 .Dt LIBNETWORKCMP 3
 .Os
 .Sh NAME
@@ -15,7 +15,8 @@
 .Nm networkcmp_client_open ,
 .Nm networkcmp_client_open_admin ,
 .Nm networkcmp_client_limits ,
-.Nm networkcmp_client_close
+.Nm networkcmp_client_close ,
+.Nm networkcmp_pf_open
 .Nd public client for the system network broker
 .Sh LIBRARY
 .Li libnetworkcmp
@@ -46,6 +47,8 @@
 .Fn networkcmp_getaddrinfo "struct networkcmp_client *client" "const char *host" "const char *service" "const struct addrinfo *hints" "struct addrinfo **result"
 .Ft void
 .Fn networkcmp_freeaddrinfo "struct addrinfo *result"
+.Ft int
+.Fn networkcmp_pf_open "int *out_fd"
 .Sh DESCRIPTION
 The
 .Nm
@@ -276,6 +279,44 @@ DTrace provider exposes component-open, message-send, message-receive, and
 message-reject probes.
 Provider daemons audit policy decisions through OpenBSM; client-library
 activity is operational telemetry and is not audited.
+.Pp
+.Fn networkcmp_pf_open
+opens one short session to
+.Dq system.Network.PF
+.Pq the Sy NetworkPf No protocol of the same library ,
+negotiates the wire version, requests the one descriptor the session
+delivers, closes the session and stores the descriptor in
+.Fa *out_fd .
+The caller's software identity must hold the
+.Dq system.network.pf.read
+attribute, or
+.Xr switchboard 8
+does not resolve the name
+.Pq Er ENOENT .
+The descriptor is a
+.Xr pf 4
+device reporting the state table of the caller's own network stack:
+the provider binds it to a jailed caller's vnet before delivery.
+It carries exactly
+.Dv CAP_READ ,
+.Dv CAP_FSTAT
+and
+.Dv CAP_IOCTL ,
+admits only
+.Dv DIOCGETSTATES
+.Pq Vt "struct pfioc_states" No of Vt "struct pfsync_state" , In net/pfvar.h ,
+allows no
+.Xr fcntl 2
+rights and cannot be transferred again; the library checks those limits on
+receipt and fails with
+.Er EPROTO
+when the descriptor differs, and locks it against further transfer and
+inheritance.
+The call is independent of the process client above and bounded like the
+other calls.
+A provider that could not open
+.Pa /dev/pf
+or bind the caller's vnet reports its errno and delivers nothing.
 .Sh CONCURRENT RESOLUTION
 The provider can coalesce at most 16 identical concurrent requests within
 one session.
@@ -319,4 +360,6 @@ A matching hosts entry satisfies the lookup before DNS is attempted.
 .Xr libservice 3 ,
 .Xr network_state 3 ,
 .Xr service_runtime 3 ,
-.Xr fidl 7
+.Xr pf 4 ,
+.Xr fidl 7 ,
+.Xr BSDNetwork 8

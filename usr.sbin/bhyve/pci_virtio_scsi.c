@@ -40,6 +40,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -2536,6 +2537,7 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 	struct pci_vtscsi_softc *sc;
 	bool intr_initialized, packed;
 	const char *devname, *errstr, *value;
+	long long bootindex;
 	uint16_t nrequestq;
 	int err;
 	int i;
@@ -2571,8 +2573,10 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	value = get_config_value_node(nvl, "bootindex");
 	if (value != NULL) {
-		if (pci_emul_add_boot_device(pi, atoi(value))) {
-			EPRINTLN("Invalid bootindex %d", atoi(value));
+		bootindex = strtonum(value, 0, INT_MAX, &errstr);
+		if (errstr != NULL ||
+		    pci_emul_add_boot_device(pi, (int)bootindex) != 0) {
+			EPRINTLN("Invalid bootindex %s", value);
 			goto fail;
 		}
 	}

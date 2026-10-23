@@ -41,7 +41,7 @@ vmm_dirty_log_request_validate(const struct vmm_dirty_log_request *request)
 	    request->size != VMM_DIRTY_LOG_REQUEST_SIZE ||
 	    request->operation < VMM_DIRTY_LOG_REQUEST_ENABLE ||
 	    request->operation >= VMM_DIRTY_LOG_REQUEST_OPERATION_LAST ||
-	    request->flags != 0 || request->reserved64[0] != 0 ||
+	    request->reserved64[0] != 0 ||
 	    request->reserved64[1] != 0 || request->reserved64[2] != 0 ||
 	    !vmm_dirty_log_request_reserved_empty(request->reserved8,
 	    sizeof(request->reserved8)))
@@ -49,6 +49,9 @@ vmm_dirty_log_request_validate(const struct vmm_dirty_log_request *request)
 
 	switch (request->operation) {
 	case VMM_DIRTY_LOG_REQUEST_ENABLE:
+		if ((request->flags &
+		    ~VMM_DIRTY_LOG_REQUEST_F_SPARSE_RANGE) != 0)
+			return (EINVAL);
 		range = (struct vmm_dirty_log_range) {
 			.gpa = request->gpa,
 			.length = request->length,
@@ -59,6 +62,8 @@ vmm_dirty_log_request_validate(const struct vmm_dirty_log_request *request)
 		break;
 	case VMM_DIRTY_LOG_REQUEST_OBSERVE:
 	case VMM_DIRTY_LOG_REQUEST_CLEAR:
+		if (request->flags != 0)
+			return (EINVAL);
 		range = (struct vmm_dirty_log_range) {
 			.gpa = request->gpa,
 			.length = request->length,
@@ -79,7 +84,8 @@ vmm_dirty_log_request_validate(const struct vmm_dirty_log_request *request)
 			return (EINVAL);
 		break;
 	case VMM_DIRTY_LOG_REQUEST_DISABLE:
-		if (request->gpa != 0 || request->length != 0 ||
+		if (request->flags != 0 || request->gpa != 0 ||
+		    request->length != 0 ||
 		    request->output_address != 0 || request->output_bytes != 0)
 			return (EINVAL);
 		break;

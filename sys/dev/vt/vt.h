@@ -52,11 +52,7 @@
 #include "opt_splash.h"
 
 #ifndef	VT_MAXWINDOWS
-#ifdef	MAXCONS
-#define	VT_MAXWINDOWS	MAXCONS
-#else
 #define	VT_MAXWINDOWS	12
-#endif
 #endif
 
 #ifndef VT_ALT_TO_ESC_HACK
@@ -65,13 +61,13 @@
 
 #define	VT_CONSWINDOW	0
 
-#if defined(SC_TWOBUTTON_MOUSE) || defined(VT_TWOBUTTON_MOUSE)
+#if defined(VT_TWOBUTTON_MOUSE)
 #define VT_MOUSE_PASTEBUTTON	MOUSE_BUTTON3DOWN	/* right button */
 #define VT_MOUSE_EXTENDBUTTON	MOUSE_BUTTON2DOWN	/* not really used */
 #else
 #define VT_MOUSE_PASTEBUTTON	MOUSE_BUTTON2DOWN	/* middle button */
 #define VT_MOUSE_EXTENDBUTTON	MOUSE_BUTTON3DOWN	/* right button */
-#endif /* defined(SC_TWOBUTTON_MOUSE) || defined(VT_TWOBUTTON_MOUSE) */
+#endif /* defined(VT_TWOBUTTON_MOUSE) */
 
 #define	SC_DRIVER_NAME	"vt"
 #ifdef VT_DEBUG
@@ -107,7 +103,7 @@ typedef unsigned int	vt_axis_t;
  * Per-device datastructure.
  */
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 struct vt_mouse_cursor;
 #endif
 
@@ -128,7 +124,7 @@ struct vt_device {
 	const struct vt_driver	*vd_prev_driver;/* (?) Previous driver. */
 	void			*vd_prev_softc;	/* (?) Previous driver data. */
 	device_t		 vd_video_dev;	/* (?) Video adapter. */
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 	struct vt_mouse_cursor	*vd_mcursor;	/* (?) Cursor bitmap. */
 	term_color_t		 vd_mcursor_fg;	/* (?) Cursor fg color. */
 	term_color_t		 vd_mcursor_bg;	/* (?) Cursor bg color. */
@@ -244,7 +240,7 @@ void vtbuf_sethistory_size(struct vt_buf *, unsigned int);
 void vtbuf_clearhistory(struct vt_buf *);
 int vtbuf_iscursor(const struct vt_buf *vb, int row, int col);
 void vtbuf_cursor_visibility(struct vt_buf *, int);
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 int vtbuf_set_mark(struct vt_buf *vb, int type, int col, int row);
 int vtbuf_get_marked_len(struct vt_buf *vb);
 void vtbuf_extract_marked(struct vt_buf *vb, term_char_t *buf, int sz, int mark);
@@ -425,7 +421,7 @@ void vt_upgrade(struct vt_device *vd);
 /* name argument is not used yet. */
 #define VT_DRIVER_DECLARE(name, drv) DATA_SET(vt_drv_set, drv)
 
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 struct vt_mouse_cursor {
 	uint8_t map[64 * 64 / 8];
 	uint8_t mask[64 * 64 / 8];
@@ -441,7 +437,7 @@ int		 vtfont_load(vfnt_t *f, struct vt_font **ret);
 
 /* Sysmouse. */
 void sysmouse_process_event(mouse_info_t *mi);
-#ifndef SC_NO_CUTPASTE
+#ifndef VT_NO_CUTPASTE
 void vt_mouse_event(int type, int x, int y, int event, int cnt, int mlevel);
 void vt_mouse_state(int show);
 #endif

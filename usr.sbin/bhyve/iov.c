@@ -100,6 +100,8 @@ check_iov_len(const struct iovec *iov, size_t niov, size_t len)
 	size_t total = 0;
 	size_t i;
 
+	if (len == 0)
+		return (true);
 	for (i = 0; i < niov; i++) {
 		/*
 		 * The mathematical length already exceeds every representable

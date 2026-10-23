@@ -47,13 +47,8 @@
 #include <vm/vm.h>
 #include <vm/vm_object.h>
 
-#ifdef COMPAT_LINUX32
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 #include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_dtrace.h>
 #include <compat/linux/linux_futex.h>
@@ -994,40 +989,6 @@ linux_sys_futex(struct thread *td, struct linux_sys_futex_args *args)
 	return (linux_futex(td, &fargs));
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_sys_futex_time64(struct thread *td,
-    struct linux_sys_futex_time64_args *args)
-{
-	struct linux_futex_args fargs = {
-		.uaddr = args->uaddr,
-		.op = args->op,
-		.val = args->val,
-		.ts = NULL,
-		.uaddr2 = args->uaddr2,
-		.val3 = args->val3,
-		.val3_compare = true,
-	};
-	int error;
-
-	switch (args->op & LINUX_FUTEX_CMD_MASK) {
-	case LINUX_FUTEX_WAIT:
-	case LINUX_FUTEX_WAIT_BITSET:
-	case LINUX_FUTEX_LOCK_PI:
-	case LINUX_FUTEX_LOCK_PI2:
-		if (args->timeout != NULL) {
-			error = linux_get_timespec64(&fargs.kts, args->timeout);
-			if (error != 0)
-				return (error);
-			fargs.ts = &fargs.kts;
-		}
-		break;
-	default:
-		fargs.ts = PTRIN(args->timeout);
-	}
-	return (linux_futex(td, &fargs));
-}
-#endif
 
 /*
  * futex2 interface.
@@ -1111,11 +1072,7 @@ linux_futex_wait(struct thread *td, struct linux_futex_wait_args *args)
 		if (error != 0)
 			return (error);
 		/* EFAULT on a bad pointer, EINVAL on an invalid timespec. */
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-		error = linux_get_timespec64(&fargs.kts, args->timeout);
-#else
 		error = linux_get_timespec(&fargs.kts, args->timeout);
-#endif
 		if (error != 0)
 			return (error);
 		fargs.ts = &fargs.kts;
@@ -1492,11 +1449,7 @@ linux_futex_waitv(struct thread *td, struct linux_futex_waitv_args *args)
 		error = linux_futex2_clock(args->clockid, &clockrt);
 		if (error != 0)
 			return (error);
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-		error = linux_get_timespec64(&ts, args->timeout);
-#else
 		error = linux_get_timespec(&ts, args->timeout);
-#endif
 		if (error != 0)
 			return (error);
 		if (ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000 || ts.tv_sec < 0)

@@ -190,6 +190,10 @@ dt_output_flags(const dtrace_hdl_t *dtp, uint_t machine)
 #if defined(__riscv_float_abi_double)
 	flags |= EF_RISCV_FLOAT_ABI_DOUBLE;
 #endif
+#if defined(DTRACE_TARGET_RISCV)
+	/* The host-built RISC-V linker cannot use host compiler ABI macros. */
+	flags = EF_RISCV_RVC | EF_RISCV_FLOAT_ABI_DOUBLE;
+#endif
 	return (flags);
 }
 

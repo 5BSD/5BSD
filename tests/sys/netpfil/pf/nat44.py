@@ -43,10 +43,10 @@ class TestNAT44(VnetTestTemplate):
         ToolsHelper.print_output("/sbin/sysctl net.inet.ip.forwarding=1")
 
         ToolsHelper.print_output("/sbin/pfctl -e")
-        ToolsHelper.print_output("/sbin/pfctl -x loud")
+        ToolsHelper.print_output("/sbin/pfctl -x debug")
         ToolsHelper.pf_rules([
             "set reassemble yes",
-            "nat on {} inet from 192.0.2.0/24 -> ({})".format(outifname, outifname),
+            "match out on {} inet from 192.0.2.0/24 nat-to ({})".format(outifname, outifname),
             "pass"])
 
     def vnet3_handler(self, vnet):

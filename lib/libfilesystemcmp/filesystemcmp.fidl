@@ -6,6 +6,7 @@
 // groups), path opens are decided by the label's policy, and stores take the
 // kernel-stamped credentials of the sending process.  Field meanings, limits
 // and errors are those of lib/libcapsulert/bsdfilesystem_proto.h.
+@available(platform="bsd", added=1)
 library bsd.filesystem.v1;
 
 using zx;

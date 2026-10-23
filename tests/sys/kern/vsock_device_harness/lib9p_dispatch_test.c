@@ -38,6 +38,24 @@ struct rec {
 };
 
 static struct rec rec;
+static bool fail_fid_allocation;
+
+struct l9p_fid *__real_l9p_connection_alloc_fid(struct l9p_connection *,
+    uint32_t);
+struct l9p_fid *__wrap_l9p_connection_alloc_fid(struct l9p_connection *,
+    uint32_t);
+
+struct l9p_fid *
+__wrap_l9p_connection_alloc_fid(struct l9p_connection *conn, uint32_t fidno)
+{
+
+	if (fail_fid_allocation) {
+		fail_fid_allocation = false;
+		errno = ENOMEM;
+		return (NULL);
+	}
+	return (__real_l9p_connection_alloc_fid(conn, fidno));
+}
 
 static int
 stub_stat(void *softc __unused, struct l9p_request *req)
@@ -265,6 +283,49 @@ ATF_TC_BODY(create_accepts_plain_component, tc)
 	ATF_CHECK_EQ(rec.create_calls, 1);
 }
 
+ATF_TC_WITHOUT_HEAD(fid_allocation_failure_reports_enomem);
+ATF_TC_BODY(fid_allocation_failure_reports_enomem, tc)
+{
+	struct l9p_connection conn;
+	struct l9p_request req;
+
+	(void)tc;
+	setup(&conn);
+	memset(&req, 0, sizeof(req));
+	req.lr_conn = &conn;
+	req.lr_req.hdr.type = L9P_TATTACH;
+	req.lr_req.hdr.fid = 2;
+	req.lr_req.tattach.afid = L9P_NOFID;
+	fail_fid_allocation = true;
+	ATF_CHECK_EQ(l9p_dispatch_request(&req), ENOMEM);
+	ATF_CHECK(ht_find(&conn.lc_files, 2) == NULL);
+	ht_destroy(&conn.lc_files);
+
+	setup(&conn);
+	(void)add_fid(&conn, 1, 0);
+	memset(&req, 0, sizeof(req));
+	req.lr_conn = &conn;
+	req.lr_req.hdr.type = L9P_TWALK;
+	req.lr_req.hdr.fid = 1;
+	req.lr_req.twalk.newfid = 2;
+	fail_fid_allocation = true;
+	ATF_CHECK_EQ(l9p_dispatch_request(&req), ENOMEM);
+	ATF_CHECK(ht_find(&conn.lc_files, 2) == NULL);
+	ht_destroy(&conn.lc_files);
+
+	setup(&conn);
+	(void)add_fid(&conn, 1, 0);
+	memset(&req, 0, sizeof(req));
+	req.lr_conn = &conn;
+	req.lr_req.hdr.type = L9P_TXATTRWALK;
+	req.lr_req.hdr.fid = 1;
+	req.lr_req.txattrwalk.newfid = 2;
+	fail_fid_allocation = true;
+	ATF_CHECK_EQ(l9p_dispatch_request(&req), ENOMEM);
+	ATF_CHECK(ht_find(&conn.lc_files, 2) == NULL);
+	ht_destroy(&conn.lc_files);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -273,5 +334,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, tstat_marks_directory_fid);
 	ATF_TP_ADD_TC(tp, create_rejects_non_component_names);
 	ATF_TP_ADD_TC(tp, create_accepts_plain_component);
+	ATF_TP_ADD_TC(tp, fid_allocation_failure_reports_enomem);
 	return (atf_no_error());
 }

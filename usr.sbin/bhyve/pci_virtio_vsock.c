@@ -144,6 +144,7 @@
 #include "pci_emul.h"
 #include "pci_virtio_vsock_probes.h"
 #ifdef BHYVE_SNAPSHOT
+#include "pci_virtio_vsock_migration.h"
 #include "snapshot.h"
 #endif
 #include "sockstream.h"
@@ -205,6 +206,7 @@
 
 /* First dynamically-assigned host-side port number */
 #define	VTVSOCK_PORT_MIN	1024
+#define	VTVSOCK_MIGRATION_ID_SIZE	16U
 
 /* Maximum simultaneous connections (prevents resource exhaustion) */
 #define	VTVSOCK_MAX_CONNS	256
@@ -290,13 +292,15 @@ monotonic_seconds(void)
  * transferred (CAP_XFER_NONE), survives neither exec nor fork, and
  * carries no ambient authority.
  */
-static void
+static int
 vtvsock_cap_lockdown(int fd)
 {
 
-	(void)cap_xfer_limit(fd, CAP_XFER_NONE);
-	(void)cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED);
-	(void)cap_clofork_limit(fd, CAP_CLOFORK_LOCKED);
+	if (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ||
+	    cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1)
+		return (-1);
+	return (0);
 }
 
 /*
@@ -305,12 +309,12 @@ vtvsock_cap_lockdown(int fd)
  * Without this the ioctl fails ENOTCAPABLE in capability mode and every
  * host->guest STREAM read silently falls back to a 4 KiB chunk.
  */
-static void
+static int
 vtvsock_cap_limit_fionread(int fd)
 {
 	const cap_ioctl_t cmds[] = { FIONREAD };
 
-	(void)caph_ioctls_limit(fd, cmds, nitems(cmds));
+	return (caph_ioctls_limit(fd, cmds, nitems(cmds)));
 }
 
 /*
@@ -322,12 +326,26 @@ vtvsock_cap_limit_fionread(int fd)
  * Close-on-fork is intentionally NOT set: a host application may
  * legitimately fork workers that use the vsock connection.
  */
-static void
+static int
 vtvsock_cap_lockdown_xfer_once(int fd)
 {
 
-	(void)cap_xfer_limit(fd, CAP_XFER_ONCE);
-	(void)cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED);
+	if (cap_xfer_limit(fd, CAP_XFER_ONCE) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1)
+		return (-1);
+	return (0);
+}
+
+/* A paused connection can be handed to its relay owner exactly once. */
+static int
+vtvsock_cap_lockdown_migration(int fd)
+{
+
+	if (cap_xfer_limit(fd, CAP_XFER_ONCE) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ||
+	    cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1)
+		return (-1);
+	return (0);
 }
 #endif
 
@@ -506,10 +524,14 @@ struct pci_vtvsock_softc {
 	uint64_t		vsc_guest_cid;
 
 	char			*vsc_path;
+	uint8_t			 vsc_migration_id[VTVSOCK_MIGRATION_ID_SIZE];
+	bool			 vsc_migration_id_valid;
 	bool			 vsc_kernel;
 	bool			 vsc_kernel_failed;
 	bool			 vsc_kernel_frozen;
 	bool			 vsc_checkpoint_lock_held;
+	bool			 vsc_migration_exported;
+	bool			 vsc_migration_transfer_enabled;
 	int			 vsc_kernel_fd;
 	struct mevent		*vsc_kernel_evp;
 	struct mevent		*vsc_kernel_write_evp;
@@ -2173,6 +2195,9 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 			 */
 			cap_rights_init(&crights, CAP_EVENT, CAP_RECV,
 			    CAP_SEND, CAP_SHUTDOWN, CAP_IOCTL);
+			if (sc->vsc_migration_transfer_enabled)
+				cap_rights_set(&crights, CAP_FSTAT,
+				    CAP_GETSOCKOPT, CAP_GETPEERNAME);
 			if (caph_rights_limit(cfd, &crights) == -1) {
 				close(cfd);
 				/* Send RST so guest doesn't hang. */
@@ -2180,8 +2205,15 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 				    type);
 				break;
 			}
-			vtvsock_cap_limit_fionread(cfd);
-			vtvsock_cap_lockdown(cfd);
+			if (vtvsock_cap_limit_fionread(cfd) == -1 ||
+			    (sc->vsc_migration_transfer_enabled ?
+			    vtvsock_cap_lockdown_migration(cfd) :
+			    vtvsock_cap_lockdown(cfd)) == -1) {
+				close(cfd);
+				vtvsock_send_rst_noconn(sc, dst_port, src_port,
+				    type);
+				break;
+			}
 #endif
 
 			conn = vtvsock_conn_alloc(sc, cfd, src_port);
@@ -2239,6 +2271,7 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 		}
 		/* peer_buf_alloc/peer_fwd_cnt already set in pre-switch. */
 		conn->state          = CONN_ESTABLISHED;
+		conn->close_time = 0;
 
 		/*
 		 * Host-initiated connection: send reply + fd back to the
@@ -3785,15 +3818,24 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 #ifndef WITHOUT_CAPSICUM
 		cap_rights_init(&crights, CAP_EVENT, CAP_RECV, CAP_SEND,
 		    CAP_SHUTDOWN, CAP_IOCTL);
+		if (sc->vsc_migration_transfer_enabled)
+			cap_rights_set(&crights, CAP_FSTAT,
+			    CAP_GETSOCKOPT, CAP_GETPEERNAME);
 		if (caph_rights_limit(pair[0], &crights) == -1) {
 			WPRINTF(("vtvsock: rights on pair[0] failed"));
 			close(pair[0]);
 			close(pair[1]);
 			goto ctl_connect_fail;
 		}
-		vtvsock_cap_limit_fionread(pair[0]);
-		vtvsock_cap_lockdown(pair[0]);
-		vtvsock_cap_lockdown_xfer_once(pair[1]);
+		if (vtvsock_cap_limit_fionread(pair[0]) == -1 ||
+		    (sc->vsc_migration_transfer_enabled ?
+		    vtvsock_cap_lockdown_migration(pair[0]) :
+		    vtvsock_cap_lockdown(pair[0])) == -1 ||
+		    vtvsock_cap_lockdown_xfer_once(pair[1]) == -1) {
+			close(pair[0]);
+			close(pair[1]);
+			goto ctl_connect_fail;
+		}
 #endif
 
 		conn = vtvsock_conn_alloc(sc, pair[0], msg.port);
@@ -3909,7 +3951,11 @@ pci_vtvsock_ctl_accept(int fd __unused, enum ev_type t __unused, void *arg)
 		pthread_mutex_unlock(&sc->vsc_mtx);
 		return;
 	}
-	vtvsock_cap_lockdown(s);
+	if (vtvsock_cap_lockdown(s) == -1) {
+		close(s);
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return;
+	}
 #endif
 
 	cc = calloc(1, sizeof(*cc));
@@ -4109,25 +4155,445 @@ static int __unused
 vtvsock_snapshot_state_error(const struct pci_vtvsock_softc *sc,
     bool require_kernel_frozen)
 {
-	if (sc->vsc_kernel) {
-		if (require_kernel_frozen && !sc->vsc_kernel_frozen)
-			return (EBUSY);
-		if (sc->vsc_kernel_failed || sc->vsc_kernel_rx != NULL ||
-		    sc->vsc_kernel_rx_off != 0 || sc->vsc_kernel_tx != NULL ||
-		    sc->vsc_kernel_tx_len != 0)
-			return (EBUSY);
-		return (0);
-	}
-	if (sc->vsc_conn_count != 0 || sc->vsc_ctl_conn_count != 0 ||
+	/* No backend may discard replies or host-owned connection state. */
+	if (sc->vsc_conn_count != 0 || !TAILQ_EMPTY(&sc->vsc_conns) ||
+	    sc->vsc_ctl_conn_count != 0 ||
+	    !TAILQ_EMPTY(&sc->vsc_ctl_conns) ||
 	    sc->vsc_pend_count != 0 || sc->vsc_reasm_total != 0 ||
 	    sc->vsc_txbuf_total != 0)
 		return (EBUSY);
+	if (sc->vsc_kernel_failed || sc->vsc_kernel_rx != NULL ||
+	    sc->vsc_kernel_rx_off != 0 || sc->vsc_kernel_tx != NULL ||
+	    sc->vsc_kernel_tx_len != 0 ||
+	    (!sc->vsc_kernel && sc->vsc_kernel_frozen))
+		return (EBUSY);
+	if (sc->vsc_kernel) {
+		if (require_kernel_frozen && !sc->vsc_kernel_frozen)
+			return (EBUSY);
+		return (0);
+	}
 	return (0);
 }
 
 #ifdef BHYVE_SNAPSHOT
+_Static_assert(VSOCK_MIGRATION_TYPE_STREAM == VIRTIO_VSOCK_TYPE_STREAM,
+    "vsock migration stream type drift");
+_Static_assert(VSOCK_MIGRATION_PEER_SHUTDOWN_RCV ==
+    VIRTIO_VSOCK_SHUTDOWN_RCV && VSOCK_MIGRATION_PEER_SHUTDOWN_SEND ==
+    VIRTIO_VSOCK_SHUTDOWN_SEND, "vsock migration shutdown bit drift");
+_Static_assert(VSOCK_MIGRATION_TYPE_SEQPACKET ==
+    VIRTIO_VSOCK_TYPE_SEQPACKET, "vsock migration seqpacket type drift");
+_Static_assert(VSOCK_MIGRATION_CONN_CONNECTING == CONN_CONNECTING &&
+    VSOCK_MIGRATION_CONN_ESTABLISHED == CONN_ESTABLISHED &&
+    VSOCK_MIGRATION_CONN_CLOSING == CONN_CLOSING,
+    "vsock migration state drift");
+_Static_assert(VSOCK_MIGRATION_MAX_BUFFER == VTVSOCK_BUF_ALLOC &&
+    VSOCK_MIGRATION_MAX_PEER_BUFFER == VTVSOCK_MAX_PEER_BUF_ALLOC &&
+    VSOCK_MIGRATION_MAX_CONNS == VTVSOCK_MAX_CONNS,
+    "vsock migration limit drift");
+_Static_assert(VSOCK_MIGRATION_MAX_REASM_TOTAL == VTVSOCK_MAX_TOTAL_REASM &&
+    VSOCK_MIGRATION_MAX_TX_TOTAL == VTVSOCK_MAX_TOTAL_TXBUF,
+    "vsock migration aggregate limit drift");
+
+static uint32_t
+vtvsock_migration_timer_age(time_t started, time_t now)
+{
+	uint64_t age;
+
+	if (started == 0 || now <= started)
+		return (0);
+	age = (uint64_t)now - (uint64_t)started;
+	return (age > UINT32_MAX ? UINT32_MAX : (uint32_t)age);
+}
+
+int
+pci_vtvsock_migration_collect(struct pci_devinst *pi,
+    struct vsock_migration_conn_state *states, uint32_t capacity,
+    uint32_t *count_out)
+{
+	struct vsock_migration_conn_state candidate[VSOCK_MIGRATION_MAX_CONNS];
+	struct pci_vtvsock_softc *sc;
+	struct vtvsock_conn *conn;
+	uint64_t reasm_total, tx_total;
+	size_t table_size;
+	time_t now;
+	uint32_t count;
+	int error;
+
+	if (pi == NULL || states == NULL || count_out == NULL)
+		return (EINVAL);
+	sc = pi->pi_arg;
+	if (sc == NULL)
+		return (EINVAL);
+	if (!sc->vsc_checkpoint_lock_held ||
+	    !pthread_mutex_isowned_np(&sc->vsc_mtx) ||
+	    !sc->vsc_lifecycle_paused)
+		return (EBUSY);
+	/* The kernel provider has no active-connection handoff API yet. */
+	if (sc->vsc_kernel) {
+		if (vtvsock_snapshot_state_error(sc, true) != 0)
+			return (EOPNOTSUPP);
+		*count_out = 0;
+		return (0);
+	}
+	if (sc->vsc_kernel_failed || sc->vsc_kernel_frozen ||
+	    sc->vsc_kernel_rx != NULL || sc->vsc_kernel_rx_off != 0 ||
+	    sc->vsc_kernel_tx != NULL || sc->vsc_kernel_tx_len != 0 ||
+	    sc->vsc_ctl_conn_count != 0 ||
+	    !TAILQ_EMPTY(&sc->vsc_ctl_conns) || sc->vsc_pend_count != 0)
+		return (EBUSY);
+	if (sc->vsc_conn_count > VSOCK_MIGRATION_MAX_CONNS)
+		return (EPROTO);
+	if (sc->vsc_conn_count > capacity)
+		return (EMSGSIZE);
+	count = 0;
+	reasm_total = tx_total = 0;
+	now = monotonic_seconds();
+	TAILQ_FOREACH(conn, &sc->vsc_conns, link) {
+		struct vsock_migration_conn_state *state;
+
+		if (count >= capacity)
+			return (EPROTO);
+		if (conn->fd < 0 || conn->ctl_fd >= 0 ||
+		    conn->reply_fd >= 0 || conn->state == CONN_CONNECTING)
+			return (EBUSY);
+		state = &candidate[count++];
+		memset(state, 0, sizeof(*state));
+		state->local_port = conn->local_port;
+		state->guest_port = conn->guest_port;
+		state->type = conn->type;
+		state->state = conn->state;
+		state->flags = (conn->host_eof ?
+		    VSOCK_MIGRATION_CONN_HOST_EOF : 0) |
+		    (conn->tx_buf_eor ? VSOCK_MIGRATION_CONN_TX_EOR : 0) |
+		    (conn->rx_resid_len != 0 && conn->rx_resid_seq ?
+		    VSOCK_MIGRATION_CONN_RESID_SEQ : 0) |
+		    (conn->rx_resid_len != 0 && conn->rx_resid_eor ?
+		    VSOCK_MIGRATION_CONN_RESID_EOR : 0) |
+		    (conn->close_time != 0 ?
+		    VSOCK_MIGRATION_CONN_CLOSE_TIMER : 0) |
+		    (conn->stall_time != 0 ?
+		    VSOCK_MIGRATION_CONN_STALL_TIMER : 0);
+		state->peer_shutdown = conn->peer_shutdown;
+		state->buf_alloc = conn->buf_alloc;
+		state->fwd_cnt = conn->fwd_cnt;
+		state->last_fwd_cnt = conn->last_fwd_cnt;
+		state->tx_cnt = conn->tx_cnt;
+		state->peer_buf_alloc = conn->peer_buf_alloc;
+		state->peer_fwd_cnt = conn->peer_fwd_cnt;
+		state->rx_reasm_len = conn->rx_reasm_len;
+		state->tx_buf_len = conn->tx_buf_len;
+		state->rx_resid_len = conn->rx_resid_len;
+		state->rx_resid_off = conn->rx_resid_off;
+		state->close_age_seconds = vtvsock_migration_timer_age(
+		    conn->close_time, now);
+		state->stall_age_seconds = vtvsock_migration_timer_age(
+		    conn->stall_time, now);
+		state->rx_reasm = conn->rx_reasm_len != 0 ?
+		    conn->rx_reasm : NULL;
+		state->tx_buf = conn->tx_buf_len != 0 ? conn->tx_buf : NULL;
+		state->rx_resid = conn->rx_resid_len != 0 ?
+		    conn->rx_resid : NULL;
+		reasm_total += conn->rx_reasm_len;
+		tx_total += conn->tx_buf_len;
+	}
+	if (count != sc->vsc_conn_count ||
+	    reasm_total != sc->vsc_reasm_total ||
+	    tx_total != sc->vsc_txbuf_total)
+		return (EPROTO);
+	error = vsock_migration_table_size(candidate, count, &table_size);
+	if (error != 0)
+		return (error);
+	if (count != 0)
+		memcpy(states, candidate, count * sizeof(candidate[0]));
+	*count_out = count;
+	return (0);
+}
+
+static int
+vtvsock_migration_validate_fd(const struct vsock_migration_conn_state *state,
+    int fd, dev_t *device, ino_t *inode)
+{
+	struct sockaddr_storage peer;
+	struct stat socket_stat;
+	socklen_t size;
+	int domain, type;
+
+	if (state == NULL || device == NULL || inode == NULL || fd < 0)
+		return (EINVAL);
+	if (fstat(fd, &socket_stat) != 0)
+		return (errno != 0 ? errno : EIO);
+	if (!S_ISSOCK(socket_stat.st_mode) || socket_stat.st_ino == 0)
+		return (EPROTOTYPE);
+	size = sizeof(type);
+	if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &size) != 0)
+		return (errno != 0 ? errno : EIO);
+	if (size != sizeof(type) ||
+	    type != (state->type == VIRTIO_VSOCK_TYPE_SEQPACKET ?
+	    SOCK_SEQPACKET : SOCK_STREAM))
+		return (EPROTOTYPE);
+	size = sizeof(domain);
+	if (getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &size) != 0)
+		return (errno != 0 ? errno : EIO);
+	if (size != sizeof(domain) || domain != AF_UNIX)
+		return (EAFNOSUPPORT);
+	size = sizeof(peer);
+	if (getpeername(fd, (struct sockaddr *)&peer, &size) != 0)
+		return (errno != 0 ? errno : EIO);
+	if (size < offsetof(struct sockaddr_storage, ss_family) +
+	    sizeof(peer.ss_family) || peer.ss_family != AF_UNIX)
+		return (EAFNOSUPPORT);
+	*device = socket_stat.st_dev;
+	*inode = socket_stat.st_ino;
+	return (0);
+}
+
+int
+pci_vtvsock_migration_capture(struct pci_devinst *pi, uint8_t **wire_out,
+    size_t *wire_size_out, int *fds, uint32_t fd_capacity,
+    uint32_t *fd_count_out)
+{
+	struct vsock_migration_conn_state states[VSOCK_MIGRATION_MAX_CONNS];
+	struct pci_vtvsock_softc *sc;
+	struct vtvsock_conn *conn;
+	dev_t socket_devs[VSOCK_MIGRATION_MAX_CONNS];
+	ino_t socket_inos[VSOCK_MIGRATION_MAX_CONNS];
+	uint8_t *wire;
+	uint32_t count, i, j;
+	size_t size;
+	int error;
+
+	if (pi == NULL || wire_out == NULL || wire_size_out == NULL ||
+	    fd_count_out == NULL || (fd_capacity != 0 && fds == NULL))
+		return (EINVAL);
+	error = pci_vtvsock_migration_collect(pi, states, nitems(states),
+	    &count);
+	if (error != 0)
+		return (error);
+	if (count > fd_capacity)
+		return (EMSGSIZE);
+	/* Refuse an endpoint the destination could never attach to a relay. */
+	sc = pi->pi_arg;
+	i = 0;
+	TAILQ_FOREACH(conn, &sc->vsc_conns, link) {
+		fds[i] = conn->fd;
+		error = vtvsock_migration_validate_fd(&states[i], fds[i],
+		    &socket_devs[i], &socket_inos[i]);
+		if (error != 0)
+			return (error);
+		for (j = 0; j < i; j++) {
+			if (fds[i] == fds[j] ||
+			    (socket_devs[i] == socket_devs[j] &&
+			    socket_inos[i] == socket_inos[j]))
+				return (EINVAL);
+		}
+		i++;
+	}
+	assert(i == count);
+	error = vsock_migration_table_size(states, count, &size);
+	if (error != 0)
+		return (error);
+	wire = malloc(size);
+	if (wire == NULL)
+		return (ENOMEM);
+	error = vsock_migration_table_encode(states, count, wire, size);
+	if (error != 0) {
+		free(wire);
+		return (error);
+	}
+	*wire_out = wire;
+	*wire_size_out = size;
+	*fd_count_out = count;
+	/* The checkpoint owner keeps this mutex through the following SAVE. */
+	sc->vsc_migration_exported = true;
+	return (0);
+}
+
+static time_t
+vtvsock_migration_timer_start(uint32_t flags, uint32_t timer_flag,
+    uint32_t age, time_t now)
+{
+	time_t started;
+
+	if ((flags & timer_flag) == 0)
+		return (0);
+	started = (time_t)((int64_t)now - (int64_t)age);
+	/* Zero means inactive in the device, even for a timer aged zero. */
+	return (started == 0 ? -1 : started);
+}
+
+int
+pci_vtvsock_migration_restore(struct pci_devinst *pi, const uint8_t *wire,
+    size_t wire_size, int *fds, uint32_t fd_count)
+{
+	struct vsock_migration_conn_state states[VSOCK_MIGRATION_MAX_CONNS];
+	struct pci_vtvsock_softc *sc;
+	struct vtvsock_conn *conn, *tmp;
+	dev_t socket_devs[VSOCK_MIGRATION_MAX_CONNS];
+	ino_t socket_inos[VSOCK_MIGRATION_MAX_CONNS];
+	uint32_t count, i, j;
+	time_t now;
+	int error, flags;
+#ifndef WITHOUT_CAPSICUM
+	cap_rights_t rights;
+	const cap_ioctl_t ioctls[] = { FIONREAD };
+#endif
+
+	if (pi == NULL || wire == NULL || (fd_count != 0 && fds == NULL))
+		return (EINVAL);
+	error = vsock_migration_table_decode(wire, wire_size, states,
+	    nitems(states), &count);
+	if (error != 0)
+		return (error);
+	if (count != fd_count)
+		return (EINVAL);
+	sc = pi->pi_arg;
+	if (sc == NULL)
+		return (EINVAL);
+	if (!sc->vsc_checkpoint_lock_held ||
+	    !pthread_mutex_isowned_np(&sc->vsc_mtx) ||
+	    !sc->vsc_lifecycle_paused || sc->vsc_kernel ||
+	    sc->vsc_conn_count != 0 || !TAILQ_EMPTY(&sc->vsc_conns) ||
+	    sc->vsc_ctl_conn_count != 0 ||
+	    !TAILQ_EMPTY(&sc->vsc_ctl_conns) ||
+	    sc->vsc_pend_count != 0 || sc->vsc_reasm_total != 0 ||
+	    sc->vsc_txbuf_total != 0)
+		return (EBUSY);
+	/* Validate all endpoints before changing device ownership. */
+	for (i = 0; i < count; i++) {
+		if (states[i].state == CONN_CONNECTING)
+			return (EINVAL);
+		error = vtvsock_migration_validate_fd(&states[i], fds[i],
+		    &socket_devs[i], &socket_inos[i]);
+		if (error != 0)
+			return (error);
+		/* dup and SCM_RIGHTS can give one socket two descriptor numbers. */
+		for (j = 0; j < i; j++) {
+			if (fds[i] == fds[j] ||
+			    (socket_devs[i] == socket_devs[j] &&
+			    socket_inos[i] == socket_inos[j]))
+				return (EINVAL);
+		}
+	}
+	now = monotonic_seconds();
+	for (i = 0; i < count; i++) {
+		conn = calloc(1, sizeof(*conn));
+		if (conn == NULL) {
+			error = ENOMEM;
+			goto rollback;
+		}
+		conn->fd = -1;
+		conn->ctl_fd = -1;
+		conn->reply_fd = -1;
+		if (states[i].rx_reasm_len != 0) {
+			conn->rx_reasm = malloc(states[i].rx_reasm_len);
+			if (conn->rx_reasm == NULL) {
+				error = ENOMEM;
+				goto free_detached;
+			}
+			memcpy(conn->rx_reasm, states[i].rx_reasm,
+			    states[i].rx_reasm_len);
+		}
+		if (states[i].tx_buf_len != 0) {
+			conn->tx_buf = malloc(states[i].tx_buf_len);
+			if (conn->tx_buf == NULL) {
+				error = ENOMEM;
+				goto free_detached;
+			}
+			memcpy(conn->tx_buf, states[i].tx_buf,
+			    states[i].tx_buf_len);
+		}
+		if (states[i].rx_resid_len != 0) {
+			conn->rx_resid = malloc(states[i].rx_resid_len);
+			if (conn->rx_resid == NULL) {
+				error = ENOMEM;
+				goto free_detached;
+			}
+			memcpy(conn->rx_resid, states[i].rx_resid,
+			    states[i].rx_resid_len);
+		}
+		flags = fcntl(fds[i], F_GETFL);
+		if (flags < 0 || fcntl(fds[i], F_SETFL,
+		    flags | O_NONBLOCK) < 0) {
+			error = errno != 0 ? errno : EIO;
+			goto free_detached;
+		}
+#ifndef WITHOUT_CAPSICUM
+		cap_rights_init(&rights, CAP_EVENT, CAP_RECV, CAP_SEND,
+		    CAP_SHUTDOWN, CAP_IOCTL);
+		if (caph_rights_limit(fds[i], &rights) == -1 ||
+		    caph_ioctls_limit(fds[i], ioctls, nitems(ioctls)) == -1 ||
+		    cap_xfer_limit(fds[i], CAP_XFER_NONE) == -1 ||
+		    cap_cloexec_limit(fds[i], CAP_CLOEXEC_LOCKED) == -1 ||
+		    cap_clofork_limit(fds[i], CAP_CLOFORK_LOCKED) == -1) {
+			error = errno != 0 ? errno : EIO;
+			goto free_detached;
+		}
+#endif
+		conn->fd = fds[i];
+		fds[i] = -1;
+		conn->local_port = states[i].local_port;
+		conn->guest_port = states[i].guest_port;
+		conn->event_id = vtvsock_event_id_alloc(sc);
+		conn->type = states[i].type;
+		conn->state = states[i].state;
+		conn->peer_shutdown = states[i].peer_shutdown;
+		conn->host_eof =
+		    (states[i].flags & VSOCK_MIGRATION_CONN_HOST_EOF) != 0;
+		conn->close_time = vtvsock_migration_timer_start(states[i].flags,
+		    VSOCK_MIGRATION_CONN_CLOSE_TIMER,
+		    states[i].close_age_seconds, now);
+		conn->stall_time = vtvsock_migration_timer_start(states[i].flags,
+		    VSOCK_MIGRATION_CONN_STALL_TIMER,
+		    states[i].stall_age_seconds, now);
+		conn->buf_alloc = states[i].buf_alloc;
+		conn->fwd_cnt = states[i].fwd_cnt;
+		conn->last_fwd_cnt = states[i].last_fwd_cnt;
+		conn->tx_cnt = states[i].tx_cnt;
+		conn->peer_buf_alloc = states[i].peer_buf_alloc;
+		conn->peer_fwd_cnt = states[i].peer_fwd_cnt;
+		conn->rx_reasm_len = conn->rx_reasm_cap = states[i].rx_reasm_len;
+		conn->tx_buf_len = conn->tx_buf_cap = states[i].tx_buf_len;
+		conn->tx_buf_eor =
+		    (states[i].flags & VSOCK_MIGRATION_CONN_TX_EOR) != 0;
+		conn->rx_resid_len = states[i].rx_resid_len;
+		conn->rx_resid_off = states[i].rx_resid_off;
+		conn->rx_resid_seq =
+		    (states[i].flags & VSOCK_MIGRATION_CONN_RESID_SEQ) != 0;
+		conn->rx_resid_eor =
+		    (states[i].flags & VSOCK_MIGRATION_CONN_RESID_EOR) != 0;
+		TAILQ_INSERT_TAIL(&sc->vsc_conns, conn, link);
+		sc->vsc_conn_count++;
+		sc->vsc_reasm_total += conn->rx_reasm_len;
+		sc->vsc_txbuf_total += conn->tx_buf_len;
+		VSOCK_PROBE_CONN_COUNT(sc->vsc_conn_count);
+		conn->evp = vtvsock_event_add(sc, conn->fd, conn->event_id,
+		    EVF_READ, vtvsock_conn_data_cb);
+		if (conn->evp == NULL) {
+			error = ENOMEM;
+			goto rollback;
+		}
+		mevent_disable(conn->evp);
+		if (conn->tx_buf_len != 0) {
+			if (vtvsock_tx_arm(sc, conn) != 0) {
+				error = ENOMEM;
+				goto rollback;
+			}
+			mevent_disable(conn->tx_evp);
+		}
+	}
+	return (0);
+
+free_detached:
+	vtvsock_conn_destroy_detached(sc, conn);
+rollback:
+	TAILQ_FOREACH_SAFE(conn, &sc->vsc_conns, link, tmp)
+		vtvsock_conn_close(sc, conn);
+	return (error);
+}
+
 #define	VTVSOCK_SNAPSHOT_MAGIC		0x314f5356U	/* "VSO1" on wire */
-#define	VTVSOCK_SNAPSHOT_VERSION	2U
+#define	VTVSOCK_SNAPSHOT_VERSION	3U
 
 static bool
 vtvsock_snapshot_zero_tail(const char *path, uint32_t path_len)
@@ -4158,6 +4624,7 @@ pci_vtvsock_pause(void *vsc)
 	assert(!pthread_mutex_isowned_np(&sc->vsc_mtx));
 	pthread_mutex_lock(&sc->vsc_mtx);
 	sc->vsc_checkpoint_lock_held = true;
+	sc->vsc_migration_exported = false;
 	vtvsock_lifecycle_stop_locked(sc);
 	if (sc->vsc_kernel) {
 		memset(&checkpoint, 0, sizeof(checkpoint));
@@ -4257,6 +4724,7 @@ pci_vtvsock_resume(void *vsc)
 	 */
 	if (error == 0)
 		sc->vsc_lifecycle_paused = sc->vsc_vs.vs_suspended;
+	sc->vsc_migration_exported = false;
 	sc->vsc_checkpoint_lock_held = false;
 	pthread_mutex_unlock(&sc->vsc_mtx);
 	return (error);
@@ -4266,10 +4734,13 @@ static int
 pci_vtvsock_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 {
 	struct pci_vtvsock_softc *sc;
+	const uint8_t empty_id[VTVSOCK_MIGRATION_ID_SIZE] = { 0 };
 	char path[MAXPATHLEN];
+	uint8_t migration_id[VTVSOCK_MIGRATION_ID_SIZE];
 	uint64_t features, guest_cid;
 	uint32_t magic, next_port, path_len, reserved, version;
 	uint8_t backend;
+	bool have_saved_id, rebind_path;
 	int ret;
 
 	sc = vsc;
@@ -4281,8 +4752,12 @@ pci_vtvsock_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	 * listener.  Empty kernel providers are reconstructible only while the
 	 * provider checkpoint fence is held.
 	 */
-	ret = vtvsock_snapshot_state_error(sc,
-	    meta->op != VM_SNAPSHOT_VALIDATE);
+	if (meta->op == VM_SNAPSHOT_SAVE && sc->vsc_migration_exported &&
+	    !sc->vsc_kernel && sc->vsc_lifecycle_paused)
+		ret = 0;
+	else
+		ret = vtvsock_snapshot_state_error(sc,
+		    meta->op != VM_SNAPSHOT_VALIDATE);
 	if (ret != 0)
 		return (ret);
 	/*
@@ -4299,8 +4774,8 @@ pci_vtvsock_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	version = VTVSOCK_SNAPSHOT_VERSION;
 	SNAPSHOT_LE32_OR_LEAVE(magic, meta, ret, done);
 	SNAPSHOT_LE32_OR_LEAVE(version, meta, ret, done);
-	if (magic != VTVSOCK_SNAPSHOT_MAGIC || version !=
-	    VTVSOCK_SNAPSHOT_VERSION) {
+	if (magic != VTVSOCK_SNAPSHOT_MAGIC ||
+	    (version != 2 && version != VTVSOCK_SNAPSHOT_VERSION)) {
 		ret = ENOTSUP;
 		goto done;
 	}
@@ -4310,6 +4785,10 @@ pci_vtvsock_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	features = sc->vsc_features;
 	next_port = sc->vsc_next_port;
 	reserved = 0;
+	memset(migration_id, 0, sizeof(migration_id));
+	if (!sc->vsc_kernel && sc->vsc_migration_id_valid)
+		memcpy(migration_id, sc->vsc_migration_id,
+		    sizeof(migration_id));
 	memset(path, 0, sizeof(path));
 	path_len = 0;
 	if (!sc->vsc_kernel) {
@@ -4327,18 +4806,29 @@ pci_vtvsock_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	SNAPSHOT_LE32_OR_LEAVE(next_port, meta, ret, done);
 	SNAPSHOT_LE32_OR_LEAVE(path_len, meta, ret, done);
 	SNAPSHOT_LE32_OR_LEAVE(reserved, meta, ret, done);
+	if (version >= 3)
+		SNAPSHOT_BUF_OR_LEAVE(migration_id, sizeof(migration_id), meta,
+		    ret, done);
 	ret = vm_snapshot_buf(path, sizeof(path), meta);
 	if (ret != 0)
 		goto done;
 	if (vm_snapshot_is_loading(meta)) {
+		have_saved_id = version >= 3 &&
+		    memcmp(migration_id, empty_id, sizeof(migration_id)) != 0;
+		rebind_path = have_saved_id && backend == 0 &&
+		    sc->vsc_migration_id_valid &&
+		    memcmp(migration_id, sc->vsc_migration_id,
+		    sizeof(migration_id)) == 0;
 		if (backend > 1 || backend != (sc->vsc_kernel ? 1 : 0) ||
 		    guest_cid != sc->vsc_guest_cid ||
 		    features != sc->vsc_vs.vs_negotiated_caps ||
 		    next_port < VTVSOCK_PORT_MIN || next_port == UINT32_MAX ||
 		    reserved != 0 || path_len >= sizeof(path) ||
 		    !vtvsock_snapshot_zero_tail(path, path_len) ||
+		    (have_saved_id && !rebind_path) ||
 		    (backend == 1 && path_len != 0) ||
-		    (backend == 0 && (strlen(sc->vsc_path) != path_len ||
+		    (backend == 0 && !rebind_path &&
+		    (strlen(sc->vsc_path) != path_len ||
 		    memcmp(sc->vsc_path, path, path_len) != 0))) {
 			ret = EINVAL;
 			goto done;
@@ -4598,10 +5088,41 @@ vtvsock_parse_backend(const char *backend, bool *is_kernel)
 }
 
 static int
+vtvsock_migration_id_parse(const char *text,
+    uint8_t id[VTVSOCK_MIGRATION_ID_SIZE])
+{
+	uint8_t candidate[VTVSOCK_MIGRATION_ID_SIZE], any;
+	unsigned int high, low;
+	char digit;
+
+	if (text == NULL || id == NULL ||
+	    strnlen(text, VTVSOCK_MIGRATION_ID_SIZE * 2 + 1) !=
+	    VTVSOCK_MIGRATION_ID_SIZE * 2)
+		return (EINVAL);
+	any = 0;
+	for (size_t i = 0; i < VTVSOCK_MIGRATION_ID_SIZE; i++) {
+		digit = text[i * 2];
+		high = digit >= '0' && digit <= '9' ? digit - '0' :
+		    digit >= 'a' && digit <= 'f' ? digit - 'a' + 10 : 16;
+		digit = text[i * 2 + 1];
+		low = digit >= '0' && digit <= '9' ? digit - '0' :
+		    digit >= 'a' && digit <= 'f' ? digit - 'a' + 10 : 16;
+		if (high == 16 || low == 16)
+			return (EINVAL);
+		candidate[i] = (high << 4) | low;
+		any |= candidate[i];
+	}
+	if (any == 0)
+		return (EINVAL);
+	memcpy(id, candidate, sizeof(candidate));
+	return (0);
+}
+
+static int
 pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtvsock_softc *sc;
-	const char *backend, *cidstr, *path;
+	const char *backend, *cidstr, *path, *migration_id;
 	pthread_mutexattr_t mtx_attr;
 	struct sockaddr_un sun;
 	bool intr_initialized = false, mtx_initialized = false, packed;
@@ -4685,6 +5206,26 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 		if (sc->vsc_path == NULL)
 			goto failed;
 	}
+	migration_id = get_config_value_node(nvl, "migration_endpoint_id");
+	if (migration_id != NULL) {
+		if (sc->vsc_kernel || vtvsock_migration_id_parse(migration_id,
+		    sc->vsc_migration_id) != 0) {
+			WPRINTF(("vtvsock: migration_endpoint_id requires a "
+			    "userspace backend and 32 lowercase hex digits"));
+			goto failed;
+		}
+		sc->vsc_migration_id_valid = true;
+	}
+#ifdef BHYVE_SNAPSHOT
+	sc->vsc_migration_transfer_enabled = get_config_bool_default(
+	    "checkpoint.migrate_active_vsock", false);
+	if (sc->vsc_migration_transfer_enabled &&
+	    (sc->vsc_kernel || !sc->vsc_migration_id_valid)) {
+		WPRINTF(("vtvsock: active migration requires a userspace "
+		    "backend and migration_endpoint_id"));
+		goto failed;
+	}
+#endif
 	DPRINTF(("vtvsock: init backend=%s guest_cid=%ju debug=%d",
 	    sc->vsc_kernel ? "kernel" : "userspace", (uintmax_t)cid,
 	    pci_vtvsock_debug));
@@ -4783,7 +5324,9 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 			    nitems(cmds)) == -1)
 				errx(EX_OSERR,
 				    "Unable to limit kernel vsock ioctls");
-			vtvsock_cap_lockdown(sc->vsc_kernel_fd);
+			if (vtvsock_cap_lockdown(sc->vsc_kernel_fd) == -1)
+				errx(EX_OSERR,
+				    "Unable to lock down kernel vsock fd");
 		}
 #endif
 		sc->vsc_kernel_evp = mevent_add(sc->vsc_kernel_fd, EVF_READ,
@@ -4850,7 +5393,8 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	cap_rights_init(&rights, CAP_CONNECTAT, CAP_LOOKUP);
 	if (caph_rights_limit(sc->vsc_dfd, &rights) == -1)
 		errx(EX_OSERR, "Unable to apply rights for sandbox on dfd");
-	vtvsock_cap_lockdown(sc->vsc_dfd);
+	if (vtvsock_cap_lockdown(sc->vsc_dfd) == -1)
+		errx(EX_OSERR, "Unable to lock down vsock directory fd");
 #endif
 	if (fcntl(s, F_SETFL, O_NONBLOCK) < 0) {
 		WPRINTF(("vtvsock: fcntl failed: %s", strerror(errno)));
@@ -4883,7 +5427,8 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	    CAP_FCNTL);
 	if (caph_rights_limit(s, &rights) == -1)
 		errx(EX_OSERR, "Unable to apply rights for sandbox on ctl");
-	vtvsock_cap_lockdown(s);
+	if (vtvsock_cap_lockdown(s) == -1)
+		errx(EX_OSERR, "Unable to lock down vsock listener fd");
 #endif
 
 	sc->vsc_ctl_fd  = s;

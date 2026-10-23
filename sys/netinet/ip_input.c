@@ -720,6 +720,9 @@ passin:
 	CK_LIST_FOREACH(ia, INADDR_HASH(ip->ip_dst.s_addr), ia_hash) {
 		if (IA_SIN(ia)->sin_addr.s_addr != ip->ip_dst.s_addr)
 			continue;
+		/* 5BSD: addresses are local only in their routing domain. */
+		if (!rt_fib_same_rdomain(ia->ia_ifp->if_fib, M_GETFIB(m)))
+			continue;
 
 		/*
 		 * net.inet.ip.rfc1122_strong_es: the address matches, verify
@@ -971,6 +974,18 @@ ip_forward(struct mbuf *m, int srcrt)
 	flowid = m->m_pkthdr.flowid;
 	ro.ro_nh = fib4_lookup(M_GETFIB(m), ip->ip_dst, 0, NHR_REF, flowid);
 	if (ro.ro_nh != NULL) {
+		/*
+		 * As OpenBSD: the packet filter sees a forwarded packet before a
+		 * reject or blackhole route discards it, so route-to/reply-to rules
+		 * can take it elsewhere.
+		 */
+		if ((ro.ro_nh->nh_flags & (NHF_BLACKHOLE | NHF_REJECT)) != 0 &&
+		    PFIL_HOOKED_OUT(V_inet_pfil_head) &&
+		    pfil_mbuf_fwd(V_inet_pfil_head, &m, ro.ro_nh->nh_ifp,
+		    NULL) != PFIL_PASS) {
+			NH_FREE(ro.ro_nh);
+			return;
+		}
 		if (ro.ro_nh->nh_flags & (NHF_BLACKHOLE | NHF_BROADCAST)) {
 			IPSTAT_INC(ips_cantforward);
 			m_freem(m);

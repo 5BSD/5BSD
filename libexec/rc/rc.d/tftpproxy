@@ -1,0 +1,20 @@
+#!/bin/sh
+#
+#
+
+# PROVIDE: tftpproxy
+# REQUIRE: DAEMON pf
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="tftpproxy"
+desc="Internet Trivial File Transfer Protocol proxy daemon"
+rcvar="tftpproxy_enable"
+# OpenBSD installs tftp-proxy(8) in /usr/sbin; 5BSD keeps it in /usr/libexec.
+command="/usr/libexec/tftp-proxy"
+
+: ${tftpproxy_svcj_options:="net_basic"}
+
+load_rc_config $name
+run_rc_command "$1"

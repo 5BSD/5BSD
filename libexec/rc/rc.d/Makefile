@@ -63,10 +63,8 @@ CONFS=	DAEMON \
 	rtsold \
 	savecore \
 	securelevel \
-	serial \
 	static_arp \
 	static_ndp \
-	stf \
 	swap \
 	swaplate \
 	sysctl \
@@ -242,7 +240,8 @@ PFPACKAGE=			pf
 PF=		pf \
 		pflog \
 		pfsync \
-		ftp-proxy
+		ftp-proxy \
+		tftpproxy
 
 CONFGROUPS+=			POWERD
 POWERDPACKAGE=			powerd
@@ -259,10 +258,6 @@ PPPOED=		pppoed
 CONFGROUPS+=			SYSLOGD
 SYSLOGDPACKAGE=			syslogd
 SYSLOGD=	syslogd
-
-CONFGROUPS+=			RCMDS
-RCMDSPACKAGE=			rcmds
-RCMDS=		rwho
 
 CONFGROUPS+=			RESOLVCONF
 RESOLVCONFPACKAGE=		resolvconf
@@ -346,18 +341,6 @@ KRB5PACKAGE=	kerberos-kdc
 CONFGROUPS+=			KTLS
 KTLS=	tlsclntd \
 	tlsservd
-.endif
-
-.if ${MK_INET6} != "no" || ${MK_ROUTED} != "no"
-CONFGROUPS+=	RIP
-RIPPACKAGE=	rip
-
-.if ${MK_INET6} != "no"
-RIP+=		route6d
-.endif
-.if ${MK_ROUTED} != "no"
-RIP+=		routed
-.endif
 .endif
 
 .for fg in ${CONFGROUPS} ${CONFGROUPS.yes}

@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 #include "channel.h"
+#include "channel_internal.h"
 #include "channel_probes.h"
 #include "trace_pressure.h"
 
@@ -53,17 +54,37 @@ struct channel_request {
 	bool			 free_pending;
 };
 
+/*
+ * An outgoing block: one allocation holding the entry, its descriptor and
+ * expectation slots and its payload, in that order.  It is the queue entry
+ * behind backpressure and the caller-visible struct channel_outgoing_buffer
+ * between channel_outgoing_reserve() and commit or abort.  A channel keeps
+ * one released block (up to CHANNEL_TX_KEEP payload bytes) for reuse, so a
+ * steady exchange through the reserve/commit interface, or one under mild
+ * backpressure, does not allocate per message.
+ */
 struct channel_queue_entry {
 	struct channel_queue_entry *next;
+	struct channel		*channel;
 	struct channel_request	*request;
-	void			*data;
+	void			*data;		/* inline payload storage */
 	size_t			 length;
-	int			*fds;
+	size_t			 capacity;	/* payload bytes in this block */
+	int			*fds;		/* inline, fd_capacity slots */
+	struct channel_fd_spec	*spec_slots;	/* inline, fd_capacity slots */
+	struct channel_fd_spec	*specs;		/* spec_slots, or NULL: none */
 	size_t			 nfds;
+	size_t			 fd_capacity;
 	uint64_t		 token;
 	uint32_t		 flags;		/* CHANNEL_SEND_* */
-	struct channel_fd_spec	*specs;		/* NULL or nfds entries */
+	bool			 reserved;	/* owned by a caller */
 };
+
+#define	CHANNEL_TX_MIN		512
+#define	CHANNEL_TX_KEEP		4096	/* a released block up to this size is kept */
+#define	CHANNEL_TX_ALIGN	16
+#define	CHANNEL_TX_ROUND(_n)	\
+	(((_n) + CHANNEL_TX_ALIGN - 1) & ~(size_t)(CHANNEL_TX_ALIGN - 1))
 
 struct channel {
 	int receive_version;
@@ -93,12 +114,18 @@ struct channel {
 	bool			 owner_released;
 	unsigned		 references;
 	struct channel_message	*rx_spare;	/* unused receive block */
-	struct channel_request	*req_spare;	/* released request, for reuse */
+	struct channel_request	*req_spare;	/* released requests, for reuse */
+	unsigned		 req_spares;	/* length of req_spare */
+	struct channel_queue_entry *tx_spare;	/* released outgoing block */
+	uint64_t		 sent_direct;	/* statistics, see channel_get_stats */
+	uint64_t		 sent_queued;
+	uint64_t		 sent_flushed;
 	bool			 write_filter;	/* EVFILT_WRITE registered */
 	bool			 rx_drained;	/* kernel reported an empty queue */
 	bool			 rx_wait_unsupported; /* kernel lacks RECV_F_WAIT */
 	struct channel_message	*rx_prefetched;	/* received by channel_wait */
 	size_t			 rx_hint;	/* last received payload length */
+	int			 call_version;	/* CHANNEL_CALL_* (channel_call.c) */
 };
 
 struct channel_message {
@@ -183,6 +210,23 @@ channel_self_pid(void)
 	return (channel_self_pid_slow());
 }
 
+/* Drop the reusable blocks: on destruction and with the last reference. */
+static void
+channel_free_spares(struct channel *channel)
+{
+	struct channel_request *request;
+
+	free(channel->rx_spare);
+	channel->rx_spare = NULL;
+	free(channel->tx_spare);
+	channel->tx_spare = NULL;
+	while ((request = channel->req_spare) != NULL) {
+		channel->req_spare = request->next;
+		free(request);
+	}
+	channel->req_spares = 0;
+}
+
 static void
 channel_retain(struct channel *channel)
 {
@@ -195,15 +239,16 @@ channel_release(struct channel *channel)
 {
 
 	if (--channel->references == 0) {
-		free(channel->rx_spare);
-		free(channel->req_spare);
+		channel_free_spares(channel);
 		free(channel);
 	}
 }
 
 /*
- * Reclaim a request.  The channel keeps one for its next request, so a
- * steady request/reply exchange does not allocate per call.
+ * Reclaim a request.  The channel keeps released requests for its next ones,
+ * up to its pending-request limit (so live and spare requests together never
+ * exceed twice that bound), and a steady request/reply exchange, however
+ * deeply pipelined, does not allocate per call once warm.
  */
 static void
 channel_request_free(struct channel_request *request)
@@ -211,12 +256,29 @@ channel_request_free(struct channel_request *request)
 	struct channel *channel;
 
 	channel = request->channel;
-	if (channel != NULL && channel->req_spare == NULL &&
+	if (channel != NULL &&
+	    channel->req_spares < channel->max_pending_requests &&
 	    !channel->destroy_pending && channel->fd >= 0) {
+		request->next = channel->req_spare;
 		channel->req_spare = request;
+		channel->req_spares++;
 		return;
 	}
 	free(request);
+}
+
+static struct channel_request *
+channel_request_alloc(struct channel *channel)
+{
+	struct channel_request *request;
+
+	if ((request = channel->req_spare) != NULL) {
+		channel->req_spare = request->next;
+		channel->req_spares--;
+		memset(request, 0, sizeof(*request));
+		return (request);
+	}
+	return (calloc(1, sizeof(*request)));
 }
 
 static bool
@@ -254,11 +316,104 @@ channel_outgoing_free(struct channel_queue_entry *out)
 	for (i = 0; i < out->nfds; i++)
 		if (out->fds[i] >= 0)
 			(void)close(out->fds[i]);
-	free(out->fds);
-	free(out->specs);
-	free(out->data);
-	free(out);
+	free(out);		/* descriptors, specs and payload are inline */
 	errno = error;
+}
+
+/* Payload capacity for an outgoing block: the request, rounded. */
+static size_t
+channel_tx_capacity(size_t length)
+{
+
+	if (length < CHANNEL_TX_MIN)
+		length = CHANNEL_TX_MIN;
+	length = CHANNEL_TX_ROUND(length);
+	return (length > MAC_CAPABILITY_MAX_MSG ? MAC_CAPABILITY_MAX_MSG :
+	    length);
+}
+
+static struct channel_queue_entry *
+channel_tx_alloc(size_t capacity, size_t fd_capacity)
+{
+	struct channel_queue_entry *out;
+	size_t fds_offset, specs_offset, data_offset;
+	void *block;
+
+	fds_offset = CHANNEL_TX_ROUND(sizeof(*out));
+	specs_offset = CHANNEL_TX_ROUND(fds_offset +
+	    fd_capacity * sizeof(*out->fds));
+	data_offset = CHANNEL_TX_ROUND(specs_offset +
+	    fd_capacity * sizeof(*out->specs));
+	block = malloc(data_offset + capacity);
+	if (block == NULL)
+		return (NULL);
+	out = block;
+	memset(out, 0, sizeof(*out));
+	out->capacity = capacity;
+	out->fd_capacity = fd_capacity;
+	/* Every offset is CHANNEL_TX_ALIGN-aligned from an aligned block. */
+	out->fds = fd_capacity != 0 ?
+	    (int *)(void *)((char *)block + fds_offset) : NULL;
+	out->spec_slots = fd_capacity != 0 ?
+	    (struct channel_fd_spec *)(void *)((char *)block + specs_offset) :
+	    NULL;
+	out->specs = NULL;
+	out->data = (char *)block + data_offset;
+	return (out);
+}
+
+/*
+ * An outgoing block with room for length payload bytes and nfds
+ * descriptors: the channel's spare when it fits, otherwise a new one.  The
+ * block is clean: no payload length, no descriptors, no request.
+ */
+static struct channel_queue_entry *
+channel_tx_get(struct channel *channel, size_t length, size_t nfds)
+{
+	struct channel_queue_entry *out;
+	size_t capacity;
+
+	capacity = channel_tx_capacity(length);
+	out = channel->tx_spare;
+	if (out != NULL && out->capacity >= length &&
+	    out->fd_capacity >= nfds &&
+	    (out->capacity <= CHANNEL_TX_KEEP || out->capacity / 4 <= length)) {
+		channel->tx_spare = NULL;
+		out->next = NULL;
+		out->request = NULL;
+		out->length = 0;
+		out->nfds = 0;
+		out->specs = NULL;
+		out->token = 0;
+		out->flags = 0;
+		return (out);
+	}
+	/* The spare does not fit this traffic: replace it. */
+	free(out);
+	channel->tx_spare = NULL;
+	return (channel_tx_alloc(capacity, nfds));
+}
+
+/*
+ * Return a block whose descriptors are no longer owned by it (sent, or
+ * never attached): keep it as the channel's spare when it is modest and the
+ * channel is live, otherwise free it.
+ */
+static void
+channel_tx_release(struct channel *channel, struct channel_queue_entry *out)
+{
+
+	out->nfds = 0;
+	out->reserved = false;
+	out->request = NULL;
+	out->channel = NULL;
+	if (channel != NULL && channel->tx_spare == NULL &&
+	    out->capacity <= CHANNEL_TX_KEEP && !channel->destroy_pending &&
+	    channel->fd >= 0 && channel->owner == channel_self_pid()) {
+		channel->tx_spare = out;
+		return;
+	}
+	free(out);
 }
 
 static struct channel_request *
@@ -535,14 +690,10 @@ channel_send_now(struct channel *channel, const void *data, size_t length,
 	return (0);
 }
 
+/* The bounded outgoing queue has room for one more message. */
 static int
-channel_queue(struct channel *channel, const void *data, size_t length,
-    const int *fds, size_t nfds, uint64_t token,
-    struct channel_request *request, const struct channel_fd_spec *specs,
-    uint32_t flags)
+channel_queue_room(struct channel *channel, size_t length, size_t nfds)
 {
-	struct channel_queue_entry *out;
-	size_t i;
 
 	if (channel->nqueued >= channel->max_queued_messages ||
 	    length > channel->max_queued_bytes - channel->queued_bytes ||
@@ -552,29 +703,32 @@ channel_queue(struct channel *channel, const void *data, size_t length,
 		errno = ENOBUFS;
 		return (-1);
 	}
-	out = calloc(1, sizeof(*out));
-	if (out == NULL)
+	return (0);
+}
+
+/*
+ * Queue a block whose payload is in place: attach the descriptors and
+ * expectations and link it at the tail.  With CHANNEL_SEND_MOVE the caller's
+ * descriptors are adopted without system calls; otherwise private locked
+ * duplicates are made.  On failure the block holds no descriptors, the
+ * caller's are untouched, and the block is not queued.
+ */
+static int
+channel_queue_block(struct channel *channel, struct channel_queue_entry *out,
+    const int *fds, size_t nfds, const struct channel_fd_spec *specs,
+    uint32_t flags)
+{
+	size_t i;
+	int error;
+
+	if (channel_queue_room(channel, out->length, nfds) == -1)
 		return (-1);
-	out->data = malloc(length);
-	if (out->data == NULL)
-		goto fail;
-	memcpy(out->data, data, length);
-	out->length = length;
-	out->token = token;
-	out->request = request;
 	out->flags = flags & ~CHANNEL_SEND_MOVE;
+	out->nfds = 0;
+	out->specs = NULL;
 	if (nfds != 0 && specs != NULL) {
-		out->specs = malloc(nfds * sizeof(*out->specs));
-		if (out->specs == NULL)
-			goto fail;
+		out->specs = out->spec_slots;
 		memcpy(out->specs, specs, nfds * sizeof(*out->specs));
-	}
-	if (nfds != 0) {
-		out->fds = malloc(nfds * sizeof(*out->fds));
-		if (out->fds == NULL)
-			goto fail;
-		for (i = 0; i < nfds; i++)
-			out->fds[i] = -1;
 	}
 	if (nfds != 0 && (flags & CHANNEL_SEND_MOVE) != 0) {
 		/* Adopt the caller's descriptors: no system calls. */
@@ -593,26 +747,69 @@ channel_queue(struct channel *channel, const void *data, size_t length,
 				goto fail;
 		}
 	}
+	out->next = NULL;
 	if (channel->out_tail == NULL)
 		channel->out_head = out;
 	else
 		channel->out_tail->next = out;
 	channel->out_tail = out;
 	channel->nqueued++;
-	channel->queued_bytes += length;
+	channel->queued_bytes += out->length;
 	channel->queued_fds += nfds;
-	LIBCHANNEL_PROBE_QUEUE(token, length, nfds, channel->nqueued);
+	channel->sent_queued++;
+	LIBCHANNEL_PROBE_QUEUE(out->token, out->length, nfds, channel->nqueued);
 	return (0);
 fail:
-	channel_outgoing_free(out);
+	error = errno;
+	for (i = 0; i < out->nfds; i++)
+		(void)close(out->fds[i]);
+	out->nfds = 0;
+	out->specs = NULL;
+	errno = error;
 	return (-1);
 }
 
+/*
+ * Queue a message from the caller's memory: one allocation (or the
+ * channel's spare block) holds the copy of the payload, the descriptor
+ * slots and the expectations.
+ */
 static int
-channel_send_or_queue(struct channel *channel, const void *data,
-    size_t length, const int *fds, size_t nfds, uint64_t token,
+channel_queue(struct channel *channel, const void *data, size_t length,
+    const int *fds, size_t nfds, uint64_t token,
     struct channel_request *request, const struct channel_fd_spec *specs,
     uint32_t flags)
+{
+	struct channel_queue_entry *out;
+	int error;
+
+	if (channel_queue_room(channel, length, nfds) == -1)
+		return (-1);
+	out = channel_tx_get(channel, length, nfds);
+	if (out == NULL)
+		return (-1);
+	memcpy(out->data, data, length);
+	out->length = length;
+	out->token = token;
+	out->request = request;
+	if (channel_queue_block(channel, out, fds, nfds, specs, flags) == -1) {
+		error = errno;
+		channel_tx_release(channel, out);
+		errno = error;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * Decide between the direct path and the queue.  Returns 1 when the kernel
+ * accepted the message from the caller's memory, 0 when it must be queued
+ * (the descriptor expectations, if any, have passed), -1 on failure.
+ */
+static int
+channel_send_direct(struct channel *channel, const void *data, size_t length,
+    const int *fds, size_t nfds, uint64_t token,
+    const struct channel_fd_spec *specs, uint32_t flags)
 {
 
 	if (channel->error != 0) {
@@ -620,9 +817,16 @@ channel_send_or_queue(struct channel *channel, const void *data,
 		return (-1);
 	}
 	if (channel->out_head == NULL) {
+		/*
+		 * Nothing queued ahead: send from the caller's memory.  A
+		 * message is only ever queued once the kernel has refused
+		 * one, so ordering with the queue is preserved.
+		 */
 		if (channel_send_now(channel, data, length, fds, nfds, token,
-		    specs, flags) == 0)
-			return (0);
+		    specs, flags) == 0) {
+			channel->sent_direct++;
+			return (1);
+		}
 		if (channel->error != 0)
 			return (-1);
 		/* EAGAIN follows the descriptor checks, so they passed. */
@@ -633,6 +837,21 @@ channel_send_or_queue(struct channel *channel, const void *data,
 		/* Behind queued messages: report a bad descriptor now. */
 		return (-1);
 	}
+	return (0);
+}
+
+static int
+channel_send_or_queue(struct channel *channel, const void *data,
+    size_t length, const int *fds, size_t nfds, uint64_t token,
+    struct channel_request *request, const struct channel_fd_spec *specs,
+    uint32_t flags)
+{
+	int sent;
+
+	sent = channel_send_direct(channel, data, length, fds, nfds, token,
+	    specs, flags);
+	if (sent != 0)
+		return (sent == 1 ? 0 : -1);
 	return (channel_queue(channel, data, length, fds, nfds, token,
 	    request, specs, flags));
 }
@@ -649,8 +868,8 @@ channel_ioctl_allowlist(int fd, struct channel *channel)
 	ssize_t count, i;
 	bool send2, recv4;
 
-	count = cap_ioctls_get(fd, NULL, 0);
-	if (count < 0 || count == CAP_IOCTLS_ALL)
+	count = channel_ioctl_allowlist_count(fd);
+	if (count < 0)
 		return;
 	send2 = recv4 = false;
 	cmds = count > 0 ? calloc((size_t)count, sizeof(*cmds)) : NULL;
@@ -754,10 +973,7 @@ channel_destroy_now(struct channel *channel)
 	if (channel->kqueue_fd >= 0)
 		(void)close(channel->kqueue_fd);
 	channel->kqueue_fd = -1;
-	free(channel->rx_spare);
-	channel->rx_spare = NULL;
-	free(channel->req_spare);
-	channel->req_spare = NULL;
+	channel_free_spares(channel);
 	if (channel->rx_prefetched != NULL) {
 		struct channel_message *m = channel->rx_prefetched;
 
@@ -805,11 +1021,9 @@ channel_abandon(struct channel *channel)
 	inherited = channel->owner != channel_self_pid();
 	while ((out = channel->out_head) != NULL) {
 		channel->out_head = out->next;
-		if (inherited) {
-			free(out->fds);
-			free(out->data);
-			free(out);
-		} else
+		if (inherited)
+			free(out);	/* one block; the slots are inline */
+		else
 			channel_outgoing_free(out);
 	}
 	channel->out_tail = NULL;
@@ -1048,13 +1262,67 @@ channel_outgoing_options(const struct channel_outgoing *outgoing,
 	return (0);
 }
 
+/*
+ * Register a request before its message is handed to the kernel, so the
+ * reply can be matched however soon it arrives.  Fails with ENOBUFS at the
+ * pending limit.
+ */
+static struct channel_request *
+channel_request_begin(struct channel *channel, channel_reply_handler handler,
+    void *context, size_t length, size_t nfds)
+{
+	struct channel_request *request;
+
+	if (channel->npending >= channel->max_pending_requests) {
+		LIBCHANNEL_TRACE_PENDING_LIMIT(channel->npending, channel->max_pending_requests);
+		errno = ENOBUFS;
+		return (NULL);
+	}
+	request = channel_request_alloc(channel);
+	if (request == NULL)
+		return (NULL);
+	request->channel = channel;
+	request->handler = handler;
+	request->context = context;
+	request->token = channel_new_token(channel);
+	request->status = EINPROGRESS;
+	request->pending = true;
+	request->next = channel->requests;
+	channel->requests = request;
+	channel->npending++;
+	LIBCHANNEL_PROBE_REQUEST_START((uintptr_t)channel, request->token,
+	    length, nfds);
+	return (request);
+}
+
+/* The message was neither sent nor queued: forget the request, errno intact. */
+static void
+channel_request_abort(struct channel *channel, struct channel_request *request,
+    int error)
+{
+	struct channel_request **link;
+
+	for (link = &channel->requests; *link != NULL; link = &(*link)->next)
+		if (*link == request) {
+			*link = request->next;
+			break;
+		}
+	channel->npending--;
+	LIBCHANNEL_PROBE_REQUEST_DONE((uintptr_t)channel, request->token,
+	    error);
+	channel_request_free(request);
+	if (channel_terminal_error(error))
+		channel_mark_dead(channel, error);
+	if (channel->destroy_pending && channel->dispatch_depth == 0)
+		channel_destroy_now(channel);
+}
+
 int
 channel_send_request(struct channel *channel,
     const struct channel_outgoing *outgoing, channel_reply_handler handler,
     void *context, struct channel_request **requestp)
 {
 	struct channel_request *request;
-	struct channel_request **link;
 	const void *data;
 	const int *fds;
 	const struct channel_fd_spec *specs;
@@ -1079,44 +1347,14 @@ channel_send_request(struct channel *channel,
 		return (-1);
 	}
 	*requestp = NULL;
-	if (channel->npending >= channel->max_pending_requests) {
-		LIBCHANNEL_TRACE_PENDING_LIMIT(channel->npending, channel->max_pending_requests);
-		errno = ENOBUFS;
+	request = channel_request_begin(channel, handler, context, length,
+	    nfds);
+	if (request == NULL)
 		return (-1);
-	}
-	if ((request = channel->req_spare) != NULL) {
-		channel->req_spare = NULL;
-		memset(request, 0, sizeof(*request));
-	} else if ((request = calloc(1, sizeof(*request))) == NULL)
-		return (-1);
-	request->channel = channel;
-	request->handler = handler;
-	request->context = context;
-	request->token = channel_new_token(channel);
-	request->status = EINPROGRESS;
-	request->pending = true;
-	request->next = channel->requests;
-	channel->requests = request;
-	channel->npending++;
-	LIBCHANNEL_PROBE_REQUEST_START((uintptr_t)channel, request->token,
-	    length, nfds);
 	if (channel_send_or_queue(channel, data, length, fds, nfds,
 	    request->token, request, specs, flags) == -1) {
 		error = errno;
-		for (link = &channel->requests; *link != NULL;
-		    link = &(*link)->next)
-			if (*link == request) {
-				*link = request->next;
-				break;
-			}
-		channel->npending--;
-		LIBCHANNEL_PROBE_REQUEST_DONE((uintptr_t)channel, request->token,
-		    error);
-		channel_request_free(request);
-		if (channel_terminal_error(error))
-			channel_mark_dead(channel, error);
-		if (channel->destroy_pending && channel->dispatch_depth == 0)
-			channel_destroy_now(channel);
+		channel_request_abort(channel, request, error);
 		errno = error;
 		return (-1);
 	}
@@ -1229,9 +1467,30 @@ channel_flush(struct channel *channel)
 		channel->nqueued--;
 		channel->queued_bytes -= out->length;
 		channel->queued_fds -= out->nfds;
-		out->nfds = 0;
-		channel_outgoing_free(out);
+		channel->sent_flushed++;
+		/* The kernel closed the descriptors; keep the block. */
+		channel_tx_release(channel, out);
 	}
+	return (0);
+}
+
+int
+channel_get_stats(const struct channel *channel, struct channel_stats *stats)
+{
+
+	if (stats == NULL || stats->size < sizeof(*stats)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (!channel_owned(channel))
+		return (-1);
+	stats->sent_direct = channel->sent_direct;
+	stats->sent_queued = channel->sent_queued;
+	stats->sent_flushed = channel->sent_flushed;
+	stats->pending_requests = channel->npending;
+	stats->queued_messages = channel->nqueued;
+	stats->queued_bytes = channel->queued_bytes;
+	stats->queued_fds = channel->queued_fds;
 	return (0);
 }
 
@@ -1783,4 +2042,444 @@ channel_request_release(struct channel_request *request)
 		return;
 	}
 	channel_request_free(request);
+}
+
+/*
+ * Encode-into-send-buffer interface.  A reserved block belongs to the caller
+ * until it is committed or aborted.  Like a received message it keeps the
+ * channel's storage alive, so an abort is valid after channel_destroy() and
+ * in a fork child (where it only frees memory).  A commit sends the block
+ * from where the caller encoded it when nothing is queued ahead and the
+ * kernel accepts it; otherwise the block itself becomes the queue entry,
+ * without copying the payload.
+ */
+int
+channel_outgoing_reserve(struct channel *channel, size_t max_length,
+    size_t nfds, struct channel_outgoing_buffer **bufferp)
+{
+	struct channel_queue_entry *out;
+
+	if (bufferp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*bufferp = NULL;
+	if (!channel_owned(channel))
+		return (-1);
+	if (channel->destroy_pending || max_length == 0 ||
+	    max_length > MAC_CAPABILITY_MAX_MSG ||
+	    nfds > MAC_CAPABILITY_MAX_FDS) {
+		errno = EINVAL;
+		return (-1);
+	}
+	out = channel_tx_get(channel, max_length, nfds);
+	if (out == NULL)
+		return (-1);
+	out->channel = channel;
+	out->reserved = true;
+	out->length = max_length;	/* the reservation, until commit */
+	channel_retain(channel);
+	*bufferp = (struct channel_outgoing_buffer *)out;
+	return (0);
+}
+
+void *
+channel_outgoing_buffer_data(struct channel_outgoing_buffer *buffer)
+{
+	struct channel_queue_entry *out = (struct channel_queue_entry *)buffer;
+
+	if (out == NULL || !out->reserved) {
+		errno = EINVAL;
+		return (NULL);
+	}
+	return (out->data);
+}
+
+size_t
+channel_outgoing_buffer_capacity(const struct channel_outgoing_buffer *buffer)
+{
+	const struct channel_queue_entry *out =
+	    (const struct channel_queue_entry *)buffer;
+
+	if (out == NULL || !out->reserved)
+		return (0);
+	return (out->length);
+}
+
+/* Validate a commit; the channel, or NULL with errno set. */
+static struct channel *
+channel_commit_check(struct channel_queue_entry *out, size_t length,
+    const int *fds, size_t nfds, uint32_t flags)
+{
+	struct channel *channel;
+
+	if (out == NULL || !out->reserved) {
+		errno = EINVAL;
+		return (NULL);
+	}
+	channel = out->channel;
+	if (!channel_owned(channel))
+		return (NULL);
+	if (channel->destroy_pending || length == 0 || length > out->length ||
+	    nfds > out->fd_capacity || (nfds != 0 && fds == NULL) ||
+	    (flags & ~(CHANNEL_SEND_MOVE | CHANNEL_SEND_LOCK_INHERIT)) != 0) {
+		errno = EINVAL;
+		return (NULL);
+	}
+	return (channel);
+}
+
+/*
+ * Send or queue a committed block.  Returns 0 once the block is consumed
+ * (sent, or queued), -1 when it is still the caller's: the reservation,
+ * payload and the caller's descriptors are then unchanged.
+ */
+static int
+channel_commit_block(struct channel *channel, struct channel_queue_entry *out,
+    size_t length, const int *fds, size_t nfds,
+    const struct channel_fd_spec *specs, uint32_t flags, uint64_t token,
+    struct channel_request *request)
+{
+	size_t reserved;
+	int error, sent;
+
+	sent = channel_send_direct(channel, out->data, length, fds, nfds,
+	    token, specs, flags);
+	if (sent == -1)
+		return (-1);
+	reserved = out->length;
+	out->length = length;
+	out->token = token;
+	out->request = request;
+	if (sent == 0 &&
+	    channel_queue_block(channel, out, fds, nfds, specs, flags) == -1) {
+		error = errno;
+		out->length = reserved;
+		out->token = 0;
+		out->request = NULL;
+		errno = error;
+		return (-1);
+	}
+	out->reserved = false;
+	out->channel = NULL;
+	if (sent == 1)
+		channel_tx_release(channel, out);
+	channel_release(channel);	/* the reservation's reference */
+	return (0);
+}
+
+/* A failed commit is reported like a failed send. */
+static void
+channel_commit_failed(struct channel *channel, int error)
+{
+
+	if (channel_terminal_error(error))
+		channel_mark_dead(channel, error);
+	if (channel->destroy_pending && channel->dispatch_depth == 0)
+		channel_destroy_now(channel);
+	errno = error;
+}
+
+int
+channel_outgoing_commit_event(struct channel_outgoing_buffer *buffer,
+    size_t length, const int *fds, size_t nfds,
+    const struct channel_fd_spec *specs, uint32_t flags)
+{
+	struct channel_queue_entry *out = (struct channel_queue_entry *)buffer;
+	struct channel *channel;
+
+	channel = channel_commit_check(out, length, fds, nfds, flags);
+	if (channel == NULL)
+		return (-1);
+	if (channel_commit_block(channel, out, length, fds, nfds, specs, flags,
+	    0, NULL) == -1) {
+		channel_commit_failed(channel, errno);
+		return (-1);
+	}
+	return (0);
+}
+
+int
+channel_outgoing_commit_request(struct channel_outgoing_buffer *buffer,
+    size_t length, const int *fds, size_t nfds,
+    const struct channel_fd_spec *specs, uint32_t flags,
+    channel_reply_handler handler, void *context,
+    struct channel_request **requestp)
+{
+	struct channel_queue_entry *out = (struct channel_queue_entry *)buffer;
+	struct channel_request *request;
+	struct channel *channel;
+	int error;
+
+	channel = channel_commit_check(out, length, fds, nfds, flags);
+	if (channel == NULL)
+		return (-1);
+	if (handler == NULL || requestp == NULL ||
+	    channel->role != CHANNEL_ROLE_CLIENT) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*requestp = NULL;
+	request = channel_request_begin(channel, handler, context, length,
+	    nfds);
+	if (request == NULL)
+		return (-1);
+	if (channel_commit_block(channel, out, length, fds, nfds, specs, flags,
+	    request->token, request) == -1) {
+		error = errno;
+		channel_request_abort(channel, request, error);
+		errno = error;
+		return (-1);
+	}
+	*requestp = request;
+	return (0);
+}
+
+int
+channel_outgoing_commit_reply(struct channel_outgoing_buffer *buffer,
+    struct channel_message *request, size_t length, const int *fds,
+    size_t nfds, const struct channel_fd_spec *specs, uint32_t flags)
+{
+	struct channel_queue_entry *out = (struct channel_queue_entry *)buffer;
+	struct channel *channel;
+
+	channel = channel_commit_check(out, length, fds, nfds, flags);
+	if (channel == NULL)
+		return (-1);
+	if (request == NULL || request->channel != channel ||
+	    request->kind != CHANNEL_MESSAGE_REQUEST || request->token == 0 ||
+	    request->responded) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (channel_commit_block(channel, out, length, fds, nfds, specs, flags,
+	    request->token, NULL) == -1) {
+		channel_commit_failed(channel, errno);
+		return (-1);
+	}
+	request->responded = true;
+	return (0);
+}
+
+void
+channel_outgoing_abort(struct channel_outgoing_buffer *buffer)
+{
+	struct channel_queue_entry *out = (struct channel_queue_entry *)buffer;
+	struct channel *channel;
+
+	if (out == NULL || !out->reserved)
+		return;
+	channel = out->channel;
+	out->reserved = false;
+	/* Nothing is attached before commit: only memory is released. */
+	channel_tx_release(channel, out);
+	channel_release(channel);
+}
+
+/*
+ * ---------------------------------------------------------------------
+ * Entry points for channel_call.c (channel_internal.h).  They live here
+ * because they touch the channel and message layouts; the synchronous call
+ * itself does not.
+ * ---------------------------------------------------------------------
+ */
+
+int
+channel_call_prepare(struct channel *channel,
+    const struct channel_outgoing *outgoing, channel_reply_handler handler,
+    void *context, struct channel_request **requestp,
+    struct channel_call_fast *fast)
+{
+	struct channel_request *request;
+	struct channel_message *block;
+	const struct channel_fd_spec *specs;
+	uint32_t flags;
+	size_t i;
+
+	if (requestp == NULL || fast == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*requestp = NULL;
+	memset(fast, 0, sizeof(*fast));
+	fast->fd = -1;
+	if (channel_outgoing_options(outgoing, &specs, &flags) != 0)
+		return (-1);
+	if (!channel_owned(channel))
+		return (-1);
+	if (outgoing->data == NULL || outgoing->length == 0 ||
+	    outgoing->length > MAC_CAPABILITY_MAX_MSG ||
+	    outgoing->nfds > MAC_CAPABILITY_MAX_FDS ||
+	    (outgoing->nfds != 0 && outgoing->fds == NULL) || handler == NULL ||
+	    channel->destroy_pending || channel->role != CHANNEL_ROLE_CLIENT) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (channel->error != 0) {
+		errno = channel->error;
+		return (-1);
+	}
+	request = channel_request_begin(channel, handler, context,
+	    outgoing->length, outgoing->nfds);
+	if (request == NULL)
+		return (-1);
+	*requestp = request;
+	fast->fd = channel->fd;
+	fast->token = request->token;
+	fast->specs = specs;
+	fast->flags = flags;
+	/* Queued output must go first; the kernel path cannot order behind it. */
+	if (channel->call_version == CHANNEL_CALL_ABSENT ||
+	    channel->out_head != NULL)
+		return (0);
+	if (channel_rx_reserve(channel, channel_rx_capacity(channel->rx_hint))
+	    == -1)
+		return (0);	/* The receive path will allocate again. */
+	block = channel->rx_spare;
+	channel->rx_spare = NULL;
+	/* The kernel installs descriptors only into slots it reports. */
+	for (i = 0; i < MAC_CAPABILITY_MAX_FDS; i++)
+		block->inline_fds[i] = -1;
+	fast->block = block;
+	fast->data = (char *)block + CHANNEL_RX_HEADER;
+	fast->capacity = block->capacity;
+	fast->fds = block->inline_fds;
+	fast->fd_info = block->fd_info;
+	return (1);
+}
+
+int
+channel_call_version(const struct channel *channel)
+{
+
+	return (channel->call_version);
+}
+
+void
+channel_call_set_version(struct channel *channel, int version)
+{
+
+	channel->call_version = version;
+}
+
+void
+channel_call_block_return(struct channel *channel,
+    struct channel_message *block)
+{
+
+	if (block == NULL)
+		return;
+	if (channel->rx_spare == NULL && !channel->destroy_pending &&
+	    channel->fd >= 0)
+		channel->rx_spare = block;
+	else
+		free(block);
+}
+
+void
+channel_call_sent(struct channel *channel)
+{
+
+	channel->sent_direct++;
+}
+
+int
+channel_call_fallback(struct channel *channel, struct channel_request *request,
+    const struct channel_outgoing *outgoing,
+    const struct channel_fd_spec *specs, uint32_t flags)
+{
+	int error;
+
+	if (channel_send_or_queue(channel, outgoing->data, outgoing->length,
+	    outgoing->fds, outgoing->nfds, request->token, request, specs,
+	    flags) == -1) {
+		error = errno;
+		channel_request_abort(channel, request, error);
+		errno = error;
+		return (-1);
+	}
+	return (0);
+}
+
+void
+channel_call_abort(struct channel *channel, struct channel_request *request,
+    int error)
+{
+
+	channel_request_abort(channel, request, error);
+}
+
+void
+channel_call_complete(struct channel *channel, struct channel_request *request,
+    struct channel_message *block,
+    const struct mac_capability_recvmsg_v4_args *args, int error)
+{
+	struct channel_message *message;
+	struct channel_request **link;
+	const struct mac_capability_recvmsg_args *receive;
+
+	message = NULL;
+	if (error == 0) {
+		/*
+		 * The reply arrived in the detached block; describe it as
+		 * channel_message_receive_wait() describes a RECVMSG_V4
+		 * result, with the kernel's descriptor report present.
+		 */
+		receive = &args->v3.message;
+		message = block;
+		channel->rx_hint = receive->payload_len;
+		channel->rx_drained =
+		    (receive->flags & MAC_CAPABILITY_RECV_F_STATUS) &&
+		    (receive->flags & MAC_CAPABILITY_RECV_F_EMPTY);
+		message->process.identity = args->v3.process.identity;
+		message->process.responsible_identity =
+		    args->v3.process.responsible_identity;
+		message->process.pid = args->v3.process.pid;
+		message->process.responsible_pid =
+		    args->v3.process.responsible_pid;
+		message->authority = args->v3.authority;
+		message->channel = channel;
+		message->owner = channel_self_pid();
+		message->kind = CHANNEL_MESSAGE_REPLY;
+		message->responded = false;
+		message->has_fd_info = true;
+		channel_retain(channel);
+		message->data = (char *)block + CHANNEL_RX_HEADER;
+		message->length = receive->payload_len;
+		message->fds = message->inline_fds;
+		message->nfds = receive->nfds;
+		message->token = receive->reply_token;
+		memset(&message->sender, 0, sizeof(message->sender));
+		message->sender.badge = receive->badge;
+		message->sender.uid = receive->trailer.uid;
+		message->sender.gid = receive->trailer.gid;
+		message->sender.prison_id = receive->trailer.prison_id;
+		message->sender.nonce = receive->trailer.nonce;
+		message->sender.abi = receive->trailer.abi;
+		LIBCHANNEL_PROBE_RECEIVE(message->kind, message->token,
+		    message->length, message->nfds);
+	} else {
+		channel_call_block_return(channel, block);
+		if (channel_terminal_error(error)) {
+			/* Completes this and every other pending request. */
+			channel_mark_dead(channel, error);
+			if (channel->destroy_pending &&
+			    channel->dispatch_depth == 0)
+				channel_destroy_now(channel);
+			return;
+		}
+	}
+	/* As channel_dispatch(): the handler may ask for destruction. */
+	channel->dispatch_depth++;
+	for (link = &channel->requests; *link != NULL; link = &(*link)->next)
+		if (*link == request) {
+			*link = request->next;
+			request->next = NULL;
+			channel->npending--;
+			break;
+		}
+	channel_request_complete(request, message, error);
+	channel->dispatch_depth--;
+	if (channel->destroy_pending && channel->dispatch_depth == 0)
+		channel_destroy_now(channel);
 }

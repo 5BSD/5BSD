@@ -108,6 +108,7 @@ struct unpcb {
  */
 #define UNP_LINUX_ABSTRACT 0x800 /* socket created by Linux64 */
 #define UNP_ABSTRACT_BOUND 0x1000 /* registered binary name */
+#define UNP_WANTPIDFD 0x2000 /* sender identity wanted always */
 #define	UNP_HAVEPC			0x001
 #define	UNP_WANTCRED_ALWAYS		0x002	/* credentials wanted always */
 #define	UNP_WANTCRED_ONESHOT		0x004	/* credentials wanted once */

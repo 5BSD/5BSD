@@ -477,7 +477,7 @@ nat_body()
 
 	firewall_config gw $fw \
 		"pf"	\
-			"nat on ${epair_two}a inet from 192.0.2.0/24 to any -> (${epair_two}a)" \
+			"match out on ${epair_two}a inet from 192.0.2.0/24 to any nat-to (${epair_two}a)" \
 			"pass dnpipe 1"
 
 	# We've deliberately not set a route to 192.0.2.0/24 on srv, so the

@@ -68,9 +68,9 @@ fwd_ip6_gu_icmp_iface_fast_success_body() {
 	jexec ${jname} ifconfig ${epair}b up
 	jexec ${jname} ifconfig ${epair}b inet6 ${ip6b}/${plen}
 
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/lladdr/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`ifconfig ${epair}a ether | awk '$1~/lladdr/{print$2}'`
 
 	# wait for DAD to complete
 	while [ `jexec ${jname} ifconfig ${epair}b inet6 | grep -c tentative` != "0" ]; do
@@ -139,9 +139,9 @@ fwd_ip6_gu_icmp_gw_gu_fast_success_body() {
 	jexec ${jname} ifconfig ${epair}b up
 	jexec ${jname} ifconfig ${epair}b inet6 ${ip6b}/${plen}
 
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/lladdr/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`ifconfig ${epair}a ether | awk '$1~/lladdr/{print$2}'`
 
 	# wait for DAD to complete
 	while [ `jexec ${jname} ifconfig ${epair}b inet6 | grep -c tentative` != "0" ]; do
@@ -213,9 +213,9 @@ fwd_ip6_gu_icmp_gw_ll_fast_success_body() {
 	jexec ${jname} ifconfig ${epair}b up
 	jexec ${jname} ifconfig ${epair}b inet6 ${ip6b}/${plen}
 
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/lladdr/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`ifconfig ${epair}a ether | awk '$1~/lladdr/{print$2}'`
 	our_ll_ip=`ifconfig ${epair}a inet6 | awk '$1~/inet6/&& $2~/^fe80:/{print$2}' | awk -F% '{print$1}'`
 
 	# wait for DAD to complete
@@ -287,9 +287,9 @@ fwd_ip6_gu_icmp_iface_slow_success_body() {
 	jexec ${jname} ifconfig ${epair}b up
 	jexec ${jname} ifconfig ${epair}b inet6 ${ip6b}/${plen}
 
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/lladdr/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`ifconfig ${epair}a ether | awk '$1~/lladdr/{print$2}'`
 
 	# wait for DAD to complete
 	while [ `jexec ${jname} ifconfig ${epair}b inet6 | grep -c tentative` != "0" ]; do
@@ -357,9 +357,9 @@ fwd_ip6_gu_icmp_gw_gu_slow_success_body() {
 	jexec ${jname} ifconfig ${epair}b up
 	jexec ${jname} ifconfig ${epair}b inet6 ${ip6b}/${plen}
 
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/lladdr/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`ifconfig ${epair}a ether | awk '$1~/lladdr/{print$2}'`
 
 	# wait for DAD to complete
 	while [ `jexec ${jname} ifconfig ${epair}b inet6 | grep -c tentative` != "0" ]; do
@@ -432,9 +432,9 @@ fwd_ip6_gu_icmp_gw_ll_slow_success_body() {
 	jexec ${jname} ifconfig ${epair}b up
 	jexec ${jname} ifconfig ${epair}b inet6 ${ip6b}/${plen}
 
-	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	jail_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/lladdr/{print$2}'`
 
-	our_mac=`ifconfig ${epair}a ether | awk '$1~/ether/{print$2}'`
+	our_mac=`ifconfig ${epair}a ether | awk '$1~/lladdr/{print$2}'`
 	our_ll_ip=`ifconfig ${epair}a inet6 | awk '$1~/inet6/&& $2~/^fe80:/{print$2}' | awk -F% '{print$1}'`
 
 	# wait for DAD to complete

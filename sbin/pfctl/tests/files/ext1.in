@@ -1,0 +1,9 @@
+# 5BSD: jail rule option, by name, by jid, lists, ranges, with user
+pass in proto tcp to port 22 jail web
+pass out proto udp jail 0
+pass in proto tcp jail { web, db }
+pass in proto tcp jail 3:7
+pass in proto tcp jail > 10
+block in proto tcp jail != web
+pass out proto tcp user root jail web
+block in inet proto { tcp, udp } jail parent.child

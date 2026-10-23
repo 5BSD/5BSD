@@ -979,23 +979,6 @@ linux_file_ioctl_sub(struct file *fp, struct linux_file *filp,
 		/* fetch user-space pointer */
 		data = *(void **)data;
 	}
-#ifdef COMPAT_FREEBSD32
-	if (SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-		/* try the compat IOCTL handler first */
-		if (fop->compat_ioctl != NULL) {
-			error = -OPW(fp, td, fop->compat_ioctl(filp,
-			    cmd, (u_long)data));
-		} else {
-			error = ENOTTY;
-		}
-
-		/* fallback to the regular IOCTL handler, if any */
-		if (error == ENOTTY && fop->unlocked_ioctl != NULL) {
-			error = -OPW(fp, td, fop->unlocked_ioctl(filp,
-			    cmd, (u_long)data));
-		}
-	} else
-#endif
 	{
 		if (fop->unlocked_ioctl != NULL) {
 			error = -OPW(fp, td, fop->unlocked_ioctl(filp,
@@ -1683,9 +1666,6 @@ linux_file_ioctl(struct file *fp, u_long cmd, void *data, struct ucred *cred,
 		*(int *)data = fgetown(&filp->f_sigio);
 		break;
 	case FIODGNAME:
-#ifdef	COMPAT_FREEBSD32
-	case FIODGNAME_32:
-#endif
 		if (filp->f_cdev == NULL || filp->f_cdev->cdev == NULL) {
 			error = ENXIO;
 			break;

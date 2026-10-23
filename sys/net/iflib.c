@@ -864,10 +864,6 @@ static int iflib_msix_init(if_ctx_t ctx);
 static int iflib_legacy_setup(if_ctx_t ctx, driver_filter_t filter, void *filterarg, int *rid, const char *str);
 static void iflib_txq_check_drain(iflib_txq_t txq, int budget);
 static uint32_t iflib_txq_can_drain(struct ifmp_ring *);
-#ifdef ALTQ
-static void iflib_altq_if_start(if_t ifp);
-static int iflib_altq_if_transmit(if_t ifp, struct mbuf *m);
-#endif
 static void iflib_register(if_ctx_t);
 static void iflib_deregister(if_ctx_t);
 static void iflib_unregister_vlan_handlers(if_ctx_t ctx);
@@ -2733,7 +2729,6 @@ iflib_timer(void *arg)
 	/* Handle any laggards */
 	if (txq->ift_db_pending ||
 	    (txq->ift_drbr != NULL &&
-	    (!if_altq_is_enabled(ctx->ifc_ifp) || txq->ift_id == 0) &&
 	    !drbr_empty(ctx->ifc_ifp, txq->ift_drbr)))
 		GROUPTASK_ENQUEUE(&txq->ift_task);
 
@@ -4431,7 +4426,7 @@ _task_fn_tx(void *context)
 {
 	iflib_txq_t txq = context;
 	if_ctx_t ctx = txq->ift_ctx;
-#if defined(DEV_NETMAP) || defined(ALTQ)
+#ifdef DEV_NETMAP
 	if_t ifp = ctx->ifc_ifp;
 #endif
 	int abdicate = ctx->ifc_sysctl_tx_abdicate;
@@ -4450,10 +4445,6 @@ _task_fn_tx(void *context)
 		iflib_simple_txq_drain(txq);
 		goto skip_ifmp;
 	}
-#ifdef ALTQ
-	if (if_altq_is_enabled(ifp))
-		iflib_altq_if_start(ifp);
-#endif
 	if (txq->ift_db_pending)
 		ifmp_ring_enqueue(txq->ift_br, (void **)&txq, 1, TX_BATCH_SIZE, abdicate);
 	else if (!abdicate)
@@ -4658,7 +4649,6 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	}
 
 	MPASS(m->m_nextpkt == NULL);
-	/* ALTQ-enabled interfaces always use queue 0. */
 	qidx = 0;
 	/* Use driver-supplied queue selection method if it exists */
 	if (ctx->isc_txq_select_v2) {
@@ -4681,7 +4671,7 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	else if (ctx->isc_txq_select)
 		qidx = ctx->isc_txq_select(ctx->ifc_softc, m);
 	/* If not, use iflib's standard method */
-	else if ((NTXQSETS(ctx) > 1) && M_HASHTYPE_GET(m) && !if_altq_is_enabled(ifp))
+	else if ((NTXQSETS(ctx) > 1) && M_HASHTYPE_GET(m))
 		qidx = QIDX(ctx, m);
 
 	/* Set TX queue */
@@ -4748,58 +4738,6 @@ iflib_if_transmit(if_t ifp, struct mbuf *m)
 	return (err);
 }
 
-#ifdef ALTQ
-/*
- * The overall approach to integrating iflib with ALTQ is to continue to use
- * the iflib mp_ring machinery between the ALTQ queue(s) and the hardware
- * ring.  Technically, when using ALTQ, queueing to an intermediate mp_ring
- * is redundant/unnecessary, but doing so minimizes the amount of
- * ALTQ-specific code required in iflib.  It is assumed that the overhead of
- * redundantly queueing to an intermediate mp_ring is swamped by the
- * performance limitations inherent in using ALTQ.
- *
- * When ALTQ support is compiled in, all iflib drivers will use a transmit
- * routine, iflib_altq_if_transmit(), that checks if ALTQ is enabled for the
- * given interface.  If ALTQ is enabled for an interface, then all
- * transmitted packets for that interface will be submitted to the ALTQ
- * subsystem via IFQ_ENQUEUE().  We don't use the legacy if_transmit()
- * implementation because it uses IFQ_HANDOFF(), which will duplicatively
- * update stats that the iflib machinery handles, and which is sensitve to
- * the disused IFF_DRV_OACTIVE flag.  Additionally, iflib_altq_if_start()
- * will be installed as the start routine for use by ALTQ facilities that
- * need to trigger queue drains on a scheduled basis.
- *
- */
-static void
-iflib_altq_if_start(if_t ifp)
-{
-	struct ifaltq *ifq = &ifp->if_snd; /* XXX - DRVAPI */
-	struct mbuf *m;
-
-	IFQ_LOCK(ifq);
-	IFQ_DEQUEUE_NOLOCK(ifq, m);
-	while (m != NULL) {
-		iflib_if_transmit(ifp, m);
-		IFQ_DEQUEUE_NOLOCK(ifq, m);
-	}
-	IFQ_UNLOCK(ifq);
-}
-
-static int
-iflib_altq_if_transmit(if_t ifp, struct mbuf *m)
-{
-	int err;
-
-	if (if_altq_is_enabled(ifp)) {
-		IFQ_ENQUEUE(&ifp->if_snd, m, err); /* XXX - DRVAPI */
-		if (err == 0)
-			if_start(ifp);
-		return (err);
-	}
-	return (iflib_if_transmit(ifp, m));
-}
-#endif /* ALTQ */
-
 static void
 iflib_if_qflush(if_t ifp)
 {
@@ -4824,10 +4762,6 @@ iflib_if_qflush(if_t ifp)
 	ctx->ifc_flags &= ~IFC_QFLUSH;
 	STATE_UNLOCK(ctx);
 
-	/*
-	 * When ALTQ is enabled, this will also take care of purging the
-	 * ALTQ queue(s).
-	 */
 	if_qflush(ifp);
 }
 
@@ -5628,7 +5562,6 @@ iflib_device_register(device_t dev, void *sc, if_shared_ctx_t sctx, if_ctx_t *ct
 	scctx = &ctx->ifc_softc_ctx;
 	ifp = ctx->ifc_ifp;
 	if (ctx->ifc_sysctl_simple_tx) {
-		/* if_start drives the same drbr drain when ALTQ is active. */
 		if_settransmitfn(ifp, iflib_simple_transmit);
 		if_setstartfn(ifp, iflib_simple_if_start);
 		device_printf(dev, "using simple transmit\n");
@@ -6516,13 +6449,7 @@ iflib_register(if_ctx_t ctx)
 	/* VF status describes children of an SR-IOV PF. */
 	if (!CTX_IS_VF(ctx))
 		if_setvfstatusfn(ifp, iflib_if_vf_status);
-#ifdef ALTQ
-	if_setstartfn(ifp, iflib_altq_if_start);
-	if_settransmitfn(ifp, iflib_altq_if_transmit);
-	if_setsendqready(ifp);
-#else
 	if_settransmitfn(ifp, iflib_if_transmit);
-#endif
 	if_setqflushfn(ifp, iflib_if_qflush);
 	if_setgetcounterfn(ifp, iflib_if_get_counter);
 	if_setflags(ifp, IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST);
@@ -8235,11 +8162,6 @@ iflib_simple_drbr_drain(iflib_txq_t txq, u_int quota, int *bytes, int *pkts,
 	if (__predict_false(!iflib_is_running(ctx) || !LINK_ACTIVE(ctx)))
 		return;
 
-#ifdef ALTQ
-	 /* We only drain from txq0 when altq is enabled. */
-	if (__predict_false(if_altq_is_enabled(ifp) && txq->ift_id != 0))
-		return;
-#endif
 	for (i = 0; TXQ_AVAIL(txq) >= MAX_TX_DESC(ctx); i++) {
 		if (i == quota)
 			return;
@@ -8348,16 +8270,6 @@ iflib_simple_transmit_impl(if_ctx_t ctx, if_t ifp, struct mbuf *m,
 	bool pinned;
 	int error, i, reclaimable;
 	int bytes_sent = 0, pkt_sent = 0, mcast_sent = 0;
-
-
-#ifdef ALTQ
-	if (if_altq_is_enabled(ifp)) {
-		IFQ_ENQUEUE(&ifp->if_snd, m, error); /* XXX - DRVAPI */
-		if (error == 0)
-			if_start(ifp);
-		return (error);
-	}
-#endif
 
 	ctx = if_getsoftc(ifp);
 	if (__predict_false(!iflib_is_running(ctx) || !LINK_ACTIVE(ctx)))
@@ -8492,9 +8404,7 @@ iflib_simple_transmit_txq_select_v2(if_t ifp, struct mbuf *m)
 }
 
 /*
- * ALTQ entry point.  drbr_dequeue() pulls from ifp->if_snd when a discipline
- * is attached, so the drain loop is shared with the if_transmit path.  Only
- * queue zero is used, matching the queue ALTQ itself selects.
+ * if_start entry point for the simple transmit path: drain queue zero.
  */
 static void
 iflib_simple_if_start(if_t ifp)

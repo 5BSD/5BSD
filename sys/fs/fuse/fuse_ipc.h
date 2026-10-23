@@ -200,6 +200,7 @@ struct fuse_data {
 	uint32_t			max_readahead_blocks;
 	uint32_t			max_write;
 	uint32_t			max_read;
+	uint32_t			max_pages_bytes;
 	bool				readdirplus;
 	bool				readdirplus_auto;
 

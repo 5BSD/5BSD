@@ -547,11 +547,6 @@ kern_ommap(struct thread *td, uintptr_t hint, int len, int oprot,
 #define	OMAP_FIXED	0x0100
 
 	prot = cvtbsdprot[oprot & 0x7];
-#if (defined(COMPAT_FREEBSD32) && defined(__amd64__)) || defined(__i386__)
-	if (i386_read_exec && SV_PROC_FLAG(td->td_proc, SV_ILP32) &&
-	    prot != 0)
-		prot |= PROT_EXEC;
-#endif
 	flags = 0;
 	if (oflags & OMAP_ANON)
 		flags |= MAP_ANON;
@@ -756,12 +751,6 @@ kern_mprotect(struct thread *td, uintptr_t addr0, size_t size, int prot,
 	addr -= pageoff;
 	size += pageoff;
 	size = (vm_size_t) round_page(size);
-#ifdef COMPAT_FREEBSD32
-	if (SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-		if (((addr + size) & 0xffffffff) < addr)
-			return (EINVAL);
-	} else
-#endif
 	if (addr + size < addr)
 		return (EINVAL);
 

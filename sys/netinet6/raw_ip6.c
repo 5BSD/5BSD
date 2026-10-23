@@ -149,6 +149,7 @@ int (*mrt6_ioctl)(u_long, caddr_t, int);
 
 struct rip6_inp_match_ctx {
 	struct ip6_hdr *ip6;
+	struct in6_addr *laddr;	/* ip6_dst, or where a filter diverted it */
 	int proto;
 };
 
@@ -165,7 +166,7 @@ rip6_inp_match(const struct inpcb *inp, void *v)
 	if (inp->inp_ip_p && inp->inp_ip_p != proto)
 		return (false);
 	if (!IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_laddr) &&
-	    !IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, &ip6->ip6_dst))
+	    !IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, c->laddr))
 		return (false);
 	if (!IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_faddr) &&
 	    !IN6_ARE_ADDR_EQUAL(&inp->in6p_faddr, &ip6->ip6_src))
@@ -196,6 +197,20 @@ rip6_input(struct mbuf **mp, int *offp, int proto)
 	M_ASSERTPKTHDR(m);
 	NET_EPOCH_ASSERT();
 
+	/*
+	 * A packet filter diverted the packet to a local address (pf
+	 * divert-to): deliver it to raw sockets bound to that address.
+	 */
+	ctx.laddr = &ip6->ip6_dst;
+	if (m->m_flags & M_IP6_NEXTHOP) {
+		struct m_tag *fwd_tag;
+
+		fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL);
+		if (fwd_tag != NULL)
+			ctx.laddr =
+			    &((struct sockaddr_in6 *)(fwd_tag + 1))->sin6_addr;
+	}
+
 	RIP6STAT_INC(rip6s_ipackets);
 
 	init_sin6(&fromsa, m, 0); /* general init */
@@ -223,6 +238,9 @@ rip6_input(struct mbuf **mp, int *offp, int proto)
 			 * assume process had PRIV_NETINET_RAW at attach,
 			 * and fall through into normal filter path if so.
 			 */
+			continue;
+		/* 5BSD: raw sockets see their routing domain only. */
+		if (!rt_fib_same_rdomain(fib, inp->inp_inc.inc_fibnum))
 			continue;
 		if (V_rip_bind_all_fibs == 0 && fib != inp->inp_inc.inc_fibnum)
 			/*
@@ -764,11 +782,12 @@ rip6_bind(struct socket *so, struct sockaddr *nam, struct thread *td)
 		return (error);
 
 	fib = V_rip_bind_all_fibs == 0 ? inp->inp_inc.inc_fibnum :
-	    RT_ALL_FIBS;
+	    rt_fib_scope(inp->inp_inc.inc_fibnum);
 
 	NET_EPOCH_ENTER(et);
 	if (!IN6_IS_ADDR_UNSPECIFIED(&addr->sin6_addr) &&
-	    (ifa = ifa_ifwithaddr_fib((struct sockaddr *)addr, fib)) == NULL) {
+	    (ifa = ifa_ifwithaddr_fib((struct sockaddr *)addr, fib)) == NULL &&
+	    (inp->inp_flags & INP_BINDANY) == 0) {
 		NET_EPOCH_EXIT(et);
 		return (EADDRNOTAVAIL);
 	}

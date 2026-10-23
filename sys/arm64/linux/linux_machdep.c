@@ -100,7 +100,7 @@ linux_ptrace_get_syscall_info_machdep(const struct reg *reg,
 {
 
 	si->arch = LINUX_ARCH_AARCH64;
-	si->instruction_pointer = reg->lr;
+	si->instruction_pointer = reg->elr;
 	si->stack_pointer = reg->sp;
 }
 

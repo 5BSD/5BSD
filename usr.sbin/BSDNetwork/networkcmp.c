@@ -41,7 +41,6 @@
 #include <networkcmp.h>
 
 #include "resolver.h"
-#include "pf_protocol.h"
 #include "pf_session.h"
 #include "state.h"
 #include <network_state.h>
@@ -1550,7 +1549,7 @@ main_logger(void)
 static int
 worker(int fd, int barrier,
     const int resolver_pipe[2], const struct networkcmp_policy *policy,
-    int audit_fd, const char *label)
+    const char *label)
 {
 	struct net_logger wlog;
 	struct auditcmp_client *audit;
@@ -1562,7 +1561,7 @@ worker(int fd, int barrier,
 	memset(&wlog, 0, sizeof(wlog));
 	if (netresolve_worker_enter() == -1)
 		goto fail;
-	if (auditcmp_client_adopt(audit_fd, &audit) == -1)
+	if (auditcmp_client_open(&audit) == -1)
 		goto fail;
 	/*
 	 * Acquire the worker's system.Log logger over the lookup channel now,
@@ -1606,10 +1605,9 @@ start_session(int fd, const char *peer_label,
 {
 	struct networkcmp_policy policy;
 	const char *policy_source;
-	int syncfd[2], resolver_pipe[2], pd, audit_fd, error;
+	int syncfd[2], resolver_pipe[2], pd, error;
 	pid_t pid;
 
-	audit_fd = -1;
 	resolver_pipe[0] = resolver_pipe[1] = -1;
 	if (harden_worker_fd(fd) == -1) {
 		error = errno;
@@ -1643,10 +1641,6 @@ start_session(int fd, const char *peer_label,
 	 * capability mode (the Identity fold for DNS).  The ipv4/ipv6 policy is
 	 * enforced daemon-side on each request and result, as before.
 	 */
-	if (auditcmp_client_prepare(&audit_fd) == -1) {
-		error = errno;
-		goto reject;
-	}
 	if (pipe2(resolver_pipe, O_CLOEXEC | O_NONBLOCK) == -1 ||
 	    harden_worker_fd(resolver_pipe[0]) == -1 ||
 	    harden_worker_fd(resolver_pipe[1]) == -1) {
@@ -1674,10 +1668,8 @@ start_session(int fd, const char *peer_label,
 	if (pid == 0) {
 		close(syncfd[0]);
 		_exit(worker(fd, syncfd[1],
-		    resolver_pipe, &policy, audit_fd, peer_label));
+		    resolver_pipe, &policy, peer_label));
 	}
-	close(audit_fd);
-	audit_fd = -1;
 	close(resolver_pipe[0]);
 	close(resolver_pipe[1]);
 	resolver_pipe[0] = resolver_pipe[1] = -1;
@@ -1697,8 +1689,6 @@ start_session(int fd, const char *peer_label,
 	return (0);
 
 reject:
-	if (audit_fd >= 0)
-		close(audit_fd);
 	if (resolver_pipe[0] >= 0)
 		close(resolver_pipe[0]);
 	if (resolver_pipe[1] >= 0)
@@ -1806,7 +1796,7 @@ main(void)
 	struct service_listener *listener, *listeners[4];
 	struct network_state_server *state_server = NULL;
 	static const char *const listener_names[4] = {
-		BSDNETWORK_NAME, BSDNETWORK_ADMIN_NAME, PF_MONITOR_SERVICE,
+		BSDNETWORK_NAME, BSDNETWORK_ADMIN_NAME, NETWORKCMP_PF_INTERFACE,
 	    NETWORK_STATE_INTERFACE };
 	struct service_provider *provider;
 	struct service_context *ctx;
@@ -1972,8 +1962,7 @@ main(void)
 			continue;
 		}
 		if (listener == listeners[2] &&
-		    !service_rights_allow(identity.rights,
-		    PF_MONITOR_RIGHT_READ)) {
+		    !network_pf_admit(identity.rights)) {
 			net_log(main_logger(), LOG_WARNING,
 			    "PF session for %s lacks read right",
 			    identity.client_label);

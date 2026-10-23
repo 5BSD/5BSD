@@ -51,5 +51,7 @@ int	linux_pidfd_topid(struct thread *td, int fd, pid_t *pidp);
  * it close-on-exec in td's table; used by pidfd_open(2) and CLONE_PIDFD.
  */
 int	linux_pidfd_create(struct thread *td, pid_t pid, bool nonblock, int *fdp);
+int	linux_pidfd_create_identity(struct thread *, pid_t,
+	    const struct timeval *, int *);
 
 #endif /* _LINUX_PIDFD_H_ */

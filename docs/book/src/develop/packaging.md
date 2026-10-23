@@ -125,13 +125,19 @@ entry in `packages/Makefile`, in `SUBDIR` or the matching
 `SUBDIR.${MK_FOO}+=` list. `bsd.pkg.mk` refuses to build a package whose
 plist has no non-directory entries, and its comment names the usual cause:
 the package was not excluded in `packages/Makefile` for a `src.conf` option
-that turned its contents off.
+that turned its contents off. A named `PKG_METADATA_ONLY` exception creates
+an archive containing only metadata and dependencies, without a staged plist.
+Use it only for intentional metadata packages, such as `pf-dev`: keeping the
+old package identity allows a normal upgrade to retire that package's old
+headers while depending on the current `clibs-dev` header provider. This does
+not run autoremove or delete files belonging to other packages.
 
 | Variable | Meaning |
 |---|---|
 | `WORLDPACKAGE` | the package's base name; `5BSD-` is prefixed from `PKG_NAME_PREFIX` |
 | `PKG_SETS` | the `set` annotation; `minimal` is the plane metapackage `5BSD-set-minimal`, `tests` selects `5BSD-set-tests`, default `optional optional-jail` |
 | `SUBPACKAGES` | which of `dbg`, `dev`, `man`, `lib` to split; default `dbg man` |
+| `PKG_METADATA_ONLY` | explicit package names without the prefix that intentionally contain no files |
 | `PKG_DEPS.<pkg>` | dependencies, emitted with the build's own `PKG_VERSION` |
 | `UCLSRC`, `UCLSRC.<pkg>` | the `-all` UCL and the per-subpackage UCL |
 | `PKG_LICENSES` | default `BSD2CLAUSE` |

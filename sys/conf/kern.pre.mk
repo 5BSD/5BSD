@@ -93,7 +93,6 @@ CFLAGS+=	-fno-common
 # XXX LOCORE means "don't declare C stuff" not "for locore.s".
 ASM_CFLAGS= -x assembler-with-cpp -DLOCORE ${CFLAGS} ${ASM_CFLAGS.${.IMPSRC:T}}
 
-COMPAT_FREEBSD32_ENABLED!= grep COMPAT_FREEBSD32 opt_global.h || true ; echo
 
 KASAN_ENABLED!=	grep KASAN opt_global.h || true ; echo
 KCSAN_ENABLED!= grep KCSAN opt_global.h || true ; echo
@@ -155,6 +154,18 @@ NORMAL_FWO= ${CC:N${CCACHE_BIN}} -c ${ASM_CFLAGS} ${WERROR} -o ${.TARGET} \
 # Remove sanitizer arguments. Some -fno-sanitize* and -fasan-shadow-offset*
 # arguments become an error if the appropriate sanitizer is not enabled.
 NOSAN_C= ${NORMAL_C:N-fsanitize*:N-fno-sanitize*:N-fasan-shadow-offset*}
+
+# OpenBSD PF (contrib/openbsd-pf) through its compatibility layer in
+# netpfil/openbsd-pf.  The layer's shadow headers come before the kernel's
+# own; keep the flags in step with sys/modules/pf/Makefile.
+OPENBSD_PF_CFLAGS= -I$S/netpfil/openbsd-pf/include ${CFLAGS} \
+	-include $S/netpfil/openbsd-pf/openbsd_compat.h -DOPENBSD_PF \
+	-Wno-missing-prototypes -Wno-strict-prototypes -Wno-format \
+	-Wno-incompatible-pointer-types-discards-qualifiers -Wno-cast-qual \
+	-Wno-unused-but-set-variable -Wno-pointer-sign -Wno-sign-compare \
+	-Wno-address-of-packed-member -Wno-constant-conversion
+# Vendor code: warnings are not fatal (as in sys/modules/pf).
+OPENBSD_PF_C= ${CC} -c ${OPENBSD_PF_CFLAGS} ${.IMPSRC}
 
 # for ZSTD in the kernel (include zstd/lib/freebsd before other CFLAGS)
 ZSTD_C= ${CC} -c -DZSTD_HEAPMODE=1 -I$S/contrib/zstd/lib/freebsd ${CFLAGS} \

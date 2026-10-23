@@ -1913,12 +1913,6 @@ passdoioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag, struct thread 
 		union ccb **user_ccb, *ccb;
 		xpt_opcode fc;
 
-#ifdef COMPAT_FREEBSD32
-		if (SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-			error = ENOTTY;
-			goto bailout;
-		}
-#endif
 		if ((softc->flags & PASS_FLAG_ZONE_VALID) == 0) {
 			error = passcreatezone(periph);
 			if (error != 0)
@@ -2093,12 +2087,6 @@ camioqueue_error:
 		struct pass_io_req *io_req;
 		int old_error;
 
-#ifdef COMPAT_FREEBSD32
-		if (SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-			error = ENOTTY;
-			goto bailout;
-		}
-#endif
 		user_ccb = (union ccb **)addr;
 		old_error = 0;
 

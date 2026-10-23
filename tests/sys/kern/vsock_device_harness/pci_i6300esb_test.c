@@ -517,7 +517,15 @@ ATF_TC_BODY(init_option_parsing, tc)
 	ATF_CHECK_EQ(-1, i6300esb_init(make_pi(), NULL));
 
 	mocks_reset();
-	cfg_set("timeout", "abc");	/* atoi -> 0 -> rejected */
+	cfg_set("timeout", "abc");
+	ATF_CHECK_EQ(-1, i6300esb_init(make_pi(), NULL));
+
+	mocks_reset();
+	cfg_set("timeout", "5junk");
+	ATF_CHECK_EQ(-1, i6300esb_init(make_pi(), NULL));
+
+	mocks_reset();
+	cfg_set("timeout", "999999999999999999999999999999");
 	ATF_CHECK_EQ(-1, i6300esb_init(make_pi(), NULL));
 
 	mocks_reset();

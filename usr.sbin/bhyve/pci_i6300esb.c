@@ -563,7 +563,8 @@ i6300esb_cfgread(struct pci_devinst *pi, int offset, int bytes, uint32_t *rv)
 static int
 i6300esb_parse_config(struct i6300esb_softc *sc, nvlist_t *nvl)
 {
-	const char *value;
+	const char *errstr, *value;
+	long long timeout;
 
 	sc->sc_action = I6300ESB_ACT_RESET;
 	sc->sc_timeout = I6300ESB_DEFAULT_TIMEOUT;
@@ -576,14 +577,13 @@ i6300esb_parse_config(struct i6300esb_softc *sc, nvlist_t *nvl)
 
 	value = get_config_value_node(nvl, "timeout");
 	if (value != NULL) {
-		int t = atoi(value);
-
-		if (t <= 0 || t > I6300ESB_MAX_TIMEOUT) {
+		timeout = strtonum(value, 1, I6300ESB_MAX_TIMEOUT, &errstr);
+		if (errstr != NULL) {
 			EPRINTLN("%s: invalid timeout \"%s\" (1..%d)",
 			    I6300ESB_NAME, value, I6300ESB_MAX_TIMEOUT);
 			return (-1);
 		}
-		sc->sc_timeout = (uint32_t)t;
+		sc->sc_timeout = (uint32_t)timeout;
 	}
 	return (0);
 }

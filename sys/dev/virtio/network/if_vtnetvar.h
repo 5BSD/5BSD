@@ -31,12 +31,6 @@
 
 #include <dev/virtio/network/virtio_net_5bsd.h>
 
-#define VTNET_ALTQ_CAPABLE (0)
-#ifdef ALTQ
-#undef VTNET_ALTQ_CAPABLE
-#define	VTNET_ALTQ_CAPABLE (1)
-#endif
-
 struct vtnet_softc;
 
 struct vtnet_statistics {

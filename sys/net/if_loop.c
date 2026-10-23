@@ -78,7 +78,7 @@
 #elif defined(LARGE_LOMTU)
 #define LOMTU	131072
 #else
-#define LOMTU	16384
+#define LOMTU	32768	/* 5BSD: OpenBSD's loopback MTU */
 #endif
 
 #define	LO_CSUM_FEATURES	(CSUM_IP | CSUM_IP_TCP | CSUM_IP_UDP | \
@@ -86,6 +86,14 @@
 #define	LO_CSUM_FEATURES6	(CSUM_IP6_TCP | CSUM_IP6_UDP | CSUM_IP6_SCTP)
 #define	LO_CSUM_SET		(CSUM_L3_CALC | CSUM_L3_VALID | \
 				    CSUM_L4_CALC | CSUM_L4_VALID)
+/*
+ * 5BSD: like OpenBSD's lo(4), loopback does LRO: TCP hands it segments up
+ * to 64 kB (TSO) and they are delivered whole.  It relies on the checksum
+ * offload above, so it is in effect only while TXCSUM and RXCSUM are.
+ */
+#define	LO_LRO_CAPS		(IFCAP_LRO | IFCAP_TSO4 | IFCAP_TSO6)
+
+static void	lo_set_hwassist(struct ifnet *);
 
 static int	loioctl(struct ifnet *, u_long, caddr_t);
 static int	looutput(struct ifnet *ifp, struct mbuf *m,
@@ -102,6 +110,13 @@ lo_clone_destroy(struct if_clone *ifc, struct ifnet *ifp, uint32_t flags)
 {
 	if (ifp->if_dunit == 0 && (flags & IFC_F_FORCE) == 0)
 		return (EINVAL);
+	/* A nonzero routing domain may go away once its other interfaces do. */
+	if ((flags & IFC_F_FORCE) == 0) {
+		int error = rt_rdomain_can_destroy(ifp);
+
+		if (error != 0)
+			return (error);
+	}
 
 #ifndef VIMAGE
 	/* XXX: destroying lo0 will lead to panics. */
@@ -110,6 +125,7 @@ lo_clone_destroy(struct if_clone *ifc, struct ifnet *ifp, uint32_t flags)
 
 	bpfdetach(ifp);
 	if_detach(ifp);
+	rt_rdomain_ifdetach(ifp);
 	if_free(ifp);
 
 	return (0);
@@ -129,8 +145,11 @@ lo_clone_create(struct if_clone *ifc, char *name, size_t len,
 	ifp->if_output = looutput;
 	ifp->if_snd.ifq_maxlen = ifqmaxlen;
 	ifp->if_capabilities = ifp->if_capenable =
-	    IFCAP_HWCSUM | IFCAP_HWCSUM_IPV6 | IFCAP_LINKSTATE;
-	ifp->if_hwassist = LO_CSUM_FEATURES | LO_CSUM_FEATURES6;
+	    IFCAP_HWCSUM | IFCAP_HWCSUM_IPV6 | IFCAP_LINKSTATE | LO_LRO_CAPS;
+	ifp->if_hw_tsomax = 65535;	/* IP_MAXPACKET */
+	ifp->if_hw_tsomaxsegcount = 0;	/* no limit: the chain is looped */
+	ifp->if_hw_tsomaxsegsize = 0;
+	lo_set_hwassist(ifp);
 	if_attach(ifp);
 	bpfattach(ifp, DLT_NULL, sizeof(u_int32_t));
 	*ifpp = ifp;
@@ -223,9 +242,24 @@ looutput(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 #endif
 
 	/* BPF writes need to be handled specially. */
-	if (dst->sa_family == AF_UNSPEC || dst->sa_family == pseudo_AF_HDRCMPLT)
+	if (dst->sa_family == AF_UNSPEC || dst->sa_family == pseudo_AF_HDRCMPLT) {
 		bcopy(dst->sa_data, &af, sizeof(af));
-	else
+		/*
+		 * 5BSD: accept OpenBSD's DLT_LOOP header from bpf(4)
+		 * writers too (network byte order, AF_INET6 is 24 there).
+		 */
+		if (af != AF_INET && af != AF_INET6) {
+			switch (ntohl(af)) {
+			case AF_INET:
+				af = AF_INET;
+				break;
+			case 24:
+			case AF_INET6:
+				af = AF_INET6;
+				break;
+			}
+		}
+	} else
 		af = RO_GET_FAMILY(ro, dst);
 
 	switch (af) {
@@ -244,7 +278,29 @@ looutput(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 		m_freem(m);
 		return (EAFNOSUPPORT);
 	}
+	/* LRO: the segment is delivered as it is; there is nothing to cut. */
+	m->m_pkthdr.csum_flags &= ~CSUM_TSO;
 	return (if_simloop(ifp, m, af, 0));
+}
+
+static void
+lo_set_hwassist(struct ifnet *ifp)
+{
+	int lro = (ifp->if_capenable & IFCAP_LRO) != 0;
+
+	ifp->if_hwassist = 0;
+	if (ifp->if_capenable & IFCAP_TXCSUM) {
+		ifp->if_hwassist |= LO_CSUM_FEATURES;
+		if (lro && (ifp->if_capenable & (IFCAP_TSO4 | IFCAP_RXCSUM)) ==
+		    (IFCAP_TSO4 | IFCAP_RXCSUM))
+			ifp->if_hwassist |= CSUM_IP_TSO;
+	}
+	if (ifp->if_capenable & IFCAP_TXCSUM_IPV6) {
+		ifp->if_hwassist |= LO_CSUM_FEATURES6;
+		if (lro && (ifp->if_capenable & (IFCAP_TSO6 |
+		    IFCAP_RXCSUM_IPV6)) == (IFCAP_TSO6 | IFCAP_RXCSUM_IPV6))
+			ifp->if_hwassist |= CSUM_IP6_TSO;
+	}
 }
 
 /*
@@ -264,8 +320,34 @@ if_simloop(struct ifnet *ifp, struct mbuf *m, int af, int hlen)
 	int32_t len;
 
 	M_ASSERTPKTHDR(m);
-	m_tag_delete_nonpersistent(m);
+	/*
+	 * 5BSD: as OpenBSD's if_input_local() (m_resethdr()), a looped
+	 * packet starts afresh for pf: its per-packet mark goes with the
+	 * other non-persistent tags.  Only pf's synproxy SYN to a server on
+	 * this host keeps it (PF_XTAG_LOOP), so that it stays "generated"
+	 * and does not meet its own state again; FreeBSD's pf supports
+	 * synproxy to local services.
+	 */
+	{
+		struct m_tag *pft;
+
+		pft = m_tag_locate(m, MTAG_ABI_COMPAT, PACKET_TAG_PF, NULL);
+		if (pft != NULL &&
+		    (((struct pkthdr_pf *)(pft + 1))->xflags & PF_XTAG_LOOP))
+			m_tag_unlink(m, pft);
+		else
+			pft = NULL;
+		m_tag_delete_nonpersistent(m);
+		if (pft != NULL)
+			m_tag_prepend(m, pft);
+	}
 	m->m_pkthdr.rcvif = ifp;
+	/*
+	 * 5BSD: a packet received on an interface of another routing domain
+	 * enters the domain of that interface (OpenBSD if_input_local()).
+	 */
+	if (!rt_fib_same_rdomain(M_GETFIB(m), ifp->if_fib))
+		M_SETFIB(m, ifp->if_fib);
 
 #ifdef MAC
 	mac_ifnet_create_mbuf(ifp, m);
@@ -286,15 +368,22 @@ if_simloop(struct ifnet *ifp, struct mbuf *m, int af, int hlen)
 			bpf_mtap(ifp->if_bpf, m);
 		}
 	} else {
-		if (bpf_peers_present(V_loif->if_bpf)) {
-			if ((m->m_flags & M_MCAST) == 0 || V_loif == ifp) {
+		/*
+		 * 5BSD: a loopback interface other than lo0 (the loopback of
+		 * a routing domain) shows its own traffic, as on OpenBSD.
+		 */
+		struct ifnet *bifp = (ifp->if_flags & IFF_LOOPBACK) ? ifp :
+		    V_loif;
+
+		if (bpf_peers_present(bifp->if_bpf)) {
+			if ((m->m_flags & M_MCAST) == 0 || bifp == ifp) {
 				/* XXX beware sizeof(af) != 4 */
 				u_int32_t af1 = af;
 
 				/*
 				 * We need to prepend the address family.
 				 */
-				bpf_mtap2(V_loif->if_bpf, &af1, sizeof(af1), m);
+				bpf_mtap2(bifp->if_bpf, &af1, sizeof(af1), m);
 			}
 		}
 	}
@@ -407,11 +496,8 @@ loioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 			ifp->if_capenable ^= IFCAP_RXCSUM_IPV6;
 		if ((mask & IFCAP_TXCSUM_IPV6) != 0)
 			ifp->if_capenable ^= IFCAP_TXCSUM_IPV6;
-		ifp->if_hwassist = 0;
-		if (ifp->if_capenable & IFCAP_TXCSUM)
-			ifp->if_hwassist = LO_CSUM_FEATURES;
-		if (ifp->if_capenable & IFCAP_TXCSUM_IPV6)
-			ifp->if_hwassist |= LO_CSUM_FEATURES6;
+		ifp->if_capenable ^= mask & LO_LRO_CAPS;
+		lo_set_hwassist(ifp);
 		break;
 
 	default:

@@ -21,14 +21,8 @@ CONFGROUPS+=	GEOM
 GEOM+=		221.backup-gpart \
 		222.backup-gmirror \
 		401.status-graid \
-		406.status-gmirror \
-		408.status-gstripe \
-		409.status-gconcat
+		406.status-gmirror
 GEOMPACKAGE=	geom
-
-CONFGROUPS+=	RCMDS
-RCMDS+=		140.clean-rwho
-RCMDSPACKAGE=	rcmds
 
 # NB: keep these sorted by MK_* knobs
 

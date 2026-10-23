@@ -8,7 +8,6 @@ DIRDEPS = \
 	lib/libc \
 	lib/libcompiler_rt \
 	lib/libnv \
-	lib/libpfctl \
 
 
 .include <dirdeps.mk>

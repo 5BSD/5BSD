@@ -205,7 +205,18 @@ class Suite:
                      ['--vm=x', '--migrate-repair', 'extra'],
                      ['--vm=x', '--migrate-recover-fd=3', '--get-all'],
                      ['--vm=x', '--migrate-recover-fd=3', 'extra'],
-                     ['--vm=x', '--unassign-pptdev=1/2'],
+                     # merged: strict numeric options and capability names
+                     ['--vm=x', '--cpu=x'], ['--vm=x', '--cpu=-1'], ['--vm=x', '--cpu=1x'],
+                     ['--vm=x', '--cpu=2147483648'], ['--vm=x', '--cpu=99999999999999999999'],
+                     ['--vm=x', '--set-mem=-1'], ['--vm=x', '--set-mem=0'],
+                     ['--vm=x', '--set-mem=abc'], ['--vm=x', '--set-mem=4x'],
+                     ['--vm=x', '--set-mem=99999999999999999999'],
+                     ['--vm=x', '--set-mem=17592186044415'],
+                     ['--vm=x', '--setcap=2', '--capname=hlt_exit'],
+                     ['--vm=x', '--setcap=10', '--capname=hlt_exit'],
+                     ['--vm=x', '--setcap=', '--capname=hlt_exit'],
+                     ['--vm=x', '--setcap=1'],
+                     ['--vm=x', '--getcap', '--capname=no_such_cap'],
                      # migrate_resolve: action and exactly its confirmation
                      ['--vm=x', '--migrate-source-retired'],
                      ['--vm=x', '--migrate-acknowledge-loss'],
@@ -226,6 +237,47 @@ class Suite:
                      ['--vm=x', '--migrate-plaintext-unix', '--migrate-recover-fd=3']):
             done, _ = self.run(*args, expect=1)
             self.check('usage for %s' % ' '.join(args), 'Usage: ' in done.stderr)
+
+    def test_numeric_refusals(self):
+        # Merged: register, descriptor, RTC and LAPIC values are parsed
+        # strictly with a per-option maximum; PCI addresses are bus/slot.func
+        # or bus/slot/func within PCI limits.  Refusals exit 1 before any
+        # request reaches the VM.
+        bad_values = [('--set-efer', '-1'), ('--set-efer', ''), ('--set-efer', '1x'),
+                      ('--set-efer', '0x10000000000000000'), ('--desc-limit', '0x100000000'),
+                      ('--desc-access', '4294967296'), ('--set-x2apic-state', '7'),
+                      ('--set-x2apic-state', '2'),
+                      ('--set-rtc-nvram', '256'), ('--rtc-nvram-offset', '2147483648'),
+                      ('--set-rtc-time', '9223372036854775808'), ('--assert-lapic-lvt', '-3'),
+                      ('--get-gpa-pmap', 'x')]
+        for option, value in bad_values:
+            done, log = self.run('--vm=guest0', '%s=%s' % (option, value), expect=1)
+            self.check('refused %s=%s' % (option, value),
+                       'invalid numeric value' in done.stderr and
+                       not any(l.startswith('ioctl VM_') for l in log), stderr=done.stderr[-300:])
+        for value in ('1/2', '-1/2/3', '1/-2/3', '1/2/-3', '256/0/0', '0/32/0', '0/0/8',
+                      'x/2/3', '1/x/3', '1/2/x', '1/2/3x', '1-2/3', '99999999999999999999/0/0',
+                      '0/99999999999999999999/0', '0/0/99999999999999999999'):
+            done, log = self.run('--vm=guest0', '--unassign-pptdev=%s' % value, expect=1)
+            self.check('refused PCI address %s' % value,
+                       'invalid PCI address' in done.stderr and
+                       not any('VM_UNBIND_PPTDEV' in l for l in log), stderr=done.stderr[-300:])
+        for value, bus, slot, func in (('4/5.6', 4, 5, 6), ('255/31/7', 255, 31, 7), ('0/0/0', 0, 0, 0)):
+            done, log = self.run('--vm=guest0', '--unassign-pptdev=%s' % value)
+            self.check('PCI address %s' % value,
+                       'ioctl VM_UNBIND_PPTDEV bus=%d slot=%d func=%d' % (bus, slot, func) in log,
+                       log=log[-3:])
+        # Maximum values are admitted and reach the model unchanged.
+        done, log = self.run('--vm=guest0', '--set-x2apic-state=1', '--get-x2apic-state')
+        self.check('largest x2apic state', 'x2apic_state[0]\t1' in done.stdout, stdout=done.stdout)
+        done, log = self.run('--vm=guest0', '--rtc-nvram-offset=17', '--set-rtc-nvram=255',
+                             '--get-rtc-nvram')
+        self.check('largest nvram value', 'rtc nvram[017]: 0xff' in done.stdout, stdout=done.stdout)
+        # An odd memory size is rounded up to the 2 MiB granule.
+        done, log = self.run('--vm=mem9', '--create', '--set-mem=3', '--get-memseg')
+        allocs = self.replies(log, 'VM_ALLOC_MEMSEG')
+        self.check('odd memory size rounded to 2 MiB', len(allocs) == 1 and
+                   allocs[0]['len'] == str(4 << 20), allocs=allocs)
 
     def test_lifecycle(self):
         done, log = self.run('--vm=absent', expect=1)
@@ -297,9 +349,10 @@ class Suite:
         # A machine-dependent request failure is reflected in the exit status
         # (regression: bhyvectl_md_main() used to return void, so bhyvectl
         # exited 0) and later requests are not attempted.
-        done, log = self.run('--vm=guest0', '--set-x2apic-state=7', '--getcap', expect=None)
-        self.check('invalid x2apic state reaches the model and is refused',
-                   'ioctl VM_SET_X2APIC_STATE error 22' in log, log=log[-3:])
+        # Merged: an out-of-range state is refused by the parser, so the
+        # model's refusal is injected for a valid one.
+        done, log = self.run('--vm=guest0', '--set-x2apic-state=1', '--getcap', expect=None,
+                             env={'VMMFAKE_FAIL': 'VM_SET_X2APIC_STATE:1:22'})
         self.check('md request failure gives a failing exit status',
                    done.returncode == 255 and 'errno = 22' in done.stdout and
                    not any(l.startswith('ioctl VM_GET_CAPABILITY') for l in log),
@@ -388,7 +441,8 @@ class Suite:
     def test_capabilities(self):
         done, log = self.run('--vm=guest0', '--getcap')
         names = ['hlt_exit', 'mtrap_exit', 'pause_exit', 'unrestricted_guest', 'enable_invpcid',
-                 'bpt_exit', 'rdpid', 'rdtscp', 'ipi_exit', 'mask_hwintr', 'rflags_tf', 'nested_vmx']
+                 'bpt_exit', 'rdpid', 'rdtscp', 'ipi_exit', 'mask_hwintr', 'rflags_tf', 'nested_vmx',
+                 'nested_svm']
         expect = []
         for i, n in enumerate(names):
             if n in ('rdpid', 'nested_vmx'):
@@ -402,6 +456,15 @@ class Suite:
                    stdout=done.stdout)
         done, log = self.run('--vm=guest0', '--capname=rdpid', '--setcap=1', expect=255)
         self.check('unavailable capability', 'Capability "rdpid" is not available' in done.stdout)
+        # Merged: --setcap takes exactly 0 or 1; clearing reaches the model.
+        done, log = self.run('--vm=guest0', '--capname=hlt_exit', '--setcap=0')
+        done, log = self.run('--vm=guest0', '--getcap', '--capname=hlt_exit')
+        self.check('capability cleared', 'Capability "hlt_exit" is not set on vcpu 0' in done.stdout,
+                   stdout=done.stdout)
+        # A set failure other than an unavailable capability prints nothing.
+        done, log = self.run('--vm=guest0', '--capname=hlt_exit', '--setcap=1', expect=255,
+                             env={'VMMFAKE_FAIL': 'VM_SET_CAPABILITY:1:5'})
+        self.check('capability set failure', 'not available' not in done.stdout, stdout=done.stdout)
         done, log = self.run('--vm=guest0', '--getcap', env={'VMMFAKE_FAIL': 'VM_GET_CAPABILITY:3:5'},
                              expect=255)
         self.check('capability failure stops listing',
@@ -829,7 +892,8 @@ def run_suite(out, binary, libdir, build, vendor, base_env=None):
     suite = Suite(out, Path(binary), Path(libdir), Path(build), vendor, base_env)
     if vendor == 'intel':
         suite.test_vendor_identity()
-    for test in (suite.test_usage, suite.test_lifecycle, suite.test_registers,
+    for test in (suite.test_usage, suite.test_lifecycle, suite.test_numeric_refusals,
+                 suite.test_registers,
                  suite.test_descriptors, suite.test_misc, suite.test_capabilities,
                  suite.test_state_queries, suite.test_memory, suite.test_run_and_suspend,
                  suite.test_get_all, suite.test_failures, suite.test_ipc,

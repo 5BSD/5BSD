@@ -4,6 +4,28 @@ Provenance for reused test ideas and implementation references is maintained
 in [the contributed software register](../contrib/README.5BSD), under
 "Fuchsia Starnix Linuxulator references". Update that entry with each reuse.
 
+Architecture-specific Linux64 coverage and the RISC-V backend gap are
+recorded in [Linuxulator architecture parity](linuxulator-architecture-parity.md).
+
+## 2026-10-16 follow-up: descriptor modes, PTY locks and FUSE page limits
+
+The current source tree implements three additional contracts from the Starnix
+review. Linux `/proc/<pid>/fd/N` and task descriptor links now report
+0500/0300/0700/0000 for read, write, read-write and `O_PATH` descriptors.
+The attribute callback holds the process across a descriptor lookup and
+rechecks access while taking a file reference. Linux-created PTYs start
+locked; `TIOCSPTLCK` and `TIOCGPTLCK` now change and report the master lock,
+and every new slave open enforces it, including `TIOCGPTPEER`. Native PTYs
+retain their initial unlocked state. FUSE 7.28+ now advertises `MAX_PAGES`,
+uses 32 pages for a zero-page daemon reply and caps read/write request sizes by the
+negotiated page count while preserving the mount's `max_read` remount check.
+
+The freestanding Linux procfs and PTY tests now cover the new modes and lock
+transitions. Native FUSE read/write tests exercise a four-page limit smaller
+than the advertised `max_read` and `max_write`. These are source and test
+changes; no kernel runtime acceptance is claimed until a matching kernel,
+modules and test suite have been built and run.
+
 ## Scope correction: whole-tree feature review (2026-10-10)
 
 ### User-selected execution order and current batch
@@ -300,7 +322,7 @@ daemon-advertised flag is not by itself an implementation to import.
 | ATOMIC_O_TRUNC | Absent from `FuseInitFlags`; no occurrence in the FUSE module or its syscall tests. | Native VFS atomic open/truncate integration remains required; this reference does not supply that contract. |
 | AUTO_INVAL_DATA, ASYNC_DIO, PARALLEL_DIROPS | Absent from the flag set and FUSE module/test references. | Requires separate cache coherency, direct-I/O ordering and directory concurrency designs. No demonstrated implementation to copy from this pin. |
 | HANDLE_KILLPRIV, ABORT_ERROR, CACHE_SYMLINKS | Absent from the flag set and FUSE module/test references. | Retain current negotiation exclusions; privilege removal, abort errno and symlink caching each need their own backend contract and regressions. |
-| MAX_PAGES | Absent from `FuseInitFlags`, but `FuseConfiguration` reads `init_out.max_pages`, defaults zero to 32, limits reads by pages and writes by the lesser of pages/max_write. Its comment explicitly leaves `max_read` mount-option parsing unimplemented. | Useful transfer-bound reference, not proof of complete negotiated MAX_PAGES semantics. Native max_read/max_write and protocol-version handling must be preserved if this is implemented later. |
+| MAX_PAGES | Absent from `FuseInitFlags`, but `FuseConfiguration` reads `init_out.max_pages`, defaults zero to 32, limits reads by pages and writes by the lesser of pages/max_write. Its comment explicitly leaves `max_read` mount-option parsing unimplemented. | Implemented locally for FUSE 7.28+ when the daemon selects the flag. Read and write requests are capped by the page count and existing limits; zero pages uses the 32-page default. New native tests await matching-kernel runtime qualification. |
 | DONT_MASK | Advertised; create/mkdir/mknod messages carry the task umask. | Native VFS already applies umask before these operations. Supporting daemon ACL decisions requires changing where masking is authoritative; advertising the bit alone cannot restore the original mode. |
 | POSIX_ACL | INIT handling enables default_permissions when this flag is selected. | Native ACL evaluation/ownership of permission decisions remains backend work. The native permission suite passes but does not establish Linux POSIX_ACL support. |
 | SPLICE_READ/WRITE/MOVE | Advertised by the reference. Native Linuxulator buffered splice and native FUSE frame boundaries differ. | Keep unadvertised until complete-frame, partial-transfer and pipe-ownership behavior is implemented and tested. |

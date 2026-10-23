@@ -67,7 +67,7 @@ rst_body()
 		"pass keep state"
 
 	# Not required, but pf should log the bad RST packet with this set.
-	jexec cl pfctl -x loud
+	jexec cl pfctl -x debug
 
 	vnet_mkjail attack ${epair_attack}b
 	jexec attack ifconfig ${epair_attack}b 192.0.2.3/24 up
@@ -104,7 +104,89 @@ rst_cleanup()
 	pft_cleanup
 }
 
+original_ack_test()
+{
+	family=$1
+	pft_init
+	left=$(vnet_mkepair)
+	right=$(vnet_mkepair)
+	vnet_mkjail router ${left}b ${right}b
+	if [ "$family" = inet ]; then
+		lp=192.0.2.; rp=198.51.100.; mask=24
+		forwarding=net.inet.ip.forwarding
+	else
+		lp=2001:db8:1::; rp=2001:db8:2::; mask=64
+		forwarding=net.inet6.ip6.forwarding
+	fi
+	ifconfig ${left}a $family ${lp}1/$mask up
+	ifconfig ${right}a $family ${rp}1/$mask up
+	jexec router ifconfig ${left}b $family ${lp}2/$mask up
+	jexec router ifconfig ${right}b $family ${rp}2/$mask up
+	sysctl $forwarding=0
+	jexec router sysctl $forwarding=1
+	if [ "$family" = inet6 ]; then
+		while { ifconfig; jexec router ifconfig; } | grep -q tentative; do sleep 1; done
+	fi
+	left_mac=$(ifconfig ${left}a | awk '/lladdr/ { print $2 }')
+	right_mac=$(ifconfig ${right}a | awk '/lladdr/ { print $2 }')
+	if [ "$family" = inet ]; then
+		jexec router arp -s ${lp}10 "$left_mac"
+		jexec router arp -s ${rp}20 "$right_mac"
+	else
+		jexec router ndp -s ${lp}10 "$left_mac"
+		jexec router ndp -s ${rp}20 "$right_mac"
+	fi
+	left_mac=$(jexec router ifconfig ${left}b | awk '/lladdr/ { print $2 }')
+	right_mac=$(jexec router ifconfig ${right}b | awk '/lladdr/ { print $2 }')
+	jexec router pfctl -e
+	# One filtering interface makes this a single stateful firewall boundary.
+	# Only SYN may create a state; resets cannot fall through to a permissive
+	# rule and create a replacement state after the tracking check rejects them.
+	pft_set_rules router "set skip on ${right}b" 'block' \
+	    "pass in quick on ${left}b $family proto tcp from ${lp}10 to ${rp}20 flags S/SA keep state"
+	atf_check -s exit:0 -o match:'ORIGINAL_ACK_CASE.*wrap_zero passed' -e ignore \
+	    python3 $(atf_get_srcdir)/tcp-original-ack.py --family "$family" \
+	    --left ${left}a --right ${right}a --left-mac "$left_mac" \
+	    --right-mac "$right_mac" --jail router
+}
+
+atf_test_case "original_ack_v4" "cleanup"
+original_ack_v4_head()
+{
+	atf_set descr 'TCP RST original ACK validation and state survival (inet)'
+	atf_set require.user root
+	atf_set require.progs 'python3 scapy'
+	atf_set timeout 600
+}
+original_ack_v4_body()
+{
+	original_ack_test inet
+}
+original_ack_v4_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "original_ack_v6" "cleanup"
+original_ack_v6_head()
+{
+	atf_set descr 'TCP RST original ACK validation and state survival (inet6)'
+	atf_set require.user root
+	atf_set require.progs 'python3 scapy'
+	atf_set timeout 600
+}
+original_ack_v6_body()
+{
+	original_ack_test inet6
+}
+original_ack_v6_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case "original_ack_v4"
+	atf_add_test_case "original_ack_v6"
 	atf_add_test_case "rst"
 }

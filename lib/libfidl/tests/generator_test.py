@@ -34,6 +34,9 @@ cases=[
  ('table_union','type State = strict enum : uint32 { OFF=0; ON=1; }; type Flags = strict bits : uint32 { FIRST=1; SECOND=2; }; type Choice = flexible union { 1: text string:16; 2: numbers vector<uint32>:4; }; type Request = table { 1: choice Choice; 2: state State; 3: flags Flags; }; closed protocol Service { strict Call(Request) -> (Request); };',True,True),
  ('containers','type Choice = strict union { 1: text string:8; 2: number uint32; }; type Request = struct { strings vector<string:<8,optional>>:4; matrix array<array<uint32,2>,3>; choices vector<Choice>:4; fixed array<Choice,2>; choice Choice:optional; nested vector<vector<bool>:4>:4; }; closed protocol Service { strict Call(Request) -> (Request); };',True,True),
  ('aggregate','type Request = struct { items vector<uint32>:8; }; closed protocol Service { strict Call(Request) -> (Request); };',True,True),
+ # Owned-descriptor release passes for every aggregate kind, including a
+ # recursive box and a payload without descriptors (which gets none).
+ ('owned_release','using zx; type Inner = resource struct { fd zx.Handle; }; type Choice = flexible resource union { 1: fd zx.Handle; 2: inner Inner; 3: number uint32; }; type Options = resource table { 1: fd zx.Handle; 2: fds vector<zx.Handle>:4; 3: label string:8; }; type Request = resource struct { fds vector<zx.Handle>:4; fixed array<Inner,2>; maybe box<Inner>; choice Choice:optional; options Options; ep client_end:<Service, optional>; next box<Request>; label string:8; }; type Plain = struct { items vector<uint32>:8; next box<Plain>; }; closed protocol Service { strict Call(Request) -> (Plain); strict Note(Request); strict -> Changed(Request); strict Keep(Plain) -> (Plain); };',True,True),
 ]
 with tempfile.TemporaryDirectory(prefix='generator-tests-',dir=a.obj) as tmp:
  root=Path(tmp)
@@ -57,6 +60,17 @@ with tempfile.TemporaryDirectory(prefix='generator-tests-',dir=a.obj) as tmp:
     artifacts={p.name for p in (output/'fidl/test.binding/cpp').iterdir()}
     if artifacts-{'natural_types.h','natural_types.cc','common_types.h','common_types.cc','markers.h','bsd.h'}:
      raise RuntimeError('unsupported Zircon messaging outputs escaped: '+str(artifacts))
+   if expected and c and name == 'owned_release':
+    # Release passes exist exactly for the aggregates that can hold
+    # descriptors, and every C entry point taking one runs it on failure.
+    bridge=(output/'fidl/test.binding/c/bridge.h').read_text()
+    source=(output/'fidl/test.binding/c/bsd.cc').read_text()
+    for present in ('CWRelease_test_binding_Request(','CWRelease_test_binding_Inner(','CWRelease_test_binding_Choice(','CWRelease_test_binding_Options('):
+     if present not in bridge: raise RuntimeError('missing release pass: '+present)
+    if 'CWRelease_test_binding_Plain(' in bridge: raise RuntimeError('release pass for a payload without descriptors')
+    if source.count('CWRelease_test_binding_Request(fidl::bsd::cwire::OwnedRelease(e), ') != 3: raise RuntimeError('Call, Note and Changed must release owned descriptors on encode failure')
+    if source.count('CWRelease_test_binding_Request(fidl::bsd::cwire::OwnedRelease(), ') != 3: raise RuntimeError('rejected arguments must release owned descriptors')
+    if 'CWRelease_test_binding_Plain' in source: raise RuntimeError('Keep has no descriptors to release')
    if expected and c:
     # Compile every accepted public C header, including protocols with no requests.
     subprocess.run(['cc','-std=c11','-pedantic-errors','-fsyntax-only',

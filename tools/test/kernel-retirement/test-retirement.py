@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise native target rejection, compatibility builds and firewall selection."""
+"""Exercise native target rejection, ABI retirement and firewall selection."""
 from pathlib import Path
 import subprocess
 import re
@@ -40,16 +40,32 @@ class Retirement(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
         self.assertNotEqual(make('', 'targets', 'TARGETS=powerpc').returncode, 0)
 
-    def test_compatibility_libraries_retained(self):
+    def test_unsupported_abi_source_retired(self):
         for target, arch in [('arm', 'armv7'), ('i386', 'i386')]:
             result = make('', '-f', 'Makefile.inc1', f'TARGET={target}',
                           f'TARGET_ARCH={arch}', 'COMPAT_LIBCOMPAT=32',
                           '-V', 'KNOWN_ARCHES')
-            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotEqual(result.returncode, 0)
         for path in ['sys/arm64/arm64/elf32_machdep.c',
                      'sys/compat/freebsd32/freebsd32_misc.c',
-                     'sys/arm/include/elf.h', 'sys/i386/include/elf.h']:
-            self.assertTrue((SRC / path).is_file(), path)
+                     'sys/amd64/linux32/linux32_sysvec.c',
+                     'sys/i386/i386/machdep.c',
+                     'sys/arm/qemu', 'sys/arm/qualcomm',
+                     'sys/arm/rockchip', 'sys/arm/ti',
+                     'sys/powerpc',
+                     'sys/contrib/ncsw', 'sys/dev/dpaa',
+                     'sys/dev/sound/macio',
+                     'sys/modules/cpsw', 'sys/modules/arm_ti',
+                     'sys/modules/imx', 'sys/modules/cfi']:
+            self.assertFalse((SRC / path).exists(), path)
+        # The amd64 BIOS bootstrap still needs these headers.
+        self.assertTrue((SRC / 'sys/i386/include/minidump.h').is_file())
+        self.assertTrue((SRC / 'sys/arm/arm/gic.c').is_file())
+        self.assertTrue((SRC / 'sys/arm64/rockchip/rk_pcie.c').is_file())
+        self.assertTrue((SRC / 'sys/dev/dpaa2/dpaa2_ni.c').is_file())
+        for path in ['lib/libkvm/kvm_arm.c', 'lib/libkvm/kvm_i386.c',
+                     'lib/libkvm/kvm_powerpc.c']:
+            self.assertFalse((SRC / path).exists(), path)
 
     def test_no_retired_firewall_consumers(self):
         # Catch orphaned dependency metadata and dormant rescue/startup paths,

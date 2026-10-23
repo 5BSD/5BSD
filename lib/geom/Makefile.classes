@@ -4,18 +4,13 @@ GEOM_CLASS_DIR?=/lib/geom
 GEOM_CLASS_DIR?=/usr/lib${COMPAT_libcompat}/geom
 .endif
 
-GEOM_CLASSES=	cache
-GEOM_CLASSES+=	concat
+GEOM_CLASSES=	label
 .if ${MK_OPENSSL} != "no"
 GEOM_CLASSES+=	eli
 .endif
-GEOM_CLASSES+=	label
 GEOM_CLASSES+=	mirror
-GEOM_CLASSES+=	mountver
 GEOM_CLASSES+=	multipath
 GEOM_CLASSES+=	nop
 GEOM_CLASSES+=	part
 GEOM_CLASSES+=	raid
-GEOM_CLASSES+=	stripe
-GEOM_CLASSES+=	union
 GEOM_CLASSES+=	zoned

@@ -2436,6 +2436,19 @@ ATF_TC_BODY(config_option_parsing, tc)
 	ATF_CHECK(error != 0);
 	g_bootdev_fail = false;
 
+	/* A numeric prefix is not a valid boot order index. */
+	env_reset();
+	set_config_value_node(NULL, "bootindex", "1junk");
+	memset(&pi, 0, sizeof(pi));
+	pi.pi_slot = 9;
+	ATF_CHECK(pci_nvme_init(&pi, NULL) != 0);
+
+	env_reset();
+	set_config_value_node(NULL, "bootindex", "-0");
+	memset(&pi, 0, sizeof(pi));
+	pi.pi_slot = 9;
+	ATF_CHECK(pci_nvme_init(&pi, NULL) != 0);
+
 	/* An invalid sector size is rejected. */
 	env_reset();
 	set_config_value_node(NULL, "ram", "8");

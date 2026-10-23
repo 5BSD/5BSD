@@ -204,6 +204,30 @@ ATF_TC_BODY(bounded_and_overlap_safe_save, tc)
 	ATF_CHECK_EQ(meta.buffer.buf_rem, sizeof(aliased));
 }
 
+ATF_TC_WITHOUT_HEAD(separate_identity_allows_rebind);
+ATF_TC_BODY(separate_identity_allows_rebind, tc)
+{
+	static const uint8_t record[] = {
+		0x03, 0x00, 0x00, 0x00, 'a', 'b', 'c'
+	};
+	struct vm_snapshot_meta meta = META_INITIALIZER(VM_SNAPSHOT_VALIDATE,
+	    __DECONST(uint8_t *, record), sizeof(record));
+
+	(void)tc;
+	ATF_REQUIRE_EQ(vm_snapshot_identity_string_check("different", 16,
+	    &meta, false), 0);
+	ATF_CHECK_EQ(meta.buffer.buf_rem, 0);
+	meta_reset(&meta, VM_SNAPSHOT_RESTORE,
+	    __DECONST(uint8_t *, record), sizeof(record));
+	ATF_REQUIRE_EQ(vm_snapshot_identity_string_check("different", 16,
+	    &meta, false), 0);
+	ATF_CHECK_EQ(meta.buffer.buf_rem, 0);
+	meta_reset(&meta, VM_SNAPSHOT_VALIDATE,
+	    __DECONST(uint8_t *, record), sizeof(record));
+	ATF_CHECK_EQ(vm_snapshot_identity_string_check("d", 2,
+	    &meta, false), E2BIG);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -211,5 +235,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rejects_mismatch_and_malformed_records);
 	ATF_TP_ADD_TC(tp, bounds_and_empty_identity);
 	ATF_TP_ADD_TC(tp, bounded_and_overlap_safe_save);
+	ATF_TP_ADD_TC(tp, separate_identity_allows_rebind);
 	return (atf_no_error());
 }

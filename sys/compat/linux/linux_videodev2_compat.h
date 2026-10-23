@@ -61,9 +61,6 @@ struct l_v4l2_standard {
 	uint32_t		framelines;
 	uint32_t		reserved[4];
 }
-#ifdef COMPAT_LINUX32 /* 32bit linuxolator */
-__attribute__ ((packed))
-#endif
 ;
 
 struct l_v4l2_ext_control {
@@ -95,9 +92,6 @@ struct l_v4l2_format {
 		uint8_t	raw_data[200];                   /* user-defined */
 	} fmt;
 }
-#ifdef COMPAT_LINUX32 /* 32bit linuxolator */
-__attribute__ ((packed))
-#endif
 ;
 
 #ifdef VIDIOC_DQEVENT
@@ -125,9 +119,6 @@ struct l_v4l2_input {
 	uint32_t	     capabilities;
 	uint32_t	     reserved[3];
 }
-#ifdef COMPAT_LINUX32 /* 32bit linuxolator */
-__attribute__ ((packed))
-#endif
 ;
 
 #endif /* _LINUX_VIDEODEV2_COMPAT_H_ */

@@ -10,10 +10,15 @@
 set -eu
 
 src=${SRCTOP:-/usr/src}
+if [ -d "$src" ]; then
+	src=$(CDPATH= cd -- "$src" && pwd)
+fi
 sanitizers=${SANITIZERS:-}
 jobs=${VMX_NESTED_BUILD_JOBS:-2}
 work=
 objprefix=
+headerdir=
+pythondir=
 result_file=${RESULT_FILE:-}
 result_started=0
 case_log=
@@ -53,6 +58,12 @@ cleanup()
 	# later discovery or body failure must not leak a file into /tmp.
 	if [ -n "$case_log" ]; then
 		rm -f "$case_log" 2>/dev/null || :
+	fi
+	if [ -n "$headerdir" ]; then
+		rm -rf "$headerdir"
+	fi
+	if [ -n "$pythondir" ]; then
+		rm -rf "$pythondir"
 	fi
 	# Publish non-success atomically so detached supervisors can distinguish a
 	# failed model gate from one whose captured stdout has not arrived yet.
@@ -102,6 +113,26 @@ if [ -n "${SANITIZE:-}" ]; then
 	exit 2
 fi
 
+# Some source hosts install only a versioned Python executable.  The source
+# validators call python3; make that name available without changing the host.
+if ! command -v python3 >/dev/null 2>&1; then
+	for python_version in python3.14 python3.13 python3.12 python3.11 \
+	    python3.10; do
+		if command -v "$python_version" >/dev/null 2>&1; then
+			pythondir=$(mktemp -d /tmp/vmx-nested-python.XXXXXX)
+			ln -s "$(command -v "$python_version")" \
+			    "$pythondir/python3"
+			PATH="$pythondir:$PATH"
+			export PATH
+			break
+		fi
+	done
+	if ! command -v python3 >/dev/null 2>&1; then
+		echo "nested-vmx model: Python 3 is required" >&2
+		exit 1
+	fi
+fi
+
 if [ -n "$sanitizers" ]; then
 	[ -f "$src/tests/sys/vmm/vmx_nested_state_test.c" ] || {
 		echo "nested-vmx model: sanitized build requires SRCTOP" >&2
@@ -109,12 +140,16 @@ if [ -n "$sanitizers" ]; then
 	}
 	work=$(mktemp -d /tmp/vmx-nested-model.XXXXXX)
 	objprefix=$work
+	headerdir=$(mktemp -d /tmp/vmx-nested-headers.XXXXXX)
+	ln -s "$src/sys/amd64/include" "$headerdir/machine"
+	ln -s "$src/sys/x86/include" "$headerdir/x86"
 	set_phase build-libvmmapi-sanitized
 	# Several ABI/liveness tests link libvmmapi.  Build that dependency in the
 	# same private object tree first; otherwise an old archive can make the
 	# focused runner disagree with a clean tests/sys/vmm build.
 	env MAKEOBJDIRPREFIX="$work" make -C "$src/lib/libvmmapi" -j"$jobs" \
 	    "CFLAGS+=-I$src/lib/libvmmapi" \
+	    "CFLAGS+=-I$headerdir" \
 	    "CFLAGS+=-I$src/sys" \
 	    "CFLAGS+=-I$src/sys/amd64/include" \
 	    "CFLAGS+=-DWITH_VMMAPI_SNAPSHOT" \
@@ -142,6 +177,7 @@ if [ -n "$sanitizers" ]; then
 	    vmm_x86_startup_machine_test vmm_x86_startup_vmreg_test \
 	    vmm_x86_startup_backend_test vmm_x86_startup_finalizer_test \
 	    "CFLAGS+=-I$src/sys" \
+	    "CFLAGS+=-I$headerdir" \
 	    "CFLAGS+=-I$src/sys/amd64/include" \
 	    "CFLAGS+=-I$src/lib/libvmmapi" \
 	    "CFLAGS+=-fsanitize=$sanitizers" \
@@ -192,9 +228,16 @@ elif [ -f "$src/tests/sys/vmm/vmx_nested_state_test.c" ]; then
 		work=$(mktemp -d /tmp/vmx-nested-model.XXXXXX)
 		objprefix=$work
 	fi
+	headerdir=$(mktemp -d /tmp/vmx-nested-headers.XXXXXX)
+	ln -s "$src/sys/amd64/include" "$headerdir/machine"
+	ln -s "$src/sys/x86/include" "$headerdir/x86"
 	set_phase build-libvmmapi
 	env MAKEOBJDIRPREFIX="$objprefix" \
-	    make -C "$src/lib/libvmmapi" -j"$jobs"
+	    make -C "$src/lib/libvmmapi" -j"$jobs" \
+	    "CFLAGS+=-I$src/lib/libvmmapi" \
+	    "CFLAGS+=-I$src/sys" \
+	    "CFLAGS+=-DWITH_VMMAPI_SNAPSHOT" \
+	    "CFLAGS+=-I$headerdir"
 	set_phase build-model-tests
 	env MAKEOBJDIRPREFIX="$objprefix" \
 	    make -C "$src/tests/sys/vmm" -j"$jobs" vmx_nested_state_test vmm_dirty_log_test \
@@ -214,7 +257,11 @@ elif [ -f "$src/tests/sys/vmm/vmx_nested_state_test.c" ]; then
 	    vmm_event_wait_test \
 	    vmm_x86_startup_state_test vmm_x86_startup_transaction_test \
 	    vmm_x86_startup_machine_test vmm_x86_startup_vmreg_test \
-	    vmm_x86_startup_backend_test vmm_x86_startup_finalizer_test
+	    vmm_x86_startup_backend_test vmm_x86_startup_finalizer_test \
+	    "CFLAGS+=-I$headerdir" \
+	    "CFLAGS+=-I$src/sys" \
+	    "CFLAGS+=-I$src/sys/amd64/include" \
+	    "CFLAGS+=-I$src/lib/libvmmapi"
 	obj=$(env MAKEOBJDIRPREFIX="$objprefix" \
 	    make -C "$src/tests/sys/vmm" -V .OBJDIR)
 	test_program=$obj/vmx_nested_state_test

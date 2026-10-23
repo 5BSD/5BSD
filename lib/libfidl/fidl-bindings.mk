@@ -10,6 +10,17 @@
 #   FIDL_FLAGS.NAME	extra fidlc arguments (optional), e.g. --available
 #			bsd:2 for an evolution test's next schema
 #
+# Every bsd.* library is versioned under the FIDL platform "bsd"
+# (@available(platform="bsd", added=N) at library level; see
+# lib/libfidl/README "Versioning").  fidlc refuses to compile a versioned
+# library without a selected version, so every set is compiled at
+#
+#   FIDL_AVAILABLE	the platform version, default bsd:1; a FIDL_FLAGS.NAME
+#			that names --available itself takes precedence
+#
+# (override on the command line, e.g. make FIDL_AVAILABLE=bsd:2, after a
+# clean: the generated set is not re-made for a flag change alone).
+#
 # and use
 #
 #   FIDLGEN.NAME	the include root: add -I${FIDLGEN.NAME} to CFLAGS for
@@ -37,6 +48,7 @@ PYTHON=		python3.12
 .endif
 .endif
 FIDLC?=		fidlc
+FIDL_AVAILABLE?=	bsd:1
 _FIDLGEN_DIR=	${SRCTOP}/tools/build/fuchsia
 _FIDLGEN_TEMPLATES=	${SRCTOP}/contrib/fuchsia/tools/fidl/fidlgen_cpp/codegen
 _FIDLGEN_TMPL=	file_markers file_common_types_header file_common_types_source \
@@ -80,6 +92,7 @@ fidlgen/${_s}.stamp: ${_FIDLGEN_INPUTS.${_s}} ${_FIDLGEN_TOOLS}
 	@mkdir -p ${.OBJDIR}/fidlgen
 	${PYTHON} ${_FIDLGEN_DIR}/fidlgen-build.py --fidlc ${FIDLC} \
 	    --out ${FIDLGEN.${_s}} --stamp ${.TARGET} \
+	    --available ${FIDL_AVAILABLE} \
 	    ${FIDL_FLAGS.${_s}:@f@--fidlc-flag=${f}@} ${_FIDLGEN_INPUTS.${_s}}
 fidlgen: fidlgen/${_s}.stamp
 ${FIDLGEN_SRCS.${_s}} \

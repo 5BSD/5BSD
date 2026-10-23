@@ -213,8 +213,8 @@ Outgoing::PrepareEmpty(uint32_t txid, uint64_t ordinal, bool flexible)
 	fidl_init_txn_header(&header, txid, ordinal,
 	    flexible ? FIDL_MESSAGE_HEADER_DYNAMIC_FLAGS_FLEXIBLE_METHOD :
 		       FIDL_MESSAGE_HEADER_DYNAMIC_FLAGS_STRICT_METHOD);
-	bytes_.resize(sizeof(header));
-	memcpy(bytes_.data(), &header, sizeof(header));
+	Resize(sizeof(header));
+	memcpy(Data(), &header, sizeof(header));
 	return 0;
 }
 int
@@ -231,15 +231,15 @@ Outgoing::Prepare(fidl::OutgoingMessage &body, uint32_t txid, uint64_t ordinal,
 	    body.handle_actual() > MAC_CAPABILITY_MAX_FDS || ordinal == 0 ||
 	    ordinal == kFidlOrdinalEpitaph)
 		return EMSGSIZE;
-	bytes_.resize(sizeof(fidl_message_header_t) + size);
+	Resize(sizeof(fidl_message_header_t) + size);
 	fidl_message_header_t header;
 	fidl_init_txn_header(&header, txid, ordinal,
 	    flexible ? FIDL_MESSAGE_HEADER_DYNAMIC_FLAGS_FLEXIBLE_METHOD :
 		       FIDL_MESSAGE_HEADER_DYNAMIC_FLAGS_STRICT_METHOD);
-	memcpy(bytes_.data(), &header, sizeof(header));
+	memcpy(Data(), &header, sizeof(header));
 	size_t offset = sizeof(header);
 	for (uint32_t i = 0; i < body.iovec_actual(); ++i) {
-		memcpy(bytes_.data() + offset, body.iovecs()[i].buffer,
+		memcpy(Data() + offset, body.iovecs()[i].buffer,
 		    body.iovecs()[i].capacity);
 		offset += body.iovecs()[i].capacity;
 	}
@@ -284,7 +284,7 @@ Outgoing::RawAlloc(size_t size)
 	if (size > MAC_CAPABILITY_MAX_MSG || aligned >
 	    MAC_CAPABILITY_MAX_MSG - sizeof(fidl_message_header_t) - offset)
 		return SIZE_MAX;
-	bytes_.resize(bytes_.size() + aligned);
+	Resize(Size() + aligned);
 	return offset;
 }
 int
@@ -315,6 +315,32 @@ Outgoing::RawHandle(int fd, uint32_t type, uint32_t rights)
 	return 0;
 }
 int
+Outgoing::RawHandleMove(int fd, uint32_t type, uint32_t rights)
+{
+	if (fd < 0)
+		return EBADF;
+	if (fds_.size() >= MAC_CAPABILITY_MAX_FDS)
+		return EMSGSIZE;
+	channel_fd_spec spec {};
+	int error = DescriptorSpec(type, rights, &spec);
+	if (error)
+		return error;
+	// Allocations and checks precede the ownership transfer, so a failure
+	// leaves the descriptor with the caller.
+	fds_.reserve(fds_.size() + 1);
+	specs_.reserve(specs_.size() + 1);
+	owners_.reserve(owners_.size() + 1);
+	if (!defer_checks_ || rights == 0) {
+		error = ValidateDescriptor(fd, type, rights);
+		if (error)
+			return error;
+	}
+	owners_.emplace_back(fd);
+	fds_.push_back(fd);
+	specs_.push_back(spec);
+	return 0;
+}
+int
 CheckReceivedDescriptor(int fd, uint32_t type, uint32_t rights,
     uint32_t reported_type, uint32_t reported_rights)
 {
@@ -326,6 +352,18 @@ CheckReceivedDescriptor(int fd, uint32_t type, uint32_t rights,
 	return ValidateDescriptor(fd, type, rights);
 }
 
+void
+Incoming::operator delete(Incoming *incoming, std::destroying_delete_t)
+{
+	// The identity keeps the slab alive until the block is back in it.
+	auto origin = std::move(incoming->origin_);
+	Slab<Incoming> *slab = incoming->slab_;
+	incoming->~Incoming();
+	if (slab)
+		slab->Put(incoming);
+	else
+		::operator delete(incoming);
+}
 fidl_message_header_t
 Incoming::header() const
 {
@@ -368,15 +406,16 @@ Result<std::unique_ptr<Connection>>
 Connection::Create(int fd, channel_role role, const channel_options *supplied)
 {
 	try {
-		auto result = std::unique_ptr<Connection>(
-		    new Connection(nullptr, role));
-		// Recycling a completed call must never allocate.
-		result->free_pending_.reserve(kPendingPoolLimit);
 		channel_options options = CHANNEL_OPTIONS_INITIALIZER(role);
 		if (supplied)
 			options = *supplied;
 		if (options.role != role)
 			return fit::error(EINVAL);
+		// The slabs for call records and received messages hold at
+		// most as many objects as calls may be outstanding; beyond
+		// that the heap is used, as it was for every object before.
+		auto result = std::unique_ptr<Connection>(
+		    new Connection(nullptr, role, options.max_pending_requests));
 		if (channel_create(fd, &options, &result->channel_) != 0)
 			return fit::error(errno);
 		channel_set_request_handler(result->channel_, OnMessage,
@@ -469,6 +508,48 @@ Connection::Shutdown(zx_status_t epitaph)
 	closing_ = true;
 	return 0;
 }
+void
+Connection::ReserveScratch()
+{
+	channel_outgoing_buffer *buffer = nullptr;
+	if (channel_ &&
+	    channel_outgoing_reserve(channel_, kReserveBytes, kMaxDescriptors,
+		&buffer) == 0)
+		scratch_.Attach(buffer);
+	else
+		scratch_.Release();
+}
+// A commit consumes the reservation (sent at once or queued as the block
+// itself); a failed one leaves the buffer, body and descriptors with the
+// packet, which FinishScratch() returns and closes.
+int
+Connection::SendEvent(Outgoing &packet)
+{
+	auto view = packet.MoveView(lock_inherit_);
+	int rc = packet.buffer() ?
+	    channel_outgoing_commit_event(packet.buffer(), view.length,
+		view.fds, view.nfds, view.fd_specs, view.flags) :
+	    channel_send_event(channel_, &view);
+	if (rc != 0)
+		return errno;
+	packet.Committed();
+	packet.Sent();
+	return 0;
+}
+int
+Connection::SendReply(Incoming &request, Outgoing &packet)
+{
+	auto view = packet.MoveView(lock_inherit_);
+	int rc = packet.buffer() ?
+	    channel_outgoing_commit_reply(packet.buffer(), request.native(),
+		view.length, view.fds, view.nfds, view.fd_specs, view.flags) :
+	    channel_send_reply(request.native(), &view);
+	if (rc != 0)
+		return errno;
+	packet.Committed();
+	packet.Sent();
+	return 0;
+}
 uint32_t
 Connection::AllocateId()
 {
@@ -482,21 +563,40 @@ Connection::AllocateId()
 std::unique_ptr<Connection::Pending>
 Connection::TakePending()
 {
-	if (free_pending_.empty())
+	void *block = pending_.Take();
+	if (!block)
 		return std::make_unique<Pending>();
-	auto pending = std::move(free_pending_.back());
-	free_pending_.pop_back();
-	return pending;
+	auto *pending = ::new (block) Pending;
+	pending->pooled = true;
+	return std::unique_ptr<Pending>(pending);
 }
 void
-Connection::RecyclePending(std::unique_ptr<Pending> pending)
+Connection::Pending::operator delete(Pending *pending,
+    std::destroying_delete_t)
 {
-	pending->completion = nullptr;
-	pending->request = nullptr;
-	pending->prev = pending->next = nullptr;
-	// Capacity is reserved at creation, so this never allocates.
-	if (free_pending_.size() < free_pending_.capacity())
-		free_pending_.push_back(std::move(pending));
+	// A pooled record is deleted while its connection exists: the list
+	// is drained by Close() before the slab is destroyed.
+	bool pooled = pending->pooled;
+	Connection *owner = pending->owner;
+	pending->~Pending();
+	if (pooled)
+		owner->pending_.Put(pending);
+	else
+		::operator delete(pending);
+}
+std::unique_ptr<Incoming>
+Connection::NewIncoming(Message message)
+{
+	void *block = identity_->incoming.Take();
+	if (!block) {
+		auto incoming = std::make_unique<Incoming>(std::move(message));
+		incoming->origin_ = identity_;
+		return incoming;
+	}
+	auto *incoming = ::new (block) Incoming(std::move(message));
+	incoming->slab_ = &identity_->incoming;
+	incoming->origin_ = identity_;
+	return std::unique_ptr<Incoming>(incoming);
 }
 void
 Connection::Unlink(Pending *pending)
@@ -524,14 +624,53 @@ Connection::SendRequest(uint32_t id, uint64_t ordinal, Outgoing &packet,
 	    reinterpret_cast<uintptr_t>(channel_), id, ordinal);
 	FIDL_BSD_REQUEST_START(reinterpret_cast<uintptr_t>(this), id, ordinal,
 	    view.length, view.nfds);
-	if (channel_send_request(channel_, &view, OnReply, raw,
-		&raw->request) != 0) {
+	if (sync_timeout_ms_ >= 0) {
+		// CallSync(): request and reply in one system call when the
+		// kernel and the channel allow, else an ordinary send.  The
+		// completion may run inside channel_call_request(), so the
+		// record is linked and the descriptors leave the packet first:
+		// an accepted message owns them (the kernel closed the
+		// originals), a refused one leaves them to be closed here.
+		int timeout = std::exchange(sync_timeout_ms_, -1);
+		std::array<int, kMaxDescriptors> fds {};
+		std::copy_n(view.fds, view.nfds, fds.begin());
+		packet.ReleaseDescriptors();
+		raw->sync = true;
+		sync_id_ = id;
+		sync_done_ = false;
+		sync_result_ = 0;
+		raw->next = active_;
+		if (active_)
+			active_->prev = raw;
+		active_ = raw;
+		pending.release();
+		if (channel_call_request(channel_, &view, OnReply, raw,
+			&raw->request, timeout) != 0) {
+			int error = errno;
+			for (size_t i = 0; i < view.nfds; ++i)
+				close(fds[i]);
+			Unlink(raw);
+			std::unique_ptr<Pending> owned(raw);
+			sync_id_ = 0;
+			FIDL_BSD_REQUEST_DONE(reinterpret_cast<uintptr_t>(this),
+			    id, ordinal, error);
+			return error;
+		}
+		packet.Reset();
+		return 0;
+	}
+	int rc = packet.buffer() ?
+	    channel_outgoing_commit_request(packet.buffer(), view.length,
+		view.fds, view.nfds, view.fd_specs, view.flags, OnReply, raw,
+		&raw->request) :
+	    channel_send_request(channel_, &view, OnReply, raw, &raw->request);
+	if (rc != 0) {
 		int error = errno;
 		FIDL_BSD_REQUEST_DONE(reinterpret_cast<uintptr_t>(this), id,
 		    ordinal, error);
-		RecyclePending(std::move(pending));
 		return error;
 	}
+	packet.Committed();
 	packet.Sent();
 	// Owned by the list until OnReply completes it.
 	raw->next = active_;
@@ -564,13 +703,66 @@ Connection::OnReply(channel_request *request, channel_message *message,
 	    pending->ordinal, error);
 	if (error == EPROTO || error == ENOMEM)
 		self->Close(error);
+	if (pending->sync) {
+		self->sync_done_ = true;
+		self->sync_result_ = error;
+	}
 	try {
 		pending->completion(error, error ? nullptr : &incoming);
 	} catch (...) {
 		// User callbacks may not unwind across the C dispatch boundary.
 		self->Close(ECANCELED);
 	}
-	self->RecyclePending(std::move(owned_pending));
+}
+int
+Connection::CallSync(int timeout_ms, int (*issue)(void *), void *context)
+{
+	if (!issue || timeout_ms < 0)
+		return EINVAL;
+	if (error())
+		return error();
+	if (role_ != CHANNEL_ROLE_CLIENT)
+		return EINVAL;
+	sync_timeout_ms_ = timeout_ms;
+	sync_id_ = 0;
+	sync_done_ = false;
+	sync_result_ = 0;
+	int err = issue(context);
+	sync_timeout_ms_ = -1;
+	uint32_t id = std::exchange(sync_id_, 0);
+	if (err)
+		return err;
+	if (id == 0)
+		return EINVAL;
+	if (sync_done_)
+		return sync_result_;
+	// Sent the ordinary way: wait for this call under one deadline, as
+	// fidl_bsd_sync_wait_txid() does; a timeout cancels only this call.
+	struct timespec deadline;
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
+		return errno;
+	deadline.tv_sec += timeout_ms / 1000;
+	deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+	if (deadline.tv_nsec >= 1000000000L) {
+		deadline.tv_sec++;
+		deadline.tv_nsec -= 1000000000L;
+	}
+	while (!sync_done_) {
+		struct timespec now;
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+			return errno;
+		int64_t ms = (deadline.tv_sec - now.tv_sec) * INT64_C(1000) +
+		    (deadline.tv_nsec - now.tv_nsec) / 1000000;
+		if (ms <= 0) {
+			if (Cancel(id) != 0 || !sync_done_)
+				Close(ETIMEDOUT);
+			return ETIMEDOUT;
+		}
+		int e = Poll(ms > INT_MAX ? INT_MAX : static_cast<int>(ms));
+		if (e && !sync_done_)
+			return e;
+	}
+	return sync_result_;
 }
 void
 Connection::OnMessage(channel *, channel_message *message, void *context)
@@ -578,8 +770,7 @@ Connection::OnMessage(channel *, channel_message *message, void *context)
 	Message owned(message);
 	auto *self = static_cast<Connection *>(context);
 	try {
-		auto incoming = std::make_unique<Incoming>(std::move(owned));
-		incoming->origin_ = self->identity_;
+		auto incoming = self->NewIncoming(std::move(owned));
 		auto h = incoming->header();
 		if (incoming->Validate(h.ordinal, std::nullopt)) {
 			self->Close(EPROTO);

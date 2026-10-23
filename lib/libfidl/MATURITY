@@ -350,3 +350,15 @@ Conformance, evolution, world and VM pass (2026-10-10)
   from recent traffic, kept across EAGAIN and grown before dequeue: raw
   864 B and 2/1 allocations per call; p50 8.1 us raw, 10.4-10.7 us FIDL.
 
+
+Daemon conversions and platform versioning (2026-10-22)
+-------------------------------------------------------
+- Tree state (not the plan's): fourteen of the fifteen capability daemons
+  serve FIDL -- Time, Power, Device, Trace, Sysctl, Crypto, Audit, Network
+  (system.Network, .Admin, .State and, from this date, .PF), Notify, Log, VM,
+  Namespace, Extension and Filesystem (+OES).  BSDBluetooth is not converted;
+  BSDMemory serves nothing.  tools/build/fuchsia/DAEMONS.md has the table.
+- Every production library carries @available(platform="bsd", added=1); the
+  build compiles at FIDL_AVAILABLE (bsd:1).  Evolution test on platform bsd
+  proves added=2 elements absent at bsd:1 and present at bsd:2 (README
+  "Versioning").  Evidence: VALIDATION.json fidl_versioning, fidl_pf.

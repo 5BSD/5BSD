@@ -48,7 +48,6 @@ DIRDEPS+= \
 	sbin/atm/atmconfig \
 	sbin/camcontrol \
 	sbin/clri \
-	sbin/comcontrol \
 	sbin/conscontrol \
 	sbin/decryptcore \
 	sbin/ddb \
@@ -91,7 +90,6 @@ DIRDEPS+= \
 	sbin/mount_msdosfs \
 	sbin/mount_nfs \
 	sbin/mount_nullfs \
-	sbin/mount_udf \
 	sbin/mount_unionfs \
 	sbin/natd \
 	sbin/newfs \
@@ -309,7 +307,6 @@ DIRDEPS+= \
 	usr.bin/seq \
 	usr.bin/shar \
 	usr.bin/showmount \
-	usr.bin/smbutil \
 	usr.bin/sockstat \
 	usr.bin/soelim \
 	usr.bin/sort \
@@ -519,10 +516,6 @@ DIRDEPS+= \
 	usr.sbin/etcupdate \
 	usr.sbin/extattr \
 	usr.sbin/extattrctl \
-	usr.sbin/fdcontrol \
-	usr.sbin/fdformat \
-	usr.sbin/fdread \
-	usr.sbin/fdwrite \
 	usr.sbin/fifolog/fifolog_create \
 	usr.sbin/fifolog/fifolog_reader \
 	usr.sbin/fifolog/fifolog_writer \
@@ -579,7 +572,6 @@ DIRDEPS+= \
 	usr.sbin/mixer \
 	usr.sbin/mld6query \
 	usr.sbin/mlxcontrol \
-	usr.sbin/mount_smbfs \
 	usr.sbin/mountd \
 	usr.sbin/moused \
 	usr.sbin/mpsutil \
@@ -729,8 +721,6 @@ DIRDEPS+=	usr.sbin/efidp
 .endif
 
 DIRDEPS.amd64= \
-	sbin/bsdlabel \
-	sbin/fdisk \
 	sbin/nvmecontrol \
 	usr.sbin/acpi/acpiconf \
 	usr.sbin/acpi/acpidb \
@@ -747,20 +737,15 @@ DIRDEPS.amd64= \
 	usr.sbin/hyperv/tools \
 	usr.sbin/hyperv/tools/kvp \
 	usr.sbin/hyperv/tools/vss \
-	usr.sbin/lptcontrol \
 	usr.sbin/mptable \
 	usr.sbin/spkrtest \
 	usr.sbin/sade \
 	usr.sbin/zzz
 
 DIRDEPS.arm= \
-	sbin/bsdlabel \
-	sbin/fdisk \
 	usr.sbin/ofwdump
 
 DIRDEPS.i386= \
-	sbin/bsdlabel \
-	sbin/fdisk \
 	sbin/nvmecontrol \
 	usr.sbin/apm \
 	usr.sbin/btxld \
@@ -768,7 +753,6 @@ DIRDEPS.i386= \
 	usr.sbin/hyperv/tools \
 	usr.sbin/hyperv/tools/kvp \
 	usr.sbin/hyperv/tools/vss \
-	usr.sbin/lptcontrol \
 	usr.sbin/mptable \
 	usr.sbin/pnpinfo \
 	usr.sbin/sade \

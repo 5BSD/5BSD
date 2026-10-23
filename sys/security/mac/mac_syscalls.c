@@ -84,12 +84,6 @@ static int	kern___mac_get_path(struct thread *td, const char *path_p,
 static int	kern___mac_set_path(struct thread *td, const char *path_p,
 		    struct mac *mac_p, int follow);
 
-#ifdef COMPAT_FREEBSD32
-struct mac32 {
-	uint32_t	m_buflen;	/* size_t */
-	uint32_t	m_string;	/* char * */
-};
-#endif
 
 static int
 mac_label_copyin_string(struct mac *const mac, char **const u_string,
@@ -133,18 +127,6 @@ mac_label_copyin(const void *const u_mac, struct mac *const mac,
 {
 	int error;
 
-#ifdef COMPAT_FREEBSD32
-	if (SV_CURPROC_FLAG(SV_ILP32)) {
-		struct mac32 mac32;
-
-		error = copyin(u_mac, &mac32, sizeof(mac32));
-		if (error != 0)
-			return (error);
-
-		CP(mac32, *mac, m_buflen);
-		PTRIN_CP(mac32, *mac, m_string);
-	} else
-#endif
 	{
 		error = copyin(u_mac, mac, sizeof(*mac));
 		if (error != 0)
@@ -314,17 +296,6 @@ mac_get_prison(struct thread *const td, struct prison *pr,
 	bool locked = true;
 
 	mtx_assert(&pr->pr_mtx, MA_OWNED);
-#ifdef COMPAT_FREEBSD32
-	if (SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-		struct mac32 mac32;
-
-		error = vfs_copyopt(opts, "mac.label", &mac32, sizeof(mac32));
-		if (error == 0) {
-			CP(mac32, mac, m_buflen);
-			PTRIN_CP(mac32, mac, m_string);
-		}
-	} else
-#endif
 		error = vfs_copyopt(opts, "mac.label", &mac, sizeof(mac));
 	if (error) {
 		if (error != ENOENT)
@@ -390,17 +361,6 @@ mac_set_prison_prepare(struct thread *const td, struct vfsoptlist *opts,
 	struct label *intlabel;
 	int error;
 
-#ifdef COMPAT_FREEBSD32
-	if (SV_PROC_FLAG(td->td_proc, SV_ILP32)) {
-		struct mac32 mac32;
-
-		error = vfs_copyopt(opts, "mac.label", &mac32, sizeof(mac32));
-		if (error == 0) {
-			CP(mac32, mac, m_buflen);
-			PTRIN_CP(mac32, mac, m_string);
-		}
-	} else
-#endif
 		error = vfs_copyopt(opts, "mac.label", &mac, sizeof(mac));
 	if (error) {
 		if (error != ENOENT)

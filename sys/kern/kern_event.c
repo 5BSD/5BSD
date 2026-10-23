@@ -78,10 +78,6 @@
 #include <sys/ktrace.h>
 #endif
 #include <machine/atomic.h>
-#ifdef COMPAT_FREEBSD32
-#include <compat/freebsd32/freebsd32.h>
-#include <compat/freebsd32/freebsd32_util.h>
-#endif
 
 #include <vm/uma.h>
 
@@ -3438,9 +3434,6 @@ kern_proc_kqueue_report_one(struct sbuf *s, struct proc *p,
     int kq_fd, struct kqueue *kq, struct knote *kn, bool compat32 __unused)
 {
 	struct kinfo_knote kin;
-#ifdef COMPAT_FREEBSD32
-	struct kinfo_knote32 kin32;
-#endif
 	int error;
 
 	if (kn->kn_status == KN_MARKER)
@@ -3454,13 +3447,7 @@ kern_proc_kqueue_report_one(struct sbuf *s, struct proc *p,
 	KQ_UNLOCK_FLUX(kq);
 	if (kn->kn_fop->f_userdump != NULL)
 		(void)kn->kn_fop->f_userdump(p, kn, &kin);
-#ifdef COMPAT_FREEBSD32
-	if (compat32) {
-		freebsd32_kinfo_knote_to_32(&kin, &kin32);
-		error = sbuf_bcat(s, &kin32, sizeof(kin32));
-	} else
-#endif
-		error = sbuf_bcat(s, &kin, sizeof(kin));
+	error = sbuf_bcat(s, &kin, sizeof(kin));
 	KQ_LOCK(kq);
 	kn_leave_flux(kn);
 	return (error);
@@ -3688,11 +3675,7 @@ sysctl_kern_proc_kqueue(SYSCTL_HANDLER_ARGS)
 		return (EINVAL);
 
 	td = curthread;
-#ifdef COMPAT_FREEBSD32
-	compat32 = SV_CURPROC_FLAG(SV_ILP32);
-#else
 	compat32 = false;
-#endif
 
 	error = pget((pid_t)name[0], PGET_NOTWEXIT, &p);
 	if (error != 0)

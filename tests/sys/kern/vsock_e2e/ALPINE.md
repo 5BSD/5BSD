@@ -312,11 +312,11 @@ The console checkpoint cases apply the same rule to host port sessions.  A
 live split or packed console connection must reject portable checkpoint,
 continue bidirectional traffic after rollback, and close cleanly before the
 listener-only state is saved and restored.
-The 9P checkpoint case sets `CHECKPOINT_ACTIVE_9P_REJECT=yes`: it first keeps
-the export mounted with live fids, requires checkpoint admission to fail, and
-then proves that the same source mount still reads and writes.  Only after
-that rollback proof does it unmount and run the portable idle-session
-checkpoint/restore path.
+The 9P checkpoint cases set `CHECKPOINT_ACTIVE_9P=yes`. They keep the export
+mounted with an open guest file descriptor through a live checkpoint and a
+suspend/restore. After each cut, they read through the retained descriptor,
+check the mount, and write a host-visible probe. Combined cases that repeat
+the restore check the descriptor again before device rebind.
 `checkpoint-fs-active-modern` and
 `checkpoint-fs-active-packed-modern` supply a stable backend identity, keep
 the Linux mount and an actual guest file descriptor active, complete both a

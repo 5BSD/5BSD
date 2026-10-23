@@ -93,6 +93,34 @@ class Wire:
     def limit(self, t):
         return t.get('maybe_element_count', UNBOUNDED)
 
+    def has_handles(self, t, active=None):
+        """Whether a C value of this type can hold outgoing descriptors."""
+        k = t['kind_v2']
+        if k in ('handle', 'endpoint'):
+            return True
+        if k in ('array', 'vector'):
+            return self.has_handles(t['element_type'], active)
+        if k == 'identifier':
+            return self.aggregate_has_handles(t['identifier'], active)
+        return False
+
+    def aggregate_has_handles(self, ident, active=None):
+        kind, d = self.t.decls[ident]
+        if kind in ('enum', 'bits'):
+            return False
+        cache = self.__dict__.setdefault('_handles', {})
+        if ident in cache:
+            return cache[ident]
+        active = set() if active is None else active
+        if ident in active:
+            return False     # a box<> cycle: the other path decides
+        active.add(ident)
+        result = any(self.has_handles(m['type'], active) for m in self.members(ident))
+        active.discard(ident)
+        if not active:
+            cache[ident] = result
+        return result
+
     def elem(self, t, expression):
         return self.t.elem(t, expression)
 
@@ -253,6 +281,47 @@ class Wire:
             return out + ['}']
         raise ValueError('unsupported C wire type: ' + k)
 
+    # -- releasing owned descriptors of a failed call --------------------------
+    def rel(self, t, v):
+        """Close the owned descriptors (fidl_bsd_fd_owned()) in C value v."""
+        k = t['kind_v2']
+        nullable = t.get('nullable', False)
+        if k in ('handle', 'endpoint'):
+            return [f'r.Release({v});']
+        if k == 'identifier':
+            kind, _ = self.decl(t)
+            fn = 'CWRelease_' + cname(t['identifier'])
+            if nullable:
+                return [f'if ({v}) {fn}(r, {v});']
+            return [f'{fn}(r, &{v});']
+        e_t = t['element_type']; i = self.fresh('i')
+        if k == 'vector':
+            # The caller's own count: every descriptor it described is taken.
+            out = [f'if ({v}) for (size_t {i} = 0; {i} < {v}_size; ++{i}) {{']
+        else:
+            out = [f'for (size_t {i} = 0; {i} < {t["element_count"]}; ++{i}) {{']
+        out += ['  ' + l for l in self.rel(e_t, self.elem(e_t, f'{v}[{i}]'))]
+        return out + ['}']
+
+    def release(self, ident, kind, cn, out):
+        members = [m for m in self.members(ident) if self.has_handles(m['type'])]
+        body = [f'inline void CWRelease_{cn}(const fidl::bsd::cwire::OwnedRelease& r, const {cn}* v) {{',
+                '(void)r; (void)v;']
+        if kind == 'union':
+            body += ['switch (v->tag) {']
+            for m in members:
+                body += [f'case {m["ordinal"]}ULL:']
+                body += ['  ' + l for l in self.rel(m['type'], self.elem(m['type'], 'v->value.' + m['_c_name']))]
+                body += ['  break;']
+            body += ['default: break;', '}']
+        else:
+            for m in members:
+                lines = self.rel(m['type'], 'v->' + m['_c_name'])
+                if kind == 'table':
+                    lines = [f'if (v->has_{m["_c_name"]}) {{', *['  ' + l for l in lines], '}']
+                body += lines
+        out += body + ['}']
+
     # -- aggregates ------------------------------------------------------------
     def members(self, ident):
         return self.t.members(ident)
@@ -265,7 +334,11 @@ class Wire:
             cn = cname(ident)
             decls += [f'inline void CWEnc_{cn}(fidl::bsd::cwire::Encoder&, const {cn}*, size_t, size_t);',
                       f'inline bool CWDec_{cn}(fidl::bsd::cwire::Decoder&, size_t, {cn}*, size_t);']
+            if self.aggregate_has_handles(ident):
+                decls += [f'inline void CWRelease_{cn}(const fidl::bsd::cwire::OwnedRelease&, const {cn}*);']
             getattr(self, kind)(ident, d, cn, defs)
+            if self.aggregate_has_handles(ident):
+                self.release(ident, kind, cn, defs)
         return decls + defs
 
     def struct(self, ident, d, cn, out):

@@ -709,34 +709,8 @@ sctl_client_reply_validation_body()
 	done
 }
 
-atf_test_case sctl_client_cache_status
-sctl_client_cache_status_body()
-{
-	tool="$(atf_get_srcdir)/switchboardctl_success_bin"
-	label=system.Time/bsdtime
-	counters='pid=123 cache_selected=1 executable_mappings=3 executable_virtual_bytes=12288'
-
-	atf_check -s exit:0 -o inline:"${counters}\n" -e empty \
-	    env SCTL_EXPECT_OP=8 SCTL_EXPECT_PAYLOAD="$label" \
-	    SCTL_SUMMARY="${counters}
-" "$tool" cache-status "$label"
-	atf_check -s exit:1 -o empty -e match:'cache-status: Device busy' \
-	    env SCTL_EXPECT_OP=8 SCTL_EXPECT_PAYLOAD="$label" \
-	    SCTL_REPLY=status "$tool" cache-status "$label"
-	atf_check -s exit:69 -o empty \
-	    -e match:'cannot reach switchboard control plane.*Input/output error' \
-	    env SCTL_FAIL=call "$tool" cache-status "$label"
-	atf_check -s exit:76 -o empty -e match:'malformed control reply' \
-	    env SCTL_EXPECT_OP=8 SCTL_EXPECT_PAYLOAD="$label" \
-	    SCTL_REPLY=trailing "$tool" cache-status "$label"
-	atf_check -s exit:64 -o empty -e match:'usage:' "$tool" cache-status
-	atf_check -s exit:64 -o empty -e match:'usage:' \
-	    "$tool" cache-status "$label" extra
-}
-
 atf_init_test_cases()
 {
-	atf_add_test_case sctl_client_cache_status
 	atf_add_test_case sctl_client_reply_validation
 	atf_add_test_case sctl_oversized_payload
 	atf_add_test_case switchboardctl_status

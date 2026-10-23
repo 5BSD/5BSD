@@ -9,7 +9,6 @@ DIRDEPS = \
 	lib/libcompiler_rt \
 	lib/libevent1 \
 	lib/libnv \
-	lib/libpfctl \
 
 
 .include <dirdeps.mk>

@@ -28,9 +28,6 @@
 #include "opt_hid.h"
 
 #include <sys/param.h>
-#ifdef COMPAT_FREEBSD32
-#include <sys/abi_compat.h>
-#endif
 #include <sys/bus.h>
 #include <sys/conf.h>
 #include <sys/fcntl.h>
@@ -384,34 +381,11 @@ u2f_write(struct cdev *dev, struct uio *uio, int flag)
 	return (error);
 }
 
-#ifdef COMPAT_FREEBSD32
-static void
-update_ugd32(const struct usb_gen_descriptor *ugd,
-    struct usb_gen_descriptor32 *ugd32)
-{
-	/* Don't update hgd_data pointer */
-	CP(*ugd, *ugd32, ugd_lang_id);
-	CP(*ugd, *ugd32, ugd_maxlen);
-	CP(*ugd, *ugd32, ugd_actlen);
-	CP(*ugd, *ugd32, ugd_offset);
-	CP(*ugd, *ugd32, ugd_config_index);
-	CP(*ugd, *ugd32, ugd_string_index);
-	CP(*ugd, *ugd32, ugd_iface_index);
-	CP(*ugd, *ugd32, ugd_altif_index);
-	CP(*ugd, *ugd32, ugd_endpt_index);
-	CP(*ugd, *ugd32, ugd_report_type);
-	/* Don't update reserved */
-}
-#endif
 
 static int
 u2f_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag,
     struct thread *td)
 {
-#ifdef COMPAT_FREEBSD32
-	struct usb_gen_descriptor local_ugd;
-	struct usb_gen_descriptor32 *ugd32 = NULL;
-#endif
 	struct u2f_softc *sc = dev->si_drv1;
 	struct usb_gen_descriptor *ugd = (struct usb_gen_descriptor *)addr;
 	uint32_t size;
@@ -421,27 +395,6 @@ u2f_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag,
 	if (sc == NULL)
 		return (EIO);
 
-#ifdef COMPAT_FREEBSD32
-	switch (cmd) {
-	case USB_GET_REPORT_DESC32:
-		cmd = _IOC_NEWTYPE(cmd, struct usb_gen_descriptor);
-		ugd32 = (struct usb_gen_descriptor32 *)addr;
-		ugd = &local_ugd;
-		PTRIN_CP(*ugd32, *ugd, ugd_data);
-		CP(*ugd32, *ugd, ugd_lang_id);
-		CP(*ugd32, *ugd, ugd_maxlen);
-		CP(*ugd32, *ugd, ugd_actlen);
-		CP(*ugd32, *ugd, ugd_offset);
-		CP(*ugd32, *ugd, ugd_config_index);
-		CP(*ugd32, *ugd, ugd_string_index);
-		CP(*ugd32, *ugd, ugd_iface_index);
-		CP(*ugd32, *ugd, ugd_altif_index);
-		CP(*ugd32, *ugd, ugd_endpt_index);
-		CP(*ugd32, *ugd, ugd_report_type);
-		/* Don't copy reserved */
-		break;
-	}
-#endif
 
 	/* fixed-length ioctls handling */
 	switch (cmd) {
@@ -452,10 +405,6 @@ u2f_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag,
 	case USB_GET_REPORT_DESC:
 		size = MIN(sc->sc_rdesc_size, ugd->ugd_maxlen);
 		ugd->ugd_actlen = size;
-#ifdef COMPAT_FREEBSD32
-		if (ugd32 != NULL)
-			update_ugd32(ugd, ugd32);
-#endif
 		if (ugd->ugd_data == NULL)
 			return (0);		/* descriptor length only */
 

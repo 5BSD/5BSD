@@ -35,17 +35,12 @@
 #include <sys/signalvar.h>
 #include <compat/linux/linux_emul.h>
 
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 #include <machine/frame.h>
 #endif
 
-#ifdef COMPAT_LINUX32
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 
 
 enum linux_rseq_cpu_id_state {
@@ -92,7 +87,7 @@ struct linux_rseq {
 	uint32_t pad;
 } __attribute__((aligned(4 * sizeof(uint64_t))));
 
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 
 static int
 linux_rseq_set_u32(struct linux_rseq *area, size_t off, uint32_t value)

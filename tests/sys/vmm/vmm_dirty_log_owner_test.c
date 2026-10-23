@@ -31,6 +31,53 @@ static const struct vmm_dirty_log_range tracked_range = {
 	.length = 4 * DLPAGE,
 };
 
+ATF_TC_WITHOUT_HEAD(sparse_owner_tracks_ram_across_mmio_hole);
+ATF_TC_BODY(sparse_owner_tracks_ram_across_mmio_hole, tc)
+{
+	const struct vmm_dirty_log_map_entry sparse_entries[] = {
+		{ .range = { .gpa = 0, .length = 2 * DLPAGE },
+		  .flags = VMM_DIRTY_LOG_MAP_F_COLLECTABLE },
+		{ .range = { .gpa = UINT64_C(0x100000000) - DLPAGE,
+		    .length = DLPAGE },
+		  .flags = VMM_DIRTY_LOG_MAP_F_READONLY_ROM },
+		{ .range = { .gpa = UINT64_C(0x100000000),
+		    .length = 2 * DLPAGE },
+		  .flags = VMM_DIRTY_LOG_MAP_F_COLLECTABLE },
+	};
+	const struct vmm_dirty_log_range all = {
+		.gpa = 0,
+		.length = UINT64_C(0x100000000) + 2 * DLPAGE,
+	};
+	const struct vmm_dirty_log_range hole = {
+		.gpa = 3 * DLPAGE,
+		.length = DLPAGE,
+	};
+	const struct vmm_dirty_log_range highmem = {
+		.gpa = UINT64_C(0x100000000),
+		.length = 2 * DLPAGE,
+	};
+	struct vmm_dirty_log_owner owner = { 0 };
+	struct vmm_dirty_log_ticket ticket;
+
+	(void)tc;
+	ATF_CHECK_EQ(vmm_dirty_log_owner_enable(&owner, sparse_entries,
+	    nitems(sparse_entries), MAPGEN, &all), EFAULT);
+	ATF_REQUIRE_EQ(vmm_dirty_log_owner_enable_sparse(&owner,
+	    sparse_entries, nitems(sparse_entries), MAPGEN, &all), 0);
+	ATF_REQUIRE_EQ(vmm_dirty_log_owner_begin(&owner, sparse_entries,
+	    nitems(sparse_entries), MAPGEN, &hole,
+	    VMM_DIRTY_LOG_COLLECT_CLEAR, &ticket), 0);
+	ATF_REQUIRE_EQ(vmm_dirty_log_owner_finish(&owner, &ticket), 0);
+	ATF_REQUIRE_EQ(vmm_dirty_log_owner_begin(&owner, sparse_entries,
+	    nitems(sparse_entries), MAPGEN, &highmem,
+	    VMM_DIRTY_LOG_COLLECT_OBSERVE, &ticket), 0);
+	ATF_REQUIRE_EQ(vmm_dirty_log_owner_finish(&owner, &ticket), 0);
+	ATF_REQUIRE_EQ(vmm_dirty_log_owner_invalidate(&owner), 0);
+	ATF_CHECK_EQ(owner.allow_holes, 0);
+	ATF_CHECK_EQ(vmm_dirty_log_owner_enable(&owner, sparse_entries,
+	    nitems(sparse_entries), MAPGEN, &all), EFAULT);
+}
+
 ATF_TC_WITHOUT_HEAD(observe_and_clear_have_distinct_generation_rules);
 ATF_TC_BODY(observe_and_clear_have_distinct_generation_rules, tc)
 {
@@ -288,6 +335,7 @@ ATF_TC_BODY(malformed_noncollecting_owner_cannot_transition, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, sparse_owner_tracks_ram_across_mmio_hole);
 	ATF_TP_ADD_TC(tp, observe_and_clear_have_distinct_generation_rules);
 	ATF_TP_ADD_TC(tp, rejected_and_aborted_operations_preserve_tracking);
 	ATF_TP_ADD_TC(tp, invalidation_revokes_live_ticket_and_generation_exhausts);

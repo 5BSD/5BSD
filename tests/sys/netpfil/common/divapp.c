@@ -40,14 +40,22 @@
 #include <netinet/ip.h>
 
 
+/*
+ * 5BSD: pf "divert-packet port N" delivers to OpenBSD divert(4) sockets,
+ * one per address family (AF_INET/AF_INET6, SOCK_RAW, IPPROTO_DIVERT).
+ * A packet is written back with the address recvfrom() returned:
+ * inbound packets carry the receiving interface address and are
+ * received again, outbound ones the unspecified address and are sent.
+ */
 struct context {
 	unsigned short divert_port;
 	bool divert_back;
 	bool expect_single_pkt;
 
-	int fd;
-	struct sockaddr_in sin;
-	socklen_t sin_len;
+	int fd[2];
+	int rfd;
+	struct sockaddr_storage ss;
+	socklen_t ss_len;
 	char pkt[IP_MAXPACKET];
 	ssize_t pkt_n;
 };
@@ -55,18 +63,28 @@ struct context {
 static void
 init(struct context *c)
 {
-	c->fd = socket(PF_DIVERT, SOCK_RAW, 0);
-	if (c->fd == -1)
-		errx(EX_OSERR, "init: Cannot create divert socket.");
+	struct sockaddr_in sin;
+	struct sockaddr_in6 sin6;
 
-	memset(&c->sin, 0, sizeof(c->sin));
-	c->sin.sin_family = AF_INET;
-	c->sin.sin_port = htons(c->divert_port);
-	c->sin.sin_addr.s_addr = INADDR_ANY;
-	c->sin_len = sizeof(struct sockaddr_in);
+	c->fd[0] = socket(AF_INET, SOCK_RAW, IPPROTO_DIVERT);
+	if (c->fd[0] == -1)
+		err(EX_OSERR, "init: Cannot create inet divert socket");
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_len = sizeof(sin);
+	sin.sin_family = AF_INET;
+	sin.sin_port = htons(c->divert_port);
+	if (bind(c->fd[0], (struct sockaddr *)&sin, sizeof(sin)) != 0)
+		err(EX_OSERR, "init: Cannot bind inet divert socket");
 
-	if (bind(c->fd, (struct sockaddr *) &c->sin, c->sin_len) != 0)
-		errx(EX_OSERR, "init: Cannot bind divert socket.");
+	c->fd[1] = socket(AF_INET6, SOCK_RAW, IPPROTO_DIVERT);
+	if (c->fd[1] == -1)
+		err(EX_OSERR, "init: Cannot create inet6 divert socket");
+	memset(&sin6, 0, sizeof(sin6));
+	sin6.sin6_len = sizeof(sin6);
+	sin6.sin6_family = AF_INET6;
+	sin6.sin6_port = htons(c->divert_port);
+	if (bind(c->fd[1], (struct sockaddr *)&sin6, sizeof(sin6)) != 0)
+		err(EX_OSERR, "init: Cannot bind inet6 divert socket");
 }
 
 static ssize_t
@@ -77,18 +95,22 @@ recv_pkt(struct context *c)
 	int s;
 
 	FD_ZERO(&readfds);
-	FD_SET(c->fd, &readfds);
+	FD_SET(c->fd[0], &readfds);
+	FD_SET(c->fd[1], &readfds);
 	timeout.tv_sec = 3;
 	timeout.tv_usec = 0;
 
-	s = select(c->fd + 1, &readfds, 0, 0, &timeout);
+	s = select((c->fd[0] > c->fd[1] ? c->fd[0] : c->fd[1]) + 1,
+	    &readfds, 0, 0, &timeout);
 	if (s == -1)
 		errx(EX_IOERR, "recv_pkt: select() errors.");
-	if (s != 1) /* timeout */
+	if (s < 1) /* timeout */
 		return (-1);
 
-	c->pkt_n = recvfrom(c->fd, c->pkt, sizeof(c->pkt), 0,
-	    (struct sockaddr *) &c->sin, &c->sin_len);
+	c->rfd = FD_ISSET(c->fd[0], &readfds) ? c->fd[0] : c->fd[1];
+	c->ss_len = sizeof(c->ss);
+	c->pkt_n = recvfrom(c->rfd, c->pkt, sizeof(c->pkt), 0,
+	    (struct sockaddr *) &c->ss, &c->ss_len);
 	if (c->pkt_n == -1)
 		errx(EX_IOERR, "recv_pkt: recvfrom() errors.");
 
@@ -100,8 +122,8 @@ send_pkt(struct context *c)
 {
 	ssize_t n;
 
-	n = sendto(c->fd, c->pkt, c->pkt_n, 0,
-	    (struct sockaddr *) &c->sin, c->sin_len);
+	n = sendto(c->rfd, c->pkt, c->pkt_n, 0,
+	    (struct sockaddr *) &c->ss, c->ss_len);
 	if (n == -1)
 		err(EX_IOERR, "send_pkt: sendto() errors");
 	if (n != c->pkt_n)

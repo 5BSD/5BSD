@@ -1,26 +1,38 @@
-.PATH: ${SRCTOP}/sys/netpfil/pf
+# OpenBSD PF (contrib/openbsd-pf/sys/net) built for 5BSD through the
+# compatibility layer in sys/netpfil/openbsd-pf.
+
+.PATH: ${SRCTOP}/contrib/openbsd-pf/sys/net ${SRCTOP}/contrib/openbsd-pf/sys/netinet \
+	${SRCTOP}/sys/netpfil/openbsd-pf
 
 KMOD=	pf
-SRCS=	pf.c pf_if.c pf_lb.c pf_osfp.c pf_ioctl.c pf_norm.c pf_table.c \
-	pf_ruleset.c pf_nl.c pf_nv.c pf_syncookies.c in4_cksum.c inet_nat64.c \
-	bus_if.h device_if.h \
-	opt_pf.h opt_inet.h opt_inet6.h opt_bpf.h opt_sctp.h opt_global.h \
-	opt_kern_tls.h
+SRCS=	pf.c pf_if.c pf_ioctl.c pf_lb.c pf_norm.c pf_osfp.c pf_ruleset.c \
+	pf_syncookies.c pf_table.c radix.c inet_nat64.c in4_cksum.c
+SRCS+=	if_pflog.c if_pflow.c if_pfsync.c
+# 5BSD glue
+GLUE=	openbsd_compat.c openbsd_net.c openbsd_ifq.c pf_freebsd.c pf_sdt.c \
+	pf_divert.c pf_dummynet.c pf_ether.c pf_jail.c pf_pfsync.c pf_sctp.c \
+	pf_quota.c pf_sysctl.c
+SRCS+=	${GLUE}
+CFLAGS.radix.c+=	-DOBSD_RADIX_IMPL
+.for f in ${GLUE}
+CFLAGS.${f}+=	-DOPENBSD_PF_GLUE
+.endfor
+SRCS+=	opt_inet.h opt_inet6.h opt_bpf.h opt_global.h
 
-.if !defined(KERNBUILDDIR)
-# pflog can be loaded as a module, have the additional checks turned on
-# pfsync can be loaded as a module, have the additional checks turned on
-opt_pf.h:
-	echo "#define DEV_PF 1" > ${.TARGET}
-	echo "#define DEV_PFLOG 1" >> ${.TARGET}
-	echo "#define DEV_PFSYNC 1" >> ${.TARGET}
+# Native generated-offset helpers must not include the PF compatibility
+# header before genoffset.c defines GENOFFSET (a self-dependency on offset.inc).
+# Keep wrapper headers before the native sys include directory.
+CFLAGS+=	-I${SRCTOP}/sys/netpfil/openbsd-pf/include
+.for f in ${SRCS:M*.c}
+CFLAGS.${f}+=	-include ${SRCTOP}/sys/netpfil/openbsd-pf/openbsd_compat.h
+CFLAGS.${f}+=	-DOPENBSD_PF
+.endfor
 
-.if defined(VIMAGE)
-opt_global.h:
-	echo "#define VIMAGE 1" >> ${.TARGET}
-.endif
-.endif
-
-EXPORT_SYMS=	YES
+# OpenBSD code is not written for these 5BSD warning defaults.
+CWARNFLAGS+=	-Wno-missing-prototypes -Wno-strict-prototypes -Wno-format \
+		-Wno-incompatible-pointer-types-discards-qualifiers \
+		-Wno-cast-qual -Wno-unused-but-set-variable \
+		-Wno-pointer-sign -Wno-sign-compare -Wno-address-of-packed-member \
+		-Wno-constant-conversion
 
 .include <bsd.kmod.mk>

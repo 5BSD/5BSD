@@ -341,6 +341,9 @@ ttydev_open(struct cdev *dev, int oflags, int devtype __unused,
 		}
 	}
 	tp->t_flags |= TF_OPENCLOSE;
+	error = ttydevsw_check_open(tp);
+	if (error != 0)
+		goto done;
 
 	/*
 	 * Make sure the "tty" and "cua" device cannot be opened at the

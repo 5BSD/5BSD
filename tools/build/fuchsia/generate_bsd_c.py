@@ -13,9 +13,11 @@ def generate_c(ir, root, cpp, dependencies=()):
     types = CTypes(ir, cpp, used, dependencies)
     h=['/* Generated C bindings; do not edit. */','#pragma once','#include <fidl/bsd/runtime_c.h>','#include <stdbool.h>',
        '#ifdef __cplusplus','extern "C" {','#endif',
-       '/* Outgoing buffers and descriptors are borrowed; descriptors are duplicated.',
-       ' * Callback buffers last until return. Take a callback descriptor with',
-       ' * fidl_bsd_take_fd() to retain it. Retain request contexts for deferred replies. */']
+       '/* Outgoing buffers and descriptors are borrowed; descriptors are duplicated',
+       ' * unless marked with fidl_bsd_fd_owned(), which the call takes and closes in',
+       ' * every outcome. Callback buffers last until return. Take a callback',
+       ' * descriptor with fidl_bsd_take_fd() to retain it. Retain request contexts',
+       ' * for deferred replies. */']
     cc=['// Generated C bridge; compile as C++20.','#include <fidl/bsd/c_bridge.h>','#include <fidl/bsd/c_wire.h>',
         '#include <fidl/'+library+'/cpp/bsd.h>','#include <fidl/'+library+'/c/bridge.h>', 'using fidl::bsd::CBoundary;', 'using namespace fidl::bsd::generated;']
     h += types.header()
@@ -35,12 +37,30 @@ def generate_c(ir, root, cpp, dependencies=()):
         if ident == 'fidl.bsd/Empty':
             return 'fidl_bsd_empty', 0
         return cname(ident), types.decls[ident][1]['type_shape_v2']['inline_size']
+    def has_handles(ident):
+        return ident != 'fidl.bsd/Empty' and wire.aggregate_has_handles(ident)
     def encode_body(ident, value):
+        # A payload with descriptors releases the owned ones a failed encode
+        # did not attach (the packet closes those it did), so the caller's
+        # fidl_bsd_fd_owned() descriptors are consumed in every outcome.
         ctype, size = payload(ident)
         if not size:
             return '[](fidl::bsd::Outgoing&) -> int { return 0; }'
+        if not has_handles(ident):
+            return (f'[&](fidl::bsd::Outgoing& out) -> int {{ fidl::bsd::cwire::Encoder e(out); '
+                    f'size_t at = e.Alloc({size}); CWEnc_{ctype}(e, {value}, at, 0); return e.error(); }}')
         return (f'[&](fidl::bsd::Outgoing& out) -> int {{ fidl::bsd::cwire::Encoder e(out); '
-                f'size_t at = e.Alloc({size}); CWEnc_{ctype}(e, {value}, at, 0); return e.error(); }}')
+                f'try {{ size_t at = e.Alloc({size}); CWEnc_{ctype}(e, {value}, at, 0); }} '
+                f'catch (const std::bad_alloc&) {{ e.Fail(ENOMEM); }} '
+                f'if (e.error()) CWRelease_{ctype}(fidl::bsd::cwire::OwnedRelease(e), {value}); return e.error(); }}')
+    def argument_check(ident, value, condition):
+        # Rejected arguments still consume the owned descriptors of a
+        # non-null payload.
+        ctype, _ = payload(ident)
+        if not has_handles(ident):
+            return f'  if({condition}) return EINVAL;'
+        return (f'  if(!{value}) return EINVAL;\n'
+                f'  if({condition}) {{ CWRelease_{ctype}(fidl::bsd::cwire::OwnedRelease(), {value}); return EINVAL; }}')
     def decode_body(ident, decoder, incoming, out):
         # C++ statement yielding int error (0, EPROTO).
         ctype, size = payload(ident)
@@ -80,7 +100,7 @@ def generate_c(ir, root, cpp, dependencies=()):
                    '    fidl::bsd::cwire::Arena arena;', f'    {req} data{{}};', '    fidl::bsd::cwire::Decoder decoder(arena);',
                    f'    if (int error = {decode_body(ident, "decoder", "*message", "&data")}) {{ c.Close(error); return; }}',
                    f'    if (!s.handlers.{mn}) {{ c.Close(ENOSYS); return; }}',
-                   '    fidl::bsd::CRequest request(new fidl_bsd_request);', '    request->value = std::move(message);',
+                   '    fidl::bsd::CRequest request = fidl::bsd::NewCRequest(s.connection, std::move(message));',
                    f'    s.handlers.{mn}(s.context, s.connection, request.get(), &data);', '    return;', '  }']
         cc += ['  default: {',
                f'    int error = c.HandleUnknown(*message, {openness});',
@@ -130,7 +150,9 @@ def generate_c(ir, root, cpp, dependencies=()):
                     framework = ('      if (data.tag == 3ULL) { callback(context, EOPNOTSUPP, nullptr); return; }'
                                  if not m['strict'] else None)
                     cc += [f'extern "C" int {func}(fidl_bsd_connection* connection,const {req}* request,{func}_callback callback,void* context,uint32_t* txid) {{',
-                           '  if(!connection || !request || !callback || !txid) return EINVAL;', '  *txid=0;', '  return CBoundary([&]() -> int {',
+                           '  if(txid) *txid=0;',
+                           argument_check(reqid, 'request', '!connection || !request || !callback || !txid'),
+                           '  return CBoundary([&]() -> int {',
                            f'    EnsureEvents_{pc}(connection);',
                            '    fidl::bsd::Connection* c = connection->value.get();',
                            f'    auto result = c->CallRaw({ordinal}ULL, {flexible}, {encode_body(reqid, "request")},',
@@ -145,14 +167,15 @@ def generate_c(ir, root, cpp, dependencies=()):
                            '      callback(context, 0, &data);', '    });',
                            '    if(result.is_error()) return result.error_value(); *txid=result.value(); return 0;', '  });','}',
                            f'extern "C" int {func}_reply(fidl_bsd_connection* connection,fidl_bsd_request* request,const {resp}* response) {{',
-                           '  if(!connection || !request || !response) return EINVAL;', '  if(request->value->replied()) return EALREADY;', '  return CBoundary([&]() -> int {',
-                           f'    if (request->value->Validate({ordinal}ULL, request->value->header().txid)) return EPROTO;',
-                           f'    return connection->value->ReplyRaw(*request->value, {flexible}, {encode_body(respid, "response")});',
+                           argument_check(respid, 'response', '!connection || !request || !response'),
+                           '  return CBoundary([&]() -> int {',
+                           f'    return connection->value->ReplyRaw(*request->value, {flexible}, {encode_body(respid, "response")}, {ordinal}ULL);',
                            '  });','}']
                 else:
                     h += [f'int {func}(struct fidl_bsd_connection *, const struct {req} *);']
                     cc += [f'extern "C" int {func}(fidl_bsd_connection* connection,const {req}* request) {{',
-                           '  if(!connection || !request) return EINVAL;', '  return CBoundary([&]() -> int {',
+                           argument_check(reqid, 'request', '!connection || !request'),
+                           '  return CBoundary([&]() -> int {',
                            f'    EnsureEvents_{pc}(connection);',
                            f'    return connection->value->SendRaw({ordinal}ULL, {flexible}, {encode_body(reqid, "request")});',
                            '  });','}']
@@ -160,7 +183,7 @@ def generate_c(ir, root, cpp, dependencies=()):
                 respid=m['maybe_response_payload']['identifier']; resp=cname(respid)
                 h += [f'int {func}(struct fidl_bsd_connection *, const struct {resp} *);']
                 cc += [f'extern "C" int {func}(fidl_bsd_connection* connection,const {resp}* event) {{',
-                       '  if(!connection || !event) return EINVAL;',
+                       argument_check(respid, 'event', '!connection || !event'),
                        f'  return CBoundary([&]() -> int {{ return connection->value->SendRaw({ordinal}ULL, {flexible}, {encode_body(respid, "event")}); }});','}']
         if events or p['openness'] != 'closed':
             h += [f'struct {pc}_events {{']

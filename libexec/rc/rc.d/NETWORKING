@@ -3,8 +3,8 @@
 #
 
 # PROVIDE: NETWORKING
-# REQUIRE: netif netwait netoptions routing ppp stf
-# REQUIRE: defaultroute route6d resolv bridge
+# REQUIRE: netif netwait netoptions routing ppp
+# REQUIRE: defaultroute resolv bridge
 # REQUIRE: static_arp static_ndp
 
 #	This is a dummy dependency, for services which require networking

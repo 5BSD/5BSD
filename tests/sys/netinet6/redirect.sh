@@ -79,7 +79,7 @@ valid_redirect_body() {
 	jexec ${jname} route add -6 -net ${net6} ${remote_rtr_ll_ip}%${epair}b
 	
 	local_ll_ip=`jexec ${jname} ifconfig ${epair}b inet6 | awk '$1 ~ /inet6/&&$2~/^fe80/ {print$2}'|awk -F% '{print$1}'`
-	local_ll_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/ether/{print$2}'`
+	local_ll_mac=`jexec ${jname} ifconfig ${epair}b ether | awk '$1~/lladdr/{print$2}'`
 
 	# wait for DAD to complete
 	while [ `ifconfig ${epair}a inet6 | grep -c tentative` != "0" ]; do

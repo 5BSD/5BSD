@@ -34,13 +34,8 @@
 #include <sys/syscallsubr.h>
 #include <sys/time.h>
 
-#ifdef COMPAT_LINUX32
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 #include <compat/linux/linux_time.h>
 
 int
@@ -138,33 +133,6 @@ linux_timer_settime(struct thread *td, struct linux_timer_settime_args *uap)
 	return (error);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_timer_settime64(struct thread *td, struct linux_timer_settime64_args *uap)
-{
-	struct l_itimerspec64 l_val, l_oval;
-	struct itimerspec val, oval, *ovalp;
-	int flags, error;
-
-	error = copyin(uap->new, &l_val, sizeof(l_val));
-	if (error != 0)
-		return (error);
-	error = linux_to_native_itimerspec64(&val, &l_val);
-	if (error != 0)
-		return (error);
-	ovalp = uap->old != NULL ? &oval : NULL;
-	error = linux_to_native_timerflags(&flags, uap->flags);
-	if (error != 0)
-		return (error);
-	error = kern_ktimer_settime(td, uap->timerid, flags, &val, ovalp);
-	if (error == 0 && uap->old != NULL) {
-		error = native_to_linux_itimerspec64(&l_oval, &oval);
-		if (error == 0)
-			error = copyout(&l_oval, uap->old, sizeof(l_oval));
-	}
-	return (error);
-}
-#endif
 
 int
 linux_timer_gettime(struct thread *td, struct linux_timer_gettime_args *uap)
@@ -181,22 +149,6 @@ linux_timer_gettime(struct thread *td, struct linux_timer_gettime_args *uap)
 	return (error);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_timer_gettime64(struct thread *td, struct linux_timer_gettime64_args *uap)
-{
-	struct l_itimerspec64 l_val;
-	struct itimerspec val;
-	int error;
-
-	error = kern_ktimer_gettime(td, uap->timerid, &val);
-	if (error == 0)
-		error = native_to_linux_itimerspec64(&l_val, &val);
-	if (error == 0)
-		error = copyout(&l_val, uap->setting, sizeof(l_val));
-	return (error);
-}
-#endif
 
 int
 linux_timer_getoverrun(struct thread *td, struct linux_timer_getoverrun_args *uap)

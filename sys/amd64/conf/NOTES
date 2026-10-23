@@ -46,20 +46,11 @@ cpu		HAMMER			# aka K8, aka Opteron & Athlon64
 # vt(4) drivers.
 device		vt_efifb	# EFI framebuffer
 
-# 3Dfx Voodoo Graphics, Voodoo II /dev/3dfx CDEV support.  This will create
-# the /dev/3dfx0 device to work with glide implementations.  This should get
-# linked to /dev/3dfx and /dev/voodoo.  Note that this is not the same as
-# the tdfx DRI module from XFree86 and is completely unrelated.
-#
-
-device		tdfx			# Enable 3Dfx Voodoo support
-
 #
 # RAID adapters
 #
 
 #XXX this stores pointers in a 32bit field that is defined by the hardware
-#device	pst
 
 # Thunderbolt (USB 4.0) support
 device		thunderbolt
@@ -145,10 +136,7 @@ device		xentimer	# Xen x86 PV timer device
 #####################################################################
 # ABI Emulation
 
-# Enable 32-bit runtime support for FreeBSD/i386 binaries.
-options 	COMPAT_FREEBSD32
-
-# Enable (32-bit) a.out binary support
+# 32-bit FreeBSD and a.out execution are outside the 5BSD ABI boundary.
 
 #####################################################################
 # ZFS support

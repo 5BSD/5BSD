@@ -21,22 +21,6 @@ tarfs:::read-done
     tarread_depth[pid, tid]--;
 }
 
-udf:::block-start
-/* @bsdinstruments-predicate */
-{
-    udfblock_depth[pid, tid]++;
-    udfblock_time[pid, tid, udfblock_depth[pid, tid]] = timestamp;
-}
-
-udf:::block-done
-/udfblock_time[pid, tid, udfblock_depth[pid, tid]] != 0/
-{
-    @udfblock_us[(int)arg3] = quantize((timestamp - udfblock_time[pid, tid, udfblock_depth[pid, tid]]) / 1000);
-    @udfblock_count[(int)arg3] = count();
-    udfblock_time[pid, tid, udfblock_depth[pid, tid]] = 0;
-    udfblock_depth[pid, tid]--;
-}
-
 isofs:::block-start
 /* @bsdinstruments-predicate */
 {

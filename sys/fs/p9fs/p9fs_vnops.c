@@ -2185,7 +2185,7 @@ out:
 
 /*
  * Put VM pages, synchronously.
- * XXX: like smbfs, cannot use vop_stdputpages due to mapping requirement
+ * Cannot use vop_stdputpages due to the mapping requirement.
  */
 static int
 p9fs_putpages(struct vop_putpages_args *ap)

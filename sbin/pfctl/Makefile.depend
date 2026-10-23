@@ -9,7 +9,6 @@ DIRDEPS = \
 	lib/libcompiler_rt \
 	lib/libmd \
 	lib/libnv \
-	lib/libpfctl \
 	lib/msun \
 	usr.bin/yacc.host \
 

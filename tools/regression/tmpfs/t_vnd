@@ -49,16 +49,17 @@ test_run() {
 	test_mount
 
 	test_name "Creation of disk image"
-	dd if=/dev/zero of=disk.img bs=1m count=10 >/dev/null 2>&1 || die
+	dd if=/dev/zero of=disk.img bs=1m count=64 >/dev/null 2>&1 || die
 
 	test_name "Configuration of vnd"
 	mdconfig -a -f disk.img -u 3 -x 32 -y 2 ||die
 
-	test_name "Labelling the md"
-	bsdlabel -m i386 -w /dev/md3 || die_configured
+	test_name "Partitioning the md"
+	gpart create -s bsd /dev/md3 || die_configured
+	gpart add -t freebsd-ufs /dev/md3 || die_configured
 	
 	test_name "Formatting of disk image"
-	newfs -n -U -m 0 -O 1 /dev/md3a >/dev/null 2>&1 || die_configured
+	newfs -n -U -m 0 -O 2 /dev/md3a >/dev/null 2>&1 || die_configured
 
 	test_name "Mounting of disk image"
 	mkdir mnt || die

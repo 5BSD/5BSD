@@ -2378,9 +2378,18 @@ ng_l2cap_process_con_rsp(ng_l2cap_con_p con, u_int8_t ident)
 			 * state. Since we have sent positive confirmation we
 			 * expect to receive L2CA_Config request from the upper
 			 * layer protocol.
+			 *
+			 * A peer must answer with a dynamic CID.  The one
+			 * exception is the response ng_l2cap_l2ca_con_req()
+			 * synthesises for the ATT and SMP fixed channels and
+			 * loops back (con->rx_internal): it names the fixed
+			 * CID itself, which is below NG_L2CAP_FIRST_CID.
 			 */
 
-			if (dcid < NG_L2CAP_FIRST_CID) {
+			if (dcid < NG_L2CAP_FIRST_CID &&
+			    !(con->rx_internal && dcid == cmd->ch->scid &&
+			    (dcid == NG_L2CAP_ATT_CID ||
+			    dcid == NG_L2CAP_SMP_CID))) {
 				NG_L2CAP_ERR(
 "%s: %s - invalid dcid in L2CAP_ConnectRsp (success), dcid=%d\n",
 					__func__, NG_NODE_NAME(l2cap->node),

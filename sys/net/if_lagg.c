@@ -2388,7 +2388,7 @@ lagg_enqueue(struct ifnet *ifp, struct mbuf *m)
 		m_snd_tag_rele(mst);
 	}
 #endif
-	return (ifp->if_transmit)(ifp, m);
+	return if_transmit(ifp, m);
 }
 
 /*

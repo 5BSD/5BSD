@@ -235,6 +235,8 @@ virtio_fs_request_accept(struct virtio_fs_session *session,
 	    response_capacity < FUSE_OUT_HEADER_SIZE +
 	    FUSE_COMPAT_INIT_OUT_SIZE)
 		return (EPROTO);
+	if (opcode == FUSE_OPCODE_INIT && session->incarnation == UINT64_MAX)
+		return (EOVERFLOW);
 
 	memset(context, 0, sizeof(*context));
 	context->byte_order = order;
@@ -246,8 +248,6 @@ virtio_fs_request_accept(struct virtio_fs_session *session,
 	    opcode != FUSE_OPCODE_BATCH_FORGET;
 	context->initializes = opcode == FUSE_OPCODE_INIT;
 	if (opcode == FUSE_OPCODE_INIT) {
-		if (session->incarnation == UINT64_MAX)
-			return (EOVERFLOW);
 		/*
 		 * FUSE_INIT terminates the prior session when accepted, not
 		 * after its asynchronous reply.  Normal requests are therefore

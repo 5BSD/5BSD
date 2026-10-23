@@ -1,0 +1,7 @@
+ether block in on lo0 proto 0x88cc l3 all
+anchor "jails" all {
+  pass in proto tcp from any to any port = 80 jail = web flags S/SA
+  pass in proto tcp from any to any port = 443 jail = web flags S/SA
+  pass out proto udp all jail = 0 dnqueue(1, 2)
+}
+pass in on lo0 proto sctp all keep state (if-bound, allow-related)

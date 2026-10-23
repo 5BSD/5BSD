@@ -311,6 +311,7 @@ typedef	__pid_t		pid_t;
 #define	F_SEAL_GROW	0x0004		/* May not grow */
 #define	F_SEAL_WRITE	0x0008		/* May not write */
 #define	F_SEAL_FUTURE_WRITE 0x0010	/* No new shared writable mappings */
+#define	F_SEAL_EXEC	0x0020	/* Prevent changing execute permission */
 #endif	/* __BSD_VISIBLE */
 
 /* file descriptor flags (F_GETFD, F_SETFD) */

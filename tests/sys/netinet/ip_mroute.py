@@ -78,6 +78,10 @@ class MRouteTestTemplate(VnetTestTemplate):
 class MRouteINETTestTemplate(MRouteTestTemplate):
     @staticmethod
     def run_pimd(ident: str, ifaces: list[str], rpaddr: str, group: str, fib=0):
+        # 5BSD: each router is its own RP at an address of its first
+        # interface.  pimd 3.3.0 silently drops a static RP of 127.0.0.1
+        # (it takes it from pimd.conf, but "pimctl show rp" lacks it), and
+        # then never registers: no RP for the group, nothing is forwarded.
         conf = f"pimd-{ident}.conf"
         with open(conf, "w") as conf_file:
             conf_file.write("no phyint\n")
@@ -163,7 +167,7 @@ class Test1RBasicINET(MRouteINETTestTemplate):
         super().setup_method(method)
 
         ifaces = [self.vnet.iface_alias_map[i].name for i in ["if1", "if2"]]
-        self.pimd = self.run_pimd("test", ifaces, "127.0.0.1", self.MULTICAST_ADDR + "/32")
+        self.pimd = self.run_pimd("test", ifaces, "192.168.1.1", self.MULTICAST_ADDR + "/32")
         time.sleep(3)  # Give pimd a bit of time to get itself together.
 
     def vnet_host1_handler(self, vnet):
@@ -241,10 +245,10 @@ class Test1RCrissCrossINET(MRouteINETCrissCrossTestTemplate):
 
         # Start a pimd instance per FIB.
         ifaces = [self.vnet.iface_alias_map[i].name for i in ["if1", "if2"]]
-        self.pimd0 = self.run_pimd("test0", ifaces, "127.0.0.1", self.MULTICAST_ADDR + "/32",
+        self.pimd0 = self.run_pimd("test0", ifaces, "192.168.1.1", self.MULTICAST_ADDR + "/32",
                                    fib=0)
         ifaces = [self.vnet.iface_alias_map[i].name for i in ["if3", "if4"]]
-        self.pimd1 = self.run_pimd("test1", ifaces, "127.0.0.1", self.MULTICAST_ADDR + "/32",
+        self.pimd1 = self.run_pimd("test1", ifaces, "192.168.3.1", self.MULTICAST_ADDR + "/32",
                                    fib=1)
         time.sleep(3)  # Give pimd a bit of time to get itself together.
 
@@ -302,7 +306,7 @@ class Test1RCrissCrossINETMissingRouter(MRouteINETCrissCrossTestTemplate):
 
         # Only start a pimd instance in FIB 0.
         ifaces = [self.vnet.iface_alias_map[i].name for i in ["if1", "if2"]]
-        self.pimd0 = self.run_pimd("test0", ifaces, "127.0.0.1",
+        self.pimd0 = self.run_pimd("test0", ifaces, "192.168.1.1",
                                    self.MULTICAST_ADDR + "/32", fib=0)
 
         time.sleep(3)  # Give pimd a bit of time to get itself together.

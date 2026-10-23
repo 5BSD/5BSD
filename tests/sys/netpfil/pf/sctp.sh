@@ -26,6 +26,22 @@
 
 . $(atf_get_srcdir)/utils.subr
 
+# sctp_wait_listen <jail> <port>: wait until a server listens there (a
+# fixed sleep loses to a slow start on a loaded host: refused, not dropped).
+# A case starting a second server on the port first waits for the previous
+# one-shot server to exit: until it has finished its association's
+# shutdown it holds the port, and the new one fails ("Address already in
+# use"), which the listener check alone would not see.
+sctp_wait_listen()
+{
+	_i=0
+	until jexec $1 sockstat -P sctp -l -p $2 | grep -q nc; do
+		_i=$((_i + 1))
+		[ ${_i} -lt 100 ] || atf_fail "no SCTP listener on port $2 in $1"
+		sleep 0.05
+	done
+}
+
 sctp_init()
 {
 	pft_init
@@ -60,10 +76,11 @@ basic_v4_body()
 		"block" \
 		"pass in proto sctp to port 1234"
 
+	wait	# for the previous one-shot server
 	echo "foo" | jexec ${j}a nc --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	out=$(jexec ${j}b nc --sctp -N -w 3 192.0.2.1 1234)
 	if [ "$out" != "foo" ]; then
@@ -72,12 +89,13 @@ basic_v4_body()
 
 	# Now with scrub rules present, so normalization is done
 	pft_set_rules ${j}a \
-		"scrub on ${j}a" \
+		"match on ${j}a scrub (reassemble tcp)" \
 		"block" \
 		"pass in proto sctp to port 1234"
 
+	wait	# for the previous one-shot server
 	echo "foo" | jexec ${j}a nc --sctp -N -l 1234 &
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	out=$(jexec ${j}b nc --sctp -N -w 3 192.0.2.1 1234)
 	if [ "$out" != "foo" ]; then
@@ -85,8 +103,9 @@ basic_v4_body()
 	fi
 
 	# Now fail with a blocked port
+	wait	# for the previous one-shot server
 	echo "foo" | jexec ${j}a nc --sctp -N -l 1235 &
-	sleep 1
+	sctp_wait_listen ${j}a 1235
 
 	out=$(jexec ${j}b nc --sctp -N -w 3 192.0.2.1 1235)
 	if [ "$out" == "foo" ]; then
@@ -135,10 +154,11 @@ basic_v6_body()
 		"block proto sctp" \
 		"pass in proto sctp to port 1234"
 
+	wait	# for the previous one-shot server
 	echo "foo" | jexec ${j}a nc -6 --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	out=$(jexec ${j}b nc --sctp -N -w 3 2001:db8::a 1234)
 	if [ "$out" != "foo" ]; then
@@ -147,12 +167,13 @@ basic_v6_body()
 
 	# Now with scrub rules present, so normalization is done
 	pft_set_rules ${j}a \
-		"scrub on ${j}a" \
+		"match on ${j}a scrub (reassemble tcp)" \
 		"block proto sctp" \
 		"pass in proto sctp to port 1234"
 
+	wait	# for the previous one-shot server
 	echo "foo" | jexec ${j}a nc -6 --sctp -N -l 1234 &
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	out=$(jexec ${j}b nc --sctp -N -w 3 2001:db8::a 1234)
 	if [ "$out" != "foo" ]; then
@@ -160,8 +181,9 @@ basic_v6_body()
 	fi
 
 	# Now fail with a blocked port
+	wait	# for the previous one-shot server
 	echo "foo" | jexec ${j}a nc -6 --sctp -N -l 1235 &
-	sleep 1
+	sctp_wait_listen ${j}a 1235
 
 	out=$(jexec ${j}b nc --sctp -N -w 3 2001:db8::a 1235)
 	if [ "$out" == "foo" ]; then
@@ -209,10 +231,11 @@ reuse_body()
 		"block" \
 		"pass in proto sctp to port 1234"
 
+	wait	# for the previous one-shot server
 	echo "foo" | jexec ${j}a nc --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	out=$(jexec ${j}b nc --sctp -N -w 3 -p 1234 192.0.2.1 1234)
 	if [ "$out" != "foo" ]; then
@@ -222,10 +245,11 @@ reuse_body()
 	# Now do the same thing again, with the same port numbers
 	jexec ${j}a pfctl -ss -v
 
+	wait	# for the previous one-shot server
 	echo "foo" | jexec ${j}a nc --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	out=$(jexec ${j}b nc --sctp -N -w 3 -p 1234 192.0.2.1 1234)
 	if [ "$out" != "foo" ]; then
@@ -268,10 +292,11 @@ abort_v4_body()
 	pft_set_rules ${j}a \
 		"block return in proto sctp to port 1234"
 
+	wait	# for the previous one-shot server
 	echo "foo" | jexec ${j}a nc --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	# If we get the abort we'll exit immediately, if we don't timeout will
 	# stop nc.
@@ -327,10 +352,11 @@ abort_v6_body()
 	pft_set_rules ${j}a \
 		"block return in proto sctp to port 1234"
 
+	wait	# for the previous one-shot server
 	echo "foo" | jexec ${j}a nc -6 --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}a 1234
 
 	# If we get the abort we'll exit immediately, if we don't timeout will
 	# stop nc.
@@ -387,17 +413,18 @@ nat_v4_body()
 
 	jexec ${j}gw pfctl -e
 	pft_set_rules ${j}gw \
-		"nat on ${epair_srv}b from 192.0.2.0/24 -> (${epair_srv}b)" \
+		"match out on ${epair_srv}b from 192.0.2.0/24 nat-to (${epair_srv}b)" \
 		"pass"
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore \
 	    jexec ${j}c ping -c 1 198.51.100.1
 
+	wait	# for the previous one-shot server
 	echo "foo" | jexec ${j}srv nc --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}srv 1234
 
 	out=$(jexec ${j}c nc --sctp -N -w 3 198.51.100.1 1234)
 	if [ "$out" != "foo" ]; then
@@ -440,17 +467,18 @@ nat_v6_body()
 
 	jexec ${j}gw pfctl -e
 	pft_set_rules ${j}gw \
-		"nat on ${epair_srv}b from 2001:db8:1::/64 -> (${epair_srv}b)" \
+		"match out on ${epair_srv}b from 2001:db8:1::/64 nat-to (${epair_srv}b)" \
 		"pass"
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore \
 	    jexec ${j}c ping -6 -c 1 2001:db8::1
 
+	wait	# for the previous one-shot server
 	echo "foo" | jexec ${j}srv nc -6 --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}srv 1234
 
 	out=$(jexec ${j}c nc --sctp -N -w 3 2001:db8::1 1234)
 	if [ "$out" != "foo" ]; then
@@ -492,14 +520,16 @@ rdr_v4_body()
 	jexec ${j}c route add default 192.0.2.1
 
 	jexec ${j}gw pfctl -e
+	# OpenBSD pf: the last matching rule wins, so the rdr-to rule last.
 	pft_set_rules ${j}gw \
-		"rdr pass on ${epair_srv}b proto sctp from 198.51.100.0/24 to any port 1234 -> 192.0.2.2 port 1234" \
-		"pass"
+		"pass" \
+		"pass in on ${epair_srv}b proto sctp from 198.51.100.0/24 to any port 1234 rdr-to 192.0.2.2 port 1234"
 
+	wait	# for the previous one-shot server
 	echo "foo" | jexec ${j}c nc --sctp -N -l 1234 &
 
 	# Wait for the server to start
-	sleep 1
+	sctp_wait_listen ${j}c 1234
 
 	out=$(jexec ${j}srv nc --sctp -N -w 3 198.51.100.2 1234)
 	if [ "$out" != "foo" ]; then
@@ -510,8 +540,8 @@ rdr_v4_body()
 	echo "bar" | jexec ${j}c nc --sctp -N -l 1234 &
 
 	pft_set_rules ${j}gw \
-		"rdr pass on ${epair_srv}b proto sctp from 198.51.100.0/24 to any port 1234 -> 192.0.2.2 port 4321" \
-		"pass"
+		"pass" \
+		"pass in on ${epair_srv}b proto sctp from 198.51.100.0/24 to any port 1234 rdr-to 192.0.2.2 port 4321"
 
 	# This will fail
 	out=$(jexec ${j}srv nc --sctp -N -w 3 198.51.100.2 4321)
@@ -660,7 +690,7 @@ pfsync_body()
 	# Now start up an SCTP connection
 	touch ${tmp}/input
 	tail -F ${tmp}/input | jexec ${j}srv nc --sctp -l 1234 &
-	sleep 1
+	sctp_wait_listen ${j}srv 1234
 
 	jexec ${j}c nc --sctp 198.51.100.1 1234 > ${tmp}/output &
 	echo "1" >> ${tmp}/input
@@ -806,8 +836,9 @@ related_icmp_body()
 	    "pass proto sctp"
 
 	# Make sure SCTP traffic passes
+	wait	# for the previous one-shot server
 	echo "foo" | jexec srv nc --sctp -N -l 1234 &
-	sleep 1
+	sctp_wait_listen srv 1234
 
 	out=$(nc --sctp -N -w 3 203.0.113.2 1234)
 	if [ "$out" != "foo" ]; then
@@ -817,8 +848,9 @@ related_icmp_body()
 	fi
 
 	# Do we see ICMP traffic if we send overly large traffic?
+	wait	# for the previous one-shot server
 	echo "foo" | jexec srv nc --sctp -l 1234 >/dev/null &
-	sleep 1
+	sctp_wait_listen srv 1234
 
 	atf_check -s exit:0 -o not-match:".*destination unreachable:.*" \
 	    netstat -s -p icmp

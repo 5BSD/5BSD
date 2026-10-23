@@ -121,94 +121,9 @@ _Static_assert(sizeof(((struct ifreq *)0)->ifr_name) ==
     offsetof(struct ifreq, ifr_ifru), "gap between ifr_name and ifr_ifru");
 
 __read_mostly epoch_t net_epoch_preempt;
-#ifdef COMPAT_FREEBSD32
-#include <sys/mount.h>
-#include <compat/freebsd32/freebsd32.h>
-
-struct ifreq_buffer32 {
-	uint32_t	length;		/* (size_t) */
-	uint32_t	buffer;		/* (void *) */
-};
-
-/*
- * Interface request structure used for socket
- * ioctl's.  All interface ioctl's must have parameter
- * definitions which begin with ifr_name.  The
- * remainder may be interface specific.
- */
-struct ifreq32 {
-	char	ifr_name[IFNAMSIZ];		/* if name, e.g. "en0" */
-	union {
-		struct sockaddr	ifru_addr;
-		struct sockaddr	ifru_dstaddr;
-		struct sockaddr	ifru_broadaddr;
-		struct ifreq_buffer32 ifru_buffer;
-		short		ifru_flags[2];
-		short		ifru_index;
-		int		ifru_jid;
-		int		ifru_metric;
-		int		ifru_mtu;
-		int		ifru_phys;
-		int		ifru_media;
-		uint32_t	ifru_data;
-		int		ifru_cap[2];
-		u_int		ifru_fib;
-		u_char		ifru_vlan_pcp;
-	} ifr_ifru;
-};
-CTASSERT(sizeof(struct ifreq) == sizeof(struct ifreq32));
-CTASSERT(__offsetof(struct ifreq, ifr_ifru) ==
-    __offsetof(struct ifreq32, ifr_ifru));
-
-struct ifconf32 {
-	int32_t	ifc_len;
-	union {
-		uint32_t	ifcu_buf;
-		uint32_t	ifcu_req;
-	} ifc_ifcu;
-};
-#define	SIOCGIFCONF32	_IOWR('i', 36, struct ifconf32)
-
-struct ifdrv32 {
-	char		ifd_name[IFNAMSIZ];
-	uint32_t	ifd_cmd;
-	uint32_t	ifd_len;
-	uint32_t	ifd_data;
-};
-#define SIOCSDRVSPEC32	_IOC_NEWTYPE(SIOCSDRVSPEC, struct ifdrv32)
-#define SIOCGDRVSPEC32	_IOC_NEWTYPE(SIOCGDRVSPEC, struct ifdrv32)
-
-struct ifgroupreq32 {
-	char	ifgr_name[IFNAMSIZ];
-	u_int	ifgr_len;
-	union {
-		char		ifgru_group[IFNAMSIZ];
-		uint32_t	ifgru_groups;
-	} ifgr_ifgru;
-};
-#define	SIOCAIFGROUP32	_IOC_NEWTYPE(SIOCAIFGROUP, struct ifgroupreq32)
-#define	SIOCGIFGROUP32	_IOC_NEWTYPE(SIOCGIFGROUP, struct ifgroupreq32)
-#define	SIOCDIFGROUP32	_IOC_NEWTYPE(SIOCDIFGROUP, struct ifgroupreq32)
-#define	SIOCGIFGMEMB32	_IOC_NEWTYPE(SIOCGIFGMEMB, struct ifgroupreq32)
-
-struct ifmediareq32 {
-	char		ifm_name[IFNAMSIZ];
-	int		ifm_current;
-	int		ifm_mask;
-	int		ifm_status;
-	int		ifm_active;
-	int		ifm_count;
-	uint32_t	ifm_ulist;	/* (int *) */
-};
-#define	SIOCGIFMEDIA32	_IOC_NEWTYPE(SIOCGIFMEDIA, struct ifmediareq32)
-#define	SIOCGIFXMEDIA32	_IOC_NEWTYPE(SIOCGIFXMEDIA, struct ifmediareq32)
-#endif /* COMPAT_FREEBSD32 */
 
 union ifreq_union {
 	struct ifreq	ifr;
-#ifdef COMPAT_FREEBSD32
-	struct ifreq32	ifr32;
-#endif
 };
 
 SYSCTL_NODE(_net, PF_LINK, link, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
@@ -266,8 +181,6 @@ caddr_t	(*carp_macmatch6_p)(struct ifnet *ifp, struct mbuf *m,
     const struct in6_addr *taddr);
 #endif
 
-struct mbuf *(*tbr_dequeue_ptr)(struct ifaltq *, int) = NULL;
-
 /*
  * XXX: Style; these should be sorted alphabetically, and unprototyped
  * static functions should be prototyped. Currently they are sorted by
@@ -288,6 +201,7 @@ static void	if_detach_internal(struct ifnet *, bool);
 static void	if_siocaddmulti(void *, int);
 static void	if_link_ifnet(struct ifnet *);
 static bool	if_unlink_ifnet(struct ifnet *, bool);
+static bool	if_linked_locked(struct ifnet *);
 #ifdef VIMAGE
 static void	if_vmove(struct ifnet *, struct vnet *);
 #endif
@@ -726,12 +640,6 @@ ifq_init(struct ifaltq *ifq, struct ifnet *ifp)
 
 	if (ifq->ifq_maxlen == 0) 
 		ifq->ifq_maxlen = ifqmaxlen;
-
-	ifq->altq_type = 0;
-	ifq->altq_disc = NULL;
-	ifq->altq_flags &= ALTQF_CANTCHANGE;
-	ifq->altq_tbr  = NULL;
-	ifq->altq_ifp  = ifp;
 }
 
 void
@@ -1131,13 +1039,6 @@ if_detach_internal(struct ifnet *ifp, bool vmove)
 	/*
 	 * Remove routes and flush queues.
 	 */
-#ifdef ALTQ
-	if (ALTQ_IS_ENABLED(&ifp->if_snd))
-		altq_disable(&ifp->if_snd);
-	if (ALTQ_IS_ATTACHED(&ifp->if_snd))
-		altq_detach(&ifp->if_snd);
-#endif
-
 	rt_flushifroutes(ifp);
 
 	if_purgeaddrs(ifp);
@@ -1198,9 +1099,44 @@ if_vmove(struct ifnet *ifp, struct vnet *new_vnet)
 	 * Switch to the context of the target vnet.
 	 */
 	CURVNET_SET_QUIET(new_vnet);
+	/*
+	 * 5BSD: net.fibs is per VNET.  An interface moved from a VNET with
+	 * more FIBs (or routing domains, which are FIBs) would stamp its
+	 * received packets with a FIB this one does not have, and the
+	 * routing lookups that index by it would read past the tables.
+	 */
+	if (ifp->if_fib >= V_rt_numfibs)
+		ifp->if_fib = RT_DEFAULT_FIB;
 	if_attach_internal(ifp, true);
 	bpf_vmove(ifp->if_bpf);
 	CURVNET_RESTORE();
+}
+
+/*
+ * 5BSD: refuse to move an interface to another vnet when
+ *  - its driver keeps its softc in per-VNET state of the creating VNET
+ *    (OpenBSD PF's pflog, pfsync and pflow set IFKF_NOVMOVE): moved away,
+ *    it would be destroyed against the other VNET's state (EOPNOTSUPP);
+ *  - it is the loopback interface of a routing domain, whose map
+ *    (V_rt_l2map) refers to it by index (EBUSY).
+ * ifp is only known to be valid while it is on the current VNET's list,
+ * which ifnet_detach_sxlock keeps stable.
+ */
+static int
+if_vmove_check(struct ifnet *ifp)
+{
+	int error = 0;
+
+	sx_assert(&ifnet_detach_sxlock, SX_XLOCKED);
+	IFNET_WLOCK();
+	if (if_linked_locked(ifp)) {
+		if ((ifp->if_kflags & IFKF_NOVMOVE) != 0)
+			error = EOPNOTSUPP;
+		else if (rt_rdomain_isloif(ifp))
+			error = EBUSY;
+	}
+	IFNET_WUNLOCK();
+	return (error);
 }
 
 /*
@@ -1211,6 +1147,7 @@ if_vmove_loan(struct thread *td, char *ifname, int jid)
 {
 	struct prison *pr;
 	struct ifnet *ifp, *difp;
+	int error;
 	bool found;
 
 	MPASS(curthread == td);
@@ -1252,6 +1189,11 @@ if_vmove_loan(struct thread *td, char *ifname, int jid)
 	}
 	sx_xlock(&ifnet_detach_sxlock);
 
+	if ((error = if_vmove_check(ifp)) != 0) {
+		sx_xunlock(&ifnet_detach_sxlock);
+		prison_free(pr);
+		return (error);
+	}
 	found = if_unlink_ifnet(ifp, true);
 	if (! found) {
 		sx_xunlock(&ifnet_detach_sxlock);
@@ -1277,7 +1219,7 @@ if_vmove_reclaim(struct thread *td, char *ifname, int jid)
 	struct prison *pr;
 	struct vnet *vnet_dst;
 	struct ifnet *ifp;
-	int found;
+	int found, error;
 
 	/* Try to find the prison within our visibility. */
 	sx_slock(&allprison_lock);
@@ -1307,6 +1249,12 @@ if_vmove_reclaim(struct thread *td, char *ifname, int jid)
 
 	/* Get interface back from child jail/vnet. */
 	sx_xlock(&ifnet_detach_sxlock);
+	if ((error = if_vmove_check(ifp)) != 0) {
+		sx_xunlock(&ifnet_detach_sxlock);
+		CURVNET_RESTORE();
+		prison_free(pr);
+		return (error);
+	}
 	found = if_unlink_ifnet(ifp, true);
 	if (! found) {
 		sx_xunlock(&ifnet_detach_sxlock);
@@ -1327,10 +1275,30 @@ if_vmove_reclaim(struct thread *td, char *ifname, int jid)
 #endif /* VIMAGE */
 
 /*
+ * 5BSD: is @ifp on this vnet's interface list?  An interface that
+ * if_unlink_ifnet() took off the list is being destroyed or moved, and
+ * if_detach_internal() may already have run if_delgroups() for it.
+ */
+static bool
+if_linked_locked(struct ifnet *ifp)
+{
+	struct ifnet *iter;
+
+	IFNET_WLOCK_ASSERT();
+
+	CK_STAILQ_FOREACH(iter, &V_ifnet, if_link)
+		if (iter == ifp)
+			return (true);
+	return (false);
+}
+
+static void	if_group_release(struct ifg_group *);
+
+/*
  * Add a group to an interface
  */
-int
-if_addgroup(struct ifnet *ifp, const char *groupname)
+static int
+if_addgroup_internal(struct ifnet *ifp, const char *groupname, bool linked)
 {
 	struct ifg_list		*ifgl;
 	struct ifg_group	*ifg = NULL;
@@ -1342,6 +1310,16 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 		return (EINVAL);
 
 	IFNET_WLOCK();
+	/*
+	 * 5BSD: never put a dying interface, or one owned by another vnet,
+	 * into this vnet's groups: if_delgroups() has already run for it
+	 * or runs elsewhere, and the membership would be left behind.
+	 */
+	if ((ifp->if_flags & IFF_DYING) != 0 || ifp->if_vnet != curvnet ||
+	    (linked && !if_linked_locked(ifp))) {
+		IFNET_WUNLOCK();
+		return (ENXIO);
+	}
 	CK_STAILQ_FOREACH(ifgl, &ifp->if_groups, ifgl_next)
 		if (!strcmp(ifgl->ifgl_group->ifg_group, groupname)) {
 			IFNET_WUNLOCK();
@@ -1364,7 +1342,12 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 			break;
 
 	if (ifg == NULL) {
-		if ((ifg = malloc(sizeof(*ifg), M_TEMP, M_NOWAIT)) == NULL) {
+		/*
+		 * 5BSD: zeroed.  The group is on if_groups before the
+		 * attach event sets ifg_pf_kif; pf reads it meanwhile.
+		 */
+		if ((ifg = malloc(sizeof(*ifg), M_TEMP,
+		    M_NOWAIT | M_ZERO)) == NULL) {
 			free(ifgl, M_TEMP);
 			free(ifgm, M_TEMP);
 			IFNET_WUNLOCK();
@@ -1378,6 +1361,12 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 	}
 
 	ifg->ifg_refcnt++;
+	/*
+	 * 5BSD: a new group is held across group_attach_event: the member
+	 * may leave (and the group be freed) as soon as the lock is dropped.
+	 */
+	if (new)
+		ifg->ifg_refcnt++;
 	ifgl->ifgl_group = ifg;
 	ifgm->ifgm_ifp = ifp;
 
@@ -1385,11 +1374,50 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 	CK_STAILQ_INSERT_TAIL(&ifp->if_groups, ifgl, ifgl_next);
 	IFNET_WUNLOCK();
 
-	if (new)
+	if (new) {
 		EVENTHANDLER_INVOKE(group_attach_event, ifg);
+		if_group_release(ifg);
+	}
 	EVENTHANDLER_INVOKE(group_change_event, groupname);
 
 	return (0);
+}
+
+/*
+ * 5BSD: drop the hold if_addgroup_internal() took on a new group; free the
+ * group if its members left meanwhile, as _if_delgroup_locked() would have.
+ */
+static void
+if_group_release(struct ifg_group *ifg)
+{
+	IFNET_WLOCK();
+	if (--ifg->ifg_refcnt > 0) {
+		IFNET_WUNLOCK();
+		return;
+	}
+	CK_STAILQ_REMOVE(&V_ifg_head, ifg, ifg_group, ifg_next);
+	IFNET_WUNLOCK();
+
+	NET_EPOCH_WAIT();
+	EVENTHANDLER_INVOKE(group_detach_event, ifg);
+	free(ifg, M_TEMP);
+}
+
+int
+if_addgroup(struct ifnet *ifp, const char *groupname)
+{
+	return (if_addgroup_internal(ifp, groupname, false));
+}
+
+/*
+ * 5BSD: if_addgroup() for a caller that holds only a reference to @ifp and
+ * can race with its detach or vnet move: fail with ENXIO unless @ifp is
+ * still on this vnet's interface list.
+ */
+int
+if_addgroup_attached(struct ifnet *ifp, const char *groupname)
+{
+	return (if_addgroup_internal(ifp, groupname, true));
 }
 
 /*
@@ -1748,7 +1776,7 @@ ifa_ifwithaddr_fib(const struct sockaddr *addr, int fibnum)
 
 	NET_EPOCH_ASSERT();
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		if ((fibnum != RT_ALL_FIBS) && (ifp->if_fib != fibnum))
+		if (!rt_fib_match(ifp->if_fib, fibnum))
 			continue;
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			if (ifa->ifa_addr->sa_family != addr->sa_family)
@@ -1811,7 +1839,7 @@ ifa_ifwithbroadaddr(const struct sockaddr *addr, int fibnum)
 
 	NET_EPOCH_ASSERT();
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		if ((fibnum != RT_ALL_FIBS) && (ifp->if_fib != fibnum))
+		if (!rt_fib_match(ifp->if_fib, fibnum))
 			continue;
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			if (ifa->ifa_addr->sa_family != addr->sa_family)
@@ -1843,7 +1871,7 @@ ifa_ifwithdstaddr(const struct sockaddr *addr, int fibnum)
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
 		if ((ifp->if_flags & IFF_POINTOPOINT) == 0)
 			continue;
-		if ((fibnum != RT_ALL_FIBS) && (ifp->if_fib != fibnum))
+		if (!rt_fib_match(ifp->if_fib, fibnum))
 			continue;
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			if (ifa->ifa_addr->sa_family != addr->sa_family)
@@ -1888,7 +1916,7 @@ ifa_ifwithnet(const struct sockaddr *addr, int ignore_ptp, int fibnum)
 	 * in this address family and the requested fib.
 	 */
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
-		if ((fibnum != RT_ALL_FIBS) && (ifp->if_fib != fibnum))
+		if (!rt_fib_match(ifp->if_fib, fibnum))
 			continue;
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 			const char *cp, *cp2, *cp3;
@@ -2154,10 +2182,6 @@ if_qflush(struct ifnet *ifp)
 
 	ifq = &ifp->if_snd;
 	IFQ_LOCK(ifq);
-#ifdef ALTQ
-	if (ALTQ_IS_ENABLED(ifq))
-		ALTQ_PURGE(ifq);
-#endif
 	n = ifq->ifq_head;
 	while ((m = n) != NULL) {
 		n = m->m_nextpkt;
@@ -2218,11 +2242,6 @@ ifr_buffer_get_buffer(void *data)
 	union ifreq_union *ifrup;
 
 	ifrup = data;
-#ifdef COMPAT_FREEBSD32
-	if (SV_CURPROC_FLAG(SV_ILP32))
-		return ((void *)(uintptr_t)
-		    ifrup->ifr32.ifr_ifru.ifru_buffer.buffer);
-#endif
 	return (ifrup->ifr.ifr_ifru.ifru_buffer.buffer);
 }
 
@@ -2232,11 +2251,6 @@ ifr_buffer_set_buffer_null(void *data)
 	union ifreq_union *ifrup;
 
 	ifrup = data;
-#ifdef COMPAT_FREEBSD32
-	if (SV_CURPROC_FLAG(SV_ILP32))
-		ifrup->ifr32.ifr_ifru.ifru_buffer.buffer = 0;
-	else
-#endif
 		ifrup->ifr.ifr_ifru.ifru_buffer.buffer = NULL;
 }
 
@@ -2246,10 +2260,6 @@ ifr_buffer_get_length(void *data)
 	union ifreq_union *ifrup;
 
 	ifrup = data;
-#ifdef COMPAT_FREEBSD32
-	if (SV_CURPROC_FLAG(SV_ILP32))
-		return (ifrup->ifr32.ifr_ifru.ifru_buffer.length);
-#endif
 	return (ifrup->ifr.ifr_ifru.ifru_buffer.length);
 }
 
@@ -2259,11 +2269,6 @@ ifr_buffer_set_length(void *data, size_t len)
 	union ifreq_union *ifrup;
 
 	ifrup = data;
-#ifdef COMPAT_FREEBSD32
-	if (SV_CURPROC_FLAG(SV_ILP32))
-		ifrup->ifr32.ifr_ifru.ifru_buffer.length = len;
-	else
-#endif
 		ifrup->ifr.ifr_ifru.ifru_buffer.length = len;
 }
 
@@ -2273,11 +2278,6 @@ ifr_data_get_ptr(void *ifrp)
 	union ifreq_union *ifrup;
 
 	ifrup = ifrp;
-#ifdef COMPAT_FREEBSD32
-	if (SV_CURPROC_FLAG(SV_ILP32))
-		return ((void *)(uintptr_t)
-		    ifrup->ifr32.ifr_ifru.ifru_data);
-#endif
 		return (ifrup->ifr.ifr_ifru.ifru_data);
 }
 
@@ -2687,7 +2687,25 @@ ifhwioctl(u_long cmd, struct ifnet *ifp, caddr_t data, struct thread *td)
 		if (ifr->ifr_fib >= rt_numfibs)
 			return (EINVAL);
 
-		ifp->if_fib = ifr->ifr_fib;
+		/* 5BSD: a FIB of another routing domain moves the interface. */
+		error = rt_rdomain_setif(ifp, ifr->ifr_fib, false);
+		break;
+
+	/* 5BSD: routing domains (rdomain(4)), OpenBSD SIOC[GS]IFRDOMAIN. */
+	case SIOCGIFRDOMAIN:
+		ifr->ifr_rdomainid = rt_fib_l2(ifp->if_fib);
+		break;
+
+	case SIOCSIFRDOMAIN:
+		error = priv_check(td, PRIV_NET_SETIFFIB);
+		if (error)
+			return (error);
+		/* Create and join atomically with default-loopback destruction. */
+		sx_xlock(&ifnet_detach_sxlock);
+		error = rt_rdomain_create(ifr->ifr_rdomainid, ifp);
+		if (error == 0 || error == EEXIST)
+			error = rt_rdomain_setif(ifp, ifr->ifr_rdomainid, true);
+		sx_xunlock(&ifnet_detach_sxlock);
 		break;
 
 	case SIOCSIFFLAGS:
@@ -3009,19 +3027,6 @@ ifhwioctl(u_long cmd, struct ifnet *ifp, caddr_t data, struct thread *td)
 int
 ifioctl(struct socket *so, u_long cmd, caddr_t data, struct thread *td)
 {
-#ifdef COMPAT_FREEBSD32
-	union {
-		struct ifconf ifc;
-		struct ifdrv ifd;
-		struct ifgroupreq ifgr;
-		struct ifmediareq ifmr;
-	} thunk;
-	u_long saved_cmd;
-	struct ifconf32 *ifc32;
-	struct ifdrv32 *ifd32;
-	struct ifgroupreq32 *ifgr32;
-	struct ifmediareq32 *ifmr32;
-#endif
 	struct ifnet *ifp;
 	struct ifreq *ifr;
 	int error;
@@ -3040,65 +3045,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct thread *td)
 	}
 #endif
 
-#ifdef COMPAT_FREEBSD32
-	saved_cmd = cmd;
-	switch (cmd) {
-	case SIOCGIFCONF32:
-		ifc32 = (struct ifconf32 *)data;
-		thunk.ifc.ifc_len = ifc32->ifc_len;
-		thunk.ifc.ifc_buf = PTRIN(ifc32->ifc_buf);
-		data = (caddr_t)&thunk.ifc;
-		cmd = SIOCGIFCONF;
-		break;
-	case SIOCGDRVSPEC32:
-	case SIOCSDRVSPEC32:
-		ifd32 = (struct ifdrv32 *)data;
-		memcpy(thunk.ifd.ifd_name, ifd32->ifd_name,
-		    sizeof(thunk.ifd.ifd_name));
-		thunk.ifd.ifd_cmd = ifd32->ifd_cmd;
-		thunk.ifd.ifd_len = ifd32->ifd_len;
-		thunk.ifd.ifd_data = PTRIN(ifd32->ifd_data);
-		data = (caddr_t)&thunk.ifd;
-		cmd = _IOC_NEWTYPE(cmd, struct ifdrv);
-		break;
-	case SIOCAIFGROUP32:
-	case SIOCGIFGROUP32:
-	case SIOCDIFGROUP32:
-	case SIOCGIFGMEMB32:
-		ifgr32 = (struct ifgroupreq32 *)data;
-		memcpy(thunk.ifgr.ifgr_name, ifgr32->ifgr_name,
-		    sizeof(thunk.ifgr.ifgr_name));
-		thunk.ifgr.ifgr_len = ifgr32->ifgr_len;
-		switch (cmd) {
-		case SIOCAIFGROUP32:
-		case SIOCDIFGROUP32:
-			memcpy(thunk.ifgr.ifgr_group, ifgr32->ifgr_group,
-			    sizeof(thunk.ifgr.ifgr_group));
-			break;
-		case SIOCGIFGROUP32:
-		case SIOCGIFGMEMB32:
-			thunk.ifgr.ifgr_groups = PTRIN(ifgr32->ifgr_groups);
-			break;
-		}
-		data = (caddr_t)&thunk.ifgr;
-		cmd = _IOC_NEWTYPE(cmd, struct ifgroupreq);
-		break;
-	case SIOCGIFMEDIA32:
-	case SIOCGIFXMEDIA32:
-		ifmr32 = (struct ifmediareq32 *)data;
-		memcpy(thunk.ifmr.ifm_name, ifmr32->ifm_name,
-		    sizeof(thunk.ifmr.ifm_name));
-		thunk.ifmr.ifm_current = ifmr32->ifm_current;
-		thunk.ifmr.ifm_mask = ifmr32->ifm_mask;
-		thunk.ifmr.ifm_status = ifmr32->ifm_status;
-		thunk.ifmr.ifm_active = ifmr32->ifm_active;
-		thunk.ifmr.ifm_count = ifmr32->ifm_count;
-		thunk.ifmr.ifm_ulist = PTRIN(ifmr32->ifm_ulist);
-		data = (caddr_t)&thunk.ifmr;
-		cmd = _IOC_NEWTYPE(cmd, struct ifmediareq);
-		break;
-	}
-#endif
 
 	switch (cmd) {
 	case SIOCGIFCONF:
@@ -3192,38 +3138,6 @@ out_ref:
 	if_rele(ifp);
 out_noref:
 	CURVNET_RESTORE();
-#ifdef COMPAT_FREEBSD32
-	if (error != 0)
-		return (error);
-	switch (saved_cmd) {
-	case SIOCGIFCONF32:
-		ifc32->ifc_len = thunk.ifc.ifc_len;
-		break;
-	case SIOCGDRVSPEC32:
-		/*
-		 * SIOCGDRVSPEC is IOWR, but nothing actually touches
-		 * the struct so just assert that ifd_len (the only
-		 * field it might make sense to update) hasn't
-		 * changed.
-		 */
-		KASSERT(thunk.ifd.ifd_len == ifd32->ifd_len,
-		    ("ifd_len was updated %u -> %zu", ifd32->ifd_len,
-			thunk.ifd.ifd_len));
-		break;
-	case SIOCGIFGROUP32:
-	case SIOCGIFGMEMB32:
-		ifgr32->ifgr_len = thunk.ifgr.ifgr_len;
-		break;
-	case SIOCGIFMEDIA32:
-	case SIOCGIFXMEDIA32:
-		ifmr32->ifm_current = thunk.ifmr.ifm_current;
-		ifmr32->ifm_mask = thunk.ifmr.ifm_mask;
-		ifmr32->ifm_status = thunk.ifmr.ifm_status;
-		ifmr32->ifm_active = thunk.ifmr.ifm_active;
-		ifmr32->ifm_count = thunk.ifmr.ifm_count;
-		break;
-	}
-#endif
 	return (error);
 }
 
@@ -4943,9 +4857,13 @@ if_input(if_t ifp, struct mbuf* sendmp)
 	(*ifp->if_input)(ifp, sendmp);
 }
 
+int (*pf_delay_transmit_hook)(struct ifnet *, struct mbuf *);
+
 int
 if_transmit(if_t ifp, struct mbuf *m)
 {
+	if (pf_delay_transmit_hook != NULL && m_pf_ro(m)->delay != 0)
+		return (pf_delay_transmit_hook(ifp, m));
 	return ((*ifp->if_transmit)(ifp, m));
 }
 
@@ -5223,12 +5141,6 @@ if_getcounter(if_t ifp, ift_counter counter)
 	return (ifp->if_get_counter(ifp, counter));
 }
 
-bool
-if_altq_is_enabled(if_t ifp)
-{
-	return (ALTQ_IS_ENABLED(&ifp->if_snd));
-}
-
 struct vnet *
 if_getvnet(if_t ifp)
 {
@@ -5333,8 +5245,6 @@ if_show_ifnet(struct ifnet *ifp)
 	IF_DB_PRINTF("%p", if_snd.ifq_drv_tail);
 	IF_DB_PRINTF("%d", if_snd.ifq_drv_len);
 	IF_DB_PRINTF("%d", if_snd.ifq_drv_maxlen);
-	IF_DB_PRINTF("%d", if_snd.altq_type);
-	IF_DB_PRINTF("%x", if_snd.altq_flags);
 #undef IF_DB_PRINTF
 }
 

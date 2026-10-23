@@ -130,6 +130,12 @@
 #include "main.h"
 #include "ping6.h"
 
+/* 5BSD: -V rtable runs ping6 on routing table rtable (sockets open later). */
+#define	PING_SETRTABLE(t) do {						\
+	if (setfib(t) == -1)						\
+		err(EX_OSERR, "setfib %d", (t));			\
+} while (0)
+
 struct tv32 {
 	u_int32_t tv32_sec;
 	u_int32_t tv32_nsec;
@@ -541,6 +547,31 @@ ping6(int argc, char *argv[])
 		case 'Y':
 			options &= ~F_NOUSERDATA;
 			options |= F_FQDNOLD;
+			break;
+		case 'V':		/* OpenBSD: routing table (rtable) */
+			{
+				const char *verr;
+				int rtable;
+
+				rtable = (int)strtonum(optarg, 0, RT_TABLEID_MAX,
+				    &verr);
+				if (verr != NULL)
+					errx(EX_USAGE, "rtable value is %s: %s",
+					    verr, optarg);
+				PING_SETRTABLE(rtable);
+			}
+			break;
+		case 'w':		/* OpenBSD: max seconds to wait after the last request */
+			{
+				const char *werr;
+
+				waittime = (int)strtonum(optarg, 1,
+				    INT_MAX / 1000, &werr);
+				if (werr != NULL)
+					errx(EX_USAGE, "maxwait value is %s: %s",
+					    werr, optarg);
+				waittime *= 1000;
+			}
 			break;
 		case 'W':
 			t = strtod(optarg, &e);

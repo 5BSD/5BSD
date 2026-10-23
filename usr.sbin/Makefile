@@ -51,7 +51,6 @@ SUBDIR=	adduser \
 	mfiutil \
 	mlxcontrol \
 	mountd \
-	mount_smbfs \
 	mpsutil \
 	mptutil \
 	mtest \
@@ -99,7 +98,6 @@ SUBDIR=	adduser \
 	rpc.statd \
 	rpc.umntall \
 	rtprio \
-	rwhod \
 	service \
 	policyctl \
 	switchboardctl \
@@ -163,7 +161,7 @@ SUBDIR.${MK_BSDINSTALL}+=	bsdinstall
 SUBDIR.${MK_BSNMP}+=	bsnmpd
 SUBDIR.${MK_DTRACE}+=	BSDTrace dtraced dtracedctl tracectl
 .if ${MK_CAROOT} != "no"
-SUBDIR.${MK_OPENSSL}+=	certctl capsign elfcache
+SUBDIR.${MK_OPENSSL}+=	certctl capsign
 .endif
 SUBDIR.${MK_CXGBETOOL}+=	cxgbetool
 SUBDIR.${MK_EFI}+=	efivar efidp efibootmgr efitable efiwake
@@ -171,10 +169,6 @@ SUBDIR.${MK_EFI}+=	efivar efidp efibootmgr efitable efiwake
 SUBDIR.${MK_EFI}+=	uefisign
 .endif
 SUBDIR.${MK_FDT}+=	ofwdump
-SUBDIR.${MK_FLOPPY}+=	fdcontrol
-SUBDIR.${MK_FLOPPY}+=	fdformat
-SUBDIR.${MK_FLOPPY}+=	fdread
-SUBDIR.${MK_FLOPPY}+=	fdwrite
 SUBDIR.${MK_FREEBSD_UPDATE}+=	freebsd-update
 SUBDIR.${MK_KERBEROS_SUPPORT}+=	gssd
 SUBDIR.${MK_GPIO}+=	gpioctl
@@ -182,8 +176,6 @@ SUBDIR.${MK_HYPERV}+=	hyperv
 SUBDIR.${MK_INET6}+=	ip6addrctl
 SUBDIR.${MK_INET6}+=	mld6query
 SUBDIR.${MK_INET6}+=	ndp
-SUBDIR.${MK_INET6}+=	rip6query
-SUBDIR.${MK_INET6}+=	route6d
 SUBDIR.${MK_INET6}+=	rrenumd
 SUBDIR.${MK_INET6}+=	rtadvctl
 SUBDIR.${MK_INET6}+=	rtadvd

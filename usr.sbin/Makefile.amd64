@@ -21,7 +21,6 @@ SUBDIR+=	bsdtrace
 SUBDIR+=	btxld
 .endif
 SUBDIR+=	cpucontrol
-SUBDIR+=	lptcontrol
 SUBDIR+=	mptable
 SUBDIR+=	spkrtest
 SUBDIR+=	zzz

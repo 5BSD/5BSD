@@ -17,6 +17,7 @@ current row counts or activation status.
 | Non-VirtIO device live and save/restore coverage | `tests/waspnest/waspnest-nonvirtio-coverage.tsv` |
 | Intel nested-VMX requirements | `tests/sys/vmm/vmx-nested-requirements.tsv` |
 | Intel nested-VMX live qualification | `tests/sys/vmm/vmx-nested-live-qualification.tsv` |
+| AMD nested-SVM live qualification | `tests/sys/vmm/svm-nested-live-qualification.tsv` |
 | Default-off nested policy qualification | `tests/sys/vmm/vmx-nested-default-policy-live-qualification.tsv` |
 | Nested implementation-defined interfaces | `tests/sys/vmm/vmx-nested-nonstandard-interfaces.tsv` |
 | Common/Intel/AMD startup-entry edges | `tests/sys/vmm/vmx-startup-entry-edge-matrix.tsv` |

@@ -258,9 +258,6 @@ print_entry(struct snl_parsed_neigh *neigh, struct snl_parsed_link_simple *link)
 	case IFT_L2VLAN:
 		xo_emit(" [{:type/vlan}]");
 		break;
-	case IFT_IEEE1394:
-		xo_emit(" [{:type/firewire}]");
-		break;
 	case IFT_BRIDGE:
 		xo_emit(" [{:type/bridge}]");
 		break;

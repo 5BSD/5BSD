@@ -18,6 +18,7 @@ fixture = r'''
 #include <stdbool.h>
 #include <sys/mman.h>
 #include "migration_snapshot.h"
+#include "migration_session.h"
 #define SHA256_DIGEST_LENGTH 32
 #define BHYVE_PHASE_START(...) ((void)0)
 #define BHYVE_PHASE_DONE(...) ((void)0)
@@ -40,6 +41,17 @@ static int step(int n) {
  assert(++position == n); errno = EIO; return n == fail_at ? EIO : 0;
 }
 #define hypertrace_initialized() tracing
+/* Merged gates: the TPM migration check runs before any other step, the
+ * saved guest CPU contract after the handoff marker and before input pause. */
+static int tpm_error, cpu_contract_error, cpu_contract_calls;
+#define tpm_device_migration_check() (assert(position == 0), tpm_error)
+struct vcpu { int unused; };
+static struct vcpu bsp;
+#define fbsdrun_vcpu(n) (assert((n) == 0), &bsp)
+static int checkpoint_restore_cpu_contract(struct restore_state *r, struct vcpu *v) {
+ assert(r != NULL && v == &bsp && position == 3 && !input_paused);
+ cpu_contract_calls++; return cpu_contract_error;
+}
 #define checkpoint_restore_startup_held() held
 #define migrate_tempfd(...) 7
 #define close(...) ((void)0)
@@ -111,6 +123,24 @@ int main(void) {
    assert(aborted == (fail_at >= 8));
    assert(destroyed == 1);
    assert(input_paused==(fail_at==0 || fail_at>=4));
+ }
+ fail_at = 0;
+ /* TPM refusal: nothing is decoded, loaded or paused. */
+ {
+   struct pci_devinst *result = &device;
+   position = destroyed = cpu_contract_calls = 0; tpm_error = ENOTSUP;
+   assert(vm_migrate_fresh_commit_state(&ctx, blob, sizeof(blob), &result) == ENOTSUP);
+   assert(result == NULL && position == 0 && destroyed == 0 && cpu_contract_calls == 0);
+   tpm_error = 0;
+   /* An oversized blob is refused before the TPM gate as well. */
+   assert(vm_migrate_fresh_commit_state(&ctx, blob, (size_t)MIGRATION_MAX_DEV_STATE + 1, &result) == EMSGSIZE);
+   assert(position == 0);
+   /* CPU contract mismatch: refused after the marker, before input pause. */
+   position = hashes = aborted = destroyed = 0; input_paused = false;
+   cpu_contract_error = EOPNOTSUPP;
+   assert(vm_migrate_fresh_commit_state(&ctx, blob, sizeof(blob), &result) == EOPNOTSUPP);
+   assert(position == 3 && cpu_contract_calls == 1 && !input_paused && destroyed == 1 && aborted == 0);
+   cpu_contract_error = 0;
  }
  resuming = true;
  for (fail_at = 0; fail_at <= 8; fail_at++) {

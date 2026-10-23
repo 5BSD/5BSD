@@ -8,6 +8,8 @@
  * 100 entries via ct.year / 100 -- a guest-visible out-of-bounds read.  The
  * validator must reject negative and overflowing values while still accepting
  * the VRTC_BROKEN_TIME (-1) sentinel and the exact representable maximum.
+ * The image must also reject an RTC address that the 7-bit address port
+ * cannot produce.
  *
  * The real vrtc.c is compiled against the harness's shadow kernel headers.
  * clocktime<->timespec conversion is delegated to libc so vrtc_init()'s
@@ -148,6 +150,7 @@ vm_snapshot_buf_err(const char *bufname __unused,
  * base_rtctime is serialized immediately after addr, so it lives at offset 4.
  */
 #define	VRTC_RECORD_SIZE	140
+#define	VRTC_ADDR_OFF		0
 #define	VRTC_BASE_RTCTIME_OFF	4
 
 static int
@@ -299,6 +302,30 @@ ATF_TC_BODY(restore_bounds_base_rtctime, tc)
 	vrtc_cleanup(src);
 }
 
+ATF_TC_WITHOUT_HEAD(restore_rejects_unreachable_addr);
+ATF_TC_BODY(restore_rejects_unreachable_addr, tc)
+{
+	struct vrtc *src, *dst;
+	uint8_t buf[256];
+	u_int before;
+
+	src = vrtc_init(NULL);
+	kmock_vrtc = src;
+	save_with_base(src, 1700000000, buf, sizeof(buf));
+	/* The address port masks bit 7 and cannot produce this value. */
+	memset(buf + VRTC_ADDR_OFF, 0, sizeof(u_int));
+	buf[VRTC_ADDR_OFF] = 0x80;
+	dst = vrtc_init(NULL);
+	kmock_vrtc = dst;
+	before = dst->addr;
+	ATF_CHECK_EQ(EINVAL, do_snapshot(dst, VM_SNAPSHOT_RESTORE, buf,
+	    VRTC_RECORD_SIZE, NULL));
+	ATF_CHECK_EQ(before, dst->addr);
+	vrtc_cleanup(dst);
+	kmock_vrtc = src;
+	vrtc_cleanup(src);
+}
+
 /*
  * Cross-check the validator's upper bound against the actual danger it guards:
  * feeding VRTC_MAX_RTCTIME to secs_to_rtc() must keep the century index
@@ -330,6 +357,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, restore_rejects_negative_base_rtctime);
 	ATF_TP_ADD_TC(tp, restore_accepts_broken_sentinel);
 	ATF_TP_ADD_TC(tp, restore_bounds_base_rtctime);
+	ATF_TP_ADD_TC(tp, restore_rejects_unreachable_addr);
 	ATF_TP_ADD_TC(tp, max_rtctime_matches_bcd_table_bound);
 	return (atf_no_error());
 }

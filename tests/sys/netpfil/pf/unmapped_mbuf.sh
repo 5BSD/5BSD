@@ -52,7 +52,7 @@ v4_body() {
 	atf_check -s exit:0 -o ignore jexec a ping -c 1 192.0.2.2
 
 	jexec a pfctl -e
-	pft_set_rules a "pass out on ${l}a route-to (${l}a 192.0.2.2) all"
+	pft_set_rules a "pass out on ${l}a all route-to 192.0.2.2"
 	jexec b timeout 30s nc -4 -d -l 2345 > out &
 	sleep 1
 	atf_check -s exit:0 -o ignore \
@@ -78,15 +78,15 @@ v6_body() {
 
 	l=$(vnet_mkepair)
 	vnet_mkjail a ${l}a
-	jexec a ifconfig ${l}a inet6 2001:db8::1/64 up
+	jexec a ifconfig ${l}a inet6 2001:db8::1/64 up no_dad
 	vnet_mkjail b ${l}b
-	jexec b ifconfig ${l}b inet6 2001:db8::2/64 up
+	jexec b ifconfig ${l}b inet6 2001:db8::2/64 up no_dad
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore jexec a ping -c 1 2001:db8::2
 
 	jexec a pfctl -e
-	pft_set_rules a "pass out on ${l}a route-to (${l}a 2001:db8::2) all"
+	pft_set_rules a "pass out on ${l}a all route-to 2001:db8::2"
 	jexec b timeout 30s nc -6 -d -l 2345 > out &
 	sleep 1
 	atf_check -s exit:0 -o ignore \
@@ -122,7 +122,7 @@ dummynet_body() {
 	atf_check -s exit:0 -o ignore \
 	    jexec a dnctl pipe 1 config delay 100
 	jexec a pfctl -e
-	pft_set_rules a "pass out on ${l}a route-to (${l}a 192.0.2.2) all dnpipe 1"
+	pft_set_rules a "pass out on ${l}a all route-to 192.0.2.2 dnpipe 1"
 	jexec b timeout 30s nc -4 -d -l 2345 > out &
 	sleep 1
 	atf_check -s exit:0 -o ignore \

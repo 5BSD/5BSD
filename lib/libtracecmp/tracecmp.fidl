@@ -4,6 +4,7 @@
 // Authority never travels in a payload: the provider decides from the
 // session's switchboard-stamped rights (SERVICE_RIGHTS_ADMIN) and its
 // bsdtrace.allow label policy.
+@available(platform="bsd", added=1)
 library bsd.trace.v1;
 
 using zx;

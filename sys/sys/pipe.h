@@ -117,6 +117,7 @@ struct pipe {
 	int	pipe_waiters;		/* pipelock waiters */
 	int	pipe_busy;		/* busy flag, mostly to handle rundown sanely */
 	int	pipe_wgen;		/* writer generation for named pipe */
+	u_int	pipe_user_size;	/* fixed capacity requested with fcntl */
 	ino_t	pipe_ino;		/* fake inode for stat(2) */
 };
 
@@ -154,6 +155,7 @@ struct file;
 int	pipe_reopen_file(struct file *, struct file *, int, struct thread *);
 void	pipe_dtor(struct pipe *dpipe);
 int	pipe_named_ctor(struct pipe **ppipe, struct thread *td);
+int	kern_pipe_set_size(struct file *fp, u_long size, u_long *sizep);
 void	pipeselwakeup(struct pipe *cpipe);
 #endif
 #endif /* !_SYS_PIPE_H_ */

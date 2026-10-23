@@ -7,6 +7,7 @@ namespace {
 thread_local bool fail_metadata = false;
 thread_local int fail_new_after = -1;
 thread_local bool triggered = false;
+thread_local unsigned long allocations = 0;
 }
 namespace fidl::bsd::testing {
 void
@@ -28,6 +29,11 @@ DisableAllocationFault()
 	fail_new_after = -1;
 	return triggered;
 }
+unsigned long
+AllocationCount()
+{
+	return allocations;
+}
 }
 extern "C" void *__real_malloc(std::size_t);
 extern "C" void *__real__Znwm(std::size_t);
@@ -35,6 +41,7 @@ extern "C" void *__real__Znam(std::size_t);
 extern "C" void *
 __wrap_malloc(std::size_t count)
 {
+	++allocations;
 	if (fail_metadata) {
 		fail_metadata = false;
 		triggered = true;
@@ -45,6 +52,7 @@ __wrap_malloc(std::size_t count)
 static void
 CheckNew()
 {
+	++allocations;
 	if (fail_new_after < 0)
 		return;
 	if (fail_new_after-- == 0) {

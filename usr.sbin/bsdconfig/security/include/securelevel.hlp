@@ -29,10 +29,12 @@ Refer to the security(7) and init(8) manual pages for complete details.
          than this will log the message ``Time adjustment clamped to +1
          second''.
 
-   3     Network secure mode - same as highly secure mode, plus IP
-         packet filter rules (see ipfw(8), ipfirewall(4) and pfctl(8))
-         cannot be changed and dummynet(4) or pf(4) configuration
-         cannot be adjusted.
+         The pf(4) packet filter is locked, as on OpenBSD: its rules,
+         options and states cannot be changed (see pfctl(8)); only
+         addresses in existing tables may be added or removed.
+
+   3     Network secure mode - same as highly secure mode, plus
+         dummynet(4) configuration (see dnctl(8)) cannot be adjusted.
 
 Securelevels must be used in combination with careful system design and
 application of protective mechanisms to prevent system configuration

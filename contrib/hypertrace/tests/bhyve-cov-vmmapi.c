@@ -249,7 +249,9 @@ test_memory(void)
 	memset(base + 12345, 0xa5, 100);
 	OK(((uint8_t *)vm_map_gpa(ctx, 12345, 100))[99] == 0xa5);
 	OK(vm_rev_map_gpa(ctx, base + 4096) == 4096);
-	OK(vm_rev_map_gpa(ctx, base + 64 * MB) == 64 * MB);
+	/* Merged: the end of low memory is not a mapped guest address. */
+	OK(vm_rev_map_gpa(ctx, base + 64 * MB - 1) == 64 * MB - 1);
+	OK(vm_rev_map_gpa(ctx, base + 64 * MB) == (vm_paddr_t)-1);
 	OK(vm_rev_map_gpa(ctx, base + 65 * MB) == (vm_paddr_t)-1);
 	/* An existing system memory segment is reused, not reallocated. */
 	{

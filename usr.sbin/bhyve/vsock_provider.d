@@ -153,6 +153,10 @@ provider bhyve {
 	    uint64_t dirty_pages, int converged);
 	probe migration__send(uint16_t type, uint32_t sequence, uint64_t length,
 	    int error);
+	probe migration__receive(uint16_t type, uint32_t sequence,
+	    uint64_t length);
+	probe migration__result(uint32_t role, uint32_t phase, uint32_t reason,
+	    int error, int runnable);
 };
 
 /* Network backend provenance probes share this executable provider object. */

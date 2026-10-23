@@ -134,36 +134,6 @@ struct md_req {
 	size_t		md_units_nitems; /* items in md_units array */
 };
 
-#ifdef COMPAT_FREEBSD32
-struct md_ioctl32 {
-	unsigned	md_version;
-	unsigned	md_unit;
-	enum md_types	md_type;
-	uint32_t	md_file;
-	off_t		md_mediasize;
-	unsigned	md_sectorsize;
-	unsigned	md_options;
-	uint64_t	md_base;
-	int		md_fwheads;
-	int		md_fwsectors;
-	uint32_t	md_label;
-	int		md_pad[MDNPAD];
-}
-#ifdef __amd64__
-__attribute__((__packed__))
-#endif
-;
-#ifndef __amd64__
-CTASSERT((sizeof(struct md_ioctl32)) == 440);
-#else
-CTASSERT((sizeof(struct md_ioctl32)) == 436);
-#endif
-
-#define	MDIOCATTACH_32	_IOC_NEWTYPE(MDIOCATTACH, struct md_ioctl32)
-#define	MDIOCDETACH_32	_IOC_NEWTYPE(MDIOCDETACH, struct md_ioctl32)
-#define	MDIOCQUERY_32	_IOC_NEWTYPE(MDIOCQUERY, struct md_ioctl32)
-#define	MDIOCRESIZE_32	_IOC_NEWTYPE(MDIOCRESIZE, struct md_ioctl32)
-#endif /* COMPAT_FREEBSD32 */
 
 static MALLOC_DEFINE(M_MD, "md_disk", "Memory Disk");
 static MALLOC_DEFINE(M_MDSECT, "md_sectors", "Memory Disk Sectors");
@@ -1969,21 +1939,6 @@ mdctlioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		mdr.md_label = mdio->md_label;
 		break;
 	}
-#ifdef COMPAT_FREEBSD32
-	case MDIOCATTACH_32:
-	case MDIOCDETACH_32:
-	case MDIOCRESIZE_32:
-	case MDIOCQUERY_32: {
-		struct md_ioctl32 *mdio = (struct md_ioctl32 *)addr;
-		if (mdio->md_version != MDIOVERSION)
-			return (EINVAL);
-		MD_IOCTL2REQ(mdio, &mdr);
-		mdr.md_file = (void *)(uintptr_t)mdio->md_file;
-		mdr.md_file_seg = UIO_USERSPACE;
-		mdr.md_label = (void *)(uintptr_t)mdio->md_label;
-		break;
-	}
-#endif
 	default:
 		/* Fall through to handler switch. */
 		break;
@@ -1993,27 +1948,15 @@ mdctlioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	error = 0;
 	switch (cmd) {
 	case MDIOCATTACH:
-#ifdef COMPAT_FREEBSD32
-	case MDIOCATTACH_32:
-#endif
 		error = kern_mdattach(td, &mdr);
 		break;
 	case MDIOCDETACH:
-#ifdef COMPAT_FREEBSD32
-	case MDIOCDETACH_32:
-#endif
 		error = kern_mddetach(td, &mdr);
 		break;
 	case MDIOCRESIZE:
-#ifdef COMPAT_FREEBSD32
-	case MDIOCRESIZE_32:
-#endif
 		error = kern_mdresize(&mdr);
 		break;
 	case MDIOCQUERY:
-#ifdef COMPAT_FREEBSD32
-	case MDIOCQUERY_32:
-#endif
 		error = kern_mdquery(&mdr);
 		break;
 	default:
@@ -2029,14 +1972,6 @@ mdctlioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		MD_REQ2IOCTL(&mdr, mdio);
 		break;
 	}
-#ifdef COMPAT_FREEBSD32
-	case MDIOCATTACH_32:
-	case MDIOCQUERY_32: {
-		struct md_ioctl32 *mdio = (struct md_ioctl32 *)addr;
-		MD_REQ2IOCTL(&mdr, mdio);
-		break;
-	}
-#endif
 	default:
 		/* Other commands to not alter mdr. */
 		break;

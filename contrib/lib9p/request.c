@@ -647,7 +647,7 @@ l9p_dispatch_tattach(struct l9p_request *req)
 
 	fid = l9p_connection_alloc_fid(conn, req->lr_req.hdr.fid);
 	if (fid == NULL)
-		return (EINVAL);
+		return (errno == ENOMEM ? ENOMEM : EINVAL);
 
 	be = conn->lc_server->ls_backend;
 
@@ -888,7 +888,7 @@ l9p_dispatch_twalk(struct l9p_request *req)
 		newfid = l9p_connection_alloc_fid(conn,
 		    req->lr_req.twalk.newfid);
 		if (newfid == NULL)
-			return (EINVAL);
+			return (errno == ENOMEM ? ENOMEM : EINVAL);
 	} else
 		newfid = fid;
 
@@ -1208,7 +1208,7 @@ l9p_dispatch_txattrwalk(struct l9p_request *req)
 
 	newfid = l9p_connection_alloc_fid(conn, req->lr_req.txattrwalk.newfid);
 	if (newfid == NULL)
-		return (EINVAL);
+		return (errno == ENOMEM ? ENOMEM : EINVAL);
 
 	be = conn->lc_server->ls_backend;
 

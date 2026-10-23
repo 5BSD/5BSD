@@ -65,6 +65,7 @@ The current classification is:
 | Shared-memory regions | production infrastructure with a provisional pmem consumer | The common sealed topology, runtime fencing, portable compatibility contract, and pmem region are implemented; live Linux/checkpoint qualification remains a release gate |
 | DAX, SR-IOV device groups, live migration | unadvertised/incomplete | Architecture and qualification work remains |
 | Intel nested VMX | experimental, default-off qualification path | Requires both the boot-time `hw.vmm.vmx.nested=1` host gate and per-guest `x86.nested_vmx=true`; VPID/INVVPID additionally requires the loader-only `hw.vmm.vmx.nested_vpid=1` qualification gate and changes the saved capability signature; rootless architectural tests do not qualify release until Linux/KVM L1 with Linux and 5BSD L2 activation, host traces, active-L2 restore, and soak all pass |
+| AMD nested SVM | experimental, default-off qualification path | Requires boot-time `hw.vmm.svm.nested=1`, host DecodeAssists, and per-guest `x86.nested_svm=true`; kernel L2 execution and checkpoint state, a read-only ROM alias live case, and a two-boot ATF runner exist, while live Linux/KVM L1 with Linux and 5BSD L2 activation, active-L2 restore, and soak remain qualification gates |
 
 “Production, provisional” means the device is registered and selectable, not
 that it has completed the release gate.  Documentation and tests must not call

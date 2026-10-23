@@ -32,7 +32,6 @@
 #include <unistd.h>
 
 #define	LIBSTDBUF	"/usr/lib/libstdbuf.so"
-#define	LIBSTDBUF32	"/usr/lib32/libstdbuf.so"
 
 static int
 appendenv(const char *key, const char *value)
@@ -101,7 +100,6 @@ main(int argc, char *argv[])
 		    "_STDBUF_E", ebuf);
 
 	appendenv("LD_PRELOAD", LIBSTDBUF);
-	appendenv("LD_32_PRELOAD", LIBSTDBUF32);
 
 	execvp(argv[0], argv);
 	err(2, "%s", argv[0]);

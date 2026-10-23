@@ -5,9 +5,10 @@
 
 mkdir /tmp/msdosfstest/
 mdconfig -a -t swap -s 128m -u 10
-bsdlabel -w md10 auto
-newfs_msdos -F 32 -b 8192 /dev/md10a
-mount_msdosfs -L zh_TW.Big5 -D CP950 /dev/md10a /tmp/msdosfstest/
+gpart create -s mbr md10
+gpart add -t fat32 md10
+newfs_msdos -F 32 -b 8192 /dev/md10s1
+mount_msdosfs -L zh_TW.Big5 -D CP950 /dev/md10s1 /tmp/msdosfstest/
 # The comment is UTF-8, the actual command uses the Big5 representation.
 # mkdir /tmp/msdosfstest/是否看過坊間常見的許茹芸淚海慶功宴吃蓋飯第四集
 subdir=$'\254\117\247\137\254\335\271\114\247\173\266\241\261\140\250\243'\

@@ -218,7 +218,7 @@ struct xinpgen {
 #define	INP_RECVRSSBUCKETID	0x00000200 /* populate recv datagram with bucket id */
 #define	INP_RATE_LIMIT_CHANGED	0x00000400 /* rate limit needs attention */
 #define	INP_ORIGDSTADDR		0x00000800 /* receive IP dst address/port */
-/*				0x00001000 */
+#define	INP_RECVDSTPORT		0x00001000 /* receive dst port (OpenBSD) */
 /*				0x00002000 */
 /*				0x00004000 */
 /*				0x00008000 */
@@ -234,7 +234,7 @@ struct xinpgen {
 /* inp_flags2 description for use with printf(9) %b identifier. */
 #define	INP_FLAGS2_BITS	"\20" \
     "\11INP_RECVFLOWID\12INP_RECVRSSBUCKETID" \
-    "\13INP_RATE_LIMIT_CHANGED\14INP_ORIGDSTADDR" \
+    "\13INP_RATE_LIMIT_CHANGED\14INP_ORIGDSTADDR\15INP_RECVDSTPORT" \
     "\22INP_2PCP_SET\23INP_2PCP_BIT0\24INP_2PCP_BIT1" \
     "\25INP_2PCP_BIT2"
 
@@ -326,6 +326,7 @@ struct xktls_session {
 struct icmp6_filter;
 struct inpcbpolicy;
 struct m_snd_tag;
+struct pf_state_key;
 struct inpcb {
 	union {
 		CK_LIST_ENTRY(inpcb)	inp_hash_exact;
@@ -382,7 +383,7 @@ struct inpcb {
 	};
 	CK_LIST_ENTRY(inpcb) inp_portlist;	/* (r:e/w:h) port list */
 	uint64_t	inp_gencnt;	/* (c) generation count */
-	void		*spare_ptr;	/* Spare pointer. */
+	struct pf_state_key *inp_pf_sk;	/* pf state key linked to socket */
 	rt_gen_t	inp_rt_cookie;	/* generation for route entry */
 	union {				/* cached L3 information */
 		struct route inp_route;
@@ -630,6 +631,8 @@ int	in_pcbbind_setup(struct inpcb *, struct sockaddr_in *, in_addr_t *,
 int	in_pcbconnect(struct inpcb *, struct sockaddr_in *, struct ucred *);
 void	in_pcbdisconnect(struct inpcb *);
 void	in_pcbfree(struct inpcb *);
+/* Installed by pf (OpenBSD PF): drop pf state links to a detaching pcb. */
+extern void (*pf_inpcb_free_hook)(struct inpcb *);
 int	in_pcbladdr(const struct inpcb *, struct in_addr *, struct in_addr *,
 	    struct ucred *);
 int	in_pcblbgroup_numa(struct inpcb *, int arg);

@@ -139,7 +139,6 @@ static const struct {
 	{ "ntfs",	&OIDX_hrFSNTFS_c },
 	{ "nwfs",	&OIDX_hrFSNetware_c },
 	{ "hpfs",	&OIDX_hrFSHPFS_c },
-	{ "smbfs",	&OIDX_hrFSOther_c },
 };
 #define	N_FS_TYPE_MAP	nitems(fs_type_map)
 

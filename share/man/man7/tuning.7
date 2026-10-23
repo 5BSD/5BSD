@@ -143,35 +143,10 @@ This is especially useful for
 .Pa /
 since some system utilities
 use the atime field for reporting.
-.Sh STRIPING DISKS
-In larger systems you can stripe partitions from several drives together
-to create a much larger overall partition.
-Striping can also improve
-the performance of a file system by splitting I/O operations across two
-or more disks.
-The
-.Xr gstripe 8
-and
-.Xr ccdconfig 8
-utilities may be used to create simple striped file systems.
-Generally
-speaking, striping smaller partitions such as the root and
-.Pa /var/tmp ,
-or essentially read-only partitions such as
-.Pa /usr
-is a complete waste of time.
-You should only stripe partitions that require serious I/O performance,
-typically
-.Pa /var , /home ,
-or custom partitions used to hold databases and web pages.
-Choosing the proper stripe size is also
-important.
-File systems tend to store meta-data on power-of-2 boundaries
-and you usually want to reduce seeking rather than increase seeking.
-This
-means you want to use a large off-center stripe size such as 1152 sectors
-so sequential I/O does not seek both disks and so meta-data is distributed
-across both disks rather than concentrated on a single disk.
+.Sh ZFS STORAGE LAYOUT
+For data stored on ZFS, choose vdev layout with
+.Xr zpool 8 .
+Review redundancy and capacity before creating a pool.
 .Sh SYSCTL TUNING
 .Xr sysctl 8
 variables permit system behavior to be monitored and controlled at
@@ -383,9 +358,12 @@ Note that the routing table (see
 can be used to introduce route-specific send and receive buffer size
 defaults.
 .Pp
-As an additional management tool you can use pipes in your
-firewall rules (see
-.Xr ipfw 8 )
+As an additional management tool you can use
+.Xr dummynet 4
+pipes in your
+.Xr pf.conf 5
+rules
+.Pq Cm dnpipe , dnqueue ; see Xr dnctl 8
 to limit the bandwidth going to or from particular IP blocks or ports.
 For example, if you have a T1 you might want to limit your web traffic
 to 70% of the T1's bandwidth in order to leave the remainder available
@@ -707,14 +685,14 @@ over services you export from your box (web services, email).
 .Xr boot 8 ,
 .Xr bsdinstall 8 ,
 .Xr config 8 ,
+.Xr dnctl 8 ,
 .Xr fsck 8 ,
 .Xr gpart 8 ,
-.Xr gstripe 8 ,
 .Xr ifconfig 8 ,
-.Xr ipfw 8 ,
 .Xr loader 8 ,
 .Xr mount 8 ,
 .Xr newfs 8 ,
+.Xr pfctl 8 ,
 .Xr route 8 ,
 .Xr sysctl 8 ,
 .Xr tunefs 8

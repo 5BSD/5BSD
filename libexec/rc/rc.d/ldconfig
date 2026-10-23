@@ -53,21 +53,6 @@ ldconfig_start()
 		startmsg 'ELF ldconfig path:' ${_LDC}
 		${ldconfig} -elf ${_ins} ${_LDC}
 
-		if check_kern_features compat_freebsd32; then
-			_LDC=""
-			if [ -x /libexec/ld-elf32.so.1 ]; then
-				for x in $(/libexec/ld-elf32.so.1 -v | sed -n -e '/^Default lib path /s///p' | tr : ' '); do
-					if [ -d "${x}" ]; then
-						_LDC="${_LDC} ${x}"
-					fi
-				done
-			fi
-			_LDC=$(ldconfig_paths "${ldconfig_local32_dirs}" \
-			    "${ldconfig32_paths}" "$_LDC")
-			startmsg '32-bit compatibility ldconfig path:' ${_LDC}
-			${ldconfig} -32 ${_ins} ${_LDC}
-		fi
-
 	fi
 }
 

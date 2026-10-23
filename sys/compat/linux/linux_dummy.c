@@ -30,11 +30,7 @@
 #include <sys/sdt.h>
 #include <sys/proc.h>
 
-/*
- * Including linux vs linux32 here is arbitrary -- the syscall args structures
- * (proto.h) are not dereferenced by the DUMMY stub implementations, and
- * suitable for use by both native and compat32 entrypoints.
- */
+/* The DUMMY stubs use the native Linux syscall argument declarations. */
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
 
@@ -92,11 +88,6 @@ DUMMY(userfaultfd);
 /* Linux 4.6: */
 /* Linux 4.8: */
 /* Linux 4.18: */
-#ifndef __amd64__
-/* The implementation currently lives in amd64/linux/linux_machdep.c. */
-DUMMY(remap_file_pages);
-DUMMY(io_pgetevents);
-#endif
 /* Linux 5.1: */
 /* Linux 5.2: */
 DUMMY(open_tree);
@@ -116,12 +107,6 @@ DUMMY(landlock_add_rule);
 DUMMY(landlock_restrict_self);
 /* Linux 5.14: */
 DUMMY(memfd_secret);
-/* The amd64 table uses a separate handler; retain this shared ABI stub. */
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
-struct linux_quotactl_fd_args;
-int linux_quotactl_fd(struct thread *, struct linux_quotactl_fd_args *);
-#endif
-DUMMY(quotactl_fd);
 /* Linux 5.15: */
 DUMMY(process_mrelease);
 /* Linux 5.16: */

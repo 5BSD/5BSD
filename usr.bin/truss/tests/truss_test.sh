@@ -233,14 +233,15 @@ accepted_abis_body()
 		    truss -o out3 -t "$name" cat input
 	done
 
-	# sysdecode(3) has Linux names only on amd64, i386, and aarch64
+	# Linux64 syscall names differ between the two supported Linux ABIs.
 	arch="$(uname -p)"
 	case "$arch" in
-		i386|amd64|aarch64) ;;
-		*) atf_expect_fail "linux(4) support not available on $arch" ;;
+		amd64) names="linux_write linux_newstat" ;;
+		aarch64) names="linux_write" ;;
+		*) return ;;
 	esac
 
-	for name in linux_write linux_newstat; do
+	for name in $names; do
 		atf_check -s exit:0 -o inline:"hello\n" -e empty \
 		    truss -o out3 -t "$name" cat input
 	done

@@ -40,6 +40,7 @@
 #include <dev/vmm/vmm_mem.h>
 #include <dev/vmm/vmm_vm.h>
 #include <dev/vmm/vmm_startup_handshake.h>
+#include <dev/vmm/vmm_event_coordinator.h>
 #include <machine/specialreg.h>
 #include <machine/fpu.h>
 
@@ -1183,4 +1184,20 @@ eventratecheck(struct timeval *lasttime, int *cureps, int maxeps)
 		(*cureps)++;
 		return (maxeps < 0 || *cureps <= maxeps);
 	}
+}
+
+/*
+ * The checkpoint event coordinator (vmm_event_coordinator.c) is outside this
+ * suite: it needs sleepqueues and the event-ingress module.  vCPU allocation
+ * consults its topology gate, so model the gate's answer; a test may set it
+ * to exercise the refusal arm.
+ */
+int khx_vmm_topology_admit_error;
+
+int
+vmm_event_coordinator_checkpoint_topology_admit(
+    struct vmm_event_coordinator *coordinator)
+{
+	(void)coordinator;
+	return (khx_vmm_topology_admit_error);
 }

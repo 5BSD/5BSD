@@ -625,7 +625,7 @@ get_mtu()
 {
 	intf=$1
 
-	ifconfig ${intf} | awk '$5 == "mtu" { print $6 }'
+	ifconfig ${intf} | sed -n '1s/^.* mtu \([0-9]*\).*/\1/p'
 }
 
 check_mtu()

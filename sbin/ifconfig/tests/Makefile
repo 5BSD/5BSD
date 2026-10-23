@@ -1,6 +1,7 @@
 NETBSD_ATF_TESTS_SH=	nonexistent_test
 ATF_TESTS_SH+=		ifconfig \
-			inet6
+			inet6 \
+			openbsd
 
 TEST_METADATA+=	execenv="jail"
 TEST_METADATA+=	execenv_jail_params="vnet allow.raw_sockets"

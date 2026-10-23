@@ -49,11 +49,9 @@ arm64/arm64/disassem.c				optional ddb
 arm64/arm64/dump_machdep.c			standard
 arm64/arm64/efirt_machdep.c			optional efirt
 arm64/arm64/efirt_support.S			optional efirt
-arm64/arm64/elf32_machdep.c			optional compat_freebsd32
 arm64/arm64/elf_machdep.c			standard
 arm64/arm64/exception.S				standard
 arm64/arm64/exec_machdep.c			standard
-arm64/arm64/freebsd32_machdep.c			optional compat_freebsd32
 arm64/arm64/gdb_machdep.c			optional gdb
 arm64/arm64/gicv3_its.c				optional intrng fdt
 arm64/arm64/gic_v3.c				standard
@@ -225,7 +223,6 @@ ghashv8-armx.o					optional armv8crypto	\
 	no-implicit-rule						\
 	clean		"ghashv8-armx.o"
 
-crypto/des/des_enc.c				optional netsmb
 crypto/openssl/ossl_aarch64.c			optional ossl
 crypto/openssl/aarch64/chacha-armv8.S		optional ossl		\
 	compile-with	"${CC} -c ${CFLAGS:N-mgeneral-regs-only} -I$S/crypto/openssl ${WERROR} ${.IMPSRC}"

@@ -130,7 +130,7 @@ reset_oracle(void)
 	topology_initial_empty = 0;
 	memset(&mock_compat, 0, sizeof(mock_compat));
 	mock_compat.version = VM_CPU_COMPAT_VERSION;
-	mock_compat.flags = VM_CPU_COMPAT_F_VALID | VM_CPU_COMPAT_F_NESTED_VMX;
+	mock_compat.flags = VM_CPU_COMPAT_F_NESTED_VMX;
 	mock_compat.xcr0_allowed = UINT64_C(0x8000000000000027);
 	mock_compat.xsave_max_size = 4096;
 	mock_compat.x2apic_state = X2APIC_ENABLED;
@@ -295,6 +295,42 @@ ATF_TC_BODY(failures_leave_destination_unchanged, tc)
 	ATF_CHECK_EQ(checkpoint_cpu_contract_capture(&vcpu, NULL), EINVAL);
 }
 
+ATF_TC_WITHOUT_HEAD(nested_svm_contract_rejects_capability_or_schema_change);
+ATF_TC_BODY(nested_svm_contract_rejects_capability_or_schema_change, tc)
+{
+	struct checkpoint_cpu_contract destination, source;
+	struct vcpu vcpu;
+
+	reset_oracle();
+	mock_compat.flags = VM_CPU_COMPAT_F_NESTED_SVM;
+	mock_compat.nested_capability_signature =
+	    UINT64_C(0x53564d0000000001);
+	mock_compat.nested_schema_signature =
+	    UINT64_C(0x53564d0000000002);
+	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &source), 0);
+	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination), 0);
+
+	/* The guest CPUID image is identical; the host VNMI facility differs. */
+	mock_compat.nested_capability_signature ^= 1;
+	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination),
+	    EXDEV);
+
+	mock_compat.nested_capability_signature ^= 1;
+	mock_compat.nested_schema_signature++;
+	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination),
+	    EXDEV);
+
+	mock_compat.flags = 0;
+	mock_compat.nested_capability_signature = 0;
+	mock_compat.nested_schema_signature = 0;
+	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination),
+	    EXDEV);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -303,5 +339,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cache_zero_subleaf_does_not_probe_beyond_terminator);
 	ATF_TP_ADD_TC(tp, extended_cache_subleaves_are_captured);
 	ATF_TP_ADD_TC(tp, failures_leave_destination_unchanged);
+	ATF_TP_ADD_TC(tp, nested_svm_contract_rejects_capability_or_schema_change);
 	return (atf_no_error());
 }

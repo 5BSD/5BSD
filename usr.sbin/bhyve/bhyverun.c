@@ -106,6 +106,7 @@
 #include "migration_credentials.h"
 #include "migration_restart_command.h"
 #include "migration_dest_image.h"
+#include "migration_vsock_owner.h"
 #endif
 #include "tpm_device.h"
 #include "vmgenc.h"
@@ -1505,6 +1506,12 @@ main(int argc, char *argv[])
 		errx(EX_USAGE, "migration receive requires mutual TLS credentials "
 		    "(migrate.tls.*) or migrate.plaintext_unix for a local "
 		    "AF_UNIX socket");
+	/* The active-vsock relay continues traffic over the raw stream after
+	 * RELEASE from a process that does not hold the TLS session. */
+	if (migrate_recv_fd >= 0 && migrate_tls_enabled &&
+	    get_config_bool_default("checkpoint.migrate_active_vsock", false))
+		errx(EX_USAGE, "checkpoint.migrate_active_vsock requires "
+		    "migrate.plaintext_unix; it cannot be combined with TLS");
 	if (migrate_recovery_listener >= 0 && !migrate_tls_enabled)
 		errx(EX_USAGE, "migration recovery listener requires mutual TLS credentials");
 	if ((migrate_reconstruct || migrate_recovery_image) &&
@@ -1726,6 +1733,14 @@ main(int argc, char *argv[])
 	    migrate_reconstruct;
 #endif
 
+#ifdef BHYVE_SNAPSHOT
+	if (get_config_bool_default("checkpoint.migrate_active_vsock", false)) {
+		error = migration_vsock_owner_start(NULL);
+		if (error != 0)
+			errx(EX_OSERR, "cannot start vsock migration relay owner: %s",
+			    strerror(error));
+	}
+#endif
 	bsp = vm_vcpu_open(ctx, BSP);
 	if (bsp == NULL) {
 		fprintf(stderr, "Unable to open boot VCPU: %s",
@@ -1764,17 +1779,8 @@ main(int argc, char *argv[])
 
 #ifdef BHYVE_SNAPSHOT
 	if (restore_file != NULL) {
-		struct checkpoint_cpu_contract destination_cpu, source_cpu;
-
-		error = lookup_cpu_contract(&rstate, &source_cpu);
-		if (error == 0) {
-			error = checkpoint_cpu_contract_capture(bsp,
-			    &destination_cpu);
-				if (error == 0)
-					error = checkpoint_cpu_contract_match(&source_cpu,
-					    &destination_cpu);
-			}
-			if (error != 0) {
+		error = checkpoint_restore_cpu_contract(&rstate, bsp);
+		if (error != 0) {
 			EPRINTLN("Checkpoint CPU contract is incompatible with "
 			    "this destination.");
 			exit(BHYVE_EXIT_ERROR);
@@ -1958,8 +1964,16 @@ main(int argc, char *argv[])
 		if (bhyve_resume_powered_cpus(ctx) != 0)
 			err(EX_OSERR, "Unable to resume restored vCPUs");
 #endif
-	} else if (migrate_recv_fd < 0 && !migrate_reconstruct)
-		/* Migration's coordinator already checked CPU resume before ACK. */
+	} else if (migrate_recv_fd >= 0) {
+		/*
+		 * The migration coordinator resumed the vCPUs before sending
+		 * RELEASE_ACK.  A vsock relay owner holds its own copy of the
+		 * stream after RELEASE; this process no longer needs it.
+		 */
+		close(migrate_recv_fd);
+		migrate_recv_fd = -1;
+	} else if (!migrate_reconstruct)
+		/* Reconstruction resumes the guest through authenticated recovery. */
 #endif
 		vm_resume_cpu(bsp);
 

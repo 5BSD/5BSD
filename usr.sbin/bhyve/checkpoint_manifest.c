@@ -171,17 +171,58 @@ bool
 checkpoint_manifest_compatible(const struct checkpoint_manifest *m)
 {
 	const char *host;
+	const char *end;
 
 	if (m == NULL ||
 	    memchr(m->architecture, '\0', sizeof(m->architecture)) == NULL ||
 	    memchr(m->machine, '\0', sizeof(m->machine)) == NULL)
 		return (false);
+	/* Fixed-width ABI fields must have canonical zero padding. */
+	end = memchr(m->architecture, '\0', sizeof(m->architecture));
+	for (const char *p = end; p < m->architecture +
+	    sizeof(m->architecture); p++) {
+		if (*p != '\0')
+			return (false);
+	}
+	end = memchr(m->machine, '\0', sizeof(m->machine));
+	for (const char *p = end; p < m->machine + sizeof(m->machine); p++) {
+		if (*p != '\0')
+			return (false);
+	}
 	host = checkpoint_host_architecture();
 	return ((m->format_version == 3 || m->format_version == 4 ||
 	    m->format_version == 5) &&
 	    strcmp(host, "unknown") != 0 &&
 	    strcmp(m->architecture, host) == 0 &&
 	    strcmp(m->machine, CHECKPOINT_MACHINE_ABI) == 0);
+}
+
+bool
+checkpoint_manifest_restore_compatible(const struct checkpoint_manifest *m,
+    bool allow_previous)
+{
+	struct checkpoint_manifest current;
+	size_t previous_len;
+
+	if (m == NULL)
+		return (false);
+	if (checkpoint_manifest_compatible(m))
+		return (true);
+	if (!allow_previous)
+		return (false);
+	current = *m;
+	previous_len = strlen(CHECKPOINT_MACHINE_ABI_PREVIOUS);
+	if (previous_len >= sizeof(current.machine) ||
+	    strnlen(current.machine, sizeof(current.machine)) != previous_len ||
+	    strcmp(current.machine, CHECKPOINT_MACHINE_ABI_PREVIOUS) != 0)
+		return (false);
+	for (size_t i = previous_len + 1; i < sizeof(current.machine); i++) {
+		if (current.machine[i] != '\0')
+			return (false);
+	}
+	strlcpy(current.machine, CHECKPOINT_MACHINE_ABI,
+	    sizeof(current.machine));
+	return (checkpoint_manifest_compatible(&current));
 }
 
 static bool
@@ -507,9 +548,10 @@ checkpoint_manifest_read_fd(int fd, struct checkpoint_manifest *m,
 			destination_size = sizeof(candidate.trace_sha256);
 		}
 		prefix_len = strlen(prefix);
-		if (strncmp(cursor, prefix, prefix_len) != 0)
+		if ((size_t)(line - cursor) < prefix_len ||
+		    memcmp(cursor, prefix, prefix_len) != 0)
 			return (EINVAL);
-		value_len = strlen(cursor + prefix_len);
+		value_len = (size_t)(line - cursor) - prefix_len;
 		if (value_len == 0 || value_len >= destination_size)
 			return (EINVAL);
 		memcpy(destination, cursor + prefix_len, value_len + 1);
@@ -846,24 +888,9 @@ checkpoint_hash_fd(int fd, char *digest)
 }
 
 static int
-checkpoint_hash_member_at(int dirfd, const char *member, char *digest)
-{
-	int error, fd;
-
-	fd = openat(dirfd, member,
-	    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
-	if (fd < 0)
-		return (errno != 0 ? errno : EIO);
-	error = checkpoint_hash_fd(fd, digest);
-	if (close(fd) != 0 && error == 0)
-		error = errno != 0 ? errno : EIO;
-	return (error);
-}
-
-static int
 checkpoint_manifest_hash_at(int dirfd, struct checkpoint_manifest *m)
 {
-	int error;
+	int data_fd, kern_fd, meta_fd, trace_fd, error;
 
 	if (dirfd < 0 || m == NULL ||
 	    (m->format_version != 3 && m->format_version != 4 &&
@@ -873,16 +900,55 @@ checkpoint_manifest_hash_at(int dirfd, struct checkpoint_manifest *m)
 	    !checkpoint_member_valid(m->meta) ||
 	    ((m->format_version == 4 || m->format_version == 5) && !checkpoint_member_valid(m->trace)))
 		return (EINVAL);
-	error = checkpoint_hash_member_at(dirfd, m->data, m->data_sha256);
+	data_fd = kern_fd = meta_fd = trace_fd = -1;
+	data_fd = openat(dirfd, m->data,
+	    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+	if (data_fd < 0)
+		return (errno != 0 ? errno : EIO);
+	kern_fd = openat(dirfd, m->kern,
+	    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+	if (kern_fd < 0) {
+		error = errno != 0 ? errno : EIO;
+		goto done;
+	}
+	meta_fd = openat(dirfd, m->meta,
+	    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+	if (meta_fd < 0) {
+		error = errno != 0 ? errno : EIO;
+		goto done;
+	}
+	error = checkpoint_validate_distinct_fds(data_fd, kern_fd, meta_fd);
 	if (error == 0)
-		error = checkpoint_hash_member_at(dirfd, m->kern,
-		    m->kern_sha256);
+		error = checkpoint_hash_fd(data_fd, m->data_sha256);
 	if (error == 0)
-		error = checkpoint_hash_member_at(dirfd, m->meta,
-		    m->meta_sha256);
-	if (error == 0 && (m->format_version == 4 || m->format_version == 5))
-		error = checkpoint_hash_member_at(dirfd, m->trace,
-		    m->trace_sha256);
+		error = checkpoint_hash_fd(kern_fd, m->kern_sha256);
+	if (error == 0)
+		error = checkpoint_hash_fd(meta_fd, m->meta_sha256);
+	if (error == 0 && (m->format_version == 4 || m->format_version == 5)) {
+		/* The trace member is hashed through its own descriptor too, and
+		 * must be distinct from every other member. */
+		trace_fd = openat(dirfd, m->trace,
+		    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+		if (trace_fd < 0)
+			error = errno != 0 ? errno : EIO;
+		if (error == 0)
+			error = checkpoint_validate_distinct_fds(data_fd, kern_fd,
+			    trace_fd);
+		if (error == 0)
+			error = checkpoint_validate_distinct_fds(meta_fd, kern_fd,
+			    trace_fd);
+		if (error == 0)
+			error = checkpoint_hash_fd(trace_fd, m->trace_sha256);
+	}
+done:
+	if (close(data_fd) != 0 && error == 0)
+		error = errno != 0 ? errno : EIO;
+	if (kern_fd >= 0 && close(kern_fd) != 0 && error == 0)
+		error = errno != 0 ? errno : EIO;
+	if (meta_fd >= 0 && close(meta_fd) != 0 && error == 0)
+		error = errno != 0 ? errno : EIO;
+	if (trace_fd >= 0 && close(trace_fd) != 0 && error == 0)
+		error = errno != 0 ? errno : EIO;
 	return (error);
 }
 
@@ -1063,7 +1129,7 @@ checkpoint_publish(int dirfd, const char *checkpoint_file,
 		return (error);
 
 	fd = openat(dirfd, manifest_tmp,
-	    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0700);
+	    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
 	if (fd < 0)
 		return (errno != 0 ? errno : EIO);
 	error = checkpoint_write_all(fd, contents, length);

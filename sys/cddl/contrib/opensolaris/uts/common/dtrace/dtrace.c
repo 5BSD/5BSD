@@ -12108,6 +12108,41 @@ dtrace_register(const char *name, const dtrace_pattr_t *pap, uint32_t priv,
 }
 
 /*
+ * 5BSD: each provider lists its probes, so that unregistering one (every
+ * process with USDT probes does at exit) and condensing walk its own probes
+ * rather than the whole probe array, under dtrace_lock.
+ */
+static void
+dtrace_probe_provlink(dtrace_probe_t *probe)
+{
+	/* Host probes only: a virtual probe's dtpr_provid is its name. */
+	dtrace_provider_t *prov = (dtrace_provider_t *)probe->dtpr_provider;
+
+	ASSERT(MUTEX_HELD(&dtrace_lock));
+	probe->dtpr_prevprov = NULL;
+	probe->dtpr_nextprov = prov->dtpv_probes;
+	if (prov->dtpv_probes != NULL)
+		prov->dtpv_probes->dtpr_prevprov = probe;
+	prov->dtpv_probes = probe;
+}
+
+static void
+dtrace_probe_provunlink(dtrace_probe_t *probe)
+{
+	/* Host probes only: a virtual probe's dtpr_provid is its name. */
+	dtrace_provider_t *prov = (dtrace_provider_t *)probe->dtpr_provider;
+
+	ASSERT(MUTEX_HELD(&dtrace_lock));
+	if (probe->dtpr_prevprov != NULL)
+		probe->dtpr_prevprov->dtpr_nextprov = probe->dtpr_nextprov;
+	else
+		prov->dtpv_probes = probe->dtpr_nextprov;
+	if (probe->dtpr_nextprov != NULL)
+		probe->dtpr_nextprov->dtpr_prevprov = probe->dtpr_prevprov;
+	probe->dtpr_nextprov = probe->dtpr_prevprov = NULL;
+}
+
+/*
  * Unregister the specified provider from the DTrace framework.  This should
  * generally be called by DTrace providers in their detach(9E) entry point.
  */
@@ -12116,13 +12151,8 @@ dtrace_unregister(dtrace_provider_id_t id)
 {
 	dtrace_provider_t *old = (dtrace_provider_t *)id;
 	dtrace_provider_t *prev = NULL;
-	int i, self = 0, noreap = 0;
+	int self = 0, noreap = 0;
 	dtrace_probe_t *probe, *first = NULL;
-	dtrace_probe_t **dtrace_probes;
-	int dtrace_nprobes;
-
-	dtrace_probes = dtrace_vprobes[HYPERTRACE_HOSTID];
-	dtrace_nprobes = dtrace_nvprobes[HYPERTRACE_HOSTID];
 
 	if (old->dtpv_pops.dtps_enable ==
 	    (void (*)(void *, dtrace_id_t, void *))dtrace_nullop) {
@@ -12173,13 +12203,8 @@ dtrace_unregister(dtrace_provider_id_t id)
 	/*
 	 * Attempt to destroy the probes associated with this provider.
 	 */
-	for (i = 0; i < dtrace_nprobes; i++) {
-		if ((probe = dtrace_probes[i]) == NULL)
-			continue;
-
-		if (probe->dtpr_provider != (dtrace_provider_id_t)old)
-			continue;
-
+	for (probe = old->dtpv_probes; probe != NULL;
+	    probe = probe->dtpr_nextprov) {
 		if (probe->dtpr_ecb == NULL)
 			continue;
 
@@ -12217,14 +12242,11 @@ dtrace_unregister(dtrace_provider_id_t id)
 	 * All of the probes for this provider are disabled; we can safely
 	 * remove all of them from their hash chains and from the probe array.
 	 */
-	for (i = 0; i < dtrace_nprobes; i++) {
-		if ((probe = dtrace_probes[i]) == NULL)
-			continue;
-
-		if (probe->dtpr_provider != (dtrace_provider_id_t)old)
-			continue;
-
-		dtrace_probes[i] = NULL;
+	while ((probe = old->dtpv_probes) != NULL) {
+		ASSERT(dtrace_vprobes[HYPERTRACE_HOSTID][probe->dtpr_id - 1] ==
+		    probe);
+		dtrace_probe_provunlink(probe);
+		dtrace_vprobes[HYPERTRACE_HOSTID][probe->dtpr_id - 1] = NULL;
 
 		dtrace_hash_remove(dtrace_bymod[HYPERTRACE_HOSTID], probe);
 		dtrace_hash_remove(dtrace_byfunc[HYPERTRACE_HOSTID], probe);
@@ -12339,12 +12361,7 @@ dtrace_condense(dtrace_provider_id_t id)
 {
 	dtrace_provider_t *prov = (dtrace_provider_t *)id;
 	int i;
-	dtrace_probe_t *probe;
-	dtrace_probe_t **dtrace_probes;
-	int dtrace_nprobes;
-
-	dtrace_probes = dtrace_vprobes[HYPERTRACE_HOSTID];
-	dtrace_nprobes = dtrace_nvprobes[HYPERTRACE_HOSTID];
+	dtrace_probe_t *probe, *next;
 
 	/*
 	 * Make sure this isn't the dtrace provider itself.
@@ -12358,17 +12375,16 @@ dtrace_condense(dtrace_provider_id_t id)
 	/*
 	 * Attempt to destroy the probes associated with this provider.
 	 */
-	for (i = 0; i < dtrace_nprobes; i++) {
-		if ((probe = dtrace_probes[i]) == NULL)
-			continue;
-
-		if (probe->dtpr_provider != (dtrace_provider_id_t)prov)
-			continue;
+	for (probe = prov->dtpv_probes; probe != NULL; probe = next) {
+		next = probe->dtpr_nextprov;
 
 		if (probe->dtpr_ecb != NULL)
 			continue;
 
-		dtrace_probes[i] = NULL;
+		i = probe->dtpr_id - 1;
+		ASSERT(dtrace_vprobes[HYPERTRACE_HOSTID][i] == probe);
+		dtrace_probe_provunlink(probe);
+		dtrace_vprobes[HYPERTRACE_HOSTID][i] = NULL;
 
 		dtrace_hash_remove(dtrace_bymod[HYPERTRACE_HOSTID], probe);
 		dtrace_hash_remove(dtrace_byfunc[HYPERTRACE_HOSTID], probe);
@@ -12588,6 +12604,10 @@ _dtrace_vprobe_create(dtrace_vmid_t vmid, dtrace_id_t _id,
 	if (vmid != HYPERTRACE_HOSTID) {
 		dtrace_vprobe_live[vmid]++;
 		dtrace_vprobe_live_total++;
+	} else {
+		/* 5BSD: only host probes have a provider to list them;
+		 * a virtual probe's dtpr_provid is its provider name. */
+		dtrace_probe_provlink(probe);
 	}
 
 	if (needs_unlock)
@@ -21252,6 +21272,7 @@ dtrace_module_unloaded(modctl_t *ctl, int *error)
 	for (first = NULL; probe != NULL; probe = next) {
 		ASSERT(dtrace_probes[probe->dtpr_id - 1] == probe);
 
+		dtrace_probe_provunlink(probe);		/* 5BSD */
 		dtrace_probes[probe->dtpr_id - 1] = NULL;
 
 		next = probe->dtpr_nextmod;

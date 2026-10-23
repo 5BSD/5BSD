@@ -903,19 +903,12 @@ fiodgname_buf_get_ptr(void *fgnp, u_long com)
 {
 	union {
 		struct fiodgname_arg	fgn;
-#ifdef COMPAT_FREEBSD32
-		struct fiodgname_arg32	fgn32;
-#endif
 	} *fgnup;
 
 	fgnup = fgnp;
 	switch (com) {
 	case FIODGNAME:
 		return (fgnup->fgn.buf);
-#ifdef COMPAT_FREEBSD32
-	case FIODGNAME_32:
-		return ((void *)(uintptr_t)fgnup->fgn32.buf);
-#endif
 	default:
 		panic("Unhandled ioctl command %ld", com);
 	}
@@ -966,9 +959,6 @@ devfs_ioctl(struct vop_ioctl_args *ap)
 		error = 0;
 		break;
 	case FIODGNAME:
-#ifdef	COMPAT_FREEBSD32
-	case FIODGNAME_32:
-#endif
 		fgn = ap->a_data;
 		p = devtoname(dev);
 		i = strlen(p) + 1;

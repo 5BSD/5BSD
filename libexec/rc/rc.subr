@@ -2477,6 +2477,17 @@ load_kld()
 	if [ $# -ne 1 ] || [ $_x -gt 1 ]; then
 		err 3 'USAGE: load_kld [-b] [-e regex | -m module] file'
 	fi
+	# Without the capability plane (capsule's loader knob, as rc.d/kld)
+	# there is no broker; a jail can neither load modules nor claim them.
+	# Both fall back to the plain check and kldload.
+	if [ "$_loader" = "sysextctl load" ]; then
+		case "$(kenv -q capability_plane 2>/dev/null)" in
+		[Nn][Oo]|[Oo][Ff][Ff]|0) _loader=kldload ;;
+		esac
+		if check_jail jailed; then
+			_loader=kldload
+		fi
+	fi
 	_loaded=false
 	if [ -n "$_re" ]; then
 		if kldstat -v | egrep -q -e "$_re"; then

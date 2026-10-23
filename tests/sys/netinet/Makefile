@@ -9,6 +9,7 @@ ATF_TESTS_C=	broadcast \
 		fibs_multibind_test \
 		ip_reass_test \
 		ip6_v4mapped_test \
+		in_legacy_ioctl \
 		raw \
 		so_reuseport_lb_test \
 		socket_afinet \
@@ -51,6 +52,8 @@ TEST_METADATA.fibs_test+= execenv="jail"		\
 TEST_METADATA.forward+=	required_programs="python"	\
 			execenv="jail"			\
 			execenv_jail_params="vnet allow.raw_sockets"
+TEST_METADATA.in_legacy_ioctl+= execenv="jail"		\
+			execenv_jail_params="vnet"
 TEST_METADATA.multicast+= execenv="jail"		\
 			execenv_jail_params="vnet"
 TEST_METADATA.output+=	required_programs="python"

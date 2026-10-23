@@ -18,8 +18,6 @@ signing=unsigned
 # key=/secure/code-signing.pem
 # Independent RSA repository signing identity (build/packages only):
 # pkg_key=/secure/pkg-signing.pem
-cache=no
-# library_list=/secure/cache-libraries.txt
 ports=/usr/obj/5BSD-ports
 # hardware_profile=/usr/src/release/tools/hardware-ports.amd64
 # distfiles=/usr/obj/5BSD-ports/distfiles
@@ -35,14 +33,15 @@ ports=/usr/obj/5BSD-ports
 # pkg_public_key=/secure/pkg-signing.pub
 # public_key=/secure/code-signing.pub
 # bootenv=5bsd-next
+# Optional source; otherwise clone the current boot environment:
+# clone_from=5bsd-current@before-upgrade
+# Optional explicit BE parent dataset (requires clone_from):
+# be_root=zroot/ROOT
 # Or use root=/usr/obj/usr/src/installed-root (must not exist).
 
 # For the media action: all, iso, or memstick.
 # media_format=all
 
-# Build signed amd64 layout artifacts; does not enroll any runtime services.
-# Requires cache=yes and development or signed mode.
-cache_layout=no
 
 # Final combined repository only; base/hardware staging stays under /usr/obj.
 # publish_repository=/var/db/5bsd/repositories/base

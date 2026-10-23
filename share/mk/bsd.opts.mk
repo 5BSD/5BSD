@@ -61,7 +61,6 @@ __DEFAULT_YES_OPTIONS = \
     MAKE_CHECK_USE_SANDBOX \
     MAN \
     MANCOMPRESS \
-    NIS \
     NLS \
     OPENSSH \
     RELRO \
@@ -72,6 +71,7 @@ __DEFAULT_YES_OPTIONS = \
     WERROR
 
 __DEFAULT_NO_OPTIONS = \
+    NIS \
     ASAN \
     BRANCH_PROTECTION \
     CCACHE_BUILD \

@@ -922,7 +922,7 @@
     },
     {
       "component": "PF",
-      "source": "sys/netpfil/pf",
+      "source": "contrib/openbsd-pf/sys/net and sys/netpfil/openbsd-pf",
       "review": {
         "status": "source-reviewed",
         "date": "2026-10-10",

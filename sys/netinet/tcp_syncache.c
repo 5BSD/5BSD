@@ -448,7 +448,8 @@ syncache_timeout(struct syncache *sc, struct syncache_head *sch, int docallout)
 		rexmt = tcp_rexmit_initial;
 	else
 		TCPT_RANGESET(rexmt,
-		    tcp_rexmit_initial * tcp_backoff[sc->sc_rxmits],
+		    tcp_rexmit_initial *
+		    tcp_backoff[MIN(sc->sc_rxmits, TCP_MAXRXTSHIFT)],
 		    tcp_rexmit_min, tcp_rexmit_max);
 	sc->sc_rxttime = ticks + rexmt;
 	sc->sc_rxmits++;
@@ -515,7 +516,9 @@ syncache_timer(void *xsch)
 		if (sc->sc_rxmits > V_tcp_ecn_maxretries) {
 			sc->sc_flags &= ~SCF_ECN_MASK;
 		}
-		if (sc->sc_rxmits > V_tcp_syncache.rexmt_limit) {
+		if (sc->sc_rxmits > V_tcp_syncache.rexmt_limit &&
+		    (sc->sc_defer_accept == 0 ||
+		    sc->sc_defer_timeout_rexmit)) {
 			if ((s = tcp_log_addrs(&sc->sc_inc, NULL, NULL, NULL))) {
 				log(LOG_DEBUG, "%s; %s: Retransmits exhausted, "
 				    "giving up and removing syncache entry\n",
@@ -532,6 +535,10 @@ syncache_timer(void *xsch)
 			    s, __func__, sc->sc_rxmits);
 			free(s, M_TCPLOG);
 		}
+		if (sc->sc_defer_accept != 0 &&
+		    (u_int)(time_uptime - sc->sc_created) >=
+		    sc->sc_defer_accept)
+			sc->sc_defer_timeout_rexmit = true;
 
 		NET_EPOCH_ENTER(et);
 		if (syncache_respond(sc, TH_SYN|TH_ACK) == 0) {
@@ -1066,7 +1073,7 @@ abort:
  */
 int
 syncache_expand(struct in_conninfo *inc, struct tcpopt *to, struct tcphdr *th,
-    struct socket **lsop, struct mbuf *m, uint16_t port)
+    struct socket **lsop, struct mbuf *m, int tlen, uint16_t port)
 {
 	struct syncache *sc;
 	struct syncache_head *sch;
@@ -1317,6 +1324,18 @@ syncache_expand(struct in_conninfo *inc, struct tcpopt *to, struct tcphdr *th,
 			return (0);  /* Do send RST, do not free sc. */
 		}
 
+		/*
+		 * Defer a pure handshake ACK while waiting for application data.
+		 * The syncache retransmission will solicit another ACK; after the
+		 * deadline that ACK is allowed to complete the connection.
+		 */
+		if (tlen == 0 && tcp_get_flags(th) == TH_ACK &&
+		    sc->sc_defer_accept != 0 &&
+		    (u_int)(time_uptime - sc->sc_created) <
+		    sc->sc_defer_accept) {
+			SCH_UNLOCK(sch);
+			return (-1);
+		}
 		TAILQ_REMOVE(&sch->sch_bucket, sc, sc_hash);
 		sch->sch_length--;
 #ifdef TCP_OFFLOAD
@@ -1592,6 +1611,8 @@ syncache_add(struct in_conninfo *inc, struct tcpopt *to, struct tcphdr *th,
 		}
 		if (syncache_respond(sc, TH_SYN|TH_ACK) == 0) {
 			sc->sc_rxmits = 0;
+			sc->sc_created = time_uptime;
+			sc->sc_defer_timeout_rexmit = false;
 			syncache_timeout(sc, sch, 1);
 			TCPSTAT_INC(tcps_sndacks);
 			TCPSTAT_INC(tcps_sndtotal);
@@ -1645,6 +1666,8 @@ syncache_add(struct in_conninfo *inc, struct tcpopt *to, struct tcphdr *th,
 	}
 
 	KASSERT(sc != NULL, ("sc == NULL"));
+	sc->sc_created = time_uptime;
+	sc->sc_defer_accept = atomic_load_int(&so->so_defer_accept);
 	if (!tfo_cookie_valid && tfo_response_cookie_valid)
 		sc->sc_tfo_cookie = &tfo_response_cookie;
 

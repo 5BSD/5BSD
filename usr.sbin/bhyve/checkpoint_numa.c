@@ -68,8 +68,13 @@ checkpoint_numa_hex_list_count(const char *text, size_t width, size_t maximum,
 
 	if (text == NULL || count == NULL || width == 0 || maximum == 0)
 		return (EINVAL);
-	length = strlen(text);
 	stride = width + 1;
+	if (maximum > (SIZE_MAX - 1) / stride)
+		return (EINVAL);
+	/* Reject overlong or unterminated checkpoint metadata before parsing it. */
+	length = strnlen(text, maximum * stride);
+	if (length == maximum * stride)
+		return (EINVAL);
 	if (length < width || (length + 1) % stride != 0)
 		return (EINVAL);
 	*count = (length + 1) / stride;

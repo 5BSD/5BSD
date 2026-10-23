@@ -114,44 +114,6 @@ struct vdso_sv_tk *alloc_sv_tk(void);
 
 #define	VDSO_TH_NUM	4
 
-#ifdef COMPAT_FREEBSD32
-
-/*
- * i386 is the only arch with a 32 bit time_t.
- */
-struct bintime32 {
-#if defined(__amd64__)
-	uint32_t	sec;
-#else
-	uint64_t	sec;
-#endif
-	uint32_t	frac[2];
-};
-
-struct vdso_timehands32 {
-	uint32_t	th_algo;
-	uint32_t	th_gen;
-	uint32_t	th_scale[2];
-	uint32_t 	th_offset_count;
-	uint32_t	th_counter_mask;
-	struct bintime32	th_offset;
-	struct bintime32	th_boottime;
-	VDSO_TIMEHANDS_MD32
-};
-
-struct vdso_timekeep32 {
-	uint32_t	tk_ver;
-	uint32_t	tk_enabled;
-	uint32_t	tk_current;
-	struct vdso_timehands32	tk_th[];
-};
-
-uint32_t tc_fill_vdso_timehands32(struct vdso_timehands32 *vdso_th32);
-uint32_t cpu_fill_vdso_timehands32(struct vdso_timehands32 *vdso_th32,
-    struct timecounter *tc);
-struct vdso_sv_tk *alloc_sv_tk_compat32(void);
-
-#endif
 #endif
 
 #endif

@@ -124,6 +124,9 @@ struct socket {
 	struct	sigio *so_sigio;	/* [sg] information for async I/O or
 					   out of band data (SIGURG) */
 	struct	ucred *so_cred;		/* (a) user credentials */
+	uint32_t so_rxq_drops;	/* (cr) receive queue overflows */
+	u_int	so_defer_accept;	/* (b) Linux TCP_DEFER_ACCEPT seconds */
+	pid_t	so_cpid;		/* (a) pid of process that created socket */
 	struct	label *so_label;	/* (b) MAC label for socket */
 	/* NB: generation count must not be first. */
 	so_gen_t so_gencnt;		/* (h) generation count */
@@ -134,7 +137,9 @@ struct socket {
 	 * so_fibnum, so_user_cookie and friends can be used to attach
 	 * some user-specified metadata to a socket, which then can be
 	 * used by the kernel for various actions.
-	 * so_user_cookie is used by ipfw/dummynet.
+	 * so_user_cookie (SO_USER_COOKIE) was matched by ipfw; 5BSD's pf
+	 * does not use it, so it is stored but has no consumer.  It is
+	 * kept for the socket option ABI (wg(4) and Linux SO_MARK set it).
 	 */
 	int so_fibnum;		/* routing domain for this socket */
 	uint32_t so_user_cookie;
@@ -564,8 +569,6 @@ void	sorwakeup_locked(struct socket *);
 void	sowwakeup_locked(struct socket *);
 void	sowakeup_aio(struct socket *, sb_which);
 void	solisten_wakeup(struct socket *);
-int	selsocket(struct socket *so, int events, struct timeval *tv,
-	    struct thread *td);
 void	soisconnected(struct socket *so);
 void	soisconnecting(struct socket *so);
 void	soisdisconnected(struct socket *so);

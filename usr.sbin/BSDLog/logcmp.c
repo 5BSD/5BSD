@@ -1469,7 +1469,7 @@ pool_add_session(struct pool_state *pool)
 }
 
 static int
-pool_worker(int control_fd, int audit_fd,
+pool_worker(int control_fd,
     struct logcmp_storage_session *storage, const struct logcmp_config *config,
     _Atomic uint32_t *admitted, uint32_t capacity, uint32_t shard)
 {
@@ -1494,7 +1494,7 @@ pool_worker(int control_fd, int audit_fd,
 	pool.kq = kqueuex(KQUEUE_CLOEXEC);
 	if (pool.kq == -1 || logcmp_storage_session_activate(storage) == -1 ||
 	    harden_worker_leaf_fd(storage->control_fd) == -1 ||
-	    auditcmp_client_adopt(audit_fd, &pool.audit) == -1 ||
+	    auditcmp_client_open(&pool.audit) == -1 ||
 	    harden_worker_leaf_fd(control_fd) == -1 ||
 	    harden_worker_leaf_fd(pool.kq) == -1 ||
 	    pool_change(&pool, control_fd, EVFILT_READ, EV_ADD | EV_ENABLE,
@@ -1635,16 +1635,14 @@ start_pool(struct pool_parent *parent,
     _Atomic uint32_t *admitted, uint32_t capacity, uint32_t shard)
 {
 	struct logcmp_storage_session storage;
-	int sockets[2], audit_fd, error, flags, pd;
+	int sockets[2], error, flags, pd;
 	pid_t pid;
 
 	memset(&storage, 0, sizeof(storage));
 	storage.control_fd = -1;
 	storage.producer_fds = (struct shmring_fds){ -1, -1, -1, -1 };
-	audit_fd = -1;
 	if (logcmp_storage_attach_pool(storage_control, &storage) == -1 ||
 	    logcmp_storage_session_prepare_fork(&storage) == -1 ||
-	    auditcmp_client_prepare(&audit_fd) == -1 ||
 	    socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets) == -1)
 		goto fail;
 	if (harden_worker_fd(sockets[1]) == -1)
@@ -1655,12 +1653,11 @@ start_pool(struct pool_parent *parent,
 	if (pid == 0) {
 		close(sockets[0]);
 		close(storage_control);
-		_exit(pool_worker(sockets[1], audit_fd, &storage,
+		_exit(pool_worker(sockets[1], &storage,
 		    config, admitted, capacity, shard));
 	}
 	close(sockets[1]);
 	logcmp_storage_session_close(&storage);
-	close(audit_fd);
 	if (service_bootstrap_parent(sockets[0], LOGCMP_STORAGE_TIMEOUT_MS) == -1) {
 		error = errno;
 		(void)pdkill(pd, SIGKILL);
@@ -1713,8 +1710,6 @@ fail_sockets:
 fail:
 	error = errno != 0 ? errno : EIO;
 fail_common:
-	if (audit_fd >= 0)
-		close(audit_fd);
 	logcmp_storage_session_close(&storage);
 	return (errno = error, -1);
 }

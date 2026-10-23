@@ -11,7 +11,7 @@
 .Nm capimage_sign ,
 .Nm capimage_embed ,
 .Nm capimage_remove ,
-.Nm capimage_cache_size ,
+.Nm capimage_elf_info_fd ,
 .Nm capimage_note ,
 .Nm capimage_policy_free ,
 .Nm capimage_seal ,
@@ -31,7 +31,7 @@ Library of embedded policy signatures (libcapimage, -lcapimage)
 .Ft int
 .Fn capimage_remove "int fd" "char *error" "size_t error_size"
 .Ft int
-.Fn capimage_cache_size "int fd" "off_t *size" "char *error" "size_t error_size"
+.Fn capimage_elf_info_fd "int fd" "struct capimage_elf_info *info" "char *error" "size_t error_size"
 .Ft int
 .Fn capimage_note "FILE *out" "const void *policy" "size_t size" "char *error" "size_t error_size"
 .Ft void
@@ -51,8 +51,12 @@ Library of embedded policy signatures (libcapimage, -lcapimage)
 .Ft int
 .Fn capimage_prepare_trusted_fd "int fd" "uint32_t flags" "const char *public_key" "int *handle" "struct capimage_info *info" "char *error" "size_t error_size"
 .Sh DESCRIPTION
-The library authenticates exact policy bytes in one bounded EOF signature
-container outside ELF segments.
+The library authenticates exact policy bytes in a non-allocated
+.Dv SHT_NOTE
+section named
+.Pa .note.5bsd.signature ,
+outside all ELF program segments.
+A redundant footer must agree with the note locator.
 An unsigned non-allocated .5bsd.policy section
 is accepted only as build input to the signer.
 It does not parse UCL or grant attributes.
@@ -83,30 +87,29 @@ Different artifact protocols must use different domains.
 .Pp
 .Fn capimage_embed
 accepts a private writable copy of a linked ELF image.
-If no policy is present, it appends a header, exact policy bytes and a fixed
-little-endian footer without changing existing ELF offsets.
-The footer is included in whole-file signing.
+It appends the signature note, authenticated original-header record, copied
+section metadata and a fixed little-endian footer.
+Only the ELF section-table locator fields change in the original header;
+program-header and load-segment offsets remain unchanged.
+All new metadata is included in whole-file signing.
 If a policy is already present, the supplied bytes must match it exactly.
 An existing unsigned build-input section is retained in the original ELF
 prefix, but is not an alternate source of authenticated runtime policy.
 The caller must sign the result before publication.
 .Pp
 .Fn capimage_remove
-truncates a private writable copy at the start of its appended container,
-restoring the original pre-signing ELF bytes.
+restores the authenticated original ELF header and truncates a private
+writable copy to its recorded original length.
+Signature removal verifies integrity before using the restoration metadata.
 An unsigned build-input section, if originally present, is retained.
 No signing key is required, and the result grants no authority.
 .Pp
-.Fn capimage_cache_size
-returns the length of the ELF prefix preceding the appended container,
-or the entire file length for unsigned input.
-This is a structural check, not signature or trust verification.
-Malformed containers, stacked containers and retired inline signatures are
-rejected rather than copied into a cache.
-Callers must retain an immutable snapshot or content pin while copying this
-prefix; the returned size alone does not protect against concurrent changes.
-A cache built from these prefixes excludes per-image signature containers
-and requires its own integrity signature.
+.Fn capimage_elf_info_fd
+returns structural ELF signature metadata, including the original length and
+header needed for verified signature removal.
+Unsigned inputs retain their full original length.
+Malformed signature containers are rejected.
+This operation does not establish integrity or publisher trust.
 .Pp
 The system trust catalogue and enforcement marker are accessed through
 root-owned directory descriptors for /etc and /etc/capability, and the keys
@@ -199,7 +202,6 @@ ENOATTR, malformed structure returns EFTYPE,
 and an invalid or untrusted signature returns EAUTH.
 .Sh SEE ALSO
 .Xr capsign 8 ,
-.Xr elfcache 8
 .Sh SECURITY CONSIDERATIONS
 The one-shot verification interfaces are not content locks.
 Explicit image handles retain a content pin for their lifetime.

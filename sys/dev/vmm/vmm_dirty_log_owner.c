@@ -43,13 +43,15 @@ vmm_dirty_log_owner_exhaust(struct vmm_dirty_log_owner *owner)
 	memset(&owner->range, 0, sizeof(owner->range));
 	memset(&owner->collection_range, 0, sizeof(owner->collection_range));
 	owner->collection_mode = 0;
+	owner->allow_holes = 0;
 }
 
 static int
 vmm_dirty_log_owner_state_validate(const struct vmm_dirty_log_owner *owner)
 {
 
-	if (owner == NULL || !vmm_dirty_log_owner_phase_valid(owner->phase))
+	if (owner == NULL || !vmm_dirty_log_owner_phase_valid(owner->phase) ||
+	    owner->allow_holes > 1)
 		return (EINVAL);
 	switch (owner->phase) {
 	case VMM_DIRTY_LOG_OWNER_OFF:
@@ -57,7 +59,7 @@ vmm_dirty_log_owner_state_validate(const struct vmm_dirty_log_owner *owner)
 		    owner->collection_range.gpa != 0 ||
 		    owner->collection_range.length != 0 ||
 		    owner->map_generation != 0 || owner->dirty_generation != 0 ||
-		    owner->collection_mode != 0)
+		    owner->collection_mode != 0 || owner->allow_holes != 0)
 			return (EPROTO);
 		break;
 	case VMM_DIRTY_LOG_OWNER_TRACKING:
@@ -83,7 +85,7 @@ vmm_dirty_log_owner_state_validate(const struct vmm_dirty_log_owner *owner)
 		    owner->range.length != 0 || owner->collection_range.gpa != 0 ||
 		    owner->collection_range.length != 0 ||
 		    owner->map_generation != 0 || owner->dirty_generation != 0 ||
-		    owner->collection_mode != 0)
+		    owner->collection_mode != 0 || owner->allow_holes != 0)
 			return (EPROTO);
 		break;
 	default:
@@ -156,10 +158,11 @@ vmm_dirty_log_owner_ticket_check(const struct vmm_dirty_log_owner *owner,
 	return (0);
 }
 
-int
-vmm_dirty_log_owner_enable(struct vmm_dirty_log_owner *owner,
+static int
+vmm_dirty_log_owner_enable_mode(struct vmm_dirty_log_owner *owner,
     const struct vmm_dirty_log_map_entry *entries, size_t nentries,
-    uint64_t map_generation, const struct vmm_dirty_log_range *range)
+    uint64_t map_generation, const struct vmm_dirty_log_range *range,
+    bool allow_holes)
 {
 	struct vmm_dirty_log_owner candidate;
 	int error;
@@ -175,7 +178,10 @@ vmm_dirty_log_owner_enable(struct vmm_dirty_log_owner *owner,
 		return (EBUSY);
 	if (vmm_dirty_log_range_validate(range, NULL) != 0)
 		return (EINVAL);
-	if ((error = vmm_dirty_log_map_covers(entries, nentries, range)) != 0)
+	error = allow_holes ?
+	    vmm_dirty_log_map_sparse(entries, nentries, range) :
+	    vmm_dirty_log_map_covers(entries, nentries, range);
+	if (error != 0)
 		return (error);
 	candidate = *owner;
 	if ((error = vmm_dirty_log_owner_advance_identity(&candidate)) != 0) {
@@ -187,9 +193,30 @@ vmm_dirty_log_owner_enable(struct vmm_dirty_log_owner *owner,
 	candidate.map_generation = map_generation;
 	candidate.dirty_generation = 1;
 	candidate.collection_mode = 0;
+	candidate.allow_holes = allow_holes ? 1 : 0;
 	candidate.phase = VMM_DIRTY_LOG_OWNER_TRACKING;
 	*owner = candidate;
 	return (0);
+}
+
+int
+vmm_dirty_log_owner_enable(struct vmm_dirty_log_owner *owner,
+    const struct vmm_dirty_log_map_entry *entries, size_t nentries,
+    uint64_t map_generation, const struct vmm_dirty_log_range *range)
+{
+
+	return (vmm_dirty_log_owner_enable_mode(owner, entries, nentries,
+	    map_generation, range, false));
+}
+
+int
+vmm_dirty_log_owner_enable_sparse(struct vmm_dirty_log_owner *owner,
+    const struct vmm_dirty_log_map_entry *entries, size_t nentries,
+    uint64_t map_generation, const struct vmm_dirty_log_range *range)
+{
+
+	return (vmm_dirty_log_owner_enable_mode(owner, entries, nentries,
+	    map_generation, range, true));
 }
 
 int
@@ -219,7 +246,10 @@ vmm_dirty_log_owner_begin(struct vmm_dirty_log_owner *owner,
 		return (ESTALE);
 	if (!vmm_dirty_log_range_contains(&owner->range, range))
 		return (EINVAL);
-	if ((error = vmm_dirty_log_map_covers(entries, nentries, range)) != 0)
+	error = owner->allow_holes != 0 ?
+	    vmm_dirty_log_map_sparse(entries, nentries, range) :
+	    vmm_dirty_log_map_covers(entries, nentries, range);
+	if (error != 0)
 		return (error);
 	candidate = *owner;
 	/* Never begin a clear which cannot be committed after publication. */
@@ -330,6 +360,7 @@ vmm_dirty_log_owner_invalidate(struct vmm_dirty_log_owner *owner)
 	memset(&candidate.range, 0, sizeof(candidate.range));
 	memset(&candidate.collection_range, 0, sizeof(candidate.collection_range));
 	candidate.collection_mode = 0;
+	candidate.allow_holes = 0;
 	*owner = candidate;
 	return (0);
 }

@@ -29,6 +29,6 @@
 KMOD=	g_audio
 
 SRCS=	bus_if.h usb_if.h device_if.h vnode_if.h \
-    card_if.h opt_usb.h pci_if.h g_audio.c
+    opt_usb.h pci_if.h g_audio.c
 
 .include <bsd.kmod.mk>

@@ -1,14 +1,12 @@
 .include <src.opts.mk>
 PACKAGE= bsd-build
-SCRIPTS= bsd-build.sh
-SCRIPTSNAME= build-bsd
+PROG= build-bsd
+SRCS= build-bsd.c
+LIBADD= md
 LINKS= ${BINDIR}/build-bsd ${BINDIR}/bsd-build
 MAN= bsd-build.8
 MLINKS= bsd-build.8 build-bsd.8
-FILESGROUPS+= EXAMPLES BACKENDS
-BACKENDS= bsd-make.subr plan-record.py
-BACKENDSDIR= ${LIBEXECDIR}/build-bsd
-BACKENDSMODE= 0444
+FILESGROUPS+= EXAMPLES
 EXAMPLES= bsd-build.conf.sample
 EXAMPLESDIR= ${SHAREDIR}/examples/bsd-build
 HAS_TESTS=

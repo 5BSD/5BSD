@@ -35,8 +35,6 @@ MAN=	aac.4 \
 	ads111x.4 \
 	ae.4 \
 	${_aesni.4} \
-	age.4 \
-	agp.4 \
 	ahc.4 \
 	ahci.4 \
 	ahd.4 \
@@ -46,7 +44,6 @@ MAN=	aac.4 \
 	ale.4 \
 	alpm.4 \
 	appleir.4 \
-	altq.4 \
 	amdpm.4 \
 	${_amdsbwd.4} \
 	${_amdsmb.4} \
@@ -55,7 +52,6 @@ MAN=	aac.4 \
 	${_amdtemp.4} \
 	${_apple_bce.4} \
 	${_bxe.4} \
-	${_aout.4} \
 	${_apic.4} \
 	${_apm.4} \
 	aq.4 \
@@ -104,7 +100,6 @@ MAN=	aac.4 \
 	bwn.4 \
 	${_bytgpio.4} \
 	capsicum.4 \
-	cardbus.4 \
 	carp.4 \
 	cas.4 \
 	mac_capability.4 \
@@ -176,12 +171,10 @@ MAN=	aac.4 \
 	et.4 \
 	etherswitch.4 \
 	eventtimers.4 \
-	exca.4 \
 	ext2fs.4 \
 	e6000sw.4 \
 	e6060sw.4 \
 	fd.4 \
-	fdc.4 \
 	fdescfs.4 \
 	fdt.4 \
 	fdt_pinctrl.4 \
@@ -197,8 +190,6 @@ MAN=	aac.4 \
 	${_ftwd.4} \
 	full.4 \
 	fusefs.4 \
-	fwe.4 \
-	fwip.4 \
 	fwohci.4 \
 	fxp.4 \
 	gdb.4 \
@@ -209,7 +200,6 @@ MAN=	aac.4 \
 	geom.4 \
 	geom_linux_lvm.4 \
 	geom_uzip.4 \
-	geom_zero.4 \
 	gif.4 \
 	${_gve.4} \
 	gpio.4 \
@@ -330,9 +320,7 @@ MAN=	aac.4 \
 	liquidio.4 \
 	lm75.4 \
 	lo.4 \
-	lp.4 \
 	lpbb.4 \
-	lpt.4 \
 	ltc430x.4 \
 	mac.4 \
 	mac_ddb.4 \
@@ -395,28 +383,21 @@ MAN=	aac.4 \
 	ng_btsocket.4 \
 	ng_car.4 \
 	ng_checksum.4 \
-	ng_cisco.4 \
 	ng_deflate.4 \
 	ng_device.4 \
 	nge.4 \
-	ng_echo.4 \
 	ng_eiface.4 \
-	ng_etf.4 \
 	ng_ether.4 \
-	ng_ether_echo.4 \
-	ng_frame_relay.4 \
 	ng_gif.4 \
 	ng_gif_demux.4 \
 	ng_hci.4 \
 	ng_hci_virt.4 \
-	ng_hole.4 \
 	ng_hub.4 \
 	ng_iface.4 \
 	ng_ip_input.4 \
 	ng_ksocket.4 \
 	ng_l2cap.4 \
 	ng_l2tp.4 \
-	ng_lmi.4 \
 	ng_macfilter.4 \
 	ng_mppc.4 \
 	ng_nat.4 \
@@ -427,10 +408,7 @@ MAN=	aac.4 \
 	ng_ppp.4 \
 	ng_pppoe.4 \
 	ng_pptpgre.4 \
-	ng_pred1.4 \
-	ng_rfc1490.4 \
 	ng_socket.4 \
-	ng_source.4 \
 	ng_split.4 \
 	ng_tag.4 \
 	ng_tcpmss.4 \
@@ -477,7 +455,6 @@ MAN=	aac.4 \
 	p9fs.4 \
 	pass.4 \
 	pca954x.4 \
-	pccbb.4 \
 	pcf.4 \
 	pcf8574.4 \
 	pcf8591.4 \
@@ -492,15 +469,11 @@ MAN=	aac.4 \
 	pim.4 \
 	pms.4 \
 	polling.4 \
-	ppbus.4 \
-	ppc.4 \
-	ppi.4 \
 	procdesc.4 \
 	proto.4 \
 	ps4dshock.4 \
 	ps5dsense.4 \
 	psm.4 \
-	pst.4 \
 	pt.4 \
 	ptnet.4 \
 	pts.4 \
@@ -516,6 +489,7 @@ MAN=	aac.4 \
 	ral.4 \
 	random.4 \
 	rctl.4 \
+	rdomain.4 \
 	re.4 \
 	rge.4 \
 	rgephy.4 \
@@ -555,7 +529,6 @@ MAN=	aac.4 \
 	sk.4 \
 	${_smartpqi.4} \
 	smb.4 \
-	smbfs.4 \
 	smbios.4 \
 	smbus.4 \
 	smp.4 \
@@ -590,7 +563,6 @@ MAN=	aac.4 \
 	spigen.4 \
 	${_spkr.4} \
 	ste.4 \
-	stf.4 \
 	stge.4 \
 	${_sume.4} \
 	${_superio.4} \
@@ -605,7 +577,6 @@ MAN=	aac.4 \
 	tcp_bblog.4 \
 	tcp_bbr.4 \
 	tcp_rack.4 \
-	tdfx.4 \
 	termios.4 \
 	textdump.4 \
 	thunderbolt.4 \
@@ -648,6 +619,7 @@ MAN=	aac.4 \
 	${_vmci.4} \
 	vmgenc.4 \
 	vkbd.4 \
+	vether.4 \
 	vlan.4 \
 	vxlan.4 \
 	${_vmd.4} \
@@ -688,11 +660,8 @@ MLINKS=	ads111x.4 ads1013.4 \
 	ads111x.4 ads1114.4 \
 	ads111x.4 ads1115.4
 MLINKS+=ae.4 if_ae.4
-MLINKS+=age.4 if_age.4
-MLINKS+=agp.4 agpgart.4
 MLINKS+=alc.4 if_alc.4
 MLINKS+=ale.4 if_ale.4
-MLINKS+=altq.4 ALTQ.4
 MLINKS+=ath.4 if_ath.4
 MLINKS+=aue.4 if_aue.4
 MLINKS+=axe.4 if_axe.4
@@ -748,14 +717,11 @@ MLINKS+=fd.4 stderr.4 \
 MLINKS+=ffs.4 ufs.4
 MLINKS+=fdt.4 FDT.4
 MLINKS+=firewire.4 ieee1394.4
-MLINKS+=fwe.4 if_fwe.4
-MLINKS+=fwip.4 if_fwip.4
 MLINKS+=fxp.4 if_fxp.4
 MLINKS+=gem.4 if_gem.4
 MLINKS+=genet.4 if_genet.4
 MLINKS+=geneve.4 if_geneve.4
 MLINKS+=geom.4 GEOM.4
-MLINKS+=geom_zero.4 gzero.4
 MLINKS+=gif.4 if_gif.4
 MLINKS+=gpio.4 gpiobus.4
 MLINKS+=gpioths.4 dht11.4
@@ -787,7 +753,6 @@ MLINKS+=lagg.4 trunk.4
 MLINKS+=lagg.4 if_lagg.4
 MLINKS+=lge.4 if_lge.4
 MLINKS+=lo.4 loop.4
-MLINKS+=lp.4 plip.4
 MLINKS+=malo.4 if_malo.4
 MLINKS+=me.4 if_me.4
 MLINKS+=mem.4 kmem.4
@@ -814,7 +779,6 @@ MLINKS+=virtio_iommu.4 vtiommu.4
 MLINKS+=virtio_mem.4 vtmem.4
 MLINKS+=virtio_pmem.4 vtpmem.4
 MLINKS+=virtio_snd.4 vtsnd.4
-MLINKS+=pccbb.4 cbb.4
 MLINKS+=pcm.4 snd.4 \
 	pcm.4 sound.4
 MLINKS+=pms.4 pmspcv.4
@@ -837,13 +801,11 @@ MLINKS+=smsc.4 if_smsc.4
 MLINKS+=snd_envy24.4 snd_ak452x.4
 MLINKS+=${_spkr.4} ${_speaker.4}
 MLINKS+=ste.4 if_ste.4
-MLINKS+=stf.4 if_stf.4
 MLINKS+=stge.4 if_stge.4
 MLINKS+=syncache.4 syncookies.4
 MLINKS+=tap.4 if_tap.4 \
 	tap.4 vmnet.4 \
 	tap.4 if_vmnet.4
-MLINKS+=tdfx.4 tdfx_linux.4
 MLINKS+=ti.4 if_ti.4
 MLINKS+=tty.4 cua.4
 MLINKS+=tun.4 if_tun.4
@@ -874,7 +836,6 @@ _acpi_sony.4=	acpi_sony.4
 _acpi_toshiba.4=acpi_toshiba.4
 _acpi_wmi.4=	acpi_wmi.4
 _aesni.4=	aesni.4
-_aout.4=	aout.4
 _apic.4=	apic.4
 _apm.4=		apm.4
 _atrtc.4=	atrtc.4
@@ -1047,6 +1008,7 @@ _dtrace_provs=	dtrace_audit.4 \
 		dtrace_cam.4 \
 		dtrace_dtmalloc.4 \
 		dtrace_dtrace.4 \
+		dtrace_pf.4 \
 		dtrace_fbt.4 \
 		dtrace_io.4 \
 		dtrace_ip.4 \
@@ -1139,7 +1101,6 @@ MAN+=	\
 	umodem.4 \
 	umoscom.4 \
 	ums.4 \
-	upgt.4 \
 	uplcom.4 \
 	ural.4 \
 	urio.4 \
@@ -1165,7 +1126,6 @@ MLINKS+=run.4 if_run.4
 MLINKS+=u3g.4 u3gstub.4
 MLINKS+=uath.4 if_uath.4
 MLINKS+=udav.4 if_udav.4
-MLINKS+=upgt.4 if_upgt.4
 MLINKS+=ural.4 if_ural.4
 MLINKS+=urndis.4 if_urndis.4
 MLINKS+=${_urtw.4} ${_if_urtw.4}
@@ -1175,5 +1135,8 @@ MLINKS+=zyd.4 if_zyd.4
 MANGROUPS+=		MAC_ABAC
 MAC_ABACPACKAGE=	mac-abac
 MAC_ABAC=		mac_abac.4
+
+# OpenBSD PF manual pages (pf, pflog, pflow, pfsync, divert).
+.PATH: ${SRCTOP}/contrib/openbsd-pf/share/man/man4
 
 .include <bsd.prog.mk>

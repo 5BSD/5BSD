@@ -29,16 +29,18 @@
 
 . $(atf_get_srcdir)/../common/vnet.subr
 
-atf_test_case "ipdivert_ip_output_remote_success" "cleanup"
-ipdivert_ip_output_remote_success_head() {
+# divert(4) sockets are OpenBSD's, provided by pf(4); ipdivert(4) is retired.
+
+atf_test_case "divert_ip_output_remote_success" "cleanup"
+divert_ip_output_remote_success_head() {
 
 	atf_set descr 'Test diverting IPv4 packet to remote destination'
 	atf_set require.user root
 	atf_set require.progs python3 scapy
-	atf_set require.kmods ipdivert
+	atf_set require.kmods pf
 }
 
-ipdivert_ip_output_remote_success_body() {
+divert_ip_output_remote_success_body() {
 
 	if [ "$(atf_config_get ci false)" = "true" ] && \
 		[ "$(uname -p)" = "i386" ]; then
@@ -72,28 +74,28 @@ ipdivert_ip_output_remote_success_body() {
 	jexec ${jname} ifconfig ${epair}b inet ${ip4b}/30
 
 	atf_check -s exit:0 $(atf_get_srcdir)/${script_name} \
-		--dip ${ip4b} --test_name ipdivert_ip_output_remote_success
+		--dip ${ip4b} --test_name divert_ip_output_remote_success
 	
 	count=`jexec ${jname} netstat -s -p icmp  | grep 'Input histogram:' -A8 | grep -c 'echo: '`
 	# Verify redirect got installed
 	atf_check_equal "1" "${count}"
 }
 
-ipdivert_ip_output_remote_success_cleanup() {
+divert_ip_output_remote_success_cleanup() {
 
 	vnet_cleanup
 }
 
-atf_test_case "ipdivert_ip_input_local_success" "cleanup"
-ipdivert_ip_input_local_success_head() {
+atf_test_case "divert_ip_input_local_success" "cleanup"
+divert_ip_input_local_success_head() {
 
 	atf_set descr 'Test diverting IPv4 packet to remote destination'
 	atf_set require.user root
 	atf_set require.progs python3 scapy
-	atf_set require.kmods ipdivert
+	atf_set require.kmods pf
 }
 
-ipdivert_ip_input_local_success_body() {
+divert_ip_input_local_success_body() {
 
 	if [ "$(atf_config_get ci false)" = "true" ] && \
 		[ "$(uname -p)" = "i386" ]; then
@@ -128,14 +130,14 @@ ipdivert_ip_input_local_success_body() {
 
 	atf_check -s exit:0 jexec ${jname} $(atf_get_srcdir)/${script_name} \
 	    --sip ${ip4a} --dip ${ip4b} \
-	    --test_name ipdivert_ip_input_local_success
+	    --test_name divert_ip_input_local_success
 	
 	count=`jexec ${jname} netstat -s -p icmp  | grep 'Input histogram:' -A8 | grep -c 'echo: '`
 	# Verify redirect got installed
 	atf_check_equal "1" "${count}"
 }
 
-ipdivert_ip_input_local_success_cleanup() {
+divert_ip_input_local_success_cleanup() {
 
 	vnet_cleanup
 }
@@ -143,8 +145,8 @@ ipdivert_ip_input_local_success_cleanup() {
 atf_init_test_cases()
 {
 
-	atf_add_test_case "ipdivert_ip_output_remote_success"
-	atf_add_test_case "ipdivert_ip_input_local_success"
+	atf_add_test_case "divert_ip_output_remote_success"
+	atf_add_test_case "divert_ip_input_local_success"
 }
 
 # end

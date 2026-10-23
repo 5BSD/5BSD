@@ -523,7 +523,7 @@ ndp_multirouter_pref_head() {
 }
 
 ndp_multirouter_pref_body() {
-	local epair0 jname prefix lladdr advrtrs
+	local epair0 jname prefix lladdr advrtrs dst
 
 	vnet_init
 
@@ -543,32 +543,38 @@ ndp_multirouter_pref_body() {
 
 	lladdr="$(ndp_if_lladdr ${epair0}b)"
 	lladdr="${lladdr%?}a"
+	dst=$(ndp_if_lladdr ${epair0}a ${jname})
+	# 5BSD: the three RAs at once.  The routers do not exist and fail
+	# neighbor unreachability detection within seconds, which takes them
+	# off the prefix's advertising routers; one ra.py (Python and scapy)
+	# can take that long on a test VM.
 	# Send an RA with high preference.
-	atf_check -e ignore python3 $(atf_get_srcdir)/ra.py \
+	python3 $(atf_get_srcdir)/ra.py \
 	    --sendif ${epair0}b \
-	    --dst $(ndp_if_lladdr ${epair0}a ${jname}) \
+	    --dst ${dst} \
 	    --src ${lladdr} \
 	    --rtrpref 1 --prefix ${prefix} \
-	    --validlifetime 10 --preferredlifetime 5
+	    --validlifetime 10 --preferredlifetime 5 2> /dev/null &
 
 	lladdr="${lladdr%?}b"
 	# Send an RA with medium preference.
-	atf_check -e ignore python3 $(atf_get_srcdir)/ra.py \
+	python3 $(atf_get_srcdir)/ra.py \
 	    --sendif ${epair0}b \
-	    --dst $(ndp_if_lladdr ${epair0}a ${jname}) \
+	    --dst ${dst} \
 	    --src ${lladdr} \
 	    --rtrpref 0 --prefix ${prefix} \
-	    --validlifetime 10 --preferredlifetime 5
+	    --validlifetime 10 --preferredlifetime 5 2> /dev/null &
 
 	lladdr="${lladdr%?}c"
 	# Send an RA with low preference.
-	atf_check -e ignore python3 $(atf_get_srcdir)/ra.py \
+	python3 $(atf_get_srcdir)/ra.py \
 	    --sendif ${epair0}b \
-	    --dst $(ndp_if_lladdr ${epair0}a ${jname}) \
+	    --dst ${dst} \
 	    --src ${lladdr} \
 	    --rtrpref 3 --prefix ${prefix} \
-	    --validlifetime 10 --preferredlifetime 5
+	    --validlifetime 10 --preferredlifetime 5 2> /dev/null &
 
+	wait
 	# Wait for a default router to appear.
 	while [ "$(jexec ${jname} ndp -r | wc -l)" -ne 3 ]; do
 		sleep 0.01

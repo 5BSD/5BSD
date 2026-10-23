@@ -147,6 +147,16 @@ License/notices: reviewed Starnix files carry The Fuchsia Authors copyright
 
 Upstream-to-local mappings (upstream paths relative to src/starnix/;
 local paths relative to the 5BSD source root):
+  - Follow-up reviewed at upstream revision
+    088a6edc59c19bbbf07595a403c0fac4bc233c6a (2026-10-16):
+    tests/syscalls/cpp/procfs_test.cc FdOpathMode supplies the descriptor
+    link-mode regression for tests/sys/kern/linux_procfs.c and native
+    linprocfs/pseudofs; modules/fuse/lib.rs supplies the max_pages and
+    zero-value default reference for native FUSE INIT and read/write tests.
+    modules/devpts/lib.rs new-terminal and lock-ioctl tests supply the PTY
+    behavior reference; native tty/pts implementation and the
+    freestanding Linux PTY regression are independently written. No upstream
+    implementation source was copied.
   - kernel/core/vfs/syscalls.rs, close_range table detachment:
     sys/compat/linux/linux_file.c, linux_file.h and linux_fork.c;
     sys/kern/kern_descrip.c and sys/sys/filedesc.h;
@@ -1236,3 +1246,24 @@ System and capability tracing review (2026-10-10):
   /usr/obj/5BSD-pf-upgrade-20261010. The earlier successful world/kernel build
   predates the last daemon review fixes; a final source freeze/rebuild and
   four-core networked VM qualification are still required before publication.
+
+OpenBSD PF regression tests and reference
+-----------------------------------------
+Upstream project: OpenBSD, https://github.com/openbsd/src.git (CVS mirror)
+Revision: facc8d7ec5d1f7a22cd5b7f1e8c6ac4990d91244 (2026-10-10)
+Imported: 2026-10-11
+Source: contrib/openbsd-pf/
+Provenance: contrib/openbsd-pf/UPSTREAM.json lists every subtree with its git
+  tree/blob object ID at the pinned commit and the signed reference snapshot
+  (OpenBSD 8.0-current amd64, GENERIC.MP#88) the tests were baselined on.
+License: contrib/openbsd-pf/LICENSE (ISC-style); per-file notices retained.
+  Test data fixtures are under the same terms. No copyleft files.
+Scope: regress/sbin/pfctl, regress/sys/net/pf_*, pflog, pflow, IP-stack
+  suites that use pf as a tool (netinet/{frag,pmtu,tcpstate,ipsec},
+  netinet6/{frag6,rh0}, net/pair); share/mk/bsd.regress.mk. Test-only:
+  installed as a Kyua fixture corpus, never part of the runtime system.
+Local changes: none (see contrib/openbsd-pf/README.5BSD for the policy on
+  expected-output divergence and on recording merged OpenBSD-derived code).
+Integration: tests/sys/netpfil/pf/openbsd (ATF wrapper, srctree install);
+  tools/test/pf-parity/openbsd-regress (two-guest runner).
+Update procedure: contrib/openbsd-pf/README.5BSD.

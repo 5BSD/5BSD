@@ -1827,3 +1827,94 @@ branches, 3718/3731 lines; migration 2338/2341 (99.8718%) branches, 4330/4374
 lines; control-scoped 452/452; bhyvectl 1772/1824 (97.15%) branches,
 2198/2227 lines; libvmmapi 712/733 (97.14%). Every bhyve component is at or
 above 97% on lines and branches.
+
+## Merge of dev into experimental/hypertrace (protocol 3, active vsock)
+
+Build `cbm-m3` (the merged tree with the coordinator's checkpoint_manifest.c
+fix); run `rm4` (all 105 suites) plus `rm4c` (gdb-migration-fence and its
+@prod variant, rerun after a fixture fix); report `pm5`, rc 0.
+
+Production finding: `fb11-hashopen`. The merged checkpoint_manifest_hash_at()
+returned `errno` (0) for an errno-less member openat(), and checkpoint_publish()
+published a manifest whose digests were never computed. Pre-merge code
+returned EIO. The coordinator fixed it (`errno != 0 ? errno : EIO` at the
+data, kern and meta opens). The snapshot suite's errno-less oracle caught it
+and passes unchanged on cbm-m3.
+
+Harness ports, to the merged APIs and the coordinator's protocol rules:
+- capture session: `vm_snapshot_capture` and `vm_snapshot_dev_state_finish`
+  (retire commits, rollback aborts, and unresolved captures are refused).
+  Covered in the adapter, snapshot, fresh-source, production-retire and
+  rollback-repair suites.
+- `checkpoint_vcpu_pause/resume`, and TPM checkpoint/migration through a TPM
+  device model in the snapshot harness.
+- the deadline-based send/recv transport (`io_timeout_ms`).
+- the baseline-walk pre-copy, and destination round-1 baseline staging.
+- version 3 numbers: VSOCK_STATE=14, RELEASE_ACK=15, V2_RESTORE bit 2,
+  VSOCK_STATE bit 3, FRESH bit 4. Empty chunks are refused.
+- bhyvectl strict numeric/PCI/capability parsing, `nested_svm`, and the
+  vm_rev_map_gpa end-of-lowmem fix.
+
+New coverage of merged paths:
+- protocol: the version gate (3 between current builds; 2 never; 1 only from
+  a [1,1] source behind V2_RESTORE, and the previous-ABI exception only
+  then); the v1 destination path against a scripted v0.1.0 source (empty
+  COMMIT, reason-only RELEASE, no RELEASE_ACK, and retain rather than discard
+  on ABORT, a challenge-shaped RELEASE, a vanished source or a failed
+  resume); active-vsock sessions with relay-order oracle O6 (prepare after
+  COMMIT and before INTENT; cancel before any source resume; activate only
+  after RELEASED; table staged before the device image), every hook failure,
+  mismatched endpoints, chunked tables, frame mutations, transport and
+  allocation faults.
+- adapter: a plaintext vsock handoff between two processes with fault
+  enumeration, plus capture and relay order invariants in check_events.
+  Active vsock with TLS is refused by both the source (IPC reply
+  REASON_CAPS, nothing paused) and the destination (EPROTONOSUPPORT).
+  Destination resume activates a prepared relay after the committed check,
+  and a failed activation never resumes the guest.
+- ops: prod_vsock_state, the destination bundle staging, matching and
+  restore, and the relay socket-pair setup with every setup call
+  fault-injected.
+- slice suites: V2_RESTORE advertisement, relay hooks wiring, TPM and CPU
+  contract gates, and the capture size limit.
+
+Fixture fix: gdb-migration-fence sampled the fenced-window flag before
+attach(), so an attach just after unfence could be counted as "in window"
+under load. It now uses a window generation read before and after the attach.
+
+Waivers:
+- Deleted, because they now execute: fd send/recv errno-less, frame-version
+  mismatch, and v1 RELEASE reason decode.
+- Re-anchored: migration_precopy.c entries, collect_checkpoint_devmem,
+  migration_source_send_state, and the rollback/dest cleanup sequences.
+- Dropped: the capture SIZE_MAX arith bounds, which became a reachable
+  512 MiB limit and are now tested.
+- Added in migration_session.c, each with a justification comment:
+  version-2 frame in a v1 session (decoder-guarantee); the duplicated HELLO
+  reserved-byte test, the role and window operands already checked, a NULL
+  state with a length, the bundle-validated restore checks and encode after
+  size (validator-implied); source version >= 2, frame_payload on rollback
+  and wedge paths, and the captured table pointers (state-invariant);
+  EAGAIN == EWOULDBLOCK (constant-condition); PCI and ROM name sizes
+  (type-bound); baseline_complete overflow (arith-bound).
+- The report now lists every waiver problem of a step together instead of
+  stopping at the first.
+
+Strict figures, pm5 against p30:
+
+| component | pm5 lines | pm5 branches | p30 lines | p30 branches |
+|---|---|---|---|---|
+| migration (outcomes) | 5254/5333 98.52% | 2949/2986 98.76% | 98.99% | 99.87% |
+| snapshot (waived/outcomes) | 5607/5769 97.19% | 3843/3924 97.94% | 97.33% | 98.73% |
+| hypertrace (outcomes) | 99.65% | 2958/2969 99.63% | 99.65% | 99.60% |
+| control-scoped | 829/830 | 452/452 | same | same |
+| bhyvectl | 2259/2288 98.73% | 1845/1902 97.00% | 98.70% | 97.15% |
+| libvmmapi | 99.28% | 712/733 97.14% | 99.28% | 97.14% |
+
+Denominators moved because dev's code joined existing files:
+migration_session.c (+1394 lines: vsock adapters, transport deadlines, v1
+gate), snapshot.c (+372: capture session, TPM, vCPU fence),
+checkpoint_manifest.c (restore compatibility), bhyvectl (strict parsing).
+migration_vsock_owner/bundle/relay.c, vsock_migration_state.c and the tpm_*
+files are not in any component. The bundle and state codecs are linked as
+real code into the adapter suites.

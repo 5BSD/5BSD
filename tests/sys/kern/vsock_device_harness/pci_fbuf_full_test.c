@@ -584,6 +584,17 @@ ATF_TC_BODY(parse_rfb_ipv4_and_port, tc)
 	cfg_set("tcp", "host:");
 	ATF_CHECK_EQ(-1, pci_fbuf_parse_config(sc, NULL));
 
+	/* Numeric prefixes and values outside the TCP port range are invalid. */
+	controls_reset();
+	sc = make_sc();
+	cfg_set("tcp", "host:5900junk");
+	ATF_CHECK_EQ(-1, pci_fbuf_parse_config(sc, NULL));
+
+	controls_reset();
+	sc = make_sc();
+	cfg_set("tcp", "65536");
+	ATF_CHECK_EQ(-1, pci_fbuf_parse_config(sc, NULL));
+
 	/* "rfb" is preferred over "tcp". */
 	controls_reset();
 	sc = make_sc();
@@ -639,6 +650,11 @@ ATF_TC_BODY(parse_rfb_ipv6, tc)
 	controls_reset();
 	sc = make_sc();
 	cfg_set("rfb", "[2001:db8::5]:");
+	ATF_CHECK_EQ(-1, pci_fbuf_parse_config(sc, NULL));
+
+	controls_reset();
+	sc = make_sc();
+	cfg_set("rfb", "[2001:db8::5]:5900junk");
 	ATF_CHECK_EQ(-1, pci_fbuf_parse_config(sc, NULL));
 }
 
@@ -746,6 +762,17 @@ ATF_TC_BODY(parse_vga_source_and_geometry, tc)
 	controls_reset();
 	sc = make_sc();
 	cfg_set("w", "320");
+	ATF_CHECK_EQ(-1, pci_fbuf_parse_config(sc, NULL));
+
+	/* Reject malformed dimensions before truncating them to 16 bits. */
+	controls_reset();
+	sc = make_sc();
+	cfg_set("w", "1920junk");
+	ATF_CHECK_EQ(-1, pci_fbuf_parse_config(sc, NULL));
+
+	controls_reset();
+	sc = make_sc();
+	cfg_set("h", "66616");
 	ATF_CHECK_EQ(-1, pci_fbuf_parse_config(sc, NULL));
 
 	/* wait + password are honored. */

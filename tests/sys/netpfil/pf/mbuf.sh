@@ -58,7 +58,7 @@ inet_in_mbuf_len_body()
 	jexec alcatraz pfctl -e
 	pft_set_rules alcatraz \
 		"block"
-	atf_check -s not-exit:0 -o ignore ping -c1 -t1 192.0.2.2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -t1 192.0.2.2
 
 	# Should be allowed by from/to addresses
 	pft_set_rules alcatraz \
@@ -105,10 +105,13 @@ inet6_in_mbuf_len_body()
 	epair=$(vnet_mkepair)
 	ifconfig ${epair}a inet6 2001:db8::1/64 up no_dad
 
-	# Ensure we don't unintentionally send MLD packets to alcatraz
+	# Ensure we don't unintentionally send MLD packets to alcatraz.
+	# OpenBSD pf: a neighbor advertisement does not match the
+	# solicitation's state, so ND is passed in as well.
 	pfctl -e
 	echo "block
 	pass out inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv, echoreq, echorep }
+	pass in inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }
 	" | pfctl -g -f -
 
 	# Set up a simple jail with one interface
@@ -123,7 +126,7 @@ inet6_in_mbuf_len_body()
 	pft_set_rules alcatraz \
 		"block" \
 		"pass quick inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }"
-	atf_check -s not-exit:0 -o ignore ping -c1 -t1 2001:db8::2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -t1 2001:db8::2
 
 	# Avoid redundant ICMPv6 packets to avoid false positives during
 	# counting of net.dummymbuf.hits.
@@ -174,13 +177,13 @@ ethernet_in_mbuf_len_body()
 	dummymbuf_init
 
 	epair=$(vnet_mkepair)
-	epair_a_mac=$(ifconfig ${epair}a ether | awk '/ether/ { print $2; }')
+	epair_a_mac=$(ifconfig ${epair}a ether | awk '/lladdr/ { print $2; }')
 	ifconfig ${epair}a 192.0.2.1/24 up
 
 	# Set up a simple jail with one interface
 	vnet_mkjail alcatraz ${epair}b
 	jexec alcatraz ifconfig ${epair}b 192.0.2.2/24 up
-	epair_b_mac=$(jexec alcatraz ifconfig ${epair}b ether | awk '/ether/ { print $2; }')
+	epair_b_mac=$(jexec alcatraz ifconfig ${epair}b ether | awk '/lladdr/ { print $2; }')
 
 	# Sanity check
 	atf_check -s exit:0 -o ignore ping -c1 192.0.2.2
@@ -190,7 +193,7 @@ ethernet_in_mbuf_len_body()
 	pft_set_rules alcatraz \
 		"ether block" \
 		"pass"
-	atf_check -s not-exit:0 -o ignore ping -c1 -t1 192.0.2.2
+	atf_check -s not-exit:0 -o ignore -e ignore ping -c1 -t1 192.0.2.2
 
 	# Should be allowed by from/to addresses
 	echo $epair_a_mac

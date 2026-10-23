@@ -51,7 +51,7 @@ firewall_config()
 	done
 
 	if [ ${fw} == "pf" ]; then
-		jexec ${jname} sysctl net.pf.filter_local=1
+		# OpenBSD pf always filters lo0; there is no net.pf.filter_local.
 		jexec ${jname} pfctl -e
 		jexec ${jname} pfctl -F all
 		jexec ${jname} pfctl -f $cwd/pf.rule

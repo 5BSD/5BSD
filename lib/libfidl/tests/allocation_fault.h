@@ -6,5 +6,7 @@ namespace fidl::bsd::testing {
 void FailMetadataAllocation();
 void FailNewAfter(int successful_allocations);
 bool DisableAllocationFault();
+// Heap allocations (malloc and operator new) made by this thread so far.
+unsigned long AllocationCount();
 }
 #endif

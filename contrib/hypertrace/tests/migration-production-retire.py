@@ -17,6 +17,7 @@ retire = source[source.index('/* The IPC controller owns this context'):source.i
 fixture = r'''
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 static int quarantines;
 static void ipc_quarantine_vm(void) { quarantines++; }
 #include <stdbool.h>
@@ -24,8 +25,16 @@ static void ipc_quarantine_vm(void) { quarantines++; }
 #include <stdint.h>
 #include "hypertrace_session.h"
 struct vmctx { int unused; };
+/* Merged: capture session, stream descriptor and the active-vsock relay. */
+struct vm_snapshot_capture { int active; };
+struct migration_vsock_relay_endpoint { int fd, type; };
 struct migration_prod_source {
     struct vmctx *ctx;
+    int stream_fd;
+    struct migration_vsock_relay_endpoint vsock_endpoints[4];
+    uint32_t vsock_endpoint_count;
+    bool vsock_relay_prepared;
+    struct vm_snapshot_capture capture;
     bool quiesced, retirement_started, retired;
     bool fresh_stopped;
     uint8_t fresh_record[40];
@@ -81,6 +90,24 @@ static int hypertrace_session_retired(uint16_t vmid, uint64_t epoch) {
     assert(vmid == 7 && epoch == 9); errno = witness_error;
     return witness_error ? -1 : 0;
 }
+static int finishes, finish_error, warnings, finish_commit = -1;
+static int vm_snapshot_dev_state_finish(struct vmctx *ctx, struct vm_snapshot_capture *capture, bool commit) {
+    (void)ctx; assert(capture != NULL);
+    /* Retirement finishes with commit after the transport stops and before
+     * kernel destruction; rollback finishes without commit before anything
+     * resumes. */
+    if (commit) assert(stopped > 0 && destroyed == 0 && transport_stops > 0);
+    else assert(resumed == 0);
+    finishes++; finish_commit = commit; return finish_error;
+}
+static void warnx(const char *fmt, ...) { (void)fmt; warnings++; }
+static int owner_prepares, owner_cancels, owner_activates;
+static int prepare_error, cancel_error, activate_error;
+static int migration_vsock_owner_prepare(int fd, struct migration_vsock_relay_endpoint *e, uint32_t count) {
+    assert(fd == 5 && e != NULL && count == 2 && e[1].fd == 9); owner_prepares++; return prepare_error;
+}
+static int migration_vsock_owner_cancel(void) { owner_cancels++; return cancel_error; }
+static int migration_vsock_owner_activate(void) { owner_activates++; return activate_error; }
 static int vm_resume_devices(void) { resumed++; return device_resume_error; }
 static int fbsdrun_migration_resume_cpus(void *ctx) {
  (void)ctx; resumed++; return cpu_resume_error;
@@ -175,8 +202,68 @@ int main(void) {
         assert(prod_retire_drain()==0 && closes==before+1);
     }
     struct migration_prod_source src = { .quiesced = true };
+    resumed = finishes = 0;
+    finish_error = EIO;
+    assert(prod_resume(&src) == EIO && resumed == 0 && src.quiesced);
+    assert(finishes == 1 && finish_commit == 0);
+    finish_error = 0;
     assert(prod_resume(&src) == 0);
-    assert(!src.quiesced && resumed == 2);
+    assert(!src.quiesced && resumed == 2 && finishes == 2 && finish_commit == 0);
+    /* Retirement: a failed event-fence finish only warns; destruction goes on. */
+    for (int failing = 0; failing < 2; failing++) {
+        struct migration_prod_source r = { .quiesced = true, .ctx = (void *)1 };
+        stopped = destroyed = transport_stops = finishes = warnings = 0;
+        stop_error = destroy_error = transport_error = join_error = 0;
+        finish_error = failing ? EIO : 0;
+        assert(prod_retire(&r) == 0 && r.retired && destroyed == 1);
+        assert(finishes == 1 && finish_commit == 1 && warnings == failing);
+    }
+    finish_error = 0;
+    /* A refused or failed stop never reaches the commit finish. */
+    {
+        struct migration_prod_source r = { .quiesced = true };
+        finishes = 0; stopped = destroyed = 0; stop_error = EIO;
+        assert(prod_retire(&r) == EIO && finishes == 0);
+        stop_error = 0;
+        struct migration_prod_source q = { .quiesced = false };
+        assert(prod_retire(&q) == EBUSY && finishes == 0);
+    }
+    /* Active-vsock relay: no endpoints is a no-op throughout. */
+    {
+        struct migration_prod_source v = { .stream_fd = 5 };
+        assert(prod_prepare_vsock_relay(&v) == 0 && !v.vsock_relay_prepared);
+        assert(prod_cancel_vsock_relay(&v) == 0 && prod_activate_vsock_relay(&v) == 0);
+        assert(owner_prepares == 0 && owner_cancels == 0 && owner_activates == 0);
+    }
+    for (int mode = 0; mode < 5; mode++) {
+        struct migration_prod_source v = { .stream_fd = 5, .vsock_endpoint_count = 2 };
+        v.vsock_endpoints[1].fd = 9;
+        owner_prepares = owner_cancels = owner_activates = 0;
+        prepare_error = mode == 1 ? EIO : 0;
+        cancel_error = mode == 3 ? EBUSY : 0;
+        activate_error = mode == 4 ? EPIPE : 0;
+        /* Prepared is recorded before the owner answers, so cancel runs
+         * even after a prepare whose acknowledgement was lost. */
+        assert(prod_prepare_vsock_relay(&v) == prepare_error);
+        assert(v.vsock_relay_prepared && owner_prepares == 1);
+        if (mode == 1 || mode == 3) {
+            assert(prod_cancel_vsock_relay(&v) == cancel_error);
+            assert(owner_cancels == 1 && v.vsock_relay_prepared == (mode == 3));
+            if (mode == 3) {
+                cancel_error = 0;
+                assert(prod_cancel_vsock_relay(&v) == 0 && owner_cancels == 2);
+            }
+            assert(!v.vsock_relay_prepared);
+            assert(prod_activate_vsock_relay(&v) == 0 && owner_activates == 0);
+            continue;
+        }
+        assert(prod_activate_vsock_relay(&v) == activate_error && owner_activates == 1);
+        assert(v.vsock_relay_prepared == (mode == 4));
+        if (mode != 4) {
+            assert(prod_activate_vsock_relay(&v) == 0 && owner_activates == 1);
+            assert(prod_cancel_vsock_relay(&v) == 0 && owner_cancels == 0);
+        }
+    }
 #ifdef BHYVE_GDB
     assert(debugger_retires > 0 && debugger_retires == retire_begins);
     printf("debugger fence retired before %d destruction attempts\n", retire_begins);

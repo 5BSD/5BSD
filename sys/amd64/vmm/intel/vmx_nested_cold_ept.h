@@ -12,6 +12,7 @@
 
 enum vmx_nested_cold_ept_disposition {
 	VMX_NESTED_COLD_EPT_POPULATED = 0,
+	VMX_NESTED_COLD_EPT_DEVICE,
 	VMX_NESTED_COLD_EPT_REFLECTED,
 };
 

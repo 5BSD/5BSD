@@ -5,12 +5,12 @@
 . $(atf_get_srcdir)/../../sys/common/vnet.subr
 
 # Bug 286910: adding 'netmask' or 'broadcast' to an IPv6 address crashed
-# ifconfig.
+# ifconfig.  5BSD follows OpenBSD and accepts an IPv6 'netmask'.
 
 atf_test_case "netmask" "cleanup"
 netmask_head()
 {
-	atf_set descr "Test invalid 'netmask' option"
+	atf_set descr "Test the inet6 'netmask' option"
 	atf_set require.user root
 }
 
@@ -21,20 +21,28 @@ netmask_body()
 	ep=$(vnet_mkepair)
 	vnet_mkjail ifcjail ${ep}a
 
-	# Add the address the wrong way
+	# A netmask is an IPv6 address, not a prefix length
 	atf_check -s exit:1 \
-	    -e match:"ifconfig: netmask: invalid option for inet6" \
+	    -e match:"ifconfig: 64: bad value" \
 	    jexec ifcjail ifconfig ${ep}a inet6 2001:db8:1::1 netmask 64
 
-	# Add the address the correct way
+	# It must be contiguous, as on OpenBSD
+	atf_check -s exit:1 \
+	    -e match:"non-contiguous netmask" \
+	    jexec ifcjail ifconfig ${ep}a inet6 2001:db8:1::1 \
+	        netmask ffff:ffff:ffff:ffff:ffff:4000::
+	atf_check -s exit:0 -o not-match:"2001:db8:1::1 " \
+	    jexec ifcjail ifconfig ${ep}a
+
 	atf_check -s exit:0 \
-	    jexec ifcjail ifconfig ${ep}a inet6 2001:db8:1::1/64
-	atf_check -s exit:0 -o match:"2001:db8:1::1 prefixlen 64" \
+	    jexec ifcjail ifconfig ${ep}a inet6 2001:db8:1::1 \
+	        netmask ffff:ffff:ffff:ffff:ffff::
+	atf_check -s exit:0 -o match:"2001:db8:1::1 prefixlen 80" \
 	    jexec ifcjail ifconfig ${ep}a
 
 	# Remove the address the wrong way
 	atf_check -s exit:1 \
-	    -e match:"ifconfig: netmask: invalid option for inet6" \
+	    -e match:"ifconfig: 64: bad value" \
 	    jexec ifcjail ifconfig ${ep}a inet6 2001:db8:1::1 netmask 64 -alias
 }
 

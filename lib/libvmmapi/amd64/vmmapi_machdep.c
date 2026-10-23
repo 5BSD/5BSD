@@ -53,6 +53,7 @@ const char *vm_capstrmap[] = {
 	[VM_CAP_MASK_HWINTR] = "mask_hwintr",
 	[VM_CAP_RFLAGS_TF] = "rflags_tf",
 	[VM_CAP_NESTED_VMX] = "nested_vmx",
+	[VM_CAP_NESTED_SVM] = "nested_svm",
 	[VM_CAP_MAX] = NULL,
 };
 

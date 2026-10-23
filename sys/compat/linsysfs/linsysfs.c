@@ -524,6 +524,23 @@ linsysfs_cpuonline(PFS_FILL_ARGS)
 	return (0);
 }
 
+/* All configured CPUs are online; there is no Linux hotplug pool. */
+static int
+linsysfs_cpuoffline(PFS_FILL_ARGS)
+{
+
+	sbuf_putc(sb, '\n');
+	return (0);
+}
+
+static int
+linsysfs_cpukernelmax(PFS_FILL_ARGS)
+{
+
+	sbuf_printf(sb, "%d\n", MAXCPU - 1);
+	return (0);
+}
+
 /*
  * Filler function for sys/devices/system/cpu/cpuX/online
  */
@@ -654,6 +671,15 @@ linsysfs_thp_pmd_size(PFS_FILL_ARGS)
 	return (0);
 }
 
+/* Linux THP is unavailable; native superpages are a separate facility. */
+static int
+linsysfs_thp_enabled(PFS_FILL_ARGS)
+{
+
+	sbuf_cat(sb, "always madvise [never]\n");
+	return (0);
+}
+
 static int
 linsysfs_init(PFS_INIT_ARGS)
 {
@@ -718,6 +744,10 @@ linsysfs_init(PFS_INIT_ARGS)
 	    NULL, PFS_RD);
 	pfs_create_file(cpu, NULL, "present", &linsysfs_cpuonline, NULL, NULL,
 	    NULL, PFS_RD);
+	pfs_create_file(cpu, NULL, "offline", linsysfs_cpuoffline, NULL, NULL,
+	    NULL, PFS_RD);
+	pfs_create_file(cpu, NULL, "kernel_max", linsysfs_cpukernelmax, NULL,
+	    NULL, NULL, PFS_RD);
 
 	linsysfs_listcpus(cpu);
 
@@ -729,6 +759,8 @@ linsysfs_init(PFS_INIT_ARGS)
 	pfs_create_dir(kernel, &dir, "mm", NULL, NULL, NULL, 0);
 	pfs_create_dir(dir, &dir, "transparent_hugepage", NULL, NULL, NULL, 0);
 	pfs_create_file(dir, NULL, "hpage_pmd_size", &linsysfs_thp_pmd_size,
+	    NULL, NULL, NULL, PFS_RD);
+	pfs_create_file(dir, NULL, "enabled", linsysfs_thp_enabled,
 	    NULL, NULL, NULL, PFS_RD);
 
 	linsysfs_net_init();
@@ -757,8 +789,4 @@ linsysfs_uninit(PFS_INIT_ARGS)
 }
 
 PSEUDOFS(linsysfs, 1, VFCF_JAIL);
-#if defined(__aarch64__) || defined(__amd64__)
 MODULE_DEPEND(linsysfs, linux_common, 1, 1, 1);
-#else
-MODULE_DEPEND(linsysfs, linux, 1, 1, 1);
-#endif

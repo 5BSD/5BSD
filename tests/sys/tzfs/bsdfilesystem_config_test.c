@@ -42,7 +42,7 @@ ATF_TC_BODY(valid_overlay_and_defaults, tc)
 	ATF_REQUIRE_EQ(0, bsdfilesystem_config_load(&config, "valid.ucl"));
 	ATF_CHECK_STREQ("tank", config.pool);
 	ATF_CHECK_STREQ("tank/Capabilities", config.base);
-	ATF_CHECK_STREQ("tank/Capabilities/persistent", config.persistent);
+	ATF_CHECK_STREQ("tank/Capabilities/Data", config.persistent);
 	ATF_CHECK_STREQ("/Caps", config.mountpoint);
 	ATF_CHECK_STREQ("standard", config.ephemeral_sync);
 }

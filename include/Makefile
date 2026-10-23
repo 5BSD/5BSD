@@ -48,20 +48,19 @@ LHDRS=	aio.h errno.h fcntl.h linker_set.h poll.h stdatomic.h stdint.h \
 	syslog.h ucontext.h
 
 LDIRS=	geom net net80211 netgraph netinet netinet6 \
-	netipsec netlink netsmb nfs nfsclient nfsserver sys vm
+	netipsec netlink nfs nfsclient nfsserver sys vm
 
-LSUBDIRS=	dev/acpica dev/agp dev/ciss dev/filemon dev/firewire \
+LSUBDIRS=	dev/acpica dev/ciss dev/filemon dev/firewire \
 	dev/hwpmc dev/hyperv \
 	dev/ic dev/iicbus dev/io dev/mfi dev/mmc dev/ntsync \
-	dev/ofw dev/pbio dev/pci ${_dev_powermac_nvram} dev/ppbus dev/pwm \
+	dev/ofw dev/pbio dev/pci ${_dev_powermac_nvram} dev/pwm \
 	dev/smbus dev/speaker dev/tcp_log dev/veriexec dev/vkbd dev/wg \
 	fs/devfs fs/fdescfs fs/msdosfs fs/nfs fs/nullfs \
-	fs/smbfs fs/udf fs/unionfs \
-	geom/cache geom/concat geom/eli geom/gate geom/label \
-	geom/mirror geom/mountver geom/multipath geom/nop \
-	geom/raid geom/stripe geom/union \
+	fs/unionfs \
+	geom/eli geom/gate geom/label \
+	geom/mirror geom/multipath geom/nop \
+	geom/raid \
 	geom/zoned \
-	net/altq \
 	net/route \
 	netgraph/netflow \
 	netinet/cc \
@@ -79,10 +78,6 @@ LSUBSUBDIRS=	dev/mpt/mpilib
 ACPICA=		acpi_hpet.h \
 		acpiio.h
 ACPICADIR=	${INCLUDEDIR}/dev/acpica
-
-.PATH: ${SRCTOP}/sys/dev/agp
-AGP=		agpreg.h
-AGPDIR=		${INCLUDEDIR}/dev/agp
 
 .PATH: ${SRCTOP}/sys/bsm
 BSM=		audit.h \
@@ -208,13 +203,21 @@ VERIEXEC=	veriexec_ioctl.h
 VERIEXECDIR=	${INCLUDEDIR}/dev/veriexec
 
 
-.PATH: ${SRCTOP}/sys/netpfil/pf
-PF=		pf.h \
-		pf_altq.h \
-		pf_mtag.h \
-		pf_nl.h
-PFPACKAGE=	pf
-PFDIR=	${INCLUDEDIR}/netpfil/pf
+# OpenBSD PF (contrib/openbsd-pf): the pf(4) ioctl ABI and the headers it
+# needs outside the kernel.
+.PATH: ${SRCTOP}/contrib/openbsd-pf/sys/net
+PF=		fq_codel.h \
+		hfsc.h \
+		if_pflog.h \
+		if_pflow.h \
+		if_pfsync.h \
+		pfvar.h
+PFDIR=		${INCLUDEDIR}/net
+
+.PATH: ${SRCTOP}/sys/netpfil/openbsd-pf/user/sys
+PFSYS=		refcnt.h \
+		timeout.h
+PFSYSDIR=	${INCLUDEDIR}/sys
 
 .PATH: ${SRCTOP}/sys/rpc
 RPC=		rpcsec_tls.h \
@@ -239,7 +242,6 @@ WGDIR=		${INCLUDEDIR}/dev/wg
 
 INCSGROUPS=	INCS \
 		ACPICA \
-		AGP \
 		BSM \
 		CAM \
 		CAMATA \
@@ -253,6 +255,8 @@ INCSGROUPS=	INCS \
 		HID \
 		HYPERV \
 		OPENCRYPTO \
+		PF \
+		PFSYS \
 		NVME \
 		NVMF \
 		PCI \
@@ -263,10 +267,6 @@ INCSGROUPS=	INCS \
 		VERIEXEC \
 		WG
 
-
-.if ${MK_PF} != "no"
-INCSGROUPS+=	PF
-.endif
 
 .if ${MK_CDDL} != "no"
 INCSGROUPS+=	NVPAIR
@@ -372,7 +372,7 @@ copies: .PHONY .META
 	cd ${SDESTDIR}${INCLUDEDIR}; find ${LDIRS} ${LSUBDIRS} ${LSUBSUBDIRS} crypto \
 	    machine machine/pc ${_MARCHS} -maxdepth 1 -mindepth 1 -type l \
 	    -name "*.h" -print -delete || true
-.for i in ${LDIRS} ${LSUBDIRS:Ndev/agp:Ndev/acpica:Ndev/coreboot:Ndev/evdev:Ndev/hid:Ndev/hyperv:Ndev/pci:Ndev/veriexec:Ndev/wg} ${LSUBSUBDIRS}
+.for i in ${LDIRS} ${LSUBDIRS:Ndev/acpica:Ndev/coreboot:Ndev/evdev:Ndev/hid:Ndev/hyperv:Ndev/pci:Ndev/veriexec:Ndev/wg} ${LSUBSUBDIRS}
 	cd ${SRCTOP}/sys; \
 	${INSTALL} -C ${TAG_ARGS:D${TAG_ARGS},dev} -o ${BINOWN} -g ${BINGRP} -m 444 $i/*.h \
 	    ${SDESTDIR}${INCLUDEDIR}/$i
@@ -408,15 +408,13 @@ symlinks: .PHONY .META
 	cd ${SRCTOP}; ${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \
 	    $$(printf '../../../%s ' sys/$i/*.h) ${SDESTDIR}${INCLUDEDIR}/$i
 .endfor
-.for i in ${LSUBDIRS:Ndev/agp:Ndev/acpica:Ndev/coreboot:Ndev/evdev:Ndev/hid:Ndev/hyperv:Ndev/pci:Ndev/veriexec:Ndev/wg}
+.for i in ${LSUBDIRS:Ndev/acpica:Ndev/coreboot:Ndev/evdev:Ndev/hid:Ndev/hyperv:Ndev/pci:Ndev/veriexec:Ndev/wg}
 	cd ${SRCTOP}; ${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \
 	    $$(printf '../../../../%s ' sys/$i/*.h) ${SDESTDIR}${INCLUDEDIR}/$i
 .endfor
 	${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \
 	    $$(printf '../../../../sys/dev/acpica/%s ' acpiio.h acpi_hpet.h) \
 	    ${SDESTDIR}${INCLUDEDIR}/dev/acpica; \
-	${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} ../../../../sys/dev/agp/agpreg.h \
-	    ${SDESTDIR}${INCLUDEDIR}/dev/agp; \
 	${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \
 	    $$(printf '../../../../sys/dev/evdev/%s ' input.h input-event-codes.h uinput.h) \
 	    ${SDESTDIR}${INCLUDEDIR}/dev/evdev;
@@ -437,11 +435,6 @@ symlinks: .PHONY .META
 	cd ${SRCTOP}; ${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \
 	    $$(printf '../../../../../%s ' sys/$i/*.h) ${SDESTDIR}${INCLUDEDIR}/$i
 .endfor
-.if ${MK_PF} != "no"
-	cd ${SRCTOP}; ${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \
-	    $$(printf '../../../../%s ' sys/netpfil/pf/*.h) \
-	    ${SDESTDIR}${INCLUDEDIR}/netpfil/pf;
-.endif
 	${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} ../../../sys/opencrypto/cryptodev.h \
 	    ${SDESTDIR}${INCLUDEDIR}/crypto; \
 	cd ${SRCTOP}; ${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \

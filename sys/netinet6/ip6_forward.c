@@ -149,8 +149,16 @@ ip6_forward(struct mbuf *m, int srcrt)
 	 * It is important to save it before IPsec processing as IPsec
 	 * processing may modify the mbuf.
 	 */
-	mcopy = m_copym(m, 0, imin(m->m_pkthdr.len, ICMPV6_PLD_MAXLEN),
-	    M_NOWAIT);
+	if (PFIL_HOOKED_OUT(V_inet6_pfil_head))
+		/*
+		 * 5BSD: a packet filter rewrites the packet in place (NAT
+		 * changes its addresses); errors must quote the packet as
+		 * received and go to its original source.
+		 */
+		mcopy = ip6_fastfwd_quote(m);
+	else
+		mcopy = m_copym(m, 0, imin(m->m_pkthdr.len,
+		    ICMPV6_PLD_MAXLEN), M_NOWAIT);
 #ifdef IPSTEALTH
 	if (V_ip6stealth == 0)
 #endif
@@ -198,6 +206,19 @@ again:
 		goto bad;
 	}
 
+	/*
+	 * As OpenBSD: the packet filter sees a forwarded packet before a
+	 * reject or blackhole route discards it, so route-to/reply-to rules
+	 * can take it elsewhere.
+	 */
+	if ((nh->nh_flags & (NHF_BLACKHOLE | NHF_REJECT)) != 0 &&
+	    PFIL_HOOKED_OUT(V_inet6_pfil_head)) {
+		if (pfil_mbuf_fwd(V_inet6_pfil_head, &m, nh->nh_ifp, NULL) !=
+		    PFIL_PASS) {
+			m_freem(mcopy);
+			goto out;
+		}
+	}
 	if (nh->nh_flags & (NHF_BLACKHOLE | NHF_REJECT)) {
 		IP6STAT_INC(ip6s_cantforward);
 		if (mcopy != NULL) {

@@ -1,3 +1,1 @@
-On 64-bit platforms, do not build 32-bit library set and a
-.Nm ld-elf32.so.1
-runtime linker.
+The 32-bit library set and runtime linker are never built on 5BSD.

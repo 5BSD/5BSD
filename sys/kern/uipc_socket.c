@@ -163,11 +163,6 @@
 
 #include <vm/uma.h>
 
-#ifdef COMPAT_FREEBSD32
-#include <sys/mount.h>
-#include <sys/sysent.h>
-#include <compat/freebsd32/freebsd32.h>
-#endif
 
 /*
  * Static SDT (DTrace) tracepoints for the socket-layer operation surface.
@@ -294,20 +289,6 @@ VNET_DEFINE(struct hhook_head *, socket_hhh[HHOOK_SOCKET_LAST + 1]);
 static inline int hhook_run_socket(struct socket *, void *, int32_t);
 #endif
 
-#ifdef COMPAT_FREEBSD32
-#ifdef __amd64__
-/* off_t has 4-byte alignment on i386 but not on other 32-bit platforms. */
-#define	__splice32_packed	__packed
-#else
-#define	__splice32_packed
-#endif
-struct splice32 {
-	int32_t	sp_fd;
-	int64_t sp_max;
-	struct timeval32 sp_idle;
-} __splice32_packed;
-#undef __splice32_packed
-#endif
 
 /*
  * Limit on the number of connections in the listen queue waiting
@@ -1078,13 +1059,6 @@ socreate(int dom, struct socket **aso, int type, int proto,
 	struct socket *so;
 	int error;
 
-#ifdef COMPAT_FREEBSD15
-	/* divert(4) historically abuses PF_INET.  Use PF_DIVERT instead. */
-	if (__predict_false(dom == PF_INET && type == SOCK_RAW &&
-	    proto == __IPPROTO_DIVERT))
-		dom = PF_DIVERT;
-#endif
-
 	prp = pffindproto(dom, type, proto);
 	if (prp == NULL) {
 		/* No support for domain. */
@@ -1114,6 +1088,7 @@ socreate(int dom, struct socket **aso, int type, int proto,
 
 	so->so_type = type;
 	so->so_cred = crhold(cred);
+	so->so_cpid = td != NULL ? td->td_proc->p_pid : 0;
 	if ((prp->pr_domain->dom_family == PF_INET) ||
 	    (prp->pr_domain->dom_family == PF_INET6) ||
 	    (prp->pr_domain->dom_family == PF_ROUTE))
@@ -1344,6 +1319,7 @@ solisten_clone(struct socket *head)
 	so->so_fibnum = head->so_fibnum;
 	so->so_proto = head->so_proto;
 	so->so_cred = crhold(head->so_cred);
+	so->so_cpid = head->so_cpid;
 #ifdef SOCKET_HHOOK
 	if (V_socket_hhh[HHOOK_SOCKET_NEWCONN]->hhh_nhooks > 0) {
 		if (hhook_run_socket(so, head, HHOOK_SOCKET_NEWCONN)) {
@@ -1478,6 +1454,7 @@ sopeeloff(struct socket *head, struct protosw *so_proto)
 	so->so_fibnum = head->so_fibnum;
 	so->so_proto = so_proto;
 	so->so_cred = crhold(head->so_cred);
+	so->so_cpid = head->so_cpid;
 #ifdef MAC
 	mac_socket_newconn(head, so);
 #endif
@@ -4111,6 +4088,40 @@ so_setsockopt(struct socket *so, int level, int optname, void *optval,
 	return (sosetopt(so, &sopt));
 }
 
+/*
+ * SO_BINDANY (OpenBSD): allow binding to and sending from addresses that
+ * are not local.  It is the socket-level spelling of IP_BINDANY and
+ * IPV6_BINDANY and is handled by the protocol.
+ */
+static int
+so_bindany_opt(struct socket *so, struct sockopt *sopt)
+{
+	struct sockopt popt;
+	int error;
+
+	popt = *sopt;
+	switch (so->so_proto->pr_domain->dom_family) {
+#ifdef INET
+	case AF_INET:
+		popt.sopt_level = IPPROTO_IP;
+		popt.sopt_name = IP_BINDANY;
+		break;
+#endif
+#ifdef INET6
+	case AF_INET6:
+		popt.sopt_level = IPPROTO_IPV6;
+		popt.sopt_name = IPV6_BINDANY;
+		break;
+#endif
+	default:
+		return (ENOPROTOOPT);
+	}
+	error = so->so_proto->pr_ctloutput(so, &popt);
+	/* getsockopt(2) returns the size the protocol copied out. */
+	sopt->sopt_valsize = popt.sopt_valsize;
+	return (error);
+}
+
 int
 sosetopt(struct socket *so, struct sockopt *sopt)
 {
@@ -4169,6 +4180,7 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 		case SO_NO_DDP:
 		case SO_NO_OFFLOAD:
 		case SO_RERROR:
+		case SO_RXQ_OVFL:
 stdopt:
 			error = sooptcopyin(sopt, &optval, sizeof optval,
 			    sizeof optval);
@@ -4194,6 +4206,10 @@ stdopt:
 			error = so->so_proto->pr_ctloutput(so, sopt);
 			break;
 
+		case SO_BINDANY:
+			error = so_bindany_opt(so, sopt);
+			break;
+
 		case SO_USER_COOKIE:
 			error = sooptcopyin(sopt, &val32, sizeof val32,
 			    sizeof val32);
@@ -4213,16 +4229,6 @@ stdopt:
 
 		case SO_SNDTIMEO:
 		case SO_RCVTIMEO:
-#ifdef COMPAT_FREEBSD32
-			if (SV_CURPROC_FLAG(SV_ILP32)) {
-				struct timeval32 tv32;
-
-				error = sooptcopyin(sopt, &tv32, sizeof tv32,
-				    sizeof tv32);
-				CP(tv32, tv, tv_sec);
-				CP(tv32, tv, tv_usec);
-			} else
-#endif
 				error = sooptcopyin(sopt, &tv, sizeof tv,
 				    sizeof tv);
 			if (error)
@@ -4282,22 +4288,6 @@ stdopt:
 		case SO_SPLICE: {
 			struct splice splice;
 
-#ifdef COMPAT_FREEBSD32
-			if (SV_CURPROC_FLAG(SV_ILP32)) {
-				struct splice32 splice32;
-
-				error = sooptcopyin(sopt, &splice32,
-				    sizeof(splice32), sizeof(splice32));
-				if (error == 0) {
-					splice.sp_fd = splice32.sp_fd;
-					splice.sp_max = splice32.sp_max;
-					CP(splice32.sp_idle, splice.sp_idle,
-					    tv_sec);
-					CP(splice32.sp_idle, splice.sp_idle,
-					    tv_usec);
-				}
-			} else
-#endif
 			{
 				error = sooptcopyin(sopt, &splice,
 				    sizeof(splice), sizeof(splice));
@@ -4433,6 +4423,7 @@ sogetopt(struct socket *so, struct sockopt *sopt)
 		case SO_NO_DDP:
 		case SO_NO_OFFLOAD:
 		case SO_RERROR:
+		case SO_RXQ_OVFL:
 stdopt:
 			optval = so->so_options & sopt->sopt_name;
 integer:
@@ -4452,6 +4443,10 @@ integer:
 			optval = so->so_fibnum;
 			SOCK_UNLOCK(so);
 			goto integer;
+
+		case SO_BINDANY:
+			error = so_bindany_opt(so, sopt);
+			break;
 
 		case SO_DOMAIN:
 			optval = so->so_proto->pr_domain->dom_family;
@@ -4514,15 +4509,6 @@ integer:
 			    (SOLISTENING(so) ? so->sol_sbrcv_timeo :
 			    so->so_rcv.sb_timeo));
 			SOCK_UNLOCK(so);
-#ifdef COMPAT_FREEBSD32
-			if (SV_CURPROC_FLAG(SV_ILP32)) {
-				struct timeval32 tv32;
-
-				CP(tv, tv32, tv_sec);
-				CP(tv, tv32, tv_usec);
-				error = sooptcopyout(sopt, &tv32, sizeof tv32);
-			} else
-#endif
 				error = sooptcopyout(sopt, &tv, sizeof tv);
 			break;
 

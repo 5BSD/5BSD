@@ -28,6 +28,12 @@ int __wrap_fsync(int fd) {
 struct migration_prod_source { void *ctx; int recovery_dirfd; struct migration_recovery_record recovery; };
 struct migration_prod_dest { void *ctx; int recovery_dirfd; struct migration_recovery_record recovery; };
 static bool hypertrace_initialized(void) { return tracing; }
+/* Merged: the destination advertises V2_RESTORE only on operator opt-in. */
+static bool restore_abi_v2; static int v2_queries;
+static bool get_config_bool_default(const char *name, bool def) {
+ assert(strcmp(name,"checkpoint.restore_abi_v2")==0 && !def);
+ v2_queries++; return restore_abi_v2;
+}
 int migration_prod_fill_hello(struct vmctx *ctx, struct migration_hello *hello) {
  (void)ctx;
  memset(hello, 0, sizeof(*hello)); hello->capability_flags=MIGRATION_CAP_PRECOPY;
@@ -38,11 +44,11 @@ int main(void) {
  char directory[]="preflight.XXXXXX"; assert(mkdtemp(directory));
  int fd=open(directory,O_RDONLY|O_DIRECTORY); assert(fd>=0);
  FILE *file=tmpfile(); assert(file);
- for (int side=0; side<2; side++) for (int mode=0; mode<9; mode++) {
+ for (int v2=0; v2<2; v2++) for (int side=0; side<2; side++) for (int mode=0; mode<9; mode++) {
   struct migration_prod_source src={.recovery_dirfd=fd};
   struct migration_prod_dest dst={.recovery_dirfd=fd};
   struct migration_hello hello;
-  tracing=mode!=0; fail_sync=mode==6; hello_error=mode==8?EIO:0; syncs=0;
+  tracing=mode!=0; fail_sync=mode==6; hello_error=mode==8?EIO:0; syncs=0; restore_abi_v2=v2; v2_queries=0;
   memset(src.recovery.source_certificate_sha256,3,32);
   memset(src.recovery.destination_certificate_sha256,4,32);
   if (mode==1) memset(src.recovery.source_certificate_sha256,0,32);
@@ -54,7 +60,11 @@ int main(void) {
   int error=side?prod_local_hello(&src,&hello):prod_dest_local_hello(&dst,&hello);
   if (mode==0 || mode==7) assert(error==0);
   else assert(error!=0);
-  assert(hello.capability_flags==(MIGRATION_CAP_PRECOPY | (mode==7?MIGRATION_CAP_HYPERTRACE_FRESH:0)));
+  /* The source never asks; the destination asks once unless HELLO fill failed. */
+  assert(v2_queries==(side||mode==8?0:1));
+  uint64_t v2cap=(!side && v2 && mode!=8)?MIGRATION_CAP_V2_RESTORE:0;
+  if (mode==8) assert(error==EIO);
+  assert(hello.capability_flags==(MIGRATION_CAP_PRECOPY | v2cap | (mode==7?MIGRATION_CAP_HYPERTRACE_FRESH:0)));
   assert(syncs==((mode==6||mode==7)?1:0));
  }
  assert(fchmod(fd,0700)==0); close(fd); fclose(file); assert(rmdir(directory)==0);

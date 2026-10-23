@@ -181,8 +181,8 @@ vm_assert_memseg_xlocked(struct vm *vm)
 /*
  * Return 'true' if 'gpa' is allocated in the guest address space.
  *
- * This function is called in the context of a running vcpu which acts as
- * an implicit lock on 'vm->mem_maps[]'.
+ * A running or frozen vcpu keeps 'vm->mem_maps[]' stable while an exit is
+ * handled.  Nested exit emulation checks allocations with the vcpu frozen.
  */
 bool
 vm_mem_allocated(struct vcpu *vcpu, vm_paddr_t gpa)
@@ -194,7 +194,8 @@ vm_mem_allocated(struct vcpu *vcpu, vm_paddr_t gpa)
 #ifdef INVARIANTS
 	int hostcpu, state;
 	state = vcpu_get_state(vcpu, &hostcpu);
-	KASSERT(state == VCPU_RUNNING && hostcpu == curcpu,
+	KASSERT(state == VCPU_FROZEN ||
+	    (state == VCPU_RUNNING && hostcpu == curcpu),
 	    ("%s: invalid vcpu state %d/%d", __func__, state, hostcpu));
 #endif
 
@@ -372,6 +373,9 @@ vm_munmap_memseg(struct vm *vm, vm_paddr_t gpa, size_t len)
 	struct vm_mem *mem;
 	struct vm_mem_map *m;
 	int i;
+#ifdef __amd64__
+	int error;
+#endif
 
 	mem = vm_mem(vm);
 	for (i = 0; i < VM_MAX_MEMMAPS; i++) {
@@ -381,6 +385,12 @@ vm_munmap_memseg(struct vm *vm, vm_paddr_t gpa, size_t len)
 			continue;
 #endif
 		if (m->gpa == gpa && m->len == len) {
+#ifdef __amd64__
+			/* Revoke independent NPT02/EPT02 aliases before L0 unmaps. */
+			error = vm_nested_memmap_invalidate(vm);
+			if (error != 0)
+				return (error);
+#endif
 			vm_free_memmap(vm, i);
 			return (0);
 		}
@@ -464,8 +474,11 @@ vm_mem_dirty_log_map_snapshot(struct vm *vm,
 				.gpa = map->gpa,
 				.length = map->len,
 			},
-			.flags = mem->mem_segs[map->segid].sysmem ?
-			    VMM_DIRTY_LOG_MAP_F_COLLECTABLE : 0,
+			.flags = (mem->mem_segs[map->segid].sysmem ?
+			    VMM_DIRTY_LOG_MAP_F_COLLECTABLE : 0) |
+			    ((map->prot & VM_PROT_WRITE) == 0 &&
+			    (map->segid == VM_BOOTROM || map->segid == VM_PCIROM) ?
+			    VMM_DIRTY_LOG_MAP_F_READONLY_ROM : 0),
 		};
 		for (j = count; j != 0 &&
 		    staging[j - 1].range.gpa > candidate.range.gpa; j--)
@@ -500,7 +513,8 @@ vm_mem_dirty_log_map_snapshot(struct vm *vm,
 }
 
 int
-vm_mem_dirty_log_enable(struct vm *vm, const struct vmm_dirty_log_range *range)
+vm_mem_dirty_log_enable(struct vm *vm, const struct vmm_dirty_log_range *range,
+    bool allow_holes)
 {
 	struct vmm_dirty_log_map_entry entries[VM_MAX_MEMMAPS];
 	struct vm_mem *mem;
@@ -515,6 +529,9 @@ vm_mem_dirty_log_enable(struct vm *vm, const struct vmm_dirty_log_range *range)
 	    nitems(entries), &nentries, &generation)) != 0)
 		return (error);
 	mem = vm_mem(vm);
+	if (allow_holes)
+		return (vmm_dirty_log_owner_enable_sparse(
+		    &mem->mem_dirty_log_owner, entries, nentries, generation, range));
 	return (vmm_dirty_log_owner_enable(&mem->mem_dirty_log_owner, entries,
 	    nentries, generation, range));
 }
@@ -728,7 +745,8 @@ vm_gpa_release(void *cookie)
  */
 int
 vm_gpa_map_alias(struct vcpu *vcpu, struct vmspace *dst_vmspace,
-    vm_paddr_t dst_gpa, vm_paddr_t src_gpa, size_t len, int prot)
+    vm_paddr_t dst_gpa, vm_paddr_t src_gpa, size_t len, int prot,
+    int required_prot, int *effective_prot)
 {
 	struct vm_mem_map *mm;
 	struct vm_mem_seg *seg;
@@ -739,7 +757,9 @@ vm_gpa_map_alias(struct vcpu *vcpu, struct vmspace *dst_vmspace,
 	if (vcpu == NULL || dst_vmspace == NULL || len == 0 ||
 	    ((dst_gpa | src_gpa | len) & PAGE_MASK) != 0 ||
 	    dst_gpa + len < dst_gpa || src_gpa + len < src_gpa ||
-	    prot == 0 || (prot & ~VM_PROT_ALL) != 0)
+	    prot == 0 || (prot & ~VM_PROT_ALL) != 0 ||
+	    required_prot == 0 || (required_prot & ~VM_PROT_ALL) != 0 ||
+	    (required_prot & prot) != required_prot)
 		return (EINVAL);
 #ifdef INVARIANTS
 	KASSERT(vcpu_get_state(vcpu, NULL) == VCPU_FROZEN,
@@ -761,8 +781,13 @@ vm_gpa_map_alias(struct vcpu *vcpu, struct vmspace *dst_vmspace,
 		mm = candidate;
 		break;
 	}
-	if (mm == NULL || (prot & mm->prot) != prot)
+	if (mm == NULL)
 		return (EFAULT);
+	/* Distinguish an L0 protection boundary from a missing source page. */
+	if ((required_prot & mm->prot) != required_prot)
+		return (EACCES);
+	/* L0's source map is an upper bound on the composed NPT02 rights. */
+	prot &= mm->prot;
 	seg = &vm_mem(vcpu_vm(vcpu))->mem_segs[mm->segid];
 	if (seg->object == NULL)
 		return (EFAULT);
@@ -784,5 +809,7 @@ vm_gpa_map_alias(struct vcpu *vcpu, struct vmspace *dst_vmspace,
 		vm_object_deallocate(seg->object);
 		return (vm_mmap_to_errno(error));
 	}
+	if (effective_prot != NULL)
+		*effective_prot = prot;
 	return (0);
 }

@@ -62,6 +62,9 @@ struct linux_emuldata {
 	int ptrace_exec_tid;
 	uint64_t em_proc_start;	/* Thread creation uptime in 100 Hz ticks. */
 	uint64_t em_proc_cookie; /* Unique lifetime identity for procfs. */
+	/* Protected by the proc lock; default is fixed at fork/clone. */
+	uint64_t timer_slack_ns;
+	uint64_t default_timer_slack_ns;
 };
 
 struct linux_emuldata	*em_find(struct thread *);
@@ -74,13 +77,14 @@ void	linux_schedtail(struct thread *);
 void	linux_rseq_schedswitch(struct thread *);
 void	linux_rseq_signal(struct thread *);
 void	linux_perf_thread_detach(struct thread *);
+void	linux_perf_task_events(struct thread *, bool);
 bool	linux_perf_inuse(void);
 typedef void (*linux_perf_detach_fn)(void *, struct thread *);
 EVENTHANDLER_DECLARE(linux_perf_detach_event, linux_perf_detach_fn);
 int	linux_on_exec(struct proc *, struct image_params *);
 bool	linux_exec_secure(struct image_params *);
 void	linux_thread_dtor(struct thread *);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(__amd64__)
 int	linux_ptrace_fork_flags(struct thread *, bool, int, bool);
 #endif
 int	linux_common_execve(struct thread *, struct image_args *);
@@ -99,7 +103,9 @@ struct linux_pemuldata {
 	uint32_t	persona;	/* process execution domain */
 	uint32_t	ptrace_flags;	/* used by ptrace(2) */
 	uint32_t	ptrace_state;	/* internal ptrace lifecycle state */
-	uint32_t	oom_score_adj;	/* /proc/self/oom_score_adj */
+	int		oom_score_adj;	/* proc lock: OOM adjustment state */
+	int		oom_score_adj_min; /* privileged floor, inherited */
+	bool		thp_disabled;	/* proc lock: PR_SET_THP_DISABLE */
 	uint32_t	so_timestamp;	/* requested timeval */
 	uint32_t	so_timestampns;	/* requested timespec */
 	struct linux_pemuldata_md pem_md; /* machine-dependent state */
@@ -123,13 +129,11 @@ struct linux_seal {
 #define	LINUX_PEM_SUNLOCK(p)	sx_sunlock(&(p)->pem_sx)
 
 struct linux_pemuldata	*pem_find(struct proc *);
-#ifdef __amd64__
 void	linux_aio_proc_share(struct linux_pemuldata *,
 	    struct linux_pemuldata *);
 void	linux_aio_proc_release(struct linux_pemuldata *, struct thread *);
-#endif
 
-#if defined(_KERNEL) && defined(__amd64__) && !defined(COMPAT_LINUX32)
+#if defined(_KERNEL) && defined(__amd64__)
 void linux_ptrace_init(void);
 void linux_ptrace_fini(void);
 #endif

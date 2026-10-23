@@ -277,7 +277,6 @@ edsc_start(struct ifnet *ifp)
 	for (;;) {
 		/*
 		 * Try to dequeue one packet.  Stop if the queue is empty.
-		 * Use IF_DEQUEUE() here if ALTQ(9) support is unneeded.
 		 */
 		IFQ_DEQUEUE(&ifp->if_snd, m);
 		if (m == NULL)

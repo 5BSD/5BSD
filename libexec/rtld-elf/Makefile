@@ -36,19 +36,12 @@ SRCS= \
 	rtld_malloc.c \
 	rtld_printf.c \
 	map_object.c \
-	elf_cache.c \
-	elf_cache_domain.c \
-	elf_cache_profile.c \
-	elf_cache_eligible.c \
+	elf_signature.c \
 	xmalloc.c \
 	debug.c \
 	libmap.c
 MAN?=		rtld.1
 ACFLAGS+=	-DLOCORE
-# VM profiling only; applies to native and compatibility rtld builds.
-.if ${RTLD_CACHE_PROFILE:Uno} == "yes"
-CFLAGS+= -DRTLD_CACHE_PROFILE
-.endif
 CFLAGS+=	-Wall -DIN_RTLD -ffreestanding
 CFLAGS+=	-iquote${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/lib/csu/common

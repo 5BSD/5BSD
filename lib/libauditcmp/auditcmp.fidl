@@ -4,6 +4,7 @@
 // The provider records every submission under the session's channel label
 // (the providing service), never under a payload-supplied identity; subject
 // names the client the provider acted for.
+@available(platform="bsd", added=1)
 library bsd.audit.v1;
 
 type ProtocolInfo = struct { wire_version uint32; };

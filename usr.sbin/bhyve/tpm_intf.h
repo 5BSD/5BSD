@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <stddef.h>
+#include <stdint.h>
 #include <vmmapi.h>
 
 #include "acpi_device.h"
@@ -35,6 +37,12 @@ struct tpm_intf {
 	int (*init)(void **sc, struct tpm_emul *emul, void *emul_sc,
 	    struct acpi_device *acpi_dev);
 	void (*deinit)(void *sc);
+	int (*pause)(void *sc);
+	int (*resume)(void *sc);
+	size_t state_size;
+	int (*state_get)(void *sc, uint8_t *wire, size_t wire_size);
+	int (*state_validate)(const uint8_t *wire, size_t wire_size);
+	int (*state_set)(void *sc, const uint8_t *wire, size_t wire_size);
 	int (*build_acpi_table)(void *sc, struct vmctx *vm_ctx);
 };
 #define TPM_INTF_SET(x) DATA_SET(tpm_intf_set, x)

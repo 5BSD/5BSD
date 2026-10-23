@@ -3,6 +3,7 @@
 // contract for wire major 1; incompatible changes need a new major.
 // Identity never travels in a payload: vmd scopes every operation to the
 // port window its registry resolved for the accepted session's label.
+@available(platform="bsd", added=1)
 library bsd.vm.v1;
 
 using zx;

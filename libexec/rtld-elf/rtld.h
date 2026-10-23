@@ -129,19 +129,6 @@ typedef struct Struct_Sym_Match_Result {
  * It looks at "next" and "mapbase" at least.  Don't add new members
  * near the front, until this can be straightened out.
  */
-/* A fresh issuer-authenticated cache descriptor and its selected ELF slice.
- * fd ownership remains with the caller, never retained as a descriptor number. */
-struct rtld_cache_image {
-    bool selected;
-    off_t offset, size;
-};
-struct rtld_cache_domain {
-    uint64_t identity, base, relro_vaddr, relro_size, relro_offset, file_size;
-    uint32_t index, count;
-    unsigned char cache_sha256[32];
-    bool done, resolving;
-};
-
 typedef struct Struct_Obj_Entry {
     /*
      * These two items have to be set right for compatibility with the
@@ -289,11 +276,6 @@ typedef struct Struct_Obj_Entry {
     dev_t dev;			/* Object's filesystem's device */
     ino_t ino;			/* Object's inode number */
     void *priv;			/* Platform-dependent */
-    struct rtld_cache_domain cache_domain;
-    dev_t cache_backing_dev;
-    ino_t cache_backing_ino;
-    off_t cache_backing_offset;
-    bool cache_only;
 
 } Obj_Entry;
 
@@ -402,15 +384,7 @@ void _rtld_error(const char *, ...) __printflike(1, 2) __exported;
 void rtld_die(void) __dead2;
 const char *rtld_strerror(int);
 Obj_Entry *map_object(int, const char *, const struct stat *, bool);
-Obj_Entry *map_object_at(int, const char *, const struct stat *, bool, off_t);
-void *rtld_cache_domain_address(int, off_t, size_t, struct rtld_cache_domain *);
-void rtld_cache_domain_relro(Obj_Entry *);
-bool rtld_cache_eligible(const void *, size_t, size_t);
 int rtld_verify_object_signature(const char *, int, const struct stat *, bool);
-/* -1: integrity failure; 0: cache miss; 1: substitution. */
-/* A hit transfers a fresh cache descriptor to the caller, which must close
- * it after mapping. A miss or failure changes only the reason output. */
-int rtld_cache_substitute(const char *, int, const struct stat *, int *, off_t *, off_t *, unsigned *);
 void *xcalloc(size_t, size_t);
 void *xmalloc(size_t);
 char *xstrdup(const char *);
@@ -470,7 +444,5 @@ void ifunc_init(Elf_Auxinfo *[__min_size(AT_COUNT)]);
 void init_pltgot(Obj_Entry *);
 void allocate_initial_tls(Obj_Entry *);
 
-int rtld_cache_open_path(const char *, struct rtld_cache_image *);
-int rtld_cache_open_at(int, const char *, struct rtld_cache_image *);
 
 #endif /* } */

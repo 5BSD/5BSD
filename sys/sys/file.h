@@ -224,6 +224,7 @@ struct file {
 	struct ucred	*f_cred;	/* associated credentials. */
 	short		f_type;		/* descriptor type */
 	short		f_vflags;	/* (f) Sleep lock flags for members */
+	bool		f_created;	/* open created this file */
 	/*
 	 *  DTYPE_VNODE specific fields.
 	 */

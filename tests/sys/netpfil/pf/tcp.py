@@ -88,7 +88,7 @@ class TestTcp(VnetTestTemplate):
         ToolsHelper.pf_rules([
             "pass"
         ])
-        ToolsHelper.print_output("/sbin/pfctl -x loud")
+        ToolsHelper.print_output("/sbin/pfctl -x debug")
 
         # Start TCP listener
         sel = selectors.DefaultSelector()

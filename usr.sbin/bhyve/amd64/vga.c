@@ -349,7 +349,8 @@ vga_mem_rd_handler(uint64_t addr, void *arg1)
 		 * extended mode: base 0xa0000 size 128k
 		 */
 		offset -=0xa0000;
-		offset &= (128 * KB - 1);
+		/* The aperture is 128 KB, but each VGA plane is 64 KB. */
+		offset &= (64 * KB - 1);
 		break;
 	case 0x1:
 		/*
@@ -362,7 +363,9 @@ vga_mem_rd_handler(uint64_t addr, void *arg1)
 		/*
 		 * monochrome text mode: base 0xb0000 size 32kb
 		 */
-		assert(0);
+		offset -= 0xb0000;
+		offset &= (32 * KB - 1);
+		break;
 	case 0x3:
 		/*
 		 * color text mode and CGA: base 0xb8000 size 32kb
@@ -379,8 +382,20 @@ vga_mem_rd_handler(uint64_t addr, void *arg1)
 	sc->vga_gc.gc_latch3 = sc->vga_ram[offset + 3*64*KB];
 
 	if (sc->vga_gc.gc_mode_rm) {
-		/* read mode 1 */
-		assert(0);
+		uint8_t compared, result;
+
+		/* Read mode 1 compares each pixel against the selected color. */
+		result = 0;
+		for (unsigned int bit = 0; bit < 8; bit++) {
+			compared = ((sc->vga_gc.gc_latch0 >> bit) & 1) |
+			    (((sc->vga_gc.gc_latch1 >> bit) & 1) << 1) |
+			    (((sc->vga_gc.gc_latch2 >> bit) & 1) << 2) |
+			    (((sc->vga_gc.gc_latch3 >> bit) & 1) << 3);
+			if (((compared ^ sc->vga_gc.gc_color_compare) &
+			    sc->vga_gc.gc_color_dont_care & 0xf) == 0)
+				result |= 1U << bit;
+		}
+		return (result);
 	}
 
 	map_sel = sc->vga_gc.gc_read_map_sel;
@@ -413,7 +428,7 @@ vga_mem_wr_handler(uint64_t addr, uint8_t val, void *arg1)
 		 * extended mode: base 0xa0000 size 128kb
 		 */
 		offset -=0xa0000;
-		offset &= (128 * KB - 1);
+		offset &= (64 * KB - 1);
 		break;
 	case 0x1:
 		/*
@@ -426,7 +441,9 @@ vga_mem_wr_handler(uint64_t addr, uint8_t val, void *arg1)
 		/*
 		 * monochrome text mode: base 0xb0000 size 32kb
 		 */
-		assert(0);
+		offset -= 0xb0000;
+		offset &= (32 * KB - 1);
+		break;
 	case 0x3:
 		/*
 		 * color text mode and CGA: base 0xb8000 size 32kb
@@ -716,6 +733,7 @@ vga_port_in_handler(struct vmctx *ctx __unused, int in __unused, int port,
 {
 	struct vga_softc *sc = arg;
 
+	*val = 0xff;
 	switch (port) {
 	case CRTC_IDX_MONO_PORT:
 	case CRTC_IDX_COLOR_PORT:
@@ -801,7 +819,6 @@ vga_port_in_handler(struct vmctx *ctx __unused, int in __unused, int port,
 			break;
 		default:
 			//printf("XXX VGA CRTC: inb 0x%04x at index %d\n", port, sc->vga_crtc.crtc_index);
-			assert(0);
 			break;
 		}
 		break;
@@ -830,7 +847,6 @@ vga_port_in_handler(struct vmctx *ctx __unused, int in __unused, int port,
 			break;
 		default:
 			//printf("XXX VGA ATC inb 0x%04x at index %d\n", port , sc->vga_atc.atc_index);
-			assert(0);
 			break;
 		}
 		break;
@@ -856,7 +872,6 @@ vga_port_in_handler(struct vmctx *ctx __unused, int in __unused, int port,
 			break;
 		default:
 			//printf("XXX VGA SEQ: inb 0x%04x at index %d\n", port, sc->vga_seq.seq_index);
-			assert(0);
 			break;
 		}
 		break;
@@ -903,7 +918,6 @@ vga_port_in_handler(struct vmctx *ctx __unused, int in __unused, int port,
 			break;
 		default:
 			//printf("XXX VGA GC: inb 0x%04x at index %d\n", port, sc->vga_crtc.crtc_index);
-			assert(0);
 			break;
 		}
 		break;
@@ -911,7 +925,7 @@ vga_port_in_handler(struct vmctx *ctx __unused, int in __unused, int port,
 		*val = sc->vga_misc;
 		break;
 	case GEN_INPUT_STS0_PORT:
-		assert(0);
+		*val = 0;
 		break;
 	case GEN_INPUT_STS1_MONO_PORT:
 	case GEN_INPUT_STS1_COLOR_PORT:
@@ -1037,14 +1051,11 @@ vga_port_out_handler(struct vmctx *ctx __unused, int in __unused, int port,
 			break;
 		default:
 			//printf("XXX VGA CRTC: outb 0x%04x, 0x%02x at index %d\n", port, val, sc->vga_crtc.crtc_index);
-			assert(0);
 			break;
 		}
 		break;
 	case ATC_IDX_PORT:
 		if (sc->vga_atc.atc_flipflop == 0) {
-			if (sc->vga_atc.atc_index & 0x20)
-				assert(0);
 			sc->vga_atc.atc_index = val & ATC_IDX_MASK;
 		} else {
 			switch (sc->vga_atc.atc_index) {
@@ -1072,7 +1083,6 @@ vga_port_out_handler(struct vmctx *ctx __unused, int in __unused, int port,
 				break;
 			default:
 				//printf("XXX VGA ATC: outb 0x%04x, 0x%02x at index %d\n", port, val, sc->vga_atc.atc_index);
-				assert(0);
 				break;
 			}
 		}
@@ -1108,7 +1118,6 @@ vga_port_out_handler(struct vmctx *ctx __unused, int in __unused, int port,
 			break;
 		default:
 			//printf("XXX VGA SEQ: outb 0x%04x, 0x%02x at index %d\n", port, val, sc->vga_seq.seq_index);
-			assert(0);
 			break;
 		}
 		break;
@@ -1161,12 +1170,11 @@ vga_port_out_handler(struct vmctx *ctx __unused, int in __unused, int port,
 			sc->vga_gc.gc_op = (val >> 3) & 0x3;
 			break;
 		case GC_READ_MAP_SELECT:
-			sc->vga_gc.gc_read_map_sel = val;
+			sc->vga_gc.gc_read_map_sel = val & 0x3;
 			break;
 		case GC_MODE:
 			sc->vga_gc.gc_mode = val;
 			sc->vga_gc.gc_mode_c4 = (val & GC_MODE_C4) != 0;
-			assert(!sc->vga_gc.gc_mode_c4);
 			sc->vga_gc.gc_mode_oe = (val & GC_MODE_OE) != 0;
 			sc->vga_gc.gc_mode_rm = (val >> 3) & 0x1;
 			sc->vga_gc.gc_mode_wm = val & 0x3;
@@ -1188,7 +1196,6 @@ vga_port_out_handler(struct vmctx *ctx __unused, int in __unused, int port,
 			break;
 		default:
 			//printf("XXX VGA GC: outb 0x%04x, 0x%02x at index %d\n", port, val, sc->vga_gc.gc_index);
-			assert(0);
 			break;
 		}
 		break;
@@ -1255,7 +1262,6 @@ vga_port_handler(struct vmctx *ctx, int in, int port,
 		}
 		break;
 	default:
-		assert(0);
 		return (-1);
 	}
 

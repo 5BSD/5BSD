@@ -1,5 +1,13 @@
 # Capability daemons on FIDL: handoff (2026-10-12)
 
+Superseded 2026-10-22: the "Resume" steps below were carried out and the
+work merged into dev on 2026-10-12 (`c222f34d395`; VM, Namespace, Extension
+and Filesystem converted, no latency benches run for those four), and
+system.Network.PF was converted on 2026-10-22 ("system.Network.PF stays on
+the record protocol" under Decisions no longer holds).  The worktrees named
+here no longer exist.  Current state: `DAEMONS.md` "Progress" and
+`REMAINING.md` section 7.  The rest of this file is the 2026-10-12 record.
+
 Plan and contract: `DAEMONS.md`; evidence: `VALIDATION.json` `fidl_daemons`.
 
 ## State

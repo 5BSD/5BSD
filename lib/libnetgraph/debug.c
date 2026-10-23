@@ -59,24 +59,17 @@
 #include <netgraph/ng_bpf.h>
 #include <netgraph/ng_bridge.h>
 #include <netgraph/ng_car.h>
-#include <netgraph/ng_cisco.h>
 #include <netgraph/ng_deflate.h>
 #include <netgraph/ng_device.h>
-#include <netgraph/ng_echo.h>
 #include <netgraph/ng_eiface.h>
-#include <netgraph/ng_etf.h>
 #include <netgraph/ng_ether.h>
-#include <netgraph/ng_ether_echo.h>
-#include <netgraph/ng_frame_relay.h>
 #include <netgraph/ng_gif.h>
 #include <netgraph/ng_gif_demux.h>
-#include <netgraph/ng_hole.h>
 #include <netgraph/ng_hub.h>
 #include <netgraph/ng_iface.h>
 #include <netgraph/ng_ip_input.h>
 #include <netgraph/ng_ksocket.h>
 #include <netgraph/ng_l2tp.h>
-#include <netgraph/ng_lmi.h>
 #include <netgraph/ng_mppc.h>
 #include <netgraph/ng_nat.h>
 #include <netgraph/netflow/ng_netflow.h>
@@ -86,10 +79,7 @@
 #include <netgraph/ng_ppp.h>
 #include <netgraph/ng_pppoe.h>
 #include <netgraph/ng_pptpgre.h>
-#include <netgraph/ng_pred1.h>
-#include <netgraph/ng_rfc1490.h>
 #include <netgraph/ng_socket.h>
-#include <netgraph/ng_source.h>
 #include <netgraph/ng_split.h>
 #include <netgraph/ng_tag.h>
 #include <netgraph/ng_tcpmss.h>
@@ -131,25 +121,18 @@ static const struct ng_cookie cookies[] = {
 	COOKIE(BPF),
 	COOKIE(BRIDGE),
 	COOKIE(CAR),
-	COOKIE(CISCO),
 	COOKIE(DEFLATE),
 	COOKIE(DEVICE),
-	COOKIE(ECHO),
 	COOKIE(EIFACE),
-	COOKIE(ETF),
 	COOKIE(ETHER),
-	COOKIE(ETHER_ECHO),
-	COOKIE(FRAMERELAY),
 	COOKIE(GIF),
 	COOKIE(GIF_DEMUX),
 	COOKIE(GENERIC),
-	COOKIE(HOLE),
 	COOKIE(HUB),
 	COOKIE(IFACE),
 	COOKIE(IP_INPUT),
 	COOKIE(KSOCKET),
 	COOKIE(L2TP),
-	COOKIE(LMI),
 	COOKIE(MPPC),
 	COOKIE(NAT),
 	COOKIE(NETFLOW),
@@ -159,10 +142,7 @@ static const struct ng_cookie cookies[] = {
 	COOKIE(PPP),
 	COOKIE(PPPOE),
 	COOKIE(PPTPGRE),
-	COOKIE(PRED1),
-	COOKIE(RFC1490),
 	COOKIE(SOCKET),
-	COOKIE(SOURCE),
 	COOKIE(SPLIT),
 	COOKIE(TAG),
 	COOKIE(TCPMSS),
@@ -347,4 +327,3 @@ _NgDebugBytes(const u_char *ptr, int len)
 		NGLOGX("%s", buf);
 	}
 }
-

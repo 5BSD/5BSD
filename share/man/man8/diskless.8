@@ -356,7 +356,7 @@ you might wish to remove unneeded files from the memory file system.
 For example,
 if the server has a firewall but you do not, you might wish
 to remove
-.Pa /etc/ipfw.conf .
+.Pa /etc/pf.conf .
 You can do this by creating a
 .Pa /conf/base/ Ns Ao Ar DIRECTORY Ac Ns Pa .remove
 file.
@@ -434,8 +434,9 @@ to the device section of the kernel configuration:
 .Pp
 .D1 Cd "device md"
 .Pp
-If you use the firewall, remember to default to
-.Dq open ,
+If you use
+.Xr pf 4 ,
+remember to pass this traffic,
 or your kernel
 will not be able to send/receive the
 .Tn BOOTP

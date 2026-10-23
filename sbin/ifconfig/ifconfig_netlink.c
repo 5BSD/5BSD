@@ -56,34 +56,6 @@
 #include "ifconfig.h"
 #include "ifconfig_netlink.h"
 
-static const char	*IFFBITS[] = {
-	"UP",			/* 00:0x1 IFF_UP*/
-	"BROADCAST",		/* 01:0x2 IFF_BROADCAST*/
-	"DEBUG",		/* 02:0x4 IFF_DEBUG*/
-	"LOOPBACK",		/* 03:0x8 IFF_LOOPBACK*/
-	"POINTOPOINT",		/* 04:0x10 IFF_POINTOPOINT*/
-	"NEEDSEPOCH",		/* 05:0x20 IFF_NEEDSEPOCH*/
-	"RUNNING",		/* 06:0x40 IFF_DRV_RUNNING*/
-	"NOARP",		/* 07:0x80 IFF_NOARP*/
-	"PROMISC",		/* 08:0x100 IFF_PROMISC*/
-	"ALLMULTI",		/* 09:0x200 IFF_ALLMULTI*/
-	"DRV_OACTIVE",		/* 10:0x400 IFF_DRV_OACTIVE*/
-	"SIMPLEX",		/* 11:0x800 IFF_SIMPLEX*/
-	"LINK0",		/* 12:0x1000 IFF_LINK0*/
-	"LINK1",		/* 13:0x2000 IFF_LINK1*/
-	"LINK2",		/* 14:0x4000 IFF_LINK2*/
-	"MULTICAST",		/* 15:0x8000 IFF_MULTICAST*/
-	"CANTCONFIG",		/* 16:0x10000 IFF_CANTCONFIG*/
-	"PPROMISC",		/* 17:0x20000 IFF_PPROMISC*/
-	"MONITOR",		/* 18:0x40000 IFF_MONITOR*/
-	"STATICARP",		/* 19:0x80000 IFF_STATICARP*/
-	"STICKYARP",		/* 20:0x100000 IFF_STICKYARP*/
-	"DYING",		/* 21:0x200000 IFF_DYING*/
-	"",			/* 22:0x400000 */
-	"PALLMULTI",		/* 23:0x800000 IFF_PALLMULTI*/
-	"LOWER_UP",		/* 24:0x1000000 IFF_NETLINK_1*/
-};
-
 static void
 nl_init_socket(struct snl_state *ss)
 {
@@ -383,7 +355,7 @@ print_ifcaps(if_ctx *ctx, if_link_t *link)
 {
 	uint32_t sz_u32 = roundup2(link->iflaf_caps.nla_bitset_size, 32) / 32;
 
-	if (sz_u32 > 0) {
+	if (sz_u32 > 0 && link->iflaf_caps.nla_bitset_value[0] != 0) {
 		uint32_t *caps = link->iflaf_caps.nla_bitset_value;
 
 		printf("\toptions=%x", caps[0]);
@@ -409,23 +381,33 @@ status_nl(if_ctx *ctx, struct iface *iface)
 
 	printf("%s: ", link->ifla_ifname);
 
-	printf("flags=%x", link->ifi_flags);
-	print_bits("IFF", &link->ifi_flags, 1, IFFBITS, nitems(IFFBITS));
+	print_ifflags(link->ifi_flags, link->iflaf_caps.nla_bitset_size > 0 ?
+	    link->iflaf_caps.nla_bitset_value[0] : 0);
+	print_rdomain(ctx);
 
 	print_metric(ctx);
 	printf(" mtu %d\n", link->ifla_mtu);
 
-	if (link->ifla_ifalias != NULL)
-		printf("\tdescription: %s\n", link->ifla_ifalias);
-
-	print_ifcaps(ctx, link);
-	tunnel_status(ctx);
-
+	/* OpenBSD ifconfig(8) order (see af_other_status_phase()). */
 	if (args->allfamilies | (args->afp != NULL && args->afp->af_af == AF_LINK)) {
 		/* Start with link-level */
 		const struct afswtch *p = af_getbyfamily(AF_LINK);
 		if (p != NULL && link->ifla_address != NULL)
 			p->af_status(ctx, link, NULL);
+	}
+
+	if (link->ifla_ifalias != NULL)
+		printf("\tdescription: %s\n", link->ifla_ifalias);
+	if (args->allfamilies)
+		print_index(ctx, link->ifi_index);
+
+	tunnel_status(ctx);
+
+	if (args->allfamilies) {
+		af_other_status_phase(ctx, AF_PHASE_IFACE);
+		af_other_status_phase(ctx, AF_PHASE_GROUPS);
+		af_other_status_phase(ctx, AF_PHASE_MEDIA);
+		af_other_status_phase(ctx, AF_PHASE_WIRELESS);
 	}
 
 	sort_iface_ifaddrs(ctx->io_ss, iface);
@@ -444,9 +426,12 @@ status_nl(if_ctx *ctx, struct iface *iface)
 	}
 
 	/* TODO: convert to netlink */
-	if (args->allfamilies)
-		af_other_status(ctx);
-	else if (args->afp->af_other_status != NULL)
+	if (args->allfamilies) {
+		af_other_status_phase(ctx, AF_PHASE_BRIDGE);
+		/* 5BSD additions */
+		print_ifcaps(ctx, link);
+		af_other_status_phase(ctx, AF_PHASE_EXTRA);
+	} else if (args->afp->af_other_status != NULL)
 		args->afp->af_other_status(ctx);
 
 	print_ifstatus(ctx);

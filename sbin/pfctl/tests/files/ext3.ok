@@ -1,0 +1,6 @@
+pass out proto tcp from any to any port = 80 flags S/SA dnpipe 1
+pass in proto udp all dnpipe(1, 2)
+pass out proto tcp all flags S/SA dnqueue 10
+pass in all flags S/SA dnqueue(0, 42)
+match out proto icmp all dnpipe 5
+pass out inet proto tcp all flags S/SA dnpipe 7 route-to 127.0.0.1

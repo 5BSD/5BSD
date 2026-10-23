@@ -59,9 +59,9 @@ create_body()
 	atf_check -o match:"laggport: ${TAP1}" ifconfig $LAGG
 
 	# Check that all members have the same MAC
-	MAC=`ifconfig $LAGG | awk '/ether/ {print $2}'`
-	atf_check -o match:"ether ${MAC}" ifconfig $TAP0
-	atf_check -o match:"ether ${MAC}" ifconfig $TAP1
+	MAC=`ifconfig $LAGG | awk '/lladdr/ {print $2}'`
+	atf_check -o match:"lladdr ${MAC}" ifconfig $TAP0
+	atf_check -o match:"lladdr ${MAC}" ifconfig $TAP1
 
 	# Check that no members have an IPv6 link-local address. IPv6
 	# link-local addresses should never be merged in any way to prevent
@@ -333,9 +333,9 @@ set_ether_body()
 	atf_check ifconfig $LAGG ether ${MAC}
 
 	# Check that all members have the same MAC
-	atf_check -o match:"ether ${MAC}" ifconfig $LAGG
-	atf_check -o match:"ether ${MAC}" ifconfig $TAP0
-	atf_check -o match:"ether ${MAC}" ifconfig $TAP1
+	atf_check -o match:"lladdr ${MAC}" ifconfig $LAGG
+	atf_check -o match:"lladdr ${MAC}" ifconfig $TAP0
+	atf_check -o match:"lladdr ${MAC}" ifconfig $TAP1
 }
 set_ether_cleanup()
 {

@@ -1,6 +1,6 @@
 .PATH: ${SRCTOP}/sys/dev/aac
 
-.if ${MACHINE_CPUARCH} == "i386"
+.if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "aarch64"
 SUBDIR= aac_linux
 .endif
 

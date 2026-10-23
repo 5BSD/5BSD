@@ -156,7 +156,6 @@ DIRDEPS = \
 	lib/libsbuf \
 	lib/libsdp \
 	lib/libsm \
-	lib/libsmb \
 	lib/libsmdb \
 	lib/libsmutil \
 	lib/libsqlite3 \

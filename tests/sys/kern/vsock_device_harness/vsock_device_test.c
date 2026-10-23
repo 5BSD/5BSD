@@ -35,6 +35,7 @@
 /* Device under test (its quote-includes resolve to the mock headers here). */
 #define	BHYVE_SNAPSHOT
 #include "pci_virtio_vsock.c"
+#include "vsock_migration_state.c"
 #include "virtio_1_4_spec.h"
 #include "virtio_1_4_wire.h"
 
@@ -402,7 +403,7 @@ test_vtvsock_ctl_event_arg(struct pci_vtvsock_softc *sc, int fd)
 
 void vi_softc_linkup(struct virtio_softc *a, struct virtio_consts *b, void *c,
     struct pci_devinst *d, struct vqueue_info *e)
-{ (void)a; (void)b; (void)c; (void)d; (void)e; }
+{ (void)b; (void)c; (void)e; d->pi_arg = a; }
 static int g_vi_transport_fail;	/* make vi_pci_select_transport() fail */
 static int g_vi_intr_fail;	/* make vi_intr_init() fail */
 int vi_pci_select_transport(struct virtio_softc *a, const nvlist_t *b,
@@ -464,6 +465,7 @@ int pci_msix_enabled(struct pci_devinst *a) { (void)a; return (0); }
 static struct { const char *key; const char *val; } g_cfg[CFG_MAX];
 static int g_cfg_n;
 static bool g_cfg_packed;			/* value for the "packed" bool key */
+static bool g_cfg_active_vsock;
 static char g_setcfg_key[64];			/* last set_config_value_node key */
 static char g_setcfg_val[256];			/* last set_config_value_node val */
 static int g_setcfg_calls;
@@ -472,6 +474,7 @@ cfg_reset(void)
 {
 	g_cfg_n = 0;
 	g_cfg_packed = false;
+	g_cfg_active_vsock = false;
 	g_setcfg_key[0] = g_setcfg_val[0] = '\0';
 	g_setcfg_calls = 0;
 }
@@ -498,6 +501,12 @@ bool get_config_bool_node_default(const nvlist_t *n, const char *k, bool dflt)
 		return (g_cfg_packed);
 	return (dflt);
 }
+bool get_config_bool_default(const char *k, bool dflt)
+{
+	if (strcmp(k, "checkpoint.migrate_active_vsock") == 0)
+		return (g_cfg_active_vsock);
+	return (dflt);
+}
 void set_config_value_node(nvlist_t *n, const char *k, const char *v)
 {
 	(void)n;
@@ -513,6 +522,7 @@ void *__real_realloc(void *, size_t);
 int __real_socketpair(int, int, int, int [2]);
 int __real_fcntl(int, int, ...);
 int __real_close(int);
+int __real_fstat(int, struct stat *);
 void *__wrap_realloc(void *, size_t);
 int __wrap_socket(int, int, int);
 ssize_t __wrap_writev(int, const struct iovec *, int);
@@ -528,8 +538,10 @@ int __wrap_close(int);
 int __wrap_accept(int, struct sockaddr *, socklen_t *);
 int __wrap_socketpair(int, int, int, int [2]);
 int __wrap_fcntl(int, int, ...);
+int __wrap_fstat(int, struct stat *);
 int __wrap_setsockopt(int, int, int, const void *, socklen_t);
 int __wrap_getsockopt(int, int, int, void *, socklen_t *);
+int __wrap_getpeername(int, struct sockaddr *, socklen_t *);
 static int g_realloc_fail;
 void *
 __wrap_realloc(void *ptr, size_t size)
@@ -761,6 +773,18 @@ __wrap_poll(struct pollfd *p, nfds_t n, int t)
 	return ((int)n);
 }
 int __wrap_close(int fd) { (void)fd; return (0); }
+int
+__wrap_fstat(int fd, struct stat *st)
+{
+	if (fd == 8999 || fd == 9000 || fd == 9001) {
+		memset(st, 0, sizeof(*st));
+		st->st_mode = S_IFSOCK;
+		st->st_dev = 1;
+		st->st_ino = (ino_t)fd;
+		return (0);
+	}
+	return (__real_fstat(fd, st));
+}
 
 /* ---- control-socket path mocks ---- */
 static int g_socketpair_fail;		/* make socketpair() return -1/ENOMEM */
@@ -806,6 +830,9 @@ int __wrap_fcntl(int fd, int cmd, ...)
  */
 static int g_sndbuf_last;	/* last SO_SNDBUF value requested */
 static int g_rcvbuf_last;	/* last SO_RCVBUF value requested */
+static int g_sock_type = SOCK_STREAM;
+static int g_sock_domain = AF_UNIX;
+static int g_peer_connected = 1;
 static int g_sndbuf_calls;	/* count of SO_SNDBUF requests */
 static int g_rcvbuf_calls;	/* count of SO_RCVBUF requests */
 int
@@ -827,8 +854,27 @@ __wrap_getsockopt(int fd, int level, int opt, void *val, socklen_t *len)
 	if (level == SOL_SOCKET && val != NULL) {
 		if (opt == SO_RCVBUF) *(int *)val = g_rcvbuf_last;
 		else if (opt == SO_SNDBUF) *(int *)val = g_sndbuf_last;
+		else if (opt == SO_TYPE) *(int *)val = g_sock_type;
+		else if (opt == SO_DOMAIN) *(int *)val = g_sock_domain;
 		else *(int *)val = 0;
 	}
+	return (0);
+}
+int
+__wrap_getpeername(int fd, struct sockaddr *addr, socklen_t *len)
+{
+	(void)fd;
+	if (!g_peer_connected) {
+		errno = ENOTCONN;
+		return (-1);
+	}
+	if (addr == NULL || len == NULL || *len < sizeof(struct sockaddr)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(addr, 0, sizeof(struct sockaddr));
+	addr->sa_family = AF_UNIX;
+	*len = sizeof(struct sockaddr);
 	return (0);
 }
 
@@ -867,6 +913,8 @@ reset_caps(void)
 	g_rx_descs = 256; g_connectat_result = 0;
 	g_one_shot_vq = NULL; g_one_shot_vq_consumed = false;
 	g_socket_calls = 0; g_connectat_calls = 0;
+	g_sock_type = SOCK_STREAM;
+	g_peer_connected = 1;
 	g_rxbuf_len = sizeof(g_rxbuf);
 	g_recv_len = 0; g_recv_off = 0; g_recv_chunk_max = 0; g_recv_eof = 0;
 	g_recv_zero_dgram = 0; g_recv_no_eor = 0;
@@ -3896,13 +3944,376 @@ ATF_TC_BODY(reset_preserves_transport_mutex_ownership, tc)
 }
 
 ATF_TC_WITHOUT_HEAD(snapshot_rejects_unreconstructible_backend_state);
+ATF_TC_WITHOUT_HEAD(migration_restores_paused_connection_atomically);
+ATF_TC_WITHOUT_HEAD(migration_rejects_aliased_relay_sockets);
+ATF_TC_BODY(migration_rejects_aliased_relay_sockets, tc)
+{
+	struct vsock_migration_conn_state states[2] = {
+		{ .local_port = 1024, .guest_port = 2000,
+		  .type = VSOCK_MIGRATION_TYPE_STREAM,
+		  .state = VSOCK_MIGRATION_CONN_ESTABLISHED,
+		  .buf_alloc = VSOCK_MIGRATION_MAX_BUFFER,
+		  .peer_buf_alloc = 8192 },
+		{ .local_port = 1025, .guest_port = 2001,
+		  .type = VSOCK_MIGRATION_TYPE_STREAM,
+		  .state = VSOCK_MIGRATION_CONN_ESTABLISHED,
+		  .buf_alloc = VSOCK_MIGRATION_MAX_BUFFER,
+		  .peer_buf_alloc = 8192 },
+	};
+	struct pci_vtvsock_softc *sc;
+	struct pci_devinst pi = { 0 };
+	uint8_t *wire;
+	size_t size;
+	int endpoints[2], fds[2];
+
+	(void)tc;
+	ATF_REQUIRE_EQ(__real_socketpair(AF_UNIX, SOCK_STREAM, 0,
+	    endpoints), 0);
+	fds[0] = endpoints[0];
+	fds[1] = dup(endpoints[0]);
+	ATF_REQUIRE(fds[1] >= 0);
+	ATF_REQUIRE_EQ(vsock_migration_table_size(states, 2, &size), 0);
+	wire = malloc(size);
+	ATF_REQUIRE(wire != NULL);
+	ATF_REQUIRE_EQ(vsock_migration_table_encode(states, 2, wire,
+	    size), 0);
+	reset_caps();
+	g_sock_type = SOCK_STREAM;
+	g_sock_domain = AF_UNIX;
+	g_peer_connected = 1;
+	sc = mk_sc();
+	pi.pi_arg = sc;
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc->vsc_mtx), 0);
+	sc->vsc_checkpoint_lock_held = true;
+	sc->vsc_lifecycle_paused = true;
+	ATF_CHECK_EQ(pci_vtvsock_migration_restore(&pi, wire, size,
+	    fds, 2), EINVAL);
+	ATF_CHECK_EQ(fds[0], endpoints[0]);
+	ATF_CHECK(fds[1] >= 0);
+	ATF_CHECK_EQ(sc->vsc_conn_count, 0U);
+	ATF_CHECK(TAILQ_EMPTY(&sc->vsc_conns));
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc->vsc_mtx), 0);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+	free(wire);
+	ATF_REQUIRE_EQ(__real_close(fds[1]), 0);
+	ATF_REQUIRE_EQ(__real_close(endpoints[0]), 0);
+	ATF_REQUIRE_EQ(__real_close(endpoints[1]), 0);
+}
+
+ATF_TC_BODY(migration_restores_paused_connection_atomically, tc)
+{
+	const uint8_t reasm[] = { 1, 2, 3 };
+	const uint8_t tx[] = { 4, 5 };
+	const uint8_t resid[] = { 6, 7, 8, 9 };
+	struct vsock_migration_conn_state state = {
+		.local_port = 1024, .guest_port = 0,
+		.type = VSOCK_MIGRATION_TYPE_SEQPACKET,
+		.state = VSOCK_MIGRATION_CONN_ESTABLISHED,
+		.flags = VSOCK_MIGRATION_CONN_TX_EOR |
+		    VSOCK_MIGRATION_CONN_RESID_SEQ |
+		    VSOCK_MIGRATION_CONN_RESID_EOR |
+		    VSOCK_MIGRATION_CONN_STALL_TIMER,
+		.buf_alloc = VSOCK_MIGRATION_MAX_BUFFER,
+		.peer_buf_alloc = 8192,
+		.rx_reasm_len = 3, .rx_reasm = reasm,
+		.tx_buf_len = 2, .tx_buf = tx,
+		.rx_resid_len = 4, .rx_resid = resid,
+		.rx_resid_off = 1, .stall_age_seconds = 5,
+	};
+	struct pci_vtvsock_softc *sc;
+	struct pci_devinst pi = { 0 };
+	struct vtvsock_conn *conn;
+	uint8_t *wire;
+	size_t size;
+	int fd;
+
+	(void)tc;
+	ATF_CHECK_EQ(vtvsock_migration_timer_start(
+	    VSOCK_MIGRATION_CONN_CLOSE_TIMER,
+	    VSOCK_MIGRATION_CONN_CLOSE_TIMER, 1000, 10), (time_t)-990);
+	reset_caps();
+	g_sock_type = SOCK_SEQPACKET;
+	ATF_REQUIRE_EQ(vsock_migration_table_size(&state, 1, &size), 0);
+	wire = malloc(size);
+	ATF_REQUIRE(wire != NULL);
+	ATF_REQUIRE_EQ(vsock_migration_table_encode(&state, 1, wire,
+	    size), 0);
+	sc = mk_sc();
+	pi.pi_arg = sc;
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc->vsc_mtx), 0);
+	sc->vsc_checkpoint_lock_held = true;
+	sc->vsc_lifecycle_paused = true;
+	fd = 8999;
+	g_sock_type = SOCK_STREAM;
+	ATF_CHECK_EQ(pci_vtvsock_migration_restore(&pi, wire, size,
+	    &fd, 1), EPROTOTYPE);
+	ATF_CHECK_EQ(fd, 8999);
+	ATF_CHECK(TAILQ_EMPTY(&sc->vsc_conns));
+	g_sock_type = SOCK_SEQPACKET;
+	g_sock_domain = AF_INET;
+	ATF_CHECK_EQ(pci_vtvsock_migration_restore(&pi, wire, size,
+	    &fd, 1), EAFNOSUPPORT);
+	ATF_CHECK_EQ(fd, 8999);
+	g_sock_domain = AF_UNIX;
+	g_peer_connected = 0;
+	ATF_CHECK_EQ(pci_vtvsock_migration_restore(&pi, wire, size,
+	    &fd, 1), ENOTCONN);
+	ATF_CHECK_EQ(fd, 8999);
+	ATF_CHECK(TAILQ_EMPTY(&sc->vsc_conns));
+	g_peer_connected = 1;
+	fd = 9000;
+	g_mevent_fail = 1;
+	ATF_CHECK_EQ(pci_vtvsock_migration_restore(&pi, wire, size,
+	    &fd, 1), ENOMEM);
+	ATF_CHECK_EQ(fd, -1);
+	ATF_CHECK_EQ(sc->vsc_conn_count, 0U);
+	ATF_CHECK(TAILQ_EMPTY(&sc->vsc_conns));
+	ATF_CHECK_EQ(sc->vsc_reasm_total, 0U);
+	ATF_CHECK_EQ(sc->vsc_txbuf_total, 0U);
+	fd = 9001;
+	ATF_REQUIRE_EQ(pci_vtvsock_migration_restore(&pi, wire, size,
+	    &fd, 1), 0);
+	ATF_CHECK_EQ(fd, -1);
+	ATF_CHECK_EQ(sc->vsc_conn_count, 1U);
+	conn = TAILQ_FIRST(&sc->vsc_conns);
+	ATF_REQUIRE(conn != NULL);
+	ATF_CHECK_EQ(conn->guest_port, 0U);
+	ATF_CHECK_EQ(conn->tx_buf_len, 2U);
+	ATF_CHECK_EQ(conn->rx_resid_off, 1U);
+	ATF_CHECK_EQ(memcmp(conn->rx_reasm, reasm, 3), 0);
+	ATF_CHECK_EQ(memcmp(conn->tx_buf, tx, 2), 0);
+	ATF_CHECK_EQ(memcmp(conn->rx_resid, resid, 4), 0);
+	ATF_CHECK(conn->evp != NULL && !conn->evp->enabled);
+	ATF_CHECK(conn->tx_evp != NULL && !conn->tx_evp->enabled);
+	ATF_CHECK(conn->stall_time != 0);
+	vtvsock_conn_close(sc, conn);
+	sc->vsc_checkpoint_lock_held = false;
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc->vsc_mtx), 0);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+	free(wire);
+}
+
+ATF_TC_WITHOUT_HEAD(migration_collects_paused_active_connection);
+ATF_TC_WITHOUT_HEAD(migration_capture_restores_on_new_device);
+ATF_TC_BODY(migration_capture_restores_on_new_device, tc)
+{
+	struct pci_vtvsock_softc *source, *dest;
+	struct pci_devinst source_pi = { 0 }, dest_pi = { 0 };
+	struct vtvsock_conn *conn;
+	uint8_t *wire;
+	uint32_t fd_count;
+	size_t wire_size;
+	int fds[1];
+
+	(void)tc;
+	reset_caps();
+	g_sock_type = SOCK_SEQPACKET;
+	source = mk_sc();
+	source_pi.pi_arg = source;
+	conn = vtvsock_conn_alloc(source, -1, 0);
+	ATF_REQUIRE(conn != NULL);
+	conn->fd = 9001;
+	conn->state = CONN_ESTABLISHED;
+	conn->type = VIRTIO_VSOCK_TYPE_SEQPACKET;
+	conn->peer_buf_alloc = 8192;
+	conn->rx_reasm = malloc(3);
+	conn->tx_buf = malloc(2);
+	conn->rx_resid = malloc(4);
+	ATF_REQUIRE(conn->rx_reasm != NULL && conn->tx_buf != NULL &&
+	    conn->rx_resid != NULL);
+	memcpy(conn->rx_reasm, "abc", 3);
+	memcpy(conn->tx_buf, "de", 2);
+	memcpy(conn->rx_resid, "fghi", 4);
+	conn->rx_reasm_len = conn->rx_reasm_cap = 3;
+	conn->tx_buf_len = conn->tx_buf_cap = 2;
+	conn->tx_buf_eor = true;
+	conn->rx_resid_len = 4;
+	conn->rx_resid_off = 1;
+	conn->rx_resid_seq = conn->rx_resid_eor = true;
+	conn->host_eof = true;
+	conn->peer_shutdown = VIRTIO_VSOCK_SHUTDOWN_SEND;
+	conn->state = CONN_CLOSING;
+	conn->close_time = monotonic_seconds() - 2;
+	source->vsc_reasm_total = 3;
+	source->vsc_txbuf_total = 2;
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&source->vsc_mtx), 0);
+	source->vsc_checkpoint_lock_held = true;
+	source->vsc_lifecycle_paused = true;
+	ATF_REQUIRE_EQ(pci_vtvsock_migration_capture(&source_pi, &wire,
+	    &wire_size, fds, nitems(fds), &fd_count), 0);
+	ATF_CHECK_EQ(fd_count, 1U);
+	ATF_CHECK_EQ(fds[0], 9001);
+	/* The source gives up its relay before the destination takes it. */
+	conn->fd = -1;
+	vtvsock_conn_close(source, conn);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&source->vsc_mtx), 0);
+	pthread_mutex_destroy(&source->vsc_mtx);
+	free(source);
+
+	dest = mk_sc();
+	dest_pi.pi_arg = dest;
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&dest->vsc_mtx), 0);
+	dest->vsc_checkpoint_lock_held = true;
+	dest->vsc_lifecycle_paused = true;
+	ATF_REQUIRE_EQ(pci_vtvsock_migration_restore(&dest_pi, wire,
+	    wire_size, fds, fd_count), 0);
+	ATF_CHECK_EQ(fds[0], -1);
+	ATF_CHECK_EQ(dest->vsc_conn_count, 1U);
+	ATF_CHECK_EQ(dest->vsc_reasm_total, 3U);
+	ATF_CHECK_EQ(dest->vsc_txbuf_total, 2U);
+	conn = TAILQ_FIRST(&dest->vsc_conns);
+	ATF_REQUIRE(conn != NULL);
+	ATF_CHECK_EQ(conn->fd, 9001);
+	ATF_CHECK_EQ(conn->state, CONN_CLOSING);
+	ATF_CHECK(conn->host_eof);
+	ATF_CHECK_EQ(conn->peer_shutdown, VIRTIO_VSOCK_SHUTDOWN_SEND);
+	ATF_CHECK(conn->close_time != 0);
+	ATF_CHECK_EQ(conn->rx_resid_off, 1U);
+	ATF_CHECK_EQ(memcmp(conn->rx_reasm, "abc", 3), 0);
+	ATF_CHECK_EQ(memcmp(conn->tx_buf, "de", 2), 0);
+	ATF_CHECK_EQ(memcmp(conn->rx_resid, "fghi", 4), 0);
+	ATF_CHECK(conn->evp != NULL && !conn->evp->enabled);
+	ATF_CHECK(conn->tx_evp != NULL && !conn->tx_evp->enabled);
+	vtvsock_conn_close(dest, conn);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&dest->vsc_mtx), 0);
+	pthread_mutex_destroy(&dest->vsc_mtx);
+	free(dest);
+	free(wire);
+}
+
+ATF_TC_BODY(migration_collects_paused_active_connection, tc)
+{
+	struct vsock_migration_conn_state states[2], decoded[2];
+	struct pci_devinst pi = { 0 };
+	struct pci_vtvsock_softc *sc;
+	struct vtvsock_conn *conn;
+	uint8_t *wire, *captured;
+	uint32_t count;
+	size_t size;
+	time_t now;
+	int relay_fds[2];
+
+	(void)tc;
+	reset_caps();
+	g_sock_type = SOCK_SEQPACKET;
+	sc = mk_sc();
+	pi.pi_arg = sc;
+	conn = vtvsock_conn_alloc(sc, -1, 0);
+	ATF_REQUIRE(conn != NULL);
+	conn->fd = 9001;
+	conn->state = CONN_ESTABLISHED;
+	conn->type = VIRTIO_VSOCK_TYPE_SEQPACKET;
+	conn->rx_reasm = malloc(3);
+	conn->tx_buf = malloc(2);
+	conn->rx_resid = malloc(4);
+	ATF_REQUIRE(conn->rx_reasm != NULL && conn->tx_buf != NULL &&
+	    conn->rx_resid != NULL);
+	memcpy(conn->rx_reasm, "abc", 3);
+	memcpy(conn->tx_buf, "de", 2);
+	memcpy(conn->rx_resid, "fghi", 4);
+	conn->rx_reasm_len = conn->rx_reasm_cap = 3;
+	conn->tx_buf_len = conn->tx_buf_cap = 2;
+	conn->tx_buf_eor = true;
+	conn->rx_resid_len = 4;
+	conn->rx_resid_off = 1;
+	conn->rx_resid_seq = conn->rx_resid_eor = true;
+	conn->peer_buf_alloc = 8192;
+	conn->fwd_cnt = 17;
+	conn->tx_cnt = 23;
+	sc->vsc_reasm_total = 3;
+	sc->vsc_txbuf_total = 2;
+	now = monotonic_seconds();
+	conn->stall_time = now - 4;
+	count = UINT32_MAX;
+	ATF_CHECK_EQ(pci_vtvsock_migration_collect(&pi, states, 2, &count),
+	    EBUSY);
+	ATF_CHECK_EQ(count, UINT32_MAX);
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc->vsc_mtx), 0);
+	sc->vsc_checkpoint_lock_held = true;
+	sc->vsc_lifecycle_paused = true;
+	ATF_REQUIRE_EQ(pci_vtvsock_migration_collect(&pi, states, 2, &count),
+	    0);
+	ATF_CHECK_EQ(count, 1U);
+	ATF_CHECK_EQ(states[0].guest_port, 0U);
+	ATF_CHECK_EQ(states[0].fwd_cnt, 17U);
+	ATF_CHECK_EQ(states[0].tx_cnt, 23U);
+	ATF_CHECK_EQ(states[0].rx_resid_off, 1U);
+	ATF_CHECK((states[0].flags & VSOCK_MIGRATION_CONN_STALL_TIMER) != 0);
+	ATF_CHECK(states[0].stall_age_seconds >= 4);
+	captured = NULL;
+	ATF_CHECK_EQ(pci_vtvsock_migration_capture(&pi, &captured, &size,
+	    relay_fds, 0, &count), EMSGSIZE);
+	ATF_CHECK(captured == NULL);
+	ATF_REQUIRE_EQ(pci_vtvsock_migration_capture(&pi, &captured, &size,
+	    relay_fds, 2, &count), 0);
+	ATF_REQUIRE(captured != NULL);
+	ATF_CHECK_EQ(relay_fds[0], 9001);
+	ATF_CHECK_EQ(count, 1U);
+	ATF_REQUIRE_EQ(vsock_migration_table_decode(captured, size, decoded,
+	    2, &count), 0);
+	ATF_CHECK_EQ(memcmp(decoded[0].tx_buf, "de", 2), 0);
+	free(captured);
+	ATF_REQUIRE_EQ(vsock_migration_table_size(states, count, &size), 0);
+	wire = malloc(size);
+	ATF_REQUIRE(wire != NULL);
+	ATF_REQUIRE_EQ(vsock_migration_table_encode(states, count, wire,
+	    size), 0);
+	ATF_REQUIRE_EQ(vsock_migration_table_decode(wire, size, decoded, 2,
+	    &count), 0);
+	ATF_CHECK_EQ(memcmp(decoded[0].rx_reasm, "abc", 3), 0);
+	ATF_CHECK_EQ(memcmp(decoded[0].tx_buf, "de", 2), 0);
+	ATF_CHECK_EQ(memcmp(decoded[0].rx_resid, "fghi", 4), 0);
+	free(wire);
+	conn->rx_resid_len = conn->rx_resid_off = 0;
+	/* The receive path leaves these booleans set after draining a record. */
+	ATF_REQUIRE_EQ(pci_vtvsock_migration_collect(&pi, states, 2, &count),
+	    0);
+	ATF_CHECK_EQ(states[0].flags & (VSOCK_MIGRATION_CONN_RESID_SEQ |
+	    VSOCK_MIGRATION_CONN_RESID_EOR), 0U);
+	ATF_REQUIRE_EQ(vsock_migration_table_size(states, count, &size), 0);
+	sc->vsc_pend_count = 1;
+	count = UINT32_MAX;
+	ATF_CHECK_EQ(pci_vtvsock_migration_collect(&pi, states, 2, &count),
+	    EBUSY);
+	ATF_CHECK_EQ(count, UINT32_MAX);
+	sc->vsc_pend_count = 0;
+	conn->fd = -1;
+	vtvsock_conn_close(sc, conn);
+	sc->vsc_kernel = true;
+	sc->vsc_kernel_frozen = true;
+	count = UINT32_MAX;
+	ATF_REQUIRE_EQ(pci_vtvsock_migration_collect(&pi, states, 2, &count),
+	    0);
+	ATF_CHECK_EQ(count, 0U);
+	sc->vsc_conn_count = 1;
+	ATF_CHECK_EQ(pci_vtvsock_migration_collect(&pi, states, 2, &count),
+	    EOPNOTSUPP);
+	sc->vsc_conn_count = 0;
+	sc->vsc_kernel = false;
+	sc->vsc_kernel_frozen = false;
+	sc->vsc_checkpoint_lock_held = false;
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc->vsc_mtx), 0);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+}
+
 ATF_TC_BODY(snapshot_rejects_unreconstructible_backend_state, tc)
 {
 	struct pci_vtvsock_softc *sc;
+	struct vtvsock_conn uncounted_conn = { 0 };
+	struct vtvsock_ctl_conn uncounted_ctl = { 0 };
 	struct vtvsock_conn *conn;
 
 	sc = mk_sc();
 	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc, true), 0);
+	TAILQ_INSERT_TAIL(&sc->vsc_conns, &uncounted_conn, link);
+	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc, true), EBUSY);
+	TAILQ_REMOVE(&sc->vsc_conns, &uncounted_conn, link);
+	TAILQ_INSERT_TAIL(&sc->vsc_ctl_conns, &uncounted_ctl, link);
+	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc, true), EBUSY);
+	TAILQ_REMOVE(&sc->vsc_ctl_conns, &uncounted_ctl, link);
 
 	/*
 	 * Every userspace-host object excluded from the portable record must
@@ -3923,6 +4334,12 @@ ATF_TC_BODY(snapshot_rejects_unreconstructible_backend_state, tc)
 	sc->vsc_txbuf_total = 1;
 	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc, true), EBUSY);
 	sc->vsc_txbuf_total = 0;
+	sc->vsc_kernel_rx = (uint8_t *)(uintptr_t)1;
+	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc, false), EBUSY);
+	sc->vsc_kernel_rx = NULL;
+	sc->vsc_kernel_frozen = true;
+	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc, false), EBUSY);
+	sc->vsc_kernel_frozen = false;
 
 	conn = vtvsock_conn_alloc(sc, -1, 7000);
 	ATF_REQUIRE(conn != NULL);
@@ -3953,6 +4370,21 @@ ATF_TC_BODY(snapshot_rejects_unreconstructible_backend_state, tc)
 	sc->vsc_kernel_tx_len = 1;
 	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc, true), EBUSY);
 	sc->vsc_kernel_tx_len = 0;
+	sc->vsc_pend_count = 1;
+	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc, true), EBUSY);
+	sc->vsc_pend_count = 0;
+	sc->vsc_conn_count = 1;
+	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc, true), EBUSY);
+	sc->vsc_conn_count = 0;
+	sc->vsc_ctl_conn_count = 1;
+	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc, true), EBUSY);
+	sc->vsc_ctl_conn_count = 0;
+	sc->vsc_reasm_total = 1;
+	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc, true), EBUSY);
+	sc->vsc_reasm_total = 0;
+	sc->vsc_txbuf_total = 1;
+	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc, true), EBUSY);
+	sc->vsc_txbuf_total = 0;
 	ATF_CHECK_EQ(vtvsock_snapshot_state_error(sc, true), 0);
 	pthread_mutex_destroy(&sc->vsc_mtx);
 	free(sc);
@@ -4146,6 +4578,69 @@ run_vsock_snapshot(struct pci_vtvsock_softc *sc, uint8_t *image, size_t size,
 	return (error);
 }
 
+ATF_TC_WITHOUT_HEAD(snapshot_accepts_only_exported_active_relay);
+ATF_TC_BODY(snapshot_accepts_only_exported_active_relay, tc)
+{
+	struct pci_vtvsock_softc *sc;
+	struct pci_devinst pi = { 0 };
+	struct vtvsock_conn *conn;
+	uint8_t image[MAXPATHLEN + 128], *wire;
+	size_t used, wire_size;
+	uint32_t fd_count;
+	int fds[1];
+
+	(void)tc;
+	reset_caps();
+	sc = mk_sc();
+	pi.pi_arg = sc;
+	sc->vsc_path = strdup("/tmp/vsock-migration-export");
+	ATF_REQUIRE(sc->vsc_path != NULL);
+	sc->vsc_vs.vs_negotiated_caps = sc->vsc_features;
+	conn = vtvsock_conn_alloc(sc, -1, 7000);
+	ATF_REQUIRE(conn != NULL);
+	conn->fd = 9001;
+	conn->state = CONN_ESTABLISHED;
+	conn->peer_buf_alloc = 8192;
+	ATF_REQUIRE_EQ(pci_vtvsock_pause(sc), 0);
+	ATF_CHECK_EQ(run_vsock_snapshot(sc, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, NULL), EBUSY);
+	wire = NULL;
+	sc->vsc_kernel_rx = (uint8_t *)(uintptr_t)1;
+	ATF_CHECK_EQ(pci_vtvsock_migration_capture(&pi, &wire, &wire_size,
+	    fds, nitems(fds), &fd_count), EBUSY);
+	ATF_CHECK(wire == NULL);
+	ATF_CHECK(!sc->vsc_migration_exported);
+	sc->vsc_kernel_rx = NULL;
+	g_sock_type = SOCK_SEQPACKET;
+	ATF_CHECK_EQ(pci_vtvsock_migration_capture(&pi, &wire, &wire_size,
+	    fds, nitems(fds), &fd_count), EPROTOTYPE);
+	ATF_CHECK(wire == NULL);
+	ATF_CHECK(!sc->vsc_migration_exported);
+	g_sock_type = SOCK_STREAM;
+	ATF_REQUIRE_EQ(pci_vtvsock_migration_capture(&pi, &wire, &wire_size,
+	    fds, nitems(fds), &fd_count), 0);
+	ATF_CHECK(sc->vsc_migration_exported);
+	ATF_CHECK_EQ(fd_count, 1U);
+	ATF_CHECK_EQ(fds[0], 9001);
+	ATF_REQUIRE_EQ(run_vsock_snapshot(sc, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_CHECK(used != 0);
+	ATF_CHECK_EQ(run_vsock_snapshot(sc, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EBUSY);
+	free(wire);
+	ATF_REQUIRE_EQ(pci_vtvsock_resume(sc), 0);
+	ATF_CHECK(!sc->vsc_migration_exported);
+	ATF_REQUIRE_EQ(pci_vtvsock_pause(sc), 0);
+	ATF_CHECK_EQ(run_vsock_snapshot(sc, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, NULL), EBUSY);
+	conn->fd = -1;
+	vtvsock_conn_close(sc, conn);
+	ATF_REQUIRE_EQ(pci_vtvsock_resume(sc), 0);
+	free(sc->vsc_path);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+}
+
 ATF_TC_WITHOUT_HEAD(snapshot_portable_identity_and_atomicity);
 ATF_TC_BODY(snapshot_portable_identity_and_atomicity, tc)
 {
@@ -4174,7 +4669,7 @@ ATF_TC_BODY(snapshot_portable_identity_and_atomicity, tc)
 	ATF_CHECK_EQ(image[1], (uint8_t)'S');
 	ATF_CHECK_EQ(image[2], (uint8_t)'O');
 	ATF_CHECK_EQ(image[3], (uint8_t)'1');
-	ATF_CHECK_EQ(image[4], 2);
+	ATF_CHECK_EQ(image[4], 3);
 	ATF_CHECK_EQ(image[5], 0);
 	ATF_CHECK_EQ(image[6], 0);
 	ATF_CHECK_EQ(image[7], 0);
@@ -4244,6 +4739,97 @@ ATF_TC_BODY(snapshot_portable_identity_and_atomicity, tc)
 	free(source->vsc_path);
 	pthread_mutex_destroy(&destination->vsc_mtx);
 	pthread_mutex_destroy(&source->vsc_mtx);
+	free(destination);
+	free(source);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_endpoint_rebind_and_v2_fixture);
+ATF_TC_BODY(snapshot_endpoint_rebind_and_v2_fixture, tc)
+{
+	struct pci_vtvsock_softc *source, *destination, *legacy_destination;
+	uint8_t image[MAXPATHLEN + 128], legacy[MAXPATHLEN + 128];
+	size_t used, legacy_used;
+
+	(void)tc;
+	reset_caps();
+	ATF_CHECK_EQ(vtvsock_migration_id_parse(
+	    "00000000000000000000000000000000", image), EINVAL);
+	ATF_CHECK_EQ(vtvsock_migration_id_parse(
+	    "0000000000000000000000000000000A", image), EINVAL);
+	ATF_REQUIRE_EQ(vtvsock_migration_id_parse(
+	    "5a000000000000000000000000000000", image), 0);
+	ATF_CHECK_EQ(image[0], 0x5a);
+	source = mk_sc();
+	source->vsc_path = strdup("/tmp/vsock-source");
+	ATF_REQUIRE(source->vsc_path != NULL);
+	source->vsc_migration_id[0] = 0x5a;
+	source->vsc_migration_id_valid = true;
+	source->vsc_vs.vs_negotiated_caps = source->vsc_features;
+	source->vsc_next_port = 43210;
+	ATF_REQUIRE_EQ(pci_vtvsock_pause(source), 0);
+	ATF_REQUIRE_EQ(run_vsock_snapshot(source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_REQUIRE_EQ(pci_vtvsock_resume(source), 0);
+	ATF_CHECK_EQ(image[4], 3);
+	ATF_CHECK_EQ(image[37], 0x5a);
+
+	destination = mk_sc();
+	destination->vsc_path = strdup("/tmp/vsock-destination");
+	ATF_REQUIRE(destination->vsc_path != NULL);
+	destination->vsc_vs.vs_negotiated_caps = source->vsc_features;
+	destination->vsc_migration_id_valid = true;
+	destination->vsc_migration_id[0] = 0x5b;
+	ATF_REQUIRE_EQ(pci_vtvsock_pause(destination), 0);
+	ATF_CHECK_EQ(run_vsock_snapshot(destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
+	ATF_CHECK_EQ(destination->vsc_next_port, VTVSOCK_PORT_MIN);
+	destination->vsc_migration_id[0] = 0x5a;
+	ATF_REQUIRE_EQ(run_vsock_snapshot(destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	ATF_REQUIRE_EQ(run_vsock_snapshot(destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK_EQ(destination->vsc_next_port, source->vsc_next_port);
+	ATF_REQUIRE_EQ(pci_vtvsock_resume(destination), 0);
+
+	/* Construct the v0.1.0 VSO1/v2 record independently of the v3 writer. */
+	memset(legacy, 0, sizeof(legacy));
+	virtio14_store_le32(legacy, 0x314f5356U);
+	virtio14_store_le32(legacy + 4, 2);
+	legacy[8] = 0; /* userspace backend */
+	virtio14_store_le64(legacy + 9, source->vsc_guest_cid);
+	virtio14_store_le64(legacy + 17, source->vsc_features);
+	virtio14_store_le32(legacy + 25, source->vsc_next_port);
+	virtio14_store_le32(legacy + 29, strlen(source->vsc_path));
+	/* Bytes 33..36 are the reserved, zero-valued field. */
+	memcpy(legacy + 37, source->vsc_path, strlen(source->vsc_path));
+	legacy_used = 37 + MAXPATHLEN;
+	legacy_destination = mk_sc();
+	legacy_destination->vsc_path = strdup("/tmp/vsock-destination");
+	ATF_REQUIRE(legacy_destination->vsc_path != NULL);
+	legacy_destination->vsc_vs.vs_negotiated_caps = source->vsc_features;
+	legacy_destination->vsc_migration_id_valid = true;
+	legacy_destination->vsc_migration_id[0] = 0x5a;
+	ATF_REQUIRE_EQ(pci_vtvsock_pause(legacy_destination), 0);
+	ATF_CHECK_EQ(run_vsock_snapshot(legacy_destination, legacy,
+	    legacy_used, VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
+	free(legacy_destination->vsc_path);
+	legacy_destination->vsc_path = strdup(source->vsc_path);
+	ATF_REQUIRE(legacy_destination->vsc_path != NULL);
+	ATF_REQUIRE_EQ(run_vsock_snapshot(legacy_destination, legacy,
+	    legacy_used, VM_SNAPSHOT_VALIDATE, NULL), 0);
+	ATF_REQUIRE_EQ(run_vsock_snapshot(legacy_destination, legacy,
+	    legacy_used, VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK_EQ(legacy_destination->vsc_next_port,
+	    source->vsc_next_port);
+	ATF_REQUIRE_EQ(pci_vtvsock_resume(legacy_destination), 0);
+
+	free(legacy_destination->vsc_path);
+	free(destination->vsc_path);
+	free(source->vsc_path);
+	pthread_mutex_destroy(&legacy_destination->vsc_mtx);
+	pthread_mutex_destroy(&destination->vsc_mtx);
+	pthread_mutex_destroy(&source->vsc_mtx);
+	free(legacy_destination);
 	free(destination);
 	free(source);
 }
@@ -4322,7 +4908,8 @@ ATF_TC_BODY(snapshot_kernel_backend_validation, tc)
 		VSOCK_STATE_NEXT_PORT_OFF = 25,
 		VSOCK_STATE_PATH_LEN_OFF = 29,
 		VSOCK_STATE_RESERVED_OFF = 33,
-		VSOCK_STATE_PATH_OFF = 37,
+		VSOCK_STATE_MIGRATION_ID_OFF = 37,
+		VSOCK_STATE_PATH_OFF = 53,
 	};
 	struct pci_vtvsock_softc *destination, *source;
 	uint8_t image[MAXPATHLEN + 128];
@@ -4399,6 +4986,12 @@ ATF_TC_BODY(snapshot_kernel_backend_validation, tc)
 	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
 	image[VSOCK_STATE_RESERVED_OFF] = 0;
 	ATF_CHECK_EQ(destination->vsc_features, original_features);
+
+	image[VSOCK_STATE_MIGRATION_ID_OFF] = 1;
+	ATF_CHECK_EQ(run_vsock_snapshot(destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+	image[VSOCK_STATE_MIGRATION_ID_OFF] = 0;
+	ATF_CHECK_EQ(destination->vsc_next_port, original_port);
 
 	image[VSOCK_STATE_PATH_OFF] = 1;
 	ATF_CHECK_EQ(run_vsock_snapshot(destination, image, used,
@@ -5035,6 +5628,7 @@ ATF_TC_BODY(tx_response_completes_host_connect, tc)
 	reset_caps();
 	c = mk_established(sc, 1234, 80, STREAM);
 	c->state = CONN_CONNECTING;
+	c->close_time = monotonic_seconds();
 	c->ctl_fd = ctlfd;
 	c->reply_fd = g_next_fd++;
 	cc = mk_ctl_conn(sc, ctlfd, 100);
@@ -5043,6 +5637,7 @@ ATF_TC_BODY(tx_response_completes_host_connect, tc)
 	    0, 0, 256 * 1024, 0);
 	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
 	ATF_CHECK(c->state == CONN_ESTABLISHED);
+	ATF_CHECK_EQ(c->close_time, 0);
 	ATF_CHECK(c->ctl_fd == -1 && c->reply_fd == -1);
 	ATF_CHECK(nctlconns(sc) == 0);		/* ctl_conn removed */
 	free(sc);
@@ -5343,10 +5938,40 @@ ATF_TC_BODY(init_userspace_backend_succeeds, tc)
 	cfg_set("cid", "42");
 	cfg_set("backend", "userspace");
 	cfg_set("path", dir);
+	cfg_set("migration_endpoint_id",
+	    "5a000000000000000000000000000000");
+	g_cfg_active_vsock = true;
 	ATF_CHECK_EQ(0, pci_vtvsock_init(&pi, NULL));
 	ATF_CHECK(g_socket_calls >= 1);
+	ATF_REQUIRE(pi.pi_arg != NULL);
+	ATF_CHECK(((struct pci_vtvsock_softc *)pi.pi_arg)->
+	    vsc_migration_id_valid);
+	ATF_CHECK(((struct pci_vtvsock_softc *)pi.pi_arg)->
+	    vsc_migration_transfer_enabled);
+	ATF_CHECK_EQ(((struct pci_vtvsock_softc *)pi.pi_arg)->
+	    vsc_migration_id[0], 0x5a);
 	/* Default backend (unset) is treated as userspace per vtvsock_parse. */
 	(void)unlink(dir);	/* socket file leaked via no-op close(); dir stays */
+}
+
+ATF_TC_WITHOUT_HEAD(init_active_migration_requires_userspace_identity);
+ATF_TC_BODY(init_active_migration_requires_userspace_identity, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	g_cfg_active_vsock = true;
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "42");
+	cfg_set("backend", "userspace");
+	cfg_set("path", "/tmp");
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+	init_reset();
+	g_cfg_active_vsock = true;
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "42");
+	cfg_set("backend", "kernel");
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
 }
 
 /* Default (unset) backend == userspace: also drives the packed-vs-legacy
@@ -5468,6 +6093,13 @@ ATF_TC_BODY(init_kernel_rejects_path, tc)
 	cfg_set("cid", "3");
 	cfg_set("backend", "kernel");
 	cfg_set("path", "/tmp");		/* invalid with kernel backend */
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "3");
+	cfg_set("backend", "kernel");
+	cfg_set("migration_endpoint_id",
+	    "5a000000000000000000000000000000");
 	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
 }
 
@@ -5959,6 +6591,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, notify_tx_undersized_chain_dropped);
 	ATF_TP_ADD_TC(tp, init_kernel_backend_succeeds);
 	ATF_TP_ADD_TC(tp, init_userspace_backend_succeeds);
+	ATF_TP_ADD_TC(tp, init_active_migration_requires_userspace_identity);
 	ATF_TP_ADD_TC(tp, init_default_backend_is_userspace);
 	ATF_TP_ADD_TC(tp, init_packed_requires_modern);
 	ATF_TP_ADD_TC(tp, init_rejects_missing_cid);
@@ -5982,11 +6615,17 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reset_cancels_suspend_and_reopens_admission);
 	ATF_TP_ADD_TC(tp, reset_preserves_transport_mutex_ownership);
 	ATF_TP_ADD_TC(tp, snapshot_rejects_unreconstructible_backend_state);
+	ATF_TP_ADD_TC(tp, snapshot_accepts_only_exported_active_relay);
+	ATF_TP_ADD_TC(tp, migration_collects_paused_active_connection);
+	ATF_TP_ADD_TC(tp, migration_capture_restores_on_new_device);
+	ATF_TP_ADD_TC(tp, migration_restores_paused_connection_atomically);
+	ATF_TP_ADD_TC(tp, migration_rejects_aliased_relay_sockets);
 	ATF_TP_ADD_TC(tp, snapshot_preflight_is_locally_serialized);
 	ATF_TP_ADD_TC(tp, kernel_checkpoint_freezes_and_thaws_provider);
 	ATF_TP_ADD_TC(tp, kernel_checkpoint_malformed_reply_thaw_failure);
 	ATF_TP_ADD_TC(tp, kernel_checkpoint_thaw_failure_is_retryable);
 	ATF_TP_ADD_TC(tp, snapshot_portable_identity_and_atomicity);
+	ATF_TP_ADD_TC(tp, snapshot_endpoint_rebind_and_v2_fixture);
 	ATF_TP_ADD_TC(tp, init_failure_detaches_and_retires_child_events);
 	ATF_TP_ADD_TC(tp, snapshot_kernel_backend_validation);
 	ATF_TP_ADD_TC(tp, backend_names_are_userspace_and_kernel);

@@ -62,7 +62,8 @@ vmm_stat_register(void *arg)
 	if (vst->pred != NULL && !vst->pred())
 		return;
 
-	if (vst_num_elems + vst->nelems >= MAX_VMM_STAT_ELEMS) {
+	if (vst->nelems <= 0 ||
+	    vst->nelems > MAX_VMM_STAT_ELEMS - vst_num_elems) {
 		printf("Cannot accommodate vmm stat type \"%s\"!\n", vst->desc);
 		return;
 	}

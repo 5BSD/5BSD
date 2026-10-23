@@ -47,6 +47,7 @@
 #include <limits.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <limits.h>
 #include <libutil.h>
 
 #include <machine/cpufunc.h>
@@ -667,6 +668,9 @@ int
 main(int argc, char *argv[])
 {
 	char *vmname;
+	char *end;
+	unsigned long long mb;
+	long cpu;
 	int action_opts, error, ch, vcpuid;
 	struct vm_run vmrun;
 	struct vmctx *ctx;
@@ -720,14 +724,29 @@ main(int argc, char *argv[])
 			vmname = optarg;
 			break;
 		case VCPU:
-			vcpuid = atoi(optarg);
+			errno = 0;
+			cpu = strtol(optarg, &end, 10);
+			if (errno != 0 || end == optarg || *end != '\0' ||
+			    cpu < 0 || cpu > INT_MAX)
+				usage(opts);
+			vcpuid = (int)cpu;
 			break;
 		case SET_MEM:
-			memsize = atoi(optarg) * MB;
-			memsize = roundup(memsize, 2 * MB);
+			if (*optarg == '-')
+				usage(opts);
+			errno = 0;
+			mb = strtoull(optarg, &end, 10);
+			if (errno != 0 || end == optarg || *end != '\0' ||
+			    mb == 0 || mb > UINT64_MAX / MB - 1)
+				usage(opts);
+			memsize = (mb + (mb & 1)) * MB;
 			break;
 		case SET_CAP:
-			capval = strtoul(optarg, NULL, 0);
+			if (optarg[0] != '0' && optarg[0] != '1')
+				usage(opts);
+			if (optarg[1] != '\0')
+				usage(opts);
+			capval = optarg[0] - '0';
 			setcap = 1;
 			break;
 		case CAPNAME:
@@ -810,6 +829,9 @@ main(int argc, char *argv[])
 	}
 #endif
 	if (vmname == NULL)
+		usage(opts);
+	if ((setcap && capname == NULL) ||
+	    (capname != NULL && vm_capability_name2type(capname) < 0))
 		usage(opts);
 
 	if (rundir == NULL)

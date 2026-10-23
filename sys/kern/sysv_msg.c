@@ -198,23 +198,6 @@ static struct syscall_helper_data msg_syscalls[] = {
 	SYSCALL_INIT_LAST
 };
 
-#ifdef COMPAT_FREEBSD32
-#include <compat/freebsd32/freebsd32.h>
-#include <compat/freebsd32/freebsd32_ipc.h>
-#include <compat/freebsd32/freebsd32_proto.h>
-#include <compat/freebsd32/freebsd32_signal.h>
-#include <compat/freebsd32/freebsd32_syscall.h>
-#include <compat/freebsd32/freebsd32_util.h>
-
-static struct syscall_helper_data msg32_syscalls[] = {
-	SYSCALL32_INIT_HELPER(freebsd32_msgctl),
-	SYSCALL32_INIT_HELPER(freebsd32_msgsnd),
-	SYSCALL32_INIT_HELPER(freebsd32_msgrcv),
-	SYSCALL32_INIT_HELPER_COMPAT(msgget),
-	SYSCALL32_INIT_HELPER(freebsd32_msgsys),
-	SYSCALL_INIT_LAST
-};
-#endif
 
 static int
 msginit(void)
@@ -311,11 +294,6 @@ msginit(void)
 	error = syscall_helper_register(msg_syscalls, SY_THR_STATIC_KLD);
 	if (error != 0)
 		return (error);
-#ifdef COMPAT_FREEBSD32
-	error = syscall32_helper_register(msg32_syscalls, SY_THR_STATIC_KLD);
-	if (error != 0)
-		return (error);
-#endif
 	return (0);
 }
 
@@ -329,9 +307,6 @@ msgunload(void)
 #endif
 
 	syscall_helper_unregister(msg_syscalls);
-#ifdef COMPAT_FREEBSD32
-	syscall32_helper_unregister(msg32_syscalls);
-#endif
 
 	for (msqid = 0; msqid < msginfo.msgmni; msqid++) {
 		msqkptr = &msqids[msqid];
@@ -1448,9 +1423,6 @@ static int
 sysctl_msqids(SYSCTL_HANDLER_ARGS)
 {
 	struct msqid_kernel tmsqk;
-#ifdef COMPAT_FREEBSD32
-	struct msqid_kernel32 tmsqk32;
-#endif
 	struct prison *pr, *rpr;
 	void *outaddr;
 	size_t outsize;
@@ -1470,25 +1442,6 @@ sysctl_msqids(SYSCTL_HANDLER_ARGS)
 				tmsqk.u.msg_perm.key = IPC_PRIVATE;
 		}
 		mtx_unlock(&msq_mtx);
-#ifdef COMPAT_FREEBSD32
-		if (SV_CURPROC_FLAG(SV_ILP32)) {
-			bzero(&tmsqk32, sizeof(tmsqk32));
-			freebsd32_ipcperm_out(&tmsqk.u.msg_perm,
-			    &tmsqk32.u.msg_perm);
-			/* Don't copy u.msg_first or u.msg_last */
-			CP(tmsqk, tmsqk32, u.msg_cbytes);
-			CP(tmsqk, tmsqk32, u.msg_qnum);
-			CP(tmsqk, tmsqk32, u.msg_qbytes);
-			CP(tmsqk, tmsqk32, u.msg_lspid);
-			CP(tmsqk, tmsqk32, u.msg_lrpid);
-			CP(tmsqk, tmsqk32, u.msg_stime);
-			CP(tmsqk, tmsqk32, u.msg_rtime);
-			CP(tmsqk, tmsqk32, u.msg_ctime);
-			/* Don't copy label or cred */
-			outaddr = &tmsqk32;
-			outsize = sizeof(tmsqk32);
-		} else
-#endif
 		{
 			/* Don't leak kernel pointers */
 			tmsqk.u.__msg_first = NULL;
@@ -1735,90 +1688,3 @@ msg_prison_cleanup(struct prison *pr)
 }
 
 SYSCTL_JAIL_PARAM_SYS_NODE(sysvmsg, CTLFLAG_RW, "SYSV message queues");
-
-#ifdef COMPAT_FREEBSD32
-int
-freebsd32_msgsys(struct thread *td, struct freebsd32_msgsys_args *uap)
-{
-
-	return (kern_nosys(td, 0));
-}
-
-
-int
-freebsd32_msgctl(struct thread *td, struct freebsd32_msgctl_args *uap)
-{
-	struct msqid_ds msqbuf;
-	struct msqid_ds32 msqbuf32;
-	int error;
-
-	if (uap->cmd == IPC_SET) {
-		error = copyin(uap->buf, &msqbuf32, sizeof(msqbuf32));
-		if (error)
-			return (error);
-		freebsd32_ipcperm_in(&msqbuf32.msg_perm, &msqbuf.msg_perm);
-		PTRIN_CP(msqbuf32, msqbuf, __msg_first);
-		PTRIN_CP(msqbuf32, msqbuf, __msg_last);
-		CP(msqbuf32, msqbuf, msg_cbytes);
-		CP(msqbuf32, msqbuf, msg_qnum);
-		CP(msqbuf32, msqbuf, msg_qbytes);
-		CP(msqbuf32, msqbuf, msg_lspid);
-		CP(msqbuf32, msqbuf, msg_lrpid);
-		CP(msqbuf32, msqbuf, msg_stime);
-		CP(msqbuf32, msqbuf, msg_rtime);
-		CP(msqbuf32, msqbuf, msg_ctime);
-	}
-	error = kern_msgctl(td, uap->msqid, uap->cmd, &msqbuf);
-	if (error)
-		return (error);
-	if (uap->cmd == IPC_STAT) {
-		freebsd32_ipcperm_out(&msqbuf.msg_perm, &msqbuf32.msg_perm);
-		PTROUT_CP(msqbuf, msqbuf32, __msg_first);
-		PTROUT_CP(msqbuf, msqbuf32, __msg_last);
-		CP(msqbuf, msqbuf32, msg_cbytes);
-		CP(msqbuf, msqbuf32, msg_qnum);
-		CP(msqbuf, msqbuf32, msg_qbytes);
-		CP(msqbuf, msqbuf32, msg_lspid);
-		CP(msqbuf, msqbuf32, msg_lrpid);
-		CP(msqbuf, msqbuf32, msg_stime);
-		CP(msqbuf, msqbuf32, msg_rtime);
-		CP(msqbuf, msqbuf32, msg_ctime);
-		error = copyout(&msqbuf32, uap->buf, sizeof(struct msqid_ds32));
-	}
-	return (error);
-}
-
-int
-freebsd32_msgsnd(struct thread *td, struct freebsd32_msgsnd_args *uap)
-{
-	const void *msgp;
-	long mtype;
-	int32_t mtype32;
-	int error;
-
-	msgp = PTRIN(uap->msgp);
-	if ((error = copyin(msgp, &mtype32, sizeof(mtype32))) != 0)
-		return (error);
-	mtype = mtype32;
-	return (kern_msgsnd(td, uap->msqid,
-	    (const char *)msgp + sizeof(mtype32),
-	    uap->msgsz, uap->msgflg, mtype));
-}
-
-int
-freebsd32_msgrcv(struct thread *td, struct freebsd32_msgrcv_args *uap)
-{
-	void *msgp;
-	long mtype;
-	int32_t mtype32;
-	int error;
-
-	msgp = PTRIN(uap->msgp);
-	if ((error = kern_msgrcv(td, uap->msqid,
-	    (char *)msgp + sizeof(mtype32), uap->msgsz,
-	    uap->msgtyp, uap->msgflg, &mtype)) != 0)
-		return (error);
-	mtype32 = (int32_t)mtype;
-	return (copyout(&mtype32, msgp, sizeof(mtype32)));
-}
-#endif

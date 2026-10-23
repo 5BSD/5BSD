@@ -4275,3 +4275,66 @@ each of the first 200 allocations then every 5th, explicit effects for the
 fresh-session steps. final8 started 20:40Z, ETA ~5 h, output
 cov-daemon-final8-20261022. These harness changes are uncommitted
 follow-on work.
+
+### Merge of dev into experimental/hypertrace (2026-10-23, in progress)
+
+The user asked for the branch to be merged into dev. Step one is merging dev
+(518 commits ahead) into experimental/hypertrace in this worktree; dev and its
+dirty checkout (/usr/src, 750 uncommitted files not ours) are untouched.
+
+Seventeen conflicts, resolved as follows (user: "resolve any conflicts";
+design approved in conversation):
+- Build glue: Makefile.inc1 (dev's order), files.amd64 (dev retired 32-bit
+  execution; our hypercall rule kept), bhyve Makefile (both), if_vtnetvar.h
+  (our include, dev's ALTQ retirement), two ELF test images (dev's struct),
+  mac_capability_authority.c (dev removed the library cache we had only
+  renamed), bhyvectl_machdep.c (comment).
+- Kernel dtrace.c: dev's per-provider probe list (unregister and condense walk
+  a provider's own probes) combined with our per-VM probe tables; only host
+  probes are linked (a virtual probe's dtpr_provid is its provider name).
+  The first compile exposed a pointer/handle mismatch in the list helpers;
+  fixed with an explicit cast.
+- dt_link.c: our ELF-flags helper plus dev's cross-built RISC-V default.
+- bhyve migration: dev and this branch had redesigned the same subsystem.
+  Merged as protocol version 3: dev's numbers kept (VSOCK_STATE=14,
+  V2_RESTORE bit 2, VSOCK_STATE bit 3), ours moved (RELEASE_ACK=15,
+  HYPERTRACE_FRESH bit 4). Version 2 refused; version 1 admitted only by a
+  destination advertising V2_RESTORE (empty COMMIT, reason-only RELEASE, no
+  ACK, retain on failure); a source requires version 3. Our handoff ordering
+  kept (bound COMMIT, retire before RELEASE, confirmed by RELEASE_ACK) with
+  dev's vsock relay inside it (prepare after COMMIT, activate after RELEASE).
+  dev's capture session (event fence held until release or rollback) adopted
+  and finished on retire and rollback; our vCPU pause kept for migration;
+  dev's TPM checkpoint support replaces our TPM refusal; dev's fd-based
+  manifest hashing extended to our trace member; size limits, restore checks
+  and the memory-stream checks combined. Auto-merge had also left mixed code
+  outside the markers (a frame length read before assignment, dev's
+  empty-COMMIT and reason-only-RELEASE checks against our bound messages);
+  each fixed by hand.
+- Limitation: dev's active-vsock relay carries guest traffic over the raw
+  migration socket after RELEASE from a process that does not hold the TLS
+  session, so active vsock is refused with TLS (bhyve startup check and per
+  migration, both sides) and allowed only on the plaintext_unix opt-in.
+
+Verification so far (all on the merged tree):
+- dev's migration_session_test reconciled (13 tests encoded one side's old
+  semantics and were updated to the merged rules): 64/64 under ASan/UBSan.
+- cross_release/run-v010-interop.sh (real v0.1.0 source): gated case
+  completes at version 1 with the guest resumed; ungated case refused.
+  newdst.c gained the destination hooks every current destination has.
+- Kernel: dtrace_hypertrace 131,711 checks, 0 failures; vmm_hypertrace 1,222
+  checks, 0 failures (harness: vm_alloc_vcpu's new signature; a modelled
+  checkpoint-topology gate). dev's own vmm changes are mostly uncovered by
+  our suite (changed-vs-HEAD 10/66 lines): follow-up coverage work.
+- libdtrace: clean instrumented rebuild; whole-library refresh 50 suites, all
+  pass; 95.89% lines / 92.23% branches raw, unchanged.
+- bhyve suites on cbm-m2: 79/105; the 26 failures are harness drift from
+  dev's new interfaces. The bhyve agent is porting them (production frozen).
+Not yet: merge commit; updating dev itself.
+- Merge defect found by the bhyve agent and fixed: the merged
+  checkpoint_manifest_hash_at() (dev's inline member opens) returned a raw
+  errno at the data, kern and meta openat() sites, so an errno-less failure
+  returned 0 and checkpoint_publish() published a manifest with uncomputed
+  digests. Fixed with the tree's `errno != 0 ? errno : EIO` convention.
+  Fail-before fb11-hashopen: merged build publishes in all three cases;
+  pre-merge and fixed builds return EIO and publish nothing.

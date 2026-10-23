@@ -45,6 +45,9 @@ SRCS=	\
 	migration_precopy.c	\
 	migration_session.c	\
 	migration_receiver.c	\
+	migration_vsock_bundle.c	\
+	migration_vsock_owner.c	\
+	migration_vsock_relay.c	\
 	mevent.c		\
 	net_backend_netmap.c	\
 	net_backend_slirp.c	\
@@ -75,6 +78,7 @@ SRCS=	\
 	pci_virtio_rnd.c	\
 	pci_virtio_rtc.c	\
 	pci_virtio_vsock.c	\
+	vsock_migration_state.c	\
 	pci_virtio_scsi.c	\
 	pci_virtio_snd.c	\
 	pci_xhci.c		\
@@ -83,8 +87,12 @@ SRCS=	\
 	smbiostbl.c		\
 	sockstream.c		\
 	tpm_device.c		\
+	tpm_checkpoint_state.c	\
+	tpm_local_state.c	\
 	tpm_emul_passthru.c	\
 	tpm_emul_swtpm.c	\
+	tpm_swtpm_control.c	\
+	tpm_state_transaction.c	\
 	tpm_intf_crb.c		\
 	tpm_ppi_qemu.c		\
 	uart_backend.c		\

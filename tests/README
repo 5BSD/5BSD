@@ -59,3 +59,24 @@ The goal in this specific case is for /usr/tests/lib/ to be generated
 entirely from src/lib/.
 
 -- 
+
+Kernel modules on 5BSD test images
+==================================
+The 5BSD capability plane denies kldload(2) after boot, so test programs
+cannot load the modules they need while they run.  pf(4) (with pflog,
+pfsync and pflow) and the DTrace providers are preloaded by default
+(stand/defaults/loader.conf).  A test image must preload the rest in
+/boot/loader.conf:
+
+  if_epair_load="YES"	# VNET tests (tests/sys/common/vnet.subr, atf_python)
+  if_bridge_load="YES"	# bridge topologies
+  carp_load="YES"
+  if_enc_load="YES"
+  dummymbuf_load="YES"
+  dummynet_load="YES"	# or load it through the SystemExtension broker
+  sctp_load="YES"
+
+When if_epair or if_bridge is missing, VNET tests skip with the reason
+"preload if_epair/if_bridge (capability plane)" rather than failing
+obscurely.  tools/test/pf-parity/openbsd-regress/image-5bsd.sh builds an
+image with this loader.conf.

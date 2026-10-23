@@ -313,7 +313,19 @@ __wrap_ioctl(int fd, unsigned long req, ...)
 	return (__real_ioctl(fd, req, arg));
 }
 ssize_t __wrap_read(int fd, void *b, size_t n) { LIBC_FAULT("read", -1); return (__real_read(fd, b, n)); }
-off_t __wrap_lseek(int fd, off_t o, int w) { LIBC_FAULT("lseek", -1); return (__real_lseek(fd, o, w)); }
+/* One-shot size overrides: the next SEEK_END / ftell reports this size. */
+static off_t lseek_end_override = -1;
+static long ftell_override = -1;
+off_t __wrap_lseek(int fd, off_t o, int w)
+{
+	LIBC_FAULT("lseek", -1);
+	if (w == SEEK_END && lseek_end_override >= 0) {
+		off_t v = lseek_end_override;
+		lseek_end_override = -1;
+		return (v);
+	}
+	return (__real_lseek(fd, o, w));
+}
 int __wrap_flock(int fd, int op)
 {
 	int r;
@@ -330,7 +342,16 @@ FILE *__wrap_fdopen(int fd, const char *m) { LIBC_FAULT("fdopen", NULL); return 
 size_t __wrap_fwrite(const void *b, size_t s, size_t n, FILE *f) { LIBC_FAULT("fwrite", 0); return (__real_fwrite(b, s, n, f)); }
 size_t __wrap_fread(void *b, size_t s, size_t n, FILE *f) { LIBC_FAULT("fread", 0); return (__real_fread(b, s, n, f)); }
 int __wrap_fseek(FILE *f, long o, int w) { LIBC_FAULT("fseek", -1); return (__real_fseek(f, o, w)); }
-long __wrap_ftell(FILE *f) { LIBC_FAULT("ftell", -1); return (__real_ftell(f)); }
+long __wrap_ftell(FILE *f)
+{
+	LIBC_FAULT("ftell", -1);
+	if (ftell_override >= 0) {
+		long v = ftell_override;
+		ftell_override = -1;
+		return (v);
+	}
+	return (__real_ftell(f));
+}
 struct ucl_parser *__wrap_ucl_parser_new(int f) { LIBC_FAULT("ucl_parser_new", NULL); return (__real_ucl_parser_new(f)); }
 bool __wrap_ucl_parser_add_fd(struct ucl_parser *p, int fd) { LIBC_FAULT("ucl_parser_add_fd", false); return (__real_ucl_parser_add_fd(p, fd)); }
 xo_handle_t *__wrap_xo_create_to_file(FILE *f, xo_style_t s, xo_xof_flags_t x) { LIBC_FAULT("xo_create_to_file", NULL); return (__real_xo_create_to_file(f, s, x)); }
@@ -449,9 +470,14 @@ vm_get_devmem_info(struct vmctx *ctx, int segid, void **base, size_t *len,
 	return (-1);
 }
 
+static int suspend_error;	/* merged: the suspend ioctl result is checked */
 int
 vm_suspend_all_cpus(struct vmctx *ctx)
 {
+	if (suspend_error != 0) {
+		errno = suspend_error == FAULT_NOERRNO ? 0 : suspend_error;
+		return (-1);
+	}
 	ctx->suspended = true;
 	return (0);
 }
@@ -733,8 +759,57 @@ paddr_host2guest(struct vmctx *ctx, void *addr)
 	return (off);
 }
 
-static bool tpm_present;
+/*
+ * TPM (merged): a checkpointable device named "tpm".  Its record is 32
+ * bytes of per-side state; vm_pause_devices() opens a state read that
+ * vm_resume_devices() ends; the migration gate is a separate knob.
+ */
+static bool tpm_present, tpm_reading_side[2];
+static int tpm_migration_error, tpm_begin_error, tpm_end_error, tpm_validate_error;
+static int tpm_begins, tpm_ends;
+static uint8_t tpm_state[2][32];
+static int side;
+/* Each side models its own process: the source (0) or a destination (1). */
+#define tpm_reading tpm_reading_side[side]
 bool tpm_device_present(void) { return (tpm_present); }
+int
+tpm_device_migration_check(void)
+{
+	return (tpm_present ? tpm_migration_error : 0);
+}
+int
+tpm_device_state_begin_read(void)
+{
+	CHECK(tpm_present);
+	if (tpm_reading)
+		return (EBUSY);	/* one state transaction at a time */
+	if (tpm_begin_error != 0)
+		return (tpm_begin_error);
+	tpm_reading = true;
+	tpm_begins++;
+	return (0);
+}
+int
+tpm_device_state_end_if_active(void)
+{
+	if (!tpm_present || !tpm_reading)
+		return (0);
+	if (tpm_end_error != 0)
+		return (tpm_end_error);
+	tpm_reading = false;
+	tpm_ends++;
+	return (0);
+}
+/* Configuration: the previous-ABI restore opt-in (merged). */
+static bool config_restore_abi_v2;
+bool
+get_config_bool_default(const char *name, bool def)
+{
+	if (strcmp(name, "checkpoint.restore_abi_v2") == 0)
+		return (config_restore_abi_v2);
+	return (def);
+}
+
 void console_input_pause(void) {}
 void console_input_resume(void) {}
 
@@ -870,6 +945,9 @@ devices_init(void)
 		kbd_state[0][j] = (uint8_t)(0x40 + j), kbd_state[1][j] = 0;
 	for (int j = 0; j < 24; j++)
 		fwcfg_state[0][j] = (uint8_t)(0x80 + j), fwcfg_state[1][j] = 0;
+	for (int j = 0; j < 32; j++)
+		tpm_state[0][j] = (uint8_t)(0xc0 ^ j), tpm_state[1][j] = 0;
+	tpm_reading_side[0] = tpm_reading_side[1] = false;
 }
 
 struct pci_devinst *
@@ -985,6 +1063,25 @@ qemu_fwcfg_snapshot(struct vm_snapshot_meta *meta)
 	SNAPSHOT_BUF_OR_LEAVE(copy, sizeof(copy), meta, ret, done);
 	if (meta->op == VM_SNAPSHOT_RESTORE)
 		memcpy(fwcfg_state[side], copy, sizeof(copy));
+done:
+	return (ret);
+}
+
+int
+tpm_device_snapshot(struct vm_snapshot_meta *meta)
+{
+	uint8_t copy[32];
+	int ret = 0;
+
+	CHECK(tpm_present);
+	if (meta->op == VM_SNAPSHOT_SAVE)
+		CHECK(tpm_reading);	/* writes drained before the copy */
+	if (meta->op == VM_SNAPSHOT_VALIDATE && tpm_validate_error != 0)
+		return (tpm_validate_error);
+	memcpy(copy, tpm_state[side], sizeof(copy));
+	SNAPSHOT_BUF_OR_LEAVE(copy, sizeof(copy), meta, ret, done);
+	if (meta->op == VM_SNAPSHOT_RESTORE)
+		memcpy(tpm_state[side], copy, sizeof(copy));
 done:
 	return (ret);
 }
@@ -1228,6 +1325,7 @@ restore_into_destination(const char *name, bool compare)
 	vm_init(&dst_vm, "dst", 0x99);
 	side = 1;
 	state = dst_state;
+	tpm_reading_side[1] = false;	/* a new destination process */
 	checkpoint_restore_startup_hold();
 	error = vm_restore_transaction(&dst_vm, &rstate);
 	if (error == 0) {
@@ -1442,11 +1540,46 @@ test_refusals(void)
 		longname[sizeof(longname) - 1] = '\0';
 		CHECK(vm_checkpoint(&src_vm, dirfd_, longname, false) == ENAMETOOLONG);
 	}
-	/* A TPM-equipped guest is refused before anything is created. */
+	/* Merged TPM: a guest whose TPM cannot migrate is refused before
+	 * anything is created; otherwise its state is checkpointed under the
+	 * device pause (begin_read .. end) and restored exactly. */
 	tpm_present = true;
+	tpm_migration_error = ENOTSUP;
 	BOTH_PARITIES(CHECK(vm_checkpoint(&src_vm, dirfd_, "tpm.ckp", false) == ENOTSUP));
-	tpm_present = false;
 	CHECK(faccessat(dirfd_, "tpm.ckp.lock", F_OK, 0) != 0);
+	tpm_migration_error = 0;
+	tpm_begins = tpm_ends = 0;
+	CHECK(vm_checkpoint(&src_vm, dirfd_, "tpm.ckp", false) == 0);
+	CHECK(tpm_begins == 1 && tpm_ends == 1 && !tpm_reading_side[0]);
+	CHECK(restore_into_destination("tpm.ckp", true) == 0);
+	CHECK(memcmp(tpm_state[1], tpm_state[0], 32) == 0);
+	/* A destination TPM that cannot migrate refuses before mutation; an
+	 * invalid TPM record is refused in preflight. */
+	tpm_migration_error = EOPNOTSUPP;
+	CHECK(restore_into_destination("tpm.ckp", false) == EOPNOTSUPP);
+	tpm_migration_error = 0;
+	tpm_validate_error = EINVAL;
+	CHECK(restore_into_destination("tpm.ckp", false) != 0);
+	tpm_validate_error = 0;
+	/* A TPM that cannot drain its writes fails the pause; the devices
+	 * paused before it are resumed again. */
+	tpm_begin_error = EBUSY;
+	CHECK(vm_checkpoint(&src_vm, dirfd_, "tpmbusy.ckp", false) == EBUSY);
+	CHECK(!src_state[0].paused && !src_state[1].paused && !tpm_reading_side[0]);
+	tpm_begin_error = 0;
+	/* A TPM that cannot restart keeps every device paused. */
+	side = 0;
+	state = src_state;
+	CHECK(vm_pause_devices() == 0 && tpm_reading);
+	tpm_end_error = EIO;
+	CHECK(vm_resume_devices() == EIO && src_state[0].paused && tpm_reading);
+	tpm_end_error = 0;
+	CHECK(vm_resume_devices() == 0 && !src_state[0].paused && !tpm_reading);
+	tpm_present = false;
+	/* A destination with a TPM the image lacks has another topology. */
+	tpm_present = true;
+	CHECK(restore_into_destination("vm.ckp", false) != 0);
+	tpm_present = false;
 	/* A restore path whose member name is longer than NAME_MAX. */
 	{
 		struct restore_state rstate;
@@ -1505,6 +1638,8 @@ test_migration_blob(bool fresh)
 	uint8_t *blob = NULL, record[HYPERTRACE_SESSION_RECORD_SIZE];
 	size_t len = 0;
 	struct pci_devinst *device = NULL;
+	struct vm_snapshot_capture cap = {0};
+	int committed, aborted;
 
 	vm_init(&src_vm, "src", 0x44);
 	devices_init();
@@ -1512,20 +1647,34 @@ test_migration_blob(bool fresh)
 	vtdtr_present = fresh;
 	if (fresh) {
 		CHECK(vm_migrate_stop_tracing(&src_vm, record) == 0);
-		CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len) == 0);
+		CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len, &cap) == 0);
 		{
 			uint8_t *none = (uint8_t *)1;
 			size_t zero = 1;
+			struct vm_snapshot_capture other = {0};
 			/* Fresh tracing is never silently stripped. */
-			CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &none, &zero) == EOPNOTSUPP);
-			CHECK(none == NULL && zero == 0);
+			CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &none, &zero, &other) == EOPNOTSUPP);
+			CHECK(none == NULL && zero == 0 && !other.active);
+			/* A capture that already holds the fence is not reused. */
+			CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &none, &zero, &cap) == EBUSY);
 		}
 	} else {
 		CHECK(vm_migrate_stop_tracing(&src_vm, record) == ENXIO);
-		CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &blob, &len) == 0);
+		CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &blob, &len, &cap) == 0);
 	}
 	CHECK(blob != NULL && len > MIGRATE_BLOB_HDR);
-	CHECK(!src_vm.session_active);
+	/* Merged: the event fence stays held through the handoff; retirement
+	 * commits it (fresh here), a rollback aborts it (ordinary here). */
+	CHECK(src_vm.session_active && cap.active && !cap.unresolved);
+	committed = src_vm.sessions_committed;
+	aborted = src_vm.sessions_aborted;
+	CHECK(vm_snapshot_dev_state_finish(NULL, &cap, fresh) == EINVAL);
+	CHECK(vm_snapshot_dev_state_finish(&src_vm, NULL, fresh) == EINVAL);
+	CHECK(vm_snapshot_dev_state_finish(&src_vm, &cap, fresh) == 0);
+	CHECK(!src_vm.session_active && !cap.active);
+	CHECK(src_vm.sessions_committed == committed + (fresh ? 1 : 0) &&
+	    src_vm.sessions_aborted == aborted + (fresh ? 0 : 1));
+	CHECK(vm_snapshot_dev_state_finish(&src_vm, &cap, fresh) == 0);	/* idle */
 	/* Destination: guest RAM was streamed separately. */
 	vm_init(&dst_vm, "dst", 0x44);
 	side = 1;
@@ -2023,7 +2172,11 @@ test_vcpu_fence(void)
 	for (int i = 0; i < 2; i++)
 		CHECK(pthread_create(&threads[i], NULL, fence_vcpu, (void *)(intptr_t)i) == 0);
 	usleep(20000);
-	vm_vcpu_pause(&src_vm);
+	{
+		bool runnable = true, owned = false;
+		CHECK(checkpoint_vcpu_pause(&src_vm, &runnable, &owned) == 0);
+		CHECK(owned && !runnable);
+	}
 	CHECK(checkpoint_active && CPU_CMP(&vcpus_active, &vcpus_suspended) == 0);
 	/* A vCPU created during the checkpoint is held before it runs. */
 	CHECK(pthread_create(&threads[2], NULL, fence_vcpu, (void *)(intptr_t)2) == 0);
@@ -2035,7 +2188,7 @@ test_vcpu_fence(void)
 		CHECK(atomic_load(&fence_progress[i]) == frozen[i]);
 	CHECK(frozen[2] == 0);
 	src_vm.suspended = false;
-	vm_vcpu_resume(&src_vm);
+	CHECK(checkpoint_vcpu_resume(&src_vm) == 0 && !checkpoint_active);
 	/* Every vCPU runs again (bounded wait: the host may be loaded). */
 	for (int i = 0; i < 3; i++) {
 		for (int t = 0; t < 5000 && atomic_load(&fence_progress[i]) <= frozen[i]; t++)
@@ -3543,6 +3696,7 @@ restore_verify(int result)
  * commit keeps the startup fence. */
 static uint8_t *mblob;
 static size_t mlen;
+static struct vm_snapshot_capture mcapture;
 static void
 blob_prepare(void)
 {
@@ -3555,17 +3709,24 @@ blob_prepare(void)
 static int
 blob_operate(void)
 {
-	return (vm_snapshot_dev_state_to_mem(&src_vm, &mblob, &mlen));
+	memset(&mcapture, 0, sizeof(mcapture));
+	return (vm_snapshot_dev_state_to_mem(&src_vm, &mblob, &mlen, &mcapture));
 }
 
 static void
 blob_verify(int result)
 {
-	CHECK(!src_vm.session_active || relaxed_is("vm_snapshot_session"));
+	/* A failed capture holds no fence (or an unresolved one only when its
+	 * release was faulted); a successful one holds it until finished. */
+	CHECK(!src_vm.session_active || result == 0 || relaxed_is("vm_snapshot_session"));
 	if (result != 0) {
 		CHECK(mblob == NULL && mlen == 0);
+		CHECK(!mcapture.active || mcapture.unresolved);
 		return;
 	}
+	CHECK(src_vm.session_active && mcapture.active);
+	CHECK(vm_snapshot_dev_state_finish(&src_vm, &mcapture, false) == 0);
+	CHECK(!src_vm.session_active && !mcapture.active);
 	vm_init(&dst_vm, "dst", 0x77);
 	side = 1;
 	state = dst_state;
@@ -3581,7 +3742,9 @@ static void
 commit_prepare(void)
 {
 	blob_prepare();
-	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &mblob, &mlen) == 0);
+	memset(&mcapture, 0, sizeof(mcapture));
+	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &mblob, &mlen, &mcapture) == 0);
+	CHECK(vm_snapshot_dev_state_finish(&src_vm, &mcapture, false) == 0);
 	vm_init(&dst_vm, "dst", 0x77);
 	side = 1;
 	state = dst_state;
@@ -3667,17 +3830,25 @@ fresh_blob_prepare(void)
 static int
 fresh_blob_operate(void)
 {
-	return (vm_snapshot_fresh_dev_state_to_mem(&src_vm, fresh_record, &mblob, &mlen));
+	memset(&mcapture, 0, sizeof(mcapture));
+	return (vm_snapshot_fresh_dev_state_to_mem(&src_vm, fresh_record, &mblob, &mlen,
+	    &mcapture));
 }
 
 static void
 fresh_blob_verify(int result)
 {
-	CHECK(!src_vm.session_active || relaxed_is("vm_snapshot_session"));
-	if (result != 0)
+	CHECK(!src_vm.session_active || result == 0 || relaxed_is("vm_snapshot_session"));
+	if (result != 0) {
 		CHECK(mblob == NULL && mlen == 0);
-	else
+		CHECK(!mcapture.active || mcapture.unresolved);
+	} else {
 		CHECK(mblob != NULL && mlen > MIGRATE_BLOB_HDR);
+		/* Retirement commits the fence the capture still holds. */
+		CHECK(src_vm.session_active && mcapture.active);
+		CHECK(vm_snapshot_dev_state_finish(&src_vm, &mcapture, true) == 0);
+		CHECK(!src_vm.session_active);
+	}
 }
 
 static void
@@ -3685,6 +3856,7 @@ fresh_commit_prepare(void)
 {
 	fresh_blob_prepare();
 	CHECK(fresh_blob_operate() == 0);
+	CHECK(vm_snapshot_dev_state_finish(&src_vm, &mcapture, true) == 0);
 	vm_init(&dst_vm, "dst", 0x78);
 	side = 1;
 	state = dst_state;
@@ -4409,16 +4581,29 @@ test_migration_edges(void)
 	uint8_t *blob = NULL, record[HYPERTRACE_SESSION_RECORD_SIZE], zero[HYPERTRACE_SESSION_RECORD_SIZE];
 	size_t len = 0;
 	struct pci_devinst *device = NULL;
+	struct vm_snapshot_capture cap = {0};
 	int r;
 
 	vm_init(&src_vm, "src", 0x73);
 	devices_init();
 	memset(zero, 0, sizeof(zero));
 	/* Capture guards and identity checks. */
-	CHECK(vm_snapshot_dev_state_to_mem(NULL, &blob, &len) == EINVAL);
-	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, NULL, &len) == EINVAL);
-	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &blob, NULL) == EINVAL);
-	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, NULL, &blob, &len) == EINVAL);
+	CHECK(vm_snapshot_dev_state_to_mem(NULL, &blob, &len, &cap) == EINVAL);
+	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, NULL, &len, &cap) == EINVAL);
+	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &blob, NULL, &cap) == EINVAL);
+	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &blob, &len, NULL) == EINVAL);
+	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, NULL, &blob, &len, &cap) == EINVAL);
+	/* The TPM migration gate refuses before the capture is examined. */
+	tpm_present = true;
+	tpm_migration_error = ENOTSUP;
+	cap.unresolved = true;
+	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &blob, &len, &cap) == ENOTSUP);
+	tpm_migration_error = 0;
+	tpm_present = false;
+	/* An unresolved capture is refused and cannot be finished. */
+	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &blob, &len, &cap) == EBUSY);
+	CHECK(vm_snapshot_dev_state_finish(&src_vm, &cap, false) == EINVAL);
+	cap.unresolved = false;
 	CHECK(vm_migrate_stop_tracing(NULL, record) == EINVAL);
 	CHECK(vm_migrate_stop_tracing(&src_vm, NULL) == EINVAL);
 	tracing = true;
@@ -4426,32 +4611,43 @@ test_migration_edges(void)
 	stop_status_busy = 0;
 	collectors_remaining = 0;
 	CHECK(vm_migrate_stop_tracing(&src_vm, record) == 0);
-	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, zero, &blob, &len) != 0 && blob == NULL);
+	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, zero, &blob, &len, &cap) != 0 && blob == NULL);
 	identity_error = ENXIO;
-	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len) == ENXIO);
+	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len, &cap) == ENXIO);
 	identity_error = FAULT_NOERRNO;
-	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len) == EIO);
+	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len, &cap) == EIO);
 	identity_vmid_delta = 1;
-	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len) == ESTALE);
+	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len, &cap) == ESTALE);
 	identity_vmid_delta = 0;
 	identity_epoch_delta = 1;
-	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len) == ESTALE);
+	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len, &cap) == ESTALE);
 	identity_epoch_delta = 0;
 	/* Capture: the metadata stream cannot be finished or flushed; a
 	 * failed kernel fence release invalidates the capture. */
 	fault_once("xo_finish_h", 1, EIO);
-	r = vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len);
+	r = vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len, &cap);
 	fault_clear();
-	CHECK(r == EIO && blob == NULL && !src_vm.session_active);
+	CHECK(r == EIO && blob == NULL && !src_vm.session_active && !cap.active);
 	fault_once("fflush", 1, EIO);
-	r = vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len);
+	r = vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len, &cap);
 	fault_clear();
 	CHECK(r == EIO && blob == NULL);
 	fault_once("fflush", 1, FAULT_NOERRNO);
-	r = vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len);
+	r = vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len, &cap);
 	fault_clear();
 	CHECK(r == EIO && blob == NULL);
-	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len) == 0 && blob != NULL);
+	/* Merged: a capture larger than one migration state is refused before
+	 * its members are copied (metadata alone, or metadata plus kernel). */
+	ftell_override = (long)MIGRATION_MAX_DEV_STATE;
+	r = vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len, &cap);
+	ftell_override = -1;
+	CHECK(r == EMSGSIZE && blob == NULL && !cap.active && !src_vm.session_active);
+	lseek_end_override = (off_t)MIGRATION_MAX_DEV_STATE;
+	r = vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len, &cap);
+	lseek_end_override = -1;
+	CHECK(r == EMSGSIZE && blob == NULL && !cap.active && !src_vm.session_active);
+	CHECK(vm_snapshot_fresh_dev_state_to_mem(&src_vm, record, &blob, &len, &cap) == 0 && blob != NULL);
+	CHECK(vm_snapshot_dev_state_finish(&src_vm, &cap, true) == 0);
 	/* Commit guards and malformed blobs. */
 	vm_init(&dst_vm, "dst", 0x73);
 	side = 1;
@@ -4530,7 +4726,9 @@ test_migration_edges(void)
 	vtdtr_present = false;
 	vm_init(&src_vm, "src", 0x74);
 	devices_init();
-	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &blob, &len) == 0);
+	memset(&cap, 0, sizeof(cap));
+	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &blob, &len, &cap) == 0);
+	CHECK(vm_snapshot_dev_state_finish(&src_vm, &cap, false) == 0);
 	vm_init(&dst_vm, "dst", 0x74);
 	side = 1;
 	state = dst_state;
@@ -4771,6 +4969,124 @@ mutate_meta(const char *key, const char *replacement, bool rename)
 	free(mutated);
 }
 
+
+/*
+ * Merged checkpoint vCPU fence and restore-compatibility helpers.  Oracles:
+ * argument and state refusals; a failed suspend whose resume works leaves
+ * the guest runnable and the fence released, one whose resume fails keeps
+ * the fence owned; a failed kernel resume keeps the userspace gate closed.
+ */
+static void
+test_merged_helpers(void)
+{
+	bool runnable, owned;
+
+	vm_init(&src_vm, "src", 0x5e);
+	devices_init();
+	checkpoint_active = false;
+	restore_startup_hold = false;
+	CPU_ZERO(&vcpus_active);
+	CPU_ZERO(&vcpus_suspended);
+	CHECK(checkpoint_vcpu_pause(NULL, &runnable, &owned) == EINVAL);
+	CHECK(checkpoint_vcpu_pause(&src_vm, NULL, &owned) == EINVAL);
+	CHECK(checkpoint_vcpu_pause(&src_vm, &runnable, NULL) == EINVAL);
+	checkpoint_active = true;
+	CHECK(checkpoint_vcpu_pause(&src_vm, &runnable, &owned) == EBUSY && !owned && !runnable);
+	checkpoint_active = false;
+	suspend_error = ENXIO;
+	CHECK(checkpoint_vcpu_pause(&src_vm, &runnable, &owned) == ENXIO);
+	CHECK(runnable && !owned && !checkpoint_active);
+	suspend_error = FAULT_NOERRNO;
+	CHECK(checkpoint_vcpu_pause(&src_vm, &runnable, &owned) == EIO && runnable);
+	suspend_error = EIO;
+	fault_once("vm_resume_all_cpus", 1, EIO);
+	CHECK(checkpoint_vcpu_pause(&src_vm, &runnable, &owned) == EIO);
+	fault_clear();
+	CHECK(!runnable && owned && checkpoint_active);
+	suspend_error = 0;
+	/* Resume refusals and a failed kernel resume. */
+	CHECK(checkpoint_vcpu_resume(NULL) == EINVAL);
+	restore_startup_hold = true;
+	CHECK(checkpoint_vcpu_resume(&src_vm) == EINVAL && checkpoint_active);
+	restore_startup_hold = false;
+	fault_once("vm_resume_all_cpus", 1, EBUSY);
+	CHECK(checkpoint_vcpu_resume(&src_vm) == EBUSY && checkpoint_active);
+	fault_clear();
+	fault_once("vm_resume_all_cpus", 1, FAULT_NOERRNO);
+	CHECK(checkpoint_vcpu_resume(&src_vm) == EIO && checkpoint_active);
+	fault_clear();
+	CHECK(checkpoint_vcpu_resume(&src_vm) == 0 && !checkpoint_active);
+	CHECK(checkpoint_vcpu_resume(&src_vm) == EINVAL);	/* not paused */
+	CHECK(checkpoint_restore_cpu_contract(NULL, NULL) == EINVAL);
+	/* Restore compatibility: the previous machine ABI is admitted only on
+	 * opt-in, with canonical padding; other ABIs never. */
+	{
+		struct checkpoint_manifest m, prev;
+		char *tmp = NULL;
+		CHECK(checkpoint_generation_names("vm.ckp", &m, &tmp) == 0);
+		free(tmp);
+		CHECK(!checkpoint_manifest_restore_compatible(NULL, true));
+		CHECK(checkpoint_manifest_restore_compatible(&m, false));
+		prev = m;
+		memset(prev.machine, 0, sizeof(prev.machine));
+		strlcpy(prev.machine, CHECKPOINT_MACHINE_ABI_PREVIOUS, sizeof(prev.machine));
+		CHECK(!checkpoint_manifest_compatible(&prev));
+		CHECK(!checkpoint_manifest_restore_compatible(&prev, false));
+		CHECK(checkpoint_manifest_restore_compatible(&prev, true));
+		prev.machine[sizeof(prev.machine) - 1] = 'x';	/* padding */
+		CHECK(!checkpoint_manifest_restore_compatible(&prev, true));
+		memset(prev.machine, 0, sizeof(prev.machine));
+		strlcpy(prev.machine, "bhyve-virtio-v1", sizeof(prev.machine));
+		CHECK(!checkpoint_manifest_restore_compatible(&prev, true));
+		memset(prev.machine, 0, sizeof(prev.machine));
+		strlcpy(prev.machine, "bhyve-virtio-v22", sizeof(prev.machine));
+		CHECK(!checkpoint_manifest_restore_compatible(&prev, true));
+		/* A current manifest with non-zero padding is not compatible. */
+		prev = m;
+		prev.architecture[sizeof(prev.architecture) - 1] = 'x';
+		CHECK(!checkpoint_manifest_compatible(&prev));
+		prev = m;
+		prev.machine[sizeof(prev.machine) - 1] = 'x';
+		CHECK(!checkpoint_manifest_compatible(&prev));
+		/* An older format with the previous ABI stays refused. */
+		prev = m;
+		prev.format_version = 2;
+		memset(prev.machine, 0, sizeof(prev.machine));
+		strlcpy(prev.machine, CHECKPOINT_MACHINE_ABI_PREVIOUS, sizeof(prev.machine));
+		CHECK(!checkpoint_manifest_restore_compatible(&prev, true));
+	}
+	/* Migration commit: the TPM gate and the state-size limit come first. */
+	{
+		uint8_t blob[64] = {0};
+		struct pci_devinst *device = NULL;
+		tpm_present = true;
+		tpm_migration_error = ENOTSUP;
+		CHECK(vm_migrate_commit_state(&src_vm, blob, sizeof(blob)) == ENOTSUP);
+		tpm_migration_error = 0;
+		tpm_present = false;
+		CHECK(vm_migrate_fresh_commit_state(&src_vm, blob,
+		    (size_t)MIGRATION_MAX_DEV_STATE + 1, &device) == EMSGSIZE && device == NULL);
+	}
+	/* A capture whose fence release never resolves becomes unresolved. */
+	{
+		static const int release_eio[] = { EIO, EIO, EIO, EIO, EIO, EIO };
+		struct vm_snapshot_capture cap = {0};
+		uint8_t *blob = NULL;
+		size_t len = 0;
+		tracing = false;
+		vtdtr_present = false;
+		CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &blob, &len, &cap) == 0);
+		free(blob);
+		script(release_eio, 6);
+		CHECK(vm_snapshot_dev_state_finish(&src_vm, &cap, true) == EIO);
+		session_script = NULL;
+		CHECK(cap.unresolved && cap.active);
+		CHECK(vm_snapshot_dev_state_finish(&src_vm, &cap, true) == EINVAL);
+		src_vm.session_active = false;
+	}
+	printf("snapshot merged helpers: vCPU fence, restore compatibility, commit gates\n");
+}
+
 static void
 test_lookup_guards(void)
 {
@@ -4885,9 +5201,11 @@ test_lookup_guards(void)
 	validate_short = true;
 	CHECK(restore_into_destination("vm.ckp", false) != 0);
 	validate_short = false;
-	/* A TPM on the destination refuses the restore before any mutation. */
+	/* A destination TPM that cannot migrate refuses before any mutation. */
 	tpm_present = true;
+	tpm_migration_error = ENOTSUP;
 	CHECK(restore_into_destination("vm.ckp", false) == ENOTSUP);
+	tpm_migration_error = 0;
 	tpm_present = false;
 	/* The startup fence released during a plain checkpoint: no hold. */
 	release_fence_on_pause = true;
@@ -4930,13 +5248,19 @@ test_lookup_guards(void)
 		checkpoint_active = false;
 		src_vm.session_active = false;
 		src_vm.suspended = false;
-		script(release_fails, 7);
-		fault_once("xo_finish_h", 1, EIO);
-		r = vm_snapshot_dev_state_to_mem(&src_vm, &blob, &blen);
-		fault_clear();
-		session_script = NULL;
-		CHECK(r == EIO && blob == NULL);
-		src_vm.session_active = false;
+		{
+			/* A failed capture whose fence release also fails leaves the
+			 * capture unresolved: it is neither reusable nor finishable. */
+			struct vm_snapshot_capture failed = {0};
+			script(release_fails, 7);
+			fault_once("xo_finish_h", 1, EIO);
+			r = vm_snapshot_dev_state_to_mem(&src_vm, &blob, &blen, &failed);
+			fault_clear();
+			session_script = NULL;
+			CHECK(r == EIO && blob == NULL && failed.active && failed.unresolved);
+			CHECK(vm_snapshot_dev_state_finish(&src_vm, &failed, false) == EINVAL);
+			src_vm.session_active = false;
+		}
 		/* Errno-less kernel replies. */
 		script(noerrno_begin, 1);
 		CHECK(vm_snapshot_session_begin_exact(&src_vm, &sess, &resolved) == EIO);
@@ -5592,6 +5916,7 @@ main(void)
 	test_restore_refusals();
 	test_manifest_api();
 	test_migration_edges();
+	test_merged_helpers();
 	test_read_eintr();
 	test_progress_tty();
 	test_lookup_guards();

@@ -1,0 +1,16 @@
+These examples use the OpenBSD PF grammar documented in pf.conf(5).
+
+pf.conf is an inactive, fully commented IPv4 gateway template. Adapt the
+interface names, addresses and policy before installing any selected rules in
+/etc/pf.conf. A block/pass policy in an example does not change the kernel's
+unmatched default, and installing this package does not enable PF.
+Run pfctl -nf /path/to/proposed.conf before loading a real configuration.
+
+Translation uses the current pf.conf(5) syntax: match and pass rules with
+nat-to, rdr-to, binat-to and af-to; there are no separate nat/rdr rules.
+Bandwidth queueing (the "queue" keyword) is not supported on 5BSD yet and
+rulesets that define queues are refused; use dummynet(4) pipes and queues
+(dnpipe, dnqueue; see dnctl(8)) for traffic shaping.
+
+The FreeBSD-era faq-example*, ackpri, queue* and spamd files used ALTQ and
+pre-4.7 NAT/redirection syntax and have been removed.

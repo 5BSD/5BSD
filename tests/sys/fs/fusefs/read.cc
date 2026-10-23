@@ -131,6 +131,15 @@ class ReadMaxRead: public Read {
 	}
 };
 
+class ReadMaxPages: public Read {
+	virtual void SetUp() {
+		m_maxread = 65536;
+		m_maxpages = 4;
+		m_init_flags |= FUSE_MAX_PAGES;
+		Read::SetUp();
+	}
+};
+
 class ReadNoatime: public Read {
 	virtual void SetUp() {
 		m_noatime = true;
@@ -1039,6 +1048,30 @@ TEST_F(Read, mmap)
 	leak(fd);
 }
 
+
+/* When max_read is set, large reads will be split up as necessary */
+TEST_F(ReadMaxPages, negotiated_limit)
+{
+	const char *path = "mountpoint/some_file.txt";
+	char actual[32768] = {}, first[16384] = {}, second[16384] = {};
+	int fd;
+
+	if (m_maxbcachebuf < (int)sizeof(actual))
+		GTEST_SKIP() << "Requires a 32 KiB cache buffer";
+	memset(first, 'a', sizeof(first));
+	memset(second, 'b', sizeof(second));
+	expect_lookup("some_file.txt", 42, sizeof(actual));
+	expect_open(42, 0, 1);
+	expect_read(42, 0, sizeof(first), sizeof(first), first);
+	expect_read(42, sizeof(first), sizeof(second), sizeof(second), second);
+	fd = open(path, O_RDONLY);
+	ASSERT_LE(0, fd) << strerror(errno);
+	ASSERT_EQ((ssize_t)sizeof(actual), read(fd, actual, sizeof(actual)))
+	    << strerror(errno);
+	ASSERT_EQ(0, memcmp(actual, first, sizeof(first)));
+	ASSERT_EQ(0, memcmp(actual + sizeof(first), second, sizeof(second)));
+	leak(fd);
+}
 
 /* When max_read is set, large reads will be split up as necessary */
 TEST_F(ReadMaxRead, split)

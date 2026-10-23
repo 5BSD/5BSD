@@ -67,6 +67,7 @@ struct	vnet;
 struct	ifmedia;
 struct	netmap_adapter;
 struct	debugnet_methods;
+struct	mbuf;			/* if_input_fn_t, if_output_fn_t */
 
 #ifdef _KERNEL
 #include <sys/_eventhandler.h>
@@ -83,8 +84,6 @@ struct	debugnet_methods;
 #include <sys/sx.h>		/* XXX */
 #include <sys/_task.h>		/* if_link_task */
 #define	IF_DUNIT_NONE	-1
-
-#include <net/altq/if_altq.h>
 
 CK_STAILQ_HEAD(ifnethead, ifnet);	/* we use TAILQs so that the order of */
 CK_STAILQ_HEAD(ifaddrhead, ifaddr);	/* instantiation is preserved in the list */
@@ -530,6 +529,7 @@ VNET_DECLARE(if_t, loif);	/* first loopback interface */
 typedef int (*if_foreach_group_cb_t)(struct ifg_group *, void *);
 int	if_foreach_group(if_t, if_foreach_group_cb_t, void *);
 int	if_addgroup(if_t, const char *);
+int	if_addgroup_attached(if_t, const char *);
 int	if_delgroup(if_t, const char *);
 int	if_addmulti(if_t, struct sockaddr *, struct ifmultiaddr **);
 int	if_allmulti(if_t, int);
@@ -672,6 +672,7 @@ struct vnet *if_getvnet(const if_t ifp);
 void *if_gethandle(u_char);
 void if_vlancap(if_t ifp);
 int if_transmit(if_t ifp, struct mbuf *m);
+extern int (*pf_delay_transmit_hook)(struct ifnet *, struct mbuf *);
 void if_init(if_t ifp, void *ctx);
 int if_ioctl(if_t ifp, u_long cmd, void *data);
 int if_resolvemulti(if_t ifp, struct sockaddr **, struct sockaddr *);
@@ -682,7 +683,6 @@ struct bpf_if *if_getbpf(if_t ifp);
 uint8_t if_getpcp(if_t ifp);
 void *if_getl2com(if_t ifp);
 struct ifvlantrunk *if_getvlantrunk(if_t ifp);
-bool if_altq_is_enabled(if_t ifp);
 
 struct in_ifinfo *if_getinet(if_t ifp);
 struct in6_ifextra *if_getinet6(if_t ifp);

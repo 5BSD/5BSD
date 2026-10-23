@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+comment = "Regression tests for bsd-build"
+
+desc = <<EOD
+Regression tests for bsd-build.
+EOD

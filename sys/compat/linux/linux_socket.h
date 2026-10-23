@@ -48,6 +48,7 @@
 #define LINUX_MSG_RST		0x1000
 #define LINUX_MSG_ERRQUEUE	0x2000
 #define LINUX_MSG_NOSIGNAL	0x4000
+#define LINUX_MSG_MORE		0x8000
 #define LINUX_MSG_WAITFORONE	0x10000
 #define LINUX_MSG_CMSG_CLOEXEC	0x40000000
 
@@ -124,40 +125,6 @@ struct l_ucred {
 	uint32_t	gid;
 };
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-
-struct linux_accept_args {
-	register_t s;
-	register_t addr;
-	register_t namelen;
-};
-
-int linux_accept(struct thread *td, struct linux_accept_args *args);
-
-/* Operations for socketcall */
-#define	LINUX_SOCKET		1
-#define	LINUX_BIND		2
-#define	LINUX_CONNECT		3
-#define	LINUX_LISTEN		4
-#define	LINUX_ACCEPT		5
-#define	LINUX_GETSOCKNAME	6
-#define	LINUX_GETPEERNAME	7
-#define	LINUX_SOCKETPAIR	8
-#define	LINUX_SEND		9
-#define	LINUX_RECV		10
-#define	LINUX_SENDTO		11
-#define	LINUX_RECVFROM		12
-#define	LINUX_SHUTDOWN		13
-#define	LINUX_SETSOCKOPT	14
-#define	LINUX_GETSOCKOPT	15
-#define	LINUX_SENDMSG		16
-#define	LINUX_RECVMSG		17
-#define	LINUX_ACCEPT4		18
-#define	LINUX_RECVMMSG		19
-#define	LINUX_SENDMMSG		20
-#define	LINUX_SENDFILE		21
-
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 /* Socket defines */
 #define	LINUX_SOL_SOCKET	1
@@ -256,6 +223,7 @@ struct l_sock_timeval {
 
 #define LINUX_SCM_RIGHTS	0x01
 #define LINUX_SCM_CREDENTIALS	0x02
+#define LINUX_SCM_PIDFD	0x04
 #define LINUX_SCM_TIMESTAMPO	LINUX_SO_TIMESTAMPO
 #define LINUX_SCM_TIMESTAMPN	LINUX_SO_TIMESTAMPN
 #define LINUX_SCM_TIMESTAMPNSO	LINUX_SO_TIMESTAMPNSO

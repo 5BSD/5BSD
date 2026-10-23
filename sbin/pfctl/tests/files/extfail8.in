@@ -1,0 +1,1 @@
+ether pass in on lo0 l3 from 192.0.2.0/24 to 2001:db8::1

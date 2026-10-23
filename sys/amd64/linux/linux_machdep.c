@@ -277,33 +277,6 @@ linux_arch_shstk(struct thread *td, l_int code, l_ulong arg)
 
 
 int
-linux_remap_file_pages(struct thread *td,
-    struct linux_remap_file_pages_args *args)
-{
-	vm_offset_t start;
-	vm_size_t size;
-	int rv;
-
-	if (args->prot != 0)
-		return (EINVAL);
-	start = trunc_page(args->start);
-	size = trunc_page(args->size);
-	if (size == 0 || start + size <= start ||
-	    args->pgoff + atop(size) < args->pgoff ||
-	    args->pgoff > (INT64_MAX >> PAGE_SHIFT))
-		return (EINVAL);
-	if (linux_range_sealed(td, start, size))
-		return (EPERM);
-	rv = vm_map_remap_file_pages(&td->td_proc->p_vmspace->vm_map,
-	    start, size, (vm_ooffset_t)args->pgoff << PAGE_SHIFT);
-	if (rv != KERN_SUCCESS)
-		return (rv == KERN_PROTECTION_FAILURE ? EACCES : EINVAL);
-	if ((args->flags & LINUX_MAP_NONBLOCK) == 0)
-		linux_mmap_populate(td, start, size, PROT_READ);
-	return (0);
-}
-
-int
 linux_arch_prctl(struct thread *td, struct linux_arch_prctl_args *args)
 {
 	unsigned long long cet[3];

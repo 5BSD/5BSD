@@ -206,6 +206,16 @@ virtual void SetUp() {
 }
 };
 
+class WriteMaxPages: public Write {
+public:
+virtual void SetUp() {
+	m_maxwrite = 65536;
+	m_maxpages = 4;
+	m_init_flags |= FUSE_MAX_PAGES;
+	Write::SetUp();
+}
+};
+
 class WriteEofDuringVnopStrategy: public Write, public WithParamInterface<int>
 {};
 
@@ -924,6 +934,27 @@ TEST_F(Write, write)
 	ASSERT_LE(0, fd) << strerror(errno);
 
 	ASSERT_EQ(bufsize, write(fd, CONTENTS, bufsize)) << strerror(errno);
+	leak(fd);
+}
+
+/* fuse(4) should not issue writes of greater size than the daemon requests */
+TEST_F(WriteMaxPages, negotiated_limit)
+{
+	char contents[32768] = {};
+	int fd;
+
+	if (m_maxbcachebuf < (int)sizeof(contents) || m_maxphys <
+	    sizeof(contents))
+		GTEST_SKIP() << "Requires a 32 KiB write buffer";
+	memset(contents, 'x', sizeof(contents));
+	expect_lookup("some_file.txt", 42, 0);
+	expect_open(42, FOPEN_DIRECT_IO, 1);
+	expect_write(42, 0, 16384, 16384, contents);
+	expect_write(42, 16384, 16384, 16384, contents + 16384);
+	fd = open("mountpoint/some_file.txt", O_WRONLY);
+	ASSERT_LE(0, fd) << strerror(errno);
+	ASSERT_EQ((ssize_t)sizeof(contents), write(fd, contents,
+	    sizeof(contents))) << strerror(errno);
 	leak(fd);
 }
 

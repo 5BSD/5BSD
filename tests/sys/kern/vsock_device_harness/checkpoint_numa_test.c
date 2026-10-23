@@ -100,6 +100,20 @@ ATF_TC_BODY(decode_failure_is_transactional, tc)
 	ATF_CHECK_EQ(domain_count, 99);
 }
 
+ATF_TC_WITHOUT_HEAD(rejects_unterminated_mapping);
+ATF_TC_BODY(rejects_unterminated_mapping, tc)
+{
+	char mapping[4 * (4 + 1)];
+	uint64_t sizes[CHECKPOINT_NUMA_MAX_DOMAINS];
+	uint16_t domains[4];
+	size_t count;
+
+	(void)tc;
+	memset(mapping, '0', sizeof(mapping));
+	ATF_CHECK_EQ(checkpoint_numa_decode("0000000100000000", mapping,
+	    nitems(domains), 4ULL << 30, sizes, &count, domains), EINVAL);
+}
+
 ATF_TC_WITHOUT_HEAD(encode_rejects_invalid_topology);
 ATF_TC_BODY(encode_rejects_invalid_topology, tc)
 {
@@ -125,6 +139,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, canonical_round_trip);
 	ATF_TP_ADD_TC(tp, rejects_malformed_and_noncanonical);
 	ATF_TP_ADD_TC(tp, decode_failure_is_transactional);
+	ATF_TP_ADD_TC(tp, rejects_unterminated_mapping);
 	ATF_TP_ADD_TC(tp, encode_rejects_invalid_topology);
 	return (atf_no_error());
 }

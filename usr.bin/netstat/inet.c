@@ -50,7 +50,6 @@
 #include <netinet/ip_icmp.h>
 #include <netinet/icmp_var.h>
 #include <netinet/igmp_var.h>
-#include <netinet/ip_divert.h>
 #include <netinet/ip_var.h>
 #include <netinet/pim_var.h>
 #include <netinet/tcp.h>
@@ -109,8 +108,6 @@ pcblist_sysctl(int proto, const char *name, char **bufp)
 	}
 	if (strncmp(name, "sdp", 3) == 0)
 		mibvar = "net.inet.sdp.pcblist";
-	else if (strncmp(name, "divert", 6) == 0)
-		mibvar = "net.inet.divert.pcblist";
 	len = 0;
 	if (sysctlbyname(mibvar, 0, &len, 0, 0) < 0) {
 		if (errno != ENOENT)
@@ -1464,36 +1461,6 @@ pim_stats(u_long off __unused, const char *name, int af1 __unused,
 	    "{N:/data register byte%s sent}\n");
 #undef p
 #undef py
-	xo_close_container(name);
-}
-
-/*
- * Dump divert(4) statistics structure.
- */
-void
-divert_stats(u_long off, const char *name, int af1 __unused, int proto __unused)
-{
-	struct divstat divstat;
-
-	if (fetch_stats("net.inet.divert.stats", off, &divstat,
-	    sizeof(divstat), kread_counters) != 0)
-		return;
-
-	xo_open_container(name);
-	xo_emit("{T:/%s}:\n", name);
-
-#define	p(f, m) if (divstat.f || sflag <= 1) \
-	xo_emit(m, (uintmax_t)divstat.f, plural(divstat.f))
-
-	p(div_diverted, "\t{:diverted-packets/%ju} "
-	    "{N:/packet%s successfully diverted to userland}\n");
-	p(div_noport, "\t{:noport-fails/%ju} "
-	    "{N:/packet%s failed to divert due to no socket bound at port}\n");
-	p(div_outbound, "\t{:outbound-packets/%ju} "
-	    "{N:/packet%s successfully re-injected as outbound}\n");
-	p(div_inbound, "\t{:inbound-packets/%ju} "
-	    "{N:/packet%s successfully re-injected as inbound}\n");
-#undef p
 	xo_close_container(name);
 }
 

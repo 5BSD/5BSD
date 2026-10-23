@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 11, 2026
+.Dd October 12, 2026
 .Dt BUILD-BSD 8
 .Os
 .Sh NAME
@@ -8,7 +8,7 @@
 .Sh SYNOPSIS
 .Nm
 .Op Cm plan
-.Cm build | stage | packages | verify | deploy | bsdinstall | media
+.Cm build | world | kernel | stage | packages | sign | verify | deploy | bsdinstall | media
 .Op Ar options
 .Nm
 .Cm status
@@ -18,7 +18,10 @@ The command is installed as
 .Nm build-bsd ;
 .Nm bsd-build
 is retained as a compatibility alias.
-Both names use the same configuration and build lock.
+Both names invoke the same compiled frontend and use the same configuration
+and build lock.
+Backend commands receive separate arguments, without shell
+expansion of configuration values.
 .Pp
 .Nm
 builds the world and selected kernel from
@@ -30,44 +33,59 @@ It invokes maintained make targets, records per-step logs, stops on failure,
 and serializes its own executions with a build lock.
 Independent manual make invocations must not overlap the same object tree.
 Build, stage, packages and verify do not install an upgrade on the host.
-Deploy requires an explicit alternate destination. No command activates a
+Deploy requires an explicit alternate destination.
+No command activates a
 boot environment or reboots the machine.
 The bsdinstall command explicitly opens the interactive disk installer; its
 disk selections can replace an existing system.
 .Pp
+World and kernel compile only the selected component.
+Sign finalizes an existing alternate root with an explicit signing key.
 The build command is an alias for packages: it compiles world and kernel
 and completes the pkgbase publication pipeline.
-Stage is a separate private VM/development operation; it compiles and installs into a new private NO_ROOT directory, runs
+Stage is a separate private VM/development operation; it compiles and installs
+into a new private NO_ROOT directory, runs
 distribution and kernel installation there, and finalizes signing.
-Packages defaults to a production world/kernel build and invokes system-packages,
+Packages defaults to a production world/kernel build and invokes
+system-packages,
 which checks production malloc and kernel/hardware identity, stages base and
 hardware separately, and publishes one combined repository.
 The repository remains
 .Pa /usr/obj/usr/src/repo ;
 base-only output does not advance latest.
 .Pp
-Plan prints the actions without building, creating directories, generating keys,
+Plan prints the actions without building, creating directories, generating
+keys,
 or publishing anything.
 Status prints a run's current or final state.
-Verify checks all system bundles and any cache in an existing signed root,
-using native capsign/elfcache tools and an explicitly trusted public key.
+Verify checks all system bundles in an existing signed root,
+using native capsign tools and an explicitly trusted public key.
 It does not compile world or kernel, install packages, or execute target code.
 Bsdinstall verifies and snapshots a completed signed pkgbase repository before
-launching the native interactive installer. It requires both public trust keys,
+launching the native interactive installer.
+It requires both public trust keys,
 a terminal, root privileges, and an installed bsdinstall supporting explicit
-repository selection and code verification. It refuses a foreign architecture
+repository selection and code verification.
+It refuses a foreign architecture
 and requires the repository to include pkg, the base set and selected kernel.
-The installer verifies signed bundles and the shared cache before boot setup.
+The installer verifies signed bundles before boot setup.
 Preparation, installer logs and recovery files remain beneath build-runs,
-including after failure. Installer creation and VM validation remain separate
+including after failure.
+Installer creation and VM validation remain separate
 from this launch operation.
-Media builds disc1.iso, memstick.img, or both from an existing built world/kernel
-and a completed signed publication. The maintained release targets check
+Media builds disc1.iso, memstick.img, or both from an existing built
+world/kernel
+and a completed signed publication.
+The maintained release targets check
 production malloc and exact live-kernel identity, preserve the complete signed
-catalogue, and embed only public trust keys. A new output directory isolates
-release staging from the standard world/kernel objects. The frontend checks
-requested artifacts and writes SHA256/SHA512 checksum files. It does not boot
-an image or launch the installer. Full image boot/install validation is still
+catalogue, and embed only public trust keys.
+A new output directory isolates
+release staging from the standard world/kernel objects.
+The frontend checks
+requested artifacts and writes SHA256/SHA512 checksum files.
+It does not boot
+an image or launch the installer.
+Full image boot/install validation is still
 required before this new path is considered release-ready.
 Logs reside under
 .Pa /usr/obj/usr/src/build-runs .
@@ -77,20 +95,37 @@ The tool does not silently resume or reuse an incomplete stage.
 .Bl -tag -width "--development-key file"
 .It Fl -root Ar directory
 Existing alternate root to check with verify, or a new destination directory
-for deploy. Deploy refuses an existing directory.
+for deploy.
+Deploy refuses an existing directory.
 .It Fl -public-key Ar file
 Trusted code-signing public key for verify, deploy, bsdinstall, or media.
 .It Fl -repository Ar directory
-Completed combined generation under /usr/obj/usr/src/repo for deploy, bsdinstall, or media.
+Completed combined generation under /usr/obj/usr/src/repo for deploy,
+bsdinstall, or media.
 A latest symlink is resolved once to select a specific generation.
 .It Fl -pkg-public-key Ar file
 Trusted package repository public key for deploy, bsdinstall, or media.
 .It Fl -bootenv Ar name
 Create a new recursive boot-environment clone for deploy instead of --root.
-The clone remains inactive. Existing names are not reused or destroyed.
+The clone remains inactive.
+Existing names are not reused or destroyed.
+.It Fl -clone-from Ar BE|BE@snapshot
+Select the source for a new boot environment.
+Defaults to the active boot
+environment.
+A fully qualified dataset beneath the selected boot-environment
+root is also accepted.
+Only the new clone is made writable.
+.It Fl -be-root Ar dataset
+Select an explicit ZFS boot-environment parent dataset, for example
+zroot/ROOT.
+Requires both --bootenv and --clone-from.
+This also permits creating a candidate in a separate test pool.
 .It Fl -config Ar file
-Read a literal key=value configuration file. Command-line options override
-file settings regardless of their position. Unknown and duplicate keys fail.
+Read a literal key=value configuration file.
+Command-line options override
+file settings regardless of their position.
+Unknown and duplicate keys fail.
 Blank lines and whole-line comments beginning with # are accepted.
 Values are literal: do not add shell quotes, expansions, or inline comments.
 The file is never sourced as shell code.
@@ -99,7 +134,8 @@ Target architecture; native defaults to the current machine.
 The make pairs are amd64/amd64, arm64/aarch64, and riscv/riscv64.
 Host signing tools remain native to the build host.
 .It Fl -jobs Ar count|auto
-Parallel compilation jobs. The default auto uses all logical CPUs.
+Parallel compilation jobs.
+The default auto uses all logical CPUs.
 .It Fl -src-conf Ar file
 World option configuration passed as SRCCONF; defaults to /etc/src.conf.
 Use /dev/null to disable that configuration file.
@@ -110,7 +146,8 @@ These two files are trusted make input, unlike the literal frontend config.
 Directory containing the selected kernel configuration, passed as KERNCONFDIR.
 .It Fl -pkg-key Ar file
 Existing unencrypted RSA private key for both base and combined repository
-catalogues. It must be private and outside the publication repository.
+catalogues.
+It must be private and outside the publication repository.
 This is independent of the Ed25519 executable-signing key.
 .It Fl -hardware-profile Ar file
 Hardware port selection for build/packages, passed as HARDWARE_PORT_LIST.
@@ -150,7 +187,8 @@ Do not distribute these test generations as production releases.
 Use WITHOUT_CLEAN=yes instead of the default clean build.
 .It Fl -media-format Ar all|iso|memstick
 Media artifacts to create; all (the default) creates both disc1.iso and
-memstick.img. Architecture selection applies to the existing target world,
+memstick.img.
+Architecture selection applies to the existing target world,
 kernel, and publication; media does not rebuild them.
 .It Fl -output Ar directory
 New output directory under /usr/obj for stage or media.
@@ -171,34 +209,54 @@ The default is /usr/obj/usr/src/signing-keys/development.pem.
 .It Fl -relaxed-signatures
 Sign the stage but omit the bundle signature-enforcement marker for testing.
 This does not disable rejection of recognized invalid executable signatures.
-.It Fl -cache
-Build the experimental shared-library cache; requires a signing mode.
-Packing libraries alone does not establish memory or startup savings.
-.It Fl -library-list Ar file
-Reviewed cache input list; requires --cache.
+.It Fl -build-backend Ar bsd-make
+Select the build adapter.
+Currently only bsd-make is implemented; unknown
+backends are rejected.
+.It Fl -format Ar text|json
+Output format for plan.
+JSON emits one request record followed by one record
+per step, including its argument vector.
+.It Fl -publish-repository Ar directory
+Final combined publication destination; defaults to /usr/obj/usr/src/repo.
+Base and hardware build staging remain under /usr/obj.
 .It Fl -ports Ar directory
 Custom ports checkout for packages.
 Defaults to PORTSDIR or /usr/obj/5BSD-ports.
 .El
 .Sh DEPLOYMENT
-Deploy verifies the signed repository and fetches authenticated packages before
-creating a target. It installs base, the selected kernel and matching hardware
+Deploy verifies the signed repository and fetches authenticated packages
+before
+creating a target.
+It installs base, the selected kernel and matching hardware
 using pkg inside the target chroot, then verifies package checksums and signed
-system bundles/cache with native capsign and elfcache.
+system bundles with native capsign.
 Private signing keys are not copied into the target.
+For boot-environment deployment, package state and system software must be
+private to the root clone.
+Separately mounted or symlinked etc, usr/local,
+var/db/pkg, and Capabilities/System paths are rejected pending an explicit
+migration design.
+Shared home/data storage is not migrated.
+The new dataset
+identity, snapshot origin, and writable mount are checked before installation.
 Root privileges and a native-architecture host are required.
 Package scripts run inside the chroot using the host kernel.
-Work logs and failed destinations are retained. An unmount failure never causes
+Work logs and failed destinations are retained.
+An unmount failure never causes
 recursive cleanup of a mounted boot environment.
 The command reports completion only after successful verification and unmount.
 This path requires signed package and executable inputs; unsigned deployment
 support and full VM deployment validation remain outstanding.
 .Sh CONFIGURATION
 The sample file is /usr/share/examples/bsd-build/bsd-build.conf.sample.
-Supported keys are arch, jobs, kernel, kernel_dir, src_conf, make_conf, signing,
-key, development_key, pkg_key, ports, library_list, output, root, public_key, repository, pkg_public_key, bootenv, production,
-incremental, cache, relaxed_signatures, build_profile, and allow_debug_publication.
-Boolean values are yes or no. Signing values match --signing.
+Every long option except config has a corresponding configuration key;
+replace hyphens with underscores (for example clone_from or pkg_public_key).
+Boolean values are yes or no.
+Options remain subject to action-specific
+validation even when supplied by the configuration file.
+Boolean values are yes or no.
+Signing values match --signing.
 No file is loaded implicitly.
 .Sh IMPLEMENTATION NOTES
 Signing tools are compiled natively in the run directory before signing work;
@@ -232,7 +290,7 @@ permission to execute installation steps.
 The default format remains text.
 .Sh EXAMPLES
 .Bd -literal -offset indent
-build-bsd plan stage --signing development --cache
+build-bsd plan stage --signing development
 build-bsd stage --signing development
 build-bsd plan build --config /secure/bsd-build.conf
 build-bsd build --incremental --jobs 8 --kernel GENERIC-NODEBUG
@@ -242,21 +300,6 @@ build-bsd status /usr/obj/usr/src/build-runs/RUN
 .Sh SEE ALSO
 .Xr build 7 ,
 .Xr capsign 8 ,
-.Xr elfcache 8
-
-.Sh OPTIONAL CACHE LAYOUT
-The
-.Fl -cache-layout
-option (configuration key
-.Va cache_layout=yes )
-adds signed relative-layout artifacts to a cache-enabled package or stage build.
-It requires
-.Fl -cache ,
-signed or development signing, and the amd64 target.
-The seed executable is signed and verified as part of staging.
-This option does not enroll services in a shared address domain or enable
-runtime sharing; those choices require explicit SwitchBoard policy.
-
 .Sh PUBLICATION DESTINATION
 .Fl -publish-repository Ar directory
 (configuration key
@@ -271,5 +314,6 @@ Base and hardware staging remain under
 .Pa /usr/obj .
 Only successful complete publication advances the destination's per-ABI
 .Pa latest
-pointer. Creating or writing the destination requires normal filesystem
+pointer.
+Creating or writing the destination requires normal filesystem
 permissions; the tool does not relocate it on permission failure.

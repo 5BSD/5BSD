@@ -283,7 +283,6 @@ valid_type(int type)
 	switch (type) {
 	case IFT_ETHER:
 	case IFT_FDDI:
-	case IFT_IEEE1394:
 	case IFT_INFINIBAND:
 	case IFT_ISO88023:
 	case IFT_ISO88024:
@@ -671,9 +670,6 @@ print_entry(struct sockaddr_dl *sdl,
 		break;
 	case IFT_L2VLAN:
 		xo_emit(" [{:type/vlan}]");
-		break;
-	case IFT_IEEE1394:
-		xo_emit(" [{:type/firewire}]");
 		break;
 	case IFT_BRIDGE:
 		xo_emit(" [{:type/bridge}]");

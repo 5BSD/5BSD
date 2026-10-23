@@ -16,7 +16,7 @@ perf_event_body()
 	    "$(atf_get_srcdir)/linux_perf_event.c"
 	atf_check -s exit:0 -o empty -e empty brandelf -t Linux linux_perf_event
 	atf_check -s exit:0 -o save:perf-cases.txt -e empty ./linux_perf_event -l
-	[ "$(wc -l <perf-cases.txt | tr -d ' ')" -eq 13 ] ||
+	[ "$(wc -l <perf-cases.txt | tr -d ' ')" -eq 14 ] ||
 	    atf_fail "missing perf_event cases"
 	while read -r name; do
 		timeout 30 ./linux_perf_event "$name" 2>stderr.txt

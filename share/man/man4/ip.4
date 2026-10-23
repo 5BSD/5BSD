@@ -176,6 +176,32 @@ cmsg_type = IP_ORIGDSTADDR
 .Ed
 .Pp
 If the
+.Dv IP_RECVDSTPORT
+option
+.Pq from Ox
+is enabled on a
+.Dv SOCK_DGRAM
+socket,
+the
+.Xr recvmsg 2
+call will return the destination port of a
+.Tn UDP
+datagram, for example one redirected to the socket by a
+.Xr pf 4
+.Cm divert-to
+rule.
+The ancillary data is a
+.Vt u_int16_t
+holding the port in network byte order, with these
+.Vt cmsghdr
+fields:
+.Bd -literal
+cmsg_len = CMSG_LEN(sizeof(u_int16_t))
+cmsg_level = IPPROTO_IP
+cmsg_type = IP_RECVDSTPORT
+.Ed
+.Pp
+If the
 .Dv IP_RECVDSTADDR
 option is enabled on a
 .Dv SOCK_DGRAM
@@ -304,8 +330,16 @@ socket, one can
 .Xr bind 2
 to any address, even one not bound to any available network interface in the
 system.
-This functionality (in conjunction with special firewall rules) can be used for
-implementing a transparent proxy.
+This functionality (in conjunction with
+.Xr pf 4
+.Cm divert-to
+or
+.Cm rdr-to
+rules) can be used for implementing a transparent proxy.
+The socket-level option
+.Dv SO_BINDANY
+.Pq see Xr getsockopt 2
+has the same effect.
 The
 .Dv PRIV_NETINET_BINDANY
 privilege is needed to set this option.
@@ -912,7 +946,8 @@ field was not equal to the length of the datagram written to the socket.
 .Xr igmp 4 ,
 .Xr inet 4 ,
 .Xr intro 4 ,
-.Xr multicast 4
+.Xr multicast 4 ,
+.Xr pf 4
 .Rs
 .%A D. Thaler
 .%A B. Fenner

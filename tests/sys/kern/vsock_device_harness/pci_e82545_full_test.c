@@ -2218,6 +2218,22 @@ ATF_TC_BODY(tx_final_descriptor_too_short, tc)
 	dev_free(sc);
 }
 
+ATF_TC_WITHOUT_HEAD(tx_empty_checksum_descriptor);
+ATF_TC_BODY(tx_empty_checksum_descriptor, tc)
+{
+	struct e82545_softc *sc = dev_new();
+
+	tx_setup(sc, 8);
+	txd_raw(GPA_TX_RING, 0, GPA_TX_BUF(0),
+	    SPEC_TXD_CMD_EOP | SPEC_TXD_CMD_RS | SPEC_TXD_CMD_IC |
+	    SPEC_TXD_CMD_IFCS, 0);
+	reg_write(sc, SPEC_TDT, 1);
+	tx_run_locked(sc);
+	ATF_CHECK_EQ(0, g_txq_count);
+	ATF_CHECK_EQ(sc->esc_TDT, sc->esc_TDH);
+	dev_free(sc);
+}
+
 ATF_TC_WITHOUT_HEAD(tx_udp_tso);
 ATF_TC_BODY(tx_udp_tso, tc)
 {
@@ -2909,6 +2925,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, tx_tcp_checksum_offload);
 	ATF_TP_ADD_TC(tp, tx_too_many_descriptors);
 	ATF_TP_ADD_TC(tp, tx_final_descriptor_too_short);
+	ATF_TP_ADD_TC(tp, tx_empty_checksum_descriptor);
 	ATF_TP_ADD_TC(tp, tx_udp_tso);
 	ATF_TP_ADD_TC(tp, tx_ipv6_tcp_tso);
 	ATF_TP_ADD_TC(tp, tx_tso_hdrlen_too_large);

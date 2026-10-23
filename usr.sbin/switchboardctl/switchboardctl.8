@@ -11,7 +11,7 @@
 .Nm
 .Cm status | services | reload | bundles
 .Nm
-.Cm start | stop | restart | cache-status Ar label
+.Cm start | stop | restart Ar label
 .Nm
 .Cm enable | disable Ar bundle
 .Nm
@@ -32,16 +32,6 @@ is the administrative client for
 .Bl -tag -width "verify path.cap ..."
 .It Cm status
 Show daemon and service state.
-.It Cm cache-status Ar label
-Report executable mappings of the system library cache in a supervised unit.
-SwitchBoard queries its child using existing launcher protection authority;
-the caller receives counters, not addresses or debug authority.
-The selected generation is identified by device and inode, so a renamed cache
-is still recognized and an unrelated file with the same name is excluded.
-The loader's read-only index mapping is not counted.
-Virtual mapped bytes are not resident memory or measured savings.
-An unavailable process or denied observation is an error, not a zero count.
-This command requires an attributed control grant, like status.
 .It Cm services
 List loaded service runtimes.
 Each running unit also shows
@@ -267,7 +257,7 @@ An unqualified service label selects a global service first, then the calling
 user's personal service.
 Use
 .Dq user:UID:label
-with start, stop, restart or cache-status to select a personal service
+with start, stop or restart to select a personal service
 explicitly.
 Only its owner or a caller with the existing operator grant may manage it;
 a numeric UID of zero alone does not confer that grant.

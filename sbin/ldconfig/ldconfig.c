@@ -57,9 +57,9 @@ main(int argc, char **argv)
 {
 	const char *hints_file;
 	int c;
-	bool is_32, justread, merge, rescan, force_be;
+	bool justread, merge, rescan, force_be;
 
-	force_be = is_32 = justread = merge = rescan = false;
+	force_be = justread = merge = rescan = false;
 
 	while (argc > 1) {
 		if (strcmp(argv[1], "-aout") == 0) {
@@ -67,19 +67,12 @@ main(int argc, char **argv)
 		} else if (strcmp(argv[1], "-elf") == 0) {
 			argc--;
 			argv++;
-		} else if (strcmp(argv[1], "-32") == 0) {
-			is_32 = true;
-			argc--;
-			argv++;
 		} else {
 			break;
 		}
 	}
 
-	if (is_32)
-		hints_file = __PATH_ELF_HINTS("32");
-	else
-		hints_file = _PATH_ELF_HINTS;
+	hints_file = _PATH_ELF_HINTS;
 	while((c = getopt(argc, argv, "BRf:imrsv")) != -1) {
 		switch (c) {
 		case 'B':
@@ -127,7 +120,7 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: ldconfig [-32] [-BRimr] [-f hints_file]"
+	    "usage: ldconfig [-BRimr] [-f hints_file]"
 	    "[directory | file ...]\n");
 	exit(1);
 }

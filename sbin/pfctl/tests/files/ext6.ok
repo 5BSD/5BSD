@@ -1,0 +1,7 @@
+pass in on lo0 inet from 192.168.10.0/24 to any flags S/SA dnqueue(12, 21)
+pass in on lo0 inet proto tcp from 192.168.10.0/24 to any port = 22 flags S/SA dnqueue(11, 21)
+pass in on lo0 inet proto tcp from 192.168.10.0/24 to any port = 53 flags S/SA dnqueue(11, 21)
+pass in on lo0 inet proto udp from 192.168.10.0/24 to any port = 53 dnqueue(11, 21)
+pass in on lo0 inet from 192.168.10.50 to any flags S/SA dnqueue(13, 21)
+pass in on lo0 inet from 192.168.20.0/24 to any flags S/SA dnpipe 1
+pass in on lo0 inet proto udp from 192.168.20.0/24 to any dnpipe 2

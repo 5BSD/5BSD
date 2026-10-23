@@ -59,6 +59,15 @@ loaded_claim_and_denial_body()
 	done
 	atf_check -s exit:0 -e empty -o inline:'direct test_module\n' \
 	    sh -c '. ./seams.sh; load_kld test_module'
+	# No capability plane, or a jail: -b falls back to the plain path.
+	atf_check -s exit:0 -e empty -o inline:'direct test_module\n' \
+	    env PLANE=NO sh -c '. ./seams.sh; load_kld -b test_module'
+	atf_check -s exit:0 -e empty -o empty \
+	    env LOADED_STATUS=0 PLANE=NO sh -c \
+	    '. ./seams.sh; load_kld -b test_module'
+	atf_check -s exit:0 -e empty -o inline:'direct test_module\n' \
+	    sh -c '. ./seams.sh; check_jail() { return 0; };
+	    load_kld -b test_module'
 }
 
 atf_test_case devmatch_broker

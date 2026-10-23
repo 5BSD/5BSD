@@ -1077,15 +1077,6 @@ ENTRY(fork_trampoline)
  * included.
  */
 
-#ifdef COMPAT_FREEBSD32
-	.data
-	.p2align 4
-	.text
-	SUPERALIGN_TEXT
-
-#include <amd64/ia32/ia32_exception.S>
-#endif
-
 	.data
 	.p2align 4
 	.text

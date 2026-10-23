@@ -114,7 +114,12 @@ ht_add(struct ht *h, uint32_t hash, void *value)
 		}
 	}
 
-	item = l9p_calloc(1, sizeof(struct ht_item));
+	item = calloc(1, sizeof(struct ht_item));
+	if (item == NULL) {
+		ht_unlock(h);
+		errno = ENOMEM;
+		return (-1);
+	}
 	item->hti_hash = hash;
 	item->hti_data = value;
 	TAILQ_INSERT_TAIL(&entry->hte_items, item, hti_link);

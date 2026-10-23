@@ -62,7 +62,9 @@
 #define	TIOCGETD	_IOR('t', 26, int)	/* get line discipline */
 #define	TIOCSETD	_IOW('t', 27, int)	/* set line discipline */
 #define	TIOCPTMASTER	 _IO('t', 28)		/* pts master validation */
-						/* 29-85 unused */
+#define	TIOCSPTLCK	_IOW('t', 29, int)	/* lock pts slave */
+#define	TIOCGPTLCK	_IOR('t', 30, int)	/* get pts slave lock */
+						/* 31-85 unused */
 #define	TIOCGDRAINWAIT	_IOR('t', 86, int)	/* get ttywait timeout */
 #define	TIOCSDRAINWAIT	_IOW('t', 87, int)	/* set ttywait timeout */
 						/* 88 unused */

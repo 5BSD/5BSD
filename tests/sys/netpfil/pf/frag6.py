@@ -18,7 +18,8 @@ class TestFrag6(VnetTestTemplate):
         ifname = vnet.iface_alias_map["if1"].name
         ToolsHelper.print_output("/sbin/pfctl -e")
         ToolsHelper.pf_rules([
-            "scrub fragment reassemble min-ttl 10",
+            "set reassemble yes",
+            "match scrub (min-ttl 10)",
             "pass",
             "block in inet6 proto icmp6 icmp6-type echoreq",
         ])
@@ -98,9 +99,10 @@ class TestFrag6HopHyHop(VnetTestTemplate):
         ToolsHelper.print_output("/sbin/sysctl net.inet6.ip6.forwarding=1")
         ToolsHelper.print_output("/usr/sbin/ndp -s 2001:db8:1::1 00:01:02:03:04:05")
         ToolsHelper.print_output("/sbin/pfctl -e")
-        ToolsHelper.print_output("/sbin/pfctl -x loud")
+        ToolsHelper.print_output("/sbin/pfctl -x debug")
         ToolsHelper.pf_rules([
-            "scrub fragment reassemble min-ttl 10",
+            "set reassemble yes",
+            "match scrub (min-ttl 10)",
             "pass allow-opts",
         ])
 
@@ -184,9 +186,9 @@ class TestFrag6_Overlap(VnetTestTemplate):
 
     def vnet2_handler(self, vnet):
         ToolsHelper.print_output("/sbin/pfctl -e")
-        ToolsHelper.print_output("/sbin/pfctl -x loud")
+        ToolsHelper.print_output("/sbin/pfctl -x debug")
         ToolsHelper.pf_rules([
-            "scrub fragment reassemble",
+            "set reassemble yes",
             "pass",
         ])
 
@@ -232,10 +234,10 @@ class TestFrag6_RouteTo(VnetTestTemplate):
     def vnet2_handler(self, vnet):
         if2name = vnet.iface_alias_map["if2"].name
         ToolsHelper.print_output("/sbin/pfctl -e")
-        ToolsHelper.print_output("/sbin/pfctl -x loud")
+        ToolsHelper.print_output("/sbin/pfctl -x debug")
         ToolsHelper.pf_rules([
-            "scrub fragment reassemble",
-            "pass in route-to (%s 2001:db8:1::2) from 2001:db8::1 to 2001:db8:666::1" % if2name,
+            "set reassemble yes",
+            "pass in from 2001:db8::1 to 2001:db8:666::1 route-to 2001:db8:1::2",
         ])
 
         ToolsHelper.print_output("/sbin/sysctl net.inet6.ip6.forwarding=1")

@@ -368,7 +368,7 @@ toe_syncache_expand(struct in_conninfo *inc, struct tcpopt *to,
 
 	NET_EPOCH_ASSERT();
 
-	return (syncache_expand(inc, to, th, lsop, NULL, htons(0)));
+	return (syncache_expand(inc, to, th, lsop, NULL, -1, htons(0)));
 }
 
 /*

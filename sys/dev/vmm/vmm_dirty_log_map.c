@@ -34,7 +34,8 @@ vmm_dirty_log_map_validate(const struct vmm_dirty_log_map_entry *entries,
 		return (E2BIG);
 	previous_last = 0;
 	for (i = 0; i < nentries; i++) {
-		if ((entries[i].flags & ~VMM_DIRTY_LOG_MAP_F_COLLECTABLE) != 0 ||
+		if ((entries[i].flags & ~(VMM_DIRTY_LOG_MAP_F_COLLECTABLE |
+		    VMM_DIRTY_LOG_MAP_F_READONLY_ROM)) != 0 ||
 		    vmm_dirty_log_range_last(&entries[i].range, &last) != 0)
 			return (EINVAL);
 		if (i != 0 && entries[i].range.gpa <= previous_last)
@@ -74,4 +75,30 @@ vmm_dirty_log_map_covers(const struct vmm_dirty_log_map_entry *entries,
 		next = entry_last + 1;
 	}
 	return (EFAULT);
+}
+
+int
+vmm_dirty_log_map_sparse(const struct vmm_dirty_log_map_entry *entries,
+    size_t nentries, const struct vmm_dirty_log_range *range)
+{
+	uint64_t entry_last, requested_last;
+	int error;
+
+	error = vmm_dirty_log_map_validate(entries, nentries);
+	if (error != 0)
+		return (error);
+	if (vmm_dirty_log_range_last(range, &requested_last) != 0)
+		return (EINVAL);
+	for (size_t i = 0; i < nentries; i++) {
+		if (vmm_dirty_log_range_last(&entries[i].range,
+		    &entry_last) != 0)
+			return (EPROTO);
+		if (entry_last < range->gpa ||
+		    entries[i].range.gpa > requested_last)
+			continue;
+		if ((entries[i].flags & (VMM_DIRTY_LOG_MAP_F_COLLECTABLE |
+		    VMM_DIRTY_LOG_MAP_F_READONLY_ROM)) == 0)
+			return (EOPNOTSUPP);
+	}
+	return (0);
 }

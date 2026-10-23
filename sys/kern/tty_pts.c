@@ -58,6 +58,7 @@
 #include <sys/syscall.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
+#include <sys/sysent.h>
 #include <sys/sysproto.h>
 #include <sys/systm.h>
 #include <sys/tty.h>
@@ -91,6 +92,7 @@ struct pts_softc {
 	unsigned int	pts_flags;	/* (t) Device flags. */
 #define	PTS_PKT		0x1	/* Packet mode. */
 #define	PTS_FINISHED	0x2	/* Return errors on read()/write(). */
+#define	PTS_LOCKED	0x4	/* Linux PTY slave is locked. */
 	char		pts_pkt;	/* (t) Unread packet mode data. */
 
 	struct cv	pts_inwait;	/* (t) Blocking write() on master. */
@@ -360,9 +362,6 @@ ptsdev_ioctl(struct file *fp, u_long cmd, void *data,
 		tty_unlock(tp);
 		return (0);
 	case FIODGNAME:
-#ifdef COMPAT_FREEBSD32
-	case FIODGNAME_32:
-#endif
 	{
 		struct fiodgname_arg *fgn;
 		const char *p;
@@ -436,6 +435,19 @@ ptsdev_ioctl(struct file *fp, u_long cmd, void *data,
 	case TIOCPTMASTER:
 		/* Yes, we are a pseudo-terminal master. */
 		SDT_PROBE1(pts, , , tiocptmaster, psc->pts_unit);
+		return (0);
+	case TIOCSPTLCK:
+		tty_lock(tp);
+		if (*(int *)data != 0)
+			psc->pts_flags |= PTS_LOCKED;
+		else
+			psc->pts_flags &= ~PTS_LOCKED;
+		tty_unlock(tp);
+		return (0);
+	case TIOCGPTLCK:
+		tty_lock(tp);
+		*(int *)data = (psc->pts_flags & PTS_LOCKED) != 0;
+		tty_unlock(tp);
 		return (0);
 	case TIOCSIG:
 		/* Signal the foreground process group. */
@@ -732,6 +744,14 @@ ptsdrv_inwakeup(struct tty *tp)
 }
 
 static int
+ptsdrv_check_open(struct tty *tp)
+{
+	struct pts_softc *psc = tty_softc(tp);
+
+	return ((psc->pts_flags & PTS_LOCKED) != 0 ? EIO : 0);
+}
+
+static int
 ptsdrv_open(struct tty *tp)
 {
 	struct pts_softc *psc = tty_softc(tp);
@@ -814,6 +834,7 @@ static struct ttydevsw pts_class = {
 	.tsw_outwakeup	= ptsdrv_outwakeup,
 	.tsw_inwakeup	= ptsdrv_inwakeup,
 	.tsw_open	= ptsdrv_open,
+	.tsw_check_open = ptsdrv_check_open,
 	.tsw_close	= ptsdrv_close,
 	.tsw_pktnotify	= ptsdrv_pktnotify,
 	.tsw_free	= ptsdrv_free,
@@ -866,6 +887,8 @@ pts_alloc(int fflags, struct thread *td, struct file *fp)
 	cv_init(&psc->pts_outwait, "ptsout");
 
 	psc->pts_unit = unit;
+	if (SV_PROC_ABI(p) == SV_ABI_LINUX)
+		psc->pts_flags |= PTS_LOCKED;
 	psc->pts_cred = crhold(cred);
 
 	tp = tty_alloc(&pts_class, psc);

@@ -25,6 +25,8 @@
 # SUCH DAMAGE.
 
 . $(atf_get_srcdir)/../common/vnet.subr
+# 5BSD: as OpenBSD, an interface's first IPv6 address goes through DAD
+# (UPDATING); these tests use their addresses at once, so skip it.
 
 atf_test_case "ether_ipv4" "cleanup"
 ether_ipv4_head()
@@ -65,11 +67,11 @@ ether_ipv4_body()
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 inet ${v4tunnel1}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest2 geneve1 inet ${v4tunnel2}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o ignore jexec genevetest1 ping -nc 1 -t 1 $v4tunnel2
 	atf_check -s exit:0 -o ignore jexec genevetest2 ping -nc 1 -t 1 $v4tunnel1
@@ -108,8 +110,8 @@ ether_ipv6_body()
 	vnet_mkjail genevetest1 ${epair}a
 	vnet_mkjail genevetest2 ${epair}b
 
-	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} up
-	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} up
+	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} no_dad up
+	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} no_dad up
 
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 create genevemode l2 debug \
@@ -121,11 +123,11 @@ ether_ipv6_body()
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 inet ${v4tunnel1}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest2 geneve1 inet ${v4tunnel2}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o ignore jexec genevetest1 ping -nc 1 -t 1 $v4tunnel2
 	atf_check -s exit:0 -o ignore jexec genevetest2 ping -nc 1 -t 1 $v4tunnel1
@@ -177,11 +179,11 @@ inherit_ipv4_body()
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 inet ${v4tunnel1}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest2 geneve1 inet ${v4tunnel2}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o ignore jexec genevetest1 ping -nc 1 -t 1 $v4tunnel2
 	atf_check -s exit:0 -o ignore jexec genevetest2 ping -nc 1 -t 1 $v4tunnel1
@@ -220,8 +222,8 @@ inherit_ipv6_body()
 	vnet_mkjail genevetest1 ${epair}a
 	vnet_mkjail genevetest2 ${epair}b
 
-	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} up
-	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} up
+	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} no_dad up
+	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} no_dad up
 
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 create genevemode l3 debug \
@@ -233,11 +235,11 @@ inherit_ipv6_body()
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 inet ${v4tunnel1}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest2 geneve1 inet ${v4tunnel2}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o ignore jexec genevetest1 ping -nc 1 -t 1 $v4tunnel2
 	atf_check -s exit:0 -o ignore jexec genevetest2 ping -nc 1 -t 1 $v4tunnel1
@@ -274,8 +276,8 @@ ether_ipv6_blind_options_body()
 	vnet_mkjail genevetest1 ${epair}a
 	vnet_mkjail genevetest2 ${epair}b
 
-	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} up
-	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} up
+	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} no_dad up
+	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} no_dad up
 
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 create genevemode l2 debug \
@@ -285,9 +287,9 @@ ether_ipv6_blind_options_body()
 	    geneveid $vni1 geneveremote ${endpoint1} genevelocal ${endpoint2} up
 
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o ignore jexec genevetest1 ping -nc 1 -t 1 $v6tunnel2
 
@@ -355,8 +357,8 @@ ether_ipv6_external_body()
 	vnet_mkjail genevetest1 ${epair}a
 	vnet_mkjail genevetest2 ${epair}b
 
-	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} up
-	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} up
+	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} no_dad up
+	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} no_dad up
 
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 create genevemode l2 debug \
@@ -366,9 +368,9 @@ ether_ipv6_external_body()
 	    geneveid $vni1 geneveremote ${endpoint1} genevelocal ${endpoint2} up
 
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o ignore jexec genevetest1 ping -nc 1 -t 1 $v6tunnel2
 
@@ -430,11 +432,11 @@ ether_ipv4_multicast_body()
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 inet ${v4tunnel1}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest2 geneve1 inet ${v4tunnel2}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o match:"group 239.0.0.1" jexec genevetest1 ifmcstat -i ${epair}a -f inet
 	atf_check -s exit:0 -o match:"group 239.0.0.1" jexec genevetest2 ifmcstat -i ${epair}b -f inet
@@ -477,8 +479,8 @@ ether_ipv6_multicast_body()
 	vnet_mkjail genevetest1 ${epair}a
 	vnet_mkjail genevetest2 ${epair}b
 
-	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} up
-	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} up
+	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} no_dad up
+	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} no_dad up
 
 	# manually add the multicast routes to epairs
 	route -j genevetest1 -n6 add -net ff08::db8:0:1/96 -interface ${epair}a
@@ -496,11 +498,11 @@ ether_ipv6_multicast_body()
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 inet ${v4tunnel1}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest2 geneve1 inet ${v4tunnel2}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o ignore jexec genevetest1 ping -nc 1 -t 1 $v4tunnel2
 	atf_check -s exit:0 -o ignore jexec genevetest1 ping -nc 1 -t 1 $v6tunnel2
@@ -557,11 +559,11 @@ ether_ipv4_multicast_without_dev_body()
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 inet ${v4tunnel1}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest2 geneve1 inet ${v4tunnel2}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o match:"group 239.0.0.1" jexec genevetest1 ifmcstat -i ${epair}a -f inet
 	atf_check -s exit:0 -o match:"group 239.0.0.1" jexec genevetest2 ifmcstat -i ${epair}b -f inet
@@ -606,8 +608,8 @@ ether_ipv6_multicast_without_dev_body()
 	vnet_mkjail genevetest1 ${epair}a
 	vnet_mkjail genevetest2 ${epair}b
 
-	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} up
-	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} up
+	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} no_dad up
+	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} no_dad up
 
 	# manually add the multicast routes to epairs
 	route -j genevetest1 -n6 add -net ff08::db8:0:1/96 -interface ${epair}a
@@ -623,11 +625,11 @@ ether_ipv6_multicast_without_dev_body()
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 inet ${v4tunnel1}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest2 geneve1 inet ${v4tunnel2}/24
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o ignore jexec genevetest1 ping -nc 1 -t 1 $v4tunnel2
 	atf_check -s exit:0 -o ignore jexec genevetest1 ping -nc 1 -t 1 $v6tunnel2
@@ -687,11 +689,11 @@ inherit_ipv4_multicast_body()
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 inet ${v4tunnel1}/30
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest2 geneve1 inet ${v4tunnel2}/30
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o ignore sysctl -j genevetest1 net.inet.icmp.bmcastecho=1
 	atf_check -s exit:0 -o ignore sysctl -j genevetest2 net.inet.icmp.bmcastecho=1
@@ -737,8 +739,8 @@ inherit_ipv6_multicast_body()
 	vnet_mkjail genevetest1 ${epair}a
 	vnet_mkjail genevetest2 ${epair}b
 
-	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} up
-	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} up
+	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} no_dad up
+	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} no_dad up
 
 	# manually add the multicast routes to epairs
 	route -j genevetest1 -n6 add -net ff08::db8:0:1/96 -interface ${epair}a
@@ -756,11 +758,11 @@ inherit_ipv6_multicast_body()
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 inet ${v4tunnel1}/30
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest2 geneve1 inet ${v4tunnel2}/30
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o ignore sysctl -j genevetest1 net.inet.icmp.bmcastecho=1
 	atf_check -s exit:0 -o ignore sysctl -j genevetest2 net.inet.icmp.bmcastecho=1
@@ -820,11 +822,11 @@ inherit_ipv4_multicast_without_dev_body()
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 inet ${v4tunnel1}/30
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest2 geneve1 inet ${v4tunnel2}/30
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o ignore sysctl -j genevetest1 net.inet.icmp.bmcastecho=1
 	atf_check -s exit:0 -o ignore sysctl -j genevetest2 net.inet.icmp.bmcastecho=1
@@ -872,8 +874,8 @@ inherit_ipv6_multicast_without_dev_body()
 	vnet_mkjail genevetest1 ${epair}a
 	vnet_mkjail genevetest2 ${epair}b
 
-	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} up
-	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} up
+	ifconfig -j genevetest1 ${epair}a inet6 ${endpoint1} no_dad up
+	ifconfig -j genevetest2 ${epair}b inet6 ${endpoint2} no_dad up
 
 	# manually add the multicast routes to epairs
 	route -j genevetest1 -n6 add -net ff08::db8:0:1/96 -interface ${epair}a
@@ -889,11 +891,11 @@ inherit_ipv6_multicast_without_dev_body()
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest1 geneve1 inet ${v4tunnel1}/30
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1}
+	    ifconfig -j genevetest1 geneve1 inet6 ${v6tunnel1} no_dad
 	atf_check -s exit:0 -o ignore \
 	    ifconfig -j genevetest2 geneve1 inet ${v4tunnel2}/30
 	atf_check -s exit:0 -o ignore \
-	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2}
+	    ifconfig -j genevetest2 geneve1 inet6 ${v6tunnel2} no_dad
 
 	atf_check -s exit:0 -o ignore sysctl -j genevetest1 net.inet.icmp.bmcastecho=1
 	atf_check -s exit:0 -o ignore sysctl -j genevetest2 net.inet.icmp.bmcastecho=1

@@ -89,7 +89,7 @@ set_tos_v4_head()
 set_tos_v4_body()
 {
 	setup_router_dummy_ipv4
-	pft_set_rules router "pass on ${epair_tester}b set ( tos 0x42 )"
+	pft_set_rules router "pass on ${epair_tester}b set tos 0x42"
 	ping_dummy_check_request exit:0 --send-tc=66 --expect-tc=66
 }
 
@@ -110,7 +110,7 @@ set_tos_v6_head()
 set_tos_v6_body()
 {
 	setup_router_dummy_ipv4
-	pft_set_rules router "pass on ${epair_tester}b set ( tos 0x42 )"
+	pft_set_rules router "pass on ${epair_tester}b set tos 0x42"
 	ping_dummy_check_request exit:0 --ping-type=tcpsyn --send-tc=66 --expect-tc=66
 }
 

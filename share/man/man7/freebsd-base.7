@@ -65,25 +65,21 @@ To allow customisation of the installed system, each package is split
 into several subpackages which contain different components of the
 package.
 For the package
-.Sy FreeBSD-foo ,
+.Sy 5BSD-foo ,
 the following subpackages may be available:
 .Pp
-.Bl -tag -width "FreeBSD-foo-dev-lib32" -compact
+.Bl -tag -width "5BSD-foo-dev" -compact
 .It Sy "Package name"
 .Sy "Description"
-.It FreeBSD-foo
+.It 5BSD-foo
 Base files for the package (typically executables)
-.It FreeBSD-foo-lib
+.It 5BSD-foo-lib
 Native runtime libraries
-.It FreeBSD-foo-lib32
-32-bit compatibility runtime libraries
-.It FreeBSD-foo-dev
+.It 5BSD-foo-dev
 Development files (headers and static libraries)
-.It FreeBSD-foo-dev-lib32
-32-bit development files
-.It FreeBSD-foo-dbg
+.It 5BSD-foo-dbg
 Debugging symbols
-.It FreeBSD-foo-man
+.It 5BSD-foo-man
 Manual pages.
 Manual pages are only packaged separately if the
 .Sy WITH_MANSPLITPKG
@@ -145,10 +141,6 @@ for systems running in a
 environment.
 This set excludes system functionality which typically does not work
 or is not useful in a jail.
-.It lib32
-32-compatibility libraries, for running 32-bit applications on a
-64-bit host system.
-This set includes both runtime libraries and development files.
 .It base
 The complete base system, excluding tests, the system source code,
 and debugging symbols.

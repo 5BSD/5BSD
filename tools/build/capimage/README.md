@@ -17,28 +17,16 @@ unloaded byte afterwards invalidates the signature.
 
 `sign-stage.sh` finalizes a private NO_ROOT stage. It signs every system unit
 program, verifies them, seals each bundle inventory, and provisions the public key.
-The optional `-c` flag also builds and verifies a signed system library cache. It appends the
-new files to METALOG with package tags. It never copies the private key into
-the stage. `-e` also provisions the strict-signature enforcement marker.
-On any error, discard the incomplete private stage. The script refuses
-already sealed bundles, existing cache outputs, and an existing enforcement
-marker. Before modifying programs, it rejects symlinked staging ancestors,
-bundle entries, metadata, and output paths, and rejects a private key inside
-the stage. Keep the private staging tree exclusive to the build while signing;
-these checks do not make a concurrently modified tree safe.
+
 
 ```sh
-CAPSIGN=/path/to/native/capsign ELFCACHE=/path/to/native/elfcache \
-  sh tools/build/capimage/sign-stage.sh -c -e \
+CAPSIGN=/path/to/native/capsign \
+  sh tools/build/capimage/sign-stage.sh -e \
   -r /usr/obj/usr/src/private-stage -k /secure/release-private.pem
 ```
 
 Package staging supports the same operation through `CAPIMAGE_SIGNING_KEY`,
-`CAPSIGN_HOST`, and optionally `ELFCACHE_HOST`. Set the key and signing tool
-when invoking the maintained package workflow. Set `CAPIMAGE_BUILD_CACHE=yes`
-and `ELFCACHE_HOST` explicitly to include the experimental cache.
-`CAPIMAGE_CACHE_LIST` selects a reviewed library list; the standalone script
-accepts `-c -l library-list` (or `ELFCACHE_LIST`). The host tools must be native to the signing machine;
+`CAPSIGN_HOST`. The host tools must be native to the signing machine;
 cross-built target programs are not host tools. Package signing and combined
 repository publication remain separate steps. This hook does not advance
 `latest`, install an upgrade, or reboot anything.
@@ -52,7 +40,7 @@ workflow automatically, including through `system-packages`.
 
 - `CAPIMAGE_SIGNING_MODE=unsigned` retains unsigned development programs and
   external unit manifests. It needs no key or native signing tools and does not
-  enable the shared cache. It refuses a previously finalized signed stage.
+  finalize a signed stage. It refuses a previously finalized signed stage.
 - `CAPIMAGE_SIGNING_MODE=signed CAPIMAGE_SIGNING_KEY=/secure/release.pem`
   uses an existing Ed25519 key. Missing keys are errors; no replacement identity
   is generated. The key and its containing directory must have private/safe
@@ -74,9 +62,7 @@ signing; changing this setting does not unsign existing binaries.
 Only public keys enter the image and package metadata. Private keys remain on
 the build machine, outside the install/repository trees. Executable signing keys
 are distinct from package-repository signing keys; these options do not replace
-repository authentication. `CAPIMAGE_BUILD_CACHE=yes` requires signed or
-development mode and remains experimental.
-
+repository authentication.
 Examples after staging a fresh generation:
 
 ```sh
@@ -112,9 +98,7 @@ allow execution, including mappings initially created without execute access.
 Verification and acquisition of a vnode text pin occur in one locked interval.
 An internal mapping owner retains that pin and the original open description
 through descriptor closure, fork, partial unmap, and final unmap. Failed
-insertions release the temporary owner. Cache descriptors already carry their
-own immutable backing lifetime; per-library signature containers remain absent
-from cache payloads.
+insertions release the temporary owner.
 
 This protects signed file contents, not all memory in a running process.
 Private writable data remains private, unsigned development mappings remain
@@ -130,15 +114,6 @@ objects are refused. `Signature/Seal` is the only excluded signature entry.
 Base-system debug files are installed under `/usr/lib/debug/Capabilities`
 instead of inside runtime bundles, so optional debug-package installation
 does not alter a sealed runtime inventory.
-
-This is an experimental implementation under active validation. The
-library cache preserves private relocations and verifies byte equality with
-source libraries; it does not prebind them. Existing ELF text mappings were
-already shared. Initial VM trials have not shown a memory or startup saving.
-Do not interpret alias deduplication in the builder's input totals as disk
-savings: the original library aliases may already be symlinks or hard links,
-and this format retains the ordinary library files for fallback. The cache
-must remain opt-in until its deployment and performance tradeoffs are accepted.
 
 
 ## Standalone and recursive tooling
@@ -167,7 +142,6 @@ and must be discarded. This operation does not activate or publish the tree.
 The CLI designs were compared with Apple's
 [codesign guidance](https://developer.apple.com/library/archive/technotes/tn2206/_index.html),
 [codesign_allocate manual](https://github.com/apple-oss-distributions/cctools/blob/main/man/codesign_allocate.1),
-and [dyld_shared_cache_util commands](https://github.com/apple-oss-distributions/dyld/blob/main/other-tools/dyld_shared_cache_util.cpp).
 Apple's allocator is Mach-O-specific; our post-link format needs no Mach-O
 rewriter. Signing nested code inside out and preserving distinct entitlements
 are the relevant practices, not applying a single entitlement set recursively.
@@ -187,8 +161,7 @@ policy.
 
 Current scope: binary sign/verify/policy extraction, detached artifact seals,
 recursive unit/bundle signing and verification, key identifiers, release-stage
-integration, cache build/list/map/info/verify/authenticated extraction, and
-separate dependency and runtime-use reports. Certificate chains, notarization,
+integration. Certificate chains, notarization,
 network timestamps, arbitrary identity requirements and automatic activation
 are not implemented. A signature's validity is separate from the runtime's
 permission to grant authority. Filesystem extraction does not establish that
@@ -196,19 +169,11 @@ an artifact is appropriate to install.
 
 Every executable signature is in the appended policy/signature container,
 located through its fixed-size EOF footer and outside every ELF segment.
-The cache only selects shared-library candidates; it does not collect program
-signatures. Its signature is the separate `/usr/libdata/5bsd/cache/elf.cache.sig` file. Cache format v2 excludes the entire per-library signature/policy container.
-It retains the unsigned ELF prefix and records source and payload lengths
-separately. Extraction produces unsigned libraries; it cannot reconstruct the
-original signed files. The original source library remains the lookup and
-authority boundary. The signature container contains no runtime capability
-descriptors or process-private library state.
+
 
 Fuchsia's [loader protocol](https://fuchsia.dev/reference/fidl/fuchsia.ldsvc)
 returns library VMO handles through a process's loader-service connection.
-For 5BSD, granted directory descriptors continue to control lookup. Cache
-substitution follows that lookup and requires byte-identical library contents;
-selecting a cache does not add library-search authority to a process.
+For 5BSD, granted directory descriptors continue to control library lookup.
 
 Standalone stripping before signing must preserve the build input with
 `strip --keep-section=.5bsd.policy program`, or supply `capsign sign -m policy`
@@ -270,11 +235,11 @@ world operations retain the standard object tree. Output checksums accompany
 the images. Orchestration and signed repository/firmware tests pass; actual
 image boot and installation validation remain pending.
 
-A release with the shared library cache uses two explicit steps:
+A signed release uses two explicit steps:
 
 ```sh
 build-bsd packages --kernel GENERIC-NODEBUG --signing signed \
-    --key /secure/code-private.pem --pkg-key /secure/pkg-private.pem --cache
+    --key /secure/code-private.pem --pkg-key /secure/pkg-private.pem
 build-bsd media --kernel GENERIC-NODEBUG \
     --repository /usr/obj/usr/src/repo/FreeBSD:16:amd64/latest \
     --pkg-public-key /secure/pkg-public.pem --public-key /secure/code-public.pem \
@@ -283,10 +248,8 @@ build-bsd media --kernel GENERIC-NODEBUG \
 
 Use `plan` before each action to review without building or opening disks.
 Replace the repository ABI and kernel with the matching publication inputs.
-The second command consumes the already signed cache in the published packages;
-it needs public verification keys, not private signing keys. `--cache` therefore
-belongs to the package-building step, not `media`. The output directory must be
-new. `--media-format iso` produces the ISO; `memstick` produces the USB image;
+The second command consumes signed published packages and needs public
+verification keys, not private signing keys. The output directory must be new. `--media-format iso` produces the ISO; `memstick` produces the USB image;
 `all` produces both. Creating media never launches the host's disk installer.
 An image is not considered release-tested until a disposable VM boots it,
 installs onto an empty virtual disk, and boots and verifies the installed system.

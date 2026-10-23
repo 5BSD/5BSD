@@ -13,7 +13,7 @@ returns the wrong vnode.
 
 ## Affected kernel object types
 
-### 1. Network filesystem mount points (NFS, FUSE, smbfs)
+### 1. Network filesystem mount points (NFS, FUSE)
 
 `open("/mnt/nfs")` crosses the mount boundary and resolves to the
 NFS root vnode.  If the server is unreachable, name resolution blocks

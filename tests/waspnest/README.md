@@ -4,7 +4,7 @@
 AF_VSOCK, VirtIO, non-VirtIO device models, checkpoint/restore, and nested VMX.
 The former `5BSD-vsock-tests` split and generic `5BSD-tests` ownership of VMM
 coverage have been removed.  The
-fine-grained sources of truth remain the installed VirtIO and nested-VMX TSV
+fine-grained sources of truth remain the installed VirtIO, nested-VMX, and nested-SVM TSV
 ledgers.  `waspnest-nonvirtio-coverage.tsv` separately prevents PCI and
 platform devices from disappearing behind a successful VirtIO guest boot;
 `waspnest-suite.tsv` defines the ordered release gates.
@@ -12,13 +12,18 @@ platform devices from disappearing behind a successful VirtIO guest boot;
 ## Architecture scope
 
 WaspNest device, VirtIO, checkpoint, and state-format coverage is portable where
-the corresponding host backend exists. Nested virtualization is different: its
-implementation and live qualification gate are Intel VMX on amd64 only. AMD SVM
-nesting and ARM64 nested virtualization have no implementation in this tree;
-they are unsupported, not merely awaiting qualification. Nested VMX remains
-experimental and default-off until its Intel hardware gate passes.
+the corresponding host backend exists. Nested virtualization has separate
+Intel VMX and AMD SVM implementations on amd64, both default-off and pending
+hardware qualification. The aggregate `run` campaign currently includes the
+Intel VMX gate. AMD SVM has installed `run-svm-nested-atf.sh` and
+`run-svm-nested-live.sh` wrappers with fixed case and evidence ledgers; run both
+on the specified AMD policy boots and keep their results with the campaign.
+An aggregate `release-ready` pass on a portable profile does not certify AMD
+nesting; review the separate AMD results before marking the overall hardware
+qualification complete.
+ARM64 nested virtualization remains unsupported.
 
-The entry point is `/usr/tests/waspnest/waspnest-test`:
+The aggregate entry point is `/usr/tests/waspnest/waspnest-test`:
 
 * `list` prints the release-gate inventory.
 * `status` summarizes Linux, 5BSD, and nested live dispositions directly from
@@ -67,9 +72,10 @@ driver.  Unsupported features are acceptable only as explicit ledger
 an unexplained skip is not a release result.
 
 Nested VMX validators and readiness rows apply on amd64 Intel VMX and in the
-nested/full profiles.  Other architectures retain the ledger in the package
-but report the hardware gate as unsupported instead of attempting to compile
-or run Intel-only probes.
+nested/full profiles. AMD SVM has its own installed ATF and guest-evidence
+wrappers; its fixed ledger is checked by `waspnest-test audit` and its live
+result is reviewed separately. Other architectures retain the ledgers in the
+package but report hardware nesting as unsupported.
 
 The `nonvirtio` profile contains 58 named cases: live and checkpoint-policy
 cases for Alpine and 5BSD for AHCI, NVMe, e82545, HDA, xHCI, framebuffer,

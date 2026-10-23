@@ -78,6 +78,23 @@ ATF_TC_BODY(malformed_chains_fail_closed, tc)
 	    &chain), EMSGSIZE);
 }
 
+ATF_TC_WITHOUT_HEAD(prepare_rejects_chain_alias);
+ATF_TC_BODY(prepare_rejects_chain_alias, tc)
+{
+	struct virtio_pmem_chain chain;
+	uint8_t response[4] = { 0xaa, 0xaa, 0xaa, 0xaa };
+	struct iovec iov[] = {
+		{ .iov_base = chain.request, .iov_len = sizeof(chain.request) },
+		{ .iov_base = response, .iov_len = sizeof(response) },
+	};
+
+	(void)tc;
+	memset(&chain, 0x5a, sizeof(chain));
+	ATF_CHECK_EQ(virtio_pmem_chain_prepare(iov, 2, 1, 1, &chain), EINVAL);
+	ATF_CHECK_EQ(chain.request[0], 0x5a);
+	ATF_CHECK_EQ(response[0], 0xaa);
+}
+
 ATF_TC_WITHOUT_HEAD(zero_length_descriptors_are_ignored);
 ATF_TC_BODY(zero_length_descriptors_are_ignored, tc)
 {
@@ -123,12 +140,29 @@ ATF_TC_BODY(completion_shape_is_revalidated, tc)
 	chain.response[0].iov_len = 4;
 	chain.response[0].iov_base = NULL;
 	ATF_CHECK_EQ(virtio_pmem_chain_complete(&chain, 0, &written), EINVAL);
+	chain.response[0].iov_base = response;
+	chain.response[0].iov_len = 1;
+	chain.response[1].iov_base = response + 1;
+	chain.response[1].iov_len = 3;
+	chain.response_count = 2;
+	memset(response, 0xaa, sizeof(response));
+	chain.response[1].iov_len = 4;
+	ATF_CHECK_EQ(virtio_pmem_chain_complete(&chain, 0, &written), EINVAL);
+	ATF_CHECK_EQ(memcmp(response, (uint8_t[4]) { 0xaa, 0xaa, 0xaa,
+	    0xaa }, sizeof(response)), 0);
+	chain.response[1].iov_len = 3;
+	chain.response[0].iov_base = &chain.response[1].iov_base;
+	ATF_CHECK_EQ(virtio_pmem_chain_complete(&chain, 0, &written), EINVAL);
+	chain.response[0].iov_base = response;
+	chain.response[1].iov_base = &written;
+	ATF_CHECK_EQ(virtio_pmem_chain_complete(&chain, 0, &written), EINVAL);
 }
 
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, fragmented_request_and_response);
 	ATF_TP_ADD_TC(tp, malformed_chains_fail_closed);
+	ATF_TP_ADD_TC(tp, prepare_rejects_chain_alias);
 	ATF_TP_ADD_TC(tp, zero_length_descriptors_are_ignored);
 	ATF_TP_ADD_TC(tp, completion_shape_is_revalidated);
 	return (atf_no_error());

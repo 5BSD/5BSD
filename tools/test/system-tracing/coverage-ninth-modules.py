@@ -6,7 +6,7 @@ import subprocess,os,json,re,shlex
 S=Path('/usr/src');K=Path('/usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG');O=Path('/usr/obj/5bsd-dtrace-ninth-validation/modules');O.mkdir(parents=True,exist_ok=True)
 opts=' '.join(sorted(set(re.findall(r'^#define\s+(\w+)', '\n'.join(p.read_text() for p in K.glob('opt*.h')),re.M))))
 results=[]
-for module in ['if_bridge','if_lagg','if_vlan','if_tuntap','tarfs','unionfs','nullfs','udf','cd9660','md']:
+for module in ['if_bridge','if_lagg','if_vlan','if_tuntap','tarfs','unionfs','nullfs','cd9660','md']:
  cwd=K/'modules/usr/src/sys/modules'/module;cwd.mkdir(parents=True,exist_ok=True)
  cmd=['make','-C',str(S/'sys/modules'/module),'-m',str(S/'share/mk'),'-j'+str(os.cpu_count()),'MAKEOBJDIR='+str(cwd),'KERNBUILDDIR='+str(K),'KERN_OPTS='+opts,'all']
  log=O/(module.replace('/','_')+'.log')

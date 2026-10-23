@@ -70,11 +70,22 @@ provider_security_contract_body()
 	    CAP_CLOEXEC_LOCKED cap_ioctls_limit cap_rights_limit CAP_IOCTL \
 	    service_identity id.client_label cryptocmp_named_create_policy_validate \
 	    cryptodesc_named_create cryptodesc_named_lease cryptodesc_named_rotate \
-	    cryptodesc_named_delete auditcmp_client_prepare auditcmp_client_adopt \
+	    cryptodesc_named_delete auditcmp_client_open \
 	    auditcmp_submit named-create named-lease named-rotate named-delete
 	do
 		atf_check -s exit:0 -o match:"${token}" grep "${token}" "${source}"
 	done
+	# Under BIP a forked worker cannot adopt an inherited Audit client
+	# (auditcmp_server.h): it opens its own after fork and before dropping
+	# service lookup authority, so prepare/adopt must not reappear and the
+	# open must come before the worker's capability mode.
+	atf_check -s exit:1 -o empty -e empty \
+	    grep -E 'auditcmp_client_(prepare|adopt)[(]' "${source}"
+	atf_check -s exit:0 -o empty awk '
+	    /auditcmp_client_open[(]/ && !o { o = NR }
+	    /service_worker_enter_capability_mode[(]/ && !c { c = NR }
+	    END { if (!o || !c || o > c) { print "open " o ", mode " c; exit 1 } }' \
+	    "${source}"
 	atf_check -s exit:0 -o match:'LIBADD=.*auditcmp' \
 	    grep 'LIBADD=.*auditcmp' "${srcdir}/Makefile"
 }

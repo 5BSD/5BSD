@@ -5,6 +5,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -38,10 +39,11 @@ def main():
     parser.add_argument('--pkg-public-key', type=Path, required=True)
     parser.add_argument('--public-key', type=Path, required=True)
     parser.add_argument('--capsign', type=Path, required=True)
-    parser.add_argument('--elfcache', type=Path, required=True)
     parser.add_argument('--kernel', default='GENERIC')
     parser.add_argument('--plan', action='store_true')
     args = parser.parse_args()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", args.kernel):
+        raise ValueError("invalid kernel configuration name")
     repository = args.repository.resolve(strict=True)
     if not repository.is_dir():
         raise ValueError('installer requires a completed publication directory')
@@ -49,7 +51,6 @@ def main():
     pub = regular(args.pkg_public_key)
     codepub = regular(args.public_key)
     capsign = regular(args.capsign)
-    elfcache = regular(args.elfcache)
     if args.plan:
         print('verify and snapshot complete signed repository: ' + str(repository))
         print('launch interactive bsdinstall with explicit repository and code-signing trust')
@@ -60,12 +61,14 @@ def main():
     if not sys.stdin.isatty():
         raise ValueError('interactive installer requires a terminal')
     regular(INSTALLER)
-    for name in ('repository.subr', 'verify-image'):
+    for name in ('repository.subr', 'verify-image', 'pkgbase'):
         regular(INSTALLER_SCRIPTS / name)
     # A mixed old/new installer must not silently ignore explicit trust.
     auto = regular(INSTALLER_SCRIPTS / 'auto').read_text()
     if 'BSDINSTALL_CODE_PUBLIC_KEY' not in auto or 'bsdinstall_repository' not in auto:
         raise ValueError('installed bsdinstall lacks explicit repository/signature support')
+    if 'BSDINSTALL_KERNEL' not in (INSTALLER_SCRIPTS / 'pkgbase').read_text():
+        raise ValueError('installed bsdinstall lacks explicit kernel selection')
     subprocess.run([str(capsign), 'key-id', '-p', str(codepub)], check=True,
                    text=True, capture_output=True)
     hw = load_hardware()
@@ -110,7 +113,8 @@ def main():
             'BSDINSTALL_TMPBOOT': str(scratch / 'boot'),
             'BSDINSTALL_PKG_REPOS_DIR': str(repos),
             'BSDINSTALL_CODE_PUBLIC_KEY': str(keys / 'code.pub'),
-            'CAPSIGN': str(capsign), 'ELFCACHE': str(elfcache),
+            'BSDINSTALL_KERNEL': args.kernel,
+            'CAPSIGN': str(capsign),
             'BSDINSTALL_LOG': str(scratch / 'bsdinstall.log')})
         status.write_text('running interactive installer\n')
         subprocess.run([str(INSTALLER), 'auto'], check=True, env=environment)

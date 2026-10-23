@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: BSD-2-Clause
-// system.Network, system.Network.Admin and system.Network.State
-// (BSDNetwork).  system.Network.PF keeps its pre-FIDL message for now.  The library name, ordinals and layouts are
-// a stable contract for wire major 1; incompatible changes need a new major.
+// system.Network, system.Network.Admin, system.Network.State and
+// system.Network.PF (BSDNetwork).  The library name, ordinals and layouts
+// are a stable contract for wire major 1; incompatible changes need a new
+// major.  Additions within the major are versioned under the platform
+// "bsd" (@available(added=N); lib/libfidl/README "Versioning").
 // Identity never travels in a payload: the provider decides every request
 // from the accepted session's label, its immutable per-label policy and the
 // endpoint the session was admitted on.
+@available(platform="bsd", added=1)
 library bsd.network.v1;
 
 using zx;
@@ -106,4 +109,24 @@ type Snapshot = struct {
 closed protocol NetworkState {
     strict GetProtocolInfo() -> (ProtocolInfo);
     strict Watch(WatchRequest) -> (Snapshot) error uint32;
+};
+
+// One read-only pf(4) descriptor reporting the state table of the client's
+// own vnet.  The descriptor keeps the rights the provider set -- exactly
+// CAP_READ, CAP_FSTAT and CAP_IOCTL with DIOCGETSTATES the only admitted
+// ioctl, no fcntls, one transfer -- so it is an untyped zx.Handle
+// (SAME_RIGHTS): the backend's explicit READ mapping narrows a descriptor to
+// CAP_READ alone, which would defeat the ioctl.  The client library checks
+// those rights on receipt.
+type PfStates = resource struct { pf zx.Handle; };
+
+// system.Network.PF, admitted only to clients anointed with
+// system.network.pf.read.  A session delivers one descriptor: a second
+// OpenStates fails with EALREADY, and the session ends five seconds after
+// it was accepted.  OpenStates errors are errno values (EPERM when the
+// client cannot be bound to its vnet, the /dev/pf open error otherwise); on
+// error no descriptor is delivered.
+closed protocol NetworkPf {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    strict OpenStates() -> (PfStates) error uint32;
 };

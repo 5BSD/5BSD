@@ -131,6 +131,9 @@ int	vmm_event_coordinator_startup_publish_claim_batch(
 int	vmm_event_coordinator_checkpoint_begin(
 	    struct vmm_event_coordinator *, struct vmm_event_checkpoint *,
 	    struct vmm_event_checkpoint_entry *, const uint32_t *, size_t);
+/* Call under vm->vcpus_init_lock before publishing a new vCPU. */
+int	vmm_event_coordinator_checkpoint_topology_admit(
+	    struct vmm_event_coordinator *);
 int	vmm_event_coordinator_checkpoint_wait_ready(
 	    struct vmm_event_coordinator *, struct vmm_event_checkpoint *,
 	    struct vmm_event_wait_ticket *, const char *, int);

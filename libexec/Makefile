@@ -1,11 +1,8 @@
 .include <src.opts.mk>
 
-.include <bsd.compat.pre.mk>
-
 SUBDIR=	${_atf} \
 	${_atrun} \
 	${_blocklistd-helper} \
-	${_comsat} \
 	${_dma} \
 	flua \
 	getty \
@@ -20,9 +17,6 @@ SUBDIR=	${_atf} \
 	revnetgroup \
 	${_rlogind} \
 	rpc.rquotad \
-	rpc.rstatd \
-	rpc.rusersd \
-	rpc.rwalld \
 	rpc.sprayd \
 	${_rshd} \
 	${_rtld-elf} \
@@ -54,10 +48,6 @@ SUBDIR+=	fingerd
 _phttpget=	phttpget
 .endif
 
-.if ${MK_MAIL} != "no"
-_comsat=	comsat
-.endif
-
 .if ${MK_DMAGENT} != "no"
 _dma=		dma
 .endif
@@ -85,9 +75,6 @@ _tftp-proxy=	tftp-proxy
 
 .if !defined(NO_PIC) && !defined(NO_RTLD)
 _rtld-elf=	rtld-elf
-.for LIBCOMPAT libcompat in ${_ALL_LIBCOMPATS_libcompats}
-SUBDIR.${MK_LIB${LIBCOMPAT}}+=	rtld-elf${libcompat}
-.endfor
 .endif
 
 .if ${MK_RBOOTD} != "no"

@@ -9,7 +9,6 @@ MAN=	accept_filter.9 \
 	accf_tls.9 \
 	acl.9 \
 	alq.9 \
-	altq.9 \
 	atomic.9 \
 	backlight.9 \
 	bcopy.9 \
@@ -224,15 +223,12 @@ MAN=	accept_filter.9 \
 	mac.9 \
 	make_dev.9 \
 	malloc.9 \
-	mbchain.9 \
 	mbuf.9 \
 	mbuf_tags.9 \
-	mdchain.9 \
 	memcchr.9 \
 	memcpy.9 \
 	memguard.9 \
 	memmove.9 \
-	microseq.9 \
 	microtime.9 \
 	microuptime.9 \
 	mi_switch.9 \
@@ -491,7 +487,6 @@ MLINKS+=alq.9 ALQ.9 \
 	alq.9 alq_post_flags.9 \
 	alq.9 alq_write.9 \
 	alq.9 alq_writen.9
-MLINKS+=altq.9 ALTQ.9
 MLINKS+=atomic.9 atomic_add.9 \
 	atomic.9 atomic_clear.9 \
 	atomic.9 atomic_cmpset.9 \
@@ -1525,22 +1520,6 @@ MLINKS+=malloc.9 free.9 \
 	malloc.9 realloc.9 \
 	malloc.9 reallocf.9 \
 	malloc.9 zfree.9
-MLINKS+=mbchain.9 mb_detach.9 \
-	mbchain.9 mb_done.9 \
-	mbchain.9 mb_fixhdr.9 \
-	mbchain.9 mb_init.9 \
-	mbchain.9 mb_initm.9 \
-	mbchain.9 mb_put_int64be.9 \
-	mbchain.9 mb_put_int64le.9 \
-	mbchain.9 mb_put_mbuf.9 \
-	mbchain.9 mb_put_mem.9 \
-	mbchain.9 mb_put_uint16be.9 \
-	mbchain.9 mb_put_uint16le.9 \
-	mbchain.9 mb_put_uint32be.9 \
-	mbchain.9 mb_put_uint32le.9 \
-	mbchain.9 mb_put_uint8.9 \
-	mbchain.9 mb_put_uio.9 \
-	mbchain.9 mb_reserve.9
 MLINKS+=\
 	mbuf.9 m_adj.9 \
 	mbuf.9 m_align.9 \
@@ -1606,23 +1585,6 @@ MLINKS+=\
 	mbuf_tags.9 m_tag_next.9 \
 	mbuf_tags.9 m_tag_prepend.9 \
 	mbuf_tags.9 m_tag_unlink.9
-MLINKS+=mdchain.9 md_append_record.9 \
-	mdchain.9 md_done.9 \
-	mdchain.9 md_get_int64.9 \
-	mdchain.9 md_get_int64be.9 \
-	mdchain.9 md_get_int64le.9 \
-	mdchain.9 md_get_mbuf.9 \
-	mdchain.9 md_get_mem.9 \
-	mdchain.9 md_get_uint16.9 \
-	mdchain.9 md_get_uint16be.9 \
-	mdchain.9 md_get_uint16le.9 \
-	mdchain.9 md_get_uint32.9 \
-	mdchain.9 md_get_uint32be.9 \
-	mdchain.9 md_get_uint32le.9 \
-	mdchain.9 md_get_uint8.9 \
-	mdchain.9 md_get_uio.9 \
-	mdchain.9 md_initm.9 \
-	mdchain.9 md_next_record.9
 MLINKS+=memcpy.9 memcpy_data.9
 MLINKS+=memmove.9 memmove_data.9
 MLINKS+=microtime.9 bintime.9 \

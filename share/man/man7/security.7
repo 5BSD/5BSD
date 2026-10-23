@@ -565,18 +565,24 @@ In addition, kernel time changes are restricted to less than or equal to one
 second.
 Attempts to change the time by more than this will log the message
 .Dq Time adjustment clamped to +1 second .
+.Pp
+The
+.Xr pf 4
+packet filter is locked, as on
+.Ox :
+its rules, layer-2
+.Cm ether
+rules, options, queues and states cannot be changed.
+.Xr pfctl 8
+can still display the configuration, states and statistics, clear the
+statistics and source tracking nodes, set the debug level, the
+statistics interface and interface flags, and add, delete or replace
+addresses in existing tables; tables cannot be created or destroyed.
 .It Ic 3
 Network secure mode \- same as highly secure mode, plus
-IP packet filter rules (see
-.Xr ipfw 8 ,
-.Xr ipfirewall 4
-and
-.Xr pfctl 8 )
-cannot be changed and
 .Xr dummynet 4
-or
-.Xr pf 4
-configuration cannot be adjusted.
+pipes, queues and schedulers cannot be configured with
+.Xr dnctl 8 .
 .El
 .Pp
 The security level can be configured with variables documented in

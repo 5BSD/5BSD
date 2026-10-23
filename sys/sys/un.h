@@ -72,6 +72,7 @@ struct sockaddr_un {
 #define	LOCAL_CAPMODE_CONNECT	LOCAL_CAP_CONNECT	/* compat alias */
 #define	LOCAL_CAPMODE_SERVER	6	/* require server in cap mode */
 #define	LOCAL_CAP_REQ		7	/* require cap mode to use this end */
+#define	LOCAL_PASSPIDFD		8	/* pass sender identity for pidfd */
 
 /* Start of reserved space for third-party socket options. */
 #define	LOCAL_VENDOR		SO_VENDOR

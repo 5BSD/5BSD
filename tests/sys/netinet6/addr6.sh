@@ -63,8 +63,50 @@ anycast_raw_addr_cleanup()
 	ifconfig $(cat netif) destroy
 }
 
+atf_test_case "p2p_shared_dst" "cleanup"
+p2p_shared_dst_head()
+{
+	atf_set descr "a shared point-to-point destination route survives its owner"
+	atf_set require.user root
+}
+
+p2p_shared_dst_body()
+{
+	vnet_init
+	vnet_mkjail p2p6
+	tun=$(jexec p2p6 ifconfig tun create)
+
+	atf_check -s exit:0 jexec p2p6 ifconfig ${tun} \
+	    inet6 2001:db8::1 2001:db8::ff prefixlen 128 up
+	atf_check -s exit:0 jexec p2p6 ifconfig ${tun} \
+	    inet6 2001:db8::2 2001:db8::ff prefixlen 128 alias
+	atf_check -s exit:0 -o match:"interface: ${tun}" \
+	    jexec p2p6 route -n6 get 2001:db8::ff
+
+	# Moving the owner to another peer hands the route to the sibling.
+	atf_check -s exit:0 jexec p2p6 ifconfig ${tun} \
+	    inet6 2001:db8::1 2001:db8::fe prefixlen 128
+	atf_check -s exit:0 -o match:"interface: ${tun}" \
+	    jexec p2p6 route -n6 get 2001:db8::fe
+	atf_check -s exit:0 -o match:"interface: ${tun}" \
+	    jexec p2p6 route -n6 get 2001:db8::ff
+
+	# So does removing it.
+	atf_check -s exit:0 jexec p2p6 ifconfig ${tun} \
+	    inet6 2001:db8::1 2001:db8::ff prefixlen 128
+	atf_check -s exit:0 jexec p2p6 ifconfig ${tun} inet6 2001:db8::2 -alias
+	atf_check -s exit:0 -o match:"interface: ${tun}" \
+	    jexec p2p6 route -n6 get 2001:db8::ff
+}
+
+p2p_shared_dst_cleanup()
+{
+	vnet_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "addr6_invalid_addr"
 	atf_add_test_case "anycast_raw_addr"
+	atf_add_test_case "p2p_shared_dst"
 }

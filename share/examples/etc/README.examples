@@ -37,7 +37,6 @@ netstart	- network startup script run from /etc/rc
 network.subr	- routines for network configuration scripts
 networks	- see networks(5)
 newsyslog.conf	- configuration for system log file rotator newsyslog(8)
-nsmb.conf	- smbfs lookups configuration file
 pf.conf		- pf(4) example configuration file
 pf.os		- SYN fingerprint database
 phones		- phone number database for tip(1)
@@ -45,7 +44,6 @@ printcap	- configuration file for lpr(1)
 profile		- system-wide .profile for sh(1)
 protocols	- see protocols(5)
 rc		- system startup script (see init(8))
-rc.firewall	- ipfw(8) setup script with basic rulesets
 rc.initdiskless	- configuration file to boot a diskless machine
 rc.resume	- sample run command file for APM Resume Event
 rc.shutdown	- system shutdown script (see init(8))

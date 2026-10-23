@@ -230,6 +230,21 @@ calls.
 The information is stored in the ancillary data as a
 .Tn sockaddr_in6
 structure.
+.It Dv IPV6_RECVDSTPORT Fa "int *"
+Get or set whether the destination port of a
+.Tn UDP
+datagram, for example one redirected to the socket by a
+.Xr pf 4
+.Cm divert-to
+rule, is returned as ancillary data in subsequent
+.Xr recvmsg 2
+calls
+.Pq from Ox .
+The ancillary data, of type
+.Dv IPV6_RECVDSTPORT ,
+is a
+.Vt u_int16_t
+holding the port in network byte order.
 .It Dv IPV6_PORTRANGE Fa "int *"
 Get or set the allocation policy of ephemeral ports for when the kernel
 automatically binds a local address to this socket.
@@ -673,6 +688,7 @@ An ancillary data object was improperly formed.
 .Xr inet6 4 ,
 .Xr ip 4 ,
 .Xr netintro 4 ,
+.Xr pf 4 ,
 .Xr tcp 4 ,
 .Xr udp 4
 .Rs

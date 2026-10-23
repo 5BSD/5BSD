@@ -200,6 +200,30 @@ ATF_TC_BODY(invalid_contract, tc)
 	ATF_CHECK(!virtio_scsi_event_state_pop(&state, NULL));
 }
 
+ATF_TC_WITHOUT_HEAD(aliasing_does_not_consume_event);
+ATF_TC_BODY(aliasing_does_not_consume_event, tc)
+{
+	struct virtio_scsi_event_record records[2], input, output;
+	struct virtio_scsi_event_state state;
+	uint8_t before[sizeof(state)];
+
+	memset(&state, 0xa5, sizeof(state));
+	memcpy(before, &state, sizeof(before));
+	ATF_CHECK_EQ(virtio_scsi_event_state_init(&state,
+	    (struct virtio_scsi_event_record *)(void *)&state, 1), EINVAL);
+	ATF_CHECK_EQ(memcmp(&state, &before, sizeof(state)), 0);
+	ATF_REQUIRE_EQ(virtio_scsi_event_state_init(&state, records, 2), 0);
+	input = event(1, SPEC_TRANSPORT_RESET, 0, 0);
+	ATF_REQUIRE_EQ(virtio_scsi_event_state_push(&state, &input), 0);
+	ATF_CHECK(!virtio_scsi_event_state_pop(&state, &records[0]));
+	ATF_CHECK_EQ(virtio_scsi_event_state_count(&state), 1);
+	ATF_CHECK(!virtio_scsi_event_state_pop(&state,
+	    (struct virtio_scsi_event_record *)(void *)&state));
+	ATF_CHECK_EQ(virtio_scsi_event_state_count(&state), 1);
+	ATF_REQUIRE(virtio_scsi_event_state_pop(&state, &output));
+	ATF_CHECK_EQ(output.source_sequence, 1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -211,5 +235,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, loss_marks_first_later_accepted_event);
 	ATF_TP_ADD_TC(tp, reset_continuity_is_explicit);
 	ATF_TP_ADD_TC(tp, invalid_contract);
+	ATF_TP_ADD_TC(tp, aliasing_does_not_consume_event);
 	return (atf_no_error());
 }

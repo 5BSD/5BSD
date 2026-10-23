@@ -98,12 +98,15 @@ static void detach(void) {
 }
 static atomic_bool stop;
 static atomic_int refused_in_window, accepted_in_window;
-static atomic_bool window;
+/* Fenced-window generation: odd while a fenced window is open.  An attach is
+ * in a window only if the same odd generation is seen before and after it. */
+static atomic_uint window;
 static void *attacher(void *unused) {
 	(void)unused;
 	while (!atomic_load(&stop)) {
-		bool in_window = atomic_load(&window);
+		unsigned gen = atomic_load(&window);
 		bool kept = attach();
+		bool in_window = (gen & 1) != 0 && atomic_load(&window) == gen;
 		if (kept) {
 			/* A kept connection is never installed while fenced. */
 			pthread_mutex_lock(&gdb_lock);
@@ -175,14 +178,14 @@ int main(void) {
 			assert(strstr(reason, "client is attached") || strstr(reason, "vCPU is held"));
 			usleep(100);
 		}
-		atomic_store(&window, true);
+		atomic_fetch_add(&window, 1);	/* open: odd */
 		for (int spin = 0; spin < 50; spin++) {
 			pthread_mutex_lock(&gdb_lock);
 			assert(cur_fd == -1);
 			pthread_mutex_unlock(&gdb_lock);
 			usleep(20);
 		}
-		atomic_store(&window, false);
+		atomic_fetch_add(&window, 1);	/* closed: even */
 		usleep(50);
 		gdb_migration_unfence();
 		usleep(200);

@@ -425,7 +425,8 @@ void MockFS::debug_response(const mockfs_buf_out &out) {
 MockFS::MockFS(int max_read, int max_readahead, bool allow_other,
 	bool default_permissions,
 	bool push_symlinks_in, bool ro, enum poll_method pm, uint32_t flags,
-	uint32_t kernel_minor_version, uint32_t max_write, bool async,
+	uint32_t kernel_minor_version, uint32_t max_write,
+	uint16_t max_pages, bool async,
 	bool noclusterr, unsigned time_gran, bool nointr, bool noatime,
 	const char *fsname, const char *subtype, bool no_auto_init,
 	bool auto_unmount, unsigned daemon_timeout, bool linux_errnos)
@@ -440,6 +441,7 @@ MockFS::MockFS(int max_read, int max_readahead, bool allow_other,
 	  m_time_gran(time_gran),
 	  m_child_pid(-1),
 	  m_maxwrite(MIN(max_write, max_max_write)),
+	  m_maxpages(max_pages),
 	  m_nready(-1),
 	  m_quit(false),
 	  m_expect_unmount(false)
@@ -794,6 +796,7 @@ void MockFS::init(uint32_t flags) {
 	out->body.init.minor = m_kernel_minor_version;;
 	out->body.init.flags = in->body.init.flags & flags;
 	out->body.init.max_write = m_maxwrite;
+	out->body.init.max_pages = m_maxpages;
 	out->body.init.max_readahead = m_maxreadahead;
 
 	if (m_kernel_minor_version < 23) {

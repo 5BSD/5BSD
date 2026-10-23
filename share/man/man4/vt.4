@@ -39,7 +39,7 @@
 .Cd options VT_TWOBUTTON_MOUSE
 .Cd options VT_FB_MAX_WIDTH= Ns Ao Ar X Ac
 .Cd options VT_FB_MAX_HEIGHT= Ns Ao Ar Y Ac
-.Cd options SC_NO_CUTPASTE
+.Cd options VT_NO_CUTPASTE
 .Cd device vt
 .Pp
 In
@@ -129,7 +129,7 @@ sequence (such as Fn + K) to access Scroll Lock.
 These kernel options control the
 .Nm
 driver.
-.Bl -tag -width MAXCONS
+.Bl -tag -width VT_MAXWINDOWS
 .It Dv TERMINAL_NORM_ATTR= Ns Ao Ar attribute Ac
 .It Dv TERMINAL_KERN_ATTR= Ns Ao Ar attribute Ac
 These options change the default colors used for normal and kernel
@@ -150,7 +150,7 @@ sequence instead of the Alt key.
 If defined, swap the functions of mouse buttons 2 and 3.
 In effect, this makes the right-hand mouse button perform a paste.
 These options are checked in the order shown.
-.It Dv SC_NO_CUTPASTE
+.It Dv VT_NO_CUTPASTE
 Disable mouse support.
 .It VT_FB_MAX_WIDTH= Ns Ao Ar X Ac
 Set the maximum width to
@@ -158,21 +158,6 @@ Set the maximum width to
 .It VT_FB_MAX_HEIGHT= Ns Ao Ar Y Ac
 Set the maximum height to
 .Fa Y .
-.El
-.Sh BACKWARDS COMPATIBILITY
-Several options are provided for compatibility with the previous
-console device,
-.Xr sc 4 .
-These options will be removed in a future
-.Fx
-version.
-.Bl -column -offset indent "TERMINAL_KERN_ATTR" "SC_KERNEL_CONS_ATTR"
-.It Sy vt Option Name Ta Sy sc Option Name
-.It Dv TERMINAL_KERN_ATTR Ta Dv SC_KERNEL_CONS_ATTR
-.It Dv TERMINAL_NORM_ATTR Ta Dv SC_NORM_ATTR
-.It Dv VT_TWOBUTTON_MOUSE Ta Dv SC_TWOBUTTON_MOUSE
-.It Dv VT_MAXWINDOWS Ta Dv MAXCONS
-.It none Ta Dv SC_NO_CUTPASTE
 .El
 .Sh START-UP OPERATION WITH X86 BIOS SYSTEMS
 The computer BIOS starts in text mode, and

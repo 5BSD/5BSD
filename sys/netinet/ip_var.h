@@ -283,24 +283,9 @@ enum {
 
 struct ip_fw_args;
 
-/* Divert hooks. */
-extern void	(*ip_divert_ptr)(struct mbuf *m, uint64_t id, bool incoming);
+/* Dummynet hooks. */
 extern int	(*ip_dn_ctl_ptr)(struct sockopt *);
 extern int	(*ip_dn_io_ptr)(struct mbuf **, struct ip_fw_args *);
-
-/* pf specific mtag for divert(4) support */
-__enum_uint8_decl(pf_mtag_dir) {
-	PF_DIVERT_MTAG_DIR_IN = 1,
-	PF_DIVERT_MTAG_DIR_OUT = 2
-};
-struct pf_divert_mtag {
-	__enum_uint8(pf_mtag_dir) idir;		/* initial pkt direction */
-	union {
-		__enum_uint8(pf_mtag_dir) ndir;	/* new dir after re-enter */
-		uint16_t port;			/* initial divert(4) port */
-	};
-};
-#define MTAG_PF_DIVERT	1262273569
 
 #endif /* _KERNEL */
 

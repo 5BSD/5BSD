@@ -14,7 +14,9 @@ rcvar="pfsync_enable"
 start_precmd="pfsync_prestart"
 start_cmd="pfsync_start"
 stop_cmd="pfsync_stop"
-required_modules="pf pfsync"
+# Vendor PF includes the pfsync interface in pf.ko (or the kernel).
+# Late kldload(2) is reserved to the SystemExtension broker; a pf preloaded
+# from loader.conf (the default) is claimed through it.
 
 pfsync_prestart()
 {
@@ -24,7 +26,7 @@ pfsync_prestart()
 		return 1
 		;;
 	esac
-	return 0
+	load_kld -b pf
 }
 
 pfsync_start()
@@ -35,13 +37,18 @@ pfsync_start()
 	if [ -n "${pfsync_syncpeer}" ]; then
 		_syncpeer="syncpeer ${pfsync_syncpeer}"
 	fi
-	ifconfig pfsync0 $_syncpeer syncdev $pfsync_syncdev $pfsync_ifconfig up
+	ifconfig pfsync0 >/dev/null 2>&1 || ifconfig pfsync0 create
+	# syncdev and syncpeer can only change while pfsync0 is down.
+	ifconfig pfsync0 down
+	ifconfig pfsync0 ${_syncpeer:--syncpeer} syncdev $pfsync_syncdev \
+	    $pfsync_ifconfig up
 }
 
 pfsync_stop()
 {
 	echo "Disabling pfsync."
-	ifconfig pfsync0 -syncdev -syncpeer down
+	# Going down first: syncdev and syncpeer cannot change while up.
+	ifconfig pfsync0 down -syncdev -syncpeer
 }
 
 load_rc_config $name

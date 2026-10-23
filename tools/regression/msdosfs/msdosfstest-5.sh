@@ -6,20 +6,21 @@
 
 mkdir /tmp/msdosfstest
 mdconfig -a -t swap -s 128m -u 10
-bsdlabel -w md10 auto
-newfs_msdos -F 16 -b 8192 /dev/md10a
-mount_msdosfs -L ja_JP.eucJP -D CP932 -l /dev/md10a /tmp/msdosfstest
+gpart create -s mbr md10
+gpart add -t fat16 md10
+newfs_msdos -F 16 -b 8192 /dev/md10s1
+mount_msdosfs -L ja_JP.eucJP -D CP932 -l /dev/md10s1 /tmp/msdosfstest
 # The comment is UTF-8, the actual command uses the eucJP representation.
 # touch /tmp/msdosfstest/ｱ (HALFWIDTH KATAKANA LETTER A)
 touch /tmp/msdosfstest/$'\216\261'
 if [ $? -eq 0 ]; then
 	umount /tmp/msdosfstest
-	mount_msdosfs -L ja_JP.eucJP -D CP932 -s /dev/md10a /tmp/msdosfstest
+	mount_msdosfs -L ja_JP.eucJP -D CP932 -s /dev/md10s1 /tmp/msdosfstest
 	ls /tmp/msdosfstest/$'\216\261'
 	if [ $? -eq 0 ]; then
 		echo "ok 5 (pass stage 1/2)"
 		umount /tmp/msdosfstest
-		mount_msdosfs -L uk_UA.KOI8-U -D CP866 -l /dev/md10a /tmp/msdosfstest
+		mount_msdosfs -L uk_UA.KOI8-U -D CP866 -l /dev/md10s1 /tmp/msdosfstest
 		# The comment is UTF-8, the actual command uses the KOI8-U representation.
 		# ls /tmp/msdosfstest/▒ (MEDIUM SHADE)
 		ls /tmp/msdosfstest/$'\221'

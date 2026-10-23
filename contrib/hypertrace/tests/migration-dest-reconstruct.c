@@ -19,6 +19,8 @@
 #include "migration_source_owner.h"
 #include "migration_dest_image.h"
 #include "migration_snapshot.h"
+#include "migration_vsock_bundle.h"
+#include "migration_vsock_relay.h"
 #include "test-coverage.h"
 
 #define LOWMEM (2U * MIGRATION_DEST_IMAGE_CHUNK)
@@ -86,6 +88,18 @@ static int vm_migrate_fresh_commit_state(struct vmctx *ctx, const uint8_t *blob,
 	if (fail_commit) return (EIO);
 	committed_blob = blob; committed_length = length; *d = &device; return (0);
 }
+/* Merged active-vsock hooks: this fixture never enables active vsock, so a
+ * prepared relay or a staged bundle would be a fixture defect. */
+static bool get_config_bool_default(const char *key, bool def) {
+	assert(strcmp(key, "checkpoint.migrate_active_vsock") == 0 && !def);
+	return (false);
+}
+static int prod_dest_stage_vsock(void *a, const uint8_t *b, size_t l) {
+	(void)a; (void)b; (void)l; abort();
+}
+static int migration_vsock_owner_activate(void) { abort(); }
+static int owner_detaches;
+static void migration_vsock_owner_detach(void) { owner_detaches++; }
 static const struct migration_dest_ops migration_prod_dest_ops = {0};
 #include "dest-reconstruct.inc"
 

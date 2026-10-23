@@ -1,225 +1,66 @@
+# tcpdump(8) from OpenBSD (contrib/openbsd-pf/usr.sbin/tcpdump), built
+# for 5BSD on the base libpcap.  The packet printers and output format are
+# OpenBSD's; 5BSD glue: openbsd_compat.h (force-included), include/ (shadow
+# headers for OpenBSD-only headers) and privsep_5bsd.c (the privileged
+# operations of privsep.h on the public libpcap API).
+
 .include <src.opts.mk>
 
-TCPDUMP_DISTDIR?= ${SRCTOP}/contrib/tcpdump
+TCPDUMP_DISTDIR?= ${SRCTOP}/contrib/openbsd-pf/usr.sbin/tcpdump
 .PATH: ${TCPDUMP_DISTDIR}
 
 PROG=	tcpdump
+MAN=	tcpdump.8
 
-SRCS=	addrtoname.c \
-	addrtostr.c \
-	af.c \
-	ascii_strcasecmp.c \
-	checksum.c \
-	cpack.c \
-	fptype.c \
-	gmpls.c \
-	in_cksum.c \
-	ipproto.c \
-	l2vpn.c \
-	machdep.c \
-	netdissect.c \
-	netdissect-alloc.c \
-	nlpid.c \
-	ntp.c \
-	oui.c \
-	parsenfsfh.c \
-	print.c \
-	print-802_11.c \
-	print-802_15_4.c \
-	print-ah.c \
-	print-ahcp.c \
-	print-aodv.c \
-	print-aoe.c \
-	print-ap1394.c \
-	print-arcnet.c \
-	print-arp.c \
-	print-ascii.c \
-	print-atalk.c \
-	print-atm.c \
-	print-babel.c \
-	print-beep.c \
-	print-bfd.c \
-	print-bgp.c \
-	print-bootp.c \
-	print-bt.c \
-	print-calm-fast.c \
-	print-carp.c \
-	print-cdp.c \
-	print-cfm.c \
-	print-chdlc.c \
-	print-cip.c \
-	print-cnfp.c \
-	print-dccp.c \
-	print-decnet.c \
-	print-dhcp6.c \
-	print-domain.c \
-	print-dtp.c \
-	print-dvmrp.c \
-	print-eap.c \
-	print-egp.c \
-	print-eigrp.c \
-	print-enc.c \
-	print-esp.c \
-	print-ether.c \
-	print-fddi.c \
-	print-forces.c \
-	print-fr.c \
-	print-frag6.c \
-	print-ftp.c \
-	print-geneve.c \
-	print-geonet.c \
-	print-gre.c \
-	print-hncp.c \
-	print-hsrp.c \
-	print-http.c \
-	print-icmp.c \
-	print-icmp6.c \
-	print-igmp.c \
-	print-igrp.c \
-	print-ip.c \
-	print-ip6.c \
-	print-ip6opts.c \
-	print-ipcomp.c \
-	print-ipfc.c \
-	print-ipnet.c \
-	print-ipx.c \
-	print-isakmp.c \
-	print-isoclns.c \
-	print-juniper.c \
-	print-krb.c \
-	print-l2tp.c \
-	print-lane.c \
-	print-ldp.c \
-	print-lisp.c \
-	print-llc.c \
-	print-lldp.c \
-	print-lmp.c \
-	print-loopback.c \
-	print-lspping.c \
-	print-lwapp.c \
-	print-lwres.c \
-	print-m3ua.c \
-	print-mobile.c \
-	print-mobility.c \
-	print-mpcp.c \
-	print-mpls.c \
-	print-mptcp.c \
-	print-msdp.c \
-	print-msnlb.c \
-	print-nflog.c \
-	print-nfs.c \
-	print-nsh.c \
-	print-ntp.c \
-	print-null.c \
-	print-olsr.c \
-	print-openflow.c \
-	print-openflow-1.0.c \
-	print-ospf.c \
-	print-ospf6.c \
-	print-pgm.c \
-	print-pim.c \
-	print-pktap.c \
-	print-ppi.c \
-	print-ppp.c \
-	print-pppoe.c \
-	print-pptp.c \
-	print-radius.c \
-	print-raw.c \
-	print-resp.c \
-	print-rip.c \
-	print-ripng.c \
-	print-rpki-rtr.c \
-	print-rsvp.c \
-	print-rt6.c \
-	print-rtsp.c \
-	print-rx.c \
-	print-sctp.c \
-	print-sflow.c \
-	print-sip.c \
-	print-sl.c \
-	print-sll.c \
-	print-slow.c \
-	print-smb.c \
-	print-smtp.c \
-	print-snmp.c \
-	print-stp.c \
-	print-sunatm.c \
-	print-sunrpc.c \
-	print-symantec.c \
-	print-syslog.c \
-	print-tcp.c \
-	print-telnet.c \
-	print-tftp.c \
-	print-timed.c \
-	print-tipc.c \
-	print-token.c \
-	print-udld.c \
-	print-udp.c \
-	print-usb.c \
-	print-vjc.c \
-	print-vqp.c \
-	print-vrrp.c \
-	print-vtp.c \
-	print-vxlan.c \
-	print-vxlan-gpe.c \
-	print-wb.c \
-	print-zephyr.c \
-	print-zeromq.c \
-	signature.c \
-	smbutil.c \
-	strtoaddr.c \
-	tcpdump.c \
-	util-print.c \
-	print-arista.c \
-	print-bcm-li.c \
-	print-brcmtag.c \
-	print-dsa.c \
-	print-ip-demux.c \
-	print-ipoib.c \
-	print-macsec.c \
-	print-openflow-1.3.c \
-	print-ptp.c \
-	print-realtek.c \
-	print-someip.c \
-	print-ssh.c \
-	print-unsupported.c \
-	print-vsock.c \
-	print-whois.c \
-	print-zep.c
+SRCS=	tcpdump.c addrtoname.c \
+	print-ether.c print-ip.c print-arp.c print-tcp.c print-udp.c \
+	print-atalk.c print-domain.c print-tftp.c print-bootp.c print-nfs.c \
+	print-icmp.c print-sl.c print-ppp.c print-rip.c print-timed.c \
+	print-snmp.c print-ntp.c print-null.c print-ospf.c print-gtp.c \
+	print-fddi.c print-llc.c print-sunrpc.c print-hsrp.c print-vqp.c \
+	print-vrrp.c print-wb.c print-decnet.c print-isoclns.c print-ipx.c \
+	print-atm.c print-dvmrp.c print-krb.c print-pim.c print-netbios.c \
+	util.c parsenfsfh.c version.c print-igrp.c \
+	print-gre.c print-nsh.c print-radius.c print-enc.c print-cnfp.c \
+	print-ipsec.c print-ike.c print-raw.c print-l2tp.c print-mobile.c \
+	print-ip6.c print-ip6opts.c print-icmp6.c print-dhcp6.c print-frag6.c \
+	print-bgp.c print-ospf6.c print-ripng.c print-rt6.c print-stp.c \
+	print-etherip.c print-lwres.c print-lldp.c print-cdp.c \
+	print-ofp.c ofp_map.c \
+	print-udpencap.c print-carp.c print-nhrp.c print-wg.c \
+	print-802_11.c print-iapp.c print-mpls.c print-slow.c print-usbpcap.c \
+	gmt2local.c savestr.c setsignal.c in_cksum.c
+# 5BSD glue replaces privsep.c, privsep_fdpass.c and privsep_pcap.c.
+SRCS+=	bpf_dump.c
+.PATH: ${.CURDIR}
+SRCS+=	privsep_5bsd.c
 
-CLEANFILES+=	${MAN}
+# pflog(4)/pfsync(4) printers and TCP OS fingerprinting (-o, pf.os(5))
+SRCS+=	print-pflog.c print-pfsync.c pf_print_state.c
+.PATH: ${SRCTOP}/contrib/openbsd-pf/sys/net ${SRCTOP}/contrib/openbsd-pf/sbin/pfctl
+SRCS+=	pf_osfp.c pfctl_osfp.c
+CFLAGS+= -DFAKE_PF_KERNEL
 
-CFLAGS+= -I${.CURDIR} -I${TCPDUMP_DISTDIR}
-CFLAGS+= -DHAVE_CONFIG_H
-CFLAGS+= -D_U_="__attribute__((unused))"
-
+CFLAGS+= -I${.CURDIR}/include -I${TCPDUMP_DISTDIR}
+CFLAGS+= -I${SRCTOP}/contrib/openbsd-pf/sbin/pfctl
+CFLAGS+= -I${SRCTOP}/sys/netpfil/openbsd-pf/user
+# for pcap-int.h (pcap_t's link type)
+CFLAGS+= -include ${SRCTOP}/lib/libpcap/config.h -I${SRCTOP}/contrib/libpcap
+CFLAGS+= -include ${.CURDIR}/openbsd_compat.h
+CFLAGS+= -DCSLIP -DPPP -DHAVE_FDDI -DETHER_SERVICE -DHAVE_ETHER_NTOHOST
 .if ${MK_INET6_SUPPORT} != "no"
-CFLAGS+=	-DINET6 -DHAVE_OS_IPV6_SUPPORT
+CFLAGS+= -DINET6
 .endif
 
-LIBADD=	pcap
-.if ${MK_CASPER} != "no"
-LIBADD+=	casper
-LIBADD+=	cap_dns
-CFLAGS+=-DHAVE_CASPER
-.endif
-.if ${MK_OPENSSL} != "no"
-LIBADD+=	crypto
-CFLAGS+= -I${SYSROOT:U${DESTDIR}}/usr/include/openssl
-CFLAGS+= -DHAVE_LIBCRYPTO -DHAVE_OPENSSL_EVP_H
-CFLAGS+= -DOPENSSL_API_COMPAT=0x10100000L
-.endif
+WARNS?=	1
+NO_WFORMAT=
+# Vendor code: warnings are reported, not fatal.
+MK_WERROR=	no
+CWARNFLAGS+= -Wno-pointer-sign -Wno-sign-compare \
+	-Wno-incompatible-pointer-types-discards-qualifiers \
+	-Wno-address-of-packed-member -Wno-unused-but-set-variable \
+	-Wno-deprecated-declarations
 
-.if ${MK_PF} != "no"
-SRCS+=	print-pflog.c \
-	print-pfsync.c
-CFLAGS+= -DHAVE_NET_PFVAR_H -DHAVE_NET_IF_PFLOG_H
-.endif
+LIBADD=	pcap crypto
 
 .include <bsd.prog.mk>
-
-.for mp in ${MAN}
-${mp}: ${mp}.in
-	sed -e 's/@MAN_MISC_INFO@/7/g' -e 's/@MAN_FILE_FORMATS@/5/g' \
-		${.ALLSRC} > ${.TARGET}
-.endfor

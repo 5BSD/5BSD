@@ -27,10 +27,8 @@
  */
 
 #include "opt_inet6.h"
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
 #include "opt_mac.h"
 #include "opt_inet.h"
-#endif
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
@@ -61,6 +59,7 @@
 #include <net/if_dl.h>
 #include <net/vnet.h>
 #include <netinet/in.h>
+#include <netinet/in_pcb.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <netinet/tcp_fsm.h>
@@ -73,14 +72,8 @@
 #include <netinet6/ip6_var.h>
 #endif
 
-#ifdef COMPAT_LINUX32
-#include <compat/freebsd32/freebsd32_util.h>
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 #include <compat/linux/linux_common.h>
 #include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_file.h>
@@ -110,13 +103,8 @@ _Static_assert(offsetof(struct l_ifreq, ifr_name) ==
 
 #define	SECURITY_CONTEXT_STRING	"unconfined"
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-CTASSERT(sizeof(struct l_group_req) == 132);
-CTASSERT(sizeof(struct l_group_source_req) == 260);
-#else
 CTASSERT(sizeof(struct l_group_req) == 136);
 CTASSERT(sizeof(struct l_group_source_req) == 264);
-#endif
 CTASSERT(sizeof(struct l_ip_mreq_source) == 12);
 CTASSERT(sizeof(struct l_in_pktinfo) == 12);
 CTASSERT(sizeof(struct l_sockaddr_in6) == 28);
@@ -204,7 +192,8 @@ linux_to_bsd_ip_sockopt_impl(int opt)
 		/*
 		 * The socket-visible part of IP_TRANSPARENT is the ability
 		 * to bind to non-local addresses; interception itself is a
-		 * firewall (ipfw fwd / pf rdr) matter on both systems.
+		 * packet filter matter on both systems (pf divert-to or
+		 * rdr-to here, iptables TPROXY there).
 		 * Both require privilege.
 		 */
 		return (IP_BINDANY);
@@ -268,9 +257,7 @@ linux_to_bsd_ip_sockopt_impl(int opt)
 		    opt);
 		return (-2);
 	case LINUX_IP_MTU:
-		LINUX_RATELIMIT_MSG_OPT1(
-		    "unsupported IPv4 socket option IP_MTU (%d), your linux program can not read the path MTU of this socket",
-		    opt);
+		/* Getsockopt is handled before this translation table. */
 		return (-2);
 	case LINUX_IP_RECVOPTS:
 	case LINUX_IP_RETOPTS:
@@ -521,6 +508,8 @@ linux_to_bsd_so_sockopt_impl(int opt)
 		return (SO_OOBINLINE);
 	case LINUX_SO_LINGER:
 		return (SO_LINGER);
+	case LINUX_SO_RXQ_OVFL:
+		return (SO_RXQ_OVFL);
 	case LINUX_SO_REUSEPORT:
 		/*
 		 * Linux SO_REUSEPORT load-balances incoming connections
@@ -531,6 +520,8 @@ linux_to_bsd_so_sockopt_impl(int opt)
 		return (SO_REUSEPORT_LB);
 	case LINUX_SO_PASSCRED:
 		return (LOCAL_CREDS_PERSISTENT);
+	case LINUX_SO_PASSPIDFD:
+		return (LOCAL_PASSPIDFD);
 	case LINUX_SO_PEERCRED:
 		return (LOCAL_PEERCRED);
 	case LINUX_SO_RCVLOWAT:
@@ -557,10 +548,10 @@ linux_to_bsd_so_sockopt_impl(int opt)
 		return (SO_DOMAIN);
 	case LINUX_SO_MARK:
 		/*
-		 * Both are 32-bit socket tags consumed by the packet
-		 * filter (ipfw sockarg / dummynet here, fwmark there).
-		 * FreeBSD does not require privilege to set it and has no
-		 * getsockopt for it.
+		 * Both are 32-bit socket tags (fwmark on Linux).  On 5BSD
+		 * nothing consumes SO_USER_COOKIE since ipfw was retired:
+		 * pf does not match it, so the mark is stored and ignored.
+		 * Setting it needs no privilege and there is no getsockopt.
 		 */
 		return (SO_USER_COOKIE);
 	case LINUX_SO_MAX_PACING_RATE:
@@ -599,7 +590,6 @@ linux_to_bsd_so_sockopt_impl(int opt)
 	case LINUX_SO_DETACH_FILTER:
 	case LINUX_SO_PEERNAME:
 	case LINUX_SO_PASSSEC:
-	case LINUX_SO_RXQ_OVFL:
 	case LINUX_SO_WIFI_STATUS:
 	case LINUX_SO_PEEK_OFF:
 	case LINUX_SO_NOFCS:
@@ -626,7 +616,6 @@ linux_to_bsd_so_sockopt_impl(int opt)
 	case LINUX_SO_RESERVE_MEM:
 	case LINUX_SO_TXREHASH:
 	case LINUX_SO_RCVMARK:
-	case LINUX_SO_PASSPIDFD:
 	case LINUX_SO_DEVMEM_LINEAR:
 	case LINUX_SO_DEVMEM_DMABUF:
 	case LINUX_SO_DEVMEM_DONTNEED:
@@ -714,9 +703,7 @@ linux_to_bsd_tcp_sockopt_impl(int opt)
 
 	/* known but not implemented sockopts, could be done with more work */
 	case LINUX_TCP_DEFER_ACCEPT:
-		/* accf_data(9) has the wait but not the timeout. */
-		LINUX_RATELIMIT_MSG_OPT1(
-		    "unsupported TCP socket option TCP_DEFER_ACCEPT (%d)", opt);
+		/* Implemented by the TCP syncache before this table is used. */
 		return (-2);
 
 	/*
@@ -1013,7 +1000,6 @@ linux_setsockopt_fixed_bool(struct thread *td,
 	return (((val != 0) == (fixed != 0)) ? 0 : EINVAL);
 }
 
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
 /* A file reference keeps the native socket generation identity immutable. */
 static int
 linux_getsockopt_cookie(struct thread *td, struct linux_getsockopt_args *args)
@@ -1038,7 +1024,6 @@ linux_getsockopt_cookie(struct thread *td, struct linux_getsockopt_args *args)
 	fdrop(fp, td);
 	return (error);
 }
-#endif
 
 static int
 linux_getsockopt_fixed_int(struct thread *td,
@@ -1046,6 +1031,107 @@ linux_getsockopt_fixed_int(struct thread *td,
 {
 
 	return (linux_sockopt_copyout_trunc(td, &fixed, sizeof(fixed), args));
+}
+
+static int
+linux_setsockopt_tcp_defer_accept(struct thread *td,
+    struct linux_setsockopt_args *args)
+{
+	struct socket *so;
+	struct file *fp;
+	int error, seconds;
+
+	if (args->optlen < sizeof(seconds))
+		return (EINVAL);
+	error = copyin(PTRIN(args->optval), &seconds, sizeof(seconds));
+	if (error != 0)
+		return (error);
+	error = getsock(td, args->s, &cap_setsockopt_rights, &fp);
+	if (error != 0)
+		return (error);
+	so = fp->f_data;
+	if (so->so_proto->pr_protocol != IPPROTO_TCP ||
+	    so->so_type != SOCK_STREAM)
+		error = ENOPROTOOPT;
+	else {
+		SOCK_LOCK(so);
+		/* Linux's default SYN-ACK retry window spans about a minute. */
+		so->so_defer_accept = seconds > 0 ? MIN(seconds, 63) : 0;
+		SOCK_UNLOCK(so);
+	}
+	fdrop(fp, td);
+	return (error);
+}
+
+static int
+linux_getsockopt_tcp_defer_accept(struct thread *td,
+    struct linux_getsockopt_args *args)
+{
+	struct socket *so;
+	struct file *fp;
+	int error, seconds;
+
+	error = getsock(td, args->s, &cap_getsockopt_rights, &fp);
+	if (error != 0)
+		return (error);
+	so = fp->f_data;
+	if (so->so_proto->pr_protocol != IPPROTO_TCP ||
+	    so->so_type != SOCK_STREAM)
+		error = ENOPROTOOPT;
+	else {
+		SOCK_LOCK(so);
+		seconds = so->so_defer_accept;
+		SOCK_UNLOCK(so);
+		error = linux_sockopt_copyout_trunc(td, &seconds,
+		    sizeof(seconds), args);
+	}
+	fdrop(fp, td);
+	return (error);
+}
+
+/* Linux IP_MTU reports the route MTU for a connected IPv4 socket. */
+static int
+linux_getsockopt_ip_mtu(struct thread *td,
+    struct linux_getsockopt_args *args)
+{
+	struct epoch_tracker et;
+	struct nhop_object *nh;
+	struct inpcb *inp;
+	struct in_addr dst;
+	struct socket *so;
+	struct file *fp;
+	int error, mtu;
+
+	error = getsock(td, args->s, &cap_getsockopt_rights, &fp);
+	if (error != 0)
+		return (error);
+	so = fp->f_data;
+	if (so->so_proto->pr_domain->dom_family != AF_INET ||
+	    so->so_pcb == NULL) {
+		error = ENOPROTOOPT;
+		goto out;
+	}
+	if ((so->so_state & SS_ISCONNECTED) == 0) {
+		error = ENOTCONN;
+		goto out;
+	}
+	inp = sotoinpcb(so);
+	INP_RLOCK(inp);
+	dst = inp->inp_faddr;
+	INP_RUNLOCK(inp);
+	CURVNET_SET(so->so_vnet);
+	NET_EPOCH_ENTER(et);
+	nh = fib4_lookup(so->so_fibnum, dst, 0, NHR_NONE, 0);
+	mtu = nh != NULL ? nh->nh_mtu : 0;
+	NET_EPOCH_EXIT(et);
+	CURVNET_RESTORE();
+	if (mtu == 0)
+		error = ENOTCONN;
+	else
+		error = linux_sockopt_copyout_trunc(td, &mtu, sizeof(mtu), args);
+out:
+	fdrop(fp, td);
+	return (error);
 }
 
 /*
@@ -1220,14 +1306,11 @@ linux_to_bsd_sockaddr_storage(const struct l_sockaddr_storage *lss,
 
 	memcpy(ss, lss, sizeof(*ss));
 	len = sizeof(*ss);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
 	if (lss->ss_family == LINUX_AF_INET6)
 		len = sizeof(struct l_sockaddr_in6);
-#endif
 	return (linux_to_bsd_sockaddr((struct l_sockaddr *)ss, NULL, &len));
 }
 
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
 /* Linux64 headers have inline vectors; native __msfilterreq uses a pointer. */
 struct linux_group_filter {
 	l_uint index, pad;
@@ -1529,7 +1612,6 @@ out:
 	fdrop(fp, td);
 	return (error);
 }
-#endif
 
 /*
  * MCAST_JOIN_GROUP & co.  struct group_req and struct group_source_req
@@ -1676,6 +1758,8 @@ linux_to_bsd_msg_flags(int flags)
 		ret_flags |= MSG_WAITALL;
 	if (flags & LINUX_MSG_NOSIGNAL)
 		ret_flags |= MSG_NOSIGNAL;
+	if (flags & LINUX_MSG_MORE)
+		ret_flags |= MSG_MORETOCOME;
 	if (flags & LINUX_MSG_PROXY)
 		LINUX_RATELIMIT_MSG_OPT1("socket message flag MSG_PROXY (%d) not handled",
 		    LINUX_MSG_PROXY);
@@ -1791,6 +1875,10 @@ bsd_to_linux_cmsg_type(struct proc *p, int cmsg_type, int cmsg_level)
 		return (LINUX_SCM_CREDENTIALS);
 	case SCM_CREDS2:
 		return (LINUX_SCM_CREDENTIALS);
+	case SCM_PIDFD_CRED:
+		return (LINUX_SCM_PIDFD);
+	case SCM_RXQ_OVFL:
+		return (LINUX_SO_RXQ_OVFL);
 	case SCM_TIMESTAMP:
 		return (pem->so_timestamp);
 	case SCM_BINTIME:
@@ -1882,7 +1970,6 @@ linux_copyout_sockaddr(const struct sockaddr *sa, void *uaddr, size_t len)
 	return (error);
 }
 
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
 /* SO_PEERNAME copies a prefix, but rejects a buffer larger than the name. */
 static int
 linux_getsockopt_peername(struct thread *td, struct linux_getsockopt_args *args)
@@ -1930,7 +2017,6 @@ out:
 	fdrop(fp, td);
 	return (error);
 }
-#endif
 
 static int
 linux_sendit(struct thread *td, int s, struct msghdr *mp, int flags,
@@ -2359,78 +2445,6 @@ linux_socketpair(struct thread *td, struct linux_socketpair_args *args)
 	return (error);
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-struct linux_send_args {
-	register_t s;
-	register_t msg;
-	register_t len;
-	register_t flags;
-};
-
-static int
-linux_send(struct thread *td, struct linux_send_args *args)
-{
-	struct sendto_args /* {
-		int s;
-		caddr_t buf;
-		int len;
-		int flags;
-		caddr_t to;
-		int tolen;
-	} */ bsd_args;
-	struct file *fp;
-	int error;
-
-	bsd_args.s = args->s;
-	bsd_args.buf = (caddr_t)PTRIN(args->msg);
-	bsd_args.len = args->len;
-	bsd_args.flags = linux_to_bsd_msg_flags(args->flags);
-	bsd_args.to = NULL;
-	bsd_args.tolen = 0;
-	error = sys_sendto(td, &bsd_args);
-	if (error == ENOTCONN) {
-		/*
-		 * Linux doesn't return ENOTCONN for non-blocking sockets.
-		 * Instead it returns the EAGAIN.
-		 */
-		error = getsock(td, args->s, &cap_send_rights, &fp);
-		if (error == 0) {
-			if (atomic_load_int(&fp->f_flag) & FNONBLOCK)
-				error = EAGAIN;
-			fdrop(fp, td);
-		}
-	}
-	return (error);
-}
-
-struct linux_recv_args {
-	register_t s;
-	register_t msg;
-	register_t len;
-	register_t flags;
-};
-
-static int
-linux_recv(struct thread *td, struct linux_recv_args *args)
-{
-	struct recvfrom_args /* {
-		int s;
-		caddr_t buf;
-		int len;
-		int flags;
-		struct sockaddr *from;
-		socklen_t fromlenaddr;
-	} */ bsd_args;
-
-	bsd_args.s = args->s;
-	bsd_args.buf = (caddr_t)PTRIN(args->msg);
-	bsd_args.len = args->len;
-	bsd_args.flags = linux_to_bsd_msg_flags(args->flags);
-	bsd_args.from = NULL;
-	bsd_args.fromlenaddr = 0;
-	return (sys_recvfrom(td, &bsd_args));
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 int
 linux_sendto(struct thread *td, struct linux_sendto_args *args)
@@ -2701,12 +2715,7 @@ linux_sendmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 		    kuio->uio_iovcnt * sizeof(*iov));
 		msg.msg_iovlen = kuio->uio_iovcnt;
 	} else {
-#ifdef COMPAT_LINUX32
-		error = freebsd32_copyiniov(PTRIN(msg.msg_iov), msg.msg_iovlen,
-		    &iov, EMSGSIZE);
-#else
 		error = copyiniov(msg.msg_iov, msg.msg_iovlen, &iov, EMSGSIZE);
-#endif
 		if (error != 0)
 			return (error);
 	}
@@ -2962,82 +2971,9 @@ recvmsg_scm_creds2(socklen_t *datalen, void **data, void **udata)
 _Static_assert(sizeof(struct sockcred2) >= sizeof(struct l_ucred),
     "scm_creds2 sizeof l_ucred");
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-static int
-recvmsg_scm_timestamp(l_int msg_type, socklen_t *datalen, void **data,
-    void **udata)
-{
-	l_sock_timeval ltv64;
-	l_timeval ltv;
-	struct timeval *tv;
-	socklen_t len;
-	void *buf;
-
-	if (*datalen != sizeof(struct timeval))
-		return (EMSGSIZE);
-
-	tv = *data;
-#if defined(COMPAT_LINUX32)
-	if (msg_type == LINUX_SCM_TIMESTAMPO &&
-	    (tv->tv_sec > INT_MAX || tv->tv_sec < INT_MIN))
-		return (EOVERFLOW);
-#endif
-	if (msg_type == LINUX_SCM_TIMESTAMPN)
-		len = sizeof(ltv64);
-	else
-		len = sizeof(ltv);
-
-	buf = malloc(len, M_LINUX, M_WAITOK);
-	if (msg_type == LINUX_SCM_TIMESTAMPN) {
-		ltv64.tv_sec = tv->tv_sec;
-		ltv64.tv_usec = tv->tv_usec;
-		memmove(buf, &ltv64, len);
-	} else {
-		ltv.tv_sec = tv->tv_sec;
-		ltv.tv_usec = tv->tv_usec;
-		memmove(buf, &ltv, len);
-	}
-	*data = *udata = buf;
-	*datalen = len;
-	return (0);
-}
-#else
 _Static_assert(sizeof(struct timeval) == sizeof(l_timeval),
     "scm_timestamp sizeof l_timeval");
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-static int
-recvmsg_scm_timestampns(l_int msg_type, socklen_t *datalen, void **data,
-    void **udata)
-{
-	struct l_timespec64 ts64;
-	struct l_timespec ts32;
-	struct timespec ts;
-	socklen_t len;
-	void *buf;
-
-	if (msg_type == LINUX_SCM_TIMESTAMPNSO)
-		len = sizeof(ts32);
-	else
-		len = sizeof(ts64);
-
-	buf = malloc(len, M_LINUX, M_WAITOK);
-	bintime2timespec(*data, &ts);
-	if (msg_type == LINUX_SCM_TIMESTAMPNSO) {
-		ts32.tv_sec = ts.tv_sec;
-		ts32.tv_nsec = ts.tv_nsec;
-		memmove(buf, &ts32, len);
-	} else {
-		ts64.tv_sec = ts.tv_sec;
-		ts64.tv_nsec = ts.tv_nsec;
-		memmove(buf, &ts64, len);
-	}
-	*data = *udata = buf;
-	*datalen = len;
-	return (0);
-}
-#else
 static int
 recvmsg_scm_timestampns(l_int msg_type, socklen_t *datalen, void **data,
     void **udata)
@@ -3051,7 +2987,6 @@ recvmsg_scm_timestampns(l_int msg_type, socklen_t *datalen, void **data,
 }
 _Static_assert(sizeof(struct bintime) >= sizeof(struct timespec),
     "scm_timestampns sizeof timespec");
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 static int
 recvmsg_scm_sol_socket(struct thread *td, l_int msg_type, l_int lmsg_type,
@@ -3072,10 +3007,6 @@ recvmsg_scm_sol_socket(struct thread *td, l_int msg_type, l_int lmsg_type,
 		error = recvmsg_scm_creds2(datalen, data, udata);
 		break;
 	case SCM_TIMESTAMP:
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-		error = recvmsg_scm_timestamp(lmsg_type, datalen,
-		    data, udata);
-#endif
 		break;
 	case SCM_BINTIME:
 		error = recvmsg_scm_timestampns(lmsg_type, datalen,
@@ -3226,9 +3157,11 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 	struct mbuf **controlp;
 	struct sockaddr *sa;
 	struct l_in_pktinfo pki;
+	struct sockpidfdcred *spc;
+	struct timeval pid_start;
 	caddr_t outbuf;
 	void *data, *udata;
-	int error, skiped;
+	int error, pidfd = -1, skiped;
 
 	memset(&pki, 0, sizeof(pki));
 	if (kernel_hdr) {
@@ -3275,12 +3208,7 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 		iov->iov_len = pbuf_raw || msg->msg_iovlen != 0 ? pbuf_len : 0;
 		msg->msg_iovlen = 1;
 	} else {
-#ifdef COMPAT_LINUX32
-		error = freebsd32_copyiniov(PTRIN(msg->msg_iov), msg->msg_iovlen,
-		    &iov, EMSGSIZE);
-#else
 		error = copyiniov(msg->msg_iov, msg->msg_iovlen, &iov, EMSGSIZE);
-#endif
 		if (error != 0)
 			return (error);
 	}
@@ -3358,23 +3286,37 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 		datalen = (caddr_t)cm + cm->cmsg_len - (caddr_t)data;
 		udata = NULL;
 		error = 0;
-
-		switch (cm->cmsg_level) {
-		case IPPROTO_IP:
-			error = recvmsg_scm_ipproto_ip(cm->cmsg_type,
-			    lcm->cmsg_type, &datalen, &data, &udata, &pki);
- 			break;
+		if (cm->cmsg_level == SOL_SOCKET &&
+		    cm->cmsg_type == SCM_PIDFD_CRED) {
+			if (datalen != sizeof(*spc)) {
+				error = EINVAL;
+				goto bad;
+			}
+			spc = data;
+			pid_start.tv_sec = spc->spc_start_sec;
+			pid_start.tv_usec = spc->spc_start_usec;
+			datalen = sizeof(pidfd);
+			data = &pidfd;
+		} else {
+			switch (cm->cmsg_level) {
+			case IPPROTO_IP:
+				error = recvmsg_scm_ipproto_ip(cm->cmsg_type,
+				    lcm->cmsg_type, &datalen, &data, &udata,
+				    &pki);
+				break;
 #ifdef INET6
-		case IPPROTO_IPV6:
-			error = recvmsg_scm_ipproto_ipv6(cm->cmsg_type,
-			    &datalen, &data, &udata);
-			break;
+			case IPPROTO_IPV6:
+				error = recvmsg_scm_ipproto_ipv6(cm->cmsg_type,
+				    &datalen, &data, &udata);
+				break;
 #endif
-		case SOL_SOCKET:
-			error = recvmsg_scm_sol_socket(td, cm->cmsg_type,
-			    lcm->cmsg_type, flags, &datalen, &data, &udata);
- 			break;
- 		}
+			case SOL_SOCKET:
+				error = recvmsg_scm_sol_socket(td, cm->cmsg_type,
+				    lcm->cmsg_type, flags, &datalen, &data,
+				    &udata);
+				break;
+			}
+		}
 
 		/* The recvmsg_scm_ is responsible to free udata on error. */
 		if (error != 0)
@@ -3407,6 +3349,13 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 			goto out;
 		}
 
+		if (cm->cmsg_level == SOL_SOCKET &&
+		    cm->cmsg_type == SCM_PIDFD_CRED &&
+		    outlen + LINUX_CMSG_LEN(datalen) > maxlen) {
+			l_msghdr.msg_flags |= LINUX_MSG_CTRUNC;
+			m_dispose_extcontrolm(m->m_next);
+			goto out;
+		}
 		if (outlen + LINUX_CMSG_LEN(datalen) > maxlen) {
 			if (outlen == 0) {
 				error = EMSGSIZE;
@@ -3421,6 +3370,13 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 			}
 		}
 
+		if (cm->cmsg_level == SOL_SOCKET &&
+		    cm->cmsg_type == SCM_PIDFD_CRED) {
+			error = linux_pidfd_create_identity(td, spc->spc_pid,
+			    &pid_start, &pidfd);
+			if (error != 0)
+				goto bad;
+		}
 		lcm->cmsg_len = LINUX_CMSG_LEN(datalen);
 		error = copyout(lcm, outbuf, L_CMSG_HDRSZ);
 		if (error == 0) {
@@ -3453,6 +3409,8 @@ out:
 	}
 
 bad:
+	if (error != 0 && pidfd >= 0)
+		(void)kern_close(td, pidfd);
 	if (control != NULL) {
 		if (error != 0)
 			m_dispose_extcontrolm(control);
@@ -3553,27 +3511,6 @@ linux_recvmmsg(struct thread *td, struct linux_recvmmsg_args *args)
 	    args->vlen, args->flags, ptts));
 }
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_recvmmsg_time64(struct thread *td, struct linux_recvmmsg_time64_args *args)
-{
-	struct timespec ts, tts, *ptts;
-	int error;
-
-	if (args->timeout) {
-		error = linux_get_timespec64(&ts, args->timeout);
-		if (error != 0)
-			return (error);
-		getnanotime(&tts);
-		timespecadd(&tts, &ts, &tts);
-		ptts = &tts;
-	}
-		else ptts = NULL;
-
-	return (linux_recvmmsg_common(td, args->s, PTRIN(args->msg),
-	    args->vlen, args->flags, ptts));
-}
-#endif
 
 int
 linux_shutdown(struct thread *td, struct linux_shutdown_args *args)
@@ -3627,13 +3564,11 @@ linux_setsockopt_impl(struct thread *td, struct linux_setsockopt_args *args)
 	int error, level, name, val;
 
 	level = linux_to_bsd_sockopt_level(args->level);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
 	if ((args->level == IPPROTO_IP &&
 	    (args->optname == LINUX_IP_MSFILTER || args->optname == LINUX_MCAST_MSFILTER)) ||
 	    (args->level == IPPROTO_IPV6 && args->optname == LINUX_MCAST_MSFILTER))
 		return (linux_sockopt_msfilter(td, args->s, args->level,
 		    args->optname, PTRIN(args->optval), args->optlen, NULL, true));
-#endif
 
 	switch (level) {
 	case SOL_SOCKET:
@@ -3661,10 +3596,10 @@ linux_setsockopt_impl(struct thread *td, struct linux_setsockopt_args *args)
 			break;
 		}
 		name = linux_to_bsd_so_sockopt(args->optname);
-		switch (name) {
-		case LOCAL_CREDS_PERSISTENT:
+		if (args->optname == LINUX_SO_PASSCRED ||
+		    args->optname == LINUX_SO_PASSPIDFD)
 			level = SOL_LOCAL;
-			break;
+		switch (name) {
 		case SO_RCVTIMEO:
 			/* FALLTHROUGH */
 		case SO_SNDTIMEO:
@@ -3755,6 +3690,8 @@ linux_setsockopt_impl(struct thread *td, struct linux_setsockopt_args *args)
 		name = linux_to_bsd_ip6_sockopt(args->optname);
 		break;
 	case IPPROTO_TCP:
+		if (args->optname == LINUX_TCP_DEFER_ACCEPT)
+			return (linux_setsockopt_tcp_defer_accept(td, args));
 		name = linux_to_bsd_tcp_sockopt(args->optname);
 		switch (name) {
 		case TCP_CONGESTION:
@@ -4113,13 +4050,11 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 	int error, level, name, newval;
 
 	level = linux_to_bsd_sockopt_level(args->level);
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
 	if ((args->level == IPPROTO_IP &&
 	    (args->optname == LINUX_IP_MSFILTER || args->optname == LINUX_MCAST_MSFILTER)) ||
 	    (args->level == IPPROTO_IPV6 && args->optname == LINUX_MCAST_MSFILTER))
 		return (linux_sockopt_msfilter(td, args->s, args->level,
 		    args->optname, PTRIN(args->optval), 0, PTRIN(args->optlen), false));
-#endif
 
 	switch (level) {
 	case SOL_SOCKET:
@@ -4127,12 +4062,10 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 		case LINUX_SO_SNDBUFFORCE:
 		case LINUX_SO_RCVBUFFORCE:
 			return (ENOPROTOOPT); /* Linux FORCE options are set-only. */
-#if defined(__amd64__) && !defined(COMPAT_LINUX32)
 		case LINUX_SO_COOKIE:
 			return (linux_getsockopt_cookie(td, args));
 		case LINUX_SO_PEERNAME:
 			return (linux_getsockopt_peername(td, args));
-#endif
 		case LINUX_SO_PEERGROUPS:
 			return (linux_getsockopt_so_peergroups(td, args));
 		case LINUX_SO_PEERSEC:
@@ -4156,6 +4089,7 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 		case LINUX_SO_BROADCAST:
 		case LINUX_SO_OOBINLINE:
 		case LINUX_SO_REUSEPORT:
+		case LINUX_SO_RXQ_OVFL:
 		case LINUX_SO_ACCEPTCONN:
 		case LINUX_SO_TIMESTAMPO:
 		case LINUX_SO_TIMESTAMPN:
@@ -4172,10 +4106,10 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 		}
 
 		name = linux_to_bsd_so_sockopt(args->optname);
-		switch (name) {
-		case LOCAL_CREDS_PERSISTENT:
+		if (args->optname == LINUX_SO_PASSCRED ||
+		    args->optname == LINUX_SO_PASSPIDFD)
 			level = SOL_LOCAL;
-			break;
+		switch (name) {
 		case SO_RCVTIMEO:
 			/* FALLTHROUGH */
 		case SO_SNDTIMEO:
@@ -4234,6 +4168,8 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 		case LINUX_IP_MTU_DISCOVER:
 			return (linux_getsockopt_mtu_discover(td, args,
 			    IPPROTO_IP, IP_DONTFRAG, LINUX_IP_PMTUDISC_DONT));
+		case LINUX_IP_MTU:
+			return (linux_getsockopt_ip_mtu(td, args));
 		case LINUX_IP_MULTICAST_ALL:
 			return (linux_getsockopt_fixed_int(td, args, 0));
 		case LINUX_IP_PROTOCOL:
@@ -4272,6 +4208,8 @@ linux_getsockopt_impl(struct thread *td, struct linux_getsockopt_args *args)
 		name = linux_to_bsd_ip6_sockopt(args->optname);
 		break;
 	case IPPROTO_TCP:
+		if (args->optname == LINUX_TCP_DEFER_ACCEPT)
+			return (linux_getsockopt_tcp_defer_accept(td, args));
 		name = linux_to_bsd_tcp_sockopt(args->optname);
 		switch (name) {
 		case TCP_INFO:
@@ -4673,125 +4611,9 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
 	    arg->offset != NULL ? &offset64 : NULL, arg->count);
 
 	if (error == 0 && arg->offset != NULL) {
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-		if (offset64 > INT32_MAX)
-			return (EOVERFLOW);
-#endif
 		offset = (l_off_t)offset64;
 		error = copyout(&offset, arg->offset, sizeof(offset));
 	}
 
 	return (error);
 }
-
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int
-linux_sendfile64(struct thread *td, struct linux_sendfile64_args *arg)
-{
-	off_t offset;
-	int error;
-
-	if (arg->offset != NULL) {
-		error = copyin(arg->offset, &offset, sizeof(offset));
-		if (error != 0)
-			return (error);
-	}
-
-	error = linux_sendfile_common(td, arg->out, arg->in,
-		arg->offset != NULL ? &offset : NULL, arg->count);
-
-	if (error == 0 && arg->offset != NULL)
-		error = copyout(&offset, arg->offset, sizeof(offset));
-
-	return (error);
-}
-
-/* Argument list sizes for linux_socketcall */
-static const unsigned char lxs_args_cnt[] = {
-	0 /* unused*/,		3 /* socket */,
-	3 /* bind */,		3 /* connect */,
-	2 /* listen */,		3 /* accept */,
-	3 /* getsockname */,	3 /* getpeername */,
-	4 /* socketpair */,	4 /* send */,
-	4 /* recv */,		6 /* sendto */,
-	6 /* recvfrom */,	2 /* shutdown */,
-	5 /* setsockopt */,	5 /* getsockopt */,
-	3 /* sendmsg */,	3 /* recvmsg */,
-	4 /* accept4 */,	5 /* recvmmsg */,
-	4 /* sendmmsg */,	4 /* sendfile */
-};
-#define	LINUX_ARGS_CNT		(nitems(lxs_args_cnt) - 1)
-#define	LINUX_ARG_SIZE(x)	(lxs_args_cnt[x] * sizeof(l_ulong))
-
-int
-linux_socketcall(struct thread *td, struct linux_socketcall_args *args)
-{
-	l_ulong a[6];
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
-	register_t l_args[6];
-#endif
-	void *arg;
-	int error;
-
-	if (args->what < LINUX_SOCKET || args->what > LINUX_ARGS_CNT)
-		return (EINVAL);
-	error = copyin(PTRIN(args->args), a, LINUX_ARG_SIZE(args->what));
-	if (error != 0)
-		return (error);
-
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
-	for (int i = 0; i < lxs_args_cnt[args->what]; ++i)
-		l_args[i] = a[i];
-	arg = l_args;
-#else
-	arg = a;
-#endif
-	switch (args->what) {
-	case LINUX_SOCKET:
-		return (linux_socket(td, arg));
-	case LINUX_BIND:
-		return (linux_bind(td, arg));
-	case LINUX_CONNECT:
-		return (linux_connect(td, arg));
-	case LINUX_LISTEN:
-		return (linux_listen(td, arg));
-	case LINUX_ACCEPT:
-		return (linux_accept(td, arg));
-	case LINUX_GETSOCKNAME:
-		return (linux_getsockname(td, arg));
-	case LINUX_GETPEERNAME:
-		return (linux_getpeername(td, arg));
-	case LINUX_SOCKETPAIR:
-		return (linux_socketpair(td, arg));
-	case LINUX_SEND:
-		return (linux_send(td, arg));
-	case LINUX_RECV:
-		return (linux_recv(td, arg));
-	case LINUX_SENDTO:
-		return (linux_sendto(td, arg));
-	case LINUX_RECVFROM:
-		return (linux_recvfrom(td, arg));
-	case LINUX_SHUTDOWN:
-		return (linux_shutdown(td, arg));
-	case LINUX_SETSOCKOPT:
-		return (linux_setsockopt(td, arg));
-	case LINUX_GETSOCKOPT:
-		return (linux_getsockopt(td, arg));
-	case LINUX_SENDMSG:
-		return (linux_sendmsg(td, arg));
-	case LINUX_RECVMSG:
-		return (linux_recvmsg(td, arg));
-	case LINUX_ACCEPT4:
-		return (linux_accept4(td, arg));
-	case LINUX_RECVMMSG:
-		return (linux_recvmmsg(td, arg));
-	case LINUX_SENDMMSG:
-		return (linux_sendmmsg(td, arg));
-	case LINUX_SENDFILE:
-		return (linux_sendfile(td, arg));
-	}
-
-	linux_msg(td, "socket type %d not implemented", args->what);
-	return (ENOSYS);
-}
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */

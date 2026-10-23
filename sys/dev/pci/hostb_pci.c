@@ -37,8 +37,6 @@
  * Provide a device to "eat" the host->pci bridge devices that show up
  * on PCI buses and stop them showing up twice on the probes.  This also
  * stops them showing up as 'none' in pciconf -l.  If the host bridge
- * provides an AGP capability then we create a child agp device for the
- * agp GART driver to attach to.
  */
 static int
 pci_hostb_probe(device_t dev)
@@ -71,12 +69,6 @@ pci_hostb_attach(device_t dev)
 
 	bus_identify_children(dev);
 
-	/*
-	 * If AGP capabilities are present on this device, then create
-	 * an AGP child.
-	 */
-	if (pci_find_cap(dev, PCIY_AGP, NULL) == 0)
-		device_add_child(dev, "agp", DEVICE_UNIT_ANY);
 	bus_attach_children(dev);
 	return (0);
 }

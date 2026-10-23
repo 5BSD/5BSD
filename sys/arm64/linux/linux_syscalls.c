@@ -5,11 +5,11 @@
  */
 
 const char *linux_syscallnames[] = {
-	"#0",			/* 0 = linux_io_setup */
-	"#1",			/* 1 = linux_io_destroy */
-	"#2",			/* 2 = linux_io_submit */
-	"#3",			/* 3 = linux_io_cancel */
-	"#4",			/* 4 = linux_io_getevents */
+	"linux_io_setup",			/* 0 = linux_io_setup */
+	"linux_io_destroy",			/* 1 = linux_io_destroy */
+	"linux_io_submit",			/* 2 = linux_io_submit */
+	"linux_io_cancel",			/* 3 = linux_io_cancel */
+	"linux_io_getevents",			/* 4 = linux_io_getevents */
 	"linux_setxattr",			/* 5 = linux_setxattr */
 	"linux_lsetxattr",			/* 6 = linux_lsetxattr */
 	"linux_fsetxattr",			/* 7 = linux_fsetxattr */
@@ -65,7 +65,7 @@ const char *linux_syscallnames[] = {
 	"close",			/* 57 = close */
 	"linux_vhangup",			/* 58 = linux_vhangup */
 	"linux_pipe2",			/* 59 = linux_pipe2 */
-	"#60",			/* 60 = linux_quotactl */
+	"linux_quotactl",			/* 60 = linux_quotactl */
 	"linux_getdents64",			/* 61 = linux_getdents64 */
 	"linux_lseek",			/* 62 = linux_lseek */
 	"read",			/* 63 = read */

@@ -69,7 +69,7 @@ struct vmx_nested_ept_handoff {
 };
 
 struct vmx_nested_ept_handoff_ops {
-	int (*populate)(void *, uint64_t, uint64_t, uint8_t, bool);
+	int (*populate)(void *, uint64_t, uint64_t, uint8_t, uint8_t, bool);
 };
 
 /*

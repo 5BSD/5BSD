@@ -94,7 +94,9 @@ l9p_connection_recv(struct l9p_connection *conn, const struct iovec *iov,
 
 	if (niov == 0 || niov > L9P_MAX_IOV)
 		return (-1);
-	req = l9p_calloc(1, sizeof (struct l9p_request));
+	req = calloc(1, sizeof (struct l9p_request));
+	if (req == NULL)
+		return (-1);
 	req->lr_aux = aux;
 	req->lr_conn = conn;
 
@@ -112,10 +114,18 @@ l9p_connection_recv(struct l9p_connection *conn, const struct iovec *iov,
 	}
 
 	if (ht_add(&conn->lc_requests, req->lr_req.hdr.tag, req)) {
-		L9P_LOG(L9P_WARNING, "client reusing outstanding tag %d",
-		    req->lr_req.hdr.tag);
+		error = errno;
+		if (error == EEXIST)
+			L9P_LOG(L9P_WARNING,
+			    "client reusing outstanding tag %d",
+			    req->lr_req.hdr.tag);
+		else
+			L9P_LOG(L9P_WARNING,
+			    "cannot register request tag %d: %s",
+			    req->lr_req.hdr.tag, strerror(error));
 		l9p_freefcall(&req->lr_req);
 		free(req);
+		errno = error;
 		return (-1);
 	}
 
@@ -184,8 +194,11 @@ struct l9p_fid *
 l9p_connection_alloc_fid(struct l9p_connection *conn, uint32_t fid)
 {
 	struct l9p_fid *file;
+	int error;
 
-	file = l9p_calloc(1, sizeof (struct l9p_fid));
+	file = calloc(1, sizeof (struct l9p_fid));
+	if (file == NULL)
+		return (NULL);
 	file->lo_fid = fid;
 	/*
 	 * Note that the new fid is not marked valid yet.
@@ -195,7 +208,9 @@ l9p_connection_alloc_fid(struct l9p_connection *conn, uint32_t fid)
 	 */
 
 	if (ht_add(&conn->lc_files, fid, file) != 0) {
+		error = errno;
 		free(file);
+		errno = error;
 		return (NULL);
 	}
 

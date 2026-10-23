@@ -147,9 +147,10 @@ paging(int cpl, enum vm_paging_mode mode)
 static struct vcpu *
 vcpu_new(struct vm *vm, int id, int dpl)
 {
-	struct vcpu *vcpu = vm_alloc_vcpu(vm, id);
+	struct vcpu *vcpu = NULL;
 	struct khx_vcpu *kv;
 
+	KHX_EQ(vm_alloc_vcpu(vm, id, &vcpu), 0);
 	KHX_CHECK(vcpu != NULL);
 	KHX_EQ(vm_activate_cpu(vcpu), 0);
 	KHX_EQ(vcpu_set_state(vcpu, VCPU_FROZEN, true), 0);
@@ -341,7 +342,7 @@ case_reset(void)
 
 	khx_host_case("reset");
 	vm = vm_new("resetvm");
-	vcpu = vm_alloc_vcpu(vm, 0);
+	KHX_EQ(vm_alloc_vcpu(vm, 0, &vcpu), 0);
 	id = vm_get_id(vm);
 	epoch = vm_get_hypertrace_epoch(vm);
 

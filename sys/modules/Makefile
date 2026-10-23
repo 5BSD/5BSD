@@ -11,9 +11,8 @@ SUBDIR_PARALLEL=
 .if defined(MODULES_OVERRIDE) && !defined(ALL_MODULES)
 SUBDIR=${MODULES_OVERRIDE}
 .else
+# 5BSD omits floppy, parallel-port, CardBus, and AGP support.
 SUBDIR=	\
-	${_3dfx} \
-	${_3dfx_linux} \
 	${_aac} \
 	${_aacraid} \
 	accf_data \
@@ -23,12 +22,8 @@ SUBDIR=	\
 	acl_nfs4 \
 	acl_posix1e \
 	${_acpi} \
-	ae \
 	${_aesni} \
-	age \
-	${_agp} \
 	ahci \
-	aic7xxx \
 	alc \
 	ale \
 	alq \
@@ -44,7 +39,6 @@ SUBDIR=	\
 	${_armv8_rng} \
 	${_apple_bce} \
 	${_asmc} \
-	ata \
 	${_aq} \
 	ath \
 	ath_dfs \
@@ -62,7 +56,6 @@ SUBDIR=	\
 	${_bce} \
 	${_bcm283x_clkman} \
 	${_bcm283x_pwm} \
-	bfe \
 	bge \
 	bhnd \
 	${_bxe} \
@@ -77,20 +70,15 @@ SUBDIR=	\
 	${_bytgpio} \
 	${_chvgpio} \
 	cam \
-	${_cardbus} \
 	${_carp} \
-	cas \
-	${_cbb} \
 	cc \
 	${_ccp} \
 	cd9660 \
 	cd9660_iconv \
-	${_cfi} \
 	${_chromebook_platform} \
 	${_ciss} \
 	${_coreboot} \
 	${_coretemp} \
-	${_cpsw} \
 	${_cpuctl} \
 	${_cpufreq} \
 	${_crypto} \
@@ -98,7 +86,6 @@ SUBDIR=	\
 	ctl \
 	${_cxgb} \
 	${_cxgbe} \
-	dc \
 	dcons \
 	dcons_crom \
 	${_dpaa2} \
@@ -118,9 +105,7 @@ SUBDIR=	\
 	${_et} \
 	etherswitch \
 	evdev \
-	${_exca} \
 	ext2fs \
-	fdc \
 	fdescfs \
 	${_felix} \
 	${_ffec} \
@@ -132,11 +117,7 @@ SUBDIR=	\
 	${_ftgpio} \
 	${_ftwd} \
 	fusefs \
-	${_fxp} \
-	gem \
 	geom \
-	${_glxiic} \
-	${_glxsb} \
 	gpio \
 	${_gve} \
 	${_hfsts} \
@@ -156,7 +137,6 @@ SUBDIR=	\
 	${_ice} \
 	${_ice_ddp} \
 	${_irdma} \
-	${_ida} \
 	if_bridge \
 	${_if_cgem} \
 	if_disc \
@@ -170,8 +150,8 @@ SUBDIR=	\
 	if_infiniband \
 	if_lagg \
 	if_ovpn \
-	${_if_stf} \
 	if_tuntap \
+	if_vether \
 	if_vlan \
 	if_vxlan \
 	if_geneve \
@@ -179,27 +159,20 @@ SUBDIR=	\
 	iflib \
 	${_igc} \
 	imgact_binmisc \
-	${_imx} \
 	${_intel_pmc} \
 	${_intelspi} \
 	${_io} \
 	${_ioat} \
         ${_ipoib} \
-	ipdivert \
 	${_ipmi} \
 	ip6_mroute_mod \
 	ip_mroute_mod \
-	${_ips} \
 	${_ipsec} \
-	${_ipw} \
-	${_ipwfw} \
 	${_isci} \
 	${_iser} \
 	isp \
 	${_ispfw} \
 	${_itwd} \
-	${_iwi} \
-	${_iwifw} \
 	${_iwlwifi} \
 	${_iwm} \
 	${_iwn} \
@@ -216,10 +189,8 @@ SUBDIR=	\
 	khelp \
 	krpc \
 	ksyms \
-	lge \
 	libalias \
 	libiconv \
-	libmchain \
 	lindebugfs \
 	linuxkpi \
 	${_linuxkpi_sdio} \
@@ -227,7 +198,6 @@ SUBDIR=	\
 	linuxkpi_video \
 	linuxkpi_wlan \
 	${_lio} \
-	lpt \
 	${_mac_ddb} \
 	${_mac_do} \
 	${_mac_ntpd} \
@@ -240,7 +210,6 @@ SUBDIR=	\
 	${_mac_veriexec_sha256} \
 	${_mac_veriexec_sha384} \
 	${_mac_veriexec_sha512} \
-	${_malo} \
 	${_mana} \
 	md \
 	mdio \
@@ -249,7 +218,6 @@ SUBDIR=	\
 	mfi \
 	mii \
 	miiproxy \
-	mlx \
 	mlxfw \
 	${_mlx4} \
 	${_mlx4ib} \
@@ -269,9 +237,6 @@ SUBDIR=	\
 	msdosfs_iconv \
 	msk \
 	${_mthca} \
-	mvs \
-	mwl \
-	${_mwlfw} \
 	mxge \
 	my \
 	${_nctgpio} \
@@ -286,7 +251,6 @@ SUBDIR=	\
 	nfslockd \
 	nfssvc \
 	nlsysevent \
-	nge \
 	nmdm \
 	ntsync \
 	nullfs \
@@ -305,22 +269,11 @@ SUBDIR=	\
 	ow \
 	p9fs \
 	${_padlock} \
-	${_padlock_rng} \
 	${_pchtherm} \
-	${_pcfclock} \
 	${_pf} \
-	${_pflog} \
-	${_pflow} \
-	${_pfsync} \
-	plip \
 	${_pms} \
-	ppbus \
-	ppc \
-	ppi \
-	pps \
 	proto \
 	pseudofs \
-	${_pst} \
 	${_pt} \
 	pvpanic \
 	puc \
@@ -333,8 +286,6 @@ SUBDIR=	\
 	${_qlxgb} \
 	${_qlxgbe} \
 	${_qlnx} \
-	ral \
-	${_ralfw} \
 	${_random_fortuna} \
 	${_random_other} \
 	rc4 \
@@ -343,7 +294,6 @@ SUBDIR=	\
 	${_rdseed_rng} \
 	re \
 	rge \
-	rl \
 	${_rockchip} \
 	rtsx \
 	${_rtw88} \
@@ -354,7 +304,6 @@ SUBDIR=	\
 	${_rtwnfw} \
 	${_s3} \
 	safexcel \
-	${_sbni} \
 	scc \
 	${_sctp} \
 	sdhci \
@@ -370,35 +319,25 @@ SUBDIR=	\
 	${_sgx} \
 	${_sgx_linux} \
 	siftr \
-	siis \
-	sis \
-	sk \
 	${_smartpqi} \
-	smbfs \
 	snp \
 	sound \
 	${_spe} \
 	${_speaker} \
 	spi \
-	ste \
-	stge \
 	${_sume} \
 	${_superio} \
 	${_p2sb} \
-	sym \
 	sysvipc \
 	tarfs \
 	tcp \
 	${_tglhgpio} \
 	${_thunderbolt} \
-	${_ti} \
 	tmpfs \
 	${_toecore} \
 	tpm \
 	tws \
 	uart \
-	udf \
-	udf_iconv \
 	ufs \
 	${_ufshci} \
 	uinput \
@@ -407,7 +346,6 @@ SUBDIR=	\
 	${_vesa} \
 	${_vf_i2c} \
 	virtio \
-	vge \
 	vsock \
 	${_viawd} \
 	video \
@@ -416,7 +354,6 @@ SUBDIR=	\
 	${_vmd} \
 	${_vmm} \
 	${_vmware} \
-	vr \
 	vte \
 	${_wbwd} \
 	${_wdatwd} \
@@ -429,12 +366,9 @@ SUBDIR=	\
 	wlan_tkip \
 	wlan_wep \
 	wlan_xauth \
-	${_wpi} \
-	${_wpifw} \
 	${_wtap} \
 	${_x86bios} \
 	xdr \
-	xl \
 	xz \
 	zlib
 
@@ -490,11 +424,6 @@ _sctp=		sctp
 .endif
 .endif
 
-.if (${MK_INET_SUPPORT} != "no" && ${MK_INET6_SUPPORT} != "no") || \
-	defined(ALL_MODULES)
-_if_stf=	if_stf
-.endif
-
 .if (${KERN_OPTS:MINET} && ${MK_INET_SUPPORT} != "no") || defined(ALL_MODULES)
 _if_me=		if_me
 .endif
@@ -518,19 +447,12 @@ SUBDIR+=	fdt
 .endif
 
 # Linuxulator
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
-    ${MACHINE_CPUARCH} == "i386"
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "riscv"
 SUBDIR+=	linprocfs
 SUBDIR+=	linsysfs
 SUBDIR+=	linux_ntsync
 .endif
-# 5BSD is 64-bit only (no COMPAT_FREEBSD32 / 32-bit ELF activator), so the
-# 32-bit 'linux' module cannot link or load; build only the 64-bit ABI.
-# (Upstream also builds 'linux' on amd64; kept for i386, which 5BSD omits.)
-.if ${MACHINE_CPUARCH} == "i386"
-SUBDIR+=	linux
-.endif
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "riscv"
 SUBDIR+=	linux64
 SUBDIR+=	linux_common
 .endif
@@ -545,7 +467,7 @@ _brcm80211= brcm80211
 
 # LinuxKPI based wireless drivers.
 .if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
-    ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "riscv"
+    ${MACHINE_CPUARCH} == "riscv"
 _iwlwifi=	iwlwifi
 _rtw88=		rtw88
 # rtw89 currently cannot be compiled without ACPI (seems also broken in Linux).
@@ -554,7 +476,6 @@ _rtw89=		rtw89
 .endif
 .endif
 
-.if ${MACHINE_CPUARCH} != "arm"
 .if ${MK_OFED} != "no" || defined(ALL_MODULES)
 _ibcore=	ibcore
 _ipoib=		ipoib
@@ -562,10 +483,8 @@ _iser=		iser
 _mthca=		mthca
 _rdma=		rdma
 .endif
-.endif
 
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
-    ${MACHINE_CPUARCH} == "i386" || ${MACHINE_ARCH:Mpowerpc64*} != ""
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
 _ipmi=		ipmi
 _mlx4=		mlx4
 _mlx5=		mlx5
@@ -580,8 +499,7 @@ _mlx5ib=	mlx5ib
 .endif
 .endif
 
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
-    ${MACHINE_CPUARCH} == "i386"
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
 _acpi=		acpi
 _ena=		ena
 _gve=		gve
@@ -589,9 +507,7 @@ _igc=		igc
 _vmware=	vmware
 .endif
 
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
-    ${MACHINE_CPUARCH} == "i386" || ${MACHINE_ARCH} == "armv7" || \
-	${MACHINE_ARCH:Mpowerpc64*} != ""
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
 _ossl=		ossl
 .endif
 
@@ -623,26 +539,16 @@ _netgraph=	netgraph
 .if (${MK_PF} != "no" && (${MK_INET_SUPPORT} != "no" || \
 	${MK_INET6_SUPPORT} != "no")) || defined(ALL_MODULES)
 _pf=		pf
-_pflog=		pflog
-_pflow=		pflow
-.if ${MK_INET_SUPPORT} != "no"
-_pfsync=	pfsync
-.endif
 .endif
 
 .if ${MK_SOURCELESS_UCODE} != "no"
 _bce=		bce
-_fxp=		fxp
 _ispfw=		ispfw
-_ti=		ti
-_mwlfw=		mwlfw
 _otusfw=	otusfw
-_ralfw=		ralfw
 _rtwnfw=	rtwnfw
 .endif
 
-.if ${MK_SOURCELESS_UCODE} != "no" && ${MACHINE_CPUARCH} != "arm" && \
-	${MACHINE_ARCH} != "powerpc" && ${MACHINE_CPUARCH} != "riscv"
+.if ${MK_SOURCELESS_UCODE} != "no" && ${MACHINE_CPUARCH} != "riscv"
 _cxgbe=		cxgbe
 .endif
 
@@ -656,8 +562,7 @@ _mpi3mr=mpi3mr
 _genet=		genet
 .endif
 
-.if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "aarch64" || \
-	${MACHINE_ARCH:Mpowerpc64*} != ""
+.if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "aarch64"
 _ice=		ice
 .if ${MK_SOURCELESS_UCODE} != "no"
 _ice_ddp=	ice_ddp
@@ -674,8 +579,7 @@ _ixl=		ixl
 _spe=		spe
 .endif
 
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "arm" || \
-	${MACHINE_CPUARCH} == "riscv"
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "riscv"
 .if !empty(OPT_FDT)
 _allwinner=	allwinner
 _if_cgem=	if_cgem
@@ -684,10 +588,8 @@ _sdhci_fdt=	sdhci_fdt
 .endif
 
 # These rely on 64bit atomics
-.if ${MACHINE_ARCH} != "powerpc"
 _mps=		mps
 _mpr=		mpr
-.endif
 
 .if ${MK_TESTS} != "no" || defined(ALL_MODULES)
 SUBDIR+=	ktest
@@ -730,19 +632,12 @@ _rockchip=	rockchip
 .endif
 .endif
 
-.if ${MACHINE_CPUARCH} == "arm"
-_imx=		imx
-.endif
-
-.if ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64"
+.if ${MACHINE_CPUARCH} == "amd64"
 _aq=		aq
-_agp=		agp
 _bios=		bios
 .if ${MK_SOURCELESS_UCODE} != "no"
 _bxe=		bxe
 .endif
-_cardbus=	cardbus
-_cbb=		cbb
 _cpuctl=	cpuctl
 _cpufreq=	cpufreq
 _dpms=		dpms
@@ -750,7 +645,6 @@ _em=		em
 _et=		et
 _ftgpio=	ftgpio
 _ftwd=		ftwd
-_exca=		exca
 _io=		io
 _itwd=		itwd
 _ix=		ix
@@ -803,25 +697,18 @@ _hptrr=		hptrr
 .endif
 _hyperv=	hyperv
 _ichwd=		ichwd
-_ida=		ida
 _intel_pmc=	intel_pmc
 _intelspi=	intelspi
-_ips=		ips
 _isci=		isci
-_ipw=		ipw
-_iwi=		iwi
 _iwm=		iwm
 _iwn=		iwn
 .if ${MK_SOURCELESS_UCODE} != "no"
-_ipwfw=		ipwfw
-_iwifw=		iwifw
 _iwnfw=		iwnfw
 .endif
 _nfe=		nfe
 _nvram=		nvram
 .if ${MK_CRYPT} != "no" || defined(ALL_MODULES)
 _padlock=	padlock
-_padlock_rng=	padlock_rng
 _rdrand_rng=	rdrand_rng
 _rdseed_rng=	rdseed_rng
 .endif
@@ -833,10 +720,6 @@ _tglhgpio=	tglhgpio
 _vesa=		vesa
 _viawd=		viawd
 _vmd=		vmd
-_wpi=		wpi
-.if ${MK_SOURCELESS_UCODE} != "no"
-_wpifw=		wpifw
-.endif
 .if ${KERN_OPTS:MVIMAGE}
 _wtap=		wtap
 .endif
@@ -888,33 +771,10 @@ _vmm=		vmm
 .endif
 .endif
 
-.if ${MACHINE_CPUARCH} == "i386"
-# XXX some of these can move to the general case when de-i386'ed
-# XXX some of these can move now, but are untested on other architectures.
-_3dfx=		3dfx
-_3dfx_linux=	3dfx_linux
-_glxiic=	glxiic
-_glxsb=		glxsb
-_pcfclock=	pcfclock
-_pst=		pst
-_sbni=		sbni
-.endif
-
-.if ${MACHINE_ARCH} == "armv7"
-_cfi=		cfi
-_cpsw=		cpsw
-.endif
-
-.if ${MACHINE_CPUARCH} == "arm" || ${MACHINE_CPUARCH} == "aarch64"
+.if ${MACHINE_CPUARCH} == "aarch64"
 _bcm283x_clkman=  bcm283x_clkman
 _bcm283x_pwm=	bcm283x_pwm
 _neta=		neta
-.endif
-
-.if !(${COMPILER_TYPE} == "clang" && ${COMPILER_VERSION} < 110000)
-# LLVM 10 crashes when building if_malo_pci.c, fixed in LLVM11:
-# https://bugs.llvm.org/show_bug.cgi?id=44351
-_malo=	malo
 .endif
 
 .if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "aarch64"

@@ -50,7 +50,6 @@
 #define	SCTL_OP_START_SVC	4	/* start a loaded unit (ADMIN) */
 #define	SCTL_OP_STOP_SVC	5	/* stop a loaded unit (ADMIN) */
 #define	SCTL_OP_TREE		7	/* responsibility tree (any); 6 is retired */
-#define	SCTL_OP_CACHE_STATUS	8	/* cache counters for a loaded unit (any) */
 
 struct sctl_request {
 	uint32_t	op;

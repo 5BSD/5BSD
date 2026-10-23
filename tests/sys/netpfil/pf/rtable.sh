@@ -49,17 +49,18 @@ forward_v4_body()
 	# Sanity check
 	ping_server_check_reply exit:1
 
-	# This rule is not enough.
-	# Echo requests will be properly forwarded but replies can't be routed back.
+	# 5BSD: OpenBSD pf.  The state keeps the original routing table for
+	# the reply direction (rtableid[]), so the rule alone is enough: the
+	# echo request is routed in rtable 1, the reply in rtable 0.
 	pft_set_rules router \
 		"pass in on ${epair_tester}b inet proto icmp all icmp-type echoreq rtable 1"
-	ping_server_check_reply exit:1
-
-	# Allow replies coming back to the tester properly via stateful filtering post-routing.
-	pft_set_rules router \
-		"pass in  on ${epair_tester}b inet proto icmp all icmp-type echoreq rtable 1" \
-		"pass out on ${epair_server}a inet proto icmp all icmp-type echoreq rtable 0"
 	ping_server_check_reply exit:0
+
+	# 5BSD: OpenBSD pf.  rtable on an outbound rule has no effect (the
+	# route lookup has happened), and the outbound state it creates takes
+	# the reply, which its interface's FIB 1 cannot route back: FreeBSD's
+	# "reply table from the outbound rule" step does not apply.
+
 
 	# Allow replies coming back to the tester properly via provding extra routes in rtable 1
 	pft_set_rules router \
@@ -103,12 +104,11 @@ forward_v6_body()
 		"pass in on ${epair_tester}b inet6 proto icmp6 icmp6-type echoreq"
 	ping_server_check_reply exit:1
 
-	# Allow replies coming back to the tester properly via stateful filtering post-routing.
-	pft_set_rules router \
-		"pass inet6 proto icmp6 icmp6-type { neighbrsol, neighbradv }" \
-		"pass in  on ${epair_tester}b inet6 proto icmp6 icmp6-type echoreq rtable 1" \
-		"pass out on ${epair_server}a inet6 proto icmp6 icmp6-type echoreq rtable 0"
-	ping_server_check_reply exit:0
+	# 5BSD: OpenBSD pf.  rtable on an outbound rule has no effect (the
+	# route lookup has happened), and the outbound state it creates takes
+	# the reply, which its interface's FIB 1 cannot route back: FreeBSD's
+	# "reply table from the outbound rule" step does not apply.
+
 
 	# Allow replies coming back to the tester properly via provding extra routes in rtable 1
 	pft_set_rules router \

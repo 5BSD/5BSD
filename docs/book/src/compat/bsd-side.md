@@ -18,7 +18,7 @@ Software that keys on `ID_LIKE` treats the system as FreeBSD; software that keys
 
 ## 64-bit only
 
-There is no 32-bit compatibility of any kind. `sys/amd64/conf/GENERIC` carries `nooptions COMPAT_FREEBSD32`, `share/mk/src.opts.mk` marks `LIB32` as a broken option (TrustedZFS capability descriptors require a 64-bit ABI; `sys/sys/zfshandle.h` refuses to compile otherwise), and i386 and armv7 are no longer universe targets. The Linux emulator loads only `linux64`: `/etc/rc.d/linux` loads the 64-bit ABI on amd64 and aarch64 alike and skips `kern.elf32.fallback_brand` because the sysctl does not exist. A 32-bit FreeBSD or Linux binary fails to exec.
+There is no 32-bit runtime compatibility. The FreeBSD32 and Linux32 kernel implementations, their syscall generators, and their DTrace modules have been retired. Both amd64 and arm64 kernel configurations omit `COMPAT_FREEBSD32`; `share/mk/src.opts.mk` marks `LIB32` as a broken option (TrustedZFS capability descriptors require a 64-bit ABI; `sys/sys/zfshandle.h` refuses to compile otherwise), and i386 and armv7 are no longer native targets. The Linux emulator loads only `linux64`: `/etc/rc.d/linux` loads the 64-bit ABI on amd64 and aarch64 alike. A 32-bit FreeBSD or Linux binary fails to exec. Some i386 format headers remain for reading historical kernel dumps; they do not enable 32-bit execution.
 
 ## The kernel is GENERIC
 
@@ -30,7 +30,7 @@ GENERIC is the 5BSD kernel; there is no overlay configuration. The mac_capabilit
 | `options RACCT` without `RACCT_DEFAULT_TO_DISABLED` | resource accounting is on; `kern.racct.enable` defaults to 1 |
 | `device vsock`, `device virtio_vsock` | the `AF_VSOCK` domain and its VirtIO transport |
 | `options BHYVE_SNAPSHOT` | checkpoint and restore in bhyve(8) |
-| `nooptions COMPAT_FREEBSD32` | no 32-bit binaries |
+| no `COMPAT_FREEBSD32` option | no 32-bit binaries |
 | `options OES` | OpenEndpointSecurity, oes(4) |
 | `options MAC_ABAC` | the attribute-based access control policy |
 | `options MAC_VERIEXEC`, `MAC_VERIEXEC_SHA256`, `device mac_veriexec_parser` | verified execution compiled in, inactive until a manifest is loaded |
@@ -127,7 +127,7 @@ fstat(1), procstat(1) and sockstat(1) know the new descriptor types. procstat(1)
 
 ## What does not change
 
-UFS, ZFS, jails, bhyve, pf, ipfw, the toolchain, ports, the FreeBSD Handbook's instructions for networking, storage and users all apply. `service(8)`, `sysrc(8)` and every rc.d script not listed above are byte-identical to FreeBSD. A FreeBSD ports package installs with `pkg install` from the FreeBSD repositories, because the ABI it was built for is the ABI 5BSD reports. What 5BSD adds sits beside these, and the rest of Part V explains where the two meet: [rc](rc-and-service.md), [sessions](sessions.md), [jails](jails.md), [packages](packages.md), [virtual machines](virtual-machines.md) and [Linux emulation](linux/overview.md).
+UFS, ZFS, jails, bhyve, the toolchain, ports, and the FreeBSD Handbook's instructions for storage, users and networking all apply, except for firewalls: the packet filter is OpenBSD's pf, configured with OpenBSD's pf.conf(5) syntax ([Packet Filter](../operations/pf.md)), so the Handbook's pf chapter (written for FreeBSD pf) needs translating and its ipfw and IPFILTER chapters do not apply, because ipfw, natd and IPFilter are not part of 5BSD. `service(8)`, `sysrc(8)` and every rc.d script not listed above are byte-identical to FreeBSD, apart from the packet-filter scripts (`pf`, `pflog`, `pfsync`, `dnctl`, `dummynet`, `tftpproxy`), which follow the OpenBSD tools and load modules through the SystemExtension broker. A FreeBSD ports package installs with `pkg install` from the FreeBSD repositories, because the ABI it was built for is the ABI 5BSD reports. What 5BSD adds sits beside these, and the rest of Part V explains where the two meet: [rc](rc-and-service.md), [sessions](sessions.md), [jails](jails.md), [packages](packages.md), [virtual machines](virtual-machines.md) and [Linux emulation](linux/overview.md).
 
 ## Status
 

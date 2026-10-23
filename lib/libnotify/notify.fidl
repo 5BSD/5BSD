@@ -4,6 +4,7 @@
 // changes need a new major.  Identity never travels in a payload: the router
 // authorizes every request from the session's admission tier, its label's
 // policy and the rights on the accepted channel.
+@available(platform="bsd", added=1)
 library bsd.notify.v1;
 
 type ProtocolInfo = struct { wire_version uint32; };

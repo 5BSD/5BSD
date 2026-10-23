@@ -5,6 +5,7 @@
 // to the accepted session's channel label.  Delivered descriptors are
 // DTYPE_CRYPTO sessions or leases whose operation rights are fixed in the
 // kernel; they may be transferred no further.
+@available(platform="bsd", added=1)
 library bsd.crypto.v1;
 
 using zx;

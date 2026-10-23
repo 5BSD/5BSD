@@ -63,7 +63,8 @@ virtio_iommu_event_process(struct virtio_iommu_state *state,
 	copied = 0;
 	for (size_t i = 0; i < iov_count && copied < sizeof(event); i++) {
 		fragment = MIN(iov[i].iov_len, sizeof(event) - copied);
-		memcpy(iov[i].iov_base, event + copied, fragment);
+		if (fragment != 0)
+			memcpy(iov[i].iov_base, event + copied, fragment);
 		copied += fragment;
 	}
 	if (copied != sizeof(event))

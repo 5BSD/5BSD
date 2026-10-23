@@ -1,0 +1,2 @@
+pfctl: Bad timeout name.
+stdin:1: unknown timeout sctp.bogus

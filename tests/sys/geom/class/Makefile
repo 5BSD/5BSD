@@ -4,7 +4,6 @@ PACKAGE=	tests
 
 TESTSDIR=	${TESTSBASE}/sys/geom/class
 
-TESTS_SUBDIRS+=	concat
 .if ${MK_OPENSSL} != "no"
 TESTS_SUBDIRS+=	eli
 .endif
@@ -14,8 +13,6 @@ TESTS_SUBDIRS+=	mirror
 TESTS_SUBDIRS+=	multipath
 TESTS_SUBDIRS+=	nop
 TESTS_SUBDIRS+=	part
-TESTS_SUBDIRS+=	stripe
-TESTS_SUBDIRS+=	union
 TESTS_SUBDIRS+=	uzip
 TESTS_SUBDIRS+=	zoned
 

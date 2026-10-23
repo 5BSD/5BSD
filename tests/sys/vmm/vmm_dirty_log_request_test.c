@@ -82,9 +82,17 @@ ATF_TC_BODY(rejects_unknown_and_noncanonical_input, tc)
 	request.gpa++;
 	ATF_CHECK_EQ(vmm_dirty_log_request_validate(&request), EINVAL);
 	request = valid_request(VMM_DIRTY_LOG_REQUEST_ENABLE);
+	request.flags = VMM_DIRTY_LOG_REQUEST_F_SPARSE_RANGE;
+	ATF_CHECK_EQ(vmm_dirty_log_request_validate(&request), 0);
+	request.flags = UINT16_C(2);
+	ATF_CHECK_EQ(vmm_dirty_log_request_validate(&request), EINVAL);
+	request = valid_request(VMM_DIRTY_LOG_REQUEST_ENABLE);
 	request.output_address = UINT64_C(0x10000);
 	ATF_CHECK_EQ(vmm_dirty_log_request_validate(&request), EINVAL);
 	request = valid_request(VMM_DIRTY_LOG_REQUEST_DISABLE);
+	request.flags = VMM_DIRTY_LOG_REQUEST_F_SPARSE_RANGE;
+	ATF_CHECK_EQ(vmm_dirty_log_request_validate(&request), EINVAL);
+	request.flags = 0;
 	request.length = UINT64_C(4096);
 	ATF_CHECK_EQ(vmm_dirty_log_request_validate(&request), EINVAL);
 }

@@ -677,12 +677,12 @@ ipfw_delete_pipe(int do_pipe, int i)
 	cmd.oid.subtype = (do_pipe == 1) ? DN_LINK :
 		( (do_pipe == 2) ? DN_FS : DN_SCH);
 	cmd.a[0] = i;
-	i = do_cmd(IP_DUMMYNET3, &cmd, cmd.oid.len);
-	if (i) {
-		i = 1;
-		warn("rule %u: setsockopt(IP_DUMMYNET3)", i);
+	if (do_cmd(IP_DUMMYNET3, &cmd, cmd.oid.len)) {
+		warn("%s %d: setsockopt(IP_DUMMYNET3)", (do_pipe == 1) ?
+		    "pipe" : ((do_pipe == 2) ? "queue" : "sched"), i);
+		return (1);
 	}
-	return i;
+	return (0);
 }
 
 /*

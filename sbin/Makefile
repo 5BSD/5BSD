@@ -3,7 +3,6 @@
 SUBDIR=adjkerntz \
 	camcontrol \
 	clri \
-	comcontrol \
 	conscontrol \
 	ddb \
 	devd \
@@ -44,7 +43,6 @@ SUBDIR=adjkerntz \
 	mount_msdosfs \
 	mount_nfs \
 	mount_nullfs \
-	mount_udf \
 	mount_unionfs \
 	newfs \
 	newfs_msdos \
@@ -78,9 +76,7 @@ SUBDIR.${MK_DUMMYNET}+=	dnctl
 SUBDIR.${MK_OPENSSL}+=	decryptcore
 SUBDIR.${MK_PF}+=	pfctl
 SUBDIR.${MK_PF}+=	pflogd
-SUBDIR.${MK_PF}+=	pflowctl
 SUBDIR.${MK_QUOTAS}+=	quotacheck
-SUBDIR.${MK_ROUTED}+=	routed
 SUBDIR.${MK_VERIEXEC}+=	veriexec
 SUBDIR.${MK_ZFS}+=	bectl
 SUBDIR.${MK_ZFS}+=	zfsbootcfg

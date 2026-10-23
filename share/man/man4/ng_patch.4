@@ -174,22 +174,32 @@ suppose you have two adjacent simplex links to a remote network
 will generate unwanted ICMP-replies which have to go forth, not back.
 Thus you need to raise TTL of every packet entering link by 2
 to ensure the TTL will not reach zero there.
-To achieve this you can set an
-.Xr ipfw 8
-rule to use the
+The packets have to be delivered to the
+.Va in
+hook by another netgraph node.
+5BSD has no
+ipfw
 .Cm netgraph
-action to inject packets which are going to the simplex link into the patch node, by using the
-following
+action, so the node is placed in a graph that carries only the IP packets
+to be changed, for example behind an
+.Xr ng_bpf 4
+node that selects them from an
+.Xr ng_ether 4
+hook (with
+.Ic setdlt
+1).
+The following
 .Xr ngctl 8
-script:
+script creates and configures such a node, here attached to
+.Xr ngctl 8 Ns 's
+own socket node:
 .Bd -literal -offset 4n
 /usr/sbin/ngctl -f- <<-SEQ
-	mkpeer ipfw: patch 200 in
-	name ipfw:200 ttl_add
+	mkpeer . patch ttl in
+	name .:ttl ttl_add
 	msg ttl_add: setconfig { count=1 csum_flags=1 ops=[	\e
 		{ mode=2 value=3 length=1 offset=8 } ] }
 SEQ
-/sbin/ipfw add 150 netgraph 200 ip from any to simplex.remote.net
 .Ed
 .Pp
 Here the
@@ -211,13 +221,12 @@ bit.
 So you do:
 .Bd -literal -offset 4n
 /usr/sbin/ngctl -f- <<-SEQ
-	mkpeer ipfw: patch 300 in
-	name ipfw:300 tos_chg
+	mkpeer . patch tos in
+	name .:tos tos_chg
 	msg tos_chg: setconfig { count=2 csum_flags=1 ops=[	\e
 		{ mode=7 value=0xf7 length=1 offset=1 }		\e
 		{ mode=8 value=0x02 length=1 offset=1 } ] }
 SEQ
-/sbin/ipfw add 160 netgraph 300 ip from any to any not dst-port 80
 .Ed
 .Pp
 This first does
@@ -231,18 +240,20 @@ In both examples the
 field indicates that IP checksum (but not TCP or UDP checksum) should be
 recalculated before transmit.
 .Pp
-Note: one should ensure that packets are returned to ipfw after processing
-inside
-.Xr netgraph 4 ,
-by setting appropriate
-.Xr sysctl 8
-variable:
-.Bd -literal -offset 4n
-sysctl net.inet.ip.fw.one_pass=0
-.Ed
+For traffic of the host itself,
+.Xr pf.conf 5
+can do similar changes without netgraph with the
+.Cm scrub
+option
+.Cm min-ttl
+and the
+.Cm set tos
+rule option.
 .Sh SEE ALSO
 .Xr netgraph 4 ,
-.Xr ng_ipfw 4 ,
+.Xr ng_bpf 4 ,
+.Xr ng_ether 4 ,
+.Xr pf.conf 5 ,
 .Xr ngctl 8
 .Sh HISTORY
 The

@@ -196,7 +196,7 @@ struct vm {
 };
 
 int vm_create(const char *name, struct vm **retvm);
-struct vcpu *vm_alloc_vcpu(struct vm *vm, int vcpuid);
+int vm_alloc_vcpu(struct vm *vm, int vcpuid, struct vcpu **vcpup);
 void vm_destroy(struct vm *vm);
 int vm_destroy_preflight(struct vm *vm);
 int vm_reinit(struct vm *vm);
@@ -253,6 +253,9 @@ int vm_startup_route_sipi_set(struct vm *vm, const cpuset_t *targets,
 void vm_lock_vcpus(struct vm *vm);
 void vm_unlock_vcpus(struct vm *vm);
 void vm_disable_vcpu_creation(struct vm *vm);
+#ifdef __amd64__
+int vm_nested_memmap_invalidate(struct vm *vm);
+#endif
 
 int vm_suspend(struct vm *vm, enum vm_suspend_how how);
 int vm_activate_cpu(struct vcpu *vcpu);

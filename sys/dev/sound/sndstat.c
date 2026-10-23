@@ -1051,10 +1051,6 @@ sndstat_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data, int fflag,
 	int err;
 	struct sndstat_file *pf;
 	struct sndstioc_nv_arg *arg;
-#ifdef COMPAT_FREEBSD32
-	struct sndstioc_nv_arg32 *arg32;
-	size_t nbytes;
-#endif
 
 	err = devfs_get_cdevpriv((void **)&pf);
 	if (err != 0)
@@ -1065,29 +1061,10 @@ sndstat_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data, int fflag,
 		arg = (struct sndstioc_nv_arg *)data;
 		err = sndstat_get_devs(pf, arg->buf, &arg->nbytes);
 		break;
-#ifdef COMPAT_FREEBSD32
-	case SNDSTIOC_GET_DEVS32:
-		arg32 = (struct sndstioc_nv_arg32 *)data;
-		nbytes = arg32->nbytes;
-		err = sndstat_get_devs(pf, (void *)(uintptr_t)arg32->buf,
-		    &nbytes);
-		if (err == 0) {
-			KASSERT(nbytes < UINT_MAX, ("impossibly many bytes"));
-			arg32->nbytes = nbytes;
-		}
-		break;
-#endif
 	case SNDSTIOC_ADD_USER_DEVS:
 		arg = (struct sndstioc_nv_arg *)data;
 		err = sndstat_add_user_devs(pf, arg->buf, arg->nbytes);
 		break;
-#ifdef COMPAT_FREEBSD32
-	case SNDSTIOC_ADD_USER_DEVS32:
-		arg32 = (struct sndstioc_nv_arg32 *)data;
-		err = sndstat_add_user_devs(pf, (void *)(uintptr_t)arg32->buf,
-		    arg32->nbytes);
-		break;
-#endif
 	case SNDSTIOC_REFRESH_DEVS:
 		err = sndstat_refresh_devs(pf);
 		break;

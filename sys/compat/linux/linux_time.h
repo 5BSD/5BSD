@@ -90,9 +90,6 @@ struct l_sigevent {
 		} _l_sigev_thread;
 	} _l_sigev_un;
 }
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
-__packed
-#endif
 ;
 
 struct l_itimerspec {
@@ -100,12 +97,6 @@ struct l_itimerspec {
 	struct l_timespec it_value;
 };
 
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-struct l_itimerspec64 {
-	struct l_timespec64 it_interval;
-	struct l_timespec64 it_value;
-};
-#endif
 
 int native_to_linux_timespec(struct l_timespec *,
 				     struct timespec *);
@@ -115,37 +106,19 @@ int linux_put_timespec(struct timespec *,
 				     struct l_timespec *);
 int linux_get_timespec(struct timespec *,
 				     const struct l_timespec *);
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int native_to_linux_timespec64(struct l_timespec64 *,
-				     struct timespec *);
-int linux_to_native_timespec64(struct timespec *,
-				     struct l_timespec64 *);
-int linux_put_timespec64(struct timespec *,
-				     struct l_timespec64 *);
-int linux_get_timespec64(struct timespec *,
-				    const  struct l_timespec64 *);
-#endif
 int linux_to_native_clockid(clockid_t *, clockid_t);
 int native_to_linux_itimerspec(struct l_itimerspec *,
 				     struct itimerspec *);
 int linux_to_native_itimerspec(struct itimerspec *,
 				     struct l_itimerspec *);
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
-int native_to_linux_itimerspec64(struct l_itimerspec64 *,
-				     struct itimerspec *);
-int linux_to_native_itimerspec64(struct itimerspec *,
-				     struct l_itimerspec64 *);
-#endif
 
 int linux_convert_l_sigevent(const struct l_sigevent *l_sig, struct sigevent *sig);
 int linux_to_native_timerflags(int *, int);
 
 /*
  * adjtimex(2)/clock_adjtime(2), <uapi/linux/timex.h>.  With l_long and
- * l_int this yields both the 64-bit layout (208 bytes, natural padding
- * after modes, status and shift) and the 32-bit adjtimex layout used by
- * i386/COMPAT_LINUX32 (128 bytes).  The 32-bit clock_adjtime64(2), which
- * takes the 64-bit __kernel_timex, is a separate syscall and not this.
+ * l_int this yields the 64-bit layout (208 bytes, with natural padding
+ * after modes, status and shift).
  */
 struct l_timex {
 	l_uint		modes;

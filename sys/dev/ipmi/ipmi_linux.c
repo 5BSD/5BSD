@@ -39,13 +39,8 @@
 #include <sys/module.h>
 #include <sys/file.h>
 #include <sys/proc.h>
-#ifdef __amd64__
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
-#endif
 #include <compat/linux/linux_ioctl.h>
 #include <sys/ioccom.h>
 #include <sys/ipmi.h>
@@ -76,7 +71,7 @@ ipmi_linux_modevent(module_t mod, int type, void *data)
 }
 
 DEV_MODULE(ipmi_linux, ipmi_linux_modevent, NULL);
-MODULE_DEPEND(ipmi_linux, linux, 1, 1, 1);
+MODULE_DEPEND(ipmi_linux, linux64, 1, 1, 1);
 
 static int
 ipmi_linux_ioctl(struct thread *td, struct linux_ioctl_args *args)

@@ -554,6 +554,7 @@ static int g_linkup_calls;
 static struct blockif_ctxt g_init_bc;
 
 extern void *__real_calloc(size_t, size_t);
+void *__wrap_calloc(size_t, size_t);
 static int g_calloc_fail_after = -1;	/* -1: never fail */
 
 void *
@@ -2641,7 +2642,7 @@ ATF_TC_BODY(device_init_success_paths, tc)
 	ATF_CHECK_EQ(sc->vbsc_nqueues, 1);
 	ATF_CHECK_EQ(sc->vbsc_cfg.vbc_capacity,
 	    (uint64_t)g_open_size / VIRTIO14_BLK_SECTOR_BYTES);
-	ATF_CHECK_EQ(sc->vbsc_cfg.vbc_blk_size, g_open_sectsz);
+	ATF_CHECK_EQ(sc->vbsc_cfg.vbc_blk_size, (uint32_t)g_open_sectsz);
 	/* seg_max is clamped below the ring size, per the Linux invariant. */
 	ATF_CHECK_EQ(sc->vbsc_cfg.vbc_seg_max,
 	    MIN(VTBLK_RINGSZ - 2, BLOCKIF_IOV_MAX));

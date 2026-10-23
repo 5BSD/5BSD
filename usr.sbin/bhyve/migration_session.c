@@ -16,6 +16,7 @@
 #include "bhyve_trace.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -23,6 +24,7 @@
 #include <zlib.h>
 
 #include "migration_session.h"
+#include "checkpoint_manifest.h"
 
 /* ------------------------------------------------------------------------- */
 /* Small helpers								     */
@@ -51,6 +53,26 @@ migration_string_canonical(const char *string, size_t capacity)
 	return (true);
 }
 
+static bool
+migration_topology_names_valid(const struct migration_topology *topology)
+{
+	const char *name;
+
+	if (topology->device_count > MIGRATION_MAX_DEVICES)
+		return (false);
+	for (uint32_t i = 0; i < topology->device_count; i++) {
+		name = topology->devices[i].name;
+		if (name[0] == '\0' || !migration_string_canonical(name,
+		    sizeof(topology->devices[i].name)))
+			return (false);
+		for (uint32_t j = 0; j < i; j++) {
+			if (strcmp(name, topology->devices[j].name) == 0)
+				return (false);
+		}
+	}
+	return (true);
+}
+
 static uint32_t
 migration_crc32(const void *payload, size_t payload_len)
 {
@@ -72,11 +94,32 @@ migration_crc32(const void *payload, size_t payload_len)
 	return ((uint32_t)checksum);
 }
 
+/* Stable, length-bound identity for reconstructed immutable ROM contents. */
+static uint64_t __unused
+migration_rom_digest(const void *payload, size_t length)
+{
+	const uint8_t *bytes = payload;
+	uint64_t digest;
+
+	digest = UINT64_C(14695981039346656037);
+	for (size_t i = 0; i < length; i++) {
+		digest ^= bytes[i];
+		digest *= UINT64_C(1099511628211);
+	}
+	for (unsigned int i = 0; i < 8; i++) {
+		digest ^= ((uint64_t)length >> (i * 8)) & UINT64_C(0xff);
+		digest *= UINT64_C(1099511628211);
+	}
+	return (digest);
+}
+
 static bool
-migration_message_type_valid(uint16_t type)
+migration_message_type_valid(uint16_t version, uint16_t type)
 {
 
-	return (type >= MIGRATION_MSG_HELLO && type <= MIGRATION_MSG_RELEASE_ACK);
+	return ((type >= MIGRATION_MSG_HELLO && type <= MIGRATION_MSG_ABORT) ||
+	    (version >= 2 && type == MIGRATION_MSG_VSOCK_STATE) ||
+	    (version >= 3 && type == MIGRATION_MSG_RELEASE_ACK));
 }
 
 static bool
@@ -86,7 +129,8 @@ migration_frame_flags_valid(uint16_t type, uint32_t flags)
 	if (flags == 0)
 		return (true);
 	return (flags == MIGRATION_FFLAG_CHUNK &&
-	    (type == MIGRATION_MSG_MEM_GEN || type == MIGRATION_MSG_DEV_STATE));
+	    (type == MIGRATION_MSG_MEM_GEN || type == MIGRATION_MSG_DEV_STATE ||
+	    type == MIGRATION_MSG_VSOCK_STATE));
 }
 
 /*
@@ -115,6 +159,30 @@ migration_memory_record_validate(uint64_t gpa, uint32_t length,
 	return (backed ? 0 : EBADMSG);
 }
 
+/* The first pre-copy generation is a complete, ordered RAM baseline. */
+static int __unused
+migration_baseline_page_validate(uint64_t gpa, uint64_t previous_end,
+    uint64_t lowmem, uint64_t highmem_base, uint64_t highmem)
+{
+	uint64_t expected;
+
+	expected = previous_end;
+	if (expected == lowmem && highmem != 0)
+		expected = highmem_base;
+	return (gpa == expected ? 0 : EBADMSG);
+}
+
+static bool __unused
+migration_baseline_complete(uint64_t previous_end, uint64_t lowmem,
+    uint64_t highmem_base, uint64_t highmem)
+{
+
+	if (highmem == 0)
+		return (previous_end == lowmem);
+	return (highmem <= UINT64_MAX - highmem_base &&
+	    previous_end == highmem_base + highmem);
+}
+
 /* ------------------------------------------------------------------------- */
 /* Frame codec								     */
 /* ------------------------------------------------------------------------- */
@@ -129,7 +197,8 @@ migration_frame_encode(uint16_t version, uint16_t type, uint32_t seq,
 	    (payload == NULL && payload_len != 0))
 		return (EINVAL);
 	if (version < MIGRATION_FRAME_VERSION_MIN ||
-	    version > MIGRATION_PROTO_VERSION || !migration_message_type_valid(type) ||
+	    version > MIGRATION_PROTO_VERSION ||
+	    !migration_message_type_valid(version, type) ||
 	    !migration_frame_flags_valid(type, flags))
 		return (EINVAL);
 	if (payload_len > MIGRATION_MAX_PAYLOAD)
@@ -168,7 +237,7 @@ migration_frame_decode_header(const uint8_t *buf, size_t len,
 		return (EINVAL);
 	if (candidate.version < MIGRATION_FRAME_VERSION_MIN ||
 	    candidate.version > MIGRATION_PROTO_VERSION ||
-	    !migration_message_type_valid(candidate.type) ||
+	    !migration_message_type_valid(candidate.version, candidate.type) ||
 	    !migration_frame_flags_valid(candidate.type, candidate.flags))
 		return (EPROTO);
 	if (candidate.length > MIGRATION_MAX_PAYLOAD)
@@ -202,6 +271,10 @@ migration_hello_encode(const struct migration_hello *hello, uint8_t *out,
 
 	if (hello == NULL || out == NULL || cap < MIGRATION_HELLO_SIZE)
 		return (EINVAL);
+	if (hello->version_min < MIGRATION_PROTO_VERSION_MIN ||
+	    hello->version_max > MIGRATION_PROTO_VERSION ||
+	    hello->version_min > hello->version_max)
+		return (EPROTONOSUPPORT);
 	if (hello->role != MIGRATION_ROLE_SOURCE &&
 	    hello->role != MIGRATION_ROLE_DEST)
 		return (EINVAL);
@@ -234,6 +307,10 @@ migration_hello_decode(const uint8_t *buf, size_t len,
 
 	if (buf == NULL || hello == NULL || len != MIGRATION_HELLO_SIZE)
 		return (EINVAL);
+	/* Reserved v1 bytes require a new protocol version before reuse. */
+	if (buf[5] != 0 || buf[6] != 0 || buf[7] != 0 ||
+	    le32dec(buf + 28) != 0 || le32dec(buf + 44) != 0)
+		return (EBADMSG);
 	memset(&candidate, 0, sizeof(candidate));
 	candidate.version_max = le16dec(buf + 0);
 	candidate.version_min = le16dec(buf + 2);
@@ -247,6 +324,9 @@ migration_hello_decode(const uint8_t *buf, size_t len,
 	candidate.intr_controller = le32dec(buf + 40);
 	candidate.capability_flags = le64dec(buf + 48);
 	memcpy(candidate.machine_abi, buf + 56, sizeof(candidate.machine_abi));
+	if (candidate.version_min < MIGRATION_PROTO_VERSION_MIN ||
+	    candidate.version_min > candidate.version_max)
+		return (EBADMSG);
 	if (candidate.role != MIGRATION_ROLE_SOURCE &&
 	    candidate.role != MIGRATION_ROLE_DEST)
 		return (EBADMSG);
@@ -349,11 +429,8 @@ migration_topology_encode(const struct migration_topology *topology,
 	size = migration_topology_wire_size(topology);
 	if (cap < size)
 		return (EMSGSIZE);
-	for (uint32_t i = 0; i < topology->device_count; i++) {
-		if (!migration_string_canonical(topology->devices[i].name,
-		    sizeof(topology->devices[i].name)))
-			return (EINVAL);
-	}
+	if (!migration_topology_names_valid(topology))
+		return (EINVAL);
 	memset(out, 0, size);
 	le64enc(out + 0, topology->mem_size);
 	le64enc(out + 8, topology->lowmem);
@@ -391,6 +468,9 @@ migration_topology_decode(const uint8_t *buf, size_t len,
 
 	if (buf == NULL || topology == NULL || len < MIGRATION_TOPOLOGY_HDR_SIZE)
 		return (EINVAL);
+	/* Reserved bytes are part of the versioned wire contract. */
+	if (le16dec(buf + 34) != 0 || le32dec(buf + 40) != 0)
+		return (EBADMSG);
 	device_count = le32dec(buf + 36);
 	if (device_count > MIGRATION_MAX_DEVICES)
 		return (EBADMSG);
@@ -430,6 +510,8 @@ migration_topology_decode(const uint8_t *buf, size_t len,
 		}
 		record += MIGRATION_DEVREC_SIZE;
 	}
+	if (error == 0 && !migration_topology_names_valid(candidate))
+		error = EBADMSG;
 	if (error == 0)
 		*topology = *candidate;
 	free(candidate);
@@ -478,6 +560,21 @@ migration_memgen_decode(const uint8_t *buf, size_t len,
 	return (0);
 }
 
+static bool
+migration_memgen_same_round(const struct migration_memgen *a,
+    const struct migration_memgen *b)
+{
+
+	return (a->round == b->round && a->mode == b->mode &&
+	    a->gpa == b->gpa && a->length == b->length &&
+	    a->cpu_identity == b->cpu_identity &&
+	    a->cpu_map_generation == b->cpu_map_generation &&
+	    a->cpu_dirty_generation == b->cpu_dirty_generation &&
+	    a->device_identity == b->device_identity &&
+	    a->device_dirty_generation == b->device_dirty_generation &&
+	    a->final == b->final);
+}
+
 int
 migration_chunk_encode(const struct migration_chunk *chunk, uint8_t *out,
     size_t cap)
@@ -513,6 +610,11 @@ migration_chunk_validate(uint64_t expect_offset, uint64_t total_or_zero,
 
 	if (chunk == NULL)
 		return (EINVAL);
+	if (chunk->final > 1)
+		return (EBADMSG);
+	/* Every chunk must advance the cursor; empty state uses one plain frame. */
+	if (chunk->chunk_length == 0)
+		return (EBADMSG);
 	/* Oversize single chunk, or a total larger than we will ever buffer. */
 	if (chunk->chunk_length > chunk_max)
 		return (EMSGSIZE);
@@ -534,11 +636,6 @@ migration_chunk_validate(uint64_t expect_offset, uint64_t total_or_zero,
 		if ((chunk->offset + chunk->chunk_length ==
 		    chunk->total_length) != (chunk->final != 0))
 			return (EBADMSG);
-	} else {
-		/* Streaming producer: termination is carried by final only. */
-		if (chunk->final != 0 && chunk->chunk_length == 0 &&
-		    chunk->offset == 0)
-			return (0);
 	}
 	return (0);
 }
@@ -623,6 +720,20 @@ migration_hello_validate(const struct migration_hello *local,
 	migration_set_reason(reason, MIGRATION_REASON_NONE);
 	if (local == NULL || remote == NULL || negotiated == NULL)
 		return (EINVAL);
+	/* Only advertise versions whose message and state codecs exist here. */
+	if (local->version_min < MIGRATION_PROTO_VERSION_MIN ||
+	    local->version_max > MIGRATION_PROTO_VERSION ||
+	    local->version_min > local->version_max ||
+	    remote->version_min < MIGRATION_PROTO_VERSION_MIN ||
+	    remote->version_min > remote->version_max) {
+		migration_set_reason(reason, MIGRATION_REASON_VERSION);
+		return (EPROTONOSUPPORT);
+	}
+	if (local->role != MIGRATION_ROLE_DEST ||
+	    remote->role != MIGRATION_ROLE_SOURCE) {
+		migration_set_reason(reason, MIGRATION_REASON_PROTOCOL);
+		return (EPROTO);
+	}
 	if (((local->capability_flags | remote->capability_flags) &
 	    ~MIGRATION_CAP_ALL) != 0) {
 		migration_set_reason(reason, MIGRATION_REASON_CAPS);
@@ -648,8 +759,20 @@ migration_hello_validate(const struct migration_hello *local,
 		migration_set_reason(reason, MIGRATION_REASON_PAGESIZE);
 		return (EINVAL);
 	}
-	if (memcmp(remote->machine_abi, local->machine_abi,
-	    sizeof(local->machine_abi)) != 0) {
+	if (!migration_string_canonical(local->machine_abi,
+	    sizeof(local->machine_abi)) ||
+	    !migration_string_canonical(remote->machine_abi,
+	    sizeof(remote->machine_abi)) ||
+	    (memcmp(remote->machine_abi, local->machine_abi,
+	    sizeof(local->machine_abi)) != 0 &&
+	    !(local->role == MIGRATION_ROLE_DEST &&
+	    remote->role == MIGRATION_ROLE_SOURCE &&
+	    (local->capability_flags & MIGRATION_CAP_V2_RESTORE) != 0 &&
+	    /* The previous machine ABI was emitted only with v0.1.0's v1 wire. */
+	    remote->version_min == 1 && remote->version_max == 1 &&
+	    strcmp(local->machine_abi, CHECKPOINT_MACHINE_ABI) == 0 &&
+	    strcmp(remote->machine_abi,
+	    CHECKPOINT_MACHINE_ABI_PREVIOUS) == 0))) {
 		migration_set_reason(reason, MIGRATION_REASON_MACHINE_ABI);
 		return (EINVAL);
 	}
@@ -659,12 +782,13 @@ migration_hello_validate(const struct migration_hello *local,
 	}
 	/*
 	 * CPU architectural state is not assumed portable: the destination
-	 * must present the same CPU family/model and the same capability
+	 * must present the same CPU family/model/stepping and capability
 	 * signature as the source, or the restored guest could execute against
 	 * a silently different ISA surface.
 	 */
 	if (remote->cpu_family != local->cpu_family ||
 	    remote->cpu_model != local->cpu_model ||
+	    remote->cpu_stepping != local->cpu_stepping ||
 	    remote->cpu_feature_hash != local->cpu_feature_hash) {
 		migration_set_reason(reason, MIGRATION_REASON_CPU);
 		return (EINVAL);
@@ -675,7 +799,46 @@ migration_hello_validate(const struct migration_hello *local,
 		migration_set_reason(reason, MIGRATION_REASON_CAPS);
 		return (EINVAL);
 	}
+	/*
+	 * Version 2 (vsock state without a confirmed handoff) was never
+	 * released.  Version 1 is admitted only from a qualified v0.1.0 source
+	 * behind this destination's V2_RESTORE gate; such a source cannot
+	 * confirm the handoff, but this destination still never discards a
+	 * committed image.
+	 */
+	if (chosen == 2 || (chosen == 1 &&
+	    (local->capability_flags & MIGRATION_CAP_V2_RESTORE) == 0)) {
+		migration_set_reason(reason, MIGRATION_REASON_VERSION);
+		return (EPROTONOSUPPORT);
+	}
 	*negotiated = chosen;
+	return (0);
+}
+
+int
+migration_caps_accept_validate(const struct migration_hello *source,
+    const struct migration_caps_accept *caps, uint32_t *reason)
+{
+
+	migration_set_reason(reason, MIGRATION_REASON_NONE);
+	if (source == NULL || caps == NULL)
+		return (EINVAL);
+	if (source->version_min < MIGRATION_PROTO_VERSION_MIN ||
+	    source->version_max > MIGRATION_PROTO_VERSION ||
+	    source->version_min > source->version_max ||
+	    caps->negotiated_version < source->version_min ||
+	    caps->negotiated_version > source->version_max ||
+	    caps->negotiated_version < MIGRATION_PROTO_VERSION_MIN ||
+	    caps->negotiated_version > MIGRATION_PROTO_VERSION) {
+		migration_set_reason(reason, MIGRATION_REASON_VERSION);
+		return (EPROTONOSUPPORT);
+	}
+	if ((caps->capability_flags & MIGRATION_CAP_PRECOPY) == 0 ||
+	    (caps->capability_flags & ~MIGRATION_CAP_ALL) != 0 ||
+	    (caps->capability_flags & ~source->capability_flags) != 0) {
+		migration_set_reason(reason, MIGRATION_REASON_CAPS);
+		return (EPROTO);
+	}
 	return (0);
 }
 
@@ -687,7 +850,8 @@ migration_topology_validate(const struct migration_topology *local,
 	migration_set_reason(reason, MIGRATION_REASON_NONE);
 	if (local == NULL || remote == NULL)
 		return (EINVAL);
-	if (remote->device_count > MIGRATION_MAX_DEVICES) {
+	if (!migration_topology_names_valid(local) ||
+	    !migration_topology_names_valid(remote)) {
 		migration_set_reason(reason, MIGRATION_REASON_TOPOLOGY);
 		return (EINVAL);
 	}
@@ -760,25 +924,73 @@ migration_topology_validate(const struct migration_topology *local,
 /* ------------------------------------------------------------------------- */
 
 #include <poll.h>
+#include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 static int
-migration_fd_wait(int fd, int timeout_ms)
+migration_fd_deadline(int timeout_ms, uint64_t *deadline)
+{
+	struct timespec now;
+
+	if (timeout_ms <= 0) {
+		*deadline = UINT64_MAX;
+		return (0);
+	}
+	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+		return (errno != 0 ? errno : EIO);
+	*deadline = (uint64_t)now.tv_sec * 1000 +
+	    (uint64_t)now.tv_nsec / 1000000 + (uint64_t)timeout_ms;
+	return (0);
+}
+
+static int
+migration_fd_remaining(uint64_t deadline, int *timeout_ms)
+{
+	struct timespec now;
+	uint64_t current, remaining;
+
+	if (deadline == UINT64_MAX) {
+		*timeout_ms = -1;
+		return (0);
+	}
+	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+		return (errno != 0 ? errno : EIO);
+	current = (uint64_t)now.tv_sec * 1000 +
+	    (uint64_t)now.tv_nsec / 1000000;
+	if (current >= deadline)
+		return (ETIMEDOUT);
+	remaining = deadline - current;
+	*timeout_ms = remaining > INT_MAX ? INT_MAX : (int)remaining;
+	return (0);
+}
+
+static int
+migration_fd_wait(int fd, short events, uint64_t deadline)
 {
 	struct pollfd pfd;
-	int rc;
+	int error, rc, timeout_ms;
 
-	if (timeout_ms <= 0)
-		return (0);
-	memset(&pfd, 0, sizeof(pfd));
-	pfd.fd = fd;
-	pfd.events = POLLIN;
-	rc = poll(&pfd, 1, timeout_ms);
-	if (rc < 0)
-		return (errno != 0 ? errno : EIO);
-	if (rc == 0)
-		return (ETIMEDOUT);
-	return (0);
+	for (;;) {
+		error = migration_fd_remaining(deadline, &timeout_ms);
+		if (error != 0)
+			return (error);
+		memset(&pfd, 0, sizeof(pfd));
+		pfd.fd = fd;
+		pfd.events = events;
+		rc = poll(&pfd, 1, timeout_ms);
+		if (rc == 0)
+			return (ETIMEDOUT);
+		if (rc < 0) {
+			if (errno == EINTR)
+				continue;
+			return (errno != 0 ? errno : EIO);
+		}
+		if ((pfd.revents & POLLNVAL) != 0)
+			return (EBADF);
+		if ((pfd.revents & (events | POLLERR | POLLHUP)) != 0)
+			return (0);
+	}
 }
 
 static int
@@ -786,16 +998,32 @@ migration_fd_send(void *cookie, const void *buf, size_t len)
 {
 	struct migration_transport_fd *fdx;
 	const uint8_t *cursor;
+	uint64_t deadline;
+	int error, timeout_ms;
 
 	fdx = cookie;
 	cursor = buf;
+	error = migration_fd_deadline(fdx->io_timeout_ms, &deadline);
+	if (error != 0)
+		return (error);
 	while (len != 0) {
 		ssize_t n;
 
-		n = write(fdx->fd, cursor, len);
+		/* A lost peer must reach rollback, not terminate bhyve via SIGPIPE. */
+		error = migration_fd_remaining(deadline, &timeout_ms);
+		if (error != 0)
+			return (error);
+		n = send(fdx->fd, cursor, len, MSG_NOSIGNAL | MSG_DONTWAIT);
 		if (n < 0) {
 			if (errno == EINTR)
 				continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				error = migration_fd_wait(fdx->fd, POLLOUT,
+				    deadline);
+				if (error != 0)
+					return (error);
+				continue;
+			}
 			return (errno != 0 ? errno : EIO);
 		}
 		if (n == 0)
@@ -811,20 +1039,31 @@ migration_fd_recv(void *cookie, void *buf, size_t len)
 {
 	struct migration_transport_fd *fdx;
 	uint8_t *cursor;
+	uint64_t deadline;
+	int error, timeout_ms;
 
 	fdx = cookie;
 	cursor = buf;
+	error = migration_fd_deadline(fdx->io_timeout_ms, &deadline);
+	if (error != 0)
+		return (error);
 	while (len != 0) {
 		ssize_t n;
-		int error;
 
-		error = migration_fd_wait(fdx->fd, fdx->recv_timeout_ms);
+		error = migration_fd_remaining(deadline, &timeout_ms);
 		if (error != 0)
 			return (error);
-		n = read(fdx->fd, cursor, len);
+		n = recv(fdx->fd, cursor, len, MSG_DONTWAIT);
 		if (n < 0) {
 			if (errno == EINTR)
 				continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				error = migration_fd_wait(fdx->fd, POLLIN,
+				    deadline);
+				if (error != 0)
+					return (error);
+				continue;
+			}
 			return (errno != 0 ? errno : EIO);
 		}
 		if (n == 0)
@@ -837,11 +1076,11 @@ migration_fd_recv(void *cookie, void *buf, size_t len)
 
 void
 migration_transport_fd_init(struct migration_transport *xp,
-    struct migration_transport_fd *fdx, int fd, int recv_timeout_ms)
+    struct migration_transport_fd *fdx, int fd, int io_timeout_ms)
 {
 
 	fdx->fd = fd;
-	fdx->recv_timeout_ms = recv_timeout_ms;
+	fdx->io_timeout_ms = io_timeout_ms;
 	xp->xp_send = migration_fd_send;
 	xp->xp_recv = migration_fd_recv;
 	xp->xp_cookie = fdx;
@@ -894,9 +1133,10 @@ migration_progress_report(const struct migration_session *sess, uint32_t phase,
 
 /*
  * Frame and send one message.  version is the negotiated protocol version once
- * the handshake completes, or MIGRATION_PROTO_VERSION for the opening HELLO.
- * A CAPS_REJECT before negotiation goes out in the peer's own frame version,
- * so a peer we refuse for its version can still decode the refusal.
+ * the handshake completes, or the oldest supported version for the opening
+ * HELLO, so a v1 destination can decode it and refuse or negotiate.  A
+ * CAPS_REJECT before negotiation goes out in the peer's own frame version, so
+ * a peer refused for its version can still decode the refusal.
  */
 static int
 migration_send(struct migration_session *sess, uint16_t type, uint32_t flags,
@@ -916,7 +1156,7 @@ migration_send(struct migration_session *sess, uint16_t type, uint32_t flags,
 	else if (type == MIGRATION_MSG_CAPS_REJECT && sess->peer_version != 0)
 		version = sess->peer_version;
 	else
-		version = MIGRATION_PROTO_VERSION;
+		version = MIGRATION_PROTO_VERSION_MIN;
 	frame_len = (size_t)MIGRATION_FRAME_HDR_SIZE + payload_len;
 	frame = malloc(frame_len);
 	if (frame == NULL)
@@ -929,6 +1169,8 @@ migration_send(struct migration_session *sess, uint16_t type, uint32_t flags,
 			sess->send_seq++;
 	}
 	BHYVE_TRACE(MIGRATION_SEND, type, sess->send_seq, payload_len, error);
+	/* Memory generations and device records can both contain guest secrets. */
+	explicit_bzero(frame, frame_len);
 	free(frame);
 	return (error);
 }
@@ -967,6 +1209,8 @@ migration_recv(struct migration_session *sess,
 
 	*payload = NULL;
 	*payload_len = 0;
+	if (sess->recv_seq == UINT32_MAX)
+		return (EOVERFLOW);
 	error = sess->xp->xp_recv(sess->xp->xp_cookie, header, sizeof(header));
 	if (error != 0)
 		return (error);
@@ -974,8 +1218,6 @@ migration_recv(struct migration_session *sess,
 	    &candidate);
 	if (error != 0)
 		return (error);
-	if (sess->recv_seq == UINT32_MAX)
-		return (EOVERFLOW);
 	if (candidate.seq != sess->recv_seq + 1)
 		return (EBADMSG);
 	if (sess->version != 0 && candidate.version != sess->version)
@@ -990,6 +1232,7 @@ migration_recv(struct migration_session *sess,
 		error = sess->xp->xp_recv(sess->xp->xp_cookie, buf,
 		    candidate.length);
 		if (error != 0) {
+			explicit_bzero(buf, candidate.length);
 			free(buf);
 			return (error);
 		}
@@ -997,6 +1240,8 @@ migration_recv(struct migration_session *sess,
 	error = migration_frame_verify_payload(&candidate, buf,
 	    candidate.length);
 	if (error != 0) {
+		if (buf != NULL)
+			explicit_bzero(buf, candidate.length);
 		free(buf);
 		return (error);
 	}
@@ -1004,6 +1249,8 @@ migration_recv(struct migration_session *sess,
 	*hdr = candidate;
 	*payload = buf;
 	*payload_len = candidate.length;
+	BHYVE_TRACE(MIGRATION_RECEIVE, candidate.type, sess->recv_seq,
+	    candidate.length);
 	return (0);
 }
 
@@ -1058,18 +1305,20 @@ migration_source_send_generation(struct migration_session *sess,
 		    &dirty_pages, &converged, &more);
 		if (error != 0)
 			return (error);
-		gen.round = round;
-		gen.final = final_flag;
 		/* The callback writes into a fixed scratch region. Reject a bad
-		 * length before memmove or framing, and forbid a non-progressing
-		 * continuation that would keep the source in this loop forever. */
-		if (page_bytes > datacap || (more && page_bytes == 0) ||
+		 * length before memmove or framing, forbid a non-progressing
+		 * continuation that would keep the source in this loop forever,
+		 * and never emit an empty chunk after the first. */
+		if (page_bytes > datacap ||
+		    (page_bytes == 0 && (more || offset != 0)) ||
 		    dirty_pages > UINT64_MAX - total_dirty ||
 		    offset > UINT64_MAX - page_bytes) {
 			if (reason != NULL)
 				*reason = MIGRATION_REASON_PROTOCOL;
 			return (EPROTO);
 		}
+		gen.round = round;
+		gen.final = final_flag;
 		total_dirty += dirty_pages;
 		if (offset == 0 && !more) {
 			/* One frame: unchunked, byte-identical to legacy. */
@@ -1121,7 +1370,7 @@ migration_source_send_generation(struct migration_session *sess,
 			free(payload);
 			return (ECONNRESET);
 		}
-		if (hdr.type != MIGRATION_MSG_MEM_ACK) {
+		if (hdr.type != MIGRATION_MSG_MEM_ACK || payload_len != 0) {
 			free(payload);
 			if (reason != NULL)
 				*reason = MIGRATION_REASON_PROTOCOL;
@@ -1137,15 +1386,14 @@ migration_source_send_generation(struct migration_session *sess,
 }
 
 /*
- * Serialize the source device/CPU/kernel-state blob and stream it as one or
- * more DEV_STATE frames.  A blob within one frame is sent unchunked (legacy
- * format); a larger blob is split into ordered, total/offset-tagged chunks that
- * the destination reassembles before restore.  DEV_STATE frames are not
- * individually acknowledged; the FINAL fence that follows orders them.
+ * Serialize a source state blob as one or more frames.  A blob within one frame
+ * is sent unchunked; a larger blob uses ordered, total/offset-tagged chunks.
+ * These frames are not individually acknowledged; FINAL orders them.
  */
 static int
-migration_source_send_dev_state(struct migration_session *sess,
-    const struct migration_source_ops *ops, void *arg, uint64_t *bytes_sent)
+migration_source_send_state(struct migration_session *sess,
+    int (*capture)(void *, uint8_t **, size_t *), void *arg, uint16_t type,
+    size_t maximum, uint64_t *bytes_sent)
 {
 	const size_t chunkmax = MIGRATION_MAX_PAYLOAD - MIGRATION_CHUNK_HDR_SIZE;
 	uint8_t *blob, *frame;
@@ -1154,25 +1402,35 @@ migration_source_send_dev_state(struct migration_session *sess,
 
 	blob = NULL;
 	len = 0;
-	error = ops->so_dev_state(arg, &blob, &len);
-	if (error != 0)
+	error = capture(arg, &blob, &len);
+	if (error != 0) {
+		if (blob != NULL)
+			explicit_bzero(blob, len);
+		free(blob);
 		return (error);
+	}
 	if (blob == NULL && len != 0)
 		return (EINVAL);
-	if (len > MIGRATION_MAX_DEV_STATE) {
+	if (len > maximum) {
+		if (blob != NULL)
+			explicit_bzero(blob, len);
 		free(blob);
 		return (EMSGSIZE);
 	}
 	if (len <= MIGRATION_MAX_PAYLOAD) {
-		error = migration_send(sess, MIGRATION_MSG_DEV_STATE, 0, blob,
+		error = migration_send(sess, type, 0, blob,
 		    len);
 		if (error == 0)
 			*bytes_sent += len;
+		if (blob != NULL)
+			explicit_bzero(blob, len);
 		free(blob);
 		return (error);
 	}
 	frame = malloc(MIGRATION_MAX_PAYLOAD);
 	if (frame == NULL) {
+		if (blob != NULL)
+			explicit_bzero(blob, len);
 		free(blob);
 		return (ENOMEM);
 	}
@@ -1195,7 +1453,7 @@ migration_source_send_dev_state(struct migration_session *sess,
 		if (error != 0)
 			break;
 		memcpy(frame + MIGRATION_CHUNK_HDR_SIZE, blob + offset, this);
-		error = migration_send(sess, MIGRATION_MSG_DEV_STATE,
+		error = migration_send(sess, type,
 		    MIGRATION_FFLAG_CHUNK, frame,
 		    MIGRATION_CHUNK_HDR_SIZE + this);
 		if (error != 0)
@@ -1203,7 +1461,9 @@ migration_source_send_dev_state(struct migration_session *sess,
 		*bytes_sent += MIGRATION_CHUNK_HDR_SIZE + this;
 		offset += this;
 	}
+	explicit_bzero(frame, MIGRATION_MAX_PAYLOAD);
 	free(frame);
+	explicit_bzero(blob, len);
 	free(blob);
 	return (error);
 }
@@ -1230,14 +1490,23 @@ migration_source_run(const struct migration_transport *xp,
 	uint8_t *topo_wire;
 	size_t payload_len, topo_len, wrote;
 	uint32_t max_rounds, round;
-	bool quiesced, precopy_enabled, cutover_ready;
+	bool quiesced, precopy_enabled, cutover_ready, relay_prepared;
 	uint8_t challenge[MIGRATION_FRESH_CHALLENGE_SIZE] = {0};
 	uint8_t release_wire[MIGRATION_FRESH_RELEASE_SIZE] = {0};
 	struct migration_commit_binding commit_binding;
+	int relay_error = 0;
 	int error;
 
 	if (xp == NULL || xp->xp_send == NULL || xp->xp_recv == NULL ||
-	    ops == NULL || config == NULL || result == NULL)
+	    ops == NULL || config == NULL || result == NULL ||
+	    ops->so_local_hello == NULL || ops->so_local_topology == NULL ||
+	    ops->so_precopy_enable == NULL || ops->so_precopy_round == NULL ||
+	    ops->so_precopy_disable == NULL || ops->so_quiesce == NULL ||
+	    ops->so_resume == NULL || ops->so_dev_state == NULL ||
+	    ops->so_defunct == NULL ||
+	    (ops->so_prepare_relay != NULL &&
+	    (ops->so_cancel_relay == NULL ||
+	    ops->so_activate_relay == NULL || ops->so_vsock_state == NULL)))
 		return (EINVAL);
 
 	memset(&out, 0, sizeof(out));
@@ -1255,6 +1524,11 @@ migration_source_run(const struct migration_transport *xp,
 	sess.xp = xp;
 	sess.config = config;
 	max_rounds = config->max_rounds != 0 ? config->max_rounds : 8;
+	/* Leave one representable round for the final stop-and-copy pass. */
+	if (max_rounds == UINT32_MAX) {
+		*result = out;
+		return (EINVAL);
+	}
 
 	payload = NULL;
 	topology = NULL;
@@ -1262,6 +1536,7 @@ migration_source_run(const struct migration_transport *xp,
 	quiesced = false;
 	precopy_enabled = false;
 	cutover_ready = false;
+	relay_prepared = false;
 
 	/* ---- Handshake ---- */
 	out.phase = MIGRATION_PHASE_HANDSHAKE;
@@ -1285,6 +1560,8 @@ migration_source_run(const struct migration_transport *xp,
 	    MIGRATION_PROTO_VERSION;
 	hello.version_min = config->version_min != 0 ? config->version_min :
 	    MIGRATION_PROTO_VERSION_MIN;
+	if (ops->so_vsock_state != NULL)
+		hello.capability_flags |= MIGRATION_CAP_VSOCK_STATE;
 	error = migration_hello_encode(&hello, hello_wire, sizeof(hello_wire));
 	if (error != 0)
 		goto fail_runnable;
@@ -1314,14 +1591,35 @@ migration_source_run(const struct migration_transport *xp,
 		out.reason = MIGRATION_REASON_PROTOCOL;
 		goto fail_runnable;
 	}
+	if (hdr.version != caps.negotiated_version) {
+		out.reason = MIGRATION_REASON_VERSION;
+		error = EPROTO;
+		goto fail_runnable;
+	}
 	free(payload);
 	payload = NULL;
-	/* The destination must have chosen a version inside our own window. */
-	error = migration_source_caps_validate(&hello, &caps, &out.reason);
+	/* Validate the peer's selected version and advertised capability set. */
+	error = migration_caps_accept_validate(&hello, &caps, &out.reason);
+	if (error == 0)
+		error = migration_source_caps_validate(&hello, &caps,
+		    &out.reason);
 	if (error != 0)
 		goto fail_runnable;
+	/* A source confirms every handoff, which only version 3 can carry; an
+	 * older destination is refused before anything is paused. */
+	if (caps.negotiated_version < 3) {
+		out.reason = MIGRATION_REASON_VERSION;
+		error = EPROTONOSUPPORT;
+		goto fail_runnable;
+	}
 	sess.version = caps.negotiated_version;
 	out.negotiated_version = caps.negotiated_version;
+	if (ops->so_vsock_state != NULL &&
+	    (caps.capability_flags & MIGRATION_CAP_VSOCK_STATE) == 0) {
+		out.reason = MIGRATION_REASON_CAPS;
+		error = ENOTSUP;
+		goto fail_runnable;
+	}
 
 	/* ---- Topology exchange + pre-quiesce validation ---- */
 	out.phase = MIGRATION_PHASE_VALIDATE;
@@ -1365,7 +1663,7 @@ migration_source_run(const struct migration_transport *xp,
 		error = ECONNREFUSED;
 		goto fail_runnable;
 	}
-	if (hdr.type != MIGRATION_MSG_TOPO_ACCEPT) {
+	if (hdr.type != MIGRATION_MSG_TOPO_ACCEPT || payload_len != 0) {
 		out.reason = MIGRATION_REASON_PROTOCOL;
 		error = EPROTO;
 		goto fail_runnable;
@@ -1467,8 +1765,18 @@ migration_source_run(const struct migration_transport *xp,
 			goto fail_rollback;
 	}
 
+	/* Active endpoints precede the device image which names them. */
+	if (sess.version >= 2 && ops->so_vsock_state != NULL) {
+		error = migration_source_send_state(&sess, ops->so_vsock_state,
+		    arg, MIGRATION_MSG_VSOCK_STATE, MIGRATION_MAX_VSOCK_STATE,
+		    &out.bytes_sent);
+		if (error != 0)
+			goto fail_rollback;
+	}
 	/* Device/backend/CPU/kernel state, then the final ordering fence. */
-	error = migration_source_send_dev_state(&sess, ops, arg, &out.bytes_sent);
+	error = migration_source_send_state(&sess, ops->so_dev_state, arg,
+	    MIGRATION_MSG_DEV_STATE, MIGRATION_MAX_DEV_STATE,
+	    &out.bytes_sent);
 	if (error != 0)
 		goto fail_rollback;
 	error = migration_send_reason(&sess, MIGRATION_MSG_FINAL,
@@ -1476,8 +1784,12 @@ migration_source_run(const struct migration_transport *xp,
 	if (error != 0)
 		goto fail_rollback;
 
-	/* Pre-copy dirty logging is retired only after the cut. */
-	(void)ops->so_precopy_disable(arg);
+	/* Pre-copy dirty logging must retire before committing the cut. */
+	error = ops->so_precopy_disable(arg);
+	if (error != 0) {
+		out.reason = MIGRATION_REASON_STATE;
+		goto fail_rollback;
+	}
 	precopy_enabled = false;
 
 	/* ---- Commit / cutover ---- */
@@ -1512,6 +1824,15 @@ migration_source_run(const struct migration_transport *xp,
 	memcpy(challenge, commit_binding.challenge, sizeof(challenge));
 	free(payload);
 	payload = NULL;
+	if (ops->so_prepare_relay != NULL) {
+		/* Cancel must also handle a prepare that fails halfway through. */
+		relay_prepared = true;
+		error = ops->so_prepare_relay(arg);
+		if (error != 0) {
+			out.reason = MIGRATION_REASON_STATE;
+			goto fail_rollback;
+		}
+	}
 
 	/* An adapter may retire the source before authorizing destination
 	 * execution. A send error can be ambiguous after delivery; it cannot
@@ -1539,6 +1860,11 @@ migration_source_run(const struct migration_transport *xp,
 	if (error != 0)
 		goto fail_wedged;
 
+	/* RELEASE forbids rollback.  Start any standby vsock owner now; its
+	 * failure is terminal for the relay, not for the handoff. */
+	if (relay_prepared)
+		relay_error = ops->so_activate_relay(arg);
+
 	/* RELEASE_ACK means the destination resumed its committed copy. */
 	error = migration_recv(&sess, &hdr, &payload, &payload_len);
 	if (error != 0)
@@ -1555,20 +1881,40 @@ migration_source_run(const struct migration_transport *xp,
 	error = ops->so_record(arg, MIGRATION_REC_SOURCE_CONFIRMED, challenge);
 	if (error != 0)
 		goto fail_wedged;
-	ops->so_defunct(arg);
 	out.source_runnable = false;
-	out.phase = MIGRATION_PHASE_COMPLETED;
-	migration_progress_report(&sess, MIGRATION_PHASE_COMPLETED, out.rounds,
-	    out.bytes_sent, 0, true);
+	/* The handoff completed; a failed relay activation is still reported. */
+	error = relay_error;
+	if (error != 0) {
+		out.phase = MIGRATION_PHASE_FAILED;
+		out.reason = MIGRATION_REASON_STATE;
+	} else
+		out.phase = MIGRATION_PHASE_COMPLETED;
+	migration_progress_report(&sess, out.phase, out.rounds,
+	    out.bytes_sent, out.reason, true);
+	if (frame_payload != NULL)
+		explicit_bzero(frame_payload, MIGRATION_MAX_PAYLOAD);
 	free(frame_payload);
 	*result = out;
-	return (0);
+	BHYVE_TRACE(MIGRATION_RESULT, MIGRATION_ROLE_SOURCE, out.phase,
+	    out.reason, error, out.source_runnable);
+	ops->so_defunct(arg);
+	return (error);
 
 fail_rollback:
 	/*
-	 * Failure after the source quiesced but before an acknowledged
-	 * destination commit: resume the source so it remains the running copy.
+	 * Failure after quiesce but before RELEASE: cancel any standby relay,
+	 * then resume the source so it remains the running copy.
 	 */
+	if (relay_prepared) {
+		int cancel_error;
+
+		cancel_error = ops->so_cancel_relay(arg);
+		if (cancel_error != 0) {
+			error = cancel_error;
+			out.reason = MIGRATION_REASON_STATE;
+			goto fail_wedged;
+		}
+	}
 	if (quiesced) {
 		int resume_error;
 
@@ -1587,8 +1933,16 @@ fail_rollback:
 				out.reason = MIGRATION_REASON_STATE;
 		}
 	}
-	if (precopy_enabled)
-		(void)ops->so_precopy_disable(arg);
+	if (precopy_enabled) {
+		int disable_error;
+
+		disable_error = ops->so_precopy_disable(arg);
+		if (disable_error != 0) {
+			error = disable_error;
+			out.reason = MIGRATION_REASON_STATE;
+			out.phase = MIGRATION_PHASE_FAILED;
+		}
+	}
 	if (out.phase != MIGRATION_PHASE_FAILED) {
 		out.source_runnable = true;
 		out.phase = MIGRATION_PHASE_ROLLED_BACK;
@@ -1597,11 +1951,15 @@ fail_rollback:
 		out.reason = MIGRATION_REASON_TRANSPORT;
 	(void)migration_send_reason(&sess, MIGRATION_MSG_ABORT, out.reason, 0);
 	free(payload);
+	if (frame_payload != NULL)
+		explicit_bzero(frame_payload, MIGRATION_MAX_PAYLOAD);
 	free(frame_payload);
 	free(topology);
 	if (error == 0)
 		error = EPROTO;
 	*result = out;
+	BHYVE_TRACE(MIGRATION_RESULT, MIGRATION_ROLE_SOURCE, out.phase,
+	    out.reason, error, out.source_runnable);
 	return (error);
 
 fail_runnable:
@@ -1609,24 +1967,36 @@ fail_runnable:
 	 * Failure before the source ever quiesced: nothing destructive has
 	 * happened, so the source keeps running.
 	 */
-	if (precopy_enabled)
-		(void)ops->so_precopy_disable(arg);
+	if (precopy_enabled) {
+		int disable_error;
+
+		disable_error = ops->so_precopy_disable(arg);
+		if (disable_error != 0) {
+			error = disable_error;
+			out.reason = MIGRATION_REASON_STATE;
+		}
+	}
 	out.source_runnable = true;
 	out.phase = MIGRATION_PHASE_FAILED;
 	if (out.reason == MIGRATION_REASON_NONE)
 		out.reason = MIGRATION_REASON_TRANSPORT;
 	(void)migration_send_reason(&sess, MIGRATION_MSG_ABORT, out.reason, 0);
 	free(payload);
+	if (frame_payload != NULL)
+		explicit_bzero(frame_payload, MIGRATION_MAX_PAYLOAD);
 	free(frame_payload);
 	free(topology);
 	if (error == 0)
 		error = EPROTO;
 	*result = out;
+	BHYVE_TRACE(MIGRATION_RESULT, MIGRATION_ROLE_SOURCE, out.phase,
+	    out.reason, error, out.source_runnable);
 	return (error);
 
 fail_wedged:
 	/*
-	 * Quiesce failed without rollback, or irreversible retirement began: the
+	 * The quiesce or relay cancellation could not roll back safely, or
+	 * irreversible retirement began: the
 	 * source is stopped and unrecoverable.  Retire dirty logging, tell the
 	 * destination to abort, and report the source as NOT runnable so the
 	 * control plane never resumes a second copy elsewhere.
@@ -1639,33 +2009,21 @@ fail_wedged:
 		out.reason = MIGRATION_REASON_STATE;
 	(void)migration_send_reason(&sess, MIGRATION_MSG_ABORT, out.reason, 0);
 	free(payload);
+	if (frame_payload != NULL)
+		explicit_bzero(frame_payload, MIGRATION_MAX_PAYLOAD);
 	free(frame_payload);
 	free(topology);
 	if (error == 0)
 		error = EIO;
 	*result = out;
+	BHYVE_TRACE(MIGRATION_RESULT, MIGRATION_ROLE_SOURCE, out.phase,
+	    out.reason, error, out.source_runnable);
 	return (error);
 }
 
 /* ------------------------------------------------------------------------- */
 /* Destination state machine						     */
 /* ------------------------------------------------------------------------- */
-
-static bool
-migration_memgen_same_generation(const struct migration_memgen *a,
-    const struct migration_memgen *b)
-{
-	/* page_count describes one frame; every other field describes the
-	 * logical generation and must stay fixed until its final chunk. */
-	return (a->round == b->round && a->mode == b->mode &&
-	    a->gpa == b->gpa && a->length == b->length &&
-	    a->cpu_identity == b->cpu_identity &&
-	    a->cpu_map_generation == b->cpu_map_generation &&
-	    a->cpu_dirty_generation == b->cpu_dirty_generation &&
-	    a->device_identity == b->device_identity &&
-	    a->device_dirty_generation == b->device_dirty_generation &&
-	    a->final == b->final);
-}
 
 int
 migration_dest_run(const struct migration_transport *xp,
@@ -1679,7 +2037,7 @@ migration_dest_run(const struct migration_transport *xp,
 	struct migration_hello local_hello, remote_hello;
 	struct migration_topology *local_topo, *remote_topo;
 	struct migration_caps_accept caps;
-	struct migration_memgen active_memgen;
+	struct migration_memgen mem_chunk_gen;
 	struct migration_reason_msg reason_msg;
 	uint8_t *payload;
 	uint8_t caps_wire[MIGRATION_CAPS_ACCEPT_SIZE];
@@ -1687,18 +2045,25 @@ migration_dest_run(const struct migration_transport *xp,
 	uint8_t commit_wire[MIGRATION_FRESH_COMMIT_SIZE];
 	struct migration_commit_binding commit_binding = {0};
 	uint8_t *dev_reasm;		/* chunked DEV_STATE reassembly buffer */
+	uint8_t *vsock_reasm;		/* chunked VSOCK_STATE reassembly buffer */
 	size_t payload_len;
 	uint64_t mem_offset;		/* next contiguous byte in a chunked gen */
 	uint64_t dev_total, dev_offset;	/* chunked DEV_STATE reassembly cursor */
+	uint64_t vsock_total, vsock_offset;
 	uint16_t negotiated;
 	uint32_t reason;
 	bool committed, staged, dev_state_seen, dev_state_started;
 	bool retain_eligible = false;
-	bool mem_stream_active;
+	bool vsock_state_seen, vsock_state_started;
+	bool final_mem_seen, mem_chunk_started;
 	int error;
 
 	if (xp == NULL || xp->xp_send == NULL || xp->xp_recv == NULL ||
-	    ops == NULL || config == NULL || result == NULL)
+	    ops == NULL || config == NULL || result == NULL ||
+	    ops->do_local_hello == NULL || ops->do_local_topology == NULL ||
+	    ops->do_stage_mem == NULL || ops->do_stage_dev == NULL ||
+	    ops->do_commit == NULL || ops->do_resume == NULL ||
+	    ops->do_discard == NULL)
 		return (EINVAL);
 
 	memset(&out, 0, sizeof(out));
@@ -1710,17 +2075,24 @@ migration_dest_run(const struct migration_transport *xp,
 	sess.config = config;
 
 	payload = NULL;
+	payload_len = 0;
 	local_topo = NULL;
 	remote_topo = NULL;
 	dev_reasm = NULL;
+	vsock_reasm = NULL;
 	mem_offset = 0;
-	mem_stream_active = false;
 	dev_total = 0;
 	dev_offset = 0;
+	vsock_total = 0;
+	vsock_offset = 0;
 	committed = false;
 	staged = false;
 	dev_state_seen = false;
 	dev_state_started = false;
+	vsock_state_seen = false;
+	vsock_state_started = false;
+	final_mem_seen = false;
+	mem_chunk_started = false;
 
 	/* ---- Handshake ---- */
 	out.phase = MIGRATION_PHASE_HANDSHAKE;
@@ -1739,6 +2111,13 @@ migration_dest_run(const struct migration_transport *xp,
 	}
 	free(payload);
 	payload = NULL;
+	if (hdr.version != remote_hello.version_min) {
+		out.reason = MIGRATION_REASON_VERSION;
+		(void)migration_send_reason(&sess, MIGRATION_MSG_CAPS_REJECT,
+		    out.reason, 0);
+		error = EPROTO;
+		goto fail;
+	}
 	if (remote_hello.role != MIGRATION_ROLE_SOURCE) {
 		out.reason = MIGRATION_REASON_PROTOCOL;
 		error = EPROTO;
@@ -1763,6 +2142,8 @@ migration_dest_run(const struct migration_transport *xp,
 		local_hello.version_max = config->version_max;
 	if (config->version_min != 0)
 		local_hello.version_min = config->version_min;
+	if (ops->do_stage_vsock != NULL)
+		local_hello.capability_flags |= MIGRATION_CAP_VSOCK_STATE;
 	reason = MIGRATION_REASON_NONE;
 	error = migration_hello_validate(&local_hello, &remote_hello,
 	    &negotiated, &reason);
@@ -1842,7 +2223,7 @@ migration_dest_run(const struct migration_transport *xp,
 		error = migration_recv(&sess, &hdr, &payload, &payload_len);
 		if (error != 0)
 			goto fail;
-		if (mem_stream_active && hdr.type != MIGRATION_MSG_MEM_GEN &&
+		if (mem_chunk_started && hdr.type != MIGRATION_MSG_MEM_GEN &&
 		    hdr.type != MIGRATION_MSG_ABORT) {
 			out.reason = MIGRATION_REASON_PROTOCOL;
 			error = EBADMSG;
@@ -1853,7 +2234,7 @@ migration_dest_run(const struct migration_transport *xp,
 			const uint8_t *data;
 			size_t data_len;
 
-			if (dev_state_started ||
+			if (dev_state_started || final_mem_seen ||
 			    payload_len < MIGRATION_MEMGEN_HDR_SIZE) {
 				out.reason = MIGRATION_REASON_PROTOCOL;
 				error = EBADMSG;
@@ -1891,11 +2272,11 @@ migration_dest_run(const struct migration_transport *xp,
 					goto fail;
 				}
 				if (chunk.total_length != 0 || chunk.final > 1 ||
-				    (chunk.final == 0 && data_len == 0) ||
+				    data_len == 0 ||
 				    mem_offset > UINT64_MAX - data_len ||
-				    (mem_stream_active &&
-				    !migration_memgen_same_generation(&active_memgen,
-				    &gen))) {
+				    (mem_chunk_started &&
+				    !migration_memgen_same_round(&gen,
+				    &mem_chunk_gen))) {
 					out.reason = MIGRATION_REASON_PROTOCOL;
 					error = EBADMSG;
 					goto fail;
@@ -1907,22 +2288,25 @@ migration_dest_run(const struct migration_transport *xp,
 					out.reason = MIGRATION_REASON_PROTOCOL;
 					goto fail;
 				}
+				if (!mem_chunk_started) {
+					mem_chunk_gen = gen;
+					mem_chunk_started = true;
+				}
 				error = ops->do_stage_mem(arg, &gen, data,
 				    data_len);
 				if (error != 0) {
 					out.reason = MIGRATION_REASON_STATE;
 					goto fail;
 				}
-				if (!mem_stream_active)
-					active_memgen = gen;
 				mem_offset += data_len;
-				mem_stream_active = chunk.final == 0;
 				if (chunk.final != 0) {
+					final_mem_seen = gen.final != 0;
+					mem_chunk_started = false;
 					mem_offset = 0;
 					out.rounds++;
 				}
 			} else {
-				if (mem_stream_active) {
+				if (mem_chunk_started) {
 					out.reason = MIGRATION_REASON_PROTOCOL;
 					error = EBADMSG;
 					goto fail;
@@ -1934,9 +2318,11 @@ migration_dest_run(const struct migration_transport *xp,
 					out.reason = MIGRATION_REASON_STATE;
 					goto fail;
 				}
+				final_mem_seen = gen.final != 0;
 				out.rounds++;
 			}
 			out.bytes_received += payload_len;
+			explicit_bzero(payload, payload_len);
 			free(payload);
 			payload = NULL;
 			error = migration_send(&sess, MIGRATION_MSG_MEM_ACK, 0,
@@ -1945,7 +2331,101 @@ migration_dest_run(const struct migration_transport *xp,
 				goto fail;
 			continue;
 		}
+		if (hdr.type == MIGRATION_MSG_VSOCK_STATE) {
+			const size_t chunkmax = MIGRATION_MAX_PAYLOAD -
+			    MIGRATION_CHUNK_HDR_SIZE;
+
+			if (sess.version < 2 || ops->do_stage_vsock == NULL ||
+			    (caps.capability_flags & MIGRATION_CAP_VSOCK_STATE) == 0 ||
+			    !final_mem_seen || mem_chunk_started ||
+			    dev_state_started || vsock_state_seen) {
+				out.reason = MIGRATION_REASON_PROTOCOL;
+				error = EBADMSG;
+				goto fail;
+			}
+			if ((hdr.flags & MIGRATION_FFLAG_CHUNK) != 0) {
+				struct migration_chunk chunk;
+
+				if (payload_len < MIGRATION_CHUNK_HDR_SIZE ||
+				    (vsock_state_started && vsock_reasm == NULL)) {
+					out.reason = MIGRATION_REASON_PROTOCOL;
+					error = EBADMSG;
+					goto fail;
+				}
+				error = migration_chunk_decode(payload,
+				    MIGRATION_CHUNK_HDR_SIZE, &chunk);
+				if (error != 0 || chunk.total_length == 0 ||
+				    chunk.chunk_length != payload_len -
+				    MIGRATION_CHUNK_HDR_SIZE) {
+					out.reason = MIGRATION_REASON_PROTOCOL;
+					error = EBADMSG;
+					goto fail;
+				}
+				error = migration_chunk_validate(vsock_offset,
+				    vsock_total, &chunk, chunkmax,
+				    MIGRATION_MAX_VSOCK_STATE);
+				if (error != 0) {
+					out.reason = MIGRATION_REASON_PROTOCOL;
+					goto fail;
+				}
+				if (vsock_reasm == NULL) {
+					vsock_state_started = true;
+					vsock_total = chunk.total_length;
+					vsock_reasm = malloc(vsock_total);
+					if (vsock_reasm == NULL) {
+						error = ENOMEM;
+						goto fail;
+					}
+				}
+				memcpy(vsock_reasm + chunk.offset,
+				    payload + MIGRATION_CHUNK_HDR_SIZE,
+				    chunk.chunk_length);
+				vsock_offset += chunk.chunk_length;
+				if (chunk.final != 0) {
+					error = ops->do_stage_vsock(arg, vsock_reasm,
+					    vsock_total);
+					explicit_bzero(vsock_reasm, vsock_total);
+					free(vsock_reasm);
+					vsock_reasm = NULL;
+					vsock_offset = 0;
+					vsock_total = 0;
+					if (error != 0) {
+						out.reason = MIGRATION_REASON_STATE;
+						goto fail;
+					}
+					vsock_state_seen = true;
+				}
+			} else {
+				if (vsock_state_started) {
+					out.reason = MIGRATION_REASON_PROTOCOL;
+					error = EBADMSG;
+					goto fail;
+				}
+				vsock_state_started = true;
+				error = ops->do_stage_vsock(arg, payload,
+				    payload_len);
+				if (error != 0) {
+					out.reason = MIGRATION_REASON_STATE;
+					goto fail;
+				}
+				vsock_state_seen = true;
+			}
+			out.bytes_received += payload_len;
+			if (payload != NULL)
+				explicit_bzero(payload, payload_len);
+			free(payload);
+			payload = NULL;
+			continue;
+		}
 		if (hdr.type == MIGRATION_MSG_DEV_STATE) {
+			if (!final_mem_seen || mem_chunk_started ||
+			    (vsock_state_started && !vsock_state_seen) ||
+			    ((caps.capability_flags & MIGRATION_CAP_VSOCK_STATE) != 0 &&
+			    !vsock_state_seen)) {
+				out.reason = MIGRATION_REASON_PROTOCOL;
+				error = EBADMSG;
+				goto fail;
+			}
 			if ((hdr.flags & MIGRATION_FFLAG_CHUNK) != 0) {
 				struct migration_chunk chunk;
 				const size_t chunkmax = MIGRATION_MAX_PAYLOAD -
@@ -2007,6 +2487,7 @@ migration_dest_run(const struct migration_transport *xp,
 				if (chunk.final != 0) {
 					error = ops->do_stage_dev(arg, dev_reasm,
 					    dev_total);
+					explicit_bzero(dev_reasm, dev_total);
 					free(dev_reasm);
 					dev_reasm = NULL;
 					dev_offset = 0;
@@ -2034,11 +2515,22 @@ migration_dest_run(const struct migration_transport *xp,
 				dev_state_seen = true;
 			}
 			out.bytes_received += payload_len;
+			if (payload != NULL)
+				explicit_bzero(payload, payload_len);
 			free(payload);
 			payload = NULL;
 			continue;
 		}
 		if (hdr.type == MIGRATION_MSG_FINAL) {
+			error = migration_reason_decode(payload, payload_len,
+			    &reason_msg);
+			if (error != 0 ||
+			    reason_msg.reason_code != MIGRATION_REASON_NONE ||
+			    reason_msg.detail != 0) {
+				out.reason = MIGRATION_REASON_PROTOCOL;
+				error = EBADMSG;
+				goto fail;
+			}
 			free(payload);
 			payload = NULL;
 			/*
@@ -2047,7 +2539,10 @@ migration_dest_run(const struct migration_transport *xp,
 			 * committing it would replay truncated state.  Reject
 			 * (the fail path frees dev_reasm).
 			 */
-			if (dev_reasm != NULL || !dev_state_seen) {
+			if (dev_reasm != NULL || vsock_reasm != NULL ||
+			    !dev_state_seen ||
+			    ((caps.capability_flags & MIGRATION_CAP_VSOCK_STATE) != 0 &&
+			    !vsock_state_seen)) {
 				out.reason = MIGRATION_REASON_PROTOCOL;
 				error = EBADMSG;
 				goto fail;
@@ -2108,8 +2603,13 @@ migration_dest_run(const struct migration_transport *xp,
 	 * retire, so retain the exact paused image on any later failure: a
 	 * committed image is never discarded. */
 	retain_eligible = true;
-	error = migration_send(&sess, MIGRATION_MSG_COMMIT, 0,
-	    commit_wire, sizeof(commit_wire));
+	if (sess.version >= 3)
+		error = migration_send(&sess, MIGRATION_MSG_COMMIT, 0,
+		    commit_wire, sizeof(commit_wire));
+	else
+		/* A qualified v0.1.0 source expects an empty COMMIT and cannot
+		 * echo a challenge; this destination still retains its image. */
+		error = migration_send(&sess, MIGRATION_MSG_COMMIT, 0, NULL, 0);
 	if (error != 0)
 		goto fail;
 
@@ -2133,14 +2633,16 @@ migration_dest_run(const struct migration_transport *xp,
 	}
 	/* A message type alone is not permission to run. Require the exact
 	 * successful release result, rejecting empty, extended, or failed ones. */
-	if (payload_len != MIGRATION_FRESH_RELEASE_SIZE ||
-	    memcmp(payload + MIGRATION_REASON_SIZE, challenge,
-	    sizeof(challenge)) != 0) {
-		out.reason = MIGRATION_REASON_PROTOCOL;
-		error = EPROTO;
-		goto fail;
+	if (sess.version >= 3) {
+		if (payload_len != MIGRATION_FRESH_RELEASE_SIZE ||
+		    memcmp(payload + MIGRATION_REASON_SIZE, challenge,
+		    sizeof(challenge)) != 0) {
+			out.reason = MIGRATION_REASON_PROTOCOL;
+			error = EPROTO;
+			goto fail;
+		}
+		payload_len = MIGRATION_REASON_SIZE;
 	}
-	payload_len = MIGRATION_REASON_SIZE;
 	if (migration_reason_decode(payload, payload_len, &reason_msg) != 0 ||
 	    reason_msg.reason_code != MIGRATION_REASON_NONE ||
 	    reason_msg.detail != 0) {
@@ -2168,13 +2670,14 @@ migration_dest_run(const struct migration_transport *xp,
 	error = ops->do_record(arg, MIGRATION_REC_DEST_RUNNING, challenge);
 	if (error != 0)
 		out.reason = MIGRATION_REASON_STATE;
-	if (error == 0) {
+	/* A version 1 source has no RELEASE_ACK to receive. */
+	if (error == 0 && sess.version >= 3) {
 		error = migration_send(&sess, MIGRATION_MSG_RELEASE_ACK, 0,
 		    challenge, sizeof(challenge));
 		if (error != 0)
 			out.reason = MIGRATION_REASON_TRANSPORT;
+		out.release_ack_sent = error == 0;
 	}
-	out.release_ack_sent = error == 0;
 	/* The guest is already running. Lost acknowledgment must not run
 	 * discard or make the caller tear down the destination. The source
 	 * remains retired and reports uncertainty until it is resolved. */
@@ -2182,6 +2685,8 @@ migration_dest_run(const struct migration_transport *xp,
 	migration_progress_report(&sess, MIGRATION_PHASE_COMPLETED, out.rounds,
 	    out.bytes_received, 0, true);
 	*result = out;
+	BHYVE_TRACE(MIGRATION_RESULT, MIGRATION_ROLE_DEST, out.phase,
+	    out.reason, 0, out.resumed);
 	return (0);
 
 fail:
@@ -2199,13 +2704,22 @@ fail:
 	out.resumed = false;
 	if (out.reason == MIGRATION_REASON_NONE)
 		out.reason = MIGRATION_REASON_TRANSPORT;
+	if (payload != NULL)
+		explicit_bzero(payload, payload_len);
 	free(payload);
 	free(remote_topo);
 	free(local_topo);
+	if (dev_reasm != NULL)
+		explicit_bzero(dev_reasm, dev_total);
 	free(dev_reasm);
+	if (vsock_reasm != NULL)
+		explicit_bzero(vsock_reasm, vsock_total);
+	free(vsock_reasm);
 	if (error == 0)
 		error = EPROTO;
 	*result = out;
+	BHYVE_TRACE(MIGRATION_RESULT, MIGRATION_ROLE_DEST, out.phase,
+	    out.reason, error, out.resumed);
 	return (error);
 }
 
@@ -2226,6 +2740,10 @@ fail:
 #ifdef BHYVE_SNAPSHOT
 
 #include <sys/param.h>
+#ifndef WITHOUT_CAPSICUM
+#include <sys/capsicum.h>
+#include <capsicum_helpers.h>
+#endif
 
 #include <err.h>
 #include <pthread.h>
@@ -2261,6 +2779,9 @@ fail:
 #include "migration_handoff.h"
 #include "migration_channel.h"
 #include "migration_credentials_nv.h"
+#include "migration_vsock_bundle.h"
+#include "migration_vsock_owner.h"
+#include "pci_virtio_vsock_migration.h"
 #include "pci_emul.h"
 #include "qemu_fwcfg.h"
 #include "qemu_fwcfg_snapshot.h"
@@ -2289,6 +2810,12 @@ struct migration_prod_source {
 	bool controller_held;
 	int controller_fd;
 	struct vmctx *ctx;
+	int stream_fd;
+	struct migration_vsock_relay_endpoint vsock_endpoints[
+	    MIGRATION_VSOCK_BUNDLE_MAX_ENDPOINTS];
+	uint32_t vsock_endpoint_count;
+	bool vsock_relay_prepared;
+	struct vm_snapshot_capture capture;
 	uint64_t track_gpa;	/* tracked range base (0) */
 	uint64_t track_len;	/* tracked range length (spans the MMIO hole) */
 	uint64_t lowmem_len;	/* [0, lowmem_len) backed */
@@ -2299,7 +2826,9 @@ struct migration_prod_source {
 	size_t bitmap_bytes;
 	uint64_t cursor;	/* next GPA to examine within the round */
 	uint64_t gen_total;	/* dirty pages emitted so far this generation */
+	struct migration_precopy_generation generation;
 	bool gen_active;
+	bool baseline_done;
 	bool quiesced;
 	bool retirement_started;
 	bool intent_pending;
@@ -2349,6 +2878,7 @@ migration_prod_fill_hello(struct vmctx *ctx, struct migration_hello *hello)
 	hello->version_max = MIGRATION_PROTO_VERSION;
 	hello->version_min = MIGRATION_PROTO_VERSION_MIN;
 	hello->page_size = MIGRATION_DIRTY_GRANULARITY;
+	/* V2 source admission stays closed until record and live-VM qualification. */
 	hello->capability_flags = MIGRATION_CAP_PRECOPY |
 	    MIGRATION_CAP_DEVICE_DIRTY;
 	strlcpy(hello->machine_abi, CHECKPOINT_MACHINE_ABI,
@@ -2388,6 +2918,37 @@ migration_prod_fill_hello(struct vmctx *ctx, struct migration_hello *hello)
 	return (0);
 }
 
+static int
+migration_prod_append_rom_identity(struct vmctx *ctx,
+    struct migration_topology *topo, int segid, const char *record_name)
+{
+	struct migration_device_record *rec;
+	char segment_name[128];
+	void *host_base;
+	uint64_t digest;
+	size_t length;
+
+	if (vm_get_devmem_info(ctx, segid, &host_base, &length,
+	    segment_name, sizeof(segment_name)) != 0)
+		return (errno == ENOENT ? 0 : errno);
+	if (topo->device_count >= MIGRATION_MAX_DEVICES)
+		return (E2BIG);
+	rec = &topo->devices[topo->device_count];
+	if (strlcpy(rec->name, record_name, sizeof(rec->name)) >=
+	    sizeof(rec->name))
+		return (ENAMETOOLONG);
+	/* Configuration reconstructs this ROM; its complete bytes must match. */
+	digest = migration_rom_digest(host_base, length);
+	rec->migration_flags = PCI_MIGRATION_F_STATE_CODEC |
+	    PCI_MIGRATION_F_COMPAT_FIXED | PCI_MIGRATION_F_DMA_NONE |
+	    PCI_MIGRATION_F_QUIESCE_NONE;
+	rec->compat_schema = 1;
+	rec->compat_crc32 = (uint32_t)digest;
+	rec->bar_hash = (uint32_t)(digest >> 32);
+	topo->device_count++;
+	return (0);
+}
+
 int
 migration_prod_fill_topology(struct vmctx *ctx, struct migration_topology *topo)
 {
@@ -2397,12 +2958,11 @@ migration_prod_fill_topology(struct vmctx *ctx, struct migration_topology *topo)
 
 	if (ctx == NULL || topo == NULL)
 		return (EINVAL);
-	/* TPM state has no portable backend/interface checkpoint contract yet. */
-	if (tpm_device_present())
-		return (ENOTSUP);
 	memset(topo, 0, sizeof(*topo));
 	lowmem = vm_get_lowmem_size(ctx);
 	highmem = vm_get_highmem_size(ctx);
+	if (lowmem > UINT64_MAX - highmem || guest_ncpus <= 0)
+		return (EINVAL);
 	topo->lowmem = lowmem;
 	topo->highmem = highmem;
 	topo->mem_size = lowmem + highmem;
@@ -2419,7 +2979,9 @@ migration_prod_fill_topology(struct vmctx *ctx, struct migration_topology *topo)
 		if (topo->device_count >= MIGRATION_MAX_DEVICES)
 			return (E2BIG);
 		rec = &topo->devices[topo->device_count];
-		strlcpy(rec->name, pdi->pi_name, sizeof(rec->name));
+		if (strlcpy(rec->name, pdi->pi_name,
+		    sizeof(rec->name)) >= sizeof(rec->name))
+			return (ENAMETOOLONG);
 		rec->migration_flags = pdi->pi_d->pe_migration_flags;
 		rec->compat_schema = PCI_SNAPSHOT_COMPAT_SCHEMA;
 		if ((rec->migration_flags & PCI_MIGRATION_F_COMPAT_CALLBACK) != 0) {
@@ -2487,6 +3049,39 @@ migration_prod_fill_topology(struct vmctx *ctx, struct migration_topology *topo)
 		rec->bar_hash = 0;
 		topo->device_count++;
 	}
+	if (tpm_device_present()) {
+		struct migration_device_record *rec;
+		uint8_t identity[TPM_MIGRATION_IDENTITY_SIZE];
+		int error;
+
+		if (topo->device_count >= MIGRATION_MAX_DEVICES)
+			return (E2BIG);
+		error = tpm_device_migration_identity(identity);
+		if (error != 0)
+			return (error);
+		rec = &topo->devices[topo->device_count];
+		strlcpy(rec->name, TPM_SNAPSHOT_NAME, sizeof(rec->name));
+		rec->migration_flags = PCI_MIGRATION_F_STATE_CODEC |
+		    PCI_MIGRATION_F_COMPAT_FIXED | PCI_MIGRATION_F_DMA_NONE |
+		    PCI_MIGRATION_F_QUIESCE_CALLBACK;
+		rec->compat_schema = TPM_MIGRATION_COMPAT_SCHEMA;
+		rec->compat_crc32 = migration_crc32(identity, sizeof(identity));
+		rec->bar_hash = 0;
+		topo->device_count++;
+	}
+	/* These read-only mappings lie in the MMIO hole and are not RAM-copied. */
+	{
+		int error;
+
+		error = migration_prod_append_rom_identity(ctx, topo, VM_BOOTROM,
+		    "_vmm.bootrom");
+		if (error != 0)
+			return (error);
+		error = migration_prod_append_rom_identity(ctx, topo, VM_PCIROM,
+		    "_vmm.pcirom");
+		if (error != 0)
+			return (error);
+	}
 	return (0);
 }
 
@@ -2526,10 +3121,16 @@ prod_precopy_enable(void *arg)
 	 * and thus never appear dirty.
 	 */
 	lowmem = vm_get_lowmem_size(src->ctx);
-	if (lowmem == 0)
-		return (ENXIO);
 	highmem = vm_get_highmem_size(src->ctx);
 	highbase = vm_get_highmem_base(src->ctx);
+	if (lowmem == 0 ||
+	    (lowmem & (MIGRATION_DIRTY_GRANULARITY - 1)) != 0 ||
+	    (highmem & (MIGRATION_DIRTY_GRANULARITY - 1)) != 0 ||
+	    (highmem != 0 &&
+	    (highbase < lowmem ||
+	    (highbase & (MIGRATION_DIRTY_GRANULARITY - 1)) != 0 ||
+	    highbase > UINT64_MAX - highmem)))
+		return (EINVAL);
 	track_len = highmem != 0 ? highbase + highmem : lowmem;
 	src->track_gpa = 0;
 	src->track_len = track_len;
@@ -2539,8 +3140,10 @@ prod_precopy_enable(void *arg)
 	src->bitmap = NULL;
 	src->bitmap_bytes = 0;
 	src->gen_active = false;
+	src->baseline_done = false;
 	src->cursor = 0;
 	src->gen_total = 0;
+	memset(&src->generation, 0, sizeof(src->generation));
 	error = migration_precopy_enable(src->ctx, src->track_gpa,
 	    src->track_len);
 	return (error);
@@ -2552,34 +3155,36 @@ prod_precopy_round(void *arg, bool final, struct migration_memgen *gen,
     bool *converged, bool *more)
 {
 	struct migration_prod_source *src = arg;
-	struct migration_precopy_generation pc;
 	size_t off;
 	uint64_t count, gpa;
 	int error;
 
-	(void)final;
 	*more = false;
 	/*
-	 * A generation begins on the first call after the previous one finished.
-	 * Collect the dirty bitmap once for the whole tracked range, then emit
-	 * page records chunk by chunk across the two backed sub-regions.
+	 * Dirty tracking starts before the baseline walk.  The first generation
+	 * must copy every backed page, including pages populated before tracking
+	 * was enabled that have not changed since.  Later generations replay
+	 * writes made during or after that walk.
 	 */
+	if (final && !src->baseline_done)
+		return (EPROTO);
 	if (!src->gen_active) {
-		error = migration_dirty_range_bitmap_bytes(src->track_gpa,
-		    src->track_len, &src->bitmap_bytes);
-		if (error != 0)
-			return (error);
-		src->bitmap = calloc(src->bitmap_bytes, 1);
-		if (src->bitmap == NULL)
-			return (ENOMEM);
-		memset(&pc, 0, sizeof(pc));
-		error = migration_precopy_collect(src->ctx, src->track_gpa,
-		    src->track_len, MIGRATION_DIRTY_CLEAR, src->bitmap,
-		    src->bitmap_bytes, &pc);
-		if (error != 0) {
-			free(src->bitmap);
-			src->bitmap = NULL;
-			return (error);
+		if (src->baseline_done) {
+			error = migration_dirty_range_bitmap_bytes(src->track_gpa,
+			    src->track_len, &src->bitmap_bytes);
+			if (error != 0)
+				return (error);
+			src->bitmap = calloc(src->bitmap_bytes, 1);
+			if (src->bitmap == NULL)
+				return (ENOMEM);
+			error = migration_precopy_collect_window(src->ctx,
+			    src->track_gpa, src->track_len, src->bitmap,
+			    src->bitmap_bytes, &src->generation);
+			if (error != 0) {
+				free(src->bitmap);
+				src->bitmap = NULL;
+				return (error);
+			}
 		}
 		src->gen_active = true;
 		src->cursor = 0;
@@ -2594,7 +3199,8 @@ prod_precopy_round(void *arg, bool final, struct migration_memgen *gen,
 		void *host;
 
 		p = gpa / MIGRATION_DIRTY_GRANULARITY;
-		if ((src->bitmap[p / NBBY] & (UINT8_C(1) << (p % NBBY))) == 0) {
+		if (src->baseline_done &&
+		    (src->bitmap[p / NBBY] & (UINT8_C(1) << (p % NBBY))) == 0) {
 			gpa = prod_next_backed(src,
 			    gpa + MIGRATION_DIRTY_GRANULARITY);
 			continue;
@@ -2625,14 +3231,26 @@ prod_precopy_round(void *arg, bool final, struct migration_memgen *gen,
 		free(src->bitmap);
 		src->bitmap = NULL;
 		src->gen_active = false;
+		src->baseline_done = true;
 	}
 	gen->mode = MIGRATION_DIRTY_CLEAR;
 	gen->gpa = src->track_gpa;
 	gen->length = src->track_len;
+	if (src->generation.cpu_identity != 0) {
+		gen->cpu_identity = src->generation.cpu_identity;
+		gen->cpu_map_generation =
+		    src->generation.cpu_map_generation;
+		gen->cpu_dirty_generation =
+		    src->generation.cpu_dirty_generation;
+		gen->device_identity = src->generation.device_identity;
+		gen->device_dirty_generation =
+		    src->generation.device_dirty_generation;
+	}
 	gen->page_count = (uint32_t)count;
 	*written = off;
 	*dirty_pages = count;
-	*converged = (!*more && src->gen_total == 0);
+	*converged = (src->baseline_done && !*more &&
+	    src->generation.cpu_identity != 0 && src->gen_total == 0);
 	return (0);
 }
 
@@ -2710,6 +3328,10 @@ prod_resume(void *arg)
 
 	if (src->retirement_started)
 		return (ECANCELED);
+	/* Merge deferred source events before devices or vCPUs can run again. */
+	error = vm_snapshot_dev_state_finish(src->ctx, &src->capture, false);
+	if (error != 0)
+		return (error);
 	error = vm_resume_devices();
 	if (error != 0)
 		return (error);
@@ -2735,25 +3357,121 @@ prod_dev_state(void *arg, uint8_t **buf, size_t *len)
 	 * DEV_STATE frames as it needs.  On any error the source rolls back via
 	 * prod_resume() and keeps running.
 	 */
-	if (src->fresh_stopped) {
+	if (src->fresh_stopped)
 		error = vm_snapshot_fresh_dev_state_to_mem(src->ctx,
-		    src->fresh_record, buf, len);
-		if (error == 0) {
-			SHA256_CTX hash;
-			SHA256_Init(&hash);
-			SHA256_Update(&hash, *buf, *len);
-			SHA256_Final(src->recovery.state_digest, &hash);
-			memcpy(src->recovery.session, src->fresh_record, sizeof(src->fresh_record));
-		}
-		return (error);
-	}
-	error = vm_snapshot_dev_state_to_mem(src->ctx, buf, len);
+		    src->fresh_record, buf, len, &src->capture);
+	else
+		error = vm_snapshot_dev_state_to_mem(src->ctx, buf, len,
+		    &src->capture);
 	if (error == 0) {
 		/* Every COMMIT must echo the digest of exactly this blob. */
 		SHA256_CTX hash;
+
 		SHA256_Init(&hash);
 		SHA256_Update(&hash, *buf, *len);
 		SHA256_Final(src->recovery.state_digest, &hash);
+		if (src->fresh_stopped)
+			memcpy(src->recovery.session, src->fresh_record,
+			    sizeof(src->fresh_record));
+	}
+	return (error);
+}
+
+static bool
+prod_is_vsock(const struct pci_devinst *pdi)
+{
+
+	return (pdi != NULL && pdi->pi_d != NULL &&
+	    strcmp(pdi->pi_d->pe_emu, "virtio-vsock") == 0);
+}
+
+static int
+prod_vsock_state(void *arg, uint8_t **buf, size_t *len)
+{
+	struct migration_prod_source *src = arg;
+	struct migration_vsock_bundle_item items[
+	    MIGRATION_VSOCK_BUNDLE_MAX_DEVICES];
+	uint8_t *tables[MIGRATION_VSOCK_BUNDLE_MAX_DEVICES] = { 0 };
+	struct pci_devinst *pdi;
+	struct vsock_migration_conn_state states[VSOCK_MIGRATION_MAX_CONNS];
+	uint8_t *table;
+	size_t table_len;
+	uint32_t devices, endpoints, count;
+	uint32_t decoded_count;
+	uint8_t *wire;
+	size_t size;
+	int fds[VSOCK_MIGRATION_MAX_CONNS];
+	int error;
+
+	if (buf == NULL || len == NULL || !src->quiesced ||
+	    src->vsock_endpoint_count != 0)
+		return (EINVAL);
+	memset(items, 0, sizeof(items));
+	devices = endpoints = 0;
+	pdi = NULL;
+	while ((pdi = pci_next(pdi)) != NULL) {
+		if (!prod_is_vsock(pdi))
+			continue;
+		if (devices == MIGRATION_VSOCK_BUNDLE_MAX_DEVICES) {
+			error = E2BIG;
+			goto fail;
+		}
+		if (strlcpy(items[devices].name, pdi->pi_name,
+		    sizeof(items[devices].name)) >= sizeof(items[devices].name)) {
+			error = ENAMETOOLONG;
+			goto fail;
+		}
+		table = NULL;
+		table_len = 0;
+		error = pci_vtvsock_migration_capture(pdi, &table,
+		    &table_len, fds, nitems(fds), &count);
+		if (error != 0)
+			goto fail;
+		items[devices].table = table;
+		items[devices].table_len = table_len;
+		tables[devices] = table;
+		devices++;
+		if (count > MIGRATION_VSOCK_BUNDLE_MAX_ENDPOINTS - endpoints) {
+			error = E2BIG;
+			goto fail;
+		}
+		items[devices - 1].endpoint_count = count;
+		error = vsock_migration_table_decode(items[devices - 1].table,
+		    items[devices - 1].table_len, states, nitems(states),
+		    &decoded_count);
+		if (error != 0 || decoded_count != count) {
+			error = EPROTO;
+			goto fail;
+		}
+		for (uint32_t j = 0; j < count; j++) {
+			src->vsock_endpoints[endpoints + j].fd = fds[j];
+			src->vsock_endpoints[endpoints + j].type = states[j].type;
+		}
+		endpoints += count;
+	}
+	error = migration_vsock_bundle_size(items, devices, &size);
+	if (error != 0)
+		goto fail;
+	wire = malloc(size);
+	if (wire == NULL) {
+		error = ENOMEM;
+		goto fail;
+	}
+	error = migration_vsock_bundle_encode(items, devices, wire, size);
+	if (error != 0) {
+		explicit_bzero(wire, size);
+		free(wire);
+		goto fail;
+	}
+	src->vsock_endpoint_count = endpoints;
+	*buf = wire;
+	*len = size;
+fail:
+	for (uint32_t i = 0; i < devices; i++) {
+		if (tables[i] != NULL) {
+			explicit_bzero(tables[i], items[i].table_len);
+			free(tables[i]);
+		}
 	}
 	return (error);
 }
@@ -2933,6 +3651,12 @@ prod_retire(void *arg)
 		error = hypertrace_retire_transport();
 	if (error != 0)
 		return (error);
+	/* Deferred device events die with the retired source; a failure
+	 * here cannot stop an irreversible handoff. */
+	error = vm_snapshot_dev_state_finish(src->ctx, &src->capture, true);
+	if (error != 0)
+		warnx("cannot complete source event fence: %s",
+		    strerror(error));
 	error = prod_retire_destroy(&src->ctx, src->fresh_stopped,
 	    stopped.vmid, stopped.epoch);
 	if (error != 0)
@@ -2942,6 +3666,49 @@ prod_retire(void *arg)
 		return (errno != 0 ? errno : EIO);
 	src->retired = true;
 	return (0);
+}
+
+static int
+prod_prepare_vsock_relay(void *arg)
+{
+	struct migration_prod_source *src = arg;
+	int error;
+
+	if (src->vsock_endpoint_count == 0)
+		return (0);
+	/* Cancellation must run even when PREPARE loses its acknowledgement. */
+	src->vsock_relay_prepared = true;
+	error = migration_vsock_owner_prepare(src->stream_fd,
+	    src->vsock_endpoints, src->vsock_endpoint_count);
+	return (error);
+}
+
+static int
+prod_cancel_vsock_relay(void *arg)
+{
+	struct migration_prod_source *src = arg;
+	int error;
+
+	if (!src->vsock_relay_prepared)
+		return (0);
+	error = migration_vsock_owner_cancel();
+	if (error == 0)
+		src->vsock_relay_prepared = false;
+	return (error);
+}
+
+static int
+prod_activate_vsock_relay(void *arg)
+{
+	struct migration_prod_source *src = arg;
+	int error;
+
+	if (!src->vsock_relay_prepared)
+		return (0);
+	error = migration_vsock_owner_activate();
+	if (error == 0)
+		src->vsock_relay_prepared = false;
+	return (error);
 }
 
 static void
@@ -3021,6 +3788,8 @@ vm_do_migrate(struct vmctx *ctx, const nvlist_t *nvl)
 	/* The IPC thread serializes access; retain ownership after lost replies. */
 	struct migration_prod_source *src = &migration_ipc_source;
 	int recovery_root = migration_source_storage.directory;
+	struct migration_source_ops ops;
+	bool active_vsock;
 	struct migration_transport xp;
 	struct migration_channel channel;
 	struct migration_tls_credentials credentials;
@@ -3028,6 +3797,7 @@ vm_do_migrate(struct vmctx *ctx, const nvlist_t *nvl)
 	struct migration_session_config config;
 	struct migration_source_result result;
 	nvlist_t *reply;
+	uint64_t requested_rounds;
 	int fd, error;
 
 	reply = nvlist_create(0);
@@ -3055,14 +3825,15 @@ vm_do_migrate(struct vmctx *ctx, const nvlist_t *nvl)
 	memset(src, 0, sizeof(*src));
 	src->ctx = ctx;
 	src->recovery_dirfd = recovery_root;
+	src->stream_fd = fd;
 
 	memset(&config, 0, sizeof(config));
 	config.version_max = MIGRATION_PROTO_VERSION;
 	config.version_min = MIGRATION_PROTO_VERSION_MIN;
 	config.max_rounds = 8;
 	if (nvlist_exists_number(nvl, "max_rounds")) {
-		uint64_t requested = nvlist_get_number(nvl, "max_rounds");
-		if (!migration_max_rounds_valid(requested)) {
+		requested_rounds = nvlist_get_number(nvl, "max_rounds");
+		if (!migration_max_rounds_valid(requested_rounds)) {
 			nvlist_add_string(reply, "error",
 			    "max_rounds exceeds the supported range");
 			nvlist_add_number(reply, "phase", MIGRATION_PHASE_FAILED);
@@ -3070,7 +3841,7 @@ vm_do_migrate(struct vmctx *ctx, const nvlist_t *nvl)
 			nvlist_add_bool(reply, "source_runnable", true);
 			return (reply);
 		}
-		config.max_rounds = (uint32_t)requested;
+		config.max_rounds = (uint32_t)requested_rounds;
 	}
 	if (nvlist_exists_number(nvl, "converge_pages"))
 		config.converge_pages = nvlist_get_number(nvl, "converge_pages");
@@ -3079,6 +3850,22 @@ vm_do_migrate(struct vmctx *ctx, const nvlist_t *nvl)
 	/* HyperTrace binds the fresh session to the TLS certificate pins. */
 	if (error == 0 && hypertrace_initialized() && !tls_enabled)
 		error = EACCES;
+	/*
+	 * The active-vsock relay continues guest traffic over the migration
+	 * stream itself after RELEASE, from a separate owner process that does
+	 * not hold this TLS session.  Until the relay carries its own channel it
+	 * runs only on the explicit same-host plaintext socket.
+	 */
+	active_vsock = get_config_bool_default("checkpoint.migrate_active_vsock",
+	    false);
+	if (error == 0 && active_vsock && tls_enabled) {
+		nvlist_add_string(reply, "error", "active vsock migration is "
+		    "available only with migrate.plaintext_unix, not TLS");
+		nvlist_add_number(reply, "phase", MIGRATION_PHASE_FAILED);
+		nvlist_add_number(reply, "reason", MIGRATION_REASON_CAPS);
+		nvlist_add_bool(reply, "source_runnable", true);
+		return (reply);
+	}
 	if (error == 0)
 		error = migration_channel_policy(fd, tls_enabled,
 		    nvlist_exists_bool(nvl, "plaintext_unix") &&
@@ -3113,6 +3900,13 @@ vm_do_migrate(struct vmctx *ctx, const nvlist_t *nvl)
 		src->recovery_dirfd = recovery_root;
 	}
 	memset(&result, 0, sizeof(result));
+	ops = migration_prod_source_ops;
+	if (active_vsock) {
+		ops.so_vsock_state = prod_vsock_state;
+		ops.so_prepare_relay = prod_prepare_vsock_relay;
+		ops.so_cancel_relay = prod_cancel_vsock_relay;
+		ops.so_activate_relay = prod_activate_vsock_relay;
+	}
 	error = 0;
 	if (channel.secure)
 		error = migration_channel_binding(&channel, true,
@@ -3145,7 +3939,7 @@ vm_do_migrate(struct vmctx *ctx, const nvlist_t *nvl)
 	}
 #endif
 	if (error == 0)
-		error = migration_source_run(&xp, &migration_prod_source_ops, src,
+		error = migration_source_run(&xp, &ops, src,
 		    &config, &result);
 	migration_channel_cleanup(&channel);
 #ifdef BHYVE_GDB
@@ -3247,8 +4041,15 @@ IPC_COMMAND(migrate_repair, vm_do_migrate_repair);
 
 struct migration_prod_dest {
 	struct vmctx *ctx;
+	int stream_fd;
 	uint8_t *dev_blob;	/* reassembled device/CPU blob (owned) */
 	size_t dev_len;
+	uint8_t *vsock_blob;
+	size_t vsock_len;
+	struct migration_vsock_relay_endpoint vsock_endpoints[
+	    MIGRATION_VSOCK_BUNDLE_MAX_ENDPOINTS];
+	uint32_t vsock_endpoint_count;
+	bool vsock_relay_prepared;
 	uint64_t mem_last_end;
 	uint32_t mem_round;
 	bool mem_round_active;
@@ -3275,10 +4076,13 @@ static int
 prod_dest_local_hello(void *arg, struct migration_hello *hello)
 {
 	struct migration_prod_dest *dst = arg;
+	int error;
 
-	int error = migration_prod_fill_hello(dst->ctx, hello);
+	error = migration_prod_fill_hello(dst->ctx, hello);
 	if (error != 0)
 		return (error);
+	if (get_config_bool_default("checkpoint.restore_abi_v2", false))
+		hello->capability_flags |= MIGRATION_CAP_V2_RESTORE;
 	return (migration_fresh_advertise(hello, hypertrace_initialized(),
 	    dst->recovery_dirfd, &dst->recovery));
 }
@@ -3313,14 +4117,24 @@ prod_dest_stage_mem(void *arg, const struct migration_memgen *gen,
 	    vm_get_lowmem_size(dst->ctx);
 	if (gen == NULL || gen->mode != MIGRATION_DIRTY_CLEAR ||
 	    gen->final > 1 || gen->gpa != 0 ||
-	    gen->length != expected_length)
+	    gen->length != expected_length ||
+	    (gen->round == 1 && gen->final != 0))
 		return (EBADMSG);
-	if (!dst->mem_round_active || gen->round != dst->mem_round) {
-		if (dst->mem_round_active && gen->round <= dst->mem_round)
+	if (!dst->mem_round_active) {
+		if (gen->round != 1)
 			return (EBADMSG);
 		dst->mem_round = gen->round;
 		dst->mem_last_end = 0;
 		dst->mem_round_active = true;
+	} else if (gen->round != dst->mem_round) {
+		if (dst->mem_round == UINT32_MAX ||
+		    gen->round != dst->mem_round + 1 ||
+		    (dst->mem_round == 1 && !migration_baseline_complete(
+		    dst->mem_last_end, vm_get_lowmem_size(dst->ctx),
+		    highmem_base, highmem)))
+			return (EBADMSG);
+		dst->mem_round = gen->round;
+		dst->mem_last_end = 0;
 	}
 	off = 0;
 	page_count = 0;
@@ -3334,7 +4148,10 @@ prod_dest_stage_mem(void *arg, const struct migration_memgen *gen,
 		off += 12;
 		if (off + plen > len || migration_memory_record_validate(gpa, plen,
 		    vm_get_lowmem_size(dst->ctx), highmem_base, highmem,
-		    dst->mem_last_end) != 0)
+		    dst->mem_last_end) != 0 ||
+		    (dst->mem_round == 1 && migration_baseline_page_validate(
+		    gpa, dst->mem_last_end, vm_get_lowmem_size(dst->ctx),
+		    highmem_base, highmem) != 0))
 			return (EBADMSG);
 		host = vm_map_gpa(dst->ctx, gpa, plen);
 		if (host == NULL)
@@ -3357,10 +4174,202 @@ prod_dest_stage_dev(void *arg, const uint8_t *buf, size_t len)
 	if (copy == NULL)
 		return (ENOMEM);
 	memcpy(copy, buf, len);
+	if (dst->dev_blob != NULL)
+		explicit_bzero(dst->dev_blob, dst->dev_len);
 	free(dst->dev_blob);
 	dst->dev_blob = copy;
 	dst->dev_len = len;
 	return (0);
+}
+
+static int
+prod_dest_vsock_items(const uint8_t *wire, size_t len,
+    struct migration_vsock_bundle_item *items, uint32_t *count_out,
+    uint32_t *endpoints_out)
+{
+	struct pci_devinst *pdi;
+	uint32_t count, endpoints, matched, local_count;
+	int error;
+
+	error = migration_vsock_bundle_decode(wire, len, items,
+	    MIGRATION_VSOCK_BUNDLE_MAX_DEVICES, &count, &endpoints);
+	if (error != 0)
+		return (error);
+	matched = local_count = 0;
+	pdi = NULL;
+	while ((pdi = pci_next(pdi)) != NULL) {
+		if (!prod_is_vsock(pdi))
+			continue;
+		local_count++;
+		for (uint32_t i = 0; i < count; i++) {
+			if (strcmp(items[i].name, pdi->pi_name) == 0) {
+				matched++;
+				break;
+			}
+		}
+	}
+	if (matched != count || local_count != count)
+		return (EINVAL);
+	*count_out = count;
+	*endpoints_out = endpoints;
+	return (0);
+}
+
+static int
+prod_dest_stage_vsock(void *arg, const uint8_t *buf, size_t len)
+{
+	struct migration_prod_dest *dst = arg;
+	struct migration_vsock_bundle_item items[
+	    MIGRATION_VSOCK_BUNDLE_MAX_DEVICES];
+	uint8_t *copy;
+	uint32_t count, endpoints;
+	int error;
+
+	if (dst->vsock_blob != NULL || buf == NULL || len == 0)
+		return (EINVAL);
+	copy = malloc(len);
+	if (copy == NULL)
+		return (ENOMEM);
+	memcpy(copy, buf, len);
+	error = prod_dest_vsock_items(copy, len, items, &count, &endpoints);
+	if (error != 0) {
+		explicit_bzero(copy, len);
+		free(copy);
+		return (error);
+	}
+	dst->vsock_blob = copy;
+	dst->vsock_len = len;
+	return (0);
+}
+
+static struct pci_devinst *
+prod_dest_vsock_device(const char *name)
+{
+	struct pci_devinst *pdi;
+
+	pdi = NULL;
+	while ((pdi = pci_next(pdi)) != NULL) {
+		if (prod_is_vsock(pdi) && strcmp(pdi->pi_name, name) == 0)
+			return (pdi);
+	}
+	return (NULL);
+}
+
+static int
+prod_dest_vsock_pair(uint32_t type, int pair[2])
+{
+	int want, got;
+	socklen_t size;
+#ifndef WITHOUT_CAPSICUM
+	cap_rights_t rights;
+#endif
+
+	if (type != VSOCK_MIGRATION_TYPE_STREAM &&
+	    type != VSOCK_MIGRATION_TYPE_SEQPACKET)
+		return (EINVAL);
+	if (socketpair(AF_UNIX, (type == VSOCK_MIGRATION_TYPE_SEQPACKET ?
+	    SOCK_SEQPACKET : SOCK_STREAM) | SOCK_CLOEXEC, 0, pair) != 0)
+		return (errno);
+	want = VSOCK_MIGRATION_MAX_BUFFER;
+	for (unsigned int i = 0; i < 2; i++) {
+		if (setsockopt(pair[i], SOL_SOCKET, SO_SNDBUF, &want,
+		    sizeof(want)) != 0 ||
+		    setsockopt(pair[i], SOL_SOCKET, SO_RCVBUF, &want,
+		    sizeof(want)) != 0)
+			goto fail;
+		if (type == VSOCK_MIGRATION_TYPE_SEQPACKET) {
+			size = sizeof(got);
+			if (getsockopt(pair[i], SOL_SOCKET, SO_RCVBUF, &got,
+			    &size) != 0)
+				goto fail;
+			if (size != sizeof(got) || got < want) {
+				errno = ENOBUFS;
+				goto fail;
+			}
+		}
+	}
+#ifndef WITHOUT_CAPSICUM
+	cap_rights_init(&rights, CAP_EVENT, CAP_RECV, CAP_SEND,
+	    CAP_SHUTDOWN);
+	if (caph_rights_limit(pair[1], &rights) == -1 ||
+	    cap_xfer_limit(pair[1], CAP_XFER_ONCE) == -1 ||
+	    cap_cloexec_limit(pair[1], CAP_CLOEXEC_LOCKED) == -1 ||
+	    cap_clofork_limit(pair[1], CAP_CLOFORK_LOCKED) == -1)
+		goto fail;
+#endif
+	return (0);
+fail:
+	{
+		int error = errno != 0 ? errno : EIO;
+		close(pair[0]);
+		close(pair[1]);
+		pair[0] = pair[1] = -1;
+		return (error);
+	}
+}
+
+static int
+prod_dest_restore_vsock(struct migration_prod_dest *dst)
+{
+	struct migration_vsock_bundle_item items[
+	    MIGRATION_VSOCK_BUNDLE_MAX_DEVICES];
+	struct vsock_migration_conn_state states[VSOCK_MIGRATION_MAX_CONNS];
+	struct pci_devinst *pdi;
+	uint32_t devices, endpoints, count, offset;
+	uint32_t created;
+	int fds[VSOCK_MIGRATION_MAX_CONNS];
+	int pair[2], error;
+
+	if (dst->vsock_blob == NULL)
+		return (EINVAL);
+	error = prod_dest_vsock_items(dst->vsock_blob, dst->vsock_len,
+	    items, &devices, &endpoints);
+	if (error != 0)
+		return (error);
+	offset = 0;
+	for (uint32_t i = 0; i < devices; i++) {
+		pdi = prod_dest_vsock_device(items[i].name);
+		if (pdi == NULL)
+			return (EINVAL);
+		error = vsock_migration_table_decode(items[i].table,
+		    items[i].table_len, states, nitems(states), &count);
+		if (error != 0 || count != items[i].endpoint_count)
+			return (EPROTO);
+		created = 0;
+		for (uint32_t j = 0; j < count; j++) {
+			error = prod_dest_vsock_pair(states[j].type, pair);
+			if (error != 0)
+				goto failed_device;
+			fds[j] = pair[0];
+			dst->vsock_endpoints[offset + j].fd = pair[1];
+			dst->vsock_endpoints[offset + j].type = states[j].type;
+			dst->vsock_endpoint_count++;
+			created++;
+		}
+		error = pci_vtvsock_migration_restore(pdi, items[i].table,
+		    items[i].table_len, fds, count);
+		for (uint32_t j = 0; j < count; j++) {
+			if (fds[j] >= 0)
+				close(fds[j]);
+		}
+		if (error != 0)
+			return (error);
+		offset += count;
+	}
+	if (offset != endpoints)
+		return (EPROTO);
+	if (endpoints != 0) {
+		dst->vsock_relay_prepared = true;
+		error = migration_vsock_owner_prepare(dst->stream_fd,
+		    dst->vsock_endpoints, endpoints);
+		if (error != 0)
+			return (error);
+	}
+	return (0);
+failed_device:
+	for (uint32_t j = 0; j < created; j++)
+		close(fds[j]);
+	return (error);
 }
 
 static int
@@ -3385,6 +4394,8 @@ prod_dest_commit(void *arg)
 		    dst->dev_len, &dst->fresh_device);
 	} else
 		error = vm_migrate_commit_state(dst->ctx, dst->dev_blob, dst->dev_len);
+	if (error == 0 && dst->vsock_blob != NULL)
+		error = prod_dest_restore_vsock(dst);
 	if (error == 0)
 		dst->committed = true;
 	return (error);
@@ -3398,6 +4409,13 @@ prod_dest_resume(void *arg)
 
 	if (!dst->committed)
 		return (EBUSY);
+	/* Start relaying the migrated vsock connections before the guest runs. */
+	if (dst->vsock_relay_prepared) {
+		error = migration_vsock_owner_activate();
+		if (error != 0)
+			return (error);
+		dst->vsock_relay_prepared = false;
+	}
 	if (hypertrace_initialized()) {
 		if (dst->fresh_device == NULL)
 			return (EPROTO);
@@ -3499,9 +4517,21 @@ prod_dest_discard(void *arg)
 {
 	struct migration_prod_dest *dst = arg;
 
+	if (dst->dev_blob != NULL)
+		explicit_bzero(dst->dev_blob, dst->dev_len);
 	free(dst->dev_blob);
 	dst->dev_blob = NULL;
 	dst->dev_len = 0;
+	if (dst->vsock_relay_prepared)
+		(void)migration_vsock_owner_cancel();
+	for (uint32_t i = 0; i < dst->vsock_endpoint_count; i++)
+		close(dst->vsock_endpoints[i].fd);
+	dst->vsock_endpoint_count = 0;
+	if (dst->vsock_blob != NULL)
+		explicit_bzero(dst->vsock_blob, dst->vsock_len);
+	free(dst->vsock_blob);
+	dst->vsock_blob = NULL;
+	dst->vsock_len = 0;
 	/*
 	 * The destination is torn down by the caller on discard; staged guest
 	 * RAM and any partially committed device state die with the process.
@@ -3639,9 +4669,21 @@ migration_prod_dest_serve_impl(struct vmctx *ctx, int fd,
 		return (ENOMEM);
 	}
 	dst->ctx = ctx;
+	dst->stream_fd = fd;
 	dst->controller_fd = -1;
 	dst->recovery_dirfd = config->recovery_enabled ?
 	    config->recovery_dirfd : -1;
+	/* The active-vsock relay owns the raw stream after RELEASE; it cannot
+	 * continue a TLS session (see vm_do_migrate). */
+	if (get_config_bool_default("checkpoint.migrate_active_vsock", false)) {
+		if (config->tls_credentials != NULL) {
+			result->phase = MIGRATION_PHASE_FAILED;
+			result->reason = MIGRATION_REASON_CAPS;
+			free(dst);
+			return (EPROTONOSUPPORT);
+		}
+		ops.do_stage_vsock = prod_dest_stage_vsock;
+	}
 	/* Image preservation is meaningful only for a retained fresh owner. */
 	if (config->recovery_image && (!hypertrace_initialized() ||
 	    !recovery_prepared || !config->recovery_enabled)) {
@@ -3694,6 +4736,18 @@ migration_prod_dest_serve_impl(struct vmctx *ctx, int fd,
 		result->reason = MIGRATION_REASON_TRANSPORT;
 	}
 	migration_channel_cleanup(&channel);
+	/* The relay owner holds its own copies of the vsock endpoints. */
+	bool had_vsock_endpoints = dst->vsock_endpoint_count != 0;
+	if (dst->vsock_blob != NULL)
+		explicit_bzero(dst->vsock_blob, dst->vsock_len);
+	free(dst->vsock_blob);
+	dst->vsock_blob = NULL;
+	for (uint32_t i = 0; i < dst->vsock_endpoint_count; i++)
+		close(dst->vsock_endpoints[i].fd);
+	dst->vsock_endpoint_count = 0;
+	/* An empty bundle leaves the prestarted owner idle; retire it now. */
+	if (error == 0 && !had_vsock_endpoints)
+		migration_vsock_owner_detach();
 	if (error == 0 && result->resumed && hypertrace_initialized() &&
 	    !result->release_ack_sent)
 		warnx("migration destination running; source acknowledgment failed");

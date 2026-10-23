@@ -39,7 +39,7 @@
 #include "rtld.h"
 
 static Elf_Ehdr *get_elf_header(int, const char *, const struct stat *,
-    Elf_Phdr **phdr, off_t);
+    Elf_Phdr **phdr);
 static int convert_flags(int); /* Elf flags -> mmap flags */
 
 static bool
@@ -59,13 +59,6 @@ phdr_in_zero_page(const Elf_Ehdr *hdr)
 Obj_Entry *
 map_object(int fd, const char *path, const struct stat *sb, bool ismain)
 {
-	return (map_object_at(fd, path, sb, ismain, 0));
-}
-
-Obj_Entry *
-map_object_at(int fd, const char *path, const struct stat *sb, bool ismain,
-    off_t file_offset)
-{
 	Obj_Entry *obj;
 	Elf_Ehdr *hdr;
 	int i;
@@ -78,7 +71,6 @@ map_object_at(int fd, const char *path, const struct stat *sb, bool ismain,
 	Elf_Phdr *phtls;
 	caddr_t mapbase;
 	size_t mapsize;
-	struct rtld_cache_domain cache_domain = {0};
 	Elf_Addr base_vaddr;
 	Elf_Addr base_vlimit;
 	caddr_t base_addr;
@@ -103,7 +95,7 @@ map_object_at(int fd, const char *path, const struct stat *sb, bool ismain,
 	char *note_map;
 	size_t note_map_len;
 
-	hdr = get_elf_header(fd, path, sb, &phdr, file_offset);
+	hdr = get_elf_header(fd, path, sb, &phdr);
 	if (hdr == NULL)
 		return (NULL);
 
@@ -175,7 +167,7 @@ map_object_at(int fd, const char *path, const struct stat *sb, bool ismain,
 				    rtld_trunc_page(phdr->p_offset);
 				note_map = mmap(NULL, note_map_len, PROT_READ,
 				    MAP_PRIVATE, fd,
-				    file_offset + rtld_trunc_page(phdr->p_offset));
+				    rtld_trunc_page(phdr->p_offset));
 				if (note_map == MAP_FAILED) {
 					_rtld_error(
 					    "%s: error mapping PT_NOTE (%d)",
@@ -221,19 +213,6 @@ map_object_at(int fd, const char *path, const struct stat *sb, bool ismain,
 	if (base_vaddr != 0)
 		base_flags |= MAP_FIXED | MAP_EXCL;
 
-	/* Only a verified cache substitution has a nonzero file offset. */
-	if (!ismain && file_offset != 0 && base_vaddr == 0) {
-		caddr_t selected = rtld_cache_domain_address(fd, file_offset,
-		    mapsize, &cache_domain);
-		if (selected != NULL) {
-			mapbase = mmap(selected, mapsize, PROT_NONE,
-			    MAP_GUARD | MAP_FIXED | MAP_EXCL, -1, 0);
-			if (mapbase != MAP_FAILED)
-				goto reserved;
-			/* Collision changes placement only; ordinary ELF still loads. */
-			memset(&cache_domain, 0, sizeof(cache_domain));
-		}
-	}
 	mapbase = mmap(base_addr, mapsize, PROT_NONE, base_flags, -1, 0);
 	if (mapbase == MAP_FAILED) {
 		_rtld_error("%s: mmap of entire address space failed: %s",
@@ -247,7 +226,6 @@ map_object_at(int fd, const char *path, const struct stat *sb, bool ismain,
 		goto error1;
 	}
 
-reserved:
 	for (i = 0; i <= nsegs; i++) {
 		/* Overlay the segment onto the proper region. */
 		data_offset = rtld_trunc_page(segs[i]->p_offset);
@@ -259,7 +237,7 @@ reserved:
 		data_flags = convert_flags(segs[i]->p_flags) | MAP_FIXED;
 		if (data_vlimit != data_vaddr && mmap(data_addr,
 		    data_vlimit - data_vaddr, data_prot, data_flags |
-		    MAP_PREFAULT_READ, fd, file_offset + data_offset) == MAP_FAILED) {
+		    MAP_PREFAULT_READ, fd, data_offset) == MAP_FAILED) {
 			_rtld_error("%s: mmap of data failed: %s",
 			    path, rtld_strerror(errno));
 			goto error1;
@@ -320,7 +298,6 @@ reserved:
 	}
 
 	obj = obj_new();
-	obj->cache_domain = cache_domain;
 	if (sb != NULL) {
 		obj->dev = sb->st_dev;
 		obj->ino = sb->st_ino;
@@ -418,7 +395,7 @@ check_elf_headers(const Elf_Ehdr *hdr, const char *path)
 
 static Elf_Ehdr *
 get_elf_header(int fd, const char *path, const struct stat *sbp,
-    Elf_Phdr **phdr_p, off_t file_offset)
+    Elf_Phdr **phdr_p)
 {
 	Elf_Ehdr *hdr;
 	Elf_Phdr *phdr;
@@ -430,7 +407,7 @@ get_elf_header(int fd, const char *path, const struct stat *sbp,
 	}
 
 	hdr = mmap(NULL, page_size, PROT_READ, MAP_PRIVATE | MAP_PREFAULT_READ,
-	    fd, file_offset);
+	    fd, 0);
 	if (hdr == MAP_FAILED) {
 		_rtld_error("%s: read error: %s", path, rtld_strerror(errno));
 		return (NULL);
@@ -449,7 +426,7 @@ get_elf_header(int fd, const char *path, const struct stat *sbp,
 		phdr = (Elf_Phdr *)((char *)hdr + hdr->e_phoff);
 	} else {
 		phdr = mmap(NULL, hdr->e_phnum * sizeof(phdr[0]), PROT_READ,
-		    MAP_PRIVATE | MAP_PREFAULT_READ, fd, file_offset + hdr->e_phoff);
+		    MAP_PRIVATE | MAP_PREFAULT_READ, fd, hdr->e_phoff);
 		if (phdr == MAP_FAILED) {
 			_rtld_error("%s: error mapping phdr: %s", path,
 			    rtld_strerror(errno));
