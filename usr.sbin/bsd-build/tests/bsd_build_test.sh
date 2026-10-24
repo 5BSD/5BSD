@@ -459,8 +459,22 @@ PYTHON
     atf_check -s not-exit:0 -o empty -e match:'must be executable' "$tool" plan bazel-test --bazel "$(pwd)/noexec"
 }
 
+atf_test_case package_closure
+package_closure_head()
+{
+    atf_set require.progs 'python3.12'
+    atf_set descr 'Selected package metadata must cover dependencies and libraries without conflicts'
+}
+package_closure_body()
+{
+    helper=$(atf_config_get closure_helper "$(atf_get_srcdir)/package_closure.py")
+    tests=$(atf_config_get closure_tests "$(atf_get_srcdir)/package_closure_test.py")
+    atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_CLOSURE_HELPER="$helper" python3.12 "$tests"
+}
+
 atf_init_test_cases()
 {
+    atf_add_test_case package_closure
     atf_add_test_case bazel_plan
     atf_add_test_case publication_destination
     atf_add_test_case json_plan
