@@ -131,3 +131,35 @@ The first attempted launch was rejected before VM startup because the earlier
 7200-second declaration exceeded the parser limit; this is an integration fix,
 not runtime qualification. The install command timeout remains an explicit
 settings-file input.
+
+### Implicit package parent directories
+
+Ordinary pkg 2.8.4 creates missing parent directories with root/wheel ownership
+and mode 0755. Archives need not contain entries for every ancestor. The fixture
+`layout.py` derives this closure from the complete inventory, using the explicit
+`pkg-parent-policy.json` contract. It preserves existing layout and package
+metadata, rejects non-directory ancestors and replacement layouts, and requires
+the selected pkg version to match the policy. It does not assign package
+ownership to generated directories or change the shared strict extractor.
+
+```
+python3.12 -B tools/test/bazel-builder/layout.py \
+    --inventory /path/to/inventory.json \
+    --initial /path/to/root-layout.json \
+    --policy tools/test/bazel-builder/pkg-parent-policy.json \
+    --output /path/to/new-layout.json --receipt /path/to/new-layout-receipt.json
+python3.12 -B tools/test/bazel-builder/test_layout.py
+```
+
+Outputs must be new, distinct files. The planning receipt binds inventory,
+initial layout, policy, producer and backend source hashes, plus the resulting
+layout hash. The transport must carry that resulting layout and its updated
+hash; changing a local file alone does not update a previously built input disk.
+This is fixture compatibility planning, not installation or production image
+qualification. Maintained generated-layout consumers can use the existing
+schema without a new build frontend option.
+
+The full 335-package builder inventory required 2,746 implicit parents. Planning
+with the strict extractor and package-derived account resolution passed for
+66,576 objects. Extraction and ordinary pkg installation still require VM
+qualification; these planning checks cannot establish their success.

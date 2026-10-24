@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "scope": "ordinary-pkg-implicit-parents",
+  "engine": {"name": "pkg", "upstream_version": "2.8.4"},
+  "defaults": {"type": "directory", "uid": 0, "gid": 0, "mode": 493, "flags_set": 0},
+  "references": [
+    "pkg 2.8.4 src/main.c: umask(022)",
+    "pkg 2.8.4 libpkg/utils.c: mkdirat_p creates missing ancestors with mode 0755",
+    "pkg 2.8.4 libpkg/pkg_add.c: try_mkdir and implicit-parent metalog_add root wheel 0755"
+  ]
+}
