@@ -202,3 +202,24 @@ acceptance using a private tmpfs bundle. See tools/test/oes-admission/README.
 /usr/obj/usr/src, leaving --objtop as the authoritative kernel/module tree.
 This keeps fixture compilation from overwriting active world-build objects;
 all staged hashes, kernel checks and pass requirements still apply.
+
+ATF lifecycle contract
+----------------------
+The runner reads each selected binary's ATF listing before boot. Explicit timeout
+and has.cleanup metadata control separate body and cleanup subprocess groups.
+An omitted timeout retains this fixture's documented 40-second default (not
+Kyua's 300-second default). A body must exit successfully with exactly a passed
+result; skips fail qualification. Declared cleanup runs after body failure or
+timeout and must succeed independently. The outer VM budget must cover boot,
+all selected bodies, declared cleanups and shutdown.
+
+--atf-case-budget relative/source:case=seconds overrides a selected case's harness
+deadline, retaining declared_timeout and budget_input in inputs.json. Values
+are 1..86400 and must be below the outer VM timeout. The static runtime_init
+--describe contract is checked before any VM launch, so stale helpers fail
+preflight. Runtime helper and runner metadata protocol must be updated together.
+
+runner_probe contains cleanup_pass and deliberate cleanup_fail/body_fail/
+body_timeout negative controls. Listing these cases is a native parser check;
+only executing them in a VM demonstrates PID1 lifecycle behavior. Process-group
+cleanup is not general containment of descendants that start another session.

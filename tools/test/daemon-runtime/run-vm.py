@@ -2,6 +2,7 @@
 """Run native libservice maturity tests in a disposable, networkless VM."""
 import argparse, hashlib, json, os, re, shutil, subprocess, time
 from pathlib import Path
+from atf_metadata import parse_listing, cases_completed, apply_case_budgets, parse_runtime_description
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--root',type=Path,required=True)
 p.add_argument('--objtop',type=Path,required=True)
@@ -19,6 +20,7 @@ p.add_argument('--cleanup-lifecycle',action='store_true',help='stage private cle
 p.add_argument('--log-provider',action='store_true')
 p.add_argument('--atf-suite',action='append',default=[],help='static ATF binary relative to objtop; repeatable')
 p.add_argument('--atf-case',action='append',default=[],help='static ATF binary relative to objtop followed by :case; repeatable')
+p.add_argument('--atf-case-budget',action='append',default=[],help='explicit selected source:case=seconds harness deadline; declared ATF timeout remains recorded')
 p.add_argument('--timeout',type=int,default=240)
 p.add_argument('--cpus',type=int,choices=range(1,5),default=4,help='guest vCPUs (default 4, maximum 4)')
 p.add_argument('--tcg-thread',choices=['multi','single'],default='multi',help='diagnostic TCG threading mode')
@@ -41,8 +43,16 @@ if digest(kernel)!=digest(root/'boot/kernel/kernel'): p.error('staged and object
 if subprocess.check_output(['config','-x',str(kernel)])!=subprocess.check_output(['config','-x',str(root/'boot/kernel/kernel')]): p.error('kernel configurations differ')
 for f in [helper,test,fs_test]:
  if 'statically linked' not in subprocess.check_output(['file',str(f)],text=True): p.error('fixture must be static: '+str(f))
+try:
+ helper_before=digest(helper)
+ description=subprocess.run([str(helper),'--describe'],capture_output=True,text=True,timeout=10,check=True)
+ helper_description=parse_runtime_description(description.stdout)
+ if digest(helper)!=helper_before: p.error('runtime helper changed during preflight')
+except (subprocess.SubprocessError, ValueError) as error:
+ p.error('runtime helper contract unavailable; rebuild selected fixture: '+str(error))
 subprocess.run([a.qemu,'--version'],check=True,stdout=subprocess.DEVNULL)
 hashes={str(f):digest(f) for f in [kernel,helper,test,fs_test]}
+if hashes[str(helper)]!=helper_before: p.error('runtime helper changed after preflight')
 work.mkdir(parents=True,exist_ok=False); stage=work/'root'; stage.mkdir()
 shutil.copytree(root/'boot',stage/'boot',ignore=shutil.ignore_patterns('kernel','modules','dtb','firmware','loader.conf','loader.conf.local','loader.conf.d','zfs'))
 shutil.copy2(root/'boot/defaults/loader.conf',stage/'boot/defaults/loader.conf')
@@ -156,6 +166,29 @@ if a.oes_admission:
  extra_hashes.update(admission_hashes); extra_cases.extend(admission_cases)
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 
+# Honor each selected test's own cleanup and time limit. The same records are
+# consumed by the guest and retained with its input provenance.
+case_metadata=[]
+all_cases=[('/tests/libservice_api_test',case) for case in
+ ['service_budget_wire','service_session_payload_and_attachment_lifecycle','service_session_close_cancels_event']]
+all_cases += [('/tests/namespace_test','delivery_hardening_failure')] + extra_cases
+listings={}
+for program,case in all_cases:
+ if program not in listings:
+  (stage/program.lstrip('/')).chmod(0o500)
+  listings[program]=parse_listing(subprocess.check_output([str(stage/program.lstrip('/')),'-l'],text=True,timeout=10))
+ if case not in listings[program]: p.error('case absent from metadata: '+program+':'+case)
+ metadata=listings[program][case]
+ case_metadata.append(dict(program=program,case=case,**metadata))
+try:
+ case_metadata=apply_case_budgets(case_metadata,selected_suites,a.atf_case_budget,a.timeout)
+except ValueError as error:
+ p.error(str(error))
+if any(m['timeout'] > helper_description['maximum_case_timeout'] for m in case_metadata):
+ p.error('selected case budget exceeds runtime helper contract; rebuild selected fixture')
+(stage/'tests/case-metadata').write_text(''.join(
+ f"{m['program']} {m['case']} {m['timeout']} {int(m['cleanup'])}\n" for m in case_metadata))
+
 (stage/'boot/loader.conf').write_text('console="comconsole"\nautoboot_delay="1"\ncapability_plane="NO"\ninit_path="/sbin/runtime-init"\nvfs.root.mountfrom="ufs:/dev/vtbd0p2"\nvfs.root.mountfrom.options="rw"\n')
 if a.oes_admission:
  with (stage/'boot/loader.conf').open('a') as f: f.write('capability_plane="YES"\n')
@@ -175,7 +208,7 @@ subprocess.run(['makefs','-t','ffs','-s','256m','-F',str(work/'METALOG'),'-o','v
 subprocess.run(['mkimg','-s','gpt','-f','raw','-b',str(stage/'boot/pmbr'),'-p','freebsd-boot:='+str(stage/'boot/gptboot'),'-p','freebsd-ufs:='+str(work/'root.ufs'),'-o',str(work/'guest.img')],check=True)
 log=work/'serial.log'
 cmd=[a.qemu,'-L',str(a.qemu_data),'-accel','tcg,thread='+a.tcg_thread,'-machine','q35','-cpu','max','-m','1024','-smp',str(a.cpus),'-drive',f'file={work}/guest.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
-provenance={'oes_admission':a.oes_admission,'guest_cpus':a.cpus,'guest_memory_mib':1024,'requested_eventtimer':a.eventtimer,'tcg_thread':a.tcg_thread,'host_loadavg_start':os.getloadavg(),'host_logical_cpus':os.cpu_count(),'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'fixture_objtop':str(fixtures),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
+provenance={'oes_admission':a.oes_admission,'guest_cpus':a.cpus,'guest_memory_mib':1024,'requested_eventtimer':a.eventtimer,'tcg_thread':a.tcg_thread,'host_loadavg_start':os.getloadavg(),'host_logical_cpus':os.cpu_count(),'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'fixture_objtop':str(fixtures),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'case_metadata':case_metadata,'runtime_helper_contract':helper_description,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
 if a.oes_admission:
  provenance['scope']='native fixtures followed by PID1 Capsule/SwitchBoard OES admission and live coalition reload/removal; OES-only provider, not installed ZFS/installer acceptance'
 (work/'inputs.json').write_text(json.dumps(provenance,indent=2)+'\n')
@@ -194,9 +227,8 @@ finally:
   try: proc.wait(timeout=10)
   except subprocess.TimeoutExpired: proc.kill(); proc.wait()
 text=log.read_text(errors='replace') if log.exists() else ''
-expected=['/tests/namespace_test:delivery_hardening_failure']+['/tests/libservice_api_test:'+case for case in ['service_budget_wire','service_session_payload_and_attachment_lifecycle','service_session_close_cancels_event']]+[program+':'+case for program,case in extra_cases]
 lines=text.splitlines()
-passed=all(lines.count('RUNTIME_CASE_PASS '+case)==1 for case in expected)
+passed=cases_completed(text,case_metadata)
 passed=passed and lines.count('RUNTIME_VM_PASS')==1 and 'RUNTIME_VM_FAIL' not in text and 'RUNTIME_CASE_FAIL' not in text
 if a.oes_admission:
  passed=passed and lines.count('COALITION_LIFECYCLE_PASS')==1 and 'COALITION_LIFECYCLE_FAIL' not in text and lines.count('OES_ADMISSION_PASS')==1 and 'OES_ADMISSION_FAIL' not in text and lines.count('RUNTIME_FIXTURES_PASS')==1
