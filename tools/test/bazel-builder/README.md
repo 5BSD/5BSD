@@ -1,0 +1,133 @@
+# Ordinary offline builder installation fixture
+
+This is test tooling for a disposable VM, not an installer or production build
+backend. It uses the complete selected package inventory. No selected program
+list is embedded in the fixture.
+
+`pkg -r` only relocates installation and supplies PKG_ROOTDIR to hooks; it does
+not chroot the hook interpreter. The reviewed pkg2.8.4 src/main.c and
+libpkg/scripts.c establish this distinction. This fixture uses actual `pkg -c`
+chroot execution. To provide the shell and dynamic interpreter before preinstall
+hooks execute, it first extracts **all selected package payloads** using maintained
+payload_extract.py. It then performs an ordinary local package installation with
+scripts and triggers enabled. There is no register-only operation or invented
+construction annotation. Package-file integrity is checked after installation.
+
+## Explicit inputs
+
+- A read-only mounted transport filesystem with format1 transport.json,
+  inventory_sha256, layout_sha256, pkg_static_sha256 and the package archive list.
+  The current transport-v2 directory adds those files/fields without changing
+  the manifest format number. Parent VM runner binds the input disk hash.
+- Exact inventory.json and root-layout.json matching the transport hashes.
+- Maintained capimage Python helpers (all sibling .py files; hashes recorded).
+- A new empty target directory on a separate writable virtio UFS filesystem,
+  beneath a root-owned0700 parent. It must not be the fixture root or tmpfs.
+- A disjoint empty report directory on retained storage.
+- Explicit normal installed Java/Bash paths owned by selected packages.
+
+The VM must provide Python and its runtime, tar, file, mount/umount, devfs,
+sysctl, chroot and their dependencies. The kernel must support nullfs/devfs.
+The package engine is explicit, hash-bound and required to be static. The input
+mount is exposed read-only inside the target. A temporary devfs exposes only
+null, zero, random and urandom; backing disks must not be visible there.
+
+Example inside the parent's **2 GB** disk-backed disposable VM, after mounting
+its prepared input/output filesystems and creating empty guarded directories:
+
+```
+python3.12 /tests/bazel-builder/install.py --disposable-vm \
+ --input /inputs --target /builder/private/root --output /builder-report \
+ --inventory /inputs/inventory.json --layout /inputs/root-layout.json \
+ --backend /tests/capimage --java /usr/local/openjdk21/bin/java \
+ --bash /usr/local/bin/bash --timeout 3600
+```
+
+All archives are selected from the manifest; their historical host paths are
+not used as guest paths. Inventory bytes are checked before archive paths are
+rebound. Package registration results must match every selected name/version,
+with no extras or omissions. Postchecks execute real Bash and Java, require
+account databases, and reject package checksum or reported hook failures.
+Timeouts kill the command process group and retain failure evidence. No failure
+is converted into a skip. Source inputs are rehashed before success. Temporary
+mount cleanup failures turn the result into FAIL. The installed target and logs
+remain for inspection.
+
+`test_install.py` checks path overlap/symlink/nonempty guards, transport archive
+escapes and duplicate identities, malformed hashes/versions, and mount matching.
+These native checks do not qualify guest execution. Full installation, hook
+behavior and resource consumption remain pending parent VM review/execution.
+A successful fixture proves bounded ordinary package installation and runtime
+prerequisites, not Bazel compilation or package publication.
+
+Frontend review: no production backend changes are warranted for this fixture.
+Future maintained Bazel package-build integration must consume the validated
+builder result and retain the normal make packages/publication contracts.
+
+## Static launcher and disk setup
+
+Build the static launcher through maintained Make:
+
+```
+env MAKEOBJDIRPREFIX=/usr/obj make -C /usr/src buildenv \
+ 'BUILDENV_SHELL=make -C /usr/src/tools/test/bazel-builder -j16 all'
+```
+
+The launcher case is `tools/test/bazel-builder/builder_test:ordinary_install`.
+ATF configuration can override `python`, `setup`, and `config`; defaults refer
+only to fixture files beneath `/tests/bazel-builder`. `setup.py --config FILE`
+takes exactly these explicit JSON settings (example devices are parent-created
+VM disks, never host disk instructions):
+
+```
+{
+  "input_device": "/dev/vtbd1",
+  "output_device": "/dev/vtbd2",
+  "input_mount": "/builder-input",
+  "output_mount": "/builder-output",
+  "python": "/usr/local/bin/python3.12",
+  "installer": "/tests/bazel-builder/install.py",
+  "backend": "/tests/capimage",
+  "java": "/usr/local/openjdk21/bin/java",
+  "bash": "/usr/local/bin/bash",
+  "nullfs_module": "/boot/kernel/nullfs.ko",
+  "timeout": 3600
+}
+```
+
+Setup requires explicit unmounted whole virtio devices, rejects the mounted boot
+disk and its parent, and requires zero output header bytes before formatting.
+This guard supplements the parent's fresh blank disk contract; it is not proof
+that every sector is empty. Input/output images and matching kernel/modules must
+be selected and hash-bound by the parent runner. No existing system disk is
+selected by discovery. Additional utilities: newfs, kldstat and kldload.
+
+The script loads the supplied matching nullfs module when needed. It writes
+installation logs and reports to the output disk, never the ATF tmpfs directory.
+The retained setup record is written before unmount and explicitly says
+cleanup_complete=false; the final serial JSON and ATF exit establish cleanup.
+A failed unmount fails the case. Bash's runtime numeric version and Java's
+upstream release version are compared with their selected owning packages;
+packaging revision suffixes are not runtime version numbers. These are runtime
+smoke checks, not full Bash/JDK qualification.
+
+Six native guard tests pass; the static launcher compiles. No VM has been run
+by this implementation agent. Real hook errors, immutable file flags interfering
+with reinstall, missing devices, or package checksums altered by legitimate
+post-install actions remain failures to investigate, not reasons to skip checks.
+
+### Runner timeout integration
+
+The static test declares a 3600-second timeout, within the maintained ATF
+metadata parser's supported range. For an explicitly authorized longer run,
+pass the runner override:
+
+```
+--atf-case-budget tools/test/bazel-builder/builder_test:ordinary_install=7200
+```
+
+The runner records the declared timeout and explicit execution budget separately.
+The first attempted launch was rejected before VM startup because the earlier
+7200-second declaration exceeded the parser limit; this is an integration fix,
+not runtime qualification. The install command timeout remains an explicit
+settings-file input.
