@@ -636,3 +636,31 @@ and 134 in verbose and quiet modes. This guards against swallowing compiler
 failures through the status of shell negation. A passing test proves helper
 error propagation only; it does not qualify Java execution or a Bazel build.
 Run this against the source after applying the selected ports patches.
+
+Shared libmd generators
+-----------------------
+lib/libmd/genhl.sh and genman.sh implement the source/manual transformations
+used by maintained Make recipes and the candidate Bazel graph. Algorithm
+parameters remain declared in lib/libmd/Makefile. Tool executable inputs are
+explicit; LIBMD_GEN_SED/CAT/MV/RM are individual executable names, not shell
+command strings. Failed generation preserves an existing completed target;
+success replaces it using a sibling temporary file and rename.
+
+Run the standalone native amd64 regression against a staged Make world:
+
+```
+python3.12 -B tools/build/bazel/shared-generator-test.py \
+  --component /usr/src/lib/libmd --src /usr/src \
+  --objtop /usr/obj/usr/src/amd64.amd64 \
+  --work /usr/obj/usr/src/NEW-generator-failure-check
+```
+
+It tests partial-writing sed/cat failures, rename failures, exclusive temporary
+collisions, and ordinary Make retry without forcing a rebuild. The reviewed
+candidate retained byte parity for all 16 active generated files with assembly
+sources enabled and disabled. Native Make compilation/linking of libmd.a and
+libmd.so.7.full also passed. Receipts are in
+/usr/obj/usr/src/bazel-libmd-graph-20261024/atomic-generator-review-r9.json and
+/usr/obj/usr/src/libmd-shared-generators-compile-20261024/receipt.json.
+This refactor does not enable a Bazel system backend or establish Bazel9
+compilation, installation, package or runtime parity.

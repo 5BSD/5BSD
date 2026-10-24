@@ -160,91 +160,40 @@ CFLAGS.sha512c_arm64.c+= -march=armv8.2-a+sha3
 .endif
 .endif # ${USE_ASM_SOURCES} != 0
 
-md4hl.c: mdXhl.c
-	(echo '#define LENGTH 16'; \
-		sed -e 's/mdX/md4/g' -e 's/MDX/MD4/g' ${.ALLSRC}) > ${.TARGET}
+# Generator parameters are shared build metadata; scripts contain the transformations.
+# Single executable inputs; unlike RM these variables never contain flags.
+LIBMD_GEN_SED?= sed
+LIBMD_GEN_CAT?= cat
+LIBMD_GEN_MV?= mv
+LIBMD_GEN_RM?= rm
 
-md5hl.c: mdXhl.c
-	(echo '#define LENGTH 16'; \
-		sed -e 's/mdX/md5/g' -e 's/MDX/MD5/g' ${.ALLSRC}) > ${.TARGET}
+LIBMD_GENHL_ARGS.md4hl.c= 16 md4 MD4 -
+LIBMD_GENHL_ARGS.md5hl.c= 16 md5 MD5 -
+LIBMD_GENHL_ARGS.sha0hl.c= 20 sha SHA_ -
+LIBMD_GENHL_ARGS.sha1hl.c= 20 sha SHA1_ -
+LIBMD_GENHL_ARGS.sha224hl.c= 28 sha224 SHA224_ -
+LIBMD_GENHL_ARGS.sha256hl.c= 32 sha256 SHA256_ -
+LIBMD_GENHL_ARGS.sha384hl.c= 48 sha384 SHA384_ -
+LIBMD_GENHL_ARGS.sha512hl.c= 64 sha512 SHA512_ -
+LIBMD_GENHL_ARGS.sha512t224hl.c= 28 sha512t SHA512_224_ SHA512_CTX
+LIBMD_GENHL_ARGS.sha512t256hl.c= 32 sha512t SHA512_256_ SHA512_CTX
+LIBMD_GENHL_ARGS.rmd160hl.c= 20 ripemd RIPEMD160_ -
+LIBMD_GENHL_ARGS.skein256hl.c= 32 skein SKEIN256_ -
+LIBMD_GENHL_ARGS.skein512hl.c= 64 skein SKEIN512_ -
+LIBMD_GENHL_ARGS.skein1024hl.c= 128 skein SKEIN1024_ -
 
-sha0hl.c: mdXhl.c
-	(echo '#define LENGTH 20'; \
-		sed -e 's/mdX/sha/g' -e 's/MDX/SHA_/g' -e 's/SHA__/SHA_/g' \
-		${.ALLSRC}) > ${.TARGET}
-
-sha1hl.c: mdXhl.c
-	(echo '#define LENGTH 20'; \
-		sed -e 's/mdX/sha/g' -e 's/MDX/SHA1_/g' -e 's/SHA1__/SHA1_/g' \
-		${.ALLSRC}) > ${.TARGET}
-
-sha224hl.c: mdXhl.c
-	(echo '#define LENGTH 28'; \
-		sed -e 's/mdX/sha224/g' -e 's/MDX/SHA224_/g'	\
-			-e  's/SHA224__/SHA224_/g' \
-		${.ALLSRC}) > ${.TARGET}
-
-sha256hl.c: mdXhl.c
-	(echo '#define LENGTH 32'; \
-		sed -e 's/mdX/sha256/g' -e 's/MDX/SHA256_/g'	\
-			-e  's/SHA256__/SHA256_/g' \
-		${.ALLSRC}) > ${.TARGET}
-
-sha384hl.c: mdXhl.c
-	(echo '#define LENGTH 48'; \
-		sed -e 's/mdX/sha384/g' -e 's/MDX/SHA384_/g'	\
-			-e  's/SHA384__/SHA384_/g' \
-		${.ALLSRC}) > ${.TARGET}
-
-sha512hl.c: mdXhl.c
-	(echo '#define LENGTH 64'; \
-		sed -e 's/mdX/sha512/g' -e 's/MDX/SHA512_/g'	\
-			-e  's/SHA512__/SHA512_/g' \
-		${.ALLSRC}) > ${.TARGET}
-
-sha512t224hl.c: mdXhl.c
-	(echo '#define LENGTH 28'; \
-		sed -e 's/mdX/sha512t/g' -e 's/MDX/SHA512_224_/g'	\
-			-e  's/SHA512_224__/SHA512_224_/g' \
-			-e 's/SHA512_224_CTX/SHA512_CTX/g' \
-		${.ALLSRC}) > ${.TARGET}
-
-sha512t256hl.c: mdXhl.c
-	(echo '#define LENGTH 32'; \
-		sed -e 's/mdX/sha512t/g' -e 's/MDX/SHA512_256_/g'	\
-			-e  's/SHA512_256__/SHA512_256_/g' \
-			-e 's/SHA512_256_CTX/SHA512_CTX/g' \
-		${.ALLSRC}) > ${.TARGET}
-
-rmd160hl.c: mdXhl.c
-	(echo '#define LENGTH 20'; \
-		sed -e 's/mdX/ripemd/g' -e 's/MDX/RIPEMD160_/g' \
-			-e 's/RIPEMD160__/RIPEMD160_/g' \
-			${.ALLSRC}) > ${.TARGET}
-
-skein256hl.c: mdXhl.c
-	(echo '#define LENGTH 32'; \
-		sed -e 's/mdX/skein/g' -e 's/MDX/SKEIN256_/g'	\
-			-e  's/SKEIN256__/SKEIN256_/g' \
-		${.ALLSRC}) > ${.TARGET}
-
-skein512hl.c: mdXhl.c
-	(echo '#define LENGTH 64'; \
-		sed -e 's/mdX/skein/g' -e 's/MDX/SKEIN512_/g'	\
-			-e  's/SKEIN512__/SKEIN512_/g' \
-		${.ALLSRC}) > ${.TARGET}
-
-skein1024hl.c: mdXhl.c
-	(echo '#define LENGTH 128'; \
-		sed -e 's/mdX/skein/g' -e 's/MDX/SKEIN1024_/g'	\
-			-e  's/SKEIN1024__/SKEIN1024_/g' \
-		${.ALLSRC}) > ${.TARGET}
-
+LIBMD_GENHL_SRCS= ${SRCS:M*hl.c}
+.for _src in ${LIBMD_GENHL_SRCS}
+${_src}: ${.CURDIR}/mdXhl.c ${.CURDIR}/genhl.sh
+	${SH:Ush} ${.CURDIR}/genhl.sh ${LIBMD_GENHL_ARGS.${_src}} \
+	    ${.CURDIR}/mdXhl.c ${.TARGET} ${LIBMD_GEN_SED:Q} ${LIBMD_GEN_MV:Q} ${LIBMD_GEN_RM:Q}
+.endfor
 
 .for i in 2 4 5
-md${i}.3: ${.CURDIR}/mdX.3
-	sed -e "s/mdX/md${i}/g" -e "s/MDX/MD${i}/g" ${.ALLSRC} > ${.TARGET}
-	cat ${.CURDIR}/md${i}.copyright >> ${.TARGET}
+LIBMD_GENMAN_ARGS.md${i}.3= md${i} MD${i}
+md${i}.3: ${.CURDIR}/mdX.3 ${.CURDIR}/md${i}.copyright ${.CURDIR}/genman.sh
+	${SH:Ush} ${.CURDIR}/genman.sh ${LIBMD_GENMAN_ARGS.md${i}.3} \
+	    ${.CURDIR}/mdX.3 ${.CURDIR}/md${i}.copyright ${.TARGET} ${LIBMD_GEN_SED:Q} ${LIBMD_GEN_CAT:Q} ${LIBMD_GEN_MV:Q} ${LIBMD_GEN_RM:Q}
 .endfor
 
 HAS_TESTS=
