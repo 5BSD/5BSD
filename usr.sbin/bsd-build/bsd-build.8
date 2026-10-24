@@ -144,6 +144,19 @@ Make configuration passed as __MAKE_CONF; defaults to /etc/make.conf.
 These two files are trusted make input, unlike the literal frontend config.
 .It Fl -kernel-dir Ar directory
 Directory containing the selected kernel configuration, passed as KERNCONFDIR.
+.It Fl -application-selection Ar file
+Explicit format-1 package archive selection for build/packages publication.
+The JSON object contains format=1 and an archives array of absolute path and
+SHA256 bindings, using the maintained package-selection schema.
+Ordinary application names, versions and archive bytes are preserved.
+The publisher validates them against the combined base/hardware selection before
+catalogue signing; this input does not authorize replacing system packages.
+The selection path must be a regular file without whitespace or make/shell
+metacharacters. Configuration files use application_selection.
+These are explicit trusted-builder inputs: hashes bind bytes but do not establish
+repository authentication. Fetching/resolving remote application repositories
+remains a separate step. This option neither installs packages nor activates an
+upgrade. Repository-root (format-2) selections are not accepted by this interface.
 .It Fl -pkg-key Ar file
 Existing unencrypted RSA private key for both base and combined repository
 catalogues.

@@ -485,8 +485,47 @@ package_inventory_body()
     atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_INVENTORY_HELPER="$helper" python3.12 "$tests"
 }
 
+atf_test_case application_selection_plan
+application_selection_plan_head()
+{
+    atf_set descr 'Application selection reaches combined publication without installation'
+    atf_set require.progs python3.12
+}
+application_selection_plan_body()
+{
+    setup
+    printf '%s\n' '{"format":1,"archives":[]}' > selected.json
+    selection=$(pwd)/selected.json
+    atf_check -s exit:0 -o save:application.jsonl -e empty "$tool" plan packages --application-selection "$selection" --format json
+    atf_check -s exit:0 -o empty -e empty python3.12 - "$selection" <<'PYTHON'
+import json, sys
+rows = [json.loads(line) for line in open('application.jsonl')]
+publication = next(row for row in rows[1:] if row['name'] == 'system-packages')
+assert 'APPLICATION_PACKAGE_SELECTION=' + sys.argv[1] in publication['argv']
+assert 'REPODIR=/usr/obj/usr/src/repo' in publication['argv']
+assert not any(row['name'] in ('deploy', 'media') for row in rows[1:])
+PYTHON
+    atf_check -s exit:0 -o save:backend -e empty make -C /usr/src -f release/Makefile.hardware -n publish-packages BASE_REPOSITORY=/usr/obj/base-plan HARDWARE_REPO=/usr/obj/hardware-plan COMPLETE_REPOSITORY=/usr/obj/complete-plan APPLICATION_PACKAGE_SELECTION="$selection"
+    atf_check -s exit:0 -o ignore grep -F -- "--application-selection $selection" backend
+    printf 'application_selection=%s\n' "$selection" > configured.conf
+    atf_check -s exit:0 -o save:configured -e empty "$tool" plan build --config configured.conf
+    atf_check -s exit:0 -o ignore grep -F "APPLICATION_PACKAGE_SELECTION=$selection" configured
+    cp selected.json override.json
+    atf_check -s exit:0 -o save:override -e empty "$tool" plan packages --config configured.conf --application-selection "$(pwd)/override.json"
+    atf_check -s exit:0 -o ignore grep -F "APPLICATION_PACKAGE_SELECTION=$(pwd)/override.json" override
+    atf_check -s exit:0 -o save:ordinary -e empty "$tool" plan packages
+    atf_check -s exit:1 -o empty grep APPLICATION_PACKAGE_SELECTION ordinary
+    atf_check -s not-exit:0 -o empty -e match:'only to build or packages' "$tool" plan world --application-selection "$selection"
+    ln -s selected.json selection-link
+    atf_check -s not-exit:0 -o empty -e match:'not a symlink' "$tool" plan packages --application-selection "$(pwd)/selection-link"
+    cp selected.json 'unsafe selection.json'
+    atf_check -s not-exit:0 -o empty -e match:'safe characters' "$tool" plan packages --application-selection "$(pwd)/unsafe selection.json"
+    atf_check -s not-exit:0 -o empty -e not-empty "$tool" plan packages --application-selection "$(pwd)/missing.json"
+}
+
 atf_init_test_cases()
 {
+    atf_add_test_case application_selection_plan
     atf_add_test_case package_inventory
     atf_add_test_case package_closure
     atf_add_test_case bazel_plan

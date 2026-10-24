@@ -40,6 +40,7 @@ static struct option options[] = {
  S("signing","auto"), S("key",""),
  S("development-key","/usr/obj/usr/src/signing-keys/development.pem"),
  S("pkg-key",""), S("public-key",""), S("pkg-public-key",""),
+ S("application-selection",""),
  S("root",""), S("output",""), S("repository",""),
  S("publish-repository",REPOSITORY), S("ports","/usr/obj/5BSD-ports"),
  S("hardware-profile",""), S("distfiles",""),
@@ -248,6 +249,11 @@ validate(void)
  for(size_t i=0;i<nitems(paths);i++) {if(*get(paths[i])!='/' || strchr(get(paths[i]),'$'))fail("world configuration paths must be absolute without make expansion");if(selected(paths[i]) && strcmp(get(paths[i]),"/dev/null"))regular(get(paths[i]),false);}
  if(*get("kernel-dir")){canonical("kernel-dir");regular(format("%s/%s",get("kernel-dir"),get("kernel")),false);}
  if(*get("pkg-key") && !request.packages)fail("--pkg-key applies only to build or packages");
+ if(selected("application-selection")) {
+  if(!request.packages)fail("--application-selection applies only to build or packages");
+  regular(get("application-selection"),false);canonical("application-selection");
+  if(strspn(get("application-selection"),"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_-.+")!=strlen(get("application-selection")))fail("--application-selection path must contain only make/shell-safe characters");
+ }
  if(selected("ports") && !request.packages)fail("--ports applies only to packages");
  if(selected("publish-repository") && !request.packages)fail("--publish-repository applies only to packages/build");
  if(!strcmp(get("signing"),"auto"))set("signing",*get("key")?"signed":"unsigned",false);
@@ -400,6 +406,7 @@ plan(void)
  } else if(request.packages){
   s=backend.make("system-packages",true);assignment(s,"PORTSDIR",get("ports"));assignment(s,"HARDWARE_PORT_LIST",get("hardware-profile"));assignment(s,"DISTDIR",get("distfiles"));arg(s,"REPODIR=" REPOSITORY);assignment(s,"PUBLISH_REPODIR",get("publish-repository"));
   if(*get("pkg-key")){assignment(s,"PKG_REPO_SIGNING_KEY",get("pkg-key"));assignment(s,"HARDWARE_SIGNING_KEY",get("pkg-key"));}
+  if(*get("application-selection"))assignment(s,"APPLICATION_PACKAGE_SELECTION",get("application-selection"));
   arg(s,"system-packages");
  }
 }

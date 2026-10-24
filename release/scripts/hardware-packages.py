@@ -10,14 +10,22 @@ import argparse
 import fnmatch
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+
+
+_closure_spec = importlib.util.spec_from_file_location('package_closure',
+    Path(__file__).resolve().parents[2] / 'tools/build/capimage/package_closure.py')
+package_closure = importlib.util.module_from_spec(_closure_spec)
+_closure_spec.loader.exec_module(package_closure)
 
 
 def run(*args, **kwargs):
@@ -466,6 +474,74 @@ def copy_signed_repository(repository, output, public_key, pkg, abi, osversion):
     return output
 
 
+def add_application_packages(selection_path, candidate, info):
+    """Copy a pinned format-1 application selection, retaining package identities.
+
+    Closure is checked against the completed candidate, because base/hardware
+    may supply application dependencies. Format-2 repository selection is not
+    supported here yet. Input hashes pin bytes; they do not authenticate origin.
+    """
+    spec = importlib.util.spec_from_file_location('package_inventory',
+        Path(__file__).resolve().parents[2] / 'tools/build/capimage/package_inventory.py')
+    reader = importlib.util.module_from_spec(spec); spec.loader.exec_module(reader)
+    fd = os.open(selection_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError('application selection must be a regular file')
+        raw = stream.read(64 * 1024 * 1024 + 1)
+    if len(raw) > 64 * 1024 * 1024:
+        raise ValueError('application selection too large')
+    selected = json.loads(raw, object_pairs_hook=reader.unique_object,
+                          parse_constant=reader.invalid_constant)
+    if (not isinstance(selected, dict) or set(selected) != {'format', 'archives'} or
+            type(selected['format']) is not int or selected['format'] != 1 or
+            not isinstance(selected['archives'], list) or not selected['archives']):
+        raise ValueError('application publication requires format-1 nonempty archive selection; format 2 unsupported')
+    names = set(inventory(candidate))
+    sources, records = set(), []
+    for row in selected['archives']:
+        if not isinstance(row, dict) or set(row) != {'path', 'sha256'}:
+            raise ValueError('invalid application archive binding')
+        value, expected = row['path'], row['sha256']
+        if (not isinstance(value, str) or not value.startswith('/') or '\0' in value or
+                any(part in ('', '.', '..') for part in value.split('/')[1:]) or
+                value in sources or not isinstance(expected, str) or
+                re.fullmatch('[0-9a-f]{64}', expected) is None):
+            raise ValueError('invalid or duplicate application archive binding')
+        sources.add(value)
+        source = Path(value)
+        if (source.is_symlink() or not source.is_file() or source.suffix != '.pkg' or
+                source.name in ('data.pkg', 'packagesite.pkg', 'meta.pkg')):
+            raise ValueError('application requires a regular .pkg archive')
+        target = candidate / source.name
+        if target.exists() or target.is_symlink():
+            raise ValueError('application archive filename conflicts with publication')
+        shutil.copyfile(source, target)
+        if sha256(target) != expected:
+            raise ValueError('application archive SHA256 mismatch')
+        package = reader.inventory_archive(target)
+        meta, name = package['manifest'], package['name']
+        if name.startswith('5BSD-') or name in names:
+            raise ValueError('application has reserved or duplicate package identity: ' + name)
+        if any(path == '/boot' or path.startswith('/boot/')
+               for path in set(package['entries']) | set(reader.package_directories(package))):
+            raise ValueError('application selection cannot supply system boot namespace objects')
+        if not isinstance(meta.get('abi'), str) or not fnmatch.fnmatchcase(info['abi'], meta['abi']):
+            raise ValueError('application package architecture mismatch: ' + name)
+        version = meta.get('annotations', {}).get('FreeBSD_version')
+        if (not str(version).isdigit() or not str(info.get('osversion')).isdigit() or
+                int(version) > int(info['osversion'])):
+            raise ValueError('application package OS version missing or newer than target: ' + name)
+        names.add(name)
+        records.append(dict(name=name, version=package['version'], file=target.name, sha256=expected))
+    # Check payload ownership and metadata against the full selected system.
+    combined = reader.inventory_packages(path for path, _ in inventory(candidate).values())
+    package_closure.require_selected_set(p['manifest'] for p in combined['packages'])
+    return {'selection_sha256': hashlib.sha256(raw).hexdigest(),
+            'packages': sorted(records, key=lambda row: row['name'])}
+
+
+
 def publish(args):
     """Publish a complete immutable generation, then atomically advance latest."""
     base = args.base_repository.resolve(strict=True)
@@ -496,6 +572,12 @@ def publish(args):
                     raise ValueError('base input already contains hardware packages')
                 shutil.copy2(archive, candidate / archive.name)
             merge_hardware(args.repository, candidate, args.pkg)
+            application_selection = getattr(args, 'application_selection', None)
+            application_record = (add_application_packages(application_selection, candidate, info)
+                                  if application_selection is not None else None)
+            # Refresh the catalogue after adding the unchanged application archives.
+            if application_record is not None:
+                run(args.pkg, 'repo', candidate)
             # Check dependencies using the actual combined package manifests.
             combined = inventory(candidate)
             closure(combined, list(combined))
@@ -507,7 +589,10 @@ def publish(args):
                 'format': 1, 'kernel_sha256': info['kernel_sha256'],
                 'hardware_manifest_sha256': sha256(candidate / 'hardware.json'),
                 'package_count': len(combined),
-                'scope': 'complete base and matching hardware generation'}, indent=2) + '\n')
+                'applications': application_record,
+                'scope': ('complete base, matching hardware and selected applications generation'
+                          if application_record is not None else
+                          'complete base and matching hardware generation')}, indent=2) + '\n')
             candidate.rename(output)
             pointer = Path(temp) / 'latest'
             pointer.symlink_to(output.name)
@@ -673,6 +758,8 @@ def main():
     pub.add_argument('--base-repository', type=Path, required=True)
     pub.add_argument('--output', type=Path, required=True)
     pub.add_argument('--signing-key', type=Path)
+    pub.add_argument('--application-selection', type=Path,
+        help='format-1 hash-bound application archives; format 2 is unsupported')
     offline = sub.add_parser('copy-signed-repository',
         help='preserve and verify a complete signed offline catalogue')
     offline.add_argument('--repository', type=Path, required=True)
