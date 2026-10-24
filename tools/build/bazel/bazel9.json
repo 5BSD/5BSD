@@ -1,6 +1,6 @@
 {
   "format": 1,
   "origin": "devel/bazel9",
-  "package": "bazel9-9.2.0_4",
+  "package": "bazel9-9.3.1",
   "java_origin": "java/openjdk21"
 }

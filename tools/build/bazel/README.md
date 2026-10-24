@@ -8,8 +8,10 @@ imported upstream BUILD files as evidence of BSD build coverage.
 
 The current upstream stable release is **9.3.1**:
 https://github.com/bazelbuild/bazel/releases/tag/9.3.1
-The selected custom port and `bazel9.json` still pin **9.2.0_4**; updating the
-port, distinfo and applicable FreeBSD patches is pending. Cached 9.2.0 packages
+The selected custom port and `bazel9.json` now pin **9.3.1**. The official
+source checksum and fresh application of existing FreeBSD patches passed;
+compilation and runtime qualification remain pending. Evidence is retained at
+`/usr/obj/bazel931-port-validation/port-validation.json`. Cached 9.2.0 packages
 are not evidence for the latest release. Qualify explicit rules_cc/Bzlmod inputs
 with the new release. Do not change the production default based on the Bazel5
 pilot results below.
