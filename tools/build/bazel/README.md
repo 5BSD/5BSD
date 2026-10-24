@@ -625,3 +625,13 @@ offline. A consumer still needs explicit module versions, a lockfile, required
 registry metadata and extension inputs, followed by an actual offline build.
 The current Bazel5 pilot is not converted or qualified for Bazel9 by this helper.
 Native corruption/escape/duplicate checks: python3.12 -B repository-cache-test.py.
+
+Bootstrap failure propagation
+-----------------------------
+bootstrap-status-test.py --buildenv /absolute/patched/scripts/bootstrap/buildenv.sh
+--bash /absolute/path/to/bash checks the actual upstream run helper, extracting
+its body from the supplied source. It verifies success and exit statuses 1, 37,
+and 134 in verbose and quiet modes. This guards against swallowing compiler
+failures through the status of shell negation. A passing test proves helper
+error propagation only; it does not qualify Java execution or a Bazel build.
+Run this against the source after applying the selected ports patches.
