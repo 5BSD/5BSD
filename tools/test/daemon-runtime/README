@@ -223,3 +223,27 @@ runner_probe contains cleanup_pass and deliberate cleanup_fail/body_fail/
 body_timeout negative controls. Listing these cases is a native parser check;
 only executing them in a VM demonstrates PID1 lifecycle behavior. Process-group
 cleanup is not general containment of descendants that start another session.
+
+Private disk and resource inputs
+-------------------------------
+--input-disk requires a regular image and explicit SHA256, is attached read-only,
+and is hashed again after shutdown. --output-disk-mib creates a distinct private
+writable disk; an optional --output-disk-source plus SHA256 seeds an exact-sized
+copy. The source is never attached writable and is checked after shutdown.
+--workspace-disk-mib adds a new blank build disk, requires input/output disks and
+an explicit --host-max-rss-mib, and checks host free space against disk capacities
+and --workspace-host-reserve-mib. This observation is not a storage reservation.
+The topology is fixture root vtbd0, input vtbd1, output vtbd2, workspace vtbd3.
+
+--root-mib sizes the disk-backed fixture root. --extra-root supplies additive
+regular files/directories and cannot replace already-staged files. These are
+trusted test inputs, not authenticated system generations. Default root writes
+are discarded; --retain-disk-writes retains only the private newly-created root.
+Output/workspace disks retain failed/partial state as well as successful output.
+
+QEMU RSS and CPU observations are retained in host-resources.jsonl, and host-
+observed serial event timing is recorded. Resource observation failures fail
+qualification. Sampling can miss peaks and excludes host page cache; these
+measurements are not guest memory or disk latency qualification.
+Disk probe wrappers exercise actual VM persistence, read-only refusal and output
+writes. Native cache/copy/preflight tests do not prove these VM mechanisms.

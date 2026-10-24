@@ -3,6 +3,10 @@
 import argparse, hashlib, json, os, re, shutil, subprocess, time
 from pathlib import Path
 from atf_metadata import parse_listing, cases_completed, apply_case_budgets, parse_runtime_description
+from serial_timeline import SerialTimeline
+from disk_copy import check_source, copy_source
+from host_resources import HostMonitor
+from workspace_disk import requirement as workspace_requirement, check_space as workspace_space, create as workspace_create
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--root',type=Path,required=True)
 p.add_argument('--objtop',type=Path,required=True)
@@ -14,23 +18,46 @@ p.add_argument('--kernconf',default='GENERIC-NODEBUG')
 p.add_argument('--client-ownership',action='store_true')
 p.add_argument('--oes-factory',action='store_true')
 p.add_argument('--oes-admission',action='store_true',help='run real Capsule/SwitchBoard with OES test bundles')
+p.add_argument('--host-max-rss-mib',type=int,default=0,help='QEMU process RSS budget; required with a workspace disk, 0 observes without a limit')
+p.add_argument('--workspace-disk-mib',type=int,default=0,help='new private build workspace disk at /dev/vtbd3; requires input and output disks')
+p.add_argument('--workspace-host-reserve-mib',type=int,default=1024,help='host free-space reserve beyond planned private disks')
+p.add_argument('--output-disk-mib',type=int,default=0,help='new private writable output disk beside a read-only input, exposed as /dev/vtbd2')
+p.add_argument('--input-disk',type=Path,help='explicit regular disk image attached read-only for independent artifact verification')
+p.add_argument('--input-disk-sha256',help='required expected SHA256 for --input-disk; content binding, not authentication')
+p.add_argument('--output-disk-source',type=Path,help='offline source copied into private output.img; never attached writable')
+p.add_argument('--output-disk-source-sha256',help='required source SHA256 for an initialized output disk')
+p.add_argument('--retain-disk-writes',action='store_true',help='retain writes to the newly created private guest.img for offline inspection; not system acceptance')
+p.add_argument('--root-mib',type=int,default=256,help='fixture root filesystem size in MiB')
+p.add_argument('--memory-mib',type=int,default=1024,help='guest RAM in MiB (512..2048)')
 p.add_argument('--log-store',action='store_true')
 p.add_argument('--log-storage',action='store_true')
 p.add_argument('--cleanup-lifecycle',action='store_true',help='stage private cleanup/unload kernel fixture')
 p.add_argument('--log-provider',action='store_true')
+p.add_argument('--extra-root',type=Path,help='explicit additive fixture tree; no staged-file replacements')
 p.add_argument('--atf-suite',action='append',default=[],help='static ATF binary relative to objtop; repeatable')
 p.add_argument('--atf-case',action='append',default=[],help='static ATF binary relative to objtop followed by :case; repeatable')
 p.add_argument('--atf-case-budget',action='append',default=[],help='explicit selected source:case=seconds harness deadline; declared ATF timeout remains recorded')
-p.add_argument('--memory-mib',type=int,default=1024,help='guest RAM in MiB (512..2048)')
 p.add_argument('--timeout',type=int,default=240)
 p.add_argument('--cpus',type=int,choices=range(1,5),default=4,help='guest vCPUs (default 4, maximum 4)')
 p.add_argument('--tcg-thread',choices=['multi','single'],default='multi',help='diagnostic TCG threading mode')
 p.add_argument('--eventtimer',choices=['LAPIC','i8254','HPET'],help='guest event timer override for diagnosis')
 a=p.parse_args()
+if not 64 <= a.root_mib <= 16384: p.error('root-mib must be between 64 and 16384')
 if a.oes_admission: a.oes_factory=True
 if a.timeout<=0: p.error('timeout must be positive')
+if a.output_disk_mib and (a.input_disk is None or not 16 <= a.output_disk_mib <= 16384): p.error('output disk requires a read-only input and capacity 16..16384 MiB')
+if (a.input_disk is None) != (a.input_disk_sha256 is None): p.error('input disk requires both path and expected SHA256')
+if a.input_disk is not None and (re.fullmatch(r'[0-9a-f]{64}', a.input_disk_sha256) is None): p.error('input disk requires a lowercase SHA256')
+if (a.output_disk_source is None) != (a.output_disk_source_sha256 is None): p.error('output source requires both path and SHA256')
+if a.output_disk_source is not None and not a.output_disk_mib: p.error('output source requires explicit output capacity and read-only input')
 if not 512 <= a.memory_mib <= 2048: p.error('guest RAM must be between 512 and 2048 MiB')
+if not 0 <= a.host_max_rss_mib <= 65536: p.error('host RSS budget must be 0..65536 MiB')
+if a.workspace_disk_mib and not a.host_max_rss_mib: p.error('workspace builds require an explicit --host-max-rss-mib budget')
 root=a.root.resolve(); obj=a.objtop.resolve(); work=a.work.resolve()
+try:
+ workspace_required=workspace_requirement(a.workspace_disk_mib,a.input_disk is not None,a.output_disk_mib,a.root_mib,a.workspace_host_reserve_mib)
+ workspace_budget=workspace_space(work,workspace_required)
+except (OSError,ValueError) as error: p.error(str(error))
 fixtures=(a.fixture_objtop or obj).resolve()
 if not fixtures.is_relative_to('/usr/obj/usr/src'): p.error('fixtures must use standard /usr/obj/usr/src staging')
 if not work.is_relative_to('/usr/obj'): p.error('VM staging must be under /usr/obj')
@@ -39,6 +66,15 @@ helper=fixtures/'tools/test/daemon-runtime/runtime_init'
 test=fixtures/'lib/libservice/tests/libservice_api_test'
 fs_test=fixtures/'usr.sbin/BSDFilesystem/tests/namespace_test'
 def digest(path): return hashlib.file_digest(path.open('rb'),'sha256').hexdigest()
+input_disk=None
+if a.input_disk is not None:
+ if a.input_disk.is_symlink() or not a.input_disk.is_file(): p.error('input disk must be a regular nonsymlink file')
+ input_disk=a.input_disk.resolve(strict=True)
+ if digest(input_disk)!=a.input_disk_sha256: p.error('input disk SHA256 differs')
+output_source=None
+if a.output_disk_source is not None:
+ try: output_source=check_source(a.output_disk_source,a.output_disk_source_sha256,a.output_disk_mib*1024*1024)
+ except (OSError,ValueError) as error: p.error(str(error))
 for f in [kernel,root/'boot/kernel/kernel',root/'boot/pmbr',root/'boot/gptboot',root/'boot/defaults/loader.conf',helper,test,fs_test]:
  if not f.is_file(): p.error('missing '+str(f))
 if digest(kernel)!=digest(root/'boot/kernel/kernel'): p.error('staged and object kernels differ')
@@ -55,7 +91,7 @@ except (subprocess.SubprocessError, ValueError) as error:
 subprocess.run([a.qemu,'--version'],check=True,stdout=subprocess.DEVNULL)
 hashes={str(f):digest(f) for f in [kernel,helper,test,fs_test]}
 if hashes[str(helper)]!=helper_before: p.error('runtime helper changed after preflight')
-work.mkdir(parents=True,exist_ok=False); stage=work/'root'; stage.mkdir()
+work.mkdir(mode=0o700,parents=True,exist_ok=False); stage=work/'root'; stage.mkdir()
 shutil.copytree(root/'boot',stage/'boot',ignore=shutil.ignore_patterns('kernel','modules','dtb','firmware','loader.conf','loader.conf.local','loader.conf.d','zfs'))
 shutil.copy2(root/'boot/defaults/loader.conf',stage/'boot/defaults/loader.conf')
 for d in ['boot/kernel','dev','sbin','etc','root','tests','tmp']: (stage/d).mkdir(parents=True,exist_ok=True)
@@ -161,6 +197,20 @@ for number, (relative,selected_case) in enumerate(selections):
  extra_cases.extend(('/tests/'+alias,case) for case in cases)
 if selections:
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
+if input_disk is not None:
+ (stage/'tests/input-device').write_text('/dev/vtbd1\n')
+if a.output_disk_mib:
+ if output_source is not None:
+  copy_source(output_source,a.output_disk_source_sha256,a.output_disk_mib*1024*1024,work/'output.img')
+ else:
+  with (work/'output.img').open('xb') as disk:
+   os.fchmod(disk.fileno(),0o600)
+   disk.truncate(a.output_disk_mib*1024*1024)
+ (stage/'tests/output-device').write_text('/dev/vtbd2\n')
+if a.workspace_disk_mib:
+ workspace_space(work,workspace_required-a.output_disk_mib*1024*1024)
+ workspace_create(work/'workspace.img',a.workspace_disk_mib)
+ (stage/'tests/workspace-device').write_text('/dev/vtbd3\n')
 (stage/'etc/passwd').write_text('root:*:0:0:Charlie &:/root:/bin/sh\n')
 if a.oes_admission:
  from oes_admission import stage_admission
@@ -199,6 +249,10 @@ if a.eventtimer:
 if a.oes_factory:
  with (stage/'boot/loader.conf').open('a') as f: f.write('oes_load="YES"\n')
 (stage/'boot.config').write_text('-h\n')
+extra_root = None
+if a.extra_root:
+ from extra_root import stage_extra_root
+ extra_root = stage_extra_root(a.extra_root, stage)
 entries=['#mtree 2.0','. type=dir uid=0 gid=0 mode=0755']
 for f in sorted(stage.rglob('*')):
  name='./'+str(f.relative_to(stage))
@@ -206,18 +260,37 @@ for f in sorted(stage.rglob('*')):
  elif f.is_dir(): entries.append(name+' type=dir uid=0 gid=0 mode='+('1777' if f.name=='tmp' else '0755'))
  else: entries.append(name+' type=file uid=0 gid=0 mode=0555')
 (work/'METALOG').write_text('\n'.join(entries)+'\n')
-subprocess.run(['makefs','-t','ffs','-s','256m','-F',str(work/'METALOG'),'-o','version=2',str(work/'root.ufs'),str(stage)],check=True)
+subprocess.run(['makefs','-t','ffs','-s',str(a.root_mib)+'m','-F',str(work/'METALOG'),'-o','version=2',str(work/'root.ufs'),str(stage)],check=True)
 subprocess.run(['mkimg','-s','gpt','-f','raw','-b',str(stage/'boot/pmbr'),'-p','freebsd-boot:='+str(stage/'boot/gptboot'),'-p','freebsd-ufs:='+str(work/'root.ufs'),'-o',str(work/'guest.img')],check=True)
 log=work/'serial.log'
-cmd=[a.qemu,'-L',str(a.qemu_data),'-accel','tcg,thread='+a.tcg_thread,'-machine','q35','-cpu','max','-m',str(a.memory_mib),'-smp',str(a.cpus),'-drive',f'file={work}/guest.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
-provenance={'oes_admission':a.oes_admission,'guest_cpus':a.cpus,'guest_memory_mib':a.memory_mib,'requested_eventtimer':a.eventtimer,'tcg_thread':a.tcg_thread,'host_loadavg_start':os.getloadavg(),'host_logical_cpus':os.cpu_count(),'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'fixture_objtop':str(fixtures),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'case_metadata':case_metadata,'runtime_helper_contract':helper_description,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
+disk_mode='off' if a.retain_disk_writes else 'on'
+cmd=[a.qemu,'-L',str(a.qemu_data),'-accel','tcg,thread='+a.tcg_thread,'-machine','q35','-cpu','max','-m',str(a.memory_mib),'-smp',str(a.cpus),'-drive',f'file={work}/guest.img,format=raw,if=none,id=fixture_root,snapshot={disk_mode}','-device','virtio-blk-pci,drive=fixture_root,bootindex=0','-boot','strict=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
+if input_disk is not None:
+ if digest(input_disk)!=a.input_disk_sha256: p.error('input disk changed during staging')
+ cmd.extend(['-blockdev',json.dumps({'driver':'raw','node-name':'artifact_input','read-only':True,'file':{'driver':'file','filename':str(input_disk)}}),'-device','virtio-blk-pci,drive=artifact_input'])
+if a.output_disk_mib:
+ cmd.extend(['-blockdev',json.dumps({'driver':'raw','node-name':'artifact_output','file':{'driver':'file','filename':str(work/'output.img')}}),'-device','virtio-blk-pci,drive=artifact_output'])
+if a.workspace_disk_mib:
+ cmd.extend(['-blockdev',json.dumps({'driver':'raw','node-name':'build_workspace','file':{'driver':'file','filename':str(work/'workspace.img')}}),'-device','virtio-blk-pci,drive=build_workspace'])
+provenance={'output_disk_mib':a.output_disk_mib,'output_disk':str(work/'output.img') if a.output_disk_mib else None,'input_disk':str(input_disk) if input_disk else None,'input_disk_sha256':a.input_disk_sha256,'input_disk_readonly':input_disk is not None,'retain_disk_writes':a.retain_disk_writes,'extra_root':extra_root,'oes_admission':a.oes_admission,'guest_cpus':a.cpus,'guest_memory_mib':a.memory_mib,'root_mib':a.root_mib,'case_metadata':case_metadata,'runtime_helper_contract':helper_description,'requested_eventtimer':a.eventtimer,'tcg_thread':a.tcg_thread,'host_loadavg_start':os.getloadavg(),'host_logical_cpus':os.cpu_count(),'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'fixture_objtop':str(fixtures),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
 if a.oes_admission:
  provenance['scope']='native fixtures followed by PID1 Capsule/SwitchBoard OES admission and live coalition reload/removal; OES-only provider, not installed ZFS/installer acceptance'
+provenance.update(workspace_disk_mib=a.workspace_disk_mib,workspace_disk=str(work/'workspace.img') if a.workspace_disk_mib else None,workspace_host_budget=workspace_budget,workspace_host_reserve_mib=a.workspace_host_reserve_mib)
+provenance.update(output_disk_source=str(output_source) if output_source else None,output_disk_source_sha256=a.output_disk_source_sha256)
 (work/'inputs.json').write_text(json.dumps(provenance,indent=2)+'\n')
-proc=subprocess.Popen(cmd); deadline=time.monotonic()+a.timeout; forced=False
+started=time.monotonic(); timeline=SerialTimeline()
+monitor=HostMonitor(work/'host-resources.jsonl',a.host_max_rss_mib)
+proc=subprocess.Popen(cmd); deadline=started+a.timeout; forced=False
 try:
  while proc.poll() is None and time.monotonic()<deadline:
+  try:
+   observed=monitor.observe(proc.pid,time.monotonic()-started)
+   if not observed and proc.poll() is None: raise ValueError('live QEMU process missing from resource observation')
+  except (OSError,ValueError,subprocess.SubprocessError) as error:
+   provenance['host_resource_error']=str(error)
+   break
   text=log.read_text(errors='replace') if log.exists() else ''
+  timeline.observe(text, time.monotonic()-started)
   if any(x in text for x in ['panic:','Fatal trap','lock order reversal','mountroot>']): break
   if a.oes_admission and any(x in text for x in ['invalid pkgbase default service identity', 'protected authority issuer unavailable']):
    provenance['admission_startup_failure']='required service identity or PID1 authority issuer unavailable'
@@ -228,14 +301,36 @@ finally:
   forced=True; proc.terminate()
   try: proc.wait(timeout=10)
   except subprocess.TimeoutExpired: proc.kill(); proc.wait()
+provenance['host_resources']=monitor.close()
 text=log.read_text(errors='replace') if log.exists() else ''
+timeline.observe(text, time.monotonic()-started)
+provenance['serial_timeline']=dict(scope='host-observed complete serial lines; polling and buffering delay included', events=timeline.events)
+provenance['vm_elapsed_seconds']=round(time.monotonic()-started,3)
 lines=text.splitlines()
-passed=cases_completed(text,case_metadata)
+passed=cases_completed(text,case_metadata) and 'host_resource_error' not in provenance
 passed=passed and lines.count('RUNTIME_VM_PASS')==1 and 'RUNTIME_VM_FAIL' not in text and 'RUNTIME_CASE_FAIL' not in text
 if a.oes_admission:
  passed=passed and lines.count('COALITION_LIFECYCLE_PASS')==1 and 'COALITION_LIFECYCLE_FAIL' not in text and lines.count('OES_ADMISSION_PASS')==1 and 'OES_ADMISSION_FAIL' not in text and lines.count('RUNTIME_FIXTURES_PASS')==1
 passed=passed and not forced and proc.returncode==0 and 'Powering system off' in text and not any(x in text for x in ['panic:','Fatal trap','lock order reversal'])
+if input_disk is not None:
+ provenance['input_disk_final_sha256']=digest(input_disk)
+ if provenance['input_disk_final_sha256']!=a.input_disk_sha256: passed=False
+if output_source is not None:
+ try:
+  check_source(output_source,a.output_disk_source_sha256,a.output_disk_mib*1024*1024)
+  provenance['output_disk_source_unchanged']=True
+ except (OSError,ValueError) as error:
+  provenance.update(output_disk_source_unchanged=False,output_disk_source_error=str(error)); passed=False
 provenance.update(result='PASS' if passed else 'FAIL',forced_termination=forced,qemu_exit=proc.returncode,serial_sha256=digest(log) if log.exists() else None)
+if a.output_disk_mib:
+ provenance['output_disk_sha256']=digest(work/'output.img')
+ provenance['output_disk_scope']='private VM output, including failed/partial state; not an accepted generation'
+if a.workspace_disk_mib:
+ provenance['workspace_disk_sha256']=digest(work/'workspace.img')
+ provenance['workspace_disk_scope']='private build workspace, including partial/failed output; not an accepted generation'
+if a.retain_disk_writes:
+ provenance['retained_guest_disk_sha256']=digest(work/'guest.img')
+ provenance['retained_guest_disk_scope']='private fixture disk, including failed/partial state; not an accepted system generation'
 (work/'result.json').write_text(json.dumps(provenance,indent=2)+'\n')
 print('\n'.join(text.splitlines()[-45:]));print(work)
 raise SystemExit(0 if passed else 1)
