@@ -777,6 +777,33 @@ hexdigest(char *buf, size_t bufsz, unsigned char *foo, size_t foo_len)
  *
  * @return NULL on error, otherwise content of file.
  */
+#if defined(VE_RSA_SUPPORT) || defined(VE_ECDSA_SUPPORT)
+/* A detached signature contains one nonempty PEM object. */
+static pem_object *
+read_signature(const char *path)
+{
+	unsigned char *data;
+	pem_object *objects;
+	size_t length, count;
+
+	data = read_file(path, &length);
+	if (data == NULL)
+		return (NULL);
+	objects = decode_pem(data, length, &count);
+	free(data);
+	if (objects == NULL)
+		return (NULL);
+	if (count != 1 || objects[0].data == NULL || objects[0].data_len == 0) {
+		for (size_t i = 0; i < count; i++)
+			free_pem_object_contents(&objects[i]);
+		free(objects);
+		return (NULL);
+	}
+	return (objects);
+}
+
+#endif
+
 #ifdef VE_ECDSA_SUPPORT
 static unsigned char *
 verify_ec(br_x509_pkey *pk, const char *file, const char *sigfile)
@@ -786,21 +813,16 @@ verify_ec(br_x509_pkey *pk, const char *file, const char *sigfile)
 #endif
 	unsigned char rhbuf[br_sha512_SIZE];
 	br_sha256_context ctx;
-	unsigned char *fcp, *scp;
-	size_t flen, slen, plen;
+	unsigned char *fcp;
+	size_t flen;
 	pem_object *po;
 	const br_ec_impl *ec;
 	br_ecdsa_vrfy vrfy;
 
 	if ((fcp = read_file(file, &flen)) == NULL)
 		return (NULL);
-	if ((scp = read_file(sigfile, &slen)) == NULL) {
+	if ((po = read_signature(sigfile)) == NULL) {
 		free(fcp);
-		return (NULL);
-	}
-	if ((po = decode_pem(scp, slen, &plen)) == NULL) {
-		free(fcp);
-		free(scp);
 		return (NULL);
 	}
 	br_sha256_init(&ctx);
@@ -822,7 +844,8 @@ verify_ec(br_x509_pkey *pk, const char *file, const char *sigfile)
 		free(fcp);
 		fcp = NULL;
 	}
-	free(scp);
+	free_pem_object_contents(po);
+	free(po);
 	return (fcp);
 }
 #endif
@@ -883,19 +906,14 @@ verify_rsa(br_x509_pkey *pk,  const char *file, const char *sigfile)
 	const unsigned char *hash_oid;
 	const br_hash_class *md;
 	br_hash_compat_context mctx;
-	unsigned char *fcp, *scp;
-	size_t flen, slen, plen, hlen;
+	unsigned char *fcp;
+	size_t flen, hlen;
 	pem_object *po;
 
 	if ((fcp = read_file(file, &flen)) == NULL)
 		return (NULL);
-	if ((scp = read_file(sigfile, &slen)) == NULL) {
+	if ((po = read_signature(sigfile)) == NULL) {
 		free(fcp);
-		return (NULL);
-	}
-	if ((po = decode_pem(scp, slen, &plen)) == NULL) {
-		free(fcp);
-		free(scp);
 		return (NULL);
 	}
 
@@ -922,7 +940,8 @@ verify_rsa(br_x509_pkey *pk,  const char *file, const char *sigfile)
 		free(fcp);
 		fcp = NULL;
 	}
-	free(scp);
+	free_pem_object_contents(po);
+	free(po);
 	return (fcp);
 }
 #endif
