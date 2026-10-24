@@ -916,7 +916,8 @@ verify_sig(const char *sigfile, int flags)
 
 	DEBUG_PRINTF(5, ("verify_sig: %s\n", sigfile));
 	n = strlcpy(pbuf, sigfile, sizeof(pbuf));
-	if (n > (sizeof(pbuf) - 5) || strcmp(&sigfile[n - 3], "sig") != 0)
+	if (n <= 4 || n > (sizeof(pbuf) - 5) ||
+	    strcmp(&sigfile[n - 4], ".sig") != 0)
 		return (NULL);
 	cp = strcpy(&pbuf[n - 3], "certs");
 	/*
@@ -1001,6 +1002,8 @@ ve_check_hash(br_hash_compat_context *ctx, const br_hash_class *md,
 	int rc;
 	int n;
 
+	if (hlen == 0 || hlen > sizeof(hbuf))
+		return (VE_FINGERPRINT_WRONG);
 	md->out(&ctx->vtable, hbuf);
 #ifdef VE_PCR_SUPPORT
 	ve_pcr_update(path, hbuf, hlen);
@@ -1009,7 +1012,8 @@ ve_check_hash(br_hash_compat_context *ctx, const br_hash_class *md,
 	if (!hex)
 		return (VE_FINGERPRINT_WRONG);
 	n = 2*hlen;
-	if ((rc = strncmp(hex, want, n))) {
+	if ((rc = strncmp(hex, want, n)) != 0 ||
+	    strchr(" \t\r\n", want[n]) == NULL) {
 		ve_error_set("%s: %.*s != %.*s", path, n, hex, n, want);
 		rc = VE_FINGERPRINT_WRONG;
 	}
