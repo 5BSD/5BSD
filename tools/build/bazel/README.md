@@ -664,3 +664,24 @@ libmd.so.7.full also passed. Receipts are in
 /usr/obj/usr/src/libmd-shared-generators-compile-20261024/receipt.json.
 This refactor does not enable a Bazel system backend or establish Bazel9
 compilation, installation, package or runtime parity.
+
+Make installation reference in bazel-test
+-----------------------------------------
+The maintained build-bsd bazel-test action now runs install-reference.py after
+the Bazel compile/artifact pilot. Its Make-only libmd build and stage are saved
+in make-install-reference/ beneath the qualification output. This preserves
+actual source-tree layout, recursively separate object directories, the
+recorded .src_opts world profile, and top-level IMAKE_INSTALL metadata flags.
+It does not import Bazel artifacts or qualify installation parity.
+
+The combined receipt records make_install_reference separately and hashes its
+receipt. Runtime, complete package archives, Bazel9 and the system backend
+remain unqualified. Both the reference script and imported environment helper
+are hashed before execution and rechecked; the recorded inputs are not a full
+hermetic build closure. NO_ROOT ownership/modes remain logical METALOG values.
+
+The standalone guard suite accepts --src, --objtop, --profile and fresh --work
+below /usr/obj. It checks output reuse, copied-source components, mismatched
+profiles, invalid parallelism, symlink escapes and Make/control-character
+paths before output creation. Actual build/install coverage currently uses
+libmd; this does not establish arbitrary component or world coverage.

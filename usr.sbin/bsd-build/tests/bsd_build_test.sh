@@ -442,6 +442,7 @@ bazel_plan_body()
 import json, sys
 rows = [json.loads(line) for line in open('plan.jsonl')]
 assert rows[0]['verification_scope'] == 'bazel-compile-comparison'
+assert rows[0]['make_install_reference'] == 'requested'
 assert rows[0]['build_backend'] == 'bsd-make'
 assert rows[0]['jobs'] == 3
 assert rows[0]['boot_verification'] == 'not-performed'

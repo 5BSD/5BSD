@@ -360,7 +360,11 @@ selects parallelism (all logical CPUs by default);
 selects a fresh directory below /usr/obj.
 It builds fresh Make reference libraries and compares Bazel artifacts,
 including versioned exports and generated-input invalidation.
-The action records compilation evidence only: it does not launch a VM,
+The action also builds and stages a Make-only libmd installation reference
+under its private output directory, preserving the selected world profile,
+source layout, debug splitting and METALOG package metadata.
+This does not establish Bazel installation parity.
+The action does not launch a VM,
 qualify performance, install packages or select Bazel for production builds.
 Make remains the production backend.
 Custom make configurations, signing and incremental reuse are not supported

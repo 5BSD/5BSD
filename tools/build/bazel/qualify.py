@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
-"""Compile-only Bazel pilot qualification; never selects a system build backend."""
+"""Bazel compile pilot and Make installation reference; no system backend selection."""
 import argparse
 import hashlib
 import json
@@ -77,6 +77,8 @@ def main():
     awk = sysroot / 'legacy/usr/bin/awk'
     required = [bazel, make, readelf, clang, objdump, awk,
                 scripts / 'declared-probe.py', scripts / 'elf-shared-check-test.py',
+                scripts / 'install-reference.py', scripts / 'libmd_environment.py',
+                objtop / '.src_opts',
                 src / 'Makefile', src / 'lib/libsbuf/Makefile',
                 sysroot / 'usr/include/sys/sbuf.h']
     for path in required:
@@ -117,7 +119,9 @@ def main():
     receipt = {'scope': 'native-amd64-bazel-compile-qualification', 'status': 'running',
                'source': str(src), 'objtop': str(objtop), 'bazel': str(bazel),
                'jobs': args.jobs, 'target': target, 'clang_resource_version': version,
-               'compile_only': True, 'runtime_qualified': False, 'system_backend_qualified': False,
+               'compile_only': False, 'bazel_compile_only': True,
+               'make_install_reference': 'pending',
+               'runtime_qualified': False, 'system_backend_qualified': False,
                'bazel9_qualified': False, 'production_backend': 'bsd-make',
                'remaining_inputs': ['host execution runtime and environment',
                                     'maintained Make configuration; not a hermetic build'],
@@ -142,6 +146,16 @@ def main():
              '--make-sbuf-map', output / 'make/sbuf/Version.map'])
         run([sys.executable, '-B', scripts / 'elf-shared-check-test.py', '--readelf', readelf,
              '--reference', output / 'make/samples/libbsd_samples.so.1'])
+        run([sys.executable, '-B', scripts / 'install-reference.py',
+             '--src', src, '--objtop', objtop, '--profile', objtop / '.src_opts',
+             '--component', src / 'lib/libmd', '--output', output / 'make-install-reference',
+             '--jobs', str(args.jobs)])
+        reference = output / 'make-install-reference/receipt.json'
+        reference_result = json.loads(reference.read_text())
+        if reference_result.get('status') != 'passed' or not reference_result.get('inputs_rechecked'):
+            raise RuntimeError('Make installation reference did not complete with stable inputs')
+        receipt.update(make_install_reference='passed',
+                       make_install_reference_receipt_sha256=sha(reference))
         for path, expected in {**source_hashes, **receipt['tool_hashes']}.items():
             if sha(Path(path)) != expected:
                 raise RuntimeError('input changed during qualification: ' + path)

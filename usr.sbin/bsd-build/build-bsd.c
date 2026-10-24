@@ -430,8 +430,8 @@ static void
 show_request(void)
 {
  if(action("bazel-test")) {
-  if(!request.json){printf("build-bsd: action=bazel-test cpus=%u target=%s/%s\n",request.jobs,request.target,request.arch);puts("qualification: scope=bazel-compile-comparison runtime=not-performed system-backend=not-qualified");return;}
-  printf("{\"schema\":\"org.5bsd.build-plan.v1\",\"record\":\"request\",\"action\":\"bazel-test\",\"verification_scope\":\"bazel-compile-comparison\",\"build_backend\":\"bsd-make\",\"boot_verification\":\"not-performed\",\"jobs\":%u}\n",request.jobs);return;
+  if(!request.json){printf("build-bsd: action=bazel-test cpus=%u target=%s/%s\n",request.jobs,request.target,request.arch);puts("qualification: scope=bazel-compile-comparison make-install-reference=requested runtime=not-performed system-backend=not-qualified");return;}
+  printf("{\"schema\":\"org.5bsd.build-plan.v1\",\"record\":\"request\",\"action\":\"bazel-test\",\"verification_scope\":\"bazel-compile-comparison\",\"make_install_reference\":\"requested\",\"build_backend\":\"bsd-make\",\"boot_verification\":\"not-performed\",\"jobs\":%u}\n",request.jobs);return;
  }
  if(!request.json){printf("build-bsd: action=%s cpus=%u kernel=%s production=%s signing=%s target=%s/%s board=%s\n",request.action,request.jobs,get("kernel"),request.production?"yes":"no",get("signing"),request.target,request.arch,get("board"));return;}
  printf("{\"schema\":\"org.5bsd.build-plan.v1\",\"record\":\"request\",\"action\":");json_string(request.action);
