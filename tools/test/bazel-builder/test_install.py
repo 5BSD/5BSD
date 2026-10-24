@@ -67,10 +67,13 @@ class Guards(unittest.TestCase):
                 mounts + [['/dev/vtbd2','/other','ufs','rw']])
 
     def test_mountpoint_metadata(self):
-        for mode in (0o700, 0o755):
+        for mode in (0o500, 0o550, 0o555, 0o700, 0o750, 0o755):
             setup.mountpoint_metadata(SimpleNamespace(st_uid=0, st_mode=stat.S_IFDIR | mode))
         for uid, mode in ((1001, stat.S_IFDIR | 0o700), (0, stat.S_IFDIR | 0o777),
-                          (0, stat.S_IFREG | 0o700), (0, stat.S_IFDIR | 0o775)):
+                          (0, stat.S_IFREG | 0o700), (0, stat.S_IFDIR | 0o775),
+                          (0, stat.S_IFDIR | 0o757), (0, stat.S_IFDIR | 0o400),
+                          (0, stat.S_IFDIR | 0o100), (0, stat.S_IFDIR | 0o1755),
+                          (0, stat.S_IFDIR | 0o2755), (0, stat.S_IFDIR | 0o4755)):
             with self.assertRaises(ValueError):
                 setup.mountpoint_metadata(SimpleNamespace(st_uid=uid, st_mode=mode))
 

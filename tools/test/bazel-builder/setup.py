@@ -24,9 +24,13 @@ def validate_devices(input_device, output_device, mounts):
 
 
 def mountpoint_metadata(info):
+    # Mounting does not require write permission on the covered directory.
+    # Preserve package metadata (for example, the base /dev is mode 0555).
+    mode = stat.S_IMODE(info.st_mode)
     if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or
-            stat.S_IMODE(info.st_mode) not in (0o700, 0o755)):
-        raise ValueError('existing mountpoint must be a root-owned mode-0700/0755 directory')
+            mode & 0o500 != 0o500 or mode & 0o7022):
+        raise ValueError('existing mountpoint must be a root-owned readable/searchable '
+                         'directory without group/other write or special permission bits')
 
 
 def validate_mountpoint(path, mounts):
