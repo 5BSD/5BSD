@@ -203,3 +203,60 @@ The native test_resources.py suite checks budget semantics, evidence preservatio
 missing metrics, failed commands and process-group termination. VM execution of
 this wrapper remains a separate qualification gate. No production build-bsd
 option changes are required for this test wrapper.
+
+### Build inside an initialized builder
+
+`build.py --config build-settings.json` is a separate fixture. It mounts an
+explicit initialized builder image without formatting it and verifies the
+successful installation receipt before using its root. The original `setup.py`
+continues to require and format a blank installation target.
+
+Three distinct whole virtio devices are required: read-only source transport,
+initialized root clone, and new blank UFS workspace. The input and root
+mountpoints must already exist as safe empty root-owned directories on the
+bootstrap filesystem. The workspace is mounted at the builder's `/usr/obj`;
+source inputs are exposed read-only at `/inputs`. Work, packages and resource
+logs stay on disk. Restricted devfs supplies random/zero/null devices without
+exposing the fixture disks.
+
+The settings file requires exactly these fields (paths are explicit fixture
+inputs, not discovered host paths):
+
+```
+input_device, root_device, workspace_device, input_mount, root_mount,
+root_relative, installation_receipt, installation_receipt_sha256,
+sources_manifest, sources_manifest_sha256, nullfs_module,
+python, resources, budget, javac_options, bootstrap_args, package_tool
+```
+
+`root_relative` and `installation_receipt` are relative to the mounted root
+disk. `sources_manifest` is relative to the read-only input filesystem. That
+manifest uses format 1 with `ports_archive` (file/sha256), `ports_directory`,
+`distfiles` (array of file/sha256 records), `origin`, and `package`. All source
+paths are canonical relative paths. The complete source archive is checked
+before extraction: duplicate members, special devices, non-directory ancestors,
+escaping links and unresolved/cyclic hardlinks fail. Symlink targets traversing
+another archive link are conservatively unsupported.
+
+The fixture invokes maintained ports `make package`, with normal patch/build/
+stage/package hooks and dependency checks. `USE_PACKAGE_DEPENDS_ONLY=yes` makes
+missing dependencies fail instead of silently rebuilding them. It passes all
+guest logical CPUs as `MAKE_JOBS_NUMBER`, verifies the selected port and produced
+archive identities, and retains the package SHA256. It does not install the new
+package. The supplied `resources.py` budget bounds the build command; preparation
+and teardown are outside that command's performance measurements.
+
+Run the static `builder_test:ordinary_port_build` case, with an explicit runner
+case budget when longer than the declared 3600-second default is needed.
+`build.py` must be staged with `setup.py` and `resources.py`. The runner must
+clone the initialized disk at its original capacity and attach a separate new
+workspace disk; increasing the original disk or using a RAM filesystem is not
+an alternative. A full committed ports snapshot and pinned distfiles are source
+inputs, not a hand-selected mini world.
+
+The workspace `build-result.json` is written before unmounting and explicitly
+has `cleanup_complete=false`. The final serial JSON and ATF exit status establish
+cleanup success; the disk record alone cannot establish it. A passing build
+records `runtime_qualified=false`: executing and qualifying the resulting Bazel
+binary remains a separate required step. RAM and disk sizing are explicit trial
+budgets until measured; an OOM or missing offline source remains a failed run.
