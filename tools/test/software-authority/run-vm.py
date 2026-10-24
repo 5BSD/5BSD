@@ -20,7 +20,7 @@ seed=json.loads((w/'seed-result.json').read_text())
 assert seed['result']=='PASS' and seed['shutdown_evidence']['guest_poweroff']
 log=w/'software-serial.log'
 if log.exists(): log.rename(str(log)+'.'+str(time.time_ns()))
-cmd=[args.qemu,'-accel','tcg,thread=multi','-machine','q35','-cpu','max','-m','8192','-smp',str(args.cpus),'-drive',f'file={w}/real-zfs.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-chardev',f'socket,id=serial,path={w}/serial.sock,server=on,wait=off,logfile={log}','-serial','chardev:serial']
+cmd=[args.qemu,'-accel','tcg,thread=multi','-machine','q35','-cpu','max','-m','2048','-smp',str(args.cpus),'-drive',f'file={w}/real-zfs.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-chardev',f'socket,id=serial,path={w}/serial.sock,server=on,wait=off,logfile={log}','-serial','chardev:serial']
 qmpdir=w/'integration-qmp';qmpdir.mkdir()
 shutdown=ShutdownEvidence(qmpdir)
 cmd += shutdown.arguments
