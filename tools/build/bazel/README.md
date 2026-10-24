@@ -608,3 +608,20 @@ and staged target/resource identity. The real full entrypoint passed in
 CLI rejection of non-object output and reused evidence directories passed too.
 The frontend action remains a qualification action, with Make production.
 Runtime qualification uses separate artifact-bound VM receipts.
+
+Pinned distribution repository cache
+------------------------------------
+repository-cache.py --archive /absolute/bazel-dist.zip --sha256 EXPECTED_SHA256
+--output /usr/obj/NEW-DIRECTORY exports the distribution's content-addressed
+repository cache. Supply a previously verified distribution digest. The helper
+checks every cache entry against its SHA256 filename, rejects unexpected or
+duplicate entries and links, and publishes NEW-DIRECTORY/cache only after all
+checks pass. It never executes archive contents or merges existing caches.
+Failed exports retain a FAIL receipt and cache.pending for inspection.
+
+Use the returned directory as Bazel's --repository_cache input. This is a
+cache seed, not proof that an arbitrary consumer's module graph can resolve
+offline. A consumer still needs explicit module versions, a lockfile, required
+registry metadata and extension inputs, followed by an actual offline build.
+The current Bazel5 pilot is not converted or qualified for Bazel9 by this helper.
+Native corruption/escape/duplicate checks: python3.12 -B repository-cache-test.py.
