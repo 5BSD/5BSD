@@ -474,6 +474,49 @@ def copy_signed_repository(repository, output, public_key, pkg, abi, osversion):
     return output
 
 
+def validate_package_payloads(candidate):
+    """Check actual archive objects and metadata closure for a selected system."""
+    spec = importlib.util.spec_from_file_location('package_inventory',
+        Path(__file__).resolve().parents[2] / 'tools/build/capimage/package_inventory.py')
+    reader = importlib.util.module_from_spec(spec); spec.loader.exec_module(reader)
+    combined = reader.inventory_packages(path for path, _ in inventory(candidate).values())
+    package_closure.require_selected_set(p['manifest'] for p in combined['packages'])
+
+
+def add_bootstrap_package(source, expected, candidate, info):
+    """Pin an explicitly selected pkg archive before catalogue construction.
+
+    The expected hash identifies the publisher's input; it is not an upstream
+    provenance signature. The combined catalogue subsequently authenticates it.
+    """
+    source = Path(source)
+    if (not re.fullmatch(r'[0-9a-fA-F]{64}', expected or '') or
+            source.suffix != '.pkg' or source.name in ('data.pkg', 'packagesite.pkg', 'meta.pkg') or
+            source.is_symlink() or not source.is_file()):
+        raise ValueError('bootstrap pkg requires a regular .pkg archive and SHA256')
+    if 'pkg' in inventory(candidate):
+        raise ValueError('base input already contains pkg; do not supply a second bootstrap')
+    target = candidate / source.name
+    if target.exists() or target.is_symlink():
+        raise ValueError('bootstrap pkg archive filename conflicts with publication')
+    shutil.copyfile(source, target)
+    actual = sha256(target)
+    if actual != expected.lower():
+        raise ValueError('bootstrap pkg SHA256 mismatch')
+    meta = manifest(target)
+    if meta.get('name') != 'pkg':
+        raise ValueError('bootstrap archive is not the pkg package')
+    if meta.get('abi') != info['abi']:
+        raise ValueError('bootstrap pkg architecture mismatch')
+    version = meta.get('annotations', {}).get('FreeBSD_version')
+    target_version = info.get('osversion')
+    if (not str(version).isdigit() or not str(target_version).isdigit() or
+            int(version) > int(target_version)):
+        raise ValueError('bootstrap pkg OS version is missing or newer than target')
+    return {'file': target.name, 'sha256': actual, 'version': meta['version']}
+
+
+
 def add_application_packages(selection_path, candidate, info):
     """Copy a pinned format-1 application selection, retaining package identities.
 
@@ -535,8 +578,7 @@ def add_application_packages(selection_path, candidate, info):
         names.add(name)
         records.append(dict(name=name, version=package['version'], file=target.name, sha256=expected))
     # Check payload ownership and metadata against the full selected system.
-    combined = reader.inventory_packages(path for path, _ in inventory(candidate).values())
-    package_closure.require_selected_set(p['manifest'] for p in combined['packages'])
+    validate_package_payloads(candidate)
     return {'selection_sha256': hashlib.sha256(raw).hexdigest(),
             'packages': sorted(records, key=lambda row: row['name'])}
 
@@ -544,6 +586,10 @@ def add_application_packages(selection_path, candidate, info):
 
 def publish(args):
     """Publish a complete immutable generation, then atomically advance latest."""
+    bootstrap = getattr(args, 'pkg_package', None)
+    bootstrap_hash = getattr(args, 'pkg_package_sha256', None)
+    if bool(bootstrap) != bool(bootstrap_hash):
+        raise ValueError('bootstrap pkg archive and SHA256 must be supplied together')
     base = args.base_repository.resolve(strict=True)
     output = args.output.absolute()
     parent = output.parent.resolve(strict=True)
@@ -571,10 +617,14 @@ def publish(args):
                 if name.startswith(('5BSD-hw-', '5BSD-hardware-abi-')):
                     raise ValueError('base input already contains hardware packages')
                 shutil.copy2(archive, candidate / archive.name)
+            bootstrap_record = (add_bootstrap_package(bootstrap, bootstrap_hash,
+                candidate, info) if bootstrap is not None else None)
             merge_hardware(args.repository, candidate, args.pkg)
             application_selection = getattr(args, 'application_selection', None)
             application_record = (add_application_packages(application_selection, candidate, info)
                                   if application_selection is not None else None)
+            if bootstrap_record is not None and application_record is None:
+                validate_package_payloads(candidate)
             # Refresh the catalogue after adding the unchanged application archives.
             if application_record is not None:
                 run(args.pkg, 'repo', candidate)
@@ -589,6 +639,7 @@ def publish(args):
                 'format': 1, 'kernel_sha256': info['kernel_sha256'],
                 'hardware_manifest_sha256': sha256(candidate / 'hardware.json'),
                 'package_count': len(combined),
+                'bootstrap_pkg': bootstrap_record,
                 'applications': application_record,
                 'scope': ('complete base, matching hardware and selected applications generation'
                           if application_record is not None else
@@ -758,6 +809,8 @@ def main():
     pub.add_argument('--base-repository', type=Path, required=True)
     pub.add_argument('--output', type=Path, required=True)
     pub.add_argument('--signing-key', type=Path)
+    pub.add_argument('--pkg-package', type=Path)
+    pub.add_argument('--pkg-package-sha256')
     pub.add_argument('--application-selection', type=Path,
         help='format-1 hash-bound application archives; format 2 is unsupported')
     offline = sub.add_parser('copy-signed-repository',

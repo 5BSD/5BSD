@@ -165,6 +165,117 @@ class HardwarePackages(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'duplicate package identity'):
             hw.add_application_packages(selection, candidate, info)
 
+    def test_bootstrap_archive_validation(self):
+        info = {'abi': ABI, 'osversion': OSVERSION}
+        good = self.package('pkg', {'/usr/local/sbin/pkg-static': 'fixture'}, version='good')
+        cases = [
+            (good, '0' * 64, 'SHA256 mismatch'),
+            (self.package('other', version='wrong-name'), None, 'not the pkg package'),
+            (self.package('pkg', version='foreign', abi='FreeBSD:16:aarch64'), None, 'architecture mismatch'),
+            (self.package('pkg', version='future', osversion=str(int(OSVERSION) + 1)), None, 'OS version'),
+            (self.package('pkg', version='no-version', osversion=''), None, 'OS version'),
+        ]
+        for index, (archive, digest, error) in enumerate(cases):
+            with self.subTest(error=error):
+                candidate = self.base / ('candidate-' + str(index))
+                candidate.mkdir()
+                with self.assertRaisesRegex(ValueError, error):
+                    hw.add_bootstrap_package(archive, digest or hw.sha256(archive), candidate, info)
+        candidate = self.base / 'candidate-good'
+        candidate.mkdir()
+        record = hw.add_bootstrap_package(good, hw.sha256(good).upper(), candidate, info)
+        self.assertEqual(record['sha256'], hw.sha256(good))
+        self.assertEqual(hw.inventory(candidate)['pkg'][1]['version'], 'good')
+        with self.assertRaisesRegex(ValueError, 'already contains pkg'):
+            hw.add_bootstrap_package(good, hw.sha256(good), candidate, info)
+        link = self.base / 'linked.pkg'
+        link.symlink_to(good)
+        with self.assertRaisesRegex(ValueError, 'regular .pkg archive'):
+            hw.add_bootstrap_package(link, hw.sha256(good), candidate, info)
+        reserved = self.base / 'data.pkg'
+        reserved.write_bytes(good.read_bytes())
+        with self.assertRaisesRegex(ValueError, 'regular .pkg archive'):
+            hw.add_bootstrap_package(reserved, hw.sha256(good), candidate, info)
+
+
+    def test_signed_bootstrap_publication_and_failure_atomicity(self):
+        kernel, hardware = self.repository()
+        self.publish_repository(kernel, hardware, 'prior')
+        bootstrap = self.package('pkg', {'/usr/local/sbin/pkg-static': 'fixture'})
+        key = self.base / 'bootstrap-private.pem'
+        hw.run('openssl', 'genpkey', '-algorithm', 'RSA',
+               '-pkeyopt', 'rsa_keygen_bits:2048', '-out', key,
+               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        args = SimpleNamespace(repository=hardware, base_repository=self.base / 'prior-base',
+            output=self.base / 'with-bootstrap', signing_key=key, pkg=PKG,
+            pkg_package=bootstrap, pkg_package_sha256='0' * 64)
+        with self.assertRaisesRegex(ValueError, 'SHA256 mismatch'):
+            hw.publish(args)
+        self.assertFalse(args.output.exists())
+        self.assertEqual((self.base / 'latest').readlink(), Path('prior'))
+        self.assertFalse(list(self.base.glob('.publish-*')))
+        args.pkg_package_sha256 = hw.sha256(bootstrap)
+        hw.publish(args)
+        self.assertEqual((self.base / 'latest').readlink(), args.output.relative_to(self.base))
+        self.assertIn('pkg', hw.inventory(args.output))
+        publication = json.loads((args.output / 'publication.json').read_text())
+        self.assertEqual(publication['bootstrap_pkg']['sha256'], hw.sha256(bootstrap))
+        hw.verify_signed_catalogue(args.output, key, PKG, ABI, OSVERSION)
+        self.assertEqual(hw.sha256(args.output / bootstrap.name), hw.sha256(bootstrap))
+        public = self.base / 'bootstrap-public.pem'
+        hw.run('openssl', 'pkey', '-in', key, '-pubout', '-out', public,
+               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        snapshot = self.base / 'bootstrap-snapshot'
+        hw.copy_signed_repository(args.output, snapshot, public, PKG, ABI, OSVERSION)
+        self.assertEqual({p.name: hw.sha256(p) for p in args.output.iterdir() if p.is_file()},
+                         {p.name: hw.sha256(p) for p in snapshot.iterdir() if p.is_file()})
+
+
+    def test_bootstrap_closure_and_application_coexistence(self):
+        import io
+        import tarfile
+        kernel, hardware = self.repository()
+        self.publish_repository(kernel, hardware, 'prior')
+        bad_packages = [
+            (self.package('pkg', version='missing', deps={'missing': {'origin': 'test/missing', 'version': '1'}}), 'lacks dependencies'),
+            (self.package('pkg', version='wrong-origin', deps={'5BSD-runtime': {'origin': 'wrong/runtime', 'version': 'prior'}}), 'identity mismatch'),
+            (self.package('pkg', {'/bin/example': 'conflict'}, version='collision'), 'conflicting package ownership'),
+        ]
+        library = self.package('pkg', {'/usr/local/sbin/pkg-static': 'payload'}, version='library')
+        meta = hw.manifest(library); meta['shlibs_required'] = ['libmissing_bootstrap.so.1']
+        with tarfile.open(library, 'w:gz') as archive:
+            for name, data in [('+MANIFEST', json.dumps(meta).encode()),
+                               ('+COMPACT_MANIFEST', json.dumps(meta).encode()),
+                               ('/usr/local/sbin/pkg-static', b'payload')]:
+                entry = tarfile.TarInfo(name); entry.size = len(data); entry.mode = 0o644
+                archive.addfile(entry, io.BytesIO(data))
+        bad_packages.append((library, 'libmissing_bootstrap'))
+        for archive, message in bad_packages:
+            args = SimpleNamespace(repository=hardware, base_repository=self.base / 'prior-base',
+                output=self.base / 'rejected-bootstrap', signing_key=None, pkg=PKG,
+                pkg_package=archive, pkg_package_sha256=hw.sha256(archive))
+            with self.subTest(package=archive.name), self.assertRaisesRegex(ValueError, message):
+                hw.publish(args)
+            self.assertFalse(args.output.exists())
+            self.assertFalse(list(self.base.glob('.publish-*')))
+            self.assertEqual((self.base / 'latest').readlink(), Path('prior'))
+        good = self.package('pkg', {'/usr/local/sbin/pkg-static': 'bootstrap'}, version='good')
+        app = self.package('pkg-client', {'/usr/local/bin/pkg-client': 'client'},
+            deps={'pkg': {'origin': 'test/pkg', 'version': 'good'}})
+        args.pkg_package = good; args.pkg_package_sha256 = hw.sha256(good)
+        args.application_selection = self.application_selection([good])
+        with self.assertRaisesRegex(ValueError, 'filename conflicts'): hw.publish(args)
+        self.assertEqual((self.base / 'latest').readlink(), Path('prior'))
+        args.application_selection = self.application_selection([app])
+        args.output = self.base / 'bootstrap-and-app'
+        hw.publish(args)
+        self.assertEqual(hw.sha256(args.output / good.name), hw.sha256(good))
+        self.assertEqual(hw.sha256(args.output / app.name), hw.sha256(app))
+        record = json.loads((args.output / 'publication.json').read_text())
+        self.assertEqual(record['bootstrap_pkg']['sha256'], hw.sha256(good))
+        self.assertEqual(record['applications']['packages'][0]['name'], 'pkg-client')
+
+
     def test_signed_catalogue_consumer_verification(self):
         self.package('5BSD-signature-test', {'/bin/test': 'payload'})
         key = self.base / 'key.pem'

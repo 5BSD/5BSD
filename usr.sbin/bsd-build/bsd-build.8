@@ -157,6 +157,23 @@ These are explicit trusted-builder inputs: hashes bind bytes but do not establis
 repository authentication. Fetching/resolving remote application repositories
 remains a separate step. This option neither installs packages nor activates an
 upgrade. Repository-root (format-2) selections are not accepted by this interface.
+.It Fl -pkg-package Ar file
+Explicit target-compatible pkg bootstrap archive to include in the combined
+publication before catalogue signing.
+Applies to build/packages and requires
+.Fl -pkg-package-sha256 .
+The archive must name pkg, match the target ABI, and declare an OS version
+no newer than the target.
+A base repository already containing pkg rejects a second bootstrap input.
+This supplies offline installation without fetching a package manager separately.
+The archive path must be a readable regular file without whitespace or make/shell
+metacharacters. Configuration files use pkg_package and pkg_package_sha256.
+.It Fl -pkg-package-sha256 Ar digest
+Expected SHA256 of the explicit bootstrap archive.
+The publisher checks the copied bytes before reading its manifest and includes
+those bytes in the signed catalogue.
+The digest pins the publisher's selected input; upstream provenance remains the
+publisher's responsibility.
 .It Fl -pkg-key Ar file
 Existing unencrypted RSA private key for both base and combined repository
 catalogues.

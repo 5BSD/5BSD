@@ -18,6 +18,9 @@ signing=unsigned
 # key=/secure/code-signing.pem
 # Independent RSA repository signing identity (build/packages only):
 # pkg_key=/secure/pkg-signing.pem
+# Explicit offline pkg archive and expected SHA256 (supply both):
+# pkg_package=/usr/obj/pkg-build/pkg-version.pkg
+# pkg_package_sha256=<64 hexadecimal digits>
 # Optional ordinary applications: format-1 hash-bound archive selection.
 # application_selection=/usr/obj/usr/src/application-selection.json
 ports=/usr/obj/5BSD-ports
