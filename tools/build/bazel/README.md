@@ -4,6 +4,43 @@ Bazel is experimental. `build-bsd` continues to accept only `bsd-make`;
 there is no world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
+## Current completion gates (2026-10-24)
+
+The current upstream stable release is **9.3.1**:
+https://github.com/bazelbuild/bazel/releases/tag/9.3.1
+The selected custom port and `bazel9.json` still pin **9.2.0_4**; updating the
+port, distinfo and applicable FreeBSD patches is pending. Cached 9.2.0 packages
+are not evidence for the latest release. Qualify explicit rules_cc/Bzlmod inputs
+with the new release. Do not change the production default based on the Bazel5
+pilot results below.
+
+`make packages` compatibility is required, not an optional follow-up:
+
+1. Feed Bazel outputs through maintained world/kernel staging with DESTDIR,
+   NO_ROOT, generated files and installation transformations. No installation
+   adapter exists in the current pilot.
+2. Preserve METALOG ownership, modes, flags, directories, links, package tags
+   and configuration semantics. Sandbox permissions are not install metadata.
+3. Pass METALOG conflict checks, mtree-to-plist conversion and complete world
+   package coverage checks. Preserve packages/ definitions, bsd.pkg.mk scripts,
+   dependencies, configuration handling, debug splits and shared-library metadata.
+4. Preserve kernel.meta, module ownership, kernel configuration/flavors and
+   existing kernel/hardware identity checks.
+5. Finalize executable bytes before prepare-stage/signing; preserve ABI and
+   OSVERSION derivation and package/source/set versioning.
+6. Keep base/hardware staging separate and publish their verified combined
+   repository under /usr/obj/usr/src/repo. Base-only make packages advances
+   latest-built; only complete publication advances latest.
+7. Compare Make/Bazel installed inventories and actual package metadata, then
+   exercise installation, upgrades, rollback and persistent data in sequential
+   2 GB disk-backed VMs. Include disk I/O, CPU, latency and memory budgets.
+
+Bazel itself and its runtime dependencies must enter the installed system through
+normal package composition, not the hardware package namespace or an untracked
+copied launcher. GNU dependency minimization is deferred. The native bazel-test
+frontend action is committed; Make remains the production backend until full
+system, package and runtime parity is demonstrated.
+
 ## Native tool prerequisite
 
 `native-probe.py` builds the actual base `bin/echo/echo.c` using Bazel's
