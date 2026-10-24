@@ -21,6 +21,7 @@ p.add_argument('--log-provider',action='store_true')
 p.add_argument('--atf-suite',action='append',default=[],help='static ATF binary relative to objtop; repeatable')
 p.add_argument('--atf-case',action='append',default=[],help='static ATF binary relative to objtop followed by :case; repeatable')
 p.add_argument('--atf-case-budget',action='append',default=[],help='explicit selected source:case=seconds harness deadline; declared ATF timeout remains recorded')
+p.add_argument('--memory-mib',type=int,default=1024,help='guest RAM in MiB (512..2048)')
 p.add_argument('--timeout',type=int,default=240)
 p.add_argument('--cpus',type=int,choices=range(1,5),default=4,help='guest vCPUs (default 4, maximum 4)')
 p.add_argument('--tcg-thread',choices=['multi','single'],default='multi',help='diagnostic TCG threading mode')
@@ -28,6 +29,7 @@ p.add_argument('--eventtimer',choices=['LAPIC','i8254','HPET'],help='guest event
 a=p.parse_args()
 if a.oes_admission: a.oes_factory=True
 if a.timeout<=0: p.error('timeout must be positive')
+if not 512 <= a.memory_mib <= 2048: p.error('guest RAM must be between 512 and 2048 MiB')
 root=a.root.resolve(); obj=a.objtop.resolve(); work=a.work.resolve()
 fixtures=(a.fixture_objtop or obj).resolve()
 if not fixtures.is_relative_to('/usr/obj/usr/src'): p.error('fixtures must use standard /usr/obj/usr/src staging')
@@ -207,8 +209,8 @@ for f in sorted(stage.rglob('*')):
 subprocess.run(['makefs','-t','ffs','-s','256m','-F',str(work/'METALOG'),'-o','version=2',str(work/'root.ufs'),str(stage)],check=True)
 subprocess.run(['mkimg','-s','gpt','-f','raw','-b',str(stage/'boot/pmbr'),'-p','freebsd-boot:='+str(stage/'boot/gptboot'),'-p','freebsd-ufs:='+str(work/'root.ufs'),'-o',str(work/'guest.img')],check=True)
 log=work/'serial.log'
-cmd=[a.qemu,'-L',str(a.qemu_data),'-accel','tcg,thread='+a.tcg_thread,'-machine','q35','-cpu','max','-m','1024','-smp',str(a.cpus),'-drive',f'file={work}/guest.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
-provenance={'oes_admission':a.oes_admission,'guest_cpus':a.cpus,'guest_memory_mib':1024,'requested_eventtimer':a.eventtimer,'tcg_thread':a.tcg_thread,'host_loadavg_start':os.getloadavg(),'host_logical_cpus':os.cpu_count(),'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'fixture_objtop':str(fixtures),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'case_metadata':case_metadata,'runtime_helper_contract':helper_description,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
+cmd=[a.qemu,'-L',str(a.qemu_data),'-accel','tcg,thread='+a.tcg_thread,'-machine','q35','-cpu','max','-m',str(a.memory_mib),'-smp',str(a.cpus),'-drive',f'file={work}/guest.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
+provenance={'oes_admission':a.oes_admission,'guest_cpus':a.cpus,'guest_memory_mib':a.memory_mib,'requested_eventtimer':a.eventtimer,'tcg_thread':a.tcg_thread,'host_loadavg_start':os.getloadavg(),'host_logical_cpus':os.cpu_count(),'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'fixture_objtop':str(fixtures),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'case_metadata':case_metadata,'runtime_helper_contract':helper_description,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
 if a.oes_admission:
  provenance['scope']='native fixtures followed by PID1 Capsule/SwitchBoard OES admission and live coalition reload/removal; OES-only provider, not installed ZFS/installer acceptance'
 (work/'inputs.json').write_text(json.dumps(provenance,indent=2)+'\n')
