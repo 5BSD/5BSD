@@ -34,6 +34,7 @@
 #include <stdarg.h>
 #define NEED_BRSSL_H
 #include "libsecureboot-priv.h"
+#include "x509_tbs.h"
 #include <brssl.h>
 #include <ta.h>
 
@@ -250,65 +251,6 @@ x509_cn_get(br_x509_certificate *xc, char *buf, size_t len)
 	return (buf);
 }
 
-/* ASN parsing related defines */
-#define ASN1_PRIMITIVE_TAG 0x1F
-#define ASN1_INF_LENGTH    0x80
-#define ASN1_LENGTH_MASK   0x7F
-
-/*
- * Get TBS part of certificate.
- * Since BearSSL doesn't provide any API to do this,
- * it has to be implemented here.
- */
-static void*
-X509_to_tbs(unsigned char* cert, size_t* output_size)
-{
-	unsigned char *result;
-	size_t tbs_size;
-	int size, i;
-
-	if (cert == NULL)
-		return (NULL);
-
-	/* Strip two sequences to get to the TBS section */
-	for (i = 0; i < 2; i++) {
-		/*
-		 * XXX: We don't need to support extended tags since
-		 * they should not be present in certificates.
-		 */
-		if ((*cert & ASN1_PRIMITIVE_TAG) == ASN1_PRIMITIVE_TAG)
-			return (NULL);
-
-		cert++;
-
-		if (*cert == ASN1_INF_LENGTH)
-			return (NULL);
-
-		size = *cert & ASN1_LENGTH_MASK;
-		tbs_size = 0;
-
-		/* Size can either be stored on a single or multiple bytes */
-		if (*cert & (ASN1_LENGTH_MASK + 1)) {
-			cert++;
-			while (*cert == 0 && size > 0) {
-				cert++;
-				size--;
-			}
-			while (size-- > 0) {
-				tbs_size <<= 8;
-				tbs_size |= *(cert++);
-			}
-		}
-		if (i == 0)
-			result = cert;
-	}
-	tbs_size += (cert - result);
-
-	if (output_size != NULL)
-		*output_size = tbs_size;
-
-	return (result);
-}
 
 void
 ve_forbidden_digest_add(hash_data *digest, size_t num)
@@ -608,7 +550,7 @@ check_forbidden_digests(br_x509_certificate *xcs, size_t num)
 	unsigned char sha256_digest[br_sha256_SIZE];
 	unsigned char sha384_digest[br_sha384_SIZE];
 	unsigned char sha512_digest[br_sha512_SIZE];
-	void *tbs;
+	const unsigned char *tbs;
 	hash_data *digest;
 	br_hash_compat_context ctx;
 	const br_hash_class *md;
@@ -623,7 +565,7 @@ check_forbidden_digests(br_x509_certificate *xcs, size_t num)
 	 * and compare its digest against the ones in the forbidden database.
 	 */
 	while (num--) {
-		tbs = X509_to_tbs(xcs[num].data, &tbs_len);
+		tbs = ve_x509_tbs(xcs[num].data, xcs[num].data_len, &tbs_len);
 		if (tbs == NULL) {
 			printf("Failed to obtain TBS part of certificate\n");
 			return (1);
