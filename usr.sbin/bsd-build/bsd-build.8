@@ -8,7 +8,7 @@
 .Sh SYNOPSIS
 .Nm
 .Op Cm plan
-.Cm build | world | kernel | stage | packages | sign | verify | deploy | bsdinstall | media
+.Cm build | world | kernel | stage | packages | sign | verify | deploy | bsdinstall | media | bazel-test
 .Op Ar options
 .Nm
 .Cm status
@@ -317,3 +317,21 @@ Only successful complete publication advances the destination's per-ABI
 pointer.
 Creating or writing the destination requires normal filesystem
 permissions; the tool does not relocate it on permission failure.
+
+.Ss Bazel build qualification
+.Cm bazel-test
+runs the maintained native amd64 compile and artifact-comparison pilot.
+It requires an explicit executable
+.Fl bazel Ar path
+and a matching development world SDK in the standard object tree.
+.Fl jobs
+selects parallelism (all logical CPUs by default);
+.Fl output
+selects a fresh directory below /usr/obj.
+It builds fresh Make reference libraries and compares Bazel artifacts,
+including versioned exports and generated-input invalidation.
+The action records compilation evidence only: it does not launch a VM,
+qualify performance, install packages or select Bazel for production builds.
+Make remains the production backend.
+Custom make configurations, signing and incremental reuse are not supported
+by this qualification action.

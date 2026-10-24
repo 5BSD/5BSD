@@ -431,8 +431,37 @@ assert world["argv"][-1]=="buildworld"
     atf_check -s not-exit:0 -o empty -e match:'requires plan' "$tool" stage --format json
     atf_check -s not-exit:0 -o empty -e match:'must be text or json' "$tool" plan stage --format unknown
 }
+atf_test_case bazel_plan
+bazel_plan_body()
+{
+    setup
+    output=/usr/obj/usr/src/bazel-plan-$$
+    atf_check -s exit:0 -o save:plan.jsonl -e empty "$tool" plan bazel-test --bazel /usr/bin/true --jobs 3 --output "$output" --format json
+    [ ! -e "$output" ] || atf_fail 'plan created output'
+    atf_check -s exit:0 -o empty -e empty python3.12 - "$output" <<'PYTHON'
+import json, sys
+rows = [json.loads(line) for line in open('plan.jsonl')]
+assert rows[0]['verification_scope'] == 'bazel-compile-comparison'
+assert rows[0]['build_backend'] == 'bsd-make'
+assert rows[0]['jobs'] == 3
+assert rows[0]['boot_verification'] == 'not-performed'
+assert len(rows) == 2
+assert rows[1]['name'] == 'bazel-qualification'
+assert rows[1]['argv'] == ['/usr/local/bin/python3.12', '/usr/src/tools/build/bazel/qualify.py', '--src', '/usr/src', '--objtop', '/usr/obj/usr/src/amd64.amd64', '--bazel', '/usr/bin/true', '--output', sys.argv[1], '--jobs', '3']
+PYTHON
+    atf_check -s not-exit:0 -o empty -e match:'requires --bazel' "$tool" plan bazel-test
+    atf_check -s not-exit:0 -o empty -e match:'native amd64' "$tool" plan bazel-test --bazel /usr/bin/true --arch arm64
+    atf_check -s not-exit:0 -o empty -e match:'only to bazel-test' "$tool" plan world --bazel /usr/bin/true
+    atf_check -s not-exit:0 -o empty -e match:'fresh qualification' "$tool" plan bazel-test --bazel /usr/bin/true --incremental
+    atf_check -s not-exit:0 -o empty -e match:'fixed comparison configuration' "$tool" plan bazel-test --bazel /usr/bin/true --src-conf /dev/null
+    cp /usr/bin/true noexec
+    chmod 644 noexec
+    atf_check -s not-exit:0 -o empty -e match:'must be executable' "$tool" plan bazel-test --bazel "$(pwd)/noexec"
+}
+
 atf_init_test_cases()
 {
+    atf_add_test_case bazel_plan
     atf_add_test_case publication_destination
     atf_add_test_case json_plan
     atf_add_test_case hardware_inputs
