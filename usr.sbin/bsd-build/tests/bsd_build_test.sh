@@ -472,8 +472,22 @@ package_closure_body()
     atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_CLOSURE_HELPER="$helper" python3.12 "$tests"
 }
 
+atf_test_case package_inventory
+package_inventory_head()
+{
+    atf_set require.progs 'python3.12'
+    atf_set descr 'Package payload inventory follows actual archives and rejects ambiguous provenance'
+}
+package_inventory_body()
+{
+    helper=$(atf_config_get inventory_helper "$(atf_get_srcdir)/package_inventory.py")
+    tests=$(atf_config_get inventory_tests "$(atf_get_srcdir)/package_inventory_test.py")
+    atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_INVENTORY_HELPER="$helper" python3.12 "$tests"
+}
+
 atf_init_test_cases()
 {
+    atf_add_test_case package_inventory
     atf_add_test_case package_closure
     atf_add_test_case bazel_plan
     atf_add_test_case publication_destination
