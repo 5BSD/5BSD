@@ -163,3 +163,43 @@ The full 335-package builder inventory required 2,746 implicit parents. Planning
 with the strict extractor and package-derived account resolution passed for
 66,576 objects. Extraction and ordinary pkg installation still require VM
 qualification; these planning checks cannot establish their success.
+
+
+## Resource-bounded commands in initialized builders
+
+`resources.py` is a qualification wrapper, not a production build interface.
+It runs an explicit executable inside a disposable VM, retaining stdout/stderr,
+JSONL samples and a final result in a new output directory. The initialized
+builder fixture supplies its command; the blank-disk installation guard remains
+unchanged. Example invocation shape:
+
+```
+python3.12 /tests/bazel-builder/resources.py --disposable-vm \
+ --budget /inputs/build-budget.json --output /workspace/build-report \
+ --filesystem /builder-output --filesystem /workspace \
+ --device vtbd2 --device vtbd3 -- /usr/sbin/chroot /builder-output/private/root \
+ /usr/bin/make -C /usr/ports/devel/bazel9 package
+```
+
+The budget JSON must explicitly specify all six fields: max_physical_memory_bytes
+(at most2147483648), max_elapsed_seconds(1..86400), min_free_memory_bytes,
+min_free_disk_bytes, max_used_disk_growth_bytes, and sample_interval_seconds
+(0.1..30). Byte limits are nonnegative integers. Duplicate, nonfinite, missing or
+unknown fields are rejected. Choose these limits before execution; retain failed
+runs if a reviewed budget subsequently changes.
+
+Preflight and sampled violations fail the run. Measurement failures are fatal.
+On termination, the wrapper kills the command process group and preserves the
+report. It records raw FreeBSD memory counters, filesystem available/used bytes,
+cumulative iostat device statistics, command CPU time, maximum child RSS and
+block-operation counts. No host-installed library or provider is inferred.
+
+These measurements have explicit limits: sampling can miss peaks; free pages
+exclude reclaimable inactive pages; child maximum RSS is not the aggregate peak
+of all concurrent processes; cumulative iostat output is not a latency histogram.
+A passing budget run is not a disk-performance regression comparison. Host QEMU
+memory and paired baseline/modified IO benchmarks remain separate requirements.
+The native test_resources.py suite checks budget semantics, evidence preservation,
+missing metrics, failed commands and process-group termination. VM execution of
+this wrapper remains a separate qualification gate. No production build-bsd
+option changes are required for this test wrapper.
