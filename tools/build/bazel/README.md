@@ -61,12 +61,13 @@ host headers/libraries. It does not establish hermeticity, source-tree sysroot
 correctness, reproducibility, cross compilation, Make parity, or publication
 readiness. Its passing result never enables a system backend.
 
-On 2026-10-24, the selected custom port `/usr/obj/5BSD-ports/devel/bazel`
+At the initial probe inventory on 2026-10-24, the selected custom port `/usr/obj/5BSD-ports/devel/bazel`
 defines 6.2.0_2, while the installed executable reports 5.4.1. These are different
 inputs. Qualify the built port separately before selecting a supported version.
 The port identifies Apache 2.0 licensing and OpenJDK 11 as a build dependency.
 The same custom tree also supplies `bazel5` 5.4.1_2, `bazel7` 7.7.1,
-`bazel8` 8.8.0 and `bazel9` 9.2.0_4. The newer ports require OpenJDK 21.
+`bazel8` 8.8.0 and `bazel9` 9.2.0_4. That inventory predates the
+selected bazel9 update to 9.3.1 described above. The newer ports require OpenJDK 21.
 The Bazel 9 distfile is cached, and that port includes FreeBSD toolchain patches;
 only OpenJDK 11 is currently installed on the host. Select and stage the supported
 version deliberately; do not silently fall back to the old installed executable.
@@ -125,7 +126,7 @@ python3.12 tools/build/bazel/port-plan.py --ports /usr/obj/5BSD-ports \
 python3.12 -B tools/build/bazel/port-plan-test.py
 ```
 
-The checkout path is a command input. The example candidate pins Bazel 9.2.0_4
+The checkout path is a command input. The current candidate pins Bazel 9.3.1
 and the OpenJDK21 origin. It does not lock the full dependency closure: the actual
 package archives and their digests must be selected together using the existing
 `tools/build/capimage/package_inventory.py` format-1 selection. Format-2 repository
