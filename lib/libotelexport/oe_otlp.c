@@ -5,7 +5,7 @@
  *
  * OTLP/HTTP+JSON exporter.  Batches events as OpenTelemetry
  * LogRecords and POSTs them to /v1/logs; aggregation snapshots map
- * to OTLP metrics POSTed to /v1/metrics.  Request bodies come from
+ * to OTLP metrics POSTed to /v1/metrics and spans to /v1/traces.  Request bodies come from
  * the shared encoder (oe_otlpenc.c), so they are identical to the
  * lines the OTLP JSON file exporter writes.
  *
@@ -708,6 +708,14 @@ otlp_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 }
 
 static int
+otlp_span(struct oe_exporter *e, const struct oe_span *sp)
+{
+	struct oe_otlp *o = (struct oe_otlp *)e;
+
+	return (otlp_queue(o, OE_SIGNAL_TRACES, oe_enc_span(&o->enc, sp), 1));
+}
+
+static int
 otlp_flush(struct oe_exporter *e)
 {
 	struct oe_otlp *o = (struct oe_otlp *)e;
@@ -773,6 +781,7 @@ static const struct oe_exporter_ops otlp_ops = {
 	.flush = otlp_flush,
 	.shutdown = otlp_shutdown,
 	.free = otlp_free,
+	.span = otlp_span,
 };
 
 void

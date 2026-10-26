@@ -3,8 +3,10 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * JSONL exporter — one JSON object per event on its own line, so
- * output pipes cleanly into jq, Loki, Vector, Splunk, fluentd.
+ * JSONL exporter — one JSON object per event or span on its own
+ * line, so output pipes cleanly into jq, Loki, Vector, Splunk,
+ * fluentd.  Spans carry "type":"span"; events have no "type" (the
+ * original shape) so existing consumers keep working.
  */
 
 #include <stdio.h>
@@ -87,6 +89,113 @@ jsonl_event(struct oe_exporter *e, const struct oe_event *ev)
 	return (ret);
 }
 
+static const char *
+kind_name(enum oe_span_kind kind)
+{
+
+	switch (kind) {
+	case OE_SPAN_SERVER:	return ("server");
+	case OE_SPAN_CLIENT:	return ("client");
+	case OE_SPAN_PRODUCER:	return ("producer");
+	case OE_SPAN_CONSUMER:	return ("consumer");
+	case OE_SPAN_INTERNAL:	break;
+	}
+	return ("internal");
+}
+
+/* Append a typed attribute as a JSON member value. */
+static void
+jsonl_attr(struct oe_buf *b, const struct oe_kv *kv, int *first)
+{
+
+	oe_buf_appendstr(b, *first ? "\"" : ",\"");
+	*first = 0;
+	oe_buf_appendjson(b, kv->key);
+	switch (kv->type) {
+	case OE_VAL_INT:
+		oe_buf_appendf(b, "\":%jd", (intmax_t)kv->i);
+		break;
+	case OE_VAL_BOOL:
+		oe_buf_appendf(b, "\":%s", kv->i != 0 ? "true" : "false");
+		break;
+	case OE_VAL_DOUBLE:
+		/* Non-finite doubles have no JSON number form. */
+		if (kv->d != kv->d || kv->d > 1.7976931348623157e308 ||
+		    kv->d < -1.7976931348623157e308)
+			oe_buf_appendstr(b, "\":null");
+		else
+			oe_buf_appendf(b, "\":%.17g", kv->d);
+		break;
+	case OE_VAL_STRING:
+		oe_buf_appendstr(b, "\":\"");
+		oe_buf_appendjson(b, kv->s != NULL ? kv->s : "");
+		oe_buf_appendstr(b, "\"");
+		break;
+	}
+}
+
+static int
+jsonl_span(struct oe_exporter *e, const struct oe_span *sp)
+{
+	static const char *const status[] = { "unset", "ok", "error" };
+	struct oe_jsonl *j = (struct oe_jsonl *)e;
+	struct oe_buf b;
+	char start[64], end[64], hex[2 * OE_TRACE_ID_LEN + 1];
+	int64_t dur;
+	size_t i;
+	int first, ret;
+
+	oe_iso8601(&sp->start, start, sizeof(start));
+	oe_iso8601(&sp->end, end, sizeof(end));
+	dur = ((int64_t)sp->end.tv_sec - sp->start.tv_sec) * 1000000000 +
+	    (sp->end.tv_nsec - sp->start.tv_nsec);
+	oe_buf_init(&b);
+	oe_buf_appendstr(&b, "{\"time\":\"");
+	oe_buf_appendjson(&b, start);
+	oe_buf_appendstr(&b, "\",\"type\":\"span\",\"profile\":\"");
+	oe_buf_appendjson(&b, sp->profile);
+	oe_buf_appendstr(&b, "\",\"name\":\"");
+	oe_buf_appendjson(&b, sp->name);
+	oe_id_hex(sp->trace_id, OE_TRACE_ID_LEN, hex);
+	oe_buf_appendf(&b, "\",\"trace_id\":\"%s\"", hex);
+	oe_id_hex(sp->span_id, OE_SPAN_ID_LEN, hex);
+	oe_buf_appendf(&b, ",\"span_id\":\"%s\"", hex);
+	if (!oe_id_is_zero(sp->parent_span_id, OE_SPAN_ID_LEN)) {
+		oe_id_hex(sp->parent_span_id, OE_SPAN_ID_LEN, hex);
+		oe_buf_appendf(&b, ",\"parent_span_id\":\"%s\"", hex);
+	}
+	oe_buf_appendstr(&b, ",\"end\":\"");
+	oe_buf_appendjson(&b, end);
+	oe_buf_appendf(&b, "\",\"duration_ns\":%jd,\"kind\":\"%s\","
+	    "\"status\":\"%s\"", (intmax_t)dur, kind_name(sp->kind),
+	    status[sp->status]);
+	if (sp->status_message != NULL) {
+		oe_buf_appendstr(&b, ",\"status_message\":\"");
+		oe_buf_appendjson(&b, sp->status_message);
+		oe_buf_appendstr(&b, "\"");
+	}
+	if (sp->probe != NULL && sp->probe[0] != '\0') {
+		oe_buf_appendstr(&b, ",\"probe\":\"");
+		oe_buf_appendjson(&b, sp->probe);
+		oe_buf_appendstr(&b, "\"");
+	}
+	if (sp->pid != 0)
+		oe_buf_appendf(&b, ",\"pid\":%d", (int)sp->pid);
+	if (sp->execname != NULL && sp->execname[0] != '\0') {
+		oe_buf_appendstr(&b, ",\"execname\":\"");
+		oe_buf_appendjson(&b, sp->execname);
+		oe_buf_appendstr(&b, "\"");
+	}
+	oe_buf_appendstr(&b, ",\"attributes\":{");
+	first = 1;
+	for (i = 0; i < sp->nattrs; i++)
+		jsonl_attr(&b, &sp->attrs[i], &first);
+	oe_buf_appendstr(&b, "}}\n");
+	ret = b.error ? -1 : oe_sink_write(j->sink, b.data, b.len);
+	oe_buf_free(&b);
+	return (ret);
+}
+
 static int
 jsonl_snapshot(struct oe_exporter *e __unused,
     const struct oe_snapshot *sn __unused)
@@ -127,6 +236,7 @@ static const struct oe_exporter_ops jsonl_ops = {
 	.flush = jsonl_flush,
 	.shutdown = jsonl_shutdown,
 	.free = jsonl_free,
+	.span = jsonl_span,
 };
 
 struct oe_exporter *

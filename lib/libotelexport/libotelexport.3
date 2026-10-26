@@ -22,6 +22,7 @@
 .Nm oe_start ,
 .Nm oe_event ,
 .Nm oe_snapshot ,
+.Nm oe_span ,
 .Nm oe_flush ,
 .Nm oe_shutdown ,
 .Nm oe_exporter_free ,
@@ -38,7 +39,11 @@
 .Nm oe_buf_appendf ,
 .Nm oe_buf_appendjson ,
 .Nm oe_frame_format ,
-.Nm oe_iso8601
+.Nm oe_iso8601 ,
+.Nm oe_id_random ,
+.Nm oe_id_derive ,
+.Nm oe_id_hex ,
+.Nm oe_id_is_zero
 .Nd shared telemetry exporter layer for the ObservableBSD tools
 .Sh LIBRARY
 .Li libotelexport
@@ -88,6 +93,8 @@ It is not installed as a shared library.
 .Ft int
 .Fn oe_snapshot "struct oe_exporter *e" "const struct oe_snapshot *sn"
 .Ft int
+.Fn oe_span "struct oe_exporter *e" "const struct oe_span *sp"
+.Ft int
 .Fn oe_flush "struct oe_exporter *e"
 .Ft int
 .Fn oe_shutdown "struct oe_exporter *e"
@@ -121,6 +128,14 @@ It is not installed as a shared library.
 .Fn oe_frame_format "const struct oe_frame *f" "char *buf" "size_t len"
 .Ft void
 .Fn oe_iso8601 "const struct timespec *ts" "char *buf" "size_t len"
+.Ft void
+.Fn oe_id_random "uint8_t *id" "size_t len"
+.Ft void
+.Fn oe_id_derive "const uint8_t salt[16]" "const char *ns" "const int64_t *key" "size_t nkey" "uint8_t *id" "size_t len"
+.Ft void
+.Fn oe_id_hex "const uint8_t *id" "size_t len" "char *buf"
+.Ft int
+.Fn oe_id_is_zero "const uint8_t *id" "size_t len"
 .Sh DESCRIPTION
 .Nm libotelexport
 is the exporter layer shared by the ObservableBSD tools
@@ -129,8 +144,10 @@ and
 .Xr hwstat 8 .
 A tool's run loop normalizes probe firings into
 .Vt struct oe_event
-records and aggregation results into
+records, aggregation results into
 .Vt struct oe_snapshot
+records and timed operations into
+.Vt struct oe_span
 records, then hands them to an exporter object which ships them to a
 destination: a stream or rotating file as text, JSON Lines, collapsed
 stacks or OTLP JSON Lines, or an OpenTelemetry collector over
@@ -155,6 +172,7 @@ struct oe_exporter_ops {
 	int	(*flush)(struct oe_exporter *);
 	int	(*shutdown)(struct oe_exporter *);
 	void	(*free)(struct oe_exporter *);
+	int	(*span)(struct oe_exporter *, const struct oe_span *);
 };
 .Ed
 .Pp
@@ -165,11 +183,15 @@ Callers never invoke the table directly; the macros
 .Fn oe_start ,
 .Fn oe_event ,
 .Fn oe_snapshot ,
+.Fn oe_span ,
 .Fn oe_flush ,
 .Fn oe_shutdown
 and
 .Fn oe_exporter_free
 dispatch through it.
+An exporter whose table has no
+.Va span
+method accepts and ignores spans.
 The intended life cycle is: construct, call
 .Fn oe_start
 once, deliver any number of events and snapshots, optionally call
@@ -228,6 +250,50 @@ is the start of the accumulation window and becomes the
 .Ql startTimeUnixNano
 of cumulative sums and histograms.
 Snapshots with zero points are ignored.
+.Pp
+.Fn oe_span
+delivers one finished span:
+.Bd -literal -offset indent
+struct oe_span {
+	const char	*name;
+	const char	*profile;
+	const char	*probe;
+	struct timespec	 start, end;
+	uint8_t		 trace_id[OE_TRACE_ID_LEN];
+	uint8_t		 span_id[OE_SPAN_ID_LEN];
+	uint8_t		 parent_span_id[OE_SPAN_ID_LEN];
+	enum oe_span_kind kind;
+	enum oe_status_code status;
+	const char	*status_message;
+	pid_t		 pid;
+	const char	*execname;
+	const struct oe_kv *attrs;
+	size_t		 nattrs;
+};
+.Ed
+.Pp
+Times are wall clock; an all-zero
+.Va parent_span_id
+marks a root span.
+.Va kind
+.Pq Dv OE_SPAN_INTERNAL , OE_SPAN_SERVER , OE_SPAN_CLIENT , OE_SPAN_PRODUCER , OE_SPAN_CONSUMER
+and
+.Va status
+.Pq Dv OE_STATUS_UNSET , OE_STATUS_OK , OE_STATUS_ERROR
+are numbered as in the OTLP trace protocol.
+.Va attrs
+is an array of typed attributes:
+.Bd -literal -offset indent
+struct oe_kv {
+	const char	*key;
+	enum oe_value_type type;	/* OE_VAL_STRING, _INT, _DOUBLE, _BOOL */
+	const char	*s;
+	int64_t		 i;		/* integer or boolean */
+	double		 d;
+};
+.Ed
+.Pp
+Like events, spans are borrowed for the duration of the call.
 .Ss Output sinks
 The file-writing exporters write through a
 .Vt struct oe_sink ,
@@ -326,6 +392,11 @@ marker and user frames under
 Snapshots print as a tabular dump headed by the aggregation name, kind and
 profile, one line per data point, with non-empty histogram buckets listed
 beneath.
+Spans print as one line:
+.Ql span Ar name duration Ns Li us
+followed by
+.Ql error
+and its message when in error, and the trace, span and parent ids.
 .Fn oe_flush
 and
 .Fn oe_shutdown
@@ -347,6 +418,32 @@ and, when present,
 and
 .Va ustack
 arrays of formatted frames.
+Spans are objects with
+.Ql \&"type\&":\&"span\&"
+carrying
+.Va time
+.Pq the start ,
+.Va profile ,
+.Va name ,
+.Va trace_id ,
+.Va span_id ,
+.Va parent_span_id
+.Pq child spans ,
+.Va end ,
+.Va duration_ns ,
+.Va kind ,
+.Va status ,
+.Va status_message ,
+.Va probe ,
+.Va pid ,
+.Va execname
+when known, and an
+.Va attributes
+object; non-finite doubles become
+.Dv null .
+Events keep their original shape, without a
+.Va type
+member.
 The
 .Fa profile
 argument is copied at construction; a
@@ -372,13 +469,15 @@ placed first and separated from the user stack by a
 frame.
 Events without any stack are ignored; events with a stack but an empty
 body are folded.
+Spans are ignored.
 .Fn oe_flush
 is a no-op.
 .It Fn oe_otlpjson_new
 OTLP JSON Lines: one
-.Vt ExportLogsServiceRequest
-or
+.Vt ExportLogsServiceRequest ,
 .Vt ExportMetricsServiceRequest
+or
+.Vt ExportTraceServiceRequest
 JSON object per line, the format written by the OpenTelemetry
 Collector's file exporter and read by its
 .Ql otlpjsonfile
@@ -395,10 +494,10 @@ struct oe_otlpjson_config {
 };
 .Ed
 .Pp
-Log records are written once
+Log records and spans are written once
 .Va batch_size
 .Pq default 200
-are pending; snapshots and any pending records are written by
+of a kind are pending; snapshots and any pending records are written by
 .Fn oe_flush
 and
 .Fn oe_shutdown ,
@@ -411,9 +510,11 @@ creates an exporter that batches events as OpenTelemetry
 .Vt LogRecord
 objects and POSTs them to
 .Pa /v1/logs ,
-and maps aggregation snapshots to OTLP metrics POSTed to
+maps aggregation snapshots to OTLP metrics POSTed to
 .Pa /v1/metrics ,
-both relative to the configured endpoint.
+and batches spans to
+.Pa /v1/traces ,
+all relative to the configured endpoint.
 It is configured by a
 .Vt struct oe_otlp_config :
 .Bd -literal -offset indent
@@ -565,9 +666,10 @@ Any other non-2xx status is reported once and the batch is discarded.
 A 2xx response whose body reports
 .Ql partialSuccess
 with a non-zero
-.Ql rejectedLogRecords
-or
+.Ql rejectedLogRecords ,
 .Ql rejectedDataPoints
+or
+.Ql rejectedSpans
 count is logged to standard error but not retried.
 Each request uses a fresh connection with
 .Ql Connection: close .
@@ -745,6 +847,32 @@ formats a
 as
 .Ql YYYY-MM-DDTHH:MM:SS.mmmZ ,
 always in UTC so that timestamps sort lexically across hosts.
+.Ss Trace and span ids
+.Fn oe_id_random
+fills
+.Fa len
+bytes with a random id.
+.Fn oe_id_derive
+derives a stable id from a 16-byte secret
+.Fa salt ,
+a short namespace string
+.Fa ns
+and up to eight integer keys: the first
+.Fa len
+bytes of the SHA-256 digest of the salt, the namespace NUL-padded to 32
+bytes and the keys as little-endian 64-bit integers.
+Two producers that know the same keys therefore name the same span
+without coordinating, while a different salt gives unrelated ids.
+Both functions never produce the all-zero id, which W3C Trace Context
+reserves as invalid; a zero result has its last byte set to 1.
+.Fn oe_id_hex
+writes
+.Fa 2*len
+lowercase hexadecimal digits and a NUL to
+.Fa buf ,
+the form OTLP JSON uses for ids, and
+.Fn oe_id_is_zero
+tests for the invalid id.
 .Ss Thread safety
 The OTLP exporter serializes its batch state with an internal mutex and
 may be fed from multiple threads;

@@ -43,6 +43,16 @@ struct cap_point {
 	char		*buckets;	/* "upper:count;..." */
 };
 
+struct cap_span {
+	char		*name, *probe, *execname, *msg;
+	char		 trace[33], span[17], parent[17];
+	struct timespec	 start, end;
+	enum oe_span_kind kind;
+	enum oe_status_code status;
+	pid_t		 pid;
+	char		*attrs;		/* "key=value;..." */
+};
+
 struct cap_snap {
 	char		*name;
 	enum oe_agg_kind kind;
@@ -57,6 +67,8 @@ struct capture {
 	int		 nevents;
 	struct cap_snap	 snaps[CAP_MAX];
 	int		 nsnaps;
+	struct cap_span	 spans[CAP_MAX];
+	int		 nspans;
 	uint64_t	 drops;
 	int		 fail;
 };
@@ -137,6 +149,48 @@ cap_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 }
 
 static int
+cap_span(struct oe_exporter *e, const struct oe_span *sp)
+{
+	struct capture *c = (struct capture *)e;
+	struct cap_span *cs;
+	struct oe_buf b;
+	size_t i;
+
+	if (c->fail)
+		return (-1);
+	ATF_REQUIRE(c->nspans < CAP_MAX);
+	cs = &c->spans[c->nspans++];
+	cs->name = strdup(sp->name);
+	cs->probe = strdup(sp->probe);
+	cs->execname = strdup(sp->execname);
+	cs->msg = sp->status_message != NULL ? strdup(sp->status_message) :
+	    NULL;
+	oe_id_hex(sp->trace_id, OE_TRACE_ID_LEN, cs->trace);
+	oe_id_hex(sp->span_id, OE_SPAN_ID_LEN, cs->span);
+	if (oe_id_is_zero(sp->parent_span_id, OE_SPAN_ID_LEN))
+		cs->parent[0] = '\0';
+	else
+		oe_id_hex(sp->parent_span_id, OE_SPAN_ID_LEN, cs->parent);
+	cs->start = sp->start;
+	cs->end = sp->end;
+	cs->kind = sp->kind;
+	cs->status = sp->status;
+	cs->pid = sp->pid;
+	oe_buf_init(&b);
+	for (i = 0; i < sp->nattrs; i++) {
+		if (sp->attrs[i].type == OE_VAL_INT)
+			oe_buf_appendf(&b, "%s=%jd;", sp->attrs[i].key,
+			    (intmax_t)sp->attrs[i].i);
+		else
+			oe_buf_appendf(&b, "%s=%s;", sp->attrs[i].key,
+			    sp->attrs[i].s);
+	}
+	cs->attrs = strdup(b.data != NULL ? b.data : "");
+	oe_buf_free(&b);
+	return (0);
+}
+
+static int
 cap_flush(struct oe_exporter *e __unused)
 {
 
@@ -155,6 +209,7 @@ static const struct oe_exporter_ops cap_ops = {
 	.flush = cap_flush,
 	.shutdown = cap_flush,
 	.free = cap_free,
+	.span = cap_span,
 };
 
 static struct capture cap;
@@ -221,7 +276,7 @@ ATF_TC_BODY(clock_program_shape, tc)
 
 	/* Both anchors print the record prefix with both clocks. */
 	ATF_REQUIRE(strstr(p, "dtrace:::BEGIN") != NULL);
-	ATF_REQUIRE(strstr(p, "profile:::tick-1s") != NULL);
+	ATF_REQUIRE(strstr(p, "profile:::tick-1sec") != NULL);
 	ATF_REQUIRE(strstr(p, "\"\\037otel.clock\\037wall=%d\\037ts=%u\\n\"")
 	    != NULL);
 	ATF_REQUIRE(strstr(p, "walltimestamp, timestamp") != NULL);
@@ -734,6 +789,179 @@ ATF_TC_BODY(agg_errors, tc)
 	dtotel_close(d);
 }
 
+/* ---------------------------------------------------------------- */
+/* Spans								*/
+
+#define	ANCHOR	"\037otel.clock\037wall=1700000000000000000\037ts=1000\n"
+
+/*
+ * Span records become spans with probe wall times, ids derived from
+ * the keys (a child names its parent by the parent's start), status
+ * from error=, kind, pid/execname and typed attributes.
+ */
+ATF_TC_WITHOUT_HEAD(span_records);
+ATF_TC_BODY(span_records, tc)
+{
+	struct dtotel *d;
+
+	d = open_bridge(NULL);
+	deliver(d, ANCHOR, 0, 1000, 1, 0);
+	/* Child first: it ends first. */
+	deliver(d, "\037otel.span\037name=block io\037start=3000\037end=3500"
+	    "\037thread=77\037parent=2000\037pid=5\037execname=sh"
+	    "\037error=5\037a.i.disk.io.bytes=4096"
+	    "\037a.s.disk.io.direction=read\n", 1, 3500, 9, 0);
+	deliver(d, "\037otel.span\037name=read\037start=2000\037end=9000"
+	    "\037thread=77\037kind=server\037pid=5\037execname=sh\n", 0,
+	    9000, 8, 0);
+	/* Same key in another thread: an unrelated span. */
+	deliver(d, "\037otel.span\037name=read\037start=2000\037end=2500"
+	    "\037thread=78\037kind=client\n", 0, 2500, 8, 0);
+	ATF_REQUIRE_EQ(3, cap.nspans);
+	ATF_REQUIRE_EQ(0, cap.nevents);
+	ATF_REQUIRE_STREQ("block io", cap.spans[0].name);
+	ATF_REQUIRE_EQ(1700000000, cap.spans[0].start.tv_sec);
+	ATF_REQUIRE_EQ(2000, cap.spans[0].start.tv_nsec);
+	ATF_REQUIRE_EQ(2500, cap.spans[0].end.tv_nsec);
+	ATF_REQUIRE_EQ(OE_STATUS_ERROR, cap.spans[0].status);
+	ATF_REQUIRE_STREQ("error 5", cap.spans[0].msg);
+	ATF_REQUIRE_EQ(OE_SPAN_INTERNAL, cap.spans[0].kind);
+	ATF_REQUIRE_EQ(5, cap.spans[0].pid);
+	ATF_REQUIRE_STREQ("sh", cap.spans[0].execname);
+	ATF_REQUIRE_STREQ("syscall:freebsd:open:entry", cap.spans[0].probe);
+	ATF_REQUIRE_STREQ("disk.io.bytes=4096;disk.io.direction=read;",
+	    cap.spans[0].attrs);
+	/* Parent link and shared trace. */
+	ATF_REQUIRE_STREQ(cap.spans[1].span, cap.spans[0].parent);
+	ATF_REQUIRE_STREQ(cap.spans[1].trace, cap.spans[0].trace);
+	ATF_REQUIRE_STREQ("", cap.spans[1].parent);
+	ATF_REQUIRE_EQ(OE_SPAN_SERVER, cap.spans[1].kind);
+	ATF_REQUIRE_EQ(OE_STATUS_UNSET, cap.spans[1].status);
+	ATF_REQUIRE(cap.spans[1].msg == NULL);
+	ATF_REQUIRE(strcmp(cap.spans[2].span, cap.spans[1].span) != 0);
+	ATF_REQUIRE(strcmp(cap.spans[2].trace, cap.spans[1].trace) != 0);
+	ATF_REQUIRE_EQ(OE_SPAN_CLIENT, cap.spans[2].kind);
+	ATF_REQUIRE_EQ(0, cap.spans[2].pid);
+	ATF_REQUIRE_STREQ("", cap.spans[2].execname);
+	dtotel_close(d);
+}
+
+/* Explicit span= and trace= keys, the other kinds, deep nesting. */
+ATF_TC_WITHOUT_HEAD(span_explicit_keys);
+ATF_TC_BODY(span_explicit_keys, tc)
+{
+	struct dtotel *d;
+
+	d = open_bridge(NULL);
+	deliver(d, ANCHOR, 0, 1000, 1, 0);
+	deliver(d, "\037otel.span\037name=leaf\037start=10\037end=20"
+	    "\037span=3\037parent=2\037trace=1\037kind=producer\n", 0, 20,
+	    1, 0);
+	deliver(d, "\037otel.span\037name=mid\037start=5\037end=30"
+	    "\037span=2\037parent=1\037trace=1\037kind=consumer\n", 0, 30,
+	    1, 0);
+	deliver(d, "\037otel.span\037name=root\037start=1\037end=40"
+	    "\037span=1\037trace=1\037kind=bogus\n", 0, 40, 1, 0);
+	ATF_REQUIRE_EQ(3, cap.nspans);
+	ATF_REQUIRE_STREQ(cap.spans[1].span, cap.spans[0].parent);
+	ATF_REQUIRE_STREQ(cap.spans[2].span, cap.spans[1].parent);
+	ATF_REQUIRE_STREQ(cap.spans[0].trace, cap.spans[2].trace);
+	ATF_REQUIRE_STREQ(cap.spans[1].trace, cap.spans[2].trace);
+	ATF_REQUIRE_EQ(OE_SPAN_PRODUCER, cap.spans[0].kind);
+	ATF_REQUIRE_EQ(OE_SPAN_CONSUMER, cap.spans[1].kind);
+	ATF_REQUIRE_EQ(OE_SPAN_INTERNAL, cap.spans[2].kind);
+	dtotel_close(d);
+}
+
+/* Each session salts its ids differently. */
+ATF_TC_WITHOUT_HEAD(span_ids_salted);
+ATF_TC_BODY(span_ids_salted, tc)
+{
+	struct dtotel *d;
+	char first[17];
+
+	d = open_bridge(NULL);
+	deliver(d, "\037otel.span\037name=a\037start=1\037end=2\n", 0, 2,
+	    1, 0);
+	ATF_REQUIRE_EQ(1, cap.nspans);
+	strlcpy(first, cap.spans[0].span, sizeof(first));
+	dtotel_close(d);
+	d = open_bridge(NULL);
+	deliver(d, "\037otel.span\037name=a\037start=1\037end=2\n", 0, 2,
+	    1, 0);
+	ATF_REQUIRE_EQ(1, cap.nspans);
+	ATF_REQUIRE(strcmp(first, cap.spans[0].span) != 0);
+	dtotel_close(d);
+}
+
+/*
+ * Before an anchor a span ends when it was read but keeps its true
+ * duration; newlines inside string fields survive; attributes past
+ * the limit and unknown integer fields are ignored.
+ */
+ATF_TC_WITHOUT_HEAD(span_unanchored_and_limits);
+ATF_TC_BODY(span_unanchored_and_limits, tc)
+{
+	struct dtotel *d;
+	struct oe_buf b;
+	int64_t dur;
+	int i;
+
+	d = open_bridge(NULL);
+	deliver(d, "\037otel.span\037name=two\nlines\037start=1000"
+	    "\037end=1700\037future=9\n", 0, 1700, 1, 0);
+	ATF_REQUIRE_EQ(1, cap.nspans);
+	ATF_REQUIRE_STREQ("two\nlines", cap.spans[0].name);
+	dur = ((int64_t)cap.spans[0].end.tv_sec - cap.spans[0].start.tv_sec) *
+	    1000000000 + cap.spans[0].end.tv_nsec - cap.spans[0].start.tv_nsec;
+	ATF_REQUIRE_EQ(700, dur);
+	ATF_REQUIRE(cap.spans[0].end.tv_sec > 1700000000);
+	oe_buf_init(&b);
+	oe_buf_appendstr(&b, "\037otel.span\037name=many\037start=1\037end=1");
+	for (i = 0; i < 20; i++)
+		oe_buf_appendf(&b, "\037a.%s.k%d=%d", i % 2 ? "i" : "s", i, i);
+	oe_buf_appendstr(&b, "\n");
+	deliver(d, b.data, 0, 1, 1, 0);
+	oe_buf_free(&b);
+	ATF_REQUIRE_EQ(2, cap.nspans);
+	ATF_REQUIRE_STREQ("k0=0;k1=1;k2=2;k3=3;k4=4;k5=5;k6=6;k7=7;k8=8;k9=9;"
+	    "k10=10;k11=11;k12=12;k13=13;k14=14;k15=15;", cap.spans[1].attrs);
+	dtotel_close(d);
+}
+
+ATF_TC_WITHOUT_HEAD(span_malformed);
+ATF_TC_BODY(span_malformed, tc)
+{
+	static const char *const bad[] = {
+		"\037otel.span\037start=1\037end=2\n",		/* no name */
+		"\037otel.span\037name=\037start=1\037end=2\n",
+		"\037otel.span\037name=x\037end=2\n",		/* no start */
+		"\037otel.span\037name=x\037start=1\n",		/* no end */
+		"\037otel.span\037name=x\037start=5\037end=2\n",	/* negative */
+		"\037otel.span\037name=x\037start=a\037end=2\n",
+		"\037otel.span\037name=x\037start=1\037end=2\037junk\n",
+		"\037otel.span\037name=x\037start=1\037end=2\037pid=\n",
+	};
+	struct dtotel *d;
+	size_t i;
+
+	d = open_bridge(NULL);
+	for (i = 0; i < nitems(bad); i++)
+		ATF_REQUIRE_EQ(DTRACE_HANDLE_OK, deliver(d, bad[i], 0, 1, 1,
+		    0));
+	/* start 0: the D side never saw the span start; dropped quietly. */
+	deliver(d, "\037otel.span\037name=x\037start=0\037end=2\n", 0, 2,
+	    1, 0);
+	ATF_REQUIRE_EQ(0, cap.nspans);
+	/* The record path never produces log events. */
+	ATF_REQUIRE_EQ(0, cap.nevents);
+	/* An exporter failure on a span aborts the consumer. */
+	cap.fail = 1;
+	ATF_REQUIRE_EQ(DTRACE_HANDLE_ABORT, deliver(d,
+	    "\037otel.span\037name=x\037start=1\037end=2\n", -1, 0, 0, 0));
+	dtotel_close(d);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -749,5 +977,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, agg_key_actions);
 	ATF_TP_ADD_TC(tp, agg_histograms);
 	ATF_TP_ADD_TC(tp, agg_errors);
+	ATF_TP_ADD_TC(tp, span_records);
+	ATF_TP_ADD_TC(tp, span_explicit_keys);
+	ATF_TP_ADD_TC(tp, span_ids_salted);
+	ATF_TP_ADD_TC(tp, span_unanchored_and_limits);
+	ATF_TP_ADD_TC(tp, span_malformed);
 	return (atf_no_error());
 }

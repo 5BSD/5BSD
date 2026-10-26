@@ -11,12 +11,15 @@
  *   /@ @bsdinstruments-predicate-and @/ AND'd into an existing predicate
  *   /@ @bsdinstruments-stack @/	 becomes stack(); with --with-stack
  *   /@ @bsdinstruments-ustack @/	 becomes ustack(); with --with-ustack
+ *   /@ @bsdinstruments-span(k=v, ...) @/ a span record (structured
+ *					 formats; nothing in text output)
  *   ${name}				 --param name=value substitution
  *
  * Profiles load from three directories with shadowing (user overrides
  * local overrides base); -f paths bypass the catalog.
  */
 
+#include <sys/param.h>
 #include <sys/stat.h>
 
 #include <ctype.h>
@@ -490,6 +493,322 @@ substitute_params(const char *source, const struct param *params,
 	return (result);
 }
 
+/* ---------------------------------------------------------------- */
+/* Span markers								*/
+
+#define	SPAN_MARKER	"/* @bsdinstruments-span("
+
+struct sbuf_ {
+	char	*data;
+	size_t	 len, cap;
+	int	 error;
+};
+
+static void
+sb_append(struct sbuf_ *b, const char *s, size_t n)
+{
+	char *np;
+	size_t cap;
+
+	if (b->error)
+		return;
+	if (b->len + n + 1 > b->cap) {
+		cap = b->cap == 0 ? 1024 : b->cap;
+		while (cap < b->len + n + 1)
+			cap *= 2;
+		np = realloc(b->data, cap);
+		if (np == NULL) {
+			b->error = 1;
+			return;
+		}
+		b->data = np;
+		b->cap = cap;
+	}
+	memcpy(b->data + b->len, s, n);
+	b->len += n;
+	b->data[b->len] = '\0';
+}
+
+static void
+sb_str(struct sbuf_ *b, const char *s)
+{
+
+	sb_append(b, s, strlen(s));
+}
+
+/*
+ * Find the ')' closing a marker argument list that starts at p,
+ * skipping nested brackets and D string/character literals.
+ */
+static const char *
+args_end(const char *p)
+{
+	int depth = 0;
+	char quote;
+
+	for (; *p != '\0'; p++) {
+		if (*p == '"' || *p == '\'') {
+			quote = *p;
+			for (p++; *p != '\0' && *p != quote; p++)
+				if (*p == '\\' && p[1] != '\0')
+					p++;
+			if (*p == '\0')
+				return (NULL);
+		} else if (*p == '(' || *p == '[')
+			depth++;
+		else if (*p == ']')
+			depth--;
+		else if (*p == ')') {
+			if (depth == 0)
+				return (p);
+			depth--;
+		} else if (p[0] == '*' && p[1] == '/')
+			return (NULL);	/* comment ends inside the marker */
+	}
+	return (NULL);
+}
+
+/* Split "args" (NUL-terminated copy) on top-level commas, in place. */
+static int
+split_args(char *args, char **out, int max)
+{
+	char *p, quote;
+	int depth = 0, n = 0;
+
+	out[n++] = args;
+	for (p = args; *p != '\0'; p++) {
+		if (*p == '"' || *p == '\'') {
+			quote = *p;
+			for (p++; *p != quote; p++)
+				if (*p == '\\')
+					p++;
+		} else if (*p == '(' || *p == '[')
+			depth++;
+		else if (*p == ')' || *p == ']')
+			depth--;
+		else if (*p == ',' && depth == 0) {
+			if (n == max)
+				return (-1);
+			*p = '\0';
+			out[n++] = p + 1;
+		}
+	}
+	return (n);
+}
+
+static char *
+trim_ws(char *s)
+{
+	char *end;
+
+	while (isspace((unsigned char)*s))
+		s++;
+	end = s + strlen(s);
+	while (end > s && isspace((unsigned char)end[-1]))
+		*--end = '\0';
+	return (s);
+}
+
+/*
+ * Expand one span marker's arguments into the printf that emits a
+ * "\037otel.span" record (see dtotel.c).  Each argument is key=value
+ * where value is a D expression, except kind, which is a word.
+ */
+static int
+span_printf(struct sbuf_ *out, char *args, const char *profile_name)
+{
+	static const char *const kinds[] = { "internal", "server", "client",
+	    "producer", "consumer" };
+	static const char *const intkeys[] = { "error", "span", "parent",
+	    "trace" };
+	struct sbuf_ fmt, vals;
+	char *argv[32], *key, *val, *eq;
+	const char *name, *start, *end, *thread, *pid, *execname, *kind;
+	size_t i;
+	int argc, k;
+
+	memset(&fmt, 0, sizeof(fmt));
+	memset(&vals, 0, sizeof(vals));
+	name = start = end = thread = pid = execname = kind = NULL;
+	argc = split_args(args, argv, nitems(argv));
+	if (argc < 0) {
+		fprintf(stderr, "bsdinstruments: profile '%s': too many span "
+		    "marker arguments\n", profile_name);
+		return (-1);
+	}
+	sb_str(&fmt, "\\037otel.span");
+	for (k = 0; k < argc; k++) {
+		key = trim_ws(argv[k]);
+		for (eq = key; isalnum((unsigned char)*eq) || *eq == '_' ||
+		    *eq == '.'; eq++)
+			;
+		if (*eq != '=' || eq == key) {
+			fprintf(stderr, "bsdinstruments: profile '%s': span "
+			    "marker argument '%s' is not key=value\n",
+			    profile_name, key);
+			goto fail;
+		}
+		*eq = '\0';
+		val = trim_ws(eq + 1);
+		if (*val == '\0') {
+			fprintf(stderr, "bsdinstruments: profile '%s': span "
+			    "marker key '%s' has no value\n", profile_name,
+			    key);
+			goto fail;
+		}
+		if (strcmp(key, "name") == 0)
+			name = val;
+		else if (strcmp(key, "start") == 0)
+			start = val;
+		else if (strcmp(key, "end") == 0)
+			end = val;
+		else if (strcmp(key, "thread") == 0)
+			thread = val;
+		else if (strcmp(key, "pid") == 0)
+			pid = val;
+		else if (strcmp(key, "execname") == 0)
+			execname = val;
+		else if (strcmp(key, "kind") == 0) {
+			for (i = 0; i < nitems(kinds); i++)
+				if (strcmp(val, kinds[i]) == 0)
+					break;
+			if (i == nitems(kinds)) {
+				fprintf(stderr, "bsdinstruments: profile '%s': "
+				    "span kind must be internal, server, "
+				    "client, producer or consumer\n",
+				    profile_name);
+				goto fail;
+			}
+			kind = val;
+		} else if (strncmp(key, "int.", 4) == 0 && key[4] != '\0') {
+			sb_str(&fmt, "\\037a.i.");
+			sb_str(&fmt, key + 4);
+			sb_str(&fmt, "=%d");
+			sb_str(&vals, ", (int64_t)(");
+			sb_str(&vals, val);
+			sb_str(&vals, ")");
+		} else if (strncmp(key, "str.", 4) == 0 && key[4] != '\0') {
+			sb_str(&fmt, "\\037a.s.");
+			sb_str(&fmt, key + 4);
+			sb_str(&fmt, "=%s");
+			sb_str(&vals, ", ");
+			sb_str(&vals, val);
+		} else {
+			for (i = 0; i < nitems(intkeys); i++)
+				if (strcmp(key, intkeys[i]) == 0)
+					break;
+			if (i == nitems(intkeys)) {
+				fprintf(stderr, "bsdinstruments: profile '%s': "
+				    "unknown span marker key '%s'\n",
+				    profile_name, key);
+				goto fail;
+			}
+			sb_str(&fmt, "\\037");
+			sb_str(&fmt, key);
+			sb_str(&fmt, "=%d");
+			sb_str(&vals, ", (int64_t)(");
+			sb_str(&vals, val);
+			sb_str(&vals, ")");
+		}
+	}
+	if (name == NULL || start == NULL) {
+		fprintf(stderr, "bsdinstruments: profile '%s': a span marker "
+		    "needs name= and start=\n", profile_name);
+		goto fail;
+	}
+	if (kind != NULL) {
+		sb_str(&fmt, "\\037kind=");
+		sb_str(&fmt, kind);
+	}
+	/* Fixed fields first, in the order of the format. */
+	sb_str(out, "printf(\"\\037otel.span\\037name=%s\\037start=%d"
+	    "\\037end=%d\\037thread=%d\\037pid=%d\\037execname=%s");
+	sb_str(out, fmt.data + strlen("\\037otel.span"));
+	sb_str(out, "\\n\", ");
+	sb_str(out, name);
+	sb_str(out, ", (int64_t)(");
+	sb_str(out, start);
+	sb_str(out, "), (int64_t)(");
+	sb_str(out, end != NULL ? end : "timestamp");
+	sb_str(out, "), (int64_t)(");
+	sb_str(out, thread != NULL ? thread : "tid");
+	sb_str(out, "), (int64_t)(");
+	sb_str(out, pid != NULL ? pid : "pid");
+	sb_str(out, "), ");
+	sb_str(out, execname != NULL ? execname : "execname");
+	if (vals.data != NULL)
+		sb_str(out, vals.data);
+	sb_str(out, ");");
+	free(fmt.data);
+	free(vals.data);
+	return (0);
+fail:
+	free(fmt.data);
+	free(vals.data);
+	return (-1);
+}
+
+/*
+ * Replace every span marker: with the record printf for structured
+ * output, with nothing for text output (whose human-readable lines
+ * stay exactly as before).  NULL on a malformed marker.
+ */
+static char *
+expand_span_markers(const char *src, int structured,
+    const char *profile_name)
+{
+	struct sbuf_ out;
+	const char *p, *hit, *close, *tail;
+	char *args;
+
+	memset(&out, 0, sizeof(out));
+	for (p = src; (hit = strstr(p, SPAN_MARKER)) != NULL; p = tail) {
+		const char *bol;
+
+		/*
+		 * In text output a marker alone on its line(s) takes the
+		 * line with it, so the rendering matches the profile
+		 * without the marker.
+		 */
+		for (bol = hit; bol > p && (bol[-1] == ' ' || bol[-1] == '\t');
+		    bol--)
+			;
+		if (structured || (bol > p && bol[-1] != '\n'))
+			bol = hit;
+		sb_append(&out, p, (size_t)(bol - p));
+		close = args_end(hit + strlen(SPAN_MARKER));
+		tail = close != NULL ? close + 1 : NULL;
+		while (tail != NULL && (*tail == ' ' || *tail == '\t'))
+			tail++;
+		if (tail == NULL || strncmp(tail, "*/", 2) != 0) {
+			fprintf(stderr, "bsdinstruments: profile '%s': "
+			    "malformed span marker\n", profile_name);
+			free(out.data);
+			return (NULL);
+		}
+		tail += 2;
+		if (!structured && bol != hit && *tail == '\n')
+			tail++;
+		if (structured) {
+			args = strndup(hit + strlen(SPAN_MARKER),
+			    (size_t)(close - hit - strlen(SPAN_MARKER)));
+			if (args == NULL || span_printf(&out, args,
+			    profile_name) != 0) {
+				free(args);
+				free(out.data);
+				return (NULL);
+			}
+			free(args);
+		}
+	}
+	sb_str(&out, p);
+	if (out.error) {
+		free(out.data);
+		return (NULL);
+	}
+	return (out.data);
+}
+
 char *
 profile_render(const struct profile *p, const struct render_opts *ro)
 {
@@ -546,7 +865,14 @@ profile_render(const struct profile *p, const struct render_opts *ro)
 		return (NULL);
 	rendered = next;
 
-	/* 4. CLI-supplied duration: append a tick exit clause. */
+	/* 4. Span markers: records for structured output only. */
+	next = expand_span_markers(rendered, ro->structured, p->name);
+	free(rendered);
+	if (next == NULL)
+		return (NULL);
+	rendered = next;
+
+	/* 5. CLI-supplied duration: append a tick exit clause. */
 	if (ro->duration > 0) {
 		snprintf(tick, sizeof(tick),
 		    "\n\ntick-%jdns { exit(0); }\n",

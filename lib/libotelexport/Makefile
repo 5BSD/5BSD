@@ -4,6 +4,7 @@ LIB=		otelexport
 INTERNALLIB=
 
 SRCS=		oe_util.c \
+		oe_id.c \
 		oe_sink.c \
 		oe_text.c \
 		oe_jsonl.c \

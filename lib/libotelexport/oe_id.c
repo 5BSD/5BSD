@@ -1,0 +1,97 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
+ * Trace and span ids.  W3C Trace Context ids are opaque byte strings
+ * that must not be all zero.  Random ids come from arc4random(3).
+ * Derived ids hash a per-run secret salt, a namespace and a key tuple
+ * with SHA-256 and keep the leading bytes, so a probe that ends a
+ * span and a probe that ends its child can name the same parent
+ * without any shared state, while ids from different runs (different
+ * salts) never collide by construction.
+ */
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <openssl/evp.h>
+
+#include "otelexport.h"
+
+/* An all-zero id is invalid; make it non-zero deterministically. */
+static void
+nonzero(uint8_t *id, size_t len)
+{
+
+	if (oe_id_is_zero(id, len))
+		id[len - 1] = 1;
+}
+
+int
+oe_id_is_zero(const uint8_t *id, size_t len)
+{
+	size_t i;
+
+	for (i = 0; i < len; i++)
+		if (id[i] != 0)
+			return (0);
+	return (1);
+}
+
+void
+oe_id_random(uint8_t *id, size_t len)
+{
+
+	arc4random_buf(id, len);
+	nonzero(id, len);
+}
+
+void
+oe_id_derive(const uint8_t salt[16], const char *ns, const int64_t *key,
+    size_t nkey, uint8_t *id, size_t len)
+{
+	unsigned char md[EVP_MAX_MD_SIZE], buf[16 + 32 + 8 * 8];
+	unsigned int mdlen;
+	size_t nslen, off, i, j;
+	uint64_t v;
+
+	/*
+	 * salt || namespace (NUL-padded to 32) || keys, little-endian.
+	 * Namespaces are short constants and key tuples at most eight
+	 * words, so the input has a fixed shape and cannot be confused
+	 * across namespaces.
+	 */
+	memset(buf, 0, sizeof(buf));
+	memcpy(buf, salt, 16);
+	nslen = strlen(ns);
+	memcpy(buf + 16, ns, nslen < 32 ? nslen : 32);
+	off = 16 + 32;
+	for (i = 0; i < nkey && i < 8; i++) {
+		v = (uint64_t)key[i];
+		for (j = 0; j < 8; j++)
+			buf[off++] = (unsigned char)(v >> (8 * j));
+	}
+	if (EVP_Digest(buf, off, md, &mdlen, EVP_sha256(), NULL) != 1 ||
+	    mdlen < len) {
+		/* No digest available: fall back to a random id. */
+		oe_id_random(id, len);
+		return;
+	}
+	memcpy(id, md, len);
+	nonzero(id, len);
+}
+
+void
+oe_id_hex(const uint8_t *id, size_t len, char *buf)
+{
+	static const char hex[] = "0123456789abcdef";
+	size_t i;
+
+	for (i = 0; i < len; i++) {
+		buf[2 * i] = hex[id[i] >> 4];
+		buf[2 * i + 1] = hex[id[i] & 0xf];
+	}
+	buf[2 * len] = '\0';
+}

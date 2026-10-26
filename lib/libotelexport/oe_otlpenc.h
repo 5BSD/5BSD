@@ -29,6 +29,10 @@ void	 oe_enc_fini(struct oe_otlpenc *);
 /* One record fragment; malloc'd, NULL on allocation failure. */
 char	*oe_enc_log_record(const struct oe_otlpenc *, const struct oe_event *);
 char	*oe_enc_metric(const struct oe_otlpenc *, const struct oe_snapshot *);
+char	*oe_enc_span(const struct oe_otlpenc *, const struct oe_span *);
+
+/* Append one typed attribute as an OTLP KeyValue. */
+void	 oe_enc_kv(struct oe_buf *, const struct oe_kv *, int *first);
 
 /*
  * Wrap fragments in one Export*ServiceRequest.  "drops" (logs only)

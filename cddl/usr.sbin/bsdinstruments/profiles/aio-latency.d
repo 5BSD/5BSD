@@ -3,7 +3,9 @@
  *
  * Traces POSIX AIO syscalls to measure asynchronous I/O
  * submission and completion latency. High-performance
- * servers use AIO to avoid blocking on disk I/O.
+ * servers use AIO to avoid blocking on disk I/O.  Structured
+ * formats also emit one span per submission, named after the
+ * call, in error when the submission fails.
  */
 
 syscall::aio_read:entry
@@ -39,6 +41,8 @@ syscall::lio_listio:return
     this->us = (timestamp - self->aio_ts) / 1000;
     printf("%s[%d]: %s %dus\n", execname, pid, self->aio_op, this->us);
     @latency[execname, self->aio_op] = quantize(this->us);
+    /* @bsdinstruments-span(name=self->aio_op, start=self->aio_ts,
+        error=errno) */
     self->aio_ts = 0;
     self->aio_op = 0;
 }

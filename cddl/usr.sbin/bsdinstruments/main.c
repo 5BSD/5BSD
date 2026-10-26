@@ -372,8 +372,7 @@ parse_common(int argc, char **argv, struct common_args *ca, int is_watch,
 			ca->broker = 1;
 			break;
 		case OPT_FORMAT:
-			if (!is_watch)
-				usage_fn();
+			/* generate takes it too: it decides the rendering. */
 			if (strcmp(optarg, "text") == 0)
 				ca->format = FORMAT_TEXT;
 			else if (strcmp(optarg, "json") == 0)
@@ -475,6 +474,7 @@ render_from_args(struct common_args *ca, struct profile **pp)
 	ro.with_stack = ca->with_stack;
 	ro.with_ustack = ca->with_ustack;
 	ro.duration = ca->duration;
+	ro.structured = ca->format != FORMAT_TEXT;
 	rendered = profile_render(p, &ro);
 	free(predicate);
 	free(predicate_and);
@@ -572,7 +572,8 @@ generate_usage(void)
 	    "           [--param key=value ...] [--pid n] [--execname name]\n"
 	    "           [--uid n] [--gid n] [--jail jid] [--where predicate]\n"
 	    "           [--duration seconds] [--with-stack] "
-	    "[--with-ustack]\n");
+	    "[--with-ustack]\n"
+	    "           [--format text|json|otel|otlp-json|collapsed]\n");
 	exit(2);
 }
 

@@ -7,7 +7,7 @@
  * OTLP/HTTP JSON encoding and the Collector's file exporter use:
  * lowerCamelCase field names, 64-bit integers as decimal strings,
  * enums as integers, trace and span ids as lowercase hex.  Events
- * become LogRecords, aggregation snapshots Metrics.
+ * become LogRecords, aggregation snapshots Metrics, spans Spans.
  */
 
 #include <stdio.h>
@@ -40,6 +40,45 @@ append_kv_string(struct oe_buf *b, const char *key, const char *value,
 	oe_buf_appendstr(b, "\",\"value\":{\"stringValue\":\"");
 	oe_buf_appendjson(b, value != NULL ? value : "");
 	oe_buf_appendstr(b, "\"}}");
+}
+
+void
+oe_enc_kv(struct oe_buf *b, const struct oe_kv *kv, int *first)
+{
+
+	if (!*first)
+		oe_buf_appendstr(b, ",");
+	*first = 0;
+	oe_buf_appendstr(b, "{\"key\":\"");
+	oe_buf_appendjson(b, kv->key);
+	switch (kv->type) {
+	case OE_VAL_INT:
+		oe_buf_appendf(b, "\",\"value\":{\"intValue\":\"%jd\"}}",
+		    (intmax_t)kv->i);
+		break;
+	case OE_VAL_BOOL:
+		oe_buf_appendf(b, "\",\"value\":{\"boolValue\":%s}}",
+		    kv->i != 0 ? "true" : "false");
+		break;
+	case OE_VAL_DOUBLE:
+		/* JSON has no NaN or infinities; proto3 JSON spells them. */
+		if (kv->d != kv->d)
+			oe_buf_appendstr(b,
+			    "\",\"value\":{\"doubleValue\":\"NaN\"}}");
+		else if (kv->d > 1.7976931348623157e308 ||
+		    kv->d < -1.7976931348623157e308)
+			oe_buf_appendf(b, "\",\"value\":{\"doubleValue\":"
+			    "\"%sInfinity\"}}", kv->d < 0 ? "-" : "");
+		else
+			oe_buf_appendf(b, "\",\"value\":{\"doubleValue\":"
+			    "%.17g}}", kv->d);
+		break;
+	case OE_VAL_STRING:
+		oe_buf_appendstr(b, "\",\"value\":{\"stringValue\":\"");
+		oe_buf_appendjson(b, kv->s != NULL ? kv->s : "");
+		oe_buf_appendstr(b, "\"}}");
+		break;
+	}
 }
 
 static char *
@@ -215,6 +254,72 @@ oe_enc_log_record(const struct oe_otlpenc *enc, const struct oe_event *ev)
 	    "\"value\":{\"stringValue\":\"", (int)ev->pid);
 	oe_buf_appendjson(&b, ev->execname != NULL ? ev->execname : "");
 	oe_buf_appendstr(&b, "\"}}]}");
+	if (b.error) {
+		oe_buf_free(&b);
+		return (NULL);
+	}
+	return (b.data);
+}
+
+/* ---------------------------------------------------------------- */
+/* Spans								*/
+
+char *
+oe_enc_span(const struct oe_otlpenc *enc, const struct oe_span *sp)
+{
+	struct oe_buf b;
+	struct oe_kv kv;
+	char tid[2 * OE_TRACE_ID_LEN + 1], sid[2 * OE_SPAN_ID_LEN + 1],
+	    pid[2 * OE_SPAN_ID_LEN + 1], key[256];
+	size_t i;
+	int first = 1;
+
+	oe_id_hex(sp->trace_id, OE_TRACE_ID_LEN, tid);
+	oe_id_hex(sp->span_id, OE_SPAN_ID_LEN, sid);
+	oe_buf_init(&b);
+	oe_buf_appendf(&b, "{\"traceId\":\"%s\",\"spanId\":\"%s\",", tid,
+	    sid);
+	if (!oe_id_is_zero(sp->parent_span_id, OE_SPAN_ID_LEN)) {
+		oe_id_hex(sp->parent_span_id, OE_SPAN_ID_LEN, pid);
+		oe_buf_appendf(&b, "\"parentSpanId\":\"%s\",", pid);
+	}
+	oe_buf_appendstr(&b, "\"name\":\"");
+	oe_buf_appendjson(&b, sp->name);
+	oe_buf_appendf(&b, "\",\"kind\":%d,\"startTimeUnixNano\":\"%ju\","
+	    "\"endTimeUnixNano\":\"%ju\",\"attributes\":[",
+	    (int)sp->kind, (uintmax_t)ts_unix_nano(&sp->start),
+	    (uintmax_t)ts_unix_nano(&sp->end));
+	snprintf(key, sizeof(key), "%s.profile", enc->scope);
+	kv.key = key;
+	kv.type = OE_VAL_STRING;
+	kv.s = sp->profile;
+	oe_enc_kv(&b, &kv, &first);
+	if (sp->probe != NULL && sp->probe[0] != '\0') {
+		snprintf(key, sizeof(key), "%s.probe", enc->scope);
+		kv.s = sp->probe;
+		oe_enc_kv(&b, &kv, &first);
+	}
+	if (sp->pid != 0) {
+		kv.key = "process.pid";
+		kv.type = OE_VAL_INT;
+		kv.i = sp->pid;
+		oe_enc_kv(&b, &kv, &first);
+	}
+	if (sp->execname != NULL && sp->execname[0] != '\0') {
+		kv.key = "process.executable.name";
+		kv.type = OE_VAL_STRING;
+		kv.s = sp->execname;
+		oe_enc_kv(&b, &kv, &first);
+	}
+	for (i = 0; i < sp->nattrs; i++)
+		oe_enc_kv(&b, &sp->attrs[i], &first);
+	oe_buf_appendf(&b, "],\"status\":{\"code\":%d", (int)sp->status);
+	if (sp->status_message != NULL) {
+		oe_buf_appendstr(&b, ",\"message\":\"");
+		oe_buf_appendjson(&b, sp->status_message);
+		oe_buf_appendstr(&b, "\"");
+	}
+	oe_buf_appendstr(&b, "}}");
 	if (b.error) {
 		oe_buf_free(&b);
 		return (NULL);

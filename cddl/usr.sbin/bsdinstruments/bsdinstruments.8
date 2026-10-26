@@ -41,6 +41,7 @@
 .Cm generate
 .Op Ar profile | Fl f Ar script.d
 .Op Ar rendering options ...
+.Op Fl -format Ar format
 .Nm
 .Cm probes
 .Op Fl -broker
@@ -88,6 +89,9 @@ Requires root.
 Render a profile to final D source without running it, applying the
 same parameter, filter, stack, and duration processing as
 .Cm watch .
+.Fl -format
+selects the rendering: text by default, or the structured rendering
+the other formats run, with span markers expanded.
 Needs no privileges; useful for piping into
 .Nm dtrace Fl s Ar - .
 .It Cm probes
@@ -114,10 +118,97 @@ actions when
 .Fl -with-stack /
 .Fl -with-ustack
 is set.
+.It Li /* @bsdinstruments-span( Ns Ar key Ns = Ns Ar value , ... Ns Li ) */
+Emits one OpenTelemetry span in the structured formats and nothing in
+text output, where the line disappears.
+See
+.Sx Spans .
 .It Li ${name}
 Substituted from
 .Fl -param Ar name=value .
 .El
+.Ss Spans
+A span marker sits in the clause that ends an operation and describes it
+with D expressions:
+.Bd -literal -offset indent
+syscall::accept:return
+/self->ts/
+{
+	/* @bsdinstruments-span(name=probefunc, kind=server,
+	    start=self->ts, error=errno, int.fd=(int)arg1) */
+	self->ts = 0;
+}
+.Ed
+.Pp
+Keys
+.Pq values are D expressions unless noted :
+.Bl -tag -width "execname" -compact
+.It Cm name
+span name (a string); required
+.It Cm start
+start, in D
+.Va timestamp
+units; required.
+A start of 0 means the operation began before tracing and no span is
+emitted.
+.It Cm end
+end; default
+.Va timestamp
+.It Cm error
+non-zero sets the span status to error
+.It Cm kind
+.Cm internal
+.Pq default ,
+.Cm server ,
+.Cm client ,
+.Cm producer
+or
+.Cm consumer ;
+a word, not an expression
+.It Cm pid , execname
+process to attribute the span to; default the current one
+.It Cm int.\& Ns Ar key , Cm str.\& Ns Ar key
+an integer or string attribute named
+.Ar key
+.It Cm thread , span , parent , trace
+identity keys, below
+.El
+.Pp
+Span and trace ids are derived from integer keys the profile already
+has, hashed with a secret chosen per run: a span is identified by
+.Cm thread
+.Pq default Va tid
+and
+.Cm span
+.Pq default its Cm start .
+A child names its parent with
+.Cm parent Ns = Ns Ar the parent's start
+.Pq or Cm span
+in the parent's
+.Cm thread ,
+and lands in its parent's trace; deeper trees pass the root's key as
+.Cm trace
+in every span.
+Work that completes in another thread, such as block I/O, saves the
+issuing
+.Va tid
+and passes it as
+.Cm thread .
+The accept-latency, connect-latency, aio-latency and biosnoop profiles
+emit spans this way, and io-spans makes each block I/O a child of the
+.Xr read 2
+or
+.Xr write 2
+that issued it.
+In the structured formats the marker becomes a
+.Fn printf
+of a record that starts with the unit separator
+.Pq Ql \e037
+and
+.Ql otel.span ,
+followed by
+.Ql \e037 Ns Ar key Ns = Ns Ar value
+fields; such records are consumed, never printed as log lines.
 .Ss Output formats
 .Bl -tag -width "collapsed"
 .It Cm text
@@ -133,7 +224,8 @@ Batch events as OTLP LogRecords POSTed to the collector's
 endpoint; DTrace aggregations become typed metrics on
 .Pa /v1/metrics
 (count/sum as monotonic Sums, min/max/avg as Gauges, quantize
-variants as Histograms).
+variants as Histograms); spans go to
+.Pa /v1/traces .
 .It Cm otlp-json
 The same OTLP requests written as JSON Lines, one request per line: the
 format of the OpenTelemetry Collector's file exporter, readable by its

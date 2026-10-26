@@ -48,6 +48,10 @@ struct dtotel {
 	int		 anchored;
 	int64_t		 clock_offset;
 
+	/* Secret salt for span and trace ids derived from D keys. */
+	uint8_t		 salt[16];
+	int		 warned_span;
+
 	/* The event being accumulated. */
 	char		*body;
 	char		*probe;

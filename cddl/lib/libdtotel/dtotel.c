@@ -19,6 +19,25 @@
  *
  *	\037otel.clock\037wall=<walltimestamp>\037ts=<timestamp>
  *		probe clock anchor (see dtotel_clock_program())
+ *
+ *	\037otel.span\037name=<s>\037start=<ts>\037end=<ts>[...]
+ *		one finished span.  Required: name, start and end (D
+ *		"timestamp" values; start 0 means the span never
+ *		started and the record is dropped).  Optional:
+ *		thread, span, parent, trace (integer keys, see below),
+ *		error (non-zero sets status ERROR), kind (internal,
+ *		server, client, producer, consumer), pid, execname,
+ *		and attributes a.i.<key>=<integer>, a.s.<key>=<string>.
+ *
+ * Span identity.  Ids are derived from integer keys the D program
+ * already has, hashed with a per-session secret salt
+ * (oe_id_derive()), so a child can name its parent without shared
+ * state: span id = H(thread, span), where "span" defaults to the
+ * start timestamp and "thread" to 0 (bsdinstruments passes tid);
+ * parent span id = H(thread, parent); trace id = H(thread, trace),
+ * where "trace" defaults to "parent" for a child and to "span" for a
+ * root.  A two-level parent/child pair thus needs only parent=<the
+ * parent's start>; deeper trees pass trace= explicitly.
  */
 
 #include <ctype.h>
@@ -42,7 +61,7 @@ static const char clock_program[] =
     "\t    walltimestamp, timestamp);\n"
     "}\n"
     "\n"
-    "profile:::tick-1s\n"
+    "profile:::tick-1sec\n"
     "{\n"
     "\tprintf(\"\\037otel.clock\\037wall=%d\\037ts=%u\\n\",\n"
     "\t    walltimestamp, timestamp);\n"
@@ -80,6 +99,7 @@ dtotel_open(const struct dtotel_config *cfg)
 	if (cfg->source != NULL)
 		d->keynames = dtotel_parse_keynames(cfg->source);
 	clock_gettime(CLOCK_REALTIME, &d->start);
+	arc4random_buf(d->salt, sizeof(d->salt));
 	return (d);
 }
 
@@ -384,13 +404,186 @@ handle_clock(struct dtotel *d, const char *rec)
 	d->anchored = 1;
 }
 
+#define	SPAN_MAX_ATTRS	16
+
+static enum oe_span_kind
+span_kind(const char *s)
+{
+
+	if (strcmp(s, "server") == 0)
+		return (OE_SPAN_SERVER);
+	if (strcmp(s, "client") == 0)
+		return (OE_SPAN_CLIENT);
+	if (strcmp(s, "producer") == 0)
+		return (OE_SPAN_PRODUCER);
+	if (strcmp(s, "consumer") == 0)
+		return (OE_SPAN_CONSUMER);
+	return (OE_SPAN_INTERNAL);
+}
+
+static int
+parse_int(const char *s, int64_t *v)
+{
+	char *end;
+
+	if (*s == '\0')
+		return (-1);
+	errno = 0;
+	*v = strtoll(s, &end, 10);
+	return (*end == '\0' && errno == 0 ? 0 : -1);
+}
+
 static void
-handle_record(struct dtotel *d, const char *rec)
+ns_to_ts(int64_t ns, struct timespec *ts)
+{
+
+	ts->tv_sec = (time_t)(ns / 1000000000);
+	ts->tv_nsec = (long)(ns % 1000000000);
+}
+
+/*
+ * One span record.  "rec" is a private copy: fields are split in
+ * place at the separators.
+ */
+static void
+handle_span(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
+    const struct timespec *observed)
+{
+	struct oe_kv attrs[SPAN_MAX_ATTRS];
+	struct oe_span sp;
+	const char *name, *kind, *execname;
+	char *field, *next, *eq, msg[48], *probe;
+	int64_t start, end, thread, spankey, parent, trace, err, pid, v,
+	    key[2];
+	int have_start, have_end, have_span, have_parent, have_trace;
+	size_t nattrs;
+
+	name = kind = execname = NULL;
+	start = end = thread = spankey = parent = trace = err = pid = 0;
+	have_start = have_end = have_span = have_parent = have_trace = 0;
+	nattrs = 0;
+	/* Fields follow the "\037otel.span" kind tag. */
+	for (field = strchr(rec + strlen(DTOTEL_RECORD_PREFIX), FIELD_SEP);
+	    field != NULL; field = next) {
+		*field++ = '\0';
+		next = strchr(field, FIELD_SEP);
+		if (next != NULL)
+			*next = '\0';
+		eq = strchr(field, '=');
+		if (eq == NULL)
+			goto bad;
+		*eq++ = '\0';
+		if (strcmp(field, "name") == 0)
+			name = eq;
+		else if (strcmp(field, "kind") == 0)
+			kind = eq;
+		else if (strcmp(field, "execname") == 0)
+			execname = eq;
+		else if (strncmp(field, "a.s.", 4) == 0 && field[4] != '\0') {
+			if (nattrs < SPAN_MAX_ATTRS) {
+				attrs[nattrs].key = field + 4;
+				attrs[nattrs].type = OE_VAL_STRING;
+				attrs[nattrs++].s = eq;
+			}
+		} else if (parse_int(eq, &v) != 0)
+			goto bad;
+		else if (strcmp(field, "start") == 0) {
+			start = v;
+			have_start = 1;
+		} else if (strcmp(field, "end") == 0) {
+			end = v;
+			have_end = 1;
+		} else if (strcmp(field, "thread") == 0)
+			thread = v;
+		else if (strcmp(field, "span") == 0) {
+			spankey = v;
+			have_span = 1;
+		} else if (strcmp(field, "parent") == 0) {
+			parent = v;
+			have_parent = 1;
+		} else if (strcmp(field, "trace") == 0) {
+			trace = v;
+			have_trace = 1;
+		} else if (strcmp(field, "error") == 0)
+			err = v;
+		else if (strcmp(field, "pid") == 0)
+			pid = v;
+		else if (strncmp(field, "a.i.", 4) == 0 && field[4] != '\0' &&
+		    nattrs < SPAN_MAX_ATTRS) {
+			attrs[nattrs].key = field + 4;
+			attrs[nattrs].type = OE_VAL_INT;
+			attrs[nattrs++].i = v;
+		}
+		/*
+		 * Unknown integer fields (newer producers) and attributes
+		 * beyond SPAN_MAX_ATTRS are ignored.
+		 */
+	}
+	if (name == NULL || name[0] == '\0' || !have_start || !have_end ||
+	    end < start)
+		goto bad;
+	if (start <= 0) {
+		/* The D side never saw the start of this span. */
+		return;
+	}
+
+	memset(&sp, 0, sizeof(sp));
+	sp.name = name;
+	sp.profile = d->profile;
+	probe = probe_name(bd);
+	sp.probe = probe != NULL ? probe : "";
+	if (d->anchored) {
+		ns_to_ts(start + d->clock_offset, &sp.start);
+		ns_to_ts(end + d->clock_offset, &sp.end);
+	} else {
+		/* Unanchored: end when read, true duration kept. */
+		sp.end = *observed;
+		ns_to_ts((int64_t)observed->tv_sec * 1000000000 +
+		    observed->tv_nsec - (end - start), &sp.start);
+	}
+	if (!have_span)
+		spankey = start;
+	key[0] = thread;
+	key[1] = spankey;
+	oe_id_derive(d->salt, "span", key, 2, sp.span_id, OE_SPAN_ID_LEN);
+	if (have_parent) {
+		key[1] = parent;
+		oe_id_derive(d->salt, "span", key, 2, sp.parent_span_id,
+		    OE_SPAN_ID_LEN);
+	}
+	key[1] = have_trace ? trace : have_parent ? parent : spankey;
+	oe_id_derive(d->salt, "trace", key, 2, sp.trace_id,
+	    OE_TRACE_ID_LEN);
+	sp.kind = kind != NULL ? span_kind(kind) : OE_SPAN_INTERNAL;
+	if (err != 0) {
+		sp.status = OE_STATUS_ERROR;
+		snprintf(msg, sizeof(msg), "error %jd", (intmax_t)err);
+		sp.status_message = msg;
+	}
+	sp.pid = (pid_t)pid;
+	sp.execname = execname != NULL ? execname : "";
+	sp.attrs = attrs;
+	sp.nattrs = nattrs;
+	if (oe_span(d->exporter, &sp) != 0)
+		d->error = 1;
+	free(probe);
+	return;
+bad:
+	if (!d->warned_span++)
+		fprintf(stderr, "dtotel: malformed span record ignored (needs "
+		    "name, start <= end, integer keys)\n");
+}
+
+static void
+handle_record(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
+    const struct timespec *observed)
 {
 	const char *kind = rec + strlen(DTOTEL_RECORD_PREFIX);
 
 	if (strncmp(kind, "clock\037", 6) == 0)
 		handle_clock(d, rec);
+	else if (strncmp(kind, "span\037", 5) == 0)
+		handle_span(d, rec, bd, observed);
 	else
 		fprintf(stderr, "dtotel: unknown structured record \"%.*s\" "
 		    "ignored\n", (int)strcspn(kind, "\037\n"), kind);
@@ -423,10 +616,16 @@ dtotel_buffered(const dtrace_bufdata_t *bufdata, void *arg)
 
 	if (strncmp(chunk, DTOTEL_RECORD_PREFIX,
 	    sizeof(DTOTEL_RECORD_PREFIX) - 1) == 0) {
-		/* One record per chunk; strip the trailing newline. */
-		rec = strndup(chunk, strcspn(chunk, "\n"));
+		/*
+		 * One record per chunk.  Strip only the final newline:
+		 * string fields may themselves contain newlines.
+		 */
+		linelen = strlen(chunk);
+		if (chunk[linelen - 1] == '\n')
+			linelen--;
+		rec = strndup(chunk, linelen);
 		if (rec != NULL) {
-			handle_record(d, rec);
+			handle_record(d, rec, bufdata, &observed);
 			free(rec);
 		}
 		return (d->error ? DTRACE_HANDLE_ABORT : DTRACE_HANDLE_OK);

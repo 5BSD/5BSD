@@ -3,7 +3,8 @@
  *
  * Measures how long server processes wait for incoming
  * connections. Useful for understanding server utilization
- * and connection arrival patterns.
+ * and connection arrival patterns.  Structured formats also
+ * emit one server span per accept(2), in error when it fails.
  */
 
 syscall::accept:entry,
@@ -21,6 +22,8 @@ syscall::accept4:return
     printf("%s[%d]: accept %dus (fd=%d)\n",
         execname, pid, this->elapsed_us, (int)arg1);
     @latency[execname] = quantize(this->elapsed_us);
+    /* @bsdinstruments-span(name=probefunc, kind=server,
+        start=self->accept_ts, error=errno, int.fd=(int)arg1) */
     self->accept_ts = 0;
     /* @bsdinstruments-stack */
     /* @bsdinstruments-ustack */

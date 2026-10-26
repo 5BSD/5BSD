@@ -107,6 +107,62 @@ struct oe_snapshot {
 	struct timespec	 start;
 };
 
+/* A typed attribute (OTLP AnyValue scalar). */
+enum oe_value_type {
+	OE_VAL_STRING,
+	OE_VAL_INT,
+	OE_VAL_DOUBLE,
+	OE_VAL_BOOL
+};
+
+struct oe_kv {
+	const char	*key;
+	enum oe_value_type type;
+	const char	*s;		/* OE_VAL_STRING */
+	int64_t		 i;		/* OE_VAL_INT, OE_VAL_BOOL */
+	double		 d;		/* OE_VAL_DOUBLE */
+};
+
+/* Span kind and status, numbered as in the OTLP trace protocol. */
+enum oe_span_kind {
+	OE_SPAN_INTERNAL = 1,
+	OE_SPAN_SERVER = 2,
+	OE_SPAN_CLIENT = 3,
+	OE_SPAN_PRODUCER = 4,
+	OE_SPAN_CONSUMER = 5
+};
+
+enum oe_status_code {
+	OE_STATUS_UNSET = 0,
+	OE_STATUS_OK = 1,
+	OE_STATUS_ERROR = 2
+};
+
+#define	OE_TRACE_ID_LEN	16
+#define	OE_SPAN_ID_LEN	8
+
+/*
+ * One finished span.  An all-zero parent_span_id marks a root span.
+ * Strings are borrowed for the duration of the call.
+ */
+struct oe_span {
+	const char	*name;
+	const char	*profile;
+	const char	*probe;		/* probe that ended it, or "" */
+	struct timespec	 start;		/* wall clock */
+	struct timespec	 end;
+	uint8_t		 trace_id[OE_TRACE_ID_LEN];
+	uint8_t		 span_id[OE_SPAN_ID_LEN];
+	uint8_t		 parent_span_id[OE_SPAN_ID_LEN];
+	enum oe_span_kind kind;
+	enum oe_status_code status;
+	const char	*status_message; /* NULL to omit */
+	pid_t		 pid;		/* 0 if unknown */
+	const char	*execname;	/* "" if unknown */
+	const struct oe_kv *attrs;
+	size_t		 nattrs;
+};
+
 /* OTel resource attributes attached to every record. */
 struct oe_resource {
 	const char	*service_name;
@@ -135,6 +191,7 @@ struct oe_exporter_ops {
 	int	(*flush)(struct oe_exporter *);
 	int	(*shutdown)(struct oe_exporter *);
 	void	(*free)(struct oe_exporter *);
+	int	(*span)(struct oe_exporter *, const struct oe_span *);
 };
 
 struct oe_exporter {
@@ -144,6 +201,9 @@ struct oe_exporter {
 #define	oe_start(e)		((e)->ops->start(e))
 #define	oe_event(e, ev)		((e)->ops->event((e), (ev)))
 #define	oe_snapshot(e, sn)	((e)->ops->snapshot((e), (sn)))
+/* Exporters without span support accept and ignore spans. */
+#define	oe_span(e, sp)		((e)->ops->span != NULL ?		\
+				    (e)->ops->span((e), (sp)) : 0)
 #define	oe_flush(e)		((e)->ops->flush(e))
 #define	oe_shutdown(e)		((e)->ops->shutdown(e))
 #define	oe_exporter_free(e)	((e)->ops->free(e))
@@ -261,6 +321,20 @@ void	oe_env_free(struct oe_env *);
 void	oe_host_name(char *buf, size_t len);
 void	oe_host_arch(char *buf, size_t len);
 void	oe_os_version(char *buf, size_t len);
+
+/*
+ * Trace and span ids.  oe_id_random() fills a fresh random id;
+ * oe_id_derive() derives a stable one from a secret salt, a
+ * namespace and a key tuple (SHA-256, truncated), so records that
+ * name the same key get the same id without coordination.  Both
+ * never return an all-zero (invalid) id.  oe_id_hex() writes
+ * 2*len lowercase hex digits plus a NUL.
+ */
+void	oe_id_random(uint8_t *id, size_t len);
+void	oe_id_derive(const uint8_t salt[16], const char *ns,
+	    const int64_t *key, size_t nkey, uint8_t *id, size_t len);
+void	oe_id_hex(const uint8_t *id, size_t len, char *buf);
+int	oe_id_is_zero(const uint8_t *id, size_t len);
 
 /*
  * Growable string buffer used by exporters to build output.

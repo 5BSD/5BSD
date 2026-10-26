@@ -3,13 +3,15 @@
  *
  * Measures outbound connection setup time. High connect latency
  * indicates DNS issues, network congestion, or remote server
- * problems.
+ * problems.  Structured formats also emit one client span per
+ * connect(2); EINPROGRESS (non-blocking connect) is not an error.
  */
 
 syscall::connect:entry
 /* @bsdinstruments-predicate */
 {
     self->conn_ts = timestamp;
+    self->conn_fd = arg0;
 }
 
 syscall::connect:return
@@ -19,7 +21,11 @@ syscall::connect:return
     printf("%s[%d]: connect %dus (ret=%d)\n",
         execname, pid, this->elapsed_us, (int)arg1);
     @latency[execname] = quantize(this->elapsed_us);
+    /* @bsdinstruments-span(name="connect", kind=client,
+        start=self->conn_ts, error=errno == EINPROGRESS ? 0 : errno,
+        int.fd=(int)self->conn_fd) */
     self->conn_ts = 0;
+    self->conn_fd = 0;
     /* @bsdinstruments-stack */
     /* @bsdinstruments-ustack */
 }

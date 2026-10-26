@@ -12,7 +12,8 @@
  *    probe firing;
  *  - aggregations become metric snapshots;
  *  - records whose text starts with "\037otel." are structured
- *    records (clock anchors, spans, context) rather than log lines.
+ *    records (clock anchors, spans, context) rather than log lines;
+ *    span records become OTLP spans.
  *
  * Probe time.  libdtrace hands every record the probe's high
  * resolution timestamp (the D "timestamp" clock), not wall time.  The

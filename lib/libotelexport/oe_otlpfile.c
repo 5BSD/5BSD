@@ -6,9 +6,9 @@
  * OTLP JSON Lines file exporter.  Writes the same requests the
  * OTLP/HTTP exporter POSTs, one Export*ServiceRequest object per
  * line, which is the format of the OpenTelemetry Collector's file
- * exporter and otlpjsonfile receiver.  Log records batch up to
- * batch_size per line; snapshots (and, later, any pending records)
- * are written on every flush.  The exporter is synchronous: it runs
+ * exporter and otlpjsonfile receiver.  Log records and spans batch up
+ * to batch_size per line; snapshots (and any pending records) are
+ * written on every flush.  The exporter is synchronous: it runs
  * on the caller's thread and reports write errors from the call
  * that hit them.
  */
@@ -104,6 +104,14 @@ otlpfile_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 }
 
 static int
+otlpfile_span(struct oe_exporter *e, const struct oe_span *sp)
+{
+	struct oe_otlpfile *f = (struct oe_otlpfile *)e;
+
+	return (otlpfile_queue(f, OE_SIGNAL_TRACES, oe_enc_span(&f->enc, sp)));
+}
+
+static int
 otlpfile_flush(struct oe_exporter *e)
 {
 	struct oe_otlpfile *f = (struct oe_otlpfile *)e;
@@ -144,6 +152,7 @@ static const struct oe_exporter_ops otlpfile_ops = {
 	.flush = otlpfile_flush,
 	.shutdown = otlpfile_shutdown,
 	.free = otlpfile_free,
+	.span = otlpfile_span,
 };
 
 struct oe_exporter *

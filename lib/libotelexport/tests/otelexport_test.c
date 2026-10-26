@@ -1765,6 +1765,464 @@ ATF_TC_BODY(otlp_alloc_failure, tc)
 	coll_stop(&co);
 }
 
+
+/* ---------------------------------------------------------------- */
+/* Spans								*/
+
+static const uint8_t test_salt[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    12, 13, 14, 15, 16 };
+
+static struct oe_kv span_attrs[] = {
+	{ .key = "net.peer.port", .type = OE_VAL_INT, .i = 443 },
+	{ .key = "op", .type = OE_VAL_STRING, .s = "aio_read" },
+	{ .key = "ok", .type = OE_VAL_BOOL, .i = 1 },
+	{ .key = "ratio", .type = OE_VAL_DOUBLE, .d = 0.5 },
+	{ .key = "nil", .type = OE_VAL_STRING, .s = NULL },
+};
+
+/* A root span and an erroring child, with fixed ids and times. */
+static void
+make_spans(struct oe_span *root, struct oe_span *child)
+{
+	int64_t k;
+	int i;
+
+	memset(root, 0, sizeof(*root));
+	root->name = "accept";
+	root->profile = "test-prof";
+	root->probe = "syscall::accept:return";
+	root->start.tv_sec = 1700000000;
+	root->start.tv_nsec = 1000;
+	root->end.tv_sec = 1700000000;
+	root->end.tv_nsec = 501000;
+	for (i = 0; i < OE_TRACE_ID_LEN; i++)
+		root->trace_id[i] = (uint8_t)(0x10 + i);
+	for (i = 0; i < OE_SPAN_ID_LEN; i++)
+		root->span_id[i] = (uint8_t)(0xa0 + i);
+	root->kind = OE_SPAN_SERVER;
+	root->pid = 42;
+	root->execname = "nginx";
+	root->attrs = span_attrs;
+	root->nattrs = nitems(span_attrs);
+	*child = *root;
+	child->name = "read \"data\"";
+	child->probe = "";
+	child->execname = "";
+	child->pid = 0;
+	child->kind = OE_SPAN_INTERNAL;
+	child->status = OE_STATUS_ERROR;
+	child->status_message = "errno 5";
+	memcpy(child->parent_span_id, root->span_id, OE_SPAN_ID_LEN);
+	k = 7;
+	oe_id_derive(test_salt, "span", &k, 1, child->span_id,
+	    OE_SPAN_ID_LEN);
+	child->attrs = NULL;
+	child->nattrs = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(span_ids);
+ATF_TC_BODY(span_ids, tc)
+{
+	uint8_t a[16], b[16], zero[8];
+	char hex[33];
+	int64_t k[2] = { 1, 2 };
+	uint8_t salt2[16];
+
+	oe_id_derive(test_salt, "trace", k, 2, a, 16);
+	oe_id_derive(test_salt, "trace", k, 2, b, 16);
+	ATF_REQUIRE(memcmp(a, b, 16) == 0);
+	/* Namespace, key order and salt all matter. */
+	oe_id_derive(test_salt, "span", k, 2, b, 16);
+	ATF_REQUIRE(memcmp(a, b, 16) != 0);
+	k[0] = 2;
+	k[1] = 1;
+	oe_id_derive(test_salt, "trace", k, 2, b, 16);
+	ATF_REQUIRE(memcmp(a, b, 16) != 0);
+	memcpy(salt2, test_salt, 16);
+	salt2[0] ^= 1;
+	oe_id_derive(salt2, "trace", k, 2, b, 16);
+	ATF_REQUIRE(memcmp(a, b, 16) != 0);
+	/* Over-long namespaces and tuples are truncated, not overrun. */
+	{
+		int64_t many[12] = { 0 };
+
+		oe_id_derive(test_salt, "a-namespace-longer-than-thirty-two"
+		    "-bytes", many, 12, b, 8);
+		ATF_REQUIRE(!oe_id_is_zero(b, 8));
+	}
+	oe_id_random(a, 16);
+	oe_id_random(b, 16);
+	ATF_REQUIRE(memcmp(a, b, 16) != 0);
+	ATF_REQUIRE(!oe_id_is_zero(a, 16));
+	memset(zero, 0, sizeof(zero));
+	ATF_REQUIRE(oe_id_is_zero(zero, 8));
+	a[0] = 0xab;
+	a[1] = 0x01;
+	oe_id_hex(a, 2, hex);
+	ATF_REQUIRE_STREQ("ab01", hex);
+}
+
+ATF_TC_WITHOUT_HEAD(span_otlpjson_golden);
+ATF_TC_BODY(span_otlpjson_golden, tc)
+{
+	struct oe_sink_config sc;
+	struct oe_sink *sink;
+	struct oe_exporter *e;
+	struct oe_span root, child;
+	struct otlp_counts c;
+	char *text;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.path = "spans.jsonl";
+	sink = oe_sink_open(&sc);
+	e = otlpjson_on(sink, 0);
+	make_spans(&root, &child);
+	ATF_REQUIRE_EQ(0, oe_span(e, &child));
+	ATF_REQUIRE_EQ(0, oe_span(e, &root));
+	ATF_REQUIRE_EQ(0, oe_shutdown(e));
+	oe_exporter_free(e);
+	oe_sink_close(sink);
+	text = slurp("spans.jsonl", NULL);
+	c = check_otlp_lines(tc, text, "otlpjson-spans.jsonl");
+	ATF_REQUIRE_EQ(1, c.requests);
+	ATF_REQUIRE_EQ(2, c.spans);
+	free(text);
+}
+
+ATF_TC_WITHOUT_HEAD(span_doubles);
+ATF_TC_BODY(span_doubles, tc)
+{
+	struct oe_kv kv[3] = {
+		{ .key = "nan", .type = OE_VAL_DOUBLE },
+		{ .key = "inf", .type = OE_VAL_DOUBLE },
+		{ .key = "ninf", .type = OE_VAL_DOUBLE },
+	};
+	struct oe_span root, child;
+	struct oe_exporter *e;
+	FILE *fp;
+	char *out;
+	size_t outlen;
+
+	kv[0].d = 0.0 / 0.0;
+	kv[1].d = 1.0 / 0.0;
+	kv[2].d = -1.0 / 0.0;
+	make_spans(&root, &child);
+	root.attrs = kv;
+	root.nattrs = 3;
+	fp = open_memstream(&out, &outlen);
+	{
+		struct oe_sink_config sc;
+		struct oe_sink *sink;
+
+		memset(&sc, 0, sizeof(sc));
+		sc.fp = fp;
+		sink = oe_sink_open(&sc);
+		e = otlpjson_on(sink, 1);
+		ATF_REQUIRE_EQ(0, oe_span(e, &root));
+		oe_exporter_free(e);
+		oe_sink_close(sink);
+	}
+	fflush(fp);
+	check_otlp_lines(tc, out, NULL);
+	ATF_REQUIRE(strstr(out, "{\"doubleValue\":\"NaN\"}") != NULL);
+	ATF_REQUIRE(strstr(out, "{\"doubleValue\":\"Infinity\"}") != NULL);
+	ATF_REQUIRE(strstr(out, "{\"doubleValue\":\"-Infinity\"}") != NULL);
+	fclose(fp);
+	free(out);
+	/* JSONL writes them as null. */
+	fp = open_memstream(&out, &outlen);
+	e = oe_jsonl_new(fp, "p");
+	ATF_REQUIRE_EQ(0, oe_span(e, &root));
+	oe_exporter_free(e);
+	fclose(fp);
+	ATF_REQUIRE(strstr(out, "\"nan\":null,\"inf\":null,\"ninf\":null") !=
+	    NULL);
+	free(out);
+}
+
+ATF_TC_WITHOUT_HEAD(span_jsonl_text);
+ATF_TC_BODY(span_jsonl_text, tc)
+{
+	struct oe_exporter *e;
+	struct oe_span root, child;
+	FILE *fp;
+	char *out;
+	size_t outlen;
+
+	make_spans(&root, &child);
+	fp = open_memstream(&out, &outlen);
+	e = oe_jsonl_new(fp, "p");
+	ATF_REQUIRE_EQ(0, oe_span(e, &root));
+	child.kind = OE_SPAN_CLIENT;
+	ATF_REQUIRE_EQ(0, oe_span(e, &child));
+	child.kind = OE_SPAN_PRODUCER;
+	child.status_message = NULL;
+	ATF_REQUIRE_EQ(0, oe_span(e, &child));
+	child.kind = OE_SPAN_CONSUMER;
+	ATF_REQUIRE_EQ(0, oe_span(e, &child));
+	oe_exporter_free(e);
+	fclose(fp);
+	ATF_REQUIRE(strstr(out, "{\"time\":\"2023-11-14T22:13:20.000Z\","
+	    "\"type\":\"span\",\"profile\":\"test-prof\",\"name\":\"accept\","
+	    "\"trace_id\":\"101112131415161718191a1b1c1d1e1f\","
+	    "\"span_id\":\"a0a1a2a3a4a5a6a7\",\"end\":"
+	    "\"2023-11-14T22:13:20.000Z\",\"duration_ns\":500000,"
+	    "\"kind\":\"server\",\"status\":\"unset\","
+	    "\"probe\":\"syscall::accept:return\",\"pid\":42,"
+	    "\"execname\":\"nginx\",\"attributes\":{\"net.peer.port\":443,"
+	    "\"op\":\"aio_read\",\"ok\":true,\"ratio\":0.5,\"nil\":\"\"}}\n")
+	    != NULL);
+	ATF_REQUIRE(strstr(out, "\"parent_span_id\":\"a0a1a2a3a4a5a6a7\"") !=
+	    NULL);
+	ATF_REQUIRE(strstr(out, "\"kind\":\"client\",\"status\":\"error\","
+	    "\"status_message\":\"errno 5\",\"attributes\":{}}") != NULL);
+	ATF_REQUIRE(strstr(out, "\"kind\":\"producer\"") != NULL);
+	ATF_REQUIRE(strstr(out, "\"kind\":\"consumer\"") != NULL);
+	free(out);
+
+	fp = open_memstream(&out, &outlen);
+	e = oe_text_new(fp);
+	ATF_REQUIRE_EQ(0, oe_span(e, &root));
+	ATF_REQUIRE_EQ(0, oe_span(e, &child));
+	child.status_message = "boom";
+	ATF_REQUIRE_EQ(0, oe_span(e, &child));
+	oe_exporter_free(e);
+	fclose(fp);
+	ATF_REQUIRE(strstr(out, "span accept 500us trace=101112131415161718"
+	    "191a1b1c1d1e1f span=a0a1a2a3a4a5a6a7\n") != NULL);
+	ATF_REQUIRE(strstr(out, "span read \"data\" 500us error trace=") !=
+	    NULL);
+	ATF_REQUIRE(strstr(out, " error: boom trace=") != NULL);
+	ATF_REQUIRE(strstr(out, " parent=a0a1a2a3a4a5a6a7\n") != NULL);
+	free(out);
+
+	/* Collapsed ignores spans; failures propagate elsewhere. */
+	fp = open_memstream(&out, &outlen);
+	e = oe_collapsed_new(fp);
+	ATF_REQUIRE_EQ(0, oe_span(e, &root));
+	oe_exporter_free(e);
+	fclose(fp);
+	free(out);
+	fp = fwopen(NULL, enospc_write);
+	setvbuf(fp, NULL, _IONBF, 0);
+	e = oe_jsonl_new(fp, "p");
+	ATF_REQUIRE_EQ(-1, oe_span(e, &root));
+	oe_exporter_free(e);
+	e = oe_text_new(fp);
+	ATF_REQUIRE_EQ(-1, oe_span(e, &root));
+	oe_exporter_free(e);
+	fclose(fp);
+}
+
+ATF_TC_WITHOUT_HEAD(span_http);
+ATF_TC_BODY(span_http, tc)
+{
+	static const struct coll_reply script[] = {
+		{ 200, NULL, "{\"partialSuccess\":{\"rejectedSpans\":\"1\"}}",
+		    0, 0 },
+	};
+	struct collector co;
+	struct oe_exporter *e;
+	struct oe_span root, child;
+	struct otlp_counts c;
+	int i;
+
+	ATF_REQUIRE_EQ(0, coll_start(&co, 0, 0, NULL));
+	coll_script(&co, script, nitems(script));
+	e = otlp_to(co.port, "http", NULL, 0, 0, NULL);
+	make_spans(&root, &child);
+	ATF_REQUIRE_EQ(0, oe_span(e, &root));
+	ATF_REQUIRE_EQ(0, oe_span(e, &child));	/* batch of 2: queued */
+	ATF_REQUIRE_EQ(0, oe_start(e));
+	ATF_REQUIRE_EQ(0, coll_wait(&co, 1, 3000));
+	ATF_REQUIRE_STREQ("/base/v1/traces", co.reqs[0].path);
+	c = check_otlp_lines(tc, co.reqs[0].body, NULL);
+	ATF_REQUIRE_EQ(2, c.spans);
+	oe_shutdown(e);
+	oe_exporter_free(e);
+	/* Allocation failure while encoding spans. */
+	for (i = 1; i <= 12; i++) {
+		e = otlp_to(co.port, "http", NULL, 0, 0, NULL);
+		failalloc_arm(i);
+		(void)oe_span(e, &root);
+		failalloc_arm(0);
+		oe_shutdown(e);
+		oe_exporter_free(e);
+	}
+	coll_stop(&co);
+}
+
+/*
+ * The validator is the oracle, so it is tested too: each document
+ * breaks one OTLP or JSON rule and must be rejected for that reason.
+ */
+ATF_TC_WITHOUT_HEAD(validator_rejects);
+ATF_TC_BODY(validator_rejects, tc)
+{
+	static const struct {
+		const char *doc, *why;
+	} cases[] = {
+		{ "{\"resourceLogs\":[],}", "trailing comma" },
+		{ "{\"resourceLogs\":[]", "expected ','" },
+		{ "{\"a\":1,\"a\":2}", "duplicate key" },
+		{ "{\"resourceLogs\":[]} x", "trailing data" },
+		{ "\"\\x\"", "invalid escape" },
+		{ "\"\\ud800\"", "unpaired high surrogate" },
+		{ "\"\\udc00\"", "lone low surrogate" },
+		{ "\"\xc3\"", "invalid UTF-8" },
+		{ "\"\xe0\x80\x80\"", "invalid UTF-8" },
+		{ "\"a\x01\"", "raw control" },
+		{ "01", "leading zero" },
+		{ "1.", "bad fraction" },
+		{ "1e", "bad exponent" },
+		{ "-", "bad number" },
+		{ "nul", "invalid literal" },
+		{ "{\"x\":{}}", "unknown request type" },
+		{ "{\"resourceLogs\":[],\"resourceSpans\":[]}",
+		    "exactly one top-level" },
+		{ "{\"resourceLogs\":[{\"bogus\":1}]}",
+		    "unknown ResourceLogs field" },
+		{ "{\"resourceLogs\":{}}", "must be an array" },
+		{ "{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{"
+		    "\"timeUnixNano\":1}]}]}]}", "decimal string" },
+		{ "{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{"
+		    "\"timeUnixNano\":\"-1\"}]}]}]}", "decimal string" },
+		{ "{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{"
+		    "\"timeUnixNano\":\"99999999999999999999\"}]}]}]}",
+		    "decimal string" },
+		{ "{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{"
+		    "\"severityNumber\":25}]}]}]}", "out of range" },
+		{ "{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{"
+		    "\"severityNumber\":\"9\"}]}]}]}", "non-negative integer" },
+		{ "{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{"
+		    "\"body\":{\"stringValue\":\"a\",\"intValue\":\"1\"}}]}]}]}",
+		    "AnyValue has 2" },
+		{ "{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{"
+		    "\"body\":{\"intValue\":1}}]}]}]}", "decimal string" },
+		{ "{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{"
+		    "\"body\":{\"bytesValue\":\"abc\"}}]}]}]}", "base64" },
+		{ "{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{"
+		    "\"body\":{\"fooValue\":1}}]}]}]}", "unknown AnyValue" },
+		{ "{\"resourceLogs\":[{\"resource\":{\"attributes\":["
+		    "{\"key\":\"a\",\"value\":{}},{\"key\":\"a\",\"value\":{}}"
+		    "]}}]}", "duplicate attribute key" },
+		{ "{\"resourceLogs\":[{\"resource\":{\"attributes\":["
+		    "{\"key\":\"\",\"value\":{}}]}}]}", "has no key" },
+		{ "{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{"
+		    "\"traceId\":\"ABCDEF0123456789ABCDEF0123456789\"}]}]}]}",
+		    "lowercase hex" },
+		{ "{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":[{"
+		    "\"name\":\"m\"}]}]}]}", "has no data" },
+		{ "{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":[{"
+		    "\"name\":\"m\",\"gauge\":{},\"sum\":{}}]}]}]}",
+		    "more than one member of oneof" },
+		{ "{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":["
+		    "{\"name\":\"m\",\"gauge\":{}},{\"name\":\"m\",\"sum\":{}}"
+		    "]}]}]}", "is both gauge and sum" },
+		{ "{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":[{"
+		    "\"name\":\"m\",\"gauge\":{\"dataPoints\":[{"
+		    "\"timeUnixNano\":\"1\"}]}}]}]}]}", "no value" },
+		{ "{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":[{"
+		    "\"name\":\"m\",\"histogram\":{\"dataPoints\":[{"
+		    "\"timeUnixNano\":\"1\",\"count\":\"3\",\"bucketCounts\":"
+		    "[\"1\",\"1\"],\"explicitBounds\":[1]}]}}]}]}]}",
+		    "count 3 != sum" },
+		{ "{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":[{"
+		    "\"name\":\"m\",\"histogram\":{\"dataPoints\":[{"
+		    "\"timeUnixNano\":\"1\",\"count\":\"2\",\"bucketCounts\":"
+		    "[\"1\",\"1\"],\"explicitBounds\":[]}]}}]}]}]}",
+		    "need 1 explicitBounds" },
+		{ "{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":[{"
+		    "\"name\":\"m\",\"histogram\":{\"dataPoints\":[{"
+		    "\"timeUnixNano\":\"1\",\"count\":\"3\",\"bucketCounts\":"
+		    "[\"1\",\"1\",\"1\"],\"explicitBounds\":[2,1]}]}}]}]}]}",
+		    "strictly increasing" },
+		{ "{\"resourceSpans\":[{\"scopeSpans\":[{\"spans\":[{"
+		    "\"spanId\":\"0102030405060708\",\"name\":\"s\"}]}]}]}",
+		    "no traceId" },
+		{ "{\"resourceSpans\":[{\"scopeSpans\":[{\"spans\":[{"
+		    "\"traceId\":\"00000000000000000000000000000000\"}]}]}]}",
+		    "non-zero" },
+		{ "{\"resourceSpans\":[{\"scopeSpans\":[{\"spans\":[{"
+		    "\"traceId\":\"0102030405060708090a0b0c0d0e0f10\","
+		    "\"spanId\":\"0102030405060708\",\"parentSpanId\":"
+		    "\"0102030405060708\",\"name\":\"s\"}]}]}]}",
+		    "own parent" },
+		{ "{\"resourceSpans\":[{\"scopeSpans\":[{\"spans\":[{"
+		    "\"traceId\":\"0102030405060708090a0b0c0d0e0f10\","
+		    "\"spanId\":\"0102030405060708\",\"name\":\"s\","
+		    "\"startTimeUnixNano\":\"2\",\"endTimeUnixNano\":\"1\"}]}]}]}",
+		    "ends before it starts" },
+		{ "{\"resourceSpans\":[{\"scopeSpans\":[{\"spans\":[{"
+		    "\"traceId\":\"0102030405060708090a0b0c0d0e0f10\","
+		    "\"spanId\":\"0102030405060708\",\"name\":\"s\","
+		    "\"kind\":6}]}]}]}", "out of range" },
+		{ "{\"resourceSpans\":[{\"scopeSpans\":[{\"spans\":[{"
+		    "\"traceId\":\"0102030405060708090a0b0c0d0e0f10\","
+		    "\"spanId\":\"0102030405060708\",\"name\":\"\"}]}]}]}",
+		    "no name" },
+	};
+	struct jv *v;
+	char err[512];
+	size_t i;
+	int rc;
+
+	for (i = 0; i < nitems(cases); i++) {
+		v = jv_parse(cases[i].doc, strlen(cases[i].doc), err,
+		    sizeof(err));
+		if (v != NULL) {
+			rc = otlp_validate_request(v, NULL, err, sizeof(err));
+			jv_free(v);
+			ATF_REQUIRE_MSG(rc != 0, "accepted: %s", cases[i].doc);
+		}
+		ATF_REQUIRE_MSG(strstr(err, cases[i].why) != NULL,
+		    "%s: got \"%s\", want \"%s\"", cases[i].doc, err,
+		    cases[i].why);
+	}
+}
+
+/* And it accepts what the spec allows that this library never emits. */
+ATF_TC_WITHOUT_HEAD(validator_accepts);
+ATF_TC_BODY(validator_accepts, tc)
+{
+	static const char *const docs[] = {
+		"{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{"
+		    "\"body\":{\"arrayValue\":{\"values\":[{\"doubleValue\":1.5},"
+		    "{\"boolValue\":false},{\"doubleValue\":\"NaN\"}]}},"
+		    "\"attributes\":[{\"key\":\"k\",\"value\":{\"kvlistValue\":"
+		    "{\"values\":[{\"key\":\"x\",\"value\":{\"bytesValue\":"
+		    "\"AAE=\"}}]}}}],\"flags\":1,\"traceId\":\"\","
+		    "\"spanId\":\"\",\"eventName\":\"e\"}]}]}]}",
+		" {\"resourceMetrics\" : [ ] } ",
+		"{\"resourceSpans\":[{\"resource\":{\"attributes\":[],"
+		    "\"droppedAttributesCount\":0},\"scopeSpans\":[{\"scope\":{"
+		    "\"name\":\"s\"},\"spans\":[{\"traceId\":"
+		    "\"0102030405060708090a0b0c0d0e0f10\",\"spanId\":"
+		    "\"0102030405060708\",\"name\":\"s\",\"startTimeUnixNano\":"
+		    "\"1\",\"endTimeUnixNano\":\"1\",\"events\":[{\"name\":\"e\","
+		    "\"timeUnixNano\":\"1\"}],\"links\":[{\"traceId\":"
+		    "\"0102030405060708090a0b0c0d0e0f10\",\"spanId\":"
+		    "\"0102030405060709\"}],\"status\":{}}]}]}]}",
+		"{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{\"body\":"
+		    "{\"stringValue\":\"\\u00e9\\ud83d\\ude00\\/\\b\\f\\n\\r\\t\"}"
+		    "}]}]}]}",
+		"{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":[{"
+		    "\"name\":\"m\",\"gauge\":{\"dataPoints\":[{"
+		    "\"timeUnixNano\":\"1\",\"asDouble\":-1.5e-3}]}}]}]}]}",
+	};
+	struct jv *v;
+	char err[512];
+	size_t i;
+
+	for (i = 0; i < nitems(docs); i++) {
+		v = jv_parse(docs[i], strlen(docs[i]), err, sizeof(err));
+		ATF_REQUIRE_MSG(v != NULL, "%s: %s", docs[i], err);
+		ATF_REQUIRE_MSG(otlp_validate_request(v, NULL, err,
+		    sizeof(err)) == 0, "%s: %s", docs[i], err);
+		jv_free(v);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1806,5 +2264,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, otlp_spool_rewrite_fail);
 	ATF_TP_ADD_TC(tp, otlp_tls);
 	ATF_TP_ADD_TC(tp, otlp_alloc_failure);
+	ATF_TP_ADD_TC(tp, span_ids);
+	ATF_TP_ADD_TC(tp, span_otlpjson_golden);
+	ATF_TP_ADD_TC(tp, span_doubles);
+	ATF_TP_ADD_TC(tp, span_jsonl_text);
+	ATF_TP_ADD_TC(tp, span_http);
+	ATF_TP_ADD_TC(tp, validator_rejects);
+	ATF_TP_ADD_TC(tp, validator_accepts);
 	return (atf_no_error());
 }

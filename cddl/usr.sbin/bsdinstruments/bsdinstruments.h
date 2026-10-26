@@ -67,6 +67,7 @@ struct render_opts {
 	int		 with_stack;
 	int		 with_ustack;
 	double		 duration;	/* <= 0: none */
+	int		 structured;	/* render for a structured format */
 };
 
 const char *profile_origin_name(enum profile_origin);

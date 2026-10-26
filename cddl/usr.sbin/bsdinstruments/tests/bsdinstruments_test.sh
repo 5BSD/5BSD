@@ -680,6 +680,132 @@ EOF
 	    bsdinstruments probes --regex x
 }
 
+make_span_profile()
+{
+	mkdir -p "$1"
+	cat > "$1/$2.d" <<'EOF'
+/*
+ * Span marker test profile.
+ */
+syscall::read:entry { self->ts = timestamp; }
+syscall::read:return
+/self->ts/
+{
+	printf("%s[%d]: read\n", execname, pid);
+	/* @bsdinstruments-span(name="read \"x\"", kind=server,
+	    start=self->ts, error=errno, int.fd=(int)arg0,
+	    str.op=probefunc == "read" ? "r, w" : "(w)",
+	    parent=self->p[1], span=self->ts, trace=1, thread=tid,
+	    pid=pid, execname=execname, end=timestamp) */
+	self->ts = 0;
+}
+EOF
+}
+
+atf_test_case generate_span_markers
+generate_span_markers_head()
+{
+	atf_set descr "span markers render to record printfs, or vanish in text"
+}
+generate_span_markers_body()
+{
+	export HOME="$(pwd)/home"
+	make_span_profile "$HOME/.bsdinstruments/profiles" spans
+	atf_check -o save:text.d bsdinstruments generate spans
+	atf_check -s exit:1 grep -q 'otel.span' text.d
+	atf_check -s exit:1 grep -q '@bsdinstruments-span' text.d
+	atf_check -o save:json.d bsdinstruments generate spans --format json
+	atf_check -s exit:1 grep -q '@bsdinstruments-span' json.d
+	atf_check -o match:'printf\("\\037otel.span\\037name=%s\\037start=%d\\037end=%d\\037thread=%d\\037pid=%d\\037execname=%s\\037error=%d\\037a.i.fd=%d\\037a.s.op=%s\\037parent=%d\\037span=%d\\037trace=%d\\037kind=server\\n", "read \\"x\\"", \(int64_t\)\(self->ts\), \(int64_t\)\(timestamp\), \(int64_t\)\(tid\), \(int64_t\)\(pid\), execname, \(int64_t\)\(errno\), \(int64_t\)\(\(int\)arg0\), probefunc == "read" \? "r, w" : "\(w\)", \(int64_t\)\(self->p\[1\]\), \(int64_t\)\(self->ts\), \(int64_t\)\(1\)\);' \
+	    cat json.d
+	# Defaults: end=timestamp, thread=tid, pid, execname.
+	cat > min.d <<'EOF'
+BEGIN { /* @bsdinstruments-span(name="m", start=1) */ }
+EOF
+	atf_check -o match:'"m", \(int64_t\)\(1\), \(int64_t\)\(timestamp\), \(int64_t\)\(tid\), \(int64_t\)\(pid\), execname\);' \
+	    bsdinstruments generate -f min.d --format otlp-json
+}
+
+atf_test_case generate_span_marker_errors
+generate_span_marker_errors_head()
+{
+	atf_set descr "malformed span markers are rendering errors"
+}
+generate_span_marker_errors_body()
+{
+	check_bad()
+	{
+		printf '%s\n' "$1" > bad.d
+		atf_check -s exit:1 -o empty -e match:"$2" \
+		    bsdinstruments generate -f bad.d --format json
+	}
+	check_bad '/* @bsdinstruments-span(start=1) */' 'needs name= and start='
+	check_bad '/* @bsdinstruments-span(name="x") */' 'needs name= and start='
+	check_bad '/* @bsdinstruments-span(name="x", start=1, bogus=2) */' \
+	    "unknown span marker key 'bogus'"
+	check_bad '/* @bsdinstruments-span(name="x", start=1, kind=rpc) */' \
+	    'span kind must be'
+	check_bad '/* @bsdinstruments-span(name="x", start) */' \
+	    "argument 'start' is not key=value"
+	check_bad '/* @bsdinstruments-span(name="x", start=) */' \
+	    "key 'start' has no value"
+	check_bad '/* @bsdinstruments-span(name="x", start=1 */' \
+	    'malformed span marker'
+	check_bad '/* @bsdinstruments-span(name="x, start=1) */' \
+	    'malformed span marker'
+	check_bad '/* @bsdinstruments-span(name="x", start=1) x */' \
+	    'malformed span marker'
+	check_bad '/* @bsdinstruments-span(name=f(a, start=1) */' \
+	    'malformed span marker'
+	many='name="x", start=1'
+	i=0
+	while [ $i -lt 40 ]; do many="$many, int.k$i=$i"; i=$((i + 1)); done
+	check_bad "/* @bsdinstruments-span($many) */" 'too many span marker'
+	# Text rendering ignores the arguments but still needs the shape.
+	printf '%s\n' '/* @bsdinstruments-span(name="x", start=1 */' > bad.d
+	atf_check -s exit:1 -o empty -e match:'malformed span marker' \
+	    bsdinstruments generate -f bad.d
+	printf '%s\n' "/* @bsdinstruments-span(name='x', start=a[1]) */" > ok.d
+	atf_check -o match:"'x'" bsdinstruments generate -f ok.d --format json
+}
+
+atf_test_case watch_spans
+watch_spans_head()
+{
+	atf_set descr "span records export as OTLP spans (file and json) with parent links"
+	atf_set require.progs cc
+}
+watch_spans_body()
+{
+	mock_setup
+	v=$(validator)
+	cat >> script <<'EOF'
+chunk 0 1000 1 \037otel.clock\037wall=1700000000000000000\037ts=1000\n
+chunk 1 3500 9 \037otel.span\037name=block io\037start=3000\037end=3500\037thread=77\037parent=2000\037pid=5\037execname=sh\037error=5\037a.i.disk.io.bytes=4096\n
+chunk 0 9000 8 \037otel.span\037name=read\037start=2000\037end=9000\037thread=77\037kind=server\037pid=5\037execname=sh\n
+chunk 0 9000 8 sh[5]: read\n
+work
+EOF
+	atf_check -s exit:0 -o empty -e empty bsdinstruments watch mock-prof \
+	    --format otlp-json --output out.jsonl
+	atf_check -o match:'requests=2 logs=1 metrics=0 datapoints=0 spans=2' \
+	    "$v" out.jsonl
+	atf_check -o match:'"startTimeUnixNano":"1700000000000002000","endTimeUnixNano":"1700000000000002500"' \
+	    -o match:'"status":\{"code":2,"message":"error 5"\}' \
+	    -o match:'"parentSpanId":"[0-9a-f]{16}"' \
+	    -o match:'"key":"disk.io.bytes","value":\{"intValue":"4096"\}' \
+	    grep resourceSpans out.jsonl
+	# The child's parentSpanId is the parent's spanId.
+	parent=$(grep -o '"parentSpanId":"[0-9a-f]*"' out.jsonl | cut -d'"' -f4)
+	atf_check -o match:"\"spanId\":\"$parent\",\"name\":\"read\"" \
+	    cat out.jsonl
+	atf_check -s exit:0 -o save:out.json -e empty \
+	    bsdinstruments watch mock-prof --format json
+	atf_check -o match:'"type":"span".*"name":"block io".*"duration_ns":500,"kind":"internal","status":"error"' \
+	    cat out.json
+	atf_check -o match:'"kind":"server","status":"unset"' cat out.json
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case list_basic
@@ -705,4 +831,7 @@ atf_init_test_cases()
 	atf_add_test_case watch_libdtrace_failures
 	atf_add_test_case watch_drops_and_signals
 	atf_add_test_case probes_mock
+	atf_add_test_case generate_span_markers
+	atf_add_test_case generate_span_marker_errors
+	atf_add_test_case watch_spans
 }

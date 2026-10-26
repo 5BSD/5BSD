@@ -64,6 +64,35 @@ text_event(struct oe_exporter *e, const struct oe_event *ev)
 	return (text_put(t, &b));
 }
 
+/* "span <name> <duration> [status] trace=... span=... [parent=...]" */
+static int
+text_span(struct oe_exporter *e, const struct oe_span *sp)
+{
+	struct oe_text *t = (struct oe_text *)e;
+	struct oe_buf b;
+	char hex[2 * OE_TRACE_ID_LEN + 1];
+	int64_t dur;
+
+	dur = ((int64_t)sp->end.tv_sec - sp->start.tv_sec) * 1000000000 +
+	    (sp->end.tv_nsec - sp->start.tv_nsec);
+	oe_buf_init(&b);
+	oe_buf_appendf(&b, "span %s %jdus", sp->name, (intmax_t)(dur / 1000));
+	if (sp->status == OE_STATUS_ERROR)
+		oe_buf_appendf(&b, " error%s%s", sp->status_message != NULL ?
+		    ": " : "", sp->status_message != NULL ?
+		    sp->status_message : "");
+	oe_id_hex(sp->trace_id, OE_TRACE_ID_LEN, hex);
+	oe_buf_appendf(&b, " trace=%s", hex);
+	oe_id_hex(sp->span_id, OE_SPAN_ID_LEN, hex);
+	oe_buf_appendf(&b, " span=%s", hex);
+	if (!oe_id_is_zero(sp->parent_span_id, OE_SPAN_ID_LEN)) {
+		oe_id_hex(sp->parent_span_id, OE_SPAN_ID_LEN, hex);
+		oe_buf_appendf(&b, " parent=%s", hex);
+	}
+	oe_buf_appendstr(&b, "\n");
+	return (text_put(t, &b));
+}
+
 static const char *
 agg_kind_name(enum oe_agg_kind kind)
 {
@@ -146,6 +175,7 @@ static const struct oe_exporter_ops text_ops = {
 	.flush = text_flush,
 	.shutdown = text_shutdown,
 	.free = text_free,
+	.span = text_span,
 };
 
 struct oe_exporter *
