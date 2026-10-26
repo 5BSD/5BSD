@@ -28,9 +28,10 @@ CFLAGS+=	-I${SRCTOP}/sys/cddl/compat/opensolaris \
 		-I${OPENSOLARIS_SYS_DISTDIR}/compat
 CFLAGS+=	-DHAVE_ISSETUGID
 CFLAGS+=	-I${SRCTOP}/lib/libotelexport
+CFLAGS+=	-I${SRCTOP}/cddl/lib/libdtotel
 CFLAGS+=	-I${SRCTOP}/lib/libtracecmp
 
-LIBADD=		tracecmp dtrace ctf elf proc spl xo pthread otelexport m
+LIBADD=		dtotel tracecmp dtrace ctf elf proc spl xo pthread otelexport m
 
 # The bundled profile catalog, installed for the loader's base tier.
 FILESGROUPS+=	PROFILES

@@ -293,6 +293,393 @@ SRC
     atf_check -s exit:1 -o empty grep -F BROKER_REQUEST_DENIED local-error
 }
 
+# ------------------------------------------------------------------
+# Mocked libdtrace runs.  mockdtrace.c is a scripted libdtrace (see
+# its header); it is preloaded into the installed binary, or already
+# linked in when $BI_MOCK_LINKED is set (the coverage harness).
+
+mock_setup()
+{
+	if [ -z "${BI_MOCK_LINKED}" ]; then
+		[ -f /usr/include/dtrace.h ] || atf_skip "dtrace.h not installed"
+		atf_check -s exit:0 -o empty -e empty cc -shared -fPIC -w \
+		    -o mockdtrace.so "$(atf_get_srcdir)/mockdtrace.c"
+		export LD_PRELOAD="$PWD/mockdtrace.so"
+	fi
+	export BI_MOCK="$PWD/script"
+	export BI_MOCK_LOG="$PWD/mock.log"
+	: > script
+	export HOME="$PWD/home"
+	mkdir -p "$HOME/.bsdinstruments/profiles"
+	cat > "$HOME/.bsdinstruments/profiles/mock-prof.d" <<'EOF'
+/*
+ * Mock profile.
+ */
+syscall::read:entry
+/* @bsdinstruments-predicate */
+{
+	printf("%s[%d]: read\n", execname, pid);
+	/* @bsdinstruments-stack */
+	@reads[execname] = count();
+}
+EOF
+}
+
+validator()
+{
+	v=${OTLP_VALIDATE:-/usr/tests/lib/libotelexport/otlp_validate}
+	[ -x "$v" ] || atf_skip "otlp_validate not installed"
+	echo "$v"
+}
+
+collector()
+{
+	c=${OTLP_COLLECTOR:-/usr/tests/lib/libotelexport/otlp_collector}
+	[ -x "$c" ] || atf_skip "otlp_collector not installed"
+	echo "$c"
+}
+
+# A clock anchor at hrtime 1000 = 2023-11-14T22:13:20Z, then events.
+anchored_script()
+{
+	cat >> script <<'EOF'
+chunk 0 1000 1 \037otel.clock\037wall=1700000000000000000\037ts=1000\n
+chunk 0 5000 2 nginx[42]: read\n
+chunk 0 5000 2               kernel`vn_read+0x10\n
+work
+chunk 1 9000 2 sshd[7]: read\n
+work
+agg reads 3
+EOF
+}
+
+atf_test_case watch_json_probe_time
+watch_json_probe_time_head()
+{
+	atf_set descr "json events carry the probe's wall time and the observed time"
+	atf_set require.progs cc
+}
+watch_json_probe_time_body()
+{
+	mock_setup
+	anchored_script
+	atf_check -s exit:0 -o save:out.json -e empty \
+	    bsdinstruments watch mock-prof --format json
+	atf_check -o match:'"time":"2023-11-14T22:13:20.000Z","observed":"' \
+	    -o match:'"body":"nginx\[42\]: read"' \
+	    -o match:'"probe":"syscall:freebsd:read:entry"' \
+	    -o match:'"stack":\["kernel`vn_read\+0x10"\]' cat out.json
+	atf_check -o inline:"2\n" sh -c 'wc -l < out.json | tr -d " "'
+	# The clock program is compiled first, then the profile.
+	atf_check -o match:'otel.clock' awk '/^compile/ { n++ } n == 1' mock.log
+	atf_check -o match:'execname, pid' awk '/^compile/ { n++ } n == 2' \
+	    mock.log
+	atf_check -o match:'^setopt bufsize=16m' cat mock.log
+}
+
+atf_test_case watch_text_output_file
+watch_text_output_file_head()
+{
+	atf_set descr "text output goes to --output, rotated by size, plain (no color)"
+	atf_set require.progs cc
+}
+watch_text_output_file_body()
+{
+	mock_setup
+	cat >> script <<'EOF'
+chunk 0 1 1 first line of text output\n
+sleep 1100
+work
+chunk 0 2 1 second line\n
+sleep 1100
+work
+agg reads 3
+EOF
+	atf_check -s exit:0 -o empty -e empty bsdinstruments watch mock-prof \
+	    --output out.txt --rotate-size 10 --rotate-keep 2
+	atf_check -o inline:"first line of text output\n" cat out.txt.2
+	atf_check -o inline:"second line\n" cat out.txt.1
+	atf_check -o match:'reads +3' cat out.txt
+	atf_check -s exit:1 grep -q "$(printf '\033')" out.txt
+	# The text path never compiles the clock program.
+	atf_check -s exit:1 grep -q otel.clock mock.log
+	atf_check -o match:'^setopt bufsize=4m' cat mock.log
+}
+
+atf_test_case watch_otlpjson_file
+watch_otlpjson_file_head()
+{
+	atf_set descr "otlp-json writes valid OTLP JSON Lines with probe timestamps"
+	atf_set require.progs cc
+}
+watch_otlpjson_file_body()
+{
+	mock_setup
+	anchored_script
+	v=$(validator)
+	atf_check -s exit:0 -o empty -e empty bsdinstruments watch mock-prof \
+	    --format otlp-json --output out.jsonl --rotate-time 1h
+	atf_check -o match:'requests=2 logs=2 metrics=1' "$v" out.jsonl
+	atf_check -o match:'"timeUnixNano":"1700000000000004000"' \
+	    -o match:'"timeUnixNano":"1700000000000008000"' \
+	    head -1 out.jsonl
+	# To standard output when --output is absent.
+	atf_check -s exit:0 -o save:stdout.jsonl -e empty \
+	    bsdinstruments watch mock-prof --format otlp-json
+	atf_check -o match:'requests=2' "$v" stdout.jsonl
+}
+
+atf_test_case watch_collapsed_file
+watch_collapsed_file_head()
+{
+	atf_set descr "collapsed stacks to a file, including stack-only firings"
+	atf_set require.progs cc
+}
+watch_collapsed_file_body()
+{
+	mock_setup
+	cat >> script <<'EOF'
+chunk 0 5 1 nginx[1]: x\n
+chunk 0 5 1               kernel`a+0x1\n
+chunk 1 6 1               kernel`b+0x2\n
+work
+EOF
+	atf_check -s exit:0 -o empty -e empty bsdinstruments watch mock-prof \
+	    --format collapsed --with-stack --output folded.txt
+	atf_check -o inline:';kernel`b+0x2 1\nnginx;kernel`a+0x1 1\n' \
+	    cat folded.txt
+}
+
+atf_test_case watch_otel_spool
+watch_otel_spool_head()
+{
+	atf_set descr "otel to an unreachable collector spools; a later run resends"
+	atf_set require.progs cc
+	atf_set timeout 120
+}
+watch_otel_spool_body()
+{
+	mock_setup
+	anchored_script
+	v=$(validator)
+	c=$(collector)
+	# Port 9 (discard) on loopback is not listening: refused.
+	atf_check -s exit:0 -o empty -e match:'spooled /v1/logs' \
+	    bsdinstruments watch mock-prof --format otel \
+	    --endpoint http://127.0.0.1:9 --spool spool.jsonl --spool-max 1m
+	atf_check -o match:'requests=2 logs=2 metrics=1' "$v" spool.jsonl
+	mkdir coll
+	"$c" -o coll -n 4 -t 60 &
+	cpid=$!
+	while [ ! -s coll/port ]; do sleep 0.1; done
+	export OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:$(cat coll/port)"
+	export OTEL_EXPORTER_OTLP_COMPRESSION=none
+	atf_check -s exit:0 -o empty -e match:'resent 2 spooled batches' \
+	    bsdinstruments watch mock-prof --format otel --spool spool.jsonl
+	wait $cpid
+	atf_check -o empty cat spool.jsonl
+	for f in coll/*.json; do
+		atf_check -o match:'requests=1' "$v" "$f"
+	done
+	atf_check -o match:'v1/metrics' cat coll/1.path coll/2.path \
+	    coll/3.path coll/4.path
+}
+
+atf_test_case watch_output_errors
+watch_output_errors_head()
+{
+	atf_set descr "output problems are clear errors, before tracing starts"
+	atf_set require.progs cc
+	atf_set require.user unprivileged
+}
+watch_output_errors_body()
+{
+	mock_setup
+	anchored_script
+	atf_check -s exit:1 -o empty -e match:'nodir/out.json: open failed' \
+	    bsdinstruments watch mock-prof --format json --output nodir/out.json
+	# Nothing reached libdtrace.
+	atf_check -s exit:0 test ! -e mock.log
+	mkdir ro && chmod 555 ro
+	atf_check -s exit:1 -o empty -e match:'Permission denied' \
+	    bsdinstruments watch mock-prof --format otlp-json --output ro/x
+	atf_check -s exit:1 -o empty -e match:'spool .*open failed' \
+	    bsdinstruments watch mock-prof --format otel --spool ro/s
+	# Disk full while writing (RLIMIT_FSIZE, SIGXFSZ ignored).
+	i=0
+	while [ $i -lt 40 ]; do
+		echo 'chunk 0 5000 2 nginx[42]: a long line to fill the file up\n'
+		i=$((i + 1))
+	done >> script
+	atf_check -s exit:1 -o empty -e match:'File too large' \
+	    sh -c 'trap "" XFSZ; ulimit -f 1; exec bsdinstruments watch \
+	    mock-prof --format json --output big.json'
+}
+
+atf_test_case watch_usage_errors
+watch_usage_errors_head()
+{
+	atf_set descr "watch rejects inconsistent output options"
+}
+watch_usage_errors_body()
+{
+	export HOME="$PWD/home"
+	atf_check -s exit:2 -e match:'rotation options need --output' \
+	    bsdinstruments watch -f x.d --rotate-size 1m
+	atf_check -s exit:2 -e match:'otlp-json to write OTLP to a file' \
+	    bsdinstruments watch -f x.d --format otel --output f
+	atf_check -s exit:2 -e match:'apply to --format otel only' \
+	    bsdinstruments watch -f x.d --spool s
+	atf_check -s exit:2 -e match:'apply to --format otel only' \
+	    bsdinstruments watch -f x.d --format json --endpoint http://h
+	atf_check -s exit:2 -e match:'needs --spool' \
+	    bsdinstruments watch -f x.d --format otel --spool-max 1m
+	atf_check -s exit:2 -e match:'positive number' \
+	    bsdinstruments watch -f x.d --output f --rotate-size 0
+	atf_check -s exit:2 -e match:'positive number' \
+	    bsdinstruments watch -f x.d --output f --rotate-size 5x
+	atf_check -s exit:2 -e match:'positive number' \
+	    bsdinstruments watch -f x.d --output f --rotate-size 99999999999g
+	atf_check -s exit:2 -e match:'positive number' \
+	    bsdinstruments watch -f x.d --output f --rotate-time 1mm
+	atf_check -s exit:2 -e match:'positive number' \
+	    bsdinstruments watch -f x.d --output f --rotate-time -5
+	atf_check -s exit:2 -e match:'positive number' \
+	    bsdinstruments watch -f x.d --output f --rotate-time 99999999999999999999
+	atf_check -s exit:2 -e match:'between 1 and 999' \
+	    bsdinstruments watch -f x.d --output f --rotate-keep 1000
+	atf_check -s exit:2 -e match:'needs a file name' \
+	    bsdinstruments watch -f x.d --output ''
+	atf_check -s exit:2 -e match:'needs a value' \
+	    bsdinstruments watch -f x.d --format otel --endpoint ''
+	atf_check -s exit:2 -e match:'otlp-json, or collapsed' \
+	    bsdinstruments watch -f x.d --format xml
+	atf_check -s exit:2 -e match:usage \
+	    bsdinstruments generate -f x.d --output f
+	atf_check -s exit:2 -e match:usage \
+	    bsdinstruments generate -f x.d --rotate-time 1s
+	atf_check -s exit:2 -e match:usage \
+	    bsdinstruments generate -f x.d --rotate-keep 2
+	atf_check -s exit:2 -e match:usage \
+	    bsdinstruments generate -f x.d --spool-max 1k
+}
+
+atf_test_case watch_libdtrace_failures
+watch_libdtrace_failures_head()
+{
+	atf_set descr "every libdtrace failure point exits 1 with a message"
+	atf_set require.progs cc
+}
+watch_libdtrace_failures_body()
+{
+	mock_setup
+	for f in open setopt:bufsize setopt:aggsize setopt:switchrate \
+	    setopt:quiet handle_drop handle_buffered compile:1 compile:2 \
+	    exec go; do
+		echo "fail $f" > script
+		atf_check -s exit:1 -o ignore -e not-empty \
+		    bsdinstruments watch mock-prof --format json
+	done
+	echo "fail compile:1" > script
+	atf_check -s exit:1 -o empty -e match:"profile 'mock-prof' failed" \
+	    bsdinstruments watch mock-prof
+	echo "fail go" > script
+	atf_check -s exit:1 -o empty -e match:'failed to start trace' \
+	    bsdinstruments watch mock-prof
+	echo "fail open" > script
+	atf_check -s exit:1 -o empty -e match:'local DTrace open failed' \
+	    bsdinstruments watch mock-prof --format otlp-json
+	# work() failure, and aggregation failures, still exit cleanly.
+	printf 'fail work\n' > script
+	atf_check -s exit:0 -o ignore -e match:'work\(\) failed' \
+	    bsdinstruments watch mock-prof --format json
+	: > script
+	anchored_script
+	printf 'fail snap\n' >> script
+	atf_check -s exit:0 -o ignore -e match:'snapshot failed' \
+	    bsdinstruments watch mock-prof
+	atf_check -s exit:0 -o ignore -e match:'snapshot failed' \
+	    bsdinstruments watch mock-prof --format json
+	: > script
+	anchored_script
+	printf 'fail aggprint\nfail walk\n' >> script
+	atf_check -s exit:0 -o ignore -e match:'print failed' \
+	    bsdinstruments watch mock-prof
+	atf_check -s exit:0 -o ignore -e match:'walk failed' \
+	    bsdinstruments watch mock-prof --format json
+}
+
+atf_test_case watch_drops_and_signals
+watch_drops_and_signals_head()
+{
+	atf_set descr "drops are reported; SIGINT stops and the last pass drains"
+	atf_set require.progs cc
+}
+watch_drops_and_signals_body()
+{
+	mock_setup
+	v=$(validator)
+	cat > script <<'EOF'
+chunk 0 1 1 a[1]: x\n
+drop 5
+work
+signal
+work
+chunk 0 2 1 drained[2]: y\n
+work
+chunk 0 3 1 unread[3]: z\n
+work
+EOF
+	atf_check -s exit:0 -o save:out.jsonl -e match:'dropped 5 record' \
+	    bsdinstruments watch mock-prof --format otlp-json
+	# The loop stops at the signal; the post-stop pass still drains
+	# what the kernel buffered, as dtrace(1) does.
+	atf_check -o match:'requests=1 logs=2' "$v" out.jsonl
+	atf_check -s exit:0 -o ignore grep drained out.jsonl
+	atf_check -s exit:1 grep -q unread out.jsonl
+	atf_check -s exit:0 -o ignore -e match:'dropped 5 record' \
+	    bsdinstruments watch mock-prof
+}
+
+atf_test_case probes_mock
+probes_mock_head()
+{
+	atf_set descr "probes lists, filters, and reports failures"
+	atf_set require.progs cc
+}
+probes_mock_body()
+{
+	mock_setup
+	cat > script <<'EOF'
+probe syscall:freebsd:read:entry
+probe syscall:freebsd:write:entry
+probe fbt:kernel:vn_open:entry
+EOF
+	atf_check -s exit:0 -o match:'fbt:kernel:vn_open:entry' \
+	    -e match:'3 probes' bsdinstruments probes
+	atf_check -s exit:0 -o inline:'syscall:freebsd:write:entry\n' \
+	    -e match:'1 probe$' bsdinstruments probes --regex 'wr.te'
+	atf_check -s exit:0 -o match:'"fullName":"syscall:freebsd:read:entry"' \
+	    -o match:'"id":1,' -e empty bsdinstruments probes --json \
+	    --provider syscall --pid 1
+	atf_check -s exit:2 -e match:'invalid --regex' \
+	    bsdinstruments probes --regex '('
+	atf_check -s exit:2 -e match:usage bsdinstruments probes extra
+	echo 'fail str2desc' >> script
+	atf_check -s exit:1 -e match:'invalid provider' \
+	    bsdinstruments probes --provider x --regex .
+	sed -i '' '/fail/d' script
+	echo 'fail grab' >> script
+	atf_check -s exit:1 -e match:'failed to grab pid 9' \
+	    bsdinstruments probes --pid 9
+	sed -i '' '/fail/d' script
+	echo 'fail iter' >> script
+	atf_check -s exit:1 -e match:'listing failed' bsdinstruments probes
+	echo 'fail open' >> script
+	atf_check -s exit:1 -e match:'local DTrace open failed' \
+	    bsdinstruments probes --regex x
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case list_basic
@@ -308,4 +695,14 @@ atf_init_test_cases()
 	atf_add_test_case profiles_compile
 	atf_add_test_case pf_profiles_compile
 	atf_add_test_case capability_services_live_probes
+	atf_add_test_case watch_json_probe_time
+	atf_add_test_case watch_text_output_file
+	atf_add_test_case watch_otlpjson_file
+	atf_add_test_case watch_collapsed_file
+	atf_add_test_case watch_otel_spool
+	atf_add_test_case watch_output_errors
+	atf_add_test_case watch_usage_errors
+	atf_add_test_case watch_libdtrace_failures
+	atf_add_test_case watch_drops_and_signals
+	atf_add_test_case probes_mock
 }

@@ -6,8 +6,8 @@
  * libotelexport — shared exporter layer for the ObservableBSD tools
  * (bsdinstruments, hwstat).  An exporter consumes probe events and
  * aggregation snapshots from a tool's run loop and ships them to a
- * destination: stdout (text, JSONL, collapsed stacks) or an
- * OTLP/HTTP+JSON collector.
+ * destination: a stream or rotating file (text, JSONL, collapsed
+ * stacks, OTLP JSON Lines) or an OTLP/HTTP+JSON collector.
  *
  * C port of the ObservableBSD Swift OTelExport library.
  */
@@ -39,7 +39,7 @@ struct oe_frame {
  * exporters must copy anything they keep.
  */
 struct oe_event {
-	struct timespec	 ts;		/* wall clock (CLOCK_REALTIME) */
+	struct timespec	 ts;		/* probe wall clock (CLOCK_REALTIME) */
 	const char	*profile;	/* profile / tool name */
 	const char	*probe;		/* probe name or "" */
 	pid_t		 pid;		/* 0 for system-level events */
@@ -49,6 +49,11 @@ struct oe_event {
 	size_t		 nstack;
 	const struct oe_frame *ustack;	/* user stack or NULL */
 	size_t		 nustack;
+	/*
+	 * When the consumer read the event (observedTimeUnixNano).
+	 * Zero means "now" at encoding time.
+	 */
+	struct timespec	 observed;
 };
 
 /* Which aggregating function a snapshot came from. */
@@ -95,6 +100,11 @@ struct oe_snapshot {
 	enum oe_agg_kind kind;
 	const struct oe_datapoint *points;
 	size_t		 npoints;
+	/*
+	 * Start of the accumulation window (startTimeUnixNano of
+	 * cumulative sums and histograms); zero omits it.
+	 */
+	struct timespec	 start;
 };
 
 /* OTel resource attributes attached to every record. */
@@ -139,11 +149,56 @@ struct oe_exporter {
 #define	oe_exporter_free(e)	((e)->ops->free(e))
 
 /*
- * Constructors.  Output FILE pointers are borrowed, not closed.
+ * Output sink: a borrowed stream or an owned file with optional size
+ * and age rotation (path.1 newest .. path.N oldest) and durable
+ * (fsync) flushes.  Records are never split across a rotation.
+ * Functions return 0 or -1 with a message on stderr; the first write
+ * error is sticky.
+ */
+struct oe_sink;
+
+struct oe_sink_config {
+	const char	*path;		/* NULL or "-": borrowed stream */
+	FILE		*fp;		/* borrowed stream; NULL = stdout */
+	uint64_t	 rotate_size;	/* bytes; 0 disables */
+	time_t		 rotate_interval; /* seconds; 0 disables */
+	unsigned	 rotate_keep;	/* rotated files kept; 0 = 7 */
+	int		 durable;	/* fsync on flush/rotate/close */
+};
+
+struct oe_sink	*oe_sink_open(const struct oe_sink_config *);
+int	 oe_sink_write(struct oe_sink *, const void *, size_t);
+int	 oe_sink_poll(struct oe_sink *);
+int	 oe_sink_flush(struct oe_sink *);
+FILE	*oe_sink_stream(struct oe_sink *);
+const char *oe_sink_path(const struct oe_sink *);
+int	 oe_sink_close(struct oe_sink *);
+
+/*
+ * Constructors.  Output FILE pointers and sinks are borrowed, not
+ * closed.
  */
 struct oe_exporter *oe_text_new(FILE *out);
 struct oe_exporter *oe_jsonl_new(FILE *out, const char *profile);
 struct oe_exporter *oe_collapsed_new(FILE *out);
+struct oe_exporter *oe_text_sink_new(struct oe_sink *);
+struct oe_exporter *oe_jsonl_sink_new(struct oe_sink *, const char *profile);
+struct oe_exporter *oe_collapsed_sink_new(struct oe_sink *);
+
+/*
+ * OTLP JSON Lines file exporter: one ExportLogsServiceRequest,
+ * ExportMetricsServiceRequest or ExportTraceServiceRequest JSON
+ * object per line, as written by the OpenTelemetry Collector's file
+ * exporter and read by its otlpjsonfile receiver.
+ */
+struct oe_otlpjson_config {
+	struct oe_sink	*sink;		/* borrowed */
+	const char	*profile;
+	const struct oe_resource *resource;
+	int		 batch_size;	/* records per line; 0 = 200 */
+};
+
+struct oe_exporter *oe_otlpjson_new(const struct oe_otlpjson_config *);
 
 /* Configuration for the OTLP/HTTP+JSON exporter. */
 struct oe_otlp_config {
@@ -157,6 +212,13 @@ struct oe_otlp_config {
 	const struct oe_attr *headers;	/* extra HTTP headers */
 	size_t		 nheaders;
 	const char	*compression;	/* "none" disables gzip; else gzip */
+	/*
+	 * Optional spool: batches that still fail after the retries
+	 * are appended here as OTLP JSON Lines and resent, oldest
+	 * first, once the collector accepts a request again.
+	 */
+	const char	*spool_path;	/* NULL disables spooling */
+	uint64_t	 spool_max;	/* bytes; 0 = 64 MiB */
 };
 
 struct oe_exporter *oe_otlp_new(const struct oe_otlp_config *);
@@ -184,6 +246,11 @@ struct oe_env {
 	size_t		 nheaders;
 };
 
+/*
+ * Load the variables above.  Malformed values (a non-numeric or
+ * negative timeout, a key=value pair without '=' or with an empty
+ * key) are reported on stderr and ignored, never half-applied.
+ */
 void	oe_env_load(struct oe_env *);
 void	oe_env_free(struct oe_env *);
 

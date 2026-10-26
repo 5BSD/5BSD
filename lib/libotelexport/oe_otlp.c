@@ -5,19 +5,37 @@
  *
  * OTLP/HTTP+JSON exporter.  Batches events as OpenTelemetry
  * LogRecords and POSTs them to /v1/logs; aggregation snapshots map
- * to OTLP metrics POSTed to /v1/metrics.
+ * to OTLP metrics POSTed to /v1/metrics.  Request bodies come from
+ * the shared encoder (oe_otlpenc.c), so they are identical to the
+ * lines the OTLP JSON file exporter writes.
  *
  * Batching is count-based (default 200 records) plus a time-based
  * flush (default 500 ms).  A dedicated sender thread performs the
  * HTTP POSTs so network latency never blocks the caller's consumer
  * loop.  Failed posts retry with exponential backoff and jitter per
  * the OTLP spec; 429/503 Retry-After is honored.
+ *
+ * With a spool configured, a request that still fails after the
+ * retries is appended to the spool file as one OTLP JSON line
+ * (fsynced) instead of being lost.  After the next accepted request,
+ * and periodically while idle, the spool is replayed oldest first;
+ * whatever the collector still refuses stays spooled.  The spool is
+ * bounded: a request that would push it past the limit is dropped
+ * and counted, so an outage cannot fill the disk.  Requests the
+ * collector rejects as malformed (non-retryable 4xx) are never
+ * spooled, since resending cannot succeed.
  */
 
+#include <sys/param.h>
+#include <sys/stat.h>
+
+#include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -25,15 +43,25 @@
 
 #include "otelexport.h"
 #include "oe_http.h"
+#include "oe_otlpenc.h"
 
 #define	OTLP_DEFAULT_BATCH	200
 #define	OTLP_DEFAULT_FLUSH	0.5
 #define	OTLP_DEFAULT_RETRIES	2
 #define	OTLP_DEFAULT_TIMEOUT	10.0
+#define	OTLP_DEFAULT_SPOOL	(64ULL * 1024 * 1024)
+#define	OTLP_SPOOL_RETRY	5	/* idle replay cadence, seconds */
+#define	OTLP_NSIGNALS		3
+
+enum post_result {
+	POST_OK,		/* 2xx */
+	POST_REJECTED,		/* non-retryable status: drop */
+	POST_FAILED		/* transport error or retries exhausted */
+};
 
 struct post_job {
 	struct post_job	*next;
-	const char	*path;		/* static string */
+	enum oe_signal	 sig;
 	char		*body;
 	size_t		 len;
 };
@@ -42,10 +70,7 @@ struct oe_otlp {
 	struct oe_exporter e;
 
 	struct oe_url	 url;
-	char		*scope;
-	char		*profile;
-	char		*version;
-	char		*resource_json;	/* prebuilt attribute list */
+	struct oe_otlpenc enc;
 	char		 user_agent[64];
 	int		 batch_size;
 	double		 flush_interval;
@@ -57,297 +82,24 @@ struct oe_otlp {
 
 	pthread_mutex_t	 lock;
 	pthread_cond_t	 cv;
-	char		**logrecs;	/* per-record JSON fragments */
-	size_t		 nlogrecs, caplogrecs;
-	char		**metrics;	/* per-snapshot metric fragments */
-	size_t		 nmetrics, capmetrics;
+	char		**frags[OTLP_NSIGNALS];	/* per-record fragments */
+	size_t		 nfrags[OTLP_NSIGNALS], capfrags[OTLP_NSIGNALS];
 	uint64_t	 pending_drops;
 	struct post_job	*jobs_head, *jobs_tail;
 	int		 stop;
 	int		 started;
 	pthread_t	 sender;
+
+	/* Spool; spool_lock serializes every spool file operation. */
+	pthread_mutex_t	 spool_lock;
+	char		*spool_path;
+	uint64_t	 spool_max;
+	uint64_t	 spool_size;
+	uint64_t	 spool_dropped;
+	time_t		 spool_last_try;
 };
 
 static const struct oe_exporter_ops otlp_ops;
-
-static uint64_t
-ts_unix_nano(const struct timespec *ts)
-{
-
-	if (ts->tv_sec < 0)
-		return (0);
-	return ((uint64_t)ts->tv_sec * 1000000000ULL + (uint64_t)ts->tv_nsec);
-}
-
-static void
-append_kv_string(struct oe_buf *b, const char *key, const char *value,
-    int *first)
-{
-
-	if (!*first)
-		oe_buf_appendstr(b, ",");
-	*first = 0;
-	oe_buf_appendstr(b, "{\"key\":\"");
-	oe_buf_appendjson(b, key);
-	oe_buf_appendstr(b, "\",\"value\":{\"stringValue\":\"");
-	oe_buf_appendjson(b, value != NULL ? value : "");
-	oe_buf_appendstr(b, "\"}}");
-}
-
-static char *
-build_resource_json(const struct oe_resource *r)
-{
-	struct oe_buf b;
-	size_t i;
-	int first = 1;
-
-	oe_buf_init(&b);
-	append_kv_string(&b, "service.name", r->service_name, &first);
-	append_kv_string(&b, "service.version", r->service_version, &first);
-	append_kv_string(&b, "host.name", r->host_name, &first);
-	append_kv_string(&b, "host.arch", r->host_arch, &first);
-	append_kv_string(&b, "os.type", r->os_name, &first);
-	append_kv_string(&b, "os.version", r->os_version, &first);
-	append_kv_string(&b, "telemetry.sdk.name", "observablebsd", &first);
-	append_kv_string(&b, "telemetry.sdk.language", "c", &first);
-	append_kv_string(&b, "telemetry.sdk.version", r->service_version,
-	    &first);
-	if (r->service_instance_id != NULL)
-		append_kv_string(&b, "service.instance.id",
-		    r->service_instance_id, &first);
-	for (i = 0; i < r->ncustom; i++)
-		append_kv_string(&b, r->custom[i].name, r->custom[i].value,
-		    &first);
-	if (b.error) {
-		oe_buf_free(&b);
-		return (NULL);
-	}
-	return (b.data);
-}
-
-/* ---------------------------------------------------------------- */
-/* Envelope construction						*/
-
-static char *
-build_log_envelope(struct oe_otlp *o, char **recs, size_t nrecs,
-    uint64_t drops, size_t *lenp)
-{
-	struct oe_buf b;
-	size_t i, reclen;
-
-	oe_buf_init(&b);
-	oe_buf_appendstr(&b,
-	    "{\"resourceLogs\":[{\"resource\":{\"attributes\":[");
-	oe_buf_appendstr(&b, o->resource_json);
-	oe_buf_appendstr(&b, "]},\"scopeLogs\":[{\"scope\":{\"name\":\"");
-	oe_buf_appendjson(&b, o->scope);
-	oe_buf_appendstr(&b, "\",\"version\":\"");
-	oe_buf_appendjson(&b, o->version);
-	oe_buf_appendstr(&b, "\"},\"logRecords\":[");
-	for (i = 0; i < nrecs; i++) {
-		if (i > 0)
-			oe_buf_appendstr(&b, ",");
-		if (i == 0 && drops > 0) {
-			/*
-			 * Splice a drop-counter attribute into the first
-			 * record.  Every record fragment ends with "]}"
-			 * closing its attribute array.
-			 */
-			reclen = strlen(recs[i]);
-			oe_buf_append(&b, recs[i], reclen - 2);
-			oe_buf_appendstr(&b, ",{\"key\":\"");
-			oe_buf_appendjson(&b, o->scope);
-			oe_buf_appendf(&b,
-			    ".drops\",\"value\":{\"intValue\":\"%ju\"}}]}",
-			    (uintmax_t)drops);
-		} else
-			oe_buf_appendstr(&b, recs[i]);
-	}
-	oe_buf_appendstr(&b, "]}]}]}");
-	if (b.error) {
-		oe_buf_free(&b);
-		return (NULL);
-	}
-	*lenp = b.len;
-	return (b.data);
-}
-
-static char *
-build_metrics_envelope(struct oe_otlp *o, char **frags, size_t nfrags,
-    size_t *lenp)
-{
-	struct oe_buf b;
-	size_t i;
-
-	oe_buf_init(&b);
-	oe_buf_appendstr(&b,
-	    "{\"resourceMetrics\":[{\"resource\":{\"attributes\":[");
-	oe_buf_appendstr(&b, o->resource_json);
-	oe_buf_appendstr(&b, "]},\"scopeMetrics\":[{\"scope\":{\"name\":\"");
-	oe_buf_appendjson(&b, o->scope);
-	oe_buf_appendstr(&b, "\",\"version\":\"");
-	oe_buf_appendjson(&b, o->version);
-	oe_buf_appendstr(&b, "\"},\"metrics\":[");
-	for (i = 0; i < nfrags; i++) {
-		if (i > 0)
-			oe_buf_appendstr(&b, ",");
-		oe_buf_appendstr(&b, frags[i]);
-	}
-	oe_buf_appendstr(&b, "]}]}]}");
-	if (b.error) {
-		oe_buf_free(&b);
-		return (NULL);
-	}
-	*lenp = b.len;
-	return (b.data);
-}
-
-static void
-build_dimension_attrs(struct oe_buf *b, const struct oe_datapoint *dp)
-{
-	size_t i;
-	int first = 1;
-
-	for (i = 0; i < dp->nattrs; i++)
-		append_kv_string(b, dp->attrs[i].name, dp->attrs[i].value,
-		    &first);
-}
-
-static int
-bucket_cmp(const void *a, const void *b)
-{
-	const struct oe_bucket *ba = a, *bb = b;
-
-	if (ba->upper < bb->upper)
-		return (-1);
-	return (ba->upper > bb->upper);
-}
-
-/*
- * Build one snapshot's metric JSON fragment.  count/sum become a
- * monotonic Sum, min/max/avg/stddev a Gauge, quantize variants a
- * Histogram (sum omitted — power-of-2 bucket bounds can't recover
- * the true sum of observations).
- */
-static char *
-build_metric_fragment(struct oe_otlp *o, const struct oe_snapshot *sn)
-{
-	struct oe_buf b;
-	struct oe_bucket *sorted;
-	const struct oe_datapoint *dp;
-	uint64_t tnano;
-	int64_t total;
-	size_t i, j;
-	int firstdp;
-
-	oe_buf_init(&b);
-	tnano = ts_unix_nano(&sn->ts);
-
-	oe_buf_appendstr(&b, "{\"name\":\"");
-	oe_buf_appendjson(&b, o->scope);
-	oe_buf_appendstr(&b, ".");
-	oe_buf_appendjson(&b, sn->profile);
-	oe_buf_appendstr(&b, ".");
-	if (sn->name != NULL && sn->name[0] != '\0')
-		oe_buf_appendjson(&b, sn->name);
-	else {
-		static const char *kindnames[] = {
-			"count", "sum", "min", "max", "avg", "stddev",
-			"quantize", "lquantize", "llquantize"
-		};
-		oe_buf_appendstr(&b, kindnames[sn->kind]);
-	}
-	oe_buf_appendstr(&b, "\",");
-
-	switch (sn->kind) {
-	case OE_AGG_COUNT:
-	case OE_AGG_SUM:
-	case OE_AGG_MIN:
-	case OE_AGG_MAX:
-	case OE_AGG_AVG:
-	case OE_AGG_STDDEV:
-		oe_buf_appendstr(&b, sn->kind == OE_AGG_COUNT ||
-		    sn->kind == OE_AGG_SUM ?
-		    "\"sum\":{\"dataPoints\":[" :
-		    "\"gauge\":{\"dataPoints\":[");
-		firstdp = 1;
-		for (i = 0; i < sn->npoints; i++) {
-			dp = &sn->points[i];
-			if (dp->is_histogram)
-				continue;
-			if (!firstdp)
-				oe_buf_appendstr(&b, ",");
-			firstdp = 0;
-			oe_buf_appendf(&b,
-			    "{\"timeUnixNano\":\"%ju\",\"asInt\":\"%jd\","
-			    "\"attributes\":[", (uintmax_t)tnano,
-			    (intmax_t)dp->scalar);
-			build_dimension_attrs(&b, dp);
-			oe_buf_appendstr(&b, "]}");
-		}
-		if (sn->kind == OE_AGG_COUNT || sn->kind == OE_AGG_SUM)
-			oe_buf_appendstr(&b, "],\"aggregationTemporality\":2,"
-			    "\"isMonotonic\":true}}");
-		else
-			oe_buf_appendstr(&b, "]}}");
-		break;
-
-	case OE_AGG_QUANTIZE:
-	case OE_AGG_LQUANTIZE:
-	case OE_AGG_LLQUANTIZE:
-		oe_buf_appendstr(&b, "\"histogram\":{\"dataPoints\":[");
-		firstdp = 1;
-		for (i = 0; i < sn->npoints; i++) {
-			dp = &sn->points[i];
-			/*
-			 * A histogram with zero buckets would emit
-			 * bucketCounts=[] with explicitBounds=[],
-			 * violating len(counts) == len(bounds)+1.
-			 */
-			if (!dp->is_histogram || dp->nbuckets == 0)
-				continue;
-			sorted = malloc(dp->nbuckets * sizeof(*sorted));
-			if (sorted == NULL) {
-				b.error = 1;
-				break;
-			}
-			memcpy(sorted, dp->buckets,
-			    dp->nbuckets * sizeof(*sorted));
-			qsort(sorted, dp->nbuckets, sizeof(*sorted),
-			    bucket_cmp);
-			total = 0;
-			for (j = 0; j < dp->nbuckets; j++)
-				total += sorted[j].count;
-			if (!firstdp)
-				oe_buf_appendstr(&b, ",");
-			firstdp = 0;
-			oe_buf_appendf(&b,
-			    "{\"timeUnixNano\":\"%ju\",\"count\":\"%jd\","
-			    "\"explicitBounds\":[", (uintmax_t)tnano,
-			    (intmax_t)total);
-			for (j = 0; j + 1 < dp->nbuckets; j++)
-				oe_buf_appendf(&b, "%s%jd", j > 0 ? "," : "",
-				    (intmax_t)sorted[j].upper);
-			oe_buf_appendstr(&b, "],\"bucketCounts\":[");
-			for (j = 0; j < dp->nbuckets; j++)
-				oe_buf_appendf(&b, "%s\"%jd\"",
-				    j > 0 ? "," : "",
-				    (intmax_t)sorted[j].count);
-			oe_buf_appendstr(&b, "],\"attributes\":[");
-			build_dimension_attrs(&b, dp);
-			oe_buf_appendstr(&b, "]}");
-			free(sorted);
-		}
-		oe_buf_appendstr(&b, "],\"aggregationTemporality\":2}}");
-		break;
-	}
-
-	if (b.error) {
-		oe_buf_free(&b);
-		return (NULL);
-	}
-	return (b.data);
-}
 
 /* ---------------------------------------------------------------- */
 /* Posting								*/
@@ -406,16 +158,20 @@ status_retryable(int status)
 static void
 check_partial_success(const char *body, const char *path)
 {
+	static const char *const keys[] = {
+		"\"rejectedLogRecords\":", "\"rejectedDataPoints\":",
+		"\"rejectedSpans\":"
+	};
 	const char *p;
 	long rejected;
+	size_t i;
 
-	if (body == NULL || strstr(body, "partialSuccess") == NULL)
+	if (strstr(body, "partialSuccess") == NULL)
 		return;
 	rejected = 0;
-	if ((p = strstr(body, "\"rejectedLogRecords\":")) != NULL)
-		p += 21;
-	else if ((p = strstr(body, "\"rejectedDataPoints\":")) != NULL)
-		p += 21;
+	for (i = 0, p = NULL; i < nitems(keys) && p == NULL; i++)
+		if ((p = strstr(body, keys[i])) != NULL)
+			p += strlen(keys[i]);
 	if (p != NULL) {
 		/* Skip whitespace and an optional quote (proto3 JSON
 		 * emits int64 as a quoted string). */
@@ -442,17 +198,20 @@ sleep_seconds(double secs)
 	nanosleep(&ts, NULL);
 }
 
-static void
-post_with_retry(struct oe_otlp *o, const char *path, const char *body,
+static enum post_result
+post_with_retry(struct oe_otlp *o, enum oe_signal sig, const char *body,
     size_t len)
 {
 	struct oe_http_response resp;
+	enum post_result result;
+	const char *path;
 	void *gz;
 	const void *payload;
 	size_t paylen;
 	double backoff_ms, retry_after;
-	int attempt, gzipped, retryable;
+	int attempt, gzipped;
 
+	path = oe_enc_path(sig);
 	gz = NULL;
 	gzipped = 0;
 	payload = body;
@@ -466,6 +225,7 @@ post_with_retry(struct oe_otlp *o, const char *path, const char *body,
 			paylen = len;
 	}
 
+	result = POST_FAILED;
 	retry_after = -1.0;
 	for (attempt = 0; attempt <= o->max_retries; attempt++) {
 		if (attempt > 0) {
@@ -477,14 +237,12 @@ post_with_retry(struct oe_otlp *o, const char *path, const char *body,
 			backoff_ms += (double)arc4random_uniform(
 			    (uint32_t)(backoff_ms * 0.5) + 1);
 			sleep_seconds(backoff_ms / 1000.0);
-			if (retry_after > 0)
-				sleep_seconds(retry_after);
+			sleep_seconds(retry_after);
 		}
 
 		if (oe_http_post(&o->url, path, o->headers, o->nheaders,
 		    o->user_agent, payload, paylen, gzipped, o->timeout_ms,
 		    &resp) != 0) {
-			retryable = 1;
 			retry_after = -1.0;
 			if (attempt == o->max_retries)
 				fprintf(stderr, "otlp: POST /%s failed: %s "
@@ -495,14 +253,15 @@ post_with_retry(struct oe_otlp *o, const char *path, const char *body,
 
 		if (resp.status >= 200 && resp.status < 300) {
 			check_partial_success(resp.body, path);
+			result = POST_OK;
 			break;
 		}
 
-		retryable = status_retryable(resp.status);
 		retry_after = resp.retry_after;
-		if (!retryable) {
+		if (!status_retryable(resp.status)) {
 			fprintf(stderr, "otlp: POST /%s returned %d "
 			    "(non-retryable)\n", path, resp.status);
+			result = POST_REJECTED;
 			break;
 		}
 		if (attempt == o->max_retries)
@@ -511,72 +270,229 @@ post_with_retry(struct oe_otlp *o, const char *path, const char *body,
 			    o->max_retries + 1);
 	}
 	free(gz);
+	return (result);
+}
+
+/* ---------------------------------------------------------------- */
+/* Spool								*/
+
+/* Append one request line.  Called with spool_lock held. */
+static void
+spool_append(struct oe_otlp *o, enum oe_signal sig, const char *body,
+    size_t len)
+{
+	int fd;
+
+	if (o->spool_size + len + 1 > o->spool_max) {
+		if (o->spool_dropped++ == 0)
+			fprintf(stderr, "otlp: spool %s is full (%ju bytes); "
+			    "dropping batches until it drains\n",
+			    o->spool_path, (uintmax_t)o->spool_max);
+		return;
+	}
+	fd = open(o->spool_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
+	    0600);
+	if (fd < 0) {
+		fprintf(stderr, "otlp: spool %s: open failed: %s; /%s batch "
+		    "lost\n", o->spool_path, strerror(errno),
+		    oe_enc_path(sig));
+		return;
+	}
+	/*
+	 * The line goes out in two writes; if the second is lost the
+	 * stray partial line is cut off again below, and replay
+	 * ignores a final line without its newline in any case.
+	 */
+	if (write(fd, body, len) != (ssize_t)len ||
+	    write(fd, "\n", 1) != 1 || fsync(fd) != 0) {
+		fprintf(stderr, "otlp: spool %s: write failed: %s; /%s "
+		    "batch lost\n", o->spool_path, strerror(errno),
+		    oe_enc_path(sig));
+		(void)ftruncate(fd, (off_t)o->spool_size);
+		close(fd);
+		return;
+	}
+	close(fd);
+	o->spool_size += len + 1;
+	fprintf(stderr, "otlp: spooled /%s batch to %s (%ju bytes "
+	    "pending)\n", oe_enc_path(sig), o->spool_path,
+	    (uintmax_t)o->spool_size);
+}
+
+static char *
+read_whole(const char *path, size_t *lenp)
+{
+	struct stat st;
+	char *data;
+	ssize_t n;
+	size_t off;
+	int fd;
+
+	fd = open(path, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return (NULL);
+	if (fstat(fd, &st) != 0 || (data = malloc((size_t)st.st_size +
+	    1)) == NULL) {
+		close(fd);
+		return (NULL);
+	}
+	for (off = 0; off < (size_t)st.st_size; off += (size_t)n) {
+		n = read(fd, data + off, (size_t)st.st_size - off);
+		if (n <= 0)
+			break;
+	}
+	close(fd);
+	data[off] = '\0';
+	*lenp = off;
+	return (data);
+}
+
+/*
+ * Keep only data[from..len) in the spool: write it to a temporary
+ * sibling, fsync, and rename over the spool so a crash leaves
+ * either the old or the new spool, never a mix.
+ */
+static int
+spool_keep_tail(struct oe_otlp *o, const char *data, size_t from,
+    size_t len)
+{
+	char tmp[PATH_MAX];
+	int fd;
+
+	if (from == len) {
+		if (truncate(o->spool_path, 0) != 0)
+			return (-1);
+		o->spool_size = 0;
+		return (0);
+	}
+	snprintf(tmp, sizeof(tmp), "%s.tmp", o->spool_path);
+	fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+	if (fd < 0)
+		return (-1);
+	if (write(fd, data + from, len - from) != (ssize_t)(len - from) ||
+	    fsync(fd) != 0) {
+		close(fd);
+		unlink(tmp);
+		return (-1);
+	}
+	close(fd);
+	if (rename(tmp, o->spool_path) != 0) {
+		unlink(tmp);
+		return (-1);
+	}
+	o->spool_size = len - from;
+	return (0);
+}
+
+/* Resend spooled requests, oldest first.  Takes spool_lock. */
+static void
+spool_replay(struct oe_otlp *o)
+{
+	char *data, *line, *nl;
+	size_t len, done, sent;
+	int sig;
+
+	pthread_mutex_lock(&o->spool_lock);
+	o->spool_last_try = time(NULL);
+	if (o->spool_size == 0 ||
+	    (data = read_whole(o->spool_path, &len)) == NULL) {
+		pthread_mutex_unlock(&o->spool_lock);
+		return;
+	}
+	done = 0;
+	sent = 0;
+	for (line = data; (nl = strchr(line, '\n')) != NULL; line = nl + 1) {
+		/* Terminate the line only while it is examined. */
+		*nl = '\0';
+		sig = oe_enc_classify(line);
+		if (sig < 0)
+			fprintf(stderr, "otlp: spool %s: skipping a line that "
+			    "is not an OTLP request\n", o->spool_path);
+		else if (post_with_retry(o, (enum oe_signal)sig, line,
+		    (size_t)(nl - line)) == POST_FAILED) {
+			*nl = '\n';
+			break;
+		} else
+			sent++;
+		*nl = '\n';
+		done = (size_t)(nl + 1 - data);
+	}
+	/* A trailing line without '\n' was an interrupted append. */
+	if (nl == NULL)
+		done = len;
+	if (done > 0) {
+		if (spool_keep_tail(o, data, done, len) != 0)
+			fprintf(stderr, "otlp: spool %s: rewrite failed: %s; "
+			    "replayed batches may be sent again\n",
+			    o->spool_path, strerror(errno));
+		else if (sent > 0)
+			fprintf(stderr, "otlp: resent %zu spooled batch%s "
+			    "from %s\n", sent, sent == 1 ? "" : "es",
+			    o->spool_path);
+		if (o->spool_size == 0 && o->spool_dropped > 0) {
+			fprintf(stderr, "otlp: spool drained; %ju batch%s "
+			    "dropped while it was full\n",
+			    (uintmax_t)o->spool_dropped,
+			    o->spool_dropped == 1 ? " was" : "es were");
+			o->spool_dropped = 0;
+		}
+	}
+	free(data);
+	pthread_mutex_unlock(&o->spool_lock);
+}
+
+/* POST one request, spooling it on failure and replaying on success. */
+static void
+deliver(struct oe_otlp *o, enum oe_signal sig, const char *body, size_t len)
+{
+
+	switch (post_with_retry(o, sig, body, len)) {
+	case POST_OK:
+		if (o->spool_path != NULL && o->spool_size > 0)
+			spool_replay(o);
+		break;
+	case POST_FAILED:
+		if (o->spool_path != NULL) {
+			pthread_mutex_lock(&o->spool_lock);
+			spool_append(o, sig, body, len);
+			pthread_mutex_unlock(&o->spool_lock);
+		}
+		break;
+	case POST_REJECTED:
+		break;
+	}
 }
 
 /* ---------------------------------------------------------------- */
 /* Batching and the sender thread				 	*/
 
-static int
-append_fragment(char ***arr, size_t *n, size_t *cap, char *frag)
+/* Called with the lock held; takes every batch out of the object. */
+static void
+take_batches(struct oe_otlp *o, char **frags[], size_t nfrags[],
+    uint64_t *drops)
 {
-	char **p;
+	int i;
 
-	if (*n == *cap) {
-		size_t newcap = *cap == 0 ? 64 : *cap * 2;
-
-		p = realloc(*arr, newcap * sizeof(*p));
-		if (p == NULL)
-			return (-1);
-		*arr = p;
-		*cap = newcap;
+	for (i = 0; i < OTLP_NSIGNALS; i++) {
+		frags[i] = o->frags[i];
+		nfrags[i] = o->nfrags[i];
+		o->frags[i] = NULL;
+		o->nfrags[i] = o->capfrags[i] = 0;
 	}
-	(*arr)[(*n)++] = frag;
-	return (0);
-}
-
-static void
-free_fragments(char **arr, size_t n)
-{
-	size_t i;
-
-	for (i = 0; i < n; i++)
-		free(arr[i]);
-	free(arr);
-}
-
-/* Called with the lock held; takes both batches out of the object. */
-static void
-take_batches(struct oe_otlp *o, char ***logs, size_t *nlogs,
-    char ***mets, size_t *nmets, uint64_t *drops)
-{
-
-	*logs = o->logrecs;
-	*nlogs = o->nlogrecs;
-	*mets = o->metrics;
-	*nmets = o->nmetrics;
 	*drops = o->pending_drops;
-	o->logrecs = NULL;
-	o->nlogrecs = o->caplogrecs = 0;
-	o->metrics = NULL;
-	o->nmetrics = o->capmetrics = 0;
 	o->pending_drops = 0;
 }
 
 /* Post taken batches.  Called without the lock. */
 static void
-post_batches(struct oe_otlp *o, char **logs, size_t nlogs, char **mets,
-    size_t nmets, uint64_t drops)
+post_batches(struct oe_otlp *o, char **frags[], size_t nfrags[],
+    uint64_t drops)
 {
 	char *body;
 	size_t len;
+	int i;
 
-	if (nlogs > 0) {
-		body = build_log_envelope(o, logs, nlogs, drops, &len);
-		if (body != NULL) {
-			post_with_retry(o, "v1/logs", body, len);
-			free(body);
-		}
-	} else if (drops > 0) {
+	if (nfrags[OE_SIGNAL_LOGS] == 0 && drops > 0) {
 		/*
 		 * No log records this cycle (aggregation-only
 		 * profiles): re-credit the drops so they ride the
@@ -586,19 +502,21 @@ post_batches(struct oe_otlp *o, char **logs, size_t nlogs, char **mets,
 		o->pending_drops += drops;
 		pthread_mutex_unlock(&o->lock);
 	}
-	if (nmets > 0) {
-		body = build_metrics_envelope(o, mets, nmets, &len);
-		if (body != NULL) {
-			post_with_retry(o, "v1/metrics", body, len);
-			free(body);
+	for (i = 0; i < OTLP_NSIGNALS; i++) {
+		if (nfrags[i] > 0) {
+			body = oe_enc_request(&o->enc, (enum oe_signal)i,
+			    frags[i], nfrags[i], drops, &len);
+			if (body != NULL) {
+				deliver(o, (enum oe_signal)i, body, len);
+				free(body);
+			}
 		}
+		oe_frags_free(frags[i], nfrags[i]);
 	}
-	free_fragments(logs, nlogs);
-	free_fragments(mets, nmets);
 }
 
 static void
-enqueue_job(struct oe_otlp *o, const char *path, char *body, size_t len)
+enqueue_job(struct oe_otlp *o, enum oe_signal sig, char *body, size_t len)
 {
 	struct post_job *job;
 
@@ -608,7 +526,7 @@ enqueue_job(struct oe_otlp *o, const char *path, char *body, size_t len)
 		return;
 	}
 	job->next = NULL;
-	job->path = path;
+	job->sig = sig;
 	job->body = body;
 	job->len = len;
 	if (o->jobs_tail != NULL)
@@ -619,57 +537,69 @@ enqueue_job(struct oe_otlp *o, const char *path, char *body, size_t len)
 	pthread_cond_signal(&o->cv);
 }
 
+static int
+batches_empty(const size_t nfrags[])
+{
+	int i;
+
+	for (i = 0; i < OTLP_NSIGNALS; i++)
+		if (nfrags[i] > 0)
+			return (0);
+	return (1);
+}
+
 static void *
 sender_main(void *arg)
 {
 	struct oe_otlp *o = arg;
 	struct post_job *job;
 	struct timespec deadline;
-	char **logs, **mets;
-	size_t nlogs, nmets;
+	char **frags[OTLP_NSIGNALS];
+	size_t nfrags[OTLP_NSIGNALS];
 	uint64_t drops;
-	int timedout;
+	int i, timedout;
 
 	pthread_mutex_lock(&o->lock);
 	for (;;) {
 		timedout = 0;
 		while (o->jobs_head == NULL && !o->stop && !timedout) {
-			if (o->flush_interval > 0) {
-				clock_gettime(CLOCK_REALTIME, &deadline);
-				deadline.tv_sec +=
-				    (time_t)o->flush_interval;
-				deadline.tv_nsec += (long)((o->flush_interval -
-				    (double)(time_t)o->flush_interval) * 1e9);
-				if (deadline.tv_nsec >= 1000000000L) {
-					deadline.tv_sec++;
-					deadline.tv_nsec -= 1000000000L;
-				}
-				if (pthread_cond_timedwait(&o->cv, &o->lock,
-				    &deadline) != 0)
-					timedout = 1;
-			} else
-				pthread_cond_wait(&o->cv, &o->lock);
+			clock_gettime(CLOCK_REALTIME, &deadline);
+			deadline.tv_sec += (time_t)o->flush_interval;
+			deadline.tv_nsec += (long)((o->flush_interval -
+			    (double)(time_t)o->flush_interval) * 1e9);
+			if (deadline.tv_nsec >= 1000000000L) {
+				deadline.tv_sec++;
+				deadline.tv_nsec -= 1000000000L;
+			}
+			if (pthread_cond_timedwait(&o->cv, &o->lock,
+			    &deadline) != 0)
+				timedout = 1;
 		}
 
 		if (timedout) {
 			/* Time-based flush of whatever accumulated. */
-			take_batches(o, &logs, &nlogs, &mets, &nmets, &drops);
-			if (nlogs > 0 || nmets > 0) {
-				pthread_mutex_unlock(&o->lock);
-				post_batches(o, logs, nlogs, mets, nmets,
-				    drops);
-				pthread_mutex_lock(&o->lock);
-			} else {
-				free_fragments(logs, nlogs);
-				free_fragments(mets, nmets);
+			take_batches(o, frags, nfrags, &drops);
+			pthread_mutex_unlock(&o->lock);
+			if (!batches_empty(nfrags))
+				post_batches(o, frags, nfrags, drops);
+			else {
+				for (i = 0; i < OTLP_NSIGNALS; i++)
+					oe_frags_free(frags[i], nfrags[i]);
 				/*
 				 * Nothing to post this tick: re-credit
 				 * any drops so they ride a later batch
-				 * instead of being destroyed (the lock
-				 * is held here).
+				 * instead of being destroyed.
 				 */
+				pthread_mutex_lock(&o->lock);
 				o->pending_drops += drops;
+				pthread_mutex_unlock(&o->lock);
+				/* Idle: probe the collector for replay. */
+				if (o->spool_path != NULL &&
+				    o->spool_size > 0 && time(NULL) -
+				    o->spool_last_try >= OTLP_SPOOL_RETRY)
+					spool_replay(o);
 			}
+			pthread_mutex_lock(&o->lock);
 			continue;
 		}
 
@@ -679,15 +609,15 @@ sender_main(void *arg)
 			if (o->jobs_head == NULL)
 				o->jobs_tail = NULL;
 			pthread_mutex_unlock(&o->lock);
-			post_with_retry(o, job->path, job->body, job->len);
+			deliver(o, job->sig, job->body, job->len);
 			free(job->body);
 			free(job);
 			pthread_mutex_lock(&o->lock);
 			continue;
 		}
 
-		if (o->stop)
-			break;
+		/* Only o->stop ends the wait without a job or timeout. */
+		break;
 	}
 	pthread_mutex_unlock(&o->lock);
 	return (NULL);
@@ -711,112 +641,84 @@ otlp_start(struct oe_exporter *e)
 	return (0);
 }
 
-static char *
-build_log_record(struct oe_otlp *o, const struct oe_event *ev)
+/*
+ * Queue one record fragment.  With "batched", a full batch becomes a
+ * request handed to the sender thread; otherwise the fragment waits
+ * for the next time-based or explicit flush.
+ */
+static int
+otlp_queue(struct oe_otlp *o, enum oe_signal sig, char *rec, int batched)
 {
-	struct oe_buf b;
-	uint64_t tnano;
+	char **frags;
+	char *body;
+	size_t nfrags, len;
+	uint64_t drops;
 
-	tnano = ts_unix_nano(&ev->ts);
-	oe_buf_init(&b);
-	oe_buf_appendf(&b, "{\"timeUnixNano\":\"%ju\","
-	    "\"observedTimeUnixNano\":\"%ju\",\"severityNumber\":9,"
-	    "\"body\":{\"stringValue\":\"", (uintmax_t)tnano,
-	    (uintmax_t)tnano);
-	oe_buf_appendjson(&b, ev->body);
-	oe_buf_appendstr(&b, "\"},\"attributes\":[{\"key\":\"");
-	oe_buf_appendjson(&b, o->scope);
-	oe_buf_appendstr(&b, ".profile\",\"value\":{\"stringValue\":\"");
-	oe_buf_appendjson(&b, ev->profile);
-	oe_buf_appendstr(&b, "\"}},{\"key\":\"");
-	oe_buf_appendjson(&b, o->scope);
-	oe_buf_appendstr(&b, ".probe\",\"value\":{\"stringValue\":\"");
-	oe_buf_appendjson(&b, ev->probe != NULL ? ev->probe : "");
-	oe_buf_appendf(&b, "\"}},{\"key\":\"process.pid\",\"value\":"
-	    "{\"intValue\":\"%d\"}},{\"key\":\"process.executable.name\","
-	    "\"value\":{\"stringValue\":\"", (int)ev->pid);
-	oe_buf_appendjson(&b, ev->execname != NULL ? ev->execname : "");
-	oe_buf_appendstr(&b, "\"}}]}");
-	if (b.error) {
-		oe_buf_free(&b);
-		return (NULL);
+	if (rec == NULL)
+		return (-1);
+	pthread_mutex_lock(&o->lock);
+	if (oe_frags_append(&o->frags[sig], &o->nfrags[sig],
+	    &o->capfrags[sig], rec) != 0) {
+		pthread_mutex_unlock(&o->lock);
+		free(rec);
+		return (-1);
 	}
-	return (b.data);
+	if (!batched || o->nfrags[sig] < (size_t)o->batch_size) {
+		pthread_mutex_unlock(&o->lock);
+		return (0);
+	}
+	/* Batch full: build the request and hand it to the sender. */
+	frags = o->frags[sig];
+	nfrags = o->nfrags[sig];
+	drops = 0;
+	if (sig == OE_SIGNAL_LOGS) {
+		drops = o->pending_drops;
+		o->pending_drops = 0;
+	}
+	o->frags[sig] = NULL;
+	o->nfrags[sig] = o->capfrags[sig] = 0;
+	body = oe_enc_request(&o->enc, sig, frags, nfrags, drops, &len);
+	if (body != NULL)
+		enqueue_job(o, sig, body, len);
+	pthread_mutex_unlock(&o->lock);
+	oe_frags_free(frags, nfrags);
+	return (0);
 }
 
 static int
 otlp_event(struct oe_exporter *e, const struct oe_event *ev)
 {
 	struct oe_otlp *o = (struct oe_otlp *)e;
-	char *rec, *body, **logs;
-	size_t nlogs, len;
-	uint64_t drops;
 
 	if (ev->body == NULL || ev->body[0] == '\0')
 		return (0);
-	rec = build_log_record(o, ev);
-	if (rec == NULL)
-		return (-1);
-
-	pthread_mutex_lock(&o->lock);
-	if (append_fragment(&o->logrecs, &o->nlogrecs, &o->caplogrecs,
-	    rec) != 0) {
-		pthread_mutex_unlock(&o->lock);
-		free(rec);
-		return (-1);
-	}
-	if (o->nlogrecs < (size_t)o->batch_size) {
-		pthread_mutex_unlock(&o->lock);
-		return (0);
-	}
-	/* Batch full: build the envelope and hand it to the sender. */
-	logs = o->logrecs;
-	nlogs = o->nlogrecs;
-	drops = o->pending_drops;
-	o->logrecs = NULL;
-	o->nlogrecs = o->caplogrecs = 0;
-	o->pending_drops = 0;
-	body = build_log_envelope(o, logs, nlogs, drops, &len);
-	if (body != NULL)
-		enqueue_job(o, "v1/logs", body, len);
-	pthread_mutex_unlock(&o->lock);
-	free_fragments(logs, nlogs);
-	return (0);
+	return (otlp_queue(o, OE_SIGNAL_LOGS, oe_enc_log_record(&o->enc, ev),
+	    1));
 }
 
 static int
 otlp_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 {
 	struct oe_otlp *o = (struct oe_otlp *)e;
-	char *frag;
-	int ret;
 
 	if (sn->npoints == 0)
 		return (0);
-	frag = build_metric_fragment(o, sn);
-	if (frag == NULL)
-		return (-1);
-	pthread_mutex_lock(&o->lock);
-	ret = append_fragment(&o->metrics, &o->nmetrics, &o->capmetrics,
-	    frag);
-	pthread_mutex_unlock(&o->lock);
-	if (ret != 0)
-		free(frag);
-	return (ret);
+	return (otlp_queue(o, OE_SIGNAL_METRICS, oe_enc_metric(&o->enc, sn),
+	    0));
 }
 
 static int
 otlp_flush(struct oe_exporter *e)
 {
 	struct oe_otlp *o = (struct oe_otlp *)e;
-	char **logs, **mets;
-	size_t nlogs, nmets;
+	char **frags[OTLP_NSIGNALS];
+	size_t nfrags[OTLP_NSIGNALS];
 	uint64_t drops;
 
 	pthread_mutex_lock(&o->lock);
-	take_batches(o, &logs, &nlogs, &mets, &nmets, &drops);
+	take_batches(o, frags, nfrags, &drops);
 	pthread_mutex_unlock(&o->lock);
-	post_batches(o, logs, nlogs, mets, nmets, drops);
+	post_batches(o, frags, nfrags, drops);
 	return (0);
 }
 
@@ -849,18 +751,17 @@ otlp_free(struct oe_exporter *e)
 		free(job->body);
 		free(job);
 	}
-	free_fragments(o->logrecs, o->nlogrecs);
-	free_fragments(o->metrics, o->nmetrics);
+	for (i = 0; i < OTLP_NSIGNALS; i++)
+		oe_frags_free(o->frags[i], o->nfrags[i]);
 	for (i = 0; i < o->nheaders; i++) {
 		free(__DECONST(char *, o->headers[i].name));
 		free(__DECONST(char *, o->headers[i].value));
 	}
 	free(o->headers);
-	free(o->scope);
-	free(o->profile);
-	free(o->version);
-	free(o->resource_json);
+	free(o->spool_path);
+	oe_enc_fini(&o->enc);
 	pthread_mutex_destroy(&o->lock);
+	pthread_mutex_destroy(&o->spool_lock);
 	pthread_cond_destroy(&o->cv);
 	free(o);
 }
@@ -887,6 +788,43 @@ oe_report_drops(struct oe_exporter *e, uint64_t count)
 	pthread_mutex_unlock(&o->lock);
 }
 
+static int
+spool_open(struct oe_otlp *o, const struct oe_otlp_config *cfg)
+{
+	struct stat st;
+	int fd;
+
+	o->spool_max = cfg->spool_max > 0 ? cfg->spool_max :
+	    OTLP_DEFAULT_SPOOL;
+	if (strlen(cfg->spool_path) + 5 > PATH_MAX) {
+		fprintf(stderr, "otlp: spool %s: path too long\n",
+		    cfg->spool_path);
+		return (-1);
+	}
+	/*
+	 * Create (or adopt) the spool now so a bad path fails before
+	 * tracing starts rather than during the first outage.  A spool
+	 * left by an earlier run is replayed like any other backlog.
+	 */
+	fd = open(cfg->spool_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
+	    0600);
+	if (fd < 0) {
+		fprintf(stderr, "otlp: spool %s: open failed: %s\n",
+		    cfg->spool_path, strerror(errno));
+		return (-1);
+	}
+	if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+		fprintf(stderr, "otlp: spool %s: not a regular file\n",
+		    cfg->spool_path);
+		close(fd);
+		return (-1);
+	}
+	close(fd);
+	o->spool_size = (uint64_t)st.st_size;
+	o->spool_path = strdup(cfg->spool_path);
+	return (o->spool_path != NULL ? 0 : -1);
+}
+
 struct oe_exporter *
 oe_otlp_new(const struct oe_otlp_config *cfg)
 {
@@ -899,6 +837,7 @@ oe_otlp_new(const struct oe_otlp_config *cfg)
 		return (NULL);
 	o->e.ops = &otlp_ops;
 	pthread_mutex_init(&o->lock, NULL);
+	pthread_mutex_init(&o->spool_lock, NULL);
 	pthread_cond_init(&o->cv, NULL);
 	if (oe_url_parse(cfg->endpoint, &o->url) != 0) {
 		fprintf(stderr, "otlp: invalid endpoint URL '%s'\n",
@@ -906,12 +845,7 @@ oe_otlp_new(const struct oe_otlp_config *cfg)
 		otlp_free(&o->e);
 		return (NULL);
 	}
-	o->scope = strdup(r->service_name);
-	o->profile = strdup(cfg->profile != NULL ? cfg->profile : "");
-	o->version = strdup(r->service_version);
-	o->resource_json = build_resource_json(r);
-	if (o->scope == NULL || o->profile == NULL || o->version == NULL ||
-	    o->resource_json == NULL)
+	if (oe_enc_init(&o->enc, r) != 0)
 		goto fail;
 	snprintf(o->user_agent, sizeof(o->user_agent),
 	    "OTel-OTLP-Exporter-C/%s", r->service_version);
@@ -933,11 +867,15 @@ oe_otlp_new(const struct oe_otlp_config *cfg)
 		for (i = 0; i < cfg->nheaders; i++) {
 			o->headers[i].name = strdup(cfg->headers[i].name);
 			o->headers[i].value = strdup(cfg->headers[i].value);
+			o->nheaders = i + 1;
 			if (o->headers[i].name == NULL ||
 			    o->headers[i].value == NULL)
 				goto fail;
-			o->nheaders = i + 1;
 		}
+	}
+	if (cfg->spool_path != NULL && spool_open(o, cfg) != 0) {
+		otlp_free(&o->e);
+		return (NULL);
 	}
 	return (&o->e);
 

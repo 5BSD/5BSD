@@ -7,6 +7,7 @@ SUBDIR=	libspl
 SUBDIR.${MK_DTRACE}+= \
 	drti \
 	libctf \
+	libdtotel \
 	libdtrace
 
 SUBDIR.${MK_TESTS}+= tests
@@ -29,6 +30,7 @@ SUBDIR.${MK_ZFS}.${MK_OPENSSL} = pam_zfs_key
 SUBDIR_DEPEND_libavl=		libspl
 SUBDIR_DEPEND_libctf=		libspl
 SUBDIR_DEPEND_libdtrace=	libctf
+SUBDIR_DEPEND_libdtotel=	libdtrace
 SUBDIR_DEPEND_libnvpair=	libspl
 SUBDIR_DEPEND_libzfs_core=	libnvpair libspl libzutil
 SUBDIR_DEPEND_libzfs=	libavl libnvpair libumem libzfs_core libzutil

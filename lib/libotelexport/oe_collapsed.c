@@ -31,7 +31,8 @@ struct fold_entry {
 
 struct oe_collapsed {
 	struct oe_exporter e;
-	FILE		*out;
+	struct oe_sink	*sink;
+	struct oe_sink	*owned;		/* wrapper sink for oe_collapsed_new() */
 	struct fold_entry *buckets[FOLD_NBUCKETS];
 	size_t		 nentries;
 };
@@ -124,6 +125,7 @@ static int
 collapsed_flush(struct oe_exporter *e __unused)
 {
 
+	/* Folded stacks are only meaningful once complete. */
 	return (0);
 }
 
@@ -141,9 +143,11 @@ collapsed_shutdown(struct oe_exporter *e)
 {
 	struct oe_collapsed *c = (struct oe_collapsed *)e;
 	struct fold_entry **sorted, *fe;
+	struct oe_buf b;
 	size_t i, n;
+	int ret;
 
-	sorted = malloc(c->nentries * sizeof(*sorted));
+	sorted = malloc((c->nentries + 1) * sizeof(*sorted));
 	if (sorted == NULL)
 		return (-1);
 	n = 0;
@@ -152,12 +156,18 @@ collapsed_shutdown(struct oe_exporter *e)
 			sorted[n++] = fe;
 	/* Sort by stack path for stable output. */
 	qsort(sorted, n, sizeof(*sorted), fold_cmp);
-	for (i = 0; i < n; i++)
-		fprintf(c->out, "%s %ju\n", sorted[i]->stack,
+	ret = 0;
+	for (i = 0; i < n && ret == 0; i++) {
+		oe_buf_init(&b);
+		oe_buf_appendf(&b, "%s %ju\n", sorted[i]->stack,
 		    (uintmax_t)sorted[i]->count);
+		ret = b.error ? -1 : oe_sink_write(c->sink, b.data, b.len);
+		oe_buf_free(&b);
+	}
 	free(sorted);
-	fflush(c->out);
-	return (0);
+	if (oe_sink_flush(c->sink) != 0)
+		ret = -1;
+	return (ret);
 }
 
 static void
@@ -174,6 +184,7 @@ collapsed_free(struct oe_exporter *e)
 			free(fe);
 		}
 	}
+	(void)oe_sink_close(c->owned);
 	free(c);
 }
 
@@ -187,7 +198,7 @@ static const struct oe_exporter_ops collapsed_ops = {
 };
 
 struct oe_exporter *
-oe_collapsed_new(FILE *out)
+oe_collapsed_sink_new(struct oe_sink *sink)
 {
 	struct oe_collapsed *c;
 
@@ -195,6 +206,25 @@ oe_collapsed_new(FILE *out)
 	if (c == NULL)
 		return (NULL);
 	c->e.ops = &collapsed_ops;
-	c->out = out;
+	c->sink = sink;
 	return (&c->e);
+}
+
+struct oe_exporter *
+oe_collapsed_new(FILE *out)
+{
+	struct oe_sink_config sc;
+	struct oe_exporter *e;
+	struct oe_sink *sink;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.fp = out;
+	if ((sink = oe_sink_open(&sc)) == NULL)
+		return (NULL);
+	if ((e = oe_collapsed_sink_new(sink)) == NULL) {
+		(void)oe_sink_close(sink);
+		return (NULL);
+	}
+	((struct oe_collapsed *)e)->owned = sink;
+	return (e);
 }

@@ -52,6 +52,7 @@ _INTERNALLIBS=	\
 		cron \
 		der \
 		diff \
+		dtotel \
 		elftc \
 		fdt \
 		fifolog \
@@ -446,6 +447,7 @@ _DP_gtest=	pthread regex
 _DP_gtest_main=	gtest
 _DP_ifconfig=	m
 _DP_otelexport=	z ssl crypto pthread
+_DP_dtotel=	dtrace otelexport
 _DP_iscsiutil=	md
 _DP_kldelf=	elf
 _DP_krb5ss=	edit
@@ -790,6 +792,9 @@ LIBPMCSTAT?=	${LIBPMCSTATDIR}/libpmcstat${PIE_SUFFIX}.a
 
 LIBOTELEXPORTDIR=	${_LIB_OBJTOP}/lib/libotelexport
 LIBOTELEXPORT?=	${LIBOTELEXPORTDIR}/libotelexport${PIE_SUFFIX}.a
+
+LIBDTOTELDIR=	${_LIB_OBJTOP}/cddl/lib/libdtotel
+LIBDTOTEL?=	${LIBDTOTELDIR}/libdtotel${PIE_SUFFIX}.a
 
 LIBUTIL++DIR=	${_LIB_OBJTOP}/lib/libutil++
 LIBUTIL++?=	${LIBUTIL++DIR}/libutil++${PIE_SUFFIX}.a

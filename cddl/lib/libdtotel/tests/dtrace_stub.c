@@ -1,0 +1,86 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
+ * Scriptable stand-ins for the libdtrace entry points libdtotel uses.
+ * Defined in the test program, they take precedence over libdtrace.
+ */
+
+#include <stdio.h>
+#include <string.h>
+
+#include "dtrace_stub.h"
+
+struct stub_state stub;
+
+int
+dtrace_handle_buffered(dtrace_hdl_t *dtp, dtrace_handle_buffered_f *hdlr,
+    void *arg)
+{
+
+	(void)dtp;
+	if (stub.fail_handle_buffered)
+		return (-1);
+	stub.bufhandler = hdlr;
+	stub.bufarg = arg;
+	return (0);
+}
+
+int
+dtrace_errno(dtrace_hdl_t *dtp)
+{
+
+	(void)dtp;
+	return (1);
+}
+
+const char *
+dtrace_errmsg(dtrace_hdl_t *dtp, int error)
+{
+
+	(void)dtp;
+	(void)error;
+	return ("stub error");
+}
+
+int
+dtrace_lookup_by_addr(dtrace_hdl_t *dtp, GElf_Addr addr, GElf_Sym *symp,
+    dtrace_syminfo_t *sip)
+{
+	static char names[16][16];
+	int idx;
+
+	(void)dtp;
+	if (addr < STUB_SYM_LO || addr >= STUB_SYM_HI)
+		return (-1);
+	idx = (int)((addr >> 8) & 0xf);
+	snprintf(names[idx], sizeof(names[idx]), "fn%d", idx);
+	memset(symp, 0, sizeof(*symp));
+	symp->st_value = addr & ~0xffULL;
+	memset(sip, 0, sizeof(*sip));
+	sip->dts_object = "kernel";
+	sip->dts_name = names[idx];
+	return (0);
+}
+
+int
+dtrace_aggregate_snap(dtrace_hdl_t *dtp)
+{
+
+	(void)dtp;
+	return (stub.fail_snap ? -1 : 0);
+}
+
+int
+dtrace_aggregate_walk(dtrace_hdl_t *dtp, dtrace_aggregate_f *func,
+    void *arg)
+{
+	size_t i;
+
+	(void)dtp;
+	for (i = 0; i < stub.naggs; i++)
+		if (func(stub.aggs[i], arg) != DTRACE_AGGWALK_NEXT)
+			break;
+	return (stub.fail_walk ? -1 : 0);
+}

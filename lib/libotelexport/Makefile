@@ -4,11 +4,14 @@ LIB=		otelexport
 INTERNALLIB=
 
 SRCS=		oe_util.c \
+		oe_sink.c \
 		oe_text.c \
 		oe_jsonl.c \
 		oe_collapsed.c \
 		oe_http.c \
-		oe_otlp.c
+		oe_otlpenc.c \
+		oe_otlp.c \
+		oe_otlpfile.c
 
 INCS=		otelexport.h
 
@@ -16,7 +19,18 @@ MAN=		libotelexport.3
 MLINKS+=	libotelexport.3 oe_text_new.3
 MLINKS+=	libotelexport.3 oe_jsonl_new.3
 MLINKS+=	libotelexport.3 oe_collapsed_new.3
+MLINKS+=	libotelexport.3 oe_text_sink_new.3
+MLINKS+=	libotelexport.3 oe_jsonl_sink_new.3
+MLINKS+=	libotelexport.3 oe_collapsed_sink_new.3
 MLINKS+=	libotelexport.3 oe_otlp_new.3
+MLINKS+=	libotelexport.3 oe_otlpjson_new.3
+MLINKS+=	libotelexport.3 oe_sink_open.3
+MLINKS+=	libotelexport.3 oe_sink_write.3
+MLINKS+=	libotelexport.3 oe_sink_poll.3
+MLINKS+=	libotelexport.3 oe_sink_flush.3
+MLINKS+=	libotelexport.3 oe_sink_stream.3
+MLINKS+=	libotelexport.3 oe_sink_path.3
+MLINKS+=	libotelexport.3 oe_sink_close.3
 MLINKS+=	libotelexport.3 oe_start.3
 MLINKS+=	libotelexport.3 oe_event.3
 MLINKS+=	libotelexport.3 oe_snapshot.3

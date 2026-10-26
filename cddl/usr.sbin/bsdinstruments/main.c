@@ -8,11 +8,13 @@
  * and generate implementations (probes lives in probes.c).
  */
 
+#include <ctype.h>
 #include <err.h>
 #include <errno.h>
 #include <getopt.h>
 #include <limits.h>
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -158,6 +160,12 @@ struct common_args {
 	const char	*endpoint;
 	const char	*bufsize;
 	const char	*switchrate;
+	const char	*output;
+	uint64_t	 rotate_size;
+	time_t		 rotate_interval;
+	unsigned	 rotate_keep;
+	const char	*spool;
+	uint64_t	 spool_max;
 };
 
 enum {
@@ -175,7 +183,13 @@ enum {
 	OPT_ENDPOINT,
 	OPT_BUFSIZE,
 	OPT_SWITCHRATE,
-	OPT_BROKER
+	OPT_BROKER,
+	OPT_OUTPUT,
+	OPT_ROTATE_SIZE,
+	OPT_ROTATE_TIME,
+	OPT_ROTATE_KEEP,
+	OPT_SPOOL,
+	OPT_SPOOL_MAX
 };
 
 static const struct option watch_opts[] = {
@@ -194,6 +208,12 @@ static const struct option watch_opts[] = {
 	{ "bufsize", required_argument, NULL, OPT_BUFSIZE },
 	{ "switchrate", required_argument, NULL, OPT_SWITCHRATE },
 	{ "broker", no_argument, NULL, OPT_BROKER },
+	{ "output", required_argument, NULL, OPT_OUTPUT },
+	{ "rotate-size", required_argument, NULL, OPT_ROTATE_SIZE },
+	{ "rotate-time", required_argument, NULL, OPT_ROTATE_TIME },
+	{ "rotate-keep", required_argument, NULL, OPT_ROTATE_KEEP },
+	{ "spool", required_argument, NULL, OPT_SPOOL },
+	{ "spool-max", required_argument, NULL, OPT_SPOOL_MAX },
 	{ NULL, 0, NULL, 0 }
 };
 
@@ -214,6 +234,37 @@ parse_num(const char *arg, const char *what, long long lo, long long hi)
 		errx(2, "%s expects an integer between %lld and %lld, "
 		    "got '%s'", what, lo, hi, arg);
 	return (v);
+}
+
+/*
+ * A number with an optional unit suffix, scaled by the matching
+ * multiplier: sizes take k/m/g (binary, as DTrace sizes do), times
+ * s/m/h/d.  Zero and garbage are usage errors.
+ */
+static uint64_t
+parse_scaled(const char *arg, const char *what, const char *units,
+    const uint64_t *mults)
+{
+	unsigned long long v;
+	const char *u;
+	char *end;
+
+	errno = 0;
+	v = strtoull(arg, &end, 10);
+	if (end == arg || errno == ERANGE || v == 0 || arg[0] == '-')
+		goto bad;
+	if (*end != '\0') {
+		if (end[1] != '\0' || (u = strchr(units,
+		    tolower((unsigned char)*end))) == NULL)
+			goto bad;
+		if (v > UINT64_MAX / mults[u - units])
+			goto bad;
+		v *= mults[u - units];
+	}
+	return (v);
+bad:
+	errx(2, "%s expects a positive number with an optional %s suffix, "
+	    "got '%s'", what, units, arg);
 }
 
 static void
@@ -249,9 +300,12 @@ parse_common(int argc, char **argv, struct common_args *ca, int is_watch,
 {
 	int ch;
 
+	static const uint64_t size_mults[] = { 1024, 1024 * 1024,
+	    1024 * 1024 * 1024 };
+	static const uint64_t time_mults[] = { 1, 60, 3600, 86400 };
+
 	memset(ca, 0, sizeof(*ca));
 	ca->format = FORMAT_TEXT;
-	ca->endpoint = "http://localhost:4318";
 
 	while ((ch = getopt_long(argc, argv, "f:h", watch_opts,
 	    NULL)) != -1) {
@@ -328,15 +382,56 @@ parse_common(int argc, char **argv, struct common_args *ca, int is_watch,
 				ca->format = FORMAT_OTEL;
 			else if (strcmp(optarg, "collapsed") == 0)
 				ca->format = FORMAT_COLLAPSED;
+			else if (strcmp(optarg, "otlp-json") == 0)
+				ca->format = FORMAT_OTLPJSON;
 			else
 				errx(2, "--format must be text, json, otel, "
-				    "or collapsed");
+				    "otlp-json, or collapsed");
+			break;
+		case OPT_OUTPUT:
+		case OPT_SPOOL:
+			if (!is_watch)
+				usage_fn();
+			if (optarg[0] == '\0')
+				errx(2, "--%s needs a file name",
+				    ch == OPT_OUTPUT ? "output" : "spool");
+			if (ch == OPT_OUTPUT)
+				ca->output = optarg;
+			else
+				ca->spool = optarg;
+			break;
+		case OPT_ROTATE_SIZE:
+		case OPT_SPOOL_MAX:
+			if (!is_watch)
+				usage_fn();
+			if (ch == OPT_ROTATE_SIZE)
+				ca->rotate_size = parse_scaled(optarg,
+				    "--rotate-size", "kmg", size_mults);
+			else
+				ca->spool_max = parse_scaled(optarg,
+				    "--spool-max", "kmg", size_mults);
+			break;
+		case OPT_ROTATE_TIME:
+			if (!is_watch)
+				usage_fn();
+			ca->rotate_interval = (time_t)parse_scaled(optarg,
+			    "--rotate-time", "smhd", time_mults);
+			break;
+		case OPT_ROTATE_KEEP:
+			if (!is_watch)
+				usage_fn();
+			ca->rotate_keep = (unsigned)parse_num(optarg,
+			    "--rotate-keep", 1, 999);
 			break;
 		case OPT_ENDPOINT:
 		case OPT_BUFSIZE:
 		case OPT_SWITCHRATE:
 			if (!is_watch)
 				usage_fn();
+			if (optarg[0] == '\0')
+				errx(2, "--%s needs a value", ch == OPT_ENDPOINT ?
+				    "endpoint" : ch == OPT_BUFSIZE ? "bufsize" :
+				    "switchrate");
 			if (ch == OPT_ENDPOINT)
 				ca->endpoint = optarg;
 			else if (ch == OPT_BUFSIZE)
@@ -403,9 +498,13 @@ watch_usage(void)
 	    "           [--param key=value ...] [--pid n] [--execname name]\n"
 	    "           [--uid n] [--gid n] [--jail jid] [--where predicate]\n"
 	    "           [--duration seconds] [--with-stack] [--with-ustack]\n"
-	    "           [--broker] [--format text|json|otel|collapsed]\n"
-	    "           [--endpoint url] [--bufsize size] "
-	    "[--switchrate rate]\n");
+	    "           [--broker]\n"
+	    "           [--format text|json|otel|otlp-json|collapsed]\n"
+	    "           [--output file [--rotate-size size] "
+	    "[--rotate-time time]\n"
+	    "            [--rotate-keep n]]\n"
+	    "           [--endpoint url [--spool file [--spool-max size]]]\n"
+	    "           [--bufsize size] [--switchrate rate]\n");
 	exit(2);
 }
 
@@ -423,6 +522,17 @@ cmd_watch(int argc, char **argv)
 	    !ca.with_ustack)
 		errx(2, "--format collapsed requires --with-stack and/or "
 		    "--with-ustack");
+	if (ca.format == FORMAT_OTEL && ca.output != NULL)
+		errx(2, "--format otel sends to --endpoint; use --format "
+		    "otlp-json to write OTLP to a file");
+	if (ca.output == NULL && (ca.rotate_size != 0 ||
+	    ca.rotate_interval != 0 || ca.rotate_keep != 0))
+		errx(2, "rotation options need --output");
+	if (ca.format != FORMAT_OTEL && (ca.spool != NULL ||
+	    ca.spool_max != 0 || ca.endpoint != NULL))
+		errx(2, "--endpoint and --spool apply to --format otel only");
+	if (ca.spool == NULL && ca.spool_max != 0)
+		errx(2, "--spool-max needs --spool");
 
 	rendered = render_from_args(&ca, &p);
 	if (rendered == NULL)
@@ -436,6 +546,12 @@ cmd_watch(int argc, char **argv)
 	wo.switchrate = ca.switchrate;
 	wo.with_stack = ca.with_stack;
 	wo.with_ustack = ca.with_ustack;
+	wo.output = ca.output;
+	wo.rotate_size = ca.rotate_size;
+	wo.rotate_interval = ca.rotate_interval;
+	wo.rotate_keep = ca.rotate_keep;
+	wo.spool = ca.spool;
+	wo.spool_max = ca.spool_max;
 
 	ret = watch_run(p, rendered, &wo);
 	free(rendered);

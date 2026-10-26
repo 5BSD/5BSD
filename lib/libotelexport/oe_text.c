@@ -3,20 +3,23 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Line-oriented stdout exporter.  Prints the event's text body;
+ * Line-oriented text exporter.  Prints the event's text body;
  * stack frames indent below event lines.  Aggregation snapshots
  * print as a tabular dump.  The simplest exporter — no batching,
- * no retry, no network.
+ * no retry, no network; output goes to a sink (stream or rotating
+ * file).
  */
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "otelexport.h"
 
 struct oe_text {
 	struct oe_exporter e;
-	FILE		*out;
+	struct oe_sink	*sink;
+	struct oe_sink	*owned;		/* wrapper sink for oe_text_new() */
 };
 
 static int
@@ -26,25 +29,39 @@ text_start(struct oe_exporter *e __unused)
 	return (0);
 }
 
+/* Write a finished buffer as one sink record. */
+static int
+text_put(struct oe_text *t, struct oe_buf *b)
+{
+	int ret;
+
+	ret = b->error ? -1 : oe_sink_write(t->sink, b->data, b->len);
+	oe_buf_free(b);
+	return (ret);
+}
+
 static int
 text_event(struct oe_exporter *e, const struct oe_event *ev)
 {
 	struct oe_text *t = (struct oe_text *)e;
+	struct oe_buf b;
 	char frame[256];
 	size_t i;
 
 	if (ev->body == NULL || ev->body[0] == '\0')
 		return (0);
-	fprintf(t->out, "%s\n", ev->body);
+	/* One record per event so rotation never splits its stacks. */
+	oe_buf_init(&b);
+	oe_buf_appendf(&b, "%s\n", ev->body);
 	for (i = 0; i < ev->nstack; i++) {
 		oe_frame_format(&ev->stack[i], frame, sizeof(frame));
-		fprintf(t->out, "    [k] %s\n", frame);
+		oe_buf_appendf(&b, "    [k] %s\n", frame);
 	}
 	for (i = 0; i < ev->nustack; i++) {
 		oe_frame_format(&ev->ustack[i], frame, sizeof(frame));
-		fprintf(t->out, "    [u] %s\n", frame);
+		oe_buf_appendf(&b, "    [u] %s\n", frame);
 	}
-	return (0);
+	return (text_put(t, &b));
 }
 
 static const char *
@@ -70,30 +87,32 @@ text_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 {
 	struct oe_text *t = (struct oe_text *)e;
 	const struct oe_datapoint *dp;
+	struct oe_buf b;
 	size_t i, j;
 
-	fprintf(t->out, "\n--- aggregation: @%s (%s) profile=%s ---\n",
+	oe_buf_init(&b);
+	oe_buf_appendf(&b, "\n--- aggregation: @%s (%s) profile=%s ---\n",
 	    sn->name, agg_kind_name(sn->kind), sn->profile);
 	for (i = 0; i < sn->npoints; i++) {
 		dp = &sn->points[i];
-		fprintf(t->out, "  [");
+		oe_buf_appendstr(&b, "  [");
 		for (j = 0; j < dp->nattrs; j++)
-			fprintf(t->out, "%s%s", j > 0 ? ", " : "",
+			oe_buf_appendf(&b, "%s%s", j > 0 ? ", " : "",
 			    dp->attrs[j].value);
 		if (dp->is_histogram) {
-			fprintf(t->out, "]\n");
+			oe_buf_appendstr(&b, "]\n");
 			for (j = 0; j < dp->nbuckets; j++) {
 				if (dp->buckets[j].count == 0)
 					continue;
-				fprintf(t->out, "    <= %jd: %jd\n",
+				oe_buf_appendf(&b, "    <= %jd: %jd\n",
 				    (intmax_t)dp->buckets[j].upper,
 				    (intmax_t)dp->buckets[j].count);
 			}
 		} else
-			fprintf(t->out, "] %jd\n", (intmax_t)dp->scalar);
+			oe_buf_appendf(&b, "] %jd\n", (intmax_t)dp->scalar);
 	}
-	fprintf(t->out, "\n");
-	return (0);
+	oe_buf_appendstr(&b, "\n");
+	return (text_put(t, &b));
 }
 
 static int
@@ -101,8 +120,7 @@ text_flush(struct oe_exporter *e)
 {
 	struct oe_text *t = (struct oe_text *)e;
 
-	fflush(t->out);
-	return (0);
+	return (oe_sink_flush(t->sink));
 }
 
 static int
@@ -115,8 +133,10 @@ text_shutdown(struct oe_exporter *e)
 static void
 text_free(struct oe_exporter *e)
 {
+	struct oe_text *t = (struct oe_text *)e;
 
-	free(e);
+	(void)oe_sink_close(t->owned);
+	free(t);
 }
 
 static const struct oe_exporter_ops text_ops = {
@@ -129,7 +149,7 @@ static const struct oe_exporter_ops text_ops = {
 };
 
 struct oe_exporter *
-oe_text_new(FILE *out)
+oe_text_sink_new(struct oe_sink *sink)
 {
 	struct oe_text *t;
 
@@ -137,6 +157,25 @@ oe_text_new(FILE *out)
 	if (t == NULL)
 		return (NULL);
 	t->e.ops = &text_ops;
-	t->out = out;
+	t->sink = sink;
 	return (&t->e);
+}
+
+struct oe_exporter *
+oe_text_new(FILE *out)
+{
+	struct oe_sink_config sc;
+	struct oe_exporter *e;
+	struct oe_sink *sink;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.fp = out;
+	if ((sink = oe_sink_open(&sc)) == NULL)
+		return (NULL);
+	if ((e = oe_text_sink_new(sink)) == NULL) {
+		(void)oe_sink_close(sink);
+		return (NULL);
+	}
+	((struct oe_text *)e)->owned = sink;
+	return (e);
 }

@@ -12,7 +12,9 @@
 
 #include <sys/types.h>
 
+#include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 
 #define	BSDINSTRUMENTS_VERSION	"0.1.0"
 
@@ -92,8 +94,11 @@ enum watch_format {
 	FORMAT_TEXT,
 	FORMAT_JSON,
 	FORMAT_OTEL,
-	FORMAT_COLLAPSED
+	FORMAT_COLLAPSED,
+	FORMAT_OTLPJSON
 };
+
+#define	WATCH_DEFAULT_ENDPOINT	"http://localhost:4318"
 
 struct watch_opts {
 	int		 broker;
@@ -103,6 +108,12 @@ struct watch_opts {
 	const char	*switchrate;	/* NULL: default */
 	int		 with_stack;
 	int		 with_ustack;
+	const char	*output;	/* NULL: standard output */
+	uint64_t	 rotate_size;	/* bytes; 0: never */
+	time_t		 rotate_interval; /* seconds; 0: never */
+	unsigned	 rotate_keep;	/* 0: library default */
+	const char	*spool;		/* otel: spool file or NULL */
+	uint64_t	 spool_max;	/* bytes; 0: library default */
 };
 
 int	 watch_run(const struct profile *, const char *rendered,

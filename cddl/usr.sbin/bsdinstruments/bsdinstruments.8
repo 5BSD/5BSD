@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 11, 2026
+.Dd October 26, 2026
 .Dt BSDINSTRUMENTS 8
 .Os
 .Sh NAME
@@ -27,8 +27,14 @@
 .Op Fl -duration Ar seconds
 .Op Fl -with-stack
 .Op Fl -with-ustack
-.Op Fl -format Ar text | json | otel | collapsed
+.Op Fl -format Ar text | json | otel | otlp-json | collapsed
+.Op Fl -output Ar file
+.Op Fl -rotate-size Ar size
+.Op Fl -rotate-time Ar time
+.Op Fl -rotate-keep Ar n
 .Op Fl -endpoint Ar url
+.Op Fl -spool Ar file
+.Op Fl -spool-max Ar size
 .Op Fl -bufsize Ar size
 .Op Fl -switchrate Ar rate
 .Nm
@@ -47,8 +53,9 @@
 bundles a catalog of DTrace profiling templates covering system
 tracing, file and network activity, allocations, scheduler and lock
 contention analysis, and USDT-instrumented applications, and ships
-the results as text, JSONL, or OTLP/HTTP+JSON to an OpenTelemetry
-collector.
+the results as text, JSONL, collapsed stacks or OTLP JSON Lines to
+standard output or a rotating file, or as OTLP/HTTP+JSON to an
+OpenTelemetry collector.
 .Pp
 A profile is a plain
 .Pa .d
@@ -117,7 +124,7 @@ Substituted from
 Line-oriented dwatch-style output; libdtrace's formatted output goes
 directly to standard output, in color on a terminal.
 .It Cm json
-One JSON object per probe firing, pipe-friendly for
+One JSON object per output line, pipe-friendly for
 .Xr jq 1 ,
 Loki, or Vector.
 .It Cm otel
@@ -127,6 +134,11 @@ endpoint; DTrace aggregations become typed metrics on
 .Pa /v1/metrics
 (count/sum as monotonic Sums, min/max/avg as Gauges, quantize
 variants as Histograms).
+.It Cm otlp-json
+The same OTLP requests written as JSON Lines, one request per line: the
+format of the OpenTelemetry Collector's file exporter, readable by its
+.Ql otlpjsonfile
+receiver.
 .It Cm collapsed
 Folded stacks for
 .Nm flamegraph.pl
@@ -135,6 +147,69 @@ or speedscope; requires
 and/or
 .Fl -with-ustack .
 .El
+.Ss Timestamps
+Structured formats stamp each record with the probe's own wall-clock
+time, not the time
+.Nm
+read it.
+.Nm
+enables a small clock program alongside the profile that prints
+.Va walltimestamp
+and
+.Va timestamp
+from the same firing at
+.Dv BEGIN
+and once a second; each record's high-resolution timestamp is moved
+onto the wall clock by the latest of these anchors.
+The time the record was read is kept as the observed time
+.Pq Ql observedTimeUnixNano , or Va observed in JSON .
+Profiles need no changes.
+Text output carries no timestamps and does not run the clock program.
+Records printed before the first anchor reaches
+.Nm
+fall back to the time they were read.
+Cumulative metrics carry the time tracing started as their start time.
+.Ss Output files
+Every format except
+.Cm otel
+writes to standard output, or with
+.Fl -output Ar file
+to that file, appending to an existing one.
+The file is checked before tracing starts, so a bad path fails at once.
+Output written to a file is flushed and
+.Xr fsync 2 Ns ed
+at least once a second and at exit.
+.Fl -rotate-size Ar size
+.Pq with an optional k, m or g suffix
+and
+.Fl -rotate-time Ar time
+.Pq with an optional s, m, h or d suffix
+rotate the file when it would grow past the size or has been open that
+long: the file becomes
+.Ar file Ns .1 ,
+older files shift up, and
+.Fl -rotate-keep Ar n
+.Pq default 7
+rotated files are kept.
+Records are never split across files.
+Text output rotates at the next once-a-second check.
+A write error, such as a full disk, stops the trace with exit status 1
+and a message naming the file.
+.Ss Collector outages
+With
+.Fl -format Cm otel ,
+.Fl -spool Ar file
+keeps batches the collector could not take after the retries: they are
+appended to
+.Ar file
+as OTLP JSON Lines and resent, oldest first, once the collector accepts
+a request again, either later in the same run or in a later run with
+the same spool.
+.Fl -spool-max Ar size
+bounds the spool
+.Pq default 64m ;
+batches that do not fit are dropped and counted.
+Batches the collector rejects as malformed are never spooled.
 .Ss DTrace buffer tuning
 .Fl -bufsize
 sets the per-CPU trace buffer size (default 4m for text output, 16m
@@ -202,7 +277,15 @@ and
 An explicit
 .Fl -endpoint
 flag takes precedence over
-.Ev OTEL_EXPORTER_OTLP_ENDPOINT .
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT ,
+which takes precedence over the built-in default
+.Ql http://localhost:4318 .
+Malformed values are reported and ignored as described in
+.Xr libotelexport 3 .
+.Sh EXIT STATUS
+.Nm
+exits 0 on success, 1 when tracing or exporting fails, and 2 on a usage
+error.
 .Sh EXAMPLES
 Watch
 .Xr kill 2
@@ -223,6 +306,19 @@ bsdinstruments watch syscall-counts --format otel \e
     --endpoint http://collector:4318 --duration 10
 .Ed
 .Pp
+Record accept latency as OTLP JSON Lines, rotating daily and keeping a
+week:
+.Bd -literal -offset indent
+bsdinstruments watch accept-latency --format otlp-json \e
+    --output /var/log/otel/accept.jsonl --rotate-time 1d
+.Ed
+.Pp
+Ship to a collector, spooling through outages:
+.Bd -literal -offset indent
+bsdinstruments watch connect-latency --format otel \e
+    --endpoint http://collector:4318 --spool /var/db/otel-spool.jsonl
+.Ed
+.Pp
 Generate a flame graph of on-CPU stacks:
 .Bd -literal -offset indent
 bsdinstruments watch sched-on-cpu --with-stack --format collapsed \e
@@ -231,6 +327,7 @@ bsdinstruments watch sched-on-cpu --with-stack --format collapsed \e
 .Sh SEE ALSO
 .Xr dtrace 1 ,
 .Xr dwatch 1 ,
+.Xr libotelexport 3 ,
 .Xr hwstat 8
 .Sh HISTORY
 .Nm

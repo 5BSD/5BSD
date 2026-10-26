@@ -15,7 +15,8 @@
 
 struct oe_jsonl {
 	struct oe_exporter e;
-	FILE		*out;
+	struct oe_sink	*sink;
+	struct oe_sink	*owned;		/* wrapper sink for oe_jsonl_new() */
 	char		*profile;
 };
 
@@ -62,8 +63,18 @@ jsonl_event(struct oe_exporter *e, const struct oe_event *ev)
 	oe_buf_init(&b);
 	oe_buf_appendstr(&b, "{\"time\":\"");
 	oe_buf_appendjson(&b, timestr);
+	if (ev->observed.tv_sec != 0 || ev->observed.tv_nsec != 0) {
+		/* "time" is the probe's clock, "observed" the reader's. */
+		oe_iso8601(&ev->observed, timestr, sizeof(timestr));
+		oe_buf_appendstr(&b, "\",\"observed\":\"");
+		oe_buf_appendjson(&b, timestr);
+	}
 	oe_buf_appendstr(&b, "\",\"profile\":\"");
 	oe_buf_appendjson(&b, ev->profile);
+	if (ev->probe != NULL && ev->probe[0] != '\0') {
+		oe_buf_appendstr(&b, "\",\"probe\":\"");
+		oe_buf_appendjson(&b, ev->probe);
+	}
 	oe_buf_appendstr(&b, "\",\"body\":\"");
 	oe_buf_appendjson(&b, ev->body);
 	oe_buf_appendstr(&b, "\"");
@@ -71,9 +82,7 @@ jsonl_event(struct oe_exporter *e, const struct oe_event *ev)
 	jsonl_stack_array(&b, "ustack", ev->ustack, ev->nustack);
 	oe_buf_appendstr(&b, "}\n");
 
-	ret = b.error ? -1 : 0;
-	if (ret == 0)
-		fwrite(b.data, 1, b.len, j->out);
+	ret = b.error ? -1 : oe_sink_write(j->sink, b.data, b.len);
 	oe_buf_free(&b);
 	return (ret);
 }
@@ -91,8 +100,7 @@ jsonl_flush(struct oe_exporter *e)
 {
 	struct oe_jsonl *j = (struct oe_jsonl *)e;
 
-	fflush(j->out);
-	return (0);
+	return (oe_sink_flush(j->sink));
 }
 
 static int
@@ -107,6 +115,7 @@ jsonl_free(struct oe_exporter *e)
 {
 	struct oe_jsonl *j = (struct oe_jsonl *)e;
 
+	(void)oe_sink_close(j->owned);
 	free(j->profile);
 	free(j);
 }
@@ -121,7 +130,7 @@ static const struct oe_exporter_ops jsonl_ops = {
 };
 
 struct oe_exporter *
-oe_jsonl_new(FILE *out, const char *profile)
+oe_jsonl_sink_new(struct oe_sink *sink, const char *profile)
 {
 	struct oe_jsonl *j;
 
@@ -129,11 +138,30 @@ oe_jsonl_new(FILE *out, const char *profile)
 	if (j == NULL)
 		return (NULL);
 	j->e.ops = &jsonl_ops;
-	j->out = out;
+	j->sink = sink;
 	j->profile = strdup(profile != NULL ? profile : "");
 	if (j->profile == NULL) {
 		free(j);
 		return (NULL);
 	}
 	return (&j->e);
+}
+
+struct oe_exporter *
+oe_jsonl_new(FILE *out, const char *profile)
+{
+	struct oe_sink_config sc;
+	struct oe_exporter *e;
+	struct oe_sink *sink;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.fp = out;
+	if ((sink = oe_sink_open(&sc)) == NULL)
+		return (NULL);
+	if ((e = oe_jsonl_sink_new(sink, profile)) == NULL) {
+		(void)oe_sink_close(sink);
+		return (NULL);
+	}
+	((struct oe_jsonl *)e)->owned = sink;
+	return (e);
 }

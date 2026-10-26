@@ -1,13 +1,24 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd September 25, 2026
+.Dd October 26, 2026
 .Dt LIBOTELEXPORT 3
 .Os
 .Sh NAME
 .Nm oe_text_new ,
 .Nm oe_jsonl_new ,
 .Nm oe_collapsed_new ,
+.Nm oe_text_sink_new ,
+.Nm oe_jsonl_sink_new ,
+.Nm oe_collapsed_sink_new ,
+.Nm oe_otlpjson_new ,
 .Nm oe_otlp_new ,
+.Nm oe_sink_open ,
+.Nm oe_sink_write ,
+.Nm oe_sink_poll ,
+.Nm oe_sink_flush ,
+.Nm oe_sink_stream ,
+.Nm oe_sink_path ,
+.Nm oe_sink_close ,
 .Nm oe_start ,
 .Nm oe_event ,
 .Nm oe_snapshot ,
@@ -47,7 +58,29 @@ It is not installed as a shared library.
 .Ft "struct oe_exporter *"
 .Fn oe_collapsed_new "FILE *out"
 .Ft "struct oe_exporter *"
+.Fn oe_text_sink_new "struct oe_sink *sink"
+.Ft "struct oe_exporter *"
+.Fn oe_jsonl_sink_new "struct oe_sink *sink" "const char *profile"
+.Ft "struct oe_exporter *"
+.Fn oe_collapsed_sink_new "struct oe_sink *sink"
+.Ft "struct oe_exporter *"
+.Fn oe_otlpjson_new "const struct oe_otlpjson_config *cfg"
+.Ft "struct oe_exporter *"
 .Fn oe_otlp_new "const struct oe_otlp_config *cfg"
+.Ft "struct oe_sink *"
+.Fn oe_sink_open "const struct oe_sink_config *cfg"
+.Ft int
+.Fn oe_sink_write "struct oe_sink *sink" "const void *data" "size_t len"
+.Ft int
+.Fn oe_sink_poll "struct oe_sink *sink"
+.Ft int
+.Fn oe_sink_flush "struct oe_sink *sink"
+.Ft "FILE *"
+.Fn oe_sink_stream "struct oe_sink *sink"
+.Ft "const char *"
+.Fn oe_sink_path "const struct oe_sink *sink"
+.Ft int
+.Fn oe_sink_close "struct oe_sink *sink"
 .Ft int
 .Fn oe_start "struct oe_exporter *e"
 .Ft int
@@ -99,8 +132,9 @@ A tool's run loop normalizes probe firings into
 records and aggregation results into
 .Vt struct oe_snapshot
 records, then hands them to an exporter object which ships them to a
-destination: standard output as text, JSON Lines or collapsed stacks,
-or an OpenTelemetry collector over OTLP/HTTP+JSON.
+destination: a stream or rotating file as text, JSON Lines, collapsed
+stacks or OTLP JSON Lines, or an OpenTelemetry collector over
+OTLP/HTTP+JSON.
 The library is a C port of the ObservableBSD Swift
 .Dq OTelExport
 library.
@@ -153,6 +187,15 @@ delivers one probe firing.
 All strings and frame arrays in the
 .Vt struct oe_event
 are borrowed for the duration of the call; exporters copy what they keep.
+.Va ts
+is the probe's own wall-clock time and becomes the record's
+.Ql timeUnixNano ;
+.Va observed
+is when the consumer read the record
+.Pq Ql observedTimeUnixNano ,
+and a zero
+.Va observed
+means the time of encoding.
 Events with a
 .Dv NULL
 or empty
@@ -179,14 +222,100 @@ carries either a scalar or, when
 is set, an array of
 .Vt struct oe_bucket
 with inclusive upper bounds.
+A non-zero
+.Va start
+is the start of the accumulation window and becomes the
+.Ql startTimeUnixNano
+of cumulative sums and histograms.
 Snapshots with zero points are ignored.
-.Ss Standard-output exporters
+.Ss Output sinks
+The file-writing exporters write through a
+.Vt struct oe_sink ,
+configured by:
+.Bd -literal -offset indent
+struct oe_sink_config {
+	const char	*path;
+	FILE		*fp;
+	uint64_t	 rotate_size;
+	time_t		 rotate_interval;
+	unsigned	 rotate_keep;
+	int		 durable;
+};
+.Ed
+.Pp
+With a
+.Dv NULL
+.Va path
+or
+.Ql -
+the sink wraps the borrowed stream
+.Va fp
+.Pq standard output when Dv NULL ,
+which is never closed, rotated or synced to disk.
+Otherwise
+.Fn oe_sink_open
+opens or creates
+.Va path
+for appending; it must be a regular file.
+A file rotates before a record that would take it past
+.Va rotate_size
+bytes, and before the first record written
+.Va rotate_interval
+seconds after it was opened: the file becomes
+.Pa path.1 ,
+older files shift up by one, and only
+.Va rotate_keep
+.Pq default 7, at most 999
+rotated files are kept.
+Records are written whole, so rotation never splits a record; a record
+larger than the limit goes out on its own.
+With
+.Va durable ,
+every flush, rotation and close
+.Xr fsync 2 Ns s
+the file, and rotation also syncs the directory.
+.Pp
+.Fn oe_sink_write
+writes one record,
+.Fn oe_sink_flush
+flushes the stream
+.Pq and fsyncs it when durable ,
+and
+.Fn oe_sink_close
+flushes and releases the sink, closing the file it owns.
+A writer that bypasses the sink, such as libdtrace writing text output
+to
+.Fn oe_sink_stream ,
+calls
+.Fn oe_sink_poll
+periodically: it flushes, takes the file's size from the file system
+and rotates when a limit has been reached.
+.Fn oe_sink_stream
+may return a different stream after a rotation.
+.Fn oe_sink_path
+returns the path, or
+.Dv NULL
+for a stream sink.
+The first failure
+.Pq for example Er ENOSPC or Er EFBIG
+is reported once on standard error with the path and the system error,
+and is sticky: every later call fails without writing.
+.Ss Stream and file exporters
 The
 .Vt FILE
-pointer passed to each constructor is borrowed and is never closed by the
-library.
+pointer passed to
+.Fn oe_text_new ,
+.Fn oe_jsonl_new
+and
+.Fn oe_collapsed_new
+is borrowed and is never closed by the library; the
+.Fn *_sink_new
+variants write through a borrowed
+.Vt struct oe_sink
+instead, so their output can go to a rotating, durable file.
+Write failures are returned by the call that hit them.
 .Bl -tag -width indent
-.It Fn oe_text_new
+.It Fn oe_text_new , Fn oe_text_sink_new
 Line-oriented output.
 Prints each event's
 .Va body
@@ -200,15 +329,18 @@ beneath.
 .Fn oe_flush
 and
 .Fn oe_shutdown
-call
-.Xr fflush 3 .
-.It Fn oe_jsonl_new
+flush the sink.
+.It Fn oe_jsonl_new , Fn oe_jsonl_sink_new
 One JSON object per event on its own line, suitable for piping into
 jq, Loki, Vector, Splunk or fluentd.
 Each object carries
 .Va time
-.Pq ISO 8601, see Fn oe_iso8601 ,
+.Pq the probe time in ISO 8601, see Fn oe_iso8601 ,
+.Va observed
+.Pq when set ,
 .Va profile ,
+.Va probe
+.Pq when non-empty ,
 .Va body ,
 and, when present,
 .Va stack
@@ -221,7 +353,7 @@ argument is copied at construction; a
 .Dv NULL
 profile is treated as the empty string.
 Snapshots are ignored.
-.It Fn oe_collapsed_new
+.It Fn oe_collapsed_new , Fn oe_collapsed_sink_new
 Folded stacks for flame graph generation in the format read by
 .Pa flamegraph.pl ,
 speedscope and pprof:
@@ -238,9 +370,40 @@ When an event carries both kernel and user stacks the kernel stack is
 placed first and separated from the user stack by a
 .Ql --
 frame.
-Events without any stack are ignored.
+Events without any stack are ignored; events with a stack but an empty
+body are folded.
 .Fn oe_flush
 is a no-op.
+.It Fn oe_otlpjson_new
+OTLP JSON Lines: one
+.Vt ExportLogsServiceRequest
+or
+.Vt ExportMetricsServiceRequest
+JSON object per line, the format written by the OpenTelemetry
+Collector's file exporter and read by its
+.Ql otlpjsonfile
+receiver.
+The requests are built by the same encoder as the OTLP/HTTP exporter's
+request bodies and are byte-for-byte identical to them.
+It is configured by:
+.Bd -literal -offset indent
+struct oe_otlpjson_config {
+	struct oe_sink	*sink;
+	const char	*profile;
+	const struct oe_resource *resource;
+	int		 batch_size;
+};
+.Ed
+.Pp
+Log records are written once
+.Va batch_size
+.Pq default 200
+are pending; snapshots and any pending records are written by
+.Fn oe_flush
+and
+.Fn oe_shutdown ,
+which also flush the sink.
+The exporter runs on the caller's thread.
 .El
 .Ss OTLP/HTTP+JSON exporter
 .Fn oe_otlp_new
@@ -265,6 +428,8 @@ struct oe_otlp_config {
 	const struct oe_attr *headers;
 	size_t		 nheaders;
 	const char	*compression;
+	const char	*spool_path;
+	uint64_t	 spool_max;
 };
 .Ed
 .Bl -tag -width "flush_interval"
@@ -346,6 +511,15 @@ unless this is the string
 .Pq compared case-insensitively .
 .Dv NULL
 selects gzip.
+.It Va spool_path
+When non-NULL, requests that still fail after the retries are spooled to
+this file instead of being lost; see
+.Sx Spooling .
+The file is created
+.Pq mode 0600
+or adopted at construction, so an unusable path fails there.
+.It Va spool_max
+Spool size limit in bytes; 0 selects 64 MiB.
 .El
 .Pp
 .Fn oe_start
@@ -401,6 +575,29 @@ Each request uses a fresh connection with
 .Fn oe_shutdown
 stops the sender thread, waits for queued posts to complete, then drains
 whatever is still batched synchronously.
+.Ss Spooling
+With a spool configured, a request that fails with a transport error or
+a retryable status after
+.Va max_retries
+retries is appended to the spool as one OTLP JSON line, in the same
+format
+.Fn oe_otlpjson_new
+writes, and the file is fsynced.
+After the next request the collector accepts, and every five seconds
+while the sender thread is idle, the spool is replayed oldest first;
+lines the collector accepts or rejects as malformed are removed, the
+rest stay for the next attempt.
+The remainder is rewritten through a temporary file and
+.Xr rename 2 ,
+so a crash leaves either the old or the new spool.
+A spool left by an earlier run is replayed the same way.
+Lines that are not OTLP requests and an incomplete final line are
+dropped with a warning.
+A request that would push the spool past
+.Va spool_max
+is dropped; the number of batches dropped is reported once the spool
+drains.
+Requests rejected with a non-retryable status are never spooled.
 .Ss Drop accounting
 .Fn oe_report_drops
 adds
@@ -434,11 +631,24 @@ arrays are allocated and released by
 which also zeroes the structure.
 Comma-separated
 .Ql key=value
-lists are parsed into
+lists
+.Pq the W3C Baggage format the specification uses
+are parsed into
 .Vt struct oe_attr
-arrays; entries without an
-.Ql =
-are skipped.
+arrays: blanks around keys and values are trimmed, empty entries are
+skipped and values are percent-decoded.
+As the specification asks, a malformed list
+.Pq an entry without Ql = , an empty key or a bad percent escape
+is reported on standard error and discarded as a whole, never applied in
+part; header lists are also discarded when a name is not an HTTP token
+or a value contains a control character, so the environment cannot
+inject request lines.
+A timeout that is not a non-negative number of milliseconds and a
+compression other than
+.Ql gzip
+or
+.Ql none
+are reported and ignored; empty variables count as unset.
 The library only parses the environment; applying it is the caller's
 business.
 Both
@@ -451,8 +661,8 @@ as the resource service name, pass
 .Va resource_attrs
 as the resource's custom attributes, use
 .Va endpoint
-only to override the compiled-in default when no explicit endpoint was
-given on the command line, and pass
+when no endpoint was given on the command line, falling back to their
+built-in default, and pass
 .Va headers ,
 .Va compression
 and a converted
@@ -510,6 +720,15 @@ Once any operation fails the buffer's
 .Va error
 flag is set and every further append fails, so a sequence of appends can
 be checked once at the end.
+.Pp
+.Fn oe_env_load
+is the single place the tools consult for these defaults, so a
+lower-precedence configuration source
+.Pq for example a system-wide file
+belongs there, filling only members the environment left unset.
+The resulting precedence is: command line, then
+.Ev OTEL_*
+environment, then such a configuration layer, then the built-in default.
 .Pp
 .Fn oe_frame_format
 renders a
@@ -660,6 +879,18 @@ fail only on memory exhaustion; network failures are handled by the
 sender thread and never surface through the delivery calls.
 .Fn oe_shutdown
 of the collapsed exporter fails if the sort buffer cannot be allocated.
+The stream and file exporters' delivery, flush and shutdown calls also
+fail when the sink cannot be written; the sink's own calls fail on any
+write, sync, rotation or close error.
+.Fn oe_sink_open
+fails when the file cannot be opened or created, is not a regular file,
+the path leaves no room for the rotation suffix, or
+.Va rotate_keep
+exceeds 999.
+With a spool,
+.Fn oe_otlp_new
+also fails when the spool cannot be opened or created or is not a
+regular file.
 .Sh SEE ALSO
 .Xr bsdinstruments 8 ,
 .Xr hwstat 8
