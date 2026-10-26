@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Declared Bazel targets for lib/libotelexport (experimental pilot).
+# Make reference: lib/libotelexport/Makefile (INTERNALLIB, WARNS 6,
+# LIBADD z ssl crypto pthread).  otel-probe.py fails if SRCS differ.
+load("//toolchain:bsd_component.bzl", "bsd_internal_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# Keep in the order of Makefile SRCS.
+OTELEXPORT_SRCS = [
+    "oe_util.c",
+    "oe_text.c",
+    "oe_jsonl.c",
+    "oe_collapsed.c",
+    "oe_http.c",
+    "oe_otlp.c",
+]
+
+# Private headers included only by the library sources.
+OTELEXPORT_PRIVATE_HDRS = [
+    "oe_http.h",
+]
+
+# Makefile INCS (not installed for an INTERNALLIB).
+OTELEXPORT_HDRS = ["otelexport.h"]
+
+# libotelexport.a and libotelexport_pie.a.
+bsd_internal_library(
+    name = "otelexport",
+    srcs = OTELEXPORT_SRCS + OTELEXPORT_PRIVATE_HDRS,
+    hdrs = OTELEXPORT_HDRS,
+    warns = 6,
+    # src.libnames.mk _DP_otelexport
+    linkopts = ["-lz", "-lssl", "-lcrypto", "-lpthread"],
+)
+
+# Consumers' CFLAGS+=-I${SRCTOP}/lib/libotelexport.
+cc_library(
+    name = "headers",
+    hdrs = OTELEXPORT_HDRS,
+    includes = ["."],
+)

@@ -24,6 +24,11 @@ def _impl(ctx):
             actions = _COMPILE + _LINK,
             flag_groups = [flag_group(flags = ["--target=" + ctx.attr.target, "--sysroot=" + root])],
         )]),
+        # Sandboxed actions run in per-action directories; record a stable
+        # DW_AT_comp_dir so debug output is reproducible across rebuilds.
+        feature(name = "bsd_debug_compilation_dir", enabled = True, flag_sets = [flag_set(
+            actions = _COMPILE, flag_groups = [flag_group(flags = ["-fdebug-compilation-dir=."])],
+        )]),
         feature(name = "bsd_cpp_headers", enabled = True, flag_sets = [flag_set(
             actions = ["c++-compile", "c++-header-parsing", "c++-module-compile", "c++-module-codegen"],
             flag_groups = [flag_group(flags = ["-isystem", headers[0]])],

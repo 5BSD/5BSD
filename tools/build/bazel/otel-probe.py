@@ -1,0 +1,648 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-2-Clause
+"""Declared Bazel targets for the OTel components, compared with independent Make builds.
+
+Builds lib/libotelexport (static and PIE archives), its ATF test program,
+usr.sbin/hwstat and cddl/usr.sbin/bsdinstruments with the declared staged
+toolchain, and the same components through maintained Make buildenv against
+the same staged SDK.  Not a system build backend; build-bsd selects Make.
+"""
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import bsd_toolchain  # noqa: E402
+
+MARKER = 'OTEL_BAZEL_DEPENDENCY_PROBE'
+LINK_MARKER = 'OTEL_BAZEL_LINK_PROBE'
+ABI_FAILURE = re.compile(r'Undefined symbol|version \S+ required by|Shared object "[^"]+" not found')
+
+# Bazel-only compile tokens removed before comparing with Make, and why.
+EXPLAINED_BAZEL_TOKENS = {
+    '-frandom-seed': 'Bazel seeds per-output randomness with the output path; it affects only '
+                     'compiler-generated unique names, not C code generation (checked by '
+                     'object/section comparison).',
+    '-iquote': 'Bazel workspace quote-include roots (".", bazel-out/<cfg>/bin, external/bazel_tools); '
+               'Make relies on the including file\'s directory, which clang searches first in both.',
+    '-isystem bazel-out': 'generated-file twin of each declared include directory; empty for these targets.',
+    '-nostdinc/-isystem SDK': 'explicit staged clang resource and sysroot include directories; '
+                              'Make reaches the same directories through --sysroot defaults.',
+    '-I vs -isystem': 'Bazel `includes` produces -isystem; with Make policy -Wsystem-headers the '
+                      'diagnostics are unchanged and the search order is preserved and verified.',
+    '-fdebug-compilation-dir=.': 'toolchain feature: Bazel sandboxes each action in a numbered '
+                                 'directory that would otherwise be recorded as DW_AT_comp_dir, making '
+                                 'debug output differ between identical rebuilds. Make records its '
+                                 'absolute object directory instead. Debug sections only.',
+    '-MD/-MF': 'dependency-file names differ (Make .depend.*, Bazel .d); Bazel also verifies '
+               'inclusions against declared inputs.',
+}
+
+
+def sha(path):
+    with Path(path).open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def load(name, filename):
+    spec = importlib.util.spec_from_file_location(name, HERE / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def object_path(value, label):
+    if not value.is_absolute() or any(c in str(value) for c in '\n\r\x00$'):
+        raise ValueError(label + ' must be absolute without newline, NUL or $')
+    return value
+
+
+class Recorder:
+    def __init__(self, path):
+        self.path = path
+        self.records = []
+
+    def run(self, argv, expect_success=True, cwd=None, env=None, timeout=None, check=True):
+        argv = [str(x) for x in argv]
+        try:
+            result = subprocess.run(argv, cwd=cwd, env=env, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True, timeout=timeout)
+            status, out, err = result.returncode, result.stdout, result.stderr
+        except subprocess.TimeoutExpired as error:
+            status, out, err = 'timeout', error.stdout or '', error.stderr or ''
+            out = out if isinstance(out, str) else out.decode(errors='replace')
+            err = err if isinstance(err, str) else err.decode(errors='replace')
+        self.records.append({'argv': argv, 'cwd': str(cwd) if cwd else None,
+                             'exit_code': status, 'stdout': out, 'stderr': err})
+        self.path.write_text(json.dumps(self.records, indent=2) + '\n')
+        if check and (status == 0) != expect_success:
+            raise RuntimeError('unexpected command result (%s): %s\n%s%s' %
+                               (status, shlex.join(argv), out[-4000:], err[-4000:]))
+        return status, out, err
+
+
+def make_compile_command(dry_run, obj):
+    matches = []
+    for line in dry_run.splitlines():
+        tokens = shlex.split(line) if ' -c ' in line else []
+        if '-o' in tokens and tokens[tokens.index('-o') + 1] == obj:
+            matches.append(tokens)
+    if len(matches) != 1:
+        raise ValueError('expected one Make compile command for ' + obj)
+    return matches[0]
+
+
+def make_link_command(dry_run, output):
+    matches = [shlex.split(line) for line in dry_run.splitlines()
+               if ' -o ' + output + ' ' in line and ' -c ' not in line]
+    if len(matches) != 1:
+        raise ValueError('expected one Make link command for ' + output)
+    return matches[0]
+
+
+def normalize_make_compile(tokens, src):
+    flags, includes, i = [], [], 1
+    while i < len(tokens):
+        t = tokens[i]
+        if t in ('-target', '-o', '-c'):
+            i += 2
+            continue
+        if t.startswith('-I'):
+            includes.append(os.path.normpath(t[2:]))
+        elif not (t.startswith('--sysroot=') or t.startswith('-B') or t == '-MD' or
+                  t.startswith('-MF') or t.startswith('-MT')):
+            flags.append(t)
+        i += 1
+    relative, missing = [], []
+    for path in includes:
+        rel = os.path.relpath(path, src)
+        if not (src / rel).is_dir():
+            missing.append(rel)
+        elif rel not in relative:
+            relative.append(rel)
+    return flags, relative, missing
+
+
+def normalize_bazel_compile(tokens):
+    flags, includes, dropped, i = [], [], [], 1
+    while i < len(tokens):
+        t = tokens[i]
+        if t in ('-MF', '-iquote', '-c', '-o'):
+            if t == '-iquote':
+                dropped.append(t + ' ' + tokens[i + 1])
+            i += 2
+            continue
+        if t == '-isystem':
+            path = tokens[i + 1]
+            if path.startswith('bazel-out/') or path.startswith('toolchain/'):
+                dropped.append(t + ' ' + path)
+            else:
+                includes.append(path)
+            i += 2
+            continue
+        if t.startswith('-frandom-seed=') or t in ('-MD', '-nostdinc', '-fdebug-compilation-dir=.'):
+            dropped.append(t)
+        elif not (t.startswith('--target=') or t.startswith('--sysroot=')):
+            flags.append(t)
+        i += 1
+    return flags, includes, dropped
+
+
+def link_summary(tokens, archive_dirs=()):
+    options, libraries, objects = set(), [], []
+    for t in tokens:
+        if t.startswith('-Wl,'):
+            options.update('-Wl,' + x for x in t[4:].split(','))
+        elif t in ('-pie', '-gz=zlib', '-static', '-shared'):
+            options.add(t)
+        elif t.startswith('-l'):
+            libraries.append(t)
+        elif t.endswith('.a'):
+            libraries.append('-l' + Path(t).name[3:-2])
+        elif t.endswith('.o') or t.endswith('.pieo'):
+            objects.append(re.sub(r'(\.pic)?\.o$|\.pieo$', '', Path(t).name))
+    ordered = list(dict.fromkeys(libraries))
+    return {'options': sorted(options), 'libraries_order': ordered,
+            'libraries': sorted(ordered), 'objects': objects}
+
+
+def params_file(bazel_bin, artifact):
+    found = sorted(bazel_bin.glob(artifact + '-*.params'))
+    if len(found) != 1:
+        raise ValueError('expected one Bazel params file for ' + artifact)
+    return found[0].read_text().split('\n')
+
+
+def key_shape(value):
+    if isinstance(value, dict):
+        return {k: key_shape(v) for k, v in sorted(value.items())}
+    if isinstance(value, list):
+        shapes = []
+        for item in value:
+            shape = key_shape(item)
+            if shape not in shapes:
+                shapes.append(shape)
+        return shapes
+    return type(value).__name__
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    for name in ('src', 'sysroot', 'objdump', 'awk', 'bazel', 'output'):
+        p.add_argument('--' + name, type=Path, required=True)
+    p.add_argument('--make', type=Path, default=Path('/usr/bin/make'))
+    p.add_argument('--readelf', type=Path, default=Path('/usr/bin/readelf'))
+    for name in ('target', 'cpu', 'clang-version'):
+        p.add_argument('--' + name, required=True)
+    p.add_argument('--jobs', type=int, default=os.cpu_count())
+    p.add_argument('--skip-host-runtime', action='store_true',
+                   help='do not execute the built programs on this host')
+    a = p.parse_args()
+    if platform.system() != 'FreeBSD' or platform.machine() != 'amd64':
+        p.error('native FreeBSD amd64 only; cross compilation is unqualified')
+    if a.jobs < 1:
+        p.error('--jobs must be positive')
+    if not re.fullmatch(r'x86_64-unknown-freebsd[0-9]+(?:\.[0-9]+)*', a.target):
+        p.error('only native amd64 FreeBSD targets are supported')
+    for name in ('src', 'sysroot', 'objdump', 'awk', 'bazel', 'output', 'make', 'readelf'):
+        object_path(getattr(a, name), '--' + name)
+    src, sysroot = a.src.resolve(strict=True), a.sysroot.resolve(strict=True)
+    bazel, make, readelf = (x.resolve(strict=True) for x in (a.bazel, a.make, a.readelf))
+    objdump, awk = a.objdump.resolve(strict=True), a.awk.resolve(strict=True)
+    out = a.output.resolve()
+    if a.output.is_symlink() or out.exists():
+        p.error('--output must be a new evidence directory')
+    if out == Path('/usr/obj') or not out.is_relative_to('/usr/obj'):
+        p.error('--output must be below /usr/obj')
+    if out.is_relative_to(src) or src.is_relative_to(out) or out.is_relative_to(sysroot):
+        p.error('--output must not overlap the source tree or staged sysroot')
+    manifest_path = HERE / 'targets/sources.json'
+    manifest = json.loads(manifest_path.read_text())
+    clang = sysroot / 'usr/bin/clang'
+    tools = {'llvm-nm': sysroot / 'usr/bin/llvm-nm', 'llvm-ar': sysroot / 'usr/bin/llvm-ar',
+             'llvm-objcopy': sysroot / 'usr/bin/llvm-objcopy'}
+    for path in [clang, *tools.values()]:
+        if not path.is_file():
+            raise ValueError('staged tool missing: ' + str(path))
+    out.mkdir(parents=True)
+    rec = Recorder(out / 'commands.json')
+    checker = load('elf_artifact_check', 'elf-artifact-check.py')
+    probe_inputs = sorted([Path(__file__).resolve(), HERE / 'bsd_toolchain.py',
+                           HERE / 'cc_toolchain_config.bzl', HERE / 'bsd_component.bzl',
+                           HERE / 'elf-artifact-check.py', HERE / 'elf-artifact-check-test.py',
+                           manifest_path,
+                           *sorted((HERE / 'targets').rglob('BUILD.bazel'))])
+    result = {'scope': 'native-amd64-otel-declared-bazel-targets', 'status': 'running',
+              'source_root': str(src), 'sysroot': str(sysroot), 'target': a.target,
+              'jobs': a.jobs, 'production_backend': 'bsd-make',
+              'probe_input_sha256': {str(x): sha(x) for x in probe_inputs},
+              'tool_sha256': {str(x): sha(x) for x in (bazel, make, readelf, objdump, awk, clang,
+                                                        *tools.values())},
+              'system_backend_qualified': False, 'bazel9_qualified': False,
+              'cross_compilation_qualified': False, 'system_runtime_qualified': False,
+              'installation_package_parity': False}
+
+    def save():
+        (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
+
+    try:
+        # ---- Independent Make references through maintained buildenv. ----
+        make_env = {'PATH': '/bin:/usr/bin:/usr/local/bin', 'HOME': os.environ.get('HOME', '/nonexistent'),
+                    'LC_ALL': 'C', 'MAKEOBJDIRPREFIX': str(out / 'make/objprefix'),
+                    'SRCCONF': '/dev/null', '__MAKE_CONF': '/dev/null'}
+        (out / 'make/objprefix').mkdir(parents=True)
+
+        def buildenv(command, **kw):
+            return rec.run([make, '-C', src, 'buildenv', 'WORLDTMP=' + str(sysroot),
+                            'BUILDENV_SHELL=' + shlex.join([str(x) for x in command])],
+                           env=make_env, **kw)
+
+        _, env_out, _ = buildenv(['/usr/bin/env'])
+        env_lines = env_out.splitlines()
+        if (env_lines[0] != 'Entering world for amd64:amd64' or
+                'SYSROOT=' + str(sysroot) not in env_lines or
+                not any(x.startswith('CC=') and '--sysroot=' + str(sysroot) in x and
+                        '-target ' + a.target in x for x in env_lines)):
+            raise ValueError('Make buildenv does not use the explicit staged sysroot/target')
+        library_dir = out / 'make/libotelexport'
+        make_info = {}
+        for component in manifest['components']:
+            objdir = out / 'make' / component['name']
+            objdir.mkdir(exist_ok=True)
+            # src.libnames.mk insists LIBOTELEXPORTDIR is .OBJDIR inside the library itself.
+            common_vars = [] if objdir == library_dir else ['LIBOTELEXPORTDIR=' + str(library_dir)]
+            base = ['/usr/bin/env', 'MAKEOBJDIR=' + str(objdir), make, '-C', src / component['path']]
+            # bsd.progs.mk (ATF_TESTS_C) keeps per-program sources in SRCS.<prog>.
+            _, values, _ = buildenv(base + ['-V', 'SRCS', '-V', 'CFLAGS', '-V', 'LDFLAGS',
+                                            '-V', 'WARNS', '-V', 'SRCS.' + component['make_targets'][0]] +
+                                    common_vars)
+            values = values.splitlines()[1:]
+            _, dry, _ = buildenv(base + ['-n'] + component['make_targets'] + common_vars)
+            (out / 'make' / (component['name'] + '.dry-run.txt')).write_text(dry)
+            buildenv(base + ['-j' + str(a.jobs)] + component['make_targets'] + common_vars)
+            make_info[component['name']] = {'objdir': str(objdir),
+                                            'srcs': (values[0] or values[4]).split(),
+                                            'cflags': values[1], 'ldflags': values[2],
+                                            'warns': values[3], 'dry_run': dry}
+        result['make_reference'] = {k: {x: y for x, y in v.items() if x != 'dry_run'}
+                                    for k, v in make_info.items()}
+        result['make_configuration'] = {k: make_env[k] for k in ('SRCCONF', '__MAKE_CONF', 'MAKEOBJDIRPREFIX')}
+
+        # ---- Declared Bazel workspace. ----
+        ws = out / 'workspace'
+        ws.mkdir()
+        bsd_toolchain.stage_toolchain(ws / 'toolchain', sysroot, objdump, awk,
+                                      a.target, a.cpu, a.clang_version)
+        for component in manifest['components']:
+            shutil.copytree(src / component['path'], ws / component['path'],
+                            symlinks=False, dirs_exist_ok=True)
+        for tree in manifest['header_trees']:
+            for header in sorted((src / tree).rglob('*.h')):
+                if not header.resolve(strict=True).is_relative_to(src):
+                    raise ValueError('header escapes source tree: ' + str(header))
+                destination = ws / header.relative_to(src)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(header, destination)
+        for name in ('BUILD', 'BUILD.bazel', 'WORKSPACE', 'WORKSPACE.bazel', 'MODULE.bazel'):
+            stray = [x for x in ws.rglob(name) if not x.is_relative_to(ws / 'toolchain')]
+            if stray:
+                raise ValueError('source tree supplied its own Bazel file: ' + str(stray[0]))
+        overlay = HERE / 'targets'
+        for build_file in sorted(overlay.rglob('BUILD.bazel')):
+            destination = ws / build_file.relative_to(overlay)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(build_file, destination)
+        (ws / 'WORKSPACE').write_text('workspace(name="bsd_otel_pilot")\n')
+        snapshot = {str(f.relative_to(ws)): sha(f) for f in sorted(ws.rglob('*')) if f.is_file()}
+        (out / 'inputs.json').write_text(json.dumps(snapshot, indent=2) + '\n')
+        result['inputs_sha256'] = sha(out / 'inputs.json')
+
+        prefix = [bazel, '--batch', '--output_user_root=' + str(out / 'cache'), '--ignore_all_rc_files']
+        flags = bsd_toolchain.build_flags(a.cpu, a.jobs) + ['--compilation_mode=opt', '--strip=never']
+        artifacts = [dict(x, component=c['name']) for c in manifest['components'] for x in c['artifacts']]
+        labels = [x['label'] for x in artifacts]
+        build = prefix + ['build'] + flags + labels
+        result['bazel_version'] = rec.run(prefix + ['version'], cwd=ws)[1]
+        rec.run(build, cwd=ws)
+        bazel_bin = ws / 'bazel-bin'
+        outputs = {x['bazel']: sha(bazel_bin / x['bazel']) for x in artifacts}
+        result['bazel_outputs'] = outputs
+
+        # ---- Source lists in BUILD files must equal Make SRCS. ----
+        def srcs_check():
+            report = {}
+            for item in artifacts:
+                _, listed, _ = rec.run(prefix + ['query', 'labels(srcs, %s)' % item['label']], cwd=ws)
+                bazel_srcs = [x.rsplit(':', 1)[1] for x in listed.split() if x.endswith('.c')]
+                make_srcs = [x for x in make_info[item['component']]['srcs'] if x.endswith('.c')]
+                if sorted(bazel_srcs) != sorted(make_srcs):
+                    raise ValueError('BUILD srcs differ from Make SRCS for ' + item['label'])
+                # Query output is sorted; source order is checked through archive
+                # member order and link object order below.
+                report[item['label']] = {'bazel': sorted(bazel_srcs), 'make': make_srcs}
+            return report
+
+        result['srcs_match_make'] = srcs_check()
+        build_file = ws / 'lib/libotelexport/BUILD.bazel'
+        original_build = build_file.read_text()
+        try:
+            if original_build.count('"oe_text.c",') != 1:
+                raise RuntimeError('drift-guard fixture expects one oe_text.c entry')
+            build_file.write_text(original_build.replace('"oe_text.c",', '', 1))
+            try:
+                srcs_check()
+            except ValueError as error:
+                result['srcs_drift_rejected'] = str(error)
+            else:
+                raise RuntimeError('removed BUILD source was not detected')
+        finally:
+            build_file.write_text(original_build)
+
+        # ---- Compile flags against Make commands. ----
+        _, aquery, _ = rec.run(prefix + ['aquery'] + flags +
+                               ['mnemonic("CppCompile", %s)' % ' + '.join(labels),
+                                '--output=jsonproto'], cwd=ws)
+        compile_actions = {}
+        for action in json.loads(aquery)['actions']:
+            argv = action['arguments']
+            compile_actions[argv[argv.index('-o') + 1]] = argv
+        flag_report = {}
+        scratch = out / 'scratch'
+        scratch.mkdir()
+        for item in artifacts:
+            listed = params_file(bazel_bin, item['bazel'])
+            objects = [x for x in listed if x.endswith('.o')]
+            dry = make_info[item['component']]['dry_run']
+            per_object = {}
+            for obj in objects:
+                stem = re.sub(r'(\.pic)?\.o$', '', Path(obj).name)
+                make_tokens = make_compile_command(dry, stem + item['make_object_suffix'])
+                bazel_tokens = compile_actions[obj]
+                mflags, mincludes, missing = normalize_make_compile(make_tokens, src)
+                bflags, bincludes, dropped = normalize_bazel_compile(bazel_tokens)
+                if mflags != bflags:
+                    raise ValueError('compile flags differ from Make for %s: make-only %s bazel-only %s' %
+                                     (obj, sorted(set(mflags) - set(bflags)),
+                                      sorted(set(bflags) - set(mflags))))
+                if mincludes != bincludes:
+                    raise ValueError('include search path differs from Make for %s: %s vs %s' %
+                                     (obj, mincludes, bincludes))
+                make_object = Path(make_info[item['component']]['objdir']) / (stem + item['make_object_suffix'])
+                ms = checker.sections(tools['llvm-objcopy'], readelf, make_object, scratch)
+                bs = checker.sections(tools['llvm-objcopy'], readelf, ws / obj, scratch)
+                differing = sorted(n for n in set(ms) | set(bs) if ms.get(n) != bs.get(n))
+                per_object[stem] = {'make_object': str(make_object),
+                                    'differing_sections': differing,
+                                    'non_debug_differing_sections':
+                                        [n for n in differing if '.debug_' not in n],
+                                    'make_argv': make_tokens, 'bazel_argv': bazel_tokens,
+                                    'compared_flags': bflags, 'include_order': bincludes,
+                                    'make_include_dirs_absent_from_tree': missing,
+                                    'bazel_only_tokens_explained': dropped}
+            item_report = {'objects': per_object}
+            if item['kind'] == 'program':
+                mlink = make_link_command(dry, item['make'])
+                blink = listed
+                ms, bs = link_summary(mlink), link_summary(blink)
+                if ms['options'] != bs['options'] or ms['libraries'] != bs['libraries'] or \
+                        ms['objects'] != bs['objects']:
+                    raise ValueError('link inputs/options differ from Make for ' + item['label'] +
+                                     ': %s vs %s' % (ms, bs))
+                item_report['link'] = {'make_argv': mlink, 'bazel_params': blink, 'make': ms,
+                                       'bazel': bs,
+                                       'library_order_equal': ms['libraries_order'] == bs['libraries_order']}
+            flag_report[item['label']] = item_report
+        result['compile_link_policy'] = {'status': 'matched', 'explanations': EXPLAINED_BAZEL_TOKENS}
+        result['object_non_debug_differences'] = {
+            label + ':' + stem: o['non_debug_differing_sections']
+            for label, v in flag_report.items() for stem, o in v['objects'].items()
+            if o['non_debug_differing_sections']}
+        (out / 'compile-link-comparison.json').write_text(json.dumps(flag_report, indent=2) + '\n')
+        result['compile_link_comparison_sha256'] = sha(out / 'compile-link-comparison.json')
+
+        # ---- Artifact comparison and diagnostic relink. ----
+        comparisons = {}
+        for item in artifacts:
+            make_artifact = Path(make_info[item['component']]['objdir']) / item['make']
+            candidate = bazel_bin / item['bazel']
+            if item['kind'] == 'archive':
+                comparison = checker.compare_archive(tools['llvm-nm'], tools['llvm-ar'],
+                                                     candidate, make_artifact)
+            else:
+                comparison = checker.compare_program(readelf, tools['llvm-objcopy'], candidate,
+                                                     make_artifact, scratch)
+                # Diagnostic only: relink the Bazel objects with Make's exact link
+                # command to show which byte differences come from link order.
+                mlink = flag_report[item['label']]['link']['make_argv']
+                relinked = scratch / (Path(item['bazel']).name + '.make-order')
+                argv = list(mlink)
+                argv[argv.index('-o') + 1] = str(relinked)
+                for index, token in enumerate(argv):
+                    if token.endswith('.pieo'):
+                        argv[index] = str(bazel_bin / Path(item['bazel']).parent / '_objs' /
+                                          Path(item['bazel']).name / (token[:-5] + '.o'))
+                    elif token == '-L' + str(library_dir):
+                        argv[index] = '-L' + str(bazel_bin / 'lib/libotelexport')
+                buildenv(argv)
+                relink_sections = checker.sections(tools['llvm-objcopy'], readelf, relinked, scratch)
+                make_sections = comparison['make_reference']['sections']
+                residual = sorted(n for n in set(relink_sections) | set(make_sections)
+                                  if relink_sections.get(n) != make_sections.get(n))
+                with open(make_artifact, 'rb') as stream:
+                    make_bytes = stream.read()
+                comparison['make_order_relink'] = {
+                    'argv': argv, 'sha256': sha(relinked),
+                    'differing_sections_vs_make': residual,
+                    'non_debug_differences': [n for n in residual if not n.startswith('.debug_')
+                                              and n not in ('.symtab', '.strtab')],
+                    'make_embeds_absolute_source_path': (str(src) + '/').encode() in make_bytes}
+            comparisons[item['label']] = comparison
+        (out / 'artifact-comparison.json').write_text(json.dumps(comparisons, indent=2) + '\n')
+        result['artifact_comparison_sha256'] = sha(out / 'artifact-comparison.json')
+        result['artifact_summary'] = {
+            label: {k: v for k, v in c.items() if k in ('byte_identical', 'needed_order_equal',
+                                                        'differing_sections')} |
+            ({'make_order_relink_non_debug_differences': c['make_order_relink']['non_debug_differences'],
+              'make_embeds_absolute_source_path': c['make_order_relink']['make_embeds_absolute_source_path']}
+             if 'make_order_relink' in c else {})
+            for label, c in comparisons.items()}
+
+        make_dir = out / 'make'
+        rec.run([sys.executable, '-B', HERE / 'elf-artifact-check-test.py', '--readelf', readelf,
+                 '--tools', sysroot / 'usr/bin', '--program', make_dir / 'hwstat/hwstat.full',
+                 '--other-program', make_dir / 'otelexport_test/otelexport_test.full',
+                 '--archive', library_dir / 'libotelexport_pie.a',
+                 '--work', out / 'elf-artifact-check-test'])
+        result['elf_artifact_checker_tests'] = 'passed'
+
+        # ---- Negative dependency tests on copied inputs. ----
+        negatives = []
+        for probe in manifest['dependency_probes']:
+            path = ws / probe['path']
+            original, mode = path.read_bytes(), path.stat().st_mode
+            path.chmod(mode | 0o200)  # SDK headers are installed read-only
+            try:
+                path.write_bytes(('#error ' + MARKER + '\n').encode() + original)
+                _, stdout, stderr = rec.run(build, expect_success=False, cwd=ws)
+                if MARKER not in stdout + stderr:
+                    raise RuntimeError('failed for an unrelated reason: ' + probe['path'])
+            finally:
+                path.write_bytes(original)
+                path.chmod(mode)
+            rec.run(build, cwd=ws)
+            negatives.append(dict(probe, injected_failure='observed', restored_build='passed'))
+        for probe in manifest['link_probes']:
+            path = ws / probe['path']
+            link = os.readlink(path)
+            try:
+                path.unlink()
+                path.write_text(LINK_MARKER + '\n')
+                _, stdout, stderr = rec.run(build, expect_success=False, cwd=ws)
+                if LINK_MARKER not in stdout + stderr:
+                    raise RuntimeError('link failed for an unrelated reason: ' + probe['path'])
+            finally:
+                path.unlink()
+                os.symlink(link, path)
+            rec.run(build, cwd=ws)
+            negatives.append(dict(probe, injected_failure='observed', restored_build='passed'))
+        result['dependency_invalidation'] = negatives
+        restored = {x['bazel']: sha(bazel_bin / x['bazel']) for x in artifacts}
+        result['restored_outputs_identical'] = restored == outputs
+        if restored != outputs:
+            raise RuntimeError('outputs changed after restoring all probe inputs')
+
+        # ---- Runtime fixture inputs for a matching-system VM runner. ----
+        fixture = out / 'runtime-fixture'
+        fixture.mkdir()
+        fixture_manifest = {'programs': {}, 'libraries': {}}
+        lib_dirs = [sysroot / 'lib', sysroot / 'usr/lib']
+        for item in artifacts:
+            if item['kind'] != 'program':
+                continue
+            name = Path(item['bazel']).name
+            for variant, path in (('bazel', bazel_bin / item['bazel']),
+                                  ('make', Path(make_info[item['component']]['objdir']) / name)):
+                staged = fixture / (name if variant == 'bazel' else 'make-' + name)
+                shutil.copy2(path, staged)
+                staged.chmod(0o755)
+                fixture_manifest['programs'][staged.name] = {'source': str(path), 'sha256': sha(staged)}
+            for needed in comparisons[item['label']]['candidate']['metadata']['needed']:
+                providers = [d / needed for d in lib_dirs if (d / needed).exists()]
+                if not providers:
+                    raise ValueError('SDK provider missing for ' + needed)
+                fixture_manifest['libraries'][needed] = {'sdk_path': str(providers[0].resolve()),
+                                                         'sha256': sha(providers[0])}
+        fixture_manifest['note'] = ('Make variants are the stripped installed form; .full files are '
+                                    'compared above. Stage these with the matching ld-elf.so.1 and '
+                                    'the listed SDK libraries plus their own NEEDED closure.')
+        (fixture / 'manifest.json').write_text(json.dumps(fixture_manifest, indent=2) + '\n')
+        result['runtime_fixture'] = str(fixture)
+
+        # ---- Host-ABI runtime (not matching-system qualification). ----
+        if a.skip_host_runtime:
+            result['host_runtime'] = 'not-performed'
+        else:
+            result['host_runtime'] = host_runtime(rec, out, fixture, src)
+        result['host_runtime_scope'] = ('host kernel ' + platform.release() + ' with host '
+                                        'rtld/libraries; not the staged SDK runtime')
+        for path, digest in result['probe_input_sha256'].items():
+            if sha(path) != digest:
+                raise RuntimeError('probe input changed during qualification: ' + path)
+        result['status'] = 'passed'
+    except Exception as error:
+        result.update(status='failed', error=str(error))
+        raise
+    finally:
+        result['commands_sha256'] = sha(out / 'commands.json') if (out / 'commands.json').exists() else None
+        save()
+    print(out / 'result.json')
+
+
+def host_runtime(rec, out, fixture, src):
+    report = {'status': 'passed', 'abi_blocked': []}
+    work = out / 'host-runtime'
+    work.mkdir()
+
+    def execute(argv, cwd=work):
+        status, stdout, stderr = rec.run(argv, cwd=cwd, timeout=120, check=False)
+        if ABI_FAILURE.search(stderr):
+            report['abi_blocked'].append({'argv': [str(x) for x in argv], 'stderr': stderr})
+        return status, stdout, stderr
+
+    # ATF test program: same case list, every case passes in both builds.
+    cases = {}
+    for name in ('otelexport_test', 'make-otelexport_test'):
+        program = fixture / name
+        status, listing, _ = execute([program, '-l'])
+        if status != 0:
+            raise RuntimeError(name + ' could not list its test cases')
+        idents = re.findall(r'^ident:\s+(\S+)$', listing, re.M)
+        results = {}
+        for case in idents:
+            directory = work / name / case
+            directory.mkdir(parents=True)
+            execute([program, '-r', directory / 'result', case], cwd=directory)
+            results[case] = ((directory / 'result').read_text().strip()
+                             if (directory / 'result').exists() else 'no result file')
+        cases[name] = results
+    if list(cases['otelexport_test']) != list(cases['make-otelexport_test']) or \
+            any(v != 'passed' for r in cases.values() for v in r.values()):
+        raise RuntimeError('ATF results differ or failed: ' + json.dumps(cases))
+    report['atf'] = cases
+
+    def pair(name, args):
+        runs = {}
+        for variant in (name, 'make-' + name):
+            status, stdout, stderr = execute([fixture / variant] + args)
+            runs[variant] = {'exit_code': status, 'stdout': stdout, 'stderr': stderr}
+        return runs[name], runs['make-' + name]
+
+    checks = []
+    for name, args in (('hwstat', []), ('hwstat', ['-h']), ('hwstat', ['bogus']),
+                       ('bsdinstruments', []), ('bsdinstruments', ['-h'])):
+        b, m = pair(name, args)
+        if b['exit_code'] != 2 or b != m:
+            raise RuntimeError('usage behavior differs: %s %s' % (name, args))
+        checks.append({'program': name, 'args': args, 'exit_code': 2, 'identical_output': True})
+    for name, args in (('bsdinstruments', ['list']), ('bsdinstruments', ['list', '--json']),
+                       ('bsdinstruments', ['generate', 'accept-latency'])):
+        b, m = pair(name, args)
+        if b['exit_code'] != 0 or b != m:
+            raise RuntimeError('deterministic output differs: %s %s' % (name, args))
+        checks.append({'program': name, 'args': args, 'exit_code': 0, 'identical_output': True,
+                       'stdout_sha256': hashlib.sha256(b['stdout'].encode()).hexdigest()})
+    b, m = pair('hwstat', ['list'])
+    labels = [re.findall(r'^([A-Za-z][^:\n]*):', r['stdout'], re.M) for r in (b, m)]
+    if b['exit_code'] != 0 or m['exit_code'] != 0 or labels[0] != labels[1]:
+        raise RuntimeError('hwstat list output structure differs')
+    checks.append({'program': 'hwstat', 'args': ['list'], 'exit_code': 0, 'labels': labels[0],
+                   'note': 'live telemetry values vary between runs; field labels compared'})
+    b, m = pair('hwstat', ['list', '--format', 'json'])
+    shapes = [key_shape(json.loads(r['stdout'])) for r in (b, m)]
+    if b['exit_code'] != 0 or m['exit_code'] != 0 or shapes[0] != shapes[1]:
+        raise RuntimeError('hwstat JSON structure differs')
+    checks.append({'program': 'hwstat', 'args': ['list', '--format', 'json'], 'exit_code': 0,
+                   'json_shape_equal': True})
+    b, m = pair('hwstat', ['watch', '--duration', '1', '--interval', '0.5'])
+    if b['exit_code'] != 0 or m['exit_code'] != 0 or not b['stdout'] or not m['stdout']:
+        raise RuntimeError('hwstat watch failed')
+    checks.append({'program': 'hwstat', 'args': ['watch', '--duration', '1', '--interval', '0.5'],
+                   'exit_code': 0, 'nonempty_output': True})
+    report['program_checks'] = checks
+    if report['abi_blocked']:
+        report['status'] = 'blocked-host-abi'
+    return report
+
+
+if __name__ == '__main__':
+    main()

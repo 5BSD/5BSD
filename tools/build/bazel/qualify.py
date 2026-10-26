@@ -78,6 +78,7 @@ def main():
     required = [bazel, make, readelf, clang, objdump, awk,
                 scripts / 'declared-probe.py', scripts / 'elf-shared-check-test.py',
                 scripts / 'install-reference.py', scripts / 'libmd_environment.py',
+                scripts / 'otel-probe.py', scripts / 'targets/sources.json',
                 objtop / '.src_opts',
                 src / 'Makefile', src / 'lib/libsbuf/Makefile',
                 sysroot / 'usr/include/sys/sbuf.h']
@@ -115,12 +116,15 @@ def main():
         'lib/libc/string/strnlen.c', 'lib/libc/amd64/stdlib/div.S',
         'sys/kern/subr_prf.c', 'sys/kern/subr_sbuf.c', 'lib/libsbuf/Symbol.map',
         'lib/libsbuf/Version.def', 'lib/libsbuf/Makefile', 'share/mk/version_gen.awk')]
+    otel_manifest = json.loads((scripts / 'targets/sources.json').read_text())
+    for component in otel_manifest['components']:
+        source_inputs += sorted(path for path in (src / component['path']).iterdir() if path.is_file())
     source_hashes = {str(path): sha(path) for path in source_inputs}
     receipt = {'scope': 'native-amd64-bazel-compile-qualification', 'status': 'running',
                'source': str(src), 'objtop': str(objtop), 'bazel': str(bazel),
                'jobs': args.jobs, 'target': target, 'clang_resource_version': version,
                'compile_only': False, 'bazel_compile_only': True,
-               'make_install_reference': 'pending',
+               'make_install_reference': 'pending', 'otel_targets': 'pending',
                'runtime_qualified': False, 'system_backend_qualified': False,
                'bazel9_qualified': False, 'production_backend': 'bsd-make',
                'remaining_inputs': ['host execution runtime and environment',
@@ -144,6 +148,17 @@ def main():
              '--awk', awk, '--make-library', output / 'make/samples/libbsd_samples.so.1',
              '--make-sbuf-library', output / 'make/sbuf/libsbuf.so.6',
              '--make-sbuf-map', output / 'make/sbuf/Version.map'])
+        # Declared OTel component targets against independent Make builds; compile and
+        # artifact comparison only (host execution is left to explicit probe runs).
+        run([sys.executable, '-B', scripts / 'otel-probe.py', '--src', src,
+             '--sysroot', sysroot, '--objdump', objdump, '--awk', awk, '--bazel', bazel,
+             '--make', make, '--readelf', readelf, '--target', target, '--cpu', 'k8',
+             '--clang-version', version, '--jobs', str(args.jobs), '--skip-host-runtime',
+             '--output', output / 'otel'])
+        otel_result = json.loads((output / 'otel/result.json').read_text())
+        if otel_result.get('status') != 'passed':
+            raise RuntimeError('OTel Bazel target comparison did not pass')
+        receipt.update(otel_targets='passed', otel_result_sha256=sha(output / 'otel/result.json'))
         run([sys.executable, '-B', scripts / 'elf-shared-check-test.py', '--readelf', readelf,
              '--reference', output / 'make/samples/libbsd_samples.so.1'])
         run([sys.executable, '-B', scripts / 'install-reference.py',
