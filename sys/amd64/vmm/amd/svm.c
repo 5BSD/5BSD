@@ -1869,7 +1869,6 @@ software_exception:
 		vmexit->exitcode = VM_EXITCODE_VMM_INTERNAL;
 		vmexit->inst_length = 0;
 		break;
-	case VMCB_EXIT_VMMCALL:
 	case VMCB_EXIT_SKINIT:
 	case VMCB_EXIT_ICEBP:
 		vm_inject_ud(vcpu->vcpu);
