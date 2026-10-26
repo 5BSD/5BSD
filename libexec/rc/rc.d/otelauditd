@@ -1,0 +1,47 @@
+#!/bin/sh
+#
+# PROVIDE: otelauditd
+# REQUIRE: DAEMON auditd
+# AFTER: fluentbit
+# KEYWORD: shutdown
+#
+# Audit records (auditpipe(4)) exported as OpenTelemetry log records
+# (otelauditd(8)).
+
+. /etc/rc.subr
+
+name="otelauditd"
+desc="OpenTelemetry audit record exporter"
+rcvar="otelauditd_enable"
+
+load_rc_config $name
+
+: ${otel_enable:="NO"}
+[ -n "${otelauditd_enable}" ] || otelauditd_enable="${otel_enable}"
+: ${otelauditd_bin:="/usr/sbin/otelauditd"}
+: ${otelauditd_runas:="_otel"}
+: ${otel_rundir:="/var/run/otel"}
+: ${otelconf_program:="/usr/sbin/otelconf"}
+if [ -n "${otel_endpoint}" ]; then
+	otelauditd_env="OTEL_EXPORTER_OTLP_ENDPOINT=${otel_endpoint}"
+fi
+
+pidfile="${otel_rundir}/${name}.pid"
+command="/usr/sbin/daemon"
+start_precmd="otelauditd_prestart"
+
+otelauditd_prestart()
+{
+	if [ ! -x "${otelauditd_bin}" ]; then
+		warn "${otelauditd_bin} is not installed"
+		return 1
+	fi
+	${otelconf_program} check -eq || return 1
+	install -d -m 0755 "${otel_rundir}" || return 1
+	# otelauditd opens /dev/auditpipe as root, then drops privileges.
+	command_args="-f -S -T ${name} -P ${pidfile} -r -R 10 \
+${otelauditd_bin} -u ${otelauditd_runas} ${rc_flags}"
+	rc_flags=""
+}
+
+run_rc_command "$1"

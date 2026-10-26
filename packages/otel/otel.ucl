@@ -1,0 +1,62 @@
+comment = "OpenTelemetry system configuration and telemetry services"
+
+desc = <<EOD
+The system OpenTelemetry layer: otel.conf(5) with its defaults, the
+otelconf(8) validator and agent-configuration renderer, the rc.d
+scripts for the local agent and the out-of-the-box emitters, and the
+otelpfd(8) (pf statistics) and otelauditd(8) (audit records) exporters.
+All services are disabled until otel_enable is set in rc.conf(5).
+EOD
+
+users: [
+    "_otel"
+]
+
+groups: [
+    "_otel"
+]
+
+scripts: {
+    pre-install = <<EOD
+    rootdir="${PKG_ROOTDIR}"
+    [ -n "$rootdir" ] || rootdir=/
+
+    # Upgrades: create the agent identity before the spool directory is
+    # extracted.  A new root gets it from master.passwd (runtime) and
+    # post-install below.
+    if [ -f "$rootdir/etc/master.passwd" ]; then
+        if ! /usr/sbin/pw -R "$rootdir" groupshow _otel \
+            >/dev/null 2>&1; then
+            /usr/sbin/pw -R "$rootdir" groupadd _otel -g 830 || exit 1
+        fi
+        if ! /usr/sbin/pw -R "$rootdir" usershow _otel \
+            >/dev/null 2>&1; then
+            /usr/sbin/pw -R "$rootdir" useradd _otel -u 830 -g _otel \
+                -w no -c "OpenTelemetry Agent" -d /var/empty \
+                -s /usr/sbin/nologin || exit 1
+        fi
+    fi
+EOD
+
+    post-install = <<EOD
+    rootdir="${PKG_ROOTDIR}"
+    [ -n "$rootdir" ] || rootdir=/
+
+    if [ ! -f "$rootdir/etc/pwd.db" ] && \
+        [ -f "$rootdir/etc/master.passwd" ]; then
+        /usr/sbin/pwd_mkdb -p -d "$rootdir/etc" \
+            "$rootdir/etc/master.passwd" || exit 1
+    fi
+    if ! /usr/sbin/pw -R "$rootdir" groupshow _otel >/dev/null 2>&1; then
+        /usr/sbin/pw -R "$rootdir" groupadd _otel -g 830 || exit 1
+    fi
+    if ! /usr/sbin/pw -R "$rootdir" usershow _otel >/dev/null 2>&1; then
+        /usr/sbin/pw -R "$rootdir" useradd _otel -u 830 -g _otel -w no \
+            -c "OpenTelemetry Agent" -d /var/empty \
+            -s /usr/sbin/nologin || exit 1
+    fi
+    # The spool may have been extracted before the identity existed.
+    /usr/sbin/chown -h 830:830 "$rootdir/var/spool/otel" || exit 1
+    /bin/chmod 0750 "$rootdir/var/spool/otel" || exit 1
+EOD
+}

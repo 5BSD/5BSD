@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 8, 2026
+.Dd October 26, 2026
 .Dt HWSTAT 8
 .Os
 .Sh NAME
@@ -254,6 +254,23 @@ The OTLP exporter honors
 .Ev OTEL_EXPORTER_OTLP_COMPRESSION ,
 and
 .Ev OTEL_EXPORTER_OTLP_TIMEOUT .
+Settings not given on the command line or in the environment come from
+.Xr otel.conf 5 ;
+an invalid
+.Xr otel.conf 5
+makes
+.Fl -format Cm otel
+fail.
+The
+.Pa otel_hwstat
+rc.d script runs
+.Ql hwstat watch --format otel
+as a service when
+.Va otel_enable
+or
+.Va otel_hwstat_enable
+is set in
+.Xr rc.conf 5 .
 .Sh EXAMPLES
 Sample every 2 seconds with per-core detail:
 .Bd -literal -offset indent
@@ -276,6 +293,8 @@ hwstat exec -- make -j20
 .Xr amdtemp 4 ,
 .Xr coretemp 4 ,
 .Xr cpuctl 4 ,
+.Xr otel.conf 5 ,
+.Xr rc.conf 5 ,
 .Xr bsdinstruments 8 ,
 .Xr sysextctl 8
 .Sh HISTORY

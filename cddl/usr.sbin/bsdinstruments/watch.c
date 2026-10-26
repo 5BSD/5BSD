@@ -33,6 +33,7 @@
 #include <sys/hypertrace.h>
 
 #include "otelexport.h"
+#include "oe_sysconf.h"
 #include "bsdinstruments.h"
 
 #define	USTACK_MARKER	"__BSDINSTRUMENTS_USTACK__"
@@ -88,6 +89,9 @@ builtin_key_name(const char *expr, int idx, char *buf, size_t len)
 		return ("provider");
 	if (expr[0] == '"')
 		return ("label");
+	/* this->name keys export their variable name. */
+	if (strncmp(expr, "this->", 6) == 0 && expr[6] != '\0')
+		return (expr + 6);
 	snprintf(buf, len, "key.%d", idx);
 	return (buf);
 }
@@ -1030,6 +1034,7 @@ watch_run(const struct profile *p, const char *rendered,
 	struct oe_exporter *exporter;
 	struct oe_resource resource;
 	struct oe_env env;
+	struct oe_sysconf sysconf;	/* otel.conf(5); outlives env */
 	struct oe_otlp_config ocfg;
 	dtrace_hdl_t *dtp;
 	dtrace_prog_t *prog;
@@ -1045,7 +1050,27 @@ watch_run(const struct profile *p, const char *rendered,
 	dtp = NULL;
 	is_text = wo->format == FORMAT_TEXT;
 
-	oe_env_load(&env);
+	/*
+	 * OTLP settings: --endpoint > OTEL_* environment > otel.conf(5) >
+	 * default.  The other formats do not read otel.conf.
+	 */
+	memset(&sysconf, 0, sizeof(sysconf));
+	if (wo->format == FORMAT_OTEL) {
+		if (oe_sysconf_load(&sysconf, NULL, NULL) != 0) {
+			fprintf(stderr, "bsdinstruments: %s\n", sysconf.error);
+			oe_sysconf_free(&sysconf);
+			return (1);
+		}
+		if (oe_env_load_system(&env, &sysconf,
+		    strcmp(wo->endpoint, "http://localhost:4318") == 0 ?
+		    NULL : wo->endpoint) != 0) {
+			fprintf(stderr, "bsdinstruments: out of memory\n");
+			oe_env_free(&env);
+			oe_sysconf_free(&sysconf);
+			return (1);
+		}
+	} else
+		oe_env_load(&env);
 	oe_host_name(hostname, sizeof(hostname));
 	oe_host_arch(arch, sizeof(arch));
 	oe_os_version(osrel, sizeof(osrel));
@@ -1261,5 +1286,6 @@ out:
 		oe_exporter_free(exporter);
 	free_agg_keynames(keynames);
 	oe_env_free(&env);
+	oe_sysconf_free(&sysconf);
 	return (err_ret);
 }

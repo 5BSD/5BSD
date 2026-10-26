@@ -1,0 +1,46 @@
+#!/bin/sh
+#
+# PROVIDE: otelpfd
+# REQUIRE: DAEMON pf
+# AFTER: fluentbit
+# KEYWORD: shutdown
+#
+# pf(4) statistics exported as OpenTelemetry metrics (otelpfd(8)).
+
+. /etc/rc.subr
+
+name="otelpfd"
+desc="OpenTelemetry pf statistics exporter"
+rcvar="otelpfd_enable"
+
+load_rc_config $name
+
+: ${otel_enable:="NO"}
+[ -n "${otelpfd_enable}" ] || otelpfd_enable="${otel_enable}"
+: ${otelpfd_bin:="/usr/sbin/otelpfd"}
+: ${otelpfd_runas:="_otel"}
+: ${otel_rundir:="/var/run/otel"}
+: ${otelconf_program:="/usr/sbin/otelconf"}
+if [ -n "${otel_endpoint}" ]; then
+	otelpfd_env="OTEL_EXPORTER_OTLP_ENDPOINT=${otel_endpoint}"
+fi
+
+pidfile="${otel_rundir}/${name}.pid"
+command="/usr/sbin/daemon"
+start_precmd="otelpfd_prestart"
+
+otelpfd_prestart()
+{
+	if [ ! -x "${otelpfd_bin}" ]; then
+		warn "${otelpfd_bin} is not installed"
+		return 1
+	fi
+	${otelconf_program} check -eq || return 1
+	install -d -m 0755 "${otel_rundir}" || return 1
+	# otelpfd opens /dev/pf as root, then drops to ${otelpfd_runas}.
+	command_args="-f -S -T ${name} -P ${pidfile} -r -R 10 \
+${otelpfd_bin} -u ${otelpfd_runas} ${rc_flags}"
+	rc_flags=""
+}
+
+run_rc_command "$1"

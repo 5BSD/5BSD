@@ -289,6 +289,35 @@ The C entry points are `oe_text_new()`, `oe_jsonl_new()`,
 `oe_report_drops()` in `<otelexport.h>`. Log records from BSDLog are not
 exported over OTLP; only DTrace and telemetry data are.
 
+## OpenTelemetry out of the box
+
+The system configuration `/etc/otel.conf` (over `/etc/defaults/otel.conf`,
+see `otel.conf(5)`) is the layer below the environment: command line >
+`OTEL_*` environment > `otel.conf` > built-in defaults. It holds the
+endpoint (default `http://localhost:4318`, the local agent), compression,
+timeout, a separate credentials file (mode 0600/0400, owned by root),
+resource attributes (`service.namespace`, `deployment.environment.name`,
+`host.id` from `/etc/hostid`), the spool directory `/var/spool/otel` and
+the local agent's settings. `otelconf(8)` validates it with the library's
+own loader, prints values for rc.d scripts and renders the agent
+configuration. hwstat, bsdinstruments, otelpfd and otelauditd all read it
+through `oe_sysconf(3)`; credentials from it are only sent to the endpoint
+it names.
+
+`sysrc otel_enable=YES` starts the services; each `*_enable` left empty
+follows the master switch:
+
+| rc.d script | What it exports | Source |
+|---|---|---|
+| `fluentbit` | local agent: OTLP receiver on 127.0.0.1:4318, `agent.tail` logs, filesystem spool, forwarding to `agent.upstream` | Fluent Bit (pending import; refuses to start until installed) |
+| `otel_hwstat` | hardware metrics | `hwstat watch --format otel` |
+| `otelpfd` | pf status counters and gauges | `DIOCGETSTATUS` on `/dev/pf` |
+| `otelauditd` | audit records as log records | `auditpipe(4)` + libbsm |
+| `otel_dtrace` | block I/O latency and bytes by device, exec/exit churn, signals | bsdinstruments `system-metrics` profile, one export per window |
+
+otelpfd and otelauditd open their device as root, limit its capability
+rights, and run as `_otel` (uid 830); the agent runs as `_otel` too.
+
 ## BSDTrace: tracing without root
 
 `/dev/dtrace` is opened by exactly one program on a running plane: BSDTrace,

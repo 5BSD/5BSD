@@ -1,0 +1,135 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd October 26, 2026
+.Dt OTELAUDITD 8
+.Os
+.Sh NAME
+.Nm otelauditd
+.Nd export audit records as OpenTelemetry log records
+.Sh SYNOPSIS
+.Nm
+.Op Fl c Ar count
+.Op Fl e Ar endpoint
+.Op Fl f Ar trail | Fl F Ar flags
+.Op Fl u Ar user
+.Sh DESCRIPTION
+.Nm
+reads BSM audit records from its own
+.Xr auditpipe 4
+clone and sends each one as an OTLP log record to the endpoint
+configured in
+.Xr otel.conf 5 .
+It is normally started by the
+.Pa otelauditd
+rc.d script; see
+.Xr rc.conf 5 .
+.Pp
+By default the pipe follows the system audit preselection
+.Pq Xr audit_control 5 ,
+so
+.Nm
+exports what
+.Xr auditd 8
+records.
+The pipe queue is raised to its maximum; records the kernel drops
+because the queue was full are reported on the next export as a drop
+count.
+.Pp
+The options are:
+.Bl -tag -width "-e endpoint"
+.It Fl c Ar count
+Exit after
+.Ar count
+audit records.
+By default
+.Nm
+runs until it receives
+.Dv SIGTERM ,
+.Dv SIGINT
+or
+.Dv SIGHUP ,
+then flushes pending records and exits.
+.It Fl e Ar endpoint
+Send to
+.Ar endpoint
+instead of the one resolved from the environment and
+.Xr otel.conf 5 .
+Credentials from the
+.Xr otel.conf 5
+headers file are not sent to it.
+.It Fl f Ar trail
+Read a BSM trail file, such as one under
+.Pa /var/audit ,
+instead of the audit pipe, and stop at its end.
+.It Fl F Ar flags
+Select records with the audit class
+.Ar flags
+.Pq for example Dq lo,aa ,
+see
+.Xr audit_control 5 ,
+instead of the system preselection.
+.It Fl u Ar user
+After opening the audit pipe and reading the configuration, switch
+permanently to
+.Ar user .
+.El
+.Sh LOG RECORDS
+Each record becomes one log record whose timestamp is the record time.
+The
+.Va otelauditd.probe
+attribute holds the event name from
+.Xr audit_event 5 ,
+such as
+.Dq AUE_EXECVE ,
+and
+.Va process.pid
+the subject process.
+The body is one line with the event name and description, the
+subject's
+.Va auid ,
+.Va euid ,
+.Va egid ,
+.Va ruid
+and
+.Va pid ,
+the
+.Va result ,
+and any path, text and exec argument tokens, for example:
+.Bd -literal -offset indent
+AUE_EXECVE execve(2) auid=1001 euid=0 egid=0 ruid=1001 pid=4242
+    args="ls -l" path=/bin/ls result=success:0
+.Ed
+.Pp
+Exec environment tokens are never exported.
+Records that cannot be parsed are skipped with a warning.
+.Sh SECURITY
+The audit pipe is opened and configured as root; its capability rights
+are then limited to reading, event notification and the drop counter
+ioctl, and the process changes to
+.Ar user .
+.Nm
+does not enter capability mode because its exporter must be able to
+connect to the collector again after a failure.
+.Sh EXIT STATUS
+.Ex -std
+Usage errors exit 2.
+.Sh SEE ALSO
+.Xr praudit 1 ,
+.Xr auditpipe 4 ,
+.Xr audit_control 5 ,
+.Xr audit_event 5 ,
+.Xr otel.conf 5 ,
+.Xr auditd 8 ,
+.Xr otelconf 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD.
+.Sh CAVEATS
+All records are exported with the INFO severity; failed events are
+distinguished by the
+.Li result=failure
+field until the exporter library carries per-record severity and
+attributes.

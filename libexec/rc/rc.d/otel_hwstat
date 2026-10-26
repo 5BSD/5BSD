@@ -1,0 +1,48 @@
+#!/bin/sh
+#
+# PROVIDE: otel_hwstat
+# REQUIRE: DAEMON
+# AFTER: fluentbit
+# KEYWORD: shutdown
+#
+# Continuous hardware metrics (hwstat(8)) exported with OTLP to the
+# endpoint of otel.conf(5).
+
+. /etc/rc.subr
+
+name="otel_hwstat"
+desc="OpenTelemetry hardware metrics (hwstat)"
+rcvar="otel_hwstat_enable"
+
+load_rc_config $name
+
+: ${otel_enable:="NO"}
+[ -n "${otel_hwstat_enable}" ] || otel_hwstat_enable="${otel_enable}"
+: ${otel_hwstat_bin:="/usr/sbin/hwstat"}
+: ${otel_hwstat_interval:="10"}
+: ${otel_rundir:="/var/run/otel"}
+: ${otelconf_program:="/usr/sbin/otelconf"}
+if [ -n "${otel_endpoint}" ]; then
+	otel_hwstat_env="OTEL_EXPORTER_OTLP_ENDPOINT=${otel_endpoint}"
+fi
+
+pidfile="${otel_rundir}/${name}.pid"
+command="/usr/sbin/daemon"
+start_precmd="otel_hwstat_prestart"
+
+otel_hwstat_prestart()
+{
+	if [ ! -x "${otel_hwstat_bin}" ]; then
+		warn "${otel_hwstat_bin} is not installed"
+		return 1
+	fi
+	${otelconf_program} check -eq || return 1
+	install -d -m 0755 "${otel_rundir}" || return 1
+	# Runs as root: package energy counters need cpuctl(4).
+	command_args="-f -S -T ${name} -P ${pidfile} -r -R 10 \
+${otel_hwstat_bin} watch --format otel \
+--interval ${otel_hwstat_interval} ${rc_flags}"
+	rc_flags=""
+}
+
+run_rc_command "$1"

@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 11, 2026
+.Dd October 26, 2026
 .Dt BSDINSTRUMENTS 8
 .Os
 .Sh NAME
@@ -203,6 +203,26 @@ An explicit
 .Fl -endpoint
 flag takes precedence over
 .Ev OTEL_EXPORTER_OTLP_ENDPOINT .
+With
+.Fl -format Cm otel ,
+settings given neither on the command line nor in the environment come
+from
+.Xr otel.conf 5 ,
+and an invalid
+.Xr otel.conf 5
+is an error.
+Aggregation keys written as clause-local variables
+.Pq Li this->device
+are exported under the variable name.
+.Pp
+The
+.Pa otel_dtrace
+rc.d script runs the
+.Cm system-metrics
+profile as a service, exporting its aggregations at the end of every
+.Va otel_dtrace_window
+seconds; see
+.Xr rc.conf 5 .
 .Sh EXAMPLES
 Watch
 .Xr kill 2
@@ -231,6 +251,7 @@ bsdinstruments watch sched-on-cpu --with-stack --format collapsed \e
 .Sh SEE ALSO
 .Xr dtrace 1 ,
 .Xr dwatch 1 ,
+.Xr otel.conf 5 ,
 .Xr hwstat 8
 .Sh HISTORY
 .Nm

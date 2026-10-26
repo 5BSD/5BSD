@@ -1,0 +1,290 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd October 26, 2026
+.Dt OTEL.CONF 5
+.Os
+.Sh NAME
+.Nm otel.conf
+.Nd system OpenTelemetry configuration
+.Sh SYNOPSIS
+.Pa /etc/otel.conf
+.Pa /etc/defaults/otel.conf
+.Sh DESCRIPTION
+.Nm
+configures how base system programs export telemetry with the
+OpenTelemetry protocol (OTLP), and how the local agent forwards it.
+It is read by every program built on the base exporter library
+.Pq Xr oe_sysconf 3 ,
+including
+.Xr hwstat 8 ,
+.Xr bsdinstruments 8 ,
+.Xr otelpfd 8
+and
+.Xr otelauditd 8 ,
+and by
+.Xr otelconf 8 ,
+which validates it and renders the local agent configuration.
+.Pp
+Settings are resolved per key, highest precedence first:
+.Bl -enum -offset indent -compact
+.It
+the program's command line;
+.It
+the standard
+.Ev OTEL_*
+environment variables;
+.It
+.Pa /etc/otel.conf ;
+.It
+.Pa /etc/defaults/otel.conf ;
+.It
+built-in defaults.
+.El
+.Pp
+.Pa /etc/defaults/otel.conf
+is replaced on upgrade and must not be edited.
+Put local settings in
+.Pa /etc/otel.conf ;
+a key set there replaces the default, and a key of an object
+.Pq for example one resource attribute
+replaces just that key.
+.Pp
+Both files use UCL syntax
+.Pq see Xr libucl 3
+restricted to plain values: macros such as
+.Ic .include
+and file variables are not processed.
+Unknown keys, wrongly typed values and duplicated keys are errors,
+so a misspelled key never silently falls back to its default.
+.Pp
+Starting the out-of-the-box telemetry services is controlled by
+.Va otel_enable
+in
+.Xr rc.conf 5 ;
+see
+.Sx SERVICES .
+.Sh EXPORTER KEYS
+.Bl -tag -width "host_id_file"
+.It Ic enable Pq boolean, default Dv true
+Apply this configuration.
+When false, programs ignore the file
+.Pq as if it did not exist
+and the rc.d OpenTelemetry services refuse to start.
+.It Ic endpoint Pq string, default Qq http://localhost:4318
+Base URL of the OTLP/HTTP receiver.
+Signals are sent to
+.Pa /v1/metrics
+and
+.Pa /v1/logs
+below it.
+The default is the local agent.
+.It Ic protocol Pq string, default Qq http/json
+OTLP transport.
+The base exporter implements only
+.Qq http/json ;
+.Qq http/protobuf
+and
+.Qq grpc
+are refused here and are available through the agent's
+.Ic upstream_protocol .
+.It Ic compression Pq string, default Qq gzip
+.Qq gzip
+or
+.Qq none .
+.It Ic timeout_ms Pq integer, default 10000
+Per-request timeout in milliseconds, 1 to 600000.
+.It Ic headers_file Pq path, default Qq
+File of extra HTTP headers, typically credentials, for
+.Ic endpoint ;
+see
+.Sx CREDENTIALS FILES .
+The headers are sent only when the resolved endpoint is
+.Ic endpoint
+itself, never to an endpoint given on the command line or in
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT .
+.It Ic host_id_file Pq path, default Pa /etc/hostid
+File holding the host UUID, written at boot by the
+.Pa hostid
+rc.d script.
+Its first line becomes the
+.Va host.id
+resource attribute unless
+.Ic resource
+sets it.
+A missing file is ignored; a file without a UUID is an error.
+.Qq
+disables the lookup.
+.It Ic resource Pq object
+Resource attributes attached to every record, as quoted names and
+string values.
+Names consist of letters, digits and
+.Ql .\& ,
+.Ql _ ,
+.Ql - ,
+.Ql / .
+An empty value removes an attribute set by the defaults file.
+The defaults set
+.Va service.namespace
+to
+.Qq 5bsd
+and
+.Va deployment.environment.name
+to
+.Qq production .
+At most 32 attributes are accepted.
+.It Ic spool Pq object
+Persistent buffering:
+.Bl -tag -width "max_bytes"
+.It Ic directory Pq path, default Pa /var/spool/otel
+.It Ic max_bytes Pq integer, default 268435456
+Bound on buffered data, 1 MiB to 1 TiB.
+UCL size suffixes such as
+.Qq 256mb
+are accepted.
+.El
+.El
+.Sh AGENT KEYS
+The
+.Ic agent
+object configures the local agent,
+.Xr fluent-bit 8 ,
+started by the
+.Pa fluentbit
+rc.d script:
+.Bl -tag -width "upstream_protocol"
+.It Ic listen Pq string, default Qq 127.0.0.1:4318
+OTLP/HTTP receiver address for the base emitters, as
+.Ar ipv4 : Ns Ar port
+or
+.Li \&[ Ns Ar ipv6 Ns \&]: Ns Ar port .
+.It Ic upstream Pq string, default Qq
+URL of the collector the agent forwards to.
+The agent is not started while this is empty.
+.It Ic upstream_protocol Pq string, default Qq http/protobuf
+.Qq http/protobuf
+or
+.Qq grpc .
+.It Ic headers_file Pq path, default Qq
+Credentials for
+.Ic upstream ,
+in the format of
+.Sx CREDENTIALS FILES .
+.It Ic tls_verify Pq boolean, default Dv true
+Verify the upstream TLS certificate.
+.It Ic log_level Pq string, default Qq info
+One of
+.Qq off ,
+.Qq error ,
+.Qq warn ,
+.Qq info ,
+.Qq debug ,
+.Qq trace .
+.It Ic tail Pq array of paths, default Bq Qq /var/log/messages
+Text log files shipped as OpenTelemetry log records.
+At most 16 absolute paths without quotes or commas.
+.El
+.Sh CREDENTIALS FILES
+A credentials file holds one header per line as
+.Dl Name: value
+Blank lines and lines starting with
+.Ql #
+are ignored.
+Names must be HTTP tokens; values must not contain control characters
+other than tab.
+.Dv Content-Type ,
+.Dv Content-Length ,
+.Dv Content-Encoding ,
+.Dv Host
+and
+.Dv Connection
+are set by the exporter and are refused.
+.Pp
+The file must be a regular file
+.Pq not a symbolic link
+owned by root or by the reading user, with no group or other
+permission bits: mode 0600 or 0400.
+A file that violates this, or that is configured but missing, makes the
+whole configuration fail to load, so telemetry is never sent without
+the configured credentials.
+.Sh FILE CHECKS
+Both configuration files must be regular files, not symbolic links,
+owned by root or the reading user, not writable by group or others,
+at most 64 KiB, and free of NUL bytes.
+A missing file is not an error.
+A credentials file is limited to 16 KiB and 32 headers.
+.Sh SERVICES
+The following
+.Xr rc.conf 5
+variables start the telemetry services; all default to off.
+.Bl -tag -width "otel_auditd_enable"
+.It Va otel_enable
+Master switch.
+Each service variable below that is left empty follows it.
+.It Va fluentbit_enable
+Local agent
+.Pq requires Ic agent.upstream .
+.It Va otel_hwstat_enable
+.Xr hwstat 8
+hardware metrics.
+.It Va otelpfd_enable
+.Xr pf 4
+statistics,
+.Xr otelpfd 8 .
+.It Va otelauditd_enable
+Audit records as log records,
+.Xr otelauditd 8 .
+.It Va otel_dtrace_enable
+DTrace-derived system metrics via
+.Xr bsdinstruments 8 .
+.El
+.Sh ENVIRONMENT
+.Bl -tag -width "OTELCONF_DEFAULTS"
+.It Ev OTELCONF_FILE , Ev OTELCONF_DEFAULTS
+Read these files instead of
+.Pa /etc/otel.conf
+and
+.Pa /etc/defaults/otel.conf ,
+for trying a configuration or testing.
+Ignored by set-user-ID and set-group-ID programs.
+.El
+.Sh FILES
+.Bl -tag -width "/etc/defaults/otel.conf" -compact
+.It Pa /etc/otel.conf
+local settings
+.It Pa /etc/defaults/otel.conf
+default settings
+.It Pa /etc/hostid
+host UUID
+.It Pa /var/spool/otel
+spool directory
+.El
+.Sh EXAMPLES
+Forward everything to a remote collector with a bearer token:
+.Bd -literal -offset indent
+# /etc/otel.conf
+agent {
+	upstream = "https://collector.example.org:4318";
+	headers_file = "/etc/otel/upstream.headers";
+}
+.Ed
+.Bd -literal -offset indent
+# install -m 0600 /dev/null /etc/otel/upstream.headers
+# echo 'Authorization: Bearer TOKEN' > /etc/otel/upstream.headers
+# otelconf check
+# sysrc otel_enable=YES
+.Ed
+.Sh SEE ALSO
+.Xr libucl 3 ,
+.Xr oe_sysconf 3 ,
+.Xr rc.conf 5 ,
+.Xr bsdinstruments 8 ,
+.Xr hwstat 8 ,
+.Xr otelauditd 8 ,
+.Xr otelconf 8 ,
+.Xr otelpfd 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD.

@@ -1,0 +1,166 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd October 26, 2026
+.Dt OE_SYSCONF 3
+.Os
+.Sh NAME
+.Nm oe_sysconf_init ,
+.Nm oe_sysconf_load ,
+.Nm oe_sysconf_free ,
+.Nm oe_headers_file_load ,
+.Nm oe_attrs_free ,
+.Nm oe_env_load_system ,
+.Nm oe_service_open ,
+.Nm oe_service_close ,
+.Nm oe_drop_privileges
+.Nd system OpenTelemetry configuration layer of libotelexport
+.Sh SYNOPSIS
+.In oe_sysconf.h
+.Ft int
+.Fn oe_sysconf_init "struct oe_sysconf *sc"
+.Ft int
+.Fn oe_sysconf_load "struct oe_sysconf *sc" "const char *defaults_path" "const char *path"
+.Ft void
+.Fn oe_sysconf_free "struct oe_sysconf *sc"
+.Ft int
+.Fn oe_headers_file_load "const char *path" "struct oe_attr **attrs" "size_t *n" "char *err" "size_t errlen"
+.Ft void
+.Fn oe_attrs_free "struct oe_attr *attrs" "size_t n"
+.Ft int
+.Fn oe_env_load_system "struct oe_env *env" "const struct oe_sysconf *sc" "const char *cli_endpoint"
+.Ft int
+.Fn oe_service_open "struct oe_service *svc" "const char *service_name" "const char *version" "const char *profile" "const char *cli_endpoint" "double flush_interval" "char *err" "size_t errlen"
+.Ft void
+.Fn oe_service_close "struct oe_service *svc"
+.Ft int
+.Fn oe_drop_privileges "const char *user" "char *err" "size_t errlen"
+.Sh DESCRIPTION
+These functions implement the system layer of the exporter settings
+described in
+.Xr otel.conf 5 .
+The library is internal to the base system.
+.Pp
+.Fn oe_sysconf_init
+fills
+.Fa sc
+with the built-in defaults.
+.Fn oe_sysconf_load
+does the same, then reads
+.Fa defaults_path
+and
+.Fa path
+over it, then the
+.Ic host_id_file
+and
+.Ic headers_file
+they name.
+.Dv NULL
+selects
+.Pa /etc/defaults/otel.conf
+and
+.Pa /etc/otel.conf ,
+or the files named by the environment variables
+.Ev OTELCONF_DEFAULTS
+and
+.Ev OTELCONF_FILE
+in programs that are not set-user-ID or set-group-ID;
+an empty string skips the layer.
+On failure the function stores a message naming the file and the
+problem in
+.Va sc->error
+and leaves the built-in defaults in
+.Fa sc .
+.Fn oe_sysconf_free
+releases the strings held by
+.Fa sc .
+.Pp
+.Fn oe_headers_file_load
+reads a credentials file
+.Pq see Xr otel.conf 5
+into a newly allocated attribute array, released with
+.Fn oe_attrs_free .
+.Pp
+.Fn oe_env_load_system
+calls
+.Xr oe_env_load 3
+and then completes
+.Fa env :
+.Fa cli_endpoint ,
+when not
+.Dv NULL ,
+replaces the endpoint; settings the environment left unset are taken
+from
+.Fa sc
+when it is enabled; resource attributes and headers are merged by
+name with the environment winning.
+Headers from the system credentials file are added only if the
+resolved endpoint equals
+.Va sc->endpoint .
+Strings in
+.Fa env
+may point into
+.Fa sc
+and
+.Fa cli_endpoint ;
+release
+.Fa env
+with
+.Xr oe_env_free 3
+before freeing
+.Fa sc .
+.Pp
+.Fn oe_service_open
+sets up the exporter of a base system telemetry service such as
+.Xr otelpfd 8 :
+it loads the system configuration, fails if it is invalid or has
+.Ic enable
+set to false, resolves the settings with
+.Fn oe_env_load_system ,
+and creates and starts an OTLP exporter in
+.Va svc->exporter
+whose
+.Va service.name
+is
+.Fa service_name
+unless
+.Ev OTEL_SERVICE_NAME
+is set.
+.Fn oe_service_close
+flushes and releases everything; it may be called on a
+.Fa svc
+whose
+.Fn oe_service_open
+failed.
+.Pp
+.Fn oe_drop_privileges
+permanently changes the process to the user ID, group ID and a group
+list consisting of the primary group of
+.Fa user ,
+and checks that root privileges cannot be regained.
+.Sh RETURN VALUES
+The functions returning
+.Vt int
+return 0 on success and \-1 on failure.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+struct oe_sysconf sc;
+struct oe_env env;
+
+if (oe_sysconf_load(&sc, NULL, NULL) != 0)
+	errx(1, "%s", sc.error);
+if (oe_env_load_system(&env, &sc, cli_endpoint) != 0)
+	errx(1, "out of memory");
+/* env.endpoint may be NULL: use the program default. */
+\&...
+oe_env_free(&env);
+oe_sysconf_free(&sc);
+.Ed
+.Sh SEE ALSO
+.Xr libotelexport 3 ,
+.Xr otel.conf 5 ,
+.Xr otelauditd 8 ,
+.Xr otelconf 8 ,
+.Xr otelpfd 8

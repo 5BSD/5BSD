@@ -97,6 +97,8 @@
         ..
         lock            uname=uucp gname=dialer mode=0775
         ..
+        otel            uname=_otel gname=_otel mode=0750 tags=package=otel
+        ..
 /set gname=daemon
         lpd
         ..
