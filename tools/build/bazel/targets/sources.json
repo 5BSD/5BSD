@@ -1,0 +1,72 @@
+{
+  "comment": "otel-probe.py inputs. Component directories are copied whole at their tree paths; header_trees contribute only *.h files. Source file lists live in the BUILD.bazel files and are checked against Make SRCS.",
+  "components": [
+    {
+      "name": "libotelexport",
+      "path": "lib/libotelexport",
+      "make_targets": ["libotelexport.a", "libotelexport_pie.a"],
+      "artifacts": [
+        {"kind": "archive", "label": "//lib/libotelexport:otelexport",
+         "bazel": "lib/libotelexport/libotelexport.a", "make": "libotelexport.a",
+         "make_object_suffix": ".o"},
+        {"kind": "archive", "label": "//lib/libotelexport:otelexport_pie",
+         "bazel": "lib/libotelexport/libotelexport_pie.a", "make": "libotelexport_pie.a",
+         "make_object_suffix": ".pieo"}
+      ]
+    },
+    {
+      "name": "otelexport_test",
+      "path": "lib/libotelexport/tests",
+      "make_targets": ["otelexport_test"],
+      "artifacts": [
+        {"kind": "program", "label": "//lib/libotelexport/tests:otelexport_test",
+         "bazel": "lib/libotelexport/tests/otelexport_test", "make": "otelexport_test.full",
+         "make_object_suffix": ".pieo"}
+      ]
+    },
+    {
+      "name": "hwstat",
+      "path": "usr.sbin/hwstat",
+      "make_targets": ["hwstat"],
+      "artifacts": [
+        {"kind": "program", "label": "//usr.sbin/hwstat:hwstat",
+         "bazel": "usr.sbin/hwstat/hwstat", "make": "hwstat.full",
+         "make_object_suffix": ".pieo"}
+      ]
+    },
+    {
+      "name": "bsdinstruments",
+      "path": "cddl/usr.sbin/bsdinstruments",
+      "make_targets": ["bsdinstruments"],
+      "artifacts": [
+        {"kind": "program", "label": "//cddl/usr.sbin/bsdinstruments:bsdinstruments",
+         "bazel": "cddl/usr.sbin/bsdinstruments/bsdinstruments", "make": "bsdinstruments.full",
+         "make_object_suffix": ".pieo"}
+      ]
+    }
+  ],
+  "header_trees": [
+    "sys",
+    "cddl/compat/opensolaris/include",
+    "cddl/contrib/opensolaris/head",
+    "cddl/contrib/opensolaris/lib/libdtrace/common",
+    "lib/libtracecmp"
+  ],
+  "dependency_probes": [
+    {"path": "lib/libotelexport/oe_util.c", "kind": "library source"},
+    {"path": "lib/libotelexport/otelexport.h", "kind": "public header used across packages"},
+    {"path": "lib/libotelexport/oe_http.h", "kind": "private library header"},
+    {"path": "lib/libotelexport/tests/otelexport_test.c", "kind": "test source"},
+    {"path": "usr.sbin/hwstat/hwstat.h", "kind": "private program header"},
+    {"path": "cddl/usr.sbin/bsdinstruments/bsdinstruments.h", "kind": "private program header"},
+    {"path": "cddl/contrib/opensolaris/lib/libdtrace/common/dtrace.h", "kind": "source-tree header shadowing the SDK copy"},
+    {"path": "sys/contrib/openzfs/lib/libspl/include/sys/types.h", "kind": "libspl header ordered before sys/ and the SDK"},
+    {"path": "lib/libtracecmp/tracecmp.h", "kind": "source-tree consumer header"},
+    {"path": "toolchain/sysroot/usr/include/zlib.h", "kind": "SDK header"},
+    {"path": "toolchain/sysroot/usr/include/atf-c.h", "kind": "SDK ATF header"}
+  ],
+  "link_probes": [
+    {"path": "toolchain/sysroot/usr/lib/libxo.so", "kind": "SDK link input (bsdinstruments)"},
+    {"path": "toolchain/sysroot/usr/lib/libprivateatf-c.so", "kind": "SDK link input (ATF test)"}
+  ]
+}

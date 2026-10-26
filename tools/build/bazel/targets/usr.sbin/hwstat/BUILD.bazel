@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: usr.sbin/hwstat/Makefile (PROG, WARNS 6, LIBADD otelexport m).
+load("//toolchain:bsd_component.bzl", "bsd_program")
+
+# Keep in the order of Makefile SRCS.
+HWSTAT_SRCS = [
+    "main.c",
+    "rapl.c",
+    "sensors.c",
+    "metrics.c",
+    "format.c",
+]
+
+HWSTAT_PRIVATE_HDRS = ["hwstat.h"]
+
+bsd_program(
+    name = "hwstat",
+    srcs = HWSTAT_SRCS + HWSTAT_PRIVATE_HDRS,
+    warns = 6,
+    deps = [
+        "//lib/libotelexport:headers",
+        "//lib/libotelexport:otelexport_pie",
+    ],
+    linkopts = ["-lm"],
+)

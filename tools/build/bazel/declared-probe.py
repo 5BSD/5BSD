@@ -9,6 +9,10 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bsd_toolchain  # noqa: E402
 
 
 def sha(path):
@@ -35,40 +39,8 @@ def main():
     workspace = root / 'workspace'
     workspace.mkdir()
     tc = workspace / 'toolchain'
-    tc.mkdir()
-    # Materialize development-header links into declared input files.
-    # Library links stay inside the copied complete runtime/SDK directories.
-    for directory in ('usr/include', 'usr/lib', 'lib'):
-        shutil.copytree(sysroot / directory, tc / 'sysroot' / directory,
-                        symlinks=(directory != 'usr/include'))
-    for path in (tc / 'sysroot').rglob('*'):
-        if path.is_symlink():
-            target = path.resolve(strict=True)
-            if not target.is_relative_to(tc / 'sysroot'):
-                raise ValueError('SDK link escapes staged tree: ' + str(path))
-    (tc / 'bin').mkdir()
-    for name in ('clang', 'ld.lld', 'llvm-ar', 'llvm-nm', 'llvm-objcopy', 'llvm-strip'):
-        shutil.copy2(sysroot / 'usr/bin' / name, tc / 'bin' / name)
-    shutil.copy2(objdump, tc / 'bin/llvm-objdump')
-    shutil.copy2(a.awk.resolve(strict=True), tc / 'bin/awk')
-    shutil.copy2(Path(__file__).with_name('cc_toolchain_config.bzl'), tc / 'cc_toolchain_config.bzl')
-    config = ('bsd_cc_config(name="config", target=%s, cpu=%s, clang_version=%s)\n' %
-              tuple(json.dumps(x) for x in (a.target, a.cpu, a.clang_version)))
-    (tc / 'BUILD.bazel').write_text(
-        'load(":cc_toolchain_config.bzl", "bsd_cc_config")\n'
-        'package(default_visibility=["//visibility:public"])\n'
-        'filegroup(name="inputs", srcs=glob(["bin/**", "sysroot/**"]))\n'
-        'filegroup(name="compile_inputs", srcs=["bin/clang"] + glob(["sysroot/usr/include/**", "sysroot/usr/lib/clang/**"]))\n'
-        'filegroup(name="link_inputs", srcs=["bin/clang", "bin/ld.lld"] + glob(["sysroot/usr/lib/**", "sysroot/lib/**"]))\n'
-        'filegroup(name="archive_inputs", srcs=["bin/llvm-ar"])\n'
-        'filegroup(name="objcopy_inputs", srcs=["bin/llvm-objcopy"])\n'
-        'filegroup(name="strip_inputs", srcs=["bin/llvm-strip"])\n'
-        'filegroup(name="empty")\n' + config +
-        'cc_toolchain(name="compiler", toolchain_identifier="bsd-staged-clang", '
-        'toolchain_config=":config", all_files=":inputs", compiler_files=":compile_inputs", '
-        'linker_files=":link_inputs", ar_files=":archive_inputs", objcopy_files=":objcopy_inputs", '
-        'strip_files=":strip_inputs", dwp_files=":empty", supports_param_files=1)\n'
-        'cc_toolchain_suite(name="suite", toolchains={%s: ":compiler"})\n' % json.dumps(a.cpu))
+    bsd_toolchain.stage_toolchain(tc, sysroot, objdump, a.awk.resolve(strict=True),
+                                  a.target, a.cpu, a.clang_version)
     (workspace / 'WORKSPACE').write_text('workspace(name="bsd_declared_pilot")\n')
     (workspace / 'BUILD.bazel').write_text(
         'load(":version_map.bzl", "bsd_version_map")\n'
@@ -112,10 +84,7 @@ def main():
     records = []
     prefix = [str(bazel), '--batch', '--output_user_root=' + str(root / 'cache'),
               '--ignore_all_rc_files']
-    build = prefix + ['build', '--jobs=' + str(a.jobs), '--noshow_progress',
-                      '--action_env=PATH=/bin:/usr/bin', '--subcommands',
-                      '--crosstool_top=//toolchain:suite', '--cpu=' + a.cpu,
-                      '--host_crosstool_top=//toolchain:suite', '--host_cpu=' + a.cpu,
+    build = prefix + ['build'] + bsd_toolchain.build_flags(a.cpu, a.jobs) + [
                       '//:echo', '//:cpp_runtime', '//:archive_runtime', '//:libbsd_samples.so.1', '//:shared_runtime', '//:sbuf_runtime', '//:libsbuf.so.6']
 
     def run(argv, expect_success=True):

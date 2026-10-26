@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 12, 2026
+.Dd October 26, 2026
 .Dt BUILD-BSD 8
 .Os
 .Sh NAME
@@ -360,6 +360,15 @@ selects parallelism (all logical CPUs by default);
 selects a fresh directory below /usr/obj.
 It builds fresh Make reference libraries and compares Bazel artifacts,
 including versioned exports and generated-input invalidation.
+It also builds the declared Bazel targets for
+.Pa lib/libotelexport ,
+its ATF test program,
+.Pa usr.sbin/hwstat
+and
+.Pa cddl/usr.sbin/bsdinstruments
+and compares their compile and link flags, archive members, symbols
+and program ELF metadata with independent Make builds of the same sources.
+These programs are not executed by this action.
 The action also builds and stages a Make-only libmd installation reference
 under its private output directory, preserving the selected world profile,
 source layout, debug splitting and METALOG package metadata.

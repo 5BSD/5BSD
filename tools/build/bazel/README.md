@@ -258,7 +258,8 @@ or host-header fallback is used. Only the C++ target requests C++ runtime librar
 
 The `bsd_static_binary` macro rejects shared requests; the separate
 `bsd_shared_library` macro now exercises explicit PIC and shared-link actions.
-This experimental configuration remains private to the pilot. The earlier trial
+This experimental configuration is staged by `bsd_toolchain.py`, shared by this
+pilot and `otel-probe.py`; it is not a supported build-backend interface. The earlier trial
 with empty/disabled shared action configurations caused a Bazel5 internal error
 and was removed. The new shared metadata gate below uses real configured actions,
 not that failure as evidence of compatibility.
@@ -685,3 +686,207 @@ below /usr/obj. It checks output reuse, copied-source components, mismatched
 profiles, invalid parallelism, symlink escapes and Make/control-character
 paths before output creation. Actual build/install coverage currently uses
 libmd; this does not establish arbitrary component or world coverage.
+
+OpenTelemetry component targets (2026-10-26)
+--------------------------------------------
+`otel-probe.py` builds real Bazel targets for `lib/libotelexport`, its ATF
+test program, `usr.sbin/hwstat` and `cddl/usr.sbin/bsdinstruments` through the
+declared toolchain, and builds the same sources independently through
+maintained Make `buildenv` against the same staged SDK. No Make subprocess is
+wrapped by Bazel. build-bsd continues to select Make.
+
+Layout:
+
+- `bsd_toolchain.py` stages the declared toolchain package; `declared-probe.py`
+  and `otel-probe.py` share it. The existing pilot was rerun after this
+  refactor (`/usr/obj/5BSD-otel-validation/bazel-declared-pilot-r1/`): all nine
+  outputs are byte-identical to the hashes bound by the 2026-10-24 VM receipts.
+- `bsd_component.bzl` holds Make compile policy (base, debug, PIE, SSP and
+  WARNS 6/3 lists from bsd.sys.mk/bsd.lib.mk/bsd.prog.mk) and macros:
+  `bsd_internal_library` (INTERNALLIB: `lib<name>.a` plus `lib<name>_pie.a`
+  with `-fpie -DPIC`), `bsd_program` (dynamic PIE, `PROG.full` before the
+  debug split) and `bsd_atf_test_c` (`-lprivateatf-c`).
+- `targets/` overlays BUILD files onto a workspace that mirrors source paths;
+  no BUILD file is added to the source directories themselves. Source lists
+  are the `*_SRCS` lists in `targets/<path>/BUILD.bazel`; update those when
+  the component Makefiles change. `targets/BUILD.bazel` declares header-only
+  bundles (`sys/**/*.h`, OpenSolaris compat/head, libdtrace/common,
+  libtracecmp) whose `includes` reproduce Make's `-I` order without absolute
+  paths. `targets/sources.json` lists copied directories, artifacts and
+  dependency probes.
+- `elf-artifact-check.py` compares programs (ELF identity, interpreter, PIE,
+  RELRO/NOW, TEXTREL, RPATH/RUNPATH, stack, W+X, NEEDED set, imported and
+  exported dynamic symbols with versions, version requirements per provider)
+  and archives (member order, defined and undefined symbols per member), and
+  records per-section hashes. `elf-artifact-check-test.py` has six
+  positive/negative cases (program metadata drift, missing member, member
+  order, renamed symbol).
+
+Run (all logical CPUs; fresh output below /usr/obj):
+
+```
+python3.12 -B tools/build/bazel/otel-probe.py --src /usr/obj/5BSD-otel-bazel \
+  --sysroot /usr/obj/usr/src/amd64.amd64/tmp \
+  --objdump /usr/obj/usr/src/amd64.amd64/usr.bin/clang/llvm-objdump/llvm-objdump \
+  --awk /usr/obj/usr/src/amd64.amd64/tmp/legacy/usr/bin/awk \
+  --bazel /usr/local/bin/bazel --target x86_64-unknown-freebsd16.0 --cpu k8 \
+  --clang-version 21 --jobs 16 --output /usr/obj/5BSD-otel-validation/bazel-otel-NEW
+```
+
+The Make reference runs `make -C SRC buildenv WORLDTMP=<sysroot>` with
+`SRCCONF=__MAKE_CONF=/dev/null`, a private `MAKEOBJDIRPREFIX`, one private
+`MAKEOBJDIR` per component and `LIBOTELEXPORTDIR` pointing consumers at the
+private library build. Dry-run commands (`make -n`) and `-V SRCS/CFLAGS/
+LDFLAGS/WARNS` are recorded. Bazel uses `--compilation_mode=opt` (so binaries
+use non-PIC actions plus Make's explicit PIE flags) and `--strip=never`.
+
+### Results (evidence `/usr/obj/5BSD-otel-validation/bazel-otel-r3/`)
+
+- libotelexport is an `INTERNALLIB`: Make builds only `libotelexport.a` and
+  `libotelexport_pie.a`; there is no shared object, SONAME, SHLIB_MAJOR or
+  symbol version map to match. Bazel builds the same two archives and does not
+  invent a shared library. Member order and per-member defined/undefined
+  symbols equal Make's. Bazel also emits its own unused `lib*.pic.a` default
+  outputs for direct library builds; nothing links them.
+- Compile flags: after removing explained Bazel-only tokens (`-frandom-seed`,
+  `-iquote` workspace roots, generated-file `-isystem` twins, explicit
+  `-nostdinc`/SDK `-isystem`, dependency-file names and
+  `-fdebug-compilation-dir=.`), every compile action equals Make's ordered
+  flag list, and the include search order equals Make's `-I` order. Make also
+  names `cddl/contrib/opensolaris/lib/libproc/common` and
+  `sys/cddl/contrib/opensolaris/compat`, which do not exist in the tree.
+  `includes` gives `-isystem` rather than `-I`; with Make's `-Wsystem-headers`
+  this does not suppress diagnostics.
+- Object code: the non-debug sections of every Bazel object equal the Make
+  `.o`/`.pieo` except `otelexport_test.o`, whose `.rodata.str1.1`, `.rela.data*`
+  and `.symtab` differ because ATF macros embed `__FILE__` (Make passes absolute
+  source paths, Bazel workspace-relative paths).
+- Link: options (`-pie`, `-gz=zlib`, `-z now`, `-z relro`), library set and
+  object order equal Make. `bsd.prog.mk` links with `${CFLAGS}`; only
+  `-gz=zlib` affects the link, so `bsd_program` passes it explicitly.
+  NEEDED order differs for hwstat and bsdinstruments: Bazel emits a binary's
+  own linkopts before dependency linkopts, while src.libnames.mk orders LDADD
+  differently. The NEEDED set, imports and version requirements are equal; a
+  diagnostic relink of the Bazel objects with Make's exact link command
+  reproduces every non-debug section of Make's `.full` byte-for-byte for
+  hwstat and bsdinstruments. The test program additionally differs by the
+  `__FILE__` strings, which shift later sections.
+- Debug: debug sections differ by recorded paths. Make's debug split
+  (`.debug` file plus `--add-gnu-debuglink` stripped program) is not modeled;
+  comparisons use Make's `.full`.
+- Reproducibility: Bazel sandboxes each action in a numbered directory that
+  clang recorded as `DW_AT_comp_dir`, so identical rebuilds differed. The
+  toolchain now passes `-fdebug-compilation-dir=.` to compile actions. After
+  that, all five outputs are byte-identical across three independent output
+  roots (`bazel-otel-r2`, `-r3`, `-qualify-args-r1`) and after every
+  restore in the negative suite. The change does not alter the existing
+  pilot outputs, which have no debug information.
+- Negative dependency suite: eleven copied inputs (library source, public and
+  private headers, test source, program headers, source-tree `dtrace.h` that
+  shadows the SDK copy, libspl `sys/types.h`, `tracecmp.h`, SDK `zlib.h` and
+  `atf-c.h`) each produce a failed rebuild carrying the injected `#error`;
+  replacing the copied SDK `libxo.so` and `libprivateatf-c.so` link inputs
+  fails the link with the injected marker. Each is restored and rebuilt.
+  Removing `oe_text.c` from the BUILD list is rejected by the Make SRCS check.
+- Host runtime (not matching-system qualification): on this 16.0-CURRENT
+  host (kernel built 2026-10-07, host rtld and libraries; SDK from
+  2026-10-23) all eleven ATF cases pass for both the Bazel and the installed-
+  form Make test program. hwstat and bsdinstruments usage paths return 2 with
+  identical output; `bsdinstruments list`, `list --json` and `generate
+  accept-latency` are identical between builds; hwstat `list` field labels,
+  `list --format json` structure and a one-second `watch` agree. No host ABI
+  failure was observed. `runtime-fixture/` holds both builds of each program
+  and the SDK providers of their NEEDED entries for a parent VM runner; no VM
+  was launched.
+
+### bazel-test integration
+
+`qualify.py` runs `otel-probe.py --skip-host-runtime` after the declared pilot
+and records `otel_targets` and the result hash; component directory files are
+hashed and rechecked with the other inputs. build-bsd.c is unchanged: the
+`bazel-test` argv, the `bazel-compile-comparison` scope and
+`runtime=not-performed` remain accurate, so its tests need no change. The
+manual describes the added comparison. The full `qualify.py` entrypoint was
+not rerun against `/usr/src`; the probe was run with the exact arguments
+`qualify.py` passes (`bazel-otel-qualify-args-r1`).
+
+### Not qualified
+
+- The staged SDK was built from `/usr/src`, not from this tree. Its
+  `libdtrace.so.2` and installed `dtrace.h` differ from the tree's HyperTrace
+  headers; bsdinstruments compiles against the tree's headers and links the
+  SDK library in both builds. Its runtime checks do not reach libdtrace.
+- Matching-system VM runtime, Bazel9/Bzlmod, cross builds, installation,
+  METALOG/package parity, hwstat's own ATF tests, man pages, profile catalog
+  (FILESGROUPS) installation and performance.
+- libotelexport sources are expected to change (OTLP-JSON file exporter,
+  rotation, spool, spans). Update `OTELEXPORT_SRCS` and private headers in
+  `targets/lib/libotelexport/BUILD.bazel`; the SRCS check fails until they
+  match `lib/libotelexport/Makefile`. New `LIBADD`/`_DP_otelexport` entries
+  must also be mirrored in the library `linkopts`.
+
+dtrace(1) and libdtrace under Bazel: design
+-------------------------------------------
+dtrace(1) is one source (`cddl/contrib/opensolaris/cmd/dtrace/dtrace.c`) with
+WARNS 1 and the bsdinstruments include order plus `usr.sbin/dtraced`;
+`LIBADD= dtrace ctf elf proc spl xo pthread crypto`. A `bsd_program` target
+needs only a WARNS 1 policy list and a header bundle for `usr.sbin/dtraced`.
+It cannot be linked against the current staged SDK: an independent Make build
+of this tree's dtrace(1) fails with 20 undefined libdtrace symbols
+(`hypertrace_link`, `dtrace_elf_create`, `open_dtraced`, ...), because the SDK
+libdtrace comes from a different revision
+(`/usr/obj/5BSD-otel-validation/bazel-dtrace-sdk-skew-r1/receipt.json`).
+dtrace(1) therefore needs libdtrace from the same tree, either a world SDK
+staged from that revision or a Bazel libdtrace target.
+
+libdtrace (`cddl/lib/libdtrace`, `LIB_CXX`, `SHLIB_MAJOR` 2, `/lib`):
+
+1. Sources: 44 C and 12 C++ (`c++20`, `-fno-rtti`, exceptions on) files
+   from libdtrace/common and libgen `gmatch.c`, plus amd64 `dis_tables.c` and
+   `instr_size.c` from `sys/cddl/dev/dtrace/x86`. About seventeen amd64
+   include directories in a fixed order, including `${.OBJDIR}` for generated
+   headers, and the forced `-include .../spl/sys/ccompile.h`. Express these as
+   header bundles in `targets/BUILD.bazel` plus a declared header passed with
+   `-include` by workspace-relative path; C++ flags need a `bsd_cxxflags`
+   policy list. The library is `cc_library` plus `bsd_shared_library(soname=
+   "libdtrace.so.2")`; check whether exports are versioned, and add an
+   unversioned export-set comparison to `elf-artifact-check.py` if they are
+   not.
+2. Grammar and scanner: `dt_grammar.y` is processed by the staged bootstrap
+   yacc (`tmp/legacy/usr/bin/yacc`, `YFLAGS=-d`, `-o dt_grammar.c`), giving
+   `dt_grammar.c` and `dt_grammar.h`, which dt_cc.c, dt_cg.c, dt_lex.l,
+   dt_parser.c and dt_sugar.c include. `dt_lex.l` goes through
+   `tmp/legacy/usr/bin/lex -o dt_lex.c`. Use small Starlark rules
+   (`bsd_yacc`, `bsd_lex`) with the tools as `cfg = "exec"` executables and
+   both outputs declared. Expose the header through a cc_library `includes`
+   on the generated directory. Compare the generated files with Make's
+   objdir byte-for-byte, after accounting for `#line` paths, as the libsbuf
+   version map is compared.
+3. Shell generators: `dt_errtags.c` (`sh mkerrtags.sh < dt_errtags.h`),
+   `dt_names.c` (`sh mknames.sh < sys/dtrace.h`) and `priv.d` (`sh mkpriv -o
+   priv.d sys/sys/priv.h`). Run them as declared actions with staged
+   `sh`/`sed`/`awk`. Redirect stdin and stdout with an extended
+   `stdout_redirect.c` helper rather than a shell pipeline.
+4. D library files (`DSRCS`, `/usr/lib/dtrace`, mode `NOBINMODE`) are data.
+   They wait on the same installation/METALOG adapter as every other target.
+5. CTF: `MK_CTF` is `no` in this configuration (checked with `-V MK_CTF`), so
+   Make runs neither ctfconvert nor ctfmerge for these userland builds. A
+   `WITH_CTF` build converts each object in place and merges at link.
+   Bazel actions cannot rewrite their own outputs, so this needs a Starlark
+   rule that uses `cc_common.compile`, runs `ctfconvert` on a copied object
+   as a separate declared action, then calls `cc_common.link` and `ctfmerge`.
+   `ctfconvert`/`ctfmerge` are present in the staged SDK `usr/bin`.
+6. USDT providers (`*.d` in SRCS, for example libtracecmp's
+   `tracecmp_provider.d`) need `dtrace -h` for headers and `dtrace -G`, which
+   rewrites objects and emits a provider object. This has the same
+   in-place problem as CTF and needs a build-host `DTRACE_CROSS`, which is
+   not present in this staged SDK.
+7. Optional knobs (`MK_DTRACE_OPTIMIZED` = `-flto`, ASAN/TSAN, benchmarks,
+   `DTRACE_TARGET_ARCH`) need explicit Bazel configuration settings rather than
+   a fixed flag list. All of them are `no` in this configuration.
+8. Qualification: generated-source parity, per-object non-debug section
+   equality, `libdtrace.so.2` SONAME/NEEDED/export comparison, a negative
+   dependency suite that includes the grammar, scanner and generator inputs,
+   and a VM runtime with the DTrace modules preloaded from loader.conf (late
+   kldload is denied by mac_capability). On this host only `dtrace -h`-style
+   usage can run without loading modules.

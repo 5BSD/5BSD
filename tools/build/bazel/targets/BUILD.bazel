@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Workspace root: header-only bundles for source directories that Make reaches
+# through -I flags.  Each glob is a declared input set; `includes` keeps Make's
+# search order and is relative to this package (no absolute -I paths).
+package(default_visibility = ["//visibility:public"])
+
+# cddl/usr.sbin/bsdinstruments CFLAGS order.  Make also lists
+# cddl/contrib/opensolaris/lib/libproc/common and
+# sys/cddl/contrib/opensolaris/compat, which do not exist in this tree.
+cc_library(
+    name = "dtrace_userland_headers",
+    hdrs = glob([
+        "sys/**/*.h",
+        "cddl/compat/opensolaris/include/**/*.h",
+        "cddl/contrib/opensolaris/head/**/*.h",
+        "cddl/contrib/opensolaris/lib/libdtrace/common/**/*.h",
+    ]),
+    includes = [
+        "sys/contrib/openzfs/include",
+        "sys/contrib/openzfs/lib/libspl/include",
+        "sys/contrib/openzfs/lib/libspl/include/os/freebsd",
+        "sys",
+        "cddl/compat/opensolaris/include",
+        "sys/cddl/compat/opensolaris",
+        "cddl/contrib/opensolaris/head",
+        "cddl/contrib/opensolaris/lib/libdtrace/common",
+        "sys/cddl/contrib/opensolaris/uts/common",
+    ],
+)
+
+# Consumers' CFLAGS+=-I${SRCTOP}/lib/libtracecmp; the library itself is
+# linked from the staged SDK.
+cc_library(
+    name = "libtracecmp_headers",
+    hdrs = glob(["lib/libtracecmp/*.h"]),
+    includes = ["lib/libtracecmp"],
+)
