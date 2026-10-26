@@ -29,6 +29,9 @@
 .Nm oe_report_drops ,
 .Nm oe_env_load ,
 .Nm oe_env_free ,
+.Nm oe_host_detect ,
+.Nm oe_host_arch_semconv ,
+.Nm oe_resource_host ,
 .Nm oe_host_name ,
 .Nm oe_host_arch ,
 .Nm oe_os_version ,
@@ -106,6 +109,12 @@ It is not installed as a shared library.
 .Fn oe_env_load "struct oe_env *env"
 .Ft void
 .Fn oe_env_free "struct oe_env *env"
+.Ft void
+.Fn oe_host_detect "struct oe_host_info *hi"
+.Ft void
+.Fn oe_host_arch_semconv "const char *machine_arch" "char *buf" "size_t len"
+.Ft void
+.Fn oe_resource_host "struct oe_resource *r" "const struct oe_host_info *hi"
 .Ft void
 .Fn oe_host_name "char *buf" "size_t len"
 .Ft void
@@ -294,6 +303,68 @@ struct oe_kv {
 .Ed
 .Pp
 Like events, spans are borrowed for the duration of the call.
+.Ss Semantic conventions
+Both
+.Vt struct oe_event
+and
+.Vt struct oe_span
+carry a
+.Vt struct oe_context
+describing who produced the record:
+.Bd -literal -offset indent
+struct oe_context {
+	unsigned	 flags;
+	pid_t		 ppid;
+	int64_t		 tid;
+	uid_t		 uid, ruid;
+	gid_t		 gid, rgid;
+	int		 cpu;
+	int		 jid;
+	const char	*jail_name;
+};
+.Ed
+.Pp
+Every format exports it under the OpenTelemetry semantic-convention
+names, from a single definition so log records, spans and JSON Lines
+agree:
+.Va pid
+as
+.Ql process.pid
+.Pq when non-zero, or when Dv OE_CTX_PID says it is known ,
+.Ql process.parent_pid
+.Pq Dv OE_CTX_PPID ,
+the event's or span's
+.Va execname
+as
+.Ql process.executable.name ,
+.Ql process.user.id
+and
+.Ql process.real_user.id
+.Pq Dv OE_CTX_UID , OE_CTX_RUID ,
+.Ql process.group.id
+and
+.Ql process.real_group.id
+.Pq Dv OE_CTX_GID , OE_CTX_RGID ,
+.Ql thread.id
+.Pq Dv OE_CTX_TID
+and
+.Ql cpu.logical_number
+.Pq Dv OE_CTX_CPU ,
+all as integers.
+A jail
+.Pq Dv OE_CTX_JAIL with a non-zero Va jid
+is reported the way the conventions describe a container:
+.Ql container.id
+is the jail id,
+.Ql container.name
+its name when known, and
+.Ql container.runtime.name
+is
+.Ql jail ;
+the host itself is not a container.
+Metric data point attributes with one of these integer names are
+emitted as integers when their value is a decimal number, so a pid has
+the same type in a metric as in a log record.
 .Ss Output sinks
 The file-writing exporters write through a
 .Vt struct oe_sink ,
@@ -418,6 +489,11 @@ and, when present,
 and
 .Va ustack
 arrays of formatted frames.
+Events and spans carry the context attributes of
+.Sx Semantic conventions
+in an
+.Va attributes
+object.
 Spans are objects with
 .Ql \&"type\&":\&"span\&"
 carrying
@@ -433,13 +509,13 @@ carrying
 .Va duration_ns ,
 .Va kind ,
 .Va status ,
-.Va status_message ,
-.Va probe ,
-.Va pid ,
-.Va execname
+.Va status_message
+and
+.Va probe
 when known, and an
 .Va attributes
-object; non-finite doubles become
+object holding the context attributes and then the span's own;
+non-finite doubles become
 .Dv null .
 Events keep their original shape, without a
 .Va type
@@ -491,9 +567,14 @@ struct oe_otlpjson_config {
 	const char	*profile;
 	const struct oe_resource *resource;
 	int		 batch_size;
+	const char	*scope_name;
 };
 .Ed
 .Pp
+.Va resource
+and
+.Va scope_name
+are as for the OTLP/HTTP exporter below.
 Log records and spans are written once
 .Va batch_size
 .Pq default 200
@@ -531,6 +612,7 @@ struct oe_otlp_config {
 	const char	*compression;
 	const char	*spool_path;
 	uint64_t	 spool_max;
+	const char	*scope_name;
 };
 .Ed
 .Bl -tag -width "flush_interval"
@@ -561,34 +643,49 @@ describing the OTel resource attached to every batch.
 Must not be
 .Dv NULL .
 Its
-.Va service_name
-also becomes the instrumentation scope name and its
 .Va service_version
-the scope version, the
+is the scope version, the
 .Ql telemetry.sdk.version
 attribute and the HTTP
 .Ql User-Agent
 .Pq Ql OTel-OTLP-Exporter-C/<version> .
-The library always emits
+The library emits
 .Ql service.name ,
 .Ql service.version ,
+.Ql service.instance.id ,
 .Ql host.name ,
+.Ql host.id ,
 .Ql host.arch ,
-.Ql os.type ,
+.Ql os.type
+.Pq from Va os_name ,
+.Ql os.name
+.Pq from Va os_full_name ,
 .Ql os.version ,
+.Ql os.description ,
 .Ql telemetry.sdk.name
-.Pq Ql observablebsd
-and
+.Pq Ql observablebsd ,
 .Ql telemetry.sdk.language
-.Pq Ql c ;
-.Ql service.instance.id
-is emitted only when
-.Va service_instance_id
-is non-NULL, and the
+.Pq Ql c
+and
+.Ql telemetry.sdk.version ,
+omitting
+.Dv NULL
+members, then the
 .Va custom
 array of
-.Vt struct oe_attr
-is appended verbatim.
+.Vt struct oe_attr .
+A custom attribute replaces a built-in one of the same key
+.Pq so Ev OTEL_RESOURCE_ATTRIBUTES can correct a detected value without producing a duplicate key ,
+except
+.Ql service.name ,
+which the tool resolves itself; of duplicate custom keys the last wins.
+.It Va scope_name
+Instrumentation scope name, normally the tool
+.Pq for example Ql bsdinstruments .
+It prefixes the tool's own attributes and metric names below.
+.Dv NULL
+falls back to the resource's
+.Va service_name .
 .It Va batch_size
 Number of log records that triggers an immediate batch post.
 0 selects the default of 200.
@@ -648,13 +745,14 @@ Metric names are
 .Ql <scope>.<profile>.<name> ,
 falling back to the aggregation kind when the snapshot is anonymous.
 Log records carry
-.Ql <scope>.profile ,
-.Ql <scope>.probe ,
-.Ql process.pid
+.Ql <scope>.profile
 and
-.Ql process.executable.name
-attributes and severity number 9
+.Ql <scope>.probe
+attributes, the context attributes described in
+.Sx Semantic conventions ,
+and severity number 9
 .Pq INFO .
+Spans carry the same, followed by their own attributes.
 .Pp
 Failed POSTs are retried with exponential backoff starting at 100 ms plus
 up to 50% jitter, as recommended by the OTLP specification.
@@ -757,9 +855,13 @@ Both
 .Xr bsdinstruments 8
 and
 .Xr hwstat 8
-use
-.Va service_name
-as the resource service name, pass
+resolve the resource service name as
+.Va service_name ,
+else a
+.Ql service.name
+entry of
+.Va resource_attrs ,
+else the program name, as the specification orders them, pass
 .Va resource_attrs
 as the resource's custom attributes, use
 .Va endpoint
@@ -772,6 +874,41 @@ and a converted
 straight into
 .Vt struct oe_otlp_config .
 .Ss Host detection
+.Fn oe_host_detect
+fills a
+.Vt struct oe_host_info
+with the values of the OpenTelemetry resource conventions:
+.Va host_name ,
+.Va host_id
+.Pq Va kern.hostuuid ,
+.Va host_arch
+.Pq Va hw.machine_arch in the conventions' spelling, see below ,
+.Va os_type
+.Pq Ql freebsd ,
+.Va os_name
+and
+.Va os_version
+.Pq Xr uname 3 ,
+.Va os_description
+.Pq system name, release and Va kern.ident, for example Ql FreeBSD 16.0-CURRENT GENERIC
+and a fresh random version 4 UUID in
+.Va instance_id
+for
+.Ql service.instance.id .
+Unknown values are empty strings.
+.Fn oe_resource_host
+points the host and operating system members of a
+.Vt struct oe_resource
+.Pq and Va service_instance_id
+at those values, leaving empty ones
+.Dv NULL .
+.Fn oe_host_arch_semconv
+maps a
+.Va hw.machine_arch
+value to the conventions' spelling
+.Pq amd64, arm64 for aarch64, x86 for i386, ppc64, ppc32, arm32 ;
+architectures they do not list keep the system's name.
+.Pp
 .Fn oe_host_name ,
 .Fn oe_host_arch
 and
@@ -948,24 +1085,18 @@ list; empty if unset.
 Build an OTLP exporter from the environment, as the tools do:
 .Bd -literal -offset indent
 struct oe_env env;
+struct oe_host_info hi;
 struct oe_resource res;
 struct oe_otlp_config cfg;
 struct oe_exporter *e;
-char host[256], arch[64], osrel[64];
 
 oe_env_load(&env);
-oe_host_name(host, sizeof(host));
-oe_host_arch(arch, sizeof(arch));
-oe_os_version(osrel, sizeof(osrel));
-
 memset(&res, 0, sizeof(res));
+oe_host_detect(&hi);
+oe_resource_host(&res, &hi);
 res.service_name = env.service_name != NULL ? env.service_name :
     "mytool";
 res.service_version = "1.0";
-res.host_name = host;
-res.host_arch = arch;
-res.os_name = "freebsd";
-res.os_version = osrel;
 res.custom = env.resource_attrs;
 res.ncustom = env.nresource_attrs;
 
@@ -974,6 +1105,7 @@ cfg.endpoint = env.endpoint != NULL ? env.endpoint :
     "http://localhost:4318";
 cfg.profile = "syscalls";
 cfg.resource = &res;
+cfg.scope_name = "mytool";
 cfg.max_retries = -1;
 cfg.timeout = env.timeout_ms > 0 ? env.timeout_ms / 1000.0 : 0;
 cfg.headers = env.headers;

@@ -29,6 +29,8 @@
 #define	CAP_MAX	64
 
 struct cap_event {
+	struct oe_context ctx;
+	char		*jail;
 	struct timespec	 ts, observed;
 	char		*body, *probe, *execname;
 	pid_t		 pid;
@@ -44,6 +46,7 @@ struct cap_point {
 };
 
 struct cap_span {
+	struct oe_context ctx;
 	char		*name, *probe, *execname, *msg;
 	char		 trace[33], span[17], parent[17];
 	struct timespec	 start, end;
@@ -99,6 +102,9 @@ cap_event(struct oe_exporter *e, const struct oe_event *ev)
 		return (-1);
 	ATF_REQUIRE(c->nevents < CAP_MAX);
 	ce = &c->events[c->nevents++];
+	ce->ctx = ev->ctx;
+	ce->jail = ev->ctx.jail_name != NULL ? strdup(ev->ctx.jail_name) :
+	    NULL;
 	ce->ts = ev->ts;
 	ce->observed = ev->observed;
 	ce->body = strdup(ev->body);
@@ -160,6 +166,7 @@ cap_span(struct oe_exporter *e, const struct oe_span *sp)
 		return (-1);
 	ATF_REQUIRE(c->nspans < CAP_MAX);
 	cs = &c->spans[c->nspans++];
+	cs->ctx = sp->ctx;
 	cs->name = strdup(sp->name);
 	cs->probe = strdup(sp->probe);
 	cs->execname = strdup(sp->execname);
@@ -583,8 +590,8 @@ ATF_TC_BODY(agg_scalars, tc)
 		if (strcmp(s->name, "calls") == 0) {
 			ATF_REQUIRE_EQ(OE_AGG_COUNT, s->kind);
 			ATF_REQUIRE_EQ(2, s->npoints);
-			ATF_REQUIRE_STREQ("execname=nginx;pid=42;syscall=read;",
-			    s->points[0].attrs);
+			ATF_REQUIRE_STREQ("process.executable.name=nginx;"
+			    "process.pid=42;syscall=read;", s->points[0].attrs);
 			ATF_REQUIRE_EQ(10, s->points[0].scalar);
 			ATF_REQUIRE_EQ(4, s->points[1].scalar);
 		} else if (strcmp(s->name, "lat") == 0) {
@@ -623,8 +630,9 @@ ATF_TC_BODY(agg_key_names, tc)
 	fake_rec(fa, DTRACEAGG_COUNT, 0, &v, sizeof(v));
 	run_aggs(d, &fa, 1);
 	ATF_REQUIRE_EQ(1, cap.nsnaps);
-	ATF_REQUIRE_STREQ("tid=7;probe=entry;module=kernel;provider=fbt;"
-	    "label=lit;key.5=7;cpu=7;key.7=7;", cap.snaps[0].points[0].attrs);
+	ATF_REQUIRE_STREQ("thread.id=7;probe=entry;module=kernel;provider=fbt;"
+	    "label=lit;key.5=7;cpu.logical_number=7;key.7=7;",
+	    cap.snaps[0].points[0].attrs);
 	fake_free(fa);
 	dtotel_close(d);
 }
@@ -962,6 +970,155 @@ ATF_TC_BODY(span_malformed, tc)
 	dtotel_close(d);
 }
 
+/* ---------------------------------------------------------------- */
+/* Context								*/
+
+#define	CTX(pid, jid, exec)						\
+	"\037otel.ctx\037pid=" #pid "\037ppid=1\037tid=100\037uid=80"		\
+	"\037ruid=1001\037gid=80\037rgid=1001\037jid=" #jid			\
+	"\037execname=" exec "\n"
+
+#define	ALLCTX	(OE_CTX_PPID | OE_CTX_TID | OE_CTX_UID | OE_CTX_RUID |	\
+	OE_CTX_GID | OE_CTX_RGID | OE_CTX_JAIL | OE_CTX_PID | OE_CTX_CPU)
+
+/*
+ * A context record attaches to the line printed by the same firing,
+ * whether it comes after the line (the stack marker sits at the end
+ * of a clause) or before it, and wins over the body heuristic.
+ */
+ATF_TC_WITHOUT_HEAD(context_records);
+ATF_TC_BODY(context_records, tc)
+{
+	struct dtotel *d;
+
+	d = open_bridge(NULL);
+	deliver(d, "wrong[9]: after\n", 2, 10, 1, 0);
+	deliver(d, CTX(42, 5, "nginx"), 2, 10, 1, 0);
+	deliver(d, CTX(43, 0, "sshd"), 3, 20, 1, 0);
+	deliver(d, "before\n", 3, 20, 1, 0);
+	/* A context from another firing does not attach. */
+	deliver(d, CTX(44, 0, "cron"), 1, 30, 1, 0);
+	deliver(d, "plain[7]: no ctx\n", 1, 31, 1, 0);
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(3, cap.nevents);
+	ATF_REQUIRE_EQ(42, cap.events[0].pid);
+	ATF_REQUIRE_STREQ("nginx", cap.events[0].execname);
+	ATF_REQUIRE_EQ(ALLCTX, cap.events[0].ctx.flags);
+	ATF_REQUIRE_EQ(2, cap.events[0].ctx.cpu);
+	ATF_REQUIRE_EQ(1, cap.events[0].ctx.ppid);
+	ATF_REQUIRE_EQ(100, cap.events[0].ctx.tid);
+	ATF_REQUIRE_EQ(80, cap.events[0].ctx.uid);
+	ATF_REQUIRE_EQ(1001, cap.events[0].ctx.ruid);
+	ATF_REQUIRE_EQ(80, cap.events[0].ctx.gid);
+	ATF_REQUIRE_EQ(1001, cap.events[0].ctx.rgid);
+	ATF_REQUIRE_EQ(5, cap.events[0].ctx.jid);
+	ATF_REQUIRE_STREQ("jail5", cap.events[0].jail);
+	ATF_REQUIRE_EQ(43, cap.events[1].pid);
+	ATF_REQUIRE_STREQ("sshd", cap.events[1].execname);
+	ATF_REQUIRE_EQ(0, cap.events[1].ctx.jid);
+	ATF_REQUIRE(cap.events[1].jail == NULL);
+	/* No context: body heuristic plus the firing's CPU only. */
+	ATF_REQUIRE_EQ(7, cap.events[2].pid);
+	ATF_REQUIRE_STREQ("plain", cap.events[2].execname);
+	ATF_REQUIRE_EQ(OE_CTX_CPU, cap.events[2].ctx.flags);
+	ATF_REQUIRE_EQ(1, cap.events[2].ctx.cpu);
+	/* A context with no probe data: no CPU. */
+	deliver(d, "x\n", -1, 0, 0, 0);
+	deliver(d, CTX(45, 0, "x"), -1, 0, 0, 0);
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(4, cap.nevents);
+	ATF_REQUIRE_EQ(0, cap.events[3].ctx.flags & OE_CTX_CPU);
+	dtotel_close(d);
+}
+
+ATF_TC_WITHOUT_HEAD(context_malformed);
+ATF_TC_BODY(context_malformed, tc)
+{
+	static const char *const bad[] = {
+		"\037otel.ctx\037pid=1\n",			/* incomplete */
+		"\037otel.ctx\037pid=1\037ppid=1\037tid=1\037uid=1\037ruid=1"
+		    "\037gid=1\037rgid=1\037jid=0\n",		/* no execname */
+		"\037otel.ctx\037ppid=1\037tid=1\037uid=1\037ruid=1\037gid=1"
+		    "\037rgid=1\037jid=0\037execname=x\n",	/* no pid */
+		"\037otel.ctx\037pid=x\n",
+		"\037otel.ctx\037pid=1\037uid=y\n",
+		"\037otel.ctx\037pid=1\037junk\n",
+	};
+	struct dtotel *d;
+	size_t i;
+
+	d = open_bridge(NULL);
+	deliver(d, "line[3]: a\n", 0, 5, 1, 0);
+	for (i = 0; i < nitems(bad); i++)
+		deliver(d, bad[i], 0, 5, 1, 0);
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(1, cap.nevents);
+	ATF_REQUIRE_EQ(3, cap.events[0].pid);
+	ATF_REQUIRE_EQ(OE_CTX_CPU, cap.events[0].ctx.flags);
+	dtotel_close(d);
+}
+
+/* Jail names are looked up once per jail and the cache is bounded. */
+ATF_TC_WITHOUT_HEAD(context_jail_cache);
+ATF_TC_BODY(context_jail_cache, tc)
+{
+	struct dtotel *d;
+	char rec[256];
+	int i;
+
+	d = open_bridge(NULL);
+	for (i = 0; i < 3; i++)
+		deliver(d, CTX(1, 7, "a"), 0, (uint64_t)i, 1, 0);
+	ATF_REQUIRE_EQ(1, stub.jail_lookups);
+	/* More jails than the cache holds, then the first again. */
+	for (i = 1; i <= 40; i++) {
+		snprintf(rec, sizeof(rec), "\037otel.ctx\037pid=1\037ppid=1"
+		    "\037tid=1\037uid=1\037ruid=1\037gid=1\037rgid=1\037jid=%d"
+		    "\037execname=a\n", i == 40 ? 200 : i + 10);
+		deliver(d, rec, 0, 100 + (uint64_t)i, 1, 0);
+	}
+	ATF_REQUIRE_EQ(41, stub.jail_lookups);
+	deliver(d, CTX(1, 7, "a"), 0, 999, 1, 0);
+	ATF_REQUIRE_EQ(42, stub.jail_lookups);
+	dtotel_close(d);
+}
+
+/*
+ * A span in the probe's own process carries the process context and
+ * CPU; one attributed elsewhere carries only its thread.
+ */
+ATF_TC_WITHOUT_HEAD(span_context);
+ATF_TC_BODY(span_context, tc)
+{
+	struct dtotel *d;
+
+	d = open_bridge(NULL);
+	deliver(d, "\037otel.span\037name=own\037start=1\037end=2\037thread=100"
+	    "\037pid=42\037execname=nginx\037ppid=1\037uid=80\037ruid=1001"
+	    "\037gid=80\037rgid=1001\037jid=5\n", 6, 2, 1, 0);
+	deliver(d, "\037otel.span\037name=other\037start=1\037end=2"
+	    "\037thread=55\037pid=7\037execname=sh\n", 6, 2, 1, 0);
+	deliver(d, "\037otel.span\037name=bare\037start=1\037end=2\n", -1, 2,
+	    0, 0);
+	deliver(d, "\037otel.span\037name=noprobe\037start=1\037end=2"
+	    "\037thread=1\037pid=1\037execname=a\037ppid=1\037uid=1"
+	    "\037ruid=1\037gid=1\037rgid=1\037jid=0\n", -1, 2, 0, 0);
+	ATF_REQUIRE_EQ(4, cap.nspans);
+	ATF_REQUIRE_EQ(ALLCTX, cap.spans[0].ctx.flags);
+	ATF_REQUIRE_EQ(6, cap.spans[0].ctx.cpu);
+	ATF_REQUIRE_EQ(100, cap.spans[0].ctx.tid);
+	ATF_REQUIRE_EQ(5, cap.spans[0].ctx.jid);
+	ATF_REQUIRE_EQ(OE_CTX_TID | OE_CTX_PID, cap.spans[1].ctx.flags);
+	ATF_REQUIRE_EQ(55, cap.spans[1].ctx.tid);
+	ATF_REQUIRE_EQ(0, cap.spans[2].ctx.flags);
+	ATF_REQUIRE_EQ(ALLCTX & ~OE_CTX_CPU, cap.spans[3].ctx.flags);
+	/* A bad context field makes the span malformed. */
+	deliver(d, "\037otel.span\037name=x\037start=1\037end=2\037uid=q\n",
+	    0, 2, 1, 0);
+	ATF_REQUIRE_EQ(4, cap.nspans);
+	dtotel_close(d);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -982,5 +1139,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, span_ids_salted);
 	ATF_TP_ADD_TC(tp, span_unanchored_and_limits);
 	ATF_TP_ADD_TC(tp, span_malformed);
+	ATF_TP_ADD_TC(tp, context_records);
+	ATF_TP_ADD_TC(tp, context_malformed);
+	ATF_TP_ADD_TC(tp, context_jail_cache);
+	ATF_TP_ADD_TC(tp, span_context);
 	return (atf_no_error());
 }

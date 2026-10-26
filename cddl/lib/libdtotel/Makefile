@@ -25,7 +25,7 @@ CFLAGS+=	-I${SRCTOP}/sys/cddl/compat/opensolaris \
 CFLAGS+=	-DHAVE_ISSETUGID
 CFLAGS+=	-I${SRCTOP}/lib/libotelexport
 
-LIBADD=		dtrace otelexport
+LIBADD=		dtrace jail otelexport
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

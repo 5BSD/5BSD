@@ -1968,10 +1968,10 @@ ATF_TC_BODY(span_jsonl_text, tc)
 	    "\"span_id\":\"a0a1a2a3a4a5a6a7\",\"end\":"
 	    "\"2023-11-14T22:13:20.000Z\",\"duration_ns\":500000,"
 	    "\"kind\":\"server\",\"status\":\"unset\","
-	    "\"probe\":\"syscall::accept:return\",\"pid\":42,"
-	    "\"execname\":\"nginx\",\"attributes\":{\"net.peer.port\":443,"
-	    "\"op\":\"aio_read\",\"ok\":true,\"ratio\":0.5,\"nil\":\"\"}}\n")
-	    != NULL);
+	    "\"probe\":\"syscall::accept:return\",\"attributes\":{"
+	    "\"process.pid\":42,\"process.executable.name\":\"nginx\","
+	    "\"net.peer.port\":443,\"op\":\"aio_read\",\"ok\":true,"
+	    "\"ratio\":0.5,\"nil\":\"\"}}\n") != NULL);
 	ATF_REQUIRE(strstr(out, "\"parent_span_id\":\"a0a1a2a3a4a5a6a7\"") !=
 	    NULL);
 	ATF_REQUIRE(strstr(out, "\"kind\":\"client\",\"status\":\"error\","
@@ -2223,6 +2223,186 @@ ATF_TC_BODY(validator_accepts, tc)
 	}
 }
 
+/* ---------------------------------------------------------------- */
+/* Semantic conventions						 	*/
+
+static struct oe_context
+full_context(void)
+{
+	struct oe_context ctx;
+
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.flags = OE_CTX_PPID | OE_CTX_TID | OE_CTX_UID | OE_CTX_RUID |
+	    OE_CTX_GID | OE_CTX_RGID | OE_CTX_CPU | OE_CTX_JAIL | OE_CTX_PID;
+	ctx.ppid = 1;
+	ctx.tid = 100123;
+	ctx.uid = 80;
+	ctx.ruid = 1001;
+	ctx.gid = 80;
+	ctx.rgid = 1001;
+	ctx.cpu = 3;
+	ctx.jid = 5;
+	ctx.jail_name = "web";
+	return (ctx);
+}
+
+/*
+ * Logs, spans and metrics name the same things the same way: the
+ * golden is built independently (gen_golden_s3.py) from the
+ * conventions, and resource overrides replace detected values.
+ */
+ATF_TC_WITHOUT_HEAD(semconv_golden);
+ATF_TC_BODY(semconv_golden, tc)
+{
+	static const struct oe_attr custom[] = {
+		{ "host.name", "override" },
+		{ "deployment.environment.name", "lab" },
+		{ "service.name", "ignored" },
+		{ "team", "a" },
+		{ "team", "b" },
+	};
+	static struct oe_attr dims[] = {
+		{ "process.pid", "123" },
+		{ "thread.id", "notanumber" },
+		{ "cpu.logical_number", "" },
+		{ "process.executable.name", "nginx" },
+	};
+	struct oe_resource res;
+	struct oe_otlpjson_config cfg;
+	struct oe_sink_config sc;
+	struct oe_sink *sink;
+	struct oe_exporter *e;
+	struct oe_event ev;
+	struct oe_span root, child;
+	struct oe_snapshot sn;
+	struct oe_datapoint dp;
+	struct otlp_counts c;
+	char *text;
+
+	res = test_resource;
+	res.host_id = "0123-hostuuid";
+	res.os_full_name = "FreeBSD";
+	res.os_description = "FreeBSD 16.0-CURRENT GENERIC";
+	res.service_instance_id = "8f6c1f4e-5b1d-4c2a-9a3e-0d9f2b7c6a11";
+	res.custom = custom;
+	res.ncustom = nitems(custom);
+	memset(&sc, 0, sizeof(sc));
+	sc.path = "semconv.jsonl";
+	sink = oe_sink_open(&sc);
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.sink = sink;
+	cfg.resource = &res;
+	e = oe_otlpjson_new(&cfg);
+	ATF_REQUIRE(e != NULL);
+	ev = make_event();
+	fixed_event_times(&ev);
+	ev.nstack = ev.nustack = 0;
+	ev.ctx = full_context();
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	/* The host (jid 0) is not a container; pid 0 known is kept. */
+	ev.ctx.jid = 0;
+	ev.pid = 0;
+	ev.execname = "";
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	/* Unknown pid and no context: no process attributes at all. */
+	memset(&ev.ctx, 0, sizeof(ev.ctx));
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	make_spans(&root, &child);
+	root.attrs = NULL;
+	root.nattrs = 0;
+	root.ctx = full_context();
+	root.ctx.jail_name = NULL;
+	ATF_REQUIRE_EQ(0, oe_span(e, &root));
+	memset(&dp, 0, sizeof(dp));
+	dp.attrs = dims;
+	dp.nattrs = nitems(dims);
+	dp.scalar = 9;
+	memset(&sn, 0, sizeof(sn));
+	sn.ts.tv_sec = 1700000010;
+	sn.profile = "test-prof";
+	sn.name = "calls";
+	sn.kind = OE_AGG_COUNT;
+	sn.points = &dp;
+	sn.npoints = 1;
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	ATF_REQUIRE_EQ(0, oe_shutdown(e));
+	oe_exporter_free(e);
+	oe_sink_close(sink);
+	text = slurp("semconv.jsonl", NULL);
+	c = check_otlp_lines(tc, text, "otlpjson-semconv.jsonl");
+	ATF_REQUIRE_EQ(3, c.requests);
+	free(text);
+}
+
+ATF_TC_WITHOUT_HEAD(semconv_jsonl);
+ATF_TC_BODY(semconv_jsonl, tc)
+{
+	struct oe_exporter *e;
+	struct oe_event ev;
+	FILE *fp;
+	char *out;
+	size_t outlen;
+
+	fp = open_memstream(&out, &outlen);
+	e = oe_jsonl_new(fp, "p");
+	ev = make_event();
+	ev.nstack = ev.nustack = 0;
+	ev.ctx = full_context();
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	oe_exporter_free(e);
+	fclose(fp);
+	ATF_REQUIRE_MSG(strstr(out, "\"attributes\":{\"process.pid\":123,"
+	    "\"process.parent_pid\":1,\"process.executable.name\":\"nginx\","
+	    "\"process.user.id\":80,\"process.real_user.id\":1001,"
+	    "\"process.group.id\":80,\"process.real_group.id\":1001,"
+	    "\"thread.id\":100123,\"cpu.logical_number\":3,"
+	    "\"container.id\":\"5\",\"container.name\":\"web\","
+	    "\"container.runtime.name\":\"jail\"}}\n") != NULL, "%s", out);
+	free(out);
+}
+
+ATF_TC_WITHOUT_HEAD(host_detection);
+ATF_TC_BODY(host_detection, tc)
+{
+	static const char *const map[][2] = {
+		{ "amd64", "amd64" }, { "aarch64", "arm64" }, { "i386", "x86" },
+		{ "powerpc64", "ppc64" }, { "powerpc64le", "ppc64" },
+		{ "powerpc", "ppc32" }, { "armv6", "arm32" },
+		{ "armv7", "arm32" }, { "riscv64", "riscv64" },
+	};
+	struct oe_host_info hi, hi2;
+	struct oe_resource r;
+	char buf[32];
+	size_t i;
+
+	for (i = 0; i < nitems(map); i++) {
+		oe_host_arch_semconv(map[i][0], buf, sizeof(buf));
+		ATF_REQUIRE_STREQ(map[i][1], buf);
+	}
+	oe_host_detect(&hi);
+	ATF_REQUIRE(hi.host_name[0] != '\0');
+	ATF_REQUIRE_STREQ("freebsd", hi.os_type);
+	ATF_REQUIRE(hi.os_name[0] != '\0');
+	ATF_REQUIRE(strncmp(hi.os_description, hi.os_name,
+	    strlen(hi.os_name)) == 0);
+	/* UUID version 4, variant 10xx. */
+	ATF_REQUIRE_EQ(36, strlen(hi.instance_id));
+	ATF_REQUIRE_EQ('4', hi.instance_id[14]);
+	ATF_REQUIRE(strchr("89ab", hi.instance_id[19]) != NULL);
+	oe_host_detect(&hi2);
+	ATF_REQUIRE(strcmp(hi.instance_id, hi2.instance_id) != 0);
+	memset(&r, 0, sizeof(r));
+	oe_resource_host(&r, &hi);
+	ATF_REQUIRE(r.host_name == hi.host_name);
+	ATF_REQUIRE(r.service_instance_id == hi.instance_id);
+	ATF_REQUIRE_STREQ("freebsd", r.os_name);
+	/* Unknown values are omitted rather than exported empty. */
+	hi.host_id[0] = hi.os_name[0] = hi.os_description[0] = '\0';
+	oe_resource_host(&r, &hi);
+	ATF_REQUIRE(r.host_id == NULL && r.os_full_name == NULL &&
+	    r.os_description == NULL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -2271,5 +2451,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, span_http);
 	ATF_TP_ADD_TC(tp, validator_rejects);
 	ATF_TP_ADD_TC(tp, validator_accepts);
+	ATF_TP_ADD_TC(tp, semconv_golden);
+	ATF_TP_ADD_TC(tp, semconv_jsonl);
+	ATF_TP_ADD_TC(tp, host_detection);
 	return (atf_no_error());
 }

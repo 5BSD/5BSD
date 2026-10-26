@@ -20,6 +20,7 @@ LIBADD.otlp_collector+=	z ssl crypto pthread
 
 ${PACKAGE}FILES+=	golden/otlpjson-basic.jsonl
 ${PACKAGE}FILES+=	golden/otlpjson-spans.jsonl
+${PACKAGE}FILES+=	golden/otlpjson-semconv.jsonl
 ${PACKAGE}FILESDIR=	${TESTSDIR}/golden
 
 CFLAGS+=	-I${.CURDIR:H}

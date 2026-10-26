@@ -31,7 +31,7 @@ CFLAGS+=	-I${SRCTOP}/lib/libotelexport
 CFLAGS+=	-I${SRCTOP}/cddl/lib/libdtotel
 CFLAGS+=	-I${SRCTOP}/lib/libtracecmp
 
-LIBADD=		dtotel tracecmp dtrace ctf elf proc spl xo pthread otelexport m
+LIBADD=		dtotel tracecmp dtrace ctf elf proc spl xo pthread otelexport jail m
 
 # The bundled profile catalog, installed for the loader's base tier.
 FILESGROUPS+=	PROFILES

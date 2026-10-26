@@ -7,6 +7,8 @@
  * variables, host detection, frame and timestamp formatting.
  */
 
+#include <sys/param.h>
+#include <sys/sysctl.h>
 #include <sys/utsname.h>
 
 #include <ctype.h>
@@ -392,6 +394,98 @@ oe_os_version(char *buf, size_t len)
 		strlcpy(buf, uts.release, len);
 	else
 		strlcpy(buf, "", len);
+}
+
+static void
+sysctl_string(const char *name, char *buf, size_t len)
+{
+	size_t n = len;
+
+	if (sysctlbyname(name, buf, &n, NULL, 0) != 0 || n == 0)
+		buf[0] = '\0';
+	buf[len - 1] = '\0';
+}
+
+/*
+ * Machine architecture in the host.arch spelling of the semantic
+ * conventions; architectures the convention does not list keep the
+ * system's name.
+ */
+void
+oe_host_arch_semconv(const char *machine_arch, char *buf, size_t len)
+{
+	static const struct {
+		const char *sys, *otel;
+	} map[] = {
+		{ "amd64", "amd64" }, { "aarch64", "arm64" },
+		{ "i386", "x86" }, { "powerpc64", "ppc64" },
+		{ "powerpc64le", "ppc64" }, { "powerpc", "ppc32" },
+		{ "armv6", "arm32" }, { "armv7", "arm32" },
+	};
+	size_t i;
+
+	for (i = 0; i < nitems(map); i++)
+		if (strcmp(machine_arch, map[i].sys) == 0) {
+			strlcpy(buf, map[i].otel, len);
+			return;
+		}
+	strlcpy(buf, machine_arch, len);
+}
+
+void
+oe_host_detect(struct oe_host_info *hi)
+{
+	struct utsname uts;
+	uint8_t u[16];
+	char machine_arch[32], ident[64];
+
+	memset(hi, 0, sizeof(*hi));
+	oe_host_name(hi->host_name, sizeof(hi->host_name));
+	sysctl_string("kern.hostuuid", hi->host_id, sizeof(hi->host_id));
+	sysctl_string("hw.machine_arch", machine_arch, sizeof(machine_arch));
+	oe_host_arch_semconv(machine_arch, hi->host_arch,
+	    sizeof(hi->host_arch));
+	strlcpy(hi->os_type, "freebsd", sizeof(hi->os_type));
+	if (uname(&uts) == 0) {
+		strlcpy(hi->os_name, uts.sysname, sizeof(hi->os_name));
+		strlcpy(hi->os_version, uts.release, sizeof(hi->os_version));
+	}
+	/*
+	 * "FreeBSD 16.0-CURRENT GENERIC": uname -v would also carry the
+	 * build user, host and object path.
+	 */
+	sysctl_string("kern.ident", ident, sizeof(ident));
+	snprintf(hi->os_description, sizeof(hi->os_description), "%s %s%s%s",
+	    hi->os_name, hi->os_version, ident[0] != '\0' ? " " : "", ident);
+	/* service.instance.id: a random (version 4) UUID per run. */
+	arc4random_buf(u, sizeof(u));
+	u[6] = (u[6] & 0x0f) | 0x40;
+	u[8] = (u[8] & 0x3f) | 0x80;
+	snprintf(hi->instance_id, sizeof(hi->instance_id),
+	    "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-"
+	    "%02x%02x%02x%02x%02x%02x", u[0], u[1], u[2], u[3], u[4], u[5],
+	    u[6], u[7], u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]);
+}
+
+static const char *
+nonempty(const char *s)
+{
+
+	return (s[0] != '\0' ? s : NULL);
+}
+
+void
+oe_resource_host(struct oe_resource *r, const struct oe_host_info *hi)
+{
+
+	r->host_name = hi->host_name;
+	r->host_arch = hi->host_arch;
+	r->host_id = nonempty(hi->host_id);
+	r->os_name = hi->os_type;
+	r->os_full_name = nonempty(hi->os_name);
+	r->os_version = hi->os_version;
+	r->os_description = nonempty(hi->os_description);
+	r->service_instance_id = hi->instance_id;
 }
 
 void

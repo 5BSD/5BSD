@@ -23,7 +23,8 @@ struct oe_otlpenc {
 	char		*resource_json;	/* prebuilt attribute list */
 };
 
-int	 oe_enc_init(struct oe_otlpenc *, const struct oe_resource *);
+int	 oe_enc_init(struct oe_otlpenc *, const struct oe_resource *,
+	    const char *scope_name);
 void	 oe_enc_fini(struct oe_otlpenc *);
 
 /* One record fragment; malloc'd, NULL on allocation failure. */
@@ -33,6 +34,12 @@ char	*oe_enc_span(const struct oe_otlpenc *, const struct oe_span *);
 
 /* Append one typed attribute as an OTLP KeyValue. */
 void	 oe_enc_kv(struct oe_buf *, const struct oe_kv *, int *first);
+/* The semantic-convention process/thread/CPU/jail attributes. */
+#define	OE_CONTEXT_MAXKV	14
+size_t	 oe_context_kvs(pid_t, const char *execname,
+	    const struct oe_context *, struct oe_kv *, char jidbuf[16]);
+void	 oe_enc_context(struct oe_buf *, pid_t, const char *execname,
+	    const struct oe_context *, int *first);
 
 /*
  * Wrap fragments in one Export*ServiceRequest.  "drops" (logs only)

@@ -6,7 +6,8 @@
  * JSONL exporter — one JSON object per event or span on its own
  * line, so output pipes cleanly into jq, Loki, Vector, Splunk,
  * fluentd.  Spans carry "type":"span"; events have no "type" (the
- * original shape) so existing consumers keep working.
+ * original shape) so existing consumers keep working.  Both carry an
+ * "attributes" object with the semantic-convention context.
  */
 
 #include <stdio.h>
@@ -14,6 +15,7 @@
 #include <string.h>
 
 #include "otelexport.h"
+#include "oe_otlpenc.h"
 
 struct oe_jsonl {
 	struct oe_exporter e;
@@ -48,45 +50,6 @@ jsonl_stack_array(struct oe_buf *b, const char *key,
 		oe_buf_appendstr(b, "\"");
 	}
 	oe_buf_appendstr(b, "]");
-}
-
-static int
-jsonl_event(struct oe_exporter *e, const struct oe_event *ev)
-{
-	struct oe_jsonl *j = (struct oe_jsonl *)e;
-	struct oe_buf b;
-	char timestr[64];
-	int ret;
-
-	if (ev->body == NULL || ev->body[0] == '\0')
-		return (0);
-
-	oe_iso8601(&ev->ts, timestr, sizeof(timestr));
-	oe_buf_init(&b);
-	oe_buf_appendstr(&b, "{\"time\":\"");
-	oe_buf_appendjson(&b, timestr);
-	if (ev->observed.tv_sec != 0 || ev->observed.tv_nsec != 0) {
-		/* "time" is the probe's clock, "observed" the reader's. */
-		oe_iso8601(&ev->observed, timestr, sizeof(timestr));
-		oe_buf_appendstr(&b, "\",\"observed\":\"");
-		oe_buf_appendjson(&b, timestr);
-	}
-	oe_buf_appendstr(&b, "\",\"profile\":\"");
-	oe_buf_appendjson(&b, ev->profile);
-	if (ev->probe != NULL && ev->probe[0] != '\0') {
-		oe_buf_appendstr(&b, "\",\"probe\":\"");
-		oe_buf_appendjson(&b, ev->probe);
-	}
-	oe_buf_appendstr(&b, "\",\"body\":\"");
-	oe_buf_appendjson(&b, ev->body);
-	oe_buf_appendstr(&b, "\"");
-	jsonl_stack_array(&b, "stack", ev->stack, ev->nstack);
-	jsonl_stack_array(&b, "ustack", ev->ustack, ev->nustack);
-	oe_buf_appendstr(&b, "}\n");
-
-	ret = b.error ? -1 : oe_sink_write(j->sink, b.data, b.len);
-	oe_buf_free(&b);
-	return (ret);
 }
 
 static const char *
@@ -134,6 +97,65 @@ jsonl_attr(struct oe_buf *b, const struct oe_kv *kv, int *first)
 	}
 }
 
+/* The context attributes as an "attributes" object member. */
+static void
+jsonl_context(struct oe_buf *b, pid_t pid, const char *execname,
+    const struct oe_context *ctx, const struct oe_kv *extra, size_t nextra)
+{
+	struct oe_kv kv[OE_CONTEXT_MAXKV];
+	char jid[16];
+	size_t i, n;
+	int first = 1;
+
+	n = oe_context_kvs(pid, execname, ctx, kv, jid);
+	oe_buf_appendstr(b, ",\"attributes\":{");
+	for (i = 0; i < n; i++)
+		jsonl_attr(b, &kv[i], &first);
+	for (i = 0; i < nextra; i++)
+		jsonl_attr(b, &extra[i], &first);
+	oe_buf_appendstr(b, "}");
+}
+
+static int
+jsonl_event(struct oe_exporter *e, const struct oe_event *ev)
+{
+	struct oe_jsonl *j = (struct oe_jsonl *)e;
+	struct oe_buf b;
+	char timestr[64];
+	int ret;
+
+	if (ev->body == NULL || ev->body[0] == '\0')
+		return (0);
+
+	oe_iso8601(&ev->ts, timestr, sizeof(timestr));
+	oe_buf_init(&b);
+	oe_buf_appendstr(&b, "{\"time\":\"");
+	oe_buf_appendjson(&b, timestr);
+	if (ev->observed.tv_sec != 0 || ev->observed.tv_nsec != 0) {
+		/* "time" is the probe's clock, "observed" the reader's. */
+		oe_iso8601(&ev->observed, timestr, sizeof(timestr));
+		oe_buf_appendstr(&b, "\",\"observed\":\"");
+		oe_buf_appendjson(&b, timestr);
+	}
+	oe_buf_appendstr(&b, "\",\"profile\":\"");
+	oe_buf_appendjson(&b, ev->profile);
+	if (ev->probe != NULL && ev->probe[0] != '\0') {
+		oe_buf_appendstr(&b, "\",\"probe\":\"");
+		oe_buf_appendjson(&b, ev->probe);
+	}
+	oe_buf_appendstr(&b, "\",\"body\":\"");
+	oe_buf_appendjson(&b, ev->body);
+	oe_buf_appendstr(&b, "\"");
+	jsonl_stack_array(&b, "stack", ev->stack, ev->nstack);
+	jsonl_stack_array(&b, "ustack", ev->ustack, ev->nustack);
+	jsonl_context(&b, ev->pid, ev->execname, &ev->ctx, NULL, 0);
+	oe_buf_appendstr(&b, "}\n");
+
+	ret = b.error ? -1 : oe_sink_write(j->sink, b.data, b.len);
+	oe_buf_free(&b);
+	return (ret);
+}
+
 static int
 jsonl_span(struct oe_exporter *e, const struct oe_span *sp)
 {
@@ -142,8 +164,7 @@ jsonl_span(struct oe_exporter *e, const struct oe_span *sp)
 	struct oe_buf b;
 	char start[64], end[64], hex[2 * OE_TRACE_ID_LEN + 1];
 	int64_t dur;
-	size_t i;
-	int first, ret;
+	int ret;
 
 	oe_iso8601(&sp->start, start, sizeof(start));
 	oe_iso8601(&sp->end, end, sizeof(end));
@@ -179,18 +200,9 @@ jsonl_span(struct oe_exporter *e, const struct oe_span *sp)
 		oe_buf_appendjson(&b, sp->probe);
 		oe_buf_appendstr(&b, "\"");
 	}
-	if (sp->pid != 0)
-		oe_buf_appendf(&b, ",\"pid\":%d", (int)sp->pid);
-	if (sp->execname != NULL && sp->execname[0] != '\0') {
-		oe_buf_appendstr(&b, ",\"execname\":\"");
-		oe_buf_appendjson(&b, sp->execname);
-		oe_buf_appendstr(&b, "\"");
-	}
-	oe_buf_appendstr(&b, ",\"attributes\":{");
-	first = 1;
-	for (i = 0; i < sp->nattrs; i++)
-		jsonl_attr(&b, &sp->attrs[i], &first);
-	oe_buf_appendstr(&b, "}}\n");
+	jsonl_context(&b, sp->pid, sp->execname, &sp->ctx, sp->attrs,
+	    sp->nattrs);
+	oe_buf_appendstr(&b, "}\n");
 	ret = b.error ? -1 : oe_sink_write(j->sink, b.data, b.len);
 	oe_buf_free(&b);
 	return (ret);

@@ -8,6 +8,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "dtrace_stub.h"
@@ -83,4 +84,17 @@ dtrace_aggregate_walk(dtrace_hdl_t *dtp, dtrace_aggregate_f *func,
 		if (func(stub.aggs[i], arg) != DTRACE_AGGWALK_NEXT)
 			break;
 	return (stub.fail_walk ? -1 : 0);
+}
+
+/* Jails 1..99 are named "jail<N>"; others are not visible. */
+char *
+jail_getname(int jid)
+{
+	char *name;
+
+	stub.jail_lookups++;
+	if (jid < 1 || jid > 99)
+		return (NULL);
+	asprintf(&name, "jail%d", jid);
+	return (name);
 }

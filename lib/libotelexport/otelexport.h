@@ -34,6 +34,33 @@ struct oe_frame {
 };
 
 /*
+ * Who produced a record, exported with OpenTelemetry semantic
+ * convention names (process.*, thread.id, cpu.logical_number, and the
+ * jail as container.*).  "flags" says which members are known; pid
+ * and executable name live in the event/span itself.
+ */
+#define	OE_CTX_PPID	0x0001	/* process.parent_pid */
+#define	OE_CTX_TID	0x0002	/* thread.id */
+#define	OE_CTX_UID	0x0004	/* process.user.id (effective) */
+#define	OE_CTX_RUID	0x0008	/* process.real_user.id */
+#define	OE_CTX_GID	0x0010	/* process.group.id (effective) */
+#define	OE_CTX_RGID	0x0020	/* process.real_group.id */
+#define	OE_CTX_CPU	0x0040	/* cpu.logical_number */
+#define	OE_CTX_JAIL	0x0080	/* container.* when jid != 0 */
+#define	OE_CTX_PID	0x0100	/* pid is known even if 0 */
+
+struct oe_context {
+	unsigned	 flags;
+	pid_t		 ppid;
+	int64_t		 tid;
+	uid_t		 uid, ruid;
+	gid_t		 gid, rgid;
+	int		 cpu;
+	int		 jid;
+	const char	*jail_name;	/* container.name; NULL to omit */
+};
+
+/*
  * One probe firing or event, normalized before it reaches any
  * exporter.  Strings are borrowed for the duration of the emit call;
  * exporters must copy anything they keep.
@@ -54,6 +81,7 @@ struct oe_event {
 	 * Zero means "now" at encoding time.
 	 */
 	struct timespec	 observed;
+	struct oe_context ctx;
 };
 
 /* Which aggregating function a snapshot came from. */
@@ -161,20 +189,54 @@ struct oe_span {
 	const char	*execname;	/* "" if unknown */
 	const struct oe_kv *attrs;
 	size_t		 nattrs;
+	struct oe_context ctx;
 };
 
-/* OTel resource attributes attached to every record. */
+/*
+ * OTel resource attributes attached to every record.  "custom" (for
+ * example OTEL_RESOURCE_ATTRIBUTES) replaces a built-in attribute of
+ * the same key, except service.name: the tool resolves that one.
+ */
 struct oe_resource {
 	const char	*service_name;
 	const char	*service_instance_id;	/* NULL to omit */
 	const char	*host_name;
 	const char	*host_arch;
-	const char	*os_name;
+	const char	*os_name;		/* os.type, e.g. "freebsd" */
 	const char	*os_version;
 	const char	*service_version;
 	const struct oe_attr *custom;
 	size_t		 ncustom;
+	/* NULL members below are omitted. */
+	const char	*host_id;		/* host.id */
+	const char	*os_full_name;		/* os.name, e.g. "FreeBSD" */
+	const char	*os_description;	/* os.description */
 };
+
+/*
+ * The running host as OTel resource values: host.name, host.id
+ * (kern.hostuuid), host.arch (the semantic-convention spelling of the
+ * machine), os.type, os.name, os.version, os.description (sysname,
+ * release and kernel ident), and a fresh random service.instance.id
+ * (UUID v4).  Empty strings mean "unknown".
+ */
+struct oe_host_info {
+	char		 host_name[256];
+	char		 host_id[64];
+	char		 host_arch[32];
+	char		 os_type[16];
+	char		 os_name[32];
+	char		 os_version[64];
+	char		 os_description[192];
+	char		 instance_id[40];
+};
+
+void	oe_host_detect(struct oe_host_info *);
+/* hw.machine_arch in the host.arch spelling of the conventions. */
+void	oe_host_arch_semconv(const char *machine_arch, char *buf,
+	    size_t len);
+/* Fill the host and OS members of a resource from the detection. */
+void	oe_resource_host(struct oe_resource *, const struct oe_host_info *);
 
 /*
  * Exporter object.  Concrete exporters embed this as their first
@@ -256,6 +318,12 @@ struct oe_otlpjson_config {
 	const char	*profile;
 	const struct oe_resource *resource;
 	int		 batch_size;	/* records per line; 0 = 200 */
+	/*
+	 * Instrumentation scope: the tool, e.g. "bsdinstruments".  It
+	 * also prefixes tool-specific attribute and metric names.  NULL
+	 * falls back to the resource's service name.
+	 */
+	const char	*scope_name;
 };
 
 struct oe_exporter *oe_otlpjson_new(const struct oe_otlpjson_config *);
@@ -279,6 +347,7 @@ struct oe_otlp_config {
 	 */
 	const char	*spool_path;	/* NULL disables spooling */
 	uint64_t	 spool_max;	/* bytes; 0 = 64 MiB */
+	const char	*scope_name;	/* as in struct oe_otlpjson_config */
 };
 
 struct oe_exporter *oe_otlp_new(const struct oe_otlp_config *);

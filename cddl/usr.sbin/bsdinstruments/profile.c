@@ -13,6 +13,9 @@
  *   /@ @bsdinstruments-ustack @/	 becomes ustack(); with --with-ustack
  *   /@ @bsdinstruments-span(k=v, ...) @/ a span record (structured
  *					 formats; nothing in text output)
+ *   /@ @bsdinstruments-context @/	 a context record (who fired the
+ *					 probe) in structured formats; the
+ *					 stack marker implies one there
  *   ${name}				 --param name=value substitution
  *
  * Profiles load from three directories with shadowing (user overrides
@@ -494,7 +497,18 @@ substitute_params(const char *source, const struct param *params,
 }
 
 /* ---------------------------------------------------------------- */
-/* Span markers								*/
+/* Context and span markers						*/
+
+/*
+ * The context record (see dtotel.c): who fired the probe, exported
+ * under OpenTelemetry semantic-convention names.  Real ids come from
+ * the psinfo translator, effective ones from the built-ins.
+ */
+#define	CONTEXT_PRINTF							\
+	"printf(\"\\037otel.ctx\\037pid=%d\\037ppid=%d\\037tid=%d"		\
+	"\\037uid=%d\\037ruid=%d\\037gid=%d\\037rgid=%d\\037jid=%d"	\
+	"\\037execname=%s\\n\", pid, ppid, tid, uid, curpsinfo->pr_uid, "	\
+	"gid, curpsinfo->pr_gid, curpsinfo->pr_jailid, execname);"
 
 #define	SPAN_MARKER	"/* @bsdinstruments-span("
 
@@ -720,6 +734,17 @@ span_printf(struct sbuf_ *out, char *args, const char *profile_name)
 		sb_str(&fmt, "\\037kind=");
 		sb_str(&fmt, kind);
 	}
+	/*
+	 * A span of the probe's own process and thread also carries the
+	 * process context; one attributed elsewhere (pid=, execname= or
+	 * thread=) does not, since the probe's process is not its own.
+	 */
+	if (pid == NULL && execname == NULL && thread == NULL) {
+		sb_str(&fmt, "\\037ppid=%d\\037uid=%d\\037ruid=%d\\037gid=%d"
+		    "\\037rgid=%d\\037jid=%d");
+		sb_str(&vals, ", ppid, uid, curpsinfo->pr_uid, gid, "
+		    "curpsinfo->pr_gid, curpsinfo->pr_jailid");
+	}
 	/* Fixed fields first, in the order of the format. */
 	sb_str(out, "printf(\"\\037otel.span\\037name=%s\\037start=%d"
 	    "\\037end=%d\\037thread=%d\\037pid=%d\\037execname=%s");
@@ -840,9 +865,21 @@ profile_render(const struct profile *p, const struct render_opts *ro)
 		return (NULL);
 	rendered = next;
 
-	/* 3. Stack capture injection. */
+	/*
+	 * 3. Context and stack capture.  The stack marker sits at each
+	 * profile's event capture site, so structured output records the
+	 * context there too; profiles without one can place the context
+	 * marker.
+	 */
+	next = replace_all(rendered, "/* @bsdinstruments-context */",
+	    ro->structured ? CONTEXT_PRINTF : "");
+	free(rendered);
+	if (next == NULL)
+		return (NULL);
+	rendered = next;
 	next = replace_all(rendered, "/* @bsdinstruments-stack */",
-	    ro->with_stack ? "stack();" : "");
+	    ro->structured ? (ro->with_stack ? CONTEXT_PRINTF " stack();" :
+	    CONTEXT_PRINTF) : (ro->with_stack ? "stack();" : ""));
 	free(rendered);
 	if (next == NULL)
 		return (NULL);

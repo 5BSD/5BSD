@@ -167,7 +167,7 @@ oe_otlpjson_new(const struct oe_otlpjson_config *cfg)
 	f->sink = cfg->sink;
 	f->batch_size = cfg->batch_size > 0 ? cfg->batch_size :
 	    OTLPFILE_DEFAULT_BATCH;
-	if (oe_enc_init(&f->enc, cfg->resource) != 0) {
+	if (oe_enc_init(&f->enc, cfg->resource, cfg->scope_name) != 0) {
 		free(f);
 		return (NULL);
 	}

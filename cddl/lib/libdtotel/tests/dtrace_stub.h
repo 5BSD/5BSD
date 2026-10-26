@@ -19,7 +19,10 @@ struct stub_state {
 	int		 fail_walk;
 	const dtrace_aggdata_t **aggs;
 	size_t		 naggs;
+	int		 jail_lookups;
 };
+
+char	*jail_getname(int);
 
 extern struct stub_state stub;
 

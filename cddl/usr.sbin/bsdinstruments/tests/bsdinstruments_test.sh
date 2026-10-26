@@ -722,7 +722,7 @@ generate_span_markers_body()
 	cat > min.d <<'EOF'
 BEGIN { /* @bsdinstruments-span(name="m", start=1) */ }
 EOF
-	atf_check -o match:'"m", \(int64_t\)\(1\), \(int64_t\)\(timestamp\), \(int64_t\)\(tid\), \(int64_t\)\(pid\), execname\);' \
+	atf_check -o match:'"m", \(int64_t\)\(1\), \(int64_t\)\(timestamp\), \(int64_t\)\(tid\), \(int64_t\)\(pid\), execname, ppid, uid, curpsinfo->pr_uid, gid, curpsinfo->pr_gid, curpsinfo->pr_jailid\);' \
 	    bsdinstruments generate -f min.d --format otlp-json
 }
 
@@ -806,6 +806,96 @@ EOF
 	atf_check -o match:'"kind":"server","status":"unset"' cat out.json
 }
 
+atf_test_case generate_context_markers
+generate_context_markers_head()
+{
+	atf_set descr "structured rendering records the context at the stack and context markers"
+}
+generate_context_markers_body()
+{
+	export HOME="$(pwd)/home"
+	make_profile "$HOME/.bsdinstruments/profiles" test-trace
+	ctx='printf\("\\037otel.ctx\\037pid=%d\\037ppid=%d\\037tid=%d\\037uid=%d\\037ruid=%d\\037gid=%d\\037rgid=%d\\037jid=%d\\037execname=%s\\n", pid, ppid, tid, uid, curpsinfo->pr_uid, gid, curpsinfo->pr_gid, curpsinfo->pr_jailid, execname\);'
+	atf_check -o save:s.d bsdinstruments generate test-trace \
+	    --param what=open --format json
+	atf_check -o match:"^	$ctx$" cat s.d
+	atf_check -o save:k.d bsdinstruments generate test-trace \
+	    --param what=open --format otel --with-stack
+	atf_check -o match:"^	$ctx stack\(\);$" cat k.d
+	# Text output is untouched.
+	atf_check -o save:t.d bsdinstruments generate test-trace \
+	    --param what=open --with-stack
+	atf_check -s exit:1 grep -q otel.ctx t.d
+	printf 'BEGIN { /* @bsdinstruments-context */ }\n' > c.d
+	atf_check -o match:"$ctx" bsdinstruments generate -f c.d \
+	    --format collapsed
+	atf_check -o inline:'BEGIN {  }\n\n' bsdinstruments generate -f c.d
+	# A span of the probe's own process carries the process context.
+	printf 'BEGIN { /* @bsdinstruments-span(name="m", start=1) */ }\n' > m.d
+	atf_check -o match:'\\037execname=%s\\037ppid=%d\\037uid=%d\\037ruid=%d\\037gid=%d\\037rgid=%d\\037jid=%d\\n", "m", .*, execname, ppid, uid, curpsinfo->pr_uid, gid, curpsinfo->pr_gid, curpsinfo->pr_jailid\);' \
+	    bsdinstruments generate -f m.d --format json
+}
+
+atf_test_case watch_semconv
+watch_semconv_head()
+{
+	atf_set descr "records carry semantic-convention context and resource attributes"
+	atf_set require.progs cc
+}
+watch_semconv_body()
+{
+	mock_setup
+	v=$(validator)
+	cat >> script <<'EOF'
+chunk 0 1000 1 \037otel.clock\037wall=1700000000000000000\037ts=1000\n
+chunk 2 5000 2 nginx[42]: read\n
+chunk 2 5000 2 \037otel.ctx\037pid=42\037ppid=1\037tid=100123\037uid=80\037ruid=1001\037gid=80\037rgid=1001\037jid=0\037execname=nginx\n
+work
+agg reads 3
+EOF
+	export OTEL_RESOURCE_ATTRIBUTES='host.name=override,service.name=fromattrs,team=a'
+	atf_check -s exit:0 -o empty -e empty bsdinstruments watch mock-prof \
+	    --format otlp-json --output out.jsonl
+	atf_check -o match:'requests=2 logs=1 metrics=1' "$v" out.jsonl
+	line=$(head -1 out.jsonl)
+	for kv in '"process.pid","value":{"intValue":"42"}' \
+	    '"process.parent_pid","value":{"intValue":"1"}' \
+	    '"process.executable.name","value":{"stringValue":"nginx"}' \
+	    '"process.user.id","value":{"intValue":"80"}' \
+	    '"process.real_user.id","value":{"intValue":"1001"}' \
+	    '"thread.id","value":{"intValue":"100123"}' \
+	    '"cpu.logical_number","value":{"intValue":"2"}' \
+	    '"service.name","value":{"stringValue":"fromattrs"}' \
+	    '"host.name","value":{"stringValue":"override"}' \
+	    '"service.instance.id","value":{"stringValue":"' \
+	    '"os.type","value":{"stringValue":"freebsd"}' \
+	    '"team","value":{"stringValue":"a"}'; do
+		echo "$line" | grep -qF "$kv" || atf_fail "missing $kv"
+	done
+	# No container for the host (jid 0), one host.name only.
+	echo "$line" | grep -q container && atf_fail "host reported as a jail"
+	[ $(echo "$line" | grep -o '"host.name"' | wc -l) -eq 1 ] || \
+	    atf_fail "duplicate host.name"
+	# The metric dimension uses the same name as the log attribute.
+	atf_check -o match:'"key":"process.executable.name","value":\{"stringValue":"k"\}' \
+	    sed -n 2p out.jsonl
+	# The scope is the tool, whatever the service is called.
+	atf_check -o match:'"scope":\{"name":"bsdinstruments","version":"[^"]*"\}' \
+	    -o match:'"key":"bsdinstruments.profile"' head -1 out.jsonl
+	# OTEL_SERVICE_NAME beats the attribute.
+	export OTEL_SERVICE_NAME=explicit
+	atf_check -s exit:0 -o save:o2.jsonl -e empty \
+	    bsdinstruments watch mock-prof --format otlp-json
+	unset OTEL_SERVICE_NAME
+	atf_check -o match:'"service.name","value":\{"stringValue":"explicit"\}' \
+	    head -1 o2.jsonl
+	unset OTEL_RESOURCE_ATTRIBUTES
+	atf_check -s exit:0 -o save:o3.json -e empty \
+	    bsdinstruments watch mock-prof --format json
+	atf_check -o match:'"attributes":\{"process.pid":42,"process.parent_pid":1,"process.executable.name":"nginx","process.user.id":80' \
+	    cat o3.json
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case list_basic
@@ -834,4 +924,6 @@ atf_init_test_cases()
 	atf_add_test_case generate_span_markers
 	atf_add_test_case generate_span_marker_errors
 	atf_add_test_case watch_spans
+	atf_add_test_case generate_context_markers
+	atf_add_test_case watch_semconv
 }

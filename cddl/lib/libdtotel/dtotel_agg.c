@@ -11,6 +11,8 @@
  * with inclusive upper bounds for the quantize family.
  */
 
+#include <sys/param.h>
+
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
@@ -26,21 +28,40 @@
 /* ---------------------------------------------------------------- */
 /* Aggregation key names parsed from the D source		 	*/
 
+/*
+ * Attribute names for aggregation keys.  D built-ins with an
+ * OpenTelemetry semantic convention get its name, so a metric's
+ * dimensions match the attributes of log records and spans; the
+ * probe-description built-ins, which have none, keep short names.
+ */
 static const char *
 builtin_key_name(const char *expr, int idx, char *buf, size_t len)
 {
+	static const struct {
+		const char *expr, *name;
+	} names[] = {
+		{ "execname", "process.executable.name" },
+		{ "pid", "process.pid" },
+		{ "ppid", "process.parent_pid" },
+		{ "curpsinfo->pr_ppid", "process.parent_pid" },
+		{ "tid", "thread.id" },
+		{ "uid", "process.user.id" },
+		{ "curpsinfo->pr_uid", "process.real_user.id" },
+		{ "gid", "process.group.id" },
+		{ "curpsinfo->pr_gid", "process.real_group.id" },
+		{ "cpu", "cpu.logical_number" },
+		{ "curpsinfo->pr_jailid", "container.id" },
+		{ "curproc->p_ucred->cr_prison->pr_id", "container.id" },
+		{ "probefunc", "syscall" },
+		{ "probename", "probe" },
+		{ "probemod", "module" },
+		{ "probeprov", "provider" },
+	};
+	size_t i;
 
-	if (strcmp(expr, "execname") == 0 || strcmp(expr, "pid") == 0 ||
-	    strcmp(expr, "tid") == 0 || strcmp(expr, "cpu") == 0)
-		return (expr);
-	if (strcmp(expr, "probefunc") == 0)
-		return ("syscall");
-	if (strcmp(expr, "probename") == 0)
-		return ("probe");
-	if (strcmp(expr, "probemod") == 0)
-		return ("module");
-	if (strcmp(expr, "probeprov") == 0)
-		return ("provider");
+	for (i = 0; i < nitems(names); i++)
+		if (strcmp(expr, names[i].expr) == 0)
+			return (names[i].name);
 	if (expr[0] == '"')
 		return ("label");
 	snprintf(buf, len, "key.%d", idx);

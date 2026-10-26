@@ -118,6 +118,12 @@ actions when
 .Fl -with-stack /
 .Fl -with-ustack
 is set.
+In the structured formats the stack marker also records who fired the
+probe; see
+.Sx Semantic conventions .
+.It Li /* @bsdinstruments-context */
+Records who fired the probe in the structured formats, for clauses that
+print events but have no stack marker; nothing in text output.
 .It Li /* @bsdinstruments-span( Ns Ar key Ns = Ns Ar value , ... Ns Li ) */
 Emits one OpenTelemetry span in the structured formats and nothing in
 text output, where the line disappears.
@@ -239,6 +245,87 @@ or speedscope; requires
 and/or
 .Fl -with-ustack .
 .El
+.Ss Semantic conventions
+Records use the OpenTelemetry semantic-convention attribute names.
+Where a profile's clause has a stack or context marker, the structured
+formats record the firing's process and thread with each event:
+.Ql process.pid ,
+.Ql process.parent_pid ,
+.Ql process.executable.name ,
+.Ql process.user.id
+and
+.Ql process.group.id
+.Pq effective ,
+.Ql process.real_user.id
+and
+.Ql process.real_group.id ,
+.Ql thread.id
+and
+.Ql cpu.logical_number ;
+a process in a jail also gets
+.Ql container.id
+.Pq the jail id ,
+.Ql container.name
+.Pq the jail name, when visible
+and
+.Ql container.runtime.name
+.Pq Ql jail .
+Without a marker, events carry the CPU and whatever
+.Ql name[pid]
+prefix the line starts with.
+Spans of the probe's own process carry the same context; spans attributed
+to another process carry their pid, executable name and thread.
+Aggregation keys that are D built-ins with a convention get its name as
+the metric attribute
+.Po
+.Va execname ,
+.Va pid ,
+.Va ppid ,
+.Va tid ,
+.Va uid ,
+.Va gid ,
+.Va cpu ,
+the
+.Va curpsinfo
+ids and the jail id
+.Pc ,
+so metrics, logs and spans can be joined on them; probe-description
+keys keep the names
+.Ql syscall ,
+.Ql probe ,
+.Ql module
+and
+.Ql provider .
+The instrumentation scope is
+.Ql bsdinstruments ,
+which also prefixes the
+.Ql bsdinstruments.profile
+and
+.Ql bsdinstruments.probe
+attributes and metric names.
+.Pp
+The resource describes the host: detected
+.Ql host.name ,
+.Ql host.id ,
+.Ql host.arch ,
+.Ql os.type ,
+.Ql os.name ,
+.Ql os.version
+and
+.Ql os.description ,
+a per-run
+.Ql service.instance.id ,
+and
+.Ql service.name
+from
+.Ev OTEL_SERVICE_NAME ,
+else from
+.Ev OTEL_RESOURCE_ATTRIBUTES ,
+else
+.Ql bsdinstruments .
+Other
+.Ev OTEL_RESOURCE_ATTRIBUTES
+entries are added and override detected values of the same name.
 .Ss Timestamps
 Structured formats stamp each record with the probe's own wall-clock
 time, not the time

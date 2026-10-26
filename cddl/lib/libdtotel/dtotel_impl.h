@@ -36,6 +36,13 @@ struct dtotel_firing {
 	dtrace_epid_t	 epid;
 };
 
+#define	DTOTEL_JAIL_CACHE	32
+
+struct dtotel_jail {
+	int		 jid;
+	char		*name;		/* NULL: unknown or not visible */
+};
+
 struct dtotel {
 	dtrace_hdl_t	*dtp;
 	struct oe_exporter *exporter;
@@ -61,7 +68,21 @@ struct dtotel {
 	struct dtotel_frames kstack;
 	struct dtotel_frames ustack;
 	int		 in_ustack;
+	struct oe_context body_ctx;
+	char		*body_exec;	/* execname from a context record */
+	pid_t		 body_pid;
+
+	/* A context record that arrived before its firing's text. */
+	struct dtotel_firing ctx_firing;
+	struct oe_context ctx;
+	char		*ctx_exec;
+	pid_t		 ctx_pid;
+
+	struct dtotel_jail jails[DTOTEL_JAIL_CACHE];
+	int		 njails;
 };
+
+const char *dtotel_jail_name(struct dtotel *, int jid);
 
 struct dtotel_keynames *dtotel_parse_keynames(const char *);
 void	 dtotel_free_keynames(struct dtotel_keynames *);

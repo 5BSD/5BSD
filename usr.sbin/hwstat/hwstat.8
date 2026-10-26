@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 8, 2026
+.Dd October 26, 2026
 .Dt HWSTAT 8
 .Os
 .Sh NAME
@@ -75,6 +75,15 @@ each sample interval becomes a set of OTLP gauge metrics POSTed to
 the collector's
 .Pa /v1/metrics
 endpoint.
+Per-core metrics carry the CPU as the integer attribute
+.Ql cpu.logical_number ,
+and the resource carries the host and operating system attributes of the
+OpenTelemetry resource conventions
+.Pq Ql host.name , host.id , host.arch , os.type , os.name , os.version , os.description
+and a per-run
+.Ql service.instance.id ,
+as described in
+.Xr libotelexport 3 .
 .It Cm exec
 Read RAPL energy counters and temperatures before and after running
 the given command, then report total energy, average power, and
@@ -271,6 +280,7 @@ Measure the energy cost of a build:
 hwstat exec -- make -j20
 .Ed
 .Sh SEE ALSO
+.Xr libotelexport 3 ,
 .Xr acpi 4 ,
 .Xr amdsmn 4 ,
 .Xr amdtemp 4 ,

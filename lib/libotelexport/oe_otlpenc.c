@@ -10,6 +10,9 @@
  * become LogRecords, aggregation snapshots Metrics, spans Spans.
  */
 
+#include <sys/param.h>
+
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -81,30 +84,68 @@ oe_enc_kv(struct oe_buf *b, const struct oe_kv *kv, int *first)
 	}
 }
 
+/* Does a custom attribute replace this built-in key? */
+static int
+overridden(const struct oe_resource *r, const char *key)
+{
+	size_t i;
+
+	for (i = 0; i < r->ncustom; i++)
+		if (strcmp(r->custom[i].name, key) == 0)
+			return (1);
+	return (0);
+}
+
+static void
+resource_kv(struct oe_buf *b, const struct oe_resource *r, const char *key,
+    const char *value, int *first)
+{
+
+	if (value != NULL && !overridden(r, key))
+		append_kv_string(b, key, value, first);
+}
+
+/*
+ * The resource attribute list.  Custom attributes replace built-ins
+ * of the same key, so a user's OTEL_RESOURCE_ATTRIBUTES can correct
+ * a detected value without producing a duplicate key; service.name
+ * is the exception (the tool already applied OTEL_SERVICE_NAME >
+ * OTEL_RESOURCE_ATTRIBUTES > default), and a custom duplicate of it
+ * is dropped.  Duplicates within the custom list keep the last.
+ */
 static char *
 build_resource_json(const struct oe_resource *r)
 {
 	struct oe_buf b;
-	size_t i;
+	size_t i, j;
 	int first = 1;
 
 	oe_buf_init(&b);
 	append_kv_string(&b, "service.name", r->service_name, &first);
-	append_kv_string(&b, "service.version", r->service_version, &first);
-	append_kv_string(&b, "host.name", r->host_name, &first);
-	append_kv_string(&b, "host.arch", r->host_arch, &first);
-	append_kv_string(&b, "os.type", r->os_name, &first);
-	append_kv_string(&b, "os.version", r->os_version, &first);
-	append_kv_string(&b, "telemetry.sdk.name", "observablebsd", &first);
-	append_kv_string(&b, "telemetry.sdk.language", "c", &first);
-	append_kv_string(&b, "telemetry.sdk.version", r->service_version,
+	resource_kv(&b, r, "service.version", r->service_version, &first);
+	resource_kv(&b, r, "service.instance.id", r->service_instance_id,
 	    &first);
-	if (r->service_instance_id != NULL)
-		append_kv_string(&b, "service.instance.id",
-		    r->service_instance_id, &first);
-	for (i = 0; i < r->ncustom; i++)
-		append_kv_string(&b, r->custom[i].name, r->custom[i].value,
-		    &first);
+	resource_kv(&b, r, "host.name", r->host_name, &first);
+	resource_kv(&b, r, "host.id", r->host_id, &first);
+	resource_kv(&b, r, "host.arch", r->host_arch, &first);
+	resource_kv(&b, r, "os.type", r->os_name, &first);
+	resource_kv(&b, r, "os.name", r->os_full_name, &first);
+	resource_kv(&b, r, "os.version", r->os_version, &first);
+	resource_kv(&b, r, "os.description", r->os_description, &first);
+	resource_kv(&b, r, "telemetry.sdk.name", "observablebsd", &first);
+	resource_kv(&b, r, "telemetry.sdk.language", "c", &first);
+	resource_kv(&b, r, "telemetry.sdk.version", r->service_version,
+	    &first);
+	for (i = 0; i < r->ncustom; i++) {
+		if (strcmp(r->custom[i].name, "service.name") == 0)
+			continue;
+		for (j = i + 1; j < r->ncustom; j++)
+			if (strcmp(r->custom[i].name, r->custom[j].name) == 0)
+				break;
+		if (j == r->ncustom)
+			append_kv_string(&b, r->custom[i].name,
+			    r->custom[i].value, &first);
+	}
 	if (b.error) {
 		oe_buf_free(&b);
 		return (NULL);
@@ -113,10 +154,11 @@ build_resource_json(const struct oe_resource *r)
 }
 
 int
-oe_enc_init(struct oe_otlpenc *enc, const struct oe_resource *r)
+oe_enc_init(struct oe_otlpenc *enc, const struct oe_resource *r,
+    const char *scope_name)
 {
 
-	enc->scope = strdup(r->service_name);
+	enc->scope = strdup(scope_name != NULL ? scope_name : r->service_name);
 	enc->version = strdup(r->service_version);
 	enc->resource_json = build_resource_json(r);
 	if (enc->scope == NULL || enc->version == NULL ||
@@ -163,6 +205,74 @@ oe_enc_classify(const char *line)
 	if (strncmp(line, "{\"resourceSpans\":", 17) == 0)
 		return (OE_SIGNAL_TRACES);
 	return (-1);
+}
+
+/*
+ * Process, thread, CPU and jail attributes under semantic-convention
+ * names, the single definition every format uses, so log records,
+ * spans and JSON Lines agree.  A jail is reported as a container
+ * (container.id is the jail id, container.name its name,
+ * container.runtime.name "jail"); the host itself (jid 0) is not.
+ * Returns the number of attributes stored in kv (at most
+ * OE_CONTEXT_MAXKV); jidbuf backs container.id.
+ */
+size_t
+oe_context_kvs(pid_t pid, const char *execname, const struct oe_context *ctx,
+    struct oe_kv *kv, char jidbuf[16])
+{
+	size_t n = 0;
+
+#define	CTX_INT(k, v) do {						\
+	kv[n].key = (k);						\
+	kv[n].type = OE_VAL_INT;					\
+	kv[n++].i = (v);						\
+} while (0)
+#define	CTX_STR(k, v) do {						\
+	kv[n].key = (k);						\
+	kv[n].type = OE_VAL_STRING;					\
+	kv[n++].s = (v);						\
+} while (0)
+	if (pid != 0 || (ctx->flags & OE_CTX_PID) != 0)
+		CTX_INT("process.pid", pid);
+	if ((ctx->flags & OE_CTX_PPID) != 0)
+		CTX_INT("process.parent_pid", ctx->ppid);
+	if (execname != NULL && execname[0] != '\0')
+		CTX_STR("process.executable.name", execname);
+	if ((ctx->flags & OE_CTX_UID) != 0)
+		CTX_INT("process.user.id", ctx->uid);
+	if ((ctx->flags & OE_CTX_RUID) != 0)
+		CTX_INT("process.real_user.id", ctx->ruid);
+	if ((ctx->flags & OE_CTX_GID) != 0)
+		CTX_INT("process.group.id", ctx->gid);
+	if ((ctx->flags & OE_CTX_RGID) != 0)
+		CTX_INT("process.real_group.id", ctx->rgid);
+	if ((ctx->flags & OE_CTX_TID) != 0)
+		CTX_INT("thread.id", ctx->tid);
+	if ((ctx->flags & OE_CTX_CPU) != 0)
+		CTX_INT("cpu.logical_number", ctx->cpu);
+	if ((ctx->flags & OE_CTX_JAIL) != 0 && ctx->jid != 0) {
+		snprintf(jidbuf, 16, "%d", ctx->jid);
+		CTX_STR("container.id", jidbuf);
+		if (ctx->jail_name != NULL)
+			CTX_STR("container.name", ctx->jail_name);
+		CTX_STR("container.runtime.name", "jail");
+	}
+#undef CTX_INT
+#undef CTX_STR
+	return (n);
+}
+
+void
+oe_enc_context(struct oe_buf *b, pid_t pid, const char *execname,
+    const struct oe_context *ctx, int *first)
+{
+	struct oe_kv kv[OE_CONTEXT_MAXKV];
+	char jid[16];
+	size_t i, n;
+
+	n = oe_context_kvs(pid, execname, ctx, kv, jid);
+	for (i = 0; i < n; i++)
+		oe_enc_kv(b, &kv[i], first);
 }
 
 /* ---------------------------------------------------------------- */
@@ -227,6 +337,7 @@ oe_enc_log_record(const struct oe_otlpenc *enc, const struct oe_event *ev)
 	struct oe_buf b;
 	struct timespec now;
 	uint64_t tnano, onano;
+	int first;
 
 	tnano = ts_unix_nano(&ev->ts);
 	if (ev->observed.tv_sec != 0 || ev->observed.tv_nsec != 0)
@@ -249,11 +360,10 @@ oe_enc_log_record(const struct oe_otlpenc *enc, const struct oe_event *ev)
 	oe_buf_appendjson(&b, enc->scope);
 	oe_buf_appendstr(&b, ".probe\",\"value\":{\"stringValue\":\"");
 	oe_buf_appendjson(&b, ev->probe != NULL ? ev->probe : "");
-	oe_buf_appendf(&b, "\"}},{\"key\":\"process.pid\",\"value\":"
-	    "{\"intValue\":\"%d\"}},{\"key\":\"process.executable.name\","
-	    "\"value\":{\"stringValue\":\"", (int)ev->pid);
-	oe_buf_appendjson(&b, ev->execname != NULL ? ev->execname : "");
-	oe_buf_appendstr(&b, "\"}}]}");
+	oe_buf_appendstr(&b, "\"}}");
+	first = 0;
+	oe_enc_context(&b, ev->pid, ev->execname, &ev->ctx, &first);
+	oe_buf_appendstr(&b, "]}");
 	if (b.error) {
 		oe_buf_free(&b);
 		return (NULL);
@@ -299,18 +409,7 @@ oe_enc_span(const struct oe_otlpenc *enc, const struct oe_span *sp)
 		kv.s = sp->probe;
 		oe_enc_kv(&b, &kv, &first);
 	}
-	if (sp->pid != 0) {
-		kv.key = "process.pid";
-		kv.type = OE_VAL_INT;
-		kv.i = sp->pid;
-		oe_enc_kv(&b, &kv, &first);
-	}
-	if (sp->execname != NULL && sp->execname[0] != '\0') {
-		kv.key = "process.executable.name";
-		kv.type = OE_VAL_STRING;
-		kv.s = sp->execname;
-		oe_enc_kv(&b, &kv, &first);
-	}
+	oe_enc_context(&b, sp->pid, sp->execname, &sp->ctx, &first);
 	for (i = 0; i < sp->nattrs; i++)
 		oe_enc_kv(&b, &sp->attrs[i], &first);
 	oe_buf_appendf(&b, "],\"status\":{\"code\":%d", (int)sp->status);
@@ -330,15 +429,49 @@ oe_enc_span(const struct oe_otlpenc *enc, const struct oe_span *sp)
 /* ---------------------------------------------------------------- */
 /* Metrics								*/
 
+/*
+ * Semantic-convention attributes whose type is an integer: their data
+ * point values (aggregation keys, carried as strings) are emitted as
+ * intValue when they are decimal integers, so a pid has the same type
+ * in a metric as in a log record or span.
+ */
+static int
+int_semconv_key(const char *key)
+{
+	static const char *const keys[] = {
+		"process.pid", "process.parent_pid", "thread.id",
+		"process.user.id", "process.real_user.id", "process.group.id",
+		"process.real_group.id", "cpu.logical_number",
+	};
+	size_t i;
+
+	for (i = 0; i < nitems(keys); i++)
+		if (strcmp(key, keys[i]) == 0)
+			return (1);
+	return (0);
+}
+
 static void
 build_dimension_attrs(struct oe_buf *b, const struct oe_datapoint *dp)
 {
+	struct oe_kv kv;
+	char *end;
 	size_t i;
 	int first = 1;
 
-	for (i = 0; i < dp->nattrs; i++)
-		append_kv_string(b, dp->attrs[i].name, dp->attrs[i].value,
-		    &first);
+	for (i = 0; i < dp->nattrs; i++) {
+		kv.key = dp->attrs[i].name;
+		if (int_semconv_key(kv.key) && dp->attrs[i].value[0] != '\0') {
+			errno = 0;
+			kv.i = strtoll(dp->attrs[i].value, &end, 10);
+			if (*end == '\0' && errno == 0) {
+				kv.type = OE_VAL_INT;
+				oe_enc_kv(b, &kv, &first);
+				continue;
+			}
+		}
+		append_kv_string(b, kv.key, dp->attrs[i].value, &first);
+	}
 }
 
 static int

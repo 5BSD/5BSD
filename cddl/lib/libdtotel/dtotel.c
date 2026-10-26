@@ -20,6 +20,13 @@
  *	\037otel.clock\037wall=<walltimestamp>\037ts=<timestamp>
  *		probe clock anchor (see dtotel_clock_program())
  *
+ *	\037otel.ctx\037pid=..\037ppid=..\037tid=..\037uid=..\037ruid=..
+ *	    \037gid=..\037rgid=..\037jid=..\037execname=<s>
+ *		who fired the probe; attached to the log record printed
+ *		by the same firing (before or after it), and exported
+ *		under semantic-convention names (process.*, thread.id,
+ *		cpu.logical_number, container.* for a jail).
+ *
  *	\037otel.span\037name=<s>\037start=<ts>\037end=<ts>[...]
  *		one finished span.  Required: name, start and end (D
  *		"timestamp" values; start 0 means the span never
@@ -27,7 +34,8 @@
  *		thread, span, parent, trace (integer keys, see below),
  *		error (non-zero sets status ERROR), kind (internal,
  *		server, client, producer, consumer), pid, execname,
- *		and attributes a.i.<key>=<integer>, a.s.<key>=<string>.
+ *		the context fields above, and attributes
+ *		a.i.<key>=<integer>, a.s.<key>=<string>.
  *
  * Span identity.  Ids are derived from integer keys the D program
  * already has, hashed with a per-session secret salt
@@ -40,8 +48,11 @@
  * parent's start>; deeper trees pass trace= explicitly.
  */
 
+#include <sys/param.h>
+
 #include <ctype.h>
 #include <errno.h>
+#include <jail.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -120,14 +131,19 @@ frames_free(struct dtotel_frames *fa)
 void
 dtotel_close(struct dtotel *d)
 {
+	int i;
 
 	if (d == NULL)
 		return;
 	free(d->body);
 	free(d->probe);
+	free(d->body_exec);
+	free(d->ctx_exec);
 	frames_free(&d->kstack);
 	frames_free(&d->ustack);
 	dtotel_free_keynames(d->keynames);
+	for (i = 0; i < d->njails; i++)
+		free(d->jails[i].name);
 	free(d->profile);
 	free(d);
 }
@@ -253,14 +269,24 @@ dtotel_flush(struct dtotel *d)
 
 	if (d->body == NULL)
 		return;
-	parse_body_metadata(d->body, execname, sizeof(execname), &pid);
 	memset(&ev, 0, sizeof(ev));
+	if (d->body_exec != NULL) {
+		/* A context record says exactly who fired. */
+		ev.pid = d->body_pid;
+		ev.execname = d->body_exec;
+		ev.ctx = d->body_ctx;
+	} else {
+		parse_body_metadata(d->body, execname, sizeof(execname),
+		    &pid);
+		ev.pid = pid;
+		ev.execname = execname;
+		ev.ctx.flags = d->body_ctx.flags & OE_CTX_CPU;
+		ev.ctx.cpu = d->body_ctx.cpu;
+	}
 	ev.ts = d->body_ts;
 	ev.observed = d->body_observed;
 	ev.profile = d->profile;
 	ev.probe = d->probe != NULL ? d->probe : "";
-	ev.pid = pid;
-	ev.execname = execname;
 	ev.body = d->body;
 	ev.stack = d->kstack.frames;
 	ev.nstack = d->kstack.n;
@@ -272,6 +298,9 @@ dtotel_flush(struct dtotel *d)
 	d->body = NULL;
 	free(d->probe);
 	d->probe = NULL;
+	free(d->body_exec);
+	d->body_exec = NULL;
+	memset(&d->body_ctx, 0, sizeof(d->body_ctx));
 	frames_free(&d->kstack);
 	frames_free(&d->ustack);
 	d->in_ustack = 0;
@@ -346,6 +375,17 @@ start_event(struct dtotel *d, const dtrace_bufdata_t *bd,
 	d->body_firing = *firing;
 	d->body_observed = *observed;
 	probe_walltime(d, firing, observed, &d->body_ts);
+	if (firing->valid) {
+		d->body_ctx.flags = OE_CTX_CPU;
+		d->body_ctx.cpu = firing->cpu;
+	}
+	/* Adopt a context record this firing printed first. */
+	if (d->ctx_exec != NULL && same_firing(firing, &d->ctx_firing)) {
+		d->body_ctx = d->ctx;
+		d->body_pid = d->ctx_pid;
+		d->body_exec = d->ctx_exec;
+		d->ctx_exec = NULL;
+	}
 }
 
 /* ---------------------------------------------------------------- */
@@ -404,6 +444,169 @@ handle_clock(struct dtotel *d, const char *rec)
 	d->anchored = 1;
 }
 
+static int
+parse_int(const char *s, int64_t *v)
+{
+	char *end;
+
+	if (*s == '\0')
+		return (-1);
+	errno = 0;
+	*v = strtoll(s, &end, 10);
+	return (*end == '\0' && errno == 0 ? 0 : -1);
+}
+
+const char *
+dtotel_jail_name(struct dtotel *d, int jid)
+{
+	struct dtotel_jail *j;
+	int i;
+
+	for (i = 0; i < d->njails; i++)
+		if (d->jails[i].jid == jid)
+			return (d->jails[i].name);
+	/* Full cache: look up without remembering. */
+	if (d->njails == DTOTEL_JAIL_CACHE) {
+		free(d->jails[0].name);
+		memmove(&d->jails[0], &d->jails[1],
+		    (DTOTEL_JAIL_CACHE - 1) * sizeof(d->jails[0]));
+		d->njails--;
+	}
+	j = &d->jails[d->njails++];
+	j->jid = jid;
+	j->name = jail_getname(jid);
+	return (j->name);
+}
+
+/*
+ * Parse the context fields of a record into ctx/pid/execname.  The
+ * process fields count only when all of them are present (they come
+ * from one printf); returns 1 then, 0 if absent, -1 if malformed.
+ */
+static int
+parse_context(struct dtotel *d, char *field, const char *key,
+    const char *val, struct oe_context *ctx, int64_t *seen)
+{
+	static const struct {
+		const char *key;
+		unsigned flag;
+	} fields[] = {
+		{ "ppid", OE_CTX_PPID }, { "tid", OE_CTX_TID },
+		{ "uid", OE_CTX_UID }, { "ruid", OE_CTX_RUID },
+		{ "gid", OE_CTX_GID }, { "rgid", OE_CTX_RGID },
+		{ "jid", OE_CTX_JAIL },
+	};
+	int64_t v;
+	size_t i;
+	char *end;
+
+	(void)field;
+	for (i = 0; i < nitems(fields); i++)
+		if (strcmp(key, fields[i].key) == 0)
+			break;
+	if (i == nitems(fields))
+		return (0);
+	errno = 0;
+	v = strtoll(val, &end, 10);
+	if (*val == '\0' || *end != '\0' || errno != 0)
+		return (-1);
+	switch (fields[i].flag) {
+	case OE_CTX_PPID:
+		ctx->ppid = (pid_t)v;
+		break;
+	case OE_CTX_TID:
+		ctx->tid = v;
+		break;
+	case OE_CTX_UID:
+		ctx->uid = (uid_t)v;
+		break;
+	case OE_CTX_RUID:
+		ctx->ruid = (uid_t)v;
+		break;
+	case OE_CTX_GID:
+		ctx->gid = (gid_t)v;
+		break;
+	case OE_CTX_RGID:
+		ctx->rgid = (gid_t)v;
+		break;
+	case OE_CTX_JAIL:
+		ctx->jid = (int)v;
+		if (v != 0)
+			ctx->jail_name = dtotel_jail_name(d, (int)v);
+		break;
+	}
+	ctx->flags |= fields[i].flag;
+	*seen |= (int64_t)fields[i].flag;
+	return (1);
+}
+
+/*
+ * The context fields a ctx record must carry, and the process part of
+ * them a span carries when it belongs to the probe's own process.
+ */
+#define	CTX_ALL	(OE_CTX_PPID | OE_CTX_TID | OE_CTX_UID | OE_CTX_RUID | \
+	OE_CTX_GID | OE_CTX_RGID | OE_CTX_JAIL)
+#define	PROC_CTX	(CTX_ALL & ~OE_CTX_TID)
+
+static void
+handle_ctx(struct dtotel *d, char *rec, const struct dtotel_firing *firing)
+{
+	struct oe_context ctx;
+	char *field, *next, *eq, *exec;
+	int64_t seen, pid, v;
+	int have_pid;
+
+	memset(&ctx, 0, sizeof(ctx));
+	exec = NULL;
+	seen = 0;
+	pid = 0;
+	have_pid = 0;
+	for (field = strchr(rec + strlen(DTOTEL_RECORD_PREFIX), FIELD_SEP);
+	    field != NULL; field = next) {
+		*field++ = '\0';
+		next = strchr(field, FIELD_SEP);
+		if (next != NULL)
+			*next = '\0';
+		eq = strchr(field, '=');
+		if (eq == NULL)
+			goto bad;
+		*eq++ = '\0';
+		if (strcmp(field, "execname") == 0)
+			exec = eq;
+		else if (strcmp(field, "pid") == 0) {
+			if (parse_int(eq, &v) != 0)
+				goto bad;
+			pid = v;
+			have_pid = 1;
+		} else if (parse_context(d, field, field, eq, &ctx, &seen) < 0)
+			goto bad;
+	}
+	if (exec == NULL || !have_pid || (seen & CTX_ALL) != CTX_ALL)
+		goto bad;
+	ctx.flags |= OE_CTX_PID;
+	if (firing->valid) {
+		ctx.flags |= OE_CTX_CPU;
+		ctx.cpu = firing->cpu;
+	}
+	if (d->body != NULL && same_firing(firing, &d->body_firing)) {
+		/* The line this firing printed is still pending. */
+		free(d->body_exec);
+		d->body_exec = strdup(exec);
+		d->body_pid = (pid_t)pid;
+		d->body_ctx = ctx;
+		return;
+	}
+	/* Keep it for the line this firing has yet to print. */
+	free(d->ctx_exec);
+	d->ctx_exec = strdup(exec);
+	d->ctx_pid = (pid_t)pid;
+	d->ctx = ctx;
+	d->ctx_firing = *firing;
+	return;
+bad:
+	fprintf(stderr, "dtotel: malformed context record ignored\n");
+}
+
 #define	SPAN_MAX_ATTRS	16
 
 static enum oe_span_kind
@@ -419,18 +622,6 @@ span_kind(const char *s)
 	if (strcmp(s, "consumer") == 0)
 		return (OE_SPAN_CONSUMER);
 	return (OE_SPAN_INTERNAL);
-}
-
-static int
-parse_int(const char *s, int64_t *v)
-{
-	char *end;
-
-	if (*s == '\0')
-		return (-1);
-	errno = 0;
-	*v = strtoll(s, &end, 10);
-	return (*end == '\0' && errno == 0 ? 0 : -1);
 }
 
 static void
@@ -453,15 +644,20 @@ handle_span(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
 	struct oe_span sp;
 	const char *name, *kind, *execname;
 	char *field, *next, *eq, msg[48], *probe;
+	struct oe_context ctx;
 	int64_t start, end, thread, spankey, parent, trace, err, pid, v,
-	    key[2];
-	int have_start, have_end, have_span, have_parent, have_trace;
+	    key[2], seen;
+	int have_start, have_end, have_span, have_parent, have_trace, rc,
+	    have_pid, have_thread;
 	size_t nattrs;
 
 	name = kind = execname = NULL;
 	start = end = thread = spankey = parent = trace = err = pid = 0;
 	have_start = have_end = have_span = have_parent = have_trace = 0;
+	have_pid = have_thread = 0;
 	nattrs = 0;
+	seen = 0;
+	memset(&ctx, 0, sizeof(ctx));
 	/* Fields follow the "\037otel.span" kind tag. */
 	for (field = strchr(rec + strlen(DTOTEL_RECORD_PREFIX), FIELD_SEP);
 	    field != NULL; field = next) {
@@ -485,6 +681,10 @@ handle_span(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
 				attrs[nattrs].type = OE_VAL_STRING;
 				attrs[nattrs++].s = eq;
 			}
+		} else if ((rc = parse_context(d, field, field, eq, &ctx,
+		    &seen)) != 0) {
+			if (rc < 0)
+				goto bad;
 		} else if (parse_int(eq, &v) != 0)
 			goto bad;
 		else if (strcmp(field, "start") == 0) {
@@ -493,8 +693,10 @@ handle_span(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
 		} else if (strcmp(field, "end") == 0) {
 			end = v;
 			have_end = 1;
-		} else if (strcmp(field, "thread") == 0)
+		} else if (strcmp(field, "thread") == 0) {
 			thread = v;
+			have_thread = 1;
+		}
 		else if (strcmp(field, "span") == 0) {
 			spankey = v;
 			have_span = 1;
@@ -506,8 +708,10 @@ handle_span(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
 			have_trace = 1;
 		} else if (strcmp(field, "error") == 0)
 			err = v;
-		else if (strcmp(field, "pid") == 0)
+		else if (strcmp(field, "pid") == 0) {
 			pid = v;
+			have_pid = 1;
+		}
 		else if (strncmp(field, "a.i.", 4) == 0 && field[4] != '\0' &&
 		    nattrs < SPAN_MAX_ATTRS) {
 			attrs[nattrs].key = field + 4;
@@ -564,6 +768,26 @@ handle_span(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
 	sp.execname = execname != NULL ? execname : "";
 	sp.attrs = attrs;
 	sp.nattrs = nattrs;
+	/*
+	 * The thread key is the thread the span belongs to.  The other
+	 * context fields describe the probe's own process and come only
+	 * when the span did not name another one, as does its CPU.
+	 */
+	sp.ctx = ctx;
+	sp.ctx.flags = 0;
+	if ((seen & PROC_CTX) == PROC_CTX) {
+		sp.ctx.flags = PROC_CTX;
+		if (bd->dtbda_probe != NULL) {
+			sp.ctx.flags |= OE_CTX_CPU;
+			sp.ctx.cpu = bd->dtbda_probe->dtpda_cpu;
+		}
+	}
+	if (have_pid)
+		sp.ctx.flags |= OE_CTX_PID;
+	if (have_thread) {
+		sp.ctx.flags |= OE_CTX_TID;
+		sp.ctx.tid = thread;
+	}
 	if (oe_span(d->exporter, &sp) != 0)
 		d->error = 1;
 	free(probe);
@@ -576,7 +800,7 @@ bad:
 
 static void
 handle_record(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
-    const struct timespec *observed)
+    const struct dtotel_firing *firing, const struct timespec *observed)
 {
 	const char *kind = rec + strlen(DTOTEL_RECORD_PREFIX);
 
@@ -584,6 +808,8 @@ handle_record(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
 		handle_clock(d, rec);
 	else if (strncmp(kind, "span\037", 5) == 0)
 		handle_span(d, rec, bd, observed);
+	else if (strncmp(kind, "ctx\037", 4) == 0)
+		handle_ctx(d, rec, firing);
 	else
 		fprintf(stderr, "dtotel: unknown structured record \"%.*s\" "
 		    "ignored\n", (int)strcspn(kind, "\037\n"), kind);
@@ -625,7 +851,7 @@ dtotel_buffered(const dtrace_bufdata_t *bufdata, void *arg)
 			linelen--;
 		rec = strndup(chunk, linelen);
 		if (rec != NULL) {
-			handle_record(d, rec, bufdata, &observed);
+			handle_record(d, rec, bufdata, &firing, &observed);
 			free(rec);
 		}
 		return (d->error ? DTRACE_HANDLE_ABORT : DTRACE_HANDLE_OK);

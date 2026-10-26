@@ -110,7 +110,7 @@ parse_format(const char *arg)
 struct otel_ctx {
 	struct oe_exporter *exporter;
 	struct oe_env	 env;
-	char		 hostname[256], arch[64], osrel[64];
+	struct oe_host_info host;
 };
 
 static struct oe_exporter *
@@ -120,17 +120,19 @@ otel_open(struct otel_ctx *ctx, const char *cli_endpoint, double interval)
 	struct oe_otlp_config ocfg;
 	const char *endpoint;
 
+	/* The same resource conventions as bsdinstruments(8). */
 	oe_env_load(&ctx->env);
-	oe_host_name(ctx->hostname, sizeof(ctx->hostname));
-	oe_host_arch(ctx->arch, sizeof(ctx->arch));
-	oe_os_version(ctx->osrel, sizeof(ctx->osrel));
+	oe_host_detect(&ctx->host);
 	memset(&resource, 0, sizeof(resource));
-	resource.service_name = ctx->env.service_name != NULL ?
-	    ctx->env.service_name : "hwstat";
-	resource.host_name = ctx->hostname;
-	resource.host_arch = ctx->arch;
-	resource.os_name = "freebsd";
-	resource.os_version = ctx->osrel;
+	oe_resource_host(&resource, &ctx->host);
+	resource.service_name = "hwstat";
+	for (size_t i = 0; i < ctx->env.nresource_attrs; i++)
+		if (strcmp(ctx->env.resource_attrs[i].name,
+		    "service.name") == 0)
+			resource.service_name =
+			    ctx->env.resource_attrs[i].value;
+	if (ctx->env.service_name != NULL)
+		resource.service_name = ctx->env.service_name;
 	resource.service_version = HWSTAT_VERSION;
 	resource.custom = ctx->env.resource_attrs;
 	resource.ncustom = ctx->env.nresource_attrs;
@@ -152,6 +154,7 @@ otel_open(struct otel_ctx *ctx, const char *cli_endpoint, double interval)
 	ocfg.headers = ctx->env.headers;
 	ocfg.nheaders = ctx->env.nheaders;
 	ocfg.compression = ctx->env.compression;
+	ocfg.scope_name = "hwstat";
 	ctx->exporter = oe_otlp_new(&ocfg);
 	if (ctx->exporter != NULL && oe_start(ctx->exporter) != 0) {
 		oe_exporter_free(ctx->exporter);
@@ -232,15 +235,15 @@ emit_otlp_sample(struct oe_exporter *exporter,
 			snprintf(cpu_id, sizeof(cpu_id), "%d", core->cpu);
 			if (core->have_usage)
 				emit_gauge(exporter, &snap->ts, "cpu",
-				    "busy_basis_points", OE_AGG_AVG, "cpu_id", cpu_id,
+				    "busy_basis_points", OE_AGG_AVG, "cpu.logical_number", cpu_id,
 				    (int64_t)((100.0 - core->usage[4]) * 100));
 			if (core->have_temp)
 				emit_gauge(exporter, &snap->ts, "cpu",
-				    "temp", OE_AGG_AVG, "cpu_id", cpu_id,
+				    "temp", OE_AGG_AVG, "cpu.logical_number", cpu_id,
 				    (int64_t)core->temp);
 			if (core->have_freq)
 				emit_gauge(exporter, &snap->ts, "cpu",
-				    "freq_mhz", OE_AGG_AVG, "cpu_id",
+				    "freq_mhz", OE_AGG_AVG, "cpu.logical_number",
 				    cpu_id, core->freq);
 			if (core->have_cstate) {
 				for (j = 0; j < core->cstate.nlevels &&
@@ -261,7 +264,7 @@ emit_otlp_sample(struct oe_exporter *exporter,
 					    "cstate_%s_pct", lname);
 					emit_gauge(exporter, &snap->ts,
 					    "cpu", mname, OE_AGG_AVG,
-					    "cpu_id", cpu_id,
+					    "cpu.logical_number", cpu_id,
 					    (int64_t)core->cstate.pct[j]);
 				}
 			}

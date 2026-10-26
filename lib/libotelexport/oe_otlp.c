@@ -854,7 +854,7 @@ oe_otlp_new(const struct oe_otlp_config *cfg)
 		otlp_free(&o->e);
 		return (NULL);
 	}
-	if (oe_enc_init(&o->enc, r) != 0)
+	if (oe_enc_init(&o->enc, r, cfg->scope_name) != 0)
 		goto fail;
 	snprintf(o->user_agent, sizeof(o->user_agent),
 	    "OTel-OTLP-Exporter-C/%s", r->service_version);

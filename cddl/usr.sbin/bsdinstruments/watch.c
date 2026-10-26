@@ -157,6 +157,7 @@ make_exporter(const struct profile *p, const struct watch_opts *wo,
 		jcfg.sink = sink;
 		jcfg.profile = p->name;
 		jcfg.resource = resource;
+		jcfg.scope_name = "bsdinstruments";
 		return (oe_otlpjson_new(&jcfg));
 	case FORMAT_OTEL:
 		break;
@@ -180,6 +181,7 @@ make_exporter(const struct profile *p, const struct watch_opts *wo,
 	ocfg.compression = env->compression;
 	ocfg.spool_path = wo->spool;
 	ocfg.spool_max = wo->spool_max;
+	ocfg.scope_name = "bsdinstruments";
 	return (oe_otlp_new(&ocfg));
 }
 
@@ -189,6 +191,7 @@ watch_run(const struct profile *p, const char *rendered,
 {
 	struct oe_exporter *exporter;
 	struct oe_resource resource;
+	struct oe_host_info host;
 	struct oe_sink_config sc;
 	struct oe_sink *sink;
 	struct oe_env env;
@@ -197,8 +200,8 @@ watch_run(const struct profile *p, const char *rendered,
 	struct timespec now, last_flush;
 	dtrace_hdl_t *dtp;
 	dtrace_workstatus_t status;
-	char hostname[256], arch[64], osrel[64];
 	FILE *out;
+	size_t i;
 	int done, err_ret, is_text, use_color;
 
 	err_ret = 1;
@@ -208,17 +211,23 @@ watch_run(const struct profile *p, const char *rendered,
 	dtp = NULL;
 	is_text = wo->format == FORMAT_TEXT;
 
+	/*
+	 * The resource follows the OTel resource conventions: detected
+	 * host and OS attributes, a per-run service.instance.id, and
+	 * service.name from OTEL_SERVICE_NAME, else a service.name in
+	 * OTEL_RESOURCE_ATTRIBUTES, else the program name.  Other
+	 * OTEL_RESOURCE_ATTRIBUTES entries override detected values.
+	 */
 	oe_env_load(&env);
-	oe_host_name(hostname, sizeof(hostname));
-	oe_host_arch(arch, sizeof(arch));
-	oe_os_version(osrel, sizeof(osrel));
+	oe_host_detect(&host);
 	memset(&resource, 0, sizeof(resource));
-	resource.service_name = env.service_name != NULL ? env.service_name :
-	    "bsdinstruments";
-	resource.host_name = hostname;
-	resource.host_arch = arch;
-	resource.os_name = "freebsd";
-	resource.os_version = osrel;
+	oe_resource_host(&resource, &host);
+	resource.service_name = "bsdinstruments";
+	for (i = 0; i < env.nresource_attrs; i++)
+		if (strcmp(env.resource_attrs[i].name, "service.name") == 0)
+			resource.service_name = env.resource_attrs[i].value;
+	if (env.service_name != NULL)
+		resource.service_name = env.service_name;
 	resource.service_version = BSDINSTRUMENTS_VERSION;
 	resource.custom = env.resource_attrs;
 	resource.ncustom = env.nresource_attrs;
