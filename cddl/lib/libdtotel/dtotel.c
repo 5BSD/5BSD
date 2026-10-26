@@ -11,7 +11,9 @@
  * are exported as typed metrics by dtotel_aggregate()).  Chunks are
  * grouped by probe firing (CPU, high resolution timestamp, enabled
  * probe id): every text line starts a log record, and the stack
- * frames that follow it from the same firing attach to it.
+ * frames that follow it from the same firing attach to it.  Output
+ * that continues a line the same firing left open (successive
+ * trace() records, a printf without a newline) joins that line.
  *
  * Structured records.  A chunk whose text starts with
  * DTOTEL_RECORD_PREFIX ("\037otel.") is a structured record, never a
@@ -36,6 +38,12 @@
  *		server, client, producer, consumer), pid, execname,
  *		the context fields above, and attributes
  *		a.i.<key>=<integer>, a.s.<key>=<string>.
+ *
+ *	\037otel.resource\037<key>=<value>[...]
+ *		resource attributes of a HyperTrace guest (for example
+ *		host.name), printed by one of its probes; they join
+ *		the guest's resource.  Ignored for host probes, whose
+ *		resource the consumer fixes.
  *
  * Span identity.  Ids are derived from integer keys the D program
  * already has, hashed with a per-session secret salt
@@ -98,6 +106,8 @@ dtotel_open(const struct dtotel_config *cfg)
 		return (NULL);
 	d->dtp = cfg->dtp;
 	d->exporter = cfg->exporter;
+	d->guest_exporter = cfg->guest_exporter;
+	d->guest_arg = cfg->guest_arg;
 	d->profile = strdup(cfg->profile != NULL ? cfg->profile : "");
 	if (d->profile == NULL) {
 		free(d);
@@ -144,6 +154,7 @@ dtotel_close(struct dtotel *d)
 	dtotel_free_keynames(d->keynames);
 	for (i = 0; i < d->njails; i++)
 		free(d->jails[i].name);
+	(void)dtotel_shutdown(d);
 	free(d->profile);
 	free(d);
 }
@@ -292,7 +303,7 @@ dtotel_flush(struct dtotel *d)
 	ev.nstack = d->kstack.n;
 	ev.ustack = d->ustack.frames;
 	ev.nustack = d->ustack.n;
-	if (oe_event(d->exporter, &ev) != 0)
+	if (oe_event(dtotel_exporter_for(d, d->body_vmid, NULL), &ev) != 0)
 		d->error = 1;
 	free(d->body);
 	d->body = NULL;
@@ -318,6 +329,22 @@ firing_of(const dtrace_bufdata_t *bd, struct dtotel_firing *f)
 	f->cpu = pd->dtpda_cpu;
 	f->hrtime = pd->dtpda_timestamp;
 	f->epid = pd->dtpda_edesc != NULL ? pd->dtpda_edesc->dtepd_epid : 0;
+}
+
+/* The VMID of the probe behind a record: 0 for the host. */
+static uint16_t
+record_vmid(const dtrace_bufdata_t *bd, const char **target)
+{
+	const dtrace_probedata_t *pd = bd->dtbda_probe;
+
+	*target = NULL;
+	if (pd == NULL)
+		return (0);
+	if (pd->dtpda_pdesc != NULL && pd->dtpda_pdesc->dtpd_target[0] != '\0')
+		*target = pd->dtpda_pdesc->dtpd_target;
+	if (pd->dtpda_edesc != NULL && pd->dtpda_edesc->dtepd_vmid != 0)
+		return (pd->dtpda_edesc->dtepd_vmid);
+	return (pd->dtpda_pdesc != NULL ? pd->dtpda_pdesc->dtpd_vmid : 0);
 }
 
 static int
@@ -362,6 +389,49 @@ probe_name(const dtrace_bufdata_t *bd)
 	return (strdup(buf));
 }
 
+static void start_event(struct dtotel *, const dtrace_bufdata_t *,
+    const struct dtotel_firing *, const struct timespec *, const char *,
+    size_t);
+
+static void
+append_body(struct dtotel *d, const char *text, size_t len)
+{
+	char *nb;
+	size_t blen = strlen(d->body);
+
+	nb = realloc(d->body, blen + len + 2);
+	if (nb == NULL)
+		return;
+	nb[blen] = ' ';
+	memcpy(nb + blen + 1, text, len);
+	nb[blen + 1 + len] = '\0';
+	d->body = nb;
+}
+
+void
+dtotel_firing_end(struct dtotel *d, const dtrace_probedata_t *pd, int quiet)
+{
+	struct dtotel_firing firing;
+	dtrace_bufdata_t bd;
+	struct timespec observed;
+	char *name;
+
+	memset(&bd, 0, sizeof(bd));
+	bd.dtbda_probe = __DECONST(dtrace_probedata_t *, pd);
+	firing_of(&bd, &firing);
+	if (quiet || same_firing(&firing, &d->out_firing))
+		return;
+	/* A firing that printed nothing: name its probe. */
+	clock_gettime(CLOCK_REALTIME, &observed);
+	name = probe_name(&bd);
+	if (name == NULL)
+		return;
+	start_event(d, &bd, &firing, &observed, name, strlen(name));
+	free(name);
+	d->out_firing = firing;
+	d->line_open = 0;
+}
+
 /* Flush the pending event and start a new one for this firing. */
 static void
 start_event(struct dtotel *d, const dtrace_bufdata_t *bd,
@@ -369,9 +439,14 @@ start_event(struct dtotel *d, const dtrace_bufdata_t *bd,
     const char *text, size_t len)
 {
 
+	const char *target;
+
 	dtotel_flush(d);
 	d->body = strndup(text, len);
 	d->probe = probe_name(bd);
+	d->body_vmid = record_vmid(bd, &target);
+	if (d->body_vmid != 0)
+		(void)dtotel_exporter_for(d, d->body_vmid, target);
 	d->body_firing = *firing;
 	d->body_observed = *observed;
 	probe_walltime(d, firing, observed, &d->body_ts);
@@ -788,14 +863,210 @@ handle_span(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
 		sp.ctx.flags |= OE_CTX_TID;
 		sp.ctx.tid = thread;
 	}
-	if (oe_span(d->exporter, &sp) != 0)
-		d->error = 1;
+	{
+		const char *target;
+		uint16_t vmid = record_vmid(bd, &target);
+
+		if (oe_span(dtotel_exporter_for(d, vmid, target), &sp) != 0)
+			d->error = 1;
+	}
 	free(probe);
 	return;
 bad:
 	if (!d->warned_span++)
 		fprintf(stderr, "dtotel: malformed span record ignored (needs "
 		    "name, start <= end, integer keys)\n");
+}
+
+/* ---------------------------------------------------------------- */
+/* HyperTrace guests							*/
+
+static struct dtotel_guest_state *
+guest_find(struct dtotel *d, uint16_t vmid)
+{
+	struct dtotel_guest_state *g;
+
+	for (g = d->guests; g != NULL; g = g->next)
+		if (g->vmid == vmid)
+			return (g);
+	return (NULL);
+}
+
+static struct dtotel_guest_state *
+guest_add(struct dtotel *d, uint16_t vmid, uint64_t epoch, const char *name)
+{
+	struct dtotel_guest_state *g;
+
+	g = calloc(1, sizeof(*g));
+	if (g == NULL)
+		return (NULL);
+	g->vmid = vmid;
+	g->epoch = epoch;
+	g->name = strdup(name != NULL ? name : "");
+	if (g->name == NULL) {
+		free(g);
+		return (NULL);
+	}
+	g->next = d->guests;
+	d->guests = g;
+	return (g);
+}
+
+/* Flush and release a guest's exporter; the next record recreates it. */
+static int
+guest_retire(struct dtotel *d, struct dtotel_guest_state *g)
+{
+	int ret = 0;
+
+	if (g->exporter == NULL)
+		return (0);
+	/* The pending line may belong to this guest. */
+	if (d->body != NULL && d->body_vmid == g->vmid)
+		dtotel_flush(d);
+	if (oe_shutdown(g->exporter) != 0)
+		ret = -1;
+	oe_exporter_free(g->exporter);
+	g->exporter = NULL;
+	return (ret);
+}
+
+static void
+guest_free(struct dtotel_guest_state *g)
+{
+	size_t i;
+
+	for (i = 0; i < g->nattrs; i++) {
+		free(__DECONST(char *, g->attrs[i].name));
+		free(__DECONST(char *, g->attrs[i].value));
+	}
+	free(g->name);
+	free(g);
+}
+
+int
+dtotel_guest(struct dtotel *d, uint16_t vmid, uint64_t epoch,
+    const char *name)
+{
+	struct dtotel_guest_state *g;
+	char *copy;
+	int ret = 0;
+
+	if (vmid == 0)
+		return (0);
+	g = guest_find(d, vmid);
+	if (g == NULL)
+		return (guest_add(d, vmid, epoch, name) != NULL ? 0 : -1);
+	if (g->epoch == epoch && name != NULL && strcmp(g->name, name) == 0)
+		return (0);
+	/* A new lifetime (or name) of the VMID: a new resource. */
+	ret = guest_retire(d, g);
+	g->epoch = epoch;
+	if (name != NULL) {
+		if ((copy = strdup(name)) == NULL)
+			return (-1);	/* keeps the old name */
+		free(g->name);
+		g->name = copy;
+	}
+	return (ret);
+}
+
+struct oe_exporter *
+dtotel_exporter_for(struct dtotel *d, uint16_t vmid, const char *target)
+{
+	struct dtotel_guest_state *g;
+	struct dtotel_guest view;
+
+	if (vmid == 0 || d->guest_exporter == NULL)
+		return (d->exporter);
+	g = guest_find(d, vmid);
+	/* An unregistered guest is known by its probes' target name. */
+	if (g == NULL && (g = guest_add(d, vmid, 0, target)) == NULL)
+		return (d->exporter);
+	if (g->exporter == NULL) {
+		view.vmid = g->vmid;
+		view.epoch = g->epoch;
+		view.name = g->name;
+		view.attrs = g->attrs;
+		view.nattrs = g->nattrs;
+		g->exporter = d->guest_exporter(d->guest_arg, &view);
+		if (g->exporter == NULL) {
+			if (!d->warned_guest++)
+				fprintf(stderr, "dtotel: cannot export VM %u "
+				    "separately; its records go to the host's "
+				    "resource\n", (unsigned)vmid);
+			return (d->exporter);
+		}
+		if (oe_start(g->exporter) != 0)
+			d->error = 1;
+	}
+	return (g->exporter);
+}
+
+int
+dtotel_shutdown(struct dtotel *d)
+{
+	struct dtotel_guest_state *g, *next;
+	int ret = 0;
+
+	dtotel_flush(d);
+	for (g = d->guests; g != NULL; g = next) {
+		next = g->next;
+		if (guest_retire(d, g) != 0)
+			ret = -1;
+		guest_free(g);
+	}
+	d->guests = NULL;
+	return (ret);
+}
+
+/* Resource attributes from a guest probe. */
+static void
+handle_resource(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd)
+{
+	struct dtotel_guest_state *g;
+	const char *target;
+	char *field, *next, *eq, *value;
+	uint16_t vmid;
+	size_t i;
+	int changed = 0;
+
+	vmid = record_vmid(bd, &target);
+	if (vmid == 0 || d->guest_exporter == NULL)
+		return;
+	g = guest_find(d, vmid);
+	if (g == NULL && (g = guest_add(d, vmid, 0, target)) == NULL)
+		return;
+	for (field = strchr(rec + strlen(DTOTEL_RECORD_PREFIX), FIELD_SEP);
+	    field != NULL; field = next) {
+		*field++ = '\0';
+		next = strchr(field, FIELD_SEP);
+		if (next != NULL)
+			*next = '\0';
+		eq = strchr(field, '=');
+		if (eq == NULL || eq == field)
+			continue;
+		*eq++ = '\0';
+		for (i = 0; i < g->nattrs; i++)
+			if (strcmp(g->attrs[i].name, field) == 0)
+				break;
+		if (i == g->nattrs && g->nattrs == DTOTEL_GUEST_ATTRS)
+			continue;
+		if (i < g->nattrs && strcmp(g->attrs[i].value, eq) == 0)
+			continue;
+		if ((value = strdup(eq)) == NULL)
+			continue;
+		if (i < g->nattrs)
+			free(__DECONST(char *, g->attrs[i].value));
+		else if ((g->attrs[i].name = strdup(field)) == NULL) {
+			free(value);
+			continue;
+		} else
+			g->nattrs++;
+		g->attrs[i].value = value;
+		changed = 1;
+	}
+	if (changed && guest_retire(d, g) != 0)
+		d->error = 1;
 }
 
 static void
@@ -810,6 +1081,8 @@ handle_record(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
 		handle_span(d, rec, bd, observed);
 	else if (strncmp(kind, "ctx\037", 4) == 0)
 		handle_ctx(d, rec, firing);
+	else if (strncmp(kind, "resource\037", 9) == 0)
+		handle_resource(d, rec, bd);
 	else
 		fprintf(stderr, "dtotel: unknown structured record \"%.*s\" "
 		    "ignored\n", (int)strcspn(kind, "\037\n"), kind);
@@ -839,6 +1112,7 @@ dtotel_buffered(const dtrace_bufdata_t *bufdata, void *arg)
 		return (DTRACE_HANDLE_OK);
 	firing_of(bufdata, &firing);
 	clock_gettime(CLOCK_REALTIME, &observed);
+	d->out_firing = firing;
 
 	if (strncmp(chunk, DTOTEL_RECORD_PREFIX,
 	    sizeof(DTOTEL_RECORD_PREFIX) - 1) == 0) {
@@ -908,6 +1182,10 @@ dtotel_buffered(const dtrace_bufdata_t *bufdata, void *arg)
 		    strncmp(trimmed, USTACK_MARKER, tlen) == 0) {
 			/* Marker between stack() and ustack() output. */
 			d->in_ustack = 1;
+		} else if (line == chunk && d->line_open && d->body != NULL &&
+		    same_firing(&firing, &d->body_firing)) {
+			/* The firing continues the line it left open. */
+			append_body(d, trimmed, tlen);
 		} else {
 			/* New event: flush pending, start accumulating. */
 			start_event(d, bufdata, &firing, &observed, trimmed,
@@ -918,5 +1196,6 @@ dtotel_buffered(const dtrace_bufdata_t *bufdata, void *arg)
 			break;
 	}
 
+	d->line_open = chunk[0] != '\0' && chunk[strlen(chunk) - 1] != '\n';
 	return (d->error ? DTRACE_HANDLE_ABORT : DTRACE_HANDLE_OK);
 }

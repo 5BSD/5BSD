@@ -87,16 +87,19 @@ oe_url_parse(const char *url, struct oe_url *u)
 	memcpy(u->host, hoststart, len);
 	u->host[len] = '\0';
 
-	if (pathstart == NULL || pathstart[0] == '\0')
+	if (pathstart == NULL)
 		strlcpy(u->basepath, "", sizeof(u->basepath));
 	else {
 		/* A truncated path would POST to the wrong URL. */
 		if (strlcpy(u->basepath, pathstart,
 		    sizeof(u->basepath)) >= sizeof(u->basepath))
 			return (-1);
-		/* Drop a trailing slash so path joining stays simple. */
+		/*
+		 * Drop a trailing slash so path joining stays simple (the
+		 * path starts with '/', so it is never empty here).
+		 */
 		len = strlen(u->basepath);
-		if (len > 0 && u->basepath[len - 1] == '/')
+		if (u->basepath[len - 1] == '/')
 			u->basepath[len - 1] = '\0';
 	}
 	return (0);
@@ -108,7 +111,7 @@ tcp_connect(const struct oe_url *u, int timeout_ms)
 	struct addrinfo hints, *res, *ai;
 	struct pollfd pfd;
 	char portstr[8];
-	int fd, error, flags;
+	int fd, error, flags, one = 1;
 	socklen_t elen;
 
 	snprintf(portstr, sizeof(portstr), "%d", u->port);
@@ -124,6 +127,12 @@ tcp_connect(const struct oe_url *u, int timeout_ms)
 			continue;
 		flags = fcntl(fd, F_GETFL, 0);
 		fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+		/*
+		 * A collector that closes early must not raise SIGPIPE in
+		 * the host program; the write just fails.
+		 */
+		(void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one,
+		    sizeof(one));
 		if (connect(fd, ai->ai_addr, ai->ai_addrlen) == 0)
 			break;
 		if (errno == EINPROGRESS) {
@@ -180,8 +189,7 @@ conn_close(struct conn *c)
 	}
 	if (c->ctx != NULL)
 		SSL_CTX_free(c->ctx);
-	if (c->fd >= 0)
-		close(c->fd);
+	close(c->fd);	/* only ever called with a connected socket */
 }
 
 static int
@@ -307,7 +315,7 @@ oe_http_post(const struct oe_url *u, const char *path,
 			break;
 		oe_buf_append(&in, chunk, (size_t)n);
 	}
-	if (in.len == 0 || in.data == NULL) {
+	if (in.len == 0) {
 		snprintf(resp->errmsg, sizeof(resp->errmsg),
 		    "no response from %s:%d", u->host, u->port);
 		oe_buf_free(&in);

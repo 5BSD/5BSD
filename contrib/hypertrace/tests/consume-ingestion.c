@@ -88,6 +88,7 @@ struct mecb {
 	int probe;		/* index into probes[] */
 	int set;
 	uint64_t uarg;
+	uint16_t vmid;		/* set by the CLI shim for guest enablings */
 };
 
 struct mbuf {
@@ -655,6 +656,7 @@ enable(dtrace_enable_io_t *p)
 			M.ecb[M.necb].probe = j;
 			M.ecb[M.necb].set = s - M.set;
 			M.ecb[M.necb].uarg = e->dofe_uarg;
+			M.ecb[M.necb].vmid = 0;
 			M.necb++;
 			matched++;
 			if (p->ps != NULL) {
@@ -1158,8 +1160,15 @@ model_ioctl(void *varg, u_long cmd, void *arg)
 		int match = cmd == CMD(DTRACEIOC_PROBEMATCH);
 		dtrace_id_t id = d->dtpd_id == DTRACE_IDNONE ? 1 : d->dtpd_id;
 
+		/*
+		 * A guest ECB's probe (the CLI shim tags guest enablings
+		 * with their VMID) is described by id like a host one and
+		 * keeps its VMID; matching guest descriptions is not
+		 * modeled.
+		 */
 		error = ESRCH;
-		for (i = id - 1; d->dtpd_vmid == 0 && i < NPROBES; i++) {
+		for (i = id - 1; (d->dtpd_vmid == 0 || !match) && i < NPROBES;
+		    i++) {
 			if (match && (!glob(d->dtpd_provider, probes[i].prov) ||
 			    !glob(d->dtpd_mod, probes[i].mod) ||
 			    !glob(d->dtpd_func, probes[i].func) ||
@@ -1199,7 +1208,7 @@ model_ioctl(void *varg, u_long cmd, void *arg)
 		d->dtepd_probeid = M.ecb[d->dtepd_epid - 1].probe + 1;
 		d->dtepd_uarg = M.ecb[d->dtepd_epid - 1].uarg;
 		d->dtepd_size = s->size;
-		d->dtepd_vmid = 0;
+		d->dtepd_vmid = M.ecb[d->dtepd_epid - 1].vmid;
 		d->dtepd_nrecs = 0;
 		for (i = 0; i < s->nact; i++)
 			if (!DTRACEACT_ISAGG(s->act[i].kind) &&

@@ -10,7 +10,10 @@
  */
 
 #include <sys/param.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
 
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +24,9 @@
 #include <sys/hypertrace.h>
 
 #include "dtotel.h"
+#include "dtotel_session.h"
+#include "otlp_validate.h"
+#include "otel_testutil.h"
 #include "dtrace_stub.h"
 
 /* ---------------------------------------------------------------- */
@@ -220,6 +226,108 @@ static const struct oe_exporter_ops cap_ops = {
 };
 
 static struct capture cap;
+
+/* ---------------------------------------------------------------- */
+/* Per-guest exporters							*/
+
+#define	GUEST_MAX	16
+
+struct guest_cap {
+	struct oe_exporter e;
+	char		 ident[256];	/* vmid/epoch/name[/k=v...] */
+	int		 events, spans, snaps, started, shutdown;
+	char		 lastbody[64];
+	int		 freed;
+};
+
+static struct guest_cap *guests[GUEST_MAX];
+static int nguests, guest_fail;
+
+static int
+g_start(struct oe_exporter *e)
+{
+
+	((struct guest_cap *)e)->started++;
+	return (0);
+}
+
+static int
+g_event(struct oe_exporter *e, const struct oe_event *ev)
+{
+	struct guest_cap *g = (struct guest_cap *)e;
+
+	g->events++;
+	strlcpy(g->lastbody, ev->body, sizeof(g->lastbody));
+	return (0);
+}
+
+static int
+g_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn __unused)
+{
+
+	((struct guest_cap *)e)->snaps++;
+	return (0);
+}
+
+static int
+g_span(struct oe_exporter *e, const struct oe_span *sp __unused)
+{
+
+	((struct guest_cap *)e)->spans++;
+	return (0);
+}
+
+static int
+g_flush(struct oe_exporter *e __unused)
+{
+
+	return (0);
+}
+
+static int
+g_shutdown(struct oe_exporter *e)
+{
+
+	((struct guest_cap *)e)->shutdown++;
+	return (guest_fail == 2 ? -1 : 0);
+}
+
+static void
+g_free(struct oe_exporter *e)
+{
+
+	/* Kept for inspection; marked so tests see the release. */
+	((struct guest_cap *)e)->freed = 1;
+}
+
+static const struct oe_exporter_ops guest_ops = {
+	.start = g_start, .event = g_event, .snapshot = g_snapshot,
+	.flush = g_flush, .shutdown = g_shutdown, .free = g_free,
+	.span = g_span,
+};
+
+static struct oe_exporter *
+make_guest(void *arg, const struct dtotel_guest *gi)
+{
+	struct guest_cap *g;
+	size_t i, n;
+
+	ATF_REQUIRE(arg == &guests);
+	if (guest_fail == 1)
+		return (NULL);
+	ATF_REQUIRE(nguests < GUEST_MAX);
+	g = calloc(1, sizeof(*g));
+	if (g == NULL)		/* an injected allocation failure */
+		return (NULL);
+	g->e.ops = &guest_ops;
+	n = (size_t)snprintf(g->ident, sizeof(g->ident), "%u/%ju/%s",
+	    gi->vmid, (uintmax_t)gi->epoch, gi->name);
+	for (i = 0; i < gi->nattrs; i++)
+		n += (size_t)snprintf(g->ident + n, sizeof(g->ident) - n,
+		    "/%s=%s", gi->attrs[i].name, gi->attrs[i].value);
+	guests[nguests++] = g;
+	return (&g->e);
+}
 
 static struct dtotel *
 open_bridge(const char *source)
@@ -1119,6 +1227,959 @@ ATF_TC_BODY(span_context, tc)
 	dtotel_close(d);
 }
 
+/* ---------------------------------------------------------------- */
+/* HyperTrace guests							*/
+
+/* Deliver a chunk from a guest probe (vmid in the edesc or pdesc). */
+static int
+deliver_vm(struct dtotel *d, const char *text, uint64_t hrtime,
+    uint16_t edesc_vmid, uint16_t pdesc_vmid, const char *target)
+{
+	dtrace_bufdata_t bd;
+	dtrace_probedata_t pd;
+	dtrace_eprobedesc_t ed;
+	dtrace_probedesc_t pdesc;
+
+	(void)d;
+	memset(&bd, 0, sizeof(bd));
+	memset(&pd, 0, sizeof(pd));
+	memset(&ed, 0, sizeof(ed));
+	pdesc = test_pdesc;
+	pdesc.dtpd_vmid = pdesc_vmid;
+	strlcpy(pdesc.dtpd_target, target, sizeof(pdesc.dtpd_target));
+	ed.dtepd_epid = 3;
+	ed.dtepd_vmid = edesc_vmid;
+	pd.dtpda_timestamp = hrtime;
+	pd.dtpda_edesc = &ed;
+	pd.dtpda_pdesc = &pdesc;
+	bd.dtbda_buffered = text;
+	bd.dtbda_probe = &pd;
+	return (stub.bufhandler(&bd, stub.bufarg));
+}
+
+static struct dtotel *
+open_guest_bridge(void)
+{
+	struct dtotel_config cfg;
+	struct dtotel *d;
+
+	memset(&cap, 0, sizeof(cap));
+	cap.e.ops = &cap_ops;
+	memset(&stub, 0, sizeof(stub));
+	nguests = 0;
+	guest_fail = 0;
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.dtp = (dtrace_hdl_t *)&stub;
+	cfg.exporter = &cap.e;
+	cfg.profile = "prof";
+	cfg.guest_exporter = make_guest;
+	cfg.guest_arg = &guests;
+	d = dtotel_open(&cfg);
+	ATF_REQUIRE(d != NULL);
+	ATF_REQUIRE_EQ(0, dtotel_handle(d));
+	return (d);
+}
+
+/*
+ * Each guest's records go to its own exporter (its own resource),
+ * identified by the registered name and epoch; the host's stay on
+ * the host exporter.
+ */
+ATF_TC_WITHOUT_HEAD(guest_routing);
+ATF_TC_BODY(guest_routing, tc)
+{
+	struct dtotel *d;
+
+	d = open_guest_bridge();
+	ATF_REQUIRE_EQ(0, dtotel_guest(d, 3, 9, "vm1"));
+	ATF_REQUIRE_EQ(0, dtotel_guest(d, 0, 1, "host"));	/* ignored */
+	ATF_REQUIRE_EQ(0, dtotel_guest(d, 3, 9, "vm1"));	/* no change */
+	deliver(d, "host line\n", 0, 10, 1, 0);
+	deliver_vm(d, "guest line\n", 11, 3, 0, "vm1");
+	/* The VMID can come from the probe description too. */
+	deliver_vm(d, "\037otel.span\037name=g\037start=1\037end=2\n", 12, 0,
+	    3, "vm1");
+	/* An unregistered guest is named after its probes' target. */
+	deliver_vm(d, "other guest\n", 13, 7, 0, "vm7");
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(1, cap.nevents);
+	ATF_REQUIRE_STREQ("host line", cap.events[0].body);
+	ATF_REQUIRE_EQ(2, nguests);
+	ATF_REQUIRE_STREQ("3/9/vm1", guests[0]->ident);
+	ATF_REQUIRE_EQ(1, guests[0]->started);
+	ATF_REQUIRE_EQ(1, guests[0]->events);
+	ATF_REQUIRE_EQ(1, guests[0]->spans);
+	ATF_REQUIRE_STREQ("guest line", guests[0]->lastbody);
+	ATF_REQUIRE_STREQ("7/0/vm7", guests[1]->ident);
+	ATF_REQUIRE_EQ(1, guests[1]->events);
+	/* A new epoch is a new resource; the old one is shut down. */
+	ATF_REQUIRE_EQ(0, dtotel_guest(d, 3, 10, "vm1"));
+	ATF_REQUIRE(guests[0]->freed && guests[0]->shutdown == 1);
+	deliver_vm(d, "after restart\n", 20, 3, 0, "vm1");
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(3, nguests);
+	ATF_REQUIRE_STREQ("3/10/vm1", guests[2]->ident);
+	/* A rename is too; NULL keeps the name. */
+	ATF_REQUIRE_EQ(0, dtotel_guest(d, 3, 11, NULL));
+	deliver_vm(d, "x\n", 21, 3, 0, "vm1");
+	ATF_REQUIRE_EQ(0, dtotel_guest(d, 3, 11, "renamed"));
+	deliver_vm(d, "y\n", 22, 3, 0, "renamed");
+	dtotel_flush(d);
+	ATF_REQUIRE_STREQ("3/11/vm1", guests[3]->ident);
+	ATF_REQUIRE_STREQ("x", guests[3]->lastbody);
+	ATF_REQUIRE_STREQ("3/11/renamed", guests[4]->ident);
+	ATF_REQUIRE_EQ(0, dtotel_shutdown(d));
+	ATF_REQUIRE(guests[1]->freed && guests[4]->freed);
+	dtotel_close(d);
+}
+
+/* Guests supply resource attributes with otel.resource records. */
+ATF_TC_WITHOUT_HEAD(guest_resource_records);
+ATF_TC_BODY(guest_resource_records, tc)
+{
+	struct dtotel *d;
+	char rec[512];
+	int i, n;
+
+	d = open_guest_bridge();
+	deliver_vm(d, "\037otel.resource\037host.name=web1\037os.type=freebsd"
+	    "\037bad\037=x\n", 1, 4, 0, "vm4");
+	deliver_vm(d, "first\n", 2, 4, 0, "vm4");
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(1, nguests);
+	ATF_REQUIRE_STREQ("4/0/vm4/host.name=web1/os.type=freebsd",
+	    guests[0]->ident);
+	/* An unchanged value keeps the exporter... */
+	deliver_vm(d, "\037otel.resource\037host.name=web1\n", 3, 4, 0, "vm4");
+	ATF_REQUIRE(!guests[0]->freed);
+	/* ...a pending guest line is flushed before a change... */
+	deliver_vm(d, "pending\n", 4, 4, 0, "vm4");
+	deliver_vm(d, "\037otel.resource\037host.name=web2\n", 5, 4, 0, "vm4");
+	ATF_REQUIRE(guests[0]->freed);
+	ATF_REQUIRE_STREQ("pending", guests[0]->lastbody);
+	deliver_vm(d, "second\n", 6, 4, 0, "vm4");
+	dtotel_flush(d);
+	ATF_REQUIRE_STREQ("4/0/vm4/host.name=web2/os.type=freebsd",
+	    guests[1]->ident);
+	/* The attribute table is bounded. */
+	n = snprintf(rec, sizeof(rec), "\037otel.resource");
+	for (i = 0; i < 12; i++)
+		n += snprintf(rec + n, sizeof(rec) - (size_t)n, "\037k%d=%d", i, i);
+	snprintf(rec + n, sizeof(rec) - (size_t)n, "\n");
+	deliver_vm(d, rec, 7, 4, 0, "vm4");
+	deliver_vm(d, "third\n", 8, 4, 0, "vm4");
+	dtotel_flush(d);
+	ATF_REQUIRE(strstr(guests[2]->ident, "/k5=5") != NULL);
+	ATF_REQUIRE(strstr(guests[2]->ident, "/k6=6") == NULL);
+	/* A resource record for an unknown guest registers it. */
+	deliver_vm(d, "\037otel.resource\037host.name=n\n", 9, 8, 0, "vm8");
+	/* Host probes cannot change the host resource. */
+	deliver(d, "\037otel.resource\037host.name=evil\n", 0, 9, 1, 0);
+	deliver_vm(d, "z\n", 10, 8, 0, "vm8");
+	dtotel_flush(d);
+	ATF_REQUIRE_STREQ("8/0/vm8/host.name=n", guests[3]->ident);
+	dtotel_close(d);
+}
+
+/*
+ * Without a callback guests share the host exporter; a failing
+ * callback falls back to it with a warning; a failing shutdown is
+ * reported.
+ */
+ATF_TC_WITHOUT_HEAD(guest_fallbacks);
+ATF_TC_BODY(guest_fallbacks, tc)
+{
+	struct dtotel *d;
+
+	d = open_bridge(NULL);
+	ATF_REQUIRE_EQ(0, dtotel_guest(d, 2, 1, "vm2"));
+	deliver_vm(d, "guest\n", 1, 2, 0, "vm2");
+	deliver_vm(d, "\037otel.resource\037host.name=x\n", 1, 2, 0, "vm2");
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(1, cap.nevents);
+	dtotel_close(d);
+
+	d = open_guest_bridge();
+	guest_fail = 1;
+	deliver_vm(d, "guest\n", 1, 2, 0, "vm2");
+	deliver_vm(d, "guest again\n", 2, 2, 0, "vm2");
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(2, cap.nevents);
+	guest_fail = 2;
+	deliver_vm(d, "z\n", 3, 5, 0, "vm5");
+	ATF_REQUIRE_EQ(-1, dtotel_shutdown(d));
+	/* Retiring on an epoch change reports the failure too. */
+	deliver_vm(d, "z\n", 4, 6, 0, "vm6");
+	ATF_REQUIRE_EQ(-1, dtotel_guest(d, 6, 2, "vm6"));
+	/* A failing resource-driven retire marks the session. */
+	deliver_vm(d, "z\n", 5, 6, 0, "vm6");
+	deliver_vm(d, "\037otel.resource\037a=b\n", 6, 6, 0, "vm6");
+	ATF_REQUIRE(dtotel_error(d));
+	guest_fail = 0;
+	dtotel_close(d);
+}
+
+/* Guest aggregation data is a separate snapshot on the guest. */
+ATF_TC_WITHOUT_HEAD(guest_aggregations);
+ATF_TC_BODY(guest_aggregations, tc)
+{
+	struct dtotel *d;
+	struct fake_agg *fa[2];
+	dtrace_eprobedesc_t ed;
+	int64_t v = 5;
+
+	d = open_guest_bridge();
+	ATF_REQUIRE_EQ(0, dtotel_guest(d, 3, 1, "vm1"));
+	fa[0] = fake_new("c", 0);
+	fake_rec(fa[0], DTRACEAGG_COUNT, 0, &v, sizeof(v));
+	fa[1] = fake_new("c", 0);
+	fake_rec(fa[1], DTRACEAGG_COUNT, 0, &v, sizeof(v));
+	memset(&ed, 0, sizeof(ed));
+	ed.dtepd_vmid = 3;
+	fa[1]->ad.dtada_edesc = &ed;
+	run_aggs(d, fa, 2);
+	ATF_REQUIRE_EQ(1, cap.nsnaps);
+	ATF_REQUIRE_EQ(1, nguests);
+	ATF_REQUIRE_EQ(1, guests[0]->snaps);
+	fake_free(fa[0]);
+	fake_free(fa[1]);
+	dtotel_close(d);
+}
+
+/*
+ * dtrace(1) output: successive trace() records of one firing join a
+ * single line, a firing that printed nothing yields its probe name
+ * (unless quiet), and a new firing never joins an open line.
+ */
+ATF_TC_WITHOUT_HEAD(dtrace_records);
+ATF_TC_BODY(dtrace_records, tc)
+{
+	struct dtotel *d;
+	dtrace_probedata_t pd;
+	dtrace_eprobedesc_t ed;
+
+	d = open_bridge(NULL);
+	deliver(d, "               7", 0, 10, 1, 0);
+	deliver(d, "  hello", 0, 10, 1, 0);
+	deliver(d, "               9", 0, 20, 1, 0);	/* new firing */
+	memset(&pd, 0, sizeof(pd));
+	memset(&ed, 0, sizeof(ed));
+	ed.dtepd_epid = 1;
+	pd.dtpda_cpu = 0;
+	pd.dtpda_timestamp = 20;
+	pd.dtpda_edesc = &ed;
+	pd.dtpda_pdesc = &test_pdesc;
+	dtotel_firing_end(d, &pd, 0);		/* had output: nothing */
+	pd.dtpda_timestamp = 30;
+	dtotel_firing_end(d, &pd, 1);		/* quiet: nothing */
+	dtotel_firing_end(d, &pd, 0);		/* default output */
+	pd.dtpda_pdesc = NULL;
+	pd.dtpda_timestamp = 40;
+	dtotel_firing_end(d, &pd, 0);		/* no probe: nothing */
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(3, cap.nevents);
+	ATF_REQUIRE_STREQ("7 hello", cap.events[0].body);
+	ATF_REQUIRE_STREQ("9", cap.events[1].body);
+	ATF_REQUIRE_STREQ("syscall:freebsd:open:entry", cap.events[2].body);
+	dtotel_close(d);
+}
+
+/* ---------------------------------------------------------------- */
+/* Sessions (dtrace(1)'s -x otel)					*/
+
+ATF_TC_WITHOUT_HEAD(session_options);
+ATF_TC_BODY(session_options, tc)
+{
+	static const struct {
+		const char *name, *value;
+		int ret;
+	} opts[] = {
+		{ "bufsize", "4m", 0 }, { "otel", NULL, -1 },
+		{ "otel", "xml", -1 }, { "otel", "otlp", 1 },
+		{ "otel", "otlp-json", 1 }, { "otel", "json", 1 },
+		{ "otelendpoint", NULL, -1 }, { "otelendpoint", "", -1 },
+		{ "otelendpoint", "http://h:1", 1 }, { "otelspool", "s", 1 },
+		{ "otelspoolmax", "2k", 1 }, { "otelspoolmax", "x", -1 },
+		{ "otelspoolmax", "0", -1 }, { "otelspoolmax", "9q", -1 },
+		{ "otelspoolmax", "1kk", -1 },
+		{ "otelspoolmax", "99999999999999999g", -1 },
+		{ "otelspoolmax", "999999999999999999999", -1 },
+		{ "otelrotatesize", "1m", 1 }, { "otelrotatesize", "-1", -1 },
+		{ "otelrotatetime", "2h", 1 }, { "otelrotatetime", "1y", -1 },
+		{ "otelrotatekeep", "3", 1 }, { "otelrotatekeep", "1000", -1 },
+		{ "otelrotatekeep", "3k", -1 }, { "otelbogus", "1", -1 },
+	};
+	struct dtotel_options o;
+	char err[256];
+	size_t i;
+
+	memset(&o, 0, sizeof(o));
+	for (i = 0; i < nitems(opts); i++)
+		ATF_REQUIRE_EQ_MSG(opts[i].ret, dtotel_option(&o, opts[i].name,
+		    opts[i].value, err, sizeof(err)), "%s=%s", opts[i].name,
+		    opts[i].value != NULL ? opts[i].value : "(null)");
+	ATF_REQUIRE_EQ(DTOTEL_JSON, o.format);
+	ATF_REQUIRE_EQ(2048, o.spool_max);
+	ATF_REQUIRE_EQ(1024 * 1024, o.rotate_size);
+	ATF_REQUIRE_EQ(7200, o.rotate_interval);
+	ATF_REQUIRE_EQ(3, o.rotate_keep);
+}
+
+ATF_TC_WITHOUT_HEAD(session_options_check);
+ATF_TC_BODY(session_options_check, tc)
+{
+	struct dtotel_options o;
+	char err[256];
+
+	memset(&o, 0, sizeof(o));
+	ATF_REQUIRE_EQ(0, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	o.rotate_keep = 1;
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	ATF_REQUIRE(strstr(err, "need -x otel") != NULL);
+	memset(&o, 0, sizeof(o));
+	o.format = DTOTEL_OTLP;
+	ATF_REQUIRE_EQ(0, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, "f", err, sizeof(err)));
+	o.rotate_interval = 1;
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	o.rotate_interval = 0;
+	o.spool_max = 1;
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	o.spool = "s";
+	ATF_REQUIRE_EQ(0, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	o.format = DTOTEL_JSON;
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	memset(&o, 0, sizeof(o));
+	o.format = DTOTEL_OTLPJSON;
+	o.rotate_size = 1;
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	ATF_REQUIRE_EQ(0, dtotel_options_check(&o, "f", err, sizeof(err)));
+}
+
+static struct dtotel_session *
+session_on(enum dtotel_format fmt, const char *output, int hypertrace,
+    const char *spool)
+{
+	static struct dtotel_options o;
+	struct dtotel_session_config cfg;
+	struct dtotel_session *s;
+	char err[256];
+
+	memset(&stub, 0, sizeof(stub));
+	memset(&o, 0, sizeof(o));
+	o.format = fmt;
+	o.endpoint = "http://127.0.0.1:9";
+	o.spool = spool;
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.options = &o;
+	cfg.dtp = (dtrace_hdl_t *)&stub;
+	cfg.output = output;
+	cfg.service_name = "dtrace";
+	cfg.service_version = "Sun D 1.13";
+	cfg.scope_name = "dtrace";
+	cfg.profile = "script";
+	cfg.source = "@c[execname] = count();";
+	cfg.hypertrace = hypertrace;
+	s = dtotel_session_open(&cfg, err, sizeof(err));
+	ATF_REQUIRE_MSG(s != NULL, "%s", err);
+	ATF_REQUIRE(stub.bufhandler == dtotel_buffered);
+	return (s);
+}
+
+static char *
+read_file(const char *path)
+{
+	FILE *fp;
+	char *buf;
+	long n;
+
+	fp = fopen(path, "r");
+	ATF_REQUIRE(fp != NULL);
+	fseek(fp, 0, SEEK_END);
+	n = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	buf = calloc(1, (size_t)n + 1);
+	ATF_REQUIRE_EQ((size_t)n, fread(buf, 1, (size_t)n, fp));
+	fclose(fp);
+	return (buf);
+}
+
+static void
+validate_lines(const char *text, struct otlp_counts *c)
+{
+	char *copy, *line, *last, err[512];
+	struct jv *v;
+
+	memset(c, 0, sizeof(*c));
+	copy = strdup(text);
+	for (line = strtok_r(copy, "\n", &last); line != NULL;
+	    line = strtok_r(NULL, "\n", &last)) {
+		v = jv_parse(line, strlen(line), err, sizeof(err));
+		ATF_REQUIRE_MSG(v != NULL, "%s", err);
+		ATF_REQUIRE_MSG(otlp_validate_request(v, c, err,
+		    sizeof(err)) == 0, "%s", err);
+		jv_free(v);
+	}
+	free(copy);
+}
+
+/*
+ * A HyperTrace session writes the host's and each guest's records as
+ * separate resources; the guest's describes the VM (name, id, epoch,
+ * the hypervisor), not the host machine, and its own attributes win.
+ */
+ATF_TC_WITHOUT_HEAD(session_guest_resources);
+ATF_TC_BODY(session_guest_resources, tc)
+{
+	struct dtotel_session *s;
+	struct otlp_counts c;
+	struct fake_agg *fa;
+	int64_t v = 2;
+	char *text, *guestline;
+
+	setenv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment.name=lab",
+	    1);
+	s = session_on(DTOTEL_OTLPJSON, "out.jsonl", 1, NULL);
+	unsetenv("OTEL_RESOURCE_ATTRIBUTES");
+	ATF_REQUIRE_EQ(0, dtotel_guest(dtotel_session_bridge(s), 3, 9, "vm3"));
+	deliver(NULL, "host line\n", 0, 10, 1, 0);
+	deliver_vm(NULL, "\037otel.resource\037os.type=freebsd\n", 11, 3, 0,
+	    "vm3");
+	deliver_vm(NULL, "guest line\n", 12, 3, 0, "vm3");
+	fa = fake_new("c", 0);
+	fake_rec(fa, DTRACEAGG_COUNT, 0, &v, sizeof(v));
+	{
+		const dtrace_aggdata_t *ads[1] = { &fa->ad };
+
+		stub.aggs = ads;
+		stub.naggs = 1;
+		ATF_REQUIRE_EQ(0, dtotel_session_tick(s));	/* < 1 s */
+		ATF_REQUIRE_EQ(0, dtotel_session_flush(s));
+		ATF_REQUIRE_EQ(0, dtotel_session_close(s, 1));
+		stub.naggs = 0;
+	}
+	fake_free(fa);
+	text = read_file("out.jsonl");
+	validate_lines(text, &c);
+	ATF_REQUIRE_EQ(2, c.logs);
+	ATF_REQUIRE_EQ(1, c.metrics);
+	guestline = strstr(text, "hypertrace.vm.name");
+	ATF_REQUIRE(guestline != NULL);
+	ATF_REQUIRE(strstr(text, "{\"key\":\"hypertrace.vm.id\",\"value\":"
+	    "{\"stringValue\":\"3\"}},{\"key\":\"hypertrace.vm.epoch\","
+	    "\"value\":{\"stringValue\":\"9\"}}") != NULL);
+	ATF_REQUIRE(strstr(text, "{\"key\":\"host.name\",\"value\":"
+	    "{\"stringValue\":\"vm3\"}}") != NULL);
+	ATF_REQUIRE(strstr(text, "\"deployment.environment.name\"") != NULL);
+	ATF_REQUIRE(strstr(text, "\"scope\":{\"name\":\"dtrace\"") != NULL);
+	free(text);
+}
+
+ATF_TC_WITHOUT_HEAD(session_formats);
+ATF_TC_BODY(session_formats, tc)
+{
+	struct dtotel_session *s;
+	char err[256], *text;
+
+	/* JSON to a file: guest lines name their resource. */
+	s = session_on(DTOTEL_JSON, "out.json", 1, NULL);
+	deliver_vm(NULL, "guest\n", 1, 4, 0, "vm4");
+	deliver(NULL, "host\n", 0, 2, 1, 0);
+	ATF_REQUIRE_EQ(0, dtotel_session_close(s, 1));
+	text = read_file("out.json");
+	ATF_REQUIRE(strstr(text, "\"resource\":{\"hypertrace.vm.name\":"
+	    "\"vm4\",\"hypertrace.vm.id\":\"4\"") != NULL);
+	free(text);
+	/* OTLP/HTTP to a refusing port, spooling per guest. */
+	s = session_on(DTOTEL_OTLP, NULL, 1, "spool.jsonl");
+	deliver_vm(NULL, "guest\n", 1, 5, 0, "vm5");
+	ATF_REQUIRE_EQ(0, dtotel_session_close(s, 1));
+	text = read_file("spool.jsonl.vm5");
+	ATF_REQUIRE(strstr(text, "\"hypertrace.vm.name\"") != NULL);
+	free(text);
+	/* Not HyperTrace: guest records stay on the host resource. */
+	s = session_on(DTOTEL_OTLPJSON, NULL, 0, NULL);
+	ATF_REQUIRE_EQ(0, dtotel_session_clock(s, (dtrace_hdl_t *)&stub, err,
+	    sizeof(err)));
+	ATF_REQUIRE_EQ(1, stub.compiled);
+	stub.fail_exec = 1;
+	ATF_REQUIRE_EQ(-1, dtotel_session_clock(s, (dtrace_hdl_t *)&stub, err,
+	    sizeof(err)));
+	ATF_REQUIRE(strstr(err, "cannot enable") != NULL);
+	stub.fail_exec = 0;
+	stub.fail_compile = 1;
+	ATF_REQUIRE_EQ(-1, dtotel_session_clock(s, (dtrace_hdl_t *)&stub, err,
+	    sizeof(err)));
+	ATF_REQUIRE(strstr(err, "cannot compile") != NULL);
+	stub.fail_compile = 0;
+	/* A failing final snapshot fails the close. */
+	stub.fail_snap = 1;
+	ATF_REQUIRE_EQ(-1, dtotel_session_close(s, 1));
+	ATF_REQUIRE_EQ(0, dtotel_session_close(NULL, 1));
+}
+
+ATF_TC(session_tick);
+ATF_TC_HEAD(session_tick, tc)
+{
+
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(session_tick, tc)
+{
+	struct dtotel_session *s;
+	struct stat st;
+
+	s = session_on(DTOTEL_OTLPJSON, "t.jsonl", 0, NULL);
+	deliver(NULL, "line\n", 0, 2, 1, 0);
+	deliver(NULL, "next\n", 0, 3, 1, 0);	/* flushes "line" */
+	/* The first tick writes both: the pending record is complete. */
+	ATF_REQUIRE_EQ(0, dtotel_session_tick(s));
+	ATF_REQUIRE(stat("t.jsonl", &st) == 0 && st.st_size > 0);
+	ATF_REQUIRE(atf_utils_grep_file("\"next\"", "t.jsonl"));
+	/* A record the bridge cannot hand on fails the next tick. */
+	deliver(NULL, "more\n", 0, 4, 1, 0);
+	usleep(1100000);
+	failalloc_arm(1);
+	ATF_REQUIRE_EQ(-1, dtotel_session_tick(s));
+	failalloc_arm(0);
+	ATF_REQUIRE_EQ(-1, dtotel_session_close(s, 0));
+	/* OTLP/HTTP hands on the record; its batches stay with the sender. */
+	s = session_on(DTOTEL_OTLP, NULL, 0, NULL);
+	deliver(NULL, "line\n", 0, 2, 1, 0);
+	ATF_REQUIRE_EQ(0, dtotel_session_tick(s));
+	ATF_REQUIRE_EQ(0, dtotel_session_close(s, 0));
+}
+
+ATF_TC_WITHOUT_HEAD(session_open_errors);
+ATF_TC_BODY(session_open_errors, tc)
+{
+	struct dtotel_options o;
+	struct dtotel_session_config cfg;
+	char err[256];
+
+	memset(&stub, 0, sizeof(stub));
+	memset(&o, 0, sizeof(o));
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.options = &o;
+	cfg.dtp = (dtrace_hdl_t *)&stub;
+	cfg.service_name = "dtrace";
+	cfg.service_version = "1";
+	cfg.scope_name = "dtrace";
+	o.format = DTOTEL_OTLPJSON;
+	cfg.output = "nodir/x";
+	ATF_REQUIRE(dtotel_session_open(&cfg, err, sizeof(err)) == NULL);
+	ATF_REQUIRE(strstr(err, "cannot open the OpenTelemetry output") !=
+	    NULL);
+	cfg.output = NULL;
+	o.format = DTOTEL_OTLP;
+	o.endpoint = "gopher://x";
+	ATF_REQUIRE(dtotel_session_open(&cfg, err, sizeof(err)) == NULL);
+	ATF_REQUIRE(strstr(err, "cannot create") != NULL);
+	o.endpoint = NULL;
+	stub.fail_handle_buffered = 1;
+	ATF_REQUIRE(dtotel_session_open(&cfg, err, sizeof(err)) == NULL);
+	ATF_REQUIRE(strstr(err, "cannot start") != NULL);
+	stub.fail_handle_buffered = 0;
+	/* OTEL_SERVICE_NAME and service.name in the attributes. */
+	setenv("OTEL_RESOURCE_ATTRIBUTES", "service.name=a", 1);
+	setenv("OTEL_SERVICE_NAME", "b", 1);
+	{
+		struct dtotel_session *s;
+
+		o.format = DTOTEL_JSON;
+		s = dtotel_session_open(&cfg, err, sizeof(err));
+		ATF_REQUIRE(s != NULL);
+		ATF_REQUIRE_EQ(0, dtotel_session_close(s, 0));
+	}
+	unsetenv("OTEL_SERVICE_NAME");
+	unsetenv("OTEL_RESOURCE_ATTRIBUTES");
+}
+
+
+/* ---------------------------------------------------------------- */
+/* Edges								*/
+
+ATF_TC_WITHOUT_HEAD(buffered_edges);
+ATF_TC_BODY(buffered_edges, tc)
+{
+	struct dtotel *d;
+	char longexec[64];
+
+	d = open_bridge(NULL);
+	/* An empty chunk; a record without its newline. */
+	deliver(d, "", 0, 1, 1, 0);
+	deliver(d, "\037otel.clock\037wall=1700000000000000000\037ts=0", 0, 1, 1,
+	    0);
+	/* Trailing blanks, an empty last segment without a newline. */
+	deliver(d, "body[3]: x   \n   ", 0, 2, 0, 0);
+	/* A bare symbol frame, a frame with no line pending. */
+	deliver(d, "  just_a_symbol`\n", 0, 2, 0, 0);
+	deliver(d, "  plain_symbol_0xnot\n", 0, 2, 0, 0);
+	/* A marker-length line that is not the marker. */
+	deliver(d, "__BSDINSTRUMENTS_USTACK_X\n", 0, 2, 0, 0);
+	/* An open line, then the next chunk from another firing. */
+	deliver(d, "open line", 0, 3, 1, 0);
+	deliver(d, "other firing\n", 1, 3, 1, 0);
+	/* A long execname prefix is not taken as the process. */
+	memset(longexec, 'e', sizeof(longexec) - 2);
+	longexec[sizeof(longexec) - 2] = '[';
+	longexec[sizeof(longexec) - 1] = '\0';
+	deliver(d, longexec, 2, 4, 1, 0);
+	dtotel_flush(d);
+	ATF_REQUIRE(cap.nevents >= 5);
+	ATF_REQUIRE_STREQ("body[3]: x", cap.events[0].body);
+	ATF_REQUIRE_EQ(1700000000, cap.events[0].ts.tv_sec);
+	ATF_REQUIRE_STREQ("", cap.events[cap.nevents - 1].execname);
+	dtotel_close(d);
+	/* A deep stack and many lines grow their arrays. */
+	d = open_bridge(NULL);
+	{
+		char stk[2048];
+		size_t n = 0;
+
+		n += (size_t)snprintf(stk, sizeof(stk), "deep\n");
+		for (int k = 0; k < 40; k++)
+			n += (size_t)snprintf(stk + n, sizeof(stk) - n,
+			    "  kernel`f%d+0x1\n", k);
+		deliver(d, stk, 0, 9, 1, 0);
+	}
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(40, (int)cap.events[0].nstack);
+	dtotel_close(d);
+	/* Frames with no pending line and no probe data. */
+	d = open_bridge(NULL);
+	deliver(d, "  kernel`f+0x1\n", -1, 0, 0, 0);
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(1, cap.nevents);
+	ATF_REQUIRE_STREQ("", cap.events[0].body);
+	dtotel_close(d);
+}
+
+ATF_TC_WITHOUT_HEAD(record_edges);
+ATF_TC_BODY(record_edges, tc)
+{
+	static const char *const bad[] = {
+		"\037otel.ctx\037pid=1\037ppid=\037tid=1\n",
+		"\037otel.ctx\037pid=1\037ppid=1x\n",
+		"\037otel.span\037name=x\037start=1\037end=2\037a.s.=v\n",
+		"\037otel.span\037name=x\037start=1\037end=2\037a.i.=1\n",
+	};
+	struct dtotel *d;
+	size_t i;
+
+	d = open_bridge(NULL);
+	for (i = 0; i < nitems(bad); i++)
+		deliver(d, bad[i], 0, 1, 1, 0);
+	/* "a.i.=1" is an unknown integer field: ignored, span kept. */
+	ATF_REQUIRE_EQ(1, cap.nspans);
+	dtotel_close(d);
+	/* A guest's records with a pdesc vmid but no edesc. */
+	d = open_guest_bridge();
+	{
+		dtrace_bufdata_t bd;
+		dtrace_probedata_t pd;
+		dtrace_probedesc_t pdesc;
+
+		memset(&bd, 0, sizeof(bd));
+		memset(&pd, 0, sizeof(pd));
+		pdesc = test_pdesc;
+		pdesc.dtpd_vmid = 6;
+		pd.dtpda_pdesc = &pdesc;
+		bd.dtbda_probe = &pd;
+		bd.dtbda_buffered = "guest\n";
+		stub.bufhandler(&bd, stub.bufarg);
+		/* No probe description at all: the host. */
+		pd.dtpda_pdesc = NULL;
+		pd.dtpda_timestamp = 9;
+		bd.dtbda_buffered = "host\n";
+		stub.bufhandler(&bd, stub.bufarg);
+	}
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(1, nguests);
+	ATF_REQUIRE_STREQ("6/0/", guests[0]->ident);
+	ATF_REQUIRE_EQ(1, cap.nevents);
+	dtotel_close(d);
+}
+
+ATF_TC_WITHOUT_HEAD(keyname_edges);
+ATF_TC_BODY(keyname_edges, tc)
+{
+	struct dtotel *d;
+	struct fake_agg *fa;
+	char src[1200];
+	int64_t v = 1;
+	uint32_t k = 1;
+	int i, n;
+
+	/*
+	 * No key list, an over-long name, nested brackets with blanks,
+	 * an over-long expression, more keys than tracked.
+	 */
+	n = snprintf(src, sizeof(src), "@plain = count(); @%0130d[x] = count(); "
+	    "@n[ f(a[1]) , \"lit\"  ] = count(); @long[", 0);
+	for (i = 0; i < 300; i++)
+		src[n++] = 'y';
+	n += snprintf(src + n, sizeof(src) - (size_t)n, "] = count(); @many[");
+	for (i = 0; i < 18; i++)
+		n += snprintf(src + n, sizeof(src) - (size_t)n, "%sk%d",
+		    i > 0 ? "," : "", i);
+	snprintf(src + n, sizeof(src) - (size_t)n, "] = count();");
+	d = open_bridge(src);
+	fa = fake_new("n", 2);
+	fake_rec(fa, DTRACEACT_DIFEXPR, 0, &k, sizeof(k));
+	fake_rec(fa, DTRACEACT_DIFEXPR, 0, "\0\0", 3);	/* empty string */
+	fake_rec(fa, DTRACEAGG_COUNT, 0, &v, sizeof(v));
+	fa->ad.dtada_normal = 0;			/* treated as 1 */
+	run_aggs(d, &fa, 1);
+	ATF_REQUIRE_EQ(1, cap.nsnaps);
+	ATF_REQUIRE_STREQ("key.0=1;label=;", cap.snaps[0].points[0].attrs);
+	fake_free(fa);
+	dtotel_close(d);
+}
+
+ATF_TC_WITHOUT_HEAD(key_action_edges);
+ATF_TC_BODY(key_action_edges, tc)
+{
+	struct dtotel *d;
+	struct fake_agg *fa;
+	uint64_t f[2] = { 0x1100, 0 }, u[3] = { 5, 0, 0 }, one = 1;
+	int64_t v = 1;
+
+	d = open_bridge(NULL);
+	fa = fake_new("k", 6);
+	/* nframes 0 in the argument: 8-byte frames assumed. */
+	fake_rec(fa, DTRACEACT_STACK, 0, f, sizeof(f));
+	/* ustack: no frame limit, a zero frame ends it. */
+	fake_rec(fa, DTRACEACT_USTACK, 0, u, sizeof(u));
+	fake_rec(fa, DTRACEACT_SYM, 0, &one, 4);		/* too short */
+	fake_rec(fa, DTRACEACT_UMOD, 0, u, sizeof(u));
+	fake_rec(fa, DTRACEACT_USYM, 0, &one, 4);		/* too short */
+	fake_rec(fa, DTRACEACT_DIFEXPR, 0, &one, 8);
+	fake_rec(fa, DTRACEAGG_COUNT, 0, &v, sizeof(v));
+	run_aggs(d, &fa, 1);
+	ATF_REQUIRE_EQ(1, cap.nsnaps);
+	ATF_REQUIRE_STREQ("key.0=kernel`fn1+0x0;key.1=pid5;key.2=01000000;"
+	    "key.3=0x0;key.4=01000000;key.5=1;", cap.snaps[0].points[0].attrs);
+	fake_free(fa);
+	dtotel_close(d);
+}
+
+ATF_TC_WITHOUT_HEAD(histogram_edges);
+ATF_TC_BODY(histogram_edges, tc)
+{
+	struct dtotel *d;
+	struct fake_agg *fa[8];
+	int64_t q[DTRACE_QUANTIZE_NBUCKETS + 2], lq[2], llq[24], v[4];
+	int i;
+
+	d = open_bridge(NULL);
+	/* quantize data longer than the bucket count. */
+	memset(q, 0, sizeof(q));
+	q[DTRACE_QUANTIZE_ZEROBUCKET] = 1;
+	fa[0] = fake_new("q", 0);
+	fake_rec(fa[0], DTRACEAGG_QUANTIZE, 0, q, sizeof(q));
+	/* lquantize data without its argument word. */
+	fa[1] = fake_new("lq", 0);
+	fake_rec(fa[1], DTRACEAGG_LQUANTIZE, 0, lq, 4);
+	/* llquantize: too short; invalid arguments. */
+	fa[2] = fake_new("l1", 0);
+	fake_rec(fa[2], DTRACEAGG_LLQUANTIZE, 0, llq, 4);
+	memset(llq, 0, sizeof(llq));
+	llq[0] = (int64_t)LLQ_ARG(1, 0, 2, 2);		/* factor < 2 */
+	fa[3] = fake_new("l2", 0);
+	fake_rec(fa[3], DTRACEAGG_LLQUANTIZE, 0, llq, 3 * 8);
+	/*
+	 * llquantize(x, 10, 1, 2, 20): starts at 10; within an order the
+	 * steps are smaller than the order (several bins per order).
+	 */
+	memset(llq, 0, sizeof(llq));
+	llq[0] = (int64_t)LLQ_ARG(10, 1, 2, 20);
+	for (i = 2; i < 24; i++)
+		llq[i] = i;
+	fa[4] = fake_new("l3", 0);
+	fake_rec(fa[4], DTRACEAGG_LLQUANTIZE, 0, llq, sizeof(llq));
+	/* The other invalid llquantize arguments. */
+	{
+		static const uint64_t badargs[] = {
+			LLQ_ARG(10, 2, 2, 20),		/* low >= high */
+			LLQ_ARG(10, 1, 2, 0),		/* no steps */
+			LLQ_ARG(10, 1, 2, 5),		/* factor > steps */
+		};
+		struct fake_agg *b;
+
+		for (i = 0; i < (int)nitems(badargs); i++) {
+			memset(llq, 0, sizeof(llq));
+			llq[0] = (int64_t)badargs[i];
+			b = fake_new("lb", 0);
+			fake_rec(b, DTRACEAGG_LLQUANTIZE, 0, llq, 3 * 8);
+			run_aggs(d, &b, 1);
+			fake_free(b);
+		}
+		memset(&cap.snaps, 0, sizeof(cap.snaps));
+		cap.nsnaps = 0;
+	}
+	/* stddev whose sum of squares does not exceed the sum squared. */
+	v[0] = 1;
+	v[1] = 4;
+	v[2] = 16;
+	v[3] = 0;
+	fa[5] = fake_new("sd", 0);
+	fake_rec(fa[5], DTRACEAGG_STDDEV, 0, v, sizeof(v));
+	/* An aggregation description without records. */
+	fa[6] = fake_new("empty", 0);
+	fa[6]->desc->dtagd_nrecs = 0;
+	run_aggs(d, fa, 7);
+	ATF_REQUIRE_EQ(6, cap.nsnaps);
+	for (i = 0; i < 7; i++)
+		fake_free(fa[i]);
+	dtotel_close(d);
+}
+
+ATF_TC_WITHOUT_HEAD(bridge_alloc_failure);
+ATF_TC_BODY(bridge_alloc_failure, tc)
+{
+	struct dtotel *d;
+	struct fake_agg *fa;
+	int64_t v = 1;
+	uint32_t k = 3;
+	int i;
+
+	for (i = 1; i <= 60; i++) {
+		struct dtotel_config cfg;
+
+		memset(&cap, 0, sizeof(cap));
+		cap.e.ops = &cap_ops;
+		memset(&stub, 0, sizeof(stub));
+		memset(&cfg, 0, sizeof(cfg));
+		cfg.exporter = &cap.e;
+		cfg.source = "@c[pid] = count();";
+		cfg.guest_exporter = make_guest;
+		cfg.guest_arg = &guests;
+		nguests = 0;
+		guest_fail = 0;
+		fa = fake_new("c", 1);
+		fake_rec(fa, DTRACEACT_DIFEXPR, 0, &k, sizeof(k));
+		fake_rec(fa, DTRACEAGG_COUNT, 0, &v, sizeof(v));
+		failalloc_arm(i);
+		d = dtotel_open(&cfg);
+		if (d == NULL) {
+			failalloc_arm(0);
+			fake_free(fa);
+			continue;
+		}
+		(void)dtotel_handle(d);
+		deliver(d, "line\n", 0, 1, 1, 0);
+		deliver(d, "  kernel`a+0x1\n  kernel`b+0x2\n", 0, 1, 1, 0);
+		deliver(d, "more", 0, 1, 1, 0);
+		deliver(d, " text\n", 0, 1, 1, 0);
+		(void)dtotel_guest(d, 4, 1, "vm4");
+		(void)dtotel_guest(d, 4, 2, "vm4b");
+		deliver_vm(d, "\037otel.resource\037host.name=h\n", 2, 4, 0, "vm4");
+		deliver_vm(d, "g\n", 3, 9, 0, "vm9");
+		deliver_vm(d, "\037otel.resource\037a=b\n", 4, 10, 0, "vm10");
+		{
+			const dtrace_aggdata_t *ads[1] = { &fa->ad };
+
+			stub.aggs = ads;
+			stub.naggs = 1;
+			(void)dtotel_aggregate(d);
+			stub.naggs = 0;
+		}
+		failalloc_arm(0);
+		fake_free(fa);
+		dtotel_close(d);
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(session_edges);
+ATF_TC_BODY(session_edges, tc)
+{
+	struct dtotel_options o;
+	struct dtotel_session_config cfg;
+	struct dtotel_session *s;
+	struct rlimit rl;
+	char err[256];
+	int i;
+
+	/* Each stray option alone, without -x otel. */
+	{
+		struct dtotel_options cases[6];
+
+		memset(cases, 0, sizeof(cases));
+		cases[0].endpoint = "e";
+		cases[1].spool = "s";
+		cases[2].spool_max = 1;
+		cases[3].rotate_size = 1;
+		cases[4].rotate_interval = 1;
+		cases[5].rotate_keep = 1;
+		for (i = 0; i < 6; i++)
+			ATF_REQUIRE_EQ(-1, dtotel_options_check(&cases[i], NULL,
+			    err, sizeof(err)));
+	}
+	memset(&o, 0, sizeof(o));
+	o.format = DTOTEL_OTLP;
+	o.rotate_size = 1;
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	o.rotate_size = 0;
+	o.rotate_keep = 1;
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	memset(&o, 0, sizeof(o));
+	o.format = DTOTEL_JSON;
+	o.spool = "s";
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	o.spool = NULL;
+	o.spool_max = 1;
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	o.spool_max = 0;
+	o.rotate_interval = 1;
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	o.rotate_interval = 0;
+	o.rotate_keep = 1;
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	o.rotate_keep = 0;
+	o.endpoint = "http://x";
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, "f", err, sizeof(err)));
+	/* The environment's endpoint and timeout reach the exporter. */
+	setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9", 1);
+	setenv("OTEL_EXPORTER_OTLP_TIMEOUT", "100", 1);
+	memset(&o, 0, sizeof(o));
+	o.format = DTOTEL_OTLP;
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.options = &o;
+	cfg.dtp = (dtrace_hdl_t *)&stub;
+	cfg.service_name = "dtrace";
+	cfg.service_version = "1";
+	cfg.scope_name = "dtrace";
+	memset(&stub, 0, sizeof(stub));
+	s = dtotel_session_open(&cfg, err, sizeof(err));
+	ATF_REQUIRE(s != NULL);
+	ATF_REQUIRE_EQ(0, dtotel_session_close(s, 0));
+	unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT");
+	unsetenv("OTEL_EXPORTER_OTLP_TIMEOUT");
+	/* Twice within a second: one write. */
+	s = session_on(DTOTEL_OTLPJSON, "tt.jsonl", 0, NULL);
+	ATF_REQUIRE_EQ(0, dtotel_session_tick(s));
+	ATF_REQUIRE_EQ(0, dtotel_session_tick(s));
+	/* A sink that cannot be written fails the close. */
+	signal(SIGXFSZ, SIG_IGN);
+	rl.rlim_cur = 0;
+	rl.rlim_max = RLIM_INFINITY;
+	deliver(NULL, "x\n", 0, 1, 1, 0);
+	ATF_REQUIRE_EQ(0, setrlimit(RLIMIT_FSIZE, &rl));
+	ATF_REQUIRE_EQ(-1, dtotel_session_close(s, 1));
+	rl.rlim_cur = RLIM_INFINITY;
+	setrlimit(RLIMIT_FSIZE, &rl);
+	/* Allocation failures while opening a session. */
+	for (i = 1; i <= 60; i++) {
+		memset(&stub, 0, sizeof(stub));
+		failalloc_arm(i);
+		s = dtotel_session_open(&cfg, err, sizeof(err));
+		failalloc_arm(0);
+		if (s != NULL)
+			(void)dtotel_session_close(s, 0);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1143,5 +2204,23 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, context_malformed);
 	ATF_TP_ADD_TC(tp, context_jail_cache);
 	ATF_TP_ADD_TC(tp, span_context);
+	ATF_TP_ADD_TC(tp, guest_routing);
+	ATF_TP_ADD_TC(tp, guest_resource_records);
+	ATF_TP_ADD_TC(tp, guest_fallbacks);
+	ATF_TP_ADD_TC(tp, guest_aggregations);
+	ATF_TP_ADD_TC(tp, dtrace_records);
+	ATF_TP_ADD_TC(tp, session_options);
+	ATF_TP_ADD_TC(tp, session_options_check);
+	ATF_TP_ADD_TC(tp, session_guest_resources);
+	ATF_TP_ADD_TC(tp, session_formats);
+	ATF_TP_ADD_TC(tp, session_tick);
+	ATF_TP_ADD_TC(tp, session_open_errors);
+	ATF_TP_ADD_TC(tp, buffered_edges);
+	ATF_TP_ADD_TC(tp, record_edges);
+	ATF_TP_ADD_TC(tp, keyname_edges);
+	ATF_TP_ADD_TC(tp, key_action_edges);
+	ATF_TP_ADD_TC(tp, histogram_edges);
+	ATF_TP_ADD_TC(tp, bridge_alloc_failure);
+	ATF_TP_ADD_TC(tp, session_edges);
 	return (atf_no_error());
 }

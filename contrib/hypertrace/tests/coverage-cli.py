@@ -236,6 +236,17 @@ def build_harness(out, objtop, libtop):
         ' offsetof(dt_elf_prog_t, dtep_exec), (int)DT_PROG_IDENTLEN); return (0); }\n')
     commands.append(['/usr/bin/cc', *('-I' + str(p) for p in includes),
                      str(harness/'elf-offsets.c'), '-o', str(harness/'elf-offsets')])
+    # The independent OTLP JSON validator and the loopback collector from
+    # the libotelexport tests check -x otel output (never instrumented).
+    otel_tests = ROOT/'lib/libotelexport/tests'
+    wrap = [f'-Wl,--wrap={f}' for f in ('malloc', 'calloc', 'realloc', 'strdup', 'strndup')]
+    commands.append(['/usr/bin/cc', '-std=gnu17', '-g', '-O0', '-Wall', '-Werror',
+                     str(otel_tests/'otlp_validate.c'), str(otel_tests/'otlp_validate_main.c'),
+                     '-o', str(harness/'otlp_validate')])
+    commands.append(['/usr/bin/cc', '-std=gnu17', '-g', '-O0', '-Wall', '-Werror', '-pthread',
+                     *wrap, '-I' + str(otel_tests), str(otel_tests/'otlp_collector_main.c'),
+                     str(otel_tests/'otel_testutil.c'), '-lz', '-lssl', '-lcrypto',
+                     '-o', str(harness/'otlp_collector')])
     with (out/'harness-build.log').open('w') as log:
         for command in commands:
             log.write('$ ' + shlex.join(command) + '\n')
@@ -244,6 +255,7 @@ def build_harness(out, objtop, libtop):
     offsets = subprocess.run([str(harness/'elf-offsets')], capture_output=True, text=True,
                              check=True).stdout.split()
     return {'shim': shim, 'daemon': harness/'cli-fake-dtraced', 'snapshot': snapshot,
+            'otlp_validate': harness/'otlp_validate', 'otlp_collector': harness/'otlp_collector',
             'srcident_offset': int(offsets[0]), 'exec_offset': int(offsets[1]),
             'identlen': int(offsets[2]),
             'sha256': {str(p): sha(p) for p in (TESTS/'cli-model-shim.c',
@@ -266,11 +278,16 @@ def load_cases():
 # 81/81), then reviewed after -y was made to run its ELF and exit instead of
 # falling into the host consumer path (cli-dec3, 2026-10-22: 3167/3341,
 # 1534/1761, 81/81; the host-path arms -y used to reach are now reached only
-# by -E).  A changed denominator needs an explicit baseline review; floors
-# allow a small tolerance for interleaving-dependent paths (session-stop exits
-# in the worker).
+# by -E), then reviewed after the OpenTelemetry output (-x otel*, the
+# libdtotel session, HyperTrace guest resources; otel-s4-cli-final4,
+# 2026-10-26: 3301/3477, 1628/1859, 84/84 -- 136 new lines, 98 new
+# branches and 3 new functions; the rate rose from 94.79%/87.11% to
+# 94.94%/87.57%, and the added or changed code itself is 142/144 lines,
+# 110/116 branches).  A changed denominator needs an explicit baseline
+# review; floors allow a small tolerance for interleaving-dependent paths
+# (session-stop exits in the worker).
 REGRESSION = {
-    'dtrace.c': {'lines': (3157, 3341), 'branches': (1524, 1761), 'functions': (81, 81)},
+    'dtrace.c': {'lines': (3291, 3477), 'branches': (1618, 1859), 'functions': (84, 84)},
     'dtrace_identifiers.h': {'lines': (53, 57), 'branches': (33, 46), 'functions': (3, 3)},
     'hypertrace_frame.h': {'lines': (47, 48), 'branches': (47, 60), 'functions': (2, 2)},
 }

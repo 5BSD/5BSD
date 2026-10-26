@@ -373,6 +373,12 @@ watch_run(const struct profile *p, const char *rendered,
 		if (sink != NULL && now.tv_sec - last_flush.tv_sec >=
 		    WATCH_FLUSH_INTERVAL) {
 			last_flush = now;
+			/* The pending record is complete between passes. */
+			if (dt != NULL) {
+				dtotel_flush(dt);
+				if (dtotel_error(dt))
+					break;
+			}
 			if ((is_text && oe_sink_poll(sink) != 0) ||
 			    (wo->output != NULL && oe_flush(exporter) != 0))
 				break;

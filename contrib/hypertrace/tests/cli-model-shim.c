@@ -356,12 +356,16 @@ shim_ioctl(void *varg, u_long cmd, void *arg)
 			rc = -1;
 		} else {
 			uint16_t vmid = p->vmid;
+			int first = M.necb, i;
 
 			p->vmid = 0;
 			M.activity = ACT_INACTIVE;
 			rc = model_ioctl(varg, DTRACEIOC_ENABLE, arg);
 			M.activity = saved;
 			p->vmid = vmid;
+			/* Their enabled probe descriptions name the guest. */
+			for (i = first; rc == 0 && i < M.necb; i++)
+				M.ecb[i].vmid = vmid;
 		}
 	} else {
 		rc = model_ioctl(varg, cmd, arg);
@@ -797,6 +801,7 @@ abort(void)
 /* Allocation faults (callers in the executable only). */
 extern void *__malloc(size_t);
 extern void *__calloc(size_t, size_t);
+extern void *__realloc(void *, size_t);
 
 void *
 malloc(size_t size)
@@ -820,6 +825,18 @@ calloc(size_t n, size_t size)
 		return (NULL);
 	}
 	return (__calloc(n, size));
+}
+
+void *
+realloc(void *p, size_t size)
+{
+	int e = fault("realloc", __builtin_return_address(0));
+
+	if (e != 0) {
+		errno = e;
+		return (NULL);
+	}
+	return (__realloc(p, size));
 }
 
 #define	FAULT_INT(name, proto, args, failval)				\
@@ -937,7 +954,15 @@ name proto								\
 	return (real_##name args);					\
 }
 
+/* NULL with errno = value (the OpenTelemetry probe clock program). */
+API_FAULT(dtrace_prog_t *, dtrace_program_strcompile, (dtrace_hdl_t *h,
+    const char *s, dtrace_probespec_t c, uint_t f, int ac, char *const av[]),
+    (h, s, c, f, ac, av), NULL)
+
 /* -1 with errno = value. */
+API_FAULT(int, dtrace_program_exec, (dtrace_hdl_t *h, dtrace_prog_t *p,
+    dtrace_proginfo_t *i), (h, p, i), -1)
+API_FAULT(int, dtrace_aggregate_snap, (dtrace_hdl_t *h), (h), -1)
 API_FAULT(int, dtrace_program_compiled_digest, (dtrace_hdl_t *h,
     dtrace_prog_t *p, uint8_t id[32]), (h, p, id), -1)
 API_FAULT(int, dtrace_getopt, (dtrace_hdl_t *h, const char *o,

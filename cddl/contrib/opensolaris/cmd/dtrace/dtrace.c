@@ -82,6 +82,8 @@
 #undef NORETURN /* needed because libxo redefines it */
 #include <libxo/xo.h>
 
+#include "dtotel_session.h"
+
 typedef struct dtrace_cmd {
 	void (*dc_func)(struct dtrace_cmd *);	/* function to compile arg */
 	dtrace_probespec_t dc_spec;		/* probe specifier context */
@@ -217,6 +219,15 @@ static pthread_t g_sighandlertd;
 
 static const char *g_ofile = NULL;
 static FILE *g_ofp;
+
+/*
+ * OpenTelemetry output (-x otel=...): the trace data goes to an
+ * exporter through libdtotel instead of to g_ofp.
+ */
+static struct dtotel_options g_otel_opts;
+static struct dtotel_session *g_otel;
+static int otel_clock(void);
+static void otel_finish(int);
 
 static pthread_mutex_t g_dtpmtx;
 static dtrace_hdl_t *g_dtp;
@@ -2183,9 +2194,13 @@ chewrec(const dtrace_probedata_t *data, const dtrace_recdesc_t *rec, void *arg)
 	if (rec == NULL) {
 		/*
 		 * We have processed the final record; output the newline if
-		 * we're not in quiet mode.
+		 * we're not in quiet mode.  OpenTelemetry output instead
+		 * records a firing that printed nothing by its probe.
 		 */
-		if (!g_quiet)
+		if (g_otel != NULL)
+			dtotel_firing_end(dtotel_session_bridge(g_otel), data,
+			    g_quiet);
+		else if (!g_quiet)
 			oprintf("\n");
 
 		return (DTRACE_CONSUME_NEXT);
@@ -2214,6 +2229,10 @@ chew(const dtrace_probedata_t *data, void *arg)
 		g_newline = 0;
 		return (DTRACE_CONSUME_ABORT);
 	}
+
+	/* OpenTelemetry records carry the probe; no heading or prefix. */
+	if (g_otel != NULL)
+		return (DTRACE_CONSUME_THIS);
 
 	if (heading == 0) {
 		if (!g_flowindent) {
@@ -2316,7 +2335,18 @@ handle_consumer_drain(dtd_arg_t *connection, int rx_sockfd, int64_t deadline)
 	    consumer_drain_gate_held(&challenge)) {
 		dtp_lock();
 		output_fd = g_ofp == NULL ? -1 : fileno(g_ofp);
-		if (g_dtp != NULL && output_fd >= 0 &&
+		/*
+		 * OpenTelemetry output is drained into the exporter, which
+		 * then hands it on (file sinks fsync, OTLP posts or spools).
+		 */
+		if (g_otel != NULL) {
+			if (g_dtp != NULL &&
+			    dtrace_consume_quiesced(g_dtp, NULL, &con,
+			    NULL) == 0 &&
+			    dtotel_session_flush(g_otel) == 0 &&
+			    consumer_drain_gate_held(&challenge))
+				challenge.result = 1;
+		} else if (g_dtp != NULL && output_fd >= 0 &&
 		    fstat(output_fd, &st) == 0 && S_ISREG(st.st_mode) &&
 		    dtrace_consume_quiesced(g_dtp, g_ofp, &con, NULL) == 0 &&
 		    fsync(output_fd) == 0 &&
@@ -2582,7 +2612,11 @@ dtc_work(void *_arg)
 
 #ifdef __FreeBSD__
 		dtp_lock();
-		if (atomic_load(&g_siginfo) && !dtrace_oformat(g_dtp)) {
+		if (atomic_load(&g_siginfo) && g_otel != NULL) {
+			/* A snapshot of the aggregations, as for printing. */
+			(void)dtotel_aggregate(dtotel_session_bridge(g_otel));
+			atomic_store(&g_siginfo, 0);
+		} else if (atomic_load(&g_siginfo) && !dtrace_oformat(g_dtp)) {
 			(void)dtrace_aggregate_print(g_dtp, g_ofp, NULL);
 			atomic_store(&g_siginfo, 0);
 		}
@@ -2595,7 +2629,8 @@ dtc_work(void *_arg)
 			 * slightly cleaner.  Note that we do this even in
 			 * "quiet" mode...
 			 */
-			oprintf("\n");
+			if (g_otel == NULL)
+				oprintf("\n");
 			atomic_store(&g_newline, 0);
 		}
 
@@ -2610,7 +2645,8 @@ dtc_work(void *_arg)
 			dtp_unlock();
 			goto stopped_session;
 		}
-		switch (dtrace_work_consumer(g_dtp, g_ofp, &con, NULL)) {
+		switch (dtrace_work_consumer(g_dtp, g_otel != NULL ? NULL :
+		    g_ofp, &con, NULL)) {
 		case DTRACE_WORKSTATUS_DONE:
 			done = 1;
 			break;
@@ -2627,17 +2663,25 @@ dtc_work(void *_arg)
 			goto stopped_session;
 		if (g_ofp != NULL && fflush(g_ofp) == EOF)
 			clearerr(g_ofp);
+		if (g_otel != NULL) {
+			dtp_lock();
+			if (dtotel_session_tick(g_otel) != 0)
+				g_status = E_ERROR;
+			dtp_unlock();
+		}
 
 	} while (!done);
 
 	if (atomic_load(&g_session_stop))
 		goto stopped_session;
 	dtp_lock();
-	if (!dtrace_oformat(g_dtp))
+	if (!dtrace_oformat(g_dtp) && g_otel == NULL)
 		oprintf("\n");
 
 	impatient = atomic_load(&g_impatient);
-	if (arg != NULL) {
+	if (g_otel != NULL)
+		otel_finish(!impatient);
+	else if (arg != NULL) {
 		if (!impatient &&
 		    (!dtrace_oformat(g_dtp) || arg->print_upon_exit)) {
 			if (dtrace_aggregate_print(g_dtp, g_ofp, NULL) == -1 &&
@@ -2649,6 +2693,8 @@ dtc_work(void *_arg)
 
 stopped_session:
 	dtp_lock();
+	/* A stopped session exports only what was already accepted. */
+	otel_finish(0);
 	if (atomic_load(&g_session_stop))
 		dtrace_oformat_discard(g_dtp);
 	else
@@ -2688,6 +2734,12 @@ process_new_pgp(dtrace_prog_t *pgp, dtrace_prog_t *gpgp_resp)
 		    pgp->dp_vmid, gpgp_resp->dp_vmid);
 		return (-1);
 	}
+
+	if (pgp->dp_vmid != 0 && g_otel != NULL &&
+	    dtotel_guest(dtotel_session_bridge(g_otel), pgp->dp_vmid,
+	    pgp->dp_vmepoch, pgp->dp_vmname) != 0)
+		error("failed to update the OpenTelemetry resource of VMID "
+		    "%u\n", pgp->dp_vmid);
 
 	if (pgp->dp_vmid != 0) {
 		/*
@@ -2731,6 +2783,12 @@ process_new_pgp(dtrace_prog_t *pgp, dtrace_prog_t *gpgp_resp)
 	if (n_pgps == 0) {
 		pthread_t worktd;
 
+		/* The probe clock is local to this consumer, never shipped. */
+		if (g_otel != NULL && otel_clock() != 0) {
+			if (atomic_fetch_add(&g_intr, 1))
+				atomic_store(&g_impatient, 1);
+			return (-1);
+		}
 		if (dtrace_program_exec(g_dtp, pgp, &dpi) == -1) {
 			if (atomic_fetch_add(&g_intr, 1))
 				atomic_store(&g_impatient, 1);
@@ -3805,6 +3863,8 @@ drophandler(const dtrace_dropdata_t *data, void *arg)
 	if (!dtrace_oformat(g_dtp)) {
 		error(data->dtdda_msg);
 	}
+	if (g_otel != NULL)
+		dtotel_drops(dtotel_session_bridge(g_otel), data->dtdda_drops);
 
 	return (DTRACE_HANDLE_OK);
 }
@@ -3967,6 +4027,98 @@ bufhandler(const dtrace_bufdata_t *bufdata, void *arg)
 	}
 
 	return (DTRACE_HANDLE_OK);
+}
+
+static void compile_file(dtrace_cmd_t *);
+static void compile_str(dtrace_cmd_t *);
+
+/*
+ * Open the OpenTelemetry session: the scripts' text names the
+ * aggregation keys, the first script names the records.
+ */
+static void
+otel_open(void)
+{
+	struct dtotel_session_config cfg;
+	struct oe_buf src;
+	char err[256], buf[4096], *profile, *dot;
+	size_t n;
+	FILE *fp;
+	int i;
+
+	/*
+	 * The D text, for aggregation key names: -s scripts are read
+	 * again; the rest (-n, -P, -m, -f, -i) are D text already, as
+	 * -x otel excludes the ELF options.
+	 */
+	oe_buf_init(&src);
+	for (i = 0; i < g_cmdc; i++) {
+		if (g_cmdv[i].dc_func != compile_file) {
+			oe_buf_appendstr(&src, g_cmdv[i].dc_arg);
+			oe_buf_append(&src, "\n", 1);
+			continue;
+		}
+		if ((fp = fopen(g_cmdv[i].dc_arg, "r")) == NULL)
+			continue;
+		while ((n = fread(buf, 1, sizeof(buf), fp)) > 0)
+			oe_buf_append(&src, buf, n);
+		fclose(fp);
+	}
+	if (src.error)
+		fatal("failed to allocate memory");
+	/* Records are named after the first script. */
+	profile = NULL;
+	for (i = 0; i < g_cmdc; i++) {
+		if (g_cmdv[i].dc_func == compile_file) {
+			profile = strdup(basename(g_cmdv[i].dc_arg));
+			break;
+		}
+	}
+	if (profile != NULL && (dot = strrchr(profile, '.')) != NULL &&
+	    dot != profile)
+		*dot = '\0';
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.options = &g_otel_opts;
+	cfg.dtp = g_dtp;
+	cfg.output = g_ofile;
+	cfg.service_name = "dtrace";
+	cfg.service_version = _dtrace_version;
+	cfg.scope_name = "dtrace";
+	cfg.profile = profile != NULL ? profile : "dtrace";
+	cfg.source = src.data;
+	cfg.hypertrace = g_elf;
+	g_otel = dtotel_session_open(&cfg, err, sizeof(err));
+	oe_buf_free(&src);
+	free(profile);
+	if (g_otel == NULL)
+		fatal("%s\n", err);
+}
+
+/* Enable the probe clock program (before any traced program). */
+static int
+otel_clock(void)
+{
+	char err[256];
+
+	if (dtotel_session_clock(g_otel, g_dtp, err, sizeof(err)) != 0) {
+		error("%s\n", err);
+		return (-1);
+	}
+	return (0);
+}
+
+/* End the session; called by the output worker with the handle lock. */
+static void
+otel_finish(int finish)
+{
+
+	if (g_otel == NULL)
+		return;
+	if (dtotel_session_close(g_otel, finish) != 0) {
+		error("failed to export OpenTelemetry data\n");
+		g_status = E_ERROR;
+	}
+	g_otel = NULL;
 }
 
 static void
@@ -4652,6 +4804,18 @@ main(int argc, char *argv[])
 			case 'x':
 				if ((p = strchr(optarg, '=')) != NULL)
 					*p++ = '\0';
+				{
+					/* dtrace(1) options, not libdtrace's. */
+					char oerr[256];
+					int handled;
+
+					handled = dtotel_option(&g_otel_opts,
+					    optarg, p, oerr, sizeof(oerr));
+					if (handled < 0)
+						fatal("%s\n", oerr);
+					if (handled > 0)
+						break;
+				}
 				if (strcmp(optarg, "checkmodref") == 0) {
 					/* A dtrace(1) check, not a libdtrace option. */
 					if (p != NULL)
@@ -4727,6 +4891,20 @@ main(int argc, char *argv[])
 	if (g_checkmodref && g_mode != DMODE_EXEC)
 		fatal("-x checkmodref is valid only when programs are compiled "
 		    "for execution\n");
+	{
+		char oerr[256];
+
+		if (dtotel_options_check(&g_otel_opts, g_ofile, oerr,
+		    sizeof(oerr)) != 0)
+			fatal("%s\n", oerr);
+	}
+	if (g_otel_opts.format != DTOTEL_OFF) {
+		if (g_mode != DMODE_EXEC || !g_exec || g_guest)
+			fatal("-x otel applies to tracing (not -A, -e, -G, "
+			    "-h, -l, -y or -Y)\n");
+		if (g_ofp == NULL)
+			fatal("-x otel is not valid with -B\n");
+	}
 
 	if (g_ofp == NULL && g_mode != DMODE_EXEC) {
 		(void) fprintf(stderr, "%s: -B not valid in combination"
@@ -4812,6 +4990,8 @@ main(int argc, char *argv[])
 	g_quiet = opt != DTRACEOPT_UNSET;
 
 	if (dtrace_oformat(g_dtp)) {
+		if (g_otel_opts.format != DTOTEL_OFF)
+			fatal("-x otel is not valid with --libxo\n");
 		if (dtrace_setopt(g_dtp, "quiet", 0) != 0)
 			dfatal("failed to set quiet (caused by oformat)");
 	}
@@ -4825,7 +5005,17 @@ main(int argc, char *argv[])
 	 */
 	switch (g_mode) {
 	case DMODE_EXEC:
-		if (g_ofile != NULL && (g_ofp = fopen(g_ofile, "a")) == NULL)
+		if (g_otel_opts.format != DTOTEL_OFF) {
+			/*
+			 * The session owns -o; a host HyperTrace consumer
+			 * enables the clock when its first program comes
+			 * back from dtraced (process_new_pgp()).
+			 */
+			otel_open();
+			if (!g_elf && otel_clock() != 0)
+				fatal("failed to start OpenTelemetry output\n");
+		} else if (g_ofile != NULL &&
+		    (g_ofp = fopen(g_ofile, "a")) == NULL)
 			fatal("failed to open output file '%s'", g_ofile);
 
 		if (dtrace_oformat(g_dtp))
@@ -4853,6 +5043,10 @@ main(int argc, char *argv[])
 			 */
 			if (g_worktd)
 				(void)pthread_join(g_worktd, NULL);
+			/* Without a worker the session was never ended. */
+			dtp_lock();
+			otel_finish(0);
+			dtp_unlock();
 
 			/* Return holding the handle lock (see dtp_lock()). */
 			dtp_lock();

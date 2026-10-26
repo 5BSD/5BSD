@@ -1996,3 +1996,388 @@ def run_all(out, binary, harness, env, objtop, only=None):
     finally:
         shutil.rmtree(ctx.sockdir, ignore_errors=True)
     return results
+
+
+# ---------------------------------------------------------------------------
+# OpenTelemetry output (-x otel=...).  Exported files are checked with the
+# independent validator from lib/libotelexport/tests (its own JSON parser and
+# OTLP schema), never with library code.  The probe clock program is enabled
+# before the script, so it owns the first BEGIN ECB (#0) and the script's
+# BEGIN is #1.  The anchor printf takes walltimestamp and timestamp; a wall
+# time of 1700000000 s with timestamp 0 puts every later record just after
+# 2023-11-14T22:13:20Z, far from the consumer's clock.
+ANCHOR = 'go 0 dtrace:::BEGIN n:1700000000000000000 n:0'
+W0 = 1700000000 * 10**9
+
+
+def otel_tool(d, name):
+    return d.parent.parent/'harness'/name
+
+
+def otlp_lines(d, path):
+    """Validate an OTLP JSON Lines file; return its parsed requests."""
+    import json
+    proc = subprocess.run([str(otel_tool(d, 'otlp_validate')), str(path)],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise ValueError(f'validator: {proc.stderr.strip()}')
+    return [json.loads(line) for line in Path(path).read_text().splitlines()]
+
+
+def otel_items(reqs, kind):
+    """(resource attributes dict, item) for every log record/metric/span."""
+    keys = {'logs': ('resourceLogs', 'scopeLogs', 'logRecords'),
+            'metrics': ('resourceMetrics', 'scopeMetrics', 'metrics'),
+            'spans': ('resourceSpans', 'scopeSpans', 'spans')}[kind]
+    out = []
+    for req in reqs:
+        for rs in req.get(keys[0], []):
+            res = {a['key']: list(a['value'].values())[0]
+                   for a in rs['resource']['attributes']}
+            for ss in rs[keys[1]]:
+                for item in ss[keys[2]]:
+                    out.append((res, ss['scope']['name'], item))
+    return out
+
+
+def attrs(item):
+    return {a['key']: list(a['value'].values())[0] for a in item.get('attributes', [])}
+
+
+def otel_check(fn):
+    """Wrap a check so validator errors become case errors."""
+    def check(d, stdout, stderr, shimlog, daemonlog):
+        try:
+            return fn(d, stdout) or []
+        except (ValueError, KeyError, IndexError) as error:
+            return [f'otel check: {error!r}']
+    return check
+
+
+def check_otlpjson_printf(d, stdout):
+    reqs = otlp_lines(d, d/'out.jsonl')
+    logs = otel_items(reqs, 'logs')
+    errors = []
+    if stdout != '':
+        errors.append('stdout not empty')
+    if [i['body']['stringValue'] for _, _, i in logs] != ['hello 42']:
+        errors.append(f'log bodies {[i["body"] for _, _, i in logs]}')
+    res, scope, rec = logs[0]
+    t = int(rec['timeUnixNano'])
+    if not W0 < t < W0 + 10**9:
+        errors.append(f'timeUnixNano {t} is not the probe clock')
+    if int(rec['observedTimeUnixNano']) < W0 + 10**16:
+        errors.append('observedTimeUnixNano is not the consumer clock')
+    if res.get('service.name') != 'dtrace' or scope != 'dtrace' or \
+            not res.get('service.version', '').startswith('Sun D'):
+        errors.append(f'resource/scope {res} {scope}')
+    if attrs(rec).get('dtrace.probe') != 'dtrace:::BEGIN':
+        errors.append(f'probe attribute {attrs(rec)}')
+    if any(k.startswith('hypertrace.') for k in res):
+        errors.append('host records carry a guest resource')
+    return errors
+
+
+case('otel-otlpjson-file', FAST + ['-q', '-x', 'otel=otlp-json', '-o', '{d}/out.jsonl', '-n',
+                                   'BEGIN { printf("hello %d\\n", 42); exit(0); }'],
+     script=ANCHOR + ' ; go 0 dtrace:::BEGIN#1 n:42 n:0', stdout='', stderr='',
+     check=otel_check(check_otlpjson_printf))
+
+
+def check_json_records(d, stdout):
+    import json
+    recs = [json.loads(line) for line in stdout.splitlines()]
+    bodies = [(r['probe'], r['body']) for r in recs]
+    want = [('test:kernel:alpha:entry', '7 8'), ('test:kernel:beta:entry',
+                                                'test:kernel:beta:entry')]
+    if bodies != want:
+        return [f'records {bodies} != {want}']
+    if not all(r['time'].startswith('2023-11-14T22:13:20.') for r in recs):
+        return [f'times {[r["time"] for r in recs]}']
+    if recs[0]['attributes'].get('cpu.logical_number') != 1:
+        return [f'attributes {recs[0]["attributes"]}']
+    return []
+
+
+# Without -q, a firing's trace() records are one line and a firing that
+# traces nothing is recorded by its probe, as dtrace(1) prints them.
+case('otel-json-trace-records', FAST + ['-x', 'otel=json', '-n',
+                                        'test:kernel:alpha:entry { trace(arg0); trace(arg1); } '
+                                        'test:kernel:beta:entry { }'],
+     script=ANCHOR + ' ; go 1 test:kernel:alpha:entry n:7 n:8 ; go 1 test:kernel:beta:entry',
+     signals=[('ROUND 2', signal.SIGINT)],
+     stderr=matched('test:kernel:alpha:entry ', 2), check=otel_check(check_json_records))
+
+
+def check_otlpjson_metrics(d, stdout):
+    reqs = otlp_lines(d, d/'agg.jsonl')
+    mets = otel_items(reqs, 'metrics')
+    names = sorted(m['name'] for _, _, m in mets)
+    if names != ['dtrace.agg.c']:
+        return [f'metric names {names}']
+    dp = mets[0][2]['sum']['dataPoints'][0]
+    if dp['asInt'] != '1' or attrs(dp) != {'syscall': 'alpha'}:
+        return [f'data point {dp}']
+    return []
+
+
+case('otel-otlpjson-aggregation', FAST + ['-x', 'otel=otlp-json', '-o', '{d}/agg.jsonl', '-s',
+                                          '{d}/agg.d'],
+     inputs={'agg.d': 'test:kernel:alpha:entry { @c[probefunc] = count(); }\n'},
+     script=ANCHOR + ' ; go 0 test:kernel:alpha:entry n:1 s:alpha a:0:3',
+     signals=[('ROUND 2', signal.SIGINT)], stdout='',
+     stderr_re=r"dtrace: script '.*/agg.d' matched 1 probe\n",
+     check=otel_check(check_otlpjson_metrics))
+
+
+def check_siginfo(d, stdout):
+    reqs = otlp_lines(d, d/'s.jsonl')
+    mets = otel_items(reqs, 'metrics')
+    if len(mets) < 2:
+        return [f'expected a SIGINFO snapshot and the final one, got {len(mets)}']
+    return []
+
+
+case('otel-siginfo-snapshot', FAST + ['-x', 'otel=otlp-json', '-o', '{d}/s.jsonl', '-n',
+                                      'test:kernel:alpha:entry { @c = count(); }'],
+     script=ANCHOR + ' ; go 0 test:kernel:alpha:entry n:1 a:0:1',
+     signals=[('ROUND 3', signal.SIGINFO), ('ROUND 6', signal.SIGINT)], stdout='',
+     stderr=matched('test:kernel:alpha:entry ', 1), check=otel_check(check_siginfo))
+
+
+def collector_env(statuses=''):
+    """Start the loopback collector; point OTEL_* at it."""
+    def env_fn(ctx, d):
+        coll = d/'coll'
+        coll.mkdir()
+        args = [str(ctx.harness['otlp_collector']), '-o', str(coll), '-t', '30', '-n', '2']
+        if statuses:
+            args += ['-r', statuses]
+        subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=open(coll/'stderr', 'w'))
+        deadline = time.monotonic() + 10
+        while not (coll/'port').exists() or not (coll/'port').read_text().strip():
+            if time.monotonic() > deadline:
+                break
+            time.sleep(0.02)
+        port = (coll/'port').read_text().strip()
+        return {'OTEL_EXPORTER_OTLP_ENDPOINT': f'http://127.0.0.1:{port}',
+                'OTEL_EXPORTER_OTLP_COMPRESSION': 'none',
+                'OTEL_RESOURCE_ATTRIBUTES': 'deployment.environment.name=lab'}
+    return env_fn
+
+
+def check_http(d, stdout):
+    coll = d/'coll'
+    deadline = time.monotonic() + 10
+    while not (coll/'2.json').exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    paths = sorted((coll/f'{n}.path').read_text().strip() for n in (1, 2))
+    if paths != ['/v1/logs', '/v1/metrics']:
+        return [f'paths {paths}']
+    reqs = otlp_lines(d, coll/'1.json') + otlp_lines(d, coll/'2.json')
+    logs = otel_items(reqs, 'logs')
+    if not logs or logs[0][0].get('deployment.environment.name') != 'lab':
+        return [f'resource {logs[:1]}']
+    return []
+
+
+case('otel-otlp-http', FAST + ['-q', '-x', 'otel=otlp', '-n',
+                               'test:kernel:alpha:entry { printf("x\\n"); @c = count(); }'],
+     env_fn=collector_env(), script=ANCHOR + ' ; go 0 test:kernel:alpha:entry n:0 n:1 a:0:1',
+     signals=[('ROUND 2', signal.SIGINT)], stdout='', stderr='',
+     check=otel_check(check_http))
+
+
+def check_spool(d, stdout):
+    reqs = otlp_lines(d, d/'spool.jsonl')
+    if len(otel_items(reqs, 'logs')) != 1:
+        return ['spool lacks the log batch']
+    return []
+
+
+# Port 9 on loopback refuses: the batch is spooled after the retries.
+case('otel-otlp-spool', FAST + ['-q', '-x', 'otel=otlp', '-x', 'otelendpoint=http://127.0.0.1:9',
+                                '-x', 'otelspool={d}/spool.jsonl', '-x', 'otelspoolmax=1m', '-n',
+                                'BEGIN { printf("x\\n"); exit(0); }'],
+     script=ANCHOR + ' ; go 0 dtrace:::BEGIN#1 n:0 n:0', stdout='',
+     stderr_has=['otlp: spooled /v1/logs batch to'], check=otel_check(check_spool))
+
+
+def check_rotated(d, stdout):
+    first = otlp_lines(d, d/'r.jsonl.1')
+    second = otlp_lines(d, d/'r.jsonl')
+    if not first or not second:
+        return ['rotation produced no records']
+    return []
+
+
+case('otel-otlpjson-rotate', FAST + ['-q', '-x', 'otel=otlp-json', '-x', 'otelrotatesize=1k',
+                                     '-x', 'otelrotatekeep=2', '-x', 'otelrotatetime=1h',
+                                     '-o', '{d}/r.jsonl', '-n',
+                                     'test:kernel:alpha:entry { printf("line %d\\n", arg0); }'],
+     # Three records at GO, written by the first once-a-second flush;
+     # the fourth comes later and its write rotates.
+     script=ANCHOR + ' ; ' + ' ; '.join(f'go 0 test:kernel:alpha:entry n:{i}' for i in range(3))
+     + ' ; snap:2400 0 test:kernel:alpha:entry n:3',
+     signals=[('ROUND 900', signal.SIGINT)], stdout='', stderr='',
+     env={'OTEL_RESOURCE_ATTRIBUTES': 'k=' + 'v' * 900},
+     check=otel_check(check_rotated))
+
+for name, args, msg in (
+        ('format', ['-x', 'otel=xml'], '-x otel=xml: expected otlp, otlp-json or json'),
+        ('no-format', ['-x', 'otel'], '-x otel needs a format: otlp, otlp-json or json'),
+        ('no-value', ['-x', 'otelendpoint'], '-x otelendpoint needs a value'),
+        ('unknown', ['-x', 'otelbogus=1'], 'unknown OpenTelemetry option -x otelbogus'),
+        ('badsize', ['-x', 'otel=otlp', '-x', 'otelspoolmax=9q'],
+         '-x otelspoolmax expects a positive number with an optional unit suffix'),
+        ('badtime', ['-x', 'otel=json', '-o', 'f', '-x', 'otelrotatetime=0'],
+         '-x otelrotatetime expects a positive number with an optional unit suffix'),
+        ('badrotsize', ['-x', 'otel=json', '-o', 'f', '-x', 'otelrotatesize=x'],
+         '-x otelrotatesize expects a positive number with an optional unit suffix'),
+        ('badkeep', ['-x', 'otel=json', '-o', 'f', '-x', 'otelrotatekeep=1000'],
+         '-x otelrotatekeep expects 1 to 999'),
+        ('without-otel', ['-x', 'otelspool=s'], '-x otel* options need -x otel'),
+        ('otlp-file', ['-x', 'otel=otlp', '-o', 'f'],
+         '-x otel=otlp sends to the collector; use -x otel=otlp-json to write a file'),
+        ('otlp-rotate', ['-x', 'otel=otlp', '-x', 'otelrotatekeep=2'],
+         '-x otelrotate* options need a file (-o)'),
+        ('spoolmax-alone', ['-x', 'otel=otlp', '-x', 'otelspoolmax=1k'],
+         '-x otelspoolmax needs -x otelspool'),
+        ('json-endpoint', ['-x', 'otel=json', '-x', 'otelendpoint=http://h'],
+         '-x otelendpoint and -x otelspool apply to -x otel=otlp only'),
+        ('stdout-rotate', ['-x', 'otel=json', '-x', 'otelrotatesize=1k'],
+         '-x otelrotate* options need a file (-o)'),
+        ('list-mode', ['-x', 'otel=json', '-l'],
+         '-x otel applies to tracing (not -A, -e, -G, -h, -l, -y or -Y)'),
+        ('compile-only', ['-x', 'otel=json', '-e'],
+         '-x otel applies to tracing (not -A, -e, -G, -h, -l, -y or -Y)'),
+        ('buffered', ['-x', 'otel=json', '-B'], '-x otel is not valid with -B'),
+        ('libxo', ['--libxo', 'json', '-x', 'otel=json'], '-x otel is not valid with --libxo')):
+    # libxo closes its empty document even on a fatal exit.
+    case(f'otel-usage-{name}', args + ['-n', 'BEGIN { exit(0); }'], status=1,
+         stdout='{ }\n' if name == 'libxo' else '', stderr=f'dtrace: {msg}\n')
+
+case('otel-output-unwritable', ['-x', 'otel=otlp-json', '-o', '{d}/absent/o', '-n',
+                                'BEGIN { exit(0); }'], status=1, stdout='',
+     stderr_has=['otelexport: {d}/absent/o: open failed: No such file or directory\n',
+                 'dtrace: cannot open the OpenTelemetry output\n'])
+case('otel-buffered-handler-fails', ['-x', 'otel=json', '-n', 'BEGIN { exit(0); }'],
+     api_faults='dtrace_handle_buffered:1:5', status=1, stdout='',
+     stderr_has=['dtrace: cannot start the OpenTelemetry exporter\n'])
+case('otel-clock-compile-fails', ['-x', 'otel=json', '-n', 'BEGIN { exit(0); }'],
+     api_faults='dtrace_program_strcompile:2:5', status=1, stdout='',
+     stderr_has=['dtrace: cannot compile the probe clock program',
+                 'dtrace: failed to start OpenTelemetry output\n'])
+case('otel-clock-enable-fails', ['-x', 'otel=json', '-n', 'BEGIN { exit(0); }'],
+     api_faults='dtrace_program_exec:1:5', status=1, stdout='',
+     stderr_has=['dtrace: cannot enable the probe clock program',
+                 'dtrace: failed to start OpenTelemetry output\n'])
+# A failing final snapshot is an export failure: exit status 1.
+case('otel-final-snapshot-fails', FAST + ['-q', '-x', 'otel=json', '-n',
+                                          'BEGIN { @c = count(); exit(0); }'],
+     script=ANCHOR + ' ; go 0 dtrace:::BEGIN#1 n:1 a:0:1 n:0',
+     api_faults='dtrace_aggregate_snap:1:5',
+     status=1, stdout='', stderr_has=['failed to export OpenTelemetry data\n'])
+case('otel-drops', ['-b', '64', '-x', 'otel=json', '-x', 'switchrate=10ms', '-n',
+                    ENTRY + ' { trace(arg0); }'],
+     script=ANCHOR + ' ; ' + ';'.join(f'go 0 {ENTRY} n:{i}' for i in range(1, 5)),
+     signals=[('ROUND 2', signal.SIGINT)], stderr_has=['drops on CPU 0'],
+     check=lambda d, out, err, slog, dlog: [] if out.count('"body"') >= 1 else ['no records'])
+
+
+# HyperTrace host consumer: the guest's records form their own resource
+# (VM name, id and epoch from the received program, hypertrace.host.name the
+# hypervisor), distinct from the host's; the host's probe clock is local to
+# the consumer and never shipped through dtraced.
+def check_guest_resource(d, stdout):
+    reqs = otlp_lines(d, d/'otel.jsonl')
+    logs = otel_items(reqs, 'logs')
+    guests = [(r, i) for r, _, i in logs if r.get('hypertrace.vm.name') == 'vm3']
+    if not guests:
+        return [f'no guest records: {logs}']
+    res, rec = guests[0]
+    want = {'hypertrace.vm.id': '3', 'hypertrace.vm.epoch': '9', 'host.name': 'vm3'}
+    if any(res.get(k) != v for k, v in want.items()) or 'host.id' in res or \
+            not res.get('hypertrace.host.name'):
+        return [f'guest resource {res}']
+    if rec['body']['stringValue'] != '5':
+        return [f'guest record {rec["body"]}']
+    return []
+
+
+host('otel-guest-resource', LOOP + 'sleep 300\n' + STOP_OK + 'hold\n',
+     during=guest_runner(), extra=['-x', 'otel=otlp-json', '-o', '{d}/otel.jsonl'],
+     script=ANCHOR + ' ; go 0 dtrace:::BEGIN#1 n:5', stderr_re=MATCHED3,
+     daemon_has=['ACK delivery=5 vmid=3 epoch=9 outcome=2', 'STOP-REPLY result=1'],
+     log_has=['VPROBE_CREATE vmid 3 epoch 9', 'ENABLE-GUEST vmid 3 epoch 9'],
+     check=otel_check(check_guest_resource))
+# A drain certifies once the exporter has taken (and synced) the records.
+host('otel-drain', BASE + f'drain token={TOKEN}\n' + STOP_OK + 'hold\n',
+     extra=['-x', 'otel=otlp-json', '-o', '{d}/d.jsonl'], stderr_re=MATCHED0,
+     script=ANCHOR + ' ; go 0 dtrace:::BEGIN#1 n:1',
+     daemon_has=['DRAIN-REPLY result=1 echo=1', 'STOP-REPLY result=1'],
+     check=otel_check(lambda d, out: [] if otel_items(otlp_lines(d, d/'d.jsonl'), 'logs')
+                      else ['drained records missing']))
+# Like any failure to enable a received program, the consumer stops.
+host('otel-clock-fails-on-receive', BASE + 'hold\n', extra=['-x', 'otel=json'],
+     api_faults='dtrace_program_strcompile:2:5',
+     stderr_has=['dtrace: cannot compile the probe clock program'])
+host('otel-drain-gate-released', BASE + f'drain token={TOKEN}\n' + STOP_OK + END_ON_SIGNAL,
+     extra=['-x', 'otel=otlp-json', '-o', '{d}/d.jsonl'], gate=f'held:{TOKEN}:1',
+     signals=[('STOP-REPLY', signal.SIGINT)], stdout='',
+     stderr_re=all_of(MATCHED0, RECONNECTING),
+     daemon_has=['DRAIN-REPLY result=0', 'STOP-REPLY result=0'])
+# The rotation fails (the directory turns read-only during the run): the
+# once-a-second flush reports it and the run exits 1.
+def lock_dir_when_written(ctx, d, env, deadline):
+    while not (d/'out'/'f.jsonl').exists() or (d/'out'/'f.jsonl').stat().st_size == 0:
+        if time.monotonic() > deadline:
+            return ['output never written']
+        time.sleep(0.02)
+    (d/'out').chmod(0o555)
+    return []
+
+
+case('otel-rotate-fails', FAST + ['-q', '-x', 'otel=otlp-json', '-x', 'otelrotatesize=1',
+                                  '-o', '{d}/out/f.jsonl', '-n',
+                                  'test:kernel:alpha:entry { printf("x\\n"); }'],
+     setup=lambda d: (d/'out').mkdir(), during=lock_dir_when_written,
+     # One record at GO, another after a second (pass 150): two
+     # once-a-second writes, the second of which rotates.
+     script=ANCHOR + ' ; go 0 test:kernel:alpha:entry n:0 ; snap:2400 0 '
+     'test:kernel:alpha:entry n:1',
+     signals=[('ROUND 900', signal.SIGINT)], status=1, stdout='',
+     stderr_has=['f.jsonl: rotate failed: Permission denied\n',
+                 'failed to export OpenTelemetry data\n'])
+# The script text is read again for aggregation key names; if that fails
+# the keys are numbered instead.
+case('otel-script-reread-fails', FAST + ['-x', 'otel=json', '-s', '{d}/k.d'],
+     inputs={'k.d': 'BEGIN { exit(0); }\n'}, faults='fopen:2:2',
+     script=ANCHOR + ' ; go 0 dtrace:::BEGIN#1 n:0',
+     stdout_has=['"profile":"k","probe":"dtrace:::BEGIN"'],
+     stderr_re=r"dtrace: script '.*/k.d' matched 1 probe\n")
+# A script name without a suffix names the records as it is.
+case('otel-script-no-suffix', FAST + ['-q', '-x', 'otel=json', '-s', '{d}/plain'],
+     inputs={'plain': 'BEGIN { printf("p\\n"); exit(0); }\n'},
+     script=ANCHOR + ' ; go 0 dtrace:::BEGIN#1 n:0 n:0', stderr='',
+     stdout_has=['"profile":"plain"'])
+case('otel-no-program', ['-x', 'otel=json'], status=1, stdout='',
+     stderr='dtrace: no probes specified\n')
+case('otel-usage-guest', ['-x', 'otel=json', '-y', '{d}/none.elf'], status=1, stdout='',
+     stderr_has=['dtrace: -x otel applies to tracing (not -A, -e, -G, -h, -l, -y or -Y)\n'])
+case('otel-usage-guest-hypertrace', ['-x', 'otel=json', '-Y', '{d}/none.elf'], status=1,
+     stdout='', stderr_has=['dtrace: -x otel applies to tracing (not -A, -e, -G, -h, -l, -y or -Y)\n'])
+# A script whose name starts with its only dot keeps it.
+case('otel-script-dotfile', FAST + ['-q', '-x', 'otel=json', '-s', '{d}/.hidden'],
+     inputs={'.hidden': 'BEGIN { printf("h\\n"); exit(0); }\n'},
+     script=ANCHOR + ' ; go 0 dtrace:::BEGIN#1 n:0 n:0', stderr='',
+     stdout_has=['"profile":".hidden"'])
+# Collecting the D text for key names runs out of memory: a clear error.
+case('otel-source-alloc-fails', ['-x', 'otel=json', '-n', 'BEGIN { exit(0); }'],
+     faults='realloc:1:12', status=1, stdout='',
+     stderr_has=['dtrace: failed to allocate memory'])
+case('exec-oformat-siginfo', FAST + ['--libxo', 'json', '-n',
+                                     'test:kernel:alpha:entry { @c = count(); }'],
+     script='go 0 test:kernel:alpha:entry n:1 a:0:1',
+     signals=[('ROUND 3', signal.SIGINFO), ('ROUND 6', signal.SIGINT)],
+     stderr=matched('test:kernel:alpha:entry ', 1), stdout_has=['"probes"'])

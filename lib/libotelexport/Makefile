@@ -22,6 +22,7 @@ MLINKS+=	libotelexport.3 oe_jsonl_new.3
 MLINKS+=	libotelexport.3 oe_collapsed_new.3
 MLINKS+=	libotelexport.3 oe_text_sink_new.3
 MLINKS+=	libotelexport.3 oe_jsonl_sink_new.3
+MLINKS+=	libotelexport.3 oe_jsonl_resource_new.3
 MLINKS+=	libotelexport.3 oe_collapsed_sink_new.3
 MLINKS+=	libotelexport.3 oe_otlp_new.3
 MLINKS+=	libotelexport.3 oe_otlpjson_new.3

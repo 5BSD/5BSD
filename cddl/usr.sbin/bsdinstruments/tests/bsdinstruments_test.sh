@@ -896,6 +896,201 @@ EOF
 	    cat o3.json
 }
 
+atf_test_case cli_usage_edges
+cli_usage_edges_head()
+{
+	atf_set descr "usage, version, and argument validation"
+}
+cli_usage_edges_body()
+{
+	export HOME="$(pwd)/home"
+	make_profile "$HOME/.bsdinstruments/profiles" test-trace
+	atf_check -s exit:2 -e match:'^usage: bsdinstruments <subcommand>' \
+	    bsdinstruments
+	atf_check -s exit:2 -e match:'^usage: bsdinstruments <subcommand>' \
+	    bsdinstruments frobnicate
+	atf_check -o inline:'0.1.0\n' bsdinstruments --version
+	atf_check -s exit:2 -e match:'usage: bsdinstruments list' \
+	    bsdinstruments list --bogus
+	atf_check -s exit:2 -e match:'usage: bsdinstruments list' \
+	    bsdinstruments list extra
+	atf_check -s exit:2 -e match:'usage: bsdinstruments probes' \
+	    bsdinstruments probes --bogus
+	atf_check -s exit:2 -e match:'usage: bsdinstruments generate' \
+	    bsdinstruments generate test-trace extra
+	atf_check -s exit:2 -e match:'usage: bsdinstruments generate' \
+	    bsdinstruments generate test-trace --bogus
+	atf_check -s exit:2 -e match:'usage: bsdinstruments watch' \
+	    bsdinstruments watch test-trace --bogus
+	for o in --broker "--bufsize 1m" "--switchrate 1s"; do
+		atf_check -s exit:2 -e match:'usage: bsdinstruments generate' \
+		    bsdinstruments generate test-trace $o
+	done
+	atf_check -s exit:2 -e match:'--bufsize needs a value' \
+	    bsdinstruments watch test-trace --bufsize ''
+	atf_check -s exit:2 -e match:'--switchrate needs a value' \
+	    bsdinstruments watch test-trace --switchrate ''
+	for v in abc 5x 99999999999999999999 -1; do
+		atf_check -s exit:2 -e match:'--pid expects an integer' \
+		    bsdinstruments generate test-trace --param what=x --pid "$v"
+	done
+	atf_check -s exit:2 -e match:'--uid expects an integer' \
+	    bsdinstruments generate test-trace --uid 4294967296
+	atf_check -s exit:2 -e match:'--gid expects an integer' \
+	    bsdinstruments generate test-trace --gid x
+	atf_check -s exit:2 -e match:'--jail expects an integer' \
+	    bsdinstruments generate test-trace --jail -2
+	for v in abc 1x inf nan 0 -1 1e9; do
+		atf_check -s exit:2 -e match:'--duration must be a positive' \
+		    bsdinstruments generate test-trace --duration "$v"
+	done
+	atf_check -s exit:2 -e match:'--param expects key=value' \
+	    bsdinstruments generate test-trace --param noequals
+	atf_check -s exit:2 -e match:'rotation options need --output' \
+	    bsdinstruments watch test-trace --rotate-time 1h
+	atf_check -s exit:2 -e match:'rotation options need --output' \
+	    bsdinstruments watch test-trace --rotate-keep 2
+	atf_check -s exit:2 -e match:'apply to --format otel only' \
+	    bsdinstruments watch test-trace --format json --spool-max 1k
+	atf_check -s exit:2 -e match:'positive number' \
+	    bsdinstruments watch test-trace --output f --rotate-size abc
+	atf_check -s exit:2 -e match:'--spool needs a file name' \
+	    bsdinstruments watch test-trace --format otel --spool ''
+	atf_check -o match:'syscall::c:entry' bsdinstruments generate \
+	    test-trace --param other=1 --param what=b --param what=c
+	atf_check -s exit:2 -e match:'provide a profile name' \
+	    bsdinstruments generate
+	atf_check -s exit:1 -e match:"unknown profile 'nosuch'" \
+	    bsdinstruments generate nosuch
+}
+
+atf_test_case generate_all_filters
+generate_all_filters_head()
+{
+	atf_set descr "every filter flag renders; repeated params take the last"
+}
+generate_all_filters_body()
+{
+	export HOME="$(pwd)/home"
+	make_profile "$HOME/.bsdinstruments/profiles" test-trace
+	atf_check -o save:out.d bsdinstruments generate test-trace \
+	    --param what=open --param what=close --uid 3 --gid 4 --jail 5 \
+	    --where 'arg0 > 1' --format text
+	atf_check -o match:'syscall::close:entry' cat out.d
+	atf_check -o match:'/uid == 3 && gid == 4 && curproc->p_ucred->cr_prison->pr_id == 5 && \(arg0 > 1\)/' \
+	    cat out.d
+}
+
+atf_test_case watch_mock_options
+watch_mock_options_head()
+{
+	atf_set descr "broker mode, buffer options, collapsed user stacks, env endpoint"
+	atf_set require.progs cc
+}
+watch_mock_options_body()
+{
+	mock_setup
+	anchored_script
+	atf_check -s exit:0 -o match:'nginx' -e empty \
+	    bsdinstruments watch mock-prof --broker --bufsize 2m \
+	    --switchrate 10ms
+	atf_check -o match:'bufsize=2m' -o match:'switchrate=10ms' cat mock.log
+	echo "fail open" > script
+	atf_check -s exit:1 -o empty -e match:'BSDTrace delegation failed' \
+	    bsdinstruments watch mock-prof --broker
+	atf_check -s exit:1 -o empty -e match:'BSDTrace delegation failed' \
+	    bsdinstruments probes --broker
+	: > script
+	anchored_script
+	atf_check -s exit:0 -o ignore -e empty \
+	    bsdinstruments watch mock-prof --format collapsed --with-ustack
+	# The default endpoint (nothing listens on it here): spooled.
+	export OTEL_EXPORTER_OTLP_TIMEOUT=200
+	atf_check -s exit:0 -o empty -e match:'spooled' \
+	    bsdinstruments watch mock-prof --format otel --spool s1.jsonl
+	export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:9
+	atf_check -s exit:0 -o empty -e match:'spooled' \
+	    bsdinstruments watch mock-prof --format otel --spool s2.jsonl
+}
+
+atf_test_case watch_tty_color
+watch_tty_color_head()
+{
+	atf_set descr "text output on a terminal is colored; failures reset it"
+	atf_set require.progs cc script
+}
+watch_tty_color_body()
+{
+	mock_setup
+	anchored_script
+	atf_check -s exit:0 -o ignore -e ignore \
+	    script -q tty.out bsdinstruments watch mock-prof < /dev/null
+	atf_check -o match:"$(printf '\033')\[36m" -o match:'nginx' \
+	    -o match:"$(printf '\033')\[35m" cat tty.out
+	echo "fail go" > script
+	atf_check -s exit:1 -o ignore -e ignore \
+	    script -q go.out bsdinstruments watch mock-prof < /dev/null
+	atf_check -o match:"$(printf '\033')\[0m" \
+	    -o match:'failed to start trace' cat go.out
+}
+
+atf_test_case watch_write_failures
+watch_write_failures_head()
+{
+	atf_set descr "write failures while tracing stop the run with status 1"
+	atf_set require.progs cc
+}
+watch_write_failures_body()
+{
+	mock_setup
+	{
+		echo 'chunk 0 1000 1 \037otel.clock\037wall=1700000000000000000\037ts=1000\n'
+		pad=$(printf '%04096d' 0)
+		i=0
+		while [ $i -lt 80 ]; do
+			echo "chunk 0 $((5000 + i)) 2 nginx[42]: $pad\n"
+			i=$((i + 1))
+		done
+		echo work
+		echo 'sleep 1100'
+		echo work
+		echo 'chunk 0 90000 2 nginx[42]: again\n'
+		echo work
+	} > script
+	# The file size limit (RLIMIT_FSIZE, SIGXFSZ ignored; 128k, room
+	# for a coverage profile) is hit while tracing.
+	for f in text json otlp-json; do
+		atf_check -s exit:1 -o empty -e match:'File too large' \
+		    sh -c "trap '' XFSZ; ulimit -f 256; exec bsdinstruments watch \
+		    mock-prof --format $f --output out.$f"
+	done
+}
+
+atf_test_case watch_text_rotation_failure
+watch_text_rotation_failure_head()
+{
+	atf_set descr "a failed rotation of text output ends the run with status 1"
+	atf_set require.progs cc
+}
+watch_text_rotation_failure_body()
+{
+	mock_setup
+	cat > script <<'EOF'
+chunk 0 5000 2 nginx[42]: a line long enough to need rotating soon\n
+work
+sleep 1100
+work
+EOF
+	# The slot rotation must clear is a non-empty directory.
+	mkdir -p out.txt.1/keep
+	atf_check -s exit:1 -o empty -e match:'out.txt: rotate failed' \
+	    bsdinstruments watch mock-prof --output out.txt --rotate-size 10 \
+	    --rotate-keep 1
+	# Standard output gets the periodic check too, without a flush.
+	atf_check -s exit:0 -o match:'nginx' -e empty \
+	    bsdinstruments watch mock-prof
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case list_basic
@@ -926,4 +1121,10 @@ atf_init_test_cases()
 	atf_add_test_case watch_spans
 	atf_add_test_case generate_context_markers
 	atf_add_test_case watch_semconv
+	atf_add_test_case cli_usage_edges
+	atf_add_test_case generate_all_filters
+	atf_add_test_case watch_mock_options
+	atf_add_test_case watch_tty_color
+	atf_add_test_case watch_write_failures
+	atf_add_test_case watch_text_rotation_failure
 }

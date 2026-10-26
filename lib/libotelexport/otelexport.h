@@ -306,6 +306,12 @@ struct oe_exporter *oe_collapsed_new(FILE *out);
 struct oe_exporter *oe_text_sink_new(struct oe_sink *);
 struct oe_exporter *oe_jsonl_sink_new(struct oe_sink *, const char *profile);
 struct oe_exporter *oe_collapsed_sink_new(struct oe_sink *);
+/*
+ * JSONL whose every line also names its resource in a "resource"
+ * object (for example a HyperTrace guest); the attributes are copied.
+ */
+struct oe_exporter *oe_jsonl_resource_new(struct oe_sink *,
+	    const char *profile, const struct oe_attr *resource, size_t n);
 
 /*
  * OTLP JSON Lines file exporter: one ExportLogsServiceRequest,
@@ -420,7 +426,11 @@ void	oe_buf_free(struct oe_buf *);
 int	oe_buf_append(struct oe_buf *, const char *, size_t);
 int	oe_buf_appendstr(struct oe_buf *, const char *);
 int	oe_buf_appendf(struct oe_buf *, const char *, ...) __printflike(2, 3);
-/* Append s with RFC 8259 JSON string escaping (no surrounding quotes). */
+/*
+ * Append s with RFC 8259 JSON string escaping (no surrounding quotes):
+ * well-formed UTF-8 passes through, control characters, quote and
+ * backslash are escaped, and malformed bytes become U+FFFD.
+ */
 int	oe_buf_appendjson(struct oe_buf *, const char *);
 
 /* Format a frame as module`symbol+0xoff / symbol / 0xaddr. */

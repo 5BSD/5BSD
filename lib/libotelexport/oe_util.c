@@ -110,18 +110,53 @@ oe_buf_appendf(struct oe_buf *b, const char *fmt, ...)
 	return (0);
 }
 
+/*
+ * Length of the well-formed UTF-8 sequence at p (RFC 3629: no
+ * overlong forms, no surrogates, nothing above U+10FFFF), or 0.
+ */
+static size_t
+utf8_seqlen(const unsigned char *p)
+{
+	size_t n, i;
+	uint32_t cp;
+
+	if (p[0] < 0x80)
+		return (1);
+	if (p[0] >= 0xc2 && p[0] <= 0xdf) {
+		n = 2;
+		cp = p[0] & 0x1f;
+	} else if (p[0] >= 0xe0 && p[0] <= 0xef) {
+		n = 3;
+		cp = p[0] & 0x0f;
+	} else if (p[0] >= 0xf0 && p[0] <= 0xf4) {
+		n = 4;
+		cp = p[0] & 0x07;
+	} else
+		return (0);
+	for (i = 1; i < n; i++) {
+		/* A NUL terminator fails this test: no overrun. */
+		if ((p[i] & 0xc0) != 0x80)
+			return (0);
+		cp = (cp << 6) | (p[i] & 0x3f);
+	}
+	if ((n == 3 && cp < 0x800) || (n == 4 && cp < 0x10000) ||
+	    cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff))
+		return (0);
+	return (n);
+}
+
 int
 oe_buf_appendjson(struct oe_buf *b, const char *s)
 {
-	const char *p;
+	const unsigned char *p;
 	char esc[8];
+	size_t n;
 
 	if (s == NULL)
 		return (0);
-	for (p = s; *p != '\0'; p++) {
-		unsigned char c = (unsigned char)*p;
-
-		switch (c) {
+	for (p = (const unsigned char *)s; *p != '\0'; p += n) {
+		n = 1;
+		switch (*p) {
 		case '"':
 			oe_buf_append(b, "\\\"", 2);
 			break;
@@ -144,18 +179,23 @@ oe_buf_appendjson(struct oe_buf *b, const char *s)
 			oe_buf_append(b, "\\t", 2);
 			break;
 		default:
-			/*
-			 * Escape control bytes AND everything >= 0x80:
-			 * DTrace bodies and execnames are arbitrary
-			 * bytes, and raw non-UTF-8 would make the whole
-			 * document invalid JSON.  Latin-1-escaping is
-			 * lossy for real UTF-8 text but always valid.
-			 */
-			if (c < 0x20 || c >= 0x80) {
-				snprintf(esc, sizeof(esc), "\\u%04x", c);
+			if (*p < 0x20) {
+				snprintf(esc, sizeof(esc), "\\u%04x", *p);
 				oe_buf_appendstr(b, esc);
+				break;
+			}
+			/*
+			 * Well-formed UTF-8 passes through unchanged.
+			 * DTrace strings are arbitrary bytes, so a byte
+			 * that does not start a well-formed sequence
+			 * becomes U+FFFD, keeping the document valid.
+			 */
+			n = utf8_seqlen(p);
+			if (n == 0) {
+				oe_buf_append(b, "\xef\xbf\xbd", 3);
+				n = 1;
 			} else
-				oe_buf_append(b, (const char *)p, 1);
+				oe_buf_append(b, (const char *)p, n);
 			break;
 		}
 	}
@@ -200,13 +240,11 @@ trim(char *s)
 	return (s);
 }
 
-/* RFC 9110 token characters, for header field names. */
+/* RFC 9110 token characters, for (non-empty) header field names. */
 static int
 is_token(const char *s)
 {
 
-	if (*s == '\0')
-		return (0);
 	for (; *s != '\0'; s++)
 		if (!isalnum((unsigned char)*s) &&
 		    strchr("!#$%&'*+-.^_`|~", *s) == NULL)

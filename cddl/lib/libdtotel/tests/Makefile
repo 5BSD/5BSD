@@ -25,7 +25,9 @@ CFLAGS+=	-I${SRCTOP}/lib/libotelexport
 CFLAGS+=	-I${SRCTOP}/lib/libotelexport/tests
 CFLAGS+=	-I${.CURDIR:H}
 .PATH:		${SRCTOP}/lib/libotelexport/tests
-SRCS.dtotel_test+=	otlp_validate.c
+SRCS.dtotel_test+=	otlp_validate.c otel_testutil.c
+LDFLAGS.dtotel_test+=	-Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc \
+			-Wl,--wrap=strdup -Wl,--wrap=strndup
 
 # dtrace_stub.c stands in for the libdtrace entry points libdtotel
 # uses, so the bridge is tested without a DTrace device.

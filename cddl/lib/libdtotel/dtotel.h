@@ -37,11 +37,34 @@
 
 struct dtotel;
 
+/*
+ * HyperTrace.  Records of guest probes (a non-zero VMID in the
+ * enabled probe description) belong to the guest, not the host: each
+ * guest gets its own exporter, and with it its own OTel resource,
+ * created on demand by the consumer's callback from the guest's
+ * identity.  "attrs" are resource attributes the guest supplied with
+ * "\037otel.resource" records (for example host.name); a change
+ * replaces the guest's exporter.
+ */
+struct dtotel_guest {
+	uint16_t	 vmid;
+	uint64_t	 epoch;		/* host-supplied VM lifetime token */
+	const char	*name;		/* VM name */
+	const struct oe_attr *attrs;
+	size_t		 nattrs;
+};
+
+typedef struct oe_exporter *dtotel_guest_exporter_f(void *,
+    const struct dtotel_guest *);
+
 struct dtotel_config {
 	dtrace_hdl_t	*dtp;
-	struct oe_exporter *exporter;	/* borrowed */
+	struct oe_exporter *exporter;	/* borrowed; the host's records */
 	const char	*profile;	/* profile/script name for records */
 	const char	*source;	/* D source (agg key names); NULL ok */
+	/* NULL: guest records go to the host exporter. */
+	dtotel_guest_exporter_f *guest_exporter;
+	void		*guest_arg;
 };
 
 struct dtotel	*dtotel_open(const struct dtotel_config *);
@@ -62,11 +85,31 @@ void		 dtotel_started(struct dtotel *);
 /* Emit the event still being accumulated, if any. */
 void		 dtotel_flush(struct dtotel *);
 
+/*
+ * End of one probe firing, for consumers whose probe callback sees
+ * every firing (dtrace(1)): without "quiet", a firing that printed
+ * nothing still produces a record naming its probe, as dtrace(1)'s
+ * default output does.
+ */
+void		 dtotel_firing_end(struct dtotel *, const dtrace_probedata_t *,
+		    int quiet);
+
 /* Snapshot and walk the aggregations, emitting metric snapshots. */
 int		 dtotel_aggregate(struct dtotel *);
 
 /* Forward kernel drop counts to the exporter. */
 void		 dtotel_drops(struct dtotel *, uint64_t);
+
+/*
+ * Record (or refresh) a guest's identity as the consumer learns it,
+ * e.g. when a guest program is received.  A new epoch for a known
+ * VMID starts a new resource.
+ */
+int		 dtotel_guest(struct dtotel *, uint16_t vmid, uint64_t epoch,
+		    const char *name);
+
+/* Flush, shut down and release the guest exporters. */
+int		 dtotel_shutdown(struct dtotel *);
 
 /* Nonzero once an exporter call failed. */
 int		 dtotel_error(const struct dtotel *);

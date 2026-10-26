@@ -24,6 +24,9 @@ CFLAGS+=	-I${SRCTOP}/sys/cddl/compat/opensolaris \
 		-I${OPENSOLARIS_SYS_DISTDIR}/uts/common \
 		-I${OPENSOLARIS_SYS_DISTDIR}/compat \
 		-I${SRCTOP}/usr.sbin/dtraced
+# OpenTelemetry output (-x otel=...).
+CFLAGS+=	-I${SRCTOP}/cddl/lib/libdtotel \
+		-I${SRCTOP}/lib/libotelexport
 
 CFLAGS+= -DHAVE_ISSETUGID
 
@@ -41,7 +44,8 @@ CXXFLAGS+=	-fsanitize=thread
 LDFLAGS+=	-fsanitize=thread
 .endif
 
-LIBADD=	dtrace ctf elf proc spl xo pthread crypto
+LIBADD=	dtotel dtrace ctf elf proc spl xo pthread crypto otelexport jail \
+	z ssl
 .if defined(DTRACE_TARGET_ARCH)
 # The cross-world provider linker consumes static libdtrace and its C++ code.
 LIBADD+=	cplusplus cxxrt m

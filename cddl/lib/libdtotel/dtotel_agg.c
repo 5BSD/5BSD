@@ -107,6 +107,10 @@ dtotel_parse_keynames(const char *source)
 		if (ak == NULL)
 			break;
 		ak->aggname = strdup(aggname);
+		if (ak->aggname == NULL) {
+			free(ak);
+			break;
+		}
 
 		/* Split the [...] key list on top-level commas. */
 		keystart = close + 1;
@@ -141,6 +145,8 @@ dtotel_parse_keynames(const char *source)
 			expr[len] = '\0';
 			ak->names[idx] = strdup(builtin_key_name(expr, idx,
 			    fallback, sizeof(fallback)));
+			if (ak->names[idx] == NULL)
+				break;		/* later keys fall back to key.N */
 			idx++;
 			if (*keyend == ']')
 				break;
@@ -182,6 +188,7 @@ struct snap_point {
 
 struct snap_accum {
 	char		*name;		/* aggregation name ("" if anon) */
+	uint16_t	 vmid;		/* the guest it came from, or 0 */
 	enum oe_agg_kind kind;
 	struct snap_point *points;
 	size_t		 npoints, cappoints;
@@ -336,18 +343,25 @@ hexdump:
 }
 
 static struct snap_accum *
-accum_for(struct agg_walk_ctx *ctx, const char *name, enum oe_agg_kind kind)
+accum_for(struct agg_walk_ctx *ctx, const char *name, enum oe_agg_kind kind,
+    uint16_t vmid)
 {
 	struct snap_accum *sa;
 
 	for (sa = ctx->accums; sa != NULL; sa = sa->next)
-		if (strcmp(sa->name, name) == 0 && sa->kind == kind)
+		if (strcmp(sa->name, name) == 0 && sa->kind == kind &&
+		    sa->vmid == vmid)
 			return (sa);
 	sa = calloc(1, sizeof(*sa));
 	if (sa == NULL)
 		return (NULL);
 	sa->name = strdup(name);
+	if (sa->name == NULL) {
+		free(sa);
+		return (NULL);
+	}
 	sa->kind = kind;
+	sa->vmid = vmid;
 	sa->next = ctx->accums;
 	ctx->accums = sa;
 	return (sa);
@@ -489,7 +503,9 @@ agg_walk(const dtrace_aggdata_t *agg, void *arg)
 	if (aggname == NULL || strcmp(aggname, "_") == 0)
 		aggname = "";	/* anonymous @ */
 
-	sa = accum_for(ctx, aggname, kind);
+	/* A guest's aggregation data belongs to the guest's resource. */
+	sa = accum_for(ctx, aggname, kind, agg->dtada_edesc != NULL ?
+	    agg->dtada_edesc->dtepd_vmid : 0);
 	if (sa == NULL)
 		return (DTRACE_AGGWALK_NEXT);
 	pt = accum_add_point(sa);
@@ -518,9 +534,15 @@ agg_walk(const dtrace_aggdata_t *agg, void *arg)
 				    "key.%d", i);
 				pt->attrs[i].name = strdup(attrname);
 			}
-			pt->attrs[i].value = strdup(kb.data != NULL ?
-			    kb.data : "");
+			pt->attrs[i].value = kb.error ? NULL : strdup(kb.data);
 			oe_buf_free(&kb);
+			if (pt->attrs[i].name == NULL ||
+			    pt->attrs[i].value == NULL) {
+				/* Out of memory: keep the keys made so far. */
+				free(__DECONST(char *, pt->attrs[i].name));
+				free(__DECONST(char *, pt->attrs[i].value));
+				break;
+			}
 			pt->nattrs = (size_t)(i + 1);
 		}
 	}
@@ -703,7 +725,8 @@ emit_and_free_accums(struct dtotel *d, struct snap_accum *accums)
 			sn.kind = sa->kind;
 			sn.points = dps;
 			sn.npoints = sa->npoints;
-			if (oe_snapshot(d->exporter, &sn) != 0)
+			if (oe_snapshot(dtotel_exporter_for(d, sa->vmid,
+			    NULL), &sn) != 0)
 				d->error = 1;
 			free(dps);
 		}

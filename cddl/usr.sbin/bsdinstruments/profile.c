@@ -174,11 +174,11 @@ profile_list_insert(struct profile_list *list, struct profile *p)
 	for (pp = &list->head; *pp != NULL; pp = &(*pp)->next) {
 		if (strcmp((*pp)->name, p->name) != 0)
 			continue;
-		if ((*pp)->origin < p->origin)
-			fprintf(stderr, "bsdinstruments: profile '%s' from "
-			    "%s shadows %s version\n", p->name,
-			    profile_origin_name(p->origin),
-			    profile_origin_name((*pp)->origin));
+		/* Tiers load in rising precedence: the newcomer wins. */
+		fprintf(stderr, "bsdinstruments: profile '%s' from "
+		    "%s shadows %s version\n", p->name,
+		    profile_origin_name(p->origin),
+		    profile_origin_name((*pp)->origin));
 		p->next = (*pp)->next;
 		profile_free(*pp);
 		*pp = p;
@@ -313,205 +313,15 @@ profile_resolve(const char *name, const char *file)
 		return (NULL);
 	}
 	/* Detach the match, free the rest. */
-	for (pp = &list.head; *pp != NULL; pp = &(*pp)->next) {
-		if (*pp == p) {
-			*pp = p->next;
-			p->next = NULL;
-			break;
-		}
-	}
+	for (pp = &list.head; *pp != p; pp = &(*pp)->next)
+		;
+	*pp = p->next;
+	p->next = NULL;
 	profile_list_free(&list);
 	return (p);
 }
 
-/*
- * Replace every occurrence of "needle" with "repl" in a malloc'd
- * string, returning a new malloc'd string.
- */
-static char *
-replace_all(const char *s, const char *needle, const char *repl)
-{
-	struct {
-		char *data;
-		size_t len, cap;
-	} b = { NULL, 0, 0 };
-	const char *p, *hit;
-	size_t nlen, rlen, chunk, need;
-	char *np;
-
-	nlen = strlen(needle);
-	rlen = strlen(repl);
-	p = s;
-	for (;;) {
-		hit = strstr(p, needle);
-		chunk = hit != NULL ? (size_t)(hit - p) : strlen(p);
-		need = chunk + (hit != NULL ? rlen : 0);
-		if (b.len + need + 1 > b.cap) {
-			b.cap = b.cap == 0 ? 1024 : b.cap;
-			while (b.cap < b.len + need + 1)
-				b.cap *= 2;
-			np = realloc(b.data, b.cap);
-			if (np == NULL) {
-				free(b.data);
-				return (NULL);
-			}
-			b.data = np;
-		}
-		memcpy(b.data + b.len, p, chunk);
-		b.len += chunk;
-		if (hit == NULL)
-			break;
-		memcpy(b.data + b.len, repl, rlen);
-		b.len += rlen;
-		p = hit + nlen;
-	}
-	b.data[b.len] = '\0';
-	return (b.data);
-}
-
-/*
- * Match a ${ident} placeholder at "start" (which points at "${").
- * Returns the '}' position and copies the identifier out, or NULL
- * if this is not a well-formed placeholder.
- */
-static const char *
-placeholder_at(const char *start, char *name, size_t namesize)
-{
-	const char *p, *end;
-	size_t len;
-
-	p = start + 2;
-	if (!isalpha((unsigned char)*p) && *p != '_')
-		return (NULL);
-	for (end = p + 1; isalnum((unsigned char)*end) || *end == '_'; end++)
-		;
-	if (*end != '}')
-		return (NULL);
-	len = (size_t)(end - p);
-	if (len >= namesize)
-		len = namesize - 1;
-	memcpy(name, p, len);
-	name[len] = '\0';
-	return (end);
-}
-
-/*
- * Substitute ${name} parameter placeholders.  Returns a malloc'd
- * string, or NULL if a placeholder has no supplied value.
- */
-static char *
-substitute_params(const char *source, const struct param *params,
-    size_t nparams, const char *profile_name)
-{
-	const char *scan, *end;
-	char *result, name[128];
-	size_t i;
-	int found;
-
-	/* Pass 1: every placeholder must have a supplied value. */
-	for (scan = strstr(source, "${"); scan != NULL;
-	    scan = strstr(scan + 1, "${")) {
-		end = placeholder_at(scan, name, sizeof(name));
-		if (end == NULL)
-			continue;
-		found = 0;
-		for (i = 0; i < nparams; i++)
-			if (strcmp(params[i].name, name) == 0) {
-				found = 1;
-				break;
-			}
-		if (!found) {
-			fprintf(stderr, "bsdinstruments: profile '%s' "
-			    "requires --param %s=<value>\n", profile_name,
-			    name);
-			return (NULL);
-		}
-		scan = end;
-	}
-
-	/*
-	 * Pass 2: single left-to-right scan.  Substituted values are
-	 * emitted verbatim and never rescanned, so a value containing
-	 * "${other}" cannot be re-substituted by a later parameter
-	 * (order-independent, matching the original Swift splice).
-	 */
-	{
-		struct {
-			char *data;
-			size_t len, cap;
-		} b = { NULL, 0, 0 };
-		const char *p2;
-		size_t need;
-		char *np;
-
-#define	SUB_APPEND(src, n) do {						\
-	need = (n);							\
-	if (b.len + need + 1 > b.cap) {					\
-		b.cap = b.cap == 0 ? 1024 : b.cap;			\
-		while (b.cap < b.len + need + 1)			\
-			b.cap *= 2;					\
-		np = realloc(b.data, b.cap);				\
-		if (np == NULL) {					\
-			free(b.data);					\
-			return (NULL);					\
-		}							\
-		b.data = np;						\
-	}								\
-	memcpy(b.data + b.len, (src), need);				\
-	b.len += need;							\
-} while (0)
-
-		for (p2 = source; *p2 != '\0';) {
-			const char *hit, *hend;
-			const char *value;
-
-			hit = strstr(p2, "${");
-			if (hit == NULL) {
-				SUB_APPEND(p2, strlen(p2));
-				break;
-			}
-			hend = placeholder_at(hit, name, sizeof(name));
-			if (hend == NULL) {
-				/* Not a placeholder; copy past "${". */
-				SUB_APPEND(p2, (size_t)(hit + 2 - p2));
-				p2 = hit + 2;
-				continue;
-			}
-			SUB_APPEND(p2, (size_t)(hit - p2));
-			value = NULL;
-			for (i = 0; i < nparams; i++)
-				if (strcmp(params[i].name, name) == 0)
-					value = params[i].value;
-			/* Pass 1 guaranteed a value exists. */
-			if (value != NULL)
-				SUB_APPEND(value, strlen(value));
-			p2 = hend + 1;
-		}
-#undef SUB_APPEND
-		if (b.data == NULL)
-			return (strdup(""));
-		b.data[b.len] = '\0';
-		result = b.data;
-	}
-	return (result);
-}
-
-/* ---------------------------------------------------------------- */
-/* Context and span markers						*/
-
-/*
- * The context record (see dtotel.c): who fired the probe, exported
- * under OpenTelemetry semantic-convention names.  Real ids come from
- * the psinfo translator, effective ones from the built-ins.
- */
-#define	CONTEXT_PRINTF							\
-	"printf(\"\\037otel.ctx\\037pid=%d\\037ppid=%d\\037tid=%d"		\
-	"\\037uid=%d\\037ruid=%d\\037gid=%d\\037rgid=%d\\037jid=%d"	\
-	"\\037execname=%s\\n\", pid, ppid, tid, uid, curpsinfo->pr_uid, "	\
-	"gid, curpsinfo->pr_gid, curpsinfo->pr_jailid, execname);"
-
-#define	SPAN_MARKER	"/* @bsdinstruments-span("
-
+/* A growable string; "error" is sticky after an allocation failure. */
 struct sbuf_ {
 	char	*data;
 	size_t	 len, cap;
@@ -549,6 +359,141 @@ sb_str(struct sbuf_ *b, const char *s)
 
 	sb_append(b, s, strlen(s));
 }
+
+/*
+ * Replace every occurrence of "needle" with "repl" in a malloc'd
+ * string, returning a new malloc'd string.
+ */
+static char *
+replace_all(const char *s, const char *needle, const char *repl)
+{
+	struct sbuf_ b;
+	const char *hit;
+	size_t nlen;
+
+	memset(&b, 0, sizeof(b));
+	nlen = strlen(needle);
+	while ((hit = strstr(s, needle)) != NULL) {
+		sb_append(&b, s, (size_t)(hit - s));
+		sb_str(&b, repl);
+		s = hit + nlen;
+	}
+	sb_str(&b, s);
+	if (b.error) {
+		free(b.data);
+		return (NULL);
+	}
+	return (b.data);
+}
+
+/*
+ * Match a ${ident} placeholder at "start" (which points at "${").
+ * Returns the '}' position and copies the identifier out, or NULL
+ * if this is not a well-formed placeholder.
+ */
+static const char *
+placeholder_at(const char *start, char *name, size_t namesize)
+{
+	const char *p, *end;
+	size_t len;
+
+	p = start + 2;
+	if (!isalpha((unsigned char)*p) && *p != '_')
+		return (NULL);
+	for (end = p + 1; isalnum((unsigned char)*end) || *end == '_'; end++)
+		;
+	if (*end != '}')
+		return (NULL);
+	len = (size_t)(end - p);
+	if (len >= namesize)
+		len = namesize - 1;
+	memcpy(name, p, len);
+	name[len] = '\0';
+	return (end);
+}
+
+/*
+ * Substitute ${name} parameter placeholders.  Returns a malloc'd
+ * string, or NULL if a placeholder has no supplied value.
+ */
+static char *
+substitute_params(const char *source, const struct param *params,
+    size_t nparams, const char *profile_name)
+{
+	struct sbuf_ b;
+	const char *scan, *end, *p2, *hit, *hend, *value;
+	char name[128];
+	size_t i;
+	int found;
+
+	/* Pass 1: every placeholder must have a supplied value. */
+	for (scan = strstr(source, "${"); scan != NULL;
+	    scan = strstr(scan + 1, "${")) {
+		end = placeholder_at(scan, name, sizeof(name));
+		if (end == NULL)
+			continue;
+		found = 0;
+		for (i = 0; i < nparams; i++)
+			if (strcmp(params[i].name, name) == 0) {
+				found = 1;
+				break;
+			}
+		if (!found) {
+			fprintf(stderr, "bsdinstruments: profile '%s' "
+			    "requires --param %s=<value>\n", profile_name,
+			    name);
+			return (NULL);
+		}
+		scan = end;
+	}
+	value = NULL;
+
+	/*
+	 * Pass 2: single left-to-right scan.  Substituted values are
+	 * emitted verbatim and never rescanned, so a value containing
+	 * "${other}" cannot be re-substituted by a later parameter
+	 * (order-independent, matching the original Swift splice).
+	 */
+	memset(&b, 0, sizeof(b));
+	for (p2 = source; (hit = strstr(p2, "${")) != NULL;) {
+		hend = placeholder_at(hit, name, sizeof(name));
+		if (hend == NULL) {
+			/* Not a placeholder; copy past "${". */
+			sb_append(&b, p2, (size_t)(hit + 2 - p2));
+			p2 = hit + 2;
+			continue;
+		}
+		sb_append(&b, p2, (size_t)(hit - p2));
+		/* Pass 1 guaranteed a value exists; the last one wins. */
+		for (i = 0; i < nparams; i++)
+			if (strcmp(params[i].name, name) == 0)
+				value = params[i].value;
+		sb_str(&b, value);
+		p2 = hend + 1;
+	}
+	sb_str(&b, p2);
+	if (b.error) {
+		free(b.data);
+		return (NULL);
+	}
+	return (b.data);
+}
+
+/* ---------------------------------------------------------------- */
+/* Context and span markers						*/
+
+/*
+ * The context record (see dtotel.c): who fired the probe, exported
+ * under OpenTelemetry semantic-convention names.  Real ids come from
+ * the psinfo translator, effective ones from the built-ins.
+ */
+#define	CONTEXT_PRINTF							\
+	"printf(\"\\037otel.ctx\\037pid=%d\\037ppid=%d\\037tid=%d"		\
+	"\\037uid=%d\\037ruid=%d\\037gid=%d\\037rgid=%d\\037jid=%d"	\
+	"\\037execname=%s\\n\", pid, ppid, tid, uid, curpsinfo->pr_uid, "	\
+	"gid, curpsinfo->pr_gid, curpsinfo->pr_jailid, execname);"
+
+#define	SPAN_MARKER	"/* @bsdinstruments-span("
 
 /*
  * Find the ')' closing a marker argument list that starts at p,
@@ -744,6 +689,10 @@ span_printf(struct sbuf_ *out, char *args, const char *profile_name)
 		    "\\037rgid=%d\\037jid=%d");
 		sb_str(&vals, ", ppid, uid, curpsinfo->pr_uid, gid, "
 		    "curpsinfo->pr_gid, curpsinfo->pr_jailid");
+	}
+	if (fmt.error || vals.error) {
+		out->error = 1;		/* out of memory */
+		goto fail;
 	}
 	/* Fixed fields first, in the order of the format. */
 	sb_str(out, "printf(\"\\037otel.span\\037name=%s\\037start=%d"

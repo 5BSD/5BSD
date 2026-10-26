@@ -98,3 +98,31 @@ jail_getname(int jid)
 	asprintf(&name, "jail%d", jid);
 	return (name);
 }
+
+static int stub_prog;
+
+dtrace_prog_t *
+dtrace_program_strcompile(dtrace_hdl_t *dtp, const char *s,
+    dtrace_probespec_t spec, uint_t cflags, int argc, char *const argv[])
+{
+
+	(void)dtp;
+	(void)s;
+	(void)spec;
+	(void)cflags;
+	(void)argc;
+	(void)argv;
+	stub.compiled++;
+	return (stub.fail_compile ? NULL : (dtrace_prog_t *)&stub_prog);
+}
+
+int
+dtrace_program_exec(dtrace_hdl_t *dtp, dtrace_prog_t *pgp,
+    dtrace_proginfo_t *pip)
+{
+
+	(void)dtp;
+	(void)pgp;
+	(void)pip;
+	return (stub.fail_exec ? -1 : 0);
+}

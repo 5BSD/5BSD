@@ -25,6 +25,8 @@ struct coll_reply {
 	const char	*body;
 	int		 garbage;	/* answer with a non-HTTP line */
 	int		 no_header_end;	/* answer without CRLFCRLF */
+	int		 hangup;	/* close at once, reading nothing */
+	size_t		 bigbody;	/* pad the body to this many bytes */
 };
 
 struct coll_req {

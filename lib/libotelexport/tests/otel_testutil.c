@@ -238,6 +238,17 @@ serve_one(struct collector *co, int fd)
 
 	memset(&c, 0, sizeof(c));
 	c.fd = fd;
+	pthread_mutex_lock(&co->lock);
+	if (co->next < co->nscript && co->script[co->next].hangup) {
+		/* Reset the connection before reading the request. */
+		struct linger l = { 1, 0 };
+
+		co->next++;
+		pthread_mutex_unlock(&co->lock);
+		setsockopt(fd, SOL_SOCKET, SO_LINGER, &l, sizeof(l));
+		return;
+	}
+	pthread_mutex_unlock(&co->lock);
 	if (co->tls) {
 		c.ssl = SSL_new(co->ssl_ctx);
 		SSL_set_fd(c.ssl, fd);
@@ -306,10 +317,18 @@ serve_one(struct collector *co, int fd)
 	} else if (rep.status != 0) {
 		snprintf(resp, sizeof(resp), "HTTP/1.1 %d X\r\n"
 		    "Content-Length: %zu\r\n%s\r\n%s", rep.status,
+		    rep.bigbody > 0 ? rep.bigbody :
 		    rep.body != NULL ? strlen(rep.body) : 0,
 		    rep.headers != NULL ? rep.headers : "",
 		    rep.body != NULL ? rep.body : "");
 		c_write(&c, resp, strlen(resp));
+		if (rep.bigbody > 0) {
+			char *pad = __real_calloc(1, rep.bigbody);
+
+			memset(pad, ' ', rep.bigbody);
+			c_write(&c, pad, rep.bigbody);
+			free(pad);
+		}
 	}
 	free(buf);
 	if (c.ssl != NULL) {

@@ -20,7 +20,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd May 12, 2026
+.Dd October 26, 2026
 .Dt DTRACE 1
 .Os
 .Sh NAME
@@ -558,6 +558,10 @@ Any attempts to enable destructive actions will cause
 to exit with a runtime error.
 .It Fl x Ar arg Ns Op = Ns Ar value
 Enable or modify a DTrace runtime option or D compiler option.
+Options whose names begin with
+.Ql otel
+select OpenTelemetry output; see
+.Sx OPENTELEMETRY OUTPUT .
 Boolean options are enabled by specifying their name.
 Options with values are set by separating the option name and value with an
 equals sign (=).
@@ -1303,6 +1307,233 @@ will produce output similar to the following in order to represent drops:
   "msg": "... dynamic variable drops\n"
 }
 .Ed
+.Sh OPENTELEMETRY OUTPUT
+With
+.Fl x Cm otel Ns = Ns Ar format ,
+.Nm
+sends the traced data to OpenTelemetry instead of printing it:
+.Bl -tag -width "otlp-json"
+.It Cm otlp
+OTLP/HTTP with JSON bodies to a collector
+.Pq Pa /v1/logs , /v1/metrics , /v1/traces .
+.It Cm otlp-json
+OTLP JSON Lines, one export request per line, as the OpenTelemetry
+Collector's file exporter writes them and its
+.Ql otlpjsonfile
+receiver reads them.
+.It Cm json
+One JSON object per record.
+.El
+.Pp
+The file formats are written to standard output, or to the file named by
+.Fl o ,
+which is appended to, flushed and
+.Xr fsync 2 Ns ed
+once a second and at exit.
+Without the option the output of
+.Nm
+is unchanged, and existing scripts need no changes in either case.
+.Pp
+Each line of
+.Fn printf ,
+.Fn trace
+and the other data-recording actions becomes a log record; the
+.Fn trace
+records of one firing form one line, as
+.Nm
+prints them, and without
+.Fl q
+a firing that records nothing yields a record naming its probe.
+.Fn stack
+and
+.Fn ustack
+frames attach to the line of their firing.
+Aggregations become metrics when tracing ends and on
+.Dv SIGINFO :
+.Fn count
+and
+.Fn sum
+as cumulative sums,
+.Fn min ,
+.Fn max ,
+.Fn avg
+and
+.Fn stddev
+as gauges, the quantize family as histograms, with the keys as attributes.
+A record printed by
+.Fn printf
+whose text starts with the unit separator
+.Pq Ql \e037
+and
+.Ql otel.\&
+is not a log line but a structured record of
+.Ql \e037 Ns Ar key Ns = Ns Ar value
+fields:
+.Bl -tag -width "otel.resource"
+.It Li otel.span
+one span: required
+.Cm name ,
+.Cm start
+and
+.Cm end
+.Pq D Va timestamp No values ;
+optional
+.Cm error
+.Pq non-zero: status error ,
+.Cm kind
+.Pq Cm internal , server , client , producer , consumer ,
+.Cm pid ,
+.Cm execname ,
+.Cm thread ,
+.Cm span ,
+.Cm parent
+and
+.Cm trace
+.Pq integer identity keys: a span is identified by Cm thread No and Cm span Pq default its Cm start ;
+a child names its parent's key with
+.Cm parent ,
+and
+.Cm trace
+defaults to the parent's key or the span's own ,
+and attributes
+.Cm a.i.\& Ns Ar key
+.Pq integer
+and
+.Cm a.s.\& Ns Ar key
+.Pq string .
+For example:
+.Bd -literal -offset indent
+syscall::read:return /self->ts/ {
+	printf("\e037otel.span\e037name=read\e037start=%d"
+	    "\e037end=%d\e037thread=%d\e037error=%d\en",
+	    self->ts, timestamp, tid, errno);
+	self->ts = 0;
+}
+.Ed
+.It Li otel.ctx
+who fired the probe:
+.Cm pid ,
+.Cm ppid ,
+.Cm tid ,
+.Cm uid ,
+.Cm ruid ,
+.Cm gid ,
+.Cm rgid ,
+.Cm jid
+and
+.Cm execname ,
+all required; attached to the log line of the same firing.
+.It Li otel.resource
+resource attributes of a HyperTrace guest, such as
+.Cm host.name ,
+printed by one of its probes.
+.El
+.Pp
+Records carry the probe's own wall-clock time:
+.Nm
+enables a small clock program that prints
+.Va walltimestamp
+and
+.Va timestamp
+together at
+.Dv BEGIN
+and once a second, and each record's high-resolution timestamp is
+moved onto the wall clock by the latest of these.
+The time the record was read is kept as the observed time.
+Attributes follow the OpenTelemetry semantic conventions
+.Pq process.*, thread.id, cpu.logical_number, container.* for a jail ;
+the resource describes the host
+.Pq host.*, os.*, a per-run service.instance.id
+with
+.Ql service.name
+.Ql dtrace
+and the instrumentation scope
+.Ql dtrace .
+The
+.Ev OTEL_SERVICE_NAME ,
+.Ev OTEL_RESOURCE_ATTRIBUTES ,
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT ,
+.Ev OTEL_EXPORTER_OTLP_HEADERS ,
+.Ev OTEL_EXPORTER_OTLP_COMPRESSION
+and
+.Ev OTEL_EXPORTER_OTLP_TIMEOUT
+environment variables are honored as described in
+.Xr libotelexport 3 .
+.Pp
+With
+.Fl E ,
+the host consumer of a HyperTrace session, records from a guest's probes
+form a resource of their own:
+.Ql host.name
+is the VM name
+.Pq or the guest's own Cm host.name Ns ,
+and
+.Ql hypertrace.vm.name ,
+.Ql hypertrace.vm.id ,
+.Ql hypertrace.vm.epoch
+and
+.Ql hypertrace.host.name
+identify the VM, its lifetime and its hypervisor; a new epoch starts a new
+resource.
+Guest stack frames keep their
+.Ql guest[ Ns Ar vmid Ns Ql \&]
+attribution and are never resolved with the host's symbols.
+The clock program runs only in the host consumer and is not sent through
+.Xr dtraced 8 .
+A drain certifies once the exporter has taken the drained records
+.Pq and, for files, synced them ;
+after a session stop only records already accepted are exported.
+.Pp
+The other
+.Ql otel
+options are:
+.Bl -tag -width "otelrotatesize=size"
+.It Cm otelendpoint Ns = Ns Ar url
+collector base URL for
+.Cm otlp ;
+it takes precedence over
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT ,
+whose default is
+.Ql http://localhost:4318 .
+.It Cm otelspool Ns = Ns Ar file
+for
+.Cm otlp ,
+keep batches the collector could not take after the retries in
+.Ar file
+as OTLP JSON Lines and resend them, oldest first, once it accepts a
+request again, in this run or a later one; guests use
+.Ar file Ns Li .vm Ns Ar vmid .
+.It Cm otelspoolmax Ns = Ns Ar size
+spool size limit, with an optional k, m or g suffix
+.Pq default 64m .
+.It Cm otelrotatesize Ns = Ns Ar size , Cm otelrotatetime Ns = Ns Ar time , Cm otelrotatekeep Ns = Ns Ar n
+rotate the
+.Fl o
+file when it would grow past
+.Ar size
+or has been open for
+.Ar time
+.Pq s, m, h or d suffix :
+it becomes
+.Ar output Ns .1 ,
+older files shift up, and
+.Ar n
+.Pq default 7
+are kept.
+.El
+.Pp
+.Fl x Cm otel
+is valid only when tracing: not with
+.Fl A , e , G , h , l
+or
+.Fl y ,
+nor with
+.Fl B
+or
+.Fl -libxo .
+An export failure at exit, such as a full disk, makes
+.Nm
+exit with status 1.
 .Sh OPERANDS
 You can specify zero or more additional arguments on the
 .Nm
@@ -1357,6 +1588,7 @@ in
 .Sh SEE ALSO
 .Xr cpp 1 ,
 .Xr dwatch 1 ,
+.Xr libotelexport 3 ,
 .Xr dtrace_audit 4 ,
 .Xr dtrace_callout_execute 4 ,
 .Xr dtrace_cam 4 ,

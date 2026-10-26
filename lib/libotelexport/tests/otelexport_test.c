@@ -29,6 +29,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <wchar.h>
 
 #include <atf-c.h>
 
@@ -74,14 +75,30 @@ ATF_TC_BODY(json_escaping, tc)
 	ATF_REQUIRE_STREQ("x\\u0001y\\u001fz", b.data);
 	oe_buf_free(&b);
 
+	/* Well-formed UTF-8 passes through: 2-, 3- and 4-byte forms. */
+	oe_buf_init(&b);
+	oe_buf_appendjson(&b, "caf\xc3\xa9 \xe2\x80\x94 \xf0\x9f\x98\x80 \x7f");
+	ATF_REQUIRE_STREQ("caf\xc3\xa9 \xe2\x80\x94 \xf0\x9f\x98\x80 \x7f",
+	    b.data);
+	oe_buf_free(&b);
+
 	/*
-	 * Bytes >= 0x80 are escaped: DTrace strings are arbitrary
-	 * bytes, and raw non-UTF-8 would make the document invalid
-	 * JSON.  (Lossy for real UTF-8, but always valid.)
+	 * Malformed bytes each become U+FFFD: a stray continuation,
+	 * truncated sequences, overlong forms, a surrogate, a code
+	 * point above U+10FFFF and bytes that never start a sequence.
 	 */
 	oe_buf_init(&b);
-	oe_buf_appendjson(&b, "caf\xc3\xa9");
-	ATF_REQUIRE_STREQ("caf\\u00c3\\u00a9", b.data);
+	oe_buf_appendjson(&b, "a\x80" "b\xc3" "c\xe2\x80" "d\xc0\xaf\xe0\x80\xaf"
+	    "\xed\xa0\x80\xf4\x90\x80\x80\xfe\xff\xf0\x9f\x98");
+	ATF_REQUIRE_STREQ("a\xef\xbf\xbd" "b\xef\xbf\xbd" "c\xef\xbf\xbd"
+	    "\xef\xbf\xbd" "d"
+	    "\xef\xbf\xbd\xef\xbf\xbd"			/* c0 af */
+	    "\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd"		/* e0 80 af */
+	    "\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd"		/* ed a0 80 */
+	    "\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd" /* f4 90.. */
+	    "\xef\xbf\xbd\xef\xbf\xbd"			/* fe ff */
+	    "\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd",		/* f0 9f 98 */
+	    b.data);
 	oe_buf_free(&b);
 
 	/* NULL is a no-op. */
@@ -1395,22 +1412,22 @@ ATF_TC_BODY(otlp_http_statuses, tc)
 {
 	static const struct coll_reply script[] = {
 		/* retryable, honoring Retry-After, then accepted */
-		{ 503, "Retry-After: 0\r\n", "busy", 0, 0 },
+		{ 503, "Retry-After: 0\r\n", "busy", 0, 0, 0, 0 },
 		{ 200, NULL, "{\"partialSuccess\":{\"rejectedLogRecords\":"
-		    " \"3\"}}", 0, 0 },
+		    " \"3\"}}", 0, 0, 0, 0 },
 		/* non-retryable: dropped at once */
-		{ 400, NULL, "bad", 0, 0 },
+		{ 400, NULL, "bad", 0, 0, 0, 0 },
 		/* retries exhausted */
-		{ 429, NULL, "", 0, 0 },
-		{ 502, NULL, "", 0, 0 },
+		{ 429, NULL, "", 0, 0, 0, 0 },
+		{ 502, NULL, "", 0, 0, 0, 0 },
 		/* no answer, then garbage, then an unterminated header */
-		{ 0, NULL, NULL, 0, 0 },
-		{ 200, NULL, NULL, 1, 0 },
-		{ 200, NULL, NULL, 0, 1 },
+		{ 0, NULL, NULL, 0, 0, 0, 0 },
+		{ 200, NULL, NULL, 1, 0, 0, 0 },
+		{ 200, NULL, NULL, 0, 1, 0, 0 },
 		/* partial success with metrics / spans keys and none */
 		{ 200, NULL, "{\"partialSuccess\":{\"rejectedDataPoints\":2}}",
-		    0, 0 },
-		{ 200, NULL, "{\"partialSuccess\":{}}", 0, 0 },
+		    0, 0, 0, 0 },
+		{ 200, NULL, "{\"partialSuccess\":{}}", 0, 0, 0, 0 },
 	};
 	struct collector co;
 	struct oe_exporter *e;
@@ -1503,9 +1520,9 @@ ATF_TC_WITHOUT_HEAD(otlp_spool_previous_run);
 ATF_TC_BODY(otlp_spool_previous_run, tc)
 {
 	static const struct coll_reply script[] = {
-		{ 200, NULL, "{}", 0, 0 },	/* new batch */
-		{ 200, NULL, "{}", 0, 0 },	/* spooled line 1 */
-		{ 503, NULL, "", 0, 0 },	/* spooled line 2 fails */
+		{ 200, NULL, "{}", 0, 0, 0, 0 },	/* new batch */
+		{ 200, NULL, "{}", 0, 0, 0, 0 },	/* spooled line 1 */
+		{ 503, NULL, "", 0, 0, 0, 0 },	/* spooled line 2 fails */
 	};
 	struct collector co;
 	struct oe_exporter *e;
@@ -1594,12 +1611,23 @@ ATF_TC_BODY(otlp_spool_idle_replay, tc)
 	int port;
 
 	port = closed_port();
+	/* An empty spool is never replayed while idle. */
+	e = otlp_to(port, "http", "empty.jsonl", 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, oe_start(e));
+	usleep(400000);
+	oe_shutdown(e);
+	oe_exporter_free(e);
 	e = otlp_to(port, "http", "idle.jsonl", 0, 0, NULL);
 	ev = make_event();
 	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
 	ATF_REQUIRE_EQ(0, oe_flush(e));
-	ATF_REQUIRE_EQ(0, coll_start(&co, port, 0, NULL));
+	/*
+	 * Still down: the first idle tick tries a replay, the next ones
+	 * wait out the five-second cadence.
+	 */
 	ATF_REQUIRE_EQ(0, oe_start(e));
+	usleep(1200000);
+	ATF_REQUIRE_EQ(0, coll_start(&co, port, 0, NULL));
 	/* The idle cadence is five seconds. */
 	ATF_REQUIRE_EQ(0, coll_wait(&co, 1, 15000));
 	oe_shutdown(e);
@@ -1664,9 +1692,9 @@ ATF_TC_HEAD(otlp_spool_rewrite_fail, tc)
 ATF_TC_BODY(otlp_spool_rewrite_fail, tc)
 {
 	static const struct coll_reply script[] = {
-		{ 200, NULL, "{}", 0, 0 },
-		{ 200, NULL, "{}", 0, 0 },
-		{ 503, NULL, "", 0, 0 },
+		{ 200, NULL, "{}", 0, 0, 0, 0 },
+		{ 200, NULL, "{}", 0, 0, 0, 0 },
+		{ 503, NULL, "", 0, 0, 0, 0 },
 	};
 	struct collector co;
 	struct oe_exporter *e;
@@ -1747,7 +1775,7 @@ ATF_TC_BODY(otlp_alloc_failure, tc)
 	ATF_REQUIRE_EQ(0, coll_start(&co, 0, 0, NULL));
 	ev = make_event();
 	sn = make_snapshot(OE_AGG_LLQUANTIZE, "ll");
-	for (i = 1; i <= 40; i++) {
+	for (i = 1; i <= 120; i++) {
 		failalloc_arm(i);
 		e = otlp_to(co.port, "http", "a.jsonl", 0, 0, NULL);
 		failalloc_arm(0);
@@ -2019,7 +2047,7 @@ ATF_TC_BODY(span_http, tc)
 {
 	static const struct coll_reply script[] = {
 		{ 200, NULL, "{\"partialSuccess\":{\"rejectedSpans\":\"1\"}}",
-		    0, 0 },
+		    0, 0, 0, 0 },
 	};
 	struct collector co;
 	struct oe_exporter *e;
@@ -2403,6 +2431,773 @@ ATF_TC_BODY(host_detection, tc)
 	    r.os_description == NULL);
 }
 
+/*
+ * UTF-8 in every format: valid text survives byte for byte and
+ * malformed input still yields documents the independent validator
+ * (which checks UTF-8) accepts.
+ */
+ATF_TC_WITHOUT_HEAD(utf8_all_formats);
+ATF_TC_BODY(utf8_all_formats, tc)
+{
+	static const char *const bodies[] = {
+		"r\xc3\xa9sum\xc3\xa9 \xe2\x80\x94 \xf0\x9f\x98\x80",
+		"trunc\xe2\x80", "overlong\xc0\xaf", "bad\xff",
+	};
+	struct oe_sink_config sc;
+	struct oe_sink *sink;
+	struct oe_exporter *e;
+	struct oe_event ev;
+	struct oe_span root, child;
+	struct jv *v;
+	char *out, *line, *last, err[256];
+	size_t outlen, i;
+	FILE *fp;
+
+	ev = make_event();
+	make_spans(&root, &child);
+	/* OTLP JSON Lines. */
+	fp = open_memstream(&out, &outlen);
+	memset(&sc, 0, sizeof(sc));
+	sc.fp = fp;
+	sink = oe_sink_open(&sc);
+	e = otlpjson_on(sink, 0);
+	for (i = 0; i < nitems(bodies); i++) {
+		ev.body = bodies[i];
+		ev.execname = bodies[i];
+		ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+		root.name = bodies[i];
+		ATF_REQUIRE_EQ(0, oe_span(e, &root));
+	}
+	ATF_REQUIRE_EQ(0, oe_flush(e));
+	oe_exporter_free(e);
+	oe_sink_close(sink);
+	fclose(fp);
+	check_otlp_lines(tc, out, NULL);
+	ATF_REQUIRE(strstr(out, bodies[0]) != NULL);
+	ATF_REQUIRE(strstr(out, "trunc\xef\xbf\xbd\xef\xbf\xbd") != NULL);
+	free(out);
+	/* JSON Lines: every line parses as strict JSON. */
+	fp = open_memstream(&out, &outlen);
+	e = oe_jsonl_new(fp, "p\xc3\xa9");
+	for (i = 0; i < nitems(bodies); i++) {
+		ev.body = bodies[i];
+		ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+		root.name = bodies[i];
+		ATF_REQUIRE_EQ(0, oe_span(e, &root));
+	}
+	oe_exporter_free(e);
+	fclose(fp);
+	for (line = strtok_r(out, "\n", &last); line != NULL;
+	    line = strtok_r(NULL, "\n", &last)) {
+		v = jv_parse(line, strlen(line), err, sizeof(err));
+		ATF_REQUIRE_MSG(v != NULL, "%s: %s", line, err);
+		jv_free(v);
+	}
+	free(out);
+	/* Text keeps the bytes as they are (not JSON). */
+	fp = open_memstream(&out, &outlen);
+	e = oe_text_new(fp);
+	ev.body = bodies[0];
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	oe_exporter_free(e);
+	fclose(fp);
+	ATF_REQUIRE(strncmp(out, bodies[0], strlen(bodies[0])) == 0);
+	free(out);
+}
+
+
+/* ---------------------------------------------------------------- */
+/* Edges of every exporter						*/
+
+/* Collapsed: user-only stacks, a NULL execname, bucket collisions. */
+ATF_TC_WITHOUT_HEAD(collapsed_edges);
+ATF_TC_BODY(collapsed_edges, tc)
+{
+	struct oe_exporter *e;
+	struct oe_event ev;
+	struct oe_snapshot sn;
+	FILE *fp;
+	char *out, name[32];
+	size_t outlen;
+	int i;
+
+	fp = open_memstream(&out, &outlen);
+	e = oe_collapsed_new(fp);
+	ATF_REQUIRE_EQ(0, oe_start(e));
+	sn = make_snapshot(OE_AGG_COUNT, "c");
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));		/* ignored */
+	ATF_REQUIRE_EQ(0, oe_flush(e));			/* no-op */
+	ev = make_event();
+	ev.nstack = 0;					/* user stack only */
+	ev.execname = NULL;
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	/* More distinct stacks than hash buckets: chains form. */
+	ev = make_event();
+	for (i = 0; i < 5000; i++) {
+		snprintf(name, sizeof(name), "p%d", i);
+		ev.execname = name;
+		ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	}
+	ATF_REQUIRE_EQ(0, oe_shutdown(e));
+	oe_exporter_free(e);
+	fclose(fp);
+	ATF_REQUIRE(strncmp(out, ";0x00000000deadbeef 1\n", 22) == 0);
+	ATF_REQUIRE(strstr(out, "\np4999;kernel`syscall") != NULL);
+	free(out);
+}
+
+ATF_TC_WITHOUT_HEAD(text_every_kind);
+ATF_TC_BODY(text_every_kind, tc)
+{
+	static struct oe_bucket b[2] = { { 1, 0 }, { 3, 5 } };
+	struct oe_exporter *e;
+	struct oe_snapshot sn;
+	struct oe_datapoint dp;
+	enum oe_agg_kind k;
+	FILE *fp;
+	char *out;
+	size_t outlen;
+
+	fp = open_memstream(&out, &outlen);
+	e = oe_text_new(fp);
+	for (k = OE_AGG_COUNT; k <= OE_AGG_LLQUANTIZE; k++) {
+		sn = make_snapshot(k, "a");
+		ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	}
+	/* Empty histogram buckets are not printed. */
+	memset(&dp, 0, sizeof(dp));
+	dp.is_histogram = 1;
+	dp.buckets = b;
+	dp.nbuckets = 2;
+	sn.points = &dp;
+	sn.npoints = 1;
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	sn.kind = (enum oe_agg_kind)99;			/* defensive */
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	oe_exporter_free(e);
+	fclose(fp);
+	ATF_REQUIRE(strstr(out, "(sum)") && strstr(out, "(min)") &&
+	    strstr(out, "(max)") && strstr(out, "(avg)") &&
+	    strstr(out, "(stddev)") && strstr(out, "(lquantize)") &&
+	    strstr(out, "(llquantize)") && strstr(out, "(unknown)"));
+	ATF_REQUIRE(strstr(out, "<= 1: 0") == NULL);
+	ATF_REQUIRE(strstr(out, "<= 3: 5") != NULL);
+	free(out);
+}
+
+/* JSONL with a resource, NULL and partial fields, every value type. */
+ATF_TC_WITHOUT_HEAD(jsonl_edges);
+ATF_TC_BODY(jsonl_edges, tc)
+{
+	static const struct oe_attr res[] = {
+		{ "hypertrace.vm.name", "vm\"1" }, { "hypertrace.vm.id", "3" },
+	};
+	struct oe_kv kv[2] = {
+		{ .key = "no", .type = OE_VAL_BOOL, .i = 0 },
+		{ .key = "s", .type = OE_VAL_STRING, .s = "x" },
+	};
+	struct oe_sink_config sc;
+	struct oe_sink *sink;
+	struct oe_exporter *e;
+	struct oe_event ev;
+	struct oe_span root, child;
+	FILE *fp;
+	char *out;
+	size_t outlen;
+	int i;
+
+	fp = open_memstream(&out, &outlen);
+	memset(&sc, 0, sizeof(sc));
+	sc.fp = fp;
+	sink = oe_sink_open(&sc);
+	e = oe_jsonl_resource_new(sink, NULL, res, nitems(res));
+	ATF_REQUIRE(e != NULL);
+	ev = make_event();
+	ev.probe = NULL;
+	ev.observed.tv_nsec = 7;
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ev.body = NULL;
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));		/* skipped */
+	make_spans(&root, &child);
+	root.kind = OE_SPAN_INTERNAL;
+	root.probe = NULL;
+	root.attrs = kv;
+	root.nattrs = 2;
+	ATF_REQUIRE_EQ(0, oe_span(e, &root));
+	oe_exporter_free(e);
+	oe_sink_close(sink);
+	fclose(fp);
+	ATF_REQUIRE(strstr(out, "\"observed\":\"1970-01-01T00:00:00.000Z\"")
+	    != NULL);
+	ATF_REQUIRE(strstr(out, "\"probe\"") == NULL);
+	ATF_REQUIRE(strstr(out, "\"kind\":\"internal\"") != NULL);
+	ATF_REQUIRE(strstr(out, "\"no\":false,\"s\":\"x\"") != NULL);
+	ATF_REQUIRE(strstr(out, ",\"resource\":{\"hypertrace.vm.name\":"
+	    "\"vm\\\"1\",\"hypertrace.vm.id\":\"3\"}}\n") != NULL);
+	free(out);
+	/* Allocation failures at construction and while writing. */
+	fp = open_memstream(&out, &outlen);
+	memset(&sc, 0, sizeof(sc));
+	sc.fp = fp;
+	sink = oe_sink_open(&sc);
+	for (i = 1; i <= 30; i++) {
+		failalloc_arm(i);
+		e = oe_jsonl_resource_new(sink, "p", res, nitems(res));
+		failalloc_arm(0);
+		if (e == NULL)
+			continue;
+		failalloc_arm(i);
+		(void)oe_span(e, &root);
+		failalloc_arm(0);
+		oe_exporter_free(e);
+	}
+	oe_sink_close(sink);
+	fclose(fp);
+	free(out);
+}
+
+/* OTLP encoding edges, checked by the independent validator. */
+ATF_TC_WITHOUT_HEAD(otlp_encoding_edges);
+ATF_TC_BODY(otlp_encoding_edges, tc)
+{
+	static struct oe_attr dims[] = {
+		{ "process.pid", "99999999999999999999" },
+		{ "label", NULL },
+		{ "thread.id", NULL },
+	};
+	static struct oe_bucket none[1];
+	struct oe_datapoint dps[3];
+	struct oe_otlpjson_config cfg;
+	struct oe_sink_config sc;
+	struct oe_sink *sink;
+	struct oe_exporter *e;
+	struct oe_event ev;
+	struct oe_span root, child;
+	struct oe_snapshot sn;
+	struct oe_kv kv = { .key = "no", .type = OE_VAL_BOOL, .i = 0 };
+	struct otlp_counts c;
+	char *text;
+	int i;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.path = "edges.jsonl";
+	sink = oe_sink_open(&sc);
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.sink = sink;
+	cfg.resource = &test_resource;
+	cfg.scope_name = "tool";
+	cfg.batch_size = 100;
+	e = oe_otlpjson_new(&cfg);
+	ev = make_event();
+	ev.ts.tv_sec = -1;			/* before the epoch: unknown */
+	ev.probe = NULL;
+	ev.execname = NULL;
+	ev.observed.tv_nsec = 1;
+	/* More records than the first fragment array holds. */
+	for (i = 0; i < 70; i++)
+		ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ev.body = NULL;
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	make_spans(&root, &child);
+	root.probe = NULL;
+	root.attrs = &kv;
+	root.nattrs = 1;
+	ATF_REQUIRE_EQ(0, oe_span(e, &root));
+	memset(dps, 0, sizeof(dps));
+	dps[0].attrs = dims;
+	dps[0].nattrs = 3;
+	dps[1].attrs = dims;
+	dps[1].nattrs = 2;
+	dps[2].is_histogram = 1;
+	dps[2].buckets = none;
+	dps[2].nbuckets = 0;			/* an empty histogram: skipped */
+	memset(&sn, 0, sizeof(sn));
+	sn.ts.tv_sec = 1;
+	sn.profile = "p";
+	sn.name = NULL;				/* named after the kind */
+	sn.kind = OE_AGG_MIN;
+	sn.points = dps;
+	sn.npoints = 3;
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	sn.kind = OE_AGG_QUANTIZE;
+	sn.name = "h";
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	ATF_REQUIRE_EQ(0, oe_shutdown(e));
+	oe_exporter_free(e);
+	oe_sink_close(sink);
+	text = slurp("edges.jsonl", NULL);
+	c = check_otlp_lines(tc, text, NULL);
+	ATF_REQUIRE_EQ(70, c.logs);
+	ATF_REQUIRE_EQ(1, c.spans);
+	ATF_REQUIRE(strstr(text, "\"name\":\"tool\"") != NULL);
+	ATF_REQUIRE(strstr(text, "\"timeUnixNano\":\"0\"") != NULL);
+	ATF_REQUIRE(strstr(text, "\"name\":\"tool.p.min\"") != NULL);
+	ATF_REQUIRE(strstr(text, "{\"key\":\"process.pid\",\"value\":"
+	    "{\"stringValue\":\"99999999999999999999\"}}") != NULL);
+	ATF_REQUIRE(strstr(text, "{\"key\":\"label\",\"value\":"
+	    "{\"stringValue\":\"\"}}") != NULL);
+	ATF_REQUIRE(strstr(text, "{\"boolValue\":false}") != NULL);
+	free(text);
+}
+
+/* Odd HTTP conversations: 1xx and 504 answers, oversized answers, resets. */
+ATF_TC_WITHOUT_HEAD(otlp_http_edges);
+ATF_TC_BODY(otlp_http_edges, tc)
+{
+	static const struct coll_reply script[] = {
+		{ 199, NULL, "", 0, 0, 0, 0 },		/* not 2xx: rejected */
+		{ 504, NULL, "", 0, 0, 0, 0 },		/* retryable... */
+		{ 200, NULL, "{\"partialSuccess\":{\"rejectedLogRecords\":"
+		    "\t 4}}", 0, 0, 0, 0 },		/* ...then accepted */
+		{ 200, NULL, NULL, 0, 0, 0, 100000 },	/* bounded read */
+		{ 0, NULL, NULL, 0, 0, 1, 0 },		/* reset at once */
+	};
+	struct collector co;
+	struct oe_exporter *e;
+	struct oe_event ev;
+	struct oe_otlp_config cfg;
+	char url[64], big[200000];
+
+	ATF_REQUIRE_EQ(0, coll_start(&co, 0, 0, NULL));
+	coll_script(&co, script, nitems(script));
+	ev = make_event();
+	e = otlp_to(co.port, "http", NULL, 0, 1, "none");
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ATF_REQUIRE_EQ(0, oe_flush(e));		/* 199 */
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ATF_REQUIRE_EQ(0, oe_flush(e));		/* 504, 200 */
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ATF_REQUIRE_EQ(0, oe_flush(e));		/* oversized answer */
+	ATF_REQUIRE_EQ(4, coll_nreqs(&co));
+	/* A large body to a peer that resets: no SIGPIPE, a failure. */
+	memset(big, 'b', sizeof(big) - 1);
+	big[sizeof(big) - 1] = '\0';
+	ev.body = big;
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ATF_REQUIRE_EQ(0, oe_flush(e));
+	oe_shutdown(e);
+	oe_exporter_free(e);
+	/* Defaults: retries, batch, flush interval, timeout. */
+	snprintf(url, sizeof(url), "http://127.0.0.1:%d", co.port);
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.endpoint = url;
+	cfg.resource = &test_resource;
+	cfg.max_retries = -1;
+	e = oe_otlp_new(&cfg);
+	ATF_REQUIRE(e != NULL);
+	ATF_REQUIRE_EQ(0, oe_start(e));
+	usleep(700000);			/* an idle tick without a spool */
+	ev = make_event();
+	ev.body = NULL;
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));	/* skipped */
+	oe_shutdown(e);
+	oe_exporter_free(e);
+	coll_stop(&co);
+	/* Malformed bracketed port. */
+	{
+		struct oe_url u;
+
+		ATF_REQUIRE_EQ(-1, oe_url_parse("http://[::1]:99999/", &u));
+	}
+}
+
+/* Two full batches queue two jobs before the sender thread starts. */
+ATF_TC_WITHOUT_HEAD(otlp_job_queue);
+ATF_TC_BODY(otlp_job_queue, tc)
+{
+	struct collector co;
+	struct oe_exporter *e;
+	struct oe_event ev;
+	int i;
+
+	ATF_REQUIRE_EQ(0, coll_start(&co, 0, 0, NULL));
+	e = otlp_to(co.port, "http", NULL, 0, 0, NULL);
+	ev = make_event();
+	for (i = 0; i < 4; i++)
+		ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ATF_REQUIRE_EQ(0, oe_start(e));
+	ATF_REQUIRE_EQ(0, coll_wait(&co, 2, 3000));
+	oe_shutdown(e);
+	/* Jobs never sent (no start) are released by free. */
+	oe_exporter_free(e);
+	e = otlp_to(co.port, "http", NULL, 0, 0, NULL);
+	for (i = 0; i < 4; i++)
+		ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	oe_exporter_free(e);
+	coll_stop(&co);
+}
+
+/*
+ * Spool corner cases: a replay whose first line fails, one that only
+ * removes garbage, exactly one dropped batch, a spool that vanished.
+ */
+ATF_TC_WITHOUT_HEAD(otlp_spool_edges);
+ATF_TC_BODY(otlp_spool_edges, tc)
+{
+	static const struct coll_reply firstfails[] = {
+		{ 200, NULL, "{}", 0, 0, 0, 0 },
+		{ 503, NULL, "", 0, 0, 0, 0 },
+	};
+	struct collector co;
+	struct oe_exporter *e;
+	struct oe_event ev;
+	struct stat st;
+	FILE *fp;
+	int port, i;
+
+	ev = make_event();
+	ATF_REQUIRE_EQ(0, coll_start(&co, 0, 0, NULL));
+	/* First replayed line refused: nothing removed. */
+	fp = fopen("a.jsonl", "w");
+	fprintf(fp, "{\"resourceLogs\":[]}\n");
+	fclose(fp);
+	coll_script(&co, firstfails, nitems(firstfails));
+	e = otlp_to(co.port, "http", "a.jsonl", 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ATF_REQUIRE_EQ(0, oe_flush(e));
+	ATF_REQUIRE(stat("a.jsonl", &st) == 0 && st.st_size == 20);
+	oe_shutdown(e);
+	oe_exporter_free(e);
+	/* Only garbage: removed, nothing resent. */
+	fp = fopen("b.jsonl", "w");
+	fprintf(fp, "garbage\n");
+	fclose(fp);
+	coll_script(&co, NULL, 0);
+	e = otlp_to(co.port, "http", "b.jsonl", 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ATF_REQUIRE_EQ(0, oe_flush(e));
+	ATF_REQUIRE(stat("b.jsonl", &st) == 0 && st.st_size == 0);
+	/* The spool vanished between the outage and the replay. */
+	fp = fopen("b.jsonl", "w");
+	fprintf(fp, "{\"resourceLogs\":[]}\n");
+	fclose(fp);
+	oe_shutdown(e);
+	oe_exporter_free(e);
+	e = otlp_to(co.port, "http", "b.jsonl", 0, 0, NULL);
+	ATF_REQUIRE_EQ(0, unlink("b.jsonl"));
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ATF_REQUIRE_EQ(0, oe_flush(e));
+	oe_shutdown(e);
+	oe_exporter_free(e);
+	coll_stop(&co);
+	/* Exactly one batch dropped, then drained. */
+	port = closed_port();
+	e = otlp_to(port, "http", "c.jsonl", 2000, 0, NULL);
+	for (i = 0; i < 2; i++) {
+		ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+		ATF_REQUIRE_EQ(0, oe_flush(e));
+	}
+	ATF_REQUIRE_EQ(0, coll_start(&co, port, 0, NULL));
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ATF_REQUIRE_EQ(0, oe_flush(e));
+	oe_shutdown(e);
+	oe_exporter_free(e);
+	coll_stop(&co);
+	/* Allocation failure reading the spool for a replay. */
+	ATF_REQUIRE_EQ(0, coll_start(&co, 0, 0, NULL));
+	for (i = 1; i <= 80; i++) {
+		fp = fopen("d.jsonl", "w");
+		fprintf(fp, "{\"resourceLogs\":[]}\n");
+		fclose(fp);
+		e = otlp_to(co.port, "http", "d.jsonl", 0, 0, NULL);
+		failalloc_arm(i);
+		(void)oe_event(e, &ev);
+		(void)oe_flush(e);
+		failalloc_arm(0);
+		oe_shutdown(e);
+		oe_exporter_free(e);
+	}
+	coll_stop(&co);
+}
+
+/* Sinks: a borrowed stream ignores age rotation; polls below limits. */
+ATF_TC_WITHOUT_HEAD(sink_edges);
+ATF_TC_BODY(sink_edges, tc)
+{
+	struct oe_sink_config sc;
+	struct oe_sink *s;
+	FILE *fp;
+	char *out;
+	size_t outlen;
+
+	fp = open_memstream(&out, &outlen);
+	memset(&sc, 0, sizeof(sc));
+	sc.fp = fp;
+	sc.rotate_interval = 1;
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "a\n", 2));
+	sleep(1);
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "b\n", 2));
+	ATF_REQUIRE_EQ(0, oe_sink_close(s));
+	fclose(fp);
+	ATF_REQUIRE_STREQ("a\nb\n", out);
+	free(out);
+	memset(&sc, 0, sizeof(sc));
+	sc.path = "p.log";
+	sc.rotate_size = 100;
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "small\n", 6));
+	ATF_REQUIRE_EQ(0, oe_sink_poll(s));
+	ATF_REQUIRE_EQ(0, oe_sink_close(s));
+}
+
+/* UTF-8 boundaries and environment odds. */
+ATF_TC_WITHOUT_HEAD(util_edges);
+ATF_TC_BODY(util_edges, tc)
+{
+	struct oe_buf b;
+	struct oe_env env;
+	struct oe_frame f;
+	char buf[64];
+
+	oe_buf_init(&b);
+	/* Overlong four-byte form of U+FFFF. */
+	oe_buf_appendjson(&b, "\xf0\x8f\xbf\xbf");
+	ATF_REQUIRE_STREQ("\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd",
+	    b.data);
+	oe_buf_free(&b);
+	/* Size overflow and a format error poison the buffer. */
+	oe_buf_init(&b);
+	ATF_REQUIRE_EQ(-1, oe_buf_append(&b, "x", SIZE_MAX));
+	ATF_REQUIRE_EQ(1, b.error);
+	oe_buf_free(&b);
+	oe_buf_init(&b);
+	ATF_REQUIRE_EQ(-1, oe_buf_appendf(&b, "%ls", L"\xd800"));
+	oe_buf_free(&b);
+	/* Blank-only entries, tabs, DEL in a header, huge timeouts. */
+	setenv("OTEL_RESOURCE_ATTRIBUTES", "\t , a\t=\tb ,", 1);
+	setenv("OTEL_EXPORTER_OTLP_HEADERS", "X=a\x7f", 1);
+	setenv("OTEL_EXPORTER_OTLP_TIMEOUT", "3000000000", 1);
+	oe_env_load(&env);
+	ATF_REQUIRE_EQ(1, env.nresource_attrs);
+	ATF_REQUIRE_STREQ("b", env.resource_attrs[0].value);
+	ATF_REQUIRE_EQ(0, env.nheaders);
+	ATF_REQUIRE_EQ(-1, env.timeout_ms);
+	oe_env_free(&env);
+	unsetenv("OTEL_RESOURCE_ATTRIBUTES");
+	unsetenv("OTEL_EXPORTER_OTLP_HEADERS");
+	unsetenv("OTEL_EXPORTER_OTLP_TIMEOUT");
+	/* A frame with a module but no symbol prints its address. */
+	memset(&f, 0, sizeof(f));
+	f.module = __DECONST(char *, "kernel");
+	f.addr = 0x10;
+	oe_frame_format(&f, buf, sizeof(buf));
+	ATF_REQUIRE_STREQ("0x0000000000000010", buf);
+	/* The legacy host helpers. */
+	oe_host_arch(buf, sizeof(buf));
+	ATF_REQUIRE(buf[0] != '\0');
+	oe_os_version(buf, sizeof(buf));
+	ATF_REQUIRE(buf[0] != '\0');
+	oe_host_name(buf, sizeof(buf));
+	ATF_REQUIRE(buf[0] != '\0');
+}
+
+/* Allocation-failure sweeps long enough to reach every path. */
+ATF_TC(alloc_sweeps);
+ATF_TC_HEAD(alloc_sweeps, tc)
+{
+
+	atf_tc_set_md_var(tc, "timeout", "300");
+}
+ATF_TC_BODY(alloc_sweeps, tc)
+{
+	struct oe_sink_config sc;
+	struct oe_sink *sink;
+	struct oe_exporter *e;
+	struct oe_event ev;
+	struct oe_span root, child;
+	struct oe_snapshot sn;
+	struct oe_otlpjson_config cfg;
+	int i;
+
+	ev = make_event();
+	make_spans(&root, &child);
+	memset(&sc, 0, sizeof(sc));
+	sc.path = "sweep.jsonl";
+	sink = oe_sink_open(&sc);
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.sink = sink;
+	cfg.resource = &test_resource;
+	cfg.batch_size = 1;
+	for (i = 1; i <= 120; i++) {
+		failalloc_arm(i);
+		e = oe_otlpjson_new(&cfg);
+		if (e != NULL) {
+			(void)oe_event(e, &ev);
+			(void)oe_span(e, &root);
+			sn = make_snapshot(OE_AGG_QUANTIZE, "q");
+			(void)oe_snapshot(e, &sn);
+			sn = make_snapshot(OE_AGG_COUNT, "c");
+			(void)oe_snapshot(e, &sn);
+			(void)oe_flush(e);
+		}
+		failalloc_arm(0);
+		if (e != NULL)
+			oe_exporter_free(e);
+	}
+	oe_sink_close(sink);
+}
+
+
+/* More failure paths: spool line allocation, rotation steps, odd spools. */
+ATF_TC(failure_edges);
+ATF_TC_HEAD(failure_edges, tc)
+{
+
+	atf_tc_set_md_var(tc, "require.user", "unprivileged");
+	atf_tc_set_md_var(tc, "timeout", "300");
+}
+ATF_TC_BODY(failure_edges, tc)
+{
+	struct oe_sink_config sc;
+	struct oe_sink *s;
+	struct oe_exporter *e;
+	struct oe_event ev;
+	struct rlimit rl;
+	FILE *fp;
+	char buf[4096];
+	int port, i, fd;
+
+	ev = make_event();
+	/* Spooling while allocations fail: batches are lost, not torn. */
+	port = closed_port();
+	for (i = 1; i <= 60; i++) {
+		e = otlp_to(port, "http", "f.jsonl", 0, 0, NULL);
+		ATF_REQUIRE(e != NULL);
+		failalloc_arm(i);
+		(void)oe_event(e, &ev);
+		(void)oe_flush(e);
+		failalloc_arm(0);
+		oe_shutdown(e);
+		oe_exporter_free(e);
+	}
+	/* A spool that is not a regular file. */
+	ATF_REQUIRE(otlp_to(port, "http", "/dev/null", 0, 0, NULL) == NULL);
+	/* Rotation: the oldest slot is a non-empty directory. */
+	ATF_REQUIRE_EQ(0, mkdir("r.log.2", 0755));
+	fp = fopen("r.log.2/x", "w");
+	fclose(fp);
+	memset(&sc, 0, sizeof(sc));
+	sc.path = "r.log";
+	sc.rotate_size = 2;
+	sc.rotate_keep = 2;
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "ab", 2));
+	ATF_REQUIRE_EQ(-1, oe_sink_write(s, "cd", 2));
+	ATF_REQUIRE_EQ(-1, oe_sink_close(s));
+	/* Rotation: shifting path.1 up fails in a read-only directory. */
+	ATF_REQUIRE_EQ(0, mkdir("rod", 0755));
+	sc.path = "rod/q.log";
+	sc.rotate_keep = 3;
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "ab", 2));
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "cd", 2));	/* rotated once */
+	ATF_REQUIRE_EQ(0, chmod("rod", 0555));
+	ATF_REQUIRE_EQ(-1, oe_sink_write(s, "ef", 2));
+	ATF_REQUIRE_EQ(-1, oe_sink_close(s));
+	ATF_REQUIRE_EQ(0, chmod("rod", 0755));
+	/* Rotation: the buffered data cannot be flushed (disk full). */
+	signal(SIGXFSZ, SIG_IGN);
+	fd = open("full.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	memset(buf, 'x', sizeof(buf));
+	ATF_REQUIRE_EQ(2000, write(fd, buf, 2000));
+	close(fd);
+	rl.rlim_cur = 4096;
+	rl.rlim_max = RLIM_INFINITY;
+	ATF_REQUIRE_EQ(0, setrlimit(RLIMIT_FSIZE, &rl));
+	sc.path = "full.log";
+	sc.rotate_size = 4500;
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, buf, 2400));	/* buffered */
+	ATF_REQUIRE_EQ(-1, oe_sink_write(s, buf, 200));
+	ATF_REQUIRE_EQ(-1, oe_sink_close(s));
+	rl.rlim_cur = RLIM_INFINITY;
+	setrlimit(RLIMIT_FSIZE, &rl);
+}
+
+ATF_TC_WITHOUT_HEAD(exporter_small_edges);
+ATF_TC_BODY(exporter_small_edges, tc)
+{
+	struct oe_exporter *e;
+	struct oe_event ev;
+	struct oe_sink_config sc;
+	struct oe_sink *sink;
+	FILE *fp;
+	char *out;
+	size_t outlen;
+
+	/* Collapsed: a kernel-only stack; a write error mid-dump. */
+	fp = open_memstream(&out, &outlen);
+	e = oe_collapsed_new(fp);
+	ev = make_event();
+	ev.nustack = 0;
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	oe_exporter_free(e);
+	fclose(fp);
+	free(out);
+	fp = fwopen(NULL, enospc_write);
+	setvbuf(fp, NULL, _IONBF, 0);
+	e = oe_collapsed_new(fp);
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ev.execname = "other";
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ATF_REQUIRE_EQ(-1, oe_shutdown(e));
+	oe_exporter_free(e);
+	fclose(fp);
+	/* JSONL with an empty probe; OTLP JSON with an empty body. */
+	fp = open_memstream(&out, &outlen);
+	e = oe_jsonl_new(fp, "p");
+	ev = make_event();
+	ev.probe = "";
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	{
+		struct oe_span root, child;
+
+		make_spans(&root, &child);
+		failalloc_arm(1);
+		ATF_REQUIRE_EQ(-1, oe_span(e, &root));
+		failalloc_arm(0);
+	}
+	oe_exporter_free(e);
+	fclose(fp);
+	ATF_REQUIRE(strstr(out, "\"probe\"") == NULL);
+	free(out);
+	fp = open_memstream(&out, &outlen);
+	memset(&sc, 0, sizeof(sc));
+	sc.fp = fp;
+	sink = oe_sink_open(&sc);
+	e = otlpjson_on(sink, 0);
+	ev.body = "";
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ATF_REQUIRE_EQ(0, oe_flush(e));
+	oe_exporter_free(e);
+	oe_sink_close(sink);
+	fclose(fp);
+	ATF_REQUIRE_EQ(0, outlen);
+	free(out);
+}
+
+
+/* Allocation failures while a full batch becomes a request. */
+ATF_TC_WITHOUT_HEAD(otlp_batch_alloc);
+ATF_TC_BODY(otlp_batch_alloc, tc)
+{
+	struct oe_exporter *e;
+	struct oe_event ev;
+	int i, port;
+
+	port = closed_port();
+	ev = make_event();
+	for (i = 1; i <= 40; i++) {
+		e = otlp_to(port, "http", NULL, 0, 0, NULL);
+		ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+		failalloc_arm(i);
+		(void)oe_event(e, &ev);		/* the batch fills */
+		failalloc_arm(0);
+		oe_exporter_free(e);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -2454,5 +3249,19 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, semconv_golden);
 	ATF_TP_ADD_TC(tp, semconv_jsonl);
 	ATF_TP_ADD_TC(tp, host_detection);
+	ATF_TP_ADD_TC(tp, utf8_all_formats);
+	ATF_TP_ADD_TC(tp, collapsed_edges);
+	ATF_TP_ADD_TC(tp, text_every_kind);
+	ATF_TP_ADD_TC(tp, jsonl_edges);
+	ATF_TP_ADD_TC(tp, otlp_encoding_edges);
+	ATF_TP_ADD_TC(tp, otlp_http_edges);
+	ATF_TP_ADD_TC(tp, otlp_job_queue);
+	ATF_TP_ADD_TC(tp, otlp_spool_edges);
+	ATF_TP_ADD_TC(tp, sink_edges);
+	ATF_TP_ADD_TC(tp, util_edges);
+	ATF_TP_ADD_TC(tp, alloc_sweeps);
+	ATF_TP_ADD_TC(tp, failure_edges);
+	ATF_TP_ADD_TC(tp, exporter_small_edges);
+	ATF_TP_ADD_TC(tp, otlp_batch_alloc);
 	return (atf_no_error());
 }

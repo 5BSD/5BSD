@@ -15,6 +15,35 @@
 
 #include "bsdinstruments.h"
 
+struct clauses {
+	char	*data;
+	size_t	 len, cap;
+};
+
+/* Append one clause, joined with " && "; exits rather than drop it. */
+static void
+append_clause(struct clauses *c, const char *clause)
+{
+	size_t clen;
+	char *np;
+
+	clen = strlen(clause);
+	if (c->len + clen + 5 > c->cap) {
+		while (c->cap < c->len + clen + 5)
+			c->cap *= 2;
+		np = realloc(c->data, c->cap);
+		if (np == NULL)
+			err(1, "filter");	/* never silently drop a filter */
+		c->data = np;
+	}
+	if (c->len > 0) {
+		memcpy(c->data + c->len, " && ", 4);
+		c->len += 4;
+	}
+	memcpy(c->data + c->len, clause, clen + 1);
+	c->len += clen;
+}
+
 /*
  * Build the joined clause list (no surrounding slashes).  Returns a
  * malloc'd string, or NULL if no filters are set.
@@ -22,43 +51,20 @@
 static char *
 clause_list(const struct filter_opts *fo)
 {
+	struct clauses c;
 	char clause[1024];
-	char *out;
 	const char *p;
-	size_t cap, len;
-	int any;
 
-	cap = 1024;
-	out = malloc(cap);
-	if (out == NULL)
+	c.cap = 1024;
+	c.len = 0;
+	c.data = malloc(c.cap);
+	if (c.data == NULL)
 		err(1, "filter");	/* never silently drop a filter */
-	out[0] = '\0';
-	len = 0;
-	any = 0;
-
-#define	APPEND_CLAUSE()	do {						\
-	size_t clen = strlen(clause);					\
-	if (len + clen + 5 > cap) {					\
-		char *np;						\
-		while (cap < len + clen + 5)				\
-			cap *= 2;					\
-		np = realloc(out, cap);					\
-		if (np == NULL)						\
-			err(1, "filter");	/* see above */		\
-		out = np;						\
-	}								\
-	if (any) {							\
-		memcpy(out + len, " && ", 4);				\
-		len += 4;						\
-	}								\
-	memcpy(out + len, clause, clen + 1);				\
-	len += clen;							\
-	any = 1;							\
-} while (0)
+	c.data[0] = '\0';
 
 	if (fo->have_pid) {
 		snprintf(clause, sizeof(clause), "pid == %d", (int)fo->pid);
-		APPEND_CLAUSE();
+		append_clause(&c, clause);
 	}
 	if (fo->execname != NULL) {
 		/*
@@ -77,35 +83,34 @@ clause_list(const struct filter_opts *fo)
 		escaped[o] = '\0';
 		snprintf(clause, sizeof(clause), "execname == \"%s\"",
 		    escaped);
-		APPEND_CLAUSE();
+		append_clause(&c, clause);
 	}
 	if (fo->have_uid) {
 		snprintf(clause, sizeof(clause), "uid == %u",
 		    (unsigned)fo->uid);
-		APPEND_CLAUSE();
+		append_clause(&c, clause);
 	}
 	if (fo->have_gid) {
 		snprintf(clause, sizeof(clause), "gid == %u",
 		    (unsigned)fo->gid);
-		APPEND_CLAUSE();
+		append_clause(&c, clause);
 	}
 	if (fo->have_jail) {
 		snprintf(clause, sizeof(clause),
 		    "curproc->p_ucred->cr_prison->pr_id == %d", fo->jail);
-		APPEND_CLAUSE();
+		append_clause(&c, clause);
 	}
 	if (fo->where != NULL) {
 		/* Parenthesize to keep the && composition unambiguous. */
 		snprintf(clause, sizeof(clause), "(%s)", fo->where);
-		APPEND_CLAUSE();
+		append_clause(&c, clause);
 	}
-#undef APPEND_CLAUSE
 
-	if (!any) {
-		free(out);
+	if (c.len == 0) {
+		free(c.data);
 		return (NULL);
 	}
-	return (out);
+	return (c.data);
 }
 
 char *

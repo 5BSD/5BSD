@@ -20,6 +20,9 @@ struct stub_state {
 	const dtrace_aggdata_t **aggs;
 	size_t		 naggs;
 	int		 jail_lookups;
+	int		 fail_compile;
+	int		 fail_exec;
+	int		 compiled;
 };
 
 char	*jail_getname(int);

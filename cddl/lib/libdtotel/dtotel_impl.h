@@ -37,6 +37,17 @@ struct dtotel_firing {
 };
 
 #define	DTOTEL_JAIL_CACHE	32
+#define	DTOTEL_GUEST_ATTRS	8
+
+struct dtotel_guest_state {
+	uint16_t	 vmid;
+	uint64_t	 epoch;
+	char		*name;
+	struct oe_attr	 attrs[DTOTEL_GUEST_ATTRS];	/* owned strings */
+	size_t		 nattrs;
+	struct oe_exporter *exporter;	/* NULL until first needed */
+	struct dtotel_guest_state *next;
+};
 
 struct dtotel_jail {
 	int		 jid;
@@ -65,9 +76,12 @@ struct dtotel {
 	struct timespec	 body_ts;
 	struct timespec	 body_observed;
 	struct dtotel_firing body_firing;
+	uint16_t	 body_vmid;
 	struct dtotel_frames kstack;
 	struct dtotel_frames ustack;
 	int		 in_ustack;
+	int		 line_open;	/* last chunk ended mid-line */
+	struct dtotel_firing out_firing; /* last firing with any output */
 	struct oe_context body_ctx;
 	char		*body_exec;	/* execname from a context record */
 	pid_t		 body_pid;
@@ -80,7 +94,17 @@ struct dtotel {
 
 	struct dtotel_jail jails[DTOTEL_JAIL_CACHE];
 	int		 njails;
+
+	/* HyperTrace guests. */
+	dtotel_guest_exporter_f *guest_exporter;
+	void		*guest_arg;
+	struct dtotel_guest_state *guests;
+	int		 warned_guest;
 };
+
+/* The exporter for records of a VMID (0: the host). */
+struct oe_exporter *dtotel_exporter_for(struct dtotel *, uint16_t vmid,
+    const char *target);
 
 const char *dtotel_jail_name(struct dtotel *, int jid);
 

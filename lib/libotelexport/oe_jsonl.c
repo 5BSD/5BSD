@@ -22,6 +22,7 @@ struct oe_jsonl {
 	struct oe_sink	*sink;
 	struct oe_sink	*owned;		/* wrapper sink for oe_jsonl_new() */
 	char		*profile;
+	char		*resource;	/* prebuilt ,"resource":{...} or NULL */
 };
 
 static int
@@ -149,6 +150,8 @@ jsonl_event(struct oe_exporter *e, const struct oe_event *ev)
 	jsonl_stack_array(&b, "stack", ev->stack, ev->nstack);
 	jsonl_stack_array(&b, "ustack", ev->ustack, ev->nustack);
 	jsonl_context(&b, ev->pid, ev->execname, &ev->ctx, NULL, 0);
+	if (j->resource != NULL)
+		oe_buf_appendstr(&b, j->resource);
 	oe_buf_appendstr(&b, "}\n");
 
 	ret = b.error ? -1 : oe_sink_write(j->sink, b.data, b.len);
@@ -202,6 +205,8 @@ jsonl_span(struct oe_exporter *e, const struct oe_span *sp)
 	}
 	jsonl_context(&b, sp->pid, sp->execname, &sp->ctx, sp->attrs,
 	    sp->nattrs);
+	if (j->resource != NULL)
+		oe_buf_appendstr(&b, j->resource);
 	oe_buf_appendstr(&b, "}\n");
 	ret = b.error ? -1 : oe_sink_write(j->sink, b.data, b.len);
 	oe_buf_free(&b);
@@ -238,6 +243,7 @@ jsonl_free(struct oe_exporter *e)
 
 	(void)oe_sink_close(j->owned);
 	free(j->profile);
+	free(j->resource);
 	free(j);
 }
 
@@ -267,6 +273,37 @@ oe_jsonl_sink_new(struct oe_sink *sink, const char *profile)
 		return (NULL);
 	}
 	return (&j->e);
+}
+
+struct oe_exporter *
+oe_jsonl_resource_new(struct oe_sink *sink, const char *profile,
+    const struct oe_attr *resource, size_t n)
+{
+	struct oe_exporter *e;
+	struct oe_jsonl *j;
+	struct oe_buf b;
+	size_t i;
+
+	if ((e = oe_jsonl_sink_new(sink, profile)) == NULL)
+		return (NULL);
+	j = (struct oe_jsonl *)e;
+	oe_buf_init(&b);
+	oe_buf_appendstr(&b, ",\"resource\":{");
+	for (i = 0; i < n; i++) {
+		oe_buf_appendstr(&b, i > 0 ? ",\"" : "\"");
+		oe_buf_appendjson(&b, resource[i].name);
+		oe_buf_appendstr(&b, "\":\"");
+		oe_buf_appendjson(&b, resource[i].value);
+		oe_buf_appendstr(&b, "\"");
+	}
+	oe_buf_appendstr(&b, "}");
+	if (b.error) {
+		oe_buf_free(&b);
+		jsonl_free(e);
+		return (NULL);
+	}
+	j->resource = b.data;
+	return (e);
 }
 
 struct oe_exporter *

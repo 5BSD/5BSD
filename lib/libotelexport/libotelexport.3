@@ -9,6 +9,7 @@
 .Nm oe_collapsed_new ,
 .Nm oe_text_sink_new ,
 .Nm oe_jsonl_sink_new ,
+.Nm oe_jsonl_resource_new ,
 .Nm oe_collapsed_sink_new ,
 .Nm oe_otlpjson_new ,
 .Nm oe_otlp_new ,
@@ -69,6 +70,11 @@ It is not installed as a shared library.
 .Fn oe_text_sink_new "struct oe_sink *sink"
 .Ft "struct oe_exporter *"
 .Fn oe_jsonl_sink_new "struct oe_sink *sink" "const char *profile"
+.Ft "struct oe_exporter *"
+.Fo oe_jsonl_resource_new
+.Fa "struct oe_sink *sink" "const char *profile"
+.Fa "const struct oe_attr *resource" "size_t n"
+.Fc
 .Ft "struct oe_exporter *"
 .Fn oe_collapsed_sink_new "struct oe_sink *sink"
 .Ft "struct oe_exporter *"
@@ -472,7 +478,7 @@ and its message when in error, and the trace, span and parent ids.
 and
 .Fn oe_shutdown
 flush the sink.
-.It Fn oe_jsonl_new , Fn oe_jsonl_sink_new
+.It Fn oe_jsonl_new , Fn oe_jsonl_sink_new , Fn oe_jsonl_resource_new
 One JSON object per event on its own line, suitable for piping into
 jq, Loki, Vector, Splunk or fluentd.
 Each object carries
@@ -526,6 +532,16 @@ argument is copied at construction; a
 .Dv NULL
 profile is treated as the empty string.
 Snapshots are ignored.
+.Fn oe_jsonl_resource_new
+also names a resource in every line: a
+.Va resource
+object holding copies of the
+.Fa n
+attributes of
+.Fa resource ,
+as
+.Xr dtrace 1
+writes for each HyperTrace guest.
 .It Fn oe_collapsed_new , Fn oe_collapsed_sink_new
 Folded stacks for flame graph generation in the format read by
 .Pa flamegraph.pl ,
@@ -721,7 +737,18 @@ Spool size limit in bytes; 0 selects 64 MiB.
 .El
 .Pp
 .Fn oe_start
-launches a dedicated sender thread; until it is called nothing is posted
+launches a dedicated sender thread, with every signal blocked so that
+the application's signal handling is unaffected and its
+.Dv SIGINT
+or
+.Dv SIGTERM
+reaches the application's own threads; sockets are opened with
+.Dv SO_NOSIGPIPE ,
+so a collector that drops the connection never raises
+.Dv SIGPIPE .
+Until
+.Fn oe_start
+is called nothing is posted
 except by an explicit
 .Fn oe_flush
 or
@@ -947,11 +974,21 @@ text.
 .Fn oe_buf_appendjson
 appends
 .Fa s
-with RFC 8259 string escaping and no surrounding quotes; control bytes
-and every byte at or above 0x80 are written as
+with RFC 8259 string escaping and no surrounding quotes: the quotation
+mark, the backslash and the control characters below 0x20 are escaped
+.Po
+.Ql \en ,
+.Ql \et
+and the other short forms where JSON has them,
 .Ql \eu00xx
-so that arbitrary DTrace bytes always yield valid JSON
-.Pq at the cost of being lossy for genuine UTF-8 .
+otherwise
+.Pc ,
+and well-formed UTF-8 is copied unchanged.
+Since DTrace strings are arbitrary bytes, any byte that does not begin a
+well-formed UTF-8 sequence (a stray continuation byte, a truncated,
+overlong or surrogate sequence, or a code point above U+10FFFF) is
+replaced by U+FFFD, so the output is always valid UTF-8 JSON.
+Every exporter writes its strings this way.
 A
 .Dv NULL
 argument is a no-op.

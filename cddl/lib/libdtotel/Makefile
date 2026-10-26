@@ -4,7 +4,8 @@ LIB=		dtotel
 INTERNALLIB=
 
 SRCS=		dtotel.c \
-		dtotel_agg.c
+		dtotel_agg.c \
+		dtotel_session.c
 
 WARNS?=		3
 

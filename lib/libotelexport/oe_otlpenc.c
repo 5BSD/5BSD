@@ -461,7 +461,8 @@ build_dimension_attrs(struct oe_buf *b, const struct oe_datapoint *dp)
 
 	for (i = 0; i < dp->nattrs; i++) {
 		kv.key = dp->attrs[i].name;
-		if (int_semconv_key(kv.key) && dp->attrs[i].value[0] != '\0') {
+		if (int_semconv_key(kv.key) && dp->attrs[i].value != NULL &&
+		    dp->attrs[i].value[0] != '\0') {
 			errno = 0;
 			kv.i = strtoll(dp->attrs[i].value, &end, 10);
 			if (*end == '\0' && errno == 0) {

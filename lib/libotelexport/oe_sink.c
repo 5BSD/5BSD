@@ -45,14 +45,16 @@ struct oe_sink {
 	struct timespec	 opened;	/* CLOCK_MONOTONIC */
 };
 
+/*
+ * Report the first failure.  Every caller runs only while no error is
+ * recorded (the entry points check it), so this is reached once.
+ */
 static void
 sink_fail(struct oe_sink *s, const char *what, int error)
 {
 
-	if (!s->error)
-		fprintf(stderr, "otelexport: %s: %s failed: %s\n",
-		    s->path != NULL ? s->path : "<stream>", what,
-		    strerror(error));
+	fprintf(stderr, "otelexport: %s: %s failed: %s\n",
+	    s->path != NULL ? s->path : "<stream>", what, strerror(error));
 	s->error = 1;
 }
 
@@ -163,7 +165,8 @@ sink_interval_due(const struct oe_sink *s)
 {
 	struct timespec now;
 
-	if (s->rotate_interval <= 0 || s->path == NULL)
+	/* Only owned files rotate; callers check s->path first. */
+	if (s->rotate_interval <= 0)
 		return (0);
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	return (now.tv_sec - s->opened.tv_sec >= s->rotate_interval);
@@ -230,7 +233,7 @@ int
 oe_sink_write(struct oe_sink *s, const void *data, size_t len)
 {
 
-	if (s->error || s->fp == NULL)
+	if (s->error)		/* also covers a failed rotation's NULL fp */
 		return (-1);
 	if (s->path != NULL && s->size > 0 && ((s->rotate_size > 0 &&
 	    s->size + len > s->rotate_size) || sink_interval_due(s)) &&
@@ -249,7 +252,7 @@ oe_sink_poll(struct oe_sink *s)
 {
 	struct stat st;
 
-	if (s->error || s->fp == NULL)
+	if (s->error)		/* also covers a failed rotation's NULL fp */
 		return (-1);
 	if (s->path == NULL)
 		return (0);
@@ -262,8 +265,8 @@ oe_sink_poll(struct oe_sink *s)
 		sink_fail(s, "write", errno);
 		return (-1);
 	}
-	if (fstat(fileno(s->fp), &st) == 0)
-		s->size = (uint64_t)st.st_size;
+	(void)fstat(fileno(s->fp), &st);	/* an open descriptor */
+	s->size = (uint64_t)st.st_size;
 	if (s->size > 0 && ((s->rotate_size > 0 &&
 	    s->size >= s->rotate_size) || sink_interval_due(s)))
 		return (sink_rotate(s));
@@ -274,7 +277,7 @@ int
 oe_sink_flush(struct oe_sink *s)
 {
 
-	if (s->error || s->fp == NULL)
+	if (s->error)		/* also covers a failed rotation's NULL fp */
 		return (-1);
 	return (sink_sync(s));
 }

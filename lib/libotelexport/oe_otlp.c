@@ -32,6 +32,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -111,8 +112,7 @@ gzip_body(const char *data, size_t len, size_t *outlenp)
 	unsigned char *out;
 	uLong bound;
 
-	if (len == 0)
-		return (NULL);
+	/* Requests are never empty. */
 	memset(&zs, 0, sizeof(zs));
 	if (deflateInit2(&zs, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
 	    15 + 16 /* gzip wrapper */, 8, Z_DEFAULT_STRATEGY) != Z_OK)
@@ -281,6 +281,8 @@ static void
 spool_append(struct oe_otlp *o, enum oe_signal sig, const char *body,
     size_t len)
 {
+	char *line;
+	ssize_t n;
 	int fd;
 
 	if (o->spool_size + len + 1 > o->spool_max) {
@@ -299,12 +301,23 @@ spool_append(struct oe_otlp *o, enum oe_signal sig, const char *body,
 		return;
 	}
 	/*
-	 * The line goes out in two writes; if the second is lost the
-	 * stray partial line is cut off again below, and replay
-	 * ignores a final line without its newline in any case.
+	 * One write per line, so several exporters appending to spools
+	 * cannot interleave within a line; a short write is cut off
+	 * again below, and replay ignores a final line without its
+	 * newline in any case.
 	 */
-	if (write(fd, body, len) != (ssize_t)len ||
-	    write(fd, "\n", 1) != 1 || fsync(fd) != 0) {
+	line = malloc(len + 1);
+	if (line == NULL) {
+		close(fd);
+		fprintf(stderr, "otlp: spool %s: out of memory; /%s batch "
+		    "lost\n", o->spool_path, oe_enc_path(sig));
+		return;
+	}
+	memcpy(line, body, len);
+	line[len] = '\n';
+	n = write(fd, line, len + 1);
+	free(line);
+	if (n != (ssize_t)(len + 1) || fsync(fd) != 0) {
 		fprintf(stderr, "otlp: spool %s: write failed: %s; /%s "
 		    "batch lost\n", o->spool_path, strerror(errno),
 		    oe_enc_path(sig));
@@ -394,8 +407,8 @@ spool_replay(struct oe_otlp *o)
 
 	pthread_mutex_lock(&o->spool_lock);
 	o->spool_last_try = time(NULL);
-	if (o->spool_size == 0 ||
-	    (data = read_whole(o->spool_path, &len)) == NULL) {
+	/* Callers replay only a non-empty spool. */
+	if ((data = read_whole(o->spool_path, &len)) == NULL) {
 		pthread_mutex_unlock(&o->spool_lock);
 		return;
 	}
@@ -631,9 +644,21 @@ otlp_start(struct oe_exporter *e)
 {
 	struct oe_otlp *o = (struct oe_otlp *)e;
 
+	sigset_t all, saved;
+	int error;
+
 	if (o->started)
 		return (0);
-	if (pthread_create(&o->sender, NULL, sender_main, o) != 0) {
+	/*
+	 * The sender thread never takes signals: a tool that waits for
+	 * them in a thread of its own (dtrace(1)) relies on every other
+	 * thread blocking them, or SIGINT would kill the process.
+	 */
+	sigfillset(&all);
+	pthread_sigmask(SIG_SETMASK, &all, &saved);
+	error = pthread_create(&o->sender, NULL, sender_main, o);
+	pthread_sigmask(SIG_SETMASK, &saved, NULL);
+	if (error != 0) {
 		fprintf(stderr, "otlp: failed to start sender thread\n");
 		return (-1);
 	}
