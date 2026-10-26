@@ -34,6 +34,7 @@
 #include <stdarg.h>
 #define NEED_BRSSL_H
 #include "libsecureboot-priv.h"
+#include "x509_tbs.h"
 #include <brssl.h>
 #include <ta.h>
 
@@ -250,65 +251,6 @@ x509_cn_get(br_x509_certificate *xc, char *buf, size_t len)
 	return (buf);
 }
 
-/* ASN parsing related defines */
-#define ASN1_PRIMITIVE_TAG 0x1F
-#define ASN1_INF_LENGTH    0x80
-#define ASN1_LENGTH_MASK   0x7F
-
-/*
- * Get TBS part of certificate.
- * Since BearSSL doesn't provide any API to do this,
- * it has to be implemented here.
- */
-static void*
-X509_to_tbs(unsigned char* cert, size_t* output_size)
-{
-	unsigned char *result;
-	size_t tbs_size;
-	int size, i;
-
-	if (cert == NULL)
-		return (NULL);
-
-	/* Strip two sequences to get to the TBS section */
-	for (i = 0; i < 2; i++) {
-		/*
-		 * XXX: We don't need to support extended tags since
-		 * they should not be present in certificates.
-		 */
-		if ((*cert & ASN1_PRIMITIVE_TAG) == ASN1_PRIMITIVE_TAG)
-			return (NULL);
-
-		cert++;
-
-		if (*cert == ASN1_INF_LENGTH)
-			return (NULL);
-
-		size = *cert & ASN1_LENGTH_MASK;
-		tbs_size = 0;
-
-		/* Size can either be stored on a single or multiple bytes */
-		if (*cert & (ASN1_LENGTH_MASK + 1)) {
-			cert++;
-			while (*cert == 0 && size > 0) {
-				cert++;
-				size--;
-			}
-			while (size-- > 0) {
-				tbs_size <<= 8;
-				tbs_size |= *(cert++);
-			}
-		}
-		if (i == 0)
-			result = cert;
-	}
-	tbs_size += (cert - result);
-
-	if (output_size != NULL)
-		*output_size = tbs_size;
-
-	return (result);
-}
 
 void
 ve_forbidden_digest_add(hash_data *digest, size_t num)
@@ -608,7 +550,7 @@ check_forbidden_digests(br_x509_certificate *xcs, size_t num)
 	unsigned char sha256_digest[br_sha256_SIZE];
 	unsigned char sha384_digest[br_sha384_SIZE];
 	unsigned char sha512_digest[br_sha512_SIZE];
-	void *tbs;
+	const unsigned char *tbs;
 	hash_data *digest;
 	br_hash_compat_context ctx;
 	const br_hash_class *md;
@@ -623,7 +565,7 @@ check_forbidden_digests(br_x509_certificate *xcs, size_t num)
 	 * and compare its digest against the ones in the forbidden database.
 	 */
 	while (num--) {
-		tbs = X509_to_tbs(xcs[num].data, &tbs_len);
+		tbs = ve_x509_tbs(xcs[num].data, xcs[num].data_len, &tbs_len);
 		if (tbs == NULL) {
 			printf("Failed to obtain TBS part of certificate\n");
 			return (1);
@@ -777,6 +719,33 @@ hexdigest(char *buf, size_t bufsz, unsigned char *foo, size_t foo_len)
  *
  * @return NULL on error, otherwise content of file.
  */
+#if defined(VE_RSA_SUPPORT) || defined(VE_ECDSA_SUPPORT)
+/* A detached signature contains one nonempty PEM object. */
+static pem_object *
+read_signature(const char *path)
+{
+	unsigned char *data;
+	pem_object *objects;
+	size_t length, count;
+
+	data = read_file(path, &length);
+	if (data == NULL)
+		return (NULL);
+	objects = decode_pem(data, length, &count);
+	free(data);
+	if (objects == NULL)
+		return (NULL);
+	if (count != 1 || objects[0].data == NULL || objects[0].data_len == 0) {
+		for (size_t i = 0; i < count; i++)
+			free_pem_object_contents(&objects[i]);
+		free(objects);
+		return (NULL);
+	}
+	return (objects);
+}
+
+#endif
+
 #ifdef VE_ECDSA_SUPPORT
 static unsigned char *
 verify_ec(br_x509_pkey *pk, const char *file, const char *sigfile)
@@ -786,21 +755,16 @@ verify_ec(br_x509_pkey *pk, const char *file, const char *sigfile)
 #endif
 	unsigned char rhbuf[br_sha512_SIZE];
 	br_sha256_context ctx;
-	unsigned char *fcp, *scp;
-	size_t flen, slen, plen;
+	unsigned char *fcp;
+	size_t flen;
 	pem_object *po;
 	const br_ec_impl *ec;
 	br_ecdsa_vrfy vrfy;
 
 	if ((fcp = read_file(file, &flen)) == NULL)
 		return (NULL);
-	if ((scp = read_file(sigfile, &slen)) == NULL) {
+	if ((po = read_signature(sigfile)) == NULL) {
 		free(fcp);
-		return (NULL);
-	}
-	if ((po = decode_pem(scp, slen, &plen)) == NULL) {
-		free(fcp);
-		free(scp);
 		return (NULL);
 	}
 	br_sha256_init(&ctx);
@@ -822,7 +786,8 @@ verify_ec(br_x509_pkey *pk, const char *file, const char *sigfile)
 		free(fcp);
 		fcp = NULL;
 	}
-	free(scp);
+	free_pem_object_contents(po);
+	free(po);
 	return (fcp);
 }
 #endif
@@ -883,19 +848,14 @@ verify_rsa(br_x509_pkey *pk,  const char *file, const char *sigfile)
 	const unsigned char *hash_oid;
 	const br_hash_class *md;
 	br_hash_compat_context mctx;
-	unsigned char *fcp, *scp;
-	size_t flen, slen, plen, hlen;
+	unsigned char *fcp;
+	size_t flen, hlen;
 	pem_object *po;
 
 	if ((fcp = read_file(file, &flen)) == NULL)
 		return (NULL);
-	if ((scp = read_file(sigfile, &slen)) == NULL) {
+	if ((po = read_signature(sigfile)) == NULL) {
 		free(fcp);
-		return (NULL);
-	}
-	if ((po = decode_pem(scp, slen, &plen)) == NULL) {
-		free(fcp);
-		free(scp);
 		return (NULL);
 	}
 
@@ -922,7 +882,8 @@ verify_rsa(br_x509_pkey *pk,  const char *file, const char *sigfile)
 		free(fcp);
 		fcp = NULL;
 	}
-	free(scp);
+	free_pem_object_contents(po);
+	free(po);
 	return (fcp);
 }
 #endif
@@ -955,7 +916,8 @@ verify_sig(const char *sigfile, int flags)
 
 	DEBUG_PRINTF(5, ("verify_sig: %s\n", sigfile));
 	n = strlcpy(pbuf, sigfile, sizeof(pbuf));
-	if (n > (sizeof(pbuf) - 5) || strcmp(&sigfile[n - 3], "sig") != 0)
+	if (n <= 4 || n > (sizeof(pbuf) - 5) ||
+	    strcmp(&sigfile[n - 4], ".sig") != 0)
 		return (NULL);
 	cp = strcpy(&pbuf[n - 3], "certs");
 	/*
@@ -1040,6 +1002,8 @@ ve_check_hash(br_hash_compat_context *ctx, const br_hash_class *md,
 	int rc;
 	int n;
 
+	if (hlen == 0 || hlen > sizeof(hbuf))
+		return (VE_FINGERPRINT_WRONG);
 	md->out(&ctx->vtable, hbuf);
 #ifdef VE_PCR_SUPPORT
 	ve_pcr_update(path, hbuf, hlen);
@@ -1048,7 +1012,8 @@ ve_check_hash(br_hash_compat_context *ctx, const br_hash_class *md,
 	if (!hex)
 		return (VE_FINGERPRINT_WRONG);
 	n = 2*hlen;
-	if ((rc = strncmp(hex, want, n))) {
+	if ((rc = strncmp(hex, want, n)) != 0 ||
+	    strchr(" \t\r\n", want[n]) == NULL) {
 		ve_error_set("%s: %.*s != %.*s", path, n, hex, n, want);
 		rc = VE_FINGERPRINT_WRONG;
 	}

@@ -40,13 +40,19 @@ hardware-packages hardware-packages-check: .PHONY
 	    --distfiles ${DISTDIR:Q} --pkg ${PKG_CMD:Q} \
 	    ${.TARGET:Mhardware-packages-check:S/hardware-packages-check/--check/}
 
+# Optional PKGBASE_PKG_PACKAGE and PKGBASE_PKG_SHA256 must be supplied together.
+# APPLICATION_PACKAGE_SELECTION optionally adds a format-1 hash-bound archive
+# selection without rewriting package identities. Format 2 is not supported.
 publish-packages: .PHONY
 	@mkdir -p ${COMPLETE_REPOSITORY:H:Q}
 	@${MALLOC_PRODUCTION_CHECK} -r ${BASE_REPOSITORY:Q}
 	${HARDWARE_PYTHON} ${.CURDIR}/release/scripts/hardware-packages.py publish \
 	    --repository ${HARDWARE_REPO:Q} --base-repository ${BASE_REPOSITORY:Q} \
 	    --output ${COMPLETE_REPOSITORY:Q} --pkg ${PKG_CMD:Q} \
-	    ${HARDWARE_SIGNING_KEY:D--signing-key ${HARDWARE_SIGNING_KEY:Q}}
+	    ${HARDWARE_SIGNING_KEY:D--signing-key ${HARDWARE_SIGNING_KEY:Q}} \
+	    ${PKGBASE_PKG_PACKAGE:D--pkg-package ${PKGBASE_PKG_PACKAGE:Q}} \
+	    ${PKGBASE_PKG_SHA256:D--pkg-package-sha256 ${PKGBASE_PKG_SHA256:Q}} \
+	    ${APPLICATION_PACKAGE_SELECTION:D--application-selection ${APPLICATION_PACKAGE_SELECTION:Q}}
 
 .ORDER: hardware-packages publish-packages
 

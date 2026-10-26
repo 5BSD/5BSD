@@ -8,7 +8,7 @@
 .Sh SYNOPSIS
 .Nm
 .Op Cm plan
-.Cm build | world | kernel | stage | packages | sign | verify | deploy | bsdinstall | media
+.Cm build | world | kernel | stage | packages | sign | verify | deploy | bsdinstall | media | bazel-test
 .Op Ar options
 .Nm
 .Cm status
@@ -144,6 +144,36 @@ Make configuration passed as __MAKE_CONF; defaults to /etc/make.conf.
 These two files are trusted make input, unlike the literal frontend config.
 .It Fl -kernel-dir Ar directory
 Directory containing the selected kernel configuration, passed as KERNCONFDIR.
+.It Fl -application-selection Ar file
+Explicit format-1 package archive selection for build/packages publication.
+The JSON object contains format=1 and an archives array of absolute path and
+SHA256 bindings, using the maintained package-selection schema.
+Ordinary application names, versions and archive bytes are preserved.
+The publisher validates them against the combined base/hardware selection before
+catalogue signing; this input does not authorize replacing system packages.
+The selection path must be a regular file without whitespace or make/shell
+metacharacters. Configuration files use application_selection.
+These are explicit trusted-builder inputs: hashes bind bytes but do not establish
+repository authentication. Fetching/resolving remote application repositories
+remains a separate step. This option neither installs packages nor activates an
+upgrade. Repository-root (format-2) selections are not accepted by this interface.
+.It Fl -pkg-package Ar file
+Explicit target-compatible pkg bootstrap archive to include in the combined
+publication before catalogue signing.
+Applies to build/packages and requires
+.Fl -pkg-package-sha256 .
+The archive must name pkg, match the target ABI, and declare an OS version
+no newer than the target.
+A base repository already containing pkg rejects a second bootstrap input.
+This supplies offline installation without fetching a package manager separately.
+The archive path must be a readable regular file without whitespace or make/shell
+metacharacters. Configuration files use pkg_package and pkg_package_sha256.
+.It Fl -pkg-package-sha256 Ar digest
+Expected SHA256 of the explicit bootstrap archive.
+The publisher checks the copied bytes before reading its manifest and includes
+those bytes in the signed catalogue.
+The digest pins the publisher's selected input; upstream provenance remains the
+publisher's responsibility.
 .It Fl -pkg-key Ar file
 Existing unencrypted RSA private key for both base and combined repository
 catalogues.
@@ -317,3 +347,25 @@ Only successful complete publication advances the destination's per-ABI
 pointer.
 Creating or writing the destination requires normal filesystem
 permissions; the tool does not relocate it on permission failure.
+
+.Ss Bazel build qualification
+.Cm bazel-test
+runs the maintained native amd64 compile and artifact-comparison pilot.
+It requires an explicit executable
+.Fl bazel Ar path
+and a matching development world SDK in the standard object tree.
+.Fl jobs
+selects parallelism (all logical CPUs by default);
+.Fl output
+selects a fresh directory below /usr/obj.
+It builds fresh Make reference libraries and compares Bazel artifacts,
+including versioned exports and generated-input invalidation.
+The action also builds and stages a Make-only libmd installation reference
+under its private output directory, preserving the selected world profile,
+source layout, debug splitting and METALOG package metadata.
+This does not establish Bazel installation parity.
+The action does not launch a VM,
+qualify performance, install packages or select Bazel for production builds.
+Make remains the production backend.
+Custom make configurations, signing and incremental reuse are not supported
+by this qualification action.

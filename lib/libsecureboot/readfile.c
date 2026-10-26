@@ -24,31 +24,36 @@
  */
 #include <sys/cdefs.h>
 #include <libsecureboot.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdint.h>
 
 unsigned char *
 read_fd(int fd, size_t len)
 {
-	int m, n, x;
+	size_t offset, count;
+	ssize_t n;
 	unsigned char *buf;
 
+	if (len == SIZE_MAX)
+		return (NULL);
 	buf = malloc(len + 1);
-	if (buf != NULL) {
-		for (x = 0, m = len; m > 0; ) {
-			n = read(fd, &buf[x], m);
-			if (n < 0)
-				break;
-			if (n > 0) {
-				m -= n;
-				x += n;
-			}
+	if (buf == NULL)
+		return (NULL);
+	for (offset = 0; offset < len; offset += (size_t)n) {
+		count = len - offset;
+		if (count > SSIZE_MAX)
+			count = SSIZE_MAX;
+		do {
+			n = read(fd, buf + offset, count);
+		} while (n < 0 && errno == EINTR);
+		if (n <= 0) {
+			free(buf);
+			return (NULL);
 		}
-		if (m == 0) {
-			buf[len] = '\0';
-			return (buf);
-		}
-		free(buf);
 	}
-	return (NULL);
+	buf[len] = '\0';
+	return (buf);
 }
 
 unsigned char *
@@ -56,25 +61,24 @@ read_file(const char *path, size_t *len)
 {
 	struct stat st;
 	unsigned char *ucp;
-	int fd;
+	int fd, flags = O_RDONLY;
 
-    	if (len)
+	if (len != NULL)
 		*len = 0;
-	if ((fd = open(path, O_RDONLY)) < 0)
-		return (NULL);
-	fstat(fd, &st);
-	ucp = read_fd(fd, st.st_size);
-	close(fd);
-	if (ucp != NULL) {
-		if (len != NULL)
-			*len = st.st_size;
-	}
-#ifdef _STANDALONE
-	else
-		printf("%s: out of memory! %lu\n", __func__,
-		    (unsigned long)len);
+#ifndef _STANDALONE
+	/* Do not block opening a FIFO before checking its type. */
+	flags |= O_NONBLOCK;
 #endif
-
+	if ((fd = open(path, flags)) < 0)
+		return (NULL);
+	if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
+	    st.st_size < 0 || (uintmax_t)st.st_size >= SIZE_MAX) {
+		close(fd);
+		return (NULL);
+	}
+	ucp = read_fd(fd, (size_t)st.st_size);
+	close(fd);
+	if (ucp != NULL && len != NULL)
+		*len = (size_t)st.st_size;
 	return (ucp);
 }
-

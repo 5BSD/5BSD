@@ -16,7 +16,7 @@ subprocess.run([args.qemu,'--version'],check=True,stdout=subprocess.DEVNULL)
 target=w/'real-zfs.img'
 with target.open('xb') as f:f.truncate(32*1024**3)
 log=w/'seed-serial.log'
-cmd=[args.qemu,'-accel','tcg,thread=multi','-machine','q35','-cpu','max','-m','8192','-smp',str(args.cpus),'-drive',f'file={w}/seed.img,format=raw,if=none,id=seedroot,snapshot=on','-device','virtio-blk-pci,drive=seedroot,bootindex=1','-drive',f'file={target},format=raw,if=none,id=target','-device','virtio-blk-pci,drive=target,serial=context-zfs-target,bootindex=2','-nic','none','-display','none','-monitor','none','-chardev',f'socket,id=serial,path={w}/serial.sock,server=on,wait=off,logfile={log}','-serial','chardev:serial']
+cmd=[args.qemu,'-accel','tcg,thread=multi','-machine','q35','-cpu','max','-m','2048','-smp',str(args.cpus),'-drive',f'file={w}/seed.img,format=raw,if=none,id=seedroot,snapshot=on','-device','virtio-blk-pci,drive=seedroot,bootindex=1','-drive',f'file={target},format=raw,if=none,id=target','-device','virtio-blk-pci,drive=target,serial=context-zfs-target,bootindex=2','-nic','none','-display','none','-monitor','none','-chardev',f'socket,id=serial,path={w}/serial.sock,server=on,wait=off,logfile={log}','-serial','chardev:serial']
 qmpdir=w/'seed-qmp';qmpdir.mkdir()
 shutdown=ShutdownEvidence(qmpdir)
 cmd += shutdown.arguments

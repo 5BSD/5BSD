@@ -145,3 +145,11 @@ That tool checks production executable and documentation identities against
 the qualified staging root. Private automation media contains disposable test
 credentials and must never be published as a release image. Public media needs
 its own unmodified boot tests.
+
+## Qualification memory budget
+
+The kernel, software VM, seed, installer, installed-system and installed-boot runners
+use 2048 MiB of guest RAM. Run one VM at a time. The native
+`python3.12 -B memory_budget_test.py` check guards declared RAM arguments;
+it does not qualify boot, disk usage, peak memory or performance. Historical
+8192 MiB results do not meet this budget and need reruns.

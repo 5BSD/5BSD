@@ -24,6 +24,8 @@
 #include <termios.h>
 #include <unistd.h>
 
+#define RUNTIME_MAX_CASE_TIMEOUT 86400U
+
 /* Local TCP/UDP fixtures need lo0; QEMU still has no network adapter. */
 static int
 configure_loopback(void)
@@ -68,64 +70,86 @@ out:
 	return (0);
 }
 
+/* Each body and cleanup gets a separate process group and bounded lifetime. */
 static int
-run_case(const char *program, const char *name)
+run_part(const char *program, const char *part, const char *path,
+    const char *result, unsigned timeout)
 {
-	char path[256], result[256], line[1024] = { 0 };
 	struct timespec start, now, pause_time = { .tv_nsec = 100000000 };
 	pid_t child;
-	int status = 0;
-	FILE *f;
+	int status;
+
+	child = fork();
+	if (child == -1)
+		return (-1);
+	if (child == 0) {
+		if (setsid() == -1 || chdir(path) == -1)
+			_exit(126);
+		execl(program, program, "-s", "/tests", "-r", result, part, NULL);
+		_exit(127);
+	}
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	for (;;) {
+		pid_t waited = waitpid(child, &status, WNOHANG);
+		if (waited == child) {
+			/* Reap a leaked worker group even after its parent exited. */
+			kill(-child, SIGKILL);
+			return (WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1);
+		}
+		if (waited == -1 && errno != EINTR)
+			return (-1);
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		if (now.tv_sec - start.tv_sec >= timeout) {
+			kill(-child, SIGKILL);
+			kill(child, SIGKILL);
+			waitpid(child, &status, 0);
+			printf("RUNTIME_CASE_FAIL %s:%s timeout=%u\n", program, part, timeout);
+			return (-1);
+		}
+		nanosleep(&pause_time, NULL);
+	}
+}
+
+static int
+run_case(const char *program, const char *name, unsigned timeout, bool cleanup)
+{
+	char path[300], result[320], part[140], line[1024] = "missing result";
+	int status, cleanup_status = 0;
+	FILE *file;
+	bool passed = false;
+
 	snprintf(path, sizeof(path), "/tmp/%s_%s", strrchr(program, '/') + 1, name);
 	if (mkdir(path, 0700) == -1) {
 		perror(path);
 		return (-1);
 	}
 	snprintf(result, sizeof(result), "%s/result", path);
-	child = fork();
-	if (child == -1)
-		return (-1);
-	if (child == 0) {
-		if (chdir(path) == -1)
-			_exit(126);
-		execl(program, program, "-s", "/tests", "-r",
-		    result, name, NULL);
-		_exit(127);
+	status = run_part(program, name, path, result, timeout);
+	file = fopen(result, "r");
+	if (file != NULL) {
+		passed = fgets(line, sizeof(line), file) != NULL &&
+		    strcmp(line, "passed\n") == 0 && fgetc(file) == EOF && !ferror(file);
+		fclose(file);
 	}
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	for (;;) {
-		pid_t p = waitpid(child, &status, WNOHANG);
-		if (p == child)
-			break;
-		if (p == -1 && errno != EINTR)
-			return (-1);
-		clock_gettime(CLOCK_MONOTONIC, &now);
-		if (now.tv_sec - start.tv_sec >= 40) {
-			kill(child, SIGKILL);
-			waitpid(child, &status, 0);
-			printf("RUNTIME_CASE_FAIL %s timeout\n", name);
-			return (-1);
-		}
-		nanosleep(&pause_time, NULL);
+	/* ATF cleanup is required even after a failed, skipped or timed-out body. */
+	if (cleanup) {
+		snprintf(part, sizeof(part), "%s:cleanup", name);
+		snprintf(result, sizeof(result), "%s/cleanup-result", path);
+		cleanup_status = run_part(program, part, path, result, timeout);
+		printf("RUNTIME_CLEANUP_%s %s:%s\n",
+		    cleanup_status == 0 ? "PASS" : "FAIL", program, name);
 	}
-	f = fopen(result, "r");
-	if (f == NULL) {
-		perror(result);
-		return (-1);
-	}
-	bool passed = fgets(line, sizeof(line), f) != NULL &&
-	    strcmp(line, "passed\n") == 0;
-	fclose(f);
-	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0 || !passed) {
-		printf("RUNTIME_CASE_FAIL %s status=%d result=%s\n", name,
-		    status, line);
+	if (status != 0 || cleanup_status != 0 || !passed) {
+		printf("RUNTIME_CASE_FAIL %s:%s status=%d cleanup=%d result=%s\n",
+		    program, name, status, cleanup_status, line);
 		return (-1);
 	}
 	printf("RUNTIME_CASE_PASS %s:%s\n", program, name);
 	return (0);
 }
+
 int
-main(void)
+main(int argc, char **argv)
 {
 	char fstype[] = "fstype", devfs[] = "devfs", fspath[] = "fspath",
 	     dev[] = "/dev";
@@ -133,10 +157,16 @@ main(void)
 		{ .iov_base = devfs, .iov_len = 6 },
 		{ .iov_base = fspath, .iov_len = 7 },
 		{ .iov_base = dev, .iov_len = 5 } };
-	const char *cases[] = { "service_budget_wire",
-		"service_session_payload_and_attachment_lifecycle",
-		"service_session_close_cancels_event" };
 	int fd, failed = 0;
+	/* Read-only host preflight; no mounts, descriptors or guest setup. */
+	if (argc == 2 && strcmp(argv[1], "--describe") == 0) {
+		printf("{\"format\":1,\"case_metadata_version\":1,"
+		    "\"maximum_case_timeout\":%u,\"cleanup\":true}\n",
+		    RUNTIME_MAX_CASE_TIMEOUT);
+		return (0);
+	}
+	if (argc != 1)
+		return (64);
 	if (getpid() != 1)
 		return (64);
 	(void)nmount(iov, 4, 0);
@@ -179,19 +209,27 @@ main(void)
 		perror("mount /tmp");
 		failed = 1;
 	}
-	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
-		if (run_case("/tests/libservice_api_test", cases[i]) == -1)
-			failed = 1;
-	if (run_case("/tests/namespace_test", "delivery_hardening_failure") == -1)
+	setenv("PATH", "/sbin:/bin:/usr/sbin:/usr/bin", 1);
+	FILE *extra = fopen("/tests/case-metadata", "r");
+	if (extra == NULL) {
+		perror("case-metadata");
 		failed = 1;
-	FILE *extra = fopen("/tests/extra-cases", "r");
-	if (extra != NULL) {
+	} else {
 		char program[128], test_case[128];
+		unsigned timeout, cleanup, count = 0;
 		int fields;
-		while ((fields = fscanf(extra, "%127s %127s", program, test_case)) == 2)
-			if (run_case(program, test_case) == -1)
+		while ((fields = fscanf(extra, "%127s %127s %u %u", program,
+		    test_case, &timeout, &cleanup)) == 4) {
+			if (timeout == 0 || timeout > RUNTIME_MAX_CASE_TIMEOUT || cleanup > 1 ||
+			    strncmp(program, "/tests/", 7) != 0) {
 				failed = 1;
-		if (fields != EOF || ferror(extra))
+				break;
+			}
+			count++;
+			if (run_case(program, test_case, timeout, cleanup != 0) == -1)
+				failed = 1;
+		}
+		if (fields != EOF || ferror(extra) || count == 0)
 			failed = 1;
 		fclose(extra);
 	}

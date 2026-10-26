@@ -69,7 +69,7 @@ def main():
     disk = installation / 'installed.img'
     assert Path(install_result['disk']).resolve(strict=True) == disk
     command = [args.qemu, '-accel', 'tcg,thread=multi',
-        '-machine', 'q35', '-cpu', 'max', '-m', '8192', '-smp', str(args.cpus),
+        '-machine', 'q35', '-cpu', 'max', '-m', '2048', '-smp', str(args.cpus),
         '-drive', f'file={disk},format=raw,if=none,id=target,snapshot=on',
         '-device', 'virtio-blk-pci,drive=target,serial=sw-installer-target',
         '-drive', f'file={iso},format=raw,media=cdrom,readonly=on',

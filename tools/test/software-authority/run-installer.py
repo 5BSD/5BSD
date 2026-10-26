@@ -52,7 +52,7 @@ def main():
     log = work / 'install-serial.log'
     command = [
         args.qemu, '-accel', 'tcg,thread=multi',
-        '-machine', 'q35', '-cpu', 'max', '-m', '8192', '-smp', str(args.cpus),
+        '-machine', 'q35', '-cpu', 'max', '-m', '2048', '-smp', str(args.cpus),
         '-drive', f'file={disk},format=raw,if=none,id=target',
         '-device', 'virtio-blk-pci,drive=target,serial=sw-installer-target',
         '-cdrom', str(iso), '-boot', 'd', '-nic', 'none', '-display', 'none',

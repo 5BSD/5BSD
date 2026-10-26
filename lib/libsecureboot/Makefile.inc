@@ -17,6 +17,7 @@ SRCS+= \
 	readfile.c \
 	brf.c \
 	vesigned.c \
+	x509_tbs.c \
 	vets.c
 
 .if ${.CURDIR:M*libsecureboot*} != ""

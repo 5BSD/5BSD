@@ -40,10 +40,13 @@ static struct option options[] = {
  S("signing","auto"), S("key",""),
  S("development-key","/usr/obj/usr/src/signing-keys/development.pem"),
  S("pkg-key",""), S("public-key",""), S("pkg-public-key",""),
+ S("pkg-package",""), S("pkg-package-sha256",""),
+ S("application-selection",""),
  S("root",""), S("output",""), S("repository",""),
  S("publish-repository",REPOSITORY), S("ports","/usr/obj/5BSD-ports"),
  S("hardware-profile",""), S("distfiles",""),
  S("bootenv",""), S("clone-from",""), S("be-root",""), S("media-format","all"),
+ S("bazel",""),
  S("format","text"), S("build-backend","bsd-make"),
  B("incremental"),
  B("relaxed-signatures"), B("allow-debug-publication"), B("production")
@@ -171,7 +174,7 @@ static void
 usage_status(int code)
 {
  FILE *out = code == 0 ? stdout : stderr;
- fprintf(out, "usage: build-bsd [plan] build|world|kernel|stage|packages|sign|verify|deploy|bsdinstall|media [options]\n"
+ fprintf(out, "usage: build-bsd [plan] build|world|kernel|stage|packages|sign|verify|deploy|bsdinstall|media|bazel-test [options]\n"
      "       build-bsd status run-directory\n"
      "       build-bsd --help\n\n"
      "Options (boolean flags accept yes/no in configuration files):\n"
@@ -199,7 +202,7 @@ parse(int argc,char **argv)
  if(getenv("KERNCONF") && *getenv("KERNCONF"))set("kernel",getenv("KERNCONF"),true);
  if(argc>1 && !strcmp(argv[1],"plan")){request.plan=true;start++;}
  if(argc<=start)usage();request.action=argv[start++];
- if(!oneof(request.action,"build|world|kernel|stage|packages|sign|verify|deploy|bsdinstall|media"))usage();
+ if(!oneof(request.action,"build|world|kernel|stage|packages|sign|verify|deploy|bsdinstall|media|bazel-test"))usage();
  for(int i=start;i<argc;i++) {
   if(!strcmp(argv[i],"--config")) { if(++i==argc)usage();if(conf)fail("only one --config is allowed");conf=argv[i];continue; }
   if(strncmp(argv[i],"--",2))usage();struct option *o=lookup(argv[i]+2);if(!o)usage();
@@ -247,6 +250,18 @@ validate(void)
  for(size_t i=0;i<nitems(paths);i++) {if(*get(paths[i])!='/' || strchr(get(paths[i]),'$'))fail("world configuration paths must be absolute without make expansion");if(selected(paths[i]) && strcmp(get(paths[i]),"/dev/null"))regular(get(paths[i]),false);}
  if(*get("kernel-dir")){canonical("kernel-dir");regular(format("%s/%s",get("kernel-dir"),get("kernel")),false);}
  if(*get("pkg-key") && !request.packages)fail("--pkg-key applies only to build or packages");
+ if(*get("pkg-package") || *get("pkg-package-sha256")) {
+  if(!request.packages)fail("bootstrap pkg inputs apply only to build or packages");
+  const char *hash=get("pkg-package-sha256");
+  if(!*get("pkg-package") || strlen(hash)!=64 || strspn(hash,"0123456789abcdefABCDEF")!=64)fail("bootstrap pkg requires --pkg-package and a 64-digit --pkg-package-sha256");
+  regular(get("pkg-package"),false);canonical("pkg-package");
+  if(strspn(get("pkg-package"),"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_-.+")!=strlen(get("pkg-package")))fail("--pkg-package path must contain only make/shell-safe characters");
+ }
+ if(selected("application-selection")) {
+  if(!request.packages)fail("--application-selection applies only to build or packages");
+  regular(get("application-selection"),false);canonical("application-selection");
+  if(strspn(get("application-selection"),"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_-.+")!=strlen(get("application-selection")))fail("--application-selection path must contain only make/shell-safe characters");
+ }
  if(selected("ports") && !request.packages)fail("--ports applies only to packages");
  if(selected("publish-repository") && !request.packages)fail("--publish-repository applies only to packages/build");
  if(!strcmp(get("signing"),"auto"))set("signing",*get("key")?"signed":"unsigned",false);
@@ -290,9 +305,17 @@ validate(void)
   if(action("verify")){regular(get("public-key"),false);canonical("public-key");}
   if(action("sign") && strcmp(get("signing"),"signed"))fail("sign requires signed mode and --key");
  } else if(!deploy && (*get("root") || *get("public-key")))fail("--root and --public-key apply only to verify/sign/deploy");
- if(*get("output") && !action("stage") && !action("media"))fail("--output applies only to stage or media");
- if(action("stage") || action("media")){
-  if(!*get("output"))set("output",format(OBJECT "/usr/src/%s/%s",action("media")?"media":"stages",strrchr(request.run,'/')+1),false);
+ if(action("bazel-test")) {
+  if(request.cross || strcmp(request.arch,"amd64"))fail("bazel-test currently requires native amd64");
+  if(!*get("bazel"))fail("bazel-test requires --bazel");
+  canonical("bazel");regular(get("bazel"),false);
+  if(access(get("bazel"),X_OK)<0)fail("--bazel must be executable");
+  if(strcmp(get("signing"),"unsigned") || yes("incremental"))fail("bazel-test requires unsigned fresh qualification output");
+  if(selected("src-conf") || selected("make-conf") || selected("build-profile") || selected("production"))fail("bazel-test uses its staged development SDK and fixed comparison configuration");
+ } else if(selected("bazel"))fail("--bazel applies only to bazel-test");
+ if(*get("output") && !action("stage") && !action("media") && !action("bazel-test"))fail("--output applies only to stage, media or bazel-test");
+ if(action("stage") || action("media") || action("bazel-test")){
+  if(!*get("output"))set("output",format(OBJECT "/usr/src/%s/%s",action("media")?"media":action("bazel-test")?"bazel-qualification":"stages",strrchr(request.run,'/')+1),false);
   if(strpbrk(get("output")," \t") || strstr(get("output"),"/../"))fail("stage path must contain no traversal or whitespace");
   if(!under(get("output"),OBJECT) || !strcmp(get("output"),OBJECT))fail("staging must be under /usr/obj");
   if(lstat(get("output"),&st)==0 || errno!=ENOENT)fail("output stage must be a new path");canonical("output");
@@ -346,6 +369,11 @@ static void
 plan(void)
 {
  struct step *s;
+ if(action("bazel-test")) {
+  s=step("bazel-qualification");args(s,PYTHON,SOURCE "/tools/build/bazel/qualify.py",
+      "--src",SOURCE,"--objtop",OBJECT "/usr/src/amd64.amd64",
+      "--bazel",get("bazel"),"--output",get("output"),"--jobs",format("%u",request.jobs),NULL);return;
+ }
  bool tools=action("verify") || action("sign") || action("deploy") || action("bsdinstall") || action("media") || strcmp(get("signing"),"unsigned");
  if(tools){
   s=step("host-tools-directory");args(s,"mkdir","-p",request.native,NULL);
@@ -386,6 +414,8 @@ plan(void)
  } else if(request.packages){
   s=backend.make("system-packages",true);assignment(s,"PORTSDIR",get("ports"));assignment(s,"HARDWARE_PORT_LIST",get("hardware-profile"));assignment(s,"DISTDIR",get("distfiles"));arg(s,"REPODIR=" REPOSITORY);assignment(s,"PUBLISH_REPODIR",get("publish-repository"));
   if(*get("pkg-key")){assignment(s,"PKG_REPO_SIGNING_KEY",get("pkg-key"));assignment(s,"HARDWARE_SIGNING_KEY",get("pkg-key"));}
+  if(*get("pkg-package")) {assignment(s,"PKGBASE_PKG_PACKAGE",get("pkg-package"));assignment(s,"PKGBASE_PKG_SHA256",get("pkg-package-sha256"));}
+  if(*get("application-selection"))assignment(s,"APPLICATION_PACKAGE_SELECTION",get("application-selection"));
   arg(s,"system-packages");
  }
 }
@@ -399,6 +429,10 @@ json_string(const char *s)
 static void
 show_request(void)
 {
+ if(action("bazel-test")) {
+  if(!request.json){printf("build-bsd: action=bazel-test cpus=%u target=%s/%s\n",request.jobs,request.target,request.arch);puts("qualification: scope=bazel-compile-comparison make-install-reference=requested runtime=not-performed system-backend=not-qualified");return;}
+  printf("{\"schema\":\"org.5bsd.build-plan.v1\",\"record\":\"request\",\"action\":\"bazel-test\",\"verification_scope\":\"bazel-compile-comparison\",\"make_install_reference\":\"requested\",\"build_backend\":\"bsd-make\",\"boot_verification\":\"not-performed\",\"jobs\":%u}\n",request.jobs);return;
+ }
  if(!request.json){printf("build-bsd: action=%s cpus=%u kernel=%s production=%s signing=%s target=%s/%s board=%s\n",request.action,request.jobs,get("kernel"),request.production?"yes":"no",get("signing"),request.target,request.arch,get("board"));return;}
  printf("{\"schema\":\"org.5bsd.build-plan.v1\",\"record\":\"request\",\"action\":");json_string(request.action);
  const char *names[]={"target","target_arch","kernel","board","build_profile","signing","build_backend","hardware_backend"};

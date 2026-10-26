@@ -431,8 +431,152 @@ assert world["argv"][-1]=="buildworld"
     atf_check -s not-exit:0 -o empty -e match:'requires plan' "$tool" stage --format json
     atf_check -s not-exit:0 -o empty -e match:'must be text or json' "$tool" plan stage --format unknown
 }
+atf_test_case bazel_plan
+bazel_plan_body()
+{
+    setup
+    output=/usr/obj/usr/src/bazel-plan-$$
+    atf_check -s exit:0 -o save:plan.jsonl -e empty "$tool" plan bazel-test --bazel /usr/bin/true --jobs 3 --output "$output" --format json
+    [ ! -e "$output" ] || atf_fail 'plan created output'
+    atf_check -s exit:0 -o empty -e empty python3.12 - "$output" <<'PYTHON'
+import json, sys
+rows = [json.loads(line) for line in open('plan.jsonl')]
+assert rows[0]['verification_scope'] == 'bazel-compile-comparison'
+assert rows[0]['make_install_reference'] == 'requested'
+assert rows[0]['build_backend'] == 'bsd-make'
+assert rows[0]['jobs'] == 3
+assert rows[0]['boot_verification'] == 'not-performed'
+assert len(rows) == 2
+assert rows[1]['name'] == 'bazel-qualification'
+assert rows[1]['argv'] == ['/usr/local/bin/python3.12', '/usr/src/tools/build/bazel/qualify.py', '--src', '/usr/src', '--objtop', '/usr/obj/usr/src/amd64.amd64', '--bazel', '/usr/bin/true', '--output', sys.argv[1], '--jobs', '3']
+PYTHON
+    atf_check -s not-exit:0 -o empty -e match:'requires --bazel' "$tool" plan bazel-test
+    atf_check -s not-exit:0 -o empty -e match:'native amd64' "$tool" plan bazel-test --bazel /usr/bin/true --arch arm64
+    atf_check -s not-exit:0 -o empty -e match:'only to bazel-test' "$tool" plan world --bazel /usr/bin/true
+    atf_check -s not-exit:0 -o empty -e match:'fresh qualification' "$tool" plan bazel-test --bazel /usr/bin/true --incremental
+    atf_check -s not-exit:0 -o empty -e match:'fixed comparison configuration' "$tool" plan bazel-test --bazel /usr/bin/true --src-conf /dev/null
+    cp /usr/bin/true noexec
+    chmod 644 noexec
+    atf_check -s not-exit:0 -o empty -e match:'must be executable' "$tool" plan bazel-test --bazel "$(pwd)/noexec"
+}
+
+atf_test_case package_closure
+package_closure_head()
+{
+    atf_set require.progs 'python3.12'
+    atf_set descr 'Selected package metadata must cover dependencies and libraries without conflicts'
+}
+package_closure_body()
+{
+    helper=$(atf_config_get closure_helper "$(atf_get_srcdir)/package_closure.py")
+    tests=$(atf_config_get closure_tests "$(atf_get_srcdir)/package_closure_test.py")
+    atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_CLOSURE_HELPER="$helper" python3.12 "$tests"
+}
+
+atf_test_case package_inventory
+package_inventory_head()
+{
+    atf_set require.progs 'python3.12'
+    atf_set descr 'Package payload inventory follows actual archives and rejects ambiguous provenance'
+}
+package_inventory_body()
+{
+    helper=$(atf_config_get inventory_helper "$(atf_get_srcdir)/package_inventory.py")
+    tests=$(atf_config_get inventory_tests "$(atf_get_srcdir)/package_inventory_test.py")
+    atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_INVENTORY_HELPER="$helper" python3.12 "$tests"
+}
+
+atf_test_case application_selection_plan
+application_selection_plan_head()
+{
+    atf_set descr 'Application selection reaches combined publication without installation'
+    atf_set require.progs python3.12
+}
+application_selection_plan_body()
+{
+    setup
+    printf '%s\n' '{"format":1,"archives":[]}' > selected.json
+    selection=$(pwd)/selected.json
+    atf_check -s exit:0 -o save:application.jsonl -e empty "$tool" plan packages --application-selection "$selection" --format json
+    atf_check -s exit:0 -o empty -e empty python3.12 - "$selection" <<'PYTHON'
+import json, sys
+rows = [json.loads(line) for line in open('application.jsonl')]
+publication = next(row for row in rows[1:] if row['name'] == 'system-packages')
+assert 'APPLICATION_PACKAGE_SELECTION=' + sys.argv[1] in publication['argv']
+assert 'REPODIR=/usr/obj/usr/src/repo' in publication['argv']
+assert not any(row['name'] in ('deploy', 'media') for row in rows[1:])
+PYTHON
+    atf_check -s exit:0 -o save:backend -e empty make -C /usr/src -f release/Makefile.hardware -n publish-packages BASE_REPOSITORY=/usr/obj/base-plan HARDWARE_REPO=/usr/obj/hardware-plan COMPLETE_REPOSITORY=/usr/obj/complete-plan APPLICATION_PACKAGE_SELECTION="$selection"
+    atf_check -s exit:0 -o ignore grep -F -- "--application-selection $selection" backend
+    printf 'application_selection=%s\n' "$selection" > configured.conf
+    atf_check -s exit:0 -o save:configured -e empty "$tool" plan build --config configured.conf
+    atf_check -s exit:0 -o ignore grep -F "APPLICATION_PACKAGE_SELECTION=$selection" configured
+    cp selected.json override.json
+    atf_check -s exit:0 -o save:override -e empty "$tool" plan packages --config configured.conf --application-selection "$(pwd)/override.json"
+    atf_check -s exit:0 -o ignore grep -F "APPLICATION_PACKAGE_SELECTION=$(pwd)/override.json" override
+    atf_check -s exit:0 -o save:ordinary -e empty "$tool" plan packages
+    atf_check -s exit:1 -o empty grep APPLICATION_PACKAGE_SELECTION ordinary
+    atf_check -s not-exit:0 -o empty -e match:'only to build or packages' "$tool" plan world --application-selection "$selection"
+    ln -s selected.json selection-link
+    atf_check -s not-exit:0 -o empty -e match:'not a symlink' "$tool" plan packages --application-selection "$(pwd)/selection-link"
+    cp selected.json 'unsafe selection.json'
+    atf_check -s not-exit:0 -o empty -e match:'safe characters' "$tool" plan packages --application-selection "$(pwd)/unsafe selection.json"
+    atf_check -s not-exit:0 -o empty -e not-empty "$tool" plan packages --application-selection "$(pwd)/missing.json"
+}
+
+atf_test_case bootstrap_pkg_plan
+bootstrap_pkg_plan_head()
+{
+    atf_set descr 'Bootstrap package inputs reach combined publication and require a pinned hash'
+    atf_set require.progs python3.12
+}
+bootstrap_pkg_plan_body()
+{
+    setup
+    printf 'archive-input-fixture\n' > bootstrap.pkg
+    archive=$(pwd)/bootstrap.pkg
+    digest=$(sha256 -q "$archive")
+    atf_check -s exit:0 -o save:plan.jsonl -e empty "$tool" plan packages --pkg-package "$archive" --pkg-package-sha256 "$digest" --format json
+    atf_check -s exit:0 -o empty -e empty python3.12 - "$archive" "$digest" <<'PYTHON'
+import json, sys
+rows = [json.loads(line) for line in open('plan.jsonl')]
+publication = next(row for row in rows[1:] if row['name'] == 'system-packages')
+assert 'PKGBASE_PKG_PACKAGE=' + sys.argv[1] in publication['argv']
+assert 'PKGBASE_PKG_SHA256=' + sys.argv[2] in publication['argv']
+assert 'REPODIR=/usr/obj/usr/src/repo' in publication['argv']
+assert not any(row['name'] in ('deploy', 'media') for row in rows[1:])
+PYTHON
+    atf_check -s exit:0 -o save:backend -e empty make -C /usr/src -f release/Makefile.hardware -n publish-packages BASE_REPOSITORY=/usr/obj/base-plan HARDWARE_REPO=/usr/obj/hardware-plan COMPLETE_REPOSITORY=/usr/obj/complete-plan PKGBASE_PKG_PACKAGE="$archive" PKGBASE_PKG_SHA256="$digest"
+    atf_check -s exit:0 -o ignore grep -- "--pkg-package $archive" backend
+    atf_check -s exit:0 -o ignore grep -- "--pkg-package-sha256 $digest" backend
+    atf_check -s not-exit:0 -o empty -e match:'64-digit' "$tool" plan packages --pkg-package "$archive"
+    atf_check -s not-exit:0 -o empty -e match:'64-digit' "$tool" plan packages --pkg-package-sha256 "$digest"
+    atf_check -s not-exit:0 -o empty -e match:'64-digit' "$tool" plan packages --pkg-package "$archive" --pkg-package-sha256 invalid
+    atf_check -s not-exit:0 -o empty -e match:'only to build or packages' "$tool" plan world --pkg-package "$archive" --pkg-package-sha256 "$digest"
+    printf 'pkg_package=%s\npkg_package_sha256=%s\n' "$archive" "$digest" > configured.conf
+    atf_check -s exit:0 -o save:configured -e empty "$tool" plan build --config configured.conf
+    atf_check -s exit:0 -o ignore grep -F "PKGBASE_PKG_PACKAGE=$archive" configured
+    atf_check -s exit:0 -o ignore grep -F "PKGBASE_PKG_SHA256=$digest" configured
+    cp bootstrap.pkg override.pkg
+    atf_check -s exit:0 -o save:override -e empty "$tool" plan packages --config configured.conf --pkg-package "$(pwd)/override.pkg"
+    atf_check -s exit:0 -o ignore grep -F "PKGBASE_PKG_PACKAGE=$(pwd)/override.pkg" override
+    atf_check -s exit:0 -o save:ordinary -e empty "$tool" plan packages
+    atf_check -s exit:1 -o empty grep PKGBASE_PKG_PACKAGE ordinary
+    ln -s bootstrap.pkg link.pkg
+    atf_check -s not-exit:0 -o empty -e match:'not a symlink' "$tool" plan packages --pkg-package "$(pwd)/link.pkg" --pkg-package-sha256 "$digest"
+    for name in 'unsafe archive.pkg' 'make$input.pkg'; do
+        cp bootstrap.pkg "$name"
+        atf_check -s not-exit:0 -o empty -e match:'safe characters' "$tool" plan packages --pkg-package "$(pwd)/$name" --pkg-package-sha256 "$digest"
+    done
+}
+
 atf_init_test_cases()
 {
+    atf_add_test_case bootstrap_pkg_plan
+    atf_add_test_case application_selection_plan
+    atf_add_test_case package_inventory
+    atf_add_test_case package_closure
+    atf_add_test_case bazel_plan
     atf_add_test_case publication_destination
     atf_add_test_case json_plan
     atf_add_test_case hardware_inputs

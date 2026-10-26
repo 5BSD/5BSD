@@ -56,7 +56,7 @@ for p in sorted(r.rglob('*')):
 subprocess.run(['makefs','-t','ffs','-s','256m','-F',str(w/'METALOG'),'-o','version=2',str(w/'root.ufs'),str(r)],check=True)
 subprocess.run(['mkimg','-s','gpt','-f','raw','-b',str(r/'boot/pmbr'),'-p','freebsd-boot:='+str(r/'boot/gptboot'),'-p','freebsd-ufs:='+str(w/'root.ufs'),'-o',str(w/'guest.img')],check=True)
 log=w/'serial.log'
-cmd=[args.qemu,'-accel','tcg,thread=multi','-machine','q35','-cpu','max','-m','4096','-smp',str(args.cpus),'-drive',f'file={w}/guest.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
+cmd=[args.qemu,'-accel','tcg,thread=multi','-machine','q35','-cpu','max','-m','2048','-smp',str(args.cpus),'-drive',f'file={w}/guest.img,format=raw,if=virtio,snapshot=on','-nic','none','-display','none','-monitor','none','-serial','file:'+str(log)]
 if args.qemu_data:
  cmd += ['-L',str(args.qemu_data.resolve())]
 (w/'command.json').write_text(json.dumps(cmd,indent=2)+'\n')
