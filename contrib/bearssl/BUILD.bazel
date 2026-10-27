@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//lib/libbearssl:sources.bzl", "LOADER_SOURCES", "LIBRARY_SOURCES", "SSL_SOURCES", "PUBLIC_HEADERS")
+exports_files(LOADER_SOURCES + LIBRARY_SOURCES + SSL_SOURCES + PUBLIC_HEADERS, visibility = ["//lib/libbearssl:__pkg__"])
+cc_library(name = "headers", hdrs = PUBLIC_HEADERS, strip_include_prefix = "inc", visibility = ["//visibility:public"])
+cc_library(name = "internal_headers", hdrs = ["src/config.h", "src/inner.h"], strip_include_prefix = "src", visibility = ["//lib/libbearssl:__pkg__"])
+cc_library(name = "tool_headers", hdrs = ["tools/brssl.h"], strip_include_prefix = "tools", visibility = ["//lib/libbearssl:__pkg__"])

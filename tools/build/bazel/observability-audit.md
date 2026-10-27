@@ -2656,3 +2656,10 @@ Native graph preserves exec_script, grantbylabel and veriexec check/get sources.
 Artifact parity does not exercise their kernel MAC calls or script execution.
 Review denial and authorization audit behavior at those kernel boundaries when
 performing runtime qualification; library build success is not enforcement proof.
+
+### BearSSL (2026-10-27)
+
+Native declarations carry the maintained cryptographic sources unchanged.
+Symbol/link and installation checks do not establish crypto runtime correctness
+or audit coverage. Review security-event logging at secureboot/veriexec consumers
+when those components are converted; upstream crypto runtime tests remain pending.

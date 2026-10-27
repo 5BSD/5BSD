@@ -185,3 +185,7 @@ config_setting(name = "ofed_enabled", flag_values = {":ofed": "true"}, visibilit
 string_flag(name = "geom_class_dir", build_setting_default = "/lib/geom", visibility = ["//visibility:public"])
 
 label_flag(name = "geom_directory_policy", build_setting_default = "//lib/geom:empty.mtree", visibility = ["//visibility:public"])
+
+# Matches libbearssl's MK_BEARSSL_SSL:Uno opt-in default.
+bool_flag(name = "bearssl_ssl", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "bearssl_ssl_enabled", flag_values = {":bearssl_ssl": "true"}, visibility = ["//visibility:public"])

@@ -3182,6 +3182,17 @@ pkgbase subpackages using the maintained package template.
 Building these candidate archives neither publishes a repository nor installs
 an upgrade, and does not qualify the complete system packaging backend.
 
+.Ss Native BearSSL selection
+The format-5 boolean build setting
+.Li //tools/build/bazel/config:bearssl_ssl
+selects the optional SSL source group.
+It defaults to false, matching the library's opt-in
+.Va MK_BEARSSL_SSL
+setting.
+The default static/shared libraries and installation metadata have been compared
+with Make; the SSL-enabled variant and crypto runtime tests remain unqualified.
+These component builds do not qualify secure boot or veriexec enforcement.
+.Pp
 .Ss RPC binder build selection
 The boolean //tools/build/bazel/config:rpcbind_warmstart_support defaults to
 false, matching the maintained source default.

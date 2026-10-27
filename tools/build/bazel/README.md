@@ -32461,3 +32461,31 @@ assembly-capable SDK; no C/backend contract change is required. This increment
 has no runtime test claim. MAC veriexec/grantbylabel interactions, exec_script
 behavior, static consumer tests, other configurations and performance remain
 outstanding. It does not qualify veriexec enforcement or secure boot.
+
+## Native BearSSL dependency — 2026-10-27
+
+Explicit native source lists declare 56 loader/common sources, 130 additional
+library sources, 83 optional SSL sources and 13 public headers. Build actions
+consume these declarations directly; they do not parse Make metadata. Native
+cc_library, cc_shared_library and component archive targets provide compilation
+and installation. The boolean //tools/build/bazel/config:bearssl_ssl defaults to
+false, matching MK_BEARSSL_SSL:Uno; format-5 build-settings can opt in.
+
+Default-build evidence: /usr/obj/usr/src/bazel-libbearssl-install-20261027,
+compared with /usr/obj/usr/src/bazel-libbearssl-make-20261027. Static archive
+matches 186 members and 271 defined globals; shared library matches 273 defined
+globals, libc dependency, libbearssl.so.5 SONAME, NOW and no RPATH/RUNPATH.
+All 19 installation records match Make, including 13 byte-identical headers,
+one symlink and one verified debuglink. Archive SHA-256:
+`f27a770fd3afe9bfcfd25bdce8b7826221ee78b6ee820c2c9f186f6bcb984569`.
+Qualification scripts and results are retained beside the authenticated artifacts.
+Symbol and metadata comparisons do not establish binary byte identity.
+
+The maintained build-bsd frontend built explicit targets with 16 jobs and the
+assembly-capable SDK. Existing format-5 settings support the optional selector;
+no frontend C, staging, signing or publication contract change is required.
+The manual documents the selector and qualification limits. SSL-enabled builds,
+upstream crypto runtime tests, other architectures and performance remain
+unqualified. Secureboot and its explicit trust inputs still need conversion
+before the veriexec command can build natively. This is not secure-boot or
+veriexec enforcement qualification.

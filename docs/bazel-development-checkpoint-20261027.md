@@ -163,3 +163,19 @@ Native static/shared libraries and eight installation records match Make.
 BearSSL and secureboot with explicit trust inputs remain missing dependencies
 before the static veriexec command can be built natively. Kernel interaction,
 script execution and enforcement runtime qualification remain outstanding.
+
+## Subsequent progress: BearSSL and commit checkpoint
+
+Native default BearSSL static/shared libraries and installation now match Make:
+186 archive members, 19 installation records and 13 identical headers. Explicit
+optional SSL sources and a format-5 selector are declared but that variant and
+upstream crypto runtime tests remain unqualified. Evidence and exact checks are
+recorded in the Bazel README.
+
+Resume with BearSSL SSL/runtime qualification and the secureboot library's
+explicit trust-generation inputs, then the static veriexec consumer. Broader
+world/kernel/module conversion, native bootstrap, complete pkgbase/frontend
+integration, configuration coverage and cache/performance qualification remain.
+Make remains the production/default backend and the ports build system; the
+current SDK is still Make-prepared. BIP remains dropped. This commit checkpoint
+records a component milestone, not completion of the system migration.
