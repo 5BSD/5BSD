@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_secureboot_headers.bzl", "bsd_secureboot_headers")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+
+# Selecting no policy must fail when the library is analyzed. There is no
+# implicit empty-trust or test policy for production consumers.
+filegroup(name = "unconfigured_policy", srcs = [], visibility = ["//visibility:public"])
+filegroup(name = "no_certificates", srcs = [], visibility = ["//visibility:public"])
+
+bsd_secureboot_headers(
+    name = "generated",
+    policy = "//tools/build/bazel/config:secureboot_policy",
+    anchors = ["//tools/build/bazel/config:secureboot_trust_anchors"],
+    verification = ["//tools/build/bazel/config:secureboot_verification_certificates"],
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+)
+cc_library(name = "generated_headers", hdrs = [":generated"], strip_include_prefix = "generated")
+cc_library(name = "headers", hdrs = ["h/libsecureboot.h"], strip_include_prefix = "h",
+    deps = ["//contrib/bearssl:headers"], visibility = ["//visibility:public"])
+cc_library(
+    name = "secureboot",
+    srcs = ["readfile.c", "brf.c", "vesigned.c", "x509_tbs.c", "vets.c", "veta.c",
+            "//contrib/bearssl:tools/xmem.c", "//contrib/bearssl:tools/vector.c"],
+    hdrs = ["libsecureboot-priv.h", "x509_tbs.h"],
+    deps = [":headers", ":generated_headers", "//contrib/bearssl:tool_headers", "//lib/libbearssl:bearssl"],
+    copts = ["-include", "secureboot_config.h"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":secureboot"], visibility = ["//visibility:public"])

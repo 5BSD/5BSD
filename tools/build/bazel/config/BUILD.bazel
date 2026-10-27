@@ -189,3 +189,8 @@ label_flag(name = "geom_directory_policy", build_setting_default = "//lib/geom:e
 # Matches libbearssl's MK_BEARSSL_SSL:Uno opt-in default.
 bool_flag(name = "bearssl_ssl", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "bearssl_ssl_enabled", flag_values = {":bearssl_ssl": "true"}, visibility = ["//visibility:public"])
+
+# Site trust is explicitly supplied; the empty policy target fails library analysis.
+label_flag(name = "secureboot_policy", build_setting_default = "//lib/libsecureboot:unconfigured_policy", visibility = ["//visibility:public"])
+label_flag(name = "secureboot_trust_anchors", build_setting_default = "//lib/libsecureboot:no_certificates", visibility = ["//visibility:public"])
+label_flag(name = "secureboot_verification_certificates", build_setting_default = "//lib/libsecureboot:no_certificates", visibility = ["//visibility:public"])

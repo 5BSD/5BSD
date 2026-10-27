@@ -32567,3 +32567,41 @@ this generator with 16 jobs; no frontend C or signing/publication contract chang
 were needed. Library/consumer wiring, actual X.509 decoding, signature verification,
 certificate rotation in a booted system and cache-invalidation execution tests
 remain outstanding. These tests establish generation behavior only.
+
+## Native libsecureboot static dependency — 2026-10-27
+
+//lib/libsecureboot:secureboot now compiles the eight maintained component
+sources with declared generated headers, private/public header interfaces and
+native BearSSL CcInfo. //lib/libsecureboot:static_archive includes only those
+eight component objects, preserving external BearSSL link dependencies.
+
+Three format-5 label settings select secureboot_policy,
+secureboot_trust_anchors and secureboot_verification_certificates under
+//tools/build/bazel/config. Policy has no implicit usable default: its default
+empty target fails single-file analysis. Certificate selectors may name a file
+or filegroup. The generator sorts declared source short paths; production trust
+must come from explicitly selected public inputs. No test certificate is a
+production default. Test bearssl-root.pem is exactly the upstream
+contrib/bearssl/test/x509/root.crt DER certificate wrapped in PEM.
+
+Evidence: /usr/obj/usr/src/bazel-libsecureboot-20261027 builds and runs
+//lib/libsecureboot/tests:trust_init_test with the explicitly selected fixture
+policy/root. It checks actual PEM decoding, one trust-anchor construction and
+cached initialization. It does not check certificate-chain validity or signatures.
+The authenticated static archive matches Make's eight members and 41 defined
+globals. Reference: /usr/obj/usr/src/bazel-libsecureboot-make-r2-20261027; exact
+command, explicit policy settings, input hashes and build script are retained.
+This isolated Make reference uses the recorded SDK, 16 jobs and no installation.
+Static archive bytes differ; no bit-identity claim is made.
+
+Omitting all secureboot settings fails during analysis in
+/usr/obj/usr/src/bazel-libsecureboot-unconfigured-20261027, specifically because
+unconfigured_policy has no file. This is an expected negative check, not a
+passing build. Initial Make reference setup rejected missing trust before the
+component query; the reference now binds the SDK first and supplies explicit
+trust settings to the component include-closure query and build.
+
+Frontend review: existing typed format-5 label settings handle all three inputs;
+the manual is updated, without C/backend contract changes. Shared-library and
+installation/package parity, signed-file verification, trust rotation, action
+invalidation and performance remain outstanding, as does the veriexec consumer.

@@ -201,3 +201,13 @@ This does not yet build libsecureboot or establish signed-file/boot enforcement.
 Next connect the generator through a configurable library graph, qualify real
 certificate inputs and Make parity, then build the veriexec consumer. See README
 for evidence, interface scope and unqualified cases.
+
+## Subsequent progress: native libsecureboot static graph
+
+Eight-source native static library now builds with explicitly selected trust
+policy and certificate labels. An upstream public fixture decodes into one
+anchor and cached initialization succeeds. Archive member/symbol counts match
+Make (eight/41); missing policy fails analysis. No default production trust is
+introduced. Shared installation, real signed-file checks, key rotation and
+veriexec consumer conversion remain next steps. The audit log records an
+existing hash self-test return-status weakness found during review.

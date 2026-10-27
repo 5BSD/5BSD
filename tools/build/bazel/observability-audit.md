@@ -2670,3 +2670,12 @@ Upstream crypto runtime tests now pass with SSL enabled, subject to the recorded
 Power8 unavailability. No logging/probe behavior was added or removed. These
 known-answer/arithmetic tests do not establish audit coverage, TLS integration,
 trust selection or enforcement at secureboot/veriexec consumers.
+
+### libsecureboot trust initialization (2026-10-27)
+
+Native tests exercise real certificate decoding/anchor construction and cached
+initialization, not signature/chain enforcement. Review found ve_test_hash in
+vets.c prints Failed but does not accumulate that failure into ve_self_tests'
+return value; its return currently counts verified certificates/OpenPGP results.
+Track and qualify error propagation and callers before claiming enforced
+cryptographic self-tests. This migration has not modified that behavior.

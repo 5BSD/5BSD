@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "build_utc": 1546329600,
+  "hashes": [
+    "SHA256",
+    "SHA384"
+  ],
+  "signatures": [
+    "RSA"
+  ],
+  "signature_extensions": [
+    "sig"
+  ],
+  "require_public_anchors": true,
+  "compiled_trust_only": true,
+  "self_tests": true,
+  "hash_kat": "self-tests-are-good"
+}

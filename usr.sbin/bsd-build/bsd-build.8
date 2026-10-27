@@ -3187,7 +3187,17 @@ The native
 .Li //lib/libsecureboot/tests:headers_test
 target qualifies explicit trust-header generation with an empty-trust fixture.
 It does not configure the installed system or establish secure-boot enforcement.
-Production library and consumer integration remain incomplete.
+The native static libsecureboot target now requires an explicitly selected
+.Li //tools/build/bazel/config:secureboot_policy
+label pointing to a format-1 policy file.
+The
+.Li secureboot_trust_anchors
+and
+.Li secureboot_verification_certificates
+labels in that configuration package select public certificate files or groups.
+No usable policy or test root is selected by default.
+Shared installation, signed-file verification and consumer integration remain
+incomplete.
 .Pp
 .Ss Native BearSSL selection
 The format-5 boolean build setting
