@@ -32438,3 +32438,26 @@ contract changes; the manual records artifact versus runtime scope. This run
 built and packaged tests but did not execute the shell corpus, load PF rules,
 create interfaces, or invoke changerule. Jail/VNET runtime execution and
 performance remain outstanding, along with broader system configuration gates.
+
+## Native libveriexec dependency — 2026-10-27
+
+Added native four-source compilation, static archive, shared library, public
+header interface and installation graph under //lib/libveriexec. This is the
+first missing library dependency for the static veriexec command; BearSSL and
+secureboot (including explicit trust-generation inputs) still need conversion.
+No SDK library substitution was added for those missing targets.
+
+Evidence: `/usr/obj/usr/src/bazel-libveriexec-20261027`; Make reference:
+`/usr/obj/usr/src/bazel-libveriexec-make-20261027`. Static symbols match (13
+public definitions, four members); shared symbols match (15 definitions),
+including libc dependency, libveriexec.so.5 SONAME, NOW and no RPATH/RUNPATH.
+All eight install records match: static/shared/debug artifacts, symlink,
+header/manual and debug directories. Header and compressed manual are byte
+identical; debuglink verifies. Archive SHA-256:
+`a7e667b0a1f5bfeba1e1a3c0962643e465adb8e0dde480914635d374dc25b2b0`.
+
+The existing frontend built these explicit targets with 16 jobs and the current
+assembly-capable SDK; no C/backend contract change is required. This increment
+has no runtime test claim. MAC veriexec/grantbylabel interactions, exec_script
+behavior, static consumer tests, other configurations and performance remain
+outstanding. It does not qualify veriexec enforcement or secure boot.

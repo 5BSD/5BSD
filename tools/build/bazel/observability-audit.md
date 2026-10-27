@@ -2649,3 +2649,10 @@ sources; Make/native binaries lack DOF. Audit control-operation coverage at the
 PF ioctl/kernel boundary for rule loading, table changes, jail/ether extensions
 and authorization failures. Artifact/parser parity establishes no runtime
 firewall audit coverage. No PF control command was executed in this increment.
+
+### libveriexec (2026-10-27)
+
+Native graph preserves exec_script, grantbylabel and veriexec check/get sources.
+Artifact parity does not exercise their kernel MAC calls or script execution.
+Review denial and authorization audit behavior at those kernel boundaries when
+performing runtime qualification; library build success is not enforcement proof.

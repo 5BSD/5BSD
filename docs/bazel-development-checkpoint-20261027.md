@@ -156,3 +156,10 @@ Changerule now builds natively and matches Make's binary metadata. Full
 program/test/corpus packaging matches 585 records and 574 nonbinary payloads.
 Jail/VNET requirements remain in Kyuafile; no test or firewall control helper
 was executed. Runtime corpus execution remains outstanding.
+
+## Subsequent progress: libveriexec
+
+Native static/shared libraries and eight installation records match Make.
+BearSSL and secureboot with explicit trust inputs remain missing dependencies
+before the static veriexec command can be built natively. Kernel interaction,
+script execution and enforcement runtime qualification remain outstanding.
