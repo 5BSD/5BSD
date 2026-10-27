@@ -32532,3 +32532,38 @@ build-bsd uses the existing format-5 selector and test list with 16 jobs; the
 manual is updated and no C/backend contract changes are needed. TLS network,
 X.509 fixture suite, other architectures, performance and system enforcement
 remain unqualified. Secureboot trust-generation inputs are the next dependency.
+
+## Explicit secureboot header generation — 2026-10-27
+
+Added bsd_secureboot_headers and secureboot_headers.py. The rule takes an
+explicit format-1 policy, public certificate labels and optional self-test
+certificate labels. Certificate files are ordered by source short path. It
+produces ta.h, vse.h and secureboot_config.h using declared Python/runtime
+inputs. No site files, signing clients, directory discovery, wall clock or
+file mtimes are consulted. Epoch, hashes, signature algorithms, extensions,
+compiled-only trust, public-anchor requirement, self-test mode and KAT string
+are explicit policy fields. Compiled-only mode requires public anchors.
+RSA/ECDSA are supported; unsupported algorithms including OpenPGP are rejected.
+This is a generation interface, not yet the production library configuration.
+
+Public-only PEM framing follows the maintained validator; certificate decoding
+remains the verifier's responsibility. Signature extensions match Make's actual
+sorted/deduplicated emission. C byte formatting matches file2c -sx. Self-test
+hashes are derived from the declared UTF-8 KAT string. String-literal escaping
+and policy validation reject code injection and unsupported values.
+
+Evidence: /usr/obj/usr/src/bazel-secureboot-headers-r2-20261027. The native
+//lib/libsecureboot/tests:headers_test compiles and runs generated headers with
+an explicitly empty-trust fixture. It is not a deployable boot policy. Separately,
+35 maintained host reference checks compare framing acceptance with public-trust.awk
+and byte emission with the staged Make file2c, and test malformed/private inputs,
+policy rejection, cross-file certificate boundaries and changed epoch/certificate
+output. Invocation and input hashes are retained in qualification/reference-checks.json.
+The initial missing generated include interface was corrected with a cc_library
+header provider; its failed output remains in bazel-secureboot-headers-20261027.
+
+Frontend review: existing build-bsd format-5 target/test selection exercised
+this generator with 16 jobs; no frontend C or signing/publication contract changes
+were needed. Library/consumer wiring, actual X.509 decoding, signature verification,
+certificate rotation in a booted system and cache-invalidation execution tests
+remain outstanding. These tests establish generation behavior only.

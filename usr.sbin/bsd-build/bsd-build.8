@@ -3182,6 +3182,13 @@ pkgbase subpackages using the maintained package template.
 Building these candidate archives neither publishes a repository nor installs
 an upgrade, and does not qualify the complete system packaging backend.
 
+.Ss Secureboot header qualification
+The native
+.Li //lib/libsecureboot/tests:headers_test
+target qualifies explicit trust-header generation with an empty-trust fixture.
+It does not configure the installed system or establish secure-boot enforcement.
+Production library and consumer integration remain incomplete.
+.Pp
 .Ss Native BearSSL selection
 The format-5 boolean build setting
 .Li //tools/build/bazel/config:bearssl_ssl

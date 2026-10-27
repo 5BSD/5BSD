@@ -191,3 +191,13 @@ Make reference. See README for preserved failures and final evidence.
 Next: explicit secureboot trust-generation inputs and the veriexec consumer.
 TLS network/X.509 fixture coverage, broader configuration and performance gates
 remain outstanding. All earlier system-wide migration limitations still apply.
+
+## Subsequent progress: explicit secureboot header generation
+
+A declared Bazel rule now generates trust/configuration headers from explicit
+policy and certificate inputs. Native generated-header execution passes; 35
+host reference/rejection checks pass. The fixture deliberately trusts nobody.
+This does not yet build libsecureboot or establish signed-file/boot enforcement.
+Next connect the generator through a configurable library graph, qualify real
+certificate inputs and Make parity, then build the veriexec consumer. See README
+for evidence, interface scope and unqualified cases.

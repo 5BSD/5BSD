@@ -56,3 +56,5 @@ cc_binary(
     linkstatic = True,
     features = ["fully_static_link"],
 )
+
+exports_files(["secureboot_headers.py"])
