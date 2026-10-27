@@ -32290,3 +32290,35 @@ No build implementation change was needed: the configured graph behaved as
 specified. Frontend C/backend review likewise requires no change for these
 existing settings. No network runtime, installation, or performance claim is
 made by these artifact checks; those remaining gates are unchanged.
+
+## Init prerequisite: native reroot_seed — 2026-10-27
+
+`//sbin/reroot_seed:reroot_seed` builds the maintained internal helper using
+cc_binary's fully_static_link feature. `:embed_payload` performs the same debug
+split as Make; the payload retains its static symbol table, removes debug
+information, and links to a separate debug artifact. It is INTERNALPROG and
+has no installation manifest. It must never be run as a build/test action:
+its main requests RB_REROOT.
+
+Full static ELF comparison matches 1,570 defined globals, no dynamic metadata
+or DOF. Payload verification matches Make's 837,376-byte size and defined
+symbols; both have no dynamic interpreter or debug-info sections. Native
+payload debuglink filename/CRC and debug ELF identity validate. Evidence:
+`/usr/obj/usr/src/bazel-reroot-seed-20261027` and
+`/usr/obj/usr/src/bazel-reroot-seed-payload-20261027/qualification-payload`.
+Make reference: `/usr/obj/usr/src/bazel-reroot-seed-make-20261027`.
+Payload SHA-256: `908fe087bc91bc78a48403d28fc50e2f684c9d1751f818eb161ed78f8689d344`.
+
+The generic installed-binary verifier deliberately rejects .symtab, so it is
+not the applicable policy for this internal payload. The retained payload
+checker verifies Make's required symbol retention and independently checks
+absence of debug sections plus debuglink CRC. No production verifier was relaxed.
+Static libc/startup inputs still come from the configured SDK; this does not
+complete native libc/bootstrap migration.
+
+The original init assembler uses .incbin of reroot_seed. Next work is a declared
+toolchain-aware assembly dependency on embed_payload, then the init binary,
+configuration/install records and comparison. Init itself is not converted by
+this prerequisite. Existing format-5 frontend inputs built the helper using
+16 jobs without C/backend changes. No helper execution, host installation or
+root switch occurred.

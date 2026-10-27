@@ -115,3 +115,11 @@ The tests-disabled full archive is byte-identical to the qualified program-only
 archive. Network/injection runtime, static/rescue, other architectures and
 performance remain outstanding. Next unconverted sbin areas include init with
 its embedded reroot_seed, pfctl, resolvconf and veriexec.
+
+## Subsequent progress: init prerequisite
+
+Native static reroot_seed and its debug-split internal payload match Make's
+symbols/link metadata and payload size. No standalone installation target is
+created. Init still needs declared assembly embedding of that payload, binary
+and configuration installation, and runtime qualification. The helper was not
+executed. See the Bazel README for evidence and SDK/bootstrap limitations.

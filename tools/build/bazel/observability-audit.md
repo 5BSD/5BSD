@@ -2619,3 +2619,11 @@ and Capsicum integration. Review audit coverage of privileged raw-socket setup
 and DNS delegation in their implementing subsystems; the build comparison does
 not demonstrate runtime audit events. Setuid metadata is preserved in the
 archive. No network or packet-injection test was performed in this increment.
+
+### reroot_seed internal helper (2026-10-27)
+
+No explicit userspace DTrace or BSM hook in the helper; full Make/native static
+binaries contain no DOF. Existing LOG_AUTH emergency syslog and RB_REROOT request
+are preserved. Audit the privileged kernel root-transition path when qualifying
+init; symbol/build parity alone does not prove audit or lifecycle behavior.
+The helper was not executed.
