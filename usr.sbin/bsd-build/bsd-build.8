@@ -3382,3 +3382,12 @@ The native target
 qualifies target signal and error table generation through declared compiler
 and generator inputs. It does not build or install the shell and is not a
 substitute for world or shell runtime qualification.
+
+.Pp
+The native targets
+.Dq //bin/zsh:zsh
+and
+.Dq //bin/zsh:runtime_smoke
+build the amd64 shell and exercise noninteractive behavior with declared
+candidate libraries. Full shell installation, upstream interactive tests,
+static-root configuration and cross builds require separate qualification.

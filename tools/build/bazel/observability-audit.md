@@ -2718,3 +2718,13 @@ It does not yet build zsh. Existing `trace_pressure.h`, `FIVEBSD_TRACE`,
 `WITH_DTRACE` and `zsh_provider.d` integration must be preserved when adding
 native compilation/linking. No probe additions/removals or runtime audit
 coverage claims follow from the four byte-equal generated files.
+
+
+### zsh executable follow-up (2026-10-27)
+
+The native amd64 executable preserves all nine Make DOF probe records, compared
+by parsed provider/function/name, argument types and site counts. Source
+instrumentation is unchanged; runtime attachment/firing is not yet tested.
+Evidence: `bazel-zsh-runtime-r5-20261027/qualification/binary-parity.json` under
+`/usr/obj/usr/src`. The noninteractive shell smoke test passes but does not
+establish job-control/pty tracing or audit integration coverage.

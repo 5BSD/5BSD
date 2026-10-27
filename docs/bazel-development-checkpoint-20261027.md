@@ -272,3 +272,14 @@ all generator outputs. See the README evidence paths. Continue with the zsh
 executable and DTrace linkage, complete installation inventory, runtime tests,
 and dependency invalidation checks; zsh itself is not yet converted/qualified.
 Existing build-bsd format-5 target selection is sufficient for this increment.
+
+## Subsequent progress: zsh executable
+
+The native amd64 zsh executable builds and its Bazel smoke test passes with
+candidate ncurses/terminfo/math libraries. Make parity: 1,898 global symbols,
+ordered shared-library dependencies, NOW/PIE flags and nine parsed DTrace probe
+records. The import helper now maintains both source lists. See README for
+`bazel-zsh-runtime-r5-20261027` evidence and retained failures.
+Next: full zsh installation inventory and upstream runtime suites, then
+DTrace-disabled/static-root and cross-architecture configuration. Neither zsh
+installation nor a complete bin/world aggregate is qualified yet.

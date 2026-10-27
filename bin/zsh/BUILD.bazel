@@ -42,3 +42,45 @@ _TABLES = [
     runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"],
 ) for prefix, stem, directory, header, count in _TABLES]
 filegroup(name = "tables", srcs = [":signames", ":errnames", ":sigcount", ":errcount"], visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary", "cc_import")
+load(":sources.bzl", "ZSH_SOURCES")
+cc_library(name = "imported_headers", hdrs = glob(["generated/**"]) + ["trace_pressure.h"],
+    includes = [".", "generated/Src", "generated/Src/Zle", "generated/Src/Modules", "generated/Src/Builtins"])
+cc_library(name = "table_headers", hdrs = [":sigcount", ":errcount"], strip_include_prefix = ".")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+bsd_dtrace_header(
+    name = "provider", source = "zsh_provider.d", output = "zsh_provider.h",
+    flags = ["-C", "-x", "nolibs"], object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = ['//cddl/lib/libdtrace:dtrace_shared', '//cddl/lib/libctf:ctf_shared', '//lib/libelf:elf_shared', '//lib/libproc:proc_shared', '//cddl/lib/libspl:spl_shared', '//lib/libxo/libxo:xo_shared', '//lib/libutil:util_shared', '//lib/libprocstat:procstat_shared', '//lib/librtld_db:rtld_db_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/libz:z_shared', '//lib/libkvm:kvm_shared'],
+    tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"], static_anchor = True,
+)
+cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")
+
+
+_DEPS = ["//lib/ncurses/ncurses:ncurses", "//lib/ncurses/tinfo:tinfo", "//lib/msun:m"]
+cc_library(name = "objects", srcs = ZSH_SOURCES + [":signames", ":errnames"],
+    deps = _DEPS,
+    implementation_deps = [":imported_headers", ":table_headers", "//contrib/zsh:headers", "//lib/ncurses/tinfo:public_headers"] + select({_TRACE: [":provider_headers"], "//conditions:default": []}),
+    local_defines = ["HAVE_CONFIG_H", "BOOL_DEFINED", "'MACHTYPE=\"amd64\"'", "FIVEBSD_TRACE"] + select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}),
+    copts = ["-std=gnu17", "-fPIE"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_dtrace_cc_objects(name = "traced_objects", library = ":objects", provider = ":provider", provider_object = "zsh_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+[filegroup(name = group, srcs = [":traced_objects"], output_group = group) for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
+cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
+cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + _DEPS)
+cc_binary(name = "zsh", deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}),
+    dynamic_deps = ["//lib/ncurses/ncurses:ncurses_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/msun:m_shared"],
+    linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
+bsd_program_test(name = "runtime_smoke", program = ":zsh",
+    runner = "//tools/build/bazel:program_test_runner",
+    args = ["-f", "-c", "'source \"$$TEST_SRCDIR/$$1\"'", "zsh-smoke", "$(rlocationpath :native-smoke.zsh)"], data = ["native-smoke.zsh"],
+    runtime_lib = ["//lib/ncurses/ncurses:ncurses_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"])

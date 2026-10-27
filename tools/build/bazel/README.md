@@ -32798,3 +32798,34 @@ new frontend options or backend changes. This is only table generation: zsh
 compilation/linking, DTrace object preservation, full installation including
 functions/configuration/manuals, and shell runtime tests remain pending. Make
 remains production/default. No base aggregate completion is implied.
+
+### zsh native executable (2026-10-27)
+
+`//bin/zsh:zsh` now compiles the maintained 79 C sources and two generated
+tables, links the native ncurses/terminfo and math targets, and carries the
+DTrace provider through the existing object rule. The source importer writes
+`sources.bzl` alongside `sources.mk` from the same static-module selection;
+Bazel does not parse Make metadata during builds. This initial target is
+explicitly FreeBSD/amd64, including MACHTYPE; cross architectures and
+WITHOUT_DYNAMICROOT remain to be implemented/qualified.
+
+`/usr/obj/usr/src/bazel-zsh-runtime-r5-20261027/qualification/binary-parity.json`
+records equality with `bazel-zsh-make-20261027`: 1,898 defined global symbols,
+ordered NEEDED entries (ncursesw, tinfow, m, libc), NOW/PIE flags, and nine parsed
+DOF probe records including provider/function/name, native/translated argument
+types and probe/is-enabled site counts. This proves linked probe preservation,
+not runtime tracing. The capture is authenticated against the frontend receipt.
+
+`//bin/zsh:runtime_smoke` passes with declared candidate library runfiles. It
+checks architecture/OS reporting, configured module loading, arithmetic,
+associative arrays, expansion, regex, signal/errno arrays, pipelines and child
+exit status. The program-test adapter now accepts declared script/fixture data
+and merges their runfiles. Earlier analysis, quoting, missing direct terminfo
+link and test-argument failures remain in the numbered evidence directories.
+No assertions or production behavior were weakened to resolve them.
+
+This is still not full zsh qualification: installation/functions/manuals/config
+metadata, complete upstream shell/pty/job-control tests, static-root and
+DTrace-disabled variants, mutation invalidation and cross builds remain. The
+existing format-5 build-bsd frontend/backend supports these targets unchanged;
+Make remains the production default. No host installation occurred.

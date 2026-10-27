@@ -12,7 +12,7 @@ def _program_test(ctx):
     ctx.actions.symlink(output = ctx.outputs.executable,
         target_file = executable, is_executable = True)
     links = {}
-    providers = [program.default_runfiles]
+    providers = [program.default_runfiles] + [target[DefaultInfo].default_runfiles for target in ctx.attr.data]
     if ctx.executable.runner:
         links["program-bin/" + ctx.executable.program.basename] = ctx.executable.program
         providers.append(ctx.attr.runner[DefaultInfo].default_runfiles)
@@ -23,7 +23,7 @@ def _program_test(ctx):
         links[key] = file
     providers.extend([target[DefaultInfo].default_runfiles for target in ctx.attr.runtime_lib])
     result = [DefaultInfo(executable = ctx.outputs.executable,
-        runfiles = ctx.runfiles(files = [executable, ctx.executable.program], symlinks = links).merge_all(providers))]
+        runfiles = ctx.runfiles(files = [executable, ctx.executable.program] + ctx.files.data, symlinks = links).merge_all(providers))]
     if ctx.executable.runner:
         result.append(RunEnvironmentInfo(environment = {
             "BSD_TEST_PROGRAM": ctx.executable.program.basename,
@@ -33,6 +33,7 @@ def _program_test(ctx):
 
 bsd_program_test = rule(implementation = _program_test, test = True, attrs = {
     "program": attr.label(executable = True, cfg = "target", mandatory = True),
+    "data": attr.label_list(allow_files = True, doc = "Declared test scripts and fixtures, included in runfiles."),
     "runtime_lib": attr.label_list(allow_files = True),
     "runner": attr.label(executable = True, cfg = "exec"),
 })

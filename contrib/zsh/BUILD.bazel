@@ -3,3 +3,7 @@ exports_files([
     "Src/signames1.awk", "Src/signames2.awk",
     "Src/Modules/errnames1.awk", "Src/Modules/errnames2.awk",
 ], visibility = ["//bin/zsh:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(glob(["Src/*.c", "Src/Zle/*.c", "Src/Modules/*.c", "Src/Builtins/*.c"]), visibility = ["//bin/zsh:__pkg__"])
+cc_library(name = "headers", hdrs = glob(["Src/*.h", "Src/Zle/*.h", "Src/Modules/*.h"]), includes = ["Src", "Src/Zle", "Src/Modules", "Src/Builtins"], visibility = ["//bin/zsh:__pkg__"])
