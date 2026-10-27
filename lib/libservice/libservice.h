@@ -87,9 +87,10 @@ typedef uint64_t service_rights_t;
 /*
  * The one cross-service well-known right: administrative access, which bypasses
  * a service's per-object policy (the capability replacement for the old
- * "root may do anything" bypass). SwitchBoard derives grants from approved
- * software attributes, not login identity. Per-service rights use the low
- * bits; this reserves the top. Providers still enforce their operation rules.
+ * "root may do anything" bypass). Development mode can derive this from
+ * approved software attributes. BIP does not issue this provider bypass:
+ * software eligibility and broker management roles are not provider operation
+ * authorization. Per-service rights use the low bits; this reserves the top.
  */
 #define	SERVICE_RIGHTS_ADMIN	((service_rights_t)1 << 63)
 /* Retired authentication protocol bit; never issued in software grants. */
@@ -150,7 +151,7 @@ struct service_identity {
 	char	container[64];			/* installed bundle for per-bundle
 						 * container storage; "" if none
 						 * (docs/book/src/plane/containers-and-storage.md) */
-	uint64_t reserved[1];
+	uint64_t storage_client_id; /* broker-observed invocation/provider association */
 	/*
 	 * Group containers the client's bundle declares membership in
 	 * (Bundle.ucl `groups`); "" slots are empty.  `size` must be exactly
@@ -257,7 +258,6 @@ int	service_system_jail_get(int token_fd, struct iovec *iov,
  */
 int	service_enter_ambient(struct service_context *);
 int	service_ready(struct service_context *);
-
 /*
  * Request that switchboard stop this provider after `seconds` of no new client
  * demand; a subsequent lookup relaunches it on demand.  Call again after
@@ -273,6 +273,7 @@ int	service_idle_shutdown(struct service_context *, unsigned seconds);
  * switchboard side).  Returns 0 on success, -1/errno otherwise.
  */
 int	service_heartbeat(struct service_context *);
+
 
 /*
  * A provider owns global-name exposure and makes the capability-mode security
@@ -384,8 +385,9 @@ int	service_worker_protect(uint32_t flags);
  * Drop every descriptor authority retained internally by libservice.
  * A freshly forked component worker calls this after
  * service_worker_protect() and before cap_enter().  Application-owned
- * session, ring, and bearer
- * descriptors are not affected.
+ * session, ring, and bearer descriptors are not affected.
+ * This does not clear attached kernel software authority or change UNIX
+ * credentials. It is not a complete privilege drop for running untrusted code.
  */
 void	service_worker_drop_inherited_authority(void);
 

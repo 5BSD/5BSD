@@ -179,6 +179,43 @@ COMMON_SRCS:=  ${COMMON_SRCS:N${i:R}.c}
 
 SRCS=	${COMMON_SRCS} ${ARCH_SRCS}
 
+# Sources included textually need dependency edges even before compiler depfiles
+# exist. Keep these inputs shared by Make and the native build graph exporter.
+.for _src in s_cos.c s_sin.c s_tan.c s_sincos.c
+TEXTUAL_SRCS.${_src}= ${.CURDIR}/src/e_rem_pio2.c
+.endfor
+.for _src in s_cosf.c s_sinf.c
+TEXTUAL_SRCS.${_src}= ${.CURDIR}/src/e_rem_pio2f.c \
+    ${.CURDIR}/src/k_cosf.c ${.CURDIR}/src/k_sinf.c
+.endfor
+TEXTUAL_SRCS.s_sincosf.c= ${.CURDIR}/src/e_rem_pio2f.c
+TEXTUAL_SRCS.s_tanf.c= ${.CURDIR}/src/e_rem_pio2f.c ${.CURDIR}/src/k_tanf.c
+.for _src in s_cospif.c s_sinpif.c
+TEXTUAL_SRCS.${_src}= ${.CURDIR}/src/k_cosf.c ${.CURDIR}/src/k_sinf.c
+.endfor
+TEXTUAL_SRCS.s_tanpif.c= ${.CURDIR}/src/k_tanf.c
+.for _src in s_llrint.c s_llrintf.c s_llrintl.c s_lrintf.c s_lrintl.c
+TEXTUAL_SRCS.${_src}= ${.CURDIR}/src/s_lrint.c
+.endfor
+.for _src in s_lroundf.c s_lroundl.c s_llround.c s_llroundf.c s_llroundl.c
+TEXTUAL_SRCS.${_src}= ${.CURDIR}/src/s_lround.c
+.endfor
+TEXTUAL_SRCS.b_tgamma.c= ${.CURDIR}/bsdsrc/b_log.c ${.CURDIR}/bsdsrc/b_exp.c
+.if ${LDBL_PREC} == 64
+TEXTUAL_SRCS.b_tgammal.c= ${.CURDIR}/ld80/b_logl.c ${.CURDIR}/ld80/b_expl.c
+.elif ${LDBL_PREC} == 113
+TEXTUAL_SRCS.b_tgammal.c= ${.CURDIR}/ld128/tgamma128.c
+.endif
+.if ${MACHINE_CPUARCH} == "arm"
+TEXTUAL_SRCS.fenv-softfp.c= ${.CURDIR}/arm/fenv.c
+TEXTUAL_SRCS.fenv-vfp.c= ${.CURDIR}/arm/fenv.c
+.endif
+.for _src in ${SRCS}
+.if defined(TEXTUAL_SRCS.${_src})
+${_src:R}.o ${_src:R}.pico ${_src:R}.pieo ${_src:R}.nossppico: ${TEXTUAL_SRCS.${_src}}
+.endif
+.endfor
+
 INCS+=	fenv.h math.h
 
 MAN=	acos.3 acosh.3 acospi.3 asin.3 asinh.3 asinpi.3 \

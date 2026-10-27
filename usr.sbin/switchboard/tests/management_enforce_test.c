@@ -318,8 +318,29 @@ ATF_TC_BODY(user_manifest_credentials_follow_owner, tc)
 	ATF_CHECK_STREQ("wheel", svc.manifest.group);
 }
 
+ATF_TC_WITHOUT_HEAD(user_launch_uid_must_match_registry_owner);
+ATF_TC_BODY(user_launch_uid_must_match_registry_owner, tc)
+{
+	(void)tc;
+	ATF_REQUIRE_EQ(0, svc_user_credentials_match(OWNER_UID, OWNER_UID, true));
+	ATF_REQUIRE_EQ(0, svc_user_credentials_match(0, 0, true));
+	/* Names can alias or change between lookups; numeric ownership cannot. */
+	errno = 0;
+	ATF_REQUIRE_EQ(-1, svc_user_credentials_match(OWNER_UID, 0, true));
+	ATF_REQUIRE_EQ(EPERM, errno);
+	errno = 0;
+	ATF_REQUIRE_EQ(-1, svc_user_credentials_match(OWNER_UID, STRANGER_UID, true));
+	ATF_REQUIRE_EQ(EPERM, errno);
+	ATF_REQUIRE_EQ(-1, svc_user_credentials_match(OWNER_UID, OWNER_UID, false));
+	ATF_REQUIRE_EQ(-1, svc_user_credentials_match(0, OWNER_UID, true));
+	/* A system unit's selected identity is a separate policy decision. */
+	ATF_REQUIRE_EQ(0, svc_user_credentials_match((uid_t)-1, OWNER_UID, true));
+	ATF_REQUIRE_EQ(0, svc_user_credentials_match((uid_t)-1, 0, false));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, user_launch_uid_must_match_registry_owner);
 	ATF_TP_ADD_TC(tp, user_manifest_cannot_grant_attributes);
 	ATF_TP_ADD_TC(tp, user_manifest_credentials_follow_owner);
 

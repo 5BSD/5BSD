@@ -46,7 +46,7 @@ procstat_vm(struct procstat *procstat, struct kinfo_proc *kipp)
 {
 	struct kinfo_vmentry *freep, *kve;
 	int ptrwidth;
-	int i, cnt;
+	unsigned int i, cnt;
 	const char *str, *lstr;
 
 	ptrwidth = 2*sizeof(void *) + 2;

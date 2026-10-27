@@ -18,4 +18,10 @@ SYM_MAPS+= ${LIBC_SRCTOP}/iconv/Symbol.map
 
 .if ${MK_ICONV} == yes
 .include "${SRCTOP}/lib/libc_nonshared/Makefile.iconv"
+# libc's regular archive and libc_nonshared share this source inventory.
+# Keep the native source mappings tied to the same list and .PATH origin.
+.for _src in ${LIBC_NONSHARED_SRCS}
+STATICOBJ_SOURCE.${_src:R}.o= ${_src}
+STATICOBJ_ORIGIN.${_src:R}.o= ${LIBC_SRCTOP}/iconv/${_src}
+.endfor
 .endif

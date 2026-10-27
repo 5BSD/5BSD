@@ -122,6 +122,7 @@ ATF_TC_BODY(cleanup_commands, tc)
 	ATF_REQUIRE(svc != NULL);
 	strlcpy(svc->manifest.label, "org.test.cleanup", sizeof(svc->manifest.label));
 	svc->manifest.management = SVC_MGMT_SYSTEM;
+	svc->owner_uid = (uid_t)-1;
 	svc->state = SVC_STATE_STOPPING;
 	svc->cleanup.pending = true;
 	sd.services = svc;
@@ -158,3 +159,12 @@ svc_by_label_scoped(const char *name, uid_t owner)
  struct svc_runtime *svc=svc_by_label(name);
  return svc != NULL && svc->owner_uid == owner ? svc : NULL;
 }
+
+/* These runtime-only tests have an empty installed catalogue. Unexpected
+ * access beyond its count is a test failure; lazy loading is exercised by
+ * the real-registry Secure Boot VM fixture. */
+unsigned bundle_registry_count(void) { return (0); }
+uid_t bundle_registry_owner_uid(unsigned index) { (void)index; abort(); }
+struct capbundle *bundle_registry_get(unsigned index) { (void)index; abort(); }
+void svc_slot_apply_bundle_policy(struct svc_runtime *svc, unsigned index)
+{ (void)svc; (void)index; abort(); }

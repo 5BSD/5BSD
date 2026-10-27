@@ -30,10 +30,7 @@ LIBADD+= jail
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
 
-keywords.h: keywords
-	LC_ALL=C awk '!/^#|^$$/ { \
-		printf "#define\tK_%s\t%d\n\t{\"%s\", K_%s},\n", \
-		    toupper($$1), ++L, $$1, toupper($$1); \
-	}' < ${.CURDIR}/keywords > ${.TARGET} || (rm -f ${.TARGET}; false)
+keywords.h: keywords keywords.awk
+	LC_ALL=C awk -f ${.CURDIR}/keywords.awk ${.CURDIR}/keywords > ${.TARGET} || (rm -f ${.TARGET}; false)
 
 .include <bsd.prog.mk>

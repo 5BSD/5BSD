@@ -24,6 +24,11 @@ POWERCMP_SCHEMAPACKAGE= libpowercmp-dev
 FILESGROUPS+= POWERCMP_NOTICE
 POWERCMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 POWERCMP_NOTICEDIR= /usr/share/licenses/libpowercmp/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= POWERCMP_NOTICEPARENT
+POWERCMP_NOTICEPARENT= ${POWERCMP_NOTICEDIR:H}
+POWERCMP_NOTICEPARENTTAGS= ${POWERCMP_NOTICEDIRTAGS}
+
 INCS=	powercmp.h powercmp_protocol.h
 LIBADD=	service fidl_bsd cplusplus
 CFLAGS+=	-I${SRCTOP}/lib/libservice

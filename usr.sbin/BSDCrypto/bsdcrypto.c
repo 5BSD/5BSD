@@ -2,6 +2,7 @@
 #include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
+#include <sys/ioctl.h>
 #include <sys/procdesc.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -45,7 +46,7 @@ struct crypto_worker {
 static int
 harden_control_descriptor(bool worker)
 {
-	static const unsigned long commands[] = {
+	static const unsigned long child_commands[] = {
 		CIOCGCRYPTODESCGENERATE,
 		CIOCGCRYPTOKEYDESC,
 		CIOCGCRYPTONAMEDKEY,
@@ -56,15 +57,44 @@ harden_control_descriptor(bool worker)
 		CIOCGCRYPTONAMEDLIST,
 		CIOCGCRYPTOOWNERLIST,
 	};
+	static const unsigned long supervisor_commands[] = { CIOCGCRYPTOCONTROL };
+	const unsigned long *commands = worker ? child_commands : supervisor_commands;
+	size_t count = worker ? nitems(child_commands) : nitems(supervisor_commands);
 	cap_rights_t rights;
 
 	if (cap_xfer_limit(control_fd, CAP_XFER_NONE) == -1 ||
-	    (worker && cap_clofork_limit(control_fd, CAP_CLOFORK_LOCKED) == -1) ||
+	    cap_clofork_limit(control_fd, CAP_CLOFORK_LOCKED) == -1 ||
 	    cap_cloexec_limit(control_fd, CAP_CLOEXEC_LOCKED) == -1 ||
-	    cap_ioctls_limit(control_fd, commands, nitems(commands)) == -1)
+	    cap_ioctls_limit(control_fd, commands, count) == -1)
 		return (-1);
 	cap_rights_init(&rights, CAP_IOCTL);
 	return (cap_rights_limit(control_fd, &rights));
+}
+
+/* The supervisor selects an authenticated owner before any child is born. */
+static int
+derive_control(uint32_t scope, const char *owner)
+{
+	struct cryptoctl_derive request = {
+		.scope = scope,
+		.rights = scope == CRYPTOCTL_SCOPE_OWNER ?
+		    CRYPTOCTL_WORKER_RIGHTS : CRYPTOCTL_RECLAIM_RIGHTS,
+		.fd = -1,
+	};
+
+	if (strlcpy(request.owner, owner, sizeof(request.owner)) >= sizeof(request.owner))
+		return (errno = EINVAL, -1);
+	if (ioctl(control_fd, CIOCGCRYPTOCONTROL, &request) == -1)
+		return (-1);
+	/* Inheritance is needed exactly once; the child locks it before serving. */
+	if (cap_xfer_limit(request.fd, CAP_XFER_NONE) == -1 ||
+	    cap_cloexec_limit(request.fd, CAP_CLOEXEC_LOCKED) == -1) {
+		int saved = errno;
+
+		close(request.fd);
+		return (errno = saved, -1);
+	}
+	return (request.fd);
 }
 
 static void
@@ -731,16 +761,18 @@ bsdcrypto_test_bundle_of(const char *container, char *out, size_t outsz)
 
 /*
  * Test entrypoint: run the real owner-scoped serve path against a caller-owned
- * channel descriptor with a caller-supplied owner label.  It opens and hardens
- * the /dev/crypto control descriptor exactly as production does but omits the
+ * channel descriptor with a caller-supplied owner label. It opens the supervisor
+ * control and derives the same kernel-bound owner scope used by production,
+ * but omits the
  * switchboard-only sandbox wrappers (worker protect/authority-drop/cap_enter) and
  * the audit client, which require a live plane.  Named-key ownership is enforced
- * by the kernel key store keyed on (name, owner), so this exercises the true
- * isolation property.
+ * by the derived handle and the kernel key store. This does not qualify the
+ * live bootstrap transport or authenticated peer-label delivery.
  */
 int
 bsdcrypto_test_serve(int fd, const char *owner_label)
 {
+	int scoped;
 
 	if (fd < 0 || owner_label == NULL ||
 	    strnlen(owner_label, CRYPTODESC_KEY_OWNER_MAX) == 0 ||
@@ -750,7 +782,12 @@ bsdcrypto_test_serve(int fd, const char *owner_label)
 	control_fd = open("/dev/crypto", O_RDWR);
 	if (control_fd < 0)
 		return (-1);
-	if (harden_control_descriptor(true) == -1)
+	if (harden_control_descriptor(false) == -1)
+		return (1);
+	scoped = derive_control(CRYPTOCTL_SCOPE_OWNER, owner_label);
+	close(control_fd);
+	control_fd = scoped;
+	if (control_fd == -1 || harden_control_descriptor(true) == -1)
 		return (1);
 	return (serve_session(fd, owner_label, owner_label, NULL));
 }
@@ -943,26 +980,37 @@ crypto_reaper_loop(void)
 
 /*
  * Fork the key-reclaim child.  Called after the control descriptor is retained
- * and hardened, so the child inherits control_fd along with the delivered
- * install-directory descriptors.  Non-fatal: a fork failure just defers
- * cleanup.
+ * and hardened. Derive listing/deletion authority before forking; the child
+ * inherits that handle and the delivered install directories, never the
+ * supervisor control. Non-fatal: a fork failure just defers cleanup.
  */
 static int
 start_reaper(void)
 {
 	pid_t pid;
-	int pd;
+	int pd, scoped, saved;
 
+	scoped = derive_control(CRYPTOCTL_SCOPE_RECLAIM, "");
+	if (scoped == -1)
+		return (-1);
 	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 	if (pid == -1) {
+		saved = errno;
+		close(scoped);
+		errno = saved;
 		logcmp_log(LOG_WARNING, "reclaim: pdfork: %m");
 		return (-1);
 	}
 	if (pid == 0) {
+		/* The supervisor handle was closed by locked CLOFORK. */
+		control_fd = scoped;
+		if (harden_control_descriptor(true) == -1)
+			_exit(1);
 		(void)signal(SIGCHLD, SIG_DFL);
 		crypto_reaper_loop();
 		/* NOTREACHED */
 	}
+	close(scoped);
 	return (pd);
 }
 
@@ -994,7 +1042,7 @@ worker(int fd, const char *owner, const char *actor)
 static int
 start_session(int fd, const char *peer_label, const char *actor, int *pdp)
 {
-	int pd;
+	int pd, scoped, saved;
 	pid_t pid;
 	char owner[CRYPTODESC_KEY_OWNER_MAX];
 
@@ -1007,6 +1055,11 @@ start_session(int fd, const char *peer_label, const char *actor, int *pdp)
 	if (strnlen(peer_label, sizeof(owner)) == sizeof(owner))
 		return (errno = EINVAL, -1);
 	strlcpy(owner, peer_label, sizeof(owner));
+	scoped = derive_control(CRYPTOCTL_SCOPE_OWNER, owner);
+	if (scoped == -1) {
+		saved = errno;
+		return (errno = saved, -1);
+	}
 	/*
 	 * pdfork (not fork): the parent watches the returned process descriptor on
 	 * its kqueue so it can bound the live-worker count.  A pdfork'd worker is
@@ -1014,10 +1067,17 @@ start_session(int fd, const char *peer_label, const char *actor, int *pdp)
 	 * on SIGCHLD disposition.  The reclaim child also uses a procdesc.
 	 */
 	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
-	if (pid == -1)
-		return (-1);
-	if (pid == 0)
+	if (pid == -1) {
+		saved = errno;
+		close(scoped);
+		return (errno = saved, -1);
+	}
+	if (pid == 0) {
+		/* No unrestricted supervisor descriptor survives this fork. */
+		control_fd = scoped;
 		_exit(worker(fd, owner, actor));
+	}
+	close(scoped);
 	*pdp = pd;
 	return (0);
 }
@@ -1099,50 +1159,24 @@ main(void)
 
 	/* Session and reclaim children are explicitly reaped through procdescs. */
 
-	/*
-	 * /dev/crypto is provided either by a static `device cryptodev` compiled
-	 * into the trusted kernel (the 5BSD default -- see sys/amd64/conf/GENERIC) or
-	 * by the loadable cryptodev.ko module.  Ask bsdextension (system.SystemExtension)
-	 * to load the module by name -- [CRYPTO] self-serves it rather than relying
-	 * on PID 1 or switchboard -- but treat that as BEST-EFFORT: a built-in
-	 * cryptodev is not a loadable file, so the load reports ENOENT (not the
-	 * EEXIST that an already-loaded module reports) even though /dev/crypto is
-	 * present and usable.  The openat("crypto") + STARTUP_CHECK(control_fd)
-	 * below is the real, authoritative test of whether the device is usable, so
-	 * a failed ensure must not by itself abort startup (which would loop the
-	 * provider until switchboard's circuit breaker disabled it).  Done before
-	 * becoming a provider and entering capability mode.
-	 */
+	/* An authenticated boot-policy grant is required; no device-open fallback. */
 	STARTUP_CHECK(service_acquire(&ctx), 10);
-	if (service_ensure_extension(ctx, "cryptodev") == -1)
-		logcmp_log(LOG_NOTICE, "ensure cryptodev module: %m; continuing "
-		    "(cryptodev may be built into the kernel)");
+	STARTUP_CHECK(service_capability_open(ctx, "crypto-control", "cryptoctl",
+	    &control_fd), 13);
 	service_release(ctx);
 	ctx = NULL;
 
 	/*
-	 * Born in capability mode: switchboard delivered /dev as a directory
-	 * descriptor (manifest directories = ["/dev"]); open the control node
-	 * beneath it with openat(2) rather than a global path.
-	 */
-	{
-		int devdir;
-
-		STARTUP_CHECK(service_resource_dir("/dev", &devdir), 12);
-		control_fd = openat(devdir, "crypto", O_RDWR);
-	}
-	/*
 	 * Self-harden the long-lived accept/fork parent.  It must still pdfork
 	 * workers and receive connection descriptors, so NOFORK/NOFDRECV are not
-	 * applied; NOPRIVS is safe because the /dev/crypto control descriptor is
-	 * already open (mirrors bsdnetwork's parent protect mask).
+	 * applied; NOPRIVS is safe because the scoped bootstrap control is
+	 * already present (mirrors bsdnetwork's parent protect mask).
 	 */
 	STARTUP_CHECK(control_fd, 13);
 	STARTUP_CHECK(harden_control_descriptor(false), 14);
 	/*
-	 * Start the key-reclaim child now: control_fd is retained and hardened
-	 * (its ioctl allow-list includes owner/named list + delete), so the child
-	 * inherits it along with the switchboard-delivered install directories.
+	 * Start the key-reclaim child with separately derived listing/deletion
+	 * authority. Locked CLOFORK removes the supervisor control in children.
 	 */
 	reaper = calloc(1, sizeof(*reaper));
 	if (reaper != NULL) {

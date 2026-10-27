@@ -10,14 +10,9 @@
  * over its clients' mac_capability channels.  bsdfilesystem is a socket-free
  * service_provider: it exposes the well-known name system.Filesystem and serves
  * each client on its own worker channel, exactly like every other
- * capability-plane daemon.  All name-based, privileged setup happens up front
- * (kldload zfs, zpool import, opening /dev/zfs and the root-pool handles by
- * name); the provider then SELF-CONFINES -- it cap_enter()s before serving and
- * handles every request from its retained handles inside the sandbox.  It cannot
- * be born in capability mode like the others because that bootstrap needs the
- * global namespace and classic privilege, so switchboard launches it ambient
- * (manifest ambient=true) and it sandboxes itself once bootstrap is done.  In the
- * serving window every operation is an ioctl on a held, cap_ioctls-limited
+ * capability-plane daemon. The maintained unit is born in capability mode,
+ * with explicit directory resources for configuration and device acquisition.
+ * In the serving window every operation is an ioctl on a held, cap_ioctls-limited
  * TrustedZFS handle (dataset create/destroy/mount/unmount are ZFD_* ioctls, never
  * mount(2)) or an openat(2) beneath the retained root fd with
  * O_RESOLVE_BENEATH/O_NOFOLLOW -- so containment is both capsicum AND the
@@ -25,6 +20,8 @@
  */
 
 #include <sys/types.h>
+#include <sys/zfshandle.h>
+#include <sys/stat.h>
 
 #include <err.h>
 #include <errno.h>
@@ -79,6 +76,7 @@ int
 main(int argc, char **argv)
 {
 	struct bsdfilesystem_state st;
+	struct stat policy_stat;
 	const char *conf = NULL;
 	bool storage_available;
 	int ch, cfgfd, dev_dirfd;
@@ -115,10 +113,9 @@ main(int argc, char **argv)
 	 * exec, so it opens nothing by global path.  Its privileged, name-based
 	 * bootstrap resources are delivered as inherited directory descriptors --
 	 * "/" (the isolated-open base, the operator-config base, and the reclaim
-	 * child's install-dir base) and /dev (for the ZFS control device).  It
-	 * still holds root so the one privileged op the substrate needs -- the
-	 * pool-root mint (ZFS_IOC_POOL_OPEN / secpolicy_zfs) -- succeeds; every
-	 * derived dataset handle is authorized by handle rights, not privilege.
+	 * child's install-dir base) and /dev (for the ZFS control device). The
+	 * provider can acquire an already-imported pool there. Derived
+	 * handles are authorized by handle rights, not UNIX privilege.
 	 */
 	if (service_resource_dir("/", &st.root_fd) == -1) {
 		syslog(LOG_WARNING, "no delivered root directory; isolated-open and "
@@ -126,29 +123,31 @@ main(int argc, char **argv)
 		st.root_fd = -1;
 	}
 
-	/*
-	 * Operator open-policy + pool config.  It lives in the GLOBAL
-	 * /Capabilities/Config (not the unit's bundle Config/), so a born-in-capmode
-	 * broker reads it by openat(2) beneath the delivered "/", never a path.
-	 * Missing/unparseable keeps the compiled-in defaults (default-deny).  An
-	 * explicit -c path (tests / pre-capmode) still uses the hardened path loader.
-	 */
+	/* Supplied policy is data only; parse/read errors are fatal. */
 	bsdfilesystem_config_defaults(&st.cfg);
-	if (conf != NULL) {
-		if (bsdfilesystem_config_load(&st.cfg, conf) == -1) {
-			syslog(LOG_ERR, "config %s: %m", conf);
-			return (1);
-		}
-	} else if (st.root_fd != -1) {
+	if (conf != NULL)
+		cfgfd = open(conf, O_RDONLY | O_CLOEXEC | O_NOFOLLOW |
+		    O_VERIFY | O_NONBLOCK);
+	else if (st.root_fd != -1)
 		cfgfd = openat(st.root_fd, "Capabilities/Config/bsdfilesystem.ucl",
 		    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_VERIFY | O_NONBLOCK);
-		if (cfgfd != -1) {
-			if (bsdfilesystem_config_load_fd(&st.cfg, cfgfd) == -1)
-				syslog(LOG_WARNING, "config unparseable (%m); "
-				    "using defaults (default-deny)");
-		} else if (errno != ENOENT) {
-			syslog(LOG_WARNING, "config unavailable (%m); using defaults");
+	else {
+		cfgfd = -1;
+		errno = ENOENT;
+	}
+	if (cfgfd < 0) {
+		if (conf != NULL || errno != ENOENT) {
+			syslog(LOG_ERR, "required storage policy unavailable: %m");
+			return (1);
 		}
+	} else if (conf != NULL && (fstat(cfgfd, &policy_stat) == -1 ||
+	    policy_stat.st_uid != geteuid() || (policy_stat.st_mode & 022) != 0)) {
+		(void)close(cfgfd);
+		syslog(LOG_ERR, "explicit storage policy has untrusted ownership or mode");
+		return (1);
+	} else if (bsdfilesystem_config_load_fd(&st.cfg, cfgfd) == -1) {
+		syslog(LOG_ERR, "storage policy rejected: %m");
+		return (1);
 	}
 
 	/*
@@ -184,10 +183,15 @@ main(int argc, char **argv)
 	} else {
 		storage_available = true;
 	}
+	/* Raw acquisition authority has no role in request handling. */
+	if (st.zfs_fd >= 0) {
+		(void)close(st.zfs_fd);
+		st.zfs_fd = -1;
+	}
 	st.storage_available = storage_available;
 	/*
 	 * The delivered /dev directory descriptor was only needed to openat("zfs")
-	 * the control device (now retained as st.zfs_fd).  Close it before forking
+	 * the control device (already closed above). Close the directory before forking
 	 * the reaper and per-client workers so the sandboxed serving processes do
 	 * not inherit a stray /dev directory fd they could openat(2) under.
 	 */

@@ -2612,6 +2612,12 @@ ucl_state_machine(struct ucl_parser *parser)
 			p = chunk->pos;
 			break;
 		case UCL_STATE_MACRO_NAME:
+			if (parser->flags & UCL_PARSER_REJECT_MACRO) {
+				ucl_set_err(parser, UCL_EMACRO, "macros are forbidden",
+					&parser->err);
+				parser->state = UCL_STATE_ERROR;
+				return false;
+			}
 			if (parser->flags & UCL_PARSER_DISABLE_MACRO) {
 				if (!ucl_skip_macro_as_comment(parser, chunk)) {
 					/* We have invalid macro */

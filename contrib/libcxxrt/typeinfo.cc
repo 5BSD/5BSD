@@ -82,6 +82,12 @@ extern "C" char* __cxa_demangle(const char* mangled_name,
 	// however, and for our changes to be pushed upstream.  We also need to
 	// call a different demangling function here depending on the ABI (e.g.
 	// ARM).
+	if (mangled_name == NULL || (buf != NULL && n == NULL))
+	{
+		if (status)
+			*status = -3;
+		return NULL;
+	}
 	char *demangled = __cxa_demangle_gnu3(mangled_name);
 	if (NULL != demangled)
 	{
@@ -89,15 +95,13 @@ extern "C" char* __cxa_demangle(const char* mangled_name,
 		if (!buf || (*n < len+1))
 		{
 			buf = static_cast<char*>(realloc(buf, len+1));
+			if (buf && n)
+				*n = len + 1;
 		}
 		if (0 != buf)
 		{
 			memcpy(buf, demangled, len);
 			buf[len] = 0;
-			if (n)
-			{
-				*n = len;
-			}
 			if (status)
 			{
 				*status = 0;

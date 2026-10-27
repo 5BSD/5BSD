@@ -20,24 +20,56 @@ start_precmd="syslogd_precmd"
 extra_commands="reload"
 
 sockfile="/var/run/syslogd.sockets"
-evalargs="rc_flags=\"\`set_socketlist\` \$rc_flags\""
+logsocket="/var/run/log"
 
 : ${syslogd_svcj_options:="net_basic"}
 
+# rc.subr evaluates the assembled command. Quote path arguments as data,
+# including apostrophes and shell metacharacters in an explicit path.
+syslogd_quote()
+{
+	printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+syslogd_configure_paths()
+{
+	local _name _path _option
+
+	for _name in pidfile socket privsocket socketlist; do
+		eval _path=\${syslogd_${_name}-}
+		[ -n "$_path" ] || continue
+		case "$_path" in
+		/*) ;;
+		*) warn "syslogd_${_name} must be an absolute path"; return 1 ;;
+		esac
+		case "$_path" in
+		*'
+'*) warn "syslogd_${_name} must not contain a newline"; return 1 ;;
+		esac
+		case "$_name" in
+		pidfile) pidfile=$_path; _option=-P ;;
+		socket) logsocket=$_path; _option=-p ;;
+		privsocket) _option=-S ;;
+		socketlist) sockfile=$_path; continue ;;
+		esac
+		command_args="$command_args $_option $(syslogd_quote "$_path")"
+	done
+}
+
 syslogd_precmd()
 {
-	local _l _ldir
+	local _l _ldir _socketargs
 
 	#	Transitional symlink for old binaries
 	#
 	if [ ! -L /dev/log ] && ! check_jail jailed; then
-		ln -sf /var/run/log /dev/log
+		ln -sf "$logsocket" /dev/log || return 1
 	fi
-	rm -f /var/run/log
+	rm -f "$logsocket" || return 1
 
 	#	Create default list of syslog sockets to watch
 	#
-	( umask 022 ; > $sockfile )
+	( umask 022 ; > "$sockfile" ) || return 1
 
 	#	If running named(8) or ntpd(8) chrooted, added appropriate
 	#	syslog socket to list of sockets to watch.
@@ -45,7 +77,7 @@ syslogd_precmd()
 	for _l in $altlog_proglist; do
 		eval _ldir=\$${_l}_chrootdir
 		if checkyesno ${_l}_enable && [ -n "$_ldir" ]; then
-			echo "${_ldir}/var/run/log" >> $sockfile
+			echo "${_ldir}/var/run/log" >> "$sockfile" || return 1
 		fi
 	done
 
@@ -53,9 +85,13 @@ syslogd_precmd()
 	#	internal copy of $syslogd_flags to force use of specific
 	#	syslogd sockets.
 	#
-	if [ -s $sockfile ]; then
-		echo "/var/run/log" >> $sockfile
-		eval $evalargs
+	if [ -s "$sockfile" ]; then
+		# An explicit primary socket is already supplied with -p.
+		if [ -z "${syslogd_socket-}" ]; then
+			printf '%s\n' "$logsocket" >> "$sockfile" || return 1
+		fi
+		_socketargs=$(set_socketlist) || return 1
+		rc_flags="$_socketargs $rc_flags"
 	fi
 
 	return 0
@@ -63,13 +99,18 @@ syslogd_precmd()
 
 set_socketlist()
 {
-	local _s _socketargs
+	local _s _socketargs _sockets
 
 	_socketargs=
-	for _s in `cat $sockfile | tr '\n' ' '` ; do
-		_socketargs="-l $_s $_socketargs"
-	done
-	echo $_socketargs
+	_sockets=$(cat "$sockfile") || return 1
+	while IFS= read -r _s || [ -n "$_s" ]; do
+		[ -n "$_s" ] || continue
+		_socketargs="-l $(syslogd_quote "$_s") $_socketargs"
+	done <<EOF
+$_sockets
+EOF
+	printf '%s\n' "$_socketargs"
 }
 load_rc_config $name
+syslogd_configure_paths || exit 1
 run_rc_command "$1"

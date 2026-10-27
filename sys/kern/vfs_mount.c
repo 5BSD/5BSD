@@ -1022,7 +1022,9 @@ vfs_donmount(struct thread *td, uint64_t fsflags, struct uio *fsoptions)
 	 * only_export is set to true only if exports are being
 	 * updated and nothing else is being updated.
 	 */
-	if (has_nonexport)
+	/* Direct syscall flags must not smuggle a remount into export-only work. */
+	if (has_nonexport ||
+	    (fsflags & ~(MNT_UPDATE | MNT_EXPORTED)) != 0)
 		only_export = false;
 	/*
 	 * If only_export is true and the caller is running within a
@@ -1371,11 +1373,13 @@ vfs_domount_first(
  *
  * Callers that authorize by held capability rather than by uid should install
  * the credential they want the mount owned by around this call; VFS_MOUNT
- * re-checks secpolicy_fs_mount() against curthread's cred.
+ * re-checks secpolicy_fs_mount() against curthread's cred. actor_cred must be
+ * the original authorizing caller's held credential, before any substitution;
+ * MAC admission evaluates it before VFS_MOUNT or publication.
  */
 int
 vfs_mount_anon(struct thread *td, const char *fstype, struct vfsoptlist *opts,
-    uint64_t mntflags, struct mount **mpp)
+    uint64_t mntflags, struct ucred *actor_cred, struct mount **mpp)
 {
 	struct vfsconf *vfsp;
 	struct mount *mp;
@@ -1388,10 +1392,18 @@ vfs_mount_anon(struct thread *td, const char *fstype, struct vfsoptlist *opts,
 	}
 
 	mp = vfs_mount_alloc(NULL, vfsp, VFS_ANON_FSPATH, td->td_ucred);
+	mp->mnt_kern_flag |= MNTK_ANON;
 	mp->mnt_optnew = opts;
 	mp->mnt_flag |= (mntflags & MNT_UPDATEMASK);
 
-	error = VFS_MOUNT(mp);
+	/* Labels and options exist, but no filesystem or handles are visible.
+	 * The actor may differ from td_ucred during capability-backed mounting. */
+	error = 0;
+#ifdef MAC
+	error = mac_mount_check_mount_anon(actor_cred, mp);
+#endif
+	if (error == 0)
+		error = VFS_MOUNT(mp);
 	if (error != 0) {
 		vfs_freeopts(mp->mnt_optnew);
 		mp->mnt_optnew = NULL;
@@ -1435,6 +1447,23 @@ vfs_mount_anon(struct thread *td, const char *fstype, struct vfsoptlist *opts,
 }
 
 /*
+ * Release an anonymous mount after its last capability anchor is gone. The
+ * kernel origin flag is local to this operation; it is neither mount state nor
+ * ambient process authority. Keep the ordinary MAC unmount hook in dounmount().
+ */
+int
+vfs_unmount_anon(struct mount *mp, struct thread *td)
+{
+
+	if ((mp->mnt_kern_flag & MNTK_ANON) == 0 ||
+	    mp->mnt_vnodecovered != NULL || (mp->mnt_flag & MNT_ROOTFS) != 0) {
+		vfs_rel(mp);
+		return (EINVAL);
+	}
+	return (dounmount(mp, MNT_FORCE | MNT_BYCAP, td));
+}
+
+/*
  * vfs_domount_update(): update of mounted file system
  */
 static int
@@ -1456,7 +1485,6 @@ vfs_domount_update(
 	uint64_t flag, mnt_union;
 	gid_t *grps;
 	fsid_t *fsid_up;
-	bool vfs_suser_failed;
 
 	ASSERT_VOP_ELOCKED(vp, __func__);
 	KASSERT((fsflags & MNT_UPDATE) != 0, ("MNT_UPDATE should be here"));
@@ -1493,29 +1521,20 @@ vfs_domount_update(
 	 * jail_export set true indicates that "export" is not mixed
 	 * with other options that change mount behaviour.
 	 */
-	vfs_suser_failed = false;
 	error = vfs_suser(mp, td);
 	if (jail_export && error != 0) {
 		error = 0;
-		vfs_suser_failed = true;
 	}
 #ifdef MAC
 	if (error == 0) {
 		error = mac_mount_check_update(td->td_ucred, mp, optlist,
-		    fsflags);
+		    fsflags, only_export);
 	}
 #endif
 	if (error != 0) {
 		vput(vp);
 		return (error);
 	}
-#ifdef MAC
-	error = mac_mount_check_update(td->td_ucred, mp, NULL, fsflags);
-	if (error != 0) {
-		vput(vp);
-		return (error);
-	}
-#endif
 	if (vfs_busy(mp, MBF_NOWAIT)) {
 		vput(vp);
 		return (EBUSY);
@@ -1555,13 +1574,14 @@ vfs_domount_update(
 		error = EBUSY;
 		goto end;
 	}
-	if (vfs_suser_failed) {
+	if (only_export) {
 		KASSERT((fsflags & (MNT_EXPORTED | MNT_UPDATE)) ==
 		    (MNT_EXPORTED | MNT_UPDATE),
 		    ("%s: jailed export did not set expected fsflags",
 		     __func__));
 		/*
-		 * For this case, only MNT_UPDATE and
+		 * Export-only updates must preserve existing mount options for both
+		 * host and jailed callers. Only MNT_UPDATE and
 		 * MNT_EXPORTED have been set in fsflags
 		 * by the options.  Only set MNT_UPDATE,
 		 * since that is the one that would be set
@@ -1886,7 +1906,7 @@ kern_unmount(struct thread *td, const char *path, uint64_t flags)
 	int error;
 
 	AUDIT_ARG_VALUE(flags);
-	if ((flags & (MNT_DEFERRED | MNT_RECURSE)) != 0)
+	if ((flags & (MNT_DEFERRED | MNT_RECURSE | MNT_BYCAP)) != 0)
 		return (EINVAL);
 	if (jailed(td->td_ucred) || usermount == 0) {
 		error = priv_check(td, PRIV_VFS_UNMOUNT);
@@ -2315,6 +2335,15 @@ dounmount(struct mount *mp, uint64_t flags, struct thread *td)
 	unsigned int retries;
 	bool coveredrec;
 
+	/* Capability release authority covers only this anonymous mount, never
+	 * an attached mount or recursive teardown of upper filesystems. */
+	if ((flags & MNT_BYCAP) != 0 &&
+	    ((mp->mnt_kern_flag & MNTK_ANON) == 0 ||
+	    mp->mnt_vnodecovered != NULL || (mp->mnt_flag & MNT_ROOTFS) != 0 ||
+	    (flags & ~(MNT_FORCE | MNT_BYCAP)) != 0)) {
+		vfs_rel(mp);
+		return (EINVAL);
+	}
 	KASSERT((flags & MNT_DEFERRED) == 0 ||
 	    (flags & (MNT_RECURSE | MNT_FORCE)) == (MNT_RECURSE | MNT_FORCE),
 	    ("MNT_DEFERRED requires MNT_RECURSE | MNT_FORCE"));
@@ -2360,7 +2389,8 @@ dounmount(struct mount *mp, uint64_t flags, struct thread *td)
 	}
 #endif
 
-	if (recursive_forced_unmount && ((flags & MNT_FORCE) != 0))
+	if (recursive_forced_unmount && (flags & MNT_BYCAP) == 0 &&
+	    (flags & MNT_FORCE) != 0)
 		flags |= MNT_RECURSE;
 
 	if ((flags & MNT_RECURSE) != 0) {

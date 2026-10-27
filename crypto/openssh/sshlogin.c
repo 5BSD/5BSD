@@ -143,7 +143,8 @@ record_login(pid_t pid, const char *tty, const char *user, uid_t uid,
 
 	li = login_alloc_entry(pid, user, host, tty);
 	login_set_addr(li, addr, addrlen);
-	login_login(li);
+	if (login_login(li) <= 0)
+		logit("Failed to record login for %s", user);
 	login_free_entry(li);
 }
 
@@ -168,6 +169,7 @@ record_logout(pid_t pid, const char *tty, const char *user)
 	struct logininfo *li;
 
 	li = login_alloc_entry(pid, user, NULL, tty);
-	login_logout(li);
+	if (login_logout(li) <= 0)
+		logit("Failed to record logout for %s", user);
 	login_free_entry(li);
 }

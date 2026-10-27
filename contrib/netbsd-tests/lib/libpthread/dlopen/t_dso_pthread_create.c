@@ -40,7 +40,7 @@ __RCSID("$NetBSD: t_dso_pthread_create.c,v 1.1 2013/03/21 16:50:21 christos Exp 
 #include <pthread.h>
 #include <unistd.h>
 
-#define DSO TESTDIR "/h_pthread_dlopen.so"
+#include "h_dlopen.h"
 
 void *
 routine(void *arg)
@@ -74,7 +74,7 @@ ATF_TC_BODY(dso_pthread_create_dso, tc)
 	rl.rlim_max = rl.rlim_cur = 0;
 	ATF_REQUIRE_EQ(setrlimit(RLIMIT_CORE, &rl), 0);
 
-	handle = dlopen(DSO, RTLD_NOW | RTLD_LOCAL);
+	handle = open_test_dso(tc);
 	ATF_REQUIRE_MSG(handle != NULL, "dlopen fails: %s", dlerror());
 
 	testf_dso_pthread_create = dlsym(handle, "testf_dso_pthread_create");

@@ -13,12 +13,15 @@
 # it opens nothing by global path.  Its bootstrap resources are delivered as
 # inherited directory descriptors -- "/" (isolated-open base, the operator config
 # under /Capabilities/Config, and the reclaim child's install-dir reads) and /dev
-# (openat("zfs") for the control device), declared in `directories` below.  user =
+# (legacy non-BIP device acquisition), declared in `directories` below. user =
 # root is retained for pool-root minting (ZFS_IOC_POOL_OPEN runs
 # secpolicy_zfs) and opening NOTIFY-only OES clients for system.OES.  Every derived dataset handle is
 # then authorized by handle rights, not privilege, and the whole serving window
 # runs inside the capsicum sandbox.  The pool is the boot pool (already imported by
 # the loader); a non-preimported pool cannot be brought up from capmode.
+# BIP instead requires an explicitly delivered storage-root dataset capability.
+# Capsule supplies it from explicit boot storage policy after device/GUID binding.
+# Actual BIP delegation and persistent-provider operation remain qualification gates.
 activation { boot = true; ipc = ["system.Filesystem",
     { name = "system.OES"; requires = ["system.oes"]; }]; }
 # Delivered as read-only directory descriptors (service_resource_dir): / as the

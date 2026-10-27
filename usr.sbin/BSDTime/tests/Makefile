@@ -34,8 +34,18 @@ LDFLAGS.provider_test+= -Wl,--wrap=service_system_settime,--wrap=service_system_
 FILESGROUPS+= FIDL_NOTICE UCL_NOTICE
 FIDL_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 FIDL_NOTICEDIR= /usr/share/licenses/bsdtime-tests/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= FIDL_NOTICEPARENT
+FIDL_NOTICEPARENT= ${FIDL_NOTICEDIR:H}
+FIDL_NOTICEPARENTTAGS= ${FIDL_NOTICEDIRTAGS}
+
 UCL_NOTICE= ${SRCTOP}/contrib/libucl/COPYING
 UCL_NOTICEDIR= /usr/share/licenses/bsdtime-tests/libucl
+
+# Record the package license ancestor as well as the notice directory.
+DIRS+= UCL_NOTICEPARENT
+UCL_NOTICEPARENT= ${UCL_NOTICEDIR:H}
+UCL_NOTICEPARENTTAGS= ${UCL_NOTICEDIRTAGS}
 
 .PATH: ${SRCTOP}/usr.sbin/BSDTime
 # Bindings generated at build time (fidl-bindings.mk).

@@ -1,9 +1,10 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Test libtrustedzfs's typed Capsicum ioctl profiles without requiring ZFS.
- * cap_ioctls_limit(2) is descriptor-generic, so a socket is sufficient to
- * verify the exact command sets and monotonic behavior.
+ * Test the Capsicum mapping with a test-only ZFD_LIMIT double.  These tests
+ * exercise real cap_ioctls_limit(2) on sockets, not the ZFS operation ceiling.
+ * trustedzfs_limit_test uses the production library without the double;
+ * tests/sys/zfshandle exercises real ZFS handles and inherited ceilings.
  */
 
 #include <sys/types.h>
@@ -13,12 +14,39 @@
 
 #include <errno.h>
 #include <stdbool.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
 #include <atf-c.h>
 #include <trustedzfs.h>
+
+static int mock_fd = -1;
+static int mock_error;
+static tzfs_opset_t requested_ops;
+
+int __wrap_ioctl(int, unsigned long, ...);
+
+/* Linked only into this test; production must never bypass ZFD_LIMIT. */
+int
+__wrap_ioctl(int fd, unsigned long cmd, ...)
+{
+	struct zfd_limit_args *limit;
+	va_list ap;
+
+	ATF_REQUIRE_EQ(mock_fd, fd);
+	ATF_REQUIRE_EQ(ZFD_LIMIT, cmd);
+	va_start(ap, cmd);
+	limit = va_arg(ap, struct zfd_limit_args *);
+	requested_ops = limit->zl_ops;
+	va_end(ap);
+	if (mock_error != 0) {
+		errno = mock_error;
+		return (-1);
+	}
+	return (0);
+}
 
 static int
 test_fd(void)
@@ -27,6 +55,7 @@ test_fd(void)
 
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	(void)close(sv[1]);
+	mock_fd = sv[0];
 	return (sv[0]);
 }
 
@@ -87,6 +116,8 @@ ATF_TC_BODY(dataset_exact, tc)
 	fd = test_fd();
 	ATF_REQUIRE_EQ(0, tzfs_limit_dataset_ioctls(fd,
 	    TZFS_OP_INFO | TZFS_OP_STAT | TZFS_OP_SNAPSHOT));
+	ATF_REQUIRE_EQ(TZFS_OP_INFO | TZFS_OP_STAT | TZFS_OP_SNAPSHOT,
+	    requested_ops);
 	require_ioctl_set(fd, expected, nitems(expected));
 	(void)close(fd);
 }
@@ -237,7 +268,7 @@ ATF_TC_BODY(monotonic_narrowing, tc)
 ATF_TC(empty_profile);
 ATF_TC_HEAD(empty_profile, tc)
 {
-	atf_tc_set_md_var(tc, "descr", "an empty mask denies every ioctl");
+	atf_tc_set_md_var(tc, "descr", "an empty mask retains only the monotonic limit command");
 }
 ATF_TC_BODY(empty_profile, tc)
 {
@@ -314,8 +345,34 @@ ATF_TC_BODY(scm_rights_preserves_profile, tc)
 	(void)close(sv[1]);
 }
 
+ATF_TC(kernel_limit_failure);
+ATF_TC_HEAD(kernel_limit_failure, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a failed kernel limit leaves the Capsicum list unchanged");
+}
+ATF_TC_BODY(kernel_limit_failure, tc)
+{
+	const int errors[] = { ENOTCAPABLE, ENOTTY, EIO };
+	size_t i;
+	int fd;
+
+	fd = test_fd();
+	for (i = 0; i < nitems(errors); i++) {
+		mock_error = errors[i];
+		ATF_REQUIRE_ERRNO(errors[i],
+		    tzfs_limit_dataset_ioctls(fd, TZFS_OP_INFO) == -1);
+		ATF_REQUIRE_EQ(CAP_IOCTLS_ALL, cap_ioctls_get(fd, NULL, 0));
+		ATF_REQUIRE_ERRNO(errors[i],
+		    tzfs_limit_pool_ioctls(fd, TZFS_OP_INFO) == -1);
+		ATF_REQUIRE_EQ(CAP_IOCTLS_ALL, cap_ioctls_get(fd, NULL, 0));
+	}
+	close(fd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, kernel_limit_failure);
 	ATF_TP_ADD_TC(tp, dataset_exact);
 	ATF_TP_ADD_TC(tp, dataset_rights_profile);
 	ATF_TP_ADD_TC(tp, dataset_non_subtree_profile);

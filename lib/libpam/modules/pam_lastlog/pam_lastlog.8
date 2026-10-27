@@ -32,7 +32,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd January 21, 2010
+.Dd October 19, 2026
 .Dt PAM_LASTLOG 8
 .Os
 .Sh NAME
@@ -66,7 +66,14 @@ The
 function records the session in the user accounting database.
 The
 .Fn pam_sm_close_session
-function does nothing.
+function records the end of the session.
+Accounting write failures are logged and return
+.Dv PAM_SESSION_ERR
+unless
+.Cm no_fail
+is specified.
+An error can occur after some accounting files have been updated;
+updates across the files are not atomic.
 .Pp
 The following options may be passed to the authentication module:
 .Bl -tag -width ".Cm no_warn"
@@ -78,7 +85,10 @@ level.
 .It Cm no_warn
 suppress warning messages to the user.
 .It Cm no_fail
-Ignore I/O failures.
+Ignore I/O failures when determining the session result.
+Accounting write failures are still logged.
+A successful session result with this option does not establish that
+accounting records were written.
 .El
 .Sh SEE ALSO
 .Xr last 1 ,

@@ -1273,8 +1273,7 @@ router_event(struct router *router, struct event_source *source,
 }
 
 static int
-router_main(int control, const struct notify_policy_db *policy_db,
-    int audit_fd)
+router_main(int control, const struct notify_policy_db *policy_db)
 {
 	struct channel_options control_options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
@@ -1291,8 +1290,10 @@ router_main(int control, const struct notify_policy_db *policy_db,
 	router.control_source.type = ROUTER_EVENT_CONTROL;
 	router.broker = notify_broker_create();
 	router.kq = kqueue();
+	/* Obtain the router's own invocation-bound Audit session before NOIPC
+	 * and NOFDRECV. A parent's non-forwardable session is not worker admission. */
 	if (router.broker == NULL || router.kq == -1 ||
-	    auditcmp_client_adopt(audit_fd, &router.audit) == -1 ||
+	    auditcmp_client_open(&router.audit) == -1 ||
 	    harden_channel(control, CAP_CLOFORK_LOCKED) == -1 ||
 	    channel_create(control, &control_options,
 	    &router.control_channel) == -1 ||
@@ -1818,7 +1819,7 @@ main(void)
 	struct service_call_options ready_options =
 	    SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct auditcmp_client *accept_audit;
-	int audit_fd, accept_audit_fd, router_pair[2], router_pd, fd;
+	int accept_audit_fd, router_pair[2], router_pd, fd;
 	int watcher_error;
 	bool watcher_started;
 	pid_t router_pid;
@@ -1853,7 +1854,6 @@ main(void)
 		goto fail;
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
-	    auditcmp_client_prepare(&audit_fd) == -1 ||
 	    service_provider_worker_channel(provider, &router_pair[0],
 	    &router_pair[1]) == -1)
 		goto fail;
@@ -1863,9 +1863,8 @@ main(void)
 	if (router_pid == 0) {
 		setproctitle("-BSDNotify: router");
 		close(router_pair[0]);
-		_exit(router_main(router_pair[1], policy_db, audit_fd));
+		_exit(router_main(router_pair[1], policy_db));
 	}
-	close(audit_fd);
 	close(router_pair[1]);
 	/*
 	 * The accept loop's own audit session, for the one refusal it makes

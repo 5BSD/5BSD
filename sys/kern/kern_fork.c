@@ -464,6 +464,11 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	PROC_LOCK(p1);
 	bcopy(&p1->p_startcopy, &p2->p_startcopy,
 	    __rangeof(struct proc, p_startcopy, p_endcopy));
+	/* Protection precedes PID publication, descriptor inheritance and execution.
+	 * It grants no software, user, or bootstrap authority. */
+	p2->p_noambient = p1->p_noambient ||
+	    ((fr->fr_flags & RFPROCDESC) != 0 &&
+	    (fr->fr_pd_flags & PD_PROTECTED) != 0);
 	pargs_hold(p2->p_args);
 	PROC_UNLOCK(p1);
 
@@ -764,7 +769,8 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	PROC_UNLOCK(p2);
 
 #ifdef KTRACE
-	ktrprocfork(p1, p2);
+	if (!p2->p_noambient)
+		ktrprocfork(p1, p2);
 #endif
 
 	/*
@@ -850,7 +856,7 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	 * synced with forks in progress so it is OK if we miss it
 	 * if being set atm.
 	 */
-	if ((p1->p_ptevents & PTRACE_FORK) != 0 &&
+	if (!p2->p_noambient && (p1->p_ptevents & PTRACE_FORK) != 0 &&
 	    (fr->fr_flags2 & FR2_NO_PTRACE) == 0) {
 		sx_xlock(&proctree_lock);
 		PROC_LOCK(p2);
@@ -999,6 +1005,18 @@ fork1(struct thread *td, struct fork_req *fr)
 			return (EXTERROR(EINVAL,
 		    "Must provide a place to put a procdesc if creating one"));
 
+#ifndef MAC
+		if ((fr->fr_pd_flags & PD_PROTECTED) != 0)
+			return (EOPNOTSUPP);
+#endif
+		/* Initial protection cannot share mutable execution state with the creator. */
+		if ((fr->fr_pd_flags & PD_PROTECTED) != 0 &&
+		    ((flags & (RFMEM | RFSIGSHARE | RFTHREAD)) != 0 ||
+		    (flags & (RFFDG | RFCFDG)) == 0))
+			return (EINVAL);
+		if ((fr->fr_pd_flags & (PD_PROTECTED | PD_PTRACE_CAP)) ==
+		    (PD_PROTECTED | PD_PTRACE_CAP))
+			return (EINVAL);
 		if ((fr->fr_pd_flags & ~PD_ALLOWED_AT_FORK) != 0)
 			return (EXTERROR(EINVAL,
 			    "Invalid pdflags at fork %#jx", fr->fr_pd_flags));

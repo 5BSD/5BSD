@@ -899,6 +899,19 @@ needs_exclusive_leaf(struct mount *mp, int flags)
 _Static_assert(MAXNAMLEN == NAME_MAX,
     "MAXNAMLEN and NAME_MAX have different values");
 
+#ifdef MAC
+/* Handle-based callers can require object admission while retaining their
+ * existing treatment of ordinary pathname MAC policy. */
+static int
+vfs_lookup_check_fh(struct nameidata *ndp, struct vnode *vp)
+{
+
+	if ((ndp->ni_lcf & NI_LCF_FHTRAVERSE) == 0)
+		return (0);
+	return (mac_vnode_check_fh(ndp->ni_cnd.cn_cred, vp));
+}
+#endif
+
 static int __noinline
 vfs_lookup_degenerate(struct nameidata *ndp, struct vnode *dp, int wantparent)
 {
@@ -917,6 +930,12 @@ vfs_lookup_degenerate(struct nameidata *ndp, struct vnode *dp, int wantparent)
 	}
 
 	vn_lock(dp, enforce_lkflags(mp, cnp->cn_lkflags | LK_RETRY));
+
+#ifdef MAC
+	error = vfs_lookup_check_fh(ndp, dp);
+	if (error != 0)
+		goto bad;
+#endif
 
 	if (dp->v_type != VDIR) {
 		error = ENOTDIR;
@@ -942,7 +961,8 @@ vfs_lookup_degenerate(struct nameidata *ndp, struct vnode *dp, int wantparent)
 		VOP_UNLOCK(dp);
 	return (0);
 bad:
-	VOP_UNLOCK(dp);
+	/* vfs_lookup consumed ni_startdir and returns directly on this error. */
+	vput(dp);
 	return (error);
 }
 
@@ -1319,6 +1339,11 @@ dirloop:
 		for (;;) {
 			bool isroot;
 
+#ifdef MAC
+			error = vfs_lookup_check_fh(ndp, dp);
+			if (error != 0)
+				goto bad;
+#endif
 			isroot = vfs_lookup_isroot(ndp, dp);
 			if (__predict_false(isroot && (ndp->ni_lcf &
 			    (NI_LCF_STRICTREL | NI_LCF_STRICTREL_KTR)) != 0)) {
@@ -1374,6 +1399,9 @@ dirloop:
 	 */
 unionlookup:
 #ifdef MAC
+	error = vfs_lookup_check_fh(ndp, dp);
+	if (error != 0)
+		goto bad;
 	error = mac_vnode_check_lookup(cnp->cn_cred, dp, cnp);
 	if (__predict_false(error))
 		goto bad;

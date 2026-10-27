@@ -82,6 +82,12 @@ A read of an unlisted name, or any unlisted write, is refused with
 .Er EPERM .
 A missing or malformed file falls back to the compiled-in default (a small
 safe read set, no writes) with a warning.
+Unknown or duplicate fields, embedded NULs, duplicate prefixes, and include
+or macro directives reject the complete policy; variables are not expanded.
+The bounded descriptor loader reads from offset zero, checks for observed
+length and metadata changes, and applies only a fully validated candidate.
+Policy-file validation does not establish an independent user authorization
+boundary or authenticate mutable backing storage.
 .Sh KERNEL ISOLATION
 The bundle's
 .Va isolate

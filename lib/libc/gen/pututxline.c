@@ -129,7 +129,8 @@ exact:
 		error = errno;
 	else
 		error = 0;
-	fclose(fp);
+	if (fclose(fp) == EOF && error == 0)
+		error = errno;
 	if (error != 0)
 		errno = error;
 	return (error == 0 ? 0 : 1);
@@ -168,30 +169,39 @@ utx_active_remove(struct futx *fu)
 
 		}
 
-	fclose(fp);
+	if (fclose(fp) == EOF && ret == 0) {
+		error = errno;
+		ret = -1;
+	}
 	if (ret != 0)
 		errno = error;
 	return (ret);
 }
 
-static void
+static int
 utx_active_init(const struct futx *fu)
 {
-	int fd;
+	ssize_t written;
+	int error, fd;
 
 	/* Initialize utx.active with a single BOOT_TIME record. */
-	fd = _open(_PATH_UTX_ACTIVE, O_CREAT|O_RDWR|O_TRUNC, 0644);
+	fd = _open(_PATH_UTX_ACTIVE, O_CREAT|O_RDWR|O_TRUNC|O_CLOEXEC, 0644);
 	if (fd < 0)
-		return;
-	_write(fd, fu, sizeof(*fu));
-	_close(fd);
+		return (-1);
+	written = _write(fd, fu, sizeof(*fu));
+	error = written == sizeof(*fu) ? 0 : (written < 0 ? errno : EIO);
+	if (_close(fd) == -1 && error == 0)
+		error = errno;
+	if (error != 0)
+		errno = error;
+	return (error == 0 ? 0 : -1);
 }
 
-static void
+static int
 utx_active_purge(void)
 {
 
-	truncate(_PATH_UTX_ACTIVE, 0);
+	return (truncate(_PATH_UTX_ACTIVE, 0));
 }
 
 static int
@@ -225,36 +235,45 @@ utx_lastlogin_add(const struct futx *fu)
 		error = errno;
 		ret = -1;
 	}
-	fclose(fp);
+	if (fclose(fp) == EOF && ret == 0) {
+		error = errno;
+		ret = -1;
+	}
 	if (ret == -1)
 		errno = error;
 	return (ret);
 }
 
-static void
+static int
 utx_lastlogin_upgrade(void)
 {
 	struct stat sb;
-	int fd;
+	int error, fd;
 
 	fd = _open(_PATH_UTX_LASTLOGIN, O_RDWR|O_CLOEXEC, 0644);
 	if (fd < 0)
-		return;
+		return (errno == ENOENT ? 0 : -1);
 
-	/*
-	 * Truncate broken lastlogin files.  In the future we should
-	 * check for older versions of the file format here and try to
-	 * upgrade it.
-	 */
-	if (_fstat(fd, &sb) != -1 && sb.st_size % sizeof(struct futx) != 0)
-		ftruncate(fd, 0);
-	_close(fd);
+	/* A new installation need not have last-login history yet. Existing
+	 * history must be checked, and failed repair must reach the caller. */
+	error = 0;
+	if (_fstat(fd, &sb) == -1)
+		error = errno;
+	else if (sb.st_size % sizeof(struct futx) != 0 &&
+	    ftruncate(fd, 0) == -1)
+		error = errno;
+	if (_close(fd) == -1 && error == 0)
+		error = errno;
+	if (error != 0)
+		errno = error;
+	return (error == 0 ? 0 : -1);
 }
 
 static int
 utx_log_add(const struct futx *fu)
 {
 	struct iovec vec[2];
+	ssize_t written;
 	int error, fd;
 	uint16_t l;
 
@@ -274,11 +293,15 @@ utx_log_add(const struct futx *fu)
 	fd = _open(_PATH_UTX_LOG, O_CREAT|O_WRONLY|O_APPEND|O_CLOEXEC, 0644);
 	if (fd < 0)
 		return (-1);
-	if (_writev(fd, vec, 2) == -1)
+	written = _writev(fd, vec, 2);
+	if (written == -1)
 		error = errno;
+	else if ((size_t)written != vec[0].iov_len + vec[1].iov_len)
+		error = EIO;
 	else
 		error = 0;
-	_close(fd);
+	if (_close(fd) == -1 && error == 0)
+		error = errno;
 	if (error != 0)
 		errno = error;
 	return (error == 0 ? 0 : 1);
@@ -296,11 +319,12 @@ pututxline(const struct utmpx *utmpx)
 
 	switch (fu.fu_type) {
 	case BOOT_TIME:
-		utx_active_init(&fu);
-		utx_lastlogin_upgrade();
+		if (utx_active_init(&fu) != 0 || utx_lastlogin_upgrade() != 0)
+			return (NULL);
 		break;
 	case SHUTDOWN_TIME:
-		utx_active_purge();
+		if (utx_active_purge() != 0)
+			return (NULL);
 		break;
 	case OLD_TIME:
 	case NEW_TIME:

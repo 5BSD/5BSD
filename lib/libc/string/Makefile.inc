@@ -217,3 +217,7 @@ MLINKS+=wmemchr.3 wcpcpy.3 \
 	wmemchr.3 wmemmove.3 \
 	wmemchr.3 wmempcpy.3 \
 	wmemchr.3 wmemset.3
+
+TEXTUAL_SRCS.memcpy.c= ${LIBC_SRCTOP}/string/bcopy.c
+TEXTUAL_SRCS.memmove.c= ${LIBC_SRCTOP}/string/bcopy.c
+TEXTUAL_SRCS.bzero.c= ${LIBC_SRCTOP}/string/memset.c

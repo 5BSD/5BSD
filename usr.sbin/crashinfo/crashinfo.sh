@@ -87,6 +87,9 @@ find_kernel()
 	done
 }
 
+# Apply before batch output or decompression creates potentially sensitive files.
+umask 077
+
 BATCH=false
 CRASHDIR=/var/crash
 DUMPNR=
@@ -194,8 +197,6 @@ elif [ ! -e $KERNEL ]; then
 	echo "$KERNEL not found"
 	exit 1
 fi
-
-umask 077
 
 # Simulate uname
 ostype=$(gdb_command $KERNEL 'printf "%s", ostype')

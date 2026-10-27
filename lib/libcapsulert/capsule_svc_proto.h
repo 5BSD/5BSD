@@ -43,6 +43,18 @@
 #define	CAPSULE_OP_SET_AMBIENT_LOOKUP	26	/* install ambient lookup fd in capsule */
 #define	CAPSULE_OP_LIFECYCLE		27	/* apply a system lifecycle transition (P4b) */
 #define	CAPSULE_OP_RELOAD		28	/* reload Capsule configuration claims (P4b) */
+/* Boot policy grants to verified Core recipients only. Application storage
+ * remains provider-owned; this does not restore retired per-app storage ops. */
+#define CAPSULE_OP_BOOT_STORAGE 29
+#define CAPSULE_OP_BOOT_CRYPTO 30
+/* Opcodes 31 through 33 were BIP storage grants; retired, do not reuse. */
+#define CAPSULE_BOOT_STORAGE_LABEL_MAX 64
+/* Boot-grant operations use the same fixed recipient request layout. */
+struct capsule_boot_storage_req {
+	uint32_t op;
+	char recipient[CAPSULE_BOOT_STORAGE_LABEL_MAX];
+};
+
 
 /*
  * CAPSULE_OP_RELOAD (docs/book/src/plane/capsule.md, P4b): the reloadable

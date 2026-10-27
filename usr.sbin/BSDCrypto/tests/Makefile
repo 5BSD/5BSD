@@ -8,6 +8,7 @@ CFLAGS+=	-I${FIDLGEN.cryptocmp} -I${SRCTOP}/lib/libfidl/include
 
 CFLAGS+=	-I${.CURDIR}/.. -I${SRCTOP}/lib/libcryptocmp -I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
+CFLAGS+=	-I${SRCTOP}/lib/libextensioncmp -I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/lib/libfidl/include -I${SRCTOP}/lib/libchannel
 .PATH:		${.CURDIR}/..
 
@@ -91,6 +92,11 @@ CFLAGS.${t}+= -I${FIDLGEN.cryptocmp}
 FILESGROUPS+= FIDL_NOTICE
 FIDL_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 FIDL_NOTICEDIR= /usr/share/licenses/bsdcrypto-tests/fuchsia
+
+# Record the package license ancestor as well as the notice directory.
+DIRS+= FIDL_NOTICEPARENT
+FIDL_NOTICEPARENT= ${FIDL_NOTICEDIR:H}
+FIDL_NOTICEPARENTTAGS= ${FIDL_NOTICEDIRTAGS}
 
 .PATH: ${.CURDIR}/evolution
 

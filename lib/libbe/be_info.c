@@ -282,8 +282,10 @@ int
 be_exists(libbe_handle_t *lbh, const char *be)
 {
 	char buf[BE_MAXPATHLEN];
+	int err;
 
-	be_root_concat(lbh, be, buf);
+	if ((err = be_root_concat(lbh, be, buf)) != 0)
+		return (err);
 
 	if (!zfs_dataset_exists(lbh->lzh, buf, ZFS_TYPE_DATASET))
 		return (BE_ERR_NOENT);

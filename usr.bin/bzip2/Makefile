@@ -16,13 +16,20 @@ MLINKS=	bzip2.1 bunzip2.1 \
 	bzip2.1 bzcat.1 \
 	bzip2.1 bzip2recover.1
 
-REFFILES=	sample1.ref sample2.ref sample3.ref 
-DREFFILES=	sample1.bz2 sample2.bz2 sample3.bz2 
-TESTFILES=	${REFFILES} ${DREFFILES}
+BZIP2_TEST_CASES= sample1 sample2 sample3
+BZIP2_TEST_COMPRESS.sample1= -1
+BZIP2_TEST_COMPRESS.sample2= -2
+BZIP2_TEST_COMPRESS.sample3= -3
+BZIP2_TEST_DECOMPRESS.sample1= -d
+BZIP2_TEST_DECOMPRESS.sample2= -d
+BZIP2_TEST_DECOMPRESS.sample3= -ds
 
-CLEANFILES+=	${TESTFILES} \
-		sample1.rb2 sample2.rb2 sample3.rb2 \
-		sample1.tst sample2.tst sample3.tst
+REFFILES= ${BZIP2_TEST_CASES:S/$/.ref/}
+DREFFILES= ${BZIP2_TEST_CASES:S/$/.bz2/}
+TESTFILES= ${REFFILES} ${DREFFILES}
+
+CLEANFILES+= ${TESTFILES} \
+	${BZIP2_TEST_CASES:S/$/.rb2/} ${BZIP2_TEST_CASES:S/$/.tst/}
 
 .for f in ${REFFILES}
 ${f}:	${f}.gz.uu
@@ -35,18 +42,18 @@ ${f}:	${f}.uu
 
 test:  bzip2 ${TESTFILES}
 	@cat ${BZ2DIR}/words1
-	./bzip2 -1  < sample1.ref > sample1.rb2
-	./bzip2 -2  < sample2.ref > sample2.rb2
-	./bzip2 -3  < sample3.ref > sample3.rb2
-	./bzip2 -d  < sample1.bz2 > sample1.tst
-	./bzip2 -d  < sample2.bz2 > sample2.tst
-	./bzip2 -ds < sample3.bz2 > sample3.tst
-	cmp sample1.bz2 sample1.rb2 
-	cmp sample2.bz2 sample2.rb2
-	cmp sample3.bz2 sample3.rb2
-	cmp sample1.tst sample1.ref
-	cmp sample2.tst sample2.ref
-	cmp sample3.tst sample3.ref
+.for case in ${BZIP2_TEST_CASES}
+	./bzip2 ${BZIP2_TEST_COMPRESS.${case}} < ${case}.ref > ${case}.rb2
+.endfor
+.for case in ${BZIP2_TEST_CASES}
+	./bzip2 ${BZIP2_TEST_DECOMPRESS.${case}} < ${case}.bz2 > ${case}.tst
+.endfor
+.for case in ${BZIP2_TEST_CASES}
+	cmp ${case}.bz2 ${case}.rb2
+.endfor
+.for case in ${BZIP2_TEST_CASES}
+	cmp ${case}.tst ${case}.ref
+.endfor
 	@cat ${BZ2DIR}/words3
 
 .include <bsd.prog.mk>

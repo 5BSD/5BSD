@@ -24,7 +24,7 @@ open_trusted(const char *path)
 	struct stat st;
 	int fd, saved;
 
-	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_VERIFY);
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK | O_VERIFY);
 	if (fd < 0)
 		return (-1);
 	if (fstat(fd, &st) == -1) {

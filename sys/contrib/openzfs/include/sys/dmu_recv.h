@@ -31,7 +31,16 @@
 
 extern const char *const recv_clone_name;
 
+struct dmu_recv_cookie;
+/* Optional kernel transport context. The callback must preserve the caller's
+ * lock state on every return and read from the cookie's retained input file. */
+typedef struct dmu_recv_io {
+	int (*read)(struct dmu_recv_cookie *, void *, size_t, ssize_t *, void *);
+	void *argument;
+} dmu_recv_io_t;
+
 typedef struct dmu_recv_cookie {
+	const dmu_recv_io_t *drc_io;
 	struct dsl_dataset *drc_ds;
 	struct dmu_replay_record *drc_drr_begin;
 	struct drr_begin *drc_drrb;
@@ -76,7 +85,7 @@ typedef struct dmu_recv_cookie {
 
 int dmu_recv_begin(const char *, const char *, dmu_replay_record_t *,
     boolean_t, boolean_t, boolean_t, nvlist_t *, nvlist_t *, const char *,
-    dmu_recv_cookie_t *, zfs_file_t *, offset_t *);
+    dmu_recv_cookie_t *, zfs_file_t *, offset_t *, const dmu_recv_io_t *);
 int dmu_recv_stream(dmu_recv_cookie_t *, offset_t *);
 int dmu_recv_end(dmu_recv_cookie_t *, void *);
 boolean_t dmu_objset_is_receiving(objset_t *);

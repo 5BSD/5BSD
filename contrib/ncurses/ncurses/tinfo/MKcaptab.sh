@@ -71,12 +71,19 @@ cat <<'EOF'
 /* *INDENT-OFF* */
 EOF
 
-cat "$@" |./make_hash 1 info "$OPT1"
-cat "$@" |./make_hash 3 cap  "$OPT1"
+# make_hash may stop after filling its table. A regular input file avoids
+# SIGPIPE in the producer and permits callers to check all command failures.
+data_file=hash-input.$$
+trap 'rm -f "$data_file"' 0
+trap 'exit 1' 1 2 3 15
+cat "$@" > "$data_file" || exit 1
 
-cat "$@" |$AWK -f "$OPT2" bigstrings="$OPT1" tablename=capalias
+"${MAKE_HASH:-./make_hash}" 1 info "$OPT1" < "$data_file"
+"${MAKE_HASH:-./make_hash}" 3 cap "$OPT1" < "$data_file"
 
-cat "$@" |$AWK -f "$OPT2" bigstrings="$OPT1" tablename=infoalias
+$AWK -f "$OPT2" bigstrings="$OPT1" tablename=capalias < "$data_file"
+
+$AWK -f "$OPT2" bigstrings="$OPT1" tablename=infoalias < "$data_file"
 
 cat <<EOF
 /* *INDENT-ON* */

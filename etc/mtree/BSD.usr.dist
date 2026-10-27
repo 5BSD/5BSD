@@ -187,8 +187,8 @@
         ..
         hyperv
         ..
-        lpr			tags=package=lp
-            ru			tags=package=lp
+        lpr			tags=package=runtime
+            ru			tags=package=runtime
             ..
         ..
         sendmail
@@ -198,7 +198,7 @@
         zfs
         ..
     ..
-    local
+    local           tags=package=runtime
     ..
     obj             nochange
     ..
@@ -358,7 +358,7 @@
             ..
             ppp
             ..
-            printing		tags=package=lp
+            printing		tags=package=runtime
             ..
             scsi_target
             ..
@@ -490,6 +490,8 @@
             ..
             store           tags=package=kyua
             ..
+        ..
+        licenses        tags=package=runtime
         ..
         locale
         ..

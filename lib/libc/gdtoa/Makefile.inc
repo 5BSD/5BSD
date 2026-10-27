@@ -13,7 +13,8 @@ CFLAGS+=-I${SRCTOP}/contrib/gdtoa
 .for src in ${GDTOASRCS}
 MISRCS+=gdtoa_${src}
 CLEANFILES+=gdtoa_${src}
-gdtoa_${src}: ${SRCTOP}/contrib/gdtoa/${src} .NOMETA
+SOURCE_ALIAS.gdtoa_${src}= ${SRCTOP}/contrib/gdtoa/${src}
+gdtoa_${src}: ${SOURCE_ALIAS.gdtoa_${src}} .NOMETA
 	ln -sf ${.ALLSRC} ${.TARGET}
 CFLAGS.gdtoa_${src}+=-fno-strict-aliasing
 .endfor

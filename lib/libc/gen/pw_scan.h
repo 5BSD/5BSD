@@ -34,3 +34,6 @@
 
 extern void	__pw_initpwd(struct passwd *);
 extern int	__pw_scan(char *, struct passwd *, int);
+
+/* NULL preserves getusershell(); a non-NULL vector is the complete shell list. */
+extern int __pw_scan_shells(char *, struct passwd *, int, const char *const *);

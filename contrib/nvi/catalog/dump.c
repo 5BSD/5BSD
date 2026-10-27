@@ -86,7 +86,7 @@ main(int argc, char *argv[])
 {
 	FILE *fp;
 
-	for (; *argv != NULL; ++argv) {
+	for (++argv; *argv != NULL; ++argv) {
 		if ((fp = fopen(*argv, "r")) == NULL) {
 			perror(*argv);
 			return (1);

@@ -195,11 +195,12 @@ provided_name_index(const struct svc_runtime *svc, const char *name)
 }
 
 int
-on_demand_name_claim(struct svc_runtime *svc, const char *name, bool sendable)
+on_demand_name_claim(struct svc_runtime *svc, const char *name, uint32_t flags)
 {
 	int index;
 
-	if (svc == NULL || name == NULL)
+	if (svc == NULL || name == NULL ||
+	    (flags & ~SVC_NAME_CLAIM_SENDABLE) != 0)
 		return (EINVAL);
 	index = provided_name_index(svc, name);
 	if (index < 0)
@@ -207,13 +208,13 @@ on_demand_name_claim(struct svc_runtime *svc, const char *name, bool sendable)
 	if (svc->name_state[index] != SVC_NAME_UNCLAIMED)
 		return (EALREADY);
 	svc->name_state[index] = SVC_NAME_INACTIVE;
-	svc->name_sendable[index] = sendable;
+	svc->name_claim_flags[index] = flags;
 	return (0);
 }
 
 /*
  * The provider's declared transfer policy for a claimed name (see
- * name_sendable): true if delivered sessions may be forwarded.  Read when the
+ * name_claim_flags): true if delivered sessions may be forwarded.  Read when the
  * name activates and its naming entry is registered.
  */
 bool
@@ -224,7 +225,8 @@ on_demand_name_sendable(const struct svc_runtime *svc, const char *name)
 	if (svc == NULL || name == NULL)
 		return (false);
 	index = provided_name_index(svc, name);
-	return (index >= 0 && svc->name_sendable[index]);
+	return (index >= 0 &&
+	    (svc->name_claim_flags[index] & SVC_NAME_CLAIM_SENDABLE) != 0);
 }
 
 bool
@@ -464,8 +466,8 @@ on_demand_broker(struct pending_lookup *pl, int kq)
 		client_fd = -1;
 	} else {
 		domain = &actual;
-		client_fd = naming_lookup(pl->name, req_svc, domain,
-		    channel_message_sender(request), &error, &sendable);
+		client_fd = naming_lookup_observed(pl->name, req_svc, domain,
+		    request, &error, &sendable);
 	}
 	if (client_fd >= 0) {
 		status = 0;
@@ -595,12 +597,13 @@ od_launch(const char *name, struct svc_runtime *requester,
 	struct kevent kev;
 	int saved_errno;
 
-	/* The kernel sender, not inherited route metadata, selects a user's
-	 * namespace. Internal deferred launches use the authenticated slot owner. */
+	/* Use the same principal as immediate naming. Internal deferred launches
+	 * use the registry owner; wire requests use freshly resolved authority. */
 	const struct channel_sender *scope_sender = request != NULL ?
 	    channel_message_sender(request) : NULL;
-	uid_t lookup_uid = scope_sender != NULL ? (uid_t)scope_sender->uid :
-	    (request == NULL && requester != NULL ? requester->owner_uid : (uid_t)-1);
+	uid_t lookup_uid = request != NULL ?
+	    svc_authority_personal_uid(ambient_domain, scope_sender) :
+	    (requester != NULL ? requester->owner_uid : (uid_t)-1);
 	if (bundle_registry_lookup_for_uid(name, lookup_uid, &bundle_idx,
 	    &service_idx) == -1)
 		return (-1);  /* not found — caller should return ENOENT */
@@ -615,12 +618,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 	 * the wire cannot tell it from an unregistered name (S5, U4).
 	 */
 	{
-		const struct channel_sender *sender;
 		const struct svc_anoint_set *set;
-		uid_t uid;
-
-		sender = request != NULL ? channel_message_sender(request) : NULL;
-		uid = sender != NULL ? (uid_t)sender->uid : lookup_uid;
 		if (ambient_domain != NULL)
 			set = &ambient_domain->anoint;
 		else if (requester != NULL)
@@ -629,7 +627,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 			set = NULL;
 		if (od_anoint_precheck(name, set, requester != NULL ?
 		    requester->manifest.label : SVC_SESSION_LABEL,
-		    uid) == -1) {
+		    lookup_uid) == -1) {
 			errno = EACCES;
 			return (-1);
 		}
@@ -859,18 +857,25 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
     struct channel_message *request, int kq)
 {
 
-	return (od_launch(name, requester, NULL, NULL, request, kq));
+	struct svc_runtime *sender;
+	struct svc_domain actual;
+
+	if (request == NULL)
+		return (od_launch(name, requester, NULL, NULL, request, kq));
+	if (svc_authority_resolve(request, &actual, &sender) == -1)
+		return (-1);
+	return (od_launch(name, sender, NULL, &actual, request, kq));
 }
 
 /*
  * Activate an on-demand name for an ambient (login-session lookup channel)
- * requester (§21).  The reply is later delivered over `lc`, scoped to `domain`
- * (carried by value so it survives the async gap).  Returns 0 if the launch was
+ * requester (§21). The reply is delivered over `lc`, using software authority
+ * resolved from the requesting message.  Returns 0 if the launch was
  * initiated (request retained), -1 otherwise.
  */
 int
 on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
-    const struct svc_domain *domain, struct channel_message *request, int kq)
+    struct channel_message *request, int kq)
 {
 
 	struct svc_runtime *sender;
@@ -878,7 +883,6 @@ on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
 
 	if (svc_authority_resolve(request, &actual, &sender) == -1)
 		return (-1);
-	(void)domain;
 	return (od_launch(name, sender, lc, &actual, request, kq));
 }
 

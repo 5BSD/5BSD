@@ -22,26 +22,35 @@ SRCS+=	netname.c netnamer.c rpcdname.c
 SRCS+=	rtime.c
 
 # generated sources
-SRCS+=  crypt_clnt.c crypt_xdr.c crypt.h
+RPCGEN_OUTPUTS= crypt_clnt.c crypt_xdr.c crypt.h
+SRCS+= ${RPCGEN_OUTPUTS}
 
 SYM_MAPS+=${LIBC_SRCTOP}/rpc/Symbol.map
 
 CFLAGS+= -DBROKEN_DES -DPORTMAP -DDES_BUILTIN
 CFLAGS+= -I${LIBC_SRCTOP}/rpc
 
-CLEANFILES+= crypt_clnt.c crypt_xdr.c crypt.h
+CLEANFILES+= ${RPCGEN_OUTPUTS}
 
 RPCDIR= ${SRCTOP}/include/rpcsvc
-RPCGEN= RPCGEN_CPP=${CPP:Q} rpcgen -C
+RPCGEN_TOOL= rpcgen
+RPCGEN_FLAGS= -C
+RPCGEN= RPCGEN_CPP=${CPP:Q} ${RPCGEN_TOOL} ${RPCGEN_FLAGS}
 
-crypt_clnt.c: ${RPCDIR}/crypt.x crypt.h
-	${RPCGEN} -l -o ${.TARGET} ${RPCDIR}/crypt.x
+RPCGEN_SOURCE.crypt_clnt.c= ${RPCDIR}/crypt.x
+RPCGEN_MODE.crypt_clnt.c= -l
+RPCGEN_DEPS.crypt_clnt.c= crypt.h
+RPCGEN_SOURCE.crypt_xdr.c= ${RPCDIR}/crypt.x
+RPCGEN_MODE.crypt_xdr.c= -c
+RPCGEN_DEPS.crypt_xdr.c= crypt.h
+RPCGEN_SOURCE.crypt.h= ${RPCDIR}/crypt.x
+RPCGEN_MODE.crypt.h= -h
+RPCGEN_DEPS.crypt.h=
 
-crypt_xdr.c: ${RPCDIR}/crypt.x crypt.h
-	${RPCGEN} -c -o ${.TARGET} ${RPCDIR}/crypt.x
-
-crypt.h: ${RPCDIR}/crypt.x
-	${RPCGEN} -h -o ${.TARGET} ${RPCDIR}/crypt.x
+.for _rpc in ${RPCGEN_OUTPUTS}
+${_rpc}: ${RPCGEN_SOURCE.${_rpc}} ${RPCGEN_DEPS.${_rpc}}
+	${RPCGEN} ${RPCGEN_MODE.${.TARGET}} -o ${.TARGET} ${RPCGEN_SOURCE.${.TARGET}}
+.endfor
 
 MAN+=	bindresvport.3 des_crypt.3 getnetconfig.3 getnetpath.3 getrpcent.3 \
 	getrpcport.3 rpc.3 rpc_soc.3 rpc_clnt_auth.3 rpc_clnt_calls.3 \

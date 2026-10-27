@@ -33,6 +33,7 @@
 
 #include <errno.h>
 #include <nl_types.h>
+#include <stdlib.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
@@ -75,25 +76,71 @@ caph_stream_rights(cap_rights_t *rights, int flags)
 		cap_rights_set(rights, CAP_LOOKUP);
 }
 
+/* Stream rights are a ceiling, not a request to restore inherited authority.
+ * Callers must keep fd stable while applying the limits. Concurrent tightening
+ * may fail a subsequent limit, but the kernel never permits widening. */
 static __inline int
 caph_limit_stream(int fd, int flags)
 {
-	cap_rights_t rights;
+	cap_rights_t rights, current;
+	unsigned long *allowed, cmds[nitems(caph_stream_cmds)];
+	ssize_t count, actual;
+	size_t i, j, ncmds = 0;
+	uint32_t fcntls;
+	int error;
 
-	caph_stream_rights(&rights, flags);
-	if (cap_rights_limit(fd, &rights) < 0 && errno != ENOSYS) {
-		if (errno == EBADF && (flags & CAPH_IGNORE_EBADF) != 0)
+	if (cap_rights_get(fd, &current) < 0) {
+		if (errno == ENOSYS ||
+		    (errno == EBADF && (flags & CAPH_IGNORE_EBADF) != 0))
 			return (0);
 		return (-1);
 	}
-
-	if (cap_ioctls_limit(fd, caph_stream_cmds,
-	    nitems(caph_stream_cmds)) < 0 && errno != ENOSYS)
+	caph_stream_rights(&rights, flags);
+	cap_rights_intersect(&rights, &current);
+	if (cap_rights_limit(fd, &rights) < 0)
 		return (-1);
 
-	if (cap_fcntls_limit(fd, caph_stream_fcntls) < 0 && errno != ENOSYS)
-		return (-1);
-
+	if (cap_rights_is_set(&rights, CAP_IOCTL)) {
+		count = cap_ioctls_get(fd, NULL, 0);
+		if (count < 0)
+			return (-1);
+		if (count == CAP_IOCTLS_ALL) {
+			for (i = 0; i < nitems(caph_stream_cmds); i++)
+				cmds[ncmds++] = caph_stream_cmds[i];
+		} else if (count != 0) {
+			if ((size_t)count > SIZE_MAX / sizeof(*allowed)) {
+				errno = EOVERFLOW;
+				return (-1);
+			}
+			allowed = (unsigned long *)malloc((size_t)count *
+			    sizeof(*allowed));
+			if (allowed == NULL)
+				return (-1);
+			actual = cap_ioctls_get(fd, allowed, (size_t)count);
+			if (actual < 0 || actual > count) {
+				error = actual < 0 ? errno : EAGAIN;
+				free(allowed);
+				errno = error;
+				return (-1);
+			}
+			for (i = 0; i < nitems(caph_stream_cmds); i++) {
+				for (j = 0; j < (size_t)actual; j++) {
+					if (allowed[j] == caph_stream_cmds[i]) {
+						cmds[ncmds++] = caph_stream_cmds[i];
+						break;
+					}
+				}
+			}
+			free(allowed);
+		}
+		if (cap_ioctls_limit(fd, cmds, ncmds) < 0)
+			return (-1);
+	}
+	if (cap_rights_is_set(&rights, CAP_FCNTL)) {
+		if (cap_fcntls_get(fd, &fcntls) < 0 ||
+		    cap_fcntls_limit(fd, fcntls & caph_stream_fcntls) < 0)
+			return (-1);
+	}
 	return (0);
 }
 

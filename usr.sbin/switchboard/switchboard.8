@@ -133,6 +133,31 @@ Enter the event loop, monitoring services via process descriptors,
 channels, coalition events, adopted in-process control connections, signals,
 and restart timers.
 .El
+.Sh RUNTIME CONTAINERS
+Runtime container names combine the installation namespace with a SHA-256
+digest of the complete service label.
+The global namespace is distinct from every personal namespace, including
+that of UID zero; the execution UID does not select the namespace.
+Names that cannot fit the destination buffer are rejected.
+These names identify runtime directories, not authorization grants or
+individual launch incarnations.
+.Pp
+Container creation requires a new directory; an existing file, directory or
+symbolic link aborts launch without adopting or changing the existing object.
+Creation is relative to a held parent directory, which must be protected
+against concurrent mutation.
+A failure before fork removes the newly created container where possible;
+a failure after fork waits for resource teardown before normal cleanup.
+Unremoved entries block reuse and require explicit cleanup or a clean runtime.
+The final container directory is opened without following symbolic links.
+Protection of its parent namespace remains a separate requirement.
+The child enters its working directory through the same held directory
+descriptor delivered as its container, without resolving the pathname again.
+The launcher removes the temporary
+.Dv CAP_FCHDIR
+right before executing service code; failure aborts the launch.
+Runtime contents are disposable; deployment of a changed naming scheme
+requires a clean supervisor runtime, normally established by reboot.
 .Sh INHERITED FILE DESCRIPTORS
 .Nm
 inherits the following file descriptors from
@@ -725,18 +750,31 @@ restart, and removed bundles trigger a graceful stop.
 The dependency graph is re-validated before any mutations are
 applied; if the new graph contains a cycle, the reload is
 rejected and running services are unaffected.
-Requires root.
+Requires the corresponding management authority; UID zero alone is insufficient.
 .It Dv SCTL_OP_START_SVC (4)
 Start a loaded stopped unit and reset its restart backoff.
 The payload is the unit label.
-Requires root.
+Requires the corresponding management authority; UID zero alone is insufficient.
 .It Dv SCTL_OP_STOP_SVC (5)
 Stop a named service.
 The payload is the service label.
-Requires root.
+Requires the corresponding management authority; UID zero alone is insufficient.
 .El
 Unknown flags, embedded NUL bytes, oversized payloads, and unexpected
 payloads are rejected.
+.Sh USER BUNDLE CREDENTIALS
+For a user-owned bundle, the UID selected for execution must equal the numeric
+owner recorded by the bundle registry. Account names cannot substitute for that
+identity. SwitchBoard checks the resolved UID before acquiring launch resources
+and again in the child before applying credentials. Missing credentials or a
+mismatched UID refuse both native and command launches.
+System-owned services have a separate identity policy; this check does not
+make live account data an authenticated source for their protected execution.
+.Sh ACCOUNT LOOKUPS
+Launch identities and activation socket owners use conventional NSS resolution.
+The manager checks the registry owner's numeric UID before launching user units.
+The retired BIP session-policy file is no longer installed or loaded.
+BIP user-session issuance requests are unsupported.
 .Sh SIGNALS
 PID-based signals from foreign program nonces are denied by capprotect.
 The signals below remain available to

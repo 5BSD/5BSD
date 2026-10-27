@@ -89,11 +89,15 @@ CLEANFILES+=	md[245]hl.c md[245].ref md[245].3 mddriver \
 		skeindriver
 
 # Need src tree sys/md5.h for MD5FileChunk prototype on older systems.
-SRCS+=		sys/md5.h
+LIBMD_HEADER_ALIASES= sys/md5.h
+LIBMD_HEADER_SOURCE.sys/md5.h= ${SRCTOP}/sys/sys/md5.h
+SRCS+=		${LIBMD_HEADER_ALIASES}
 CLEANDIRS=	sys
 CFLAGS+=	-I.
-sys/md5.h: ${SRCTOP}/sys/${.TARGET} .NOMETA
+.for _header in ${LIBMD_HEADER_ALIASES}
+${_header}: ${LIBMD_HEADER_SOURCE.${_header}} .NOMETA
 	ln -sf ${.ALLSRC} ${.TARGET}
+.endfor
 
 # Define WEAK_REFS to provide weak aliases for libmd symbols
 #
@@ -162,6 +166,9 @@ CFLAGS.sha512c_arm64.c+= -march=armv8.2-a+sha3
 
 # Generator parameters are shared build metadata; scripts contain the transformations.
 # Single executable inputs; unlike RM these variables never contain flags.
+LIBMD_GEN_SH?= ${SH:Ush}
+LIBMD_GENHL_SCRIPT= ${.CURDIR}/genhl.sh
+LIBMD_GENHL_TEMPLATE= ${.CURDIR}/mdXhl.c
 LIBMD_GEN_SED?= sed
 LIBMD_GEN_CAT?= cat
 LIBMD_GEN_MV?= mv
@@ -184,9 +191,9 @@ LIBMD_GENHL_ARGS.skein1024hl.c= 128 skein SKEIN1024_ -
 
 LIBMD_GENHL_SRCS= ${SRCS:M*hl.c}
 .for _src in ${LIBMD_GENHL_SRCS}
-${_src}: ${.CURDIR}/mdXhl.c ${.CURDIR}/genhl.sh
-	${SH:Ush} ${.CURDIR}/genhl.sh ${LIBMD_GENHL_ARGS.${_src}} \
-	    ${.CURDIR}/mdXhl.c ${.TARGET} ${LIBMD_GEN_SED:Q} ${LIBMD_GEN_MV:Q} ${LIBMD_GEN_RM:Q}
+${_src}: ${LIBMD_GENHL_TEMPLATE} ${LIBMD_GENHL_SCRIPT}
+	${LIBMD_GEN_SH:Q} ${LIBMD_GENHL_SCRIPT:Q} ${LIBMD_GENHL_ARGS.${_src}} \
+	    ${LIBMD_GENHL_TEMPLATE:Q} ${.TARGET} ${LIBMD_GEN_SED:Q} ${LIBMD_GEN_MV:Q} ${LIBMD_GEN_RM:Q}
 .endfor
 
 .for i in 2 4 5

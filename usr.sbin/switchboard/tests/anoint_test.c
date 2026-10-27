@@ -137,12 +137,11 @@ sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
 
 int
 on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
-    const struct svc_domain *domain, struct channel_message *request, int kq)
+    struct channel_message *request, int kq)
 {
 
 	(void)name;
 	(void)lc;
-	(void)domain;
 	(void)request;
 	(void)kq;
 	errno = ENOENT;
@@ -2899,6 +2898,7 @@ ATF_TC_BODY(personal_namespace_uses_sender, tc)
  ATF_CHECK_EQ(-1,naming_lookup("org.test.personal",NULL,&domain,NULL,&error,NULL));
  naming_remove_owner(a);naming_remove_owner(b);free(a);free(b);
 }
+
 
 ATF_TP_ADD_TCS(tp)
 {

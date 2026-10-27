@@ -205,7 +205,9 @@ Dataset and pool operation bits may not be mixed; an unknown or wrong-kind
 bit fails with
 .Er EINVAL
 without changing the descriptor.
-An empty mask is valid and denies all ioctls.
+An empty mask is valid and denies all operations except
+.Dv ZFD_LIMIT ,
+which can only narrow the ceiling further.
 As with the underlying Capsicum primitive, confinement is monotonic: a later
 call may narrow the set but cannot restore a removed operation.
 .Pp
@@ -225,6 +227,14 @@ does the corresponding mapping for pool handles.
 These helpers install both a kernel operation ceiling and a per-descriptor
 Capsicum ceiling; they do not replace the immutable rights enforced by the
 TrustedZFS kernel handle.
+The kernel must accept
+.Dv ZFD_LIMIT
+before the Capsicum allowlist is installed.
+Failure is returned with the kernel's error; ordinary files and sockets are
+not accepted as substitute handles.
+If the kernel ceiling is narrowed but the subsequent Capsicum call fails,
+the narrowing is not rolled back.
+Callers must treat any failure as a failed grant and close the descriptor.
 .Pp
 An ioctl that returns a new handle descriptor, including derive, openat,
 create, clone, and pool-root-open, inherits the parent's kernel operation
@@ -244,6 +254,19 @@ buffer; use
 .Xr nvlist_unpack 3
 for structured access.
 .Pp
+Dataset property updates use the normal ZFS property setters, including
+quota enforcement and activation of filesystem and snapshot accounting.
+Native read-only properties cannot be set through this interface.
+String property values may be empty; null value pointers and empty property
+names are rejected. Native property semantics are checked by ZFS.
+Capability-authorized dataset creation, cloning and snapshots honor configured
+ZFS count limits even for a root caller; count admission occurs in the ZFS
+transaction checks.
+These limits are not immutable administrative policy: a holder with
+.Dv ZH_PROPS_WRITE
+can change them.
+Ordinary administrative ZFS operations retain their existing semantics.
+.Pp
 .Fn tzfs_create
 and
 .Fn tzfs_create_volume
@@ -254,6 +277,12 @@ with a
 .Dv NULL
 .Fa relname
 destroys the handle's own dataset.
+.Fn tzfs_rename
+requires a subtree handle and two nonempty relative descendant names.
+A handle to a dataset does not grant authority over its parent namespace;
+self-rename is rejected with
+.Er ENOTCAPABLE .
+Use an authorized parent subtree handle to rename that dataset.
 .Fn tzfs_clone
 creates
 .Fa relname
@@ -314,6 +343,17 @@ controls scrub state, and
 .Fn tzfs_pool_root_open
 returns a rights-limited handle for the pool root dataset.
 .Pp
+.Fn tzfs_hold
+and
+.Fn tzfs_release
+operate on one snapshot and tag, reporting per-object failures through
+.Va errno .
+A missing snapshot or release tag returns
+.Er ENOENT ;
+a duplicate hold returns
+.Er EEXIST .
+A successful hold prevents snapshot destruction until released.
+.Pp
 .Fn tzfs_list_children ,
 .Fn tzfs_list_snapshots ,
 .Fn tzfs_holds ,
@@ -360,6 +400,14 @@ additionally invalidates the entire lineage.
 A failed send does not consume the one attempt.
 The output descriptor is never closed by the kernel; that remains the
 caller's responsibility.
+.Pp
+If dataset creation or cloning succeeds but returning its handle fails,
+the kernel attempts to destroy the newly created dataset.
+The original handle-publication error is returned to the caller.
+If that cleanup also fails, a kernel warning identifies the dataset and both
+errors; the dataset may remain and requires reconciliation before retrying.
+An unsuccessful create or clone therefore does not guarantee absence of the
+requested dataset.
 .Sh RETURN VALUES
 Functions documented as returning a handle or file descriptor return a
 non-negative descriptor on success.

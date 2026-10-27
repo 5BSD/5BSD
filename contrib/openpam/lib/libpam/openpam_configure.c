@@ -38,6 +38,7 @@
 #endif
 
 #include <sys/param.h>
+#include <sys/stat.h>
 
 #include <errno.h>
 #include <stdio.h>
@@ -51,7 +52,9 @@
 #include "openpam_strlcat.h"
 #include "openpam_strlcpy.h"
 
-static int openpam_load_chain(pam_handle_t *, const char *, pam_facility_t);
+struct openpam_load_context;
+static int openpam_load_chain(pam_handle_t *, const char *, pam_facility_t,
+    struct openpam_load_context *);
 
 /*
  * Validate a service name.
@@ -141,6 +144,25 @@ valid_module_name(const char *name)
 
 typedef enum { pam_conf_style, pam_d_style } openpam_style_t;
 
+/* Bound recursion and acyclic expansion independently, per pam_start. */
+#define OPENPAM_MAX_POLICY_DEPTH 64
+#define OPENPAM_MAX_POLICY_FILES 1024
+
+struct openpam_policy_frame {
+	const struct openpam_policy_frame *previous;
+	dev_t dev;
+	ino_t ino;
+	const char *service;
+	pam_facility_t facility;
+	openpam_style_t style;
+};
+
+struct openpam_load_context {
+	const struct openpam_policy_frame *active;
+	unsigned depth;
+	unsigned files;
+};
+
 /*
  * Extracts given chains from a policy file.
  *
@@ -154,7 +176,8 @@ openpam_parse_chain(pam_handle_t *pamh,
 	pam_facility_t facility,
 	FILE *f,
 	const char *filename,
-	openpam_style_t style)
+	openpam_style_t style,
+	struct openpam_load_context *context)
 {
 	pam_chain_t *this, **next;
 	pam_module_t *module;
@@ -242,7 +265,7 @@ openpam_parse_chain(pam_handle_t *pamh,
 				errno = EINVAL;
 				goto fail;
 			}
-			ret = openpam_load_chain(pamh, servicename, fclt);
+			ret = openpam_load_chain(pamh, servicename, fclt, context);
 			FREEV(wordc, wordv);
 			if (ret < 0) {
 				/*
@@ -377,8 +400,12 @@ openpam_load_file(pam_handle_t *pamh,
 	const char *service,
 	pam_facility_t facility,
 	const char *filename,
-	openpam_style_t style)
+	openpam_style_t style,
+	struct openpam_load_context *context)
 {
+	struct openpam_policy_frame frame;
+	const struct openpam_policy_frame *ancestor;
+	struct stat sb;
 	FILE *f;
 	int ret, serrno;
 
@@ -403,10 +430,56 @@ openpam_load_file(pam_handle_t *pamh,
 		RETURNN(-1);
 	}
 
-	/* parse the file */
+	/* Use the opened file's identity, not its possibly aliased pathname.
+	 * pam.conf can contain distinct services in the same file; a selected
+	 * facility can likewise revisit a file without re-entering an active
+	 * chain. Completed includes are deliberately not a global visited set.
+	 */
+	if (fstat(fileno(f), &sb) != 0)
+		goto rejected;
+	for (ancestor = context->active; ancestor != NULL;
+	    ancestor = ancestor->previous) {
+		if (ancestor->dev != sb.st_dev || ancestor->ino != sb.st_ino ||
+		    ancestor->style != style ||
+		    (style == pam_conf_style &&
+		    strcmp(ancestor->service, service) != 0))
+			continue;
+		if (ancestor->facility == PAM_FACILITY_ANY ||
+		    facility == PAM_FACILITY_ANY || ancestor->facility == facility) {
+			errno = ELOOP;
+			goto rejected;
+		}
+	}
+	if (context->depth >= OPENPAM_MAX_POLICY_DEPTH) {
+		errno = ELOOP;
+		goto rejected;
+	}
+	if (context->files >= OPENPAM_MAX_POLICY_FILES) {
+		errno = E2BIG;
+		goto rejected;
+	}
+	frame.previous = context->active;
+	frame.dev = sb.st_dev;
+	frame.ino = sb.st_ino;
+	frame.service = service;
+	frame.facility = facility;
+	frame.style = style;
+	context->active = &frame;
+	context->depth++;
+	context->files++;
+
+	/* The parser closes f on success and failure. */
 	ret = openpam_parse_chain(pamh, service, facility,
-	    f, filename, style);
+	    f, filename, style, context);
+	context->depth--;
+	context->active = frame.previous;
 	RETURNN(ret);
+rejected:
+	serrno = errno;
+	openpam_log(PAM_LOG_ERROR, "%s: policy expansion rejected: %m", filename);
+	fclose(f);
+	errno = serrno;
+	RETURNN(-1);
 }
 
 /*
@@ -420,7 +493,8 @@ openpam_load_file(pam_handle_t *pamh,
 static int
 openpam_load_chain(pam_handle_t *pamh,
 	const char *service,
-	pam_facility_t facility)
+	pam_facility_t facility,
+	struct openpam_load_context *context)
 {
 	const char *p, **path;
 	char filename[PATH_MAX];
@@ -437,7 +511,7 @@ openpam_load_chain(pam_handle_t *pamh,
 		else
 			style = pam_d_style;
 		ret = openpam_load_file(pamh, service, facility,
-		    service, style);
+		    service, style, context);
 		RETURNN(ret);
 	}
 
@@ -460,7 +534,7 @@ openpam_load_chain(pam_handle_t *pamh,
 			style = pam_conf_style;
 		}
 		ret = openpam_load_file(pamh, service, facility,
-		    filename, style);
+		    filename, style, context);
 		/* success */
 		if (ret > 0)
 			RETURNN(ret);
@@ -487,6 +561,7 @@ int
 openpam_configure(pam_handle_t *pamh,
 	const char *service)
 {
+	struct openpam_load_context context = {0};
 	pam_facility_t fclt;
 	int serrno;
 
@@ -495,7 +570,7 @@ openpam_configure(pam_handle_t *pamh,
 		openpam_log(PAM_LOG_ERROR, "invalid service name");
 		RETURNC(PAM_SYSTEM_ERR);
 	}
-	if (openpam_load_chain(pamh, service, PAM_FACILITY_ANY) < 0) {
+	if (openpam_load_chain(pamh, service, PAM_FACILITY_ANY, &context) < 0) {
 		if (errno != ENOENT)
 			goto load_err;
 	}
@@ -503,7 +578,7 @@ openpam_configure(pam_handle_t *pamh,
 		if (pamh->chains[fclt] != NULL)
 			continue;
 		if (OPENPAM_FEATURE(FALLBACK_TO_OTHER)) {
-			if (openpam_load_chain(pamh, PAM_OTHER, fclt) < 0)
+			if (openpam_load_chain(pamh, PAM_OTHER, fclt, &context) < 0)
 				goto load_err;
 		}
 	}

@@ -520,8 +520,12 @@ dof_add_provider(dt_dof_t *ddo, const dt_provider_t *pvp)
 
 	(void) dt_idhash_iter(pvp->pv_probes, dof_add_probe, ddo);
 
-	if (dt_buf_len(&ddo->ddo_probes) == 0)
+	if (dt_buf_len(&ddo->ddo_probes) == 0) {
+		/* A selected code section need not use every declared provider. */
+		if (dtp->dt_linksection != 0)
+			return (1);
 		return (dt_set_errno(dtp, EDT_NOPROBES));
+	}
 
 	dofpv.dofpv_probes = dof_add_lsect(ddo, NULL, DOF_SECT_PROBES,
 	    sizeof (uint64_t), 0, sizeof (dof_probe_t),
@@ -821,10 +825,20 @@ dtrace_dof_create(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t flags)
 	 * to the providers and the probes and arguments that they define.
 	 */
 	if (flags & DTRACE_D_PROBES) {
+		uint_t providers = 0;
+		int status;
+
 		for (pvp = dt_list_next(&dtp->dt_provlist);
 		    pvp != NULL; pvp = dt_list_next(pvp)) {
-			if (dof_add_provider(ddo, pvp) != 0)
+			status = dof_add_provider(ddo, pvp);
+			if (status < 0)
 				return (NULL);
+			if (status == 0 && !(pvp->pv_flags & DT_PROVIDER_IMPL))
+				providers++;
+		}
+		if (dtp->dt_linksection != 0 && providers == 0) {
+			(void) dt_set_errno(dtp, EDT_NOPROBES);
+			return (NULL);
 		}
 	}
 

@@ -69,7 +69,7 @@ static void *
 try_dlopen(const char *modfn)
 {
 	void *dlh;
-	int fd;
+	int fd, serrno;
 
 	openpam_log(PAM_LOG_LIBDEBUG, "dlopen(%s)", modfn);
 	if ((fd = open(modfn, O_RDONLY)) < 0) {
@@ -79,13 +79,15 @@ try_dlopen(const char *modfn)
 	}
 	if (OPENPAM_FEATURE(VERIFY_MODULE_FILE) &&
 	    openpam_check_desc_owner_perms(modfn, fd) != 0) {
+		serrno = errno;
 		close(fd);
+		errno = serrno;
 		return (NULL);
 	}
 	if ((dlh = fdlopen(fd, RTLD_NOW)) == NULL) {
 		openpam_log(PAM_LOG_ERROR, "%s: %s", modfn, dlerror());
 		close(fd);
-		errno = 0;
+		errno = ENOEXEC;
 		return (NULL);
 	}
 	close(fd);
@@ -106,7 +108,7 @@ try_dlopen(const char *modfn)
 		return (NULL);
 	if ((dlh = dlopen(modfn, RTLD_NOW)) == NULL) {
 		openpam_log(PAM_LOG_ERROR, "%s: %s", modfn, dlerror());
-		errno = 0;
+		errno = ENOEXEC;
 		return (NULL);
 	}
 	return (dlh);
@@ -205,14 +207,14 @@ openpam_dynamic(const char *modname)
 	 */
 	p = strchr(modname, '\0');
 	has_ver = has_so = 0;
-	while (is_digit(*p))
+	while (p > modname && is_digit(p[-1]))
 		--p;
-	if (*p == '.' && *++p != '\0') {
+	if (p > modname && p[-1] == '.' && *p != '\0') {
 		/* found a numeric suffix */
 		has_ver = 1;
 		/* assume that .so is either present or unneeded */
 		has_so = 1;
-	} else if (*p == '\0' && p >= modname + sizeof PAM_SOEXT &&
+	} else if (*p == '\0' && (size_t)(p - modname) >= sizeof PAM_SOEXT - 1 &&
 	    strcmp(p - sizeof PAM_SOEXT + 1, PAM_SOEXT) == 0) {
 		/* found .so suffix */
 		has_so = 1;
@@ -237,21 +239,27 @@ openpam_dynamic(const char *modname)
 			    *path, modname, PAM_SOEXT, &dot, LIB_MAJ);
 		/* check for overflow */
 		if (len < 0 || (unsigned int)len >= sizeof modpath) {
-			errno = ENOENT;
-			continue;
+			errno = ENAMETOOLONG;
+			return (NULL);
 		}
 		/* try the versioned path */
 		if ((module = try_module(modpath)) != NULL)
 			return (module);
-		if (errno == ENOENT && modpath[dot] != '\0') {
+		/* A rejected candidate is not an absent candidate. */
+		if (errno != ENOENT)
+			return (NULL);
+		if (modpath[dot] != '\0') {
 			/* no luck, try the unversioned path */
 			modpath[dot] = '\0';
 			if ((module = try_module(modpath)) != NULL)
 				return (module);
+			if (errno != ENOENT)
+				return (NULL);
 		}
 	}
 
-	/* :( */
+	/* Every candidate was absent, including an empty search path. */
+	errno = ENOENT;
 	return (NULL);
 }
 

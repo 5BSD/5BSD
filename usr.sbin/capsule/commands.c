@@ -198,11 +198,12 @@ cmd_reload(uid_t euid, struct ctl_reply *reply,
 	 * services never lose a claim they depend on.
 	 */
 	config_init_defaults(&newcfg);
-	if (config_load(&newcfg, od.conffile) == -1) {
+	if (config_load(&newcfg, od.conffile) == -1 ||
+	    !config_boot_policy_equal(&newcfg, &od.cfg)) {
 		syslog(LOG_WARNING, "reload: config parse error, "
 		    "keeping existing config");
 		BUF_APPEND(summary, sumlen, &off,
-		    "warning: config parse error, claims unchanged\n");
+		    "warning: invalid config or changed boot policy, claims unchanged\n");
 	} else {
 		if (!od.test_mode) {
 			claims_failed = mac_capability_reload_claims(&newcfg);
@@ -212,6 +213,8 @@ cmd_reload(uid_t euid, struct ctl_reply *reply,
 		}
 		config_apply_claims(&newcfg);
 	}
+
+	config_free(&newcfg);
 
 	/*
 	 * The control socket is the supported administrative authority after

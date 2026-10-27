@@ -52,7 +52,7 @@ enum {
 extern int	procstat_opts;
 
 struct kinfo_proc;
-void	kinfo_proc_sort(struct kinfo_proc *kipp, int count);
+void	kinfo_proc_sort(struct kinfo_proc *kipp, unsigned int count);
 const char *	kinfo_proc_thread_name(const struct kinfo_proc *kipp);
 
 void	procstat_advlocks(struct procstat *prstat, struct kinfo_proc *kipp);

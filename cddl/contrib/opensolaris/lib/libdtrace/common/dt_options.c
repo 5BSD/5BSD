@@ -356,6 +356,43 @@ dt_opt_linkmode(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 
 /*ARGSUSED*/
 static int
+dt_opt_linkpath(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
+{
+	if (arg == NULL)
+		return (dt_set_errno(dtp, EDT_BADOPTVAL));
+	if (strcmp(arg, "absolute") == 0)
+		dtp->dt_linkpath = 0;
+	else if (strcmp(arg, "relative") == 0)
+		dtp->dt_linkpath = 1;
+	else
+		return (dt_set_errno(dtp, EDT_BADOPTVAL));
+	return (0);
+}
+
+/*ARGSUSED*/
+static int
+dt_opt_linksection(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
+{
+	unsigned int value = 0;
+	const unsigned char *p = (const unsigned char *)arg;
+
+	/* A section index is decimal, nonzero, and must fit ELF sh_info. */
+	if (p == NULL || *p == '\0')
+		return (dt_set_errno(dtp, EDT_BADOPTVAL));
+	for (; *p != '\0'; p++) {
+		if (*p < '0' || *p > '9' ||
+		    value > (UINT_MAX - (*p - '0')) / 10)
+			return (dt_set_errno(dtp, EDT_BADOPTVAL));
+		value = value * 10 + (*p - '0');
+	}
+	if (value == 0)
+		return (dt_set_errno(dtp, EDT_BADOPTVAL));
+	dtp->dt_linksection = value;
+	return (0);
+}
+
+/*ARGSUSED*/
+static int
 dt_opt_linktype(dtrace_hdl_t *dtp, const char *arg, uintptr_t option)
 {
 	if (arg == NULL)
@@ -1020,6 +1057,8 @@ static const dt_option_t _dtrace_ctoptions[] = {
 	{ "ldpath", dt_opt_ld_path },
 	{ "libdir", dt_opt_libdir },
 	{ "linkmode", dt_opt_linkmode },
+	{ "linkpath", dt_opt_linkpath },
+	{ "linksection", dt_opt_linksection },
 	{ "linktype", dt_opt_linktype },
 	{ "nolibs", dt_opt_cflags, DTRACE_C_NOLIBS },
 #ifdef __FreeBSD__

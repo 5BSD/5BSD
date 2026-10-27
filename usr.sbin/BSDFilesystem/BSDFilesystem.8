@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 12, 2026
+.Dd October 19, 2026
 .Dt BSDFILESYSTEM 8
 .Os
 .Sh NAME
@@ -17,9 +17,8 @@
 is the
 .Sy [TZFS]
 system daemon that owns the storage plane of the capability system.
-It holds the root-pool handle for the pool that backs
-.Pa /Capabilities
-and auto-provisions the persistent and ephemeral dataset roots.
+It provisions persistent and ephemeral dataset roots beneath a selected
+base dataset capability.
 It is a socket-free capability-plane service: it exposes the well-known name
 .Dq Li system.Filesystem
 and serves each client on its own
@@ -82,6 +81,24 @@ takes the storage-granting role that
 .Xr capsule 8
 previously performed inline.
 .Pp
+A nonzero requested quota, or the configured
+.Li default_refquota
+when no override is requested, must be installed before writable storage is
+delivered.
+If that property update fails, the request fails with the storage error;
+the daemon does not return an unbounded writable handle as a fallback.
+Existing contents are retained.
+A read-only view does not change quota or ownership and remains available
+for inspection or recovery, subject to the ordinary access checks.
+A zero configured default disables this per-claim quota when no override is
+requested.
+New claims, snapshots, and transaction staging clones are also subject to
+object-count admission checks.
+Failure to enumerate or decode the existing objects denies creation and returns
+the underlying error; reaching the configured implementation limit returns
+.Er EDQUOT .
+Reopening an existing claim does not consume a new-object admission slot.
+.Pp
 Durable storage lives in a per-bundle
 .Em container ,
 .Pa Data/<bundle>/<unit>/persistent
@@ -95,27 +112,25 @@ for a group of bundles that declare it.
 .Nm
 reconciles those containers against the installed and running bundles
 .Pq the install folders and Pa /Capabilities/Run
-once at boot and then periodically, destroying the container of a bundle that
-is neither installed nor running
-.Pq a group container once no member is installed ,
-snapshots included.
+once at boot and then periodically, reporting containers whose owners are absent.
+Catalogue absence does not authorize persistent-data deletion.
+Bundle and group containers, including snapshots, are retained and reported with
+.Er EBUSY
+until an authenticated retention and deletion protocol can authorize removal.
+This also preserves state potentially needed by retained boot environments.
+Automatic persistent-container reclamation is therefore suspended; retained data
+continues to consume storage and requires a future explicit lifecycle mechanism.
 The bundle scan requires readable System and Run/live directories.
 An absent optional Apps directory is allowed; other errors opening or reading
-owner sources prevent bundle reclamation for that pass.
-An incomplete pass resets the timer grace history, requiring two subsequent
-successful observations of absence before removal.
-Missing group-owner information likewise resets the group grace history.
-A container whose snapshot is pinned by a clone outside it is left intact:
-that reap fails
-.Pq ZFS reports the branch point as Er EEXIST ,
-is logged with the reason, and is retried on every later pass until the clone
-is gone.
+owner sources prevent reconciliation for that pass.
+An incomplete pass resets the timer history.
+Missing group-owner information likewise resets the group history.
 The cadence of the timer passes, which is also the grace window, is the
 .Va reclaim_interval
 configuration key in seconds
 .Pq default 300, accepted range 10 to 86400 ;
 an out-of-range value is a configuration error.
-The passes and each destroyed container are visible through the
+The passes and refused reclamation attempts are visible through the
 .Ql BSDFilesystem:::reclaim-pass ,
 .Ql BSDFilesystem:::reclaim-destroy ,
 and
@@ -133,15 +148,13 @@ files; dataset operations fail with
 .Er ENXIO
 until the configured pool is available.
 .Pp
-All name-based setup
-.Pq configuration, opening the pool, provisioning
-happens at startup.
-.Nm
-then enters capability mode with
-.Xr cap_enter 2
-and serves every request from its retained capability handles, so a
-compromised daemon cannot reach datasets outside
-.Pa /Capabilities .
+The maintained service unit starts in capability mode and receives explicit
+configuration and device directory resources from SwitchBoard.
+It acquires storage handles at startup and serves requests using retained
+capabilities.
+The acquisition path uses
+.Pa /dev/zfs
+and closes that descriptor after acquiring the bounded dataset handles.
 .Pp
 The options are:
 .Bl -tag -width ".Fl c Ar config"
@@ -150,7 +163,11 @@ Read configuration from
 .Ar config
 instead of
 .Pa /Capabilities/Config/bsdfilesystem.ucl .
-A missing file is not an error; built-in defaults stand.
+An explicitly selected file must exist and have trusted ownership and mode.
+Invalid supplied configuration is a fatal startup error.
+An absent default configuration permits built-in defaults.
+See
+.Xr tzfs.conf 5 .
 .El
 .Sh FILES
 .Bl -tag -width ".Pa /var/run/BSDFilesystem.ready" -compact
@@ -208,6 +225,31 @@ last reference; factory-session closure does not revoke delivered descriptors.
 Ordinary filesystem opens refuse the OES device, including normalized path
 aliases and character-device aliases detected after opening.
 .Sh LIMITATIONS
+Startup preserves reserved transaction datasets and reports unresolved work.
+A reserved name is insufficient evidence that the dataset is disposable:
+an interrupted commit can leave the original claim under a staging name.
+Automatic resolution and reclamation require a durable recovery protocol.
+Idle sweeps also preserve unresolved staging datasets.
+Automatic staging reclamation is suspended until owner lifetime and durable
+publication can be established; abandoned staging can therefore retain space.
+.Pp
+Commit refuses a failed staging-marker transition before dropping either mount
+anchor, promoting a clone or renaming a dataset.
+This prevents that error path from exposing a live staging clone to idle cleanup.
+.Pp
+Abort verifies the staging clone's recorded origin before releasing mount anchors
+or deleting storage. Missing, unreadable, empty, or mismatched metadata refuses
+the operation; an interrupted commit with a cleared marker requires recovery.
+This check does not serialize concurrent workers or prove dataset identity across
+rename/replacement races. Durable identities and coordinated lifecycle ownership
+remain required.
+.Pp
+Transaction commit promotes a clone and performs two separate dataset renames.
+There is no durable commit record or recovery protocol for interruptions between
+these operations; error rollback is best-effort.
+Commit is not an atomic namespace replacement and is not a system-generation
+activation mechanism.
+.Pp
 Startup lease and transaction-staging sweeps do not yet distinguish a new boot
 from a provider restart during the same boot.
 Surviving workers and delivered directory descriptors can retain old storage.
@@ -226,6 +268,12 @@ The stricter OES factory limits of four per client and 64 globally also apply.
 An excess connection is closed before allocating session resources.
 Capacity returns when the provider removes the closed session or exited worker.
 Existing sessions are preserved; clients must handle connection failure.
+.Sh REQUEST ATTRIBUTION
+Requests require kernel-supplied sender credentials.
+When managed-program attribution is available, the service records it for the
+current request; missing attribution does not by itself reject every request.
+Capability-channel admission, namespace isolation, ownership checks and
+operation-specific storage authorization remain independent requirements.
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr libbsdfilesystem 3 ,
@@ -242,3 +290,11 @@ Existing sessions are preserved; clients must handle connection failure.
 .Xr switchboard 8
 .Sh AUTHORS
 .An Kory Heard
+
+.Sh SELECTED WORKER NAMESPACES
+When the supervisor supplies a selected namespace view, the worker uses only
+that view and closes inherited broad namespace parents.
+A missing selected entry does not cause fallback to a broader parent.
+A selected worker cannot replace its session through
+.Dv BSDFILESYSTEM_OP_BEGIN_SESSION ;
+a new session requires a new supervised selection.

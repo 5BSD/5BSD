@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd September 10, 2026
+.Dd October 18, 2026
 .Dt CAPSULE.CONF 5
 .Os
 .Sh NAME
@@ -15,15 +15,23 @@ file configures the
 daemon.
 It uses
 UCL format.
-The default location is
+The normal installation and daemon default is
 .Pa /etc/capsule.conf .
 .Pp
-If the configuration file does not exist,
-compiled-in defaults are used.
-Syntax errors in the configuration file are fatal and cause
-.Xr capsule 8
-to exit.
-Unknown keys are silently ignored.
+Only an absent default configuration file permits compiled-in
+defaults; an explicitly selected missing file is an error.
+The file must be regular, owned by root or the effective user, not writable by
+group or others, and at most 1 MiB.
+Symbolic links are rejected.
+.Pp
+The parser rejects unknown and duplicate keys, invalid types and values,
+embedded NUL/control bytes in strings, overlong paths, excess or duplicate
+claims, UCL macros and includes.
+Variables are not expanded.
+A failed load leaves the previous configuration unchanged.
+An empty or comment-only file explicitly retains initialized defaults.
+Configuration failure aborts daemon startup; PID 1 uses its fatal reboot path
+instead of entering a recovery shell with rejected policy.
 .Ss General
 The following top-level keys are recognized:
 .Bl -tag -width "control_socket_mode"
@@ -45,6 +53,10 @@ Path to the first managed process started by
 Default:
 .Pa /usr/libexec/switchboard .
 If set to an empty string, no service manager is started.
+Delegated manager descriptors are confined before execution:
+they survive the initial exec, are locked against inheritance by further forks,
+and close on subsequent execs.
+These limits are established before the manager's constructors run.
 May be overridden with
 .Xr capsule 8 Ns 's
 .Fl b
@@ -135,6 +147,127 @@ Forced termination is deliberately reserved for a supervisor holding an
 process descriptor; signaling through
 .Xr pdkill 2
 does not depend on ambient PID authority.
+.Ss Boot host identity
+The optional top-level
+.Va hostuuid
+is a deployment-supplied, stable UUID in canonical lowercase
+.Dq 8-4-4-4-12
+hexadecimal notation.
+The nil UUID and UUIDs deriving a zero host ID are rejected.
+It is required when
+.Va storage
+is nonempty and is accepted only by the original PID 1 personality.
+Before acquiring storage, PID 1 sets and verifies
+.Va kern.hostuuid
+and
+.Va kern.hostid
+from this authenticated input.
+The host ID follows the existing rc hostid convention: the first four bytes of
+MD5 of the UUID text, interpreted in network byte order.
+There is no implicit hardware, environment or writable-file fallback.
+.Pp
+Provision a unique UUID per machine and preserve it across system generations.
+The generation must also supply the configured hostid and machine-id
+compatibility files for normal startup; see
+.Xr rc.conf 5 .
+The rc services verify these against the protected kernel identity without
+regenerating them.
+Changing it requires a new authenticated boot policy and may prevent importing
+an unexported pool.
+Neither this 32-bit identifier nor the UUID is proof of machine ownership;
+cloning them does not provide safe shared-disk or rollback protection.
+Host identity, like storage assignments, cannot change on manager restart or
+policy reload.
+.Ss Boot Crypto control
+The optional
+.Va crypto_recipient
+string names one exact bundle/unit label eligible for a Crypto supervisor
+control descriptor.
+An absent or empty value grants no Crypto control.
+The packaged base policy selects
+.Dq Li system.Crypto/bsdcrypto ;
+this is policy data, not a recipient compiled into Capsule or SwitchBoard.
+The recipient must also be a verified system Core unit.
+.Pp
+Original PID 1 opens the kernel control endpoint and restricts the delivered
+descriptor to introspection and child-control derivation.
+SwitchBoard confines it to the launch, and libservice checks its kernel type
+and exact descriptor/ioctl rights before the provider can consume it.
+Root identity or a matching executable name alone is insufficient.
+The field cannot change during reload or manager restart; changing it requires
+a new authenticated system generation in BIP mode.
+.Pp
+This delivery mechanism does not yet provide explicit grant revocation or
+complete crash/restart semantics.
+Those remain qualification requirements, as does actual provider operation
+under enforcing BIP and Secure Boot.
+.Ss Boot storage
+The
+.Va storage
+array declares boot-only dataset handle delegation.
+An empty array grants no persistent storage.
+A nonempty array is accepted only by the original PID 1 personality.
+Tables are allocated for the selected entries, subject to a 16 MiB expanded-memory
+budget per table and the 1 MiB configuration-file limit.
+Reload preserves the previous configuration on parse or allocation failure;
+boot storage assignments cannot change on reload.
+.Pp
+Each entry requires these fields:
+.Bl -tag -width "dataset_guid"
+.It Va recipient
+An exact bundle and unit label, separated by one slash.
+.It Va pool
+Expected pool name.
+.It Va pool_guid
+Expected pool GUID as a quoted positive decimal string, without leading zeroes.
+.It Va dataset
+Expected dataset name, strictly below the named pool.
+Pool roots and snapshot names are rejected.
+.It Va dataset_guid
+Expected dataset GUID in the same format as
+.Va pool_guid .
+.It Va devices
+One through eight explicit character-device paths beneath
+.Pa /dev .
+Every backing leaf, spare and cache device must match an approved device
+identity; duplicate aliases and regular-file-backed pools are rejected.
+Disk, mirror, RAID-Z, replacing and spare topologies are supported.
+Other topologies are rejected.
+.It Va rights
+Explicit array of TrustedZFS operation names:
+.Dq props_read , props_write , snapshot , snap_destroy , rollback ,
+.Dq clone_src , create , destroy , send , recv , mount , hold , event ,
+.Dq scrub , rename , promote , bookmark , release .
+The implicit rights
+.Dq props_read
+and
+.Dq event
+must be included explicitly.
+.El
+.Pp
+Duplicate recipients, overlapping dataset roots, and conflicting identities or
+device lists for the same pool are rejected.
+PID 1 acquires the configured anchors before starting the service manager.
+It imports only the explicitly selected pool, without mounting datasets,
+writing a cache file, forcing import or rewinding.
+Unexported pools require a nonzero matching kernel host ID;
+.Dv ZFS_HOSTID
+does not override this decision.
+Multihost state must permit import.
+A pool imported before a later validation failure may remain imported, but no
+service receives a handle and bootstrap fails.
+.Pp
+Anchors are published only after every acquisition and descriptor restriction
+succeeds. They cannot be transferred or inherited across fork or exec.
+The service manager receives bounded derivatives for eligible recipients through
+the existing storage-root bootstrap resource. Manager restarts preserve anchors.
+Ordinary system startup remains responsible for named filesystem mounts.
+.Pp
+The removed BIP keys
+.Va attachment , content , management , data ,
+and
+.Va policy
+are rejected. Storage delegation does not provide BIP protection.
 .Ss Claims
 The
 .Va claims
@@ -188,12 +321,16 @@ May be an integer, a range string
 .Pq e.g., Dq 80-8000 ,
 .Dq *
 for all ports (0\(en65535), or
-.Dq .\&<1024
+.Dq .1024
+or
+.Dq <1024
 for privileged ports (0\(en1023).
 Optional; default is all ports (0\(en65535).
 .Va ports
 is accepted as an alias for
 .Va port .
+Specifying both is an error.
+Range endpoints must contain decimal digits; an omitted endpoint is invalid.
 .It Va protocol
 .Dq tcp ,
 .Dq udp ,
@@ -207,7 +344,7 @@ the Bluetooth socket protocols
 or
 .Dq * .
 Default:
-.Dq tcp .
+.Dq any .
 .It Va direction
 .Dq bind ,
 .Dq connect ,
@@ -254,6 +391,9 @@ matches a single peer.
 .Dq *
 matches any address.
 Optional; if omitted, any address is matched.
+A supplied CIDR slash requires a numeric prefix length.
+An explicit domain must match the address family.
+If domain is omitted, the address selects its family.
 .El
 .Pp
 Foreign nonces receive
@@ -313,7 +453,7 @@ operations:
 claims {
     network = [
         {
-            port = ".<1024";
+            port = "<1024";
             protocol = "tcp";
             direction = "bind";
             domain = "inet";
@@ -335,7 +475,7 @@ claims {
 .Xr mac_capability_capprotect 4 ,
 .Xr mac_capability_isolation 4 ,
 .Xr mac_capability_system 4 ,
+.Xr bsdfilesystem 8 ,
 .Xr capsule 8 ,
 .Xr capsulectl 8 ,
-.Xr switchboard 8 ,
-.Xr bsdfilesystem 8
+.Xr switchboard 8

@@ -122,6 +122,9 @@ struct svc_domain {
 	/* Registry identity; never accepted from a request payload. */
 	uint64_t authority_issuer;
 	uint64_t authority_identity;
+	/* Per-request kernel stamps; never stored as a principal or a role. */
+	uint64_t request_process;
+	uint64_t request_nonce;
 };
 
 /*
@@ -203,12 +206,11 @@ struct svc_runtime {
 	bool		want_console;	/* stdio on /dev/console (rc bootstrap) */
 	uint8_t		name_state[SWITCHBOARD_MAX_PROVIDES];
 	/*
-	 * Per-provides transfer policy the provider set at claim time (its own
-	 * protocol contract, not manifest policy): true leaves each delivered
-	 * session CAP_XFER_UNLIMITED (the consumer may forward it), false (the
-	 * default) attenuates it to CAP_XFER_NONE.
+	 * Per-provides protocol flags negotiated at claim time, not manifest
+	 * policy. SENDABLE permits forwarding; otherwise channels are attenuated
+	 * to CAP_XFER_NONE.
 	 */
-	bool		name_sendable[SWITCHBOARD_MAX_PROVIDES];
+	uint32_t	name_claim_flags[SWITCHBOARD_MAX_PROVIDES];
 
 	/* Restart tracking */
 	unsigned	restart_count;
@@ -403,6 +405,8 @@ int	capsule_set_ambient_lookup(int channel_fd, int lookup_fd);
 int	capsule_lifecycle(int channel_fd, uint32_t lifecycle_op);
 /* Relay a Capsule configuration reload to capsule (P4b).  0 = ok, -1 = error. */
 int	capsule_reload(int channel_fd);
+int	capsule_boot_storage(int channel_fd, const char *recipient);
+int	capsule_boot_crypto(int channel_fd, const char *recipient);
 int	capsule_release_manifest(int channel_fd, const struct svc_manifest *m);
 
 
@@ -467,7 +471,7 @@ int svc_lifecycle_client(struct svc_runtime *, struct svc_runtime *,
  * for the container-model reconcile.  The installed set (System/, Apps/) is the
  * primary live set; these markers add the units that are still running so a
  * provider never reaps a bundle whose unit has not yet been unloaded. */
-void svc_reclaim_live_prepare(void);
+int svc_reclaim_live_prepare(void);
 void svc_reclaim_publish_live(void);
 void svc_reclaim_publish_groups(void);
 void svc_reclaim_mark_dirty(void);
@@ -512,7 +516,7 @@ bool	activation_timer_owns(uintptr_t ident);
 void	activation_timer_fire(uintptr_t ident, int kq);
 void	activation_path_event(struct kevent *kev, int kq);
 void	activation_mount_event(struct kevent *kev, int kq);
-void	svc_run_container_remove(const char *label);
+void	svc_run_container_remove(const char *label, uid_t owner);
 void	svc_run_container_sweep(void);
 bool	activation_socket_owns(int fd);
 void	activation_socket_event(struct kevent *kev, int kq);
@@ -528,12 +532,11 @@ int	svc_activate_cleanup_provider(const char *, int);
 int	on_demand_launch(const char *name, struct svc_runtime *requester,
 	    struct channel_message *request, int kq);
 int	on_demand_launch_ambient(const char *name,
-	    struct svc_lookup_channel *lc, const struct svc_domain *domain,
-	    struct channel_message *request, int kq);
+	    struct svc_lookup_channel *lc, struct channel_message *request, int kq);
 void	on_demand_lookup_channel_gone(struct svc_lookup_channel *lc, int kq);
 void	on_demand_check_ready(struct svc_runtime *svc, int kq);
 bool	on_demand_name_activating(struct svc_runtime *, const char *);
-int	on_demand_name_claim(struct svc_runtime *, const char *, bool sendable);
+int	on_demand_name_claim(struct svc_runtime *, const char *, uint32_t flags);
 bool	on_demand_name_sendable(const struct svc_runtime *, const char *);
 bool	on_demand_all_names_claimed(const struct svc_runtime *);
 int	on_demand_name_withdraw(struct svc_runtime *, const char *, int);
@@ -556,6 +559,9 @@ void	naming_rebind_owner(struct svc_runtime *old_owner,
 int	naming_lookup(const char *name, struct svc_runtime *requester,
 	    const struct svc_domain *domain, const struct channel_sender *sender,
 	    int *errp, bool *sendablep);
+
+int naming_lookup_observed(const char *, struct svc_runtime *,
+    const struct svc_domain *, const struct channel_message *, int *, bool *);
 
 /* anoint.c — IPC attribute sets and the endpoint match */
 void	svc_anoint_set_from_manifest(struct svc_anoint_set *set,

@@ -28,7 +28,8 @@
 
 # Make sure time(1) is consistent with the FreeBSD time command and not the
 # shell interpretation of time(1)
-TIME=/usr/bin/time
+# The installed default remains the standalone utility; build tests may
+# explicitly supply their declared time executable through ATF configuration.
 
 validate_time_output()
 {
@@ -51,13 +52,14 @@ validate_time_output()
 atf_test_case cputime_hard_flag cleanup
 cputime_hard_flag_body()
 {
+	local TIME=$(atf_config_get time /usr/bin/time)
 
 	atf_check -o match:'cputime[[:space:]]+3 secs' \
 	    limits -H -t 3 limits -H
 	atf_check -o match:'cputime[[:space:]]+3 secs' \
 	    limits -H -t 3 limits -S
 	atf_check -e save:time_output -s signal:sigkill \
-	    $TIME -p limits -H -t 3 sh -c 'while : ; do : ; done'
+	    "$TIME" -p limits -H -t 3 sh -c 'while : ; do : ; done'
 	validate_time_output time_output
 }
 cputime_hard_flag_cleanup()
@@ -70,13 +72,14 @@ SIGXCPU=24 # atf_check doesn't know sigxcpu
 atf_test_case cputime_soft_flag cleanup
 cputime_soft_flag_body()
 {
+	local TIME=$(atf_config_get time /usr/bin/time)
 
 	atf_check -o match:'cputime-max[[:space:]]+infinity secs' \
 	    limits -S -t 3 limits -H
 	atf_check -o match:'cputime-cur[[:space:]]+3 secs' \
 	    limits -S -t 3 limits -S
 	atf_check -e save:time_output -s signal:$SIGXCPU \
-	    $TIME -p limits -S -t 3 sh -c 'while : ; do : ; done'
+	    "$TIME" -p limits -S -t 3 sh -c 'while : ; do : ; done'
 	validate_time_output time_output
 }
 cputime_soft_flag_cleanup()

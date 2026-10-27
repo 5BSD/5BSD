@@ -42,9 +42,7 @@
  * could otherwise unload code another still depends on.  See sysext_proto.h.
  *
  * Loading is default-deny by module name as well as by domain: bsdextension carries
- * an allow-list of module names it is permitted to load (the built-in set of
- * on-demand modules the base system legitimately requests, overridable by an
- * operator UCL config).  A name that passes the path-traversal check but is not
+ * an allow-list of module names supplied by its required UCL configuration.  A name that passes the path-traversal check but is not
  * on the allow-list is refused with EPERM and logged.  This closes the gap where
  * any SYSTEM-domain client, once past the domain gate, could load ARBITRARY
  * kernel code; the gate authorizes reaching bsdextension, the allow-list authorizes
@@ -82,16 +80,9 @@
 #include "trace_pressure.h"
 
 /*
- * The kernel-module allow-list.  Loading is default-deny by name: only a module
- * whose name appears here may be loaded.  The built-in defaults are the exact
- * set of extensions the base system loads on demand today (see
- * sysext_config_defaults); an optional operator config (SYSEXT_DEFAULT_CONF)
- * may replace the set.  A missing config is not an error — the built-in set
- * stands, so the control is fail-closed with no dependency on a file being
- * present early in boot.
- *
- * SYSEXT_MAX_ALLOW, SYSEXT_DEFAULT_CONF and struct sysext_config are defined in
- * bsdextension.h so the unit tests share one definition.
+ * The required startup policy supplies the complete base allow-list. Missing
+ * or invalid input stops startup; executable defaults grant no module access.
+ * Administrator overrides have a separate explicit writer and persistent store.
  */
 
 /*
@@ -165,7 +156,7 @@ SYSEXT_STATIC bool
 valid_module_name(const char *name)
 {
 
-	if (memchr(name, '\0', SYSEXT_NAME_MAX) == NULL)
+	if (name == NULL || strnlen(name, SYSEXT_NAME_MAX) == SYSEXT_NAME_MAX)
 		return (false);
 	if (name[0] == '\0' || strcmp(name, ".") == 0 ||
 	    strcmp(name, "..") == 0)
@@ -175,42 +166,12 @@ valid_module_name(const char *name)
 	return (true);
 }
 
-/*
- * The built-in allow-list: the modules the base system legitimately loads on
- * demand through system.SystemExtension today.  Derived from the tree's
- * service_ensure_extension(3) callers and the equivalent early-boot kldload
- * needs:
- *
- *   cryptodev  bsdcrypto (usr.sbin/bsdcrypto): /dev/crypto for OCF.
- *   vhid       blued (usr.sbin/bluetooth/blued):   virtual-HID transport.
- *   zfs        bsdfilesystem (usr.sbin/bsdfilesystem):             storage backing /Capabilities.
- *   linux64    sysextctl:                        Linux application runtime.
- *   vmm        WASPNest:                         Virtual machine monitor.
- *   fdescfs/linprocfs/linsysfs:                   Linux terminals and filesystems.
- *   drm/i915kms/amdgpu/radeonkms:                 installed graphics drivers.
- *   cpuctl/coretemp/amdsmn/amdtemp:                hwstat CPU telemetry.
- *   dummynet   rc.d/dummynet, rc.d/dnctl:        pf dnpipe/dnqueue shaping.
- *   pf         rc.d/pf, rc.d/pflog, rc.d/pfsync: packet filter (pf_load="NO").
- *
- * Deliberately narrow — every entry corresponds to a concrete on-demand
- * consumer.  Do not broaden without a matching consumer.
- */
+/* Deployment grants live in the packaged policy, never in executable defaults. */
 SYSEXT_STATIC void
 sysext_config_defaults(struct sysext_config *cfg)
 {
-	static const char *const builtin[] = {
-		"cryptodev", "vhid", "zfs", "linux64", "vmm",
-		"fdescfs", "linprocfs", "linsysfs",
-		"drm", "i915kms", "amdgpu", "radeonkms",
-		"cpuctl", "coretemp", "amdsmn", "amdtemp", "dummynet",
-		"pf"
-	};
-	size_t i;
 
 	memset(cfg, 0, sizeof(*cfg));
-	for (i = 0; i < nitems(builtin); i++)
-		(void)strlcpy(cfg->allow[i], builtin[i], SYSEXT_NAME_MAX);
-	cfg->nallow = nitems(builtin);
 }
 
 /* True iff name is on the resolved allow-list (exact match). */
@@ -227,97 +188,62 @@ extension_allowed(const struct sysext_config *cfg, const char *name)
 }
 
 /*
- * Overlay an operator UCL config on top of the built-in allow-list.  A missing
- * file is not an error (the built-in set stands, fail-closed).  A present file
- * with an "allowed_extensions" string array REPLACES the built-in set; each
- * entry must itself be a valid single-component module name.  Any malformed or
- * over-permissive file is rejected wholesale (EINVAL) and the built-in set is
- * left untouched, so a bad config can never widen what may load.
- */
-/*
- * Parse a trusted, already-open config fd into cfg.  The fd is authoritative by
- * PROVENANCE -- either switchboard-delivered from the veriexec-protected bundle
- * Config directory (service_config_open), or an operator-named path -- so there
- * is NO uid/ownership check: possession of the descriptor is the authorization
- * (a born-in-capmode broker is not root and cannot own an operator config).
- * The only checks are cheap integrity: a regular, size-bounded, non-group/other
- * -writable file.  Does not close fd (the caller owns it).
+ * The delivered descriptor's provenance is the caller's responsibility. These
+ * checks validate syntax and bound reads; UNIX modes do not establish BIP trust.
+ * A failed load/reload leaves the previous configuration untouched.
  */
 static int
-sysext_config_parse_fd(struct sysext_config *cfg, int fd, bool required)
+sysext_config_parse_fd(struct sysext_config *cfg, int fd)
 {
-	struct sysext_config saved;
-	struct ucl_parser *p;
-	const ucl_object_t *root, *arr, *ent;
+	struct sysext_config candidate;
+	ucl_object_t *root;
+	const ucl_object_t *arr, *ent;
 	ucl_object_iter_t it = NULL;
-	struct stat sb;
-	int error;
-	size_t count = 0;
+	const char *name;
+	size_t i;
+	int error = EINVAL;
 
-	saved = *cfg;
-	if (fstat(fd, &sb) == -1)
+	if (cfg == NULL)
+		return (errno = EINVAL, -1);
+	root = sysext_config_object_fd(fd, S_IWGRP | S_IWOTH);
+	if (root == NULL)
 		return (-1);
-	if (!S_ISREG(sb.st_mode) || sb.st_size > 1024 * 1024 ||
-	    (sb.st_mode & (S_IWGRP | S_IWOTH)) != 0)
-		return (errno = EPERM, -1);
-	p = ucl_parser_new(UCL_PARSER_DEFAULT);
-	if (p == NULL)
-		return (errno = ENOMEM, -1);
-	if (!ucl_parser_add_fd(p, fd)) {
-		ucl_parser_free(p);
-		return (errno = EINVAL, -1);
-	}
-	root = ucl_parser_get_object(p);
-	if (root == NULL || ucl_object_type(root) != UCL_OBJECT) {
-		if (root != NULL)
-			ucl_object_unref(__DECONST(ucl_object_t *, root));
-		ucl_parser_free(p);
-		return (errno = EINVAL, -1);
-	}
-
+	memset(&candidate, 0, sizeof(candidate));
+	if (ucl_object_type(root) != UCL_OBJECT || root->len != 1)
+		goto done;
 	arr = ucl_object_lookup(root, "allowed_extensions");
-	if (arr == NULL && required)
-		goto invalid;
-	if (arr != NULL) {
-		if (ucl_object_type(arr) != UCL_ARRAY)
-			goto invalid;
-		while ((ent = ucl_object_iterate(arr, &it, true)) != NULL) {
-			const char *s;
-
-			if (count >= SYSEXT_MAX_ALLOW ||
-			    ucl_object_type(ent) != UCL_STRING ||
-			    (s = ucl_object_tostring(ent)) == NULL ||
-			    strlcpy(cfg->allow[count], s, SYSEXT_NAME_MAX) >=
-			    SYSEXT_NAME_MAX ||
-			    !valid_module_name(cfg->allow[count]))
-				goto invalid;
-			count++;
-		}
-		cfg->nallow = count;
+	if (arr == NULL || arr->next != NULL ||
+	    arr->keylen != strlen("allowed_extensions") ||
+	    ucl_object_type(arr) != UCL_ARRAY)
+		goto done;
+	while ((ent = ucl_object_iterate(arr, &it, true)) != NULL) {
+		if (candidate.nallow == SYSEXT_MAX_ALLOW ||
+		    ucl_object_type(ent) != UCL_STRING ||
+		    (name = ucl_object_tostring(ent)) == NULL ||
+		    strlen(name) != ent->len || !valid_module_name(name))
+			goto done;
+		for (i = 0; i < candidate.nallow; i++)
+			if (strcmp(candidate.allow[i], name) == 0)
+				goto done;
+		strlcpy(candidate.allow[candidate.nallow++], name,
+		    SYSEXT_NAME_MAX);
 	}
-
-	ucl_object_unref(__DECONST(ucl_object_t *, root));
-	ucl_parser_free(p);
-	return (0);
-
-invalid:
-	error = EINVAL;
-	*cfg = saved;
-	ucl_object_unref(__DECONST(ucl_object_t *, root));
-	ucl_parser_free(p);
-	return (errno = error, -1);
+	*cfg = candidate;
+	error = 0;
+done:
+	ucl_object_unref(root);
+	return (error == 0 ? 0 : (errno = error, -1));
 }
 
-/* Open `path` and parse it (integrity + provenance as in parse_fd). */
 static int
-sysext_config_read(struct sysext_config *cfg, const char *path, bool required)
+sysext_config_read(struct sysext_config *cfg, const char *path)
 {
 	int fd, r, error;
 
 	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
 	if (fd == -1)
-		return (errno == ENOENT && !required ? 0 : -1);
-	r = sysext_config_parse_fd(cfg, fd, required);
+		return (-1);
+	r = sysext_config_parse_fd(cfg, fd);
 	error = errno;
 	(void)close(fd);
 	errno = error;
@@ -327,7 +253,7 @@ sysext_config_read(struct sysext_config *cfg, const char *path, bool required)
 SYSEXT_STATIC int
 sysext_config_load(struct sysext_config *cfg, const char *path)
 {
-	return (sysext_config_read(cfg, path, false));
+	return (sysext_config_read(cfg, path));
 }
 
 /*
@@ -340,19 +266,19 @@ sysext_config_load(struct sysext_config *cfg, const char *path)
 int
 sysext_config_load_fd(struct sysext_config *cfg, int fd)
 {
-	return (sysext_config_parse_fd(cfg, fd, false));
+	return (sysext_config_parse_fd(cfg, fd));
 }
 
 int
 sysext_config_reload_fd(struct sysext_config *cfg, int fd)
 {
-	return (sysext_config_parse_fd(cfg, fd, true));
+	return (sysext_config_parse_fd(cfg, fd));
 }
 
 int
 sysext_config_reload(struct sysext_config *cfg, const char *path)
 {
-	return (sysext_config_read(cfg, path, true));
+	return (sysext_config_read(cfg, path));
 }
 
 /*
@@ -1209,35 +1135,22 @@ main(int argc, char **argv)
 	setproctitle("-SystemExtension");
 	syslog(LOG_NOTICE, "bsdextension system-extension broker");
 
-	/*
-	 * Resolve the module allow-list before serving so every client-serving
-	 * thread shares it.  Missing or malformed startup configuration retains the
-	 * built-in allow-list; failed reloads retain the last active policy.
-	 */
+	/* Required startup policy; a failed reload retains the last active policy. */
 	sysext_config_defaults(&sysext_conf);
 	if (conf_from_arg) {
-		/* Explicit -c path (tests / non-plane, pre-capmode). */
 		if (sysext_config_load(&sysext_conf, conf) == -1)
-			syslog(LOG_WARNING, "allow-list config %s unparseable "
-			    "(%m); using built-in allow-list", conf);
+			err(1, "load extension policy %s", conf);
 	} else {
-		/*
-		 * Plane: the allow-list config is delivered by descriptor.  A
-		 * born-in-capmode broker has no global namespace, so the operator
-		 * config is opened THROUGH the switchboard-delivered Config
-		 * directory (service_config_open); holding that fd is the
-		 * authorization.  Absent config => built-in allow-list (ENOENT).
-		 */
-		int cfgfd;
+		int cfgfd, error, result;
 
-		if (service_config_open(SYSEXT_CONFIG_NAME, &cfgfd) == 0) {
-			if (sysext_config_load_fd(&sysext_conf, cfgfd) == -1)
-				syslog(LOG_WARNING, "allow-list config "
-				    "unparseable (%m); built-in allow-list");
-			(void)close(cfgfd);
-		} else if (errno != ENOENT) {
-			syslog(LOG_WARNING, "allow-list config unavailable "
-			    "(%m); built-in allow-list");
+		if (service_config_open(SYSEXT_CONFIG_NAME, &cfgfd) == -1)
+			err(1, "open delivered extension policy");
+		result = sysext_config_load_fd(&sysext_conf, cfgfd);
+		error = errno;
+		(void)close(cfgfd);
+		if (result == -1) {
+			errno = error;
+			err(1, "load delivered extension policy");
 		}
 	}
 	policy_path = conf;

@@ -434,6 +434,11 @@
 	    (policy)->mpc_name, 6, \
 	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct vnode *)(a1), (uint64_t)(uintptr_t)(struct label *)(a2), (uint64_t)(uintptr_t)(struct vfsconf *)(a3), (uint64_t)(uintptr_t)(struct vfsoptlist **)(a4), (uint64_t)(uint64_t)(a5) }))
 
+#define MAC_HOOK_ARGS_mount_check_mount_anon(policy, a0, a1, a2) \
+	SDT_PROBE4(mac_framework, , , hook__args, "mount_check_mount_anon", \
+	    (policy)->mpc_name, 3, \
+	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct mount *)(a1), (uint64_t)(uintptr_t)(struct label *)(a2) }))
+
 #define MAC_HOOK_ARGS_mount_check_snapshot_create(policy, a0, a1) \
 	SDT_PROBE4(mac_framework, , , hook__args, "mount_check_snapshot_create", \
 	    (policy)->mpc_name, 2, \
@@ -454,10 +459,10 @@
 	    (policy)->mpc_name, 3, \
 	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct mount *)(a1), (uint64_t)(uintptr_t)(struct label *)(a2) }))
 
-#define MAC_HOOK_ARGS_mount_check_update(policy, a0, a1, a2, a3, a4) \
+#define MAC_HOOK_ARGS_mount_check_update(policy, a0, a1, a2, a3, a4, a5) \
 	SDT_PROBE4(mac_framework, , , hook__args, "mount_check_update", \
-	    (policy)->mpc_name, 5, \
-	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct mount *)(a1), (uint64_t)(uintptr_t)(struct label *)(a2), (uint64_t)(uintptr_t)(struct vfsoptlist **)(a3), (uint64_t)(uint64_t)(a4) }))
+	    (policy)->mpc_name, 6, \
+	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct mount *)(a1), (uint64_t)(uintptr_t)(struct label *)(a2), (uint64_t)(uintptr_t)(struct vfsoptlist **)(a3), (uint64_t)(uint64_t)(a4), (uint64_t)(bool)(a5) }))
 
 #define MAC_HOOK_ARGS_mount_check_unmount(policy, a0, a1, a2, a3) \
 	SDT_PROBE4(mac_framework, , , hook__args, "mount_check_unmount", \
@@ -1313,6 +1318,11 @@
 	SDT_PROBE4(mac_framework, , , hook__args, "vnode_check_exec", \
 	    (policy)->mpc_name, 5, \
 	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct vnode *)(a1), (uint64_t)(uintptr_t)(struct label *)(a2), (uint64_t)(uintptr_t)(struct image_params *)(a3), (uint64_t)(uintptr_t)(struct label *)(a4) }))
+
+#define MAC_HOOK_ARGS_vnode_check_fh(policy, a0, a1, a2) \
+	SDT_PROBE4(mac_framework, , , hook__args, "vnode_check_fh", \
+	    (policy)->mpc_name, 3, \
+	    ((const uint64_t[]){ (uint64_t)(uintptr_t)(struct ucred *)(a0), (uint64_t)(uintptr_t)(struct vnode *)(a1), (uint64_t)(uintptr_t)(struct label *)(a2) }))
 
 #define MAC_HOOK_ARGS_vnode_check_getacl(policy, a0, a1, a2, a3) \
 	SDT_PROBE4(mac_framework, , , hook__args, "vnode_check_getacl", \

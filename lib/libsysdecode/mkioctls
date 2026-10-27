@@ -22,7 +22,8 @@ ioctl_includes=$(
 		set -o pipefail
 	fi
 
-	filter='tee'
+	# No filtering is needed when PF headers are included.
+	filter='cat'
 	if [ "${MK_PF}" = "no" ]; then
 		filter='egrep -v (net/pfvar|net/if_pfsync)\.h'
 	fi

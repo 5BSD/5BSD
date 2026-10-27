@@ -230,42 +230,108 @@ sysext_policy_reload_fd(struct sysext_policy *p, int fd, service_rights_t rights
 	return (reload(p, NULL, fd, rights));
 }
 
-/* Strict, versioned UCL.  Never silently discard corrupt administrator state. */
-static int
-read_state(int dirfd, struct policy_state *s)
+/*
+ * Bounded parsing shared by the packaged base policy and private overrides.
+ * No includes, environment/file variables, duplicate keys, implicit arrays or
+ * raw NULs. Borrow the descriptor and leave its offset unchanged. Provenance
+ * and protected storage remain separate requirements of the caller.
+ */
+ucl_object_t *
+sysext_config_object_fd(int fd, mode_t forbidden)
 {
-	struct ucl_parser *parser;
+	struct stat before, after;
+	struct ucl_parser *parser = NULL;
 	ucl_object_t *root = NULL;
-	const ucl_object_t *array, *obj, *name, *permission, *enabled, *version;
-	ucl_object_iter_t it = NULL;
-	struct stat st;
-	int fd, error = EINVAL;
+	unsigned char *text;
+	const size_t limit = 1024 * 1024;
+	size_t done = 0;
+	ssize_t amount;
+	int error = EINVAL;
 
-	fd = openat(dirfd, "overrides.ucl", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-	if (fd == -1)
-		return (errno == ENOENT ? 0 : -1);
-	if (fstat(fd, &st) == -1) {
+	if (fstat(fd, &before) == -1)
+		return (NULL);
+	if (!S_ISREG(before.st_mode) || (before.st_mode & forbidden) != 0)
+		return (errno = EPERM, NULL);
+	if (before.st_size < 0 || (uintmax_t)before.st_size > limit)
+		return (errno = EFBIG, NULL);
+	text = malloc(limit + 1);
+	if (text == NULL)
+		return (NULL);
+	for (;;) {
+		amount = pread(fd, text + done, limit + 1 - done, (off_t)done);
+		if (amount == -1 && errno == EINTR)
+			continue;
+		if (amount == -1) {
+			error = errno;
+			goto done;
+		}
+		if (amount == 0)
+			break;
+		done += (size_t)amount;
+		if (done > limit) {
+			error = EFBIG;
+			goto done;
+		}
+	}
+	if (fstat(fd, &after) == -1) {
 		error = errno;
 		goto done;
 	}
-	if (!S_ISREG(st.st_mode) || st.st_size > 1024 * 1024 ||
-	    (st.st_mode & 077) != 0)
+	if (done != (size_t)before.st_size || after.st_size != before.st_size ||
+	    after.st_mode != before.st_mode || after.st_uid != before.st_uid ||
+	    after.st_gid != before.st_gid ||
+	    timespeccmp(&after.st_mtim, &before.st_mtim, !=) ||
+	    timespeccmp(&after.st_ctim, &before.st_ctim, !=) ||
+	    memchr(text, '\0', done) != NULL)
 		goto done;
-	parser = ucl_parser_new(UCL_PARSER_NO_FILEVARS);
+	parser = ucl_parser_new(UCL_PARSER_NO_FILEVARS |
+	    UCL_PARSER_DISABLE_MACRO | UCL_PARSER_NO_IMPLICIT_ARRAYS);
 	if (parser == NULL) {
 		error = ENOMEM;
 		goto done;
 	}
-	if (!ucl_parser_add_fd(parser, fd))
-		goto parsed;
+	if (!ucl_parser_add_chunk_full(parser, text, done, 0,
+	    UCL_DUPLICATE_ERROR, UCL_PARSE_UCL))
+		goto done;
 	root = ucl_parser_get_object(parser);
-	if (root == NULL || ucl_object_type(root) != UCL_OBJECT || root->len != 2)
+	if (root != NULL)
+		error = 0;
+done:
+	if (parser != NULL)
+		ucl_parser_free(parser);
+	free(text);
+	errno = error;
+	return (root);
+}
+
+/* Strict, versioned UCL. Never discard corrupt administrator state. */
+static int
+read_state(int dirfd, struct policy_state *s)
+{
+	ucl_object_t *root = NULL;
+	const ucl_object_t *array, *obj, *name, *permission, *enabled, *version;
+	ucl_object_iter_t it = NULL;
+	int fd, error = EINVAL;
+
+	fd = openat(dirfd, "overrides.ucl", O_RDONLY | O_NOFOLLOW | O_CLOEXEC |
+	    O_NONBLOCK);
+	if (fd == -1)
+		return (errno == ENOENT ? 0 : -1);
+	root = sysext_config_object_fd(fd, 077);
+	if (root == NULL) {
+		error = errno;
+		goto done;
+	}
+	if (ucl_object_type(root) != UCL_OBJECT || root->len != 2)
 		goto parsed;
 	version = ucl_object_lookup(root, "version");
 	array = ucl_object_lookup(root, "extensions");
 	if (version == NULL || version->next != NULL ||
+	    version->keylen != strlen("version") ||
 	    ucl_object_type(version) != UCL_INT || ucl_object_toint(version) != 1 ||
-	    array == NULL || array->next != NULL || ucl_object_type(array) != UCL_ARRAY)
+	    array == NULL || array->next != NULL ||
+	    array->keylen != strlen("extensions") ||
+	    ucl_object_type(array) != UCL_ARRAY)
 		goto parsed;
 	while ((obj = ucl_object_iterate(array, &it, true)) != NULL) {
 		struct override *entry;
@@ -279,7 +345,11 @@ read_state(int dirfd, struct policy_state *s)
 		permission = ucl_object_lookup(obj, "permission");
 		enabled = ucl_object_lookup(obj, "enabled");
 		if (name == NULL || permission == NULL || enabled == NULL ||
-		    name->next != NULL || permission->next != NULL || enabled->next != NULL ||
+		    name->next != NULL || permission->next != NULL ||
+		    enabled->next != NULL ||
+		    name->keylen != strlen("name") ||
+		    permission->keylen != strlen("permission") ||
+		    enabled->keylen != strlen("enabled") ||
 		    ucl_object_type(name) != UCL_STRING ||
 		    ucl_object_type(permission) != UCL_INT ||
 		    ucl_object_type(enabled) != UCL_BOOLEAN)
@@ -297,7 +367,6 @@ read_state(int dirfd, struct policy_state *s)
 parsed:
 	if (root != NULL)
 		ucl_object_unref(root);
-	ucl_parser_free(parser);
 done:
 	close(fd);
 	return (error == 0 ? 0 : (errno = error, -1));

@@ -181,9 +181,11 @@ all: ${.OBJDIR}/nsswitch.conf
 
 # Manually stage nsswitch.conf in the object directory so that we can edit it
 # before installing.
-${.OBJDIR}/nsswitch.conf: ${LIBC_SRCTOP}/net/nsswitch.conf
-	cp -f ${LIBC_SRCTOP}/net/nsswitch.conf ${.TARGET}
-.if ${MK_NIS} == "no"
-	sed -i "" -e 's/.*_compat:/# &/' -e 's/compat$$/files/' \
-		${.TARGET}
-.endif
+CONF_GENERATED+= nsswitch.conf
+CONF_GENERATOR.nsswitch.conf= ${LIBC_SRCTOP}/net/gen-nsswitch.sh
+CONF_TEMPLATE.nsswitch.conf= ${LIBC_SRCTOP}/net/nsswitch.conf
+CONF_TOOLS.nsswitch.conf= sed cat
+CONF_ARGS.nsswitch.conf= ${MK_NIS}
+${.OBJDIR}/nsswitch.conf: ${CONF_TEMPLATE.nsswitch.conf} ${CONF_GENERATOR.nsswitch.conf}
+	${SH:Ush} ${CONF_GENERATOR.nsswitch.conf} ${CONF_TEMPLATE.nsswitch.conf} \
+	    ${.TARGET} ${SED:Used} ${CAT:Ucat} ${CONF_ARGS.nsswitch.conf}

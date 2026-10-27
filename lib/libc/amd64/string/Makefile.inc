@@ -34,3 +34,6 @@ MDSRCS+= \
 # sanitizer runtime can initialize itself.
 CFLAGS.amd64_archlevel.c+=	-fno-sanitize=address
 .endif
+
+TEXTUAL_SRCS.bcmp.S= ${LIBC_SRCTOP}/amd64/string/memcmp.S
+TEXTUAL_SRCS.memcpy.S= ${LIBC_SRCTOP}/amd64/string/memmove.S

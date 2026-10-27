@@ -613,7 +613,10 @@ the directory descriptor.
 clone a claim into a writable staging dataset; returns the txn id and
 its directory descriptor.
 .It Dv BSDFILESYSTEM_OP_TXN_COMMIT
-atomically swap the staging clone in as the claim.
+replace the claim through promotion and separate dataset renames.
+This operation does not provide atomic namespace replacement or durable
+crash recovery; interruption can leave the original claim under a staging name.
+It must not be used as an authenticated system-generation activation.
 .It Dv BSDFILESYSTEM_OP_TXN_ABORT
 discard the staging clone.
 .It Dv BSDFILESYSTEM_OP_UNMOUNT
@@ -721,6 +724,22 @@ report the caller's own window in a
 .Vt struct vmd_list_reply
 .Pq Va port_base , port_limit , port_count .
 .El
+.Sh STORAGE NAMESPACE SELECTION
+The
+.In storage_namespace.h
+interface is shared by the filesystem provider and the service broker.
+.Fn storage_namespace_select
+validates fixed-width resource-owner, container and group fields and constructs
+relative boot, unit, shared and declared-group namespace names.
+Duplicate selections are coalesced.
+A client without a container receives no durable selection.
+Malformed fields, reserved-name aliases and invalid components are rejected.
+On failure the output selection is cleared and errno is set.
+.Pp
+The scope and container helpers accept only persistent or cache lifetimes.
+These functions describe logical selection only: they do not resolve datasets,
+authenticate their roots, assign operation rights or grant access.
+Consumers must bind the selection to authenticated policy and actual objects.
 .Sh RETURN VALUES
 The
 .Fn parse_*

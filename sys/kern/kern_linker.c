@@ -520,6 +520,9 @@ linker_load_file(const char *filename, linker_file_t *result)
 		KLD_DPF(FILE, ("linker_load_file: trying to load %s\n",
 		    filename));
 		error = LINKER_LOAD_FILE(lc, filename, &lf);
+		/* A policy denial is terminal, not an unrecognized file format. */
+		if (error == EPERM || error == EACCES)
+			return (error);
 		/*
 		 * If we got something other than ENOENT, then it exists but
 		 * we cannot load it for some other reason.

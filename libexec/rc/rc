@@ -135,21 +135,48 @@ if have run_rc_scripts_final; then
 fi
 
 # Remove the firstboot sentinel, and reboot if it was requested.
-# Be a bit paranoid about removing it to handle the common failure
-# modes since the consequence of failure can be big.
-# Note: this assumes firstboot_sentinel is on / when we have
-# a read-only /, or that it is on media that's writable.
-if [ -e ${firstboot_sentinel} ]; then
-	checkyesno root_rw_mount || mount -uw /
-	chflags -R 0 ${firstboot_sentinel}
-	rm -rf ${firstboot_sentinel}
-	if [ -e ${firstboot_sentinel}-reboot ]; then
-		chflags -R 0 ${firstboot_sentinel}-reboot
-		rm -rf ${firstboot_sentinel}-reboot
-		checkyesno root_rw_mount || mount -ur /
-		kill -INT 1
+# Hardened installations select a sentinel on writable instance storage.
+# Root integrity and PID 1 protection remain enforced during cleanup/reboot.
+if [ -e "${firstboot_sentinel}" ]; then
+	_firstboot_integrity=$(${SYSCTL} -i -n security.mac.system_integrity.enforcing) || {
+		echo 'Cannot determine firstboot integrity protection, startup aborted'
+		exit 1
+	}
+	case "${_firstboot_integrity}" in
+	0|1|"") ;;
+	*)
+		echo 'Invalid firstboot integrity protection status, startup aborted'
+		exit 1
+		;;
+	esac
+	_firstboot_remount=NO
+	if ! checkyesno root_rw_mount && [ "${_firstboot_integrity}" != 1 ]; then
+		mount -uw / || exit 1
+		_firstboot_remount=YES
 	fi
-	checkyesno root_rw_mount || mount -ur /
+	_firstboot_failed=NO
+	chflags -R 0 "${firstboot_sentinel}" &&
+	    rm -rf "${firstboot_sentinel}" || _firstboot_failed=YES
+	_firstboot_reboot=NO
+	if [ "${_firstboot_failed}" = NO ] && [ -e "${firstboot_sentinel}-reboot" ]; then
+		chflags -R 0 "${firstboot_sentinel}-reboot" &&
+		    rm -rf "${firstboot_sentinel}-reboot" || _firstboot_failed=YES
+		_firstboot_reboot=YES
+	fi
+	if [ "${_firstboot_remount}" = YES ]; then
+		mount -ur / || exit 1
+	fi
+	if [ "${_firstboot_failed}" = YES ]; then
+		echo 'Cannot remove firstboot sentinel, startup aborted'
+		exit 1
+	fi
+	if [ "${_firstboot_reboot}" = YES ]; then
+		if [ "${_firstboot_integrity}" = 1 ]; then
+			/sbin/shutdown -r now || exit 1
+		else
+			kill -INT 1 || exit 1
+		fi
+	fi
 fi
 
 echo ''

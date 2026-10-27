@@ -1,0 +1,3 @@
+# Local system configuration.
+# Settings here override /etc/defaults/rc.conf.
+# See rc.conf(5).

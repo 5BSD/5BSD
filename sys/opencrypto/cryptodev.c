@@ -2309,6 +2309,175 @@ crypto_open(struct cdev *dev, int oflags, int devtype, struct thread *td)
 	return (error);
 }
 
+/* Derived control state is immutable after publication through finstall. */
+struct cryptoctl {
+	uint32_t scope;
+	uint32_t rights;
+	char owner[CRYPTODESC_KEY_OWNER_MAX];
+};
+
+static void
+cryptoctl_info(struct cryptoctl_info *info, uint32_t scope, uint32_t rights,
+    const char *owner)
+{
+
+	memset(info, 0, sizeof(*info));
+	info->version = CRYPTOCTL_INFO_VERSION;
+	info->scope = scope;
+	info->rights = rights;
+	strlcpy(info->owner, owner, sizeof(info->owner));
+}
+
+static int
+cryptoctl_ioctl(struct file *fp, u_long cmd, void *data,
+    struct ucred *cred __unused, struct thread *td)
+{
+	const struct cryptoctl *ctl = fp->f_data;
+	const char *owner = NULL;
+	uint32_t right;
+
+	if (cmd == CIOCGCRYPTOCONTROLINFO) {
+		cryptoctl_info(data, ctl->scope, ctl->rights, ctl->owner);
+		return (0);
+	}
+	switch (cmd) {
+	case CIOCGCRYPTODESCGENERATE: right = CRYPTOCTL_GENERATE; break;
+	case CIOCGCRYPTOKEYDESC: right = CRYPTOCTL_KEY; break;
+	case CIOCGCRYPTONAMEDKEY:
+		right = CRYPTOCTL_CREATE;
+		owner = ((struct cryptodesc_named_create *)data)->cd_owner;
+		break;
+	case CIOCGCRYPTONAMEDLEASE:
+		right = CRYPTOCTL_LEASE;
+		owner = ((struct cryptodesc_named_lease *)data)->cd_owner;
+		break;
+	case CIOCCRYPTONAMEDROTATE:
+		right = CRYPTOCTL_ROTATE;
+		owner = ((struct cryptodesc_named_control *)data)->cd_owner;
+		break;
+	case CIOCCRYPTONAMEDDELETE:
+		right = CRYPTOCTL_DELETE;
+		owner = ((struct cryptodesc_named_control *)data)->cd_owner;
+		break;
+	case CIOCGCRYPTONAMEDSTAT:
+		right = CRYPTOCTL_STAT;
+		owner = ((struct cryptodesc_named_stat *)data)->cd_owner;
+		break;
+	case CIOCGCRYPTONAMEDLIST:
+		right = CRYPTOCTL_LIST;
+		owner = ((struct cryptodesc_named_list *)data)->cd_owner;
+		break;
+	case CIOCGCRYPTOOWNERLIST: right = CRYPTOCTL_OWNERS; break;
+	default: return (ENOTTY);
+	}
+	if ((ctl->rights & right) == 0)
+		return (EPERM);
+	if (owner != NULL && ctl->scope == CRYPTOCTL_SCOPE_OWNER &&
+	    (ctl->owner[0] == '\0' ||
+	    strnlen(owner, CRYPTODESC_KEY_OWNER_MAX) == CRYPTODESC_KEY_OWNER_MAX ||
+	    strcmp(owner, ctl->owner) != 0))
+		return (EPERM);
+
+	switch (cmd) {
+	case CIOCGCRYPTODESCGENERATE: return (cryptodesc_mint_generated(td, data));
+	case CIOCGCRYPTOKEYDESC: return (cryptodesc_mint_key(td, data));
+	case CIOCGCRYPTONAMEDKEY: return (cryptokey_create(data));
+	case CIOCGCRYPTONAMEDLEASE: return (cryptokey_lease(td, data));
+	case CIOCCRYPTONAMEDROTATE: return (cryptokey_rotate(data));
+	case CIOCCRYPTONAMEDDELETE: return (cryptokey_delete(data));
+	case CIOCGCRYPTONAMEDSTAT: return (cryptokey_stat(data));
+	case CIOCGCRYPTONAMEDLIST: return (cryptokey_list(data));
+	case CIOCGCRYPTOOWNERLIST: return (cryptokey_owner_list(data));
+	default: return (ENOTTY);
+	}
+}
+
+static int
+cryptoctl_close(struct file *fp, struct thread *td __unused)
+{
+
+	free(fp->f_data, M_CRYPTODEV);
+	fp->f_data = NULL;
+	fp->f_ops = &badfileops;
+	return (0);
+}
+
+static int
+cryptoctl_fill_kinfo(struct file *fp, struct kinfo_file *kif,
+    struct filedesc *fdp __unused)
+{
+	const struct cryptoctl *ctl = fp->f_data;
+
+	kif->kf_type = KF_TYPE_CRYPTO;
+	snprintf(kif->kf_path, sizeof(kif->kf_path),
+	    "crypto-control:scope=%u:rights=%#x", ctl->scope, ctl->rights);
+	return (0);
+}
+
+static const struct fileops cryptoctl_ops = {
+	.fo_read = invfo_rdwr,
+	.fo_write = invfo_rdwr,
+	.fo_truncate = invfo_truncate,
+	.fo_ioctl = cryptoctl_ioctl,
+	.fo_poll = invfo_poll,
+	.fo_kqfilter = invfo_kqfilter,
+	.fo_stat = cryptodesc_stat,
+	.fo_close = cryptoctl_close,
+	.fo_chmod = invfo_chmod,
+	.fo_chown = invfo_chown,
+	.fo_sendfile = invfo_sendfile,
+	.fo_fill_kinfo = cryptoctl_fill_kinfo,
+	.fo_cmp = file_kcmp_generic,
+	.fo_flags = DFLAG_PASSABLE,
+};
+
+static int
+cryptoctl_derive(struct thread *td, const struct fcrypt *fcr,
+    struct cryptoctl_derive *request)
+{
+	struct cryptoctl *ctl;
+	struct file *fp;
+	uint32_t allowed;
+	int error, fd;
+
+	request->fd = -1;
+	if (!fcr->descriptor_authority)
+		return (EPERM);
+	if (request->reserved != 0 ||
+	    strnlen(request->owner, sizeof(request->owner)) == sizeof(request->owner))
+		return (EINVAL);
+	switch (request->scope) {
+	case CRYPTOCTL_SCOPE_OWNER:
+		allowed = CRYPTOCTL_WORKER_RIGHTS;
+		if (request->owner[0] != '\0' &&
+		    !cryptokey_identifier_valid(request->owner, sizeof(request->owner)))
+			return (EINVAL);
+		break;
+	case CRYPTOCTL_SCOPE_RECLAIM:
+		allowed = CRYPTOCTL_RECLAIM_RIGHTS;
+		if (request->owner[0] != '\0')
+			return (EINVAL);
+		break;
+	default:
+		return (EINVAL);
+	}
+	if (request->rights == 0 || (request->rights & ~allowed) != 0)
+		return (EINVAL);
+	error = falloc_noinstall(td, &fp);
+	if (error != 0)
+		return (error);
+	ctl = malloc(sizeof(*ctl), M_CRYPTODEV, M_WAITOK | M_ZERO);
+	ctl->scope = request->scope;
+	ctl->rights = request->rights;
+	strlcpy(ctl->owner, request->owner, sizeof(ctl->owner));
+	finit(fp, FREAD | FWRITE, DTYPE_CRYPTO, ctl, &cryptoctl_ops);
+	error = finstall(td, fp, &fd, O_CLOEXEC, NULL);
+	fdrop(fp, td);
+	if (error == 0)
+		request->fd = fd;
+	return (error);
+}
+
 static int
 crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
     struct thread *td)
@@ -2336,6 +2505,16 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 	devfs_get_cdevpriv((void **)&fcr);
 
 	switch (cmd) {
+	case CIOCGCRYPTOCONTROLINFO:
+		cryptoctl_info((struct cryptoctl_info *)data,
+		    fcr->descriptor_authority ? CRYPTOCTL_SCOPE_SUPERVISOR :
+		    CRYPTOCTL_SCOPE_NONE,
+		    fcr->descriptor_authority ? CRYPTOCTL_WORKER_RIGHTS |
+		    CRYPTOCTL_OWNERS | CRYPTOCTL_DERIVE :
+		    CRYPTOCTL_GENERATE | CRYPTOCTL_KEY, "");
+		return (0);
+	case CIOCGCRYPTOCONTROL:
+		return (cryptoctl_derive(td, fcr, (struct cryptoctl_derive *)data));
 #ifdef COMPAT_FREEBSD12
 	case CRIOGET:
 		/*

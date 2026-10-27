@@ -83,9 +83,12 @@ trust_spine_is_core_and_shielded_body()
 	# BSDAuth left the spine when software attributes replaced
 	# login-principal grants (2026-10-05): admission is decided from
 	# kernel-attributed software identity and no core provider took its
-	# place.
+	# place.  BSDCrypto joined it when Capsule's boot policy began
+	# supplying its bounded crypto-control descriptor: the cross-owner
+	# control supervisor is part of the Core trusted base.
 	cat >spine <<'EOF'
 usr.sbin/BSDAudit/capbundle/bsdaudit.ucl
+usr.sbin/BSDCrypto/capbundle/crypto.ucl
 usr.sbin/BSDExtension/capbundle/bsdextension.ucl
 usr.sbin/BSDFilesystem/capbundle/bsdfilesystem.ucl
 usr.sbin/BSDLog/capbundle/bsdlog.ucl
@@ -120,7 +123,6 @@ non_tcb_units_are_system_managed_body()
 	for manifest in \
 	    usr.sbin/bluetooth/BSDBluetooth/blued.ucl \
 	    usr.sbin/BSDNotify/capbundle/bsdnotify.ucl \
-	    usr.sbin/BSDCrypto/capbundle/crypto.ucl \
 	    usr.sbin/BSDDevice/capbundle/device.ucl \
 	    usr.sbin/BSDNetwork/capbundle/bsdnetwork.ucl \
 	    usr.sbin/BSDTrace/capbundle/bsdtrace.ucl \

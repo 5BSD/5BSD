@@ -7,6 +7,7 @@
 # KEYWORD: nojail
 
 . /etc/rc.subr
+. /etc/hostid.subr
 
 name="hostid_save"
 desc="Save unique host ID to disk"
@@ -26,6 +27,14 @@ hostid_machine_id()
 
 hostid_save()
 {
+	hostid_integrity_mode || return 1
+	if [ "${hostid_protected}" = YES ]; then
+		hostid_verify_kernel || return 1
+		hostid_machine_id
+		hostid_verify_cache "${hostid_file}" "${current_hostid}" &&
+		    hostid_verify_cache "${machine_id_file}" "${current_machine_id}"
+		return $?
+	fi
 	current_hostid=`$SYSCTL_N kern.hostuuid`
 
 	read saved_hostid 2>/dev/null < ${hostid_file}

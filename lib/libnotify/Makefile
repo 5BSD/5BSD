@@ -30,6 +30,11 @@ NOTIFY_SCHEMAPACKAGE= libnotify-dev
 FILESGROUPS+= NOTIFY_NOTICE
 NOTIFY_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 NOTIFY_NOTICEDIR= /usr/share/licenses/libnotify/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= NOTIFY_NOTICEPARENT
+NOTIFY_NOTICEPARENT= ${NOTIFY_NOTICEDIR:H}
+NOTIFY_NOTICEPARENTTAGS= ${NOTIFY_NOTICEDIRTAGS}
+
 INCS=	notify.h notify_protocol.h notify_server.h notify_watch.h notify_pressure.h
 LIBADD=	pthread service fidl_bsd cplusplus
 CFLAGS+=	-I${SRCTOP}/lib/libservice

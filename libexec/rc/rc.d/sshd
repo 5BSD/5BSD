@@ -60,15 +60,18 @@ sshd_keygen_alg()
 	fi
 
 	echo "Generating $ALG host key."
-	/usr/bin/ssh-keygen -q -t $alg -f "$keyfile" -N ""
+	/usr/bin/ssh-keygen -q -t $alg -f "$keyfile" -N "" || return 1
 	/usr/bin/ssh-keygen -l -f "$keyfile.pub"
 }
 
 sshd_keygen()
 {
-	sshd_keygen_alg rsa
-	sshd_keygen_alg ecdsa
-	sshd_keygen_alg ed25519
+	local status=0
+
+	sshd_keygen_alg rsa || status=1
+	sshd_keygen_alg ecdsa || status=1
+	sshd_keygen_alg ed25519 || status=1
+	return "$status"
 }
 
 sshd_configtest()
@@ -79,7 +82,7 @@ sshd_configtest()
 
 sshd_precmd()
 {
-	run_rc_command keygen
+	run_rc_command keygen || return 1
 	run_rc_command configtest
 }
 

@@ -41,7 +41,12 @@ void	timecmp_config_defaults(struct timecmp_config *);
  * missing file keeps the compiled-in default-deny (returns 0); a malformed file
  * returns -1 with *config holding the defaults.  Hardened open (O_NOFOLLOW,
  * regular file, trusted owner, not group/other writable, size cap).  load_fd
- * takes ownership of fd and closes it.  UCL shape:
+ * takes ownership of fd and closes it, reads from offset zero, and rejects
+ * observed metadata/length changes. Unknown/duplicate keys, non-boolean grants,
+ * embedded NULs and external includes/macros are errors. No variable expansion
+ * occurs. These checks do not authenticate the backing storage or authorize
+ * a user/session; the protected launcher and operation policy provide those
+ * separate boundaries. UCL shape:
  *
  *	default { set = false; }
  *	clients { "org.example.ntp" { set = true; } }

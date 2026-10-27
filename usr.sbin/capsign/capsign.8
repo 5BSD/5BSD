@@ -106,6 +106,10 @@ and returns failure if any image failed.
 This option applies to non-recursive image verification.
 Options that do not apply to the selected command are usage errors.
 .Pp
+The key-id input must be a regular, nonsymlink file of at most 4096 bytes
+containing exactly one PUBLIC KEY PEM object. Surrounding whitespace is allowed;
+private keys, additional PEM objects and other prefix or suffix data are rejected.
+.Pp
 The key-id command prints the raw Ed25519 public-key identifier used in the
 system trust catalogue.
 .Pp

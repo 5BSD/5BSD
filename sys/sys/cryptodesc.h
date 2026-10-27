@@ -278,4 +278,45 @@ struct cryptodesc_info {
 #define	CIOCGCRYPTONAMEDLIST	_IOWR('c', 125, struct cryptodesc_named_list)
 #define	CIOCGCRYPTOOWNERLIST	_IOWR('c', 126, struct cryptodesc_owner_list)
 
+/* Immutable, independently allocated control authority; never re-derivable. */
+#define CRYPTOCTL_SCOPE_OWNER 1U
+#define CRYPTOCTL_SCOPE_RECLAIM 2U
+#define CRYPTOCTL_GENERATE 0x001U
+#define CRYPTOCTL_KEY 0x002U
+#define CRYPTOCTL_CREATE 0x004U
+#define CRYPTOCTL_LEASE 0x008U
+#define CRYPTOCTL_ROTATE 0x010U
+#define CRYPTOCTL_DELETE 0x020U
+#define CRYPTOCTL_STAT 0x040U
+#define CRYPTOCTL_LIST 0x080U
+#define CRYPTOCTL_OWNERS 0x100U
+#define CRYPTOCTL_WORKER_RIGHTS 0x0ffU
+#define CRYPTOCTL_RECLAIM_RIGHTS (CRYPTOCTL_DELETE | CRYPTOCTL_LIST | CRYPTOCTL_OWNERS)
+
+struct cryptoctl_derive {
+	uint32_t scope;
+	uint32_t rights;
+	/* Empty owner permits only unnamed operations in OWNER scope. */
+	char owner[CRYPTODESC_KEY_OWNER_MAX];
+	uint32_t reserved;
+	int32_t fd;
+};
+#define CIOCGCRYPTOCONTROL _IOWR('c', 127, struct cryptoctl_derive)
+
+/* Describes kernel authority only, not Capsicum ioctl limits or provenance. */
+#define CRYPTOCTL_INFO_VERSION 1U
+#define CRYPTOCTL_SCOPE_NONE 0U
+#define CRYPTOCTL_SCOPE_SUPERVISOR 3U
+#define CRYPTOCTL_DERIVE 0x200U
+struct cryptoctl_info {
+	uint32_t version;
+	uint32_t scope;
+	uint32_t rights;
+	uint32_t reserved;
+	char owner[CRYPTODESC_KEY_OWNER_MAX];
+};
+#define CIOCGCRYPTOCONTROLINFO _IOR('c', 128, struct cryptoctl_info)
+
+
+
 #endif /* !_SYS_CRYPTODESC_H_ */

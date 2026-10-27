@@ -20,7 +20,7 @@ linux_mount() {
 	_mount_point="$2"
 	shift 2
 	if ! mount | grep -q "^$_fs on $_mount_point ("; then
-		mkdir -p "$_mount_point"
+		mkdir -p "$_mount_point" || return 1
 		mount "$@" -t "$_fs" "$_fs" "$_mount_point"
 	fi
 }
@@ -67,21 +67,21 @@ linux_start()
 
 	# Handle unbranded ELF executables by defaulting to ELFOSABI_LINUX.
 	if [ `sysctl -ni kern.elf64.fallback_brand` -eq "-1" ]; then
-		sysctl kern.elf64.fallback_brand=3 > /dev/null
+		sysctl kern.elf64.fallback_brand=3 > /dev/null || return 1
 	fi
 
 	# kern.elf32.fallback_brand only exists on kernels with 32-bit ELF
 	# support, which 5BSD omits; skip it when the node is absent.
 	if [ "`sysctl -ni kern.elf32.fallback_brand`" = "-1" ]; then
-		sysctl kern.elf32.fallback_brand=3 > /dev/null
+		sysctl kern.elf32.fallback_brand=3 > /dev/null || return 1
 	fi
 
 	if checkyesno linux_mounts_enable; then
-		linux_mount linprocfs "${_emul_path}/proc" -o nocover
-		linux_mount linsysfs "${_emul_path}/sys" -o nocover
-		linux_mount devfs "${_emul_path}/dev" -o nocover
-		linux_mount fdescfs "${_emul_path}/dev/fd" -o nocover,linrdlnk
-		linux_mount tmpfs "${_emul_path}/dev/shm" -o nocover,mode=1777
+		linux_mount linprocfs "${_emul_path}/proc" -o nocover || return 1
+		linux_mount linsysfs "${_emul_path}/sys" -o nocover || return 1
+		linux_mount devfs "${_emul_path}/dev" -o nocover || return 1
+		linux_mount fdescfs "${_emul_path}/dev/fd" -o nocover,linrdlnk || return 1
+		linux_mount tmpfs "${_emul_path}/dev/shm" -o nocover,mode=1777 || return 1
 	fi
 }
 

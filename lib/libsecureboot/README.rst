@@ -140,3 +140,16 @@ from the relevant chain - which is sure to be a valid certificate
 signed by the corresponding trust anchor.
 
 --------------------
+
+Verifying an existing buffer
+---------------------------
+
+``verify_buf(fd, path, buf, size)`` verifies bytes already held by the caller
+against an entry in a registered manifest. The descriptor is used for manifest
+namespace lookup, not payload reads. The caller must authenticate and register
+the manifest before calling this low-level function, require exactly
+``VE_FINGERPRINT_OK``, and consume the same buffer without later mutation or
+rereading storage. In particular, ``VE_FINGERPRINT_IGNORE`` (``no_hash``) is not
+an authenticated result. This function does not discover manifests, enable
+mandatory policy, or make arbitrary file rereads trustworthy. It allocates no
+payload copy and does not retain the caller's buffer.

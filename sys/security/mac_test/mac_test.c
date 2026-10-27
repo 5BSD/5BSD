@@ -1134,10 +1134,22 @@ test_mount_check_mount(struct ucred *cred, struct vnode *vp,
 	return (0);
 }
 
+COUNTER_DECL(mount_check_mount_anon);
+static int
+test_mount_check_mount_anon(struct ucred *cred, struct mount *mp,
+    struct label *mplabel)
+{
+
+	LABEL_CHECK(cred->cr_label, MAGIC_CRED);
+	LABEL_CHECK(mplabel, MAGIC_MOUNT);
+	COUNTER_INC(mount_check_mount_anon);
+	return (0);
+}
+
 COUNTER_DECL(mount_check_update);
 static int
 test_mount_check_update(struct ucred *cred, struct mount *mp,
-    struct label *mplabel, struct vfsoptlist **optlist, uint64_t fsflags)
+    struct label *mplabel, struct vfsoptlist **optlist, uint64_t fsflags, bool only_export __unused)
 {
 
 	LABEL_CHECK(mplabel, MAGIC_MOUNT);
@@ -3895,6 +3907,7 @@ static struct mac_policy_ops test_ops =
 	.mpo_mbuf_init_label = test_mbuf_init_label,
 
 	.mpo_mount_check_mount = test_mount_check_mount,
+	.mpo_mount_check_mount_anon = test_mount_check_mount_anon,
 	.mpo_mount_check_snapshot_create = test_mount_check_snapshot_create,
 	.mpo_mount_check_snapshot_delete = test_mount_check_snapshot_delete,
 	.mpo_mount_check_snapshot_revert = test_mount_check_snapshot_revert,

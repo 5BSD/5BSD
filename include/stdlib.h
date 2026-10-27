@@ -289,6 +289,7 @@ int	 cgetent(char **, char **, const char *);
 int	 cgetfirst(char **, char **);
 int	 cgetmatch(const char *, const char *);
 int	 cgetnext(char **, char **);
+int	 cgetusedb(int);
 int	 cgetnum(char *, const char *, long *);
 int	 cgetset(const char *);
 int	 cgetstr(char *, const char *, char **);

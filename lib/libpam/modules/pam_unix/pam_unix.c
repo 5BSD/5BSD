@@ -92,7 +92,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 	login_cap_t *lc;
 	struct passwd *pwd;
 	int retval;
-	const char *pass, *user = NULL, *realpw, *prompt;
+	const char *pass, *user = NULL, *realpw, *prompt, *encrypted;
 	const char *emptypasswd = "";
 
 	if (openpam_get_option(pamh, PAM_OPT_AUTH_AS_SELF)) {
@@ -128,7 +128,8 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 		 */
 		if (!(flags & PAM_DISALLOW_NULL_AUTHTOK) &&
 		    openpam_get_option(pamh, PAM_OPT_EMPTYOK) &&
-		    strcmp(crypt(emptypasswd, realpw), realpw) == 0) {
+		    (encrypted = crypt(emptypasswd, realpw)) != NULL &&
+		    strcmp(encrypted, realpw) == 0) {
 			PAM_UNIX_PROBE_SM_AUTHENTICATE(user, PAM_SUCCESS);
 			return (PAM_SUCCESS);
 		}
@@ -146,11 +147,18 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 		return (retval);
 	}
 	PAM_LOG("Got password");
+	/* A supplied empty token is disallowed even when its hash is nonempty. */
+	if ((flags & PAM_DISALLOW_NULL_AUTHTOK) != 0 && pass[0] == '\0') {
+		PAM_VERBOSE_ERROR("Empty password refused");
+		PAM_UNIX_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
+		return (PAM_AUTH_ERR);
+	}
 	if (strnlen(pass, _PASSWORD_LEN + 1) > _PASSWORD_LEN) {
 		PAM_LOG("Password is too long, using fake password");
 		realpw = "*";
 	}
-	if (strcmp(crypt(pass, realpw), realpw) == 0) {
+	encrypted = crypt(pass, realpw);
+	if (encrypted != NULL && strcmp(encrypted, realpw) == 0) {
 		PAM_UNIX_PROBE_SM_AUTHENTICATE(user, PAM_SUCCESS);
 		return (PAM_SUCCESS);
 	}
@@ -282,9 +290,8 @@ pam_sm_acct_mgmt(pam_handle_t *pamh, int flags __unused,
 			getnameinfo(res->ai_addr, res->ai_addrlen,
 			    rhostip, sizeof(rhostip), NULL, 0,
 			    NI_NUMERICHOST);
-		}
-		if (res != NULL)
 			freeaddrinfo(res);
+		}
 	}
 
 	/*
@@ -411,7 +418,8 @@ pam_sm_chauthtok(pam_handle_t *pamh, int flags,
 			PAM_UNIX_PROBE_SM_CHAUTHTOK(user, PAM_PERM_DENIED);
 			return (PAM_PERM_DENIED);
 		}
-		if (strcmp(encrypted, pwd->pw_passwd) != 0) {
+		if (encrypted == NULL ||
+		    strcmp(encrypted, pwd->pw_passwd) != 0) {
 			PAM_UNIX_PROBE_SM_CHAUTHTOK(user, PAM_PERM_DENIED);
 			return (PAM_PERM_DENIED);
 		}
@@ -466,7 +474,13 @@ pam_sm_chauthtok(pam_handle_t *pamh, int flags,
 		
 		login_close(lc);
 		makesalt(salt);
-		pwd->pw_passwd = crypt(new_pass, salt);
+		encrypted = crypt(new_pass, salt);
+		if (encrypted == NULL) {
+			free(old_pwd);
+			PAM_UNIX_PROBE_SM_CHAUTHTOK(user, PAM_AUTHTOK_ERR);
+			return (PAM_AUTHTOK_ERR);
+		}
+		pwd->pw_passwd = encrypted;
 #ifdef YP
 		switch (old_pwd->pw_fields & _PWF_SOURCE) {
 		case _PWF_FILES:

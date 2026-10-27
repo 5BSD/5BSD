@@ -2,7 +2,7 @@
 
 PACKAGE=	tests
 
-ATF_TESTS_SH=	zdiff_test
+ATF_TESTS_SH=	zdiff_test zstd_test
 NETBSD_ATF_TESTS_SH=	gzip_test
 
 ${PACKAGE}FILES+=	foo.diff

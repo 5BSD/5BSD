@@ -591,7 +591,12 @@ ATF_TC_BODY(names_and_self_rename, tc)
 	snprintf(self, sizeof(self), "%s/self", ds);
 	ATF_REQUIRE_EQ(0, zht_systemf("zfs create %s", self));
 	fd = tzfs_open(self, ZH_RENAME, 0);
-	ATF_REQUIRE_EQ(0, tzfs_rename(fd, NULL, "renamed..leaf"));
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    tzfs_rename(fd, NULL, "renamed..leaf") == -1);
+	cfd = tzfs_open(ds, ZH_RENAME, ZHF_SUBTREE);
+	ATF_REQUIRE(cfd >= 0);
+	ATF_REQUIRE_EQ(0, tzfs_rename(cfd, "self", "renamed..leaf"));
+	close(cfd);
 	ATF_REQUIRE_EQ(0, tzfs_info(fd, &info));
 	snprintf(want, sizeof(want), "%s/renamed..leaf", ds);
 	ATF_CHECK_STREQ(want, info.zi_name);

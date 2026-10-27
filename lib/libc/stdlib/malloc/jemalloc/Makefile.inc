@@ -20,7 +20,8 @@ CFLAGS.gcc+=-Wno-error=missing-braces
 .for src in ${JEMALLOCSRCS}
 MISRCS+=jemalloc_${src}
 CLEANFILES+=jemalloc_${src}
-jemalloc_${src}: ${SRCTOP}/contrib/jemalloc/src/${src} .NOMETA
+SOURCE_ALIAS.jemalloc_${src}= ${SRCTOP}/contrib/jemalloc/src/${src}
+jemalloc_${src}: ${SOURCE_ALIAS.jemalloc_${src}} .NOMETA
 	ln -sf ${.ALLSRC} ${.TARGET}
 .endfor
 
@@ -49,7 +50,26 @@ MLINKS+= \
 
 .if ${MK_MALLOC_PRODUCTION} != "no" || defined(MALLOC_PRODUCTION)
 CFLAGS+=	-DMALLOC_PRODUCTION
+_MALLOC_BUILD_MODE= production
+_MALLOC_OTHER_MODE= debug
+.else
+_MALLOC_BUILD_MODE= debug
+_MALLOC_OTHER_MODE= production
 .endif
+
+# Compiler option changes alone do not invalidate objects without meta mode.
+# Keep only the current mode stamp, so either transition rebuilds every
+# allocator object, while repeated builds in the same mode remain incremental.
+_MALLOC_MODE_STAMP= malloc-build-mode.${_MALLOC_BUILD_MODE}
+CLEANFILES+= malloc-build-mode.production malloc-build-mode.debug
+${_MALLOC_MODE_STAMP}: .NOMETA
+	rm -f malloc-build-mode.${_MALLOC_OTHER_MODE}
+	touch ${.TARGET}
+.for src in ${JEMALLOCSRCS}
+.for suffix in o pico nossppico
+jemalloc_${src:R}.${suffix}: ${_MALLOC_MODE_STAMP}
+.endfor
+.endfor
 
 # 5BSD: record the malloc(3) mode of this libc build in its object directory.
 # Package publication and release media refuse a world without this marker

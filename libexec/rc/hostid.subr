@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Shared protected-host-identity handling for hostid and hostid_save.
+
+# Return failure on query errors or unexpected values. sysctl -i suppresses only
+# an absent OID, so an ordinary kernel without BIP keeps its existing behavior.
+hostid_integrity_mode()
+{
+	local value
+
+	value=$(${SYSCTL} -i -n security.mac.system_integrity.enforcing) || {
+		warn "cannot determine host identity protection"
+		return 1
+	}
+	case "${value}" in
+	1) hostid_protected=YES ;;
+	0|"") hostid_protected=NO ;;
+	*) warn "invalid host identity protection status"; return 1 ;;
+	esac
+}
+
+# Read the protected kernel identity; never consult hardware or writable files.
+# The standard rc host-ID derivation is coordination metadata, not authentication.
+hostid_verify_kernel()
+{
+	local x y digest numeric_id
+
+	current_hostid=$(${SYSCTL} -n kern.hostuuid) &&
+	    numeric_id=$(${SYSCTL} -n kern.hostid) || {
+		warn "cannot read authenticated boot identity"
+		return 1
+	}
+	x="[0-9a-f]"
+	y=$x$x$x$x
+	case "${current_hostid}" in
+	00000000-0000-0000-0000-000000000000)
+		warn "authenticated boot UUID is unset"; return 1 ;;
+	$y$y-$y-$y-$y-$y$y$y) ;;
+	*) warn "authenticated boot UUID is missing or invalid"; return 1 ;;
+	esac
+	digest=$(printf '%s' "${current_hostid}" | /sbin/md5) || return 1
+	case "${digest}" in
+	$y$y$y$y$y$y$y$y) ;;
+	*) warn "cannot derive boot host ID"; return 1 ;;
+	esac
+	case "${numeric_id}" in
+	""|*[!0-9]*) warn "invalid kernel host ID"; return 1 ;;
+	esac
+	if [ "${#numeric_id}" -gt 10 ] || [ "${numeric_id}" -eq 0 ] ||
+	    [ "${numeric_id}" -ne "$((0x${digest%????????????????????????}))" ]; then
+		warn "kernel host ID does not match authenticated boot UUID"
+		return 1
+	fi
+}
+
+# Compatibility files are generation inputs under BIP. Do not repair them from
+# the running system, follow a final symlink, or accept extra records.
+hostid_verify_cache()
+{
+	if [ ! -f "$1" ] || [ -L "$1" ] ||
+	    ! printf '%s\n' "$2" | /usr/bin/cmp -s - "$1"; then
+		warn "host identity file missing or inconsistent: $1"
+		return 1
+	fi
+}

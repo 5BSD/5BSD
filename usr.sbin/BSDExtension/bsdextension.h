@@ -19,6 +19,7 @@
 #ifndef _BSDEXTENSION_H_
 #define _BSDEXTENSION_H_
 
+#include <sys/types.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <libservice.h>
@@ -34,6 +35,10 @@
  */
 #define	SYSEXT_CONFIG_NAME	"bsdextension.ucl"
 #define SYSEXT_POLICY_DIR "/etc/bsdextension"
+
+/* Internal parser shared by base and override policy; caller owns the fd. */
+struct ucl_object_s;
+struct ucl_object_s *sysext_config_object_fd(int, mode_t);
 
 struct sysext_config {
 	char	allow[SYSEXT_MAX_ALLOW][SYSEXT_NAME_MAX];

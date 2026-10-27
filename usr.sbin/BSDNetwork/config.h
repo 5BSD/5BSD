@@ -19,8 +19,8 @@
  * manifest label; switchboard itself stays policy-free and identity.rights is
  * consulted only for the SERVICE_RIGHTS_ADMIN bypass.
  *
- * The table is loaded once at startup, pre-capability-mode, from the unit's
- * Config directory ($CAPABILITY_UNIT_DIR/Config/bsdnetwork.conf):
+ * The table is required at startup and is read through the delivered Config
+ * directory descriptor, including for launches already in capability mode:
  *
  *	default {
  *		resolve = true; connect = true; udp = true;
@@ -32,11 +32,9 @@
  *
  * `default` applies to any label without a clients{} entry.  A clients{} entry
  * names only the dimensions it overrides; unnamed dimensions inherit from
- * default.  The entry schema is closed (an unknown key is malformed), but the
- * FILE-level failure direction is FAIL-SOFT: a missing or malformed file
- * leaves the compiled-in default policy (today's non-admin grant: outbound
- * allowed, internal ranges denied) in force, because a bad config file must
- * not brick the network provider everything else depends on.
+ * default. Unknown/duplicate/NUL-aliased keys, external includes and invalid
+ * types reject the entire input. Production startup refuses unavailable or
+ * rejected policy; it cannot silently restore outbound grants.
  */
 
 #define	NETWORKCMP_CONFIG_NAME		"bsdnetwork.conf"
@@ -66,23 +64,25 @@ void	networkcmp_config_defaults(struct networkcmp_config *);
 /*
  * Parse a configuration text into *config.  Strict: on any schema violation
  * (unknown key, wrong type, invalid or duplicate label, too many entries) the
- * whole text is rejected, -1 is returned, and *config is reset to the
- * compiled-in defaults so a partial parse can never leak through.
+ * whole text is rejected, -1 is returned, and *config is cleared so normal
+ * sessions receive no grants. Callers must handle the error before serving.
  */
 int	networkcmp_config_parse(const char *, struct networkcmp_config *);
 
 /*
  * Load the configuration from a file, with the same open-time hardening as the
  * sibling providers (O_NOFOLLOW, regular file, trusted owner, not group/other
- * writable, size cap).  Fail-soft: a missing file is not an error (returns 0
- * with defaults); any other failure returns -1 with *config holding the
- * compiled-in defaults, and the caller logs and continues.
+ * writable, size cap). This optional-path API accepts an absent file as an
+ * explicit request for defaults. Every other failure clears *config and
+ * returns -1. Production startup uses the required delivered-fd path instead.
  */
 int	networkcmp_config_load(struct networkcmp_config *, const char *);
 
 /*
  * As networkcmp_config_load(), but from an already-open descriptor (which it
- * takes ownership of and closes).  Used with service_config_open(3) so the
+ * takes ownership of and closes). Reads from offset zero, rejects observed
+ * length/metadata changes, and applies a fully validated candidate. Used with
+ * service_config_open(3) so the
  * config is read via the switchboard-delivered Config directory descriptor,
  * needing no path lookup under capability mode.
  */

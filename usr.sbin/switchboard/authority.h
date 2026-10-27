@@ -12,6 +12,7 @@ struct svc_authority_scope {
 struct svc_domain;
 struct svc_runtime;
 struct channel_message;
+struct channel_sender;
 
 /* The broker alone owns the issuer. Returned grants are one-use objects. */
 int svc_authority_issue(uid_t, struct svc_domain *,
@@ -20,8 +21,10 @@ int svc_authority_applications_sync(void);
 int svc_authority_constrain_application(const struct svc_runtime *, int);
 int svc_authority_resolve(const struct channel_message *, struct svc_domain *,
     struct svc_runtime **);
+uid_t svc_authority_personal_uid(const struct svc_domain *, const struct channel_sender *);
 const char *svc_authority_label(const struct svc_domain *);
 int svc_authority_bind(const struct svc_domain *, int);
+int svc_authority_bind_invocation(const struct svc_domain *, int);
 void svc_authority_revoke_unit(const struct svc_runtime *);
 void svc_authority_collect(void);
 void svc_authority_teardown(void);

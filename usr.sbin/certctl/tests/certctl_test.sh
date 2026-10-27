@@ -328,6 +328,21 @@ misc_body()
 	    env DISTBASE=base certctl -n rehash
 }
 
+atf_test_case failures
+failures_head()
+{
+	atf_set "descr" "Reject invalid inputs and report certificate output failures"
+	atf_set "require.progs" "certctl openssl python3.12"
+	atf_set "require.user" "unprivileged"
+}
+failures_body()
+{
+	atf_check -s exit:0 -o empty -e match:"OK" \
+	    env CERTCTL_TEST_TOOL="$(command -v certctl)" \
+	    CERTCTL_TEST_OPENSSL="$(command -v openssl)" \
+	    python3.12 -B "$(atf_get_srcdir)/failure_test.py"
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case rehash
@@ -336,4 +351,5 @@ atf_init_test_cases()
 	atf_add_test_case untrust
 	atf_add_test_case metalog
 	atf_add_test_case misc
+	atf_add_test_case failures
 }

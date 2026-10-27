@@ -101,6 +101,12 @@ channel_pair_link(struct mac_capability_instance *a,
 }
 
 static struct mac_capability_service *channel_svc;
+
+bool
+mac_capability_channel_is_service(const struct mac_capability_service *svc)
+{
+	return (channel_svc != NULL && svc == channel_svc);
+}
 static volatile uint64_t channel_next_badge = 1;
 
 static int

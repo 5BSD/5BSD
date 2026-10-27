@@ -122,12 +122,47 @@ When the kernel processes this line, a
 .Li mountroot>
 command-line prompt is displayed.
 At this prompt, the operator can enter the root mount.
+.It Ic .verity Ar backing name workers cache-blocks window-bytes heap-bytes
+With the
+.Dv GEOM_VERITY
+kernel option, construct a read-only verified-block provider named
+.Ar name
+on the existing GEOM provider
+.Ar backing .
+Geometry, salt and root digest come from exactly one structurally valid
+.Li bip_root_descriptor
+preload.
+The four numeric parameters are explicit nonnegative decimal integers;
+the provider validates their supported ranges and memory budget.
+Trailing arguments are rejected.
+The budget covers requested worker records and buffers, not kernel stacks,
+filesystem caches or upstream I/O queues.
+.Pp
+This directive does not import a pool, attach a backing file, mount the new
+provider or authenticate a descriptor signer.
+The preload type and a matching device name are not evidence of trusted boot.
+With GEOM_VERITY enabled, supplying a root descriptor or attempting this directive
+requires the final mounted root to match that descriptor through the live
+read-only verifier before mountroot completion.
+Missing, invalid or mismatched roots panic, including fallback to the backing
+filesystem after a failed stage.
+Boots with neither a descriptor nor a verity directive keep conventional behavior.
+For verified-root staging, the previous root must be placed at /.mount and
+devfs at /dev. These must be directories on the selected root, not symlinks,
+the root directory itself, or existing mountpoints. Placement errors stop boot;
+the conventional /mnt fallback is disabled.
+A hardened boot policy must independently establish descriptor authority and
+protect the runtime storage boundary.
 .It Ic .md Ar file
-Create a memory backed
+Create a read-only, vnode-backed
 .Xr md 4
 virtual disk, using
 .Ar file
 as the backing store.
+The file is read on demand; this directive does not preload the entire image
+into memory.
+Read-only attachment does not authenticate the file or prevent modification
+through other access to its backing storage.
 .It Ic .onfail Ar [panic|reboot|retry|continue]
 If after parsing all the lines in
 .Pa .mount.conf

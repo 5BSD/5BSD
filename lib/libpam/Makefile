@@ -30,4 +30,10 @@ SUBDIR+=	static_libpam
 SUBDIR_DEPEND_static_libpam= modules
 SUBDIR_PARALLEL=
 
+.include <src.opts.mk>
+.if ${MK_TESTS} != "no"
+SUBDIR+= tests
+SUBDIR_DEPEND_tests= libpam
+.endif
+
 .include <bsd.subdir.mk>

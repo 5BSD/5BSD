@@ -25,8 +25,7 @@ LDIRS=	BSD_daemon \
 	ses \
 	scsi_target \
 	sound \
-	sunrpc \
-	ypldap
+	sunrpc
 
 
 SE_DIRS+=	BSD_daemon
@@ -337,9 +336,12 @@ SE_UEFISIGN=	uefikeys
 SE_UEFISIGNPACKAGE=efi-tools
 .endif
 
+.if ${MK_NIS} != "no"
+LDIRS+=		ypldap
 SE_DIRS+=	ypldap
 SE_YPLDAP=	ypldap.conf
 SE_YPLDAPPACKAGE=yp
+.endif
 
 .if ${MK_HAST} != "no"
 LDIRS+=		hast

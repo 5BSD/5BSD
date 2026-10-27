@@ -3493,6 +3493,12 @@ swapongeom(struct vnode *vp, int priority, int trimflags)
 	int error;
 
 	ASSERT_VOP_ELOCKED(vp, "swapongeom");
+#ifdef MAC
+	/* GEOM swap must observe the same policy as vnode-backed swap. */
+	error = mac_system_check_swapon(curthread->td_ucred, vp);
+	if (error != 0)
+		return (error);
+#endif
 	if (vp->v_type != VCHR || VN_IS_DOOMED(vp)) {
 		error = ENOENT;
 	} else {

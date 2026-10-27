@@ -115,6 +115,11 @@ list allows access at any
 time, except if a given time is falls within a period in the
 .Em times.deny
 list.
+When a login class is supplied, a time value of
+.Li "(time_t)-1"
+or failure to convert the value to local time denies access.
+The Unix epoch value zero is evaluated normally against the time lists.
+.Pp
 The format of time period records contained in both
 .Em times.allow
 and
@@ -131,6 +136,18 @@ in the
 access list, or is within the
 .Em deny
 access list.
+Allocation failure while loading a host, terminal or time restriction
+also denies access.
+An absent restriction remains distinct from a failed lookup.
+Malformed time expressions and time lists exceeding LC_MAXTIMES entries deny
+access.
+.Sh CAVEATS
+The underlying login-capability routines use shared temporary storage.
+Separate
+.Vt login_cap_t
+objects do not isolate that storage.
+Applications performing concurrent account checks must coordinate calls to
+those routines; these interfaces do not provide a thread-safety guarantee.
 .Sh SEE ALSO
 .Xr getcap 3 ,
 .Xr login_cap 3 ,

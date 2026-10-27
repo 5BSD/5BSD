@@ -41,6 +41,7 @@
 #include <sys/systm.h>
 #include <sys/acct.h>		/* for acct_process() function prototype */
 #include <sys/capsicum.h>
+#include <sys/cap_authority.h>
 #include <sys/eventhandler.h>
 #include <sys/exterrvar.h>
 #include <sys/filedesc.h>
@@ -392,6 +393,7 @@ exit1(struct thread *td, int rval, int signo)
 
 	/* Note that we are exiting. */
 	p->p_flag |= P_WEXIT;
+	cap_authority_invocation_invalidate_locked(p);
 
 	/*
 	 * Wait for any processes that have a hold on our vmspace to

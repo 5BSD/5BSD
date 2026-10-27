@@ -169,7 +169,8 @@ typedef enum ucl_parser_flags {
 	UCL_PARSER_NO_IMPLICIT_ARRAYS = (1 << 3), /** Create explicit arrays instead of implicit ones */
 	UCL_PARSER_SAVE_COMMENTS = (1 << 4),      /** Save comments in the parser context */
 	UCL_PARSER_DISABLE_MACRO = (1 << 5),      /** Treat macros as comments */
-	UCL_PARSER_NO_FILEVARS = (1 << 6)         /** Do not set file vars */
+	UCL_PARSER_NO_FILEVARS = (1 << 6),        /** Do not set file vars */
+	UCL_PARSER_REJECT_MACRO = (1 << 7)        /** Reject macros instead of executing them */
 } ucl_parser_flags_t;
 
 /**

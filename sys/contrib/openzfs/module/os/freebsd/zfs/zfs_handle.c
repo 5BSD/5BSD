@@ -32,6 +32,7 @@
 #include <sys/filio.h>
 #include <sys/namei.h>
 #include <sys/vnode.h>
+#include <sys/cmn_err.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
@@ -54,8 +55,11 @@
 #endif
 
 #include <sys/dmu.h>
+#include <sys/dmu_recv.h>
 #include <sys/dmu_objset.h>
 #include <sys/dsl_dataset.h>
+#include <sys/txg.h>
+#include <sys/dsl_dir.h>
 #include <sys/dsl_deleg.h>
 #include <sys/dsl_destroy.h>
 #include <sys/dsl_pool.h>
@@ -68,6 +72,7 @@
 #include <sys/spa.h>
 #include <sys/zfs_ioctl.h>
 #include <sys/zfs_vfsops.h>
+#include <sys/zfs_znode.h>
 #include <sys/zfs_ioctl_impl.h>
 #include <sys/zvol.h>
 
@@ -281,7 +286,7 @@ static int	zfshandle_ioc_flags(uint64_t, const char *, const char *,
 static int	zfshandle_ioc(uint64_t, const char *, const char *,
 		    uint64_t, nvlist_t *, nvlist_t **);
 static int	zfshandle_mint_child(struct thread *, struct zfshandle *,
-		    const char *, uint64_t, uint32_t, int32_t *);
+		    const char *, uint64_t, uint32_t, u_long, int32_t *);
 static fo_poll_t	zfshandle_poll;
 static fo_kqfilter_t	zfshandle_kqfilter;
 static fo_stat_t	zfshandle_stat;
@@ -898,7 +903,7 @@ zfshandle_op_pool_root_open(zfshandle_t *zh, struct zpd_root_open_args *args,
 	if (error != 0)
 		return (error);
 	return (zfshandle_mint_child(td, zh, name, args->zr_rights,
-	    args->zr_flags, &args->zr_fd));
+	    args->zr_flags, ZPD_ROOT_OPEN, &args->zr_fd));
 }
 
 int
@@ -1099,11 +1104,13 @@ zfshandle_op_get_props(zfshandle_t *zh, struct zfd_get_props_args *args)
 	return (error);
 }
 
+
 static int
 zfshandle_op_set_prop(zfshandle_t *zh, struct zfd_set_prop_args *args)
 {
 	char name[ZFS_MAX_DATASET_NAME_LEN];
 	nvlist_t *nvl;
+	zfs_prop_t prop;
 	int error;
 
 	if (zfshandle_str_validate(args->zsp_name,
@@ -1117,12 +1124,24 @@ zfshandle_op_set_prop(zfshandle_t *zh, struct zfd_set_prop_args *args)
 	if (error != 0)
 		return (error);
 
+	/* The ioctl pipeline assumes native read-only properties were rejected
+	 * by its userspace frontend. This typed kernel API must do that too. */
+	prop = zfs_name_to_prop(args->zsp_name);
+	if (prop != ZPROP_USERPROP && zfs_prop_readonly(prop))
+		return (SET_ERROR(EINVAL));
+
+
 	nvl = fnvlist_alloc();
 	if (args->zsp_is_string)
 		fnvlist_add_string(nvl, args->zsp_name, args->zsp_strval);
 	else
 		fnvlist_add_uint64(nvl, args->zsp_name, args->zsp_intval);
-	error = dsl_props_set(name, ZPROP_SRC_LOCAL, nvl);
+	/* Use the normal property pipeline: validation and special setters are
+	 * required for quotas, reservations and filesystem/snapshot counters.
+	 * Writing the property ZAP directly can report success without enabling
+	 * the corresponding enforcement state. ZH_PROPS_WRITE was checked by
+	 * dispatch; the scoped credential preserves configured limit checks. */
+	error = zfshandle_ioc(ZFS_IOC_SET_PROP, name, NULL, 0, nvl, NULL);
 	nvlist_free(nvl);
 	return (error);
 }
@@ -1144,6 +1163,9 @@ zfshandle_snapname(zfshandle_t *zh, const char *component, char *buf,
 		return (SET_ERROR(ENAMETOOLONG));
 	return (0);
 }
+
+static cred_t *zfshandle_cred_enter_from(cred_t *);
+static void zfshandle_cred_exit(cred_t *);
 
 static int
 zfshandle_op_snapshot(zfshandle_t *zh, struct zfd_snapshot_args *args,
@@ -1168,7 +1190,12 @@ zfshandle_op_snapshot(zfshandle_t *zh, struct zfd_snapshot_args *args,
 
 	snaps = fnvlist_alloc();
 	fnvlist_add_boolean(snaps, full);
+	/* Retain the caller's identity, but do not let UID/property privileges
+	 * waive snapshot limits for this capability-authorized operation. The
+	 * DSL snapshots the scoped credential for its transaction checks. */
+	cred_t *saved = zfshandle_cred_enter_from(CRED());
 	error = dsl_dataset_snapshot(snaps, NULL, NULL);
+	zfshandle_cred_exit(saved);
 	nvlist_free(snaps);
 	return (error);
 }
@@ -1196,6 +1223,38 @@ zfshandle_op_snap_destroy(zfshandle_t *zh, struct zfd_snapshot_args *args,
 #endif
 	return (dsl_destroy_snapshot(full, B_FALSE));
 }
+
+#ifdef MAC
+/* Pin the implicit "latest" choice to one actual snapshot before admission.
+ * Passing its name to dsl_dataset_rollback also retains the DSL transaction's
+ * check that this exact snapshot remains the most recent rollback target. */
+static int
+zfshandle_latest_snapshot(zfshandle_t *zh, char *name)
+{
+	dsl_pool_t *dp;
+	dsl_dataset_t *ds, *snapshot;
+	int error;
+
+	sx_assert(&zfshandle_namespace_sx, SA_XLOCKED);
+	error = zfshandle_hold(zh, FTAG, &dp, &ds);
+	if (error != 0)
+		return (error);
+	if (ds->ds_is_snapshot)
+		error = SET_ERROR(EINVAL);
+	else if (dsl_dataset_phys(ds)->ds_prev_snap_txg < TXG_INITIAL)
+		error = SET_ERROR(ESRCH);
+	else {
+		error = dsl_dataset_hold_obj(dp,
+		    dsl_dataset_phys(ds)->ds_prev_snap_obj, FTAG, &snapshot);
+		if (error == 0) {
+			dsl_dataset_name(snapshot, name);
+			dsl_dataset_rele(snapshot, FTAG);
+		}
+	}
+	zfshandle_rele(dp, ds, FTAG);
+	return (error);
+}
+#endif
 
 static int
 zfshandle_op_rollback(zfshandle_t *zh, struct zfd_rollback_args *args,
@@ -1225,8 +1284,13 @@ zfshandle_op_rollback(zfshandle_t *zh, struct zfd_rollback_args *args,
 		tgt = target;
 	}
 #ifdef MAC
-	error = mac_mount_check_snapshot_revert(cred,
-	    tgt != NULL ? tgt : name);
+	if (tgt == NULL) {
+		error = zfshandle_latest_snapshot(zh, target);
+		if (error != 0)
+			return (error);
+		tgt = target;
+	}
+	error = mac_mount_check_snapshot_revert(cred, tgt);
 	if (error != 0)
 		return (error);
 #endif
@@ -1365,29 +1429,42 @@ zfshandle_op_openat(zfshandle_t *zh, struct zfd_openat_args *args,
  * visibility still applies (it checks curproc, not the thread cred) — a
  * jailed holder remains confined to jail-visible datasets in Phase 2.
  */
+/* A private credential carries the limit policy into deferred DSL checks.
+ * Never mark the shared kernel or process credential. The marker only removes
+ * administrative limit exemptions; it grants no operation or property right. */
 static cred_t *
-zfshandle_cred_enter(void)
+zfshandle_cred_enter_from(cred_t *base)
 {
 	struct thread *td = curthread;
 	cred_t *saved = td->td_ucred;
+	cred_t *scoped = crdup(base);
 
-	crhold(kcred);
-	td->td_ucred = kcred;
+	scoped->cr_flags |= CRED_FLAG_CAPABILITY_LIMITS;
+	td->td_ucred = scoped;
 	return (saved);
+}
+
+static cred_t *
+zfshandle_cred_enter(void)
+{
+
+	return (zfshandle_cred_enter_from(kcred));
 }
 
 static void
 zfshandle_cred_exit(cred_t *saved)
 {
 	struct thread *td = curthread;
+	cred_t *scoped = td->td_ucred;
 
 	td->td_ucred = saved;
-	crfree(kcred);
+	crfree(scoped);
 }
 
 static int
-zfshandle_ioc_flags(uint64_t ioc, const char *name, const char *value,
-    uint64_t cookie, uint64_t zflags, nvlist_t *innvl, nvlist_t **outnvlp)
+zfshandle_ioc_context(uint64_t ioc, const char *name, const char *value,
+    uint64_t cookie, uint64_t zflags, nvlist_t *innvl, nvlist_t **outnvlp,
+    const dmu_recv_io_t *io)
 {
 	const size_t dstlen = 128 * 1024;
 	zfs_cmd_t *zc;
@@ -1420,7 +1497,12 @@ zfshandle_ioc_flags(uint64_t ioc, const char *name, const char *value,
 	zc->zc_nvlist_dst_size = dstlen;
 
 	saved = zfshandle_cred_enter();
-	error = zfsdev_ioctl_common(ioc - ZFS_IOC_FIRST, zc, FKIOCTL);
+	if (io != NULL) {
+		ASSERT3U(ioc, ==, ZFS_IOC_RECV_NEW);
+		error = zfsdev_ioctl_recv_io(zc, io);
+	} else {
+		error = zfsdev_ioctl_common(ioc - ZFS_IOC_FIRST, zc, FKIOCTL);
+	}
 	zfshandle_cred_exit(saved);
 
 	if (error == 0 && outnvlp != NULL && zc->zc_nvlist_dst_filled)
@@ -1431,6 +1513,14 @@ zfshandle_ioc_flags(uint64_t ioc, const char *name, const char *value,
 	vmem_free(dst, dstlen);
 	vmem_free(zc, sizeof (*zc));
 	return (error);
+}
+
+static int
+zfshandle_ioc_flags(uint64_t ioc, const char *name, const char *value,
+    uint64_t cookie, uint64_t zflags, nvlist_t *innvl, nvlist_t **outnvlp)
+{
+	return (zfshandle_ioc_context(ioc, name, value, cookie, zflags,
+	    innvl, outnvlp, NULL));
 }
 
 static int
@@ -1477,7 +1567,7 @@ zfshandle_relname(zfshandle_t *zh, const char *relname, boolean_t allow_self,
 /* Mint a handle for a dataset by full name and install it as an fd. */
 static int
 zfshandle_mint_child(struct thread *td, zfshandle_t *zh, const char *full,
-    uint64_t rights, uint32_t flags, int32_t *fdp)
+    uint64_t rights, uint32_t flags, u_long command, int32_t *fdp)
 {
 	zfshandle_t *nzh;
 	objset_t *os;
@@ -1517,6 +1607,27 @@ zfshandle_mint_child(struct thread *td, zfshandle_t *zh, const char *full,
 	return (0);
 }
 
+/* Creation has succeeded, but descriptor publication can still fail.
+ * Preserve that failure for callers; report an unsuccessful rollback instead
+ * of silently leaving a newly created dataset behind. The namespace gate
+ * remains held across publication and rollback, as for the original mutation. */
+static int
+zfshandle_publish_child(struct thread *td, zfshandle_t *zh, const char *full,
+    uint64_t rights, uint32_t flags, u_long command, int32_t *fdp)
+{
+	int error, cleanup_error;
+
+	error = zfshandle_mint_child(td, zh, full, rights, flags, command, fdp);
+	if (error == 0)
+		return (0);
+	cleanup_error = zfshandle_ioc(ZFS_IOC_DESTROY, full, NULL, 0, NULL, NULL);
+	if (cleanup_error != 0)
+		cmn_err(CE_WARN, "TrustedZFS: child %s publication failed (%d); "
+		    "cleanup failed (%d), dataset may remain", full, error,
+		    cleanup_error);
+	return (error);
+}
+
 static int
 zfshandle_op_create(zfshandle_t *zh, struct zfd_create_args *args,
     struct thread *td)
@@ -1545,6 +1656,7 @@ zfshandle_op_create(zfshandle_t *zh, struct zfd_create_args *args,
 	if (error != 0)
 		return (error);
 
+
 	innvl = fnvlist_alloc();
 	fnvlist_add_int32(innvl, "type",
 	    args->zc_type == ZFD_TYPE_VOLUME ? DMU_OST_ZVOL : DMU_OST_ZFS);
@@ -1562,11 +1674,8 @@ zfshandle_op_create(zfshandle_t *zh, struct zfd_create_args *args,
 	if (error != 0)
 		return (error);
 
-	error = zfshandle_mint_child(td, zh, full, zh->zh_rights,
-	    args->zc_handle_flags, &args->zc_fd);
-	if (error != 0)
-		(void) zfshandle_ioc(ZFS_IOC_DESTROY, full, NULL, 0, NULL, NULL);
-	return (error);
+	return (zfshandle_publish_child(td, zh, full, zh->zh_rights,
+	    args->zc_handle_flags, ZFD_CREATE, &args->zc_fd));
 }
 
 static int
@@ -1593,7 +1702,8 @@ zfshandle_op_destroy(zfshandle_t *zh, struct zfd_destroy_args *args,
 }
 
 static int
-zfshandle_op_rename(zfshandle_t *zh, struct zfd_rename_args *args)
+zfshandle_op_rename(zfshandle_t *zh, struct zfd_rename_args *args,
+    struct ucred *cred)
 {
 	char from[ZFS_MAX_DATASET_NAME_LEN];
 	char to[ZFS_MAX_DATASET_NAME_LEN];
@@ -1606,37 +1716,23 @@ zfshandle_op_rename(zfshandle_t *zh, struct zfd_rename_args *args)
 	    strchr(args->zr_to, '@') != NULL ||
 	    strchr(args->zr_from, '@') != NULL)
 		return (SET_ERROR(EINVAL));
-	error = zfshandle_relname(zh, args->zr_from, B_TRUE, from,
+	/* Rename changes both parent namespaces. Authority over the dataset
+	 * itself does not authorize modifying its containing namespace, even
+	 * for a one-component destination. Both endpoints must be descendants
+	 * of this same granted subtree. */
+	if ((zh->zh_flags & ZHF_SUBTREE) == 0 || args->zr_from[0] == '\0')
+		return (SET_ERROR(ENOTCAPABLE));
+	error = zfshandle_relname(zh, args->zr_from, B_FALSE, from,
 	    sizeof (from));
 	if (error != 0)
 		return (error);
-	/*
-	 * The destination is always relative to the handle: renaming self
-	 * still cannot move the dataset out of the grant.
-	 */
-	if (args->zr_from[0] == '\0' && (zh->zh_flags & ZHF_SUBTREE) == 0) {
-		/*
-		 * Self-rename on a non-subtree handle: the new name replaces
-		 * the last component of the current name.
-		 */
-		char *slash = strrchr(from, '/');
-
-		if (slash == NULL)
-			return (SET_ERROR(EINVAL));
-		if (snprintf(to, sizeof (to), "%.*s/%s",
-		    (int)(slash - from), from, args->zr_to) >=
-		    (int)sizeof (to))
-			return (SET_ERROR(ENAMETOOLONG));
-		if (entity_namecheck(to, NULL, NULL) != 0)
-			return (SET_ERROR(EINVAL));
-	} else {
-		error = zfshandle_relname(zh, args->zr_to, B_FALSE, to,
-		    sizeof (to));
-		if (error != 0)
-			return (error);
-	}
+	error = zfshandle_relname(zh, args->zr_to, B_FALSE, to,
+	    sizeof (to));
+	if (error != 0)
+		return (error);
 	return (zfshandle_ioc(ZFS_IOC_RENAME, from, to, 0, NULL, NULL));
 }
+
 
 static int
 zfshandle_op_clone(zfshandle_t *zh, struct zfd_clone_args *args,
@@ -1696,10 +1792,12 @@ zfshandle_op_clone(zfshandle_t *zh, struct zfd_clone_args *args,
 		return (SET_ERROR(EINVAL));
 	}
 
+
 	error = zfshandle_relname(zh, args->zc_relname, B_FALSE, full,
 	    sizeof (full));
 	if (error != 0)
 		return (error);
+
 
 	innvl = fnvlist_alloc();
 	fnvlist_add_string(innvl, "origin", origin);
@@ -1708,11 +1806,8 @@ zfshandle_op_clone(zfshandle_t *zh, struct zfd_clone_args *args,
 	if (error != 0)
 		return (error);
 
-	error = zfshandle_mint_child(td, zh, full, zh->zh_rights, 0,
-	    &args->zc_fd);
-	if (error != 0)
-		(void) zfshandle_ioc(ZFS_IOC_DESTROY, full, NULL, 0, NULL, NULL);
-	return (error);
+	return (zfshandle_publish_child(td, zh, full, zh->zh_rights,
+	    0, ZFD_CLONE, &args->zc_fd));
 }
 
 /* Compose the full snapshot name for stream/hold verbs. */
@@ -1791,13 +1886,89 @@ zfshandle_send_finish(zfshandle_t *zh, int error)
 	mutex_exit(&zss->zss_lock);
 }
 
+/* Pin the admitted snapshots before dropping namespace serialization. The
+ * numeric-object send path cannot substitute an object after a rename, and
+ * long holds prevent destruction/reuse until streaming has finished. */
+static int
+zfshandle_send_pinned(zfshandle_t *zh, const char *full, const char *from,
+    struct zfd_send_args *args)
+{
+	dsl_pool_t *dp;
+	dsl_dataset_t *snapshot, *base = NULL;
+	zfs_cmd_t *zc;
+	cred_t *saved;
+	int error;
+
+	sx_assert(&zfshandle_namespace_sx, SA_XLOCKED);
+	zc = vmem_zalloc(sizeof(*zc), KM_SLEEP);
+	error = dsl_pool_hold(full, zc, &dp);
+	if (error != 0)
+		goto out;
+	if (spa_guid(dp->dp_spa) != zh->zh_pool_guid) {
+		error = SET_ERROR(ENXIO);
+		goto drop_pool;
+	}
+	error = dsl_dataset_hold(dp, full, zc, &snapshot);
+	if (error != 0)
+		goto drop_pool;
+	if (!dsl_dataset_is_snapshot(snapshot)) {
+		error = SET_ERROR(EINVAL);
+		goto drop_snapshot;
+	}
+	if (from[0] != '\0') {
+		error = dsl_dataset_hold(dp, from, zc, &base);
+		if (error != 0)
+			goto drop_snapshot;
+		if (!dsl_dataset_is_snapshot(base)) {
+			error = SET_ERROR(EINVAL);
+			goto drop_base;
+		}
+	}
+	(void)strlcpy(zc->zc_name, full, sizeof(zc->zc_name));
+	zc->zc_sendobj = snapshot->ds_object;
+	zc->zc_fromobj = base != NULL ? base->ds_object : 0;
+	zc->zc_cookie = args->zs_out_fd;
+	/* These four flags share the legacy SEND ioctl ABI, which drives
+	 * dmu_send_obj and the normal output descriptor/feature checks. */
+	CTASSERT(ZFD_SEND_EMBED == 0x1 && ZFD_SEND_LARGEBLOCK == 0x2 &&
+	    ZFD_SEND_COMPRESS == 0x4 && ZFD_SEND_RAW == 0x8);
+	zc->zc_flags = args->zs_flags;
+	dsl_dataset_long_hold(snapshot, zc);
+	if (base != NULL)
+		dsl_dataset_long_hold(base, zc);
+	dsl_pool_rele(dp, zc);
+	/* Never hold the namespace gate while waiting for output consumers.
+	 * Dataset references, not names, now carry the admitted identity. */
+	sx_xunlock(&zfshandle_namespace_sx);
+	saved = zfshandle_cred_enter();
+	error = zfsdev_ioctl_common(ZFS_IOC_SEND - ZFS_IOC_FIRST, zc, FKIOCTL);
+	zfshandle_cred_exit(saved);
+	if (base != NULL) {
+		dsl_dataset_long_rele(base, zc);
+		dsl_dataset_rele(base, zc);
+	}
+	dsl_dataset_long_rele(snapshot, zc);
+	dsl_dataset_rele(snapshot, zc);
+	sx_xlock(&zfshandle_namespace_sx);
+	goto out;
+drop_base:
+	if (base != NULL)
+		dsl_dataset_rele(base, zc);
+drop_snapshot:
+	dsl_dataset_rele(snapshot, zc);
+drop_pool:
+	dsl_pool_rele(dp, zc);
+out:
+	vmem_free(zc, sizeof(*zc));
+	return (error);
+}
+
 static int
 zfshandle_op_send(zfshandle_t *zh, struct zfd_send_args *args,
     struct ucred *cred)
 {
 	char full[ZFS_MAX_DATASET_NAME_LEN];
-	char from[ZFS_MAX_DATASET_NAME_LEN];
-	nvlist_t *innvl;
+	char from[ZFS_MAX_DATASET_NAME_LEN] = {0};
 	int error;
 
 	if (zfshandle_str_validate(args->zs_snapname,
@@ -1817,8 +1988,6 @@ zfshandle_op_send(zfshandle_t *zh, struct zfd_send_args *args,
 		return (error);
 #endif
 
-	innvl = fnvlist_alloc();
-	fnvlist_add_int32(innvl, "fd", args->zs_out_fd);
 	if (args->zs_fromsnap[0] != '\0') {
 		char *at = strchr(full, '@');
 
@@ -1827,29 +1996,109 @@ zfshandle_op_send(zfshandle_t *zh, struct zfd_send_args *args,
 		    snprintf(from, sizeof (from), "%.*s@%s",
 		    (int)(at - full), full, args->zs_fromsnap) >=
 		    (int)sizeof (from)) {
-			nvlist_free(innvl);
 			return (SET_ERROR(EINVAL));
 		}
-		fnvlist_add_string(innvl, "fromsnap", from);
 	}
-	if (args->zs_flags & ZFD_SEND_EMBED)
-		fnvlist_add_boolean(innvl, "embedok");
-	if (args->zs_flags & ZFD_SEND_LARGEBLOCK)
-		fnvlist_add_boolean(innvl, "largeblockok");
-	if (args->zs_flags & ZFD_SEND_COMPRESS)
-		fnvlist_add_boolean(innvl, "compressok");
-	if (args->zs_flags & ZFD_SEND_RAW)
-		fnvlist_add_boolean(innvl, "rawok");
-
 	error = zfshandle_send_begin(zh);
-	if (error != 0) {
-		nvlist_free(innvl);
+	if (error != 0)
 		return (error);
-	}
-	error = zfshandle_ioc(ZFS_IOC_SEND_NEW, full, NULL, 0, innvl, NULL);
-	nvlist_free(innvl);
+	error = zfshandle_send_pinned(zh, full, from, args);
 	zfshandle_send_finish(zh, error);
 	return (error);
+}
+
+struct zfshandle_recv_id {
+	uint64_t object, guid;
+};
+struct zfshandle_recv_context {
+	zfshandle_t *root;
+	char rootname[ZFS_MAX_DATASET_NAME_LEN];
+	char parent[ZFS_MAX_DATASET_NAME_LEN];
+	char target[ZFS_MAX_DATASET_NAME_LEN];
+	struct zfshandle_recv_id parent_id, target_id;
+	boolean_t target_exists;
+};
+
+static int
+zfshandle_recv_identity(uint64_t pool, const char *name,
+    struct zfshandle_recv_id *identity)
+{
+	dsl_pool_t *dp;
+	dsl_dataset_t *ds;
+	int error;
+
+	sx_assert(&zfshandle_namespace_sx, SA_XLOCKED);
+	error = dsl_pool_hold(name, FTAG, &dp);
+	if (error != 0)
+		return (error);
+	if (spa_guid(dp->dp_spa) != pool) {
+		dsl_pool_rele(dp, FTAG);
+		return (SET_ERROR(ENXIO));
+	}
+	error = dsl_dataset_hold(dp, name, FTAG, &ds);
+	if (error == 0) {
+		identity->object = ds->ds_object;
+		identity->guid = dsl_dataset_phys(ds)->ds_guid;
+		dsl_dataset_rele(ds, FTAG);
+	}
+	dsl_pool_rele(dp, FTAG);
+	return (error);
+}
+
+static boolean_t
+zfshandle_recv_same(const struct zfshandle_recv_id *a,
+    const struct zfshandle_recv_id *b)
+{
+	return (a->object == b->object && a->guid == b->guid);
+}
+
+static int
+zfshandle_recv_validate(struct zfshandle_recv_context *ctx,
+    const dmu_recv_cookie_t *drc)
+{
+	struct zfshandle_recv_id actual, expected = ctx->target_id;
+	char rootname[ZFS_MAX_DATASET_NAME_LEN];
+	boolean_t exists = ctx->target_exists;
+	int error;
+
+	/* Root/parent replacement is distinct from target replacement. Capture
+	 * and compare actual objects; a matching pathname alone is not enough. */
+	if (zfshandle_resolve_name(ctx->root, rootname, sizeof(rootname)) != 0 ||
+	    strcmp(rootname, ctx->rootname) != 0 ||
+	    zfshandle_recv_identity(ctx->root->zh_pool_guid, ctx->parent,
+	    &actual) != 0 || !zfshandle_recv_same(&actual, &ctx->parent_id))
+		return (SET_ERROR(ESTALE));
+	/* BEGIN may read payload before creating anything. Once a new receive
+	 * owns its dataset, that owned object becomes the only acceptable target. */
+	if (!exists && drc->drc_newfs && drc->drc_ds != NULL) {
+		expected.object = drc->drc_ds->ds_object;
+		expected.guid = dsl_dataset_phys(drc->drc_ds)->ds_guid;
+		exists = B_TRUE;
+	}
+	error = zfshandle_recv_identity(ctx->root->zh_pool_guid, ctx->target,
+	    &actual);
+	if (!exists)
+		return (error == ENOENT ? 0 : SET_ERROR(ESTALE));
+	return (error == 0 && zfshandle_recv_same(&actual, &expected) ?
+	    0 : SET_ERROR(ESTALE));
+}
+
+static int
+zfshandle_recv_read(dmu_recv_cookie_t *drc, void *buffer, size_t length,
+    ssize_t *resid, void *argument)
+{
+	struct zfshandle_recv_context *ctx = argument;
+	int error, scope_error;
+
+	sx_assert(&zfshandle_namespace_sx, SA_XLOCKED);
+	sx_xunlock(&zfshandle_namespace_sx);
+	error = zfs_file_read(drc->drc_fp, buffer, length, resid);
+	sx_xlock(&zfshandle_namespace_sx);
+	scope_error = zfshandle_recv_validate(ctx, drc);
+	/* Restore serialization even on EOF, interruption or replacement. The
+	 * normal receive failure path cleans its owned staging object while
+	 * name-based commit/property handling cannot run on a replacement. */
+	return (scope_error != 0 ? scope_error : error);
 }
 
 static int
@@ -1859,6 +2108,9 @@ zfshandle_op_recv(zfshandle_t *zh, struct zfd_recv_args *args,
 	char full[ZFS_MAX_DATASET_NAME_LEN];
 	char fsname[ZFS_MAX_DATASET_NAME_LEN];
 	nvlist_t *innvl;
+	struct zfshandle_recv_context context = {.root = zh};
+	dmu_recv_io_t io = {.read = zfshandle_recv_read, .argument = &context};
+	char *slash;
 	char *at;
 	int error;
 
@@ -1879,6 +2131,25 @@ zfshandle_op_recv(zfshandle_t *zh, struct zfd_recv_args *args,
 		return (error);
 #endif
 
+	/* All bindings are obtained under the admission gate, before any read
+	 * can release it. Typed receive supplies no name-based property lists. */
+	error = zfshandle_resolve_name(zh, context.rootname, sizeof(context.rootname));
+	if (error != 0)
+		return (error);
+	(void)strlcpy(context.target, fsname, sizeof(context.target));
+	(void)strlcpy(context.parent, fsname, sizeof(context.parent));
+	slash = strrchr(context.parent, '/');
+	if (slash == NULL)
+		return (SET_ERROR(EINVAL));
+	*slash = '\0';
+	error = zfshandle_recv_identity(zh->zh_pool_guid, context.parent, &context.parent_id);
+	if (error != 0)
+		return (error);
+	error = zfshandle_recv_identity(zh->zh_pool_guid, fsname, &context.target_id);
+	if (error != 0 && error != ENOENT)
+		return (error);
+	context.target_exists = error == 0;
+
 	innvl = fnvlist_alloc();
 	fnvlist_add_string(innvl, "snapname", full);
 	fnvlist_add_byte_array(innvl, "begin_record",
@@ -1887,8 +2158,8 @@ zfshandle_op_recv(zfshandle_t *zh, struct zfd_recv_args *args,
 	if (args->zr_force)
 		fnvlist_add_boolean(innvl, "force");
 
-	error = zfshandle_ioc(ZFS_IOC_RECV_NEW, fsname, NULL, 0, innvl,
-	    NULL);
+	error = zfshandle_ioc_context(ZFS_IOC_RECV_NEW, fsname, NULL, 0, 0,
+	    innvl, NULL, &io);
 	nvlist_free(innvl);
 	return (error);
 }
@@ -1899,7 +2170,7 @@ zfshandle_op_hold(zfshandle_t *zh, struct zfd_hold_args *args,
 {
 	char full[ZFS_MAX_DATASET_NAME_LEN];
 	char pool[ZFS_MAX_DATASET_NAME_LEN];
-	nvlist_t *innvl, *holds;
+	nvlist_t *innvl, *holds, *errors = NULL;
 	char *slash;
 	int error;
 
@@ -1927,7 +2198,7 @@ zfshandle_op_hold(zfshandle_t *zh, struct zfd_hold_args *args,
 		fnvlist_add_nvlist(innvl, "holds", holds);
 		nvlist_free(holds);
 		error = zfshandle_ioc(ZFS_IOC_HOLD, pool, NULL, 0, innvl,
-		    NULL);
+		    &errors);
 	} else {
 		nvlist_t *tags = fnvlist_alloc();
 
@@ -1936,9 +2207,25 @@ zfshandle_op_hold(zfshandle_t *zh, struct zfd_hold_args *args,
 		fnvlist_add_nvlist(innvl, full, tags);
 		nvlist_free(tags);
 		error = zfshandle_ioc(ZFS_IOC_RELEASE, pool, NULL, 0, innvl,
-		    NULL);
+		    &errors);
 	}
 	nvlist_free(innvl);
+	/* The bulk ioctl reports absent snapshots/tags in its output list
+	 * without failing the whole batch. This handle operation requests
+	 * exactly one snapshot/tag, so any object error is its result. */
+	if (error == 0 && errors != NULL && !nvlist_empty(errors)) {
+		nvpair_t *pair = nvlist_next_nvpair(errors, NULL);
+		int32_t object_error;
+
+		if (nvlist_next_nvpair(errors, pair) != NULL ||
+		    nvpair_value_int32(pair, &object_error) != 0 ||
+		    object_error <= 0)
+			error = SET_ERROR(EIO);
+		else
+			error = object_error;
+	}
+	if (errors != NULL)
+		nvlist_free(errors);
 	return (error);
 }
 
@@ -2043,10 +2330,6 @@ zfshandle_op_get_one_prop(zfshandle_t *zh, struct zfd_get_one_prop_args *args)
 	if (zfshandle_str_validate(args->zgo_name,
 	    sizeof (args->zgo_name), B_TRUE) != 0)
 		return (SET_ERROR(EINVAL));
-	error = zfshandle_resolve_name(zh, name, sizeof (name));
-	if (error != 0)
-		return (error);
-
 	prop = zfs_name_to_prop(args->zgo_name);
 	if (prop == ZPROP_USERPROP) {
 		/*
@@ -2081,20 +2364,56 @@ zfshandle_op_get_one_prop(zfshandle_t *zh, struct zfd_get_one_prop_args *args)
 		return (0);
 	}
 
-	/* Native property: resolves even at its default value. */
-	setpoint[0] = '\0';
-	if (zfs_prop_get_type(prop) == PROP_TYPE_STRING) {
-		error = dsl_prop_get(name, args->zgo_name, 1,
-		    sizeof (args->zgo_strval), args->zgo_strval, setpoint);
+	/* Computed accounting properties are not stored property-ZAP values.
+	 * Ask the normal dataset/directory statistics producers first. */
+	if (zfs_prop_get_type(prop) != PROP_TYPE_STRING) {
+		dsl_pool_t *dp;
+		dsl_dataset_t *ds;
+		nvlist_t *stats, *value;
+
+		error = zfshandle_hold(zh, FTAG, &dp, &ds);
 		if (error != 0)
 			return (error);
-		args->zgo_is_string = 1;
-	} else {
-		error = dsl_prop_get_integer(name, args->zgo_name,
-		    &args->zgo_intval, setpoint);
+		stats = fnvlist_alloc();
+		dsl_dir_stats(ds->ds_dir, stats);
+		dsl_dataset_stats(ds, stats);
+		zfshandle_rele(dp, ds, FTAG);
+		error = nvlist_lookup_nvlist(stats, args->zgo_name, &value);
+		if (error == 0)
+			error = nvlist_lookup_uint64(value, ZPROP_VALUE,
+			    &args->zgo_intval);
+		nvlist_free(stats);
+		if (error == 0) {
+			args->zgo_is_string = 0;
+			args->zgo_source = ZPROP_SRC_NONE;
+			return (0);
+		}
+	}
+
+	/* Native property: read the held identity, never re-resolve its name.
+	 * Capture the name and setpoint under the same pool configuration hold. */
+	{
+		dsl_pool_t *dp;
+		dsl_dataset_t *ds;
+
+		error = zfshandle_hold(zh, FTAG, &dp, &ds);
 		if (error != 0)
 			return (error);
-		args->zgo_is_string = 0;
+		dsl_dataset_name(ds, name);
+		setpoint[0] = '\0';
+		if (zfs_prop_get_type(prop) == PROP_TYPE_STRING) {
+			error = dsl_prop_get_ds(ds, args->zgo_name, 1,
+			    sizeof (args->zgo_strval), args->zgo_strval, setpoint);
+			args->zgo_is_string = 1;
+		} else {
+			error = dsl_prop_get_ds(ds, args->zgo_name,
+			    sizeof (args->zgo_intval), 1, &args->zgo_intval,
+			    setpoint);
+			args->zgo_is_string = 0;
+		}
+		zfshandle_rele(dp, ds, FTAG);
+		if (error != 0)
+			return (error);
 	}
 	args->zgo_source = setpoint[0] == '\0' ? ZPROP_SRC_DEFAULT :
 	    (strcmp(setpoint, name) == 0 ? ZPROP_SRC_LOCAL :
@@ -2398,7 +2717,8 @@ zfshandle_anon_mount(struct thread *td, const char *osname,
 	 * uses the caller's restored cred.
 	 */
 	saved_cred = zfshandle_cred_enter();
-	error = vfs_mount_anon(td, fstype, opts, rdonly ? MNT_RDONLY : 0, mpp);
+	error = vfs_mount_anon(td, fstype, opts, rdonly ? MNT_RDONLY : 0,
+	    saved_cred, mpp);
 	zfshandle_cred_exit(saved_cred);
 	return (error);
 }
@@ -2488,7 +2808,7 @@ zfshandle_anon_release(struct mount *mp, struct thread *td)
 		 * refuse, leaking the mount with no registry entry.
 		 */
 		saved = zfshandle_cred_enter();
-		error = dounmount(mp, MNT_FORCE, td);
+		error = vfs_unmount_anon(mp, td);
 		zfshandle_cred_exit(saved);
 		if (error != 0) {
 			/*
@@ -2524,8 +2844,11 @@ zfshandle_anon_release(struct mount *mp, struct thread *td)
  * caller holds the dataset's registry entry in the mounting state, so no
  * other claim can adopt or mount it concurrently.
  */
+static int zfshandle_anon_root(zfshandle_t *, struct mount *, struct vnode **);
+
 static int
-zfshandle_anon_adopt(uint64_t fsid_guid, boolean_t rdonly, struct mount **mpp)
+zfshandle_anon_adopt(zfshandle_t *zh, uint64_t fsid_guid, boolean_t rdonly,
+    struct mount **mpp)
 {
 	struct mount *mp;
 	fsid_t fsid;
@@ -2539,6 +2862,7 @@ zfshandle_anon_adopt(uint64_t fsid_guid, boolean_t rdonly, struct mount **mpp)
 		    ((uint32_t)fsid.val[1] >> 8) != (uint32_t)(fsid_guid >> 32))
 			continue;
 		if (strcmp(mp->mnt_stat.f_fstypename, "zfs") != 0 ||
+		    (mp->mnt_kern_flag & MNTK_ANON) == 0 ||
 		    mp->mnt_vnodecovered != NULL ||
 		    strcmp(mp->mnt_stat.f_mntonname, VFS_ANON_FSPATH) != 0)
 			continue;
@@ -2557,6 +2881,15 @@ zfshandle_anon_adopt(uint64_t fsid_guid, boolean_t rdonly, struct mount **mpp)
 		break;
 	}
 	mtx_unlock(&mountlist_mtx);
+	if (error == 0) {
+		/* A colliding fsid must not let this handle acquire or tear down
+		 * somebody else's mount. Validate before registry ownership. */
+		error = zfshandle_anon_root(zh, *mpp, NULL);
+		if (error != 0) {
+			vfs_rel(*mpp);
+			*mpp = NULL;
+		}
+	}
 	return (error);
 }
 
@@ -2573,6 +2906,49 @@ zfshandle_anon_unmount(zfshandle_t *zh, struct thread *td)
 	if (mp == NULL)
 		return;
 	zfshandle_anon_release(mp, td);
+}
+
+/*
+ * The fsid used by orphan lookup is only a candidate locator: it loses bits
+ * and does not identify the pool.  Before publishing any root, check the full
+ * pinned handle identity against the mounted objset.  Do this for fresh and
+ * cached mounts too, so no attachment path can skip the identity invariant.
+ *
+ * Our anchor holds a mount reference; busying additionally excludes teardown
+ * of mnt_data.  Do not wait for an unmount while holding the namespace gate.
+ * The ZFS teardown reader protects z_os during identity inspection.  Never
+ * acquire these locks under mountlist_mtx or zfshandle_anon_mtx.
+ */
+static int
+zfshandle_anon_root(zfshandle_t *zh, struct mount *mp, struct vnode **vpp)
+{
+	zfsvfs_t *zfsvfs;
+	objset_t *os;
+	int error;
+
+	error = vfs_busy(mp, MBF_NOWAIT);
+	if (error != 0)
+		return (error);
+	zfsvfs = mp->mnt_data;
+	if (zfsvfs == NULL) {
+		error = SET_ERROR(ESTALE);
+		goto out;
+	}
+	error = zfs_enter(zfsvfs, FTAG);
+	if (error != 0)
+		goto out;
+	os = zfsvfs->z_os;
+	if (os == NULL ||
+	    spa_guid(dmu_objset_spa(os)) != zh->zh_pool_guid ||
+	    dmu_objset_id(os) != zh->zh_dsobj ||
+	    dsl_dataset_phys(dmu_objset_ds(os))->ds_guid != zh->zh_ds_guid)
+		error = SET_ERROR(ESTALE);
+	zfs_exit(zfsvfs, FTAG);
+	if (error == 0 && vpp != NULL)
+		error = VFS_ROOT(mp, LK_EXCLUSIVE, vpp);
+out:
+	vfs_unbusy(mp);
+	return (error);
 }
 
 static int
@@ -2672,19 +3048,13 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 		za->za_mounting = B_TRUE;
 		LIST_INSERT_HEAD(&zfshandle_anon_list, za, za_link);
 		mtx_unlock(&zfshandle_anon_mtx);
-		error = zfshandle_anon_mount(td, name, rdonly, &mp);
-		if (error != 0) {
-			/*
-			 * The objset may still be mounted by an orphan the
-			 * registry dropped after its unmount failed: adopt it
-			 * rather than refuse the store until reboot.
-			 */
-			int aerror;
-
-			aerror = zfshandle_anon_adopt(fsid_guid, rdonly, &mp);
-			if (aerror != ENOENT)
-				error = aerror;
-		}
+		/* Recover an existing mount before attempting creation. Never
+		 * reinterpret a creation-policy denial as permission to adopt.
+		 * Both adopted and newly created roots still pass vn_open_vnode
+		 * below with the caller's current credentials. */
+		error = zfshandle_anon_adopt(zh, fsid_guid, rdonly, &mp);
+		if (error == ENOENT)
+			error = zfshandle_anon_mount(td, name, rdonly, &mp);
 		if (error != 0) {
 			mtx_lock(&zfshandle_anon_mtx);
 			LIST_REMOVE(za, za_link);
@@ -2706,7 +3076,7 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 	SDT_PROBE3(trustedzfs, , , anon__mount, zh->zh_ds_guid, refs,
 	    joined ? 1 : 0);
 
-	error = VFS_ROOT(mp, LK_EXCLUSIVE, &vp);
+	error = zfshandle_anon_root(zh, mp, &vp);
 	if (error != 0)
 		goto release;
 
@@ -2777,48 +3147,6 @@ failed:
 	return (error);
 }
 
-static zfd_opset_t
-zfshandle_cmd_op(u_long cmd)
-{
-
-	switch (cmd) {
-	case ZFD_INFO: return (ZFD_OP_INFO);
-	case ZFD_DERIVE: return (ZFD_OP_DERIVE);
-	case ZFD_OPENAT: return (ZFD_OP_OPENAT);
-	case ZFD_STAT: return (ZFD_OP_STAT);
-	case ZFD_GET_PROPS: return (ZFD_OP_GET_PROPS);
-	case ZFD_GET_ONE_PROP: return (ZFD_OP_GET_ONE_PROP);
-	case ZFD_LIST_CHILDREN: return (ZFD_OP_LIST_CHILDREN);
-	case ZFD_LIST_SNAPS: return (ZFD_OP_LIST_SNAPSHOTS);
-	case ZFD_HOLDS: return (ZFD_OP_HOLDS);
-	case ZFD_LIST_BOOKMARKS: return (ZFD_OP_LIST_BOOKMARKS);
-	case ZFD_SET_PROP: return (ZFD_OP_SET_PROP);
-	case ZFD_INHERIT: return (ZFD_OP_INHERIT);
-	case ZFD_SNAPSHOT: return (ZFD_OP_SNAPSHOT);
-	case ZFD_BOOKMARK: return (ZFD_OP_BOOKMARK);
-	case ZFD_SNAP_DESTROY: return (ZFD_OP_SNAP_DESTROY);
-	case ZFD_DESTROY_BOOKMARK: return (ZFD_OP_DESTROY_BOOKMARK);
-	case ZFD_ROLLBACK: return (ZFD_OP_ROLLBACK);
-	case ZFD_CREATE: return (ZFD_OP_CREATE);
-	case ZFD_DESTROY: return (ZFD_OP_DESTROY);
-	case ZFD_RENAME: return (ZFD_OP_RENAME);
-	case ZFD_CLONE: return (ZFD_OP_CLONE);
-	case ZFD_PROMOTE: return (ZFD_OP_PROMOTE);
-	case ZFD_SEND: return (ZFD_OP_SEND);
-	case ZFD_RECV: return (ZFD_OP_RECV);
-	case ZFD_HOLD: return (ZFD_OP_HOLD);
-	case ZFD_RELEASE: return (ZFD_OP_RELEASE);
-	case ZFD_BLKOPEN: return (ZFD_OP_BLKOPEN);
-	case ZFD_MOUNT: return (ZFD_OP_MOUNT);
-	case ZFD_UNMOUNT: return (ZFD_OP_UNMOUNT);
-	case ZPD_STAT: return (ZFD_OP_POOL_STAT);
-	case ZPD_GET_PROPS: return (ZFD_OP_POOL_GET_PROPS);
-	case ZPD_SET_PROP: return (ZFD_OP_POOL_SET_PROP);
-	case ZPD_SCRUB: return (ZFD_OP_POOL_SCRUB);
-	case ZPD_ROOT_OPEN: return (ZFD_OP_POOL_ROOT_OPEN);
-	default: return (0);
-	}
-}
 
 /* Immutable authority is reported before a narrower operation ceiling. */
 static uint64_t
@@ -2887,19 +3215,13 @@ zfshandle_op_limit(zfshandle_t *zh, struct zfd_limit_args *args)
 }
 
 /*
- * Read-only verbs that neither mutate the ZFS namespace nor any cross-handle
- * state.  Each only resolves object->name and performs a name-based READ (stat,
- * property get, child/snapshot enumeration) or reads cached handle fields; the
- * per-handle zh_name refresh they may do is taken under zh_lock, not the
- * namespace lock.  They can therefore hold the namespace gate SHARED: that still
- * excludes every writer (a concurrent rename that would break the resolve->name
- * window cannot run while any shared holder is present), so the object-to-name
- * gate stays closed, while any number of readers run concurrently instead of
- * serialising behind one exclusive lock.  This is the same shared side the
- * /dev/zfs upstream path already takes.  Everything not listed here -- every
- * mutation, plus verbs that mint/derive handles, change holds, or narrow rights
- * -- keeps the exclusive side.
+ * These verbs normally share the namespace gate with other reads and legacy
+ * ioctls. This excludes typed writers, but does not exclude legacy namespace
+ * mutations. A policy requiring live ancestry requests exclusive retry before
+ * the dispatcher permits the read. Exact-identity-only checks retain the
+ * concurrent path. Mutations and handle derivation start exclusive.
  */
+
 static boolean_t
 zfshandle_cmd_is_read(u_long cmd)
 {
@@ -2928,6 +3250,7 @@ zfshandle_ioctl(struct file *fp, u_long cmd, void *data,
 	zfd_opset_t op;
 	uint64_t right;
 	boolean_t shared;
+
 	int error;
 
 	/*
@@ -2941,6 +3264,7 @@ zfshandle_ioctl(struct file *fp, u_long cmd, void *data,
 		sx_xlock(&zfshandle_namespace_sx);
 	SDT_PROBE3(trustedzfs, , , op__entry, zh->zh_ds_guid, (int)cmd,
 	    zh->zh_rights);
+
 
 	/*
 	 * Pool and dataset handles share the descriptor type but not the
@@ -2987,7 +3311,7 @@ zfshandle_ioctl(struct file *fp, u_long cmd, void *data,
 		error = zfshandle_require(zh, cmd, right);
 		goto out;
 	}
-	op = zfshandle_cmd_op(cmd);
+	op = zfd_command_operation(cmd);
 	if (op != 0 && cmd != ZFD_LIMIT && (zh->zh_ops & op) == 0) {
 		error = SET_ERROR(ENOTCAPABLE);
 		goto out;
@@ -3068,7 +3392,7 @@ zfshandle_ioctl(struct file *fp, u_long cmd, void *data,
 	case ZFD_RENAME:
 		error = zfshandle_require(zh, cmd, ZH_RENAME);
 		if (error == 0)
-			error = zfshandle_op_rename(zh, data);
+			error = zfshandle_op_rename(zh, data, active_cred);
 		break;
 	case ZFD_CLONE:
 		error = zfshandle_require(zh, cmd, ZH_CREATE);

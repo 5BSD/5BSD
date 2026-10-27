@@ -22,6 +22,8 @@
 #include <sys/un.h>
 
 #include <channel.h>
+#include <libcapbundle.h>
+
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -322,27 +324,86 @@ sctl_cmd_tree(struct sctl_reply *reply, char *summary, size_t sumlen)
 }
 
 /*
- * Execute a capability control operation. is_admin is the operator right
- * derived from held endpoint rights and the actual sender's current
- * system.switchboard.admin attribute; audit_uid is the connection UID,
- * checked against the sender before dispatch. UID 0 is not a
- * bypass. Owners may manage their USER units, and CORE remains protected.
- * Fills reply status, summary length and summary text.
+ * Explicit start may be the first activation of a registered IPC-only unit.
+ * Apply its registry-derived confinement and check management authority before
+ * publishing a runtime slot. Failed or unauthorized requests consume no slots.
  */
 static struct svc_runtime *
-sctl_target(const char *payload, uid_t caller, bool is_admin)
+sctl_target_scoped(const char *label, uid_t owner, uid_t caller, bool is_admin,
+    bool load, int *error)
+{
+	struct capbundle *bundle;
+	struct capbundle_service *unit;
+	struct svc_runtime *svc, *candidate;
+	unsigned bi, si;
+
+	svc = svc_by_label_scoped(label, owner);
+	if (svc != NULL || !load)
+		return (svc);
+	for (bi = 0; bi < bundle_registry_count(); bi++) {
+		if (bundle_registry_owner_uid(bi) != owner)
+			continue;
+		bundle = bundle_registry_get(bi);
+		if (bundle == NULL)
+			continue;
+		for (si = 0; si < capbundle_nservices(bundle); si++) {
+			unit = capbundle_service(bundle, si);
+			if (unit == NULL || strcmp(capbundle_svc_label(unit), label) != 0)
+				continue;
+			candidate = calloc(1, sizeof(*candidate));
+			if (candidate == NULL) {
+				*error = ENOMEM;
+				return (NULL);
+			}
+			*error = EINVAL;
+			if (capbundle_svc_fill_manifest(unit, &candidate->manifest) == -1)
+				goto rejected;
+			svc_slot_apply_bundle_policy(candidate, bi);
+			*error = svc_management_check_op(candidate, "started", caller, is_admin);
+			if (*error != 0)
+				goto rejected;
+			if (sd.services == NULL || sd.nservices >= SWITCHBOARD_MAX_SERVICES) {
+				*error = sd.services == NULL ? ENOMEM : ENOSPC;
+				goto rejected;
+			}
+			candidate->bundle_idx = bi;
+			candidate->bundle_svc_idx = si;
+			svc_runtime_init_fds(candidate);
+			candidate->state = SVC_STATE_STOPPED;
+			clock_gettime(CLOCK_MONOTONIC, &candidate->launch_time);
+			svc = &sd.services[sd.nservices++];
+			*svc = *candidate;
+			free(candidate);
+			return (svc);
+rejected:
+			free(candidate);
+			return (NULL);
+		}
+	}
+	return (NULL);
+}
+
+/* caller is the authenticated session UID in protected mode, or -1 when
+ * self-management is not authorized. is_admin also requires the software
+ * management grant and the live manage_system role. UID 0 adds no rights. */
+static struct svc_runtime *
+sctl_target(const char *payload, uid_t caller, bool is_admin, bool load,
+    int *error)
 {
 	const char *label;
 	uid_t owner;
 	struct svc_runtime *svc;
+
+	*error = ENOENT;
 	if (strncmp(payload, "user:", 5) == 0) {
 		if (!sb_control_personal_target(payload, caller, is_admin, &owner, &label))
 			return (NULL);
-		return (svc_by_label_scoped(label, owner));
+		return (sctl_target_scoped(label, owner, caller, is_admin, load, error));
 	}
-	svc = svc_by_label(payload);
-	return (svc != NULL || caller == (uid_t)-1 ? svc :
-	    svc_by_label_scoped(payload, caller));
+	svc = sctl_target_scoped(payload, (uid_t)-1, caller, is_admin, load, error);
+	if (svc != NULL || *error != ENOENT || caller == (uid_t)-1)
+		return (svc);
+	return (sctl_target_scoped(payload, caller, caller, is_admin, load, error));
 }
 
 static void
@@ -404,11 +465,11 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			struct svc_runtime *svc;
 			int error;
 
-			svc = sctl_target(payload, audit_uid, is_admin);
+			svc = sctl_target(payload, audit_uid, is_admin, true, &error);
 			if (svc == NULL) {
-				reply->status = ENOENT;
+				reply->status = error;
 				snprintf(summary, summary_cap,
-				    "start: service \"%s\" not found", payload);
+				    "start: \"%s\": %s", payload, strerror(error));
 			} else if (svc_management_check_op(svc, "started",
 			    audit_uid, is_admin) != 0) {
 				/*
@@ -461,8 +522,9 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			    "stop: missing service label");
 		} else {
 			struct svc_runtime *svc;
+			int error;
 
-			svc = sctl_target(payload, audit_uid, is_admin);
+			svc = sctl_target(payload, audit_uid, is_admin, false, &error);
 			if (svc == NULL) {
 				reply->status = ENOENT;
 				snprintf(summary, summary_cap,

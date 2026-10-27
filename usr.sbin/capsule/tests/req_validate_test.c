@@ -109,8 +109,50 @@ ATF_TC_BODY(service_request_validation, tc)
 	ATF_CHECK(!validate_service_req(&req, sizeof(req), &validated, &error));
 }
 
+ATF_TC_WITHOUT_HEAD(boot_request_validation);
+ATF_TC_BODY(boot_request_validation, tc)
+{
+	struct capsule_boot_storage_req req;
+	const struct capsule_boot_storage_req *validated;
+	const uint32_t ops[] = { CAPSULE_OP_BOOT_STORAGE, CAPSULE_OP_BOOT_CRYPTO };
+	/* Retired wire numbers must remain rejected after their names are removed. */
+	const uint32_t retired[] = { 31, 32, 33 };
+	int error;
+
+	for (size_t op = 0; op < nitems(ops); op++) {
+		memset(&req, 0, sizeof(req));
+		req.op = ops[op];
+		strlcpy(req.recipient, "site.Store/provider", sizeof(req.recipient));
+		ATF_REQUIRE(validate_boot_req(&req, sizeof(req), &validated, &error));
+		ATF_CHECK(validated == &req);
+		for (size_t size = 0; size < sizeof(req); size++)
+			ATF_CHECK(!validate_boot_req(&req, size, &validated, &error));
+		ATF_CHECK(!validate_boot_req(&req, sizeof(req) + 1, &validated, &error));
+		ATF_CHECK(!validate_boot_req(NULL, sizeof(req), &validated, &error));
+		for (size_t i = strlen(req.recipient) + 1; i < sizeof(req.recipient); i++) {
+			req.recipient[i] = 'x';
+			ATF_CHECK(!validate_boot_req(&req, sizeof(req), &validated, &error));
+			req.recipient[i] = '\0';
+		}
+		memset(req.recipient, 'x', sizeof(req.recipient));
+		ATF_CHECK(!validate_boot_req(&req, sizeof(req), &validated, &error));
+		memset(req.recipient, 0, sizeof(req.recipient));
+		ATF_CHECK(!validate_boot_req(&req, sizeof(req), &validated, &error));
+	}
+	strlcpy(req.recipient, "site.Store/provider", sizeof(req.recipient));
+	for (size_t op = 0; op < nitems(retired); op++) {
+		req.op = retired[op];
+		ATF_CHECK(!validate_boot_req(&req, sizeof(req), &validated, &error));
+		ATF_CHECK_EQ(EINVAL, error);
+	}
+	req.op = UINT32_MAX;
+	ATF_CHECK(!validate_boot_req(&req, sizeof(req), &validated, &error));
+	ATF_CHECK_EQ(EINVAL, error);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, boot_request_validation);
 
 	ATF_TP_ADD_TC(tp, bluetooth_network_requests);
 	ATF_TP_ADD_TC(tp, strict_wire_shape);

@@ -348,7 +348,7 @@
     ..
     libipt              tags=package=libipt-dev
     ..
-    libmilter           tags=package=libmilter-dev
+    libmilter           tags=package=clibs-dev
     ..
     libxo               tags=package=runtime-dev
     ..

@@ -419,42 +419,50 @@ login_set_addr(struct logininfo *li, const struct sockaddr *sa,
 int
 login_write(struct logininfo *li)
 {
+	int success = 1;
+
+	if (li->type != LTYPE_LOGIN && li->type != LTYPE_LOGOUT) {
+		logit_f("Invalid type field");
+		return (0);
+	}
 #ifndef HAVE_CYGWIN
 	if (geteuid() != 0) {
 		logit("Attempt to write login records by non-root user (aborting)");
-		return (1);
+		return (0);
 	}
 #endif
 
 	/* set the timestamp */
 	login_set_current_time(li);
 #ifdef USE_LOGIN
-	syslogin_write_entry(li);
+	success &= syslogin_write_entry(li) > 0;
 #endif
 #ifdef USE_LASTLOG
 	if (li->type == LTYPE_LOGIN)
-		lastlog_write_entry(li);
+		success &= lastlog_write_entry(li) > 0;
 #endif
 #ifdef USE_UTMP
-	utmp_write_entry(li);
+	success &= utmp_write_entry(li) > 0;
 #endif
 #ifdef USE_WTMP
-	wtmp_write_entry(li);
+	success &= wtmp_write_entry(li) > 0;
 #endif
 #ifdef USE_UTMPX
-	utmpx_write_entry(li);
+	success &= utmpx_write_entry(li) > 0;
 #endif
 #ifdef USE_WTMPX
-	wtmpx_write_entry(li);
+	success &= wtmpx_write_entry(li) > 0;
 #endif
 #ifdef USE_WTMPDB
-	wtmpdb_write_entry(li);
+	success &= wtmpdb_write_entry(li) > 0;
 #endif
 #ifdef CUSTOM_SYS_AUTH_RECORD_LOGIN
 	if (li->type == LTYPE_LOGIN &&
 	    !sys_auth_record_login(li->username,li->hostname,li->line,
-	    loginmsg))
+	    loginmsg)) {
 		logit("Writing login record failed for %s", li->username);
+		success = 0;
+	}
 #endif
 #ifdef SSH_AUDIT_EVENTS
 	if (li->type == LTYPE_LOGIN)
@@ -462,7 +470,7 @@ login_write(struct logininfo *li)
 	else if (li->type == LTYPE_LOGOUT)
 		audit_session_close(li);
 #endif
-	return (0);
+	return (success);
 }
 
 #ifdef LOGIN_NEEDS_UTMPX
@@ -990,13 +998,17 @@ utmp_write_entry(struct logininfo *li)
 static int
 utmpx_write_library(struct logininfo *li, struct utmpx *utx)
 {
+	int success;
+
 	setutxent();
-	pututxline(utx);
+	success = pututxline(utx) != NULL;
+	if (!success)
+		logit_f("pututxline failed: %s", strerror(errno));
 
 #  ifdef HAVE_ENDUTXENT
 	endutxent();
 #  endif
-	return (1);
+	return (success);
 }
 
 # else /* UTMPX_USE_LIBRARY */
@@ -1045,11 +1057,10 @@ utmpx_perform_logout(struct logininfo *li)
 # endif
 
 # ifdef UTMPX_USE_LIBRARY
-	utmpx_write_library(li, &utx);
+	return (utmpx_write_library(li, &utx));
 # else
-	utmpx_write_direct(li, &utx);
+	return (utmpx_write_direct(li, &utx));
 # endif
-	return (1);
 }
 
 int

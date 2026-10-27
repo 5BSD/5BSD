@@ -831,6 +831,8 @@ typedef struct {
 #define	NT_FREEBSD_NOINIT_TAG	2
 #define	NT_FREEBSD_ARCH_TAG	3
 #define	NT_FREEBSD_FEATURE_CTL	4
+/* Bound shared by kernel note parsing and protected-image admission. */
+#define	ELF_NOTE_MAX_COUNT	4096
 
 /* NT_FREEBSD_FEATURE_CTL desc[0] bits */
 #define	NT_FREEBSD_FCTL_ASLR_DISABLE	0x00000001

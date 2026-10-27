@@ -92,10 +92,18 @@ login_timelist(login_cap_t *lc, char const *cap, int *ltno,
     struct login_time	*lt = NULL;
     const char		**tl;
 
+    /* Distinguish an absent capability from a failed allocation. */
+    errno = 0;
     if ((tl = login_getcaplist(lc, cap, NULL)) != NULL) {
 
-	while (tl[j++] != NULL)
-	    ;
+	while (tl[j] != NULL) {
+	    if (j == LC_MAXTIMES) {
+		errno = EINVAL;
+		return (NULL);
+	    }
+	    j++;
+	}
+	j++; /* Include the terminator. */
 	if (*ltno >= j)
 	    lt = *ltptr;
 	else if ((lt = realloc(*ltptr, j * sizeof(struct login_time))) != NULL) {
@@ -103,11 +111,18 @@ login_timelist(login_cap_t *lc, char const *cap, int *ltno,
 	    *ltptr = lt;
 	}
 	if (lt != NULL) {
-	    int	    i = 0;
+	    int i, n = 0;
+	    login_time_t parsed;
 
-	    for (--j; i < j; i++)
-		lt[i] = parse_lt(tl[i]);
-	    lt[i].lt_dow = LTM_NONE;
+	    for (i = 0; i < j - 1; i++) {
+		parsed = parse_lt(tl[i]);
+		if (errno != 0)
+		    return (NULL);
+		/* None/Never are empty periods, not list terminators. */
+		if (parsed.lt_dow != LTM_NONE)
+		    lt[n++] = parsed;
+	    }
+	    lt[n].lt_dow = LTM_NONE;
 	}
     }
     return lt;
@@ -134,14 +149,18 @@ login_ttyok(login_cap_t *lc, const char *tty, const char *allowcap,
 
 	te = getttynam(tty);  /* Need group name */
 	grp = te ? te->ty_group : NULL;
+	errno = 0;
 	ttl = login_getcaplist(lc, allowcap, NULL);
 
-	if (ttl != NULL && !login_str2inlist(ttl, tty, grp, 0))
+	if ((ttl == NULL && errno != 0) ||
+	    (ttl != NULL && !login_str2inlist(ttl, tty, grp, 0)))
 	    rc = 0;	/* tty or ttygroup not in allow list */
 	else {
 
+	    errno = 0;
 	    ttl = login_getcaplist(lc, denycap, NULL);
-	    if (ttl != NULL && login_str2inlist(ttl, tty, grp, 0))
+	    if ((ttl == NULL && errno != 0) ||
+		(ttl != NULL && login_str2inlist(ttl, tty, grp, 0)))
 		rc = 0; /* tty or ttygroup in deny list */
 	}
     }
@@ -180,13 +199,17 @@ login_hostok(login_cap_t *lc, const char *host, const char *ip,
 	((host != NULL && *host != '\0') || (ip != NULL && *ip != '\0'))) {
 	const char **hl;
 
+	errno = 0;
 	hl = login_getcaplist(lc, allowcap, NULL);
-	if (hl != NULL && !login_str2inlist(hl, host, ip, FNM_CASEFOLD))
+	if ((hl == NULL && errno != 0) ||
+	    (hl != NULL && !login_str2inlist(hl, host, ip, FNM_CASEFOLD)))
 	    rc = 0;	/* host or IP not in allow list */
 	else {
 
+	    errno = 0;
 	    hl = login_getcaplist(lc, denycap, NULL);
-	    if (hl != NULL && login_str2inlist(hl, host, ip, FNM_CASEFOLD))
+	    if ((hl == NULL && errno != 0) ||
+		(hl != NULL && login_str2inlist(hl, host, ip, FNM_CASEFOLD)))
 		rc = 0; /* host or IP in deny list */
 	}
     }
@@ -217,22 +240,27 @@ auth_timeok(login_cap_t *lc, time_t t)
 {
     int	    rc = 1; /* Default is ok */
 
-    if (lc != NULL && t != (time_t)0 && t != (time_t)-1) {
-	struct tm	*tptr;
+    if (lc != NULL) {
+	struct tm	converted, *tptr;
 
-	static int 	ltimesno = 0;
-	static struct login_time *ltimes = NULL;
+	int 	ltimesno = 0;
+	struct login_time *ltimes = NULL;
 
-	if ((tptr = localtime(&t)) != NULL) {
+	/* time(3) failure must not disable account restrictions. */
+	if (t == (time_t)-1)
+	    return 0;
+	if ((tptr = localtime_r(&t, &converted)) != NULL) {
 	    struct login_time	*lt;
 
 	  lt = login_timelist(lc, "times.allow", &ltimesno, &ltimes);
-	  if (lt != NULL && in_ltms(lt, tptr, NULL) == -1)
+	  if ((lt == NULL && errno != 0) ||
+	      (lt != NULL && in_ltms(lt, tptr, NULL) == -1))
 	      rc = 0;	  /* not in allowed times list */
 	  else {
 
 	      lt = login_timelist(lc, "times.deny", &ltimesno, &ltimes);
-	      if (lt != NULL && in_ltms(lt, tptr, NULL) != -1)
+	      if ((lt == NULL && errno != 0) ||
+		  (lt != NULL && in_ltms(lt, tptr, NULL) != -1))
 		  rc = 0; /* in deny times list */
 	  }
 	  if (ltimes) {
@@ -240,7 +268,8 @@ auth_timeok(login_cap_t *lc, time_t t)
 	      ltimes = NULL;
 	      ltimesno = 0;
 	  }
-	}
+	} else
+	    rc = 0; /* cannot evaluate the supplied time */
     }
 
     return rc;

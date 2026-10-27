@@ -46,6 +46,10 @@ int	verify_prep(int, const char *, off_t, struct stat *, const char *);
 void	ve_debug_set(int);
 char	*ve_error_get(void);
 void	ve_efi_init(void);
+void	verify_require(void);
+int	verify_required(void);
+/* Compiled-anchor policy query; not a signature or firmware verification. */
+int	verify_manifest_trust_restricted(void);
 void	ve_status_set(int, int);
 int	ve_status_get(int);
 int	load_manifest(const char *, const char *, const char *, struct stat *);
@@ -54,6 +58,8 @@ int	pass_manifest_export_envs(void);
 int	severity_guess(const char *);
 void	verify_report(const char *, int, int, struct stat *);
 int	verify_file(int, const char *, off_t, int, const char *);
+/* Registered manifest required; only VE_VERIFIED establishes a buffer match. */
+int	verify_buf(int, const char *, const void *, size_t);
 void	verify_pcr_export(void);
 int	hash_string(char *s, size_t n, char *buf, size_t bufsz);
 int	is_verified(struct stat *);
@@ -61,8 +67,12 @@ void	add_verify_status(struct stat *, int);
 
 struct vectx;
 struct vectx* vectx_open(int, const char *, int, off_t, struct stat *, int *, const char *);
+/* Before first read: disable replay storage and reject backward verified seeks. */
+int	vectx_set_sequential(struct vectx *);
 ssize_t	vectx_read(struct vectx *, void *, size_t);
 off_t	vectx_lseek(struct vectx *, off_t, int);
 int	vectx_close(struct vectx *, const char *);
+/* Abandon a failed load; does not verify input or close the caller-owned fd. */
+void	vectx_discard(struct vectx *);
 
 #endif	/* _VERIFY_FILE_H_ */

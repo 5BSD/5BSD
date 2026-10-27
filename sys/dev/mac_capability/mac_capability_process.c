@@ -117,8 +117,11 @@ context_exit(void *arg __unused, struct proc *p)
 static void
 context_ctor(void *arg __unused, struct proc *p)
 {
+	p->p_cap_invocation = NULL;
 	p->p_cap_authority = NULL;
 	p->p_cap_authority_generation = 0;
+	p->p_cap_execution = 0;
+	p->p_noambient = false;
 	p->p_cap_authority_invalid = false;
 	p->p_cap_authority_pending_exec = false;
 	p->p_cap_context = NULL;
@@ -268,7 +271,7 @@ sys_cap_process(struct thread *td, struct cap_process_args *a)
 	struct origin_token *t;
 	struct file *fp;
 	int error, fd;
-	if (a->op >= CAP_AUTH_ISSUER_CREATE && a->op <= CAP_AUTH_GET_LIBDIR) {
+	if (a->op >= CAP_AUTH_ISSUER_CREATE && a->op <= CAP_AUTH_CHECK_INVOCATION) {
 		if (a->uid != 0)
 			return (EINVAL);
 		return (cap_authority_call(td, a->op, a->fd, a->data));

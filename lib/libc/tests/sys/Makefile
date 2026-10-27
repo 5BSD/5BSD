@@ -103,4 +103,13 @@ DD=dd ${DD_NOSTATUS}
 truncate_test.root_owned:
 	${DD} if=/dev/null bs=1 count=1 of=${.TARGET}
 
+# The WNOHANG variant includes the common test body as text.
+TEXTUAL_SRCS.t_wait_noproc_wnohang.c= ${TESTSRC}/t_wait_noproc.c
+
 .include <bsd.test.mk>
+
+.for _src in ${SRCS}
+.if defined(TEXTUAL_SRCS.${_src})
+${_src:R}.o ${_src:R}.pieo: ${TEXTUAL_SRCS.${_src}}
+.endif
+.endfor

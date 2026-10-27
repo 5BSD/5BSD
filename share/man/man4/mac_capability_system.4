@@ -89,6 +89,16 @@ The bit is excluded from
 must not be reassigned, and a claim carrying it is rejected with
 .Er EINVAL .
 .Pp
+The audit gate excludes
+.Dv A_GETCOND
+and
+.Dv A_OLDGETCOND ,
+which report whether auditing is active without changing audit state.
+The ordinary
+.Xr auditon 2
+privilege and argument checks still apply.
+All other auditon commands and auditctl remain subject to the audit gate.
+.Pp
 The MACF hooks enforced for each gate are:
 .Bl -column "Dv SYS_GATE_KLDUNLOAD" -offset indent
 .It Sy Gate Ta Sy MACF hooks

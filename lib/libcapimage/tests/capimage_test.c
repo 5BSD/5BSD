@@ -575,6 +575,69 @@ ATF_TC_BODY(handle_mapping_and_rights, tc)
 	writer = open("image", O_WRONLY); ATF_REQUIRE(writer >= 0); close(writer);
 }
 
+ATF_TC(signed_mmap_lifetime);
+ATF_TC_HEAD(signed_mmap_lifetime, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Signed mmap pins survive aliases and other unmaps; changed bytes are reverified");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(signed_mmap_lifetime, tc)
+{
+	void *first, *second, *bad;
+	unsigned char byte;
+	size_t size;
+	long page = sysconf(_SC_PAGESIZE);
+	int present = 0, fd, writer;
+
+	(void)tc;
+	size = sizeof(present);
+	if (sysctlbyname("kern.features.veriexec_capimage_mmap", &present,
+	    &size, NULL, 0) != 0 || present != 1)
+		atf_tc_skip("requires signed-mapping kernel; skip is not qualification");
+	require_handle_filesystem();
+	ATF_REQUIRE(page > 0);
+	keys("mmap-secret", "mmap-public");
+	fd = fixture(1, 1, 0);
+	ATF_REQUIRE_EQ(0, capimage_sign(fd, "mmap-secret", error, sizeof(error)));
+	ATF_REQUIRE_EQ(0, close(fd));
+	fd = open("image", O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	first = mmap(NULL, page, PROT_READ, MAP_PRIVATE, fd, 0);
+	ATF_REQUIRE(first != MAP_FAILED);
+	ATF_REQUIRE_EQ(0, link("image", "alias"));
+	ATF_REQUIRE_EQ(0, unlink("image"));
+	second = mmap(NULL, page, PROT_READ, MAP_PRIVATE, fd, 0);
+	ATF_REQUIRE(second != MAP_FAILED);
+	ATF_REQUIRE_EQ(0, close(fd));
+	ATF_REQUIRE_EQ(0, mprotect(first, page, PROT_READ | PROT_EXEC));
+	ATF_REQUIRE_EQ(-1, open("alias", O_WRONLY));
+	ATF_REQUIRE_EQ(ETXTBSY, errno);
+	ATF_REQUIRE_EQ(0, munmap(first, page));
+	ATF_REQUIRE_EQ(-1, open("alias", O_WRONLY));
+	ATF_REQUIRE_EQ(ETXTBSY, errno);
+	ATF_REQUIRE_EQ(0, munmap(second, page));
+	writer = open("alias", O_RDWR);
+	ATF_REQUIRE(writer >= 0);
+	ATF_REQUIRE_EQ(1, pread(writer, &byte, 1, 256));
+	byte ^= 1;
+	ATF_REQUIRE_EQ(1, pwrite(writer, &byte, 1, 256));
+	ATF_REQUIRE_EQ(0, close(writer));
+	fd = open("alias", O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	/* A result from the old pin interval must not authorize new bytes. */
+	for (unsigned i = 0; i < 2; i++) {
+		bad = mmap(NULL, page, PROT_READ | (i ? PROT_EXEC : 0),
+		    MAP_PRIVATE, fd, 0);
+		ATF_REQUIRE_EQ(MAP_FAILED, bad);
+		ATF_REQUIRE_EQ(EAUTH, errno);
+	}
+	ATF_REQUIRE_EQ(0, close(fd));
+	/* Failed verification must not leak a text pin either. */
+	writer = open("alias", O_WRONLY);
+	ATF_REQUIRE(writer >= 0);
+	ATF_REQUIRE_EQ(0, close(writer));
+}
+
 ATF_TC_WITH_CLEANUP(handle_tmpfs_unsupported);
 ATF_TC_HEAD(handle_tmpfs_unsupported, tc)
 {
@@ -589,10 +652,15 @@ ATF_TC_BODY(handle_tmpfs_unsupported, tc)
  const char *root;
  FILE *record;
  int fd, handle, writer;
- void *mapping;
+ void *mapping, *executable;
  unsigned char byte;
  long page = sysconf(_SC_PAGESIZE);
  require_handle_kernel();
+ int present = 0;
+ size_t present_size = sizeof(present);
+ if (sysctlbyname("kern.features.veriexec_capimage_mmap", &present,
+     &present_size, NULL, 0) != 0 || present == 0)
+  atf_tc_skip("requires the signed-mapping kernel in the VM");
  root = atf_tc_get_config_var_wd(tc, "tmpfs_test_root", "/tmp");
  ATF_REQUIRE(snprintf(path, sizeof(path), "%s/capimage-tmpfs.XXXXXX", root) < (int)sizeof(path));
  ATF_REQUIRE(mkdtemp(path) != NULL);
@@ -617,6 +685,14 @@ ATF_TC_BODY(handle_tmpfs_unsupported, tc)
   ATF_REQUIRE_EQ(-1, capimage_prepare_fd(fd, i ? CAPIMAGE_PREPARE_REQUIRED : 0,
       &handle, &info, error, sizeof(error)));
   ATF_REQUIRE_EQ(EOPNOTSUPP, errno);ATF_REQUIRE_EQ(-1, handle);
+ }
+ /* Verification must not authorize a mapping on an unsupported backend,
+  * including a read-only mapping which mprotect could make executable. */
+ for (unsigned i = 0; i < 2; i++) {
+  executable = mmap(NULL, page, PROT_READ | (i ? PROT_EXEC : 0),
+      MAP_PRIVATE, fd, 0);
+  ATF_REQUIRE_EQ(MAP_FAILED, executable);
+  ATF_REQUIRE_EQ(EOPNOTSUPP, errno);
  }
  /* The mapping is really mutable, rather than a guessed backend property. */
  byte = ((unsigned char *)mapping)[256];((unsigned char *)mapping)[256] = byte ^ 1;
@@ -777,6 +853,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, elf_native);
 	ATF_TP_ADD_TC(tp, elf_locators);
 	ATF_TP_ADD_TC(tp, handle_tmpfs_unsupported);
+	ATF_TP_ADD_TC(tp, signed_mmap_lifetime);
 	ATF_TP_ADD_TC(tp, handle_mapping_and_rights);
 	ATF_TP_ADD_TC(tp, handle_arguments);
 	ATF_TP_ADD_TC(tp, handle_unsigned_and_bad);

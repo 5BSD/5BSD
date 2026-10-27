@@ -13,3 +13,7 @@ LDBL_PREC = 64
 
 CFLAGS+=-D_RENAME_FMA
 CFLAGS+=-D_RENAME_FMAF
+
+# Assembly wrappers include the corresponding long-returning implementation.
+TEXTUAL_SRCS.s_llrint.S= ${.CURDIR}/amd64/s_lrint.S
+TEXTUAL_SRCS.s_llrintf.S= ${.CURDIR}/amd64/s_lrintf.S

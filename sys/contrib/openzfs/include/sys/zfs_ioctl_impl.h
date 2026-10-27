@@ -80,6 +80,9 @@ int zfs_vfs_ref(zfsvfs_t **);
 void zfs_vfs_rele(zfsvfs_t *);
 
 long zfsdev_ioctl_common(uint_t, zfs_cmd_t *, int);
+struct dmu_recv_io;
+/* Kernel-only receive dispatch; preserves ordinary vector validation/policy. */
+long zfsdev_ioctl_recv_io(zfs_cmd_t *, const struct dmu_recv_io *);
 int zfsdev_attach(void);
 void zfsdev_detach(void);
 void zfsdev_private_set_state(void *, zfsdev_state_t *);

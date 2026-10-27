@@ -46,35 +46,39 @@ write_conf(const char *content)
 	return (path);
 }
 
-/*
- * The built-in default set must permit exactly the base system's on-demand
- * modules.  If any of these silently falls off the list, a legitimate consumer
- * (bsdcrypto/blued/bsdfilesystem) breaks.
- */
-ATF_TC_WITHOUT_HEAD(allowlisted_module_is_permitted);
-ATF_TC_BODY(allowlisted_module_is_permitted, tc)
+/* No deployment grants survive missing or rejected policy input. */
+ATF_TC_WITHOUT_HEAD(defaults_grant_nothing);
+ATF_TC_BODY(defaults_grant_nothing, tc)
 {
 	struct sysext_config cfg;
 
 	sysext_config_defaults(&cfg);
-	ATF_CHECK(extension_allowed(&cfg, "cryptodev"));
-	ATF_CHECK(extension_allowed(&cfg, "vhid"));
-	ATF_CHECK(extension_allowed(&cfg, "zfs"));
-	ATF_CHECK(extension_allowed(&cfg, "linux64"));
-	ATF_CHECK(extension_allowed(&cfg, "vmm"));
-	ATF_CHECK(extension_allowed(&cfg, "fdescfs"));
-	ATF_CHECK(extension_allowed(&cfg, "linprocfs"));
-	ATF_CHECK(extension_allowed(&cfg, "linsysfs"));
-	ATF_CHECK(extension_allowed(&cfg, "drm"));
-	ATF_CHECK(extension_allowed(&cfg, "i915kms"));
-	ATF_CHECK(extension_allowed(&cfg, "amdgpu"));
-	ATF_CHECK(extension_allowed(&cfg, "radeonkms"));
-	ATF_CHECK(extension_allowed(&cfg, "cpuctl"));
-	ATF_CHECK(extension_allowed(&cfg, "coretemp"));
-	ATF_CHECK(extension_allowed(&cfg, "amdsmn"));
-	ATF_CHECK(extension_allowed(&cfg, "amdtemp"));
-	ATF_CHECK(extension_allowed(&cfg, "dummynet"));
-	ATF_CHECK(extension_allowed(&cfg, "pf"));
+	ATF_CHECK_EQ(0, cfg.nallow);
+	ATF_CHECK(!extension_allowed(&cfg, "cryptodev"));
+	ATF_CHECK(!extension_allowed(&cfg, "zfs"));
+}
+
+/* Vary the input to prove the complete grant set follows configuration. */
+ATF_TC_WITHOUT_HEAD(allowlisted_module_is_permitted);
+ATF_TC_BODY(allowlisted_module_is_permitted, tc)
+{
+	struct sysext_config cfg;
+	const char *path;
+
+	sysext_config_defaults(&cfg);
+	path = write_conf("allowed_extensions=[\"first_driver\",\"second.ko\"];");
+	ATF_REQUIRE_EQ(0, sysext_config_load(&cfg, path));
+	unlink(path);
+	ATF_CHECK_EQ(2, cfg.nallow);
+	ATF_CHECK(extension_allowed(&cfg, "first_driver"));
+	ATF_CHECK(extension_allowed(&cfg, "second.ko"));
+	ATF_CHECK(!extension_allowed(&cfg, "cryptodev"));
+	path = write_conf("allowed_extensions=[\"different_driver\"];");
+	ATF_REQUIRE_EQ(0, sysext_config_load(&cfg, path));
+	unlink(path);
+	ATF_CHECK_EQ(1, cfg.nallow);
+	ATF_CHECK(extension_allowed(&cfg, "different_driver"));
+	ATF_CHECK(!extension_allowed(&cfg, "first_driver"));
 }
 
 /*
@@ -107,6 +111,7 @@ ATF_TC_WITHOUT_HEAD(valid_module_name_rejects_paths_accepts_dotted);
 ATF_TC_BODY(valid_module_name_rejects_paths_accepts_dotted, tc)
 {
 
+	ATF_CHECK(!valid_module_name(NULL));
 	ATF_CHECK(!valid_module_name(""));
 	ATF_CHECK(!valid_module_name("."));
 	ATF_CHECK(!valid_module_name(".."));
@@ -134,13 +139,9 @@ ATF_TC_BODY(valid_module_name_requires_termination, tc)
 	ATF_CHECK(!valid_module_name(name));
 }
 
-/*
- * Fail-soft on a MALFORMED config: a config the parser cannot read must leave
- * the built-in defaults in place and never abort.  This is the boot-resilience
- * guarantee — a corrupt UCL file must not brick a boot=true daemon.
- */
-ATF_TC_WITHOUT_HEAD(malformed_config_falls_back_to_defaults);
-ATF_TC_BODY(malformed_config_falls_back_to_defaults, tc)
+/* Malformed input returns an error and leaves the deny-all state intact. */
+ATF_TC_WITHOUT_HEAD(malformed_config_preserves_deny);
+ATF_TC_BODY(malformed_config_preserves_deny, tc)
 {
 	struct sysext_config cfg;
 	const char *path;
@@ -148,20 +149,20 @@ ATF_TC_BODY(malformed_config_falls_back_to_defaults, tc)
 	sysext_config_defaults(&cfg);
 	/* Unterminated string: a hard UCL parse failure. */
 	path = write_conf("allowed_extensions = [ \"broken");
-	(void)sysext_config_load(&cfg, path);	/* return ignored: must not abort */
-	/* Built-in set survives untouched. */
-	ATF_CHECK_EQ(17, (int)cfg.nallow);
-	ATF_CHECK(extension_allowed(&cfg, "cryptodev"));
-	ATF_CHECK(extension_allowed(&cfg, "vhid"));
-	ATF_CHECK(extension_allowed(&cfg, "zfs"));
+	ATF_CHECK_ERRNO(EINVAL, sysext_config_load(&cfg, path) == -1);
+	/* Empty initial state survives untouched. */
+	ATF_CHECK_EQ(0, (int)cfg.nallow);
+	ATF_CHECK(!extension_allowed(&cfg, "cryptodev"));
+	ATF_CHECK(!extension_allowed(&cfg, "vhid"));
+	ATF_CHECK(!extension_allowed(&cfg, "zfs"));
 	(void)unlink(path);
 }
 
 /*
  * A config whose root is not an object is malformed; defaults must stand.
  */
-ATF_TC_WITHOUT_HEAD(non_object_config_falls_back_to_defaults);
-ATF_TC_BODY(non_object_config_falls_back_to_defaults, tc)
+ATF_TC_WITHOUT_HEAD(non_object_config_preserves_deny);
+ATF_TC_BODY(non_object_config_preserves_deny, tc)
 {
 	struct sysext_config cfg;
 	const char *path;
@@ -169,31 +170,28 @@ ATF_TC_BODY(non_object_config_falls_back_to_defaults, tc)
 	sysext_config_defaults(&cfg);
 	path = write_conf("[ 1, 2, 3 ]");
 	ATF_CHECK_ERRNO(EINVAL, sysext_config_load(&cfg, path) == -1);
-	ATF_CHECK_EQ(17, (int)cfg.nallow);
-	ATF_CHECK(extension_allowed(&cfg, "cryptodev"));
+	ATF_CHECK_EQ(0, (int)cfg.nallow);
+	ATF_CHECK(!extension_allowed(&cfg, "cryptodev"));
 	(void)unlink(path);
 }
 
-/*
- * A MISSING config (ENOENT) is not an error: load succeeds and the built-in
- * defaults stand.  bsdextension must not depend on a file existing early in boot.
- */
-ATF_TC_WITHOUT_HEAD(missing_config_uses_defaults);
-ATF_TC_BODY(missing_config_uses_defaults, tc)
+/* Missing policy is an error, with no compiled fallback grants. */
+ATF_TC_WITHOUT_HEAD(missing_config_is_error);
+ATF_TC_BODY(missing_config_is_error, tc)
 {
 	struct sysext_config cfg;
 
 	sysext_config_defaults(&cfg);
-	ATF_CHECK_EQ(0, sysext_config_load(&cfg, "./does-not-exist.ucl"));
-	ATF_CHECK_EQ(17, (int)cfg.nallow);
-	ATF_CHECK(extension_allowed(&cfg, "cryptodev"));
-	ATF_CHECK(extension_allowed(&cfg, "vhid"));
-	ATF_CHECK(extension_allowed(&cfg, "zfs"));
+	ATF_CHECK_ERRNO(ENOENT, sysext_config_load(&cfg, "./does-not-exist.ucl") == -1);
+	ATF_CHECK_EQ(0, (int)cfg.nallow);
+	ATF_CHECK(!extension_allowed(&cfg, "cryptodev"));
+	ATF_CHECK(!extension_allowed(&cfg, "vhid"));
+	ATF_CHECK(!extension_allowed(&cfg, "zfs"));
 }
 
 /*
  * A config that lists a bogus (path-bearing) entry is over-broad/malformed and
- * must be rejected WHOLESALE, restoring the built-in defaults — a bad config can
+ * must be rejected WHOLESALE, restoring the previous configuration — a bad config can
  * never widen or corrupt what may load.
  */
 ATF_TC_WITHOUT_HEAD(invalid_entry_config_rejected_keeps_defaults);
@@ -205,15 +203,15 @@ ATF_TC_BODY(invalid_entry_config_rejected_keeps_defaults, tc)
 	sysext_config_defaults(&cfg);
 	path = write_conf("allowed_extensions = [ \"a/b\" ]");
 	ATF_CHECK(sysext_config_load(&cfg, path) == -1);
-	ATF_CHECK_EQ(17, (int)cfg.nallow);
-	ATF_CHECK(extension_allowed(&cfg, "cryptodev"));
+	ATF_CHECK_EQ(0, (int)cfg.nallow);
+	ATF_CHECK(!extension_allowed(&cfg, "cryptodev"));
 	ATF_CHECK(!extension_allowed(&cfg, "a/b"));
 	(void)unlink(path);
 }
 
 /*
- * A well-formed operator config REPLACES the built-in set: a module the config
- * lists becomes allowed, and a built-in default the config omits becomes denied.
+ * A well-formed operator config REPLACES the previous set: a module the config
+ * lists becomes allowed, and a previous grant the config omits becomes denied.
  * This proves the config is authoritative (not merely additive).
  */
 ATF_TC_WITHOUT_HEAD(config_replaces_default_allowlist);
@@ -249,8 +247,12 @@ ATF_TC_WITHOUT_HEAD(stat_shares_ensure_allowlist_gate);
 ATF_TC_BODY(stat_shares_ensure_allowlist_gate, tc)
 {
 	struct sysext_config cfg;
+	const char *path;
 
 	sysext_config_defaults(&cfg);
+	path = write_conf("allowed_extensions=[\"cryptodev\",\"zfs\"];");
+	ATF_REQUIRE_EQ(0, sysext_config_load(&cfg, path));
+	unlink(path);
 	/* Allow-listed => queryable, exactly as it is loadable. */
 	ATF_CHECK(extension_allowed(&cfg, "cryptodev"));
 	ATF_CHECK(extension_allowed(&cfg, "zfs"));
@@ -269,10 +271,25 @@ ATF_TC_BODY(reload_authorization_and_last_good, tc)
 	    "allowed_extensions = [ \"broken",
 	    "allowed_extensions = [ \"../evil\" ]",
 	    "unrelated = true",
+	    "allowed_extensions=[]; unrelated=true;",
+	    "allowed_extensions=[]; allowed_extensions=[\"widened\"];",
+	    "allowed_extensions=[\"a\",\"a\"];",
+	    "allowed_extensions=[true];",
+	    "allowed_extensions=[\"a\\u0000b\"];",
+	    "\"allowed_extensions\\u0000bad\"=[];",
+	    "allowed_extensions=\"a\",\"b\";",
+	    ".include \"injected.ucl\";",
 	};
 	size_t i;
 
 	sysext_config_defaults(&cfg);
+	{
+		int include_fd = open("injected.ucl", O_WRONLY | O_CREAT | O_EXCL, 0600);
+		const char *injected = "allowed_extensions=[\"widened\"];";
+		ATF_REQUIRE(include_fd >= 0);
+		ATF_REQUIRE_EQ((ssize_t)strlen(injected), write(include_fd, injected, strlen(injected)));
+		close(include_fd);
+	}
 	policy = sysext_policy_create(&cfg);
 	ATF_REQUIRE(policy != NULL);
 	ATF_CHECK_ERRNO(EPERM, sysext_policy_reload(policy, "missing",
@@ -352,9 +369,66 @@ ATF_TC_BODY(reload_shared_and_owner_death, tc)
 	sysext_policy_destroy(policy);
 }
 
+
+ATF_TC_WITHOUT_HEAD(descriptor_contract);
+ATF_TC_BODY(descriptor_contract, tc)
+{
+	struct sysext_config cfg, previous;
+	const char *path;
+	int fd, pipefds[2];
+	const char nul_input[] = "allowed_extensions=[];\0ignored=true;";
+
+	path = write_conf("allowed_extensions=[\"kept\"];");
+	fd = open(path, O_RDWR);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(3, lseek(fd, 3, SEEK_SET));
+	sysext_config_defaults(&cfg);
+	ATF_REQUIRE_EQ(0, sysext_config_load_fd(&cfg, fd));
+	ATF_CHECK_EQ(3, lseek(fd, 0, SEEK_CUR));
+	ATF_CHECK(fcntl(fd, F_GETFD) >= 0);
+	previous = cfg;
+	ATF_REQUIRE_EQ(0, ftruncate(fd, 1024 * 1024 + 1));
+	ATF_CHECK_ERRNO(EFBIG, sysext_config_load_fd(&cfg, fd) == -1);
+	ATF_CHECK_EQ(0, memcmp(&cfg, &previous, sizeof(cfg)));
+	ATF_REQUIRE_EQ(0, ftruncate(fd, 0));
+	ATF_REQUIRE_EQ((ssize_t)sizeof(nul_input) - 1,
+	    pwrite(fd, nul_input, sizeof(nul_input) - 1, 0));
+	ATF_CHECK_ERRNO(EINVAL, sysext_config_load_fd(&cfg, fd) == -1);
+	ATF_CHECK_EQ(0, memcmp(&cfg, &previous, sizeof(cfg)));
+	close(fd);
+	ATF_REQUIRE_EQ(0, pipe(pipefds));
+	ATF_CHECK_ERRNO(EPERM, sysext_config_load_fd(&cfg, pipefds[0]) == -1);
+	ATF_CHECK(fcntl(pipefds[0], F_GETFD) >= 0);
+	close(pipefds[0]);
+	close(pipefds[1]);
+	unlink(path);
+}
+
+ATF_TC(packaged_policy);
+ATF_TC_HEAD(packaged_policy, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Packaged deployment policy remains a valid explicit input");
+}
+ATF_TC_BODY(packaged_policy, tc)
+{
+	struct sysext_config cfg;
+	const char *path;
+	size_t i;
+
+	path = atf_tc_get_config_var_wd(tc, "packaged_policy",
+	    "/Capabilities/System/SystemExtension.cap/Units/bsdextension.unit/Config/bsdextension.ucl");
+	sysext_config_defaults(&cfg);
+	ATF_REQUIRE_EQ(0, sysext_config_load(&cfg, path));
+	for (i = 0; i < cfg.nallow; i++)
+		ATF_CHECK(extension_allowed(&cfg, cfg.allow[i]));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, defaults_grant_nothing);
+	ATF_TP_ADD_TC(tp, descriptor_contract);
+	ATF_TP_ADD_TC(tp, packaged_policy);
 	ATF_TP_ADD_TC(tp, allowlisted_module_is_permitted);
 	ATF_TP_ADD_TC(tp, reload_authorization_and_last_good);
 	ATF_TP_ADD_TC(tp, reload_shared_and_owner_death);
@@ -362,9 +436,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, non_allowlisted_module_is_denied);
 	ATF_TP_ADD_TC(tp, valid_module_name_rejects_paths_accepts_dotted);
 	ATF_TP_ADD_TC(tp, valid_module_name_requires_termination);
-	ATF_TP_ADD_TC(tp, malformed_config_falls_back_to_defaults);
-	ATF_TP_ADD_TC(tp, non_object_config_falls_back_to_defaults);
-	ATF_TP_ADD_TC(tp, missing_config_uses_defaults);
+	ATF_TP_ADD_TC(tp, malformed_config_preserves_deny);
+	ATF_TP_ADD_TC(tp, non_object_config_preserves_deny);
+	ATF_TP_ADD_TC(tp, missing_config_is_error);
 	ATF_TP_ADD_TC(tp, invalid_entry_config_rejected_keeps_defaults);
 	ATF_TP_ADD_TC(tp, config_replaces_default_allowlist);
 	return (atf_no_error());

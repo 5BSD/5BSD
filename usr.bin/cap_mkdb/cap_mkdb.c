@@ -150,6 +150,9 @@ db_build(char **ifiles)
 	int st;
 	char *bp, *p, *t;
 
+	/* Rebuild from the named text inputs, never an existing .db cache. */
+	(void)cgetusedb(0);
+
 	data.data = NULL;
 	key.data = NULL;
 	for (reccnt = 0, bplen = 0; (st = cgetnext(&bp, ifiles)) > 0; free(bp)) {

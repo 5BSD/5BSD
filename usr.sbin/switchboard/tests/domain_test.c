@@ -138,12 +138,11 @@ sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
  */
 int
 on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
-    const struct svc_domain *domain, struct channel_message *request, int kq)
+    struct channel_message *request, int kq)
 {
 
 	(void)name;
 	(void)lc;
-	(void)domain;
 	(void)request;
 	(void)kq;
 	errno = ENOENT;
@@ -471,7 +470,8 @@ ATF_TC_BODY(ambient_descriptor_marking, tc)
 	/*
 	 * The ambient marking (§21.1) survives every fork and survives exec.
 	 * cap_clofork_limit / fcntl work on any descriptor, so this needs no
-	 * capability kernel.
+	 * capability device. It still requires a kernel matching the syscall
+	 * ABI of the test and its libraries.
 	 */
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
 	ATF_REQUIRE_EQ(0, fcntl(sv[0], F_SETFD, FD_CLOEXEC));

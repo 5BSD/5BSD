@@ -56,6 +56,14 @@ than they can the original text file(s).
 The ``tc'' capabilities of the records are expanded before the
 record is stored into the database.
 .Pp
+Only the named text files supply records and
+.Ic tc
+references.
+Existing compiled databases adjacent to any input are ignored, including when
+.Fl f
+selects a different output basename.
+An oversized name field is rejected; an incomplete output database is removed.
+.Pp
 The following options are available:
 .Bl -tag -width indent
 .It Fl b

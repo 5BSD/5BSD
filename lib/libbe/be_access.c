@@ -342,14 +342,17 @@ char *
 be_mountpoint_augmented(libbe_handle_t *lbh, char *mountpoint)
 {
 
-	if (lbh->altroot_len == 0)
+	if (lbh->altroot_len == 0 || mountpoint == NULL)
 		return (mountpoint);
-	if (mountpoint == NULL || *mountpoint == '\0')
+	if (strncmp(mountpoint, lbh->altroot, lbh->altroot_len) != 0)
 		return (mountpoint);
 
 	if (mountpoint[lbh->altroot_len] == '\0') {
-		*(mountpoint + 1) = '\0';
+		mountpoint[0] = '/';
+		mountpoint[1] = '\0';
 		return (mountpoint);
-	} else
-		return (mountpoint + lbh->altroot_len);
+	}
+	if (mountpoint[lbh->altroot_len] != '/')
+		return (mountpoint);
+	return (mountpoint + lbh->altroot_len);
 }

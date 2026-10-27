@@ -1,0 +1,2 @@
+exec echo b a
+exec echo d c

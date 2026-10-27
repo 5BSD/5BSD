@@ -2,17 +2,26 @@ PACKAGE=	tzfs-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/BSDFilesystem
 .PATH:		${SRCTOP}/usr.sbin/BSDFilesystem
 
+ATF_TESTS_C+=	config_test
+SRCS.config_test= config_test.c
+LIBADD.config_test= capsulert
+NO_SHARED.config_test= yes
+FILESGROUPS+= STORAGE_POLICY
+STORAGE_POLICY= ${.CURDIR}/../bsdfilesystem.ucl
+STORAGE_POLICYNAME= storage-policy.ucl
+STORAGE_POLICYDIR= ${TESTSDIR}
+
 ATF_TESTS_C+=	namespace_test
 ATF_TESTS_C+=	provider_test
 
 # Both tests link the daemon's request-loop translation unit compiled with the
 # BSDFILESYSTEM_TESTING hook, which exposes the file-private pure-logic functions and a
-# single-channel serve entrypoint.  layout.c/nvwalk.c/config.c provide the
+# single-channel serve entrypoint. layout.c/nvwalk.c and libcapsulert provide the
 # symbols request.c references (bsdfilesystem_ensure_path, bsdfilesystem_destroy_tree,
 # bsdfilesystem_session_begin, bsdfilesystem_nvl_names, and the config defaults); no ZFS work is
 # performed by the cases we actually run.
-BSDFILESYSTEM_SRCS=	request.c layout.c nvwalk.c config.c oes_factory.c oes_session.c
-BSDFILESYSTEM_LIBADD=	trustedzfs ucl nvpair service channel md capreclaim logcmp \
+BSDFILESYSTEM_SRCS=	request.c layout.c nvwalk.c oes_factory.c oes_session.c
+BSDFILESYSTEM_LIBADD=	capsulert trustedzfs ucl nvpair service channel md capreclaim logcmp \
 			filesystemcmp oes fidl_bsd
 
 # Shared daemon sources are compiled once with the same flags for both tests, so
@@ -75,8 +84,15 @@ NO_SHARED.manifest_test= yes
 # configuration file of the same name.
 ${PACKAGE}FILES+= ${.CURDIR}/../capbundle/bsdfilesystem.ucl
 
+# Includes a non-root rejection case and a real file-backed ZFS pool case.
+ATF_TESTS_C+= anchor_test
+SRCS.anchor_test= anchor_test.c layout.c nvwalk.c
+CFLAGS.anchor_test+= -I${SRCTOP}/tests/sys/zfshandle
+LIBADD.anchor_test= ${BSDFILESYSTEM_LIBADD}
+NO_SHARED.anchor_test= yes
+
 ATF_TESTS_C+= cleanup_test
-SRCS.cleanup_test= cleanup_test.c layout.c nvwalk.c config.c
+SRCS.cleanup_test= cleanup_test.c layout.c nvwalk.c
 LIBADD.cleanup_test= ${BSDFILESYSTEM_LIBADD}
 NO_SHARED.cleanup_test= yes
 .for symbol in tzfs_openat tzfs_info tzfs_list_children tzfs_list_snapshots tzfs_snap_destroy tzfs_destroy
@@ -85,12 +101,14 @@ LDFLAGS.cleanup_test+= -Wl,--wrap=${symbol}
 
 
 ATF_TESTS_C+= quota_test
+SRCS.quota_test= quota_test.c layout.c nvwalk.c
+LIBADD.quota_test= ${BSDFILESYSTEM_LIBADD}
 CFLAGS.quota_test+= -I${SRCTOP}/lib/libfidl/include -I${FIDLGEN.filesystemcmp} -I${FIDLGEN.oes_broker} -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libtrustedzfs -I${SRCTOP}/lib/libcapreclaim -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libservice -I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys -I${SRCTOP}/lib/liboes -I${SRCTOP}/contrib/libucl/include -ffunction-sections -fdata-sections
 LDFLAGS.quota_test+= -Wl,--gc-sections
 NO_SHARED.quota_test= yes
 
 ATF_TESTS_C+= lifecycle_test
-SRCS.lifecycle_test= lifecycle_test.c layout.c nvwalk.c config.c oes_factory.c oes_session.c
+SRCS.lifecycle_test= lifecycle_test.c layout.c nvwalk.c oes_factory.c oes_session.c
 CFLAGS.lifecycle_test+= -I${SRCTOP}/lib/liboes -ffunction-sections -fdata-sections
 LDFLAGS.lifecycle_test+= -Wl,--gc-sections
 LIBADD.lifecycle_test= ${BSDFILESYSTEM_LIBADD}
@@ -130,6 +148,11 @@ FILESGROUPS+= FIDL_NOTICE
 FIDL_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 FIDL_NOTICEDIR= /usr/share/licenses/tzfs-tests/fuchsia
 
+# Record the package license ancestor as well as the notice directory.
+DIRS+= FIDL_NOTICEPARENT
+FIDL_NOTICEPARENT= ${FIDL_NOTICEDIR:H}
+FIDL_NOTICEPARENTTAGS= ${FIDL_NOTICEDIRTAGS}
+
 .PATH: ${.CURDIR}/evolution
 
 # Bindings generated at build time (fidl-bindings.mk); the generated code is
@@ -147,5 +170,26 @@ FIDL_SCHEMAS.filesystemcmp_next=	lib/libfidl/tests/zx.fidl \
 FIDL_LIBRARY.filesystemcmp_next=	bsd.filesystem.v1
 FIDL_FLAGS.filesystemcmp_next=	--available bsd:2
 .include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
+
+
+ATF_TESTS_C+= staging_recovery_test
+SRCS.staging_recovery_test= staging_recovery_test.c layout.c nvwalk.c
+CFLAGS.staging_recovery_test.c+= -I${SRCTOP}/tests/sys/zfshandle
+LIBADD.staging_recovery_test= ${BSDFILESYSTEM_LIBADD}
+NO_SHARED.staging_recovery_test= yes
+
+ATF_TESTS_C+= abort_test
+SRCS.abort_test= abort_test.c layout.c nvwalk.c
+CFLAGS.abort_test+= ${CFLAGS.quota_test} -I${SRCTOP}/tests/sys/zfshandle
+LDFLAGS.abort_test+= -Wl,--gc-sections
+LIBADD.abort_test= ${BSDFILESYSTEM_LIBADD}
+NO_SHARED.abort_test= yes
+
+# Includes layout.c to exercise its actual private reclamation callbacks.
+ATF_TESTS_C+= persistent_retention_test
+SRCS.persistent_retention_test= persistent_retention_test.c nvwalk.c
+CFLAGS.persistent_retention_test+= -I${SRCTOP}/tests/sys/zfshandle
+LIBADD.persistent_retention_test= ${BSDFILESYSTEM_LIBADD}
+NO_SHARED.persistent_retention_test= yes
 
 .include <bsd.test.mk>

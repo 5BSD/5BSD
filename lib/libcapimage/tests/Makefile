@@ -2,7 +2,7 @@
 PACKAGE= libcapimage-tests
 TESTSDIR= ${TESTSBASE}/lib/libcapimage
 ATF_TESTS_C= capimage_test
-CFLAGS+= -I${SRCTOP}/lib/libcapimage
+CFLAGS+= -I${SRCTOP}/lib/libcapimage -I${SRCTOP}/sys
 LIBADD= capimage crypto
 
 PLAIN_TESTS_C+= capimage_handle_client_test

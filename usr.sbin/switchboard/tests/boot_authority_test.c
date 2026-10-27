@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <atf-c.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -10,20 +11,27 @@
 #include "authority.h"
 
 static int
-parse(const char *text, struct svc_domain *domain, struct svc_authority_scope *scope)
+parse_bytes(const char *text, size_t length, struct svc_domain *domain,
+    struct svc_authority_scope *scope)
 {
 	char path[] = "boot-policy.XXXXXX";
 	int fd = mkstemp(path), result, saved;
 
 	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE(unlink(path) == 0);
-	ATF_REQUIRE(write(fd, text, strlen(text)) == (ssize_t)strlen(text));
+	ATF_REQUIRE(write(fd, text, length) == (ssize_t)length);
 	result = svc_authority_parse_boot(fd, domain, scope);
 	saved = errno;
 	close(fd);
 	errno = saved;
 	return (result);
 }
+static int
+parse(const char *text, struct svc_domain *domain, struct svc_authority_scope *scope)
+{
+	return (parse_bytes(text, strlen(text), domain, scope));
+}
+
 ATF_TC_WITHOUT_HEAD(valid_scope);
 ATF_TC_BODY(valid_scope, tc)
 {
@@ -48,6 +56,11 @@ ATF_TC_BODY(reject_malformed, tc)
 	struct svc_domain domain;
 	struct svc_authority_scope scope;
 	const char *bad[] = {
+	    "\"endpoints\\u0000suffix\"=[\"x.y\"];",
+	    "endpoints=[\"x.y\"];\"admin_rights\\u0000suffix\"=true;",
+	    "endpoints=[\"x.y\"];\"attributes\\u0000suffix\"=[\"a.b\"];",
+	    "endpoints=[\"x.y\",\"x.y\"];",
+	    "endpoints=[\"x.y\"];attributes=[\"a.b\",\"a.b\"];",
 	    "", "endpoints=[];", "endpoints=[\"*\"];", "endpoints=[42];",
 	    "endpoints=[\"x.y\"];unknown=true;",
 	    "endpoints=[\"x.y\"];anointments=[];",
@@ -88,8 +101,42 @@ ATF_TC_BODY(no_external_includes, tc)
 	ATF_REQUIRE(unlink("boot-external.ucl") == 0);
 }
 
+ATF_TC_WITHOUT_HEAD(descriptor_bounds);
+ATF_TC_BODY(descriptor_bounds, tc)
+{
+	const char valid[] = "endpoints=[\"example.Service\"];";
+	const char raw_nul[] = "endpoints=[\"example.Service\"];\0admin_rights=true;";
+	struct svc_domain domain;
+	struct svc_authority_scope scope;
+	char *text;
+	int fds[2], fd;
+
+	(void)tc;
+	ATF_REQUIRE_ERRNO(EBADF, svc_authority_parse_boot(-1, &domain, &scope) == -1);
+	ATF_REQUIRE_EQ(scope.count, 0);
+	ATF_REQUIRE_EQ(0, pipe(fds));
+	ATF_REQUIRE_ERRNO(EINVAL, svc_authority_parse_boot(fds[0], &domain, &scope) == -1);
+	close(fds[0]); close(fds[1]);
+	fd = open(".", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_ERRNO(EINVAL, svc_authority_parse_boot(fd, &domain, &scope) == -1);
+	close(fd);
+	ATF_REQUIRE(parse_bytes(raw_nul, sizeof(raw_nul) - 1, &domain, &scope) == -1);
+	ATF_REQUIRE_EQ(scope.count, 0);
+	text = malloc(65537);
+	ATF_REQUIRE(text != NULL);
+	memset(text, ' ', 65537);
+	memcpy(text, valid, sizeof(valid) - 1);
+	ATF_REQUIRE_EQ(0, parse_bytes(text, 65536, &domain, &scope));
+	ATF_REQUIRE_EQ(scope.count, 1);
+	ATF_REQUIRE_ERRNO(EINVAL, parse_bytes(text, 65537, &domain, &scope) == -1);
+	ATF_REQUIRE_EQ(scope.count, 0);
+	free(text);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, descriptor_bounds);
 	ATF_TP_ADD_TC(tp, valid_scope);
 	ATF_TP_ADD_TC(tp, reject_malformed);
 	ATF_TP_ADD_TC(tp, no_external_includes);

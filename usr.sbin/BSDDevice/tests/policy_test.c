@@ -7,6 +7,7 @@
 #include <sys/types.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -204,8 +205,33 @@ ATF_TC_BODY(oes_requires_attribute_endpoint, tc)
 	ATF_CHECK_EQ(0, cfg.nentries);
 }
 
+
+ATF_TC(packaged_default_deny);
+ATF_TC_HEAD(packaged_default_deny, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Shipping policy grants no example client device access");
+}
+ATF_TC_BODY(packaged_default_deny, tc)
+{
+	struct devicecmp_config cfg;
+	const char *path;
+	char packaged[1024];
+	int fd;
+
+	ATF_REQUIRE(snprintf(packaged, sizeof(packaged), "%s/device.conf",
+	    atf_tc_get_config_var(tc, "srcdir")) < (int)sizeof(packaged));
+	path = atf_tc_get_config_var_wd(tc, "packaged_policy", packaged);
+	devicecmp_config_defaults(&cfg);
+	fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, devicecmp_config_load_fd(&cfg, fd));
+	ATF_CHECK_EQ(0, cfg.nentries);
+	close(fd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, packaged_default_deny);
 	ATF_TP_ADD_TC(tp, oes_requires_attribute_endpoint);
 
 	ATF_TP_ADD_TC(tp, name_validation);

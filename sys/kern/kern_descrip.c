@@ -1508,6 +1508,8 @@ fsetown(pid_t pgid, struct sigio **sigiop)
 	SIGIO_UNLOCK();
 	if (osigio != NULL)
 		sigiofree(osigio);
+	if (ret != 0)
+		sigiofree(sigio);
 	return (ret);
 }
 

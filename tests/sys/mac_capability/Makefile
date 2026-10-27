@@ -47,6 +47,10 @@ all: authority-inject.so
 CFLAGS.authority_boot_helper+= -I${SRCTOP}/sys -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libcapability
 LIBADD.authority_boot_helper+= channel capability pthread
 NO_SHARED.authority_boot_helper= yes
+.PATH: ${SRCTOP}/usr.sbin/switchboard ${SRCTOP}/usr.sbin/switchboard/nss-helper
+SRCS.authority_boot_helper= authority_boot_helper.c nss_exchange.c nss_child.c nss_protocol.c
+CFLAGS.authority_boot_helper+= -I${SRCTOP}/usr.sbin/switchboard
+
 CFLAGS.authority_session_helper+= -I${SRCTOP}/sys -I${SRCTOP}/lib/libservice
 CFLAGS.authority_session_helper+= -I${SRCTOP}/lib/libcapsulert
 LIBADD.authority_session_helper+= service

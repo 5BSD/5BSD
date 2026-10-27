@@ -6,6 +6,7 @@
  * bsdfilesystem(8) configuration: opinionated defaults + optional UCL overlay.
  */
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -14,34 +15,35 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <syslog.h>
 #include <unistd.h>
 
 #include <ucl.h>
+#include <dev/mac_capability/mac_capability_isolation_proto.h>
 
-#include "bsdfilesystem.h"
+#include "filesystem_policy.h"
+#include "claim_parse.h"
 
-/*
- * Derive the /Capabilities dataset layout from a pool name.  Only fields the
- * caller has not explicitly set are recomputed; callers pass a freshly
- * defaulted config so every field is (re)derived here.
- */
-static void
+/* Derive omitted children from the selected base, rejecting truncation. */
+static int
+derive_children(struct bsdfilesystem_config *cfg)
+{
+
+	if (snprintf(cfg->persistent, sizeof(cfg->persistent), "%s/Data",
+	    cfg->base) >= (int)sizeof(cfg->persistent) ||
+	    snprintf(cfg->ephemeral, sizeof(cfg->ephemeral), "%s/ephemeral",
+	    cfg->base) >= (int)sizeof(cfg->ephemeral))
+		return (errno = EINVAL, -1);
+	return (0);
+}
+
+static int
 derive_roots(struct bsdfilesystem_config *cfg)
 {
 
-	(void)snprintf(cfg->base, sizeof(cfg->base), "%s/Capabilities",
-	    cfg->pool);
-	/*
-	 * The durable-container root: each capability unit's persistent data lives
-	 * at Data/<bundle>/<unit>/persistent under it, so the per-bundle container
-	 * is the ownership record the reconcile reaps by (docs/capability-
-	 * container-model.md).
-	 */
-	(void)snprintf(cfg->persistent, sizeof(cfg->persistent),
-	    "%s/Data", cfg->base);
-	(void)snprintf(cfg->ephemeral, sizeof(cfg->ephemeral),
-	    "%s/ephemeral", cfg->base);
+	if (snprintf(cfg->base, sizeof(cfg->base), "%s/Capabilities",
+	    cfg->pool) >= (int)sizeof(cfg->base))
+		return (errno = EINVAL, -1);
+	return (derive_children(cfg));
 }
 
 static bool
@@ -69,7 +71,7 @@ bsdfilesystem_config_defaults(struct bsdfilesystem_config *cfg)
 
 	memset(cfg, 0, sizeof(*cfg));
 	(void)strlcpy(cfg->pool, "zroot", sizeof(cfg->pool));
-	derive_roots(cfg);
+	(void)derive_roots(cfg);
 	(void)strlcpy(cfg->mountpoint, "/Capabilities",
 	    sizeof(cfg->mountpoint));
 	(void)strlcpy(cfg->ephemeral_sync, "disabled",
@@ -86,8 +88,12 @@ copy_string(char *destination, size_t capacity, const ucl_object_t *object)
 
 	if (object == NULL || ucl_object_type(object) != UCL_STRING ||
 	    (value = ucl_object_tostring(object)) == NULL || value[0] == '\0' ||
+	    strlen(value) != object->len ||
 	    strlcpy(destination, value, capacity) >= capacity)
 		return (errno = EINVAL, -1);
+	for (size_t i = 0; i < object->len; i++)
+		if ((unsigned char)value[i] < 32 || (unsigned char)value[i] == 127)
+			return (errno = EINVAL, -1);
 	return (0);
 }
 
@@ -159,10 +165,32 @@ config_validate(const struct bsdfilesystem_config *cfg)
 	return (0);
 }
 
-/*
- * Overlay a UCL config file on top of the defaults.  A missing file is not an
- * error (defaults stand).  Unknown keys are ignored so the schema can grow.
- */
+/* Only declared keys are accepted. The parser independently rejects duplicates. */
+static bool
+object_keys(const ucl_object_t *object, const char *const *names, size_t count)
+{
+	const ucl_object_t *entry;
+	ucl_object_iter_t it = NULL;
+	bool known;
+
+	if (object == NULL || ucl_object_type(object) != UCL_OBJECT)
+		return (false);
+	while ((entry = ucl_object_iterate(object, &it, true)) != NULL) {
+		const char *key = ucl_object_key(entry);
+		if (key == NULL || strlen(key) != entry->keylen || entry->next != NULL)
+			return (false);
+		known = false;
+		for (size_t i = 0; i < count; i++)
+			if (strcmp(key, names[i]) == 0)
+				known = true;
+		if (!known)
+			return (false);
+	}
+	return (true);
+}
+
+
+
 /*
  * Parse a UCL config from an already-open, already-vetted descriptor and overlay
  * it on the defaults.  Does NOT close fd (caller owns it).  Restores the prior
@@ -174,21 +202,50 @@ config_parse_fd(struct bsdfilesystem_config *cfg, int fd)
 	struct bsdfilesystem_config saved;
 	struct ucl_parser *p;
 	const ucl_object_t *root, *o, *roots;
+	static const char *const keys[] = { "pool", "roots", "ephemeral",
+	    "default_refquota", "reclaim_interval", "staging_idle_grace", "open_paths" };
+	static const char *const root_keys[] = { "base", "persistent",
+	    "ephemeral", "mountpoint" };
+	static const char *const ephemeral_keys[] = { "sync" };
+	static const char *const path_keys[] = { "label", "path", "rights",
+	    "prefix", "verify" };
+	struct stat sb;
+	char *data;
+	ssize_t length;
 	int error;
-	bool pool_set = false;
+	bool parsed, pool_set = false;
 
 	saved = *cfg;
-	p = ucl_parser_new(UCL_PARSER_DEFAULT);
+	if (fstat(fd, &sb) == -1)
+		return (-1);
+	if (!S_ISREG(sb.st_mode) || sb.st_size < 0 || sb.st_size > 1024 * 1024)
+		return (errno = EINVAL, -1);
+	data = malloc((size_t)sb.st_size + 1);
+	if (data == NULL)
+		return (-1);
+	do {
+		length = pread(fd, data, (size_t)sb.st_size, 0);
+	} while (length < 0 && errno == EINTR);
+	if (length != sb.st_size || memchr(data, '\0', (size_t)sb.st_size) != NULL) {
+		free(data);
+		return (errno = EINVAL, -1);
+	}
+	p = ucl_parser_new(UCL_PARSER_NO_FILEVARS | UCL_PARSER_DISABLE_MACRO |
+	    UCL_PARSER_NO_IMPLICIT_ARRAYS);
 	if (p == NULL) {
+		free(data);
 		errno = ENOMEM;
 		return (-1);
 	}
-	if (!ucl_parser_add_fd(p, fd)) {
+	parsed = ucl_parser_add_chunk_full(p, (const unsigned char *)data,
+	    (size_t)sb.st_size, 0, UCL_DUPLICATE_ERROR, UCL_PARSE_UCL);
+	free(data);
+	if (!parsed) {
 		ucl_parser_free(p);
 		return (errno = EINVAL, -1);
 	}
 	root = ucl_parser_get_object(p);
-	if (root == NULL || ucl_object_type(root) != UCL_OBJECT) {
+	if (!object_keys(root, keys, nitems(keys))) {
 		if (root != NULL)
 			ucl_object_unref(__DECONST(ucl_object_t *, root));
 		ucl_parser_free(p);
@@ -201,15 +258,17 @@ config_parse_fd(struct bsdfilesystem_config *cfg, int fd)
 		pool_set = true;
 	}
 	/* Recompute the root layout from a possibly-overridden pool. */
-	if (pool_set)
-		derive_roots(cfg);
+	if (pool_set && derive_roots(cfg) == -1)
+		goto invalid;
 
 	if ((roots = ucl_object_lookup(root, "roots")) != NULL) {
-		if (ucl_object_type(roots) != UCL_OBJECT)
+		if (!object_keys(roots, root_keys, nitems(root_keys)))
 			goto invalid;
-		if ((o = ucl_object_lookup(roots, "base")) != NULL &&
-		    copy_string(cfg->base, sizeof(cfg->base), o) == -1)
-			goto invalid;
+		if ((o = ucl_object_lookup(roots, "base")) != NULL) {
+			if (copy_string(cfg->base, sizeof(cfg->base), o) == -1 ||
+			    derive_children(cfg) == -1)
+				goto invalid;
+		}
 		if ((o = ucl_object_lookup(roots, "persistent")) != NULL &&
 		    copy_string(cfg->persistent, sizeof(cfg->persistent), o) == -1)
 			goto invalid;
@@ -224,7 +283,7 @@ config_parse_fd(struct bsdfilesystem_config *cfg, int fd)
 	if ((o = ucl_object_lookup(root, "ephemeral")) != NULL) {
 		const ucl_object_t *sy = ucl_object_lookup(o, "sync");
 
-		if (ucl_object_type(o) != UCL_OBJECT ||
+		if (!object_keys(o, ephemeral_keys, nitems(ephemeral_keys)) ||
 		    (sy != NULL && copy_string(cfg->ephemeral_sync,
 		    sizeof(cfg->ephemeral_sync), sy) == -1))
 			goto invalid;
@@ -255,26 +314,16 @@ config_parse_fd(struct bsdfilesystem_config *cfg, int fd)
 		    ucl_object_type(o) != UCL_TIME)
 			goto invalid;
 		v = ucl_object_todouble(o);
-		if (v < BSDFILESYSTEM_RECLAIM_INTERVAL_MIN ||
-		    v > BSDFILESYSTEM_RECLAIM_INTERVAL_MAX) {
-			/*
-			 * A cadence outside the bounds is a mistake, not a reason
-			 * to take the storage plane down: keep the default and say
-			 * so.
-			 */
-			syslog(LOG_WARNING, "config: reclaim_interval %g outside "
-			    "%u..%u, keeping %u", v, BSDFILESYSTEM_RECLAIM_INTERVAL_MIN,
-			    BSDFILESYSTEM_RECLAIM_INTERVAL_MAX,
-			    BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT);
-			cfg->reclaim_interval = BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT;
-		} else
-			cfg->reclaim_interval = (unsigned)v;
+		if (!(v >= BSDFILESYSTEM_RECLAIM_INTERVAL_MIN &&
+		    v <= BSDFILESYSTEM_RECLAIM_INTERVAL_MAX) || v != (unsigned)v)
+			goto invalid;
+		cfg->reclaim_interval = (unsigned)v;
 	}
 
 	/*
 	 * Minimum age of an abandoned TXN staging clone before the live-system
 	 * idle reap reclaims it (a live txn is protected by its mount regardless).
-	 * Bounded; out-of-range keeps the default.
+	 * Bounded; invalid or fractional values reject the configuration.
 	 */
 	if ((o = ucl_object_lookup(root, "staging_idle_grace")) != NULL) {
 		double v;
@@ -283,16 +332,10 @@ config_parse_fd(struct bsdfilesystem_config *cfg, int fd)
 		    ucl_object_type(o) != UCL_TIME)
 			goto invalid;
 		v = ucl_object_todouble(o);
-		if (v < BSDFILESYSTEM_STAGING_IDLE_GRACE_MIN ||
-		    v > BSDFILESYSTEM_STAGING_IDLE_GRACE_MAX) {
-			syslog(LOG_WARNING, "config: staging_idle_grace %g outside "
-			    "%u..%u, keeping %u", v,
-			    BSDFILESYSTEM_STAGING_IDLE_GRACE_MIN,
-			    BSDFILESYSTEM_STAGING_IDLE_GRACE_MAX,
-			    BSDFILESYSTEM_STAGING_IDLE_GRACE);
-			cfg->staging_idle_grace = BSDFILESYSTEM_STAGING_IDLE_GRACE;
-		} else
-			cfg->staging_idle_grace = (unsigned)v;
+		if (!(v >= BSDFILESYSTEM_STAGING_IDLE_GRACE_MIN &&
+		    v <= BSDFILESYSTEM_STAGING_IDLE_GRACE_MAX) || v != (unsigned)v)
+			goto invalid;
+		cfg->staging_idle_grace = (unsigned)v;
 	}
 
 	/*
@@ -313,7 +356,7 @@ config_parse_fd(struct bsdfilesystem_config *cfg, int fd)
 			ucl_object_iter_t rit = NULL;
 
 			if (cfg->nopen_policy >= BSDFILESYSTEM_MAX_OPEN_POLICY ||
-			    ucl_object_type(ent) != UCL_OBJECT)
+			    !object_keys(ent, path_keys, nitems(path_keys)))
 				goto invalid;
 			pol = &cfg->open_policy[cfg->nopen_policy];
 			memset(pol, 0, sizeof(*pol));
@@ -341,9 +384,11 @@ config_parse_fd(struct bsdfilesystem_config *cfg, int fd)
 				pol->verify = px != NULL && ucl_object_toboolean(px);
 			}
 			while ((rv = ucl_object_iterate(ri, &rit, true)) != NULL) {
-				const char *s = ucl_object_tostring(rv);
+				char right[16];
+				const char *s = right;
+				uint32_t previous = pol->rights;
 
-				if (s == NULL)
+				if (copy_string(right, sizeof(right), rv) == -1)
 					goto invalid;
 				if (strcmp(s, "read") == 0)
 					pol->rights |= BSDFILESYSTEM_OPEN_READ;
@@ -357,7 +402,13 @@ config_parse_fd(struct bsdfilesystem_config *cfg, int fd)
 					pol->rights |= BSDFILESYSTEM_OPEN_IOCTL;
 				else
 					goto invalid;
+				if (pol->rights == previous)
+					goto invalid;
 			}
+			for (unsigned i = 0; i < cfg->nopen_policy; i++)
+				if (strcmp(cfg->open_policy[i].label, pol->label) == 0 &&
+				    strcmp(cfg->open_policy[i].path, pol->path) == 0)
+					goto invalid;
 			if (pol->rights == 0 || (pol->verify &&
 			    (pol->prefix || (pol->rights &
 			    ~(BSDFILESYSTEM_OPEN_READ | BSDFILESYSTEM_OPEN_EXEC)) != 0)))
@@ -374,7 +425,7 @@ config_parse_fd(struct bsdfilesystem_config *cfg, int fd)
 	return (0);
 
 invalid:
-	error = errno != 0 ? errno : EINVAL;
+	error = EINVAL;
 	*cfg = saved;
 	ucl_object_unref(__DECONST(ucl_object_t *, root));
 	ucl_parser_free(p);
@@ -403,7 +454,8 @@ bsdfilesystem_config_load(struct bsdfilesystem_config *cfg, const char *path)
 		close(fd);
 		return (errno = error, -1);
 	}
-	if (!S_ISREG(sb.st_mode) || sb.st_size > 1024 * 1024 ||
+	if (!S_ISREG(sb.st_mode) || sb.st_size < 0 ||
+	    sb.st_size > 1024 * 1024 ||
 	    sb.st_uid != geteuid() || (sb.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
 		close(fd);
 		return (errno = EPERM, -1);
@@ -415,14 +467,7 @@ bsdfilesystem_config_load(struct bsdfilesystem_config *cfg, const char *path)
 	return (rc);
 }
 
-/*
- * Load the config from a descriptor the born-in-capmode broker opened itself via
- * the switchboard-delivered "/" (openat(root_fd, "Capabilities/Config/...")).
- * Possession of the descriptor is the authorization -- no st_uid ownership check
- * (the broker is not the config's owner and cannot open it by path in capmode) --
- * only a regular-file + size sanity guard.  Takes ownership of fd and closes it;
- * fd < 0 leaves the defaults untouched.
- */
+/* Consume a regular bounded configuration descriptor; missing defaults are allowed. */
 int
 bsdfilesystem_config_load_fd(struct bsdfilesystem_config *cfg, int fd)
 {
@@ -441,7 +486,8 @@ bsdfilesystem_config_load_fd(struct bsdfilesystem_config *cfg, int fd)
 		(void)close(fd);
 		return (errno = error, -1);
 	}
-	if (!S_ISREG(sb.st_mode) || sb.st_size > 1024 * 1024) {
+	if (!S_ISREG(sb.st_mode) || sb.st_size < 0 ||
+	    sb.st_size > 1024 * 1024) {
 		(void)close(fd);
 		return (errno = EPERM, -1);
 	}
@@ -451,3 +497,4 @@ bsdfilesystem_config_load_fd(struct bsdfilesystem_config *cfg, int fd)
 	errno = error;
 	return (rc);
 }
+

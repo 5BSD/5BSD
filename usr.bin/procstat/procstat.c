@@ -232,7 +232,7 @@ kinfo_proc_compare(const void *a, const void *b)
 }
 
 void
-kinfo_proc_sort(struct kinfo_proc *kipp, int count)
+kinfo_proc_sort(struct kinfo_proc *kipp, unsigned int count)
 {
 
 	qsort(kipp, count, sizeof(*kipp), kinfo_proc_compare);
@@ -313,7 +313,8 @@ main(int argc, char *argv[])
 	const char *xocontainer;
 	long l;
 	pid_t pid;
-	int aflag, ch, cnt, i, interval;
+	int aflag, ch, i, interval;
+	unsigned int cnt, procidx;
 
 	interval = 0;
 	cmd = NULL;
@@ -497,8 +498,8 @@ main(int argc, char *argv[])
 			if (p == NULL)
 				xo_errx(1, "procstat_getprocs()");
 			kinfo_proc_sort(p, cnt);
-			for (i = 0; i < cnt; i++) {
-				procstat(cmd, prstat, &p[i]);
+			for (procidx = 0; procidx < cnt; procidx++) {
+				procstat(cmd, prstat, &p[procidx]);
 
 				/* Suppress header after first process. */
 				procstat_opts |= PS_OPT_NOHEADER;

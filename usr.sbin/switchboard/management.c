@@ -10,12 +10,12 @@
 
 #include <errno.h>
 #include <stddef.h>
-#include <pwd.h>
 #include <string.h>
 #include <syslog.h>
 
 #include "switchboard.h"
 #include "management.h"
+#include "account_nss.h"
 
 /* User-writable bundle declarations cannot grant protected service access. */
 void
@@ -38,20 +38,27 @@ svc_user_manifest_confine(struct svc_runtime *svc)
 	memset(m->anointments, 0, sizeof(m->anointments));
 }
 
+/* A name lookup must not change the registry owner's numeric identity.
+ * Check both before acquiring launch resources and at the child credential drop.
+ * System-owned units have an independently selected service identity policy. */
+int
+svc_user_credentials_match(uid_t owner, uid_t selected, bool have_creds)
+{
+
+	if (owner != (uid_t)-1 && (!have_creds || selected != owner))
+		return (errno = EPERM, -1);
+	return (0);
+}
+
 /* Resolve the account from registry ownership, never from writable policy. */
 int
 svc_user_manifest_credentials(struct svc_runtime *svc)
 {
-	struct passwd *pw;
-
 	if (svc->owner_uid == (uid_t)-1)
 		return (0);
-	pw = getpwuid(svc->owner_uid);
-	if (pw == NULL)
-		return (errno = ENOENT, -1);
-	if (strlcpy(svc->manifest.user, pw->pw_name,
-	    sizeof(svc->manifest.user)) >= sizeof(svc->manifest.user))
-		return (errno = ENAMETOOLONG, -1);
+	if (account_nss_uid(svc->owner_uid, svc->manifest.user,
+	    sizeof(svc->manifest.user)) == -1)
+		return (-1);
 	svc->manifest.group[0] = '\0';
 	return (0);
 }

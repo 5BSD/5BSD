@@ -31,6 +31,11 @@ EXTENSIONCMP_SCHEMAPACKAGE= libextensioncmp-dev
 FILESGROUPS+= EXTENSIONCMP_NOTICE
 EXTENSIONCMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 EXTENSIONCMP_NOTICEDIR= /usr/share/licenses/libextensioncmp/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= EXTENSIONCMP_NOTICEPARENT
+EXTENSIONCMP_NOTICEPARENT= ${EXTENSIONCMP_NOTICEDIR:H}
+EXTENSIONCMP_NOTICEPARENTTAGS= ${EXTENSIONCMP_NOTICEDIRTAGS}
+
 INCS=	extensioncmp.h
 LIBADD=	pthread service fidl_bsd cplusplus
 CFLAGS+=	-I${SRCTOP}/lib/libservice

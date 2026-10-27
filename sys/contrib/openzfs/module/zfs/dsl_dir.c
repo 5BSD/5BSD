@@ -762,6 +762,13 @@ dsl_enforce_ds_ss_limits(dsl_dir_t *dd, zfs_prop_t prop,
 	    prop == ZFS_PROP_SNAPSHOT_LIMIT);
 
 #ifdef _KERNEL
+#ifdef __FreeBSD__
+	/* TrustedZFS carries capability-authorized mutations through privileged
+	 * implementation calls. That must not waive configured count limits,
+	 * including when the caller itself is root or a property writer. */
+	if ((cr->cr_flags & CRED_FLAG_CAPABILITY_LIMITS) != 0)
+		return (ENFORCE_ALWAYS);
+#endif
 	if (crgetzoneid(cr) != GLOBAL_ZONEID)
 		return (ENFORCE_ALWAYS);
 

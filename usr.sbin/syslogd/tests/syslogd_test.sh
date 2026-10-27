@@ -36,6 +36,59 @@ unix_cleanup()
     syslogd_stop
 }
 
+atf_test_case "unix_alias" "cleanup"
+unix_alias_head()
+{
+    atf_set descr "Relocated UNIX sockets and PID file retain compatibility links across restart"
+    atf_set "require.progs" "syslogd logger"
+    atf_set timeout 30
+}
+unix_alias_body()
+{
+    mkdir state compatibility
+    ln -s ../state/log.sock compatibility/log
+    ln -s ../state/logpriv.sock compatibility/logpriv
+    ln -s ../state/syslogd.pid compatibility/pid
+    chmod 0555 compatibility
+    printf "user.debug\t${SYSLOGD_LOGFILE}\n" > "${SYSLOGD_CONFIG}"
+
+    for phase in first restarted; do
+        syslogd_start -P "${PWD}/state/syslogd.pid" \
+            -p "${PWD}/state/log.sock" -S "${PWD}/state/logpriv.sock" -ss
+        atf_check cmp compatibility/pid state/syslogd.pid
+        syslogd_log -p user.debug -t alias -h "${PWD}/compatibility/log" \
+            "public-${phase}"
+        syslogd_check_log "alias: public-${phase}"
+        syslogd_log -p user.debug -t alias -h "${PWD}/compatibility/logpriv" \
+            "private-${phase}"
+        syslogd_check_log "alias: private-${phase}"
+        # A reload must reopen the new output after rotation, not keep writing
+        # the old inode through a retained descriptor. Casper performs this
+        # resource opening in the normal build.
+        mv "${SYSLOGD_LOGFILE}" "${SYSLOGD_LOGFILE}.${phase}"
+        cp "${SYSLOGD_LOGFILE}.${phase}" "rotation-before.${phase}"
+        syslogd_reload "${PWD}/state/syslogd.pid"
+        syslogd_log -p user.debug -t alias -h "${PWD}/compatibility/log" \
+            "rotated-${phase}"
+        syslogd_check_log "alias: rotated-${phase}"
+        atf_check cmp "rotation-before.${phase}" "${SYSLOGD_LOGFILE}.${phase}"
+        syslogd_stop "${PWD}/state/syslogd.pid" \
+            "${PWD}/state/log.sock" "${PWD}/state/logpriv.sock"
+        for name in log logpriv pid; do
+            [ -L "compatibility/${name}" ] || atf_fail "lost ${name} alias"
+            [ ! -e "compatibility/${name}" ] || atf_fail "state survived shutdown"
+        done
+    done
+}
+unix_alias_cleanup()
+{
+    if [ -f "${PWD}/state/syslogd.pid" ]; then
+        syslogd_stop "${PWD}/state/syslogd.pid" \
+            "${PWD}/state/log.sock" "${PWD}/state/logpriv.sock"
+    fi
+    chmod 0755 compatibility 2>/dev/null || :
+}
+
 atf_test_case "inet" "cleanup"
 inet_head()
 {
@@ -682,6 +735,7 @@ forward_reload_cleanup()
 atf_init_test_cases()
 {
     atf_add_test_case "unix"
+    atf_add_test_case "unix_alias"
     atf_add_test_case "inet"
     atf_add_test_case "inet6"
     atf_add_test_case "reload"

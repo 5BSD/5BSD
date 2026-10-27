@@ -31,6 +31,7 @@
 # KEYWORD: nojail
 
 . /etc/rc.subr
+. /etc/hostid.subr
 
 name="hostid"
 desc="Generate a unique host ID"
@@ -134,6 +135,11 @@ hostid_generate()
 
 hostid_reset()
 {
+	hostid_integrity_mode || return 1
+	if [ "${hostid_protected}" = YES ]; then
+		warn "BIP host identity changes require authenticated boot policy"
+		return 1
+	fi
 	hostid_generate
 	# Store newly generated UUID in ${hostid_file}.
 	echo $uuid > ${hostid_file}
@@ -144,6 +150,11 @@ hostid_reset()
 
 hostid_start()
 {
+	hostid_integrity_mode || return 1
+	if [ "${hostid_protected}" = YES ]; then
+		hostid_verify_kernel
+		return $?
+	fi
 	# If ${hostid_file} already exists, we take UUID from there.
 	if [ -r ${hostid_file} ]; then
 		read saved_hostid < ${hostid_file}

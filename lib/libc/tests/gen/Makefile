@@ -24,6 +24,7 @@ ATF_TESTS_C+=		fts_set_test
 ATF_TESTS_C+=		fpsetmask_test
 ATF_TESTS_C+=		fpsetround_test
 ATF_TESTS_C+=		ftw_test
+.PATH: ${SRCTOP}/lib/libc/gen
 ATF_TESTS_C+=		getentropy_test
 ATF_TESTS_C+=		getmntinfo_test
 ATF_TESTS_C+=		glob2_test
@@ -34,6 +35,8 @@ ATF_TESTS_C+=		limits_test
 ATF_TESTS_C+=		makecontext_test
 ATF_TESTS_C+=		opendir_test
 ATF_TESTS_C+=		popen_test
+ATF_TESTS_C+=		pututxline_test
+NO_SHARED.pututxline_test= yes
 ATF_TESTS_C+=		posix_spawn_test
 ATF_TESTS_C+=		realpath2_test
 ATF_TESTS_C+=		scandir_test

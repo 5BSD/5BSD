@@ -1,18 +1,20 @@
 # bsdfilesystem(8) configuration.  Every key is optional; the built-in defaults
 # (shown commented below) apply when omitted.  See tzfs.conf(5).
+# BIP requires this policy in authenticated immutable system storage.
+# Invalid supplied policy is fatal; unknown/duplicate keys and includes are rejected.
 
 # pool = "zroot";                    # pool backing /Capabilities
 
 # roots {
 #     base        = "zroot/Capabilities";
-#     persistent  = "zroot/Capabilities/persistent";
+#     persistent  = "zroot/Capabilities/Data";
 #     ephemeral   = "zroot/Capabilities/ephemeral";
 #     mountpoint  = "/Capabilities";
 # }
 
 # ephemeral { sync = "disabled"; }   # sync= for ephemeral datasets
 
-# default_refquota = "1gb";          # per-claim space ceiling (bytes; 0 = off)
+# default_refquota = 1gb;          # per-claim space ceiling (bytes; 0 = off)
                                      # so no single claim/tenant can fill the pool
 
 # Isolated-open policy (BSDFILESYSTEM_OP_OPEN, default-deny).  Each entry grants one

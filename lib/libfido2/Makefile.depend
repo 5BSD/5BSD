@@ -5,6 +5,7 @@ DIRDEPS = \
 	include/xlocale \
 	lib/${CSU_DIR} \
 	lib/libc \
+	lib/libcbor \
 	lib/libcompiler_rt \
 	lib/libz \
 	secure/lib/libcrypto \

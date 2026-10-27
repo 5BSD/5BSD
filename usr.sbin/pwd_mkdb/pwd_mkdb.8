@@ -36,6 +36,7 @@
 .Op Fl CiNp
 .Op Fl d Ar directory
 .Op Fl s Ar cachesize
+.Op Fl S Ar shells
 .Op Fl u Ar username
 .Ar file
 .Sh DESCRIPTION
@@ -56,6 +57,11 @@ The file must be in the correct format (see
 It is important to note that the format used in this system is
 different from the historic Version 7 style format.
 .Pp
+Before installing the result, input permissions are set to 0600 when needed.
+Failure to set those permissions is an error.
+An input already having mode 0600 is not subjected to a redundant permission
+change, which can otherwise change filesystem bookkeeping flags.
+.Pp
 The options are as follows:
 .Bl -tag -width flag
 .It Fl C
@@ -75,6 +81,14 @@ A non-default directory must also be specified with the
 .Fl d
 option for locking to be ignored.
 Other use of this option is strongly discouraged.
+.It Fl S Ar shells
+Use the specified shell list for root-shell validation instead of the system
+shell list returned by
+.Xr getusershell 3 .
+This is useful when constructing an image for another system.
+An empty file declares no known shells; missing or unreadable files are errors.
+Unknown root shells retain the usual warning behavior.
+Without this option, validation uses the system shell list as before.
 .It Fl N
 Tell
 .Nm
@@ -101,6 +115,11 @@ Only update the record for the specified user.
 Utilities that
 operate on a single user can use this option to avoid the
 overhead of rebuilding the entire database.
+Existing UID mappings are read from the copied destination database.
+With
+.Fl d ,
+the host's account database is not used to decide which target record owns a
+shared UID.
 .El
 .Pp
 The two databases differ in that the secure version contains the user's

@@ -614,6 +614,8 @@ cp_check_shield(struct ucred *cred __unused, struct proc *p, uint32_t flag,
 
 	if (curthread->td_proc == p)
 		return (0);
+	if (p->p_noambient)
+		return (EPERM);
 	if (cp_no_shields())
 		return (0);
 
@@ -670,6 +672,8 @@ cp_mac_check_signal(struct ucred *cred __unused, struct proc *p, int signum)
 
 	if (curthread->td_proc == p)
 		return (0);
+	if (p->p_noambient)
+		return (EPERM);
 	if (cp_no_shields())
 		return (0);
 
@@ -738,6 +742,9 @@ static int
 cp_mac_proc_check_core(struct ucred *cred __unused, struct proc *p)
 {
 	uint32_t flags;
+
+	if (p->p_noambient)
+		return (EPERM);
 
 	if (cp_no_shields())
 		return (0);

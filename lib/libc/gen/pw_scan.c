@@ -80,6 +80,13 @@ __pw_initpwd(struct passwd *pwd)
 int
 __pw_scan(char *bp, struct passwd *pw, int flags)
 {
+	return (__pw_scan_shells(bp, pw, flags, NULL));
+}
+
+int
+__pw_scan_shells(char *bp, struct passwd *pw, int flags,
+    const char *const *shells)
+{
 	uid_t id;
 	int root;
 	char *ep, *p, *sh;
@@ -197,7 +204,15 @@ __pw_scan(char *bp, struct passwd *pw, int flags)
 		goto fmt;
 
 	p = pw->pw_shell;
-	if (root && *p) {				/* empty == /bin/sh */
+	if (root && *p && shells != NULL) {
+		size_t i;
+
+		for (i = 0; shells[i] != NULL; i++)
+			if (strcmp(p, shells[i]) == 0)
+				break;
+		if (shells[i] == NULL && (flags & _PWSCAN_WARN))
+			warnx("warning, unknown root shell");
+	} else if (root && *p) {			/* empty == /bin/sh */
 		for (setusershell();;) {
 			if (!(sh = getusershell())) {
 				if (flags & _PWSCAN_WARN)

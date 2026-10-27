@@ -7,6 +7,7 @@
 #include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/ioctl.h>
+#include <sys/procdesc.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
@@ -308,8 +309,7 @@ handle_name_claim(struct svc_runtime *svc, struct channel_message *request)
 		    EINVAL, NULL, 0);
 		return;
 	}
-	error = on_demand_name_claim(svc, req->name,
-	    (req->flags & SVC_NAME_CLAIM_SENDABLE) != 0);
+	error = on_demand_name_claim(svc, req->name, req->flags);
 	SWITCHBOARD_PROBE_ENDPOINT_CLAIM(svc->manifest.label, req->name, error);
 	switchboard_audit(AUE_SWITCHBOARD_ONDEMAND, getuid(), error,
 	    "endpoint claim svc=%s name=%s", svc->manifest.label, req->name);
@@ -427,7 +427,8 @@ handle_name_withdraw(struct svc_runtime *svc,
 
 /* Returns true when on-demand state retained the request. */
 static bool
-handle_lookup(struct svc_runtime *svc, struct channel_message *request)
+handle_lookup(struct svc_runtime *svc, struct channel_message *request,
+    const struct svc_domain *actual)
 {
 	const struct svc_lookup_req *req;
 	bool sendable;
@@ -459,8 +460,8 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 		return (false);
 	}
 	sendable = false;
-	client_fd = naming_lookup(req->name, svc, &svc->domain,
-	    channel_message_sender(request), &error, &sendable);
+	client_fd = naming_lookup_observed(req->name, svc, actual,
+	    request, &error, &sendable);
 	if (client_fd < 0) {
 		if (error == ENOENT) {
 			if (on_demand_launch(req->name, svc, request,
@@ -565,13 +566,17 @@ svc_request(struct channel *channel, struct channel_message *request,
 	(void)channel;
 	svc = context;
 	retained = false;
-	if (channel_message_fd_count(request) != 0 ||
-	    channel_message_length(request) < sizeof(op)) {
+	if (channel_message_length(request) < sizeof(op)) {
 		(void)svc_channel_reply(svc, request, 0, EINVAL, NULL, 0);
 		goto out;
 	}
 	opp = channel_message_data(request);
 	memcpy(&op, opp, sizeof(op));
+	if (channel_message_fd_count(request) != 0 &&
+	    !(op == SVC_OP_LOOKUP && channel_message_fd_count(request) == 1)) {
+		(void)svc_channel_reply(svc, request, op, EINVAL, NULL, 0);
+		goto out;
+	}
 	/* Owning a bootstrap endpoint does not identify its current sender. */
 	if (svc_authority_resolve(request, &domain, &sender) == -1 ||
 	    sender != svc) {
@@ -606,7 +611,7 @@ svc_request(struct channel *channel, struct channel_message *request,
 		handle_heartbeat(svc, request);
 		break;
 	case SVC_OP_LOOKUP:
-		retained = handle_lookup(svc, request);
+		retained = handle_lookup(svc, request, &domain);
 		break;
 	case SVC_OP_HELPER_OPEN:
 		retained = handle_helper_open(svc, request);

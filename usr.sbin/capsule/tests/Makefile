@@ -2,6 +2,7 @@ PACKAGE=	capsule-tests
 
 .PATH:	${SRCTOP}/usr.sbin/capsule/tests
 
+ATF_TESTS_SH+=	capsule_config_cli_test
 ATF_TESTS_SH+=	capsule_daemon_test
 ATF_TESTS_SH+=	capsule_init_test
 ATF_TESTS_SH+=	capsule_daemon_lifecycle_test
@@ -71,10 +72,63 @@ CFLAGS.capsule_lifecycle_test+=	-I${SRCTOP}/lib/libcapsulert
 ATF_TESTS_C+=	capsule_plane_test
 CFLAGS.capsule_plane_test+=	-I${SRCTOP}/usr.sbin/capsule
 
+
 ATF_TESTS_C+= system_release_test
 CFLAGS.system_release_test+= -I${SRCTOP}/sys -I${SRCTOP}/usr.sbin/capsule
 CFLAGS.system_release_test+= -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libcapbundle
 CFLAGS.system_release_test+= -ffunction-sections -fdata-sections
 LDFLAGS.system_release_test+= -Wl,--gc-sections
+
+
+ATF_TESTS_C+= config_test
+.PATH: ${SRCTOP}/usr.sbin/capsule ${SRCTOP}/usr.sbin/capsule/examples
+SRCS.config_test= config_test.c config.c protected_crypto.c
+CFLAGS.config_test+= -I${SRCTOP}/sys -I${SRCTOP}/usr.sbin/capsule
+CFLAGS.config_test+= -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libcapbundle
+CFLAGS.config_test+= -I${SRCTOP}/contrib/libucl/include
+LIBADD.config_test= capsulert ucl md
+NO_SHARED.config_test= yes
+LDFLAGS.config_test+= -Wl,--wrap=malloc -Wl,--wrap=calloc
+${PACKAGE}FILES+= capsule-daemon.conf
+
+.if ${.OBJDIR} != ${.CURDIR}
+${.OBJDIR}/capsule-daemon.conf: ${SRCTOP}/usr.sbin/capsule/capsule-daemon.conf
+	${CP} ${.ALLSRC} ${.TARGET}
+all: ${.OBJDIR}/capsule-daemon.conf
+CLEANFILES+= capsule-daemon.conf
+.endif
+
+.for profile in desktop server embedded broker
+${PACKAGE}FILES+= ${profile}.conf
+.if ${.OBJDIR} != ${.CURDIR}
+${.OBJDIR}/${profile}.conf: ${SRCTOP}/usr.sbin/capsule/examples/${profile}.conf
+	${CP} ${.ALLSRC} ${.TARGET}
+all: ${.OBJDIR}/${profile}.conf
+CLEANFILES+= ${profile}.conf
+.endif
+.endfor
+
+ATF_TESTS_C+= storage_test
+SRCS.storage_test= storage_test.c protected_storage.c config.c
+NO_SHARED.storage_test= yes
+LIBADD.storage_test= md trustedzfs zfs zutil nvpair spl pthread capsulert ucl
+CFLAGS+= -I${SRCTOP}/usr.sbin/capsule -I${SRCTOP}/lib/libtrustedzfs \
+	-I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libcapbundle \
+	-I${SRCTOP}/contrib/libucl/include -I${SRCTOP}/tests/sys/zfshandle
+CFLAGS.storage_test.c+= -I${SRCTOP}/sys
+CFLAGS.config.c+= -I${SRCTOP}/sys
+CFLAGS.protected_storage.c+= -DIN_BASE -DNEED_SOLARIS_BOOLEAN \
+	-I${SRCTOP}/sys/contrib/openzfs/include \
+	-I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include \
+	-I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd \
+	-I${SRCTOP}/sys -I${SRCTOP}/cddl/compat/opensolaris/include \
+	-include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h \
+	-include ${SRCTOP}/sys/modules/zfs/zfs_config.h
+
+ATF_TESTS_C+= import_test
+SRCS.import_test= import_test.c protected_storage.c config.c
+NO_SHARED.import_test= yes
+LIBADD.import_test= ${LIBADD.storage_test}
+CFLAGS.import_test.c+= ${CFLAGS.protected_storage.c}
 
 .include <bsd.test.mk>

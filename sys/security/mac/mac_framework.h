@@ -249,9 +249,10 @@ int	mac_mbuf_tag_init(struct m_tag *, int);
 
 int	mac_mount_check_mount(struct ucred *cred, struct vnode *vp,
 	    struct vfsconf *, struct vfsoptlist **optlist, uint64_t fsflags);
+int	mac_mount_check_mount_anon(struct ucred *cred, struct mount *mp);
 int	mac_mount_check_stat(struct ucred *cred, struct mount *mp);
 int	mac_mount_check_update(struct ucred *cred, struct mount *mp,
-	    struct vfsoptlist **optlist, uint64_t fsflags);
+	    struct vfsoptlist **optlist, uint64_t fsflags, bool only_export);
 int	mac_mount_check_unmount(struct ucred *cred, struct mount *mp,
 	    uint64_t flags);
 void	mac_mount_create(struct ucred *cred, struct mount *mp);
@@ -695,6 +696,7 @@ int	mac_vnode_check_deleteextattr(struct ucred *cred, struct vnode *vp,
 	    int attrnamespace, const char *name);
 int	mac_vnode_check_exec(struct ucred *cred, struct vnode *vp,
 	    struct image_params *imgp);
+int	mac_vnode_check_fh(struct ucred *cred, struct vnode *vp);
 int	mac_vnode_check_getacl(struct ucred *cred, struct vnode *vp,
 	    acl_type_t type);
 int	mac_vnode_check_getextattr(struct ucred *cred, struct vnode *vp,

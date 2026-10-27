@@ -44,6 +44,12 @@ LDFLAGS.storage_barrier_test+= -Wl,--wrap=shmring_read_record \
     -Wl,--wrap=shmring_consumer_arm -Wl,--wrap=logcmp_store_append \
     -Wl,--wrap=logcmp_store_flush
 
+ATF_TESTS_C+=	store_fallback_test
+CFLAGS.store_fallback_test+= -I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/sys \
+    -ffunction-sections -fdata-sections
+LDFLAGS.store_fallback_test+= -Wl,--gc-sections
+NO_SHARED.store_fallback_test= yes
+
 ATF_TESTS_C+=	provider_test
 SRCS.provider_test=	provider_test.c logcmp.c session.c
 CFLAGS.provider_test+=	-DLOGCMP_TESTING
@@ -70,7 +76,7 @@ SRCTREE_FILES=	lib/liblogcmp/logcmp.c \
 
 
 ATF_TESTS_C+= pool_fairness_test
-SRCS.pool_fairness_test= pool_fairness_test.c session.c
+SRCS.pool_fairness_test= pool_fairness_test.c pool_fairness_session.c
 CFLAGS.pool_fairness_test+= -I${SRCTOP}/lib/libauditcmp \
     -I${SRCTOP}/lib/libchannel -I${SRCTOP}/sys \
     -ffunction-sections -fdata-sections
@@ -122,6 +128,11 @@ NO_SHARED.latency_bench= no
 FILESGROUPS+= FIDL_NOTICE
 FIDL_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 FIDL_NOTICEDIR= /usr/share/licenses/bsdlog-tests/fuchsia
+
+# Record the package license ancestor as well as the notice directory.
+DIRS+= FIDL_NOTICEPARENT
+FIDL_NOTICEPARENT= ${FIDL_NOTICEDIR:H}
+FIDL_NOTICEPARENTTAGS= ${FIDL_NOTICEDIRTAGS}
 
 # Bindings generated at build time (fidl-bindings.mk).
 FIDL_BINDINGS+=	logcmp

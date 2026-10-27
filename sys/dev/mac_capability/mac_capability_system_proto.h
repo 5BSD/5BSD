@@ -14,13 +14,15 @@
  * nonces can perform them.  Even root is denied unless holding
  * an authorized token.
  *
+ *
  * OPERATIONS
  *
  *   SYS_OP_CLAIM
  *     Claim one or more system operations.  The caller's nonce
  *     becomes the owner.  Once claimed, the MACF hooks deny
  *     the operation to all foreign nonces.  Same-nonce processes
- *     (the fork family) can perform the operation freely.
+ *     (the fork family) can perform the operation in non-BIP kernels.
+ *     BIP additionally requires the original PID 1 for owner authority.
  *
  *   SYS_OP_RELEASE
  *     Release the gates selected by the request mask on this connection.
@@ -32,9 +34,11 @@
  *     claimed operations.  Returned as a reply fd.
  *
  *   SYS_OP_AUTHORIZE
- *     Called on a token fd.  Adds the caller's nonce to the
- *     authorized set.  Authorization persists while the token
- *     fd is open.
+ *     Called on a token fd. Activates it for the caller's nonce.
+ *     Repeating for the same nonce succeeds; a different nonce gets
+ *     EALREADY and must obtain a fresh token. Fork shares the nonce;
+ *     exec rotates it. Authorization lasts until instance revocation,
+ *     subject to any software/invocation binding on each operation.
  *
  *   SYS_OP_SETTIME
  *     PERFORM a privileged clock step in kernel context on behalf of a
@@ -94,7 +98,7 @@
 #define	SYS_GATE_SYSCTL		0x0040
 #define	SYS_GATE_KENV		0x0080
 #define	SYS_GATE_ACCT		0x0100
-#define	SYS_GATE_AUDIT		0x0200	/* auditon + auditctl */
+#define	SYS_GATE_AUDIT		0x0200	/* audit administration; condition queries excluded */
 #define	SYS_GATE_KENV_READ	0x0400	/* kenv get + dump */
 #define	SYS_GATE_SETTIME	0x0800	/* clock step: settimeofday/clock_settime */
 #define	SYS_GATE_JAIL		0x1000	/* jail creation: jail_set(2) */
@@ -144,9 +148,9 @@ struct sys_adjtime_reply {
  *
  *   - No payload (req_len == sizeof(struct sys_request)) => COARSE mode: the
  *     SYSCTL gate isolates EVERY privileged sysctl write, exactly as today.
- *   - A payload is present => SCOPED mode: only the OIDs listed in the set are
- *     isolated; every other sysctl stays directly writable (subject to the
- *     kernel's own PRIV_SYSCTL_WRITE check).
+ *   - A payload is present => SCOPED mode: only listed OIDs are isolated.
+ *     In non-BIP kernels other sysctls remain subject to ordinary privilege
+ *     checks. BIP denies unclaimed writes by non-bootstrap processes.
  *
  * Claim mode is tracked per connection. A scoped re-claim narrows only
  * that connection; independent coarse claims still isolate every OID.

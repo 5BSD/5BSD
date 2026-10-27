@@ -18,6 +18,9 @@ its credential and session hooks return success without taking action.
 New PAM configurations do not use this module.
 Existing references may be removed while preserving the normal UNIX
 authentication modules.
-Capability permissions belong to attributed applications, not login accounts.
+Software entitlements and authenticated user/session authority are independent
+inputs to service authorization.
+Successful PAM credential or session hooks in this compatibility module do not
+establish either authority or enroll an authentication issuer.
 .Sh SEE ALSO
 .Xr pam.conf 5

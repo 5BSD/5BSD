@@ -352,6 +352,11 @@ VIRTIO_REQUIREMENTS_COMPANION_FILES=	Makefile run.sh \
 				validate-virtio-snapshot-runner-selftest.sh
 ${PACKAGE}FILES+=	${VIRTIO_VALIDATION_FILES} ${SANITIZER_HARNESS_FILES} \
 			DEEP_REVIEW_PROMPT.md Makefile
+# Executable companions are installed once by SCRIPTS, with script modes.
+# Keep them in the source-copy lists used by object-directory test runs.
+.for _script in ${SCRIPTS}
+${PACKAGE}FILES:= ${${PACKAGE}FILES:N${_script}}
+.endfor
 CFLAGS.vsock_device_test+=	-DWITHOUT_CAPSICUM \
 				-I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/usr.sbin/bhyve \

@@ -46,6 +46,7 @@
 #include <gelf.h>
 #include <libelf.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -123,7 +124,9 @@ record_end(void)
 	reccnt++;
 	intalign();
 	write_int(recpos);
-	return (fwrite(recbuf, recpos, 1, fxref) != 1 ? errno : 0);
+	if (fwrite(recbuf, recpos, 1, fxref) != 1 || ferror(fxref))
+		return (errno != 0 ? errno : EIO);
+	return (0);
 }
 
 static int
@@ -283,9 +286,9 @@ parse_pnp_list(struct elf_file *ef, const char *desc, char **new_desc,
 	while (walker < ep) {
 		colon = strchr(walker, ':');
 		semi = strchr(walker, ';');
-		if (semi != NULL && semi < colon)
+		if (colon == NULL || (semi != NULL && semi < colon))
 			goto err;
-		if (colon - walker > sizeof(type))
+		if (colon == walker || (size_t)(colon - walker) >= sizeof(type))
 			goto err;
 		strncpy(type, walker, colon - walker);
 		type[colon - walker] = '\0';
@@ -296,7 +299,7 @@ parse_pnp_list(struct elf_file *ef, const char *desc, char **new_desc,
 			key[semi - colon - 1] = '\0';
 			walker = semi + 1;
 			/* Fail safe if we have spaces after ; */
-			while (walker < ep && isspace(*walker))
+			while (walker < ep && isspace((unsigned char)*walker))
 				walker++;
 		} else {
 			if (strlen(colon + 1) >= sizeof(key))
@@ -308,7 +311,8 @@ parse_pnp_list(struct elf_file *ef, const char *desc, char **new_desc,
 			printf("Found type %s for name %s\n", type, key);
 		/* Skip pointer place holders */
 		if (strcmp(type, "P") == 0) {
-			off += elf_pointer_size(ef);
+			off = roundup2(off, elf_pointer_size(ef)) +
+			    elf_pointer_size(ef);
 			continue;
 		}
 
@@ -316,6 +320,8 @@ parse_pnp_list(struct elf_file *ef, const char *desc, char **new_desc,
 		 * Add a node of the appropriate type
 		 */
 		elt = malloc(sizeof(struct pnp_elt) + strlen(key) + 1);
+		if (elt == NULL)
+			err(1, "PNP element");
 		TAILQ_INSERT_TAIL(list, elt, next);
 		elt->pe_key = (char *)(elt + 1);
 		elt->pe_offset = off;
@@ -409,7 +415,7 @@ parse_pnp_list(struct elf_file *ef, const char *desc, char **new_desc,
 	}
 	if (fclose(fp) != 0)
 		errx(1, "Failed to close memory stream");
-	return (0);
+	return (off);
 err:
 	errx(1, "Parse error of description string %s", desc);
 }
@@ -444,13 +450,13 @@ parse_32(const void *p)
 		return (be32dec(p));
 }
 
-static void
+static int
 parse_pnp_entry(struct elf_file *ef, struct pnp_elt *elt, const char *walker)
 {
 	uint8_t v1;
 	uint16_t v2;
 	uint32_t v4;
-	int	value;
+	int	value, error;
 	char buffer[1024];
 
 	if (elt->pe_kind == TYPE_W32) {
@@ -505,8 +511,10 @@ parse_pnp_entry(struct elf_file *ef, struct pnp_elt *elt, const char *walker)
 			    elt->pe_offset);
 			buffer[0] = '\0';
 			if (address != 0) {
-				elf_read_string(ef, address, buffer,
+				error = elf_read_string(ef, address, buffer,
 				    sizeof(buffer));
+				if (error != 0)
+					return (error);
 				buffer[sizeof(buffer) - 1] = '\0';
 			}
 		}
@@ -515,9 +523,10 @@ parse_pnp_entry(struct elf_file *ef, struct pnp_elt *elt, const char *walker)
 			    (elt->pe_kind == TYPE_Z ? 'Z' : 'D'), buffer);
 		record_string(buffer);
 	}
+	return (0);
 }
 
-static void
+static int
 record_pnp_info(struct elf_file *ef, const char *cval,
     struct Gmod_pnp_match_info *pnp, const char *descr)
 {
@@ -536,16 +545,26 @@ record_pnp_info(struct elf_file *ef, const char *cval,
 	 * Parse descr to weed out the chaff and to create a list
 	 * of offsets to output.
 	 */
-	parse_pnp_list(ef, descr, &new_descr, &list);
+	if (pnp->num_entry < 0 || pnp->entry_len <= 0 ||
+	    (size_t)pnp->num_entry > SIZE_MAX / (size_t)pnp->entry_len)
+		return (EINVAL);
+	if (parse_pnp_list(ef, descr, &new_descr, &list) > pnp->entry_len) {
+		free_pnp_list(new_descr, &list);
+		return (EINVAL);
+	}
 	record_int(MDT_PNP_INFO);
 	record_string(cval);
 	record_string(new_descr);
 	record_int(pnp->num_entry);
-	len = pnp->num_entry * pnp->entry_len;
+	len = (size_t)pnp->num_entry * (size_t)pnp->entry_len;
+	if (len == 0) {
+		free_pnp_list(new_descr, &list);
+		return (0);
+	}
 	error = elf_read_relocated_data(ef, pnp->table, len, &table);
 	if (error != 0) {
 		free_pnp_list(new_descr, &list);
-		return;
+		return (error);
 	}
 
 	/*
@@ -555,7 +574,9 @@ record_pnp_info(struct elf_file *ef, const char *cval,
 	walker = table;
 	for (i = 0; i < pnp->num_entry; i++) {
 		TAILQ_FOREACH(elt, &list, next) {
-			parse_pnp_entry(ef, elt, walker);
+			error = parse_pnp_entry(ef, elt, walker);
+			if (error != 0)
+				goto out;
 		}
 		if (verbose > 1)
 			printf("\n");
@@ -563,8 +584,10 @@ record_pnp_info(struct elf_file *ef, const char *cval,
 	}
 
 	/* Now free it */
+out:
 	free_pnp_list(new_descr, &list);
 	free(table);
+	return (error);
 }
 
 static int
@@ -616,14 +639,14 @@ parse_entry(struct Gmod_metadata *md, const char *cval,
 			printf("  pnp info for bus %s format %s %d entries of %d bytes\n",
 			    cval, descr, pnp.num_entry, pnp.entry_len);
 		} else {
-			record_pnp_info(ef, cval, &pnp, descr);
+			error = record_pnp_info(ef, cval, &pnp, descr);
 		}
 		break;
 	default:
 		warnx("unknown metadata record %d in file %s", md->md_type, kldname);
 	}
 	if (!error)
-		record_end();
+		error = record_end();
 	return (error);
 }
 
@@ -632,7 +655,7 @@ read_kld(char *filename, char *kldname)
 {
 	struct Gmod_metadata md;
 	struct elf_file ef;
-	GElf_Addr *p;
+	GElf_Addr *p, start, stop;
 	int error;
 	long entries, i;
 	char cval[MAXMODNAME + 1];
@@ -644,7 +667,7 @@ read_kld(char *filename, char *kldname)
 	if (error != 0)
 		return (error);
 
-	if (reccnt == 0) {
+	if (byte_order == ELFDATANONE) {
 		ehdr = ef.ef_hdr;
 		byte_order = elf_encoding(&ef);
 		free(ehdr_filename);
@@ -657,6 +680,17 @@ read_kld(char *filename, char *kldname)
 	}
 
 	do {
+		/* Relocatable objects can legitimately have no metadata section. */
+		if (ef.ef_hdr.e_type == ET_REL) {
+			error = EF_LOOKUP_SET(&ef, MDT_SETNAME, &start, &stop,
+			    &entries);
+			if (error == ESRCH) {
+				error = 0;
+				break;
+			}
+			if (error != 0)
+				break;
+		}
 		check(elf_read_linker_set(&ef, MDT_SETNAME, &p, &entries));
 
 		/*
@@ -682,7 +716,7 @@ read_kld(char *filename, char *kldname)
 			check(elf_read_string(&ef, md.md_cval, cval,
 			    sizeof(cval)));
 			if (md.md_type == MDT_MODULE) {
-				parse_entry(&md, cval, &ef, kldname);
+				check(parse_entry(&md, cval, &ef, kldname));
 				break;
 			}
 		}
@@ -700,7 +734,7 @@ read_kld(char *filename, char *kldname)
 			check(elf_read_string(&ef, md.md_cval, cval,
 			    sizeof(cval)));
 			if (md.md_type != MDT_MODULE)
-				parse_entry(&md, cval, &ef, kldname);
+				check(parse_entry(&md, cval, &ef, kldname));
 		}
 		if (error != 0)
 			warnc(error, "error while reading %s", filename);
@@ -717,7 +751,8 @@ read_kld(char *filename, char *kldname)
 static FILE *
 maketempfile(char *dest, const char *root)
 {
-	int fd;
+	FILE *stream;
+	int fd, error;
 
 	if (snprintf(dest, MAXPATHLEN, "%s/lhint.XXXXXX", root) >=
 	    MAXPATHLEN) {
@@ -728,18 +763,117 @@ maketempfile(char *dest, const char *root)
 	fd = mkstemp(dest);
 	if (fd < 0)
 		return (NULL);
-	fchmod(fd, 0644);	/* nothing secret in the file */
-	return (fdopen(fd, "w+"));
+	if (fchmod(fd, 0644) == 0) {
+		stream = fdopen(fd, "w+");
+		if (stream != NULL)
+			return (stream);
+	}
+	error = errno;
+	close(fd);
+	unlink(dest);
+	errno = error;
+	return (NULL);
 }
 
 static char xrefname[MAXPATHLEN], tempname[MAXPATHLEN];
+
+static void
+cleanup_temp(void)
+{
+
+	if (fxref != NULL) {
+		fclose(fxref);
+		fxref = NULL;
+	}
+	if (tempname[0] != '\0') {
+		if (unlink(tempname) != 0 && errno != ENOENT)
+			warn("remove %s", tempname);
+		tempname[0] = '\0';
+	}
+}
+
+/* Explicit input mode never discovers files or traverses directories. */
+static const char *
+explicit_path(const char *path)
+{
+	const char *leaf;
+
+	leaf = strrchr(path, '/');
+	if (path[0] != '/' || strlen(path) >= MAXPATHLEN || leaf == NULL ||
+	    leaf[1] == '\0' || strcmp(leaf, "/.") == 0 ||
+	    strcmp(leaf, "/..") == 0 || strstr(path, "//") != NULL ||
+	    strstr(path, "/./") != NULL || strstr(path, "/../") != NULL)
+		errx(1, "explicit mode requires canonical absolute paths: %s", path);
+	return (leaf + 1);
+}
+
+static int
+explicit_files(const char *output, int count, char **files)
+{
+	char directory[MAXPATHLEN];
+	const char *leaf;
+	struct stat sb;
+	size_t length;
+	int error, i, j;
+
+	leaf = explicit_path(output);
+	length = leaf - output;
+	/* Keep the root slash for an output directly below /. */
+	memcpy(directory, output, length);
+	directory[length > 1 ? length - 1 : length] = '\0';
+	if (lstat(output, &sb) == 0) {
+		if (!S_ISREG(sb.st_mode))
+			errx(1, "output is not a regular file: %s", output);
+	} else if (errno != ENOENT)
+		err(1, "%s", output);
+	for (i = 0; i < count; i++) {
+		leaf = explicit_path(files[i]);
+		if ((size_t)(leaf - files[i]) != length ||
+		    strncmp(files[i], output, length) != 0 ||
+		    strcmp(files[i], output) == 0)
+			errx(1, "inputs must be distinct from output and in its directory");
+		for (j = 0; j < i; j++)
+			if (strcmp(files[i], files[j]) == 0)
+				errx(1, "duplicate module input: %s", files[i]);
+		if (lstat(files[i], &sb) != 0)
+			err(1, "%s", files[i]);
+		if (!S_ISREG(sb.st_mode))
+			errx(1, "input is not a regular file: %s", files[i]);
+	}
+	if (elf_version(EV_CURRENT) == EV_NONE)
+		errx(1, "unsupported libelf");
+	fxref = maketempfile(tempname, directory);
+	if (fxref == NULL)
+		err(1, "create hints in %s", directory);
+	byte_order = ELFDATANONE;
+	reccnt = 0;
+	for (i = 0; i < count; i++) {
+		error = read_kld(files[i], strrchr(files[i], '/') + 1);
+		if (error != 0)
+			errc(1, error, "%s", files[i]);
+	}
+	/* A version-only index represents explicitly selected no-record objects. */
+	if (reccnt == 0)
+		write_int(1);
+	error = ferror(fxref);
+	if (fclose(fxref) != 0)
+		error = 1;
+	fxref = NULL;
+	if (error != 0)
+		errx(1, "write hints %s", output);
+	if (rename(tempname, output) != 0)
+		err(1, "install hints %s", output);
+	tempname[0] = '\0';
+	return (0);
+}
 
 static void
 usage(void)
 {
 
 	fprintf(stderr, "%s\n",
-	    "usage: kldxref [-Rdv] [-f hintsfile] path ..."
+	    "usage: kldxref [-Rdv] [-f hintsfile] path ...\n"
+	    "       kldxref -o output file ..."
 	);
 	exit(1);
 }
@@ -764,18 +898,25 @@ main(int argc, char *argv[])
 {
 	FTS *ftsp;
 	FTSENT *p;
-	char *dot = NULL, *module = NULL;
-	int opt, fts_options;
+	char *dot = NULL, *module = NULL, *output = NULL;
+	bool directory_option = false;
+	int opt, fts_options, error;
 	struct stat sb;
 
+	if (atexit(cleanup_temp) != 0)
+		errx(1, "cannot register output cleanup");
 	fts_options = FTS_PHYSICAL;
 
-	while ((opt = getopt(argc, argv, "Rdf:m:v")) != -1) {
+	while ((opt = getopt(argc, argv, "Rdf:m:o:v")) != -1) {
 		switch (opt) {
+		case 'o':
+			output = optarg;
+			break;
 		case 'd':	/* no hint file, only print on stdout */
 			dflag = true;
 			break;
 		case 'f':	/* use this name instead of linker.hints */
+			directory_option = true;
 			xref_file = optarg;
 			break;
 		case 'm':
@@ -786,6 +927,7 @@ main(int argc, char *argv[])
 			verbose++;
 			break;
 		case 'R':	/* recurse on directories */
+			directory_option = true;
 			fts_options |= FTS_COMFOLLOW;
 			break;
 		default:
@@ -798,10 +940,20 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
+	if (output != NULL) {
+		if (dflag || directory_option || verbose || argc == 0)
+			errx(1, "-o requires file inputs and cannot combine with other modes");
+		return (explicit_files(output, argc, argv));
+	}
+
 	if (module) {
 		if (elf_version(EV_CURRENT) == EV_NONE)
 			errx(1, "unsupported libelf");
-		read_kld(module, module);
+		error = read_kld(module, module);
+		if (error != 0)
+			errc(1, error, "%s", module);
+		if (fflush(stdout) != 0)
+			err(1, "standard output");
 		exit(0);
 	}
 
@@ -820,25 +972,51 @@ main(int argc, char *argv[])
 		exit(1);
 
 	for (;;) {
+		errno = 0;
 		p = fts_read(ftsp);
+		if (p == NULL && errno != 0) {
+			warn("fts_read");
+			goto fail;
+		}
+		if (p != NULL && (p->fts_info == FTS_ERR ||
+		    p->fts_info == FTS_DNR || p->fts_info == FTS_NS ||
+		    p->fts_info == FTS_DC)) {
+			warnc(p->fts_errno != 0 ? p->fts_errno : ELOOP,
+			    "%s", p->fts_path);
+			goto fail;
+		}
 		if ((p == NULL || p->fts_info == FTS_D) && fxref) {
 			/* close and rename the current hint file */
-			fclose(fxref);
+			error = fclose(fxref);
 			fxref = NULL;
-			if (reccnt != 0) {
-				rename(tempname, xrefname);
-			} else {
-				/* didn't find any entry, ignore this file */
-				unlink(tempname);
-				unlink(xrefname);
+			if (error != 0) {
+				warn("close %s", tempname);
+				goto fail;
 			}
+			if (reccnt != 0) {
+				if (rename(tempname, xrefname) != 0) {
+					warn("rename %s", xrefname);
+					goto fail;
+				}
+			} else {
+				/* A successfully scanned empty directory has no hints. */
+				if (unlink(tempname) != 0 ||
+				    (unlink(xrefname) != 0 && errno != ENOENT)) {
+					warn("remove empty hints %s", xrefname);
+					goto fail;
+				}
+			}
+			tempname[0] = '\0';
 		}
 		if (p == NULL)
 			break;
 		if (p->fts_info == FTS_D && !dflag) {
 			/* visiting a new directory, create a new hint file */
-			snprintf(xrefname, sizeof(xrefname), "%s/%s",
-			    ftsp->fts_path, xref_file);
+			if (snprintf(xrefname, sizeof(xrefname), "%s/%s",
+			    ftsp->fts_path, xref_file) >= sizeof(xrefname)) {
+				warnx("hints path too long");
+				goto fail;
+			}
 			fxref = maketempfile(tempname, ftsp->fts_path);
 			if (fxref == NULL)
 				err(1, "can't create %s", tempname);
@@ -856,8 +1034,19 @@ main(int argc, char *argv[])
 		dot = strrchr(p->fts_name, '.');
 		if (dot != NULL && strcmp(dot, ".ko") != 0)
 			continue;
-		read_kld(p->fts_path, p->fts_name);
+		error = read_kld(p->fts_path, p->fts_name);
+		if (error != 0) {
+			warnc(error, "%s", p->fts_path);
+			goto fail;
+		}
 	}
-	fts_close(ftsp);
+	if (fts_close(ftsp) != 0)
+		err(1, "fts_close");
+	if (fflush(stdout) != 0)
+		err(1, "standard output");
 	return (0);
+fail:
+	cleanup_temp();
+	fts_close(ftsp);
+	return (1);
 }

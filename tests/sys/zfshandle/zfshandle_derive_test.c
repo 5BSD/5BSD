@@ -5,6 +5,8 @@
  * grant, subtree and snapshot-of-self semantics.
  */
 
+#include <stdint.h>
+
 #include "zfshandle_test_helpers.h"
 
 static void
@@ -25,7 +27,8 @@ ATF_TC_HEAD(derive_narrows, tc)
 }
 ATF_TC_BODY(derive_narrows, tc)
 {
-	struct zfd_info_args info;
+	struct zfd_info_args info, original;
+	struct zfd_limit_args limit;
 	char ds[256];
 	int fd, dfd;
 
@@ -33,10 +36,13 @@ ATF_TC_BODY(derive_narrows, tc)
 	fd = zht_open_req(ds, ZH_SNAPSHOT | ZH_SNAP_DESTROY | ZH_PROPS_WRITE,
 	    0);
 
+	ATF_REQUIRE_EQ(0, zfd_info(fd, &original));
 	dfd = zfd_derive(fd, ZH_SNAPSHOT);
 	ATF_REQUIRE(dfd >= 0);
 	ATF_REQUIRE_EQ(0, zfd_info(dfd, &info));
 	ATF_REQUIRE_EQ(ZH_SNAPSHOT | ZH_IMPLICIT_RIGHTS, info.zi_rights);
+	ATF_REQUIRE_EQ(original.zi_pool_guid, info.zi_pool_guid);
+	ATF_REQUIRE_EQ(original.zi_ds_guid, info.zi_ds_guid);
 
 	ATF_REQUIRE_EQ(0, zfd_snapshot(dfd, "s1"));
 	ATF_REQUIRE_ERRNO(EPERM, zfd_set_prop_str(dfd, "zht:k", "v") == -1);
@@ -46,6 +52,16 @@ ATF_TC_BODY(derive_narrows, tc)
 	ATF_REQUIRE_EQ(0, zfd_snap_destroy(fd, "s1"));
 	ATF_REQUIRE_EQ(0, zfd_set_prop_str(fd, "zht:k", "v"));
 
+	close(dfd);
+	/* Rights alone must not restore an operation removed from the source. */
+	limit.zl_ops = ZFD_OP_INFO | ZFD_OP_DERIVE;
+	ATF_REQUIRE_EQ(0, ioctl(fd, ZFD_LIMIT, &limit));
+	dfd = zfd_derive(fd, ZH_SNAPSHOT);
+	ATF_REQUIRE(dfd >= 0);
+	ATF_REQUIRE_EQ(0, zfd_info(dfd, &info));
+	ATF_REQUIRE_EQ(original.zi_pool_guid, info.zi_pool_guid);
+	ATF_REQUIRE_EQ(original.zi_ds_guid, info.zi_ds_guid);
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE, zfd_snapshot(dfd, "forbidden") == -1);
 	close(dfd);
 	close(fd);
 }

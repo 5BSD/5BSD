@@ -16,14 +16,16 @@ find_guardian()
 
 start_guarded_sleep()
 {
-	local i
+	local i sleep_bin
 
 	find_guardian
+	sleep_bin=$(atf_config_get sleep /bin/sleep)
+	[ -x "$sleep_bin" ] || atf_fail "sleep helper is not executable: $sleep_bin"
 	control="$(pwd)/guardian.sock"
 	mkfifo -m 0600 lease
 	exec 9<>lease
 	"$guardian_bin" run -l "$(pwd)/lease" -s "$control" -- \
-	    /bin/sleep 300 >guardian.log 2>&1 9>&- &
+	    "$sleep_bin" 300 >guardian.log 2>&1 9>&- &
 	guardian_pid=$!
 	i=0
 	while [ ! -S "$control" ] && [ "$i" -lt 100 ]; do

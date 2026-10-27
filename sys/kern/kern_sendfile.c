@@ -566,6 +566,13 @@ sendfile_getobj(struct thread *td, struct file *fp, vm_object_t *obj_res,
 			error = EINVAL;
 			goto out;
 		}
+#ifdef MAC
+		/* sendfile bypasses fo_read; enforce the same source admission
+		 * before retaining its pages or delivering any bytes. */
+		error = mac_vnode_check_read(td->td_ucred, fp->f_cred, vp);
+		if (error != 0)
+			goto out;
+#endif
 		obj = vp->v_object;
 		if (obj == NULL) {
 			error = EINVAL;

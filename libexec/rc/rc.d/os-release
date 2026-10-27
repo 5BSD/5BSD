@@ -25,12 +25,18 @@ load_rc_config $name
 
 osrelease_start()
 {
-	local _version _version_id
+	local _version _version_id _status t
 
 	startmsg -n "Updating ${osrelease_file} "
-	_version=$(freebsd-version -u)
+	if ! _version=$(freebsd-version -u); then
+		warn "Unable to obtain the installed system version"
+		return 1
+	fi
 	_version_id=${_version%%[^0-9.]*}
-	t=$(mktemp -t os-release)
+	if ! t=$(mktemp -t os-release); then
+		warn "Unable to create temporary os-release metadata"
+		return 1
+	fi
 	cat > "$t" <<-__EOF__
 		NAME=5BSD
 		VERSION="$_version"
@@ -44,8 +50,19 @@ osrelease_start()
 		SUPPORT_URL="${osrelease_support_url}"
 		BUG_REPORT_URL="${osrelease_bug_report_url}"
 __EOF__
-	install -C -o root -g wheel -m ${osrelease_perms} "$t" "${osrelease_file}"
-	rm -f "$t"
+	_status=$?
+	if [ "$_status" -eq 0 ]; then
+		install -C -o root -g wheel -m "${osrelease_perms}" "$t" "${osrelease_file}" ||
+		    _status=$?
+	fi
+	if ! rm -f "$t"; then
+		warn "Unable to remove temporary os-release metadata"
+		[ "$_status" -ne 0 ] || _status=1
+	fi
+	if [ "$_status" -ne 0 ]; then
+		warn "Unable to update ${osrelease_file}"
+		return "$_status"
+	fi
 	startmsg 'done.'
 }
 

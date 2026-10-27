@@ -447,6 +447,11 @@ The
 function will concatenate the boot environment root and the given boot
 environment name into
 .Fa result .
+An already qualified name must identify a child below that root;
+the root itself and sibling datasets sharing its name prefix are rejected.
+Empty names are rejected.
+On failure, the result buffer is unchanged and the error must be handled
+before using it for a dataset operation.
 .Pp
 The
 .Fn be_validate_name

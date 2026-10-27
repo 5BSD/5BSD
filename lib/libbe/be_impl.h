@@ -7,6 +7,7 @@
 #ifndef _LIBBE_IMPL_H
 #define _LIBBE_IMPL_H
 
+#include <sys/param.h>
 #include <libzfs.h>
 
 #include "be.h"
@@ -16,6 +17,7 @@ struct libbe_handle {
 	char rootfs[BE_MAXPATHLEN];
 	char bootfs[BE_MAXPATHLEN];
 	char *bootonce;
+	char altroot[MAXPATHLEN];
 	size_t altroot_len;
 	zpool_handle_t *active_phandle;
 	libzfs_handle_t *lzh;

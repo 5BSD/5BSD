@@ -105,6 +105,12 @@ abac_rule_create(struct abac_rule_arg *arg, const char *data,
 	    arg->vr_object_len))
 		return (EINVAL);
 
+	/* Object context requires a target process supplied by the hook. */
+	if (arg->vr_obj_context.vc_flags != 0 &&
+	    (arg->vr_operations & ~(ABAC_OP_DEBUG | ABAC_OP_SIGNAL |
+	    ABAC_OP_SCHED | ABAC_OP_WAIT)) != 0)
+		return (EINVAL);
+
 	/* Extract string pointers from data buffer */
 	subject_str = data;
 	object_str = data + arg->vr_subject_len;

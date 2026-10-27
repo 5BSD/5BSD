@@ -129,7 +129,8 @@ sighup_reload(void)
 	syslog(LOG_INFO, "reload requested (SIGHUP)");
 	CAPSULE_PROBE_RELOAD();
 	config_init_defaults(&newcfg);
-	if (config_load(&newcfg, od.conffile) == 0) {
+	if (config_load(&newcfg, od.conffile) == 0 &&
+	    config_boot_policy_equal(&newcfg, &od.cfg)) {
 		if (!od.test_mode)
 			mac_capability_reload_claims(&newcfg);
 		config_apply_claims(&newcfg);
@@ -137,6 +138,8 @@ sighup_reload(void)
 		syslog(LOG_WARNING,
 		    "reload: config parse error, keeping existing");
 	}
+
+	config_free(&newcfg);
 
 	/* Forward SIGHUP to switchboard so it reloads manifests. */
 	bootstrap_signal(SIGHUP);

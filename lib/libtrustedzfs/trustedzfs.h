@@ -30,6 +30,9 @@ __BEGIN_DECLS
  * Per-operation Capsicum confinement.  ZH_* rights are the immutable
  * authority carried by a TrustedZFS handle; this second, per-descriptor
  * layer selects the exact ioctl entry points visible through one fd.
+ * The limiters first install an inheritable kernel operation ceiling with
+ * ZFD_LIMIT; failure is fatal to the grant.  A later Capsicum failure does
+ * not roll back that ceiling.  Close the descriptor on any failed grant.
  *
  * The common INFO and DERIVE operations apply to both dataset and pool
  * handles.  Dataset and pool operation bits must not be mixed when calling
@@ -147,6 +150,7 @@ int	tzfs_create(int zfd, const char *relname, uint32_t handle_flags);
 int	tzfs_create_volume(int zfd, const char *relname, uint64_t volsize,
 	    uint64_t volblocksize);
 int	tzfs_destroy(int zfd, const char *relname);	/* NULL = self */
+/* Both names must be nonempty descendants of a subtree handle. */
 int	tzfs_rename(int zfd, const char *from, const char *to);
 int	tzfs_clone(int zfd, int origin_zfd, const char *origin_snap,
 	    const char *relname);

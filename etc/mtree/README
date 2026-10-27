@@ -46,3 +46,11 @@ and keep them in good working order.
 
         If you want details on it bug me about it via email to
         rgrimes@FreeBSD.org.
+
+Unconditional hierarchy directories must belong to an unconditional base package.
+A directory needed only as scaffolding must not select a disabled component's
+package or create an otherwise empty package. The base runtime owns unconditional
+program/example directories; clibs-dev owns the common include hierarchy.
+Optional components still own their installed files. Keep these assignments in
+the mtree declarations so filesystem construction and package inventory use the
+same source; do not suppress directory-only plists in packaging coverage checks.

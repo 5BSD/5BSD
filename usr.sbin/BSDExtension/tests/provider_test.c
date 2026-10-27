@@ -36,6 +36,7 @@
 
 #include "sysext_proto.h"
 #include "bsdextension.h"
+#include "test_policy.h"
 
 struct fixture {
 	struct extensioncmp_session *client;	/* libextensioncmp */
@@ -109,14 +110,14 @@ fixture_create_cfg(struct fixture *fixture, const struct sysext_config *cfg)
 }
 
 /*
- * Convenience wrapper: serve the default (built-in) allow-list.
+ * Convenience wrapper: serve the explicit fixture allow-list.
  */
 static void
 fixture_create(struct fixture *fixture)
 {
 	struct sysext_config cfg;
 
-	sysext_config_defaults(&cfg);
+	test_base_policy(&cfg);
 	fixture_create_cfg(fixture, &cfg);
 }
 
@@ -236,7 +237,7 @@ raw_negotiated(struct fixture *fixture)
 {
 	struct sysext_config cfg;
 
-	sysext_config_defaults(&cfg);
+	test_base_policy(&cfg);
 	fixture_start(fixture, &cfg, true);
 	ATF_REQUIRE_EQ(0, send_frame(fixture->session, ORD_INFO, NULL, 0, -1));
 }
@@ -255,7 +256,7 @@ reject(bool negotiate, uint64_t ordinal, const void *body, size_t length,
 	if (negotiate)
 		raw_negotiated(&fixture);
 	else {
-		sysext_config_defaults(&cfg);
+		test_base_policy(&cfg);
 		fixture_start(&fixture, &cfg, true);
 	}
 	ATF_CHECK_EQ(-1, send_frame(fixture.session, ordinal, body, length,
@@ -322,7 +323,7 @@ ATF_TC_BODY(provider_rejects_malformed_frames, tc)
 	memset(&legacy, 0, sizeof(legacy));
 	legacy.op = SYSEXT_OP_ENSURE;
 	strlcpy(legacy.name, "cryptodev", sizeof(legacy.name));
-	sysext_config_defaults(&cfg);
+	test_base_policy(&cfg);
 	fixture_start(&fixture, &cfg, true);
 	ATF_CHECK_EQ(-1, send_raw(fixture.session, &legacy, sizeof(legacy), -1));
 	fixture_destroy(&fixture);

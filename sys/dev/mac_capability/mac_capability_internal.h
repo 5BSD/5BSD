@@ -142,7 +142,10 @@ struct mac_capability_instance {
 	struct mac_capability_service *ci_service;	/* (I) owning service */
 	struct mac_capability_callback_state *ci_callback_state; /* (M) lazy */
 	void		*ci_priv;		/* (I) service-private data */
-	struct cap_authority *ci_authority; /* (M) Bind once; pins authority. */
+	struct cap_authority_lease *ci_lease; /* (M) Immutable lifetime binding. */
+	LIST_ENTRY(mac_capability_instance) ci_lease_link; /* lease mutex */
+	/* (M) Published once, immutable; owns its software-authority reference. */
+	struct cap_authority_binding ci_binding;
 	uint64_t	ci_badge;		/* (I) connection badge */
 
 	struct mac_capability_msgq ci_txq;	/* (M) outbound queue */

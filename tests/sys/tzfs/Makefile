@@ -9,11 +9,12 @@ TESTSDIR=	${TESTSBASE}/sys/tzfs
 # that harness lands; live coverage meanwhile is the clean-VM boot.
 ATF_TESTS_C+=	bsdfilesystem_config_test
 
-SRCS.bsdfilesystem_config_test=	bsdfilesystem_config_test.c config.c
+SRCS.bsdfilesystem_config_test=	bsdfilesystem_config_test.c
 CFLAGS.bsdfilesystem_config_test+=	-I${SRCTOP}/usr.sbin/BSDFilesystem
 CFLAGS.bsdfilesystem_config_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.bsdfilesystem_config_test+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD.bsdfilesystem_config_test+=	ucl
+LIBADD.bsdfilesystem_config_test+=	capsulert
+NO_SHARED.bsdfilesystem_config_test= yes
 .PATH:	${SRCTOP}/usr.sbin/BSDFilesystem
 
 BINDIR=		${TESTSDIR}

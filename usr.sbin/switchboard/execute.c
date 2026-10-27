@@ -16,6 +16,8 @@
  * channel (capsule_client.c).
  */
 
+#include "run_container_identity.h"
+#include "run_container_directory.h"
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/capsicum.h>
@@ -51,11 +53,14 @@
 #include <dev/mac_capability/mac_capability_system_proto.h>	/* SYS_GATE_* */
 #include <service_bootstrap.h>
 #include <channel.h>
+#include <libcapbundle.h>
 
 
 #include "switchboard.h"
+#include "account_nss.h"
 #include "management.h"
 #include "authority.h"
+#include "boot_storage.h"
 #include "launch_limits.h"
 #include "rc_adopt.h"
 #include "fd_budget.h"
@@ -152,60 +157,44 @@ svc_marshal_sysctl_oidset(const struct svc_manifest *m, void *buf, size_t bufsz,
 }
 
 /*
- * Fold a unit label into a single path component: '/' and '.' become '_'.
- * The per-instance runtime container is named for the unit, like a bundle.
- */
-static void
-svc_run_container_leaf(const char *label, char *buf, size_t len)
-{
-	size_t i, n;
-
-	for (i = 0, n = 0; label[i] != '\0' && n + 1 < len; i++)
-		buf[n++] = (label[i] == '/' || label[i] == '.') ? '_' : label[i];
-	buf[n] = '\0';
-}
-
-static void
-svc_run_container_path(const char *label, char *buf, size_t len)
-{
-	char leaf[NAME_MAX + 1];
-
-	svc_run_container_leaf(label, leaf, sizeof(leaf));
-	(void)snprintf(buf, len, "%s/%s", switchboard_run_dir, leaf);
-}
-
-/*
- * Create (or reuse) a unit's per-instance runtime container under
+ * Create a fresh unit's per-instance runtime container under
  * /Capabilities/Run, owned by the launched service, and return an O_DIRECTORY
  * descriptor.  The container is the unit's read-write scratch/home (macOS-style
  * app container): created before exec, delivered as the "container" capability,
- * and removed on stop.  Confinement is by capabilities and the jail rooted here,
- * not by the name.
+ * and removed on stop. Native launch supplies a scoped directory descriptor
+ * and enters capability mode; a namespace is a separate explicit service.
  */
 static int
-svc_run_container_open(const char *label, uid_t uid, gid_t gid)
+svc_run_container_open(const char *label, uid_t owner, uid_t uid, gid_t gid)
 {
-	char path[PATH_MAX];
+	char leaf[NAME_MAX + 1];
 	cap_rights_t rights;
-	int fd, saved;
+	int fd, parent, saved;
 
-	(void)mkdir(switchboard_run_dir, 0700);
-	svc_run_container_path(label, path, sizeof(path));
-	if (mkdir(path, 0700) == -1 && errno != EEXIST)
+	if (sb_run_container_leaf(label, owner, leaf, sizeof(leaf)) != 0)
 		return (-1);
-	fd = open(path, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+	if (mkdir(switchboard_run_dir, 0700) == -1 && errno != EEXIST)
+		return (-1);
+	parent = open(switchboard_run_dir,
+	    O_DIRECTORY | O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (parent == -1)
+		return (-1);
+	fd = sb_run_container_create(parent, leaf);
+	saved = errno;
+	(void)close(parent);
 	if (fd == -1)
-		return (-1);
+		return (errno = saved, -1);
 	/*
 	 * Deliver with exactly the rights libservice's directory-descriptor
-	 * validation expects (a read-write scratch dir whose openat(2)ed files
+	 * validation expects after child setup removes launch-only FCHDIR
+	 * (a read-write scratch dir whose openat(2)ed files
 	 * keep GETFL|SETFL for O_APPEND), matching the former storage-directory
 	 * delivery so a plain open()'s ambient rights do not fail validation.
 	 */
 	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_PREAD, CAP_PWRITE,
 	    CAP_SEEK, CAP_FCNTL, CAP_FLOCK, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
 	    CAP_FTRUNCATE, CAP_FSYNC, CAP_CREATE, CAP_MKDIRAT, CAP_UNLINKAT,
-	    CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
+	    CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET, CAP_FCHDIR);
 	if (fchown(fd, uid, gid) == -1 || fchmod(fd, 0700) == -1 ||
 	    cap_rights_limit(fd, &rights) == -1 ||
 	    cap_fcntls_limit(fd, CAP_FCNTL_GETFL | CAP_FCNTL_SETFL) == -1) {
@@ -280,7 +269,7 @@ svc_run_container_sweep(void)
 
 /* Remove a unit's runtime container and its contents (best effort). */
 void
-svc_run_container_remove(const char *label)
+svc_run_container_remove(const char *label, uid_t owner)
 {
 	char leaf[NAME_MAX + 1];
 	int base;
@@ -288,7 +277,10 @@ svc_run_container_remove(const char *label)
 	base = open(switchboard_run_dir, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
 	if (base == -1)
 		return;
-	svc_run_container_leaf(label, leaf, sizeof(leaf));
+	if (sb_run_container_leaf(label, owner, leaf, sizeof(leaf)) != 0) {
+		(void)close(base);
+		return;
+	}
 	svc_rmtree_at(base, leaf);
 	(void)close(base);
 }
@@ -410,9 +402,9 @@ static void __dead2
 child_exec(struct svc_manifest *m, int child_channel_fd,
     int capprotect_fd, int bootstrap_fd, int discovery_fd, int authority_fd,
     int *token_fds, unsigned ntokens,
-    int *service_fds, unsigned nservices,
+    int *service_fds, unsigned nservices, unsigned container_index,
     uid_t uid, gid_t gid, bool have_creds, const char *homedir,
-    gid_t *groups, int ngroups, bool user_owned)
+    gid_t *groups, int ngroups, uid_t owner_uid)
 {
 	char user_env[128], home_env[PATH_MAX + 8];
 	char unit_dir[PATH_MAX], unit_dir_env[PATH_MAX + 32];
@@ -423,6 +415,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	char *argv[SWITCHBOARD_MAX_ARGUMENTS + 2];
 	int nullfd, logfd, fd, tgtfd;
 	bool have_capprotect;
+	bool user_owned = owner_uid != (uid_t)-1;
 	unsigned i, envc;
 
 	/* A managed context contains only this launch's manifest grants. */
@@ -570,30 +563,22 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 			_exit(126);
 	}
 
-	/*
-	 * Enter the per-instance runtime container as the working directory: the
-	 * unit's writable home (macOS-style app container).  Done while still
-	 * privileged so the 0700 container is enterable; relative paths and the
-	 * shell's notion of "." then resolve inside the container.  Capsicum, not
-	 * a chroot, is the confinement, so this is a chdir rather than a jail root.
-	 */
-	{
-		char container_path[PATH_MAX];
-
-		svc_run_container_path(m->label, container_path,
-		    sizeof(container_path));
-		if (chdir(container_path) == -1) {
-			dprintf(STDERR_FILENO, "switchboard: runtime container: %s\n",
-			    strerror(errno));
-			_exit(126);
-		}
+	/* Use the exact delivered directory, then remove launch-only FCHDIR.
+	 * Re-resolving its pathname could select a replacement object. */
+	if (container_index >= nservices ||
+	    sb_run_container_enter(SVC_TOKEN_BASE + (int)ntokens +
+	    (int)container_index) == -1) {
+		dprintf(STDERR_FILENO, "switchboard: runtime container: %s\n",
+		    strerror(errno));
+		_exit(126);
 	}
 
 
 	/* User-writable bundle paths must be opened with the owner's credentials,
 	 * including Config/, resources, executable and runtime linker inputs. */
 	if (user_owned) {
-		if (!have_creds || setgroups(ngroups, groups) == -1 ||
+		if (svc_user_credentials_match(owner_uid, uid, have_creds) == -1 ||
+		    setgroups(ngroups, groups) == -1 ||
 		    setgid(gid) == -1 || setuid(uid) == -1)
 			_exit(126);
 		have_creds = false; /* Already dropped; do not repeat below. */
@@ -965,70 +950,44 @@ svc_exec(struct svc_runtime *svc, int kq)
 	return (-1);
 }
 
-/*
- * Resolve a manifest's user/group into uid/gid + supplementary groups.
- * have_creds stays false when neither is set, meaning "run as switchboard's
- * own credentials" (root).  Separate from svc_exec_native's inline copy so
- * the native path is untouched.
- */
+/* Resolve account credentials once in the parent before acquiring launch resources. */
 static int
-command_resolve_creds(const struct svc_manifest *m, uid_t *uidp, gid_t *gidp,
-    gid_t *groups, int *ngroupsp, bool *have_credsp)
+command_resolve_creds(const struct svc_runtime *svc, uid_t *uidp, gid_t *gidp,
+    gid_t *groups, int *ngroupsp, bool *have_credsp, char *home, size_t homesize)
 {
-	struct passwd *pw;
-	struct group *gr;
+	const struct svc_manifest *m = &svc->manifest;
+	struct service_account_identity user;
+	bool have = m->user[0] != '\0' || m->group[0] != '\0';
+	const char *name = m->user[0] != '\0' ? m->user : "nobody";
 	uid_t uid = 0;
 	gid_t gid = 0;
 	int ngroups = 0;
-	bool have = false;
 
-	if (m->user[0] != '\0') {
-		if ((pw = getpwnam(m->user)) == NULL) {
-			syslog(LOG_ERR, "unit %s: unknown user %s",
-			    m->label, m->user);
-			return (-1);
-		}
-		uid = pw->pw_uid;
-		gid = pw->pw_gid;
-		have = true;
-	}
-	if (m->group[0] != '\0') {
-		if ((gr = getgrnam(m->group)) == NULL) {
-			syslog(LOG_ERR, "unit %s: unknown group %s",
-			    m->label, m->group);
-			return (-1);
-		}
-		gid = gr->gr_gid;
-		have = true;
-	}
-	/*
-	 * A group-only manifest (group set, no user) must NOT inherit
-	 * switchboard's uid 0: without this, uid stays 0 and the child's
-	 * setuid() runs it as root.  Resolve `nobody`, exactly as the native
-	 * exec path (svc_exec_native) already does for this case.
-	 */
-	if (have && m->user[0] == '\0') {
-		if ((pw = getpwnam("nobody")) == NULL) {
-			syslog(LOG_ERR,
-			    "unit %s: group-only manifest requires user nobody",
-			    m->label);
-			return (-1);
-		}
-		uid = pw->pw_uid;
-	}
+	if (home != NULL) home[0] = '\0';
 	if (have) {
-		ngroups = NGROUPS_MAX + 1;
-		if (getgrouplist(m->user[0] != '\0' ? m->user : "nobody",
-		    gid, groups, &ngroups) == -1) {
-			syslog(LOG_ERR, "unit %s: getgrouplist failed", m->label);
-			return (-1);
+		if (account_nss_user(name, &user) == -1)
+			goto fail;
+		uid = user.uid;
+		gid = user.gid;
+		if (home != NULL && strlcpy(home, user.home, homesize) >= homesize) {
+			errno = ENAMETOOLONG;
+			goto fail;
 		}
+		if (m->group[0] != '\0' && account_nss_group(m->group, &gid) == -1)
+			goto fail;
+		ngroups = NGROUPS_MAX + 1;
+		if (account_nss_groups(name,
+		    gid, groups, &ngroups) == -1)
+			goto fail;
 	}
 	*uidp = uid;
 	*gidp = gid;
 	*ngroupsp = ngroups;
 	*have_credsp = have;
 	return (0);
+fail:
+	syslog(LOG_ERR, "unit %s: account identity resolution failed: %m", m->label);
+	return (-1);
 }
 
 /*
@@ -1068,9 +1027,15 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 	}
 	if (svc_user_manifest_credentials(svc) == -1)
 		return (-1);
-	if (command_resolve_creds(m, &uid, &gid, groups, &ngroups,
-	    &have_creds) == -1) {
+	if (command_resolve_creds(svc, &uid, &gid, groups, &ngroups,
+	    &have_creds, NULL, 0) == -1) {
 		SWITCHBOARD_PROBE_SVC_EXEC_FAIL(m->label, errno);
+		return (-1);
+	}
+
+	if (svc_user_credentials_match(svc->owner_uid, uid, have_creds) == -1) {
+		syslog(LOG_ERR, "unit %s: resolved credentials differ from bundle owner",
+		    m->label);
 		return (-1);
 	}
 
@@ -1086,8 +1051,12 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 	svc->launch_id = ++svc_launch_sequence;
 	if (svc->launch_id == 0)
 		svc->launch_id = ++svc_launch_sequence;
-	if (svc->want_console && svc_authority_issue_boot(svc, &authority_fd) == -1)
+	if (svc->want_console && svc_authority_issue_boot(svc, &authority_fd) == -1) {
+		int saved_errno = errno;
+
+		errno = saved_errno;
 		syslog(LOG_WARNING, "rc bootstrap authority unavailable: %m");
+	}
 	pid = pdfork(&pd_fd, PD_CLOEXEC | PD_NOWAITPID);
 	if (pid == -1) {
 		syslog(LOG_ERR, "unit %s: pdfork: %m", m->label);
@@ -1108,14 +1077,7 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 			close(authority_fd);
 		}
 
-		/*
-		 * stdio.  Ordinary commands get /dev/null.  The rc bootstrap
-		 * oneshot (want_console) gets /dev/console with a controlling
-		 * terminal, exactly as init gave /etc/rc: its progress is visible
-		 * on the console and scripts that expect a tty (fsck prompts, job
-		 * control) work.  Console setup is best-effort — on failure we
-		 * fall back to /dev/null so the child still runs.
-		 */
+		/* Console units use the controlling terminal; others use /dev/null. */
 		nullfd = -1;
 		if (svc->want_console) {
 			int cfd;
@@ -1124,8 +1086,9 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 			cfd = open("/dev/console", O_RDWR);
 			if (cfd != -1) {
 				(void)ioctl(cfd, TIOCSCTTY, NULL);
-				if (dup2(cfd, STDIN_FILENO) == -1 ||
-				    dup2(cfd, STDOUT_FILENO) == -1 ||
+				if (dup2(cfd, STDIN_FILENO) == -1)
+					_exit(126);
+				if (dup2(cfd, STDOUT_FILENO) == -1 ||
 				    dup2(cfd, STDERR_FILENO) == -1)
 					_exit(126);
 				if (cfd > STDERR_FILENO)
@@ -1157,6 +1120,8 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 		closefrom(STDERR_FILENO + 1);
 		(void)unsetenv(SERVICE_LOOKUP_ENV);
 
+		if (svc_user_credentials_match(svc->owner_uid, uid, have_creds) == -1)
+			_exit(126);
 		if (have_creds) {
 			if (setgroups(ngroups, groups) == -1 ||
 			    setgid(gid) == -1 || setuid(uid) == -1)
@@ -1337,6 +1302,8 @@ struct svc_launch {
 	char		service_types[SERVICE_BOOTSTRAP_CAPABILITY_MAX]
 			    [SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX];
 	unsigned	nservices;
+	unsigned	container_index;
+	bool		forked;
 
 	uid_t		uid;
 	gid_t		gid;
@@ -1385,8 +1352,6 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	static struct svc_manifest minted_manifest;
 	struct svc_manifest *m;
 	struct svc_launch *L;		/* heap snapshot handed to the async path */
-	struct passwd *pw;
-	struct group *gr;
 	struct timespec exec_start;
 	char homedir[PATH_MAX];
 	int capsule_end, child_end, coalition_fd, capprotect_fd;
@@ -1396,7 +1361,11 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	    [SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
 	char service_types[SERVICE_BOOTSTRAP_CAPABILITY_MAX]
 	    [SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX];
-	unsigned ntokens, nservices, nlisteners;
+	unsigned container_index;
+	bool container_created = false;
+	unsigned ntokens, nservices, nlisteners, nboot_storage = 0, nboot_crypto = 0;
+	struct capbundle *storage_bundle;
+	bool storage_recipient;
 	uid_t uid;
 	gid_t gid;
 	gid_t groups[NGROUPS_MAX + 1];
@@ -1458,6 +1427,10 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		    m->label);
 		return (-1);
 	}
+	storage_bundle = bundle_registry_get(svc->bundle_idx);
+	storage_recipient = boot_storage_recipient(m,
+	    storage_bundle != NULL ? capbundle_id(storage_bundle) : NULL,
+	    bundle_registry_is_system(svc->bundle_idx), svc->owner_uid);
 	expected_tokens = svc_launch_token_count(m);
 	if (expected_tokens > SVC_MAX_TOKENS) {
 		syslog(LOG_ERR, "svc_exec %s: too many capability tokens: %u",
@@ -1483,7 +1456,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 			nlisteners++;
 
 	if (switchboard_fd_budget_check((size_t)expected_tokens +
-	    nlisteners +
+	    nlisteners + (storage_recipient ? 2 : 0) +
 	    14, "service launch") == -1) {
 		saved_errno = errno;
 		syslog(LOG_ERR,
@@ -1497,55 +1470,13 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	/* Resolve credentials before fork; user bundles run as their owner. */
 	if (svc_user_manifest_credentials(svc) == -1)
 		return (-1);
-	uid = 0;
-	gid = 0;
-	ngroups = 0;
-	have_creds = false;
-	homedir[0] = '\0';
-	if (m->user[0] != '\0') {
-		pw = getpwnam(m->user);
-		if (pw == NULL) {
-			syslog(LOG_ERR, "svc_exec %s: unknown user: %s",
-			    m->label, m->user);
-			return (-1);
-		}
-		uid = pw->pw_uid;
-		gid = pw->pw_gid;
-		strlcpy(homedir, pw->pw_dir, sizeof(homedir));
-		have_creds = true;
-	}
-	if (m->group[0] != '\0') {
-		gr = getgrnam(m->group);
-		if (gr == NULL) {
-			syslog(LOG_ERR, "svc_exec %s: unknown group: %s",
-			    m->label, m->group);
-			return (-1);
-		}
-		gid = gr->gr_gid;
-		have_creds = true;
-		if (m->user[0] == '\0') {
-			pw = getpwnam("nobody");
-			if (pw == NULL) {
-				syslog(LOG_ERR, "svc_exec %s: group-only "
-				    "manifest requires user nobody",
-				    m->label);
-				return (-1);
-			}
-			uid = pw->pw_uid;
-			strlcpy(homedir, pw->pw_dir, sizeof(homedir));
-		}
-	}
-
-	/* Build supplementary group list in the parent (async-signal-safe
-	 * setgroups() is used in the child instead of initgroups()). */
-	if (have_creds) {
-		ngroups = NGROUPS_MAX + 1;
-		if (getgrouplist(m->user[0] != '\0' ? m->user : "nobody",
-		    gid, groups, &ngroups) == -1) {
-			syslog(LOG_ERR, "svc_exec %s: getgrouplist: %m",
-			    m->label);
-			return (-1);
-		}
+	if (command_resolve_creds(svc, &uid, &gid, groups, &ngroups,
+	    &have_creds, homedir, sizeof(homedir)) == -1)
+		return (-1);
+	if (svc_user_credentials_match(svc->owner_uid, uid, have_creds) == -1) {
+		syslog(LOG_ERR, "svc_exec %s: resolved credentials differ from bundle owner",
+		    m->label);
+		return (-1);
 	}
 
 	/*
@@ -1682,6 +1613,32 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	}
 	}
 
+	if (storage_recipient) {
+		int fd = capsule_boot_storage(sd.capsule_channel_fd, m->label);
+
+		if (fd >= 0) {
+			strlcpy(service_names[nservices], "storage-root", sizeof(service_names[nservices]));
+			strlcpy(service_types[nservices], "zfshandle", sizeof(service_types[nservices]));
+			service_fds[nservices++] = fd;
+			nboot_storage = 1;
+		} else if (errno != ENOENT) {
+			syslog(LOG_ERR, "svc_exec %s: boot storage grant failed: %m", m->label);
+			goto fail_tokens;
+		}
+		if (nservices >= SERVICE_BOOTSTRAP_CAPABILITY_MAX)
+			goto fail_tokens;
+		fd = capsule_boot_crypto(sd.capsule_channel_fd, m->label);
+		if (fd >= 0) {
+			strlcpy(service_names[nservices], "crypto-control", sizeof(service_names[nservices]));
+			strlcpy(service_types[nservices], "cryptoctl", sizeof(service_types[nservices]));
+			service_fds[nservices++] = fd;
+			nboot_crypto = 1;
+		} else if (errno != ENOENT) {
+			syslog(LOG_ERR, "svc_exec %s: boot crypto grant failed: %m", m->label);
+			goto fail_tokens;
+		}
+	}
+
 	/*
 	 * Deliver the manager-owned socket-activation listeners (Phase 4) as
 	 * ordinary bootstrap capabilities of type "socket", keyed by their
@@ -1719,7 +1676,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		errno = EOVERFLOW;
 		goto fail_tokens;
 	} else {
-		int cfd = svc_run_container_open(m->label, have_creds ? uid : 0,
+		int cfd = svc_run_container_open(m->label, svc->owner_uid, have_creds ? uid : 0,
 		    have_creds ? gid : 0);
 
 		if (cfd == -1) {
@@ -1731,6 +1688,8 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		    sizeof(service_names[nservices]));
 		strlcpy(service_types[nservices], "directory",
 		    sizeof(service_types[nservices]));
+		container_created = true;
+		container_index = nservices;
 		service_fds[nservices++] = cfd;
 	}
 
@@ -1742,11 +1701,11 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * see svc_launch_finish.)
 	 */
 	if (ntokens != expected_tokens ||
-	    nservices != nlisteners + 1) {
+	    nservices != nlisteners + nboot_storage + nboot_crypto + 1) {
 		syslog(LOG_ERR, "svc_exec %s: incomplete capability set "
 		    "(%u/%u tokens, %u/%u services)", m->label, ntokens,
 		    expected_tokens, nservices,
-		    nlisteners + 1);
+		    nlisteners + nboot_storage + nboot_crypto + 1);
 		goto fail_tokens;
 	}
 
@@ -1772,6 +1731,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	for (i = 0; i < ntokens; i++)
 		L->token_fds[i] = token_fds[i];
 	L->nservices = nservices;
+	L->container_index = container_index;
 	for (i = 0; i < nservices; i++) {
 		L->service_fds[i] = service_fds[i];
 		strlcpy(L->service_names[i], service_names[i],
@@ -1832,6 +1792,8 @@ fail_tokens:
 		close(token_fds[i]);
 	for (i = 0; i < nservices; i++)
 		close(service_fds[i]);
+	if (container_created)
+		svc_run_container_remove(m->label, svc->owner_uid);
 	return (-1);
 }
 
@@ -1867,6 +1829,9 @@ svc_launch_abort(struct svc_runtime *svc, int error, int kq __unused)
 	for (i = 0; i < L->nservices; i++)
 		if (L->service_fds[i] >= 0)
 			close(L->service_fds[i]);
+	/* Post-fork cleanup waits for the coalition completion gate. */
+	if (!L->forked)
+		svc_run_container_remove(svc->manifest.label, svc->owner_uid);
 	free(L);
 	svc->launch = NULL;
 	svc->pid = 0;
@@ -1929,6 +1894,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	pid_t pid;
 	int saved_errno = 0;
 	unsigned i;
+	bool trusted_system = bundle_registry_is_system(svc->bundle_idx);
 
 	if (L->ntokens > 0)
 		syslog(LOG_DEBUG, "svc_exec %s: minted %u tokens", m->label,
@@ -1960,7 +1926,8 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		 * it to CLOFORK_ONCE here latches it to CLOFORK_LOCKED after the
 		 * launch fork, and the provider can no longer share it.
 		 */
-		if (strcmp(L->service_types[i], "directory") == 0)
+		if (strcmp(L->service_types[i], "directory") == 0 ||
+		    strcmp(L->service_types[i], "zfshandle") == 0)
 			prepared = prepare_child_descriptor_forkable(
 			    L->service_fds[i]);
 		else
@@ -2012,14 +1979,24 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		close(launch_gate[0]);
 		if (nread != 1 || ready != 'R')
 			_exit(126);
+		/* The trusted launcher applies this to itself, before dropping
+		 * credentials or entering capmode. PID-based parent scheduling
+		 * is deliberately denied for protected children. */
+		if (svc_oom_protect(getpid(), m->oom_protect, trusted_system) == -1) {
+			syslog(LOG_ERR, "svc_exec %s: OOM protection: %m; refusing exec",
+			    m->label);
+			_exit(126);
+		}
 		child_exec(m, L->child_end, L->capprotect_fd, bootstrap_fd, discovery_fd, authority_fd,
 		    L->token_fds, L->ntokens, L->service_fds, L->nservices,
+		    L->container_index,
 		    L->uid, L->gid, L->have_creds,
 		    L->homedir[0] != '\0' ? L->homedir : NULL, L->groups,
-		    L->ngroups, svc->owner_uid != (uid_t)-1);
+		    L->ngroups, svc->owner_uid);
 		/* NOTREACHED */
 	}
 
+	L->forked = true;
 	close(launch_gate[0]);
 	launch_gate[0] = -1;
 	/* Parent: the child owns its copies now. */
@@ -2030,26 +2007,6 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	close(L->child_end);
 	L->child_end = -1;
 	close(bootstrap_fd);
-	/* The child cannot exec until the launch gate is released below.
-	 * Apply OOM exclusion before its signal shield, credentials or capmode.
-	 * Registry provenance, never the manifest's control/domain strings,
-	 * decides whether this privilege is available. */
-	if (svc_oom_protect(pid, m->oom_protect,
-	    bundle_registry_is_system(svc->bundle_idx)) == -1) {
-		saved_errno = errno;
-		syslog(LOG_ERR, "svc_exec %s: OOM protection: %m; refusing launch", m->label);
-		if (L->capprotect_fd >= 0) {
-			close(L->capprotect_fd);
-			L->capprotect_fd = -1;
-		}
-		for (i = 0; i < L->ntokens; i++)
-			close(L->token_fds[i]);
-		L->ntokens = 0;
-		for (i = 0; i < L->nservices; i++)
-			close(L->service_fds[i]);
-		L->nservices = 0;
-		goto fail_postfork;
-	}
 	/*
 	 * Launcher-applied protection: shield the child by its process descriptor
 	 * now, while pd_fd is still transferable and before the child's program
@@ -2171,7 +2128,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	svc->state = SVC_STATE_STARTING;
 	svc->protocol_ready = false;
 	memset(svc->name_state, SVC_NAME_UNCLAIMED, sizeof(svc->name_state));
-	memset(svc->name_sendable, 0, sizeof(svc->name_sendable));
+	memset(svc->name_claim_flags, 0, sizeof(svc->name_claim_flags));
 	clock_gettime(CLOCK_MONOTONIC, &svc->last_start);
 
 	if (svc_launch_release(svc, kq, launch_gate[1]) == -1)

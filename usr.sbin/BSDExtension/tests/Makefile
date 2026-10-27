@@ -32,6 +32,7 @@ NO_SHARED=	yes
 
 # allowlist_test: pure unit — the allow-list / name-validation / config-loader
 # regression.  No capability plane, no kldload, no privilege.
+ATF_TESTS_SH+= startup_test
 ATF_TESTS_C+=		allowlist_test
 SRCS.allowlist_test=	allowlist_test.c bsdextension.c policy.c reclaim.c
 
@@ -86,6 +87,11 @@ NO_SHARED.latency_bench= no
 FILESGROUPS+= FIDL_NOTICE
 FIDL_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 FIDL_NOTICEDIR= /usr/share/licenses/bsdextension-tests/fuchsia
+
+# Record the package license ancestor as well as the notice directory.
+DIRS+= FIDL_NOTICEPARENT
+FIDL_NOTICEPARENT= ${FIDL_NOTICEDIR:H}
+FIDL_NOTICEPARENTTAGS= ${FIDL_NOTICEDIRTAGS}
 
 .PATH: ${.CURDIR}/evolution
 

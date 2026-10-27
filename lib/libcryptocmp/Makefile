@@ -30,6 +30,11 @@ CRYPTOCMP_SCHEMAPACKAGE= libcryptocmp-dev
 FILESGROUPS+= CRYPTOCMP_NOTICE
 CRYPTOCMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 CRYPTOCMP_NOTICEDIR= /usr/share/licenses/libcryptocmp/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= CRYPTOCMP_NOTICEPARENT
+CRYPTOCMP_NOTICEPARENT= ${CRYPTOCMP_NOTICEDIR:H}
+CRYPTOCMP_NOTICEPARENTTAGS= ${CRYPTOCMP_NOTICEDIRTAGS}
+
 INCS=	cryptocmp.h cryptocmp_protocol.h
 LIBADD=	pthread service fidl_bsd cplusplus
 CFLAGS+=	-I${SRCTOP}/lib/libservice

@@ -15,6 +15,29 @@ stop_cmd=":"
 
 root_start()
 {
+	local integrity
+
+	# Protected mounts and boot selection belong to the authenticated PID 1
+	# policy. Do not remount root, tear down those mounts, or edit nextboot.
+	# -i permits kernels without this policy; other query failures abort.
+	integrity=$(${SYSCTL} -i -n security.mac.system_integrity.enforcing) || {
+		echo 'Cannot determine root integrity protection, startup aborted'
+		stop_boot true
+		return 1
+	}
+	case "${integrity}" in
+	1)
+		return 0
+		;;
+	0|"")
+		;;
+	*)
+		echo 'Invalid root integrity protection status, startup aborted'
+		stop_boot true
+		return 1
+		;;
+	esac
+
 	# root normally must be read/write, but if this is a BOOTP NFS
 	# diskless boot it does not have to be.
 	#

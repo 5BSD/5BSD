@@ -67,6 +67,7 @@
 #include <libcapbundle.h>
 
 #include "switchboard.h"
+#include "account_nss.h"
 #include "switchboard_audit.h"
 #include "switchboard_probes.h"
 #include "activation_calendar.h"
@@ -356,19 +357,16 @@ listener_create(const struct svc_activation_socket *s)
 	    (s->path_owner[0] != '\0' || s->path_group[0] != '\0')) {
 		uid_t uid = (uid_t)-1;
 		gid_t gid = (gid_t)-1;
-		struct passwd *pw;
-		struct group *gr;
+		struct service_account_identity user;
 
 		if (s->path_owner[0] != '\0') {
-			if ((pw = getpwnam(s->path_owner)) == NULL)
+			if (account_nss_user(s->path_owner, &user) == -1)
 				goto chown_fail;
-			uid = pw->pw_uid;
+			uid = user.uid;
 		}
-		if (s->path_group[0] != '\0') {
-			if ((gr = getgrnam(s->path_group)) == NULL)
-				goto chown_fail;
-			gid = gr->gr_gid;
-		}
+		if (s->path_group[0] != '\0' && account_nss_group(s->path_group, &gid) == -1)
+			goto chown_fail;
+
 		if (chown(s->unixpath, uid, gid) == -1) {
 chown_fail:
 			(void)unlink(s->unixpath);

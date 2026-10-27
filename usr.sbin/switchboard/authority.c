@@ -9,6 +9,9 @@
 #include <sys/capsicum.h>
 #include <sys/syscall.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
+#include <sys/event.h>
+#include <sys/procdesc.h>
 #include <channel.h>
 #include <libcapbundle.h>
 #include <errno.h>
@@ -17,6 +20,7 @@
 #include <string.h>
 #include <time.h>
 #include <syslog.h>
+#include <sysexits.h>
 #include <unistd.h>
 
 #include "switchboard.h"
@@ -212,7 +216,18 @@ remove_record(struct authority_record **link)
 	struct authority_record *r = *link;
 	struct cap_authority_revoke revoke = { .token_fd = r->token };
 
-	(void)authority_call(CAP_AUTH_REVOKE, sd.authority_issuer_fd, &revoke);
+	if (authority_call(CAP_AUTH_REVOKE, sd.authority_issuer_fd, &revoke) == -1) {
+		int error = errno;
+
+		/* A registry deletion cannot stand in for kernel revocation. Drop
+		 * the issuer, which invalidates its entire authority tree, before
+		 * terminating. Continuing could leave an untracked live token. */
+		(void)close(sd.authority_issuer_fd);
+		sd.authority_issuer_fd = -1;
+		syslog(LOG_CRIT, "authority revocation failed for %s: %s; issuer closed",
+		    r->label, strerror(error));
+		_exit(EX_SOFTWARE);
+	}
 	*link = r->next;
 	close(r->token);
 	free(r);
@@ -530,6 +545,8 @@ svc_authority_resolve(const struct channel_message *request,
     struct svc_domain *domain, struct svc_runtime **svc)
 {
 	const struct cap_authority_stamp *stamp;
+	const struct channel_process_identity *process;
+	const struct channel_sender *sender;
 	struct authority_record *r;
 	struct svc_runtime *owner = NULL;
 
@@ -551,8 +568,20 @@ svc_authority_resolve(const struct channel_message *request,
 			return (errno = EACCES, -1);
 	}
 	*domain = r->domain;
+	process = channel_message_process(request);
+	sender = channel_message_sender(request);
+	domain->request_process = process != NULL ? process->identity : 0;
+	domain->request_nonce = sender != NULL ? sender->nonce : 0;
 	*svc = owner;
 	return (0);
+}
+
+/* Personal namespaces follow the kernel-observed sender credentials. */
+uid_t
+svc_authority_personal_uid(const struct svc_domain *domain __unused,
+    const struct channel_sender *sender)
+{
+	return (sender != NULL ? (uid_t)sender->uid : (uid_t)-1);
 }
 
 const char *
@@ -579,6 +608,27 @@ svc_authority_bind(const struct svc_domain *domain, int fd)
 		return (errno = EACCES, -1);
 	binding.token_fd = r->token;
 	return (authority_call(CAP_AUTH_BIND, sd.authority_issuer_fd, &binding));
+}
+
+/* Control and future session grants name one invocation, not every execution
+ * of an approved image. Missing kernel metadata never falls back to a broad
+ * software binding. Ordinary provider/worker delegation uses bind() above. */
+int
+svc_authority_bind_invocation(const struct svc_domain *domain, int fd)
+{
+	struct authority_record *r;
+	struct cap_authority_bind_invocation binding = { .capability_fd = fd };
+
+	if (domain == NULL || domain->authority_identity == 0 ||
+	    domain->request_process == 0 || domain->request_nonce == 0)
+		return (errno = EACCES, -1);
+	r = find(domain->authority_issuer, domain->authority_identity);
+	if (r == NULL)
+		return (errno = EACCES, -1);
+	binding.token_fd = r->token;
+	binding.process_identity = domain->request_process;
+	binding.execution_nonce = domain->request_nonce;
+	return (authority_call(CAP_AUTH_BIND_INVOCATION, sd.authority_issuer_fd, &binding));
 }
 
 void

@@ -7,6 +7,11 @@
 # Create a small file system to experiment on
 tunefs_setup()
 {
+	# Alternate test runtimes may supply their matching file(1) database.
+	if atf_config_has magic; then
+		MAGIC=$(atf_config_get magic)
+		export MAGIC
+	fi
 	atf_check -o save:dev mdconfig -t malloc -s 16M
 	tunefs_dev=/dev/$(cat dev)
 	atf_check -o ignore newfs "$@" $tunefs_dev

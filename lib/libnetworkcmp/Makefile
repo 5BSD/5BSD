@@ -33,6 +33,11 @@ NETWORKCMP_SCHEMAPACKAGE= libnetworkcmp-dev
 FILESGROUPS+= NETWORKCMP_NOTICE
 NETWORKCMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 NETWORKCMP_NOTICEDIR= /usr/share/licenses/libnetworkcmp/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= NETWORKCMP_NOTICEPARENT
+NETWORKCMP_NOTICEPARENT= ${NETWORKCMP_NOTICEDIR:H}
+NETWORKCMP_NOTICEPARENTTAGS= ${NETWORKCMP_NOTICEDIRTAGS}
+
 INCS=	networkcmp.h networkcmp_protocol.h networkcmp_server.h \
 	network_state.h network_state_protocol.h
 

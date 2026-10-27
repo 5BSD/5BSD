@@ -45,6 +45,8 @@
  */
 #define	CRED_FLAG_CAPMODE	0x00000001	/* In capability mode. */
 #define	CRED_FLAG_GROUPSET	0x00000002	/* Groups have been set. */
+/* Kernel-only scoped operation: capability authority does not waive limits. */
+#define	CRED_FLAG_CAPABILITY_LIMITS 0x00000004
 
 /*
  * Number of groups inlined in 'struct ucred'.  It must stay reasonably low as

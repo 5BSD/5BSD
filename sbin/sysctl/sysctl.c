@@ -471,7 +471,7 @@ parse(const char *string, int lineno)
 	 */
 	len = name2oid(bufp, mib);
 	if (len < 0) {
-		if (iflag) {
+		if (iflag && errno == ENOENT) {
 			free(buf);
 			return (0);
 		}
@@ -512,6 +512,7 @@ parse(const char *string, int lineno)
 			i = show_var(mib, len, false);
 			if (!i && !bflag)
 				putchar('\n');
+			return (i != 0);
 		}
 		return (0);
 	}
@@ -1105,7 +1106,8 @@ show_var(int *oid, int nlen, bool honor_skip)
 	if (i || !j)
 		err(1, "sysctl name %d %zu %d", i, j, errno);
 
-	oidfmt(oid, nlen, fmt, &kind);
+	if (oidfmt(oid, nlen, fmt, &kind) != 0)
+		return (1);
 	/* if Wflag then only list sysctls that are writeable and not stats. */
 	if (Wflag && ((kind & CTLFLAG_WR) == 0 || (kind & CTLFLAG_STATS) != 0))
 		return (1);
@@ -1188,6 +1190,8 @@ show_var(int *oid, int nlen, bool honor_skip)
 	else {
 		j = 0;
 		i = trace_sysctl(oid, nlen, 0, &j, 0, 0);
+		if (i != 0)
+			return (1);
 		j += j; /* we want to be sure :-) */
 	}
 

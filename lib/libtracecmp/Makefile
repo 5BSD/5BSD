@@ -21,6 +21,11 @@ TRACECMP_SCHEMAPACKAGE= libtracecmp-dev
 FILESGROUPS+= TRACECMP_NOTICE
 TRACECMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 TRACECMP_NOTICEDIR= /usr/share/licenses/libtracecmp/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= TRACECMP_NOTICEPARENT
+TRACECMP_NOTICEPARENT= ${TRACECMP_NOTICEDIR:H}
+TRACECMP_NOTICEPARENTTAGS= ${TRACECMP_NOTICEDIRTAGS}
+
 INCS=	tracecmp.h tracecmp_protocol.h tracecmp_server.h
 LIBADD=	dtrace service fidl_bsd cplusplus
 CFLAGS+=	-I${SRCTOP}/lib/libservice

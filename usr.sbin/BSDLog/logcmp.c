@@ -1921,6 +1921,10 @@ bsdlog_open_store(struct service_context *context, int *dirfdp)
 	if (service_storage_open(context, "state", dirfdp) == 0)
 		return (0);
 	error = errno;
+	/* Only an unavailable storage backend permits a volatile store.
+	 * Authorization, quota and I/O failures must remain visible. */
+	if (error != ENXIO)
+		return (-1);
 	if (service_capability_open(context, "container", "directory",
 	    dirfdp) == -1)
 		return (-1);
@@ -1944,9 +1948,11 @@ main(void)
 	_Atomic uint32_t *admitted;
 	uint64_t instance;
 	uint32_t capacity, cursor, i, remainder, started_pools;
-	int fd, storage_control, storage_dir, storage_process;
+	int error, fd, storage_control, storage_dir, storage_process;
 
-	openlog("bsdlog", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	/* SwitchBoard supplies stderr independently of this logging service.
+	 * The syslog socket is not reachable by a born-in-capmode provider. */
+	openlog("bsdlog", LOG_PID | LOG_NDELAY | LOG_PERROR, LOG_DAEMON);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
 	service_set_proctitle();
 	/*
@@ -2069,6 +2075,7 @@ main(void)
 	}
 
 fail:
+	error = errno;
 	if (context != NULL)
 		service_release(context);
 	if (pools != NULL && started_pools != 0)
@@ -2079,6 +2086,8 @@ fail:
 		(void)shutdown_storage(&storage_control, &storage_process);
 	else if (storage_process >= 0)
 		(void)shutdown_storage(&storage_control, &storage_process);
+	/* Cleanup may change errno; report the operation that actually failed. */
+	errno = error;
 	syslog(LOG_ERR, "initialization or service loop: %m");
 	return (1);
 }

@@ -52,7 +52,7 @@ usage(void)
 {
 
 	fprintf(stderr, "usage: uefisign -c cert -k key -o outfile [-v] file\n"
-			"       uefisign -V [-c cert] [-v] file\n");
+			"       uefisign -V [-v] file\n");
 	exit(1);
 }
 

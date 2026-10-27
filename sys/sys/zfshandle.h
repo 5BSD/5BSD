@@ -289,7 +289,7 @@ struct zfd_destroy_args {
 };
 
 struct zfd_rename_args {
-	char		zr_from[ZFSHANDLE_NAME_MAX];	/* in: "" = self */
+	char		zr_from[ZFSHANDLE_NAME_MAX];	/* in: descendant name */
 	char		zr_to[ZFSHANDLE_NAME_MAX];	/* in: new relative name */
 };
 
@@ -403,11 +403,56 @@ struct zfd_mount_args {
 #define	ZFD_DESTROY_BOOKMARK _IOW('z', 0x22, struct zfd_bookmark_args)
 /* 0x23-0x24 reserved; blocking name-based waits are intentionally absent. */
 #define	ZFD_LIMIT	_IOW('z', 0x25, struct zfd_limit_args)
+/* 0x26-0x2e reserved for retired BIP ioctls. */
 
 /* Bound kernel memory used by one cursor-free enumeration operation. */
 #define	ZFSHANDLE_ENUM_MAX_ENTRIES	16384
 
 #ifdef _KERNEL
+/* Shared immutable command classification; unknown commands have no grant bit. */
+static __inline zfd_opset_t
+zfd_command_operation(u_long cmd)
+{
+
+	switch (cmd) {
+	case ZFD_INFO: return (ZFD_OP_INFO);
+	case ZFD_DERIVE: return (ZFD_OP_DERIVE);
+	case ZFD_OPENAT: return (ZFD_OP_OPENAT);
+	case ZFD_STAT: return (ZFD_OP_STAT);
+	case ZFD_GET_PROPS: return (ZFD_OP_GET_PROPS);
+	case ZFD_GET_ONE_PROP: return (ZFD_OP_GET_ONE_PROP);
+	case ZFD_LIST_CHILDREN: return (ZFD_OP_LIST_CHILDREN);
+	case ZFD_LIST_SNAPS: return (ZFD_OP_LIST_SNAPSHOTS);
+	case ZFD_HOLDS: return (ZFD_OP_HOLDS);
+	case ZFD_LIST_BOOKMARKS: return (ZFD_OP_LIST_BOOKMARKS);
+	case ZFD_SET_PROP: return (ZFD_OP_SET_PROP);
+	case ZFD_INHERIT: return (ZFD_OP_INHERIT);
+	case ZFD_SNAPSHOT: return (ZFD_OP_SNAPSHOT);
+	case ZFD_BOOKMARK: return (ZFD_OP_BOOKMARK);
+	case ZFD_SNAP_DESTROY: return (ZFD_OP_SNAP_DESTROY);
+	case ZFD_DESTROY_BOOKMARK: return (ZFD_OP_DESTROY_BOOKMARK);
+	case ZFD_ROLLBACK: return (ZFD_OP_ROLLBACK);
+	case ZFD_CREATE: return (ZFD_OP_CREATE);
+	case ZFD_DESTROY: return (ZFD_OP_DESTROY);
+	case ZFD_RENAME: return (ZFD_OP_RENAME);
+	case ZFD_CLONE: return (ZFD_OP_CLONE);
+	case ZFD_PROMOTE: return (ZFD_OP_PROMOTE);
+	case ZFD_SEND: return (ZFD_OP_SEND);
+	case ZFD_RECV: return (ZFD_OP_RECV);
+	case ZFD_HOLD: return (ZFD_OP_HOLD);
+	case ZFD_RELEASE: return (ZFD_OP_RELEASE);
+	case ZFD_BLKOPEN: return (ZFD_OP_BLKOPEN);
+	case ZFD_MOUNT: return (ZFD_OP_MOUNT);
+	case ZFD_UNMOUNT: return (ZFD_OP_UNMOUNT);
+	case ZPD_STAT: return (ZFD_OP_POOL_STAT);
+	case ZPD_GET_PROPS: return (ZFD_OP_POOL_GET_PROPS);
+	case ZPD_SET_PROP: return (ZFD_OP_POOL_SET_PROP);
+	case ZPD_SCRUB: return (ZFD_OP_POOL_SCRUB);
+	case ZPD_ROOT_OPEN: return (ZFD_OP_POOL_ROOT_OPEN);
+	default: return (0);
+	}
+}
+
 struct thread;
 
 /* Hooks called from the FreeBSD zfs module's /dev/zfs ioctl entry. */

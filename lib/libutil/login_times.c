@@ -23,9 +23,11 @@
 
 #include <sys/types.h>
 #include <ctype.h>
+#include <errno.h>
 #include <login_cap.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 static struct
@@ -41,16 +43,19 @@ static struct
     { "wk", 2, LTM_WK  }, { "wd", 2, LTM_WD  }, { NULL, 0, 0       }
 };
 
-static char *
-parse_time(char * ptr, u_short * t)
+static const char *
+parse_time(const char *ptr, u_short *t)
 {
-    u_short	val;
+    unsigned int val = 0, digits = 0;
 
-    for (val = 0; *ptr && isdigit(*ptr); ptr++)
-	val = (u_short)(val * 10 + (*ptr - '0'));
-
-    *t = (u_short)((val / 100) * 60 + (val % 100));
-
+    while (isdigit((unsigned char)*ptr)) {
+	if (++digits > 4)
+	    return (NULL);
+	val = val * 10 + (*ptr++ - '0');
+    }
+    if (digits == 0 || val > 2400 || val % 100 >= 60)
+	return (NULL);
+    *t = (u_short)((val / 100) * 60 + val % 100);
     return (ptr);
 }
 
@@ -58,47 +63,44 @@ parse_time(char * ptr, u_short * t)
 login_time_t
 parse_lt(const char *str)
 {
-    login_time_t    t;
+    login_time_t t = {0}, m = {0};
+    const char *p = str;
+    int i;
 
-    memset(&t, 0, sizeof t);
-    t.lt_dow = LTM_NONE;
-    if (str && *str && strcmp(str, "Never") != 0 && strcmp(str, "None") != 0) {
-	int		 i;
-	login_time_t	 m = t;
-	char		*p;
-	char		 buf[64];
+    errno = 0;
+    if (str == NULL || *str == '\0')
+	goto invalid;
+    if (strcasecmp(str, "Never") == 0 || strcasecmp(str, "None") == 0)
+	return (t);
 
-	/* Make local copy and force lowercase to simplify parsing */
-	strlcpy(buf, str, sizeof buf);
-	for (i = 0; buf[i]; i++)
-	    buf[i] = (char)tolower(buf[i]);
-	p = buf;
-
-	while (isalpha(*p)) {
-
-	    i = 0;
-	    while (dws[i].dw && strncmp(p, dws[i].dw, dws[i].cn) != 0)
-		i++;
-	    if (dws[i].dw == NULL)
+    while (isalpha((unsigned char)*p)) {
+	for (i = 0; dws[i].dw != NULL; i++)
+	    if (strncasecmp(p, dws[i].dw, dws[i].cn) == 0)
 		break;
-	    m.lt_dow |= dws[i].fl;
-	    p += dws[i].cn;
-	}
-
-	if (m.lt_dow == LTM_NONE) /* No (valid) prefix, assume any */
-	    m.lt_dow |= LTM_ANY;
-
-	if (isdigit(*p))
-	    p = parse_time(p, &m.lt_start);
-	else
-	    m.lt_start = 0;
-	if (*p == '-')
-	    p = parse_time(p + 1, &m.lt_end);
-	else
-	    m.lt_end = 1440;
-
-	t = m;
+	if (dws[i].dw == NULL)
+	    goto invalid;
+	m.lt_dow |= dws[i].fl;
+	p += dws[i].cn;
     }
+    if (m.lt_dow == LTM_NONE)
+	m.lt_dow = LTM_ANY;
+    m.lt_end = 1440;
+    if (isdigit((unsigned char)*p)) {
+	p = parse_time(p, &m.lt_start);
+	if (p == NULL)
+	    goto invalid;
+    }
+    if (*p == '-') {
+	p = parse_time(p + 1, &m.lt_end);
+	if (p == NULL)
+	    goto invalid;
+    }
+    if (*p != '\0' || m.lt_start > m.lt_end)
+	goto invalid;
+    return (m);
+
+invalid:
+    errno = EINVAL;
     return (t);
 }
 

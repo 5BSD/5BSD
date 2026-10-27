@@ -561,12 +561,21 @@ disable the generation or saving of the
 and
 .Pa machine-id
 files at system boot and shutdown.
+Under BSD Integrity Protection (BIP), these services verify the authenticated
+kernel identity and existing compatibility files instead of generating or
+saving them.
+Disabling the services does not disable kernel integrity protection.
+Runtime host-ID reset is refused under BIP; identity changes require new
+authenticated boot policy.
 .It Va hostid_file
 .Pq Vt str
 Path to the
 .Pa hostid
 file, default
 .Pa /etc/hostid .
+Under BIP this must be a regular generation file containing the authenticated
+boot UUID followed by one newline.
+Startup reports a missing or inconsistent file and does not repair it.
 .It Va hostid_uuidgen_flags
 .Pq Vt str
 Flags passed to
@@ -582,6 +591,8 @@ Path to the
 .Pa machine-id
 file, default
 .Pa /etc/machine-id .
+Under BIP this must contain the same UUID without hyphens, followed by one
+newline, and is verified without runtime writes.
 .It Va dhclient_program
 .Pq Vt str
 Path to the DHCP client program, defaulting to
@@ -1973,6 +1984,41 @@ is set to
 .Dq Li YES ,
 these are the flags to pass to
 .Xr syslogd 8 .
+.It Va syslogd_pidfile
+.Pq Vt str
+Optional absolute PID-file path for
+.Xr syslogd 8 .
+When nonempty, the startup script uses it for PID tracking and supplies it
+to the daemon with
+.Fl P .
+Otherwise the startup script tracks
+.Pa /var/run/syslog.pid .
+.It Va syslogd_socket
+.Pq Vt str
+Optional absolute path for the primary local logging socket.
+When nonempty, the script supplies it with
+.Fl p
+and performs startup cleanup at that path instead of
+.Pa /var/run/log .
+.It Va syslogd_privsocket
+.Pq Vt str
+Optional absolute path for the restricted local logging socket, supplied with
+.Fl S .
+The daemon default is
+.Pa /var/run/logpriv .
+.It Va syslogd_socketlist
+.Pq Vt str
+Path for the startup script's generated list of additional chroot logging
+sockets; the default is
+.Pa /var/run/syslogd.sockets .
+Nonempty explicit paths for these four variables must be absolute and contain
+no newline.
+They are passed as path arguments, including embedded spaces and apostrophes.
+Do not also specify corresponding path options in
+.Va syslogd_flags ;
+multiple socket options can request additional endpoints.
+These settings do not create parent directories, authorize protected storage
+access or install compatibility links for clients using the default paths.
 .It Va inetd_enable
 .Pq Vt bool
 If set to
@@ -3279,6 +3325,15 @@ mounted no later than
 to function properly.
 The default is
 .Pa /firstboot .
+When BSD Integrity Protection (BIP) is enforcing, select a sentinel on writable
+instance storage; the immutable root is not remounted for cleanup.
+A file with
+.Dq -reboot
+appended requests a reboot after successful sentinel cleanup.
+Under BIP this request uses
+.Xr shutdown 8
+rather than signalling the protected init process.
+Failure to query integrity policy or remove a sentinel aborts startup.
 .It Va linux_enable
 .Pq Vt bool
 Set to

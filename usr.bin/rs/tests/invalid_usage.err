@@ -1,0 +1,2 @@
+rs: option requires an argument -- w
+usage: rs [-[csCS][x][kKgGw][N]tTeEnyjhHmz] [rows [cols]]

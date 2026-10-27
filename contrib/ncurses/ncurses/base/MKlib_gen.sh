@@ -83,7 +83,7 @@ USE="$3"
 #	https://gcc.gnu.org/gcc-5/porting_to.html
 
 PRG=`echo "$1" | "$AWK" '{ sub(/^[ 	]*/,""); sub(/[ 	].*$/, ""); print; }' || exit 0`
-FSF=`("$PRG" --version 2>/dev/null || exit 0) | ${FGREP-grep -F} "Free Software Foundation" | head -n 1`
+FSF=`("$PRG" --version 2>/dev/null || exit 0) | ${FGREP-grep -F} "Free Software Foundation" | head -n 1 || :`
 ALL=`"$PRG" -dumpversion 2>/dev/null || exit 0`
 ONE=`echo "$ALL" | sed -e 's/[^0-9].*$//'`
 if test -n "$FSF" && test -n "$ALL" && test -n "$ONE" ; then
@@ -101,8 +101,8 @@ ED4=sed4_${PID}.sed
 AW1=awk1_${PID}.awk
 AW2=awk2_${PID}.awk
 TMP=gen__${PID}.c
-trap "rm -f $ED1 $ED2 $ED3 $ED4 $AW1 $AW2 $TMP; exit 1" 1 2 3 15
-trap "rm -f $ED1 $ED2 $ED3 $ED4 $AW1 $AW2 $TMP" 0
+trap "rm -f $ED1 $ED2 $ED3 $ED4 $AW1 $AW2 $TMP ${TMP}.i; exit 1" 1 2 3 15
+trap "rm -f $ED1 $ED2 $ED3 $ED4 $AW1 $AW2 $TMP ${TMP}.i" 0
 
 ALL=$USE
 if test "$USE" = implemented ; then
@@ -542,8 +542,9 @@ sed -n -f $ED1 \
 	-e 's/gen_$//' \
 	-e 's/  / /g' >>$TMP
 
-$preprocessor $TMP 2>/dev/null \
-| sed \
+# Do not hide preprocessing failures behind the following text filters.
+$preprocessor $TMP > ${TMP}.i || exit $?
+sed < ${TMP}.i \
 	-e 's/  / /g' \
 	-e 's/^ //' \
 	-e 's/_Bool/NCURSES_BOOL/g' \

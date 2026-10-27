@@ -21,10 +21,10 @@ MLINKS+=	libcapsulert.3 ort_net_domain_name.3
 MLINKS+=	libcapsulert.3 ort_net_direction_name.3
 MLINKS+=	libcapsulert.3 ort_net_protocol_name.3
 
-SRCS=	claim_parse.c
+SRCS=	claim_parse.c storage_namespace.c filesystem_policy.c
 INCS=	capsulert.h claim_parse.h capsule_ctl.h \
 	switchboard_ctl.h capsule_svc_proto.h switchboard_svc_proto.h \
-	bsdfilesystem_proto.h
+	bsdfilesystem_proto.h storage_namespace.h filesystem_policy.h
 
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include

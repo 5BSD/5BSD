@@ -38,19 +38,19 @@
  *
  * A port of init(8)'s state machine (see
  * docs/book/src/plane/capsule.md for the behavior contract) with
- * one additional state: after /etc/rc completes, ESTABLISH_CAPSULE
- * brings up the Capsule capability engine (mac_capability, control
- * socket, switchboard under a procdesc) before multi-user session
- * management begins.  The multi-user wait is a kqueue loop so the
- * engine's control socket, switchboard procdesc/channel, and restart
- * timers are switchboard from PID 1 without threads.
+ * an ESTABLISH_CAPSULE state that brings up the capability engine
+ * (mac_capability, control socket, switchboard under a procdesc).
+ * Switchboard runs /etc/rc and launches native boot units; PID 1 waits
+ * for convergence before multi-user session management begins.  The
+ * kqueue loop handles the engine's control socket, switchboard
+ * procdesc/channel, and restart timers in PID 1 without threads.
  *
  * Compatibility contract (docs/book/src/plane/capsule.md):
  *  - never daemonize, never exit: every stock init exit path becomes a
  *    logged emergency followed by deliberate reboot or recovery;
  *  - PID 1 is already the real-init reaper: verify, don't acquire;
- *  - rc remains the owner of the legacy Unix service world; switchboard
- *    owns only migrated capability services;
+ *  - rc remains the owner of legacy Unix services; switchboard runs rc
+ *    as a oneshot and manages native capability services;
  *  - shutdown order: revoke ttys -> /etc/rc.shutdown (switchboard still
  *    available) -> drain/stop switchboard via its procdesc -> global
  *    SIGTERM/SIGKILL sweep -> /etc/rc.final -> reboot(2).
@@ -100,6 +100,8 @@
 
 #include "capsule_daemon.h"
 #include "capsule.h"
+#include "protected_storage.h"
+#include "protected_crypto.h"
 #include "capsule_ctl.h"
 #include "capsule_ambient.h"	/* capsule_ambient_pin (§21 fd hygiene) */
 #include "capsule_lifecycle.h"	/* capsule_lifecycle_decide/_permits */
@@ -1098,7 +1100,7 @@ establish_capsule(void)
 /*
  * Wait for switchboard to signal boot convergence over its authenticated,
  * per-instance Capsule channel after running /etc/rc and launching native
- * services.  The engine kqueue is switchboard meanwhile so switchboard's
+ * services.  The engine kqueue is serviced meanwhile so switchboard's
  * channel/procdesc events -- including crash and restart -- are handled.
  *
  * There is deliberately no time deadline: /etc/rc has no knowable
@@ -1200,6 +1202,7 @@ capsule_assert_signal_shield(void)
 static void
 capsule_engine_start(void)
 {
+	const char *conffile;
 
 	if (capsule_engine_up)
 		return;
@@ -1211,15 +1214,13 @@ capsule_engine_start(void)
 	BOOTTRACE("Capsule engine starting...");
 
 	if (!capsule_mac_up) {
+		conffile = CAPSULE_DEFAULT_CONFFILE;
+		if (conffile == NULL)
+			capsule_fatal("Capsule: cannot determine boot policy: %s", strerror(errno));
 		config_init_defaults(&od.cfg);
-		if (config_load(&od.cfg, CAPSULE_DEFAULT_CONFFILE) != 0) {
-			warning("Capsule: config error in %s; "
-			    "capability world disabled",
-			    CAPSULE_DEFAULT_CONFFILE);
-			return;
-		}
-		strlcpy(od.conffile, CAPSULE_DEFAULT_CONFFILE,
-		    sizeof(od.conffile));
+		if (config_load(&od.cfg, conffile) != 0)
+			capsule_fatal("Capsule: configuration rejected: %s", conffile);
+		strlcpy(od.conffile, conffile, sizeof(od.conffile));
 
 		/*
 		 * PID 1 is already the real-init reaper: verify rather
@@ -1256,10 +1257,16 @@ capsule_engine_start(void)
 
 	capsule_assert_signal_shield();
 
+	if (protected_crypto_prepare(&od.cfg) != 0)
+		capsule_fatal("Capsule: boot crypto policy failed: %s", strerror(errno));
+
+	if (protected_storage_prepare(&od.cfg) != 0)
+		capsule_fatal("Capsule: boot storage policy failed: %s", strerror(errno));
+
 	od.shutting_down = false;
 	if (bootstrap_start(capsule_kq) == -1) {
 		warning("bootstrap: switchboard start failed; "
-		    "running with rc services only");
+		    "capability engine unavailable; entering recovery");
 		return;
 	}
 
@@ -2109,7 +2116,7 @@ transition_handler(int sig)
 /*
  * Take the system multiuser.  The wait loop is kqueue-driven so the
  * Capsule engine (control socket, switchboard procdesc/channel, restart
- * timers) is switchboard from PID 1 alongside session reaping.
+ * timers) is serviced by PID 1 alongside session reaping.
  */
 static struct state_next
 multi_user(void)

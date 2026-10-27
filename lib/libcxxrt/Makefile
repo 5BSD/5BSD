@@ -41,11 +41,17 @@ LDBL_SED=
 LDBL_SED=	-e 's/long double/__ieee128/g'
 .endif
 
-Version-32.map: Version.map
-	sed -e 's/%%NEW_DELETE_TYPE%%/int/' ${LDBL_SED} ${.ALLSRC} > ${.TARGET}
+# Explicit generator inputs shared by Make and native build graph exporters.
+VERSION_MAP_TEMPLATE.Version-32.map= ${.CURDIR}/Version.map
+VERSION_MAP_TEMPLATE.Version-64.map= ${.CURDIR}/Version.map
+VERSION_MAP_SED_ARGS.Version-32.map= -e 's/%%NEW_DELETE_TYPE%%/int/' ${LDBL_SED}
+VERSION_MAP_SED_ARGS.Version-64.map= -e 's/%%NEW_DELETE_TYPE%%/long/' ${LDBL_SED}
 
-Version-64.map: Version.map
-	sed -e 's/%%NEW_DELETE_TYPE%%/long/' ${LDBL_SED} ${.ALLSRC} > ${.TARGET}
+Version-32.map: ${VERSION_MAP_TEMPLATE.Version-32.map}
+	sed ${VERSION_MAP_SED_ARGS.Version-32.map} ${.ALLSRC} > ${.TARGET}
+
+Version-64.map: ${VERSION_MAP_TEMPLATE.Version-64.map}
+	sed ${VERSION_MAP_SED_ARGS.Version-64.map} ${.ALLSRC} > ${.TARGET}
 .endif
 
 .include <bsd.lib.mk>

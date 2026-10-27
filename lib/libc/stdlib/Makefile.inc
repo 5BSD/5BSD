@@ -83,7 +83,8 @@ CFLAGS.qsort.c+= -Wsign-compare
 # libc has both _Exit.c and _exit.s and they both yield
 # _exit.o (case insensitively speaking).
 CLEANFILES+=C99_Exit.c
-C99_Exit.c: ${LIBC_SRCTOP}/stdlib/_Exit.c .NOMETA
+SOURCE_ALIAS.C99_Exit.c= ${LIBC_SRCTOP}/stdlib/_Exit.c
+C99_Exit.c: ${SOURCE_ALIAS.C99_Exit.c} .NOMETA
 	ln -sf ${.ALLSRC} ${.TARGET}
 
 SYM_MAPS+= ${LIBC_SRCTOP}/stdlib/Symbol.map
@@ -165,3 +166,12 @@ MLINKS+=tsearch.3 tdelete.3 \
 	tsearch.3 tfind.3 \
 	tsearch.3 twalk.3 \
 	tsearch.3 tdestroy.3
+
+.for _src in bsearch_b.c bsearch_s.c
+TEXTUAL_SRCS.${_src}= ${LIBC_SRCTOP}/stdlib/bsearch.c
+.endfor
+TEXTUAL_SRCS.heapsort_b.c= ${LIBC_SRCTOP}/stdlib/heapsort.c
+TEXTUAL_SRCS.mergesort_b.c= ${LIBC_SRCTOP}/stdlib/merge.c
+.for _src in qsort_r.c qsort_r_compat.c qsort_s.c
+TEXTUAL_SRCS.${_src}= ${LIBC_SRCTOP}/stdlib/qsort.c
+.endfor

@@ -113,7 +113,7 @@ svc_exec(struct svc_runtime *svc, int kq)
 }
 
 void
-svc_run_container_remove(const char *label)
+svc_run_container_remove(const char *label, uid_t owner __unused)
 {
 
 	runtime_removals++;
@@ -1701,8 +1701,29 @@ ATF_TC_BODY(idle_quiesce_busy_resumes_provider, tc)
 	(void)close(kq);
 }
 
+ATF_TC_WITHOUT_HEAD(retired_principal_claim);
+ATF_TC_BODY(retired_principal_claim, tc)
+{
+	struct svc_runtime svc = {0};
+	const char *name = "test.Software";
+	(void)tc;
+	svc.manifest.nprovides = 1;
+	strlcpy(svc.manifest.provides[0], name, sizeof(svc.manifest.provides[0]));
+	/* Retired flag 0x2 must not acquire meaning again or mutate state. */
+	ATF_CHECK_EQ(EINVAL, on_demand_name_claim(&svc, name, 2));
+	ATF_CHECK_EQ(EINVAL, on_demand_name_claim(&svc, name, 2 | SVC_NAME_CLAIM_SENDABLE));
+	ATF_CHECK_EQ(SVC_NAME_UNCLAIMED, svc.name_state[0]);
+	ATF_CHECK_EQ(0, svc.name_claim_flags[0]);
+	ATF_CHECK_EQ(EACCES, on_demand_name_claim(&svc, "test.Unknown", 0));
+	ATF_CHECK_EQ(0, on_demand_name_claim(&svc, name, SVC_NAME_CLAIM_SENDABLE));
+	ATF_CHECK(on_demand_name_sendable(&svc, name));
+	ATF_CHECK_EQ(EALREADY, on_demand_name_claim(&svc, name, 0));
+	ATF_CHECK(on_demand_name_sendable(&svc, name));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, retired_principal_claim);
 	ATF_TP_ADD_TC(tp, provider_incarnation);
 	ATF_TP_ADD_TC(tp, provider_name_filter);
 	ATF_TP_ADD_TC(tp, timer_identifiers);

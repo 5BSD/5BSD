@@ -202,7 +202,8 @@ CANCELPOINTS_SRCS=sem.c sem_new.c
 .for src in ${CANCELPOINTS_SRCS}
 SRCS+=cancelpoints_${src}
 CLEANFILES+=cancelpoints_${src}
-cancelpoints_${src}: ${LIBC_SRCTOP}/gen/${src} .NOMETA
+SOURCE_ALIAS.cancelpoints_${src}= ${LIBC_SRCTOP}/gen/${src}
+cancelpoints_${src}: ${SOURCE_ALIAS.cancelpoints_${src}} .NOMETA
 	ln -sf ${.ALLSRC} ${.TARGET}
 .endfor
 
@@ -406,6 +407,7 @@ MLINKS+=getcap.3 cgetcap.3 \
 	getcap.3 cgetfirst.3 \
 	getcap.3 cgetmatch.3 \
 	getcap.3 cgetnext.3 \
+	getcap.3 cgetusedb.3 \
 	getcap.3 cgetnum.3 \
 	getcap.3 cgetset.3 \
 	getcap.3 cgetstr.3 \
@@ -601,3 +603,8 @@ install-passwd: .PHONY
 		echo ".${DISTBASE}/etc/passwd type=file uname=root gname=wheel mode=0644"; \
 	) | cat -l >> ${METALOG}
 .endif
+
+# Source fragments included textually; they are not separate archive members.
+TEXTUAL_SRCS.arc4random.c= ${SRCTOP}/sys/crypto/chacha20/chacha.c
+TEXTUAL_SRCS.scandir_b.c= ${LIBC_SRCTOP}/gen/scandir.c
+TEXTUAL_SRCS.ldexp.c= ${LIBC_SRCTOP}/../msun/src/s_scalbn.c

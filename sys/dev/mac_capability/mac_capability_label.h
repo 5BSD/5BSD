@@ -5,8 +5,12 @@
  *
  * mac_capability_label — per-credential program identity.
  *
- * The MAC capability framework attaches a cryptographic nonce to every credential.
- * The nonce identifies the program image:
+ * The MAC capability framework attaches an execution identity nonce to credentials.
+ * Identity replies and kernel-stamped message trailers expose this value;
+ * it is not a bearer secret. Consumers must use trusted kernel metadata,
+ * not accept a user-supplied number as proof of the caller's identity.
+ * Current random allocation depends on the kernel's early-seeding policy.
+ * The nonce identifies the program execution family:
  *   - Inherited across fork (same program)
  *   - Rotated on exec (new program)
  *   - Kernel-assigned; userspace cannot set it

@@ -439,7 +439,7 @@ supervisor_finish_native_exit(struct svc_runtime *svc, int exit_status,
     time_t uptime_sec)
 {
 
-	svc_run_container_remove(svc->manifest.label);
+	svc_run_container_remove(svc->manifest.label, svc->owner_uid);
 	svc->state = SVC_STATE_STOPPED;
 
 	if (was_stopping && remove_pending) {
