@@ -65,7 +65,7 @@ def main():
         'filegroup(name="strip_inputs", srcs=["bin/llvm-strip"])\n'
         'filegroup(name="empty")\n' + config +
         'cc_toolchain(name="compiler", toolchain_identifier="bsd-staged-clang", '
-        'toolchain_config=":config", all_files=":inputs", compiler_files=":compile_inputs", '
+        'toolchain_config=":config", all_files=":inputs", compiler_files=":compile_inputs", as_files=":compile_inputs", '
         'linker_files=":link_inputs", ar_files=":archive_inputs", objcopy_files=":objcopy_inputs", '
         'strip_files=":strip_inputs", dwp_files=":empty", supports_param_files=1)\n'
         'cc_toolchain_suite(name="suite", toolchains={%s: ":compiler"})\n' % json.dumps(a.cpu))

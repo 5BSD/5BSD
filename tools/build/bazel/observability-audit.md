@@ -2627,3 +2627,11 @@ binaries contain no DOF. Existing LOG_AUTH emergency syslog and RB_REROOT reques
 are preserved. Audit the privileged kernel root-transition path when qualifying
 init; symbol/build parity alone does not prove audit or lifecycle behavior.
 The helper was not executed.
+
+### Native init embedding (2026-10-27)
+
+Native init retains maintained source and logging behavior; Make/native binaries
+lack DOF. This increment verifies declared seed embedding and installation
+metadata, not PID1 lifecycle, login/audit events or root-transition logging.
+Review those behaviors in a booted matching-system qualification. No init or
+reroot_seed execution was performed.

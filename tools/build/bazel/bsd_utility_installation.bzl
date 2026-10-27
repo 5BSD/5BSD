@@ -3,7 +3,7 @@
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest", "bsd_compress")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
 
-def utility_installation(name, program, manual, package, bindir = "/usr/bin", man_section = "1", aliases = [], manual_aliases = [], extra_entries = [], binary_owner = "root", binary_group = "wheel", binary_mode = "0555", binary = None, keep_sections = []):
+def utility_installation(name, program, manual, package, bindir = "/usr/bin", man_section = "1", aliases = [], manual_aliases = [], extra_entries = [], binary_owner = "root", binary_group = "wheel", binary_mode = "0555", binary = None, keep_sections = [], binary_flags = ""):
     """Install program under its maintained name, optionally from a variant label.
 
     binary changes only the declared source artifact; installed/debug filenames
@@ -40,7 +40,7 @@ def utility_installation(name, program, manual, package, bindir = "/usr/bin", ma
     for suffix, source, destination, mode, tags in files:
         target = name + "_" + suffix
         bsd_install_file(name = target, src = source, destination = destination, owner = binary_owner if suffix != "manual_file" else "root",
-            group = binary_group if suffix != "manual_file" else "wheel", mode = mode, install_tags = tags)
+            group = binary_group if suffix != "manual_file" else "wheel", mode = mode, flags = binary_flags if suffix == "binary" else "", install_tags = tags)
         entries.append(":" + target)
     if len(depset(aliases).to_list()) != len(aliases):
         fail("duplicate utility alias")

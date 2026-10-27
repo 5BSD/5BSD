@@ -32322,3 +32322,43 @@ configuration/install records and comparison. Init itself is not converted by
 this prerequisite. Existing format-5 frontend inputs built the helper using
 16 jobs without C/backend changes. No helper execution, host installation or
 root switch occurred.
+
+## Native init and declared seed embedding — 2026-10-27
+
+`//sbin/init:init` now compiles init.c with Make's DEBUGSHELL, SECURE, LOGIN_CAP
+and COMPAT_SYSV_INIT definitions and native util/crypt dependencies. The new
+bsd_asm_payload rule compiles the original reroot_seed.embed.s via cc_common
+and the selected C++ toolchain. Its seed is an explicit additional action input;
+assembler search directories derive from declared payload artifacts. It does
+not execute the seed or generate a substitute assembly/source payload.
+
+This exposed missing as_files in the staged cc_toolchain declarations. Both
+libmd-stage-tools.py and declared-probe.py now bind assembler inputs to the
+compiler/runtime input group. Raw .s actions otherwise selected Clang without
+staging it in the sandbox. Regenerated SDK/receipt:
+`/usr/obj/usr/src/bazel-assembly-sdk-20261027`; existing snapshots were preserved.
+Execution-log inspection confirms the assembly action declares both Clang and
+the seed. Existing frontend format-5 SDK selection handles the new receipt;
+no frontend C option change is required.
+
+Qualification: `/usr/obj/usr/src/bazel-init-r3-20261027`; Make reference:
+`/usr/obj/usr/src/bazel-init-make-20261027`. Eight defined globals and ordered
+util/crypt/c dependencies match, with PIE/NOW and no RPATH/RUNPATH. Six install
+records match, including schg on /sbin/init, /etc ownership/package metadata,
+/etc/ttys configuration, manual bytes, and a valid debuglink. Utility installation
+now supports explicit binary_flags to preserve that existing Make requirement.
+Archive SHA-256:
+`d8d5334519a982a52846357e2094263790fab3a9f485e0b541799e22fe873fa7`.
+
+ELF extraction proves native init embeds exactly its declared 837,376-byte seed
+(digest 908fe087bc91bc78a48403d28fc50e2f684c9d1751f818eb161ed78f8689d344).
+The Make reference embeds the main object tree's seed of the same size but a
+different digest, recorded in qualification/embedding.json. No whole-init byte
+identity is claimed. That Make seed is an external reference input, not the
+separately rebuilt seed used in the earlier standalone comparison.
+
+Neither init nor the seed was executed. Boot/PID1 behavior, root transition,
+rescue/static/other-platform configurations, invalidation under changed payloads,
+and performance remain unqualified. Fresh stage comparisons do not exercise
+PRECIOUSPROG backup/replacement behavior on an installed system. Make remains
+the production/default system backend.

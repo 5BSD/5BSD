@@ -3278,3 +3278,11 @@ The target
 .Dq //sbin/ping:install_archive
 also packages the shell and pytest network tests when tests are enabled.
 Those installed network tests are not executed by the checksum suite.
+
+.Pp
+Native init uses a declared static seed payload and toolchain assembly action.
+Staged SDKs for raw assembly must include assembler tool inputs; regenerate
+older snapshots with the maintained staging helper rather than modifying their
+recorded files. The native init archive preserves its schg flag and ttys
+configuration. Building this target does not execute init or qualify boot and
+root-transition behavior.

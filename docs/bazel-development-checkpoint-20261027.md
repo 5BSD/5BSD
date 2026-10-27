@@ -123,3 +123,13 @@ symbols/link metadata and payload size. No standalone installation target is
 created. Init still needs declared assembly embedding of that payload, binary
 and configuration installation, and runtime qualification. The helper was not
 executed. See the Bazel README for evidence and SDK/bootstrap limitations.
+
+## Subsequent progress: native init
+
+Init now builds with declared seed embedding and matches Make's symbol/link and
+six-record install metadata checks, including schg. Raw assembly revealed and
+fixed a missing SDK assembler input declaration; a fresh SDK receipt is under
+bazel-assembly-sdk-20261027. Embedded payload bytes match the native dependency.
+Make's separate object-tree seed differs, so no whole-binary identity is claimed.
+Boot/root-transition/rescue behavior, changed-payload invalidation and performance
+remain outstanding. No lifecycle operation was run.

@@ -156,7 +156,7 @@ def materialize(plan_path, tools_path):
            'filegroup(name="inputs", srcs=glob(["bin/**", "sysroot/**", "execution-runtime/**", "python-home/**"]))',
            'filegroup(name="empty")',
            'bsd_cc_config(name="config", target=%s, cpu="k8", clang_version=%s, archive_validation=%s)'%(json.dumps(target),json.dumps(version),str(bool(python_info))),
-           'cc_toolchain(name="compiler", toolchain_identifier="bsd-staged-clang", toolchain_config=":config", all_files=":inputs", compiler_files=":compile_inputs", linker_files=":link_inputs", ar_files=":archive_inputs", objcopy_files=":objcopy_inputs", strip_files=":strip_inputs", dwp_files=":empty", supports_param_files=1)',
+           'cc_toolchain(name="compiler", toolchain_identifier="bsd-staged-clang", toolchain_config=":config", all_files=":inputs", compiler_files=":compile_inputs", as_files=":compile_inputs", linker_files=":link_inputs", ar_files=":archive_inputs", objcopy_files=":objcopy_inputs", strip_files=":strip_inputs", dwp_files=":empty", supports_param_files=1)',
            'toolchain(name="registered", toolchain=":compiler", toolchain_type="@bazel_tools//tools/cpp:toolchain_type", exec_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", ":selected_sdk"], target_compatible_with=["@platforms//os:freebsd", "@platforms//cpu:x86_64", ":selected_sdk"])',
            'cc_binary(name="stdout_redirect", srcs=["stdout_redirect.c"], linkstatic=True, features=["fully_static_link"])']
     lines += runtime_groups(tool_dependencies) + action_input_groups()
