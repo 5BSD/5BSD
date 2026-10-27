@@ -3413,3 +3413,11 @@ The typed setting
 currently controls zsh only. False selects its static, non-PIE build, matching
 WITHOUT_DYNAMICROOT for that component. Other root-filesystem targets have not
 yet adopted this setting; it does not qualify a complete static-root system.
+
+.Pp
+The native target
+.Dq //bin/rmail:install_archive
+uses the internal libsm PIE archive and preserves rmail's dynamic-link exception.
+.Dq //lib/libsm:tests
+runs selected unchanged upstream library tests. These checks do not qualify
+mail handoff or delivery and do not invoke the host sendmail service.

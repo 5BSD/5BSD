@@ -317,3 +317,14 @@ nine DOF records, no interpreter/NEEDED entries, 1,259 installation records and
 The setting currently has only the zsh consumer; adopting it across root
 programs is still required. Continue remaining bin conversions (csh/rmail),
 keeping cross/privileged/whole-system and performance gates open.
+
+## Subsequent progress: libsm and rmail
+
+Native libsm ordinary/PIE archives and rmail build/package correctly against
+Make references. Evidence: `bazel-rmail-r4-20261027/qualification` under
+`/usr/obj/usr/src`: 76 members/210 symbols per library, 149 rmail symbols,
+four installation records, one byte-equal manual and verified debug linkage.
+Five unchanged upstream library tests and five pre-delivery error cases pass.
+Successful mail handoff was not run; source and host mail configuration are
+unchanged. Custom sendmail options and broader suite coverage remain open.
+Continue csh conversion and remaining aggregate/system gates.

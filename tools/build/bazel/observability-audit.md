@@ -2754,3 +2754,12 @@ The static non-PIE native zsh retains all nine Make DOF records and passes its
 smoke test without candidate shared libraries. This checks instrumentation
 retention through static linking; runtime probe attachment/firing remains
 unqualified. No observability source or test assertion was weakened.
+
+
+## libsm/rmail native migration (2026-10-27)
+
+The maintained component Makefiles contain no DTrace provider integration;
+native migration adds/removes no instrumentation. rmail's observed paths are
+usage/input rejection only; successful sendmail handoff and mail-delivery
+logging/audit behavior are unqualified. Review those paths with the mail-service
+integration tests rather than inferring coverage from library tests or packaging.

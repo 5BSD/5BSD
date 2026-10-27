@@ -32924,3 +32924,38 @@ explicit. Make remains production/default.
 Returning to the default configuration in `bazel-zsh-default-after-static-20261027`
 passes smoke and reproduces the prior dynamic archive hash
 `c30f4f89d94ee02860d705142acae0ff7f3d7f5170a642fdb5b5c76fea62e4c5`.
+
+### libsm and rmail native components (2026-10-27)
+
+`//lib/libsm:sm` and `sm_pie` compile all 76 maintained source files into
+ordinary and PIE variants. The OS header is derived from the declared FreeBSD
+header; vendor public/private headers are declared. The library retains Make's
+NEWDB/NIS/MAP_REGEX/NOT_SENDMAIL/HAVE_NANOSLEEP defines and configured NETINET6.
+It is internal, with no public library installation payload. `rmail` uses the
+PIE archive and preserves Make's explicit dynamic-link exception even when
+WITHOUT_DYNAMICROOT is selected. No host mail service is used by the build.
+
+`/usr/obj/usr/src/bazel-rmail-r4-20261027/qualification/binary-parity.json`
+compares the native outputs against `bazel-libsm-make-20261027` and
+`bazel-rmail-make-20261027`: both library archives have 76 members and 210 matching
+global symbols; rmail has 149 matching globals, libc-only shared dependency,
+NOW/PIE flags and no RPATH. Five production-binary error cases match Make in
+status/stdout/stderr: no recipients, unknown option, empty input, missing From
+line and overlong envelope. All terminate before sendmail execution. The
+captured artifact is authenticated, then copied to an executable qualification
+path; the captured blob itself is kept unchanged.
+
+Five unchanged upstream Bazel tests pass: string, strl, scanf, strio and match.
+They link the internal static archive, not an implicit Bazel shared library.
+Initial missing-header, non-PIE-link and test-runtime-link failures are retained
+in the earlier evidence directories. Production source was not changed.
+
+The same qualification's `rmail/receipt.json` verifies all four installation
+records, exact metadata, byte-identical compressed manual and a valid debug
+link. Archive SHA256:
+`ee811d6aa53442c1ef604f65265af0709a362d64623b9ab1b99521bfb2ec75a9`.
+The maintained format-5 build-bsd frontend/installation backend supports these
+targets without a C frontend change. Not yet qualified: successful UUCP envelope
+handoff/delivery, complete libsm upstream suite, IPv6-disabled/custom sendmail
+build settings, cross builds or a whole mail-service installation. Make remains
+production/default and no mail was sent or host package installed.

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(glob(["libsm/*.c"]) + ["include/sm/os/sm_os_freebsd.h", "rmail/rmail.c", "rmail/rmail.8"], visibility = ["//lib/libsm:__pkg__", "//bin/rmail:__pkg__"])
+cc_library(name = "headers", hdrs = glob(["include/**/*.h", "src/*.h", "libsm/*.h"]), includes = ["include", "src"],
+    visibility = ["//lib/libsm:__pkg__", "//bin/rmail:__pkg__"])
