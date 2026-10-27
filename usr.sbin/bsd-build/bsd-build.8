@@ -3248,3 +3248,13 @@ Two board descriptions have been compared with the maintained Make workflow;
 all current ARM overlay sources also pass generation and consumer comparisons.
 This does not qualify complete board selection, installation, overlay application
 or boot.
+
+.Pp
+The native dhclient parser test suite is
+.Dq //sbin/dhclient/tests:tests .
+Select it in both format-5 targets and tests to run the maintained plain test.
+The target
+.Dq //sbin/dhclient:install_archive
+includes installed tests when the tests build setting is enabled.
+Its installed PCP test requires root, VNET/netgraph, and an ISC DHCP server;
+it is not executed by the host-safe parser suite.

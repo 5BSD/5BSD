@@ -2573,3 +2573,11 @@ schema/argument/site parity and amd64 site validation pass against Make. This is
 not live probe-firing evidence. Syslog/Casper diagnostics remain in the source.
 Privilege separation, packet handling, lease persistence and script execution
 need isolated runtime/audit review; no DHCP operation was executed here.
+
+### Dhclient parser tests (2026-10-27)
+
+Native Bazel now executes the unchanged option-domain-search/date parser test.
+The production daemon DTrace graph is unchanged. The parser test builds the
+same subset as Make without enabling daemon lifecycle probes. PCP/VNET remains
+installed with exclusivity metadata but needs a privileged runtime fixture;
+a parser pass is not evidence of DHCP network or lifecycle-probe behavior.

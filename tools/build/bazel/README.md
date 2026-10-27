@@ -32050,3 +32050,34 @@ script behavior. Maintained pcp and option-domain-search tests and test installa
 remain pending, as do disabled feature variants, cache/performance and static/
 rescue. No DHCP client ran. Existing frontend typed flags and explicit targets
 require no C/backend change. Make stays production and the prepared SDK remains.
+
+## Dhclient test integration — 2026-10-27
+
+The maintained `option-domain-search_test` now builds natively and runs through
+`//sbin/dhclient/tests:tests`. It compiles the same eight production C sources
+and two test sources as Make, using declared local headers and native libutil.
+The execution target uses test-only runfiles paths; the installed binary has
+no RPATH/RUNPATH. PIE test objects are statically linked into each executable.
+The unchanged test exercises missing/valid/truncated/compressed domain options,
+invalid pointers, and date parsing. Bazel reports one passing test (cached on
+the final archive rerun); the Make reference executable also exits zero.
+
+`//sbin/dhclient:install_archive` adds tests when the existing `tests` setting
+is enabled. The PCP script and Kyuafile retain `is_exclusive=true`. PCP requires
+root, VNET/netgraph and an ISC DHCP server; its privileged runtime execution is
+not yet qualified and it is intentionally outside the host-safe Bazel suite.
+
+Evidence: `/usr/obj/usr/src/bazel-dhclient-tests-r4-20261027`.
+The authenticated archive comparison against the maintained Make reference
+passes 20 inventory records, nine nonbinary payload comparisons, and two debug
+links. The parser test matches 75 defined globals, util/c dependency order,
+PIE/NOW and absence of runtime search paths. Archive SHA-256:
+`87132537e54a9654979ec4477ffe113e735650b12ccafecc2dde7dd976bdc9eb`.
+Earlier attempts remain available: r1 exposed implicit shared linkage of PIE
+objects; r2/r3 exposed missing Make-owned debug directory policy. Both issues
+were corrected rather than weakening the verifier.
+
+Frontend review: existing format-5 target/test selection and `bazel-test` carry
+this addition without C/backend changes; the maintained manual is updated.
+This evidence does not qualify live DHCP, PCP, static/rescue builds, disabled
+configuration variants, or system-wide cache/performance behavior.

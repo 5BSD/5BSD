@@ -55,3 +55,10 @@ The original tracked patch, untracked archive, status, and HEAD are saved in
 source root was moved there as `stray-kernel-fixture`, rather than committed.
 Intentional binary and expected-output test fixtures are retained in source.
 Private-key markers examined in tests contain malformed dummy input, not keys.
+
+## Subsequent progress: dhclient tests
+
+The native parser test now passes, and the combined program/test installation
+matches Make (20 records, nine nonbinary payloads, two debug links). Test ELF
+symbols and dynamic metadata also match. See the Bazel README for evidence and
+remaining PCP/VNET, configuration, and performance qualification work.
