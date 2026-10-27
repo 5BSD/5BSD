@@ -307,3 +307,13 @@ globals, no DOF section, all 1,259 installation records and 1,251 nonbinary
 payloads matched. Evidence: `bazel-zsh-no-dtrace-20261027/qualification`.
 Next: static-root configuration and remaining bin targets; cross/privileged
 and whole-system gates remain open. README details the exact scope and limits.
+
+## Subsequent progress: zsh static-root variant
+
+`dynamic_root=false` now selects static non-PIE zsh and removes shared test
+runtime dependencies. Smoke and Make binary/install parity pass: 4,907 globals,
+nine DOF records, no interpreter/NEEDED entries, 1,259 installation records and
+1,251 byte-equal payloads. Evidence: `bazel-zsh-static-r2-20261027/qualification`.
+The setting currently has only the zsh consumer; adopting it across root
+programs is still required. Continue remaining bin conversions (csh/rmail),
+keeping cross/privileged/whole-system and performance gates open.

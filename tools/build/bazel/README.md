@@ -32892,3 +32892,35 @@ change for these targets. Still pending: privileged/host-skipped cases,
 static-root configuration, cross builds, dependency mutation/remote-cache
 qualification and whole-system build/image/performance gates. Make remains
 the production default; no host installation or account changes were made.
+
+### zsh static-root configuration (2026-10-27)
+
+The typed boolean `//tools/build/bazel/config:dynamic_root` defaults to true;
+setting it to false selects zsh's maintained WITHOUT_DYNAMICROOT behavior:
+no -fPIE/-pie, native static library dependencies and the toolchain's
+fully_static_link feature. Tests omit the candidate shared runtime libraries
+in this configuration. Current consumer is zsh only: other root-filesystem
+programs still need to adopt/qualify this setting before it can describe a
+whole static-root world. Do not treat it as a completed global MK option.
+
+`/usr/obj/usr/src/bazel-zsh-static-r2-20261027/qualification` contains binary
+and installation comparisons against `bazel-zsh-static-make-20261027`:
+4,907 defined global symbols, nine identical parsed DOF probe records, ELF
+EXEC/non-PIE type, no interpreter or shared dependencies, all 1,259 installation
+records, 1,251 byte-equal nonbinary files and a valid split debug link. The smoke
+test passes without candidate shared libraries. Archive SHA256:
+`0961b0f4821e007e318b495d31faf5cec649b5ef965e895c8732c457355c354e`.
+Static libc/sysroot inputs still come from the declared SDK; no native libc
+bootstrap or complete static-world claim is made. The full upstream suite was
+not repeated for this configuration.
+
+The maintained format-5 frontend passes the typed setting without changes to
+build-bsd.c/source_graph.py; both build and test execution used that path.
+Remaining zsh gates include cross builds, privileged/host-skipped tests,
+probe firing and dependency mutation/remote-cache qualification. Next component
+work can proceed to the remaining bin targets while those system gates stay
+explicit. Make remains production/default.
+
+Returning to the default configuration in `bazel-zsh-default-after-static-20261027`
+passes smoke and reproduces the prior dynamic archive hash
+`c30f4f89d94ee02860d705142acae0ff7f3d7f5170a642fdb5b5c76fea62e4c5`.

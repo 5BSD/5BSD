@@ -3406,3 +3406,10 @@ runs the upstream suite as a local, noncached integration test. It uses host
 commands, locales, account lookups and pseudo-terminals in addition to the
 declared candidate and fixtures. Review upstream skips in the retained log;
 a successful group does not imply every platform-dependent case executed.
+
+.Pp
+The typed setting
+.Dq //tools/build/bazel/config:dynamic_root
+currently controls zsh only. False selects its static, non-PIE build, matching
+WITHOUT_DYNAMICROOT for that component. Other root-filesystem targets have not
+yet adopted this setting; it does not qualify a complete static-root system.

@@ -196,3 +196,8 @@ label_flag(name = "secureboot_trust_anchors", build_setting_default = "//lib/lib
 label_flag(name = "secureboot_verification_certificates", build_setting_default = "//lib/libsecureboot:no_certificates", visibility = ["//visibility:public"])
 
 string_flag(name = "version_branch", build_setting_default = "", visibility = ["//visibility:public"])
+
+# MK_DYNAMICROOT: root-filesystem executables opt into this choice as converted.
+# Current consumer: bin/zsh. This is not yet a world-wide static-root switch.
+bool_flag(name = "dynamic_root", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "dynamic_root_enabled", flag_values = {":dynamic_root": "true"}, visibility = ["//visibility:public"])

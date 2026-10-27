@@ -2746,3 +2746,11 @@ limitations remain logged. W02/W03 job-control groups run successfully, but
 these tests do not attach DTrace consumers or prove probe firing. The explicitly
 DTrace-disabled candidate matches Make and contains no DOF section. No probe
 source was removed or rewritten to achieve these results.
+
+
+### zsh static-root follow-up (2026-10-27)
+
+The static non-PIE native zsh retains all nine Make DOF records and passes its
+smoke test without candidate shared libraries. This checks instrumentation
+retention through static linking; runtime probe attachment/firing remains
+unqualified. No observability source or test assertion was weakened.
