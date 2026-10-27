@@ -380,3 +380,28 @@ builds. Do not substitute host helpers or mark this suite passed. A matching
 runtime/compatibility diagnosis is still required. Next useful independent
 work: continue missing bin test/install integration while preserving this
 runtime gate; 18 listed tests directories remain without BUILD files.
+
+## Capsicum runtime failure diagnosed (2026-10-27)
+
+The cat ATF startup failure is reproducible with the host's old Capsicum ABI.
+A small C probe opens /dev/null and obtains rights using cap_rights_get, built
+once with installed headers/libraries and once with the authenticated SDK
+sysroot. Both executions return rights words 02000fffffffffff and
+040000006fffffff. Host CAP_ALL matches; SDK CAP_ALL is 02000fffffffffff and
+05fc000001ffffff. Returned index-1 bits 0x6e000000 are outside the SDK's valid
+mask, explaining cap_rights_is_valid rejecting the inherited rights before
+cat's test bodies execute.
+
+Commit fc21f4e34df moved local rights on October 8 and explicitly requires a
+coordinated kernel/world upgrade. The running kernel was built October 7.
+Some old rights also overlap newly allocated upstream rights, so masking
+unknown bits is not a sound ABI compatibility fix. Keep the existing failed
+Make/native runtime results. Qualification requires a matching kernel/world
+runtime; neither changing PATH to host helpers nor suppressing the assertion
+qualifies the candidate. No host installation or reboot was performed.
+
+Probe source, both executables and results.json are retained under
+/usr/obj/usr/src/bazel-cat-tests-20261027/qualification/capsicum-abi.
+This evidence explains the shared startup failure; it does not establish
+that the 13 cat cases pass on a matching runtime. The frontend and backend
+require no implementation changes for this diagnostic-only update.
