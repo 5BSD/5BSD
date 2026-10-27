@@ -230,13 +230,44 @@ are value / effort; status as above.
 
 | # | From | Feature | Buys 5BSD | Status |
 |---|---|---|---|---|
-| G1 | macOS SSV | sealed boot environment: sign the BE snapshot's root block pointer at build; loader and veriexec verify before mount | "declaration is the grant" gets a sealed root for the system bundle | next, M |
+| G1 | macOS SSV | authenticated system generations, verified boot, mandatory integrity and protected recovery; see [system security design](book/src/capability/system-security.md) | protects the software and policy that grants depend on; ordinary ZFS checksums are not publisher authentication | design and staged implementation; acceptance required |
 | G2 | OpenBSD pinsyscalls | syscalls only from rtld-registered stub addresses, on for system-bundle units, manifest opt-out | kills syscall gadgets in TCB daemons; rtld branding already exists | next, M |
 | G3 | OpenBSD mimmutable | immutable mappings for sealed records, relro and TCB code pages | cheap complement to W^X | later, S |
 | G4 | fs-verity | per-file signed digest in TrustedZFS, verified on read, covering data files, kmods and mapped libraries | extends veriexec past exec-time whole-file hashes | later, L |
 | G5 | Windows WDAC | veriexec audit mode and signer rules ("anything signed by the pkgbase key"), signed policy | makes "assumed enforcing" deployable | later, M |
 | G6 | Linux keyrings | use-only ("logon") keystore entries with expiry; request_key as on-demand custody activation | the smallest borrow that makes factotum custody sound for ZFS encryption keys | later, M |
 | G7 | Symbian DLL rule, Apple library constraints | a capmode unit may map only libraries whose veriexec level is at least its own | a low-trust extension library cannot enter a provider through the lib-dir fds | later, S |
+
+#### Incremental package updates under G1
+
+The [update and activation roadmap](book/src/capability/system-security.md#incremental-updates-and-activation-roadmap)
+requires changed packages and dependencies to form a complete authenticated system
+generation while reusing unchanged verified content. Protected OS updates initially
+activate through a new boot environment and reboot. The default is base packages
+requiring reboot and ordinary ports packages using independent versioned updates
+and rollback with matching dependencies/package state. Ports supplying kernel
+modules, protected code or security policy remain on the protected system path.
+Ordinary applications and
+independently packaged services may use restart activation only with their stated
+isolation, dependency and authorization contracts verified. Protected OS live
+updates remain a later gated extension with the same update authority requirements.
+Whole-system rollback restores matching package state, respects the security-version
+floor, and handles persistent data through explicit migration/recovery policy.
+The maintained build-bsd workflow and usable-system VM tests must cover these paths;
+this roadmap entry does not report them implemented or qualified.
+
+Old boot-environment removal is a required upgrade acceptance gate. In a disposable
+Secure Boot VM, upgrade A to B, boot B, verify normal startup and SSH, then remove
+obsolete A through the authorized generation-management path. Verify its datasets
+and boot references are gone, B still boots and serves SSH, and shared persistent
+data and the retained recovery generation survive. Exercise refusal for the running
+generation, pending boot target and required recovery generation, including direct
+attempts by compromised root. Check clone-origin dependencies, interrupted removal,
+retries and retention policy. Measure space reclamation with shared blocks accounted
+for; deletion does not imply all referenced blocks become free. The existing
+`be_vm_test.py` now includes explicit obsolete-clone removal and surviving-data
+checks, but that isolated ZFS mechanism test does not establish these authorization
+or post-upgrade boot guarantees.
 
 ### Theme H: introductions
 

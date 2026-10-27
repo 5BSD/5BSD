@@ -32,10 +32,21 @@ if [ -d "$stage/Capabilities/System" ]; then
 fi
 [ -f "$key" ] && [ ! -L "$key" ] || { echo 'signing key must be a regular file, not a symlink' >&2; exit 1; }
 key=$(realpath "$key")
+permissions=$(stat -f %Lp "$key")
+[ $((0$permissions & 077)) = 0 ] || { echo 'private key must not be accessible to group or others' >&2; exit 1; }
+[ -r "$key" ] || { echo 'private key is not readable by the signing user' >&2; exit 1; }
+parent_permissions=$(stat -f %Lp "$(dirname "$key")")
+[ $((0$parent_permissions & 022)) = 0 ] || { echo 'private key directory must not be writable by group or others' >&2; exit 1; }
 case "$key" in "$stage"|"$stage"/*) echo 'private key must be outside the staged image' >&2; exit 1;; esac
 [ ! -e "$stage/etc/capability/require-signatures" ] || {
     echo 'stage already has signature enforcement; use a fresh generation' >&2; exit 1;
 }
+if [ -d "$stage/etc/capability/keys" ]; then
+    enrolled=$(find "$stage/etc/capability/keys" -mindepth 1 -maxdepth 1 -print) || exit 1
+    [ -z "$enrolled" ] || {
+        echo 'fresh signing stage must have an empty trust catalogue' >&2; exit 1;
+    }
+fi
 count=0
 for bundle in "$stage"/Capabilities/System/*.cap; do
     [ -d "$bundle" ] && [ ! -L "$bundle" ] || continue

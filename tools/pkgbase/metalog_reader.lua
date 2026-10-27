@@ -33,6 +33,7 @@ function main(args)
 	    #args == 1, false, false
 	local dcount, dsize, fuid, fgid, fid =
 	    false, false, false, false, false
+	local unassignedonly = false
 	local verbose = false
 	local w_notagdirs = false
 
@@ -45,6 +46,9 @@ function main(args)
 		elseif args[i] == '-c' then
 			printall = false
 			checkonly = true
+		elseif args[i] == '-u' then
+			printall = false
+			unassignedonly = true
 		elseif args[i] == '-p' then
 			printall = false
 			pkgonly = true
@@ -93,6 +97,8 @@ function main(args)
 		errors = print_lints(sess)
 	elseif checkonly then
 		errors = print_lints(sess)
+	elseif unassignedonly then
+		io.write(sess.unassigned_report())
 	elseif pkgonly then
 		io.write(sess.pkg_report_simple(dcount, dsize, {
 			fuid and sess.pkg_issetuid or nil,
@@ -111,7 +117,7 @@ end
 
 --- @param man boolean
 function usage(man)
-	local sn = 'Usage: '..arg[0].. ' [-h] [-a | -c | -p [-count] [-size] [-f...]] [-W...] metalog-path \n'
+	local sn = 'Usage: '..arg[0].. ' [-h] [-a | -c | -u | -p [-count] [-size] [-f...]] [-W...] metalog-path \n'
 	if man then
 		io.write('\n')
 		io.write(sn)
@@ -129,6 +135,8 @@ format that's returned by `mtree -c | mtree -C`
              and conflicting metadata
       -Wcheck-notagdir    entries with dir type and no tags will be also
                           included the first time they appear
+  -u         list non-directory paths with no package assignment in any record;
+             this reports omissions for review, not an error or runtime policy.
   -p         list all package names found in the file as exactly specified by
              `tags=package=...`
       -count       display the number of files of the package
@@ -273,6 +281,25 @@ function Analysis_session(metalog, verbose, w_notagdirs)
 	local swarn = {}
 	--- @public
 	local serrs = {}
+
+	-- Preserve METALOG pathname escaping. A declaration on any record owns
+	-- the path; conflicting duplicate records remain the lint mode's concern.
+	local function unassigned_report()
+		local result = {}
+		for filename, rows in sortedPairs(files) do
+			local assigned, nondirectory = false, false
+			for _, row in ipairs(rows) do
+				if row.attrs.type ~= 'dir' then nondirectory = true end
+				for tag in (row.attrs.tags or ''):gmatch('[^,]+') do
+					if tag:match('^package=.+$') then assigned = true end
+				end
+			end
+			if nondirectory and not assigned then
+				result[#result + 1] = filename .. '\n'
+			end
+		end
+		return table.concat(result)
+	end
 
 	-- returns number of files in package and size of package
 	-- nil is  returned upon errors
@@ -523,6 +550,7 @@ function Analysis_session(metalog, verbose, w_notagdirs)
 		pkg_issetuid = pkg_issetuid,
 		pkg_issetgid = pkg_issetgid,
 		pkg_issetid = pkg_issetid,
+		unassigned_report = unassigned_report,
 		pkg_report_full = pkg_report_full,
 		pkg_report_simple = pkg_report_simple,
 		dup_report = dup_report,

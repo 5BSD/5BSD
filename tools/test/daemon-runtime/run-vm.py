@@ -18,6 +18,8 @@ p.add_argument('--kernconf',default='GENERIC-NODEBUG')
 p.add_argument('--client-ownership',action='store_true')
 p.add_argument('--oes-factory',action='store_true')
 p.add_argument('--oes-admission',action='store_true',help='run real Capsule/SwitchBoard with OES test bundles')
+p.add_argument('--zfs',action='store_true',help='stage matching ZFS module and world tools for actual dataset tests; not BIP qualification')
+p.add_argument('--scratch-disk-mib',type=int,default=0,help='new private virtio scratch disk, exposed to tests as /dev/vtbd1')
 p.add_argument('--host-max-rss-mib',type=int,default=0,help='QEMU process RSS budget; required with a workspace disk, 0 observes without a limit')
 p.add_argument('--workspace-disk-mib',type=int,default=0,help='new private build workspace disk at /dev/vtbd3; requires input and output disks')
 p.add_argument('--workspace-host-reserve-mib',type=int,default=1024,help='host free-space reserve beyond planned private disks')
@@ -28,7 +30,8 @@ p.add_argument('--output-disk-source',type=Path,help='offline source copied into
 p.add_argument('--output-disk-source-sha256',help='required source SHA256 for an initialized output disk')
 p.add_argument('--retain-disk-writes',action='store_true',help='retain writes to the newly created private guest.img for offline inspection; not system acceptance')
 p.add_argument('--root-mib',type=int,default=256,help='fixture root filesystem size in MiB')
-p.add_argument('--memory-mib',type=int,default=1024,help='guest RAM in MiB (512..2048)')
+p.add_argument('--resource-profile',choices=['fixture','bazel-builder'],default='fixture',help='fixture: up to 2 GiB/4 vCPUs; bazel-builder: up to 24 GiB/8 vCPUs')
+p.add_argument('--memory-mib',type=int,default=1024,help='guest RAM in MiB within the selected resource profile')
 p.add_argument('--log-store',action='store_true')
 p.add_argument('--log-storage',action='store_true')
 p.add_argument('--cleanup-lifecycle',action='store_true',help='stage private cleanup/unload kernel fixture')
@@ -38,19 +41,22 @@ p.add_argument('--atf-suite',action='append',default=[],help='static ATF binary 
 p.add_argument('--atf-case',action='append',default=[],help='static ATF binary relative to objtop followed by :case; repeatable')
 p.add_argument('--atf-case-budget',action='append',default=[],help='explicit selected source:case=seconds harness deadline; declared ATF timeout remains recorded')
 p.add_argument('--timeout',type=int,default=240)
-p.add_argument('--cpus',type=int,choices=range(1,5),default=4,help='guest vCPUs (default 4, maximum 4)')
+p.add_argument('--cpus',type=int,default=4,help='guest vCPUs within selected resource profile (default 4)')
 p.add_argument('--tcg-thread',choices=['multi','single'],default='multi',help='diagnostic TCG threading mode')
 p.add_argument('--eventtimer',choices=['LAPIC','i8254','HPET'],help='guest event timer override for diagnosis')
 a=p.parse_args()
 if not 64 <= a.root_mib <= 16384: p.error('root-mib must be between 64 and 16384')
 if a.oes_admission: a.oes_factory=True
 if a.timeout<=0: p.error('timeout must be positive')
+if a.scratch_disk_mib and (a.scratch_disk_mib < 128 or not a.zfs): p.error('scratch disk requires --zfs and at least 128 MiB')
 if a.output_disk_mib and (a.input_disk is None or not 16 <= a.output_disk_mib <= 16384): p.error('output disk requires a read-only input and capacity 16..16384 MiB')
 if (a.input_disk is None) != (a.input_disk_sha256 is None): p.error('input disk requires both path and expected SHA256')
-if a.input_disk is not None and (re.fullmatch(r'[0-9a-f]{64}', a.input_disk_sha256) is None): p.error('input disk requires a lowercase SHA256')
+if a.input_disk is not None and (a.scratch_disk_mib or re.fullmatch(r'[0-9a-f]{64}', a.input_disk_sha256) is None): p.error('input disk requires a lowercase SHA256 and cannot share the scratch disk slot')
 if (a.output_disk_source is None) != (a.output_disk_source_sha256 is None): p.error('output source requires both path and SHA256')
 if a.output_disk_source is not None and not a.output_disk_mib: p.error('output source requires explicit output capacity and read-only input')
-if not 512 <= a.memory_mib <= 2048: p.error('guest RAM must be between 512 and 2048 MiB')
+max_memory_mib,max_cpus=(24576,8) if a.resource_profile=='bazel-builder' else (2048,4)
+if not 512 <= a.memory_mib <= max_memory_mib: p.error(f'guest RAM must be between 512 and {max_memory_mib} MiB')
+if not 1 <= a.cpus <= max_cpus: p.error(f'guest CPUs must be between 1 and {max_cpus}')
 if not 0 <= a.host_max_rss_mib <= 65536: p.error('host RSS budget must be 0..65536 MiB')
 if a.workspace_disk_mib and not a.host_max_rss_mib: p.error('workspace builds require an explicit --host-max-rss-mib budget')
 root=a.root.resolve(); obj=a.objtop.resolve(); work=a.work.resolve()
@@ -100,7 +106,12 @@ for source,dest in [(kernel,stage/'boot/kernel/kernel'),(helper,stage/'sbin/runt
  if digest(dest)!=hashes[str(source)] or digest(source)!=hashes[str(source)]: p.error('input changed during staging: '+str(source))
 shutil.copyfile(fs_test,stage/'tests/namespace_test')
 if digest(stage/'tests/namespace_test')!=hashes[str(fs_test)] or digest(fs_test)!=hashes[str(fs_test)]: p.error('filesystem test changed during staging')
-extra_cases=[]; extra_hashes={}
+extra_cases=[]; extra_hashes={}; zfs_shared={}
+if a.zfs:
+ from zfs_fixture import stage_zfs
+ zfs_hashes=stage_zfs(root, kernel.parent, stage)
+ extra_hashes.update(zfs_hashes)
+ zfs_shared={str(Path(name).relative_to(root)): value for name,value in zfs_hashes.items() if Path(name).is_relative_to(root)}
 if a.cleanup_lifecycle:
  source=obj/'tools/test/daemon-runtime/cleanup-fixture/mac_capability_test_cleanup.ko'
  before=digest(source); dest=stage/'boot/kernel/mac_capability_test_cleanup.ko'
@@ -199,6 +210,9 @@ if selections:
  (stage/'tests/extra-cases').write_text(''.join(program+' '+case+'\n' for program,case in extra_cases))
 if input_disk is not None:
  (stage/'tests/input-device').write_text('/dev/vtbd1\n')
+if a.scratch_disk_mib:
+ (stage/'tests/scratch-device').write_text('/dev/vtbd1\n')
+ with (work/'scratch.img').open('xb') as disk: disk.truncate(a.scratch_disk_mib*1024*1024)
 if a.output_disk_mib:
  if output_source is not None:
   copy_source(output_source,a.output_disk_source_sha256,a.output_disk_mib*1024*1024,work/'output.img')
@@ -211,7 +225,9 @@ if a.workspace_disk_mib:
  workspace_space(work,workspace_required-a.output_disk_mib*1024*1024)
  workspace_create(work/'workspace.img',a.workspace_disk_mib)
  (stage/'tests/workspace-device').write_text('/dev/vtbd3\n')
-(stage/'etc/passwd').write_text('root:*:0:0:Charlie &:/root:/bin/sh\n')
+# An explicit account payload supplies its own text and database files.
+if not (a.extra_root and (a.extra_root/'etc/passwd').exists()):
+ (stage/'etc/passwd').write_text('root:*:0:0:Charlie &:/root:/bin/sh\n')
 if a.oes_admission:
  from oes_admission import stage_admission
  admission_hashes, admission_cases=stage_admission(stage,fixtures)
@@ -246,19 +262,24 @@ if a.oes_admission:
  with (stage/'boot/loader.conf').open('a') as f: f.write('capability_plane="YES"\n')
 if a.eventtimer:
  with (stage/'boot/loader.conf').open('a') as f: f.write('kern.eventtimer.timer="'+a.eventtimer+'"\n')
+if a.zfs:
+ with (stage/'boot/loader.conf').open('a') as f: f.write('zfs_load="YES"\n')
 if a.oes_factory:
  with (stage/'boot/loader.conf').open('a') as f: f.write('oes_load="YES"\n')
 (stage/'boot.config').write_text('-h\n')
 extra_root = None
 if a.extra_root:
  from extra_root import stage_extra_root
- extra_root = stage_extra_root(a.extra_root, stage)
+ extra_root = stage_extra_root(a.extra_root, stage, shared_files=zfs_shared)
+from extra_root import mtree_escape
 entries=['#mtree 2.0','. type=dir uid=0 gid=0 mode=0755']
 for f in sorted(stage.rglob('*')):
- name='./'+str(f.relative_to(stage))
- if f.is_symlink(): entries.append(name+' type=link uid=0 gid=0 link='+os.readlink(f))
+ name=mtree_escape('./'+str(f.relative_to(stage)))
+ if f.is_symlink(): entries.append(name+' type=link uid=0 gid=0 link='+mtree_escape(os.readlink(f)))
  elif f.is_dir(): entries.append(name+' type=dir uid=0 gid=0 mode='+('1777' if f.name=='tmp' else '0755'))
- else: entries.append(name+' type=file uid=0 gid=0 mode=0555')
+ else:
+  mode = (extra_root or {}).get('file_modes', {}).get(str(f.relative_to(stage)), 0o555)
+  entries.append(name+' type=file uid=0 gid=0 mode='+format(mode, '04o'))
 (work/'METALOG').write_text('\n'.join(entries)+'\n')
 subprocess.run(['makefs','-t','ffs','-s',str(a.root_mib)+'m','-F',str(work/'METALOG'),'-o','version=2',str(work/'root.ufs'),str(stage)],check=True)
 subprocess.run(['mkimg','-s','gpt','-f','raw','-b',str(stage/'boot/pmbr'),'-p','freebsd-boot:='+str(stage/'boot/gptboot'),'-p','freebsd-ufs:='+str(work/'root.ufs'),'-o',str(work/'guest.img')],check=True)
@@ -268,11 +289,13 @@ cmd=[a.qemu,'-L',str(a.qemu_data),'-accel','tcg,thread='+a.tcg_thread,'-machine'
 if input_disk is not None:
  if digest(input_disk)!=a.input_disk_sha256: p.error('input disk changed during staging')
  cmd.extend(['-blockdev',json.dumps({'driver':'raw','node-name':'artifact_input','read-only':True,'file':{'driver':'file','filename':str(input_disk)}}),'-device','virtio-blk-pci,drive=artifact_input'])
+if a.scratch_disk_mib:
+ cmd.extend(['-drive',f'file={work}/scratch.img,format=raw,if=virtio'])
 if a.output_disk_mib:
  cmd.extend(['-blockdev',json.dumps({'driver':'raw','node-name':'artifact_output','file':{'driver':'file','filename':str(work/'output.img')}}),'-device','virtio-blk-pci,drive=artifact_output'])
 if a.workspace_disk_mib:
  cmd.extend(['-blockdev',json.dumps({'driver':'raw','node-name':'build_workspace','file':{'driver':'file','filename':str(work/'workspace.img')}}),'-device','virtio-blk-pci,drive=build_workspace'])
-provenance={'output_disk_mib':a.output_disk_mib,'output_disk':str(work/'output.img') if a.output_disk_mib else None,'input_disk':str(input_disk) if input_disk else None,'input_disk_sha256':a.input_disk_sha256,'input_disk_readonly':input_disk is not None,'retain_disk_writes':a.retain_disk_writes,'extra_root':extra_root,'oes_admission':a.oes_admission,'guest_cpus':a.cpus,'guest_memory_mib':a.memory_mib,'root_mib':a.root_mib,'case_metadata':case_metadata,'runtime_helper_contract':helper_description,'requested_eventtimer':a.eventtimer,'tcg_thread':a.tcg_thread,'host_loadavg_start':os.getloadavg(),'host_logical_cpus':os.cpu_count(),'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'fixture_objtop':str(fixtures),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
+provenance={'resource_profile':a.resource_profile,'output_disk_mib':a.output_disk_mib,'output_disk':str(work/'output.img') if a.output_disk_mib else None,'input_disk':str(input_disk) if input_disk else None,'input_disk_sha256':a.input_disk_sha256,'input_disk_readonly':input_disk is not None,'retain_disk_writes':a.retain_disk_writes,'extra_root':extra_root,'oes_admission':a.oes_admission,'guest_cpus':a.cpus,'guest_memory_mib':a.memory_mib,'root_mib':a.root_mib,'zfs_fixture':a.zfs,'scratch_disk_mib':a.scratch_disk_mib,'case_metadata':case_metadata,'runtime_helper_contract':helper_description,'requested_eventtimer':a.eventtimer,'tcg_thread':a.tcg_thread,'host_loadavg_start':os.getloadavg(),'host_logical_cpus':os.cpu_count(),'kernel_sha256':hashes[str(kernel)],'fixture_sha256':hashes[str(helper)],'test_sha256':hashes[str(test)],'filesystem_test_sha256':hashes[str(fs_test)],'ownership_test_hashes':extra_hashes,'objtop':str(obj),'fixture_objtop':str(fixtures),'staged_root':str(root),'command':cmd,'selected_atf_suites':selected_suites,'scope':'isolated native daemon/library fixtures; not integrated bundle or installer acceptance'}
 if a.oes_admission:
  provenance['scope']='native fixtures followed by PID1 Capsule/SwitchBoard OES admission and live coalition reload/removal; OES-only provider, not installed ZFS/installer acceptance'
 provenance.update(workspace_disk_mib=a.workspace_disk_mib,workspace_disk=str(work/'workspace.img') if a.workspace_disk_mib else None,workspace_host_budget=workspace_budget,workspace_host_reserve_mib=a.workspace_host_reserve_mib)

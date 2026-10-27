@@ -1,7 +1,6 @@
-# SPDX-License-Identifier: BSD-2-Clause
-
-comment = "Library for embedded ELF image signatures and policy verification"
+comment = "Authenticated executable image library"
 
 desc = <<EOD
-Library for embedded ELF image signatures and policy verification.
+libcapimage reads and verifies authenticated executable image metadata used by
+the capability bundle and process-loading interfaces.
 EOD

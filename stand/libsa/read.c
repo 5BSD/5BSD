@@ -59,6 +59,7 @@
  */
 
 #include <sys/param.h>
+#include <limits.h>
 #include "stand.h"
 
 ssize_t
@@ -73,6 +74,15 @@ read(int fd, void *dest, size_t bcount)
 	if (f == NULL || !(f->f_flags & F_READ)) {
 		errno = EBADF;
 		return (-1);
+	}
+	/* The result must fit ssize_t; a zero-byte read must not fetch data. */
+	if (bcount > SSIZE_MAX) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (bcount == 0) {
+		TSEXIT();
+		return (0);
 	}
 	if (f->f_flags & F_RAW) {
 		twiddle(4);
@@ -95,7 +105,7 @@ read(int fd, void *dest, size_t bcount)
 	for (;;) {
 		size_t	ccount, cresid;
 		/* how much can we supply? */
-		ccount = imin(f->f_ralen, resid);
+		ccount = MIN(f->f_ralen, resid);
 		if (ccount > 0) {
 			bcopy(f->f_rabuf + f->f_raoffset, dest, ccount);
 			f->f_raoffset += ccount;

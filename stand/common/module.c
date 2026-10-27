@@ -32,10 +32,12 @@
 #include <string.h>
 #include <sys/param.h>
 #include <sys/linker.h>
+#include <sys/limits.h>
 #include <sys/module.h>
 #include <sys/queue.h>
 #include <sys/stdint.h>
 #include <sys/font.h>
+#include <geom/verity/g_verity_verify.h>
 #include <gfx_fb.h>
 
 #if defined(LOADER_FDT_SUPPORT)
@@ -44,6 +46,7 @@
 
 #include "bootstrap.h"
 #include "modinfo.h"
+#include "verified_root.h"
 
 #define	MDIR_REMOVED	0x0001
 #define	MDIR_NOHINTS	0x0002
@@ -641,6 +644,35 @@ file_load_dependencies(struct preloaded_file *base_file)
 	return (error);
 }
 
+/*
+ * Read the bounded descriptor once into private memory, then authenticate those
+ * exact bytes before copying them to kernel load memory. The kernel still has
+ * to validate the descriptor format and bind it to the selected root provider.
+ */
+static ssize_t
+file_readroot(int fd, const char *name, vm_offset_t dest)
+{
+#ifdef LOADER_VERIEXEC
+	unsigned char buf[G_VERITY_ROOT_BYTES];
+	ssize_t used;
+
+	used = verified_root_read(fd, name, buf);
+	if (used < 0)
+		return (-1);
+	if (archsw.arch_copyin(buf, dest, used) != used) {
+		errno = EIO;
+		return (-1);
+	}
+	return (used);
+#else
+	(void)fd;
+	(void)name;
+	(void)dest;
+	errno = EAUTH;
+	return (-1);
+#endif
+}
+
 #ifdef LOADER_VERIEXEC_VECTX
 #define VECTX_HANDLE(fd) vctx
 #else
@@ -690,29 +722,65 @@ file_loadraw(const char *fname, const char *type, int insert)
 		return(NULL);
 	}
 
+#ifdef LOADER_VERITY_SUPPORT
+	if (verity_check_source(fd) != 0) {
+		command_errmsg = "preload is outside the selected verified image";
+		free(name);
+		close(fd);
+		TSEXIT();
+		return (NULL);
+	}
+#endif
+
+	if (strcmp(type, G_VERITY_ROOT_TYPE) == 0) {
+		loadaddr = md_align(loadaddr);
+		got = file_readroot(fd, name, loadaddr);
+		if (got < 0) {
+			snprintf(command_errbuf, sizeof(command_errbuf),
+			    "can't load authenticated root descriptor '%s': %s",
+			    name, strerror(errno));
+			free(name);
+			close(fd);
+			TSEXIT();
+			return (NULL);
+		}
+		laddr = loadaddr + got;
+		goto loaded;
+	}
+
 #ifdef LOADER_VERIEXEC_VECTX
 	severity = severity_guess(name);
 	if (severity < VE_MUST) {
 		/* double check against type */
 		if (strcmp(type, "md_image") == 0
+		    || strcmp(type, "md_image_ro") == 0
+		    || strcmp(type, "bip_root_descriptor") == 0
 		    || strcmp(type, "mfs_root") == 0
 		    || strcmp(type, "acpi_dsdt") == 0
 		    || strcmp(type, "cpu_microcode") == 0)
 			severity = VE_MUST;
 	}
 	vctx = vectx_open(fd, name, severity, 0L, NULL, &verror, __func__);
-	if (verror) {
+	/* Raw loading consumes one forward stream through arch_readin. Reject
+	 * rewinds instead of retaining random-access replay metadata. */
+	if (vctx != NULL && verror == 0)
+		verror = vectx_set_sequential(vctx);
+	if (vctx == NULL || verror != 0) {
 		sprintf(command_errbuf, "can't verify '%s': %s",
 		    name, ve_error_get());
 		free(name);
-		free(vctx);
+		vectx_discard(vctx);
 		close(fd);
 		TSEXIT();
 		return(NULL);
 	}
 #else
 #ifdef LOADER_VERIEXEC
-	if (verify_file(fd, name, 0, VE_MUST, __func__) < 0) {
+	if (
+#ifdef LOADER_VERITY_SUPPORT
+	    !verity_source_verified(fd) &&
+#endif
+	    verify_file(fd, name, 0, VE_MUST, __func__) < 0) {
 		sprintf(command_errbuf, "can't verify '%s': %s",
 		    name, ve_error_get());
 		free(name);
@@ -740,7 +808,7 @@ file_loadraw(const char *fname, const char *type, int insert)
 			free(name);
 			close(fd);
 #ifdef LOADER_VERIEXEC_VECTX
-			free(vctx);
+			vectx_discard(vctx);
 #endif
 			TSEXIT();
 			return(NULL);
@@ -757,12 +825,12 @@ file_loadraw(const char *fname, const char *type, int insert)
 	if (verror) {
 		free(name);
 		close(fd);
-		free(vctx);
 		TSEXIT();
 		return(NULL);
 	}
 #endif
 
+loaded:
 	/* Looks OK so far; create & populate control structure */
 	fp = file_alloc();
 	if (fp == NULL) {
@@ -906,6 +974,22 @@ mod_loadkld(const char *kldname, int argc, char *argv[])
 	return (err);
 }
 
+/* Every kernel handoff, including the optional installer, uses this gate. */
+int
+file_exec(struct preloaded_file *fp)
+{
+#ifdef LOADER_VERITY_SUPPORT
+	int error;
+
+	error = verity_check_handoff();
+	if (error != 0) {
+		command_errmsg = "verified image descriptor missing or changed at handoff";
+		return (error);
+	}
+#endif
+	return (file_formats[fp->f_loader]->l_exec(fp));
+}
+
 /*
  * Find a file matching (name) and (type).
  * NULL may be passed as a wildcard to either.
@@ -1027,6 +1111,11 @@ file_addbuf(const char *name, const char *type, size_t len, void *buf)
 
 	/* Figure out where to load the data. */
 	dest = md_align(loadaddr);
+	if (dest < loadaddr || len > SSIZE_MAX ||
+	    len > (vm_offset_t)-1 - dest) {
+		command_errmsg = "preload buffer address overflow";
+		return (-1);
+	}
 
 	/* Create & populate control structure */
 	fp = file_alloc();
@@ -1047,11 +1136,19 @@ file_addbuf(const char *name, const char *type, size_t len, void *buf)
 		    "no memory to load %s", name);
 		free(fp->f_name);
 		free(fp->f_type);
+		free(fp);
 		return (-1);
 	}
 
 	/* Copy the data in. */
-	archsw.arch_copyin(buf, fp->f_addr, len);
+	if (archsw.arch_copyin(buf, fp->f_addr, len) != (ssize_t)len) {
+		snprintf(command_errbuf, sizeof(command_errbuf),
+		    "can't copy preload buffer %s", name);
+		free(fp->f_name);
+		free(fp->f_type);
+		free(fp);
+		return (-1);
+	}
 	loadaddr = fp->f_addr + len;
 
 	/* Add to the list of loaded files */

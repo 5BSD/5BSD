@@ -1,5 +1,5 @@
 WORLDPACKAGE=	libsysctlcmp-tests
-SUBPACKAGES=
+SUBPACKAGES=	dbg
 PKG_SETS=	tests
 PKG_LICENSES=	BSD2CLAUSE
 UCLSRC=	${SRCTOP}/release/packages/ucl/libsysctlcmp-tests-all.ucl

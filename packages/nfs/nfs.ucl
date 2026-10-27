@@ -1,34 +1,73 @@
-/*
- * SPDX-License-Identifier: ISC
- *
- * Copyright (c) 2025 Lexi Winter <ivy@FreeBSD.org>
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
+# SPDX-License-Identifier: ISC
+.include(try=false) "${SRCDIR}/common.ucl"
 
-comment = "NFS client and server utilities"
-
-desc = <<EOD
-The Network File System (NFS) is a widely-used network filesystem protocol,
-which allows a filesystem to be exported from one system and mounted on one
-or more client systems over a network connection.  NFS is supported on nearly
-all Unix systems, and many non-Unix systems.
-
-NFS offers optional authentication, integrity and confidentiality via either
-Kerberos (using GSS-API) or TLS.
-
-This package provides nfsd(8) and mountd(8), the userland component of the
-NFS server, and the mount_nfs(8) utility used to mount an NFS filesystem on
-the client.  Several other daemons and utilities are also provided which may
-be necessary depending on the NFS configuration.
+# Source-defined defaults in mountd/pathnames.h, nfsd/nfsd.c,
+# rpc.lockd/lockd.c and rpc.statd/statd.c. No runtime authority is assigned.
+# Exported data, /etc/exports, debug controls, TLS credentials and deployment
+# overrides require separate policy review. Stable state affects protocol
+# recovery and must not be assumed safe merely because it resides under /var.
+annotations {
+    "5bsd.state-requirements" = <<EOD
+{
+  "format": 1,
+  "requirements": [
+    {
+      "name": "mountd-pid",
+      "program": "/usr/sbin/mountd",
+      "path": "/var/run/mountd.pid",
+      "type": "file",
+      "lifetime": "boot",
+      "purpose": "Create and lock the daemon PID file; remove it on shutdown"
+    },
+    {
+      "name": "mountd-clients",
+      "program": "/usr/sbin/mountd",
+      "path": "/var/db/mountdtab",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "Read, append and rewrite the recorded client mount list"
+    },
+    {
+      "name": "nfsd-pid",
+      "program": "/usr/sbin/nfsd",
+      "path": "/var/run/nfsd.pid",
+      "type": "file",
+      "lifetime": "boot",
+      "purpose": "Create and lock the default PID file; the -P override requires deployment reconciliation"
+    },
+    {
+      "name": "nfsd-stable",
+      "program": "/usr/sbin/nfsd",
+      "path": "/var/db/nfs-stablerestart",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "Read and update NFSv4 stable restart state used for client recovery"
+    },
+    {
+      "name": "nfsd-stable-backup",
+      "program": "/usr/sbin/nfsd",
+      "path": "/var/db/nfs-stablerestart.bak",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "Maintain the backup of NFSv4 stable restart state"
+    },
+    {
+      "name": "lockd-local-socket",
+      "program": "/usr/sbin/rpc.lockd",
+      "path": "/var/run/rpclockd.sock",
+      "type": "socket",
+      "lifetime": "boot",
+      "purpose": "Recreate the local RPC socket when kernel lockd delegates client replies"
+    },
+    {
+      "name": "statd-status",
+      "program": "/usr/sbin/rpc.statd",
+      "path": "/var/db/statd.status",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "Maintain the memory-mapped status monitor database for restart notification"
+    }
+  ]
+}
 EOD
+}

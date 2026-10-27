@@ -1,5 +1,8 @@
 WORLDPACKAGE=	rc
 
+UCLSRC=		common.ucl
+UCLSRC.rc=	rc.ucl
+
 PKG_SETS=	minimal minimal-jail
 
 # rc scripts require /bin/sh.

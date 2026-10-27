@@ -146,3 +146,21 @@ runtime linker build needs the new world's `libc_nossp_pic.a`; the completed
 The host's boot pool, EFI GPT label and filesystems were inspected before the
 change. No running provider uses a retired GEOM class, but other installations
 may. Migration of such providers is an upgrade prerequisite.
+
+## Intel graphics support floor (2026-10-19)
+
+The supported i915 graphics floor is generation 6 (Sandy Bridge). The owner
+explicitly retired generations 2 through 5, including Ironlake, when resolving
+the AGP removal's impact on the ports graphics driver. This decision concerns
+GPU generations, not Intel CPU marketing generation numbers.
+
+The custom drm-612-kmod port removes the older PCI matches and device records,
+the FreeBSD AGP/GTT wrappers, the legacy GMCH GTT object and the AGP module
+dependency. Probe and GTT setup reject graphics versions below 6 with ENODEV;
+force-probe cannot re-enable the retired backend. The modern PCI resource and
+ACPI glue and generation-6-and-newer GTT implementations remain. Package notes
+state the support floor. This does not retire otherwise supported AMD graphics.
+
+Successful compilation and module metadata checks do not establish physical
+GPU operation. Supported Intel hardware still requires load, display/render,
+and suspend/resume qualification against the matching packaged kernel.

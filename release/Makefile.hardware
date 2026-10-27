@@ -14,6 +14,11 @@ BASE_REPOSITORY?= ${REPODIR}/${HARDWARE_ABI}/latest-built
 HARDWARE_REPO?= ${BASE_REPOSITORY:tA}.hardware
 # Final publication can live independently of disposable base/hardware staging.
 PUBLISH_REPODIR?= ${REPODIR}
+# A candidate is complete but does not change the current update channel.
+PUBLISH_ADVANCE_LATEST?= yes
+.if ${PUBLISH_ADVANCE_LATEST:tl} != "yes" && ${PUBLISH_ADVANCE_LATEST:tl} != "no"
+.error PUBLISH_ADVANCE_LATEST must be yes or no
+.endif
 COMPLETE_REPOSITORY?= ${PUBLISH_REPODIR}/${HARDWARE_ABI}/${BASE_REPOSITORY:tA:T}.complete
 KERNBUILDDIR?= ${OBJTOP}/sys/${KERNCONF}
 HARDWARE_PORT_LIST?= ${.CURDIR}/release/tools/hardware-ports.${MACHINE_ARCH}
@@ -40,7 +45,8 @@ hardware-packages hardware-packages-check: .PHONY
 	    --distfiles ${DISTDIR:Q} --pkg ${PKG_CMD:Q} \
 	    ${.TARGET:Mhardware-packages-check:S/hardware-packages-check/--check/}
 
-# Optional PKGBASE_PKG_PACKAGE and PKGBASE_PKG_SHA256 must be supplied together.
+# Optional offline bootstrap input: PKGBASE_PKG_PACKAGE and PKGBASE_PKG_SHA256
+# must be supplied together. The combined catalogue covers the copied archive.
 # APPLICATION_PACKAGE_SELECTION optionally adds a format-1 hash-bound archive
 # selection without rewriting package identities. Format 2 is not supported.
 publish-packages: .PHONY
@@ -52,7 +58,8 @@ publish-packages: .PHONY
 	    ${HARDWARE_SIGNING_KEY:D--signing-key ${HARDWARE_SIGNING_KEY:Q}} \
 	    ${PKGBASE_PKG_PACKAGE:D--pkg-package ${PKGBASE_PKG_PACKAGE:Q}} \
 	    ${PKGBASE_PKG_SHA256:D--pkg-package-sha256 ${PKGBASE_PKG_SHA256:Q}} \
-	    ${APPLICATION_PACKAGE_SELECTION:D--application-selection ${APPLICATION_PACKAGE_SELECTION:Q}}
+	    ${APPLICATION_PACKAGE_SELECTION:D--application-selection ${APPLICATION_PACKAGE_SELECTION:Q}} \
+	    ${PUBLISH_ADVANCE_LATEST:tl:Mno:S/no/--no-latest/}
 
 .ORDER: hardware-packages publish-packages
 

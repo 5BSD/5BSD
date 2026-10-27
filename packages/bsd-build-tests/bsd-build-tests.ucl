@@ -1,7 +1,5 @@
-# SPDX-License-Identifier: BSD-2-Clause
-
-comment = "Regression tests for bsd-build"
+comment = "Tests for the 5BSD system build and generation construction tool"
 
 desc = <<EOD
-Regression tests for bsd-build.
+Tests for the 5BSD system build and generation construction tool.
 EOD

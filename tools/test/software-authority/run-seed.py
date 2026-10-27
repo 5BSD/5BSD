@@ -22,9 +22,10 @@ shutdown=ShutdownEvidence(qmpdir)
 cmd += shutdown.arguments
 if args.qemu_data:cmd += ['-L',str(args.qemu_data.resolve())]
 (w/'seed-command.json').write_text(json.dumps(cmd,indent=2)+'\n')
+started=time.monotonic();deadline=started+args.timeout;ok=False;forced=False
 p=subprocess.Popen(cmd)
-shutdown.start(p);started=time.monotonic();deadline=started+args.timeout;ok=False;forced=False
 try:
+ shutdown.start(p)
  while p.poll() is None and time.monotonic()<deadline:
   s=log.read_text(errors='replace') if log.exists() else ''
   if any(x in s for x in ['panic:','Fatal trap','lock order reversal','SEED_FAILED']):break

@@ -148,6 +148,80 @@ The following command is only available in
 Set a newbus hint to disable the
 .Ar device .
 .El
+.Ss Verified filesystem image operations
+EFI loaders built with loader verification include the following integration
+commands.
+They do not by themselves establish authenticated kernel root admission.
+.Bl -tag -width indent
+.It Ic verity-require
+Commit to requiring a selected verified image for this loader session.
+Call this from authenticated boot policy before loading a kernel or raw preloads.
+It rejects a first invocation after any file has been preloaded; repeated
+invocations after commitment are harmless.
+Until image selection succeeds, executable-source admission and kernel handoff
+fail. A failed selection does not clear the requirement and may be retried.
+The requirement cannot be cleared through the environment or
+.Ic verity-clear ;
+returning to an optional-image session requires restarting the loader.
+This command is a policy primitive, not automatic startup integration or proof
+of authenticated kernel root admission.
+.It Ic verity-select Ar image descriptor descriptor-sha256 cache-blocks heap-bytes
+Requires a loader built with WITHOUT_LOADER_EFI_TRUST_DB=yes and explicit public
+TRUST_ANCHORS for generation manifests. General firmware executable trust alone
+is insufficient for root descriptor loading.
+The descriptor-sha256 argument is exactly 64 lowercase hexadecimal digits from
+the authenticated generation startup policy. Signature-valid descriptor bytes
+must match this digest before a device is attached. A digest alone never replaces
+manifest authentication. It binds descriptor contents, including geometry, salt
+and root, to the selected generation; it is not rollback prevention.
+Authenticate the root descriptor through that loader manifest policy and select
+its file-backed verified filesystem image as
+.Va currdev .
+Both memory parameters are explicit nonnegative decimal integers.
+The heap budget covers requested device buffers and bookkeeping, not all loader
+memory or allocator overhead.
+Selection requires no loaded kernel or modules and no existing selection.
+The previous current device is retained for release.
+While selected, the ELF kernel/module, EFI amd64 Multiboot header and raw-preload
+readers require their opened file to belong to the selected verified device.
+Explicit paths to another device are rejected, regardless of currdev.
+This check adds no whole-file rescan or per-read authorization operation.
+For gzip, bzip2, xz and zstd transforms, admission checks the retained backing
+file, not the outer device description. The backing file must be a direct UFS
+file on the selected device; unsupported source types and transform chains
+are rejected in this mode.
+EFI Lua readable inputs also require selected-device provenance after selection.
+Files on that device use its authenticated block reads instead of an additional
+per-file manifest stream verifier. Before selection, existing manifest verification
+still applies; ordinary admission success is not proof of a verified source.
+This does not change signature or entitlement policy for installed applications.
+With WITHOUT_LOADER_VERIEXEC_VECTX=yes, ELF kernels, ELF objects and raw preloads
+also use selected-image provenance instead of a redundant per-file manifest scan.
+Before selection their existing manifest checks apply. Streaming-verification
+builds retain their existing manifest/context behavior; this does not qualify
+that configuration for the new disk-image boot path.
+.It Ic verity-preload
+After loading the kernel, preload the exact descriptor bytes retained during
+selection, without reopening the descriptor file.
+The selected device must still be current, and an existing root descriptor
+preload is rejected.
+This command does not assert that all loaded code originated from that device.
+Before normal boot or the optional installer calls the kernel exec handler, a selected image
+requires exactly one root descriptor of the expected size whose loaded bytes
+match the retained descriptor. Missing, duplicate or changed descriptors stop
+that boot attempt. This consistency check does not establish release-key scope.
+.It Ic verity-clear
+After unloading the kernel and modules, restore the previous current device
+and release the verified image.
+Other open files may keep the image busy; close them before retrying.
+If
+.Ic verity-require
+has committed this session, release is denied even after unloading all files.
+.El
+.Pp
+These operations are not a complete boot protocol.
+Kernel root-provider binding and mandatory admission must also be configured
+and qualified before using them for a hardened installation.
 .Ss BUILTIN ENVIRONMENT VARIABLES
 The environment variables common to all interpreters are described in the
 .Xr loader_simp 8

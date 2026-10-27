@@ -11,6 +11,7 @@ import socket
 import subprocess
 import time
 from qmp_shutdown import ShutdownEvidence
+from installed_disk_evidence import disk_digest, require_disk
 
 
 def digest(path):
@@ -40,6 +41,7 @@ def main():
     assert result['qemu_exit'] == 0 and result['shutdown_evidence']['guest_poweroff']
     disk = installation / 'installed.img'
     assert Path(result['disk']).resolve(strict=True) == disk
+    disk_before = require_disk(disk, result.get('disk_sha256'))
     expected = digest(args.expected_kernel.resolve(strict=True))
     work = args.work.resolve() if args.work else installation / 'installed-boot'
     work.mkdir(exist_ok=False)
@@ -85,8 +87,8 @@ INSTALLED_CHECK
     started = time.monotonic()
     with (work / 'qemu.log').open('w') as log:
         process = subprocess.Popen(command, stdout=log, stderr=log)
-        shutdown.start(process)
         try:
+            shutdown.start(process)
             while process.poll() is None and time.monotonic() - started < args.timeout:
                 text = serial.read_text(errors='replace') if serial.exists() else ''
                 if any(marker in text for marker in fatal):
@@ -113,7 +115,8 @@ INSTALLED_CHECK
     text = serial.read_text(errors='replace') if serial.exists() else ''
     required = ['SOFTWARE_INSTALLED_ROOT_BOOTED', 'SOFTWARE_INSTALLED_IDENTITY_PASS']
     missing = [marker for marker in required if marker not in text.splitlines()]
-    passed = (sent and not missing and not forced and process.returncode == 0
+    disk_after = disk_digest(disk)
+    passed = (disk_after == disk_before and sent and not missing and not forced and process.returncode == 0
               and shutdown_evidence['guest_poweroff'] and 'All buffers synced.' in text and 'Powering system off' in text and not any(x in text for x in fatal))
     output = {
         'result': 'PASS' if passed else 'FAIL',
@@ -121,6 +124,7 @@ INSTALLED_CHECK
         'scope': 'BSDInstall target booted without media; kernel/package identity, ZFS root, control discovery and DTrace module; full integration suite still required',
         'installation_evidence_sha256': digest(evidence),
         'expected_kernel_sha256': expected, 'missing_markers': missing,
+        'disk_sha256': disk_before, 'disk_after_sha256': disk_after,
         'forced_termination': forced, 'qemu_exit': process.returncode,
         'serial_sha256': digest(serial) if serial.exists() else None,
         'elapsed_seconds': round(time.monotonic() - started, 1),

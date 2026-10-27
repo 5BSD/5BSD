@@ -1,0 +1,48 @@
+{
+  "policies": [
+    "vm-module-unsafe-versioned",
+    "vm-module-unsafe-unversioned",
+    "vm-module-malformed",
+    "vm-module-optional-malformed",
+    "vm-module-missing-fallback",
+    "vm-module-explicit-version",
+    "vm-module-mutable"
+  ],
+  "modules": [
+    {
+      "path": "usr/local/lib/pam_vm_unsafe.so.6",
+      "source": "usr/lib/pam_deny.so.6",
+      "mode": 292
+    },
+    {
+      "path": "usr/local/lib/pam_vm_unversioned.so.6",
+      "source": "usr/lib/pam_deny.so.6",
+      "mode": 292
+    },
+    {
+      "path": "usr/local/lib/pam_vm_malformed.so.6",
+      "source": "usr/lib/pam_deny.so.6",
+      "mode": 292
+    },
+    {
+      "path": "usr/local/lib/pam_vm_fallback.so.6",
+      "source": "usr/lib/pam_deny.so.6",
+      "mode": 292
+    },
+    {
+      "path": "usr/lib/pam_vm_unsafe.so.6",
+      "source": "usr/lib/pam_deny.so.6",
+      "mode": 438
+    },
+    {
+      "path": "usr/lib/pam_vm_unversioned.so",
+      "source": "usr/lib/pam_deny.so.6",
+      "mode": 438
+    },
+    {
+      "path": "usr/lib/pam_vm_malformed.so.6",
+      "contents": "not an ELF\n",
+      "mode": 292
+    }
+  ]
+}

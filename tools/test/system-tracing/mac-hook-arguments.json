@@ -1577,6 +1577,26 @@
       }
     ]
   },
+  "mount_check_mount_anon": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mp",
+        "type": "struct mount *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "mplabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
   "mount_check_snapshot_create": {
     "result": "int",
     "arguments": [
@@ -1668,6 +1688,11 @@
       {
         "name": "fsflags",
         "type": "uint64_t",
+        "encoding": "scalar"
+      },
+      {
+        "name": "only_export",
+        "type": "bool",
         "encoding": "scalar"
       }
     ]
@@ -5077,6 +5102,26 @@
       },
       {
         "name": "execlabel",
+        "type": "struct label *",
+        "encoding": "pointer"
+      }
+    ]
+  },
+  "vnode_check_fh": {
+    "result": "int",
+    "arguments": [
+      {
+        "name": "cred",
+        "type": "struct ucred *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vp",
+        "type": "struct vnode *",
+        "encoding": "pointer"
+      },
+      {
+        "name": "vplabel",
         "type": "struct label *",
         "encoding": "pointer"
       }

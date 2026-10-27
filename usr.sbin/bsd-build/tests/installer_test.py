@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 import importlib.util
+import json
 import os
 from pathlib import Path
 import shutil
@@ -41,7 +42,7 @@ class Installer(unittest.TestCase):
         self.fail_install = False
         self.host_abi = 'FreeBSD:16:amd64'
         self.names = {'pkg': None, '5BSD-set-base': None, '5BSD-kernel-generic': None}
-        self.hardware = SimpleNamespace(verify=lambda p: {'abi': 'FreeBSD:16:amd64', 'osversion': 1600018},
+        self.hardware = SimpleNamespace(copy_public_key=shutil.copyfile, verify=lambda p: {'abi': 'FreeBSD:16:amd64', 'osversion': 1600018},
             copy_signed_repository=self.copy_repository, inventory=lambda p: self.names)
 
     def copy_repository(self, source, target, public, pkg, abi, version):
@@ -75,6 +76,15 @@ class Installer(unittest.TestCase):
              patch.object(installer, 'load_hardware', return_value=self.hardware), \
              patch.object(installer.subprocess, 'run', side_effect=self.command):
             installer.main()
+
+    def test_literal_repository_path(self):
+        target = self.base / 'runs: space %23 #'
+        self.runs.rename(target)
+        self.runs = target
+        self.invoke()
+        work, = self.runs.iterdir()
+        config = json.loads((work / 'repos/5BSD-base.conf').read_text())
+        self.assertEqual(config['5BSD-base']['url'], 'file://' + str(work / 'repository'))
 
     def test_plan_is_read_only(self):
         before = sorted(self.base.rglob('*'))

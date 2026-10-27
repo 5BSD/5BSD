@@ -63,8 +63,11 @@ signature: our personal signature still uses a key pair.
 
 If every signing locator is deliberately removed, an in-file scheme cannot
 distinguish that result from intentionally unsigned software. Trusted identities
-that require a signature must enforce that requirement externally. This revision
-does not implement the deferred immutable base or SIP-like process protections.
+that require a signature must enforce that requirement externally. Code signing
+supports BSD Integrity Protection (BIP), whose mandatory restrictions apply
+even to root. Signing alone does not establish those protections. See the
+[BIP design and qualification boundary](book/src/capability/system-security.md)
+for the implemented bootstrap protections and remaining production gates.
 
 ## Tooling
 
@@ -77,6 +80,18 @@ The ELF signature format is unreleased version 1. There is one
 supported layout; no development-format readers or migration paths
 are retained. Build readers, writers and signed artifacts as one coordinated
 system generation. Unsupported format versions are rejected.
+
+## Text pinning backends
+
+Kernel verification of signed images and executable authority constraints use
+one VFS eligibility check. UFS and ZFS are admitted; tmpfs and other unaudited
+backends return `EOPNOTSUPP`. Tmpfs existing shared writable mappings are not
+excluded by its ordinary vnode text count. This restriction applies to exec,
+explicit descriptor verification, `O_VERIFY`, signed mappings and verified-image
+handles. Unsigned ordinary execution and userspace signature inspection remain
+available. A text pin does not prevent raw-device modification; the full
+[system security design](book/src/capability/system-security.md) requires
+mandatory storage protection and authenticated boot.
 
 ## Acceptance gates
 

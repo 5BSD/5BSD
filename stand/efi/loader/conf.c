@@ -31,6 +31,9 @@
 #include <efizfs.h>
 
 extern struct devsw vdisk_dev;
+#ifdef LOADER_VERITY_SUPPORT
+extern struct devsw verity_dev;
+#endif
 
 struct devsw *devsw[] = {
 	&efipart_fddev,
@@ -41,6 +44,9 @@ struct devsw *devsw[] = {
 	&efinet_dev,
 #endif
 	&vdisk_dev,
+#ifdef LOADER_VERITY_SUPPORT
+	&verity_dev,
+#endif
 #ifdef EFI_ZFS_BOOT
 	&zfs_dev,
 #endif

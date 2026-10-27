@@ -27,6 +27,9 @@
 
 #include "lstd.h"
 #include "math.h"
+#ifdef LOADER_VERITY_SUPPORT
+#include "bootstrap.h"
+#endif
 
 #ifdef LOADER_VERIEXEC
 #include <verify_file.h>
@@ -37,6 +40,7 @@ fopen(const char *filename, const char *mode)
 {
 	struct stat	st;
 	int		fd, m, o;
+	int		verified_source __unused = 0;
 	FILE		*f;
 
 	if (mode == NULL)
@@ -65,7 +69,7 @@ fopen(const char *filename, const char *mode)
 	if (fd < 0)
 		return NULL;
 
-	f = malloc(sizeof(FILE));
+	f = calloc(1, sizeof(FILE));
 	if (f == NULL) {
 		close(fd);
 		return NULL;
@@ -77,10 +81,53 @@ fopen(const char *filename, const char *mode)
 		return (NULL);
 	}
 
+#ifdef LOADER_VERITY_SUPPORT
+	if (!(m & O_WRONLY)) {
+		int error = verity_check_source(fd);
+
+		if (error != 0) {
+			free(f);
+			close(fd);
+			errno = error;
+			return (NULL);
+		}
+		verified_source = verity_source_verified(fd);
+	}
+#endif
 #ifdef LOADER_VERIEXEC
+	/* Mandatory input verification must not be bypassed by object type. */
+	if (verify_required() && !(m & O_WRONLY) && !S_ISREG(st.st_mode)) {
+		free(f);
+		close(fd);
+		errno = EAUTH;
+		return (NULL);
+	}
 	/* only regular files and only reading makes sense */
-	if (S_ISREG(st.st_mode) && !(m & O_WRONLY)) {
-		if (verify_file(fd, filename, 0, VE_GUESS, __func__) < 0) {
+	if (S_ISREG(st.st_mode) && !(m & O_WRONLY) && !verified_source) {
+		if (verify_required()) {
+			int error;
+
+			/* vectx retains the path until close; Lua may release its string. */
+			f->verification_path = strdup(filename);
+			if (f->verification_path == NULL) {
+				free(f);
+				close(fd);
+				return (NULL);
+			}
+			f->verification = vectx_open(fd, f->verification_path,
+			    VE_MUST, 0, &st, &error, __func__);
+			/* This stdio wrapper has no seek API. Make the restriction
+			 * explicit so sequential Lua input needs no replay table. */
+			if (f->verification != NULL && error == 0)
+				error = vectx_set_sequential(f->verification);
+			if (f->verification == NULL || error != 0) {
+				vectx_discard(f->verification);
+				free(f->verification_path);
+				free(f);
+				close(fd);
+				return (NULL);
+			}
+		} else if (verify_file(fd, filename, 0, VE_GUESS, __func__) < 0) {
 			free(f);
 			close(fd);
 			return (NULL);
@@ -91,6 +138,7 @@ fopen(const char *filename, const char *mode)
 	f->fd = fd;
 	f->offset = 0;
 	f->size = st.st_size;
+	f->error = 0;
 
 	return (f);
 }
@@ -106,16 +154,34 @@ freopen(const char *filename, const char *mode, FILE *stream)
 size_t
 fread(void *ptr, size_t size, size_t count, FILE *stream)
 {
-	size_t r;
+	size_t bytes;
+	ssize_t r;
 
-	if (stream == NULL)
-		return 0;
-	r = (size_t)read(stream->fd, ptr, size * count);
-	stream->offset += r;
-
-	return (r);
+	if (stream == NULL || stream->error != 0 || size == 0 || count == 0)
+		return (0);
+	if (ptr == NULL) {
+		errno = stream->error = EINVAL;
+		return (0);
+	}
+	if (count > SIZE_MAX / size || (bytes = size * count) > SSIZE_MAX ||
+	    bytes > SIZE_MAX - stream->offset) {
+		errno = stream->error = EOVERFLOW;
+		return (0);
+	}
+#ifdef LOADER_VERIEXEC
+	if (stream->verification != NULL)
+		r = vectx_read(stream->verification, ptr, bytes);
+	else
+#endif
+		r = read(stream->fd, ptr, bytes);
+	if (r < 0) {
+		stream->error = errno != 0 ? errno : EIO;
+		return (0);
+	}
+	stream->offset += (size_t)r;
+	/* This loader wrapper historically returns bytes, not element count. */
+	return ((size_t)r);
 }
-
 size_t
 fwrite(const void *ptr, size_t size, size_t count, FILE *stream)
 {
@@ -136,7 +202,15 @@ fclose(FILE *stream)
 {
 	if (stream == NULL)
 		return EOF;
+#ifdef LOADER_VERIEXEC
+	/* luaL_loadfile closes before exposing the compiled script for execution. */
+	if (stream->verification != NULL &&
+	    vectx_close(stream->verification, __func__) != 0)
+		panic("Secure Boot: Lua input verification failed: %s",
+		    stream->verification_path);
+#endif
 	close(stream->fd);
+	free(stream->verification_path);
 	free(stream);
 
 	return (0);
@@ -146,7 +220,7 @@ int
 ferror(FILE *stream)
 {
 
-	return (stream == NULL || stream->fd < 0);
+	return (stream == NULL || stream->fd < 0 || stream->error != 0);
 }
 
 int
@@ -162,17 +236,12 @@ feof(FILE *stream)
 int
 getc(FILE *stream)
 {
-	char	ch;
-	size_t	r;
+	unsigned char ch;
 
-	if (stream == NULL)
-		return EOF;
-	r = read(stream->fd, &ch, 1);
-	if (r == 1)
-		return ch;
-	return EOF;
+	if (fread(&ch, 1, 1, stream) != 1)
+		return (EOF);
+	return (ch);
 }
-
 DIR *
 opendir(const char *name)
 {

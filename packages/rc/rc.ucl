@@ -1,28 +1,4 @@
-/*
- * SPDX-License-Identifier: ISC
- *
- * Copyright (c) 2025 Lexi Winter <ivy@FreeBSD.org>
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
-
-comment = "rc(8) subsystem"
-
-desc = <<EOD
-The rc(8) subsystem provides a method to start services at system startup and
-stop them at shutdown.  This package provides the rc(8) subsystem itself and
-the service scripts for the base system.
-EOD
+.include(try=false) "${SRCDIR}/common.ucl"
 
 scripts: {
     pre-install = <<EOD
@@ -45,5 +21,106 @@ EOD
     # Capsule is PID 1 now. Legacy installations can retain this obsolete
     # script, which would start a competing daemon instance.
     /bin/rm -f "$rootdir/etc/rc.d/oracled"
+EOD
+}
+
+/* Reviewed default paths from cleanvar, dmesg, msgs, motd and os-release. Declarations grant
+ * no authority. Other rc services, configured path overrides and optional
+ * third-party UUCP cleanup remain outside this initial coverage. */
+annotations: {
+    "5bsd.state-requirements" = <<EOD
+{
+  "format": 1,
+  "requirements": [
+    {
+      "name": "runtime-cleanup",
+      "program": "/etc/rc.d/cleanvar",
+      "path": "/var/run",
+      "type": "directory",
+      "lifetime": "boot",
+      "purpose": "Remove regular files and non-logging sockets during enabled boot cleanup"
+    },
+    {
+      "name": "runtime-cleanup-marker",
+      "program": "/etc/rc.d/cleanvar",
+      "path": "/var/run/clean_var",
+      "type": "file",
+      "lifetime": "boot",
+      "purpose": "Remove and recreate the marker controlling runtime-directory cleanup"
+    },
+    {
+      "name": "lock-cleanup",
+      "program": "/etc/rc.d/cleanvar",
+      "path": "/var/spool/lock",
+      "type": "directory",
+      "lifetime": "boot",
+      "purpose": "Remove regular lock files during enabled boot cleanup"
+    },
+    {
+      "name": "lock-cleanup-marker",
+      "program": "/etc/rc.d/cleanvar",
+      "path": "/var/spool/lock/clean_var",
+      "type": "file",
+      "lifetime": "boot",
+      "purpose": "Remove and recreate the marker controlling lock-directory cleanup"
+    },
+    {
+      "name": "boot-messages",
+      "program": "/etc/rc.d/dmesg",
+      "path": "/var/run/dmesg.boot",
+      "type": "file",
+      "lifetime": "boot",
+      "purpose": "Replace the boot-message snapshot; dmesg_file overrides require separate review"
+    },
+    {
+      "name": "motd-output",
+      "program": "/etc/rc.d/motd",
+      "path": "/var/run/motd",
+      "type": "file",
+      "lifetime": "boot",
+      "purpose": "Generate the kernel version and selected template contents for ordinary login display"
+    },
+    {
+      "name": "motd-compatibility",
+      "program": "/etc/rc.d/motd",
+      "path": "/etc/motd",
+      "type": "file",
+      "lifetime": "boot",
+      "purpose": "Legacy compatibility path to the generated message; immutable generations must construct the alias and /etc/motd.template offline rather than relying on first-boot migration"
+    },
+    {
+      "name": "motd-temporary-workspace",
+      "program": "/etc/rc.d/motd",
+      "path": "/tmp",
+      "type": "directory",
+      "lifetime": "boot",
+      "purpose": "Create and remove temporary generated message text; TMPDIR overrides require deployment reconciliation and this declaration grants no authority over other files"
+    },
+    {
+      "name": "os-release-metadata",
+      "program": "/etc/rc.d/os-release",
+      "path": "/var/run/os-release",
+      "type": "file",
+      "lifetime": "boot",
+      "purpose": "Create or replace the default operating-system metadata file during enabled startup; osrelease_file overrides require deployment reconciliation"
+    },
+    {
+      "name": "os-release-temporary-workspace",
+      "program": "/etc/rc.d/os-release",
+      "path": "/tmp",
+      "type": "directory",
+      "lifetime": "boot",
+      "purpose": "Create and remove the mktemp staging file before installing os-release metadata; TMPDIR overrides require deployment reconciliation, and this declaration grants no authority over other temporary files"
+    },
+    {
+      "name": "message-bounds",
+      "program": "/etc/rc.d/msgs",
+      "path": "/var/msgs/bounds",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "Initialize missing message bounds when the message directory exists"
+    }
+  ]
+}
 EOD
 }

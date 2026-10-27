@@ -311,6 +311,11 @@ probe_zfs_currdev(uint64_t guid)
 	devname = devformat(&currdev.dd);
 	set_currdev(devname);
 	printf("Setting currdev to %s\n", devname);
+#ifdef EFI_SECUREBOOT
+	/* Dataset selection is a locator, never an environment authority. */
+	if (verify_required())
+		return (sanity_check_currdev());
+#endif
 	init_zfs_boot_options(devname);
 
 	if (zfs_get_bootonce(&currdev, OS_BOOTONCE, buf, sizeof(buf)) == 0) {
@@ -1164,16 +1169,27 @@ parse_loader_efi_config(EFI_HANDLE h, const char *env_fn)
 	if (dp == NULL)
 		return;
 	set_currdev_pdinfo(dp);
-	if (stat(env_fn, &st) != 0)
-		return;
 	fd = open(env_fn, O_RDONLY);
 	if (fd == -1)
 		return;
+	if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+	    (uintmax_t)st.st_size > SSIZE_MAX ||
+	    (uintmax_t)st.st_size >= SIZE_MAX)
+		goto out;
+#ifdef EFI_SECUREBOOT
+	if (verify_required())
+		(void)verify_file(fd, env_fn, 0, VE_MUST, __func__);
+#endif
 	env = malloc(st.st_size + 1);
 	if (env == NULL)
 		goto out;
 	if (read(fd, env, st.st_size) != st.st_size)
 		goto out;
+#ifdef EFI_SECUREBOOT
+	/* Parse only the private bytes authenticated here, never a later reread. */
+	if (verify_required() && verify_buf(fd, env_fn, env, st.st_size) != VE_VERIFIED)
+		panic("Secure Boot: EFI configuration changed: %s", env_fn);
+#endif
 	env[st.st_size] = '\0';
 	boot_parse_cmdline(env);
 out:
@@ -1343,6 +1359,13 @@ main(int argc, CHAR16 *argv[])
 #endif
 	cons_probe();
 
+#ifdef EFI_SECUREBOOT
+	/* Boot#### options and ESP environment files are writable by root. */
+	ve_efi_init();
+	if (verify_required())
+		argc = 1;
+#endif
+
 	/* Set print_delay variable to have hooks in place. */
 	env_setenv("print_delay", EV_VOLATILE, "", setprint_delay, env_nounset);
 
@@ -1378,7 +1401,10 @@ main(int argc, CHAR16 *argv[])
 	/*
 	 * Scan all the VirtualDisks, passing them along to the FreeBSD kernel.
 	 */
-	efiblk_memdisk_preload();
+#ifdef EFI_SECUREBOOT
+	if (!verify_required())
+#endif
+		efiblk_memdisk_preload();
 
 	/*
 	 * Parse command line arguments before any operation that may configure
@@ -1398,7 +1424,11 @@ main(int argc, CHAR16 *argv[])
 	 * If we didn't find a ipxe image, and we're netbooting, try to
 	 * download an initmd that the dhcp server tells us about.
 	 */
-	if (!has_ipxe && is_efi_netboot())
+	if (!has_ipxe && is_efi_netboot()
+#ifdef EFI_SECUREBOOT
+	    && !verify_required()
+#endif
+	    )
 		maybe_download_initmd();
 
 	/*
@@ -1425,8 +1455,15 @@ main(int argc, CHAR16 *argv[])
 	 * We also read in NextLoaderEnv if it was specified. This allows next boot
 	 * functionality to be implemented and to override anything in LoaderEnv.
 	 */
-	read_loader_env("LoaderEnv", "/efi/5bsd/loader.env", false);
-	read_loader_env("NextLoaderEnv", NULL, true);
+#ifdef EFI_SECUREBOOT
+	/* The required signed startup policy owns all configuration inputs. */
+	if (!verify_required()) {
+#endif
+		read_loader_env("LoaderEnv", "/efi/5bsd/loader.env", false);
+		read_loader_env("NextLoaderEnv", NULL, true);
+#ifdef EFI_SECUREBOOT
+	}
+#endif
 
 	set_boot_policy();
 
@@ -1576,16 +1613,6 @@ main(int argc, CHAR16 *argv[])
 	 */
 	BS->SetWatchdogTimer(0, 0, 0, NULL);
 
-	/*
-	 * Initialize the trusted/forbidden certificates from UEFI.
-	 * They will be later used to verify the manifest(s),
-	 * which should contain hashes of verified files.
-	 * This needs to be initialized before any configuration files
-	 * are loaded.
-	 */
-#ifdef EFI_SECUREBOOT
-	ve_efi_init();
-#endif
 
 	/*
 	 * Try and find a good currdev based on the image that was booted.
@@ -1594,10 +1621,15 @@ main(int argc, CHAR16 *argv[])
 	 * the boot protocol and also allow an escape hatch for users wishing
 	 * to try something different.
 	 */
-	if (find_currdev(uefi_boot_mgr, boot_info, bisz) != 0)
+	if (find_currdev(uefi_boot_mgr, boot_info, bisz) != 0) {
+#ifdef EFI_SECUREBOOT
+		if (verify_required())
+			panic("Secure Boot: no bootable policy device");
+#endif
 		if (uefi_boot_mgr &&
 		    !interactive_interrupt("Failed to find bootable partition"))
 			return (EFI_NOT_FOUND);
+	}
 
 	autoload_font(false);	/* Set up the font list for console. */
 	efi_init_environment();
@@ -1987,8 +2019,8 @@ static int
 command_chain(int argc, char *argv[])
 {
 	EFI_GUID LoadedImageGUID = LOADED_IMAGE_PROTOCOL;
-	EFI_HANDLE loaderhandle;
-	EFI_LOADED_IMAGE *loaded_image;
+	EFI_HANDLE loaderhandle = NULL;
+	EFI_LOADED_IMAGE *loaded_image = NULL;
 	UINTN ExitDataSize;
 	CHAR16 *ExitData = NULL;
 	EFI_STATUS status;
@@ -2010,6 +2042,14 @@ command_chain(int argc, char *argv[])
 		return (CMD_ERROR);
 	}
 
+#ifdef LOADER_VERITY_SUPPORT
+	if (verity_check_source(fd) != 0) {
+		command_errmsg = "chain image is outside the selected verified source";
+		close(fd);
+		return (CMD_ERROR);
+	}
+#endif
+
 #ifdef LOADER_VERIEXEC
 	if (verify_file(fd, name, 0, VE_MUST, __func__) < 0) {
 		sprintf(command_errbuf, "can't verify: %s", name);
@@ -2018,7 +2058,9 @@ command_chain(int argc, char *argv[])
 	}
 #endif
 
-	if (fstat(fd, &st) < -1) {
+	if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
+	    st.st_size <= 0 || (uintmax_t)st.st_size > SSIZE_MAX ||
+	    (uintmax_t)st.st_size > (UINTN)-1) {
 		command_errmsg = "stat failed";
 		close(fd);
 		return (CMD_ERROR);
@@ -2036,25 +2078,57 @@ command_chain(int argc, char *argv[])
 		close(fd);
 		return (CMD_ERROR);
 	}
+#ifdef LOADER_VERIEXEC
+	/* Authenticate the retained bytes actually handed to firmware. */
+	if (verify_required() &&
+	    verify_buf(fd, name, buf, (size_t)st.st_size) != VE_VERIFIED) {
+		command_errmsg = "chain image buffer failed verification";
+		(void)BS->FreePool(buf);
+		close(fd);
+		return (CMD_ERROR);
+	}
+#endif
 	close(fd);
 	status = BS->LoadImage(FALSE, IH, NULL, buf, st.st_size, &loaderhandle);
 	(void)BS->FreePool(buf);
 	if (status != EFI_SUCCESS) {
+		/* UEFI may load an image but prohibit starting it. */
+		if (status == EFI_SECURITY_VIOLATION && loaderhandle != NULL)
+			(void)BS->UnloadImage(loaderhandle);
 		command_errmsg = "LoadImage failed";
 		return (CMD_ERROR);
 	}
 	status = OpenProtocolByHandle(loaderhandle, &LoadedImageGUID,
 	    (void **)&loaded_image);
+	if (status != EFI_SUCCESS || loaded_image == NULL) {
+		command_errmsg = "cannot obtain loaded image protocol";
+		(void)BS->UnloadImage(loaderhandle);
+		return (CMD_ERROR);
+	}
 
 	if (argc > 2) {
-		int i, len = 0;
+		int i;
+		size_t len = 0;
 		CHAR16 *argp;
 
-		for (i = 2; i < argc; i++)
-			len += strlen(argv[i]) + 1;
+		for (i = 2; i < argc; i++) {
+			if (__builtin_add_overflow(len, strlen(argv[i]), &len) ||
+			    __builtin_add_overflow(len, 1, &len) ||
+			    len > UINT32_MAX / sizeof(*argp)) {
+				command_errmsg = "chain image options too large";
+				(void)BS->UnloadImage(loaderhandle);
+				return (CMD_ERROR);
+			}
+		}
 
 		len *= sizeof (*argp);
-		loaded_image->LoadOptions = argp = malloc (len);
+		argp = malloc(len);
+		if (argp == NULL) {
+			command_errmsg = "cannot allocate chain image options";
+			(void)BS->UnloadImage(loaderhandle);
+			return (CMD_ERROR);
+		}
+		loaded_image->LoadOptions = argp;
 		loaded_image->LoadOptionsSize = len;
 		for (i = 2; i < argc; i++) {
 			char *ptr = argv[i];
@@ -2062,7 +2136,7 @@ command_chain(int argc, char *argv[])
 				*(argp++) = *(ptr++);
 			*(argp++) = ' ';
 		}
-		*(--argv) = 0;
+		*(--argp) = 0;
 	}
 
 	if (efi_getdev((void **)&dev, name, (const char **)&path) == 0) {
@@ -2118,7 +2192,7 @@ command_chain(int argc, char *argv[])
 		command_errmsg = "";
 		free(loaded_image->LoadOptions);
 		loaded_image->LoadOptions = NULL;
-		status = BS->UnloadImage(loaded_image);
+		status = BS->UnloadImage(loaderhandle);
 		return (CMD_ERROR);
 	}
 

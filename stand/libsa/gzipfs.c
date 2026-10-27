@@ -41,6 +41,15 @@ struct z_file
     int			zf_endseen;
 };
 
+/* The returned descriptor remains owned by this decompressor. */
+static int
+zf_source(struct open_file *f)
+{
+	struct z_file *source = f->f_fsdata;
+
+	return (source == NULL ? -1 : source->zf_rawfd);
+}
+
 static int	zf_fill(struct z_file *z);
 static int	zf_open(const char *path, struct open_file *f);
 static int	zf_close(struct open_file *f);
@@ -58,6 +67,7 @@ struct fs_ops gzipfs_fsops = {
 	.fo_seek = zf_seek,
 	.fo_stat = zf_stat,
 	.fo_readdir = null_readdir,
+	.fo_source = zf_source,
 };
 
 static int
@@ -198,8 +208,10 @@ zf_open(const char *fname, struct open_file *f)
 
     /* Allocate a z_file structure, populate it */
     zf = malloc(sizeof(struct z_file));
-    if (zf == NULL)
-        return(ENOMEM);
+    if (zf == NULL) {
+	close(rawfd);
+	return(ENOMEM);
+    }
     bzero(zf, sizeof(struct z_file));
     zf->zf_rawfd = rawfd;
 
@@ -290,16 +302,25 @@ zf_seek(struct open_file *f, off_t offset, int where)
 {
     struct z_file	*zf = (struct z_file *)f->f_fsdata;
     off_t		target;
-    char		discard[16];
+    /* Amortize decoder calls while keeping seek scratch space bounded. */
+    char		discard[512];
     
     switch (where) {
     case SEEK_SET:
 	target = offset;
 	break;
     case SEEK_CUR:
-	target = offset + zf->zf_zstream.total_out;
+	if (__builtin_add_overflow(offset, zf->zf_zstream.total_out, &target)) {
+	    errno = EOVERFLOW;
+	    return(-1);
+	}
 	break;
     default:
+	errno = EINVAL;
+	return(-1);
+    }
+
+    if (target < 0) {
 	errno = EINVAL;
 	return(-1);
     }

@@ -29,3 +29,39 @@ sys/capimage_elf.h: ${SRCTOP}/sys/sys/capimage_elf.h
 	mkdir -p sys
 	cp ${.ALLSRC} ${.TARGET}
 capimage.o: sys/capimage_elf.h
+
+# Account-generation tools execute on the builder, never from the target stage.
+# Its maintained bootstrap recipe supplies source account-directory policy and
+# compatibility headers while retaining the host ABI and native libraries.
+pwd_mkdb: .PHONY
+	mkdir -p ${.OBJDIR}/pwd_mkdb-build
+	env -u MAKEOBJDIRPREFIX MAKEOBJDIR=${.OBJDIR}/pwd_mkdb-build \
+	    ${MAKE} -C ${SRCTOP}/usr.sbin/pwd_mkdb BOOTSTRAPPING=0 \
+	    WITHOUT_TESTS=yes all
+	cp ${.OBJDIR}/pwd_mkdb-build/pwd_mkdb ${.OBJDIR}/pwd_mkdb
+
+# Use the maintained bootstrap build for a host-native, cross-ELF hints tool.
+# Keep its objects separate from capsign and from target-world objects.
+kldxref: .PHONY
+	mkdir -p ${.OBJDIR}/kldxref-build
+	env -u MAKEOBJDIRPREFIX MAKEOBJDIR=${.OBJDIR}/kldxref-build \
+	    ${MAKE} -C ${SRCTOP}/usr.sbin/kldxref BOOTSTRAPPING=0 all
+	cp ${.OBJDIR}/kldxref-build/kldxref ${.OBJDIR}/kldxref
+
+# Native static validator shares Capsule's production parser and report.
+# Compiler-generated dependencies keep source and transitive headers in sync.
+CAPSULE_VALIDATE_SRCS= ${SRCTOP}/usr.sbin/bsd-build/capsule-policy-validate/capsule-policy-validate.c \
+    ${SRCTOP}/usr.sbin/capsule/config.c \
+    ${SRCTOP}/usr.sbin/capsule/config_report.c \
+    ${SRCTOP}/lib/libcapsulert/claim_parse.c
+CAPSULE_VALIDATE_OBJS= ${CAPSULE_VALIDATE_SRCS:T:R:S/$/.validator.o/}
+.for src in ${CAPSULE_VALIDATE_SRCS}
+${src:T:R}.validator.o: ${src}
+	${CC} ${CFLAGS} -I${SRCTOP}/usr.sbin/capsule -MD -MP \
+	    -MF ${.TARGET:R}.d -c ${src} -o ${.TARGET}
+.endfor
+bsd-capsule-validate: ${CAPSULE_VALIDATE_OBJS}
+	${CC} ${LDFLAGS} -static -o ${.TARGET} ${.ALLSRC} -lprivateucl -lmd
+.for dep in ${CAPSULE_VALIDATE_OBJS:R:S/$/.d/}
+.sinclude "${dep}"
+.endfor

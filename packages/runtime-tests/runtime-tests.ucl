@@ -1,0 +1,5 @@
+comment = "Tests for base runtime programs and power services"
+
+desc = <<EOD
+Tests for base runtime programs and power services.
+EOD

@@ -110,6 +110,8 @@ extern int ptblread(void *, void *, size_t, uint64_t);
  */
 extern int disk_print(struct disk_devdesc *, char *, int);
 extern int disk_parsedev(struct devdesc **, const char *, const char **);
+extern int disk_parsedev_named(struct devdesc **, const char *, const char **,
+    const char *);
 
 char *disk_fmtdev(struct devdesc *vdev);
 

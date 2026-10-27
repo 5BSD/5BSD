@@ -114,8 +114,8 @@ command_boot(int argc, char *argv[])
 	/* Pass the tslog buffer to the kernel as a preloaded module. */
 	tslog_publish();
 
-	/* Call the exec handler from the loader matching the kernel */
-	file_formats[fp->f_loader]->l_exec(fp);
+	/* Shared admission covers every kernel execution route. */
+	file_exec(fp);
 	return(CMD_ERROR);
 }
 

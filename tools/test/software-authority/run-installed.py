@@ -10,6 +10,7 @@ import socket
 import subprocess
 import time
 from qmp_shutdown import ShutdownEvidence
+from installed_disk_evidence import disk_digest, require_disk
 
 
 def digest(path):
@@ -58,6 +59,10 @@ def main():
     assert digest(qualified / 'software-result.json') == manifest['vm_result_sha256']
     qualification = json.loads((qualified / 'software-result.json').read_text())
     assert qualification['result'] == 'PASS'
+    disk = installation / 'installed.img'
+    disk_before = require_disk(disk, install_result.get('disk_sha256'))
+    if any(boot.get(field) != disk_before for field in ('disk_sha256', 'disk_after_sha256')):
+        raise ValueError('installed boot evidence is not bound to the current disk')
     work = args.work.resolve() if args.work else installation / ('installed-suite-' + str(time.time_ns()))
     work.mkdir()
     media = work / 'media'
@@ -159,8 +164,8 @@ INSTALL_SUITE
     started = time.monotonic()
     with (work / 'qemu.log').open('w') as output:
         process = subprocess.Popen(command, stdout=output, stderr=output)
-        shutdown.start(process)
         try:
+            shutdown.start(process)
             while process.poll() is None and time.monotonic() - started < args.timeout:
                 text = serial.read_text(errors='replace') if serial.exists() else ''
                 lines = text.splitlines()
@@ -192,10 +197,16 @@ INSTALL_SUITE
         matches = re.findall(r'^SOFTWARE_STATUS_' + mode.upper() + r'_SECONDS=([0-9]+(?:\.[0-9]+)?)\r?$', text, re.MULTILINE)
         if len(matches) == 1:
             timings[mode] = float(matches[0])
-    passed = len(timings) == 2 and sent and not missing and not forced and process.returncode == 0 and shutdown_evidence['guest_poweroff'] and 'All buffers synced.' in text and 'Powering system off' in text and not any(marker in text for marker in fatal) and not any(marker in text.splitlines() for marker in failures)
+    disk_after = disk_digest(disk)
+    passed = disk_after == disk_before and len(timings) == 2 and sent and not missing and not forced and process.returncode == 0 and shutdown_evidence['guest_poweroff'] and 'All buffers synced.' in text and 'Powering system off' in text and not any(marker in text for marker in fatal) and not any(marker in text.splitlines() for marker in failures)
     result = {'result': 'PASS' if passed else 'FAIL',
         'shutdown_evidence': shutdown_evidence,
-        'scope': 'full software suite on BSDInstall target overlay with explicit test fixtures; production kernel and userland retained',
+        'disk_sha256': disk_before, 'disk_after_sha256': disk_after,
+        'scope': 'software-authority suite on BSDInstall target overlay with substituted DTrace, test programs and login profiles; not hardened-generation qualification',
+        'network_scope': 'guest-loopback SSH; no external guest network interface',
+        'production_userland_unmodified': False,
+        'verified_boot_evaluated': False,
+        'immutable_base_evaluated': False,
         'missing_markers': missing, 'required_markers': required,
         'status_load': {'scope': 'QEMU TCG end-to-end client execution plus discovery and status; not native IPC latency', 'sequential_requests': 32, 'parallel_workers': 4, 'requests_per_worker': 8, 'elapsed_seconds': timings},
         'forced': forced, 'exit': process.returncode,

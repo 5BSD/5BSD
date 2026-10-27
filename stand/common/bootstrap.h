@@ -277,6 +277,7 @@ void file_addmetadata(struct preloaded_file *, int, size_t, void *);
 int file_addmodule(struct preloaded_file *, char *, int,
     struct kernel_module **);
 void file_removemetadata(struct preloaded_file *fp);
+int file_exec(struct preloaded_file *fp);
 int file_addbuf(const char *name, const char *type, size_t len, void *buf);
 int tslog_init(void);
 int tslog_publish(void);
@@ -370,6 +371,12 @@ struct arch_switch
 	const char *(*arch_hypervisor)(void);
 };
 extern struct arch_switch archsw;
+
+#ifdef LOADER_VERITY_SUPPORT
+int verity_check_source(int);
+int verity_source_verified(int);
+int verity_check_handoff(void);
+#endif
 
 /* This must be provided by the MD code, but should it be in the archsw? */
 void	delay(int delay);

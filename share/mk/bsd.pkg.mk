@@ -201,7 +201,7 @@ ${_pkgfullname}.ucl.in: ${UCLSRC.${_pkg}:U${UCLSRC:U${_pkg}.ucl}}
 	@echo >>${.TARGET} '}'
 .endif
 
-${_pkgfullname}.pkgucl: ${_pkgfullname}.ucl.in
+${_pkgfullname}.pkgucl: ${_pkgfullname}.ucl.in ${SRCTOP}/release/packages/generate-ucl.lua
 	${FLUA} ${SRCTOP}/release/packages/generate-ucl.lua \
 		${_UCLVARS} \
 		PKGNAME "${_pkg}" \

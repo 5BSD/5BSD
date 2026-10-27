@@ -74,11 +74,11 @@ LUAPATH?=	/boot/lua
 FLUASRC?=	${SRCTOP}/libexec/flua
 FLUALIB?=	${SRCTOP}/libexec/flua
 
-LIBSA=		${BOOTOBJ}/libsa/libsa.a
+LIBSA=		${BOOTOBJ}/${defined(EFI_TARGET):?efi/libsaefi:libsa}/libsa.a
 .if ${MACHINE} == "i386"
 LIBSA32=	${LIBSA}
 .else
-LIBSA32=	${BOOTOBJ}/${"${LOADER}" == "loader_ia32":?efi/libsa32efi:libsa32}/libsa32.a
+LIBSA32=	${BOOTOBJ}/${defined(EFI_TARGET):?efi/libsa32efi:libsa32}/libsa32.a
 .endif
 
 # Standard options:
@@ -89,9 +89,9 @@ CFLAGS+=	-nostdinc
 # those as possible.
 CFLAGS+=	${CFLAGS_EARLY} ${CFLAGS_EARLY.${.IMPSRC:T}} ${CFLAGS_EARLY.${.TARGET:T}}
 .if ${MACHINE_ARCH} == "amd64" && ${DO32:U0} == 1
-CFLAGS+=	-I${BOOTOBJ}/libsa32
+CFLAGS+=	-I${LIBSA32:H}
 .else
-CFLAGS+=	-I${BOOTOBJ}/libsa
+CFLAGS+=	-I${LIBSA:H}
 .endif
 CFLAGS+=	-I${SASRC} -D_STANDALONE
 CFLAGS+=	-I${SYSDIR}

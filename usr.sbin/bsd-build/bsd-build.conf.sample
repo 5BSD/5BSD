@@ -18,6 +18,8 @@ signing=unsigned
 # key=/secure/code-signing.pem
 # Independent RSA repository signing identity (build/packages only):
 # pkg_key=/secure/pkg-signing.pem
+# Optional complete candidate without advancing the update channel:
+# candidate_publication=yes
 # Explicit offline pkg archive and expected SHA256 (supply both):
 # pkg_package=/usr/obj/pkg-build/pkg-version.pkg
 # pkg_package_sha256=<64 hexadecimal digits>
@@ -37,6 +39,9 @@ ports=/usr/obj/5BSD-ports
 # repository=/usr/obj/usr/src/repo/FreeBSD:16:amd64/latest
 # pkg_public_key=/secure/pkg-signing.pub
 # public_key=/secure/code-signing.pub
+# generated=/usr/obj/usr/src/generation-inputs/generated.json
+# The manifest must declare generated contents and metadata; deploy does not
+# infer exceptions from the installed candidate.
 # bootenv=5bsd-next
 # Optional source; otherwise clone the current boot environment:
 # clone_from=5bsd-current@before-upgrade
@@ -49,10 +54,61 @@ ports=/usr/obj/5BSD-ports
 
 
 # Final combined repository only; base/hardware staging stays under /usr/obj.
-# publish_repository=/var/db/5bsd/repositories/base
+# publish_repository=/usr/obj/usr/src/repo
 
 # Build policy is independent of code-signing mode.
 # build_profile=production
 # For private staging use development or debug (debug adds compiler symbols).
 # Test-only package publication with either requires:
 # allow_debug_publication=yes
+
+# Separate trusted-builder construction configuration (construct action only):
+# root=/usr/obj/usr/src/candidate
+# inventory=/usr/obj/usr/src/package-inventory.json
+# generated=/usr/obj/usr/src/initial-inputs.json
+# output=/usr/obj/usr/src/construction-result
+# construction_timeout=300
+# Optional database construction requires all five inputs:
+# database_pkg=/usr/obj/usr/src/qualified-tools/pkg-static
+# database_sqlite=/usr/local/bin/sqlite3
+# database_contract=/usr/obj/usr/src/database-contract.json
+# database_policy=/usr/share/examples/bsd-build/database-output-policy.json
+# Set database_osversion to the OSVERSION of the selected target build.
+# database_osversion=
+# Inputs must already be trusted. This action neither signs nor activates them.
+
+# Optional construct extraction into an empty root under a private builder parent.
+# generated must then name an explicit root-only layout (see root-layout.json).
+# extract-tar=/usr/bin/bsdtar
+
+# Explicit startup-contract input required for signed boot-stage:
+# boot_policy=/secure/system/startup-policy.json
+# Staging schema: {"version":1,"mode":"preloaded"}
+# A verity policy selects image/descriptor paths and memory bounds for disk staging.
+
+# Supply together for boot-check or boot-stage with a verity-bearing base receipt:
+# boot_verity_image=/usr/obj/usr/src/generation/base/system.verity
+# boot_verity_descriptor=/usr/obj/usr/src/generation/base/root.descriptor
+
+# For loader-build: public generation certificates, including rotation overlap.
+# loader-anchors=/path/to/release-anchors.pem
+# This fixed trust profile uses /dev/null make configuration files.
+
+# For boot-stage with EFI signing: pin the selected trusted-builder record.
+# boot-loader-build=/usr/obj/usr/src/loaders/release-candidate/loader-build.json
+# boot-loader-build-sha256=<SHA256 of the selected record>
+
+# Explicit native companion from the same loader-build output; digest is pinned
+# by boot-loader-build. It verifies the staged manifest before EFI signing.
+# boot-manifest-verifier=/usr/obj/.../loader-manifest-verify
+
+# Required for EFI staging; explicit independent Authenticode verifier.
+# boot-efi-signature-verifier=/usr/local/bin/osslsigncode
+
+# The selected boot-policy JSON may also carry a transition object in verity
+# mode: version, transport_fs, transport_device, provider, workers, cache_blocks,
+# window_bytes, buffer_bytes. No implicit storage or resource defaults.
+# This currently builds a manifest-bound artifact only, not a working disk boot.
+
+# Transition staging also requires root_transition_version=1 in the pinned
+# loader-build receipt; use a fresh maintained loader-build result.

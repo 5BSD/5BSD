@@ -5,6 +5,9 @@ Its login/session grant and principal-policy sections are superseded by
 [Software Attributes](book/src/plane/attributes.md) and
 [Software policy and service management](book/src/plane/management-policy.md).
 They do not describe the current software-authority model.
+The [system security design](book/src/capability/system-security.md) now defines
+independent user authorization and compromised-root protection as implementation
+targets. It does not restore this historical policy format or its fallback rules.
 
 The original proposal superseded
 the authorization framing in [`service-discovery-model.md`](service-discovery-model.md),

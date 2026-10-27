@@ -1,0 +1,20 @@
+{
+  "format": 1,
+  "name": "system-certificates",
+  "program": "/usr/sbin/certctl",
+  "selections": [
+    {"package": "5BSD-caroot", "prefix": "/usr/share/certs/trusted", "role": "trusted"},
+    {"package": "5BSD-caroot", "prefix": "/usr/share/certs/untrusted", "role": "untrusted"}
+  ],
+  "files": [],
+  "overrides": [],
+  "outputs": {
+    "trusted_directory": "/etc/ssl/certs",
+    "untrusted_directory": "/etc/ssl/untrusted",
+    "bundle": "/etc/ssl/cert.pem",
+    "uid": 0,
+    "gid": 0,
+    "mode": 292,
+    "flags_set": 0
+  }
+}

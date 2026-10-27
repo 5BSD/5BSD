@@ -1,0 +1,43 @@
+{
+  "format": 1,
+  "program": "/usr/sbin/kldxref",
+  "groups": [
+    {
+      "directory": "/boot/kernel",
+      "packages": [
+        "5BSD-kernel-*"
+      ],
+      "patterns": [
+        "kernel",
+        "*.ko"
+      ],
+      "required": true,
+      "output": {
+        "name": "linker.hints",
+        "uid": 0,
+        "gid": 0,
+        "mode": 292,
+        "flags_set": 0,
+        "replace": true
+      }
+    },
+    {
+      "directory": "/boot/modules",
+      "packages": [
+        "*"
+      ],
+      "patterns": [
+        "*.ko"
+      ],
+      "required": false,
+      "output": {
+        "name": "linker.hints",
+        "uid": 0,
+        "gid": 0,
+        "mode": 292,
+        "flags_set": 0,
+        "replace": false
+      }
+    }
+  ]
+}

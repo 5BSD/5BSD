@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Exercise the real Lua installer with isolated package-command fixtures."""
 import os
+import json
+import shlex
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -10,6 +13,20 @@ import unittest
 SOURCE = Path(__file__).resolve().parents[2] / 'usr.sbin/bsdinstall/scripts/pkgbase.in'
 
 class OfflinePkgbase(unittest.TestCase):
+    def test_signed_release_literal_repository_path(self):
+        makefile = SOURCE.parents[3] / 'release/Makefile'
+        commands = [line for line in makefile.read_text().splitlines()
+                    if '"url"' in line and '${HARDWARE_PYTHON} -c' in line]
+        self.assertEqual(len(commands), 1)
+        program = shlex.split(commands[0].rstrip().removesuffix('\\').rstrip())[2]
+        repository = '/tmp/FreeBSD:16:amd64 space %23 # repository'
+        result = subprocess.check_output([sys.executable, '-c', program,
+                                          repository, '/tmp/public key'], text=True)
+        config = json.loads(result)['5BSD-base']
+        self.assertEqual(config['url'], 'file://' + repository)
+        self.assertEqual(config['signature_type'], 'pubkey')
+        self.assertEqual(config['pubkey'], '/tmp/public key')
+
     def run_installer(self, mode='', override=False, offline=True):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

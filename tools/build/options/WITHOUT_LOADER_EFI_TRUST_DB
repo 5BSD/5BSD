@@ -1,0 +1,8 @@
+Do not import firmware db certificates as boot-manifest trust anchors.
+EFI Secure Boot must remain enabled. Supply explicit public X.509 certificates
+through TRUST_ANCHORS; they are embedded in the loader. Firmware certificate
+and digest revocations still apply. An enforcing loader with no usable compiled
+anchors refuses to boot. This separates manifest trust from firmware executable
+trust; it does not provide generation rollback policy or prevent selection of
+another firmware-trusted loader. Rebuild the loader and its libraries when
+changing this option or its trust inputs.

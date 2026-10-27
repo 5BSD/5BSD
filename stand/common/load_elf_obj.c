@@ -100,6 +100,13 @@ __elfN(obj_loadfile)(char *filename, uint64_t dest,
 		return(EFTYPE);
 	if ((ef.fd = open(filename, O_RDONLY)) == -1)
 		return(errno);
+#ifdef LOADER_VERITY_SUPPORT
+	if (verity_check_source(ef.fd) != 0) {
+		close(ef.fd);
+		return (EAUTH);
+	}
+#endif
+
 #ifdef LOADER_VERIEXEC_VECTX
 	{
 		int verror;
@@ -109,7 +116,7 @@ __elfN(obj_loadfile)(char *filename, uint64_t dest,
 		if (verror) {
 			printf("Unverified %s: %s\n", filename, ve_error_get());
 			close(ef.fd);
-			free(ef.vctx);
+			vectx_discard(ef.vctx);
 			return (EAUTH);
 		}
 	}
@@ -144,7 +151,11 @@ __elfN(obj_loadfile)(char *filename, uint64_t dest,
 	}
 
 #if defined(LOADER_VERIEXEC) && !defined(LOADER_VERIEXEC_VECTX)
-	if (verify_file(ef.fd, filename, bytes_read, VE_MUST, __func__) < 0) {
+	if (
+#ifdef LOADER_VERITY_SUPPORT
+	    !verity_source_verified(ef.fd) &&
+#endif
+	    verify_file(ef.fd, filename, bytes_read, VE_MUST, __func__) < 0) {
 		err = EAUTH;
 		goto oerr;
 	}
@@ -202,6 +213,8 @@ out:
 			err = EAUTH;
 			file_discard(fp);
 		}
+	} else {
+		vectx_discard(ef.vctx);
 	}
 #endif
 	close(ef.fd);

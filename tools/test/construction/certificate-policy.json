@@ -1,0 +1,7 @@
+{
+  "format": 1,
+  "selections": [
+    {"role": "trusted", "prefix": "/usr/share/certs/trusted"},
+    {"role": "untrusted", "prefix": "/usr/share/certs/untrusted"}
+  ]
+}

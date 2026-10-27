@@ -56,7 +56,8 @@ TESTS_PATH+= ${DESTDIR}/bin ${DESTDIR}/sbin \
 TESTS_ENV+= PATH=${TESTS_PATH:tW:C/ +/:/g}
 
 # Ordered list of directories to construct the LD_LIBRARY_PATH for the tests.
-TESTS_LD_LIBRARY_PATH+= ${DESTDIR}/lib ${DESTDIR}/usr/lib
+_TESTS_DEFAULT_LD_LIBRARY_PATH= ${DESTDIR}/lib ${DESTDIR}/usr/lib
+TESTS_LD_LIBRARY_PATH+= ${_TESTS_DEFAULT_LD_LIBRARY_PATH}
 TESTS_ENV+= LD_LIBRARY_PATH=${TESTS_LD_LIBRARY_PATH:tW:C/ +/:/g}
 
 # List of all tests being built.  The various *.test.mk modules extend this

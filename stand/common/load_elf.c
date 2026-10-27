@@ -273,6 +273,12 @@ __elfN(load_elf_header)(char *filename, elf_file_t ef)
 		return (EFTYPE);
 	if ((ef->fd = open(filename, O_RDONLY)) == -1)
 		return (errno);
+#ifdef LOADER_VERITY_SUPPORT
+	if (verity_check_source(ef->fd) != 0) {
+		close(ef->fd);
+		return (EAUTH);
+	}
+#endif
 	ef->firstpage = malloc(PAGE_SIZE);
 	if (ef->firstpage == NULL) {
 		close(ef->fd);
@@ -288,7 +294,11 @@ __elfN(load_elf_header)(char *filename, elf_file_t ef)
 		if (verror) {
 			printf("Unverified %s: %s\n", filename, ve_error_get());
 			close(ef->fd);
-			free(ef->vctx);
+			vectx_discard(ef->vctx);
+			ef->vctx = NULL;
+			free(ef->firstpage);
+			ef->firstpage = NULL;
+			ef->fd = -1;
 			return (EAUTH);
 		}
 	}
@@ -325,7 +335,11 @@ __elfN(load_elf_header)(char *filename, elf_file_t ef)
 	}
 
 #if defined(LOADER_VERIEXEC) && !defined(LOADER_VERIEXEC_VECTX)
-	if (verify_file(ef->fd, filename, bytes_read, VE_MUST, __func__) < 0) {
+	if (
+#ifdef LOADER_VERITY_SUPPORT
+	    !verity_source_verified(ef->fd) &&
+#endif
+	    verify_file(ef->fd, filename, bytes_read, VE_MUST, __func__) < 0) {
 		err = EAUTH;
 		goto error;
 	}
@@ -339,7 +353,7 @@ error:
 	}
 	if (ef->fd != -1) {
 #ifdef LOADER_VERIEXEC_VECTX
-		free(ef->vctx);
+		vectx_discard(ef->vctx);
 #endif
 		close(ef->fd);
 		ef->fd = -1;
@@ -510,6 +524,8 @@ out:
 				err = EAUTH;
 				file_discard(fp);
 			}
+		} else {
+			vectx_discard(ef.vctx);
 		}
 #endif
 		close(ef.fd);
@@ -1107,6 +1123,8 @@ out:
 				err = EAUTH;
 				file_discard(fp);
 			}
+		} else {
+			vectx_discard(ef.vctx);
 		}
 #endif
 		close(ef.fd);

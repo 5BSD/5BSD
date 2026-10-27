@@ -2,8 +2,12 @@ NO_OBJ=t
 
 .include <bsd.init.mk>
 
-SUBDIR.yes+=	libefi
-SUBDIR.${MK_LOADER_IA32}+=	libsa32efi libefi32
+SUBDIR.yes+=	libsaefi
+SUBDIR.${MK_LOADER_IA32}+=	libsa32efi
+SUBDIR.yes+=	.WAIT libefi
+SUBDIR.${MK_LOADER_IA32}+=	libefi32
+SUBDIR.${MK_LOADER_LUA}+=	libluaefi
+SUBDIR.${MK_FORTH}+=	ficlefi
 SUBDIR.${MK_FDT}+=	fdt
 
 .if ${LOADER_DEFAULT_INTERP} == "lua"

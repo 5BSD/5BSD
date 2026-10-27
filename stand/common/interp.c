@@ -60,6 +60,17 @@ interact(void)
 	 * we need to switch interpreters.
 	 */
 	interp_identifier = bootprog_interp;
+#ifdef LOADER_VERIEXEC
+	if (verify_required()) {
+		/* No optional startup, menu, autoboot interruption or CLI fallback. */
+		if (strcmp(bootprog_interp, "$Interpreter:lua") != 0)
+			panic("Secure Boot: policy requires the Lua interpreter");
+		interp_preinit();
+		if (interp_include("/boot/lua/secureboot.lua") != 0)
+			panic("Secure Boot: startup policy failed");
+		panic("Secure Boot: startup policy returned without booting");
+	}
+#endif
 	interp_preinit();
 	interp_init();
 

@@ -1,7 +1,5 @@
-# SPDX-License-Identifier: BSD-2-Clause
-
-comment = "Build and deployment orchestrator for signed 5BSD systems"
+comment = "5BSD system build and generation construction tool"
 
 desc = <<EOD
-Build and deployment orchestrator for signed 5BSD systems.
+5BSD system build and generation construction tool.
 EOD

@@ -38,6 +38,9 @@
 #include <stdarg.h>
 #include <string.h>
 #include <bootstrap.h>
+#ifdef LOADER_VERIEXEC
+#include <verify_file.h>
+#endif
 
 #include "libzfs.h"
 
@@ -1440,6 +1443,11 @@ zfs_attach_nvstore(void *vdev)
 	spa_t *spa;
 	uint64_t version;
 	int rv;
+
+#ifdef LOADER_VERIEXEC
+	if (verify_required())
+		return (EPERM);
+#endif
 
 	if (dev->dd.d_dev->dv_type != DEVT_ZFS)
 		return (ENOTSUP);

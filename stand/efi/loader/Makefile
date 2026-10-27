@@ -105,6 +105,14 @@ NEWVERSWHAT?=	"EFI loader" ${MACHINE}
 VERSION_FILE?=	${.CURDIR}/../loader/version
 HELP_FILENAME=	loader.help.efi
 
+# The verified filesystem device shares the kernel's bounded hash verifier.
+# Selection still requires an authenticated descriptor; registration grants none.
+.if ${MK_LOADER_VERIEXEC} != "no"
+CFLAGS+= -DLOADER_VERITY_SUPPORT
+.PATH: ${SYSDIR}/geom/verity
+SRCS+= veritydev.c verity_attach.c verity_read.c g_verity_verify.c g_verity_transition.c verity_commands.c
+.endif
+
 # Always add MI sources
 .include	"${BOOTSRC}/loader.mk"
 

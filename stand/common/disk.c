@@ -412,23 +412,28 @@ disk_fmtdev(struct devdesc *vdev)
 int
 disk_parsedev(struct devdesc **idev, const char *devspec, const char **path)
 {
+	if (strncmp(devspec, "disk", 4) == 0)
+		return (disk_parsedev_named(idev, devspec, path, "disk"));
+	return (disk_parsedev_named(idev, devspec, path, "vdisk"));
+}
+
+/* Share disk suffix parsing without accepting another device's name. */
+int
+disk_parsedev_named(struct devdesc **idev, const char *devspec,
+    const char **path, const char *name)
+{
 	int unit, slice, partition;
 	const char *np;
 	char *cp;
 	struct disk_devdesc *dev;
+	size_t length;
 
-	/*
-	 * disk names look approximately like:
-	 *	v?disk([0-9]+(p[0-9]+|s[a-z])?)?:
-	 * so skip over the initial bit. We don't have access to the devsw
-	 * to check the name.
-	 */
-	if (strncmp(devspec, "disk", 4) == 0)
-		np = devspec + 4;
-	else if (strncmp(devspec, "vdisk", 5) == 0)
-		np = devspec + 5;
-	else
+	if (idev == NULL || devspec == NULL || name == NULL || name[0] == '\0')
 		return (EINVAL);
+	length = strlen(name);
+	if (strncmp(devspec, name, length) != 0)
+		return (EINVAL);
+	np = devspec + length;
 	unit = -1;
 	/*
 	 * If there is path/file info after the device info, then any missing

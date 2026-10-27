@@ -136,6 +136,41 @@ end
 
 local obj = parser:get_object()
 
+-- bsd.pkg.mk appends build annotations to those in the package source.
+-- UCL represents repeated object keys as an implicit array; normalize that
+-- array before changing "set", or pkg can lose one of the annotation blocks.
+-- Annotation values are strings. Equal repeated values agree; conflicts and
+-- malformed values must not depend on parser or package iteration order.
+local function annotation_error(message)
+	io.stderr:write(arg[0] .. ": invalid annotations: " .. message .. "\n")
+	os.exit(1)
+end
+
+local annotations = obj["annotations"]
+if annotations == nil then
+	annotations = {}
+end
+if type(annotations) ~= "table" then
+	annotation_error("expected an object")
+end
+local blocks = annotations[1] ~= nil and annotations or {annotations}
+local merged = {}
+for index, block in pairs(blocks) do
+	if type(index) ~= "number" or type(block) ~= "table" then
+		annotation_error("expected annotation objects")
+	end
+	for key, value in pairs(block) do
+		if type(key) ~= "string" or type(value) ~= "string" then
+			annotation_error("expected string keys and values")
+		end
+		if merged[key] ~= nil and merged[key] ~= value then
+			annotation_error("conflicting value for " .. key)
+		end
+		merged[key] = value
+	end
+end
+obj["annotations"] = merged
+
 -- If pkgname is different from pkggenname, add a dependency on pkggenname.
 -- This means that e.g. -dev packages depend on their respective base package.
 if add_gen_dep(pkgname, pkggenname) then

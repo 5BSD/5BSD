@@ -3,6 +3,9 @@ PKG_SETS=	minimal
 
 PKG_LICENSES=	BSD2CLAUSE
 
+UCLSRC=		common.ucl
+UCLSRC.switchboard=	switchboard.ucl
+
 # switchboard links against libcapbundle and libcapsulert.  capsule owns the
 # bootstrap lifecycle and therefore depends on switchboard, not vice versa.
 PKG_DEPS.switchboard+=	audit

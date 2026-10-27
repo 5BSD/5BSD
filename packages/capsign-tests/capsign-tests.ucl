@@ -1,7 +1,5 @@
-# SPDX-License-Identifier: BSD-2-Clause
-
-comment = "Regression tests for capsign"
+comment = "Tests for 5BSD executable and system bundle signing"
 
 desc = <<EOD
-Regression tests for capsign.
+Tests for 5BSD executable and system bundle signing.
 EOD

@@ -58,6 +58,15 @@ struct bz_file
     int			bzf_endseen;
 };
 
+/* The returned descriptor remains owned by this decompressor. */
+static int
+bzf_source(struct open_file *f)
+{
+	struct bz_file *source = f->f_fsdata;
+
+	return (source == NULL ? -1 : source->bzf_rawfd);
+}
+
 static int	bzf_fill(struct bz_file *z);
 static int	bzf_open(const char *path, struct open_file *f);
 static int	bzf_close(struct open_file *f);
@@ -76,6 +85,7 @@ struct fs_ops bzipfs_fsops = {
 	.fo_seek = bzf_seek,
 	.fo_stat = bzf_stat,
 	.fo_readdir = null_readdir,
+	.fo_source = bzf_source,
 };
 #endif
 
@@ -189,8 +199,10 @@ bzf_open(const char *fname, struct open_file *f)
 
     /* Allocate a bz_file structure, populate it */
     bzf = malloc(sizeof(struct bz_file));
-    if (bzf == NULL)
+    if (bzf == NULL) {
+	close(rawfd);
 	return(ENOMEM);
+    }
     bzero(bzf, sizeof(struct bz_file));
     bzf->bzf_rawfd = rawfd;
 
@@ -305,46 +317,80 @@ bzf_rewind(struct open_file *f)
     return(0);
 }
 
+/* Convert the decoder's split unsigned counter to the loader's offset type. */
+static off_t
+bzf_position(const struct bz_file *bzf)
+{
+    off_t position;
+
+    if (__builtin_add_overflow(
+	(uint64_t)bzf->bzf_bzstream.total_out_hi32 << 32,
+	(uint64_t)bzf->bzf_bzstream.total_out_lo32, &position)) {
+	errno = EOVERFLOW;
+	return(-1);
+    }
+    return(position);
+}
+
 static off_t
 bzf_seek(struct open_file *f, off_t offset, int where)
 {
     struct bz_file	*bzf = (struct bz_file *)f->f_fsdata;
-    off_t		target;
-    char		discard[16];
+    off_t		target, position;
+    /* Amortize decoder calls while keeping seek scratch space bounded. */
+    char		discard[512];
     
+    position = bzf_position(bzf);
+    if (position < 0)
+	return(-1);
+
     switch (where) {
     case SEEK_SET:
 	target = offset;
 	break;
     case SEEK_CUR:
-	target = offset + bzf->bzf_bzstream.total_out_lo32;
+	if (__builtin_add_overflow(offset, position, &target)) {
+	    errno = EOVERFLOW;
+	    return(-1);
+	}
 	break;
     default:
 	errno = EINVAL;
 	return(-1);
     }
 
+    if (target < 0) {
+	errno = EINVAL;
+	return(-1);
+    }
+
     /* Can we get there from here? */
-    if (target < bzf->bzf_bzstream.total_out_lo32 && bzf_rewind(f) != 0) {
+    if (target < position && bzf_rewind(f) != 0) {
 	errno = EOFFSET;
 	return -1;
     }
 
     /* if bzf_rewind was called then bzf has changed */
     bzf = (struct bz_file *)f->f_fsdata;
+    position = bzf_position(bzf);
+    if (position < 0)
+	return(-1);
 
     /* skip forwards if required */
-    while (target > bzf->bzf_bzstream.total_out_lo32) {
+    while (target > position) {
 	errno = bzf_read(f, discard, min(sizeof(discard),
-	    target - bzf->bzf_bzstream.total_out_lo32), NULL);
+	    target - position), NULL);
 	if (errno)
+	    return(-1);
+	position = bzf_position(bzf);
+	if (position < 0)
 	    return(-1);
 	/* Break out of loop if end of file has been reached. */
 	if (bzf->bzf_endseen)
 	    break;
     }
     /* This is where we are (be honest if we overshot) */
-    return(bzf->bzf_bzstream.total_out_lo32);
+    return(position);
 }
 
 static int

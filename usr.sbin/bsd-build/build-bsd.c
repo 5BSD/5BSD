@@ -40,15 +40,37 @@ static struct option options[] = {
  S("signing","auto"), S("key",""),
  S("development-key","/usr/obj/usr/src/signing-keys/development.pem"),
  S("pkg-key",""), S("public-key",""), S("pkg-public-key",""),
- S("pkg-package",""), S("pkg-package-sha256",""),
+ S("pkg-package",""), S("pkg-package-sha256",""), S("package-tool",""),
  S("application-selection",""),
  S("root",""), S("output",""), S("repository",""),
+ S("snapshot-abi",""), S("snapshot-osversion",""),
+ S("database-pkg",""), S("database-sqlite",""), S("database-contract",""), S("database-policy",""), S("database-osversion",""),
+ S("boot-media-makefs",""), S("boot-media-mkimg",""), S("boot-efi-fallback",""), S("boot-esp-mib",""), S("boot-free-percent",""),
+ S("loader-anchors",""),
+ S("boot-manifest-verifier",""),
+ S("boot-loader-build",""), S("boot-loader-build-sha256",""),
+ S("boot-efi-path",""), S("boot-efi-signer",""), S("boot-efi-signature-verifier",""),
+ S("boot-efi-signing-key",""), S("boot-efi-signing-certificate",""),
+ S("boot-signing-key",""), S("boot-signing-certificate",""), S("boot-openssl",""),
+ S("capsule-validator",""), S("capsule-validator-sha256",""),
+ S("configuration-base",""), S("configuration-changes",""), S("configuration-parser",""), S("configuration-parser-sha256",""),
+ S("boot-observation-policy",""),
+ S("boot-image",""), S("boot-archive",""), S("image-receipt",""), S("boot-generated",""), S("boot-policy",""), S("boot-verity-image",""), S("boot-verity-descriptor",""), S("boot-root-path",""),
+ S("image-verity-policy",""), S("construction-receipt",""), S("image-makefs",""), S("image-mdconfig",""), S("image-mount",""), S("image-umount",""),
+ S("state-plan",""), S("storage-layout-policy",""), S("extract-tar",""), S("package-selection",""), S("inventory",""), S("generated",""), S("construction-timeout","300"), S("certificate-policy",""), S("module-policy",""), S("library-policy",""), S("installation-policy",""),
+ S("test-generation-key",""), S("test-generation-certificate",""),
+ S("test-case",""),
+ S("test-firmware-code",""), S("test-firmware-vars",""),
+ S("test-openssl","/usr/bin/openssl"), S("test-uefisign","/usr/sbin/uefisign"),
+ S("test-makefs","/usr/sbin/makefs"), S("test-mkimg","/usr/bin/mkimg"),
  S("publish-repository",REPOSITORY), S("ports","/usr/obj/5BSD-ports"),
  S("hardware-profile",""), S("distfiles",""),
  S("bootenv",""), S("clone-from",""), S("be-root",""), S("media-format","all"),
- S("bazel",""),
+ S("qemu","/usr/local/bin/qemu-system-x86_64"),
+ S("qemu-data","/usr/local/share/qemu"), S("uefi-vars-tool","/usr/local/bin/virt-fw-vars"),
+ S("bazel",""), S("bazel-inputs",""),
  S("format","text"), S("build-backend","bsd-make"),
- B("incremental"),
+ B("incremental"), B("candidate-publication"), B("image-boot-archive"),
  B("relaxed-signatures"), B("allow-debug-publication"), B("production")
 #undef S
 #undef B
@@ -84,6 +106,7 @@ static const char *get(const char *n) { return lookup(n)->value; }
 static bool yes(const char *n) { return !strcmp(get(n),"yes"); }
 static bool selected(const char *n) { return lookup(n)->selected; }
 static bool action(const char *n) { return !strcmp(request.action,n); }
+static bool firmware_test(void) { return action("secureboot-test") && !strcmp(get("test-case"),"firmware"); }
 static void
 set(const char *n,const char *v,bool explicit)
 {
@@ -174,7 +197,7 @@ static void
 usage_status(int code)
 {
  FILE *out = code == 0 ? stdout : stderr;
- fprintf(out, "usage: build-bsd [plan] build|world|kernel|stage|packages|sign|verify|deploy|bsdinstall|media|bazel-test [options]\n"
+ fprintf(out, "usage: build-bsd [plan] build|world|kernel|stage|packages|sign|verify|inventory|inventory-audit|reconcile|construct|image|boot-check|boot-stage|boot-observe|compose-config|state-storage|snapshot|deploy|bsdinstall|media|loader-build|secureboot-test|bazel-test [options]\n"
      "       build-bsd status run-directory\n"
      "       build-bsd --help\n\n"
      "Options (boolean flags accept yes/no in configuration files):\n"
@@ -202,7 +225,7 @@ parse(int argc,char **argv)
  if(getenv("KERNCONF") && *getenv("KERNCONF"))set("kernel",getenv("KERNCONF"),true);
  if(argc>1 && !strcmp(argv[1],"plan")){request.plan=true;start++;}
  if(argc<=start)usage();request.action=argv[start++];
- if(!oneof(request.action,"build|world|kernel|stage|packages|sign|verify|deploy|bsdinstall|media|bazel-test"))usage();
+ if(!oneof(request.action,"build|world|kernel|stage|packages|sign|verify|inventory|inventory-audit|reconcile|construct|image|boot-check|boot-stage|boot-observe|compose-config|state-storage|snapshot|deploy|bsdinstall|media|loader-build|secureboot-test|bazel-test"))usage();
  for(int i=start;i<argc;i++) {
   if(!strcmp(argv[i],"--config")) { if(++i==argc)usage();if(conf)fail("only one --config is allowed");conf=argv[i];continue; }
   if(strncmp(argv[i],"--",2))usage();struct option *o=lookup(argv[i]+2);if(!o)usage();
@@ -222,6 +245,27 @@ static void
 validate(void)
 {
  char host[64];size_t len=sizeof(host);struct stat st;
+ if(action("state-storage")){if(!*get("state-plan"))fail("state-storage requires --state-plan");regular(get("state-plan"),false);canonical("state-plan");}
+ else if(selected("state-plan"))fail("--state-plan applies only to state-storage");
+ if(selected("capsule-validator") || selected("capsule-validator-sha256")) {
+  if(!action("compose-config"))fail("Capsule validator applies only to compose-config");
+  const char *hash=get("capsule-validator-sha256");
+  if(!*get("capsule-validator") || strlen(hash)!=64 || strspn(hash,"0123456789abcdef")!=64)
+   fail("Capsule validator requires a selected executable and lowercase SHA256");
+  regular(get("capsule-validator"),false);canonical("capsule-validator");
+ }
+ const char *composition_inputs[]={"configuration-base","configuration-changes","configuration-parser"};
+ for(size_t i=0;i<nitems(composition_inputs);i++) {
+  if(action("compose-config")){if(!*get(composition_inputs[i]))fail("compose-config requires base, changes and parser");regular(get(composition_inputs[i]),false);canonical(composition_inputs[i]);}
+  else if(selected(composition_inputs[i]))fail("configuration composition inputs apply only to compose-config");
+ }
+ if(action("compose-config")) {
+  const char *hash=get("configuration-parser-sha256");
+  if(strlen(hash)!=64 || strspn(hash,"0123456789abcdef")!=64)fail("compose-config requires a lowercase parser SHA256");
+ } else if(selected("configuration-parser-sha256"))fail("parser hash applies only to compose-config");
+
+ if(action("boot-observe")){if(!*get("boot-observation-policy"))fail("boot-observe requires --boot-observation-policy");regular(get("boot-observation-policy"),false);canonical("boot-observation-policy");}
+ else if(selected("boot-observation-policy"))fail("--boot-observation-policy applies only to boot-observe");
  if(sysctlbyname("hw.machine_arch",host,&len,NULL,0)<0)err(1,"host architecture");
  bool native_arch=!strcmp(get("arch"),"native");
  if(native_arch)set("arch",host,false);
@@ -237,6 +281,7 @@ validate(void)
  else if(oneof(get("arch"),"riscv|riscv64")){request.target="riscv";request.arch="riscv64";}
  else fail("--arch must be native, amd64, arm64, or riscv64");
  request.cross=strcmp(host,request.arch)!=0;
+ if(action("boot-observe") && strcmp(request.arch,"amd64"))fail("boot-observe currently requires amd64");
  if(!strcmp(get("jobs"),"auto")){int cpus;len=sizeof(cpus);if(sysctlbyname("hw.ncpu",&cpus,&len,NULL,0)<0)err(1,"CPUs");request.jobs=cpus;}
  else {char *end;errno=0;unsigned long j=strtoul(get("jobs"),&end,10);if(strspn(get("jobs"),"0123456789")!=strlen(get("jobs")) || errno || *end || !j || j>104857 || strlen(get("jobs"))>6)fail("--jobs must be a positive integer or auto");request.jobs=j;}
  if(!strcmp(get("build-profile"),"auto"))set("build-profile",request.packages?"production":"development",false);
@@ -250,6 +295,12 @@ validate(void)
  for(size_t i=0;i<nitems(paths);i++) {if(*get(paths[i])!='/' || strchr(get(paths[i]),'$'))fail("world configuration paths must be absolute without make expansion");if(selected(paths[i]) && strcmp(get(paths[i]),"/dev/null"))regular(get(paths[i]),false);}
  if(*get("kernel-dir")){canonical("kernel-dir");regular(format("%s/%s",get("kernel-dir"),get("kernel")),false);}
  if(*get("pkg-key") && !request.packages)fail("--pkg-key applies only to build or packages");
+ if(selected("package-tool")) {
+  if(!request.packages && !action("snapshot"))fail("--package-tool applies only to build, packages or snapshot");
+  regular(get("package-tool"),false);canonical("package-tool");
+  if(strspn(get("package-tool"),"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_-.+")!=strlen(get("package-tool")))fail("--package-tool path must contain only make/shell-safe characters");
+  if(access(get("package-tool"),X_OK)<0)fail("--package-tool must be executable");
+ }
  if(*get("pkg-package") || *get("pkg-package-sha256")) {
   if(!request.packages)fail("bootstrap pkg inputs apply only to build or packages");
   const char *hash=get("pkg-package-sha256");
@@ -263,6 +314,7 @@ validate(void)
   if(strspn(get("application-selection"),"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_-.+")!=strlen(get("application-selection")))fail("--application-selection path must contain only make/shell-safe characters");
  }
  if(selected("ports") && !request.packages)fail("--ports applies only to packages");
+ if(selected("candidate-publication") && !request.packages)fail("--candidate-publication applies only to packages/build");
  if(selected("publish-repository") && !request.packages)fail("--publish-repository applies only to packages/build");
  if(!strcmp(get("signing"),"auto"))set("signing",*get("key")?"signed":"unsigned",false);
  if(!oneof(get("signing"),"unsigned|development|signed"))fail("unknown signing mode");
@@ -289,6 +341,14 @@ validate(void)
  } else if(*get("hardware-profile") || *get("distfiles"))fail("hardware profile and distfiles apply only to build or packages");
  if(selected("media-format") && !action("media"))fail("--media-format applies only to media");
  if(!oneof(get("media-format"),"all|iso|memstick"))fail("invalid media format");
+ if(action("snapshot")) {
+  if(!*get("repository") || !*get("pkg-public-key") || !*get("package-tool") || !*get("snapshot-abi") || !*get("snapshot-osversion"))fail("snapshot requires repository, public trust key, package tool, ABI and OS version");
+  if(strcmp(get("signing"),"unsigned"))fail("snapshot verifies consumer trust and does not sign");
+  regular(get("pkg-public-key"),false);canonical("pkg-public-key");canonical("repository");regular(format("%s/publication.json",get("repository")),false);
+  const char *abi=get("snapshot-abi"),*version=get("snapshot-osversion");char *end;errno=0;unsigned long n=strtoul(version,&end,10);
+  if(strlen(abi)>128 || strspn(abi,"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:_-.")!=strlen(abi))fail("invalid snapshot ABI");
+  if(strspn(version,"0123456789")!=strlen(version) || errno || *end || !n || n>INT_MAX)fail("snapshot OS version must be a positive 32-bit integer");
+ } else if(selected("snapshot-abi") || selected("snapshot-osversion"))fail("snapshot target inputs apply only to snapshot");
  bool deploy=action("deploy") || action("bsdinstall") || action("media");
  if(deploy){
   regular(get("public-key"),false);canonical("public-key");regular(get("pkg-public-key"),false);canonical("pkg-public-key");canonical("repository");regular(format("%s/publication.json",get("repository")),false);
@@ -298,24 +358,207 @@ validate(void)
   if((*get("clone-from") || *get("be-root")) && !*get("bootenv"))fail("--clone-from/--be-root require --bootenv");
   if(*get("be-root") && !*get("clone-from"))fail("--be-root requires --clone-from");
   if(action("bsdinstall") && request.cross)fail("bsdinstall requires native architecture");
- } else if(*get("repository") || *get("pkg-public-key") || *get("bootenv") || *get("clone-from") || *get("be-root"))fail("repository settings apply only to deployment");
+ } else if((!action("snapshot") && (*get("repository") || *get("pkg-public-key"))) || *get("bootenv") || *get("clone-from") || *get("be-root"))fail("repository settings apply only to deployment or snapshot");
  if(action("verify") || action("sign")){
   if(!*get("root"))fail("requires --root DIRECTORY");canonical("root");
   if(!strcmp(get("root"),"/") || stat(get("root"),&st)<0 || !S_ISDIR(st.st_mode))fail("requires an alternate root directory");
   if(action("verify")){regular(get("public-key"),false);canonical("public-key");}
   if(action("sign") && strcmp(get("signing"),"signed"))fail("sign requires signed mode and --key");
- } else if(!deploy && (*get("root") || *get("public-key")))fail("--root and --public-key apply only to verify/sign/deploy");
+ } else if(!deploy && !action("secureboot-test") && !action("reconcile") && !action("construct") && !action("image") && (*get("root") || *get("public-key")))fail("--root and --public-key apply only to verify/sign/deploy");
+ if(selected("storage-layout-policy")) {
+  if(!action("reconcile") && !action("image") && !action("construct"))fail("--storage-layout-policy applies only to construct, reconcile or image");
+  regular(get("storage-layout-policy"),false);canonical("storage-layout-policy");
+ }
+ if(action("inventory")) {
+  regular(get("package-selection"),false);canonical("package-selection");
+  if(strcmp(get("signing"),"unsigned"))fail("inventory does not sign or authenticate packages");
+ } else if(selected("package-selection"))fail("--package-selection applies only to inventory");
+ if(action("reconcile") || action("construct") || action("image")) {
+  if(!*get("root"))fail("offline generation operation requires --root");
+  if(lstat(get("root"),&st)<0 || S_ISLNK(st.st_mode))fail("offline generation root must be a directory, not a symlink");canonical("root");
+  if(!strcmp(get("root"),"/") || stat(get("root"),&st)<0 || !S_ISDIR(st.st_mode))fail("requires an alternate root directory");
+  regular(get("inventory"),false);canonical("inventory");regular(get("generated"),false);canonical("generated");
+  if(strcmp(get("signing"),"unsigned") || *get("public-key"))fail("offline generation operations do not authenticate or sign inputs");
+ } else if(action("inventory-audit")) {
+  regular(get("inventory"),false);canonical("inventory");
+  if(*get("generated") || strcmp(get("signing"),"unsigned"))fail("inventory-audit accepts inventory only and does not sign inputs");
+ } else if(action("deploy")) {
+  if(*get("inventory"))fail("deploy derives inventory from authenticated package fetch");
+  if(!*get("generated"))fail("deploy requires --generated construction manifest");
+  regular(get("generated"),false);canonical("generated");
+ } else if(*get("inventory") || *get("generated"))fail("--inventory applies only to reconcile, construct, image or inventory-audit; --generated applies only to reconcile, construct, image or deploy");
+ {
+  const char *names[]={"construction-receipt","image-makefs","image-mdconfig","image-mount","image-umount"};
+  for(size_t i=0;i<nitems(names);i++) {
+   if(action("image")) {if(!*get(names[i]))fail("image requires a construction receipt and all four explicit image tools");regular(get(names[i]),false);canonical(names[i]);}
+   else if(selected(names[i]))fail("image inputs apply only to image");
+  }
+ }
+ {
+  const char *names[]={"boot-image","boot-archive","image-receipt"};
+  for(size_t i=0;i<nitems(names);i++) {
+   if(action("boot-check") || action("boot-stage")) {if(!*get(names[i]))fail("boot-check/boot-stage require image, boot archive and image receipt");regular(get(names[i]),false);canonical(names[i]);}
+   else if(selected(names[i]))fail("boot inputs apply only to boot-check or boot-stage");
+  }
+  if((action("boot-check") || action("boot-stage")) && strcmp(get("signing"),"unsigned"))fail("boot-check does not authenticate or sign inputs");
+ }
+ if(selected("boot-signing-key") || selected("boot-signing-certificate") || selected("boot-openssl")) {
+  if(!action("boot-stage") || !*get("boot-policy") || !*get("boot-generated") || !*get("boot-signing-key") || !*get("boot-signing-certificate") || !*get("boot-openssl"))fail("boot manifest signing requires boot-stage, --boot-policy, --boot-generated, --boot-signing-key, --boot-signing-certificate and --boot-openssl");
+  regular(get("boot-signing-key"),true);canonical("boot-signing-key");
+  regular(get("boot-signing-certificate"),false);canonical("boot-signing-certificate");
+  regular(get("boot-openssl"),false);canonical("boot-openssl");
+  if(access(get("boot-openssl"),X_OK)<0)fail("--boot-openssl must be executable");
+ }
+ if(selected("boot-efi-signing-key") || selected("boot-efi-signing-certificate")) {
+  if(!action("boot-stage") || !*get("boot-efi-path") || !*get("boot-efi-signing-key") || !*get("boot-efi-signing-certificate"))fail("separate EFI signing requires boot-stage EFI inputs and both key and certificate");
+  regular(get("boot-efi-signing-key"),true);canonical("boot-efi-signing-key");
+  regular(get("boot-efi-signing-certificate"),false);canonical("boot-efi-signing-certificate");
+ }
+ if(selected("boot-efi-signature-verifier") || selected("boot-efi-path") || selected("boot-efi-signer") || selected("boot-loader-build") || selected("boot-loader-build-sha256") || selected("boot-manifest-verifier")) {
+  if(!action("boot-stage") || !*get("boot-signing-key") || !*get("boot-efi-path") || !*get("boot-efi-signer"))fail("EFI signing requires boot-stage manifest signing, --boot-efi-path and --boot-efi-signer");
+  const char *pin=get("boot-loader-build-sha256");
+  if(!*get("boot-loader-build") || strlen(pin)!=64 || strspn(pin,"0123456789abcdef")!=64)fail("EFI signing requires --boot-loader-build and its lowercase --boot-loader-build-sha256");
+  regular(get("boot-loader-build"),false);canonical("boot-loader-build");
+  if(!*get("boot-manifest-verifier"))fail("EFI signing requires --boot-manifest-verifier");
+  regular(get("boot-manifest-verifier"),false);canonical("boot-manifest-verifier");
+  if(access(get("boot-manifest-verifier"),X_OK)<0)fail("manifest verifier must be executable");
+  if(strncmp(get("boot-efi-path"),"/boot/",6))fail("EFI loader must be a boot inventory path");
+  if(!*get("boot-efi-signature-verifier"))fail("EFI signing requires --boot-efi-signature-verifier");
+  regular(get("boot-efi-signature-verifier"),false);canonical("boot-efi-signature-verifier");
+  if(access(get("boot-efi-signature-verifier"),X_OK)<0)fail("EFI signature verifier must be executable");
+  regular(get("boot-efi-signer"),false);canonical("boot-efi-signer");
+  if(access(get("boot-efi-signer"),X_OK)<0)fail("EFI signer must be executable");
+ }
+ {
+  const char *media[]={"boot-media-makefs","boot-media-mkimg","boot-efi-fallback","boot-esp-mib","boot-free-percent"};
+  bool requested=false;for(size_t i=0;i<nitems(media);i++)if(selected(media[i]))requested=true;
+  if(requested) {
+   if(!action("boot-stage") || !*get("boot-efi-path") || !*get("boot-root-path"))fail("boot media requires boot-stage EFI signing and --boot-root-path");
+   for(size_t i=0;i<nitems(media);i++)if(!*get(media[i]))fail("boot media requires both tools, fallback name, ESP capacity and free percentage");
+   for(size_t i=0;i<2;i++){regular(get(media[i]),false);canonical(media[i]);if(access(get(media[i]),X_OK)<0)fail("boot media tool must be executable");}
+   const char *fallback=get("boot-efi-fallback");size_t length=strlen(fallback);
+   if(length<9 || strncmp(fallback,"BOOT",4) || strcmp(fallback+length-4,".EFI") || strspn(fallback+4,"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")!=length-8)fail("invalid boot EFI fallback name");
+   for(size_t i=3;i<5;i++){const char *v=get(media[i]);if(strlen(v)>4 || strspn(v,"0123456789")!=strlen(v))fail("invalid boot media capacity");unsigned long n=strtoul(v,NULL,10);if((i==3 && (n<16 || n>1024)) || (i==4 && n>50))fail("invalid boot media capacity");}
+  }
+ }
+ if(selected("boot-root-path")) {
+  if(!action("boot-stage") || strncmp(get("boot-root-path"),"/boot/",6))fail("--boot-root-path requires boot-stage and a boot inventory path");
+ }
+ if(selected("boot-verity-image") || selected("boot-verity-descriptor")) {
+  if((!action("boot-check") && !action("boot-stage")) || !*get("boot-verity-image") || !*get("boot-verity-descriptor"))fail("verity artifact inputs require boot-check/boot-stage and both image and descriptor");
+  if(action("boot-stage") && !*get("boot-policy"))fail("disk staging requires an explicit boot policy");
+  regular(get("boot-verity-image"),false);canonical("boot-verity-image");
+  regular(get("boot-verity-descriptor"),false);canonical("boot-verity-descriptor");
+ }
+ if(selected("boot-policy")) {
+  if(!action("boot-stage") && !action("boot-check"))fail("--boot-policy applies only to boot-check or boot-stage");
+  regular(get("boot-policy"),false);canonical("boot-policy");
+ }
+ if(selected("boot-generated")) {
+  if(!action("boot-stage"))fail("--boot-generated applies only to boot-stage");
+  regular(get("boot-generated"),false);canonical("boot-generated");
+ }
+ if(selected("image-verity-policy")) {
+  if(!action("image") || !*get("storage-layout-policy"))fail("--image-verity-policy requires image with --storage-layout-policy");
+  regular(get("image-verity-policy"),false);canonical("image-verity-policy");
+ }
+ if(selected("image-boot-archive") && !action("image"))fail("--image-boot-archive applies only to image");
+ if(selected("extract-tar")) {
+  if(!action("construct"))fail("--extract-tar applies only to construct");
+  regular(get("extract-tar"),false);canonical("extract-tar");
+ }
+ if(selected("installation-policy")) {
+  if(!action("construct"))fail("--installation-policy applies only to construct");
+  if(!*get("installation-policy"))fail("--installation-policy requires a file");
+  regular(get("installation-policy"),false);canonical("installation-policy");
+ }
+ if(selected("library-policy")) {
+  if(!action("construct"))fail("--library-policy applies only to construct");
+  if(!*get("library-policy"))fail("--library-policy requires a file");
+  regular(get("library-policy"),false);canonical("library-policy");
+ }
+ if(selected("module-policy")) {
+  if(!action("construct"))fail("--module-policy applies only to construct");
+  if(!*get("module-policy"))fail("--module-policy requires a file");
+  regular(get("module-policy"),false);canonical("module-policy");
+ }
+ if(selected("certificate-policy")) {
+  if(!action("construct"))fail("--certificate-policy applies only to construct");
+  if(!*get("certificate-policy"))fail("--certificate-policy requires a file");
+  regular(get("certificate-policy"),false);canonical("certificate-policy");
+ }
+ {
+  const char *names[]={"database-pkg","database-sqlite","database-contract","database-policy","database-osversion"};
+  bool any=false;for(size_t i=0;i<5;i++)if(selected(names[i]))any=true;
+  if(any) {
+   if(!action("construct"))fail("database inputs apply only to construct");
+   for(size_t i=0;i<5;i++)if(!*get(names[i]))fail("database construction requires all five explicit database inputs");
+   for(size_t i=0;i<4;i++){regular(get(names[i]),false);canonical(names[i]);}
+   const char *value=get("database-osversion");char *end;errno=0;unsigned long version=strtoul(value,&end,10);
+   if(strspn(value,"0123456789")!=strlen(value) || errno || *end || !version || version>INT_MAX)fail("database OSVERSION must be a positive 32-bit integer");
+  }
+ }
+ if(action("construct")) {
+  const char *value=get("construction-timeout");char *end;errno=0;unsigned long seconds=strtoul(value,&end,10);
+  if(!*value || strspn(value,"0123456789")!=strlen(value) || errno || *end || !seconds || seconds>86400)fail("--construction-timeout must be between 1 and 86400 seconds");
+ } else if(selected("construction-timeout"))fail("--construction-timeout applies only to construct");
+ if((!strcmp(get("test-case"),"firmware-signed-manifest") || !strcmp(get("test-case"),"revoked-generation-manifest")) && !*get("test-generation-key"))fail("generation trust cases require explicit generation key and certificate");
+ if(selected("test-generation-key") || selected("test-generation-certificate")) {
+  if(!action("secureboot-test") || !*get("test-generation-key") || !*get("test-generation-certificate"))fail("generation test signing requires secureboot-test and both key and certificate");
+  if(!*get("test-case") || !strcmp(get("test-case"),"second-db-cert") || !strcmp(get("test-case"),"second-dbx-cert") || !strcmp(get("test-case"),"second-dbx-hash"))fail("generation test signing requires an explicit case independent of secondary firmware db trust");
+  regular(get("test-generation-key"),true);canonical("test-generation-key");
+  regular(get("test-generation-certificate"),false);canonical("test-generation-certificate");
+  const char *cert=get("test-generation-certificate");
+  if(strspn(cert,"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-")!=strlen(cert))fail("generation certificate path must be a literal make word using letters, digits, slash, dot, underscore or dash");
+ }
  if(action("bazel-test")) {
   if(request.cross || strcmp(request.arch,"amd64"))fail("bazel-test currently requires native amd64");
   if(!*get("bazel"))fail("bazel-test requires --bazel");
   canonical("bazel");regular(get("bazel"),false);
+  if(*get("bazel-inputs")){canonical("bazel-inputs");regular(get("bazel-inputs"),false);}
   if(access(get("bazel"),X_OK)<0)fail("--bazel must be executable");
   if(strcmp(get("signing"),"unsigned") || yes("incremental"))fail("bazel-test requires unsigned fresh qualification output");
   if(selected("src-conf") || selected("make-conf") || selected("build-profile") || selected("production"))fail("bazel-test uses its staged development SDK and fixed comparison configuration");
- } else if(selected("bazel"))fail("--bazel applies only to bazel-test");
- if(*get("output") && !action("stage") && !action("media") && !action("bazel-test"))fail("--output applies only to stage, media or bazel-test");
- if(action("stage") || action("media") || action("bazel-test")){
-  if(!*get("output"))set("output",format(OBJECT "/usr/src/%s/%s",action("media")?"media":action("bazel-test")?"bazel-qualification":"stages",strrchr(request.run,'/')+1),false);
+ } else if(selected("bazel") || selected("bazel-inputs"))fail("--bazel and --bazel-inputs apply only to bazel-test");
+ if(action("loader-build")) {
+  if(request.cross || strcmp(request.arch,"amd64"))fail("loader-build currently requires native amd64");
+  if(!*get("loader-anchors"))fail("loader-build requires --loader-anchors");
+  regular(get("loader-anchors"),false);canonical("loader-anchors");
+  if(strcmp(get("signing"),"unsigned") || yes("incremental"))fail("loader-build produces an unsigned loader in a fresh object tree");
+  if((selected("src-conf") && strcmp(get("src-conf"),"/dev/null")) ||
+     (selected("make-conf") && strcmp(get("make-conf"),"/dev/null")))fail("loader-build uses a fixed trust profile with /dev/null make configurations");
+  set("src-conf","/dev/null",false);set("make-conf","/dev/null",false);
+ } else if(selected("loader-anchors"))fail("--loader-anchors applies only to loader-build");
+ if(action("secureboot-test")) {
+  if(selected("test-case") && (!*get("test-case") || strlen(get("test-case"))>80 || strspn(get("test-case"),"abcdefghijklmnopqrstuvwxyz0123456789-")!=strlen(get("test-case"))))fail("--test-case requires one runner case name");
+  if(request.cross || strcmp(request.arch,"amd64"))fail("Secure Boot qualification requires native amd64");
+  if(!firmware_test()) {
+  if(!*get("root"))fail("secureboot-test requires --root with a matching staged kernel");
+  canonical("root");
+  if(!under(get("root"),OBJECT))fail("qualification root must be staged under /usr/obj");
+  regular(format("%s/boot/kernel/kernel",get("root")),false);
+  } else if(*get("root") || *get("test-generation-key"))fail("firmware-only tests do not use a staged root or generation key");
+  if(strcmp(get("signing"),"unsigned") || *get("public-key") || yes("incremental"))fail("secureboot-test generates disposable keys and always rebuilds its loader");
+  const char *programs[]={"qemu","uefi-vars-tool"};
+  for(size_t i=0;i<nitems(programs);i++){canonical(programs[i]);regular(get(programs[i]),false);}
+  canonical("qemu-data");
+  if(firmware_test()) {
+   if(!*get("test-firmware-code") || !*get("test-firmware-vars"))fail("firmware tests require explicit --test-firmware-code and --test-firmware-vars");
+   const char *inputs[]={"test-firmware-code","test-firmware-vars","test-openssl","test-uefisign","test-makefs","test-mkimg"};
+   for(size_t i=0;i<nitems(inputs);i++){canonical(inputs[i]);regular(get(inputs[i]),false);}
+  } else {
+  regular(format("%s/edk2-x86_64-secure-code.fd",get("qemu-data")),false);
+  regular(format("%s/edk2-i386-vars.fd",get("qemu-data")),false);
+  }
+ } else if(selected("test-case") || selected("qemu") || selected("qemu-data") || selected("uefi-vars-tool"))fail("QEMU options apply only to secureboot-test");
+ {
+  const char *inputs[]={"test-firmware-code","test-firmware-vars","test-openssl","test-uefisign","test-makefs","test-mkimg"};
+  for(size_t i=0;i<nitems(inputs);i++)if(selected(inputs[i]) && !firmware_test())fail("firmware inputs require secureboot-test --test-case firmware");
+ }
+ if(*get("output") && !action("inventory") && !action("inventory-audit") && !action("stage") && !action("media") && !action("secureboot-test") && !action("reconcile") && !action("construct") && !action("image") && !action("boot-stage") && !action("boot-observe") && !action("compose-config") && !action("snapshot") && !action("state-storage") && !action("loader-build") && !action("bazel-test"))fail("--output applies only to stage, media, secureboot-test, reconcile, construct, image or boot-observe");
+ if(action("inventory") || action("inventory-audit") || action("stage") || action("media") || action("secureboot-test") || action("reconcile") || action("construct") || action("image") || action("boot-stage") || action("boot-observe") || action("compose-config") || action("snapshot") || action("state-storage") || action("loader-build") || action("bazel-test")){
+  if(action("snapshot") && !*get("output"))set("output",format("%s/repository",request.run),false);
+  if(!*get("output"))set("output",format(OBJECT "/usr/src/%s/%s",action("inventory")?"inventories":action("inventory-audit")?"inventory-audits":action("media")?"media":action("reconcile")?"reconciliation":action("construct")?"construction":action("image")?"images":action("boot-stage")?"boot-stages":action("boot-observe")?"boot-observations":action("compose-config")?"configuration-compositions":action("state-storage")?"state-storage":action("loader-build")?"loaders":action("bazel-test")?"bazel-qualification":"stages",strrchr(request.run,'/')+1),false);
   if(strpbrk(get("output")," \t") || strstr(get("output"),"/../"))fail("stage path must contain no traversal or whitespace");
   if(!under(get("output"),OBJECT) || !strcmp(get("output"),OBJECT))fail("staging must be under /usr/obj");
   if(lstat(get("output"),&st)==0 || errno!=ENOENT)fail("output stage must be a new path");canonical("output");
@@ -370,14 +613,108 @@ plan(void)
 {
  struct step *s;
  if(action("bazel-test")) {
-  s=step("bazel-qualification");args(s,PYTHON,SOURCE "/tools/build/bazel/qualify.py",
+  s=step("bazel-qualification");args(s,PYTHON,*get("bazel-inputs")?SOURCE "/tools/build/bazel/native-qualify.py":SOURCE "/tools/build/bazel/qualify.py",
       "--src",SOURCE,"--objtop",OBJECT "/usr/src/amd64.amd64",
-      "--bazel",get("bazel"),"--output",get("output"),"--jobs",format("%u",request.jobs),NULL);return;
+      "--bazel",get("bazel"),"--output",get("output"),"--jobs",format("%u",request.jobs),NULL);
+  if(*get("bazel-inputs"))args(s,"--inputs",get("bazel-inputs"),NULL);
+  return;
+ }
+ if(action("loader-build")) {
+  s=step("loader-build");args(s,PYTHON,HELPERS "loader_build.py","--anchors",get("loader-anchors"),"--output",get("output"),"--jobs",format("%u",request.jobs),NULL);return;
+ }
+ if(action("inventory")) {
+  char *directory=strdup(get("output"));*strrchr(directory,'/')=0;
+  s=step("inventory-parent");args(s,"mkdir","-p",directory,NULL);free(directory);
+  s=step("inventory-directory");args(s,"mkdir","-m","0700","--",get("output"),NULL);
+  s=step("inventory");args(s,PYTHON,HELPERS "package_inventory.py","--selection",get("package-selection"),"--output",format("%s/inventory.json",get("output")),NULL);return;
+ }
+ if(action("state-storage")){s=step("state-storage");args(s,PYTHON,HELPERS "state_storage.py","--plan",get("state-plan"),"--output",get("output"),NULL);return;}
+ if(action("snapshot")){s=step("snapshot");args(s,PYTHON,SOURCE "/release/scripts/hardware-packages.py","copy-signed-repository","--repository",get("repository"),"--output",get("output"),"--public-key",get("pkg-public-key"),"--pkg",get("package-tool"),"--abi",get("snapshot-abi"),"--osversion",get("snapshot-osversion"),NULL);return;}
+ if(action("compose-config")){s=step("compose-config");args(s,PYTHON,HELPERS "configuration_compose.py","--base",get("configuration-base"),"--changes",get("configuration-changes"),"--ucl-parser",get("configuration-parser"),"--ucl-parser-sha256",get("configuration-parser-sha256"),"--output",get("output"),NULL);if(*get("capsule-validator"))args(s,"--capsule-validator",get("capsule-validator"),"--capsule-validator-sha256",get("capsule-validator-sha256"),NULL);return;}
+ if(action("boot-observe")){s=step("boot-observe");args(s,PYTHON,SOURCE "/tools/test/boot-observe/run.py","--policy",get("boot-observation-policy"),"--work",get("output"),NULL);return;}
+ if(action("boot-check") || action("boot-stage")) {
+  s=step(request.action);args(s,PYTHON,HELPERS "generation_boot.py","--image",get("boot-image"),"--boot-archive",get("boot-archive"),"--image-receipt",get("image-receipt"),NULL);if(action("boot-stage"))args(s,"--output",get("output"),NULL);if(*get("boot-generated"))args(s,"--generated",get("boot-generated"),NULL);if(*get("boot-policy"))args(s,"--boot-policy",get("boot-policy"),NULL);if(*get("boot-verity-image"))args(s,"--verity-image",get("boot-verity-image"),"--verity-descriptor",get("boot-verity-descriptor"),NULL);if(*get("boot-root-path"))args(s,"--root-path",get("boot-root-path"),NULL);if(*get("boot-signing-key"))args(s,"--signing-key",get("boot-signing-key"),"--signing-certificate",get("boot-signing-certificate"),"--openssl",get("boot-openssl"),NULL);if(*get("boot-efi-path"))args(s,"--efi-path",get("boot-efi-path"),"--efi-signer",get("boot-efi-signer"),"--efi-signature-verifier",get("boot-efi-signature-verifier"),"--loader-build-receipt",get("boot-loader-build"),"--loader-build-sha256",get("boot-loader-build-sha256"),"--manifest-verifier",get("boot-manifest-verifier"),NULL);if(*get("boot-efi-signing-key"))args(s,"--efi-signing-key",get("boot-efi-signing-key"),"--efi-signing-certificate",get("boot-efi-signing-certificate"),NULL);if(*get("boot-media-makefs"))args(s,"--media-makefs",get("boot-media-makefs"),"--media-mkimg",get("boot-media-mkimg"),"--efi-fallback-name",get("boot-efi-fallback"),"--esp-mib",get("boot-esp-mib"),"--boot-free-percent",get("boot-free-percent"),NULL);return;
+ }
+ if(action("image")) {
+  s=step("image");args(s,PYTHON,HELPERS "generation_image.py","--root",get("root"),"--inventory",get("inventory"),"--generated",get("generated"),"--construction-receipt",get("construction-receipt"),"--output",get("output"),"--makefs",get("image-makefs"),"--mdconfig",get("image-mdconfig"),"--mount",get("image-mount"),"--umount",get("image-umount"),NULL);if(*get("image-verity-policy"))args(s,"--verity-policy",get("image-verity-policy"),NULL);if(!strcmp(get("image-boot-archive"),"yes"))args(s,"--boot-archive",NULL);if(*get("storage-layout-policy"))args(s,"--storage-layout-policy",get("storage-layout-policy"),NULL);return;
+ }
+ if(action("construct")) {
+  s=step("construct");args(s,PYTHON,HELPERS "construction.py","--root",get("root"),"--inventory",get("inventory"),"--generated",get("generated"),"--output",get("output"),"--timeout",get("construction-timeout"),NULL);
+  if(*get("extract-tar"))args(s,"--extract-tar",get("extract-tar"),NULL);
+  if(*get("database-pkg"))args(s,"--database-pkg",get("database-pkg"),"--database-sqlite",get("database-sqlite"),"--database-contract",get("database-contract"),"--database-policy",get("database-policy"),"--database-osversion",get("database-osversion"),NULL);
+  if(*get("module-policy"))args(s,"--module-policy",get("module-policy"),NULL);
+  if(*get("library-policy"))args(s,"--library-policy",get("library-policy"),NULL);
+  if(*get("installation-policy"))args(s,"--installation-policy",get("installation-policy"),NULL);
+  if(*get("storage-layout-policy"))args(s,"--storage-layout-policy",get("storage-layout-policy"),NULL);
+  if(*get("certificate-policy"))args(s,"--certificate-policy",get("certificate-policy"),NULL);return;
+ }
+ if(action("inventory-audit")) {
+  char *parent=strdup(get("output"));*strrchr(parent,'/')='\0';
+  s=step("audit-parent");args(s,"mkdir","-p",parent,NULL);free(parent);
+  s=step("audit-directory");args(s,"mkdir",get("output"),NULL);
+  s=step("inventory-audit");args(s,PYTHON,HELPERS "inventory_audit.py","--inventory",get("inventory"),"--output",format("%s/inventory-review.json",get("output")),NULL);return;
+ }
+ if(action("reconcile")) {
+  s=step("reconcile");args(s,PYTHON,HELPERS "generation_check.py","--root",get("root"),"--inventory",get("inventory"),"--generated",get("generated"),"--output",get("output"),NULL);
+  if(*get("storage-layout-policy"))args(s,"--storage-layout-policy",get("storage-layout-policy"),NULL);
+  return;
+ }
+ if(action("secureboot-test")) {
+  /* Firmware-verification options change shared stand libraries. Keep them
+   * out of the world tree, including when the next build is incremental. */
+  char *loader_prefix=format("%s/secureboot-obj",request.run);
+  char *loader_objtop=format("%s/usr/src/%s.%s",loader_prefix,request.target,request.arch);
+  const char *targets[]={"clean","efi-loader"};
+  for(size_t i=0;i<nitems(targets);i++) {
+   s=step(i?"secureboot-loader":"secureboot-loader-clean");
+   args(s,"env",format("MAKEOBJDIRPREFIX=%s",loader_prefix),"make","-C",SOURCE "/stand","-j",format("%u",request.jobs),
+       "WITH_BEARSSL=yes","WITH_LOADER_VERIEXEC=yes","WITH_LOADER_EFI_SECUREBOOT=yes",
+       "WITHOUT_LOADER_VERIEXEC_VECTX=yes","WITHOUT_FORTH=yes","WITHOUT_LOADER_IA32=yes",NULL);
+   if(*get("test-generation-certificate")) {
+    arg(s,"WITHOUT_LOADER_EFI_TRUST_DB=yes");
+    assignment(s,"TRUST_ANCHORS",get("test-generation-certificate"));
+   }
+   assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));arg(s,targets[i]);
+  }
+  if(firmware_test()) {
+   s=step("secureboot-firmware-probe");args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE,"buildenv",
+       format("BUILDENV_SHELL=make -C %s/tools/test/secureboot/firmware -j%u BOOTOBJ=%s/stand all",SOURCE,request.jobs,loader_objtop),NULL);
+   assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));
+   s=step("secureboot-firmware-update-probe");args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE,"buildenv",
+       format("BUILDENV_SHELL=make -C %s/tools/test/secureboot/firmware/update -j%u BOOTOBJ=%s/stand all",SOURCE,request.jobs,loader_objtop),NULL);
+   assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));
+   s=step("secureboot-firmware-evidence-tests");args(s,"env",format("FIRMWARE_TEST_OPENSSL=%s",get("test-openssl")),PYTHON,"-B","-m","unittest","discover","-s",SOURCE "/tools/test/secureboot/firmware","-p","*_test.py",NULL);
+   s=step("secureboot-firmware-vm");args(s,PYTHON,"-B",SOURCE "/tools/test/secureboot/firmware/suite.py",
+       "--probe",OBJECT "/usr/src/amd64.amd64/tools/test/secureboot/firmware/firmware_probe.efi",
+       "--update-probe",OBJECT "/usr/src/amd64.amd64/tools/test/secureboot/firmware/update/firmware_update.efi",
+       "--firmware",get("test-firmware-code"),"--variables",get("test-firmware-vars"),
+       "--vars-tool",get("uefi-vars-tool"),"--openssl",get("test-openssl"),"--uefisign",get("test-uefisign"),
+       "--makefs",get("test-makefs"),"--mkimg",get("test-mkimg"),
+       "--qemu",get("qemu"),"--qemu-data",get("qemu-data"),"--work",get("output"),NULL);
+   return;
+  }
+  s=step("secureboot-bootstrap");args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE,"buildenv",
+      format("BUILDENV_SHELL=sh %s/tools/test/secureboot/build-bootstrap.sh %s %u",SOURCE,SOURCE,request.jobs),NULL);
+  assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));
+  s=step("secureboot-fixture");args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE,"buildenv",
+      format("BUILDENV_SHELL=make -C %s/tools/test/secureboot -j%u SECUREBOOT_OBJTOP=%s all",SOURCE,request.jobs,loader_objtop),NULL);
+  assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));
+  s=step("secureboot-parser");args(s,OBJECT "/usr/src/amd64.amd64/tools/test/secureboot/efi_database_test",NULL);
+  s=step("secureboot-host-tools-directory");args(s,"mkdir","-p",request.native,NULL);
+  s=step("secureboot-host-tools");args(s,"make","-C",request.native,"-f",HELPERS "host-tools.mk","-j",format("%u",request.jobs),"SRCTOP=" SOURCE,"all",NULL);
+  s=step("secureboot-staging-growth");args(s,PYTHON,SOURCE "/tools/test/secureboot/efi_staging_test.py",NULL);
+  s=step("secureboot-vm");args(s,PYTHON,SOURCE "/tools/test/secureboot/run.py","--root",get("root"),"--work",get("output"),"--kernel",get("kernel"),"--qemu",get("qemu"),"--qemu-data",get("qemu-data"),"--vars-tool",get("uefi-vars-tool"),"--capsign",format("%s/capsign",request.native),"--loader",format("%s/stand/efi/loader_lua/loader_lua.efi",loader_objtop),"--startup-policy",SOURCE "/stand/lua/secureboot.lua",NULL);
+  if(*get("test-generation-key"))args(s,"--generation-key",get("test-generation-key"),"--generation-certificate",get("test-generation-certificate"),NULL);
+  if(*get("test-case"))args(s,"--case",get("test-case"),NULL);
+  s=step("secureboot-evidence");args(s,PYTHON,SOURCE "/tools/test/secureboot/verify_evidence.py","--work",get("output"),NULL);
+  if(!*get("test-case"))arg(s,"--require-complete");
+  return;
  }
  bool tools=action("verify") || action("sign") || action("deploy") || action("bsdinstall") || action("media") || strcmp(get("signing"),"unsigned");
  if(tools){
   s=step("host-tools-directory");args(s,"mkdir","-p",request.native,NULL);
   s=step("host-tools");args(s,"make","-C",request.native,"-f",HELPERS "host-tools.mk","-j",format("%u",request.jobs),"SRCTOP=" SOURCE,NULL);
+  if(action("media"))args(s,"all","kldxref",NULL);
  }
  if(action("verify") || action("sign")){
   s=step(request.action);args(s,"env",format("CAPSIGN=%s/capsign",request.native),"sh",action("sign")?HELPERS "sign-stage.sh":HELPERS "verify-stage.sh","-r",get("root"),action("sign")?"-k":"-p",action("sign")?get("key"):get("public-key"),NULL);
@@ -387,6 +724,7 @@ plan(void)
  if(action("deploy") || action("bsdinstall")){
   s=step(request.action);args(s,PYTHON,action("deploy")?HELPERS "deploy.py":HELPERS "installer.py","--repository",get("repository"),"--pkg-public-key",get("pkg-public-key"),"--public-key",get("public-key"),"--kernel",get("kernel"),"--capsign",format("%s/capsign",request.native),NULL);
   if(action("deploy")){
+   args(s,"--generated",get("generated"),NULL);
    args(s,*get("bootenv")?"--bootenv":"--root",*get("bootenv")?get("bootenv"):get("root"),NULL);
    if(*get("clone-from"))args(s,"--clone-from",get("clone-from"),NULL);
    if(*get("be-root"))args(s,"--be-root",get("be-root"),NULL);
@@ -397,7 +735,7 @@ plan(void)
   s=step("media-code-key");args(s,format("%s/capsign",request.native),"key-id","-p",get("public-key"),NULL);
   s=step("media-directory");args(s,"mkdir","-p",get("output"),NULL);
   s=step("media");args(s,"env","MAKEOBJDIRPREFIX=" OBJECT,"make","-C",SOURCE "/release","-j",format("%u",request.jobs),NULL);
-  assignment(s,"RELEASE_OBJDIR",get("output"));assignment(s,"TARGET",request.target);assignment(s,"TARGET_ARCH",request.arch);assignment(s,"KERNCONF",get("kernel"));assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));assignment(s,"PORTSDIR",get("ports"));assignment(s,"PKGBASE_SIGNED_REPOSITORY",get("repository"));assignment(s,"PKGBASE_REPO_PUBLIC_KEY",get("pkg-public-key"));assignment(s,"PKGBASE_CODE_PUBLIC_KEY",get("public-key"));args(s,"HARDWARE_PYTHON=" PYTHON,"NOPKGBASE=","NODISTSETS=yes","NOPKG=yes",NULL);
+  assignment(s,"HARDWARE_KLDXREF",format("%s/kldxref",request.native));assignment(s,"RELEASE_OBJDIR",get("output"));assignment(s,"TARGET",request.target);assignment(s,"TARGET_ARCH",request.arch);assignment(s,"KERNCONF",get("kernel"));assignment(s,"SRCCONF",get("src-conf"));assignment(s,"__MAKE_CONF",get("make-conf"));assignment(s,"PORTSDIR",get("ports"));assignment(s,"PKGBASE_SIGNED_REPOSITORY",get("repository"));assignment(s,"PKGBASE_REPO_PUBLIC_KEY",get("pkg-public-key"));assignment(s,"PKGBASE_CODE_PUBLIC_KEY",get("public-key"));args(s,"HARDWARE_PYTHON=" PYTHON,"NOPKGBASE=","NODISTSETS=yes","NOPKG=yes",NULL);
   if(*get("kernel-dir"))assignment(s,"KERNCONFDIR",get("kernel-dir"));
   if(strcmp(get("media-format"),"memstick"))arg(s,"disc1.iso");if(strcmp(get("media-format"),"iso"))arg(s,"memstick.img");return;
  }
@@ -413,9 +751,15 @@ plan(void)
   }
  } else if(request.packages){
   s=backend.make("system-packages",true);assignment(s,"PORTSDIR",get("ports"));assignment(s,"HARDWARE_PORT_LIST",get("hardware-profile"));assignment(s,"DISTDIR",get("distfiles"));arg(s,"REPODIR=" REPOSITORY);assignment(s,"PUBLISH_REPODIR",get("publish-repository"));
+  /* Incremental compilation must not reuse signed installation output. */
+  assignment(s,"WSTAGEDIR",format("%s/package-stage/world",request.run));
+  assignment(s,"KSTAGEDIR",format("%s/package-stage/kernel",request.run));
+  assignment(s,"SSTAGEDIR",format("%s/package-stage/source",request.run));
   if(*get("pkg-key")){assignment(s,"PKG_REPO_SIGNING_KEY",get("pkg-key"));assignment(s,"HARDWARE_SIGNING_KEY",get("pkg-key"));}
+  if(*get("package-tool"))assignment(s,"PKG_CMD",get("package-tool"));
   if(*get("pkg-package")) {assignment(s,"PKGBASE_PKG_PACKAGE",get("pkg-package"));assignment(s,"PKGBASE_PKG_SHA256",get("pkg-package-sha256"));}
   if(*get("application-selection"))assignment(s,"APPLICATION_PACKAGE_SELECTION",get("application-selection"));
+  assignment(s,"PUBLISH_ADVANCE_LATEST",yes("candidate-publication")?"no":"yes");
   arg(s,"system-packages");
  }
 }
@@ -429,15 +773,11 @@ json_string(const char *s)
 static void
 show_request(void)
 {
- if(action("bazel-test")) {
-  if(!request.json){printf("build-bsd: action=bazel-test cpus=%u target=%s/%s\n",request.jobs,request.target,request.arch);puts("qualification: scope=bazel-compile-comparison make-install-reference=requested runtime=not-performed system-backend=not-qualified");return;}
-  printf("{\"schema\":\"org.5bsd.build-plan.v1\",\"record\":\"request\",\"action\":\"bazel-test\",\"verification_scope\":\"bazel-compile-comparison\",\"make_install_reference\":\"requested\",\"build_backend\":\"bsd-make\",\"boot_verification\":\"not-performed\",\"jobs\":%u}\n",request.jobs);return;
- }
- if(!request.json){printf("build-bsd: action=%s cpus=%u kernel=%s production=%s signing=%s target=%s/%s board=%s\n",request.action,request.jobs,get("kernel"),request.production?"yes":"no",get("signing"),request.target,request.arch,get("board"));return;}
+ if(!request.json){printf("build-bsd: action=%s cpus=%u kernel=%s production=%s bundle-signing-mode=%s target=%s/%s board=%s\n",request.action,request.jobs,get("kernel"),request.production?"yes":"no",get("signing"),request.target,request.arch,get("board"));puts(action("bazel-test")?(*get("bazel-inputs")?"qualification: scope=native-configured-qualification workspace-mode=explicit-inputs runtime=selected-by-inputs system-backend=not-qualified":"qualification: scope=bazel-compile-comparison make-install-reference=requested runtime=not-performed system-backend=not-qualified"):firmware_test()?"security: verification-scope=firmware-only boot-verification=qemu-qualification-requested system-image-verification=not-performed root-protection-verification=not-performed":action("loader-build")?"security: verification-scope=trusted-builder-loader-compilation boot-verification=not-performed root-protection-verification=not-performed activation-authorized=no":action("inventory")?"security: verification-scope=package-payload-inventory input-authentication=not-performed activation-authorized=no":action("inventory-audit")?"security: verification-scope=selected-package-review-inventory input-authentication=not-performed program-compatibility-verification=not-performed authority-assigned=no":action("state-storage")?"security: verification-scope=offline-state-provisioning generation-authentication=not-performed activation-authorized=no":action("snapshot")?"security: verification-scope=signed-repository-snapshot consumer-verification=requested generation-authentication=not-performed activation-authorized=no":action("compose-config")?"security: verification-scope=explicit-configuration-composition input-authentication=not-performed service-policy-validation=not-performed activation-authorized=no":action("boot-observe")?"security: verification-scope=installed-boot-observation boot-verification=not-performed program-compatibility-verification=not-performed activation-authorized=no":action("boot-stage")?"security: verification-scope=boot-transport-makefs-input generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("boot-check")?"security: verification-scope=collected-boot-transport-consistency generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("image")?"security: verification-scope=trusted-builder-filesystem-image input-authentication=not-performed generation-authentication=not-performed boot-verification=not-performed activation-authorized=no":action("construct")?"security: verification-scope=trusted-builder-construction input-authentication=not-performed generation-authentication=not-performed activation-authorized=no":action("deploy")?"security: verification-scope=packages-bundles-and-filesystem generation-authentication=not-performed boot-verification=not-performed root-protection-verification=not-performed":action("reconcile")?"security: verification-scope=offline-filesystem-reconciliation input-authentication=not-performed boot-verification=not-performed root-protection-verification=not-performed":action("secureboot-test")?"security: verification-scope=uefi-and-loader boot-verification=qemu-qualification-requested system-image-verification=qemu-qualification-requested root-protection-verification=not-performed bootstrap-integrity-verification=kernel-dependent program-compatibility-verification=bounded-vm-fixture-requested":"security: verification-scope=system-bundles boot-verification=not-performed root-protection-verification=not-performed");return;}
  printf("{\"schema\":\"org.5bsd.build-plan.v1\",\"record\":\"request\",\"action\":");json_string(request.action);
- const char *names[]={"target","target_arch","kernel","board","build_profile","signing","build_backend","hardware_backend"};
- const char *values[]={request.target,request.arch,get("kernel"),get("board"),get("build-profile"),get("signing"),backend.name,"native-ports"};
- for(size_t i=0;i<nitems(names);i++){printf(",\"%s\":",names[i]);json_string(values[i]);}printf(",\"jobs\":%u}\n",request.jobs);
+ const char *names[]={"target","target_arch","kernel","board","build_profile","signing","signing_scope","build_backend","hardware_backend","verification_scope","boot_verification","root_protection_verification","system_image_verification","bootstrap_integrity_verification","program_compatibility_verification"};
+ const char *values[]={request.target,request.arch,get("kernel"),get("board"),get("build-profile"),get("signing"),"system-bundles",backend.name,"native-ports",action("bazel-test")?(*get("bazel-inputs")?"native-configured-qualification":"bazel-compile-comparison"):firmware_test()?"firmware-only":action("loader-build")?"trusted-builder-loader-compilation":action("inventory")?"package-payload-inventory":action("inventory-audit")?"selected-package-review-inventory":action("state-storage")?"offline-state-provisioning":action("snapshot")?"signed-repository-snapshot":action("compose-config")?"explicit-configuration-composition":action("boot-observe")?"installed-boot-observation":action("boot-stage")?"boot-transport-makefs-input":action("boot-check")?"collected-boot-transport-consistency":action("image")?"trusted-builder-filesystem-image":action("construct")?"trusted-builder-construction":action("deploy")?"packages-bundles-and-filesystem":action("reconcile")?"offline-filesystem-reconciliation":action("secureboot-test")?"uefi-and-loader":"system-bundles",action("secureboot-test")?"qemu-qualification-requested":"not-performed","not-performed",(action("secureboot-test") && !firmware_test())?"qemu-qualification-requested":"not-performed",(action("secureboot-test") && !firmware_test())?"kernel-dependent":"not-performed",(action("secureboot-test") && !firmware_test())?"bounded-vm-fixture-requested":"not-performed"};
+ for(size_t i=0;i<nitems(names);i++){printf(",\"%s\":",names[i]);json_string(values[i]);}if(action("bazel-test"))printf(",\"make_install_reference\":\"%s\"",*get("bazel-inputs")?"not-performed":"requested");printf(",\"jobs\":%u}\n",request.jobs);
 }
 static void
 show_step(struct step *s,size_t number)

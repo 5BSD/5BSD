@@ -1,5 +1,5 @@
 WORLDPACKAGE=	libservice-tests
-SUBPACKAGES=
+SUBPACKAGES=	dbg
 PKG_SETS=	tests
 
 PKG_DEPS.libservice-tests+=	atf

@@ -20,6 +20,7 @@
 ATF_TESTS_C?=
 ATF_TESTS_CXX?=
 ATF_TESTS_SH?=
+ATF_TESTS_SH_INTERPRETER?= /usr/libexec/atf-sh
 ATF_TESTS_KSH93?=
 ATF_TESTS_PYTEST?=
 
@@ -30,12 +31,15 @@ _TESTS+= ${ATF_TESTS_C}
 BINDIR.${_T}= ${TESTSDIR}
 MAN.${_T}?= # empty
 SRCS.${_T}?= ${_T}.c
-DPADD.${_T}+= ${LIBATF_C}
+TEST_FRAMEWORK_LIBS.${_T}= atf_c
+.for _framework_lib in ${TEST_FRAMEWORK_LIBS.${_T}}
+DPADD.${_T}+= ${LIB${_framework_lib:tu}}
 .if empty(LDFLAGS:M-static) && empty(LDFLAGS.${_T}:M-static)
-LDADD.${_T}+= ${LDADD_atf_c}
+LDADD.${_T}+= ${LDADD_${_framework_lib}}
 .else
-LDADD.${_T}+= ${LIBATF_C}
+LDADD.${_T}+= ${LIB${_framework_lib:tu}}
 .endif
+.endfor
 TEST_INTERFACE.${_T}= atf
 .endfor
 .endif
@@ -47,12 +51,15 @@ _TESTS+= ${ATF_TESTS_CXX}
 BINDIR.${_T}= ${TESTSDIR}
 MAN.${_T}?= # empty
 SRCS.${_T}?= ${_T}${CXX_SUFFIX:U.cc}
-DPADD.${_T}+= ${LIBATF_CXX} ${LIBATF_C}
+TEST_FRAMEWORK_LIBS.${_T}= atf_cxx atf_c
+.for _framework_lib in ${TEST_FRAMEWORK_LIBS.${_T}}
+DPADD.${_T}+= ${LIB${_framework_lib:tu}}
 .if empty(LDFLAGS:M-static) && empty(LDFLAGS.${_T}:M-static)
-LDADD.${_T}+= ${LDADD_atf_cxx} ${LDADD_atf_c}
+LDADD.${_T}+= ${LDADD_${_framework_lib}}
 .else
-LDADD.${_T}+= ${LIBATF_CXX} ${LIBATF_C}
+LDADD.${_T}+= ${LIB${_framework_lib:tu}}
 .endif
+.endfor
 TEST_INTERFACE.${_T}= atf
 .endfor
 .endif
@@ -70,7 +77,7 @@ CLEANFILES+= ${_T} ${_T}.tmp
 ATF_TESTS_SH_SED_${_T}?= # empty
 ATF_TESTS_SH_SRC_${_T}?= ${_T}.sh
 ${_T}: ${ATF_TESTS_SH_SRC_${_T}}
-	echo '#! /usr/libexec/atf-sh' > ${.TARGET}.tmp
+	echo '#! ${ATF_TESTS_SH_INTERPRETER}' > ${.TARGET}.tmp
 .if empty(ATF_TESTS_SH_SED_${_T})
 	cat ${.ALLSRC:N*Makefile*} >>${.TARGET}.tmp
 .else

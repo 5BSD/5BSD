@@ -1,0 +1,7 @@
+# A Core class alone must not receive the provider's boot storage grant.
+activation { boot = true; ipc = ["test.StorageClient"]; }
+program = "storage_client";
+control = "core";
+restart = "never";
+user = "root";
+limits { nofile = 128; nproc = 16; core = 0; }

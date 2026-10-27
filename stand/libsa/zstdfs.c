@@ -50,6 +50,15 @@ struct zstd_file
     off_t		zstdf_total_out;
 };
 
+/* The returned descriptor remains owned by this decompressor. */
+static int
+zstdf_source(struct open_file *f)
+{
+	struct zstd_file *source = f->f_fsdata;
+
+	return (source == NULL ? -1 : source->zstdf_rawfd);
+}
+
 static int	zstdf_fill(struct zstd_file *zstdf);
 static int	zstdf_open(const char *path, struct open_file *f);
 static int	zstdf_close(struct open_file *f);
@@ -67,6 +76,7 @@ struct fs_ops zstdfs_fsops = {
 	.fo_seek = zstdf_seek,
 	.fo_stat = zstdf_stat,
 	.fo_readdir = null_readdir,
+	.fo_source = zstdf_source,
 };
 
 static int
@@ -263,16 +273,25 @@ zstdf_seek(struct open_file *f, off_t offset, int where)
 {
     struct zstd_file	*zstdf = (struct zstd_file *)f->f_fsdata;
     off_t		target;
-    char		discard[16];
+    /* Amortize decoder calls while keeping seek scratch space bounded. */
+    char		discard[512];
 
     switch (where) {
     case SEEK_SET:
 	target = offset;
 	break;
     case SEEK_CUR:
-	target = offset + zstdf->zstdf_total_out;
+	if (__builtin_add_overflow(offset, zstdf->zstdf_total_out, &target)) {
+	    errno = EOVERFLOW;
+	    return(-1);
+	}
 	break;
     default:
+	errno = EINVAL;
+	return(-1);
+    }
+
+    if (target < 0) {
 	errno = EINVAL;
 	return(-1);
     }

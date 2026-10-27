@@ -1,5 +1,5 @@
 WORLDPACKAGE=	switchboard-tests
-SUBPACKAGES=
+SUBPACKAGES=	dbg
 PKG_SETS=	tests
 
 PKG_DEPS.switchboard-tests+=	atf

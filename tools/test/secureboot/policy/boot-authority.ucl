@@ -1,0 +1,4 @@
+# Disposable native-service fixture grants; not shipping authorization policy.
+endpoints = ["system.Crypto", "system.Notify", "system.switchboard", "test.Session", "test.Personal"];
+attributes = ["system.switchboard.admin"];
+admin_rights = false;

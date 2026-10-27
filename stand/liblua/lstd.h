@@ -48,6 +48,9 @@ typedef struct FILE
 	int fd;
 	size_t offset;
 	size_t size;
+	int error;
+	struct vectx *verification;
+	char *verification_path;
 } FILE;
 
 typedef struct DIR

@@ -1,0 +1,3 @@
+syntax(2)
+test_suite("bip_filesystem")
+atf_test_program{name="mmap_data_test"}

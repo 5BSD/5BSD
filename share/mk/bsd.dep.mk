@@ -104,10 +104,15 @@ OBJS_DEPEND_GUESS.${_S:${OBJS_SRCS_FILTER:ts:}}.o+=	${_S}
 .endfor
 
 # Lexical analyzers
+# flex accepts one executable path in M4; preserve an environment override.
+LEX_M4?= ${M4:Um4}
 .for _LSRC in ${SRCS:M*.l:N*/*}
 .for _LC in ${_LSRC:R}.c
+LEX_OUTPUTS+= ${_LC}
+LEX_SOURCE.${_LC}= ${_LSRC}
+LEX_FLAGS.${_LC}= ${LFLAGS} ${LFLAGS.${_LSRC}}
 ${_LC}: ${_LSRC}
-	${LEX} ${LFLAGS} ${LFLAGS.${_LSRC}} -o${.TARGET} ${.ALLSRC}
+	M4=${LEX_M4:Q} ${LEX} ${LEX_FLAGS.${.TARGET}} -o${.TARGET} ${.ALLSRC}
 OBJS_DEPEND_GUESS.${_LC:R}.o+=	${_LC}
 SRCS:=	${SRCS:S/${_LSRC}/${_LC}/}
 CLEANFILES+= ${_LC}
@@ -117,9 +122,16 @@ CLEANFILES+= ${_LC}
 # Yacc grammars
 .for _YSRC in ${SRCS:M*.y:N*/*}
 .for _YC in ${_YSRC:R}.c
+YACC_OUTPUTS+= ${_YC}
+YACC_SOURCE.${_YC}= ${_YSRC}
+YACC_FLAGS.${_YC}= ${YFLAGS} ${YFLAGS.${_YSRC}}
+YACC_HEADER.${_YC}=
+YACC_STYLE.${_YC}= named
 SRCS:=	${SRCS:S/${_YSRC}/${_YC}/}
 CLEANFILES+= ${_YC}
 .if !empty(YFLAGS:M-d) && !empty(SRCS:My.tab.h)
+YACC_HEADER.${_YC}= y.tab.h
+YACC_STYLE.${_YC}= traditional
 # Multi-output targets both expect a .meta file and will fight over it. Only
 # allow it on the .c file instead.
 y.tab.h: ${_YC} .NOMETA
@@ -128,11 +140,12 @@ y.tab.h: ${_YC} .NOMETA
 ${_YC}: .PHONY .META
 .endif
 ${_YC}: ${_YSRC}
-	${YACC} ${YFLAGS} ${YFLAGS.${_YSRC}} ${.ALLSRC}
+	${YACC} ${YACC_FLAGS.${.TARGET}} ${.ALLSRC}
 	cp y.tab.c ${_YC}
 CLEANFILES+= y.tab.c y.tab.h
 .elif !empty(YFLAGS:M-d)
 .for _YH in ${_YC:R}.h
+YACC_HEADER.${_YC}= ${_YH}
 # Multi-output targets both expect a .meta file and will fight over it. Only
 # allow it on the .c file instead.
 ${_YH}: ${_YC} .NOMETA
@@ -141,13 +154,13 @@ ${_YH}: ${_YC} .NOMETA
 ${_YC}: .PHONY .META
 .endif
 ${_YC}: ${_YSRC}
-	${YACC} ${YFLAGS} ${YFLAGS.${_YSRC}} -o ${_YC} ${.ALLSRC}
+	${YACC} ${YACC_FLAGS.${.TARGET}} -o ${_YC} ${.ALLSRC}
 SRCS+=	${_YH}
 CLEANFILES+= ${_YH}
 .endfor
 .else
 ${_YC}: ${_YSRC}
-	${YACC} ${YFLAGS} ${YFLAGS.${_YSRC}} -o ${_YC} ${.ALLSRC}
+	${YACC} ${YACC_FLAGS.${.TARGET}} -o ${_YC} ${.ALLSRC}
 .endif
 OBJS_DEPEND_GUESS.${_YC:R}.o+=	${_YC}
 .endfor
@@ -172,6 +185,10 @@ _DTRACE_DRTI_DEP=	${SRCTOP}/cddl/contrib/opensolaris/lib/libdtrace/common/drti.c
 .endif
 .for _DSRC in ${SRCS:M*.d:N*/*}
 .for _D in ${_DSRC:R}
+# Preserve the configured provider inputs before replacing them in SRCS.
+# Other build graph consumers need the same source/header association.
+DTRACE_PROVIDERS+= ${_DSRC}
+DTRACE_PROVIDER_HEADER.${_DSRC}= ${_D}.h
 SRCS+=	${_D}.h
 ${_D}.h: ${_DSRC}
 	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -h -s ${.ALLSRC}
