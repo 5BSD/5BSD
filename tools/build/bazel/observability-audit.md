@@ -2763,3 +2763,12 @@ native migration adds/removes no instrumentation. rmail's observed paths are
 usage/input rejection only; successful sendmail handoff and mail-delivery
 logging/audit behavior are unqualified. Review those paths with the mail-service
 integration tests rather than inferring coverage from library tests or packaging.
+
+
+## csh native generator/executable increment (2026-10-27)
+
+The maintained csh Makefile has no DTrace provider step. The native migration
+preserves its source set and generated inputs without instrumentation changes.
+The arithmetic/array smoke test does not cover interactive job control,
+password/lock behavior using crypt, signal/audit integration or login startup.
+Keep these as runtime qualification gaps, not inferred coverage from linking.

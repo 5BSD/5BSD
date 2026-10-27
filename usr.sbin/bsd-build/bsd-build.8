@@ -3421,3 +3421,14 @@ uses the internal libsm PIE archive and preserves rmail's dynamic-link exception
 .Dq //lib/libsm:tests
 runs selected unchanged upstream library tests. These checks do not qualify
 mail handoff or delivery and do not invoke the host sendmail service.
+
+.Pp
+The targets
+.Dq //bin/csh:generated ,
+.Dq //bin/csh:csh
+and
+.Dq //bin/csh:runtime_smoke
+qualify native generation, compilation and basic runtime behavior separately
+from installation and interactive shell tests. csh also consumes dynamic_root
+and nls_catalogs settings; its alternative configurations require separate
+qualification. dynamic_root still does not control every root-filesystem target.

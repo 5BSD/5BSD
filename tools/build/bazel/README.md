@@ -32959,3 +32959,33 @@ targets without a C frontend change. Not yet qualified: successful UUCP envelope
 handoff/delivery, complete libsm upstream suite, IPv6-disabled/custom sendmail
 build settings, cross builds or a whole mail-service installation. Make remains
 production/default and no mail was sent or host package installed.
+
+### csh native generators and executable (2026-10-27)
+
+`//bin/csh:generated` declares the editor/error header inputs, target-compiler
+constants preprocessing and native gethost execution tool. gethost translates
+the maintained host.defs into conditional C; it does not substitute execution
+host identity for target architecture. The execution tool receives its own
+configuration through cfg=exec. No target executable runs to generate headers.
+The constants filter retains Make's grep/sed/sort behavior with pipeline error
+propagation. The error/editor AWK extraction preserves the generated content.
+
+`//bin/csh:csh` compiles 51 maintained sources plus tc.defs.c and links native
+terminfo/crypt. Configuration represents MK_NLS/MK_NLS_CATALOGS, the iconv stub
+branch and dynamic_root linking. Only the default amd64 configuration is
+qualified here; those alternative branches and cross builds remain unqualified.
+`dynamic_root` now has csh as well as zsh consumers, not every root program.
+
+`/usr/obj/usr/src/bazel-csh-runtime-20261027/qualification/parity.json`
+records all four byte-identical generated files against `bazel-csh-make-20261027`,
+1,108 identical defined global symbols, ordered NEEDED entries (tinfow, crypt,
+libc), NOW/PIE flags and no RPATH. `runtime_smoke` passes arithmetic and array
+checks with declared candidate shared libraries. Missing config_p.h and AWK
+variable-timing failures are retained in the preceding generator runs; no
+production shell source was changed.
+
+The existing format-5 build-bsd frontend accepts the typed settings and native
+test target without changes to its C frontend or backend. This is not yet full
+csh qualification: catalog/alias/manual/example/configuration installation,
+interactive/upstream tests, alternate build settings, cross builds and system
+image gates remain. Make stays production/default.

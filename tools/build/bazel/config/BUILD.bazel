@@ -198,6 +198,11 @@ label_flag(name = "secureboot_verification_certificates", build_setting_default 
 string_flag(name = "version_branch", build_setting_default = "", visibility = ["//visibility:public"])
 
 # MK_DYNAMICROOT: root-filesystem executables opt into this choice as converted.
-# Current consumer: bin/zsh. This is not yet a world-wide static-root switch.
+# Current consumers: bin/zsh and bin/csh. Not a world-wide static-root switch.
 bool_flag(name = "dynamic_root", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "dynamic_root_enabled", flag_values = {":dynamic_root": "true"}, visibility = ["//visibility:public"])
+
+# Catalog availability within programs is distinct from catalog installation.
+bool_flag(name = "nls_catalogs", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "nls_catalogs_enabled", flag_values = {":nls": "true", ":nls_catalogs": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "nls_catalogs_iconv_stub", flag_values = {":nls": "true", ":nls_catalogs": "true", ":iconv": "false"}, visibility = ["//visibility:public"])

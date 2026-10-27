@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+[bsd_awk_output(name = name, script = "extract-defines.awk", srcs = [source], output = output,
+    variables = {"guard": guard, "pattern": pattern}, awk = "@bsd_sdk//toolchain:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
+ for name, source, output, guard, pattern in [
+    ("errors", "//contrib/tcsh:sh.err.c", "sh.err.h", "_h_sh_err", "ERR_"),
+    ("editor", "//contrib/tcsh:ed.defns.c", "ed.defns.h", "_h_ed_defns", "[FV]_"),
+]]
+cc_library(name = "error_headers", hdrs = [":errors"], strip_include_prefix = ".")
+cc_library(name = "configuration", hdrs = ["config.h", "config_p.h"], includes = ["."])
+cc_binary(name = "gethost", srcs = ["//contrib/tcsh:gethost.c"],
+    deps = [":configuration", ":error_headers", "//contrib/tcsh:headers"], local_defines = ["_h_tc_const"],
+    copts = ["-std=gnu17"], linkstatic = True, features = ["fully_static_link"])
+bsd_script_output(name = "host_definitions", script = "host-definitions.sh", src = "//contrib/tcsh:host.defs",
+    input_mode = "argument", output = "tc.defs.c", path_tools = {":gethost": "gethost"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sh_runtime"])
+bsd_script_output(name = "constants_preprocessed", script = "constants-cpp.sh", src = "//contrib/tcsh:tc.const.c",
+    input_mode = "argument", output = "tc.const.preprocessed", use_cpp = True,
+    cpp_deps = [":configuration", ":error_headers", "//contrib/tcsh:headers"],
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs", path_tools = {"@bsd_sdk//toolchain:awk": "awk"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"])
+bsd_script_output(name = "constants", script = "constants-header.sh", src = ":constants_preprocessed",
+    input_mode = "argument", output = "tc.const.h",
+    path_tools = {"@bsd_sdk//toolchain:extra_grep": "grep", "@bsd_sdk//toolchain:sed": "sed", "@bsd_sdk//toolchain:extra_sort": "sort"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:extra_grep_runtime", "@bsd_sdk//toolchain:sed_runtime", "@bsd_sdk//toolchain:extra_sort_runtime"])
+filegroup(name = "generated", srcs = [":errors", ":editor", ":constants", ":host_definitions"], visibility = ["//visibility:public"])
+
+load(":sources.bzl", "CSH_SOURCES")
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+bsd_template(name = "iconv_stub_header", template = "iconv_stub.h", output = "iconv.h", substitutions = {})
+cc_library(name = "iconv_stub_headers", hdrs = [":iconv_stub_header"], strip_include_prefix = ".")
+cc_library(name = "generated_headers", hdrs = [":editor", ":constants"], strip_include_prefix = ".")
+_DYNAMIC = "//tools/build/bazel/config:dynamic_root_enabled"
+_NLS = "//tools/build/bazel/config:nls_catalogs_enabled"
+_STUB = "//tools/build/bazel/config:nls_catalogs_iconv_stub"
+cc_binary(name = "csh", srcs = CSH_SOURCES + [":host_definitions"] + select({_STUB: ["iconv_stub.c"], "//conditions:default": []}),
+    deps = [":configuration", ":error_headers", ":generated_headers", "//contrib/tcsh:headers", "//lib/ncurses/tinfo:tinfo", "//lib/libcrypt:crypt"] + select({_STUB: [":iconv_stub_headers"], "//conditions:default": []}),
+    local_defines = ["'_PATH_TCSHELL=\"/bin/csh\"'"] + select({_NLS: ["HAVE_ICONV"], "//conditions:default": ["NO_NLS_CATALOGS"]}),
+    copts = ["-std=gnu17"] + select({_DYNAMIC: ["-fPIE"], "//conditions:default": []}),
+    dynamic_deps = select({_DYNAMIC: ["//lib/ncurses/tinfo:tinfo_shared", "//lib/libcrypt:crypt_shared"], "//conditions:default": []}),
+    linkopts = select({_DYNAMIC: ["-pie"], "//conditions:default": []}),
+    features = select({_DYNAMIC: [], "//conditions:default": ["fully_static_link"]}),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
+bsd_program_test(name = "runtime_smoke", program = ":csh", runner = "//tools/build/bazel:program_test_runner",
+    args = ["-f", "-c", "'set values=(one two); @ n = 6 * 7; if ($$n != 42) exit 1; if ($$values[2] != two) exit 1; echo native-csh-ok'"],
+    runtime_lib = select({_DYNAMIC: ["//lib/ncurses/tinfo:tinfo_shared", "//lib/libcrypt:crypt_shared", "//lib/libmd:md_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"], "//conditions:default": []}))

@@ -328,3 +328,13 @@ Five unchanged upstream library tests and five pre-delivery error cases pass.
 Successful mail handoff was not run; source and host mail configuration are
 unchanged. Custom sendmail options and broader suite coverage remain open.
 Continue csh conversion and remaining aggregate/system gates.
+
+## Subsequent progress: csh native build
+
+Native csh generators and executable now build. Four generated files match
+Make byte for byte; the executable matches 1,108 globals and dynamic/hardening
+metadata, and a candidate-library arithmetic/array smoke test passes. Evidence:
+`bazel-csh-runtime-20261027/qualification/parity.json` under `/usr/obj/usr/src`.
+Next: complete csh installation including NLS catalogs/links, examples,
+configuration and csh/tcsh aliases. Static-root, iconv/NLS alternatives and
+interactive/upstream suites remain unqualified. World aggregation stays open.
