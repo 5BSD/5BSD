@@ -32989,3 +32989,36 @@ test target without changes to its C frontend or backend. This is not yet full
 csh qualification: catalog/alias/manual/example/configuration installation,
 interactive/upstream tests, alternate build settings, cross builds and system
 image gates remain. Make stays production/default.
+
+### csh full installation and iconv-stub variant (2026-10-27)
+
+`//bin/csh:install_archive` includes csh/tcsh binary and manual hardlinks,
+split debug information, five configuration files, examples, ten native gencat
+catalogues and locale symlinks. `catalogs.bzl` owns the explicit source order
+(charset followed by sorted set files), locale mapping and UTF8/iconv aliases;
+Bazel does not parse the Makefile or inspect host-installed catalogs. MK_NLS
+installation is independent of MK_NLS_CATALOGS compiled lookup, preserving
+Make's conditional alias policy. The new typed examples setting currently
+controls csh's example payloads; wider consumer adoption remains separate.
+
+`/usr/obj/usr/src/bazel-csh-install-r2-20261027/qualification/csh/receipt.json`
+verifies all 75 Make records, 38 symlinks, two hardlinks, 19 byte-equal nonbinary
+payload records and two debug-link checks (both executable names). Every owner,
+group, mode, flag and package/config tag is compared. Archive SHA256:
+`e09888d3d3287fad30e647572502c6f51de8b7855b755700c1b1d2fad59796f4`.
+The unsupported shell-style glob in the first attempt is preserved in
+`bazel-csh-install-20261027`; the explicit catalog source inventory is unchanged.
+
+`bazel-csh-noiconv-20261027` versus `bazel-csh-noiconv-make-20261027` under
+`/usr/obj/usr/src` qualifies iconv=false/examples=false: smoke passes, 1,111
+globals and dynamic metadata match, all generated files remain byte-equal, and
+40 installation records match with six symlinks, two hardlinks, 17 byte-equal
+nonbinary records and both debug links. Archive SHA256:
+`32fc06d0d99ad8a37a5460ca97bf0c11fea55a61f833a45a808e10e36d21237c`.
+This explicitly exercises the maintained iconv stub and reduced alias set.
+
+The format-5 build-bsd frontend and maintained catalog/install backends support
+these settings/targets without a C frontend change. Static-root/NLS-disabled
+variants, interactive/upstream csh tests, cross builds and system-image/package
+publication gates remain open. These are component archives, not installed host
+upgrades or a qualified complete world. Make remains production/default.

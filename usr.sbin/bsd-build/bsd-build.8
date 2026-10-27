@@ -3432,3 +3432,10 @@ qualify native generation, compilation and basic runtime behavior separately
 from installation and interactive shell tests. csh also consumes dynamic_root
 and nls_catalogs settings; its alternative configurations require separate
 qualification. dynamic_root still does not control every root-filesystem target.
+
+.Pp
+.Dq //bin/csh:install_archive
+stages csh/tcsh aliases, configuration, examples, manuals and native catalogs.
+The typed examples setting currently controls csh examples only. Catalog
+installation follows nls, while compiled lookup follows nls_catalogs; iconv
+also affects catalog aliases and the maintained stub implementation.

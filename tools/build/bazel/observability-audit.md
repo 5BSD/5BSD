@@ -2772,3 +2772,12 @@ preserves its source set and generated inputs without instrumentation changes.
 The arithmetic/array smoke test does not cover interactive job control,
 password/lock behavior using crypt, signal/audit integration or login startup.
 Keep these as runtime qualification gaps, not inferred coverage from linking.
+
+
+### csh installation/iconv-stub follow-up (2026-10-27)
+
+Both csh/tcsh executable names retain valid split debug linkage in default and
+iconv-disabled/no-examples archives. Configuration/catalog payloads match Make.
+The smoke test still covers arithmetic/arrays only; locale switching, login,
+interactive job control, lock/password paths and audit behavior remain outside
+this runtime evidence. No instrumentation or production shell source changed.

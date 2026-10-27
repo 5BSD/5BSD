@@ -2,3 +2,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 exports_files(glob(["*.c"]) + ["host.defs"], visibility = ["//bin/csh:__pkg__"])
 cc_library(name = "headers", hdrs = glob(["*.h"]), includes = ["."], visibility = ["//bin/csh:__pkg__"])
+
+exports_files(glob(["nls/*/charset", "nls/*/set*"]) + ["tcsh.man", "complete.tcsh", "csh-mode.el"], visibility = ["//bin/csh:__pkg__"])

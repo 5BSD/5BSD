@@ -52,3 +52,40 @@ bsd_program_test(name = "runtime_smoke", program = ":csh", runner = "//tools/bui
     args = ["-f", "-c", "'set values=(one two); @ n = 6 * 7; if ($$n != 42) exit 1; if ($$values[2] != two) exit 1; echo native-csh-ok'"],
     runtime_lib = select({_DYNAMIC: ["//lib/ncurses/tinfo:tinfo_shared", "//lib/libcrypt:crypt_shared", "//lib/libmd:md_shared",
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"], "//conditions:default": []}))
+
+load(":catalogs.bzl", "CATALOGS", "CATALOG_SOURCES", "UTF8_LINKS", "ICONV_LINKS")
+load("//tools/build/bazel:bsd_nls.bzl", "bsd_catalogue")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+[bsd_catalogue(name = "catalogue_" + locale, sources = CATALOG_SOURCES[locale], concatenate = True,
+    output = locale + ".cat", gencat = "//usr.bin/gencat:gencat", cat = "@bsd_sdk//toolchain:cat",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:cat_runtime"]) for locale in CATALOGS]
+[bsd_install_file(name = "install_catalogue_" + locale, src = ":catalogue_" + locale,
+    destination = "/usr/share/nls/" + locale + "/tcsh.cat", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=csh"]) for locale in CATALOGS]
+[bsd_install_link(name = "catalogue_link_" + alias, destination = "/usr/share/nls/" + alias + "/tcsh.cat", target = "../" + locale + "/tcsh.cat",
+    kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=csh"])
+ for links in [UTF8_LINKS, ICONV_LINKS] for locale, aliases in links.items() for alias in aliases]
+[bsd_install_file(name = "example_" + str(i), src = "//contrib/tcsh:" + n, destination = "/usr/share/examples/tcsh/" + n,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=csh"]) for i,n in enumerate(["complete.tcsh", "csh-mode.el"])]
+[bsd_install_file(name = "config_" + str(i), src = src, destination = dst, owner = "root", group = "wheel", mode = "0644", install_tags = ["package=csh", "config"])
+ for i, (src,dst) in enumerate([(n, "/etc/" + n) for n in ["csh.cshrc", "csh.login", "csh.logout"]] + [("dot.cshrc", "/root/.cshrc"), ("dot.login", "/root/.login")])]
+_NLS_ENTRIES = [":install_catalogue_" + locale for locale in CATALOGS] + [":catalogue_link_" + alias for aliases in UTF8_LINKS.values() for alias in aliases]
+# MK_NLS controls installation; MK_NLS_CATALOGS controls csh's compiled lookup.
+utility_installation(name = "install_manifest", program = "csh", manual = "//contrib/tcsh:tcsh.man", package = "csh", bindir = "/bin", aliases = ["tcsh"],
+    extra_entries = [":config_" + str(i) for i in range(5)] +
+        select({"//tools/build/bazel/config:examples_enabled": [":example_0", ":example_1"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:nls_enabled": _NLS_ENTRIES, "//conditions:default": []}) +
+        select({":install_iconv_links": [":catalogue_link_" + alias for aliases in ICONV_LINKS.values() for alias in aliases], "//conditions:default": []}))
+config_setting(name = "install_iconv_links", flag_values = {"//tools/build/bazel/config:nls": "true", "//tools/build/bazel/config:iconv": "true", "//tools/build/bazel/config:nls_catalogs": "true"})
+# The non-UTF8 aliases are declared in Make only inside its catalog-enabled branch.
+_DIRS = {"/usr/lib/debug/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=csh","dbg"]}',
+    "/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}',
+    "/root": '{"owner":"root","group":"wheel","mode":"0750","tags":["package=utilities"]}'}
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = _DIRS | select({"//tools/build/bazel/config:examples_enabled": {"/usr/share/examples/tcsh": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=csh"]}'}, "//conditions:default": {}}) |
+        select({"//tools/build/bazel/config:nls_enabled": {"/usr/share/nls": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=csh"]}'} | {"/usr/share/nls/" + locale: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}' for locale in CATALOGS}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

@@ -338,3 +338,15 @@ metadata, and a candidate-library arithmetic/array smoke test passes. Evidence:
 Next: complete csh installation including NLS catalogs/links, examples,
 configuration and csh/tcsh aliases. Static-root, iconv/NLS alternatives and
 interactive/upstream suites remain unqualified. World aggregation stays open.
+
+## Subsequent progress: csh installation
+
+Complete default csh inventory matches Make: 75 records, 38 symlinks, two
+hardlinks, 19 byte-equal nonbinary records and both executable debug links.
+The iconv-disabled/no-examples variant also passes smoke and binary/install
+parity: 1,111 globals, 40 records, six symlinks and 17 byte-equal nonbinary
+records. Evidence directories: `bazel-csh-install-r2-20261027` and
+`bazel-csh-noiconv-20261027` under `/usr/obj/usr/src`.
+Next: csh upstream/interactive tests and static-root/NLS variants, then review
+remaining directory/aggregate coverage. Whole-world, kernel and publication
+qualification still cannot be inferred from component coverage.

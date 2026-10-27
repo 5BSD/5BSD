@@ -206,3 +206,6 @@ config_setting(name = "dynamic_root_enabled", flag_values = {":dynamic_root": "t
 bool_flag(name = "nls_catalogs", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "nls_catalogs_enabled", flag_values = {":nls": "true", ":nls_catalogs": "true"}, visibility = ["//visibility:public"])
 config_setting(name = "nls_catalogs_iconv_stub", flag_values = {":nls": "true", ":nls_catalogs": "true", ":iconv": "false"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "examples", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "examples_enabled", flag_values = {":examples": "true"}, visibility = ["//visibility:public"])
