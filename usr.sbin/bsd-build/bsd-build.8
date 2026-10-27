@@ -3199,6 +3199,17 @@ No usable policy or test root is selected by default.
 Shared installation, signed-file verification and consumer integration remain
 incomplete.
 .Pp
+.Ss Native veriexec qualification
+The native static
+.Li //sbin/veriexec:veriexec
+target uses the explicitly configured libsecureboot trust inputs.
+.Li //sbin/veriexec/tests:tests
+runs four maintained parser cases with the test's ioctl recorder.
+.Li //sbin/veriexec:install_archive
+packages the program and, when enabled, its tests.
+Binary and installation metadata have been compared with Make.
+These checks do not load a manifest or qualify kernel enforcement.
+.Pp
 .Ss Native BearSSL selection
 The format-5 boolean build setting
 .Li //tools/build/bazel/config:bearssl_ssl

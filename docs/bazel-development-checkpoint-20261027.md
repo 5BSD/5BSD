@@ -211,3 +211,13 @@ Make (eight/41); missing policy fails analysis. No default production trust is
 introduced. Shared installation, real signed-file checks, key rotation and
 veriexec consumer conversion remain next steps. The audit log records an
 existing hash self-test return-status weakness found during review.
+
+## Subsequent progress: native veriexec command
+
+Static veriexec and its maintained manifest test build natively. Four parser
+cases pass using the existing test ioctl recorder; all 12 program/test install
+records and binary symbol/static-link checks match Make. Evidence and reference
+library selection are documented in the README. No host enforcement operation
+was run. Continue with libsecureboot shared installation and signed-file/trust
+rotation qualification, including the recorded self-test return-status issue.
+System-wide world/kernel/package/bootstrap and performance gates remain open.

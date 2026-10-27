@@ -32605,3 +32605,40 @@ Frontend review: existing typed format-5 label settings handle all three inputs;
 the manual is updated, without C/backend contract changes. Shared-library and
 installation/package parity, signed-file verification, trust rotation, action
 invalidation and performance remain outstanding, as does the veriexec consumer.
+
+## Native veriexec command and parser tests — 2026-10-27
+
+The static veriexec command now builds from native libveriexec, libsecureboot
+and BearSSL dependencies. Native yacc/lex/m4 generate the maintained parser
+and lexer; a CcInfo header interface exposes their declared generated header.
+The library trust policy remains explicitly selected through format-5 labels.
+No policy, certificate or SDK library substitute was added for the command.
+
+All four unchanged maintained manifest tests pass through Bazel's ATF adapter:
+valid_manifest, rejects_bad_hash_lengths, reports_load_failure and
+reports_recovered_syntax_error. Their original ioctl recorder prevents kernel
+manifest loading; this is parser/error-handling coverage, not enforcement.
+Program/test installation includes the maintained Kyuafile and debug split.
+The program-only archive is separate; the aggregate includes tests when enabled.
+
+Evidence: /usr/obj/usr/src/bazel-veriexec-install-20261027, compared with
+/usr/obj/usr/src/bazel-veriexec-make-r2-20261027. The Make reference explicitly
+links the previously built Make reference archives using per-library LDADD
+inputs, because the SDK omits these optional libraries. Its commands, archive
+hashes, build script and component Make closure are retained. The first attempt
+in bazel-veriexec-make-20261027 failed to find those libraries through -l;
+no host installation or SDK replacement was used to resolve that.
+
+Program and test match 1758 and 1950 defined globals respectively; both are
+static and have no interpreter or NEEDED dependency. All 12 installation
+records match; compressed manual and Kyuafile are byte-identical, and both
+debuglinks verify. Archive SHA-256:
+`5aaea9e5b820f6fd5e8e07b70c7f62159b9a77a6b9d1c0334e44551e8cd58523`.
+This does not claim whole-binary byte identity.
+
+Frontend review: maintained build-bsd executes the targets and four cases with
+16 jobs and existing explicit trust settings; the manual records scope. No
+frontend C or signing/publication contract change is required. The actual
+veriexec command was not executed, and no manifest or host enforcement state
+was changed. Real signed-file/denial/rotation checks, libsecureboot shared
+installation, other configurations and performance remain outstanding.

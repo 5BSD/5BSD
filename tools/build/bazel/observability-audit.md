@@ -2679,3 +2679,11 @@ vets.c prints Failed but does not accumulate that failure into ve_self_tests'
 return value; its return currently counts verified certificates/OpenPGP results.
 Track and qualify error propagation and callers before claiming enforced
 cryptographic self-tests. This migration has not modified that behavior.
+
+### veriexec command and manifest parser (2026-10-27)
+
+The native graph preserves production sources and generated parser/lexer.
+Four maintained tests verify valid input, hash-length rejection, ioctl failure
+propagation and recovered syntax errors via the existing ioctl recorder. They
+do not exercise kernel MAC audit events, manifest loading or denial enforcement.
+Review those runtime/audit paths on a qualified system; no kernel state changed.
