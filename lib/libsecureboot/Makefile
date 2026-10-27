@@ -1,6 +1,7 @@
 .include <src.opts.mk>
 
 LIB= secureboot
+LIBADD+= bearssl
 
 .include "Makefile.inc"
 

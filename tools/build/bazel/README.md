@@ -32642,3 +32642,38 @@ frontend C or signing/publication contract change is required. The actual
 veriexec command was not executed, and no manifest or host enforcement state
 was changed. Real signed-file/denial/rotation checks, libsecureboot shared
 installation, other configurations and performance remain outstanding.
+
+## libsecureboot shared linkage and installation — 2026-10-27
+
+Added the native shared library and full seven-record library installation.
+Review of the existing Make output found unresolved BearSSL symbols without
+an explicit BearSSL NEEDED dependency. Make now declares LIBADD+=bearssl and
+src.libnames.mk records the transitive dependency. Bazel cc_shared_library
+uses the native BearSSL shared provider and -z defs. Static consumers retain
+normal CcInfo dependency propagation and the component archive remains eight
+objects. No crypto implementation or trust defaults were changed.
+
+Evidence: /usr/obj/usr/src/bazel-libsecureboot-install-r2-20261027, with Make
+reference /usr/obj/usr/src/bazel-libsecureboot-install-make-20261027. Static
+symbols match 41 definitions/eight members; shared matches 43 definitions,
+ordered libbearssl.so.5/libc.so.7 dependencies, libsecureboot.so.5 SONAME, NOW
+and no RPATH/RUNPATH. All seven installation records match, including identical
+public header, symlink and verified debuglink. Archive SHA-256:
+`3a9f515903ff9313dc7fd990c5174728ad295510d39a875ef89123db1f683c28`.
+Both static and shared trust-initialization tests pass against the selected
+upstream public test root. The shared test declares native library runfiles
+and the SDK libc/libsys runtime; no host installation is used.
+
+Changing src.libnames.mk invalidated the old SDK receipt as intended. A fresh
+plan and toolchain were generated using libmd-plan.py and libmd-stage-tools.py
+at /usr/obj/usr/src/bazel-secureboot-sdk-20261027. Subsequent builds must use
+that receipt/workspace while this metadata is current. This is still an
+external Make-prepared SDK, not proof of complete native bootstrap. Initial
+input rejection is retained at bazel-libsecureboot-install-20261027.
+
+Frontend review: existing format-5 target/test and trust selectors build and
+qualify this graph with 16 jobs; the manual records the narrowed remaining
+scope. No frontend C or publication contract change is required. Real signed-file
+verification, key rotation, self-test error propagation, action invalidation,
+configuration coverage and performance remain outstanding. Matching shared
+installation and anchor loading do not establish verified boot or enforcement.

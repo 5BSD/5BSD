@@ -221,3 +221,13 @@ library selection are documented in the README. No host enforcement operation
 was run. Continue with libsecureboot shared installation and signed-file/trust
 rotation qualification, including the recorded self-test return-status issue.
 System-wide world/kernel/package/bootstrap and performance gates remain open.
+
+## Subsequent progress: libsecureboot shared installation
+
+Shared library and all seven installation records now match Make. Both build
+systems explicitly link BearSSL; its previously missing shared dependency is
+fixed along with Make's transitive dependency metadata. Static and shared
+trust-initialization tests pass. The SDK receipt was regenerated through maintained
+helpers under bazel-secureboot-sdk-20261027 after the metadata change.
+Next: signed-file/key-rotation qualification and the recorded hash self-test
+error-propagation issue. System-wide migration and performance gates remain open.

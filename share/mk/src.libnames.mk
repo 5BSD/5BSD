@@ -474,6 +474,7 @@ _DP_pam+=	ssh
 _DP_pam+=	ypclnt
 .endif
 _DP_pjdlog=	util
+_DP_secureboot=	bearssl
 _DP_proc=	cxxrt
 .if ${MK_CTF} != "no"
 _DP_proc+=	ctf
