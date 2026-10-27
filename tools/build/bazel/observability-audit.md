@@ -2781,3 +2781,12 @@ iconv-disabled/no-examples archives. Configuration/catalog payloads match Make.
 The smoke test still covers arithmetic/arrays only; locale switching, login,
 interactive job control, lock/password paths and audit behavior remain outside
 this runtime evidence. No instrumentation or production shell source changed.
+
+
+### csh static/NLS-disabled and bin test gaps (2026-10-27)
+
+Static csh retains matching symbols and split debug linkage without dynamic
+runtime dependencies. The smoke scope remains arithmetic/arrays. The bin
+file-presence inventory exposes 19 missing test BUILD directories; no audit,
+probe or service behavior coverage should be inferred from 42 component BUILD
+files. Preserve privilege/jail requirements when integrating those test suites.

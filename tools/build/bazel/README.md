@@ -33022,3 +33022,35 @@ these settings/targets without a C frontend change. Static-root/NLS-disabled
 variants, interactive/upstream csh tests, cross builds and system-image/package
 publication gates remain open. These are component archives, not installed host
 upgrades or a qualified complete world. Make remains production/default.
+
+### csh static/NLS-disabled qualification and bin coverage audit (2026-10-27)
+
+`bazel-csh-static-nonls-20261027` versus `bazel-csh-static-nonls-make-20261027`
+under `/usr/obj/usr/src` qualifies dynamic_root=false/nls=false/examples=false.
+The native smoke test passes without candidate shared runtimes. All four
+generated files are byte-identical, 3,665 defined global symbols match, both
+executables are static non-PIE with no interpreter/NEEDED entries, and all 13
+installation records match. Seven nonbinary payload records are byte-identical;
+both executable aliases have valid debug linkage. Archive SHA256:
+`ebb5e5e46a8faa117fe352fe0699df858112fffd6904bc5726474d923308d7fa`.
+No production source change was needed for this configuration. The maintained
+format-5 frontend and configuration graph were used unchanged.
+
+The tcsh vendor import does not contain an upstream runtime test harness (its
+nls/Makefile.in is not one). Broader interactive/login/locale runtime testing
+still needs a maintained harness or an appropriately reviewed upstream test
+import; the smoke test does not establish those behaviors.
+
+The qualification's `bin-inventory.json` records a file-presence audit: all 42
+immediate bin component directories with Makefiles now have BUILD.bazel files.
+Of 25 tests directories, including bin/tests itself, six have BUILD files and
+19 do not. Presence is not completeness, successful execution, aggregate
+installation or world qualification. The missing directories are:
+cat/tests, chmod/tests, cp/tests, date/tests, dd/tests, echo/tests, expr/tests,
+hostname/tests, ln/tests, ls/tests, mkdir/tests, mv/tests, pax/tests, pwd/tests,
+rm/tests, rmdir/tests, sleep/tests, test/tests, and tests (top-level catalog).
+Do not create a purportedly complete bin aggregate that silently drops them.
+The next expansion should integrate their maintained tests and installation
+metadata, preserving root/jail/host requirements and recording actual failures.
+Cross builds, privileged runtime checks, full system packaging and performance
+gates remain open; Make remains production/default.

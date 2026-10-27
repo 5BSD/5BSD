@@ -350,3 +350,18 @@ records. Evidence directories: `bazel-csh-install-r2-20261027` and
 Next: csh upstream/interactive tests and static-root/NLS variants, then review
 remaining directory/aggregate coverage. Whole-world, kernel and publication
 qualification still cannot be inferred from component coverage.
+
+## Subsequent progress: csh static/NLS-disabled and test coverage audit
+
+Static, NLS-disabled, no-examples csh passes smoke and Make parity: 3,665 globals,
+four byte-equal generated files, static non-PIE ELF and 13 installation records.
+Evidence: `bazel-csh-static-nonls-20261027/qualification` under `/usr/obj/usr/src`.
+The imported tcsh tree has no upstream runtime suite; interactive coverage
+remains open.
+
+The retained bin inventory shows 42/42 immediate component directories have
+BUILD files, but 19/25 tests directories lack them (including bin/tests).
+This is file presence, not a completion percentage. Next: integrate cat's
+maintained NetBSD and local ATF shell tests and their fixtures, then the other
+missing test directories listed in README. A complete bin aggregate must not
+omit test metadata or imply unsupported runtime qualification.
