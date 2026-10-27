@@ -32179,3 +32179,32 @@ No daemon was started and no replication/storage operation performed. The
 maintained privileged daemon start/stop test, its test installation integration,
 INET6-disabled/static/other-platform variants, cache and performance gates
 remain outstanding. Program artifact parity is not runtime qualification.
+
+## HAST test packaging and INET6_SUPPORT qualification — 2026-10-27
+
+`//sbin/hastd:install_archive` now adds the unchanged maintained shell test and
+Kyuafile under the existing tests setting. It matches Make across eight records,
+four nonbinary payloads, ownership/modes/tags and one debug link. Evidence:
+`/usr/obj/usr/src/bazel-hast-tests-install-20261027`; archive SHA-256:
+`4667d26436dce5566566ee7ee7c8b004ac8fcf88ae290eec87b0e16209ac0dc0`.
+The privileged ctl case is installed, not executed or represented as a passing
+Bazel runtime test. It starts/stops hastd and requires matching-kernel qualification.
+
+Both HAST programs were also built with the native inet6_support setting false
+and compared against separate Make references using --without-option INET6_SUPPORT.
+Evidence: `/usr/obj/usr/src/bazel-hast-noinet6-20261027`; references:
+`/usr/obj/usr/src/bazel-hastd-noinet6-make-20261027` and
+`/usr/obj/usr/src/bazel-hastctl-noinet6-make-20261027`. Defined globals, ordered
+ELF dependencies and program installation comparisons pass. All 36 captured
+HAST C compilation actions omit -DINET6, as do Make's reference compile commands.
+
+The resulting program archives are byte-identical to the default-setting
+archives. This is expected from the maintained sources: IPv6 family detection
+and tcp6 address handling are runtime paths, not guarded by the INET6 define.
+Do not interpret the build-option comparison as proof of an IPv6-free product.
+The dependency SDK itself was not rebuilt without IPv6. Runtime control,
+replication, static builds and performance remain unqualified.
+
+Frontend review: existing explicit target/settings inputs support these additions;
+no C/backend contract change is needed. No host installation, daemon start,
+replication operation, or live storage change occurred.

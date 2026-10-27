@@ -85,3 +85,11 @@ header matches bytewise; parser/lexer C match apart from line-directive filename
 The libmd consumer CcInfo target is public. Privileged daemon tests, test
 installation, option/static variants, and replication performance remain next
 qualification work; no daemon or replication operation was started.
+
+## Subsequent progress: HAST test installation and option parity
+
+HAST test packaging now matches Make (eight combined records). Both programs
+also match Make with INET6_SUPPORT disabled. That setting removes the compiler
+define but leaves these program artifacts unchanged: current source selects
+IPv6 support at runtime. Privileged ctl runtime execution remains outstanding;
+test installation must not be counted as execution.
