@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files([
+    "Src/signames1.awk", "Src/signames2.awk",
+    "Src/Modules/errnames1.awk", "Src/Modules/errnames2.awk",
+], visibility = ["//bin/zsh:__pkg__"])

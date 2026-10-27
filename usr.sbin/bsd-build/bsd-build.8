@@ -3375,3 +3375,10 @@ The native pfctl target
 packages the regression helper, shell tests and corpus when tests are enabled.
 The Kyuafile retains the regression suite's jail and VNET requirements.
 Successful archive qualification does not mean those privileged tests ran.
+
+.Pp
+The native target
+.Dq //bin/zsh:tables
+qualifies target signal and error table generation through declared compiler
+and generator inputs. It does not build or install the shell and is not a
+substitute for world or shell runtime qualification.

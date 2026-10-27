@@ -263,3 +263,12 @@ rmail, plus directory test aggregation. Continue with zsh and its declared
 signal/error table generators and existing DTrace instrumentation. A complete
 bin/world aggregate remains unqualified; do not hide these gaps behind a partial
 aggregate target. README records the evidence and remaining version-policy scope.
+
+## Subsequent progress: zsh table generation
+
+The native `//bin/zsh:tables` target now produces signal/errno tables and count
+headers byte-identical to the isolated Make reference. Repeated build reuses
+all generator outputs. See the README evidence paths. Continue with the zsh
+executable and DTrace linkage, complete installation inventory, runtime tests,
+and dependency invalidation checks; zsh itself is not yet converted/qualified.
+Existing build-bsd format-5 target selection is sufficient for this increment.

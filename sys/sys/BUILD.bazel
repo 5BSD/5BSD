@@ -46,3 +46,5 @@ cc_library(name = "envfd_header", hdrs = ["envfd.h"], strip_include_prefix = "/s
 cc_library(name = "cryptodesc_header", hdrs = ["cryptodesc.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
 
 exports_files(["socket.h"], visibility = ["//usr.bin/getaddrinfo:__pkg__"])
+
+exports_files(["signal.h", "errno.h"], visibility = ["//bin/zsh:__pkg__"])

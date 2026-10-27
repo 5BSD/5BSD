@@ -32775,3 +32775,26 @@ build-bsd's existing format-5 settings/targets exercised both branches with
 16 jobs; the manual documents the new input and limitation. No frontend C or
 publication contract change was required. No host installation or state mutation
 was performed.
+
+### zsh target ABI tables (2026-10-27)
+
+`//bin/zsh:tables` runs the maintained upstream signal/errno AWK generators,
+preprocesses their candidates with the selected target C toolchain, and extracts
+the count headers in separate declared actions. Source headers, AWK programs,
+compiler closure and shell/tool runtimes are declared inputs. It neither runs a
+target executable nor queries host signal/errno values. The staged target SDK
+headers remain a bootstrap input; this is not a native SDK bootstrap claim.
+
+`/usr/obj/usr/src/bazel-zsh-tables-r2-20261027/qualification/table-parity.json`
+records authenticated artifact hashes and byte equality for all four files
+against `/usr/obj/usr/src/bazel-zsh-make-20261027`. The initial analysis failure
+from missing source-header exports is preserved in `bazel-zsh-tables-20261027`.
+The repeated `bazel-zsh-tables-cache-20261027` build ran no generator actions
+(one internal action). This establishes unchanged-input local cache reuse,
+not mutation invalidation or remote-cache portability.
+
+The existing format-5 `build-bsd bazel-test` frontend handles this target without
+new frontend options or backend changes. This is only table generation: zsh
+compilation/linking, DTrace object preservation, full installation including
+functions/configuration/manuals, and shell runtime tests remain pending. Make
+remains production/default. No base aggregate completion is implied.

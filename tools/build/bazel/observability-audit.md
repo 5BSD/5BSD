@@ -2709,3 +2709,12 @@ Native generation preserves the maintained shell program. Default/-u reporting
 was exercised; no kernel/jail command was run. This utility gains no new tracing
 or audit behavior. Kernel/jail query and deployment-version consistency checks
 remain part of system qualification.
+
+
+## zsh ABI-table increment (2026-10-27)
+
+Native table generation preserves upstream algorithms and target preprocessing.
+It does not yet build zsh. Existing `trace_pressure.h`, `FIVEBSD_TRACE`,
+`WITH_DTRACE` and `zsh_provider.d` integration must be preserved when adding
+native compilation/linking. No probe additions/removals or runtime audit
+coverage claims follow from the four byte-equal generated files.

@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+
+# These tables describe the target ABI, never the execution host's signals
+# or errno values. Keep the upstream AWK algorithms and declared preprocessing.
+_TABLES = [
+    ("sig", "signames", "Src", "signal.h", "SIGCOUNT"),
+    ("err", "errnames", "Src/Modules", "errno.h", "ERRCOUNT"),
+]
+[bsd_script_output(
+    name = stem + "_candidates", script = "table-awk.sh",
+    src = "//contrib/zsh:" + directory + "/" + stem + "1.awk",
+    additional_sources = ["//sys/sys:" + header],
+    input_mode = "argument", output = prefix + "tmp.c",
+    path_tools = {"@bsd_sdk//toolchain:awk": "awk"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"],
+) for prefix, stem, directory, header, count in _TABLES]
+[bsd_script_output(
+    name = stem + "_preprocessed", script = "table-cpp.sh",
+    src = ":" + stem + "_candidates", input_mode = "argument", output = prefix + "tmp.out",
+    use_cpp = True, compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    path_tools = {"@bsd_sdk//toolchain:awk": "awk"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"],
+) for prefix, stem, directory, header, count in _TABLES]
+[bsd_script_output(
+    name = stem, script = "table-awk.sh",
+    src = "//contrib/zsh:" + directory + "/" + stem + "2.awk",
+    additional_sources = [":" + stem + "_preprocessed"],
+    input_mode = "argument", output = stem + ".c",
+    path_tools = {"@bsd_sdk//toolchain:awk": "awk"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"],
+) for prefix, stem, directory, header, count in _TABLES]
+[bsd_script_output(
+    name = prefix + "count", script = "table-count.sh",
+    src = ":" + stem, arguments = [count],
+    input_mode = "argument", output = prefix + "count.h",
+    path_tools = {"@bsd_sdk//toolchain:awk": "awk"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"],
+) for prefix, stem, directory, header, count in _TABLES]
+filegroup(name = "tables", srcs = [":signames", ":errnames", ":sigcount", ":errcount"], visibility = ["//visibility:public"])
