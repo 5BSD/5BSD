@@ -2728,3 +2728,11 @@ instrumentation is unchanged; runtime attachment/firing is not yet tested.
 Evidence: `bazel-zsh-runtime-r5-20261027/qualification/binary-parity.json` under
 `/usr/obj/usr/src`. The noninteractive shell smoke test passes but does not
 establish job-control/pty tracing or audit integration coverage.
+
+
+### zsh installation follow-up (2026-10-27)
+
+The full native installation now preserves Make's debug split/link and all
+configuration/completion/manual payloads. No instrumentation sources changed.
+The earlier nine-record DOF comparison remains executable-level evidence;
+probe firing and interactive behavior still require runtime qualification.

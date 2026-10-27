@@ -3391,3 +3391,10 @@ and
 build the amd64 shell and exercise noninteractive behavior with declared
 candidate libraries. Full shell installation, upstream interactive tests,
 static-root configuration and cross builds require separate qualification.
+
+.Pp
+The target
+.Dq //bin/zsh:install_archive
+stages the complete shell component, including functions, manuals, configuration
+and split debug information. Its installation inventory is qualified separately
+from full upstream shell tests, system images and repository publication.

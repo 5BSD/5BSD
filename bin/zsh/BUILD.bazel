@@ -84,3 +84,44 @@ bsd_program_test(name = "runtime_smoke", program = ":zsh",
     args = ["-f", "-c", "'source \"$$TEST_SRCDIR/$$1\"'", "zsh-smoke", "$(rlocationpath :native-smoke.zsh)"], data = ["native-smoke.zsh"],
     runtime_lib = ["//lib/ncurses/ncurses:ncurses_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/msun:m_shared",
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"])
+
+load(":functions.bzl", "ZSH_FUNCTIONS")
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+load("//tools/build/bazel:bsd_soelim.bzl", "bsd_soelim")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_compress")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_MANUALS = ['zsh', 'zshall', 'zshbuiltins', 'zshcalsys', 'zshcompctl', 'zshcompsys', 'zshcompwid', 'zshcontrib', 'zshexpn', 'zshmisc', 'zshmodules', 'zshoptions', 'zshparam', 'zshroadmap', 'zshtcpsys', 'zshzftpsys', 'zshzle']
+bsd_soelim(name = "combined_manual", src = "//contrib/zsh:Doc/zshall.1", output = "zshall.1",
+    includes = {"//contrib/zsh:Doc/" + m + ".1": "man1/" + m + ".1" for m in _MANUALS if m != "zshall"},
+    soelim = "//usr.bin/soelim:soelim", redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_template(name = "run_help", template = "//contrib/zsh:Functions/Misc/run-help", output = "run-help",
+    substitutions = {"@runhelpdir@": "/usr/share/zsh/help"})
+_FUNCTIONS = [f for f in ZSH_FUNCTIONS if f.split("/")[-1] not in ["run-help", "_mdo"]]
+[bsd_install_file(name = "function_" + str(i), src = f, destination = "/usr/share/zsh/functions/" + f.split("/")[-1],
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=runtime"]) for i, f in enumerate(_FUNCTIONS)]
+[bsd_install_file(name = "local_" + n, src = s, destination = d, owner = "root", group = "wheel", mode = mode,
+    install_tags = ["package=runtime"] + (["config"] if config else [])) for n, s, d, mode, config in [
+    ("run_help", ":run_help", "/usr/share/zsh/functions/run-help", "0444", False),
+    ("mdo", "_mdo", "/usr/share/zsh/functions/_mdo", "0444", False),
+    ("license", "//contrib/zsh:LICENCE", "/usr/share/doc/zsh/LICENCE", "0444", False),
+    ("zshrc", "zshrc", "/etc/zshrc", "0644", True),
+    ("root_profile", "//share/skel:dot.zprofile", "/root/.zprofile", "0644", True),
+    ("root_rc", "//share/skel:dot.zshrc", "/root/.zshrc", "0644", True),
+]]
+[bsd_compress(name = "manual_" + m, src = ":combined_manual" if m == "zshall" else "//contrib/zsh:Doc/" + m + ".1",
+    output = m + ".1.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for m in _MANUALS]
+[bsd_install_file(name = "install_manual_" + m, src = ":manual_" + m, destination = "/usr/share/man/man1/" + m + ".1.gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]})) for m in _MANUALS]
+utility_installation(name = "install_manifest", program = "zsh", manual = None, package = "runtime", bindir = "/bin",
+    extra_entries = [":function_" + str(i) for i in range(len(_FUNCTIONS))] +
+        [":local_" + n for n in ["run_help", "mdo", "license", "zshrc", "root_profile", "root_rc"]] +
+        [":install_manual_" + m for m in _MANUALS])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime"]}' for d in ["/etc", "/usr/share/zsh", "/usr/share/zsh/functions", "/usr/share/doc/zsh"]} |
+        {"/root": '{"owner":"root","group":"wheel","mode":"0750","tags":["package=runtime"]}', "/usr/lib/debug/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

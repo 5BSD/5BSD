@@ -283,3 +283,13 @@ records. The import helper now maintains both source lists. See README for
 Next: full zsh installation inventory and upstream runtime suites, then
 DTrace-disabled/static-root and cross-architecture configuration. Neither zsh
 installation nor a complete bin/world aggregate is qualified yet.
+
+## Subsequent progress: zsh installation inventory
+
+The full zsh archive matches all 1,259 Make component records, including 1,251
+byte-equal nonbinary payloads and validated split debug linkage. Function
+inventories are maintained by the import helper for both build systems;
+combined-manual includes and the execution tool are explicit Bazel inputs.
+Final evidence: `bazel-zsh-install-r2-20261027/qualification/zsh` under
+`/usr/obj/usr/src`. Next: upstream shell suites and configuration variants;
+no complete world/image/package publication claim follows from this archive.

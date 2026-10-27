@@ -32829,3 +32829,30 @@ metadata, complete upstream shell/pty/job-control tests, static-root and
 DTrace-disabled variants, mutation invalidation and cross builds remain. The
 existing format-5 build-bsd frontend/backend supports these targets unchanged;
 Make remains the production default. No host installation occurred.
+
+### zsh complete component installation (2026-10-27)
+
+`//bin/zsh:install_archive` now includes the binary and split debug file,
+completion/functions, local `_mdo`, expanded run-help, license, all 17 manuals,
+`/etc/zshrc`, root `.zprofile`/`.zshrc` and their package-owned directories.
+The import helper produces `functions.bzl` and `functions.mk` from the same
+1,230-function inventory and license exclusions. The build graph applies the
+same local replacements as Make; no function inventory is discovered from the
+host. `bsd_soelim` declares manual include paths and runs the native soelim
+execution tool. run-help uses a declared template substitution.
+
+Final evidence:
+`/usr/obj/usr/src/bazel-zsh-install-r2-20261027/qualification/zsh/receipt.json`
+and its retained verifier compare all 1,259 installation records against
+`bazel-zsh-make-20261027`: exact inventory, package/config/debug tags, owners,
+groups, modes and flags, 1,251 byte-identical nonbinary payloads, and one verified
+debug link. This includes the flattened/compressed combined manual. The archive
+SHA256 is `c30f4f89d94ee02860d705142acae0ff7f3d7f5170a642fdb5b5c76fea62e4c5`;
+the initial and final generator implementation produce that same archive.
+The native runtime smoke test remains passing (cached in this installation run).
+
+The maintained format-5 frontend and installation backend handle this target
+without changes to build-bsd.c. This is a staged component archive, not a
+published pkgbase repository or host installation. Full upstream shell suites,
+interactive/pty/job-control behavior, static-root/DTrace-disabled variants,
+cross builds and broader world/image qualification remain pending.
