@@ -32233,3 +32233,33 @@ This qualifies the default program artifact only. Checksum/ATF/pytest test
 integration and test installation, live IPv4/IPv6 and injection tests, option
 variants, static/rescue configurations, and performance remain outstanding.
 The existing explicit-target frontend contract requires no C/backend change.
+
+## Ping checksum tests and full test installation — 2026-10-27
+
+`//sbin/ping/tests:tests` runs the four unchanged maintained in_cksum cases:
+aligned/unaligned buffers with even/odd lengths. It compiles the production
+utils.c with the original ATF test. All four executed and passed in
+`/usr/obj/usr/src/bazel-ping-checksum-20261027`; subsequent archive qualification
+reused those cached results. Test binary comparison matches seven globals,
+ordered ATF/c libraries, PIE/NOW, no RPATH/RUNPATH and no DOF.
+
+`//sbin/ping:install_archive` now includes the complete maintained test inventory
+when tests are enabled: checksum executable/debug payload, shell test, pytest
+wrapper, injection helper, four expected-output fixtures, and Kyuafile. Native
+script generation preserves Make's atf_pytest_wrapper interpreter and /usr/tests
+argument. Kyuafile keeps ping_test exclusivity as the maintained string value
+and test_ping.py's pytest dependency. Network shell/pytest runtime targets are
+not yet integrated; installation does not establish their execution.
+
+Evidence: `/usr/obj/usr/src/bazel-ping-tests-20261027`, compared against
+`/usr/obj/usr/src/bazel-ping-make-20261027`. All 21 inventory records, ten
+nonbinary payload comparisons, two hardlinks and three executable/alias debuglink
+checks pass. Archive SHA-256:
+`521d74fa13996b0d68e4515ff5692d0cc9fd1d18d9b2d37f32d00e6628cc39bd`.
+Setuid archive permissions remain verified independently of safe extraction.
+No packets were sent and no host installation occurred.
+
+Existing format-5 frontend targets/tests and the tests build setting carry the
+addition with no C/backend changes; the maintained manual identifies this suite's
+scope. Remaining work includes IPv4/IPv6 variants, network/injection execution,
+static/rescue, other architectures, and performance qualification.

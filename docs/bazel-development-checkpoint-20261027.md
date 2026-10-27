@@ -100,3 +100,10 @@ Native default ping program and six installation records match Make, including
 conditional ping6 links and setuid archive metadata. No installation or packet
 transmission occurred. Checksum/ATF/pytest tests, test packaging, configuration
 variants and network/runtime qualification remain outstanding.
+
+## Subsequent progress: ping tests
+
+Four native checksum cases execute successfully. Full program/test installation
+matches Make across 21 records, including shell/pytest wrappers and fixtures.
+Checksum binary metadata also matches. Shell/pytest network runtime execution,
+configuration variants and performance remain outstanding.

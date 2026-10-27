@@ -3269,3 +3269,12 @@ The suite contains a flow-layout ABI test and three maintained dry-run command
 tests. Full runtime qualification requires a kernel compatible with the built
 userspace Capsicum ABI; successful artifact comparisons alone do not establish
 that the shell tests ran.
+
+.Pp
+The native suite
+.Dq //sbin/ping/tests:tests
+runs the four maintained checksum cases without sending packets.
+The target
+.Dq //sbin/ping:install_archive
+also packages the shell and pytest network tests when tests are enabled.
+Those installed network tests are not executed by the checksum suite.
