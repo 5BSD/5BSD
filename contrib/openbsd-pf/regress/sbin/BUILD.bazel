@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+exports_files(["pfctl/changerule.c"], visibility = ["//sbin/pfctl/tests:__pkg__"])
+# This data inventory follows the maintained Make corpus selection. Keep build
+# metadata outside pfctl/ so Make's top-level data scan stays unchanged.
+_CORPUS = glob(["pfctl/*"], exclude = ["pfctl/changerule.c"])
+[bsd_install_file(name = "corpus_" + str(i), src = p, destination = "/usr/tests/sbin/pfctl/files/" + ("regress.mk" if p == "pfctl/Makefile" else p[len("pfctl/"):]), owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"]) for i, p in enumerate(_CORPUS)]
+bsd_install_manifest(name = "pfctl_corpus", entries = [":corpus_" + str(i) for i in range(len(_CORPUS))], visibility = ["//sbin/pfctl:__pkg__"])

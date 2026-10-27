@@ -1,2 +1,2 @@
 # SPDX-License-Identifier: BSD-2-Clause
-exports_files(["pf_ruleset.c"], visibility = ["//sbin/pfctl:__pkg__"])
+exports_files(["pf_ruleset.c"], visibility = ["//sbin/pfctl:__subpackages__"])

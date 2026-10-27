@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "changerule", srcs = ["//contrib/openbsd-pf/regress/sbin:pfctl/changerule.c", '//contrib/openbsd-pf/sbin/pfctl:pfctl.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_parser.c', '//contrib/openbsd-pf/sbin/pfctl:pf_print_state.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_osfp.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_radix.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_table.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_optimize.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_queue.c', '//sbin/pfctl:parser', '//contrib/openbsd-pf/sys/net:pf_ruleset.c', '//sys/netpfil/openbsd-pf/user:pfctl_jail.c', '//sys/netpfil/openbsd-pf/user:pfctl_ether.c'],
+    deps = ["//sys/netpfil/openbsd-pf/user:pfctl_headers", "//contrib/openbsd-pf/sbin/pfctl:headers", "//lib/msun:m", "//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/msun:m_shared", "//lib/libmd:md_shared"], local_defines = ["REGRESS_NOMAIN"], copts = ["-fPIE", "-include", "openbsd_compat.h"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+utility_installation(name = "install_helper", program = "changerule", manual = "", package = "tests", bindir = "/usr/tests/sbin/pfctl")
+_SHELL = ["macro", "pfctl_5bsd", "pfctl_regress"]
+[bsd_script_wrapper(name = n, body = n + ".sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect") for n in _SHELL]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = _SHELL, interfaces = {n: "atf" for n in _SHELL}, metadata = {"pfctl_regress": '{"execenv":"jail","execenv_jail_params":"vnet"}'})
+[bsd_install_file(name = "install_" + n, src = ":" + n, destination = "/usr/tests/sbin/pfctl/" + n, owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"]) for n in _SHELL]
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/sbin/pfctl/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+_EXTENSIONS = glob(["files/ext*.in", "files/ext*.ok"])
+[bsd_install_file(name = "extension_" + str(i), src = p, destination = "/usr/tests/sbin/pfctl/" + p, owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"]) for i, p in enumerate(_EXTENSIONS)]
+bsd_install_manifest(name = "install_extra", entries = [":install_" + n for n in _SHELL] + [":install_kyuafile"] + [":extension_" + str(i) for i in range(len(_EXTENSIONS))], visibility = ["//sbin/pfctl:__pkg__"])

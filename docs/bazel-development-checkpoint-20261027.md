@@ -149,3 +149,10 @@ compatibility and shadow headers preserve the maintained OpenBSD/5BSD build.
 The changerule helper, shell/corpus packaging, jail/VNET execution and runtime
 qualification remain outstanding. Veriexec and directory-level test aggregation
 remain sbin graph gaps; no firewall state was changed.
+
+## Subsequent progress: pfctl regression packaging
+
+Changerule now builds natively and matches Make's binary metadata. Full
+program/test/corpus packaging matches 585 records and 574 nonbinary payloads.
+Jail/VNET requirements remain in Kyuafile; no test or firewall control helper
+was executed. Runtime corpus execution remains outstanding.

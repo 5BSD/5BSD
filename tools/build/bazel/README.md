@@ -32410,3 +32410,31 @@ shell/corpus test packaging and execution (including jail/VNET isolation),
 static/platform variants and performance are still outstanding. This program
 artifact comparison does not qualify the complete pfctl regression suite.
 Frontend review: no C/backend contract change is needed for the explicit target.
+
+## Pfctl regression helper and complete corpus packaging — 2026-10-27
+
+`//sbin/pfctl/tests:changerule` now builds the maintained helper against the
+OpenBSD/5BSD sources and parser with REGRESS_NOMAIN. The existing compatibility
+and native m/md dependency declarations are reused. The combined
+`//sbin/pfctl:install_archive` includes this helper/debug payload, three shell
+tests, Kyuafile, upstream regression data and 5BSD extension fixtures when the
+tests setting is enabled. Kyuafile preserves pfctl_regress's execenv=jail and
+execenv_jail_params=vnet requirements.
+
+The upstream corpus inventory follows Make's top-level file selection and
+renames its Makefile to regress.mk. The native BUILD file lives in the parent
+regress/sbin directory, so Make's corpus scan does not accidentally install
+Bazel metadata. Extension fixtures follow the maintained ext*.in/ext*.ok patterns.
+
+Evidence: `/usr/obj/usr/src/bazel-pfctl-tests-20261027`, compared against the
+existing `/usr/obj/usr/src/bazel-pfctl-make-20261027` reference. Changerule matches
+465 defined globals, ordered m/md/c dependencies, PIE/NOW and no RPATH/RUNPATH.
+All 585 inventory records, 574 nonbinary payload comparisons, and two debuglinks
+pass. Archive SHA-256:
+`a6503854f30f082e3f6dcfa1adf3f7873b4df0eaa6a4ddd9c743f4f8f72f5b4a`.
+
+Existing format-5 frontend target selection used 16 jobs without C/backend
+contract changes; the manual records artifact versus runtime scope. This run
+built and packaged tests but did not execute the shell corpus, load PF rules,
+create interfaces, or invoke changerule. Jail/VNET runtime execution and
+performance remain outstanding, along with broader system configuration gates.

@@ -3286,3 +3286,10 @@ older snapshots with the maintained staging helper rather than modifying their
 recorded files. The native init archive preserves its schg flag and ttys
 configuration. Building this target does not execute init or qualify boot and
 root-transition behavior.
+
+.Pp
+The native pfctl target
+.Dq //sbin/pfctl:install_archive
+packages the regression helper, shell tests and corpus when tests are enabled.
+The Kyuafile retains the regression suite's jail and VNET requirements.
+Successful archive qualification does not mean those privileged tests ran.
