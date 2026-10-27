@@ -77,6 +77,20 @@ VERSION="${VERSION:-${BRAND} ${RELEASE}}"
 
 RELDATE=$(awk '/^#define[[:space:]]*__FreeBSD_version/ {print $3}' ${PARAMFILE:-${SYSDIR}/sys/param.h})
 
+# The exact version-only query needs no copyright or build metadata. Keep this
+# usable by declared build actions with just newvers.sh and the target param.h.
+print_version_variables()
+{
+	for v in TYPE REVISION BRANCH RELEASE VERSION RELDATE; do
+		eval val=\$${v}
+		echo ${v}=\"${val}\"
+	done
+}
+if [ "$#" -eq 1 ] && [ "$1" = "-v" ]; then
+	print_version_variables
+	exit 0
+fi
+
 if [ -r "${SYSDIR}/../COPYRIGHT" ]; then
 	year=$(sed -Ee '/^Copyright .* The FreeBSD Project/!d;s/^.*1992-([0-9]*) .*$/\1/g' ${SYSDIR}/../COPYRIGHT)
 else
@@ -131,10 +145,7 @@ while getopts cd:rRvV: opt; do
 		;;
 	v)
 		# Only put variables that are single lines here.
-		for v in TYPE REVISION BRANCH RELEASE VERSION RELDATE; do
-			eval val=\$${v}
-			echo ${v}=\"${val}\"
-		done
+		print_version_variables
 		exit 0
 		;;
 	V)

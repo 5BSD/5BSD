@@ -2702,3 +2702,10 @@ Native verification emits existing success/rejection diagnostics during 25
 in-process signed-file checks. Return values and verified payload bytes are
 asserted; no audit event completeness claim is made. Kernel manifest loading,
 system policy changes and firmware logging are outside this test's scope.
+
+### freebsd-version (2026-10-27)
+
+Native generation preserves the maintained shell program. Default/-u reporting
+was exercised; no kernel/jail command was run. This utility gains no new tracing
+or audit behavior. Kernel/jail query and deployment-version consistency checks
+remain part of system qualification.

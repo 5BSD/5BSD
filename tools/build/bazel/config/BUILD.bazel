@@ -194,3 +194,5 @@ config_setting(name = "bearssl_ssl_enabled", flag_values = {":bearssl_ssl": "tru
 label_flag(name = "secureboot_policy", build_setting_default = "//lib/libsecureboot:unconfigured_policy", visibility = ["//visibility:public"])
 label_flag(name = "secureboot_trust_anchors", build_setting_default = "//lib/libsecureboot:no_certificates", visibility = ["//visibility:public"])
 label_flag(name = "secureboot_verification_certificates", build_setting_default = "//lib/libsecureboot:no_certificates", visibility = ["//visibility:public"])
+
+string_flag(name = "version_branch", build_setting_default = "", visibility = ["//visibility:public"])

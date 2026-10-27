@@ -32732,3 +32732,46 @@ one verifier process. It does not qualify firmware keys, signed image transition
 persisted revocation, rollback resistance, boot-environment upgrades, intermediate
 certificate chains, expiry boundary tests or the complete signing algorithm matrix.
 Those system/key-management and broader migration/performance gates remain open.
+
+## Native freebsd-version and bin aggregation review — 2026-10-27
+
+Review found no native bin aggregate and missing targets for freebsd-version,
+zsh, csh and rmail. freebsd-version is now converted. The other three, directory
+test aggregation and complete configured bin coverage remain outstanding; no
+partial list is advertised as a completed world/bin aggregate.
+
+The native generation action invokes maintained newvers.sh -v with declared
+newvers.sh, target param.h and the script template. The exact -v path now exits
+before unrelated copyright/date discovery; the same output function is used by
+the existing option parser. No version number or branch is copied into Bazel
+metadata. Execution shell/awk/Python and runtimes are declared SDK tools; native
+bootstrap replacement of that SDK remains a broader gate.
+
+The format-5 string setting //tools/build/bazel/config:version_branch selects
+an explicit BRANCH_OVERRIDE; empty retains the source default. Version tokens
+are validated before template expansion. This setting currently configures the
+userland version script; a future complete native kernel/version graph must use
+the same selected system version, and is not yet qualified.
+
+Evidence: /usr/obj/usr/src/bazel-freebsd-version-r2-20261027 compared with
+/usr/obj/usr/src/bazel-freebsd-version-make-20261027. All three installation
+records match, including the runtime-owned /bin directory; script and compressed
+manual are byte-identical. Archive SHA-256:
+`4a8c00388609c801670692955b8c83d114f8992dab88bb6a018f0ab2298b89e8`.
+The initial archive omitted that directory metadata; the comparison rejected it
+and the graph was corrected, rather than relaxing inventory checks.
+
+Eight old/new newvers query comparisons cover default/overridden branch,
+REVISION assignments, -rv and -V REVISION; retained evidence is beneath
+bazel-freebsd-version-20261027/qualification. Default and explicit CURRENT-test
+scripts pass shell syntax and default/-u runtime checks, reporting source-derived
+16.0-CURRENT and 16.0-CURRENT-test. The override artifact is retained under
+bazel-freebsd-version-branch-20261027; its earlier archive is not the final default
+installation qualification. Runtime results are in the r2 qualification directory.
+Kernel-file/running-kernel/jail reporting and full image version consistency
+remain outstanding.
+
+build-bsd's existing format-5 settings/targets exercised both branches with
+16 jobs; the manual documents the new input and limitation. No frontend C or
+publication contract change was required. No host installation or state mutation
+was performed.

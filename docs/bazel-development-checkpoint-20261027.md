@@ -7,7 +7,7 @@ Bazel work on `dev`. It is not a release qualification. Make remains the
 production build path and remains supported for ports. BIP is out of scope.
 No host installation, upgrade, or reboot was performed for this checkpoint.
 
-The current component, `sbin/dhclient`, has completed its normal program and
+The original checkpoint component, `sbin/dhclient`, has completed its normal program and
 installation comparison against Make. The native graph uses explicit C sources,
 headers, dependency ordering, and DTrace generation. The comparison covers 168
 defined globals, 11 installation records, seven nonbinary payloads, debuglink,
@@ -23,7 +23,7 @@ qualification, and live network behavior remain to be completed.
 
 ## Remaining migration work
 
-There are 1,058 BUILD.bazel files at this checkpoint; this is a graph-file count,
+At the initial checkpoint there were 1,058 BUILD.bazel files; this is a graph-file count,
 not a count of successfully qualified products or a completion percentage.
 A complete native world, kernel/modules, bootstrap, pkgbase, and image build
 has not yet been demonstrated. The current component builds still consume a
@@ -251,3 +251,15 @@ Firmware/image key transitions, persisted revocation and boot-environment upgrad
 rotation remain unqualified. Continue with declared-input/cache invalidation and
 remaining world/kernel/package integration; do not equate this process-level test
 with end-to-end system update qualification.
+
+## Subsequent progress: freebsd-version and aggregate gaps
+
+Native version generation and all three installation records match Make, with
+default/overridden branch reporting and eight newvers compatibility queries
+checked. The version comes from maintained source inputs, not copied constants.
+The exact newvers -v query now avoids unrelated copyright/date discovery.
+Review still finds missing bin targets for zsh (required default shell), csh and
+rmail, plus directory test aggregation. Continue with zsh and its declared
+signal/error table generators and existing DTrace instrumentation. A complete
+bin/world aggregate remains unqualified; do not hide these gaps behind a partial
+aggregate target. README records the evidence and remaining version-policy scope.

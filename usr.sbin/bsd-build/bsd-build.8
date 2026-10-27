@@ -3200,6 +3200,19 @@ Static/shared trust initialization and library installation metadata have been
 qualified with explicitly selected test inputs.
 System-wide signing, key rotation and enforcement remain incomplete.
 .Pp
+.Ss Userland version branch
+The format-5 string setting
+.Li //tools/build/bazel/config:version_branch
+provides an explicit branch override for the native
+.Li //bin/freebsd-version:version_script
+target.
+An empty value retains the maintained source default.
+Use a version token containing only letters, digits, dot, underscore, plus or
+hyphen.
+The script and installation metadata have been compared with Make.
+This currently selects userland script generation; complete native kernel/image
+version consistency remains unqualified.
+.Pp
 .Ss Signed-file qualification
 The native
 .Li //lib/libsecureboot/tests:signed_rotation_test
