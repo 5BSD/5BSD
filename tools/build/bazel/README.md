@@ -33113,3 +33113,26 @@ Probe source, both executables and results.json are retained under
 This evidence explains the shared startup failure; it does not establish
 that the 13 cat cases pass on a matching runtime. The frontend and backend
 require no implementation changes for this diagnostic-only update.
+
+## echo ATF integration (2026-10-27)
+
+The two maintained echo cases now use an ATF executable configuration input,
+with /bin/echo retained as the installed-suite default. Bazel supplies the
+actual declared echo target through config_files, avoiding tests of the host
+binary. Test expectations are unchanged. Native scripts and Kyuafile are
+included in echo's installation archive when tests are enabled.
+
+Make installation parity passes: seven records, three byte-equal nonbinary
+files and one executable debug link. Evidence is under
+/usr/obj/usr/src/bazel-echo-install-20261027/qualification/echo, compared with
+/usr/obj/usr/src/bazel-echo-tests-make-20261027. Archive SHA256:
+1d90198833eb596dfa53c2d95424e2df791752971dbfc21126dfebf48b0ccc67.
+
+The first runtime request was rejected because its requested test suite was
+not also a selected target. Corrected inputs reach both tests, which fail
+before their bodies with the previously diagnosed host/SDK Capsicum mismatch.
+Failure reports and copied logs are retained in
+/usr/obj/usr/src/bazel-echo-tests-r2-20261027. Neither case is runtime-qualified.
+Seventeen of the previously listed bin tests directories still lack BUILD
+files. The existing frontend format-5 targets/tests interface supports this
+integration without C/backend changes; the maintained manual documents it.

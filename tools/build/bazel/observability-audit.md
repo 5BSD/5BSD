@@ -2800,3 +2800,10 @@ currently fails in helper initialization with a Capsicum assertion reproduced
 by Make-built dirname as well. Consequently none of the cat option/body tests
 or probe behavior gains runtime qualification from this run. Failure logs and
 cross-build-system reproductions are retained; no skip/fallback was added.
+
+## echo test integration (2026-10-27)
+
+Both maintained cases now select the candidate explicitly, retaining installed
+/bin/echo defaults. No production executable, probe or audit behavior changed.
+Installation/debug parity passes; both ATF bodies remain unexecuted because
+helper startup hits the diagnosed host/SDK Capsicum ABI mismatch.

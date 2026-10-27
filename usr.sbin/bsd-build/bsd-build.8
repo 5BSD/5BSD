@@ -3452,3 +3452,12 @@ runs the maintained cat ATF cases; its scripts and fixtures are included by
 when tests are enabled. Installation parity is separate from runtime success.
 The current older-host/SDK Capsicum helper assertion prevents those cases from
 reaching their bodies and remains a failed qualification gate.
+
+.Pp
+.Dq //bin/echo/tests:tests
+selects the native echo executable through an ATF configuration input;
+installed tests retain /bin/echo as their default. The test scripts and
+Kyuafile are included by
+.Dq //bin/echo:install_archive
+when tests are enabled. Installation parity has been checked; the current
+host/SDK Capsicum incompatibility prevents runtime qualification.
