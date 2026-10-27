@@ -48,3 +48,8 @@ bsd_program_test(name = "trust_init_shared_test", program = ":trust_init_shared_
     linkstatic = True, size = "small",
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
     for mode in ["clean", "bad256", "bad384"]]
+
+cc_test(name = "signed_rotation_test", srcs = ["signed_rotation_test.c"],
+    deps = ["//lib/libsecureboot:secureboot", "//secure/lib/libcrypto:crypto"],
+    linkstatic = True, size = "medium",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

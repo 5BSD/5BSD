@@ -3198,7 +3198,16 @@ labels in that configuration package select public certificate files or groups.
 No usable policy or test root is selected by default.
 Static/shared trust initialization and library installation metadata have been
 qualified with explicitly selected test inputs.
-Signed-file verification, key rotation and system enforcement remain incomplete.
+System-wide signing, key rotation and enforcement remain incomplete.
+.Pp
+.Ss Signed-file qualification
+The native
+.Li //lib/libsecureboot/tests:signed_rotation_test
+target uses disposable in-memory RSA keys to exercise signed-file verification,
+trust overlap, revocation precedence and malformed or missing metadata.
+Test files stay beneath the Bazel test temporary directory.
+This qualifies in-process verifier behavior, not firmware key rotation or system
+image upgrade policy.
 .Pp
 .Ss Secureboot self-test qualification
 The native

@@ -32703,3 +32703,32 @@ format-5 trust settings. No frontend/backend contract change is needed; the
 manual records the test scope. Signed-file/key-rotation integration, all policy
 modes, firmware and performance remain outstanding. This does not make every
 caller enforce self-test failure or change certificate-count policy.
+
+## Native signed-file and in-process trust rotation — 2026-10-27
+
+//lib/libsecureboot/tests:signed_rotation_test generates two disposable RSA-2048
+keys in memory using native libcrypto, creates self-signed public certificates,
+and signs files with SHA256/PKCS#1. It exercises production verify_signed and
+trust-add/revoke APIs using native libsecureboot/BearSSL. OpenSSL configuration
+loading is disabled, private keys are never written, and all public certificates,
+signatures and payloads live beneath TEST_TMPDIR. Certificate time enforcement
+is enabled with newly generated certificates; no host trust or enforcement state
+is modified.
+
+Evidence: /usr/obj/usr/src/bazel-secureboot-signed-r2-20261027. One Bazel test
+passes 25 internal checks: untrusted rejection; old/new trust overlap; mismatched
+certificate/signature rejection while both roots are trusted; old-root revocation
+and denial even after re-addition; accepted and tampered files of sizes 0, 1,
+4095, 4096, 4097 and 65537; revoked-certificate replacement; malformed/missing
+signature; missing certificate; and successful new-key verification afterward.
+The test generates fresh keys when executed, and cached execution must not be
+reported as a fresh key generation. The earlier 23-check run is retained at
+bazel-secureboot-signed-20261027.
+
+build-bsd runs this through the existing format-5 target/test and explicit
+trust inputs with 16 jobs; the manual documents scope and no C/backend contract
+change is required. This qualifies self-signed RSA signer trust changes inside
+one verifier process. It does not qualify firmware keys, signed image transitions,
+persisted revocation, rollback resistance, boot-environment upgrades, intermediate
+certificate chains, expiry boundary tests or the complete signing algorithm matrix.
+Those system/key-management and broader migration/performance gates remain open.

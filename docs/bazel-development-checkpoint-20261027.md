@@ -240,3 +240,14 @@ corrupted-expectation tests pass, including cached-result behavior, with real
 upstream certificate fixtures. Existing caller policies and signature-count
 semantics remain unchanged. Signed-file/trust-rotation qualification is next;
 all broader system migration and performance requirements remain open.
+
+## Subsequent progress: signed-file and trust rotation tests
+
+A native integration test passes 25 checks with disposable in-memory RSA keys,
+real signing/verification, old/new trust overlap, revocation precedence, malformed
+or missing metadata and payload boundary sizes. All mutations are confined to
+the test process and TEST_TMPDIR. README records exact scope and evidence.
+Firmware/image key transitions, persisted revocation and boot-environment upgrade
+rotation remain unqualified. Continue with declared-input/cache invalidation and
+remaining world/kernel/package integration; do not equate this process-level test
+with end-to-end system update qualification.

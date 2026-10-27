@@ -2695,3 +2695,10 @@ return cached zero before later signature successes. Native clean/SHA256/SHA384
 corruption cases pass. Existing failure messages are retained. Strict-mode caller
 checks zero; verify_prep/tvo still intentionally ignore the return. Their policy
 and complete boot enforcement have not been qualified by this unit-level fix.
+
+### Signed-file and trust-rotation test (2026-10-27)
+
+Native verification emits existing success/rejection diagnostics during 25
+in-process signed-file checks. Return values and verified payload bytes are
+asserted; no audit event completeness claim is made. Kernel manifest loading,
+system policy changes and firmware logging are outside this test's scope.
