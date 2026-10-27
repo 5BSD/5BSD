@@ -3398,3 +3398,11 @@ The target
 stages the complete shell component, including functions, manuals, configuration
 and split debug information. Its installation inventory is qualified separately
 from full upstream shell tests, system images and repository publication.
+
+.Pp
+The target
+.Dq //bin/zsh:upstream_tests
+runs the upstream suite as a local, noncached integration test. It uses host
+commands, locales, account lookups and pseudo-terminals in addition to the
+declared candidate and fixtures. Review upstream skips in the retained log;
+a successful group does not imply every platform-dependent case executed.

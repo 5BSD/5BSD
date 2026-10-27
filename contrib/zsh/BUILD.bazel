@@ -9,3 +9,6 @@ exports_files(glob(["Src/*.c", "Src/Zle/*.c", "Src/Modules/*.c", "Src/Builtins/*
 cc_library(name = "headers", hdrs = glob(["Src/*.h", "Src/Zle/*.h", "Src/Modules/*.h"]), includes = ["Src", "Src/Zle", "Src/Modules", "Src/Builtins"], visibility = ["//bin/zsh:__pkg__"])
 
 exports_files(glob(["Completion/**", "Functions/**", "Doc/*.1"]) + ["LICENCE"], visibility = ["//bin/zsh:__pkg__"])
+
+filegroup(name = "upstream_test_data", srcs = glob(["Test/**", "Functions/**", "Completion/**", "Misc/globtests", "Misc/globtests.ksh", "Src/**/*.mdd"]), visibility = ["//bin/zsh:__pkg__"])
+exports_files(["Test/runtests.zsh"], visibility = ["//bin/zsh:__pkg__"])

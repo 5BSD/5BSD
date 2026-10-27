@@ -293,3 +293,17 @@ combined-manual includes and the execution tool are explicit Bazel inputs.
 Final evidence: `bazel-zsh-install-r2-20261027/qualification/zsh` under
 `/usr/obj/usr/src`. Next: upstream shell suites and configuration variants;
 no complete world/image/package publication claim follows from this archive.
+
+## Subsequent progress: upstream zsh tests and DTrace-disabled parity
+
+The local noncached upstream Bazel test runs all 63 retained groups: 62 pass,
+zero fail, P01privileged skips at UID 1001. Individual platform/terminal skips
+remain visible in the retained summary/log. Job-control, ZLE, module and
+completion groups pass. Missing-fixture failures from the first two runs are
+preserved. Evidence: `bazel-zsh-upstream-r3-20261027/qualification`.
+
+DTrace-disabled zsh also passes smoke and Make binary/install parity: 1,889
+globals, no DOF section, all 1,259 installation records and 1,251 nonbinary
+payloads matched. Evidence: `bazel-zsh-no-dtrace-20261027/qualification`.
+Next: static-root configuration and remaining bin targets; cross/privileged
+and whole-system gates remain open. README details the exact scope and limits.

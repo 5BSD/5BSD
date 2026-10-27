@@ -32856,3 +32856,39 @@ without changes to build-bsd.c. This is a staged component archive, not a
 published pkgbase repository or host installation. Full upstream shell suites,
 interactive/pty/job-control behavior, static-root/DTrace-disabled variants,
 cross builds and broader world/image qualification remain pending.
+
+### zsh upstream host integration and DTrace-disabled variant (2026-10-27)
+
+`//bin/zsh:upstream_tests` runs the unchanged upstream harness and all 63
+retained groups against the native candidate. Its declared runfiles include
+functions/completions, both glob corpora, module descriptors, maintained module
+configuration and target config.h. A writable layout under TEST_TMPDIR supplies
+the harness's expected Test/Src paths; candidate libraries are explicit runfiles.
+The upstream suite intentionally calls host tools and absolute system paths,
+and uses host locales/NSS/PTYs. This target is local, noncached and nonremote;
+it is host integration evidence, not a hermetic test or cross execution claim.
+
+`/usr/obj/usr/src/bazel-zsh-upstream-r3-20261027/qualification/upstream-summary.json`
+records 62 successful groups, zero failures and one skipped group, with each
+source group accounted for. P01privileged skipped under UID 1001. Successful
+groups include W02jobs/W03jobparameters, ZLE, completion and module tests.
+Additional skipped checks for MONITOR-dependent pipe leakage, block devices,
+/dev/fd, terminal colour and strftime extensions remain recorded in the full
+log; group success does not mean every conditional case executed. The first two
+runs are retained with their missing-fixture failures; test expectations and
+production shell behavior were not changed.
+
+`bazel-zsh-no-dtrace-20261027` versus `bazel-zsh-no-dtrace-make-20261027`, both
+under `/usr/obj/usr/src`, qualifies the explicit dtrace=false setting: native
+smoke passes, 1,889 global symbols and ordered dynamic metadata match, neither
+binary has a .SUNW_dof section, and all 1,259 installation records match with
+1,251 byte-equal nonbinary payloads and one valid debug link. Archive SHA256:
+`38c1ad13d9f0c5644d2cad83ef3081c9a10388e77711e687fbb8f49e7f8a18d7`.
+The full upstream suite was run for the DTrace-enabled default; the disabled
+variant has smoke and binary/install evidence, not a second full suite claim.
+
+The existing build-bsd format-5 test/configuration frontend requires no code
+change for these targets. Still pending: privileged/host-skipped cases,
+static-root configuration, cross builds, dependency mutation/remote-cache
+qualification and whole-system build/image/performance gates. Make remains
+the production default; no host installation or account changes were made.

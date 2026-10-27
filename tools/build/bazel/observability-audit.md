@@ -2736,3 +2736,13 @@ The full native installation now preserves Make's debug split/link and all
 configuration/completion/manual payloads. No instrumentation sources changed.
 The earlier nine-record DOF comparison remains executable-level evidence;
 probe firing and interactive behavior still require runtime qualification.
+
+
+### zsh upstream runtime and disabled probes (2026-10-27)
+
+The native DTrace-enabled candidate passes 62 of 63 retained upstream groups;
+privileged behavior is skipped under the current UID, and conditional host
+limitations remain logged. W02/W03 job-control groups run successfully, but
+these tests do not attach DTrace consumers or prove probe firing. The explicitly
+DTrace-disabled candidate matches Make and contains no DOF section. No probe
+source was removed or rewritten to achieve these results.

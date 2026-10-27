@@ -125,3 +125,14 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+# Upstream tests intentionally exercise host tools, NSS, locales and PTYs.
+# Do not cache these as hermetic tests or hide upstream skips.
+bsd_program_test(name = "upstream_tests", program = ":zsh",
+    runner = "//tools/build/bazel:program_test_runner",
+    args = ["-f", "-c", "'source \"$$TEST_SRCDIR/$$1\" \"$$TEST_SRCDIR/$$2\" \"$$TEST_SRCDIR/$$3\" \"$$TEST_SRCDIR/$$4\"'", "zsh-upstream",
+        "$(rlocationpath :upstream-tests.zsh)", "$(rlocationpath //contrib/zsh:Test/runtests.zsh)", "$(rlocationpath :generated/config.h)", "$(rlocationpath :modules.conf)"],
+    data = ["upstream-tests.zsh", "generated/config.h", "modules.conf", "//contrib/zsh:Test/runtests.zsh", "//contrib/zsh:upstream_test_data"],
+    runtime_lib = ["//lib/ncurses/ncurses:ncurses_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    tags = ["local", "external", "no-remote", "no-cache"], timeout = "long")
