@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["krb5.pc.in", "mit-krb5.pc.in", "krb5-gssapi.pc.in", "mit-krb5-gssapi.pc.in"], visibility = ["//krb5:__subpackages__"])

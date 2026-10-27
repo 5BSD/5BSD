@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+# TAP Make rules copy this script unchanged; preserve the installed program.
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["legacy_test"],
+    interfaces = {"legacy_test": "tap"},
+    metadata = {"legacy_test": '{"allowed_architectures":"amd64 i386","required_programs":"lastcomm"}'})
+bsd_install_file(name = "install_shell", src = "legacy_test.sh",
+    destination = "/usr/tests/usr.bin/lastcomm/legacy_test", owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/usr.bin/lastcomm/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+_FIXTURES = ['v1-amd64-acct.in', 'v1-amd64.out', 'v1-i386-acct.in', 'v1-i386.out', 'v2-amd64-acct.in', 'v2-amd64.out', 'v2-i386-acct.in', 'v2-i386.out']
+[bsd_install_file(name = "install_" + f, src = f,
+    destination = "/usr/tests/usr.bin/lastcomm/" + f, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"]) for f in _FIXTURES]
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile"] + [":install_" + f for f in _FIXTURES], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+bsd_script_wrapper(name = "legacy_test", body = "legacy_test.sh", interpreter = "/bin/sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyua_test(name = "legacy", program = ":legacy_test", interface = "tap",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua",
+    clean_environment = True,
+    path_programs = {"//usr.bin/lastcomm:lastcomm": "lastcomm"},
+    test_metadata = '{"allowed_architectures":"amd64 i386","required_programs":"lastcomm"}',
+    suite_files = {f: f for f in _FIXTURES},
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])

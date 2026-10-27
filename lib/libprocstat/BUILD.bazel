@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+load(":sources.bzl", "PROCSTAT_SOURCES")
+_CDDL = "//tools/build/bazel/config:cddl_enabled"
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_LIBS = ["//lib/libelf:elf", "//lib/libkvm:kvm", "//lib/libutil:util"]
+_SHARED = ["//lib/libelf:elf_shared", "//lib/libkvm:kvm_shared", "//lib/libutil:util_shared"]
+cc_library(name = "headers", hdrs = ["libprocstat.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+cc_library(name = "objects", srcs = PROCSTAT_SOURCES + ["common_kvm.h", "core.h", "libprocstat_internal.h"],
+    deps = [":headers"] + _LIBS, local_defines = ["_KVM_VNODE"] + select({_CDDL: ["LIBPROCSTAT_ZFS"], "//conditions:default": []}),
+    linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = "zfs_objects", srcs = ["zfs.c", "common_kvm.h", "//sys/modules/zfs:zfs_config.h"],
+    deps = [":headers"] + _LIBS, implementation_deps = ["//sys/contrib/openzfs:procstat_zfs_headers"],
+    local_defines = ["_KVM_VNODE", "LIBPROCSTAT_ZFS", "IN_BASE", "HAVE_ISSETUGID", "ZFS_DEBUG"],
+    copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h",
+        "-include", "sys/modules/zfs/zfs_config.h", "-Wno-cast-qual"],
+    linkstatic = True, target_compatible_with = _PLATFORM)
+_GROUPS = [":objects"] + select({_CDDL: [":zfs_objects"], "//conditions:default": []})
+cc_library(name = "procstat", deps = _GROUPS + [":headers"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = _GROUPS, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_configured_version_map(
+    name = "version_map",
+    symbol_maps = ["Symbol.map"],
+    versions = "//lib/libc:Versions.def",
+    generator = "//share/mk:version_gen.awk",
+    # This symbol inventory has no includes or target-dependent conditionals.
+    cpp_flags = ["-P", "-nostdinc", "-undef"],
+    compiler = "@bsd_sdk//toolchain:bin/clang",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk",
+    awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+
+cc_shared_library(name = "procstat_shared", deps = [":procstat"], dynamic_deps = _SHARED, shared_lib_name = "libprocstat.so.1",
+    additional_linker_inputs = [":version_map"], user_link_flags = ["-Wl,-soname,libprocstat.so.1", "-Wl,--version-script=$(location :version_map),--no-undefined-version", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "ctf_headers", hdrs = glob(["uts/common/**/*.h"]), includes = [".", "uts/common"], visibility = ["//visibility:public"])
+
+exports_files(["uts/common/sys/dtrace.h"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+
+cc_library(name = "dtrace_intel_headers", hdrs = glob(["uts/intel/**/*.h"]), includes = ["uts/intel"], deps = [":ctf_headers"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+
+exports_files(["uts/common/sys/ctf_api.h"], visibility = ["//cddl/lib/libdtrace:__pkg__"])

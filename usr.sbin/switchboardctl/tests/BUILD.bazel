@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+# Real command used by the maintained tests, preserving NO_SHARED.
+cc_binary(name = "switchboardctl_test_bin", deps = ["//usr.sbin/switchboardctl:command_objects"], linkstatic = True, linkopts = ["-static"], visibility = ["//visibility:public"])

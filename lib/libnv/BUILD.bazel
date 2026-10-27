@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+
+cc_library(
+    name = "internal_headers",
+    hdrs = ["common_impl.h", "msgio.h"],
+    strip_include_prefix = "/lib/libnv",
+)
+cc_library(
+    name = "nv",
+    srcs = [
+        "msgio.c",
+        "//sys/contrib/libnv:cnvlist.c", "//sys/contrib/libnv:dnvlist.c",
+        "//sys/contrib/libnv:nvlist.c", "//sys/contrib/libnv:bsd_nvpair.c",
+        "//sys/contrib/libnv:nv_impl.h", "//sys/contrib/libnv:nvlist_impl.h",
+        "//sys/contrib/libnv:nvpair_impl.h",
+    ],
+    deps = ["//sys/sys:nv_headers"],
+    implementation_deps = [":internal_headers"],
+    target_compatible_with = ["@platforms//os:freebsd"],
+    visibility = ["//visibility:public"],
+)
+cc_shared_library(
+    name = "nv_shared",
+    deps = [":nv"],
+    shared_lib_name = "libnv.so.1",
+    additional_linker_inputs = ["Version.map"],
+    user_link_flags = [
+        "-Wl,-soname,libnv.so.1",
+        "-Wl,--version-script=$(location Version.map),--no-undefined-version",
+        "-Wl,--fatal-warnings,--warn-shared-textrel",
+    ],
+    target_compatible_with = ["@platforms//os:freebsd"],
+    visibility = ["//visibility:public"],
+)
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+bsd_component_archive(name = "static_archive", groups = [":nv"], visibility = ["//visibility:public"])
+
+load(":installation.bzl", "libnv_installation")
+libnv_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

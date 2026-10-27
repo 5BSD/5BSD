@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(['ib.h', 'rdma_cma.h', 'rdma_cma_abi.h', 'rdma_verbs.h', 'rsocket.h'], visibility = ["//lib/ofed/include:__pkg__"])

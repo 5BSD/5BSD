@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":catalogs.bzl", "libc_catalogs")
+libc_catalogs()

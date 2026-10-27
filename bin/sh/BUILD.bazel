@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load(":generation.bzl", "shell_generate")
+cc_binary(name = "mknodes", srcs = ["mknodes.c"], visibility = ["//visibility:private"])
+cc_binary(name = "mksyntax", srcs = ["mksyntax.c", "parser.h"], visibility = ["//visibility:private"])
+_TOOLS = {"@bsd_sdk//toolchain:sh": "sh", "@bsd_sdk//toolchain:awk": "awk", "@bsd_sdk//toolchain:cat": "cat", "@bsd_sdk//toolchain:sed": "sed", "@bsd_sdk//toolchain:rm": "rm", "@bsd_sdk//toolchain:extra_grep": "grep", "@bsd_sdk//toolchain:extra_mktemp": "mktemp", "@bsd_sdk//toolchain:extra_tr": "tr", "@bsd_sdk//toolchain:extra_wc": "wc"}
+_RUNTIME = ["@bsd_sdk//toolchain:python_stdlib"] + ["@bsd_sdk//toolchain:" + n + "_runtime" for n in ["sh", "awk", "cat", "sed", "rm", "extra_grep", "extra_mktemp", "extra_tr", "extra_wc"]]
+shell_generate(name = "nodes", tool = ":mknodes", argument_files = ["nodetypes", "nodes.c.pat"], outputs = ["nodes/nodes.c", "nodes/nodes.h"], runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+shell_generate(name = "syntax", tool = ":mksyntax", outputs = ["syntax/syntax.c", "syntax/syntax.h"], runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+shell_generate(name = "builtins", tool = "@bsd_sdk//toolchain:sh", argument_files = ["mkbuiltins"], argument_directory = "builtins.def", inputs = ["shell.h"], outputs = ["builtins/builtins.c", "builtins/builtins.h"], path_tools = _TOOLS, runtime = _RUNTIME)
+shell_generate(name = "tokens", tool = "@bsd_sdk//toolchain:sh", argument_files = ["mktokens"], outputs = ["tokens/token.h"], path_tools = _TOOLS, runtime = _RUNTIME)
+filegroup(name = "generated", srcs = [":nodes", ":syntax", ":builtins", ":tokens"], visibility = ["//visibility:public"])
+
+cc_library(name = "headers", hdrs = ['alias.h', 'arith.h', 'arith_yacc.h', 'cd.h', 'error.h', 'eval.h', 'exec.h', 'expand.h', 'input.h', 'jobs.h', 'mail.h', 'main.h', 'memalloc.h', 'myhistedit.h', 'mystring.h', 'options.h', 'output.h', 'parser.h', 'redir.h', 'shell.h', 'show.h', 'trap.h', 'var.h', 'bltin/bltin.h'], strip_include_prefix = ".")
+[cc_library(name = name + "_headers", hdrs = [name + "/" + header], strip_include_prefix = name)
+ for name, header in [("nodes", "nodes.h"), ("syntax", "syntax.h"), ("builtins", "builtins.h"), ("tokens", "token.h")]]
+cc_binary(name = "sh", srcs = ['alias.c', 'arith_yacc.c', 'arith_yylex.c', 'cd.c', 'error.c', 'eval.c', 'exec.c', 'expand.c', 'histedit.c', 'input.c', 'jobs.c', 'mail.c', 'main.c', 'memalloc.c', 'miscbltin.c', 'mystring.c', 'options.c', 'output.c', 'parser.c', 'redir.c', 'show.c', 'trap.c', 'var.c', 'bltin/echo.c', '//bin/kill:kill.c', '//bin/test:test.c', '//usr.bin/printf:printf.c', 'nodes/nodes.c', 'syntax/syntax.c', 'builtins/builtins.c', '//bin/kill:signaltool_trace.h'],
+    deps = [":headers", ":nodes_headers", ":syntax_headers", ":builtins_headers", ":tokens_headers", "//lib/libedit:edit"],
+    dynamic_deps = ["//lib/libedit:edit_shared"], local_defines = ["SHELL"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+utility_installation(name = "install_manifest", program = "sh", manual = "sh.1", package = "runtime", bindir = "/bin")
+
+# Maintained shell defaults are pkgbase configuration files, not immutable payloads.
+[bsd_install_file(
+    name = name,
+    src = source,
+    destination = destination,
+    owner = "root", group = "wheel", mode = "0644",
+    install_tags = ["package=runtime", "config"],
+) for name, source, destination in [
+    ("profile_config", "profile", "/etc/profile"),
+    ("root_profile_config", "dot.profile", "/root/.profile"),
+    ("root_shrc_config", "dot.shrc", "/root/.shrc"),
+]]
+bsd_install_manifest(name = "config_manifest", entries = [":profile_config", ":root_profile_config", ":root_shrc_config"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest", ":config_manifest"],
+    directories = {
+        "/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}',
+        "/root": '{"owner":"root","group":"wheel","mode":"0750","tags":["package=utilities"]}',
+        "/usr/lib/debug/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}',
+    },
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

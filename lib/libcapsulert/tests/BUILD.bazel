@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+_CASES = {'claim_parse_test': ['port_range_grammar', 'address_prefix_grammar', 'protocol_names', 'bdaddr_wildcard', 'bdaddr_exact', 'bdaddr_malformed', 'wildcard_reservation_matches_kernel_schema', 'scoped_l2cap_claim', 'storage_lifetimes'], 'storage_namespace_test': ['selection_and_membership', 'reject_aliases_and_malformed']}
+[cc_binary(name = program, srcs = [program + ".c"],
+    deps = ["//lib/libcapsulert:capsulert", "//lib/atf/libatf-c:atf_c", "//sys/dev/mac_capability:isolation_headers"],
+    dynamic_deps = ["//lib/libcapsulert:capsulert_shared", "//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"]) for program in _CASES]
+[bsd_atf_test(name = program + "_" + case, case_name = case, interface = "program", body = ":" + program,
+    runtime_lib = ["//lib/libcapsulert:capsulert_shared", "//lib/atf/libatf-c:atf_c_shared", "//lib/libucl:ucl_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libm.so.5"],
+    runner = "//tools/build/bazel:atf_runner", size = "small") for program, cases in _CASES.items() for case in cases]
+test_suite(name = "host_tests", tests = [":" + program + "_" + case for program, cases in _CASES.items() for case in cases], visibility = ["//visibility:public"])
+[utility_installation(name = "install_" + program, program = program, manual = "", package = "libcapsulert-tests", bindir = "/usr/tests/lib/libcapsulert") for program in _CASES]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = list(_CASES.keys()), interfaces = {program: "atf" for program in _CASES})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libcapsulert/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libcapsulert-tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"], visibility = ["//lib/libcapsulert:__pkg__", "//packages/libcapsulert-tests:__pkg__"])

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['main.c', 'db.c', 'memory.c', 'verbs.c'], visibility = ["//lib/ofed/libbnxtre:__pkg__"])
+cc_library(name = "private_headers", hdrs = ['abi.h', 'list.h', 'main.h', 'memory.h', 'verbs.h', 'version.h'], strip_include_prefix = ".",
+    deps = ["//contrib/ofed/libibverbs:headers"], visibility = ["//lib/ofed/libbnxtre:__pkg__"])

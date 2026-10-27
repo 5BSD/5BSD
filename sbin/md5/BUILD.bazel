@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(
+    name = "md5",
+    srcs = ["md5.c"],
+    deps = [
+        "//lib/libmd:md_link",
+        "//lib/libcasper/libcasper:casper",
+        "//lib/libcasper/services/cap_fileargs:cap_fileargs",
+        "//lib/libcapsicum:headers",
+    ],
+    # Casper providers carry libnv transitively; the command does not use it.
+    dynamic_deps = [
+        "//lib/libmd:md_shared",
+        "//lib/libcasper/libcasper:casper_shared",
+        "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared",
+    ],
+    local_defines = ["HAVE_CAPSICUM", "WITH_CASPER"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress")
+load(":installation.bzl", "digest_installation")
+
+bsd_debug_split(
+    name = "debug", src = ":md5", binary_name = "install/md5", debug_name = "install/md5.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs",
+)
+bsd_strip_binary(
+    name = "stripped", src = ":debug", output = "stripped/md5",
+    strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs",
+)
+bsd_compress(
+    name = "manual", src = "md5.1", output = "md5.1.gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"],
+)
+digest_installation(name = "install_manifest")
+
+# Static consumption qualification; not an additional installed utility.
+cc_binary(
+    name = "md5_static",
+    testonly = True,
+    srcs = ["md5.c"],
+    deps = [
+        "//lib/libmd:md_archive",
+        "//lib/libcasper/libcasper:casper",
+        "//lib/libcasper/services/cap_fileargs:cap_fileargs",
+        "//lib/libcapsicum:headers",
+    ],
+    local_defines = ["HAVE_CAPSICUM", "WITH_CASPER"],
+    linkstatic = True,
+    features = ["fully_static_link"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)

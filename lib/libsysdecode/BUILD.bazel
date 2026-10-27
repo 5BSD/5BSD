@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+
+# Generate from source headers; stdout mode avoids Make-specific dependency files.
+bsd_script_output(
+    name = "linux_tables",
+    script = "mklinuxtables",
+    src = "//sys/compat/linux:linux.h",
+    inputs = [
+        "//sys/compat/linux:linux_file.h",
+        "//sys/compat/linux:linux_fork.h",
+        "//sys/compat/linux:linux_time.h",
+    ],
+    input_mode = "directory",
+    directory_anchor = "compat/linux/linux.h",
+    output = "tables_linux.h",
+    path_tools = {
+        "@bsd_sdk//toolchain:cat": "cat",
+        "@bsd_sdk//toolchain:awk": "awk",
+        "@bsd_sdk//toolchain:extra_grep": "egrep",
+    },
+    runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "cat", "awk", "extra_grep"]],
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+
+# The SDK header inventory is explicit. The configured compiler supplies target,
+# sysroot and resource-directory flags, including enum preprocessing.
+bsd_script_output(
+    name = "native_tables",
+    script = "mktables",
+    src = "@bsd_sdk//toolchain:sysroot/usr/include/sys/param.h",
+    inputs = ["@bsd_sdk//toolchain:compile_inputs"],
+    input_mode = "directory",
+    directory_anchor = "sys/param.h",
+    use_cpp = True,
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    output = "tables.h",
+    path_tools = {
+        "@bsd_sdk//toolchain:cat": "cat",
+        "@bsd_sdk//toolchain:awk": "awk",
+        "@bsd_sdk//toolchain:sed": "sed",
+    },
+    runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "cat", "awk", "sed"]],
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+copy_file(name = "egrep_tool", src = "@bsd_sdk//toolchain:extra_grep",
+    out = "tools/egrep", is_executable = True, allow_symlink = True)
+bsd_script_output(
+    name = "ioctl_source",
+    script = "mkioctls",
+    src = "@bsd_sdk//toolchain:sysroot/usr/include/sys/param.h",
+    inputs = ["@bsd_sdk//toolchain:compile_inputs"],
+    input_mode = "directory",
+    directory_anchor = "sys/param.h",
+    use_cpp = True,
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    environment = select({"//tools/build/bazel/config:pf_enabled": {"MK_PF": "yes"}, "//conditions:default": {"MK_PF": "no"}}),
+    output = "ioctl.c",
+    runtime_libraries = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:extra_grep_runtime", "@bsd_sdk//toolchain:extra_sort_runtime"],
+    path_tools = {
+        "@bsd_sdk//toolchain:awk": "awk",
+        "@bsd_sdk//toolchain:extra_grep": "grep",
+        ":egrep_tool": "egrep",
+        "@bsd_sdk//toolchain:extra_sort": "sort",
+        "//usr.bin/find:find": "find",
+        "@bsd_sdk//toolchain:cat": "cat",
+        "//usr.bin/xargs:xargs": "xargs",
+    },
+    runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "cat", "awk", "extra_grep", "extra_sort"]],
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "headers", hdrs = ["sysdecode.h"], strip_include_prefix = ".",
+    visibility = ["//visibility:public"])
+cc_library(name = "generated_headers", hdrs = [":native_tables", ":linux_tables"],
+    strip_include_prefix = ".")
+cc_library(
+    name = "sysdecode",
+    srcs = ["errno.c", "flags.c", ":ioctl_source", "netlink.c", "signal.c", "syscallnames.c", "utrace.c", "support.c", "linux.c", "support.h"],
+    deps = [":headers"],
+    implementation_deps = [":generated_headers", "//sys/compat/linux:sysdecode_headers",
+        "//sys/amd64/linux:sysdecode_headers", "//sys/kern:sysdecode_syscalls", "//libexec/rtld-elf:utrace_header"],
+    local_defines = select({"//tools/build/bazel/config:pf_enabled": ["PF"], "//conditions:default": []}),
+    linkstatic = True,
+    target_compatible_with = _PLATFORM,
+    visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":sysdecode"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+# The maintained lib/Makefile.inc default ABI major is 5.
+cc_shared_library(name = "sysdecode_shared", deps = [":sysdecode"],
+    shared_lib_name = "libsysdecode.so.5",
+    user_link_flags = ["-Wl,-soname,libsysdecode.so.5", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load(":installation.bzl", "sysdecode_installation")
+sysdecode_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libsysdecode/tests:install_manifest"], "//conditions:default": []}),
+    directories = select({"//tools/build/bazel/config:tests_enabled": {'/usr/lib/debug/usr': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/lib': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}', '/usr/lib/debug/usr/tests': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/tests/lib': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/tests/lib/libsysdecode': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/tests/lib/libsysdecode': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests"]}'}, "//conditions:default": {'/usr/lib/debug/usr': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}', '/usr/lib/debug/usr/lib': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}'}}),
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

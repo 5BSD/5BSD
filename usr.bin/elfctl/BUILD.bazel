@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "elfctl", srcs = ["elfctl.c"], deps = ["//lib/libelftc:elftc_pie", "//lib/libelf:elf", "//contrib/elftoolchain:utility_headers", "//sys/sys:elf_common_header"], dynamic_deps = ["//lib/libelf:elf_shared"], copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "elfctl", manual = "elfctl.1", package = "utilities", bindir = "/usr/bin", man_section = "1")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+
+
+# Interface fixtures match independent Make; editing checks are retained separately.
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+bsd_compare_test(name = "list_test", program = ":elfctl", arguments = ['-l'],
+    expected = "bazel-fixtures/list.out", expected_stderr = "bazel-fixtures/list.err", expected_exit = 0,
+    runtime_lib = ["//lib/libelf:elf_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "help_test", program = ":elfctl", arguments = ['-h'],
+    expected = "bazel-fixtures/help.out", expected_stderr = "bazel-fixtures/help.err", expected_exit = 1,
+    runtime_lib = ["//lib/libelf:elf_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+test_suite(name = "tests", tests = [":list_test", ":help_test"], visibility = ["//visibility:public"])

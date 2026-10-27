@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "headers", hdrs = ["bsdfilesystem.h"], deps = ["//lib/libcapsulert:headers"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+cc_library(name = "objects", srcs = ["bsdfilesystem.c"], deps = [":headers", "//lib/libfilesystemcmp:transport_headers", "//lib/libtrustedzfs:headers"], linkstatic = True)
+cc_library(name = "bsdfilesystem", deps = [":objects", ":headers", "//lib/libtrustedzfs:trustedzfs", "//lib/libservice:service", "//lib/libchannel:channel", "//lib/libfilesystemcmp:filesystemcmp", "//lib/libfidl:fidl"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":objects"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "bsdfilesystem_shared", deps = [":bsdfilesystem"],
+    dynamic_deps = ["//lib/libtrustedzfs:trustedzfs_shared", "//lib/libservice:service_shared", "//lib/libchannel:channel_shared", "//lib/libfilesystemcmp:filesystemcmp_shared", "//lib/libfidl:fidl_shared"],
+    shared_lib_name = "libbsdfilesystem.so.1", user_link_flags = ["-Wl,-soname,libbsdfilesystem.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+library_installation(name = "install_manifest")
+bsd_install_archive(name = "library_install_archive", manifests = [":install_manifest"],
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+cc_library(name = "test_source_headers", textual_hdrs = ["bsdfilesystem.c"], deps = [":headers", "//lib/libservice:headers", "//lib/libtrustedzfs:headers"], strip_include_prefix = ".", visibility = ["//lib/libbsdfilesystem/tests:__pkg__"])
+
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libbsdfilesystem/tests:install_test", "//lib/libbsdfilesystem/tests:install_extra"], "//conditions:default": []}),
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'} | select({"//tools/build/bazel/config:tests_enabled": {'/usr/tests/lib/libbsdfilesystem': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tzfs-tests"]}', '/usr/lib/debug/usr': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tzfs-tests", "dbg"]}', '/usr/lib/debug/usr/tests': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tzfs-tests", "dbg"]}', '/usr/lib/debug/usr/tests/lib': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tzfs-tests", "dbg"]}', '/usr/lib/debug/usr/tests/lib/libbsdfilesystem': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tzfs-tests", "dbg"]}'}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

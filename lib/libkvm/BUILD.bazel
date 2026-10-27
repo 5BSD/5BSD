@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load(":sources.bzl", "KVM_SOURCES")
+cc_library(name = "headers", hdrs = ["kvm.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+cc_library(name = "kvm", srcs = KVM_SOURCES + ["kvm_private.h", "kvm_amd64.h", "kvm_aarch64.h", "kvm_riscv.h",
+        "//sys/amd64/include:minidump.h", "//sys/arm64/include:minidump.h", "//sys/riscv/include:minidump.h"],
+    deps = [":headers", "//lib/libelf:elf"], local_defines = ["NO__SCCSID"],
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":kvm"], visibility = ["//visibility:public"])
+cc_shared_library(name = "kvm_shared", deps = [":kvm"], dynamic_deps = ["//lib/libelf:elf_shared"],
+    shared_lib_name = "libkvm.so.7", user_link_flags = ["-Wl,-soname,libkvm.so.7", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
+cc_import(name = "archive_link", static_library = ":static_archive")
+[
+    cc_test(name = "input_" + variant, srcs = ["input_test.c"],
+        deps = ([":archive_link", ":headers", "//lib/libelf:elf"] if variant == "static" else [":kvm"]),
+        dynamic_deps = [] if variant == "static" else [":kvm_shared", "//lib/libelf:elf_shared"],
+        features = [] if variant == "static" else ["bsd_test_runtime_paths"], linkstatic = variant == "static",
+        size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+    for variant in ["static", "shared"]
+]
+
+load(":installation.bzl", "kvm_installation")
+kvm_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

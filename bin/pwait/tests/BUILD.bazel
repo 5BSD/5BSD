@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+CASES = ['basic', 'time_unit', 'timeout_trigger_timeout', 'timeout_no_timeout', 'timeout_many', 'or_flag', 'print']
+[bsd_atf_test(
+    name = "native_" + case,
+    case_name = case,
+    body = "pwait_test.sh",
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ['//bin/sh:sh', '//libexec/atf/atf-sh:atf-sh', '//libexec/atf/atf-check:atf-check', '//bin/timeout:timeout', '//bin/pwait:pwait', '//bin/kill:kill', '//usr.bin/true:true', '//bin/sleep:sleep', '//usr.bin/tr:tr', '//usr.bin/cmp:cmp', '//bin/test:test', '//bin/cat:cat', '//usr.bin/dirname:dirname', '//usr.bin/basename:basename', '//usr.bin/grep:grep', '//usr.bin/sed:sed', '//usr.bin/diff:diff', '//bin/rm:rm'],
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libutil:util_shared", "//lib/libkvm:kvm_shared", "//lib/libelf:elf_shared", "//lib/libjail:jail_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared"],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "medium",
+) for case in CASES]
+test_suite(name = "tests", tests = [":native_" + case for case in CASES + ["pwait_normal", "pwait_reap"]], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_script_wrapper(name = "pwait_test", body = "pwait_test.sh",
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["pwait_reap", "pwait_test"], interfaces = {"pwait_reap": "atf", "pwait_test": "atf"})
+bsd_install_file(name = "install_shell", src = ":pwait_test",
+    destination = "/usr/tests/bin/pwait/pwait_test", owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/bin/pwait/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "pwait_reap",
+    manual = None, package = "tests", bindir = "/usr/tests/bin/pwait",
+    extra_entries = [":install_shell", ":install_kyuafile"])
+
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "pwait_reap", srcs = ["pwait_reap.c"],
+    deps = ["//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+[bsd_atf_test(name = "native_" + case, case_name = case,
+    interface = "program", body = ":pwait_reap",
+    runtime_bin = ["//bin/pwait:pwait"],
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libutil:util_shared", "//lib/libkvm:kvm_shared", "//lib/libelf:elf_shared", "//lib/libjail:jail_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared"],
+    runner = "//tools/build/bazel:atf_runner", size = "medium",
+) for case in ["pwait_normal", "pwait_reap"]]

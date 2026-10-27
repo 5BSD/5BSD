@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["main.c", "split.c", "debug.c"] + ["data/" + n + ".in" for n in ['basic', 'paren', 'anchor', 'error', 'meta', 'backref', 'repet_ordinary', 'repet_bounded', 'repet_multi', 'bracket', 'complex', 'subtle', 'c_comments', 'subexp', 'startend', 'nospec', 'zero', 'word_bound', 'regress']], visibility = ["//lib/libregex/tests:__pkg__"])
+cc_library(name = "test_headers", hdrs = ["test_regex.h"], includes = ["."], visibility = ["//lib/libregex/tests:__pkg__"])
+
+exports_files(["t_exhaust.c", "t_regex_att.c"] + ["data/att/" + name + ".dat" for name in ["basic", "categorization", "nullsubexpr", "leftassoc", "rightassoc", "forcedassoc", "repetition"]], visibility = ["//lib/libregex/tests:__pkg__"])
+
+exports_files(["t_regex.sh"], visibility = ["//lib/libregex/tests:__pkg__"])

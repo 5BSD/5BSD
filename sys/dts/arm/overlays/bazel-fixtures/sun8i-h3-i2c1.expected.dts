@@ -1,0 +1,17 @@
+/dts-v1/;
+
+/  {
+
+	compatible = "allwinner,sun8i-h3";
+	fragment@0 {
+
+		target-path = "/soc/i2c@1c2b000";
+		__overlay__ {
+
+			status = "okay";
+		};
+	};
+	__symbols__ {
+
+	};
+};

@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "zhack", srcs = ["//sys/contrib/openzfs:cmd/zhack.c", "//sys/modules/zfs:zfs_config.h"],
+    deps = ['//cddl/lib/libavl:avl', '//cddl/lib/libnvpair:nvpair', '//cddl/lib/libzfs:zfs', '//cddl/lib/libspl:spl', '//cddl/lib/libzutil:zutil', '//cddl/lib/libzpool:zpool'] + ["//sys/contrib/openzfs:zhack_headers"], dynamic_deps = ['//cddl/lib/libavl:avl_shared', '//cddl/lib/libnvpair:nvpair_shared', '//cddl/lib/libzfs:zfs_shared', '//cddl/lib/libspl:spl_shared', '//cddl/lib/libzutil:zutil_shared', '//cddl/lib/libzpool:zpool_shared'],
+    local_defines = ["IN_BASE", "HAVE_ISSETUGID", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY", "DEBUG=1"],
+    copts = ["-std=c99", "-fPIE", "-include", "sys/contrib/openzfs/include/sys/simd_config.h", "-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h", "-include", "sys/modules/zfs/zfs_config.h"],
+    linkopts = ["-pie", "-pthread"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "zhack", manual = "//sys/contrib/openzfs:man/man1/zhack.1", package = "zfs", bindir = "/usr/sbin")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

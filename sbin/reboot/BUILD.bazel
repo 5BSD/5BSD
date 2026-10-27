@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+cc_binary(name = "reboot", srcs = ["reboot.c"],
+
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_link")
+_MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]})
+[bsd_compress(name = name + "_gzip", src = source, output = source + ".gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+ for name, source in [("nextboot", "nextboot.8"), ("boot", "boot_i386.8")]]
+[bsd_install_file(name = name + "_manual", src = ":" + name + "_gzip", destination = "/usr/share/man/man8/" + filename + ".gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+ for name, filename in [("nextboot", "nextboot.8"), ("boot", "boot_i386.8")]]
+bsd_install_link(name = "nextboot_alias", destination = "/sbin/nextboot", target = "/sbin/reboot", kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=runtime"])
+bsd_install_link(name = "boot_alias", destination = "/usr/share/man/man8/boot.8.gz", target = "/usr/share/man/man8/boot_i386.8.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "reboot", manual = "reboot.8",
+    package = "runtime", bindir = "/sbin", man_section = "8", aliases = ["halt", "fastboot", "fasthalt"], extra_entries = [":nextboot_alias", ":nextboot_manual", ":boot_manual", ":boot_alias"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "program_install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'
+        for d in ["/usr/lib/debug/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+cc_library(name = "test_source", hdrs = ["reboot.c"], visibility = ["//sbin/reboot/tests:__pkg__"])
+
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//sbin/reboot/tests:install_test", "//sbin/reboot/tests:install_extra"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'
+        for d in ["/usr/lib/debug/sbin"]} | select({"//tools/build/bazel/config:tests_enabled": {
+        "/usr/tests/sbin/reboot": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime-tests"]}',
+    } | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime-tests","dbg"]}'
+        for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/sbin", "/usr/lib/debug/usr/tests/sbin/reboot"]}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

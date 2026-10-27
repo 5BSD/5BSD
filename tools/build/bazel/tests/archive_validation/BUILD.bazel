@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
+cc_library(name = "first", srcs = ["first.c"], testonly = True)
+cc_library(name = "second", srcs = ["second.c"], testonly = True)
+# Expected build failure: requested explicitly by qualification, never wildcarded.
+cc_static_library(
+    name = "duplicate_definitions",
+    deps = [":first", ":second"],
+    testonly = True,
+    tags = ["manual"],
+)

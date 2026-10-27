@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//secure:ssh_program.bzl", "ssh_program")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_compress")
+config_setting(name = "heimdal", flag_values = {"//tools/build/bazel/config:kerberos_support": "true", "//tools/build/bazel/config:mitkrb5": "false"})
+bsd_install_file(name = "server_config", src = "//crypto/openssh:sshd_config", destination = "/etc/ssh/sshd_config", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=ssh", "config"])
+bsd_compress(name = "config_manual", src = "//crypto/openssh:sshd_config.5", output = "manuals/sshd_config.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "config_manual_file", src = ":config_manual", destination = "/usr/share/man/man5/sshd_config.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=ssh-man"], "//conditions:default": ["package=ssh"]}))
+bsd_install_file(name = "moduli", src = "//crypto/openssh:moduli", destination = "/etc/ssh/moduli", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=ssh", "config"])
+ssh_program(
+    name = "sshd",
+    bindir = "/usr/sbin",
+    man_section = "8",
+    srcs = ['//crypto/openssh:sshd.c', '//crypto/openssh:platform-listen.c', '//crypto/openssh:servconf.c', '//crypto/openssh:sshpty.c', '//crypto/openssh:srclimit.c', '//crypto/openssh:groupaccess.c', '//crypto/openssh:auth2-methods.c', '//crypto/openssh:dns.c', '//crypto/openssh:fatal.c', '//crypto/openssh:compat.c', '//crypto/openssh:utf8.c', '//crypto/openssh:authfd.c', '//crypto/openssh:canohost.c'],
+    deps = ["//secure/lib/libcrypto:crypto", "//lib/libutil:util"] + select({"//tools/build/bazel/config:tcp_wrappers_enabled": ["//lib/libwrap:wrap"], "//conditions:default": []}) + select({"//tools/build/bazel/config:kerberos_support_enabled": ["//krb5/lib/gssapi:gssapi_krb5", "//krb5/lib/krb5:krb5"], "//conditions:default": []}),
+    dynamic_deps = ["//secure/lib/libcrypto:crypto_shared", "//lib/libutil:util_shared"] + select({"//tools/build/bazel/config:tcp_wrappers_enabled": ["//lib/libwrap:wrap_shared"], "//conditions:default": []}) + select({"//tools/build/bazel/config:kerberos_support_enabled": ["//krb5/lib/gssapi:gssapi_krb5_shared", "//krb5/lib/krb5:krb5_shared"], "//conditions:default": []}),
+    extra_entries = [":server_config", ":moduli", ":config_manual_file"],
+    extra_directories = {"/etc/ssh": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'},
+    # The native MIT graph is available; Heimdal remains an explicit open migration.
+    target_compatible_with = select({":heimdal": ["@platforms//:incompatible"], "//conditions:default": []}),
+)

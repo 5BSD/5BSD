@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_link_script.bzl", "bsd_link_script")
+_STRONG = "//tools/build/bazel/config:crypt_enabled"
+cc_library(name = "private_headers", hdrs = ["crypt.h"], strip_include_prefix = ".", visibility = ["//lib/libcrypt/tests:__pkg__"])
+cc_library(name = "crypt", srcs = ["crypt.c", "misc.c", "crypt-md5.c", "crypt-nthash.c", "crypt-sha256.c", "crypt-sha512.c"] + select({
+    _STRONG: ["//secure/lib/libcrypt:crypt-des.c", "//secure/lib/libcrypt:crypt-blowfish.c", "//secure/lib/libcrypt:blowfish.c"], "//conditions:default": []}),
+    deps = ["//lib/libmd:md_link"], implementation_deps = [":private_headers"] + select({_STRONG: ["//secure/lib/libcrypt:headers"], "//conditions:default": []}),
+    local_defines = select({_STRONG: ["HAS_DES", "HAS_BLOWFISH"], "//conditions:default": []}),
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":crypt"], visibility = ["//visibility:public"])
+cc_shared_library(name = "crypt_shared", deps = [":crypt"], dynamic_deps = ["//lib/libmd:md_shared"],
+    shared_lib_name = "libcrypt.so.5", user_link_flags = ["-Wl,-soname,libcrypt.so.5", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_link_script(name = "static_link_script", template = "libcrypt.aldscript", output = "libcrypt.ald",
+    substitutions = {"@@LIB@@": "crypt", "@@STATICLIB_SUFFIX@@": "_real"})
+bsd_link_script(name = "shared_link_script", template = "libcrypt.ldscript", output = "libcrypt.ld",
+    substitutions = {"@@SHLIB@@": "/lib/libcrypt.so.5"})
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libcrypt/tests:install_crypt_test", "//lib/libcrypt/tests:install_crypt_tests", "//lib/libcrypt/tests:install_extra"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}' for d in ["/usr/lib/debug/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libcrypt"]} | {"/usr/tests/lib/libcrypt": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'}, "//conditions:default": {}}),
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

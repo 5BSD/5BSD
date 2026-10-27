@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+cc_binary(name = "arch_type", srcs = ["arch_type.c"], copts = ["-fPIE"], linkopts = ["-pie"])
+utility_installation(name = "arch_install", program = "arch_type", manual = None, package = "tests", bindir = "/usr/tests/usr.bin/getconf")
+bsd_script_wrapper(name = "getconf_test", body = "getconf_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["getconf_test"], interfaces = {"getconf_test": "atf"})
+bsd_install_file(name = "install_shell", src = ":getconf_test", destination = "/usr/tests/usr.bin/getconf/getconf_test",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/usr.bin/getconf/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile", ":arch_install_binary", ":arch_install_symbols_file"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+bsd_kyua_test(name = "native_tests", program = ":getconf_test", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    path_programs = {"//usr.bin/getconf:getconf": "getconf"},
+    suite_files = {":arch_type": "arch_type"},
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
+
+exports_files(["conflicting.gperf"], visibility = ["//usr.bin/getconf:__pkg__"])

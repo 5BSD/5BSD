@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(
+    name = "localedef_headers",
+    hdrs = ["collate.h", "runefile.h", "lnumeric.h", "lmonetary.h", "lmessages.h", "xlocale_private.h", "setlocale.h"],
+    strip_include_prefix = ".",
+    visibility = ["//usr.bin/localedef:__pkg__", "//lib/libc/stdtime:__pkg__"],
+)
+
+cc_library(name = "setlocale_header", hdrs = ["setlocale.h"], strip_include_prefix = ".", visibility = ["//usr.bin/locale:__pkg__"])

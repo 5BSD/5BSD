@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+[bsd_compare_test(name = name, program = "//usr.bin/grep:grep", arguments = args,
+    file_arguments = ["//contrib/netbsd-tests/usr.bin/grep:" + source], expected = "//contrib/netbsd-tests/usr.bin/grep:" + output,
+    expected_stderr = "empty.out", runtime_lib = ["//lib/libregex:regex_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+ for name, args, source, output in [('word', ['-w', 'separated'], 'd_input', 'd_word_regexps.out'), ('begin', ['^Front'], 'd_input', 'd_begin_end_a.out'), ('end', ['ending$'], 'd_input', 'd_begin_end_b.out'), ('ignore_case', ['-i', 'Upper'], 'd_input', 'd_ignore_case.out'), ('invert', ['-v', 'fish'], 'd_invert.in', 'd_invert.out'), ('whole_line', ['-x', 'matchme'], 'd_input', 'd_whole_line.out')]]

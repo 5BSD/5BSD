@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_DEFINES = ["IN_BASE", "ZFS_DEBUG", "HAVE_ISSETUGID", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"]
+_COPTS = ["-fPIE", "-include", "sys/contrib/openzfs/include/sys/simd_config.h", "-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h", "-include", "sys/modules/zfs/zfs_config.h"]
+cc_library(name = "io", srcs = ["//sys/contrib/openzfs:cmd/zstream/zstream_io.c"], hdrs = ["//sys/modules/zfs:zfs_config.h"],
+    deps = ["//sys/contrib/openzfs:zstream_headers"], local_defines = _DEFINES,
+    copts = _COPTS + ["-Wno-error=atomic-alignment"], linkstatic = True, target_compatible_with = _PLATFORM)
+_PROGRAM = dict( srcs = ['//sys/contrib/openzfs:cmd/zstream/zstream.c', '//sys/contrib/openzfs:cmd/zstream/zstream_backtrace.c', '//sys/contrib/openzfs:cmd/zstream/zstream_byteswap.c', '//sys/contrib/openzfs:cmd/zstream/zstream_chain.c', '//sys/contrib/openzfs:cmd/zstream/zstream_decompress.c', '//sys/contrib/openzfs:cmd/zstream/zstream_drop_records.c', '//sys/contrib/openzfs:cmd/zstream/zstream_dump.c', '//sys/contrib/openzfs:cmd/zstream/zstream_fletcher4.c', '//sys/contrib/openzfs:cmd/zstream/zstream_queue.c', '//sys/contrib/openzfs:cmd/zstream/zstream_raw.c', '//sys/contrib/openzfs:cmd/zstream/zstream_recompress.c', '//sys/contrib/openzfs:cmd/zstream/zstream_redup.c', '//sys/contrib/openzfs:cmd/zstream/zstream_selftest.c', '//sys/contrib/openzfs:cmd/zstream/zstream_selftest_queue.c', '//sys/contrib/openzfs:cmd/zstream/zstream_token.c', '//sys/contrib/openzfs:cmd/zstream/zstream_util.c', '//sys/contrib/openzfs:cmd/zstream/zstream_validate.c'] + ["//sys/modules/zfs:zfs_config.h"],
+    deps = ['//lib/libgeom:geom', '//lib/msun:m', '//cddl/lib/libnvpair:nvpair', '//cddl/lib/libumem:umem', '//cddl/lib/libavl:avl', '//cddl/lib/libspl:spl', '//cddl/lib/libzfs_core:zfs_core', '//cddl/lib/libzfs:zfs', '//cddl/lib/libzutil:zutil', '//cddl/lib/libzpool:zpool'] + [":io", "//sys/contrib/openzfs:zstream_headers"], dynamic_deps = ['//lib/libgeom:geom_shared', '//lib/msun:m_shared', '//cddl/lib/libnvpair:nvpair_shared', '//cddl/lib/libumem:umem_shared', '//cddl/lib/libavl:avl_shared', '//cddl/lib/libspl:spl_shared', '//cddl/lib/libzfs_core:zfs_core_shared', '//cddl/lib/libzfs:zfs_shared', '//cddl/lib/libzutil:zutil_shared', '//cddl/lib/libzpool:zpool_shared'],
+    local_defines = _DEFINES, copts = _COPTS, linkopts = ["-pie", "-pthread"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_binary(name = "zstream",
+    srcs = _PROGRAM["srcs"],
+    deps = _PROGRAM["deps"],
+    dynamic_deps = _PROGRAM["dynamic_deps"],
+    local_defines = _PROGRAM["local_defines"],
+    copts = _PROGRAM["copts"],
+    linkopts = _PROGRAM["linkopts"],
+    target_compatible_with = _PROGRAM["target_compatible_with"],
+    visibility = _PROGRAM["visibility"]
+)
+
+# Exercise the maintained selftest implementation, including newly added queue
+# cases automatically. Default worker selection uses the available CPU count;
+# the explicit seed makes failures replayable. Only the test opts into runpaths.
+# Test executables explicitly load the indirect native DSO closure as well.
+# Production DSOs have system search paths, so executable RUNPATH alone cannot
+# control their indirect dependencies. This linkage is confined to the test.
+cc_test(
+    name = "queue_selftests",
+    args = ["selftest", "-s", "0x5b5d", "queue"],
+    features = ["bsd_test_runtime_paths"],
+    size = "medium",
+    srcs = _PROGRAM["srcs"],
+    deps = _PROGRAM["deps"] + ['//lib/libexpat:bsdxml', '//lib/libsbuf:sbuf', '//secure/lib/libcrypto:crypto', '//lib/libmd:md_link', '//lib/librt:rt', '//lib/libutil:util', '//lib/libz:z', '//cddl/lib/libicp:icp'],
+    dynamic_deps = _PROGRAM["dynamic_deps"] + ['//lib/libexpat:bsdxml_shared', '//lib/libsbuf:sbuf_shared', '//secure/lib/libcrypto:crypto_shared', '//lib/libmd:md_shared', '//lib/librt:rt_shared', '//lib/libutil:util_shared', '//lib/libz:z_shared', '//cddl/lib/libicp:icp_shared'],
+    local_defines = _PROGRAM["local_defines"],
+    copts = _PROGRAM["copts"],
+    linkopts = _PROGRAM["linkopts"],
+    target_compatible_with = _PROGRAM["target_compatible_with"],
+    visibility = _PROGRAM["visibility"]
+)
+
+
+load(":installation.bzl", "zstream_installation")
+zstream_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

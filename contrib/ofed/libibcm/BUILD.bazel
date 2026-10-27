@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(['cm.h', 'cm_abi.h'], visibility = ["//lib/ofed/include:__pkg__"])

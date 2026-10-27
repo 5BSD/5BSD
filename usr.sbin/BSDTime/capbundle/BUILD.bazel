@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Source fixtures shipped with Switchboard contract tests.
+exports_files(['BSDTime.ucl'], visibility = ["//usr.sbin/switchboard/tests:__pkg__", "//usr.sbin/BSDTime:__pkg__"])
+
+exports_files(["Bundle.ucl", "time.conf"], visibility = ["//usr.sbin/BSDTime:__pkg__"])

@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary")
+load("//contrib/libarchive:test_list.bzl", "archive_test_list")
+load(":sources.bzl", "TEST_SOURCES", "REFERENCE_FILES")
+archive_test_list(name = "registry", srcs = TEST_SOURCES,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "registry_header", hdrs = [":registry"], strip_include_prefix = "registry")
+_DEPS = ["//contrib/libarchive:internal_headers", ":registry_header", "//contrib/libarchive:cpio_test_headers", "//lib/libarchive:configuration", "//lib/libarchive:archive"]
+_DEFINES = ['PLATFORM_CONFIG_H=\\"config_freebsd.h\\"'] + select({
+    "//tools/build/bazel/config:openssl_enabled": ["WITH_OPENSSL", "OPENSSL_API_COMPAT=0x10100000L"], "//conditions:default": [],
+})
+cc_library(name = "utilities", srcs = ["//contrib/libarchive:test_utils/test_utils.c"],
+    deps = _DEPS, local_defines = _DEFINES, copts = ["-Wno-cast-align", "-fPIE"], linkstatic = True)
+cc_binary(name = "bsdcpio_test", srcs = TEST_SOURCES + ["//contrib/libarchive:test_utils/test_main.c"] + ['//contrib/libarchive:cpio/cmdline.c', '//contrib/libarchive:libarchive_fe/lafe_err.c'],
+    deps = _DEPS + [":utilities"], local_defines = _DEFINES, copts = ["-fPIE"], linkopts = ["-pie"],
+    dynamic_deps = ["//lib/libarchive:archive_shared"], data = REFERENCE_FILES,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load("//contrib/libarchive:cli_test.bzl", "archive_cli_suite")
+archive_cli_suite(name = "functional_test", harness = ":bsdcpio_test", program = "//usr.bin/cpio:bsdcpio", references = REFERENCE_FILES)

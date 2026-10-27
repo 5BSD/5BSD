@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+# Only charconv uses LLVM libc floating-point conversion support.
+cc_library(name = "conversion_headers", hdrs = glob(["shared/*.h", "hdr/**/*.h", "src/__support/**/*.h", "include/**/*.h"]),
+    includes = ["."], visibility = ["//lib/libc++:__pkg__"])
+
+# Static archive compilation declares the headers here but sets the search root
+# only on charconv.cpp, preserving Make's per-source include contract.
+cc_library(name = "conversion_inputs", hdrs = glob(["shared/*.h", "hdr/**/*.h", "src/__support/**/*.h", "include/**/*.h"]),
+    visibility = ["//lib/libc++:__pkg__"])

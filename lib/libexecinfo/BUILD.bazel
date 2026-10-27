@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "execinfo",
+    srcs = ["//contrib/libexecinfo:" + name for name in ["backtrace.c", "symtab.c", "unwind.c", "symtab.h"]],
+    deps = ["//contrib/libexecinfo:headers", "//lib/libelf:elf"],
+    implementation_deps = ["//contrib/llvm-project/libunwind/include:headers"],
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":execinfo"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "execinfo_shared", deps = [":execinfo"], dynamic_deps = ["//lib/libelf:elf_shared"],
+    shared_lib_name = "libexecinfo.so.1", user_link_flags = ["-Wl,-soname,libexecinfo.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
+cc_import(name = "archive_link", static_library = ":static_archive")
+[cc_test(name = "backtrace_" + variant, srcs = ["backtrace_test.c"],
+    deps = ([":archive_link", "//contrib/libexecinfo:headers", "//lib/libelf:elf"] if variant == "static" else [":execinfo"]),
+    dynamic_deps = [] if variant == "static" else [":execinfo_shared", "//lib/libelf:elf_shared"],
+    copts = ["-fno-omit-frame-pointer", "-fno-optimize-sibling-calls"], linkopts = ["-Wl,--export-dynamic"],
+    features = [] if variant == "static" else ["bsd_test_runtime_paths"], linkstatic = variant == "static",
+    size = "small", target_compatible_with = _PLATFORM)
+ for variant in ["static", "shared"]]
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+
+filegroup(name = "package_abi", srcs = [":install_manifest_stripped"], visibility = ["//packages/libexecinfo:__pkg__"])

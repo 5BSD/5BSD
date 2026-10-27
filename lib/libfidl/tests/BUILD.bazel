@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
+exports_files(["zx.fidl", "runtime.fidl"])
+bsd_fidl_ir(name = "runtime_ir", schemas = ["zx.fidl", "runtime.fidl"], available = "bsd:1",
+    compiler = "//tools/build/fuchsia/fidlc:fidlc",
+    runtime_libraries = ["//lib/libmd:md_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"])
+bsd_fidl_bindings(name = "runtime_bindings", ir = ":runtime_ir",
+    generator = "//tools/build/fuchsia:fidlgen-build.py", modules = ["//tools/build/fuchsia:binding_modules"],
+    templates = ["@fuchsia_runtime_src//:binding_templates"],
+    sources = ["fidl/bsd.runtime.test/" + name for name in ["cpp/natural_types.cc", "cpp/common_types.cc", "c/bsd.cc"]],
+    headers = ["fidl/bsd.runtime.test/" + name for name in ["cpp/markers.h", "cpp/common_types.h", "cpp/natural_types.h", "cpp/bsd.h", "c/bsd.h", "c/bridge.h"]],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+filegroup(name = "binding_sources", srcs = [":runtime_bindings"], output_group = "sources")
+filegroup(name = "binding_headers", srcs = [":runtime_bindings"], output_group = "headers")
+cc_library(name = "generated_headers", hdrs = [":binding_headers"], strip_include_prefix = "runtime_bindings")
+cc_library(name = "generated_bindings", srcs = [":binding_sources"],
+    deps = [":generated_headers", "//lib/libfidl:fidl"], copts = ["-std=gnu++20", "-nostdinc++"], linkstatic = True)
+cc_binary(name = "c_binding_test", srcs = ["c_binding_test.c"],
+    deps = [":generated_bindings"], copts = ["-std=c11"], linkopts = ["-static"], linkstatic = True)
+cc_binary(name = "c_wire_test", srcs = ["c_wire_test.cc"],
+    deps = [":generated_bindings"], copts = ["-std=gnu++20", "-nostdinc++"], linkopts = ["-static"], linkstatic = True)
+
+# These programs need matching-kernel execution; building is independent of it.
+cc_binary(name = "runtime_test", srcs = ["runtime_test.cc", "allocation_fault.cc", "allocation_fault.h"],
+    deps = [":generated_bindings", "//lib/googletest/gtest_main:gtest_main", "//sys/dev/mac_capability:ioctl_headers"],
+    copts = ["-std=gnu++20", "-nostdinc++", "-frtti"],
+    local_defines = ["GTEST_HAS_POSIX_RE=1", "GTEST_HAS_PTHREAD=1", "GTEST_HAS_STREAM_REDIRECTION=1"],
+    linkopts = ["-static", "-Wl,--wrap=malloc,--wrap=_Znwm,--wrap=_Znam"], linkstatic = True,
+    tags = ["manual", "requires-matching-kernel"])
+cc_binary(name = "sync_call_bench", srcs = ["sync_call_bench.c"],
+    deps = [":generated_bindings", "//lib/libchannel:channel"], copts = ["-std=c11"],
+    linkopts = ["-static"], linkstatic = True)
+cc_binary(name = "ipc_bench", srcs = ["ipc_bench.cc"],
+    deps = [":generated_bindings", "//lib/libchannel:channel", "//sys/dev/mac_capability:ioctl_headers"], copts = ["-std=gnu++20", "-nostdinc++"],
+    linkopts = ["-static", "-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free"], linkstatic = True)
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+_GTEST = "//tools/build/bazel/config:googletest_enabled"
+[utility_installation(name = "install_" + name, program = name, manual = "", package = "libfidl-tests",
+    bindir = "/usr/tests/lib/libfidl") for name in ["c_binding_test", "c_wire_test", "runtime_test", "sync_call_bench", "ipc_bench"]]
+_NAMES = ["c_binding_test", "c_wire_test"] + select({_GTEST: ["runtime_test"], "//conditions:default": []})
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = _NAMES,
+    interfaces = {name: "plain" for name in ["c_binding_test", "c_wire_test"]} | select({_GTEST: {"runtime_test": "plain"}, "//conditions:default": {}}),
+    metadata = {name: '{"timeout":"180"}' for name in ["c_binding_test", "c_wire_test"]} | select({_GTEST: {"runtime_test": '{"timeout":"180"}'}, "//conditions:default": {}}))
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libfidl/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libfidl-tests"])
+[bsd_install_file(name = "notice_" + name, src = "@fuchsia_runtime_src//:" + name,
+    destination = "/usr/share/licenses/libfidl-tests/fuchsia/" + name, owner = "root", group = "wheel", mode = "0444",
+    install_tags = ["package=libfidl-tests"]) for name in ["LICENSE", "PATENTS"]]
+bsd_install_file(name = "notice_gtest", src = "//contrib/googletest:LICENSE",
+    destination = "/usr/share/licenses/libfidl-tests/googletest/LICENSE", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libfidl-tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile", ":notice_LICENSE", ":notice_PATENTS"] + select({_GTEST: [":notice_gtest"], "//conditions:default": []}), visibility = ["//lib/libfidl:__pkg__"])
+
+load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
+bsd_program_test(name = "native_wire", program = ":c_wire_test", size = "small")
+bsd_program_test(name = "native_runtime", program = ":runtime_test", size = "medium", tags = ["manual", "requires-matching-kernel"])
+bsd_program_test(name = "native_c_binding", program = ":c_binding_test", size = "medium", tags = ["manual", "requires-matching-kernel"])

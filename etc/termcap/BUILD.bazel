@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":generation.bzl", "termcap_small")
+termcap_small(name = "generated")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_install_link")
+bsd_install_file(name = "install_small", src = ":generated", destination = "/etc/termcap.small",
+    owner = "root", group = "wheel", mode = "0644", install_tags = ["package=ncurses-lib", "config"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_small"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+# Created by etc distribution in Make; keep it separate from component install.
+bsd_install_link(name = "install_link", destination = "/etc/termcap", target = "/usr/share/misc/termcap",
+    kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=ncurses-lib"])
+bsd_install_manifest(name = "distribution_manifest", entries = [":install_small", ":install_link"], visibility = ["//visibility:public"])
+termcap_small(name = "custom_entries", entries = ["xterm", "ecma[+]italics", "vt100"], testonly = True)
+
+bsd_install_archive(
+    name = "distribution_archive",
+    manifests = [":distribution_manifest"],
+    directories = {},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

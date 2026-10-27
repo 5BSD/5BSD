@@ -1,0 +1,657 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+load(":installation.bzl", "libmd_test_installation")
+# Maintained digest driver and reference inventory. No Make query at build time.
+
+cc_binary(
+    name = "md4driver",
+    srcs = ["mddriver.c"],
+    local_defines = ["MD=4"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "md4_test",
+    program = ":md4driver",
+    input = "empty.input",
+    expected = "md4.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_binary(
+    name = "md5driver",
+    srcs = ["mddriver.c"],
+    local_defines = ["MD=5"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "md5_test",
+    program = ":md5driver",
+    input = "empty.input",
+    expected = "md5.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_binary(
+    name = "rmd160driver",
+    srcs = ["rmddriver.c"],
+    local_defines = ["RMD=160"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "rmd160_test",
+    program = ":rmd160driver",
+    input = "empty.input",
+    expected = "rmd160.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_binary(
+    name = "sha0driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=0"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha0_test",
+    program = ":sha0driver",
+    input = "empty.input",
+    expected = "sha0.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_binary(
+    name = "sha1driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=1"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha1_test",
+    program = ":sha1driver",
+    input = "empty.input",
+    expected = "sha1.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_binary(
+    name = "sha224driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=224"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha224_test",
+    program = ":sha224driver",
+    input = "empty.input",
+    expected = "sha224.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_binary(
+    name = "sha256driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=256"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha256_test",
+    program = ":sha256driver",
+    input = "empty.input",
+    expected = "sha256.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_binary(
+    name = "sha384driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=384"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha384_test",
+    program = ":sha384driver",
+    input = "empty.input",
+    expected = "sha384.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_binary(
+    name = "sha512driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=512"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha512_test",
+    program = ":sha512driver",
+    input = "empty.input",
+    expected = "sha512.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_binary(
+    name = "sha512t224driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=512224"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha512t224_test",
+    program = ":sha512t224driver",
+    input = "empty.input",
+    expected = "sha512t224.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_binary(
+    name = "sha512t256driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=512256"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha512t256_test",
+    program = ":sha512t256driver",
+    input = "empty.input",
+    expected = "sha512t256.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_binary(
+    name = "skein256driver",
+    srcs = ["skeindriver.c"],
+    local_defines = ["SKEIN=256"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "skein256_test",
+    program = ":skein256driver",
+    input = "empty.input",
+    expected = "skein256.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_binary(
+    name = "skein512driver",
+    srcs = ["skeindriver.c"],
+    local_defines = ["SKEIN=512"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "skein512_test",
+    program = ":skein512driver",
+    input = "empty.input",
+    expected = "skein512.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_binary(
+    name = "skein1024driver",
+    srcs = ["skeindriver.c"],
+    local_defines = ["SKEIN=1024"],
+    deps = ["//lib/libmd:md_archive"],
+    linkstatic = True,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "skein1024_test",
+    program = ":skein1024driver",
+    input = "empty.input",
+    expected = "skein1024.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+test_suite(name = "tests", tests = [':md4_test', ':md5_test', ':rmd160_test', ':sha0_test', ':sha1_test', ':sha224_test', ':sha256_test', ':sha384_test', ':sha512_test', ':sha512t224_test', ':sha512t256_test', ':skein256_test', ':skein512_test', ':skein1024_test'])
+
+cc_binary(
+    name = "md4_shared_driver",
+    srcs = ["mddriver.c"],
+    local_defines = ["MD=4"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "md4_shared_test",
+    program = ":md4_shared_driver",
+    input = "empty.input",
+    expected = "md4.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+cc_binary(
+    name = "md5_shared_driver",
+    srcs = ["mddriver.c"],
+    local_defines = ["MD=5"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "md5_shared_test",
+    program = ":md5_shared_driver",
+    input = "empty.input",
+    expected = "md5.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+cc_binary(
+    name = "rmd160_shared_driver",
+    srcs = ["rmddriver.c"],
+    local_defines = ["RMD=160"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "rmd160_shared_test",
+    program = ":rmd160_shared_driver",
+    input = "empty.input",
+    expected = "rmd160.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+cc_binary(
+    name = "sha0_shared_driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=0"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha0_shared_test",
+    program = ":sha0_shared_driver",
+    input = "empty.input",
+    expected = "sha0.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+cc_binary(
+    name = "sha1_shared_driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=1"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha1_shared_test",
+    program = ":sha1_shared_driver",
+    input = "empty.input",
+    expected = "sha1.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+cc_binary(
+    name = "sha224_shared_driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=224"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha224_shared_test",
+    program = ":sha224_shared_driver",
+    input = "empty.input",
+    expected = "sha224.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+cc_binary(
+    name = "sha256_shared_driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=256"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha256_shared_test",
+    program = ":sha256_shared_driver",
+    input = "empty.input",
+    expected = "sha256.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+cc_binary(
+    name = "sha384_shared_driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=384"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha384_shared_test",
+    program = ":sha384_shared_driver",
+    input = "empty.input",
+    expected = "sha384.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+cc_binary(
+    name = "sha512_shared_driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=512"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha512_shared_test",
+    program = ":sha512_shared_driver",
+    input = "empty.input",
+    expected = "sha512.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+cc_binary(
+    name = "sha512t224_shared_driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=512224"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha512t224_shared_test",
+    program = ":sha512t224_shared_driver",
+    input = "empty.input",
+    expected = "sha512t224.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+cc_binary(
+    name = "sha512t256_shared_driver",
+    srcs = ["shadriver.c"],
+    local_defines = ["SHA=512256"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "sha512t256_shared_test",
+    program = ":sha512t256_shared_driver",
+    input = "empty.input",
+    expected = "sha512t256.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+cc_binary(
+    name = "skein256_shared_driver",
+    srcs = ["skeindriver.c"],
+    local_defines = ["SKEIN=256"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "skein256_shared_test",
+    program = ":skein256_shared_driver",
+    input = "empty.input",
+    expected = "skein256.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+cc_binary(
+    name = "skein512_shared_driver",
+    srcs = ["skeindriver.c"],
+    local_defines = ["SKEIN=512"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "skein512_shared_test",
+    program = ":skein512_shared_driver",
+    input = "empty.input",
+    expected = "skein512.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+cc_binary(
+    name = "skein1024_shared_driver",
+    srcs = ["skeindriver.c"],
+    local_defines = ["SKEIN=1024"],
+    deps = ["//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libmd:md_shared"],
+    linkstatic = False,
+    testonly = True,
+)
+bsd_compare_test(
+    name = "skein1024_shared_test",
+    program = ":skein1024_shared_driver",
+    input = "empty.input",
+    expected = "skein1024.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_shared"],
+    size = "small",
+)
+
+test_suite(name = "shared_tests", tests = [':md4_shared_test', ':md5_shared_test', ':rmd160_shared_test', ':sha0_shared_test', ':sha1_shared_test', ':sha224_shared_test', ':sha256_shared_test', ':sha384_shared_test', ':sha512_shared_test', ':sha512t224_shared_test', ':sha512t256_shared_test', ':skein256_shared_test', ':skein512_shared_test', ':skein1024_shared_test'])
+
+bsd_compare_test(
+    name = "md4_stripped_test",
+    program = ":md4_shared_driver",
+    input = "empty.input",
+    expected = "md4.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "md5_stripped_test",
+    program = ":md5_shared_driver",
+    input = "empty.input",
+    expected = "md5.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "rmd160_stripped_test",
+    program = ":rmd160_shared_driver",
+    input = "empty.input",
+    expected = "rmd160.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "sha0_stripped_test",
+    program = ":sha0_shared_driver",
+    input = "empty.input",
+    expected = "sha0.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "sha1_stripped_test",
+    program = ":sha1_shared_driver",
+    input = "empty.input",
+    expected = "sha1.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "sha224_stripped_test",
+    program = ":sha224_shared_driver",
+    input = "empty.input",
+    expected = "sha224.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "sha256_stripped_test",
+    program = ":sha256_shared_driver",
+    input = "empty.input",
+    expected = "sha256.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "sha384_stripped_test",
+    program = ":sha384_shared_driver",
+    input = "empty.input",
+    expected = "sha384.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "sha512_stripped_test",
+    program = ":sha512_shared_driver",
+    input = "empty.input",
+    expected = "sha512.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "sha512t224_stripped_test",
+    program = ":sha512t224_shared_driver",
+    input = "empty.input",
+    expected = "sha512t224.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "sha512t256_stripped_test",
+    program = ":sha512t256_shared_driver",
+    input = "empty.input",
+    expected = "sha512t256.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "skein256_stripped_test",
+    program = ":skein256_shared_driver",
+    input = "empty.input",
+    expected = "skein256.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "skein512_stripped_test",
+    program = ":skein512_shared_driver",
+    input = "empty.input",
+    expected = "skein512.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "skein1024_stripped_test",
+    program = ":skein1024_shared_driver",
+    input = "empty.input",
+    expected = "skein1024.ref",
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libmd:md_install"],
+    size = "small",
+)
+
+test_suite(name = "stripped_tests", tests = [':md4_stripped_test', ':md5_stripped_test', ':rmd160_stripped_test', ':sha0_stripped_test', ':sha1_stripped_test', ':sha224_stripped_test', ':sha256_stripped_test', ':sha384_stripped_test', ':sha512_stripped_test', ':sha512t224_stripped_test', ':sha512t256_stripped_test', ':skein256_stripped_test', ':skein512_stripped_test', ':skein1024_stripped_test'])
+
+libmd_test_installation(name = "install_manifest", digests = ['md4', 'md5', 'rmd160', 'sha0', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512t224', 'sha512t256', 'skein256', 'skein512', 'skein1024'])

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(
+    name = "gtest",
+    srcs = ["//contrib/googletest:googletest/src/gtest-all.cc"],
+    deps = ["//contrib/googletest:bsd_headers", "//lib/libc++:cxx", "//lib/libregex:regex_pic"],
+    implementation_deps = ["//contrib/googletest:bsd_implementation"],
+    local_defines = ["GTEST_HAS_POSIX_RE=1", "GTEST_HAS_PTHREAD=1", "GTEST_HAS_STREAM_REDIRECTION=1"],
+    copts = ["-fPIC", "-nostdinc++", "-frtti", "-pthread"],
+    linkopts = ["-pthread"],
+    linkstatic = True,
+    visibility = ["//visibility:public"],
+)

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+_RUNTIME = {"//lib/atf/libatf-c++:atf_cxx_shared": "libprivateatf-c++.so.2", "//lib/atf/libatf-c:atf_c_shared": "libprivateatf-c.so.1", "//lib/libc++:cxx_shared": "libc++.so.1", "//lib/libcxxrt:cxxrt_shared": "libcxxrt.so.1", "//lib/msun:m_shared": "libm.so.5"}
+[cc_binary(name = name + "_test", srcs = ["//contrib/atf:atf-c++/detail/" + name + "_test.cpp", "//contrib/atf:atf-c++/detail/test_helpers.cpp"],
+    deps = ["//contrib/atf:cxx_test_headers", "//lib/atf/libatf-c++:atf_cxx", "//lib/atf/libatf-c:atf_c", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"],
+    dynamic_deps = _RUNTIME.keys(),
+    local_defines = ['ATF_INCLUDEDIR=\\"/usr/include\\"', 'ATF_C_TESTS_BASE=\\"/usr/tests/lib/atf/libatf-c\\"'],
+    copts = ["-std=gnu++20", "-nostdinc++", "-fPIE"], linkopts = ["-pie", "-Wl,-rpath,$ORIGIN"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for name in ["env", "exceptions", "text"]]
+[bsd_kyua_test(name = name, program = ":" + name + "_test", interface = "atf",
+    kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True, size = "small",
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime", "@bsd_sdk//toolchain:python_stdlib", "//tools/build/bazel:libmd_environment.py"],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py", runtime_libraries = _RUNTIME)
+ for name in ["env", "exceptions", "text"]]

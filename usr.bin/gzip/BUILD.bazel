@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+_LIBRARIES = ["//lib/libbz2:bz2", "//lib/liblzma:lzma", "//lib/libz:z", "//lib/libzstd:zstd"]
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+bsd_dtrace_header(
+    name = "provider", source = "gzipstream_provider.d", output = "gzipstream_provider.h",
+    flags = ["-C", "-x", "nolibs"], object_path_mode = "relative",
+    dtrace = "@bsd_sdk//toolchain:extra_dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "@bsd_sdk//toolchain:sysroot/usr/lib/dtrace/drti.o",
+    tool_inputs = ["@bsd_sdk//toolchain:extra_dtrace_runtime", "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"],
+)
+cc_library(
+    name = "provider_headers", hdrs = [":provider"], strip_include_prefix = "/usr.bin/gzip",
+)
+cc_library(
+    name = "objects", srcs = ["gzip.c", "gzipstream_trace.h"],
+    textual_hdrs = ["unbzip2.c", "zuncompress.c", "unpack.c", "unxz.c", "unlz.c", "unzstd.c"],
+    deps = _LIBRARIES + select({_TRACE: [":provider_headers"], "//conditions:default": []}),
+    local_defines = select({_TRACE: ["WITH_COVERAGE_DTRACE"], "//conditions:default": []}),
+    copts = ["-fPIE"], target_compatible_with = _PLATFORM,
+)
+bsd_dtrace_cc_objects(
+    name = "traced_objects", library = ":objects", provider = ":provider",
+    provider_object = "gzipstream_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner",
+)
+filegroup(name = "regular_objects", srcs = [":traced_objects"], output_group = "regular_objects")
+filegroup(name = "pic_objects", srcs = [":traced_objects"], output_group = "pic_objects")
+filegroup(name = "regular_provider", srcs = [":traced_objects"], output_group = "regular_provider")
+filegroup(name = "pic_provider", srcs = [":traced_objects"], output_group = "pic_provider")
+cc_import(
+    name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True,
+)
+cc_import(
+    name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"],
+    deps = _LIBRARIES + [":provider_link"],
+)
+cc_binary(
+    name = "gzip",
+    deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}),
+    # liblzma owns its libmd dependency; list only directly consumed DSOs.
+    dynamic_deps = ["//lib/libbz2:bz2_shared", "//lib/liblzma:lzma_shared",
+        "//lib/libz:z_shared", "//lib/libzstd:zstd_shared"],
+    linkopts = ["-pie"], target_compatible_with = _PLATFORM,
+    visibility = ["//visibility:public"],
+)
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
+load(":installation.bzl", "gzip_installation")
+
+bsd_debug_split(
+    name = "debug", src = ":gzip", binary_name = "install/gzip", debug_name = "install/gzip.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs",
+)
+bsd_strip_binary(
+    name = "stripped", src = ":debug", output = "stripped/gzip",
+    strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs",
+)
+gzip_installation(name = "install_manifest")

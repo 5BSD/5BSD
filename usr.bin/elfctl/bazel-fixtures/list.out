@@ -1,0 +1,7 @@
+Known features are:
+noaslr          Disable ASLR
+noprotmax       Disable implicit PROT_MAX
+nostackgap      Disable stack gap
+wxneeded        Requires W+X mappings
+la48            amd64: Limit user virtual addresses to 48 bits
+la57            amd64: Allow the use of 57-bit virtual addresses when available

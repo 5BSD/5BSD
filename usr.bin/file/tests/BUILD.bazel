@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+exports_files(["normalize-result.awk"])
+cc_binary(name = "fixture_runner", srcs = ["fixture_runner.c"], linkopts = ["-static"], visibility = ["//visibility:public"])

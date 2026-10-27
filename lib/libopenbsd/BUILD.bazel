@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "headers", hdrs = ["ohash.h", "imsg.h", "unistd.h", "sys/sysctl.h"],
+    strip_include_prefix = ".", visibility = ["//visibility:public"])
+# Normal target library. Cross-host bootstrap has a different source inventory.
+[
+    cc_library(name = "openbsd" + suffix,
+        srcs = ["imsg-buffer.c", "imsg.c", "ohash.c", "getdtablecount.c"],
+        deps = [":headers"], copts = flags, linkstatic = True,
+        target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+    for suffix, flags in [("", []), ("_pie", ["-fPIE", "-DPIC"])]
+]
+bsd_component_archive(name = "static_archive", groups = [":openbsd"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pie_archive", groups = [":openbsd_pie"], visibility = ["//visibility:public"])

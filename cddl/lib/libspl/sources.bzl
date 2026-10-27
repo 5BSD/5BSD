@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Normal target library; legacy bootstrap has a smaller source set.
+SPL_SOURCES = [
+    "//sys/contrib/openzfs:lib/libspl/assert.c",
+    "//sys/contrib/openzfs:lib/libspl/backtrace.c",
+    "//sys/contrib/openzfs:lib/libspl/condvar.c",
+    "//sys/contrib/openzfs:lib/libspl/kmem.c",
+    "//sys/contrib/openzfs:lib/libspl/libspl.c",
+    "//sys/contrib/openzfs:lib/libspl/list.c",
+    "//sys/contrib/openzfs:lib/libspl/mkdirp.c",
+    "//sys/contrib/openzfs:lib/libspl/mutex.c",
+    "//sys/contrib/openzfs:lib/libspl/os/freebsd/zone.c",
+    "//sys/contrib/openzfs:lib/libspl/page.c",
+    "//sys/contrib/openzfs:lib/libspl/procfs_list.c",
+    "//sys/contrib/openzfs:lib/libspl/random.c",
+    "//sys/contrib/openzfs:lib/libspl/rwlock.c",
+    "//sys/contrib/openzfs:lib/libspl/sid.c",
+    "//sys/contrib/openzfs:lib/libspl/taskq.c",
+    "//sys/contrib/openzfs:lib/libspl/timestamp.c",
+    "//sys/contrib/openzfs:lib/libspl/atomic.c",
+    "//sys/contrib/openzfs:lib/libspl/cred.c",
+    "//sys/contrib/openzfs:lib/libspl/getexecname.c",
+    "//sys/contrib/openzfs:lib/libspl/kstat.c",
+    "//sys/contrib/openzfs:lib/libspl/thread.c",
+    "//sys/contrib/openzfs:lib/libspl/tunables.c",
+    "//sys/contrib/openzfs:lib/libspl/os/freebsd/getexecname.c",
+    "//sys/contrib/openzfs:lib/libspl/os/freebsd/gethostid.c",
+    "//sys/contrib/openzfs:lib/libspl/os/freebsd/getextmntent.c",
+    "//sys/contrib/openzfs:lib/libspl/os/freebsd/mnttab.c"
+]

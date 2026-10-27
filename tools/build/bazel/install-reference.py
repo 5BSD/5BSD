@@ -7,6 +7,7 @@ This does not import Bazel outputs or establish package/runtime parity.
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import subprocess
@@ -27,7 +28,14 @@ def main():
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--jobs', type=int, required=True)
     parser.add_argument('--make', type=Path, default=Path('/usr/bin/make'))
+    parser.add_argument('--with-option', action='append', default=[],
+                        help='enable a component option against the unchanged recorded SDK')
+    parser.add_argument('--without-option', action='append', default=[],
+                        help='disable a component option against the unchanged recorded SDK')
     args = parser.parse_args()
+    selected = args.with_option + args.without_option
+    if len(set(selected)) != len(selected) or any(not re.fullmatch(r'[A-Z][A-Z0-9_]*', value) for value in selected):
+        parser.error('component options must be distinct uppercase option names')
     if args.jobs < 1:
         parser.error('--jobs must be positive')
     src, objtop, profile, component, make = [path(p) for p in
@@ -42,6 +50,18 @@ def main():
     if component == src or not component.is_relative_to(src) or not (component / 'Makefile').is_file():
         parser.error('component must be a maintained directory within the actual source tree')
     environment = BuildEnvironment(src, objtop, profile, make, component)
+    component_options = {name: 'yes' for name in args.with_option}
+    component_options.update({name: 'no' for name in args.without_option})
+    for name, expected in component_options.items():
+        # Keep the recorded world profile/SDK identity checks intact. Only this
+        # isolated component reference receives explicit feature overrides.
+        keys = {'WITH_' + name, 'WITHOUT_' + name}
+        environment.options = [value for value in environment.options
+                               if value.split('=', 1)[0] not in keys]
+        environment.options.append(('WITH_' if expected == 'yes' else 'WITHOUT_') + name + '=1')
+    for name, expected in component_options.items():
+        if environment.query(['-V', 'MK_' + name]).strip() != expected:
+            raise ValueError('component option is unknown or ineffective: ' + name)
     source_hashes = {str(p): digest(p) for p in component.rglob('*') if p.is_file()}
     # The baseline uses the maintained source layout, including tests' RELDIR.
     output.mkdir(parents=True, exist_ok=False)
@@ -54,7 +74,9 @@ def main():
     implementations = {str(Path(__file__).resolve()): digest(Path(__file__)),
                        str(Path(libmd_environment.__file__).resolve()): digest(Path(libmd_environment.__file__))}
     receipt = {'format': 1, 'status': 'running', 'scope': 'native-amd64-Make-installation-reference',
-               'component': str(component), 'jobs': args.jobs, 'source_hashes': source_hashes,
+               'component': str(component), 'jobs': args.jobs,
+               'component_options': component_options,
+               'sdk_reconfigured': False, 'source_hashes': source_hashes,
                'implementation_hashes': implementations,
                'object_environment': {key: build_environment[key] for key in ('MAKEOBJDIR', 'REFERENCE_OBJROOT')},
                'bazel_parity_qualified': False, 'runtime_qualified': False,
@@ -92,7 +114,25 @@ def main():
         receipt['install_configuration'] = install.strip()
         run([str(make), '-C', str(src), *environment.fixed, *environment.options,
              *flags, 'distrib-dirs'], 'directories')
+        # Preserve phase ownership: common directory setup can emit package-tagged
+        # links unrelated to this component. Keep the complete METALOG as well.
+        directory_metadata = metalog.read_bytes()
+        (output / 'directories.METALOG').write_bytes(directory_metadata)
         run(buildenv(base + flags + assignments + ['install']), 'install')
+        # Make's distribution path installs configuration separately from install.
+        groups=environment.query(['-V','CONFGROUPS'],extra=flags).split()
+        configuration={group:environment.query(['-V',group],extra=flags).split() for group in groups}
+        receipt['configuration_groups']=configuration
+        if any(configuration.values()):
+            run(buildenv(base + flags + assignments + ['installconfig']), 'installconfig')
+        combined_metadata = metalog.read_bytes()
+        if not combined_metadata.startswith(directory_metadata):
+            raise ValueError('component install rewrote directory metadata')
+        (output / 'component.METALOG').write_bytes(combined_metadata[len(directory_metadata):])
+        receipt['metadata_phases'] = {
+            name: digest(output / name)
+            for name in ('directories.METALOG', 'component.METALOG')
+        }
         environment.verify()
         if {str(p): digest(p) for p in component.rglob('*') if p.is_file()} != source_hashes:
             raise ValueError('component file set or contents changed during baseline')

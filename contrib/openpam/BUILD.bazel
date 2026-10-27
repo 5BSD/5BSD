@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//lib/libpam/libpam:sources.bzl", "PAM_SOURCES")
+exports_files([s.split(":", 1)[1] for s in PAM_SOURCES], visibility = ["//lib/libpam/libpam:__pkg__"])
+cc_library(name = "headers", hdrs = glob(["include/security/*.h"]), includes = ["include"], visibility = ["//visibility:public"])
+cc_library(name = "private_headers", hdrs = glob(["lib/libpam/*.h"]), includes = ["lib/libpam"], visibility = ["//lib/libpam/libpam:__pkg__"])
+
+load("//lib/libpam/libpam:installation_data.bzl", "PAM_HEADERS", "PAM_MANUALS")
+exports_files(["include/" + h for h in PAM_HEADERS] + ["doc/man/" + m for m in PAM_MANUALS + ["pam.conf.5"]], visibility = ["//lib/libpam/libpam:__pkg__"])

@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["amd64_archlevel.c"], visibility = ["//lib/msun:__pkg__"])

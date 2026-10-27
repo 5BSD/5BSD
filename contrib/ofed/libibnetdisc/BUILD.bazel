@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(['ibnetdisc.h', 'ibnetdisc_osd.h'], visibility = ["//lib/ofed/include:__pkg__"])

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ['diff_debug.h', 'diff_internal.h'], strip_include_prefix = ".", visibility = ["//lib/libdiff:__pkg__", "//usr.bin/diff:__pkg__"])
+exports_files(['diff_atomize_text.c', 'diff_main.c', 'diff_myers.c', 'diff_patience.c', 'diff_output.c', 'diff_output_plain.c', 'diff_output_unidiff.c', 'diff_output_edscript.c'], visibility = ["//lib/libdiff:__pkg__"])

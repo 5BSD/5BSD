@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+[
+    cc_library(name = "diff" + suffix,
+        srcs = ['//contrib/libdiff/lib:diff_atomize_text.c', '//contrib/libdiff/lib:diff_main.c', '//contrib/libdiff/lib:diff_myers.c', '//contrib/libdiff/lib:diff_patience.c', '//contrib/libdiff/lib:diff_output.c', '//contrib/libdiff/lib:diff_output_plain.c', '//contrib/libdiff/lib:diff_output_unidiff.c', '//contrib/libdiff/lib:diff_output_edscript.c'],
+        deps = ["//contrib/libdiff/include:headers"],
+        implementation_deps = ["//contrib/libdiff/lib:headers", "//contrib/libdiff/compat/include:headers"],
+        copts = flags, linkstatic = True,
+        target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+    for suffix, flags in [("", []), ("_pie", ["-fPIE", "-DPIC"])]
+]
+# INTERNAL library, without a public installed API or shared library.
+bsd_component_archive(name = "static_archive", groups = [":diff"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pie_archive", groups = [":diff_pie"], visibility = ["//visibility:public"])

@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//bin/sh/tests:installation.bzl", "shell_test_group")
+
+shell_test_group(
+    fixtures = [
+        "env1.0",
+        "exitstatus1.0",
+        "ifs1.0",
+        "mail1.0",
+        "mail2.0",
+        "optind1.0",
+        "optind2.0",
+        "positional1.0",
+        "positional2.0",
+        "positional3.0",
+        "positional4.0",
+        "positional5.0",
+        "positional6.0",
+        "positional7.0",
+        "positional8.0",
+        "positional9.0",
+        "pwd1.0",
+        "pwd2.0"
+],
+)

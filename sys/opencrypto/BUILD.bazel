@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "cryptodev_headers", hdrs = ["cryptodev.h", "_cryptodev.h"],
+    strip_include_prefix = "/sys", visibility = ["//sys/geom/eli:__pkg__", "//usr.sbin/BSDCrypto:__pkg__", "//usr.sbin/BSDCrypto/tests:__pkg__"])

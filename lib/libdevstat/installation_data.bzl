@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+MANUAL_ALIASES = ['devstat_getnumdevs', 'devstat_getgeneration', 'devstat_getversion', 'devstat_checkversion', 'devstat_getdevs', 'devstat_selectdevs', 'devstat_buildmatch', 'devstat_compute_statistics', 'devstat_compute_etime', 'getnumdevs', 'getgeneration', 'getversion', 'checkversion', 'getdevs', 'selectdevs', 'buildmatch', 'compute_stats', 'compute_etime']

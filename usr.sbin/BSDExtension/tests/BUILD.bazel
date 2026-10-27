@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+[cc_binary(name = name,
+    srcs = [name + ".c", "test_policy.h", "//usr.sbin/BSDExtension:bsdextension.c",
+        "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDExtension:test_headers",
+        "//lib/libextensioncmp:extensioncmp", "//lib/libextensioncmp:generated_headers",
+        "//lib/libfidl:fidl", "//lib/libservice:service", "//lib/libchannel:channel",
+        "//lib/libucl:ucl", "//lib/libcapreclaim:capreclaim", "//lib/liblogcmp:logcmp", "//lib/libthr:thr"] + (["//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers"] if name == "provider_test" else []),
+    local_defines = ["BSDEXTENSION_TESTING"], linkstatic = True, linkopts = ["-static"])
+ for name in ["allowlist_test", "policy_test", "reclaim_test", "provider_test"]]
+[bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    tags = ["manual", "requires-matching-kernel"] if name in ["provider_test", "reclaim_test"] else [],
+    size = "medium", visibility = ["//visibility:public"])
+ for name in ["allowlist_test", "policy_test", "reclaim_test", "provider_test"]]
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
+bsd_fidl_ir(name = "next_ir", schemas = ["evolution/extensioncmp_next.fidl"], available = "bsd:2",
+    compiler = "//tools/build/fuchsia/fidlc:fidlc",
+    runtime_libraries = ["//lib/libmd:md_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"])
+bsd_fidl_bindings(name = "next_bindings", ir = ":next_ir",
+    generator = "//tools/build/fuchsia:fidlgen-build.py", modules = ["//tools/build/fuchsia:binding_modules"],
+    templates = ["@fuchsia_runtime_src//:binding_templates"],
+    sources = ["fidl/bsd.extension.v1/" + name for name in ["cpp/natural_types.cc", "cpp/common_types.cc", "c/bsd.cc"]],
+    headers = ["fidl/bsd.extension.v1/" + name for name in ["cpp/markers.h", "cpp/common_types.h", "cpp/natural_types.h", "cpp/bsd.h", "c/bsd.h", "c/bridge.h"]],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+
+filegroup(name = "next_sources", srcs = [":next_bindings"], output_group = "sources")
+filegroup(name = "next_header_files", srcs = [":next_bindings"], output_group = "headers")
+cc_library(name = "next_headers", hdrs = [":next_header_files"], strip_include_prefix = "next_bindings")
+# Make links all three generated objects directly into this standalone peer.
+cc_library(name = "next_codec", srcs = [":next_sources"],
+    deps = [":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, alwayslink = True)
+# The newer peer must never inherit the production bsd:1 generated headers.
+cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
+    deps = [":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
+    linkopts = ["-static"], linkstatic = True)
+
+
+_EXTENSION_LIBS = ['//lib/libextensioncmp:extensioncmp', '//lib/libfidl:fidl', '//lib/libservice:service', '//lib/libchannel:channel', '//lib/libucl:ucl', '//lib/libcapreclaim:capreclaim', '//lib/liblogcmp:logcmp', '//lib/libthr:thr']
+cc_binary(name = "evolution_test", srcs = ["evolution_test.c", "evolution_test_provider.c", "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c"],
+    deps = _EXTENSION_LIBS + ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDExtension:test_headers", "//lib/libextensioncmp:generated_headers", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers"],
+    local_defines = ["BSDEXTENSION_TESTING"], linkstatic = True, linkopts = ["-static"])
+cc_binary(name = "latency_bench", srcs = ["latency_bench.c", "latency_bench_provider.c", "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c"],
+    deps = _EXTENSION_LIBS + ["//usr.sbin/BSDExtension:test_headers", "//lib/libextensioncmp:client_source_headers", "//tools/build/fuchsia:daemon_bench_headers", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers"],
+    dynamic_deps = [lib + "_shared" for lib in _EXTENSION_LIBS],
+    local_defines = ["BSDEXTENSION_TESTING"], copts = ["-fPIE"], linkopts = ["-pie"])
+bsd_kyua_test(name = "evolution_test_run", program = ":evolution_test", interface = "atf",
+    suite = "FreeBSD", suite_files = {":next_peer": "next_peer"}, case_timeout = 120,
+    tags = ["manual", "requires-matching-kernel"],
+    kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+
+
+cc_binary(name = "inherited_session_test", srcs = ["inherited_session_test.c"],
+    deps = _EXTENSION_LIBS + ["//lib/atf/libatf-c:atf_c", "//lib/libextensioncmp:client_source_headers"],
+    local_defines = ["BSDEXTENSION_TESTING"], linkstatic = True, linkopts = ["-static"])
+bsd_kyua_test(name = "inherited_session_test_run", program = ":inherited_session_test", interface = "atf",
+    suite = "FreeBSD", case_timeout = 15,
+    kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+bsd_script_wrapper(name = "startup_test", body = "startup_test.sh",
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load(":installation.bzl", "TESTDIR", "ATF_PROGRAMS", "BINARIES", "DIRECTORIES")
+[utility_installation(name = "install_" + p, program = p, manual = "",
+    package = "bsdextension-tests", bindir = TESTDIR) for p in BINARIES]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ATF_PROGRAMS,
+    interfaces = {p: "atf" for p in ATF_PROGRAMS},
+    metadata = {"evolution_test": '{"timeout":"120"}', "inherited_session_test": '{"timeout":"15"}'})
+_FILES = [(":kyuafile", TESTDIR + "/Kyuafile", "0444"),
+    (":startup_test", TESTDIR + "/startup_test", "0555")] + [
+    ("//contrib/fuchsia:" + n, "/usr/share/licenses/bsdextension-tests/fuchsia/" + n, "0444") for n in ["LICENSE", "PATENTS"]]
+[bsd_install_file(name = "install_file_" + str(i), src = source, destination = dest,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=bsdextension-tests"])
+ for i, (source, dest, mode) in enumerate(_FILES)]
+bsd_install_manifest(name = "install_extra", entries = [":install_file_" + str(i) for i in range(len(_FILES))],
+    visibility = ["//usr.sbin/BSDExtension:__pkg__"])

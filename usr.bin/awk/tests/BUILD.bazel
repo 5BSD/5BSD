@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+# Unchanged upstream fixtures; BEGIN-only cases need no stdin or host commands.
+[bsd_compare_test(name = name.replace("-", "_"), program = "//usr.bin/awk:awk",
+    arguments = ["-f"], file_arguments = ["//contrib/one-true-awk/bugs-fixed:" + name + ".awk"],
+    expected = "//contrib/one-true-awk/bugs-fixed:" + name + ".ok",
+    runtime_lib = ["//lib/msun:m_shared"], runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small") for name in ['a-format', 'decr-NF', 'concat-assign-same', 'unary-plus']]

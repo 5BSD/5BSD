@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+cc_binary(name = "alternate_test", srcs = ["alternate_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c"], dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+CASES = ["explicit_shell_policy", "directory_alias_updates", "in_place_input_metadata", "alternate_uid_update", "alternate_duplicate_uid", "malformed_update_retains_database"]
+[bsd_atf_test(
+    name = "native_" + case,
+    case_name = case,
+    interface = "program",
+    body = ":alternate_test",
+    config_files = {"//usr.sbin/pwd_mkdb:pwd_mkdb": "pwd_mkdb"},
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "small",
+) for case in CASES]
+test_suite(name = "tests", tests = [":native_" + case for case in CASES], visibility = ["//visibility:public"])

@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "fsdb", srcs = ["fsdb.c", "fsdbutil.c", "fsdb.h", "//sbin/fsck_ffs:dir.c", "//sbin/fsck_ffs:ea.c", "//sbin/fsck_ffs:fsutil.c", "//sbin/fsck_ffs:inode.c", "//sbin/fsck_ffs:pass1.c", "//sbin/fsck_ffs:pass1b.c", "//sbin/fsck_ffs:pass2.c", "//sbin/fsck_ffs:pass3.c", "//sbin/fsck_ffs:pass4.c", "//sbin/fsck_ffs:pass5.c", "//sbin/fsck_ffs:setup.c", "//sbin/fsck_ffs:utilities.c", "//sbin/fsck_ffs:globs.c", "//sys/ufs/ffs:ffs_subr.c", "//sys/ufs/ffs:ffs_tables.c", "//tools/diag/prtblknos:prtblknos.c"],
+    deps = ["//sbin/fsck_ffs:shared_headers", "//lib/libedit:edit", "//lib/libufs:ufs"],
+    dynamic_deps = ["//lib/libedit:edit_shared", "//lib/libufs:ufs_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "fsdb", manual = "fsdb.8",
+    package = "ufs", bindir = "/sbin", man_section = "8")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "program_install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ufs","dbg"]}'
+        for d in ["/usr/lib/debug/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

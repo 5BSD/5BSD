@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["template.lua"], visibility = ["//lib/libifconfig:__pkg__"])

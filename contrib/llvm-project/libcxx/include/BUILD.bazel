@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = glob(["**"], exclude = ["BUILD.bazel", "CMakeLists.txt", "*.in"]),
+    includes = ["."], deps = ["//lib/libc++:config_headers", "//contrib/libcxxrt:public_headers"], visibility = ["//visibility:public"])
+
+load("//lib/libc++:installation_data.bzl", "UPSTREAM_HEADERS")
+exports_files(UPSTREAM_HEADERS, visibility = ["//lib/libc++:__pkg__"])

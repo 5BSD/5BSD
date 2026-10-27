@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_compress")
+exports_files(["nfsdtop"])
+bsd_install_file(name = "install_script", src = "nfsdtop", destination = "/usr/sbin/nfsdtop",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=nfs"])
+bsd_compress(name = "manual", src = "nfsdtop.8", output = "manual/nfsdtop.8.gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "install_manual", src = ":manual", destination = "/usr/share/man/man8/nfsdtop.8.gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=nfs-man"], "//conditions:default": ["package=nfs"]}))
+bsd_install_manifest(name = "install_manifest", entries = [":install_script", ":install_manual"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/usr/sbin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=nfs"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+_RUNTIME = ["//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared",
+    "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"]
+# Exercise the native shell with the maintained script on stdin; -v exits
+# before tracing or external utility invocation.
+bsd_compare_test(name = "version_test", program = "//bin/sh:sh", input = "nfsdtop",
+    arguments = ["-s", "--", "-v"], expected = "version.out", expected_stderr = "empty.out",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "syntax_test", program = "//bin/sh:sh", input = "nfsdtop",
+    arguments = ["-n"], expected = "empty.out", expected_stderr = "empty.out",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+test_suite(name = "tests", tests = [":version_test", ":syntax_test"], visibility = ["//visibility:public"])

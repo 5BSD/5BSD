@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+bsd_install_file(
+    name = "file", src = "payload.txt", destination = "/z",
+    owner = "fixture", group = "fixture", mode = "0640", install_tags = [],
+)
+
+bsd_install_link(
+    name = "chain", destination = "/a", target = "/b", kind = "hardlink",
+    owner = "fixture", group = "fixture", mode = "0640", install_tags = [],
+)
+
+bsd_install_link(
+    name = "link", destination = "/b", target = "/z", kind = "hardlink",
+    owner = "fixture", group = "fixture", mode = "0640", install_tags = [],
+)
+
+bsd_install_link(
+    name = "symlink", destination = "/s", target = "z", kind = "symlink",
+    owner = "fixture", group = "fixture", mode = "0755", install_tags = [],
+)
+
+bsd_install_manifest(name = "manifest", entries = [":file", ":chain", ":link", ":symlink"])
+
+bsd_install_archive(
+    name = "archive",
+    manifests = [":manifest"],
+    directories = {"/": '{"owner":"fixture","group":"fixture","mode":"0750"}'},
+    users = {"fixture": "1234"}, groups = {"fixture": "2345"}, epoch = 42,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+)

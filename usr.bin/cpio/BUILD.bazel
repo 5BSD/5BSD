@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(
+    name = "bsdcpio",
+    srcs = ["//contrib/libarchive:cpio/cpio.c", "//contrib/libarchive:cpio/cmdline.c",
+        "//contrib/libarchive:libarchive_fe/lafe_err.c", "//contrib/libarchive:libarchive_fe/line_reader.c",
+        "//contrib/libarchive:libarchive_fe/passphrase.c"],
+    deps = ["//lib/libarchive:archive", "//lib/libarchive:configuration", "//contrib/libarchive:cpio_headers"],
+    dynamic_deps = ["//lib/libarchive:archive_shared"],
+    local_defines = ['PLATFORM_CONFIG_H=\\"config_freebsd.h\\"', "BSDCPIO_VERSION_STRING=ARCHIVE_VERSION_ONLY_STRING"] + select({
+        "//tools/build/bazel/config:openssl_enabled": ["WITH_OPENSSL", "OPENSSL_API_COMPAT=0x10100000L"],
+        "//conditions:default": [],
+    }),
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+load("//contrib/libarchive:cli_installation.bzl", "archive_cli_installation")
+archive_cli_installation(name = "install_manifest", program = "bsdcpio", alias = "cpio", package = "utilities", manual = "//contrib/libarchive:cpio/bsdcpio.1")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

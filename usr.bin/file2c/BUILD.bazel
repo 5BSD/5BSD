@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "file2c", srcs = ["file2c.c"], copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "file2c", manual = "file2c.1", package = "toolchain", bindir = "/usr/bin", man_section = "1")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=toolchain","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test", "bsd_filter_fixture")
+_RUNTIME = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"]
+bsd_filter_fixture(name = "input_1", src = "tests/regress.in", output = "fixture-1.in",
+    tool = "//usr.bin/head:head", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    arguments = ["-c", "13"], runtime_libraries = _RUNTIME)
+bsd_compare_test(name = "regress_1_test", program = ":file2c", input = ":input_1",
+    arguments = [], expected = "tests/regress.1.out", expected_stderr = "tests/empty.out",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_filter_fixture(name = "input_2", src = "tests/regress.in", output = "fixture-2.in",
+    tool = "//usr.bin/head:head", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    arguments = ["-c", "26"], runtime_libraries = _RUNTIME)
+bsd_compare_test(name = "regress_2_test", program = ":file2c", input = ":input_2",
+    arguments = ['PREFIX'], expected = "tests/regress.2.out", expected_stderr = "tests/empty.out",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_filter_fixture(name = "input_3", src = "tests/regress.in", output = "fixture-3.in",
+    tool = "//usr.bin/head:head", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    arguments = ["-c", "39"], runtime_libraries = _RUNTIME)
+bsd_compare_test(name = "regress_3_test", program = ":file2c", input = ":input_3",
+    arguments = ['PREFIX', 'SUFFIX'], expected = "tests/regress.3.out", expected_stderr = "tests/empty.out",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_filter_fixture(name = "input_4", src = "tests/regress.in", output = "fixture-4.in",
+    tool = "//usr.bin/head:head", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    arguments = ["-c", "52"], runtime_libraries = _RUNTIME)
+bsd_compare_test(name = "regress_4_test", program = ":file2c", input = ":input_4",
+    arguments = ['-x'], expected = "tests/regress.4.out", expected_stderr = "tests/empty.out",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_filter_fixture(name = "input_5", src = "tests/regress.in", output = "fixture-5.in",
+    tool = "//usr.bin/head:head", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    arguments = ["-c", "65"], runtime_libraries = _RUNTIME)
+bsd_compare_test(name = "regress_5_test", program = ":file2c", input = ":input_5",
+    arguments = ['-n', '-1'], expected = "tests/regress.5.out", expected_stderr = "tests/empty.out",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_filter_fixture(name = "input_6", src = "tests/regress.in", output = "fixture-6.in",
+    tool = "//usr.bin/head:head", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    arguments = ["-c", "7"], runtime_libraries = _RUNTIME)
+bsd_compare_test(name = "regress_6_test", program = ":file2c", input = ":input_6",
+    arguments = ['-n', '1', 'P', 'S'], expected = "tests/regress.6.out", expected_stderr = "tests/empty.out",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_filter_fixture(name = "input_7", src = "tests/regress.in", output = "fixture-7.in",
+    tool = "//usr.bin/head:head", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    arguments = ["-c", "14"], runtime_libraries = _RUNTIME)
+bsd_compare_test(name = "regress_7_test", program = ":file2c", input = ":input_7",
+    arguments = ['-n', '2', '-x', 'P S'], expected = "tests/regress.7.out", expected_stderr = "tests/empty.out",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_filter_fixture(name = "input_8", src = "tests/regress.in", output = "fixture-8.in",
+    tool = "//usr.bin/head:head", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    arguments = ["-c", "21"], runtime_libraries = _RUNTIME)
+bsd_compare_test(name = "regress_8_test", program = ":file2c", input = ":input_8",
+    arguments = ['-n', '16', 'P', '-x', 'S'], expected = "tests/regress.8.out", expected_stderr = "tests/empty.out",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "regress_9_test", program = ":file2c", input = "tests/regress.in",
+    arguments = ['const char data[] = {', ', 0};'], expected = "tests/regress.9.out", expected_stderr = "tests/empty.out",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+test_suite(name = "tests", tests = [':regress_1_test', ':regress_2_test', ':regress_3_test', ':regress_4_test', ':regress_5_test', ':regress_6_test', ':regress_7_test', ':regress_8_test', ':regress_9_test'], visibility = ["//visibility:public"])

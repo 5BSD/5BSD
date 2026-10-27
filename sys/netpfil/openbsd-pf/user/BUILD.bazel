@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "compat_headers", hdrs = ["openbsd_compat.h"],
+    strip_include_prefix = ".", visibility = ["//sbin/ifconfig:__pkg__"])
+
+cc_library(name = "util_headers", hdrs = ["util.h"], strip_include_prefix = ".", visibility = ["//sbin/pflogd:__pkg__"])

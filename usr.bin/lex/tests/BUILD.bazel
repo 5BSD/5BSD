@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex")
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+# libln supplies both main and yywrap; exercise generation, compilation,
+# archive linkage and scanner execution under three table representations.
+[bsd_lex(name = variant + "_source", src = "tokens.l", output = variant + ".c",
+    flags = flags, lex = "//usr.bin/lex:lex", m4 = "@bsd_sdk//toolchain:extra_m4",
+    runtime = ["@bsd_sdk//toolchain:extra_m4_runtime"])
+ for variant, flags in [("compressed", []), ("full", ["-Cf"]), ("fast", ["-CF"])]]
+
+[cc_binary(name = variant + "_scanner", srcs = [":" + variant + "_source"],
+    deps = ["//usr.bin/lex/lib:ln"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for variant in ["compressed", "full", "fast"]]
+[bsd_compare_test(name = variant, program = ":" + variant + "_scanner",
+    input = "tokens.in", expected = "tokens.out",
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+ for variant in ["compressed", "full", "fast"]]

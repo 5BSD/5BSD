@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("//tools/build/bazel:bsd_link_sequence.bzl", "bsd_link_sequence")
+cc_library(name = "common", srcs = ["common.c"])
+cc_library(name = "first", srcs = ["choice.c"], local_defines = ["CHOICE=1"], deps = [":common"])
+cc_library(name = "second", srcs = ["choice.c"], local_defines = ["CHOICE=2"], deps = [":common"])
+bsd_link_sequence(name = "first_order", deps = [":first", ":second"])
+bsd_link_sequence(name = "second_order", deps = [":second", ":first"])
+[cc_test(name = name, srcs = ["main.c"], deps = [":" + order], local_defines = ["EXPECTED=" + str(expected)],
+    linkstatic = True, linkopts = ["-static"], size = "small")
+ for name, order, expected in [("first_wins", "first_order", 11), ("second_wins", "second_order", 12)]]

@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: BSD-2-Clause
+"""Cacheable installation archives; inode relationships are serialized metadata."""
+load(":bsd_install.bzl", "BsdInstallManifestInfo")
+
+BsdInstallArchiveInfo = provider(fields = ["directory_metadata"])
+
+def _archive(ctx):
+    records, payloads = [], []
+    for target in ctx.attr.manifests:
+        info = target[BsdInstallManifestInfo]
+        records.extend(info.records)
+        payloads.append(info.payload)
+    for path, value in ctx.attr.directories.items():
+        record = json.decode(value)
+        record.update(destination = path, type = "dir")
+        records.append(record)
+    request = ctx.actions.declare_file(ctx.label.name + ".json")
+    archive = ctx.actions.declare_file(ctx.label.name + ".tar")
+    directory_metadata = ctx.actions.declare_file(ctx.label.name + ".directories.json")
+    policy_inputs = ctx.files.mtree_specs + ctx.files._policy_modules
+    policy_tools = []
+    specs = []
+    if ctx.file.supplemental_mtree and not ctx.attr.mtree_specs:
+        fail("supplemental mtree requires base mtree/account policy")
+    if ctx.attr.mtree_specs:
+        if not ctx.executable.mtree or not ctx.file.passwd or not ctx.file.group:
+            fail("mtree policy requires explicit tool/account files")
+        policy_inputs += [ctx.file.passwd, ctx.file.group]
+        policy_tools = [ctx.attr.mtree[DefaultInfo].files_to_run]
+        for target, prefix in ctx.attr.mtree_specs.items():
+            files = target[DefaultInfo].files.to_list()
+            if len(files) != 1:
+                fail("one file per mtree specification required")
+            specs.append(dict(source = files[0].path, prefix = prefix))
+    if ctx.file.supplemental_mtree:
+        policy_inputs.append(ctx.file.supplemental_mtree)
+        specs.append(dict(source = ctx.file.supplemental_mtree.path, prefix = "/"))
+    ctx.actions.write(request, json.encode(dict(
+        records = records,
+        users = {key: int(value) for key, value in ctx.attr.users.items()},
+        groups = {key: int(value) for key, value in ctx.attr.groups.items()},
+        epoch = ctx.attr.epoch,
+        mtree_specs = specs,
+        directory_packages = ctx.attr.directory_packages,
+        mtree = ctx.executable.mtree.path if ctx.executable.mtree else None,
+        passwd = ctx.file.passwd.path if ctx.file.passwd else None,
+        group = ctx.file.group.path if ctx.file.group else None,
+    )) + "\n")
+    args = ctx.actions.args()
+    args.add_all(["-B", "-S", ctx.file._writer.path, request.path, archive.path, "--directory-metadata", directory_metadata.path])
+    ctx.actions.run(
+        executable = ctx.attr.python[DefaultInfo].files_to_run,
+        arguments = [args],
+        inputs = depset([request, ctx.file._writer, ctx.file.python_home] + policy_inputs, transitive = payloads),
+        tools = ctx.files.runtime + policy_tools,
+        outputs = [archive, directory_metadata],
+        env = {"PYTHONHOME": ctx.file.python_home.dirname, "PYTHONNOUSERSITE": "1", "LC_ALL": "C"},
+        use_default_shell_env = False,
+        mnemonic = "BSDInstallArchive",
+    )
+    return [DefaultInfo(files = depset([archive])), OutputGroupInfo(metadata = depset([request]), directory_metadata = depset([directory_metadata])), BsdInstallArchiveInfo(directory_metadata = directory_metadata)]
+
+bsd_install_archive = rule(
+    implementation = _archive,
+    attrs = {
+        "manifests": attr.label_list(providers = [BsdInstallManifestInfo], mandatory = True),
+        "directories": attr.string_dict(),
+        "directory_packages": attr.string_list(),
+        "supplemental_mtree": attr.label(allow_single_file = True),
+        "users": attr.string_dict(),
+        "groups": attr.string_dict(),
+        "mtree_specs": attr.label_keyed_string_dict(allow_files = True),
+        "mtree": attr.label(executable = True, cfg = "exec", allow_single_file = True),
+        "passwd": attr.label(allow_single_file = True),
+        "group": attr.label(allow_single_file = True),
+        "_policy_modules": attr.label_list(default = [Label(":archive_policy.py"), Label(":directory_metadata.py")], allow_files = True, cfg = "exec"),
+        "epoch": attr.int(mandatory = True),
+        "python": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),
+        "python_home": attr.label(cfg = "exec", allow_single_file = True, mandatory = True),
+        "runtime": attr.label_list(cfg = "exec", allow_files = True),
+        "_writer": attr.label(default = Label(":install_archive.py"), allow_single_file = True, cfg = "exec"),
+    },
+)

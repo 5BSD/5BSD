@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+# Make exposes the GSSAPI root as well as each implementation subdirectory.
+cc_library(
+    name = "headers",
+    includes = ["."],
+    deps = ["//crypto/krb5/src/lib/gssapi/generic:headers", "//crypto/krb5/src/lib/gssapi/krb5:headers", "//crypto/krb5/src/lib/gssapi/spnego:headers", "//crypto/krb5/src/lib/gssapi/mechglue:headers"],
+    visibility = ["//krb5:__subpackages__"],
+)

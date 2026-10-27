@@ -1,0 +1,23 @@
+/dts-v1/;
+
+/  {
+
+	compatible = "allwinner,sun8i-h3";
+	fragment@0 {
+
+		target-path = "/soc/i2c@1c2ac00";
+		__overlay__ {
+
+			status = "okay";
+			pinctrl-names = "default";
+			pinctrl-0 = <0xdeadbeef>;
+		};
+	};
+	__symbols__ {
+
+	};
+	__fixups__ {
+
+		i2c0_pins = "/fragment@0/__overlay__:pinctrl-0:0";
+	};
+};

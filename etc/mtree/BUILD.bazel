@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["BSD.root.dist", "BSD.usr.dist", "BSD.include.dist", "BSD.debug.dist"])
+
+exports_files(["BSD.tests.dist"])
+
+exports_files(["BSD.var.dist"])

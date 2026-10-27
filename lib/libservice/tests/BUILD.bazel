@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# Preserve maintained source inclusion for injected bootstrap/clock operations.
+cc_binary(name = "bootstrap_test", srcs = ["bootstrap_test.c"], deps = ["//lib/libservice:test_source_headers", "//lib/libchannel:channel", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"], linkstatic = True, linkopts = ["-static"])
+cc_binary(name = "runtime_test", srcs = ["runtime_test.c", "//lib/libservice:service_runtime.c"], deps = ["//lib/libservice:test_source_headers", "//lib/libchannel:channel", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"], linkstatic = True, linkopts = ["-static"])
+cc_binary(name = "client_deadline_test", srcs = ["client_deadline_test.c"], deps = ["//lib/libservice:test_source_headers", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"], copts = ["-ffunction-sections", "-fdata-sections"], linkstatic = True, linkopts = ["-static", "-Wl,--gc-sections"])
+_CASES = {'bootstrap_test': ['bootstrap_socket_errors', 'bootstrap_stall_deadline', 'bootstrap_invalid_arguments', 'bootstrap_seqpacket'], 'runtime_test': ['retry_and_health', 'lease_ownership', 'drain_deadline', 'budget_scope', 'listener_wait'], 'client_deadline_test': ['monotonic_condition', 'deadline_not_restarted']}
+[bsd_atf_test(name = program + "_" + case, case_name = case, interface = "program", body = ":" + program, runner = "//tools/build/bazel:atf_runner", size = "medium" if case == "bootstrap_stall_deadline" else "small") for program, cases in _CASES.items() for case in cases]
+# Partial suite: remaining service/fixture tests must be migrated separately.
+test_suite(name = "runtime_host_tests", tests = [":" + program + "_" + case for program, cases in _CASES.items() for case in cases], visibility = ["//visibility:public"])
+
+_API_CASES = {'libservice_api_test': ['service_budget_wire', 'deadline_timer_control', 'capability_rights_algebra', 'bootstrap_validation', 'stale_bootstrap_preserves_descriptor', 'crypto_control_bootstrap_type', 'shared_context', 'named_directory_bootstrap', 'resource_directory_colon_path', 'api_rejects_invalid_descriptors_and_arguments', 'service_session_lifecycle', 'service_session_payload_and_attachment_lifecycle', 'service_session_close_cancels_event', 'service_idle_shutdown_wire'], 'service_ambient_test': ['environment_cannot_grant_discovery', 'non_channel_install_rejected', 'context_holds_reference', 'wrong_protocol_fails_closed'], 'software_identity_test': ['lookup_cancellation_closes_owned_fds', 'lookup_process_descriptor_modes', 'wire_layout', 'sender_abi_round_trip']}
+_API_TIMEOUTS = {"service_session_payload_and_attachment_lifecycle": 15, "service_idle_shutdown_wire": 30, "service_budget_wire": 10, "deadline_timer_control": 30}
+_API_CLEANUP = {'libservice_api_test': [], 'service_ambient_test': [], 'software_identity_test': ['sender_abi_round_trip']}
+_API_ROOT = ['libservice_api_test_crypto_control_bootstrap_type', 'libservice_api_test_shared_context', 'libservice_api_test_named_directory_bootstrap', 'libservice_api_test_service_session_lifecycle', 'libservice_api_test_service_session_payload_and_attachment_lifecycle', 'libservice_api_test_service_session_close_cancels_event', 'libservice_api_test_service_idle_shutdown_wire', 'libservice_api_test_service_budget_wire', 'software_identity_test_sender_abi_round_trip']
+_API_HOST = ["libservice_api_test_api_rejects_invalid_descriptors_and_arguments", "software_identity_test_wire_layout"]
+[cc_binary(name = program, srcs = [program + ".c"],
+    deps = ["//lib/libservice:service", "//lib/libservice:test_source_headers", "//lib/libchannel:channel", "//lib/libcapability:capability", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c", "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers", "//sys/sys:envfd_header", "//sys/sys:cryptodesc_header"] + (["//lib/libfilesystemcmp:filesystemcmp", "//lib/libtrustedzfs:trustedzfs"] if program == "libservice_api_test" else []),
+    linkstatic = True, linkopts = ["-static"], visibility = ["//visibility:public"]) for program in _API_CASES]
+[bsd_atf_test(name = program + "_" + case, case_name = case, interface = "program", body = ":" + program,
+    body_timeout_seconds = _API_TIMEOUTS.get(case, 300),
+    cleanup = case in _API_CLEANUP[program], runner = "//tools/build/bazel:atf_runner", size = "medium",
+    tags = ([] if program + "_" + case in _API_HOST else ["manual", "requires-matching-kernel"]) + (["requires-root"] if program + "_" + case in _API_ROOT else []) + (["exclusive"] if program == "software_identity_test" else []))
+ for program, cases in _API_CASES.items() for case in cases]
+test_suite(name = "api_host_tests", tests = [":" + case for case in _API_HOST], visibility = ["//visibility:public"])
+test_suite(name = "api_matching_kernel_tests", tests = [":" + program + "_" + case for program, cases in _API_CASES.items() for case in cases if program + "_" + case not in _API_HOST], tags = ["manual"], visibility = ["//visibility:public"])
+
+# The managed-service fixture is dynamically linked, as in the maintained Make
+# target. The guardian is a shared static utility owned by Capsule's test package.
+cc_binary(
+    name = "capd_service_fixture",
+    srcs = ["capd_service_fixture.c"],
+    deps = ["//lib/libservice:service", "//lib/libservice:test_source_headers",
+            "//lib/libchannel:channel", "//lib/libcapability:capability",
+            "//lib/libcapsulert:capsulert", "//lib/libthr:thr"],
+    dynamic_deps = ["//lib/libservice:service_shared", "//lib/libchannel:channel_shared",
+                    "//lib/libcapability:capability_shared", "//lib/libcapsulert:capsulert_shared",
+                    "//lib/libthr:thr_shared"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    visibility = ["//visibility:public"],
+)
+alias(name = "capd_test_guardian", actual = "//usr.sbin/capsule/tests:capd_test_guardian",
+      visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load(":provider_sources.bzl", "PROVIDER_SOURCES")
+_PROGRAMS = sorted(list(_CASES.keys()) + list(_API_CASES.keys()))
+[utility_installation(name = "install_" + program, program = program, manual = "",
+    package = "libservice-tests", bindir = "/usr/tests/lib/libservice")
+ for program in _PROGRAMS + ["capd_service_fixture", "capd_test_guardian"]]
+_SHELL_PROGRAMS = ["libservice_test", "worker_contract_test"]
+[bsd_script_wrapper(name = program, body = program + ".sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect") for program in _SHELL_PROGRAMS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = sorted(_PROGRAMS + _SHELL_PROGRAMS),
+    interfaces = {program: "atf" for program in _PROGRAMS + _SHELL_PROGRAMS},
+    metadata = {program: '{"is_exclusive":"true"}' for program in ["libservice_test", "software_identity_test"]})
+_EXTRA = [("Kyuafile", ":kyuafile", "0444"),
+          ("capd_test_harness.sh", "//usr.sbin/capsule/tests:capd_test_harness.sh", "0444")] + [
+          (program, ":" + program, "0555") for program in _SHELL_PROGRAMS] + [
+          (destination, source, "0444") for source, destination in PROVIDER_SOURCES.items()]
+[bsd_install_file(name = "install_file_" + destination.replace("/", "_"), src = source,
+    destination = "/usr/tests/lib/libservice/" + destination, owner = "root", group = "wheel",
+    mode = mode, install_tags = ["package=libservice-tests"]) for destination, source, mode in _EXTRA]
+bsd_install_manifest(name = "install_extra", entries = [":install_file_" + destination.replace("/", "_")
+    for destination, _, _ in _EXTRA], visibility = ["//lib/libservice:__pkg__"])
+
+exports_files(["capd_service_fixture.c"], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])

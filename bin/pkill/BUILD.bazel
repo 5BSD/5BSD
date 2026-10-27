@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+cc_binary(name = "pkill", srcs = ['pkill.c'], deps = ["//lib/libkvm:kvm", "//lib/libjail:jail"], dynamic_deps = ["//lib/libkvm:kvm_shared", "//lib/libjail:jail_shared", "//lib/libelf:elf_shared"], copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "pkill", manual = "pkill.1", package = "runtime", bindir = "/bin", man_section = "1", aliases = ["pgrep"], extra_entries = [":compat_pkill", ":compat_pgrep"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//bin/pkill/tests:install_manifest"], "//conditions:default": []}),
+    directories = select({"//tools/build/bazel/config:tests_enabled": {'/usr/lib/debug/bin': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=runtime", "dbg"]}', '/usr/tests/bin/pkill': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests"]}', '/usr/lib/debug/usr': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/tests': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/tests/bin': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}', '/usr/lib/debug/usr/tests/bin/pkill': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}'}, "//conditions:default": {'/usr/lib/debug/bin': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=runtime", "dbg"]}'}}),
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")
+[bsd_install_link(name = "compat_" + name, destination = "/usr/bin/" + name,
+    target = "../../bin/" + name, kind = "symlink", owner = "root", group = "wheel",
+    mode = "0755", install_tags = ["package=runtime"]) for name in ["pkill", "pgrep"]]

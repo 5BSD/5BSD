@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "utrace_header", hdrs = ["rtld_utrace.h"],
+    strip_include_prefix = ".", visibility = ["//lib/libsysdecode:__pkg__"])
+
+exports_files(["rtld_malloc.c"], visibility = ["//lib/libthr:__pkg__"])
+cc_library(name = "thr_headers", hdrs = ["rtld.h", "rtld_lock.h", "rtld_printf.h", "rtld_paths.h", "rtld_malloc.h", "rtld_tls.h"],
+    strip_include_prefix = ".", deps = ["//libexec/rtld-elf/amd64:headers"],
+    visibility = ["//lib/libthr:__pkg__"])
+
+cc_library(name = "paths_header", hdrs = ["rtld_paths.h"],
+    strip_include_prefix = ".", visibility = ["//sbin/ldconfig:__pkg__"])

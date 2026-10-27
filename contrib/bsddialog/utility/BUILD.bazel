@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['bsddialog.c', 'util_builders.c', 'util_cli.c', 'util_theme.c', 'util.h', 'bsddialog.1'], visibility = ["//usr.bin/bsddialog:__pkg__"])

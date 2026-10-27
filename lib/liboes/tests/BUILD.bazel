@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+# Keep installed linkage identical to Make; only runtime variants use local RPATH.
+[cc_binary(name = name + suffix,
+    srcs = [name + ".c"],
+    deps = ["//lib/liboes:test_source_headers", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []))
+ for name in ["ownership_test", "path_test", "broker_protocol_test"] for suffix in ["", "_runtime"]]
+[bsd_kyua_test(name = name + "_run", program = ":" + name + "_runtime", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py",
+    runtime_libraries = {"//lib/atf/libatf-c:atf_c_shared": "libprivateatf-c.so.1",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7": "libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7": "libsys.so.7"},
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    materialize_suite = True,
+    size = "small", visibility = ["//visibility:public"])
+ for name in ["ownership_test", "path_test", "broker_protocol_test"]]
+
+
+
+cc_binary(name = "broker_client_test", srcs = ["broker_client_test.c"],
+    deps = ["//lib/liboes:test_source_headers", "//lib/atf/libatf-c:atf_c", "//lib/libservice:service", "//lib/libfidl:fidl"],
+    linkstatic = True, linkopts = ["-static"])
+bsd_kyua_test(name = "broker_client_test_run", program = ":broker_client_test", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load(":installation.bzl", "TESTDIR", "ATF_PROGRAMS")
+[utility_installation(name = "install_" + p, program = p, manual = "",
+    package = "oes", bindir = TESTDIR) for p in ATF_PROGRAMS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = sorted(ATF_PROGRAMS),
+    interfaces = {p: "atf" for p in ATF_PROGRAMS})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = TESTDIR + "/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=oes"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"],
+    visibility = ["//lib/liboes:__pkg__"])

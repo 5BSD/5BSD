@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["regcomp.c", "regerror.c", "regexec.c", "regfree.c", "engine.c", "cname.h", "regex2.h", "utils.h"],
+    visibility = ["//lib/libregex:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "test_headers", hdrs = ["utils.h", "regex2.h"], includes = ["."], visibility = ["//lib/libregex/tests:__pkg__"])

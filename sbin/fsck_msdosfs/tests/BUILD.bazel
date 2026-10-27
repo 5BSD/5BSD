@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+CASES = [('fsck_msdosfs_boot_test.sh', 'hidden_secs_high_bit'), ('fsck_msdosfs_boot_test.sh', 'fsinfo_free_high_bit'), ('fsck_msdosfs_boot_test.sh', 'fsinfo_next_high_bit'), ('fsck_msdosfs_boot_test.sh', 'root_cluster_high_bit'), ('fsck_msdosfs_boot_test.sh', 'fatsecs_high_bit'), ('fsck_msdosfs_boot_test.sh', 'huge_sectors_high_bit'), ('fsck_msdosfs_large_test.sh', 'reconnect_above_4g'), ('fsck_msdosfs_test.sh', 'lost_chain_cleared'), ('fsck_msdosfs_test.sh', 'lost_chain_left_alone'), ('fsck_msdosfs_test.sh', 'lost_chain_preen'), ('fsck_msdosfs_test.sh', 'corrupted_lost_chain_left_alone'), ('fsck_msdosfs_test.sh', 'corrupted_lost_chain_reconnected')]
+[bsd_atf_test(
+    name = "native_" + case,
+    case_name = case,
+    body = body,
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ['//sbin/newfs_msdos:newfs_msdos', '//sbin/fsck_msdosfs:fsck_msdosfs', '//bin/sh:sh', '//libexec/atf/atf-sh:atf-sh', '//libexec/atf/atf-check:atf-check', '//usr.bin/dirname:dirname', '//usr.bin/tr:tr', '//bin/dd:dd', '//bin/cp:cp', '//usr.bin/hexdump:od', '//usr.bin/awk:awk', '//usr.bin/cmp:cmp'],
+    runtime_lib = ['//lib/atf/libatf-c:atf_c_shared', '//lib/atf/libatf-c++:atf_cxx_shared', '//lib/libc++:cxx_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/msun:m_shared', '//lib/libedit:edit_shared', '//lib/ncurses/tinfo:tinfo_shared', '@bsd_sdk//toolchain:sysroot/lib/libc.so.7', '@bsd_sdk//toolchain:sysroot/lib/libsys.so.7', '@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1', '//lib/libutil:util_shared'],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "medium",
+) for body, case in CASES]
+test_suite(name = "tests", tests = [":native_" + case for body, case in CASES], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+SCRIPTS = ["fsck_msdosfs_test", "fsck_msdosfs_boot_test", "fsck_msdosfs_large_test"]
+[bsd_script_wrapper(name = name, body = name + ".sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect") for name in SCRIPTS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = sorted(SCRIPTS), interfaces = {name: "atf" for name in SCRIPTS})
+[bsd_install_file(name = "install_" + name, src = ":" + name, destination = "/usr/tests/sbin/fsck_msdosfs/" + name,
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"]) for name in SCRIPTS]
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/sbin/fsck_msdosfs/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_" + name for name in SCRIPTS] + [":install_kyuafile"], visibility = ["//sbin/fsck_msdosfs:__pkg__"])

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files([
+    "linux.h",
+    "linux_file.h",
+    "linux_fork.h",
+    "linux_time.h",
+], visibility = ["//usr.bin/kdump:__pkg__", "//lib/libsysdecode:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(
+    name = "sysdecode_headers",
+    hdrs = ["linux.h", "linux_errno.h", "linux_file.h", "linux_fork.h", "linux_time.h", "linux_siginfo.h"],
+    textual_hdrs = ["linux_errno.inc"],
+    strip_include_prefix = ".",
+    include_prefix = "compat/linux",
+    visibility = ["//usr.bin/kdump:__pkg__", "//lib/libsysdecode:__pkg__", "//sys/amd64/linux:__pkg__"],
+)

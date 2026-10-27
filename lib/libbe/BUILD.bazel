@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "headers", hdrs = ["be.h"], strip_include_prefix = ".",
+    deps = ["//cddl/lib/libnvpair:nvpair"], visibility = ["//visibility:public"])
+cc_library(
+    name = "be", srcs = ["be.c", "be_access.c", "be_error.c", "be_info.c", "be_impl.h"],
+    deps = [":headers", "//cddl/lib/libzfs:zfs", "//cddl/lib/libnvpair:nvpair", "//cddl/lib/libspl:spl", "//cddl/lib/libzfsbootenv:zfsbootenv"],
+    implementation_deps = ["//sys/contrib/openzfs:zfs_headers"],
+    local_defines = ["IN_BASE", "HAVE_RPC_TYPES", "HAVE_ISSETUGID", "HAVE_STRLCAT", "HAVE_STRLCPY", "NEED_SOLARIS_BOOLEAN"],
+    copts = ["-Wno-cast-qual", "-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"],
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":be"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "be_shared", deps = [":be"],
+    dynamic_deps = ["//cddl/lib/libzfs:zfs_shared", "//cddl/lib/libnvpair:nvpair_shared", "//cddl/lib/libspl:spl_shared", "//cddl/lib/libzfsbootenv:zfsbootenv_shared"],
+    shared_lib_name = "libbe.so.1", user_link_flags = ["-Wl,-soname,libbe.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

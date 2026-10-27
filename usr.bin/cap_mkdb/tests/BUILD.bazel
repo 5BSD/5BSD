@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+cc_binary(name = "input_test", srcs = ["input_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd"])
+_CASES = ["alternate_output", "inherited_input", "default_output", "reader_selection", "long_name", "long_continued_name"]
+[bsd_atf_test(name = case, case_name = case, interface = "program", body = ":input_test",
+    config_files = {"//usr.bin/cap_mkdb:cap_mkdb": "cap_mkdb"},
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small") for case in _CASES]
+test_suite(name = "tests", tests = [":" + case for case in _CASES], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["input_test"], interfaces = {"input_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/usr.bin/cap_mkdb/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=utilities-tests"])
+utility_installation(name = "install_manifest", program = "input_test", manual = None,
+    package = "utilities-tests", bindir = "/usr/tests/usr.bin/cap_mkdb", extra_entries = [":install_kyuafile"])
+
+# Exercise the independently compiled reader with the same maintained cases.
+[bsd_atf_test(name = "bootstrap_" + case, case_name = case, interface = "program", body = ":input_test",
+    config_files = {"//usr.bin/cap_mkdb:cap_mkdb_bootstrap": "cap_mkdb"},
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small") for case in _CASES]
+test_suite(name = "bootstrap_tests", tests = [":bootstrap_" + case for case in _CASES], visibility = ["//visibility:public"])

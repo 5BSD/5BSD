@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+# These programs are installed for Kyua execution. Network access and global
+# sysctl changes require an explicitly provisioned runtime qualification system.
+cc_binary(name = "net_test", srcs = ["net_test.c"],
+    deps = ["//lib/libcasper/libcasper:casper", "//lib/libcasper/services/cap_net:cap_net", "//lib/libnv:nv", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_net:cap_net_shared", "//lib/libnv:nv_shared", "//lib/atf/libatf-c:atf_c_shared"],
+    local_defines = ["WITH_CASPER"], copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd"],
+    visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["net_test"], interfaces = {"net_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/lib/libcasper/services/cap_net/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+utility_installation(name = "install_manifest", program = "net_test", manual = None,
+    package = "tests", bindir = "/usr/tests/lib/libcasper/services/cap_net",
+    extra_entries = [":install_kyuafile"])

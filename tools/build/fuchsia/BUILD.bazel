@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['fidlgen-build.py', 'generate-bsd.py', 'generate_bsd_c.py', 'generate_bsd_c_types.py', 'generate_bsd_c_wire.py', 'fidlgen_natural.py', 'fidlgen_reserved.py', 'gotemplate.py'])
+filegroup(name = "binding_modules", srcs = ['generate-bsd.py', 'generate_bsd_c.py', 'generate_bsd_c_types.py', 'generate_bsd_c_wire.py', 'fidlgen_natural.py', 'fidlgen_reserved.py', 'gotemplate.py'], visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "daemon_bench_headers", hdrs = ["daemon_bench.h"],
+    strip_include_prefix = ".", visibility = ["//usr.sbin/BSDFilesystem/tests:__pkg__", "//usr.sbin/BSDNamespace/tests:__pkg__", "//usr.sbin/BSDDevice/tests:__pkg__", "//usr.sbin/BSDExtension/tests:__pkg__", "//usr.sbin/BSDCrypto/tests:__pkg__", "//usr.sbin/BSDTrace/tests:__pkg__", "//usr.sbin/BSDNetwork/tests:__pkg__", "//usr.sbin/BSDVM/tests:__pkg__", "//usr.sbin/BSDSysctl/tests:__pkg__", "//usr.sbin/BSDNotify/tests:__pkg__", "//usr.sbin/BSDPower/tests:__pkg__", "//usr.sbin/BSDLog/tests:__pkg__", "//usr.sbin/BSDAudit/tests:__pkg__"])

@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_spec", "bsd_dtrace_cc_objects")
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+bsd_dtrace_spec(name = "provider", source = "capsule_provider.d", output = "capsule_provider.o",
+    flags = ["-C", "-x", "nolibs"], static_anchor = False, object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = ["//cddl/lib/libdtrace:dtrace_shared", "//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared", "//cddl/lib/libspl:spl_shared", "//lib/libxo/libxo:xo_shared", "//lib/libutil:util_shared", "//lib/libprocstat:procstat_shared", "//lib/librtld_db:rtld_db_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libz:z_shared", "//lib/libkvm:kvm_shared"],
+    tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
+
+_LIBRARIES = ['//lib/libmd:md_link', '//lib/libcapability:capability', '//lib/libcrypt:crypt', '//lib/libcapsulert:capsulert', '//lib/libucl:ucl', '//lib/libutil:util', '//lib/libservice:service', '//lib/libtrustedzfs:trustedzfs', '//cddl/lib/libzfs:zfs', '//cddl/lib/libzutil:zutil', '//cddl/lib/libnvpair:nvpair', '//cddl/lib/libspl:spl', '//lib/libthr:thr']
+_SHARED_LIBRARIES = ['//lib/libmd:md_shared', '//lib/libcapability:capability_shared', '//lib/libcrypt:crypt_shared', '//lib/libcapsulert:capsulert_shared', '//lib/libucl:ucl_shared', '//lib/libutil:util_shared', '//lib/libservice:service_shared', '//lib/libtrustedzfs:trustedzfs_shared', '//cddl/lib/libzfs:zfs_shared', '//cddl/lib/libzutil:zutil_shared', '//cddl/lib/libnvpair:nvpair_shared', '//cddl/lib/libspl:spl_shared', '//lib/libthr:thr_shared']
+cc_library(name = "private_headers", visibility = ["//usr.sbin/capsule/tests:__pkg__"], hdrs = ['bootstrap_exec.h', 'capsule.h', 'capsule_ambient.h', 'capsule_daemon.h', 'capsule_lifecycle.h', 'capsule_plane.h', 'capsule_proto_claims.h', 'claim_check.h', 'commands.h', 'config.h', 'mac_capability_priv.h', 'probes.h', 'protected_crypto.h', 'protected_storage.h', 'req_validate.h', 'trace_pressure.h'],
+    deps = ["//lib/libcapbundle:internal_headers", "//lib/libservice:bootstrap_headers", "//lib/libcapsulert:headers", "//contrib/libucl:headers", "//lib/libtrustedzfs:headers",
+        "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:capprotect_headers", "//sys/dev/mac_capability:isolation_headers", "//sys/dev/mac_capability:system_headers", "//sys/dev/mac_capability:channel_headers"])
+cc_library(name = "objects", alwayslink = True, srcs = ['main.c', 'bootstrap.c', 'bootstrap_exec.c', 'protected_crypto.c', 'mac_capability_setup.c', 'mac_capability_claims.c', 'mac_capability_reload.c', 'mac_capability_status.c', 'mac_capability_mint.c', 'mac_capability_coal.c', 'commands.c', 'config.c', 'config_report.c', 'control.c', 'event.c', 'capsule.c', 'capsule_proto.c', 'capsule_proto_claims.c', 'proc.c'],
+    deps = ['//lib/libmd:md_link', '//lib/libcapability:capability', '//lib/libcrypt:crypt', '//lib/libcapsulert:capsulert', '//lib/libucl:ucl', '//lib/libutil:util', '//lib/libservice:service', '//lib/libtrustedzfs:trustedzfs'] + [":private_headers"],
+    local_defines = select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}),
+    copts = ["-fPIE"], target_compatible_with = _PLATFORM)
+# OpenZFS wrappers/forced headers apply only to this translation unit.
+cc_library(name = "storage_objects", alwayslink = True, srcs = ["protected_storage.c"], hdrs = ["//sys/modules/zfs:zfs_config.h"],
+    deps = [":private_headers", "//lib/libtrustedzfs:trustedzfs", "//sys/contrib/openzfs:spl_headers", "//cddl/compat/opensolaris/include:headers"] + ['//cddl/lib/libzfs:zfs', '//cddl/lib/libzutil:zutil', '//cddl/lib/libnvpair:nvpair', '//cddl/lib/libspl:spl'],
+    local_defines = ["IN_BASE", "NEED_SOLARIS_BOOLEAN"] + select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}),
+    copts = ["-fPIE", "-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h", "-include", "sys/modules/zfs/zfs_config.h"], target_compatible_with = _PLATFORM)
+bsd_dtrace_cc_objects(name = "traced_objects", libraries = [":objects", ":storage_objects"], provider = ":provider",
+    provider_object = "capsule_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+[filegroup(name = group, srcs = [":traced_objects"], output_group = group) for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
+cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
+cc_import(name = "traced", alwayslink = True, objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + _LIBRARIES)
+cc_binary(name = "capsule", deps = select({_TRACE: [":traced"], "//conditions:default": [":objects", ":storage_objects"] + _LIBRARIES}),
+    dynamic_deps = _SHARED_LIBRARIES, linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_compress")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+utility_installation(name = "install_capsule", program = "capsule", manual = "capsule.8",
+    package = "capsule", bindir = "/usr/sbin", man_section = "8")
+# Make FILESGROUPS installs the debug-split, not fully stripped, program here.
+# This is a second regular file so / and /usr may reside on separate filesystems.
+bsd_install_file(name = "install_boot_copy", src = ":install_capsule_debug", destination = "/sbin/capsule",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=capsule"])
+bsd_install_file(name = "install_config", src = "capsule-daemon.conf", destination = "/etc/capsule.conf",
+    owner = "root", group = "wheel", mode = "0644", install_tags = ["package=capsule", "config"])
+bsd_install_file(name = "install_loader", src = "capsule-loader.conf", destination = "/boot/loader.conf.d/capsule.conf",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=capsule"])
+bsd_compress(name = "manual5", src = "capsule.conf.5", output = "capsule.conf.5.gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "install_manual5", src = ":manual5", destination = "/usr/share/man/man5/capsule.conf.5.gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=capsule-man"], "//conditions:default": ["package=capsule"]}))
+_EXAMPLES = ["desktop.conf", "server.conf", "embedded.conf", "broker.conf", "dynamic_claims.d"]
+[bsd_install_file(name = "install_example_" + name, src = "examples/" + name,
+    destination = "/usr/share/examples/capsule/" + name, owner = "root", group = "wheel", mode = "0444",
+    install_tags = ["package=capsule"]) for name in _EXAMPLES]
+bsd_install_manifest(name = "install_extra", visibility = ["//packages/capsule:__pkg__"], entries = [":install_boot_copy", ":install_config", ":install_loader", ":install_manual5"] + [":install_example_" + name for name in _EXAMPLES])
+bsd_install_archive(name = "runtime_install_archive", manifests = [":install_capsule", ":install_extra"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=capsule"]}' for d in ["/sbin", "/boot/loader.conf.d", "/usr/share/examples/capsule"]} |
+        {"/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'} |
+        {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=capsule","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    directory_packages = ["capsule", "capsule-man"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+
+# Test sources use the maintained Capsule-local header names.
+cc_library(name = "test_headers", deps = [":private_headers"], includes = ["."],
+    visibility = ["//usr.sbin/capsule/tests:__pkg__"])
+
+cc_library(name = "release_test_includes", hdrs = ["capsule_proto_claims.c"],
+    deps = [":test_headers"], visibility = ["//usr.sbin/capsule/tests:__pkg__"])
+
+exports_files(["config.c", "protected_crypto.c", "capsule-daemon.conf"] + ["examples/" + n + ".conf" for n in ["desktop", "server", "embedded", "broker"]], visibility = ["//usr.sbin/capsule/tests:__pkg__"])
+
+# Non-PIE static test variant: restrict OpenZFS compilation context to this unit.
+cc_library(name = "test_storage_objects", srcs = ["protected_storage.c"], hdrs = ["//sys/modules/zfs:zfs_config.h"],
+    deps = [":test_headers"],
+    implementation_deps = ["//lib/libtrustedzfs:trustedzfs", "//sys/contrib/openzfs:spl_headers", "//cddl/compat/opensolaris/include:headers", "//cddl/lib/libzfs:zfs", "//cddl/lib/libzutil:zutil", "//cddl/lib/libnvpair:nvpair", "//cddl/lib/libspl:spl"],
+    local_defines = ["IN_BASE", "NEED_SOLARIS_BOOLEAN"],
+    copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h", "-include", "sys/modules/zfs/zfs_config.h"],
+    alwayslink = True, visibility = ["//usr.sbin/capsule/tests:__pkg__"])
+
+load("//usr.sbin/capsule/tests:installation_data.bzl", "TEST_DIRECTORIES")
+bsd_install_archive(name = "install_archive", manifests = [":install_capsule", ":install_extra"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.sbin/capsule/tests:install_manifest"], "//conditions:default": []}),
+    directories = ({d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=capsule"]}' for d in ["/sbin", "/boot/loader.conf.d", "/usr/share/examples/capsule"]} |
+        {"/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'} |
+        {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=capsule","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]}) | select({"//tools/build/bazel/config:tests_enabled": TEST_DIRECTORIES, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

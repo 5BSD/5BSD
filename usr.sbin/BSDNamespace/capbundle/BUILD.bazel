@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Source fixtures shipped with Switchboard contract tests.
+exports_files(['bsdnamespace.ucl'], visibility = ["//usr.sbin/BSDNamespace:__pkg__", "//usr.sbin/switchboard/tests:__pkg__"])
+
+exports_files(["Bundle.ucl"], visibility = ["//usr.sbin/BSDNamespace:__pkg__"])

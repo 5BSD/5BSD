@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+CASES = ['invalid_usage', 'no_arguments', 'relative_path', 'absolute_path', 'dotdot_path', 'recursive', 'mixed_paths', 'symlink_no_h', 'symlink_rootlevel_H', 'symlink_rootlevel_H_dead', 'outside_symlink_rejected', 'outside_symlink_unsafe']
+[bsd_atf_test(
+    name = "native_" + case,
+    case_name = case,
+    body = "chflags_test.sh",
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ['//bin/sh:sh', '//libexec/atf/atf-sh:atf-sh', '//libexec/atf/atf-check:atf-check', '//bin/chflags:chflags', '//usr.bin/stat:stat', '//usr.bin/touch:touch', '//bin/rm:rm', '//bin/mkdir:mkdir', '//bin/ln:ln', '//usr.bin/dirname:dirname', '//usr.bin/basename:basename', '//bin/cat:cat', '//usr.bin/grep:grep', '//usr.bin/sed:sed'],
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libutil:util_shared", "//lib/libkvm:kvm_shared", "//lib/libelf:elf_shared", "//lib/libjail:jail_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared"],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "small",
+) for case in CASES]
+test_suite(name = "tests", tests = [":native_" + case for case in CASES], visibility = ["//visibility:public"])

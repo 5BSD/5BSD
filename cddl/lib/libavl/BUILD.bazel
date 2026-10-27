@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "avl", srcs = ["//sys/contrib/openzfs:module/avl/avl.c"],
+    deps = ["//cddl/lib/libspl:spl"],
+    local_defines = ["IN_BASE", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"],
+    copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"],
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":avl"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "avl_shared", deps = [":avl"], dynamic_deps = ["//cddl/lib/libspl:spl_shared"],
+    shared_lib_name = "libavl.so.2", user_link_flags = ["-Wl,-soname,libavl.so.2", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
+cc_import(name = "archive_link", static_library = ":static_archive")
+[cc_test(name = "tree_" + variant, srcs = ["tree_test.c"],
+    deps = ([":archive_link", "//cddl/lib/libspl:spl"] if variant == "static" else [":avl"]),
+    dynamic_deps = [] if variant == "static" else [":avl_shared", "//cddl/lib/libspl:spl_shared"],
+    local_defines = ["IN_BASE", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"],
+    copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"], linkopts = ["-pthread"],
+    features = [] if variant == "static" else ["bsd_test_runtime_paths"], linkstatic = variant == "static",
+    size = "small", target_compatible_with = _PLATFORM)
+ for variant in ["static", "shared"]]
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

@@ -1,0 +1,143 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+cc_binary(name = "config_test", srcs = ["config_test.c"],
+    deps = ["//usr.sbin/BSDFilesystem:test_headers", "//lib/atf/libatf-c:atf_c", "//lib/libcapsulert:capsulert"],
+    linkstatic = True, linkopts = ["-static"])
+bsd_kyua_test(name = "config_test_run", program = ":config_test", interface = "atf",
+    suite = "FreeBSD", suite_files = {"//usr.sbin/BSDFilesystem:bsdfilesystem.ucl": "storage-policy.ucl"},
+    materialize_suite = True, kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
+
+cc_binary(name = "oes_factory_failure_test", srcs = ["oes_factory_failure_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:oes_test_headers"],
+    linkstatic = True, linkopts = ["-static"])
+cc_binary(name = "oes_factory_test", srcs = ["oes_factory_test.c", "//usr.sbin/BSDFilesystem:oes_factory.c"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:oes_test_headers", "//lib/libservice:service"],
+    linkstatic = True, linkopts = ["-static"])
+[cc_binary(name = name, srcs = [name + ".c"] +
+        (["//usr.sbin/BSDFilesystem:oes_session.c", "//usr.sbin/BSDFilesystem:oes_factory.c"] if name == "oes_handoff_test" else []),
+    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:oes_test_headers",
+        "//lib/liboes:oes", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libservice:service"],
+    linkstatic = True, linkopts = ["-static"])
+ for name in ["oes_session_test", "oes_handoff_test"]]
+[bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
+    tags = [] if name == "oes_factory_failure_test" else ["manual", "requires-matching-kernel"],
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+ for name in ["oes_factory_failure_test", "oes_factory_test", "oes_session_test", "oes_handoff_test"]]
+
+_DAEMON_LIBRARIES = ["//lib/libcapsulert:capsulert", "//lib/libtrustedzfs:trustedzfs", "//lib/libucl:ucl",
+    "//usr.sbin/BSDFilesystem:nvpair_link", "//lib/libservice:service", "//lib/libchannel:channel",
+    "//lib/libmd:md_link", "//lib/libcapreclaim:capreclaim", "//lib/liblogcmp:logcmp",
+    "//lib/libfilesystemcmp:filesystemcmp", "//lib/liboes:oes", "//lib/libfidl:fidl"]
+_DAEMON_SOURCES = ["//usr.sbin/BSDFilesystem:" + p for p in
+    ["request.c", "layout.c", "nvwalk.c", "oes_factory.c", "oes_session.c"]]
+[cc_binary(name = name, srcs = [name + ".c"] + _DAEMON_SOURCES,
+    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:request_test_headers"] + _DAEMON_LIBRARIES +
+        (["//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers"] if name == "provider_test" else []),
+    local_defines = ["BSDFILESYSTEM_TESTING"], linkstatic = True, linkopts = ["-static"])
+ for name in ["namespace_test", "provider_test"]]
+[bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
+    tags = ["manual", "requires-matching-kernel"] if name == "provider_test" else [],
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+ for name in ["namespace_test", "provider_test"]]
+
+_STORAGE_TESTS = ["cleanup_test", "quota_test", "lifecycle_test", "anchor_test", "staging_recovery_test", "abort_test", "persistent_retention_test"]
+[cc_binary(name = name, srcs = [name + ".c", "//usr.sbin/BSDFilesystem:nvwalk.c"] +
+        ([] if name == "persistent_retention_test" else ["//usr.sbin/BSDFilesystem:layout.c"]) +
+        (["//usr.sbin/BSDFilesystem:oes_factory.c", "//usr.sbin/BSDFilesystem:oes_session.c"] if name == "lifecycle_test" else []),
+    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:request_test_headers"] + _DAEMON_LIBRARIES +
+        (["//tests/sys/zfshandle:test_headers"] if name in ["anchor_test", "staging_recovery_test", "abort_test", "persistent_retention_test"] else []),
+    local_defines = ["BSDFILESYSTEM_TESTING"],
+    copts = ["-ffunction-sections", "-fdata-sections"] if name in ["quota_test", "lifecycle_test", "abort_test"] else [],
+    linkstatic = True, linkopts = ["-static"] +
+        (["-Wl,--gc-sections"] if name in ["quota_test", "lifecycle_test", "abort_test"] else []) +
+        (["-Wl,--wrap=" + symbol for symbol in ["tzfs_openat", "tzfs_info", "tzfs_list_children", "tzfs_list_snapshots", "tzfs_snap_destroy", "tzfs_destroy"]] if name == "cleanup_test" else []))
+ for name in _STORAGE_TESTS]
+[bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
+    tags = [] if name == "cleanup_test" else ["manual", "requires-matching-kernel"],
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+ for name in _STORAGE_TESTS]
+cc_binary(name = "manifest_test", srcs = ["manifest_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libcapbundle:capbundle", "//lib/libcapbundle:internal_headers"],
+    linkstatic = True, linkopts = ["-static"])
+bsd_kyua_test(name = "manifest_test_run", program = ":manifest_test", interface = "atf",
+    suite = "FreeBSD", suite_files = {"//usr.sbin/BSDFilesystem:capbundle/bsdfilesystem.ucl": "bsdfilesystem.ucl"},
+    materialize_suite = True, kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
+bsd_fidl_ir(name = "next_ir", schemas = ["//lib/libfidl/tests:zx.fidl", "evolution/filesystemcmp_next.fidl"], available = "bsd:2",
+    compiler = "//tools/build/fuchsia/fidlc:fidlc",
+    runtime_libraries = ["//lib/libmd:md_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"])
+bsd_fidl_bindings(name = "next_bindings", ir = ":next_ir",
+    generator = "//tools/build/fuchsia:fidlgen-build.py", modules = ["//tools/build/fuchsia:binding_modules"],
+    templates = ["@fuchsia_runtime_src//:binding_templates"],
+    sources = ["fidl/bsd.filesystem.v1/" + name for name in ["cpp/natural_types.cc", "cpp/common_types.cc", "c/bsd.cc"]],
+    headers = ["fidl/bsd.filesystem.v1/" + name for name in ["cpp/markers.h", "cpp/common_types.h", "cpp/natural_types.h", "cpp/bsd.h", "c/bsd.h", "c/bridge.h"]],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+
+filegroup(name = "next_sources", srcs = [":next_bindings"], output_group = "sources")
+filegroup(name = "next_header_files", srcs = [":next_bindings"], output_group = "headers")
+cc_library(name = "next_headers", hdrs = [":next_header_files"], strip_include_prefix = "next_bindings")
+# Make links all three generated objects directly into this standalone peer.
+cc_library(name = "next_codec", srcs = [":next_sources"],
+    deps = [":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, alwayslink = True)
+# The newer peer must never inherit the production bsd:1 generated headers.
+cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
+    deps = [":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
+    linkopts = ["-static"], linkstatic = True)
+
+
+
+cc_binary(name = "evolution_test", srcs = ["evolution_test.c"] + _DAEMON_SOURCES,
+    deps = _DAEMON_LIBRARIES + ["//lib/libthr:thr", "//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDFilesystem:request_test_headers", "//lib/libfilesystemcmp:client_source_headers"],
+    local_defines = ["BSDFILESYSTEM_TESTING"], linkstatic = True, linkopts = ["-static"])
+cc_binary(name = "latency_bench", srcs = ["latency_bench.c"] + _DAEMON_SOURCES,
+    deps = _DAEMON_LIBRARIES + ["//lib/libthr:thr", "//usr.sbin/BSDFilesystem:request_test_headers", "//lib/libfilesystemcmp:client_source_headers", "//tools/build/fuchsia:daemon_bench_headers"],
+    dynamic_deps = ["//lib/libcapsulert:capsulert_shared", "//lib/libtrustedzfs:trustedzfs_shared", "//lib/libucl:ucl_shared", "//cddl/lib/libnvpair:nvpair_shared", "//lib/libservice:service_shared", "//lib/libchannel:channel_shared", "//lib/libmd:md_shared", "//lib/libcapreclaim:capreclaim_shared", "//lib/liblogcmp:logcmp_shared", "//lib/libfilesystemcmp:filesystemcmp_shared", "//lib/liboes:oes_shared", "//lib/libfidl:fidl_shared", "//lib/libthr:thr_shared"],
+    local_defines = ["BSDFILESYSTEM_TESTING"], copts = ["-fPIE"], linkopts = ["-pie"])
+bsd_kyua_test(name = "evolution_test_run", program = ":evolution_test", interface = "atf",
+    suite = "FreeBSD", suite_files = {":next_peer": "next_peer"}, case_timeout = 120,
+    tags = ["manual", "requires-matching-kernel"],
+    kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load(":installation.bzl", "TESTDIR", "ATF_PROGRAMS", "BINARIES", "DIRECTORIES")
+[utility_installation(name = "install_" + p, program = p, manual = "",
+    package = "tzfs-tests", bindir = TESTDIR) for p in BINARIES]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ATF_PROGRAMS,
+    interfaces = {p: "atf" for p in ATF_PROGRAMS},
+    metadata = {"evolution_test": '{"timeout":"120"}'})
+_FILES = [(":kyuafile", TESTDIR + "/Kyuafile", "0444"),
+    ("//usr.sbin/BSDFilesystem:bsdfilesystem.ucl", TESTDIR + "/storage-policy.ucl", "0444"),
+    ("//usr.sbin/BSDFilesystem:capbundle/bsdfilesystem.ucl", TESTDIR + "/bsdfilesystem.ucl", "0444")] + [
+    ("//contrib/fuchsia:" + n, "/usr/share/licenses/tzfs-tests/fuchsia/" + n, "0444") for n in ["LICENSE", "PATENTS"]]
+[bsd_install_file(name = "install_file_" + str(i), src = source, destination = dest,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=tzfs-tests"])
+ for i, (source, dest, mode) in enumerate(_FILES)]
+bsd_install_manifest(name = "install_extra", entries = [":install_file_" + str(i) for i in range(len(_FILES))],
+    visibility = ["//usr.sbin/BSDFilesystem:__pkg__"])

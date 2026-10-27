@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "thread_db_header", hdrs = ["thread_db.h"], strip_include_prefix = ".",
+    visibility = ["//lib/libthr:__pkg__"])

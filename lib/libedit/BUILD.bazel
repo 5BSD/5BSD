@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_TOOLS = {"@bsd_sdk//toolchain:awk": "awk", "@bsd_sdk//toolchain:cat": "cat", "@bsd_sdk//toolchain:sed": "sed", "@bsd_sdk//toolchain:extra_basename": "basename", "@bsd_sdk//toolchain:extra_sort": "sort", "@bsd_sdk//toolchain:extra_tr": "tr"}
+_RUNTIME = ["@bsd_sdk//toolchain:" + n + "_runtime" for n in ["sh", "awk", "cat", "sed", "extra_basename", "extra_sort", "extra_tr"]]
+[bsd_script_output(name = name + "_header", script = "//contrib/libedit:makelist",
+    src = "//contrib/libedit:" + name + ".c", output = name + ".h", input_mode = "argument", arguments = ["-h"],
+    path_tools = _TOOLS, runtime = _RUNTIME, shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect")
+ for name in ["vi", "emacs", "common"]]
+[bsd_script_output(name = name + "_header", script = "//contrib/libedit:makelist",
+    src = first, additional_sources = rest, output = name + ".h", input_mode = "argument", arguments = [flag],
+    path_tools = _TOOLS, runtime = _RUNTIME, shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect")
+ for name, flag, first, rest in [
+    ("fcns", "-fh", ":vi_header", [":emacs_header", ":common_header"]),
+    ("func", "-fc", ":vi_header", [":emacs_header", ":common_header"]),
+    ("help", "-bh", "//contrib/libedit:vi.c", ["//contrib/libedit:emacs.c", "//contrib/libedit:common.c"]),
+]]
+cc_library(name = "generated_headers", hdrs = [":" + n + "_header" for n in ["vi", "emacs", "common", "fcns", "func", "help"]], strip_include_prefix = ".")
+cc_library(name = "edit", srcs = ['//contrib/libedit:chared.c', '//contrib/libedit:chartype.c', '//contrib/libedit:common.c', '//contrib/libedit:el.c', '//contrib/libedit:eln.c', '//contrib/libedit:emacs.c', '//contrib/libedit:filecomplete.c', '//contrib/libedit:hist.c', '//contrib/libedit:history.c', '//contrib/libedit:historyn.c', '//contrib/libedit:keymacro.c', '//contrib/libedit:literal.c', '//contrib/libedit:map.c', '//contrib/libedit:parse.c', '//contrib/libedit:prompt.c', '//contrib/libedit:read.c', '//contrib/libedit:readline.c', '//contrib/libedit:refresh.c', '//contrib/libedit:search.c', '//contrib/libedit:sig.c', '//contrib/libedit:terminal.c', '//contrib/libedit:tokenizer.c', '//contrib/libedit:tokenizern.c', '//contrib/libedit:tty.c', '//contrib/libedit:vi.c'],
+    deps = ["//contrib/libedit:headers", "//lib/ncurses/tinfo:tinfo"],
+    implementation_deps = ["//contrib/libedit:private_headers", ":generated_headers"],
+    linkstatic = True, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":edit"], visibility = ["//visibility:public"])
+cc_shared_library(name = "edit_shared", deps = [":edit"], shared_lib_name = "libedit.so.8",
+    dynamic_deps = ["//lib/ncurses/tinfo:tinfo_shared"],
+    user_link_flags = ["-Wl,-soname,libedit.so.8", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+# Installed target-system program.
+cc_binary(name = "cap_mkdb", srcs = ["cap_mkdb.c"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "cap_mkdb", manual = "cap_mkdb.1", package = "utilities")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.bin/cap_mkdb/tests:install_manifest"], "//conditions:default": []}),
+    directories = {'/usr/lib/debug/usr': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}', '/usr/lib/debug/usr/bin': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}'} | select({"//tools/build/bazel/config:tests_enabled": {'/usr/lib/debug/usr': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities-tests", "dbg"]}', '/usr/tests/usr.bin/cap_mkdb': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities-tests"]}', '/usr/lib/debug/usr/tests': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities-tests", "dbg"]}', '/usr/lib/debug/usr/tests/usr.bin': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities-tests", "dbg"]}', '/usr/lib/debug/usr/tests/usr.bin/cap_mkdb': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities-tests", "dbg"]}'}, "//conditions:default": {}}),
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+# Build-time consumers must request this tool with cfg = "exec". It compiles
+# the maintained source reader instead of inheriting host cget* semantics.
+cc_library(name = "bootstrap_headers", hdrs = ["bootstrap/stdlib.h"],
+    strip_include_prefix = "bootstrap")
+cc_binary(name = "cap_mkdb_bootstrap",
+    srcs = ["cap_mkdb.c", "//lib/libc/gen:getcap.c"],
+    deps = [":bootstrap_headers", "//tools/build/libc-bootstrap:namespace_headers"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd"], visibility = ["//visibility:public"])

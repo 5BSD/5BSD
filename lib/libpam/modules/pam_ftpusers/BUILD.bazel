@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libpam/modules:module.bzl", "pam_module")
+pam_module(name = 'pam_ftpusers', srcs = ['pam_ftpusers.c', 'pam_ftpusers_probes.h'],
+    provider = 'pam_ftpusers_provider.d')

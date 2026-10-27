@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_test(
+    name = "unit",
+    srcs = ["libdevdctl_unittest.cc"],
+    deps = ["//lib/googletest/gtest_main:gtest_main", "//lib/libdevdctl:devdctl", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"],
+    dynamic_deps = ["//lib/libdevdctl:devdctl_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"],
+    copts = ["-nostdinc++", "-pthread"],
+    features = ["bsd_test_runtime_paths"],
+    linkopts = ["-pthread"],
+    size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)

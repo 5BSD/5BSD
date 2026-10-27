@@ -1,0 +1,24 @@
+/dts-v1/;
+
+/  {
+
+	compatible = "allwinner,sun8i-a83t";
+	fragment@0 {
+
+		target-path = "/soc";
+		__overlay__ {
+
+			eeprom@1c14000 {
+
+				compatible = "allwinner,sun8i-a83t-sid";
+				reg = <0x1c14000 0x400>;
+				status = "okay";
+				phandle = <0x1>;
+			};
+		};
+	};
+	__symbols__ {
+
+		sid = "/fragment@0/__overlay__/eeprom@1c14000";
+	};
+};

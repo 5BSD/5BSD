@@ -1,0 +1,187 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag", "int_flag")
+
+# Mirrors the maintained BSD default: manual pages stay in their base package.
+bool_flag(
+    name = "split_manpages",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "split_manpages_enabled",
+    flag_values = {":split_manpages": "true"},
+    visibility = ["//visibility:public"],
+)
+
+# No wall-clock fallback: package builds require a declared release version.
+string_flag(
+    name = "package_version",
+    build_setting_default = "",
+    visibility = ["//visibility:public"],
+)
+
+# Zero preserves pkg's automatic compression threading default.
+int_flag(
+    name = "package_threads",
+    build_setting_default = 0,
+    visibility = ["//visibility:public"],
+)
+
+# Native equivalent of the supported userland MK_DTRACE choice.
+bool_flag(
+    name = "dtrace",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+config_setting(
+    name = "dtrace_enabled",
+    flag_values = {":dtrace": "true"},
+    visibility = ["//visibility:public"],
+)
+
+# Native equivalent of MK_OPENSSL_KTLS; consumers must select it explicitly.
+bool_flag(name = "openssl_ktls", build_setting_default = True,
+    visibility = ["//visibility:public"])
+config_setting(name = "openssl_ktls_enabled", flag_values = {":openssl_ktls": "true"},
+    visibility = ["//visibility:public"])
+
+# Native equivalent of MK_OPENSSL_FIPS module inclusion; not certification.
+bool_flag(name = "openssl_fips", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "openssl_fips_enabled", flag_values = {":openssl_fips": "true"},
+    visibility = ["//visibility:public"])
+
+# Native MK_ICONV choice; each component retains its own static/shared contract.
+bool_flag(name = "iconv", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "iconv_enabled", flag_values = {":iconv": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "openssl", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "openssl_enabled", flag_values = {":openssl": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_INET6_SUPPORT input.
+bool_flag(name = "inet6_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "inet6_support_enabled", flag_values = {":inet6_support": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_CDDL choice, initially consumed by libprocstat.
+bool_flag(name = "cddl", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "cddl_enabled", flag_values = {":cddl": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_CTF library feature; object CTF conversion is separate.
+bool_flag(name = "ctf", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "ctf_enabled", flag_values = {":ctf": "true", ":cddl": "true", ":dtrace": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_CASPER choice; each consumer must opt into this setting explicitly.
+bool_flag(name = "casper", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "casper_enabled", flag_values = {":casper": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_SORT_THREADS choice; controls code, linkage and manual content.
+bool_flag(name = "sort_threads", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "sort_threads_enabled", flag_values = {":sort_threads": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_AUDIT choice; consumers select this feature explicitly.
+bool_flag(name = "audit", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "audit_enabled", flag_values = {":audit": "true"}, visibility = ["//visibility:public"])
+
+# Native equivalent of the optional PS_CHECK_KEYWORDS diagnostic build.
+bool_flag(name = "ps_check_keywords", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "ps_check_keywords_enabled", flag_values = {":ps_check_keywords": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_LS_COLORS choice, enabled by default as in src.opts.mk.
+bool_flag(name = "ls_colors", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "ls_colors_enabled", flag_values = {":ls_colors": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_LOCALES choice; C.UTF-8 remains part of runtime either way.
+bool_flag(name = "locales", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "locales_enabled", flag_values = {":locales": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_NLS choice; selects catalog installation independently of MK_LOCALES.
+bool_flag(name = "nls", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "nls_enabled", flag_values = {":nls": "true"}, visibility = ["//visibility:public"])
+
+# Native equivalent of MK_JAIL for userland consumers.
+bool_flag(name = "jail", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "jail_enabled", flag_values = {":jail": "true"}, visibility = ["//visibility:public"])
+
+# Userland MK_INET_SUPPORT, independent of IPv6.
+bool_flag(name = "inet_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "inet_support_enabled", flag_values = {":inet_support": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_TESTS installation choice; explicit test targets remain runnable.
+bool_flag(name = "tests", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "tests_enabled", flag_values = {":tests": "true"}, visibility = ["//visibility:public"])
+
+# Mirrors MK_PF for generated system-call decoding and its compilation.
+bool_flag(name = "pf", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "pf_enabled", flag_values = {":pf": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_WIRELESS_SUPPORT selection.
+bool_flag(name = "wireless_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "wireless_support_enabled", flag_values = {":wireless_support": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_USB selection.
+bool_flag(name = "usb", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "usb_enabled", flag_values = {":usb": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_NETLINK_SUPPORT selection.
+bool_flag(name = "netlink_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "netlink_support_enabled", flag_values = {":netlink_support": "true"}, visibility = ["//visibility:public"])
+
+# Matches default MK_PTHREADS_ASSERTIONS.
+bool_flag(name = "pthreads_assertions", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "pthreads_assertions_enabled", flag_values = {":pthreads_assertions": "true"}, visibility = ["//visibility:public"])
+
+# Include the maintained secure DES/Blowfish implementations.
+bool_flag(name = "crypt", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "crypt_enabled", flag_values = {":crypt": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "nis", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "nis_enabled", flag_values = {":nis": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "ldns", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "ldns_enabled", flag_values = {":ldns": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "kerberos_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "kerberos_support_enabled", flag_values = {":kerberos_support": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "mitkrb5", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "mitkrb5_enabled", flag_values = {":mitkrb5": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "tcp_wrappers", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "tcp_wrappers_enabled", flag_values = {":tcp_wrappers": "true"}, visibility = ["//visibility:public"])
+
+string_flag(name = "ssh_xauth_path", build_setting_default = "/usr/local/bin/xauth", visibility = ["//visibility:public"])
+string_flag(name = "ssh_askpass_path", build_setting_default = "", visibility = ["//visibility:public"])
+
+# MK_BLOCKLIST_SUPPORT controls service-side reporting to blocklistd.
+bool_flag(name = "blocklist_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "blocklist_support_enabled", flag_values = {":blocklist_support": "true"}, visibility = ["//visibility:public"])
+
+# Matches src.opts.mk default-off warm-start support.
+bool_flag(name = "rpcbind_warmstart_support", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "rpcbind_warmstart_support_enabled", flag_values = {":rpcbind_warmstart_support": "true"}, visibility = ["//visibility:public"])
+
+# Maintained MAGICPATH default; shared by libmagic and file.
+string_flag(name = "magic_path", build_setting_default = "/usr/share/misc",
+    visibility = ["//visibility:public"])
+
+# Controls GoogleTest-dependent installation alongside the general tests flag.
+bool_flag(name = "googletest", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "googletest_enabled", flag_values = {":googletest": "true"}, visibility = ["//visibility:public"])
+
+# Qualification-only selection; live tracing and resource gates remain open.
+bool_flag(name = "experimental_dtrace_section_archives", build_setting_default = False,
+    visibility = ["//visibility:public"])
+config_setting(name = "experimental_dtrace_section_archives_enabled",
+    flag_values = {":dtrace": "true", ":experimental_dtrace_section_archives": "true"},
+    visibility = ["//visibility:public"])
+
+# src.opts.mk enables STATS by default.
+bool_flag(name = "stats", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "stats_enabled", flag_values = {":stats": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "ofed", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "ofed_enabled", flag_values = {":ofed": "true"}, visibility = ["//visibility:public"])
+
+string_flag(name = "geom_class_dir", build_setting_default = "/lib/geom", visibility = ["//visibility:public"])
+
+label_flag(name = "geom_directory_policy", build_setting_default = "//lib/geom:empty.mtree", visibility = ["//visibility:public"])

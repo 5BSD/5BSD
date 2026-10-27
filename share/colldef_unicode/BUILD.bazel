@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:collate_locales.bzl", "collate_locales")
+load(":locales.bzl", "LOCALES", "MAPPED", "ALIASES")
+collate_locales(version = "48.2", locales = LOCALES, mapped = MAPPED, aliases = ALIASES)

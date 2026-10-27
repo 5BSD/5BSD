@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ['arraylist.h', 'diff_main.h', 'diff_output.h'], strip_include_prefix = ".", visibility = ["//lib/libdiff:__pkg__", "//usr.bin/diff:__pkg__"])

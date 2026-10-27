@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Mechanism experiment only; no production consumer selects this output yet.
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_binary")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+bsd_dtrace_header(name = "provider", source = "provider.d", output = "archiveprobe_provider.h",
+    flags = ["-C", "-x", "nolibs"], static_anchor = False, object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = ["//cddl/lib/libdtrace:dtrace_shared", "//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared", "//cddl/lib/libspl:spl_shared", "//lib/libxo/libxo:xo_shared", "//lib/libutil:util_shared", "//lib/libprocstat:procstat_shared", "//lib/librtld_db:rtld_db_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libz:z_shared", "//lib/libkvm:kvm_shared"],
+    tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
+
+cc_library(name = "objects", srcs = ["used.c", "unused.c", "plain.c"])
+bsd_dtrace_cc_objects(name = "rewritten", library = ":objects", provider = ":provider",
+    provider_object = "archive_provider", archive_members = True,
+    archive_runner = "//tools/build/bazel:dtrace_archive_member",
+    copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+filegroup(name = "members", srcs = [":rewritten"], output_group = "regular_archive_objects")
+cc_import(name = "archive", objects = [":members"])
+[cc_binary(name = name, srcs = [source], deps = [":archive"], linkstatic = True,
+    linkopts = ["-static"], visibility = ["//visibility:public"])
+ for name, source in [("selected_consumer", "main.c"), ("unused_consumer", "none.c"), ("plain_consumer", "plain_main.c"), ("both_consumer", "both.c")]]
+
+# An unreferenced caller must not retain the library through its constructor.
+cc_binary(name = "dead_caller_consumer", srcs = ["dead.c"], deps = [":archive"],
+    copts = ["-ffunction-sections", "-fdata-sections"],
+    linkstatic = True, linkopts = ["-static", "-Wl,--gc-sections"], visibility = ["//visibility:public"])
+
+# One selected function must not retain another probe-bearing function merely
+# because both were compiled from the same source file.
+cc_library(name = "multiple_objects", srcs = ["multiple.c"],
+    copts = ["-ffunction-sections", "-fdata-sections"])
+bsd_dtrace_cc_objects(name = "multiple_rewritten", library = ":multiple_objects",
+    provider = ":provider", provider_object = "multiple_provider",
+    archive_members = True,
+    archive_runner = "//tools/build/bazel:dtrace_archive_member",
+    copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+filegroup(name = "multiple_members", srcs = [":multiple_rewritten"],
+    output_group = "regular_archive_objects")
+cc_import(name = "multiple_archive", objects = [":multiple_members"])
+cc_binary(name = "multiple_consumer", srcs = ["multiple_main.c"],
+    deps = [":multiple_archive"], linkstatic = True,
+    linkopts = ["-static", "-Wl,--gc-sections"],
+    visibility = ["//visibility:public"])
+
+# Shared probe and is-enabled symbols across independently collected sections.
+# A normal constructor in the original object must keep working.
+cc_library(name = "shared_objects", srcs = ["shared.c"], hdrs = [":provider"],
+    copts = ["-ffunction-sections", "-fdata-sections"])
+bsd_dtrace_cc_objects(name = "shared_rewritten", library = ":shared_objects",
+    provider = ":provider", provider_object = "shared_provider",
+    archive_members = True,
+    archive_runner = "//tools/build/bazel:dtrace_archive_member",
+    copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+filegroup(name = "shared_members", srcs = [":shared_rewritten"],
+    output_group = "regular_archive_objects")
+cc_import(name = "shared_archive", objects = [":shared_members"])
+[cc_binary(name = name, srcs = ["shared_main.c"], deps = [":shared_archive"],
+    local_defines = ["TEST_SELECTION=" + str(selection)],
+    copts = ["-ffunction-sections", "-fdata-sections"], linkstatic = True,
+    linkopts = ["-static", "-Wl,--gc-sections"], visibility = ["//visibility:public"])
+ for name, selection in [("shared_first_consumer", 1), ("shared_second_consumer", 2),
+                         ("shared_both_consumer", 3), ("shared_dead_consumer", 0)]]
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+cc_binary(name = "verify", srcs = ["verify.c"], deps = ["//lib/libelf:elf"],
+    linkstatic = True, features = ["fully_static_link"])
+_RETENTION_CASES = {
+    "selected_consumer": ["selected", "unselected", "1", "0", "1", "0"],
+    "unused_consumer": ["selected", "unselected", "0", "0", "0", "0"],
+    "plain_consumer": ["selected", "unselected", "0", "0", "0", "0"],
+    "both_consumer": ["selected", "unselected", "1", "1", "2", "0"],
+    "dead_caller_consumer": ["selected", "unselected", "0", "0", "0", "0"],
+    "multiple_consumer": ["multiple_selected", "multiple_unselected", "1", "0", "1", "0"],
+    "shared_first_consumer": ["shared_first", "shared_second", "1", "0", "1", "1"],
+    "shared_second_consumer": ["shared_first", "shared_second", "0", "1", "1", "1"],
+    "shared_both_consumer": ["shared_first", "shared_second", "1", "1", "2", "1"],
+    "shared_dead_consumer": ["shared_first", "shared_second", "0", "0", "0", "1"],
+}
+[bsd_compare_test(name = name + "_test", program = ":verify",
+    file_arguments = [":" + name], arguments = expected + [name],
+    expected = "expected.txt", runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small")
+ for name, expected in _RETENTION_CASES.items()]
+test_suite(name = "retention_tests", tests = [":" + name + "_test" for name in _RETENTION_CASES],
+    visibility = ["//visibility:public"])
+
+# Use the actual PIC output group when a static archive is linked into a DSO.
+filegroup(name = "shared_pic_members", srcs = [":shared_rewritten"],
+    output_group = "pic_archive_objects")
+cc_import(name = "shared_pic_archive", objects = [":shared_members"],
+    pic_objects = [":shared_pic_members"])
+_PIC_CASES = {
+    "pic_first": (1, ["1", "0", "1"]),
+    "pic_second": (2, ["0", "1", "1"]),
+    "pic_both": (3, ["1", "1", "2"]),
+    "pic_dead": (0, ["0", "0", "0"]),
+}
+[cc_binary(name = name + ".so", srcs = ["shared_entry.c"],
+    deps = [":shared_pic_archive"], local_defines = ["TEST_SELECTION=" + str(case[0])],
+    copts = ["-ffunction-sections", "-fdata-sections"], linkstatic = True, linkshared = True,
+    additional_linker_inputs = ["exports.map"],
+    linkopts = ["-Wl,--gc-sections", "-Wl,--version-script=$(location exports.map)",
+                "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    visibility = ["//visibility:public"])
+ for name, case in _PIC_CASES.items()]
+cc_binary(name = "verify_shared", srcs = ["verify.c"], deps = ["//lib/libelf:elf"],
+    local_defines = ["SHARED_FIXTURE"], linkstatic = True)
+[bsd_compare_test(name = name + "_test", program = ":verify_shared",
+    file_arguments = [":" + name + ".so"],
+    arguments = ["shared_first", "shared_second"] + case[1] + ["1", name],
+    expected = "expected.txt", runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+ for name, case in _PIC_CASES.items()]
+test_suite(name = "pic_retention_tests", tests = [":" + name + "_test" for name in _PIC_CASES],
+    visibility = ["//visibility:public"])

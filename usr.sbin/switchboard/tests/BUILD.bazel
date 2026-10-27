@@ -1,0 +1,330 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# Initial host-safe subset; remaining maintained programs must be migrated.
+_SOURCES = {'account_nss_test': ['nss-helper/nss_protocol.c'], 'nss_child_test': [], 'nss_helper_test': ['nss-helper/nss_protocol.c'], 'activation_calendar_test': ['activation_calendar.c'], 'bundle_selection_test': ['bundle_selection.c'], 'manifest_compare_test': ['manifest_compare.c'], 'rc_ingest_test': ['rc_ingest.c']}
+_CASES = {'account_nss_test': ['writable_mode', 'isolated_mode'], 'nss_child_test': ['child_setup', 'setup_failures'], 'nss_helper_test': ['reply_validation', 'group_reply_validation', 'provider_errors', 'group_membership', 'request_validation', 'helper_roundtrip', 'helper_framing'], 'activation_calendar_test': ['daily_same_day', 'daily_rolls_to_tomorrow', 'exact_match_is_strictly_after', 'hourly_top_of_hour', 'every_minute', 'specific_month', 'friday_the_thirteenth_and_semantics', 'prev_daily', 'prev_month_boundary_no_overshoot'], 'bundle_selection_test': ['order_independent_highest_sequence', 'conflicts_fail_closed', 'distinct_and_invalid_inputs'], 'manifest_compare_test': ['equal_and_unused_tail', 'identity_and_execution_changes', 'process_policy_changes', 'capsule_changes', 'sysctl_isolate_changes', 'anointment_policy_changes'], 'rc_ingest_test': ['basic', 'whitespace_and_multi', 'no_provide', 'header_ends_at_code', 'provide_overflow_bounded', 'scan_dir', 'scan_missing_dir']}
+[cc_binary(name = program, srcs = [program + ".c"] + ["//usr.sbin/switchboard:" + source for source in sources],
+    deps = ["//usr.sbin/switchboard:test_source_headers", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE", "-ffunction-sections", "-fdata-sections"], linkopts = ["-pie"],
+    visibility = ["//visibility:public"])
+ for program, sources in _SOURCES.items()]
+[bsd_atf_test(name = program + "_" + case, case_name = case, interface = "program", body = ":" + program,
+    config_files = {"//usr.sbin/switchboard:switchboard-nss": "helper"} if program == "nss_helper_test" else {},
+    body_timeout_seconds = 300, runner = "//tools/build/bazel:atf_runner", size = "large",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7",
+                   "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"])
+ for program, cases in _CASES.items() for case in cases]
+test_suite(name = "logic_host_tests", tests = [":" + program + "_" + case for program, cases in _CASES.items() for case in cases],
+    visibility = ["//visibility:public"])
+
+# Authorization/launch predicates and descriptor-budget tests.
+_POLICY_CASES = {'run_container_directory_test': ['fresh_only', 'held_directory_and_rights', 'missing_launch_right'], 'run_container_identity_test': ['distinct_labels_and_scopes', 'full_label_and_repeatability', 'reject_truncation_and_empty'], 'boot_storage_test': ['recipient_identity'], 'register_lookup_gate_test': ['adopt_domain_is_arriving_domain', 'user_cannot_widen_to_system', 'reject_zero_fds', 'reject_multi_fd', 'reject_non_channel_fd', 'reject_bad_length', 'reject_nonzero_flags'], 'launch_limits_test': ['maximum_counts', 'token_count_tracks_delegated_capabilities'], 'restart_name_test': ['every_policy_has_its_own_name'], 'fd_budget_test': ['raise_limit', 'raise_at_inherited_ceiling', 'reserve_and_admission', 'control_shedding'], 'oom_protect_test': ['unprivileged_self_denied', 'authority_and_failures', 'kernel_lifetime']}
+_POLICY_DEFERRED = ["fd_budget_test_reserve_and_admission", "fd_budget_test_control_shedding",
+    "run_container_directory_test_held_directory_and_rights",
+    "run_container_directory_test_missing_launch_right", "oom_protect_test_kernel_lifetime",
+    "oom_protect_test_unprivileged_self_denied"]
+[cc_binary(name = program, srcs = [program + ".c"],
+    deps = ["//usr.sbin/switchboard:test_source_headers", "//lib/atf/libatf-c:atf_c"] +
+        (["//lib/libmd:md_link"] if program == "run_container_identity_test" else []),
+    dynamic_deps = [] if program == "boot_storage_test" else ["//lib/atf/libatf-c:atf_c_shared"] +
+        (["//lib/libmd:md_shared"] if program == "run_container_identity_test" else []),
+    linkstatic = True,
+    copts = ["-ffunction-sections", "-fdata-sections"] + ([] if program == "boot_storage_test" else ["-fPIE"]),
+    linkopts = ["-static"] if program == "boot_storage_test" else ["-pie"],
+    visibility = ["//visibility:public"]) for program in _POLICY_CASES]
+[bsd_atf_test(name = program + "_" + case, case_name = case, interface = "program", body = ":" + program,
+    body_timeout_seconds = 300, runner = "//tools/build/bazel:atf_runner", size = "large",
+    runtime_lib = [] if program == "boot_storage_test" else ["//lib/atf/libatf-c:atf_c_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"] +
+        (["//lib/libmd:md_shared"] if program == "run_container_identity_test" else []),
+    tags = (["manual", "requires-matching-kernel"] if program + "_" + case in _POLICY_DEFERRED else []) +
+        (["requires-root"] if case == "kernel_lifetime" else []) +
+        (["requires-unprivileged"] if case == "unprivileged_self_denied" else []))
+ for program, cases in _POLICY_CASES.items() for case in cases]
+test_suite(name = "policy_host_tests", tests = [":" + program + "_" + case
+    for program, cases in _POLICY_CASES.items() for case in cases if program + "_" + case not in _POLICY_DEFERRED],
+    visibility = ["//visibility:public"])
+test_suite(name = "policy_kernel_tests", tests = [":" + case for case in _POLICY_DEFERRED],
+    tags = ["manual"], visibility = ["//visibility:public"])
+
+_MANAGEMENT_SOURCES = {'management_enforce_test': [], 'sctl_gate_test': [], 'rc_adopt_test': ['rc_adopt.c', 'rc_ingest.c'], 'responsibility_test': ['responsibility.c'], 'registry_watch_test': ['registry_watch.c'], 'boot_authority_test': ['boot_authority.c']}
+_MANAGEMENT_CASES = {'management_enforce_test': ['user_launch_uid_must_match_registry_owner', 'user_manifest_cannot_grant_attributes', 'user_manifest_credentials_follow_owner', 'band_boost_needs_system', 'core_refuses_everyone', 'system_requires_operator', 'user_owner_or_operator', 'user_unowned_needs_operator', 'default_zero_init_is_system', 'class_gate_matches_op_wrapper', 'null_unit_is_permitted', 'management_names', 'core_gate_is_pure_class_function'], 'sctl_gate_test': ['nonadmin_denied_all_mutating_ops', 'admin_passes_all_mutating_ops', 'readonly_ops_open_to_nonadmin', 'unknown_op_requires_admin', 'rights_derivation_is_admin_bit', 'core_unstoppable_even_with_admin'], 'rc_adopt_test': ['allowlist_membership', 'allowlist_is_config_driven', 'missing_config_adopts_nothing', 'status_argv_uses_onestatus', 'launch_argv_uses_onestart', 'stop_argv_uses_onestop', 'verb_argv_layout', 'selects_only_allowlisted', 'absent_cron_zero_units', 'missing_dir_zero_units', 'nostart_and_nonexec_rejected', 'build_unit_shape', 'select_and_build_end_to_end'], 'responsibility_test': ['helper_is_responsible_to_requester', 'shared_provider_roots_itself', 'user_unit_follows_owner', 'requester_without_coalition_degrades_to_self', 'authority_does_not_imply_session_coalition', 'boot_and_operator_belong_to_switchboard', 'name_strings', 'apply_records_parent_and_learns_ids', 'apply_self_uses_self_flag', 'apply_unset_defaults_to_switchboard', 'apply_dead_parent_degrades_to_self', 'apply_never_fails_the_launch', 'constraint_absent_allows_anyone', 'constraint_matches_simple_kinds', 'constraint_session_any_and_by_uid', 'constraint_unit_label_and_bundle', 'constraint_any_entry_suffices'], 'registry_watch_test': ['bundle_dir_writes_reload', 'quarantined_scan_is_retried_boundedly', 'failed_rescan_is_retried_until_it_succeeds', 'persistently_failing_rescan_gives_up', 'exhausted_budget_waits_for_a_change', 'change_during_retries_restarts_the_budget', 'change_settles_into_one_reload', 'burst_coalesces_and_extends_settle', 'absent_root_is_watched_for_and_then_watched', 'removed_root_drops_watch_and_returns', 'shutdown_suppresses_reload', 'settle_override_is_validated', 'unowned_descriptors_are_not_claimed'], 'boot_authority_test': ['descriptor_bounds', 'valid_scope', 'reject_malformed', 'no_external_includes']}
+[cc_binary(name = program, srcs = [program + ".c"] + ["//usr.sbin/switchboard:" + source for source in sources],
+    deps = ["//usr.sbin/switchboard:test_source_headers", "//lib/atf/libatf-c:atf_c", "//sys/dev/mac_capability:ioctl_headers"] +
+        (["//usr.sbin/switchboard:test_management_logic"] if program in ["management_enforce_test", "sctl_gate_test"] else []) +
+        (["//lib/libcapbundle:capbundle", "//lib/libucl:ucl"] if program == "boot_authority_test" else []),
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"] +
+        (["//lib/libcapbundle:capbundle_shared", "//lib/libucl:ucl_shared"] if program == "boot_authority_test" else []),
+    copts = ["-fPIE", "-ffunction-sections", "-fdata-sections"],
+    linkopts = ["-pie"] + (["-Wl,--gc-sections"] if program == "rc_adopt_test" else []),
+    visibility = ["//visibility:public"]) for program, sources in _MANAGEMENT_SOURCES.items()]
+[bsd_atf_test(name = program + "_" + case, case_name = case, interface = "program", body = ":" + program,
+    body_timeout_seconds = 300, runner = "//tools/build/bazel:atf_runner", size = "large",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"] +
+        (["//lib/libcapbundle:capbundle_shared", "//lib/libucl:ucl_shared", "//lib/libcapsulert:capsulert_shared",
+          "//lib/libmd:md_shared", "//lib/libcapimage:capimage_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/msun:m_shared"]
+          if program == "boot_authority_test" else []))
+ for program, cases in _MANAGEMENT_CASES.items() for case in cases]
+test_suite(name = "management_host_tests", tests = [":" + program + "_" + case
+    for program, cases in _MANAGEMENT_CASES.items() for case in cases], visibility = ["//visibility:public"])
+
+_CLEANUP_CASES = {'reclaim_publish_test': ['incomplete_publication_preserves_owners'], 'launch_gate_test': ['launch_gate_failures', 'launch_abort_containers'], 'cleanup_status_test': ['cleanup_status', 'cleanup_commands'], 'worker_cleanup_test': ['unit_revocation_selects_exact_launch', 'revocation_failure_stops_broker']}
+_CLEANUP_LIBRARIES = {
+    "reclaim_publish_test": ["//lib/libmd:md_link"],
+    "launch_gate_test": ["//lib/libmd:md_link"],
+    "cleanup_status_test": ["//lib/libcapbundle:capbundle", "//lib/libucl:ucl"],
+    "worker_cleanup_test": ["//lib/libchannel:channel", "//lib/libcapsulert:capsulert"],
+}
+[cc_binary(name = program, srcs = [program + ".c"],
+    deps = ["//usr.sbin/switchboard:" + program + "_includes", "//lib/atf/libatf-c:atf_c"] + _CLEANUP_LIBRARIES[program],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libmd:md_shared"] if program == "reclaim_publish_test" else [],
+    linkstatic = True, copts = ["-ffunction-sections", "-fdata-sections"] + (["-fPIE"] if program == "reclaim_publish_test" else []),
+    linkopts = ["-pie"] if program == "reclaim_publish_test" else ["-static", "-Wl,--gc-sections"],
+    visibility = ["//visibility:public"]) for program in _CLEANUP_CASES]
+[bsd_atf_test(name = program + "_" + case, case_name = case, interface = "program", body = ":" + program,
+    body_timeout_seconds = 20 if program == "launch_gate_test" else 300,
+    runner = "//tools/build/bazel:atf_runner", size = "large",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libmd:md_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"] if program == "reclaim_publish_test" else [])
+ for program, cases in _CLEANUP_CASES.items() for case in cases]
+test_suite(name = "cleanup_host_tests", tests = [":" + program + "_" + case
+    for program, cases in _CLEANUP_CASES.items() for case in cases], visibility = ["//visibility:public"])
+
+# Timer, vnode and socket activation retain Make's static/section-GC policy.
+cc_binary(name = "activation_test", srcs = ["activation_test.c", "//usr.sbin/switchboard:activation_calendar.c"],
+    deps = ["//usr.sbin/switchboard:activation_test_includes", "//lib/atf/libatf-c:atf_c", "//lib/libcapbundle:capbundle", "//lib/libucl:ucl"],
+    copts = ["-ffunction-sections", "-fdata-sections"], linkopts = ["-static", "-Wl,--gc-sections"],
+    linkstatic = True, visibility = ["//visibility:public"])
+_ACTIVATION_CASES = ['timer_arm_ident_and_teardown', 'timer_fire_and_coalesce', 'path_arm_write_and_teardown', 'path_delete_reopen_and_drop', 'register_all_creates_slot', 'socket_listener_create_binds_and_listens', 'socket_arm_connect_demand_and_coalesce', 'socket_restart_preserves_listener', 'socket_address_conflict_second_fails', 'register_all_creates_socket_slot']
+[bsd_atf_test(name = "activation_test_" + case, case_name = case, interface = "program", body = ":activation_test",
+    body_timeout_seconds = 300, runner = "//tools/build/bazel:atf_runner", size = "large") for case in _ACTIVATION_CASES]
+test_suite(name = "activation_host_tests", tests = [":activation_test_" + case for case in _ACTIVATION_CASES], visibility = ["//visibility:public"])
+
+cc_binary(name = "nss_exchange_test", srcs = ["nss_exchange_test.c", "//usr.sbin/switchboard:nss-helper/nss_protocol.c"],
+    deps = ["//usr.sbin/switchboard:nss_exchange_test_includes", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
+_NSS_EXCHANGE_HOST = ["descriptor_cleanup", "setup_deadline", "launch_refusal"]
+_NSS_EXCHANGE_KERNEL = ["complete_reply", "rejected_replies", "deadlines"]
+[bsd_atf_test(name = "nss_exchange_test_" + case, case_name = case, interface = "program", body = ":nss_exchange_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    body_timeout_seconds = 30, runner = "//tools/build/bazel:atf_runner", size = "small",
+    tags = ["manual", "requires-matching-kernel"] if case in _NSS_EXCHANGE_KERNEL else [])
+ for case in _NSS_EXCHANGE_HOST + _NSS_EXCHANGE_KERNEL]
+test_suite(name = "nss_exchange_host_tests", tests = [":nss_exchange_test_" + case for case in _NSS_EXCHANGE_HOST], visibility = ["//visibility:public"])
+test_suite(name = "nss_exchange_kernel_tests", tests = [":nss_exchange_test_" + case for case in _NSS_EXCHANGE_KERNEL], tags = ["manual"], visibility = ["//visibility:public"])
+
+cc_binary(name = "nss_isolation_probe", srcs = ["nss_isolation_probe.c", "//usr.sbin/switchboard:nss-helper/nss_main.c", "//usr.sbin/switchboard:nss-helper/nss_protocol.c"],
+    deps = ["//usr.sbin/switchboard:nss_protocol_headers", "//usr.sbin/switchboard:test_source_headers"], copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
+cc_binary(name = "nss_integration_test", srcs = ["nss_integration_test.c", "//usr.sbin/switchboard:nss_exchange.c", "//usr.sbin/switchboard:nss_child.c", "//usr.sbin/switchboard:nss-helper/nss_protocol.c"],
+    deps = ["//usr.sbin/switchboard:nss_protocol_headers", "//usr.sbin/switchboard:test_source_headers", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"], copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
+_NSS_INTEGRATION_CASES = ["clean_exec", "inherited_authority", "inherited_discovery", "real_account_lookup"]
+[bsd_atf_test(name = "nss_integration_test_" + case, case_name = case, interface = "program", body = ":nss_integration_test",
+    config_files = {":nss_isolation_probe": "probe", "//usr.sbin/switchboard:switchboard-nss": "helper"},
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    body_timeout_seconds = 30, runner = "//tools/build/bazel:atf_runner", size = "small",
+    tags = ["manual", "requires-matching-kernel"] + (["requires-supervisor-authority"] if case == "inherited_authority" else []) +
+        (["requires-supervisor-discovery"] if case == "inherited_discovery" else [])) for case in _NSS_INTEGRATION_CASES]
+test_suite(name = "nss_integration_kernel_tests", tests = [":nss_integration_test_" + case for case in _NSS_INTEGRATION_CASES], tags = ["manual"], visibility = ["//visibility:public"])
+
+cc_binary(name = "bundle_registry_test", srcs = ["bundle_registry_test.c", "//usr.sbin/switchboard:bundle_registry.c", "//usr.sbin/switchboard:bundle_selection.c"],
+    deps = ["//usr.sbin/switchboard:test_source_headers", "//lib/atf/libatf-c:atf_c", "//lib/libcapbundle:capbundle", "//lib/libucl:ucl"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libcapbundle:capbundle_shared", "//lib/libucl:ucl_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
+_REGISTRY_HOST = ["platform_attribute_scope", "per_user_agent_loads_with_owner", "per_user_agent_world_writable_rejected"]
+_REGISTRY_ROOT = ["local_platform_grants_quarantined", "user_conflicts_are_quarantined_not_fatal", "registered_bundle_is_retained_when_unreadable", "root_spelling_does_not_unregister", "vanished_system_root_retains"]
+[bsd_atf_test(name = "bundle_registry_test_" + case, case_name = case, interface = "program", body = ":bundle_registry_test",
+    runtime_bin = ["//bin/mkdir:mkdir"],
+    runtime_lib = ["//lib/libxo/libxo:xo_shared","//lib/atf/libatf-c:atf_c_shared", "//lib/libcapbundle:capbundle_shared", "//lib/libucl:ucl_shared", "//lib/libcapsulert:capsulert_shared", "//lib/libmd:md_shared", "//lib/libcapimage:capimage_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    body_timeout_seconds = 60, runner = "//tools/build/bazel:atf_runner", size = "medium",
+    tags = ["manual", "requires-root"] if case in _REGISTRY_ROOT else []) for case in _REGISTRY_HOST + _REGISTRY_ROOT]
+test_suite(name = "registry_host_tests", tests = [":bundle_registry_test_" + case for case in _REGISTRY_HOST], visibility = ["//visibility:public"])
+test_suite(name = "registry_root_tests", tests = [":bundle_registry_test_" + case for case in _REGISTRY_ROOT], tags = ["manual"], visibility = ["//visibility:public"])
+
+_DOMAIN_CASES = {'domain_test': ['unit_context_generation', 'scope_system_resolves_all', 'scope_user_allow_list', 'control_domain_separation', 'control_ondemand_gating', 'ambient_descriptor_marking', 'default_requester_is_system', 'user_scope_hides_registered_name', 'minted_channel_user_scoped', 'minted_system_channel_scoped', 'direct_mint_over_ambient_retired', 'user_channel_mints_neither', 'hello_ack_over_user_channel', 'hello_ack_over_system_channel', 'unknown_op_over_lookup_channel_enotsup', 'register_private_route_no_authority', 'register_private_user_channel_hides', 'register_non_channel_fd_rejected', 'register_multi_fd_rejected'], 'anoint_test': ['personal_namespace_uses_sender', 'covers_table', 'set_from_manifest', 'endpoint_requires_from_registry', 'unit_requires_from_manifest', 'missing_rendering', 'user_visibility_of_gated_names', 'unit_covered_connects_with_identity', 'unit_uncovered_refused_and_audited', 'unit_all_of_several', 'registry_wins_over_stale_unit_manifest', 'session_sets', 'rights_follow_admin_rights_knob', 'control_requires_issued_authority', 'on_demand_precheck', 'unregistered_gated_name_is_ondemand_eligible', 'minted_channel_carries_set', 'session_reach_over_minted_channel', 'registered_private_channel_keeps_set', 'covers_duplicate_requires', 'covers_at_set_bound', 'covers_empty_name_semantics', 'covers_prefix_suffix_case', 'covers_all_flag_with_names', 'set_from_manifest_bounds', 'missing_rendering_max_names', 'mint_req_wire_shape', 'lookup_two_requires_partial_and_audit_count', 'lookup_user_kind_unit_gated_visibility', 'lookup_identity_without_stamp_and_linux_abi', 'lookup_unit_never_admin_even_with_all', 'lookup_session_admin_rights_without_reach', 'fabricated_control_authority_denied', 'lookup_open_endpoint_no_set', 'precheck_stopped_provider', 'lookup_helper_names_pure', 'lookup_helper_names_over_minted_channel', 'one_refusal_one_record_on_demand_path']}
+_DOMAIN_ROOT = {'domain_test': ['minted_channel_user_scoped', 'minted_system_channel_scoped', 'hello_ack_over_user_channel', 'hello_ack_over_system_channel', 'unknown_op_over_lookup_channel_enotsup', 'direct_mint_over_ambient_retired', 'user_channel_mints_neither', 'register_private_route_no_authority', 'register_private_user_channel_hides', 'register_non_channel_fd_rejected', 'register_multi_fd_rejected', 'unit_context_generation'], 'anoint_test': ['minted_channel_carries_set', 'session_reach_over_minted_channel', 'registered_private_channel_keeps_set', 'lookup_helper_names_over_minted_channel']}
+_DOMAIN_KERNEL = {program: cases + (["ambient_descriptor_marking"] if program == "domain_test" else []) for program, cases in _DOMAIN_ROOT.items()}
+[cc_binary(name = program, srcs = [program + ".c", "retired_protocol.h"],
+    deps = ["//usr.sbin/switchboard:domain_test_includes", "//lib/atf/libatf-c:atf_c", "//lib/libchannel:channel", "//lib/libservice:service", "//lib/libcapsulert:capsulert", "//lib/libthr:thr"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libchannel:channel_shared", "//lib/libservice:service_shared", "//lib/libcapsulert:capsulert_shared", "//lib/libthr:thr_shared"],
+    local_defines = ["USE_BSM_AUDIT"] if program == "anoint_test" else [],
+    copts = ["-fPIE", "-ffunction-sections", "-fdata-sections"], linkopts = ["-pie", "-Wl,--gc-sections"], visibility = ["//visibility:public"])
+ for program in _DOMAIN_CASES]
+[bsd_atf_test(name = program + "_" + case, case_name = case, interface = "program", body = ":" + program,
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libchannel:channel_shared", "//lib/libservice:service_shared", "//lib/libcapsulert:capsulert_shared", "//lib/libthr:thr_shared", "//lib/libcapability:capability_shared", "//lib/libtrustedzfs:trustedzfs_shared", "//lib/libucl:ucl_shared", "//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"],
+    body_timeout_seconds = 60, runner = "//tools/build/bazel:atf_runner", size = "medium",
+    tags = (["manual", "requires-matching-kernel"] if case in _DOMAIN_KERNEL[program] else []) + (["requires-root"] if case in _DOMAIN_ROOT[program] else []))
+ for program, cases in _DOMAIN_CASES.items() for case in cases]
+test_suite(name = "domain_host_tests", tests = [":" + program + "_" + case for program, cases in _DOMAIN_CASES.items() for case in cases if case not in _DOMAIN_KERNEL[program]], visibility = ["//visibility:public"])
+test_suite(name = "domain_kernel_tests", tests = [":" + program + "_" + case for program, cases in _DOMAIN_KERNEL.items() for case in cases], tags = ["manual"], visibility = ["//visibility:public"])
+
+_ON_DEMAND_CASES = ['retired_principal_claim', 'provider_incarnation', 'provider_name_filter', 'timer_identifiers', 'timer_registration_failure', 'circuit_breaker_blocks_on_demand_relaunch', 'idle_timer_arm_cancel', 'idle_timer_ident_range', 'idle_timer_fire_stops_provider', 'idle_quiesce_busy_resumes_provider', 'idle_note_exit_reactivatable', 'cleanup_stop_intent', 'cleanup_terminal_states', 'cleanup_rebind_deadline', 'cleanup_live_outcomes', 'cleanup_live_process', 'cleanup_unenlisted_child', 'cleanup_missing_coalition', 'cleanup_registration_failure', 'cleanup_updated_intent', 'cleanup_compaction', 'handle_idle_protocol', 'handle_ready_ambient_promotion']
+_ON_DEMAND_ROOT = ['cleanup_unenlisted_child', 'cleanup_live_process', 'cleanup_live_outcomes', 'handle_idle_protocol', 'handle_ready_ambient_promotion']
+cc_binary(name = "on_demand_test", srcs = ["on_demand_test.c"],
+    deps = ["//usr.sbin/switchboard:on_demand_test_includes", "//lib/atf/libatf-c:atf_c", "//lib/libchannel:channel", "//lib/libcapability:capability", "//lib/libthr:thr"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libchannel:channel_shared", "//lib/libcapability:capability_shared", "//lib/libthr:thr_shared"],
+    copts = ["-fPIE", "-ffunction-sections", "-fdata-sections"], linkopts = ["-pie", "-Wl,--gc-sections"], visibility = ["//visibility:public"])
+[bsd_atf_test(name = "on_demand_test_" + case, case_name = case, interface = "program", body = ":on_demand_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libchannel:channel_shared", "//lib/libcapability:capability_shared", "//lib/libthr:thr_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    body_timeout_seconds = 30, runner = "//tools/build/bazel:atf_runner", size = "medium",
+    tags = ["exclusive"] + (["manual", "requires-root", "requires-matching-kernel"] if case in _ON_DEMAND_ROOT else [])) for case in _ON_DEMAND_CASES]
+test_suite(name = "on_demand_host_tests", tests = [":on_demand_test_" + case for case in _ON_DEMAND_CASES if case not in _ON_DEMAND_ROOT], visibility = ["//visibility:public"])
+test_suite(name = "on_demand_kernel_tests", tests = [":on_demand_test_" + case for case in _ON_DEMAND_ROOT], tags = ["manual"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+_SCOPE_LIBS = {"scope_identity_contract_test": ["//usr.sbin/switchboard:test_source_headers"],
+    "scope_storage_test": ["//usr.sbin/switchboard:scope_storage_test_includes", "//lib/libmd:md_link"],
+    "scope_cli_test": ["//usr.sbin/switchboardctl:scope_cli_test_includes"]}
+[cc_binary(name = program, srcs = [program + ".c"], deps = deps,
+    dynamic_deps = ["//lib/libmd:md_shared"] if program == "scope_storage_test" else [],
+    copts = ["-fPIE", "-ffunction-sections", "-fdata-sections"],
+    linkopts = ["-pie"] + (["-Wl,--gc-sections"] if program == "scope_cli_test" else []),
+    visibility = ["//visibility:public"]) for program, deps in _SCOPE_LIBS.items()]
+[bsd_compare_test(name = program + "_run", program = ":" + program, expected = program + ".expected",
+    runtime_lib = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"] + (["//lib/libmd:md_shared"] if program == "scope_storage_test" else []),
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small") for program in _SCOPE_LIBS]
+test_suite(name = "scope_contract_host_tests", tests = [":" + program + "_run" for program in _SCOPE_LIBS], visibility = ["//visibility:public"])
+
+cc_binary(name = "scope_runtime_test", srcs = ["scope_runtime_test.c"],
+    deps = ["//usr.sbin/switchboard:scope_runtime_test_includes", "//lib/libcapbundle:capbundle", "//lib/libucl:ucl"],
+    copts = ["-ffunction-sections", "-fdata-sections", "-Wno-unused-function"],
+    linkopts = ["-static", "-Wl,--gc-sections"], linkstatic = True, visibility = ["//visibility:public"])
+bsd_compare_test(name = "scope_runtime_test_run", program = ":scope_runtime_test", expected = "scope_runtime_test.expected",
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small", visibility = ["//visibility:public"])
+
+cc_binary(name = "scope_registry_test", srcs = ["scope_registry_test.c", "//usr.sbin/switchboard:bundle_selection.c"],
+    deps = ["//usr.sbin/switchboard:scope_registry_test_includes", "//lib/libcapbundle:capbundle", "//lib/libucl:ucl"],
+    dynamic_deps = ["//lib/libcapbundle:capbundle_shared", "//lib/libucl:ucl_shared"],
+    copts = ["-fPIE", "-ffunction-sections", "-fdata-sections"], linkopts = ["-pie"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
+bsd_program_test(name = "scope_registry_test_run", program = ":scope_registry_test",
+    runner = "//tools/build/bazel:program_test_runner", size = "small",
+    runtime_lib = ["//lib/libcapbundle:capbundle_shared", "//lib/libucl:ucl_shared", "//lib/libcapsulert:capsulert_shared", "//lib/libmd:md_shared", "//lib/libcapimage:capimage_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    visibility = ["//visibility:public"])
+
+# Compile the gated consumer only in this fixture, matching the maintained Make test.
+cc_binary(name = "verified_handle_consumer_test",
+    srcs = ["verified_handle_consumer_test.c", "//lib/libcapimage:capimage.c", "//lib/libcapbundle:libcapbundle_sign.c", "//usr.sbin/switchboard:authority.c"],
+    deps = ["//usr.sbin/switchboard:test_source_headers", "//lib/libcapimage:headers", "//secure/lib/libcrypto:crypto", "//lib/libmd:md_link", "//lib/libucl:ucl"],
+    dynamic_deps = ["//secure/lib/libcrypto:crypto_shared", "//lib/libmd:md_shared", "//lib/libucl:ucl_shared"],
+    local_defines = ["CAPIMAGE_EXPERIMENTAL_CONSUMER"],
+    copts = ["-fPIE", "-ffunction-sections", "-fdata-sections"],
+    linkopts = ["-pie", "-Wl,--gc-sections", "-Wl,--wrap=mac_syscall", "-Wl,--wrap=syscall"], visibility = ["//visibility:public"])
+bsd_program_test(name = "verified_handle_consumer_test_run", program = ":verified_handle_consumer_test",
+    runner = "//tools/build/bazel:program_test_runner", size = "small",
+    runtime_lib = ["//secure/lib/libcrypto:crypto_shared", "//lib/libmd:md_shared", "//lib/libucl:ucl_shared", "//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    visibility = ["//visibility:public"])
+
+# These helpers use Switchboard's maintained Make linkage, including a dynamic
+# guardian; Capsule's existing static guardian is a different build variant.
+_FIXTURE_LIBS = {
+    "capd_test_guardian": [],
+    "capd_service_fixture": ["capability", "channel", "service", "capsulert", "thr"],
+    "capd_protocol_fixture": ["service", "channel", "capability"],
+    "service_probe": ["service", "channel", "thr"],
+}
+_FIXTURE_SOURCES = {
+    "capd_test_guardian": "//usr.sbin/capsule/tests:capd_test_guardian.c",
+    "capd_service_fixture": "//lib/libservice/tests:capd_service_fixture.c",
+    "capd_protocol_fixture": "capd_protocol_fixture.c",
+    "service_probe": "service_probe.c",
+}
+[cc_binary(name = program, srcs = [_FIXTURE_SOURCES[program]],
+    deps = ["//lib/lib" + lib + ":" + lib for lib in libs] +
+        (["//usr.sbin/switchboard:test_source_headers"] if program == "service_probe" else ["//lib/libservice:managed_fixture_headers"] if program == "capd_service_fixture" else ["//lib/libcapsulert:headers"] if program == "capd_protocol_fixture" else []),
+    dynamic_deps = ["//lib/lib" + lib + ":" + lib + "_shared" for lib in libs],
+    copts = ["-fPIE", "-ffunction-sections", "-fdata-sections"], linkopts = ["-pie"],
+    visibility = ["//visibility:public"]) for program, libs in _FIXTURE_LIBS.items()]
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+# Installed scripts default to the installed utility; build-tree ATF runs must
+# supply the declared control binary through config_files (switchboardctl).
+_SHELL_PROGRAMS = ["switchboard_naming_test", "switchboard_svc_test", "launch_policy_test",
+    "switchboard_integration_test", "switchboard_dynamic_claims_test", "helper_integration_test",
+    "service_reachability_test", "shipped_manifest_policy_test", "anoint_observability_test", "bundle_integration_test"]
+bsd_template(name = "anoint_observability_body", template = "anoint_observability_test.sh",
+    output = "generated/anoint_observability_test.sh",
+    substitutions = select({"//tools/build/bazel/config:dtrace_enabled": {"@MK_DTRACE@": "yes"}, "//conditions:default": {"@MK_DTRACE@": "no"}}))
+[bsd_script_wrapper(name = program,
+    body = ":anoint_observability_body" if program == "anoint_observability_test" else program + ".sh",
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+ for program in _SHELL_PROGRAMS]
+_SHELL_FILES = [(program, ":" + program, "0555") for program in _SHELL_PROGRAMS] + [
+    ("test_helpers.sh", "test_helpers.sh", "0444"),
+    ("capd_test_harness.sh", "//usr.sbin/capsule/tests:capd_test_harness.sh", "0444"),
+    ("CapabilityKyuafile", "CapabilityKyuafile", "0444"),
+    ("run_capsule_switchboard_capability_tests.sh", "run_capsule_switchboard_capability_tests.sh", "0555")]
+[bsd_install_file(name = "install_shell_" + destination, src = source,
+    destination = "/usr/tests/usr.sbin/switchboard/" + destination,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=switchboard-tests"])
+ for destination, source, mode in _SHELL_FILES]
+bsd_install_manifest(name = "install_shell_files", entries = [":install_shell_" + destination for destination, _, _ in _SHELL_FILES],
+    visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_kyuafile")
+_ATF_PROGRAMS = sorted(list(_CASES.keys()) + list(_POLICY_CASES.keys()) +
+    list(_MANAGEMENT_CASES.keys()) + list(_CLEANUP_CASES.keys()) + list(_DOMAIN_CASES.keys()) +
+    ["activation_test", "nss_exchange_test", "nss_integration_test", "bundle_registry_test", "on_demand_test"])
+_PLAIN_PROGRAMS = sorted(list(_SCOPE_LIBS.keys()) + ["scope_registry_test", "scope_runtime_test", "verified_handle_consumer_test"])
+_INSTALLED_BINARIES = _ATF_PROGRAMS + _PLAIN_PROGRAMS + list(_FIXTURE_LIBS.keys()) + ["nss_isolation_probe"]
+[utility_installation(name = "install_" + program, program = program, manual = "",
+    package = "switchboard-tests", bindir = "/usr/tests/usr.sbin/switchboard") for program in _INSTALLED_BINARIES]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = sorted(_ATF_PROGRAMS + _PLAIN_PROGRAMS + _SHELL_PROGRAMS),
+    interfaces = {program: "atf" for program in _ATF_PROGRAMS + _SHELL_PROGRAMS} | {program: "plain" for program in _PLAIN_PROGRAMS},
+    metadata = {program: '{"is_exclusive":"true"}' for program in ["switchboard_naming_test", "switchboard_svc_test", "launch_policy_test", "switchboard_integration_test", "switchboard_dynamic_claims_test", "bundle_integration_test", "helper_integration_test", "on_demand_test"]})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/usr.sbin/switchboard/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=switchboard-tests"])
+bsd_install_manifest(name = "install_test_index", entries = [":install_kyuafile"], visibility = ["//visibility:public"])
+# Individual payload targets retained for focused qualification.
+filegroup(name = "installation_candidates", srcs = [":install_" + program for program in _INSTALLED_BINARIES] +
+    [":install_test_index", ":install_shell_files"], visibility = ["//visibility:public"])
+
+load(":source_fixtures.bzl", "SOURCE_FIXTURES")
+[bsd_install_file(name = "install_source_" + destination.replace("/", "_"), src = source,
+    destination = "/usr/tests/usr.sbin/switchboard/" + destination, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=switchboard-tests"]) for source, destination in SOURCE_FIXTURES.items()]
+bsd_install_manifest(name = "install_source_fixtures", entries = [":install_source_" + destination.replace("/", "_") for destination in SOURCE_FIXTURES.values()],
+    visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load(":installation_data.bzl", "TEST_DIRECTORIES")
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_" + program for program in _INSTALLED_BINARIES] + [":install_test_index", ":install_shell_files", ":install_source_fixtures"],
+    directories = TEST_DIRECTORIES,
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+
+# Combine the existing leaf records without duplicating their file metadata.
+bsd_install_manifest(name = "install_manifest",
+    entries = [":install_" + program + "_" + kind for program in _INSTALLED_BINARIES for kind in ["binary", "symbols_file"]] +
+        [":install_shell_" + destination for destination, _, _ in _SHELL_FILES] +
+        [":install_source_" + destination.replace("/", "_") for destination in SOURCE_FIXTURES.values()] + [":install_kyuafile"],
+    visibility = ["//usr.sbin/switchboard:__pkg__", "//packages/switchboard-tests:__pkg__"])
+
+load("//tools/build/bazel:bsd_fixture_tree.bzl", "bsd_fixture_tree")
+bsd_fixture_tree(name = "contract_source_tree",
+    sources = {source: destination.removeprefix("srctree/") for source, destination in SOURCE_FIXTURES.items()},
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+_MANIFEST_CASES = ["every_shipped_unit_is_explicit", "trust_spine_is_core_and_shielded", "non_tcb_units_are_system_managed", "live_core_change_reaches_management_gate"]
+[bsd_atf_test(name = "shipped_manifest_policy_test_" + case, case_name = case,
+    body = "shipped_manifest_policy_test.sh", subr = "//libexec/atf/atf-sh:shell_library",
+    data_paths = {":contract_source_tree": "srctree"},
+    runtime_bin = ["//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//usr.bin/find:find", "//usr.bin/sort:sort", "//usr.bin/cmp:cmp", "//bin/cat:cat", "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/grep:grep", "//usr.bin/sed:sed", "//usr.bin/diff:diff", "//bin/rm:rm"],
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libthr:thr_shared", "//lib/libutil:util_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"],
+    runner = "//tools/build/bazel:atf_runner", size = "small", tags = ["manual", "requires-matching-kernel"]) for case in _MANIFEST_CASES]
+test_suite(name = "manifest_kernel_tests", tests = [":shipped_manifest_policy_test_" + case for case in _MANIFEST_CASES], tags = ["manual"], visibility = ["//visibility:public"])

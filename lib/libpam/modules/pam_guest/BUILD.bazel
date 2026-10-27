@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libpam/modules:module.bzl", "pam_module")
+pam_module(name = 'pam_guest', srcs = ['pam_guest.c', 'pam_guest_probes.h'],
+    provider = 'pam_guest_provider.d')

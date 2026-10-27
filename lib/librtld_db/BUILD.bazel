@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "headers", hdrs = ["rtld_db.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+cc_library(name = "rtld_db", srcs = ["rtld_db.c"], deps = [":headers", "//lib/libelf:elf", "//lib/libprocstat:procstat"],
+    implementation_deps = ["//lib/libproc:headers", "//lib/libutil:headers"],
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":rtld_db"], visibility = ["//visibility:public"])
+cc_shared_library(name = "rtld_db_shared", deps = [":rtld_db"],
+    dynamic_deps = ["//lib/libelf:elf_shared", "//lib/libprocstat:procstat_shared"],
+    shared_lib_name = "librtld_db.so.2", user_link_flags = ["-Wl,-soname,librtld_db.so.2", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["unifdef.c", "unifdef.1", "unifdefall.sh"], visibility = ["//usr.bin/unifdef:__pkg__"])
+cc_library(name = "headers", hdrs = ["unifdef.h", "version.h"], strip_include_prefix = ".", visibility = ["//usr.bin/unifdef:__pkg__"])

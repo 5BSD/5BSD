@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["generate-ucl.lua"])
+
+exports_files(["ucl/libchannel-all.ucl"], visibility = ["//packages/libchannel:__pkg__"])
+
+load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
+bsd_pkg_dependency(name = "set-base_dependency", package = "set-base", origin = "base/5BSD-set-base",
+    version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])
+
+exports_files(["ucl/libchannel-tests-all.ucl"], visibility = ["//packages/libchannel-tests:__pkg__"])

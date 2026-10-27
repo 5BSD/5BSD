@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["t_dlopen.c", "t_main_pthread_create.c"], visibility = ["//lib/libthr/tests/dlopen:__pkg__"])
+cc_library(name = "test_headers", hdrs = ["h_dlopen.h"], strip_include_prefix = ".",
+    deps = ["//lib/atf/libatf-c:atf_c"], visibility = ["//lib/libthr/tests/dlopen:__pkg__"])

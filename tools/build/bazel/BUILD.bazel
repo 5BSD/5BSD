@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+cc_binary(
+    name = "byte_compare_runner",
+    srcs = ["byte_compare_runner.c"],
+    visibility = ["//visibility:public"],
+)
+exports_files(["decode_uu.py", "install_archive.py", "archive_policy.py", "directory_metadata.py", "pkg_manifest.py", "pkg_create.py"])
+
+cc_binary(
+    name = "dtrace_copy_runner",
+    srcs = ["copy_then_exec.c"],
+    linkstatic = True,
+    features = ["fully_static_link"],
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["header_pkgconfig.py"])
+
+exports_files(["tests/crypt_rpc_roundtrip.c"], visibility = ["//usr.bin/rpcgen/tests:__pkg__"])
+
+exports_files(["elf-runtime-check.py", "libmd_environment.py"], visibility = ["//lib/libbsdfilesystem/tests:__pkg__", "//lib/liboes/tests:__pkg__", "//usr.sbin/BSDNetwork/tests:__pkg__", "//usr.sbin/BSDTrace/tests:__pkg__", "//usr.sbin/BSDCrypto/tests:__pkg__", "//usr.sbin/BSDSysctl/tests:__pkg__", "//usr.sbin/BSDMemory/tests:__pkg__", "//usr.sbin/BSDPower/tests:__pkg__", "//usr.sbin/BSDTime/tests:__pkg__", "//usr.sbin/BSDAudit/tests:__pkg__", "//usr.sbin/capsule/tests:__pkg__", "//lib/libregex/tests:__pkg__", "//lib/atf/libatf-c++/tests:__pkg__", "//lib/libcasper/services/cap_grp/tests:__pkg__", "//lib/libcasper/services/cap_pwd/tests:__pkg__"])
+
+# The test adapter starts before the candidate runtime is selected.
+cc_binary(name = "atf_runner", srcs = ["atf_runner.c"], linkopts = ["-static"], visibility = ["//visibility:public"])
+
+exports_files(["generate_accounts.py"])
+
+cc_binary(name = "cwd_exec", srcs = ["cwd_exec.c"], linkopts = ["-static"], visibility = ["//visibility:public"])
+
+exports_files(["fuchsia_runtime.BUILD"])
+
+cc_binary(name = "dtrace_archive_member", srcs = ["dtrace_archive_member.c"],
+    deps = ["//lib/libelf:elf"], linkstatic = True, features = ["fully_static_link"],
+    visibility = ["//visibility:public"])
+
+# Small supervisor for per-command rusage without inheriting controller RSS.
+cc_binary(name = "resource_run", srcs = ["resource_run.c"], linkstatic = True,
+    features = ["fully_static_link"], visibility = ["//visibility:public"])
+
+cc_binary(name = "program_test_runner", srcs = ["program_test_runner.c"],
+    linkstatic = True, features = ["fully_static_link"], visibility = ["//visibility:public"])
+
+exports_files(["fixture_tree.py"])
+
+exports_files(["bsd_dtrace_bootstrap.bzl"])
+
+exports_files(["bsd_link_sequence.bzl"])
+
+exports_files(["kyua_junit.py"])
+
+cc_binary(
+    name = "capimage_asm",
+    srcs = ["capimage_asm.c"],
+    linkstatic = True,
+    features = ["fully_static_link"],
+)

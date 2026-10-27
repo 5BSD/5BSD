@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["g_eli_crypto.c", "g_eli_hmac.c", "g_eli_key.c", "pkcs5v2.c"], visibility = ["//lib/geom/eli:__pkg__"])
+cc_library(name = "headers", hdrs = ["g_eli.h", "pkcs5v2.h"], strip_include_prefix = "/sys", deps = ["//sys/opencrypto:cryptodev_headers", "//sys/crypto/sha2:kernel_headers"], visibility = ["//lib/geom/eli:__pkg__"])

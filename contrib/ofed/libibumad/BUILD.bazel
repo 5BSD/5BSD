@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(['umad.h', 'umad_cm.h', 'umad_sa.h', 'umad_sm.h', 'umad_str.h', 'umad_types.h'], visibility = ["//lib/ofed/include:__pkg__"])

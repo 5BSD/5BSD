@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = glob(["**/*.h"]), includes = ["."], visibility = ["//visibility:public"])
+
+# Solaris consumers must see this wrapper before the native libproc API.
+# The wrapper uses include_next to reach the declared native header dependency.
+cc_library(
+    name = "proc_headers",
+    hdrs = ["libproc.h"],
+    strip_include_prefix = ".",
+    deps = ["//lib/libproc:headers"],
+    visibility = ["//cddl/usr.sbin/dtrace:__pkg__", "//cddl/usr.sbin/plockstat:__pkg__"],
+)

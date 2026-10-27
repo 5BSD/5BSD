@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+module(name = "fivebsd")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+# The builder supplies a verified SDK repository with --override_module.
+bazel_dep(name = "bsd_sdk", version = "0.0.0")
+register_toolchains("@bsd_sdk//toolchain:registered")
+
+# rules_cc 0.2.17 aggregates both object variants, contrary to its documented
+# PIC preference. Keep this narrow correction visible and review on upgrades.
+single_version_override(
+    module_name = "rules_cc",
+    version = "0.2.17",
+    patches = ["//tools/build/bazel/patches:rules_cc-static-objects.patch"],
+    patch_strip = 1,
+)
+
+# Imported source view: native metadata without rewriting Fuchsia's BUILD files.
+fuchsia_runtime_repository = use_repo_rule("//tools/build/bazel:fuchsia_runtime_repository.bzl", "fuchsia_runtime_repository")
+fuchsia_runtime_repository(name = "fuchsia_runtime_src",
+    source_marker = "//contrib/fuchsia:LICENSE",
+    build_file = "//tools/build/bazel:fuchsia_runtime.BUILD")

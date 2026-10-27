@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//secure:ssh_program.bzl", "ssh_program")
+ssh_program(name = "ssh-pkcs11-helper", srcs = ['//crypto/openssh:ssh-pkcs11-helper.c', '//crypto/openssh:ssh-pkcs11.c'], deps = ["//secure/lib/libcrypto:crypto"], dynamic_deps = ["//secure/lib/libcrypto:crypto_shared"], bindir = "/usr/libexec", man_section = "8")

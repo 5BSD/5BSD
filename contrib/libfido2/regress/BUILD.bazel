@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['assert.c', 'cred.c', 'dev.c', 'eddsa.c', 'es256.c', 'es384.c', 'rs256.c', 'compress.c', 'mock.c', 'extern.h'], visibility = ["//lib/libfido2/tests:__pkg__"])

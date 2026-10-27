@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:text_locales.bzl", "text_locales")
+load(":locales.bzl", "LOCALES", "ALIASES")
+text_locales(category = "LC_TIME", locales = LOCALES, aliases = ALIASES)

@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+PE_SOURCES = [
+    "//contrib/elftoolchain:libpe/libpe_buffer.c",
+    "//contrib/elftoolchain:libpe/libpe_coff.c",
+    "//contrib/elftoolchain:libpe/libpe_dos.c",
+    "//contrib/elftoolchain:libpe/libpe_init.c",
+    "//contrib/elftoolchain:libpe/libpe_rich.c",
+    "//contrib/elftoolchain:libpe/libpe_section.c",
+    "//contrib/elftoolchain:libpe/libpe_utils.c",
+    "//contrib/elftoolchain:libpe/pe_buffer.c",
+    "//contrib/elftoolchain:libpe/pe_cntl.c",
+    "//contrib/elftoolchain:libpe/pe_coff.c",
+    "//contrib/elftoolchain:libpe/pe_dos.c",
+    "//contrib/elftoolchain:libpe/pe_flag.c",
+    "//contrib/elftoolchain:libpe/pe_init.c",
+    "//contrib/elftoolchain:libpe/pe_rich.c",
+    "//contrib/elftoolchain:libpe/pe_section.c",
+    "//contrib/elftoolchain:libpe/pe_symtab.c",
+    "//contrib/elftoolchain:libpe/pe_update.c",
+]

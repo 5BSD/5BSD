@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['negoex_ctx.c', 'negoex_util.c', 'spnego_mech.c', 'gssapiP_negoex.h', 'gssapiP_spnego.h'], visibility = ["//krb5:__subpackages__"])
+cc_library(name = "headers", hdrs = ['gssapiP_negoex.h', 'gssapiP_spnego.h'], includes = ["."], strip_include_prefix = ".", include_prefix = "gssapi", deps = ['//crypto/krb5/src/include:internal_headers', '//krb5/lib/gssapi:public_headers', '//crypto/krb5/src/lib/gssapi/generic:headers', '//crypto/krb5/src/lib/gssapi/krb5:headers'], visibility = ["//krb5:__subpackages__", "//crypto/krb5/src/lib/gssapi:__subpackages__"])

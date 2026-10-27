@@ -1,0 +1,129 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+bsd_dtrace_header(
+    name = "provider", source = "threadwait_provider.d", output = "threadwait_provider.h",
+    flags = ["-C", "-x", "nolibs"], object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = ['//cddl/lib/libdtrace:dtrace_shared', '//cddl/lib/libctf:ctf_shared', '//lib/libelf:elf_shared', '//lib/libproc:proc_shared', '//cddl/lib/libspl:spl_shared', '//lib/libxo/libxo:xo_shared', '//lib/libutil:util_shared', '//lib/libprocstat:procstat_shared', '//lib/librtld_db:rtld_db_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/libz:z_shared', '//lib/libkvm:kvm_shared'],
+    tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"], static_anchor = True,
+)
+
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+bsd_configured_version_map(
+    name = "version_map",
+    symbol_maps = ["pthread.map"],
+    versions = "//lib/libc:Versions.def",
+    generator = "//share/mk:version_gen.awk",
+    # This symbol inventory has no includes or target-dependent conditionals.
+    cpp_flags = ["-P", "-nostdinc", "-undef"],
+    compiler = "@bsd_sdk//toolchain:bin/clang",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk",
+    awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_shared_library")
+cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")
+cc_library(name = "machine_headers", hdrs = ["arch/amd64/include/pthread_md.h"], strip_include_prefix = "arch/amd64/include")
+cc_library(name = "private_headers", hdrs = ["thread/thr_private.h", "thread/thr_umtx.h", "thread/threadwait_trace.h"],
+    strip_include_prefix = "thread", deps = [":machine_headers", "//lib/libthread_db:thread_db_header"] +
+    select({_TRACE: [":provider_headers"], "//conditions:default": []}))
+# Object groups retain the one per-file semantic compiler option.
+_COPTS = ["-fno-stack-protector", "-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=0",
+          "-fexceptions", "-mno-mmx", "-mno-sse", "-mno-avx", "-mno-avx2"]
+_DEFINES = ["PTHREAD_KERNEL", "_PTHREAD_FORCED_UNWIND"] + select({
+    "//tools/build/bazel/config:pthreads_assertions_enabled": ["_PTHREADS_INVARIANTS"],
+    "//conditions:default": [],
+}) + select({_TRACE: ["WITH_COVERAGE_DTRACE"], "//conditions:default": []})
+_DEPS = [":private_headers", "//lib/libc/include:thr_headers", "//libexec/rtld-elf:thr_headers"]
+cc_library(name = 'before_rtld',
+    srcs = ['arch/amd64/amd64/thr_machdep.c', 'sys/thr_error.c', 'thread/thr_affinity.c', 'thread/thr_attr.c', 'thread/thr_barrier.c', 'thread/thr_barrierattr.c', 'thread/thr_cancel.c', 'thread/thr_clean.c', 'thread/thr_concurrency.c', 'thread/thr_cond.c', 'thread/thr_condattr.c', 'thread/thr_create.c', 'thread/thr_ctrdtr.c', 'thread/thr_detach.c', 'thread/thr_equal.c', 'thread/thr_event.c', 'thread/thr_exit.c', 'thread/thr_fork.c', 'thread/thr_getprio.c', 'thread/thr_getcpuclockid.c', 'thread/thr_getschedparam.c', 'thread/thr_getthreadid_np.c', 'thread/thr_info.c', 'thread/thr_init.c', 'thread/thr_join.c', 'thread/thr_list.c', 'thread/thr_kern.c', 'thread/thr_kill.c', 'thread/thr_main_np.c', 'thread/thr_malloc.c', 'thread/thr_multi_np.c', 'thread/thr_mutex.c', 'thread/thr_mutexattr.c', 'thread/thr_once.c', 'thread/thr_printf.c', 'thread/thr_pshared.c', 'thread/thr_pspinlock.c', 'thread/thr_resume_np.c'],
+    deps = _DEPS, local_defines = _DEFINES, copts = _COPTS + [],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], linkstatic = True)
+cc_library(name = 'rtld',
+    srcs = ['thread/thr_rtld.c'],
+    deps = _DEPS, local_defines = _DEFINES, copts = _COPTS + ['-fno-builtin'],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], linkstatic = True)
+cc_library(name = 'after_rtld',
+    srcs = ['thread/thr_rwlock.c', 'thread/thr_rwlockattr.c', 'thread/thr_self.c', 'thread/thr_sem.c', 'thread/thr_setprio.c', 'thread/thr_setschedparam.c', 'thread/thr_sig.c', 'thread/thr_sigqueue.c', 'thread/thr_single_np.c', 'thread/thr_sleepq.c', 'thread/thr_spec.c', 'thread/thr_spinlock.c', 'thread/thr_stack.c', 'thread/thr_syscalls.c', 'thread/thr_suspend_np.c', 'thread/thr_switch_np.c', 'thread/thr_symbols.c', 'thread/thr_umtx.c', 'thread/thr_yield.c', '//libexec/rtld-elf:rtld_malloc.c'],
+    deps = _DEPS, local_defines = _DEFINES, copts = _COPTS + [],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], linkstatic = True)
+filegroup(name = "compiled_objects", srcs = [":before_rtld", ":rtld", ":after_rtld"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object", "bsd_component_archive")
+cc_library(name = "umtx_assembly", srcs = ["//lib/libsys/amd64:_umtx_op_err.S"],
+    copts = _COPTS, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_object(name = "umtx_object", group = ":umtx_assembly", out = "_umtx_op_err.o")
+bsd_component_object(name = "umtx_pic_object", group = ":umtx_assembly", pic = True, out = "_umtx_op_err.pico")
+
+# Match Make's explicit assembly object followed by its ordered C inventory.
+_OBJECT_GROUPS = [":umtx_assembly", ":before_rtld", ":rtld", ":after_rtld"]
+bsd_dtrace_cc_objects(name = "traced_objects", libraries = _OBJECT_GROUPS,
+    provider = ":provider", provider_object = "threadwait_provider",
+    copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+[filegroup(name = group, srcs = [":traced_objects"], output_group = group)
+ for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
+cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
+cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"])
+bsd_component_archive(name = "static_archive", groups = select({
+    _TRACE: [":traced", ":provider_link"], "//conditions:default": _OBJECT_GROUPS,
+}), visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = select({
+    _TRACE: [":traced", ":provider_link"], "//conditions:default": _OBJECT_GROUPS,
+}), pic = True, visibility = ["//visibility:public"])
+
+# libc/libsys are currently supplied by the declared bootstrap SDK.
+cc_library(name = "thr", deps = select({_TRACE: [":traced"], "//conditions:default": _OBJECT_GROUPS}),
+    linkopts = ["-lc", "-lsys"], visibility = ["//visibility:public"])
+cc_shared_library(name = "thr_shared", deps = [":thr"], shared_lib_name = "libthr.so.3",
+    additional_linker_inputs = [":version_map"],
+    user_link_flags = ["-Wl,--version-script=$(location :version_map),--no-undefined-version",
+        "-lc", "-lsys", "-Wl,-soname,libthr.so.3", "-Wl,-znodelete,-zinitfirst,--auxiliary,libsys.so.7",
+        "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//lib/libthr/tests:programs.bzl", "PTHREAD_C_PROGRAMS", "PTHREAD_SHELL_PROGRAMS")
+_TEST_MANIFESTS = ["//lib/libthr/tests:install_" + n for n in PTHREAD_C_PROGRAMS + ["h_" + n for n in PTHREAD_SHELL_PROGRAMS]] + [
+    "//lib/libthr/tests:install_extra", "//lib/libthr/tests/dlopen:install_dlopen",
+    "//lib/libthr/tests/dlopen:install_main_pthread_create", "//lib/libthr/tests/dlopen:install_helper",
+    "//lib/libthr/tests/dlopen:install_extra",
+]
+_TEST_DIRECTORIES = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}' for d in [
+    "/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib",
+    "/usr/lib/debug/usr/tests/lib/libthr", "/usr/lib/debug/usr/tests/lib/libthr/dlopen"]} | {
+    d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}' for d in ["/usr/tests/lib/libthr", "/usr/tests/lib/libthr/dlopen"]}
+
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": _TEST_MANIFESTS, "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=clibs","dbg"]}' for d in ["/usr/lib/debug/lib"]} | select({"//tools/build/bazel/config:tests_enabled": _TEST_DIRECTORIES, "//conditions:default": {}}),
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

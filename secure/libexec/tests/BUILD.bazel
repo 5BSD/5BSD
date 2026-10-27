@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+test_suite(name = "sftp_tests", tests = ["//secure/libexec/tests/sftp:sftp_tests"], visibility = ["//visibility:public"])

@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['a-format.awk', 'a-format.ok', 'decr-NF.awk', 'decr-NF.ok', 'concat-assign-same.awk', 'concat-assign-same.ok', 'unary-plus.awk', 'unary-plus.ok'], visibility = ["//usr.bin/awk/tests:__pkg__"])

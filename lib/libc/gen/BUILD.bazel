@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["pw_scan.c"], visibility = ["//lib/libutil:__pkg__", "//usr.sbin/pwd_mkdb:__pkg__"])
+cc_library(name = "pw_scan_headers", hdrs = ["pw_scan.h"], strip_include_prefix = ".", visibility = ["//lib/libutil:__pkg__", "//usr.sbin/pwd_mkdb:__pkg__"])
+
+cc_library(name = "exterr_catalog_headers", hdrs = ["exterr_cat_filenames.h"],
+    strip_include_prefix = ".", visibility = ["//usr.bin/kdump:__pkg__"])
+
+exports_files(["getcap.c"], visibility = ["//usr.bin/cap_mkdb:__pkg__"])

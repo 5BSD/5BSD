@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ["g_nop.h"], strip_include_prefix = "/sys", visibility = ["//lib/geom/nop:__pkg__"])

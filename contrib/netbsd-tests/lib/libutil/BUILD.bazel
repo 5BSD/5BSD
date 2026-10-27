@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["t_efun.c"], visibility = ["//lib/libnetbsd/tests:__pkg__"])

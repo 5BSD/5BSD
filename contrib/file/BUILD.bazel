@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['src/apprentice.c', 'src/cdf_time.c', 'src/encoding.c', 'src/funcs.c', 'src/magic.c', 'src/print.c', 'src/swap.c', 'src/magic.h.in'], visibility = ["//lib/libmagic:__pkg__"])
+cc_library(name = "headers", hdrs = ['src/cdf.h', 'src/der.h', 'src/elfclass.h', 'src/file.h', 'src/file_opts.h', 'src/mygetopt.h', 'src/readelf.h', 'src/swap.h', 'src/tar.h'], strip_include_prefix = "src", visibility = ["//lib/libmagic:__pkg__", "//usr.bin/file:__pkg__"])
+
+# Mirrors Make's complete lowercase Magdir inventory; new fragments are inputs.
+filegroup(name = "magic_fragments", srcs = ["magic/Header", "magic/Localstuff"] + [path for path in glob(["magic/Magdir/*"]) if path.split("/")[-1][0] in "abcdefghijklmnopqrstuvwxyz"], visibility = ["//lib/libmagic:__pkg__"])
+
+exports_files(['src/apptype.c', 'src/ascmagic.c', 'src/buffer.c', 'src/cdf.c', 'src/compress.c', 'src/der.c', 'src/fsmagic.c', 'src/is_json.c', 'src/is_csv.c', 'src/is_simh.c', 'src/is_tar.c', 'src/readcdf.c', 'src/readelf.c', 'src/seccomp.c', 'src/softmagic.c', 'src/file.c'], visibility = ["//lib/libmagic:__pkg__", "//usr.bin/file:__pkg__"])
+
+exports_files(["libmagic.pc.in"], visibility = ["//lib/libmagic:__pkg__"])
+
+exports_files(["doc/libmagic.man", "doc/magic.man", "doc/file.man"], visibility = ["//lib/libmagic:__pkg__"])
+
+load("//usr.bin/file/tests:fixtures.bzl", "file_fixtures")
+file_fixtures(name = "fixture_tests")

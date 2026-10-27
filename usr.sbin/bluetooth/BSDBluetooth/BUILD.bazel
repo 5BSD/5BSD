@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Source fixtures shipped with Switchboard contract tests.
+exports_files(['blued.ucl'], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])

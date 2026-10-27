@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_compress")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+cc_binary(name = "auditd", srcs = ['//contrib/openbsm:bin/auditd/auditd.c', '//contrib/openbsm:bin/auditd/audit_warn.c', '//contrib/openbsm:bin/auditd/auditd_fbsd.c', '//contrib/openbsm:bin/auditd/auditd.h'],
+    deps = ["//lib/libauditd:auditd", "//lib/libbsm:bsm"],
+    dynamic_deps = ["//lib/libauditd:auditd_shared", "//lib/libbsm:bsm_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_CONFIGS = {'audit_class': '0444', 'audit_control': '0600', 'audit_event': '0444', 'audit_user': '0600', 'audit_warn': '0500'}
+[bsd_install_file(name = "config_" + name, src = "//contrib/openbsm:etc/" + name,
+    destination = "/etc/security/" + name, owner = "root", group = "wheel",
+    mode = mode, install_tags = ["package=audit", "config"]) for name, mode in _CONFIGS.items()]
+_MANUALS = ['audit.log.5', 'audit_class.5', 'audit_control.5', 'audit_event.5', 'audit_user.5', 'audit_warn.5']
+[bsd_compress(name = "manual_" + name, src = "//contrib/openbsm:man/" + name,
+    output = "manuals/" + name + ".gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for name in _MANUALS]
+[bsd_install_file(name = "install_manual_" + name, src = ":manual_" + name,
+    destination = "/usr/share/man/man5/" + name + ".gz", owner = "root", group = "wheel", mode = "0444",
+    install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=audit-man"], "//conditions:default": ["package=audit"]})) for name in _MANUALS]
+utility_installation(name = "install_manifest", program = "auditd", manual = "//contrib/openbsm:bin/auditd/auditd.8",
+    package = "audit", bindir = "/usr/sbin", man_section = "8",
+    extra_entries = [":config_" + name for name in _CONFIGS] + [":install_manual_" + name for name in _MANUALS])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=audit","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]} | {"/etc/security": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

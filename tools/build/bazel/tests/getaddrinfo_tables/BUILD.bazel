@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["socket_fixture.h"], visibility = ["//usr.bin/getaddrinfo:__pkg__"])

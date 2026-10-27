@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load(":sources.bzl", "PE_SOURCES")
+# INTERNAL library: ordinary and PIE archives; no installed library payload.
+cc_library(name = "pe", srcs = PE_SOURCES,
+    deps = ["//contrib/elftoolchain:pe_headers"],
+    implementation_deps = ["//contrib/elftoolchain:pe_internal_headers"],
+    copts = [], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":pe"], visibility = ["//visibility:public"])
+cc_library(name = "pe_pie", srcs = PE_SOURCES,
+    deps = ["//contrib/elftoolchain:pe_headers"],
+    implementation_deps = ["//contrib/elftoolchain:pe_internal_headers"],
+    copts = ["-fPIE", "-DPIC"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+bsd_component_archive(name = "pie_archive", groups = [":pe_pie"], visibility = ["//visibility:public"])

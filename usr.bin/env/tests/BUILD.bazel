@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+
+# Deterministic environment and split-string checks; full ATF suite is separate.
+[bsd_compare_test(
+    name = name,
+    program = "//usr.bin/env:env",
+    arguments = arguments,
+    expected = expected,
+    expected_stderr = "empty.out",
+    runtime_lib = ["//lib/libutil:util_shared"],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+) for name, arguments, expected in [
+    ("empty", ["-i"], "empty.out"),
+    ("assignment", ["-i", "BAZEL_ENV_TEST=two words"], "assignment.out"),
+    ("split_string", ["-i", "-S", "BAZEL_ENV_TEST='two words'"], "assignment.out"),
+]]

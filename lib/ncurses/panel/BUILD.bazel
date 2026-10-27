@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//lib/ncurses/tinfo:abi.bzl", "LIBRARY_ABIS")
+cc_library(
+    name = "panel",
+    srcs = ['//contrib/ncurses:panel/p_above.c', '//contrib/ncurses:panel/p_below.c', '//contrib/ncurses:panel/p_bottom.c', '//contrib/ncurses:panel/p_delete.c', '//contrib/ncurses:panel/p_hidden.c', '//contrib/ncurses:panel/p_hide.c', '//contrib/ncurses:panel/p_move.c', '//contrib/ncurses:panel/p_new.c', '//contrib/ncurses:panel/p_replace.c', '//contrib/ncurses:panel/p_show.c', '//contrib/ncurses:panel/p_top.c', '//contrib/ncurses:panel/p_update.c', '//contrib/ncurses:panel/p_user.c', '//contrib/ncurses:panel/p_win.c', '//contrib/ncurses:panel/panel.c'],
+    deps = ["//lib/ncurses/ncurses:ncurses", "//contrib/ncurses:panel_headers"],
+    implementation_deps = ["//lib/ncurses/tinfo:library_generated_headers", "//contrib/ncurses:library_include_headers", "//contrib/ncurses:library_private_headers"],
+    local_defines = ["_XOPEN_SOURCE_EXTENDED", "NDEBUG", "HAVE_CONFIG_H"],
+    linkstatic = True, visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":panel"], visibility = ["//visibility:public"])
+cc_shared_library(name = "panel_shared", deps = [":panel"],
+    shared_lib_name = "libpanelw.so." + str(LIBRARY_ABIS["panelw"]),
+    dynamic_deps = ["//lib/ncurses/ncurses:ncurses_shared", "//lib/ncurses/tinfo:tinfo_shared"],
+    user_link_flags = ["-Wl,-soname,libpanelw.so." + str(LIBRARY_ABIS["panelw"]), "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    visibility = ["//visibility:public"])
+
+load(":installation.bzl", "install_library")
+install_library(name = "install_manifest")

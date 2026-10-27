@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libpam/modules:module.bzl", "pam_module")
+pam_module(name = "pam_unix", srcs = ["pam_unix.c", "pam_unix_probes.h"], provider = "pam_unix_provider.d",
+    deps = ["//lib/libutil:util", "//lib/libcrypt:crypt", "//lib/libpam/libpam:module_headers"] + select({"//tools/build/bazel/config:nis_enabled": ["//lib/libypclnt:ypclnt"], "//conditions:default": []}),
+    dynamic_deps = ["//lib/libutil:util_shared", "//lib/libcrypt:crypt_shared"] + select({"//tools/build/bazel/config:nis_enabled": ["//lib/libypclnt:ypclnt_shared"], "//conditions:default": []}),
+    local_defines = select({"//tools/build/bazel/config:nis_enabled": ["YP"], "//conditions:default": []}))

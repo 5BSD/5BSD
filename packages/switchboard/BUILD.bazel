@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_pkg_layout.bzl", "bsd_pkg_layout")
+load("//tools/build/bazel:bsd_pkg_manifest.bzl", "bsd_pkg_manifests")
+load("//tools/build/bazel:bsd_pkg_create.bzl", "bsd_pkg_create")
+_MANIFESTS = ["//usr.sbin/switchboard:install_switchboard", "//usr.sbin/switchboard:install_nss", "//usr.sbin/switchboard:install_extra"]
+alias(name = "install_archive", actual = "//usr.sbin/switchboard:runtime_install_archive")
+bsd_pkg_layout(
+    name = "package_layout", manifests = _MANIFESTS,
+    packages = ["switchboard", "switchboard-dbg"] + select({"//tools/build/bazel/config:split_manpages_enabled": ["switchboard-man"], "//conditions:default": []}),
+    suffix_tags = ["dbg"],
+    dependencies = select({"//tools/build/bazel/config:split_manpages_enabled": {'switchboard': ['audit', 'libcapbundle', 'libcapability', 'libchannel', 'libcapsulert', 'libucl'], 'switchboard-dbg': ['switchboard'], 'switchboard-man': ['switchboard']}, "//conditions:default": {'switchboard': ['audit', 'libcapbundle', 'libcapability', 'libchannel', 'libcapsulert', 'libucl'], 'switchboard-dbg': ['switchboard']}}),
+    external_dependencies = ['//packages/audit:audit_dependency', '//packages/libcapbundle:libcapbundle_dependency', '//packages/libcapability:libcapability_dependency', '//packages/libchannel:libchannel_dependency', '//packages/libcapsulert:libcapsulert_dependency', '//packages/libucl:libucl_dependency'],
+)
+bsd_pkg_manifests(
+    name = "package_manifests",
+    layout = ":package_layout",
+    version = "//tools/build/bazel/config:package_version",
+    templates = select({"//tools/build/bazel/config:split_manpages_enabled": {"switchboard": "switchboard.ucl", "switchboard-dbg": "common.ucl", "switchboard-man": "common.ucl"}, "//conditions:default": {"switchboard": "switchboard.ucl", "switchboard-dbg": "common.ucl"}}),
+    template_inputs = ["common.ucl"],
+    prefix = "5BSD",
+    maintainer = "re@5bsd.org",
+    www = "https://github.com/5BSD/5BSD",
+    license_logic = "single",
+    licenses = ["BSD2CLAUSE"],
+    annotations = {"set": "minimal"},
+    generator = "//release/packages:generate-ucl.lua",
+    flua = "@bsd_sdk//toolchain:extra_flua",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_flua_runtime"],
+)
+
+bsd_pkg_create(
+    name = "packages",
+    manifests = ":package_manifests",
+    archive = ":install_archive",
+    abi_file = "//usr.sbin/switchboard:switchboard",
+    osversion_header = "//sys/sys:param.h",
+    format = "tzst",
+    threads = "//tools/build/bazel/config:package_threads",
+    epoch = 0,
+    pkg = "@bsd_sdk//toolchain:extra_pkg",
+    tar = "@bsd_sdk//toolchain:extra_tar",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_pkg_runtime", "@bsd_sdk//toolchain:extra_tar_runtime"],
+)
+
+
+load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
+bsd_pkg_dependency(name = "switchboard_dependency", package = "switchboard", origin = "base/5BSD-switchboard",
+    version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])

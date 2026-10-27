@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Source ownership only; base build policy lives under lib/ and usr.bin/.
+exports_files([
+    "blocksort.c", "bzlib.c", "bzlib.h", "bzlib_private.h", "compress.c",
+    "crctable.c", "decompress.c", "huffman.c", "randtable.c",
+    "bzip2.c", "bzip2recover.c", "bzip2.1",
+    "sample1.ref.gz.uu", "sample1.bz2.uu",
+    "sample2.ref.gz.uu", "sample2.bz2.uu",
+    "sample3.ref.gz.uu", "sample3.bz2.uu",
+], visibility = ["//lib/libbz2:__pkg__", "//usr.bin/bzip2:__pkg__", "//usr.bin/bzip2recover:__pkg__"])

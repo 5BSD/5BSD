@@ -30,6 +30,8 @@
 #
 #   Bazel Build for Google C++ Testing Framework(Google Test)
 
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
 package(default_visibility = ["//visibility:public"])
 
 licenses(["notice"])
@@ -248,3 +250,18 @@ cc_test(
     srcs = ["googletest/samples/sample10_unittest.cc"],
     deps = [":gtest"],
 )
+
+# 5BSD native build bindings; retain upstream target/package layout above.
+exports_files(["googletest/src/gtest-all.cc", "googletest/src/gtest_main.cc"])
+cc_library(name = "bsd_headers", hdrs = glob(["googletest/include/**/*.h"]),
+    includes = ["googletest/include"])
+cc_library(name = "bsd_implementation", textual_hdrs = glob(["googletest/src/*.cc", "googletest/src/*.h"],
+    exclude = ["googletest/src/gtest-all.cc", "googletest/src/gtest_main.cc"]),
+    includes = ["googletest"], visibility = ["//lib/googletest/gtest:__pkg__"])
+
+exports_files(["googlemock/src/gmock-all.cc", "googlemock/src/gmock_main.cc"])
+cc_library(name = "bsd_mock_headers", hdrs = glob(["googlemock/include/**/*.h"]),
+    includes = ["googlemock/include"], deps = [":bsd_headers"])
+cc_library(name = "bsd_mock_implementation", textual_hdrs = glob(["googlemock/src/*.cc"],
+    exclude = ["googlemock/src/gmock-all.cc", "googlemock/src/gmock_main.cc"]),
+    includes = ["googlemock"], visibility = ["//lib/googletest/gmock:__pkg__"])

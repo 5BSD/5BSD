@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_test")
+load(":headers.bzl", "bsdxml_headers")
+bsdxml_headers(name = "generated_headers", header = "//contrib/expat:lib/expat.h",
+    external = "//contrib/expat:lib/expat_external.h")
+cc_library(name = "headers", hdrs = [":generated_headers"], strip_include_prefix = "/lib/libexpat",
+    visibility = ["//visibility:public"])
+cc_library(name = "configuration", hdrs = ["expat_config.h"], strip_include_prefix = "/lib/libexpat")
+cc_library(name = "bsdxml",
+    srcs = ["//contrib/expat:lib/random_arc4random_buf.c", "//contrib/expat:lib/xcs.c", "//contrib/expat:lib/xmlparse.c", "//contrib/expat:lib/xmlrole.c", "//contrib/expat:lib/xmltok.c"],
+    deps = [":headers"], implementation_deps = [":configuration", "//contrib/expat:internal_headers"],
+    local_defines = ["HAVE_EXPAT_CONFIG_H"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+cc_shared_library(name = "bsdxml_shared", deps = [":bsdxml"], shared_lib_name = "libbsdxml.so.4",
+    user_link_flags = ["-Wl,-soname,libbsdxml.so.4", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+cc_test(name = "parser_static", srcs = ["tests/parser_test.c"], deps = [":bsdxml"], linkstatic = True,
+    size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_test(name = "parser_shared", srcs = ["tests/parser_test.c"], deps = [":bsdxml"],
+    dynamic_deps = [":bsdxml_shared"], features = ["bsd_test_runtime_paths"],
+    size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress")
+load(":installation.bzl", "bsdxml_installation")
+bsd_debug_split(name = "debug", src = ":bsdxml_shared", binary_name = "install/libbsdxml.so.4",
+    debug_name = "install/libbsdxml.so.4.debug", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs")
+bsd_strip_binary(name = "stripped", src = ":debug", output = "stripped/libbsdxml.so.4",
+    strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
+bsd_compress(name = "manual", src = "libbsdxml.3", output = "libbsdxml.3.gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsdxml_installation(name = "install_manifest")

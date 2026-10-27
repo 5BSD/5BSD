@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['chared.c', 'chartype.c', 'common.c', 'el.c', 'eln.c', 'emacs.c', 'filecomplete.c', 'hist.c', 'history.c', 'historyn.c', 'keymacro.c', 'literal.c', 'map.c', 'parse.c', 'prompt.c', 'read.c', 'readline.c', 'refresh.c', 'search.c', 'sig.c', 'terminal.c', 'tokenizer.c', 'tokenizern.c', 'tty.c', 'vi.c', 'makelist'], visibility = ["//lib/libedit:__pkg__"])
+cc_library(name = "headers", hdrs = ["histedit.h", "filecomplete.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+cc_library(name = "private_headers", hdrs = ['chared.h', 'chartype.h', 'config.h', 'el.h', 'hist.h', 'keymacro.h', 'literal.h', 'map.h', 'parse.h', 'prompt.h', 'read.h', 'refresh.h', 'search.h', 'sig.h', 'sys.h', 'terminal.h', 'tty.h', 'readline/readline.h'], textual_hdrs = ["history.c", "tokenizer.c"], strip_include_prefix = ".", visibility = ["//lib/libedit:__pkg__"])
+
+exports_files(["histedit.h", "filecomplete.h", "readline/readline.h", "editline.3", "editrc.5", "editline.7"], visibility = ["//lib/libedit:__pkg__"])
+cc_library(name = "readline_headers", hdrs = ["readline/readline.h"], strip_include_prefix = "readline", include_prefix = "edit/readline", visibility = ["//visibility:public"])

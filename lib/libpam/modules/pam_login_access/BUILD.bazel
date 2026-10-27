@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libpam/modules:module.bzl", "pam_module")
+pam_module(name = 'pam_login_access', srcs = ['pam_login_access.c', 'pam_login_access_probes.h', 'login_access.c', 'pam_login_access.h'],
+    provider = 'pam_login_access_provider.d', manuals = ["login.access.5", "pam_login_access.8"])

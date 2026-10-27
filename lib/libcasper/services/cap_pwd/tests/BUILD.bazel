@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+# Test-only inherited RPATH also binds libc's indirect libsys dependency.
+[cc_binary(name = "pwd_test" + suffix, srcs = ["pwd_test.c"],
+    deps = ["//lib/libcasper/libcasper:casper", "//lib/libcasper/services/cap_pwd:cap_pwd", "//lib/libnv:nv"],
+    dynamic_deps = ["//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_pwd:cap_pwd_shared", "//lib/libnv:nv_shared"],
+    local_defines = ["WITH_CASPER"], copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]) for suffix in ["", "_qualification"]]
+
+bsd_kyua_test(name = "native_pwd", program = ":pwd_test_qualification", interface = "tap",
+    kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime", "@bsd_sdk//toolchain:python_stdlib", "//tools/build/bazel:libmd_environment.py"],
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py",
+    runtime_libraries = {
+        "//lib/libcasper/libcasper:casper_shared": "libcasper.so.1",
+        "//lib/libcasper/services/cap_pwd:cap_pwd_shared": "libcap_pwd.so.1",
+        "//lib/libnv:nv_shared": "libnv.so.1",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7": "libc.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7": "libsys.so.7",
+    },
+    case_timeout = 120, size = "medium")
+test_suite(name = "tests", tests = [":native_pwd"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["pwd_test"], interfaces = {"pwd_test": "tap"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/lib/libcasper/services/cap_pwd/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+utility_installation(name = "install_manifest", program = "pwd_test", manual = None,
+    package = "tests", bindir = "/usr/tests/lib/libcasper/services/cap_pwd",
+    extra_entries = [":install_kyuafile"])

@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+MANUALS = ['cap_net.3']
+MANUAL_LINKS = [('cap_net.3', 'libcap_net.3'), ('cap_net.3', 'cap_bind.3'), ('cap_net.3', 'cap_connect.3'), ('cap_net.3', 'cap_net_free.3'), ('cap_net.3', 'cap_net_limit.3'), ('cap_net.3', 'cap_net_limit_addr2name.3'), ('cap_net.3', 'cap_net_limit_addr2name_family.3'), ('cap_net.3', 'cap_net_limit_bind.3'), ('cap_net.3', 'cap_net_limit_connect.3'), ('cap_net.3', 'cap_net_limit_init.3'), ('cap_net.3', 'cap_net_limit_name2addr.3'), ('cap_net.3', 'cap_net_limit_name2addr_family.3'), ('cap_net.3', 'cap_getaddrinfo.3'), ('cap_net.3', 'cap_gethostbyaddr.3'), ('cap_net.3', 'cap_gethostbyname.3'), ('cap_net.3', 'cap_gethostbyname2.3'), ('cap_net.3', 'cap_getnameinfo.3')]

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['closure.c', 'error.c', 'graph.c', 'lalr.c', 'lr0.c', 'main.c', 'mkpar.c', 'mstring.c', 'output.c', 'reader.c', 'yaccpar.c', 'symtab.c', 'verbose.c', 'warshall.c', 'VERSION', 'yacc.1'], visibility = ["//usr.bin/yacc:__pkg__"])
+cc_library(name = "headers", hdrs = ["defs.h"], strip_include_prefix = ".", visibility = ["//usr.bin/yacc:__pkg__"])

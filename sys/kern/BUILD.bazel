@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["subr_prf.c", "subr_sbuf.c"], visibility = ["//lib/libsbuf:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "sysdecode_syscalls", textual_hdrs = ["syscalls.c"],
+    strip_include_prefix = ".", include_prefix = "kern",
+    visibility = ["//lib/libsysdecode:__pkg__"])
+
+exports_files(["subr_stats.c"], visibility = ["//lib/libstats:__pkg__"])
+
+exports_files(["syscalls.master"], visibility = ["//usr.sbin/BSDAudit/tests:__pkg__"])

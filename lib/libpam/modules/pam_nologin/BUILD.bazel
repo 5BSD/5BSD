@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libpam/modules:module.bzl", "pam_module")
+pam_module(name = 'pam_nologin', srcs = ['pam_nologin.c', 'pam_nologin_probes.h'],
+    provider = 'pam_nologin_provider.d',
+    deps = ["//lib/libutil:util"], dynamic_deps = ["//lib/libutil:util_shared"])

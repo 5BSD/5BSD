@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_dtb.bzl", "bsd_dtb")
+
+_RUNTIME = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"]
+
+[bsd_dtb(
+    name = name,
+    src = src,
+    textual_inputs = headers,
+    append_sources = ["//sys/dts:freebsd-compatible.dts"],
+    output = name + ".dtb",
+    dtc_options = ["-@", "-b", "0", "-p", "1024"],
+    cpp = "@bsd_sdk//toolchain:bin/cpp",
+    cpp_inputs = ["@bsd_sdk//toolchain:compile_inputs"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    dtc = "//usr.bin/dtc:dtc",
+    runtime_libraries = _RUNTIME,
+    visibility = ["//visibility:public"],
+) for name, src, headers in [
+    ("trimslice", "//sys/dts/arm:trimslice.dts", []),
+    ("versatile-pb", "//sys/contrib/device-tree/src/arm/arm:versatile-pb.dts", ["//sys/contrib/device-tree/src/arm/arm:versatile-ab.dts"]),
+]]
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+bsd_compare_test(name = "trimslice_test", program = "//usr.bin/dtc:dtc", input = ":trimslice",
+    arguments = ["-I", "dtb", "-O", "dts"], expected = "trimslice.expected.dts", expected_stderr = "empty",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "versatile-pb_test", program = "//usr.bin/dtc:dtc", input = ":versatile-pb",
+    arguments = ["-I", "dtb", "-O", "dts"], expected = "versatile-pb.expected.dts", expected_stderr = "empty",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+test_suite(name = "tests", tests = [":trimslice_test", ":versatile-pb_test"], visibility = ["//visibility:public"])

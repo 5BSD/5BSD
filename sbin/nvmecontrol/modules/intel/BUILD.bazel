@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//sbin/nvmecontrol/modules:module.bzl", "nvme_module")
+nvme_module(name = "intel")

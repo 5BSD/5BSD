@@ -1,0 +1,17 @@
+/dts-v1/;
+
+/  {
+
+	compatible = "allwinner,sun8i-h3";
+	fragment@0 {
+
+		target-path = "/soc/mmc@1c10000";
+		__overlay__ {
+
+			status = "disabled";
+		};
+	};
+	__symbols__ {
+
+	};
+};

@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["yppasswd_private.x"], visibility = ["//lib/libypclnt:__pkg__"])

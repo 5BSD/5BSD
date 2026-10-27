@@ -1,0 +1,44 @@
+/dts-v1/;
+
+/  {
+
+	compatible = "brcm,bcm2836";
+	fragment@0 {
+
+		target-path = "/soc/spi@7e204000";
+		__overlay__ {
+
+			status = "okay";
+			spigen0 {
+
+				compatible = "freebsd,spigen";
+				reg = <0x0>;
+				spi-max-frequency = <0x7a120>;
+				status = "okay";
+				phandle = <0x1>;
+			};
+			spigen1 {
+
+				compatible = "freebsd,spigen";
+				reg = <0x1>;
+				spi-max-frequency = <0x7a120>;
+				status = "okay";
+				phandle = <0x2>;
+			};
+		};
+	};
+	fragment@1 {
+
+		target-path = "/soc/gpio@7e200000/spi0_cs_pins";
+		__overlay__ {
+
+			brcm,pins = <0x8 0x7>;
+			brcm,function = <0x4>;
+		};
+	};
+	__symbols__ {
+
+		spigen1 = "/fragment@0/__overlay__/spigen1";
+		spigen0 = "/fragment@0/__overlay__/spigen0";
+	};
+};

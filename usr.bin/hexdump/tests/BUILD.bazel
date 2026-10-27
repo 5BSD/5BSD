@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+FIXTURES = ['d_hexdump_a.in', 'd_hexdump_b.in', 'd_hexdump_c.in', 'd_hexdump_bug118723.in', 'd_hexdump_bflag_a.out', 'd_hexdump_bflag_b.out', 'd_hexdump_bflag_c.out', 'd_hexdump_cflag_a.out', 'd_hexdump_cflag_b.out', 'd_hexdump_cflag_c.out', 'd_hexdump_dflag_a_el.out', 'd_hexdump_dflag_b_el.out', 'd_hexdump_dflag_c_el.out', 'd_hexdump_dflag_a_eb.out', 'd_hexdump_dflag_b_eb.out', 'd_hexdump_dflag_c_eb.out', 'd_hexdump_nflag_a.out', 'd_hexdump_oflag_a_el.out', 'd_hexdump_oflag_b_el.out', 'd_hexdump_oflag_c_el.out', 'd_hexdump_oflag_a_eb.out', 'd_hexdump_oflag_b_eb.out', 'd_hexdump_oflag_c_eb.out', 'd_hexdump_sflag_a.out', 'd_hexdump_UCflag_a.out', 'd_hexdump_UCflag_b.out', 'd_hexdump_UCflag_c.out', 'd_hexdump_UCflag_bug118723.out', 'd_hexdump_UCvflag_bug118723.out', 'd_hexdump_xflag_a_el.out', 'd_hexdump_xflag_b_el.out', 'd_hexdump_xflag_c_el.out', 'd_hexdump_xflag_a_eb.out', 'd_hexdump_xflag_b_eb.out', 'd_hexdump_xflag_c_eb.out', 'd_od_cflag_a.out', 'd_od_cflag_b.out']
+[bsd_atf_test(name = "hexdump_test_" + case, case_name = case,
+    body = "hexdump_test.sh", data = FIXTURES,
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ['//bin/sh:sh', '//libexec/atf/atf-sh:atf-sh', '//libexec/atf/atf-check:atf-check', '//usr.bin/hexdump:hexdump', '//usr.bin/hexdump:hd', '//usr.bin/hexdump:od', '//usr.bin/head:head', '//usr.bin/awk:awk', '//usr.bin/cut:cut', '//usr.bin/seq:seq', '//usr.bin/tr:tr', '//usr.bin/cmp:cmp', '//bin/test:test', '//bin/cat:cat', '//usr.bin/dirname:dirname', '//usr.bin/basename:basename', '//usr.bin/grep:grep', '//usr.bin/sed:sed', '//usr.bin/diff:diff', '//bin/rm:rm'],
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libutil:util_shared", "//lib/libkvm:kvm_shared", "//lib/libelf:elf_shared", "//lib/libjail:jail_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared"],
+    locale_files = {'//share/ctypedef:C.UTF-8': 'en_US.UTF-8/LC_CTYPE', '//share/colldef_unicode:en_US.UTF-8': 'en_US.UTF-8/LC_COLLATE', '//share/monetdef_unicode:en_US.UTF-8': 'en_US.UTF-8/LC_MONETARY', '//share/msgdef_unicode:en_US.UTF-8': 'en_US.UTF-8/LC_MESSAGES', '//share/numericdef_unicode:en_US.UTF-8': 'en_US.UTF-8/LC_NUMERIC', '//share/timedef:en_US.UTF-8': 'en_US.UTF-8/LC_TIME'},
+    runner = "//tools/build/bazel:atf_runner", size = "small",
+) for case in ['b_flag', 'c_flag', 'C_flag', 'hd_name', 'd_flag', 'n_flag', 'o_flag', 's_flag', 'v_flag', 'x_flag', 'no_conv_err']]
+[bsd_atf_test(name = "od_test_" + case, case_name = case,
+    body = "od_test.sh", data = FIXTURES,
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ['//bin/sh:sh', '//libexec/atf/atf-sh:atf-sh', '//libexec/atf/atf-check:atf-check', '//usr.bin/hexdump:hexdump', '//usr.bin/hexdump:hd', '//usr.bin/hexdump:od', '//usr.bin/head:head', '//usr.bin/awk:awk', '//usr.bin/cut:cut', '//usr.bin/seq:seq', '//usr.bin/tr:tr', '//usr.bin/cmp:cmp', '//bin/test:test', '//bin/cat:cat', '//usr.bin/dirname:dirname', '//usr.bin/basename:basename', '//usr.bin/grep:grep', '//usr.bin/sed:sed', '//usr.bin/diff:diff', '//bin/rm:rm'],
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libutil:util_shared", "//lib/libkvm:kvm_shared", "//lib/libelf:elf_shared", "//lib/libjail:jail_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared"],
+    locale_files = {'//share/ctypedef:C.UTF-8': 'en_US.UTF-8/LC_CTYPE', '//share/colldef_unicode:en_US.UTF-8': 'en_US.UTF-8/LC_COLLATE', '//share/monetdef_unicode:en_US.UTF-8': 'en_US.UTF-8/LC_MONETARY', '//share/msgdef_unicode:en_US.UTF-8': 'en_US.UTF-8/LC_MESSAGES', '//share/numericdef_unicode:en_US.UTF-8': 'en_US.UTF-8/LC_NUMERIC', '//share/timedef:en_US.UTF-8': 'en_US.UTF-8/LC_TIME'},
+    runner = "//tools/build/bazel:atf_runner", size = "small",
+) for case in ['c_flag']]
+test_suite(name = "tests", tests = [':hexdump_test_b_flag', ':hexdump_test_c_flag', ':hexdump_test_C_flag', ':hexdump_test_hd_name', ':hexdump_test_d_flag', ':hexdump_test_n_flag', ':hexdump_test_o_flag', ':hexdump_test_s_flag', ':hexdump_test_v_flag', ':hexdump_test_x_flag', ':hexdump_test_no_conv_err', ':od_test_c_flag'], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+[bsd_script_wrapper(name = name, body = name + ".sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect") for name in ["hexdump_test", "od_test"]]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["hexdump_test", "od_test"],
+    interfaces = {"hexdump_test": "atf", "od_test": "atf"})
+[bsd_install_file(name = "install_" + name, src = ":" + name,
+    destination = "/usr/tests/usr.bin/hexdump/" + name, owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=tests"]) for name in ["hexdump_test", "od_test"]]
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/usr.bin/hexdump/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+[bsd_install_file(name = "install_" + f, src = f,
+    destination = "/usr/tests/usr.bin/hexdump/" + f, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"]) for f in FIXTURES]
+bsd_install_manifest(name = "install_manifest",
+    entries = [":install_hexdump_test", ":install_od_test", ":install_kyuafile"] + [":install_" + f for f in FIXTURES],
+    visibility = ["//visibility:public"])

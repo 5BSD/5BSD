@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_import")
+load(":sources.bzl", "LIBCXX_SOURCES")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "config_headers", hdrs = ["__config_site", "__assertion_handler"],
+    includes = ["."], visibility = ["//visibility:public"])
+_COPTS = ["-std=c++23", "-nostdinc++", "-fdata-sections", "-ffunction-sections",
+    "-fno-semantic-interposition", "-fvisibility-inlines-hidden", "-fvisibility=hidden"]
+_DEFINES = ["_LIBCPP_BUILDING_LIBRARY", "_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER",
+    "_LIBCPP_REMOVE_TRANSITIVE_INCLUDES", "LIBCXXRT"]
+_DEPS = ["//contrib/llvm-project/libcxx/include:headers"]
+load("//tools/build/bazel:native_cc.bzl", "bsd_library", "bsd_static_source")
+# Make's regular libc++.a embeds ABI objects under distinct cxxrt_ names.
+_ABI_SOURCES = ['auxhelper.cc', 'dynamic_cast.cc', 'exception.cc', 'guard.cc', 'libelftc_dem_gnu3.c', 'memory.cc', 'stdexcept.cc', 'terminate.cc', 'typeinfo.cc']
+[bsd_static_source(
+    name = "static_" + source.replace(".", "_"),
+    source = "//contrib/libcxxrt:" + source,
+    output = "cxxrt_" + source,
+    copts = [flag for flag in _COPTS if not (source.endswith(".c") and flag == "-std=c++23")] + ["-D" + define for define in _DEFINES],
+) for source in _ABI_SOURCES]
+bsd_library(
+    name = "compiled_archives",
+    visibility = ["//visibility:public"],
+    srcs = ["//contrib/llvm-project/libcxx/src:" + source for source in LIBCXX_SOURCES],
+    source_keys = {"//contrib/llvm-project/libcxx/src:" + source: source for source in LIBCXX_SOURCES},
+    static_sources = [":static_" + source.replace(".", "_") for source in _ABI_SOURCES],
+    deps = _DEPS + ["//contrib/libcxxrt:headers", "//contrib/llvm-project/libcxx/src:private_headers", "//contrib/llvm-project/libc:conversion_inputs", "//lib/libcxxrt:cxxrt"],
+    cxxopts = _COPTS + ["-D" + define for define in _DEFINES],
+    per_file_flags = {"charconv.cpp": ["-isystem", "contrib/llvm-project/libc"]},
+    variants = ["regular", "pic"],
+    archive_member_order = {"regular": [source.split("/")[-1][:-4] + ".o" for source in LIBCXX_SOURCES] +
+        ["cxxrt_" + source.rsplit(".", 1)[0] + ".o" for source in _ABI_SOURCES],
+        "pic": [source.split("/")[-1][:-4] + ".pic.o" for source in LIBCXX_SOURCES]},
+    arflags = ["-crsD"],
+    archive_basename = "libc++",
+    archive_inputs = "@bsd_sdk//toolchain:archive_inputs",
+    target_compatible_with = _PLATFORM,
+)
+
+# Use standard cc_import for shared-library graph ownership; compilation remains
+# native and both archive artifacts are declared, configuration-keyed inputs.
+filegroup(name = "pic_archive", srcs = [":compiled_archives"], output_group = "pic_archive")
+cc_import(name = "cxx", static_library = ":compiled_archives", pic_static_library = ":pic_archive",
+    deps = _DEPS + ["//lib/libcxxrt:cxxrt"], visibility = ["//visibility:public"])
+alias(name = "static_archive", actual = ":compiled_archives", visibility = ["//lib/libc++/tests:__pkg__"])
+cc_shared_library(name = "cxx_shared", deps = [":cxx"], dynamic_deps = ["//lib/libcxxrt:cxxrt_shared"],
+    shared_lib_name = "libc++.so.1", user_link_flags = ["-Wl,-soname,libc++.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load(":installation.bzl", "libcxx_installation")
+libcxx_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=clibs","dbg"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["pflogd.c", "privsep.c", "privsep_fdpass.c", "pflogd.8"], visibility = ["//sbin/pflogd:__pkg__"])
+cc_library(name = "headers", hdrs = ["pflogd.h"], strip_include_prefix = ".", visibility = ["//sbin/pflogd:__pkg__"])

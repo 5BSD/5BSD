@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+
+bsd_compare_test(
+    name = "width", program = "//usr.bin/fold:fold",
+    arguments = ["-w", "3"], input = "width.in", expected = "width.out",
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small",
+)
+bsd_compare_test(
+    name = "bytes", program = "//usr.bin/fold:fold",
+    arguments = ["-b", "-w", "3"], input = "width.in", expected = "width.out",
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small",
+)
+bsd_compare_test(
+    name = "words", program = "//usr.bin/fold:fold",
+    arguments = ["-s", "-w", "6"], input = "words.in", expected = "words.out",
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small",
+)

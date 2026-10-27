@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+# The maintained test supplies a scripted transport, exactly as its Makefile does.
+cc_library(name = "transport_fixture", hdrs = ["filesystem_transact.h"], strip_include_prefix = ".")
+[cc_binary(name = "bsdfilesystem_test" + suffix, srcs = ["bsdfilesystem_test.c"],
+    deps = [":transport_fixture", "//lib/libbsdfilesystem:test_source_headers", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"], copts = ["-fPIE"],
+    linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else [])) for suffix in ["", "_runtime"]]
+bsd_kyua_test(name = "bsdfilesystem_test_run", program = ":bsdfilesystem_test_runtime", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py",
+    runtime_libraries = {"//lib/atf/libatf-c:atf_c_shared": "libprivateatf-c.so.1",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7": "libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7": "libsys.so.7"},
+    materialize_suite = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+utility_installation(name = "install_test", program = "bsdfilesystem_test", manual = "", package = "tzfs-tests", bindir = "/usr/tests/lib/libbsdfilesystem")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["bsdfilesystem_test"], interfaces = {"bsdfilesystem_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libbsdfilesystem/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tzfs-tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"], visibility = ["//lib/libbsdfilesystem:__pkg__"])

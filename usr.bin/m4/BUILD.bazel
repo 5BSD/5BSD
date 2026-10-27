@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+bsd_yacc(name = "parser", src = "parser.y", output = "parser.c", header = "parser.h",
+    yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+bsd_lex(name = "tokenizer", src = "tokenizer.l", output = "tokenizer.c",
+    lex = "//usr.bin/lex:lex", m4 = "@bsd_sdk//toolchain:extra_m4",
+    runtime = ["@bsd_sdk//toolchain:extra_m4_runtime"])
+cc_library(name = "headers", hdrs = ["extern.h", "mdef.h", "pathnames.h", "stdd.h", ":parser_header"], strip_include_prefix = ".")
+cc_library(name = "objects",
+    srcs = ["eval.c", "expr.c", "look.c", "main.c", "misc.c", "gnum4.c", "trace.c", ":parser_source", ":tokenizer"],
+    deps = [":headers", "//lib/libopenbsd:openbsd_pie", "//lib/msun:m"],
+    local_defines = ["EXTENDED"], copts = ["-fPIE", "-Wno-missing-variable-declarations"], target_compatible_with = _PLATFORM)
+cc_binary(name = "m4", deps = [":objects"], dynamic_deps = ["//lib/msun:m_shared"],
+    linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "m4", manual = "m4.1", package = "utilities", bindir = "/usr/bin", man_section = "1")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

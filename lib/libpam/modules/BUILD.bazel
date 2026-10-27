@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["module.bzl", "installation.bzl"], visibility = ["//lib/libpam/modules:__subpackages__"])

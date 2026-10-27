@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+package(default_visibility = ["//lib/libucl:__pkg__"])
+cc_library(name = "headers", hdrs = ["include/ucl.h"], strip_include_prefix = "include", visibility = ["//visibility:public"])
+cc_library(name = "source_headers", hdrs = glob(["src/*.h"]), strip_include_prefix = "src")
+cc_library(name = "uthash_headers", hdrs = glob(["uthash/*.h"]), strip_include_prefix = "uthash")
+cc_library(name = "klib_headers", hdrs = glob(["klib/*.h"]), strip_include_prefix = "klib")
+exports_files([
+    "src/ucl_emitter_streamline.c", "src/ucl_emitter_utils.c", "src/ucl_emitter.c",
+    "src/ucl_hash.c", "src/ucl_msgpack.c", "src/ucl_parser.c", "src/ucl_schema.c",
+    "src/ucl_sexp.c", "src/ucl_util.c", "doc/libucl.3",
+])
+
+exports_files(["COPYING"], visibility = ["//usr.sbin/BSDDevice/tests:__pkg__", "//usr.sbin/BSDSysctl/tests:__pkg__", "//usr.sbin/BSDTime/tests:__pkg__", "//usr.sbin/BSDPower/tests:__pkg__"])

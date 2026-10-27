@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "ioctl_headers", hdrs = ["mac_capability_ioctl.h", "mac_capability_coalition_proto.h"],
+    strip_include_prefix = "/sys", deps = ["//sys/sys:cap_authority_header"], visibility = ["//visibility:public"])
+cc_library(name = "capprotect_headers", hdrs = ["mac_capability_capprotect_proto.h"],
+    strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "channel_headers", hdrs = ["mac_capability_channel_proto.h"],
+    strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "isolation_headers", hdrs = ["mac_capability_isolation_proto.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "system_headers", hdrs = ["mac_capability_system_proto.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "shield_test_headers", hdrs = ["mac_capability_ioctl.h", "mac_capability_capprotect_proto.h", "mac_capability_identity_proto.h"],
+    strip_include_prefix = ".", deps = ["//sys/sys:cap_authority_header"], visibility = ["//tests/sys/mac_capability:__pkg__"])

@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+cc_binary(name = "fixture", srcs = ["fixture.c"], deps = ["//lib/atf/libatf-c:atf_c"], linkstatic = True, linkopts = ["-static"])
+[bsd_kyua_test(name = case, program = ":fixture", interface = "atf", case_name = case,
+    kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime"], size = "small")
+ for case in ["missing_configuration", "ordinary_pass", "expected_failure"]]
+
+# Negative qualification target: an explicit run must fail and retain XML.
+bsd_kyua_test(name = "intentional_failure", program = ":fixture", interface = "atf", case_name = "intentional_failure",
+    kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime"], size = "small", tags = ["manual"])
+
+bsd_kyua_test(name = "configuration", program = ":fixture", interface = "atf", case_name = "configuration",
+    config_files = {"policy with spaces.txt": "selected_file"},
+    config_values = {"scalar": "spaces ' \" $() = literal"},
+    kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime"], size = "small")
+
+[bsd_kyua_test(name = case, program = ":fixture", interface = "atf", case_name = case,
+    case_timeout = 0, kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime"], size = "small",
+    tags = [] if case == "cleanup_pass" else ["manual"])
+ for case in ["cleanup_pass", "cleanup_failure", "body_failure_cleanup", "body_timeout_cleanup"]]

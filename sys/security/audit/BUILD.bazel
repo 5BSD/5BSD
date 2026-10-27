@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['audit_syscalls.c'], visibility = ["//usr.sbin/BSDAudit/tests:__pkg__"])

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["libmain.c", "libyywrap.c"], visibility = ["//usr.bin/lex/lib:__pkg__"])
+
+exports_files(['buf.c', 'ccl.c', 'dfa.c', 'ecs.c', 'filter.c', 'gen.c', 'main.c', 'misc.c', 'nfa.c', 'options.c', 'regex.c', 'scanflags.c', 'scanopt.c', 'sym.c', 'tables.c', 'tables_shared.c', 'tblcmp.c', 'yylex.c', 'FlexLexer.h', 'flexdef.h', 'flexint.h', 'options.h', 'scanopt.h', 'tables.h', 'tables_shared.h', 'version.h', 'parse.y', 'scan.l', 'mkskel.sh', 'flex.skl'], visibility = ["//usr.bin/lex:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ['FlexLexer.h', 'flexdef.h', 'flexint.h', 'options.h', 'scanopt.h', 'tables.h', 'tables_shared.h', 'version.h'], strip_include_prefix = ".", visibility = ["//usr.bin/lex:__pkg__"])

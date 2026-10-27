@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+cc_binary(name = "sendfile_helper", srcs = ["sendfile_helper.c"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    deps = ["//lib/libthr:thr"], dynamic_deps = ["//lib/libthr:thr_shared"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+utility_installation(name = "helper_install_manifest", program = "sendfile_helper",
+    manual = None, package = "tests", bindir = "/usr/tests/sys/common")
+_FILES = {"vnet.subr": "0444", "divert.py": "0555", "sender.py": "0555", "net_receiver.py": "0555"}
+[bsd_install_file(name = "install_" + name, src = name,
+    destination = "/usr/tests/sys/common/" + name, owner = "root", group = "wheel",
+    mode = mode, install_tags = ["package=tests"]) for name, mode in _FILES.items()]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = [], interfaces = {})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/sys/common/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "support_install_manifest",
+    entries = [":install_" + name for name in _FILES] + [":install_kyuafile"],
+    visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":support_install_manifest", ":helper_install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/sys", "/usr/lib/debug/usr/tests/sys/common"]} | {"/usr/tests/sys/common": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

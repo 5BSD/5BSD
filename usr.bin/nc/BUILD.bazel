@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+_STATS = "//tools/build/bazel/config:stats_enabled"
+cc_binary(name = "nc", srcs = ["//contrib/netcat:" + source for source in ["netcat.c", "atomicio.c", "socks.c"]],
+    deps = ["//contrib/netcat:headers", "//lib/libipsec:ipsec"] + select({_STATS: ["//lib/libsbuf:sbuf", "//lib/libstats:stats"], "//conditions:default": []}),
+    dynamic_deps = ["//lib/libipsec:ipsec_shared"] + select({_STATS: ["//lib/libsbuf:sbuf_shared", "//lib/libstats:stats_shared"], "//conditions:default": []}),
+    local_defines = ["IPSEC"] + select({_STATS: ["WITH_STATS"], "//conditions:default": []}),
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "nc", manual = "//contrib/netcat:nc.1", package = "utilities")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

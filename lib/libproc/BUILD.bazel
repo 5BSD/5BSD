@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+# Header-only edge avoids the libproc/librtld_db link dependency cycle.
+cc_library(name = "headers", hdrs = ["libproc.h"], strip_include_prefix = ".",
+    deps = ["//contrib/elftoolchain:elf_headers", "//lib/librtld_db:headers"], visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load(":sources.bzl", "PROC_SOURCES")
+_CTF = "//tools/build/bazel/config:ctf_enabled"
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_LIBS = ["//lib/libcxxrt:cxxrt", "//lib/libelf:elf", "//lib/libprocstat:procstat", "//lib/librtld_db:rtld_db", "//lib/libutil:util", "//lib/libz:z"] + select({_CTF: ["//cddl/lib/libctf:ctf"], "//conditions:default": []})
+_SHARED = ["//lib/libcxxrt:cxxrt_shared", "//lib/libelf:elf_shared", "//lib/libprocstat:procstat_shared", "//lib/librtld_db:rtld_db_shared", "//lib/libutil:util_shared", "//lib/libz:z_shared"] + select({_CTF: ["//cddl/lib/libctf:ctf_shared"], "//conditions:default": []})
+cc_library(name = "proc", srcs = PROC_SOURCES + ["_libproc.h"], deps = [":headers"] + _LIBS,
+    local_defines = select({_CTF: ["IN_BASE", "SKIP_SPL_SYS_CONDVAR_H", "HAVE_ISSETUGID", "HAVE_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"], "//conditions:default": ["NO_CTF"]}),
+    copts = select({_CTF: ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"], "//conditions:default": []}),
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":proc"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "proc_shared", deps = [":proc"], dynamic_deps = _SHARED,
+    shared_lib_name = "libproc.so.5", user_link_flags = ["-Wl,-soname,libproc.so.5", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

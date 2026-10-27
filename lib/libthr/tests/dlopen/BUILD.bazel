@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+_PROGRAMS = {
+    "dlopen": ["dlopen", "dlopen_mutex", "dlopen_mutex_libc", "dlopen_mutex_libpthread"],
+    "main_pthread_create": ["main_pthread_create_main", "main_pthread_create_dso"],
+}
+[cc_binary(name = name + "_test", srcs = ["//contrib/netbsd-tests/lib/libpthread/dlopen:t_" + name + ".c"],
+    deps = ["//contrib/netbsd-tests/lib/libpthread/dlopen:test_headers", "//lib/libnetbsd:netbsd_pie",
+            "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/libthr:thr_shared", "//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for name in _PROGRAMS]
+[bsd_atf_test(name = "native_" + case, case_name = case, interface = "program", body = ":" + program + "_test",
+    data = ["//lib/libthr/tests/dlopen/dso:helper_alias"],
+    runtime_lib = ["//lib/libthr:thr_shared", "//lib/atf/libatf-c:atf_c_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small")
+ for program, cases in _PROGRAMS.items() for case in cases]
+test_suite(name = "tests", tests = [":native_" + case for cases in _PROGRAMS.values() for case in cases],
+    visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_TESTDIR = "/usr/tests/lib/libthr/dlopen"
+[utility_installation(name = "install_" + name, program = name + "_test", manual = "", package = "tests", bindir = _TESTDIR)
+ for name in _PROGRAMS]
+alias(name = "h_pthread_dlopen.so.1", actual = "//lib/libthr/tests/dlopen/dso:helper")
+utility_installation(name = "install_helper", program = "h_pthread_dlopen.so.1", manual = "", package = "tests",
+    bindir = _TESTDIR, binary_mode = "0444")
+bsd_install_link(name = "install_helper_link", destination = _TESTDIR + "/h_pthread_dlopen.so",
+    target = "h_pthread_dlopen.so.1", kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=tests"])
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = [name + "_test" for name in _PROGRAMS],
+    interfaces = {name + "_test": "atf" for name in _PROGRAMS})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = _TESTDIR + "/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_helper_link", ":install_kyuafile"], visibility = ["//lib/libthr:__pkg__"])
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_" + name for name in _PROGRAMS] + [":install_helper", ":install_extra"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}' for d in [
+        "/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib",
+        "/usr/lib/debug/usr/tests/lib/libthr", "/usr/lib/debug/usr/tests/lib/libthr/dlopen"]} | {
+        _TESTDIR: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

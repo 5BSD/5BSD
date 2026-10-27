@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex")
+
+# Both outputs are part of the compilation input graph.
+bsd_lex(
+    name = "scanner",
+    src = "//contrib/libpcap:scanner.l",
+    output = "scanner.c",
+    header = "scanner.h",
+    flags = ["-Ppcap_", "--nounput"],
+    lex = "//usr.bin/lex:lex",
+    m4 = "//usr.bin/m4:m4",
+)
+filegroup(name = "scanner_source", srcs = [":scanner"], output_group = "source")
+filegroup(name = "scanner_header", srcs = [":scanner"], output_group = "header")
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_filter_fixture")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_yacc")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+bsd_filter_fixture(name = "grammar_input", src = "//contrib/libpcap:grammar.y.in", output = "grammar.y",
+    tool = "@bsd_sdk//toolchain:sed", arguments = ["-e", "s/@REENTRANT_PARSER@/%pure-parser/"],
+    runtime = ["@bsd_sdk//toolchain:sed_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_yacc(name = "parser", src = ":grammar_input", output = "grammar.c", header = "grammar.h", flags = ["-p", "pcap_"], yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+copy_file(name = "tokens", src = ":parser_header", out = "tokdefs.h")
+cc_library(name = "local_headers", hdrs = ["config.h", ":parser_header", ":scanner_header", ":tokens"], strip_include_prefix = ".")
+_RDMA = "//tools/build/bazel/config:ofed_enabled"
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_RDMA_LIBS = ["//lib/ofed/lib" + n + ":" + n for n in ["ibverbs", "bnxtre", "mlx5"]]
+cc_library(name = "pcap", srcs = ['//contrib/libpcap:bpf_dump.c', '//contrib/libpcap:bpf_filter.c', '//contrib/libpcap:bpf_image.c', '//contrib/libpcap:etherent.c', '//contrib/libpcap:fad-getad.c', '//contrib/libpcap:fmtutils.c', '//contrib/libpcap:gencode.c', '//contrib/libpcap:nametoaddr.c', '//contrib/libpcap:optimize.c', '//contrib/libpcap:pcap-bpf.c', '//contrib/libpcap:pcap-common.c', '//contrib/libpcap:pcap-netmap.c', '//contrib/libpcap:pcap-util.c', '//contrib/libpcap:pcap.c', '//contrib/libpcap:savefile.c', '//contrib/libpcap:sf-pcap.c', '//contrib/libpcap:sf-pcapng.c'] + [":parser_source", ":scanner_source"] + select({_RDMA: ["//contrib/libpcap:pcap-rdmasniff.c"], "//conditions:default": []}),
+    deps = [":local_headers", "//contrib/libpcap:headers"] + select({_RDMA: _RDMA_LIBS, "//conditions:default": []}),
+    local_defines = ["HAVE_CONFIG_H", "_U_=__attribute__((unused))", "BUILDING_PCAP", "PCAP_SUPPORT_NETMAP"] +
+        select({_RDMA: ["PCAP_SUPPORT_RDMASNIFF"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:pf_enabled": ["HAVE_NET_PFVAR_H"], "//conditions:default": []}),
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":pcap"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "pcap_shared", deps = [":pcap"], shared_lib_name = "libpcap.so.8",
+    dynamic_deps = select({_RDMA: [n + "_shared" for n in _RDMA_LIBS], "//conditions:default": []}),
+    user_link_flags = ["-Wl,-soname,libpcap.so.8", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_binary")
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+cc_import(name = "archive_link", static_library = ":static_archive")
+[cc_binary(name = "offline_" + variant + "_program", srcs = ["offline_test.c"],
+    deps = ([":archive_link", "//contrib/libpcap:headers"] if variant == "static" else [":pcap"]) + select({_RDMA: _RDMA_LIBS, "//conditions:default": []}),
+    dynamic_deps = ([":pcap_shared"] if variant == "shared" else []) + select({_RDMA: [n + "_shared" for n in _RDMA_LIBS] + ["//lib/libthr:thr_shared"], "//conditions:default": []}),
+    linkstatic = variant == "static", target_compatible_with = _PLATFORM)
+ for variant in ["static", "shared"]]
+[bsd_compare_test(name = "offline_" + variant, program = ":offline_" + variant + "_program",
+    expected = "offline_expected.out", expected_stderr = "offline_empty.out",
+    runtime_lib = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"] +
+        ([":pcap_shared"] if variant == "shared" else []) +
+        select({_RDMA: [n + "_shared" for n in _RDMA_LIBS] + ["//lib/libthr:thr_shared"], "//conditions:default": []}),
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+ for variant in ["static", "shared"]]
+
+cc_library(name = "config_header", hdrs = ["config.h"], strip_include_prefix = ".", visibility = ["//sbin/pflogd:__pkg__"])

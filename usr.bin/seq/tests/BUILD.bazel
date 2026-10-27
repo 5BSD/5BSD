@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+
+# Positive cases preserve seq_test.sh arguments and inline expected output.
+[bsd_compare_test(
+    name = name,
+    program = "//usr.bin/seq:seq",
+    arguments = arguments,
+    expected = expected,
+    expected_stderr = "empty.out",
+    runtime_lib = ["//lib/msun:m_shared"],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+) for name, arguments, expected in [
+    ("float_rounding", ["1", "0.1", "1.2"], "rounding.out"),
+    ("valid_format", ["-f", "foo%g", "2"], "format.out"),
+]]
+
+bsd_compare_test(
+    name = "invalid_format",
+    program = "//usr.bin/seq:seq",
+    arguments = ["-f", "foo", "3"],
+    expected = "empty.out",
+    expected_exit = 1,
+    expected_stderr = "invalid-format.err",
+    runtime_lib = ["//lib/msun:m_shared"],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)

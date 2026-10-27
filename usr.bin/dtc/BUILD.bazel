@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+cc_binary(
+    name = "dtc",
+    srcs = ["dtc.cc", "input_buffer.cc", "string.cc", "dtb.cc", "fdt.cc", "checking.cc", "checking.hh", "dtb.hh", "fdt.hh", "input_buffer.hh", "util.hh"],
+    copts = ["-fPIE", "-nostdinc++", "-fno-rtti", "-fno-exceptions"],
+    deps = ["//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"],
+    dynamic_deps = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"],
+    linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "dtc", manual = "dtc.1", package = "utilities")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+# DTB fixtures match independent Make and are decoded by the retained
+# qualification script to check headers, properties and phandle references.
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+_RUNTIME = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"]
+bsd_compare_test(name = "default_test", program = ":dtc", input = "bazel-fixtures/board.dts",
+    arguments = ['-I', 'dts', '-O', 'dtb'], expected = "bazel-fixtures/default.dtb", expected_stderr = "bazel-fixtures/empty",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "sorted_test", program = ":dtc", input = "bazel-fixtures/board.dts",
+    arguments = ['-I', 'dts', '-O', 'dtb', '-s'], expected = "bazel-fixtures/sorted.dtb", expected_stderr = "bazel-fixtures/empty",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "padding_test", program = ":dtc", input = "bazel-fixtures/board.dts",
+    arguments = ['-I', 'dts', '-O', 'dtb', '-p', '128'], expected = "bazel-fixtures/padding.dtb", expected_stderr = "bazel-fixtures/empty",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "bootcpu_test", program = ":dtc", input = "bazel-fixtures/board.dts",
+    arguments = ['-I', 'dts', '-O', 'dtb', '-b', '3'], expected = "bazel-fixtures/bootcpu.dtb", expected_stderr = "bazel-fixtures/empty",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "symbols_test", program = ":dtc", input = "bazel-fixtures/board.dts",
+    arguments = ['-I', 'dts', '-O', 'dtb', '-@'], expected = "bazel-fixtures/symbols.dtb", expected_stderr = "bazel-fixtures/empty",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+test_suite(name = "tests", tests = [':default_test', ':sorted_test', ':padding_test', ':bootcpu_test', ':symbols_test'], visibility = ["//visibility:public"])

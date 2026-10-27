@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_test")
+
+cc_test(
+    name = "roundtrip",
+    srcs = ["bazel_roundtrip.c"],
+    data = ["//usr.bin/patch:patch"],
+    args = ["$(location //usr.bin/patch:patch)"],
+    size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)

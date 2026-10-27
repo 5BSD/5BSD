@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["crypt.x"], visibility = ["//usr.bin/rpcgen/tests:__pkg__"])
+
+exports_files(["yp.x", "yppasswd.x"], visibility = ["//lib/libypclnt:__pkg__"])

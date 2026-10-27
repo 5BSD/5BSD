@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files([
+    "tools/ctf/common/list.c",
+    "tools/ctf/common/memory.c",
+    "tools/ctf/common/symbol.c",
+    "tools/ctf/common/utils.c",
+    "tools/ctf/cvt/alist.c",
+    "tools/ctf/cvt/barrier.c",
+    "tools/ctf/cvt/ctf.c",
+    "tools/ctf/cvt/ctfconvert.c",
+    "tools/ctf/cvt/ctfmerge.c",
+    "tools/ctf/cvt/dwarf.c",
+    "tools/ctf/cvt/fifo.c",
+    "tools/ctf/cvt/fixup_tdescs.c",
+    "tools/ctf/cvt/hash.c",
+    "tools/ctf/cvt/iidesc.c",
+    "tools/ctf/cvt/input.c",
+    "tools/ctf/cvt/merge.c",
+    "tools/ctf/cvt/output.c",
+    "tools/ctf/cvt/stack.c",
+    "tools/ctf/cvt/strtab.c",
+    "tools/ctf/cvt/tdata.c",
+    "tools/ctf/cvt/traverse.c",
+    "tools/ctf/cvt/util.c",
+    "tools/ctf/dump/dump.c"
+], visibility = ["//cddl/usr.bin/ctfconvert:__pkg__", "//cddl/usr.bin/ctfmerge:__pkg__", "//cddl/usr.bin/ctfdump:__pkg__"])
+cc_library(name = "ctf_tool_headers",
+    hdrs = glob(["head/*.h", "tools/ctf/**/*.h", "lib/libctf/common/*.h", "cmd/mdb/tools/common/*.h"]),
+    includes = [".", "head", "tools/ctf/common", "tools/ctf/cvt", "tools/ctf/dump", "cmd/mdb/tools/common"],
+    deps = ["//sys/contrib/openzfs:spl_headers", "//cddl/compat/opensolaris/include:headers", "//sys/cddl/compat/opensolaris:headers", "//sys/cddl/contrib/opensolaris:ctf_headers"],
+    visibility = ["//visibility:public"])
+
+exports_files(['common/ctf/ctf_create.c', 'common/ctf/ctf_decl.c', 'common/ctf/ctf_error.c', 'common/ctf/ctf_hash.c', 'common/ctf/ctf_labels.c', 'lib/libctf/common/ctf_lib.c', 'common/ctf/ctf_lookup.c', 'common/ctf/ctf_open.c', 'lib/libctf/common/ctf_subr.c', 'common/ctf/ctf_types.c', 'common/ctf/ctf_util.c'], visibility = ["//cddl/lib/libctf:__pkg__"])
+cc_library(name = "ctf_library_headers", hdrs = glob(["head/*.h", "common/ctf/*.h", "lib/libctf/common/*.h"]),
+    includes = ["head", "common/ctf", "lib/libctf/common"],
+    deps = ["//sys/contrib/openzfs:spl_headers", "//cddl/compat/opensolaris/include:headers", "//sys/cddl/compat/opensolaris:headers", "//sys/cddl/contrib/opensolaris:ctf_headers"], visibility = ["//visibility:public"])
+
+exports_files(["lib/libctf/common/ctf.5"], visibility = ["//cddl/lib/libctf:__pkg__"])
+
+exports_files(["lib/libdtrace/common/" + name for name in ["mkerrtags.sh", "mknames.sh", "dt_errtags.h", "dt_grammar.y", "dt_lex.l"]], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+
+exports_files(['lib/libdtrace/common/dt_aggregate.c', 'lib/libdtrace/common/dt_as.c', 'lib/libdtrace/common/dt_buf.c', 'lib/libdtrace/common/dt_cc.c', 'lib/libdtrace/common/dt_cg.c', 'lib/libdtrace/common/dt_consume.c', 'lib/libdtrace/common/dt_decl.c', 'lib/libdtrace/common/dt_dis.c', 'lib/libdtrace/common/dt_dof.c', 'lib/libdtrace/common/dt_error.c', 'lib/libdtrace/common/dt_handle.c', 'lib/libdtrace/common/dt_ident.c', 'lib/libdtrace/common/dt_inttab.c', 'lib/libdtrace/common/dt_link.c', 'lib/libdtrace/common/dt_list.c', 'lib/libdtrace/common/dt_map.c', 'lib/libdtrace/common/dt_module.c', 'lib/libdtrace/common/dt_open.c', 'lib/libdtrace/common/dt_options.c', 'lib/libdtrace/common/dt_parser.c', 'lib/libdtrace/common/dt_pcb.c', 'lib/libdtrace/common/dt_pid.c', 'lib/libdtrace/common/dt_pq.c', 'lib/libdtrace/common/dt_pragma.c', 'lib/libdtrace/common/dt_print.c', 'lib/libdtrace/common/dt_printf.c', 'lib/libdtrace/common/dt_proc.c', 'lib/libdtrace/common/dt_program.c', 'lib/libdtrace/common/dt_provider.c', 'lib/libdtrace/common/dt_regset.c', 'lib/libdtrace/common/dt_string.c', 'lib/libdtrace/common/dt_strtab.c', 'lib/libdtrace/common/dt_subr.c', 'lib/libdtrace/common/dt_sugar.c', 'lib/libdtrace/common/dt_work.c', 'lib/libdtrace/common/dt_xlator.c', 'lib/libdtrace/i386/dt_isadep.c', 'lib/libgen/common/gmatch.c'], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+cc_library(name = "dtrace_headers", hdrs = glob(["lib/libdtrace/common/*.h"]), includes = ["lib/libdtrace/common"],
+    deps = [":ctf_library_headers"], visibility = ["//visibility:public"])
+
+exports_files(["cmd/dtrace/dtrace.c"], visibility = ["//cddl/usr.sbin/dtrace:__pkg__"])
+
+exports_files(["lib/libdtrace/common/dtrace.h"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+
+exports_files(["cmd/dtrace/dtrace.1"], visibility = ["//cddl/usr.sbin/dtrace:__pkg__"])
+
+exports_files(["cmd/plockstat/plockstat.c"], visibility = ["//cddl/usr.sbin/plockstat:__pkg__"])
+
+exports_files(["lib/libdtrace/common/drti.c"], visibility = ["//cddl/lib/drti:__pkg__"])
+
+exports_files(["cmd/lockstat/lockstat.c", "cmd/lockstat/sym.c", "cmd/lockstat/lockstat.1"], visibility = ["//cddl/usr.sbin/lockstat:__pkg__"])

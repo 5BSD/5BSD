@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//crypto/openssl:module_sources_amd64.bzl", "MODULE_SOURCES")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "legacy_objects", srcs = MODULE_SOURCES["modules/legacy"],
+    deps = ["//secure/lib/libcrypto:crypto"],
+    implementation_deps = ["//crypto/openssl:internal_headers"], linkstatic = True,
+    target_compatible_with = _PLATFORM)
+cc_shared_library(name = "legacy", deps = [":legacy_objects"],
+    dynamic_deps = ["//secure/lib/libcrypto:crypto_shared"], shared_lib_name = "legacy.so",
+    user_link_flags = ["-Wl,-soname,legacy.so", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+# This module intentionally has no dependency on libcrypto. It retains the
+# maintained portable-C implementation, self-tests, and one-symbol export map.
+cc_library(name = "fips_objects", srcs = MODULE_SOURCES["modules/fips"] + ["fips/fips_build.h"],
+    deps = ["//crypto/openssl:headers"],
+    implementation_deps = ["//crypto/openssl:internal_headers"],
+    local_defines = ["FIPS_MODULE", "OPENSSL_PIC", "L_ENDIAN"],
+    copts = ["-include", "$(location fips/fips_build.h)", "-ffunction-sections", "-fdata-sections"],
+    linkopts = ["-pthread"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_shared_library(name = "fips", deps = [":fips_objects"], shared_lib_name = "fips.so",
+    additional_linker_inputs = ["fips/fips.map"],
+    user_link_flags = ["-Wl,-soname,fips.so", "-Wl,--fatal-warnings,--warn-shared-textrel",
+        "-Wl,--version-script=$(location fips/fips.map)", "-Wl,-z,defs", "-Wl,-Bsymbolic", "-Wl,--gc-sections"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+filegroup(name = "modules", srcs = [":legacy"] + select({
+    "//tools/build/bazel/config:openssl_fips_enabled": [":fips"],
+    "//conditions:default": [],
+}), visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+_LOAD_INPUTS = [":legacy"] + ["//secure/lib/libcrypto/engines:" + name
+    for name in ["capi", "devcrypto", "loader_attic", "padlock"]]
+cc_test(name = "load_test", srcs = ["load_test.c"],
+    deps = ["//secure/lib/libcrypto:crypto"],
+    dynamic_deps = ["//secure/lib/libcrypto:crypto_shared"],
+    features = ["bsd_test_runtime_paths"],
+    data = _LOAD_INPUTS, args = ["$(rootpath " + label + ")" for label in _LOAD_INPUTS],
+    size = "small", target_compatible_with = _PLATFORM)
+
+load("//secure/lib/libcrypto:install_helpers.bzl", "openssl_binary_entries")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
+_LEGACY_INSTALL = openssl_binary_entries("legacy_install", ":legacy", "/usr/lib/ossl-modules/legacy.so")
+_FIPS_INSTALL = openssl_binary_entries("fips_install", ":fips", "/usr/lib/ossl-modules/fips.so")
+bsd_install_manifest(name = "install_manifest", entries = _LEGACY_INSTALL + select({
+    "//tools/build/bazel/config:openssl_fips_enabled": _FIPS_INSTALL, "//conditions:default": [],
+}), visibility = ["//visibility:public"])

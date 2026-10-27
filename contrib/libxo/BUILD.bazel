@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["libxo/libxo.c", "libxo/xo_encoder.c", "libxo/xo_syslog.c"], visibility = ["//lib/libxo/libxo:__pkg__"])
+cc_library(name = "headers", hdrs = ["libxo/xo.h", "libxo/xo_encoder.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+cc_library(name = "internal_headers", hdrs = ["libxo/xo_buf.h", "libxo/xo_explicit.h", "libxo/xo_humanize.h", "libxo/xo_wcwidth.h"], includes = ["libxo"], visibility = ["//lib/libxo/libxo:__pkg__"])
+
+exports_files([
+    "libxo/xo.h",
+    "libxo/xo_encoder.h",
+    "libxo/libxo.3",
+    "libxo/xo_attr.3",
+    "libxo/xo_create.3",
+    "libxo/xo_emit.3",
+    "libxo/xo_emit_err.3",
+    "libxo/xo_emit_f.3",
+    "libxo/xo_err.3",
+    "libxo/xo_error.3",
+    "libxo/xo_finish.3",
+    "libxo/xo_flush.3",
+    "libxo/xo_message.3",
+    "libxo/xo_no_setlocale.3",
+    "libxo/xo_open_container.3",
+    "libxo/xo_open_list.3",
+    "libxo/xo_open_marker.3",
+    "libxo/xo_parse_args.3",
+    "libxo/xo_set_allocator.3",
+    "libxo/xo_set_flags.3",
+    "libxo/xo_set_info.3",
+    "libxo/xo_set_options.3",
+    "libxo/xo_set_style.3",
+    "libxo/xo_set_syslog_enterprise_id.3",
+    "libxo/xo_set_version.3",
+    "libxo/xo_set_writer.3",
+    "libxo/xo_syslog.3",
+    "libxo/xo_format.5",
+    "libxo/xo_options.7",
+], visibility = ["//lib/libxo/libxo:__pkg__"])

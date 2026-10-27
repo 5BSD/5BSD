@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+[cc_binary(name = "h_regex_" + variant,
+    srcs = ["//contrib/netbsd-tests/lib/libc/regex:" + f for f in ["main.c", "split.c", "debug.c"]],
+    deps = ["//contrib/netbsd-tests/lib/libc/regex:test_headers", "//lib/libc/regex:test_headers", "//lib/libregex:" + library],
+    copts = flags, linkopts = linkflags, linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for variant, library, flags, linkflags in [("ordinary", "regex", [], []), ("pic", "regex_pic", ["-fPIE"], ["-pie"])]]
+# All fixtures and all three invocations from maintained regex_test and libregex_test.
+_CASES = ['basic', 'paren', 'anchor', 'error', 'meta', 'backref', 'repet_ordinary', 'repet_bounded', 'repet_multi', 'bracket', 'complex', 'subtle', 'c_comments', 'subexp', 'startend', 'nospec', 'zero', 'word_bound', 'regress']
+[bsd_compare_test(name = variant + "_" + case + "_" + mode,
+    program = ":h_regex_" + variant, arguments = args,
+    input = ("gnuext.in" if case == "gnuext" else "//contrib/netbsd-tests/lib/libc/regex:data/" + case + ".in"),
+    expected = "empty.out", expected_stderr = "empty.out",
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+ for variant in ["ordinary", "pic"] for case in _CASES + ["gnuext"]
+ for mode, args in [("default", []), ("large", ["-el"]), ("backref", ["-er"])]]
+
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+# Preserve maintained implementation flags, including its known expected failure.
+[cc_binary(name = name + suffix + "_test", srcs = ["//contrib/netbsd-tests/lib/libc/regex:" + source],
+    deps = ["//lib/libregex:regex", "//lib/libnetbsd:cdefs_header", "//lib/atf/libatf-c:atf_c"] + (["//lib/libnetbsd:util_header"] if name == "att" else []),
+    dynamic_deps = (["//lib/libregex:regex_shared"] + (["//lib/libutil:util_shared"] if name == "att" else [])) if suffix else [],
+    local_defines = ["REGEX_SPENCER", "SKIP_LEFTASSOC"],
+    linkstatic = True, linkopts = (["-Wl,-rpath,$ORIGIN"] if suffix else []),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for name, source in [("exhaust", "t_exhaust.c"), ("att", "t_regex_att.c")] for suffix in ["", "_shared"]]
+[bsd_kyua_test(name = name + suffix, program = ":" + name + suffix + "_test", interface = "atf",
+    kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    case_timeout = 0, size = "large" if name == "exhaust" else "small",
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime", "@bsd_sdk//toolchain:python_stdlib", "//tools/build/bazel:libmd_environment.py"],
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py" if suffix else None,
+    runtime_libraries = ({"//lib/libregex:regex_shared": "libregex.so.1", "//lib/libutil:util_shared": "libutil.so.10"} if name == "att" else {"//lib/libregex:regex_shared": "libregex.so.1"}) if suffix else {},
+    suite_files = {"//contrib/netbsd-tests/lib/libc/regex:data/att/" + n + ".dat": "data/" + n + ".dat" for n in ["basic", "categorization", "nullsubexpr", "leftassoc", "rightassoc", "forcedassoc", "repetition"]} if name == "att" else {})
+ for name in ["exhaust", "att"] for suffix in ["", "_shared"]]
+
+cc_binary(name = "h_regex_shared",
+    srcs = ["//contrib/netbsd-tests/lib/libc/regex:" + f for f in ["main.c", "split.c", "debug.c"]],
+    deps = ["//contrib/netbsd-tests/lib/libc/regex:test_headers", "//lib/libc/regex:test_headers", "//lib/libregex:regex"],
+    dynamic_deps = ["//lib/libregex:regex_shared"], copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+[bsd_compare_test(name = "shared_" + case + "_" + mode,
+    program = ":h_regex_shared", arguments = args,
+    input = ("gnuext.in" if case == "gnuext" else "//contrib/netbsd-tests/lib/libc/regex:data/" + case + ".in"),
+    expected = "empty.out", expected_stderr = "empty.out",
+    runtime_lib = ["//lib/libregex:regex_shared"],
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+ for case in _CASES + ["gnuext"] for mode, args in [("default", []), ("large", ["-el"]), ("backref", ["-er"])]]
+
+# Installed test binaries use system loader paths, not private suite RPATHs.
+[cc_binary(name = name,
+    srcs = ["//contrib/netbsd-tests/lib/libc/regex:" + source],
+    deps = ["//lib/libregex:regex", "//lib/libnetbsd:cdefs_header", "//lib/atf/libatf-c:atf_c"] + (["//lib/libnetbsd:util_header"] if name == "regex_att_test" else []),
+    dynamic_deps = ["//lib/libregex:regex_shared", "//lib/atf/libatf-c:atf_c_shared"] + (["//lib/libutil:util_shared"] if name == "regex_att_test" else []),
+    local_defines = ["REGEX_SPENCER", "SKIP_LEFTASSOC"], copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for name, source in [("exhaust_installed", "t_exhaust.c"), ("regex_att_test", "t_regex_att.c")]]
+alias(name = "h_regex", actual = ":h_regex_shared")
+load(":installation.bzl", "test_installation")
+test_installation(name = "install_manifest")

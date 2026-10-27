@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# NVMe package configuration only; devd executable migration is separate.
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+bsd_install_file(name = "nvme_config", src = "nvmf.conf", destination = "/etc/devd/nvmf.conf",
+    owner = "root", group = "wheel", mode = "0644", install_tags = ["package=nvme-tools", "config"])
+bsd_install_manifest(name = "nvme_install_manifest", entries = [":nvme_config"], visibility = ["//visibility:public"])

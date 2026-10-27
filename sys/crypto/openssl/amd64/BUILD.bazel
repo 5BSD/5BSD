@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//crypto/openssl:crypto_sources_amd64.bzl", "AMD64_ASM_SOURCES")
+exports_files([label.split(":", 1)[1] for label in AMD64_ASM_SOURCES if label.startswith("//sys/crypto/openssl/amd64:")],
+    visibility = ["//secure/lib/libcrypto:__pkg__"])
+
+exports_files(["e_padlock-x86_64.S"], visibility = ["//secure/lib/libcrypto/engines:__pkg__"])

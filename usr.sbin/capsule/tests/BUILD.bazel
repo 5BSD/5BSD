@@ -1,0 +1,210 @@
+load(":installation_data.bzl", "TEST_DIRECTORIES")
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+# Shared test utility: use the maintained implementation for every consumer.
+cc_binary(
+    name = "capd_test_guardian",
+    srcs = ["capd_test_guardian.c"],
+    linkstatic = True,
+    linkopts = ["-static"],
+    visibility = ["//visibility:public"],
+)
+exports_files(["capd_test_harness.sh"], visibility = ["//visibility:public"])
+
+exports_files(["capd_test_guardian.c"], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+# Pure request/decision helpers; these do not run Capsule or drive PID 1.
+_LOGIC_CASES = {'req_validate_test': ['boot_request_validation', 'bluetooth_network_requests', 'strict_wire_shape', 'service_request_validation'], 'capsule_lifecycle_test': ['reboot_ops_set_howto_and_death', 'single_clears_reboot_keeps_howto', 'reroot_touches_nothing_else', 'rescan_is_state_gated', 'catatonia_is_state_gated', 'unknown_op_is_invalid', 'lifecycle_permits_only_pid1'], 'capsule_plane_test': ['disabling_values', 'plane_keeping_values']}
+# Compile identical sources/options for installed and host-test consumers. Only
+# the latter receives a suite-local transitive RPATH (including libc -> libsys);
+# installation uses the original name and has no added runtime search path.
+[cc_binary(name = program + suffix, srcs = [program + ".c"],
+    deps = ["//usr.sbin/capsule:test_headers", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []),
+    visibility = ["//visibility:public"])
+ for program in _LOGIC_CASES for suffix in ["", "_kyua"]]
+_C_ATF_RUNTIME = {
+    "//lib/atf/libatf-c:atf_c_shared": "libprivateatf-c.so.1",
+    "@bsd_sdk//toolchain:sysroot/lib/libc.so.7": "libc.so.7",
+    "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7": "libsys.so.7",
+}
+[bsd_kyua_test(name = program + "_" + case, case_name = case, interface = "atf", program = ":" + program + "_kyua",
+    case_timeout = 60, clean_environment = True, size = "small",
+    kyua = "@bsd_sdk//toolchain:extra_kyua",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime", "@bsd_sdk//toolchain:python_stdlib", "//tools/build/bazel:libmd_environment.py"],
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py", runtime_libraries = _C_ATF_RUNTIME)
+ for program, cases in _LOGIC_CASES.items() for case in cases]
+test_suite(name = "logic_host_tests", tests = [":" + program + "_" + case
+    for program, cases in _LOGIC_CASES.items() for case in cases], visibility = ["//visibility:public"])
+
+# Release tests mock the kernel calls in the maintained source; ambient tests
+# use real descriptors and require a matching cap_clofork ABI for successful pins.
+_RELEASE_CASES = ["explicit_error_and_retry", "auto_error_and_shared_reference", "sweep_preserves_policy_and_failed_claims"]
+_AMBIENT_CASES = ["negative_fd_rejected", "pin_sets_cloexec_and_clofork", "second_install_closes_first"]
+[cc_binary(name = program + suffix, srcs = [program + ".c"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/capsule:" + ("release_test_includes" if program == "system_release_test" else "test_headers")],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"] + (["-ffunction-sections", "-fdata-sections"] if program == "system_release_test" else []),
+    linkopts = ["-pie"] + (["-Wl,--gc-sections"] if program == "system_release_test" else []) + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []),
+    visibility = ["//visibility:public"])
+ for program in ["system_release_test", "capsule_ambient_test"] for suffix in ["", "_kyua"]]
+[bsd_kyua_test(name = program + "_" + case, case_name = case, interface = "atf", program = ":" + program + "_kyua",
+    case_timeout = 60, clean_environment = True, size = "small",
+    kyua = "@bsd_sdk//toolchain:extra_kyua",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime", "@bsd_sdk//toolchain:python_stdlib", "//tools/build/bazel:libmd_environment.py"],
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py", runtime_libraries = _C_ATF_RUNTIME,
+    tags = ["manual", "requires-matching-kernel"] if program == "capsule_ambient_test" and case != "negative_fd_rejected" else [])
+ for program, cases in {"system_release_test": _RELEASE_CASES, "capsule_ambient_test": _AMBIENT_CASES}.items() for case in cases]
+test_suite(name = "release_host_tests", tests = [":system_release_test_" + c for c in _RELEASE_CASES] + [":capsule_ambient_test_negative_fd_rejected"], visibility = ["//visibility:public"])
+test_suite(name = "ambient_kernel_tests", tests = [":capsule_ambient_test_" + c for c in _AMBIENT_CASES if c != "negative_fd_rejected"], tags = ["manual"], visibility = ["//visibility:public"])
+
+# Preserve Make's static linkage and targeted allocator-failure injection.
+cc_binary(name = "config_test", srcs = ["config_test.c", "//usr.sbin/capsule:config.c", "//usr.sbin/capsule:protected_crypto.c"],
+    deps = ["//usr.sbin/capsule:test_headers", "//lib/atf/libatf-c:atf_c", "//lib/libcapsulert:capsulert", "//lib/libucl:ucl", "//lib/libmd:md_link"],
+    linkstatic = True, linkopts = ["-static", "-Wl,--wrap=malloc", "-Wl,--wrap=calloc"], visibility = ["//visibility:public"])
+_CONFIG_CASES = ['storage_allocation_failure', 'storage_dynamic_lifetime', 'storage_policy_file', 'crypto_boot_policy', 'installation_policy', 'host_identity', 'storage_inputs', 'storage_conflicts', 'selected_inputs', 'invalid_policy_is_atomic', 'no_external_inputs', 'descriptor_inputs', 'shipped_policy', 'shipped_examples']
+[bsd_kyua_test(name = "config_test_" + case, case_name = case, interface = "atf", program = ":config_test",
+    kyua = "@bsd_sdk//toolchain:extra_kyua", case_timeout = 60, size = "small", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime", "@bsd_sdk//toolchain:python_stdlib"],
+    suite_files = dict([("//usr.sbin/capsule:capsule-daemon.conf", "capsule-daemon.conf")] +
+        [("//usr.sbin/capsule:examples/" + n + ".conf", n + ".conf") for n in ["desktop", "server", "embedded", "broker"]]),
+    tags = ["manual", "requires-installation-policy"] if case == "installation_policy" else []) for case in _CONFIG_CASES]
+test_suite(name = "config_host_tests", tests = [":config_test_" + case for case in _CONFIG_CASES if case != "installation_policy"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_link_sequence.bzl", "bsd_link_sequence")
+_STORAGE_LIBRARIES = ["//lib/libmd:md_link", "//lib/libtrustedzfs:trustedzfs", "//cddl/lib/libzfs:zfs", "//cddl/lib/libzutil:zutil", "//cddl/lib/libnvpair:nvpair", "//cddl/lib/libspl:spl", "//lib/libthr:thr", "//lib/libcapsulert:capsulert", "//lib/libucl:ucl"]
+# Declare root static-library precedence before transitive dependencies.
+bsd_link_sequence(name = "storage_link_sequence", object_groups = ["//usr.sbin/capsule:test_storage_objects"], deps = ["//lib/atf/libatf-c:atf_c"] + _STORAGE_LIBRARIES + ["//usr.sbin/capsule:test_headers", "//usr.sbin/capsule:test_storage_objects", "//tests/sys/zfshandle:test_headers"])
+bsd_link_sequence(name = "import_link_sequence", object_groups = [":storage_config_objects", "//usr.sbin/capsule:test_storage_objects"], deps = ["//lib/atf/libatf-c:atf_c"] + _STORAGE_LIBRARIES + [":storage_config_objects", "//usr.sbin/capsule:test_headers", "//usr.sbin/capsule:test_storage_objects", "//sys/contrib/openzfs:spl_headers", "//cddl/compat/opensolaris/include:headers"])
+cc_binary(name = "storage_test", srcs = ["storage_test.c", "//usr.sbin/capsule:config.c"],
+    deps = [":storage_link_sequence"],
+    linkstatic = True, linkopts = ["-static"], visibility = ["//visibility:public"])
+# import_test itself includes libzfs headers and needs the same wrapper context.
+cc_binary(name = "import_test", srcs = ["import_test.c", "//sys/modules/zfs:zfs_config.h"],
+    deps = [":import_link_sequence"],
+    local_defines = ["IN_BASE", "NEED_SOLARIS_BOOLEAN"],
+    copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h", "-include", "sys/modules/zfs/zfs_config.h"],
+    linkstatic = True, linkopts = ["-static"], visibility = ["//visibility:public"])
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "storage_config_objects", srcs = ["//usr.sbin/capsule:config.c"],
+    deps = ["//usr.sbin/capsule:test_headers", "//lib/libcapsulert:capsulert", "//lib/libucl:ucl", "//lib/libmd:md_link"], alwayslink = True)
+[bsd_kyua_test(name = program + "_" + case, case_name = case, interface = "atf", program = ":" + program,
+    kyua = "@bsd_sdk//toolchain:extra_kyua", case_timeout = 60, size = "small", clean_environment = True,
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime"])
+ for program, case in {"import_test": "import_admission", "storage_test": "no_ambient_anchor"}.items()]
+# disk_import_and_binding needs a disposable VM, root and an explicit scratch disk;
+# its runnable target and declared zfs/zpool runtime are still pending.
+
+# Keep the existing static guardian for its declared consumers; install Make's
+# ordinary dynamic helper variant with the maintained program name.
+cc_binary(name = "capd_test_guardian_dynamic", srcs = ["capd_test_guardian.c"],
+    copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
+cc_binary(name = "capd_bootstrap_fixture", srcs = ["capd_bootstrap_fixture.c"],
+    deps = ["//lib/libcapsulert:headers", "//sys/dev/mac_capability:ioctl_headers"],
+    copts = ["-fPIE"], linkopts = ["-pie"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_SHELL_PROGRAMS = ["capsule_config_cli_test", "capsule_daemon_test", "capsule_init_test", "capsule_daemon_lifecycle_test", "capsule_bootstrap_test", "capd_test_guardian_test", "capsule_boot_test"]
+_ATF_PROGRAMS = list(_LOGIC_CASES.keys()) + ["capsule_ambient_test", "system_release_test", "config_test", "storage_test", "import_test"]
+_INSTALLED_BINARIES = _ATF_PROGRAMS + ["capd_test_guardian", "capd_bootstrap_fixture"]
+[bsd_script_wrapper(name = program, body = program + ".sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect") for program in _SHELL_PROGRAMS]
+[utility_installation(name = "install_" + program, program = program, manual = "", package = "capsule-tests",
+    bindir = "/usr/tests/usr.sbin/capsule", binary = ":capd_test_guardian_dynamic" if program == "capd_test_guardian" else None) for program in _INSTALLED_BINARIES]
+_FILES = [(program, ":" + program, "0555") for program in _SHELL_PROGRAMS] + [
+    ("capd_test_harness.sh", "capd_test_harness.sh", "0444"),
+    ("loader-defaults.conf", "//stand/defaults:loader.conf", "0444"),
+    ("run_capsule_vm_boot_test.sh", "run_capsule_vm_boot_test.sh", "0555"),
+    ("run_capsule_vm_image_test.sh", "run_capsule_vm_image_test.sh", "0555"),
+    ("capsule-daemon.conf", "//usr.sbin/capsule:capsule-daemon.conf", "0444")] + [
+    (n + ".conf", "//usr.sbin/capsule:examples/" + n + ".conf", "0444") for n in ["desktop", "server", "embedded", "broker"]]
+[bsd_install_file(name = "install_file_" + name, src = source, destination = "/usr/tests/usr.sbin/capsule/" + name,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=capsule-tests"]) for name, source, mode in _FILES]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = sorted(_ATF_PROGRAMS + _SHELL_PROGRAMS),
+    interfaces = {program: "atf" for program in _ATF_PROGRAMS + _SHELL_PROGRAMS},
+    metadata = {program: '{"is_exclusive":"true"}' for program in ["capsule_init_test", "capsule_daemon_lifecycle_test", "capsule_bootstrap_test"]})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/usr.sbin/capsule/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=capsule-tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_file_" + name for name, _, _ in _FILES] + [":install_kyuafile"])
+bsd_install_archive(name = "install_archive", manifests = [":install_" + program for program in _INSTALLED_BINARIES] + [":install_extra"],
+    directories = TEST_DIRECTORIES,
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+
+bsd_install_manifest(name = "install_manifest",
+    entries = [":install_" + program + "_" + kind for program in _INSTALLED_BINARIES for kind in ["binary", "symbols_file"]] +
+        [":install_file_" + name for name, _, _ in _FILES] + [":install_kyuafile"],
+    visibility = ["//usr.sbin/capsule:__pkg__", "//packages/capsule-tests:__pkg__"])
+
+# Shell harness utilities use the source libc/Capsicum ABI. Run these on a
+# matching kernel; neither case starts Capsule as a daemon or invokes PID 1.
+_SHELL_TOOLS = ["//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//bin/cat:cat", "//bin/chmod:chmod", "//usr.bin/grep:grep", "//bin/ln:ln", "//bin/mkdir:mkdir", "//bin/cp:cp", "//usr.bin/sed:sed", "//bin/rm:rm"]
+_SHELL_RUNTIME = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libthr:thr_shared", "//lib/libutil:util_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"]
+_CAPSULE_RUNTIME = ["//lib/libchannel:channel_shared", "//lib/libcapability:capability_shared", "//lib/libcrypt:crypt_shared", "//lib/libcapsulert:capsulert_shared", "//lib/libucl:ucl_shared", "//lib/libservice:service_shared", "//lib/libtrustedzfs:trustedzfs_shared", "//cddl/lib/libzfs:zfs_shared", "//cddl/lib/libzutil:zutil_shared", "//cddl/lib/libnvpair:nvpair_shared", "//cddl/lib/libspl:spl_shared", "//cddl/lib/libzfs_core:zfs_core_shared", "//cddl/lib/libavl:avl_shared", "//lib/libexpat:bsdxml_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libgeom:geom_shared", "//lib/librt:rt_shared", "//cddl/lib/libumem:umem_shared", "//lib/libz:z_shared", "//lib/libsbuf:sbuf_shared"]
+bsd_atf_test(name = "capsule_config_cli_test_static_only", case_name = "static_only", body = "capsule_config_cli_test.sh",
+    subr = "//libexec/atf/atf-sh:shell_library", config_files = {"//usr.sbin/capsule:capsule": "capsule"},
+    runtime_bin = _SHELL_TOOLS, runtime_lib = _SHELL_RUNTIME + _CAPSULE_RUNTIME,
+    runner = "//tools/build/bazel:atf_runner", body_timeout_seconds = 120, size = "small", tags = ["manual", "requires-matching-kernel"])
+bsd_atf_test(name = "capsule_boot_test_platform_boot_defaults", case_name = "platform_boot_defaults", body = "capsule_boot_test.sh",
+    subr = "//libexec/atf/atf-sh:shell_library", data_paths = {"//stand/defaults:loader.conf": "loader-defaults.conf"},
+    runtime_bin = _SHELL_TOOLS, runtime_lib = _SHELL_RUNTIME,
+    runner = "//tools/build/bazel:atf_runner", body_timeout_seconds = 60, size = "small", tags = ["manual", "requires-matching-kernel"])
+test_suite(name = "configuration_shell_tests", tests = [":capsule_config_cli_test_static_only", ":capsule_boot_test_platform_boot_defaults"], tags = ["manual"], visibility = ["//visibility:public"])
+
+# Exercise procdesc lifecycle with the declared child executable. Installed
+# ATF tests retain /bin/sleep as their default; Bazel selects its built output.
+_GUARDIAN_CASES = ["explicit_kill", "lease_loss", "guardian_signal"]
+[bsd_atf_test(name = "capd_test_guardian_test_" + case, case_name = case,
+    body = "capd_test_guardian_test.sh", cleanup = True,
+    subr = "//libexec/atf/atf-sh:shell_library",
+    data_paths = {":capd_test_guardian_dynamic": "capd_test_guardian"},
+    config_files = {"//bin/sleep:sleep": "sleep"},
+    runtime_bin = _SHELL_TOOLS + ["//bin/sleep:sleep", "//usr.bin/mkfifo:mkfifo", "//bin/ps:ps"],
+    runtime_lib = _SHELL_RUNTIME + ["//lib/libkvm:kvm_shared", "//lib/libjail:jail_shared", "//lib/libxo/libxo:xo_shared", "//lib/libelf:elf_shared"],
+    runner = "//tools/build/bazel:atf_runner", body_timeout_seconds = 60,
+    cleanup_timeout_seconds = 30, size = "small", tags = ["manual", "requires-matching-kernel"])
+ for case in _GUARDIAN_CASES]
+test_suite(name = "guardian_shell_tests", tests = [":capd_test_guardian_test_" + case for case in _GUARDIAN_CASES],
+    tags = ["manual"], visibility = ["//visibility:public"])
+
+# These ordinary-process tests deliberately use Capsule's maintained -T mode.
+_DAEMON_CASES = ["foreground_lifecycle", "duplicate_pidfile"]
+[bsd_atf_test(name = "capsule_daemon_test_" + case, case_name = case,
+    body = "capsule_daemon_test.sh", cleanup = True,
+    subr = "//libexec/atf/atf-sh:shell_library",
+    config_files = {"//usr.sbin/capsule:capsule": "capsule"},
+    runtime_bin = _SHELL_TOOLS + ["//bin/sleep:sleep", "//bin/test:test", "//bin/kill:kill"],
+    runtime_lib = _SHELL_RUNTIME + _CAPSULE_RUNTIME,
+    runner = "//tools/build/bazel:atf_runner", body_timeout_seconds = 60,
+    cleanup_timeout_seconds = 30, size = "small", tags = ["manual", "requires-matching-kernel"])
+ for case in _DAEMON_CASES]
+test_suite(name = "daemon_shell_tests", tests = [":capsule_daemon_test_" + case for case in _DAEMON_CASES],
+    tags = ["manual"], visibility = ["//visibility:public"])
+
+# Bootstrap protocol uses the maintained mock service manager, not an installed
+# Switchboard. Requires a matching, plane-off test kernel with the declared MAC
+# modules; building these targets does not establish those prerequisites.
+_BOOTSTRAP_CASES = ["bootstrap_starts_switchboard", "bootstrap_channel_ping", "control_reload_reaches_switchboard", "bootstrap_channel_loss_kills_switchboard", "bootstrap_ready_logged", "bootstrap_restart_on_crash", "bootstrap_clean_shutdown", "ambient_signals_denied_control_shutdown_allowed", "bootstrap_no_service_manager"]
+[bsd_atf_test(name = "capsule_bootstrap_test_" + case, case_name = case,
+    body = "capsule_bootstrap_test.sh", cleanup = True,
+    subr = "//libexec/atf/atf-sh:shell_library",
+    data = ["capd_test_harness.sh"],
+    data_paths = {":capd_bootstrap_fixture": "capd_bootstrap_fixture", "//tests/sys/mac_capability:mac_capability_shield_helper": "mac_capability_shield_helper"},
+    config_files = {"//usr.sbin/capsule:capsule": "capd_capsule", ":capd_test_guardian_dynamic": "capd_guardian", "//tests/sys/mac_capability:mac_capability_shield_helper": "capd_shield_helper"},
+    runtime_bin = _SHELL_TOOLS + ["//bin/sleep:sleep", "//bin/test:test", "//bin/ps:ps", "//bin/dd:dd", "//usr.bin/mkfifo:mkfifo", "//usr.bin/nc:nc", "//usr.bin/hexdump:od", "//usr.bin/awk:awk", "//usr.bin/tail:tail", "//usr.bin/mktemp:mktemp"],
+    runtime_lib = _SHELL_RUNTIME + _CAPSULE_RUNTIME + ["//lib/libkvm:kvm_shared", "//lib/libjail:jail_shared", "//lib/libxo/libxo:xo_shared", "//lib/libelf:elf_shared", "//lib/libipsec:ipsec_shared", "//lib/libstats:stats_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared", "//lib/libnv:nv_shared"],
+    runner = "//tools/build/bazel:atf_runner", body_timeout_seconds = 120,
+    cleanup_timeout_seconds = 60, size = "medium", tags = ["manual", "requires-matching-kernel", "requires-root", "exclusive"])
+ for case in _BOOTSTRAP_CASES]
+test_suite(name = "bootstrap_shell_tests", tests = [":capsule_bootstrap_test_" + case for case in _BOOTSTRAP_CASES],
+    tags = ["manual"], visibility = ["//visibility:public"])

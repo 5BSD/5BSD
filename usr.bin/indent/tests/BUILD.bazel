@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":format_tests.bzl", "format_tests")
+format_tests()

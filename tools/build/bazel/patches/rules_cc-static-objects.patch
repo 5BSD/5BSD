@@ -1,0 +1,12 @@
+--- a/cc/private/rules_impl/cc_static_library.bzl
++++ b/cc/private/rules_impl/cc_static_library.bzl
+@@ -43,8 +43,7 @@
+     for linker_input in linker_inputs.to_list():
+         for lib in linker_input.libraries:
+             if lib._contains_objects:
+-                transitive_objects.append(depset(lib.pic_objects))
+-                transitive_objects.append(depset(lib.objects))
++                transitive_objects.append(depset(lib.pic_objects or lib.objects))
+ 
+     return depset(transitive = transitive_objects, order = "topological")
+ 

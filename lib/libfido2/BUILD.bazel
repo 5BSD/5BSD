@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "fido2", srcs = ['//contrib/libfido2:src/aes256.c', '//contrib/libfido2:src/assert.c', '//contrib/libfido2:src/authkey.c', '//contrib/libfido2:src/bio.c', '//contrib/libfido2:src/blob.c', '//contrib/libfido2:src/buf.c', '//contrib/libfido2:src/cbor.c', '//contrib/libfido2:src/compress.c', '//contrib/libfido2:src/config.c', '//contrib/libfido2:src/cred.c', '//contrib/libfido2:src/credman.c', '//contrib/libfido2:src/dev.c', '//contrib/libfido2:src/ecdh.c', '//contrib/libfido2:src/eddsa.c', '//contrib/libfido2:src/err.c', '//contrib/libfido2:src/es256.c', '//contrib/libfido2:src/es384.c', '//contrib/libfido2:src/hid_freebsd.c', '//contrib/libfido2:src/hid_unix.c', '//contrib/libfido2:src/hid.c', '//contrib/libfido2:src/info.c', '//contrib/libfido2:src/io.c', '//contrib/libfido2:src/iso7816.c', '//contrib/libfido2:src/largeblob.c', '//contrib/libfido2:src/log.c', '//contrib/libfido2:src/pin.c', '//contrib/libfido2:src/random.c', '//contrib/libfido2:src/reset.c', '//contrib/libfido2:src/rs1.c', '//contrib/libfido2:src/rs256.c', '//contrib/libfido2:src/time.c', '//contrib/libfido2:src/touch.c', '//contrib/libfido2:src/tpm.c', '//contrib/libfido2:src/types.c', '//contrib/libfido2:src/u2f.c', '//contrib/libfido2:src/util.c', '//contrib/libfido2:openbsd-compat/freezero.c'], deps = ["//contrib/libfido2:headers", "//lib/libcbor:cbor", "//secure/lib/libcrypto:crypto", "//lib/libz:z"],
+    local_defines = ['_FIDO_INTERNAL', 'HAVE_ARC4RANDOM_BUF', 'HAVE_ASPRINTF', 'HAVE_CLOCK_GETTIME', 'HAVE_DEV_URANDOM', 'HAVE_ERR_H', 'HAVE_EXPLICIT_BZERO', 'HAVE_GETLINE', 'HAVE_GETOPT', 'HAVE_GETPAGESIZE', 'HAVE_GETRANDOM', 'HAVE_OPENSSLV_H', 'HAVE_READPASSPHRASE', 'HAVE_SIGNAL_H', 'HAVE_STRLCAT', 'HAVE_STRLCPY', 'HAVE_STRSEP', 'HAVE_SYSCONF', 'HAVE_SYS_RANDOM_H', 'HAVE_TIMESPECSUB', 'HAVE_TIMINGSAFE_BCMP', 'HAVE_UNISTD_H', 'OPENSSL_API_COMPAT=0x10100000L', 'TLS=__thread', '_FIDO_MAJOR=1', '_FIDO_MINOR=14', '_FIDO_PATCH=0'], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":fido2"], visibility = ["//visibility:public"])
+# ABI version inherited from lib/Makefile.inc.
+cc_shared_library(name = "fido2_shared", deps = [":fido2"], dynamic_deps = ["//lib/libcbor:cbor_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libz:z_shared"], shared_lib_name = "libprivatefido2.so.5",
+    user_link_flags = ["-Wl,-z,defs", "-Wl,-soname,libprivatefido2.so.5", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ssh","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

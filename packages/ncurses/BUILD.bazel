@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_pkg_layout.bzl", "bsd_pkg_layout")
+load("//tools/build/bazel:bsd_pkg_manifest.bzl", "bsd_pkg_manifests")
+load("//tools/build/bazel:bsd_pkg_create.bzl", "bsd_pkg_create")
+
+_MANIFESTS = ['//lib/ncurses/tinfo:library_manual_manifest', '//lib/ncurses/tinfo:pkgconfig_manifest', '//lib/ncurses/ncurses:install_manifest', '//lib/ncurses/form:install_manifest', '//lib/ncurses/menu:install_manifest', '//lib/ncurses/panel:install_manifest', '//usr.bin/ncurses:tic_install_manifest', '//usr.bin/ncurses:tput_install_manifest', '//usr.bin/ncurses:infocmp_install_manifest', '//usr.bin/ncurses:toe_install_manifest', '//usr.bin/ncurses:tabs_install_manifest', '//usr.bin/ncurses:clear_install_manifest', '//usr.bin/ncurses:tset_install_manifest', '//share/tabset:install_manifest', '//share/termcap:install_manifest', '//etc/termcap:distribution_manifest']
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = _MANIFESTS,
+    directories = {directory: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ncurses","dbg"]}' for directory in ["/usr/lib/debug/lib", "/usr/lib/debug/usr", "/usr/lib/debug/usr/lib", "/usr/lib/debug/usr/bin"]} | {directory: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ncurses-lib"]}' for directory in ["/usr/share/misc", "/usr/share/tabset"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+# Package membership and dependencies are source-owned. The shared library
+# package has no automatic base dependency, matching the maintained generator.
+bsd_pkg_layout(
+    name = "package_layout",
+    manifests = _MANIFESTS,
+    packages = ["ncurses", "ncurses-dbg", "ncurses-dev", "ncurses-lib"] + select({
+        "//tools/build/bazel/config:split_manpages_enabled": ["ncurses-man"],
+        "//conditions:default": [],
+    }),
+    suffix_tags = ["dbg", "dev", "lib"],
+    dependencies = select({
+        "//tools/build/bazel/config:split_manpages_enabled": {
+            "ncurses-dbg": ["ncurses"], "ncurses-dev": ["ncurses"], "ncurses-man": ["ncurses"],
+        },
+        "//conditions:default": {"ncurses-dbg": ["ncurses"], "ncurses-dev": ["ncurses"]},
+    }),
+)
+
+bsd_pkg_manifests(
+    name = "package_manifests",
+    layout = ":package_layout",
+    version = "//tools/build/bazel/config:package_version",
+    templates = select({
+        "//tools/build/bazel/config:split_manpages_enabled": {
+            "ncurses": "ncurses.ucl", "ncurses-dbg": "ncurses.ucl", "ncurses-dev": "ncurses.ucl",
+            "ncurses-lib": "ncurses.ucl", "ncurses-man": "ncurses.ucl",
+        },
+        "//conditions:default": {
+            "ncurses": "ncurses.ucl", "ncurses-dbg": "ncurses.ucl", "ncurses-dev": "ncurses.ucl", "ncurses-lib": "ncurses.ucl",
+        },
+    }),
+    prefix = "5BSD",
+    maintainer = "re@5bsd.org",
+    www = "https://github.com/5BSD/5BSD",
+    license_logic = "single",
+    licenses = ["BSD2CLAUSE"],
+    annotations = {"set": "minimal,minimal-jail"},
+    generator = "//release/packages:generate-ucl.lua",
+    flua = "@bsd_sdk//toolchain:extra_flua",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_flua_runtime"],
+)
+
+bsd_pkg_create(
+    name = "packages",
+    manifests = ":package_manifests",
+    archive = ":install_archive",
+    abi_file = "//usr.bin/ncurses:tic",
+    osversion_header = "//sys/sys:param.h",
+    format = "tzst",
+    threads = "//tools/build/bazel/config:package_threads",
+    epoch = 0,
+    pkg = "@bsd_sdk//toolchain:extra_pkg",
+    tar = "@bsd_sdk//toolchain:extra_tar",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_pkg_runtime", "@bsd_sdk//toolchain:extra_tar_runtime"],
+)

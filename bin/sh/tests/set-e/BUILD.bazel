@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//bin/sh/tests:installation.bzl", "shell_test_group")
+
+shell_test_group(
+    fixtures = [
+        "and1.0",
+        "and2.1",
+        "and3.0",
+        "and4.0",
+        "background1.0",
+        "cmd1.0",
+        "cmd2.1",
+        "elif1.0",
+        "elif2.0",
+        "eval1.0",
+        "eval2.1",
+        "for1.0",
+        "func1.0",
+        "func2.1",
+        "if1.0",
+        "if2.0",
+        "if3.0",
+        "not1.0",
+        "not2.0",
+        "or1.0",
+        "or2.0",
+        "or3.1",
+        "pipe1.1",
+        "pipe2.0",
+        "return1.0",
+        "semi1.1",
+        "semi2.1",
+        "subshell1.0",
+        "subshell2.1",
+        "until1.0",
+        "until2.0",
+        "until3.0",
+        "while1.0",
+        "while2.0",
+        "while3.0"
+],
+)

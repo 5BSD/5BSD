@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_test(
+    name = "api",
+    srcs = ["api_test.c"],
+    deps = ["//lib/ncurses/panel:panel", "//lib/ncurses/ncurses:ncurses", "//lib/ncurses/menu:menu", "//lib/ncurses/form:form"],
+    dynamic_deps = ["//lib/ncurses/panel:panel_shared", "//lib/ncurses/ncurses:ncurses_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/ncurses/menu:menu_shared", "//lib/ncurses/form:form_shared"],
+    features = ["bsd_test_runtime_paths"],
+    size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)

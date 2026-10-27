@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["crypt-des.c", "crypt-blowfish.c", "blowfish.c"], visibility = ["//lib/libcrypt:__pkg__"])
+cc_library(name = "headers", hdrs = ["blowfish.h"], strip_include_prefix = ".", visibility = ["//lib/libcrypt:__pkg__"])

@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["geom_bsd_enc.c"], visibility = ["//sbin/newfs:__pkg__"])

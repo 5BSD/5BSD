@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["tcp_stats.c"], visibility = ["//lib/libstats:__pkg__"])

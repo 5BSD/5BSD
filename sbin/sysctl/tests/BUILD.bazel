@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# Matches NO_SHARED.query_error_test; the embedded command has no JAIL/DTrace defines.
+cc_binary(name = "query_error_test", srcs = ["query_error_test.c"],
+    deps = ["//sbin/sysctl:query_test_inputs", "//lib/atf/libatf-c:atf_c"],
+    linkopts = ["-static"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+CASES = ["unknown_only", "lookup_failure", "read_failure", "actual_read"]
+[bsd_atf_test(
+    name = "native_" + case, case_name = case,
+    interface = "program", body = ":query_error_test",
+    runner = "//tools/build/bazel:atf_runner", size = "small",
+) for case in CASES]
+test_suite(name = "query_tests", tests = [":native_" + case for case in CASES], visibility = ["//visibility:public"])
+
+SHELL_CASES = ['sysctl_aflag', 'sysctl_aflag_jail', 'sysctl_by_name', 'sysctl_nflag', 'sysctl_eflag', 'sysctl_tflag', 'sysctl_dflag', 'sysctl_tflag_dflag', 'sysctl_nflag_tflag_dflag']
+[bsd_atf_test(name = "native_" + case, case_name = case,
+    body = "sysctl_test.sh", subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ['//bin/sh:sh', '//libexec/atf/atf-sh:atf-sh', '//libexec/atf/atf-check:atf-check', '//usr.sbin/jail:jail', '//sbin/sysctl:sysctl', '//bin/cat:cat', '//usr.bin/tr:tr', '//usr.bin/diff:diff', '//usr.bin/dirname:dirname', '//usr.bin/basename:basename', '//usr.bin/grep:grep', '//usr.bin/sed:sed', '//bin/rm:rm'],
+    runtime_lib = ['//lib/atf/libatf-c:atf_c_shared', '//lib/atf/libatf-c++:atf_cxx_shared', '//lib/libc++:cxx_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/msun:m_shared', '//lib/libedit:edit_shared', '//lib/ncurses/tinfo:tinfo_shared', '@bsd_sdk//toolchain:sysroot/lib/libc.so.7', '@bsd_sdk//toolchain:sysroot/lib/libsys.so.7', '@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1', '//lib/libutil:util_shared', '//lib/libkvm:kvm_shared', '//lib/libelf:elf_shared', '//lib/libjail:jail_shared', '//lib/libregex:regex_shared', '//lib/libmd:md_shared', '//lib/libxo/libxo:xo_shared', '//lib/libnv:nv_shared', '//lib/libcasper/libcasper:casper_shared', '//lib/libcasper/services/cap_fileargs:cap_fileargs_shared', '//lib/libgeom:geom_shared', '//lib/libufs:ufs_shared', '//lib/libexpat:bsdxml_shared', '//lib/libsbuf:sbuf_shared'],
+    runner = "//tools/build/bazel:atf_runner", size = "medium",
+) for case in SHELL_CASES]
+test_suite(name = "shell_tests", tests = [":native_" + case for case in SHELL_CASES], visibility = ["//visibility:public"])
+test_suite(name = "tests", tests = [":query_tests", ":shell_tests"], visibility = ["//visibility:public"])
+
+# Installed ATF programs use the same package/debug transformations as utilities.
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+bsd_script_wrapper(name = "sysctl_test", body = "sysctl_test.sh",
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD",
+    names = ["query_error_test", "sysctl_test"],
+    interfaces = {"query_error_test": "atf", "sysctl_test": "atf"})
+bsd_install_file(name = "install_shell", src = ":sysctl_test",
+    destination = "/usr/tests/sbin/sysctl/sysctl_test", owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/sbin/sysctl/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+utility_installation(name = "install_manifest", program = "query_error_test",
+    manual = None, package = "tests", bindir = "/usr/tests/sbin/sysctl",
+    extra_entries = [":install_shell", ":install_kyuafile"])

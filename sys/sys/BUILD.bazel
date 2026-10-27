@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["param.h"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(
+    name = "md_headers",
+    hdrs = ["md4.h", "md5.h"],
+    strip_include_prefix = "/sys/sys",
+    include_prefix = "sys",
+    visibility = ["//lib/libmd:__pkg__"],
+)
+
+cc_library(
+    name = "nv_headers",
+    hdrs = ["nv.h", "cnv.h", "dnv.h"],
+    strip_include_prefix = "/sys/sys",
+    include_prefix = "sys",
+    visibility = ["//lib/libnv:__pkg__", "//lib/libcasper/libcasper:__pkg__"],
+)
+
+cc_library(name = "elf_headers", hdrs = ["elf32.h", "elf64.h", "elf_common.h"],
+    strip_include_prefix = "/sys/sys", include_prefix = "sys", visibility = ["//visibility:public"])
+
+exports_files(["priv.h"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+
+cc_library(name = "sbuf_headers", hdrs = ["sbuf.h"], strip_include_prefix = "/sys", visibility = ["//lib/libsbuf:__pkg__"])
+
+cc_library(name = "iconv_headers", hdrs = ["iconv.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+# Isolated target constants for host/bootstrap consumers, without ABI headers.
+cc_library(name = "elf_common_header", hdrs = ["elf_common.h"],
+    strip_include_prefix = "/sys/sys", include_prefix = "sys", visibility = ["//visibility:public"])
+
+cc_library(name = "cap_authority_header", hdrs = ["cap_authority.h"],
+    strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "cap_process_header", hdrs = ["cap_process.h"],
+    strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "zfshandle_header", hdrs = ["zfshandle.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "capimage_headers", hdrs = ["capimage.h", "capimage_elf.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "envfd_header", hdrs = ["envfd.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "cryptodesc_header", hdrs = ["cryptodesc.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+exports_files(["socket.h"], visibility = ["//usr.bin/getaddrinfo:__pkg__"])

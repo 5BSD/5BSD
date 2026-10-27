@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+# Native equivalents of the three maintained regress.sh command/fixture cases.
+[bsd_compare_test(name = "legacy_" + case, program = "//usr.bin/comm:comm",
+    arguments = [] if case == "02" else ["-12"],
+    file_arguments = ["regress." + case + "a.in", "regress." + case + "b.in"],
+    expected = "regress." + case + ".out", runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small") for case in ["00", "01", "02"]]

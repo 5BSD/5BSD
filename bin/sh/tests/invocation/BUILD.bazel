@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//bin/sh/tests:installation.bzl", "shell_test_group")
+
+shell_test_group(
+    fixtures = [
+        "sh-ac1.0",
+        "sh-c-missing1.0",
+        "sh-c1.0",
+        "sh-ca1.0",
+        "sh-fca1.0"
+],
+)

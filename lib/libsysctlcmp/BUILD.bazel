@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
+exports_files(["sysctlcmp.fidl"])
+bsd_fidl_ir(name = "sysctl_ir", schemas = ["sysctlcmp.fidl"], available = "bsd:1",
+    compiler = "//tools/build/fuchsia/fidlc:fidlc",
+    runtime_libraries = ["//lib/libmd:md_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"])
+bsd_fidl_bindings(name = "sysctl_bindings", ir = ":sysctl_ir",
+    generator = "//tools/build/fuchsia:fidlgen-build.py", modules = ["//tools/build/fuchsia:binding_modules"],
+    templates = ["@fuchsia_runtime_src//:binding_templates"],
+    sources = ["fidl/bsd.sysctl.v1/" + name for name in ["cpp/natural_types.cc", "cpp/common_types.cc", "c/bsd.cc"]],
+    headers = ["fidl/bsd.sysctl.v1/" + name for name in ["cpp/markers.h", "cpp/common_types.h", "cpp/natural_types.h", "cpp/bsd.h", "c/bsd.h", "c/bridge.h"]],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+filegroup(name = "binding_sources", srcs = [":sysctl_bindings"], output_group = "sources")
+filegroup(name = "binding_headers", srcs = [":sysctl_bindings"], output_group = "headers")
+cc_library(name = "generated_headers", hdrs = [":binding_headers"], strip_include_prefix = "sysctl_bindings", visibility = ["//lib/libsysctlcmp/tests:__pkg__", "//usr.sbin/BSDSysctl:__pkg__", "//usr.sbin/BSDSysctl/tests:__pkg__"])
+# Make sets STATIC_CFLAGS, not STATIC_CXXFLAGS: C++ static objects are non-PIC.
+# cc_shared_library consumes the separately compiled PIC variant.
+cc_library(name = "generated_bindings", srcs = [":binding_sources"],
+    deps = [":generated_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"], copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, visibility = ["//lib/libsysctlcmp/tests:__pkg__"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "headers", hdrs = ["sysctlcmp.h", "sysctlcmp_protocol.h", "sysctlcmp_server.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+cc_library(name = "objects", srcs = ["sysctlcmp.c", "sysctlcmp_legacy.c"], copts = ["-fPIC"], deps = [":headers", ":generated_headers", "//lib/libservice:headers", "//lib/libfidl:headers"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = "sysctlcmp", deps = [":objects", ":generated_bindings", "//lib/libservice:service", "//lib/libfidl:fidl", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/libthr:thr"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":objects", ":generated_bindings"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "sysctlcmp_shared", deps = [":sysctlcmp"],
+    dynamic_deps = ["//lib/libservice:service_shared", "//lib/libfidl:fidl_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libthr:thr_shared"],
+    shared_lib_name = "libsysctlcmp.so.1", user_link_flags = ["-Wl,-soname,libsysctlcmp.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+
+exports_files(["sysctlcmp_legacy.c"], visibility = ["//lib/libsysctlcmp/tests:__pkg__"])
+cc_library(name = "client_source_headers", textual_hdrs = ["sysctlcmp.c"], strip_include_prefix = ".",
+    deps = [":headers", ":generated_headers", "//lib/libfidl:headers", "//lib/libservice:headers"],
+    visibility = ["//lib/libsysctlcmp/tests:__pkg__", "//usr.sbin/BSDSysctl/tests:__pkg__"])
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Explicit library-only archive; aggregate test installation is declared below.
+bsd_install_archive(
+    name = "library_install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp"]}' for d in ["/usr/share/licenses/libsysctlcmp", "/usr/share/licenses/libsysctlcmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libsysctlcmp/tests:install_sysctlcmp_test", "//lib/libsysctlcmp/tests:install_client_strings_test", "//lib/libsysctlcmp/tests:install_extra"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp"]}' for d in ["/usr/share/licenses/libsysctlcmp", "/usr/share/licenses/libsysctlcmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {
+        "/usr/share/licenses/libsysctlcmp-tests": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-tests"]}',
+        "/usr/share/licenses/libsysctlcmp-tests/fuchsia": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-tests"]}',
+        "/usr/tests/lib/libsysctlcmp": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-tests"]}',
+        "/usr/lib/debug/usr": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-tests","dbg"]}',
+        "/usr/lib/debug/usr/tests": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-tests","dbg"]}',
+        "/usr/lib/debug/usr/tests/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-tests","dbg"]}',
+        "/usr/lib/debug/usr/tests/lib/libsysctlcmp": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsysctlcmp-tests","dbg"]}',
+    }, "//conditions:default": {}}),
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

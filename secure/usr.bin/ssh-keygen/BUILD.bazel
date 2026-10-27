@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//secure:ssh_program.bzl", "ssh_program")
+ssh_program(name = "ssh-keygen", srcs = ['//crypto/openssh:ssh-keygen.c', '//crypto/openssh:sshsig.c'], deps = ["//secure/lib/libcrypto:crypto"], dynamic_deps = ["//secure/lib/libcrypto:crypto_shared"])

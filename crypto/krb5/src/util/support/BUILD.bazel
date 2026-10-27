@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['base64.c', 'bcmp.c', 'dir_filenames.c', 'errors.c', 'fake-addrinfo.c', 'gmt_mktime.c', 'hashtab.c', 'hex.c', 'init-addrinfo.c', 'json.c', 'k5buf.c', 'path.c', 'plugins.c', 'strerror_r.c', 'threads.c', 'utf8.c', 'utf8_conv.c', 'zap.c', 't_base64.c', 't_hex.c', 't_json.c', 't_k5buf.c', 't_path.c', 't_unal.c', 't_utf8.c', 't_utf16.c'], visibility = ["//krb5/util/support:__pkg__"])
+cc_library(name = "headers", hdrs = ["cache-addrinfo.h", "supp-int.h"], includes = ["."], deps = ["//crypto/krb5/src/include:support_headers"], visibility = ["//krb5/util/support:__pkg__"])

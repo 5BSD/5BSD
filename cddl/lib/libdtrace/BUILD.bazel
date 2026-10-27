@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+bsd_lex(name = "lexer", src = "//cddl/contrib/opensolaris:lib/libdtrace/common/dt_lex.l", output = "dt_lex.c",
+    lex = "//usr.bin/lex:lex", m4 = "@bsd_sdk//toolchain:extra_m4",
+    runtime = ["@bsd_sdk//toolchain:extra_m4_runtime"])
+bsd_yacc(name = "parser", src = "//cddl/contrib/opensolaris:lib/libdtrace/common/dt_grammar.y", output = "dt_grammar.c", header = "dt_grammar.h",
+    yacc = "//usr.bin/yacc:yacc")
+bsd_script_output(name = "errtags", script = "//cddl/contrib/opensolaris:lib/libdtrace/common/mkerrtags.sh",
+    src = "//cddl/contrib/opensolaris:lib/libdtrace/common/dt_errtags.h", output = "dt_errtags.c",
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    path_tools = {"@bsd_sdk//toolchain:sed": "sed"}, runtime = ["@bsd_sdk//toolchain:sed_runtime", "@bsd_sdk//toolchain:sh_runtime"])
+bsd_script_output(name = "names", script = "//cddl/contrib/opensolaris:lib/libdtrace/common/mknames.sh",
+    src = "//sys/cddl/contrib/opensolaris:uts/common/sys/dtrace.h", output = "dt_names.c",
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    path_tools = {"@bsd_sdk//toolchain:awk": "nawk"}, runtime = ["@bsd_sdk//toolchain:awk_runtime", "@bsd_sdk//toolchain:sh_runtime"])
+bsd_script_output(name = "privileges", script = "mkpriv", src = "//sys/sys:priv.h", output = "priv.d", input_mode = "argument",
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    path_tools = {"@bsd_sdk//toolchain:awk": "awk", "@bsd_sdk//toolchain:cat": "cat"},
+    runtime = ["@bsd_sdk//toolchain:awk_runtime", "@bsd_sdk//toolchain:cat_runtime", "@bsd_sdk//toolchain:sh_runtime"])
+filegroup(name = "generated", srcs = [":lexer", ":parser", ":errtags", ":names", ":privileges"], visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load(":sources.bzl", "DTRACE_SOURCES")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+cc_library(name = "generated_headers", hdrs = [":parser_header"], deps = [":proc_compat_headers"], strip_include_prefix = ".")
+_LIBS = ["//cddl/lib/libctf:ctf", "//lib/libelf:elf", "//lib/libproc:proc", "//lib/librtld_db:rtld_db", "//lib/libxo/libxo:xo"]
+_SHARED = ["//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared", "//lib/librtld_db:rtld_db_shared", "//lib/libxo/libxo:xo_shared"]
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "implementation", srcs = DTRACE_SOURCES + [":lexer", ":parser_source", ":errtags", ":names"],
+    deps = ["//cddl/contrib/opensolaris:dtrace_headers"] + _LIBS,
+    implementation_deps = [":generated_headers", "//sys/cddl/dev/dtrace:layout_headers", "//sys/cddl/dev/dtrace/x86:headers", "//sys/cddl/dev/kinst:headers", "//sys/cddl/contrib/opensolaris:dtrace_intel_headers"],
+    local_defines = ["IN_BASE", "SKIP_SPL_SYS_CONDVAR_H", "HAVE_ISSETUGID", "DIS_MEM"],
+    copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"],
+    linkopts = ["-pthread"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+# Compile internals with Solaris compatibility headers; expose only the public API.
+cc_library(name = "dtrace", deps = [":public_headers"], implementation_deps = [":implementation"],
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":implementation"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "dtrace_shared", deps = [":dtrace"], dynamic_deps = _SHARED,
+    shared_lib_name = "libdtrace.so.2", user_link_flags = ["-Wl,-soname,libdtrace.so.2", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {
+        "/usr/lib/dtrace": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=dtrace"]}',
+        "/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=dtrace","dbg"]}',
+    },
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+cc_library(name = "proc_compat_headers", hdrs = ["libproc_compat.h"], strip_include_prefix = ".", visibility = ["//cddl/usr.sbin/plockstat:__pkg__"])
+
+filegroup(name = "package_abi", srcs = [":install_manifest_stripped"], visibility = ["//packages/dtrace:__pkg__"])
+
+# Public consumers must not inherit SPL's replacement assert.h and libc headers.
+cc_library(name = "public_headers", hdrs = ["//cddl/contrib/opensolaris:lib/libdtrace/common/dtrace.h"],
+    strip_include_prefix = "/cddl/contrib/opensolaris/lib/libdtrace/common",
+    deps = ["//contrib/elftoolchain:elf_headers", "//lib/libproc:headers", "//lib/librtld_db:headers"],
+    visibility = ["//visibility:public"])
