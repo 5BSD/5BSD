@@ -32113,3 +32113,35 @@ was performed. These components have no maintained Make tests. Privileged
 functional/I/O, static/DYNAMICROOT, other architectures, and performance remain
 qualification work. Frontend C/backend behavior needs no change for these
 explicit targets; existing input selection supports them.
+
+## Standalone dnctl native build and tests — 2026-10-27
+
+`//sbin/dnctl:dnctl` compiles the four maintained C sources and local header
+with native libutil. `:install_archive` includes the maintained tests under the
+existing tests setting. The program belongs to dummynet; tests belong to tests.
+The native ATF suite `//sbin/dnctl/tests:tests` includes the unchanged flow-layout
+C test and all three shell cases (syntax, rejects, config_file). Shell runtime
+inputs explicitly include native dnctl, shell, ATF tools, cat and dirname.
+The source dry-run branch returns before opening its Dummynet control socket.
+
+Qualification is partial: the ABI test passes, but all three shell cases abort
+in native dirname's cap_rights_intersect before executing their bodies. This
+matches the documented newer-source libc versus older-host Capsicum rights
+mismatch. Initial evidence also caught a missing dirname harness dependency;
+it was declared, not replaced with a host utility. Full suite failures remain
+in `/usr/obj/usr/src/bazel-dnctl-r2-20261027`. The complete suite is retained
+unchanged for matching-kernel qualification and is not labeled passed/skipped.
+
+Independent artifact/ABI-test selection via the same frontend succeeds in
+`/usr/obj/usr/src/bazel-dnctl-artifacts-20261027`, using 16 jobs. Make reference:
+`/usr/obj/usr/src/bazel-dnctl-make-20261027`. Comparisons pass 23 defined program
+globals, ordered util/c dependency metadata, PIE/NOW, absence of RPATH/RUNPATH,
+13 installation records, three byte-identical nonbinary files and two debug
+links. Archive SHA-256:
+`e14f1fe760d0d2627d7e59748d49bebc905d15167957b3498919683128737e2c`.
+
+No live shaper state was changed. Full shell-suite execution, live kernel
+control, static/other-platform configurations, and performance remain gates.
+The existing format-5 explicit targets/tests already carry these definitions;
+no frontend C or backend contract change is required. The manual records the
+suite and its runtime qualification requirement.

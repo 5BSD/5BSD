@@ -69,3 +69,11 @@ Native ggatec, ggated, and ggatel now build through the maintained frontend and
 match Make binary/install comparisons. The aggregate archive has ten records.
 The Bazel README records evidence, incremental-link observation, and remaining
 privileged I/O/static/platform qualification. No disk was attached or exported.
+
+## Subsequent progress: dnctl
+
+Native program and combined test installation match Make (13 records).
+Flow-layout ABI test passes. The complete four-case native suite is defined;
+three shell cases fail before their bodies in dirname because of the documented
+older-host/newer-source Capsicum mismatch. Preserve these failures and rerun on
+a matching kernel. The Bazel README records separate artifact and runtime evidence.

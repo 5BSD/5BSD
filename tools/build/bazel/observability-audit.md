@@ -2592,3 +2592,12 @@ and detach failures, and network connection lifecycle for audit/observability
 coverage. Do not infer userspace coverage from libthr probes or kernel GEOM
 instrumentation. Kernel module behavior and real device/network I/O remain
 unqualified by these artifact/install comparisons.
+
+### Standalone dnctl (2026-10-27)
+
+No explicit DTrace provider or BSM audit calls found in the maintained dnctl
+sources/Makefile; Make and Bazel binaries both lack DOF. The control path can
+configure/delete/flush Dummynet state. Review kernel control-operation auditing
+and error visibility before claiming end-to-end audit coverage. Native ABI test
+passes; shell dry-run tests are present but blocked before their bodies by the
+older-host Capsicum mismatch. No live shaper operation was exercised.
