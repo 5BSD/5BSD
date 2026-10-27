@@ -77,3 +77,11 @@ Flow-layout ABI test passes. The complete four-case native suite is defined;
 three shell cases fail before their bodies in dirname because of the documented
 older-host/newer-source Capsicum mismatch. Preserve these failures and rerun on
 a matching kernel. The Bazel README records separate artifact and runtime evidence.
+
+## Subsequent progress: HAST
+
+Native hastd/hastctl program artifacts and installation match Make. Parser
+header matches bytewise; parser/lexer C match apart from line-directive filenames.
+The libmd consumer CcInfo target is public. Privileged daemon tests, test
+installation, option/static variants, and replication performance remain next
+qualification work; no daemon or replication operation was started.

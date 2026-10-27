@@ -2601,3 +2601,12 @@ configure/delete/flush Dummynet state. Review kernel control-operation auditing
 and error visibility before claiming end-to-end audit coverage. Native ABI test
 passes; shell dry-run tests are present but blocked before their bodies by the
 older-host Capsicum mismatch. No live shaper operation was exercised.
+
+### HAST daemon and control utility (2026-10-27)
+
+Reviewed hastd/hastctl sources and Makefiles: no explicit userspace DTrace
+provider or BSM audit hooks found, and both native/Make executable pairs lack
+DOF. Existing pjdlog role changes, worker termination and errors are preserved.
+Review control authorization, role transitions, replication reconnect/failover,
+and metadata-changing operations for audit/probe coverage. Artifact and parser
+comparisons do not establish runtime failover or kernel/storage observability.

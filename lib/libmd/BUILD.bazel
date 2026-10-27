@@ -311,7 +311,8 @@ cc_library(
     name = "md_link",
     deps = [":common_objects", ":skein_block_objects", ":assembly_objects"],
     target_compatible_with = _AMD64,
-    visibility = ["//sbin/routed:__pkg__", "//sbin/routed/rtquery:__pkg__", "//lib/geom/eli:__pkg__", "//lib/geom/mirror:__pkg__", "//usr.sbin/BSDFilesystem:__pkg__", "//usr.sbin/BSDFilesystem/tests:__pkg__", "//usr.sbin/BSDNamespace:__pkg__", "//usr.sbin/BSDNamespace/tests:__pkg__", "//usr.sbin/BSDLog/tests:__pkg__", "//usr.sbin/BSDLog:__pkg__", "//usr.sbin/capsule:__pkg__", "//usr.sbin/capsule/tests:__pkg__", "//usr.sbin/switchboardctl:__pkg__", "//usr.sbin/switchboard:__pkg__", "//usr.sbin/switchboard/tests:__pkg__", "//lib/libcapbundle:__pkg__", "//tools/build/fuchsia/fidlc:__pkg__", "//lib/libradius:__pkg__", "//lib/libtacplus:__pkg__", "//lib/libcrypt:__pkg__", "//cddl/usr.sbin/zfsd/tests:__pkg__", "//usr.bin/sort:__pkg__", "//lib/libfetch:__pkg__", "//cddl/usr.bin/zstream:__pkg__", "//cddl/lib/libzpool:__pkg__", "//cddl/lib/libzfs:__pkg__", "//lib/libmd/tests:__pkg__", "//sbin/md5:__pkg__", "//lib/liblzma:__pkg__", "//lib/libarchive:__pkg__"],
+    # Public CcInfo interface for the installed base library.
+    visibility = ["//visibility:public"],
 )
 
 cc_shared_library(

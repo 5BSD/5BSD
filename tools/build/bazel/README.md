@@ -32145,3 +32145,37 @@ control, static/other-platform configurations, and performance remain gates.
 The existing format-5 explicit targets/tests already carry these definitions;
 no frontend C or backend contract change is required. The manual records the
 suite and its runtime qualification requirement.
+
+## Native HAST daemon and control utility — 2026-10-27
+
+Added `//sbin/hastd:hastd` and `//sbin/hastctl:hastctl` with their program install
+archives. The shared lexer/parser are native lex/yacc actions with declared
+source, header and verbose report outputs; each program compiles shared C and
+generated C with its own maintained defines. Headers and sources are explicit.
+INET6_SUPPORT selects INET6, while INET and HAVE_CAPSICUM follow Make. HAST uses
+native geom/md/util/z/thr libraries and Make's effective pthread-last order.
+
+The libmd CcInfo consumer target `md_link` is now public, consistent with the
+installed library and already-public shared target. This replaces a growing
+consumer allowlist; internal compilation targets retain their own visibility.
+The artifact-producing `md` target is not used as a CcInfo dependency.
+
+Evidence: `/usr/obj/usr/src/bazel-hast-r3-20261027`. Separate Make references:
+`/usr/obj/usr/src/bazel-hastctl-make-20261027` and
+`/usr/obj/usr/src/bazel-hastd-make-20261027`. The maintained frontend used
+16 jobs and existing format-5 inputs; no frontend C/backend change was needed.
+Both defined-symbol inventories match (176 control, 201 daemon), with matching
+ordered dependencies, PIE/NOW and no RPATH/RUNPATH. Program archives match four
+and five installation records respectively, three compressed manuals total,
+and one debug link per program. SHA-256 values:
+
+- hastctl: `f6d2fa1b88baadf0bad320771d270ebb74efe7cdffe0da6877c458c461f03343`
+- hastd: `2d7056498c2446467e9d91e1acd890c9d7e2ffe41d2ef0a0dd024137a388e833`
+
+Generated y.tab.h is byte-identical to both Make references. Generated parse.c
+and token.c match after mapping only explicit source/output filenames in #line
+directives; retained generated files and digests are under qualification/generators.
+No daemon was started and no replication/storage operation performed. The
+maintained privileged daemon start/stop test, its test installation integration,
+INET6-disabled/static/other-platform variants, cache and performance gates
+remain outstanding. Program artifact parity is not runtime qualification.
