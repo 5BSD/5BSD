@@ -32081,3 +32081,35 @@ Frontend review: existing format-5 target/test selection and `bazel-test` carry
 this addition without C/backend changes; the maintained manual is updated.
 This evidence does not qualify live DHCP, PCP, static/rescue builds, disabled
 configuration variants, or system-wide cache/performance behavior.
+
+## GEOM Gate native programs — 2026-10-27
+
+Added native `ggatec`, `ggated`, and `ggatel` targets under `//sbin/ggate`.
+Each compiles the maintained shared ggate.c with its own Make-defined flags:
+LIBGEOM for the client/local tool and MAX_SEND_SIZE=32768 for the client.
+The shared header is declared with a scoped include path; native geom/util/thr
+libraries replace SDK library substitution. `ggated` preserves the effective
+util/pthread order imposed by bsd.libnames.mk, rather than the textual LIBADD
+order. All three use the existing utility installation rules and one aggregate
+`//sbin/ggate:install_archive`.
+
+The existing format-5 frontend built all four targets with 16 jobs. Evidence:
+`/usr/obj/usr/src/bazel-ggate-r2-20261027`; Make reference:
+`/usr/obj/usr/src/bazel-ggate-make-20261027`.
+Defined globals match (27/26/27 respectively), as do ordered dynamic dependencies,
+PIE/NOW flags and absence of RPATH/RUNPATH. Installation matches ten records,
+three compressed manual payloads, three debug links, ownership/modes and tags.
+Archive SHA-256:
+`02d80bd3eff93277c691aa00309529f0c4c0531a02cc8dcc85545886418ed068`.
+
+The corrected link-order rebuild executed one CppLink plus debug extraction,
+debug split, stripping, and archive construction, with no CppCompile actions
+in the execution log. This is a narrow incremental observation, not general
+cache or performance qualification. Earlier mismatch evidence is retained in
+`/usr/obj/usr/src/bazel-ggate-20261027`.
+
+No GEOM device was created, exported, or attached and no disk I/O runtime test
+was performed. These components have no maintained Make tests. Privileged
+functional/I/O, static/DYNAMICROOT, other architectures, and performance remain
+qualification work. Frontend C/backend behavior needs no change for these
+explicit targets; existing input selection supports them.

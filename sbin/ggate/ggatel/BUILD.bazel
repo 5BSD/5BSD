@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "ggatel", srcs = ["ggatel.c", "//sbin/ggate/shared:ggate.c"],
+    deps = ['//lib/libgeom:geom', '//lib/libutil:util', '//sbin/ggate/shared:headers'],
+    dynamic_deps = ['//lib/libgeom:geom_shared', '//lib/libutil:util_shared'],
+    local_defines = ['LIBGEOM'], copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "ggatel", manual = "ggatel.8", package = "ggate", bindir = "/sbin", man_section = "8")

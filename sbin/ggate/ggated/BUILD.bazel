@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+# bsd.libnames.mk moves pthread after other libraries; retain that link order.
+cc_binary(name = "ggated", srcs = ["ggated.c", "//sbin/ggate/shared:ggate.c"],
+    deps = ['//lib/libutil:util', '//lib/libthr:thr', '//sbin/ggate/shared:headers'],
+    dynamic_deps = ['//lib/libutil:util_shared', '//lib/libthr:thr_shared'],
+    local_defines = [], copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "ggated", manual = "ggated.8", package = "ggate", bindir = "/sbin", man_section = "8")

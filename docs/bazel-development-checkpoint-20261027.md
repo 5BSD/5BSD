@@ -62,3 +62,10 @@ The native parser test now passes, and the combined program/test installation
 matches Make (20 records, nine nonbinary payloads, two debug links). Test ELF
 symbols and dynamic metadata also match. See the Bazel README for evidence and
 remaining PCP/VNET, configuration, and performance qualification work.
+
+## Subsequent progress: GEOM Gate
+
+Native ggatec, ggated, and ggatel now build through the maintained frontend and
+match Make binary/install comparisons. The aggregate archive has ten records.
+The Bazel README records evidence, incremental-link observation, and remaining
+privileged I/O/static/platform qualification. No disk was attached or exported.

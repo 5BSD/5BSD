@@ -2581,3 +2581,14 @@ The production daemon DTrace graph is unchanged. The parser test builds the
 same subset as Make without enabling daemon lifecycle probes. PCP/VNET remains
 installed with exclusivity metadata but needs a privileged runtime fixture;
 a parser pass is not evidence of DHCP network or lifecycle-probe behavior.
+
+### GEOM Gate programs (2026-10-27)
+
+Reviewed ggatec, ggated, ggatel and their shared ggate.c. No explicit userspace
+DTrace provider or BSM audit integration appears in these sources; the Make and
+Bazel executable artifacts both lack a DOF section. Shared logging uses syslog
+and is preserved. Review export authorization/configuration changes, attachment
+and detach failures, and network connection lifecycle for audit/observability
+coverage. Do not infer userspace coverage from libthr probes or kernel GEOM
+instrumentation. Kernel module behavior and real device/network I/O remain
+unqualified by these artifact/install comparisons.
