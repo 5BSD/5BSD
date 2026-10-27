@@ -107,3 +107,11 @@ Four native checksum cases execute successfully. Full program/test installation
 matches Make across 21 records, including shell/pytest wrappers and fixtures.
 Checksum binary metadata also matches. Shell/pytest network runtime execution,
 configuration variants and performance remain outstanding.
+
+## Subsequent progress: ping configuration qualification
+
+IPv4-only and IPv6-only component builds now match separate Make references.
+The tests-disabled full archive is byte-identical to the qualified program-only
+archive. Network/injection runtime, static/rescue, other architectures and
+performance remain outstanding. Next unconverted sbin areas include init with
+its embedded reroot_seed, pfctl, resolvconf and veriexec.

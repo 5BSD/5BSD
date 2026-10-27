@@ -32263,3 +32263,30 @@ Existing format-5 frontend targets/tests and the tests build setting carry the
 addition with no C/backend changes; the maintained manual identifies this suite's
 scope. Remaining work includes IPv4/IPv6 variants, network/injection execution,
 static/rescue, other architectures, and performance qualification.
+
+## Ping configuration qualification — 2026-10-27
+
+Qualified both single-protocol source selections using existing frontend
+format-5 build settings, with 16 jobs and independent Make references:
+
+- INET6_SUPPORT=no: `/usr/obj/usr/src/bazel-ping-noinet6-20261027`, reference
+  `/usr/obj/usr/src/bazel-ping-noinet6-make-20261027`. Matches 24 globals,
+  ordered dynamic metadata and four installation records. libmd and both
+  ping6 hardlinks are absent. Archive SHA-256:
+  `10ccbcdf22fe7aee3f95c99dde1c7e37010e903a1f950a432f9046b92598f004`.
+- INET_SUPPORT=no: `/usr/obj/usr/src/bazel-ping-noinet-20261027`, reference
+  `/usr/obj/usr/src/bazel-ping-noinet-make-20261027`. Matches 23 globals,
+  ordered dynamic metadata and six records including ping6 links. Archive:
+  `1cc513035a1cf8de21d40e32bb2405d0a1df8d5552cdbbca7807c2ce51615c46`.
+
+Both comparisons include modes, ownership, package tags, manual payloads,
+hardlinks where present, and debuglink validation. These are component option
+builds against the existing SDK, not whole-system single-protocol builds.
+
+With tests disabled, the full install_archive is byte-identical to the already
+qualified default program_install_archive. Authenticated digest comparison is
+in `/usr/obj/usr/src/bazel-ping-no-tests-20261027/qualification/tests-disabled.json`.
+No build implementation change was needed: the configured graph behaved as
+specified. Frontend C/backend review likewise requires no change for these
+existing settings. No network runtime, installation, or performance claim is
+made by these artifact checks; those remaining gates are unchanged.
