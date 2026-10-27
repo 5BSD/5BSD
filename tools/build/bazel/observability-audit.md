@@ -2641,3 +2641,11 @@ reroot_seed execution was performed.
 All generated shell payloads match Make. This template migration adds no
 instrumentation; runtime resolver updates and subscriber restarts need separate
 operational/audit review. No subscriber or resolver mutation was executed.
+
+### OpenBSD-derived pfctl (2026-10-27)
+
+No explicit userspace DTrace provider or BSM audit call found in pfctl/glue C
+sources; Make/native binaries lack DOF. Audit control-operation coverage at the
+PF ioctl/kernel boundary for rule loading, table changes, jail/ether extensions
+and authorization failures. Artifact/parser parity establishes no runtime
+firewall audit coverage. No PF control command was executed in this increment.

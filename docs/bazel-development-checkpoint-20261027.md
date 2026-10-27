@@ -141,3 +141,11 @@ payloads); seven shell syntax checks pass. Resolver runtime, subscriber service
 integration and nondefault layout qualification remain outstanding. No resolver
 state or service was changed. Remaining sbin program gaps include pfctl and
 veriexec plus directory-level test aggregation.
+
+## Subsequent progress: pfctl
+
+Native program/parser and five-record installation match Make. Explicit
+compatibility and shadow headers preserve the maintained OpenBSD/5BSD build.
+The changerule helper, shell/corpus packaging, jail/VNET execution and runtime
+qualification remain outstanding. Veriexec and directory-level test aggregation
+remain sbin graph gaps; no firewall state was changed.
