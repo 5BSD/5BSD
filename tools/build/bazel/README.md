@@ -32362,3 +32362,26 @@ rescue/static/other-platform configurations, invalidation under changed payloads
 and performance remain unqualified. Fresh stage comparisons do not exercise
 PRECIOUSPROG backup/replacement behavior on an installed system. Make remains
 the production/default system backend.
+
+## Native resolvconf template generation — 2026-10-27
+
+`//sbin/resolvconf:install_archive` now generates the script, six subscriber
+scripts, and two manuals directly from the maintained openresolv templates.
+The existing bsd_template rule declares source/substitution/output inputs;
+there is no Make or shell generator action. Native package layout defaults,
+restart quoting and the ng interface-order adjustment match sbin/resolvconf's
+Makefile. These are the standard layout values, not a claim that arbitrary
+Make command-line layout overrides have been migrated.
+
+Evidence: `/usr/obj/usr/src/bazel-resolvconf-20261027`; Make reference:
+`/usr/obj/usr/src/bazel-resolvconf-make-20261027`. All 11 metadata records and
+nine generated/compressed payloads match, including script modes, package tags,
+/sbin and /libexec/resolvconf ownership. Seven generated shell files pass
+/bin/sh -n. Archive SHA-256:
+`6db08457e65a2ec349e213610500b031e423aed3a7051aef98c72fa114d3f453`.
+
+The existing frontend selected this graph using format-5 inputs and the fresh
+assembly-capable SDK, with 16 jobs. No frontend C/backend contract change is
+needed for this target. No resolver file was modified and no subscriber/service
+was invoked. Resolver runtime behavior, service integrations, configurable
+layout overrides, and system-wide performance remain qualification work.

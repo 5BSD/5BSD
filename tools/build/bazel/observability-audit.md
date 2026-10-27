@@ -2635,3 +2635,9 @@ lack DOF. This increment verifies declared seed embedding and installation
 metadata, not PID1 lifecycle, login/audit events or root-transition logging.
 Review those behaviors in a booted matching-system qualification. No init or
 reroot_seed execution was performed.
+
+### resolvconf generated scripts (2026-10-27)
+
+All generated shell payloads match Make. This template migration adds no
+instrumentation; runtime resolver updates and subscriber restarts need separate
+operational/audit review. No subscriber or resolver mutation was executed.

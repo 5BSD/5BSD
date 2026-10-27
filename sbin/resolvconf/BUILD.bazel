@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_compress")
+# Native package layout and service command, matching the maintained Make defaults.
+_SUBSTITUTIONS = {'@SYSCONFDIR@': '/etc', '@LIBEXECDIR@': '/libexec/resolvconf', '@VARDIR@': '/var/run/resolvconf', '@RESTARTCMD@': '"/usr/sbin/service \\$1 onestatus >/dev/null 2>&1 && /usr/sbin/service \\$1 restart"', '@RCDIR@': '/etc/rc.d', '@SBINDIR@': '/sbin', ' vpn ': ' ng[0-9]* vpn '}
+_TEMPLATES = ['resolvconf', 'libc', 'dnsmasq', 'named', 'pdnsd', 'pdns_recursor', 'unbound', 'resolvconf.conf.5', 'resolvconf.8']
+[bsd_template(name = "generated_" + n, template = "//contrib/openresolv:" + n + ".in", output = n, substitutions = _SUBSTITUTIONS) for n in _TEMPLATES]
+_FILES = [("resolvconf", "/sbin/resolvconf", "0555")] + [(n, "/libexec/resolvconf/" + n, "0444") for n in ["libc", "dnsmasq", "named", "pdnsd", "pdns_recursor", "unbound"]]
+[bsd_install_file(name = "install_" + n, src = ":generated_" + n, destination = dest, owner = "root", group = "wheel", mode = mode, install_tags = ["package=resolvconf"]) for n, dest, mode in _FILES]
+_MANUALS = ["resolvconf.conf.5", "resolvconf.8"]
+[bsd_compress(name = "gzip_" + n, src = ":generated_" + n, output = n + ".gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for n in _MANUALS]
+[bsd_install_file(name = "install_" + n, src = ":gzip_" + n, destination = "/usr/share/man/man" + n[-1] + "/" + n + ".gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=resolvconf-man"], "//conditions:default": ["package=resolvconf"]})) for n in _MANUALS]
+bsd_install_manifest(name = "install_manifest", entries = [":install_" + n for n in _TEMPLATES], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=resolvconf"]}' for d in ["/sbin", "/libexec/resolvconf"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

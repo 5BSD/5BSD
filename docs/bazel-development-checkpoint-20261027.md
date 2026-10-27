@@ -133,3 +133,11 @@ bazel-assembly-sdk-20261027. Embedded payload bytes match the native dependency.
 Make's separate object-tree seed differs, so no whole-binary identity is claimed.
 Boot/root-transition/rescue behavior, changed-payload invalidation and performance
 remain outstanding. No lifecycle operation was run.
+
+## Subsequent progress: resolvconf
+
+Native template generation and installation match Make (11 records, nine
+payloads); seven shell syntax checks pass. Resolver runtime, subscriber service
+integration and nondefault layout qualification remain outstanding. No resolver
+state or service was changed. Remaining sbin program gaps include pfctl and
+veriexec plus directory-level test aggregation.
