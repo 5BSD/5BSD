@@ -93,3 +93,10 @@ also match Make with INET6_SUPPORT disabled. That setting removes the compiler
 define but leaves these program artifacts unchanged: current source selects
 IPv6 support at runtime. Privileged ctl runtime execution remains outstanding;
 test installation must not be counted as execution.
+
+## Subsequent progress: ping
+
+Native default ping program and six installation records match Make, including
+conditional ping6 links and setuid archive metadata. No installation or packet
+transmission occurred. Checksum/ATF/pytest tests, test packaging, configuration
+variants and network/runtime qualification remain outstanding.

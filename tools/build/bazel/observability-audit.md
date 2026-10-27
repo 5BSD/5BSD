@@ -2610,3 +2610,12 @@ DOF. Existing pjdlog role changes, worker termination and errors are preserved.
 Review control authorization, role transitions, replication reconnect/failover,
 and metadata-changing operations for audit/probe coverage. Artifact and parser
 comparisons do not establish runtime failover or kernel/storage observability.
+
+### Ping program (2026-10-27)
+
+No explicit DTrace provider or BSM audit hooks found in the maintained ping
+sources; Make and Bazel binaries both lack DOF. Preserve existing Casper DNS
+and Capsicum integration. Review audit coverage of privileged raw-socket setup
+and DNS delegation in their implementing subsystems; the build comparison does
+not demonstrate runtime audit events. Setuid metadata is preserved in the
+archive. No network or packet-injection test was performed in this increment.

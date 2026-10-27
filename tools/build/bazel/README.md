@@ -32208,3 +32208,28 @@ replication, static builds and performance remain unqualified.
 Frontend review: existing explicit target/settings inputs support these additions;
 no C/backend contract change is needed. No host installation, daemon start,
 replication operation, or live storage change occurred.
+
+## Native ping program — 2026-10-27
+
+`//sbin/ping:ping` now uses explicit IPv4/IPv6 source and define selections,
+native m/md/casper/cap_dns/ipsec dependencies, PIE, and the normal-build Casper
+requirement. IPv6 also controls libmd and the ping6 binary/manual hardlinks.
+Conditional links use existing configurable manifest entries; the utility
+macro's fixed alias list is not passed an unresolved select.
+
+The program and archive built through existing format-5 build-bsd inputs with
+16 jobs. Evidence: `/usr/obj/usr/src/bazel-ping-r2-20261027`; Make reference:
+`/usr/obj/usr/src/bazel-ping-make-20261027`. Comparisons pass 25 defined globals,
+ordered dynamic dependencies, PIE/NOW, no RPATH/RUNPATH, six installation records,
+two hardlinks and both alias/debuglink resolutions to the single debug payload.
+Manual payloads match bytewise. Archive SHA-256:
+`f321301fa38988726bab61f040eb0cbb24e21709d443143b82e38b14714f3cca`.
+Archive and manifest modes match Make's 04555 for ping/ping6. Python's safe tar
+extraction removes setuid bits; extracted modes are checked against that filter
+while full archive modes are checked independently. No setuid executable was
+installed on the host, and no ping packet was sent.
+
+This qualifies the default program artifact only. Checksum/ATF/pytest test
+integration and test installation, live IPv4/IPv6 and injection tests, option
+variants, static/rescue configurations, and performance remain outstanding.
+The existing explicit-target frontend contract requires no C/backend change.

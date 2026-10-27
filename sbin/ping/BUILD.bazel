@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+_V4 = "//tools/build/bazel/config:inet_support_enabled"
+_V6 = "//tools/build/bazel/config:inet6_support_enabled"
+_DEPS = ["//lib/msun:m"] + select({_V6: ["//lib/libmd:md_link"], "//conditions:default": []}) + ["//lib/libcasper/libcasper:casper", "//lib/libcasper/services/cap_dns:cap_dns", "//lib/libipsec:ipsec"]
+_SHARED = ["//lib/msun:m_shared"] + select({_V6: ["//lib/libmd:md_shared"], "//conditions:default": []}) + ["//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_dns:cap_dns_shared", "//lib/libipsec:ipsec_shared"]
+cc_binary(name = "ping", srcs = ["main.c", "main.h", "ping.h", "ping6.h", "utils.h"] + select({_V4: ["ping.c", "utils.c"], "//conditions:default": []}) + select({_V6: ["ping6.c"], "//conditions:default": []}),
+    deps = _DEPS, dynamic_deps = _SHARED,
+    local_defines = ["IPSEC", "WITH_CASPER"] + select({_V4: ["INET"], "//conditions:default": []}) + select({_V6: ["INET6", "KAME_SCOPEID"], "//conditions:default": []}),
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({"//tools/build/bazel/config:casper_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}), visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "ping", manual = "ping.8", package = "runtime", bindir = "/sbin", man_section = "8", binary_mode = "4555",
+    extra_entries = select({_V6: [":ping6_link", ":ping6_manual"], "//conditions:default": []}))
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "program_install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'
+        for d in ["/usr/lib/debug/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")
+bsd_install_link(name = "ping6_link", destination = "/sbin/ping6", target = "/sbin/ping", kind = "hardlink", owner = "root", group = "wheel", mode = "4555", install_tags = ["package=runtime"])
+bsd_install_link(name = "ping6_manual", destination = "/usr/share/man/man8/ping6.8.gz", target = "/usr/share/man/man8/ping.8.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
