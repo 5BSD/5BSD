@@ -231,3 +231,12 @@ trust-initialization tests pass. The SDK receipt was regenerated through maintai
 helpers under bazel-secureboot-sdk-20261027 after the metadata change.
 Next: signed-file/key-rotation qualification and the recorded hash self-test
 error-propagation issue. System-wide migration and performance gates remain open.
+
+## Subsequent progress: hash self-test failure propagation
+
+Fixed the recorded hash-result loss in ve_self_tests: a hash failure returns
+cached zero before signature tests can report success. Three native clean and
+corrupted-expectation tests pass, including cached-result behavior, with real
+upstream certificate fixtures. Existing caller policies and signature-count
+semantics remain unchanged. Signed-file/trust-rotation qualification is next;
+all broader system migration and performance requirements remain open.

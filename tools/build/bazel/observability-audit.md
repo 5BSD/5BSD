@@ -2687,3 +2687,11 @@ Four maintained tests verify valid input, hash-length rejection, ioctl failure
 propagation and recovered syntax errors via the existing ioctl recorder. They
 do not exercise kernel MAC audit events, manifest loading or denial enforcement.
 Review those runtime/audit paths on a qualified system; no kernel state changed.
+
+### libsecureboot hash-result follow-up (2026-10-27)
+
+The hash self-test return-status weakness noted above is fixed: failed KATs
+return cached zero before later signature successes. Native clean/SHA256/SHA384
+corruption cases pass. Existing failure messages are retained. Strict-mode caller
+checks zero; verify_prep/tvo still intentionally ignore the return. Their policy
+and complete boot enforcement have not been qualified by this unit-level fix.

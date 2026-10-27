@@ -32677,3 +32677,29 @@ scope. No frontend C or publication contract change is required. Real signed-fil
 verification, key rotation, self-test error propagation, action invalidation,
 configuration coverage and performance remain outstanding. Matching shared
 installation and anchor loading do not establish verified boot or enforcement.
+
+## Secureboot hash self-test failure propagation — 2026-10-27
+
+Review found that ve_test_hash printed failures but ve_self_tests could still
+return a positive certificate-test count. Hash failures now return the cached
+zero result before certificate/OpenPGP tests. Existing successful signature-test
+count semantics are preserved. The strict verify_tweak caller already treats
+zero as fatal; other callers that intentionally ignore the result are unchanged.
+This corrects shared production source used by both build systems.
+
+Three native tests include the production vets.c translation unit to access
+its private expected KAT values, while linking other components and BearSSL
+normally. They use explicit upstream public trust/verification certificates.
+The clean case verifies one certificate and cached success; two failure cases
+corrupt SHA256/SHA384 expectations, require zero, restore the expectation and
+require cached zero again. This tests error propagation with real cryptographic
+operations, without a replacement hash implementation or production injection
+hook. Historic fixture certificate date checks are explicitly disabled in these
+tests; time-policy validation is not claimed.
+
+Evidence: /usr/obj/usr/src/bazel-secureboot-selftest-20261027; all three tests
+pass. The maintained build-bsd frontend ran them with 16 jobs and existing
+format-5 trust settings. No frontend/backend contract change is needed; the
+manual records the test scope. Signed-file/key-rotation integration, all policy
+modes, firmware and performance remain outstanding. This does not make every
+caller enforce self-test failure or change certificate-count policy.

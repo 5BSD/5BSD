@@ -41,3 +41,10 @@ bsd_program_test(name = "trust_init_shared_test", program = ":trust_init_shared_
     runner = "//tools/build/bazel:program_test_runner", size = "small",
     runtime_lib = ["//lib/libsecureboot:secureboot_shared", "//lib/libbearssl:bearssl_shared",
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"])
+
+[cc_test(name = "selftest_" + mode, srcs = ["selftest_failure_test.c"],
+    deps = ["//lib/libsecureboot:selftest_source", "//lib/libsecureboot:secureboot"],
+    copts = ["-include", "secureboot_config.h"], args = [mode],
+    linkstatic = True, size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+    for mode in ["clean", "bad256", "bad384"]]

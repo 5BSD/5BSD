@@ -17,7 +17,7 @@ bsd_secureboot_headers(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"],
 )
-cc_library(name = "generated_headers", hdrs = [":generated"], strip_include_prefix = "generated")
+cc_library(name = "generated_headers", hdrs = [":generated"], strip_include_prefix = "generated", visibility = ["//lib/libsecureboot/tests:__pkg__"])
 cc_library(name = "headers", hdrs = ["h/libsecureboot.h"], strip_include_prefix = "h",
     deps = ["//contrib/bearssl:headers"], visibility = ["//visibility:public"])
 cc_library(
@@ -61,3 +61,10 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+# A unit-test translation unit includes the production implementation to corrupt
+# only its private expected KAT value. This is not an installed interface.
+cc_library(name = "selftest_source", testonly = True,
+    textual_hdrs = ["vets.c"], hdrs = ["libsecureboot-priv.h", "x509_tbs.h"],
+    deps = [":headers", ":generated_headers", "//contrib/bearssl:tool_headers"],
+    visibility = ["//lib/libsecureboot/tests:__pkg__"])

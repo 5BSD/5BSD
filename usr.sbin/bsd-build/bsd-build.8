@@ -3200,6 +3200,18 @@ Static/shared trust initialization and library installation metadata have been
 qualified with explicitly selected test inputs.
 Signed-file verification, key rotation and system enforcement remain incomplete.
 .Pp
+.Ss Secureboot self-test qualification
+The native
+.Li //lib/libsecureboot/tests:selftest_clean ,
+.Li selftest_bad256 ,
+and
+.Li selftest_bad384
+targets exercise hash self-test result propagation with explicitly selected
+trust and verification certificates.
+The failure cases corrupt private expected hashes in test translation units
+and require cached failure; production code has no injection hook.
+These tests do not qualify firmware or system-wide enforcement.
+.Pp
 .Ss Native veriexec qualification
 The native static
 .Li //sbin/veriexec:veriexec
