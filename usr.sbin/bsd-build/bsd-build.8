@@ -3189,8 +3189,16 @@ selects the optional SSL source group.
 It defaults to false, matching the library's opt-in
 .Va MK_BEARSSL_SSL
 setting.
-The default static/shared libraries and installation metadata have been compared
-with Make; the SSL-enabled variant and crypto runtime tests remain unqualified.
+Both default and SSL-enabled static/shared libraries and installation metadata
+have been compared with Make.
+The native
+.Li //lib/libbearssl:crypto_test
+target runs the unchanged upstream crypto suite with
+.Li all
+and requires
+.Li bearssl_ssl=true .
+The suite passes on the qualified amd64 host; Power8 cases are unavailable there.
+TLS network behavior and other architectures remain unqualified.
 These component builds do not qualify secure boot or veriexec enforcement.
 .Pp
 .Ss RPC binder build selection

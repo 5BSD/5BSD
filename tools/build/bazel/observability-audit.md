@@ -2663,3 +2663,10 @@ Native declarations carry the maintained cryptographic sources unchanged.
 Symbol/link and installation checks do not establish crypto runtime correctness
 or audit coverage. Review security-event logging at secureboot/veriexec consumers
 when those components are converted; upstream crypto runtime tests remain pending.
+
+### BearSSL optional crypto follow-up (2026-10-27)
+
+Upstream crypto runtime tests now pass with SSL enabled, subject to the recorded
+Power8 unavailability. No logging/probe behavior was added or removed. These
+known-answer/arithmetic tests do not establish audit coverage, TLS integration,
+trust selection or enforcement at secureboot/veriexec consumers.

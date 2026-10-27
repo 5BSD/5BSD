@@ -179,3 +179,15 @@ integration, configuration coverage and cache/performance qualification remain.
 Make remains the production/default backend and the ports build system; the
 current SDK is still Make-prepared. BIP remains dropped. This commit checkpoint
 records a component milestone, not completion of the system migration.
+
+## Subsequent progress: optional BearSSL and crypto tests
+
+The full upstream crypto suite now passes as a native Bazel test with SSL
+enabled; five Power8 cases remain unavailable on this amd64 host. Qualification
+found and repaired 26 missing optional sources in both Make and Bazel. The
+295-member optional library and all 19 installation records match the explicit
+Make reference. See README for preserved failures and final evidence.
+
+Next: explicit secureboot trust-generation inputs and the veriexec consumer.
+TLS network/X.509 fixture coverage, broader configuration and performance gates
+remain outstanding. All earlier system-wide migration limitations still apply.

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_test")
 load(":sources.bzl", "LOADER_SOURCES", "LIBRARY_SOURCES", "SSL_SOURCES")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 cc_library(name = "bearssl", srcs = ["//contrib/bearssl:" + p for p in LOADER_SOURCES + LIBRARY_SOURCES] + select({"//tools/build/bazel/config:bearssl_ssl_enabled": ["//contrib/bearssl:" + p for p in SSL_SOURCES], "//conditions:default": []}),
@@ -30,4 +30,21 @@ bsd_install_archive(
     python = "@bsd_sdk//toolchain:extra_python",
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+# Unmodified upstream known-answer and arithmetic tests; no arguments only
+# prints usage, so explicitly request the complete suite. The full upstream
+# test requires algorithms provided by the optional SSL configuration.
+cc_test(
+    name = "crypto_test",
+    srcs = ["//contrib/bearssl:test/test_crypto.c"],
+    deps = [":bearssl", "//contrib/bearssl:internal_headers"],
+    args = ["all"],
+    size = "large",
+    timeout = "long",
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+        "//tools/build/bazel/config:bearssl_ssl_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
 )

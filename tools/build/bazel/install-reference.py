@@ -32,8 +32,12 @@ def main():
                         help='enable a component option against the unchanged recorded SDK')
     parser.add_argument('--without-option', action='append', default=[],
                         help='disable a component option against the unchanged recorded SDK')
+    parser.add_argument('--with-local-option', action='append', default=[],
+                        help='enable a library-local MK_ option not declared in src.opts.mk')
+    parser.add_argument('--without-local-option', action='append', default=[],
+                        help='disable a library-local MK_ option not declared in src.opts.mk')
     args = parser.parse_args()
-    selected = args.with_option + args.without_option
+    selected = args.with_option + args.without_option + args.with_local_option + args.without_local_option
     if len(set(selected)) != len(selected) or any(not re.fullmatch(r'[A-Z][A-Z0-9_]*', value) for value in selected):
         parser.error('component options must be distinct uppercase option names')
     if args.jobs < 1:
@@ -59,6 +63,11 @@ def main():
         environment.options = [value for value in environment.options
                                if value.split('=', 1)[0] not in keys]
         environment.options.append(('WITH_' if expected == 'yes' else 'WITHOUT_') + name + '=1')
+    local_options = {name: 'yes' for name in args.with_local_option}
+    local_options.update({name: 'no' for name in args.without_local_option})
+    for name, expected in local_options.items():
+        environment.options.append('MK_' + name + '=' + expected)
+    component_options.update(local_options)
     for name, expected in component_options.items():
         if environment.query(['-V', 'MK_' + name]).strip() != expected:
             raise ValueError('component option is unknown or ineffective: ' + name)

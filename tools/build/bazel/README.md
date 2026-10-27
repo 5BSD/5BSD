@@ -32489,3 +32489,46 @@ upstream crypto runtime tests, other architectures and performance remain
 unqualified. Secureboot and its explicit trust inputs still need conversion
 before the veriexec command can build natively. This is not secure-boot or
 veriexec enforcement qualification.
+
+## BearSSL optional SSL and upstream crypto qualification — 2026-10-27
+
+The previous SSL limitation is now narrowed by runtime and artifact evidence.
+//lib/libbearssl:crypto_test is a native cc_test using unchanged upstream
+source and the explicit `all` argument (no arguments merely prints usage).
+It requires bearssl_ssl=true through target compatibility; its source depends
+on optional algorithms. It does not add test-only algorithms to the library.
+
+Qualification exposed 26 missing upstream sources in the optional Make source
+inventory: AEAD, system RNG, OAEP, accelerated primitives and related APIs.
+Both Make and Bazel now include these explicitly only with SSL enabled. Default
+186-source builds retain their existing inventory. The optional library has
+295 sources including tools/errors.c. Make's existing per-source warning scheme
+handles upstream const casts and one shadowed variable; optional builds suppress
+compiler-system-header diagnostics after warning defaults, retaining source
+warnings. No cryptographic implementation or upstream test body was changed.
+
+The reference helper accepts --with-local-option/--without-local-option for
+explicit library-local MK_ booleans absent from src.opts.mk. These are command
+line assignments, recorded in the receipt, and do not reconfigure the SDK.
+Standard WITH_/WITHOUT_ options retain their existing checked path.
+
+Runtime evidence: /usr/obj/usr/src/bazel-libbearssl-crypto-ssl-r2-20261027.
+One Bazel test runs the complete upstream selection and passes, including
+AES-NI, PCLMUL GHASH and SSE2 ChaCha20. Five Power8 cases report UNAVAILABLE on
+amd64; they are not claimed as exercised. Initial subset-link and incomplete
+SSL-link failures remain in bazel-libbearssl-crypto-20261027 and
+bazel-libbearssl-crypto-ssl-20261027. Make diagnostic failures remain in the
+ssl-make and ssl-make-r2 through r4 output directories.
+
+Final installation evidence: /usr/obj/usr/src/bazel-libbearssl-ssl-install-20261027,
+against /usr/obj/usr/src/bazel-libbearssl-ssl-make-r5-20261027. Static archive
+matches 295 members and 548 defined globals; shared library matches 550,
+libc dependency, SONAME libbearssl.so.5, NOW and absent RPATH/RUNPATH. All 19
+installation records, 13 header byte comparisons, symlink and debuglink pass.
+Archive SHA-256:
+`1b1e1383c66c267937c4b4b7e66e6290fe4b977f133da73315ac09cdafd017a2`.
+
+build-bsd uses the existing format-5 selector and test list with 16 jobs; the
+manual is updated and no C/backend contract changes are needed. TLS network,
+X.509 fixture suite, other architectures, performance and system enforcement
+remain unqualified. Secureboot trust-generation inputs are the next dependency.
