@@ -2790,3 +2790,13 @@ runtime dependencies. The smoke scope remains arithmetic/arrays. The bin
 file-presence inventory exposes 19 missing test BUILD directories; no audit,
 probe or service behavior coverage should be inferred from 42 component BUILD
 files. Preserve privilege/jail requirements when integrating those test suites.
+
+
+## cat ATF integration (2026-10-27)
+
+The maintained suites now expose all 13 cases and fixtures natively. No probe
+source changed; test packaging retains the executable debug link. Every case
+currently fails in helper initialization with a Capsicum assertion reproduced
+by Make-built dirname as well. Consequently none of the cat option/body tests
+or probe behavior gains runtime qualification from this run. Failure logs and
+cross-build-system reproductions are retained; no skip/fallback was added.

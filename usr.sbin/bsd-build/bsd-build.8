@@ -3444,3 +3444,11 @@ also affects catalog aliases and the maintained stub implementation.
 Static, NLS-disabled csh component parity has been checked independently of
 full system qualification. Component BUILD-file presence does not establish
 complete test catalogs, aggregate pkgbase installation or runtime coverage.
+
+.Pp
+.Dq //bin/cat/tests:tests
+runs the maintained cat ATF cases; its scripts and fixtures are included by
+.Dq //bin/cat:install_archive
+when tests are enabled. Installation parity is separate from runtime success.
+The current older-host/SDK Capsicum helper assertion prevents those cases from
+reaching their bodies and remains a failed qualification gate.

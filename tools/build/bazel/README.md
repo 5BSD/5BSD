@@ -33054,3 +33054,37 @@ The next expansion should integrate their maintained tests and installation
 metadata, preserving root/jail/host requirements and recording actual failures.
 Cross builds, privileged runtime checks, full system packaging and performance
 gates remain open; Make remains production/default.
+
+### cat maintained ATF integration: packaged, runtime blocked (2026-10-27)
+
+`//bin/cat/tests:tests` exposes all eight maintained NetBSD cases and all five
+local option/implication cases, unchanged, with declared fixtures and native
+ATF/shell/tool/library runfiles. `//bin/cat:install_archive` includes their two
+scripts, Kyuafile and eleven fixtures when tests are enabled. The archive also
+now declares its runtime-owned debug directory explicitly.
+
+`/usr/obj/usr/src/bazel-cat-install-20261027/qualification/cat/receipt.json`
+verifies all 19 Make component records against `bazel-cat-tests-make-20261027`,
+15 byte-equal nonbinary payloads (manual, scripts, catalog and fixtures), exact
+owner/group/mode/tag/flag metadata and one valid debug link. Archive SHA256:
+`15775e74f5da330ae3961cdd262892b9d159dc6f25432faf40e7606593a270b1`.
+This separate installation run explicitly requested no runtime tests; it must
+not be presented as a passing suite.
+
+Runtime is NOT qualified: all 13 tests in `bazel-cat-tests-20261027` fail before
+their bodies when native dirname aborts in cap_rights_intersect; ATF cannot
+determine its source directory. All logs are retained in that output's
+qualification directory. `dirname-host-sdk.json` shows native and Make-built
+dirname both lack cap_rights_intersect@FBSD_1.9 with host libc and both assert
+cap_rights_is_valid(src) with SDK libc on the running kernel. This demonstrates
+a shared runtime compatibility problem, not successful cat behavior; the exact
+Capsicum compatibility defect remains undiagnosed here. No host helper was
+substituted, assertion disabled, test expectation weakened or skip added.
+A compatible runtime or proper compatibility fix is required before claiming
+these test bodies pass.
+
+The maintained format-5 frontend and existing ATF/install backends were used;
+no build-bsd.c change was required. Eighteen of the previously listed 25 bin
+tests directories still lack BUILD files; the new file does not convert these
+13 runtime failures into completed coverage. Whole-system and performance
+gates remain open and Make stays production/default.

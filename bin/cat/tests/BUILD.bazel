@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+_FIXTURES = ['d_align.in', 'd_align.out', 'd_b_output.in', 'd_b_output.out', 'd_s_output.in', 'd_s_output.out', 'd_se_output.in', 'd_se_output.out', 'd_vt_output.in', 'd_vt_output.out', 'stdin_test.out']
+_SUITES = {
+    "cat_test": ("//contrib/netbsd-tests/bin/cat:t_cat.sh", ["align", "nonexistent", "b_output", "se_output", "s_output", "e_output", "vt_output", "stdin_test"]),
+    "cat_extra_test": ("cat_extra_test.sh", ["E_output", "T_output", "A_output", "e_implies_v", "t_implies_v"]),
+}
+_TOOLS = ["//bin/sh:sh", "//bin/cat:cat", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check",
+    "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/grep:grep", "//usr.bin/sed:sed", "//usr.bin/diff:diff", "//bin/rm:rm", "//bin/test:test"]
+_LIBS = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"]
+[bsd_atf_test(name = "native_" + case, case_name = case, body = source,
+    subr = "//libexec/atf/atf-sh:shell_library", runner = "//tools/build/bazel:atf_runner",
+    runtime_bin = _TOOLS, runtime_lib = _LIBS,
+    data = ["//contrib/netbsd-tests/bin/cat:" + f for f in _FIXTURES], size = "small")
+ for source,cases in _SUITES.values() for case in cases]
+test_suite(name = "tests", tests = [":native_" + case for source,cases in _SUITES.values() for case in cases], visibility = ["//visibility:public"])
+[bsd_script_wrapper(name = name, body = source, interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect") for name,(source,cases) in _SUITES.items()]
+[bsd_install_file(name = "install_" + name, src = ":" + name, destination = "/usr/tests/bin/cat/" + name,
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"]) for name in _SUITES]
+[bsd_install_file(name = "fixture_" + str(i), src = "//contrib/netbsd-tests/bin/cat:" + f, destination = "/usr/tests/bin/cat/" + f,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"]) for i,f in enumerate(_FIXTURES)]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["cat_extra_test", "cat_test"], interfaces = {n: "atf" for n in _SUITES})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/bin/cat/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_kyuafile"] + [":install_" + n for n in _SUITES] + [":fixture_" + str(i) for i in range(len(_FIXTURES))], visibility = ["//visibility:public"])

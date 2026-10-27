@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['t_cat.sh', 'd_align.in', 'd_align.out', 'd_b_output.in', 'd_b_output.out', 'd_s_output.in', 'd_s_output.out', 'd_se_output.in', 'd_se_output.out', 'd_vt_output.in', 'd_vt_output.out', 'stdin_test.out'], visibility = ["//bin/cat/tests:__pkg__"])

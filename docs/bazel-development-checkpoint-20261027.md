@@ -365,3 +365,18 @@ This is file presence, not a completion percentage. Next: integrate cat's
 maintained NetBSD and local ATF shell tests and their fixtures, then the other
 missing test directories listed in README. A complete bin aggregate must not
 omit test metadata or imply unsupported runtime qualification.
+
+## Subsequent progress: cat tests packaged, runtime failures retained
+
+Both maintained cat shell suites (13 cases) and eleven fixtures now have native
+Bazel test/install targets. Complete program+test installation matches Make:
+19 records, 15 byte-equal nonbinary payloads and a valid debug link. Evidence:
+`bazel-cat-install-20261027/qualification/cat` under `/usr/obj/usr/src`.
+
+All 13 runtime cases fail before their bodies because native dirname asserts
+in cap_rights_intersect. `bazel-cat-tests-20261027/qualification` preserves logs
+and a Make/native host/SDK comparison reproducing the same failure for both
+builds. Do not substitute host helpers or mark this suite passed. A matching
+runtime/compatibility diagnosis is still required. Next useful independent
+work: continue missing bin test/install integration while preserving this
+runtime gate; 18 listed tests directories remain without BUILD files.
