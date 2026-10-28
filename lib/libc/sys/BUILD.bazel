@@ -83,3 +83,29 @@ cc_library(
 )
 bsd_component_archive(name = "amd64_archive", groups = [":amd64_objects"])
 bsd_component_archive(name = "amd64_shared_archive", groups = [":amd64_shared_objects"], pic = True)
+cc_library(
+    name = 'x86_objects',
+    srcs = ['//lib/libsys/x86:pkru.c', '//lib/libsys/x86:sched_getcpu_x86.c'],
+    implementation_deps = ["//lib/libc/include:rt_private_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] +
+        select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:hyperv_enabled": ["WANT_HYPERV"], "//conditions:default": []}),
+    copts = ['-fexceptions', '-ftls-model=initial-exec'],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+cc_library(
+    name = 'vdso_gettc_objects',
+    srcs = ['//lib/libsys/x86:__vdso_gettc.c'],
+    implementation_deps = ["//lib/libc/include:rt_private_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] +
+        select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:hyperv_enabled": ["WANT_HYPERV"], "//conditions:default": []}),
+    copts = ['-fexceptions', '-ftls-model=initial-exec', '-fno-sanitize=address', '-fno-sanitize=undefined'],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "x86_archive", groups = [":x86_objects", ":vdso_gettc_objects"])
+bsd_component_archive(name = "x86_pic_archive", groups = [":x86_objects", ":vdso_gettc_objects"], pic = True)

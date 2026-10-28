@@ -250,3 +250,6 @@ config_setting(name = "malloc_production_enabled", flag_values = {":malloc_produ
 
 bool_flag(name = "jemalloc_lg_vaddr_wide", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "jemalloc_lg_vaddr_wide_enabled", flag_values = {":jemalloc_lg_vaddr_wide": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "hyperv", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "hyperv_enabled", flag_values = {":hyperv": "true"}, visibility = ["//visibility:public"])

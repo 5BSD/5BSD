@@ -5757,3 +5757,24 @@ Frontend review: existing format-5 target inputs/NLS setting and native toolchai
 compile C and assembly through build-bsd; no new helper or C interface required.
 Source/header exports have narrow libc sys visibility. No host TLS, process,
 context or installation changes were performed.
+
+## 2026-10-28: x86 libc support and Hyper-V selection
+
+Adds __vdso_gettc.c, pkru.c and sched_getcpu_x86.c from the maintained libsys
+sources, compiled in libc mode. The typed hyperv setting defaults on for the
+current amd64 target, matching src.opts.mk. The timecounter group explicitly
+excludes address/undefined sanitizer instrumentation as required for its early
+IFUNC use; other sources do not inherit that exclusion.
+
+Evidence: /usr/obj/usr/src/bazel-libc-libsysx86-{yes,no}-build-20261028/qualification/
+parity.json against matching fresh Make references. Both Hyper-V configurations
+match all six ordinary/PIC objects (12 comparisons) in .text, global and
+unresolved symbols. The tested SDK/profile has sanitizers disabled; a complete
+sanitized build and early-runtime sanitizer behavior remain unqualified.
+
+This does not qualify runtime Hyper-V/TSC/HPET clock selection or performance,
+PKRU/CPU-number operation, full data/relocation/debug identity, generated syscalls,
+complete libc/libsys linking or ABI/filter behavior. Frontend review: the existing
+format-5 typed build-settings path exercises hyperv true/false through build-bsd;
+no new frontend C option or helper contract required. No host CPU/register or
+clock configuration changes and no installation performed.

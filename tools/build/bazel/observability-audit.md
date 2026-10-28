@@ -4528,3 +4528,11 @@ No direct DTrace/SDT or BSM audit hooks found in the ten migrated C/assembly
 sources. Existing sysarch/syscall and error paths remain unchanged. Kernel syscall
 observation is separate; text and relocation parity do not prove runtime tracing
 or CPU-state correctness. Evidence: bazel-libc-libsysamd64-build-20261028/qualification.
+
+## 2026-10-28: x86 libc timecounter, PKRU and CPU-number support
+
+No direct DTrace/SDT or BSM audit hooks found in these three sources. Existing
+clock fallback, Hyper-V and CPU-feature selection code remains unchanged.
+Object parity for both Hyper-V settings does not establish actual fast-path use,
+latency or runtime observation. Evidence: bazel-libc-libsysx86-{yes,no}-build-20261028/
+qualification/parity.json. No instrumentation added to timing-sensitive paths.
