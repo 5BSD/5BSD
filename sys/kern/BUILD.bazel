@@ -126,3 +126,12 @@ amd64_generic_kernel_objects(name = "generic_timers", srcs = ["kern_timeout.c", 
 amd64_generic_kernel_objects(name = "generic_events", srcs = ["kern_event.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers",
         "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_kqueue_header"])
+
+amd64_generic_kernel_objects(name = "generic_pipe", srcs = ["sys_pipe.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers"])
+amd64_generic_kernel_objects(name = "generic_socket", srcs = ["uipc_socket.c", "uipc_sockbuf.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:internal_headers",
+        "//sys/netinet:pcb_headers", "//sys/netinet:tcp_wire_headers",
+        "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_inet_header",
+        "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_kern_tls_header",
+        "//sys/amd64/conf:generic_opt_sctp_header", "//sys/amd64/conf:generic_opt_param_header"])

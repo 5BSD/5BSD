@@ -3380,3 +3380,13 @@ match. Evidence: `/usr/obj/usr/src/bazel-events-kernel-20261028/qualification`.
 No source instrumentation was changed. Live probe firing, event semantics
 and audit coverage remain runtime/integration qualification; compilation
 parity alone does not establish those properties.
+
+### Pipe/socket built-in objects (2026-10-28)
+
+sys_pipe.c, uipc_socket.c and uipc_sockbuf.c contain respectively 17, 15 and
+2 SDT probe definitions. Native GENERIC objects match Make symbols, raw CTF,
+allocated sections and runtime relocations, including SDT metadata. Evidence:
+`/usr/obj/usr/src/bazel-sockets-kernel-20261028/qualification`. Existing MAC
+calls remain unchanged; live enforcement and probe firing are unqualified.
+Audit coverage across socket syscalls and descriptor passing requires the
+syscall-layer/integration review; object parity does not establish coverage.

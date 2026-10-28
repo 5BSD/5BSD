@@ -2813,3 +2813,31 @@ cancellation, descriptor lifetime and concurrency need the linked test
 kernel. Full kernel/world/pkgbase/bootstrap and performance gates remain
 open. Make remains production/default; module count remains 45, with no host
 installation or BIP changes.
+
+### Native pipes, sockets and socket buffers
+
+Added //sys/kern:generic_pipe_object_files and generic_socket_object_files
+for sys_pipe.c, uipc_socket.c and uipc_sockbuf.c, matching the generated
+GENERIC Makefile source selection. Dependencies declare CK/VM, MAC internal
+headers (visibility limited to sys/kern), TCP/PCB headers and native config
+KTRACE/INET/INET6/KERN_TLS/SCTP/PARAM options. No runtime source was changed.
+
+Evidence: `/usr/obj/usr/src/bazel-sockets-kernel-20261028/qualification`.
+All three objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records/associations. All six option headers match Make bytes. Maintained
+Make recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible paths; log: `/usr/obj/usr/src/bazel-sockets-kernel-make-20261028.log`.
+Whole-object/debug-path identity is not claimed.
+
+Unchanged frontend rerun: `/usr/obj/usr/src/bazel-sockets-kernel-cache-20261028`.
+All retained artifact hashes match; execution.json is empty (zero spawned
+actions, not a claim of zero internal write/symlink actions). No runtime
+tests ran. Pipe/socket lifecycle, blocking/nonblocking I/O, descriptor passing,
+MAC enforcement and network/TLS behavior still need linked-kernel tests.
+
+Frontend review: existing format-5 targets and generated inputs cover these
+additions without new build-bsd C/backend options, staging or manual changes.
+Full kernel/world/pkgbase/bootstrap and CPU/memory/disk performance gates
+remain open. Make stays production/default, module count remains 45, and no
+host installation or BIP work occurred.

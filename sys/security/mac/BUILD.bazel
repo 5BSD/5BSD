@@ -10,7 +10,7 @@ cc_library(name = "policy_headers", hdrs = ["mac_policy.h"], includes = ["../.."
 
 load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
 cc_library(name = "internal_headers", hdrs = ["mac_internal.h", "mac_syscalls.h", "mac_trace_args.h"], includes = ["../.."],
-    deps = [":framework_headers", ":policy_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+    deps = [":framework_headers", ":policy_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"], visibility = ["//sys/kern:__pkg__"])
 # GENERIC selects MAC, AUDIT, INET and INET6; arbitrary configurations remain pending.
 amd64_generic_kernel_objects(name = "generic_control",
     srcs = ["mac_audit.c", "mac_cred.c", "mac_kdb.c", "mac_framework.c", "mac_label.c", "mac_pipe.c",
