@@ -3570,3 +3570,14 @@ and
 expose source and compilation-header dependencies for native kernel consumers.
 Generation parity preserves the source-level SDT definitions and call sites;
 compiled-kernel retention and live probes require separate qualification.
+
+.Pp
+Object-interface generation also covers every current device and architecture
+.Pa *_if.m
+source under sys, using targets named after the interface within its owning
+Bazel package. For example,
+.Dq //sys/dev/pci:pci_if
+and
+.Dq //sys/dev/usb:usb_if
+emit their maintained C/header pairs. This qualifies text generation only,
+not compilation or runtime support for the associated driver or architecture.

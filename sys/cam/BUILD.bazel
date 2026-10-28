@@ -3,3 +3,6 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = glob(["**/*.h"]), strip_include_prefix = ".", include_prefix = "cam",
     deps = ["//sys/dev/nvme:headers"], visibility = ["//visibility:public"])
 exports_files(['cam.c', 'scsi/scsi_all.c', 'scsi/scsi_da.c', 'scsi/scsi_sa.c', 'ata/ata_all.c', 'nvme/nvme_all.c', 'scsi/smp_all.c'], visibility = ["//lib/libcam:__pkg__"])
+
+load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
+kernel_interfaces(srcs = ["mmc/mmc_sim_if.m"])

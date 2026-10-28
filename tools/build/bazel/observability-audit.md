@@ -2901,3 +2901,9 @@ stub substitution. This confirms source preservation only: kernel compilation,
 linker retention and live DTrace attachment remain untested. The generator does
 not supply per-operation audit-record integration; broader audit behavior lives
 in its callers and has not been qualified by this generation comparison.
+
+The same makeobjops comparison now covers all 132 current object interfaces,
+including devices and non-host architectures: 264 byte-equal C/header outputs.
+makeobjops does not itself generate SDT or audit sites. No instrumentation was
+added or removed; driver instrumentation and audit behavior must still be
+checked when the corresponding implementation objects are compiled and linked.

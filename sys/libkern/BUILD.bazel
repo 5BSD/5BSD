@@ -1,2 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["gsb_crc32.c"], visibility = ["//lib/libnvmf:__pkg__", "//lib/libufs:__pkg__"])
+
+load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
+kernel_interfaces(srcs = glob(["*_if.m"]))

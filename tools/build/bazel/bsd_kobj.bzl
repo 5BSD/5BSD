@@ -37,3 +37,17 @@ bsd_kobj_interface = rule(implementation = _impl, attrs = {
     "python_home": attr.label(allow_single_file = True, cfg = "exec", mandatory = True),
     "runtime": attr.label_list(allow_files = True, cfg = "exec"),
 })
+
+
+def kernel_interfaces(srcs, **kwargs):
+    """Declare maintained interfaces; callers may override execution inputs."""
+    defaults = {
+        "python": "@bsd_sdk//toolchain:extra_python",
+        "python_home": "@bsd_sdk//toolchain:python-home/runtime.json",
+        "runtime": ["@bsd_sdk//toolchain:python_stdlib"],
+        "libraries": ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+        "visibility": ["//visibility:public"],
+    }
+    defaults.update(kwargs)
+    for src in srcs:
+        bsd_kobj_interface(name = src.split("/")[-1][:-2], src = src, **defaults)

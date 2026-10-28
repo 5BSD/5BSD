@@ -2,3 +2,6 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = ["etherswitch.h"], strip_include_prefix = "/sys",
     visibility = ["//sbin/etherswitchcfg:__pkg__"])
+
+load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
+kernel_interfaces(srcs = glob(["*_if.m"]))

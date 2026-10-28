@@ -33529,3 +33529,35 @@ package aggregation remain unfinished. Execution still depends on the SDK and
 host loader; cross execution and full sandbox/cache portability are unqualified.
 The existing frontend target-selection contract needs no C/backend change; the
 manual documents these candidates. Make remains production/default.
+
+### Complete current object-interface generation inventory (2026-10-28)
+
+Added 124 native interface targets, bringing coverage to all 132 current
+`sys/**/*_if.m` definitions (also all current sys/**/*.m files). This includes
+PCI, USB, ACPI, network, storage, crypto, Xen, ARM and RISC-V interfaces. Shared
+`kernel_interfaces` applies the same declared generator/tool/runtime contract;
+package-local globs discover additional interfaces in those packages. Existing
+parent packages are preserved: CAM and GEOM use relative source declarations
+rather than new child package boundaries that could exclude existing headers.
+Adding a new package still requires its normal BUILD declaration.
+
+`/usr/obj/usr/src/bazel-all-kobj-20261028` built all 132 targets through maintained
+build-bsd with sixteen jobs. `qualification/verify.py` independently enumerates
+the current source inventory, requires exact equality with selected target labels,
+and compares every output with the maintained separate -c/-h generator recipes.
+All 264 C/header files are byte-equal. The reference uses host awk with matching
+source basenames; no generated output is normalized or filtered.
+
+`/usr/obj/usr/src/bazel-all-kobj-repeat-20261028` verifies the shared macro also
+preserves core-interface outputs. It executes zero spawns and all 264 hashes
+match. This establishes local unchanged-input reuse, not input invalidation or
+remote/sandbox portability. Foreign-architecture interface text generation is
+not cross-compilation or runtime qualification. No kernel, module or driver was
+compiled, installed or loaded by this work.
+
+Frontend format-5 target selection already handles the expanded inventory;
+manual and observability notes are updated without a C/backend contract change.
+Kernel source selection still contains special compile rules and dependencies
+that require explicit native actions. Configured options, full compiler flags,
+assembly offsets, kernel/module linking, packages and performance gates remain
+unfinished. Make remains production/default.
