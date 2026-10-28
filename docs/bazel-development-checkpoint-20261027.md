@@ -6799,3 +6799,38 @@ runtime-results.json was absent when checked this turn. Other migration work
 continues independently. Frontend review: build-bsd.c's format-5 native targets
 and maintained backend handle these archives at 16 jobs without new CLI or
 publication inputs. Make remains the production default.
+
+## 2026-10-28: libc core library installation and stripped runtime
+
+Added native library_install_manifest/library_install_archive for libc.a,
+libc_pic.a, libc.so.7, its separate debug file, libc.so linker script and libxnet.so
+compatibility link. The installed PIC archive aliases the shared-object archive,
+matching Make's SOBJS contract rather than the static-wrapper group. Existing
+Make schg metadata on libc.so.7 is preserved in the archive; no host flag or BIP
+policy is changed. The manifest intentionally names its library-only scope.
+
+Evidence: /usr/obj/usr/src/bazel-libc-library-install-20261028/receipt.json and
+qualification/library-installation-parity.json. All seven library/debug-directory
+metadata records match Make, including ownership/modes/tags/flags and the link.
+The linker script bytes match. Installed native archives retain their original
+bytes and match Make member counts: libc.a 1455, libc_pic.a 1443. Stripped shared
+libc retains identical .text and .SUNW_dof bytes from the qualified native full
+library. Separate-debug name/CRC and DWARF-info presence pass. The existing
+runtime smoke probe then passes against the stripped installed libc and native
+libsys; loader paths are recorded. This does not prove live DTrace firing.
+
+Reference: bazel-libc-install-reference-20261028-r3. The full maintained install
+inventory with tests disabled contains 1494 unique paths, including manuals,
+aliases and NLS catalogs; this commit qualifies only the seven library records.
+The first reference lacked compressed manuals and attempted unbuilt tests. The
+second used a nonexistent manbuild target. The final reference explicitly uses
+WITHOUT_TESTS, WITHOUT_NIS and debug malloc, builds the maintained all-man target,
+and performs rootless install. Failed runs are retained. Scripts and source/manual
+inventory: bazel-libc-install-qualification-20261028. Remaining manual/catalog/
+configuration coverage must be reconciled before whole-libc installation claims.
+
+Frontend review: build-bsd.c's existing format-5 targets/tests/backend built the
+new archives and existing smoke tests at 16 jobs; no CLI/publication inputs need
+changing. The extra installed-library execution check uses saved artifacts. No
+host installation occurred. Make remains production/default; pending privileged
+iconv conversion and full world/kernel/pkgbase/performance gates remain open.

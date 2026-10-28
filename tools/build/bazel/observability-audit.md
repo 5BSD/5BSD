@@ -4823,3 +4823,13 @@ valid separate debug links and reproduce all 656 database outputs with native
 libc/libsys. Manuals and full component installation metadata match Make. No
 runtime source, DTrace probes or audit hooks changed. This is generator execution
 evidence; it does not substitute for the pending isolated iconv conversion run.
+
+## 2026-10-28 installed libc observability preservation
+
+The native stripped libc installation artifact retains byte-identical .text and
+.SUNW_dof sections from the previously qualified full libc. Its separate debug
+CRC/name and DWARF-info presence pass; the existing smoke probe runs using that
+installed library copy and native libsys. No probes or audit hooks were removed.
+Live DTrace provider registration/firing and full system runtime are not established
+by section preservation. Library payload metadata matches Make; documentation,
+catalog/config coverage and broader tests remain separate work.

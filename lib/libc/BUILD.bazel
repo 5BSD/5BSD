@@ -115,3 +115,34 @@ bsd_install_link(name = "xnet_link", destination = "/usr/lib/libxnet.so", target
     kind = "symlink", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clibs"])
 # This manifest covers the link interface only; whole libc installation is separate.
 bsd_install_manifest(name = "link_interface_manifest", entries = [":linker_script_install", ":xnet_link"])
+
+# The installed PIC archive is Make's SOBJS collection, not its static wrappers.
+alias(name = "pic_archive", actual = ":shared_objects_archive", visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
+bsd_debug_split(name = "library_debug", src = ":c_shared",
+    binary_name = "install/libc.so.7", debug_name = "install/libc.so.7.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy", objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs")
+bsd_strip_binary(name = "library_stripped", src = ":library_debug", output = "install/stripped/libc.so.7",
+    strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
+filegroup(name = "library_symbols", srcs = [":library_debug"], output_group = "debug_files")
+_LIBRARY_FILES = [
+    (":static_archive", "/usr/lib/libc.a", ["package=clibs", "dev"], ""),
+    (":pic_archive", "/usr/lib/libc_pic.a", ["package=clibs", "dev"], ""),
+    (":library_stripped", "/lib/libc.so.7", ["package=clibs"], "schg"),
+    (":library_symbols", "/usr/lib/debug/lib/libc.so.7.debug", ["package=clibs", "dbg"], ""),
+]
+[bsd_install_file(name = "library_install_" + str(index), src = source, destination = destination,
+    owner = "root", group = "wheel", mode = "0444", install_tags = tags, flags = flags)
+ for index, (source, destination, tags, flags) in enumerate(_LIBRARY_FILES)]
+# Library payload only: manuals, catalogs and configuration have separate owners.
+bsd_install_manifest(name = "library_install_manifest",
+    entries = [":library_install_" + str(index) for index in range(len(_LIBRARY_FILES))] + [":linker_script_install", ":xnet_link"],
+    visibility = ["//visibility:public"])
+bsd_install_archive(name = "library_install_archive", manifests = [":library_install_manifest"],
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=clibs","dbg"]}'},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])
