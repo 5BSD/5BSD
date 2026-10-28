@@ -174,3 +174,10 @@ amd64_generic_kernel_objects(name = "generic_exec", srcs = ["kern_exec.c"],
         "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_ktrace_header",
         "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_hwt_hooks_header",
         "//sys/amd64/conf:generic_opt_vm_header"])
+
+amd64_generic_kernel_objects(name = "generic_threads", srcs = ["kern_thr.c", "kern_thread.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/audit:kernel_headers",
+        "//sys/dev/hwpmc:kernel_headers", "//sys/dev/hwt:hook_headers",
+        "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_posix_header",
+        "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_hwt_hooks_header",
+        "//sys/amd64/conf:generic_opt_witness_header"])

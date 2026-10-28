@@ -2986,3 +2986,26 @@ credential transitions, policy denial and failed-exec cleanup remain linked-
 kernel qualification. Full kernel/world/pkgbase/bootstrap and performance
 gates remain open. Make remains production/default; module count remains 45.
 No host installation or BIP work occurred.
+
+### Native thread management
+
+Added //sys/kern:generic_threads_object_files for kern_thr.c and kern_thread.c,
+selected by the maintained GENERIC Makefile. Dependencies declare CK/VM,
+audit, HWPMC/HWT hooks and native generated KTRACE/POSIX/HWPMC_HOOKS/HWT_HOOKS/
+WITNESS headers. No thread or instrumentation source behavior changed.
+
+Evidence: `/usr/obj/usr/src/bazel-threads-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records/associations. All five generated option headers match Make bytes.
+Reference log: `/usr/obj/usr/src/bazel-threads-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and generated inputs support these
+objects without new build-bsd C/backend options, staging or manual changes.
+No runtime tests ran. Thread creation/exit, suspension/wakeup, signals,
+resource accounting, contention and tracing require linked-kernel tests.
+Full kernel/world/pkgbase/bootstrap and CPU/memory/disk performance gates
+remain open. Make remains production/default; module count remains 45.
+No host installation or BIP work occurred.

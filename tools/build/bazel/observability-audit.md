@@ -3476,3 +3476,14 @@ runtime relocations, including instrumentation. Evidence:
 Generated hook options match Make; no instrumentation was disabled or runtime
 source changed. Live successful/failed exec, tracing hooks, audit records and
 policy enforcement remain unqualified.
+
+### Thread management (2026-10-28)
+
+kern_thread.c defines proc:lwp-exit; kern_thr.c has signal/process audit
+arguments and hardware tracing/performance-counter hook paths. Native GENERIC
+objects match Make symbols, raw CTF, allocated sections and runtime
+relocations. All generated tracing/WITNESS options match Make. Evidence:
+`/usr/obj/usr/src/bazel-threads-kernel-20261028/qualification`.
+No hooks were disabled and no runtime source changed. Thread lifecycle,
+audit records, hook firing and contention remain runtime qualification;
+absence of local SDT definitions in kern_thr.c alone is not a coverage verdict.
