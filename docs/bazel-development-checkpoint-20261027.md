@@ -7922,7 +7922,7 @@ Owner/group, uid/gid, flags, tags, archive membership, and both file payloads
 match exactly. Shell tests have no ELF/debug counterpart to qualify.
 
 Evidence: /usr/obj/usr/src/bazel-mknetid-test-archive-20261028/qualification/
-test-install-parity.json. Reference: bazel-mknetid-test-reference-20261028.
+test-install-parity.json. Reference: bazel-mknetid-test-reference-20261028-r2.
 Retained scripts: bazel-mknetid-qualification-20261028/{make-test-reference.py,
 verify-test-install.py}. build-bsd performed the native archive build at 16
 jobs. Reviewed build-bsd.c and existing collection/backend rules: explicit
@@ -7933,3 +7933,15 @@ pkg creation/publication, or installed-system test discovery. Prior six-case
 guest runtime evidence remains unchanged. General VM replay integration and
 full-world/kernel/package/performance qualification remain outstanding; Make
 remains production/default. No host files were installed.
+
+Verification correction for the preceding entry: the first archive comparison
+incorrectly expected tar membership to contain only component records; the tar
+also contains four required ancestor directories. A second check exposed that
+the original Make reference enabled tests only for the component, leaving
+WITH_TESTS disabled during distrib-dirs. The r2 reference enables tests for both
+steps. Verification now checks exact membership including ancestors, comparing
+all four ancestor modes/owners against Make distribution metadata as well as
+the three component records and two payloads. It passes and emits the cited
+report. The initial documentation commit ran despite verification failure due
+to missing shell fail-fast handling; subsequent commands fail immediately on
+errors. No archive implementation or expected file contents changed to pass.
