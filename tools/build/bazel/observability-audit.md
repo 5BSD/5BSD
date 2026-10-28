@@ -3995,3 +3995,13 @@ relocations. Evidence:
 `/usr/obj/usr/src/bazel-device-init-dma-kernel-20261028/qualification`.
 No runtime source changed. Live ordering, DMA mappings, callback/error paths
 and performance remain unqualified.
+
+### Physical I/O dispatch (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in kern_physio.c.
+Assess device/GEOM I/O probes and surrounding read/write audit paths together
+before adding instrumentation. Native GENERIC output matches Make symbols,
+raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-physio-kernel-20261028/qualification`.
+No runtime source changed. Live mapping/transfer/error behavior and runtime
+CPU/memory/disk performance remain unqualified.

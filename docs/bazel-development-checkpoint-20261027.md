@@ -4108,3 +4108,25 @@ segment boundaries, callback errors and IOMMU integration require linked-kernel
 and driver tests. Full kernel/world/pkgbase/bootstrap and performance gates
 remain open. Make stays production/default; module count remains 45. No host
 installation or BIP changes occurred.
+
+### Native physical I/O dispatch
+
+Added //sys/kern:generic_physio_object_files for kern_physio.c, selected
+by maintained GENERIC Make. Dependencies declare CK/VM and GEOM headers.
+No runtime source or buffer-mapping behavior changed.
+
+Evidence: `/usr/obj/usr/src/bazel-physio-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. Reference log:
+`/usr/obj/usr/src/bazel-physio-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. User-buffer mapping/unmapping, partial transfers, device errors, resource
+limits and CPU/memory/disk I/O costs require linked-kernel and device tests.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+stays production/default; module count remains 45. No host installation or
+BIP changes occurred.
