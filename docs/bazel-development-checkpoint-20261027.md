@@ -3633,3 +3633,25 @@ rename/unmount races and lookup performance require linked-kernel/filesystem
 tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
 Make remains production/default; module count remains 45. No host installation
 or BIP changes occurred.
+
+### Native VFS name cache
+
+Added //sys/kern:generic_namecache_object_files for vfs_cache.c, selected by
+the maintained GENERIC Makefile. Dependencies declare CK/VM, MAC, audit,
+debugger and generated DDB/KTRACE options. No caching or lookup source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-namecache-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. Both option headers match Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-namecache-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets cover this addition without new
+build-bsd C/backend options, staging or manual changes. No runtime tests ran.
+Positive/negative cache lookup, invalidation, rename/unlink/unmount races,
+SMR reclamation, path permissions and lookup/memory costs require linked-kernel
+filesystem tests. Full kernel/world/pkgbase/bootstrap and performance gates
+remain open. Make stays production/default; module count remains 45. No host
+installation or BIP changes occurred.

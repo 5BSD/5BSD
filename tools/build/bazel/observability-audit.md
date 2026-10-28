@@ -3778,3 +3778,14 @@ symbols, raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-lookup-kernel-20261028/qualification`.
 No runtime source changed. Live path resolution, security boundaries, audit
 records and probe firing remain unqualified.
+
+### VFS name cache (2026-10-28)
+
+vfs_cache.c has 23 SDT probe definitions. Native GENERIC output matches Make
+symbols, raw CTF, allocated sections and runtime relocations, preserving probe
+metadata. Evidence:
+`/usr/obj/usr/src/bazel-namecache-kernel-20261028/qualification`.
+No runtime source changed. No local AUDIT_ARG calls were found; assess cached
+lookup auditing with the surrounding namei/syscall paths rather than inferring
+coverage from includes. Live probes, cache invalidation, permissions and
+concurrent filesystem behavior remain unqualified.
