@@ -3499,3 +3499,12 @@ embedded-template generators.
 includes the executable, debug file and both manuals.
 GENERIC configuration output parity and warm cache reuse have been checked;
 this does not establish a native Bazel kernel or module build.
+
+.Pp
+.Dq //usr.bin/xinstall:install_archive
+stages install, its manual/debug data and the maintained ATF suite when tests
+are enabled. The normal executable consumes the dtrace setting.
+.Dq //usr.bin/xinstall:bootstrap_install
+selects the maintained bootstrap code path without probes or copy_file_range.
+This component target has not replaced the frontend's staged bootstrap tools;
+its existence does not establish a self-hosted native build.

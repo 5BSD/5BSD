@@ -2847,3 +2847,14 @@ lexer sources. This migration preserves config output, including configured
 kernel option headers, without changing instrumentation policy. GENERIC and
 -g output inventories match Make, but no kernel/module probes were compiled,
 loaded or exercised. Kernel audit/DTrace retention remains a separate gate.
+
+## install / bootstrap_install (2026-10-28)
+
+All five installcopy probes are preserved with matching argument schemas and
+site counts: range-start/done, fallback and sync-start/done. Normal copy paths
+were exercised but probes were not attached or counted at runtime. Bootstrap
+source selection intentionally excludes probes and copy_file_range, as Make
+does. No new audit hooks were added. Ownership and identity-database tests use
+-U/private files and do not qualify privileged installs or account changes.
+The full maintained ATF suite is packaged, with native runtime registration
+still pending; no assertion or kernel-compatibility fallback was introduced.

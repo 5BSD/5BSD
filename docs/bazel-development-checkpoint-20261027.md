@@ -567,3 +567,41 @@ config's generated Makefile would not satisfy native kernel integration.
 Current maintained config output parity is a prerequisite, not that end state.
 The existing frontend format-5 interface needs no C/backend contract change;
 the maintained manual documents the new component and its limits.
+
+## Native install and explicit bootstrap variant (2026-10-28)
+
+Added usr.bin/xinstall native compilation/linkage, hashing and mtree identity
+headers, DTrace generation, and complete program/manual/debug plus maintained
+ATF-script/Kyuafile installation. The installed program remains named install.
+The separate bootstrap_install target defines BOOTSTRAP_XINSTALL and omits
+instrumentation, matching the maintained source's bootstrap branch. It has
+been built/inspected and exercised, but does not replace SDK/bootstrap helpers
+or prove a self-hosted build; its execution-time DSO closure still needs wiring
+where it becomes a declared build tool.
+
+Evidence: /usr/obj/usr/src/bazel-xinstall-r2-20261028/qualification, versus
+/usr/obj/usr/src/bazel-xinstall-make-20261028. The normal executable matches 17
+globals, ordered NEEDED libraries and NOW/PIE metadata. Five DTrace records
+(fallback, range-start/done, sync-start/done) match provider/function/probe
+names, argument types and site counts; addresses are allowed to differ.
+The bootstrap executable has no copy_file_range import or .SUNW_dof section.
+Complete installation matches eight records, three byte-identical nonbinary
+files and the debug link. Archive SHA256:
+f7301000702b926e4eb8f10b72c83cf5cb1728891990b1935555ab7538f016aa.
+
+Direct runtime comparisons exercise native, Make and bootstrap executables on
+private files: copy/compare, safe replacement with backup, preservation of
+timestamps, directory modes, hard/relative symlinks, stdin/null input, five
+independently verified hashes, and METALOG with an explicit alternate identity
+database. They agree, using native libmd and SDK runtime libraries. Initial
+fixture errors (relative link source and missing master.passwd) were corrected;
+production behavior was unchanged and earlier outputs remain preserved.
+
+The first build exposed a missing NetBSD util.h dependency, now declared.
+The installed ATF suite is packaged unchanged, but its cases are not yet
+registered/executed through native Bazel. Other remaining gates include stripping,
+privileged ownership/flags, complete option coverage, forced I/O failures,
+DTrace attachment, runtime closure and bootstrap parity against a matching
+BOOTSTRAPPING Make build. Existing frontend format-5 inputs support these
+targets; no C/backend change or bootstrap-tool substitution was performed.
+World/kernel/pkgbase and performance gates remain incomplete.

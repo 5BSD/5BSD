@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["getid.c"], visibility = ["//usr.bin/xinstall:__pkg__"])
+cc_library(name = "install_headers", hdrs = ["mtree.h", "extern.h"], includes = ["."], deps = ["//lib/libnetbsd:util_header"], visibility = ["//usr.bin/xinstall:__pkg__"])

@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_script_wrapper(name = "install_test", body = "install_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["install_test"], interfaces = {"install_test": "atf"})
+[bsd_install_file(name = "install_" + name, src = source, destination = "/usr/tests/usr.bin/xinstall/" + name,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=tests"]) for name, source, mode in [
+    ("install_test", ":install_test", "0555"), ("Kyuafile", ":kyuafile", "0444")]]
+bsd_install_manifest(name = "install_manifest", entries = [":install_install_test", ":install_Kyuafile"], visibility = ["//visibility:public"])
