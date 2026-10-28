@@ -6184,3 +6184,31 @@ combined DTrace DOF, installation/debug/pkgbase and runtime gates remain open.
 Frontend review: build-bsd's existing format-5 targets compile this component;
 no new frontend/backend contract required. Builds use 16 CPUs and Make remains
 production/default. No installation, upgrade or reboot occurred.
+
+## 2026-10-28: syscall inventory generated for native Bazel
+
+The maintained sys/tools/syscalls generator now emits syscall_symbols.bzl via
+the optional sysbzl configuration output (default /dev/null). It shares the exact
+native/compatibility/NODEF/NOLIB inclusion predicate with syscall.mk. Native
+sys/kern/syscalls.conf selects ../sys/syscall_symbols.bzl and sys/kern/Makefile
+lists it among GENERATED outputs, so normal sysent regeneration updates it.
+The checked-in inventory is generated from syscalls.master, not a hand-maintained
+second list and not a runtime Make parser. Standalone syscall_mk invocation also
+emits the configured Bazel output.
+
+Evidence: /usr/obj/usr/src/bazel-syscall-inventory-20261028/comparison.json. Running
+the original generator and changed generator against the same native master and
+output-isolated configurations produces all eight pre-existing files byte-equal.
+The 452 Bazel symbols exactly equal syscall.mk in order and membership, with no
+duplicates. This checks inventory generation only; no generated assembly objects,
+new libc/libsys link or syscall runtime qualification is claimed.
+
+Next native targets must load this inventory and explicitly model PSEUDO and
+INTERPOSED syscall policy, amd64 handwritten exclusions, stack notes and separate
+static/libsys versus empty shared-libc syscall bodies. The maintained per-stub
+shell generator and bsd_syscall_asm rule already exist. Full ABI/cross-architecture,
+cache, linking/package and runtime gates remain outstanding.
+
+Frontend review: build-bsd continues through the maintained Make sysent backend;
+the added generated output is part of that normal path. No new frontend option
+or signing/publication contract is needed. No installed host files changed.

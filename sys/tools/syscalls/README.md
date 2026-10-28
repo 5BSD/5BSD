@@ -38,7 +38,9 @@ standalone scripts to generate specific files.
     * `init_sysent.lua` - Generates `init_sysent.c`.
     * `libsys_h.lua` - Generates `lib/libsys/_libsys.h`.
     * `syscall_h.lua` - Generates `syscall.h`.
-    * `syscall_mk.lua` - Generates `syscall.mk`.
+    * `syscall_mk.lua` - Generates `syscall.mk` and the optional native Bazel
+      symbol inventory (`sysbzl`, default `/dev/null`). Both use the same ABI
+      inclusion predicate; architecture-specific stub selection stays in libsys.
     * `syscalls.lua` - Generates `syscalls.c`.
     * `syscalls_map.lua` - Generates `lib/libsys/syscalls.map`.
     * `sysproto_h.lua` - Generates `sysproto.h`.

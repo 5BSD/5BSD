@@ -26,6 +26,11 @@ syscall_mk.file = "/dev/null"
 -- Libc has all the STD, NOSTD and SYSMUX system calls in it, as well as
 -- replaced system calls dating back to FreeBSD 7. We are lucky that the
 -- system call filename is just the base symbol name for it.
+local function included(v)
+	return (v:native() or v:compatLevel() >= 7) and
+	    not v.type.NODEF and not v.type.NOLIB
+end
+
 function syscall_mk.generate(tbl, config, fh)
 	-- Grab the master system calls table.
 	local s = tbl.syscalls
@@ -42,10 +47,9 @@ function syscall_mk.generate(tbl, config, fh)
 
 	gen:write("MIASM =  \\\n") -- preamble
 	for _, v in pairs(s) do
-		local c = v:compatLevel()
 		local bs = " \\"
 		idx = idx + 1
-		if (v:native() or c >= 7) and not v.type.NODEF and not v.type.NOLIB then
+		if included(v) then
 			if idx >= size then
 				-- At last system call, no backslash.
 				bs = ""
@@ -53,6 +57,20 @@ function syscall_mk.generate(tbl, config, fh)
 			gen:write(string.format("\t%s.o%s\n", v:symbol(), bs))
 		end
 	end
+end
+
+-- The native Bazel inventory uses the same ABI filtering as syscall.mk.
+-- Architecture-specific handwritten/pseudo selection belongs to libsys targets.
+function syscall_mk.generate_bazel(tbl, config, fh)
+	local gen = generator:new({}, fh)
+	gen:preamble("System call symbols for native Bazel targets.", "#")
+	gen:write("SYSCALL_SYMBOLS = [\n")
+	for _, v in pairs(tbl.syscalls) do
+		if included(v) then
+			gen:write(string.format("    %q,\n", v:symbol()))
+		end
+	end
+	gen:write("]\n")
 end
 
 -- Entry of script:
@@ -73,6 +91,7 @@ if script then
 
 	syscall_mk.file = config.sysmk	-- change file here
 	syscall_mk.generate(tbl, config, syscall_mk.file)
+	syscall_mk.generate_bazel(tbl, config, config.sysbzl)
 end
 
 -- Return the module.

@@ -4657,3 +4657,11 @@ userspace implementation is compiled directly; no new policy or instrumentation
 added. Ordinary/PIC object and exception-section parity does not establish kernel
 rights enforcement or runtime auditing. Existing capsicum tests and full native
 libc/kernel integration remain necessary for those claims.
+
+## 2026-10-28: generated syscall inventory
+
+The native Bazel symbol list is generated with syscall.mk's existing ABI filter;
+all 452 native inventory entries match. Existing eight generated outputs remain
+byte-identical, including tracing argument generation. No new probes, syscall
+wrappers or policy changes are introduced in this producer change. Assembly and
+runtime audit/tracing behavior remain to be qualified with the native consumers.
