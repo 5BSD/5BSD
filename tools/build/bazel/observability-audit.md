@@ -5432,3 +5432,14 @@ No host configuration or users changed. ATF shell-level expectations, live servi
 behavior and user-management/audit operations remain unqualified. All four flua
 regression tests also reran successfully with the extended test launcher.
 Evidence: /usr/obj/usr/src/bazel-nuageinit-runtime-20261028/test-reports/.
+
+
+### pw native build (2026-10-28)
+
+All fifteen original C files are carried forward, including pw_log.c; object code
+and symbols match Make. Source scan found no direct audit(), DTRACE, SDT_PROBE
+or syslog references in these C files. That does not establish absent kernel
+syscall auditing or adequate account-management audit coverage. Review configured
+pw logging, failed mutations and kernel audit behavior during isolated runtime
+qualification. No user/group operations executed on the host. Evidence:
+/usr/obj/usr/src/bazel-pw-20261028/qualification/.

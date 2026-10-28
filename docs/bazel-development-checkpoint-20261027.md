@@ -8699,3 +8699,26 @@ shell wrappers' additional stdout/stderr checks, installed test paths, live SSH,
 user creation or full nuageinit startup. Remaining fixture/shell scenarios need
 native helper integration and isolated VM coverage. Bootstrap and complete world/
 kernel/pkgbase/cache/performance gates remain open; Make remains default.
+
+
+## 2026-10-28: native pw build and installation
+
+Added native pw target with all fifteen maintained C sources, explicit local
+headers, native libcrypt/libutil dependencies, both manuals and split-debug
+installation in package=runtime. This supplies a missing build dependency for
+nuageinit's user/group management tests without substituting the host pw binary.
+
+All fifteen object .text/global-symbol comparisons pass against isolated Make.
+The executable matches 220 global/undefined symbols, libc/crypt/util NEEDED and
+empty RPATH/RUNPATH. All six installation metadata records and both compressed
+manual payloads match. Debug validation and stripped-text preservation pass.
+
+Evidence: /usr/obj/usr/src/bazel-pw-20261028/qualification/{pw/parity.json,
+object-parity.json}; reference: bazel-pw-reference-20261028; scripts:
+bazel-pw-qualification-20261028/{make.py,verify.py,objects.py}. Builds used maintained
+build-bsd at 16 jobs. Reviewed build-bsd.c: existing explicit inputs/artifact
+collection support this target, no frontend change required. This establishes
+build/install parity only. User/group mutations, password database updates,
+rollback/locking/failure behavior and existing pw ATF suites remain unqualified.
+No host accounts/configuration were changed. Whole-world/kernel/pkgbase/cache/
+performance gates remain open and Make remains production/default.
