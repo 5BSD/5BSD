@@ -4897,3 +4897,34 @@ at /usr/obj/usr/src/bazel-login-capdb-reuse-20261028 passes the same full-featur
 metadata and byte-identical database comparison. Existing rule consumers are
 not required to migrate. This correction supersedes any description of a new
 capability-database rule in the initial change.
+
+
+## 2026-10-28: reconcile login package payload and generated database
+
+Corrects the earlier provisional database-ownership concern: inspection of
+packages/utilities/utilities.ucl found maintained post-install regeneration from
+/etc/login.conf and a 5bsd.construction declaration for /etc/login.conf.db.
+The untagged Make record represents generated state, not a missing package owner.
+Do not assign a prebuilt database to a package and overwrite state derived from
+local configuration. No Make recipe or package action changes are needed here.
+
+Native login now exposes package-backed install_manifest separately from explicit
+generated_manifest. install_archive includes both. A scope=component package_layout
+uses the tagged payload only, with runtime/runtime-dbg and optional runtime-man.
+This is an explicit partition; the database is not silently dropped from staging.
+It does not produce a complete runtime package or qualify utilities post-install
+execution, upgrades or config merge/regeneration across package updates.
+
+Evidence: /usr/obj/usr/src/bazel-login-payload-20261028 and
+bazel-login-payload-split-20261028. Normal full installation still matches all 11
+Make records and generated DB bytes. qualification/partition.py reads saved
+artifact manifests, not mutable bazel-bin links; normal and split-manpage layouts
+account for every installed nondirectory file. Exactly login.conf.db is generated,
+all four configurations retain config tags, and the manual moves to runtime-man
+when selected. Counts: normal runtime=6/runtime-dbg=1; split runtime=5,
+runtime-dbg=1/runtime-man=1; each also stages the single generated DB.
+
+Frontend review: existing explicit targets expose both manifests and layout via
+build-bsd; README corrected to describe actual package generation ownership.
+No C/backend contract change, host update or login invocation. Full package
+assembly/publication, post-install and upgrade qualification remain open.

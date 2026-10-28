@@ -34336,7 +34336,9 @@ records, not changes to host executable permissions.
 `bsd_capability_database` declares capability sources, `.db` output, explicit `little` or
 `big` byte order and an execution-configured compiler. login uses the native
 cap_mkdb_bootstrap source reader and amd64 little endian. Other execution/target
-platforms need qualification; no host database is imported. login.conf.db lacks
-a package tag in the current Make METALOG recipe, which is recorded as an open
-pkgbase ownership/reconciliation issue. Full-feature and all-three-disabled
+platforms need qualification; no host database is imported. login.conf.db is
+intentionally generated rather than packaged: packages/utilities/utilities.ucl
+contains its post-install regeneration and construction declaration. login exposes
+package-backed install_manifest and separate generated_manifest; install_archive
+includes both. Component package_layout consumes only the package-backed manifest. Full-feature and all-three-disabled
 login artifact comparisons pass; authentication/session runtime remains open.
