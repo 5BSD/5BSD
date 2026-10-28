@@ -2341,6 +2341,12 @@ source selection, Make artifact/debug parity, and staged installation metadata.
 The observed option change recompiles only the affected uzip translation unit.
 Decompression runtime, resource/performance and whole-kernel qualification
 remain separate.
+The boolean //tools/build/bazel/config:veriexec_debug defaults to true and
+preserves the core module's VERIFIED_EXEC_DEBUG compiler definition;
+false corresponds to Make WITHOUT_VERIEXEC_DEBUG.
+Current core sources do not consume that definition, so both settings produce
+identical artifacts. Both variants have Make artifact and staged metadata
+comparisons; live enforcement remains unqualified.
 For example, //tools/build/bazel/config:split_manpages set to true selects
 separate manual-page package ownership; false is the maintained default.
 The boolean //sbin/growfs:gfsdbg defaults to false and selects the maintained

@@ -223,3 +223,7 @@ string_flag(name = "kernel_debug_directory", build_setting_default = "/usr/lib/d
 # Shared authority for native config and option-selected kernel sources.
 bool_flag(name = "kernel_zstdio", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "kernel_zstdio_enabled", flag_values = {":kernel_zstdio": "true"}, visibility = ["//visibility:public"])
+
+# Module diagnostic compilation, corresponding to WITHOUT_VERIEXEC_DEBUG.
+bool_flag(name = "veriexec_debug", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "veriexec_debug_enabled", flag_values = {":veriexec_debug": "true"}, visibility = ["//visibility:public"])

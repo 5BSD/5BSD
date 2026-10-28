@@ -3151,3 +3151,15 @@ Review live registration/unregistration, verification failures and audit
 coverage when converting and testing the core module. Do not add per-block
 crypto probes merely to increase instrumentation counts. No live module
 load, verification decision or probe firing is claimed here.
+
+### Core Veriexec native build (2026-10-28)
+
+All five core SDT definitions (fingerprint status/start/done and capimage
+verify start/done) retain Make-identical provider/probe/argument/tracepoint
+sections in both diagnostic compiler settings. The lookup paths retain their
+AUDITVNODE1 flags. Artifact comparison does not establish live audit events or
+probe firing. Registration, invalid signatures, vnode replacement/cache
+invalidation, key changes and concurrent verification still need runtime
+qualification with the completed kernel. VERIFIED_EXEC_DEBUG currently has
+no source consumer; toggling its preserved build setting does not change
+runtime behavior or observability.

@@ -6,3 +6,13 @@ amd64_generic_module_objects(name = "sha1_module", srcs = ["mac_veriexec_sha1.c"
 amd64_generic_module_objects(name = "sha256_module", srcs = ["mac_veriexec_sha256.c"], deps = [":headers", "//sys/crypto/sha2:module_headers"])
 amd64_generic_module_objects(name = "sha384_module", srcs = ["mac_veriexec_sha384.c"], deps = [":headers", "//sys/crypto/sha2:module_headers"])
 amd64_generic_module_objects(name = "sha512_module", srcs = ["mac_veriexec_sha512.c"], deps = [":headers", "//sys/crypto/sha2:module_headers"])
+
+cc_library(name = "internal_headers", hdrs = ["mac_veriexec_internal.h"], deps = [":headers"])
+amd64_generic_module_objects(
+    srcs = ["mac_veriexec.c", "veriexec_capimage.c", "veriexec_fingerprint.c", "veriexec_metadata.c"],
+    deps = [":internal_headers", "//sys/security/mac:policy_headers", "//sys/security/mac:framework_headers",
+        "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_mac_header",
+        "//sys/amd64/conf:generic_opt_veriexec_header", "//sys/fs/nullfs:headers",
+        "//sys/crypto/sha2:module_headers", "//sys/opencrypto:ed25519_headers"],
+    copts = select({"//tools/build/bazel/config:veriexec_debug_enabled": ["-DVERIFIED_EXEC_DEBUG"], "//conditions:default": []}),
+)

@@ -2189,3 +2189,30 @@ and default. The current module comparison batch now covers thirty-one
 modules, not the complete kernel or system. The core Veriexec and capability
 modules, remaining world/kernel closure and pkgbase/publication qualification
 remain unfinished.
+
+### Native core Veriexec module
+
+Added all four core sources, explicit internal/public/crypto/nullfs/MAC
+header dependencies, native config-derived opt_capsicum/opt_mac/opt_veriexec,
+and the maintained three-symbol export policy. No verification policy source
+was changed. The format-5 veriexec_debug boolean preserves Make's compiler
+definition selection (default true, false = WITHOUT_VERIEXEC_DEBUG).
+Current sources do not consume VERIFIED_EXEC_DEBUG; both modes produce the
+same artifacts. This is a compiler-interface compatibility setting, not a
+new runtime security switch. The maintained frontend manual documents it;
+existing typed build-settings handling requires no C/backend option change.
+
+Evidence: `/usr/obj/usr/src/bazel-veriexec-core-20261028/qualification` and
+`/usr/obj/usr/src/bazel-veriexec-core-nodebug-20261028/qualification`.
+Both variants match their corresponding Make references for code/data,
+symbols, relocations, raw CTF, all SDT sections and staged install metadata.
+Debug identity and CRC pass. Extracted native option headers match Make.
+The core contains three fingerprint and two capimage verification probes;
+these sections survive compilation and export processing unchanged.
+
+The module comparison batch now covers thirty-two modules. These checks do
+not demonstrate load/unload behavior, signature acceptance/rejection, key
+rotation, vnode changes or invalidation, actual audit delivery or probe firing.
+Whole-kernel linking/boot, capability modules, world/pkgbase/publication,
+arbitrary KERNCONF, bootstrap and comparative performance gates remain open.
+Make remains production/default; BIP remains out of scope.
