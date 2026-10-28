@@ -181,3 +181,7 @@ amd64_generic_kernel_objects(name = "generic_threads", srcs = ["kern_thr.c", "ke
         "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_posix_header",
         "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_hwt_hooks_header",
         "//sys/amd64/conf:generic_opt_witness_header"])
+
+amd64_generic_kernel_objects(name = "generic_umtx", srcs = ["kern_umtx.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/amd64/conf:generic_opt_umtx_profiling_header"])

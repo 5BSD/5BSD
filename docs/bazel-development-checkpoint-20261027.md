@@ -3009,3 +3009,26 @@ resource accounting, contention and tracing require linked-kernel tests.
 Full kernel/world/pkgbase/bootstrap and CPU/memory/disk performance gates
 remain open. Make remains production/default; module count remains 45.
 No host installation or BIP work occurred.
+
+### Native user-mutex synchronization
+
+Added //sys/kern:generic_umtx_object_files for kern_umtx.c, selected by the
+maintained GENERIC Makefile. Dependencies declare CK/VM, MAC and the native
+config-generated UMTX_PROFILING header. No synchronization source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-umtx-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. The generated profiling header matches Make bytes. Reference
+log: `/usr/obj/usr/src/bazel-umtx-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and generated inputs cover this
+addition without new build-bsd C/backend options, staging or manual changes.
+No runtime tests ran. Pthread mutex/condition-variable behavior, robust and
+process-shared synchronization, timeout/wakeup races and priority inheritance
+require linked-kernel qualification. Alternate profiling configurations remain
+separate qualification. Full kernel/world/pkgbase/bootstrap and CPU/memory/
+disk performance gates stay open. Make remains production/default; module
+count remains 45. No host installation or BIP changes occurred.

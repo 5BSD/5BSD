@@ -3487,3 +3487,14 @@ relocations. All generated tracing/WITNESS options match Make. Evidence:
 No hooks were disabled and no runtime source changed. Thread lifecycle,
 audit records, hook firing and contention remain runtime qualification;
 absence of local SDT definitions in kern_thr.c alone is not a coverage verdict.
+
+### User-mutex synchronization (2026-10-28)
+
+kern_umtx.c defines four SDT probes for wake, sleep-start, sleep-done and
+priority-inheritance ownership. Native GENERIC output matches Make symbols,
+raw CTF, allocated sections and runtime relocations, including probe metadata.
+Evidence: `/usr/obj/usr/src/bazel-umtx-kernel-20261028/qualification`.
+No source instrumentation changed. No AUDIT_ARG calls were found locally;
+that alone does not establish a missing audit requirement for synchronization
+operations. Live contention, ownership transitions, probes and MAC outcomes
+remain unqualified.
