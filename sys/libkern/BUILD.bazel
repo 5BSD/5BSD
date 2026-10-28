@@ -3,3 +3,61 @@ exports_files(["gsb_crc32.c"], visibility = ["//lib/libnvmf:__pkg__", "//lib/lib
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+# qsort_r.c includes the maintained common implementation.
+cc_library(name = "qsort_implementation", hdrs = ["qsort.c"], includes = [".."])
+# GENERIC common support routines; random-provider and x86 CRC groups remain separate.
+amd64_generic_kernel_objects(name = "generic_common",
+    srcs = [
+    "arc4random_uniform.c",
+    "asprintf.c",
+    "bcd.c",
+    "bsearch.c",
+    "crc16.c",
+    "explicit_bzero.c",
+    "fnmatch.c",
+    "gsb_crc32.c",
+    "inet_aton.c",
+    "inet_ntoa.c",
+    "inet_ntop.c",
+    "inet_pton.c",
+    "jenkins_hash.c",
+    "murmur3_32.c",
+    "memcchr.c",
+    "memchr.c",
+    "memmem.c",
+    "qsort.c",
+    "qsort_r.c",
+    "random.c",
+    "scanc.c",
+    "strcasecmp.c",
+    "strcasestr.c",
+    "strcat.c",
+    "strchr.c",
+    "strchrnul.c",
+    "strcpy.c",
+    "strcspn.c",
+    "strdup.c",
+    "strndup.c",
+    "strlcat.c",
+    "strlcpy.c",
+    "strncat.c",
+    "strncpy.c",
+    "strnlen.c",
+    "strnstr.c",
+    "strrchr.c",
+    "strsep.c",
+    "strspn.c",
+    "strstr.c",
+    "strtol.c",
+    "strtoq.c",
+    "strtoul.c",
+    "strtouq.c",
+    "strvalid.c",
+    "timingsafe_bcmp.c",
+    "strcmp.c",
+    "strncmp.c"
+],
+    deps = [":qsort_implementation", "//sys/netinet:address_headers", "//sys/contrib/pcg-c:kernel_headers"])

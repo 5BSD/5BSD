@@ -2561,3 +2561,30 @@ and acceptance, parser error behavior, key changes, cache invalidation and
 performance remain unqualified, alongside world/pkgbase/publication and
 bootstrap gates. Module count stays 45. Make remains production/default;
 no host installation or BIP changes occurred.
+
+### Native libkern common support objects
+
+Added forty-eight explicit GENERIC libkern C sources under
+//sys/libkern:generic_common_object_files, covering selected memory/string,
+search/sort, checksums, address conversion and other support routines.
+qsort_r includes qsort.c through a declared common implementation header
+input. random.c's PCG dependency is explicitly declared; the initial missing
+header failure remains in the first run. No source or feature was disabled.
+The generated GENERIC libkern inventory has two remaining unconverted objects:
+arc4random.o and x86 crc32_sse42.o, for separate provider/architecture groups.
+
+Evidence: `/usr/obj/usr/src/bazel-libkern-common-r2-20261028/qualification`.
+All 48 objects match Make symbols, raw CTF, complete allocated section
+inventories/content/size/type/flags/alignment, and runtime relocation records
+and associations. Retained script, native/reference objects and inventory
+record the exact scope. Reference log:
+`/usr/obj/usr/src/bazel-libkern-common-make-20261028.log`; maintained kernel
+recipes use the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible source paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target selection and native compiler/CTF
+artifact retention require no new C/backend option or standalone installation
+entries. Functional vectors, live kernel behavior, remaining source closure,
+complete world/pkgbase/publication, bootstrap and resource/performance gates
+remain open. Module count remains 45; these are built-in objects. Make stays
+production/default with no host installation or BIP changes.

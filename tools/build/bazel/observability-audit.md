@@ -3290,3 +3290,12 @@ rejection diagnostics during runtime qualification. Cryptographic primitives
 need functional vectors and integration checks, not per-block probes added
 solely for coverage counts. Live trust/key changes and verification/cache
 behavior remain open. No instrumentation or policy source changed.
+
+### libkern common support routines (2026-10-28)
+
+The forty-eight converted support objects match Make code/data and runtime
+relocations. Avoid adding probes to each hot string/memory/crypto helper for
+coverage counts; test behavior through vectors and instrument meaningful
+call sites where needed. Timing-sensitive helpers still need appropriate
+functional/performance review beyond artifact parity. Random-provider and
+x86 CRC implementations remain outside this object group.
