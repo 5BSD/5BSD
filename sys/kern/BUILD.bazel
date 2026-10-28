@@ -415,3 +415,9 @@ amd64_generic_kernel_objects(name = "generic_clock_discipline", srcs = ["kern_nt
 
 amd64_generic_kernel_objects(name = "generic_idle_membarrier", srcs = ["kern_idle.c", "kern_membarrier.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+
+filegroup(name = "cpufreq_if_header_file", srcs = [":cpufreq_if"], output_group = "header")
+cc_library(name = "cpufreq_if_headers", hdrs = [":cpufreq_if_header_file"], strip_include_prefix = "cpufreq_if.generated", visibility = ["//visibility:public"])
+amd64_generic_kernel_objects(name = "generic_cpu_frequency_storage", srcs = ["kern_cpu.c", "subr_pcpu.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
+        ":cpufreq_if_headers", "//sys/ddb:kernel_headers", "//sys/amd64/conf:generic_opt_ddb_header"])

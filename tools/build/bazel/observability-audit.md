@@ -4068,3 +4068,13 @@ relocations. Evidence:
 `/usr/obj/usr/src/bazel-idle-membarrier-kernel-20261028/qualification`.
 No runtime source changed. Live SMP ordering, idle transitions and runtime
 performance remain unqualified.
+
+### CPU frequency and per-CPU storage (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in kern_cpu.c or
+subr_pcpu.c. Assess frequency driver callbacks, sysctl access and allocator
+instrumentation together before adding probes. Native GENERIC output matches
+Make symbols, raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-cpu-frequency-storage-kernel-20261028/qualification`.
+No runtime source changed. Live frequency transitions, per-CPU lifetime,
+concurrency and performance remain unqualified.
