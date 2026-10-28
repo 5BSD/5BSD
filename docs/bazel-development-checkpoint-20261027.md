@@ -4349,3 +4349,24 @@ ASLR/WX/stackgap/no-new-privileges settings, inheritance and exit races require
 linked-kernel tests. Full kernel/world/pkgbase/bootstrap and performance gates
 remain open. Make stays production/default; module count remains 45. No host
 installation or BIP changes occurred.
+
+### Native process metadata and enumeration
+
+Added //sys/kern:generic_process_metadata_object_files for kern_proc.c.
+Dependencies declare CK/VM, MAC, capability labels, devfs, debugger and generated
+DDB/KTRACE/KSTACK_PAGES/STACK options. Existing capability label header visibility
+now includes sys/kern. No process metadata or authorization source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-process-metadata-kernel-20261028/qualification`.
+The object matches maintained GENERIC Make symbols, raw CTF, complete allocated
+section inventory, bytes/size/type/flags/alignment and runtime relocation
+records/associations. All four option headers match Make bytes. Reference:
+`/usr/obj/usr/src/bazel-process-metadata-kernel-make-20261028.log` using the
+same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible paths.
+Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 inputs cover this target without C/backend,
+staging or manual changes. No runtime tests ran. Process enumeration, metadata
+visibility, jail/MAC boundaries, stack inspection and lifecycle races require
+linked-kernel tests. All world/kernel/pkgbase/bootstrap/performance gates remain
+open. Make stays production/default. No installation or BIP changes occurred.

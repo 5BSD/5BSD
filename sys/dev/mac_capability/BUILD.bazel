@@ -45,7 +45,7 @@ load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objec
 amd64_generic_kernel_objects(name = "generic_builtin",
     srcs = ["mac_capability_process.c", "mac_capability_authority.c"], deps = [":internal_headers"])
 
-cc_library(name = "label_headers", hdrs = ["mac_capability_label.h"], includes = ["../.."], visibility = ["//sys/security/oes:__pkg__"])
+cc_library(name = "label_headers", hdrs = ["mac_capability_label.h"], includes = ["../.."], visibility = ["//sys/security/oes:__pkg__", "//sys/kern:__pkg__"])
 
 # Explicit GENERIC source groups, shared by the built-in and module variants.
 _CAPABILITY_GROUPS = [

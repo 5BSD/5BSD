@@ -4099,3 +4099,12 @@ runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-process-control-kernel-20261028/qualification`.
 No runtime source changed. Live probes, authorization, inheritance, reaper
 races and audit records remain unqualified.
+
+### Process metadata and enumeration (2026-10-28)
+
+kern_proc.c retains the proc SDT provider and KDTRACE_HOOKS lifecycle handling.
+No local SDT probe definitions or AUDIT_ARG calls were found; assess proc
+provider consumers and syscall/sysctl auditing together. Native output matches
+Make symbols, raw CTF, allocated sections and relocations. Evidence:
+`/usr/obj/usr/src/bazel-process-metadata-kernel-20261028/qualification`.
+Live provider behavior, metadata visibility and lifecycle races remain unqualified.
