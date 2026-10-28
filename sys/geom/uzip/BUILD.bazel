@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+cc_library(name = "headers", hdrs = ["g_uzip.h", "g_uzip_cloop.h", "g_uzip_dapi.h", "g_uzip_lzma.h", "g_uzip_softc.h", "g_uzip_wrkthr.h", "g_uzip_zlib.h", "g_uzip_zstd.h"], includes = ["../.."],
+    deps = ["//sys/geom:kernel_headers"])
+amd64_generic_module_objects(name = "g_uzip", srcs = ["g_uzip.c"], deps = [":headers", "//sys/amd64/conf:generic_opt_geom_header", "//sys/amd64/conf:generic_opt_zstdio_header"], copts = [])
+amd64_generic_module_objects(name = "g_uzip_zlib", srcs = ["g_uzip_zlib.c"], deps = [":headers", "//sys/contrib/zlib:kernel_headers", "//sys/dev/zlib:kernel_headers"], copts = [])
+amd64_generic_module_objects(name = "g_uzip_lzma", srcs = ["g_uzip_lzma.c"], deps = [":headers", "//sys/contrib/xz-embedded:kernel_headers"], copts = ["-Isys/contrib/xz-embedded/freebsd", "-Isys/contrib/xz-embedded/linux/lib/xz"])
+amd64_generic_module_objects(name = "g_uzip_wrkthr", srcs = ["g_uzip_wrkthr.c"], deps = [":headers"], copts = [])
+amd64_generic_module_objects(name = "g_uzip_zstd", srcs = ["g_uzip_zstd.c"], deps = [":headers", "//sys/contrib/zstd:kernel_headers"], copts = ["-Isys/contrib/zstd/lib/freebsd"])

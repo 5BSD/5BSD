@@ -1963,3 +1963,34 @@ Frontend review: existing typed build-settings transport already validates
 and forwards this boolean; no new C option is needed. The maintained manual
 now documents its override semantics and limited qualification. Full native
 config/world/kernel/package/runtime/performance gates remain open.
+
+### Native uzip source selection
+
+Added native geom_uzip with separate named compilation groups preserving
+Make's ordered sources and LZMA/Zstd per-source include paths. Compression
+API headers and zcalloc's transitive zutil dependency are declared. The shared
+kernel_zstdio setting selects both native config output and the optional
+g_uzip_zstd object through select(); the disabled module does not compile/link
+that implementation. No C wrapper or unconditional disabled implementation
+is used.
+
+Enabled evidence: `/usr/obj/usr/src/bazel-uzip-true-r2-20261028/qualification`,
+Make reference `/usr/obj/usr/src/bazel-geom_uzip-make-20261028`. Symbols,
+relocations, text/data/rodata and raw CTF match; debug identity/CRC pass.
+The initial build found an undeclared zutil.h include; its dependency was
+fixed and the successful second run retained separately.
+
+Disabled evidence: `/usr/obj/usr/src/bazel-uzip-false-20261028`.
+`zstdio-selection.json` records enabled link inputs containing g_uzip_zstd.o
+and its ZSTD references, versus no such object or symbols in the disabled
+module. Both runs used the maintained frontend with explicit format-5 inputs
+and 16 jobs. This is build/source-selection evidence, not decompression
+runtime qualification. Disabled Make parity, installation and incremental
+checks remain pending. The current batch has eighteen native module builds;
+not all qualification gates are closed for each.
+
+Frontend review: the previous change documents kernel_zstdio and the existing
+typed setting transport handles this consumer without new C/backend options.
+Next: qualify the disabled Make reference and both installation variants,
+then continue remaining GEOM/module conversion. Whole-system/runtime and
+resource/performance gates remain open; Make remains production/default.

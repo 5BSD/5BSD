@@ -8,3 +8,5 @@ cc_library(
 exports_files(['adler32.c', 'compress.c', 'crc32.c', 'deflate.c', 'gzclose.c', 'gzlib.c', 'gzread.c', 'gzwrite.c', 'infback.c', 'inffast.c', 'inflate.c', 'inftrees.c', 'trees.c', 'uncompr.c', 'zutil.c', 'inftrees.h', 'inffast.h', 'crc32.h', 'deflate.h', 'trees.h', 'zutil.h', 'gzguts.h', 'inffixed.h', 'inflate.h', 'test/example.c'], visibility = ["//lib/libz:__pkg__"])
 
 exports_files(["zlib.pc.in", "zlib.3", "zlib.h", "zconf.h"], visibility = ["//lib/libz:__pkg__"])
+
+cc_library(name = "kernel_headers", hdrs = ["zlib.h", "zconf.h", "zutil.h"], includes = ["../.."], visibility = ["//visibility:public"])

@@ -3080,3 +3080,11 @@ No explicit SDT_* or AUDIT_* calls were found in geom_flashmap.c. Native
 symbols/relocations match Make with export-all semantics; no instrumentation
 was changed. Common GEOM tracing and flash slicing runtime coverage remain
 to be reviewed and exercised.
+
+### GEOM uzip (2026-10-28)
+
+No explicit SDT_* or AUDIT_* calls were found in the inspected uzip C sources.
+The enabled native module matches Make symbols/relocations. Disabling ZSTDIO
+removes the zstd implementation and feature symbols as configured. No source
+instrumentation was altered; live compression I/O, error paths and common
+GEOM tracing/audit coverage still need qualification.
