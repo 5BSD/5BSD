@@ -797,3 +797,27 @@ interfaces outside sys/kern, configured source selection, option headers,
 assembly/offset generation, kernel linking, modules and pkgbase aggregation
 remain unfinished. The existing frontend needs no interface change to select
 these generation targets; its manual is updated. Make remains production/default.
+
+### Native vnode interface generation (2026-10-28)
+
+`//sys/kern:vnode_if` runs unchanged `vnode_if.awk` with native execution-platform
+awk and explicitly declared source, generator, shell, libraries and shell
+runtime. The action declares all four outputs: vnode_if.c, vnode_if.h,
+vnode_if_newproto.h and vnode_if_typedef.h. `vnode_source` exposes the C output;
+`vnode_headers` supplies the generated headers through a native CcInfo dependency
+with their maintained include names. It does not execute a generated Makefile.
+
+`/usr/obj/usr/src/bazel-vnode-20261028` records the maintained build-bsd format-5
+qualification with sixteen jobs. All four output files match the maintained
+Make recipe's separate -c/-h/-p/-q generator invocations byte for byte. Exact
+reference commands and output hashes are retained in `qualification/parity.json`.
+The generated C retains 166 SDT probe definitions and 166 call sites; the main
+header retains 166 declarations and 116 inline call sites. Counts are source
+observations, not live DTrace attachment or a compiled-kernel instrumentation test.
+
+This is generation-only qualification. Kernel compilation/linking, option and
+assembly-offset generation, configured source selection, drivers/modules and
+package aggregation remain unfinished. Execution still depends on the SDK and
+host loader; cross execution and full sandbox/cache portability are unqualified.
+The existing frontend target-selection contract needs no C/backend change; the
+manual documents these candidates. Make remains production/default.

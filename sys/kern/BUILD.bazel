@@ -21,3 +21,17 @@ load("//tools/build/bazel:bsd_kobj.bzl", "bsd_kobj_interface")
     libraries = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
     visibility = ["//visibility:public"],
 ) for interface in ["bus_if", "clock_if", "cpufreq_if", "device_if", "linker_if", "msi_if", "pic_if", "serdev_if"]]
+
+load("//tools/build/bazel:bsd_vnode.bzl", "bsd_vnode_interface")
+bsd_vnode_interface(
+    name = "vnode_if",
+    src = "vnode_if.src",
+    shell = "@bsd_sdk//toolchain:sh",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime"],
+    libraries = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    visibility = ["//visibility:public"],
+)
+filegroup(name = "vnode_source", srcs = [":vnode_if"], output_group = "source", visibility = ["//visibility:public"])
+cc_library(name = "vnode_headers", hdrs = [":vnode_header_files"],
+    strip_include_prefix = "vnode_if.generated", visibility = ["//visibility:public"])
+filegroup(name = "vnode_header_files", srcs = [":vnode_if"], output_group = "headers")

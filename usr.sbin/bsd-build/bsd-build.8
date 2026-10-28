@@ -3560,3 +3560,13 @@ Each emits the maintained interface C source and header using declared native
 generation tools. These targets do not compile a kernel or module. Complete
 native kernel configuration, compilation, linking and packaging remain
 separate qualification work.
+
+.Pp
+.Dq //sys/kern:vnode_if
+emits the maintained vnode C source and all three generated headers.
+.Dq //sys/kern:vnode_source
+and
+.Dq //sys/kern:vnode_headers
+expose source and compilation-header dependencies for native kernel consumers.
+Generation parity preserves the source-level SDT definitions and call sites;
+compiled-kernel retention and live probes require separate qualification.

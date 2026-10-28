@@ -2891,3 +2891,13 @@ core sys/kern interfaces when invoked with identical source basenames. It does
 not filter methods or substitute stub implementations. Kernel compilation and
 runtime dispatch, tracing and audit behavior have not been exercised by this
 output-generation comparison.
+
+## Vnode interfaces (2026-10-28)
+
+Native vnode generation is byte-equal to all four Make-generated artifacts.
+The C output preserves 166 SDT definitions and 166 call sites; vnode_if.h
+preserves 166 declarations and 116 inline call sites. There is no filtering or
+stub substitution. This confirms source preservation only: kernel compilation,
+linker retention and live DTrace attachment remain untested. The generator does
+not supply per-operation audit-record integration; broader audit behavior lives
+in its callers and has not been qualified by this generation comparison.
