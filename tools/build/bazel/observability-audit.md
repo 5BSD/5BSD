@@ -3334,3 +3334,13 @@ AUDIT_ARG_SVIPC call sites. Live delivery is not established by compilation.
 Runtime coverage must include success/denial, blocking interruption, resource
 limits, IPC removal, jail isolation and semaphore undo on process exit. No
 IPC policy, instrumentation or runtime source changed.
+
+### Shared memory and synchronization built-ins (2026-10-28)
+
+Native objects preserve allocated sections and runtime relocations against
+Make, retaining configured HWPMC/KTRACE and existing lock instrumentation.
+This does not demonstrate lock ordering, contention/wakeup behavior, audit
+output or shared-memory lifecycle. The open ZFS/filedesc WITNESS report
+remains undiagnosed. Exercise lock stress, waiter interruption, shared-memory
+mapping/truncation/removal and MAC checks on a completed test kernel; measure
+resource usage and latency rather than inferring performance from compilation.

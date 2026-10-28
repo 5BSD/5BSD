@@ -2690,3 +2690,31 @@ mapping/removal, jail visibility, MAC enforcement and audit delivery remain
 runtime tests for the linked kernel. Complete world/kernel/pkgbase/bootstrap
 and resource/performance qualification remain open. Module count stays 45;
 Make remains production/default, with no host installation or BIP changes.
+
+### POSIX shared memory and kernel synchronization objects
+
+Added uipc_shm and seven selected GENERIC synchronization sources:
+kern_condvar, kern_lock, kern_mutex, kern_rmlock, kern_rwlock, kern_sema,
+kern_sx. uipc_sem.c is not selected by this GENERIC reference; its POSIX
+semaphore configuration remains separate work. The native targets retain
+actual generated adaptive-lock/scheduler/KTRACE/HWPMC/DDB/Capsicum options.
+The initial missing HWPMC header was fixed with the existing declared header
+target, not by disabling hooks. No synchronization or IPC source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-shm-sync-kernel-r2-20261028/qualification`.
+All eight match Make symbols, raw CTF, complete allocated-section inventories
+and contents/size/type/flags/alignment, and runtime relocation records and
+associations. All eight consumed option headers match Make bytes. Retained
+objects, comparison script and options-comparison.json document the scope.
+Reference log: `/usr/obj/usr/src/bazel-shm-sync-kernel-make-20261028.log`;
+maintained recipes use the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and native configuration outputs
+support this group without new C/backend options or installation entries.
+Live shared-memory behavior, lock contention/wakeup/ordering, scheduler
+interaction and comparative CPU/memory/disk performance remain open. The
+recorded 2026-10-03 ZFS/filedesc WITNESS trace was consulted; its open,
+undiagnosed status is unchanged by object parity. Complete kernel/world/
+pkgbase/bootstrap gates remain open. Make stays production/default with no
+host installation or BIP changes; module count remains 45.

@@ -99,3 +99,13 @@ load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objec
 amd64_generic_kernel_objects(name = "generic_sysvipc", srcs = ["sysv_ipc.c", "sysv_msg.c", "sysv_sem.c", "sysv_shm.c"],
     deps = ["//sys/amd64/conf:generic_opt_sysvipc_header", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers",
         "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_posix_shm", srcs = ["uipc_shm.c"],
+    deps = ["//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_ktrace_header",
+        "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers"])
+amd64_generic_kernel_objects(name = "generic_sync", srcs = ["kern_condvar.c", "kern_lock.c", "kern_mutex.c", "kern_rmlock.c", "kern_rwlock.c", "kern_sema.c", "kern_sx.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/fs/devfs:internal_headers", ":bus_if_headers", ":device_if_headers", "//sys/dev/hwpmc:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_hwpmc_hooks_header",
+        "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_sched_header",
+        "//sys/amd64/conf:generic_opt_adaptive_mutexes_header", "//sys/amd64/conf:generic_opt_no_adaptive_rwlocks_header", "//sys/amd64/conf:generic_opt_no_adaptive_sx_header"])
