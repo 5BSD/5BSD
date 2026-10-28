@@ -4005,3 +4005,13 @@ raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-physio-kernel-20261028/qualification`.
 No runtime source changed. Live mapping/transfer/error behavior and runtime
 CPU/memory/disk performance remain unqualified.
+
+### Character-device lifecycle (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in kern_conf.c.
+Assess driver/devfs lifecycle probes and device syscall audit paths together
+before proposing instrumentation. Native GENERIC output matches Make symbols,
+raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-character-devices-kernel-20261028/qualification`.
+No runtime source changed. Live creation/destruction, reference races and
+private-data cleanup remain unqualified.

@@ -4130,3 +4130,27 @@ limits and CPU/memory/disk I/O costs require linked-kernel and device tests.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 stays production/default; module count remains 45. No host installation or
 BIP changes occurred.
+
+### Native character-device lifecycle
+
+Added //sys/kern:generic_character_devices_object_files for kern_conf.c,
+selected by maintained GENERIC Make. Dependencies declare CK/VM, devfs
+internal headers, debugger headers and generated DDB options. No device
+lifetime or runtime source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-character-devices-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. opt_ddb.h matches Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-character-devices-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible paths. Whole-object/debug-path identity is not
+claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Device create/destroy, aliases, open references, deferred destruction,
+private data destructors and devfs interactions require linked-kernel tests.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+stays production/default; module count remains 45. No host installation or
+BIP changes occurred.
