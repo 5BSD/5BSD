@@ -1152,6 +1152,10 @@ Error Section::initialize(SectionTableRef SecTable) {
 
 void Section::finalize() { this->Link = LinkSection ? LinkSection->Index : 0; }
 
+void OwnedDataSection::setSymTabLink(SymbolTableSection &SymTab) {
+  LinkSection = &SymTab;
+}
+
 void GnuDebugLinkSection::init(StringRef File) {
   FileName = sys::path::filename(File);
   // The format for the .gnu_debuglink starts with the file name and is

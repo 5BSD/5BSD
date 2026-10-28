@@ -3703,10 +3703,11 @@ Package assembly, complete module coverage and runtime qualification remain open
 
 .Pp
 .Dq //tools/test/construction:nullfs_artifacts_test
-is a registered static module/debug audit. It currently fails on incorrect CTF
-symbol/type associations also present in the Make reference: export localization
-reorders symbols after CTF emission. Earlier CTF dump equality does not prove
-correct associations. The candidate is not qualified for publication or runtime.
-Moving CTF emission later with fuzzy matching was rejected after a duplicate
-static/global symbol-name fixture produced wrong types. Exact association
-preservation remains required; the test failure must not be suppressed.
+is a registered static module/debug audit. It passes with the rebuilt LLVM
+objcopy and a freshly staged SDK: objcopy preserves CTF records using original
+symbol identities across export localization, renaming and removal.
+CTF parsing is deferred when symbol associations do not change.
+Earlier SDKs still contain the corrupting transform and must be rebuilt;
+Make/Bazel CTF dump equality alone does not establish correct associations.
+Fuzzy name matching remains unsupported. This establishes static nullfs
+artifact qualification, not complete module, publication or runtime qualification.

@@ -34142,3 +34142,164 @@ its failure. No C interface change is needed; docs/manual/observability record
 the failing gate. BIP stays out of scope, no module was loaded, no host upgrade
 occurred, and Make remains production/default. Complete migration and module
 qualification remain active, unfinished work.
+
+### CTF-aware objcopy candidate (2026-10-28, work in progress)
+
+The uncommitted LLVM ELF objcopy candidate preserves original symbol indices
+and rewrites `.SUNW_ctf` object/function records after symbol transformations.
+New symbols receive unknown-type entries. It also retains the CTF section's
+link to the symbol table through debug stripping and section renumbering.
+It does not use fuzzy name matching or change the module link/merge ordering.
+
+An isolated binary was compiled with the maintained Make compilation flags
+and linked with retained Make driver/library objects. No SDK file or installed
+program was replaced. Evidence and commands are under
+`/usr/obj/usr/src/ctf-objcopy-candidate-20261028`; `candidate-inputs.json` records
+source and final binary hashes. This is diagnostic integration, not a freshly
+qualified toolchain build.
+
+- Final candidate: all 34 maintained static nullfs audit checks pass at
+  `/usr/obj/usr/src/ctf-nullfs-candidate-r4-20261028/audit/result.json`, including
+  the added CTF-to-symbol-table link check. No module was loaded.
+- Nine additional diagnostic checks pass at
+  `/usr/obj/usr/src/ctf-transform-candidate-r2-20261028/result.json`: copy,
+  localization, rename, removal, addition, and rejection of invalid magic,
+  version, offsets and compressed data. The initial candidate assertion during
+  debug splitting and map-sentinel error during symbol addition were fixed;
+  the final reports are from subsequent runs.
+- The original collision fixture baseline and production transform passed
+  with an earlier candidate at `/usr/obj/usr/src/ctf-localization-candidate-20261028`.
+  `localization-audit.py --mode merge-then-localize` selects this path without
+  invoking the separately rejected fuzzy-merge alternative.
+
+Still required: move the additional transform/malformed cases into maintained
+regression coverage; check version 2, byte order, uncompressed CTF, dynsym-linked
+data, removal/update of CTF itself, and stripping without a symbol table;
+review allocation bounds and metadata preservation; build the changed LLVM
+through maintained targets; qualify a new SDK and rerun the native Bazel gate
+plus incremental/cache checks. Measure costs before making performance claims.
+The current SDK/Bazel nullfs target still uses the old objcopy and is not
+qualified. Keep the source candidate uncommitted until this review is complete.
+
+Frontend assessment: no new frontend option is required. The normal SDK
+input/receipt must identify the rebuilt objcopy and its actual runtime closure;
+do not replace a hashed SDK binary in place. Format-5 test selection remains
+the integration path. Full kernel/modules/world/pkgbase qualification remains
+open, and Make remains the production default.
+
+### Maintained LLVM build and CTF format qualification (2026-10-28)
+
+The CTF candidate now builds through the normal `make -C lib/clang/libllvm
+-j16 all` and `make -C usr.bin/clang/llvm-objcopy -j16 all` targets. Outputs
+remain under `/usr/obj`; nothing was installed. Dynamic testing explicitly
+selects the newly built libprivatellvm, and the retained format report records
+its resolved path and SHA256 plus all other ldd-resolved dependencies.
+
+The maintained `tests/ctf/format-audit.py` passes **61 checks**, covering CTF v2
+and v3, compressed and uncompressed payloads, little- and big-endian CTF
+serialization, symbol localization/renaming/removal/addition, unknown added
+function types, variadic records, label/type/string preservation, section links
+and unrelated added sections. It independently checks little-endian fixture
+types using native ctfdump. Big-endian CTF is embedded in an amd64 ELF fixture;
+this does not qualify a big-endian kernel or architecture. Evidence:
+`/usr/obj/usr/src/ctf-format-maintained-r3-20261028/result.json`.
+
+All **34 static nullfs checks** also pass with the maintained tool/library:
+`/usr/obj/usr/src/ctf-nullfs-maintained-20261028/audit/result.json`. This is a
+real module artifact check without module loading, not a fresh Bazel SDK run.
+
+Review corrections: CTF link preservation now applies only to explicitly
+rewritten CTF sections; unrelated owned sections do not acquire a symtab link.
+Version-2 function-section records are packed (unlike function-type records);
+per-record four-byte rounding was wrong and has been removed. Record views now
+reference the retained input buffer instead of allocating one buffer per symbol.
+Non-symbol section links are rejected, while dynsym-linked CTF is left to its
+unchanged dynamic symbol table. Dynsym-specific qualification is still open.
+
+The incremental LLVM library build reported 9.65s wall time and 1,322,524 KiB
+maximum RSS; retain the full `/usr/obj/usr/src/ctf-maintained-build-20261028`
+logs for CPU and block-I/O counts. These are build measurements, not an old/new
+objcopy or whole-system performance comparison.
+
+Frontend assessment: existing SDK staging currently selects bootstrap tools
+from objtop/tmp. Do not copy this dynamic tool over a frozen SDK or rewrite its
+receipt. Rebuild/stage the appropriate bootstrap tool and generate a fresh SDK
+through maintained helpers, then rerun the format-5 Bazel nullfs test and cache
+checks. The source candidate remains uncommitted pending that integration and
+the remaining edge-case/resource review.
+
+### Bootstrap SDK and native Bazel module gate (2026-10-28)
+
+The maintained `make -j16 _cross-tools` stage completed, including normal
+staging under `/usr/obj/usr/src/amd64.amd64/tmp`; no host installation occurred.
+`libmd-plan.py` and `libmd-stage-tools.py` generated a **fresh** SDK and receipt
+at `/usr/obj/usr/src/bazel-ctf-sdk-20261028`, preserving the old SDK unchanged.
+The receipt identifies static objcopy SHA256
+`4af3d1fe4ad904bfb564bca6b316d9b733115d9a2617d023023607ab95d4daa5`, with no
+dynamic execution dependencies. No receipt was patched or SDK tool replaced
+in place. This remains a prepared-SDK migration bridge, not Bazel bootstrap
+completion or a hermeticity claim.
+
+The normal `build-bsd bazel-test` format-5 workflow now passes
+`//tools/test/construction:nullfs_artifacts_test` with all 34 static module
+checks. Evidence: `/usr/obj/usr/src/bazel-nullfs-ctf-fixed-20261028`, including
+retained `qualification/result.json`, frontend receipt, artifacts and test
+reports. Export localization/debug splitting executed with the new SDK.
+The exact frozen SDK also passes the maintained 61-check CTF format suite at
+`/usr/obj/usr/src/ctf-format-sdk-20261028/result.json`.
+
+A repeat frontend run at
+`/usr/obj/usr/src/bazel-nullfs-ctf-fixed-repeat-20261028` has identical selected
+artifact hashes and zero spawned actions. It reused the successful test result;
+it is **not** a second execution of the test. `qualification/cache-check.json`
+retains the comparison and event metadata. Extra diagnostics confirmed that
+full symbol stripping and explicit CTF-section removal complete successfully.
+
+Frontend assessment: existing build-bsd input selection, maintained cross-tools
+and SDK receipt generation were sufficient. No new C frontend option or
+one-off build backend was needed. The initial kernel source revision input was
+updated to the actual HEAD plus dirty state. Code remains under review and
+uncommitted; remaining work includes broader consumer/edge-case tests, tool
+performance comparison, and then module expansion. No kernel was loaded, and
+full world/kernel/modules/pkgbase/runtime/performance gates remain open.
+
+### CTF symbol-preservation fix ready for commit (2026-10-28)
+
+The reviewed fix defers CTF decoding when eligible symbol identities/order are
+unchanged. This avoids decompression on ordinary copying and debug stripping
+and permits copying/removing opaque unsupported CTF; reordering such CTF still
+fails. The maintained format audit now passes **65 checks**, including those
+behaviors. Final bootstrap and frozen SDK objcopy have identical SHA256
+`ef5e69b925fd66c30a34376a8fb366ae4487030d1eadf54f471d257236bb7eb3`.
+The final fresh SDK is `/usr/obj/usr/src/bazel-ctf-lazy-sdk-20261028`.
+The normal build-bsd Bazel test again passes all **34 nullfs checks** at
+`/usr/obj/usr/src/bazel-nullfs-ctf-lazy-20261028`; its JSON is retained under
+`qualification` independently of mutable Bazel symlinks.
+
+Performance evidence uses 100 alternating warm-cache invocations per tool on
+the same retained 459,736-byte nullfs input, via the maintained
+`tests/ctf/objcopy-benchmark.py`:
+
+| Operation | Old median wall | Fixed median wall | Old/fixed peak child RSS | Old/fixed output bytes |
+|---|---:|---:|---:|---:|
+| Copy | 2.509 ms | 2.503 ms | 7,256 / 15,304 KiB | 459,736 / 459,736 |
+| Export localization | 2.546 ms | 5.114 ms | 19,460 / 22,008 KiB | 459,736 / 460,568 |
+
+Copy outputs are byte-identical. Export outputs intentionally differ: the old
+one has wrong types, while the corrected CTF is rewritten/recompressed. Each
+measured batch reported zero block inputs and 400 block outputs; these OS
+counters are not physical disk throughput. RSS varies between samples/batches
+and is not a whole-build memory result. Immediate st_blocks values can reflect
+deferred filesystem allocation and are retained as observations, not durable
+disk-space claims. Raw CPU, RSS, timing, I/O, sizes and hashes are retained at
+`/usr/obj/usr/src/ctf-objcopy-copy-perf-20261028` and
+`/usr/obj/usr/src/ctf-objcopy-export-perf-20261028`. No whole-system performance
+claim follows from this small input.
+
+This supersedes the earlier uncommitted-candidate status for the reviewed CTF
+fix. The manual now reflects its fresh-SDK static qualification. Existing
+frontend/backends were sufficient; no build-bsd C option changed. Full kernel,
+all modules, other architectures, runtime and publication qualification remain
+open. The separately logged libctf v2 reader discrepancy and broader consumer
+coverage remain follow-up work; no test was suppressed or expected to pass on
+corrupt metadata.

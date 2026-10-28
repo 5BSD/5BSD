@@ -110,6 +110,7 @@ def main():
         full_ctf = run(args.fixtures / 'ctfdump', '-l', '-t', '-d', full)
         # Strip-debug removes STT_FILE symbols and renumbers ELF indices.
         # Compare CTF bytes and symbol/type associations, not printed ELF indices.
+        check('ctf_symbol_table_link', rs['.SUNW_ctf'][0][6] == list(rs).index('.symtab'))
         check('ctf_section_preserved', bool(rs['.SUNW_ctf'][1]) and rs['.SUNW_ctf'][1] == fs['.SUNW_ctf'][1])
         def data_objects(text):
             return [(int(index), int(type_id), name) for index, type_id, name in

@@ -31,17 +31,48 @@ Retained evidence (2026-10-28):
 - Both baselines pass. Both transformation orders fail for data and functions.
   Each directory retains commands, tool hashes, objects, CTF dumps and JSON.
 
-The source LLVM objcopy currently retains symbol objects through its
-`SymbolTableSection::updateSymbols` stable partition, but has no `.SUNW_ctf`
-rewriter. Preserving CTF associations using those exact symbol identities is a
-candidate implementation direction. It is not implemented or qualified.
-Any implementation must cover object and variable-length function tables,
-compressed input, removal/renaming/localization, byte order, and malformed
-input. Do not replace this with name-only matching or accept Make parity as
-proof of valid types. The real `nullfs_artifacts_test` remains failing.
+LLVM objcopy now retains input symbol identities and rewrites CTF object and
+function records when their symbol associations change. It defers parsing for
+unchanged copying/debug stripping and explicitly removed CTF. This preserves
+opaque unsupported CTF for operations that do not require understanding it;
+reordering unsupported CTF is rejected. Fuzzy name matching remains rejected.
+The real `nullfs_artifacts_test` passes with the freshly rebuilt SDK.
 
-Frontend assessment: these diagnostic fixtures do not change build inputs,
-packaging or publication interfaces. No build-bsd C change is required. The
-existing format-5 frontend still selects the real nullfs Bazel test. When the
-production CTF fix lands, update and qualify its declared tool closure and
-both maintained Make and native Bazel module actions together.
+Frontend assessment: rebuild the maintained bootstrap tools and generate a new
+SDK/receipt through maintained helpers. Never replace a frozen SDK binary in
+place. Existing format-5 frontend selection runs the real nullfs test; no new
+build-bsd C option is required. Full module/runtime coverage is still open.
+
+Use `--mode merge-then-localize` to test only the maintained module order.
+The default `--mode all` also runs the rejected fuzzy-merge comparison.
+
+## Format checks
+
+`format-audit.py` takes explicit `--objcopy`, `--baseline` (the localization
+audit's baseline.o), `--ctfdump`, `--ldd` and fresh `--work` paths. Optional
+repeated `--objcopy-library-directory` and `--ctf-library-directory` inputs
+select each tool's runtime. The report captures the objcopy dependency paths
+and hashes. It covers both SUNW CTF versions, byte orders and compression
+settings, with independent ctfdump checks for little-endian types. The ELF
+container remains amd64: this is not cross-architecture qualification.
+
+The maintained tool/library pass 61 checks at
+`/usr/obj/usr/src/ctf-format-maintained-r3-20261028`. See the development
+checkpoint for remaining SDK/Bazel integration and consumer-review work.
+
+The fresh SDK passes this format suite at
+`/usr/obj/usr/src/ctf-format-sdk-20261028` and the real Bazel nullfs test at
+`/usr/obj/usr/src/bazel-nullfs-ctf-fixed-20261028`. The repeated frontend run
+reuses its cached test result; see the checkpoint for exact evidence and scope.
+
+Final selected-tool evidence: 65 format checks at
+`/usr/obj/usr/src/ctf-format-lazy-20261028` and 34 real Bazel nullfs checks at
+`/usr/obj/usr/src/bazel-nullfs-ctf-lazy-20261028`. The format-tested bootstrap
+binary and the frozen SDK binary have the same SHA256.
+
+`objcopy-benchmark.py` accepts explicit old/new tool paths, input, export-options
+file, iterations and a fresh work directory. It alternates tool order and records
+per-child wait4 CPU/RSS/block-I/O counters, elapsed time and file sizes/hashes.
+An empty options file measures copying. These are warm-cache microbenchmarks;
+block counts and immediate filesystem allocation reports do not establish
+physical disk throughput or durable allocation.

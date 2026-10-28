@@ -2980,3 +2980,16 @@ the rejected fuzzy-merge alternative. Native evidence is retained at
 `/usr/obj/usr/src/ctf-localization-native-r2-20261028`. This is additional failure
 evidence, not a fix or module qualification. See `tests/ctf/LOCALIZATION.md`
 under the Bazel tooling for scope and next implementation requirements.
+
+### CTF v2 reader discrepancy found during module qualification
+
+The format matrix exposed `cddl/contrib/opensolaris/common/ctf/ctf_open.c`
+rounding each function-section record to four bytes in `init_symtab`. The
+maintained ctf(5) function-section description, ctfdump, ctfmerge input reader
+and kernel FBT reader use packed records; only the following type section
+requires alignment. The new objcopy candidate and independently validated
+fixtures now use packed records. The existing libctf reader discrepancy is
+not fixed or runtime-qualified here and should receive a focused API regression
+before a separate fix. Native generated CTF is version 3, where record widths
+make this discrepancy invisible. Do not infer v2 consumer correctness from
+the passing objcopy/ctfdump matrix.

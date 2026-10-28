@@ -87,6 +87,7 @@ def main():
         parser.add_argument('--' + tool, type=Path, required=True)
     parser.add_argument('--ctf-library-directory', type=Path, action='append', default=[])
     parser.add_argument('--work', type=Path, required=True)
+    parser.add_argument('--mode', choices=('all', 'merge-then-localize', 'localize-then-fuzzy-merge'), default='all')
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=False)
     report = {'passed': False, 'scope': 'amd64 synthetic CTF localization; no kernel loading',
@@ -129,7 +130,8 @@ def main():
         if actual != expected:
             raise AssertionError('baseline CTF must match fixture source types')
         report['checks'].append({'case': 'baseline', 'passed': True})
-        for mode in ('merge-then-localize', 'localize-then-fuzzy-merge'):
+        modes = ('merge-then-localize', 'localize-then-fuzzy-merge') if args.mode == 'all' else (args.mode,)
+        for mode in modes:
             output = args.work / (mode + '.o')
             run(args.objcopy, '-Lshared_data', '-Lshared_function',
                 baseline if mode == 'merge-then-localize' else linked, output)
