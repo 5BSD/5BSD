@@ -3280,3 +3280,13 @@ process/authority and channel-create audit questions. Live kernel dispatch,
 service/module coexistence, credential transitions, descriptor lifecycle,
 revocation/timeout races and audit/probe delivery remain unqualified. No
 instrumentation or security source behavior was changed.
+
+### Veriexec/parser/SHA2 built-in variants (2026-10-28)
+
+Native object comparisons preserve the core verification probes and all
+allocated runtime sections relative to Make. The parser contains no direct
+SDT or audit call sites; review malformed input, load/reload and acceptance/
+rejection diagnostics during runtime qualification. Cryptographic primitives
+need functional vectors and integration checks, not per-block probes added
+solely for coverage counts. Live trust/key changes and verification/cache
+behavior remain open. No instrumentation or policy source changed.

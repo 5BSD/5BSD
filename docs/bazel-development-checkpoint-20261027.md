@@ -2535,3 +2535,29 @@ capability lifecycle/enforcement, world/pkgbase/publication, bootstrap and
 comparative resource/performance gates remain open. Module count remains 45;
 this adds thirteen new built-in variants alongside the earlier two. Make
 stays production/default, with no host installation/loading or BIP changes.
+
+### GENERIC Veriexec, parser and SHA2 built-ins
+
+Added native built-in targets for the four Veriexec core/capimage sources,
+SHA256 registration, mac_veriexec_parser and sha256c/sha512c. The eight-source
+inventory matches these packages' selected generated GENERIC kernel targets.
+These use built-in compilation settings without KLD definitions or module-only
+diagnostic flags. No parser, trust, signature or algorithm policy was changed.
+Other algorithm registration/configuration combinations remain separate work.
+
+Evidence: `/usr/obj/usr/src/bazel-veriexec-builtins-20261028/qualification`,
+including both object sets, comparison script and source-inventory.json.
+All eight match Make symbols, raw CTF, complete allocated-section inventories
+and contents/size/type/flags/alignment, and runtime relocation bytes and
+associations. Existing allocated SDT sections are included. Reference log:
+`/usr/obj/usr/src/bazel-veriexec-builtins-make-20261028.log`; maintained kernel
+recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible source paths. Whole-object/debug path identity is not claimed.
+
+Frontend review: existing format-5 targets, compiler/CTF tools and artifact
+retention cover these built-ins without new C/backend options or object
+installation entries. Full kernel linking/boot, live verification rejection
+and acceptance, parser error behavior, key changes, cache invalidation and
+performance remain unqualified, alongside world/pkgbase/publication and
+bootstrap gates. Module count stays 45. Make remains production/default;
+no host installation or BIP changes occurred.
