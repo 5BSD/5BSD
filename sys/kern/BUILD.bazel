@@ -343,3 +343,7 @@ amd64_generic_kernel_objects(name = "generic_vfs_export", srcs = ["vfs_export.c"
     deps = ["//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/netinet:address_headers", "//sys/net:radix_headers",
         "//sys/rpc:kernel_auth_headers", "//sys/amd64/conf:generic_opt_inet_header",
         "//sys/amd64/conf:generic_opt_inet6_header"])
+
+amd64_generic_kernel_objects(name = "generic_file_locks", srcs = ["kern_lockf.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers",
+        "//sys/amd64/conf:generic_opt_debug_lockf_header"])

@@ -3847,3 +3847,27 @@ mapping, update/removal races and export-policy failures require linked-kernel
 and network tests. Full kernel/world/pkgbase/bootstrap and performance gates
 remain open. Make stays production/default; module count remains 45. No host
 installation or BIP changes occurred.
+
+### Native file locking
+
+Added //sys/kern:generic_file_locks_object_files for kern_lockf.c, selected
+by maintained GENERIC Make. Dependencies declare CK/VM headers and the
+lock-debug option extracted from native config output. No locking algorithm
+or runtime source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-file-locks-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. opt_debug_lockf.h matches Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-file-locks-kernel-make-20261028.log`; maintained
+recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Advisory lock contention, range splitting/merging, deadlock detection,
+interruption/cancellation, owner cleanup and remote lock interactions require
+linked-kernel tests. DEBUG_LOCKF-enabled configurations need separate coverage.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+stays production/default; module count remains 45. No host installation or
+BIP changes occurred.

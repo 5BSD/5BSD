@@ -3878,3 +3878,14 @@ symbols, raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-vfs-export-kernel-r2-20261028/qualification`.
 No runtime source changed. Live NFS authorization, mapped identities, probes
 and policy update concurrency remain unqualified.
+
+### File locking (2026-10-28)
+
+kern_lockf.c retains seven SDT probe definitions for wait start/done,
+cancellation, conflicts, deadlock, grant and wake. No local AUDIT_ARG calls
+were found; assess fcntl/flock syscall auditing separately. Native GENERIC
+output matches Make symbols, raw CTF, allocated sections and runtime
+relocations. Evidence:
+`/usr/obj/usr/src/bazel-file-locks-kernel-20261028/qualification`.
+No runtime source changed. Live probes, lock contention, deadlock detection,
+owner cleanup and lock performance remain unqualified.
