@@ -4363,3 +4363,14 @@ including the userland mode of the shared NFSv4 ACL implementation. The word
 direct SDT/DTrace/BSM hook was found in these local C sources. Object comparison
 does not establish kernel audit emission, mac_abac/openES behavior, permission
 enforcement or live filesystem ACL compatibility; runtime qualification remains.
+
+## 2026-10-28: libc database routines
+
+Reviewed the 31 database compilation sources (btree, dispatch, hash/ndbm,
+mpool and recno). No direct DTrace/SDT or BSM audit calls were found in this
+source group. Existing diagnostics remain unchanged. Database-level probes
+could improve latency/error visibility, but require a deliberate API/provider
+design; the migration adds none. Security auditing belongs also at callers
+that modify accounts or policy; this object comparison does not qualify those
+callers or establish runtime audit coverage. Ordinary/PIC .text and symbol
+parity evidence: bazel-libc-db-build-20261028/qualification/parity.json.

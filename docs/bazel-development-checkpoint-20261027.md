@@ -5288,3 +5288,22 @@ open. No ACL policy, MAC enforcement, host file labels or runtime code changed.
 Frontend review: existing explicit targets and NLS setting cover this group via
 build-bsd format 5; no frontend/backend contract change needed. The shared source
 export does not change existing kernel target recipes or flags. No host install.
+
+## 2026-10-28: libc database object inventory
+
+Adds all 31 maintained database sources: btree (13), db dispatch (1), hash
+and ndbm (7), mpool (2), recno (8). Explicit private headers preserve relative
+includes and __DBINTERFACE_PRIVATE; no source copies or ambient include paths.
+Ordinary/PIC archives are qualification artifacts for eventual complete libc.
+
+Evidence: /usr/obj/usr/src/bazel-libc-db-build-20261028/qualification/parity.json
+against fresh bazel-libc-db-make-20261028. All 62 objects match global symbols,
+unresolved symbols and .text bytes. Builds used build-bsd explicit format-5
+inputs and 16 jobs. Scripts and original reference logs remain under /usr/obj.
+No complete libc link, ABI map, debug/data/relocation equality, database runtime,
+manuals or installed tests are claimed. World, kernel and package completion
+remain open.
+
+Frontend review: existing explicit target and NLS settings cover these inputs;
+no build-bsd C/backend contract change is needed. No host database modification,
+installation or package publication was performed.
