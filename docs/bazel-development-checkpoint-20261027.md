@@ -5778,3 +5778,31 @@ complete libc/libsys linking or ABI/filter behavior. Frontend review: the existi
 format-5 typed build-settings path exercises hyperv true/false through build-bsd;
 no new frontend C option or helper contract required. No host CPU/register or
 clock configuration changes and no installation performed.
+
+## 2026-10-28: libc string sources, optimized and portable selections
+
+Native explicit source inventories now cover 88 amd64-optimized string sources
+and 87 portable sources, including wide-character routines and explicit_bzero.
+The existing machdep_optimizations flag selects the implementation; local textual
+C/assembly includes and private header dependencies are declared. Early IFUNC
+and page-reading sanitizer exclusions are scoped to the applicable groups.
+
+The first comparison caught incorrectly selected portable bcopy/bzero: Make's
+.PATH selects amd64 C wrappers even though those names are not in MDSRCS. The
+native inventory now explicitly selects those wrappers when optimizations are
+on. The original failed comparison and build remain available; no comparator
+exception was added.
+
+Evidence: /usr/obj/usr/src/bazel-libc-string-build-20261028-r2/qualification/
+parity.json (176 ordinary/PIC objects) and bazel-libc-string-portable-build-20261028/
+qualification/parity.json (174), each against its fresh corresponding Make
+reference. All 350 comparisons match .text and global/unresolved symbols.
+These are raw component archives, not a complete libc. Data/debug/relocation
+identity, runtime string/locale/IFUNC behavior, sanitizer-enabled execution,
+manual installation, full linking and performance remain unqualified.
+
+Frontend review: build-bsd's existing bazel-test explicit inputs and typed
+machdep_optimizations setting exercise both selections; no new CLI/backend or
+publication contract is needed for these component targets. No host installation
+or runtime configuration changes. The next libc work includes gen routines,
+generated syscall assembly and the final aggregate/link/install/runtime gates.

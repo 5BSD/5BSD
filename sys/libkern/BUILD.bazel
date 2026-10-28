@@ -66,3 +66,5 @@ amd64_generic_kernel_objects(name = "generic_random", srcs = ["arc4random.c"],
     deps = ["//sys/crypto/chacha20:kernel_headers", "//sys/crypto/sha2:kernel_headers", "//sys/dev/random:provider_headers"])
 amd64_generic_kernel_objects(name = "generic_x86_crc", srcs = ["x86/crc32_sse42.c"])
 filegroup(name = "generic_object_files", srcs = [":generic_common_object_files", ":generic_random_object_files", ":generic_x86_crc_object_files"], visibility = ["//visibility:public"])
+
+exports_files(["explicit_bzero.c"], visibility = ["//lib/libc/string:__pkg__"])

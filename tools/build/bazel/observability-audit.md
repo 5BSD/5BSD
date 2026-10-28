@@ -4536,3 +4536,13 @@ clock fallback, Hyper-V and CPU-feature selection code remains unchanged.
 Object parity for both Hyper-V settings does not establish actual fast-path use,
 latency or runtime observation. Evidence: bazel-libc-libsysx86-{yes,no}-build-20261028/
 qualification/parity.json. No instrumentation added to timing-sensitive paths.
+
+## 2026-10-28: libc string and wide-character routines
+
+No direct DTrace/SDT or BSM audit hooks found in the migrated string/amd64-string
+sources or explicit_bzero. No instrumentation added to these hot paths.
+Optimized and portable object comparisons preserve the selected implementation,
+including timing-safe and explicit-zero routines, but do not establish timing,
+zeroization at runtime, IFUNC selection or memory-boundary behavior. Maintained
+string tests (including timing-safe, memcpy and locale cases) still need native
+runtime integration; object parity does not replace those tests.

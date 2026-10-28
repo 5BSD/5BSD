@@ -26,3 +26,5 @@ cc_library(name = "inet_private_headers", hdrs = ["resolv_mt.h"], strip_include_
 cc_library(name = "stdio_private_headers", hdrs = ["errlst.h", "spinlock.h"], strip_include_prefix = ".", deps = [":rt_private_headers"], visibility = ["//lib/libc/stdio:__pkg__"])
 
 cc_library(name = "stdlib_headers", hdrs = ["block_abi.h", "spinlock.h"], strip_include_prefix = ".", deps = [":rt_private_headers"], visibility = ["//lib/libc/stdlib:__pkg__"])
+
+cc_library(name = "string_headers", hdrs = ["reentrant.h", "errlst.h"], strip_include_prefix = ".", deps = [":rt_private_headers", "//lib/libc/amd64:math_headers"], visibility = ["//lib/libc/string:__pkg__"])
