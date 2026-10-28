@@ -5718,3 +5718,21 @@ runtime mechanism; successful object comparison is not proof of that behavior.
 Data/relocation/debug identity and installed package integration remain open.
 Frontend review: format-5 explicit targets cover both variants through build-bsd;
 no frontend/helper contract change required. No host installation.
+
+## 2026-10-28: common libsys C implementations in libc mode
+
+Adds clock_gettime, gettimeofday, __vdso_gettimeofday, __error, __getosreldate,
+getpagesize, getpagesizes and libsys_sigwait as native libc-mode groups using the
+maintained libsys source files. Static/PIC variants retain libc compilation flags
+and private header dependencies; no standalone libsys library is claimed.
+
+Evidence: /usr/obj/usr/src/bazel-libc-libsyscommon-build-20261028/qualification/
+parity.json against bazel-libc-libsyscommon-make-20261028. All 16 ordinary/PIC
+objects match .text, global and unresolved symbols. Full data/relocation/debug
+identity, generated syscall assembly, architecture support, libc/libsys linking,
+ABI maps and runtime time/errno/auxiliary-vector/signal behavior remain open.
+The vDSO implementation comparison is not evidence of actual vDSO runtime use.
+
+Frontend review: existing format-5 explicit targets/NLS setting covers these
+objects through build-bsd; no new C/backend contract required. Source exports
+are restricted to the libc sys package. No host installation or runtime changes.

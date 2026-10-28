@@ -4514,3 +4514,10 @@ libc_stubs.c. Native groups preserve auxiliary-vector access, interposition tabl
 and intentional shared trap stub. Runtime filter resolution and thread dispatch
 still require full-library tests. Evidence: bazel-libc-libsysvariants-build-20261028/
 qualification/parity.json. No hooks or runtime source changes introduced.
+
+## 2026-10-28: common libc/libsys C sources
+
+No direct DTrace/SDT or BSM audit calls found in the eight common sources migrated
+in libc mode. Time-interface vDSO and syscall paths, errno and page-size helpers
+remain unchanged. Kernel observation and actual fast-path use require runtime
+qualification. Evidence: bazel-libc-libsyscommon-build-20261028/qualification/parity.json.

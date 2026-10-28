@@ -49,3 +49,15 @@ cc_library(
 )
 bsd_component_archive(name = "static_libsys_archive", groups = [":static_libsys_objects"])
 bsd_component_archive(name = "shared_libsys_archive", groups = [":shared_libsys_objects"], pic = True)
+
+# Common libsys sources compiled with libc's flags for its own artifacts.
+cc_library(name = "common_libsys_objects",
+    srcs = ['//lib/libsys:clock_gettime.c', '//lib/libsys:gettimeofday.c', '//lib/libsys:__vdso_gettimeofday.c', '//lib/libsys:__error.c', '//lib/libsys:__getosreldate.c', '//lib/libsys:getpagesize.c', '//lib/libsys:getpagesizes.c', '//lib/libsys:libsys_sigwait.c'],
+    implementation_deps = ["//lib/libc/include:rt_private_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ["-fexceptions", "-ftls-model=initial-exec"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "common_libsys_archive", groups = [":common_libsys_objects"])
+bsd_component_archive(name = "common_libsys_pic_archive", groups = [":common_libsys_objects"], pic = True)
