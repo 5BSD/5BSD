@@ -7,3 +7,5 @@ cc_library(name = "address_headers", hdrs = ["in.h"], includes = [".."],
 
 cc_library(name = "pcb_headers", hdrs = ["in_pcb.h"], includes = [".."],
     deps = [":address_headers", "//sys/net:route_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"], visibility = ["//visibility:public"])
+
+cc_library(name = "ip_headers", hdrs = ["ip_var.h", "in_kdtrace.h"], includes = [".."], deps = [":pcb_headers"], visibility = ["//visibility:public"])

@@ -3212,3 +3212,13 @@ inheritance/teardown and authority token creation/revocation/expiry for useful
 probe and audit coverage during runtime qualification. Object-level parity
 preserves current behavior; it does not prove observability or enforcement.
 No probes, callbacks or audit behavior were changed during conversion.
+
+### MAC framework control group (2026-10-28)
+
+The seventeen new built-in object comparisons include all allocated SDT
+sections and their relocation records. Existing audit-control policy checks
+and MAC_CHECK_PROBE definitions remain in the source. mac_kdb has no direct
+probe definitions in this group; review debugger/policy observability in the
+context of its existing call paths. Live MAC dispatch, policy registration,
+lock context, rejection/error paths and audit event delivery remain open.
+The four network/VFS groups are not covered by this object qualification.

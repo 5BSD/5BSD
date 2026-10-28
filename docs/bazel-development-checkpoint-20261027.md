@@ -2351,3 +2351,33 @@ kernel linking, boot, lifecycle/authority runtime checks, installation/debug
 qualification of the linked kernel and performance remain unfinished. The
 module count remains forty-two; these are two additional built-in translation
 units, not modules. Make remains production/default and BIP remains excluded.
+
+### Native MAC framework control objects
+
+Added seventeen explicitly inventoried amd64 GENERIC built-in sources:
+mac_audit, mac_cred, mac_kdb, mac_framework, mac_label, mac_pipe,
+mac_posix_sem, mac_posix_shm, mac_prison, mac_priv, mac_process, mac_socket,
+mac_syscalls, mac_system, mac_sysv_msg, mac_sysv_sem and mac_sysv_shm.
+A reusable amd64_generic_kernel_objects macro carries native compiler/CTF
+inputs without module defines. opt_posix joins the native config-derived
+header outputs. Socket policy dependencies include explicit BPF/interface/IP
+headers; the initial missing bpfdesc header failure is retained in the first
+run rather than bypassed. MAC network/IPv4/IPv6/VFS source groups remain open.
+
+Evidence: `/usr/obj/usr/src/bazel-mac-framework-r2-20261028/qualification`,
+including retained Make and Bazel object copies and comparison script.
+All seventeen match Make symbols and raw CTF, allocated section contents,
+size/type/flags/alignment and runtime relocation payloads/associations.
+This includes allocated SDT sections. Reference objects were built through
+the maintained generated kernel Makefile with the same SDK clang, 16 jobs,
+DEBUG=-g, WITH_CTF=yes and reproducible source paths; log is
+`/usr/obj/usr/src/bazel-mac-framework-make-20261028.log`.
+Whole-object/debug-path identity is not claimed.
+
+Frontend review: format-5 target selection, generated headers, compiler
+receipt and artifact retention support the new target without C/frontend
+interface changes. This is an explicitly scoped GENERIC object group, not
+arbitrary kernel option selection or a completed kernel link. Object graph
+coverage does not establish live MAC policy dispatch or audit delivery.
+Module count remains forty-two. Full kernel/world/pkgbase, runtime and
+comparative CPU/memory/disk gates remain open; Make stays production/default.
