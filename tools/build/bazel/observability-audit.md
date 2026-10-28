@@ -5578,3 +5578,11 @@ No test assertions changed and no cases executed. Installed-system/root cases
 need isolation; existing integrity-related cases require applicability review
 without reintroducing out-of-scope BIP. Source-fixture tests should use declared
 native inputs. Packaging these tests does not prove startup or logging behavior.
+
+### 2026-10-28 safe_eval execution
+
+Both maintained safe_set assertions pass with native Bazel tools in a matching-
+kernel QEMU replay. Host execution aborts before assertions due to Capsicum ABI
+mismatch. This verifies two shell-input filtering cases only, not general rc
+startup or privileged service behavior. Source-path selection uses standard ATF
+configuration; assertions and safe_eval implementation are unchanged.

@@ -9190,3 +9190,34 @@ Reviewed frontend artifact collection and typed inputs: no frontend change
 required; used 16 jobs. Next work is actual Bazel-owned rc test execution with
 explicit source/runtime inputs and isolated system tests where required.
 Full boot/world/kernel/pkgbase/performance gates remain open; Make stays default.
+
+## 2026-10-28: safe_eval native ATF cases and matching-kernel replay
+
+Added safe_set_reject and safe_set_xtras as native bsd_atf_test targets with
+declared safe_eval source, native tools and libraries. The existing test now
+accepts the standard ATF safe_eval configuration path, retaining SAFE_EVAL and
+/libexec/safe_eval.sh defaults; assertions are unchanged. Host execution failed
+before assertions on the known cap_rights_intersect assertion with the older
+host kernel. Evidence: bazel-rc-safe-eval-20261028 test reports/execution log.
+No host-tool fallback or rights masking was used.
+
+Both cases passed in QEMU replay of the recorded Bazel test environments and
+runfiles, along with the fixture's baseline checks. Evidence:
+/usr/obj/usr/src/bazel-rights-vm-20261028/safe-eval-run-r3/{result.json,serial.log}.
+Captured payload hashes/actions: safe-eval-payload.json; staging script:
+stage-safe-eval.py. Guest configuration: 2 GiB, 4 CPUs, networkless disk-backed
+512 MiB UFS root. The launcher is a static ATF replay adapter; guest execution
+uses the native Bazel test runner/payloads, not a guest Bazel scheduler. It does
+not prove general shell tests run on the host or normal installed system startup.
+VM exited and powered off successfully.
+
+Preparation initially used the wrong ATF library spelling; the SDK library is
+libprivateatf-c. Two VM launches were rejected before boot because the runner's
+default GENERIC-NODEBUG did not match the staged GENERIC kernel. Fresh private
+inputs plus explicit --kernconf GENERIC passed identity validation; those rejected
+logs are retained. This was a launch configuration error, not a bypass of checks.
+
+Reviewed build-bsd/ATF helpers: existing config_files and maintained frontend
+inputs support the new test parameter without changes. Installation wrappers need
+recomparison after the source-path parameter change. Remaining rc runtime cases,
+world/kernel/pkgbase and performance gates stay open; Make remains default.
