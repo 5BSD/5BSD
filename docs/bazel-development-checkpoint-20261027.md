@@ -7273,3 +7273,36 @@ Seven maintained rtld ATF cases are now qualified across recorded runs. Child
 exec/fexecve/preload behavior, TLS/libmap and full runtime qualification remain
 open, as do world/kernel/pkgbase/bootstrap/cache/performance gates. Make stays
 production/default. No host installation or BIP work occurred.
+
+## 2026-10-28 descriptor-loading test builds
+
+Added native targets for the unchanged ld_library_pathfds and ld_preload_fds
+programs (including common.c), plus their target child executable. The
+fd_loading_suite filegroup collects both parents, the child and libpythagoras.
+The library's public header now uses a declared include prefix; the initial
+sandbox compilation caught the missing include interface. That failed run is
+retained at /usr/obj/usr/src/bazel-rtld-fd-build-20261028.
+
+The corrected build passed at /usr/obj/usr/src/bazel-rtld-fd-build-20261028-r2.
+Independent Make builds under bazel-rtld-fd-reference-20261028 establish matching
+NEEDED, SONAME, RPATH/RUNPATH and PT_INTERP properties for all four artifacts.
+The target requires libc.so.7 and libpythagoras.so.0, has no RPATH/RUNPATH and
+uses /libexec/ld-elf.so.1. Thus the fixture does not bypass missing-library
+checks through a Bazel build-directory search path. Evidence is in
+qualification/elf-parity.json; commands and verification script are retained
+under /usr/obj/usr/src/bazel-rtld-fd-qualification-20261028.
+
+This is build qualification only: zero additional ATF cases ran. The unchanged
+common helper invokes fexecve with only the test's selected environment entry.
+The kernel therefore chooses the installed interpreter. Passing the parent
+through native rtld cannot qualify the child loader. The eleven descriptor
+cases (seven directory and four preload cases) need an isolated root/VM with
+the native loader at its normal interpreter path and the native runtime
+installed. Do not replace fexecve, inject a search path that defeats negative
+cases, or report a host-loader run as native-loader qualification.
+
+Reviewed build-bsd.c's bazel-test integration: existing format-5 target inputs
+support this build-only suite at 16 jobs. No frontend, signing, installation or
+publication change is required. Seven previously recorded rtld cases remain
+runtime-qualified. Full world/kernel/pkgbase and performance gates remain open;
+Make remains production/default, with no host installation or BIP changes.

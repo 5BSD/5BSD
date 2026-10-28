@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+# This executable intentionally has no RPATH: the parent tests exercise
+# LD_LIBRARY_PATH_FDS/LD_PRELOAD_FDS, including missing-library failures.
+cc_binary(name = "target", srcs = ["target.c"],
+    deps = ["//libexec/rtld-elf/tests/libpythagoras:pythagoras"],
+    dynamic_deps = ["//libexec/rtld-elf/tests/libpythagoras:pythagoras_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    features = ["-bsd_test_runtime_paths"],
+    visibility = ["//libexec/rtld-elf/tests:__pkg__"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

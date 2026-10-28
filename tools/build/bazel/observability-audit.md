@@ -4946,3 +4946,11 @@ are injected by the original test; real cryptographic checks and kernel
 transport are not established by this evidence. No DTrace or audit hooks were
 added, removed or modified. Existing rtld probe qualification remains separate;
 live probe firing and broader runtime coverage remain open.
+
+## 2026-10-28 descriptor-loading fixture builds
+
+Both maintained descriptor-test programs and their child now build with Bazel.
+Four ELF dependency/interpreter/search-path layouts match independent Make
+references. No test source, fexecve behavior, DTrace probe or audit hook changed.
+These are compilation/link checks only. The eleven ATF runtime cases remain
+unqualified against native rtld until an isolated installed runtime is used.

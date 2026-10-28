@@ -60,3 +60,15 @@ bsd_atf_test(name = "integers", interface = "program", body = ":parse_integer_te
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "parse_integer_header", textual_hdrs = [":parse_integer_func"],
     includes = ["."])
+
+# Child fexecve selects the installed PT_INTERP. These are build targets, not
+# native-rtld runtime claims; qualification needs an isolated installed root.
+[cc_binary(name = program, srcs = [program + ".c", "common.c", "common.h"],
+    deps = ["//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for program in ["ld_library_pathfds", "ld_preload_fds"]]
+filegroup(name = "fd_loading_suite", srcs = [":ld_library_pathfds", ":ld_preload_fds",
+    "//libexec/rtld-elf/tests/target:target",
+    "//libexec/rtld-elf/tests/libpythagoras:pythagoras_shared"])
