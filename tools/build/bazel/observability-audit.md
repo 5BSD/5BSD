@@ -4555,3 +4555,12 @@ instrumentation added. Object parity is not runtime signal-state, FP-control or
 tracing evidence. Six maintained makecontext argument/return cases pass with
 native makecontext and SDK context syscalls; setjmp/sigsetjmp and maintained
 fpsetmask/fpsetround tests still need native runtime integration.
+
+## 2026-10-28: libc directory/traversal/glob group
+
+No direct SDT/DTrace or BSM audit hooks found in the 23 migrated sources.
+Existing filesystem syscalls retain their kernel observation paths; that is not
+proof of runtime audit delivery. Seven maintained directory tests pass using
+native open/read/close/seek/tell routines with SDK support. Native fts/glob,
+Blocks, Capsicum, compatibility ABI and concurrent traversal tests remain open.
+No new instrumentation was added to traversal loops.

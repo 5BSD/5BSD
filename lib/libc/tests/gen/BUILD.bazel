@@ -26,3 +26,53 @@ cc_binary(
     )
     for n in range(1, 7)
 ]
+
+# Native directory objects with the remaining libc supplied by the SDK.
+cc_import(name = "directory_pic", static_library = "//lib/libc/gen:directory_pic_archive")
+cc_binary(name = "opendir_objects_test", srcs = ["opendir_test.c"],
+    deps = [":directory_pic", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)
+bsd_atf_test(name = "native_opendir_ok", case_name = "opendir_ok",
+    interface = "program", body = ":opendir_objects_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"],
+)
+bsd_atf_test(name = "native_fdopendir_ok", case_name = "fdopendir_ok",
+    interface = "program", body = ":opendir_objects_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"],
+)
+bsd_atf_test(name = "native_fdopendir_ebadf", case_name = "fdopendir_ebadf",
+    interface = "program", body = ":opendir_objects_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"],
+)
+bsd_atf_test(name = "native_fdopendir_enotdir", case_name = "fdopendir_enotdir",
+    interface = "program", body = ":opendir_objects_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"],
+)
+bsd_atf_test(name = "native_opendir_fifo", case_name = "opendir_fifo",
+    interface = "program", body = ":opendir_objects_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"],
+)
+cc_binary(name = "dir2_objects_test", srcs = ["dir2_test.c"],
+    deps = [":directory_pic", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)
+bsd_atf_test(name = "native_telldir_after_seekdir", case_name = "telldir_after_seekdir",
+    interface = "program", body = ":dir2_objects_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"],
+)
+bsd_atf_test(name = "native_telldir_at_end_of_block", case_name = "telldir_at_end_of_block",
+    interface = "program", body = ":dir2_objects_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"],
+)

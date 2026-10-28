@@ -5834,3 +5834,32 @@ Frontend review: existing build-bsd bazel-test format-5 targets/tests, native
 C/assembly toolchain and ATF reporting support these additions without a new
 frontend option or backend contract. Make remains the production/default build.
 No host installation, signal-policy or account changes were made.
+
+## 2026-10-28: libc directory, traversal and glob objects
+
+Adds 23 explicit gen sources for directory open/read/scan/seek/tell, fts, ftw,
+nftw and glob, including the maintained compatibility implementations. fts.c
+and glob.c retain their per-source -fblocks option; scandir_b.c's inclusion of
+scandir.c is a declared textual input. Private directory/compatibility headers,
+block ABI and locale collation headers are explicit dependencies. These targets
+currently qualify the FreeBSD amd64 toolchain with Blocks support.
+
+Evidence: /usr/obj/usr/src/bazel-libc-directory-build-20261028/qualification/
+parity.json versus bazel-libc-directory-make-20261028: all 46 ordinary/PIC objects
+match .text and global/unresolved symbols. Full relocation/data/debug identity,
+versioned compatibility ABI, complete libc linking and installation remain open.
+
+The unchanged opendir_test.c and dir2_test.c now run as seven native Bazel ATF
+cases. All pass without skips in bazel-libc-directory-test-20261028/receipt.json:
+normal and descriptor-based open, invalid descriptor/non-directory/FIFO rejection,
+and seek/tell behavior across directory blocks. qualification/link-proof.json
+confirms the invoked directory routines are defined in the test executables from
+the native archive; other libc and syscall support remains SDK-provided. These
+tests do not qualify fts/glob/Blocks traversal, compatibility callers, Capsicum,
+threading, filesystem diversity or performance. Those maintained tests remain
+required for the broader libc qualification.
+
+Frontend review: existing build-bsd bazel-test explicit targets and tests, typed
+NLS option, native compilation and ATF reporting handle this component; no new
+frontend/backend contract required. Make remains production/default. Tests used
+private working directories; no host installation or configuration changes.

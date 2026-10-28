@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 exports_files(["pw_scan.c"], visibility = ["//lib/libutil:__pkg__", "//usr.sbin/pwd_mkdb:__pkg__", "//usr.bin/chpass:__pkg__"])
 cc_library(name = "pw_scan_headers", hdrs = ["pw_scan.h"], strip_include_prefix = ".", visibility = ["//lib/libutil:__pkg__", "//usr.sbin/pwd_mkdb:__pkg__", "//usr.bin/chpass:__pkg__"])
 
@@ -9,3 +10,63 @@ cc_library(name = "exterr_catalog_headers", hdrs = ["exterr_cat_filenames.h"],
 exports_files(["getcap.c"], visibility = ["//usr.bin/cap_mkdb:__pkg__"])
 
 exports_files(["ldexp.c"], visibility = ["//lib/libc/amd64/gen:__pkg__"])
+
+cc_library(
+    name = "directory_objects",
+    srcs = [
+        "closedir.c",
+        "dirfd.c",
+        "fdopendir.c",
+        "opendir.c",
+        "opendir2.c",
+        "readdir.c",
+        "readdir-compat11.c",
+        "rewinddir.c",
+        "seekdir.c",
+        "telldir.c",
+        "scandir.c",
+        "scandir_b.c",
+        "scandir-compat11.c",
+        "fts-compat.c",
+        "fts-compat11.c",
+        "fts-compat15.c",
+        "ftw.c",
+        "ftw-compat11.c",
+        "nftw.c",
+        "nftw-compat11.c",
+        "glob-compat11.c",
+    ],
+    hdrs = ["fts-compat.h", "fts-compat11.h", "fts-compat15.h", "gen-compat.h", "gen-private.h", "glob-compat11.h", "telldir.h"],
+    textual_hdrs = ["scandir.c"],
+    implementation_deps = ["//lib/libc/include:gen_directory_headers", "//lib/libc/locale:regex_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({
+        "//tools/build/bazel/config:nls_enabled": ["NLS"],
+        "//conditions:default": [],
+    }),
+    copts = ["-fexceptions", "-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+
+cc_library(
+    name = "directory_blocks_objects",
+    srcs = [
+        "fts.c",
+        "glob.c",
+    ],
+    hdrs = ["fts-compat.h", "fts-compat11.h", "fts-compat15.h", "gen-compat.h", "gen-private.h", "glob-compat11.h", "telldir.h"],
+    textual_hdrs = ["scandir.c"],
+    implementation_deps = ["//lib/libc/include:gen_directory_headers", "//lib/libc/locale:regex_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({
+        "//tools/build/bazel/config:nls_enabled": ["NLS"],
+        "//conditions:default": [],
+    }),
+    copts = ["-fexceptions", "-ftls-model=initial-exec", "-fblocks"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+
+bsd_component_archive(name = "directory_archive", groups = [":directory_objects", ":directory_blocks_objects"])
+bsd_component_archive(name = "directory_pic_archive", groups = [":directory_objects", ":directory_blocks_objects"], pic = True, visibility = ["//lib/libc:__pkg__", "//lib/libc/tests/gen:__pkg__"])
