@@ -7012,3 +7012,36 @@ rtld replacement-libc sources, selected libc/libsys object dependencies, final
 link/version map and forbidden-dependency checks, installation and loader tests.
 SDK/bootstrap closure and full world/kernel/package/performance gates remain
 open. Make remains production/default.
+
+## 2026-10-28: rtld replacement libc compilation
+
+Added 42 native replacement-libc source targets under libexec/rtld-elf. Owned
+libc_sources.bzl metadata declares the selected gen, stdlib and generic string
+sources plus rtld_libc.c, their per-source warnings and textual dependencies.
+Source packages expose restricted filegroup labels from this same inventory.
+These sources compile with rtld's private namespace/libc_private headers and
+freestanding compiler policy, not the ordinary libc object variants. Dedicated
+dirent and errlst header targets avoid importing ordinary libc namespace policy.
+Generic string implementations preserve Make's avoidance of IFUNC dispatch.
+
+The first sandboxed build caught bzero.c's included memset.c as undeclared.
+Added its textual dependency, alongside memcpy/memmove's included bcopy.c,
+after checking the full selected source include inventory. No sandbox bypass
+or broad source-tree input was introduced. Failed evidence remains in
+bazel-rtld-libc-20261028; successful evidence is
+/usr/obj/usr/src/bazel-rtld-libc-20261028-r2/qualification/object-parity.json.
+All 42 replacement objects match Make executable-section bytes and global/
+undefined symbols. None imports stack-protector instrumentation. Together with
+the 12 previously qualified core objects and provider, their 55 ELF object
+paths exactly reconcile with the independent Make reference. Make's textual
+.depend.*.o files are explicitly distinguished from ELF compilation outputs.
+Reference: bazel-rtld-core-reference-20261028; comparison script:
+bazel-rtld-libc-qualification-20261028/verify.py.
+
+Reviewed build-bsd.c's maintained bazel-test backend: existing format-5 explicit
+target selection handles this target with 16 jobs, without new public inputs.
+No host installation occurred. Scope is amd64 object compilation; final rtld
+linkage still requires its selected libc/libsys archive objects and compiler
+runtime, version script, dependency checks and installation/runtime tests.
+No complete-loader, world/kernel/package or performance claim is made. Make
+remains production/default.

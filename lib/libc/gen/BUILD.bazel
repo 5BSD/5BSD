@@ -497,3 +497,10 @@ exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
     ('libc_manual_valloc.3', 'valloc.3'),
     ('libc_manual_wordexp.3', 'wordexp.3'),
 ]]
+
+load("//libexec/rtld-elf:libc_sources.bzl", "rtld_libc_source_exports")
+rtld_libc_source_exports('lib/libc/gen')
+
+# These local directory headers must not import normal libc namespace headers.
+cc_library(name = "rtld_directory_headers", hdrs = ["gen-private.h", "telldir.h"],
+    strip_include_prefix = ".", visibility = ["//libexec/rtld-elf:__pkg__"])

@@ -44,3 +44,6 @@ cc_library(features = LIBC_VARIANT_FEATURES, name = "gen_support_headers", hdrs 
 
 cc_library(features = LIBC_VARIANT_FEATURES, name = "syscall_compat_header", hdrs = ["compat.h"],
     strip_include_prefix = ".", visibility = ["//lib/libsys:__pkg__", "//lib/libc/sys:__pkg__"])
+
+cc_library(name = "rtld_errlst_header", hdrs = ["errlst.h"], strip_include_prefix = ".",
+    visibility = ["//libexec/rtld-elf:__pkg__"])

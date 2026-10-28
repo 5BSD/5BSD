@@ -262,3 +262,6 @@ exports_files(["memcpy.c", "memset.c", "strlcpy.c", "bcopy.c"], visibility = ["/
     ('libc_manual_wcsxfrm.3', 'wcsxfrm.3'),
     ('libc_manual_wmemchr.3', 'wmemchr.3'),
 ]]
+
+load("//libexec/rtld-elf:libc_sources.bzl", "rtld_libc_source_exports")
+rtld_libc_source_exports('lib/libc/string')

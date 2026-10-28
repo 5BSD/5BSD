@@ -87,3 +87,6 @@ exports_files(["atexit.h"], visibility = ["//lib/libc/gen:__pkg__"])
     ('libc_manual_system.3', 'system.3'),
     ('libc_manual_tsearch.3', 'tsearch.3'),
 ]]
+
+load("//libexec/rtld-elf:libc_sources.bzl", "rtld_libc_source_exports")
+rtld_libc_source_exports('lib/libc/stdlib')

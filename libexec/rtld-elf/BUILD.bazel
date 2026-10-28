@@ -39,3 +39,7 @@ bsd_dtrace_cc_objects(name = "traced_core_objects", libraries = [":core_objects"
     copy_runner = "//tools/build/bazel:dtrace_copy_runner")
 filegroup(name = "traced_core_pic", srcs = [":traced_core_objects"], output_group = "pic_objects")
 filegroup(name = "trace_provider_pic", srcs = [":traced_core_objects"], output_group = "pic_provider")
+
+load(":libc_sources.bzl", "RTLD_LIBC_GROUPS", "rtld_libc_objects")
+rtld_libc_objects()
+bsd_component_archive(name = "replacement_libc_pic_archive", groups = RTLD_LIBC_GROUPS, pic = True)

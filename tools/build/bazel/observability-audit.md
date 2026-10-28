@@ -4879,3 +4879,11 @@ without libc-dependent runtime imports or constructor sections. With dtrace
 disabled, all 12 core objects still match Make and no DTrace generation action
 runs. This is compilation/provider evidence; final loader linkage and live
 probe firing remain unqualified. No audit or signature-check source changed.
+
+## 2026-10-28 runtime-linker replacement libc
+
+All 42 replacement-libc objects match independent Make executable sections and
+global/undefined symbols. The core, replacement code and provider inventories
+reconcile to all 55 Make compilation outputs. Private rtld namespace headers
+and generic string implementations are retained. No runtime C sources, DTrace
+probes or audit hooks changed; final loader runtime remains unqualified.
