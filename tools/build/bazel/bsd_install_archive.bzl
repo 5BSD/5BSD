@@ -6,6 +6,13 @@ BsdInstallArchiveInfo = provider(fields = ["directory_metadata"])
 
 def _archive(ctx):
     records, payloads = [], []
+    runtime_names = []
+    for library in ctx.files.mtree_runtime_libraries:
+        if library.basename in runtime_names:
+            fail("duplicate mtree runtime library basename: " + library.basename)
+        runtime_names.append(library.basename)
+    if ctx.files.mtree_runtime_libraries and not ctx.attr.mtree_specs:
+        fail("mtree runtime libraries require mtree policy")
     for target in ctx.attr.manifests:
         info = target[BsdInstallManifestInfo]
         records.extend(info.records)
@@ -43,6 +50,7 @@ def _archive(ctx):
         mtree_specs = specs,
         directory_packages = ctx.attr.directory_packages,
         mtree = ctx.executable.mtree.path if ctx.executable.mtree else None,
+        mtree_runtime_libraries = [file.path for file in ctx.files.mtree_runtime_libraries],
         passwd = ctx.file.passwd.path if ctx.file.passwd else None,
         group = ctx.file.group.path if ctx.file.group else None,
     )) + "\n")
@@ -52,7 +60,7 @@ def _archive(ctx):
         executable = ctx.attr.python[DefaultInfo].files_to_run,
         arguments = [args],
         inputs = depset([request, ctx.file._writer, ctx.file.python_home] + policy_inputs, transitive = payloads),
-        tools = ctx.files.runtime + policy_tools,
+        tools = ctx.files.runtime + ctx.files.mtree_runtime_libraries + policy_tools,
         outputs = [archive, directory_metadata],
         env = {"PYTHONHOME": ctx.file.python_home.dirname, "PYTHONNOUSERSITE": "1", "LC_ALL": "C"},
         use_default_shell_env = False,
@@ -71,6 +79,7 @@ bsd_install_archive = rule(
         "groups": attr.string_dict(),
         "mtree_specs": attr.label_keyed_string_dict(allow_files = True),
         "mtree": attr.label(executable = True, cfg = "exec", allow_single_file = True),
+        "mtree_runtime_libraries": attr.label_list(cfg = "exec", allow_files = True, doc = "Declared DSOs for the mtree subprocess only."),
         "passwd": attr.label(allow_single_file = True),
         "group": attr.label(allow_single_file = True),
         "_policy_modules": attr.label_list(default = [Label(":archive_policy.py"), Label(":directory_metadata.py")], allow_files = True, cfg = "exec"),

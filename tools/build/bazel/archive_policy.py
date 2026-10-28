@@ -2,6 +2,7 @@
 """Resolve archive ancestors and identities from declared base policy sources."""
 from pathlib import Path, PurePosixPath
 import subprocess
+import os
 from directory_metadata import records, normalize, absolute
 
 
@@ -50,10 +51,18 @@ def resolve(request):
     # mtree entries may describe object types this archive does not install.
     selected_packages = set(request.get("directory_packages", []))
     flattened = []
+    mtree_env = None
+    libraries = request.get("mtree_runtime_libraries", [])
+    if libraries:
+        paths = [Path(name).absolute() for name in libraries]
+        if any(not path.is_file() for path in paths):
+            raise ValueError("missing mtree runtime library")
+        directories = list(dict.fromkeys(str(path.parent) for path in paths))
+        mtree_env = dict(os.environ, LD_LIBRARY_PATH=":".join(directories))
     for spec in specs:
         prefix = absolute(spec["prefix"])
         output = subprocess.run([request["mtree"], "-C", "-K", "all", "-f", spec["source"]],
-                                check=True, capture_output=True, text=True).stdout
+                                check=True, capture_output=True, text=True, env=mtree_env).stdout
         for relative, attrs in records(output):
             path = absolute(prefix.rstrip("/") + ("/" + relative[2:] if relative != "." else "") or "/")
             flattened.append((path, attrs))

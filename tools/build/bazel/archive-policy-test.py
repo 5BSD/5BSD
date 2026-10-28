@@ -1,6 +1,9 @@
 #!/usr/local/bin/python3.12
 # SPDX-License-Identifier: BSD-2-Clause
 import unittest
+import os
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
 from archive_policy import resolve
@@ -55,4 +58,24 @@ class DirectoryPolicyTests(unittest.TestCase):
         with patch('archive_policy.accounts', return_value={'root':0,'wheel':0}), patch('archive_policy.subprocess.run', side_effect=outputs):
             with self.assertRaisesRegex(ValueError, 'conflicting mtree directory'):
                 resolve(r)
+    def test_native_mtree_runtime_is_scoped_to_child(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / 'libfixture.so.1'
+            library.write_bytes(b'fixture')
+            request = self.request()
+            request['mtree_runtime_libraries'] = [str(library)]
+            with patch.dict(os.environ, {'LD_LIBRARY_PATH': '/inherited'}), patch('archive_policy.accounts', return_value={'root': 0, 'wheel': 0}), patch('archive_policy.subprocess.run', return_value=SimpleNamespace(stdout='. type=dir uname=root gname=wheel mode=0755\n')) as command:
+                resolve(request)
+                self.assertEqual(command.call_args.kwargs['env']['LD_LIBRARY_PATH'], directory)
+                self.assertEqual(os.environ['LD_LIBRARY_PATH'], '/inherited')
+
+    def test_missing_native_mtree_library_fails_before_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            request = self.request()
+            request['mtree_runtime_libraries'] = [str(Path(directory) / 'missing.so')]
+            with patch('archive_policy.accounts', return_value={'root': 0, 'wheel': 0}), patch('archive_policy.subprocess.run') as command:
+                with self.assertRaisesRegex(ValueError, 'missing mtree runtime'):
+                    resolve(request)
+                command.assert_not_called()
+
 if __name__=='__main__':unittest.main()

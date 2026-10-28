@@ -33353,3 +33353,32 @@ The maintained frontend format-5 interface needs no C/backend change for these
 targets. This candidate has not replaced the SDK staging mtree. Execution-tool
 runtime closure, broader ATF cases, invalidation/performance, full bootstrap,
 world/kernel/pkgbase and publication gates remain open.
+
+## Native mtree used by an installation action (2026-10-28)
+
+The install archive rule now accepts mtree_runtime_libraries as declared
+execution-configuration inputs. It rejects duplicate library basenames and
+runtime declarations without mtree policy. The policy helper validates those
+files and sets LD_LIBRARY_PATH only for its mtree subprocess, leaving the
+Python/controller environment unchanged. Existing SDK-tool callers retain
+their current behavior when no library list is supplied.
+
+usr.bin/xinstall:install_archive is the first consumer switched from staged
+extra_mtree to //usr.sbin/nmtree:mtree. Its declared native libmd/libutil and
+SDK libc/libsys are built/selected in the execution configuration. The normal
+maintained frontend successfully builds the archive with that tool. Evidence:
+/usr/obj/usr/src/bazel-native-mtree-archive-r2-20261028/qualification/native-mtree.json.
+Authenticated captured output is byte-identical to the prior SDK-mtree archive:
+f7301000702b926e4eb8f10b72c83cf5cb1728891990b1935555ab7538f016aa.
+The request records native-opt-exec paths for mtree, libmd and libutil.
+Nine archive-policy tests pass, including child-environment isolation and
+failure before execution when a declared runtime library is missing.
+
+This qualifies one native staging-tool consumer. Other archive targets still
+use their SDK mtree declarations; the compiler, libc/libsys and Python runtime
+remain staged SDK inputs. It does not establish independent bootstrap, full
+runtime-loader hermeticity, cross-host execution or system-wide packaging.
+The backend rule/helper/tests/manual changed together. Frontend CLI/input
+formats are unchanged; no build-bsd C change is required for this rule-level
+execution dependency. Further native-tool adoption and full world/kernel/
+pkgbase/performance gates remain open.

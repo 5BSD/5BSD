@@ -49,9 +49,10 @@ bsd_install_archive(
     },
     passwd = "//etc:master.passwd",
     group = "//etc:group",
-    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    mtree = "//usr.sbin/nmtree:mtree",
+    mtree_runtime_libraries = ["//lib/libmd:md_shared", "//lib/libutil:util_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
     epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python",
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
-    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
 )

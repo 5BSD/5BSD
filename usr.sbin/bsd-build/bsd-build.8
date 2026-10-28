@@ -3517,3 +3517,10 @@ runs twelve imported conversion/merge checks as native byte comparisons.
 This candidate has not replaced the staged SDK tool. The maintained mtree
 reports missing/extra entries on stdout while returning zero in the observed
 cases; tree-verification callers must not rely solely on its exit status.
+
+.Pp
+Installation archive rules can declare mtree runtime libraries for the
+execution platform. Their loader path is applied only to the mtree policy
+subprocess. The xinstall archive now uses native mtree with explicit libraries;
+its output matches the previous staged-tool archive. Other SDK consumers and
+complete native bootstrap remain separate qualification work.
