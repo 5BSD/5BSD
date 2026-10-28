@@ -7718,3 +7718,35 @@ Invitation lifetime/replay, hostname lookup, terminal permissions and delivery,
 configuration/static/cross variants and resource behavior remain unqualified.
 Full world/kernel/pkgbase/bootstrap/cache/performance gates remain open; Make
 stays production/default and BIP stays out of scope.
+
+## 2026-10-28 native mknetid with explicit NIS libc
+
+Added mknetid's three unchanged sources and both maintained manuals. The target
+is incompatible when nis=false, matching libexec/Makefile's MK_NIS exclusion.
+The disabled configuration is verified to reject the explicit target during
+analysis: /usr/obj/usr/src/bazel-mknetid-disabled-20261028/bazel.stderr.
+Initial Make and Bazel links against the NIS-disabled SDK failed with missing
+yp_get_default_domain; no stub or host-library fallback was introduced.
+
+The enabled target declares libc:shared_link_interface and dynamic c_shared /
+sys_shared dependencies, with -nodefaultlibs. The native graph builds the
+NIS-enabled libc including its existing rpcgen actions. Through build-bsd at
+16 jobs, bazel-mknetid-nis-20261028 completed successfully. All three component
+object .text bodies and global/undefined symbols match independent Make
+compilation. Linked comparison matches 53 symbols, libc/libsys dependencies,
+empty RPATH, six installation records, both compressed manuals, and debug
+name/CRC/DWARF; stripping preserves native .text.
+
+Evidence: /usr/obj/usr/src/bazel-mknetid-nis-20261028/qualification/{parity.json,
+object-parity.json}. Scripts: bazel-mknetid-qualification-20261028. Reference:
+bazel-mknetid-nis-reference-20261028-r2; objects:
+bazel-mknetid-reference-objects-20261028. The Make link explicitly uses the same
+native NIS libc/libsys as Bazel; it is NOT independent libc qualification.
+An initial reference command overrode LDFLAGS without retaining -pie; its
+weak-symbol mismatch was investigated, corrected and the reference relinked.
+
+Reviewed build-bsd.c: format-5 settings and explicit targets already support
+this configuration; no frontend change required. No runtime NIS query or host
+installation occurred. Independent NIS-enabled libc comparison, map-generation
+runtime fixtures, service integration and full-system/cache/performance gates
+remain open. Make remains production/default; BIP remains out of scope.

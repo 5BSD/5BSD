@@ -5095,3 +5095,12 @@ this graph conversion. Invitation processing, terminal-write authorization,
 delivery failures and logging remain isolated runtime review items. Build and
 installation parity does not establish those behaviors; no daemon or terminal
 announcement was executed on the host.
+
+## 2026-10-28 mknetid
+
+All three source units compile unchanged and match Make executable object code
+and symbols. No direct SDT/DTrace, audit or syslog call was found in these
+sources. This map-generation utility's error/output behavior and NIS default-
+domain lookup remain runtime qualification items; no instrumentation was added.
+The enabled native libc builds successfully, but its NIS behavior is not proved
+by this component's build and installation comparison.
