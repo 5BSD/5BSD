@@ -4205,3 +4205,26 @@ and floating-point context assumptions require linked-kernel boot tests.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 stays production/default; module count remains 45. No host installation or
 BIP changes occurred.
+
+### Native real-time clock management
+
+Added //sys/kern:generic_rtc_object_files for subr_rtc.c, selected by
+maintained GENERIC Make. Dependencies declare CK/VM, generated bus/device
+and clock interfaces and generated FFCLOCK options. The clock header is
+exposed from the existing native .m generator. No RTC runtime source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-rtc-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. opt_ffclock.h matches Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-rtc-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. RTC registration/removal, invalid clock values, hardware reads/writes,
+resolution selection and deferred synchronization require linked-kernel and
+driver tests. Full kernel/world/pkgbase/bootstrap and performance gates remain
+open. Make stays production/default; module count remains 45. No host
+installation or BIP changes occurred.

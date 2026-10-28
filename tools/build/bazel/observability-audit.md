@@ -4036,3 +4036,13 @@ symbols, raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-clock-calibration-kernel-20261028/qualification`.
 No runtime source changed. Actual calibration, clock wrap/failure paths and
 boot timing remain unqualified.
+
+### Real-time clock management (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in subr_rtc.c.
+Assess clock drivers, diagnostics and time-setting syscall audit paths
+together before adding instrumentation. Native GENERIC output matches Make
+symbols, raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-rtc-kernel-20261028/qualification`.
+No runtime source changed. Live hardware clock access, invalid values and
+synchronization behavior remain unqualified.

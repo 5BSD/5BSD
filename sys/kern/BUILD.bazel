@@ -402,3 +402,9 @@ amd64_generic_kernel_objects(name = "generic_clock_conversion", srcs = ["subr_cl
 amd64_generic_kernel_objects(name = "generic_clock_calibration", srcs = ["subr_clockcalib.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"],
     copts = ["-O3", "-mmmx", "-msse", "-msse2"])
+
+filegroup(name = "clock_if_header_file", srcs = [":clock_if"], output_group = "header")
+cc_library(name = "clock_if_headers", hdrs = [":clock_if_header_file"], strip_include_prefix = "clock_if.generated", visibility = ["//visibility:public"])
+amd64_generic_kernel_objects(name = "generic_rtc", srcs = ["subr_rtc.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
+        ":clock_if_headers", "//sys/amd64/conf:generic_opt_ffclock_header"])
