@@ -365,3 +365,6 @@ amd64_generic_kernel_objects(name = "generic_disk_ranges", srcs = ["subr_disk.c"
 
 amd64_generic_kernel_objects(name = "generic_buffer_mutex_pools", srcs = ["subr_bufring.c", "kern_mtxpool.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_helper_hooks", srcs = ["kern_hhook.c", "kern_khelp.c", "kern_osd.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/net:network_headers"])

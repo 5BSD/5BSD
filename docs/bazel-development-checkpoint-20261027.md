@@ -3991,3 +3991,25 @@ mutex pool hashing/contention and allocation failures require linked-kernel
 tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
 Make stays production/default; module count remains 45. No host installation
 or BIP changes occurred.
+
+### Native helper hooks and object storage
+
+Added //sys/kern:generic_helper_hooks_object_files for kern_hhook.c,
+kern_khelp.c and kern_osd.c, selected by maintained GENERIC Make. Dependencies
+declare CK/VM and VNET/network headers. No runtime source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-helper-hooks-kernel-20261028/qualification`.
+All three objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. Reference log:
+`/usr/obj/usr/src/bazel-helper-hooks-kernel-make-20261028.log`; maintained
+recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Hook registration/removal, helper module lifetime, VNET teardown, object
+slot allocation/destructors and concurrent callbacks require linked-kernel
+tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
+Make stays production/default; module count remains 45. No host installation
+or BIP changes occurred.

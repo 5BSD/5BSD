@@ -3941,3 +3941,14 @@ allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-buffer-mutex-pools-kernel-20261028/qualification`.
 No runtime source changed. Live concurrency, lifetime/error paths and
 contention performance remain unqualified.
+
+### Helper hooks and object storage (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in kern_hhook.c,
+kern_khelp.c or kern_osd.c. These framework callbacks are not themselves
+DTrace probes; assess consumers, module lifecycle and jail paths for coverage.
+Native GENERIC output matches Make symbols, raw CTF, allocated sections and
+runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-helper-hooks-kernel-20261028/qualification`.
+No runtime source changed. Live callback/lifetime behavior, teardown races
+and performance remain unqualified.
