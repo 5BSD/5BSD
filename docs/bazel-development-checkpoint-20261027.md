@@ -9067,3 +9067,27 @@ sufficient; used 16 jobs. Conditional service groups, architecture restrictions,
 Kerberos alternatives, configured aggregate packaging and rc runtime tests are
 still pending. These results do not establish all rc.d coverage or normal boot.
 Full world/kernel/pkgbase/performance qualification remains open; Make stays default.
+
+## 2026-10-28: shared-setting rc.d selections
+
+Added eighteen service scripts controlled by six existing native settings:
+audit, jail, pf, nis, ns_caching and kerberos_support (gssd). Each group uses
+select() on the shared build setting and preserves its maintained package/config
+tags. The partial aggregate selected_install_archive combines these groups with
+the ninety unconditional scripts. It does not represent the full rc.d set.
+
+Enabled qualification matches Make for 108 payloads and 109 records; disabled
+qualification matches the unconditional Make reference for 90 payloads and 91
+records. Evidence:
+/usr/obj/usr/src/bazel-rc-selected-services-20261028/qualification/rc/parity.json
+and bazel-rc-selected-services-off-20261028/qualification/rc/parity.json.
+Reference: bazel-rc-selected-services-reference-20261028 (other optional groups
+disabled); disabled reference: bazel-rc-services-reference-20261028. Scripts:
+bazel-rc-selected-services-qualification-20261028/{make.py,verify.py,verify-off.py}.
+Only formatting of the native table changed after the builds.
+
+Reviewed frontend: source_graph.py accepts typed format-5 build-settings, and
+build-bsd forwards them without a new option or one-off workflow. Both runs use
+16 jobs. Remaining conditional groups, architecture/Kerberos combinations and
+runtime startup tests remain pending; this validates these six settings together,
+not every mixed configuration. Make stays default and full-system gates remain open.

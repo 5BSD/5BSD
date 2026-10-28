@@ -5544,3 +5544,11 @@ Start/stop/restart behavior, error reporting, rc ordering and service dependenci
 remain runtime test requirements; no daemon functionality is established by
 script packaging parity. Conditional groups are not covered by this result.
 Evidence: bazel-rc-services-20261028/qualification/rc/parity.json.
+
+### 2026-10-28 conditional rc groups using shared settings
+
+Eighteen additional unchanged scripts (audit, jail, PF, NIS, nscd and gssd) now
+follow native configuration selection. Enabled and disabled installation payloads
+match Make. This establishes selection and metadata parity, not daemon startup,
+audit delivery, firewall behavior, jail creation or NIS communication. No service
+was started on the host. Other optional rc groups and runtime tests remain open.
