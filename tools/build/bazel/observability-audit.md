@@ -3921,3 +3921,13 @@ runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-device-resources-kernel-20261028/qualification`.
 No runtime source changed. Live I/O probes, accounting accuracy and resource
 allocation behavior remain unqualified.
+
+### Disk helpers and range sets (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in subr_disk.c or
+subr_rangeset.c. Assess GEOM/device/syscall callers for observability before
+adding probes to these helpers. Native GENERIC output matches Make symbols,
+raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-disk-ranges-kernel-20261028/qualification`.
+No runtime source changed. Live disk control, range-boundary/error behavior
+and runtime performance remain unqualified.

@@ -357,3 +357,8 @@ amd64_generic_kernel_objects(name = "generic_device_resources", srcs = ["subr_de
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/netinet:address_headers",
         ":bus_if_headers", ":device_if_headers", "//sys/ddb:kernel_headers",
         "//sys/amd64/conf:generic_opt_ddb_header"])
+
+amd64_generic_kernel_objects(name = "generic_disk_ranges", srcs = ["subr_disk.c", "subr_rangeset.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/geom:disk_headers",
+        "//sys/ddb:kernel_headers", "//sys/amd64/conf:generic_opt_ddb_header",
+        "//sys/amd64/conf:generic_opt_geom_header"])

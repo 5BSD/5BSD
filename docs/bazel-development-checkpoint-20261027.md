@@ -3944,3 +3944,27 @@ reservation/alignment/conflicts and release require linked-kernel/driver tests.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 stays production/default; module count remains 45. No host installation or
 BIP changes occurred.
+
+### Native disk helpers and range sets
+
+Added //sys/kern:generic_disk_ranges_object_files for subr_disk.c and
+subr_rangeset.c, selected by maintained GENERIC Make. Dependencies declare
+CK/VM, GEOM disk headers, debugger headers and generated DDB/GEOM options.
+No disk or range-set runtime algorithm changed.
+
+Evidence: `/usr/obj/usr/src/bazel-disk-ranges-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. DDB/GEOM option headers match Make bytes. Reference
+log: `/usr/obj/usr/src/bazel-disk-ranges-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible paths. Whole-object/debug-path identity is not
+claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Disk control and boundary/error handling, range insertion/removal/lookup,
+allocation failures and concurrent consumers require linked-kernel tests.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+stays production/default; module count remains 45. No host installation or
+BIP changes occurred.
