@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+bsd_yacc(name = "parser", src = "yacc.y", output = "yacc.c", header = "yacc.h",
+    yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+bsd_lex(name = "scanner", src = "lex.l", output = "lex.c",
+    lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
+cc_library(name = "headers", hdrs = ["ldef.h", ":parser_header"], strip_include_prefix = ".")
+cc_binary(name = "mkesdb", srcs = [":parser_source", ":scanner"],
+    deps = [":headers", "//lib/libc/iconv:module_headers", "//lib/libc:shared_link_interface"],
+    dynamic_deps = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie", "-nodefaultlibs"],
+    visibility = ["//visibility:public"])
+# Execution tool carries native libc statically; no installed runtime is needed.
+cc_binary(name = "mkesdb_tool", srcs = [":parser_source", ":scanner"],
+    deps = [":headers", "//lib/libc/iconv:module_headers", "//lib/libc:static_link_objects"],
+    features = ["fully_static_link"], linkopts = ["-nodefaultlibs"], linkstatic = True,
+    visibility = ["//visibility:public"])

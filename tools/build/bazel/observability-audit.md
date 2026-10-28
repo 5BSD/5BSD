@@ -4745,3 +4745,13 @@ conversion libraries do not themselves establish a new authentication/audit
 boundary; do not invent probes merely to satisfy migration coverage. Runtime
 loader provenance is covered by 23 passing native Bazel tests; conversion data,
 full conversion semantics, installation and performance remain to qualify.
+
+## 2026-10-28 mkesdb and mkcsmapper
+
+Native lexer/parser generation preserves the maintained .l/.y sources and their
+error handling. Source scan found no existing DTRACE/SDT_PROBE or audit_ hooks in
+these utilities; none were removed. They produce conversion databases rather
+than establish a new authentication boundary. Byte parity covers all 656 binary
+databases produced by the maintained i18n build with native static tools versus
+fresh Make generators. Native data actions, installation and full iconv runtime
+remain outstanding; this is generator qualification, not service auditing.

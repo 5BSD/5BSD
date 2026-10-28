@@ -31,3 +31,6 @@ cc_binary(name = "module_load_program", srcs = ["module_load_test.c"],
     deps = ["//lib/libc:shared_link_interface"],
     dynamic_deps = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"],
     linkopts = ["-nodefaultlibs"], testonly = True)
+
+cc_library(name = "mapper_file_header", hdrs = ["mapper_std/citrus_mapper_std_file.h"],
+    strip_include_prefix = "mapper_std", visibility = ["//usr.bin/mkcsmapper:__pkg__"])

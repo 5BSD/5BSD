@@ -6514,3 +6514,37 @@ success is not claimed as conversion correctness. Frontend review: existing
 build-bsd.c bazel-test --bazel-inputs and format-5 backend carry the explicit
 module targets/tests at 16 jobs without a new interface or publication change.
 Make remains production/default; full world/kernel/pkgbase gates remain open.
+
+## 2026-10-28: native Citrus database generators
+
+Added native mkesdb and mkcsmapper targets with declared lexer/parser actions
+using existing native lex/yacc/m4 targets in the execution configuration. Generated
+parser headers are explicit C compilation inputs. Private Citrus and mapper file
+format headers are exposed only to the consumers requiring them. Normal program
+targets link native shared libc/libsys with PIE; separate *_tool targets link
+native libc statically for data-generation execution without relying on an
+installed runtime. The latter have no ELF INTERP segment. These are same-host
+amd64 qualifications, not a cross-compilation/bootstrap closure claim. No Make
+BOOTSTRAPPING source injection or installed generator substitute is used in the
+native generator targets.
+
+Evidence: /usr/obj/usr/src/bazel-citrus-generators-20261028/receipt.json and
+qualification/generator-parity.json. Both normal and execution-tool variants build.
+Fresh maintained Make generators were built under
+bazel-citrus-generators-make-20261028. The complete maintained share/i18n all build
+was run twice in isolated object directories: once with those Make generators,
+once with copies of the saved native static tools. All 656 generated .esdb, .mps,
+.db and .pvdb outputs are byte-identical, including map and pivot modes. Full
+output inventories were compared before bytes; no mismatches were excluded.
+Reference trees: bazel-citrus-data-make-20261028 and
+bazel-citrus-data-native-20261028. Scripts:
+bazel-citrus-generators-qualification-20261028.
+
+The data comparison still uses Make orchestration. Migrating the data graph,
+preprocessing, aliases, directory/pivot inventories and installation into declared
+Bazel actions remains necessary; this evidence qualifies the generators, not the
+complete i18n migration. Normal dynamically linked generator runtime and install
+metadata remain to qualify separately. No host installation occurred. Frontend
+review: build-bsd.c's existing format-5 targets and backend support these native
+program targets at 16 jobs; no CLI/publication contract changes are needed.
+Make remains the production default; the full migration goal remains active.
