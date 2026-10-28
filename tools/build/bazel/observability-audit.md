@@ -3889,3 +3889,14 @@ relocations. Evidence:
 `/usr/obj/usr/src/bazel-file-locks-kernel-20261028/qualification`.
 No runtime source changed. Live probes, lock contention, deadlock detection,
 owner cleanup and lock performance remain unqualified.
+
+### Memory descriptors and scatter/gather lists (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in subr_memdesc.c or
+subr_sglist.c. These helpers serve lower-level memory and I/O consumers;
+assess caller instrumentation before introducing hot-path probes. Native
+GENERIC output matches Make symbols, raw CTF, allocated sections and runtime
+relocations. Evidence:
+`/usr/obj/usr/src/bazel-memory-descriptors-kernel-20261028/qualification`.
+No runtime source changed. Driver integration, boundary/error handling and
+runtime CPU/memory/I/O performance remain unqualified.

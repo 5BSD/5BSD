@@ -347,3 +347,6 @@ amd64_generic_kernel_objects(name = "generic_vfs_export", srcs = ["vfs_export.c"
 amd64_generic_kernel_objects(name = "generic_file_locks", srcs = ["kern_lockf.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers",
         "//sys/amd64/conf:generic_opt_debug_lockf_header"])
+
+amd64_generic_kernel_objects(name = "generic_memory_descriptors", srcs = ["subr_memdesc.c", "subr_sglist.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])

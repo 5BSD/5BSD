@@ -3871,3 +3871,26 @@ linked-kernel tests. DEBUG_LOCKF-enabled configurations need separate coverage.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 stays production/default; module count remains 45. No host installation or
 BIP changes occurred.
+
+### Native memory descriptors and scatter/gather lists
+
+Added //sys/kern:generic_memory_descriptors_object_files for subr_memdesc.c
+and subr_sglist.c, selected by maintained GENERIC Make. Dependencies declare
+CK/VM headers. No runtime source or memory mapping algorithm changed.
+
+Evidence: `/usr/obj/usr/src/bazel-memory-descriptors-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. Reference log:
+`/usr/obj/usr/src/bazel-memory-descriptors-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible paths. Whole-object/debug-path identity is not
+claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Page boundaries, mbuf/uio translation, segment coalescing and exhaustion,
+DMA consumers and CPU/memory/I/O costs require linked-kernel/driver tests.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+stays production/default; module count remains 45. No host installation or
+BIP changes occurred.
