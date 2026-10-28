@@ -5518,3 +5518,31 @@ open. Existing maintained stdlib tests must exercise the complete native libc.
 Frontend review: existing format-5 typed build-settings input supports the new
 source selection; build-bsd C/backend and manual interfaces need no new option.
 No host installation, account/environment modification or upgrade performed.
+
+## 2026-10-28: portable stdlib selection qualified; allocator integration boundary
+
+Qualified machdep_optimizations=false against WITHOUT_MACHDEP_OPTIMIZATIONS.
+All 148 ordinary/PIC non-allocator stdlib objects match Make .text, global and
+unresolved symbols. The Make reference compiles div.c/ldiv.c/lldiv.c, matching
+the native configured selection. Evidence:
+/usr/obj/usr/src/bazel-libc-stdlib-portable-build-20261028/qualification/parity.json
+and bazel-libc-stdlib-portable-make-20261028. This closes the portable-division
+object comparison gap from the prior checkpoint; it does not establish other
+architecture configurations, runtime arithmetic or complete libc linkage.
+
+Allocator review identifies 62 imported jemalloc sources plus two libc sized-free
+wrappers. Native integration must preserve the selected allocator, debug versus
+production behavior, and JEMALLOC_LG_VADDR_WIDE configuration. Production builds
+must carry configuration-derived evidence into the normal publication path:
+release/scripts/check-malloc-production.sh currently checks the object stamp
+and actual libc debug signature, or the packaged libc signature. A stand-alone
+native allocator archive is not publishable-world evidence and must not create
+a success stamp detached from the full linked libc artifact. Preserve the
+explicit ALLOW_DEBUG_MALLOC test exception and existing package/identity checks.
+
+Frontend review: build-bsd currently passes WITH_MALLOC_PRODUCTION=yes for
+production Make builds and WITHOUT_MALLOC_PRODUCTION=yes otherwise. The native
+qualification interface's typed inputs handle the verified optimization toggle.
+No publication/helper changes were made before a native allocator/full-library
+artifact exists to verify. Allocator, complete libc/runtime and publication
+qualification remain outstanding; Make stays the production backend.
