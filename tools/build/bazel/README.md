@@ -34380,3 +34380,11 @@ and OFED for OFED_EXTRA. `mail` and `netgraph` are default-on native bool flags;
 `"//tools/build/bazel/config:netgraph": false`. An explicitly enabled child cannot
 override its disabled prerequisite. These selectors currently qualify rc service
 installation; complete world inclusion and other MAIL children remain pending.
+
+### DMA installation aggregation (2026-10-28)
+
+`//libexec/dma:install_archive` combines the agent and mailbox helper manifests,
+including both debug files, configuration, example and manual hardlink. Select it
+through the existing format-5 targets input. It is an explicit component target;
+world-level DMAGENT/MAIL/OpenSSL selection remains to be implemented. This archive
+is an installation artifact, not a published pkgbase repository.

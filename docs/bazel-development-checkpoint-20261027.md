@@ -9369,3 +9369,29 @@ Other MAIL children (mailwrapper/dmagent), remaining src.opts.mk implications,
 compiled aggregate selection, complete world/kernel/pkgbase and performance
 qualification remain open. No host installation or services started. Make remains
 the production default; BIP remains excluded.
+
+## 2026-10-28: native DMA installation aggregation
+
+Added //libexec/dma:install_archive with both declared child installation
+manifests. The native archive action receives their payload depsets directly;
+there is no extraction/repacking of child tar files and no Make subprocess.
+The maintained format-5 build-bsd path built the target with 16 jobs.
+
+Exact composition verification against the two previously Make-qualified child
+archives passed: 13 installation records, 24 archive members and 8 regular-file
+payloads. Comparison includes binary/debug bytes, all metadata record fields,
+archive ownership/modes/timestamps, hardlinks and directory overlap consistency.
+Evidence: /usr/obj/usr/src/bazel-dma-complete-20261028/composition.json; verifier
+verify-composition.py in that directory; frontend inputs adjacent to it. This
+is composition evidence, not a new recursive Make reference or mail runtime test.
+
+Frontend review: existing target selection/artifact capture handles this parent
+target without a new input or backend protocol. No host installation occurred.
+
+Aggregation review found root BUILD.bazel only exports COPYRIGHT and libexec
+has no parent BUILD target. Component coverage must not be called a world build.
+Next aggregation work must account for every maintained libexec child, options,
+tests, architecture selections and directory policy before claiming completeness.
+DMA world selection still needs DMAGENT gated by MAIL/OpenSSL/CRYPT; directly
+requesting this explicit archive includes both children. Full world/kernel,
+pkgbase publication and runtime/performance gates remain open. Make remains default.
