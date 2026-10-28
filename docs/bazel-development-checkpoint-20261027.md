@@ -4795,3 +4795,29 @@ Frontend review: existing explicit format-5 targets/archive rules suffice; no
 frontend/backend contract change. Make declares no component tests, so retained
 checks are conversion evidence, not new registered Bazel tests. Whole-system
 gates remain open and Make remains default. No host installation or reboot.
+
+
+## 2026-10-28: native ldd
+
+Added native ldd with native libelf and the existing rtld_paths.h target, extending
+its visibility only to ldd. The maintained source's runtime-loader selection is
+preserved. No runtime source changes. Installation retains utilities ownership,
+section-1 manual, split debug and PIE.
+
+Evidence: /usr/obj/usr/src/bazel-ldd-20261028 and Make reference
+/usr/obj/usr/src/bazel-ldd-make-20261028. qualification/verify.py verifies five
+installation records, six defined globals, libelf.so.2/libc.so.7/BIND_NOW/NOW PIE
+metadata and compressed manual bytes. qualification/runtime.py compares seven
+cases: missing operands, invalid option, absent file, non-ELF input, formatted
+executable dependencies, formatted shared-library dependencies and -a reporting.
+Expected statuses and dependency names pass. Host loader emits a vDSO ASLR address
+even with custom format; only that address is normalized and raw outputs are
+retained. The initial exact-output mismatch and reason are explicit in the final
+verifier. Known native ELF fixtures only, native libelf and SDK libraries; no
+arbitrary executable input, complete newly built loader or installed-image
+qualification. No whole executable/debug byte identity claim.
+
+Frontend review: existing format-5 explicit targets and installation rules cover
+the addition without frontend/backend contract changes. Make declares no tests;
+retained behavior comparisons are conversion evidence. Whole-system gates remain
+incomplete and Make stays production default. No host install or reboot.

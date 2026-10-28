@@ -4221,3 +4221,11 @@ ipcrm.c has no local SDT/DTrace/AUDIT hooks. Review whether destructive IPC
 operations warrant explicit probes/audit coverage independently of conversion;
 no claim that syscall audit hooks are absent. Private ID-removal tests pass for
 all three IPC classes; key/global/jail and kernel-memory paths remain open.
+
+
+### 2026-10-28: ldd
+
+No local SDT/DTrace/AUDIT hooks in unchanged ldd source. Runtime-loader paths and
+O_VERIFY input open behavior are preserved. Known-ELF dependency reporting
+compares with Make on the current loader; this does not qualify live loader or
+exec audit events, arbitrary architectures or a newly built installed image.

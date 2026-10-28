@@ -9,4 +9,4 @@ cc_library(name = "thr_headers", hdrs = ["rtld.h", "rtld_lock.h", "rtld_printf.h
     visibility = ["//lib/libthr:__pkg__"])
 
 cc_library(name = "paths_header", hdrs = ["rtld_paths.h"],
-    strip_include_prefix = ".", visibility = ["//sbin/ldconfig:__pkg__"])
+    strip_include_prefix = ".", visibility = ["//sbin/ldconfig:__pkg__", "//usr.bin/ldd:__pkg__"])
