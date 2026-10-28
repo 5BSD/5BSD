@@ -7306,3 +7306,32 @@ support this build-only suite at 16 jobs. No frontend, signing, installation or
 publication change is required. Seven previously recorded rtld cases remain
 runtime-qualified. Full world/kernel/pkgbase and performance gates remain open;
 Make remains production/default, with no host installation or BIP changes.
+
+## 2026-10-28 top-level rtld test installation
+
+Added maintained installation/debug manifests for all seven top-level rtld test
+programs, their generated Kyua index, and a component install archive. The index
+retains the rtld_deepbind subdirectory reference. This archive covers only the
+top-level test directory, not the referenced subdirectory or helper libraries;
+it is not yet a standalone complete installed loader test suite.
+
+The independent rootless Make reference used -DNO_SUBDIR to install exactly
+this component. All 20 unique records match: 15 files and five package-owned
+directories, including ownership, permissions, flags and package/debug tags.
+The Kyua index is byte-identical to Make. All seven stripped executable/debug
+pairs pass debug-link name, CRC and DWARF checks. ELF/debug byte identity with
+Make is not asserted. Evidence:
+/usr/obj/usr/src/bazel-rtld-tests-install-20261028-r3/qualification/installation-parity.json.
+Make reference: bazel-rtld-tests-install-reference-20261028; retained scripts:
+/usr/obj/usr/src/bazel-rtld-tests-install-qualification-20261028.
+The r2 archive attempt failed BUILD syntax validation before compilation;
+r3 corrected the directory comprehension and completed through build-bsd.
+
+Reviewed build-bsd.c: existing format-5 targets and artifact/metadata collection
+support these installation targets at 16 jobs. No new frontend option or
+publication-policy change is needed. Tests remain explicit qualification
+inputs; this does not enable them in production or publish packages. No host
+installation occurred. No new runtime cases ran. The eleven descriptor cases
+still require an isolated installed native loader, and the earlier root-only
+iconv runtime report is still absent. Fixture/deepbind installation and complete
+world/kernel/pkgbase/bootstrap/cache/performance qualification remain open.

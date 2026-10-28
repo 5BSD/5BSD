@@ -72,3 +72,34 @@ cc_library(name = "parse_integer_header", textual_hdrs = [":parse_integer_func"]
 filegroup(name = "fd_loading_suite", srcs = [":ld_library_pathfds", ":ld_preload_fds",
     "//libexec/rtld-elf/tests/target:target",
     "//libexec/rtld-elf/tests/libpythagoras:pythagoras_shared"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+_INSTALLED_PROGRAMS = ["dlopen_hash_test", "dlopen_test", "ld_library_pathfds",
+    "ld_preload_fds", "parse_integer_test", "set_var_test", "signature_verify_test"]
+[utility_installation(name = "install_" + program, program = program, manual = "",
+    package = "tests", bindir = "/usr/tests/libexec/rtld-elf")
+ for program in _INSTALLED_PROGRAMS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = _INSTALLED_PROGRAMS,
+    interfaces = {program: "atf" for program in _INSTALLED_PROGRAMS},
+    subdirectories = ["rtld_deepbind"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/libexec/rtld-elf/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_metadata", entries = [":install_kyuafile"],
+    visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+# Top-level test directory only; fixture/deepbind installation is separate.
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_" + program for program in _INSTALLED_PROGRAMS] + [":install_metadata"],
+    directories = {path: json.encode({"owner": "root", "group": "wheel", "mode": "0755",
+        "tags": ["package=tests"] + (["dbg"] if path.startswith("/usr/lib/debug/") else [])})
+        for path in ["/usr/tests/libexec/rtld-elf", "/usr/lib/debug/usr", "/usr/lib/debug/usr/tests",
+            "/usr/lib/debug/usr/tests/libexec", "/usr/lib/debug/usr/tests/libexec/rtld-elf"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])

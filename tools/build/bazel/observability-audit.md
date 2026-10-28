@@ -4954,3 +4954,11 @@ Four ELF dependency/interpreter/search-path layouts match independent Make
 references. No test source, fexecve behavior, DTrace probe or audit hook changed.
 These are compilation/link checks only. The eleven ATF runtime cases remain
 unqualified against native rtld until an isolated installed runtime is used.
+
+## 2026-10-28 top-level rtld test packaging
+
+Seven test executables now have native installation/debug manifests and their
+maintained Kyua index. Twenty metadata records match rootless Make installation;
+all seven debug-link/CRC/DWARF pairs validate. This is packaging evidence only,
+with helper/deepbind installation still separate and no new runtime cases.
+No production code, DTrace probes or audit hooks changed.
