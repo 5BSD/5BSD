@@ -3856,3 +3856,14 @@ runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-vfs-buffer-io-kernel-20261028/qualification`.
 No runtime source changed. Probe delivery, pressure/error paths and CPU,
 memory and disk I/O performance remain unqualified.
+
+### Asynchronous VFS I/O (2026-10-28)
+
+vfs_aio.c retains 26 SDT probe definitions spanning submit, queue, scheduling,
+completion, cancellation, reaping, limits, process rundown, fsync and list I/O.
+No local AUDIT_ARG calls were found; syscall audit integration must be assessed
+with event mappings and surrounding entry points. Native GENERIC output
+matches Make symbols, raw CTF, allocated sections and runtime relocations.
+Evidence: `/usr/obj/usr/src/bazel-vfs-aio-kernel-20261028/qualification`.
+No runtime source changed. Probe delivery, asynchronous ordering, cancellation,
+resource limits and runtime performance remain unqualified.
