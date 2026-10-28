@@ -29,10 +29,13 @@ exec_tool(const atf_tc_t *tc, const char *const arguments[])
 	if (argv == NULL)
 		_exit(126);
 	if (*loader != '\0')
-		argv[offset++] = (char *)loader;
-	argv[offset++] = (char *)tool;
+		argv[offset++] = strdup(loader);
+	argv[offset++] = strdup(tool);
 	for (i = 0; i < count; i++)
-		argv[offset + i] = (char *)arguments[i];
+		argv[offset + i] = strdup(arguments[i]);
+	for (i = 0; i < offset + count; i++)
+		if (argv[i] == NULL)
+			_exit(126);
 	execv(*loader != '\0' ? loader : tool, argv);
 	_exit(127);
 }

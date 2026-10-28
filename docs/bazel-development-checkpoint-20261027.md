@@ -8774,3 +8774,29 @@ selection/collection supports these tests; no frontend changes required. This
 qualifies these six scenarios, not all account-management or locking behavior,
 installed default-loader execution, root-only pw/nuageinit integration or full
 world/kernel/pkgbase/cache/performance. Make remains production/default.
+
+
+## 2026-10-28: pwd_mkdb ATF installation and Make-warning correction
+
+Added install_archive for alternate_test, its Kyua index, split debug file and
+runtime-tests metadata. The independent Make reference exposed a real defect in
+the previous turn's optional-loader helper: casting const arguments to char *
+failed Make's -Wcast-qual/-Werror gate. Fixed by duplicating each exec argument
+and checking allocation failures; no warning suppression was added. Initial
+failed Make log remains in bazel-pwd-mkdb-test-reference-20261028-r2. Corrected
+Make build/install succeeds in r3.
+
+Eight installation records and Kyua bytes match Make; 54 executable symbols,
+libc/privateATF dependencies, empty RPATH/RUNPATH, debug pair and stripped text
+checks pass. All six database ATF cases actually executed and passed again with
+the corrected helper. Evidence:
+/usr/obj/usr/src/bazel-pwd-mkdb-test-install-20261028-r2/qualification/
+alternate_test/parity.json plus bazel.stdout/test-reports. Reference:
+bazel-pwd-mkdb-test-reference-20261028-r3; scripts:
+bazel-pwd-mkdb-test-install-qualification-20261028/{make.py,verify.py}.
+
+Maintained build-bsd ran at 16 jobs. Reviewed frontend explicit input selection:
+no frontend change required. Installation parity and these runtime cases do not
+establish configured-world test aggregation, published pkgbase output, installed
+default-loader execution or full account-management coverage. Full world/kernel/
+cache/performance gates remain open. Make stays default; host accounts unchanged.

@@ -5462,3 +5462,12 @@ are checked. Host account databases remain unchanged. Failure preservation and
 shell-policy checks here do not establish kernel audit event coverage, concurrent
 locking or root-only user-management flows. Evidence:
 /usr/obj/usr/src/bazel-pwd-mkdb-native-20261028/test-reports/.
+
+
+### pwd_mkdb installed ATF artifacts (2026-10-28)
+
+ATF binary/Kyua/debug installation now matches runtime-tests metadata from Make.
+Make caught const-dropping casts in the new optional-loader helper; replaced with
+checked string copies and reran all six database cases successfully. No assertion
+or expected diagnostic was weakened. Broader privilege/audit coverage remains
+open. Evidence: /usr/obj/usr/src/bazel-pwd-mkdb-test-install-20261028-r2/.
