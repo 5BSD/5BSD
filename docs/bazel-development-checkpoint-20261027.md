@@ -4711,3 +4711,35 @@ Frontend review: existing format-5 target selection and installation rules
 express the addition without frontend/backend changes. Make declares no tests;
 retained comparisons are not registered Bazel tests. Full-system/runtime gates
 remain open; Make remains default. No installation or remote query performed.
+
+
+## 2026-10-28: native fingerd, blocklist enabled and disabled
+
+Added native fingerd with libutil and conditional native blocklist dependency
+and USE_BLOCKLIST define selected by the existing blocklist_support setting.
+No runtime source changes. Installation preserves utilities ownership,
+section-8 manual, split debug and PIE.
+
+Evidence: /usr/obj/usr/src/bazel-fingerd-20261028 and
+bazel-fingerd-noblocklist-20261028, each compared with its own Make reference
+(bazel-fingerd-make-20261028 and bazel-fingerd-noblocklist-make-20261028).
+Both match five installation records, seven defined globals, compressed manual
+bytes and ordered dynamic metadata. Enabled dependencies are libutil.so.10,
+libblocklist.so.0, libc.so.7; disabled dependencies omit libblocklist as expected.
+Both retain BIND_NOW/NOW PIE. Per-run qualification/verify.py and parity.json
+retain checks. No whole executable/debug byte identity claim.
+
+Disabled-run qualification/runtime.py and runtime.json record five protocol
+comparisons using documented -d debug mode and -p with a private argument-recorder
+fixture: normal username, /W mapping/multiple arguments, -k, empty secure request
+refusal and forwarding refusal. Expected exit/output and Make comparison all
+pass. No real user queries or blocklist reports are sent. Native libutil and SDK
+runtime are used; the fixture uses host shell. This does not qualify inetd/TCP,
+remote hostname handling, actual finger invocation or live blocklist reporting.
+Enabled mode is artifact-qualified, not runtime-qualified by these disabled tests.
+
+Frontend review: existing format-5 blocklist_support setting and target selection
+express both variants without frontend/backend changes. Make has no component
+test suite; retained protocol comparisons are conversion evidence. No host install,
+service activation or reboot. Full world/kernel/pkgbase/boot/performance gates
+remain open; Make remains production default.

@@ -4194,3 +4194,12 @@ No local SDT/DTrace/AUDIT hooks found in the five unchanged source files.
 User/session lookup, config aliases and remote queries still need integration
 coverage; invalid-option parity does not cover them. No new probes or audit
 policy; absence of local hooks does not establish missing syscall auditing.
+
+
+### 2026-10-28: fingerd
+
+No local SDT/DTrace/AUDIT hooks in unchanged source. Optional blocklist success
+and denial reports remain configured with MK_BLOCKLIST_SUPPORT's Bazel counterpart;
+verify their live behavior with an isolated service. Both artifact variants match
+Make; debug protocol checks cover only disabled reporting. Syslog, inetd/TCP and
+real-client execution remain runtime gates. No new probe or audit policy added.
