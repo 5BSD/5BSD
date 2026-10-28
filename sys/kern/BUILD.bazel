@@ -368,3 +368,6 @@ amd64_generic_kernel_objects(name = "generic_buffer_mutex_pools", srcs = ["subr_
 
 amd64_generic_kernel_objects(name = "generic_helper_hooks", srcs = ["kern_hhook.c", "kern_khelp.c", "kern_osd.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/net:network_headers"])
+
+amd64_generic_kernel_objects(name = "generic_hints_firmware", srcs = ["subr_hints.c", "subr_firmware.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers"])

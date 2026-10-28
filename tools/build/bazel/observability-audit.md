@@ -3952,3 +3952,14 @@ runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-helper-hooks-kernel-20261028/qualification`.
 No runtime source changed. Live callback/lifetime behavior, teardown races
 and performance remain unqualified.
+
+### Device hints and firmware loading (2026-10-28)
+
+subr_firmware.c retains seven SDT probe definitions for load waits, lookup,
+module loading and binary loading. No local SDT or AUDIT_ARG calls were found
+in subr_hints.c; assess device configuration callers for coverage. Native
+GENERIC output matches Make symbols, raw CTF, allocated sections and runtime
+relocations. Evidence:
+`/usr/obj/usr/src/bazel-hints-firmware-kernel-20261028/qualification`.
+No runtime source changed. Live firmware probes, missing-image/privilege
+errors, loading concurrency and hardware integration remain unqualified.

@@ -4013,3 +4013,27 @@ slot allocation/destructors and concurrent callbacks require linked-kernel
 tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
 Make stays production/default; module count remains 45. No host installation
 or BIP changes occurred.
+
+### Native device hints and firmware loading
+
+Added //sys/kern:generic_hints_firmware_object_files for subr_hints.c and
+subr_firmware.c, selected by maintained GENERIC Make. Dependencies declare
+CK/VM and generated bus/device interfaces. No runtime source or firmware
+search/loading policy changed.
+
+Evidence: `/usr/obj/usr/src/bazel-hints-firmware-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. Reference log:
+`/usr/obj/usr/src/bazel-hints-firmware-kernel-make-20261028.log`; maintained
+recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Boot hints, driver firmware module/binary lookup, missing images,
+privilege failures, concurrent loading and unload/reference cleanup require
+linked-kernel/driver tests. Separate hardware package publication remains a
+required end-to-end gate. Full kernel/world/pkgbase/bootstrap and performance
+gates remain open. Make stays production/default; module count remains 45.
+No host installation or BIP changes occurred.
