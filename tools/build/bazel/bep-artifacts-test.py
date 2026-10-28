@@ -32,6 +32,16 @@ class ArtifactTests(unittest.TestCase):
         self.run_snapshot()
         self.assertEqual((self.root/'artifacts').stat().st_mode & 0o777,0o700)
         self.assertEqual(next((self.root/'artifacts/files').iterdir()).stat().st_mode & 0o777,0o400)
+    def test_empty_output_with_omitted_length(self):
+        self.source.write_bytes(b'')
+        self.file['digest']=hashlib.sha256(b'').hexdigest()
+        del self.file['length']
+        result=self.run_snapshot()
+        self.assertEqual(result['bytes'],0)
+        self.assertEqual(result['unique_files'],1)
+    def test_nonempty_output_with_omitted_length_rejected(self):
+        del self.file['length']
+        with self.assertRaisesRegex(ValueError,'changed before'):self.run_snapshot()
     def test_missing_source_rejected(self):
         self.source.unlink()
         with self.assertRaisesRegex(ValueError,'regular output'):self.run_snapshot()

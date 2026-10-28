@@ -67,7 +67,8 @@ def snapshot(events_path, destination):
                 expected = file.get('digest')
                 if not isinstance(expected, str) or len(expected) != 64 or any(c not in '0123456789abcdef' for c in expected):
                     raise ValueError('SHA-256 BEP digest required: ' + name)
-                size = int(file['length'])
+                # Protobuf JSON omits scalar defaults, including length=0.
+                size = int(file.get('length', 0))
                 mode = stat.S_IMODE(source.stat().st_mode)
                 # Always verify the source, including repeated/shared artifacts.
                 with source.open('rb') as stream:

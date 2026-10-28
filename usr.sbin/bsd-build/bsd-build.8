@@ -3589,3 +3589,12 @@ including compile-time layout assertions. The generation actions declare
 execution tools and prerequisite objects and never execute target objects.
 This test does not compile GENERIC's actual offset or assembly-constant objects;
 configured kernel headers and full kernel builds remain separate work.
+
+.Pp
+.Dq //sys/amd64/conf:generic_config
+and
+.Dq //sys/amd64/conf:generic_debug_config
+run native config with declared configuration inputs and capture complete
+GENERIC output trees, including empty option headers. They do not execute the
+generated Makefile or build a kernel. Other configurations require explicit
+input declarations and separate qualification.

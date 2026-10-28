@@ -33616,3 +33616,36 @@ C/backend change. Manual guidance is updated. Kernel configuration/options and
 complete header dependencies must precede real kernel-layout object conversion.
 Complete world/kernel/modules, pkgbase, bootstrap independence, cache-invalidation,
 sandbox and performance gates remain open. Make remains production/default.
+
+### Declared native GENERIC configuration actions (2026-10-28)
+
+`bsd_kernel_config` now runs native config in the execution configuration with
+explicit configuration sources, shared files/options/template/std metadata,
+source-root anchor, runtime libraries and SDK Python/stdlib. The output is the
+complete generated directory rather than a curated option-header inventory.
+`//sys/amd64/conf:generic_config` and `generic_debug_config` cover GENERIC and
+config -g. Additional configurations must declare all their inputs; only these
+two have qualification evidence. The Makefile S path is relative to its output
+directory, avoiding action-root paths. The Makefile is captured, never executed.
+
+`/usr/obj/usr/src/bazel-kernel-config-r2-20261028` passes maintained build-bsd
+qualification with sixteen jobs. Both variants produce 200 files, including
+196 headers. Every filename and file content matches the Make-built config
+reference with the same source-root argument. All 400 regular outputs are
+captured in the frontend's authenticated artifact manifest. Bazel read-only
+output modes are not compared to ordinary writable reference output modes.
+Reference commands and complete per-file hashes are in qualification/parity.json.
+
+The first invocation generated both trees successfully but failed frontend
+capture: BEP omits the length field for zero-byte outputs. bep_artifacts now
+uses the protobuf scalar default of zero while still checking file size and
+SHA-256. Tests cover an empty output with omitted length and rejection of a
+nonempty output with omitted length; all fifteen capture tests pass. This is a
+maintained backend fix, with no frontend C interface or package/publication
+policy change. Empty headers are preserved, not dropped to satisfy capture.
+
+No kernel objects were compiled from these headers yet. Configured source/rule
+selection, kernel compiler options, full header closure, real genoffset/genassym,
+linking, modules and pkgbase remain unfinished. SDK compiler/interpreter/loader
+and source-access isolation still need bootstrap/sandbox qualification. Make
+remains production/default. Whole-system runtime and performance gates remain open.

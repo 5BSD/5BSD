@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_kernel_config.bzl", "bsd_kernel_config")
+# Configuration sources remain ordinary inputs, including DEFAULTS and includes.
+filegroup(name = "configuration_inputs", srcs = glob(["*"], exclude = ["BUILD.bazel"]), visibility = ["//visibility:public"])
+[bsd_kernel_config(
+    name = name, config = "GENERIC", debug = debug,
+    inputs = [":configuration_inputs", "//sys/conf:configuration_inputs"],
+    source_anchor = "//sys/conf:files",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+    libraries = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"],
+    visibility = ["//visibility:public"],
+) for name, debug in [("generic_config", False), ("generic_debug_config", True)]]
