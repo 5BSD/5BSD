@@ -2331,6 +2331,13 @@ this is not a production backend selection.
 The optional build-settings object maps source target labels to JSON boolean,
 integer or string values for declared Bazel settings.
 Native command-line flags and composite values are not accepted in this object.
+The boolean //tools/build/bazel/config:kernel_zstdio defaults to true for
+native amd64 GENERIC configuration.
+It explicitly overrides ZSTDIO through the native config parser and is also
+available to native conditional source selection.
+False removes that option; it does not select a different installed kernel.
+This setting has been checked for generated option headers in both states;
+compression module and whole-kernel qualification remain separate.
 For example, //tools/build/bazel/config:split_manpages set to true selects
 separate manual-page package ownership; false is the maintained default.
 The boolean //sbin/growfs:gfsdbg defaults to false and selects the maintained

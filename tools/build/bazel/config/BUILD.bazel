@@ -219,3 +219,7 @@ string_flag(name = "kernel_source_revision", build_setting_default = "", visibil
 # Kernel and module installation roots, corresponding to KODIR/KERN_DEBUGDIR.
 string_flag(name = "kernel_directory", build_setting_default = "/boot/kernel", visibility = ["//visibility:public"])
 string_flag(name = "kernel_debug_directory", build_setting_default = "/usr/lib/debug", visibility = ["//visibility:public"])
+
+# Shared authority for native config and option-selected kernel sources.
+bool_flag(name = "kernel_zstdio", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "kernel_zstdio_enabled", flag_values = {":kernel_zstdio": "true"}, visibility = ["//visibility:public"])

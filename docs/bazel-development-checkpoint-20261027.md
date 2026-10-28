@@ -1939,3 +1939,27 @@ macro-only extension. The upcoming configuration model must integrate with
 the maintained frontend and native config inputs in the same change.
 Uzip, other configuration-dependent modules, complete kernel/world/pkgbase,
 runtime and performance gates remain open. Make stays production/default.
+
+### Native option authority for conditional module sources
+
+Added typed kernel_zstdio (default true) and its analysis-time config_setting.
+The native config rule accepts boolean-setting-to-option mappings, validates
+option identifiers/uniqueness/types, and writes a declared configuration input
+which includes GENERIC followed by nooptions/options overrides. The existing
+native config parser resolves that composition and reports its identity.
+No Make output parsing, source wrapping or duplicate handwritten header is
+used. This is an explicit override: the build setting owns ZSTDIO even if
+the included GENERIC text changes its default. Arbitrary configuration
+selection and the remaining options still need integration.
+
+Maintained frontend format-5 runs for true and false both pass at
+`/usr/obj/usr/src/bazel-kernel-zstdio-{true,false}-r2-20261028`. Their retained
+opt_zstdio.h payloads are respectively `#define ZSTDIO 1` and empty;
+qualification/option-matrix.json under the true run records hashes/checks.
+This qualifies option generation only, not uzip source selection or runtime.
+The native uzip consumer remains to be implemented with both settings tested.
+
+Frontend review: existing typed build-settings transport already validates
+and forwards this boolean; no new C option is needed. The maintained manual
+now documents its override semantics and limited qualification. Full native
+config/world/kernel/package/runtime/performance gates remain open.
