@@ -2381,3 +2381,29 @@ arbitrary kernel option selection or a completed kernel link. Object graph
 coverage does not establish live MAC policy dispatch or audit delivery.
 Module count remains forty-two. Full kernel/world/pkgbase, runtime and
 comparative CPU/memory/disk gates remain open; Make stays production/default.
+
+### Complete GENERIC MAC framework object inventory
+
+Added native mac_net, mac_inet, mac_inet6 and mac_vfs objects with declared
+interface/IP/IPv6/devfs headers. The aggregate target
+//sys/security/mac:generic_object_files selects all twenty-one MAC framework
+sources for amd64 GENERIC. Its inventory matches the MAC entries in
+sys/conf/files. This is a GENERIC source inventory; conditional selection for
+arbitrary KERNCONF remains unimplemented, not implicitly assumed equivalent.
+
+Evidence: `/usr/obj/usr/src/bazel-mac-framework-all-20261028/qualification`.
+All 21 objects match maintained kernel Make references for symbols, raw CTF,
+complete allocated-section inventories and contents/size/type/flags/alignment,
+and relocation bytes with their linked symbol-table and target associations.
+Allocated SDT sets are included. Retained comparison code, both object sets,
+and source-inventory.json make the scope reviewable. The four new references
+were built with the same SDK compiler and 16 jobs using maintained recipes;
+log: `/usr/obj/usr/src/bazel-mac-network-vfs-make-20261028.log`.
+Whole-object/debug path identity is not claimed.
+
+Frontend review: existing format-5 targets handle the aggregate, generated
+inputs and artifact collection without a new C/frontend/backend option.
+Kernel linking/boot, policy invocation and live tracing/audit remain separate
+gates, along with world/pkgbase, bootstrap and CPU/memory/disk performance.
+The current module count remains 42; these are built-in kernel objects.
+Make stays production/default. No runtime policy code or BIP work was added.

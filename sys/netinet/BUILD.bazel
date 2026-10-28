@@ -9,3 +9,5 @@ cc_library(name = "pcb_headers", hdrs = ["in_pcb.h"], includes = [".."],
     deps = [":address_headers", "//sys/net:route_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"], visibility = ["//visibility:public"])
 
 cc_library(name = "ip_headers", hdrs = ["ip_var.h", "in_kdtrace.h"], includes = [".."], deps = [":pcb_headers"], visibility = ["//visibility:public"])
+
+cc_library(name = "ip6_wire_headers", hdrs = ["ip6.h"], includes = [".."], visibility = ["//sys/netinet6:__pkg__"])

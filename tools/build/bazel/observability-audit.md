@@ -3222,3 +3222,12 @@ probe definitions in this group; review debugger/policy observability in the
 context of its existing call paths. Live MAC dispatch, policy registration,
 lock context, rejection/error paths and audit event delivery remain open.
 The four network/VFS groups are not covered by this object qualification.
+
+### MAC network and VFS framework objects (2026-10-28)
+
+mac_net, mac_inet, mac_inet6 and mac_vfs retain their allocated SDT sections
+and relocation records byte-for-byte relative to Make. The complete 21-source
+GENERIC framework inventory now has native object comparison evidence.
+Network packet/label lifecycle, VFS operations, mapping/revocation paths,
+policy registration/dispatch and live audit/probe behavior still require a
+linked test kernel. Existing probes were preserved, not expanded.
