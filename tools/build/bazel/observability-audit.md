@@ -3163,3 +3163,13 @@ invalidation, key changes and concurrent verification still need runtime
 qualification with the completed kernel. VERIFIED_EXEC_DEBUG currently has
 no source consumer; toggling its preserved build setting does not change
 runtime behavior or observability.
+
+### Capability accounting, identity and coalition (2026-10-28)
+
+Accounting's two SDT definitions and coalition's twenty-two definitions retain
+Make-identical provider/probe/argument/tracepoint sections. Identity currently
+has no SDT definitions or direct audit calls. Track identity operation grants,
+denials and credential changes for an observability review; do not count
+matching absent sections as probe coverage. Accounting and coalition runtime
+limits, cleanup/races, deny reporting and audit delivery remain untested by
+these artifact comparisons. No instrumentation or policy source was changed.

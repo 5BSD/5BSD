@@ -2216,3 +2216,38 @@ rotation, vnode changes or invalidation, actual audit delivery or probe firing.
 Whole-kernel linking/boot, capability modules, world/pkgbase/publication,
 arbitrary KERNCONF, bootstrap and comparative performance gates remain open.
 Make remains production/default; BIP remains out of scope.
+
+### Capability accounting, identity and coalition modules
+
+Added native module sources and explicit shared/local header dependencies for
+mac_capability_accounting, mac_capability_identity and mac_capability_coalition.
+All preserve package=mac-capability for runtime/debug staging. Policy sources
+are unchanged. Existing format-5 targets and installation manifests cover the
+frontend integration; no new C frontend or backend setting is required.
+
+Coalition exposed a real diagnostic-path mismatch: assertions in jail.h
+embedded Bazel virtual include paths. sys/sys:kernel_headers now uses its
+natural source include root, retaining sys/sys/jail.h diagnostics. This is a
+shared header declaration change, not binary rewriting or comparison masking.
+The initial mismatch remains in `bazel-capability-services-20261028`;
+`bazel-capability-services-r2-20261028/qualification` records corrected parity.
+
+The shared change was exercised across all thirty-five modules in the current
+batch through maintained build-bsd, with 16 jobs. Evidence and retained
+comparison scripts: `/usr/obj/usr/src/bazel-module-header-regression-20261028`.
+All 35 build, match Make code/data, symbols and raw CTF, pass debug identity/CRC,
+and match NO_ROOT staged installation metadata. SDT sections match where
+present; equal absent sections do not establish instrumentation coverage.
+The existing nullfs Bazel artifact test executed and passed (not cached).
+mac_portacl retains its previously recorded raw readelf relocation listing
+difference from physical section offsets; all six binary relocation payloads,
+entry sizes and linked/target section associations match. That exception is
+retained explicitly in comparison.json and relocation-records.json.
+
+This is an amd64 GENERIC module build regression, not complete world/kernel
+or runtime qualification. Capability call authorization, accounting limits,
+identity transitions, coalition process lifetime/cleanup and live audit/probe
+behavior remain open. Shared-header impact outside this module batch, other
+KERNCONF/architectures and resource/performance gates remain unqualified.
+No host modules were loaded, system installed, or security policy altered.
+Make remains production/default; BIP remains excluded.

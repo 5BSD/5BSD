@@ -53,4 +53,4 @@ cc_library(name = "assym_header", hdrs = ["assym.h"],
     strip_include_prefix = "/sys/sys", include_prefix = "sys", visibility = ["//visibility:public"])
 
 cc_library(name = "kernel_headers", hdrs = glob(["*.h", "disk/*.h"]),
-    strip_include_prefix = ".", include_prefix = "sys", visibility = ["//visibility:public"])
+    includes = [".."], visibility = ["//visibility:public"])
