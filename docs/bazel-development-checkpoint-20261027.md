@@ -4690,3 +4690,24 @@ no frontend/backend contract change required. Make declares no component test
 suite; retained comparisons are not registered Bazel tests. No host install,
 service activation or reboot. Full world/kernel/pkgbase/boot/performance gates
 remain incomplete and Make remains production default.
+
+
+## 2026-10-28: native finger
+
+Added native compilation of finger.c, lprint.c, net.c, sprint.c and util.c with
+all three local headers. Installation includes finger.1 and finger.conf.5,
+with the existing split-manpages setting applied to both manual package tags.
+Preserves utilities package, PIE and split-debug metadata. No source changes.
+
+Evidence: /usr/obj/usr/src/bazel-finger-20261028 with Make reference
+/usr/obj/usr/src/bazel-finger-make-20261028. qualification/verify.py verifies six
+installation records, 29 defined globals, libc.so.7/BIND_NOW/NOW PIE metadata and
+both compressed manuals against Make. qualification/runtime.py records matching
+invalid-option exit/output before user lookup, with SDK libraries. This does
+not qualify local users, utmpx, finger.conf aliases, privacy options or remote
+queries. No complete executable/debug byte identity or installed-image claim.
+
+Frontend review: existing format-5 target selection and installation rules
+express the addition without frontend/backend changes. Make declares no tests;
+retained comparisons are not registered Bazel tests. Full-system/runtime gates
+remain open; Make remains default. No installation or remote query performed.

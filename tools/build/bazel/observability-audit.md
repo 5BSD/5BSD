@@ -4186,3 +4186,11 @@ No local SDT/DTrace/AUDIT hooks in unchanged ctlstat source. CTL ioctl and
 statistics collection paths need installed-VM coverage, including JSON and
 Prometheus modes; early option checks do not exercise those paths. No claim
 that syscall auditing is absent and no new probes/audit policy introduced.
+
+
+### 2026-10-28: finger
+
+No local SDT/DTrace/AUDIT hooks found in the five unchanged source files.
+User/session lookup, config aliases and remote queries still need integration
+coverage; invalid-option parity does not cover them. No new probes or audit
+policy; absence of local hooks does not establish missing syscall auditing.
