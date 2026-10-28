@@ -7837,3 +7837,36 @@ kernel/userland is the next qualification route; do not classify current-host
 failures as passing or alter installed-host rights to accommodate testing.
 Review of build-bsd.c finds no build-input or packaging change required by this
 diagnosis. Full migration and runtime/performance gates remain incomplete.
+
+## 2026-10-28 QEMU confirms matching capability-rights ABI
+
+The maintained tools/test/daemon-runtime/run-vm.py runner booted the existing
+Oct 24 GENERIC object kernel in a disposable networkless QEMU guest, with
+2 GiB RAM, four vCPUs and a disk-backed 256 MiB UFS root (not a RAM disk).
+The rebuilt maintained runtime_init helper enforced the fixture test protocol.
+A static ATF probe compiled against the current staged SDK opened /dev/null
+and read its rights without limiting them. The guest returned exactly
+02000fffffffffff,05fc000001ffffff and current libc accepted them. The three
+libservice cases and namespace delivery-hardening case also passed. QEMU exited
+0 after guest poweroff, with no forced termination. No host upgrade occurred.
+
+Evidence: /usr/obj/usr/src/bazel-rights-vm-20261028/run/{result.json,inputs.json,
+serial.log,host-resources.jsonl}. Probe source, preparation script, private
+fixtures, and helper build log are retained in the parent directory. Kernel
+SHA256: 785a65a10d230a47a868d5619d1fa8765253e9593ad2e1abfc57e0334a033003.
+The first preflight failed because installed QEMU could not locate libusb.so.4;
+the successful run explicitly used a private copy from the current object tree
+via LD_LIBRARY_PATH. No host library was installed or replaced.
+
+The sampled QEMU-only RSS peak was 353779712 bytes and last observed CPU time
+18.87 seconds across 16 samples; these exclude unsampled peaks and host page
+cache. They are fixture observations, not disk-I/O measurements or a Bazel/Make
+performance comparison. Loader emitted missing optional-module warnings from
+inherited boot defaults; this is a mechanism fixture, not complete-system boot
+qualification. The kernel is Make-built, not proof of a Bazel kernel build.
+
+This proves an available guest kernel accepts current rights, resolving the
+host-ABI prerequisite for further isolated execution. It does NOT run the six
+mknetid ATF cases; staging and executing those unchanged Bazel tests is next.
+Reviewed build-bsd.c: no build input or packaging policy changed here, and the
+native bazel-test frontend remains unchanged. Full goal remains incomplete.

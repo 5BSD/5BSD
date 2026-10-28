@@ -5134,3 +5134,12 @@ intersection intact. Qualified execution requires a compatible kernel/runtime;
 the mknetid ATF suite still has no passing runtime cases on this host.
 The prior SDK/native harness split was removed because it did not solve this
 ABI mismatch. See checkpoint and bazel-cap-rights-host-20261028 evidence.
+
+## 2026-10-28 guest rights compatibility verified
+
+The newer GENERIC kernel passes the static current-SDK descriptor-rights ATF
+probe under the maintained networkless QEMU fixture runner. The returned mask
+matches current CAP_ALL exactly and validates without suppressing assertions.
+This contrasts with the older host's invalid mask and confirms the matching-
+kernel route. No live DTrace/audit observation or mknetid ATF run is implied.
+See bazel-rights-vm-20261028/run/result.json and serial.log.
