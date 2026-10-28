@@ -7217,3 +7217,32 @@ No host installation occurred. Remaining work includes libthr dlopen/unload,
 child exec/fexecve/preload paths, TLS/libmap and other maintained loader tests,
 then broad world/kernel/pkgbase/bootstrap/cache/performance qualification.
 Make remains production/default.
+
+## 2026-10-28: native libthr dlopen cases
+
+Added the unchanged dlopen_test.c program and its two ATF cases. An explicit
+libthr.so fixture alias resolves to the declared native libthr.so.3; both are
+runfiles beside native libc/libsys/private ATF. The program is executed through
+the declared native rtld, using the maintained explicit-loader adapter.
+
+Evidence: /usr/obj/usr/src/bazel-rtld-dlopen-20261028/receipt.json and
+qualification/runtime-provenance.json. Both dlopen_basic and dlopen_recursing
+passed as actual Bazel/ATF cases. The first checks pthread_create lookup, close
+and rejection of lookup through the closed handle; it does not prove physical
+unmapping of libthr. The second checks RTLD_GLOBAL loading/close without the
+previous recursion failure. Neither case starts threads or qualifies general TLS.
+
+The provenance check confirms alias/versioned DSO bytes equal the saved native
+libthr artifact, then independently reruns both cases with process-local ktrace
+name lookups. Both return ATF passed; traces contain the declared libthr.so path
+and no /lib or /usr/lib libthr lookup. Per-case ktrace.out/namei.txt and results
+are retained in qualification. Script: bazel-rtld-dlopen-qualification-20261028/verify.py.
+libthr still links against prepared SDK interfaces, with native libraries chosen
+at runtime; this is not bootstrap closure. The host kernel remains.
+
+Reviewed build-bsd.c's maintained bazel-test backend: existing format-5 targets/
+tests handle these runs at 16 jobs, without new public options or publication
+changes. No host installation occurred. Next loader work includes child fexecve/
+preload behavior, parse-integer and signature-verifier cases, plus TLS/libmap
+coverage. Full world/kernel/pkgbase/cache/bootstrap/performance gates remain
+open. Make stays production/default.

@@ -4929,3 +4929,11 @@ verified fixture dependency separation and $ORIGIN behavior matching Make.
 Original C sources and assertions remain unchanged. Native loader/runtime
 provenance is recorded; no audit or DTrace hooks changed. This single case
 does not establish general loader behavior or live probe firing.
+
+## 2026-10-28 native libthr loading cases
+
+Two existing dlopen ATF cases pass through native rtld with native libthr.
+Process-local name traces confirm the declared fixture lookup, with no host
+libthr lookup. Original C sources and checks are unchanged. Handle-close
+behavior and the recursion regression are covered; thread creation, TLS and
+physical library unmapping are not established. No probes/audit hooks changed.

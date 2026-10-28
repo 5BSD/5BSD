@@ -13,3 +13,17 @@ _PROGRAMS = [("set_var_test", "set_var_library_path_fds"), ("dlopen_hash_test", 
     data = ["//libexec/rtld-elf/tests/libpythagoras:pythagoras_shared"],
     runner = "//tools/build/bazel:atf_runner", size = "small")
  for program, case in _PROGRAMS]
+
+load("//libexec/rtld-elf/tests/rtld_deepbind:fixtures.bzl", "fixture_alias")
+# Preserve dlopen("libthr.so") with an explicit alias to the native DSO.
+fixture_alias(name = "thr_alias", src = "//lib/libthr:thr_shared", out = "libthr.so")
+cc_binary(name = "dlopen_test", srcs = ["dlopen_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c"], dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+[bsd_atf_test(name = case, interface = "program", body = ":dlopen_test", case_name = case,
+    loader = "//libexec/rtld-elf:rtld_binary",
+    runtime_lib = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/atf/libatf-c:atf_c_shared",
+        ":thr_alias", "//lib/libthr:thr_shared"],
+    runner = "//tools/build/bazel:atf_runner", size = "small")
+ for case in ["dlopen_basic", "dlopen_recursing"]]
