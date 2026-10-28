@@ -5,7 +5,7 @@ setup()
 	rc_source=$(atf_config_get rc_source /etc)
 	# Exercise the maintained script; redirect only external effects to fixtures.
 	sed '/^\. \/etc\/rc.subr$/d; /^load_rc_config /d; /^run_rc_command /d; s,/usr/bin/ssh-keygen,./keygen,g; s,/etc/ssh/,./keys/,g' \
-	    "${rc_source}/rc.d/sshd" > sshd.sh
+	    "$(atf_config_get rc_script "${rc_source}/rc.d/sshd")" > sshd.sh
 	mkdir keys
 	cat > keygen <<-'EOF'
 	#!/bin/sh

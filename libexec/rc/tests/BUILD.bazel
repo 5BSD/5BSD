@@ -60,3 +60,29 @@ load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
     runner = "//tools/build/bazel:atf_runner",
     size = "small",
 ) for case in ["installed_metadata", "denied_install", "failed_inputs"]]
+
+[bsd_atf_test(
+    name = "sshd_" + case,
+    case_name = case,
+    body = "sshd_startup_test.sh",
+    config_files = {"//libexec/rc/rc.d:sshd": "rc_script"},
+    data = ["//libexec/rtld-elf:rtld_binary"],
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ["//bin/chmod:chmod", "//usr.bin/cmp:cmp", "//bin/cp:cp", "//bin/test:test", "//usr.bin/env:env", "//usr.bin/mktemp:mktemp", "//usr.bin/tr:tr", "//bin/mkdir:mkdir", "//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//bin/cat:cat", "//bin/rm:rm", "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/grep:grep", "//usr.bin/sed:sed", "//usr.bin/diff:diff"],
+    runtime_lib = ["//lib/libutil:util_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libregex:regex_shared"],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "small",
+) for case in ["key_failure", "success_and_disabled", "precheck"]]
+
+[bsd_atf_test(
+    name = "syslogd_" + case,
+    case_name = case,
+    body = "syslogd_startup_test.sh",
+    config_files = {"//libexec/rc/rc.d:syslogd": "rc_script"},
+    data = ["//libexec/rtld-elf:rtld_binary"],
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ["//bin/chmod:chmod", "//usr.bin/cmp:cmp", "//bin/cp:cp", "//bin/test:test", "//usr.bin/env:env", "//usr.bin/mktemp:mktemp", "//usr.bin/tr:tr", "//bin/mkdir:mkdir", "//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//bin/cat:cat", "//bin/rm:rm", "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/grep:grep", "//usr.bin/sed:sed", "//usr.bin/diff:diff"],
+    runtime_lib = ["//lib/libutil:util_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libregex:regex_shared"],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "small",
+) for case in ["prepare_failure", "list_read_failure", "default_and_chroot", "explicit_paths"]]

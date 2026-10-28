@@ -5595,3 +5595,12 @@ Their existing fixtures replace external operations with temporary-file seams;
 this is not an actual system startup. Missing native env/libutil runtime was
 caught and fixed. All rc test installation payloads still match Make. No host
 os-release file or installed configuration changed.
+
+### 2026-10-28 SSH/syslog startup fixture tests
+
+Seven existing fixture cases pass with native Bazel payloads in QEMU replay:
+key-generation failure handling, disabled/existing key logic, prechecks, socket
+preparation/read failures, chroot lists and explicit quoted paths. Existing stubs
+and temporary fixtures are preserved. This does not demonstrate live SSH login,
+real key generation, syslog delivery or boot ordering. Native /bin/sh is staged
+for existing shebangs in the private VM; host state is untouched.

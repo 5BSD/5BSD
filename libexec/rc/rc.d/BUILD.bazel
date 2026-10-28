@@ -94,3 +94,5 @@ bsd_install_archive(
 )
 
 exports_files(["os-release"], visibility = ["//libexec/rc/tests:__pkg__"])
+
+exports_files(["sshd", "syslogd"], visibility = ["//libexec/rc/tests:__pkg__"])

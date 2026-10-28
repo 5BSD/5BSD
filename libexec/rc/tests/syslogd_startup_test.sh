@@ -4,7 +4,7 @@ setup()
 {
 	rc_source=$(atf_config_get rc_source /etc)
 	sed '/^\. \/etc\/rc.subr$/d; /^load_rc_config /d; /^run_rc_command /d' \
-	    "${rc_source}/rc.d/syslogd" > syslogd.sh
+	    "$(atf_config_get rc_script "${rc_source}/rc.d/syslogd")" > syslogd.sh
 	cat > seams.sh <<-'EOF'
 	check_jail() { return 0; }
 	checkyesno() { eval '[ "${'"$1"'}" = yes ]'; }

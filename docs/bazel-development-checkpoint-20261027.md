@@ -9253,3 +9253,35 @@ these parameters; no frontend change required. Builds used 16 jobs. Five rc case
 now have native payloads passing guest replay, not whole-suite or installed-system
 qualification. Remaining tests, default option implications, full world/kernel/
 pkgbase and performance gates stay open. Make remains default.
+
+## 2026-10-28: SSH/syslog startup fixture runtime
+
+Added seven native ATF cases: SSH key_failure, success_and_disabled, precheck;
+syslog prepare_failure, list_read_failure, default_and_chroot, explicit_paths.
+Both maintained test scripts accept an optional rc_script file parameter while
+preserving rc_source/installed defaults. Existing assertions and temporary-file
+seams remain unchanged. No real keys, host sockets or daemon configuration were
+modified. The SSH keygen fixture is a stub already present in the maintained test,
+so these results do not establish actual key generation, login or daemon execution.
+
+Host run bazel-rc-daemon-scripts-20261028 hits the known old-kernel Capsicum ABI
+failure. Matching-GENERIC guest replay initially exposed missing /bin/sh for the
+fixture's shebang. The revised private VM root supplies the declared native sh
+payload at that standard path; no host shell substitution or test rewrite.
+All seven cases are explicitly recorded passed in
+/usr/obj/usr/src/bazel-rights-vm-20261028/daemon-scripts-run-r2/result.json (some
+initial serial lines are absent from the console summary; result.json and serial
+record the per-case markers). VM shut down successfully. Evidence also includes
+serial.log, daemon-scripts-payload.json, stage-daemon-scripts-r2.py. The failed
+first guest run is retained. Guest: 2 GiB/4 CPUs, disk-backed 512 MiB root,
+networkless; recorded Bazel action replay, not a guest Bazel scheduler.
+
+All rc test installation records and payloads recompare successfully after these
+source parameter additions: bazel-rc-tests-20261028-r4/qualification/rc/parity.json;
+reference bazel-rc-tests-reference-20261028-r4. Twelve rc fixture cases now pass
+native-payload guest replay across safe_eval, os-release, SSH and syslog tests.
+Remaining rc cases and actual installed-system behavior are still unqualified.
+
+Frontend review: maintained build-bsd and existing config_files/runtime inputs
+suffice; compilation uses 16 jobs. No production/default change. Full-world,
+kernel, pkgbase, boot, option-implication and performance gates remain open.
