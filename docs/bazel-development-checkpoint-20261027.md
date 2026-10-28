@@ -3289,3 +3289,27 @@ ran. Class inheritance, method lookup/cache, class lifetime and boot preload
 metadata processing require linked-kernel tests. Full kernel/world/pkgbase/
 bootstrap and performance gates remain open. Make remains production/default;
 module count remains 45. No host installation or BIP changes occurred.
+
+### Native kernel startup and init-process creation
+
+Added //sys/kern:generic_init_object_files for init_main.c, selected by the
+maintained GENERIC Makefile. Dependencies declare CK/VM, MAC, audit, debugger
+and native generated DDB/KDB/INIT_PATH/VERBOSE_SYSINIT options. Init-path policy
+comes from config output; no replacement startup path or runtime source change
+was introduced.
+
+Evidence: `/usr/obj/usr/src/bazel-init-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. All four option headers match Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-init-kernel-make-20261028.log`; maintained recipes used
+the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible paths.
+Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and generated inputs cover this
+addition without new build-bsd C/backend options, staging or manual changes.
+No boot/runtime tests ran. SYSINIT ordering, process-zero initialization,
+root mounting and PID 1 startup require a linked kernel and normal-system VM
+tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
+Make remains production/default; module count remains 45. No host installation
+or BIP changes occurred.

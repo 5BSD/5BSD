@@ -3624,3 +3624,12 @@ Make symbols, raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-kobj-preload-kernel-20261028/qualification`.
 No runtime source changed. Live dispatch and boot preload behavior remain
 unqualified.
+
+### Kernel startup (2026-10-28)
+
+init_main.c retains BOOTTRACE SYSINIT/startup call sites and KDTRACE_HOOKS
+initialization paths. Native GENERIC output matches Make symbols, raw CTF,
+allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-init-kernel-20261028/qualification`.
+No startup or instrumentation source changed. This is compile evidence only;
+boot trace collection, SYSINIT ordering and PID 1 operation remain unqualified.
