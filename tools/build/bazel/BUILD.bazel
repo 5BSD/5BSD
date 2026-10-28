@@ -68,3 +68,5 @@ exports_files(["tree_file.py"])
 exports_files(["kernel_version.py"])
 
 exports_files(["module_exports.py"])
+
+exports_files(["elf-debug-check.py"])

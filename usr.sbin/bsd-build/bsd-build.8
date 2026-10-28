@@ -3700,3 +3700,13 @@ and
 default to /boot/kernel and /usr/lib/debug. An empty debug directory places
 debug files beside the module. Setting changes preserve compiled payloads.
 Package assembly, complete module coverage and runtime qualification remain open.
+
+.Pp
+.Dq //tools/test/construction:nullfs_artifacts_test
+is a registered static module/debug audit. It currently fails on incorrect CTF
+symbol/type associations also present in the Make reference: export localization
+reorders symbols after CTF emission. Earlier CTF dump equality does not prove
+correct associations. The candidate is not qualified for publication or runtime.
+Moving CTF emission later with fuzzy matching was rejected after a duplicate
+static/global symbol-name fixture produced wrong types. Exact association
+preservation remains required; the test failure must not be suppressed.

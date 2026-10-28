@@ -1374,3 +1374,63 @@ runs select no registered Bazel tests. Package archives, full kernel/module
 aggregation, loader/kernel compatibility, module load/unload, filesystem runtime,
 live SDT/audit behavior and system CPU/memory/disk gates remain open. No host
 install, module load or reboot occurred; Make remains production/default.
+
+### Correction: module CTF association regression (2026-10-28)
+
+The earlier Make/Bazel equality checks did NOT establish correct CTF symbol/type
+associations. A new registered Bazel target,
+//tools/test/construction:nullfs_artifacts_test, now checks the actual linked
+module/debug family with declared native kldxref/ctfdump and the maintained debug
+checker. It checks exports, page layout, allocated-data preservation, debug CRC
+and corruption rejection, SDT metadata, CTF associations, kernel-tied dependency
+and hints. It reuses the module audit runfiles adapter and is local/no-cache
+because host shell/SDK Python loader qualification remains incomplete.
+
+THIS TEST CURRENTLY FAILS on ctf_type_null_vnodeops. Both Make and the native
+pipeline merge CTF before objcopy localizes selected global symbols. Localization
+reorders the ELF symbol table without repairing CTF's order-based object/function
+associations. The module dump associates null_vnodeops with STRUCT sdt_provider
+and null_vnodeops_no_unp_bypass with STRUCT sysctl_oid, instead of STRUCT vop_vector.
+Some SDT symbols are likewise wrong. Earlier equality and live-loader metadata
+checks remain evidence of equality/metadata only, not valid CTF or live probes.
+Treat the native module as an incomplete candidate; do not publish it as qualified.
+
+The first test expectation incorrectly counted the zero-initialized queue link
+inside sdt_tracepoint as a relocation. The test policy now distinguishes byte
+size from relocation count (four 32-byte records, twelve relocations). Comparing
+full versus stripped ctfdump text also initially compared printed ELF symbol
+indices; strip-debug removes STT_FILE entries and changes those indices normally.
+The test now compares exact CTF section bytes plus ordered symbol/type associations,
+and independently checks expected structure names, retaining strict semantic
+checks rather than rewriting module data. Exception paths mark reports failed.
+
+A prototype moved CTF emission after localization and enabled ctfmerge's existing
+-f localized-global matching. It passed nullfs (bazel-nullfs-test-r3-20261028), but
+an independent two-translation-unit fixture exposed an unsafe ambiguity: a global
+volatile int and a static volatile long sharing the same name were BOTH assigned
+the long type. Source inspection shows matching_iidesc can prefer the apparent
+static-file match after localization loses ownership context. The prototype was
+rejected and removed from both kmod.mk and native module/CTF rules. No heuristic
+matching fix is committed. The maintained Make pipeline remains unchanged here.
+
+Evidence: /usr/obj/usr/src/bazel-nullfs-ctf-order-20261028 includes before/after
+ctfdumps and collision/{a.c,b.c,*.o,ctf.txt}. The final current-code failure is
+/usr/obj/usr/src/bazel-nullfs-ctf-regression-20261028/qualification, containing
+copied test log/XML and failed result.json independent of mutable Bazel symlinks.
+The passing prototype run is NOT current qualification. The regression is
+intentionally failing, not skipped, marked expected-pass or suppressed.
+
+Next: retain exact original-to-transformed ELF symbol identity when rebuilding
+CTF associations. This needs explicit pre-transform metadata, not name-only fuzzy
+matching; duplicate local/global names must be tested. Preserve both object and
+function associations, export policy, debug metadata and all architecture rules.
+Use the same robust transformation for maintained Make and native actions, then
+rerun the real module test, collision fixtures and Make/native parity. PREFIX_SYMS
+and other symbol transforms need the same review. Registering tests revealed a
+correctness gap that simple Make parity missed.
+
+Frontend review: existing format-5 targets/tests select this test and propagate
+its failure. No C interface change is needed; docs/manual/observability record
+the failing gate. BIP stays out of scope, no module was loaded, no host upgrade
+occurred, and Make remains production/default. Complete migration and module
+qualification remain active, unfinished work.

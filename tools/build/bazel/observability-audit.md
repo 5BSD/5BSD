@@ -2959,3 +2959,13 @@ and debuglink CRC is valid. The runtime retains its required loader symbol table
 while only the two declared vnode-operation symbols remain global exports.
 Native kldxref emits the same linker.hints as for Make. This is a static linked
 module check, not a module load, live probe attachment, filesystem or audit test.
+
+## Open CTF correctness failure (2026-10-28)
+
+The registered nullfs artifact test exposes wrong symbol/type associations after
+export localization in BOTH current Make and native outputs. Earlier equal dumps
+were equal but wrong: null_vnodeops maps to sdt_provider rather than vop_vector,
+and some SDT variable types are wrong. No claim of valid live DTrace types follows
+from previous parity. A late merge with -f fixes this module but misassigns a
+same-named static/global collision fixture; that prototype was removed. Exact
+ELF symbol identity must be preserved through localization before qualification.

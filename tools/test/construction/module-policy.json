@@ -1,0 +1,47 @@
+{
+  "name": "nullfs",
+  "version": 1,
+  "page_size": 4096,
+  "exports": [
+    "null_vnodeops",
+    "null_vnodeops_no_unp_bypass"
+  ],
+  "sdt_symbols": [
+    "sdt_provider_nullfs",
+    "sdt_nullfs___cache__hit",
+    "sdt_nullfs___cache__miss",
+    "sdt_nullfs___node__start",
+    "sdt_nullfs___node__done"
+  ],
+  "linker_sets": {
+    "set_sdt_providers_set": {
+      "bytes": 8,
+      "relocations": 1
+    },
+    "set_sdt_probes_set": {
+      "bytes": 32,
+      "relocations": 4
+    },
+    "set_sdt_argtypes_set": {
+      "bytes": 56,
+      "relocations": 7
+    },
+    "set_sdt_tracepoint_set": {
+      "bytes": 128,
+      "relocations": 12
+    },
+    "set_modmetadata_set": {
+      "bytes": 24,
+      "relocations": 3
+    }
+  },
+  "ctf_types": {
+    "null_vnodeops": "STRUCT vop_vector",
+    "null_vnodeops_no_unp_bypass": "STRUCT vop_vector",
+    "sdt_provider_nullfs": "STRUCT sdt_provider",
+    "sdt_nullfs___cache__hit": "STRUCT sdt_probe",
+    "sdt_nullfs___cache__miss": "STRUCT sdt_probe",
+    "sdt_nullfs___node__start": "STRUCT sdt_probe",
+    "sdt_nullfs___node__done": "STRUCT sdt_probe"
+  }
+}

@@ -43,3 +43,13 @@ load(":kldxref_test.bzl", "kldxref_audit_test")
     size = "small",
 ) for variant, program in [("native", "kldxref"), ("bootstrap", "bootstrap_kldxref")]
   for mode in ["pnp", "module-inputs", "kldxref"]]
+
+# Real linked module; this test inspects it without kernel loading.
+kldxref_audit_test(name = "nullfs_artifacts_test", mode = "module-artifacts",
+    program = "//usr.sbin/kldxref:kldxref", audit = "audit-module-artifacts.py",
+    fixtures = ["//sys/modules/nullfs:generic_module", "//sys/modules/nullfs:generic_full", "//sys/modules/nullfs:generic_debug",
+        "//cddl/usr.bin/ctfdump:ctfdump", "//sys/sys:param.h", "//tools/build/bazel:elf-debug-check.py", "module-policy.json"],
+    libraries = ["//lib/libelf:elf_shared", "//lib/libz:z_shared", "//lib/libkldelf:kldelf_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"], tags = ["local", "no-cache"], size = "small")

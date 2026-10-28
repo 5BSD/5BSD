@@ -41,6 +41,6 @@ kldxref_audit_test = rule(implementation = _impl, test = True, attrs = {
     "libraries": attr.label_list(allow_files = True, mandatory = True),
     "fixtures": attr.label_list(allow_files = True, mandatory = True),
     "audit": attr.label(allow_single_file = True, mandatory = True),
-    "mode": attr.string(values = ["pnp", "module-inputs", "kldxref"], mandatory = True),
+    "mode": attr.string(values = ["pnp", "module-inputs", "kldxref", "module-artifacts"], mandatory = True),
     "adapter": attr.label(allow_single_file = True, default = ":kldxref_test.py"),
 })
