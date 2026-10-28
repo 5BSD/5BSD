@@ -17,3 +17,9 @@ cc_library(name = "library_protocol_headers", hdrs = [":" + n + ".h" for n in RP
 # Generated XDR uses local header names; handwritten callers use rpcsvc/ names.
 cc_library(name = "library_local_headers", hdrs = [":" + n + ".h" for n in RPCSVC_PROTOCOLS],
     strip_include_prefix = ".", visibility = ["//lib/librpcsvc:__pkg__"])
+
+# Public protocol interfaces for consumers; reuse the native rpcgen actions.
+[cc_library(name = name + "_public_header", hdrs = [":" + name + ".h"],
+    strip_include_prefix = ".", include_prefix = "rpcsvc",
+    visibility = ["//libexec/" + consumer + ":__pkg__"])
+ for name, consumer in [("spray", "rpc.sprayd"), ("rquota", "rpc.rquotad")]]

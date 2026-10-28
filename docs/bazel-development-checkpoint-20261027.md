@@ -7528,3 +7528,30 @@ No helper was installed or executed, no host accounting records were changed,
 and no setuid binary was placed on the host installation paths. Isolated PTY/
 login/logout authorization checks remain next. Full world/kernel/pkgbase,
 bootstrap/cache and resource/performance gates remain open; Make stays default.
+
+## 2026-10-28 native RPC spray and quota daemons
+
+Added native rpc.sprayd and rpc.rquotad targets with explicit librpcsvc/libutil
+CcInfo/shared dependencies. The consumer protocol headers now have narrowly
+visible CcInfo targets wrapping existing native rpcgen actions; neither consumer
+silently depends on SDK copies of spray.h/rquota.h. Generated headers match the
+Make-prepared SDK references byte for byte (1424 and 4162 bytes respectively).
+
+Both program/installation candidates passed through build-bsd at 16 jobs and
+match independent Make references: 28 global/undefined symbol entries for
+rpc.sprayd, 35 for rpc.rquotad, matching NEEDED and empty RPATH/RUNPATH, five
+installation records each, and byte-identical manuals. Both debug pairs validate
+and stripping preserves the native executable .text. Package ownership remains
+utilities for rpc.sprayd and nfs for rpc.rquotad. Evidence:
+/usr/obj/usr/src/bazel-rpc-daemons-20261028/qualification, including per-program
+parity.json and protocol-headers.json. References are
+bazel-rpc.sprayd-reference-20261028 and bazel-rpc.rquotad-reference-20261028;
+scripts are in bazel-rpc-daemons-qualification-20261028.
+
+Reviewed build-bsd.c: existing format-5 targets/settings and installation
+collection handle these components without new frontend inputs or publication
+policy. No daemon was started, rpcbind registration made, host package installed
+or quota state modified. Isolated inetd/standalone RPC startup, protocol errors,
+authentication/quota replies, configuration/cross variants and performance
+remain unqualified. Full world/kernel/pkgbase/bootstrap/cache/runtime gates
+remain open; Make remains production/default and BIP is out of scope.

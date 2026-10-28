@@ -5029,3 +5029,13 @@ library/helper source, probes or audit hooks changed. Metadata qualification
 does not establish helper authorization or utmpx accounting behavior. Isolated
 PTY and login/logout tests remain pending; the helper was not executed and host
 accounting state was not modified.
+
+## 2026-10-28 rpc.sprayd and rpc.rquotad
+
+Native build conversion preserves the daemon sources and explicit generated RPC
+protocol interfaces. Existing syslog registration, reply and argument failures
+remain compiled. No dedicated DTrace/direct audit calls were found in these
+daemon units. Runtime review must cover inetd versus standalone startup,
+registration cleanup, malformed requests, AUTH_UNIX rejection and ordinary/
+extended quota replies. Symbol/header/install parity does not establish these
+behaviors or audit coverage. No daemon was started on the host.
