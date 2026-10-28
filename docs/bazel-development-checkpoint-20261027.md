@@ -3920,3 +3920,27 @@ IOMMU integration and CPU/memory/disk costs require linked-kernel/driver tests.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 stays production/default; module count remains 45. No host installation or
 BIP changes occurred.
+
+### Native device statistics and resource manager
+
+Added //sys/kern:generic_device_resources_object_files for subr_devstat.c
+and subr_rman.c, selected by maintained GENERIC Make. Dependencies declare
+CK/VM, network address headers, generated bus/device interfaces, debugger
+headers and generated DDB options. No runtime source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-device-resources-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. opt_ddb.h matches Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-device-resources-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible paths. Whole-object/debug-path identity is not
+claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Device attach/detach statistics, concurrent I/O accounting, resource
+reservation/alignment/conflicts and release require linked-kernel/driver tests.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+stays production/default; module count remains 45. No host installation or
+BIP changes occurred.

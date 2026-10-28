@@ -3910,3 +3910,14 @@ matches Make symbols, raw CTF, allocated sections and runtime relocations.
 Evidence: `/usr/obj/usr/src/bazel-busdma-kernel-20261028/qualification`.
 No runtime source changed. Live DMA behavior, probe delivery, callback races,
 IOMMU integration and performance remain unqualified.
+
+### Device statistics and resource manager (2026-10-28)
+
+subr_devstat.c retains the io provider start/done probes. No local SDT
+or AUDIT_ARG calls were found in subr_rman.c; assess resource consumers and
+existing debugger/sysctl visibility before proposing instrumentation.
+Native GENERIC output matches Make symbols, raw CTF, allocated sections and
+runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-device-resources-kernel-20261028/qualification`.
+No runtime source changed. Live I/O probes, accounting accuracy and resource
+allocation behavior remain unqualified.
