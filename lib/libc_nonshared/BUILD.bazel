@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//lib/libc/iconv:nonshared_sources.bzl", "ICONV_WRAPPERS")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+cc_library(
+    name = "nonshared_objects",
+    srcs = ["__stub.c"] + select({
+        "//tools/build/bazel/config:iconv_enabled": ["//lib/libc/iconv:" + s for s in ICONV_WRAPPERS] + ["//lib/libc/iconv:iconv-internal.h"],
+        "//conditions:default": [],
+    }),
+    copts = ["-fpic", "-fvisibility=hidden"],
+    local_defines = ["PIC"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)
+# NO_PIC in Make suppresses additional archives; this archive itself is PIC.
+bsd_component_archive(name = "static_archive", groups = [":nonshared_objects"], visibility = ["//visibility:public"])
+bsd_install_file(name = "archive_install", src = ":static_archive", destination = "/usr/lib/libc_nonshared.a",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clibs", "dev"])
+bsd_install_manifest(name = "install_manifest", entries = [":archive_install"])

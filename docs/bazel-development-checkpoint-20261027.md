@@ -5398,3 +5398,26 @@ Those remain required for complete library and system qualification.
 Frontend review: existing format-5 targets and typed iconv/NLS inputs cover the
 new groups without frontend/backend contract changes. No host install or
 conversion-module path overrides were introduced.
+
+## 2026-10-28: libc_nonshared archive and installation metadata
+
+Adds a native libc_nonshared archive with the maintained amd64 -fpic, PIC and
+hidden visibility contract. __stub.c is always included; the eleven wrappers
+are selected by iconv. A native nonshared_sources.bzl inventory is shared with
+static libc's wrapper group to prevent those native declarations diverging.
+Sources are consumed directly from libc/iconv; libc compilation flags are not
+inherited into the separate library. One install manifest places the archive at
+/usr/lib/libc_nonshared.a, root:wheel, mode 0444, package=clibs,dev.
+
+Evidence: /usr/obj/usr/src/bazel-libc-nonshared-build-20261028-r3/qualification/
+parity.json and archive-install-parity.json against the complete build/private
+install reference bazel-libc-nonshared-make-20261028. All 12 members match .text,
+global/unresolved symbols, and symbol binding/type/visibility. Archive member
+inventory and the sole installation metadata record match. Initial candidates
+used mode 0644 and -fPIC; final declarations match Make's 0444 and -fpic.
+
+This qualifies the iconv-enabled archive and manifest only. Iconv-disabled
+stub-only build, archive/debug byte identity, complete libc linker-script use,
+installed package construction and runtime remain open. No host installation.
+Frontend review: build-bsd's existing format-5 targets/iconv input and maintained
+archive/install helpers cover this contract without new frontend options.

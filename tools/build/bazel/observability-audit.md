@@ -4410,3 +4410,11 @@ module path selection and libc_dlopen behavior remain unchanged. Module loading
 and encoding database use require runtime qualification; matching object code
 does not prove either. No probe or auditing policy changes were added.
 Evidence: bazel-libc-iconv-build-20261028/qualification/parity.json (55 objects).
+
+## 2026-10-28: libc_nonshared
+
+The shared wrapper inventory retains the iconv forwarding functions and empty
+stub without new runtime code or probes. The iconv source audit applies; native
+hidden symbol visibility is compared explicitly to Make for all 12 members.
+No complete libc link or runtime module-loading claim follows from the archive
+and metadata checks. Evidence: bazel-libc-nonshared-build-20261028-r3/qualification.
