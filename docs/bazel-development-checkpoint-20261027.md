@@ -7444,3 +7444,33 @@ SDK is still Make-prepared. PTY/serial interaction, login handoff, failure paths
 configuration/static/cross variants and resource/cache behavior remain to be
 qualified. Complete world/kernel/pkgbase/runtime/performance gates remain open;
 Make stays production/default and BIP remains out of scope.
+
+## 2026-10-28 revnetgroup and phttpget
+
+Added native source-owned targets and program/manual/debug installation archives
+for revnetgroup (three C files plus hash.h) and phttpget (one C file). Neither
+uses Make to discover or execute native build actions. Both passed through
+build-bsd with 16 jobs. Make remains the independent reference and SDK supplier.
+
+Each component matches Make's five installation records, compressed manual,
+dynamic libc dependency and empty RPATH/RUNPATH. Global/undefined symbol entries
+match (46 revnetgroup, 49 phttpget); both debug pairs validate and stripping
+preserves native .text. Evidence: /usr/obj/usr/src/bazel-libexec-pair-20261028/
+qualification/{revnetgroup,phttpget}/parity.json. Independent references:
+bazel-revnetgroup-reference-20261028 and bazel-phttpget-reference-20261028;
+scripts are in bazel-libexec-pair-qualification-20261028.
+
+Four bounded runtime comparisons also match Make under native rtld/libc: stdin
+user mapping, host mapping, nested netgroups, and phttpget's EX_USAGE diagnostic.
+Native libc selection is traced. Evidence: qualification/runtime-parity.json.
+These are retained qualification-script checks, not registered Bazel test cases.
+No network requests, host installation or system-data writes occurred. HTTP
+requests/proxies/timeouts/malformed replies, broader netgroup edge cases,
+configuration/static/cross variants and performance remain open.
+
+Reviewed build-bsd.c: existing format-5 explicit targets and installation
+collection support both components without new CLI options or publication
+changes. libulog still lacks a native target and must be implemented before
+ulog-helper; no host-library substitute was added. Whole world/kernel/pkgbase,
+bootstrap/cache and runtime/performance gates remain open. Make remains the
+production/default build path; BIP is out of scope.

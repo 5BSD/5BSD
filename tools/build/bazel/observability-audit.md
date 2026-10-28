@@ -4999,3 +4999,13 @@ startup, chat failures, login handoff and corresponding login/PAM audit events
 for integrated runtime qualification; consider dedicated terminal-state probes
 only after that review. Build/metadata/symbol parity passed; no getty process was
 started on a host terminal.
+
+## 2026-10-28 revnetgroup and phttpget
+
+Native conversion preserves all existing C sources and diagnostics. Build,
+installation and four bounded runtime comparisons match Make. No dedicated
+DTrace or audit integration was introduced; mapping generation and HTTP request
+lifecycle/error visibility remain review candidates, not migration completion
+criteria proven by symbol parity. HTTP network behavior has not been exercised.
+libulog/ulog-helper conversion remains open; its login-record side effects
+require separate qualification without writing host accounting databases.
