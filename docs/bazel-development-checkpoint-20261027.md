@@ -4658,3 +4658,35 @@ addition without changing build-bsd or backend contracts. Make has no test suite
 for this component; retained comparisons are conversion evidence, not a new
 registered Bazel test suite. Whole-system gates remain incomplete and Make stays
 production default. No host installation or reboot.
+
+
+## 2026-10-28: native ctlstat
+
+Added native ctlstat with existing declared CAM headers and native sbuf/bsdxml
+libraries. Installation preserves ctl package ownership, section-8 manual,
+split debug, binary location and PIE. No source or device behavior changes.
+The existing sys/cam header target currently uses a recursive header glob;
+this conversion reuses it rather than introducing another broad source include.
+Header inventory refinement remains separate from complete-world qualification.
+
+Evidence: /usr/obj/usr/src/bazel-ctlstat-20261028, Make reference
+/usr/obj/usr/src/bazel-ctlstat-make-20261028. qualification/verify.py and parity.json
+record five matching installation records, six defined globals, matching ordered
+libsbuf.so.6/libbsdxml.so.4/libc.so.7 dependencies and BIND_NOW/NOW PIE, plus
+byte-identical compressed manuals. qualification/runtime.py compares four
+invalid/missing-option cases; all statuses and output match Make with native
+libraries and SDK runtime. These read the max_luns sysctl but exit before CTL
+device open. Storage ioctls, counters, CPU reporting, JSON/Prometheus formatting,
+filtering and timing remain installed-VM qualification. No full executable/debug
+byte identity or runtime performance claim.
+
+Source review follow-up: existing LUN/port parsing uses atoi and rejects only
+values greater than ctl_stat_bits before bit_set. Negative indices and an index
+equal to the bit count merit a dedicated bounds review/test; not changed or
+claimed fixed as part of this build conversion.
+
+Frontend review: existing format-5 targets/archive rules cover the addition;
+no frontend/backend contract change required. Make declares no component test
+suite; retained comparisons are not registered Bazel tests. No host install,
+service activation or reboot. Full world/kernel/pkgbase/boot/performance gates
+remain incomplete and Make remains production default.

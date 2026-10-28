@@ -4178,3 +4178,11 @@ list signals and show help. No runtime sources or audit policy modified.
 No local SDT/DTrace/AUDIT hooks in lessecho/version sources. Shared less sources
 and configuration remain unchanged. Quoting/error behavior compares with Make;
 no new tracing or audit policy is introduced and no live audit check is claimed.
+
+
+### 2026-10-28: ctlstat
+
+No local SDT/DTrace/AUDIT hooks in unchanged ctlstat source. CTL ioctl and
+statistics collection paths need installed-VM coverage, including JSON and
+Prometheus modes; early option checks do not exercise those paths. No claim
+that syscall auditing is absent and no new probes/audit policy introduced.
