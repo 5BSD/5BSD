@@ -9285,3 +9285,29 @@ Remaining rc cases and actual installed-system behavior are still unqualified.
 Frontend review: maintained build-bsd and existing config_files/runtime inputs
 suffice; compilation uses 16 jobs. No production/default change. Full-world,
 kernel, pkgbase, boot, option-implication and performance gates remain open.
+
+## 2026-10-28: clean default rc selection and NIS default correction
+
+Compared native rc.d installation with no feature-setting overrides against Make
+using SRCCONF, __MAKE_CONF and SRC_ENV_CONF=/dev/null, with test installation off.
+The initial comparison found eight extra NIS scripts. Native nis had defaulted
+true, contrary to share/mk/bsd.opts.mk's __DEFAULT_NO_OPTIONS. Corrected the shared
+native setting default to false; explicit nis=true configurations remain supported.
+This affects all consumers that previously relied on the incorrect implicit value,
+including libc, so it is a configuration correction beyond rc packaging.
+
+Corrected evidence:
+/usr/obj/usr/src/bazel-rc-default-20261028-r2/qualification/rc/parity.json:
+151 byte-identical script payloads and 152 metadata records match the independent
+Make stage bazel-rc-default-reference-20261028. Initial failed evidence remains in
+bazel-rc-default-20261028. Scripts:
+bazel-rc-complete-qualification-20261028/{make-default.py,verify-default.py,
+verify-default-r2.py}. No runtime/boot claim follows from installation parity.
+
+Reviewed frontend: typed explicit settings already override defaults; no build-bsd
+change is required. Qualification used 16 jobs. Inspection also confirms remaining
+native implication gaps: src.opts.mk disables dependent features when CRYPT,
+OPENSSL, CDDL, MAIL, NETGRAPH, LDNS or OFED are disabled. Current native selectors
+do not consistently encode these implications. Correct default installation is
+not proof of arbitrary mixed-option compatibility. This is next configuration
+work, before claiming complete package/world selection. Make remains default.

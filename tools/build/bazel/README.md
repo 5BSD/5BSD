@@ -34354,3 +34354,12 @@ not receive `-fexceptions`. It does not yet select librt/libthr unwind variants.
 Use the existing `//tools/build/bazel/config:dtrace` boolean independently.
 The semaphore archives contain raw objects pending complete libc DOF/linking;
 compiling these targets does not establish runtime cancellation or tracing.
+
+### Native NIS default correction (2026-10-28)
+
+The native `//tools/build/bazel/config:nis` default is now false, matching
+`share/mk/bsd.opts.mk`. Enable NIS explicitly through the existing typed
+`build-settings` input when desired. A clean default rc.d archive matches Make
+for 151 payloads and 152 metadata records; evidence is recorded in the development
+checkpoint. This corrects the shared configuration default and does not establish
+all option implications or full-system build qualification.

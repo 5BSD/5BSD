@@ -134,7 +134,7 @@ config_setting(name = "pthreads_assertions_enabled", flag_values = {":pthreads_a
 bool_flag(name = "crypt", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "crypt_enabled", flag_values = {":crypt": "true"}, visibility = ["//visibility:public"])
 
-bool_flag(name = "nis", build_setting_default = True, visibility = ["//visibility:public"])
+bool_flag(name = "nis", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "nis_enabled", flag_values = {":nis": "true"}, visibility = ["//visibility:public"])
 
 bool_flag(name = "ldns", build_setting_default = True, visibility = ["//visibility:public"])
