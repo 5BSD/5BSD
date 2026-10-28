@@ -2296,3 +2296,29 @@ or backend option. Make remains production/default. Live policy enforcement,
 jail/mount lifecycle, namespace/network restrictions, audit delivery, module
 load/unload, complete world/kernel/pkgbase and performance remain open. No
 host installation or module loading was performed.
+
+### Core capability module and capprotect
+
+Added the core module's four explicit sources and 22 maintained exports,
+plus the capprotect module. Both preserve mac-capability pkgbase ownership.
+The native opt_capsicum header feeds core compilation. Neither process nor
+authority implementation is included in the loadable module: sys/conf/files
+lists mac_capability_process.c and mac_capability_authority.c as standard
+kernel sources, and their built-in conversion/whole-kernel integration is
+still required. Module coverage must not be mistaken for that kernel closure.
+
+Evidence: `/usr/obj/usr/src/bazel-capability-core-20261028/qualification`.
+Both modules match maintained Make code/data, symbols, relocations, raw CTF
+and SDT sections, pass separate-debug identity/CRC, and match NO_ROOT staged
+metadata. Core preserves 42 SDT definitions across its sources; capprotect
+preserves three. No runtime, protocol, authority or security policy source
+was changed. This brings the current module artifact-comparison batch to
+forty-two. All ten existing mac_capability module directories now have native
+BUILD definitions, but kernel built-ins and live operation remain unqualified.
+
+Frontend review: the existing format-5 selection, export processing and
+installation manifests cover these targets without new C/frontend backend
+options. Whole-kernel/world/pkgbase publication, bootstrap, runtime lifecycle,
+cache-invalidation/performance gates remain incomplete. Make remains the
+production/default backend. No host installation or loading was performed;
+BIP remains excluded.

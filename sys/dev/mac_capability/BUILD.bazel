@@ -35,3 +35,11 @@ cc_library(name = "mount_module_headers", hdrs = ["mac_capability_mount_proto.h"
 amd64_generic_module_objects(name = "mount_module", srcs = ["mac_capability_mount.c"], deps = [":mount_module_headers"])
 cc_library(name = "system_module_headers", hdrs = ["mac_capability_system_proto.h"], includes = ["../.."], deps = [":kernel_headers"])
 amd64_generic_module_objects(name = "system_module", srcs = ["mac_capability_system.c"], deps = [":system_module_headers", "//sys/security/mac:policy_headers", "//sys/net:network_headers"])
+
+# Process lifecycle callbacks are built into the kernel, not this module.
+amd64_generic_module_objects(name = "core_module",
+    srcs = ["mac_capability_core.c", "mac_capability_dev.c", "mac_capability_kern.c", "mac_capability_label.c"],
+    deps = [":internal_headers", "//sys/security/mac:policy_headers", "//sys/amd64/conf:generic_opt_capsicum_header"])
+cc_library(name = "capprotect_module_headers", hdrs = ["mac_capability_capprotect_proto.h"], deps = [":kernel_headers"])
+amd64_generic_module_objects(name = "capprotect_module", srcs = ["mac_capability_capprotect.c"],
+    deps = [":capprotect_module_headers", "//sys/security/mac:policy_headers"])

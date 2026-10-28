@@ -3193,3 +3193,14 @@ control operations; their presence does not prove audit record generation
 or delivery for every capability action. Live allow/deny decisions, probe
 firing, audit control behavior and jail/mount/network lifecycle still need
 runtime tests. No security or instrumentation behavior was altered here.
+
+### Core capability and capprotect (2026-10-28)
+
+Core source inventory retains 33 core, five device and four label SDT
+definitions (42 total); the kern source uses the provider without defining
+additional probes. Capprotect retains three definitions. All SDT sections
+match Make after export processing. Service/mint/reply/revoke, descriptor
+transfer, label transitions, protected operations and failure-path probe
+delivery still need runtime qualification, including races and resource
+measurements. Process/authority built-ins remain a separate kernel review;
+module artifact parity does not establish their audit/probe coverage.
