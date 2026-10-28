@@ -3737,3 +3737,14 @@ and runtime relocations after correcting the machine-header __FILE__ mapping.
 Evidence: `/usr/obj/usr/src/bazel-counter-blist-kernel-r2-20261028/qualification`.
 Initial diagnostic-string/relocation mismatch is retained in the initial run.
 Concurrent counter and allocator behavior remain unqualified.
+
+### Hash tables and identifier allocation (2026-10-28)
+
+subr_hash.c and subr_unit.c have no local SDT/AUDIT call sites. Internal
+allocation/lookup primitives do not automatically require audit records;
+review caller-level observability and contention measurements as needed.
+Native GENERIC objects match Make symbols, raw CTF, allocated sections and
+runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-hash-unit-kernel-20261028/qualification`.
+No runtime source changed. Concurrent lookup and identifier lifetime behavior
+remain unqualified.
