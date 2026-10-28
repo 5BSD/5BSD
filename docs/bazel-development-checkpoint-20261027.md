@@ -8869,3 +8869,29 @@ support this executable, so no frontend change is needed. DMA installation,
 debug packaging, configurations/manual links and runtime delivery remain pending.
 No host mail was submitted or configuration changed. Full world/kernel/package/
 runtime/performance gates remain open; Make remains production/default.
+
+## 2026-10-28: DMA agent installation/debug archive
+
+Added the native DMA installation archive: root:mail 02555 executable,
+root:mail 0444 debug file, two root:mail 0640 configuration files with config
+tags, mailer.conf example, manual and cross-section dma.conf.5 hardlink.
+Package-owned directories follow Make, including /etc/dma's utilities tag.
+The manual link follows split_manpages selection; this run checks default
+unsplit packaging, not every option combination.
+
+Maintained build-bsd at 16 jobs succeeded:
+/usr/obj/usr/src/bazel-dma-agent-install-20261028.
+Eleven distinct metadata records and five nonbinary payloads match rootless
+Make; the manual alias is verified as a hardlink to dma.8.gz. Debug pairing and
+stripped-text preservation pass. Executable symbols and NEEDED/RPATH/RUNPATH
+still match Make. Evidence: qualification/dma/parity.json; reference:
+bazel-dma-agent-install-reference-20261028; scripts:
+bazel-dma-agent-qualification-20261028/{install.py,verify-install.py}.
+Make emits /etc/dma twice with identical metadata; comparison coalesces that
+record. No host installation or mail delivery occurred.
+
+Reviewed frontend and backend artifact handling: existing explicit targets and
+installation archive support handle these outputs without frontend changes.
+Runtime delivery/TLS/queue/privilege qualification and aggregate world/pkgbase
+publication remain open, as do full kernel and performance gates. Make stays
+production/default.

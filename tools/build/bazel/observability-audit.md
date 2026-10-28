@@ -5498,3 +5498,11 @@ unchanged. This is build evidence, not verification that logs reach a running
 logger. Mail submission, TLS, queue retries, privilege transitions and audit
 coverage still need isolated runtime qualification. No probes or audit hooks
 were added during this conversion.
+
+### 2026-10-28 DMA agent installation
+
+Installation parity now covers mail-group executable/debug ownership, setgid
+mode, restrictive configuration modes, config package tags and manual hardlink.
+This does not demonstrate mail delivery or logging at runtime. Queue retries,
+SMTP/TLS failure reporting and privileged mailbox behavior remain on the runtime
+qualification list. Evidence: bazel-dma-agent-install-20261028/qualification/dma/parity.json.
