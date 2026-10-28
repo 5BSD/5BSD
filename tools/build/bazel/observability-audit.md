@@ -3344,3 +3344,12 @@ output or shared-memory lifecycle. The open ZFS/filedesc WITNESS report
 remains undiagnosed. Exercise lock stress, waiter interruption, shared-memory
 mapping/truncation/removal and MAC checks on a completed test kernel; measure
 resource usage and latency rather than inferring performance from compilation.
+
+### Sleepqueue and turnstile objects (2026-10-28)
+
+Native objects retain configured instrumentation and allocated runtime sections
+relative to Make, with profiling/stack/scheduler option headers compared byte
+for byte. Runtime wait/wake, signal interruption, priority propagation and
+contention measurement remain required; object parity cannot diagnose the
+open lock-order report or establish latency. No probe or synchronization
+source behavior changed during conversion.

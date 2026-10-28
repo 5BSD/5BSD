@@ -2718,3 +2718,27 @@ recorded 2026-10-03 ZFS/filedesc WITNESS trace was consulted; its open,
 undiagnosed status is unchanged by object parity. Complete kernel/world/
 pkgbase/bootstrap gates remain open. Make stays production/default with no
 host installation or BIP changes; module count remains 45.
+
+### Native sleepqueue and turnstile kernel objects
+
+Added //sys/kern:generic_waitqueues_object_files for subr_sleepqueue and
+subr_turnstile, using native generated scheduler, DDB, stack and queue-profiling
+option headers with explicit CK/VM/DDB dependencies. No queue implementation,
+profiling choice or synchronization behavior was changed.
+
+Evidence: `/usr/obj/usr/src/bazel-waitqueues-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories
+and contents/size/type/flags/alignment, and runtime relocation records and
+associations. All five consumed generated option headers match Make bytes.
+Object copies, comparison script and options-comparison.json are retained.
+Reference log: `/usr/obj/usr/src/bazel-waitqueues-kernel-make-20261028.log`;
+maintained kernel recipes use the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible paths. Whole-object/debug-path identity is not
+claimed; arbitrary profiling configurations remain separate qualification.
+
+Frontend review: existing format-5 target selection and generated inputs
+support these objects without new C/backend options or installation entries.
+Wakeup/interruption, priority inheritance, contention, races and latency/CPU
+measurements require the linked test kernel. The open WITNESS issue remains
+undiagnosed. Full kernel/world/pkgbase/bootstrap and performance gates remain
+open; Make stays production/default with no host loading or BIP changes.
