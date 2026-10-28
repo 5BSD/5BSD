@@ -3260,3 +3260,13 @@ Neither compiled parity nor these call sites establish actual event/audit
 delivery. Runtime qualification must exercise allow/deny, client disconnect,
 timeout modes, queue/drop pressure and cache invalidation with ABAC enabled.
 No probes, audit behavior or security policy were changed in this conversion.
+
+### Built-in ABAC and openES variants (2026-10-28)
+
+The twenty built-in objects preserve all allocated SDT sections and runtime
+relocations relative to their maintained kernel Make recipes. This extends
+artifact evidence beyond the earlier loadable module variants, without
+claiming live policy interaction. Label/credential transitions, rule changes,
+openES client failure/timeout, cache invalidation, hook ordering and audit
+output must still be exercised on a linked test kernel. No instrumentation
+or enforcement behavior was changed.

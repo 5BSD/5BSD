@@ -2481,3 +2481,29 @@ client attach/detach, timeout/failure modes, cache invalidation, queue pressure,
 ABAC interaction and audit delivery remain runtime gates. No host module was
 loaded or installed. Full kernel/world/pkgbase/publication and performance
 qualification remain open; Make stays production/default and BIP excluded.
+
+### Built-in ABAC and openES kernel objects
+
+Added generic_builtin_object_files targets for sys/security/mac_abac and
+sys/security/oes: fifteen ABAC and five openES built-in translation units.
+Each package shares one explicit source/header inventory between module and
+built-in targets, while retaining their separate kernel versus KLD compile
+settings. No policy source or protocol changed. The twenty-object inventory
+matches the selected generated GENERIC Makefile targets exactly.
+
+Evidence: `/usr/obj/usr/src/bazel-abac-oes-builtins-20261028/qualification`.
+All twenty match Make symbols, raw CTF, allocated section inventories and
+contents/size/type/flags/alignment, and runtime relocation records/associations.
+Allocated probe sections are included. Both object sets and the comparison
+script are retained. Make references use the same SDK compiler, 16 jobs,
+DEBUG=-g, WITH_CTF=yes and reproducible paths; log:
+`/usr/obj/usr/src/bazel-abac-oes-builtins-make-20261028.log`.
+Whole-object/debug-path identity and linked-kernel identity are not claimed.
+
+Frontend review: existing format-5 selection and native object artifact
+retention cover both built-in targets, without new C/backend options or
+standalone object installation metadata. Module count remains forty-five;
+these are additional built-in variants. Complete kernel linking/boot, live
+ABAC/openES interaction, world/pkgbase/publication, bootstrap, arbitrary
+KERNCONF and CPU/memory/disk qualification remain open. Make remains
+production/default. No host installation, loading or BIP work occurred.
