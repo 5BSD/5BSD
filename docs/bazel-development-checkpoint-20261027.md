@@ -4370,3 +4370,34 @@ staging or manual changes. No runtime tests ran. Process enumeration, metadata
 visibility, jail/MAC boundaries, stack inspection and lifecycle races require
 linked-kernel tests. All world/kernel/pkgbase/bootstrap/performance gates remain
 open. Make stays production/default. No installation or BIP changes occurred.
+
+### Refreshed whole-world scope audit (2026-10-28)
+
+The maintained world-inventory.py completed Make print-dir with 16 jobs and
+the existing amd64 object profile/public loader trust anchor. Evidence:
+`/usr/obj/usr/src/bazel-world-inventory-refresh-20261028/inventory.json`.
+The traversal discovered 2,103 directories; build-presence.json alongside it
+records a current local BUILD.bazel presence audit. This is not a count of
+programs/libraries built or qualified. Parent-package ownership, generated
+inputs, install metadata, options and runtime tests require further mapping.
+
+| Configured subtree | Directories | Without local BUILD.bazel |
+| --- | ---: | ---: |
+| bin | 74 | 18 |
+| sbin | 105 | 10 |
+| usr.bin | 425 | 210 |
+| usr.sbin | 462 | 369 |
+| lib | 429 | 225 |
+| libexec | 53 | 49 |
+| tests | 234 | 230 |
+| stand | 53 | 52 |
+| rescue | 3 | 3 |
+
+Userland and libraries are not complete. Remaining work spans programs,
+helpers, tests, headers/data, bootstrap/loader/rescue, full aggregate builds,
+installation and pkgbase publication. Prior bin test-presence records are
+historical: some tests have since been added. Use this fresh inventory for
+follow-up, and validate ownership before treating absent local BUILD files as
+missing implementation. No full world target exists at the repository root.
+Make remains production/default. This inventory does not change frontend
+inputs or publication policy and requires no frontend implementation change.
