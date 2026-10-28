@@ -4304,3 +4304,11 @@ SDT/DTrace/BSM audit hooks found in the RPC C sources; no new hooks introduced.
 116 ordinary/PIC objects have symbol/text parity, not live network, key-service,
 NSS-cache, syslog-emission or audit-event qualification. Complete native libc
 linkage and service/runtime tests remain necessary.
+
+### 2026-10-28: libc nameser and ISC groups
+
+No direct SDT/DTrace, BSM audit or syslog calls found in the six nameser and two
+ISC C sources. All 16 ordinary/PIC objects have symbol/text parity evidence.
+Resolver name-resolution probes remain in the separate resolv sources, which
+are not yet converted here. Live DNS, event scheduling, resolver probes and
+installed libc behavior remain runtime qualification work.

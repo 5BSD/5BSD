@@ -5113,3 +5113,26 @@ Frontend review: existing format-5 build-settings accepts typed ns_caching and
 hesiod labels through source_graph.setting_arguments; existing targets cover
 archives/generator outputs. No build-bsd C or backend contract change needed.
 Make remains production default; no host installation or service changes.
+
+## 2026-10-28: libc nameser and ISC object groups
+
+Adds all six maintained nameser sources and both ISC event sources as native
+libc object groups, with ordinary/PIC qualification archives. Declares the
+maintained portability and private ISC event/list/platform headers explicitly;
+_LIBC behavior comes from port_before.h, preserving the source's conditional
+include paths. The first build exposed the missing private eventlib dependency;
+no ambient header path or replacement header was introduced to bypass it.
+Nameser Symbol.map is exposed for the eventual complete libc link.
+
+Evidence: /usr/obj/usr/src/bazel-libc-nameser-isc-20261028-r2/qualification has
+parity-nameser.json (12 objects) and parity-isc.json (4 objects), compared with
+fresh maintained Make objects in bazel-libc-nameser-isc-make-20261028. All match
+global symbols, unresolved symbols and .text bytes. No final libc link, ABI
+versioning, relocation/all-allocated-section, full debug, installation or runtime
+qualification is claimed. Resolver sources with name-resolution DTrace hooks
+remain separate native integration work; these groups do not disable or replace
+those sources or probes.
+
+Frontend review: existing format-5 explicit targets and NLS setting cover these
+object groups through build-bsd; no frontend/backend contract changes needed.
+No network queries, host installation or service changes were performed.

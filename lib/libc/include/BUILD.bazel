@@ -13,3 +13,6 @@ cc_library(name = "yp_private_headers", hdrs = ["reentrant.h"], strip_include_pr
 
 cc_library(name = "rpc_private_headers", hdrs = ["reentrant.h", "nss_tls.h", "nscache.h", "nscachedcli.h"],
     strip_include_prefix = ".", deps = [":rt_private_headers"], visibility = ["//lib/libc/rpc:__pkg__"])
+
+cc_library(name = "resolver_port_headers", hdrs = ["port_before.h", "port_after.h", "isc/eventlib.h", "isc/platform.h", "isc/list.h"],
+    strip_include_prefix = ".", visibility = ["//lib/libc/nameser:__pkg__", "//lib/libc/isc:__pkg__"])
