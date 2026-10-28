@@ -9339,3 +9339,33 @@ Used 16 jobs; no host install or service execution. These checks qualify rc
 selection, not all compiled consumers under disabled-feature configurations.
 MAIL/NETGRAPH/OFED and further option dependencies, configured aggregate builds,
 full runtime/pkgbase/performance gates remain open. Make stays default.
+
+## 2026-10-28: MAIL/NETGRAPH/OFED service prerequisites
+
+Added native default-on mail/netgraph requested bool flags. Shared Sendmail,
+Bluetooth and OFED_EXTRA enabled selectors now require mail, netgraph and ofed
+respectively, following src.opts.mk. No runtime Make parsing or frontend rewriting.
+
+Four independent rootless Make installation references match native rc.d archives
+exactly for payload bytes and metadata (owners, groups, permissions, tags, flags):
+
+| Configuration | Payloads | Metadata records |
+| --- | ---: | ---: |
+| MAIL off, SENDMAIL explicitly on | 151 | 152 |
+| NETGRAPH off, BLUETOOTH explicitly on | 143 | 144 |
+| OFED off, OFED_EXTRA explicitly on | 151 | 152 |
+| SENDMAIL and OFED_EXTRA on, parents default on | 153 | 154 |
+
+Evidence under /usr/obj/usr/src/bazel-rc-{no-mail,no-netgraph,no-ofed,mail-ofed}-20261028/qualification/rc/parity.json;
+independent references use corresponding -reference-20261028 directories.
+Reproduction scripts make-<variant>.py and verify-<variant>.py are retained in
+bazel-rc-implications-qualification-20261028, with format-5 inputs adjacent to
+the run directories. All runs used the maintained build-bsd bazel-test frontend
+and 16 jobs. Reviewed source_graph typed settings transport: existing format-5
+inputs suffice, with no frontend C/backend protocol change required.
+
+This qualifies rc service selection only, not live Bluetooth, Sendmail or OpenSM.
+Other MAIL children (mailwrapper/dmagent), remaining src.opts.mk implications,
+compiled aggregate selection, complete world/kernel/pkgbase and performance
+qualification remain open. No host installation or services started. Make remains
+the production default; BIP remains excluded.

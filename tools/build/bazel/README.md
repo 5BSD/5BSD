@@ -34373,3 +34373,10 @@ OpenSSL therefore excludes its dependent rc services without manually clearing
 each child flag. The crypt/OpenSSL-disabled rc variants match independent Make
 installation references. Remaining option relationships and compiled-world
 variants are still being qualified; this is not complete src.opts.mk coverage.
+
+The shared selectors also require MAIL for Sendmail, NETGRAPH for Bluetooth,
+and OFED for OFED_EXTRA. `mail` and `netgraph` are default-on native bool flags;
+`ofed` already exists. Set these through format-5 `build-settings`, for example
+`"//tools/build/bazel/config:netgraph": false`. An explicitly enabled child cannot
+override its disabled prerequisite. These selectors currently qualify rc service
+installation; complete world inclusion and other MAIL children remain pending.
