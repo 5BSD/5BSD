@@ -4057,3 +4057,14 @@ CTF, allocated sections and runtime relocations. Evidence:
 GENERIC has PPS_SYNC enabled and FFCLOCK disabled; the enabled FFCLOCK branch
 is unqualified. No runtime source changed. Live adjustment/privilege paths,
 PPS behavior and clock stability remain unqualified.
+
+### CPU idle and memory barriers (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in kern_idle.c or
+kern_membarrier.c. Assess scheduler/architecture probes and syscall audit
+mappings together before adding hot-path instrumentation. Native GENERIC
+output matches Make symbols, raw CTF, allocated sections and runtime
+relocations. Evidence:
+`/usr/obj/usr/src/bazel-idle-membarrier-kernel-20261028/qualification`.
+No runtime source changed. Live SMP ordering, idle transitions and runtime
+performance remain unqualified.

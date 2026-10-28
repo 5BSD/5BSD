@@ -412,3 +412,6 @@ amd64_generic_kernel_objects(name = "generic_rtc", srcs = ["subr_rtc.c"],
 amd64_generic_kernel_objects(name = "generic_clock_discipline", srcs = ["kern_ntptime.c", "kern_ffclock.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
         "//sys/amd64/conf:generic_opt_ntp_header", "//sys/amd64/conf:generic_opt_ffclock_header"])
+
+amd64_generic_kernel_objects(name = "generic_idle_membarrier", srcs = ["kern_idle.c", "kern_membarrier.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])

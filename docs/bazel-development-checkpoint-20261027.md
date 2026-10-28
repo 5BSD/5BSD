@@ -4254,3 +4254,26 @@ require linked-kernel tests; FFCLOCK-enabled configurations need separate
 qualification. Full kernel/world/pkgbase/bootstrap and performance gates remain
 open. Make stays production/default; module count remains 45. No host
 installation or BIP changes occurred.
+
+### Native CPU idle and memory barriers
+
+Added //sys/kern:generic_idle_membarrier_object_files for kern_idle.c and
+kern_membarrier.c, selected by maintained GENERIC Make. Dependencies declare
+CK/VM headers. No scheduler, memory-ordering or runtime source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-idle-membarrier-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. Reference log:
+`/usr/obj/usr/src/bazel-idle-membarrier-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible paths. Whole-object/debug-path identity is not
+claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Idle/wakeup behavior, CPU affinity, memory-barrier registration/query/error
+paths, cross-CPU ordering and performance require linked-kernel SMP tests.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+stays production/default; module count remains 45. No host installation or
+BIP changes occurred.
