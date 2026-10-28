@@ -3113,3 +3113,11 @@ sources contain no explicit SDT_* or AUDIT_* calls; common MAC/audit hooks
 need runtime review. Native symbol and relocation listings match Make,
 preserving registrations. No policy grants/denials or audit records were
 exercised. Evidence: bazel-mac-modules-20261028/qualification under /usr/obj/usr/src.
+
+### MAC port ACL/PIM (2026-10-28)
+
+Port ACL registers init/destroy and socket_check_bind; PIM registers priv_grant.
+Neither inspected source has explicit SDT_* or AUDIT_* calls. Native symbol
+and relocation-record comparisons preserve hook registrations. Common MAC
+audit/tracing and live bind/privilege behavior need runtime review; no policy
+module was loaded for this build qualification.

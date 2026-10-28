@@ -2093,3 +2093,23 @@ Frontend review: maintained format-5 selection supports these targets and
 installation manifests; no new C frontend/signing/publication change is
 required. Native kernel/world/pkgbase, source/header invalidation, live
 behavior and performance gates remain open. Make remains production/default.
+
+### MAC port ACL and PIM
+
+Added native mac_portacl and mac_pimd plus declared PCB/route header targets.
+Evidence: `/usr/obj/usr/src/bazel-mac-network-20261028/qualification`; Make
+references `/usr/obj/usr/src/bazel-{mac_portacl,mac_pimd}-make-20261028`.
+Both pass debug identity/CRC, runtime symbols, text/data/rodata, raw CTF and
+staged installation metadata comparisons. PIM's raw relocation listing
+matches as well. Port ACL's raw listing differs in physical section offsets;
+relocation-records.json independently verifies identical relocation bytes,
+entry sizes, linked symbol-table names and target-section names. Allocated
+sections including BSS match type/flags/address/size/alignment and payload
+(build-id excluded). The differing physical file layout is retained in the
+evidence and no whole-file byte equality is claimed.
+
+No policy module was loaded. Port binding grants/denials, PIM privilege grants,
+jail/VNET behavior, auditing and performance remain unqualified. The current
+artifact-comparison batch contains twenty-five modules. Existing maintained
+format-5 frontend selection covers these targets; no C/backend publication
+change is needed. Full-system gates remain open; Make remains production.

@@ -4,3 +4,6 @@ exports_files(["tcp_stats.c"], visibility = ["//lib/libstats:__pkg__"])
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "address_headers", hdrs = ["in.h"], includes = [".."],
     deps = ["//sys/net:network_headers", "//sys/netinet6:address_headers"], visibility = ["//visibility:public"])
+
+cc_library(name = "pcb_headers", hdrs = ["in_pcb.h"], includes = [".."],
+    deps = [":address_headers", "//sys/net:route_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"], visibility = ["//visibility:public"])

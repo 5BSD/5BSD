@@ -6,3 +6,5 @@ kernel_interfaces(srcs = glob(["*_if.m"]))
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "network_headers", hdrs = ["if.h", "vnet.h"], includes = [".."],
     deps = [], visibility = ["//visibility:public"])
+
+cc_library(name = "route_headers", hdrs = ["route.h"], includes = [".."], deps = [":network_headers"], visibility = ["//visibility:public"])

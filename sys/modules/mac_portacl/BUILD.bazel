@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+amd64_generic_module(module = "mac_portacl", objects = ["//sys/security/mac_portacl:generic_module_object_files"])
