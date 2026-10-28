@@ -5375,3 +5375,26 @@ newlocale, remains to be integrated with the complete native library and data.
 Frontend review: existing format-5 input targets and typed iconv/NLS settings
 cover both configurations through build-bsd. No frontend/backend contract change
 is required. No host locale settings, installation or upgrades were changed.
+
+## 2026-10-28: libc iconv and static wrapper objects
+
+Adds all 22 regular iconv/Citrus libc sources and the 11 wrappers selected by
+libc_nonshared/Makefile.iconv for static libc. Wrappers have a separate source
+group/archive and must not enter the shared libc link. Iconv-disabled targets
+are incompatible, reflecting their absence from that configuration. Private
+headers and normal libc compilation flags are explicit native dependencies.
+
+Evidence: /usr/obj/usr/src/bazel-libc-iconv-build-20261028/qualification/parity.json
+against fresh bazel-libc-iconv-make-20261028. All 55 objects match .text, global
+and unresolved symbols: 22 ordinary, 22 PIC, and 11 static wrappers. Native
+build ran through build-bsd using 16 jobs and the existing iconv setting.
+
+The separate libc_nonshared library is not qualified here: it requires PIC,
+hidden visibility and its own source/flag/install contract. Neither complete
+libc linking, ABI maps, data/relocation/debug identity, manual installation nor
+runtime loading of Citrus modules/data is established by these comparisons.
+Those remain required for complete library and system qualification.
+
+Frontend review: existing format-5 targets and typed iconv/NLS inputs cover the
+new groups without frontend/backend contract changes. No host install or
+conversion-module path overrides were introduced.

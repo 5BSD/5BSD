@@ -4401,3 +4401,12 @@ no conversion-loop probes were introduced. This is not proof of locale-data or
 Citrus module loading behavior, nor of runtime audit coverage. Both configured
 ordinary/PIC object sets match Make; evidence is in
 bazel-libc-locale-{yes,no}-build-20261028-r2/qualification/parity.json.
+
+## 2026-10-28: libc iconv/Citrus
+
+Reviewed regular Citrus/iconv sources and static wrappers. No direct DTrace/SDT
+or BSM audit calls were found. Existing secure_getenv(PATH_I18NMODULE), default
+module path selection and libc_dlopen behavior remain unchanged. Module loading
+and encoding database use require runtime qualification; matching object code
+does not prove either. No probe or auditing policy changes were added.
+Evidence: bazel-libc-iconv-build-20261028/qualification/parity.json (55 objects).
