@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test", "cc_shared_library")
 cc_library(name = "headers", hdrs = ["libsys.h", "_libsys.h"], strip_include_prefix = ".", visibility = ["//lib/libc/include:__pkg__"])
 
 exports_files(["auxv.c", "interposing_table.c", "libc_stubs.c", "ptrace.c", "recvmmsg.c", "sendmmsg.c"], visibility = ["//lib/libc/sys:__pkg__"])
@@ -55,7 +55,9 @@ cc_library(
             "pdrfork_thread.S", "vfork.S", "cerror.S", "getcontext.S", "_umtx_op_err.S",
         ]] + ["//lib/libc/string:" + n for n in ["memcpy.c", "memset.c", "strlcpy.c"]],
     textual_hdrs = ["//lib/libc/string:bcopy.c"],
-    implementation_deps = _HEADERS,
+    # Runtime builtins are dependencies of these objects, not additional DSO
+    # roots: cc_shared_library whole-links roots and normally extracts deps.
+    implementation_deps = _HEADERS + ["//lib/libcompiler_rt:compiler_rt"],
     local_defines = _DEFINES,
     copts = _COPTS,
     linkstatic = True,
@@ -68,7 +70,7 @@ cc_library(
     copts = _COPTS + ["-fno-sanitize=address", "-fno-sanitize=undefined"],
     linkstatic = True, target_compatible_with = _AMD64,
 )
-cc_library(name = "sys", deps = [":sys_objects", ":vdso_objects"],
+cc_library(name = "sys", deps = [":headers", ":sys_objects", ":vdso_objects"],
     target_compatible_with = _AMD64, visibility = ["//visibility:public"])
 bsd_component_archive(name = "static_archive", groups = [":sys_objects", ":vdso_objects"])
 bsd_component_archive(name = "pic_archive", groups = [":sys_objects", ":vdso_objects"], pic = True)
@@ -92,3 +94,16 @@ cc_test(name = "syscall_runtime_test",
     deps = [":sys", ":headers"], linkstatic = True,
     target_compatible_with = _AMD64, size = "small",
 )
+
+cc_shared_library(name = "sys_shared", deps = [":sys"], shared_lib_name = "libsys.so.7",
+    additional_linker_inputs = [":version_map"],
+    user_link_flags = ["-nodefaultlibs", "-Wl,-Bsymbolic", "-Wl,-soname,libsys.so.7",
+        "-Wl,--version-script=$(location :version_map),--no-undefined-version",
+        "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _AMD64, visibility = ["//visibility:public"])
+
+cc_test(name = "syscall_shared_runtime_test",
+    srcs = ["//tools/build/bazel:tests/libsys_runtime.c"],
+    deps = [":sys"], dynamic_deps = [":sys_shared"],
+    features = ["bsd_test_runtime_paths"],
+    target_compatible_with = _AMD64, size = "small")

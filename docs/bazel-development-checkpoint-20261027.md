@@ -6279,3 +6279,49 @@ Frontend review: build-bsd.c and native-qualify.py's maintained format-5 path
 already accept these targets and the cc_test, and were used with 16 jobs. No new
 option or staging/signing/publication contract is introduced. No frontend change
 or host installation is needed for this component step.
+
+## 2026-10-28: native compiler-rt and libsys shared linkage
+
+Added explicit source-owned amd64 compiler-rt targets for the staged Clang
+configuration (Float16/BFloat16 enabled). The 165-source inventory preserves
+x86_64 assembly selection and shared x86 CPU/FP implementations. Headers and
+textual .inc dependencies are declared. The installed-library candidate is one
+static archive of -fpic, hidden, non-stack-protected objects; cc_import preserves
+that archive for DSO consumers. Other architectures/compiler configurations are
+not qualified by this target.
+
+Evidence: /usr/obj/usr/src/bazel-compiler-rt-native-build-20261028/qualification/
+parity.json against fresh bazel-compiler-rt-native-make-20261028. All 165 members
+match text, global/undefined symbols and normalized text relocations. One actual
+Bazel arithmetic test passes, covering signed/unsigned 128-bit division/remainder
+and amd64 integer/FP conversions. Native definitions of every called builtin are
+verified. This does not establish the full compiler-rt behavioral test suite.
+
+libsys.so.7 now links these native objects and native compiler-rt through
+cc_shared_library, preserving -nodefaultlibs, -Bsymbolic, SONAME and ABI map.
+The first linkage incorrectly placed compiler-rt under a source-less root:
+cc_shared_library consequently whole-linked its archive, increasing allocated
+size and introducing math dependencies. The shared runtime test failed to link.
+Fixed the graph by making compiler-rt an implementation dependency of the object
+group that needs it. No undefined-symbol suppression or extra math library was
+added. Failed builds remain at bazel-libsys-native-shared-20261028 and
+bazel-libsys-native-shared-test-20261028.
+
+Final evidence: bazel-libsys-native-shared-test-20261028-r2/shared-parity.json.
+All 1,271 dynamic-symbol entries match Make by size/type/binding/visibility,
+name/version and defined/undefined state; section indices and addresses differ
+with layout. Both libraries have no DT_NEEDED or TEXTREL, the same SONAME and
+SYMBOLIC/BIND_NOW flags. Native size reports text/data/bss 110737/1000/3000 bytes
+versus Make 110729/1000/3012; this is not byte-identical ELF or a performance test.
+Two actual syscall tests pass (static objects and shared library). Loader tracing
+and SHA-256 comparison prove the shared test loads the exact native libsys output;
+host libc/loader still supply the rest of the process runtime. Verification
+scripts are retained in bazel-compiler-rt-native-20261028.
+
+Remaining: debug/install/pkgbase metadata, compiler-rt compatibility libgcc.a
+symlink, libsys manual pages/headers, complete libc linkage/DOF, broader threading,
+IFUNC and other runtime tests, cross-configurations and complete world/kernel/
+modules/package/cache/performance gates. Frontend review: build-bsd's maintained
+format-5 bazel-test path drove all runs with 16 jobs; no new option or publication
+contract needs frontend changes. Make remains production/default. No host files
+were installed and no upgrade/reboot was performed.

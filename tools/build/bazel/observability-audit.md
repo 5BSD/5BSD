@@ -4684,3 +4684,14 @@ mean it owns kernel audit policy. No new SDT providers or audit logging are adde
 The direct syscall smoke test covers successful pipe I/O and EBADF, not audit
 records, DTrace syscall probes, thread errno, IFUNC timekeeping or shared-library
 interposition. Those remain full runtime/kernel qualification obligations.
+
+## 2026-10-28: compiler-rt builtins and shared libsys
+
+Native compiler-rt preserves the 165 configured amd64 builtin implementations;
+no probes or audit policy were added. Arithmetic/conversion tests prove a bounded
+runtime subset. Static and shared direct syscall tests pass; the latter loads
+verified native libsys.so.7. ABI and linker-property parity does not qualify
+thread-local errno selection, IFUNC timekeeping, audit records, syscall tracing,
+atomic contention or full compiler-generated arithmetic. Those broader runtime
+checks remain outstanding. A caught whole-archive linkage error was fixed in the
+dependency graph, retaining shared runtime test coverage against recurrence.
