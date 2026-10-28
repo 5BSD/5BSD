@@ -1,17 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_FLAGS", "AMD64_KERNEL_HEADER_DEPS")
-load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
 cc_library(name = "headers", hdrs = ["null.h"], strip_include_prefix = ".", include_prefix = "fs/nullfs",
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
-cc_library(name = "generic_module_objects", srcs = ["null_subr.c", "null_vfsops.c", "null_vnops.c"],
-    deps = AMD64_KERNEL_HEADER_DEPS + [":headers", "//sys/kern:generic_offset_header", "//sys/kern:vnode_headers"],
-    copts = [flag for flag in AMD64_KERNEL_FLAGS if flag != "-fcommon"] + ["-fno-common"],
-    local_defines = ["_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
-bsd_ctf_library(name = "generic_module_ctf", library = ":generic_module_objects",
-    converter = "//cddl/usr.bin/ctfconvert:ctfconvert",
-    runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libdwarf:dwarf_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared",
-        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
-    ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label", preserve_debug = True)
-filegroup(name = "generic_module_object_files", srcs = [":generic_module_ctf"], output_group = "regular_objects", visibility = ["//visibility:public"])
+
+amd64_generic_module_objects(srcs = ["null_subr.c", "null_vfsops.c", "null_vnops.c"], deps = [":headers"])

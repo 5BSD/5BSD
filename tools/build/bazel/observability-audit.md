@@ -2993,3 +2993,19 @@ not fixed or runtime-qualified here and should receive a focused API regression
 before a separate fix. Native generated CTF is version 3, where record widths
 make this discrepancy invisible. Do not infer v2 consumer correctness from
 the passing objcopy/ctfdump matrix.
+
+### fdescfs native module review (2026-10-28)
+
+The two fdescfs C sources have no explicit SDT probe declarations or direct
+AUDIT calls. This is carried forward unchanged from Make, not evidence
+that filesystem operations bypass the kernel's common audit hooks. Assess
+whether component-specific probes are useful separately; no probes or
+audit behavior were added or removed for the build migration.
+
+### unionfs native module review (2026-10-28)
+
+`union_subr.c` declares and fires `copyup__start` and `copyup__done`.
+The native GENERIC build preserves both probes. All SDT sections, their
+relocations, and runtime symbol listings match the Make reference in
+`/usr/obj/usr/src/bazel-filesystem-modules-20261028/qualification`.
+This is artifact evidence; no live DTrace firing was tested.

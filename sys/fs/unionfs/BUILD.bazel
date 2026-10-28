@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+cc_library(name = "headers", hdrs = ["union.h"], strip_include_prefix = ".", include_prefix = "fs/unionfs",
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(srcs = ["union_subr.c", "union_vfsops.c", "union_vnops.c"],
+    deps = [":headers", "//sys/security/mac:framework_headers"])

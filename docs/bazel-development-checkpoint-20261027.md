@@ -1606,3 +1606,57 @@ all modules, other architectures, runtime and publication qualification remain
 open. The separately logged libctf v2 reader discrepancy and broader consumer
 coverage remain follow-up work; no test was suppressed or expected to pass on
 corrupt metadata.
+
+## 2026-10-28: shared GENERIC module rules and fdescfs
+
+`amd64_generic_module.bzl` now shares the qualified nullfs compilation,
+CTF merge, explicit export policy, debug split, and installation metadata.
+The names and settings remain compatible with existing nullfs callers.
+`fdescfs` declares its two C sources and headers and uses the same rules,
+with the maintained Make default EXPORT_SYMS=NO (empty export list).
+This is specifically amd64 GENERIC tied-module support.
+
+The maintained `build-bsd bazel-test` format-5 input selected both modules
+using 16 jobs. Evidence: `/usr/obj/usr/src/bazel-fdescfs-20261028`, with
+Make reference `/usr/obj/usr/src/bazel-fdescfs-make-20261028`.
+`qualification/comparison.json` records matching allocated section types,
+flags, sizes, alignment and bytes (NOBITS size only, build-id excluded),
+and matching raw SUNW CTF. Runtime/debug identity and debuglink CRC pass.
+The existing nullfs artifact test reused its passing cached result; this
+was not a fresh test execution. No module was loaded. Relocation/symbol
+comparison, installation parity, and fdescfs runtime qualification remain
+to be completed before claiming this module fully qualified.
+
+Frontend review: existing explicit target selection and kernel installation
+settings cover these additions; no new C frontend option or publication
+policy is required. Make remains the production/default build. Next: finish
+fdescfs qualification, then unionfs, tmpfs and pseudofs.
+
+### Follow-up: fdescfs symbols/install and unionfs
+
+The fdescfs runtime symbol and relocation listings now match Make exactly.
+`qualification/symbols-relocations.json` records the comparison with both
+raw readelf listings. `installation-comparison.json` records matching paths,
+owner/group/mode/type and package/debug tags against Make's staged METALOG.
+The first standalone install attempt used Make's `/boot/modules` default
+and failed because that staging directory was absent. The corrected
+comparison explicitly supplies `KMODDIR=/boot/kernel`, as the maintained
+kernel build does through `MKMODULESENV` in `sys/conf/kern.pre.mk`.
+No installed file hashes are claimed equal: debug information/build-id
+differ between build systems. No host files were installed.
+
+Unionfs now declares its three C sources and MAC-framework/DDB header
+dependencies. The shared GENERIC rules build its runtime, full, debug and
+installation manifest targets through `build-bsd bazel-test`. Evidence is
+`/usr/obj/usr/src/bazel-filesystem-modules-20261028/qualification`, with
+Make reference `/usr/obj/usr/src/bazel-unionfs-make-20261028`.
+Code/data sections (excluding build-id), raw CTF, complete symbols and
+relocations match; the separate debug file and CRC pass. SDT provider,
+probe, argument-type and tracepoint sections match, including both copy-up
+probes. The nullfs test result was cached.
+
+Remaining: unionfs staged installation comparison, incremental/cache checks
+for the new modules, module runtime tests, and broader kernel qualification.
+Frontend review remains unchanged: the maintained format-5 target selection
+and kernel-directory settings suffice; no additional frontend option is
+needed. These are native module artifacts, not a complete kernel build.
