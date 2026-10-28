@@ -5028,3 +5028,31 @@ The first run's ordinary-object/PIE link failure remains recorded separately.
 Frontend review: build-bsd's format-5 targets/tests already express this case,
 and its maintained qualification path captured the test reports. No C/backend
 contract update required. No host installation or network activity.
+
+## 2026-10-28: native librpcsvc and generated protocol headers
+
+Adds native static/PIE archives and librpcsvc.so.5, optional NIS source selection,
+14 declared rpcgen XDR actions and corresponding include/rpcsvc header actions.
+The schema inventory is shared as reviewed source metadata in protocols.bzl.
+Header generation preserves include/rpcsvc Make's -DWANT_NFS3; library XDR
+sources preserve its separate -C generation without that define. Explicit
+rpcsvc/ and local header views support handwritten and generated callers.
+No Make invocation, source rewriting or implicit output discovery is used in
+native compilation. Static/shared/debug files and development symlink carry
+the maintained runtime package metadata; include installation remains the
+separate include/rpcsvc component's unfinished responsibility.
+
+Evidence: /usr/obj/usr/src/bazel-rpcsvc-complete-20261028/qualification/parity.json
+against bazel-rpcsvc-make-20261028, NIS disabled. All 14 generated XDR C files
+are byte-identical; static member inventory (19), archive/global symbols,
+shared globals (143), dependency/SONAME/flags and six installation records match.
+No whole archive/debug byte equivalence, generated-header comparison, package
+archive construction, live RPC or installed-image qualification is claimed.
+PIE archive builds but has not been independently compared in this run.
+NIS-enabled source selection is declared but not qualified; the previously
+recorded missing NIS SDK libc support remains unresolved. The native libc
+aggregate and the installed RPC test suite remain subsequent integration work.
+
+Frontend review: existing explicit targets and nis setting work through the
+maintained build-bsd format-5 interface; staging metadata uses existing helpers.
+No frontend/backend contract change, host installation or publication occurred.

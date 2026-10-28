@@ -4279,3 +4279,11 @@ Unchanged NetBSD double/enumeration encode/decode case now passes as a Bazel ATF
 test linked to native XDR PIC objects. Native symbol ownership and Make fixture
 bytes verified separately. This adds serialization runtime evidence only; it
 does not cover transport events, kernel audit, live RPC services or full libc.
+
+### 2026-10-28: librpcsvc
+
+No direct SDT/DTrace, BSM audit or syslog hooks found in handwritten librpcsvc
+sources. Native build carries those sources and generated RPC XDR schemas
+unchanged. Artifact comparison covers the NIS-disabled variant, not network
+calls, key handling, service authentication or live audit behavior. NIS variant
+and installed-system runtime qualification remain open.
