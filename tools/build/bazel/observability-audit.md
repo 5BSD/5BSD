@@ -3453,3 +3453,15 @@ also merit checking against actual audit event encoding. Review emitted
 records for each wait identifier type before claiming coverage. No audit
 semantics were changed in this build conversion. Live process probes, audit
 records, inheritance and teardown races remain unqualified.
+
+### Signals and credentials (2026-10-28)
+
+kern_sig.c defines proc signal-send/clear/discard probes; kern_prot.c defines
+credential UID/GID and setid-exec probes. Existing audit arguments record
+signal and credential operations. Native GENERIC objects match Make symbols,
+raw CTF, allocated sections and runtime relocations, preserving existing
+instrumentation. Evidence:
+`/usr/obj/usr/src/bazel-signal-credentials-kernel-20261028/qualification`.
+No policy or instrumentation source was changed. Live signal-denial behavior,
+credential transitions, MAC decisions, audit records and probe firing remain
+unqualified; compile parity alone does not establish end-to-end coverage.
