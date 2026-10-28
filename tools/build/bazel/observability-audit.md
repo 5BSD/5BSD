@@ -4392,3 +4392,12 @@ separate cost/semantics review. No probes were invented during migration.
 Object parity (222 ordinary/PIC objects) is recorded in
 bazel-libc-stdio-build-20261028-r2/qualification/parity.json. Runtime concurrency,
 EINTR and stream behavior still require the maintained stdio test suite.
+
+## 2026-10-28: libc locale
+
+Reviewed locale sources, including the iconv-enabled and disabled C16/C32 paths.
+No direct DTrace/SDT or BSM audit calls were found. Existing diagnostics remain;
+no conversion-loop probes were introduced. This is not proof of locale-data or
+Citrus module loading behavior, nor of runtime audit coverage. Both configured
+ordinary/PIC object sets match Make; evidence is in
+bazel-libc-locale-{yes,no}-build-20261028-r2/qualification/parity.json.

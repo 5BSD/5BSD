@@ -5351,3 +5351,27 @@ locale and wide-character runtime behavior are not established by this result.
 Frontend review: existing format-5 explicit targets and NLS configuration carry
 the inputs through build-bsd. No new frontend/backend contract is required.
 No host installation, upgrade, policy or account changes were performed.
+
+## 2026-10-28: native libc locale with both iconv configurations
+
+Adds all 60 common locale sources and explicit selection of four iconv-backed
+or four independent C16/C32 conversion sources through the existing iconv build
+setting. Declared dependencies cover locale private headers, timelocal.h and
+Citrus interfaces. Iconv-disabled builds omit the Citrus dependency. The initial
+build found timelocal.h's transitive xlocale_private.h include; the existing
+locale header view now supplies it, without an ambient include directory.
+
+Evidence: /usr/obj/usr/src/bazel-libc-locale-{yes,no}-build-20261028-r2/qualification/parity.json
+against fresh bazel-libc-locale-{yes,no}-make-20261028. Both configurations match
+all 128 ordinary/PIC objects in .text, global and unresolved symbols (256
+comparisons). Artifacts are read from each run's saved manifest, not mutable
+bazel-bin symlinks. Failed initial native output remains recorded.
+
+This does not qualify complete libc linkage, data/relocation/debug identity,
+manuals, locale database installation, Citrus runtime modules or locale runtime
+semantics. The maintained locale ATF suite, including character conversion and
+newlocale, remains to be integrated with the complete native library and data.
+
+Frontend review: existing format-5 input targets and typed iconv/NLS settings
+cover both configurations through build-bsd. No frontend/backend contract change
+is required. No host locale settings, installation or upgrades were changed.

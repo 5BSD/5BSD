@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "locale_headers", hdrs = ["citrus_hash.h", "citrus_module.h", "citrus_iconv.h", "citrus_iconv_local.h"], visibility = ["//lib/libc/locale:__pkg__"])

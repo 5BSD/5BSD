@@ -3,3 +3,5 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "localedef_headers", hdrs = ["timelocal.h"],
     strip_include_prefix = ".", deps = ["//lib/libc/locale:localedef_headers"],
     visibility = ["//usr.bin/localedef:__pkg__"])
+
+exports_files(["timelocal.h"], visibility = ["//lib/libc/locale:__pkg__"])
