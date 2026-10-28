@@ -4987,3 +4987,15 @@ suite in the rtld install archive. Disabled output is byte-identical to the
 qualified loader-only archive; enabled output matches the qualified 49-record
 union. One shared source-owned inventory serves both archive targets. No probe,
 audit hook, runtime source or test semantics changed. No new runtime passes.
+
+## 2026-10-28 getty
+
+Converted all four maintained getty translation units without changing C source.
+No dedicated DTrace/SDT or audit calls were found in these units. Existing syslog
+configuration, terminal and login-exec diagnostics remain compiled. Getty hands
+off to login; absence of direct audit calls here does not establish an audit
+failure, nor does linking libutil prove its probes fired. Record PTY/serial
+startup, chat failures, login handoff and corresponding login/PAM audit events
+for integrated runtime qualification; consider dedicated terminal-state probes
+only after that review. Build/metadata/symbol parity passed; no getty process was
+started on a host terminal.

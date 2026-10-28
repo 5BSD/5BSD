@@ -7418,3 +7418,29 @@ not production/default selection or publication. No runtime cases or host
 installation occurred. Descriptor fexecve cases still need an isolated native
 runtime; whole-world/kernel/pkgbase/bootstrap/cache/performance gates remain
 open. Make stays production/default and BIP remains out of scope.
+
+## 2026-10-28 native getty
+
+Added a source-owned native getty target covering main.c/init.c/subr.c/chat.c,
+local headers and the existing libutil CcInfo/shared-library dependency. The
+installation archive includes the program, separate debug information,
+gettytab configuration, all three sectioned manuals and Make-owned directories.
+No program source or authentication behavior changed.
+
+Through build-bsd at 16 jobs, the default amd64 candidate matches independent
+Make across 96 global/undefined symbol entries, dynamic dependencies
+(libc.so.7 and libutil.so.10, no RPATH), nine installation metadata records,
+and all four nonbinary payloads. Debug filename/CRC/DWARF validates, and stripping
+preserves the native candidate's .text bytes. This is not ELF/debug byte identity
+with Make. Evidence: /usr/obj/usr/src/bazel-getty-20261028-r2/qualification/parity.json.
+Reference: bazel-getty-reference-20261028, objects in
+bazel-getty-reference-objects-20261028; scripts: bazel-getty-qualification-20261028.
+The first archive omitted Make's /etc metadata; r2 includes its utilities owner.
+
+Reviewed build-bsd.c: existing format-5 explicit target/settings/installation
+collection supports this component, with no new frontend option or publication
+contract. No host installation or terminal daemon startup occurred. The staged
+SDK is still Make-prepared. PTY/serial interaction, login handoff, failure paths,
+configuration/static/cross variants and resource/cache behavior remain to be
+qualified. Complete world/kernel/pkgbase/runtime/performance gates remain open;
+Make stays production/default and BIP remains out of scope.
