@@ -2940,3 +2940,13 @@ CTF label/type/data dumps. This data object adds no probe sites. Compiler and
 source identity are explicit build inputs; supplied provenance is not verified
 boot or a cryptographic source attestation. Final kernel CTF merging, debugger
 access and live instrumentation remain open.
+
+## nullfs module compilation (2026-10-28)
+
+All three native module objects retain Make-equivalent allocated data and
+relocations. null_subr.c defines four SDT probes (cache hit/miss, node start/done)
+and one provider; the probe/argument sets retain 4/7 pointers and tracepoints
+retain 12 relocations. null_vfsops.c retains 3 module-metadata records. CTF
+labels/types/data match and DWARF remains present. No new direct audit callbacks
+were added; filesystem audit integration must be evaluated through the complete
+VFS/system path. Native module linking and live SDT/audit qualification are open.

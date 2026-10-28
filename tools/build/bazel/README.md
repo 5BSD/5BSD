@@ -33925,3 +33925,49 @@ Modules must preserve generated interfaces, debug/CTF/DTrace, dependency metadat
 installation and packaging. Ports/third-party module Make support remains required.
 Make stays production/default. This checkpoint does not mark any whole-system
 migration gate complete.
+
+### Native nullfs module objects (2026-10-28)
+
+The next module path begins with //sys/fs/nullfs:generic_module_object_files.
+All three maintained sources (null_subr.c, null_vfsops.c, null_vnops.c) compile
+with declared kernel/vnode/offset/VM/CK headers, GENERIC options, KLD_MODULE and
+KLD_TIED, native CTF conversion and preserved DWARF. The existing amd64 GENERIC
+flags/header dependencies moved to tools/build/bazel/kernel_amd64.bzl so kernel
+and module objects share policy; this remains explicitly scoped to amd64 GENERIC,
+not all architectures/configurations. No module is installed or loaded.
+
+/usr/obj/usr/src/bazel-nullfs-objects-20261028 contains the maintained frontend
+build and captured objects. Its qualification/verify.py compares with the real
+Make module recipe under /usr/obj/usr/src/bazel-nullfs-20261028. The reference
+uses the same SDK compiler, MODULE_TIED=yes, DEBUG_FLAGS=-g, WITH_CTF=yes and the
+existing GENERIC KERNBUILDDIR. Make successfully builds the full reference module;
+Bazel currently builds only its objects. Host ctfconvert/ctfmerge are Make reference
+tools. The native action uses the Bazel-built converter.
+
+The initial object comparison caught different diagnostic __FILE__ paths. Make's
+PREFIX_SYSDIR alone does not activate source path rewriting; the final reference
+explicitly enables WITH_REPRODUCIBLE_PATHS=yes and PREFIX_SYSDIR=sys, matching
+Bazel's logical source path. The three reference runs and logs are retained.
+No output strings, machine code or comparison payloads are rewritten/filtered.
+This qualifies the stated reproducible-path profile, not byte identity against
+Make's default absolute diagnostic paths or complete DWARF byte identity.
+
+All three objects have identical allocated section type/flags/size/alignment and
+bytes, canonical allocated relocations, and defined global symbols/sizes. CTF
+label/type/data dumps match; .debug_info and .debug_line are retained. null_subr
+retains four nullfs SDT probe symbols plus the provider: 4 probe pointers, 7
+argument pointers, 12 tracepoint relocation records. null_vfsops retains 3
+module-metadata relocation records. Full source/object details are in parity.json.
+These are object preservation checks, not linked-module or live instrumentation
+qualification; no host module loading is authorized or performed.
+
+Frontend review: existing format-5 targets and kernel_ctf_label select the objects;
+no frontend C/backend interface change is required. The manual and observability
+log describe exact scope. Next is a reusable module link/export path preserving
+ldscript.kmod.amd64 page protection layout, relocatable linking, CTF merge,
+EXPORT_SYMS, split debug and installation metadata. The maintained export AWK
+spawns nm through a shell and does not currently check its pipeline close status;
+its error propagation needs review before adopting it into the native path.
+No claim is made that producing these objects completes nullfs, all base modules,
+drivers, kernel/world aggregation, pkgbase, runtime or performance gates.
+Make remains production/default.

@@ -3663,3 +3663,12 @@ verification. The existing version_branch setting also applies.
 adds normal kernel compilation, CTF conversion and retained DWARF. Make object
 comparison and limited invalidation checks pass; complete kernel/modules,
 publication, runtime and system performance remain unqualified.
+
+.Pp
+.Dq //sys/fs/nullfs:generic_module_object_files
+compiles the three nullfs module sources for amd64 GENERIC with KLD_MODULE,
+KLD_TIED, CTF and retained DWARF. Object and relocation comparison uses Make's
+WITH_REPRODUCIBLE_PATHS=yes and PREFIX_SYSDIR=sys profile. Default absolute
+source-path strings and complete DWARF bytes are not claimed identical.
+Native module linking, symbol exports, split debug and installation/package
+metadata remain pending; this target does not produce a qualified loadable module.
