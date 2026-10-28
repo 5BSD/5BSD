@@ -3032,3 +3032,26 @@ require linked-kernel qualification. Alternate profiling configurations remain
 separate qualification. Full kernel/world/pkgbase/bootstrap and CPU/memory/
 disk performance gates stay open. Make remains production/default; module
 count remains 45. No host installation or BIP changes occurred.
+
+### Native resource limits and process accounting
+
+Added //sys/kern:generic_resource_accounting_object_files for kern_resource.c
+and kern_acct.c, selected by the maintained GENERIC Makefile. Dependencies
+declare CK/VM and MAC headers. Neither source requires an additional local
+option header. No limits, accounting or policy source behavior changed.
+
+Evidence: `/usr/obj/usr/src/bazel-resource-accounting-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. Reference log:
+`/usr/obj/usr/src/bazel-resource-accounting-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets support these additions without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Resource-limit enforcement, scheduling priority permissions, resource
+usage reporting and accounting-file lifecycle/space handling remain linked-
+kernel qualification. Full kernel/world/pkgbase/bootstrap and performance
+gates remain open. Make remains production/default; module count remains 45.
+No host installation or BIP work occurred.

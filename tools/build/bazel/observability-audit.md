@@ -3498,3 +3498,16 @@ No source instrumentation changed. No AUDIT_ARG calls were found locally;
 that alone does not establish a missing audit requirement for synchronization
 operations. Live contention, ownership transitions, probes and MAC outcomes
 remain unqualified.
+
+### Resource limits and process accounting (2026-10-28)
+
+kern_resource.c defines four procresource nice/limit start/done probes;
+kern_acct.c defines acct:config and retains mac_system_check_acct calls.
+Native GENERIC objects match Make symbols, raw CTF, allocated sections and
+runtime relocations, including probe metadata. Evidence:
+`/usr/obj/usr/src/bazel-resource-accounting-kernel-20261028/qualification`.
+No runtime source changed. No local AUDIT_ARG calls were found in either
+source; review syscall event mapping and emitted argument records for
+setrlimit/setpriority/acct before claiming complete audit coverage. Local
+absence alone is not proof that syscall auditing is absent. Live probes,
+accounting records and permission enforcement remain unqualified.

@@ -185,3 +185,6 @@ amd64_generic_kernel_objects(name = "generic_threads", srcs = ["kern_thr.c", "ke
 amd64_generic_kernel_objects(name = "generic_umtx", srcs = ["kern_umtx.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
         "//sys/amd64/conf:generic_opt_umtx_profiling_header"])
+
+amd64_generic_kernel_objects(name = "generic_resource_accounting", srcs = ["kern_resource.c", "kern_acct.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers"])
