@@ -8570,3 +8570,31 @@ qualified combined installation or full flua runtime suite. Next consolidate
 installation and Bazel-owned runtime tests, then bootstrap/configuration coverage.
 Nuageinit and whole-world/kernel/pkgbase/cache/performance gates remain open.
 Make remains default; no host installation or kernel state changes occurred.
+
+
+## 2026-10-28: combined non-bootstrap flua installation
+
+Added //libexec/flua:complete_install_archive composing interpreter and all eight
+loadable-module component manifests. Module manifests are exposed narrowly to the
+flua parent package. Explicit directory ownership covers shared debug ancestors
+and lyaml's Lua directory. Component install_archive targets remain available
+for isolated parity checks; the complete target supplies the combined payload.
+
+Strict comparison against the union of nine isolated Make component references
+matches 34 unique records and 27 file payloads. Duplicate Make directory records
+must agree. Payloads equal the previously qualified component archives byte for
+byte; exact tar membership and all ancestor ownership/modes are checked.
+A bounded integration run uses the interpreter and every module extracted from
+the combined archive, native dependent libraries and previously qualified native
+loader/libc: all nine imports (including lyaml's Lua wrapper) succeed, as does a
+YAML-to-UCL serialization/parsing interchange. No privileged operations run.
+
+Evidence: /usr/obj/usr/src/bazel-flua-complete-20261028/qualification/
+{combined-parity.json,runtime/results.json}. Scripts:
+bazel-flua-complete-qualification-20261028/{verify.py,runtime.py}. Build used
+maintained build-bsd at 16 jobs. Reviewed build-bsd.c: existing explicit inputs
+collect this target without frontend changes. This is component-union parity,
+not an independent recursive Make build, pkg publication, or a self-contained
+system image; dependent DSOs/loader remain separately provided native artifacts.
+Bazel-owned tests, privileged VM checks, bootstrap/configuration variants and
+whole world/kernel/pkgbase/cache/performance gates remain open. Make stays default.

@@ -34,3 +34,31 @@ bsd_install_archive(
 
 cc_library(name = "bootstrap_headers", hdrs = ["bootstrap.h"], strip_include_prefix = ".",
     visibility = ["//libexec/flua:__subpackages__"])
+
+# Interpreter and all modules from the non-bootstrap Make configuration.
+bsd_install_archive(
+    name = "complete_install_archive",
+    manifests = [":install_manifest", "//libexec/flua/lfbsd:install_manifest", "//libexec/flua/lfs:install_manifest", "//libexec/flua/libhash:install_manifest", "//libexec/flua/libjail:install_manifest", "//libexec/flua/libucl:install_manifest", "//libexec/flua/liblyaml:install_manifest", "//libexec/flua/libfreebsd/kenv:install_manifest", "//libexec/flua/libfreebsd/sys/linker:install_manifest"],
+    directories = {
+    "/usr/lib/debug/usr": "{\"owner\":\"root\",\"group\":\"wheel\",\"mode\":\"0755\",\"tags\":[\"package=flua\",\"dbg\"]}",
+    "/usr/lib/debug/usr/libexec": "{\"owner\":\"root\",\"group\":\"wheel\",\"mode\":\"0755\",\"tags\":[\"package=flua\",\"dbg\"]}",
+    "/usr/lib/debug/usr/lib": "{\"owner\":\"root\",\"group\":\"wheel\",\"mode\":\"0755\",\"tags\":[\"package=flua\",\"dbg\"]}",
+    "/usr/lib/debug/usr/lib/flua": "{\"owner\":\"root\",\"group\":\"wheel\",\"mode\":\"0755\",\"tags\":[\"package=flua\",\"dbg\"]}",
+    "/usr/lib/debug/usr/lib/flua/freebsd": "{\"owner\":\"root\",\"group\":\"wheel\",\"mode\":\"0755\",\"tags\":[\"package=flua\",\"dbg\"]}",
+    "/usr/lib/debug/usr/lib/flua/freebsd/sys": "{\"owner\":\"root\",\"group\":\"wheel\",\"mode\":\"0755\",\"tags\":[\"package=flua\",\"dbg\"]}",
+    "/usr/share/flua/lyaml": "{\"owner\":\"root\",\"group\":\"wheel\",\"mode\":\"0755\",\"tags\":[\"package=flua\"]}"
+},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

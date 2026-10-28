@@ -14,4 +14,4 @@ def module_installation(name, module, binary = ":module", extra_entries = []):
         owner = "root", group = "wheel", mode = "0444", install_tags = ["package=flua"])
     bsd_install_file(name = name + "_debug_file", src = ":" + name + "_symbols", destination = "/usr/lib/debug/usr/lib/flua/" + module + ".debug",
         owner = "root", group = "wheel", mode = "0444", install_tags = ["package=flua", "dbg"])
-    bsd_install_manifest(name = name, entries = [":" + name + "_file", ":" + name + "_debug_file"] + extra_entries)
+    bsd_install_manifest(name = name, entries = [":" + name + "_file", ":" + name + "_debug_file"] + extra_entries, visibility = ["//libexec/flua:__pkg__"])

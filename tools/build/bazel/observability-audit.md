@@ -5382,3 +5382,13 @@ kernel-environment and module load/unload behavior, privilege denial, cleanup an
 kernel audit events remain unqualified; run those checks in an isolated VM.
 No host kernel state was changed. Evidence:
 /usr/obj/usr/src/bazel-flua-freebsd-20261028/qualification/parity.json.
+
+
+### combined flua installation (2026-10-28)
+
+All interpreter/module payloads match their qualified component archives. A
+staged integration run imports all modules and exchanges YAML data through UCL.
+No kernel environment, jail or module-loading operations are exercised; those
+privileged behavior/audit gates remain open. This external run is not yet a
+Bazel-owned test suite. Evidence:
+/usr/obj/usr/src/bazel-flua-complete-20261028/qualification/.
