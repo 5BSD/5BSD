@@ -4632,3 +4632,11 @@ object/exception-section parity does not qualify runtime thread initialization,
 login-record writes or event delivery. Static pututxline testing and full native
 libc/libthr runtime integration remain required. Existing stub functions are
 part of libc's maintained design, not migration workarounds.
+
+## 2026-10-28: libc loader interfaces and imported utilities
+
+No direct SDT/DTrace or BSM audit hooks found in these seven migrated sources.
+Existing weak loader-service stubs, TLS bootstrap interfaces and imported
+utility implementations are unchanged. Object/exception-section parity does not
+prove loader interposition, TLS lifetime, tracing or lookup-cache behavior.
+Full native loader/libc runtime qualification remains required.

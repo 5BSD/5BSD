@@ -38,3 +38,5 @@ cc_library(
 bsd_component_archive(name = "objects_archive", groups = [":stdlib_objects", ":qsort_objects", ":division_objects"])
 bsd_component_archive(name = "pic_objects_archive", groups = [":stdlib_objects", ":qsort_objects", ":division_objects"], pic = True)
 exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+exports_files(["atexit.h"], visibility = ["//lib/libc/gen:__pkg__"])

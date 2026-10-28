@@ -311,3 +311,21 @@ cc_library(
 )
 bsd_component_archive(name = "support_archive", groups = [":support_objects"])
 bsd_component_archive(name = "support_pic_archive", groups = [":support_objects"], pic = True)
+
+cc_library(
+    name = "loader_import_objects",
+    srcs = ["dlfcn.c", "tls.c", "sysconf.c", "unvis-compat.c",
+            "//contrib/libc-vis:vis.c", "//contrib/libc-vis:unvis.c", "//contrib/libc-pwcache:pwcache.c"],
+    hdrs = ["//contrib/libc-pwcache:pwcache.h", "//lib/libc/stdlib:atexit.h"],
+    implementation_deps = ["//lib/libc/include:gen_helper_headers", "//libexec/rtld-elf:thr_headers", "//contrib/tzcode:tzdir_header"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({
+        "//tools/build/bazel/config:nls_enabled": ["NLS"],
+        "//conditions:default": [],
+    }),
+    copts = ["-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "loader_import_archive", groups = [":loader_import_objects"])
+bsd_component_archive(name = "loader_import_pic_archive", groups = [":loader_import_objects"], pic = True)

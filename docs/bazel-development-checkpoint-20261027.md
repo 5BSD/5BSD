@@ -6098,3 +6098,32 @@ This is a component inventory checkpoint, not whole-libc completion.
 Frontend review: build-bsd's existing format-5 targets support the additions;
 no frontend/backend contract changes needed. All compilation uses 16 CPUs;
 Make remains production/default, with no host installation or policy changes.
+
+## 2026-10-28: libc loader interfaces and imported utilities
+
+Adds seven native sources: dlfcn.c, tls.c, sysconf.c, unvis-compat.c, imported
+vis.c/unvis.c and pwcache.c. Imported files remain in their maintained contrib
+locations with narrow exports. Loader headers, timezone-directory constants,
+atexit metadata and pwcache declarations are explicit dependencies. Existing
+libthr loader-header consumers remain intact; rtld_malloc source visibility was
+reviewed and kept restricted to its existing consumer.
+
+Evidence: /usr/obj/usr/src/bazel-libc-loaderimports-build-20261028/qualification/
+parity.json versus bazel-libc-loaderimports-make-20261028: all 14 ordinary/PIC
+objects match .text and global/unresolved symbols. exception-sections.json also
+confirms raw exception/unwind section contents/presence. Full relocation/data/debug
+identity, installation/versioning and runtime linking remain unqualified.
+
+dlfcn.c contains maintained weak stubs overridden by the dynamic linker; these
+are existing source semantics, not newly invented fallbacks. tls.c retains its
+bootstrap allocator and weak runtime-linker interface. Static/dynamic resolution,
+TLS initialization/allocation, shell escaping, pwcache lookup behavior and sysconf
+values still need complete native runtime tests. Compiling these sources does not
+establish a native runtime linker or completed libc.
+
+Five primary gen sources remain: getgrent, getgrouplist, getnetgrent, getpwent and
+initgroups. Complete libc source reconciliation, generated syscall interfaces,
+linking/DOF, ABI/install and runtime gates remain broader outstanding work.
+Frontend review: existing build-bsd format-5 targets support these additions;
+no new frontend/backend contract required. All compilation uses 16 CPUs; Make
+remains production/default. No host installation or loader configuration changed.
