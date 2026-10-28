@@ -3316,3 +3316,12 @@ Do not infer live hook invocation from artifact parity. Runtime qualification
 must cover node lifecycle, devfs rules, jailed views, device I/O and label
 propagation; assess audit/probe coverage along those paths. No instrumentation,
 filesystem policy or source behavior changed in this build conversion.
+
+### tmpfs and pseudofs built-in variants (2026-10-28)
+
+Native built-in object comparisons preserve all allocated sections and runtime
+relocations against Make, extending the earlier module artifact evidence.
+Live VFS/MAC/audit integration, vnode cache lifetimes, concurrent teardown and
+memory-pressure behavior still need a linked test kernel. Review tracing at
+those operations without interpreting build parity as executed hook coverage.
+No filesystem or instrumentation source behavior changed.

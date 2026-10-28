@@ -2640,3 +2640,27 @@ rulesets, jail visibility, MAC labels, open/read/write and teardown remain
 runtime tests for the linked kernel. Complete world/kernel/pkgbase/bootstrap
 and CPU/memory/disk performance gates remain open. Module count stays 45;
 Make remains production/default, and no host installation or BIP work occurred.
+
+### Native tmpfs and pseudofs built-in variants
+
+Added generic_builtin_object_files for tmpfs and pseudofs, four sources each.
+Module and built-in targets share explicit source/dependency inventories but
+retain their different compilation settings. Native option/vnode/offset
+headers are unchanged. The eight-object inventory matches selected generated
+GENERIC Make targets; no filesystem implementation or policy source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-tmpfs-pseudofs-builtins-20261028/qualification`.
+All eight match Make symbols, raw CTF, complete allocated-section inventories
+and contents/size/type/flags/alignment, and runtime relocation records and
+associations. Both object sets and the comparison script are retained.
+Reference log: `/usr/obj/usr/src/bazel-tmpfs-pseudofs-builtins-make-20261028.log`;
+maintained recipes use the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 selection and native artifact retention
+support the added built-in targets without new C/backend options or object
+installation entries. Mount/unmount, vnode lifetime, quota/limits, memory
+pressure, concurrent file operations and filesystem performance remain live
+qualification work. Complete kernel/world/pkgbase/bootstrap gates stay open.
+Module count remains 45; Make stays production/default. No host filesystem
+was mounted or modified, and no BIP work was introduced.
