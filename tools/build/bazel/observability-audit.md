@@ -3844,3 +3844,15 @@ raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-vfs-lifecycle-kernel-20261028/qualification`.
 No runtime source changed. Live probes, vnode reclamation, syncer behavior and
 concurrent lifecycle operations remain unqualified.
+
+### Buffered and clustered VFS I/O (2026-10-28)
+
+vfs_bio.c retains nine buffer-cache SDT probe definitions for reclamation,
+space waits, flushes, write waits and I/O completion. No local SDT definitions
+were found in vfs_cluster.c and neither source has local AUDIT_ARG calls;
+assess surrounding vnode/syscall coverage before proposing additional probes.
+Native GENERIC output matches Make symbols, raw CTF, allocated sections and
+runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-vfs-buffer-io-kernel-20261028/qualification`.
+No runtime source changed. Probe delivery, pressure/error paths and CPU,
+memory and disk I/O performance remain unqualified.

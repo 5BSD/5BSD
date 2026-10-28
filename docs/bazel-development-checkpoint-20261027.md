@@ -3774,3 +3774,28 @@ paths and filesystem CPU/memory/I/O costs require linked-kernel testing.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 stays production/default; module count remains 45. No host installation or
 BIP changes occurred.
+
+### Native buffered and clustered VFS I/O
+
+Added //sys/kern:generic_vfs_buffer_io_object_files for vfs_bio.c and
+vfs_cluster.c, selected by maintained GENERIC Make. Dependencies declare
+CK/VM, GEOM, debugger headers and generated DDB options. No buffer-cache,
+clustering or disk I/O algorithm changed.
+
+Evidence: `/usr/obj/usr/src/bazel-vfs-buffer-io-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. The DDB option header matches Make bytes. Reference
+log: `/usr/obj/usr/src/bazel-vfs-buffer-io-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible paths. Whole-object/debug-path identity is not
+claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Sequential/random buffered I/O, read-ahead, clustered writes, dirty-buffer
+pressure, flush/error handling, latency/throughput, CPU and memory consumption
+need linked-kernel measurements. Object parity does not establish performance.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+stays production/default; module count remains 45. No host installation or
+BIP changes occurred.
