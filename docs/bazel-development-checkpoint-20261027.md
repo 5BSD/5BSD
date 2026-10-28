@@ -1792,3 +1792,26 @@ comparisons. Live storage behavior, failover, zoned-device semantics,
 source/header invalidation, broad configuration/architecture support and
 resource/performance qualification remain unproven. This does not qualify
 a whole kernel or all modules/drivers, and Make remains the production path.
+
+### GEOM mirror and netdump header dependencies
+
+Added native geom_mirror with both maintained C sources. The first sandbox
+build correctly rejected a missing net/if.h dependency from geom_disk.h ->
+sys/disk.h. The disk header's netdump interface also requires netinet/in.h,
+net/vnet.h and netinet6/in6.h. These are now explicit cc_library header
+dependencies in a separate GEOM disk_headers target, without disabling
+netdump or exposing undeclared source files. Existing userland header targets
+are retained.
+
+The second frontend build succeeds; evidence is
+`/usr/obj/usr/src/bazel-geom-mirror-r2-20261028/qualification`. Runtime symbol
+and relocation listings, text/data/rodata and raw CTF match the Make reference
+at `/usr/obj/usr/src/bazel-geom_mirror-make-20261028`. Debug identity and CRC
+pass. Staged install parity and incremental checks are pending for this module,
+as are live mirror/failover/resync and performance checks. This is the eleventh
+module in the current artifact-comparison batch, not whole-kernel completion.
+
+The existing maintained frontend format-5 selection handles these targets;
+no C frontend, signing or publication changes are required. Next: mirror
+installation parity, then GPT using the native g_part_if generator; GEOM label
+requires its maintained opt_geom generation and broader filesystem headers.

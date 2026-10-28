@@ -1,2 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["tcp_stats.c"], visibility = ["//lib/libstats:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "address_headers", hdrs = ["in.h"], includes = [".."],
+    deps = ["//sys/net:network_headers", "//sys/netinet6:address_headers"], visibility = ["//visibility:public"])

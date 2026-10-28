@@ -3042,3 +3042,11 @@ No live probe firing or failover was exercised. Inspected Linux LVM/zoned
 sources have no explicit SDT_* or AUDIT_* calls; migration adds/removes none.
 Assess common GEOM instrumentation and useful component-specific coverage
 separately. Evidence: bazel-geom-expanded-20261028/qualification under /usr/obj/usr/src.
+
+### GEOM mirror (2026-10-28)
+
+Neither inspected g_mirror.c nor g_mirror_ctl.c declares SDT_* or AUDIT_*
+calls. The native module's complete runtime symbol and relocation listings
+match Make; no instrumentation changes were made. Assess mirror failover,
+resync and common GEOM tracing/audit coverage separately. Runtime behavior
+and live instrumentation remain unqualified.
