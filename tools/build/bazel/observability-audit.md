@@ -4229,3 +4229,11 @@ No local SDT/DTrace/AUDIT hooks in unchanged ldd source. Runtime-loader paths an
 O_VERIFY input open behavior are preserved. Known-ELF dependency reporting
 compares with Make on the current loader; this does not qualify live loader or
 exec audit events, arbitrary architectures or a newly built installed image.
+
+
+### 2026-10-28: lock
+
+No local SDT/DTrace/AUDIT hooks in unchanged lock source; native PAM keeps its
+configured library instrumentation. Private temporary-key PTY checks pass, but
+PAM authentication, syslog events, setuid transitions and console locking remain
+installed-system coverage. No new probes/audit policy or authentication bypass.

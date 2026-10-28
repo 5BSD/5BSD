@@ -4821,3 +4821,31 @@ Frontend review: existing format-5 explicit targets and installation rules cover
 the addition without frontend/backend contract changes. Make declares no tests;
 retained behavior comparisons are conversion evidence. Whole-system gates remain
 incomplete and Make stays production default. No host install or reboot.
+
+
+## 2026-10-28: native lock and private-terminal checks
+
+Added native lock with native PAM dependency and maintained setuid installation
+mode 4555. Runtime source, temporary-key and PAM authentication paths are unchanged.
+Evidence: /usr/obj/usr/src/bazel-lock-20261028 with Make reference
+/usr/obj/usr/src/bazel-lock-make-20261028. qualification/verify.py verifies five
+installation records (octal modes normalized), six globals, libpam.so.6/libc.so.7
+and BIND_NOW/NOW PIE metadata, and identical compressed manual bytes.
+
+qualification/terminal_check.py and pty.json record six private PTY checks:
+Bazel/Make each cancel an empty key, reject mismatched keys and unlock with the
+chosen fixture key. Every run disables echo while prompting and restores the
+complete original terminal attributes on exit. Executables are uninstalled and
+non-setuid; no account credentials or user terminal involved. No PAM authentication,
+virtual-console locking, privileged install or timeout-expiry qualification.
+Native PAM and SDK libraries used; no full executable/debug byte identity claim.
+Initial harness naming shadowed Python pty; renamed. The next harness waited
+without draining PTY output, blocking TCSADRAIN; corrected to drain while waiting.
+No product behavior was changed to make tests pass; bounded cleanup kills only
+the harness's own child on failure.
+
+Frontend review: existing format-5 explicit target/archive rules handle this
+addition without frontend/backend changes. Make declares no component tests;
+retained terminal checks are conversion evidence, not registered Bazel tests.
+Whole world/kernel/pkgbase/runtime/performance gates remain open. Make remains
+default, no host installation, authentication attempt or reboot.
