@@ -3121,3 +3121,12 @@ Neither inspected source has explicit SDT_* or AUDIT_* calls. Native symbol
 and relocation-record comparisons preserve hook registrations. Common MAC
 audit/tracing and live bind/privilege behavior need runtime review; no policy
 module was loaded for this build qualification.
+
+### mac_do (2026-10-28)
+
+Configuration and rule__grant SDT probes are retained with byte-matching
+provider/probe/argument/tracepoint sections and relocation listings. Registered
+hooks include init/destroy, credential setcred enter/check/exit and privilege
+grant. Artifact parity does not establish credential authorization or audit
+behavior. Live grants/denials, jail interaction and probe firing remain open.
+Evidence: bazel-mac-do-20261028/qualification under /usr/obj/usr/src.

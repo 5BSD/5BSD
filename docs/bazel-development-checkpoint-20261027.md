@@ -2113,3 +2113,19 @@ jail/VNET behavior, auditing and performance remain unqualified. The current
 artifact-comparison batch contains twenty-five modules. Existing maintained
 format-5 frontend selection covers these targets; no C/backend publication
 change is needed. Full-system gates remain open; Make remains production.
+
+### Native mac_do
+
+Added mac_do with its maintained source, generated vnode headers and shared
+MAC policy dependencies. Evidence: `/usr/obj/usr/src/bazel-mac-do-20261028/qualification`;
+Make reference `/usr/obj/usr/src/bazel-mac_do-make-20261028`. Runtime symbols
+and relocations, text/data/rodata, raw CTF and all SDT provider/probe/argument/
+tracepoint sections match Make. Debug identity/CRC and staged installation
+metadata pass. Both configuration and rule-grant probes remain present.
+
+No module load, credential transition, privilege grant/denial or live probe
+firing was performed. Existing format-5 frontend selection covers this
+addition without new C/backend policy. The current comparison batch has
+twenty-six native module builds; complete kernel/world/pkgbase, live policy,
+source/header invalidation and performance gates remain open. Make remains
+production/default. Next MAC review includes mac_abac and capability modules.
