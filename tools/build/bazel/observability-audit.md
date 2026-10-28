@@ -3748,3 +3748,14 @@ runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-hash-unit-kernel-20261028/qualification`.
 No runtime source changed. Concurrent lookup and identifier lifetime behavior
 remain unqualified.
+
+### ACL helpers and VFS ACL entry points (2026-10-28)
+
+vfs_acl.c defines six probes for get/check/set/remove and has type/vnode/fd
+audit arguments. subr_acl_nfs4.c has no local SDT/AUDIT calls; higher VFS
+layers provide instrumentation. Native GENERIC objects match Make symbols,
+raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-acl-kernel-20261028/qualification`.
+No runtime source changed. Live ACL/MAC decisions, inheritance, audit records
+and probe firing remain unqualified. The unselected ufs_acl/POSIX.1e variant
+is not covered by this evidence.
