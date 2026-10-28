@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# luaconf.h beside lua.h includes this maintained local configuration.
+# The older lib/liblua/luaconf.h is not the header selected by Make.
+cc_library(name = "config_headers", hdrs = ["luaconf.local.h"],
+    strip_include_prefix = ".", visibility = ["//contrib/lua/src:__pkg__"])
+[cc_library(
+    name = name,
+    copts = flags,
+    srcs = ["//contrib/lua/src:lapi.c", "//contrib/lua/src:lcode.c", "//contrib/lua/src:lctype.c", "//contrib/lua/src:ldebug.c", "//contrib/lua/src:ldo.c", "//contrib/lua/src:ldump.c", "//contrib/lua/src:lfunc.c", "//contrib/lua/src:lgc.c", "//contrib/lua/src:linit.c", "//contrib/lua/src:llex.c", "//contrib/lua/src:lmem.c", "//contrib/lua/src:lobject.c", "//contrib/lua/src:lopcodes.c", "//contrib/lua/src:lparser.c", "//contrib/lua/src:lstate.c", "//contrib/lua/src:lstring.c", "//contrib/lua/src:ltable.c", "//contrib/lua/src:ltm.c", "//contrib/lua/src:lundump.c", "//contrib/lua/src:lvm.c", "//contrib/lua/src:lzio.c", "//contrib/lua/src:lauxlib.c", "//contrib/lua/src:lbaselib.c", "//contrib/lua/src:lcorolib.c", "//contrib/lua/src:ldblib.c", "//contrib/lua/src:liolib.c", "//contrib/lua/src:lmathlib.c", "//contrib/lua/src:loslib.c", "//contrib/lua/src:lstrlib.c", "//contrib/lua/src:ltablib.c", "//contrib/lua/src:lutf8lib.c", "//contrib/lua/src:loadlib.c"],
+    deps = ["//contrib/lua/src:headers", "//lib/msun:m"],
+    local_defines = ['LUA_PROGNAME=\\\"\\\"'],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+) for name, flags in [("lua", []), ("lua_pie", ["-fPIE"])]]
+# Make marks this INTERNALLIB: build consumers link it; it is not installed.
+bsd_component_archive(name = "static_archive", groups = [":lua"],
+    visibility = ["//visibility:public"])
+bsd_component_archive(name = "pie_archive", groups = [":lua_pie"],
+    visibility = ["//visibility:public"])

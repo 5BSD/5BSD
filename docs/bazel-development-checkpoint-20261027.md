@@ -8324,3 +8324,29 @@ runtime checks remain open. The script's interpreter/modules are runtime package
 dependencies, not bundled substitutes. Split-manpage configuration, complete
 pkgbase construction, world/kernel, cache and performance gates remain open.
 Make remains production/default. No host configuration was changed.
+
+
+## 2026-10-28: internal liblua ordinary and PIE archives
+
+Added explicit native cc_library source declarations for all 32 liblua C files,
+ordinary and PIE consumer variants, and component archives. Header dependencies
+use contrib/lua/src/luaconf.h and its maintained lib/liblua/luaconf.local.h;
+the older lib/liblua/luaconf.h is not substituted. The math dependency is native
+CcInfo. Make's INTERNALLIB contract is preserved: no installation manifest or
+installed liblua DSO is invented.
+
+All 64 ordinary/PIE objects match the isolated Make reference in .text bytes
+and global symbols. Make archive member inventories drive the comparison and
+native object counts must match. Rootless Make install produces zero component
+records, as expected. Evidence: /usr/obj/usr/src/bazel-lua-20261028-r2/
+qualification/parity.json; reference objects under
+bazel-lua-reference-objects-20261028/usr/src/lib/liblua. Retained scripts:
+bazel-lua-qualification-20261028/{make.py,verify.py}. Both Bazel builds used the
+maintained build-bsd frontend with 16 jobs. Reviewed build-bsd.c explicit input
+handling: these targets require no frontend or publication behavior change.
+
+Only the amd64 target-library configuration is qualified here. Bootstrap Lua's
+BOOTSTRAPPING definitions and search paths, flua and its loadable modules,
+interpreter runtime tests, dependency invalidation/cache behavior and performance
+remain open. No host installation occurred. Whole-world/kernel/pkgbase gates
+remain open and Make stays production/default.

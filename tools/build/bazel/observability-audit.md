@@ -5285,3 +5285,15 @@ configuration and other system mutations. flua/module integration is pending.
 No runtime, audit-event or DTrace coverage is claimed for this installation-only
 change. Evidence: bazel-nuageinit-20261028-r2/qualification/installation-parity.json
 under /usr/obj/usr/src.
+
+
+### liblua native archives (2026-10-28)
+
+All 32 sources are carried into ordinary/PIE native targets; 64 object text and
+global-symbol comparisons pass against Make. Source scan found no DTRACE,
+SDT_PROBE or audit() integration in the Lua C/header inputs. No probes were
+removed or invented. Lua's language debug hooks are separate from OS audit and
+DTrace coverage. Review audit needs at privileged flua/nuageinit operations when
+those runtimes are qualified; this internal library build establishes no audit
+or runtime behavior. Bootstrap and interpreter/module tests remain pending.
+Evidence: /usr/obj/usr/src/bazel-lua-20261028-r2/qualification/parity.json.
