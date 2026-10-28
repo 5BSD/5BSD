@@ -4573,3 +4573,29 @@ Frontend review: existing explicit format-5 inputs and archive rules cover both
 components with no frontend/backend contract change. Standard /usr/obj storage
 and 16-job execution preserved. No host install or service activation. Full
 world/kernel/pkgbase/boot/runtime/performance gates remain incomplete.
+
+
+## 2026-10-28: native c89 and c99 compiler frontends
+
+Added unchanged-source native cc_binary targets, split debug/manual installation
+and archive metadata for both toolchain-package programs. Neither Make component
+has generated sources or declares tests. Their maintained /usr/bin/cc invocation
+is preserved; conversion does not inject a private compiler pathname.
+
+Evidence: /usr/obj/usr/src/bazel-c89-c99-20261028 and separate Make references
+bazel-c89-make-20261028 / bazel-c99-make-20261028. Per-component qualification
+verifiers show five installation records each, byte-identical compressed manuals,
+six defined globals each and libc.so.7/BIND_NOW/NOW PIE metadata matching Make.
+qualification/runtime.py and runtime.json record four compile-and-run comparisons:
+C89/C99 __STDC_VERSION__ checks, macro forwarding, a 24-extra-argument C99 case,
+and joined/separated pthread/rt/xnet library operands. Each native/Make pair
+produces byte-identical test executable output and each executable exits zero.
+Compiler version is recorded. These runtime checks use the maintained host
+/usr/bin/cc and host libraries, not Bazel-built clang; they do not qualify a
+complete installed image or whole frontend executable/debug byte identity.
+
+Frontend review: explicit format-5 target inputs and current installation rules
+cover the additions without frontend/backend contract changes. No new registered
+Bazel tests claimed; retained comparisons qualify this conversion only. World,
+kernel, pkgbase, boot, runtime and performance gates remain incomplete; Make
+remains production default. No host installation or reboot.

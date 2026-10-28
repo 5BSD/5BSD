@@ -4154,3 +4154,11 @@ sources unchanged. chat tty/modem exchanges, timeouts and syslog, and comsat
 mail notification/terminal writes deserve integration coverage. Early invocation
 checks do not exercise them. No claim that syscall auditing is absent; no probe
 or audit-policy changes introduced.
+
+
+### 2026-10-28: c89 and c99
+
+No local SDT/DTrace/AUDIT hooks in either unchanged compiler frontend. Process
+exec auditing, where applicable, belongs to the existing exec path; absence of
+local hooks does not establish missing syscall audit coverage. Argument and
+language-mode qualification uses host cc and does not test live audit events.
