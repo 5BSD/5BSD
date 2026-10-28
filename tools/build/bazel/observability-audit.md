@@ -5372,3 +5372,13 @@ and syntax-error checks pass using the archived Lua payload. These checks do not
 establish hostile-input resource limits, exhaustive YAML semantics, or audit
 coverage of privileged configuration consumers. Nuageinit integration remains
 open. Evidence: /usr/obj/usr/src/bazel-flua-lyaml-20261028-r2/qualification/.
+
+
+### flua FreeBSD kenv/linker modules (2026-10-28)
+
+Original kenv.c and linker.c compile unchanged with object code/global-symbol
+parity against Make. Manuals and nested installation paths are preserved. Runtime
+kernel-environment and module load/unload behavior, privilege denial, cleanup and
+kernel audit events remain unqualified; run those checks in an isolated VM.
+No host kernel state was changed. Evidence:
+/usr/obj/usr/src/bazel-flua-freebsd-20261028/qualification/parity.json.

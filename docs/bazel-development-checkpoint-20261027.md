@@ -8545,3 +8545,28 @@ frontend change. This is bounded module qualification, not exhaustive YAML parse
 coverage, resource-limit testing or nuageinit runtime. Remaining FreeBSD modules,
 Bazel-owned tests, bootstrap and complete world/kernel/pkgbase/cache/performance
 gates remain open. No host installation. Make remains production/default.
+
+
+## 2026-10-28: flua FreeBSD kernel-environment/linker modules
+
+Added native freebsd.kenv and freebsd.sys.linker modules with unchanged sources,
+explicit Lua/bootstrap headers, nested installed module/debug paths and their
+section-3lua manuals. Both PIC object .text/global-symbol comparisons pass.
+DSOs match 22/18 symbols respectively, libc-only dependencies, SONAME and empty
+RPATH/RUNPATH. Seven/eight installation metadata records and both compressed
+manual payloads match Make; debug validation and stripped-text preservation pass.
+
+Evidence: /usr/obj/usr/src/bazel-flua-freebsd-20261028/qualification/parity.json.
+References: bazel-flua-{kenv,linker}-reference-20261028. Retained scripts:
+bazel-flua-freebsd-qualification-20261028/{make-kenv.py,make-linker.py,verify.py}.
+Builds used maintained build-bsd at 16 jobs. Reviewed frontend explicit target
+handling; no frontend change needed. No runtime syscall qualification is claimed:
+kernel environment changes and module load/unload need isolated VM testing.
+
+All modules in the current non-bootstrap flua Make list now have native build
+and component installation targets (lfbsd, lfs, libhash, libjail, libucl,
+liblyaml, and libfreebsd's kenv/sys.linker). This is component coverage, not a
+qualified combined installation or full flua runtime suite. Next consolidate
+installation and Bazel-owned runtime tests, then bootstrap/configuration coverage.
+Nuageinit and whole-world/kernel/pkgbase/cache/performance gates remain open.
+Make remains default; no host installation or kernel state changes occurred.
