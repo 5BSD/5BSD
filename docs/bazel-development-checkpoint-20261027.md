@@ -8172,3 +8172,27 @@ subtree without frontend changes. No host installation or network execution
 occurred. Split-manual variant, runtime behavior, configured-world/pkgbase
 aggregation, full-system publication and performance gates remain open. Make
 remains production/default; this is component installation evidence only.
+
+## 2026-10-28 libexec maintenance scripts
+
+Added native install archives for save-entropy and makewhatis.local. Their
+maintained shell source bytes are installed directly under the extensionless
+/usr/libexec names, with 0555 script and 0444 compressed manual permissions.
+Make's package-specific /usr/libexec directory record is preserved separately
+for utilities and mandoc. The first archive build omitted those directory
+ownership records; the r2 graph adds them based on independent Make staging.
+
+At 16 jobs through build-bsd, both archives pass exact script/manual byte and
+three-record metadata comparison (six component records total). Evidence:
+/usr/obj/usr/src/bazel-libexec-scripts-20261028-r2/qualification/
+installation-parity.json. References: bazel-save-entropy-reference-20261028 and
+bazel-makewhatis.local-reference-20261028. Scripts:
+bazel-libexec-scripts-qualification-20261028. No ELF/debug transformation is
+applicable to these shell scripts; no replacement scripts were generated.
+
+Reviewed build-bsd.c: existing format-5 archive support suffices, with no
+frontend changes required. Neither script executed: no host entropy files,
+random-device reads, or manual databases were changed. Runtime permissions,
+rotation/error cases, manual database traversal and split-manual configurations
+remain unqualified. World/pkgbase/publication/runtime/cache/performance gates
+remain open; Make stays production/default.

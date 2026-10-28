@@ -5233,3 +5233,11 @@ All four executable/debug payloads and five manual entries now have Make-parity
 installation evidence, including the gateway manual hardlink. No runtime source
 or logging was altered. BOOTP packet/configuration/relay/error behavior still
 needs isolated execution; packaging checks do not supply that coverage.
+
+## 2026-10-28 save-entropy and makewhatis.local
+
+Exact maintained script bytes and manuals are preserved by native installation.
+Existing entropy error logging remains unchanged. No script was executed;
+qualify entropy-slot rotation/permissions/failure reporting and manual database
+maintenance in isolated writable fixtures before runtime claims. Installation
+parity does not establish random-device or maintenance behavior.
