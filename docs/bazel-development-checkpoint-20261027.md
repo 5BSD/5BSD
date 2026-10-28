@@ -6976,3 +6976,39 @@ Full world/kernel/packages/performance gates remain open; Make stays default.
 No host installation occurred. The full execution diagnostic for the first
 candidate was approximately 1.8 GiB; broad diagnostic disk/resource cost remains
 a performance work item, not a passed gate.
+
+## 2026-10-28: native runtime-linker core and lazy DTrace provider
+
+Added native amd64 rtld core compilation: ten C translation units and two
+startup assembly units, with declared architecture, startup-note, rtld-libc ABI,
+capimage and veriexec syscall headers. policy.bzl records maintained freestanding,
+no-SIMD, soft-float, hidden-visibility, no-SSP and zero-fortification requirements.
+The core includes elf_signature.c; signature checks were not omitted to make
+the build pass. No runtime source or security behavior changed.
+
+rtld's DTrace header and object transformations use the maintained -xlazyload
+policy. All rewritten objects are separate outputs; compilation outputs remain
+immutable. Ten C objects are supplied to the transform; only probe-bearing code
+changes. The lazy provider carries DOF and expected probe-site relocations, with
+no init/fini constructor sections or other undefined runtime imports. A first
+verifier incorrectly rejected the necessary $dtrace probe-site symbols; it was
+corrected to distinguish those from external runtime imports, while retaining
+the complete normalized symbol comparison with Make.
+
+Evidence: /usr/obj/usr/src/bazel-rtld-core-20261028/qualification/object-parity.json.
+All 12 core objects match independent Make executable-section bytes and global/
+undefined symbols after normalizing DTrace path IDs; provider symbols also match.
+Reference: bazel-rtld-core-reference-20261028. Disabled variant evidence:
+bazel-rtld-core-no-dtrace-20261028/qualification/object-parity.json: all 12 core
+objects match Make bytes/symbols, no DTrace symbols, no DTrace generation actions.
+Independent reference: bazel-rtld-core-no-dtrace-reference-20261028. Scripts:
+bazel-rtld-core-qualification-20261028.
+
+Reviewed build-bsd.c's maintained bazel-test backend; existing format-5 explicit
+targets and typed dtrace setting handle both runs with 16 jobs. No new frontend
+input or publication behavior is needed. These are object comparisons, not
+linked-loader or runtime tests; no host installation occurred. Next: native
+rtld replacement-libc sources, selected libc/libsys object dependencies, final
+link/version map and forbidden-dependency checks, installation and loader tests.
+SDK/bootstrap closure and full world/kernel/package/performance gates remain
+open. Make remains production/default.

@@ -2,3 +2,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = ["rtld_machdep.h"], strip_include_prefix = ".",
     visibility = ["//libexec/rtld-elf:__pkg__"])
+
+exports_files(["reloc.c", "rtld_start.S"], visibility = ["//libexec/rtld-elf:__pkg__"])

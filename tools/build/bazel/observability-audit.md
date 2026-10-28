@@ -4869,3 +4869,13 @@ its separately built compiler policy. An initially overbroad transition was
 rejected by symbol comparison and replaced with a libc-only setting. No C
 sources, probes or audit hooks changed. This does not establish live DTrace
 registration/firing or qualify the still-unbuilt native runtime linker.
+
+## 2026-10-28 runtime-linker core
+
+Native rtld preserves its maintained lazy DTrace provider and patched core
+object code. All 12 core executable-section payloads and normalized global/
+undefined symbols match Make. The provider has DOF and probe-site relocations
+without libc-dependent runtime imports or constructor sections. With dtrace
+disabled, all 12 core objects still match Make and no DTrace generation action
+runs. This is compilation/provider evidence; final loader linkage and live
+probe firing remain unqualified. No audit or signature-check source changed.

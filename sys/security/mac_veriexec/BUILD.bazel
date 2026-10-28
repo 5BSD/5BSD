@@ -25,3 +25,7 @@ amd64_generic_kernel_objects(name = "generic_builtin",
         "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_mac_header",
         "//sys/amd64/conf:generic_opt_veriexec_header", "//sys/fs/nullfs:headers",
         "//sys/crypto/sha2:module_headers", "//sys/opencrypto:ed25519_headers"])
+
+# Userland rtld requires the syscall ABI, not kernel implementation headers.
+cc_library(name = "rtld_abi_header", hdrs = ["mac_veriexec.h"], strip_include_prefix = "/sys",
+    visibility = ["//libexec/rtld-elf:__pkg__"])

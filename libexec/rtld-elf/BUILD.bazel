@@ -10,3 +10,32 @@ cc_library(name = "thr_headers", hdrs = ["rtld.h", "rtld_lock.h", "rtld_printf.h
 
 cc_library(name = "paths_header", hdrs = ["rtld_paths.h"],
     strip_include_prefix = ".", visibility = ["//sbin/ldconfig:__pkg__", "//usr.bin/ldd:__pkg__"])
+
+load(":policy.bzl", "RTLD_COPTS", "RTLD_DEFINES", "RTLD_PLATFORM")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+bsd_dtrace_header(name = "trace_provider", source = "rtldtrace_provider.d", output = "rtldtrace_provider.h",
+    flags = ["-xlazyload"], object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:bootstrap", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti", runtime_libraries = ["//cddl/usr.sbin/dtrace:bootstrap_runtime"],
+    tool_inputs = ["@bsd_sdk//toolchain:compile_inputs", "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
+cc_library(name = "core_headers", hdrs = ["debug.h", "libmap.h", "rtld.h", "rtld_lock.h", "rtld_printf.h",
+    "rtld_paths.h", "rtld_malloc.h", "rtld_tls.h", "rtld_utrace.h", "rtldtrace_trace.h"] + select({
+        "//tools/build/bazel/config:dtrace_enabled": [":trace_provider"], "//conditions:default": []}),
+    strip_include_prefix = ".",
+    deps = ["//libexec/rtld-elf/amd64:headers", "//libexec/rtld-elf/rtld-libc:headers", "//lib/csu/common:notes_header"])
+cc_library(name = "core_objects", srcs = ["//libexec/rtld-elf/amd64:reloc.c", "rtld.c", "rtld_lock.c", "rtld_malloc.c",
+    "rtld_printf.c", "map_object.c", "elf_signature.c", "xmalloc.c", "debug.c", "libmap.c"],
+    implementation_deps = [":core_headers", "//sys/security/mac_veriexec:rtld_abi_header", "//sys/sys:capimage_headers"],
+    local_defines = RTLD_DEFINES, copts = RTLD_COPTS, features = ["-bsd_ssp"],
+    target_compatible_with = RTLD_PLATFORM)
+cc_library(name = "startup_objects", srcs = ["//lib/csu/common:crtbrand.S", "//libexec/rtld-elf/amd64:rtld_start.S"],
+    implementation_deps = [":core_headers"], local_defines = RTLD_DEFINES + ["LOCORE"],
+    copts = RTLD_COPTS, features = ["-bsd_ssp"], target_compatible_with = RTLD_PLATFORM)
+bsd_component_archive(name = "core_pic_archive", groups = [":core_objects", ":startup_objects"], pic = True)
+bsd_dtrace_cc_objects(name = "traced_core_objects", libraries = [":core_objects"],
+    provider = ":trace_provider", provider_object = "rtldtrace_provider",
+    copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+filegroup(name = "traced_core_pic", srcs = [":traced_core_objects"], output_group = "pic_objects")
+filegroup(name = "trace_provider_pic", srcs = [":traced_core_objects"], output_group = "pic_provider")

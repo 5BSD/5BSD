@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["crtbrand.S"], visibility = ["//libexec/rtld-elf:__pkg__"])
+cc_library(name = "notes_header", hdrs = ["notes.h"], strip_include_prefix = ".",
+    visibility = ["//libexec/rtld-elf:__pkg__"])
