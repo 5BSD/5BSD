@@ -4895,3 +4895,13 @@ explicit inventory, executable-section bytes and global/undefined symbols.
 Selection forwards declared compiler outputs without pulling in transitive
 library objects. No C source, DTrace provider or audit hook changed. Final
 loader dependency checks and runtime observability remain pending linkage.
+
+## 2026-10-28 linked native runtime loader
+
+Native rtld links with the lazy provider and matches Make's ten DTrace schemas.
+Twelve ordinary and fourteen enabled sites pass instruction-byte validation;
+there are no constructor dependencies. The disabled variant has no DOF. Both
+loaders execute the native-libc smoke program with confirmed native libc/libsys
+selection. Live probe registration/firing and broad loader runtime behavior are
+not established. Link-map rejection gates preserve Make's dependency isolation;
+no signature verification, audit or runtime C source was changed.

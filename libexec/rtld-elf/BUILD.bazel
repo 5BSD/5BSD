@@ -49,3 +49,23 @@ load("@rules_cc//cc:defs.bzl", "cc_import")
 # archive extraction semantics at final link; do not whole-link libc/libsys.
 cc_import(name = "selected_runtime_objects", pic_objects = ["//lib/libc:rtld_nossp_objects", "//lib/libsys:rtld_pic_objects"])
 bsd_component_archive(name = "selected_runtime_archive", groups = [":selected_runtime_objects"], pic = True)
+
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+bsd_configured_version_map(name = "version_map", symbol_maps = ["Symbol.map"],
+    versions = "//lib/libc:Versions.def", generator = "//share/mk:version_gen.awk",
+    cpp_flags = ["-P", "-nostdinc", "-undef"], compiler = "@bsd_sdk//toolchain:bin/clang",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk", awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect")
+cc_import(name = "traced_core_link", pic_objects = [":traced_core_pic", ":trace_provider_pic"])
+cc_import(name = "selected_runtime_link", static_library = ":selected_runtime_archive")
+load(":link.bzl", "bsd_rtld_link")
+bsd_rtld_link(name = "rtld", output = "ld-elf.so.1.full", entry = ".rtld_start",
+    groups = [":startup_objects"] + RTLD_LIBC_GROUPS + select({
+        "//tools/build/bazel/config:dtrace_enabled": [":traced_core_link"],
+        "//conditions:default": [":core_objects"]}),
+    deps = [":selected_runtime_link", "//lib/libcompiler_rt:compiler_rt"], version_map = ":version_map",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"], target_compatible_with = RTLD_PLATFORM)
+filegroup(name = "rtld_binary", srcs = [":rtld"], output_group = "binary", visibility = ["//visibility:public"])

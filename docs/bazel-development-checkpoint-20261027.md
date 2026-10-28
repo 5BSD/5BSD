@@ -7076,3 +7076,50 @@ version script, forbidden-dependency checks, installation/debug parity and
 loader runtime tests. These dependency-object results do not establish loader
 execution, full-world/kernel/pkgbase or performance qualification. Make remains
 production/default.
+
+## 2026-10-28: native rtld linking and direct execution
+
+Added //libexec/rtld-elf:rtld and rtld_binary. The local link rule uses the
+registered C/C++ toolchain and cc_common.link with explicit PIC compilation
+outputs, ordinary archive dependencies, entry symbol, maintained version map,
+-nostdlib, symbolic binding and defined-symbol enforcement. The link map is a
+declared additional output, not an undeclared shell side effect. Version-map
+generation reuses the maintained declared CPP/AWK actions.
+
+A mandatory sandboxed check rejects the same four link-map patterns as Make:
+__libsys_interposing, __libc_interposing, xlocale and fprintf. Only after these
+checks does it copy the loader to its exported artifact and produce a hash
+report. Installation consumers of rtld_binary therefore depend on the check.
+The checker does not claim ELF verification beyond a magic check; independent
+qualification below supplies ABI and runtime evidence.
+
+Evidence: /usr/obj/usr/src/bazel-rtld-link-20261028-r3/qualification/link-parity.json.
+The version map and all 29 dynamic symbol entries match independent Make. Both
+loaders have the correct .rtld_start entry, symbolic/bind-now/RELRO properties,
+no PT_INTERP, no DT_NEEDED and no init/fini constructors. Ten DTrace probe
+schemas match; 12 ordinary and 14 enabled probe sites have validated instruction
+bytes. This does not establish live probe firing. Whole ELF bytes differ due
+to build paths/layout and are not claimed identical.
+
+qualification/direct-runtime.json records successful direct execution of the
+existing native-libc smoke executable through the new loader, with loader trace
+confirming the explicit native libc.so.7 and libsys.so.7 paths. No installed
+loader or program was replaced. The host kernel and prepared SDK headers/
+startup objects remain. This smoke execution is not yet a maintained Bazel
+loader test suite or a full-system boot qualification.
+
+DTrace-disabled evidence: bazel-rtld-link-no-dtrace-20261028/qualification, with
+the same ABI/properties and direct smoke pass and no DOF section. References:
+bazel-rtld-link-reference-20261028 and bazel-rtld-link-no-dtrace-reference-20261028.
+Make uses independently built libc NOSSP/libsys PIC archives; its compiler-rt
+search still uses the prepared SDK, while native linkage declares compiler_rt.
+Scripts: bazel-rtld-link-qualification-20261028. The enabled qualification also
+records rejection of all four forbidden map patterns and an empty map in
+link-check-rejections.json. Initial analysis failures (generator visibility and
+SDK Python file acceptance) remain in the first two native run directories.
+
+Reviewed build-bsd.c: existing format-5 targets support both runs at 16 jobs.
+No public build/publication option changes are needed. Next: installation/debug
+metadata parity, maintained Bazel loader runtime tests and broader dlopen/TLS/
+libmap/preload/error handling. Full-world/kernel/pkgbase, bootstrap and resource
+performance gates remain open. Make remains production/default.
