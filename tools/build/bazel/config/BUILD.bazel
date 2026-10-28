@@ -227,3 +227,7 @@ config_setting(name = "kernel_zstdio_enabled", flag_values = {":kernel_zstdio": 
 # Module diagnostic compilation, corresponding to WITHOUT_VERIEXEC_DEBUG.
 bool_flag(name = "veriexec_debug", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "veriexec_debug_enabled", flag_values = {":veriexec_debug": "true"}, visibility = ["//visibility:public"])
+
+# Match MK_SETUID_LOGIN; disabled builds retain a normal executable.
+bool_flag(name = "setuid_login", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "setuid_login_enabled", flag_values = {":setuid_login": "true"}, visibility = ["//visibility:public"])

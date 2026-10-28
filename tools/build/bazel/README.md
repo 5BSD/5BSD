@@ -34322,3 +34322,21 @@ The bintrans legacy suite qualifies this layout and all five original TAP
 checks; lastcomm qualifies the existing flat layout. Evidence is recorded in
 the 2026-10-28 checkpoint. Bintrans's two ATF cases still fail at runtime startup
 on the current host and are not qualified by the passing legacy suite.
+
+
+### Login feature and capability-database inputs
+
+`//tools/build/bazel/config:setuid_login` is a boolean source setting, default
+true, corresponding to MK_SETUID_LOGIN. The normal format-5 `build-settings`
+object passes it through build-bsd bazel-test. Native login also honors existing
+`audit` and `dtrace` settings. Setuid installation preserves Make's 4555/schg
+metadata; disabled installation is 0555 without schg. These are installation
+records, not changes to host executable permissions.
+
+`bsd_capdb` declares a capability source, `.db` output, explicit `little` or
+`big` byte order and an execution-configured compiler. login uses the native
+cap_mkdb_bootstrap source reader and amd64 little endian. Other execution/target
+platforms need qualification; no host database is imported. login.conf.db lacks
+a package tag in the current Make METALOG recipe, which is recorded as an open
+pkgbase ownership/reconciliation issue. Full-feature and all-three-disabled
+login artifact comparisons pass; authentication/session runtime remains open.

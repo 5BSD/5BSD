@@ -1,26 +1,20 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Capability database generation with explicit target byte order."""
+"""Compile a declared capability database with an execution-platform tool."""
 def _capdb(ctx):
     output = ctx.actions.declare_file(ctx.attr.output)
-    if not output.path.endswith(".db"):
+    if not output.basename.endswith(".db"):
         fail("capability database output must end in .db")
-    environment = {"LC_ALL": "C"}
-    if ctx.files.runtime_libraries:
-        environment["LD_LIBRARY_PATH"] = ":".join(sorted(depset([f.dirname for f in ctx.files.runtime_libraries]).to_list()))
-    args = ctx.actions.args()
-    args.add("-l" if ctx.attr.endian == "little" else "-b")
-    args.add_all(["-f", output.path[:-3]])
-    args.add_all(ctx.files.srcs)
-    ctx.actions.run(executable = ctx.attr.compiler[DefaultInfo].files_to_run,
-        arguments = [args], inputs = ctx.files.srcs,
-        tools = ctx.files.runtime_libraries, outputs = [output],
-        env = environment, use_default_shell_env = False, mnemonic = "BSDCapabilityDatabase")
+    ctx.actions.run(
+        executable = ctx.attr.compiler[DefaultInfo].files_to_run,
+        arguments = ["-l" if ctx.attr.byte_order == "little" else "-b", "-f", output.path[:-3], ctx.file.source.path],
+        inputs = [ctx.file.source], outputs = [output],
+        env = {"LC_ALL": "C"}, use_default_shell_env = False,
+        mnemonic = "BSDCapabilityDatabase",
+    )
     return [DefaultInfo(files = depset([output]))]
-
-bsd_capability_database = rule(implementation = _capdb, attrs = {
-    "srcs": attr.label_list(allow_files = True, mandatory = True, allow_empty = False),
+bsd_capdb = rule(implementation = _capdb, attrs = {
+    "source": attr.label(allow_single_file = True, mandatory = True),
     "output": attr.string(mandatory = True),
-    "endian": attr.string(values = ["little", "big"], mandatory = True),
+    "byte_order": attr.string(mandatory = True, values = ["little", "big"]),
     "compiler": attr.label(executable = True, cfg = "exec", mandatory = True),
-    "runtime_libraries": attr.label_list(allow_files = True, cfg = "exec"),
 })

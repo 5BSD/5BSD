@@ -4849,3 +4849,42 @@ addition without frontend/backend changes. Make declares no component tests;
 retained terminal checks are conversion evidence, not registered Bazel tests.
 Whole world/kernel/pkgbase/runtime/performance gates remain open. Make remains
 default, no host installation, authentication attempt or reboot.
+
+
+## 2026-10-28: native login, configuration DB and feature variants
+
+Added native login/login_fbtab and optional login_audit compilation with libutil,
+PAM and optional BSM. DTrace uses the existing native provider/object pipeline.
+New typed setuid_login setting defaults true, matching MK_SETUID_LOGIN; enabled
+installation preserves mode 4555 and the preexisting Make PRECIOUSPROG schg flag,
+disabled uses 0555 without schg. This preserves existing metadata, not BIP work.
+Four original configuration files are installed with runtime/config tags.
+
+New bsd_capdb rule runs cap_mkdb_bootstrap in the execution configuration on a
+declared source file, with explicit output and little/big byte order. login
+currently targets amd64 and selects little endian. It does not copy a host DB,
+parse Make or write into /etc. Execution-platform portability and big-endian
+qualification remain outstanding. Database install metadata matches Make,
+including its currently untagged login.conf.db record; package ownership must
+be resolved explicitly in full-world pkgbase reconciliation, not silently omitted.
+
+Full-feature evidence: /usr/obj/usr/src/bazel-login-20261028-r2 against
+bazel-login-make-20261028. Eleven unique installation records, 15 globals,
+ordered libutil.so.10/libpam.so.6/libbsm.so.3/libc.so.7 and BIND_NOW/NOW PIE
+match. Manual and generated login.conf.db bytes match. Offline DOF inventories
+match two login auth/fail schemas and both builds pass amd64 probe instruction
+site checks. No registration/live-authentication assertion is implied.
+
+Disabled-feature evidence: bazel-login-minimal-20261028 against
+bazel-login-minimal-make-20261028, with audit/dtrace/setuid disabled explicitly.
+Eleven metadata records, ten globals, manual and database bytes match; libbsm,
+.SUNW_dof and schg are absent as expected. Separate qualification/verify.py and
+parity.json retained for each variant. Other combinations remain unqualified.
+No login invocation or PAM/session/credential/terminal/audit runtime test performed;
+those remain isolated-VM gates. No full executable/debug byte identity claim.
+
+Frontend review: source_graph.setting_arguments already validates and forwards
+typed format-5 source settings; both runs exercised setuid_login through build-bsd.
+No C frontend or backend-contract change needed. README documents the setting
+and database rule. No installed system, host configuration or credentials changed.
+Whole-system gates remain incomplete and Make remains default.

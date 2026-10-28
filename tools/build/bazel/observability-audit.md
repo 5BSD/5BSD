@@ -4237,3 +4237,12 @@ No local SDT/DTrace/AUDIT hooks in unchanged lock source; native PAM keeps its
 configured library instrumentation. Private temporary-key PTY checks pass, but
 PAM authentication, syslog events, setuid transitions and console locking remain
 installed-system coverage. No new probes/audit policy or authentication bypass.
+
+
+### 2026-10-28: login
+
+Preserves login auth/fail DTrace probes and optional BSM login_audit compilation.
+Full-feature probe schemas and ordinary instruction sites match Make offline;
+disabled-feature build omits DOF/BSM as configured. Live PAM authentication,
+credential transitions, terminal/session setup, BSM event emission and provider
+registration still require VM qualification. No bypass or runtime source change.
