@@ -264,7 +264,7 @@ main(int argc, char **argv)
 	const char *execution_path = installed_path(argc, argv);
 	char root[PATH_MAX], bin[PATH_MAX], shell[PATH_MAX], interpreter[PATH_MAX];
 	char data[PATH_MAX], libs[PATH_MAX], suite[PATH_MAX], body[PATH_MAX];
-	char result[PATH_MAX], *line = NULL;
+	char result[PATH_MAX], loader_path[PATH_MAX], *line = NULL;
 	size_t line_capacity = 0;
 	ssize_t line_length;
 	const char *outcome = NULL, *reason = NULL;
@@ -275,6 +275,8 @@ main(int argc, char **argv)
 	const char *harness = required("BSD_ATF_HARNESS");
 	const char *interface = required("BSD_ATF_INTERFACE");
 	const char *executable;
+	const char *loader = getenv("BSD_ATF_LOADER");
+	int use_loader = loader != NULL && strcmp(loader, "1") == 0;
 	int shell_interface;
 	char temporary[PATH_MAX];
 	int status, cleanup_status = 0;
@@ -288,7 +290,13 @@ main(int argc, char **argv)
 		fprintf(stderr, "invalid ATF interface: %s\n", interface);
 		return (1);
 	}
+	if ((loader != NULL && strcmp(loader, "0") != 0 && !use_loader) ||
+	    (use_loader && shell_interface)) {
+		fprintf(stderr, "invalid explicit ATF loader configuration\n");
+		return (1);
+	}
 	join(root, required("TEST_SRCDIR"), required("TEST_WORKSPACE"));
+	join(loader_path, root, "atf-loader/loader");
 	join(bin, root, "atf-runtime/bin");
 	join(shell, bin, "sh");
 	join(interpreter, bin, "atf-sh");
@@ -331,14 +339,18 @@ main(int argc, char **argv)
 		fprintf(stderr, "invalid ATF configuration count\n");
 		return (1);
 	}
-	arguments = calloc(8 + 2 * (size_t)config_count, sizeof(*arguments));
+	arguments = calloc(10 + 2 * (size_t)config_count, sizeof(*arguments));
 	if (arguments == NULL) {
 		perror("calloc");
 		return (1);
 	}
-	executable = shell_interface ? interpreter : body;
+	executable = use_loader ? loader_path : (shell_interface ? interpreter : body);
 	arguments[argument_count++] = (char *)executable;
-	if (shell_interface)
+	if (use_loader) {
+		arguments[argument_count++] = "--";
+		arguments[argument_count++] = body;
+		fprintf(stderr, "ATF explicit loader: %s\n", loader_path);
+	} else if (shell_interface)
 		arguments[argument_count++] = body;
 	arguments[argument_count++] = "-s";
 	arguments[argument_count++] = suite;

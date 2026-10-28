@@ -13,6 +13,11 @@ def _atf_test(ctx):
         "BSD_ATF_HARNESS": ctx.file.body.basename,
         "BSD_ATF_CONFIG_COUNT": str(len(ctx.attr.config_files)),
     }
+    if ctx.file.loader:
+        if ctx.attr.interface != "program":
+            fail("explicit ATF loader requires the program interface")
+        links["atf-loader/loader"] = ctx.file.loader
+    environment["BSD_ATF_LOADER"] = "1" if ctx.file.loader else "0"
     names = []
     for target, name in ctx.attr.config_files.items():
         if not name or name in names or any([c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for c in name.elems()]):
@@ -70,6 +75,8 @@ def _atf_test(ctx):
                         target_file = ctx.executable.runner, is_executable = True)
     runfiles = ctx.runfiles(files = [ctx.executable.runner], symlinks = links)
     targets = [ctx.attr.runner, ctx.attr.body] + ctx.attr.runtime_bin + ctx.attr.runtime_lib + ctx.attr.config_files.keys() + ctx.attr.locale_files.keys() + ctx.attr.data + ctx.attr.data_paths.keys()
+    if ctx.attr.loader:
+        targets.append(ctx.attr.loader)
     runfiles = runfiles.merge_all([target[DefaultInfo].default_runfiles for target in targets])
     return [DefaultInfo(executable = ctx.outputs.executable, runfiles = runfiles),
             RunEnvironmentInfo(environment = environment)]
@@ -90,6 +97,7 @@ bsd_atf_test = rule(
         "data_paths": attr.label_keyed_string_dict(allow_files = True, doc = "Declared fixture files mapped to relative suite paths."),
         "runtime_bin": attr.label_list(allow_files = True),
         "runtime_lib": attr.label_list(allow_files = True),
+        "loader": attr.label(allow_single_file = True, doc = "Optional declared ELF loader for the ATF program body and cleanup; does not redirect child execs."),
         "locale_files": attr.label_keyed_string_dict(allow_files = True),
         "runner": attr.label(executable = True, cfg = "exec", mandatory = True),
     },

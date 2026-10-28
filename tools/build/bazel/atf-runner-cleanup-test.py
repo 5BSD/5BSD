@@ -22,7 +22,7 @@ class CleanupLifecycle(unittest.TestCase):
     def tearDownClass(cls):
         cls.storage.cleanup()
 
-    def exercise(self, body_exit=0, cleanup_exit=0, result='passed', cleanup='1', signal=False, check_locale=False, xml=False, body_timeout="0", cleanup_timeout="0", hang_body=False, hang_cleanup=False):
+    def exercise(self, body_exit=0, cleanup_exit=0, result='passed', cleanup='1', signal=False, check_locale=False, xml=False, body_timeout="0", cleanup_timeout="0", hang_body=False, hang_cleanup=False, loader=False, missing_loader=False):
         with tempfile.TemporaryDirectory(dir=self.root) as tmp:
             root = Path(tmp)
             suite = root / 'workspace/atf-suite'
@@ -60,9 +60,15 @@ example)
 esac
 ''')
             body.chmod(0o755)
+            if loader and not missing_loader:
+                launcher = root / 'workspace/atf-loader/loader'
+                launcher.parent.mkdir(parents=True)
+                launcher.write_text("#!/bin/sh\ntest \"$1\" = -- || exit 81\nshift\nprintf '%s\\n' \"$*\" >> \"$FIXTURE_LOADER_LOG\"\nexec \"$@\"\n")
+                launcher.chmod(0o755)
             env = dict(os.environ, TEST_SRCDIR=str(root), TEST_WORKSPACE='workspace',
                        TEST_TMPDIR=str(root), BSD_ATF_CASE='example', BSD_ATF_HARNESS='fixture',
-                       BSD_ATF_INTERFACE='program', BSD_ATF_CONFIG_COUNT='0', BSD_ATF_CLEANUP=cleanup,
+                       BSD_ATF_INTERFACE='program', BSD_ATF_LOADER='1' if loader else '0',
+                       FIXTURE_LOADER_LOG=str(root / 'loader-calls'), BSD_ATF_CONFIG_COUNT='0', BSD_ATF_CLEANUP=cleanup,
                        BSD_ATF_BODY_TIMEOUT=str(body_timeout), BSD_ATF_CLEANUP_TIMEOUT=str(cleanup_timeout),
                        HANG_BODY='yes' if hang_body else 'no', HANG_CLEANUP='yes' if hang_cleanup else 'no',
                        BODY_EXIT=str(body_exit), CLEANUP_EXIT=str(cleanup_exit), RESULT=result,
@@ -73,10 +79,29 @@ esac
                 env.update({name: 'contaminated' for name in ['LANG', 'LC_ALL', 'LC_COLLATE', 'LC_CTYPE', 'LC_MESSAGES', 'LC_MONETARY', 'LC_NUMERIC', 'LC_TIME', 'TZ', 'PATH_LOCALE']})
             run = subprocess.run([str(self.runner)], env=env, capture_output=True, text=True, timeout=10)
             markers = list(root.glob('atf.*/cleanup-ran'))
+            if loader and not missing_loader:
+                calls = (root / 'loader-calls').read_text().splitlines()
+                self.assertEqual(len(calls), 2 if cleanup == '1' else 1)
+                self.assertTrue(calls[0].startswith(str(body) + ' -s '))
+                self.assertTrue(calls[0].endswith(' example'))
+                if cleanup == '1':
+                    self.assertTrue(calls[1].endswith(' example:cleanup'))
+            if missing_loader:
+                self.assertFalse(list(root.glob('atf.*/body-created')))
             if xml:
                 report = root / 'test.xml'
                 return run, ET.parse(report).getroot() if report.exists() else None
             return run, len(markers)
+
+    def test_explicit_loader_runs_body_and_cleanup(self):
+        run, markers = self.exercise(loader=True)
+        self.assertEqual((run.returncode, markers), (0, 1), run.stderr)
+        self.assertIn('ATF explicit loader:', run.stderr)
+
+    def test_missing_explicit_loader_never_falls_back(self):
+        run, markers = self.exercise(loader=True, missing_loader=True)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertEqual(markers, 0)
 
     def test_timed_out_body_still_runs_cleanup(self):
         # The sleep child inherits captured output. A leaked descendant would

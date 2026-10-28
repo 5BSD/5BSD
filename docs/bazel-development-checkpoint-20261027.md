@@ -7151,3 +7151,36 @@ handle the archive with 16 jobs. No new frontend/publication setting is needed.
 Next: maintained Bazel loader runtime tests covering dynamic loading, TLS,
 libmap/preload and failure behavior. Broad world/kernel/pkgbase/bootstrap and
 performance gates remain open. Make stays production/default.
+
+## 2026-10-28: maintained ATF cases through the native loader
+
+Added optional loader input to bsd_atf_test for program-interface cases. The
+static adapter invokes the declared loader with -- and the ATF program for
+both body and cleanup, retaining deadlines, status handling and XML reporting.
+Missing loader execution fails; there is no host-loader fallback. Shell tests
+cannot select this mode. Existing callers default to their previous behavior.
+This intentionally does not redirect exec/fexecve calls made by test children;
+such cases still need their interpreter/runtime paths qualified separately.
+
+Converted the existing unmodified set_var_test and dlopen_hash_test programs
+and libpythagoras fixture to native targets. Both maintained cases pass through
+the native rtld: runtime LIBRARY_PATH_FDS changes and descriptor-qualified
+dlopen names. The fixture remains in the suite data directory, outside the
+initial runtime library path, preserving each test's initial missing-library
+assertion. Native libm is a declared fixture dependency.
+
+Evidence: /usr/obj/usr/src/bazel-rtld-tests-20261028/receipt.json, test-reports
+and qualification/runtime-provenance.json. Exactly two reported ATF cases
+passed, with native-loader bytes matched to the saved artifact and runtime
+trace confirming native libc, libsys and private ATF selection. SDK headers
+and link interfaces and the host kernel remain. Adapter regression evidence:
+qualification/adapter-regression.log, 19 tests passed, including explicit-loader
+body/cleanup dispatch and missing-loader failure without executing the body.
+These controlled protocol fixtures test adapter behavior, not ELF loading.
+
+Reviewed build-bsd.c's maintained bazel-test backend: existing format-5 targets/
+tests handle both cases at 16 jobs; no frontend CLI change is needed. Native
+Bazel runfiles carry the loader and fixtures. Remaining loader tests include
+dlopen/libthr unload, deep binding, child fexecve/preload behavior, TLS, libmap,
+parse-integer and signature-verifier cases. No host installation occurred;
+whole-system/bootstrap/package/performance gates remain open. Make stays default.

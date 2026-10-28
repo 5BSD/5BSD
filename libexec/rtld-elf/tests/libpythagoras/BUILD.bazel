@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+cc_library(name = "pythagoras", srcs = ["pythagoras.c"], hdrs = ["pythagoras.h"],
+    deps = ["//lib/msun:m"])
+cc_shared_library(name = "pythagoras_shared", deps = [":pythagoras"],
+    dynamic_deps = ["//lib/msun:m_shared"], shared_lib_name = "libpythagoras.so.0",
+    user_link_flags = ["-Wl,-soname,libpythagoras.so.0"], visibility = ["//libexec/rtld-elf/tests:__pkg__"])

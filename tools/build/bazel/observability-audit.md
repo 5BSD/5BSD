@@ -4913,3 +4913,11 @@ Its separate debug filename/CRC and DWARF presence pass. The stripped artifact
 executes a native-libc smoke probe with explicit native libc/libsys selection.
 No runtime sources, probes or audit hooks changed. This does not establish
 live DTrace firing, full installation or the broader loader runtime suite.
+
+## 2026-10-28 explicit-loader ATF execution
+
+Two maintained rtld ATF cases pass under the declared native loader with native
+libc/libsys/private ATF provenance. Test C sources are unchanged. The adapter
+records explicit-loader selection and preserves body/cleanup result handling;
+19 protocol/lifecycle regressions pass. No runtime probes or audit hooks changed.
+This does not qualify child exec interpreter selection or live DTrace firing.
