@@ -3611,3 +3611,25 @@ Get/set/list/remove, namespace and MAC permissions, path/fd/symlink semantics,
 persistence and audit output require linked-kernel/filesystem tests. Full
 kernel/world/pkgbase/bootstrap and performance gates remain open. Make stays
 production/default; module count remains 45. No host installation or BIP changes.
+
+### Native VFS pathname lookup
+
+Added //sys/kern:generic_lookup_object_files for vfs_lookup.c, selected by
+the maintained GENERIC Makefile. Dependencies declare CK/VM, MAC, audit and
+generated Capsicum/KTRACE options. No lookup or security source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-lookup-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. Both option headers match Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-lookup-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets cover this addition without new
+build-bsd C/backend options, staging or manual changes. No runtime tests ran.
+Symlink/dotdot traversal, dirfd-relative lookup, jail/Capsicum/MAC boundaries,
+rename/unmount races and lookup performance require linked-kernel/filesystem
+tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
+Make remains production/default; module count remains 45. No host installation
+or BIP changes occurred.

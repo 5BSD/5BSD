@@ -3769,3 +3769,12 @@ relocations. Evidence:
 `/usr/obj/usr/src/bazel-extattr-kernel-20261028/qualification`.
 No runtime source changed. Live namespace/MAC decisions, audit records,
 filesystem persistence and probe firing remain unqualified.
+
+### VFS pathname lookup (2026-10-28)
+
+vfs_lookup.c defines lookup entry/return probes and records directory-fd,
+user-path and vnode audit arguments. Native GENERIC output matches Make
+symbols, raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-lookup-kernel-20261028/qualification`.
+No runtime source changed. Live path resolution, security boundaries, audit
+records and probe firing remain unqualified.
