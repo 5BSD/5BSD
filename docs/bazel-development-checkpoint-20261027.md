@@ -5578,3 +5578,29 @@ Frontend review: existing format-5 typed settings pass both modes through
 build-bsd. Make production/default behavior and publication gates remain intact.
 Native publication integration still requires a complete verified libc artifact;
 no premature marker or production-backend switch was added. No host install.
+
+## 2026-10-28: sized-free wrappers and maintained ATF case
+
+Adds native ordinary/PIC targets for free_sized.c and free_aligned_sized.c,
+preserving internal implementations and weak public aliases. Allocator Symbol.map
+is exported for eventual aggregate libc ABI linkage. Four objects match Make
+.text, global and unresolved symbols: evidence under
+/usr/obj/usr/src/bazel-libc-sized-free-build-20261028/qualification/parity.json
+against bazel-libc-sized-free-make-20261028.
+
+The unchanged maintained free_sized_test.c now has a native qualification binary
+and Bazel ATF case. Evidence: bazel-libc-sized-free-test-20261028-r2/test-reports/0
+reports one passed, no skips/failures. Null pointers, ordinary allocation sizes
+1 through 65536 and 64-byte-aligned sizes 64 through 65536 are exercised.
+qualification/link-proof.json verifies all four wrapper symbols are defined in
+the native binary; malloc/aligned_alloc/__free still resolve to staged SDK libc.
+This is wrapper runtime coverage, not native jemalloc or full libc runtime proof.
+Initial test analysis failed on archive visibility; a narrow test-package grant
+fixed it. No public visibility expansion or source behavior change was needed.
+
+ATF executes through the maintained direct runner, which reports the standard
+outside-Kyua warning; this does not qualify installed Kyua suite integration.
+Full libc versioning/link, complete allocator runtime/performance, manual staging,
+installed tests and publication remain open. Frontend review: existing format-5
+targets/tests and maintained ATF adapter cover the changes through build-bsd.
+No host installation or global allocator changes.

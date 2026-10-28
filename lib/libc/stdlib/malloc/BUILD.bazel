@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(
+    name = "sized_free_objects",
+    srcs = ["free_sized.c", "free_aligned_sized.c"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ["-fexceptions", "-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "objects_archive", groups = [":sized_free_objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":sized_free_objects"], pic = True, visibility = ["//lib/libc:__pkg__", "//lib/libc/tests/stdlib:__pkg__"])
+exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])

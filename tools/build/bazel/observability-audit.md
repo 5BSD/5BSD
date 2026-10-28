@@ -4456,3 +4456,11 @@ preserve the compiled paths, but no live ktrace/utrace execution or allocator
 performance is claimed. Debug assertions remain in debug archives and absent
 from production archives. Evidence: bazel-libc-jemalloc{,-production}-build-20261028/
 qualification/parity.json and production qualification/modes.json.
+
+## 2026-10-28: sized-free wrappers
+
+Both wrappers forward to __free and retain weak aliases without direct probes or
+audit hooks. Native object parity and the maintained sized_deallocation ATF case
+pass. The test links native wrappers and SDK allocator, so runtime jemalloc utrace
+behavior is not established. Evidence: bazel-libc-sized-free-test-20261028-r2,
+including qualification/link-proof.json and the saved ATF report.
