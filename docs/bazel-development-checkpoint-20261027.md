@@ -5472,3 +5472,24 @@ data/relocation/debug identity remain unqualified.
 Frontend review: source_graph.py already forwards typed source build settings;
 build-bsd accepts the existing explicit input file. Both option values were
 exercised through that path. No new frontend C argument or helper is needed.
+
+## 2026-10-28: libc regular-expression object inventory
+
+Adds all four libc regex sources with POSIX_MISTAKE and libc's locale/collation
+path. This is distinct from the existing standalone libregex LIBREGEX build.
+engine.c is a declared textual header, preserving its repeated inclusion under
+different definitions in regexec.c; it is not compiled as an extra object.
+Locale private headers are declared dependencies.
+
+Evidence: /usr/obj/usr/src/bazel-libc-regex-build-20261028/qualification/parity.json
+against fresh bazel-libc-regex-make-20261028. All eight ordinary/PIC objects
+match .text, global and unresolved symbols. Both builds used 16 jobs.
+Complete libc linkage/ABI versioning, data/relocation/debug identity, manuals and
+runtime multibyte/collation qualification remain open. The maintained libc regex
+suite includes multibyte, data-driven matching, exhaustion and ATT cases; the
+existing SKIP_LEFTASSOC expectation is inherited test policy, not newly hidden
+by this migration. Those libc runtime tests were not run in this comparison.
+
+Frontend review: existing build-bsd format-5 explicit targets/NLS setting cover
+the group; no new C/backend contract required. No host installation or locale
+configuration changes were made.

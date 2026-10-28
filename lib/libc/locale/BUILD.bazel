@@ -108,3 +108,5 @@ bsd_component_archive(name = "pic_objects_archive", groups = [":locale_objects"]
 exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
 
 cc_library(name = "stdtime_headers", hdrs = ["ldpart.h"], strip_include_prefix = ".", deps = [":localedef_headers"], visibility = ["//lib/libc/stdtime:__pkg__"])
+
+cc_library(name = "regex_headers", hdrs = ["collate.h", "xlocale_private.h", "setlocale.h"], strip_include_prefix = ".", visibility = ["//lib/libc/regex:__pkg__"])

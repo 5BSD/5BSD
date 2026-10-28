@@ -4428,3 +4428,11 @@ code. Source time32.c retains its documented temporal-locality/post-2038 TODO;
 this migration neither repairs nor proves those semantics. Runtime reload and
 edge-case testing remains necessary with a complete native libc and zone data.
 Evidence: bazel-libc-{stdtime,stdtime-detect}-build-20261028/qualification.
+
+## 2026-10-28: libc regex
+
+Reviewed regcomp, regerror, regexec, regfree and textually included engine.c.
+No direct DTrace/SDT or BSM audit calls were found. No probes were added to
+matching loops. libc's collation path remains enabled and must be exercised by
+runtime tests with locale data; standalone libregex evidence is not a substitute.
+Object evidence: bazel-libc-regex-build-20261028/qualification/parity.json.
