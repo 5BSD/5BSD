@@ -155,3 +155,20 @@ bsd_install_archive(name = "manual_install_archive", manifests = [":manual_insta
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
     visibility = ["//visibility:public"])
+
+# Complete library-owned install/installconfig payload, excluding the test suite.
+# Generated account databases belong to fresh-system construction, not this payload.
+load("//lib/libc/nls:catalogs.bzl", "LOCALES")
+_CATALOG_DIRECTORIES = {"/usr/share/nls/" + locale: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}' for locale in LOCALES}
+_CATALOG_DIRECTORIES["/usr/share/nls"] = '{"owner":"root","group":"wheel","mode":"0755","tags":["package=locales"]}'
+bsd_install_archive(name = "install_archive",
+    manifests = [":library_install_manifest", ":manual_install_manifest", ":base_config_manifest",
+        "//lib/libc/net:config_manifest", "//lib/libc/rpc:config_manifest", "//lib/libc/nls:install_manifest"],
+    directories = {"/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}',
+        "/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=clibs","dbg"]}'} | select({
+            "//tools/build/bazel/config:nls_enabled": _CATALOG_DIRECTORIES, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])

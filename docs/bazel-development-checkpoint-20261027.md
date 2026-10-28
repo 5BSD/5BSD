@@ -6897,3 +6897,34 @@ and whole-system qualification remain. Frontend review: build-bsd.c's format-5
 targets/settings/backend handles both archives at 16 jobs without new CLI or
 publication inputs. Make remains production/default. The previously requested
 privileged iconv conversion gate remains separate from this evidence.
+
+## 2026-10-28: aggregate libc package installation payload
+
+Added //lib/libc:install_archive combining native libraries, manuals, catalogs
+and maintained raw configuration manifests. Catalog inclusion follows nls; the
+manifest is exposed only to its libc parent package. Account database generation
+remains separate initial-system state, as in the existing config_archive target.
+The aggregate excludes the test suite and does not install or migrate accounts.
+
+Evidence: /usr/obj/usr/src/bazel-libc-complete-install-20261028/receipt.json and
+qualification/complete-installation-parity.json. Compared against an independent
+maintained Make install plus installconfig, all 1505 package-tagged metadata
+records match (owners, groups, numeric IDs, modes, tags, flags and link targets),
+including 30 component directories. All 1470 nonbinary file payloads match Make;
+973 hardlink/symlink relationships pass. The four native library/debug binaries
+are byte-identical to the separately qualified library installation archive.
+Make's untagged /etc/passwd, /etc/pwd.db and /etc/spwd.db are explicitly accounted
+for as initial state, outside this package payload. Reference:
+bazel-libc-complete-install-reference-20261028. Comparison script:
+bazel-libc-install-qualification-20261028/verify-complete.py.
+
+Scope is amd64, NIS disabled, debug malloc, NLS/iconv enabled, tests excluded.
+This is archive installation parity, not a built pkgbase repository, a fresh
+bootable system, a runtime suite pass or whole-world completion. The frontend
+receipt reports action success with no selected runtime tests; the separate
+comparison supplies installation evidence. Reviewed build-bsd.c: its maintained
+bazel-test --bazel-inputs path handles this aggregate at 16 jobs without new
+inputs or publication behavior. No frontend change is needed for this target.
+No host installation occurred. Make remains production/default. Privileged
+iconv conversion, broader configurations, complete world/kernel/packages and
+performance qualification remain open.

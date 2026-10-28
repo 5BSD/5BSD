@@ -44,7 +44,8 @@ def libc_catalogs():
         entries.append(":install_" + locale)
         directories["/usr/share/nls/" + locale] = json.encode(dict(owner = "root", group = "wheel", mode = "0755", tags = ["package=utilities"]))
     native.filegroup(name = "catalogs", srcs = [":" + locale for locale in LOCALES], visibility = ["//visibility:public"])
-    bsd_install_manifest(name = "install_manifest", entries = select({"//tools/build/bazel/config:nls_enabled": entries, "//conditions:default": []}))
+    bsd_install_manifest(name = "install_manifest", entries = select({"//tools/build/bazel/config:nls_enabled": entries, "//conditions:default": []}),
+        visibility = ["//lib/libc:__pkg__"])
     bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
         directories = select({"//tools/build/bazel/config:nls_enabled": directories, "//conditions:default": {}}),
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},

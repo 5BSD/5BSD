@@ -4850,3 +4850,12 @@ installation paths; default and iconv-disabled/split-package variants match Make
 bytes, metadata and hardlink inode relationships. This is documentation coverage,
 not evidence of runtime probe or audit behavior. No runtime sources or hooks were
 changed. Canonical alias-chain handling preserves the existing Make relationships.
+
+## 2026-10-28 aggregate libc installation
+
+The combined package payload preserves the four previously qualified native
+library/debug binaries byte-for-byte, including the existing DTrace-bearing
+library. All package-tagged installation records match maintained Make in the
+qualified amd64 configuration. No runtime sources, probes or audit hooks change.
+Generated account databases remain separate initial state; neither account
+migration nor authentication behavior is demonstrated by this archive check.
