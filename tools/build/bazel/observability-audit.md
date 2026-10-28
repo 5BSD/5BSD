@@ -3687,3 +3687,13 @@ relocations. Evidence:
 `/usr/obj/usr/src/bazel-random-uuid-kernel-20261028/qualification`.
 No runtime source changed. Entropy quality/provider behavior and live syscall
 semantics are not established by compilation parity.
+
+### Kernel logging and message buffers (2026-10-28)
+
+subr_log.c and subr_msgbuf.c have no local SDT/AUDIT calls. They implement
+logging transport/storage, so absent probes do not establish missing audit
+coverage. Native GENERIC objects match Make symbols, raw CTF, allocated
+sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-logging-kernel-20261028/qualification`.
+No source instrumentation changed. End-to-end delivery to normal logging
+services, buffer wraparound and reader lifecycle remain unqualified.

@@ -267,3 +267,6 @@ amd64_generic_kernel_objects(name = "generic_kthread_posix", srcs = ["kern_kthre
 amd64_generic_kernel_objects(name = "generic_random_uuid", srcs = ["sys_getrandom.c", "kern_uuid.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/net:network_headers",
         "//sys/net:interface_type_headers", "//sys/net:link_address_headers"])
+
+amd64_generic_kernel_objects(name = "generic_logging", srcs = ["subr_log.c", "subr_msgbuf.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])

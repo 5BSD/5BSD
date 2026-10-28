@@ -3428,3 +3428,24 @@ UUID generation under jail/concurrency conditions require linked-kernel tests.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 remains production/default; module count remains 45. No host installation
 or BIP changes occurred.
+
+### Native kernel logging and message buffers
+
+Added //sys/kern:generic_logging_object_files for subr_log.c and subr_msgbuf.c,
+selected by the maintained GENERIC Makefile. Dependencies declare CK/VM headers.
+No logging source behavior changed.
+
+Evidence: `/usr/obj/usr/src/bazel-logging-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. Reference log:
+`/usr/obj/usr/src/bazel-logging-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets cover these objects without new
+build-bsd C/backend options, staging or manual changes. No runtime tests ran.
+Message delivery, wraparound, read/poll notification, asynchronous readers and
+normal logging-service integration require linked-kernel tests. Full kernel/
+world/pkgbase/bootstrap and performance gates remain open. Make remains
+production/default; module count remains 45. No host installation or BIP changes.
