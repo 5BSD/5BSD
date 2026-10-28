@@ -6363,3 +6363,56 @@ are component installation results, not a completed pkgbase repository or world.
 Remaining gates include libc linkage/DOF, full installation/package composition,
 other build configurations, runtime/kernel/modules and cache/performance testing.
 Make remains production/default, with no host installation or upgrade performed.
+
+## 2026-10-28: complete native amd64 libc composition and initial runtime proof
+
+Added source-owned composition.bzl for ordinary groups, static-only iconv/libsys
+implementations, shared-libc filtered syscall bodies, and typed iconv/NIS/string
+optimization selection. Resolver/NSS/semaphore groups undergo one combined DTrace
+rewrite per object variant; provider objects are included in each corresponding
+archive. The native ABI map uses ordered source maps with iconv/NIS/Hesiod/timezone
+options. Shared linkage uses native compiler-rt and libsys with -nodefaultlibs,
+libsys auxiliary filtering, version map and normal hardening flags.
+
+The first shared analysis correctly rejected compiler-rt's reuse across libsys
+and libc under Bazel's default link-once policy. compiler_rt now declares
+LINKABLE_MORE_THAN_ONCE: BSD deliberately links private hidden builtins into each
+DSO that needs them. It is not falsely exported by libsys, and archive extraction
+remains selective. The rejected r2 build remains available.
+
+Evidence: /usr/obj/usr/src/bazel-libc-runtime-20261028/qualification/parity.json
+against fresh bazel-libc-link-make-20261028. Native static/shared-object archives
+have 1,455/1,443 members, matching Make. The full static global/undefined symbol
+multisets match after normalizing only DTrace's generated path-derived identifier
+on __res_nsend. Version.map is byte-identical. All 3,590 dynamic-symbol entries
+match by name/version/type/binding/visibility/size and defined/undefined state.
+Both DSOs require and auxiliary-filter through libsys.so.7, have the same SONAME
+and BIND_NOW/STATIC_TLS flags, and have no TEXTREL. Archive member names/layout and
+full ELF bytes differ; two native div members are disambiguated by archive symbol
+index rather than Make's jemalloc_ filename prefix. No new per-object identity
+claim is made here beyond earlier component checks and these aggregate checks.
+
+DOF inventory and amd64 instruction-site validation match: 12 probe schemas,
+14 ordinary sites and 15 enabled sites. Constructor/destructor order also matches
+Make using DWARF names: __guard_setup, uexterr_ctr, jemalloc_constructor,
+dtrace_dof_init; __clean_env_destructor, dtrace_dof_fini. This verifies metadata,
+patching and ordering, not live probe firing. The Make link command uses staged
+SDK -lcompiler_rt/-lsys; requested LIB* path overrides did not change those link
+arguments. The native DSO uses the actual new native dependencies.
+
+The maintained libc_runtime.c smoke checks pass with explicitly selected native
+libc/libsys runfiles: allocation/text, streams, mmap/mprotect, fork/pipe I/O and
+numeric getaddrinfo. Loader tracing resolves both libraries to the saved native
+artifacts. A fully static executable also passes using native libc/compiler-rt
+with -nodefaultlibs. Final bazel-libc-runtime-20261028-r2/static-runtime-proof.json
+confirms no interpreter, native function definitions and valid DOF instruction
+sites. The final library artifacts match the earlier checked hashes. Two tests
+report passed (the unchanged shared test was cached in the final run).
+
+These are the NIS-off, debug-malloc amd64 configuration and bounded smoke tests,
+not all libc suites or all build modes. SDK startup objects and host kernel/loader
+remain. Native libc install/debug/pkgbase, broader runtime suites, option variants,
+live tracing, bootstrap/world/kernel/modules, cache and performance gates remain.
+No production-world stamp, installation or upgrade is claimed. Frontend review:
+existing build-bsd format-5 targets/tests/build-settings drove all runs at 16 jobs;
+no new CLI or publication contract is needed for this step. Make remains default.

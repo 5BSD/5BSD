@@ -74,3 +74,5 @@ exports_files(["elf-debug-check.py"])
 exports_files(["tests/libsys_runtime.c"], visibility = ["//lib/libsys:__pkg__"])
 
 exports_files(["tests/compiler_rt_runtime.c"], visibility = ["//lib/libcompiler_rt:__pkg__"])
+
+exports_files(["tests/libc_runtime.c"], visibility = ["//lib/libc:__pkg__"])

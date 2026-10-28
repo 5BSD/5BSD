@@ -184,7 +184,10 @@ cc_library(name = "objects",
 )
 bsd_component_archive(name = "static_archive", groups = [":objects"], visibility = ["//visibility:public"])
 # Preserve ordinary -fpic archive selection for all consumers, including DSOs.
-cc_import(name = "compiler_rt", static_library = ":static_archive", visibility = ["//visibility:public"])
+# BSD links private hidden runtime builtins into each DSO that needs them.
+# They are not exported from libsys for libc (or other DSOs) to reuse.
+cc_import(name = "compiler_rt", static_library = ":static_archive",
+    tags = ["LINKABLE_MORE_THAN_ONCE"], visibility = ["//visibility:public"])
 cc_test(name = "builtins_test", srcs = ["//tools/build/bazel:tests/compiler_rt_runtime.c"],
     deps = [":compiler_rt"], linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], size = "small")

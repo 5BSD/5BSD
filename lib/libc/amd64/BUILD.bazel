@@ -3,3 +3,5 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "math_headers", hdrs = ["_fpmath.h", "amd64_archlevel.h"], strip_include_prefix = ".", visibility = ["//lib/libc/include:__pkg__"])
 
 cc_library(name = "gdtoa_headers", hdrs = ['arith.h', 'gd_qnan.h'], strip_include_prefix = ".", visibility = ["//lib/libc/gdtoa:__pkg__", "//lib/libc/stdlib:__pkg__", "//lib/libc/stdio:__pkg__"])
+
+exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])

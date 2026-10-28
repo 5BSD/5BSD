@@ -121,3 +121,7 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
     visibility = ["//visibility:public"])
+
+exports_files(["syscalls.map"], visibility = ["//lib/libc:__pkg__"])
+
+exports_files(["Symbol.sys.map"], visibility = ["//lib/libc:__pkg__"])

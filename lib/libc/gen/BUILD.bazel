@@ -357,3 +357,5 @@ cc_library(
 )
 bsd_component_archive(name = "account_archive", groups = [":account_objects"])
 bsd_component_archive(name = "account_pic_archive", groups = [":account_objects"], pic = True)
+
+exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])

@@ -4704,3 +4704,15 @@ links match Make in default and split-manpage modes. This supports later debuggi
 and tracing workflows but does not itself establish DTrace probe behavior, live
 symbolication, audit records or full debugger/runtime correctness. No runtime
 instrumentation or security policy was changed by these installation targets.
+
+## 2026-10-28: whole-libc DTrace composition and runtime smoke checks
+
+Native libc combines resolver/NSS/semaphore probe objects into one provider per
+ordinary/PIC variant. Linked shared libc and the static smoke executable contain
+12 schemas, 14 ordinary sites and 15 enabled sites; the maintained DOF validator
+checks function ranges and patched NOP/RET/XOR instructions. Shared schema/site
+counts match Make, and constructor/destructor ordering preserves DOF init/fini.
+Actual registration and live probe firing are not established by these checks.
+The existing allocation, text, stream, mapping, fork/pipe and numeric-resolution
+smoke checks pass with native libraries, but do not replace libc runtime suites,
+audit-record tests, thread/cancellation checks or performance qualification.

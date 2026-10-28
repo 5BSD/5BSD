@@ -5,4 +5,4 @@ cc_library(name = "sys_headers", hdrs = ["SYS.h"], strip_include_prefix = ".", v
 
 exports_files(["_umtx_op_err.S"], visibility = ["//lib/libsys:__pkg__", "//lib/libthr:__pkg__"])
 
-exports_files(["Symbol.sys.map"], visibility = ["//lib/libsys:__pkg__"])
+exports_files(["Symbol.sys.map"], visibility = ["//lib/libc:__pkg__", "//lib/libsys:__pkg__"])

@@ -41,3 +41,59 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load(":composition.bzl", "COMMON_GROUPS", "TRACE_GROUPS", "STATIC_GROUPS", "SHARED_GROUPS")
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_shared_library")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_cc_objects")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+bsd_dtrace_cc_objects(name = "traced_objects", libraries = TRACE_GROUPS,
+    provider = ":nameres_provider", provider_object = "nameres_provider",
+    copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+[filegroup(name = "traced_" + group, srcs = [":traced_objects"], output_group = group)
+ for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
+cc_import(name = "provider_link", objects = [":traced_regular_provider"], pic_objects = [":traced_pic_provider"], alwayslink = True)
+cc_import(name = "traced", objects = [":traced_regular_objects"], pic_objects = [":traced_pic_objects"], deps = [":provider_link"])
+_TRACE_LINK = select({"//tools/build/bazel/config:dtrace_enabled": [":traced", ":provider_link"], "//conditions:default": TRACE_GROUPS})
+bsd_component_archive(name = "static_archive", groups = COMMON_GROUPS + STATIC_GROUPS + _TRACE_LINK, visibility = ["//visibility:public"])
+bsd_component_archive(name = "shared_objects_archive", groups = COMMON_GROUPS + SHARED_GROUPS + _TRACE_LINK, pic = True)
+bsd_configured_version_map(name = "version_map",
+    symbol_maps = ["//lib/libc/amd64:Symbol.map"] + ["//lib/libc/csu:Symbol.map"] + ["//lib/libc/db:Symbol.map"] + ["//lib/libc/compat-43:Symbol.map"] + ["//lib/libc/gdtoa:Symbol.map"] + ["//lib/libc/gen:Symbol.map"] + ["//lib/libc/gmon:Symbol.map"] + select({"//tools/build/bazel/config:iconv_enabled": ["//lib/libc/iconv:Symbol.map"], "//conditions:default": []}) + ["//lib/libc/inet:Symbol.map"] + ["//lib/libc/locale:Symbol.map"] + ["//lib/libc/nameser:Symbol.map"] + ["//lib/libc/net:Symbol.map"] + select({"//tools/build/bazel/config:hesiod_enabled": ["//lib/libc/net:Symbol.hesiod.map"], "//conditions:default": []}) + ["//lib/libc/nls:Symbol.map"] + ["//lib/libc/posix1e:Symbol.map"] + ["//lib/libc/regex:Symbol.map"] + ["//lib/libc/resolv:Symbol.map"] + ["//lib/libc/stdbit:Symbol.map"] + ["//lib/libc/stdio:Symbol.map"] + ["//lib/libc/stdlib:Symbol.map"] + ["//lib/libc/stdlib/malloc:Symbol.map"] + ["//lib/libc/stdtime:Symbol.map"] + ["//lib/libc/string:Symbol.map"] + ["//lib/libsys:syscalls.map"] + ["//lib/libsys:Symbol.sys.map"] + ["//lib/libsys/amd64:Symbol.sys.map"] + ["//lib/libc/sys:Symbol.map"] + ["//lib/libc/secure:Symbol.map"] + ["//lib/libc/rpc:Symbol.map"] + ["//lib/libc/uuid:Symbol.map"] + ["//lib/libc/xdr:Symbol.map"] + select({"//tools/build/bazel/config:nis_enabled": ["//lib/libc/yp:Symbol.map"], "//conditions:default": []}) + ["//lib/libc/capability:Symbol.map"],
+    versions = "Versions.def", generator = "//share/mk:version_gen.awk",
+    cpp_flags = ["-P", "-nostdinc", "-undef"] + select({"//tools/build/bazel/config:detect_tz_changes_enabled": ["-DDETECT_TZ_CHANGES"], "//conditions:default": []}),
+    compiler = "@bsd_sdk//toolchain:bin/clang", compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk", awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect")
+
+# Shared libc uses its own filtered syscall bodies. Runtime dependencies remain
+# below the archive root so cc_shared_library extracts only needed builtins.
+cc_import(name = "shared_link_objects", static_library = ":shared_objects_archive",
+    deps = ["//lib/libcompiler_rt:compiler_rt", "//lib/libsys:sys"])
+cc_shared_library(name = "c_shared", deps = [":shared_link_objects"],
+    dynamic_deps = ["//lib/libsys:sys_shared"], shared_lib_name = "libc.so.7",
+    additional_linker_inputs = [":version_map"],
+    user_link_flags = ["-nodefaultlibs", "-Wl,--auxiliary,libsys.so.7", "-Wl,-soname,libc.so.7",
+        "-Wl,--version-script=$(location :version_map),--no-undefined-version",
+        "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
+# Compile the existing ABI probe with the declared SDK, then explicitly select
+# native libc/libsys runfiles for execution. The runner itself is static.
+cc_binary(name = "runtime_probe", srcs = ["//tools/build/bazel:tests/libc_runtime.c"],
+    testonly = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_program_test(name = "runtime_test", program = ":runtime_probe",
+    runtime_lib = [":c_shared", "//lib/libsys:sys_shared"],
+    runner = "//tools/build/bazel:program_test_runner", size = "small")
+
+cc_import(name = "static_link_objects", static_library = ":static_archive",
+    deps = ["//lib/libcompiler_rt:compiler_rt"], visibility = ["//visibility:public"])
+cc_binary(name = "static_runtime_probe", srcs = ["//tools/build/bazel:tests/libc_runtime.c"],
+    deps = [":static_link_objects"], features = ["fully_static_link"],
+    linkopts = ["-nodefaultlibs"], linkstatic = True, testonly = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_program_test(name = "static_runtime_test", program = ":static_runtime_probe",
+    runner = "//tools/build/bazel:program_test_runner", size = "small")
