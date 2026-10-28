@@ -3360,3 +3360,25 @@ absolute timers, nonblocking reads, poll/kqueue and concurrent close require
 linked-kernel tests. Full kernel/world/pkgbase/bootstrap and performance gates
 remain open. Make remains production/default; module count remains 45.
 No host installation or BIP changes occurred.
+
+### Native event descriptors and filesystem notifications
+
+Added //sys/kern:generic_notifications_object_files for sys_eventfd.c and
+vfs_inotify.c, selected by the maintained GENERIC Makefile. Dependencies
+declare CK/VM, audit and generated KTRACE options. No runtime source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-notifications-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. The tracing option header matches Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-notifications-kernel-make-20261028.log`; maintained
+recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets cover these additions without new
+build-bsd C/backend options, staging or manual changes. No runtime tests ran.
+Eventfd counter/semaphore/nonblocking behavior, poll/kqueue, filesystem watch
+permissions, rename/unlink/overflow and concurrent close/watch removal need
+linked-kernel tests. Full kernel/world/pkgbase/bootstrap and performance gates
+remain open. Make remains production/default; module count remains 45.
+No host installation or BIP changes occurred.

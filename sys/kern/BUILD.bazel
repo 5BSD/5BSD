@@ -256,3 +256,7 @@ amd64_generic_kernel_objects(name = "generic_clocks", srcs = ["kern_clock.c", "k
 
 amd64_generic_kernel_objects(name = "generic_event_timers", srcs = ["kern_et.c", "sys_timerfd.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/audit:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_notifications", srcs = ["sys_eventfd.c", "vfs_inotify.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/audit:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ktrace_header"])

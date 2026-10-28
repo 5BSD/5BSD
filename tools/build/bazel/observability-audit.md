@@ -3653,3 +3653,14 @@ CTF, allocated sections and runtime relocations. Evidence:
 No instrumentation source changed. Live timer delivery, audit records and
 probe firing remain unqualified; creation arguments alone do not establish
 complete audit coverage of timer operations.
+
+### Eventfd and inotify (2026-10-28)
+
+sys_eventfd.c defines 14 SDT probes and records creation flags for audit;
+vfs_inotify.c defines five probes covering wait, watch add/remove and queueing.
+Native GENERIC objects match Make symbols, raw CTF, allocated sections and
+runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-notifications-kernel-20261028/qualification`.
+No instrumentation source changed. Inotify audit mapping and records require
+review before claiming coverage; local probes alone are not audit records.
+Live delivery, permissions, probe firing and lifecycle races remain unqualified.
