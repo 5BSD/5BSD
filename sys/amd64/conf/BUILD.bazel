@@ -23,7 +23,7 @@ load("//tools/build/bazel:bsd_tree_file.bzl", "bsd_tree_file")
     python = "@bsd_sdk//toolchain:extra_python",
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"])
- for name in ["opt_global", "opt_hwpmc_hooks", "opt_kstack_pages", "opt_config", "opt_tmpfs", "opt_ddb", "opt_pseudofs", "opt_geom", "opt_zstdio", "opt_capsicum", "opt_mac", "opt_veriexec", "opt_posix"]]
+ for name in ["opt_global", "opt_hwpmc_hooks", "opt_kstack_pages", "opt_config", "opt_tmpfs", "opt_ddb", "opt_pseudofs", "opt_geom", "opt_zstdio", "opt_capsicum", "opt_mac", "opt_veriexec", "opt_posix", "opt_sysvipc"]]
 cc_library(name = "generic_global_headers", hdrs = [":opt_global"],
     strip_include_prefix = "generic_options", visibility = ["//visibility:public"])
 cc_library(name = "generic_assym_headers", hdrs = [":opt_hwpmc_hooks", ":opt_kstack_pages"],
@@ -40,4 +40,4 @@ filegroup(name = "generic_identity", srcs = [":generic_config"], output_group = 
 
 [cc_library(name = "generic_" + name + "_header", hdrs = [":" + name],
     strip_include_prefix = "generic_options", visibility = ["//visibility:public"])
- for name in ["opt_tmpfs", "opt_ddb", "opt_pseudofs", "opt_geom", "opt_zstdio", "opt_capsicum", "opt_mac", "opt_veriexec", "opt_posix"]]
+ for name in ["opt_tmpfs", "opt_ddb", "opt_pseudofs", "opt_geom", "opt_zstdio", "opt_capsicum", "opt_mac", "opt_veriexec", "opt_posix", "opt_sysvipc"]]

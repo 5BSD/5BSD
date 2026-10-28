@@ -2664,3 +2664,29 @@ pressure, concurrent file operations and filesystem performance remain live
 qualification work. Complete kernel/world/pkgbase/bootstrap gates stay open.
 Module count remains 45; Make stays production/default. No host filesystem
 was mounted or modified, and no BIP work was introduced.
+
+### Native GENERIC System V IPC kernel objects
+
+Added sysv_ipc, sysv_msg, sysv_sem and sysv_shm under
+//sys/kern:generic_sysvipc_object_files with explicit MAC/audit/VM/CK
+headers and native config-derived opt_sysvipc.h. The source inventory matches
+the generated GENERIC kernel targets; the option header matches Make bytes.
+No IPC implementation or configuration was altered. Initial source inspection
+also confirmed this tree contains no fs/procfs or modules/procfs to convert.
+
+Evidence: `/usr/obj/usr/src/bazel-sysvipc-kernel-20261028/qualification`.
+All four match Make symbols, raw CTF, complete allocated-section inventories
+and contents/size/type/flags/alignment, and runtime relocation records and
+associations. Allocated SDT data are included. Both object sets, comparison
+script and option-header/inventory evidence are retained. Make log:
+`/usr/obj/usr/src/bazel-sysvipc-kernel-make-20261028.log`; maintained recipes
+use the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target selection and generated inputs
+support this kernel group without new C/backend options or installation
+entries. Queue limits/blocking, semaphore wait/wake/undo, shared-memory
+mapping/removal, jail visibility, MAC enforcement and audit delivery remain
+runtime tests for the linked kernel. Complete world/kernel/pkgbase/bootstrap
+and resource/performance qualification remain open. Module count stays 45;
+Make remains production/default, with no host installation or BIP changes.

@@ -94,3 +94,8 @@ cc_library(name = "bus_if_headers", hdrs = [":bus_if_header_file"], strip_includ
 
 filegroup(name = "device_if_header_file", srcs = [":device_if"], output_group = "header")
 cc_library(name = "device_if_headers", hdrs = [":device_if_header_file"], strip_include_prefix = "device_if.generated", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+amd64_generic_kernel_objects(name = "generic_sysvipc", srcs = ["sysv_ipc.c", "sysv_msg.c", "sysv_sem.c", "sysv_shm.c"],
+    deps = ["//sys/amd64/conf:generic_opt_sysvipc_header", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers",
+        "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers"])

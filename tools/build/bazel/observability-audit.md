@@ -3325,3 +3325,12 @@ Live VFS/MAC/audit integration, vnode cache lifetimes, concurrent teardown and
 memory-pressure behavior still need a linked test kernel. Review tracing at
 those operations without interpreting build parity as executed hook coverage.
 No filesystem or instrumentation source behavior changed.
+
+### System V IPC kernel group (2026-10-28)
+
+Native objects preserve existing SDT sections and runtime relocations,
+including message wait/wake and shared-memory lifecycle probes, plus existing
+AUDIT_ARG_SVIPC call sites. Live delivery is not established by compilation.
+Runtime coverage must include success/denial, blocking interruption, resource
+limits, IPC removal, jail isolation and semaphore undo on process exit. No
+IPC policy, instrumentation or runtime source changed.
