@@ -2839,3 +2839,11 @@ signals, privileges or tape-driver instrumentation. xstr's file/stdin and
 persistent table outputs match Make. All three executable debug links match
 their packaged debug files. Runtime comparisons are retained outside Bazel's
 test catalog; converting them to maintained native tests remains work.
+
+## Kernel config tool (2026-10-28)
+
+No tool-local DTrace/audit call sites were found in config's C/C++, parser or
+lexer sources. This migration preserves config output, including configured
+kernel option headers, without changing instrumentation policy. GENERIC and
+-g output inventories match Make, but no kernel/module probes were compiled,
+loaded or exercised. Kernel audit/DTrace retention remains a separate gate.

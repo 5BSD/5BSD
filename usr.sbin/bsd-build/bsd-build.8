@@ -3490,3 +3490,12 @@ and
 preserve their maintained packages, manuals and debug files.
 Artifact parity and private-file runtime comparisons do not qualify live
 device revocation or physical tape operations.
+
+.Pp
+.Dq //usr.sbin/config:config
+builds the kernel configuration tool with declared native lexer, parser and
+embedded-template generators.
+.Dq //usr.sbin/config:install_archive
+includes the executable, debug file and both manuals.
+GENERIC configuration output parity and warm cache reuse have been checked;
+this does not establish a native Bazel kernel or module build.
