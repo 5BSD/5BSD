@@ -8277,3 +8277,26 @@ proof. SSH transport, repository authentication, full update acceptance and
 additional adversarial cases remain unqualified. Reviewed build-bsd.c: existing
 format-5 test handling records host failures correctly; maintained generic VM
 backend integration is still open. Make remains production/default.
+
+## 2026-10-28 pkg-serve test archive parity
+
+The existing //libexec/pkg-serve:test_install_archive now has independent
+Make installation qualification. Three component records match (test directory,
+pkg_serve_test executable script, Kyua index), including owners, modes and
+package=tests tags. Both payloads match byte-for-byte. Exact tar membership
+includes four ancestor directories, whose ownership/modes match Make's
+test-enabled distribution staging. No graph correction was needed.
+
+Evidence: /usr/obj/usr/src/bazel-pkg-serve-test-archive-20261028/qualification/
+test-install-parity.json. Reference: bazel-pkg-serve-test-reference-20261028-r2;
+objects: bazel-pkg-serve-atf-reference-20261028/objects. Retained scripts:
+bazel-pkg-serve-qualification-20261028/{make-test-reference.py,
+verify-test-install.py}. Archive collection ran through build-bsd at 16 jobs.
+Reviewed build-bsd.c: current explicit targets suffice; no frontend change.
+
+Combined with the preceding 14-case guest result, this qualifies component test
+payload installation and bounded execution. It does not establish configured-
+world test discovery, package publication, host ABI compatibility, or a generic
+VM test backend. No host installation or additional runtime execution occurred.
+Whole-system/kernel/pkgbase/cache/performance gates remain open; Make stays
+production/default.

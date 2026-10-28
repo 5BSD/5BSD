@@ -5266,3 +5266,10 @@ existing traversal case. Shell assertions are unchanged; executable selection
 is explicit through ATF configuration. This is bounded protocol coverage, not
 an exhaustive confinement/authorization review or transport/signing proof.
 The incompatible-host failures remain recorded. No host repository was served.
+
+## 2026-10-28 pkg-serve test packaging verified
+
+The maintained 14-case shell suite and Kyua index now match Make installation
+bytes and metadata; tar ancestor directories are independently checked too.
+This preserves the previously guest-exercised diagnostics/protocol assertions
+for installation. No additional runtime, SSH, signing or audit claim is added.
