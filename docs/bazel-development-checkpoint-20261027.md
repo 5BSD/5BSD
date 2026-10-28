@@ -6416,3 +6416,36 @@ live tracing, bootstrap/world/kernel/modules, cache and performance gates remain
 No production-world stamp, installation or upgrade is claimed. Frontend review:
 existing build-bsd format-5 targets/tests/build-settings drove all runs at 16 jobs;
 no new CLI or publication contract is needed for this step. Make remains default.
+
+## 2026-10-28: existing libc ATF tests now exercise the complete native runtime
+
+Converted gen/inet/stdlib qualification programs from component-object imports
+and SDK runtime libraries to the complete native libc/libsys runtime. Shared
+runtime labels are owned by lib/libc/test_runtime.bzl. Programs retain the staged
+SDK header/link interface and native ATF support, while the static ATF supervisor
+selects the declared native libc, libsys and private ATF DSOs in runfiles. Internal
+program labels now use _runtime_program to reflect this scope; case labels remain
+stable. No imported libc component archive masks calls into the new shared libc.
+
+Also enabled the maintained arc4random cases, previously deferred when isolated
+objects could not resolve the SDK's private auxv implementation. Full native
+runtime composition resolves that dependency; no replacement symbol or stub was
+added. The tests cover parent/child random output and uniform-result bounds.
+
+Evidence: /usr/obj/usr/src/bazel-libc-suite-20261028-r2/receipt.json and
+qualification/runtime-provenance.json. All 33 actual ATF cases passed, with no
+skips: six makecontext, seven directory, ten signal conversion/set operations,
+three getentropy, two arc4random, four inet conversion and one sized-deallocation
+case. The provenance script verifies imported tested functions for all ten
+programs and resolves native libc/libsys/private-ATF to the saved artifact paths.
+The inet functions use the source header's __inet_* symbol aliases. Initial
+frontend input validation rejected tests omitted from the explicit target set;
+the corrected input includes every selected test. Verification scripts are under
+bazel-libc-suite-qualification-20261028.
+
+This remains 33 selected cases, not the complete libc suite or entropy/security
+qualification. SDK headers/link interfaces, host kernel/loader, other libc tests,
+thread/cancellation/locale/service behavior, options, install/pkgbase and whole
+system/performance gates remain. Frontend review: build-bsd's existing format-5
+explicit targets/tests path ran these tests with 16 jobs; no new CLI/backend or
+publication contract is needed. No host installation/upgrade occurred.

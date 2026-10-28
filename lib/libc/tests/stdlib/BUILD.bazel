@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
+# Test programs use SDK headers/link interfaces and execute with native libc/libsys.
+# No libc component objects are copied into the test executables.
+load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
-# Native wrappers with the staged SDK allocator; not full native libc coverage.
-cc_import(name = "sized_free_pic", static_library = "//lib/libc/stdlib/malloc:pic_objects_archive")
-cc_binary(name = "free_sized_objects_test", srcs = ["free_sized_test.c"],
-    deps = [":sized_free_pic", "//lib/atf/libatf-c:atf_c"],
+load("//lib/libc:test_runtime.bzl", "LIBC_TEST_RUNTIME")
+cc_binary(name = "free_sized_runtime_program", srcs = ["free_sized_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c"],
     dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
 )
 bsd_atf_test(name = "native_sized_deallocation", case_name = "sized_deallocation",
-    interface = "program", body = ":free_sized_objects_test",
-    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    interface = "program", body = ":free_sized_runtime_program",
+    runtime_lib = LIBC_TEST_RUNTIME,
     runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"],
 )

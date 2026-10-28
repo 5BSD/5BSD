@@ -4716,3 +4716,12 @@ Actual registration and live probe firing are not established by these checks.
 The existing allocation, text, stream, mapping, fork/pipe and numeric-resolution
 smoke checks pass with native libraries, but do not replace libc runtime suites,
 audit-record tests, thread/cancellation checks or performance qualification.
+
+## 2026-10-28: full-runtime libc ATF selection
+
+33 maintained ATF cases now run against complete native libc/libsys instead of
+embedding selected libc objects. Loader and imported-symbol checks cover all ten
+programs. Added the existing arc4random fork/uniform cases after full native auxv
+became available. Passing these cases does not establish live DTrace firing,
+audit-record coverage, entropy strength, thread cancellation or all libc features.
+No instrumentation or audit policy was altered for this test integration.
