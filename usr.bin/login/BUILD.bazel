@@ -30,12 +30,12 @@ cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_
 cc_binary(name = "login", dynamic_deps = _SHARED, deps = _LIBS + select({_TRACE: [":traced"], "//conditions:default": [":objects"]}),
     linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
-load("//tools/build/bazel:bsd_capdb.bzl", "bsd_capdb")
+load("//tools/build/bazel:bsd_capdb.bzl", "bsd_capability_database")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
 _CONFIGS = ["fbtab", "login.conf", "motd.template", "login.access"]
 [bsd_install_file(name = "config_" + f, src = f, destination = "/etc/" + f, owner = "root", group = "wheel", mode = "0644", install_tags = ["package=runtime", "config"]) for f in _CONFIGS]
 # This target currently supports amd64, whose capability DB byte order is little.
-bsd_capdb(name = "login_database", source = "login.conf", output = "login.conf.db", byte_order = "little", compiler = "//usr.bin/cap_mkdb:cap_mkdb_bootstrap")
+bsd_capability_database(name = "login_database", srcs = ["login.conf"], output = "login.conf.db", endian = "little", compiler = "//usr.bin/cap_mkdb:cap_mkdb_bootstrap")
 bsd_install_file(name = "database_file", src = ":login_database", destination = "/etc/login.conf.db", owner = "root", group = "wheel", mode = "0644", install_tags = [])
 utility_installation(name = "install_manifest", program = "login", manual = "login.1", package = "runtime", bindir = "/usr/bin", man_section = "1", binary_mode = select({_SETUID: "4555", "//conditions:default": "0555"}), binary_flags = select({_SETUID: "schg", "//conditions:default": ""}), extra_entries = [":database_file"] + [":config_" + f for f in _CONFIGS])
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")

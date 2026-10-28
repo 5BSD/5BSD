@@ -4860,7 +4860,7 @@ installation preserves mode 4555 and the preexisting Make PRECIOUSPROG schg flag
 disabled uses 0555 without schg. This preserves existing metadata, not BIP work.
 Four original configuration files are installed with runtime/config tags.
 
-New bsd_capdb rule runs cap_mkdb_bootstrap in the execution configuration on a
+Existing bsd_capability_database rule runs cap_mkdb_bootstrap in the execution configuration on a
 declared source file, with explicit output and little/big byte order. login
 currently targets amd64 and selects little endian. It does not copy a host DB,
 parse Make or write into /etc. Execution-platform portability and big-endian
@@ -4888,3 +4888,12 @@ typed format-5 source settings; both runs exercised setuid_login through build-b
 No C frontend or backend-contract change needed. README documents the setting
 and database rule. No installed system, host configuration or credentials changed.
 Whole-system gates remain incomplete and Make remains default.
+
+Post-commit review correction: the first login change accidentally replaced an
+existing bsd_capability_database API while adding a narrower duplicate. Restored
+the original rule unchanged and switched login to its srcs/endian/compiler
+interface, retaining multi-source and runtime-library support. Requalification
+at /usr/obj/usr/src/bazel-login-capdb-reuse-20261028 passes the same full-feature
+metadata and byte-identical database comparison. Existing rule consumers are
+not required to migrate. This correction supersedes any description of a new
+capability-database rule in the initial change.

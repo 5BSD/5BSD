@@ -34333,7 +34333,7 @@ object passes it through build-bsd bazel-test. Native login also honors existing
 metadata; disabled installation is 0555 without schg. These are installation
 records, not changes to host executable permissions.
 
-`bsd_capdb` declares a capability source, `.db` output, explicit `little` or
+`bsd_capability_database` declares capability sources, `.db` output, explicit `little` or
 `big` byte order and an execution-configured compiler. login uses the native
 cap_mkdb_bootstrap source reader and amd64 little endian. Other execution/target
 platforms need qualification; no host database is imported. login.conf.db lacks
