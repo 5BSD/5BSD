@@ -3508,3 +3508,12 @@ are enabled. The normal executable consumes the dtrace setting.
 selects the maintained bootstrap code path without probes or copy_file_range.
 This component target has not replaced the frontend's staged bootstrap tools;
 its existence does not establish a self-hosted native build.
+
+.Pp
+.Dq //usr.sbin/nmtree:install_archive
+stages native mtree/nmtree, manuals, debug data and maintained test fixtures.
+.Dq //usr.sbin/nmtree/tests:stream_tests
+runs twelve imported conversion/merge checks as native byte comparisons.
+This candidate has not replaced the staged SDK tool. The maintained mtree
+reports missing/extra entries on stdout while returning zero in the observed
+cases; tree-verification callers must not rely solely on its exit status.

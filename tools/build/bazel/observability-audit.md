@@ -2858,3 +2858,13 @@ does. No new audit hooks were added. Ownership and identity-database tests use
 -U/private files and do not qualify privileged installs or account changes.
 The full maintained ATF suite is packaged, with native runtime registration
 still pending; no assertion or kernel-compatibility fallback was introduced.
+
+## mtree / nmtree (2026-10-28)
+
+No local DTrace/audit integration was found in the imported mtree/mknod C
+sources. None was removed or added. Native conversion/merge cases pass and
+private-tree checks observe hash/mode/missing/extra differences. Missing/extra
+entries retain the maintained exit-0 behavior with stdout diagnostics; this
+must be considered by future integrity-check callers. No completeness or
+security conclusion can be drawn from that exit code alone. These tests do
+not qualify privileged mutation, ownership/flags, or full ATF coverage.

@@ -33313,3 +33313,43 @@ DTrace attachment, runtime closure and bootstrap parity against a matching
 BOOTSTRAPPING Make build. Existing frontend format-5 inputs support these
 targets; no C/backend change or bootstrap-tool substitution was performed.
 World/kernel/pkgbase and performance gates remain incomplete.
+
+## Native mtree staging component (2026-10-28)
+
+Added explicit imported mtree/mknod sources, NetBSD compatibility PIE archive,
+libmd/libutil dependencies, mtree/nmtree hardlinks, both manuals and the complete
+maintained test installation. Two fixture substitutions (sha256 to
+sha256digest) are declared generation actions matching Make. An initial duplicate
+manual alias declaration was rejected by the existing rule and corrected;
+no production source or expected fixture bytes changed.
+
+Twelve native byte-comparison tests pass, carrying the imported -C/-D conversion,
+-S sorting and -M merge commands for mtree and netbsd6 flavors with their original
+input/expected fixtures. These tests select declared native executable/DSOs
+without requiring an ATF shell; the installed ATF suite remains unchanged.
+Directory creation, permissions and other remaining ATF cases are not covered
+by this twelve-case result.
+
+Evidence: /usr/obj/usr/src/bazel-nmtree-tests-20261028/qualification; independent
+Make reference: /usr/obj/usr/src/bazel-nmtree-make-20261028. Sixty globals,
+ordered dependencies and NOW/PIE metadata match. Full installation matches
+21 records, two hardlinks, 15 byte-equal nonbinary files and both executable
+alias debug-link checks. Archive SHA256:
+271e29cf2b2de3c3941e730628e74272b93470438acbf6fd8e17292d25bdd0d3.
+
+Private-tree comparison produces identical specs and verification results for
+native and Make binaries. Valid content exits 0; changed SHA256 content and
+mode exit 2. An existing behavior discrepancy was confirmed: missing and extra
+entries are reported on stdout but exit 0 in both builds, despite the manual's
+broad mismatch-status description. verify.c reports those paths without updating
+the mismatch return value. This migration preserves that behavior and records
+it as an open issue; never treat exit 0 alone as proof of a complete matching
+tree. The inspected Bazel archive_policy.py uses mtree -C to parse inventories,
+not this tree-verification return status, and performs its own record checks.
+The initial overly broad exit-status expectation was corrected to assert actual
+status plus missing/extra diagnostics, with prior output retained.
+
+The maintained frontend format-5 interface needs no C/backend change for these
+targets. This candidate has not replaced the SDK staging mtree. Execution-tool
+runtime closure, broader ATF cases, invalidation/performance, full bootstrap,
+world/kernel/pkgbase and publication gates remain open.
