@@ -5020,3 +5020,12 @@ not prove accounting updates or authorization behavior. Isolated tests must
 cover PTY ownership, login/logout records, helper failures and relevant audit
 policy without writing host accounting data. Setuid installation metadata and
 runtime qualification are still pending.
+
+## 2026-10-28 libulog/helper installation
+
+The installation graph now preserves headers, compatibility aliases, manuals,
+debug data and helper setuid metadata. Twenty-three records match Make; no
+library/helper source, probes or audit hooks changed. Metadata qualification
+does not establish helper authorization or utmpx accounting behavior. Isolated
+PTY and login/logout tests remain pending; the helper was not executed and host
+accounting state was not modified.

@@ -7500,3 +7500,31 @@ compatibility-link installation, helper setuid metadata, debug splitting and
 isolated accounting runtime checks remain next. No helper was executed and no
 host accounting database was modified. SDK bootstrap, full world/kernel/pkgbase,
 cache and resource/performance qualification remain open. Make stays default.
+
+## 2026-10-28 libulog and helper installation
+
+Added source-owned libulog installation for its ordinary archive, stripped DSO,
+separate debug file, two headers, two manuals/eight manual aliases and three
+linker/utempter compatibility symlinks. The helper has a separate installation
+archive preserving root ownership and 04555 mode in metadata. The PIC archive
+remains qualification-only. No installed payload or side-effect implementation
+was replaced by a host-library fallback.
+
+All 23 combined metadata records match an independent rootless Make install.
+Twelve header/manual payloads are byte-identical; eleven symlink/hardlink
+relationships validate, including the two chained manual aliases. Both separate
+debug pairs validate; the installed ordinary archive equals the already
+qualified native static archive. Evidence:
+/usr/obj/usr/src/bazel-ulog-install-20261028-r2/qualification/parity.json.
+Make reference: bazel-ulog-install-reference-20261028; scripts:
+bazel-ulog-install-qualification-20261028. The first native attempt failed
+Starlark load ordering before compilation; r2 fixes the ordering and passes.
+
+Reviewed build-bsd.c: existing format-5 targets and archive/metadata collection
+support the additions at 16 jobs. No new frontend option or publication policy
+is needed. This qualifies default amd64 installation, not INSTALLLIB/NO_PIC or
+split-manual configuration variants, pkgbase publication or accounting runtime.
+No helper was installed or executed, no host accounting records were changed,
+and no setuid binary was placed on the host installation paths. Isolated PTY/
+login/logout authorization checks remain next. Full world/kernel/pkgbase,
+bootstrap/cache and resource/performance gates remain open; Make stays default.
