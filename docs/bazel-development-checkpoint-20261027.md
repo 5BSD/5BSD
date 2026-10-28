@@ -6008,3 +6008,35 @@ qualification is claimed. These remain necessary for completion. Frontend review
 build-bsd's existing format-5 typed settings/targets handle the new setting in all
 four runs; no new C frontend option or backend contract is required. Make remains
 production/default. All builds use 16 CPUs; no host installation or policy change.
+
+## 2026-10-28: native libc random and entropy components
+
+Adds 14 sources: the ten rand48-family sources, arc4random, its compatibility
+and uniform helpers, and getentropy. Source-owned ChaCha embedding inputs are
+exposed through narrow header targets; no duplicated implementation or broad
+sys include-directory dependency is introduced. Existing kernel header targets
+are preserved. The generator implementations themselves are unchanged.
+
+Evidence: /usr/obj/usr/src/bazel-libc-random-build-20261028/qualification/parity.json
+versus bazel-libc-random-make-20261028: all 28 ordinary/PIC objects match .text and
+global/unresolved symbols. No full data/debug/relocation or ABI parity is claimed.
+
+Native getentropy runs all three unchanged maintained cases: requested-length
+boundary, invalid pointer, and size limits including zero. All pass without skips
+in bazel-libc-getentropy-test-20261028/receipt.json. qualification/link-proof.json
+confirms native getentropy is defined in the test executable; getrandom remains
+an SDK import using the host kernel. No entropy quality/performance claim follows.
+
+The attempted arc4random runtime test failed to link because _elf_aux_info is a
+private dependency absent from the SDK shared libc interface. Evidence remains
+in bazel-libc-random-test-20261028/bazel.stderr. No stub, symbol rename, substitute
+implementation or fallback was added. The unbuildable standalone arc4random test
+target was removed; the unchanged maintained test remains to integrate with
+native libc/libsys. Its fork-sequence and uniform-bound cases are NOT qualified.
+Native rand48 runtime, RNG reseeding/thread/fork/kernel-version behavior, complete
+libc linking/install and performance remain outstanding.
+
+Frontend review: existing build-bsd format-5 targets/tests support the native
+objects and getentropy cases; no new frontend/backend contract needed. Builds
+used 16 CPUs. Make remains production/default; no host installation or entropy
+configuration changes occurred.

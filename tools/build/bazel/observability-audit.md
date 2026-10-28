@@ -4603,3 +4603,13 @@ combinations match Make objects and exception sections; action arguments and
 raw probe reference presence are also checked. sem.c has no direct probes.
 Active provider registration, concurrent wait/wake/cancellation behavior and
 latency still require complete libc linking and runtime qualification.
+
+## 2026-10-28: random-number and entropy routines
+
+No direct SDT/DTrace or BSM audit hooks found in the migrated random/entropy
+sources. No instrumentation of generated random values or entropy material was
+added. getentropy's existing syscall path is preserved and three native cases
+pass; runtime audit delivery is not established. arc4random private _elf_aux_info
+linkage requires native libc/libsys integration before its maintained fork and
+uniform-bound tests can run. Repeated reseed, concurrency, fallback and latency
+qualification remain open; object parity is not cryptographic validation.

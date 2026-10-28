@@ -154,3 +154,35 @@ cc_library(
 # Raw objects: final DOF processing must combine all libc provider contributors.
 bsd_component_archive(name = "semaphore_archive", groups = [":semaphore_objects"])
 bsd_component_archive(name = "semaphore_pic_archive", groups = [":semaphore_objects"], pic = True)
+
+cc_library(
+    name = "random_objects",
+    srcs = [
+        "_rand48.c",
+        "drand48.c",
+        "erand48.c",
+        "jrand48.c",
+        "lcong48.c",
+        "lrand48.c",
+        "mrand48.c",
+        "nrand48.c",
+        "seed48.c",
+        "srand48.c",
+        "arc4random.c",
+        "arc4random-compat.c",
+        "arc4random_uniform.c",
+        "getentropy.c",
+    ],
+    hdrs = ["rand48.h", "arc4random.h"],
+    implementation_deps = ["//lib/libc/include:math_headers", "//sys/crypto/chacha20:libc_embedded"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({
+        "//tools/build/bazel/config:nls_enabled": ["NLS"],
+        "//conditions:default": [],
+    }),
+    copts = ["-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "random_archive", groups = [":random_objects"])
+bsd_component_archive(name = "random_pic_archive", groups = [":random_objects"], pic = True, visibility = ["//lib/libc:__pkg__", "//lib/libc/tests/gen:__pkg__"])
