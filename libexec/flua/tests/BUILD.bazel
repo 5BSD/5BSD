@@ -22,3 +22,5 @@ _MODULES = {
     data = ["//libexec/rtld-elf:rtld_binary", "//libexec/flua:flua", "runtime.lua"] + _LIBRARIES + _MODULES.values(),
     size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
  for case in ["modules", "hash", "formats", "filesystem"]]
+
+exports_files(["runner.c"], visibility = ["//libexec/nuageinit/tests:__pkg__"])

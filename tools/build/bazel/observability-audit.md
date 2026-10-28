@@ -5421,3 +5421,14 @@ SSH, hostname, timezone and authorization configuration scenarios, are preserved
 These cases have not executed under the new native test path and their audit or
 privilege behavior is not qualified. Root-only cases require isolated VM coverage.
 Evidence: /usr/obj/usr/src/bazel-nuageinit-tests-20261028-r3/qualification/.
+
+
+### nuageinit native Lua fixtures (2026-10-28)
+
+Five unchanged fixtures now execute under Bazel with native flua and declared
+nuage/lfs inputs. Pathname, file overwrite/append, base64, hostname validation/file
+generation and SSH configuration rewriting checks pass under NUAGE_FAKE_ROOTDIR.
+No host configuration or users changed. ATF shell-level expectations, live service
+behavior and user-management/audit operations remain unqualified. All four flua
+regression tests also reran successfully with the extended test launcher.
+Evidence: /usr/obj/usr/src/bazel-nuageinit-runtime-20261028/test-reports/.

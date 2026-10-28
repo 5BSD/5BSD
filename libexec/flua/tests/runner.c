@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Test-only adapter: loader, program, script, case, libraries, --, modules.
+ * --temp-env=NAME explicitly maps a fixture root variable to TEST_TMPDIR.
+ */
 #include <err.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,11 +26,17 @@ main(int argc, char **argv)
 {
  char *loader, *program, *script, *libs = NULL, *next, *path, *slash;
  char **args;
- const char *tmp = getenv("TEST_TMPDIR");
+ const char *tmp = getenv("TEST_TMPDIR"), *temp_env = NULL;
  int i, n = 0, split;
  if (argc < 7 || tmp == NULL) errx(126, "missing test inputs");
  loader = runfile(argv[1]); program = runfile(argv[2]); script = runfile(argv[3]);
  for (split = 5; split < argc && strcmp(argv[split], "--") != 0; split++) {
+  if (strncmp(argv[split], "--temp-env=", 11) == 0) {
+   temp_env = argv[split] + 11;
+   if (*temp_env == '\0' || strchr(temp_env, '=') != NULL)
+    errx(126, "invalid temporary directory environment name");
+   continue;
+  }
   path = runfile(argv[split]); slash = strrchr(path, '/'); *slash = '\0';
   if (asprintf(&next, "%s%s%s", libs == NULL ? "" : libs,
       libs == NULL ? "" : ":", path) < 0) err(126, "asprintf");
@@ -45,5 +54,7 @@ main(int argc, char **argv)
  if (clearenv() != 0 || setenv("LD_LIBRARY_PATH", libs, 1) != 0 ||
      setenv("LC_ALL", "C", 1) != 0 || chdir(tmp) != 0)
   err(126, "test environment");
+ if (temp_env != NULL && setenv(temp_env, tmp, 1) != 0)
+  err(126, "temporary directory environment");
  execv(loader, args); err(127, "%s", loader);
 }

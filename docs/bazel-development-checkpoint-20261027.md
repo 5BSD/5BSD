@@ -8674,3 +8674,28 @@ qualification only. ATF execution, configurable native runtime paths, root-only
 pw/pwd_mkdb operations and isolated nuageinit configuration scenarios remain open.
 Whole world/kernel/pkgbase/cache/performance gates remain open; Make stays default.
 No host installation or user/configuration changes occurred.
+
+
+## 2026-10-28: native nuageinit Lua fixture execution
+
+Added Bazel-owned tests executing five existing, unchanged self-checking Lua
+fixtures: dirname, addfile, decode_base64, sethostname, update_sshd_config.
+The shared static flua test launcher accepts an explicit --temp-env=NAME input
+mapping a fixture-root variable to TEST_TMPDIR. Nuageinit tests request the
+existing NUAGE_FAKE_ROOTDIR interface; the Lua adapter requires an absolute,
+non-root value before loading any fixture. Declared native flua/rtld/libraries,
+lfs and nuage.lua are used; package.path/cpath are empty after exact preloading.
+No mock implementation or replacement fixture assertions were introduced.
+
+All five fixture tests and all four flua regression tests actually executed and
+passed through build-bsd at 16 jobs. File/hostname/SSH configuration mutations
+were redirected into the test temporary root. These cases need no pw, sysctl,
+pwd_mkdb or timezone helper subprocesses. Evidence:
+/usr/obj/usr/src/bazel-nuageinit-runtime-20261028/{bazel.stdout,
+test-inventory.json,test-reports/manifest.json,execution.json}.
+Reviewed build-bsd.c: existing explicit build/test selection handles these tests;
+no frontend change required. This verifies the Lua fixtures only, not the ATF
+shell wrappers' additional stdout/stderr checks, installed test paths, live SSH,
+user creation or full nuageinit startup. Remaining fixture/shell scenarios need
+native helper integration and isolated VM coverage. Bootstrap and complete world/
+kernel/pkgbase/cache/performance gates remain open; Make remains default.

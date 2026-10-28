@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_test")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
@@ -47,3 +47,17 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+# Execute existing self-checking fixtures; installed ATF suites remain separate.
+_RUNTIME = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/msun:m_shared"]
+[cc_test(name = "lua_" + case, srcs = ["//libexec/flua/tests:runner.c"],
+    linkopts = ["-static"], linkstatic = True,
+    args = ["$(rootpath //libexec/rtld-elf:rtld_binary)", "$(rootpath //libexec/flua:flua)",
+        "$(rootpath :native_fixture.lua)", case, "--temp-env=NUAGE_FAKE_ROOTDIR"] +
+        ["$(rootpath " + label + ")" for label in _RUNTIME] +
+        ["--", "lfs", "$(rootpath //libexec/flua/lfs:module)", "nuage", "$(rootpath //libexec/nuageinit:nuage.lua)",
+         "fixture", "$(rootpath :" + case + ".lua)"],
+    data = _RUNTIME + ["//libexec/rtld-elf:rtld_binary", "//libexec/flua:flua", "//libexec/flua/lfs:module",
+        "//libexec/nuageinit:nuage.lua", "native_fixture.lua", case + ".lua"],
+    size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for case in ["dirname", "addfile", "decode_base64", "sethostname", "update_sshd_config"]]
