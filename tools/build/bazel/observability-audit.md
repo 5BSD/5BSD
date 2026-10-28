@@ -4962,3 +4962,11 @@ maintained Kyua index. Twenty metadata records match rootless Make installation;
 all seven debug-link/CRC/DWARF pairs validate. This is packaging evidence only,
 with helper/deepbind installation still separate and no new runtime cases.
 No production code, DTrace probes or audit hooks changed.
+
+## 2026-10-28 descriptor helper installation
+
+The target child and complete libpythagoras installation now join the test
+archive. Twenty-six records match Make; nine debug pairs validate. The static
+archive contains the correct ordinary object with matching code and symbols.
+No production or test C source, audit hooks or DTrace probes changed. This does
+not add runtime qualification for the pending descriptor cases.

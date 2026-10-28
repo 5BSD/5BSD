@@ -9,3 +9,7 @@ cc_binary(name = "target", srcs = ["target.c"],
     features = ["-bsd_test_runtime_paths"],
     visibility = ["//libexec/rtld-elf/tests:__pkg__"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "target", manual = "",
+    package = "tests", bindir = "/usr/tests/libexec/rtld-elf")

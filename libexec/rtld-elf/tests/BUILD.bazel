@@ -90,9 +90,11 @@ bsd_install_manifest(name = "install_metadata", entries = [":install_kyuafile"],
     visibility = ["//visibility:public"])
 
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
-# Top-level test directory only; fixture/deepbind installation is separate.
+# Top-level tests and descriptor helpers; deepbind installation is separate.
 bsd_install_archive(name = "install_archive",
-    manifests = [":install_" + program for program in _INSTALLED_PROGRAMS] + [":install_metadata"],
+    manifests = [":install_" + program for program in _INSTALLED_PROGRAMS] + [":install_metadata",
+        "//libexec/rtld-elf/tests/target:install_manifest",
+        "//libexec/rtld-elf/tests/libpythagoras:install_manifest"],
     directories = {path: json.encode({"owner": "root", "group": "wheel", "mode": "0755",
         "tags": ["package=tests"] + (["dbg"] if path.startswith("/usr/lib/debug/") else [])})
         for path in ["/usr/tests/libexec/rtld-elf", "/usr/lib/debug/usr", "/usr/lib/debug/usr/tests",

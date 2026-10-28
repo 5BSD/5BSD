@@ -7335,3 +7335,29 @@ installation occurred. No new runtime cases ran. The eleven descriptor cases
 still require an isolated installed native loader, and the earlier root-only
 iconv runtime report is still absent. Fixture/deepbind installation and complete
 world/kernel/pkgbase/bootstrap/cache/performance qualification remain open.
+
+## 2026-10-28 descriptor helper installation
+
+The top-level rtld tests install archive now also includes target and all
+libpythagoras payloads: the ordinary static archive, versioned shared library,
+unversioned relative symlink and separate debug information. Ownership and
+package tags follow Make's tests package, including the static library (no
+invented development-package split). The ordinary archive uses component-owned
+objects, so it does not absorb libm's transitive objects.
+
+Evidence: /usr/obj/usr/src/bazel-rtld-helpers-install-20261028/qualification.
+All 26 unique metadata records match the independent Make references: 20 files,
+one symlink, and five directories. All nine runtime/debug pairs pass name, CRC
+and DWARF checks. The ordinary archive contains exactly pythagoras.o; its .text
+and global/undefined symbols match Make. The Kyua index remains byte-identical.
+Scripts are under bazel-rtld-helpers-install-qualification-20261028. The initial
+Make reference failed because it installed helpers before the parent test
+directory; r2 installs the maintained parent first, preserving normal ordering.
+
+Reviewed build-bsd.c's existing format-5 installation target support; no new
+frontend option, staging policy or publication change is needed. Qualification
+used build-bsd with 16 jobs and wrote only beneath /usr/obj. Deepbind installation
+remains separate and is still needed to satisfy the Kyua subdirectory reference.
+The eleven descriptor-loading runtime cases remain pending isolated native
+loader installation. No new runtime cases ran, no host installation occurred,
+and complete world/kernel/package/cache/bootstrap/performance gates remain open.
