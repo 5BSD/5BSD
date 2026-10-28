@@ -27,3 +27,36 @@ cc_binary(name = "dlopen_test", srcs = ["dlopen_test.c"],
         ":thr_alias", "//lib/libthr:thr_shared"],
     runner = "//tools/build/bazel:atf_runner", size = "small")
  for case in ["dlopen_basic", "dlopen_recursing"]]
+
+# Preserve the maintained injection of structural classification and syscall
+# transport. This exercises verifier control flow, not cryptographic validation.
+cc_binary(name = "signature_verify_test", srcs = ["signature_verify_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//libexec/rtld-elf:signature_test_inputs"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_atf_test(name = "same_descriptor", interface = "program",
+    body = ":signature_verify_test", case_name = "same_descriptor",
+    loader = "//libexec/rtld-elf:rtld_binary", runtime_lib = _RUNTIME,
+    runner = "//tools/build/bazel:atf_runner", size = "small")
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_filter_fixture")
+# Match the maintained Make extraction; the production source is an action input.
+bsd_filter_fixture(name = "parse_integer_func", src = "//libexec/rtld-elf:rtld.c",
+    output = "parse_integer_func.c", tool = "@bsd_sdk//toolchain:sed",
+    arguments = ["-ne", "/^parse_integer/,/^}/p"],
+    runtime = ["@bsd_sdk//toolchain:sed_runtime"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect")
+cc_binary(name = "parse_integer_test",
+    srcs = ["parse_integer_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c", ":parse_integer_header"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_atf_test(name = "integers", interface = "program", body = ":parse_integer_test",
+    case_name = "integers", loader = "//libexec/rtld-elf:rtld_binary",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:atf_runner", size = "small")
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "parse_integer_header", textual_hdrs = [":parse_integer_func"],
+    includes = ["."])

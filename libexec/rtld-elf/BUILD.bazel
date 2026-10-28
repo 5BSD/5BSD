@@ -72,3 +72,12 @@ filegroup(name = "rtld_binary", srcs = [":rtld"], output_group = "binary", visib
 
 load(":installation.bzl", "rtld_installation")
 rtld_installation()
+
+# The maintained verifier test textually includes the production implementation.
+cc_library(name = "signature_test_inputs",
+    textual_hdrs = ["elf_signature.c", "rtld.h"],
+    deps = ["//libexec/rtld-elf/rtld-libc:headers",
+        "//sys/security/mac_veriexec:rtld_abi_header", "//sys/sys:capimage_headers"],
+    visibility = ["//libexec/rtld-elf/tests:__pkg__"])
+
+exports_files(["rtld.c"], visibility = ["//libexec/rtld-elf/tests:__pkg__"])

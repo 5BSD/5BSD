@@ -4937,3 +4937,12 @@ Process-local name traces confirm the declared fixture lookup, with no host
 libthr lookup. Original C sources and checks are unchanged. Handle-close
 behavior and the recursion regression are covered; thread creation, TLS and
 physical library unmapping are not established. No probes/audit hooks changed.
+
+## 2026-10-28 rtld integer and signature-verifier cases
+
+Two unchanged maintained ATF cases now pass through native rtld. Parser
+extraction equals Make's output. Signature classification and syscall transport
+are injected by the original test; real cryptographic checks and kernel
+transport are not established by this evidence. No DTrace or audit hooks were
+added, removed or modified. Existing rtld probe qualification remains separate;
+live probe firing and broader runtime coverage remain open.

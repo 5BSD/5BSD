@@ -7246,3 +7246,30 @@ changes. No host installation occurred. Next loader work includes child fexecve/
 preload behavior, parse-integer and signature-verifier cases, plus TLS/libmap
 coverage. Full world/kernel/pkgbase/cache/bootstrap/performance gates remain
 open. Make stays production/default.
+
+## 2026-10-28 rtld parser and descriptor-verifier tests
+
+Added native Bazel builds for the unchanged parse_integer_test.c and
+signature_verify_test.c. The parser's textual C fragment is extracted from
+production rtld.c by a declared staged sed action, matching the maintained
+Make command byte for byte (819 bytes). It is a textual compilation input,
+not a separately compiled replacement implementation. The verifier test
+explicitly declares the production elf_signature.c and its header dependencies.
+
+Both actual ATF cases (integers and same_descriptor) passed through native rtld
+with native libc/libsys/private ATF selected by the existing test adapter.
+Evidence: /usr/obj/usr/src/bazel-rtld-unit-20261028/receipt.json and
+qualification/unit-parity.json; independent extraction check script at
+/usr/obj/usr/src/bazel-rtld-unit-qualification-20261028/verify.py.
+The verifier test injects classification and syscall transport. It checks the
+same descriptor, preserved file offset, unsigned/required/malformed decisions,
+and propagation of EAUTH/ECAPMODE/ENOSYS/EPERM/EIO. It does not authenticate a
+real signed object or exercise the kernel verifier. No test C sources changed.
+
+Reviewed build-bsd.c and its maintained format-5 bazel-test backend: the added
+targets/tests use existing inputs, explicit runtime dependencies and 16 jobs;
+no frontend option, staging, signing or publication change is required.
+Seven maintained rtld ATF cases are now qualified across recorded runs. Child
+exec/fexecve/preload behavior, TLS/libmap and full runtime qualification remain
+open, as do world/kernel/pkgbase/bootstrap/cache/performance gates. Make stays
+production/default. No host installation or BIP work occurred.
