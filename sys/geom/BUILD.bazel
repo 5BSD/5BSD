@@ -3,3 +3,7 @@ exports_files(["geom_bsd_enc.c"], visibility = ["//sbin/newfs:__pkg__"])
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = ["part/g_part_if.m"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "kernel_headers", hdrs = ["geom.h", "geom_dbg.h"], includes = [".."],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"], visibility = ["//visibility:public"])

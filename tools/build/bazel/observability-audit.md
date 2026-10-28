@@ -3024,3 +3024,11 @@ resolved without source changes. Complete runtime symbol and relocation
 listings now match Make; text/data/rodata and raw CTF also match. Evidence:
 `/usr/obj/usr/src/bazel-tmpfs-pseudofs-ctf-20261028/qualification`. Live probe
 firing and common VFS audit coverage remain untested.
+
+### GEOM nop/gate (2026-10-28)
+
+The inspected g_nop.c and g_gate.c have no explicit SDT_* declarations or
+AUDIT_* calls. Their complete runtime symbols and relocations match Make;
+no observability source changes were made for migration. Assess useful
+GEOM fault-injection and gate I/O instrumentation separately, together with
+common GEOM tracing/audit coverage. No live I/O or probe attachment was run.

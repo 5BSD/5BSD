@@ -1745,3 +1745,27 @@ five selected modules. Source/header invalidation, live module behavior,
 whole-system packaging, and performance/resource qualification remain open.
 Next expansion candidate inspected: geom_nop (single g_nop.c source with
 GEOM headers); it has not yet been converted or qualified.
+
+### GEOM nop/gate native modules
+
+Native `geom_nop` and `geom_gate` now use the shared GENERIC module build
+rules with explicit C sources and GEOM headers. The existing userland
+geom_nop header target is retained. GEOM kernel headers expose the original
+source include root, retaining declared inputs without virtual-path leakage.
+The maintained frontend format-5 targets built both with 16 jobs; no new
+frontend C option, signing or publication change is required.
+
+Evidence: `/usr/obj/usr/src/bazel-geom-modules-20261028/qualification/comparison.json`
+and retained raw readelf dumps. Make references are under
+`/usr/obj/usr/src/bazel-{geom_nop,geom_gate}-make-20261028`. Both runtime
+symbol/relocation listings, text/data/rodata and raw SUNW CTF match Make.
+Separate debug-file identity and CRC pass. Staged Make metadata matches
+paths, ownership, permissions, type, package and debug tags. No host module
+load or installation occurred. These comparisons do not establish live
+GEOM I/O behavior, cache invalidation or disk/memory performance.
+
+This increment has seven native module builds: nullfs, fdescfs, unionfs,
+tmpfs, pseudofs, geom_nop and geom_gate. This is a batch count, not an
+authoritative total for the repository or full kernel/module completion.
+The broader module inventory, hardware/drivers, source/header invalidation,
+runtime, full-world/kernel packaging and performance gates remain open.
