@@ -23,3 +23,24 @@ bsd_atf_test(name = "deepbind_simple", body = ":rtld_deepbind", case_name = "dee
     runtime_lib = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/atf/libatf-c:atf_c_shared"],
     data = [":val_shared", ":val2_shared", ":deep_shared", ":deep_alias"],
     runner = "//tools/build/bazel:atf_runner", size = "small")
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest", "bsd_kyuafile")
+_TESTDIR = "/usr/tests/libexec/rtld-elf/rtld_deepbind"
+[bsd_install_link(name = "install_" + name + "_link", destination = _TESTDIR + "/lib" + name + ".so",
+    target = "lib" + name + ".so.0", kind = "symlink", owner = "root", group = "wheel",
+    mode = "0755", install_tags = ["package=tests"])
+ for name in ["val", "val2", "deep"]]
+[utility_installation(name = "install_" + name, program = "lib" + name + ".so.0",
+    binary = ":" + name + "_shared", binary_mode = "0444", manual = "",
+    package = "tests", bindir = _TESTDIR, extra_entries = [":install_" + name + "_link"])
+ for name in ["val", "val2", "deep"]]
+utility_installation(name = "install_program", program = "rtld_deepbind",
+    manual = "", package = "tests", bindir = _TESTDIR)
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["rtld_deepbind"],
+    interfaces = {"rtld_deepbind": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = _TESTDIR + "/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_metadata", entries = [":install_kyuafile"],
+    visibility = ["//libexec/rtld-elf/tests:__pkg__"])

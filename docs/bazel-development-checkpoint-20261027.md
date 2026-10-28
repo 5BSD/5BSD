@@ -7361,3 +7361,34 @@ remains separate and is still needed to satisfy the Kyua subdirectory reference.
 The eleven descriptor-loading runtime cases remain pending isolated native
 loader installation. No new runtime cases ran, no host installation occurred,
 and complete world/kernel/package/cache/bootstrap/performance gates remain open.
+
+## 2026-10-28 complete rtld tests installation archive
+
+The test install archive now includes rtld_deepbind, libval/libval2/libdeep,
+their unversioned relative symlinks and debug files, and the nested Kyua index.
+Together with the prior top-level programs and descriptor helpers, this covers
+the maintained rtld test-directory installation for the qualified amd64/default
+configuration. Library-only SHLIB fixtures do not acquire invented static
+archives. Their existing $ORIGIN layout and separate dependency graphs remain.
+
+All 40 unique metadata records match independent rootless Make references:
+29 files, four symlinks, seven directories. Both Kyua indexes are byte-identical;
+all 13 runtime/debug pairs pass filename, CRC and DWARF checks. Evidence:
+/usr/obj/usr/src/bazel-rtld-complete-tests-20261028/qualification/installation-parity.json.
+The additional Make reference is bazel-rtld-deepbind-install-reference-20261028;
+scripts are in bazel-rtld-complete-tests-qualification-20261028.
+
+The unchanged deepbind_simple case also passes using the actual stripped
+program and three DSOs extracted from this archive into /usr/obj. Explicit
+native rtld and native libc/libsys/private ATF come from the previously
+qualified runfiles. Loader tracing confirms installed $ORIGIN/libval.so.0 and
+native support libraries. Evidence: qualification/installed-runtime.json.
+This is a rerun of an existing case, not an eighth distinct rtld case; the host
+kernel remains. General child-exec qualification is not implied.
+
+Reviewed build-bsd.c: the maintained format-5 target/artifact workflow builds
+this archive with 16 jobs without new options or publication-policy changes.
+No host installation or package publication occurred. The eleven descriptor
+cases still require an isolated installed native loader. The full-system
+world/kernel/pkgbase/bootstrap/cache/performance gates remain open and Make
+remains production/default. BIP remains out of scope.

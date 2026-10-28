@@ -4970,3 +4970,12 @@ archive. Twenty-six records match Make; nine debug pairs validate. The static
 archive contains the correct ordinary object with matching code and symbols.
 No production or test C source, audit hooks or DTrace probes changed. This does
 not add runtime qualification for the pending descriptor cases.
+
+## 2026-10-28 complete rtld tests installation
+
+Deepbind's three DSOs, program, links, debug files and nested Kyua index now
+complete the maintained rtld test-directory archive. Forty metadata records
+match Make and thirteen debug pairs validate. The existing deepbind_simple case
+passes again from stripped archive payloads under native rtld, preserving the
+$ORIGIN fixture layout. No C source, DTrace probes or audit hooks changed.
+Descriptor child-exec coverage and live probe firing remain separate gates.
