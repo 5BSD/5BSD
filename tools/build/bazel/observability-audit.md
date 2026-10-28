@@ -4203,3 +4203,11 @@ and denial reports remain configured with MK_BLOCKLIST_SUPPORT's Bazel counterpa
 verify their live behavior with an isolated service. Both artifact variants match
 Make; debug protocol checks cover only disabled reporting. Syslog, inetd/TCP and
 real-client execution remain runtime gates. No new probe or audit policy added.
+
+
+### 2026-10-28: leave
+
+No local SDT/DTrace/AUDIT hooks in unchanged source. Capsicum setup preserved;
+both Make and native binaries abort at the recorded capability-rights assertion
+on current host/SDK startup. Timer and terminal behaviors remain unqualified.
+No security bypass, probes or audit policy added to get a runtime pass.

@@ -4743,3 +4743,28 @@ express both variants without frontend/backend changes. Make has no component
 test suite; retained protocol comparisons are conversion evidence. No host install,
 service activation or reboot. Full world/kernel/pkgbase/boot/performance gates
 remain open; Make remains production default.
+
+
+## 2026-10-28: leave artifact candidate; runtime startup fails
+
+Added native leave compilation and utilities-package installation metadata,
+retaining source, Capsicum entry, split debug, section-1 manual and PIE.
+Evidence: /usr/obj/usr/src/bazel-leave-20261028 and Make reference
+/usr/obj/usr/src/bazel-leave-make-20261028. qualification/verify.py establishes
+five installation records, six defined globals, libc.so.7/BIND_NOW/NOW PIE and
+compressed-manual bytes matching Make. No complete executable/debug identity
+claim and no runtime pass inferred from these artifact checks.
+
+qualification/startup.py and startup.json record blank-input startup using SDK
+libraries, with core dumps disabled and no timer requested. Both native and Make
+executables terminate SIGABRT at cap_rights_intersect's cap_rights_is_valid(src)
+assertion before prompt/input processing. Expected exit/output are not met;
+passed=false. This matches the previously diagnosed source/host Capsicum ABI
+mismatch. No bypass, source weakening or expected-failure conversion was added.
+A matching system runtime must qualify blank input, time parsing, reminders and
+terminal lifecycle. This runtime failure is an open gate, not successful parity.
+
+Frontend review: existing format-5 target/archive rules suffice, no frontend or
+backend contract change required. Make declares no component tests. No host
+installation, reminder process or reboot. Other conversion work can proceed;
+full world/kernel/pkgbase/boot/runtime/performance goals remain incomplete.
