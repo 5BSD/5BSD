@@ -3545,3 +3545,15 @@ Evidence: `/usr/obj/usr/src/bazel-affinity-scheduling-kernel-20261028/qualificat
 No instrumentation source changed. Review administrative affinity/scheduling
 syscall audit mapping and records before claiming coverage. Live probes,
 permission decisions and scheduling behavior remain unqualified.
+
+### ULE scheduler (2026-10-28)
+
+sched_ule.c calls shared sched probes for load, priority changes/lending,
+on/off/remain-CPU, surrender and enqueue/dequeue, and retains HWPMC/HWT and
+KDTRACE hook paths. Absence of local SDT_PROBE_DEFINE declarations does not
+mean these calls lack instrumentation. Native GENERIC output matches Make
+symbols, raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-ule-kernel-20261028/qualification`.
+All generated hook/scheduler option headers match Make. No runtime source
+changed. Shared provider linkage and live firing, context-switch hooks and
+scheduler behavior remain linked-kernel qualification.
