@@ -7,3 +7,5 @@ cc_library(
     includes = ["."],
     visibility = ["//visibility:public"],
 )
+
+exports_files(["tcpd.c", "tcpd.8", "patchlevel.h"], visibility = ["//libexec/tcpd:__pkg__"])

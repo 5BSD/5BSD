@@ -5039,3 +5039,12 @@ daemon units. Runtime review must cover inetd versus standalone startup,
 registration cleanup, malformed requests, AUTH_UNIX rejection and ordinary/
 extended quota replies. Symbol/header/install parity does not establish these
 behaviors or audit coverage. No daemon was started on the host.
+
+## 2026-10-28 tcpd
+
+Native conversion preserves tcpd.c, its syslog severity/facility definitions
+and host-access policy delegation to libwrap. Default and IPv6-disabled build/
+install comparisons match Make. No probe/audit hooks were added or removed.
+Record isolated allow/deny, hostname/ident failure, IPv4/IPv6 and daemon-exec
+checks with syslog/audit review for runtime qualification. Compile-time option
+parity does not establish policy behavior; no wrapper/service was executed.

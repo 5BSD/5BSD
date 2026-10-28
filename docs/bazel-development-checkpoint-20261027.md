@@ -7555,3 +7555,33 @@ or quota state modified. Isolated inetd/standalone RPC startup, protocol errors,
 authentication/quota replies, configuration/cross variants and performance
 remain unqualified. Full world/kernel/pkgbase/bootstrap/cache/runtime gates
 remain open; Make remains production/default and BIP is out of scope.
+
+## 2026-10-28 native tcpd and IPv6 selection
+
+Added tcpd with explicit contrib source/header/manual inputs and native libwrap
+CcInfo/shared-library dependencies. Its maintained default daemon/hosts paths,
+logging constants and timeout are compile definitions; the existing inet6_support
+setting selects INET6. No runtime policy source changed. Arbitrary Make
+LIBEXECDIR overrides are not yet exposed by this component and remain an input
+configuration gap, rather than being claimed supported.
+
+Both default and IPv6-disabled candidates pass independent Make comparisons:
+24 and 23 global/undefined symbol entries respectively, matching libc/libwrap
+NEEDED with no RPATH, five installation records each, byte-identical manual,
+valid debug pairs, and preserved native .text through stripping. References
+build the tcpd component against the prepared SDK; this is not independent
+whole-libwrap variant/runtime qualification. Evidence:
+/usr/obj/usr/src/bazel-tcpd-20261028-r2/qualification/parity.json and
+/usr/obj/usr/src/bazel-tcpd-noinet6-20261028/qualification/parity.json.
+Scripts: bazel-tcpd-qualification-20261028; references:
+bazel-tcpd-reference-20261028 and bazel-tcpd-noinet6-reference-20261028.
+The initial native compile rejected an unquoted path macro; r2 preserves C
+string literals through Bazel tokenization, matching the established libwrap
+consumer convention. No fallback or source substitution was used.
+
+Reviewed build-bsd.c: existing format-5 configuration/targets carry this input
+selection at 16 jobs; no new CLI or publication contract was introduced. No
+wrapper was executed, service launched, network listener opened or host files
+installed. Allow/deny policy, IPv4/IPv6 requests, syslog and daemon handoff remain
+runtime gates. Full world/kernel/pkgbase/bootstrap/cache/performance work stays
+open, Make remains production/default, and BIP remains out of scope.
