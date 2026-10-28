@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["ftp-proxy.c", "filter.c", "filter.h", "ftp-proxy.8"], visibility = ["//usr.sbin/ftp-proxy:__pkg__"])

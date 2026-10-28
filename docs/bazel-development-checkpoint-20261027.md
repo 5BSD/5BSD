@@ -8101,3 +8101,26 @@ no frontend/backend changes required. This completes default component library
 installation evidence, not configured-world/pkg publication or runtime coverage.
 Event-loop backend behavior, consumer traffic, cache/incremental performance and
 whole-world/kernel/publication gates remain open. Make remains production/default.
+
+## 2026-10-28 native ftp-proxy
+
+Added ftp-proxy's two unchanged contributed sources/local header, native
+libevent1 dependency, explicit forced OpenBSD compatibility header, and the
+maintained NOPRIV_USER="proxy" definition. Source exports and compatibility
+visibility are limited to the new consumer. Installation follows Make's pf
+package and /usr/sbin location, with manual and split debug metadata.
+
+Through build-bsd at 16 jobs, both object .text bodies and global/undefined
+symbol sets match independent Make. Linked comparison matches 133 entries,
+libc/libprivateevent1 dependencies, empty RPATH/RUNPATH, five installation
+records, manual bytes, debug name/CRC/DWARF, and strip-preserved .text.
+Evidence: /usr/obj/usr/src/bazel-ftp-proxy-20261028/qualification/{parity.json,
+object-parity.json}; reference: bazel-ftp-proxy-reference-20261028 and matching
+reference-objects tree. Scripts: bazel-ftp-proxy-qualification-20261028.
+
+Reviewed build-bsd.c: current explicit format-5 target and archive handling
+supports this component without frontend changes. No daemon or host PF rule
+operation ran. Active/passive FTP, address rewriting, malformed commands,
+privilege changes, timeout/error cleanup, and concurrent session behavior still
+need isolated runtime qualification. Configured-world selection, pkgbase
+publication and full-system/performance gates remain open. Make stays default.

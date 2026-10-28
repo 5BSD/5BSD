@@ -5210,3 +5210,11 @@ Private header, archive, DSO/link and debug packaging now match maintained
 Make component metadata. Runtime source/logging behavior is unchanged. This
 adds installation evidence only; readiness/timer/signal/backend and teardown
 runtime qualification remains outstanding.
+
+## 2026-10-28 ftp-proxy
+
+Both compiled sources match Make executable code and symbols, preserving
+existing syslog and privilege-drop code. No dedicated SDT/DTrace/audit calls
+were found. Guest qualification must exercise FTP command/address handling,
+PF rule creation/removal, dropped privileges, failures and concurrent sessions.
+This conversion adds build/install evidence, not network or authorization proof.
