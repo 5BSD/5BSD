@@ -4981,3 +4981,26 @@ It does not fix the existing SDK's missing NIS libc symbols or qualify chpass NI
 Frontend review: build-bsd's format-5 explicit targets and existing typed NLS
 setting cover this object qualification; no new frontend/backend contract.
 Full native libc, bootstrap and final world linkage remain completion gates.
+
+## 2026-10-28: native libc XDR object group
+
+Adds all eight maintained lib/libc/xdr sources as native xdr_objects, with
+explicit libc private-header and rpc_com.h dependencies. Ordinary/PIC archives
+are qualification artifacts, not installed replacement libraries. Preserves
+libc namespace handling, fortify/revision/NLS defines, default unwind and TLS
+options; Symbol.map and xdr.3 are exposed to the future libc aggregate.
+
+Evidence: /usr/obj/usr/src/bazel-libc-xdr-20261028/qualification/parity.json
+compares saved native artifacts against fresh maintained Make objects in
+bazel-libc-xdr-make-20261028. All 16 ordinary/PIC objects match global symbols,
+undefined symbols and .text bytes. Comparison does not establish relocation,
+all allocated-section, whole object/debug, final ABI or runtime equivalence.
+The libc aggregate, final shared/static library links, xdr.3 and rpc_xdr.3 manual
+aliases, installation/package integration and NO_THREAD_STACK_UNWIND variants
+remain open. Existing lib/libc/tests/rpc includes NetBSD XDR tests and generated
+h_testbits RPC fixtures; carrying that suite into Bazel is follow-up work, not
+covered by these object comparisons.
+
+Frontend review: current explicit format-5 targets and NLS configuration work
+through build-bsd; no frontend/backend contract change needed for this group.
+No host installation, network activity, credential changes or BIP work.

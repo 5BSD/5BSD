@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(
+    name = "rpc_com_headers",
+    hdrs = ["rpc_com.h"],
+    strip_include_prefix = ".",
+    visibility = ["//lib/libc/xdr:__pkg__"],
+)
