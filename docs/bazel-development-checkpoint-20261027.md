@@ -8350,3 +8350,38 @@ BOOTSTRAPPING definitions and search paths, flua and its loadable modules,
 interpreter runtime tests, dependency invalidation/cache behavior and performance
 remain open. No host installation occurred. Whole-world/kernel/pkgbase gates
 remain open and Make stays production/default.
+
+
+## 2026-10-28: flua interpreter build/install and bounded runtime
+
+Added native flua cc_binary and installation targets with explicit liblua PIE,
+libedit, math and readline header dependencies. Make's custom linit_flua and
+built-in lposix are compiled unchanged. Exported executable symbols (-Wl,-E)
+are preserved for future loadable modules. The contributed interpreter is
+exported narrowly to this package. No Make invocation or prebuilt interpreter
+is used by the native target.
+
+Three object bodies/global symbols, 281 executable global/undefined symbols,
+NEEDED libraries (c/edit/m), empty RPATH/RUNPATH, five installation records and
+the compressed manual match Make. Debug CRC/DWARF and stripped executable text
+checks pass. The first archive omitted Make's implicit flua.1 manual; the
+corrected r2 includes it. Both runs are retained.
+
+Five bounded cases (language/table/UTF-8, math, coroutine, built-in POSIX helpers,
+error propagation) pass with matching output/status for Bazel and Make binaries
+using copied native rtld, libc/libsys, libedit, libm and libtinfo. The first
+runtime harness used an unsupported --library-path loader option and failed
+before executing Lua; corrected runtime-r2 uses LD_LIBRARY_PATH. That initial
+failure remains recorded. These are external qualification cases, not yet
+Bazel-owned tests, and do not qualify loadable modules, REPL/readline interaction,
+bootstrap Lua or nuageinit behavior.
+
+Evidence: /usr/obj/usr/src/bazel-flua-20261028-r2/qualification/{flua/parity.json,
+object-parity.json,runtime-r2/results.json}. Scripts:
+bazel-flua-qualification-20261028/{make.py,verify.py,objects.py,runtime.py}.
+Reference: bazel-flua-reference-20261028, with NO_SUBDIR explicitly selecting
+the interpreter; its modules remain pending, not silently included in this
+claim. Builds used build-bsd with 16 jobs. Reviewed build-bsd.c: existing
+explicit target collection suffices; no frontend change needed. No host
+installation/configuration changes. Full world/kernel/pkgbase/cache/performance
+qualification remains open; Make remains production/default.

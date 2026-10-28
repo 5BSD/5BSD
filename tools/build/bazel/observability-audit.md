@@ -5297,3 +5297,14 @@ DTrace coverage. Review audit needs at privileged flua/nuageinit operations when
 those runtimes are qualified; this internal library build establishes no audit
 or runtime behavior. Bootstrap and interpreter/module tests remain pending.
 Evidence: /usr/obj/usr/src/bazel-lua-20261028-r2/qualification/parity.json.
+
+
+### flua interpreter (2026-10-28)
+
+The native target carries lua.c, linit_flua.c and modules/lposix.c unchanged,
+including exported symbols needed by modules. All three object code/symbol
+comparisons pass against Make. Five bounded runtime checks exercise language,
+math, coroutines, built-in POSIX loading and error handling, not privileged
+system mutations. Module-specific audit/security behavior, interactive readline
+and bootstrap behavior remain open. Nuageinit runtime is not yet qualified.
+Evidence: /usr/obj/usr/src/bazel-flua-20261028-r2/qualification/.
