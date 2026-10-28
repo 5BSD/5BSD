@@ -3494,3 +3494,25 @@ filesystem I/O require linked-kernel tests. Disk I/O and memory/CPU performance
 are not established by object parity. Full kernel/world/pkgbase/bootstrap gates
 remain open. Make stays production/default; module count remains 45. No host
 installation or BIP changes occurred.
+
+### Native SMR and pctrie helpers
+
+Added //sys/kern:generic_smr_pctrie_object_files for subr_smr.c and
+subr_pctrie.c, selected by the maintained GENERIC Makefile. Dependencies
+declare CK/VM, debugger and generated DDB options. No reclamation or tree
+algorithm source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-smr-pctrie-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. The debugger option header matches Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-smr-pctrie-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets cover these additions without new
+build-bsd C/backend options, staging or manual changes. No runtime tests ran.
+Concurrent lookup/update, grace periods, reclamation, memory pressure and
+CPU/memory costs require linked-kernel tests. Full kernel/world/pkgbase/
+bootstrap and performance gates remain open. Make stays production/default;
+module count remains 45. No host installation or BIP changes occurred.

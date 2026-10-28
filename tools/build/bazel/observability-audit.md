@@ -3717,3 +3717,13 @@ raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-uio-rangelock-kernel-20261028/qualification`.
 No runtime source changed. Copy-fault handling, contention and filesystem
 performance remain unqualified.
+
+### SMR and pctrie helpers (2026-10-28)
+
+subr_smr.c and subr_pctrie.c have no local SDT/AUDIT call sites. Review existing
+counters/debugger facilities and reclamation/lookup measurements before
+adding low-level instrumentation. Native GENERIC objects match Make symbols,
+raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-smr-pctrie-kernel-20261028/qualification`.
+No runtime source changed. Concurrency, reclamation and resource behavior
+remain unqualified.
