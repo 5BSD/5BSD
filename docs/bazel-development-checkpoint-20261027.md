@@ -5056,3 +5056,31 @@ aggregate and the installed RPC test suite remain subsequent integration work.
 Frontend review: existing explicit targets and nis setting work through the
 maintained build-bsd format-5 interface; staging metadata uses existing helpers.
 No frontend/backend contract change, host installation or publication occurred.
+
+## 2026-10-28: maintained RPC suite programs and staging
+
+Adds native rpc_test and xdr_test from unchanged NetBSD sources, retaining
+libnetbsd, ATF, librpcsvc and libutil dependencies. Installed variants retain
+Make's no-RPATH PIE link contract. Separate native-runtime test variants use
+$ORIGIN RPATH (not RUNPATH) to include libc's auxiliary libsys in the declared
+runtime closure. Strict existing elf-runtime-check.py confirms all five selected
+libraries before Kyua runs. No loader check was relaxed: intermediate failures
+caught an incorrect ATF SONAME and nontransitive lookup of host libsys. Narrow
+checker visibility and explicit Python/runtime inputs complete those dependencies.
+
+Eight case targets preserve the maintained inventory. case_raw and case_xdr
+are local; the six network/service cases carry manual/requires-network tags and
+remain unexecuted. Installed Kyuafile still includes both complete ATF programs.
+Installation stages both programs, debug files, Kyuafile and owned directories.
+
+Evidence: /usr/obj/usr/src/bazel-libc-rpc-tests-20261028-r6: two Kyua cases executed
+and passed, with five declared-library checks each. qualification/parity.json
+compares saved installed-program artifacts against bazel-libc-rpc-tests-make-
+20261028: rpc_test 6 globals, xdr_test 10 globals, matching ordered dependencies,
+flags/no-RPATH and 11 unique installation records. Runtime variants are distinct
+from these metadata-compared installed variants. SDK libc/libsys and host kernel
+remain in use; this does not qualify native complete libc, all RPC cases, installed
+image startup, full binary/debug bytes or package archive lifecycle.
+
+Frontend review: existing targets/tests and per-case test selection work through
+build-bsd format 5. No frontend/backend contract change or host installation.

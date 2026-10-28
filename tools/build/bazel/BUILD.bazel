@@ -20,7 +20,7 @@ exports_files(["header_pkgconfig.py"])
 
 exports_files(["tests/crypt_rpc_roundtrip.c"], visibility = ["//usr.bin/rpcgen/tests:__pkg__"])
 
-exports_files(["elf-runtime-check.py", "libmd_environment.py"], visibility = ["//lib/libbsdfilesystem/tests:__pkg__", "//lib/liboes/tests:__pkg__", "//usr.sbin/BSDNetwork/tests:__pkg__", "//usr.sbin/BSDTrace/tests:__pkg__", "//usr.sbin/BSDCrypto/tests:__pkg__", "//usr.sbin/BSDSysctl/tests:__pkg__", "//usr.sbin/BSDMemory/tests:__pkg__", "//usr.sbin/BSDPower/tests:__pkg__", "//usr.sbin/BSDTime/tests:__pkg__", "//usr.sbin/BSDAudit/tests:__pkg__", "//usr.sbin/capsule/tests:__pkg__", "//lib/libregex/tests:__pkg__", "//lib/atf/libatf-c++/tests:__pkg__", "//lib/libcasper/services/cap_grp/tests:__pkg__", "//lib/libcasper/services/cap_pwd/tests:__pkg__"])
+exports_files(["elf-runtime-check.py", "libmd_environment.py"], visibility = ["//lib/libc/tests/rpc:__pkg__", "//lib/libbsdfilesystem/tests:__pkg__", "//lib/liboes/tests:__pkg__", "//usr.sbin/BSDNetwork/tests:__pkg__", "//usr.sbin/BSDTrace/tests:__pkg__", "//usr.sbin/BSDCrypto/tests:__pkg__", "//usr.sbin/BSDSysctl/tests:__pkg__", "//usr.sbin/BSDMemory/tests:__pkg__", "//usr.sbin/BSDPower/tests:__pkg__", "//usr.sbin/BSDTime/tests:__pkg__", "//usr.sbin/BSDAudit/tests:__pkg__", "//usr.sbin/capsule/tests:__pkg__", "//lib/libregex/tests:__pkg__", "//lib/atf/libatf-c++/tests:__pkg__", "//lib/libcasper/services/cap_grp/tests:__pkg__", "//lib/libcasper/services/cap_pwd/tests:__pkg__"])
 
 # The test adapter starts before the candidate runtime is selected.
 cc_binary(name = "atf_runner", srcs = ["atf_runner.c"], linkopts = ["-static"], visibility = ["//visibility:public"])

@@ -4287,3 +4287,11 @@ sources. Native build carries those sources and generated RPC XDR schemas
 unchanged. Artifact comparison covers the NIS-disabled variant, not network
 calls, key handling, service authentication or live audit behavior. NIS variant
 and installed-system runtime qualification remain open.
+
+### 2026-10-28: maintained RPC suite
+
+Native-built installed-program variants preserve both NetBSD RPC test programs.
+Local raw RPC and XDR cases passed with checked native ATF/librpcsvc/libutil and
+SDK libc/libsys. This exercises SDK libc's RPC implementation; it is not proof
+of a native complete libc. Six network/service cases remain explicit unrun
+qualification work. No test source edits or root/service requirement bypasses.
