@@ -3480,3 +3480,13 @@ stage the command and preload library independently.
 checks candidate library buffering through explicit preload runfiles.
 It does not substitute for testing the installed command's absolute library
 path in an isolated system runtime.
+
+.Pp
+The native installation targets
+.Dq //usr.bin/xstr:install_archive ,
+.Dq //usr.bin/revoke:install_archive
+and
+.Dq //usr.bin/tcopy:install_archive
+preserve their maintained packages, manuals and debug files.
+Artifact parity and private-file runtime comparisons do not qualify live
+device revocation or physical tape operations.

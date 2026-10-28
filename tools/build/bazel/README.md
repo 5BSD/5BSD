@@ -33200,3 +33200,40 @@ Existing frontend format-5 target/test inputs support this integration; no
 frontend C/backend contract change is needed. Manual and observability records
 are updated. Make remains production/default. Full world/kernel/bootstrap,
 pkgbase aggregation and CPU/memory/disk/cache qualification remain open.
+
+## Native xstr, revoke and tcopy (2026-10-28)
+
+Three more utilities now have explicit native source/dependency and installation
+targets. xstr declares its local pathnames header and toolchain package;
+revoke retains the utilities package. tcopy declares native libutil, libc++,
+libcxxrt and libm dependencies, with ordinary C++ RTTI/exceptions retained as
+in Make. Production sources are unchanged.
+
+Each installation matches five Make records, a byte-identical compressed
+manual, and a valid executable debug link. Defined globals match (xstr 6,
+revoke 6, tcopy 40); ordered NEEDED libraries, NOW/PIE flags and absence of
+runtime search paths also match. Evidence:
+/usr/obj/usr/src/bazel-xstr-revoke-20261028/qualification and
+/usr/obj/usr/src/bazel-tcopy-20261028/qualification. Separate Make references
+are bazel-{xstr,revoke,tcopy}-make-20261028 under /usr/obj/usr/src.
+
+Retained runtime comparisons cover xstr file/stdin input and persistent
+string-table processing, including repeated/suffix strings and escapes;
+outputs match Make byte-for-byte. revoke checks cover usage and an explicitly
+nonexistent path only. tcopy uses private regular SIMH-TAP files, testing read,
+copy, verify, raw extraction and malformed trailer rejection (exit 65).
+Extracted payload is checked against the independently supplied bytes, and
+copied tape bytes match Make. Both tcopy executables use the declared native
+DSOs plus the SDK runtime in this comparison. No live device was accessed.
+These are retained direct runtime comparisons, not newly registered Bazel test
+targets. Device revocation, physical tape/file-set behavior, complete option
+coverage and native test registration remain open.
+
+Archive SHA256:
+- xstr: 36c0bc764b34b3da1fce810f7eb61e28e10f16fbd4e32b3b91b55e34d2883adf
+- revoke: 29566806d0767d5e06157d465d7221af5d35248ff3aba61bf12172dea29199d8
+- tcopy: ee815eb94af52c9310d2d3edf26c8cc5f307af09dff3eb7d007839163d06458a
+
+The maintained frontend target-selection interface requires no C/backend
+change for these components; the manual lists the installation targets.
+World/kernel/bootstrap/pkgbase aggregation and performance gates remain open.

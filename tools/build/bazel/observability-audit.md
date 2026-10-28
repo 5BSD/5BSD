@@ -2827,3 +2827,15 @@ binary metadata match Make. Installed absolute-path integration, stdin and
 privileged-loader behavior remain unqualified. A preload library must avoid
 unnecessary dependencies and namespace pollution; native libstdbuf retains
 Make's sole libc dependency.
+
+## xstr, revoke, tcopy (2026-10-28)
+
+No program-local DTrace or audit call integration was found in these source
+files, and none was added or removed by the native build declarations. revoke
+calls the kernel revoke syscall; its syscall audit behavior and live-device
+access revocation are not exercised by usage/nonexistent-path checks. tcopy's
+SIMH-TAP fixture checks do not qualify physical device errors, file sets,
+signals, privileges or tape-driver instrumentation. xstr's file/stdin and
+persistent table outputs match Make. All three executable debug links match
+their packaged debug files. Runtime comparisons are retained outside Bazel's
+test catalog; converting them to maintained native tests remains work.
