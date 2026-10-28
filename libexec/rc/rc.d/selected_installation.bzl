@@ -1,18 +1,43 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Service groups controlled by the existing shared native build settings."""
+"""Service groups controlled by the shared native build settings."""
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
 _GROUPS = {
-    "audit": ("audit", ["auditd", "auditdistd"]),
-    "jail": ("jail", ["jail"]),
-    "pf": ("pf", ["pf", "pflog", "pfsync", "ftp-proxy", "tftpproxy"]),
-    "nis": ("yp", ["ypbind", "ypldap", "yppasswdd", "ypserv", "ypset", "ypupdated", "ypxfrd", "nisdomain"]),
-    "ns_caching": ("rc", ["nscd"]),
-    "kerberos_support": ("gssd", ["gssd"]),
+    "audit": ("audit", "audit", ["auditd", "auditdistd"]),
+    "autofs": ("autofs", "autofs", ["automount", "automountd", "autounmountd"]),
+    "blocklist": ("blocklist", "blocklist", ["blacklistd", "blocklistd"]),
+    "bluetooth": ("bluetooth", "bluetooth", ["blued", "bluetooth", "bthidd", "hcsecd", "meshd", "rfcomm_pppd_server", "sdpd", "ubthidhci"]),
+    "bootparamd": ("bootparamd", "rc", ["bootparams"]),
+    "bsnmp": ("bsnmp", "bsnmp", ["bsnmpd"]),
+    "gssd": ("kerberos_support", "gssd", ["gssd"]),
+    "hast": ("hast", "hast", ["hastd"]),
+    "inetd": ("inetd", "inetd", ["inetd"]),
+    "dummynet": ("dummynet", "dummynet", ["dnctl", "dummynet"]),
+    "iscsi": ("iscsi", "iscsi", ["iscsictl", "iscsid"]),
+    "jail": ("jail", "jail", ["jail"]),
+    "lp": ("lpr", "lp", ["lpd"]),
+    "nis": ("nis", "yp", ["ypbind", "ypldap", "yppasswdd", "ypserv", "ypset", "ypupdated", "ypxfrd", "nisdomain"]),
+    "nscd": ("ns_caching", "rc", ["nscd"]),
+    "ntp": ("ntp", "ntp", ["ntpd", "ntpdate"]),
+    "nuageinit": ("nuageinit", "nuageinit", ["nuageinit", "nuageinit_post_net", "nuageinit_user_data_script"]),
+    "opensm": ("ofed_extra", "rc", ["opensm"]),
+    "pf": ("pf", "pf", ["pf", "pflog", "pfsync", "ftp-proxy", "tftpproxy"]),
+    "ppp": ("ppp", "ppp", ["ppp"]),
+    "sendmail": ("sendmail", "sendmail", ["sendmail"]),
+    "ssh": ("openssh", "ssh", ["sshd"]),
+    "unbound": ("unbound", "local-unbound", ["local_unbound"]),
+    "vi": ("vi", "vi", ["virecover"]),
+    "sound": ("sound", "sound", ["mixer", "virtual_oss"]),
+    "hostapd": ("wireless", "hostapd", ["hostapd"]),
+    "wpa": ("wireless", "wpa", ["wpa_supplicant"]),
+    "zfs": ("zfs", "zfs", ["zfs", "zfsbe", "zfsd", "zfskeys", "zpool", "zpoolreguid", "zpoolupgrade", "zvol"]),
+    "syscons": ("legacy_console", "console-tools", ["moused", "msconvd", "syscons"]),
+    "accounting": ("acct", "acct", ["accounting"]),
+    "utx": ("utmpx", "acct", ["utx"]),
 }
 
 def selected_installation(name):
     entries = []
-    for setting, (package, services) in _GROUPS.items():
+    for group, (setting, package, services) in _GROUPS.items():
         group_entries = []
         for service in services:
             target = name + "_" + service

@@ -5552,3 +5552,12 @@ follow native configuration selection. Enabled and disabled installation payload
 match Make. This establishes selection and metadata parity, not daemon startup,
 audit delivery, firewall behavior, jail creation or NIS communication. No service
 was started on the host. Other optional rc groups and runtime tests remain open.
+
+### 2026-10-28 all single-option rc service groups
+
+The selected-service table now covers 31 single-option groups, with 158 scripts
+including unconditional services when enabled. All-on/all-off payload and
+metadata parity pass against Make. No script source changed. This includes SSH,
+NTP, sound, wireless and ZFS service scripts but does not prove those services
+start, authenticate, log correctly or communicate with hardware. ACPI, Kerberos
+alternatives and KTLS conjunction remain separate pending work.

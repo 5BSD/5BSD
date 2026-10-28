@@ -9091,3 +9091,30 @@ build-bsd forwards them without a new option or one-off workflow. Both runs use
 16 jobs. Remaining conditional groups, architecture/Kerberos combinations and
 runtime startup tests remain pending; this validates these six settings together,
 not every mixed configuration. Make stays default and full-system gates remain open.
+
+## 2026-10-28: all single-option rc.d groups
+
+Extended the native selected-service table to all 31 single-option groups,
+including independently selected accounting/utx and wireless's distinct hostapd
+and wpa package groups. Reused existing settings and added 24 shared bool settings
+for remaining component selectors. Defaults were checked against Make with
+SRCCONF and __MAKE_CONF set to /dev/null on amd64; recorded in
+bazel-rc-options-qualification-20261028/settings.json. Source builds do not query
+Make or parse its metadata: the checked-in native table and settings own the graph.
+
+All groups enabled match Make for 158 script payloads and 159 metadata records;
+all disabled match the unconditional Make reference for 90 payloads and 91
+records. Evidence: /usr/obj/usr/src/bazel-rc-options-20261028/qualification/rc/parity.json
+and bazel-rc-options-off-20261028/qualification/rc/parity.json. Reference:
+bazel-rc-options-reference-20261028; scripts:
+bazel-rc-options-qualification-20261028/{make.py,verify.py,verify-off.py}.
+The enabled Make reference enables OpenSSL so OpenSSH is not implicitly disabled;
+KTLS scripts remain off. These checks cover explicit all-on/all-off settings,
+not every mixed/default or architecture-dependent option combination.
+
+Reviewed build-bsd and source_graph.py: typed format-5 settings already expose
+these selectors through the maintained frontend; no CLI changes needed. Used
+16 jobs. ACPI architecture rules, Kerberos alternatives/directory metadata and
+KTLS conjunction remain missing from this partial aggregate. Native option
+implications and broader default configurations still need qualification.
+Runtime, complete-world/pkgbase and performance gates remain open; Make stays default.
