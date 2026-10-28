@@ -4489,3 +4489,11 @@ object parity preserves it but does not establish delivery to logging services.
 Legacy signal/identity operations delegate to existing interfaces; kernel audit
 coverage is separate. No hooks or policy were changed. Runtime fortify/signal
 and bit-operation tests remain open. Evidence: bazel-libc-smallgroups-build-20261028-r2.
+
+## 2026-10-28: gmon, libc startup and x86 context
+
+No direct DTrace/SDT or BSM audit hooks found in these groups. gmon retains its
+profil-based sampling and mcount bookkeeping; getcontextx retains CPUID and
+sysarch extended-state handling. Object parity does not verify profiling output,
+startup relocation or CPU-state capture. No hooks or runtime behavior changed.
+Evidence: bazel-libc-startup-build-20261028/qualification.

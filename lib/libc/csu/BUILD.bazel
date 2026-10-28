@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "relocation_input", textual_hdrs = ["amd64/reloc.c"], strip_include_prefix = "amd64")
+cc_library(
+    name = "objects",
+    srcs = ['libc_start1.c'],
+    implementation_deps = ['//lib/libc/include:rt_private_headers', ':relocation_input'],
+    local_defines = ['_FORTIFY_SOURCE_read=_read', 'NO__SCCSID', 'NO__RCSID', 'CRT_IRELOC_RELA'] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ["-fexceptions", "-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "objects_archive", groups = [":objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":objects"], pic = True)
+exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])

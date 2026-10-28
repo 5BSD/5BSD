@@ -5653,3 +5653,21 @@ present and must be integrated with the complete native library.
 Frontend review: explicit format-5 targets and existing NLS input exercise these
 groups through build-bsd; no new C/backend contract required. No host identity,
 signals, installation or policy modifications were performed.
+
+## 2026-10-28: profiling, libc startup and x86 context objects
+
+Adds gmon.c/mcount.c, libc_start1.c and getcontextx.c native ordinary/PIC groups.
+Startup preserves amd64 CRT_IRELOC_RELA and declares amd64/reloc.c as a textual
+input with the appropriate include view. No source copies or runtime overrides.
+Evidence: /usr/obj/usr/src/bazel-libc-startup-build-20261028/qualification/
+{gmon,csu,x86-gen}-parity.json against bazel-libc-startup-make-20261028.
+All eight objects match .text, global and unresolved symbols.
+
+This does not qualify complete startup/linkage, full relocation/debug/data
+identity, IFUNC/static executable startup, profiling output or extended CPU
+context runtime. The separate profiled-object contract must preserve Make's
+rule that mcount.po reuses an unprofiled mcount.o; no profiled archive is claimed
+by the ordinary/PIC groups here. Other architectures remain unqualified.
+Frontend review: existing format-5 explicit targets/NLS setting suffice through
+build-bsd; no new frontend/helper contract required. No host install or profiling
+state modification was performed.
