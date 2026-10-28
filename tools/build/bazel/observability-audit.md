@@ -5177,3 +5177,12 @@ calls; its executable object matches Make. No dedicated DTrace/SDT or audit call
 was found. Review guest coverage for module loading, netgraph node/hook creation,
 discovery/session failures, fork/exec and configured command authorization.
 No network or module-loading runtime was exercised in this build conversion.
+
+## 2026-10-28 mail.local and smrsh
+
+Both unchanged program objects match Make. Existing syslog diagnostics remain;
+no dedicated audit/SDT/DTrace calls were found in their source files. Prioritize
+isolated mailbox ownership/locking and delivery failure tests for mail.local,
+and command allowlisting, path validation, metacharacter rejection and exec
+failure tests for smrsh. No live mail, logging or authorization claim follows
+from build/install parity. Custom SENDMAIL build flags remain unqualified.

@@ -7999,3 +7999,32 @@ these paths, PPPoE discovery/negotiation, failure cleanup and authorization need
 isolated guest qualification. Nondefault compile configurations, full world,
 kernel, package publication, cache and performance gates remain open. Make
 remains production/default and BIP remains out of scope.
+
+## 2026-10-28 native mail.local and smrsh
+
+Added native sendmail helper targets using unchanged contributed sources and
+the existing libsm:sm_pie dependency, including its declared generated sm_os.h
+and maintained header interfaces. Narrowly exported the two sources/manuals.
+Installation preserves package=sendmail, /usr/libexec, manuals and split debug.
+At 16 jobs through build-bsd both programs and archives build successfully.
+
+Independent Make comparison matches 272 linked global/undefined entries for
+mail.local and 209 for smrsh, libc-only dependencies, empty RPATH/RUNPATH,
+five metadata records each, both manual payloads, debug name/CRC/DWARF and
+strip-preserved .text. The two program object bodies (9237 and 2016 .text bytes)
+and their symbol sets match Make exactly.
+Evidence: /usr/obj/usr/src/bazel-sendmail-helpers-20261028/qualification/
+{mail.local,smrsh}/parity.json and object-parity.json. References:
+bazel-mail.local-reference-20261028 and bazel-smrsh-reference-20261028, with
+corresponding reference-objects trees. Scripts are retained under
+bazel-sendmail-helpers-qualification-20261028.
+
+Reviewed build-bsd.c: explicit format-5 target/artifact support suffices for the
+default component qualification. Make's arbitrary SENDMAIL_CFLAGS/DPADD/LDADD/
+LDFLAGS customization is not represented here and remains an explicit migration
+gap; this is not complete configuration parity. No mail delivery or restricted
+command execution occurred. Mailbox locking/ownership, LMTP behavior, smrsh
+command rejection/execution, and logging require isolated runtime qualification.
+Inspection also found tftp-proxy's native libevent dependency still missing;
+that prerequisite remains on the remaining-libexec list. Full-system, package,
+cache and performance gates remain open; Make stays production/default.
