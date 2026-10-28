@@ -5048,3 +5048,13 @@ install comparisons match Make. No probe/audit hooks were added or removed.
 Record isolated allow/deny, hostname/ident failure, IPv4/IPv6 and daemon-exec
 checks with syslog/audit review for runtime qualification. Compile-time option
 parity does not establish policy behavior; no wrapper/service was executed.
+
+## 2026-10-28 rbootd
+
+All six existing source units are compiled unchanged; object code and symbols
+match Make. Existing syslog allocation, request, unknown-packet and connection
+messages remain present. No dedicated DTrace or direct audit hooks were found
+in these units. Isolated BPF/interface startup, reload, client authorization,
+boot/read/error responses and their log visibility remain runtime review items.
+Build parity is not evidence of packet handling or audit correctness. The daemon
+was not executed and no BPF device or network listener was opened.

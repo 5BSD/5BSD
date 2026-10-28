@@ -7585,3 +7585,27 @@ wrapper was executed, service launched, network listener opened or host files
 installed. Allow/deny policy, IPv4/IPv6 requests, syslog and daemon handoff remain
 runtime gates. Full world/kernel/pkgbase/bootstrap/cache/performance work stays
 open, Make remains production/default, and BIP remains out of scope.
+
+## 2026-10-28 native rbootd
+
+Added all six maintained rbootd C sources and four local headers to a native
+Bazel program target, with program/manual/debug installation metadata. The
+source files and runtime path definitions are unchanged. Qualification used
+build-bsd with 16 jobs and an independent rootless Make reference.
+
+All six executable object .text bodies and global/undefined symbol sets match
+Make. The linked program matches 118 global/undefined symbol entries and its
+libc-only dependency/empty RPATH layout. Five installation records and the
+compressed manual match; debug name/CRC/DWARF validates and stripping preserves
+native .text. Evidence: /usr/obj/usr/src/bazel-rbootd-20261028/qualification/
+parity.json and object-parity.json. Make reference: bazel-rbootd-reference-20261028,
+objects: bazel-rbootd-reference-objects-20261028; scripts:
+bazel-rbootd-qualification-20261028. Debug bytes are not asserted identical.
+
+Reviewed build-bsd.c: existing format-5 native target and installation collection
+supports this component without new frontend options or publication policy.
+No daemon was started, BPF device opened, boot packet sent or host files
+installed. Interface selection, configuration parsing/reload, client permissions,
+boot/read/error replies, resource behavior and cross/static variants remain
+runtime/configuration gates. Complete world/kernel/pkgbase/bootstrap/cache/
+performance qualification remains open; Make stays production/default.
