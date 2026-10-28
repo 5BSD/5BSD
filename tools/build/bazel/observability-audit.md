@@ -4506,3 +4506,11 @@ kernel syscall observation must be checked in their owning layers; object parity
 alone does not establish audit coverage or runtime thread semantics. No hooks or
 policy changes were added. Evidence: bazel-libc-syswrappers-build-20261028-r2/
 qualification/parity.json (122 ordinary/PIC objects).
+
+## 2026-10-28: libc static/shared libsys variants
+
+No direct DTrace/SDT or BSM audit calls found in auxv.c, interposing_table.c or
+libc_stubs.c. Native groups preserve auxiliary-vector access, interposition table
+and intentional shared trap stub. Runtime filter resolution and thread dispatch
+still require full-library tests. Evidence: bazel-libc-libsysvariants-build-20261028/
+qualification/parity.json. No hooks or runtime source changes introduced.

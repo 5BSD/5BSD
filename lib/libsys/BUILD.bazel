@@ -2,4 +2,4 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = ["libsys.h", "_libsys.h"], strip_include_prefix = ".", visibility = ["//lib/libc/include:__pkg__"])
 
-exports_files(["ptrace.c", "recvmmsg.c", "sendmmsg.c"], visibility = ["//lib/libc/sys:__pkg__"])
+exports_files(["auxv.c", "interposing_table.c", "libc_stubs.c", "ptrace.c", "recvmmsg.c", "sendmmsg.c"], visibility = ["//lib/libc/sys:__pkg__"])

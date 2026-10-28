@@ -5695,3 +5695,26 @@ Frontend review: existing format-5 targets/NLS configuration cover the new C
 groups through build-bsd; no frontend/backend contract change needed. Narrow
 libsys source exports do not alter its existing compile flags. No host process
 control, account/policy changes or installation performed.
+
+## 2026-10-28: libc-specific static/shared libsys source variants
+
+Adds distinct native groups for libc's static auxv.c/interposing_table.c and
+shared PIC libc_stubs.c, consuming the maintained libsys sources directly.
+The static and shared archive outputs select only their respective object group;
+there is no combined archive or alternate implementation. This preserves the
+variant split recorded by lib/libsys/Makefile.sys.
+
+Evidence: /usr/obj/usr/src/bazel-libc-libsysvariants-build-20261028/qualification/
+parity.json against bazel-libc-libsysvariants-make-20261028. All three selected
+objects match .text, global and unresolved symbols. Native libsys itself still
+has no complete implementation/link target; its existing BUILD previously only
+provided headers and source exports. These libc-mode groups do not qualify the
+libsys library or dynamic auxiliary-filter behavior.
+
+Generated syscall assembly, common libsys sources, complete static/shared libc
+linking and runtime interposition/filter verification remain outstanding. The
+shared elf_aux_info trap stub must be resolved through the intended libsys
+runtime mechanism; successful object comparison is not proof of that behavior.
+Data/relocation/debug identity and installed package integration remain open.
+Frontend review: format-5 explicit targets cover both variants through build-bsd;
+no frontend/helper contract change required. No host installation.

@@ -25,3 +25,27 @@ cc_library(
 bsd_component_archive(name = "objects_archive", groups = [":interposed_objects", ":pseudo_objects"])
 bsd_component_archive(name = "pic_objects_archive", groups = [":interposed_objects", ":pseudo_objects"], pic = True)
 exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+# libsys source variants required by libc: never merge these groups.
+cc_library(
+    name = 'static_libsys_objects',
+    srcs = ['//lib/libsys:auxv.c', '//lib/libsys:interposing_table.c'],
+    implementation_deps = ["//lib/libc/include:rt_private_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ["-fexceptions", "-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+cc_library(
+    name = 'shared_libsys_objects',
+    srcs = ['//lib/libsys:libc_stubs.c'],
+    implementation_deps = ["//lib/libc/include:rt_private_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ["-fexceptions", "-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "static_libsys_archive", groups = [":static_libsys_objects"])
+bsd_component_archive(name = "shared_libsys_archive", groups = [":shared_libsys_objects"], pic = True)
