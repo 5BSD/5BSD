@@ -3353,3 +3353,11 @@ for byte. Runtime wait/wake, signal interruption, priority propagation and
 contention measurement remain required; object parity cannot diagnose the
 open lock-order report or establish latency. No probe or synchronization
 source behavior changed during conversion.
+
+### Deferred work kernel objects (2026-10-28)
+
+Preserved seven taskqueue, eight group-taskqueue and four epoch probe
+definitions; allocated SDT sections and runtime relocations match Make.
+Runtime checks must cover enqueue/run/cancel/drain and epoch callbacks under
+concurrency and teardown, along with real probe delivery and resource usage.
+No source instrumentation or scheduling/reclamation behavior changed.

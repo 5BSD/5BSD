@@ -2742,3 +2742,27 @@ Wakeup/interruption, priority inheritance, contention, races and latency/CPU
 measurements require the linked test kernel. The open WITNESS issue remains
 undiagnosed. Full kernel/world/pkgbase/bootstrap and performance gates remain
 open; Make stays production/default with no host loading or BIP changes.
+
+### Native taskqueue, group taskqueue and epoch objects
+
+Added //sys/kern:generic_deferred_work_object_files for subr_taskqueue,
+subr_gtaskqueue and subr_epoch with explicit CK/VM and generated bus/device
+interface dependencies. These are the maintained GENERIC source selections;
+no queue, scheduling, epoch or instrumentation source was changed.
+
+Evidence: `/usr/obj/usr/src/bazel-deferred-work-kernel-20261028/qualification`.
+All three match Make symbols, raw CTF, complete allocated-section inventories
+and contents/size/type/flags/alignment, and runtime relocation records and
+associations. Existing allocated SDT data are included (seven taskqueue,
+eight group taskqueue, four epoch definitions). Retained comparison code and
+both object sets document the scope. Reference log:
+`/usr/obj/usr/src/bazel-deferred-work-kernel-make-20261028.log`; maintained
+recipes use the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target selection and native artifact
+retention cover these objects without new C/backend options or installation
+entries. Live scheduling/cancellation/drain, epoch reclamation, races and
+throughput/latency/resource measurements remain unqualified. Full kernel/
+world/pkgbase/bootstrap gates remain open. Make stays production/default;
+no host installation or BIP work occurred, and module count remains 45.

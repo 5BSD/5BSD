@@ -114,3 +114,6 @@ amd64_generic_kernel_objects(name = "generic_waitqueues", srcs = ["subr_sleepque
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers",
         "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_sched_header",
         "//sys/amd64/conf:generic_opt_sleepqueue_profiling_header", "//sys/amd64/conf:generic_opt_turnstile_profiling_header", "//sys/amd64/conf:generic_opt_stack_header"])
+
+amd64_generic_kernel_objects(name = "generic_deferred_work", srcs = ["subr_taskqueue.c", "subr_gtaskqueue.c", "subr_epoch.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers"])
