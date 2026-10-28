@@ -5471,3 +5471,12 @@ Make caught const-dropping casts in the new optional-loader helper; replaced wit
 checked string copies and reran all six database cases successfully. No assertion
 or expected diagnostic was weakened. Broader privilege/audit coverage remains
 open. Evidence: /usr/obj/usr/src/bazel-pwd-mkdb-test-install-20261028-r2/.
+
+
+### DMA mailbox helper (2026-10-28)
+
+Unchanged dma-mbox-create.c carries its existing Capsicum and syslog integration
+into the native target; machine code/global symbols match Make. Root:mail and
+04554 metadata are preserved. No privilege transition, mailbox write or syslog
+runtime event is claimed: qualify success/failure paths and audit behavior in an
+isolated VM. Evidence: /usr/obj/usr/src/bazel-dma-mbox-20261028/qualification/.

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["dma-mbox-create.c"], visibility = ["//libexec/dma/dma-mbox-create:__pkg__"])
+cc_library(name = "headers", hdrs = ["dma.h"], strip_include_prefix = ".", visibility = ["//libexec/dma:__subpackages__"])

@@ -8800,3 +8800,24 @@ no frontend change required. Installation parity and these runtime cases do not
 establish configured-world test aggregation, published pkgbase output, installed
 default-loader execution or full account-management coverage. Full world/kernel/
 cache/performance gates remain open. Make stays default; host accounts unchanged.
+
+
+## 2026-10-28: DMA mailbox helper native build/install
+
+Added native dma-mbox-create from the unchanged contributed source with explicit
+dma.h and maintained feature/path/version/account definitions. Installation
+preserves root:mail mode 04554 and mail-group debug ownership; archive UID/GID
+checks use the source account database rather than the builder's local accounts.
+No setuid helper was installed or executed on the host.
+
+The executable object .text/global symbols, 31 executable symbols, libc-only
+NEEDED and empty RPATH/RUNPATH match isolated Make. Four installation records,
+debug validation and stripped-text preservation pass. Evidence:
+/usr/obj/usr/src/bazel-dma-mbox-20261028/qualification/{dma-mbox-create/parity.json,
+object-parity.json}. Reference: bazel-dma-mbox-reference-20261028; scripts:
+bazel-dma-mbox-qualification-20261028/{make.py,verify.py,objects.py}.
+Builds used maintained build-bsd at 16 jobs. Reviewed frontend explicit targets:
+no change required. Privileged mailbox ownership/creation, Capsicum transitions,
+failure cleanup and hostile-path behavior require isolated VM qualification.
+DMA's main agent/generators remain unconverted. Full world/kernel/pkgbase/cache/
+performance gates remain open and Make remains production/default.
