@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
-# C wrappers only; generated syscalls and libsys variants remain separate.
+load("//lib/libsys:syscall_policy.bzl", "INTERPOSED_SYSCALLS")
+# C wrappers and generated syscall/libsys variants remain separate.
 cc_library(
     name = 'interposed_objects',
-    srcs = ['accept.c', 'accept4.c', 'aio_suspend.c', 'clock_nanosleep.c', 'close.c', 'connect.c', 'fcntl.c', 'fdatasync.c', 'fsync.c', 'fork.c', 'kevent.c', 'msync.c', 'nanosleep.c', 'open.c', 'openat.c', 'pdfork.c', 'pdwait.c', 'poll.c', 'ppoll.c', 'pselect.c', '//lib/libsys:ptrace.c', 'read.c', 'readv.c', 'recvfrom.c', 'recvmsg.c', 'select.c', 'sendmsg.c', 'sendto.c', 'setcontext.c', 'sigaction.c', 'sigprocmask.c', 'sigsuspend.c', 'sigtimedwait.c', 'sigwait.c', 'sigwaitinfo.c', 'swapcontext.c', 'wait4.c', 'wait6.c', 'write.c', 'writev.c'],
+    srcs = ["//lib/libsys:ptrace.c" if name == "ptrace" else name + ".c"
+            for name in INTERPOSED_SYSCALLS],
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
     copts = ["-ftls-model=initial-exec"],
@@ -109,3 +111,21 @@ cc_library(
 )
 bsd_component_archive(name = "x86_archive", groups = [":x86_objects", ":vdso_gettc_objects"])
 bsd_component_archive(name = "x86_pic_archive", groups = [":x86_objects", ":vdso_gettc_objects"], pic = True)
+
+# Full syscall implementations in static libc; shared libc exports empty bodies
+# filtered by libsys. Keep these as separate compilation groups.
+[cc_library(
+    name = name,
+    srcs = ["//lib/libsys:amd64_syscall_sources"],
+    implementation_deps = ["//lib/libsys/amd64:sys_headers",
+        "//lib/libc/include:syscall_compat_header", "//sys/sys:syscall_header"],
+    local_defines = ["NO__SCCSID", "NO__RCSID"] + defines,
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+) for name, defines in [
+    ("syscall_objects", []),
+    ("shared_syscall_objects", ["_SYSCALL_BODY(name)="]),
+]]
+bsd_component_archive(name = "syscall_archive", groups = [":syscall_objects"])
+bsd_component_archive(name = "shared_syscall_archive", groups = [":shared_syscall_objects"], pic = True)

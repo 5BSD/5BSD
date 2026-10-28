@@ -4665,3 +4665,13 @@ all 452 native inventory entries match. Existing eight generated outputs remain
 byte-identical, including tracing argument generation. No new probes, syscall
 wrappers or policy changes are introduced in this producer change. Assembly and
 runtime audit/tracing behavior remain to be qualified with the native consumers.
+
+## 2026-10-28: native generated amd64 syscall assembly
+
+450 generated stubs preserve Make's PSEUDO/interposed/handwritten exclusions,
+compatibility symbol versions and stack notes. Static libc gets full syscall
+bodies; shared libc gets the existing empty filtered bodies. All 900 objects
+match text, global/undefined symbols and text relocations against fresh Make.
+No tracing or audit policy changed. Syscall entry auditing and DTrace syscall
+providers belong to kernel/runtime qualification, which this object comparison
+does not establish. Complete native libc/libsys links and runtime tests remain.

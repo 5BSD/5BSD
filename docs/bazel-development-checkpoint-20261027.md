@@ -6212,3 +6212,34 @@ cache, linking/package and runtime gates remain outstanding.
 Frontend review: build-bsd continues through the maintained Make sysent backend;
 the added generated output is part of that normal path. No new frontend option
 or signing/publication contract is needed. No installed host files changed.
+
+## 2026-10-28: native generated amd64 libc syscall assembly
+
+Native libsys generation now consumes syscall_symbols.bzl and explicit ABI policy
+in lib/libsys/syscall_policy.bzl. The interposed C wrappers use that same native
+policy list. Each of the 450 stubs has its own declared generator action with
+staged shell/runtime and the maintained gen-syscall.sh; no Make evaluation runs
+inside the native graph. Architecture exclusions, PSEUDO versus RSYSCALL and
+GNU-stack notes are preserved. Source-owned syscall.h and compat.h are declared
+compilation dependencies. Static libc's full syscall bodies and shared libc's
+empty, libsys-filtered bodies have distinct native compilation groups.
+
+Evidence: /usr/obj/usr/src/bazel-libc-syscalls-build-20261028/qualification/parity.json
+against fresh bazel-libc-syscalls-make-20261028. All 450 generated sources match
+Make byte-for-byte and membership matches Make's configured inventory. All 900
+ordinary/shared-PIC objects match .text bytes, global/undefined symbols (including
+compatibility versions) and normalized .text relocations. Debug and non-text
+relocations were not compared. Final shared-policy build
+bazel-libc-syscalls-build-20261028-r2 also builds the existing C wrapper groups;
+its 452 syscall outputs (450 sources and two archives) are byte-identical to the
+first build, recorded in prior-artifact-parity.json. Qualification scripts and
+full logs remain under /usr/obj/usr/src/bazel-libc-syscalls-20261028 and run dirs.
+
+This is component qualification, not a complete libc/libsys link or syscall
+runtime test. Full libsys, libc linking/filter maps/DOF, installation, pkgbase,
+bootstrap, world/kernel/modules, cross-configurations and runtime/performance
+remain required. No installed host files changed. Make remains production/default.
+
+Frontend review: existing build-bsd bazel-test format-5 target inputs drive both
+runs with 16 jobs. No new frontend input, signing, staging or publication contract
+is introduced; no frontend/backend change is needed for these native targets.

@@ -54,3 +54,6 @@ cc_library(name = "assym_header", hdrs = ["assym.h"],
 
 cc_library(name = "kernel_headers", hdrs = glob(["*.h", "disk/*.h"]),
     includes = [".."], visibility = ["//visibility:public"])
+
+cc_library(name = "syscall_header", hdrs = ["syscall.h"],
+    strip_include_prefix = "/sys", visibility = ["//lib/libc/sys:__pkg__"])
