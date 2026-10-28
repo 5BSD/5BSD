@@ -3183,3 +3183,13 @@ for syscall creation/denial and related descriptor operations; preserving its
 build does not establish audit coverage. No audit event or SDT policy was
 changed during conversion. Live probe firing, syscall/module registration,
 authorization and descriptor lifecycle/concurrency remain unqualified.
+
+### Capability isolation, mount and system (2026-10-28)
+
+Preserved all twelve isolation probes, two mount probes and three system
+probes; their SDT section bytes match Make. The system policy registers
+system_check_auditon and system_check_auditctl hooks. These constrain audit
+control operations; their presence does not prove audit record generation
+or delivery for every capability action. Live allow/deny decisions, probe
+firing, audit control behavior and jail/mount/network lifecycle still need
+runtime tests. No security or instrumentation behavior was altered here.

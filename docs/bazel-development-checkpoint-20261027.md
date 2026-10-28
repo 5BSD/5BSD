@@ -2272,3 +2272,27 @@ thirty-seven modules. Runtime execution, authorization, descriptor lifecycle,
 channel races, throughput/memory/disk measurements and complete kernel/world
 qualification are still open; no host module was loaded or installed.
 Make remains production/default and BIP remains excluded.
+
+### Capability isolation, mount and system modules
+
+Added native mac_capability_isolation, mac_capability_mount and
+mac_capability_system sources with explicit local protocol, network, MAC and
+Bluetooth header dependencies. The capability kernel headers expose their
+natural source include root for qualified dev/mac_capability includes.
+Runtime and debug metadata retain package=mac-capability. No module runtime
+source, protocol or policy changed; these are conversions of existing
+modules, not a reintroduction of BIP.
+
+Evidence: `/usr/obj/usr/src/bazel-capability-isolation-system-20261028/qualification`
+includes retained comparison code, raw dumps and metadata results. All three
+match maintained Make symbols, relocations, text/data/rodata, raw CTF and all
+SDT sections, with passing separate-debug identity/CRC and NO_ROOT staged
+metadata checks. Existing probes retained: isolation twelve, mount two,
+system three. The current module comparison batch reaches forty modules.
+
+Frontend review: existing format-5 targets, native dependency graph and
+installation manifests handle these inputs/outputs without a new C frontend
+or backend option. Make remains production/default. Live policy enforcement,
+jail/mount lifecycle, namespace/network restrictions, audit delivery, module
+load/unload, complete world/kernel/pkgbase and performance remain open. No
+host installation or module loading was performed.

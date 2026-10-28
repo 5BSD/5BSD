@@ -16,7 +16,7 @@ cc_library(name = "shield_test_headers", hdrs = ["mac_capability_ioctl.h", "mac_
     strip_include_prefix = ".", deps = ["//sys/sys:cap_authority_header"], visibility = ["//tests/sys/mac_capability:__pkg__"])
 
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
-cc_library(name = "kernel_headers", hdrs = ["mac_capability.h", "mac_capability_ioctl.h", "mac_capability_label.h"],
+cc_library(name = "kernel_headers", includes = ["../.."], hdrs = ["mac_capability.h", "mac_capability_ioctl.h", "mac_capability_label.h"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
 cc_library(name = "internal_headers", hdrs = ["mac_capability_internal.h"], deps = [":kernel_headers"])
 cc_library(name = "accounting_module_headers", hdrs = ["mac_capability_accounting_proto.h"], deps = [":kernel_headers"])
@@ -29,3 +29,9 @@ cc_library(name = "node_module_headers", hdrs = ["mac_capability_node_proto.h"],
 amd64_generic_module_objects(name = "node_module", srcs = ["mac_capability_node.c"], deps = [":node_module_headers"])
 cc_library(name = "channel_module_headers", hdrs = ["mac_capability_channel_proto.h"], deps = [":kernel_headers"])
 amd64_generic_module_objects(name = "channel_module", srcs = ["mac_capability_channel.c"], deps = [":channel_module_headers"])
+cc_library(name = "isolation_module_headers", hdrs = ["mac_capability_isolation_proto.h"], includes = ["../.."], deps = [":kernel_headers"])
+amd64_generic_module_objects(name = "isolation_module", srcs = ["mac_capability_isolation.c"], deps = [":isolation_module_headers", "//sys/security/mac:policy_headers", "//sys/netinet:address_headers", "//sys/netgraph/bluetooth/include:socket_headers"])
+cc_library(name = "mount_module_headers", hdrs = ["mac_capability_mount_proto.h"], includes = ["../.."], deps = [":kernel_headers"])
+amd64_generic_module_objects(name = "mount_module", srcs = ["mac_capability_mount.c"], deps = [":mount_module_headers"])
+cc_library(name = "system_module_headers", hdrs = ["mac_capability_system_proto.h"], includes = ["../.."], deps = [":kernel_headers"])
+amd64_generic_module_objects(name = "system_module", srcs = ["mac_capability_system.c"], deps = [":system_module_headers", "//sys/security/mac:policy_headers", "//sys/net:network_headers"])
