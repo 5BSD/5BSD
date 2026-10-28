@@ -4446,3 +4446,13 @@ and thread tests remain necessary at aggregate libc qualification; .text and
 symbol parity alone do not prove those behaviors. Allocator observability is
 outside this source group's coverage. Evidence: bazel-libc-stdlib-build-20261028/
 qualification/parity.json (148 ordinary/PIC objects).
+
+## 2026-10-28: jemalloc
+
+Maintained platform headers enable JEMALLOC_UTRACE; jemalloc.c retains its
+UTRACE_CALL hook through the platform preamble. Native targets consume those
+headers unchanged. Matching undefined symbols and .text in both malloc modes
+preserve the compiled paths, but no live ktrace/utrace execution or allocator
+performance is claimed. Debug assertions remain in debug archives and absent
+from production archives. Evidence: bazel-libc-jemalloc{,-production}-build-20261028/
+qualification/parity.json and production qualification/modes.json.

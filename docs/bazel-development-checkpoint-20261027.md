@@ -5546,3 +5546,35 @@ qualification interface's typed inputs handle the verified optimization toggle.
 No publication/helper changes were made before a native allocator/full-library
 artifact exists to verify. Allocator, complete libc/runtime and publication
 qualification remain outstanding; Make stays the production backend.
+
+## 2026-10-28: native jemalloc debug and production object groups
+
+Adds all 62 maintained jemalloc sources as direct contrib inputs, with the
+maintained 5BSD platform headers and imported header tree declared in Bazel.
+No configure-generated substitutes or copied source aliases are introduced.
+Typed malloc_production (default false) and jemalloc_lg_vaddr_wide (default true)
+settings select MALLOC_PRODUCTION and _USE_LG_VADDR_WIDE in compiler actions.
+Headers use scoped include roots; sources are an explicit reviewed inventory.
+
+Evidence: /usr/obj/usr/src/bazel-libc-jemalloc-build-20261028/qualification/parity.json
+(debug) and bazel-libc-jemalloc-production-build-20261028/qualification/parity.json
+(production). Each matches all 124 ordinary/PIC objects in .text, global and
+unresolved symbols (248 comparisons). Explicit debug reference is
+bazel-libc-jemalloc-debug-make-20261028; production reference is
+bazel-libc-jemalloc-make-20261028. Initial comparison failed because that first
+reference inherited WITH_MALLOC_PRODUCTION from the recorded profile while
+native defaulted to debug. Its receipt's original debug scope label is incorrect;
+actual commands and mode stamp show production. The failure was not relaxed:
+an explicit debug reference and separate native production build resolved it.
+
+qualification/modes.json in the production run also checks saved archives:
+assertion signature present in both debug archives, absent in both production
+archives. This is not a complete linked-libc production/publication check.
+No success stamp is emitted from these component archives. Sized-free wrappers,
+non-wide address configuration, complete libc ABI/linking, debug/data/relocation
+identity, runtime allocation/utrace, concurrency and performance remain open.
+
+Frontend review: existing format-5 typed settings pass both modes through
+build-bsd. Make production/default behavior and publication gates remain intact.
+Native publication integration still requires a complete verified libc artifact;
+no premature marker or production-backend switch was added. No host install.
