@@ -3195,3 +3195,25 @@ jail/VNET behavior and concurrent registration/removal require linked-kernel
 tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
 Make remains production/default; module count remains 45. No host installation
 or BIP changes occurred.
+
+### Native kernel environment and event handlers
+
+Added //sys/kern:generic_environment_events_object_files for kern_environment.c
+and subr_eventhandler.c, selected by the maintained GENERIC Makefile.
+Dependencies declare CK/VM and MAC headers. No runtime source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-environment-events-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. Reference log:
+`/usr/obj/usr/src/bazel-environment-events-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets support these objects without new
+build-bsd C/backend options, staging or manual changes. No runtime tests ran.
+Environment get/set/unset permissions and boot tunables, event registration/
+invocation/deregistration and concurrent handler drain require linked-kernel
+tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
+Make remains production/default; module count remains 45. No host installation
+or BIP changes occurred.

@@ -3579,3 +3579,15 @@ No instrumentation source changed. No local AUDIT_ARG calls were found;
 review sysctl syscall event mapping and emitted records before claiming
 administrative-write audit coverage. Live permissions, probe firing and
 concurrent sysctl lifecycle behavior remain unqualified.
+
+### Kernel environment and event handlers (2026-10-28)
+
+kern_environment.c defines kenv set/unset probes and retains MAC checks.
+subr_eventhandler.c has KTR_EVH list/item lifecycle call sites. Native GENERIC
+objects match Make symbols, raw CTF, allocated sections and runtime
+relocations. Evidence:
+`/usr/obj/usr/src/bazel-environment-events-kernel-20261028/qualification`.
+No instrumentation source changed; arbitrary KTR variants were not tested.
+Review kenv syscall audit mapping and emitted records before claiming
+administrative-write coverage. Live probes, permissions and handler lifecycle
+concurrency remain unqualified.
