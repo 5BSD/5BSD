@@ -4583,3 +4583,13 @@ including raw exception/unwind section contents, and 24 passing ATF cases.
 This is not active unwinding, DTrace registration or BSM event-delivery evidence.
 No provider definitions or source instrumentation changed. Alternate configuration
 qualification and future cancellation-point handling remain explicit requirements.
+
+## 2026-10-28: alternate exception-flag configurations
+
+Renewed six alternate component configurations after removing broad libc
+-fexceptions. All 594 object and raw exception-section comparisons match Make.
+No new runtime tracing or cancellation claims. Future sem_new.c migration must
+declare semwait_trace.h and the shared nameres provider header, preserve the
+SEMWAIT park/wake probes and static anchor, and include those contributors in
+the complete libc provider link. libthr/librt broad exception flags are deliberate;
+their separately named no-unwind options remain future qualification work.

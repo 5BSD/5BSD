@@ -5938,3 +5938,42 @@ Frontend review: build-bsd's existing format-5 target/test/settings interface
 supports the combined and NIS checks; no CLI/backend contract changes needed.
 All compilation uses 16 CPUs. Make remains production/default; no host install,
 upgrade, reboot or policy changes occurred.
+
+## 2026-10-28: renew alternate libc configurations after flag correction
+
+The alternate configurations left open by the preceding exception-flag correction
+have now been rebuilt through the maintained build-bsd bazel-test interface:
+
+- Portable string: 174 ordinary/PIC objects.
+- Portable stdlib: 148 ordinary/PIC objects.
+- Locale with iconv disabled: 128 ordinary/PIC objects.
+- x86 support with Hyper-V disabled: six ordinary/PIC objects.
+- Timezone-change detection enabled: 14 ordinary/PIC objects.
+- Production jemalloc: 124 ordinary/PIC objects.
+
+All 594 match their original, configuration-specific Make references in .text,
+global and unresolved symbols. Raw .eh_frame and .gcc_except_table presence and
+contents also match for every object. Evidence is under
+/usr/obj/usr/src/bazel-libc-exception-variants-20261028: status.json, each variant's
+qualification/parity.json, and exception-sections.json. Exact orchestration and
+section-reader scripts are retained in bazel-libc-exception-flags-20261028.
+The original explicit inputs are reused without substituting configurations or
+rebuilding the saved Make reference objects.
+
+These six runs do not add runtime cases. They close the alternate object checks
+listed in the previous entry, not whole-system configurations, installation,
+production malloc publication, ABI/version maps, section relocations, cancellation,
+actual unwinding or performance. NIS-enabled RPC comparison remains open.
+
+Adjacent-library review: libthr and librt legitimately apply -fexceptions broadly
+in their maintained Makefiles. Their existing native flags should not receive
+the libc per-source correction. Preserve their distinct disable-option spellings
+when modeling those variants: NO_THREAD_UNWIND_STACK in libthr versus
+NO_THREAD_STACK_UNWIND in libc/librt. Those disable variants remain unqualified.
+
+Next libc cancellation sources need the scoped exception option and sem_new.c's
+semwait_trace.h dependency on the shared nameres provider. Preserve existing
+DTrace probes and defer any claim of provider registration to the complete link
+and runtime gates. Frontend review: existing format-5 inputs support all six
+settings; no frontend/backend/manual contract change required. All compilation
+used 16 CPUs; Make remains production/default and no host installation occurred.
