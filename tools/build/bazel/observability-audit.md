@@ -3426,3 +3426,14 @@ Source-review follow-ups (not changed by this build conversion):
   parity does not establish safe close/kqueue/vnode locking under contention.
 
 Live probe firing, audit records and policy enforcement remain unqualified.
+
+### Capsicum and process descriptors (2026-10-28)
+
+sys_capability.c contains 36 SDT probe definitions; sys_procdesc.c contains
+four. Existing instrumentation covers rights/mode/transfer operations and
+process-descriptor open/transfer; both sources have audit argument calls.
+Native GENERIC objects match Make symbols, raw CTF, allocated sections and
+runtime relocations, including probe metadata. Evidence:
+`/usr/obj/usr/src/bazel-capsicum-procdesc-kernel-20261028/qualification`.
+No source instrumentation or policy checks were changed. Live rights denial,
+transfer, process lifecycle, audit output and probe firing remain unqualified.

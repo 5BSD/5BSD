@@ -2891,3 +2891,27 @@ The recorded 2026-10-03 filedesc/ZFS WITNESS trace was consulted; its lock-order
 reversal remains undiagnosed, not fixed by build parity. Full kernel/world/
 pkgbase/bootstrap and performance gates remain open. Make remains production/
 default; module count remains 45, with no host installation or BIP work.
+
+### Native Capsicum and process descriptors
+
+Added //sys/kern:generic_capsicum_procdesc_object_files for sys_capability.c
+and sys_procdesc.c, matching the maintained GENERIC source selection. CK/VM,
+audit and generated Capsicum/KTRACE dependencies are declared. No runtime
+source or security semantics changed.
+
+Evidence: `/usr/obj/usr/src/bazel-capsicum-procdesc-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records/associations. Both generated option headers match Make bytes.
+Reference log: `/usr/obj/usr/src/bazel-capsicum-procdesc-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and generated inputs support these
+objects without new build-bsd C/backend options, staging or manual changes.
+No runtime tests ran. Rights reduction/transfer, ioctl/fcntl limits, capability
+mode, process-descriptor transfer/close/kill and poll/kqueue lifecycle remain
+linked-kernel qualification, including the previously recorded filedesc/ZFS
+lock-order issue. Full kernel/world/pkgbase/bootstrap and performance gates
+remain open. Make remains production/default; module count remains 45.
+No host installation or BIP work occurred.
