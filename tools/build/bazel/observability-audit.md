@@ -3727,3 +3727,13 @@ raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-smr-pctrie-kernel-20261028/qualification`.
 No runtime source changed. Concurrency, reclamation and resource behavior
 remain unqualified.
+
+### Counters and blist (2026-10-28)
+
+Neither source has local SDT/AUDIT calls. Counters themselves support system
+observability; internal allocator operations do not automatically need audit
+records. Native GENERIC objects match Make symbols, raw CTF, allocated sections
+and runtime relocations after correcting the machine-header __FILE__ mapping.
+Evidence: `/usr/obj/usr/src/bazel-counter-blist-kernel-r2-20261028/qualification`.
+Initial diagnostic-string/relocation mismatch is retained in the initial run.
+Concurrent counter and allocator behavior remain unqualified.

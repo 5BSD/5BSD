@@ -3516,3 +3516,33 @@ Concurrent lookup/update, grace periods, reclamation, memory pressure and
 CPU/memory costs require linked-kernel tests. Full kernel/world/pkgbase/
 bootstrap and performance gates remain open. Make stays production/default;
 module count remains 45. No host installation or BIP changes occurred.
+
+### Native counters and blist; machine-header diagnostic paths
+
+Added //sys/kern:generic_counter_blist_object_files for subr_counter.c and
+subr_blist.c, selected by the maintained GENERIC Makefile, with CK/VM headers.
+Initial comparison caught a real counter-object mismatch: __FILE__ in the
+machine/counter.h assertion contained Bazel's virtual-header path. Shared
+amd64 kernel flags now map that virtual include root to the logical machine/
+path using -fmacro-prefix-map and Bazel's configuration-derived BINDIR.
+No literal output configuration or source-code substitute is used. Runtime
+algorithms are unchanged; diagnostic paths now match Make.
+
+Evidence: `/usr/obj/usr/src/bazel-counter-blist-kernel-r2-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. Initial failed comparison remains in the non-r2 run. Reference:
+`/usr/obj/usr/src/bazel-counter-blist-kernel-make-20261028.log`; maintained
+recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible paths. Whole-object/debug-path identity is not claimed.
+Shared-flag regression: `/usr/obj/usr/src/bazel-machine-path-regression-20261028/qualification`;
+kern_thr.o, kern_thread.o and sched_ule.o pass the same full object comparisons.
+This is a bounded regression check, not a full-kernel/module rebuild.
+
+Frontend review: existing format-5 targets and compiler action inputs cover
+these changes without new build-bsd C/backend options, staging or manual
+changes. No runtime tests ran. Counter aggregation/reset under concurrency,
+blist fragmentation/exhaustion and resource costs require linked-kernel tests.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+remains production/default; module count remains 45. No host installation
+or BIP changes occurred.

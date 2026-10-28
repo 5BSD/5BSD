@@ -7,6 +7,10 @@ AMD64_KERNEL_FLAGS = [
     "-fno-asynchronous-unwind-tables", "-fno-omit-frame-pointer",
     "-mno-omit-leaf-frame-pointer", "-fwrapv", "-fstack-protector-strong",
     "-g", "-gdwarf-4", "-std=gnu17",
+    # Match Make's logical machine/ header names in __FILE__ diagnostics.
+    # BINDIR follows the selected Bazel configuration; never bake in an output path.
+    "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/_virtual_includes/kernel_headers/=",
+
 ]
 AMD64_KERNEL_HEADER_DEPS = [
     "//sys/amd64/conf:generic_global_headers", "//sys/sys:kernel_headers",
