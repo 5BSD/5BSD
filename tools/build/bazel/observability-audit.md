@@ -3984,3 +3984,14 @@ matches Make symbols, raw CTF, allocated sections and runtime relocations.
 Evidence: `/usr/obj/usr/src/bazel-bus-kernel-20261028/qualification`.
 No runtime source changed. Live driver callbacks, failure paths, suspend/resume,
 IOMMU integration and device-management concurrency remain unqualified.
+
+### Device initialization and common DMA (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in subr_autoconf.c
+or subr_bus_dma.c. Assess deferred initialization diagnostics and driver/
+architecture DMA probes together before adding instrumentation. Native GENERIC
+output matches Make symbols, raw CTF, allocated sections and runtime
+relocations. Evidence:
+`/usr/obj/usr/src/bazel-device-init-dma-kernel-20261028/qualification`.
+No runtime source changed. Live ordering, DMA mappings, callback/error paths
+and performance remain unqualified.

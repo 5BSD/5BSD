@@ -4083,3 +4083,28 @@ IOMMU integration and concurrent device management require linked-kernel and
 hardware tests. Full kernel/world/pkgbase/bootstrap and performance gates
 remain open. Make stays production/default; module count remains 45. No host
 installation or BIP changes occurred.
+
+### Native device initialization and common DMA
+
+Added //sys/kern:generic_device_init_dma_object_files for subr_autoconf.c
+and subr_bus_dma.c, selected by maintained GENERIC Make. Dependencies declare
+CK/VM, generated bus/device interfaces, crypto-buffer headers, debugger headers
+and generated BUS/DDB/IOMMU options. Extended the existing cryptodev header
+target visibility to its sys/kern consumer. No runtime source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-device-init-dma-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. BUS/DDB/IOMMU option headers match Make bytes.
+Reference log: `/usr/obj/usr/src/bazel-device-init-dma-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible paths. Whole-object/debug-path identity is not
+claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Deferred initialization ordering, DMA mbuf/uio/crypto buffer mapping,
+segment boundaries, callback errors and IOMMU integration require linked-kernel
+and driver tests. Full kernel/world/pkgbase/bootstrap and performance gates
+remain open. Make stays production/default; module count remains 45. No host
+installation or BIP changes occurred.
