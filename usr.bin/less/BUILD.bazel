@@ -2,7 +2,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_compress")
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
-cc_library(name = "configuration", hdrs = ["defines.h"], strip_include_prefix = ".")
+cc_library(name = "configuration", hdrs = ["defines.h"], strip_include_prefix = ".", visibility = ["//usr.bin/lessecho:__pkg__"])
 cc_binary(name = "less", srcs = ['//contrib/less:main.c', '//contrib/less:screen.c', '//contrib/less:brac.c', '//contrib/less:ch.c', '//contrib/less:charset.c', '//contrib/less:cmdbuf.c', '//contrib/less:command.c', '//contrib/less:cvt.c', '//contrib/less:decode.c', '//contrib/less:evar.c', '//contrib/less:edit.c', '//contrib/less:filename.c', '//contrib/less:forwback.c', '//contrib/less:help.c', '//contrib/less:ifile.c', '//contrib/less:input.c', '//contrib/less:jump.c', '//contrib/less:lesskey_parse.c', '//contrib/less:line.c', '//contrib/less:linenum.c', '//contrib/less:lmsg.c', '//contrib/less:lsystem.c', '//contrib/less:mark.c', '//contrib/less:optfunc.c', '//contrib/less:option.c', '//contrib/less:opttbl.c', '//contrib/less:os.c', '//contrib/less:output.c', '//contrib/less:pattern.c', '//contrib/less:position.c', '//contrib/less:prompt.c', '//contrib/less:search.c', '//contrib/less:signal.c', '//contrib/less:tags.c', '//contrib/less:ttyin.c', '//contrib/less:version.c', '//contrib/less:xbuf.c'],
     deps = [":configuration", "//contrib/less:headers", "//lib/ncurses/tinfo:tinfo"],
     dynamic_deps = ["//lib/ncurses/tinfo:tinfo_shared"],

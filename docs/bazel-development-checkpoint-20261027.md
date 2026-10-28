@@ -4631,3 +4631,30 @@ Frontend review: existing format-5 target selection and dtrace setting carry
 both variants without frontend/backend contract change. No new system backend,
 host installation or reboot. Full world/kernel/pkgbase/runtime/performance
 qualification remains incomplete; Make remains production default.
+
+
+## 2026-10-28: native lessecho
+
+Added native lessecho compilation from declared contrib/less lessecho.c and
+version.c, reusing the existing less configuration/header targets. Visibility
+is extended only to the lessecho package. The maintained Make manual recipe
+copies lessecho.nro unchanged; Bazel compresses that same input directly.
+Installation preserves utilities package ownership and binary/debug/man paths.
+No runtime source changes or Make metadata import.
+
+Evidence: /usr/obj/usr/src/bazel-lessecho-20261028 with Make reference
+/usr/obj/usr/src/bazel-lessecho-make-20261028. qualification/verify.py records
+five matching installation records, seven defined globals, matching ordered
+libc.so.7/BIND_NOW/NOW PIE metadata and identical compressed manual bytes.
+qualification/runtime.py and runtime.json retain 19 behavior comparisons for
+empty input, multiple arguments, quoting, numeric quote characters, metacharacter
+escaping, numeric escaping, disabled escaping, option termination, help/version
+and malformed options. All statuses/stdout/stderr match Make with expected
+success/error exits. SDK runtime libraries are used; not full installed-image
+or whole executable/debug byte identity qualification.
+
+Frontend review: current format-5 explicit inputs and archive rules express this
+addition without changing build-bsd or backend contracts. Make has no test suite
+for this component; retained comparisons are conversion evidence, not a new
+registered Bazel test suite. Whole-system gates remain incomplete and Make stays
+production default. No host installation or reboot.

@@ -4171,3 +4171,10 @@ rules. Two probe schemas match Make and both ordinary/is-enabled instruction
 sites pass offline validation. Configured-disabled build omits DOF. No live
 firing, signal delivery or jail semantics qualified; runtime comparisons only
 list signals and show help. No runtime sources or audit policy modified.
+
+
+### 2026-10-28: lessecho
+
+No local SDT/DTrace/AUDIT hooks in lessecho/version sources. Shared less sources
+and configuration remain unchanged. Quoting/error behavior compares with Make;
+no new tracing or audit policy is introduced and no live audit check is claimed.
