@@ -6834,3 +6834,30 @@ new archives and existing smoke tests at 16 jobs; no CLI/publication inputs need
 changing. The extra installed-library execution check uses saved artifacts. No
 host installation occurred. Make remains production/default; pending privileged
 iconv conversion and full world/kernel/pkgbase/performance gates remain open.
+
+## 2026-10-28: libc catalog installation reconciled; native gencat
+
+Reconciled the existing catalog rules with the full libc Make installation.
+The /usr/share/nls parent directory was missing an explicit locales package tag;
+it now carries maintained Make's package=locales metadata. Locale subdirectories
+retain their utilities tags, and catalog files retain locales ownership. Native
+catalog generation now uses gencat_tool linked statically against native libc.
+The normal gencat target also uses the native shared libc interface and explicit
+libc/libsys dependencies; the installed tool has not yet received separate runtime
+or installation requalification in this step.
+
+Evidence: /usr/obj/usr/src/bazel-libc-catalog-install-20261028/receipt.json and
+qualification/installation-parity.json. All 27 catalog payload bytes and metadata
+match Make; all 28 catalog directory metadata records match. The static execution
+tool has no ELF INTERP segment (qualification/generator-proof.json). Reference:
+bazel-libc-install-reference-20261028-r3. Script:
+bazel-libc-catalog-install-qualification-20261028/verify.py.
+
+Also qualified explicit nls=false input through the maintained frontend:
+bazel-libc-catalog-disabled-20261028/disabled-proof.json. Its installation manifest
+is empty, its archive has no file payload, and no BSDMessageCatalog action runs.
+No disabled-build result is counted as a catalog runtime test. Catalog lookup
+semantics, normal gencat installed execution, libc manuals/configuration, pending
+privileged iconv conversion and whole-system gates remain. Frontend review:
+build-bsd.c format-5 targets/settings/backend support both runs at 16 jobs without
+new CLI/publication inputs. No host installation occurred; Make remains default.

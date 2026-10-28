@@ -34,9 +34,10 @@ LOCALES = [
 ]
 
 def libc_catalogs():
-    entries, directories = [], {}
+    entries = []
+    directories = {"/usr/share/nls": json.encode(dict(owner = "root", group = "wheel", mode = "0755", tags = ["package=locales"]))}
     for locale in LOCALES:
-        bsd_message_catalog(name = locale, src = locale + ".msg", gencat = "//usr.bin/gencat:gencat")
+        bsd_message_catalog(name = locale, src = locale + ".msg", gencat = "//usr.bin/gencat:gencat_tool")
         bsd_install_file(name = "install_" + locale, src = ":" + locale,
             destination = "/usr/share/nls/" + locale + "/libc.cat",
             owner = "root", group = "wheel", mode = "0444", install_tags = ["package=locales"])

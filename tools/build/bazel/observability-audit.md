@@ -4833,3 +4833,12 @@ installed library copy and native libsys. No probes or audit hooks were removed.
 Live DTrace provider registration/firing and full system runtime are not established
 by section preservation. Library payload metadata matches Make; documentation,
 catalog/config coverage and broader tests remain separate work.
+
+## 2026-10-28 libc catalogs and gencat
+
+All 27 libc catalog bytes and 28 directory records match the maintained Make
+installation. Catalog generation now declares a static native-libc execution
+tool. NLS-disabled qualification produces no catalogs and runs no catalog action.
+No conversion/catalog C sources, DTrace probes or audit hooks changed; changes
+are link dependencies and package directory metadata. Catalog lookup behavior and
+normal installed gencat runtime remain outside this evidence.
