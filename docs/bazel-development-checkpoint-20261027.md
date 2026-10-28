@@ -5632,3 +5632,24 @@ data/relocation/debug identity or runtime catalog loading/cache/error behavior.
 Existing secure_getenv(NLSPATH) handling remains unchanged. Frontend review:
 format-5 explicit targets and NLS setting cover the new group through build-bsd;
 no frontend/backend contract change needed. No host locale changes or install.
+
+## 2026-10-28: compatibility, fortified helpers and C23 bit operations
+
+Adds complete inventories for compat-43 (8 sources), secure (19) and stdbit (14).
+Separate formatter and stack-protector groups retain per-source flags. Initial
+secure comparison found extra SSP instrumentation in libc_stack_protector.c;
+libc/Makefile explicitly excludes this source from SSP_CFLAGS. Native compilation
+now applies -fno-stack-protector only to that implementation. It does not disable
+stack protection elsewhere. Initial mismatch evidence remains recorded.
+
+Evidence: /usr/obj/usr/src/bazel-libc-smallgroups-build-20261028-r2/qualification/
+{compat-43,secure,stdbit}-parity.json against bazel-libc-smallgroups-make-20261028.
+All 82 ordinary/PIC objects match .text, global and unresolved symbols. No source
+behavior changes. Full libc linkage/versioning, data/relocation/debug identity,
+manuals, runtime signal/identity compatibility, overflow failure behavior and
+C23 bit-operation edge cases remain unqualified. Maintained fortify tests are
+present and must be integrated with the complete native library.
+
+Frontend review: explicit format-5 targets and existing NLS input exercise these
+groups through build-bsd; no new C/backend contract required. No host identity,
+signals, installation or policy modifications were performed.

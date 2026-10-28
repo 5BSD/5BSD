@@ -4480,3 +4480,12 @@ No direct DTrace/SDT or BSM audit calls found in msgcat.c. Existing NLSPATH acce
 uses secure_getenv and remains unchanged. Matching objects do not establish
 runtime catalog search, privilege filtering or concurrent cache behavior; those
 remain complete-libc tests. Evidence: bazel-libc-msgcat-build-20261028/qualification.
+
+## 2026-10-28: compat-43, secure and stdbit
+
+No direct DTrace/SDT or BSM audit calls found in the migrated groups. The existing
+stack-protector failure path logs LOG_CRIT through syslog and raises SIGABRT;
+object parity preserves it but does not establish delivery to logging services.
+Legacy signal/identity operations delegate to existing interfaces; kernel audit
+coverage is separate. No hooks or policy were changed. Runtime fortify/signal
+and bit-operation tests remain open. Evidence: bazel-libc-smallgroups-build-20261028-r2.
