@@ -4078,3 +4078,13 @@ Make symbols, raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-cpu-frequency-storage-kernel-20261028/qualification`.
 No runtime source changed. Live frequency transitions, per-CPU lifetime,
 concurrency and performance remain unqualified.
+
+### Thread contexts and shared pages (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in kern_context.c or
+kern_sharedpage.c. Assess syscall/signal and VM instrumentation together
+before adding probes. Native GENERIC output matches Make symbols, raw CTF,
+allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-context-sharedpage-kernel-20261028/qualification`.
+No runtime source changed. Live context restoration, signal masks, user-pointer
+errors and shared-page/VDSO behavior remain unqualified.

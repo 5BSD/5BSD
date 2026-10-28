@@ -4302,3 +4302,27 @@ free, CPU enumeration and concurrent access require linked-kernel and hardware
 tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
 Make stays production/default; module count remains 45. No host installation
 or BIP changes occurred.
+
+### Native thread contexts and shared pages
+
+Added //sys/kern:generic_context_sharedpage_object_files for kern_context.c
+and kern_sharedpage.c, selected by maintained GENERIC Make. Dependencies
+declare CK/VM headers and generated VM options. No context handling, shared
+page mapping or runtime source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-context-sharedpage-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. opt_vm.h matches Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-context-sharedpage-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible paths. Whole-object/debug-path identity is not
+claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Context save/restore/swap, invalid user pointers, signal masks, shared-page
+mapping, VDSO consumers and ABI variants require linked-kernel tests.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+stays production/default; module count remains 45. No host installation or
+BIP changes occurred.
