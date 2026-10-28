@@ -3752,3 +3752,25 @@ MAC/Capsicum enforcement and emitted audit records require linked-kernel tests.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 stays production/default; module count remains 45. No host installation or
 BIP changes occurred.
+
+### Native VFS vnode lifecycle
+
+Added //sys/kern:generic_vfs_lifecycle_object_files for vfs_subr.c, selected
+by maintained GENERIC Make. Dependencies declare CK/VM, MAC, debugger headers
+and generated DDB/watchdog options. No lifecycle or security source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-vfs-lifecycle-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. DDB/watchdog option headers match Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-vfs-lifecycle-kernel-make-20261028.log`; maintained
+recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Vnode allocation/reclamation, syncer work, detach races, watchdog/debugger
+paths and filesystem CPU/memory/I/O costs require linked-kernel testing.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+stays production/default; module count remains 45. No host installation or
+BIP changes occurred.

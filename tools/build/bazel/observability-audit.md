@@ -3834,3 +3834,13 @@ Evidence: `/usr/obj/usr/src/bazel-vfs-syscalls-kernel-20261028/qualification`.
 No runtime source changed. This does not prove complete audit argument coverage
 or live probe firing; syscall records, authorization and error paths need
 linked-kernel tests.
+
+### VFS vnode lifecycle (2026-10-28)
+
+vfs_subr.c retains four SDT probe definitions for syncer start/done and detach
+start/done. No local AUDIT_ARG calls were found; audit coverage must be assessed
+at the surrounding syscall layer. Native GENERIC output matches Make symbols,
+raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-vfs-lifecycle-kernel-20261028/qualification`.
+No runtime source changed. Live probes, vnode reclamation, syncer behavior and
+concurrent lifecycle operations remain unqualified.
