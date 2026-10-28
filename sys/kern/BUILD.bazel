@@ -253,3 +253,6 @@ amd64_generic_kernel_objects(name = "generic_clocks", srcs = ["kern_clock.c", "k
         "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_kdb_header",
         "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_ntp_header",
         "//sys/amd64/conf:generic_opt_device_polling_header", "//sys/amd64/conf:generic_opt_watchdog_header"])
+
+amd64_generic_kernel_objects(name = "generic_event_timers", srcs = ["kern_et.c", "sys_timerfd.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/audit:kernel_headers"])

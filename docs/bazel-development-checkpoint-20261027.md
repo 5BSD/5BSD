@@ -3337,3 +3337,26 @@ Alternate polling/watchdog configurations remain separate qualification.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 remains production/default; module count remains 45. No host installation
 or BIP changes occurred.
+
+### Native event timers and timer descriptors
+
+Added //sys/kern:generic_event_timers_object_files for kern_et.c and
+sys_timerfd.c, selected by the maintained GENERIC Makefile. Dependencies
+declare CK/VM and audit headers. No timer source behavior changed. POSIX timer
+handling in the previously converted kern_time.c is not counted again.
+
+Evidence: `/usr/obj/usr/src/bazel-event-timers-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. Reference log:
+`/usr/obj/usr/src/bazel-event-timers-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets cover these objects without new
+build-bsd C/backend options, staging or manual changes. No runtime tests ran.
+Event-timer registration/selection, timerfd expiration counts, periodic and
+absolute timers, nonblocking reads, poll/kqueue and concurrent close require
+linked-kernel tests. Full kernel/world/pkgbase/bootstrap and performance gates
+remain open. Make remains production/default; module count remains 45.
+No host installation or BIP changes occurred.

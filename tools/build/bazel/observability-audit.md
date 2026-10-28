@@ -3642,3 +3642,14 @@ raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-clocks-kernel-20261028/qualification`.
 No tracing source changed. Arbitrary KTR configurations and live tick/probe
 firing, clock accuracy and interrupt overhead remain unqualified.
+
+### Event timers and timer descriptors (2026-10-28)
+
+sys_timerfd.c defines 14 SDT probes for allocation, configuration, expiration,
+read/wait and close; creation records clock/flags audit arguments. kern_et.c
+has no local SDT/AUDIT calls. Native GENERIC objects match Make symbols, raw
+CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-event-timers-kernel-20261028/qualification`.
+No instrumentation source changed. Live timer delivery, audit records and
+probe firing remain unqualified; creation arguments alone do not establish
+complete audit coverage of timer operations.
