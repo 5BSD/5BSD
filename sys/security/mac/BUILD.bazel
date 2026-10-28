@@ -4,3 +4,6 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "framework_headers", hdrs = ["mac_framework.h"],
     strip_include_prefix = ".", include_prefix = "security/mac",
     deps = ["//sys/ddb:kernel_headers"], visibility = ["//visibility:public"])
+
+cc_library(name = "policy_headers", hdrs = ["mac_policy.h"], includes = ["../.."],
+    deps = ["//sys/ddb:kernel_headers"], visibility = ["//visibility:public"])

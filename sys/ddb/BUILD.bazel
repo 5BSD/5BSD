@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
-cc_library(name = "kernel_headers", hdrs = ["ddb.h"],
+cc_library(name = "kernel_headers", hdrs = ["ddb.h", "db_command.h"],
     strip_include_prefix = ".", include_prefix = "ddb", visibility = ["//visibility:public"])

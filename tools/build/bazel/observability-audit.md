@@ -3104,3 +3104,12 @@ calls. Native runtime symbols/relocations match Make without instrumentation
 changes. Encryption worker, authentication failure and key lifecycle coverage
 require separate review with common GEOM/crypto tracing and audit hooks.
 No encrypted storage operation or live probe/audit behavior was tested.
+
+### MAC DDB/priority/NTP (2026-10-28)
+
+mac_ddb registers init, DDB command registration/execution and KDB backend
+checks. mac_priority and mac_ntpd register privilege-grant hooks. The inspected
+sources contain no explicit SDT_* or AUDIT_* calls; common MAC/audit hooks
+need runtime review. Native symbol and relocation listings match Make,
+preserving registrations. No policy grants/denials or audit records were
+exercised. Evidence: bazel-mac-modules-20261028/qualification under /usr/obj/usr/src.

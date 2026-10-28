@@ -2073,3 +2073,23 @@ now contains twenty modules including the five filesystem modules. This
 does not cover other source-present GEOM schemes or the rest of sys/modules.
 Whole-kernel/world/pkgbase/hardware, runtime, performance and broader options
 remain open. Make remains production/default.
+
+### MAC DDB, priority and NTP modules
+
+Added native mac_ddb, mac_priority and mac_ntpd with their maintained C
+sources, shared mac_policy.h declarations and DDB command header dependency.
+Evidence: `/usr/obj/usr/src/bazel-mac-modules-20261028/qualification`; Make
+references `/usr/obj/usr/src/bazel-{mac_ddb,mac_priority,mac_ntpd}-make-20261028`.
+All three match runtime symbols/relocations, text/data/rodata and raw CTF.
+Separate debug identity/CRC and staged installation metadata pass.
+
+These are compiled policy modules only. No host loading or installation,
+privilege-grant test, DDB command restriction test, jail/VNET behavior or live
+audit qualification was performed. The current native artifact-comparison
+batch contains twenty-three modules. This does not qualify other MAC modules
+or establish system-wide security policy correctness.
+
+Frontend review: maintained format-5 selection supports these targets and
+installation manifests; no new C frontend/signing/publication change is
+required. Native kernel/world/pkgbase, source/header invalidation, live
+behavior and performance gates remain open. Make remains production/default.
