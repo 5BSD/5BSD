@@ -3557,3 +3557,14 @@ symbols, raw CTF, allocated sections and runtime relocations. Evidence:
 All generated hook/scheduler option headers match Make. No runtime source
 changed. Shared provider linkage and live firing, context-switch hooks and
 scheduler behavior remain linked-kernel qualification.
+
+### Synchronization and SMP coordination (2026-10-28)
+
+kern_synch.c defines the sched:preempt probe and has KTR sleep/switch call sites.
+subr_smp.c has KTR signal-forwarding and CPU stop/restart call sites. Native
+GENERIC output matches Make symbols, raw CTF, allocated sections and runtime
+relocations. Evidence:
+`/usr/obj/usr/src/bazel-synch-smp-kernel-20261028/qualification`.
+No instrumentation source changed. This qualifies only the selected GENERIC
+configuration, not arbitrary KTR configurations. Live probes, cross-CPU
+coordination and sleep/wakeup behavior remain unqualified.

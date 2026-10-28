@@ -3149,3 +3149,26 @@ latency and CPU/resource measurements require the linked test kernel. Alternate
 scheduler configurations remain separate qualification. Full kernel/world/
 pkgbase/bootstrap and performance gates remain open. Make remains production/
 default; module count remains 45. No host installation or BIP work occurred.
+
+### Native synchronization and SMP coordination
+
+Added //sys/kern:generic_synch_smp_object_files for kern_synch.c and subr_smp.c,
+selected by the maintained GENERIC Makefile. Dependencies declare CK/VM,
+generated bus/device interfaces and KTRACE/SCHED options. No synchronization
+or SMP source behavior changed.
+
+Evidence: `/usr/obj/usr/src/bazel-synch-smp-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records/associations. Both generated option headers match Make bytes.
+Reference log: `/usr/obj/usr/src/bazel-synch-smp-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and generated inputs cover these
+objects without new build-bsd C/backend options, staging or manual changes.
+No runtime tests ran. Sleep/wakeup, preemption, SMP rendezvous, CPU stop/restart,
+interprocessor signaling and latency/resource use require linked-kernel tests.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+remains production/default; module count remains 45. No host installation
+or BIP work occurred.
