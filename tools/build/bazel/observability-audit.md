@@ -3405,3 +3405,24 @@ and runtime relocations, including existing instrumentation. Evidence:
 `/usr/obj/usr/src/bazel-unix-sockets-kernel-20261028/qualification`.
 Live descriptor-transfer denials, audit records, probes and policy outcomes
 remain to be exercised; source/object inspection is not runtime proof.
+
+### Descriptor management and general I/O (2026-10-28)
+
+kern_descrip.c contains ten SDT probe definitions for advisory locking,
+descriptor install/dup/close, fork inheritance and exec/fork flag enforcement
+and consumption. sys_generic.c has audit arguments and MAC ioctl checks,
+but no local SDT_PROBE_DEFINE declarations. Both native GENERIC objects match
+Make symbols, raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-descriptor-io-kernel-20261028/qualification`.
+
+Source-review follow-ups (not changed by this build conversion):
+- kern_fcntl currently calls AUDIT_ARG_FD(cmd), followed by AUDIT_ARG_CMD(cmd),
+  despite having a separate fd parameter. Review descriptor attribution and
+  exercise emitted audit records before claiming correct fcntl audit coverage.
+- kern_dup retains an XXXRW comment for recording the destination descriptor
+  with AUDIT_ARG_FD2. Review against current mode/flags semantics and audit
+  event encoding; do not mechanically activate the historical comment.
+- The recorded filedesc/ZFS lock-order reversal remains open. Compilation
+  parity does not establish safe close/kqueue/vnode locking under contention.
+
+Live probe firing, audit records and policy enforcement remain unqualified.

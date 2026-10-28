@@ -2866,3 +2866,28 @@ credential transfer, garbage collection, MAC denial and audit record delivery
 remain linked-kernel qualification. Full kernel/world/pkgbase/bootstrap and
 CPU/memory/disk performance gates remain open. Make remains production/default;
 module count remains 45. No host installation or BIP work occurred.
+
+### Native descriptor management and general I/O
+
+Added //sys/kern:generic_descriptor_io_object_files for kern_descrip.c and
+sys_generic.c, as selected by the maintained GENERIC Makefile. Dependencies
+explicitly include CK/VM, MAC, audit, networking, debugger and generated
+Capsicum/DDB/KTRACE headers. No descriptor, locking or I/O source was changed.
+
+Evidence: `/usr/obj/usr/src/bazel-descriptor-io-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records/associations. All three option headers match Make bytes. Maintained
+reference recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths; log:
+`/usr/obj/usr/src/bazel-descriptor-io-kernel-make-20261028.log`.
+Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target selection supports these additions
+without new build-bsd C/backend options, staging or manual changes. No runtime
+tests ran. Descriptor lifetime, dup/fork/exec inheritance, ioctl, read/write,
+poll/select, concurrency and audit/MAC behavior need linked-kernel tests.
+The recorded 2026-10-03 filedesc/ZFS WITNESS trace was consulted; its lock-order
+reversal remains undiagnosed, not fixed by build parity. Full kernel/world/
+pkgbase/bootstrap and performance gates remain open. Make remains production/
+default; module count remains 45, with no host installation or BIP work.
