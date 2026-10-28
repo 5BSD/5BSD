@@ -5181,3 +5181,23 @@ No address parsing behavior or source implementation was changed.
 Frontend review: existing explicit targets and NLS setting cover the group via
 build-bsd format 5. No frontend/backend contract update needed. No host installs,
 network queries or service changes. Complete native libc remains unfinished.
+
+## 2026-10-28: maintained inet parser cases against native objects
+
+Adds unchanged NetBSD inet_addr and inet_network test sources as native Bazel
+object-qualification programs. Explicit PIC archive selection supports PIE tests
+without changing production object flags. Four ATF case targets preserve both
+programs' basic/error cases; no assertions or test data were weakened.
+
+Evidence: /usr/obj/usr/src/bazel-libc-inet-tests-20261028 records four executed
+passing cases. qualification/link-ownership.json verifies saved executables define
+inet_addr/inet_ntoa and inet_network from the native archive, rather than testing
+SDK definitions of those functions. Existing SDK libc supplies remaining runtime
+functions; native ATF and its declared runtime use the maintained Bazel adapter.
+These are IPv4/parser cases, not coverage of all inet functions or live networking.
+The complete installed libc test suite, metadata, native libc link and installed
+image qualification remain open; no partial test executables replace that suite.
+
+Frontend review: existing format-5 targets/tests express all four cases through
+build-bsd; no frontend/backend contract update needed. No host install or network
+operations were performed by these string/address conversion tests.

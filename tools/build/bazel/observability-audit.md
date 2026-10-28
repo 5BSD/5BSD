@@ -4330,3 +4330,10 @@ Native objects preserve maintained implementations; 28 ordinary/PIC variants
 have symbol/text parity evidence. Address-parser runtime tests, malformed input
 coverage and complete libc qualification remain open. No new probes or audit
 policy introduced.
+
+### 2026-10-28: inet parser runtime cases
+
+Four unchanged NetBSD basic/error cases pass against native inet_addr/inet_ntoa
+and inet_network definitions. Saved-binary symbol checks establish native routine
+ownership; SDK libc remains for other functions. No live networking, audit events,
+new probes or full libc/system runtime qualification is implied.

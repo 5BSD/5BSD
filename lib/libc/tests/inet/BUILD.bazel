@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# Exercise native PIC objects before the complete libc link is available.
+# These qualification programs are not installed libc test-suite replacements.
+cc_import(name = "inet_pic", static_library = "//lib/libc/inet:pic_objects_archive")
+[cc_binary(name = name + "_objects_test",
+    srcs = ["//contrib/netbsd-tests/lib/libc/inet:t_" + name + ".c"],
+    deps = [":inet_pic", "//lib/libnetbsd:netbsd_pie", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+) for name in ["inet_addr", "inet_network"]]
+[bsd_atf_test(name = "native_" + name + "_" + case, case_name = name + "_" + case,
+    interface = "program", body = ":" + name + "_objects_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"],
+) for name in ["inet_addr", "inet_network"] for case in ["basic", "err"]]
