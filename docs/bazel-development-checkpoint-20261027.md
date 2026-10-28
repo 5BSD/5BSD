@@ -5618,3 +5618,17 @@ Complete libc linkage/version maps, data/relocation/debug identity, manuals,
 UUID parsing/endian/generation runtime tests and syscall error behavior remain
 unqualified. Frontend review: existing format-5 targets/NLS setting carry this
 group through build-bsd; no new backend/helper contract required. No host install.
+
+## 2026-10-28: native libc message-catalog implementation
+
+Adds msgcat.c ordinary/PIC objects alongside the existing catalog-data targets,
+with declared libc and locale private headers. Existing catalog generation and
+installation declarations are unchanged. Both objects match Make .text, global
+and unresolved symbols: /usr/obj/usr/src/bazel-libc-msgcat-build-20261028/
+qualification/parity.json against bazel-libc-msgcat-make-20261028.
+
+This verifies compilation, not complete libc linkage, ABI maps, manual staging,
+data/relocation/debug identity or runtime catalog loading/cache/error behavior.
+Existing secure_getenv(NLSPATH) handling remains unchanged. Frontend review:
+format-5 explicit targets and NLS setting cover the new group through build-bsd;
+no frontend/backend contract change needed. No host locale changes or install.

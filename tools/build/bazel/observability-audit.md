@@ -4473,3 +4473,10 @@ Existing uuid_create sets success status and ignores uuidgen's return value;
 error-path behavior deserves separate runtime review and is not changed during
 migration. Object parity does not establish generation success or uniqueness.
 Evidence: bazel-libc-uuid-build-20261028/qualification/parity.json (18 objects).
+
+## 2026-10-28: libc message catalogs
+
+No direct DTrace/SDT or BSM audit calls found in msgcat.c. Existing NLSPATH access
+uses secure_getenv and remains unchanged. Matching objects do not establish
+runtime catalog search, privilege filtering or concurrent cache behavior; those
+remain complete-libc tests. Evidence: bazel-libc-msgcat-build-20261028/qualification.
