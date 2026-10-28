@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 cc_binary(name = 'iconv', srcs = ['iconv.c'],
-    deps = ['//lib/libcapsicum:headers'],
-    copts = ["-fPIE"], linkopts = ["-pie"],
+    deps = ['//lib/libcapsicum:headers', '//lib/libc:shared_link_interface'],
+    dynamic_deps = ['//lib/libc:c_shared', '//lib/libsys:sys_shared'],
+    copts = ["-fPIE"], linkopts = ["-pie", "-nodefaultlibs"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = 'iconv', manual = 'iconv.1', package = "utilities")

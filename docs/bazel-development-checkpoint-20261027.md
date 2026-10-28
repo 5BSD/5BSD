@@ -6730,3 +6730,43 @@ whole-system gates. This is default amd64 installation qualification, not custom
 LIBDIR/debug-option or cross-platform coverage. Frontend review: build-bsd.c's
 existing format-5 targets/backend handle the archive and native loader inputs at
 16 jobs; no CLI or publication change is required. Make remains default.
+
+## 2026-10-28: complete native iconv runtime fixture prepared; execution pending
+
+The existing iconv CLI now links through native libc's shared interface and
+nonshared public wrappers with explicit native libc/libsys dynamic dependencies.
+Native build evidence: bazel-iconv-complete-runtime-20261028/receipt.json;
+cli-link-provenance.json verifies defined public wrappers and native library
+resolution. This is linkage evidence, not conversion behavior.
+
+Prepared a private root from both complete native i18n/module installation
+archives, native libc/libsys/private ATF, the maintained iconvctl program and
+native iconv CLI. The host /libexec/ld-elf.so.1 is copied explicitly as the loader;
+the fixture manifest records hashes for all 762 file paths, including module
+symlinks. Preparation script: bazel-iconv-complete-runtime-qualification-20261028/prepare.py.
+Fixture: /usr/obj/usr/src/bazel-iconv-complete-runtime-20261028/test-root.
+No mounted filesystem, host installation or host policy change was performed.
+
+Maintained tools/build/bazel/iconv-chroot-check.py accepts explicit root, manifest,
+output, uid and gid inputs, verifies fixture hashes and runs children through
+host chroot after dropping user/group/supplementary groups to the requested
+nonzero IDs. Its 20 intended checks cover the maintained iconvctl ATF case,
+eight representative encoding round trips, invalid input/unknown encoding, and
+encoding listing. Python codecs provide independent expected byte sequences.
+The host kernel/loader remain dependencies and these samples do not cover every
+encoding. The runner's syntax/help paths were checked; runtime cases are NOT yet
+qualified or registered as a passing Bazel test suite.
+
+The host has security.bsd.unprivileged_chroot disabled. A real chroot -n probe
+failed with that explicit OS policy error. No sudo/doas executable is available,
+and sandbox escalation does not grant root uid. The user was asked to run this
+prepared command in a root shell (it drops privileges before testing):
+
+    sh /usr/obj/usr/src/bazel-iconv-complete-runtime-qualification-20261028/run-root.sh
+
+Expected report: bazel-iconv-complete-runtime-20261028/runtime-results.json.
+Until that report is inspected, end-to-end conversion remains pending. Other
+migration work can continue; this is not a whole-goal blocker. Frontend review:
+all build inputs/artifacts use maintained build-bsd format-5 qualification;
+privileged runtime execution is a separate explicit pending gate, not a claimed
+new frontend feature or replacement build. Make remains production/default.

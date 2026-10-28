@@ -4806,3 +4806,12 @@ pass separate-debug CRC checks and load with native runtime libraries. Metadata
 matches Make for 72 unique file/link/directory records. No conversion source,
 DTrace or audit hooks changed. Existing loader tests now also qualify installation
 copies; this remains module loading evidence, not end-to-end character conversion.
+
+## 2026-10-28 native iconv CLI and prepared runtime qualification
+
+The existing CLI source is unchanged; its native libc/nonshared link interface
+is now explicit. The complete native data/module fixture and maintained
+privilege-dropping chroot checker are prepared. Runtime checks are pending host
+root assistance because unprivileged chroot is disabled. No new probes, host
+policy exceptions or path redirection were added to conversion code. Linkage
+checks must not be reported as completed conversion tests.
