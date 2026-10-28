@@ -22,3 +22,5 @@ cc_library(name = "resolver_private_headers", hdrs = ["reentrant.h", "resolv_mt.
 
 cc_library(name = "inet_private_headers", hdrs = ["resolv_mt.h"], strip_include_prefix = ".",
     deps = [":resolver_port_headers"], visibility = ["//lib/libc/inet:__pkg__"])
+
+cc_library(name = "stdio_private_headers", hdrs = ["errlst.h", "spinlock.h"], strip_include_prefix = ".", deps = [":rt_private_headers"], visibility = ["//lib/libc/stdio:__pkg__"])

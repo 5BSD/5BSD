@@ -5327,3 +5327,27 @@ floating-point edge cases remain unqualified. This is not complete libc.
 Frontend review: build-bsd format-5 targets and existing NLS setting carry the
 inputs; native toolchain compile rules retain flags and headers in action inputs.
 No frontend/backend contract change or host installation is needed.
+
+## 2026-10-28: complete libc stdio compilation inventory
+
+Adds all 111 maintained stdio compilation sources, including narrow/wide stream
+I/O, memory streams, positional formatting, scanf and extended printf routines.
+Private dependencies explicitly cover local stdio headers, locale/multibyte
+interfaces, gdtoa declarations/architecture constants and libc private headers.
+Initial native build exposed fclose's angle-bracket spinlock.h dependency; it
+was added to the declared private header set. The failed run remains recorded.
+
+Evidence: /usr/obj/usr/src/bazel-libc-stdio-build-20261028-r2/qualification/parity.json
+against fresh bazel-libc-stdio-make-20261028. All 222 ordinary/PIC objects match
+.text bytes, global symbols and unresolved symbols. Builds used 16 jobs. No
+source edits, broad ambient include paths or runtime fallbacks were introduced.
+
+This is compilation qualification only. Full libc linkage/ABI versioning,
+data/relocation/debug parity, manual staging and installed stdio tests remain
+open. The maintained lib/libc/tests/stdio suite contains 20 local and 10 NetBSD
+ATF test programs; stream cancellation, EINTR, thread locking, floating-point,
+locale and wide-character runtime behavior are not established by this result.
+
+Frontend review: existing format-5 explicit targets and NLS configuration carry
+the inputs through build-bsd. No new frontend/backend contract is required.
+No host installation, upgrade, policy or account changes were performed.

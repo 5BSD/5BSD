@@ -4382,3 +4382,13 @@ or BSM audit calls were found. The migration preserves source behavior and adds
 no hot-path probes. Conversion edge-case runtime tests remain necessary at libc
 integration; object parity alone does not establish numeric API correctness.
 Evidence: bazel-libc-gdtoa-build-20261028/qualification/parity.json (42 objects).
+
+## 2026-10-28: libc stdio
+
+Reviewed the 111 maintained stdio sources. No direct DTrace/SDT or BSM audit
+calls were found; native targets retain existing locking/cancellation and error
+paths. Adding probes to frequently called stream functions would require a
+separate cost/semantics review. No probes were invented during migration.
+Object parity (222 ordinary/PIC objects) is recorded in
+bazel-libc-stdio-build-20261028-r2/qualification/parity.json. Runtime concurrency,
+EINTR and stream behavior still require the maintained stdio test suite.

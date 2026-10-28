@@ -2,4 +2,4 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 exports_files(['strtorx.c', 'dmisc.c', 'dtoa.c', 'gdtoa.c', 'gethex.c', 'gmisc.c', 'hd_init.c', 'hexnan.c', 'misc.c', 'smisc.c', 'strtod.c', 'strtodg.c', 'strtof.c', 'strtord.c', 'sum.c', 'ulp.c'], visibility = ["//lib/libc/gdtoa:__pkg__"])
 cc_library(name = "headers", hdrs = ["gdtoa.h", "gdtoaimp.h", "gdtoa_fltrnds.h"],
-    strip_include_prefix = ".", visibility = ["//lib/libc/gdtoa:__pkg__"])
+    strip_include_prefix = ".", visibility = ["//lib/libc/gdtoa:__pkg__", "//lib/libc/stdio:__pkg__"])
