@@ -2766,3 +2766,26 @@ entries. Live scheduling/cancellation/drain, epoch reclamation, races and
 throughput/latency/resource measurements remain unqualified. Full kernel/
 world/pkgbase/bootstrap gates remain open. Make stays production/default;
 no host installation or BIP work occurred, and module count remains 45.
+
+### Native timecounter, timer and callout objects
+
+Added //sys/kern:generic_timers_object_files for kern_tc, kern_time and
+kern_timeout, with explicit CK/VM/debugger/interface headers and native
+generated DDB/KTRACE/callout-profiling/FFCLOCK/NTP/RSS options. No timing,
+clock-selection, scheduling or instrumentation source behavior changed.
+
+Evidence: `/usr/obj/usr/src/bazel-timers-kernel-20261028/qualification`.
+All three match Make symbols, raw CTF, complete allocated-section inventories
+and contents/size/type/flags/alignment, and runtime relocation records and
+associations. All six option headers match Make bytes. Native/reference
+objects, comparison script and option evidence are retained. Reference log:
+`/usr/obj/usr/src/bazel-timers-kernel-make-20261028.log`; maintained recipes
+use the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and native generated inputs support
+these kernel objects without new C/backend options or installation entries.
+Clock accuracy/selection, timer delivery, callout drain/cancel races and
+latency/resource measurements remain runtime qualification. Complete kernel/
+world/pkgbase/bootstrap gates stay open. Make remains production/default,
+module count stays 45, and no host installation or BIP changes occurred.

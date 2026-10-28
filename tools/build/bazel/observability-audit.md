@@ -3361,3 +3361,11 @@ definitions; allocated SDT sections and runtime relocations match Make.
 Runtime checks must cover enqueue/run/cancel/drain and epoch callbacks under
 concurrency and teardown, along with real probe delivery and resource usage.
 No source instrumentation or scheduling/reclamation behavior changed.
+
+### Timer and callout objects (2026-10-28)
+
+Native objects preserve configured instrumentation, allocated data and runtime
+relocations relative to Make. Live clock selection/adjustment, callout callback
+lifecycle and timer delivery still need tests; collect timing and contention
+measurements under load. Object parity does not establish clock accuracy or
+latency. No source timing or instrumentation behavior was altered.
