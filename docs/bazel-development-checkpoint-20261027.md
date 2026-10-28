@@ -4154,3 +4154,27 @@ private data destructors and devfs interactions require linked-kernel tests.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 stays production/default; module count remains 45. No host installation or
 BIP changes occurred.
+
+### Native clock and FAT timestamp conversion
+
+Added //sys/kern:generic_clock_conversion_object_files for subr_clock.c
+and subr_fattime.c, selected by maintained GENERIC Make. Dependencies declare
+CK/VM and generated bus/device interfaces. No timestamp conversion source
+changed. subr_clockcalib.c remains pending: its maintained recipe uses special
+-O3 and MMX/SSE/SSE2 flags and removes -nostdinc, requiring separate treatment.
+
+Evidence: `/usr/obj/usr/src/bazel-clock-conversion-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. Reference log:
+`/usr/obj/usr/src/bazel-clock-conversion-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible paths. Whole-object/debug-path identity is not
+claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Calendar/leap-year and range boundaries, FAT timezone/precision behavior
+and driver clock consumers require runtime tests. Full kernel/world/pkgbase/
+bootstrap and performance gates remain open. Make stays production/default;
+module count remains 45. No host installation or BIP changes occurred.

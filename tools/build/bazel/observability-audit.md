@@ -4015,3 +4015,13 @@ raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-character-devices-kernel-20261028/qualification`.
 No runtime source changed. Live creation/destruction, reference races and
 private-data cleanup remain unqualified.
+
+### Clock and FAT timestamp conversion (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in subr_clock.c or
+subr_fattime.c. Assess clock/filesystem consumers before adding instrumentation
+to conversion helpers. Native GENERIC output matches Make symbols, raw CTF,
+allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-clock-conversion-kernel-20261028/qualification`.
+No runtime source changed. Calendar/range/precision behavior and driver clock
+integration remain unqualified; special clock calibration compilation is pending.
