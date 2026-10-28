@@ -5671,3 +5671,27 @@ by the ordinary/PIC groups here. Other architectures remain unqualified.
 Frontend review: existing format-5 explicit targets/NLS setting suffice through
 build-bsd; no new frontend/helper contract required. No host install or profiling
 state modification was performed.
+
+## 2026-10-28: libc C system-interface wrappers
+
+Adds the 40 maintained INTERPOSED wrappers and 21 pseudo-interface C sources.
+Native declarations consume ptrace.c, recvmmsg.c and sendmmsg.c directly from
+libsys, matching Make's source search; the other sources reside under libc/sys.
+Initial inventory/build checks caught those shared origins, and failed setup/run
+evidence remains recorded. No copied implementations or source modifications.
+
+Evidence: /usr/obj/usr/src/bazel-libc-syswrappers-build-20261028-r2/qualification/
+parity.json against bazel-libc-syswrappers-make-20261028. All 122 ordinary/PIC
+objects match .text, global and unresolved symbols. Builds use 16 jobs.
+
+This does not complete libc's syscall subsystem. Generated syscall assembly,
+shared empty bodies/filter behavior, libc_stubs.c, static auxv/interposing table,
+other common libsys sources, aggregate ABI/link and runtime interposition remain
+separate requirements. Cancellation, fork/context, signal, I/O and process-control
+behavior need runtime tests with the complete native libc/libsys combination.
+Full data/relocation/debug identity and manual installation remain unqualified.
+
+Frontend review: existing format-5 targets/NLS configuration cover the new C
+groups through build-bsd; no frontend/backend contract change needed. Narrow
+libsys source exports do not alter its existing compile flags. No host process
+control, account/policy changes or installation performed.

@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# C wrappers only; generated syscalls and libsys variants remain separate.
+cc_library(
+    name = 'interposed_objects',
+    srcs = ['accept.c', 'accept4.c', 'aio_suspend.c', 'clock_nanosleep.c', 'close.c', 'connect.c', 'fcntl.c', 'fdatasync.c', 'fsync.c', 'fork.c', 'kevent.c', 'msync.c', 'nanosleep.c', 'open.c', 'openat.c', 'pdfork.c', 'pdwait.c', 'poll.c', 'ppoll.c', 'pselect.c', '//lib/libsys:ptrace.c', 'read.c', 'readv.c', 'recvfrom.c', 'recvmsg.c', 'select.c', 'sendmsg.c', 'sendto.c', 'setcontext.c', 'sigaction.c', 'sigprocmask.c', 'sigsuspend.c', 'sigtimedwait.c', 'sigwait.c', 'sigwaitinfo.c', 'swapcontext.c', 'wait4.c', 'wait6.c', 'write.c', 'writev.c'],
+    implementation_deps = ["//lib/libc/include:rt_private_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ["-fexceptions", "-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+cc_library(
+    name = 'pseudo_objects',
+    srcs = ['POSIX2x_Fork.c', 'brk.c', 'closefrom.c', 'compat-stub.c', 'creat.c', 'getdents.c', 'lockf.c', 'lstat.c', 'mknod.c', 'pipe.c', 'recv.c', '//lib/libsys:recvmmsg.c', 'send.c', '//lib/libsys:sendmmsg.c', 'shm_open.c', 'stat.c', 'vadvise.c', 'wait.c', 'wait3.c', 'waitid.c', 'waitpid.c'],
+    implementation_deps = ["//lib/libc/include:rt_private_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ["-fexceptions", "-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "objects_archive", groups = [":interposed_objects", ":pseudo_objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":interposed_objects", ":pseudo_objects"], pic = True)
+exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])

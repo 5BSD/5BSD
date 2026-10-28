@@ -4497,3 +4497,12 @@ profil-based sampling and mcount bookkeeping; getcontextx retains CPUID and
 sysarch extended-state handling. Object parity does not verify profiling output,
 startup relocation or CPU-state capture. No hooks or runtime behavior changed.
 Evidence: bazel-libc-startup-build-20261028/qualification.
+
+## 2026-10-28: libc C system wrappers
+
+No direct DTrace/SDT or BSM audit calls found in the 61 migrated C wrappers,
+including shared ptrace/recvmmsg/sendmmsg sources. Interposition, cancellation and
+kernel syscall observation must be checked in their owning layers; object parity
+alone does not establish audit coverage or runtime thread semantics. No hooks or
+policy changes were added. Evidence: bazel-libc-syswrappers-build-20261028-r2/
+qualification/parity.json (122 ordinary/PIC objects).
