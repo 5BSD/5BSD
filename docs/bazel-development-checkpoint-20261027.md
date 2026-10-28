@@ -8749,3 +8749,28 @@ locking, user homes, installed test metadata or the thirteen root-required shell
 suites. Those and nuageinit user-management scenarios still need isolated runtime
 qualification. No host accounts changed. Full world/kernel/pkgbase/cache/
 performance gates remain open and Make stays production/default.
+
+
+## 2026-10-28: pwd_mkdb native runtime and child generator selection
+
+Existing pwd_mkdb ATF targets still selected SDK libc/libsys. Switched runtime
+inputs to native libc/libsys and declared native rtld for the test program.
+Added optional pwd_mkdb_loader ATF configuration for generator subprocesses;
+all existing argument vectors and assertions are preserved. Without that option
+the installed suite still executes its configured/default pwd_mkdb directly.
+No generator implementation or database comparison was replaced.
+
+All six cases actually executed and passed with native test/generator/runtime:
+alternate UID update, duplicate UID, malformed update preserving databases,
+in-place input metadata, symlinked directory updates, and explicit shell policy.
+Database comparisons use real pwd.db/spwd.db records, not only flat-file output.
+Mutations stay in test temporary directories; host account databases are only
+read by pre-existing fixture preconditions, never rewritten.
+
+Evidence: /usr/obj/usr/src/bazel-pwd-mkdb-native-20261028/{bazel.stdout,
+test-inventory.json,test-reports/manifest.json,execution.json}. Maintained
+build-bsd ran at 16 jobs. Reviewed frontend explicit input handling: existing
+selection/collection supports these tests; no frontend changes required. This
+qualifies these six scenarios, not all account-management or locking behavior,
+installed default-loader execution, root-only pw/nuageinit integration or full
+world/kernel/pkgbase/cache/performance. Make remains production/default.

@@ -5452,3 +5452,13 @@ including forked invalid/negative/overflow diagnostics and EX_USAGE checks.
 Existing unit assertions/stub remain unchanged. This does not qualify user/group
 mutation logging, syscall audit, password database locking or privilege handling.
 Evidence: /usr/obj/usr/src/bazel-pw-unit-20261028/test-reports/.
+
+
+### pwd_mkdb native subprocess tests (2026-10-28)
+
+Six existing ATF scenarios pass using native libc/libsys and explicit native rtld
+for both harness and generator subprocesses. Real database records and metadata
+are checked. Host account databases remain unchanged. Failure preservation and
+shell-policy checks here do not establish kernel audit event coverage, concurrent
+locking or root-only user-management flows. Evidence:
+/usr/obj/usr/src/bazel-pwd-mkdb-native-20261028/test-reports/.

@@ -11,8 +11,9 @@ CASES = ["explicit_shell_policy", "directory_alias_updates", "in_place_input_met
     case_name = case,
     interface = "program",
     body = ":alternate_test",
-    config_files = {"//usr.sbin/pwd_mkdb:pwd_mkdb": "pwd_mkdb"},
-    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    loader = "//libexec/rtld-elf:rtld_binary",
+    config_files = {"//usr.sbin/pwd_mkdb:pwd_mkdb": "pwd_mkdb", "//libexec/rtld-elf:rtld_binary": "pwd_mkdb_loader"},
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared"],
     runner = "//tools/build/bazel:atf_runner",
     size = "small",
 ) for case in CASES]

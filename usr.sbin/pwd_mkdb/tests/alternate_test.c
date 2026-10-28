@@ -14,6 +14,29 @@
 #include <string.h>
 #include <unistd.h>
 
+/* Optional loader is an explicit test input, never a substituted generator. */
+static void
+exec_tool(const atf_tc_t *tc, const char *const arguments[])
+{
+	const char *tool = atf_tc_get_config_var_wd(tc, "pwd_mkdb", "/usr/sbin/pwd_mkdb");
+	const char *loader = atf_tc_get_config_var_wd(tc, "pwd_mkdb_loader", "");
+	char **argv;
+	size_t count = 0, offset = 0, i;
+
+	while (arguments[count] != NULL)
+		count++;
+	argv = calloc(count + 3, sizeof(*argv));
+	if (argv == NULL)
+		_exit(126);
+	if (*loader != '\0')
+		argv[offset++] = (char *)loader;
+	argv[offset++] = (char *)tool;
+	for (i = 0; i < count; i++)
+		argv[offset + i] = (char *)arguments[i];
+	execv(*loader != '\0' ? loader : tool, argv);
+	_exit(127);
+}
+
 static void
 input(const char *directory, const char *text)
 {
@@ -31,7 +54,6 @@ static void
 build_input(const atf_tc_t *tc, const char *directory, const char *name,
     const char *user, int status)
 {
-	const char *tool = atf_tc_get_config_var_wd(tc, "pwd_mkdb", "/usr/sbin/pwd_mkdb");
 	char path[256];
 	pid_t child;
 	int result;
@@ -41,9 +63,9 @@ build_input(const atf_tc_t *tc, const char *directory, const char *name,
 	ATF_REQUIRE(child >= 0);
 	if (child == 0) {
 		if (user == NULL)
-			execl(tool, tool, "-p", "-d", directory, path, (char *)NULL);
+			exec_tool(tc, (const char *const[]){ "-p", "-d", directory, path, NULL });
 		else
-			execl(tool, tool, "-p", "-d", directory, "-u", user, path, (char *)NULL);
+			exec_tool(tc, (const char *const[]){ "-p", "-d", directory, "-u", user, path, NULL });
 		_exit(127);
 	}
 	ATF_REQUIRE_EQ(child, waitpid(child, &result, 0));
@@ -244,7 +266,6 @@ static void
 shell_check(const atf_tc_t *tc, const char *shells, int expected,
     int warning)
 {
-	const char *tool = atf_tc_get_config_var_wd(tc, "pwd_mkdb", "/usr/sbin/pwd_mkdb");
 	char output[2048];
 	pid_t child;
 	int status, fd;
@@ -257,7 +278,7 @@ shell_check(const atf_tc_t *tc, const char *shells, int expected,
 		if (fd < 0 || dup2(fd, STDERR_FILENO) < 0)
 			_exit(126);
 		close(fd);
-		execl(tool, tool, "-C", "-S", shells, "target/input", (char *)NULL);
+		exec_tool(tc, (const char *const[]){ "-C", "-S", shells, "target/input", NULL });
 		_exit(127);
 	}
 	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
