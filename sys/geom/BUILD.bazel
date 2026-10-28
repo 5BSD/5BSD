@@ -24,3 +24,5 @@ exports_files(["part/g_part_bsd.c"], visibility = ["//sys/modules/geom/geom_part
 
 cc_library(name = "slice_headers", hdrs = ["geom_slice.h", "geom_flashmap.h"], includes = [".."],
     deps = [":kernel_headers"], visibility = ["//visibility:public"])
+
+exports_files(["geom_flashmap.c"], visibility = ["//sys/modules/geom/geom_flashmap:__pkg__"])

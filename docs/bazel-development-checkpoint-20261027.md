@@ -1890,3 +1890,25 @@ review: existing format-5 input/target selection covers the new generator
 and dependency graph; no C frontend option or publication-policy change is
 needed. Source/header invalidation, runtime, resource/performance and complete
 kernel/world/pkgbase qualification remain open; Make remains production.
+
+### GEOM flashmap and export-all module policy
+
+Added native geom_flashmap. The shared module macro now supports an explicit
+export_all option corresponding to maintained EXPORT_SYMS=YES. This skips
+localization and exposes the CTF-merged full artifact directly through an
+alias, preserving all definitions rather than substituting an enumerated
+allowlist. An explicit export list combined with export_all is rejected.
+The ordinary restricted export pipeline remains unchanged.
+
+Evidence: `/usr/obj/usr/src/bazel-flashmap-20261028/qualification`, Make
+reference `/usr/obj/usr/src/bazel-geom_flashmap-make-20261028`. Runtime
+symbols/relocations, text/data/rodata and raw CTF match; both M_FLASHMAP and
+flash_register_slicer remain exported. Debug identity/CRC and staged
+installation metadata pass. No module load or host installation occurred.
+
+The batch now has seventeen module builds with artifact comparisons.
+Frontend assessment: export policy is native target metadata selected through
+the existing format-5 frontend; no new C option or publication change is
+needed. Runtime slicing, invalidation, performance, all-world/kernel and
+pkgbase gates remain open. Next GEOM work includes uzip's conditional zstd
+sources and per-source compression include paths, then RAID/ELI.

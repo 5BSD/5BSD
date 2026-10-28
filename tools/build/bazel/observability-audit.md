@@ -3073,3 +3073,10 @@ calls. Native runtime symbols and relocations match Make. No probes/audit
 behavior were changed; common GEOM discovery instrumentation and useful
 format-specific label probes require separate review. Runtime label detection
 was not exercised. Evidence: bazel-geom-label-20261028/qualification under /usr/obj/usr/src.
+
+### GEOM flashmap (2026-10-28)
+
+No explicit SDT_* or AUDIT_* calls were found in geom_flashmap.c. Native
+symbols/relocations match Make with export-all semantics; no instrumentation
+was changed. Common GEOM tracing and flash slicing runtime coverage remain
+to be reviewed and exercised.
