@@ -5392,3 +5392,13 @@ No kernel environment, jail or module-loading operations are exercised; those
 privileged behavior/audit gates remain open. This external run is not yet a
 Bazel-owned test suite. Evidence:
 /usr/obj/usr/src/bazel-flua-complete-20261028/qualification/.
+
+
+### Bazel-owned flua runtime tests (2026-10-28)
+
+Four maintained cc_test targets now execute the declared native interpreter,
+loader, libraries, modules and Lua files. All pass: imports, hash known answer,
+YAML/UCL interchange/error and temporary filesystem behavior. Sources/probes of
+the interpreter/modules are unchanged. Privileged operation/audit checks remain
+open; these tests import jail/kenv/linker without invoking their system mutations.
+Evidence: /usr/obj/usr/src/bazel-flua-tests-20261028-r3/test-reports/.

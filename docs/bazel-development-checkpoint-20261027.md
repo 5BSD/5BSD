@@ -8598,3 +8598,32 @@ not an independent recursive Make build, pkg publication, or a self-contained
 system image; dependent DSOs/loader remain separately provided native artifacts.
 Bazel-owned tests, privileged VM checks, bootstrap/configuration variants and
 whole world/kernel/pkgbase/cache/performance gates remain open. Make stays default.
+
+
+## 2026-10-28: Bazel-owned flua runtime tests
+
+Added four native cc_test targets in libexec/flua/tests: modules, hash, formats,
+and filesystem. A static test-only C launcher resolves declared runfiles, selects
+the native rtld/interpreter and explicit native library paths, clears inherited
+environment, and executes Lua assertions in TEST_TMPDIR. It propagates flua's
+exit status directly. Lua preloads exactly the declared native modules/support
+files and empties package.path/cpath, preventing host Lua module search fallback.
+Tests exercise all module imports, SHA-256 one-shot/incremental known answer,
+YAML/UCL interchange and malformed YAML, and temporary filesystem operations.
+Privileged jail/kenv/linker operations are not called.
+
+All four tests actually executed and passed under Bazel through maintained
+build-bsd at 16 jobs. Evidence: /usr/obj/usr/src/bazel-flua-tests-20261028-r3/
+{bazel.stdout,test-inventory.json,test-reports/manifest.json,execution.json}.
+The first two frontend invocations were rejected before build because qualification
+inputs omitted build targets and then omitted tests from targets; corrected r3
+selects the complete archive plus all tests as targets and the four tests as tests.
+Rejected logs remain retained. Reviewed frontend input validation: no code change
+needed; these tests use the existing supported explicit-target workflow.
+
+This replaces reliance on external-only flua smoke checks with maintained native
+Bazel tests for the stated cases. It does not cover all binding methods, hostile
+input limits, subprocess lifecycle, privileged VM operations, bootstrap variants,
+installed Kyua integration, cache invalidation or performance. Full world/kernel/
+pkgbase qualification remains open and Make stays production/default. No host
+installation or configuration change occurred.

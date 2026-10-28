@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_test")
+_LIBRARIES = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/msun:m_shared", "//lib/libmd:md_shared", "//lib/libjail:jail_shared", "//lib/libucl:ucl_shared", "//lib/libyaml:yaml_shared"]
+_MODULES = {
+    "fbsd": "//libexec/flua/lfbsd:module",
+    "lfs": "//libexec/flua/lfs:module",
+    "hash": "//libexec/flua/libhash:module",
+    "jail": "//libexec/flua/libjail:module",
+    "ucl": "//libexec/flua/libucl:module",
+    "yaml": "//libexec/flua/liblyaml:module",
+    "freebsd.kenv": "//libexec/flua/libfreebsd/kenv:module",
+    "freebsd.sys.linker": "//libexec/flua/libfreebsd/sys/linker:module",
+    "lyaml.explicit": "//contrib/lyaml:lib/lyaml/explicit.lua",
+    "lyaml.functional": "//contrib/lyaml:lib/lyaml/functional.lua",
+    "lyaml.implicit": "//contrib/lyaml:lib/lyaml/implicit.lua",
+    "lyaml": "//contrib/lyaml:lib/lyaml/init.lua"
+}
+[cc_test(name = case, srcs = ["runner.c"], linkopts = ["-static"], linkstatic = True,
+    args = ["$(rootpath //libexec/rtld-elf:rtld_binary)", "$(rootpath //libexec/flua:flua)", "$(rootpath :runtime.lua)", case] +
+        ["$(rootpath " + label + ")" for label in _LIBRARIES] + ["--"] +
+        [arg for name, label in _MODULES.items() for arg in [name, "$(rootpath " + label + ")"]],
+    data = ["//libexec/rtld-elf:rtld_binary", "//libexec/flua:flua", "runtime.lua"] + _LIBRARIES + _MODULES.values(),
+    size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for case in ["modules", "hash", "formats", "filesystem"]]
