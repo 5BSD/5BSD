@@ -6480,3 +6480,37 @@ bazel-libc-link-interface-qualification-20261028. No host installation occurred.
 Frontend review: build-bsd.c's existing bazel-test --bazel-inputs path and backend
 format-5 targets/tests handle these additions; no new inputs or publication
 contract require frontend changes. Make remains the production default.
+
+## 2026-10-28: all 23 Citrus modules build and load natively
+
+Added explicit native cc_library/cc_shared_library targets for every module in
+lib/libiconv_modules/Makefile. Shared module policy is in modules.bzl; the source
+inventory is owned by BUILD.bazel and does not parse Make during Bazel builds.
+Preserved SHLIB_MAJOR=5, bool=_Bool and mapper_parallel's deliberate reuse of
+mapper_serial source. Private Citrus headers are declared through a restricted
+header target. Dependencies select native libc/libsys with -nodefaultlibs. GCC
+inlining knobs are not applied to the qualified Clang build. Qualification is
+amd64 with iconv enabled; cross architectures remain outside this evidence.
+
+All 23 modules built. Their dynamic symbols (including size, type, binding,
+visibility, version and definition/import status) match fresh maintained Make
+outputs. SONAMEs match, no TEXTREL is present. Bazel records explicit libc and
+libsys dependencies; Make's default link may record only libc. This is not a
+byte-identical ELF or performance claim. The module loader tests use RTLD_NOW,
+resolve the expected Citrus getops entrypoint, and compare the loaded module's
+realpath with its declared runfile, rejecting host module fallback. All 23 tests
+passed with native libc/libsys runtime runfiles. Modules are byte-identical to
+the artifacts whose ABI was compared before adding the tests.
+
+Evidence: /usr/obj/usr/src/bazel-iconv-modules-20261028/qualification/shared-parity.json;
+bazel-iconv-modules-runtime-20261028/receipt.json and
+qualification/runtime-provenance.json. Fresh Make reference:
+bazel-iconv-modules-make-20261028. Comparison/build scripts:
+bazel-iconv-modules-qualification-20261028. No host installation occurred.
+
+End-to-end iconv conversion remains pending native csmapper/esdb data and their
+generators; module installation/debug/pkgbase integration also remains. Loader
+success is not claimed as conversion correctness. Frontend review: existing
+build-bsd.c bazel-test --bazel-inputs and format-5 backend carry the explicit
+module targets/tests at 16 jobs without a new interface or publication change.
+Make remains production/default; full world/kernel/pkgbase gates remain open.

@@ -4735,3 +4735,13 @@ No probes or audit hooks were removed or added. The shared smoke program now
 links native libc directly; two static/shared smoke cases passed. Live DTrace
 and audit behavior remain outside this evidence. See checkpoint link-interface
 section and bazel-libc-link-interface-20261028-r3 qualification report.
+
+## 2026-10-28 Citrus modules
+
+All 23 lib/libiconv_modules targets preserve their maintained C sources, including
+shared mapper_serial/mapper_parallel implementation. Source scan found no existing
+DTRACE/SDT_PROBE or audit_ calls in these modules. No hooks were removed. These
+conversion libraries do not themselves establish a new authentication/audit
+boundary; do not invent probes merely to satisfy migration coverage. Runtime
+loader provenance is covered by 23 passing native Bazel tests; conversion data,
+full conversion semantics, installation and performance remain to qualify.

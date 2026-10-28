@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary")
+load(":modules.bzl", "citrus_module")
+cc_library(name = "headers", hdrs = glob(["*/*.h"]))
+# mapper_parallel deliberately uses the serial source, as maintained Make does.
+citrus_module(name = "BIG5", src = "BIG5/citrus_big5.c")
+citrus_module(name = "DECHanyu", src = "DECHanyu/citrus_dechanyu.c")
+citrus_module(name = "EUC", src = "EUC/citrus_euc.c")
+citrus_module(name = "EUCTW", src = "EUCTW/citrus_euctw.c")
+citrus_module(name = "GBK2K", src = "GBK2K/citrus_gbk2k.c")
+citrus_module(name = "HZ", src = "HZ/citrus_hz.c")
+citrus_module(name = "ISO2022", src = "ISO2022/citrus_iso2022.c")
+citrus_module(name = "JOHAB", src = "JOHAB/citrus_johab.c")
+citrus_module(name = "MSKanji", src = "MSKanji/citrus_mskanji.c")
+citrus_module(name = "UES", src = "UES/citrus_ues.c")
+citrus_module(name = "UTF1632", src = "UTF1632/citrus_utf1632.c")
+citrus_module(name = "UTF7", src = "UTF7/citrus_utf7.c")
+citrus_module(name = "UTF8", src = "UTF8/citrus_utf8.c")
+citrus_module(name = "VIQR", src = "VIQR/citrus_viqr.c")
+citrus_module(name = "ZW", src = "ZW/citrus_zw.c")
+citrus_module(name = "iconv_none", src = "iconv_none/citrus_iconv_none.c")
+citrus_module(name = "iconv_std", src = "iconv_std/citrus_iconv_std.c")
+citrus_module(name = "mapper_646", src = "mapper_646/citrus_mapper_646.c")
+citrus_module(name = "mapper_none", src = "mapper_none/citrus_mapper_none.c")
+citrus_module(name = "mapper_parallel", src = "mapper_serial/citrus_mapper_serial.c")
+citrus_module(name = "mapper_serial", src = "mapper_serial/citrus_mapper_serial.c")
+citrus_module(name = "mapper_std", src = "mapper_std/citrus_mapper_std.c")
+citrus_module(name = "mapper_zone", src = "mapper_zone/citrus_mapper_zone.c")
+
+cc_binary(name = "module_load_program", srcs = ["module_load_test.c"],
+    deps = ["//lib/libc:shared_link_interface"],
+    dynamic_deps = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+    linkopts = ["-nodefaultlibs"], testonly = True)
