@@ -3900,3 +3900,13 @@ relocations. Evidence:
 `/usr/obj/usr/src/bazel-memory-descriptors-kernel-20261028/qualification`.
 No runtime source changed. Driver integration, boundary/error handling and
 runtime CPU/memory/I/O performance remain unqualified.
+
+### x86 bus DMA (2026-10-28)
+
+The x86 bounce implementation includes subr_busdma_bounce.c, retaining four
+busdma SDT definitions for reserve failure, deferral, readiness and callbacks.
+The included source is a declared textual dependency. Native GENERIC output
+matches Make symbols, raw CTF, allocated sections and runtime relocations.
+Evidence: `/usr/obj/usr/src/bazel-busdma-kernel-20261028/qualification`.
+No runtime source changed. Live DMA behavior, probe delivery, callback races,
+IOMMU integration and performance remain unqualified.

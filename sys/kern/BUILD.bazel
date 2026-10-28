@@ -350,3 +350,5 @@ amd64_generic_kernel_objects(name = "generic_file_locks", srcs = ["kern_lockf.c"
 
 amd64_generic_kernel_objects(name = "generic_memory_descriptors", srcs = ["subr_memdesc.c", "subr_sglist.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+
+cc_library(name = "busdma_bounce_implementation", textual_hdrs = ["subr_busdma_bounce.c"], visibility = ["//sys/x86/x86:__pkg__"])
