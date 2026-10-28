@@ -4464,3 +4464,12 @@ audit hooks. Native object parity and the maintained sized_deallocation ATF case
 pass. The test links native wrappers and SDK allocator, so runtime jemalloc utrace
 behavior is not established. Evidence: bazel-libc-sized-free-test-20261028-r2,
 including qualification/link-proof.json and the saved ATF report.
+
+## 2026-10-28: libc UUID
+
+No direct DTrace/SDT or BSM audit calls found in the nine UUID sources. Creation
+uses uuidgen; kernel syscall auditing is separate from this userland group.
+Existing uuid_create sets success status and ignores uuidgen's return value;
+error-path behavior deserves separate runtime review and is not changed during
+migration. Object parity does not establish generation success or uniqueness.
+Evidence: bazel-libc-uuid-build-20261028/qualification/parity.json (18 objects).

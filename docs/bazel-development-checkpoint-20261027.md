@@ -5604,3 +5604,17 @@ Full libc versioning/link, complete allocator runtime/performance, manual stagin
 installed tests and publication remain open. Frontend review: existing format-5
 targets/tests and maintained ATF adapter cover the changes through build-bsd.
 No host installation or global allocator changes.
+
+## 2026-10-28: native libc UUID objects
+
+Adds all nine maintained UUID sources with explicit native ordinary/PIC targets
+and exports the existing Symbol.map for eventual libc ABI linkage. Sources and
+public UUID interfaces are unchanged; uuid_create continues to call uuidgen.
+Evidence: /usr/obj/usr/src/bazel-libc-uuid-build-20261028/qualification/parity.json
+against fresh bazel-libc-uuid-make-20261028. All 18 objects match .text, global
+and unresolved symbols. Builds used 16 jobs through the maintained frontend.
+
+Complete libc linkage/version maps, data/relocation/debug identity, manuals,
+UUID parsing/endian/generation runtime tests and syscall error behavior remain
+unqualified. Frontend review: existing format-5 targets/NLS setting carry this
+group through build-bsd; no new backend/helper contract required. No host install.
