@@ -4108,3 +4108,12 @@ provider consumers and syscall/sysctl auditing together. Native output matches
 Make symbols, raw CTF, allocated sections and relocations. Evidence:
 `/usr/obj/usr/src/bazel-process-metadata-kernel-20261028/qualification`.
 Live provider behavior, metadata visibility and lifecycle races remain unqualified.
+
+### beep (2026-10-28)
+
+Native beep preserves the existing source, including capability-mode entry.
+This conversion adds no application probes or audit calls. Audio device and
+syscall instrumentation must be assessed with the driver stack. Eight safe
+argument/error cases match Make; actual playback and capability-mode device
+setup remain unqualified. Evidence:
+`/usr/obj/usr/src/bazel-beep-20261028/qualification/parity.json`.

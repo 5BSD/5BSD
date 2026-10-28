@@ -4401,3 +4401,26 @@ follow-up, and validate ownership before treating absent local BUILD files as
 missing implementation. No full world target exists at the repository root.
 Make remains production/default. This inventory does not change frontend
 inputs or publication policy and requires no frontend implementation change.
+
+### Native beep userland utility
+
+Added //usr.bin/beep:beep, :install_manifest and :install_archive using native
+cc_binary, native libm and maintained utility debug/strip/manual/archive rules.
+Package ownership is sound, as in Make; no runtime source changed.
+Evidence: `/usr/obj/usr/src/bazel-beep-20261028/qualification/parity.json` and
+its retained verify.py; Make reference `/usr/obj/usr/src/bazel-beep-make-20261028`.
+All five component installation records match (types, paths, owners, groups,
+modes and package tags), including debug directories. Compressed manual bytes,
+six defined global symbols, ordered NEEDED libraries and NOW/PIE flags match.
+Whole executable/debug byte identity is not claimed.
+
+Eight native/Make runtime cases match: help, low/high duration, low/high sample
+rate, low/high gain and missing device. Both use native libm and SDK runtime
+libraries. No audio hardware was accessed; playback, background operation,
+Capsicum device setup and device ioctl failures remain unqualified. These
+checks were run by the retained qualification script, not registered Bazel tests.
+
+Frontend review: existing format-5 target selection handles these targets and
+sound installation metadata without frontend C/backend/manual changes. Full
+world aggregation, pkgbase publication, tests and performance remain open.
+Make remains production/default; no host installation or BIP changes occurred.
