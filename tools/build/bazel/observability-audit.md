@@ -5561,3 +5561,12 @@ metadata parity pass against Make. No script source changed. This includes SSH,
 NTP, sound, wireless and ZFS service scripts but does not prove those services
 start, authenticate, log correctly or communicate with hardware. ACPI, Kerberos
 alternatives and KTLS conjunction remain separate pending work.
+
+### 2026-10-28 compound rc service selection
+
+ACPI architecture selection, MIT/Heimdal alternatives and KTLS prerequisites now
+have native installation expressions. Enabled variants and disabled prerequisites
+match Make metadata/payloads. Architecture checks inspect configured dependencies
+only. The scripts remain unchanged; power management, Kerberos authentication,
+TLS offload, error reporting and boot ordering still need runtime qualification.
+No service was started or host configuration changed.

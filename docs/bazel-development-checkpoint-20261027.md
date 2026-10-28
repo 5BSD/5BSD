@@ -9118,3 +9118,51 @@ these selectors through the maintained frontend; no CLI changes needed. Used
 KTLS conjunction remain missing from this partial aggregate. Native option
 implications and broader default configurations still need qualification.
 Runtime, complete-world/pkgbase and performance gates remain open; Make stays default.
+
+## 2026-10-28: compound rc.d selections and complete archive candidate
+
+Added the remaining rc.d selection expressions: ACPI on x86_64/x86_32/aarch64,
+Kerberos-enabled MIT versus Heimdal alternatives, and OpenSSL AND OpenSSL_KTLS.
+The native install_archive aggregates unconditional, single-option and compound
+manifests. Heimdal installs /var/heimdal root:wheel 0700 tagged utilities; MIT
+omits that directory and tags kadmind/kdc kerberos-kdc rather than kerberos.
+New shared acpi/kerberos selectors follow maintained default-on settings.
+
+All-enabled amd64 Heimdal qualification matches Make for 167 payloads and 169
+records; MIT matches for 163 payloads and 164 records. Evidence:
+/usr/obj/usr/src/bazel-rc-heimdal-20261028/qualification/rc/parity.json and
+bazel-rc-mit-20261028/qualification/rc/parity.json. Independent references:
+bazel-rc-{heimdal,mit}-reference-20261028. Scripts:
+bazel-rc-complete-qualification-20261028/{make-heimdal.py,verify-heimdal.py,
+make-mit.py,verify-mit.py}. No service execution occurred.
+
+Reviewed build-bsd/source_graph typed settings: existing frontend inputs suffice,
+with 16 jobs used. The candidate remains uncommitted until disabled conjunctions
+and architecture selection receive focused verification. All-on variants do not
+prove default-option implication handling, other architectures, complete rc test
+execution or normal system startup. Full goal gates remain open; Make stays default.
+
+## 2026-10-28: compound rc selection exclusion and architecture checks
+
+Complete install_archive now passes independent Make comparisons with OpenSSL
+only and OPENSSL_KTLS only, with ACPI/Kerberos and single-option groups disabled.
+Both yield exactly 90 payloads/91 records: no TLS service scripts, either Kerberos
+variant or Heimdal directory. The two cases also vary MITKRB5 while KERBEROS is
+disabled. Evidence: bazel-rc-{ssl-only,ktls-only}-20261028/qualification/rc/parity.json;
+references: bazel-rc-{ssl-only,ktls-only}-reference-20261028. Together with prior
+MIT/Heimdal all-enabled checks, this qualifies the compound selections exercised.
+
+Analysis-only platform fixtures in libexec/rc/rc.d/tests check the actual configured
+compound manifest dependency graph: ACPI's power_profile is selected on x86_64,
+x86_32 and aarch64 and absent on riscv64. Evidence:
+/usr/obj/usr/src/bazel-rc-architecture-20261028/selection.json plus per-platform
+cquery logs. Script: bazel-rc-complete-qualification-20261028/architecture.py.
+This is metadata analysis, not cross compilation or cross-architecture runtime.
+It reuses the recorded frontend command/toolchain inputs and changes target
+platform for cquery only; normal frontend qualification remains native.
+
+Reviewed build-bsd and source_graph.py: normal installation and typed settings
+use the maintained frontend, without new options. No host service execution or
+installation occurred. All rc.d groups now have native installation expressions;
+full default/option-implication semantics, system package aggregation, rc tests,
+normal boot and full-system performance gates remain unqualified. Make stays default.

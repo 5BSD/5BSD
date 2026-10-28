@@ -307,3 +307,11 @@ bool_flag(name = "wireless", build_setting_default = True, visibility = ["//visi
 config_setting(name = "wireless_enabled", flag_values = {":wireless": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "zfs", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "zfs_enabled", flag_values = {":zfs": "true"}, visibility = ["//visibility:public"])
+
+# Native component selection used by rc.d.
+bool_flag(name = "acpi", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "acpi_enabled", flag_values = {":acpi": "true"}, visibility = ["//visibility:public"])
+
+# Native component selection used by rc.d.
+bool_flag(name = "kerberos", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "kerberos_enabled", flag_values = {":kerberos": "true"}, visibility = ["//visibility:public"])
