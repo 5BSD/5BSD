@@ -8647,3 +8647,30 @@ change required. This establishes local cache reuse and declared Lua test-input
 invalidation only. Native source/header invalidation, remote/cache portability,
 bootstrap variants and full world/kernel/pkgbase/performance gates remain open.
 No benchmark or system-wide caching claim follows from these bounded checks.
+
+
+## 2026-10-28: complete nuageinit test installation payload
+
+Added native installation targets for all three maintained ATF shell scripts,
+all fourteen Lua fixtures, sorted Kyua index, and the crypt helper built from
+usr.sbin/pw/tests/crypt.c with native libcrypt. Source export is narrow to this
+test package. Test assertions remain unchanged; no test cases were omitted.
+
+Make comparison matches all 25 metadata records and all 18 nonbinary payloads
+byte-for-byte. The crypt helper matches its Make object .text/global symbols,
+11 executable symbols and libc/libcrypt dependencies with empty RPATH/RUNPATH.
+Debug validation and unchanged stripped text pass. Initial archive build rejected
+missing test/debug directories; added standard BSD.tests.dist and Make's debug
+metadata. The next comparison caught unsorted Kyua entries; corrected to Make's
+sorted order. Both unsuccessful runs are retained before passing r3.
+
+Evidence: /usr/obj/usr/src/bazel-nuageinit-tests-20261028-r3/qualification/
+{crypt/parity.json,object-parity.json}. Reference:
+bazel-nuageinit-test-reference-20261028-r2. Scripts:
+bazel-nuageinit-tests-qualification-20261028/{make.py,verify.py,objects.py}.
+Builds used maintained build-bsd at 16 jobs. Reviewed build-bsd.c: existing explicit
+target collection suffices; no frontend change. This is test payload/build
+qualification only. ATF execution, configurable native runtime paths, root-only
+pw/pwd_mkdb operations and isolated nuageinit configuration scenarios remain open.
+Whole world/kernel/pkgbase/cache/performance gates remain open; Make stays default.
+No host installation or user/configuration changes occurred.

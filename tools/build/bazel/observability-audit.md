@@ -5411,3 +5411,13 @@ repeat used four cached results; this Lua file change reran all four shared-scri
 tests without compile/link work. Production artifacts stayed byte-identical.
 This verifies execution of the updated assertions, not privileged runtime/audit
 coverage. Evidence: /usr/obj/usr/src/bazel-flua-cache-qualification-20261028/.
+
+
+### nuageinit test payload migration (2026-10-28)
+
+Three ATF scripts and fourteen Lua fixtures install byte-identically to Make;
+crypt helper code/global symbols match. Existing assertions, including user,
+SSH, hostname, timezone and authorization configuration scenarios, are preserved.
+These cases have not executed under the new native test path and their audit or
+privilege behavior is not qualified. Root-only cases require isolated VM coverage.
+Evidence: /usr/obj/usr/src/bazel-nuageinit-tests-20261028-r3/qualification/.
