@@ -4564,3 +4564,13 @@ proof of runtime audit delivery. Seven maintained directory tests pass using
 native open/read/close/seek/tell routines with SDK support. Native fts/glob,
 Blocks, Capsicum, compatibility ABI and concurrent traversal tests remain open.
 No new instrumentation was added to traversal loops.
+
+## 2026-10-28: libc process, signal and time helpers
+
+No direct SDT/DTrace or BSM audit hooks found in these 42 migrated sources.
+Process creation, exec and signal syscalls retain their existing kernel paths;
+object parity does not prove audit-event delivery or runtime process behavior.
+Ten native signal conversion/set-operation cases pass; no real signal delivery
+or process-launch runtime qualification is claimed. The posix_spawn comparison
+caught incorrect broad -fexceptions use; corrected for this group, with a
+cross-component libc flag/exception-section audit now required before linking.

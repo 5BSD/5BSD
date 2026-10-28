@@ -5863,3 +5863,39 @@ Frontend review: existing build-bsd bazel-test explicit targets and tests, typed
 NLS option, native compilation and ATF reporting handle this component; no new
 frontend/backend contract required. Make remains production/default. Tests used
 private working directories; no host installation or configuration changes.
+
+## 2026-10-28: process/signal/time group; exception-flag audit required
+
+Adds 42 explicit libc gen sources for process creation/execution, affinity,
+signals, special descriptors, terminal and time helpers. All 84 ordinary/PIC
+objects match .text and global/unresolved symbols against a fresh Make reference
+in /usr/obj/usr/src/bazel-libc-process-build-20261028-r2/qualification/parity.json.
+The original bazel-libc-process-build-20261028 comparison is retained: it failed
+for both posix_spawn variants and was not accepted as passing evidence.
+
+Root cause: libc/Makefile:231 scopes CANCELPOINTS_CFLAGS to cancelpoints_* sources.
+Our native libc targets had copied -fexceptions from the earlier assignment
+without carrying forward that final per-source restriction. This changes stack
+protector code generation in posix_spawn's noreturn child path. The new process
+group now omits -fexceptions, matching the effective Make recipe. No stack
+protector disablement or comparator exception was introduced.
+
+PRIORITY FOLLOW-UP: 31 existing libc BUILD files still contain broadly applied
+-fexceptions. Correct those non-cancellation groups and renew their qualification
+before proceeding to the libc aggregate. Earlier matching .text/global-symbol
+results remain evidence for their saved artifacts, but do not prove flag parity
+or unwind/exception-section parity. Cancellation-point sources must preserve
+-fexceptions and the NO_THREAD_STACK_UNWIND option when they are migrated. This
+finding also requires reviewing per-source conditional assignments as a whole,
+not copying only the initial CFLAGS declaration.
+
+The unchanged sigsetops_test.c and sig2str_test.c now have native Bazel ATF
+integration. All ten cases pass without skips in the r2 receipt. Its qualification/
+link-proof.json confirms all eight signal-set operations and sig2str/str2sig are
+native executable definitions. Remaining libc/syscall support is SDK-provided.
+These tests do not qualify spawn/exec, real signal delivery, terminal, affinity,
+AIO, host/source syscall compatibility, full libc linking/install or performance.
+
+Frontend review: the existing build-bsd format-5 target/test interface and ATF
+reporting suffice; no frontend/backend contract change needed. Make remains
+production/default. No host installation or process policy changes performed.
