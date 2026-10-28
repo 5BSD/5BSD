@@ -2922,3 +2922,13 @@ CTF conversion retains DWARF for GENERIC's debug configuration. CTF labels,
 types/data records and allocated payload sections match Make, including the
 embedded kernel configuration. These data objects add no probe sites; kernel
 CTF merging, debugger use and live DTrace/audit behavior remain unqualified.
+
+## Compiled vnode implementation (2026-10-28)
+
+Native GENERIC vnode_if.o retains 166 SDT probe symbols, 166 probe-set pointers,
+415 argument-type pointers and 5312 bytes of tracepoint records. All allocated
+section bytes and canonical relocation records match Make, as do CTF dumps;
+DWARF is retained. This advances beyond source-only preservation evidence.
+Kernel final-link retention, live SDT attachment and audit behavior are still
+unqualified. Generated assertion filenames are normalized by compiler flags,
+not by filtering comparison output or disabling assertions.

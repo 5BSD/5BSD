@@ -69,18 +69,24 @@ kernel_constants(name = "generic_assym", object = ":generic_genassym_object", ki
     prerequisites = [":generic_genoffset_check_object"])
 
 load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_library")
-# Generated GENERIC data objects use normal kernel common-symbol policy.
-[cc_library(name = "generic_" + name + "_objects", srcs = ["//sys/amd64/conf:generic_" + name + "_source"],
-    deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header"] + (["//sys/amd64/conf:generic_config_header"] if name == "config" else []),
-    copts = [flag for flag in _AMD64_LAYOUT_FLAGS if flag != "-fcommon"] + ["-fno-common"],
+# Generated GENERIC objects use normal kernel common-symbol policy.
+[cc_library(name = "generic_" + name + "_objects", srcs = [source],
+    deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header"] + extra_deps,
+    copts = [flag for flag in _AMD64_LAYOUT_FLAGS if flag != "-fcommon"] + ["-fno-common",
+        "-fmacro-prefix-map=$(execpath " + source + ")=" + name + ".c"],
     local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
- for name in ["config", "env", "hints"]]
+ for name, source, extra_deps in [
+    ("config", "//sys/amd64/conf:generic_config_source", ["//sys/amd64/conf:generic_config_header"]),
+    ("env", "//sys/amd64/conf:generic_env_source", []),
+    ("hints", "//sys/amd64/conf:generic_hints_source", []),
+    ("vnode_if", ":vnode_source", [":vnode_headers"]),
+]]
 [bsd_ctf_library(name = "generic_" + name + "_ctf", library = ":generic_" + name + "_objects",
     converter = "//cddl/usr.bin/ctfconvert:ctfconvert",
     runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libdwarf:dwarf_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared",
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
     ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label", preserve_debug = True)
- for name in ["config", "env", "hints"]]
+ for name in ["config", "env", "hints", "vnode_if"]]
 [filegroup(name = "generic_" + name + "_object", srcs = [":generic_" + name + "_ctf"], output_group = "regular_objects", visibility = ["//visibility:public"])
- for name in ["config", "env", "hints"]]
+ for name in ["config", "env", "hints", "vnode_if"]]

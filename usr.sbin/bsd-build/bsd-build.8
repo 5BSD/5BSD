@@ -3626,3 +3626,11 @@ The format-5 build-settings key
 sets their CTF label explicitly. Its default matches ctfconvert when Make's
 VERSION environment variable is unset. Changing this label reruns conversion
 without recompiling these objects. Full kernel linking remains unqualified.
+
+.Pp
+.Dq //sys/kern:generic_vnode_if_object
+compiles the generated vnode implementation with CTF, retained DWARF and
+GENERIC SDT instrumentation. Object code, data and probe relocation records have
+Make comparison evidence; a linked kernel and live probe attachment remain
+separate qualification gates. Generated-source assertion filenames use a stable
+compiler prefix map.

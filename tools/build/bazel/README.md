@@ -33752,3 +33752,36 @@ amd64 GENERIC's generated data, with WITH_CTF and debug enabled. Full configurab
 kernel compilation, vers/vnode/runtime objects, linking/CTF merge, modules,
 packages, bootstrap/runtime and whole-system performance gates remain open.
 Make remains production/default; no kernel was installed or booted.
+
+### Native vnode runtime object and SDT record parity (2026-10-28)
+
+`//sys/kern:generic_vnode_if_object` now compiles the maintained generated vnode
+implementation with GENERIC kernel options, declared source/offset/vnode headers,
+normal kernel common-symbol policy, CTF conversion and retained DWARF. The
+existing generated-object declarations share conversion policy with config/env/
+hints. No DTrace option or assertion is disabled.
+
+`/usr/obj/usr/src/bazel-generic-vnode-r2-20261028/qualification` compares against
+a fresh maintained Make vnode_if.o built with the same SDK compiler and host
+ctfconvert. All allocated section bytes/layout match, including 38011 machine-code
+bytes, data, diagnostic strings and three SDT linker sets. Canonical relocations
+match (target symbol identity/value/size and addend, not raw symbol-table indices).
+There are 417 defined global symbols, including 166 SDT probes; SDT sets contain
+166 probe pointers, 415 argument-type pointers and 5312 bytes of tracepoint
+records. Their relocation counts are 166, 415 and 498 respectively. CTF
+label/type/data dumps agree and both objects retain debug info/line sections.
+Full ELF/DWARF byte identity is not claimed.
+
+The initial machine code and probe records already matched, but assertion strings
+contained the Bazel generated-source path. Generated-object compilation now uses
+the compiler's -fmacro-prefix-map from each declared source path to its logical
+filename (for example vnode_if.c), matching Make diagnostics and avoiding action
+root leakage. No source/output bytes are edited by the comparison. Broader debug
+path policy still needs qualification as more runtime objects are integrated.
+
+Existing frontend format-5 target selection handles this action chain; manual
+and observability notes are updated without a C/backend interface change.
+This is compiled-object evidence, not kernel linking, linker-set retention after
+link/GC, live probe attachment, vnode execution or audit-policy qualification.
+Other runtime objects, kernel/module/package aggregation, bootstrap, runtime and
+performance gates remain open. Make remains production/default.
