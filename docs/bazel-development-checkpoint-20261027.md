@@ -1994,3 +1994,32 @@ typed setting transport handles this consumer without new C/backend options.
 Next: qualify the disabled Make reference and both installation variants,
 then continue remaining GEOM/module conversion. Whole-system/runtime and
 resource/performance gates remain open; Make remains production/default.
+
+### Uzip enabled/disabled Make parity and installation
+
+Both ZSTDIO variants now pass Make artifact/debug and staged installation
+comparisons. The disabled Make reference was configured independently with
+the maintained built config utility over `include GENERIC; nooptions ZSTDIO`
+(newline-separated directives), rather than by editing generated headers.
+Reference: `/usr/obj/usr/src/bazel-geom_uzip-nozstd-make-20261028`, including
+configuration input/log and build log. The enabled reference remains
+`/usr/obj/usr/src/bazel-geom_uzip-make-20261028`.
+
+Each native run retains qualification/variant-comparison.json:
+`/usr/obj/usr/src/bazel-uzip-true-r2-20261028` and
+`/usr/obj/usr/src/bazel-uzip-false-20261028`. Both match runtime symbols,
+relocations, text/data/rodata and raw CTF; debug identity and CRC pass. Both
+staged installs match path/owner/group/mode/type and package/debug tags.
+No host module load or installation occurred.
+
+The observed enabled-to-disabled transition spawned exactly one CppCompile,
+for g_uzip.c, plus its CTF and downstream module actions. Unchanged zlib,
+LZMA and worker translation units were reused. The Zstd object and symbols
+were excluded. See the disabled run's qualification/option-invalidation.json.
+This is concrete option invalidation evidence, not broad cache/performance
+qualification. No decompression I/O, corruption/error-path or memory/disk
+performance tests have been performed for uzip.
+
+Frontend review: typed kernel_zstdio and maintained format-5 transport worked
+for both variants; manual qualification wording updated without new C/backend
+options. Continue remaining module/kernel/world migration and broader gates.

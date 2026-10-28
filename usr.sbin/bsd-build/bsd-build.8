@@ -2336,8 +2336,11 @@ native amd64 GENERIC configuration.
 It explicitly overrides ZSTDIO through the native config parser and is also
 available to native conditional source selection.
 False removes that option; it does not select a different installed kernel.
-This setting has been checked for generated option headers in both states;
-compression module and whole-kernel qualification remain separate.
+Both states have been checked for generated option headers and native uzip
+source selection, Make artifact/debug parity, and staged installation metadata.
+The observed option change recompiles only the affected uzip translation unit.
+Decompression runtime, resource/performance and whole-kernel qualification
+remain separate.
 For example, //tools/build/bazel/config:split_manpages set to true selects
 separate manual-page package ownership; false is the maintained default.
 The boolean //sbin/growfs:gfsdbg defaults to false and selects the maintained
