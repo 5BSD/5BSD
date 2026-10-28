@@ -293,3 +293,7 @@ amd64_generic_kernel_objects(name = "generic_hash_unit", srcs = ["subr_hash.c", 
 amd64_generic_kernel_objects(name = "generic_acl", srcs = ["subr_acl_nfs4.c", "vfs_acl.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
         "//sys/security/audit:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_extattr", srcs = ["vfs_extattr.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/amd64/conf:generic_opt_capsicum_header"])

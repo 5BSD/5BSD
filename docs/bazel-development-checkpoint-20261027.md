@@ -3590,3 +3590,24 @@ ACL inheritance/order, allow/deny, get/set/remove, descriptor/path operations
 and MAC/audit outcomes need linked-kernel/filesystem tests. Full kernel/world/
 pkgbase/bootstrap and performance gates remain open. Make stays production/
 default; module count remains 45. No host installation or BIP changes occurred.
+
+### Native VFS extended attributes
+
+Added //sys/kern:generic_extattr_object_files for vfs_extattr.c, selected by
+the maintained GENERIC Makefile. Dependencies declare CK/VM, MAC, audit and
+generated Capsicum options. No extended-attribute or policy source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-extattr-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. The Capsicum header matches Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-extattr-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets cover this addition without new
+build-bsd C/backend options, staging or manual changes. No runtime tests ran.
+Get/set/list/remove, namespace and MAC permissions, path/fd/symlink semantics,
+persistence and audit output require linked-kernel/filesystem tests. Full
+kernel/world/pkgbase/bootstrap and performance gates remain open. Make stays
+production/default; module count remains 45. No host installation or BIP changes.

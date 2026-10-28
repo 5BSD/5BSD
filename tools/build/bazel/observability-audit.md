@@ -3759,3 +3759,13 @@ raw CTF, allocated sections and runtime relocations. Evidence:
 No runtime source changed. Live ACL/MAC decisions, inheritance, audit records
 and probe firing remain unqualified. The unselected ufs_acl/POSIX.1e variant
 is not covered by this evidence.
+
+### VFS extended attributes (2026-10-28)
+
+vfs_extattr.c defines six get/list/set/remove probes and records command,
+namespace, attribute-name and descriptor audit arguments. Native GENERIC
+output matches Make symbols, raw CTF, allocated sections and runtime
+relocations. Evidence:
+`/usr/obj/usr/src/bazel-extattr-kernel-20261028/qualification`.
+No runtime source changed. Live namespace/MAC decisions, audit records,
+filesystem persistence and probe firing remain unqualified.
