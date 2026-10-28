@@ -5058,3 +5058,14 @@ in these units. Isolated BPF/interface startup, reload, client authorization,
 boot/read/error responses and their log visibility remain runtime review items.
 Build parity is not evidence of packet handling or audit correctness. The daemon
 was not executed and no BPF device or network listener was opened.
+
+## 2026-10-28 TFTP client/server
+
+The shared file/I/O/options/transfer/utils sources are explicitly declared for
+both native programs without source changes. Existing logging and wrapper-policy
+behavior is retained by compilation; no new audit/probe behavior is claimed.
+Local client mode/status parity passed. Record isolated read/write permissions,
+option negotiation, retries, netascii/octet transfers and IPv4/IPv6 failures for
+runtime/logging review. Server functional tests use the installed absolute path
+and include root-required cases, so a host-loader/program fallback would not
+qualify these candidates. Server/test-suite execution remains open.

@@ -7609,3 +7609,36 @@ installed. Interface selection, configuration parsing/reload, client permissions
 boot/read/error replies, resource behavior and cross/static variants remain
 runtime/configuration gates. Complete world/kernel/pkgbase/bootstrap/cache/
 performance qualification remains open; Make stays production/default.
+
+## 2026-10-28 native TFTP client/server
+
+Added native tftpd and tftp program/installation targets. One source-owned
+TFTP_SOURCES inventory supplies the five shared implementation files; a declared
+header interface serves both programs. Each compiles its own source objects,
+matching Make's separate program builds. Server LIBWRAP and libwrap dependency
+selection uses the existing tcp_wrappers setting; the client consumes native
+libedit. Default configuration is qualified; wrapper-disabled qualification
+remains open.
+
+Both candidates passed through build-bsd at 16 jobs and match independent Make
+references: 146 global/undefined entries for tftpd, 157 for tftp, expected
+libc/libwrap or libc/libedit dependencies with no RPATH, five installation
+records each and byte-identical manuals. Both debug pairs validate and stripping
+preserves native .text. Evidence: /usr/obj/usr/src/bazel-tftp-20261028/qualification/
+{tftpd,tftp}/parity.json. References: bazel-tftpd-reference-20261028 and
+bazel-tftp-reference-20261028; retained scripts: bazel-tftp-qualification-20261028.
+
+Client status, binary/ascii mode changes and quit match Make under native
+rtld/libc/libedit, including stdout/stderr and exit status. The runtime trace is
+retained in qualification/client-runtime.json. This is a bounded retained script
+check, not a registered Bazel test and not a transfer test. No server was started
+or transfer attempted. The maintained server functional test execs the installed
+/usr/libexec/tftpd and includes root-required cases; qualify it in an isolated
+installed runtime rather than accidentally exercising the host daemon. Both
+client and server test builds/installation are still outstanding.
+
+Reviewed build-bsd.c: existing format-5 native targets/settings/install outputs
+handle these additions without new options or publication changes. No host
+installation occurred. Transfer modes/options/retries/access policy, IPv4/IPv6,
+configuration variants and performance remain gates, alongside complete world/
+kernel/pkgbase/bootstrap/cache qualification. Make stays production/default.
