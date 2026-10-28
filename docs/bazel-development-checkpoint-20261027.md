@@ -6615,3 +6615,30 @@ is not read at native build time: encoding membership is now owned explicitly in
 Bazel metadata. Frontend review: build-bsd.c's existing format-5 explicit targets
 and backend handled both filegroups at 16 jobs, without new CLI or publication
 inputs. Make remains production/default. No host installation occurred.
+
+## 2026-10-28: native encoding directory and alias indexes
+
+Added native esdb.dir/esdb.alias generation from ordered Bazel-owned encoding
+family metadata and declared maintained .alias files. The action uses native awk
+in execution configuration, explicit script/layout/alias inputs, two declared
+outputs and fixed locale. It preserves family/member/alias ordering, canonical
+encoding names and colon-to-@ database paths. Index membership is checked during
+analysis against encodings.bzl: duplicate/unbuilt members and omitted databases
+fail rather than leave a silently inconsistent index. The ordered membership
+metadata replaces Make .part reads for this native graph; alias file content
+remains an input, so alias edits invalidate generation.
+
+Both text indexes and their lookup-mode mkesdb databases now build natively.
+All four outputs match maintained Make byte-for-byte and by output inventory:
+esdb.dir, esdb.alias, esdb.dir.db, esdb.alias.db. Final evidence:
+/usr/obj/usr/src/bazel-esdb-indexes-20261028-r2/receipt.json and
+qualification/index-parity.json. Verification script:
+bazel-esdb-indexes-qualification-20261028/verify.py. Reference:
+bazel-citrus-data-make-20261028. No host installation occurred. This completes
+native encoding database/index generation, but not its installation or runtime
+conversion qualification. Character mapper directory/pivot indexes and static
+.646 data remain, along with full i18n installation and iconv execution tests.
+
+Frontend review: existing build-bsd.c format-5 target selection invokes the native
+index filegroup with 16 jobs; no new CLI/backend publication input is required.
+Make remains production/default and full world/kernel/pkgbase gates remain open.

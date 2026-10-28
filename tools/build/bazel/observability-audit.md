@@ -4773,3 +4773,11 @@ six variable-driven actions explicitly record the template, variable table,
 script and native awk dependency. No conversion C code, probes or audit hooks
 were changed. Alias/index generation, installation and end-to-end conversion
 remain necessary before declaring the iconv runtime qualified.
+
+## 2026-10-28 encoding indexes
+
+Native index actions declare all maintained encoding alias files and generate
+both text inventories before compiling their databases. Bazel analysis rejects
+index membership inconsistent with generated encoding databases. All four text
+and binary outputs match Make. No runtime probes or audit hooks were changed;
+mapper indexes, installation and full conversion tests are still outstanding.

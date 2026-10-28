@@ -17,3 +17,19 @@ load("//tools/build/bazel:bsd_citrus_encoding.bzl", "citrus_encoding")
 filegroup(name = "encoding_databases", srcs = [":" + stem + "_database" for stem, _, _ in ENCODINGS],
     visibility = ["//visibility:public"])
 filegroup(name = "expanded_sources", srcs = [":" + stem + "_source" for stem, _, substitutions in ENCODINGS if substitutions])
+
+load(":indexes.bzl", "ENCODING_FAMILIES")
+load("//tools/build/bazel:bsd_citrus_index.bzl", "citrus_index")
+# Validate index membership against the generated database inventory.
+load(":index_policy.bzl", "encoding_index_layout")
+citrus_index(name = "indexes", layout = encoding_index_layout(ENCODINGS, ENCODING_FAMILIES),
+    aliases = [directory + "/" + code + ".alias" for directory, code, _, _ in ENCODING_FAMILIES],
+    script = "encoding_indexes.awk", awk = "//usr.bin/awk:awk")
+filegroup(name = "directory", srcs = [":indexes"], output_group = "directory")
+filegroup(name = "aliases", srcs = [":indexes"], output_group = "aliases")
+citrus_database(name = "directory_database", src = ":directory", output = "esdb.dir.db",
+    mode = "lookup", tool = "//usr.bin/mkesdb:mkesdb_tool")
+citrus_database(name = "alias_database", src = ":aliases", output = "esdb.alias.db",
+    mode = "lookup", tool = "//usr.bin/mkesdb:mkesdb_tool")
+filegroup(name = "encoding_indexes", srcs = [":indexes", ":directory_database", ":alias_database"],
+    visibility = ["//visibility:public"])
