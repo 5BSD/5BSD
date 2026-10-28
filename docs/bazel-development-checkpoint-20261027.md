@@ -1912,3 +1912,30 @@ the existing format-5 frontend; no new C option or publication change is
 needed. Runtime slicing, invalidation, performance, all-world/kernel and
 pkgbase gates remain open. Next GEOM work includes uzip's conditional zstd
 sources and per-source compression include paths, then RAID/ELI.
+
+### Uzip preparation: scoped compilation and option-selected sources
+
+The shared amd64 GENERIC object macro now accepts a source-group name and
+additional copts, retaining existing names/flags by default. This permits
+separate source-specific dependency/flag contexts without broadening every
+translation unit's include paths. Existing seventeen-module artifact hashes
+remain identical with zero spawned actions in
+`/usr/obj/usr/src/bazel-module-groups-20261028/qualification/comparison.json`.
+Non-default names/copts still need direct qualification with their consumer.
+
+Uzip is NOT converted yet. Its maintained Makefile selects g_uzip_zstd.c
+through SRCS.ZSTDIO and KERN_OPTS, and supplies separate LZMA/Zstd include
+paths. GENERIC currently enables ZSTDIO, but that observation must not become
+an unconditional source list purporting to support changing kernel configs.
+The native config action currently produces its tree at execution time;
+source selection needs a coherent configuration input at analysis time.
+Resolve the shared option/source selection model, validate it against actual
+config output, and qualify ZSTDIO both enabled and disabled. Do not invoke
+Make to decide the production Bazel graph, compile a disabled implementation
+unconditionally, or wrap C sources to conceal the selection gap.
+
+Frontend review: current explicit format-5 target selection covers this
+macro-only extension. The upcoming configuration model must integrate with
+the maintained frontend and native config inputs in the same change.
+Uzip, other configuration-dependent modules, complete kernel/world/pkgbase,
+runtime and performance gates remain open. Make stays production/default.

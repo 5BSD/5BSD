@@ -49,16 +49,16 @@ def amd64_generic_module(module, objects, exports = [], export_all = False):
         owner = "root", group = "wheel", mode = "0444", install_tags = ["package=kernel", "dbg"])
     bsd_install_manifest(name = "install_manifest", entries = [":install_module", ":install_debug"], visibility = ["//visibility:public"])
 
-def amd64_generic_module_objects(srcs, deps = []):
-    """Compile explicitly enumerated sources against the GENERIC headers."""
-    cc_library(name = "generic_module_objects", srcs = srcs,
+def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = []):
+    """Compile a named source group with its own GENERIC headers and flags."""
+    cc_library(name = name + "_objects", srcs = srcs,
         deps = AMD64_KERNEL_HEADER_DEPS + deps + ["//sys/kern:generic_offset_header", "//sys/kern:vnode_headers"],
-        copts = [flag for flag in AMD64_KERNEL_FLAGS if flag != "-fcommon"] + ["-fno-common"],
+        copts = [flag for flag in AMD64_KERNEL_FLAGS if flag != "-fcommon"] + ["-fno-common"] + copts,
         local_defines = ["_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
         target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
-    bsd_ctf_library(name = "generic_module_ctf", library = ":generic_module_objects",
+    bsd_ctf_library(name = name + "_ctf", library = ":" + name + "_objects",
         converter = "//cddl/usr.bin/ctfconvert:ctfconvert",
         runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libdwarf:dwarf_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared",
             "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
         ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label", preserve_debug = True)
-    native.filegroup(name = "generic_module_object_files", srcs = [":generic_module_ctf"], output_group = "regular_objects", visibility = ["//visibility:public"])
+    native.filegroup(name = name + "_object_files", srcs = [":" + name + "_ctf"], output_group = "regular_objects", visibility = ["//visibility:public"])
