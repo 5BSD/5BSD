@@ -63,3 +63,4 @@ exports_files(["freebsd_version.py"])
 
 exports_files(["kobj_generate.py"], visibility = ["//visibility:public"])
 exports_files(["kernel_config.py"], visibility = ["//visibility:public"])
+exports_files(["tree_file.py"])

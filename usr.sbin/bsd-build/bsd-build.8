@@ -3607,3 +3607,10 @@ compile actual amd64 GENERIC layout inputs with generated kernel options and
 source headers. The assembly constants require a successful offset-layout
 assertion compile. These targets do not link or boot a kernel and do not qualify
 other configurations or architectures.
+
+.Pp
+GENERIC layout objects depend on individually extracted option headers.
+Qualification confirms an unrelated MSGBUF_SIZE change causes no layout C
+compilation, while KSTACK_PAGES recompiles genassym only. This is limited
+invalidation evidence for layout targets; it is not a complete kernel build
+or system performance result.

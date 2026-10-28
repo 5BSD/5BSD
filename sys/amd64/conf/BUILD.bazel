@@ -16,5 +16,14 @@ filegroup(name = "configuration_inputs", srcs = glob(["*"], exclude = ["BUILD.ba
 ) for name, debug in [("generic_config", False), ("generic_debug_config", True)]]
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
-cc_library(name = "generic_headers", hdrs = [":generic_config"],
-    includes = ["generic_config.generated"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_tree_file.bzl", "bsd_tree_file")
+[bsd_tree_file(name = name, tree = ":generic_config", member = name + ".h",
+    output = "generic_options/" + name + ".h",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for name in ["opt_global", "opt_hwpmc_hooks", "opt_kstack_pages"]]
+cc_library(name = "generic_global_headers", hdrs = [":opt_global"],
+    strip_include_prefix = "generic_options", visibility = ["//visibility:public"])
+cc_library(name = "generic_assym_headers", hdrs = [":opt_hwpmc_hooks", ":opt_kstack_pages"],
+    strip_include_prefix = "generic_options", visibility = ["//visibility:public"])

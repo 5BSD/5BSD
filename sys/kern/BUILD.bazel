@@ -41,7 +41,7 @@ _AMD64_LAYOUT_FLAGS = [
     "-g", "-gdwarf-4", "-std=gnu17",
 ]
 _AMD64_LAYOUT_DEPS = [
-    "//sys/amd64/conf:generic_headers", "//sys/sys:kernel_headers",
+    "//sys/amd64/conf:generic_global_headers", "//sys/sys:kernel_headers",
     "//sys/amd64/include:kernel_headers", "//sys/x86/include:kernel_headers",
     "//sys/bsm:kernel_headers",
 ]
@@ -59,7 +59,7 @@ cc_library(name = "generic_genoffset_check", srcs = ["genoffset.c"],
 bsd_component_object(name = "generic_genoffset_check_object", group = ":generic_genoffset_check", out = "generic_layout/genoffset_test.o")
 
 cc_library(name = "generic_genassym", srcs = ["//sys/amd64/amd64:genassym.c"],
-    deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header", ":vnode_headers",
+    deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header", ":vnode_headers", "//sys/amd64/conf:generic_assym_headers",
         "//sys/vm:kernel_headers", "//sys/isa:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/dev/hwpmc:kernel_headers"],
     copts = _AMD64_LAYOUT_FLAGS,
     local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS"],

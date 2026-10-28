@@ -976,3 +976,36 @@ configurations/architectures, modules or packages. Compiler bootstrap still uses
 the SDK. Full source selection, compile policy, kernel linking, runtime, cache
 invalidation and CPU/memory/disk performance gates remain open. Make remains
 the production/default backend.
+
+### Precise kernel option-header dependencies and invalidation (2026-10-28)
+
+`bsd_tree_file` exposes selected generated tree members as independently hashed
+files. Layout compilation now declares only opt_global.h for the offset objects,
+plus opt_hwpmc_hooks.h and opt_kstack_pages.h for genassym. The complete config
+output remains captured; individual consumers no longer directly depend on the
+entire configuration tree. New consumers must declare the option headers they
+actually include. -nostdinc continues to prevent installed-header fallbacks.
+
+The extraction adapter accepts Bazel's sandbox input symlinks and rejects
+non-normalized member paths or nonregular/missing members. An initial attempt
+incorrectly rejected sandbox symlinks; the corrected helper passes two tests
+covering empty/nested/symlink-backed files and invalid member paths. Declared
+artifact extraction is not an untrusted-archive security boundary.
+
+`/usr/obj/usr/src/bazel-layout-headers-r2-20261028` qualifies the new dependency
+graph. `/usr/obj/usr/src/bazel-layout-invalidation-20261028` retains the exact
+mutation script, original GENERIC bytes, frontend logs, execution logs and result:
+- Adding MSGBUF_SIZE reruns config plus three member extractions (four actions),
+  executes no C compilation and preserves offset.inc and assym.inc hashes.
+- Adding KSTACK_PAGES=8 compiles only generic_genassym (six total actions), changes
+  assym.inc and preserves offset.inc. Both genoffset objects are reused.
+- Restoring GENERIC recompiles only genassym and restores both original hashes.
+The source was restored byte for byte and has no remaining diff. All phases use
+maintained build-bsd with sixteen jobs; no host installation or reboot occurred.
+
+This resolves the recorded whole-config dependency issue for these three layout
+objects. It is concrete input-invalidation evidence, not whole-kernel cache,
+remote execution or CPU/memory/disk performance qualification. Full native
+kernel/world/module/package and runtime gates remain unfinished. Existing
+frontend target selection handles these actions without a C/backend contract
+change; the manual documents the dependency behavior. Make remains default.
