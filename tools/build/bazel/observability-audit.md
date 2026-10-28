@@ -4815,3 +4815,11 @@ privilege-dropping chroot checker are prepared. Runtime checks are pending host
 root assistance because unprivileged chroot is disabled. No new probes, host
 policy exceptions or path redirection were added to conversion code. Linkage
 checks must not be reported as completed conversion tests.
+
+## 2026-10-28 installed database generators
+
+Both stripped installed generator programs preserve their native .text, retain
+valid separate debug links and reproduce all 656 database outputs with native
+libc/libsys. Manuals and full component installation metadata match Make. No
+runtime source, DTrace probes or audit hooks changed. This is generator execution
+evidence; it does not substitute for the pending isolated iconv conversion run.

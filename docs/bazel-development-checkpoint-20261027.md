@@ -6770,3 +6770,32 @@ migration work can continue; this is not a whole-goal blocker. Frontend review:
 all build inputs/artifacts use maintained build-bsd format-5 qualification;
 privileged runtime execution is a separate explicit pending gate, not a claimed
 new frontend feature or replacement build. Make remains production/default.
+
+## 2026-10-28: installed native Citrus generators qualified
+
+mkesdb and mkcsmapper now use the standard utility installation macro and archive
+rules for the normal dynamically linked programs, separate debug files and
+compressed manuals. Static *_tool execution binaries remain build tools and are
+not substituted for installed user programs. Existing package/mtree/account
+policy supplies utilities metadata and debug directory ownership.
+
+Evidence: /usr/obj/usr/src/bazel-citrus-generator-install-20261028/receipt.json and
+qualification/installation-parity.json. Both archives match their entire unique
+Make component inventory, ownership, modes, flags, package tags and manual bytes.
+Debuglink names/CRCs and DWARF-info presence pass; stripping preserves .text from
+the corresponding native program artifact. Loader traces select native libc and
+libsys. The stripped installed programs then regenerated every one of the 656
+binary databases against the prepared maintained source inputs at 16 jobs; all
+outputs match Make byte-for-byte. This qualifies dynamic installed generators in
+addition to the previously qualified static execution tools.
+
+Fresh independent Make references were produced by maintained install-reference.py:
+bazel-mkesdb-install-reference-20261028 and bazel-mkcsmapper-install-reference-20261028.
+Verification script: bazel-citrus-generator-install-qualification-20261028/verify.py.
+No host installation occurred. This is default amd64 utility installation and
+generator runtime evidence, not aggregate pkgbase publication or end-to-end iconv
+conversion. The latter still awaits the previously requested root-shell run;
+runtime-results.json was absent when checked this turn. Other migration work
+continues independently. Frontend review: build-bsd.c's format-5 native targets
+and maintained backend handle these archives at 16 jobs without new CLI or
+publication inputs. Make remains the production default.
