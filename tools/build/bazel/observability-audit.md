@@ -5159,3 +5159,13 @@ The unchanged six-case shell suite and Kyua index now have a standalone native
 installation archive whose three metadata records and both payloads match Make.
 This preserves diagnostic tests for installation; it adds no new runtime/probe
 claims and does not establish complete-system test discovery.
+
+## 2026-10-28 rpc.rwalld / rpc.rstatd / rpc.rusersd
+
+Five C source units compile unchanged and match Make object code/symbols.
+Existing syslog calls remain; no dedicated SDT/DTrace or audit call was found
+in these sources. Remote wall executes the maintained wall command through
+popen, so guest qualification must cover process invocation, terminal delivery
+and authorization before runtime claims. rusers session disclosure and rstat
+kernel/device statistics require actual RPC requests in isolation. Build and
+installation parity does not establish those behaviors; no services started.

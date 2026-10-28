@@ -7945,3 +7945,34 @@ the three component records and two payloads. It passes and emits the cited
 report. The initial documentation commit ran despite verification failure due
 to missing shell fail-fast handling; subsequent commands fail immediately on
 errors. No archive implementation or expected file contents changed to pass.
+
+## 2026-10-28 three native rcmds RPC daemons
+
+Added rpc.rwalld (one C source), rpc.rstatd (two C sources), and rpc.rusersd
+(two C sources/local header), with explicit native util/devstat/rpcsvc library
+edges as required by their maintained Makefiles. Added narrow public wrappers
+for generated rwall.h, rstat.h and rnusers.h; all reuse existing native rpcgen
+actions. No source behavior or historic wall-command path was altered.
+Installation uses the maintained rcmds package, /usr/libexec, manuals and split
+debug payloads. The dormant XIDLE conditional remains disabled as in Make.
+
+At 16 jobs through build-bsd, all three build/install targets pass. Independent
+Make comparison matches 44/59/42 global-and-undefined entries respectively,
+expected NEEDED libraries and empty RPATH/RUNPATH, five installation records
+per daemon, each manual's bytes, debug name/CRC/DWARF, and strip-preserved .text.
+All five object .text bodies and symbol sets match Make. The three generated
+protocol headers match the staged SDK byte-for-byte.
+
+Evidence: /usr/obj/usr/src/bazel-rcmd-rpc-20261028/qualification/{rpc.rwalld,
+rpc.rstatd,rpc.rusersd}/parity.json and object-header-parity.json. References:
+bazel-rpc.rwalld-reference-20261028, bazel-rpc.rstatd-reference-20261028,
+bazel-rpc.rusersd-reference-20261028; corresponding reference-objects trees.
+Scripts: bazel-rcmd-rpc-qualification-20261028. No daemon was started, no terminal
+message delivered, and no host installation or RPC registration performed.
+
+Reviewed build-bsd.c and existing backend collection: format-5 explicit targets
+support these builds/install archives without frontend changes. Inetd/standalone
+startup, RPC requests, user/session disclosure, wall authorization/delivery,
+statistics behavior, nondefault configurations and performance remain open.
+Whole-world/kernel/pkgbase/publication/runtime qualification is incomplete;
+Make remains production/default and BIP remains out of scope.

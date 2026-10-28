@@ -22,4 +22,4 @@ cc_library(name = "library_local_headers", hdrs = [":" + n + ".h" for n in RPCSV
 [cc_library(name = name + "_public_header", hdrs = [":" + name + ".h"],
     strip_include_prefix = ".", include_prefix = "rpcsvc",
     visibility = ["//libexec/" + consumer + ":__pkg__"])
- for name, consumer in [("spray", "rpc.sprayd"), ("rquota", "rpc.rquotad")]]
+ for name, consumer in [("spray", "rpc.sprayd"), ("rquota", "rpc.rquotad"), ("rwall", "rpc.rwalld"), ("rstat", "rpc.rstatd"), ("rnusers", "rpc.rusersd")]]
