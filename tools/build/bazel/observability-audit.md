@@ -4764,3 +4764,12 @@ it does not introduce runtime probes or change conversion code. Initial executio
 configuration build produced approximately 2 GiB of JSON action diagnostics;
 record this as build diagnostic-storage overhead for full-system performance
 qualification. Broader conversion/runtime and installation remain incomplete.
+
+## 2026-10-28 encoding data generation
+
+237 native database actions and 182 template outputs preserve the maintained
+conversion inputs; all match Make's complete output inventory and bytes. Big5's
+six variable-driven actions explicitly record the template, variable table,
+script and native awk dependency. No conversion C code, probes or audit hooks
+were changed. Alias/index generation, installation and end-to-end conversion
+remain necessary before declaring the iconv runtime qualified.

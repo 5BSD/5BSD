@@ -6583,3 +6583,35 @@ script: bazel-csmapper-data-qualification-20261028/verify.py. The first reader
 attempt assumed newline-separated JSON; Bazel emits adjacent objects. The reader
 was corrected to stream that actual format without changing build evidence.
 No warm-cache, input-invalidation or cross-platform claim follows from this run.
+
+## 2026-10-28: native encoding database actions
+
+All 237 encoding databases now have explicit native Bazel actions driven by the
+owned encodings.bzl inventory. Of these, 55 use maintained source files directly
+and 182 expand maintained templates. The template substitutions preserve UTF
+module/variable settings, Georgian name/charset distinctions and the other
+family naming rules. The six Big5 expansions declare Big5.variable as an input
+and use the native execution-platform awk with a literal-substitution script;
+values are read from that table rather than copied into Bazel metadata. Missing
+or duplicate selected table entries fail generation. The first migration-time
+comparison exposed Big5's separate variable-table contract before implementation
+was accepted. No Make evaluation or reference-output copying occurs in Bazel.
+
+Evidence: /usr/obj/usr/src/bazel-esdb-data-20261028-r2/receipt.json and
+qualification/database-parity.json. Every one of the 237 .esdb outputs and 182
+expanded .src outputs matches the complete maintained Make inventory and bytes.
+Execution records confirm declared inputs for all 237 database actions and all
+six Big5 variable-table actions. The verification script initially used an
+incorrect expected count of eight variable expansions; it now compares their
+output inventory directly against the reference's Big5 sources instead.
+Scripts are retained under bazel-esdb-data-qualification-20261028. Reference:
+bazel-citrus-data-make-20261028. Qualification is same-host amd64; this does not
+establish cross-build behavior or runtime conversion semantics.
+
+Together with the prior 415 character maps, 652 binary data files now have native
+Bazel generation. The four compiled alias/directory/pivot indexes, their text
+inventories, static .646 data and installation remain. The Make .part inventory
+is not read at native build time: encoding membership is now owned explicitly in
+Bazel metadata. Frontend review: build-bsd.c's existing format-5 explicit targets
+and backend handled both filegroups at 16 jobs, without new CLI or publication
+inputs. Make remains production/default. No host installation occurred.

@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":encodings.bzl", "ENCODINGS")
+load("//tools/build/bazel:bsd_citrus_database.bzl", "citrus_database")
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+load("//tools/build/bazel:bsd_citrus_encoding.bzl", "citrus_encoding")
+[bsd_template(name = stem + "_source", template = source,
+    output = stem + ".src", substitutions = substitutions)
+ for stem, source, substitutions in ENCODINGS if substitutions and source != "BIG5/Big5.src"]
+[citrus_encoding(name = stem + "_source", template = source, variables = "BIG5/Big5.variable",
+    key = substitutions["encoding"][5:], encoding = substitutions["encoding"],
+    output = stem + ".src", script = "expand_variable.awk", awk = "//usr.bin/awk:awk")
+ for stem, source, substitutions in ENCODINGS if source == "BIG5/Big5.src"]
+[citrus_database(name = stem + "_database",
+    src = ":" + stem + "_source" if substitutions else source,
+    output = stem + ".esdb", tool = "//usr.bin/mkesdb:mkesdb_tool")
+ for stem, source, substitutions in ENCODINGS]
+filegroup(name = "encoding_databases", srcs = [":" + stem + "_database" for stem, _, _ in ENCODINGS],
+    visibility = ["//visibility:public"])
+filegroup(name = "expanded_sources", srcs = [":" + stem + "_source" for stem, _, substitutions in ENCODINGS if substitutions])
