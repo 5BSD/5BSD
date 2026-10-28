@@ -4905,3 +4905,11 @@ loaders execute the native-libc smoke program with confirmed native libc/libsys
 selection. Live probe registration/firing and broad loader runtime behavior are
 not established. Link-map rejection gates preserve Make's dependency isolation;
 no signature verification, audit or runtime C source was changed.
+
+## 2026-10-28 installed runtime-loader payload
+
+Stripping rtld preserves byte-identical native .text and .SUNW_dof sections.
+Its separate debug filename/CRC and DWARF presence pass. The stripped artifact
+executes a native-libc smoke probe with explicit native libc/libsys selection.
+No runtime sources, probes or audit hooks changed. This does not establish
+live DTrace firing, full installation or the broader loader runtime suite.

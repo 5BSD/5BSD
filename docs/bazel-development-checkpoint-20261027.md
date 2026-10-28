@@ -7123,3 +7123,31 @@ No public build/publication option changes are needed. Next: installation/debug
 metadata parity, maintained Bazel loader runtime tests and broader dlopen/TLS/
 libmap/preload/error handling. Full-world/kernel/pkgbase, bootstrap and resource
 performance gates remain open. Make remains production/default.
+
+## 2026-10-28: runtime-loader installation/debug payload
+
+Added rtld install_manifest/install_archive through shared debug-split, strip,
+compression, link and installation rules. Payload includes /libexec/ld-elf.so.1,
+its separate debug file, /etc/libmap.conf, the /usr/libexec compatibility symlink,
+rtld.1 and both maintained manual aliases. Configuration retains its config tag;
+the loader retains Make's existing schg flag. This is ordinary installation
+metadata, not a return of BIP. Manual ownership follows split_manpages.
+
+Evidence: /usr/obj/usr/src/bazel-rtld-install-20261028/qualification/installation-parity.json.
+All nine unique component metadata records match rootless Make install plus
+installconfig, including two directories and three symlink/hardlink records.
+Four nonbinary file payloads match Make byte-for-byte, including manual aliases.
+The debug filename/CRC and DWARF checks pass; stripping preserves native .text
+and .SUNW_dof bytes. The stripped loader directly executes the native-libc smoke
+probe, with trace confirming native libc/libsys selection. No installed host
+loader, configuration or files were changed.
+
+Independent reference: bazel-rtld-install-reference-20261028. Scripts:
+bazel-rtld-install-qualification-20261028/{make-reference.py,verify.py}. Scope is
+amd64 default manual packaging with DTrace enabled and component tests excluded;
+this does not establish complete pkgbase archives or full-system installation.
+Reviewed build-bsd.c's maintained bazel-test backend: existing format-5 inputs
+handle the archive with 16 jobs. No new frontend/publication setting is needed.
+Next: maintained Bazel loader runtime tests covering dynamic loading, TLS,
+libmap/preload and failure behavior. Broad world/kernel/pkgbase/bootstrap and
+performance gates remain open. Make stays production/default.

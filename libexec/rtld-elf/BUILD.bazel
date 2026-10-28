@@ -69,3 +69,6 @@ bsd_rtld_link(name = "rtld", output = "ld-elf.so.1.full", entry = ".rtld_start",
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], target_compatible_with = RTLD_PLATFORM)
 filegroup(name = "rtld_binary", srcs = [":rtld"], output_group = "binary", visibility = ["//visibility:public"])
+
+load(":installation.bzl", "rtld_installation")
+rtld_installation()
