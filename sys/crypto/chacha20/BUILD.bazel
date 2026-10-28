@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "kernel_headers", hdrs = ["chacha.h", "_chacha.h"], includes = ["../.."], visibility = ["//sys/libkern:__pkg__"])

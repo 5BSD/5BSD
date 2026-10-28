@@ -3299,3 +3299,11 @@ coverage counts; test behavior through vectors and instrument meaningful
 call sites where needed. Timing-sensitive helpers still need appropriate
 functional/performance review beyond artifact parity. Random-provider and
 x86 CRC implementations remain outside this object group.
+
+### Remaining GENERIC libkern objects (2026-10-28)
+
+arc4random and x86 CRC object code/CTF/relocations match Make within the
+complete fifty-object aggregate. Live entropy initialization/reseeding,
+random-provider behavior and CPU dispatch/CRC vectors still need execution
+tests. Do not infer entropy quality or instruction compatibility from a
+successful compile. No runtime source or instrumentation policy changed.

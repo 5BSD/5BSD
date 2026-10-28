@@ -2588,3 +2588,30 @@ entries. Functional vectors, live kernel behavior, remaining source closure,
 complete world/pkgbase/publication, bootstrap and resource/performance gates
 remain open. Module count remains 45; these are built-in objects. Make stays
 production/default with no host installation or BIP changes.
+
+### Complete GENERIC libkern object inventory
+
+Added arc4random and x86 crc32_sse42 as separate native object groups with
+explicit ChaCha, SHA2 and random-provider headers. The CRC implementation
+uses its maintained inline assembly under normal kernel compilation flags;
+no global CPU feature flags were introduced. The initial missing _chacha.h
+failure is retained in the first run and fixed by declaring that input.
+//sys/libkern:generic_object_files now selects all fifty libkern objects in
+the generated amd64 GENERIC Makefile. Other architecture/configuration sets
+remain outside this inventory claim.
+
+Evidence: `/usr/obj/usr/src/bazel-libkern-all-r2-20261028/qualification`.
+All fifty match Make symbols, raw CTF, complete allocated-section inventories
+and contents/size/type/flags/alignment, and runtime relocation records and
+associations. Both object sets, comparison script and source-inventory.json
+are retained. The two new references use maintained kernel recipes and the
+same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible paths;
+log: `/usr/obj/usr/src/bazel-libkern-final-make-20261028.log`.
+Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 selection and artifact retention support
+the aggregate and declared headers without a new C/backend option. This
+completes GENERIC libkern object coverage, not kernel linking/boot or live
+entropy/reseed/CRC dispatch validation. Functional vectors, performance,
+world/pkgbase/publication and bootstrap gates remain open. Module count
+remains 45. Make stays production/default; no host installation or BIP changes.

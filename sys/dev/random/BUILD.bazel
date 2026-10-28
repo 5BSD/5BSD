@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "provider_headers", hdrs = ["randomdev.h", "fenestrasX/fx_pub.h"], includes = ["../.."], visibility = ["//sys/libkern:__pkg__"])

@@ -8,7 +8,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
 # qsort_r.c includes the maintained common implementation.
 cc_library(name = "qsort_implementation", hdrs = ["qsort.c"], includes = [".."])
-# GENERIC common support routines; random-provider and x86 CRC groups remain separate.
+# GENERIC common support routines; provider and architecture groups follow below.
 amd64_generic_kernel_objects(name = "generic_common",
     srcs = [
     "arc4random_uniform.c",
@@ -61,3 +61,8 @@ amd64_generic_kernel_objects(name = "generic_common",
     "strncmp.c"
 ],
     deps = [":qsort_implementation", "//sys/netinet:address_headers", "//sys/contrib/pcg-c:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_random", srcs = ["arc4random.c"],
+    deps = ["//sys/crypto/chacha20:kernel_headers", "//sys/crypto/sha2:kernel_headers", "//sys/dev/random:provider_headers"])
+amd64_generic_kernel_objects(name = "generic_x86_crc", srcs = ["x86/crc32_sse42.c"])
+filegroup(name = "generic_object_files", srcs = [":generic_common_object_files", ":generic_random_object_files", ":generic_x86_crc_object_files"], visibility = ["//visibility:public"])
