@@ -25,3 +25,7 @@ cc_library(name = "identity_module_headers", hdrs = ["mac_capability_identity_pr
 amd64_generic_module_objects(name = "identity_module", srcs = ["mac_capability_identity.c"], deps = [":identity_module_headers"])
 cc_library(name = "coalition_module_headers", hdrs = ["mac_capability_coalition_proto.h"], deps = [":internal_headers"])
 amd64_generic_module_objects(name = "coalition_module", srcs = ["mac_capability_coalition.c"], deps = [":coalition_module_headers"])
+cc_library(name = "node_module_headers", hdrs = ["mac_capability_node_proto.h"], deps = [":kernel_headers"])
+amd64_generic_module_objects(name = "node_module", srcs = ["mac_capability_node.c"], deps = [":node_module_headers"])
+cc_library(name = "channel_module_headers", hdrs = ["mac_capability_channel_proto.h"], deps = [":kernel_headers"])
+amd64_generic_module_objects(name = "channel_module", srcs = ["mac_capability_channel.c"], deps = [":channel_module_headers"])

@@ -3173,3 +3173,13 @@ denials and credential changes for an observability review; do not count
 matching absent sections as probe coverage. Accounting and coalition runtime
 limits, cleanup/races, deny reporting and audit delivery remain untested by
 these artifact comparisons. No instrumentation or policy source was changed.
+
+### Capability node and channel modules (2026-10-28)
+
+Node's call__done/deny probes and channel's create/forward/handler__done/state
+probes retain Make-identical SDT sections. The channel-create syscall registers
+sy_auevent=AUE_NULL in existing code. Record that as an audit coverage question
+for syscall creation/denial and related descriptor operations; preserving its
+build does not establish audit coverage. No audit event or SDT policy was
+changed during conversion. Live probe firing, syscall/module registration,
+authorization and descriptor lifecycle/concurrency remain unqualified.

@@ -2251,3 +2251,24 @@ behavior remain open. Shared-header impact outside this module batch, other
 KERNCONF/architectures and resource/performance gates remain unqualified.
 No host modules were loaded, system installed, or security policy altered.
 Make remains production/default; BIP remains excluded.
+
+### Capability node and channel modules
+
+Added native mac_capability_node and mac_capability_channel targets with
+explicit protocol/shared headers and mac-capability package ownership.
+The existing generic module rule supplies native generated vnode interfaces
+and the kernel/BSM header closure. No runtime source, protocol or policy was
+changed. Existing format-5 target selection, installation metadata and
+artifact collection handle both additions; frontend review found no new
+build-bsd C/backend option required.
+
+Evidence: `/usr/obj/usr/src/bazel-capability-node-channel-20261028/qualification`
+contains the retained comparison script, raw dumps and staged metadata
+results. Both modules match maintained Make for symbols, relocations,
+text/data/rodata, raw CTF and all SDT sections. Debug identity/CRC and staged
+NO_ROOT installation metadata pass. Node retains two SDT definitions and
+channel four. This brings the current native module comparison batch to
+thirty-seven modules. Runtime execution, authorization, descriptor lifecycle,
+channel races, throughput/memory/disk measurements and complete kernel/world
+qualification are still open; no host module was loaded or installed.
+Make remains production/default and BIP remains excluded.
