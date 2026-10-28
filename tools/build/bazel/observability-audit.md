@@ -3613,3 +3613,14 @@ raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-elf-loaders-kernel-20261028/qualification`.
 No instrumentation source changed. Live backend errors, caller-level probes,
 audit coverage and policy denial remain unqualified; no host modules loaded.
+
+### Kernel object dispatch and preload metadata (2026-10-28)
+
+subr_kobj.c and subr_module.c have no local SDT/AUDIT call sites. Object lookup
+statistics are conditional on KOBJ_STATS; that variant was not qualified.
+Absence of probes does not itself establish an instrumentation requirement
+for internal method lookup or preload metadata. Native GENERIC objects match
+Make symbols, raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-kobj-preload-kernel-20261028/qualification`.
+No runtime source changed. Live dispatch and boot preload behavior remain
+unqualified.

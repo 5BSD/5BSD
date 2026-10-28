@@ -236,3 +236,7 @@ amd64_generic_kernel_objects(name = "generic_elf_loaders", srcs = ["link_elf.c",
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
         "//sys/net:network_headers", ":linker_if_headers", ":ctf_implementation",
         "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_gdb_header"])
+
+amd64_generic_kernel_objects(name = "generic_kobj_preload", srcs = ["subr_kobj.c", "subr_module.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header"])
