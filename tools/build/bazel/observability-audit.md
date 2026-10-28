@@ -3437,3 +3437,19 @@ runtime relocations, including probe metadata. Evidence:
 `/usr/obj/usr/src/bazel-capsicum-procdesc-kernel-20261028/qualification`.
 No source instrumentation or policy checks were changed. Live rights denial,
 transfer, process lifecycle, audit output and probe firing remain unqualified.
+
+### Fork and exit handling (2026-10-28)
+
+kern_fork.c defines the proc:create SDT probe; kern_exit.c defines proc:exit
+and two proclife exit-status/reap probes. Existing KDTRACE_HOOKS paths and
+audit argument calls remain unchanged. Native GENERIC objects match Make
+symbols, raw CTF, allocated sections and runtime relocations, including probe
+metadata. Evidence:
+`/usr/obj/usr/src/bazel-process-lifecycle-kernel-20261028/qualification`.
+
+Follow-up: kern_exit.c retains comments questioning the wait idtype/id audit
+arguments; consecutive AUDIT_ARG_VALUE(idtype) and AUDIT_ARG_VALUE(options)
+also merit checking against actual audit event encoding. Review emitted
+records for each wait identifier type before claiming coverage. No audit
+semantics were changed in this build conversion. Live process probes, audit
+records, inheritance and teardown races remain unqualified.

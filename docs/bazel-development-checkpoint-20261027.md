@@ -2915,3 +2915,27 @@ linked-kernel qualification, including the previously recorded filedesc/ZFS
 lock-order issue. Full kernel/world/pkgbase/bootstrap and performance gates
 remain open. Make remains production/default; module count remains 45.
 No host installation or BIP work occurred.
+
+### Native fork and exit handling
+
+Added //sys/kern:generic_process_lifecycle_object_files for kern_fork.c and
+kern_exit.c, selected by the maintained GENERIC Makefile. Dependencies declare
+CK/VM, MAC, audit, debugger and generated DDB/KTRACE/KSTACK_PAGES headers.
+The stack-page header is extracted from native config, not synthesized.
+No process or security source behavior changed.
+
+Evidence: `/usr/obj/usr/src/bazel-process-lifecycle-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. All three generated option headers match Make bytes. Reference
+log: `/usr/obj/usr/src/bazel-process-lifecycle-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target selection and generated inputs cover
+these additions without new build-bsd C/backend options, staging or manual
+changes. No runtime tests ran. Fork/vfork/pdfork, failure cleanup, wait/reap,
+credential/descriptor inheritance and process teardown require linked-kernel
+qualification. Full kernel/world/pkgbase/bootstrap and performance gates stay
+open. Make remains production/default; module count remains 45. No host
+installation or BIP changes occurred.
