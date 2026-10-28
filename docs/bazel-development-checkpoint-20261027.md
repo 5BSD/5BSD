@@ -1815,3 +1815,33 @@ The existing maintained frontend format-5 selection handles these targets;
 no C frontend, signing or publication changes are required. Next: mirror
 installation parity, then GPT using the native g_part_if generator; GEOM label
 requires its maintained opt_geom generation and broader filesystem headers.
+
+### GPT native interface consumer and mirror install closure
+
+Mirror installation metadata now matches maintained Make; evidence is its
+r2 qualification/installation-comparison.json. No host installation occurred.
+
+The native GPT module consumes `g_part_if.h` from the existing declared
+makeobjops.awk action over g_part_if.m. No copied/generated substitute is
+checked in. The first sandbox compile found missing nested disk-format
+headers; sys/sys:kernel_headers now declares disk/*.h alongside its direct
+headers. GPT's maintained Make list also generates bus_if.h/device_if.h;
+the inspected GPT translation unit consumes neither, so those are not added
+as unrelated compilation dependencies. Their native generators already exist.
+
+Evidence: `/usr/obj/usr/src/bazel-gpt-module-r2-20261028/qualification`,
+with Make reference `/usr/obj/usr/src/bazel-geom_part_gpt-make-20261028`.
+GPT symbols, relocations, text/data/rodata and raw CTF match Make; debug
+identity/debuglink CRC pass. Staged install metadata matches both runtime and
+debug paths, ownership, mode, type and tags. The generated interface is NOT
+byte-identical: one provenance-comment line uses the input basename instead
+of Make's absolute /usr/src path. interface.diff and interface-comparison.json
+retain and narrowly verify that sole difference; compiler inputs are not
+modified by the comparison.
+
+The current batch has twelve native module builds with artifact comparisons.
+GPT runtime partition operations, live kernel integration, invalidation and
+performance remain open. Existing format-5 frontend targets and inputs cover
+this addition; no C frontend/backend publication change is required. Make
+remains the production/default path. Next: expand partition schemes using
+this shared generated interface, then GEOM label's options/header inputs.

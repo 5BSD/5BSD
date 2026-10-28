@@ -3050,3 +3050,10 @@ calls. The native module's complete runtime symbol and relocation listings
 match Make; no instrumentation changes were made. Assess mirror failover,
 resync and common GEOM tracing/audit coverage separately. Runtime behavior
 and live instrumentation remain unqualified.
+
+### GEOM GPT (2026-10-28)
+
+The inspected g_part_gpt.c has no explicit SDT_* or AUDIT_* calls. Native
+module symbols/relocations match Make. Generated interface integration does
+not alter instrumentation. Assess common GEOM/partition auditing and useful
+GPT-specific probes separately; no live partition operation was performed.
