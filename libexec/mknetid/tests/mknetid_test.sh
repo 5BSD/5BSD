@@ -12,16 +12,13 @@ setup()
 	    'unix.server@example.test 0:server' > expected
 	program=$(atf_config_get mknetid /usr/libexec/mknetid)
 	loader=$(atf_config_get loader '')
-	if [ -n "$loader" ]; then
-		libpath="$(dirname "$(atf_config_get libc)"):$(dirname "$(atf_config_get libsys)")"
-	fi
 }
 
 check_map()
 {
 	# Installed tests use the system loader; build tests declare their loader.
 	if [ -n "$loader" ]; then
-		set -- env "LD_LIBRARY_PATH=$libpath" "$loader" "$program" "$@"
+		set -- "$loader" "$program" "$@"
 	else
 		set -- "$program" "$@"
 	fi
@@ -83,7 +80,7 @@ required_group_missing_body()
 	setup
 	rm group
 	if [ -n "$loader" ]; then
-		set -- env "LD_LIBRARY_PATH=$libpath" "$loader" "$program"
+		set -- "$loader" "$program"
 	else
 		set -- "$program"
 	fi

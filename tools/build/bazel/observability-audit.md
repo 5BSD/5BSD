@@ -5123,3 +5123,14 @@ validation assertion reached from stream-rights limiting. This is a real open
 runtime compatibility gate; no instrumentation, capability check or assertion
 was removed to obtain a pass. Exact rights/host compatibility diagnosis is
 pending. Wrapper/Kyua build parity alone does not count as runtime coverage.
+
+## 2026-10-28 Capsicum helper failure diagnosed
+
+A descriptor-rights probe confirms that this running host returns the older
+5BSD rights allocation: current libc rejects bits 0x6e000000 in word 1, while
+host libc accepts the same returned rights. Some rights also changed meaning
+at their old bit positions. Keep the assertion and the inherited-authority
+intersection intact. Qualified execution requires a compatible kernel/runtime;
+the mknetid ATF suite still has no passing runtime cases on this host.
+The prior SDK/native harness split was removed because it did not solve this
+ABI mismatch. See checkpoint and bazel-cap-rights-host-20261028 evidence.

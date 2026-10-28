@@ -7805,3 +7805,35 @@ suite and records failures; no frontend change needed. Next work: diagnose
 rights returned to the helper and qualify a compatible runtime, then rerun
 all six tests and complete installation aggregation/parity. Make remains
 production/default; whole-system and performance qualification remain open.
+
+## 2026-10-28 confirmed host Capsicum rights ABI mismatch
+
+The mknetid ATF helper failure is now explained by a read-only runtime probe,
+not just inferred from differing headers. The running kernel identifies as
+Oct 7 f4db9ce01f15-dirty. A newly opened /dev/null descriptor returns rights
+02000fffffffffff,040000006fffffff. Host headers/libc accept these (valid=1).
+Current SDK headers and native libc expect CAP_ALL index 1
+05fc000001ffffff; returned unknown bits are 000000006e000000 and valid=0.
+Thus caph_limit_stream's intersection of inherited rights triggers libc's
+validity assertion before dirname can execute the requested operation.
+
+There is also semantic reassignment: host CAP_JAIL_ATTACH is
+0400000000800000 whereas source uses 0500000000000000; the former position is
+now CAP_PDDUPFD. Timerfd rights have likewise moved. Ignoring unknown bits or
+suppressing assertions would not establish correct authority semantics.
+No such compatibility workaround was added.
+
+Evidence and probe source: /usr/obj/usr/src/bazel-cap-rights-host-20261028/
+{probe.c,host-probe,sdk-probe,host.txt,native.txt}. The SDK probe runs with the
+saved native loader/libc/libsys from bazel-mknetid-runtime-20261028. The probe
+only opens /dev/null and reads its rights; no cap_rights_limit, installation,
+upgrade or reboot occurred. This is independent of Bazel program generation.
+
+Removed the unsuccessful r2 harness-runtime split and its extra library-path
+configuration. The maintained suite again declares native runtime libraries
+consistently; existing first-attempt evidence applies to this configuration.
+The matching-kernel runtime gate is still OPEN. A VM with matching source
+kernel/userland is the next qualification route; do not classify current-host
+failures as passing or alter installed-host rights to accommodate testing.
+Review of build-bsd.c finds no build-input or packaging change required by this
+diagnosis. Full migration and runtime/performance gates remain incomplete.
