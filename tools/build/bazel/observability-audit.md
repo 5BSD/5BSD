@@ -4136,3 +4136,12 @@ conversion leaves them unchanged. Scheduling and privilege transitions deserve
 an installed-system audit check together with atrun/PAM: early invalid-input
 comparisons do not exercise those paths. No inference that syscall audit hooks
 are absent, and no new probes or audit policy introduced in this conversion.
+
+
+### 2026-10-28: atrun
+
+atrun/gloadavg contain no local SDT/DTrace/AUDIT hooks. PAM and login capability
+paths stay enabled and link existing native libraries with their configured
+DTrace inputs. Runtime source is unchanged. VM checks must cover PAM account
+and session handling, credential changes, queued/batch job execution and syslog;
+compile/link/manual parity and cache reuse do not qualify those behaviors.

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load(":configuration.bzl", "AT_POLICY", "at_defines")
 load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
@@ -32,3 +32,5 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+cc_library(name = "privilege_headers", hdrs = ["privs.h"], strip_include_prefix = ".", visibility = ["//libexec/atrun:__pkg__"])

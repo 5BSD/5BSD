@@ -4520,3 +4520,32 @@ No test suite exists in this component's Make definition; the four comparisons
 are retained qualification checks, not newly registered Bazel tests. atrun and
 whole-system package/runtime/performance qualification remain outstanding.
 Make remains production default and BIP remains out of scope.
+
+
+## 2026-10-28: native atrun and at/atrun local reuse
+
+Added native atrun.c/gloadavg.c compilation with declared gloadavg/privilege
+headers and existing native PAM/libutil dependencies. LOGIN_CAP and PAM remain
+enabled as in Make; shared at/configuration.bzl drives compiler constants,
+manual substitutions and installation bindir. No runtime source changes.
+The native graph retains enabled PAM/libutil DTrace generation. This establishes
+build dependency preservation, not live probe or PAM-session qualification.
+
+Evidence: /usr/obj/usr/src/bazel-atrun-20261028 and Make reference
+/usr/obj/usr/src/bazel-atrun-make-20261028. qualification/verify.py and parity.json
+establish five installation records, 13 defined globals, ordered dependencies
+libpam.so.6/libutil.so.10/libc.so.7 and BIND_NOW/NOW PIE matching Make. Generated
+atrun.8 and compressed manual bytes match. No runtime invocation: atrun changes
+credentials before option parsing. Credential transitions, PAM account/session
+handling, job execution and logging require installed VM qualification; no
+whole-executable/debug byte identity or performance claim is made.
+
+Unchanged combined at/atrun build at
+/usr/obj/usr/src/bazel-at-atrun-cache-20261028 passed with 16 action-cache hits,
+one internal action and no compiler/linker execution reported. This is a local
+unchanged-build reuse check only; it does not prove remote cache correctness,
+complete invalidation behavior, cold-build reproducibility or system performance.
+
+Frontend review: existing format-5 inputs select both components and archives;
+no frontend/backend contract change required. No Make backend/default change,
+host installation, job execution or reboot. Full-system goals remain active.
