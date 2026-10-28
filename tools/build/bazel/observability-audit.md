@@ -3974,3 +3974,13 @@ relocations. Evidence:
 `/usr/obj/usr/src/bazel-devctl-kernel-20261028/qualification`.
 No runtime source changed. Live notifications, reader/wakeup races, privilege
 checks and queue-pressure behavior remain unqualified.
+
+### Bus framework (2026-10-28)
+
+subr_bus.c retains four newbus SDT definitions around driver attach/detach
+callbacks. Early boot callbacks precede probe enablement, so runtime coverage
+must distinguish boot from later device operations. Native GENERIC output
+matches Make symbols, raw CTF, allocated sections and runtime relocations.
+Evidence: `/usr/obj/usr/src/bazel-bus-kernel-20261028/qualification`.
+No runtime source changed. Live driver callbacks, failure paths, suspend/resume,
+IOMMU integration and device-management concurrency remain unqualified.
