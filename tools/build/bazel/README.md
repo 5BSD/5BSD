@@ -34363,3 +34363,13 @@ The native `//tools/build/bazel/config:nis` default is now false, matching
 for 151 payloads and 152 metadata records; evidence is recorded in the development
 checkpoint. This corrects the shared configuration default and does not establish
 all option implications or full-system build qualification.
+
+### Effective feature selectors (2026-10-28)
+
+Native bool flags represent requested options. Shared `*_enabled` config_settings
+also require implemented prerequisites, matching Make's effective option rules.
+For example `openssh_enabled` requires openssh, openssl and crypt; disabling
+OpenSSL therefore excludes its dependent rc services without manually clearing
+each child flag. The crypt/OpenSSL-disabled rc variants match independent Make
+installation references. Remaining option relationships and compiled-world
+variants are still being qualified; this is not complete src.opts.mk coverage.

@@ -9311,3 +9311,31 @@ OPENSSL, CDDL, MAIL, NETGRAPH, LDNS or OFED are disabled. Current native selecto
 do not consistently encode these implications. Correct default installation is
 not proof of arbitrary mixed-option compatibility. This is next configuration
 work, before claiming complete package/world selection. Make remains default.
+
+## 2026-10-28: crypt/OpenSSL prerequisite selection
+
+Shared enabled config_settings now require maintained prerequisites: crypt for
+OpenSSL; crypt+OpenSSL for SSH, KTLS/FIPS, Kerberos/support/MIT and LDNS; LDNS plus
+those prerequisites for unbound; CDDL plus those prerequisites for ZFS. Local
+compound rc selectors and four SSH Heimdal incompatibility selectors include the
+same crypt/OpenSSL prerequisites. These are ordinary native config_setting
+conjunctions, not frontend flag rewriting or a separate rc-only policy.
+Raw bool settings remain requested values; enabled selectors express effective
+availability. Directly requesting a component target is not whole-world inclusion.
+
+Independent clean Make WITHOUT_OPENSSL and WITHOUT_CRYPT references both match
+native rc installation for 136 payloads and 137 metadata records. Other feature
+settings remain at defaults, proving dependent entries disappear through the
+shared prerequisites. Evidence:
+/usr/obj/usr/src/bazel-rc-no-openssl-20261028/qualification/rc/parity.json and
+bazel-rc-no-crypt-20261028/qualification/rc/parity.json. References:
+bazel-rc-{no-openssl,no-crypt}-reference-20261028. Scripts:
+bazel-rc-implications-qualification-20261028/{make-no-openssl.py,make-no-crypt.py,
+verify-no-openssl.py,verify-no-crypt.py}.
+
+Reviewed frontend/source_graph: no new inputs or interpretation needed; build-bsd
+passes typed requested settings and the native graph resolves prerequisites.
+Used 16 jobs; no host install or service execution. These checks qualify rc
+selection, not all compiled consumers under disabled-feature configurations.
+MAIL/NETGRAPH/OFED and further option dependencies, configured aggregate builds,
+full runtime/pkgbase/performance gates remain open. Make stays default.

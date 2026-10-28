@@ -43,12 +43,12 @@ config_setting(
 # Native equivalent of MK_OPENSSL_KTLS; consumers must select it explicitly.
 bool_flag(name = "openssl_ktls", build_setting_default = True,
     visibility = ["//visibility:public"])
-config_setting(name = "openssl_ktls_enabled", flag_values = {":openssl_ktls": "true"},
+config_setting(name = "openssl_ktls_enabled", flag_values = {":openssl_ktls": "true", ":openssl": "true", ":crypt": "true"},
     visibility = ["//visibility:public"])
 
 # Native equivalent of MK_OPENSSL_FIPS module inclusion; not certification.
 bool_flag(name = "openssl_fips", build_setting_default = True, visibility = ["//visibility:public"])
-config_setting(name = "openssl_fips_enabled", flag_values = {":openssl_fips": "true"},
+config_setting(name = "openssl_fips_enabled", flag_values = {":openssl_fips": "true", ":openssl": "true", ":crypt": "true"},
     visibility = ["//visibility:public"])
 
 # Native MK_ICONV choice; each component retains its own static/shared contract.
@@ -56,7 +56,7 @@ bool_flag(name = "iconv", build_setting_default = True, visibility = ["//visibil
 config_setting(name = "iconv_enabled", flag_values = {":iconv": "true"}, visibility = ["//visibility:public"])
 
 bool_flag(name = "openssl", build_setting_default = True, visibility = ["//visibility:public"])
-config_setting(name = "openssl_enabled", flag_values = {":openssl": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "openssl_enabled", flag_values = {":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
 
 # Native MK_INET6_SUPPORT input.
 bool_flag(name = "inet6_support", build_setting_default = True, visibility = ["//visibility:public"])
@@ -138,13 +138,13 @@ bool_flag(name = "nis", build_setting_default = False, visibility = ["//visibili
 config_setting(name = "nis_enabled", flag_values = {":nis": "true"}, visibility = ["//visibility:public"])
 
 bool_flag(name = "ldns", build_setting_default = True, visibility = ["//visibility:public"])
-config_setting(name = "ldns_enabled", flag_values = {":ldns": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "ldns_enabled", flag_values = {":ldns": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
 
 bool_flag(name = "kerberos_support", build_setting_default = True, visibility = ["//visibility:public"])
-config_setting(name = "kerberos_support_enabled", flag_values = {":kerberos_support": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "kerberos_support_enabled", flag_values = {":kerberos_support": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
 
 bool_flag(name = "mitkrb5", build_setting_default = True, visibility = ["//visibility:public"])
-config_setting(name = "mitkrb5_enabled", flag_values = {":mitkrb5": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "mitkrb5_enabled", flag_values = {":mitkrb5": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
 
 bool_flag(name = "tcp_wrappers", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "tcp_wrappers_enabled", flag_values = {":tcp_wrappers": "true"}, visibility = ["//visibility:public"])
@@ -290,7 +290,7 @@ config_setting(name = "nuageinit_enabled", flag_values = {":nuageinit": "true"},
 bool_flag(name = "ofed_extra", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "ofed_extra_enabled", flag_values = {":ofed_extra": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "openssh", build_setting_default = True, visibility = ["//visibility:public"])
-config_setting(name = "openssh_enabled", flag_values = {":openssh": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "openssh_enabled", flag_values = {":openssh": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "ppp", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "ppp_enabled", flag_values = {":ppp": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "sendmail", build_setting_default = False, visibility = ["//visibility:public"])
@@ -298,7 +298,7 @@ config_setting(name = "sendmail_enabled", flag_values = {":sendmail": "true"}, v
 bool_flag(name = "sound", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "sound_enabled", flag_values = {":sound": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "unbound", build_setting_default = True, visibility = ["//visibility:public"])
-config_setting(name = "unbound_enabled", flag_values = {":unbound": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "unbound_enabled", flag_values = {":unbound": "true", ":ldns": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "utmpx", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "utmpx_enabled", flag_values = {":utmpx": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "vi", build_setting_default = True, visibility = ["//visibility:public"])
@@ -306,7 +306,7 @@ config_setting(name = "vi_enabled", flag_values = {":vi": "true"}, visibility = 
 bool_flag(name = "wireless", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "wireless_enabled", flag_values = {":wireless": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "zfs", build_setting_default = True, visibility = ["//visibility:public"])
-config_setting(name = "zfs_enabled", flag_values = {":zfs": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "zfs_enabled", flag_values = {":zfs": "true", ":cddl": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
 
 # Native component selection used by rc.d.
 bool_flag(name = "acpi", build_setting_default = True, visibility = ["//visibility:public"])
@@ -314,4 +314,4 @@ config_setting(name = "acpi_enabled", flag_values = {":acpi": "true"}, visibilit
 
 # Native component selection used by rc.d.
 bool_flag(name = "kerberos", build_setting_default = True, visibility = ["//visibility:public"])
-config_setting(name = "kerberos_enabled", flag_values = {":kerberos": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "kerberos_enabled", flag_values = {":kerberos": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
