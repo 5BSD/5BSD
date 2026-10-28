@@ -1434,3 +1434,14 @@ its failure. No C interface change is needed; docs/manual/observability record
 the failing gate. BIP stays out of scope, no module was loaded, no host upgrade
 occurred, and Make remains production/default. Complete migration and module
 qualification remain active, unfinished work.
+
+### CTF localization reproduction expanded (2026-10-28)
+
+The maintained `tools/build/bazel/tests/ctf/localization-audit.py` diagnostic
+now reproduces incorrect data **and function-return** types with exported,
+localized and same-name static symbols. Both installed-tool and Bazel-native
+runs pass their source-type baseline and fail both the current ordering and
+the rejected fuzzy-merge alternative. Native evidence is retained at
+`/usr/obj/usr/src/ctf-localization-native-r2-20261028`. This is additional failure
+evidence, not a fix or module qualification. See `tests/ctf/LOCALIZATION.md`
+under the Bazel tooling for scope and next implementation requirements.
