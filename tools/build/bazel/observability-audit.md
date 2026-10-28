@@ -3591,3 +3591,15 @@ No instrumentation source changed; arbitrary KTR variants were not tested.
 Review kenv syscall audit mapping and emitted records before claiming
 administrative-write coverage. Live probes, permissions and handler lifecycle
 concurrency remain unqualified.
+
+### Kernel module/linker management (2026-10-28)
+
+kern_linker.c defines load-deny/load/unload probes and retains MAC and hardware
+tracing/performance-counter paths. kern_module.c has no local SDT_PROBE_DEFINE
+or AUDIT_ARG calls. Native GENERIC objects match Make symbols, raw CTF,
+allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-module-linker-kernel-20261028/qualification`.
+No source instrumentation changed. Review module syscall audit mapping and
+emitted records before claiming administrative coverage. Live registration,
+load/unload, policy decisions and probe firing remain unqualified; no host
+module loading was performed.

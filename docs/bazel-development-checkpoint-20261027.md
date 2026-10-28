@@ -3217,3 +3217,27 @@ invocation/deregistration and concurrent handler drain require linked-kernel
 tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
 Make remains production/default; module count remains 45. No host installation
 or BIP changes occurred.
+
+### Native module registration and kernel linker management
+
+Added //sys/kern:generic_module_linker_object_files for kern_module.c and
+kern_linker.c, selected by the maintained GENERIC Makefile. Dependencies declare
+CK/VM, MAC, VNET, debugger, HWPMC and the native generated linker interface,
+plus DDB/KLD/HWPMC_HOOKS/HWT_HOOKS configuration headers. No loader source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-module-linker-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. All four option headers match Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-module-linker-kernel-make-20261028.log`; maintained
+recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and generated inputs support these
+objects without new build-bsd C/backend options, staging or manual changes.
+No runtime tests or host module loads ran. Module dependencies, registration,
+load/unload, references, denial paths and tracing hooks require linked-kernel
+VM qualification. ELF loader backends and final kernel linking remain separate
+work. Full world/pkgbase/bootstrap and performance gates remain open. Make
+remains production/default; converted module count remains 45. No host
+installation or BIP changes occurred.
