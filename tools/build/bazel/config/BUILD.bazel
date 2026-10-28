@@ -253,3 +253,7 @@ config_setting(name = "jemalloc_lg_vaddr_wide_enabled", flag_values = {":jemallo
 
 bool_flag(name = "hyperv", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "hyperv_enabled", flag_values = {":hyperv": "true"}, visibility = ["//visibility:public"])
+
+# libc/librt NO_THREAD_STACK_UNWIND inverse; libthr has a distinct option.
+bool_flag(name = "thread_stack_unwind", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "thread_stack_unwind_enabled", flag_values = {":thread_stack_unwind": "true"}, visibility = ["//visibility:public"])

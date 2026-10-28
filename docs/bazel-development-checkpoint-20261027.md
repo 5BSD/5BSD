@@ -5977,3 +5977,34 @@ DTrace probes and defer any claim of provider registration to the complete link
 and runtime gates. Frontend review: existing format-5 inputs support all six
 settings; no frontend/backend/manual contract change required. All compilation
 used 16 CPUs; Make remains production/default and no host installation occurred.
+
+## 2026-10-28: native semaphore cancellation-point objects
+
+Adds sem.c and sem_new.c as native libc gen sources. The native graph compiles
+the maintained sources directly; Make's cancelpoints_ source aliases select
+flags and need no copied/generated source in Bazel. The typed boolean
+//tools/build/bazel/config:thread_stack_unwind defaults true and controls
+-fexceptions only for this cancellation group. False corresponds to libc's
+NO_THREAD_STACK_UNWIND. It does not yet control librt or libthr targets.
+
+semwait_trace.h has a declared private header target. With DTrace enabled it
+depends on the existing libc nameres provider header, preserving SEMWAIT park/wake
+probe references and its static anchor. The archives remain raw objects; final
+DOF rewriting must process the entire libc provider contributor set once.
+
+Evidence: /usr/obj/usr/src/bazel-libc-semaphore-20261028/status.json and each
+bazel-libc-semaphore-{unwind,no-unwind}-{trace,no-trace}-build-20261028/qualification/
+parity.json. All four combinations pass fresh native and Make builds; all 16
+ordinary/PIC object comparisons match .text and global/unresolved symbols.
+mode-checks.json additionally verifies all 16 actual compile actions have the
+selected exception/DTrace flags, compares raw exception-section contents with
+Make, and checks raw probe references appear only in tracing-enabled sem_new.
+The archive member-name difference (sem versus cancelpoints_sem) is explicitly
+mapped in the comparator; source semantics and compile flags match.
+
+No semaphore/cancellation runtime tests, active DTrace registration, unwind
+execution, versioned compatibility ABI, complete libc link/install or performance
+qualification is claimed. These remain necessary for completion. Frontend review:
+build-bsd's existing format-5 typed settings/targets handle the new setting in all
+four runs; no new C frontend option or backend contract is required. Make remains
+production/default. All builds use 16 CPUs; no host installation or policy change.

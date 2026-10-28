@@ -34342,3 +34342,15 @@ contains its post-install regeneration and construction declaration. login expos
 package-backed install_manifest and separate generated_manifest; install_archive
 includes both. Component package_layout consumes only the package-backed manifest. Full-feature and all-three-disabled
 login artifact comparisons pass; authentication/session runtime remains open.
+
+
+### libc cancellation-point unwind setting
+
+The native libc semaphore group accepts the format-5 `build-settings` entry
+`"//tools/build/bazel/config:thread_stack_unwind": true` (the default).
+Set it to `false` to select libc's `NO_THREAD_STACK_UNWIND` behavior. This setting
+currently applies to `//lib/libc/gen:semaphore_objects`; ordinary libc groups do
+not receive `-fexceptions`. It does not yet select librt/libthr unwind variants.
+Use the existing `//tools/build/bazel/config:dtrace` boolean independently.
+The semaphore archives contain raw objects pending complete libc DOF/linking;
+compiling these targets does not establish runtime cancellation or tracing.

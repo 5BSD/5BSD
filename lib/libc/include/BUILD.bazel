@@ -30,3 +30,9 @@ cc_library(name = "stdlib_headers", hdrs = ["block_abi.h", "spinlock.h"], strip_
 cc_library(name = "string_headers", hdrs = ["reentrant.h", "errlst.h"], strip_include_prefix = ".", deps = [":rt_private_headers", "//lib/libc/amd64:math_headers"], visibility = ["//lib/libc/string:__pkg__"])
 
 cc_library(name = "gen_directory_headers", hdrs = ["block_abi.h"], strip_include_prefix = ".", deps = [":rt_private_headers"], visibility = ["//lib/libc/gen:__pkg__"])
+
+cc_library(name = "semaphore_headers", hdrs = ["semwait_trace.h"],
+    strip_include_prefix = ".", deps = [":rt_private_headers"] + select({
+        "//tools/build/bazel/config:dtrace_enabled": ["//lib/libc:nameres_provider_headers"],
+        "//conditions:default": [],
+    }), visibility = ["//lib/libc/gen:__pkg__"])

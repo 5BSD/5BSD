@@ -4593,3 +4593,13 @@ declare semwait_trace.h and the shared nameres provider header, preserve the
 SEMWAIT park/wake probes and static anchor, and include those contributors in
 the complete libc provider link. libthr/librt broad exception flags are deliberate;
 their separately named no-unwind options remain future qualification work.
+
+## 2026-10-28: semaphore cancellation group
+
+sem_new.c's existing SEMWAIT park/wake start/done references and nameres static
+anchor are preserved in the native group. Declared semwait_trace.h/provider
+header dependencies are conditional on DTrace. All four DTrace/unwind mode
+combinations match Make objects and exception sections; action arguments and
+raw probe reference presence are also checked. sem.c has no direct probes.
+Active provider registration, concurrent wait/wake/cancellation behavior and
+latency still require complete libc linking and runtime qualification.
