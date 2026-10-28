@@ -4295,3 +4295,12 @@ Local raw RPC and XDR cases passed with checked native ATF/librpcsvc/libutil and
 SDK libc/libsys. This exercises SDK libc's RPC implementation; it is not proof
 of a native complete libc. Six network/service cases remain explicit unrun
 qualification work. No test source edits or root/service requirement bypasses.
+
+### 2026-10-28: libc RPC implementation
+
+Carries all 58 configured RPC sources and crypt RPC generation. Existing syslog
+error paths in transport/configuration handling remain unchanged. No direct
+SDT/DTrace/BSM audit hooks found in the RPC C sources; no new hooks introduced.
+116 ordinary/PIC objects have symbol/text parity, not live network, key-service,
+NSS-cache, syslog-emission or audit-event qualification. Complete native libc
+linkage and service/runtime tests remain necessary.

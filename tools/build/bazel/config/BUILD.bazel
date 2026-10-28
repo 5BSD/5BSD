@@ -231,3 +231,9 @@ config_setting(name = "veriexec_debug_enabled", flag_values = {":veriexec_debug"
 # Match MK_SETUID_LOGIN; disabled builds retain a normal executable.
 bool_flag(name = "setuid_login", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "setuid_login_enabled", flag_values = {":setuid_login": "true"}, visibility = ["//visibility:public"])
+
+# libc name-service options; defaults follow src.opts.mk.
+bool_flag(name = "ns_caching", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "ns_caching_enabled", flag_values = {":ns_caching": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "hesiod", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "hesiod_enabled", flag_values = {":hesiod": "true"}, visibility = ["//visibility:public"])

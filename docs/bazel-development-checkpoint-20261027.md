@@ -5084,3 +5084,32 @@ image startup, full binary/debug bytes or package archive lifecycle.
 
 Frontend review: existing targets/tests and per-case test selection work through
 build-bsd format 5. No frontend/backend contract change or host installation.
+
+## 2026-10-28: complete libc RPC object inventory
+
+Adds all 58 configured RPC C sources (56 maintained plus generated crypt client
+and XDR) as native rpc_objects, with declared crypt.h/client/XDR generation and
+explicit RPC/libc private headers. Ordinary/PIC archives are qualification
+artifacts; no replacement library is installed or linked into consumers.
+Preserves BROKEN_DES, PORTMAP, DES_BUILTIN, libc namespace/fortify/revision/TLS
+and default unwind options. NLS, NIS and IPv6-support use existing typed settings;
+new ns_caching (default true) and hesiod (default false) follow src.opts.mk and
+control NS_CACHING/HESIOD definitions. Configuration inventory remains native
+Bazel source metadata, not a runtime Make parser.
+
+Evidence: /usr/obj/usr/src/bazel-libc-rpc-20261028/qualification/parity.json
+against freshly compiled bazel-libc-rpc-make-20261028. Selected profile has NIS
+and Hesiod disabled, caching/NLS/IPv6 support enabled. All 116 ordinary/PIC
+objects match global symbols, unresolved symbols and .text bytes; all three
+generated files match byte for byte. The comparison checks all 58 members,
+including secure RPC, transport, name-service and netlink sources.
+No relocation/all-allocated-section, complete debug, final ABI-version-map,
+libc-link, runtime or installed-image equivalence is claimed. Configuration
+variants, default-unwind overrides, RPC manuals/aliases and netconfig/rpc config
+installation remain integration work. Existing RPC tests still use SDK libc
+until the complete native library and its private dependency closure are linked.
+
+Frontend review: existing format-5 build-settings accepts typed ns_caching and
+hesiod labels through source_graph.setting_arguments; existing targets cover
+archives/generator outputs. No build-bsd C or backend contract change needed.
+Make remains production default; no host installation or service changes.
