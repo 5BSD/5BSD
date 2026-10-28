@@ -307,3 +307,8 @@ amd64_generic_kernel_objects(name = "generic_namecache", srcs = ["vfs_cache.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
         "//sys/security/audit:kernel_headers", "//sys/ddb:kernel_headers",
         "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_ktrace_header"])
+
+amd64_generic_kernel_objects(name = "generic_vnops", srcs = ["vfs_vnops.c"],
+    deps = ["//sys/contrib/pcg-c:kernel_headers", "//sys/netinet:address_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/dev/hwpmc:kernel_headers", "//sys/dev/hwt:hook_headers",
+        "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_hwt_hooks_header"])

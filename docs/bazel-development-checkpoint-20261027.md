@@ -3655,3 +3655,29 @@ SMR reclamation, path permissions and lookup/memory costs require linked-kernel
 filesystem tests. Full kernel/world/pkgbase/bootstrap and performance gates
 remain open. Make stays production/default; module count remains 45. No host
 installation or BIP changes occurred.
+
+### Native VFS vnode operations
+
+Added //sys/kern:generic_vnops_object_files for vfs_vnops.c, selected by
+maintained GENERIC Make. Dependencies declare CK/VM, MAC, audit, HWPMC/HWT,
+generated options, network address headers used by disk.h and PCG headers
+used by prng.h. Extended the existing PCG target visibility to sys/kern.
+No runtime source or security behavior changed.
+
+Evidence: `/usr/obj/usr/src/bazel-vnops-kernel-r4-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. HWPMC/HWT option headers match Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-vnops-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Earlier failed attempts retain evidence of undeclared network/PCG
+headers; these were resolved with declared dependencies. Whole-object/debug-path
+identity is not claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. File read/write, mmap hooks, locking, copy operations, MAC/audit decisions
+and concurrent filesystem performance still require a linked kernel and runtime
+tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
+Make stays production/default; module count remains 45. No host installation
+or BIP changes occurred.

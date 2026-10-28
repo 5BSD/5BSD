@@ -3789,3 +3789,14 @@ No runtime source changed. No local AUDIT_ARG calls were found; assess cached
 lookup auditing with the surrounding namei/syscall paths rather than inferring
 coverage from includes. Live probes, cache invalidation, permissions and
 concurrent filesystem behavior remain unqualified.
+
+### VFS vnode operations (2026-10-28)
+
+vfs_vnops.c retains seven AUDIT_ARG_VNODE1 sites and conditional HWPMC/HWT
+mmap hooks. No local SDT probe definitions were found; vnode interface probes
+are generated separately and need end-to-end coverage with their callers.
+Native GENERIC output matches Make symbols, raw CTF, allocated sections and
+runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-vnops-kernel-r4-20261028/qualification`.
+No runtime source changed. Actual audit records, mmap hook delivery and
+filesystem behavior remain unqualified.
