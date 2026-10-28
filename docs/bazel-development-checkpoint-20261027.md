@@ -7671,3 +7671,27 @@ use privileged service ports. Use an isolated installed runtime to qualify these
 without testing the host programs or changing test semantics. No host daemon,
 listener, installation or transfer was started. Full-system/cache/performance
 and configured test aggregation remain open; Make remains production/default.
+
+## 2026-10-28 TFTP without TCP wrappers
+
+Qualified the existing tcp_wrappers=false server configuration through build-bsd
+at 16 jobs against an independent WITHOUT_TCP_WRAPPERS Make reference. The
+candidate matches 143 global/undefined symbol entries, libc-only NEEDED and
+empty RPATH/RUNPATH, five installation records and the manual bytes. Its debug
+pair validates and stripping preserves native .text. Compared with the default
+native server, the linked artifact removes hosts_access, request_init and
+request_set, exactly the calls in tftpd.c's LIBWRAP branch; no new symbols appear.
+An initial ad hoc comparison incorrectly expected sock_host; source inspection
+confirmed the actual request_set call and the retained comparison checks it.
+
+Evidence: /usr/obj/usr/src/bazel-tftpd-nowrap-20261028/qualification/tftpd/parity.json
+and qualification/wrapper-symbols.json. Reference:
+bazel-tftpd-nowrap-reference-20261028; scripts:
+bazel-tftpd-nowrap-qualification-20261028. No implementation change was needed:
+the existing declared dependency/define selection produces the correct variant.
+Reviewed build-bsd.c's existing format-5 setting transport; no frontend changes
+are needed for this qualification. No transfer, wrapper policy decision, daemon
+startup or host installation was performed. Disabled wrappers intentionally
+remove hosts-access checks; this is a build option parity result, not proof of
+network policy correctness. Full-system/runtime/cache/performance gates remain
+open and Make remains production/default.

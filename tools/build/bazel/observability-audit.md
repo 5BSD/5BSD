@@ -5078,3 +5078,11 @@ script and Kyua bytes match. Separate test archives preserve package ownership
 of shared debug ancestors. No test source, daemon path or runtime assertions
 were changed. This adds zero executed transfer cases; isolated installed daemon,
 inetd, privilege and networking checks remain necessary.
+
+## 2026-10-28 TFTP wrapper-disabled configuration
+
+The existing configured graph now has independent Make evidence for disabled
+TCP wrappers. The artifact removes libwrap and the three calls actually present
+in the maintained LIBWRAP branch. No C source or logging/audit hooks changed.
+No runtime authorization or transfer was exercised; disabled-wrapper operation
+and access-control behavior still require isolated networking qualification.
