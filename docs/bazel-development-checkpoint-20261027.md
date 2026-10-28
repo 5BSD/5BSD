@@ -7910,3 +7910,26 @@ sample was 21.44 seconds, across 18 samples. Neither proves disk-I/O or build
 performance parity. Live NIS/default-domain lookup remains untested. Reviewed
 build-bsd.c: no input/security/packaging policy changed; the existing frontend
 recorded the host failures correctly. Make remains production/default.
+
+## 2026-10-28 mknetid test installation archive qualified
+
+Added //libexec/mknetid:test_install_archive using the existing shell-test
+manifest and maintained archive/mtree rules. It retains separate package=tests
+ownership and leaves the ordinary utilities installation archive separate.
+Three records match independent rootless Make installation: directory
+/usr/tests/libexec/mknetid (0755), mknetid_test (0555), and Kyuafile (0444).
+Owner/group, uid/gid, flags, tags, archive membership, and both file payloads
+match exactly. Shell tests have no ELF/debug counterpart to qualify.
+
+Evidence: /usr/obj/usr/src/bazel-mknetid-test-archive-20261028/qualification/
+test-install-parity.json. Reference: bazel-mknetid-test-reference-20261028.
+Retained scripts: bazel-mknetid-qualification-20261028/{make-test-reference.py,
+verify-test-install.py}. build-bsd performed the native archive build at 16
+jobs. Reviewed build-bsd.c and existing collection/backend rules: explicit
+archive targets already work, so no frontend change is required.
+
+This qualifies the component test archive, not configured-world test aggregation,
+pkg creation/publication, or installed-system test discovery. Prior six-case
+guest runtime evidence remains unchanged. General VM replay integration and
+full-world/kernel/package/performance qualification remain outstanding; Make
+remains production/default. No host files were installed.

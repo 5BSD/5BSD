@@ -5152,3 +5152,10 @@ file diagnostics without disabling capability assertions or replacing helpers.
 Evidence: bazel-rights-vm-20261028/mknetid-run-r3/serial.log and result.json.
 The older-host failure remains reproducible; this is guest execution coverage,
 not a passing host Bazel run or a live NIS service/DTrace/audit qualification.
+
+## 2026-10-28 mknetid test archive
+
+The unchanged six-case shell suite and Kyua index now have a standalone native
+installation archive whose three metadata records and both payloads match Make.
+This preserves diagnostic tests for installation; it adds no new runtime/probe
+claims and does not establish complete-system test discovery.
