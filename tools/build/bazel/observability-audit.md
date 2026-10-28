@@ -4127,3 +4127,12 @@ missing syscall auditing; encoding/decoding uses ordinary file/stdio paths.
 No new probes or audit policy added. Direct fixture and alias behavior compares
 with Make; ATF startup remains blocked by the recorded capability-rights ABI
 assertion, and legacy TAP Bazel runtime integration remains pending.
+
+
+### 2026-10-28: at
+
+at, panic, parsetime and perm sources contain no local SDT/DTrace/AUDIT hooks;
+conversion leaves them unchanged. Scheduling and privilege transitions deserve
+an installed-system audit check together with atrun/PAM: early invalid-input
+comparisons do not exercise those paths. No inference that syscall audit hooks
+are absent, and no new probes or audit policy introduced in this conversion.

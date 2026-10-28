@@ -4491,3 +4491,32 @@ the previously recorded startup assertion and are not counted as passing.
 No host upgrade or installation occurred. Frontend review: existing explicit
 format-5 target/test inputs carry these additions without a new frontend option.
 Whole-world, kernel, package, boot and performance gates remain incomplete.
+
+
+## 2026-10-28: native at utility candidate
+
+Added native compilation of at.c, panic.c, parsetime.c and perm.c with declared
+headers; shared configuration.bzl contains the Makefile.inc policy values for
+at and future atrun integration. The generated manual uses Bazel template
+expansion from that same policy, without invoking Make or parsing Make metadata.
+Installation preserves three command/manual aliases, setuid mode 4555, debug
+symbols, cron configuration mode/config tag and the utilities-owned cron.d
+directory. No runtime source changes or host installation.
+
+Evidence: /usr/obj/usr/src/bazel-at-20261028-r2, Make reference
+/usr/obj/usr/src/bazel-at-make-20261028, and qualification/verify.py plus
+parity.json. All 13 unique installation records match after octal mode and
+hardlink normalization (Make records cron.d twice). Generated at.1 and gzip
+manual bytes match; 19 defined global symbols and libc.so.7/BIND_NOW/NOW PIE
+metadata match. Four invalid-option/queue/time cases exit identically before
+permission/spool access, using declared SDK libraries. This does not qualify
+setuid execution, scheduling, atrun, full executable/debug byte identity or an
+installed system. First failed attempt exposed incorrectly escaped compiler
+definitions; retry preserves quoted string/character constants and passed.
+
+Frontend review: existing explicit format-5 targets and installation archive
+rules cover this addition. No build-bsd option/backend contract change needed.
+No test suite exists in this component's Make definition; the four comparisons
+are retained qualification checks, not newly registered Bazel tests. atrun and
+whole-system package/runtime/performance qualification remain outstanding.
+Make remains production default and BIP remains out of scope.

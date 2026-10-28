@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load(":configuration.bzl", "AT_POLICY", "at_defines")
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
+cc_binary(name = "at", srcs = ["at.c", "panic.c", "parsetime.c", "perm.c", "at.h", "panic.h", "parsetime.h", "perm.h", "privs.h"],
+    local_defines = at_defines(), copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_template(name = "manual", template = "at.man", output = "at.1", substitutions = {"_" + k: AT_POLICY[k] for k in ["ATSPOOL_DIR", "ATJOB_DIR", "DEFAULT_BATCH_QUEUE", "DEFAULT_AT_QUEUE", "LOADAVG_MX", "PERM_PATH", "LOCKFILE"]})
+bsd_install_file(name = "cron_config", src = "atrun", destination = "/etc/cron.d/at",
+    owner = "root", group = "wheel", mode = "0644", install_tags = ["package=at", "config"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "at", manual = ":manual", package = "at", binary_mode = "4555", aliases = ["atq", "atrm", "batch"], extra_entries = [":cron_config"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=at","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]} | {"/etc/cron.d": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
