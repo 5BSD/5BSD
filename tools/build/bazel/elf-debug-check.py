@@ -41,15 +41,22 @@ def sections(data):
     return endian, result
 
 
-def verify(binary, debug):
+def verify(binary, debug, *, module=False):
     runtime = binary.read_bytes()
     symbols = debug.read_bytes()
     endian, runtime_sections = sections(runtime)
     debug_endian, debug_sections = sections(symbols)
     if runtime[:20] != symbols[:20] or endian != debug_endian:
         raise ValueError('debug ELF identity differs')
-    if any(n in runtime_sections for n in ('.debug_info', '.zdebug_info', '.symtab')):
-        raise ValueError('installed binary retains debug or static symbol sections')
+    if any(n in runtime_sections for n in ('.debug_info', '.zdebug_info')):
+        raise ValueError('installed binary retains debug information')
+    if module:
+        if struct.unpack_from(endian + 'H', runtime, 16)[0] not in (1, 3):
+            raise ValueError('kernel module must be relocatable or shared ELF')
+        if not runtime_sections.get('.symtab'):
+            raise ValueError('kernel module lacks its loader symbol table')
+    elif '.symtab' in runtime_sections:
+        raise ValueError('installed binary retains static symbol sections')
     if not any(debug_sections.get(n) for n in ('.debug_info', '.zdebug_info')):
         raise ValueError('separate debug file lacks debug information')
     link = runtime_sections.get('.gnu_debuglink', b'')
@@ -73,8 +80,9 @@ if __name__ == '__main__':
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--debug', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--module', action='store_true', help='require the loader symbol table in a kernel module')
     a = p.parse_args()
-    result = verify(a.binary, a.debug)
+    result = verify(a.binary, a.debug, module=a.module)
     with a.output.open('x') as f:
         json.dump(result, f, indent=2)
         f.write('\n')

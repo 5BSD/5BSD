@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_kernel_module.bzl", "bsd_module_link", "bsd_module_exports")
+load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_merge")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split")
+
+bsd_module_link(name = "generic_link", objects = ["//sys/fs/nullfs:generic_module_object_files"],
+    script = "//sys/conf:ldscript.kmod.amd64", emulation = "elf_x86_64_fbsd", output = "generic/nullfs.linked",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", linker_inputs = ["@bsd_sdk//toolchain:link_inputs"])
+bsd_ctf_merge(name = "generic_ctf", linked = ":generic_link", objects = ["//sys/fs/nullfs:generic_module_object_files"],
+    output = "generic/nullfs.ctf", ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label", preserve_debug = True,
+    merger = "//cddl/usr.bin/ctfmerge:ctfmerge", copy_runner = "//tools/build/bazel:dtrace_copy_runner",
+    runtime = ["//lib/libelf:elf_shared", "//lib/libz:z_shared", "//cddl/lib/libspl:spl_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"])
+bsd_module_exports(name = "generic_full", src = ":generic_ctf", output = "generic/nullfs.ko.full",
+    exports = ["null_vnodeops", "null_vnodeops_no_unp_bypass"],
+    nm = "@bsd_sdk//toolchain:bin/llvm-nm", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    tool_inputs = ["@bsd_sdk//toolchain:llvm-nm_runtime", "@bsd_sdk//toolchain:objcopy_inputs"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    libraries = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"], visibility = ["//visibility:public"])
+bsd_debug_split(name = "generic_module", src = ":generic_full", binary_name = "generic/nullfs.ko", debug_name = "generic/nullfs.ko.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy", objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs", visibility = ["//visibility:public"])
+filegroup(name = "generic_debug", srcs = [":generic_module"], output_group = "debug_files", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+bsd_install_file(name = "install_module", src = ":generic_module", destination = "/nullfs.ko",
+    destination_prefixes = ["//tools/build/bazel/config:kernel_directory"],
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=kernel"])
+bsd_install_file(name = "install_debug", src = ":generic_debug", destination = "/nullfs.ko.debug",
+    destination_prefixes = ["//tools/build/bazel/config:kernel_debug_directory", "//tools/build/bazel/config:kernel_directory"],
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=kernel", "dbg"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_module", ":install_debug"], visibility = ["//visibility:public"])

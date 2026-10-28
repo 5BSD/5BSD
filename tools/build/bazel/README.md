@@ -34015,3 +34015,70 @@ Bazel target is needed for this failure-propagation correction. Native module
 linking should now declare nm listings as action outputs and reuse these pure
 AWK transforms. Linking, CTF merge, symbol editing, split debug, installation and
 pkgbase qualification remain next; Make remains production/default.
+
+### Native nullfs module link, exports, debug and install manifest (2026-10-28)
+
+//sys/modules/nullfs:generic_module now produces an amd64 GENERIC relocatable
+nullfs.ko. Separate declared actions link the ordered native CTF objects with
+ldscript.kmod.amd64 and elf_x86_64_fbsd, merge native CTF with retained DWARF,
+produce a checked nm listing, run maintained kmod_syms.awk on it, apply the
+component's declared export symbols, and split debug information. generic_full
+and generic_debug expose nullfs.ko.full and nullfs.ko.debug. The linker uses a
+Bazel-managed response file; export application uses a quoted LLVM response file
+to avoid argv limits, with no shell/xargs. The export runner rejects unexpected
+options and propagates objcopy failure. SDK linker/nm/objcopy/Python are still
+bootstrap inputs; native awk, ctfmerge and its libraries are declared execution
+tools. These are not self-hosted or fully sandbox-qualified builds.
+
+bsd_ctf_merge now supports the same explicit CTF-label setting and debug retention
+as object conversion, preserving existing callers' defaults. The new module link
+and export rules are reusable declared actions; this candidate qualifies the
+amd64 relocatable format and explicit export list only. Shared module formats,
+PREFIX_SYMS and further module configurations remain open.
+
+Evidence: /usr/obj/usr/src/bazel-nullfs-link-20261028 and its qualification scripts
+compare captured artifacts with the maintained Make reproducible-path reference
+from the previous checkpoint. Code/data and allocated-section layout match,
+except .note.gnu.build-id; canonical allocated relocations and exported global
+symbols match. Only null_vnodeops and null_vnodeops_no_unp_bypass remain exported.
+CTF label/type/data dumps agree. Text and read-only sections are 12288 and 4096
+bytes, preserving the maintained linker script's page boundaries. Build IDs
+are valid SHA1 GNU notes and identical across the native full/runtime/debug
+family, but differ from Make. DWARF/complete ELF byte identity is not established.
+
+The userland debug checker correctly rejected the retained module symbol table;
+it now has an explicit --module mode requiring that loader table and relocatable
+or shared ELF, while still rejecting embedded debug data in the runtime file.
+The native debuglink name/CRC passes; corrupt debug data and using default
+userland mode on the module are rejected. Native kldxref reads the native and
+Make modules and emits identical 64-byte linker.hints. No module was loaded.
+
+//sys/modules/nullfs:install_manifest declares module/debug destinations and
+package=kernel tags. Format-5 settings kernel_directory (default /boot/kernel)
+and kernel_debug_directory (default /usr/lib/debug) select roots; an empty debug
+root places debug beside the module. bsd_install_file supports ordered string
+setting prefixes without changing existing static callers. The initial 0555
+mode assumption was caught by the Make install comparison and corrected to
+0444. NO_ROOT alone in the standalone module recipe did not activate install -U;
+the successful staged reference queries IMAKE_INSTALL from maintained
+Makefile.inc1, as install-reference.py does, and uses that actual contract.
+All staging stays under /usr/obj, without host installation or ownership changes.
+Paths, root/wheel ownership, modes and tags match the resulting METALOG.
+
+bazel-nullfs-link-r2-20261028 qualifies the final linker response file; downstream
+output hashes remain unchanged. bazel-nullfs-install-r2-20261028 executes zero
+spawns. bazel-nullfs-install-override-20261028 sets kernel_directory to
+/boot/qualification and an empty debug root; it changes the manifest, retains
+all module/debug hashes and executes zero spawns (native kldxref is also a
+selected, already cached target). Artifact sizes: native/Make runtime 76240/76240,
+full 459736/458160, debug 439632/438056 bytes. These are artifact sizes, not peak
+memory, disk I/O or system performance results.
+
+Frontend review: the normal maintained format-5 target/settings interface handles
+all actions and install roots; C/backend interface changes are unnecessary.
+Manual/observability docs are updated. Direct host regression tests cover symbol
+listing errors and malformed export options/failed objcopy; the qualification
+runs select no registered Bazel tests. Package archives, full kernel/module
+aggregation, loader/kernel compatibility, module load/unload, filesystem runtime,
+live SDT/audit behavior and system CPU/memory/disk gates remain open. No host
+install, module load or reboot occurred; Make remains production/default.

@@ -3670,8 +3670,8 @@ compiles the three nullfs module sources for amd64 GENERIC with KLD_MODULE,
 KLD_TIED, CTF and retained DWARF. Object and relocation comparison uses Make's
 WITH_REPRODUCIBLE_PATHS=yes and PREFIX_SYSDIR=sys profile. Default absolute
 source-path strings and complete DWARF bytes are not claimed identical.
-Native module linking, symbol exports, split debug and installation/package
-metadata remain pending; this target does not produce a qualified loadable module.
+This object target does not link a module; separate module targets provide
+linking, exports, debug splitting and installation metadata.
 
 .Pp
 The maintained Make module backend runs and checks nm before its symbol-policy
@@ -3679,4 +3679,24 @@ transforms, then checks the transform before editing ELF. The transforms consume
 explicit text listings. Standalone module builds delete failed targets, matching
 the source build's existing delete-on-error policy; a later build must not reuse
 a partially transformed module. This backend correction does not qualify the
-pending native Bazel module link and package path.
+native Bazel module link and package path.
+
+.Pp
+.Dq //sys/modules/nullfs:generic_module ,
+.Dq generic_full ,
+and
+.Dq generic_debug
+produce the amd64 GENERIC module, full ELF and separate debug file using native
+declared link/CTF/export actions. Code/data, relocations, export symbols and CTF
+match the Make reference; build IDs and complete DWARF bytes differ.
+Debuglink CRC and native kldxref metadata checks pass. No module loading is implied.
+.Pp
+.Dq //sys/modules/nullfs:install_manifest
+records root/wheel ownership, 0444 modes and kernel/debug package tags.
+The format-5 settings
+.Dq //tools/build/bazel/config:kernel_directory
+and
+.Dq //tools/build/bazel/config:kernel_debug_directory
+default to /boot/kernel and /usr/lib/debug. An empty debug directory places
+debug files beside the module. Setting changes preserve compiled payloads.
+Package assembly, complete module coverage and runtime qualification remain open.

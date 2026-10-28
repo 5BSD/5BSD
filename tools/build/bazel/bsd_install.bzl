@@ -1,11 +1,18 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load(":bsd_kyua_metadata.bzl", "kyua_metadata_fields")
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 """Typed installation payloads. No writes to the host installation tree."""
 BsdInstallFileInfo = provider(fields = ["source", "metadata"])
 BsdInstallManifestInfo = provider(fields = ["manifest", "payload", "records"])
 
 def _install_file(ctx):
-    destination = ctx.attr.destination
+    prefixes = []
+    for setting in ctx.attr.destination_prefixes:
+        value = setting[BuildSettingInfo].value
+        if type(value) != "string" or (value and not value.startswith("/")):
+            fail("installation prefixes must be absolute directory strings or empty")
+        prefixes.append(value.rstrip("/"))
+    destination = "".join(prefixes) + ctx.attr.destination
     if not destination.startswith("/") or ".." in destination.split("/"):
         fail("installation destination must be absolute without traversal")
     metadata = {
@@ -26,6 +33,7 @@ bsd_install_file = rule(
         "src": attr.label(allow_single_file = True, mandatory = True),
         "flags": attr.string(),
         "destination": attr.string(mandatory = True),
+        "destination_prefixes": attr.label_list(providers = [BuildSettingInfo], doc = "Ordered configured directory prefixes; empty strings are allowed."),
         "owner": attr.string(mandatory = True),
         "group": attr.string(mandatory = True),
         "mode": attr.string(mandatory = True),

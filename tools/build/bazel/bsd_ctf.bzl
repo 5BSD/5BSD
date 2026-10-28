@@ -78,12 +78,17 @@ bsd_ctf_library = rule(implementation = _convert, provides = [CcInfo, CcSharedLi
 
 
 def _merge(ctx):
+    if ctx.attr.ctf_label and ctx.attr.ctf_label_setting:
+        fail("choose either ctf_label or ctf_label_setting")
+    label = ctx.attr.ctf_label_setting[BuildSettingInfo].value if ctx.attr.ctf_label_setting else ctx.attr.ctf_label
+    if not label:
+        fail("an explicit CTF label is required")
     if not ctx.files.objects:
         fail("CTF merge requires explicit converted object inputs")
     out = ctx.actions.declare_file(ctx.attr.output)
     args = ctx.actions.args()
     args.add_all(["--copy-executable" if ctx.attr.is_executable else "--copy", ctx.file.linked.path, out.path,
-        "--", ctx.executable.merger.path, "-l", ctx.attr.ctf_label, "-o", out.path])
+        "--", ctx.executable.merger.path] + (["-g"] if ctx.attr.preserve_debug else []) + ["-l", label, "-o", out.path])
     args.add_all(ctx.files.objects)
     ctx.actions.run(executable = ctx.attr.copy_runner[DefaultInfo].files_to_run,
         arguments = [args], inputs = [ctx.file.linked] + ctx.files.objects,
@@ -99,6 +104,8 @@ bsd_ctf_merge = rule(implementation = _merge, attrs = {
     "copy_runner": attr.label(executable = True, cfg = "exec", mandatory = True),
     "runtime": attr.label_list(allow_files = True, cfg = "exec"),
     "output": attr.string(mandatory = True),
-    "ctf_label": attr.string(mandatory = True),
+    "ctf_label": attr.string(),
+    "ctf_label_setting": attr.label(providers = [BuildSettingInfo]),
+    "preserve_debug": attr.bool(default = False),
     "is_executable": attr.bool(default = False),
 })

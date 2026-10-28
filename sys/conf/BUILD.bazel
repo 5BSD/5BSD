@@ -4,3 +4,5 @@ exports_files(["newvers.sh"])
 # Config parses metadata here, including nested files/options/std includes.
 filegroup(name = "configuration_inputs", srcs = glob(["files*", "options*", "Makefile.*", "std.*"]), visibility = ["//visibility:public"])
 exports_files(["files"], visibility = ["//visibility:public"])
+
+exports_files(["ldscript.kmod.amd64", "kmod_syms.awk"])

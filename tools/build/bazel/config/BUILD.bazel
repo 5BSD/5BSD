@@ -215,3 +215,7 @@ string_flag(name = "kernel_ctf_label", build_setting_default = "*** No Label Pro
 
 # Explicit provenance; kernel version generation rejects an unset value.
 string_flag(name = "kernel_source_revision", build_setting_default = "", visibility = ["//visibility:public"])
+
+# Kernel and module installation roots, corresponding to KODIR/KERN_DEBUGDIR.
+string_flag(name = "kernel_directory", build_setting_default = "/boot/kernel", visibility = ["//visibility:public"])
+string_flag(name = "kernel_debug_directory", build_setting_default = "/usr/lib/debug", visibility = ["//visibility:public"])

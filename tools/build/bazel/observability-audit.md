@@ -2950,3 +2950,12 @@ retain 12 relocations. null_vfsops.c retains 3 module-metadata records. CTF
 labels/types/data match and DWARF remains present. No new direct audit callbacks
 were added; filesystem audit integration must be evaluated through the complete
 VFS/system path. Native module linking and live SDT/audit qualification are open.
+
+## Linked nullfs candidate (2026-10-28)
+
+Native linking/export processing preserves Make-equivalent SDT/module data and
+canonical allocated relocations. CTF label/type/data dumps match after merge,
+and debuglink CRC is valid. The runtime retains its required loader symbol table,
+while only the two declared vnode-operation symbols remain global exports.
+Native kldxref emits the same linker.hints as for Make. This is a static linked
+module check, not a module load, live probe attachment, filesystem or audit test.
