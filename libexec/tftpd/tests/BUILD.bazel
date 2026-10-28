@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+# The unchanged test execs /usr/libexec/tftpd; runtime qualification requires
+# an isolated installed native system, not merely a native parent loader.
+cc_binary(name = "functional", srcs = ["functional.c"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libutil:util"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libutil:util_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+utility_installation(name = "install_program", program = "functional", manual = "",
+    package = "tests", bindir = "/usr/tests/libexec/tftpd")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["functional"],
+    interfaces = {"functional": "atf"}, metadata = {"functional": '{"timeout":15}'})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/libexec/tftpd/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_metadata", entries = [":install_kyuafile"],
+    visibility = ["//libexec/tftpd:__pkg__"])

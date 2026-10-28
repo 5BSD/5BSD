@@ -7642,3 +7642,32 @@ handle these additions without new options or publication changes. No host
 installation occurred. Transfer modes/options/retries/access policy, IPv4/IPv6,
 configuration variants and performance remain gates, alongside complete world/
 kernel/pkgbase/bootstrap/cache qualification. Make stays production/default.
+
+## 2026-10-28 TFTP test builds and installation
+
+Added the unchanged server functional.c native ATF program with libutil/private
+ATF dependencies, plus the maintained client shell-test wrapper. Installed Kyua
+metadata preserves timeout=15 for the server and is_exclusive="true" for the
+client. Each parent exposes test_install_archive separately from its ordinary
+program archive. These are explicit qualification targets; configured full-world
+test aggregation remains to be connected.
+
+Make records /usr/lib/debug/usr for both utilities and tests packages. Keeping
+separate package archives preserves both ownership records instead of letting
+last-record wins erase one. The initial combined candidate is retained as
+bazel-tftp-tests-20261028; r2 separates the inventories. Rootless Make comparison
+covers all eight server-test and three client-test records. Both Kyua indexes
+and the shell wrapper are byte-identical, and the functional debug pair validates.
+Evidence: /usr/obj/usr/src/bazel-tftp-tests-20261028-r2/qualification/installation-parity.json.
+References: bazel-tftpd-tests-reference-20261028 and bazel-tftp-tests-reference-20261028;
+scripts: bazel-tftp-tests-qualification-20261028. The client shell test has no
+ELF/debug pair; the report's false debug flag means not applicable, not a failure.
+
+Reviewed build-bsd.c: existing format-5 explicit target/artifact collection
+supports these test archives at 16 jobs, with no new frontend or publication
+policy. Zero ATF transfer cases ran. The server tests exec installed tftpd and
+include root-required cases; the client tests start installed inetd/tftpd and
+use privileged service ports. Use an isolated installed runtime to qualify these
+without testing the host programs or changing test semantics. No host daemon,
+listener, installation or transfer was started. Full-system/cache/performance
+and configured test aggregation remain open; Make remains production/default.

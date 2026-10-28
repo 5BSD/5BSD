@@ -5069,3 +5069,12 @@ option negotiation, retries, netascii/octet transfers and IPv4/IPv6 failures for
 runtime/logging review. Server functional tests use the installed absolute path
 and include root-required cases, so a host-loader/program fallback would not
 qualify these candidates. Server/test-suite execution remains open.
+
+## 2026-10-28 TFTP maintained test packaging
+
+The existing C functional test and shell test now have native build/installation
+targets. Timeout/exclusivity metadata and eleven test-package records match Make;
+script and Kyua bytes match. Separate test archives preserve package ownership
+of shared debug ancestors. No test source, daemon path or runtime assertions
+were changed. This adds zero executed transfer cases; isolated installed daemon,
+inetd, privilege and networking checks remain necessary.
