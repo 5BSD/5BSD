@@ -192,3 +192,7 @@ amd64_generic_kernel_objects(name = "generic_resource_accounting", srcs = ["kern
 amd64_generic_kernel_objects(name = "generic_identity_privilege", srcs = ["kern_priv.c", "kern_loginclass.c", "kern_mib.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
         "//sys/amd64/conf:generic_opt_posix_header", "//sys/amd64/conf:generic_config_header"])
+
+amd64_generic_kernel_objects(name = "generic_resource_control", srcs = ["kern_racct.c", "kern_rctl.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/amd64/conf:generic_opt_sched_header", ":bus_if_headers", ":device_if_headers"])

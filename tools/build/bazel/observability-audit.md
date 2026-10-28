@@ -3523,3 +3523,14 @@ All three native GENERIC objects match Make symbols, raw CTF, allocated
 sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-identity-privilege-kernel-20261028/qualification`.
 Live policy decisions, audit records and probe firing remain unqualified.
+
+### RACCT and RCTL (2026-10-28)
+
+kern_racct.c defines accounting/lifecycle/throttle probes; kern_rctl.c defines
+three enforcement probes for deny, signal and throttle. Native GENERIC objects
+match Make symbols, raw CTF, allocated sections and runtime relocations.
+Evidence: `/usr/obj/usr/src/bazel-resource-control-kernel-r2-20261028/qualification`.
+No instrumentation source changed. No local AUDIT_ARG calls were found;
+review rule-management syscall audit mapping and emitted records before
+claiming administrative-operation coverage. Live resource enforcement,
+accounting accuracy and probe firing remain unqualified.

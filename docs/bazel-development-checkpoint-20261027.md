@@ -3078,3 +3078,27 @@ integration and jail-specific identity/sysctl behavior require linked-kernel
 tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
 Make remains production/default; module count remains 45. No host installation
 or BIP work occurred.
+
+### Native RACCT and RCTL
+
+Added //sys/kern:generic_resource_control_object_files for kern_racct.c and
+kern_rctl.c, selected by the maintained GENERIC Makefile. Dependencies declare
+CK/VM, MAC, generated scheduler options and bus/device interfaces required
+through SMP headers. The first build exposed the missing generated interface
+dependency; the corrected graph builds without runtime source changes.
+
+Evidence: `/usr/obj/usr/src/bazel-resource-control-kernel-r2-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. The scheduler option header matches Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-resource-control-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and generated inputs support these
+objects without new build-bsd C/backend options, staging or manual changes.
+No runtime tests ran. Rule add/remove, process/user/jail/login-class accounting,
+deny/signal/throttle actions, concurrency and resource usage need linked-kernel
+qualification. Full kernel/world/pkgbase/bootstrap and performance gates remain
+open. Make remains production/default; module count remains 45. No host
+installation or BIP work occurred.
