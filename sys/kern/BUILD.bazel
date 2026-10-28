@@ -396,3 +396,9 @@ amd64_generic_kernel_objects(name = "generic_character_devices", srcs = ["kern_c
 
 amd64_generic_kernel_objects(name = "generic_clock_conversion", srcs = ["subr_clock.c", "subr_fattime.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers"])
+
+# The amd64 calibration recipe enables floating-point instructions and -O3.
+# Its headers are declared here, so retain the native kernel's -nostdinc.
+amd64_generic_kernel_objects(name = "generic_clock_calibration", srcs = ["subr_clockcalib.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"],
+    copts = ["-O3", "-mmmx", "-msse", "-msse2"])

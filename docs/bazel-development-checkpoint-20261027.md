@@ -4178,3 +4178,30 @@ ran. Calendar/leap-year and range boundaries, FAT timezone/precision behavior
 and driver clock consumers require runtime tests. Full kernel/world/pkgbase/
 bootstrap and performance gates remain open. Make stays production/default;
 module count remains 45. No host installation or BIP changes occurred.
+
+### Native clock calibration with special compiler flags
+
+Added //sys/kern:generic_clock_calibration_object_files for subr_clockcalib.c,
+selected by the maintained amd64 recipe. The target uses source-specific
+-O3, -mmmx, -msse and -msse2 through native cc_library copts. Unlike Make's
+recipe, native compilation retains -nostdinc: the source uses declared kernel
+headers and requires no implicit host include search. No calibration algorithm
+changed and no global kernel SIMD flags changed. This resolves the previous
+clock-calibration compilation follow-up for amd64 GENERIC only.
+
+Evidence: `/usr/obj/usr/src/bazel-clock-calibration-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. Reference log:
+`/usr/obj/usr/src/bazel-clock-calibration-kernel-make-20261028.log`; the
+maintained special recipe used the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible paths. Whole-object/debug-path identity is not
+claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Boot-time frequency calibration, counter wrap, failure/fallback behavior
+and floating-point context assumptions require linked-kernel boot tests.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+stays production/default; module count remains 45. No host installation or
+BIP changes occurred.

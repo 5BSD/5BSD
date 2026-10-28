@@ -4025,3 +4025,14 @@ allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-clock-conversion-kernel-20261028/qualification`.
 No runtime source changed. Calendar/range/precision behavior and driver clock
 integration remain unqualified; special clock calibration compilation is pending.
+
+### Clock calibration (2026-10-28)
+
+subr_clockcalib.c retains TSENTER/TSEXIT boot timing hooks and existing
+calibration diagnostics. No local SDT definitions or AUDIT_ARG calls were
+found; early boot timing is the relevant instrumentation context. Native
+GENERIC output with the special -O3/MMX/SSE/SSE2 settings matches Make
+symbols, raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-clock-calibration-kernel-20261028/qualification`.
+No runtime source changed. Actual calibration, clock wrap/failure paths and
+boot timing remain unqualified.
