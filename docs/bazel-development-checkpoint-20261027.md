@@ -6548,3 +6548,38 @@ metadata remain to qualify separately. No host installation occurred. Frontend
 review: build-bsd.c's existing format-5 targets and backend support these native
 program targets at 16 jobs; no CLI/publication contract changes are needed.
 Make remains the production default; the full migration goal remains active.
+
+## 2026-10-28: native character-map database actions
+
+The 415 binary character-map sources now have a Bazel-owned inventory in
+share/i18n/csmapper/maps.bzl and one CitrusDatabase action per source. Actions
+invoke mkcsmapper_tool through an executable cfg=exec dependency, declare source
+and output files, and use a fixed locale without a shell or ambient environment.
+The reusable rule also exposes explicit compile/lookup/pivot modes for subsequent
+index generation. No Make parsing, reference-tree lookup, installed-tool fallback
+or generated-result copying occurs in the native build. Adding maps requires
+updating the owned source inventory, like other explicit Bazel source lists.
+
+Build evidence: /usr/obj/usr/src/bazel-csmapper-data-20261028/receipt.json. This
+first use in execution configuration builds native libc and the static tool for
+that configuration separately from their previous target-configuration builds.
+The full data graph remains incomplete: .646 files, mapper directory/pivot
+indexes, aliases, esdb templates and installation still need native ownership.
+The previous 656-output generator comparison does not establish that graph.
+
+The JSON execution log from this first execution-tool build is approximately
+2 GiB. This is diagnostic disk overhead, not a measured runtime or filesystem
+regression. The action verifier streams records instead of loading the complete
+log. Broad build CPU/memory/I/O and diagnostic-storage qualification remain open;
+future full-world runs need a measured logging/storage policy. Frontend review:
+build-bsd.c's maintained format-5 explicit-target backend executes the data
+filegroup at 16 jobs without new CLI or publication inputs. Make remains default.
+
+Qualification completed: all 415 output names and bytes match the full maintained
+Make character-map inventory. Execution evidence confirms 415 successful database
+actions, each declaring its source and the execution-configuration mkcsmapper
+binary. Report: bazel-csmapper-data-20261028/qualification/database-parity.json;
+script: bazel-csmapper-data-qualification-20261028/verify.py. The first reader
+attempt assumed newline-separated JSON; Bazel emits adjacent objects. The reader
+was corrected to stream that actual format without changing build evidence.
+No warm-cache, input-invalidation or cross-platform claim follows from this run.

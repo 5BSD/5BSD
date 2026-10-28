@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":maps.bzl", "MAP_SOURCES")
+load("//tools/build/bazel:bsd_citrus_database.bzl", "citrus_database")
+[citrus_database(
+    name = source[:-4] + "_database",
+    src = source,
+    output = source[:-4] + ".mps",
+    tool = "//usr.bin/mkcsmapper:mkcsmapper_tool",
+) for source in MAP_SOURCES]
+filegroup(name = "binary_maps", srcs = [source[:-4] + "_database" for source in MAP_SOURCES],
+    visibility = ["//visibility:public"])

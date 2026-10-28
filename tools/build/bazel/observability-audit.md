@@ -4755,3 +4755,12 @@ than establish a new authentication boundary. Byte parity covers all 656 binary
 databases produced by the maintained i18n build with native static tools versus
 fresh Make generators. Native data actions, installation and full iconv runtime
 remain outstanding; this is generator qualification, not service auditing.
+
+## 2026-10-28 native character-map data actions
+
+415 per-source CitrusDatabase actions expose their generator, source and output
+to Bazel execution records. This moves data generation into the dependency graph;
+it does not introduce runtime probes or change conversion code. Initial execution
+configuration build produced approximately 2 GiB of JSON action diagnostics;
+record this as build diagnostic-storage overhead for full-system performance
+qualification. Broader conversion/runtime and installation remain incomplete.
