@@ -2507,3 +2507,31 @@ these are additional built-in variants. Complete kernel linking/boot, live
 ABAC/openES interaction, world/pkgbase/publication, bootstrap, arbitrary
 KERNCONF and CPU/memory/disk qualification remain open. Make remains
 production/default. No host installation, loading or BIP work occurred.
+
+### Complete GENERIC capability built-in object inventory
+
+Expanded capability built-ins to the complete fifteen-source GENERIC set:
+core/device/kern/label, nine service/policy sources, and the existing standard
+process/authority sources. The ten module groups and their built-in variants
+now share explicit source/dependency tuples. Module target names and separate
+KLD compile settings are retained. Process/authority remain kernel-only.
+Their earlier hand-expanded compilation target now uses the shared native
+built-in macro. Public aggregate: //sys/dev/mac_capability:generic_object_files.
+
+Evidence: `/usr/obj/usr/src/bazel-capability-all-builtins-20261028/qualification`.
+All fifteen match maintained kernel Make symbols, raw CTF, complete allocated
+section inventories and contents/size/type/flags/alignment, and runtime
+relocation bytes/associations. The source inventory matches generated GENERIC
+Make targets. Object copies and comparison script are retained; reference log:
+`/usr/obj/usr/src/bazel-capability-all-builtins-make-20261028.log`.
+`bazel-capability-module-refactor-20261028` additionally builds all ten module
+runtime targets through maintained build-bsd after the inventory refactor.
+That repeat is a build check, not a fresh live module execution test.
+
+Frontend review: existing format-5 target selection, native artifact retention
+and module packaging interfaces remain sufficient; no new C/backend option
+is required. Whole-kernel linking/boot, arbitrary configuration selection,
+capability lifecycle/enforcement, world/pkgbase/publication, bootstrap and
+comparative resource/performance gates remain open. Module count remains 45;
+this adds thirteen new built-in variants alongside the earlier two. Make
+stays production/default, with no host installation/loading or BIP changes.

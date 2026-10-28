@@ -3270,3 +3270,13 @@ claiming live policy interaction. Label/credential transitions, rule changes,
 openES client failure/timeout, cache invalidation, hook ordering and audit
 output must still be exercised on a linked test kernel. No instrumentation
 or enforcement behavior was changed.
+
+### Complete GENERIC capability built-ins (2026-10-28)
+
+All fifteen selected capability sources now have native built-in object
+comparisons, preserving allocated probe sections and runtime relocations.
+This extends earlier module evidence and retains the recorded identity,
+process/authority and channel-create audit questions. Live kernel dispatch,
+service/module coexistence, credential transitions, descriptor lifecycle,
+revocation/timeout races and audit/probe delivery remain unqualified. No
+instrumentation or security source behavior was changed.

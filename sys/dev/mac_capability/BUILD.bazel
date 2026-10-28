@@ -20,44 +20,46 @@ cc_library(name = "kernel_headers", includes = ["../.."], hdrs = ["mac_capabilit
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
 cc_library(name = "internal_headers", hdrs = ["mac_capability_internal.h"], deps = [":kernel_headers"])
 cc_library(name = "accounting_module_headers", hdrs = ["mac_capability_accounting_proto.h"], deps = [":kernel_headers"])
-amd64_generic_module_objects(name = "accounting_module", srcs = ["mac_capability_accounting.c"], deps = [":accounting_module_headers"])
+
 cc_library(name = "identity_module_headers", hdrs = ["mac_capability_identity_proto.h"], deps = [":kernel_headers"])
-amd64_generic_module_objects(name = "identity_module", srcs = ["mac_capability_identity.c"], deps = [":identity_module_headers"])
+
 cc_library(name = "coalition_module_headers", hdrs = ["mac_capability_coalition_proto.h"], deps = [":internal_headers"])
-amd64_generic_module_objects(name = "coalition_module", srcs = ["mac_capability_coalition.c"], deps = [":coalition_module_headers"])
+
 cc_library(name = "node_module_headers", hdrs = ["mac_capability_node_proto.h"], deps = [":kernel_headers"])
-amd64_generic_module_objects(name = "node_module", srcs = ["mac_capability_node.c"], deps = [":node_module_headers"])
+
 cc_library(name = "channel_module_headers", hdrs = ["mac_capability_channel_proto.h"], deps = [":kernel_headers"])
-amd64_generic_module_objects(name = "channel_module", srcs = ["mac_capability_channel.c"], deps = [":channel_module_headers"])
+
 cc_library(name = "isolation_module_headers", hdrs = ["mac_capability_isolation_proto.h"], includes = ["../.."], deps = [":kernel_headers"])
-amd64_generic_module_objects(name = "isolation_module", srcs = ["mac_capability_isolation.c"], deps = [":isolation_module_headers", "//sys/security/mac:policy_headers", "//sys/netinet:address_headers", "//sys/netgraph/bluetooth/include:socket_headers"])
+
 cc_library(name = "mount_module_headers", hdrs = ["mac_capability_mount_proto.h"], includes = ["../.."], deps = [":kernel_headers"])
-amd64_generic_module_objects(name = "mount_module", srcs = ["mac_capability_mount.c"], deps = [":mount_module_headers"])
+
 cc_library(name = "system_module_headers", hdrs = ["mac_capability_system_proto.h"], includes = ["../.."], deps = [":kernel_headers"])
-amd64_generic_module_objects(name = "system_module", srcs = ["mac_capability_system.c"], deps = [":system_module_headers", "//sys/security/mac:policy_headers", "//sys/net:network_headers"])
 
-# Process lifecycle callbacks are built into the kernel, not this module.
-amd64_generic_module_objects(name = "core_module",
-    srcs = ["mac_capability_core.c", "mac_capability_dev.c", "mac_capability_kern.c", "mac_capability_label.c"],
-    deps = [":internal_headers", "//sys/security/mac:policy_headers", "//sys/amd64/conf:generic_opt_capsicum_header"])
+
+
 cc_library(name = "capprotect_module_headers", hdrs = ["mac_capability_capprotect_proto.h"], deps = [":kernel_headers"])
-amd64_generic_module_objects(name = "capprotect_module", srcs = ["mac_capability_capprotect.c"],
-    deps = [":capprotect_module_headers", "//sys/security/mac:policy_headers"])
 
-load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_FLAGS", "AMD64_KERNEL_HEADER_DEPS")
-load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_library")
-# Standard kernel sources: deliberately no KLD_MODULE or KLD_TIED definitions.
-cc_library(name = "generic_builtin_objects",
-    srcs = ["mac_capability_process.c", "mac_capability_authority.c"],
-    deps = AMD64_KERNEL_HEADER_DEPS + [":internal_headers", "//sys/kern:generic_offset_header", "//sys/kern:vnode_headers"],
-    copts = [flag for flag in AMD64_KERNEL_FLAGS if flag != "-fcommon"] + ["-fno-common"],
-    local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
-bsd_ctf_library(name = "generic_builtin_ctf", library = ":generic_builtin_objects",
-    converter = "//cddl/usr.bin/ctfconvert:ctfconvert",
-    runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libdwarf:dwarf_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared",
-        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
-    ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label", preserve_debug = True)
-filegroup(name = "generic_builtin_object_files", srcs = [":generic_builtin_ctf"], output_group = "regular_objects", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+# Process lifecycle and authority sources always belong to the kernel.
+amd64_generic_kernel_objects(name = "generic_builtin",
+    srcs = ["mac_capability_process.c", "mac_capability_authority.c"], deps = [":internal_headers"])
 
 cc_library(name = "label_headers", hdrs = ["mac_capability_label.h"], includes = ["../.."], visibility = ["//sys/security/oes:__pkg__"])
+
+# Explicit GENERIC source groups, shared by the built-in and module variants.
+_CAPABILITY_GROUPS = [
+    ("accounting_module", ["mac_capability_accounting.c"], [":accounting_module_headers"]),
+    ("identity_module", ["mac_capability_identity.c"], [":identity_module_headers"]),
+    ("coalition_module", ["mac_capability_coalition.c"], [":coalition_module_headers"]),
+    ("node_module", ["mac_capability_node.c"], [":node_module_headers"]),
+    ("channel_module", ["mac_capability_channel.c"], [":channel_module_headers"]),
+    ("isolation_module", ["mac_capability_isolation.c"], [":isolation_module_headers", "//sys/security/mac:policy_headers", "//sys/netinet:address_headers", "//sys/netgraph/bluetooth/include:socket_headers"]),
+    ("mount_module", ["mac_capability_mount.c"], [":mount_module_headers"]),
+    ("system_module", ["mac_capability_system.c"], [":system_module_headers", "//sys/security/mac:policy_headers", "//sys/net:network_headers"]),
+    ("core_module", ["mac_capability_core.c", "mac_capability_dev.c", "mac_capability_kern.c", "mac_capability_label.c"], [":internal_headers", "//sys/security/mac:policy_headers", "//sys/amd64/conf:generic_opt_capsicum_header"]),
+    ("capprotect_module", ["mac_capability_capprotect.c"], [":capprotect_module_headers", "//sys/security/mac:policy_headers"]),
+]
+[amd64_generic_module_objects(name = name, srcs = srcs, deps = deps) for name, srcs, deps in _CAPABILITY_GROUPS]
+[amd64_generic_kernel_objects(name = name + "_builtin", srcs = srcs, deps = deps) for name, srcs, deps in _CAPABILITY_GROUPS]
+filegroup(name = "generic_object_files", srcs = [":generic_builtin_object_files"] + [":" + name + "_builtin_object_files" for name, _, _deps in _CAPABILITY_GROUPS], visibility = ["//visibility:public"])
