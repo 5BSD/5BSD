@@ -4272,3 +4272,10 @@ Preserves libc namespace handling and RPC private interfaces. All ordinary/PIC
 objects have offline symbol and text comparison evidence; malformed-stream,
 record I/O, allocation-failure and live RPC behavior require runtime coverage.
 Existing NetBSD XDR tests are identified but not yet integrated or executed here.
+
+### 2026-10-28: existing XDR runtime case
+
+Unchanged NetBSD double/enumeration encode/decode case now passes as a Bazel ATF
+test linked to native XDR PIC objects. Native symbol ownership and Make fixture
+bytes verified separately. This adds serialization runtime evidence only; it
+does not cover transport events, kernel audit, live RPC services or full libc.

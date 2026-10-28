@@ -29,5 +29,5 @@ cc_library(
     visibility = ["//lib/libc:__pkg__"],
 )
 bsd_component_archive(name = "objects_archive", groups = [":xdr_objects"])
-bsd_component_archive(name = "pic_objects_archive", groups = [":xdr_objects"], pic = True)
+bsd_component_archive(name = "pic_objects_archive", groups = [":xdr_objects"], pic = True, visibility = ["//lib/libc/tests/rpc:__pkg__"])
 exports_files(["Symbol.map", "xdr.3"], visibility = ["//lib/libc:__pkg__"])

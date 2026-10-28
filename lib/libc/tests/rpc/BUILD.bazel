@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
+load("//tools/build/bazel:bsd_rpcgen.bzl", "bsd_rpcgen")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+
+[bsd_rpcgen(
+    name = output + "_generate",
+    source = "//contrib/netbsd-tests/lib/libc/rpc:h_testbits.x",
+    output = output,
+    mode = mode,
+    flags = ["-L", "-C"],
+    cpp_flags = ["-E", "-x", "c", "-nostdinc"],
+    rpcgen = "//usr.bin/rpcgen:rpcgen",
+    cpp = "@bsd_sdk//toolchain:bin/cpp",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    runtime = ["@bsd_sdk//toolchain:cpp_runtime"],
+) for output, mode in [("h_testbits.h", "-h"), ("h_testbits_xdr.c", "-c")]]
+cc_library(name = "fixture_headers", hdrs = [":h_testbits.h"], strip_include_prefix = ".")
+
+# Select the already-qualified PIC archive for this PIE object test.
+cc_import(name = "xdr_pic", static_library = "//lib/libc/xdr:pic_objects_archive")
+
+# Exercise the native libc objects before the complete libc link is available.
+# This is not the installed xdr_test/rpc_test suite or installation parity.
+cc_binary(
+    name = "xdr_objects_test",
+    srcs = ["//contrib/netbsd-tests/lib/libc/rpc:t_xdr.c", ":h_testbits_xdr.c"],
+    deps = [":fixture_headers", ":xdr_pic",
+            "//lib/libnetbsd:netbsd_pie", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)
+bsd_atf_test(
+    name = "native_xdr",
+    case_name = "xdr",
+    interface = "program",
+    body = ":xdr_objects_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared",
+                   "@bsd_sdk//toolchain:sysroot/lib/libc.so.7",
+                   "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "small",
+    visibility = ["//visibility:public"],
+)

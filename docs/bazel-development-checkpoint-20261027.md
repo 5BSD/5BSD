@@ -5004,3 +5004,27 @@ covered by these object comparisons.
 Frontend review: current explicit format-5 targets and NLS configuration work
 through build-bsd; no frontend/backend contract change needed for this group.
 No host installation, network activity, credential changes or BIP work.
+
+## 2026-10-28: existing XDR case under Bazel
+
+Adds the unchanged NetBSD t_xdr.c case with declared h_testbits RPC header/XDR
+fixture generation (-L -C), NetBSD compatibility and native ATF dependencies.
+The xdr_objects_test executable consumes the native PIC archive explicitly via
+cc_import: ordinary objects cannot be linked into this PIE executable. This
+selects existing qualified PIC outputs without changing production object flags.
+It is intentionally an object qualification executable, not the installed
+xdr_test/rpc_test suite; native librpcsvc, complete libc linkage and installation
+metadata must still be integrated before claiming that suite is converted.
+
+Evidence: /usr/obj/usr/src/bazel-libc-xdr-test-20261028-r2 records one executed
+passing native_xdr ATF case (double/enumeration decode and byte-exact encode).
+qualification/fixture-and-link.json confirms both generated files match fresh
+Make fixture output and required XDR functions are defined in the executable,
+not merely resolved to SDK libc. SDK libc/libsys, host loader/kernel and native
+ATF runtime remain dependencies. No record transport, malformed stream, failure
+allocation, installed image or full libc runtime coverage is claimed.
+The first run's ordinary-object/PIE link failure remains recorded separately.
+
+Frontend review: build-bsd's format-5 targets/tests already express this case,
+and its maintained qualification path captured the test reports. No C/backend
+contract update required. No host installation or network activity.
