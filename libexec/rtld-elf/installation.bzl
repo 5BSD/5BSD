@@ -4,6 +4,8 @@ load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_bina
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest", "bsd_compress")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
+load("//libexec/rtld-elf/tests:installation.bzl", "TEST_MANIFESTS", "TEST_DIRECTORIES")
+
 def rtld_installation():
     bsd_debug_split(name = "install_debug", src = ":rtld_binary",
         binary_name = "install/ld-elf.so.1", debug_name = "install/ld-elf.so.1.debug",
@@ -35,12 +37,21 @@ def rtld_installation():
     bsd_install_manifest(name = "install_manifest", entries = [":install_" + n for n in [
         "binary_file", "debug_file", "config_file", "compat_link", "manual_file", "manual_ld-elf.so.1", "manual_ld.so"]],
         visibility = ["//visibility:public"])
-    bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
-        directories = {
-            "/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}',
-            "/usr/lib/debug/libexec": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=clibs","dbg"]}',
-        },
-        mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    base_directories = {
+        "/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}',
+        "/usr/lib/debug/libexec": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=clibs","dbg"]}',
+    }
+    test_directories = dict(base_directories)
+    test_directories.update(TEST_DIRECTORIES)
+    base_mtree = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"}
+    test_mtree = dict(base_mtree)
+    test_mtree["//etc/mtree:BSD.tests.dist"] = "/usr/tests"
+    bsd_install_archive(name = "install_archive", manifests = [":install_manifest"] + select({
+        "//tools/build/bazel/config:tests_enabled": TEST_MANIFESTS, "//conditions:default": []}),
+        directories = select({"//tools/build/bazel/config:tests_enabled": test_directories,
+            "//conditions:default": base_directories}),
+        mtree_specs = select({"//tools/build/bazel/config:tests_enabled": test_mtree,
+            "//conditions:default": base_mtree}),
         passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
         python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
         runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

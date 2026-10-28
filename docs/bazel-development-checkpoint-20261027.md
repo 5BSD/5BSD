@@ -7392,3 +7392,29 @@ No host installation or package publication occurred. The eleven descriptor
 cases still require an isolated installed native loader. The full-system
 world/kernel/pkgbase/bootstrap/cache/performance gates remain open and Make
 remains production/default. BIP remains out of scope.
+
+## 2026-10-28 configured rtld test inclusion
+
+Connected //libexec/rtld-elf:install_archive to the existing tests build setting,
+matching the maintained Makefile's SUBDIR.${MK_TESTS} selection. Before this
+change the loader archive always excluded the separately declared test suite.
+A shared source-owned tests/installation.bzl now supplies program names,
+manifest labels and directory ownership to both archive entry points. This
+avoids maintaining two divergent copies of the test installation inventory.
+
+Both configurations passed through build-bsd with 16 jobs. With tests=false,
+the entire archive is byte-identical to the previously Make-qualified rtld-only
+archive. With tests=true, all files, links, modes, ownership and archive metadata
+match the union of the independently qualified loader and full test archives;
+all 49 explicit metadata records match. Evidence:
+/usr/obj/usr/src/bazel-rtld-install-tests-true-20261028/qualification/configured-installation.json.
+The disabled run is bazel-rtld-install-tests-false-20261028; verification script
+is in bazel-rtld-configured-install-qualification-20261028/verify.py.
+
+Reviewed build-bsd.c and its maintained format-5 inputs: the existing tests
+setting already reaches native Bazel actions, so no new CLI option or backend
+substitute is needed. The change affects declared component installation,
+not production/default selection or publication. No runtime cases or host
+installation occurred. Descriptor fexecve cases still need an isolated native
+runtime; whole-world/kernel/pkgbase/bootstrap/cache/performance gates remain
+open. Make stays production/default and BIP remains out of scope.

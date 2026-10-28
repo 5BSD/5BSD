@@ -43,4 +43,4 @@ bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
     destination = _TESTDIR + "/Kyuafile", owner = "root", group = "wheel",
     mode = "0444", install_tags = ["package=tests"])
 bsd_install_manifest(name = "install_metadata", entries = [":install_kyuafile"],
-    visibility = ["//libexec/rtld-elf/tests:__pkg__"])
+    visibility = ["//libexec/rtld-elf/tests:__pkg__", "//libexec/rtld-elf:__pkg__"])

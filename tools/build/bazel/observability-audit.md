@@ -4979,3 +4979,11 @@ match Make and thirteen debug pairs validate. The existing deepbind_simple case
 passes again from stripped archive payloads under native rtld, preserving the
 $ORIGIN fixture layout. No C source, DTrace probes or audit hooks changed.
 Descriptor child-exec coverage and live probe firing remain separate gates.
+
+## 2026-10-28 configured rtld test inclusion
+
+The existing tests setting now controls inclusion of the complete loader test
+suite in the rtld install archive. Disabled output is byte-identical to the
+qualified loader-only archive; enabled output matches the qualified 49-record
+union. One shared source-owned inventory serves both archive targets. No probe,
+audit hook, runtime source or test semantics changed. No new runtime passes.
