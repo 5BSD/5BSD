@@ -4312,3 +4312,13 @@ ISC C sources. All 16 ordinary/PIC objects have symbol/text parity evidence.
 Resolver name-resolution probes remain in the separate resolv sources, which
 are not yet converted here. Live DNS, event scheduling, resolver probes and
 installed libc behavior remain runtime qualification work.
+
+### 2026-10-28: libc resolver objects
+
+Preserves resolver query/server start/done hooks and enabled checks, generated
+from the unchanged libc nameres_provider.d shared with NSS/semaphore providers.
+Raw res_send objects retain the DOF archive anchor and eight probe/enabled
+references; generated header and 28 object variants match Make offline. Final
+combined libc DOF rewriting, retention, registered provider sites and live DNS
+probe/audit behavior are still unqualified. No probe disabling or partial-provider
+substitution was used to make the build pass.

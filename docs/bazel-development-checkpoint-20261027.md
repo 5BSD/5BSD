@@ -5136,3 +5136,28 @@ those sources or probes.
 Frontend review: existing format-5 explicit targets and NLS setting cover these
 object groups through build-bsd; no frontend/backend contract changes needed.
 No network queries, host installation or service changes were performed.
+
+## 2026-10-28: native resolver objects with preserved DTrace inputs
+
+Adds all 14 maintained resolver C sources, explicit private/configuration headers,
+and libc-owned nameres_provider header generation using declared native DTrace
+bootstrap tools. The provider schema includes nameres and semwait and belongs to
+the complete libc aggregate, not individual resolver/NSS/semaphore sublibraries.
+Resolver objects retain configured WITH_COVERAGE_DTRACE probe references and
+__bsd_dof_anchor_nameres_provider. Qualification archives are RAW compilation
+objects; they are not final linkable libc archives. Final combined-group DTrace
+rewriting/DOF/anchor retention must still be implemented once all contributors
+are present. No standalone partial provider object was substituted for that work.
+
+Evidence: /usr/obj/usr/src/bazel-libc-resolv-20261028/qualification/parity.json
+against fresh bazel-libc-resolv-make-20261028: all 28 ordinary/PIC objects match
+global and unresolved symbols and .text bytes with DTrace enabled. provider.json
+also records a byte-identical generated provider header and all eight probe/
+enabled references plus the static archive anchor in raw res_send.o. These are
+pre-DOF checks, not final rewritten-site, provider registration or live firing
+qualification. DTrace-disabled and other configurations, full debug/relocations,
+full libc linkage/versioning, installation and runtime remain open.
+
+Frontend review: existing explicit targets and dtrace setting cover the generated
+header and object variants through build-bsd format 5. No frontend/backend
+contract change needed. No DNS queries, host install or service changes occurred.

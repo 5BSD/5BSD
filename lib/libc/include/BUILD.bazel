@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "rt_private_headers", hdrs = ["namespace.h", "un-namespace.h", "libc_private.h"],
-    strip_include_prefix = ".", deps = ["//lib/libsys:headers"], visibility = ["//lib/libthr:__pkg__", "//lib/librt:__pkg__", "//lib/msun:__pkg__", "//lib/libc/yp:__pkg__", "//lib/libc/xdr:__pkg__", "//lib/libc/rpc:__pkg__"])
+    strip_include_prefix = ".", deps = ["//lib/libsys:headers"], visibility = ["//lib/libthr:__pkg__", "//lib/librt:__pkg__", "//lib/msun:__pkg__", "//lib/libc/yp:__pkg__", "//lib/libc/xdr:__pkg__", "//lib/libc/rpc:__pkg__", "//lib/libc/resolv:__pkg__"])
 
 cc_library(name = "math_headers", hdrs = ["fpmath.h"], strip_include_prefix = ".", deps = [":rt_private_headers", "//lib/libc/amd64:math_headers"], visibility = ["//lib/msun:__pkg__"])
 
@@ -15,4 +15,7 @@ cc_library(name = "rpc_private_headers", hdrs = ["reentrant.h", "nss_tls.h", "ns
     strip_include_prefix = ".", deps = [":rt_private_headers"], visibility = ["//lib/libc/rpc:__pkg__"])
 
 cc_library(name = "resolver_port_headers", hdrs = ["port_before.h", "port_after.h", "isc/eventlib.h", "isc/platform.h", "isc/list.h"],
-    strip_include_prefix = ".", visibility = ["//lib/libc/nameser:__pkg__", "//lib/libc/isc:__pkg__"])
+    strip_include_prefix = ".", visibility = ["//lib/libc/nameser:__pkg__", "//lib/libc/isc:__pkg__", "//lib/libc/resolv:__pkg__"])
+
+cc_library(name = "resolver_private_headers", hdrs = ["reentrant.h", "resolv_mt.h"],
+    strip_include_prefix = ".", deps = [":rt_private_headers", ":resolver_port_headers"], visibility = ["//lib/libc/resolv:__pkg__"])
