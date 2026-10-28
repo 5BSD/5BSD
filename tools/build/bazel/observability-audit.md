@@ -5009,3 +5009,14 @@ lifecycle/error visibility remain review candidates, not migration completion
 criteria proven by symbol parity. HTTP network behavior has not been exercised.
 libulog/ulog-helper conversion remains open; its login-record side effects
 require separate qualification without writing host accounting databases.
+
+## 2026-10-28 libulog and ulog-helper build graph
+
+All maintained library/helper sources remain unchanged. libulog writes utmpx
+records through pututxline and forks/execs the installed helper for pseudo-terminal
+recording. No dedicated DTrace or direct audit calls were found in the converted
+library units. ABI and six ordinary/PIC object comparisons match Make; this does
+not prove accounting updates or authorization behavior. Isolated tests must
+cover PTY ownership, login/logout records, helper failures and relevant audit
+policy without writing host accounting data. Setuid installation metadata and
+runtime qualification are still pending.

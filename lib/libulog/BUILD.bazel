@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "ulog", srcs = ["ulog_login.c", "ulog_login_pseudo.c", "utempter.c"],
+    hdrs = ["ulog.h", "utempter.h"], strip_include_prefix = ".",
+    deps = ["//lib/libmd:md_link"], linkstatic = True,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":ulog"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = [":ulog"], pic = True,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_configured_version_map(
+    name = "version_map",
+    symbol_maps = ["Symbol.map"],
+    versions = "//lib/libc:Versions.def",
+    generator = "//share/mk:version_gen.awk",
+    # This symbol inventory has no includes or target-dependent conditionals.
+    cpp_flags = ["-P", "-nostdinc", "-undef"],
+    compiler = "@bsd_sdk//toolchain:bin/clang",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk",
+    awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+
+cc_shared_library(name = "ulog_shared", deps = [":ulog"],
+    dynamic_deps = ["//lib/libmd:md_shared"], shared_lib_name = "libulog.so.0",
+    additional_linker_inputs = [":version_map"],
+    user_link_flags = ["-Wl,-soname,libulog.so.0",
+        "-Wl,--version-script=$(location :version_map),--no-undefined-version",
+        "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

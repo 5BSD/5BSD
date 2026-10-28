@@ -7474,3 +7474,29 @@ changes. libulog still lacks a native target and must be implemented before
 ulog-helper; no host-library substitute was added. Whole world/kernel/pkgbase,
 bootstrap/cache and runtime/performance gates remain open. Make remains the
 production/default build path; BIP is out of scope.
+
+## 2026-10-28 native libulog and ulog-helper builds
+
+Added native libulog compilation for all three maintained C files, public
+ulog/utempter headers, component-only ordinary/PIC archives, declared version-map
+generation, and the versioned DSO. ulog-helper consumes the native CcInfo/DSO.
+The dependency is libmd's public md_link interface, not its archive-only md
+label; the initial analysis rejected the latter and the corrected r2 passed.
+No host-library substitute or C-source modification was introduced.
+
+Independent Make comparison establishes identical generated Version.map,
+31 dynamic symbol entries for libulog, 16 global/undefined helper entries,
+and matching SONAME/NEEDED/empty RPATH layouts. All three ordinary and three PIC
+objects match Make executable .text and global/undefined symbols. Make does not
+produce libulog_pic.a in this configuration: the PIC comparison uses its three
+ELF .pico objects (excluding non-ELF .depend metadata). The Bazel PIC archive is
+a qualification output and has not been declared as an installation payload.
+Evidence: /usr/obj/usr/src/bazel-ulog-20261028-r2/qualification/parity.json;
+Make reference: bazel-ulog-reference-20261028; scripts: bazel-ulog-qualification-20261028.
+
+Reviewed build-bsd.c: existing format-5 targets support these builds at 16 jobs;
+no new frontend input or publication policy is required. Library/header/manual/
+compatibility-link installation, helper setuid metadata, debug splitting and
+isolated accounting runtime checks remain next. No helper was executed and no
+host accounting database was modified. SDK bootstrap, full world/kernel/pkgbase,
+cache and resource/performance qualification remain open. Make stays default.
