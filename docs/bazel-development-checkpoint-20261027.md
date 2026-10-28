@@ -4768,3 +4768,30 @@ Frontend review: existing format-5 target/archive rules suffice, no frontend or
 backend contract change required. Make declares no component tests. No host
 installation, reminder process or reboot. Other conversion work can proceed;
 full world/kernel/pkgbase/boot/runtime/performance goals remain incomplete.
+
+
+## 2026-10-28: native ipcrm and private IPC removal checks
+
+Added native ipcrm with libkvm and declared ipc.c/ipc.h/ipcsnapshot_trace.h inputs
+shared from ipcs. Exports are restricted to the ipcrm package. The maintained
+ipcrm Makefile does not enable WITH_COVERAGE_DTRACE; the native target preserves
+that trace-disabled compilation path rather than borrowing ipcs instrumentation.
+No runtime source changes. Installation retains utilities ownership and PIE.
+
+Evidence: /usr/obj/usr/src/bazel-ipcrm-20261028 and Make reference
+/usr/obj/usr/src/bazel-ipcrm-make-20261028. qualification/verify.py verifies five
+installation records, 17 defined globals, libkvm.so.7/libc.so.7/BIND_NOW/NOW PIE
+metadata and compressed manual bytes. qualification/runtime.py and runtime.json
+record six successful private-object removal checks: each build removes its own
+new IPC_PRIVATE message queue, shared-memory segment and semaphore set using the
+exact returned ID. Objects use mode 0600; follow-up removal reports EINVAL/EIDRM,
+confirming deletion. Cleanup covers failed candidate invocations. No preexisting
+objects or global-removal operation touched. Native libraries/SDK runtime used;
+test allocation uses host libc. Key-based removal, -W, jail behavior and -y
+kernel-memory access remain unqualified. No installed-image/full debug-byte or
+performance claim.
+
+Frontend review: existing explicit format-5 targets/archive rules suffice; no
+frontend/backend contract change. Make declares no component tests, so retained
+checks are conversion evidence, not new registered Bazel tests. Whole-system
+gates remain open and Make remains default. No host installation or reboot.

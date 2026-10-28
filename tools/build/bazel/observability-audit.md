@@ -4211,3 +4211,13 @@ No local SDT/DTrace/AUDIT hooks in unchanged source. Capsicum setup preserved;
 both Make and native binaries abort at the recorded capability-rights assertion
 on current host/SDK startup. Timer and terminal behaviors remain unqualified.
 No security bypass, probes or audit policy added to get a runtime pass.
+
+
+### 2026-10-28: ipcrm
+
+Shared ipc.c contains ipcsnapshot wrappers, but ipcrm's maintained Make recipe
+does not enable WITH_COVERAGE_DTRACE; native compilation preserves that behavior.
+ipcrm.c has no local SDT/DTrace/AUDIT hooks. Review whether destructive IPC
+operations warrant explicit probes/audit coverage independently of conversion;
+no claim that syscall audit hooks are absent. Private ID-removal tests pass for
+all three IPC classes; key/global/jail and kernel-memory paths remain open.

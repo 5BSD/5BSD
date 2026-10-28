@@ -55,3 +55,7 @@ bsd_compare_test(name = "invalid_option_test", program = ":ipcs", arguments = ["
     runtime_lib = ["//lib/libkvm:kvm_shared", "//lib/libelf:elf_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
     runner = "//tools/build/bazel:byte_compare_runner", size = "small")
 test_suite(name = "tests", tests = [":invalid_option_test"], visibility = ["//visibility:public"])
+
+# ipcrm shares the maintained IPC implementation, without ipcs tracing defines.
+exports_files(["ipc.c"], visibility = ["//usr.bin/ipcrm:__pkg__"])
+cc_library(name = "ipc_headers", hdrs = ["ipc.h", "ipcsnapshot_trace.h"], strip_include_prefix = ".", visibility = ["//usr.bin/ipcrm:__pkg__"])
