@@ -3241,3 +3241,28 @@ VM qualification. ELF loader backends and final kernel linking remain separate
 work. Full world/pkgbase/bootstrap and performance gates remain open. Make
 remains production/default; converted module count remains 45. No host
 installation or BIP changes occurred.
+
+### Native kernel ELF loader backends
+
+Added //sys/kern:generic_elf_loaders_object_files for link_elf.c and
+link_elf_obj.c, selected by the maintained GENERIC Makefile. Dependencies
+include the generated linker interface, native DDB/GDB options, MAC/VNET/VM,
+zlib and debugger CTF headers. kern_ctf.c is an explicit textual dependency,
+matching its inclusion by both loaders. No loader source behavior changed.
+
+Evidence: `/usr/obj/usr/src/bazel-elf-loaders-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. Both option headers match Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-elf-loaders-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and generated inputs support these
+objects without new build-bsd C/backend options, staging or manual changes.
+No runtime tests or host module loads ran. ELF validation, relocations, symbol
+resolution, CTF loading, malformed-input cleanup and MAC denial require
+linked-kernel VM qualification. Architecture relocation code and full kernel
+linking remain separate work. Full world/pkgbase/bootstrap and performance
+gates remain open. Make stays production/default; module count remains 45.
+No host installation or BIP changes occurred.

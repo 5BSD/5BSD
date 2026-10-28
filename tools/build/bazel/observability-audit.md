@@ -3603,3 +3603,13 @@ No source instrumentation changed. Review module syscall audit mapping and
 emitted records before claiming administrative coverage. Live registration,
 load/unload, policy decisions and probe firing remain unqualified; no host
 module loading was performed.
+
+### Kernel ELF loader backends (2026-10-28)
+
+link_elf.c and link_elf_obj.c retain mac_kld_check_load calls. No local SDT
+probe or AUDIT_ARG calls were found; the previously reviewed kern_linker layer
+provides load/deny/unload probes. Native GENERIC objects match Make symbols,
+raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-elf-loaders-kernel-20261028/qualification`.
+No instrumentation source changed. Live backend errors, caller-level probes,
+audit coverage and policy denial remain unqualified; no host modules loaded.
