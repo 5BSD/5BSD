@@ -3088,3 +3088,11 @@ The enabled native module matches Make symbols/relocations. Disabling ZSTDIO
 removes the zstd implementation and feature symbols as configured. No source
 instrumentation was altered; live compression I/O, error paths and common
 GEOM tracing/audit coverage still need qualification.
+
+### GEOM RAID (2026-10-28)
+
+The inspected RAID C sources contain no explicit SDT_* or AUDIT_* calls
+(despite g_raid.c including sdt.h). Runtime symbols/relocations match Make.
+Metadata detection, rebuild/resync, degraded I/O and fault handling are
+candidates for instrumentation review alongside common GEOM coverage. No
+live array, fault-injection or audit behavior was qualified.

@@ -88,3 +88,9 @@ bsd_kernel_version(name = "generic_version_source", identity = "//sys/amd64/conf
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:sh_runtime"],
     libraries = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
     visibility = ["//visibility:public"])
+
+filegroup(name = "bus_if_header_file", srcs = [":bus_if"], output_group = "header")
+cc_library(name = "bus_if_headers", hdrs = [":bus_if_header_file"], strip_include_prefix = "bus_if.generated", visibility = ["//visibility:public"])
+
+filegroup(name = "device_if_header_file", srcs = [":device_if"], output_group = "header")
+cc_library(name = "device_if_headers", hdrs = [":device_if_header_file"], strip_include_prefix = "device_if.generated", visibility = ["//visibility:public"])

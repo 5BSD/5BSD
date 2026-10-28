@@ -2023,3 +2023,27 @@ performance tests have been performed for uzip.
 Frontend review: typed kernel_zstdio and maintained format-5 transport worked
 for both variants; manual qualification wording updated without new C/backend
 options. Continue remaining module/kernel/world migration and broader gates.
+
+### Native GEOM RAID
+
+Added all fifteen maintained translation units: g_raid/g_raid_ctl, generated
+metadata/transform interface C sources, six metadata formats and five RAID
+transforms. The generated interfaces consume the native bus/device header
+actions, now exposed as CcInfo header targets. The first sandbox compile
+correctly detected those missing generated dependencies; the r2 build fixes
+the declarations. Generated C diagnostic identities use compiler macro-prefix
+mapping from declared source locations to logical filenames; no output byte
+rewriting or copied generated sources are used.
+
+Evidence: `/usr/obj/usr/src/bazel-raid-r2-20261028/qualification`; Make reference
+`/usr/obj/usr/src/bazel-geom_raid-make-20261028`. Runtime symbols/relocations,
+text/data/rodata and raw CTF match. Debug identity/CRC and staged installation
+metadata pass. No module load, host installation, array creation, resync or
+failover was attempted. Runtime, corruption/error paths, invalidation and
+performance remain unqualified.
+
+The current native module batch has nineteen artifact-compared builds.
+Existing maintained format-5 frontend targets cover the new generation and
+compilation dependencies; no C frontend or publication change is needed.
+Complete kernel/world/pkgbase/hardware and runtime/resource gates remain
+open; Make remains production/default.

@@ -4,3 +4,14 @@ cc_library(name = "headers", hdrs = ["g_raid.h"], strip_include_prefix = "/sys",
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+filegroup(name = "g_raid_md_if_source", srcs = [":g_raid_md_if"], output_group = "source")
+filegroup(name = "g_raid_md_if_header", srcs = [":g_raid_md_if"], output_group = "header")
+cc_library(name = "g_raid_md_if_headers", hdrs = [":g_raid_md_if_header"], strip_include_prefix = "g_raid_md_if.generated")
+filegroup(name = "g_raid_tr_if_source", srcs = [":g_raid_tr_if"], output_group = "source")
+filegroup(name = "g_raid_tr_if_header", srcs = [":g_raid_tr_if"], output_group = "header")
+cc_library(name = "g_raid_tr_if_headers", hdrs = [":g_raid_tr_if_header"], strip_include_prefix = "g_raid_tr_if.generated")
+cc_library(name = "module_headers", hdrs = ["g_raid.h", "md_ddf.h"], includes = ["../.."], deps = ["//sys/geom:disk_headers", ":g_raid_md_if_headers", ":g_raid_tr_if_headers"])
+amd64_generic_module_objects(srcs = ["g_raid.c", "g_raid_ctl.c", ":g_raid_md_if_source", ":g_raid_tr_if_source", "md_ddf.c", "md_intel.c", "md_jmicron.c", "md_nvidia.c", "md_promise.c", "md_sii.c", "tr_concat.c", "tr_raid0.c", "tr_raid1.c", "tr_raid1e.c", "tr_raid5.c"], deps = [":module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    copts = ["-fmacro-prefix-map=$(location :g_raid_md_if_source)=g_raid_md_if.c", "-fmacro-prefix-map=$(location :g_raid_tr_if_source)=g_raid_tr_if.c"])
