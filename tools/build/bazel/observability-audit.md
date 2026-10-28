@@ -5104,3 +5104,13 @@ sources. This map-generation utility's error/output behavior and NIS default-
 domain lookup remain runtime qualification items; no instrumentation was added.
 The enabled native libc builds successfully, but its NIS behavior is not proved
 by this component's build and installation comparison.
+
+## 2026-10-28 mknetid diagnostics exercised
+
+Explicit-file runtime qualification now checks duplicate warnings and their
+quiet suppression, malformed passwd diagnostics, and required-file errors,
+as well as supplementary groups and optional-file behavior. All six cases
+match fixed expected results and Make under the same native loader/libraries.
+No default-domain lookup, NIS service, live probes or audit stream is exercised.
+These are external qualification checks; native Bazel test registration is
+still outstanding.

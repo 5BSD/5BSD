@@ -7750,3 +7750,28 @@ this configuration; no frontend change required. No runtime NIS query or host
 installation occurred. Independent NIS-enabled libc comparison, map-generation
 runtime fixtures, service integration and full-system/cache/performance gates
 remain open. Make remains production/default; BIP remains out of scope.
+
+## 2026-10-28 mknetid explicit-file runtime qualification
+
+Six runtime cases now pass both independent expected-output assertions and
+byte-for-byte exit/stdout/stderr comparison with the Make-built component:
+supplementary groups plus host/netid records, duplicate UID warning, quiet
+suppression, absent optional netid file, malformed passwd record, and absent
+required group file. Every database path and domain is supplied explicitly;
+no host account database, NIS service, or system configuration is modified.
+
+The frontend collected mknetid, native rtld, NIS-enabled libc and libsys as
+explicit targets in /usr/obj/usr/src/bazel-mknetid-runtime-20261028. Runtime
+checks copy the saved artifacts into an isolated qualification directory and
+retain their hashes. LD_TRACE_LOADED_OBJECTS confirms the intended libc/libsys
+paths. Both the native and Make executables use those same libraries, so the
+comparison still does not independently qualify libc or the NIS service.
+
+Evidence: bazel-mknetid-runtime-20261028/qualification/runtime-parity.json.
+Retained script: bazel-mknetid-qualification-20261028/runtime.py. These six cases
+are external qualification checks, NOT registered Bazel tests or ATF cases.
+Native Bazel test registration remains to be implemented. Default-domain
+lookup, broader malformed-input cases and live NIS integration remain open.
+Existing build-bsd explicit-target collection suffices; no frontend or backend
+change is required for this evidence-only qualification. Full-system gates
+remain open and Make remains production/default.
