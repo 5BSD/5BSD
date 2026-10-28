@@ -3511,3 +3511,15 @@ source; review syscall event mapping and emitted argument records for
 setrlimit/setpriority/acct before claiming complete audit coverage. Local
 absence alone is not proof that syscall auditing is absent. Live probes,
 accounting records and permission enforcement remain unqualified.
+
+### Privilege checks, login classes and identity (2026-10-28)
+
+kern_priv.c defines three privilege success/error/credential-error probes;
+its MAC integration remains unchanged. kern_loginclass.c and kern_mib.c have
+no local SDT_PROBE_DEFINE or AUDIT_ARG calls. Review login-class transition
+observability with syscall event mapping and resource accounting before
+claiming complete coverage; local absence alone is not an auditing verdict.
+All three native GENERIC objects match Make symbols, raw CTF, allocated
+sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-identity-privilege-kernel-20261028/qualification`.
+Live policy decisions, audit records and probe firing remain unqualified.

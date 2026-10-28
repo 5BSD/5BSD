@@ -3055,3 +3055,26 @@ usage reporting and accounting-file lifecycle/space handling remain linked-
 kernel qualification. Full kernel/world/pkgbase/bootstrap and performance
 gates remain open. Make remains production/default; module count remains 45.
 No host installation or BIP work occurred.
+
+### Native privilege checks, login classes and OS identity
+
+Added //sys/kern:generic_identity_privilege_object_files for kern_priv.c,
+kern_loginclass.c and kern_mib.c, selected by the maintained GENERIC Makefile.
+Dependencies declare CK/VM, MAC and generated POSIX/CONFIG headers. No
+privilege, login-class or identity source behavior changed.
+
+Evidence: `/usr/obj/usr/src/bazel-identity-privilege-kernel-20261028/qualification`.
+All three objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records/associations. Both generated option headers match Make bytes.
+Reference log: `/usr/obj/usr/src/bazel-identity-privilege-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target selection covers these objects
+without new build-bsd C/backend options, staging or manual changes. No runtime
+tests ran. Privilege/MAC decisions, login-class transitions, resource-accounting
+integration and jail-specific identity/sysctl behavior require linked-kernel
+tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
+Make remains production/default; module count remains 45. No host installation
+or BIP work occurred.
