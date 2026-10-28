@@ -23,3 +23,23 @@ filegroup(
     srcs = [":pnp_%d" % case for case in range(9)],
     visibility = ["//visibility:public"],
 )
+
+load(":kldxref_test.bzl", "kldxref_audit_test")
+[kldxref_audit_test(
+    name = variant + "_" + mode.replace("-", "_") + "_test",
+    program = "//usr.sbin/kldxref:" + program,
+    audit = "audit-" + mode + ".py",
+    mode = mode,
+    fixtures = [":pnp_fixtures"],
+    libraries = [
+        "//lib/libelf:elf_shared", "//lib/libz:z_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7",
+    ] + (["//lib/libkldelf:kldelf_shared"] if variant == "native" else []),
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+    tags = ["local", "no-cache"],
+    size = "small",
+) for variant, program in [("native", "kldxref"), ("bootstrap", "bootstrap_kldxref")]
+  for mode in ["pnp", "module-inputs", "kldxref"]]

@@ -33446,3 +33446,31 @@ non-amd64 relocation correctness, or kernel/module build completion. Registering
 these audits with declared interpreter, runtime and runfiles is still required.
 Make remains production/default; full world/kernel/pkgbase, cache and performance
 gates remain incomplete.
+
+### kldxref audits registered as Bazel tests (2026-10-28)
+
+Six maintained targets now run the unchanged construction audits for native and
+bootstrap kldxref: `{native,bootstrap}_{pnp,module_inputs,kldxref}_test` under
+`//tools/test/construction`. Nine PNP cases, twenty explicit-input checks and
+eight hints-update cases pass per variant. Tests declare the native program,
+ELF fixtures, shared-library closure, SDK Python and standard library as runfiles.
+The adapter selects the child library directory only after Python starts; it
+preserves audit exceptions and exit codes. Host shell and Python-loader runtime
+dependencies remain, so these tests are local and uncached, not hermetic.
+
+`/usr/obj/usr/src/bazel-kldxref-tests-r3-20261028` records six executed/passed
+Bazel tests through maintained `build-bsd bazel-test` with sixteen jobs. Receipt
+and retained test log/XML hashes were checked. Bazel reports six aggregate test
+cases; the logs contain the individual audit reports (74 checks in total).
+Existing frontend format-5 targets/tests support this without a C/backend
+interface change. The manual documents the test selection.
+
+The first run rejected the SDK Python file because the new rule omitted
+`allow_files`. The second run passed its audit bodies but blocked while Bazel
+collected intentional FIFO fixtures from undeclared outputs. That run was
+cancelled; its blocked collectors were released and its result is not accepted
+as qualification. The maintained adapter now keeps audit work in TEST_TMPDIR
+and exports only regular JSON reports. The third run completes naturally.
+No modules were loaded, and no host installation or publication was performed.
+Full world/kernel/module builds, package aggregation, cross-architecture runtime,
+bootstrap independence, sandboxing and performance qualification remain open.

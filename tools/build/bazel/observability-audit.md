@@ -2877,3 +2877,9 @@ and static-bootstrap consumers. Hints generation and failed-output preservation
 were checked on private copies of two amd64 modules; no kernel modules or
 probes were loaded. Other architecture relocation paths, live loader behavior
 and kernel instrumentation retention remain separate qualification gates.
+
+The maintained PNP, explicit-input and hints-failure audits now execute through
+six Bazel test targets for native and bootstrap kldxref (37 checks per variant).
+They exercise malformed metadata and failed output updates without loading
+modules. This expands utility error-path coverage; no DTrace/audit sites were
+added, removed or runtime-attached, and kernel instrumentation remains untested.

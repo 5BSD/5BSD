@@ -3534,3 +3534,13 @@ stage the private ELF module reader and module-hints utility.
 uses the native static library with linker-set registrations retained.
 These candidates have amd64 copied-module comparison evidence; image/publication
 helpers and full cross-architecture kernel packaging remain separate work.
+
+.Pp
+The six
+.Dq //tools/test/construction:{native,bootstrap}_{pnp,module_inputs,kldxref}_test
+labels select the maintained module-metadata audits with declared synthetic ELF
+fixtures and native runtime libraries. Specify each desired label in both the
+format-5 targets and tests lists. These tests run locally and are not cached:
+the host shell and SDK Python loader remain execution dependencies. They never
+load their synthetic fixtures into the kernel. This does not qualify a complete
+kernel/module build or cross-architecture relocation behavior.
