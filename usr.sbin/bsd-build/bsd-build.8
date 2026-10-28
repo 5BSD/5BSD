@@ -3598,3 +3598,12 @@ run native config with declared configuration inputs and capture complete
 GENERIC output trees, including empty option headers. They do not execute the
 generated Makefile or build a kernel. Other configurations require explicit
 input declarations and separate qualification.
+
+.Pp
+.Dq //sys/kern:generic_offset
+and
+.Dq //sys/kern:generic_assym
+compile actual amd64 GENERIC layout inputs with generated kernel options and
+source headers. The assembly constants require a successful offset-layout
+assertion compile. These targets do not link or boot a kernel and do not qualify
+other configurations or architectures.

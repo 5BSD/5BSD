@@ -28,3 +28,42 @@ cc_library(name = "vnode_headers", hdrs = [":vnode_header_files"],
 filegroup(name = "vnode_header_files", srcs = [":vnode_if"], output_group = "headers")
 
 exports_files(["genassym.sh", "genoffset.sh"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+load("//tools/build/bazel:bsd_kernel_constants.bzl", "kernel_constants")
+# Initial amd64 GENERIC layout-only compilation. Full kernel policy is separate.
+_AMD64_LAYOUT_FLAGS = [
+    "-nostdinc", "-ffreestanding", "-fno-strict-aliasing", "-fcommon",
+    "-include", "opt_global.h", "-mcmodel=kernel", "-mno-red-zone",
+    "-mno-mmx", "-mno-sse", "-msoft-float", "-mno-aes", "-mno-avx",
+    "-fno-asynchronous-unwind-tables", "-fno-omit-frame-pointer",
+    "-mno-omit-leaf-frame-pointer", "-fwrapv", "-fstack-protector-strong",
+    "-g", "-gdwarf-4", "-std=gnu17",
+]
+_AMD64_LAYOUT_DEPS = [
+    "//sys/amd64/conf:generic_headers", "//sys/sys:kernel_headers",
+    "//sys/amd64/include:kernel_headers", "//sys/x86/include:kernel_headers",
+    "//sys/bsm:kernel_headers",
+]
+cc_library(name = "generic_genoffset", srcs = ["genoffset.c"],
+    deps = _AMD64_LAYOUT_DEPS, copts = _AMD64_LAYOUT_FLAGS,
+    local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_object(name = "generic_genoffset_object", group = ":generic_genoffset", out = "generic_layout/genoffset.o")
+kernel_constants(name = "generic_offset", object = ":generic_genoffset_object", kind = "offset", output = "generic_layout/offset.inc")
+cc_library(name = "generic_offset_header", hdrs = [":generic_offset"], strip_include_prefix = "generic_layout")
+cc_library(name = "generic_genoffset_check", srcs = ["genoffset.c"],
+    deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header"], copts = _AMD64_LAYOUT_FLAGS,
+    local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS", "OFFSET_TEST"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_object(name = "generic_genoffset_check_object", group = ":generic_genoffset_check", out = "generic_layout/genoffset_test.o")
+
+cc_library(name = "generic_genassym", srcs = ["//sys/amd64/amd64:genassym.c"],
+    deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header", ":vnode_headers",
+        "//sys/vm:kernel_headers", "//sys/isa:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/dev/hwpmc:kernel_headers"],
+    copts = _AMD64_LAYOUT_FLAGS,
+    local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_object(name = "generic_genassym_object", group = ":generic_genassym", out = "generic_layout/genassym.o")
+kernel_constants(name = "generic_assym", object = ":generic_genassym_object", kind = "assym", output = "generic_layout/assym.inc",
+    prerequisites = [":generic_genoffset_check_object"])

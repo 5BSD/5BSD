@@ -941,3 +941,38 @@ selection, kernel compiler options, full header closure, real genoffset/genassym
 linking, modules and pkgbase remain unfinished. SDK compiler/interpreter/loader
 and source-access isolation still need bootstrap/sandbox qualification. Make
 remains production/default. Whole-system runtime and performance gates remain open.
+
+### Actual amd64 GENERIC layout compilation (2026-10-28)
+
+Native targets now compile the actual sys/kern/genoffset.c twice (normal and
+OFFSET_TEST) and sys/amd64/amd64/genassym.c. They use Bazel-generated GENERIC
+option headers, declared source-tree sys/machine/x86/BSM/VM/ISA/CK/HWPMC headers,
+-nostdinc, kernel defines, amd64 kernel ABI flags, freestanding compilation and
+-fcommon. No host installed headers or copied Make objects provide these inputs.
+The assembly-constant action depends on successful offset-layout assertions.
+The first genassym attempt exposed missing HWPMC headers; a declared header
+dependency fixed it without disabling GENERIC's HWPMC_HOOKS option.
+
+Targets: //sys/kern:generic_genoffset_object, generic_genoffset_check_object,
+generic_offset, generic_genassym_object and generic_assym. Evidence is under
+`/usr/obj/usr/src/bazel-generic-layout-r2-20261028/qualification`. A fresh Make
+reference was built in the earlier offset qualification's make-reference
+subdirectory using current Make-built config output, maintained Make targets,
+the same SDK compiler/nm, and sixteen jobs. The 6, 6 and 1167 nm symbol/size
+records respectively match. offset.inc (695 bytes) and assym.inc (5465 bytes)
+are byte-equal. This does not claim byte-identical DWARF/object files.
+
+The maintained frontend's existing format-5 targets support these outputs;
+manual and observability notes are updated. No C/backend interface, staging,
+signing or publication change is needed. Compilation flags are currently scoped
+to these amd64 GENERIC layout objects, not a complete configurable kernel policy.
+The configuration tree is a coarse header dependency: finer option-header
+invalidation needs attention before kernel incremental-performance qualification.
+Source header inventories use package-local globs, with machine/x86 include
+names represented by native CcInfo rather than source-root include fallbacks.
+
+This qualifies real kernel layout inputs, not a linked/booted kernel, other
+configurations/architectures, modules or packages. Compiler bootstrap still uses
+the SDK. Full source selection, compile policy, kernel linking, runtime, cache
+invalidation and CPU/memory/disk performance gates remain open. Make remains
+the production/default backend.

@@ -14,3 +14,7 @@ filegroup(name = "configuration_inputs", srcs = glob(["*"], exclude = ["BUILD.ba
         "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"],
     visibility = ["//visibility:public"],
 ) for name, debug in [("generic_config", False), ("generic_debug_config", True)]]
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "generic_headers", hdrs = [":generic_config"],
+    includes = ["generic_config.generated"], visibility = ["//visibility:public"])

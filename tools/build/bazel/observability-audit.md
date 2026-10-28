@@ -2907,3 +2907,11 @@ including devices and non-host architectures: 264 byte-equal C/header outputs.
 makeobjops does not itself generate SDT or audit sites. No instrumentation was
 added or removed; driver instrumentation and audit behavior must still be
 checked when the corresponding implementation objects are compiled and linked.
+
+## Actual GENERIC layout objects (2026-10-28)
+
+Native genoffset/genoffset_test/genassym retain the current GENERIC options,
+including HWPMC_HOOKS. Their symbol sizes and generated offsets/constants match
+a fresh Make reference. These are layout objects, not instrumentation-bearing
+kernel runtime implementations; this does not qualify live PMC, DTrace or audit
+behavior. No option was removed to avoid declaring its headers.
