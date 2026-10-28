@@ -5736,3 +5736,24 @@ The vDSO implementation comparison is not evidence of actual vDSO runtime use.
 Frontend review: existing format-5 explicit targets/NLS setting covers these
 objects through build-bsd; no new C/backend contract required. Source exports
 are restricted to the libc sys package. No host installation or runtime changes.
+
+## 2026-10-28: amd64 libc/libsys architecture support
+
+Adds all ten sources from libsys/amd64/Makefile.sys: five FS/GS/TLS C helpers and
+rfork_thread, pdrfork_thread, vfork, cerror and getcontext assembly. The native
+assembly header view declares SYS.h. Ordinary and shared groups remain distinct;
+the shared group carries libc's empty _SYSCALL_BODY macro even though these
+handwritten routines use lower-level syscall instructions directly.
+
+Evidence: /usr/obj/usr/src/bazel-libc-libsysamd64-build-20261028/qualification/
+parity.json and text-relocations.json against bazel-libc-libsysamd64-make-20261028.
+All 20 ordinary/shared PIC objects match .text, global/unresolved symbols, and
+text relocations (offset/type/symbol value/name/addend, excluding symbol-table
+indices). This does not establish full relocation/debug/data identity or runtime
+FS/GS/TLS, IFUNC, fork/thread, errno or context behavior. Generated syscall stubs,
+x86 common sources and complete libc/libsys linking remain outstanding.
+
+Frontend review: existing format-5 target inputs/NLS setting and native toolchain
+compile C and assembly through build-bsd; no new helper or C interface required.
+Source/header exports have narrow libc sys visibility. No host TLS, process,
+context or installation changes were performed.

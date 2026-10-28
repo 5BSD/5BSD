@@ -4521,3 +4521,10 @@ No direct DTrace/SDT or BSM audit calls found in the eight common sources migrat
 in libc mode. Time-interface vDSO and syscall paths, errno and page-size helpers
 remain unchanged. Kernel observation and actual fast-path use require runtime
 qualification. Evidence: bazel-libc-libsyscommon-build-20261028/qualification/parity.json.
+
+## 2026-10-28: amd64 libc/libsys support
+
+No direct DTrace/SDT or BSM audit hooks found in the ten migrated C/assembly
+sources. Existing sysarch/syscall and error paths remain unchanged. Kernel syscall
+observation is separate; text and relocation parity do not prove runtime tracing
+or CPU-state correctness. Evidence: bazel-libc-libsysamd64-build-20261028/qualification.

@@ -1,2 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['amd64_get_fsbase.c', 'amd64_get_gsbase.c', 'amd64_set_fsbase.c', 'amd64_set_gsbase.c', 'amd64_set_tlsbase.c', 'rfork_thread.S', 'pdrfork_thread.S', 'vfork.S', 'cerror.S', 'getcontext.S'], visibility = ["//lib/libc/sys:__pkg__"])
+cc_library(name = "sys_headers", hdrs = ["SYS.h"], strip_include_prefix = ".", visibility = ["//lib/libc/sys:__pkg__"])
+
 exports_files(["_umtx_op_err.S"], visibility = ["//lib/libthr:__pkg__"])
