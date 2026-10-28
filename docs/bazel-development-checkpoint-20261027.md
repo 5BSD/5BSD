@@ -4928,3 +4928,32 @@ Frontend review: existing explicit targets expose both manifests and layout via
 build-bsd; README corrected to describe actual package generation ownership.
 No C/backend contract change, host update or login invocation. Full package
 assembly/publication, post-install and upgrade qualification remain open.
+
+## 2026-10-28: native chpass and NIS bootstrap gap
+
+Adds native chpass sources, crypt/util dependencies, optional YP/ypclnt,
+relative command aliases, manual aliases, debug staging and maintained 4555/schg
+metadata. Shares libc pw_scan through narrowly extended source/header visibility.
+The existing schg install flag follows PRECIOUSPROG; no BIP implementation added.
+Comparison corrected command symlink metadata to Make's 0755.
+
+Evidence: /usr/obj/usr/src/bazel-chpass-20261028-r2/qualification/parity.json,
+using saved artifacts, matches the NIS-disabled Make reference's 26 global
+symbols, ordered dynamic dependencies/flags, nine installation records including
+permissions/flags/link destinations, manual hardlink identity in reference,
+and compressed manual bytes. No executable/debug byte identity or account
+modification/runtime qualification is claimed.
+
+NIS-enabled qualification FAILED, not waived: bazel-chpass-nis-20261028 cannot
+link libypclnt against the frozen SDK libc (missing yp_master, yperr_string and
+YP XDR symbols). The independent bazel-chpass-nis-make-20261028 reference fails
+compilation because its configured world sysroot lacks ypclnt.h. A coherent
+NIS-enabled bootstrap/sysroot and subsequent native libc integration are needed
+before this variant can be qualified. Do not add private copies of libc's YP
+implementation to chpass or suppress undefined-symbol errors to pass this gate.
+Account editing, privileged installation and NIS service interaction remain VM
+coverage. This component is not evidence of completed userland or full world.
+
+Frontend review: existing format-5 targets and typed nis setting expose this
+component and variant through build-bsd; no new frontend/backend contract is
+required. No host account, installed file, package repository or boot state changed.

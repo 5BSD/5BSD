@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+_NIS = "//tools/build/bazel/config:nis_enabled"
+cc_binary(name = "chpass", srcs = ["chpass.c", "edit.c", "field.c", "table.c", "util.c", "chpass.h", "//lib/libc/gen:pw_scan.c"],
+    deps = ["//lib/libc/gen:pw_scan_headers", "//lib/libcrypt:crypt", "//lib/libutil:util"] + select({_NIS: ["//lib/libypclnt:ypclnt"], "//conditions:default": []}),
+    dynamic_deps = ["//lib/libcrypt:crypt_shared", "//lib/libutil:util_shared"] + select({_NIS: ["//lib/libypclnt:ypclnt_shared"], "//conditions:default": []}),
+    local_defines = select({_NIS: ["YP"], "//conditions:default": []}), copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")
+_BASE_ALIASES = ["chfn", "chsh"]
+_YP_ALIASES = ["ypchfn", "ypchpass", "ypchsh"]
+[bsd_install_link(name = "command_" + n, destination = "/usr/bin/" + n, target = "chpass", kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=utilities"]) for n in _BASE_ALIASES + _YP_ALIASES]
+[bsd_install_link(name = "manual_" + n, destination = "/usr/share/man/man1/" + n + ".1.gz", target = "/usr/share/man/man1/chpass.1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444",
+    install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]})) for n in _YP_ALIASES]
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "chpass", manual = "chpass.1", package = "utilities", binary_mode = "4555", binary_flags = "schg", manual_aliases = _BASE_ALIASES, extra_entries = [":command_" + n for n in _BASE_ALIASES] + select({_NIS: [":command_" + n for n in _YP_ALIASES] + [":manual_" + n for n in _YP_ALIASES], "//conditions:default": []}))
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

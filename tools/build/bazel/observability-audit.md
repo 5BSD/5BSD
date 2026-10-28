@@ -4246,3 +4246,13 @@ Full-feature probe schemas and ordinary instruction sites match Make offline;
 disabled-feature build omits DOF/BSM as configured. Live PAM authentication,
 credential transitions, terminal/session setup, BSM event emission and provider
 registration still require VM qualification. No bypass or runtime source change.
+
+### 2026-10-28: chpass
+
+No direct SDT/DTrace, BSM audit or syslog calls found in local chpass sources.
+Native build preserves sources and crypt/util dependencies, with optional
+ypclnt. Account-change audit coverage is a follow-up across chpass, libutil
+password database operations and installed kernel audit configuration; no new
+hooks or runtime bypass added. NIS-enabled artifact qualification remains
+blocked by missing SDK/world NIS inputs; non-NIS artifact parity is not live
+account-change or audit-event qualification.
