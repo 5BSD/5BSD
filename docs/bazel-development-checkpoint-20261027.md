@@ -5230,3 +5230,39 @@ Full libc tests and installed image qualification remain open.
 Frontend review: existing format-5 targets and typed settings cover objects and
 generators via build-bsd; no frontend/backend contract changes required. No host
 name-service configuration, installed software or network service was changed.
+
+## 2026-10-28: complete libc configuration staging and generated-state partition
+
+Adds libc:config_archive with all maintained libc configuration: group,
+master.passwd, shells, hosts, hosts.equiv, networks, protocols, nsswitch.conf,
+mac.conf, netconfig and rpc. Reuses gen-nsswitch.sh through existing bsd_template
+with declared template, shell/sed/cat and typed NIS input. Audit found libc/gen's
+global CONFSPACKAGE=runtime governs these files, not libc's PACKAGE=clibs.
+master.passwd retains 0600; other configuration files retain 0644 and config tags.
+
+Reuses existing etc:account_databases rather than introducing another generator.
+Corrects its existing installation manifest: passwd/pwd.db/spwd.db are generated
+state, untagged in Make and rebuilt by runtime.ucl construction/post-install
+logic. They must not be packaged as prebuilt replacements for local account
+configuration. The combined fresh-system staging archive contains both explicit
+configuration manifests and that separate untagged generated-state manifest.
+There are no existing source-graph consumers of the account manifest requiring
+migration; its standalone archive also retains the corrected tags.
+
+Evidence: bazel-libc-config-20261028-r2 and bazel-libc-config-nis-20261028-r2 under
+/usr/obj/usr/src, each qualification/parity.json, against separate no/yes Make
+configuration references. Both configurations match all 15 installation records
+(11 configuration files, 3 generated files, /etc directory metadata) and all 14
+file bytes, including account databases. Exactly passwd/pwd.db/spwd.db are
+untagged. Checks read saved archive artifacts; no host accounts/configuration
+were modified. Initial reference setup failed because it omitted the maintained
+IMAKE_INSTALL unprivileged flags; corrected reference queries that contract and
+uses NO_SUBDIR for this libc installconfig-only comparison.
+
+This proves fresh staging, not package upgrade/config-merge behavior, existing
+account migration, NSS/NIS service behavior or installed image startup. Native
+complete libc, package lifecycle and system qualification remain open.
+
+Frontend review: existing format-5 targets/NIS input and maintained template,
+account-generation and staging helpers expose this through build-bsd. No new
+frontend C or backend contract needed; no one-off replacement build path.

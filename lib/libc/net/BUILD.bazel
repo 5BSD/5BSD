@@ -38,3 +38,17 @@ _DEPS = ([":private_headers", "//lib/libc/include:rpc_private_headers", "//lib/l
 bsd_component_archive(name = "objects_archive", groups = [":net_objects", ":lexer_objects"])
 bsd_component_archive(name = "pic_objects_archive", groups = [":net_objects", ":lexer_objects"], pic = True)
 exports_files(["Symbol.map", "Symbol.hesiod.map"], visibility = ["//lib/libc:__pkg__"])
+
+load("//tools/build/bazel:native_cc.bzl", "bsd_template")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+bsd_template(name = "nsswitch_generated", script = "gen-nsswitch.sh", template = "nsswitch.conf",
+    output = "configuration/nsswitch.conf", shell = "@bsd_sdk//toolchain:sh",
+    tools = ["@bsd_sdk//toolchain:sed", "@bsd_sdk//toolchain:cat"],
+    execution_runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:sed_runtime", "@bsd_sdk//toolchain:cat_runtime"],
+    arguments = select({"//tools/build/bazel/config:nis_enabled": ["yes"], "//conditions:default": ["no"]}))
+[bsd_install_file(name = "config_" + name, src = source, destination = "/etc/" + name,
+    owner = "root", group = "wheel", mode = "0644", install_tags = ["package=runtime", "config"])
+ for name, source in [("hosts", "hosts"), ("hosts.equiv", "hosts.equiv"), ("networks", "networks"),
+                      ("protocols", "protocols"), ("nsswitch.conf", ":nsswitch_generated")]]
+bsd_install_manifest(name = "config_manifest", entries = [":config_" + n for n in ["hosts", "hosts.equiv", "networks", "protocols", "nsswitch.conf"]],
+    visibility = ["//lib/libc:__pkg__"])

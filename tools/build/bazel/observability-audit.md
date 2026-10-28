@@ -4346,3 +4346,11 @@ NSS parser behavior remain unchanged. 82 objects have symbol/text comparison;
 parser generation differences are confined to verified #line paths. No live NSS,
 cache daemon, NIS/Hesiod, kernel/network or audit-event behavior is qualified.
 Final shared libc provider processing and registration remain open.
+
+### 2026-10-28: libc configuration staging
+
+Native staging preserves all libc network/NSS/RPC/account/MAC configuration and
+reuses existing pwd_mkdb generation. Make metadata and bytes match with NIS on
+and off (fresh staging only). Generated account files remain untagged state.
+No host account mutation, MAC policy installation, live authentication/NSS or
+audit event behavior was exercised; those remain installed-system tests.

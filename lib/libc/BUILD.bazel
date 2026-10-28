@@ -12,3 +12,32 @@ bsd_dtrace_header(name = "nameres_provider", source = "nameres_provider.d", outp
     tool_inputs = ["@bsd_sdk//toolchain:compile_inputs", "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
 cc_library(name = "nameres_provider_headers", hdrs = [":nameres_provider"], strip_include_prefix = ".",
     visibility = ["//lib/libc/resolv:__pkg__", "//lib/libc/net:__pkg__"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+[bsd_install_file(name = "config_" + name, src = source, destination = "/etc/" + name,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=runtime", "config"])
+ for name, source, mode in [("group", "//etc:group", "0644"), ("master.passwd", "//etc:master.passwd", "0600"),
+                           ("shells", "//etc:shells", "0644"), ("mac.conf", "//lib/libc/posix1e:mac.conf", "0644")]]
+bsd_install_manifest(name = "base_config_manifest", entries = [":config_" + n for n in ["group", "master.passwd", "shells", "mac.conf"]])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Configuration plus generated fresh-system state; package payload excludes
+# the untagged account database manifest. No account migration is performed.
+bsd_install_archive(
+    name = "config_archive",
+    manifests = [":base_config_manifest", "//lib/libc/net:config_manifest", "//lib/libc/rpc:config_manifest", "//etc:account_install_manifest"],
+    directories = {"/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

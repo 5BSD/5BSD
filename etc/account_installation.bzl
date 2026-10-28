@@ -5,15 +5,16 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 def account_installation():
     entries = []
-    # Matches packages/runtime/runtime.ucl account-databases output policy.
+    # Generated state matches Make and runtime.ucl construction actions.
+    # Do not package prebuilt account databases over local configuration.
     for filename, group, mode in [("passwd", "passwd", "0644"), ("pwd.db", "pwd_db", "0644"), ("spwd.db", "spwd_db", "0600")]:
         name = "account_" + group
         native.filegroup(name = name, srcs = [":account_databases"], output_group = group)
         bsd_install_file(name = name + "_install", src = ":" + name,
             destination = "/etc/" + filename, owner = "root", group = "wheel",
-            mode = mode, install_tags = ["package=runtime"])
+            mode = mode, install_tags = [])
         entries.append(":" + name + "_install")
-    bsd_install_manifest(name = "account_install_manifest", entries = entries)
+    bsd_install_manifest(name = "account_install_manifest", entries = entries, visibility = ["//lib/libc:__pkg__"])
     bsd_install_archive(name = "account_install_archive", manifests = [":account_install_manifest"],
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/"},
         passwd = ":master.passwd", group = ":group",

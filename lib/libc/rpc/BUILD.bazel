@@ -94,3 +94,9 @@ cc_library(
 bsd_component_archive(name = "objects_archive", groups = [":rpc_objects"])
 bsd_component_archive(name = "pic_objects_archive", groups = [":rpc_objects"], pic = True)
 exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+[bsd_install_file(name = "config_" + name, src = name, destination = "/etc/" + name,
+    owner = "root", group = "wheel", mode = "0644", install_tags = ["package=runtime", "config"])
+ for name in ["netconfig", "rpc"]]
+bsd_install_manifest(name = "config_manifest", entries = [":config_netconfig", ":config_rpc"], visibility = ["//lib/libc:__pkg__"])
