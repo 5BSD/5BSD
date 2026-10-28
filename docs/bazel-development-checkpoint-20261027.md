@@ -7775,3 +7775,33 @@ lookup, broader malformed-input cases and live NIS integration remain open.
 Existing build-bsd explicit-target collection suffices; no frontend or backend
 change is required for this evidence-only qualification. Full-system gates
 remain open and Make remains production/default.
+
+## 2026-10-28 maintained mknetid ATF suite: runtime gate open
+
+Added six shared ATF shell cases and Make test traversal, native Bazel test
+registration, wrapper/Kyua generation and installation manifests. Fixtures
+cover the six previously qualified explicit-file cases; installed tests use
+/usr/libexec/mknetid, while build tests receive executable/loader/library paths
+through declared ATF configuration. No production source behavior changed.
+
+Make built the suite in bazel-mknetid-atf-reference-20261028. Bazel wrapper and
+Kyua bytes match exactly: bazel-mknetid-test-install-20261028/qualification/
+test-artifact-parity.json. This does not establish aggregate test packaging.
+
+Both native test attempts FAILED before their bodies: bazel-mknetid-tests-
+20261028 and -r2. ATF shell initialization calls dirname; that helper aborts
+in cap_rights_intersect on cap_rights_is_valid(src). Source inspection identifies
+caph_limit_stream's intersection with rights returned by cap_rights_get as the
+path requiring investigation. The first attempt used native libc for all
+helpers; r2 explicitly separates SDK harness libraries from native mknetid
+libraries, but reproduces the assertion. Thus blaming only new libc selection
+is not supported. Host/source rights compatibility remains undiagnosed.
+No helper replacement, assertion suppression, skip or expected-success rewrite
+was introduced. Six external qualification checks from the prior entry still
+pass; ZERO registered ATF cases pass here. Test runtime remains an open gate.
+
+Reviewed build-bsd.c: existing format-5 test/artifact collection supports this
+suite and records failures; no frontend change needed. Next work: diagnose
+rights returned to the helper and qualify a compatible runtime, then rerun
+all six tests and complete installation aggregation/parity. Make remains
+production/default; whole-system and performance qualification remain open.

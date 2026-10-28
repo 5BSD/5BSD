@@ -5114,3 +5114,12 @@ match fixed expected results and Make under the same native loader/libraries.
 No default-domain lookup, NIS service, live probes or audit stream is exercised.
 These are external qualification checks; native Bazel test registration is
 still outstanding.
+
+## 2026-10-28 mknetid ATF registration catches harness failure
+
+Registered six diagnostic/map cases in the maintained ATF suite. Both Bazel
+runs abort in the dirname helper before any case body, at the capability-rights
+validation assertion reached from stream-rights limiting. This is a real open
+runtime compatibility gate; no instrumentation, capability check or assertion
+was removed to obtain a pass. Exact rights/host compatibility diagnosis is
+pending. Wrapper/Kyua build parity alone does not count as runtime coverage.
