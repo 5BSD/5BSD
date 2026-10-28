@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+
+cc_library(
+    name = "objects",
+    srcs = [
+        "_setjmp.S",
+        "setjmp.S",
+        "sigsetjmp.S",
+        "fabs.S",
+        "infinity.c",
+        "//lib/libc/gen:ldexp.c",
+        "makecontext.c",
+        "signalcontext.c",
+        "flt_rounds.c",
+        "fpgetmask.c",
+        "fpsetmask.c",
+        "fpgetprec.c",
+        "fpsetprec.c",
+        "fpgetround.c",
+        "fpsetround.c",
+        "fpgetsticky.c",
+    ],
+    # ldexp includes the maintained scalbn implementation directly.
+    textual_hdrs = ["//lib/msun:src/s_scalbn.c"],
+    implementation_deps = ["//lib/libsys/amd64:sys_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({
+        "//tools/build/bazel/config:nls_enabled": ["NLS"],
+        "//conditions:default": [],
+    }),
+    copts = ["-fexceptions", "-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "objects_archive", groups = [":objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":objects"], pic = True, visibility = ["//lib/libc:__pkg__", "//lib/libc/tests/gen:__pkg__"])

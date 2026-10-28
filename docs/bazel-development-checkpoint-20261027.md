@@ -5806,3 +5806,31 @@ machdep_optimizations setting exercise both selections; no new CLI/backend or
 publication contract is needed for these component targets. No host installation
 or runtime configuration changes. The next libc work includes gen routines,
 generated syscall assembly and the final aggregate/link/install/runtime gates.
+
+## 2026-10-28: amd64 libc general routines and makecontext tests
+
+Adds all 16 sources selected by amd64/gen/Makefile.inc as explicit native
+ordinary/PIC component objects: jump/context handling, floating-point controls,
+fabs/infinity and ldexp. ldexp remains the maintained gen source with its msun
+s_scalbn.c textual input declared; no generated copy or source substitution.
+SYS.h visibility is extended narrowly to this package. Existing libsys and
+msun targets are preserved.
+
+Evidence: /usr/obj/usr/src/bazel-libc-amd64gen-build-20261028/qualification/
+parity.json against bazel-libc-amd64gen-make-20261028: all 32 ordinary/PIC objects
+match .text and global/unresolved symbols. Full relocation/data/debug identity
+and complete libc linking/install/ABI qualification remain outstanding.
+
+Native Bazel ATF integration runs the unchanged makecontext_test.c, covering
+one through six integer arguments and context return. All six cases pass with
+no skips in bazel-libc-amd64gen-test-20261028/receipt.json. Its qualification/
+link-proof.json confirms __makecontext is defined and makecontext is the native
+weak alias, while getcontext/swapcontext remain SDK imports. This is native
+makecontext component coverage with SDK support, not a complete native context
+or libc runtime. Jump/signal state, floating-point control tests, invalid context
+inputs and performance remain unqualified.
+
+Frontend review: existing build-bsd bazel-test format-5 targets/tests, native
+C/assembly toolchain and ATF reporting support these additions without a new
+frontend option or backend contract. Make remains the production/default build.
+No host installation, signal-policy or account changes were made.

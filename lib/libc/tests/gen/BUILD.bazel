@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+
+# Native makecontext with SDK getcontext/swapcontext and remaining libc.
+cc_import(name = "amd64_gen_pic", static_library = "//lib/libc/amd64/gen:pic_objects_archive")
+cc_binary(
+    name = "makecontext_objects_test",
+    srcs = ["makecontext_test.c"],
+    deps = [":amd64_gen_pic", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)
+[
+    bsd_atf_test(
+        name = "native_makecontext_arg" + str(n),
+        case_name = "makecontext_arg" + str(n),
+        interface = "program",
+        body = ":makecontext_objects_test",
+        runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+        runner = "//tools/build/bazel:atf_runner",
+        size = "small",
+        visibility = ["//visibility:public"],
+    )
+    for n in range(1, 7)
+]

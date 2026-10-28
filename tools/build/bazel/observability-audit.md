@@ -4546,3 +4546,12 @@ including timing-safe and explicit-zero routines, but do not establish timing,
 zeroization at runtime, IFUNC selection or memory-boundary behavior. Maintained
 string tests (including timing-safe, memcpy and locale cases) still need native
 runtime integration; object parity does not replace those tests.
+
+## 2026-10-28: amd64 libc general routines
+
+No direct SDT/DTrace or BSM audit hooks found in the 16 migrated sources.
+Jump/context and floating-point paths retain their existing behavior; no new
+instrumentation added. Object parity is not runtime signal-state, FP-control or
+tracing evidence. Six maintained makecontext argument/return cases pass with
+native makecontext and SDK context syscalls; setjmp/sigsetjmp and maintained
+fpsetmask/fpsetround tests still need native runtime integration.
