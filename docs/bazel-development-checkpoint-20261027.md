@@ -2458,3 +2458,26 @@ processing and package tags support these additions without new C/backend
 options. Live label lifecycle assertions, hook counters, denial injection,
 complete kernel/world/pkgbase and resource/performance qualification remain
 open. Make remains production/default; BIP remains out of scope.
+
+### Native openES module
+
+Added the complete maintained five-source oes module inventory, explicit
+kernel/internal/capability-label/MAC/audit/network headers, native opt_mac
+and generated vnode inputs. Existing userland header targets remain intact.
+Runtime/debug metadata retain package=oes. No event protocol, authorization,
+cache, timeout or enforcement policy source was changed.
+
+Evidence: `/usr/obj/usr/src/bazel-oes-module-20261028/qualification`, including
+the comparison script, raw dumps and staged metadata checks. The module
+matches maintained Make symbols, relocations, text/data/rodata, raw CTF and
+all SDT sections. Separate debug identity/CRC and NO_ROOT metadata checks
+pass. The reference is `/usr/obj/usr/src/bazel-oes-make-20261028`.
+Current module comparison batch: forty-five.
+
+Frontend review: format-5 target selection and existing module/debug/install
+processing cover these additions without new C/frontend/backend options.
+This is artifact evidence only. Live openES authorization/notification,
+client attach/detach, timeout/failure modes, cache invalidation, queue pressure,
+ABAC interaction and audit delivery remain runtime gates. No host module was
+loaded or installed. Full kernel/world/pkgbase/publication and performance
+qualification remain open; Make stays production/default and BIP excluded.

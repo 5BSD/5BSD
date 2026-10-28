@@ -59,3 +59,5 @@ bsd_ctf_library(name = "generic_builtin_ctf", library = ":generic_builtin_object
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
     ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label", preserve_debug = True)
 filegroup(name = "generic_builtin_object_files", srcs = [":generic_builtin_ctf"], output_group = "regular_objects", visibility = ["//visibility:public"])
+
+cc_library(name = "label_headers", hdrs = ["mac_capability_label.h"], includes = ["../.."], visibility = ["//sys/security/oes:__pkg__"])

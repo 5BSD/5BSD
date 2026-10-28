@@ -3250,3 +3250,13 @@ by native artifact parity. mac_test_hooks exposes per-hook invocation
 counters and denial controls. Later runtime tests must demonstrate counter
 increments and the requested denials on the actual linked test kernel;
 compilation does not establish hook invocation, race safety or audit delivery.
+
+### openES module (2026-10-28)
+
+All compiled SDT sections match Make; oes_event.c contains nine direct probe
+definitions. The existing authorization-denial AUDIT_ARG_TEXT annotation in
+oes_mac.c and process audit identity capture in oes_client.c are preserved.
+Neither compiled parity nor these call sites establish actual event/audit
+delivery. Runtime qualification must exercise allow/deny, client disconnect,
+timeout modes, queue/drop pressure and cache invalidation with ABAC enabled.
+No probes, audit behavior or security policy were changed in this conversion.

@@ -3,3 +3,10 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = ["oes.h", "oes_event_table.h"], strip_include_prefix = "/sys",
     visibility = ["//visibility:public"])
 exports_files(["oes.h", "oes_event_table.h"], visibility = ["//lib/liboes:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+cc_library(name = "kernel_headers", hdrs = ["oes.h", "oes_event_table.h", "oes_internal.h"], includes = ["../.."],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(srcs = ["oes_dev.c", "oes_client.c", "oes_cache.c", "oes_event.c", "oes_mac.c"],
+    deps = [":kernel_headers", "//sys/amd64/conf:generic_opt_mac_header", "//sys/security/mac:policy_headers",
+        "//sys/security/audit:kernel_headers", "//sys/netinet:address_headers", "//sys/dev/mac_capability:label_headers"])
