@@ -5186,3 +5186,11 @@ isolated mailbox ownership/locking and delivery failure tests for mail.local,
 and command allowlisting, path validation, metacharacter rejection and exec
 failure tests for smrsh. No live mail, logging or authorization claim follows
 from build/install parity. Custom SENDMAIL build flags remain unqualified.
+
+## 2026-10-28 private libevent1
+
+Eight maintained sources produce Make-identical ordinary/PIC executable code
+and symbols. Build parity preserves existing logging and backend code but does
+not establish event delivery, descriptor lifetime, timeout, signal, or teardown
+behavior. Qualify kqueue/poll/select paths with consumers in a compatible guest;
+no runtime or tracing coverage is claimed by this dependency conversion.

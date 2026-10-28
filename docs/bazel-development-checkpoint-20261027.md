@@ -8028,3 +8028,27 @@ command rejection/execution, and logging require isolated runtime qualification.
 Inspection also found tftp-proxy's native libevent dependency still missing;
 that prerequisite remains on the remaining-libexec list. Full-system, package,
 cache and performance gates remain open; Make stays production/default.
+
+## 2026-10-28 native private libevent1 prerequisite
+
+Added native cc_library/component archives/shared library for the eight
+maintained contrib/pf/libevent sources, explicit private headers, and public
+event.h interface. Feature defines and VERSION=1.3b match lib/libevent1/Makefile.
+The DSO retains the private SONAME libprivateevent1.so.1; no public libevent ABI
+or ports-library substitution was introduced. This supplies the native build
+dependency needed by PF proxy consumers, whose conversion remains pending.
+
+Through build-bsd at 16 jobs, ordinary/PIC archives and the DSO build. All
+16 ordinary/PIC object .text bodies and global/undefined symbol sets match
+independent Make. The DSO matches 136 dynamic entries, libc-only NEEDED,
+private SONAME and empty RPATH/RUNPATH. Evidence:
+/usr/obj/usr/src/bazel-event1-20261028/qualification/parity.json. Make reference
+and retained verifier: bazel-event1-reference-20261028/{objects,verify.py};
+build command and output are retained there. Runtime source was unchanged.
+
+Reviewed build-bsd.c: existing explicit-target qualification and artifact
+collection handle these outputs; no frontend change required at this step.
+Library installation/header/symlink/debug/pkg metadata, backend runtime tests,
+consumer linking and incremental/cache qualification still need completion.
+No event-loop runtime or PF/network operation was executed. Full world/kernel,
+pkgbase/publication and performance gates remain open; Make stays default.

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "event1", srcs = ["//contrib/pf/libevent:buffer.c", "//contrib/pf/libevent:evbuffer.c", "//contrib/pf/libevent:event.c", "//contrib/pf/libevent:kqueue.c", "//contrib/pf/libevent:log.c", "//contrib/pf/libevent:poll.c", "//contrib/pf/libevent:select.c", "//contrib/pf/libevent:signal.c", "//contrib/pf/libevent:event-internal.h", "//contrib/pf/libevent:evsignal.h", "//contrib/pf/libevent:log.h"],
+    deps = ["//contrib/pf/libevent:headers"],
+    local_defines = ["HAVE_CLOCK_GETTIME", "HAVE_FCNTL_H", "HAVE_POLL", "HAVE_SELECT", "HAVE_SETFD", "HAVE_STDARG_H", "HAVE_SYS_IOCTL_H", "HAVE_SYS_TIME_H", "HAVE_UNISTD_H", "HAVE_VASPRINTF", "HAVE_WORKING_KQUEUE", "VERSION=\\\"1.3b\\\""],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":event1"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = [":event1"], pic = True)
+cc_shared_library(name = "event1_shared", deps = [":event1"], shared_lib_name = "libprivateevent1.so.1",
+    user_link_flags = ["-Wl,-soname,libprivateevent1.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
