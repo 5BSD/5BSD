@@ -2962,3 +2962,27 @@ UID/GID/group transitions and MAC/audit outcomes require linked-kernel tests.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 remains production/default; module count remains 45. No host installation
 or BIP work occurred.
+
+### Native executable loading
+
+Added //sys/kern:generic_exec_object_files for kern_exec.c, selected by the
+maintained GENERIC Makefile. Dependencies declare CK/VM, MAC, audit, HWPMC
+and HWT hooks, and generated Capsicum/KTRACE/HWPMC_HOOKS/HWT_HOOKS/VM headers.
+HWT_HOOKS remains enabled according to native GENERIC config; no tracing
+feature was disabled to compile. No exec or policy source behavior changed.
+
+Evidence: `/usr/obj/usr/src/bazel-exec-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. All five generated option headers match Make bytes. Reference
+log: `/usr/obj/usr/src/bazel-exec-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and generated inputs cover this
+addition without new build-bsd C/backend options, staging or manual changes.
+No runtime tests ran. Executable/interpreter activation, fexecve, set-id,
+credential transitions, policy denial and failed-exec cleanup remain linked-
+kernel qualification. Full kernel/world/pkgbase/bootstrap and performance
+gates remain open. Make remains production/default; module count remains 45.
+No host installation or BIP work occurred.

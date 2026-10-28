@@ -3465,3 +3465,14 @@ instrumentation. Evidence:
 No policy or instrumentation source was changed. Live signal-denial behavior,
 credential transitions, MAC decisions, audit records and probe firing remain
 unqualified; compile parity alone does not establish end-to-end coverage.
+
+### Executable loading (2026-10-28)
+
+kern_exec.c defines proc exec/exec-failure/exec-success SDT probes, includes
+KDTRACE/HWPMC/HWT hooks and records argv/environment/vnode/fd audit arguments.
+Native GENERIC output matches Make symbols, raw CTF, allocated sections and
+runtime relocations, including instrumentation. Evidence:
+`/usr/obj/usr/src/bazel-exec-kernel-20261028/qualification`.
+Generated hook options match Make; no instrumentation was disabled or runtime
+source changed. Live successful/failed exec, tracing hooks, audit records and
+policy enforcement remain unqualified.
