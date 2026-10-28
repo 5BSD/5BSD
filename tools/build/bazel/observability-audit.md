@@ -5352,3 +5352,13 @@ rejection pass against the native libucl dependency. These checks do not qualify
 file includes, schema validation, parser resource limits or privileged consumers'
 audit behavior. Nuageinit integration remains open. Evidence:
 /usr/obj/usr/src/bazel-flua-ucl-20261028/qualification/.
+
+
+### private libyaml (2026-10-28)
+
+All eight original C sources are declared in the native library target; ordinary
+and PIC machine code/global symbols match Make. Build/install qualification does
+not establish parser resource limits, malformed-input handling, emitter runtime
+behavior or privileged consumers' audit integration. Runtime qualification will
+continue through the flua YAML binding and its consumers. Evidence:
+/usr/obj/usr/src/bazel-yaml-20261028/qualification/.

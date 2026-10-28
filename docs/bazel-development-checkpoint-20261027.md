@@ -8492,3 +8492,28 @@ handling: current targets/artifact collection need no frontend change. Remaining
 flua modules, Bazel-owned tests, bootstrap and complete world/kernel/pkgbase/
 cache/performance gates remain open. No host installation/configuration changes;
 Make remains production/default.
+
+
+## 2026-10-28: native private libyaml dependency
+
+Flua's YAML module had no native libyaml dependency available. Added all eight
+maintained libyaml source files with declared public/private headers and the
+Make version definitions (0.2.5). Targets provide ordinary/PIC archives, native
+CcInfo and libprivateyaml.so.1. Installation preserves private yaml.h, the static
+archive, DSO/symlink, split debug file and package=libyaml metadata.
+
+All 16 ordinary/PIC object .text/global-symbol comparisons pass against isolated
+Make. The DSO matches 79 dynamic symbols, libc-only NEEDED, SONAME and empty
+RPATH/RUNPATH. All seven installation records, header bytes, archive member
+inventory, symlink and debug checks pass; installed static archive equals the
+native archive and stripping preserves executable text.
+
+Evidence: /usr/obj/usr/src/bazel-yaml-20261028/qualification/{parity.json,
+installation-parity.json}. Reference: bazel-yaml-install-reference-20261028;
+objects/scripts: bazel-yaml-reference-20261028/{objects,install.py,verify.py,
+verify-install.py}. Builds ran through maintained build-bsd with 16 jobs.
+Reviewed build-bsd.c: existing explicit targets and collection cover the new
+outputs without frontend changes. This is build/install qualification only;
+parser runtime, flua YAML module and its Lua payloads remain pending. Full world,
+kernel/pkgbase/cache/performance gates remain open. Make remains default, with
+no host installation or configuration changes.
