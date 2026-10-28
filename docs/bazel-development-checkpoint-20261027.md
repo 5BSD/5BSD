@@ -3405,3 +3405,26 @@ parameter handling and POSIX sysctl reporting require linked-kernel tests.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 remains production/default; module count remains 45. No host installation
 or BIP changes occurred.
+
+### Native getrandom syscall and UUID generation
+
+Added //sys/kern:generic_random_uuid_object_files for sys_getrandom.c and
+kern_uuid.c, selected by the maintained GENERIC Makefile. Dependencies declare
+CK/VM and network/interface/link-address headers. No entropy or UUID source
+behavior changed. This batch does not qualify entropy provider implementations.
+
+Evidence: `/usr/obj/usr/src/bazel-random-uuid-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. Reference log:
+`/usr/obj/usr/src/bazel-random-uuid-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets cover these objects without new
+build-bsd C/backend options, staging or manual changes. No runtime tests ran.
+Early-boot entropy, blocking/nonblocking/error behavior, interrupted reads and
+UUID generation under jail/concurrency conditions require linked-kernel tests.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+remains production/default; module count remains 45. No host installation
+or BIP changes occurred.

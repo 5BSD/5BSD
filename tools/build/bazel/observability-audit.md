@@ -3676,3 +3676,14 @@ relocations. Evidence:
 `/usr/obj/usr/src/bazel-kthread-posix-kernel-20261028/qualification`.
 No runtime source changed. Live thread lifecycle, policy decisions and logging
 remain unqualified.
+
+### Getrandom and UUID generation (2026-10-28)
+
+sys_getrandom.c and kern_uuid.c have no local SDT/AUDIT calls. Review syscall
+mapping and provider-level observability before deciding whether additional
+instrumentation is needed; randomness payloads should not be logged. Native
+GENERIC objects match Make symbols, raw CTF, allocated sections and runtime
+relocations. Evidence:
+`/usr/obj/usr/src/bazel-random-uuid-kernel-20261028/qualification`.
+No runtime source changed. Entropy quality/provider behavior and live syscall
+semantics are not established by compilation parity.
