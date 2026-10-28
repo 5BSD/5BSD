@@ -3697,3 +3697,13 @@ sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-logging-kernel-20261028/qualification`.
 No source instrumentation changed. End-to-end delivery to normal logging
 services, buffer wraparound and reader lifecycle remain unqualified.
+
+### Kernel formatted output and sbuf (2026-10-28)
+
+subr_prf.c and subr_sbuf.c have no local SDT/AUDIT calls. These formatting
+primitives underpin logging; their lack of probes alone is not a coverage
+failure. Native GENERIC objects match Make symbols, raw CTF, allocated
+sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-formatted-output-kernel-20261028/qualification`.
+No runtime source changed. Console delivery, sbuf drain/error handling and
+concurrent logging remain unqualified.
