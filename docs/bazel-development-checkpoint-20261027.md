@@ -1660,3 +1660,60 @@ for the new modules, module runtime tests, and broader kernel qualification.
 Frontend review remains unchanged: the maintained format-5 target selection
 and kernel-directory settings suffice; no additional frontend option is
 needed. These are native module artifacts, not a complete kernel build.
+
+### 2026-10-28: installation/cache closure and next modules
+
+Unionfs's staged Make install now matches Bazel paths, ownership, permissions,
+file types and package/debug tags. Evidence: filesystem-modules qualification
+`installation-comparison.json`. An identical frontend invocation retained
+identical artifact hashes and an empty spawned-action log at
+`/usr/obj/usr/src/bazel-filesystem-modules-repeat-20261028`; the nullfs test
+result was reused, not executed again. This proves unchanged-input reuse,
+not invalidation correctness under source/header/configuration edits.
+
+Native tmpfs and pseudofs definitions have been added, using option headers
+extracted from actual GENERIC config outputs, explicit source lists and
+pseudofs's maintained 11-symbol export list. Both build through the existing
+format-5 frontend. No new frontend C option is necessary.
+Evidence: `/usr/obj/usr/src/bazel-tmpfs-pseudofs-20261028/qualification`,
+with Make references `/usr/obj/usr/src/bazel-{tmpfs,pseudofs}-make-20261028`.
+
+**Not yet qualified:** debuglink and symbol comparisons pass, but rodata and
+relocation comparisons fail for both; tmpfs raw CTF also differs. Diagnostic
+strings contain virtual-header paths (pseudofs_internal.h, tmpfs.h and
+vm_pager.h), unlike Make's source paths. Correct this through compiler path
+mapping derived from declared header locations, not rewriting source or
+output bytes or hardcoding a particular Bazel output-root spelling. Inspect
+the CTF difference independently. Machine-code bytes and SDT section bytes
+currently match; that does not waive the differences. Neither module was
+loaded, and their install/cache/runtime qualification remains outstanding.
+
+### Resolved: header identity and CTF ordering
+
+The earlier tmpfs/pseudofs mismatches above are resolved. Source headers in
+`sys/vm`, `sys/fs/tmpfs` and `sys/fs/pseudofs` now expose their existing
+source include root through ordinary cc_library includes and declared hdrs,
+rather than redundant virtual aliases. No Bazel output-directory spelling
+is embedded, no output bytes are rewritten, and header dependencies remain
+declared. This resolved rodata and relocation differences.
+
+Tmpfs's individual four objects already had identical raw CTF to Make.
+`ctfmerge.c` sorts its input paths before merging; the ordinal directory
+before each basename changed merge order and type IDs. The CTF conversion
+rule now places basename before its collision-disambiguating index, retaining
+distinct equal-basename inputs while restoring Make's basename ordering for
+these modules. This resolved tmpfs's raw CTF mismatch.
+
+Final evidence: `/usr/obj/usr/src/bazel-tmpfs-pseudofs-ctf-20261028/qualification`.
+The tmpfs, pseudofs, fdescfs and unionfs comparisons all pass for full runtime
+symbol and relocation listings, text/data/rodata bytes and raw SUNW CTF.
+All four debug-file identity/debuglink CRC checks pass. Raw comparison dumps
+and comparison.json are retained. Nullfs's existing artifact test result
+was reused from cache, not rerun. These changes continue to use the existing
+frontend format-5 inputs; no frontend C option or publication-policy change
+is required.
+
+Outstanding for tmpfs/pseudofs: staged installation metadata, unchanged-input
+and selective invalidation checks, live module behavior/probes and broader
+performance qualification. CTF output layout changes other users of the
+shared conversion rule; whole-world requalification remains required.

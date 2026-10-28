@@ -41,8 +41,11 @@ def _convert(ctx):
             fail("duplicate CTF object inputs")
         outputs = []
         for index, obj in enumerate(objects):
-            # Indexed directories retain distinct equal-basename input objects.
-            out = ctx.actions.declare_file(ctx.label.name + "/" + variant + "/" + str(index) + "/" + obj.basename)
+            # ctfmerge sorts input paths before merging types. Put the object
+            # basename before the collision discriminator so unique-basename
+            # inputs retain the same ordering as ordinary Make objects.
+            # The index still distinguishes equal-basename input objects.
+            out = ctx.actions.declare_file(ctx.label.name + "/" + variant + "/" + obj.basename + "/" + str(index) + "/" + obj.basename)
             ctx.actions.run(executable = ctx.attr.converter[DefaultInfo].files_to_run,
                 arguments = (["-g"] if ctx.attr.preserve_debug else []) + ["-l", label, "-o", out.path, obj.path],
                 inputs = [obj], tools = ctx.files.runtime, outputs = [out],

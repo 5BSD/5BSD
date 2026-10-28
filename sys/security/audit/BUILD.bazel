@@ -1,2 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(['audit_syscalls.c'], visibility = ["//usr.sbin/BSDAudit/tests:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "kernel_headers", hdrs = ["audit.h"], strip_include_prefix = ".",
+    include_prefix = "security/audit", deps = ["//sys/bsm:kernel_headers"], visibility = ["//visibility:public"])

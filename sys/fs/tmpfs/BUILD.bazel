@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+cc_library(name = "headers", hdrs = ["tmpfs.h", "tmpfs_fifoops.h", "tmpfs_vnops.h"], includes = ["../.."],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(srcs = ["tmpfs_vnops.c", "tmpfs_fifoops.c", "tmpfs_vfsops.c", "tmpfs_subr.c"],
+    deps = [":headers", "//sys/amd64/conf:generic_opt_tmpfs_header", "//sys/amd64/conf:generic_opt_ddb_header", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers"])

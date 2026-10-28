@@ -3009,3 +3009,18 @@ The native GENERIC build preserves both probes. All SDT sections, their
 relocations, and runtime symbol listings match the Make reference in
 `/usr/obj/usr/src/bazel-filesystem-modules-20261028/qualification`.
 This is artifact evidence; no live DTrace firing was tested.
+
+### tmpfs/pseudofs conversion in progress (2026-10-28)
+
+Tmpfs declares 11 SDT probes across rename/node/capacity/vnode/reclaim/resize.
+Its SDT section bytes match Make in the initial artifact comparison, but
+rodata/relocation/CTF mismatches remain under investigation. It includes
+audit.h but the inspected sources contain no direct AUDIT_* calls. Pseudofs
+has no explicit SDT or AUDIT_* calls. These observations do not establish
+common VFS audit coverage; live probe/audit qualification remains open.
+
+Tmpfs/pseudofs follow-up: header identity and CTF ordering mismatches were
+resolved without source changes. Complete runtime symbol and relocation
+listings now match Make; text/data/rodata and raw CTF also match. Evidence:
+`/usr/obj/usr/src/bazel-tmpfs-pseudofs-ctf-20261028/qualification`. Live probe
+firing and common VFS audit coverage remain untested.

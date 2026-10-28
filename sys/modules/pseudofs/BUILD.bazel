@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "pseudofs", objects = ["//sys/fs/pseudofs:generic_module_object_files"],
+    exports = ["pfs_cmount", "pfs_mount", "pfs_unmount", "pfs_root", "pfs_statfs", "pfs_init", "pfs_uninit", "pfs_create_dir", "pfs_create_file", "pfs_create_link", "pfs_destroy"])
