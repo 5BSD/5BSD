@@ -4613,3 +4613,13 @@ pass; runtime audit delivery is not established. arc4random private _elf_aux_inf
 linkage requires native libc/libsys integration before its maintained fork and
 uniform-bound tests can run. Repeated reseed, concurrency, fallback and latency
 qualification remain open; object parity is not cryptographic validation.
+
+## 2026-10-28: libc system/path/terminal helper group
+
+No direct SDT/DTrace or BSM audit hooks found in these 57 migrated sources.
+Existing syslog/diagnostic behavior and syscall observation paths are retained;
+object/exception-section parity does not establish runtime event delivery.
+wordexp's maintained shell builtin, syslog socket recovery and terminal/service
+interaction require later runtime qualification. crypt.c contains pre-existing
+legacy compatibility stubs; no cryptographic behavior or new instrumentation
+is asserted by its native compilation.

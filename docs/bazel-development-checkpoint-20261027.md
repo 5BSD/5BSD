@@ -6040,3 +6040,31 @@ Frontend review: existing build-bsd format-5 targets/tests support the native
 objects and getentropy cases; no new frontend/backend contract needed. Builds
 used 16 CPUs. Make remains production/default; no host installation or entropy
 configuration changes occurred.
+
+## 2026-10-28: libc system/path/terminal helpers
+
+Adds 57 explicit sources to system_helper_objects: pathname and filename matching,
+system/device/mount queries, terminal helpers, diagnostics/syslog, shell expansion,
+legacy compatibility and related gen routines. Private reentrancy, error-list,
+collation and compatibility headers are declared. NLS/NIS/Hesiod settings are
+explicit; this qualification uses NLS on, NIS off, Hesiod off. getusershell's
+NIS/Hesiod paths still need alternate configuration checks.
+
+Evidence: /usr/obj/usr/src/bazel-libc-helpers-build-20261028/qualification/parity.json
+against bazel-libc-helpers-make-20261028. All 114 ordinary/PIC objects match .text,
+global/unresolved symbols. exception-sections.json confirms matching raw .eh_frame
+and .gcc_except_table presence/contents. No full data/debug/relocation, runtime,
+versioned ABI or complete libc link/install qualification is claimed.
+
+Source review: crypt.c is the existing legacy compatibility stub implementation,
+not functional encryption. No new stub was introduced by this migration.
+wordexp uses the maintained /bin/sh freebsd_wordexp builtin; runtime tests must
+qualify that actual shell dependency. syslog socket/reconnect behavior, terminal
+interaction, mounts, path edge cases and namespace/service behavior remain open.
+
+Inventory caution: source exports such as pw_scan.c and getcap.c in gen/BUILD.bazel
+serve other native consumers and must not be counted as native libc object groups.
+The remaining libc inventory must distinguish exports from compiled source lists.
+Frontend review: existing build-bsd format-5 targets/settings support these objects;
+no new frontend/backend contract required. Builds used 16 CPUs; Make remains
+production/default and no host installation or configuration changes occurred.
