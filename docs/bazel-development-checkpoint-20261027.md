@@ -6159,3 +6159,28 @@ No account/authentication/NSS service runtime tests or host account/policy chang
 were performed. Frontend review: existing build-bsd format-5 settings/targets
 support these cases; no frontend/backend contract change required. Compilation
 uses 16 CPUs, and Make remains production/default.
+
+## 2026-10-28: libc capability-rights source and syscall-generation review
+
+Adds libc/capability's subr_capability.c directly from the shared sys/kern source,
+compiled without _KERNEL, with a narrow source export and Symbol.map export for
+the future aggregate. Existing sys/kern native targets are preserved.
+
+Evidence: /usr/obj/usr/src/bazel-libc-capability-build-20261028/qualification/
+parity.json and exception-sections.json against a fresh Make reference. Both
+ordinary/PIC objects match .text, global/unresolved symbols and raw exception
+section contents/presence. This does not qualify capability enforcement, object
+rights propagation, kernel isolation, complete libc ABI or runtime behavior.
+No capability policy or host process rights were changed.
+
+Next generated-interface work can reuse the maintained libsys/gen-syscall.sh and
+tools/build/bazel/bsd_syscall_asm.bzl. Explicit native syscall inventory must
+preserve normal versus PSEUDO/INTERPOSED selection, amd64 handwritten exclusions,
+GNU stack notes and libc's empty shared syscall bodies. Existing configured
+exporter metadata is reference evidence, not a substitute for native authoritative
+Bazel targets. Final libc/libsys source reconciliation, version maps/filtering,
+combined DTrace DOF, installation/debug/pkgbase and runtime gates remain open.
+
+Frontend review: build-bsd's existing format-5 targets compile this component;
+no new frontend/backend contract required. Builds use 16 CPUs and Make remains
+production/default. No installation, upgrade or reboot occurred.

@@ -4649,3 +4649,11 @@ probes belong to the separate net group and eventual combined libc DOF link.
 Three configuration comparisons pass, but authentication, account-policy effects,
 NIS/Hesiod service behavior, NSS cache recovery and concurrent lookup runtime
 coverage remain outstanding. No host account/group or NSS configuration changed.
+
+## 2026-10-28: libc capability-rights helper
+
+No direct SDT/DTrace or BSM audit hooks found in subr_capability.c. Its maintained
+userspace implementation is compiled directly; no new policy or instrumentation
+added. Ordinary/PIC object and exception-section parity does not establish kernel
+rights enforcement or runtime auditing. Existing capsicum tests and full native
+libc/kernel integration remain necessary for those claims.

@@ -435,3 +435,5 @@ amd64_generic_kernel_objects(name = "generic_process_metadata", srcs = ["kern_pr
         "//sys/amd64/conf:generic_opt_kstack_pages_header", "//sys/amd64/conf:generic_opt_stack_header"])
 
 exports_files(["subr_acl_nfs4.c"], visibility = ["//lib/libc/posix1e:__pkg__"])
+
+exports_files(["subr_capability.c"], visibility = ["//lib/libc/capability:__pkg__"])
