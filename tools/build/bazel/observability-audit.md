@@ -3096,3 +3096,11 @@ The inspected RAID C sources contain no explicit SDT_* or AUDIT_* calls
 Metadata detection, rebuild/resync, degraded I/O and fault handling are
 candidates for instrumentation review alongside common GEOM coverage. No
 live array, fault-injection or audit behavior was qualified.
+
+### GEOM ELI (2026-10-28)
+
+The nine inspected ELI sources have no explicit SDT_PROBE_DEFINE or AUDIT_*
+calls. Native runtime symbols/relocations match Make without instrumentation
+changes. Encryption worker, authentication failure and key lifecycle coverage
+require separate review with common GEOM/crypto tracing and audit hooks.
+No encrypted storage operation or live probe/audit behavior was tested.

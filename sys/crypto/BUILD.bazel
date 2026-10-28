@@ -1,2 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["md4c.c", "md5c.c"], visibility = ["//lib/libmd:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "intake_headers", hdrs = ["intake.h"], includes = [".."], visibility = ["//visibility:public"])

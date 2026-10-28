@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Native inventory corresponding to geom/Makefile and geom_part/Makefile.
+
+filegroup(name = "generic_modules", srcs = [
+    "//sys/modules/geom/geom_eli:generic_module",
+    "//sys/modules/geom/geom_flashmap:generic_module",
+    "//sys/modules/geom/geom_gate:generic_module",
+    "//sys/modules/geom/geom_label:generic_module",
+    "//sys/modules/geom/geom_linux_lvm:generic_module",
+    "//sys/modules/geom/geom_mirror:generic_module",
+    "//sys/modules/geom/geom_multipath:generic_module",
+    "//sys/modules/geom/geom_nop:generic_module",
+    "//sys/modules/geom/geom_raid:generic_module",
+    "//sys/modules/geom/geom_uzip:generic_module",
+    "//sys/modules/geom/geom_zoned:generic_module",
+    "//sys/modules/geom/geom_part/geom_part_bsd:generic_module",
+    "//sys/modules/geom/geom_part/geom_part_ebr:generic_module",
+    "//sys/modules/geom/geom_part/geom_part_gpt:generic_module",
+    "//sys/modules/geom/geom_part/geom_part_mbr:generic_module",
+], visibility = ["//visibility:public"])
+
+filegroup(name = "generic_debug", srcs = [
+    "//sys/modules/geom/geom_eli:generic_debug",
+    "//sys/modules/geom/geom_flashmap:generic_debug",
+    "//sys/modules/geom/geom_gate:generic_debug",
+    "//sys/modules/geom/geom_label:generic_debug",
+    "//sys/modules/geom/geom_linux_lvm:generic_debug",
+    "//sys/modules/geom/geom_mirror:generic_debug",
+    "//sys/modules/geom/geom_multipath:generic_debug",
+    "//sys/modules/geom/geom_nop:generic_debug",
+    "//sys/modules/geom/geom_raid:generic_debug",
+    "//sys/modules/geom/geom_uzip:generic_debug",
+    "//sys/modules/geom/geom_zoned:generic_debug",
+    "//sys/modules/geom/geom_part/geom_part_bsd:generic_debug",
+    "//sys/modules/geom/geom_part/geom_part_ebr:generic_debug",
+    "//sys/modules/geom/geom_part/geom_part_gpt:generic_debug",
+    "//sys/modules/geom/geom_part/geom_part_mbr:generic_debug",
+], visibility = ["//visibility:public"])
+
+filegroup(name = "install_manifests", srcs = [
+    "//sys/modules/geom/geom_eli:install_manifest",
+    "//sys/modules/geom/geom_flashmap:install_manifest",
+    "//sys/modules/geom/geom_gate:install_manifest",
+    "//sys/modules/geom/geom_label:install_manifest",
+    "//sys/modules/geom/geom_linux_lvm:install_manifest",
+    "//sys/modules/geom/geom_mirror:install_manifest",
+    "//sys/modules/geom/geom_multipath:install_manifest",
+    "//sys/modules/geom/geom_nop:install_manifest",
+    "//sys/modules/geom/geom_raid:install_manifest",
+    "//sys/modules/geom/geom_uzip:install_manifest",
+    "//sys/modules/geom/geom_zoned:install_manifest",
+    "//sys/modules/geom/geom_part/geom_part_bsd:install_manifest",
+    "//sys/modules/geom/geom_part/geom_part_ebr:install_manifest",
+    "//sys/modules/geom/geom_part/geom_part_gpt:install_manifest",
+    "//sys/modules/geom/geom_part/geom_part_mbr:install_manifest",
+], visibility = ["//visibility:public"])

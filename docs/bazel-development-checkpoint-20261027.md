@@ -2047,3 +2047,29 @@ Existing maintained format-5 frontend targets cover the new generation and
 compilation dependencies; no C frontend or publication change is needed.
 Complete kernel/world/pkgbase/hardware and runtime/resource gates remain
 open; Make remains production/default.
+
+### GEOM ELI and native GEOM aggregate
+
+Added all nine maintained ELI C sources and its declared crypto intake
+header dependency, preserving existing userland crypto headers. Evidence:
+`/usr/obj/usr/src/bazel-eli-20261028/qualification`; Make reference
+`/usr/obj/usr/src/bazel-geom_eli-make-20261028`. Runtime symbols/relocations,
+text/data/rodata and raw CTF match; debug identity/CRC and staged installation
+metadata pass. No encrypted provider, key change, module load or host
+installation was performed. Encrypted I/O/authentication/error behavior and
+resource/performance remain unqualified.
+
+Added native aggregate targets under //sys/modules/geom for generic_modules,
+generic_debug and install_manifests. Their explicit inventory corresponds to
+the maintained geom and geom_part Makefile selections (eleven direct modules
+and four partition modules). The maintained frontend aggregate run at
+`/usr/obj/usr/src/bazel-geom-aggregate-20261028` succeeds and retains fifteen
+runtime modules and fifteen debug artifacts, plus installation records. This
+is source-native metadata, not a Make invocation hidden behind Bazel.
+
+Frontend assessment: existing format-5 target selection supports the whole
+subtree without new C/backend options. The native module comparison batch
+now contains twenty modules including the five filesystem modules. This
+does not cover other source-present GEOM schemes or the rest of sys/modules.
+Whole-kernel/world/pkgbase/hardware, runtime, performance and broader options
+remain open. Make remains production/default.
