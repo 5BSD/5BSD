@@ -321,3 +321,8 @@ amd64_generic_kernel_objects(name = "generic_mount", srcs = ["vfs_mount.c", "vfs
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
         "//sys/security/audit:kernel_headers", "//sys/geom:kernel_headers", "//sys/netinet:address_headers",
         "//sys/net:radix_headers", "//sys/amd64/conf:generic_opt_rootdevname_header"])
+
+amd64_generic_kernel_objects(name = "generic_vfs_syscalls", srcs = ["vfs_syscalls.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/netinet:address_headers", "//sys/fs/devfs:kernel_headers",
+        "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_ktrace_header"])

@@ -3823,3 +3823,14 @@ runtime relocations. Evidence:
 No runtime source changed. Probe delivery, audit records, mount authorization,
 root discovery and concurrent unmount remain unqualified. The recorded
 ZFS/filedesc WITNESS issue remains open and is not resolved by object parity.
+
+### VFS system calls (2026-10-28)
+
+vfs_syscalls.c retains four SDT probe definitions (copy range start/done,
+chflags and chroot) and its existing AUDIT_ARG calls for descriptors, vnodes,
+flags, ownership, modes and other syscall arguments. Native GENERIC output
+matches Make symbols, raw CTF, allocated sections and runtime relocations.
+Evidence: `/usr/obj/usr/src/bazel-vfs-syscalls-kernel-20261028/qualification`.
+No runtime source changed. This does not prove complete audit argument coverage
+or live probe firing; syscall records, authorization and error paths need
+linked-kernel tests.
