@@ -6698,3 +6698,35 @@ whole libc/world/kernel/package qualification still remain. Frontend review:
 build-bsd.c's existing explicit format-5 targets and maintained backend built
 these manifests/archive with 16 jobs. No new CLI/publication input was introduced.
 Make remains the production default.
+
+## 2026-10-28: complete Citrus module installation and debug handling
+
+All 23 modules now have native debug extraction, stripped installation binaries,
+development symlinks and installation manifests. sources.bzl owns the single
+module source inventory used for both builds and archive assembly. The aggregate
+archive preserves maintained Make's utilities/dev/dbg package tags, root/wheel
+ownership, 0444 file modes and 0755 symlink/debug-directory modes. Existing mtree
+policy supplies parent directories. No whole-system image is assembled here.
+
+Evidence: /usr/obj/usr/src/bazel-iconv-install-20261028-r2/receipt.json and
+qualification/installation-parity.json. All 72 unique component metadata records
+match Make: 23 binaries, 23 debug files, 23 development links, three debug
+directories. Make emits the same directory entries repeatedly during parallel
+module installation; comparison checks the resulting unique path inventory.
+All 23 debuglink names/CRCs match their separate files, which contain DWARF info.
+Installed .text bytes match the previously ABI-qualified native full modules.
+The existing native loader probe successfully loads all 23 stripped archive
+copies with native libc/libsys and verifies the expected entrypoint comes from
+the declared installed module path. This tests installation artifacts in a
+private qualification directory without modifying host installed libraries.
+The host readelf warns about absent dynamic-table contents in separate debug-only
+ELFs; debug-link/DWARF checks and loader execution all succeeded.
+
+Reference: bazel-iconv-install-reference-20261028, using rootless maintained Make
+installation over the previously built independent module reference. Scripts:
+bazel-iconv-install-qualification-20261028. Full end-to-end conversion with native
+libc/modules/i18n data together remains, as do aggregate pkgbase publication and
+whole-system gates. This is default amd64 installation qualification, not custom
+LIBDIR/debug-option or cross-platform coverage. Frontend review: build-bsd.c's
+existing format-5 targets/backend handle the archive and native loader inputs at
+16 jobs; no CLI or publication change is required. Make remains default.

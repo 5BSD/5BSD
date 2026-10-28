@@ -3,6 +3,8 @@
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
 
+load(":installation.bzl", "module_installation")
+
 def citrus_module(name, src):
     cc_library(
         name = name + "_objects",
@@ -32,3 +34,4 @@ def citrus_module(name, src):
         runner = "//tools/build/bazel:program_test_runner",
         size = "small",
     )
+    module_installation(name)

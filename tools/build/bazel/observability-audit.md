@@ -4798,3 +4798,11 @@ payloads/metadata and 35 component directory records. This includes static ISO64
 maps, not only generated binary databases. No runtime code, probes or audit hooks
 changed. This establishes installation coverage for share/i18n only; dynamic
 module installation, end-to-end conversion and package publication remain.
+
+## 2026-10-28 installed Citrus modules
+
+All 23 stripped installed modules retain their previously qualified .text bytes,
+pass separate-debug CRC checks and load with native runtime libraries. Metadata
+matches Make for 72 unique file/link/directory records. No conversion source,
+DTrace or audit hooks changed. Existing loader tests now also qualify installation
+copies; this remains module loading evidence, not end-to-end character conversion.
