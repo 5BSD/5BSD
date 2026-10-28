@@ -16,7 +16,7 @@ _SHARED = ["//lib/libz:z_shared", "//lib/libbz2:bz2_shared", "//lib/liblzma:lzma
 })
 _FEATURES = select({_ICONV: ["bsd_libarchive_iconv"], "//conditions:default": []})
 bsd_cc_feature_requirements(name = "required_features", required_features = _FEATURES)
-cc_library(name = "configuration", hdrs = ["config_freebsd.h"], strip_include_prefix = "/lib/libarchive", visibility = ["//usr.bin/unzip:__pkg__", "//usr.bin/cpio:__pkg__", "//usr.bin/tar:__pkg__", "//usr.bin/unzip/tests:__pkg__", "//usr.bin/cpio/tests:__pkg__", "//usr.bin/tar/tests:__pkg__"])
+cc_library(name = "configuration", hdrs = ["config_freebsd.h"], strip_include_prefix = "/lib/libarchive", visibility = ["//usr.bin/bsdcat:__pkg__", "//usr.bin/unzip:__pkg__", "//usr.bin/cpio:__pkg__", "//usr.bin/tar:__pkg__", "//usr.bin/bsdcat/tests:__pkg__", "//usr.bin/unzip/tests:__pkg__", "//usr.bin/cpio/tests:__pkg__", "//usr.bin/tar/tests:__pkg__"])
 bsd_dtrace_header(name = "provider", source = "archiveio_provider.d", output = "archiveio_provider.h",
     flags = ["-C", "-x", "nolibs"], static_anchor = True, object_path_mode = "relative",
     dtrace = "@bsd_sdk//toolchain:extra_dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",

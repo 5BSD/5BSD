@@ -33136,3 +33136,39 @@ Failure reports and copied logs are retained in
 Seventeen of the previously listed bin tests directories still lack BUILD
 files. The existing frontend format-5 targets/tests interface supports this
 integration without C/backend changes; the maintained manual documents it.
+
+## Native bsdcat and maintained libarchive suite (2026-10-28)
+
+Added explicit bsdcat sources, configuration/header dependencies, native
+libarchive linkage, installation/debug transforms, and all 18 maintained test
+sources with eleven declared compressed/reference fixtures. The test registry
+is a declared native generation action. Test utility objects use alwayslink
+to preserve Make's directly linked object, and the harness explicitly declares
+its maintained compression/crypto dependencies and their order.
+
+The shared libarchive CLI runner now preserves the candidate's basename;
+renaming it to program had broken the unchanged bsdcat help assertion. The
+initial run executed 18 cases with one failure; after this runner fix all 18
+pass, with 1,051 assertions and no skips. This is a local integration suite:
+its existing runner uses host shell utilities and host libc, alongside declared
+native libarchive/dependency DSOs. It remains noncacheable; it does not prove
+hermetic runtime behavior or compatibility of an entire new world with this
+host kernel. Installed ATF wrapper execution was not separately qualified.
+
+Final evidence: /usr/obj/usr/src/bazel-bsdcat-r7-20261027/qualification.
+Make reference: /usr/obj/usr/src/bazel-bsdcat-make-20261027.
+Program and harness match 11 and 102 defined globals respectively, ordered
+NEEDED libraries match, and generated list.h is byte-identical. Full program
+and test installation matches 24 records, 14 byte-identical nonbinary files
+and both debug links. Archive SHA256:
+5752ef75b8a4f2b5604f70cd812eb7793cdba6afedc63f861d54782e30b7b093.
+Earlier analysis failures (configuration visibility, manifest composition,
+a delimiter error) and the help failure remain in prior output directories.
+
+Existing frontend format-5 target/test selection supports these targets; no
+frontend C or backend contract change is required. Manual coverage is updated.
+Remaining: alternate configurations, full native world/kernel/bootstrap and
+pkgbase aggregation, declared runtime closure, cache/performance qualification.
+The directory scan found 94 immediate usr.bin Makefile directories without
+BUILD files before bsdcat, now 93; that includes aggregate directories and is
+not a count of missing programs or a completion percentage.

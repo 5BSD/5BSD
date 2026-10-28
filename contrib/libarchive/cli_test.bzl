@@ -6,7 +6,7 @@ Callers mark tests local and noncacheable until those runtimes are modeled.
 """
 def _test(ctx):
     prefix = ctx.label.name + ".runtime/"
-    links = {prefix + "harness": ctx.executable.harness, prefix + "program": ctx.executable.program}
+    links = {prefix + "harness": ctx.executable.harness, prefix + ctx.executable.program.basename: ctx.executable.program}
     for file in ctx.files.references:
         key = prefix + "references/" + file.basename
         if key in links:
@@ -24,8 +24,8 @@ def _test(ctx):
     ctx.actions.write(runner, """#!/bin/sh
 set -eu
 root="$TEST_SRCDIR/$TEST_WORKSPACE/%s"
-exec /usr/bin/env -i PATH=/bin:/usr/bin:/usr/local/bin LC_ALL=C TMPDIR="$TEST_TMPDIR" LD_LIBRARY_PATH="$root/lib" "$root/harness" -p "$root/program" -r "$root/references" -v
-""" % prefix, is_executable = True)
+exec /usr/bin/env -i PATH=/bin:/usr/bin:/usr/local/bin LC_ALL=C TMPDIR="$TEST_TMPDIR" LD_LIBRARY_PATH="$root/lib" "$root/harness" -p "$root/%s" -r "$root/references" -v
+""" % (prefix, ctx.executable.program.basename), is_executable = True)
     targets = [ctx.attr.harness, ctx.attr.program] + ctx.attr.libraries.keys()
     runfiles = ctx.runfiles(symlinks = links).merge_all([target[DefaultInfo].default_runfiles for target in targets])
     return [DefaultInfo(executable = runner, runfiles = runfiles)]

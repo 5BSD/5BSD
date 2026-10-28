@@ -2807,3 +2807,13 @@ Both maintained cases now select the candidate explicitly, retaining installed
 /bin/echo defaults. No production executable, probe or audit behavior changed.
 Installation/debug parity passes; both ATF bodies remain unexecuted because
 helper startup hits the diagnosed host/SDK Capsicum ABI mismatch.
+
+## bsdcat (2026-10-28)
+
+No program-local DTrace or audit calls were found in the imported cat C/header
+sources. It consumes the existing native libarchive graph, including that
+library's configured instrumentation; this change adds no probes and does not
+qualify probe attachment. Eighteen compression/CLI cases pass, 1,051 assertions,
+zero skips. Program/harness globals, dependency order, generated registry and
+both installed debug links match Make. The local suite still uses host shell
+utilities/libc; full runtime closure and performance remain open.

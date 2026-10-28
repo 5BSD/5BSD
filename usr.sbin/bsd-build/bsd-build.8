@@ -3461,3 +3461,12 @@ Kyuafile are included by
 .Dq //bin/echo:install_archive
 when tests are enabled. Installation parity has been checked; the current
 host/SDK Capsicum incompatibility prevents runtime qualification.
+
+.Pp
+.Dq //usr.bin/bsdcat:install_archive
+includes its program, manual and debug data, plus the maintained ATF wrapper,
+upstream harness, fixtures and Kyuafile when tests are enabled.
+.Dq //usr.bin/bsdcat/tests:functional_test
+runs the upstream cases against the declared candidate with its original
+executable name. This local, noncacheable integration suite uses host shell
+utilities; passing it does not qualify a complete native system runtime.

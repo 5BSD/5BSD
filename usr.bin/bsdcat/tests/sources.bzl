@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Maintained explicitly alongside the imported libarchive test inventory.
+TEST_SOURCES = [
+    "//contrib/libarchive:cat/test/test_0.c",
+    "//contrib/libarchive:cat/test/test_empty_gz.c",
+    "//contrib/libarchive:cat/test/test_empty_lz4.c",
+    "//contrib/libarchive:cat/test/test_empty_xz.c",
+    "//contrib/libarchive:cat/test/test_empty_zstd.c",
+    "//contrib/libarchive:cat/test/test_error.c",
+    "//contrib/libarchive:cat/test/test_error_mixed.c",
+    "//contrib/libarchive:cat/test/test_expand_Z.c",
+    "//contrib/libarchive:cat/test/test_expand_bz2.c",
+    "//contrib/libarchive:cat/test/test_expand_gz.c",
+    "//contrib/libarchive:cat/test/test_expand_lz4.c",
+    "//contrib/libarchive:cat/test/test_expand_mixed.c",
+    "//contrib/libarchive:cat/test/test_expand_plain.c",
+    "//contrib/libarchive:cat/test/test_expand_xz.c",
+    "//contrib/libarchive:cat/test/test_expand_zstd.c",
+    "//contrib/libarchive:cat/test/test_help.c",
+    "//contrib/libarchive:cat/test/test_stdin.c",
+    "//contrib/libarchive:cat/test/test_version.c",
+]
+REFERENCE_FILES = [
+    "//contrib/libarchive:cat/test/test_empty.gz.uu",
+    "//contrib/libarchive:cat/test/test_empty.lz4.uu",
+    "//contrib/libarchive:cat/test/test_empty.xz.uu",
+    "//contrib/libarchive:cat/test/test_empty.zst.uu",
+    "//contrib/libarchive:cat/test/test_expand.Z.uu",
+    "//contrib/libarchive:cat/test/test_expand.bz2.uu",
+    "//contrib/libarchive:cat/test/test_expand.gz.uu",
+    "//contrib/libarchive:cat/test/test_expand.lz4.uu",
+    "//contrib/libarchive:cat/test/test_expand.plain.uu",
+    "//contrib/libarchive:cat/test/test_expand.xz.uu",
+    "//contrib/libarchive:cat/test/test_expand.zst.uu",
+]
