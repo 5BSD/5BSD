@@ -3968,3 +3968,26 @@ allocation failures and concurrent consumers require linked-kernel tests.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 stays production/default; module count remains 45. No host installation or
 BIP changes occurred.
+
+### Native buffer rings and mutex pools
+
+Added //sys/kern:generic_buffer_mutex_pools_object_files for subr_bufring.c
+and kern_mtxpool.c, selected by maintained GENERIC Make. Dependencies declare
+CK/VM headers. No allocation, locking or runtime source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-buffer-mutex-pools-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. Reference log:
+`/usr/obj/usr/src/bazel-buffer-mutex-pools-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible paths. Whole-object/debug-path identity is not
+claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Buffer ring allocation/lifetime, concurrent producer/consumer callers,
+mutex pool hashing/contention and allocation failures require linked-kernel
+tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
+Make stays production/default; module count remains 45. No host installation
+or BIP changes occurred.

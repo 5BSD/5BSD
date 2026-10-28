@@ -3931,3 +3931,13 @@ raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-disk-ranges-kernel-20261028/qualification`.
 No runtime source changed. Live disk control, range-boundary/error behavior
 and runtime performance remain unqualified.
+
+### Buffer rings and mutex pools (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in subr_bufring.c or
+kern_mtxpool.c. Assess callers and shared locking instrumentation before
+adding hot-path probes. Native GENERIC output matches Make symbols, raw CTF,
+allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-buffer-mutex-pools-kernel-20261028/qualification`.
+No runtime source changed. Live concurrency, lifetime/error paths and
+contention performance remain unqualified.
