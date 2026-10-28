@@ -4088,3 +4088,14 @@ allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-context-sharedpage-kernel-20261028/qualification`.
 No runtime source changed. Live context restoration, signal masks, user-pointer
 errors and shared-page/VDSO behavior remain unqualified.
+
+### Process control (2026-10-28)
+
+kern_procctl.c retains 26 procctl SDT definitions covering commands, denials,
+process security controls and reaper operations. No local AUDIT_ARG calls
+were found; syscall event/argument audit mappings require separate review.
+Native GENERIC output matches Make symbols, raw CTF, allocated sections and
+runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-process-control-kernel-20261028/qualification`.
+No runtime source changed. Live probes, authorization, inheritance, reaper
+races and audit records remain unqualified.

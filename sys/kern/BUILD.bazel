@@ -424,3 +424,6 @@ amd64_generic_kernel_objects(name = "generic_cpu_frequency_storage", srcs = ["ke
 
 amd64_generic_kernel_objects(name = "generic_context_sharedpage", srcs = ["kern_context.c", "kern_sharedpage.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/amd64/conf:generic_opt_vm_header"])
+
+amd64_generic_kernel_objects(name = "generic_process_control", srcs = ["kern_procctl.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/amd64/conf:generic_opt_ktrace_header"])
