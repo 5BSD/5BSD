@@ -408,3 +408,7 @@ cc_library(name = "clock_if_headers", hdrs = [":clock_if_header_file"], strip_in
 amd64_generic_kernel_objects(name = "generic_rtc", srcs = ["subr_rtc.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
         ":clock_if_headers", "//sys/amd64/conf:generic_opt_ffclock_header"])
+
+amd64_generic_kernel_objects(name = "generic_clock_discipline", srcs = ["kern_ntptime.c", "kern_ffclock.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
+        "//sys/amd64/conf:generic_opt_ntp_header", "//sys/amd64/conf:generic_opt_ffclock_header"])

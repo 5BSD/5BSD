@@ -4228,3 +4228,29 @@ resolution selection and deferred synchronization require linked-kernel and
 driver tests. Full kernel/world/pkgbase/bootstrap and performance gates remain
 open. Make stays production/default; module count remains 45. No host
 installation or BIP changes occurred.
+
+### Native NTP and feed-forward clock support
+
+Added //sys/kern:generic_clock_discipline_object_files for kern_ntptime.c
+and kern_ffclock.c, selected by maintained GENERIC Make. Dependencies declare
+CK/VM, generated bus/device interfaces and native NTP/FFCLOCK options.
+GENERIC enables PPS_SYNC but leaves FFCLOCK undefined: evidence covers the
+configured disabled branch, not FFCLOCK-enabled behavior. No runtime source
+or clock adjustment policy changed.
+
+Evidence: `/usr/obj/usr/src/bazel-clock-discipline-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. NTP/FFCLOCK headers match Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-clock-discipline-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible paths. Whole-object/debug-path identity is not
+claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Clock adjustment permissions, PPS/leap/status handling and clock stability
+require linked-kernel tests; FFCLOCK-enabled configurations need separate
+qualification. Full kernel/world/pkgbase/bootstrap and performance gates remain
+open. Make stays production/default; module count remains 45. No host
+installation or BIP changes occurred.

@@ -4046,3 +4046,14 @@ symbols, raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-rtc-kernel-20261028/qualification`.
 No runtime source changed. Live hardware clock access, invalid values and
 synchronization behavior remain unqualified.
+
+### NTP and feed-forward clock support (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in kern_ntptime.c or
+kern_ffclock.c. Assess time-setting syscall audit mappings and existing clock
+status diagnostics together. Native GENERIC output matches Make symbols, raw
+CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-clock-discipline-kernel-20261028/qualification`.
+GENERIC has PPS_SYNC enabled and FFCLOCK disabled; the enabled FFCLOCK branch
+is unqualified. No runtime source changed. Live adjustment/privilege paths,
+PPS behavior and clock stability remain unqualified.
