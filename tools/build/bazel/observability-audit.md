@@ -4256,3 +4256,11 @@ password database operations and installed kernel audit configuration; no new
 hooks or runtime bypass added. NIS-enabled artifact qualification remains
 blocked by missing SDK/world NIS inputs; non-NIS artifact parity is not live
 account-change or audit-event qualification.
+
+### 2026-10-28: libc YP object group
+
+No direct SDT/DTrace, BSM audit or syslog hooks found in xdryp.c/yplib.c.
+Preserves maintained sources and libc namespace/private interfaces. Generated
+RPC schema code and six object variants have offline comparison evidence only;
+NIS network, cache, timeout and identity-lookup behavior remain runtime coverage.
+No new instrumentation, network calls or credentials were exercised here.

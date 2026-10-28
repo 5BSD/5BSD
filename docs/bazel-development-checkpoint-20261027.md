@@ -4957,3 +4957,27 @@ coverage. This component is not evidence of completed userland or full world.
 Frontend review: existing format-5 targets and typed nis setting expose this
 component and variant through build-bsd; no new frontend/backend contract is
 required. No host account, installed file, package repository or boot state changed.
+
+## 2026-10-28: native libc YP object group
+
+Adds lib/libc/yp:yp_objects with the maintained xdryp/yplib sources and declared
+rpcgen -C header/XDR actions from include/rpcsvc/yp.x. Native protocol include
+layout and narrow private-header dependencies preserve libc namespace handling.
+Ordinary/PIC qualification archives are explicitly not installed libraries and
+are not linked into chpass as a substitute for a configured libc. Preserves
+libc revision/fortify defines, configured NLS, default exception-unwind setting
+and initial-exec TLS model. The complete libc aggregate and its conditional NIS
+selection are still to be implemented; NO_THREAD_STACK_UNWIND variants remain
+unqualified. Symbol.map is available for that eventual aggregate.
+
+Evidence: /usr/obj/usr/src/bazel-libc-yp-20261028-r2/qualification/parity.json
+compares saved artifacts against freshly compiled maintained libc Make objects
+in bazel-libc-yp-make-20261028 (WITH_NIS, unchanged world SDK). Both generated
+files are byte-identical. All six ordinary/PIC objects match global and undefined
+symbols and .text bytes. This does not compare all allocated sections/relocations,
+full object/debug identity, final symbol versions, runtime or package installation.
+It does not fix the existing SDK's missing NIS libc symbols or qualify chpass NIS.
+
+Frontend review: build-bsd's format-5 explicit targets and existing typed NLS
+setting cover this object qualification; no new frontend/backend contract.
+Full native libc, bootstrap and final world linkage remain completion gates.
