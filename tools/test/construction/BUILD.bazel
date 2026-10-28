@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+
+# Synthetic relocatable ELF metadata for kldxref audits. Never kernel-load these.
+# Keep the cases aligned with pnp_fixture.c and the maintained Makefile.
+[cc_library(
+    name = "pnp_%d_objects" % case,
+    srcs = ["pnp_fixture.c"],
+    copts = ["-fno-pic", "-DPNP_CASE=%d" % case],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+) for case in range(9)]
+
+[bsd_component_object(
+    name = "pnp_%d" % case,
+    group = ":pnp_%d_objects" % case,
+    out = "pnp-%d.ko" % case,
+) for case in range(9)]
+
+filegroup(
+    name = "pnp_fixtures",
+    srcs = [":pnp_%d" % case for case in range(9)],
+    visibility = ["//visibility:public"],
+)

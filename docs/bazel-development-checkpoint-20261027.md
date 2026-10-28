@@ -713,3 +713,28 @@ C/backend contract changes. The manual records new targets; publication/image
 helpers have not been switched to this candidate. Native execution dependencies,
 maintained fixture tests, kernel/module builds, complete pkgbase and performance
 qualification remain unfinished. Make remains the production/default backend.
+
+### Native kldxref synthetic fixture qualification (2026-10-28)
+
+`//tools/test/construction:pnp_fixtures` builds all nine maintained PNP ELF
+fixtures using native C compilation and declared object outputs. Case definitions
+remain in `pnp_fixture.c`, shared with Make; these are never kernel-loaded.
+The maintained build-bsd format-5 frontend built the fixtures with 16 jobs in
+`/usr/obj/usr/src/bazel-kldxref-fixtures-20261028`. Its existing target-selection
+contract suffices; no frontend C, signing, staging or publication change is needed.
+
+The unchanged `audit-pnp.py`, `audit-module-inputs.py`, and `audit-kldxref.py`
+passed against native, bootstrap and Make kldxref using those fixtures: nine PNP
+cases, twenty explicit-input checks and eight hints-update cases per variant.
+Coverage includes malformed descriptors, bad pointers, mixed architectures,
+selected-input validation, failed writes/renames, preservation of prior hints,
+and temporary-file cleanup. Evidence, exact invocation script and reports are
+under that output's `qualification` directory. No modules were installed/loaded.
+
+These are direct host-Python audit runs, not registered Bazel tests. The script
+sets the child loader environment after Python starts and uses native libkldelf,
+libelf/libz and SDK libc/libsys. It does not establish loader hermeticity,
+non-amd64 relocation correctness, or kernel/module build completion. Registering
+these audits with declared interpreter, runtime and runfiles is still required.
+Make remains production/default; full world/kernel/pkgbase, cache and performance
+gates remain incomplete.
