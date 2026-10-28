@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["crypt.x"], visibility = ["//usr.bin/rpcgen/tests:__pkg__", "//lib/libc/rpc:__pkg__"])
 
-exports_files(["yp.x", "yppasswd.x"], visibility = ["//lib/libypclnt:__pkg__", "//lib/libc/yp:__pkg__", "//lib/librpcsvc:__pkg__"])
+exports_files(["yp.x", "yppasswd.x"], visibility = ["//libexec/ypxfr:__pkg__", "//lib/libypclnt:__pkg__", "//lib/libc/yp:__pkg__", "//lib/librpcsvc:__pkg__"])
 
 load(":protocols.bzl", "RPCSVC_PROTOCOLS")
 load("//tools/build/bazel:bsd_rpcgen.bzl", "bsd_rpcgen")
@@ -22,4 +22,4 @@ cc_library(name = "library_local_headers", hdrs = [":" + n + ".h" for n in RPCSV
 [cc_library(name = name + "_public_header", hdrs = [":" + name + ".h"],
     strip_include_prefix = ".", include_prefix = "rpcsvc",
     visibility = ["//libexec/" + consumer + ":__pkg__"])
- for name, consumer in [("spray", "rpc.sprayd"), ("rquota", "rpc.rquotad"), ("rwall", "rpc.rwalld"), ("rstat", "rpc.rstatd"), ("rnusers", "rpc.rusersd")]]
+ for name, consumer in [("ypxfrd", "ypxfr"), ("spray", "rpc.sprayd"), ("rquota", "rpc.rquotad"), ("rwall", "rpc.rwalld"), ("rstat", "rpc.rstatd"), ("rnusers", "rpc.rusersd")]]

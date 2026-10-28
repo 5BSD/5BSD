@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_rpcgen.bzl", "bsd_rpcgen")
+
+[bsd_rpcgen(
+    name = name, source = "//include/rpcsvc:yp.x", output = output,
+    mode = mode, flags = ["-I", "-C"] + defines,
+    cpp_flags = ["-E", "-x", "c", "-nostdinc"],
+    rpcgen = "//usr.bin/rpcgen:rpcgen", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    runtime = ["@bsd_sdk//toolchain:cpp_runtime"],
+) for name, output, mode, defines in [
+    ("protocol", "yp.h", "-h", []),
+    ("server_client", "yp_clnt.c", "-l", ["-DYPSERV_ONLY"]),
+    ("push_client", "ypxfr_clnt.c", "-l", ["-DYPPUSH_ONLY"]),
+]]
+cc_library(name = "local_protocol", hdrs = [":yp.h"], strip_include_prefix = ".")
+cc_library(name = "public_protocol", hdrs = [":yp.h"], strip_include_prefix = ".", include_prefix = "rpcsvc")
+cc_binary(
+    name = "ypxfr",
+    srcs = ["//usr.sbin/ypserv:yp_dblookup.c", "//usr.sbin/ypserv:yp_error.c",
+        "yp_dbwrite.c", "ypxfr_getmap.c", "ypxfr_main.c", "ypxfr_misc.c", "ypxfrd_getmap.c",
+        "ypxfr_extern.h", ":yp_clnt.c", ":ypxfr_clnt.c"],
+    deps = ["//lib/libc:shared_link_interface", ":local_protocol", ":public_protocol", "//usr.sbin/ypserv:headers",
+        "//include/rpcsvc:ypxfrd_public_header", "//lib/librpcsvc:rpcsvc"],
+    dynamic_deps = ["//lib/librpcsvc:rpcsvc_shared", "//lib/libc:c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie", "-nodefaultlibs"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+        "//tools/build/bazel/config:nis_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}),
+    visibility = ["//visibility:public"],
+)
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "ypxfr", manual = "ypxfr.8", man_section = "8", package = "yp", bindir = "/usr/libexec")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=yp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/libexec"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

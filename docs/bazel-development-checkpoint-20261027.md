@@ -8895,3 +8895,109 @@ installation archive support handle these outputs without frontend changes.
 Runtime delivery/TLS/queue/privilege qualification and aggregate world/pkgbase
 publication remain open, as do full kernel and performance gates. Make stays
 production/default.
+
+## 2026-10-28: ypxfr native conversion in progress (not qualified)
+
+Added a candidate native ypxfr graph with explicit rpcgen header and two client
+outputs, preserving -I/-C and YPSERV_ONLY/YPPUSH_ONLY selections, source/header
+exports from ypserv, generated rpcsvc/ypxfrd header and librpcsvc dependency.
+The executable is incompatible when NIS is disabled. No installed payload or
+successful executable is claimed yet.
+
+Both build attempts expose the existing SDK's WITHOUT_NIS libc: Make ypxfr
+fails with unresolved yp/XDR symbols, and Bazel fails linking NIS-enabled
+librpcsvc with unresolved yp_get_default_domain/yp_master. Logs:
+/usr/obj/usr/src/bazel-ypxfr-20261028/bazel.stderr and
+/usr/obj/usr/src/bazel-ypxfr-reference-20261028/build.log.
+An attempted full object comparison also stopped because Bazel aborted before
+producing ypxfr_main.o; no all-object parity claim is valid. Scripts remain in
+bazel-ypxfr-qualification-20261028. Next: qualify against matching NIS-enabled
+native libc and Make reference inputs; do not substitute NIS stubs or disable
+the requested option to get a link. Candidate edits remain uncommitted.
+
+Reviewed frontend: explicit inputs already select NIS, but selecting an option
+does not rebuild the imported SDK. This needs consistent dependency/reference
+qualification, not a one-off frontend fallback. DMA delivery checks remain
+pending isolated execution because its normal paths use system mail config and
+queue state. Full goal remains active and Make remains production/default.
+
+## 2026-10-28: ypxfr native NIS dependency graph builds
+
+The successful candidate run is bazel-ypxfr-20261028-r3. librpcsvc now declares
+native libc as a shared dependency, and ypxfr selects the native executable libc
+interface; both disable implicit default-library linking. This propagates NIS
+selection to the actual libc link dependency instead of relying on the imported
+WITHOUT_NIS SDK libc. An intermediate r2 analysis failed because placing the
+executable libc interface under librpcsvc caused shared-library ownership of
+libc_nonshared. The DSO now uses shared_link_objects, with narrow visibility from
+libc; ypxfr retains the executable interface. Review/regression of this change
+for other rpcsvc consumers and static archives remains required before commit.
+
+All nine ypxfr object bodies and global/undefined symbol sets match the Make
+objects, including generated RPC clients. Evidence:
+/usr/obj/usr/src/bazel-ypxfr-20261028-r3/qualification/object-parity.json.
+A fresh isolated Make libc with WITH_NIS also built successfully in
+bazel-ypxfr-libc-reference-objects-20261028; command/receipt and log are in
+bazel-ypxfr-libc-reference-20261028. Script:
+bazel-ypxfr-qualification-20261028/make-libc.py.
+The Make ypxfr executable still needs relinking against matching reference
+libraries; no final executable ABI/install/runtime parity claim yet. All changes
+remain uncommitted pending this dependency/reference qualification.
+
+Frontend review: maintained explicit inputs select the configuration and collect
+the completed native executable without additional frontend options. The graph
+fix belongs in native dependencies. No SDK or host installation was modified.
+
+## 2026-10-28: ypxfr executable parity and direct dependency correction
+
+The Make reference now links using the maintained libc_nossp.ldscript template
+expanded to the fresh NIS-enabled Make libc and SDK libc_nonshared archive in a
+private reference link directory. No installed SDK files changed. The relink
+command retains the Make PIE/relro/now flags; logs/receipt:
+bazel-ypxfr-reference-20261028-r2. Script: ypxfr qualification/relink.py.
+
+Strict comparison caught an extra direct libsys NEEDED entry in native ypxfr.
+An --as-needed trial (r4) was ineffective because rules_cc emits those target
+flags after library operands; it was removed. Corrected the graph by removing
+redundant direct libsys dynamic_deps from ypxfr and librpcsvc: libc already owns
+that transitive shared dependency. Successful run:
+/usr/obj/usr/src/bazel-ypxfr-20261028-r5. All nine objects match Make .text and
+symbols. All 120 executable global symbols and NEEDED libc/librpcsvc entries
+match; no RPATH/RUNPATH. Evidence: qualification/{object-parity,binary-parity}.json.
+
+Five existing RPC consumers (rquotad, sprayd, rwalld, rstatd, rusersd) and both
+rpcsvc static archive variants built in bazel-rpcsvc-native-libc-regression-20261028
+before the final redundant-dependency correction. That run is compile/link
+regression evidence only, not runtime or final-graph verification. Repeat it
+against the final graph and compare archives/dependencies before committing.
+The component archive rule selects only each group's own objects, excluding
+transitive libc from installed rpcsvc archives. Installation and runtime ypxfr
+qualification remain pending. Frontend explicit inputs continue to suffice;
+Make remains default and the full goal remains incomplete.
+
+## 2026-10-28: ypxfr installation and final RPC regression qualification
+
+Native ypxfr now has an installation archive preserving package yp, executable
+and debug metadata and its section-8 manual. Five metadata records and the
+manual payload match isolated Make. Debug pairing, stripped-code preservation,
+120 executable symbols and libc/rpcsvc NEEDED entries match; RPATH/RUNPATH are
+empty. Evidence: /usr/obj/usr/src/bazel-ypxfr-install-20261028/qualification/ypxfr/parity.json.
+Make stage: bazel-ypxfr-install-reference-20261028. Scripts:
+bazel-ypxfr-qualification-20261028/{install.py,verify-install.py}.
+
+Final graph regression run:
+/usr/obj/usr/src/bazel-rpcsvc-native-libc-regression-20261028-r2.
+Both rpcsvc archives are byte-identical to the prior qualified artifacts in
+bazel-rpcsvc-complete-20261028. All five RPC consumers (rquotad, sprayd, rwalld,
+rstatd, rusersd) match their independent Make references for global symbols and
+NEEDED/RPATH/RUNPATH/SONAME. Evidence: regression-parity.json; comparison script:
+bazel-ypxfr-qualification-20261028/regression.py. These are build/link checks,
+not running-daemon tests. Native source code is unchanged.
+
+Frontend review: maintained build-bsd explicit inputs, native configuration and
+artifact/archive collection support this work without a new frontend option or
+fallback. Builds use 16 jobs. Live NIS map transfers, RPC failure behavior,
+privileged destination handling and ypxfr installation/runtime on an image are
+still pending. This component qualification does not establish whole-system
+completion, publication, performance or the NIS SDK bootstrap path. Make stays
+default and no host installation occurred.

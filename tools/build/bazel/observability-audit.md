@@ -5506,3 +5506,14 @@ mode, restrictive configuration modes, config package tags and manual hardlink.
 This does not demonstrate mail delivery or logging at runtime. Queue retries,
 SMTP/TLS failure reporting and privileged mailbox behavior remain on the runtime
 qualification list. Evidence: bazel-dma-agent-install-20261028/qualification/dma/parity.json.
+
+### 2026-10-28 ypxfr and native RPC libc dependency
+
+Nine ypxfr object bodies and symbols match Make. Existing yp_error/vsyslog
+reporting is preserved; no new DTrace or audit instrumentation was added.
+Install/debug metadata and executable dependencies now match Make. Five RPC
+consumers retain matching symbols/dependencies, and rpcsvc static archives are
+byte-identical after the dependency change. Live map transfer, peer validation,
+partial-write cleanup, syslog delivery and audit coverage remain unqualified.
+Evidence: bazel-ypxfr-install-20261028/qualification/ypxfr/parity.json and
+bazel-rpcsvc-native-libc-regression-20261028-r2/regression-parity.json.
