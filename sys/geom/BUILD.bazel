@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-exports_files(["geom_bsd_enc.c"], visibility = ["//sbin/newfs:__pkg__"])
+exports_files(["geom_bsd_enc.c"], visibility = ["//sbin/newfs:__pkg__", "//sys/modules/geom/geom_part/geom_part_bsd:__pkg__"])
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = ["part/g_part_if.m"])
@@ -17,3 +17,7 @@ cc_library(name = "partition_headers", hdrs = ["part/g_part.h"], includes = ["..
     deps = [":kernel_headers"], visibility = ["//visibility:public"])
 cc_library(name = "partition_interface_headers", hdrs = [":g_part_interface_header"],
     strip_include_prefix = "g_part_if.generated", deps = [":partition_headers"], visibility = ["//visibility:public"])
+
+exports_files(["part/g_part_mbr.c"], visibility = ["//sys/modules/geom/geom_part/geom_part_mbr:__pkg__"])
+exports_files(["part/g_part_ebr.c"], visibility = ["//sys/modules/geom/geom_part/geom_part_ebr:__pkg__"])
+exports_files(["part/g_part_bsd.c"], visibility = ["//sys/modules/geom/geom_part/geom_part_bsd:__pkg__"])

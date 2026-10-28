@@ -3057,3 +3057,11 @@ The inspected g_part_gpt.c has no explicit SDT_* or AUDIT_* calls. Native
 module symbols/relocations match Make. Generated interface integration does
 not alter instrumentation. Assess common GEOM/partition auditing and useful
 GPT-specific probes separately; no live partition operation was performed.
+
+### BSD/EBR/MBR partition modules (2026-10-28)
+
+The inspected three scheme sources and geom_bsd_enc.c have no explicit
+SDT_* or AUDIT_* calls. Native symbols and relocations match Make. No
+instrumentation was added or removed; common partition/GEOM audit and
+probe coverage needs separate runtime review. Evidence is retained under
+/usr/obj/usr/src/bazel-partition-modules-20261028/qualification.

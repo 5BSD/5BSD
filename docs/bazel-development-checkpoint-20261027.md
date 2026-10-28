@@ -1845,3 +1845,25 @@ performance remain open. Existing format-5 frontend targets and inputs cover
 this addition; no C frontend/backend publication change is required. Make
 remains the production/default path. Next: expand partition schemes using
 this shared generated interface, then GEOM label's options/header inputs.
+
+### BSD, EBR and MBR partition modules
+
+Added native geom_part_bsd, geom_part_ebr and geom_part_mbr. BSD explicitly
+includes geom_bsd_enc.c; EBR consumes opt_geom.h extracted from the actual
+GENERIC configuration. All three reuse the native g_part_if interface action.
+Together with GPT this covers module builds for the four schemes selected by
+the maintained sys/modules/geom/geom_part/Makefile. Other source-present
+schemes are not implied to be built or qualified.
+
+Evidence: `/usr/obj/usr/src/bazel-partition-modules-20261028/qualification`,
+with Make references `/usr/obj/usr/src/bazel-geom_part_{bsd,ebr,mbr}-make-20261028`.
+All three match complete runtime symbols and relocations, text/data/rodata,
+and raw CTF. Debug identity and CRC pass. Staged install metadata matches
+paths, owner/group/mode/type and package/debug tags. No module load, host
+installation or live partition modification was performed.
+
+Existing maintained frontend format-5 targets and build settings support
+the additions without a new C option or publication change. The current
+artifact-comparison batch contains fifteen module builds. Full partition
+operations, mutation invalidation, runtime/performance, complete kernel/world
+and pkgbase qualification remain open. Make remains production/default.
