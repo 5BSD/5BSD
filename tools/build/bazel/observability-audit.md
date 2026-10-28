@@ -3231,3 +3231,13 @@ GENERIC framework inventory now has native object comparison evidence.
 Network packet/label lifecycle, VFS operations, mapping/revocation paths,
 policy registration/dispatch and live audit/probe behavior still require a
 linked test kernel. Existing probes were preserved, not expanded.
+
+### GENERIC audit kernel object group (2026-10-28)
+
+All fourteen selected sources retain their allocated data and runtime
+relocations; audit_pipe.c retains seven auditpipe probes (open, close, submit,
+append, drop, ioctl, read). Matching compiled audit code is not evidence of
+live event delivery or completeness of event selection. Qualify pipe/trail
+output, selection, queue limits/drop, rotation, storage failure and MAC
+interaction on a completed test kernel. The conditional audit_dtrace.c
+DTAUDIT/DTRACEALL build and dynamic audit provider remain outstanding.

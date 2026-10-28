@@ -2407,3 +2407,31 @@ Kernel linking/boot, policy invocation and live tracing/audit remain separate
 gates, along with world/pkgbase, bootstrap and CPU/memory/disk performance.
 The current module count remains 42; these are built-in kernel objects.
 Make stays production/default. No runtime policy code or BIP work was added.
+
+### Native GENERIC audit kernel objects
+
+Added the fourteen audit/BSM sources selected by the generated amd64 GENERIC
+kernel Makefile under //sys/security/audit:generic_object_files. Internal
+headers and network wire/PCB dependencies are explicit. The source inventory
+matches the generated reference exactly. audit_dtrace.c is conditional on
+DTAUDIT/DTRACEALL and uses the CDDL compilation recipe; that unselected variant
+still requires separate conversion and qualification. No audit source or
+configuration option was disabled to obtain this result.
+
+Evidence: `/usr/obj/usr/src/bazel-audit-kernel-20261028/qualification`, with
+retained comparison script, both object sets and source-inventory.json.
+All fourteen match Make symbols, raw CTF, complete allocated section
+inventories/content/size/type/flags/alignment and runtime relocation payloads
+and associations. This includes the auditpipe SDT sections. The Make reference
+uses maintained kernel targets, the same SDK compiler, 16 jobs, DEBUG=-g,
+WITH_CTF=yes and reproducible source paths; its log is
+`/usr/obj/usr/src/bazel-audit-kernel-make-20261028.log`.
+Whole-object and debug-path byte equality is not claimed.
+
+Frontend review: existing format-5 targets and artifact retention handle this
+native kernel object group without new C/backend options. No standalone
+installation entries are added for objects destined for the kernel. Live audit
+selection, pipe/trail delivery, backpressure/drop behavior, rotation/failure
+handling and DTAUDIT integration remain unqualified. Complete kernel linking,
+world/pkgbase/publication, bootstrap and resource/performance gates remain
+open. Make stays production/default; no host installation or BIP work occurred.
