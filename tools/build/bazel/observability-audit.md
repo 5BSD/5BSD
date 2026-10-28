@@ -5534,3 +5534,13 @@ No shell source or logging behavior changed. Startup, shutdown, diskless setup,
 suspend/resume and network transitions remain runtime qualification requirements.
 Existing rc tests and the full rc.d service collection are not covered by this
 nonrecursive installation comparison. Evidence: bazel-rc-core-20261028-r2/qualification/rc/parity.json.
+
+### 2026-10-28 always-installed rc.d service groups
+
+Ninety unchanged scripts across fifteen groups now have native installation
+metadata matching Make. This carries forward existing service startup/logging
+commands, including mac_abacd, syslogd and NFS services, without executing them.
+Start/stop/restart behavior, error reporting, rc ordering and service dependencies
+remain runtime test requirements; no daemon functionality is established by
+script packaging parity. Conditional groups are not covered by this result.
+Evidence: bazel-rc-services-20261028/qualification/rc/parity.json.

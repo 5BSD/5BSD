@@ -9043,3 +9043,27 @@ Reviewed maintained build-bsd explicit input/archive support: no frontend change
 required. Used 16 jobs. No startup scripts were executed on the host and no host
 configuration was installed. This proves installation parity, not normal boot.
 Full world/kernel/pkgbase/runtime/performance gates remain open; Make stays default.
+
+## 2026-10-28: always-installed rc.d groups
+
+Added native metadata for all fifteen unconditional rc.d groups: ninety scripts
+with per-group package ownership and config tags. The checked-in Starlark table
+owns the graph; Makefile translation was an authoring step only, with no runtime
+Make parsing or source-directory glob. The existing ZFS-specific target remains
+separate; this archive is explicitly named unconditional_install_archive.
+
+All ninety script payloads and ninety-one metadata records match a nonrecursive
+Make reference with every optional rc.d selector disabled. This includes package
+ownership for devd, mac-abac, devmatch, dhclient, cron, ctl, geom, ggate, newsyslog,
+nfs, powerd, ppp, syslogd, resolvconf and rc. Evidence:
+/usr/obj/usr/src/bazel-rc-services-20261028/qualification/rc/parity.json.
+Reference: bazel-rc-services-reference-20261028; scripts:
+bazel-rc-services-qualification-20261028/{make.py,verify.py}.
+Only table formatting changed after the successful build; payloads/selection
+are unchanged. No service startup was executed.
+
+Reviewed maintained frontend: existing explicit target and archive handling is
+sufficient; used 16 jobs. Conditional service groups, architecture restrictions,
+Kerberos alternatives, configured aggregate packaging and rc runtime tests are
+still pending. These results do not establish all rc.d coverage or normal boot.
+Full world/kernel/pkgbase/performance qualification remains open; Make stays default.
