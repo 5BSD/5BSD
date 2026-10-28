@@ -3963,3 +3963,14 @@ relocations. Evidence:
 `/usr/obj/usr/src/bazel-hints-firmware-kernel-20261028/qualification`.
 No runtime source changed. Live firmware probes, missing-image/privilege
 errors, loading concurrency and hardware integration remain unqualified.
+
+### Device-control notifications (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in kern_devctl.c.
+Assess device-event consumers and bus lifecycle instrumentation together;
+event delivery itself does not prove trace or audit coverage. Native GENERIC
+output matches Make symbols, raw CTF, allocated sections and runtime
+relocations. Evidence:
+`/usr/obj/usr/src/bazel-devctl-kernel-20261028/qualification`.
+No runtime source changed. Live notifications, reader/wakeup races, privilege
+checks and queue-pressure behavior remain unqualified.
