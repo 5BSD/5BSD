@@ -3,7 +3,7 @@
 setup()
 {
 	sed '/^\. \/etc\/rc.subr$/d; /^load_rc_config /d; /^run_rc_command /d' \
-	    "${RC_TEST_SRCDIR:-/etc/rc.d}/os-release" > startup.sh
+	    "$(atf_config_get rc_script "${RC_TEST_SRCDIR:-/etc/rc.d}/os-release")" > startup.sh
 	cat > seams.sh <<-'SEAMS'
 	. ./startup.sh
 	osrelease_file="$PWD/output"

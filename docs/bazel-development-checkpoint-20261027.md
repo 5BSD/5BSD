@@ -9221,3 +9221,35 @@ Reviewed build-bsd/ATF helpers: existing config_files and maintained frontend
 inputs support the new test parameter without changes. Installation wrappers need
 recomparison after the source-path parameter change. Remaining rc runtime cases,
 world/kernel/pkgbase and performance gates stay open; Make remains default.
+
+## 2026-10-28: os-release rc tests and wrapper revalidation
+
+Added native ATF targets for installed_metadata, denied_install and failed_inputs.
+The maintained test accepts a standard rc_script configuration path while retaining
+its RC_TEST_SRCDIR/installed defaults. Existing fixtures/assertions remain unchanged:
+they use temporary files and pre-existing failure-injection shell functions.
+The native os-release source and runtime binaries/libraries are declared inputs.
+
+Host execution again fails before assertions due to the older host Capsicum ABI.
+During integration, an incorrectly prefixed ATF case identity was caught during
+replay staging and corrected. First VM execution passed installed_metadata but
+failed two cases because native env lacked libutil in its runtime. Added declared
+native libutil; no host-library fallback. Corrected actions:
+bazel-rc-osrelease-20261028-r3. All three pass in matching-GENERIC QEMU replay:
+/usr/obj/usr/src/bazel-rights-vm-20261028/osrelease-run-r2/{result.json,serial.log}.
+Captured actions/payload hashes: osrelease-payload.json; stage-osrelease-r3.py.
+Earlier failed runs and logs remain. Guest is networkless, 2 GiB/4 CPUs with a
+512 MiB disk-backed UFS root; exited and powered off successfully. This is replay
+of Bazel actions/runfiles, not guest Bazel scheduling or normal system boot.
+
+Revalidated complete rc test installation after both source-path parameter changes:
+bazel-rc-tests-20261028-r3/qualification/rc/parity.json. All thirteen metadata
+records and twelve payloads match Make reference bazel-rc-tests-reference-20261028-r3.
+Scripts: bazel-rc-tests-qualification-20261028/{make-r3.py,verify-r3.py}.
+The preceding r2 comparison also passed after safe_eval alone.
+
+Frontend/adapter review: maintained build-bsd and existing config_files support
+these parameters; no frontend change required. Builds used 16 jobs. Five rc cases
+now have native payloads passing guest replay, not whole-suite or installed-system
+qualification. Remaining tests, default option implications, full world/kernel/
+pkgbase and performance gates stay open. Make remains default.

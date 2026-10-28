@@ -5586,3 +5586,12 @@ kernel QEMU replay. Host execution aborts before assertions due to Capsicum ABI
 mismatch. This verifies two shell-input filtering cases only, not general rc
 startup or privileged service behavior. Source-path selection uses standard ATF
 configuration; assertions and safe_eval implementation are unchanged.
+
+### 2026-10-28 os-release startup fixture cases
+
+Three existing cases pass using native Bazel payloads in matching-kernel replay:
+metadata creation, denied install preservation, and input/temporary-file failures.
+Their existing fixtures replace external operations with temporary-file seams;
+this is not an actual system startup. Missing native env/libutil runtime was
+caught and fixed. All rc test installation payloads still match Make. No host
+os-release file or installed configuration changed.
