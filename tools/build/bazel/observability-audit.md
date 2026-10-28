@@ -5526,3 +5526,11 @@ edits /etc/rc.conf. Interface reconfiguration, virtual-function failover,
 command failures and reporting still require isolated Hyper-V runtime testing.
 No host networking was changed. No probes/logging hooks were added during this
 packaging conversion. Evidence: bazel-hyperv-scripts-20261028/qualification/hyperv/parity.json.
+
+### 2026-10-28 main rc files
+
+Fourteen rc/default/helper payloads and their installation metadata match Make.
+No shell source or logging behavior changed. Startup, shutdown, diskless setup,
+suspend/resume and network transitions remain runtime qualification requirements.
+Existing rc tests and the full rc.d service collection are not covered by this
+nonrecursive installation comparison. Evidence: bazel-rc-core-20261028-r2/qualification/rc/parity.json.

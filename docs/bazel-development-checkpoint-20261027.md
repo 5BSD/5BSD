@@ -9020,3 +9020,26 @@ on system rc configuration, network tools and Hyper-V devices; no network or
 rc.conf mutation was attempted on the host. This establishes installation parity,
 not functional Hyper-V or complete package aggregation. Full world/kernel/runtime/
 publication/performance gates remain open and Make stays production/default.
+
+## 2026-10-28: main rc files and defaults installation
+
+Added native installation for six /etc rc source files, four executable /etc
+configuration scripts, /etc/defaults/rc.conf and three /libexec shell helpers.
+All fourteen payloads match Make byte-for-byte; seventeen distinct metadata
+records match, preserving config tags, 0644/0755 modes, rc payload ownership and
+utilities ownership of /etc and /etc/defaults. The first comparison caught missing
+explicit /etc directory records; the corrected archive includes them. Failed
+run bazel-rc-core-20261028 remains available.
+
+Successful evidence:
+/usr/obj/usr/src/bazel-rc-core-20261028-r2/qualification/rc/parity.json.
+Reference: bazel-rc-core-reference-20261028 (NO_SUBDIR); scripts:
+bazel-rc-core-qualification-20261028/{make.py,verify.py}. Duplicate identical
+Make directory records are coalesced. This deliberately covers the main directory,
+not the rc.d service collection or rc tests. The previously existing rc.d target
+covers a ZFS-specific subset; broader service selection and startup tests remain.
+
+Reviewed maintained build-bsd explicit input/archive support: no frontend change
+required. Used 16 jobs. No startup scripts were executed on the host and no host
+configuration was installed. This proves installation parity, not normal boot.
+Full world/kernel/pkgbase/runtime/performance gates remain open; Make stays default.
