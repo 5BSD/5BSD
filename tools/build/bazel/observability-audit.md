@@ -5342,3 +5342,13 @@ attachment, removal and parameter changes remains unverified and belongs in
 isolated VM runtime qualification. No audit or privilege-enforcement completion
 claim follows from these checks. Evidence:
 /usr/obj/usr/src/bazel-flua-jail-20261028/qualification/.
+
+
+### flua UCL module (2026-10-28)
+
+Original lua_ucl.c is carried into native ucl.so with object code/symbol parity.
+Typed in-memory configuration parsing, JSON roundtrip and malformed-input
+rejection pass against the native libucl dependency. These checks do not qualify
+file includes, schema validation, parser resource limits or privileged consumers'
+audit behavior. Nuageinit integration remains open. Evidence:
+/usr/obj/usr/src/bazel-flua-ucl-20261028/qualification/.

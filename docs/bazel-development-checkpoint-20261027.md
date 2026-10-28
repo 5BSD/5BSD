@@ -8467,3 +8467,28 @@ Builds used maintained build-bsd with 16 jobs. Reviewed frontend explicit input
 handling: existing artifact collection suffices with no frontend change. Other
 modules, Bazel-owned runtime tests, bootstrap/configuration variants and complete
 world/kernel/pkgbase/cache/performance gates remain open. Make stays default.
+
+
+## 2026-10-28: flua UCL module
+
+Added native ucl.so with the original contributed lua_ucl.c, explicit Lua and
+bootstrap headers, and native libucl CcInfo/shared dependency. Internal UCL and
+uthash headers are narrowly visible to this binding; no implicit source-tree
+include fallback or embedded second Lua runtime was introduced.
+
+The PIC object .text/global symbols, 86 DSO symbols, libc/privateucl dependencies,
+SONAME and empty RPATH/RUNPATH match Make. Five installation metadata records,
+split-debug validation and unchanged stripped text pass. Three external runtime
+cases pass with matching output for native/Make modules: typed UCL configuration,
+nested JSON parse/serialization roundtrip, and malformed-input rejection. Runs
+use copied native libprivateucl and the previously qualified flua/loader/libraries.
+File includes, schema validation and the broader binding API remain unqualified.
+
+Evidence: /usr/obj/usr/src/bazel-flua-ucl-20261028/qualification/
+{parity.json,runtime/results.json}. Scripts: bazel-flua-ucl-qualification-20261028/
+{make.py,verify.py,runtime.py}. Reference: bazel-flua-ucl-reference-20261028.
+Builds used maintained build-bsd at 16 jobs. Reviewed frontend explicit input
+handling: current targets/artifact collection need no frontend change. Remaining
+flua modules, Bazel-owned tests, bootstrap and complete world/kernel/pkgbase/
+cache/performance gates remain open. No host installation/configuration changes;
+Make remains production/default.
