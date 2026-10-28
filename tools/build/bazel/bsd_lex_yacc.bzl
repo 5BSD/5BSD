@@ -25,17 +25,24 @@ def _yacc(ctx):
     report_stem = source.path[:-6] if source.path.endswith(".tab.c") else source.path[:-2]
     if report and (not source.path.endswith(".c") or report.path != report_stem + ".output"):
         fail("yacc report must match the generator-derived output stem")
+    interface = ctx.actions.declare_file(ctx.attr.interface) if ctx.attr.interface else None
+    if "-i" in ctx.attr.flags:
+        fail("use interface to declare yacc's interface output")
+    interface_suffix = ".tab.i" if source.path.endswith(".tab.c") else ".i"
+    if interface and (not source.path.endswith(".c") or interface.path != report_stem + interface_suffix):
+        fail("yacc interface must match the generator-derived output stem")
+    interfaces = [interface] if interface else []
     reports = [report] if report else []
-    arguments = ctx.attr.flags + (["-v"] if report else []) + (["-d"] if header else []) + ["-o", source.path]
+    arguments = ctx.attr.flags + (["-i"] if interface else []) + (["-v"] if report else []) + (["-d"] if header else []) + ["-o", source.path]
     if header:
         arguments += ["-H", header.path]
     arguments.append(ctx.file.src.path)
     ctx.actions.run(executable = ctx.executable.yacc,
         arguments = arguments,
-        inputs = [ctx.file.src], tools = ctx.files.runtime, outputs = [source] + headers + reports,
+        inputs = [ctx.file.src], tools = ctx.files.runtime, outputs = [source] + headers + reports + interfaces,
         env = {"LC_ALL": "C"}, use_default_shell_env = False, mnemonic = "BSDYacc")
-    return [DefaultInfo(files = depset([source] + headers + reports)),
-        OutputGroupInfo(source = depset([source]), header = depset(headers), report = depset(reports))]
+    return [DefaultInfo(files = depset([source] + headers + reports + interfaces)),
+        OutputGroupInfo(source = depset([source]), header = depset(headers), report = depset(reports), interface = depset(interfaces))]
 
 bsd_lex = rule(implementation = _lex, attrs = {
     "src": attr.label(allow_single_file = [".l"], mandatory = True),
@@ -46,7 +53,7 @@ bsd_lex = rule(implementation = _lex, attrs = {
 })
 bsd_yacc = rule(implementation = _yacc, attrs = {
     "src": attr.label(allow_single_file = [".y"], mandatory = True),
-    "output": attr.string(mandatory = True), "header": attr.string(), "report": attr.string(), "flags": attr.string_list(),
+    "output": attr.string(mandatory = True), "header": attr.string(), "report": attr.string(), "interface": attr.string(), "flags": attr.string_list(),
     "yacc": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),
     "runtime": attr.label_list(allow_files = True, cfg = "exec"),
 })

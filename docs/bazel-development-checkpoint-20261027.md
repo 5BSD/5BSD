@@ -8821,3 +8821,51 @@ no change required. Privileged mailbox ownership/creation, Capsicum transitions,
 failure cleanup and hostile-path behavior require isolated VM qualification.
 DMA's main agent/generators remain unconverted. Full world/kernel/pkgbase/cache/
 performance gates remain open and Make remains production/default.
+
+## 2026-10-28: DMA native parser/scanner output qualification
+
+The direct bsd_yacc rule now declares its optional -i interface output, exposes
+an interface output group, and checks the generator-derived filename. Raw -i
+flags must use the explicit interface attribute. DMA declares aliases_parse.c,
+.h and .i plus aliases_scan.c using native yacc, lex and m4 targets. This does
+not add interface support to the separate configured metadata exporter.
+
+Maintained build-bsd at 16 jobs succeeded in
+/usr/obj/usr/src/bazel-dma-generators-20261028. All four collected artifacts match
+isolated Make after mapping only exact known source/output path spellings in
+preprocessor line/include directives; line numbers and all other contents remain
+checked. Evidence: generator-parity.json and artifacts/manifest.json in that run;
+comparison script: bazel-dma-generators-qualification-20261028/verify.py;
+Make evidence: bazel-dma-generators-reference-20261028/generators.log.
+
+Reviewed frontend explicit target selection and default artifact collection:
+the interface is a declared default output and is retained without frontend
+changes. Main DMA executable compilation, installation, runtime and interface
+validation edge cases are still pending. Generator parity alone does not prove
+include resolution in a consuming compile action. Full world/kernel/pkgbase and
+performance gates remain open. Make remains production/default.
+
+## 2026-10-28: DMA native executable compilation
+
+The DMA agent now consumes declared parser source/header/interface outputs and
+scanner source, ten unchanged contributed C sources, and native SSL/crypto
+libraries. Its feature/account/path/version definitions follow Makefile.inc;
+OPENSSL_API_COMPAT and PIE follow the component Makefile. The first sandboxed
+build caught an omitted dfcompat.h dependency; declaring that source header
+fixed the build without broadening sandbox filesystem access. Failed evidence
+remains in bazel-dma-agent-20261028.
+
+Successful maintained frontend run:
+/usr/obj/usr/src/bazel-dma-agent-20261028-r2 (16 jobs).
+All twelve object .text bodies and global/undefined symbol sets match isolated
+Make. The executable's 249 global symbols and libc/ssl/crypto NEEDED entries
+match, with no RPATH/RUNPATH. Evidence: qualification/{object-parity,binary-parity}.json;
+reference: bazel-dma-agent-reference-20261028; scripts:
+bazel-dma-agent-qualification-20261028/{make.py,objects.py,binary.py}.
+This also verifies generated include resolution in consuming compile actions.
+
+Reviewed maintained frontend: explicit targets and artifact collection already
+support this executable, so no frontend change is needed. DMA installation,
+debug packaging, configurations/manual links and runtime delivery remain pending.
+No host mail was submitted or configuration changed. Full world/kernel/package/
+runtime/performance gates remain open; Make remains production/default.

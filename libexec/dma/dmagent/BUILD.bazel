@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+bsd_yacc(name = "aliases_parser", src = "//contrib/dma:aliases_parse.y", output = "aliases_parse.c",
+    header = "aliases_parse.h", interface = "aliases_parse.i", yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":aliases_parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":aliases_parser"], output_group = "header")
+filegroup(name = "parser_interface", srcs = [":aliases_parser"], output_group = "interface")
+bsd_lex(name = "aliases_scanner", src = "//contrib/dma:aliases_scan.l", output = "aliases_scan.c",
+    lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+cc_library(
+    name = "parser_headers",
+    hdrs = [":parser_header", ":parser_interface"],
+    strip_include_prefix = ".",
+)
+cc_binary(
+    name = "dma",
+    srcs = ["//contrib/dma:base64.c", "//contrib/dma:conf.c", "//contrib/dma:crypto.c", "//contrib/dma:dma.c", "//contrib/dma:dns.c", "//contrib/dma:local.c", "//contrib/dma:mail.c", "//contrib/dma:net.c", "//contrib/dma:spool.c", "//contrib/dma:util.c"] + [":parser_source", ":aliases_scanner"],
+    deps = [":parser_headers", "//contrib/dma:headers", "//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto"],
+    dynamic_deps = ["//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared"],
+    local_defines = ["HAVE_REALLOCF", "HAVE_STRLCPY", "HAVE_GETPROGNAME", "CONF_PATH=\\\"/etc/dma\\\"", "LIBEXEC_PATH=\\\"/usr/libexec\\\"", "DMA_VERSION=\\\"v0.13+\\\"", "DMA_ROOT_USER=\\\"mailnull\\\"", "DMA_GROUP=\\\"mail\\\"", "OPENSSL_API_COMPAT=0x10100000L"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)

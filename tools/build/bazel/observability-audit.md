@@ -5480,3 +5480,21 @@ into the native target; machine code/global symbols match Make. Root:mail and
 04554 metadata are preserved. No privilege transition, mailbox write or syslog
 runtime event is claimed: qualify success/failure paths and audit behavior in an
 isolated VM. Evidence: /usr/obj/usr/src/bazel-dma-mbox-20261028/qualification/.
+
+### 2026-10-28 DMA aliases generators
+
+Native yacc/lex rules now generate the unchanged DMA alias grammar and scanner,
+including the explicitly declared yacc interface file. Four generated artifacts
+match Make except exact preprocessor path spelling (evidence:
+/usr/obj/usr/src/bazel-dma-generators-20261028/generator-parity.json).
+No application observability behavior changed. Agent compile/runtime, malformed
+aliases, delivery failure logging and privilege behavior remain unqualified.
+
+### 2026-10-28 DMA agent compilation
+
+All twelve agent objects now match Make .text and global/undefined symbols.
+Existing delivery, queue ownership and failure syslog calls are carried forward
+unchanged. This is build evidence, not verification that logs reach a running
+logger. Mail submission, TLS, queue retries, privilege transitions and audit
+coverage still need isolated runtime qualification. No probes or audit hooks
+were added during this conversion.
