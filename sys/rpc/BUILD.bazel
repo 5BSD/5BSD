@@ -2,3 +2,6 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "nvpair_headers", hdrs = ["types.h", "xdr.h"], strip_include_prefix = "/sys",
     visibility = ["//cddl/lib/libnvpair:__pkg__"])
+
+cc_library(name = "kernel_auth_headers", hdrs = ["types.h", "xdr.h", "auth.h", "clnt_stat.h", "netconfig.h"],
+    includes = [".."], visibility = ["//sys/kern:__pkg__"])

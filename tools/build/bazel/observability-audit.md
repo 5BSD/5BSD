@@ -3867,3 +3867,14 @@ matches Make symbols, raw CTF, allocated sections and runtime relocations.
 Evidence: `/usr/obj/usr/src/bazel-vfs-aio-kernel-20261028/qualification`.
 No runtime source changed. Probe delivery, asynchronous ordering, cancellation,
 resource limits and runtime performance remain unqualified.
+
+### VFS exports (2026-10-28)
+
+vfs_export.c retains eight nfsexport SDT probe definitions covering export
+configuration, address lists, default exports, mapped credentials, grants and
+lookups. No local AUDIT_ARG calls were found; assess mount syscall audit
+records and service-level policy together. Native GENERIC output matches Make
+symbols, raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-vfs-export-kernel-r2-20261028/qualification`.
+No runtime source changed. Live NFS authorization, mapped identities, probes
+and policy update concurrency remain unqualified.

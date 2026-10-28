@@ -338,3 +338,8 @@ amd64_generic_kernel_objects(name = "generic_vfs_buffer_io", srcs = ["vfs_bio.c"
 
 amd64_generic_kernel_objects(name = "generic_vfs_aio", srcs = ["vfs_aio.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/geom:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_vfs_export", srcs = ["vfs_export.c"],
+    deps = ["//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/netinet:address_headers", "//sys/net:radix_headers",
+        "//sys/rpc:kernel_auth_headers", "//sys/amd64/conf:generic_opt_inet_header",
+        "//sys/amd64/conf:generic_opt_inet6_header"])

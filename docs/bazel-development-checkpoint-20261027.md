@@ -3823,3 +3823,27 @@ linked-kernel tests. Compatibility syscall wrappers require separate coverage.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 stays production/default; module count remains 45. No host installation or
 BIP changes occurred.
+
+### Native VFS exports
+
+Added //sys/kern:generic_vfs_export_object_files for vfs_export.c, selected
+by maintained GENERIC Make. Dependencies declare CK/VM, network address/radix,
+kernel RPC authentication headers and generated INET/INET6 options. The first
+attempt exposed a missing VM dependency through mbuf.h; the declaration was
+corrected. No export authorization or runtime source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-vfs-export-kernel-r2-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. INET/INET6 headers match Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-vfs-export-kernel-make-20261028.log`; maintained
+recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. NFS exports, client network matching, default exports, anonymous credential
+mapping, update/removal races and export-policy failures require linked-kernel
+and network tests. Full kernel/world/pkgbase/bootstrap and performance gates
+remain open. Make stays production/default; module count remains 45. No host
+installation or BIP changes occurred.
