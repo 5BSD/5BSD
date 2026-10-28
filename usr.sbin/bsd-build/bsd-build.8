@@ -3672,3 +3672,11 @@ WITH_REPRODUCIBLE_PATHS=yes and PREFIX_SYSDIR=sys profile. Default absolute
 source-path strings and complete DWARF bytes are not claimed identical.
 Native module linking, symbol exports, split debug and installation/package
 metadata remain pending; this target does not produce a qualified loadable module.
+
+.Pp
+The maintained Make module backend runs and checks nm before its symbol-policy
+transforms, then checks the transform before editing ELF. The transforms consume
+explicit text listings. Standalone module builds delete failed targets, matching
+the source build's existing delete-on-error policy; a later build must not reuse
+a partially transformed module. This backend correction does not qualify the
+pending native Bazel module link and package path.

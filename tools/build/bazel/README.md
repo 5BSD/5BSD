@@ -33971,3 +33971,47 @@ its error propagation needs review before adopting it into the native path.
 No claim is made that producing these objects completes nullfs, all base modules,
 drivers, kernel/world aggregation, pkgbase, runtime or performance gates.
 Make remains production/default.
+
+### Checked module symbol-policy inputs (2026-10-28)
+
+Before native module linking adopts the maintained export/prefix transforms,
+their hidden nm subprocesses have been removed. sys/conf/kmod_syms.awk and
+kmod_syms_prefix.awk now take a previously checked nm text listing as their first
+argument. The export transform accepts modname for diagnostics. The maintained
+kmod.mk runs nm explicitly (-g for exports, all symbols for prefixing), checks
+its recipe status, and captures/checks AWK output before invoking objcopy through
+xargs. The temporary ${KMOD}.symbols file is in CLEANFILES. Inspection found no
+other maintained consumers requiring adaptation. No symbol policy is substituted
+with a hand-maintained symbol list or a second parser.
+
+The earlier scripts returned success for missing nm and for nm that emitted
+partial output before failing. Adding close(command) checks alone did not fix it:
+this one-true-awk implementation reports pclose failure, not the child's nonzero
+exit status (contrib/one-true-awk/run.c closefile). That attempted approach was
+replaced, not treated as passing. The new transform performs no process execution
+and rejects a missing listing before emitting options. Empty valid listings are
+allowed; existing missing-export warning semantics remain unchanged.
+
+A real nullfs Make relink with an injected nm that prints one partial symbol and
+exits 42 now fails. That qualification also found a failed .ko.full survived in
+the standalone module build, because it did not inherit source local.sys.mk's
+.DELETE_ON_ERROR. kmod.mk now declares that same standard Make behavior so failed
+linked/transformed targets are removed. This affects standalone/ports module
+builds as well; it does not install or load anything.
+
+Evidence in /usr/obj/usr/src/bazel-kmod-symbol-errors-20261028 contains retained
+old helpers, check-make.py, failure/success logs, before.ko.full and reports.
+The failed build returns 2 and deletes the module target. The subsequent real
+nullfs build is byte-identical to the pre-change full module. On null_subr.o,
+both helper outputs preserve the old policy (11 export-localization/removal
+options, 39 prefix-renaming options). The maintained direct host regression
+kmod-symbol-errors-test.py checks explicit listing behavior with NM/PATH
+unavailable and rejects missing input with no partial options. These are not
+registered Bazel tests and do not establish native module-link completion.
+
+Frontend review: kmod.mk is the maintained backend used for Make/ports; it is
+updated with its helpers and tests in this change. No new frontend C option or
+Bazel target is needed for this failure-propagation correction. Native module
+linking should now declare nm listings as action outputs and reuse these pure
+AWK transforms. Linking, CTF merge, symbol editing, split debug, installation and
+pkgbase qualification remain next; Make remains production/default.
