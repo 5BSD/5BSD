@@ -2322,3 +2322,32 @@ options. Whole-kernel/world/pkgbase publication, bootstrap, runtime lifecycle,
 cache-invalidation/performance gates remain incomplete. Make remains the
 production/default backend. No host installation or loading was performed;
 BIP remains excluded.
+
+### Standard capability process and authority kernel objects
+
+Added native generic_builtin_objects/generic_builtin_ctf and the public
+//sys/dev/mac_capability:generic_builtin_object_files target. It compiles
+mac_capability_process.c and mac_capability_authority.c as standard amd64
+GENERIC kernel sources with explicit headers, generated vnode/offset inputs,
+kernel printf annotation and CTF. No KLD_MODULE/KLD_TIED definitions are used.
+These objects are separate from loadable module sources and do not receive
+standalone installation entries: their eventual installed artifact is the
+linked kernel. This does not yet connect a complete kernel link graph.
+
+Evidence: `/usr/obj/usr/src/bazel-capability-builtins-r2-20261028/qualification`.
+Maintained generated kernel Makefile targets built the reference objects using
+the same SDK clang, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible source
+paths. Reference log: `/usr/obj/usr/src/bazel-capability-builtins-make-20261028.log`.
+Both objects match symbol tables, text, data, rodata/string sections and raw
+CTF. Exact allocated section contents/size/type/flags/alignment and their
+relocation bytes/entry sizes/linked-symbol-table/target associations match
+(14 authority and 13 process sections including relocations). Debug sections
+and whole object bytes are not claimed identical. Reference object copies
+are retained alongside native artifacts, independent of mutable build output.
+
+Frontend review: existing format-5 target selection and retained artifacts
+support these object outputs with no new C/frontend/backend option. Full
+kernel linking, boot, lifecycle/authority runtime checks, installation/debug
+qualification of the linked kernel and performance remain unfinished. The
+module count remains forty-two; these are two additional built-in translation
+units, not modules. Make remains production/default and BIP remains excluded.

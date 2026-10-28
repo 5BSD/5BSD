@@ -3204,3 +3204,11 @@ transfer, label transitions, protected operations and failure-path probe
 delivery still need runtime qualification, including races and resource
 measurements. Process/authority built-ins remain a separate kernel review;
 module artifact parity does not establish their audit/probe coverage.
+
+### Capability process and authority built-ins (2026-10-28)
+
+Neither source currently defines SDT probes. Review process-context creation,
+inheritance/teardown and authority token creation/revocation/expiry for useful
+probe and audit coverage during runtime qualification. Object-level parity
+preserves current behavior; it does not prove observability or enforcement.
+No probes, callbacks or audit behavior were changed during conversion.
