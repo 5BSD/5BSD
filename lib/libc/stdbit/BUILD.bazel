@@ -13,3 +13,22 @@ cc_library(
 bsd_component_archive(name = "objects_archive", groups = [':objects'])
 bsd_component_archive(name = "pic_objects_archive", groups = [':objects'], pic = True)
 exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_stdc_bit_ceil.3', 'stdc_bit_ceil.3'),
+    ('libc_manual_stdc_bit_floor.3', 'stdc_bit_floor.3'),
+    ('libc_manual_stdc_bit_width.3', 'stdc_bit_width.3'),
+    ('libc_manual_stdc_count_ones.3', 'stdc_count_ones.3'),
+    ('libc_manual_stdc_count_zeros.3', 'stdc_count_zeros.3'),
+    ('libc_manual_stdc_first_leading_one.3', 'stdc_first_leading_one.3'),
+    ('libc_manual_stdc_first_leading_zero.3', 'stdc_first_leading_zero.3'),
+    ('libc_manual_stdc_first_trailing_one.3', 'stdc_first_trailing_one.3'),
+    ('libc_manual_stdc_first_trailing_zero.3', 'stdc_first_trailing_zero.3'),
+    ('libc_manual_stdc_has_single_bit.3', 'stdc_has_single_bit.3'),
+    ('libc_manual_stdc_leading_ones.3', 'stdc_leading_ones.3'),
+    ('libc_manual_stdc_leading_zeros.3', 'stdc_leading_zeros.3'),
+    ('libc_manual_stdc_trailing_ones.3', 'stdc_trailing_ones.3'),
+    ('libc_manual_stdc_trailing_zeros.3', 'stdc_trailing_zeros.3'),
+]]

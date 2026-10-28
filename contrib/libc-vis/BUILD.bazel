@@ -1,2 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["vis.c", "unvis.c"], visibility = ["//lib/libc/gen:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_unvis.3', 'unvis.3'),
+    ('libc_manual_vis.3', 'vis.3'),
+]]

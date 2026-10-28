@@ -40,3 +40,12 @@ cc_library(
 bsd_component_archive(name = "objects_archive", groups = [":time_objects", ":localtime_objects", ":time32_objects"])
 bsd_component_archive(name = "pic_objects_archive", groups = [":time_objects", ":localtime_objects", ":time32_objects"], pic = True)
 exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_ctime.3', 'ctime.3'),
+    ('libc_manual_strftime.3', 'strftime.3'),
+    ('libc_manual_strptime.3', 'strptime.3'),
+    ('libc_manual_tzset.3', 'tzset.3'),
+]]

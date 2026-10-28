@@ -4842,3 +4842,11 @@ tool. NLS-disabled qualification produces no catalogs and runs no catalog action
 No conversion/catalog C sources, DTrace probes or audit hooks changed; changes
 are link dependencies and package directory metadata. Catalog lookup behavior and
 normal installed gencat runtime remain outside this evidence.
+
+## 2026-10-28 libc manuals and aliases
+
+All 459 maintained libc manual sources and 972 aliases now have native declared
+installation paths; default and iconv-disabled/split-package variants match Make
+bytes, metadata and hardlink inode relationships. This is documentation coverage,
+not evidence of runtime probe or audit behavior. No runtime sources or hooks were
+changed. Canonical alias-chain handling preserves the existing Make relationships.

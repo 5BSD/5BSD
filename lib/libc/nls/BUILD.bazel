@@ -14,3 +14,11 @@ cc_library(name = "msgcat_objects", srcs = ["msgcat.c"],
 bsd_component_archive(name = "objects_archive", groups = [":msgcat_objects"])
 bsd_component_archive(name = "pic_objects_archive", groups = [":msgcat_objects"], pic = True)
 exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_catclose.3', 'catclose.3'),
+    ('libc_manual_catgets.3', 'catgets.3'),
+    ('libc_manual_catopen.3', 'catopen.3'),
+]]

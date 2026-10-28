@@ -100,3 +100,30 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_man
     owner = "root", group = "wheel", mode = "0644", install_tags = ["package=runtime", "config"])
  for name in ["netconfig", "rpc"]]
 bsd_install_manifest(name = "config_manifest", entries = [":config_netconfig", ":config_rpc"], visibility = ["//lib/libc:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_bindresvport.3', 'bindresvport.3'),
+    ('libc_manual_des_crypt.3', 'des_crypt.3'),
+    ('libc_manual_getnetconfig.3', 'getnetconfig.3'),
+    ('libc_manual_getnetpath.3', 'getnetpath.3'),
+    ('libc_manual_getrpcent.3', 'getrpcent.3'),
+    ('libc_manual_getrpcport.3', 'getrpcport.3'),
+    ('libc_manual_rpc.3', 'rpc.3'),
+    ('libc_manual_rpc_soc.3', 'rpc_soc.3'),
+    ('libc_manual_rpc_clnt_auth.3', 'rpc_clnt_auth.3'),
+    ('libc_manual_rpc_clnt_calls.3', 'rpc_clnt_calls.3'),
+    ('libc_manual_rpc_clnt_create.3', 'rpc_clnt_create.3'),
+    ('libc_manual_rpc_svc_calls.3', 'rpc_svc_calls.3'),
+    ('libc_manual_rpc_svc_create.3', 'rpc_svc_create.3'),
+    ('libc_manual_rpc_svc_err.3', 'rpc_svc_err.3'),
+    ('libc_manual_rpc_svc_reg.3', 'rpc_svc_reg.3'),
+    ('libc_manual_rpc_xdr.3', 'rpc_xdr.3'),
+    ('libc_manual_rpcbind.3', 'rpcbind.3'),
+    ('libc_manual_publickey.3', 'publickey.3'),
+    ('libc_manual_rpc_secure.3', 'rpc_secure.3'),
+    ('libc_manual_rtime.3', 'rtime.3'),
+    ('libc_manual_rpc.5', 'rpc.5'),
+    ('libc_manual_netconfig.5', 'netconfig.5'),
+]]

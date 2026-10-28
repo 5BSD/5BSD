@@ -6861,3 +6861,39 @@ semantics, normal gencat installed execution, libc manuals/configuration, pendin
 privileged iconv conversion and whole-system gates remain. Frontend review:
 build-bsd.c format-5 targets/settings/backend support both runs at 16 jobs without
 new CLI/publication inputs. No host installation occurred; Make remains default.
+
+## 2026-10-28: all libc manuals and aliases use native installation rules
+
+Added owned manual_sources.bzl metadata for 459 source manuals and 972 aliases.
+Twenty-four source packages expose restricted filegroup labels for their maintained
+manual sources; runtime Bazel generation reads neither Make metadata nor staged
+reference files. manual_installation.bzl uses declared compression, installation
+and hardlink rules. Five iconv manuals and five aliases follow the typed iconv
+setting. Runtime manuals retain clibs ownership, development manuals/aliases use
+clibs-dev, and split_manpages selects clibs-man. Make inventory queries confirmed
+NIS selection does not alter this amd64 manual inventory.
+
+Default evidence: /usr/obj/usr/src/bazel-libc-manuals-20261028/receipt.json and
+qualification/manual-parity.json. All 1431 output paths match maintained Make
+metadata and compressed bytes; all 972 hardlinks match source inode identity.
+Alias chains are resolved before comparing tar targets: e.g. regfree.3 points
+through regexec.3 to regex.3 in metadata, while the archive links directly to the
+canonical source. The initial verifier assumed only direct aliases; it was
+corrected to check canonical resolution and Make inode identity without changing
+archive behavior or relaxing byte checks.
+
+Variant evidence: bazel-libc-manuals-variant-20261028/qualification/manual-parity.json.
+With iconv=false and split_manpages=true, all 1421 paths match Make, including 967
+hardlinks and the clibs-man tags. The independent variant reference uses
+WITHOUT_ICONV/WITH_MANSPLITPKG and maintained all-man/maninstall targets; no stale
+library binaries are installed as part of this manual-only reference.
+References: bazel-libc-install-reference-20261028-r3 and
+bazel-libc-manuals-variant-reference-20261028. Scripts:
+bazel-libc-manuals-qualification-20261028. No host installation occurred.
+
+This establishes library documentation payload coverage for these amd64 options;
+other architectures, complete configuration handling, aggregate pkgbase packages
+and whole-system qualification remain. Frontend review: build-bsd.c's format-5
+targets/settings/backend handles both archives at 16 jobs without new CLI or
+publication inputs. Make remains production/default. The previously requested
+privileged iconv conversion gate remains separate from this evidence.

@@ -135,3 +135,43 @@ cc_library(
 bsd_component_archive(name = "objects_archive", groups = [":stdio_objects"])
 bsd_component_archive(name = "pic_objects_archive", groups = [":stdio_objects"], pic = True)
 exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_fclose.3', 'fclose.3'),
+    ('libc_manual_ferror.3', 'ferror.3'),
+    ('libc_manual_fflush.3', 'fflush.3'),
+    ('libc_manual_fgetln.3', 'fgetln.3'),
+    ('libc_manual_fgets.3', 'fgets.3'),
+    ('libc_manual_fgetwln.3', 'fgetwln.3'),
+    ('libc_manual_fgetws.3', 'fgetws.3'),
+    ('libc_manual_flockfile.3', 'flockfile.3'),
+    ('libc_manual_fopen.3', 'fopen.3'),
+    ('libc_manual_fopencookie.3', 'fopencookie.3'),
+    ('libc_manual_fputs.3', 'fputs.3'),
+    ('libc_manual_fputws.3', 'fputws.3'),
+    ('libc_manual_fread.3', 'fread.3'),
+    ('libc_manual_fseek.3', 'fseek.3'),
+    ('libc_manual_funopen.3', 'funopen.3'),
+    ('libc_manual_fwide.3', 'fwide.3'),
+    ('libc_manual_getc.3', 'getc.3'),
+    ('libc_manual_getline.3', 'getline.3'),
+    ('libc_manual_getwc.3', 'getwc.3'),
+    ('libc_manual_mktemp.3', 'mktemp.3'),
+    ('libc_manual_open_memstream.3', 'open_memstream.3'),
+    ('libc_manual_printf.3', 'printf.3'),
+    ('libc_manual_printf_l.3', 'printf_l.3'),
+    ('libc_manual_putc.3', 'putc.3'),
+    ('libc_manual_putwc.3', 'putwc.3'),
+    ('libc_manual_remove.3', 'remove.3'),
+    ('libc_manual_scanf.3', 'scanf.3'),
+    ('libc_manual_scanf_l.3', 'scanf_l.3'),
+    ('libc_manual_setbuf.3', 'setbuf.3'),
+    ('libc_manual_stdio.3', 'stdio.3'),
+    ('libc_manual_tmpnam.3', 'tmpnam.3'),
+    ('libc_manual_ungetc.3', 'ungetc.3'),
+    ('libc_manual_ungetwc.3', 'ungetwc.3'),
+    ('libc_manual_wprintf.3', 'wprintf.3'),
+    ('libc_manual_wscanf.3', 'wscanf.3'),
+]]

@@ -13,3 +13,9 @@ cc_library(
 bsd_component_archive(name = "objects_archive", groups = [":sized_free_objects"])
 bsd_component_archive(name = "pic_objects_archive", groups = [":sized_free_objects"], pic = True, visibility = ["//lib/libc:__pkg__", "//lib/libc/tests/stdlib:__pkg__"])
 exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_free_sized.3', 'free_sized.3'),
+]]

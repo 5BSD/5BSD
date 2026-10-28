@@ -14,3 +14,14 @@ cc_library(
 bsd_component_archive(name = "objects_archive", groups = [':objects'])
 bsd_component_archive(name = "pic_objects_archive", groups = [':objects'], pic = True)
 exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_killpg.2', 'killpg.2'),
+    ('libc_manual_sigpause.2', 'sigpause.2'),
+    ('libc_manual_sigsetmask.2', 'sigsetmask.2'),
+    ('libc_manual_sigvec.2', 'sigvec.2'),
+    ('libc_manual_gethostid.3', 'gethostid.3'),
+    ('libc_manual_setruid.3', 'setruid.3'),
+]]
