@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+cc_library(name = "headers", hdrs = ["mac_veriexec.h"], includes = ["../.."])
+amd64_generic_module_objects(name = "sha1_module", srcs = ["mac_veriexec_sha1.c"], deps = [":headers", "//sys/crypto:sha1_headers"])
+amd64_generic_module_objects(name = "sha256_module", srcs = ["mac_veriexec_sha256.c"], deps = [":headers", "//sys/crypto/sha2:module_headers"])
+amd64_generic_module_objects(name = "sha384_module", srcs = ["mac_veriexec_sha384.c"], deps = [":headers", "//sys/crypto/sha2:module_headers"])
+amd64_generic_module_objects(name = "sha512_module", srcs = ["mac_veriexec_sha512.c"], deps = [":headers", "//sys/crypto/sha2:module_headers"])

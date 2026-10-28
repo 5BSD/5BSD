@@ -2150,3 +2150,42 @@ existing installation manifests, selectable through maintained format-5
 targets without a new C option. Full pkgbase assembly/publication remains
 a separate gate. The current batch has twenty-seven native module builds
 with artifact comparisons; whole-system completion is not established.
+
+### Native Veriexec fingerprint modules and cross-package CTF merging
+
+Added mac_veriexec_sha1, mac_veriexec_sha256, mac_veriexec_sha384 and
+mac_veriexec_sha512 using their maintained source inventories. Crypto objects
+have native targets; SHA-384 and SHA-512 reuse the same sha512c compilation.
+The initial execution log records seven C compilations for four modules.
+No algorithm selection or security policy was changed.
+
+Initial qualification found equal code/data, symbols, relocations and staged
+metadata, but different raw CTF. ctfmerge.c sorts paths internally, so object
+packages previously influenced type merge order. The shared merge rule now
+declares basename-first symlinks under a common per-target input directory;
+indices distinguish duplicate basenames. No object contents are copied. This
+retains native object reuse and removes package path influence on ordering.
+Duplicate-basename order follows declared input indices; it is not a promise
+of equality with a Make build that uses a different collision naming scheme.
+
+Evidence: `/usr/obj/usr/src/bazel-veriexec-hashes-r2-20261028/qualification`,
+including the comparison script, raw dumps and per-module results. All four
+match Make for text/data/rodata, symbols, relocations and raw CTF. Separate
+debug identity/CRC checks and NO_ROOT staged metadata comparisons pass. Make
+references are `/usr/obj/usr/src/bazel-mac_veriexec_sha*-make-20261028`.
+The original mismatch remains in `bazel-veriexec-hashes-20261028`.
+
+The CTF correction reran twenty merge/downstream spawned actions with no C
+compilation. `bazel-veriexec-ctf-regression-20261028` reran nullfs CTF merging;
+its full/runtime/debug hashes equal `bazel-five-modules-repeat-20261028`.
+The existing nullfs Bazel artifact test reports cached PASS, not a new test
+execution. This is build evidence, not runtime module loading or verification
+policy qualification. Full CPU/memory/disk performance gates remain open.
+
+Frontend review: existing format-5 target selection, toolchain receipt,
+installation manifests and retained artifacts cover these additions; no new
+build-bsd C option or backend selection is required. Make remains production
+and default. The current module comparison batch now covers thirty-one
+modules, not the complete kernel or system. The core Veriexec and capability
+modules, remaining world/kernel closure and pkgbase/publication qualification
+remain unfinished.

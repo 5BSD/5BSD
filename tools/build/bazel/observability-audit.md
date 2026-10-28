@@ -3139,3 +3139,15 @@ rule-management and label/extattr probes. Existing policy source remains
 unchanged. Live probe firing, rule decisions and audit-record semantics have
 not been tested by the build comparison. Evidence: bazel-abac-20261028/qualification
 under /usr/obj/usr/src.
+
+### Veriexec fingerprint modules (2026-10-28)
+
+The four native SHA registration modules preserve their original source and
+crypto implementations. They contain no SDT probes or direct audit calls.
+Core Veriexec already defines fingerprint status/start/done probes in
+veriexec_metadata.c and capimage verification probes in veriexec_capimage.c;
+these core sources are not qualified by the fingerprint module builds.
+Review live registration/unregistration, verification failures and audit
+coverage when converting and testing the core module. Do not add per-block
+crypto probes merely to increase instrumentation counts. No live module
+load, verification decision or probe firing is claimed here.

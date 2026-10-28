@@ -88,13 +88,21 @@ def _merge(ctx):
         fail("an explicit CTF label is required")
     if not ctx.files.objects:
         fail("CTF merge requires explicit converted object inputs")
+    # ctfmerge sorts paths internally. Give inputs a common directory and
+    # basename-first ordering independent of their originating Bazel package.
+    # Symlinks retain declared dependencies without copying object contents.
+    objects = []
+    for index, obj in enumerate(ctx.files.objects):
+        staged = ctx.actions.declare_file(ctx.label.name + "/merge_inputs/" + obj.basename + "/" + str(index) + "/" + obj.basename)
+        ctx.actions.symlink(output = staged, target_file = obj)
+        objects.append(staged)
     out = ctx.actions.declare_file(ctx.attr.output)
     args = ctx.actions.args()
     args.add_all(["--copy-executable" if ctx.attr.is_executable else "--copy", ctx.file.linked.path, out.path,
         "--", ctx.executable.merger.path] + (["-g"] if ctx.attr.preserve_debug else []) + ["-l", label, "-o", out.path])
-    args.add_all(ctx.files.objects)
+    args.add_all(objects)
     ctx.actions.run(executable = ctx.attr.copy_runner[DefaultInfo].files_to_run,
-        arguments = [args], inputs = [ctx.file.linked] + ctx.files.objects,
+        arguments = [args], inputs = [ctx.file.linked] + objects,
         tools = [ctx.attr.merger[DefaultInfo].files_to_run] + ctx.files.runtime,
         outputs = [out], env = {"LC_ALL": "C", "LD_LIBRARY_PATH": ":".join(depset([f.dirname for f in ctx.files.runtime]).to_list())},
         use_default_shell_env = False, mnemonic = "BSDCtfMerge")
