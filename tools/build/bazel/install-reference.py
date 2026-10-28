@@ -54,6 +54,8 @@ def main():
     if component == src or not component.is_relative_to(src) or not (component / 'Makefile').is_file():
         parser.error('component must be a maintained directory within the actual source tree')
     environment = BuildEnvironment(src, objtop, profile, make, component)
+    # Verify the baseline before changing the isolated component configuration.
+    environment.verify()
     component_options = {name: 'yes' for name in args.with_option}
     component_options.update({name: 'no' for name in args.without_option})
     for name, expected in component_options.items():
@@ -71,6 +73,14 @@ def main():
     for name, expected in component_options.items():
         if environment.query(['-V', 'MK_' + name]).strip() != expected:
             raise ValueError('component option is unknown or ineffective: ' + name)
+    # Feature overrides can legitimately add/remove Makefile includes. Freeze
+    # the selected configuration before building, retaining baseline hashes too.
+    selected_closure = environment.capture_closure()
+    for name, expected in environment.inputs.items():
+        if digest(Path(name)) != expected:
+            raise ValueError('build input changed while selecting component options: ' + name)
+    environment.closure = selected_closure
+    environment.inputs.update(selected_closure)
     source_hashes = {str(p): digest(p) for p in component.rglob('*') if p.is_file()}
     # The baseline uses the maintained source layout, including tests' RELDIR.
     output.mkdir(parents=True, exist_ok=False)

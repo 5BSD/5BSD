@@ -5421,3 +5421,30 @@ stub-only build, archive/debug byte identity, complete libc linker-script use,
 installed package construction and runtime remain open. No host installation.
 Frontend review: build-bsd's existing format-5 targets/iconv input and maintained
 archive/install helpers cover this contract without new frontend options.
+
+## 2026-10-28: disabled-iconv nonshared variant and reference closure fix
+
+Qualified libc_nonshared with iconv disabled: the native and Make archives
+contain exactly __stub.o, with matching code, global/unresolved symbols and
+symbol visibility. The sole install record remains root:wheel 0444 at
+/usr/lib/libc_nonshared.a with package=clibs,dev. Evidence:
+/usr/obj/usr/src/bazel-libc-nonshared-noiconv-build-20261028/qualification/
+parity.json and archive-install-parity.json, compared with the passed private
+reference bazel-libc-nonshared-noiconv-make-20261028-r2.
+
+The initial reference correctly refused certification, but exposed a helper
+ordering defect: BuildEnvironment captured Make includes before component
+option overrides. Disabling iconv removed Makefile.iconv from the legitimate
+include closure, producing a false change-during-export failure after install.
+install-reference.py now verifies baseline inputs, applies and checks overrides,
+captures the selected include closure before building, and retains baseline
+hashes in addition to selected inputs. End-of-build closure/hash verification
+remains enabled. The initial failed reference is retained and not counted as
+qualified. The actual option-dependent build/install now passes, and all six
+existing install-reference CLI guard tests pass under
+/usr/obj/usr/src/bazel-install-reference-guards-20261028.
+
+Frontend/backend review: this fixes the maintained reference helper used for
+qualification, without changing build-bsd inputs, staged SDK or world profile.
+No host installation. Full archive/debug identity and native libc link/runtime
+remain open even though both nonshared source-selection variants are checked.
