@@ -5249,3 +5249,11 @@ existing error messages and legacy-IPFW rejection. No firewall command was
 executed. Runtime review remains for add/remove/flush, failed PF operations,
 address/protocol parsing and legacy configuration errors in an isolated guest.
 No security-policy correctness or live audit coverage is claimed by packaging.
+
+## 2026-10-28 pkg-serve
+
+The unchanged program object matches Make code/symbols. Preserve its existing
+ATF file/mtime/malformed-request/traversal cases for native runtime integration.
+Capability-mode containment and actual file service require execution on a
+compatible kernel; build/install checks alone are insufficient. No repository
+was served and no transport/authentication or policy correctness is claimed.

@@ -8218,3 +8218,29 @@ behavior. PF table/rule lifetime, failed commands, address/protocol handling,
 compatibility entry behavior and other backend branches still need isolated
 runtime tests. Configured-world/package/publication/cache/performance gates
 remain incomplete; Make remains production/default.
+
+## 2026-10-28 native pkg-serve build/install
+
+Added unchanged pkg-serve as a native cc_binary and utilities installation
+archive under /usr/libexec. Through build-bsd at 16 jobs, its object .text and
+global/undefined symbols match independent Make. Linked comparison matches 36
+symbol entries, libc-only dependency, empty RPATH/RUNPATH, five installation
+records, compressed manual bytes, debug name/CRC/DWARF and strip-preserved .text.
+Evidence: /usr/obj/usr/src/bazel-pkg-serve-20261028/qualification/{parity.json,
+object-parity.json}; reference: bazel-pkg-serve-reference-20261028 and matching
+reference-objects tree; scripts: bazel-pkg-serve-qualification-20261028.
+
+Reviewed the existing 14-case ATF shell suite: greeting, unknown command,
+missing file, ordinary/leading-slash/up-to-date/subdirectory retrieval,
+directory request, missing/bad age, empty argument, path traversal, multiple
+gets and invalid base directory. Native test registration/execution and test
+installation remain next; none was run as part of this build comparison.
+It already permits explicit PKG_SERVE executable selection. Preserve its
+assertions when integrating with the compatible guest runtime.
+
+Reviewed build-bsd.c: current explicit targets and archive collection suffice;
+no frontend change needed. No repository data was served, installed or changed.
+This helper conversion does not establish SSH transport, signed repository
+publication, source authentication or update acceptance. Full-system/runtime,
+configured packaging, cache and performance gates remain open; Make stays
+production/default.
