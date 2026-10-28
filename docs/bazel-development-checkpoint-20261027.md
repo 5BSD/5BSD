@@ -2435,3 +2435,26 @@ selection, pipe/trail delivery, backpressure/drop behavior, rotation/failure
 handling and DTAUDIT integration remain unqualified. Complete kernel linking,
 world/pkgbase/publication, bootstrap and resource/performance gates remain
 open. Make stays production/default; no host installation or BIP work occurred.
+
+### Native MAC test modules
+
+Added mac_test and mac_test_hooks native module targets with explicit
+MAC/VM/CK/devfs/interface headers and generated vnode interfaces. Package
+ownership remains kernel for mac_test and tests for mac_test_hooks, including
+separate debug metadata. Runtime sources, counters and denial controls are
+unchanged. These modules support later live tests; building them does not
+execute those tests or establish hook coverage.
+
+Evidence: `/usr/obj/usr/src/bazel-mac-test-modules-20261028/qualification`,
+including retained comparison script, raw dumps and metadata results. Both
+match Make symbols, relocations, text/data/rodata and raw CTF; debug identity
+and CRC pass, as do NO_ROOT staged metadata comparisons. Neither defines SDT
+probes; equal absent sections must not be interpreted as probe coverage.
+Current module comparison batch: forty-four. No modules were installed or
+loaded into the host.
+
+Frontend review: existing format-5 targets, generated inputs, export/debug
+processing and package tags support these additions without new C/backend
+options. Live label lifecycle assertions, hook counters, denial injection,
+complete kernel/world/pkgbase and resource/performance qualification remain
+open. Make remains production/default; BIP remains out of scope.

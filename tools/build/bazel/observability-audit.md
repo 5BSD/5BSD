@@ -3241,3 +3241,12 @@ live event delivery or completeness of event selection. Qualify pipe/trail
 output, selection, queue limits/drop, rotation, storage failure and MAC
 interaction on a completed test kernel. The conditional audit_dtrace.c
 DTAUDIT/DTRACEALL build and dynamic audit provider remain outstanding.
+
+### MAC test modules (2026-10-28)
+
+mac_test and mac_test_hooks contain no direct SDT definitions. Their existing
+sysctl counters/controls and assertions are test instrumentation, preserved
+by native artifact parity. mac_test_hooks exposes per-hook invocation
+counters and denial controls. Later runtime tests must demonstrate counter
+increments and the requested denials on the actual linked test kernel;
+compilation does not establish hook invocation, race safety or audit delivery.

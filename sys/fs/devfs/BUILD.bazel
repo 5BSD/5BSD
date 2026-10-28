@@ -1,3 +1,3 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-cc_library(name = "kernel_headers", hdrs = ["devfs.h"], includes = ["../.."], visibility = ["//sys/security/mac:__pkg__"])
+cc_library(name = "kernel_headers", hdrs = ["devfs.h"], includes = ["../.."], visibility = ["//sys/security/mac:__pkg__", "//sys/security/mac_test:__pkg__"])

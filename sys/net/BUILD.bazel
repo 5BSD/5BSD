@@ -10,3 +10,5 @@ cc_library(name = "network_headers", hdrs = ["if.h", "vnet.h"], includes = [".."
 cc_library(name = "route_headers", hdrs = ["route.h"], includes = [".."], deps = [":network_headers"], visibility = ["//visibility:public"])
 
 cc_library(name = "interface_headers", hdrs = ["if_var.h", "ifq.h", "bpfdesc.h"], includes = [".."], deps = [":network_headers", "//sys/contrib/ck:kernel_headers"], visibility = ["//visibility:public"])
+
+cc_library(name = "interface_type_headers", hdrs = ["if_types.h"], includes = [".."], visibility = ["//sys/security/mac_test:__pkg__"])
