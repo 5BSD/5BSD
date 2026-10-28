@@ -3634,3 +3634,17 @@ GENERIC SDT instrumentation. Object code, data and probe relocation records have
 Make comparison evidence; a linked kernel and live probe attachment remain
 separate qualification gates. Generated-source assertion filenames use a stable
 compiler prefix map.
+
+.Pp
+The maintained kernel version generator supports explicit reproducible inputs
+through newvers.sh's standalone
+.Fl e
+mode. The Make backend can select it with NEWVERS_ARGS=-e and supply PARAMFILE,
+NEWVERS_COPYRIGHT, NEWVERS_COPYRIGHT_TEMPLATE, NEWVERS_IDENT,
+NEWVERS_COMPILER_VERSION and NEWVERS_SOURCE_REVISION in the environment.
+These identify the target param.h, source copyright and template, kernel identity,
+compiler banner and source revision. An explicitly empty revision denotes an
+unversioned source archive. This mode uses no host/VCS discovery or build counter;
+its caller is responsible for supplying accurate provenance.
+The shared renderer has direct Make/source/object comparison evidence.
+A native Bazel kernel version action and complete kernel remain unqualified.

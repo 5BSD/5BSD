@@ -485,7 +485,7 @@ NEWVERS_ENV+= MAKE="${MAKE}"
 NEWVERS_ARGS+= -R -d ${PREFIX_OBJDIR}
 .endif
 vers.c: .NOMETA_CMP $S/conf/newvers.sh $S/sys/param.h ${SYSTEM_DEP:Nvers.*}
-	${NEWVERS_ENV} sh $S/conf/newvers.sh ${NEWVERS_ARGS} ${KERN_IDENT}
+	${NEWVERS_ENV} sh $S/conf/newvers.sh ${NEWVERS_ARGS}
 
 vnode_if.c: $S/tools/vnode_if.awk $S/kern/vnode_if.src
 	${AWK} -f $S/tools/vnode_if.awk $S/kern/vnode_if.src -c

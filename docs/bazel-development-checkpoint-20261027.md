@@ -1117,3 +1117,47 @@ Make backend already propagates a failed recipe. Explicit kernel version inputs
 will require frontend/configuration documentation when implemented. Make remains
 production/default; complete world/kernel/package/runtime/performance gates stay
 open. Push approval remains pending separately.
+
+### Shared explicit kernel version rendering (2026-10-28)
+
+Maintained sys/conf/newvers.sh now supports -e as a standalone option after
+variable overrides. Required inputs are PARAMFILE, NEWVERS_COPYRIGHT (source
+COPYRIGHT path), NEWVERS_COPYRIGHT_TEMPLATE, NEWVERS_IDENT,
+NEWVERS_COMPILER_VERSION and NEWVERS_SOURCE_REVISION. Revision must be supplied;
+an explicitly empty value represents an unversioned source archive. The shared
+copyright and C rendering code remains authoritative for Make and future Bazel
+callers. Quoted/backslash/multiline C-string metadata is rejected, not silently
+rewritten. Missing inputs, invalid numeric metadata and output failures fail.
+
+Explicit mode does not query Make, VCS, clock, user/hostname or a version counter.
+It does not discover alternate copyright templates. The caller supplies source
+provenance and selected compiler identity; this mode does not authenticate those
+claims or infer dirty state. Current implicit Make modes retain discovery.
+The kernel Make recipe no longer passes an unused trailing KERN_IDENT argument;
+legacy generation already queries Make for it. With NEWVERS_ARGS=-e and required
+environment inputs, the maintained recipe uses the same explicit renderer.
+
+Evidence: /usr/obj/usr/src/bazel-newvers-explicit-20261028/parity.json records
+identical C source and compiled-object bytes for the retained original script,
+current legacy -r and explicit -e. The actual SDK clang is used; inputs include
+independently collected checkout provenance and compiler banner. Explicit mode
+creates no counter. make-explicit.log records maintained GENERIC Make recipe
+execution with SYSTEM_DEP empty to isolate generation, matching the reference
+C bytes; this is not completion of its kernel prerequisites. The object-byte
+comparison is a direct compiler invocation, not a native Bazel vers.o target.
+
+newvers-errors-test.py passes producer failures, explicit input validation,
+space-containing paths, unavailable Make/clock commands, changed ambient identity,
+explicitly empty revision and failed output writes. Its explicit-mode PATH
+contains only awk/sed/cat; input tools remain host tools in this regression test.
+Shell syntax and diff whitespace checks pass. The previous -v query continues
+to use its early exit; it now also rejects failure of the param.h awk query.
+
+Frontend review: the maintained Make backend is updated in this change, and the
+manual describes the boundary. No new build-bsd C option or native Bazel target
+is claimed. Next is a declared native action using the selected execution
+compiler, source provenance inputs, and config-derived identity. Config identity
+must come from configuration processing rather than a duplicate hardcoded
+GENERIC string. Register action tests and qualify input invalidation/cache reuse
+before adding native vers.o. Full world/kernel/package/bootstrap/runtime and
+CPU/memory/disk gates remain open; Make remains production/default.

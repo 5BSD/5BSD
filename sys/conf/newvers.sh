@@ -31,6 +31,14 @@
 
 # Command line options:
 #
+#	-e	Generate reproducible vers.c from explicit inputs only. Requires
+#		PARAMFILE, NEWVERS_COPYRIGHT (source COPYRIGHT file),
+#		NEWVERS_COPYRIGHT_TEMPLATE, NEWVERS_IDENT,
+#		NEWVERS_COMPILER_VERSION and NEWVERS_SOURCE_REVISION. The last
+#		may be explicitly empty for an unversioned source archive. This
+#		mode does not query Make/VCS/clock/host or update a build counter.
+#		Use -e alone, after any variable overrides.
+#
 #	-c	Print the copyright / license statement as a C comment and exit
 #
 #	-r	Reproducible build.  Do not embed directory names, user	names,
@@ -59,10 +67,6 @@ fi
 unset RELEASE
 unset VERSION
 
-if [ -z "${SYSDIR}" ]; then
-	SYSDIR=$(dirname $0)/..
-fi
-
 # allow random overrides
 while :
 do
@@ -75,7 +79,33 @@ done
 RELEASE="${RELEASE:-${REVISION}-${BRANCH}}"
 VERSION="${VERSION:-${BRAND} ${RELEASE}}"
 
-RELDATE=$(awk '/^#define[[:space:]]*__FreeBSD_version/ {print $3}' ${PARAMFILE:-${SYSDIR}/sys/param.h})
+explicit_inputs=no
+if [ "$#" -eq 1 ] && [ "$1" = "-e" ]; then
+	explicit_inputs=yes
+	: "${PARAMFILE:?explicit mode requires PARAMFILE}"
+	: "${NEWVERS_COPYRIGHT:?explicit mode requires NEWVERS_COPYRIGHT}"
+	: "${NEWVERS_COPYRIGHT_TEMPLATE:?explicit mode requires NEWVERS_COPYRIGHT_TEMPLATE}"
+	: "${NEWVERS_IDENT:?explicit mode requires NEWVERS_IDENT}"
+	: "${NEWVERS_COMPILER_VERSION:?explicit mode requires NEWVERS_COMPILER_VERSION}"
+	: "${NEWVERS_SOURCE_REVISION?explicit mode requires NEWVERS_SOURCE_REVISION}"
+	# Values are inserted in C string literals. Reject unsupported quoting
+	# instead of generating malformed C or accepting injected definitions.
+	for value in "$NEWVERS_IDENT" "$NEWVERS_COMPILER_VERSION" "$NEWVERS_SOURCE_REVISION" "$TYPE" "$RELEASE" "$VERSION"; do
+		case "$value" in
+		*'"'*|*'\'*|*'
+'*|*"$(printf '\r')"*)
+			echo "Explicit version input contains unsupported string characters" >&2
+			exit 1
+			;;
+		esac
+	done
+fi
+
+if [ "$explicit_inputs" != yes ] && [ -z "${SYSDIR}" ]; then
+	SYSDIR=$(dirname $0)/..
+fi
+
+RELDATE=$(awk '/^#define[[:space:]]*__FreeBSD_version/ {print $3}' "${PARAMFILE:-${SYSDIR}/sys/param.h}") || exit 1
 
 # The exact version-only query needs no copyright or build metadata. Keep this
 # usable by declared build actions with just newvers.sh and the target param.h.
@@ -91,25 +121,37 @@ if [ "$#" -eq 1 ] && [ "$1" = "-v" ]; then
 	exit 0
 fi
 
-if [ -r "${SYSDIR}/../COPYRIGHT" ]; then
+if [ "$explicit_inputs" = yes ]; then
+	year=$(sed -Ee '/^Copyright .* The FreeBSD Project/!d;s/^.*1992-([0-9]*) .*$/\1/g' "$NEWVERS_COPYRIGHT") || exit 1
+	case "$year" in
+	""|*[!0-9]*) echo "Invalid explicit copyright year" >&2; exit 1;;
+	esac
+elif [ -r "${SYSDIR}/../COPYRIGHT" ]; then
 	year=$(sed -Ee '/^Copyright .* The FreeBSD Project/!d;s/^.*1992-([0-9]*) .*$/\1/g' ${SYSDIR}/../COPYRIGHT)
 else
 	year=$(date +%Y)
 fi
 # look for copyright template
 b=share/examples/etc/bsd-style-copyright
-for bsd_copyright in $b ../$b ../../$b ../../../$b /usr/src/$b /usr/$b
-do
-	if [ -r "$bsd_copyright" ]; then
-		COPYRIGHT=$(sed \
-		    -e "s/\[year\]/1992-$year/" \
-		    -e 's/\[your name here\]\.* /The FreeBSD Project./' \
-		    -e 's/\[your name\]\.*/The FreeBSD Project./' \
-		    -e '/\[id for your version control system, if any\]/d' \
-		    $bsd_copyright)
-		break
-	fi
-done
+render_copyright()
+{
+	sed -e "s/\[year\]/1992-$year/" \
+	    -e 's/\[your name here\]\.* /The FreeBSD Project./' \
+	    -e 's/\[your name\]\.*/The FreeBSD Project./' \
+	    -e '/\[id for your version control system, if any\]/d' "$1"
+}
+if [ "$explicit_inputs" = yes ]; then
+	COPYRIGHT=$(render_copyright "$NEWVERS_COPYRIGHT_TEMPLATE") || exit 1
+	[ -n "$COPYRIGHT" ] || { echo "Empty explicit copyright template" >&2; exit 1; }
+else
+	for bsd_copyright in $b ../$b ../../$b ../../../$b /usr/src/$b /usr/$b
+	do
+		if [ -r "$bsd_copyright" ]; then
+			COPYRIGHT=$(render_copyright "$bsd_copyright")
+			break
+		fi
+	done
+fi
 
 # no copyright found, use a dummy
 if [ -z "$COPYRIGHT" ]; then
@@ -123,13 +165,28 @@ fi
 COPYRIGHT="$COPYRIGHT
 "
 
+if [ "$explicit_inputs" = yes ]; then
+	case "$RELDATE" in
+	""|*[!0-9]*) echo "Invalid explicit osreldate" >&2; exit 1;;
+	esac
+	i=$NEWVERS_IDENT
+	compiler_v=$NEWVERS_COMPILER_VERSION
+	svn= git= gitup= hg=
+	[ -z "$NEWVERS_SOURCE_REVISION" ] || git=" $NEWVERS_SOURCE_REVISION"
+	include_metadata=no
+	modified=no
+else
 # We expand include_metadata later since we may set it to the
 # future value of modified.
 builddir=$(pwd)
 include_metadata=yes
 modified=no
-while getopts cd:rRvV: opt; do
+while getopts ced:rRvV: opt; do
 	case "$opt" in
+	e)
+		echo "-e must be used alone after variable overrides" >&2
+		exit 1
+		;;
 	c)
 		echo "$COPYRIGHT"
 		exit 0
@@ -317,6 +374,8 @@ if [ -n "$hg_cmd" ] ; then
 	fi
 fi
 
+fi # legacy metadata discovery
+
 [ ${include_metadata} = "if-modified" -a ${modified} = "yes" ] && include_metadata=yes
 if [ ${include_metadata} != "yes" ]; then
 	VERINFO="${VERSION}${svn}${git}${gitup}${hg} ${i}"
@@ -348,10 +407,12 @@ const char osrelease[sizeof(RELSTR) > 32 ? sizeof(RELSTR) : 32] = RELSTR;
 const int osreldate = ${RELDATE};
 const char kern_ident[] = "${i}";
 EOF
-)
+) || exit 1
 vers_content_old=$(cat vers.c 2>/dev/null || true)
 if [ "$vers_content_new" != "$vers_content_old" ]; then
-	printf "%s\n" "$vers_content_new" > vers.c
+	printf "%s\n" "$vers_content_new" > vers.c || exit 1
 fi
 
-echo $((v + 1)) > version
+if [ "$explicit_inputs" != yes ]; then
+	echo $((v + 1)) > version
+fi

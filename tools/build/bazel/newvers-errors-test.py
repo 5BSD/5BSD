@@ -50,5 +50,68 @@ class VersionErrors(unittest.TestCase):
                         self.assertNotEqual(result.returncode, 0, result.stderr)
                         self.assertFalse((work / 'vers.c').exists())
 
+
+    def test_explicit_inputs(self):
+        with tempfile.TemporaryDirectory(prefix='newvers inputs ') as directory:
+            root = Path(directory)
+            tools = root / 'tools'
+            tools.mkdir()
+            # This PATH cannot run Make, Git, date, hostname, touch or dirname.
+            for tool in ('awk', 'sed', 'cat'):
+                (tools / tool).symlink_to(shutil.which(tool))
+            for name, original in [('param.h', SOURCE / 'sys/sys/param.h'),
+                                   ('COPYRIGHT', SOURCE / 'COPYRIGHT'),
+                                   ('template', SOURCE / 'share/examples/etc/bsd-style-copyright')]:
+                shutil.copyfile(original, root / name)
+            env = {'PATH': str(tools), 'PARAMFILE': str(root / 'param.h'),
+                   'NEWVERS_COPYRIGHT': str(root / 'COPYRIGHT'),
+                   'NEWVERS_COPYRIGHT_TEMPLATE': str(root / 'template'),
+                   'NEWVERS_IDENT': 'GENERIC', 'NEWVERS_COMPILER_VERSION': 'fixture version 1',
+                   'NEWVERS_SOURCE_REVISION': 'dev-n123-abcdef-dirty',
+                   'MAKE': '/missing/make', 'SOURCE_DATE_EPOCH': 'invalid',
+                   'USER': 'ignored', 'HOSTNAME': 'ignored'}
+            script = str(SOURCE / 'sys/conf/newvers.sh')
+            first = subprocess.run(['/bin/sh', script, '-e'], cwd=root, env=env,
+                                   capture_output=True, timeout=10)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            content = (root / 'vers.c').read_bytes()
+            self.assertIn(b'dev-n123-abcdef-dirty GENERIC', content)
+            self.assertFalse((root / 'version').exists())
+            second = subprocess.run(['/bin/sh', script, '-e'], cwd=root,
+                                    env=dict(env, USER='different', HOSTNAME='different'),
+                                    capture_output=True, timeout=10)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertEqual(content, (root / 'vers.c').read_bytes())
+            cases = [(key, None) for key in ('PARAMFILE', 'NEWVERS_COPYRIGHT',
+                      'NEWVERS_COPYRIGHT_TEMPLATE', 'NEWVERS_IDENT',
+                      'NEWVERS_COMPILER_VERSION', 'NEWVERS_SOURCE_REVISION')]
+            cases += [('NEWVERS_IDENT', 'bad"ident'), ('NEWVERS_COMPILER_VERSION', 'bad\nversion'),
+                      ('NEWVERS_SOURCE_REVISION', 'bad\\revision'),
+                      ('NEWVERS_COPYRIGHT_TEMPLATE', str(root / 'missing')),
+                      ('PARAMFILE', str(root / 'missing'))]
+            for key, value in cases:
+                with self.subTest(key=key, value=value):
+                    (root / 'vers.c').unlink(missing_ok=True)
+                    bad = dict(env)
+                    if value is None:
+                        del bad[key]
+                    else:
+                        bad[key] = value
+                    result = subprocess.run(['/bin/sh', script, '-e'], cwd=root, env=bad,
+                                            capture_output=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertFalse((root / 'vers.c').exists())
+                    self.assertFalse((root / 'version').exists())
+            result = subprocess.run(['/bin/sh', script, '-e'], cwd=root,
+                                    env=dict(env, NEWVERS_SOURCE_REVISION=''),
+                                    capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            (root / 'vers.c').unlink()
+            (root / 'vers.c').mkdir()
+            result = subprocess.run(['/bin/sh', script, '-e'], cwd=root, env=env,
+                                    capture_output=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((root / 'version').exists())
+
 if __name__ == '__main__':
     unittest.main()
