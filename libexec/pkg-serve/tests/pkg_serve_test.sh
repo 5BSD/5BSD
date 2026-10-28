@@ -7,7 +7,7 @@ PKG_SERVE="${PKG_SERVE:-/usr/libexec/pkg-serve}"
 
 serve()
 {
-	printf "$1" | "${PKG_SERVE}" "$2"
+	printf "$1" | "$(atf_config_get pkg_serve "${PKG_SERVE}")" "$2"
 }
 
 check_output()
@@ -208,7 +208,7 @@ bad_basedir_head()
 bad_basedir_body()
 {
 	atf_check -s not-exit:0 -e match:"open" \
-	    "${PKG_SERVE}" /nonexistent/path
+	    "$(atf_config_get pkg_serve "${PKG_SERVE}")" /nonexistent/path
 }
 
 atf_init_test_cases()

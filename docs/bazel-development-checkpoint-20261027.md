@@ -8244,3 +8244,36 @@ This helper conversion does not establish SSH transport, signed repository
 publication, source authentication or update acceptance. Full-system/runtime,
 configured packaging, cache and performance gates remain open; Make stays
 production/default.
+
+## 2026-10-28 pkg-serve's 14 maintained ATF cases pass in guest
+
+Registered all 14 existing pkg_serve_test cases with declared native shell,
+ATF, utility, libc/libsys and loader inputs. The only shell-suite changes add
+an ATF pkg_serve configuration lookup at its two execution sites, retaining the
+PKG_SERVE environment/default fallback and all existing assertions. Added script/
+Kyua metadata and a standalone test installation archive; exact Make installation
+comparison for that new archive remains pending.
+
+build-bsd at 16 jobs captured the tests in bazel-pkg-serve-tests-20261028. Host
+execution still aborts in the shell helper's cap_rights_intersect assertion,
+consistent with the independently diagnosed old-kernel rights allocation. This
+host run remains FAILED; no assertions, privileges or containment were bypassed.
+
+Replayed all 14 captured test-setup environments/runfiles through the maintained
+networkless QEMU fixture runner and its matching GENERIC kernel. The static ATF
+launcher only executes each unchanged Bazel runner and checks exit status.
+Relocated runfile/tmp/XML paths are explicit; payload provenance covers 883 paths
+and 42 unique file payloads. The guest uses native rtld for child execution.
+All 14 bodies reported passed, as did four baseline fixture cases. QEMU exited
+0 after guest poweroff, without forced termination, using 2 GiB RAM/four vCPUs
+and a disk-backed 512 MiB UFS fixture.
+
+Evidence: /usr/obj/usr/src/bazel-rights-vm-20261028/pkg-serve-run/{result.json,
+serial.log,host-resources.jsonl}; payload manifest pkg-serve-payload.json and
+stage-pkg-serve.py/pkg_serve_guest.c in the parent. This is guest replay of
+Bazel-built tests, not an in-guest Bazel scheduler or passing native-host run.
+The inherited assertions are exercised as written, not a comprehensive security
+proof. SSH transport, repository authentication, full update acceptance and
+additional adversarial cases remain unqualified. Reviewed build-bsd.c: existing
+format-5 test handling records host failures correctly; maintained generic VM
+backend integration is still open. Make remains production/default.

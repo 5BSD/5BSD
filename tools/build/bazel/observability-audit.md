@@ -5257,3 +5257,12 @@ ATF file/mtime/malformed-request/traversal cases for native runtime integration.
 Capability-mode containment and actual file service require execution on a
 compatible kernel; build/install checks alone are insufficient. No repository
 was served and no transport/authentication or policy correctness is claimed.
+
+## 2026-10-28 pkg-serve ATF runtime coverage
+
+All 14 maintained ATF assertions pass under captured Bazel runner/runfiles in
+the matching-kernel guest, including malformed-request/error handling and the
+existing traversal case. Shell assertions are unchanged; executable selection
+is explicit through ATF configuration. This is bounded protocol coverage, not
+an exhaustive confinement/authorization review or transport/signing proof.
+The incompatible-host failures remain recorded. No host repository was served.
