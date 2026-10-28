@@ -237,3 +237,7 @@ bool_flag(name = "ns_caching", build_setting_default = True, visibility = ["//vi
 config_setting(name = "ns_caching_enabled", flag_values = {":ns_caching": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "hesiod", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "hesiod_enabled", flag_values = {":hesiod": "true"}, visibility = ["//visibility:public"])
+
+# Match the default-off DETECT_TZ_CHANGES source option.
+bool_flag(name = "detect_tz_changes", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "detect_tz_changes_enabled", flag_values = {":detect_tz_changes": "true"}, visibility = ["//visibility:public"])

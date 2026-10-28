@@ -4418,3 +4418,13 @@ stub without new runtime code or probes. The iconv source audit applies; native
 hidden symbol visibility is compared explicitly to Make for all 12 members.
 No complete libc link or runtime module-loading claim follows from the archive
 and metadata checks. Evidence: bazel-libc-nonshared-build-20261028-r3/qualification.
+
+## 2026-10-28: libc stdtime/tzcode
+
+Reviewed time routines and imported timezone code; no direct DTrace/SDT or BSM
+audit calls found. Existing time conversion, locking and optional timezone-change
+detection code remain unchanged. Both option values match maintained Make object
+code. Source time32.c retains its documented temporal-locality/post-2038 TODO;
+this migration neither repairs nor proves those semantics. Runtime reload and
+edge-case testing remains necessary with a complete native libc and zone data.
+Evidence: bazel-libc-{stdtime,stdtime-detect}-build-20261028/qualification.

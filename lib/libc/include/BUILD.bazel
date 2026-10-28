@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "rt_private_headers", hdrs = ["namespace.h", "un-namespace.h", "libc_private.h"],
-    strip_include_prefix = ".", deps = ["//lib/libsys:headers"], visibility = ["//lib/libthr:__pkg__", "//lib/librt:__pkg__", "//lib/msun:__pkg__", "//lib/libc/yp:__pkg__", "//lib/libc/xdr:__pkg__", "//lib/libc/rpc:__pkg__", "//lib/libc/resolv:__pkg__", "//lib/libc/posix1e:__pkg__", "//lib/libc/iconv:__pkg__", "//lib/libc/db:__pkg__", "//lib/libc/locale:__pkg__"])
+    strip_include_prefix = ".", deps = ["//lib/libsys:headers"], visibility = ["//lib/libthr:__pkg__", "//lib/librt:__pkg__", "//lib/msun:__pkg__", "//lib/libc/yp:__pkg__", "//lib/libc/xdr:__pkg__", "//lib/libc/rpc:__pkg__", "//lib/libc/resolv:__pkg__", "//lib/libc/posix1e:__pkg__", "//lib/libc/iconv:__pkg__", "//lib/libc/stdtime:__pkg__", "//lib/libc/db:__pkg__", "//lib/libc/locale:__pkg__"])
 
 cc_library(name = "math_headers", hdrs = ["fpmath.h"], strip_include_prefix = ".", deps = [":rt_private_headers", "//lib/libc/amd64:math_headers"], visibility = ["//lib/msun:__pkg__", "//lib/libc/gdtoa:__pkg__"])
 

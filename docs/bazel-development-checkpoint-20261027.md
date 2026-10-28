@@ -5448,3 +5448,27 @@ Frontend/backend review: this fixes the maintained reference helper used for
 qualification, without changing build-bsd inputs, staged SDK or world profile.
 No host installation. Full archive/debug identity and native libc link/runtime
 remain open even though both nonshared source-selection variants are checked.
+
+## 2026-10-28: native libc time routines and timezone-detection option
+
+Adds all seven stdtime sources, including direct contrib/tzcode sources. Native
+groups preserve the forced tzconfig.h include for the six configured routines,
+exclude it from time32.c, and limit ALL_STATE/THREAD_SAFE/DETECT_TZ_CHANGES to
+localtime.c. The new typed detect_tz_changes setting defaults off, matching
+src.opts.mk. Explicit headers cover tzcode, locale internals and libc interfaces.
+
+Evidence: /usr/obj/usr/src/bazel-libc-{stdtime,stdtime-detect}-build-20261028/
+qualification/parity.json against matching fresh Make references. Both disabled
+and enabled timezone-detection configurations match all 14 ordinary/PIC objects
+in .text, global and unresolved symbols (28 comparisons total). Native builds
+run through build-bsd format 5 with 16 jobs; no host timezone changes.
+
+Complete libc symbol-map generation must also apply DETECT_TZ_CHANGES to
+Version.map as maintained Make does. That aggregate link remains open; this
+object qualification does not claim ABI-version-map completion. Runtime timezone
+reloads, DST/leap-second/locale behavior, installed zone data/manuals and full
+data/relocation/debug identity remain unqualified.
+
+Frontend review: source_graph.py already forwards typed source build settings;
+build-bsd accepts the existing explicit input file. Both option values were
+exercised through that path. No new frontend C argument or helper is needed.
