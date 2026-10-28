@@ -4117,3 +4117,13 @@ syscall instrumentation must be assessed with the driver stack. Eight safe
 argument/error cases match Make; actual playback and capability-mode device
 setup remain unqualified. Evidence:
 `/usr/obj/usr/src/bazel-beep-20261028/qualification/parity.json`.
+
+
+### 2026-10-28: bintrans
+
+Native conversion carries bintrans.c, uuencode.c, uudecode.c and qp.c unchanged.
+No local SDT/DTrace/AUDIT hooks found in those sources. This does not establish
+missing syscall auditing; encoding/decoding uses ordinary file/stdio paths.
+No new probes or audit policy added. Direct fixture and alias behavior compares
+with Make; ATF startup remains blocked by the recorded capability-rights ABI
+assertion, and legacy TAP Bazel runtime integration remains pending.

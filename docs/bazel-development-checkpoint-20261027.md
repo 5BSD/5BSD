@@ -4424,3 +4424,40 @@ Frontend review: existing format-5 target selection handles these targets and
 sound installation metadata without frontend C/backend/manual changes. Full
 world aggregation, pkgbase publication, tests and performance remain open.
 Make remains production/default; no host installation or BIP changes occurred.
+
+
+## 2026-10-28: bintrans native build and installation candidate
+
+Scope remains all userland, libraries, kernel, modules and drivers; none of
+those whole-system categories is complete. Added native cc_binary compilation
+of the four maintained bintrans sources, PIE linking, split debug, both manual
+sections, five executable aliases and six manual aliases. No program source
+or runtime security behavior changed. Test installation follows MK_TESTS via
+the existing Bazel setting and includes both scripts, eleven fixtures and the
+ATF/TAP Kyuafile; directory policy comes from BSD.tests.dist.
+
+Evidence: `/usr/obj/usr/src/bazel-bintrans-build-20261028-r2` through the maintained
+build-bsd frontend, 16 jobs, frozen SDK; Make reference at
+`/usr/obj/usr/src/bazel-bintrans-make-20261028`. qualification/verify.py and
+parity.json record 32 installation records matching type/path/owner/group/mode/
+package tags after normalizing hardlinks, matching 11 global symbols and dynamic
+metadata (libc.so.7, BIND_NOW, NOW PIE), byte-identical compressed manuals, six
+fixture comparisons and all five argv[0] alias comparisons against Make. Direct
+runtime checks use SDK libraries; they are not full installed-system tests.
+No whole executable/debug byte identity or system performance claim.
+
+Two native ATF cases are declared. Attempts retained at
+bazel-bintrans-20261028-r2 and -r3 fail before either body with the capability
+rights assertion in runtime tools, consistent with the previously recorded
+source/host ABI discrepancy. These are failures, not passing/skipped tests.
+Legacy TAP script is installed but its Bazel runner remains pending. Its
+../regress.m4 dependency is provided by usr.bin/tests in the installed tree;
+it must not be replaced by an ad hoc fixture. Build-only qualification uses
+separate explicit inputs and does not erase failed runtime evidence. Initial
+archive validation correctly rejected absent tests directory policy, fixed by
+declaring the maintained tests mtree input.
+
+Frontend review: format-5 explicit targets/tests and existing tests/split_manpages
+settings express this addition; no frontend/backend contract change is required.
+Make remains production default. BIP remains out of scope. Nothing installed on
+the host, no reboot, and no complete-world/kernel/package/boot claim.
