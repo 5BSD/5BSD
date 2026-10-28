@@ -6325,3 +6325,41 @@ modules/package/cache/performance gates. Frontend review: build-bsd's maintained
 format-5 bazel-test path drove all runs with 16 jobs; no new option or publication
 contract needs frontend changes. Make remains production/default. No host files
 were installed and no upgrade/reboot was performed.
+
+## 2026-10-28: native compiler-rt/libsys installation archives
+
+Added source-owned installation targets for compiler-rt and libsys, consumed by
+the maintained typed manifest/archive rules. Compiler-rt installs its archive and
+libgcc.a compatibility symlink with libcompiler_rt/dev ownership. libsys installs
+ordinary/PIC archives, libsys.so.7 and its development symlink, a split debug file,
+two public headers, 236 compressed manuals and 181 manual hardlinks. The normal
+Make schg metadata on libsys.so.7 is preserved as archive metadata. Ancestor
+policy still comes from maintained mtree/account sources; only libsys's explicit
+debug directory is declared by this component. Nothing is installed on the host.
+
+Default evidence: /usr/obj/usr/src/bazel-runtime-install-20261028-r2/qualification/
+installation-parity.json against bazel-compiler-rt-install-reference-20261028 and
+bazel-libsys-install-reference-20261028, both produced by install-reference.py.
+All 426 non-directory metadata records match, including ownership, modes, file
+flags, package tags and symbolic/hardlink relationships. All 419 header/manual
+payloads match Make bytes (including aliases); native archives retain the exact
+previously qualified artifact bytes and contain 165/477/477 members. The shared
+library's debug-link filename/CRC matches its companion, which contains DWARF.
+This is not a debug-byte or full ELF identity comparison with Make.
+
+Alternate manual ownership also passes: bazel-runtime-install-split-20261028/
+qualification/installation-parity.json matches fresh Make WITH_MANSPLITPKG=yes
+at bazel-libsys-install-split-reference-20261028. All 424 libsys metadata entries,
+419 header/manual payloads and 182 links match. The initial reference invocation
+incorrectly used WITH_SPLIT_MANPAGES; the helper rejected it before creating a
+reference. Correcting to Make's actual MANSPLITPKG option produced the successful
+comparison. Native split_manpages remains the existing typed frontend setting.
+Verification scripts live at bazel-runtime-install-qualification-20261028.
+
+Frontend review: build-bsd.c and native-qualify.py already support these native
+targets and the typed split_manpages setting through format 5; all builds used
+16 jobs. No new CLI, signing or publication contract is introduced. These archives
+are component installation results, not a completed pkgbase repository or world.
+Remaining gates include libc linkage/DOF, full installation/package composition,
+other build configurations, runtime/kernel/modules and cache/performance testing.
+Make remains production/default, with no host installation or upgrade performed.

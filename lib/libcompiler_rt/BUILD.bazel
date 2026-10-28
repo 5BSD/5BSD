@@ -188,3 +188,21 @@ cc_import(name = "compiler_rt", static_library = ":static_archive", visibility =
 cc_test(name = "builtins_test", srcs = ["//tools/build/bazel:tests/compiler_rt_runtime.c"],
     deps = [":compiler_rt"], linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], size = "small")
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+bsd_install_file(name = "archive_install", src = ":static_archive", destination = "/usr/lib/libcompiler_rt.a",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libcompiler_rt", "dev"])
+bsd_install_link(name = "gcc_compat_link", destination = "/usr/lib/libgcc.a", target = "libcompiler_rt.a",
+    kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=libcompiler_rt", "dev"])
+bsd_install_manifest(name = "install_manifest", entries = [":archive_install", ":gcc_compat_link"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])

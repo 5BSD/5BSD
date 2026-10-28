@@ -4695,3 +4695,12 @@ thread-local errno selection, IFUNC timekeeping, audit records, syscall tracing,
 atomic contention or full compiler-generated arithmetic. Those broader runtime
 checks remain outstanding. A caught whole-archive linkage error was fixed in the
 dependency graph, retaining shared runtime test coverage against recurrence.
+
+## 2026-10-28: compiler-rt/libsys installation and debug artifacts
+
+Installation preserves the qualified native archives and exposes libsys's split
+DWARF companion through a verified GNU debug-link CRC. Headers/manual payloads and
+links match Make in default and split-manpage modes. This supports later debugging
+and tracing workflows but does not itself establish DTrace probe behavior, live
+symbolication, audit records or full debugger/runtime correctness. No runtime
+instrumentation or security policy was changed by these installation targets.
