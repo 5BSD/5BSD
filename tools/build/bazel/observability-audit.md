@@ -5308,3 +5308,14 @@ math, coroutines, built-in POSIX loading and error handling, not privileged
 system mutations. Module-specific audit/security behavior, interactive readline
 and bootstrap behavior remain open. Nuageinit runtime is not yet qualified.
 Evidence: /usr/obj/usr/src/bazel-flua-20261028-r2/qualification/.
+
+
+### flua lfs/fbsd modules (2026-10-28)
+
+Original module sources are compiled unchanged; both PIC object code and symbols
+match Make. Temporary filesystem operations, missing-path errors and fbsd API
+argument rejection are checked with the exact built modules. This does not
+establish process-spawn/pipe cleanup, privileged filesystem behavior, or audit
+coverage of consumers. Keep those runtime/security checks open when qualifying
+nuageinit and other privileged Lua users. Evidence:
+/usr/obj/usr/src/bazel-flua-modules-20261028-r2/qualification/.

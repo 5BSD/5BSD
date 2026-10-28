@@ -8385,3 +8385,32 @@ claim. Builds used build-bsd with 16 jobs. Reviewed build-bsd.c: existing
 explicit target collection suffices; no frontend change needed. No host
 installation/configuration changes. Full world/kernel/pkgbase/cache/performance
 qualification remains open; Make remains production/default.
+
+
+## 2026-10-28: flua lfs/fbsd loadable modules
+
+Added native targets for lfs.so and fbsd.so, using explicit Lua/bootstrap headers
+and leaving Lua API references for the interpreter to resolve. Neither module
+embeds another Lua runtime. A flua-specific installation helper splits debug
+files and installs the existing /usr/lib/flua layout with package=flua metadata.
+The helper currently covers modules without manuals or additional Lua payloads;
+other module types still need their declared additional installation inputs.
+
+Both PIC objects match Make's .text and global symbols. The DSOs match 42/39
+symbols respectively, libc-only NEEDED, SONAME and empty RPATH/RUNPATH. Five
+installation records per module match Make in owners/modes/package tags, and
+both debug pairs validate with stripped .text unchanged. Three external runtime
+cases pass for native and Make builds using the previously qualified flua and
+native loader/libraries: load/create/stat/enumerate/remove temporary files,
+missing-file errors, and fbsd loading/argument rejection. Subprocess execution,
+pipes and lifecycle behavior remain unqualified; passing argument rejection is
+not a process-execution test. All mutations stayed in private qualification dirs.
+
+Evidence: /usr/obj/usr/src/bazel-flua-modules-20261028-r2/qualification/
+{parity.json,runtime/results.json}. Scripts:
+bazel-flua-modules-qualification-20261028/{make-lfs.py,make-lfbsd.py,verify.py,
+runtime.py}. Make references: bazel-flua-{lfs,lfbsd}-reference-20261028.
+Native builds ran through build-bsd at 16 jobs. Reviewed frontend explicit input
+handling; current collection supports these targets without frontend changes.
+Remaining flua modules, Bazel-owned runtime tests, bootstrap variants, nuageinit,
+full world/kernel/pkgbase/cache/performance gates remain open. Make stays default.
