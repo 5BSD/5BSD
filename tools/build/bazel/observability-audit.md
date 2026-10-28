@@ -5604,3 +5604,11 @@ preparation/read failures, chroot lists and explicit quoted paths. Existing stub
 and temporary fixtures are preserved. This does not demonstrate live SSH login,
 real key generation, syslog delivery or boot ordering. Native /bin/sh is staged
 for existing shebangs in the private VM; host state is untouched.
+
+### 2026-10-28 ATF pytest wrapper
+
+Native target preserves the existing source's stderr diagnostics, debug argument
+printing and execvp failure reports. The source contains no DTrace probes or
+audit calls. This unprivileged test-launch adapter does not introduce a new
+privileged policy operation; no new audit instrumentation added. Build and
+installation parity pass; actual pytest dispatch/runtime remains unqualified.

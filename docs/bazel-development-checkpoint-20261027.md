@@ -9395,3 +9395,30 @@ tests, architecture selections and directory policy before claiming completeness
 DMA world selection still needs DMAGENT gated by MAIL/OpenSSL/CRYPT; directly
 requesting this explicit archive includes both children. Full world/kernel,
 pkgbase publication and runtime/performance gates remain open. Make remains default.
+
+## 2026-10-28: native ATF pytest wrapper
+
+The libexec aggregation audit found atf-pytest-wrapper lacked a native BUILD
+file. Added ordinary cc_binary and installation targets for atf_pytest_wrapper,
+with declared native libc++/libcxxrt/libm dependencies and source-matching
+GNU C++20, HAVE_CONFIG_H and PIE settings. No source changes or Make subprocess.
+
+Independent rootless Make and maintained build-bsd format-5 builds used 16 jobs.
+Qualification passed: four installation metadata records, 77 global/undefined
+symbols, identical NEEDED libraries, no RPATH/RUNPATH, valid stripped/debug pairing
+and preserved executable text. All 38 executable object sections (15,080 bytes),
+including C++ COMDAT functions, match Make byte-for-byte; the .text-only check
+also passed but is insufficient alone for this C++ program.
+
+Evidence: /usr/obj/usr/src/bazel-pytest-wrapper-20261028/qualification/
+atf_pytest_wrapper/parity.json, object-parity.json and executable-sections.json
+(the latter two are directly under qualification). Reproduction scripts:
+bazel-pytest-wrapper-qualification-20261028/{make.py,verify.py,objects.py,sections.py}.
+Independent Make objects/stage are under bazel-pytest-wrapper-reference*-20261028.
+Native full ELF was copied into the qualification directory before comparison.
+
+The existing frontend target input, declared installation rules and artifact
+capture require no new frontend/backend protocol. Runtime pytest invocation,
+ATF tests and libexec/world aggregation remain open. This component build adds
+no host pytest dependency or installation. Make remains production/default;
+complete world/kernel/package/runtime and resource gates are still outstanding.

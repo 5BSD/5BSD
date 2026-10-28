@@ -34388,3 +34388,11 @@ including both debug files, configuration, example and manual hardlink. Select i
 through the existing format-5 targets input. It is an explicit component target;
 world-level DMAGENT/MAIL/OpenSSL selection remains to be implemented. This archive
 is an installation artifact, not a published pkgbase repository.
+
+### Native ATF pytest adapter (2026-10-28)
+
+`//libexec/atf/atf-pytest-wrapper:atf_pytest_wrapper` builds the existing C++20
+launcher; `:install_archive` packages its executable and debug file. Build and
+installation parity with Make are qualified, including all executable object
+sections. Running it still requires pytest and the applicable ATF pytest plugin
+in the test environment. Native compilation does not qualify Python test runtime.
