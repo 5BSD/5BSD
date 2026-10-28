@@ -14,3 +14,5 @@ cc_library(name = "interface_headers", hdrs = ["if_var.h", "ifq.h", "bpfdesc.h"]
 cc_library(name = "interface_type_headers", hdrs = ["if_types.h"], includes = [".."], visibility = ["//sys/security/mac_test:__pkg__", "//sys/kern:__pkg__"])
 
 cc_library(name = "link_address_headers", hdrs = ["if_dl.h"], includes = [".."], visibility = ["//sys/kern:__pkg__"])
+
+cc_library(name = "radix_headers", hdrs = ["radix.h"], includes = [".."], visibility = ["//sys/kern:__pkg__"])

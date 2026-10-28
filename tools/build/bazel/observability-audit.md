@@ -3811,3 +3811,15 @@ raw CTF, allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-vfs-defaults-kernel-20261028/qualification`.
 No runtime source changed. Live probe/audit coverage, fallback dispatch and
 concurrent vnode lifecycle behavior remain unqualified.
+
+### VFS mount and root mount (2026-10-28)
+
+vfs_mount.c retains four mount SDT probe definitions and audit calls for flags,
+filesystem type and filesystem identifier. vfs_mountroot.c has no local SDT
+or AUDIT_ARG calls; early boot coverage must be assessed in its boot context.
+Native GENERIC output matches Make symbols, raw CTF, allocated sections and
+runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-mount-kernel-20261028/qualification`.
+No runtime source changed. Probe delivery, audit records, mount authorization,
+root discovery and concurrent unmount remain unqualified. The recorded
+ZFS/filedesc WITNESS issue remains open and is not resolved by object parity.

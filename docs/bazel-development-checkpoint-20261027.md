@@ -3703,3 +3703,28 @@ operation dispatch, access checks and VM-backed reads still require a linked
 kernel and runtime tests. Full kernel/world/pkgbase/bootstrap and performance
 gates remain open. Make stays production/default; module count remains 45.
 No host installation or BIP changes occurred.
+
+### Native VFS mount and root mount
+
+Added //sys/kern:generic_mount_object_files for vfs_mount.c and
+vfs_mountroot.c, selected by maintained GENERIC Make. Dependencies include
+CK/VM, MAC/audit, GEOM, network address and radix headers. Root-device options
+are extracted from native config output, not synthesized. No runtime source
+or mounting policy changed.
+
+Evidence: `/usr/obj/usr/src/bazel-mount-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. opt_rootdevname.h matches Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-mount-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Root filesystem discovery, mount option errors, privilege/jail/MAC checks,
+mount/unmount races and filesystem I/O require linked-kernel qualification.
+The recorded 2026-10-03 ZFS/filedesc WITNESS issue was consulted; this build
+comparison neither diagnoses nor fixes it. Full kernel/world/pkgbase/bootstrap
+and performance gates remain open. Make stays production/default; module
+count remains 45. No host installation or BIP changes occurred.
