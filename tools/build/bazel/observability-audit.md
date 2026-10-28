@@ -4623,3 +4623,12 @@ wordexp's maintained shell builtin, syslog socket recovery and terminal/service
 interaction require later runtime qualification. crypt.c contains pre-existing
 legacy compatibility stubs; no cryptographic behavior or new instrumentation
 is asserted by its native compilation.
+
+## 2026-10-28: libc general support group
+
+No direct SDT/DTrace or BSM audit hooks found in the 26 migrated sources.
+Existing thread interposition and extended-error paths are unchanged. Native
+object/exception-section parity does not qualify runtime thread initialization,
+login-record writes or event delivery. Static pututxline testing and full native
+libc/libthr runtime integration remain required. Existing stub functions are
+part of libc's maintained design, not migration workarounds.

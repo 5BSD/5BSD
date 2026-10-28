@@ -6068,3 +6068,33 @@ The remaining libc inventory must distinguish exports from compiled source lists
 Frontend review: existing build-bsd format-5 targets/settings support these objects;
 no new frontend/backend contract required. Builds used 16 CPUs; Make remains
 production/default and no host installation or configuration changes occurred.
+
+## 2026-10-28: libc general support and previously export-only sources
+
+Adds 26 sources to native support_objects: existing thread stubs/initialization,
+ELF support and interposition, floating-point helpers, login-record storage,
+inotify, extended errors, allocation wrappers, pw_scan and getcap. The last two
+previously had source exports for other consumers, not native libc compilation.
+Private floating-point, spinlock, login-record and extended-error catalogue
+headers are declared. No stub implementation or fallback was invented; the
+existing libc sources and their normal linkage semantics are retained.
+
+Evidence: /usr/obj/usr/src/bazel-libc-support-build-20261028/qualification/parity.json
+against bazel-libc-support-make-20261028. All 52 ordinary/PIC objects match .text
+and global/unresolved symbols. exception-sections.json also confirms matching
+raw .eh_frame/.gcc_except_table contents/presence. Full relocation/debug/data,
+ABI versioning and runtime behavior remain unqualified.
+
+Thread stub replacement/interposition, initialization order, ELF-loader behavior,
+login-record writes, extended-error handling and floating-point edge cases need
+complete libc linking and maintained runtime tests. The pututxline test's Make
+configuration requires static linkage; do not substitute shared-SDK execution
+as its final qualification. No host login-record/account updates were performed.
+
+Nine entries remain in gen's primary source list: dlfcn, getgrent, getgrouplist,
+getnetgrent, getpwent, initgroups, sysconf, tls and unvis-compat. Separate imported
+pwcache/vis/unvis sources and complete library install/link metadata also remain.
+This is a component inventory checkpoint, not whole-libc completion.
+Frontend review: build-bsd's existing format-5 targets support the additions;
+no frontend/backend contract changes needed. All compilation uses 16 CPUs;
+Make remains production/default, with no host installation or policy changes.

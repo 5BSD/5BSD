@@ -267,3 +267,47 @@ cc_library(
 )
 bsd_component_archive(name = "system_helpers_archive", groups = [":system_helper_objects"])
 bsd_component_archive(name = "system_helpers_pic_archive", groups = [":system_helper_objects"], pic = True)
+
+cc_library(
+    name = "support_objects",
+    srcs = [
+        "__pthread_mutex_init_calloc_cb_stub.c",
+        "_once_stub.c",
+        "_pthread_stubs.c",
+        "_spinlock_stub.c",
+        "_thread_init.c",
+        "elf_utils.c",
+        "fpclassify.c",
+        "frexp.c",
+        "getutxent.c",
+        "inotify.c",
+        "isinf.c",
+        "isnan.c",
+        "libc_dlopen.c",
+        "libc_interposing_table.c",
+        "memalign.c",
+        "nlist.c",
+        "pututxline.c",
+        "uexterr_format.c",
+        "uexterr_gettext.c",
+        "uexterr_init.c",
+        "uexterr_set.c",
+        "utxdb.c",
+        "valloc.c",
+        "pw_scan.c",
+        "getcap.c",
+        "modf.c",
+    ],
+    hdrs = ["utxdb.h", "pw_scan.h", "exterr_cat_filenames.h"],
+    implementation_deps = ["//lib/libc/include:gen_support_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({
+        "//tools/build/bazel/config:nls_enabled": ["NLS"],
+        "//conditions:default": [],
+    }),
+    copts = ["-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "support_archive", groups = [":support_objects"])
+bsd_component_archive(name = "support_pic_archive", groups = [":support_objects"], pic = True)
