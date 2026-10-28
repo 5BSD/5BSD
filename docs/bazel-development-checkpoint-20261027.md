@@ -1717,3 +1717,31 @@ Outstanding for tmpfs/pseudofs: staged installation metadata, unchanged-input
 and selective invalidation checks, live module behavior/probes and broader
 performance qualification. CTF output layout changes other users of the
 shared conversion rule; whole-world requalification remains required.
+
+### Five-module installation and cache checks
+
+Tmpfs and pseudofs now also match Make's staged installation paths,
+owner/group/mode/type and package/debug tags. Staging used the maintained
+IMAKE_INSTALL contract with NO_ROOT and kernel-build KMODDIR; nothing was
+installed into the host. The comparison is retained in
+`/usr/obj/usr/src/bazel-tmpfs-pseudofs-ctf-20261028/qualification/installation-comparison.json`.
+
+The identical frontend repeat at
+`/usr/obj/usr/src/bazel-five-modules-repeat-20261028` produced identical
+artifact hashes and an empty spawned-action log. The existing nullfs test
+result was cached. A separate explicit format-5 input changed kernel_directory
+to `/boot/qualified-test-kernel` and kernel_debug_directory to empty. All five
+module manifests correctly place runtime and debug files together at that
+destination, with unchanged full/runtime/debug payload hashes and no spawned
+compile/link/tool processes. Metadata is produced by Bazel write actions; an
+empty spawned-action log does not mean those metadata actions did not run.
+Evidence: `/usr/obj/usr/src/bazel-five-modules-install-setting-20261028` and
+`qualification/cache-settings-check.json` in the original CTF qualification.
+
+Frontend assessment: maintained format-5 target and installation settings
+worked as designed, so no C frontend/backend change is needed for this check.
+This closes unchanged-input reuse and install-setting invalidation for the
+five selected modules. Source/header invalidation, live module behavior,
+whole-system packaging, and performance/resource qualification remain open.
+Next expansion candidate inspected: geom_nop (single g_nop.c source with
+GEOM headers); it has not yet been converted or qualified.
