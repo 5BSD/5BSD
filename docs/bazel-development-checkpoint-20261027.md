@@ -7870,3 +7870,43 @@ host-ABI prerequisite for further isolated execution. It does NOT run the six
 mknetid ATF cases; staging and executing those unchanged Bazel tests is next.
 Reviewed build-bsd.c: no build input or packaging policy changed here, and the
 native bazel-test frontend remains unchanged. Full goal remains incomplete.
+
+## 2026-10-28 all six mknetid ATF cases pass in matching-kernel guest
+
+The current registered tests were rebuilt/captured through build-bsd at 16
+jobs in bazel-mknetid-tests-20261028-r3. Their host executions still fail at
+the known old-kernel rights mismatch; those failures are retained. Six actual
+TestRunner test-setup actions were selected from execution.json, separately
+from the six XML-generation actions that share the same mnemonic. The first
+preparation attempt rejected that distinction instead of silently staging
+extra actions; failed preparation work/logs remain retained.
+
+Captured BSD_ATF environment settings and complete dereferenced runfiles were
+staged with per-file SHA256 provenance: 367 paths, 33 unique payloads, with
+identical payloads hardlinked. A small static ATF launcher forks/execs the
+unchanged Bazel atf_runner with relocated TEST_SRCDIR/TEST_TMPDIR/XML paths and
+checks its exit status. It does not reproduce the test assertions. Native rtld
+is supplied at /libexec/ld-elf.so.1 for ordinary child execs; the suite's explicit
+mknetid loader selection also remains unchanged. No host helpers, rights masks,
+assertion suppressions, skips or rewritten expected results were substituted.
+
+The maintained VM runner booted the previously qualified GENERIC kernel using
+2 GiB RAM, four vCPUs and a disk-backed 512 MiB UFS root. All six original
+shell test bodies reported passed: supplementary groups/host/netid records,
+duplicate warning, quiet suppression, missing optional netid, malformed passwd,
+and missing required group. Four baseline fixture cases also passed. The guest
+powered off, QEMU exited 0, and no forced termination occurred.
+
+Evidence under /usr/obj/usr/src/bazel-rights-vm-20261028:
+- mknetid-run-r3/result.json, serial.log and host-resources.jsonl
+- mknetid-payload.json: captured actions and copied file hashes
+- stage-mknetid.py, mknetid_guest.c and fixtures/mknetid_guest: replay mechanics
+
+This is guest replay of Bazel-built tests, NOT a Bazel scheduler running in the
+VM, native-host success, a maintained frontend VM backend, or whole-system
+qualification. Captured replay should become reusable tooling before broad
+VM qualification. The sampled QEMU RSS maximum was 384843776 bytes; last CPU
+sample was 21.44 seconds, across 18 samples. Neither proves disk-I/O or build
+performance parity. Live NIS/default-domain lookup remains untested. Reviewed
+build-bsd.c: no input/security/packaging policy changed; the existing frontend
+recorded the host failures correctly. Make remains production/default.

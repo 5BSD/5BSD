@@ -5143,3 +5143,12 @@ matches current CAP_ALL exactly and validates without suppressing assertions.
 This contrasts with the older host's invalid mask and confirms the matching-
 kernel route. No live DTrace/audit observation or mknetid ATF run is implied.
 See bazel-rights-vm-20261028/run/result.json and serial.log.
+
+## 2026-10-28 mknetid registered test bodies pass in QEMU
+
+The six unchanged ATF shell bodies now pass with their Bazel runner/runfiles
+replayed in a matching-kernel guest. This exercises duplicate/malformed/missing-
+file diagnostics without disabling capability assertions or replacing helpers.
+Evidence: bazel-rights-vm-20261028/mknetid-run-r3/serial.log and result.json.
+The older-host failure remains reproducible; this is guest execution coverage,
+not a passing host Bazel run or a live NIS service/DTrace/audit qualification.
