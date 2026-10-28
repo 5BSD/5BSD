@@ -5161,3 +5161,23 @@ full libc linkage/versioning, installation and runtime remain open.
 Frontend review: existing explicit targets and dtrace setting cover the generated
 header and object variants through build-bsd format 5. No frontend/backend
 contract change needed. No DNS queries, host install or service changes occurred.
+
+## 2026-10-28: complete libc inet object inventory
+
+Adds all 14 maintained inet C sources as native inet_objects with ordinary/PIC
+qualification archives and Symbol.map visibility for the future libc link.
+Explicit private headers preserve port_before/after and the resolver context
+interface used by nsap_addr. The initial compile exposed resolv_mt.h missing
+from the declared dependency set; it was added without an ambient include path.
+
+Evidence: /usr/obj/usr/src/bazel-libc-inet-build-20261028-r2/qualification/parity.json
+against fresh bazel-libc-inet-make-20261028. All 28 ordinary/PIC objects match
+Make global symbols, unresolved symbols and .text bytes. This does not qualify
+full debug/allocated-section/relocation identity, final libc ABI, installation
+or runtime. Existing NetBSD inet_addr_test and inet_network_test are identified
+for later integration; they were not executed in this object-comparison run.
+No address parsing behavior or source implementation was changed.
+
+Frontend review: existing explicit targets and NLS setting cover the group via
+build-bsd format 5. No frontend/backend contract update needed. No host installs,
+network queries or service changes. Complete native libc remains unfinished.

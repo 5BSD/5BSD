@@ -4322,3 +4322,11 @@ references; generated header and 28 object variants match Make offline. Final
 combined libc DOF rewriting, retention, registered provider sites and live DNS
 probe/audit behavior are still unqualified. No probe disabling or partial-provider
 substitution was used to make the build pass.
+
+### 2026-10-28: libc inet object group
+
+No direct SDT/DTrace, BSM audit or syslog hooks found in the 14 inet C sources.
+Native objects preserve maintained implementations; 28 ordinary/PIC variants
+have symbol/text parity evidence. Address-parser runtime tests, malformed input
+coverage and complete libc qualification remain open. No new probes or audit
+policy introduced.

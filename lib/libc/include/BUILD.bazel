@@ -15,7 +15,10 @@ cc_library(name = "rpc_private_headers", hdrs = ["reentrant.h", "nss_tls.h", "ns
     strip_include_prefix = ".", deps = [":rt_private_headers"], visibility = ["//lib/libc/rpc:__pkg__"])
 
 cc_library(name = "resolver_port_headers", hdrs = ["port_before.h", "port_after.h", "isc/eventlib.h", "isc/platform.h", "isc/list.h"],
-    strip_include_prefix = ".", visibility = ["//lib/libc/nameser:__pkg__", "//lib/libc/isc:__pkg__", "//lib/libc/resolv:__pkg__"])
+    strip_include_prefix = ".", visibility = ["//lib/libc/nameser:__pkg__", "//lib/libc/isc:__pkg__", "//lib/libc/resolv:__pkg__", "//lib/libc/inet:__pkg__"])
 
 cc_library(name = "resolver_private_headers", hdrs = ["reentrant.h", "resolv_mt.h"],
     strip_include_prefix = ".", deps = [":rt_private_headers", ":resolver_port_headers"], visibility = ["//lib/libc/resolv:__pkg__"])
+
+cc_library(name = "inet_private_headers", hdrs = ["resolv_mt.h"], strip_include_prefix = ".",
+    deps = [":resolver_port_headers"], visibility = ["//lib/libc/inet:__pkg__"])
