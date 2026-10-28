@@ -5331,3 +5331,14 @@ The manual says uppercase hex while the existing implementation emits lowercase;
 this pre-existing documentation discrepancy is recorded, not silently changed by
 the build migration. Evidence: /usr/obj/usr/src/bazel-flua-hash-20261028-r2/
 qualification/{parity.json,runtime/results.json}.
+
+
+### flua jail module (2026-10-28)
+
+Unchanged lua_jail.c is carried into native jail.so; object code and global
+symbols match Make. Loading and seven invalid-type rejection checks pass,
+without invoking jail operations. Kernel audit behavior for jail creation,
+attachment, removal and parameter changes remains unverified and belongs in
+isolated VM runtime qualification. No audit or privilege-enforcement completion
+claim follows from these checks. Evidence:
+/usr/obj/usr/src/bazel-flua-jail-20261028/qualification/.

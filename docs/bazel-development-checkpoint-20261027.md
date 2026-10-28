@@ -8442,3 +8442,28 @@ explicit inputs/artifact collection cover this target without frontend changes.
 Other modules, Bazel-owned runtime tests, bootstrap and split-man variants,
 full world/kernel/pkgbase/cache/performance qualification remain open. No host
 installation or configuration change. Make remains production/default.
+
+
+## 2026-10-28: flua jail module build/install qualification
+
+Added native jail.so with declared Lua/bootstrap headers and native libjail
+CcInfo/shared dependency. The unchanged lua_jail.c resolves its Lua API from
+the interpreter. Installation includes jail.3lua in man3lua, package=flua-dev
+for the tested non-split-man configuration, and normal split-debug artifacts.
+
+The PIC object .text and symbols, 54 DSO global/undefined symbols, libc/libjail
+NEEDED, SONAME and empty RPATH/RUNPATH match Make. All six installation records
+and compressed manual bytes match; debug pair and stripped-text checks pass.
+Seven argument-validation cases pass for both native and Make modules using
+native libjail and the previously qualified flua/loader/libraries. These prove
+module loading and rejection of invalid argument types only. No jail creation,
+attachment, removal, listing or parameter syscall behavior is qualified here.
+Those operations require further isolated VM coverage; no host jail was changed.
+
+Evidence: /usr/obj/usr/src/bazel-flua-jail-20261028/qualification/
+{parity.json,runtime/results.json}. Scripts: bazel-flua-jail-qualification-20261028/
+{make.py,verify.py,runtime.py}; reference: bazel-flua-jail-reference-20261028.
+Builds used maintained build-bsd with 16 jobs. Reviewed frontend explicit input
+handling: existing artifact collection suffices with no frontend change. Other
+modules, Bazel-owned runtime tests, bootstrap/configuration variants and complete
+world/kernel/pkgbase/cache/performance gates remain open. Make stays default.
