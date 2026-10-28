@@ -3707,3 +3707,13 @@ sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-formatted-output-kernel-20261028/qualification`.
 No runtime source changed. Console delivery, sbuf drain/error handling and
 concurrent logging remain unqualified.
+
+### UIO helpers and range locking (2026-10-28)
+
+subr_uio.c and kern_rangelock.c have no local SDT/AUDIT call sites. Review
+higher-level I/O observability and contention measurements before deciding
+whether low-level probes are needed. Native GENERIC objects match Make symbols,
+raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-uio-rangelock-kernel-20261028/qualification`.
+No runtime source changed. Copy-fault handling, contention and filesystem
+performance remain unqualified.
