@@ -5086,3 +5086,12 @@ TCP wrappers. The artifact removes libwrap and the three calls actually present
 in the maintained LIBWRAP branch. No C source or logging/audit hooks changed.
 No runtime authorization or transfer was exercised; disabled-wrapper operation
 and access-control behavior still require isolated networking qualification.
+
+## 2026-10-28 ntalkd
+
+All six maintained source units, including shared ttymsg.c, compile unchanged
+and match Make executable code/symbols. No DTrace or audit behavior is added by
+this graph conversion. Invitation processing, terminal-write authorization,
+delivery failures and logging remain isolated runtime review items. Build and
+installation parity does not establish those behaviors; no daemon or terminal
+announcement was executed on the host.

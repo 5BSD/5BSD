@@ -7695,3 +7695,26 @@ startup or host installation was performed. Disabled wrappers intentionally
 remove hosts-access checks; this is a build option parity result, not proof of
 network policy correctness. Full-system/runtime/cache/performance gates remain
 open and Make remains production/default.
+
+## 2026-10-28 native ntalkd
+
+Added the maintained talk daemon's six-source native program, including the
+explicitly exported wall/ttymsg.c source and a narrow ttymsg.h interface. The
+installation correctly keeps executable ntalkd and manual talkd(8), without
+inventing an ntalkd manual alias. Runtime code and path definitions are unchanged.
+
+At 16 jobs through build-bsd, all six object executable .text bodies and global/
+undefined symbol sets match independent Make. The linked program matches 65
+symbol entries and libc-only dependency/empty RPATH. Five installation records,
+manual bytes and debug name/CRC/DWARF checks pass; stripping preserves native
+.text. Evidence: /usr/obj/usr/src/bazel-talkd-20261028/qualification/parity.json
+and object-parity.json. Reference: bazel-talkd-reference-20261028; objects:
+bazel-talkd-reference-objects-20261028; scripts: bazel-talkd-qualification-20261028.
+
+Reviewed build-bsd.c: existing format-5 explicit targets and installation
+collection support the component without new frontend or publication changes.
+No daemon started, invitation sent, terminal written or host installation made.
+Invitation lifetime/replay, hostname lookup, terminal permissions and delivery,
+configuration/static/cross variants and resource behavior remain unqualified.
+Full world/kernel/pkgbase/bootstrap/cache/performance gates remain open; Make
+stays production/default and BIP stays out of scope.
