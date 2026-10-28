@@ -5443,3 +5443,12 @@ syscall auditing or adequate account-management audit coverage. Review configure
 pw logging, failed mutations and kernel audit behavior during isolated runtime
 qualification. No user/group operations executed on the host. Evidence:
 /usr/obj/usr/src/bazel-pw-20261028/qualification/.
+
+
+### pw ATF unit execution (2026-10-28)
+
+Seven existing descriptor parsing cases pass with native program/runtime inputs,
+including forked invalid/negative/overflow diagnostics and EX_USAGE checks.
+Existing unit assertions/stub remain unchanged. This does not qualify user/group
+mutation logging, syscall audit, password database locking or privilege handling.
+Evidence: /usr/obj/usr/src/bazel-pw-unit-20261028/test-reports/.

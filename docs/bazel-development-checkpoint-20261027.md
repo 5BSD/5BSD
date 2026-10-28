@@ -8722,3 +8722,30 @@ build/install parity only. User/group mutations, password database updates,
 rollback/locking/failure behavior and existing pw ATF suites remain unqualified.
 No host accounts/configuration were changed. Whole-world/kernel/pkgbase/cache/
 performance gates remain open and Make remains production/default.
+
+
+## 2026-10-28: pw native ATF unit suite
+
+Confirmed pwd_mkdb already has a native build/install target; did not duplicate
+it. Added native pw_unit_test using the existing test C source plus pw_utils.c
+and strtounum.c, declared pw headers, native libutil and ATF-C. All seven existing
+ATF cases are exposed individually through the maintained program adapter with
+explicit native rtld/libc/libsys/libutil/ATF runtime inputs. Existing assertions
+and the upstream test's read_userconfig stub are unchanged; no new production
+stub or substitute implementation was introduced.
+
+All seven cases actually executed and passed: dash, zero, valid descriptor,
+INT_MAX, invalid text, negative value and overflow. Failure cases retain their
+fork/exit-status and exact diagnostic checks. Evidence:
+/usr/obj/usr/src/bazel-pw-unit-20261028/{bazel.stdout,test-inventory.json,
+test-reports/manifest.json,execution.json}. Qualification ran via build-bsd at
+16 jobs. An accidental nonexistent command after writing the target returned
+127 before qualification; the subsequent maintained frontend invocation above
+completed successfully. Reviewed build-bsd.c: existing explicit targets/tests
+handle these cases, no frontend change needed.
+
+This is existing unit-suite coverage only, not user/group database mutation,
+locking, user homes, installed test metadata or the thirteen root-required shell
+suites. Those and nuageinit user-management scenarios still need isolated runtime
+qualification. No host accounts changed. Full world/kernel/pkgbase/cache/
+performance gates remain open and Make stays production/default.

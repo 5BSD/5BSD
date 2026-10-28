@@ -36,3 +36,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "test_headers", hdrs = ["pw.h", "pwupd.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/pw/tests:__pkg__"])
+exports_files(["pw_utils.c", "strtounum.c"], visibility = ["//usr.sbin/pw/tests:__pkg__"])
