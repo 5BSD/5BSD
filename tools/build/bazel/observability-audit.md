@@ -2932,3 +2932,11 @@ DWARF is retained. This advances beyond source-only preservation evidence.
 Kernel final-link retention, live SDT attachment and audit behavior are still
 unqualified. Generated assertion filenames are normalized by compiler flags,
 not by filtering comparison output or disabling assertions.
+
+## Native kernel version data (2026-10-28)
+
+GENERIC vers.o now retains CTF and DWARF, matching Make's allocated data and
+CTF label/type/data dumps. This data object adds no probe sites. Compiler and
+source identity are explicit build inputs; supplied provenance is not verified
+boot or a cryptographic source attestation. Final kernel CTF merging, debugger
+access and live instrumentation remain open.

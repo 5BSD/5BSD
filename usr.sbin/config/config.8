@@ -33,7 +33,7 @@
 .Nd build system configuration files
 .Sh SYNOPSIS
 .Nm
-.Op Fl CVgpv
+.Op Fl CVgimpv
 .Op Fl I Ar path
 .Op Fl d Ar destdir
 .Op Fl s Ar srcdir
@@ -88,6 +88,11 @@ to the directory given.
 Use
 .Ar srcdir
 as the source directory, instead of the default one.
+.It Fl i
+Print the parsed kernel identity and exit without generating build files.
+Includes and overrides are processed by the normal configuration parser.
+Cannot be combined with
+.Fl m .
 .It Fl m
 Print the MACHINE and MACHINE_ARCH values for this
 kernel and exit.

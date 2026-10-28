@@ -81,12 +81,22 @@ load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_library")
     ("env", "//sys/amd64/conf:generic_env_source", []),
     ("hints", "//sys/amd64/conf:generic_hints_source", []),
     ("vnode_if", ":vnode_source", [":vnode_headers"]),
+    ("vers", ":generic_version_source", []),
 ]]
 [bsd_ctf_library(name = "generic_" + name + "_ctf", library = ":generic_" + name + "_objects",
     converter = "//cddl/usr.bin/ctfconvert:ctfconvert",
     runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libdwarf:dwarf_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared",
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
     ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label", preserve_debug = True)
- for name in ["config", "env", "hints", "vnode_if"]]
+ for name in ["config", "env", "hints", "vnode_if", "vers"]]
 [filegroup(name = "generic_" + name + "_object", srcs = [":generic_" + name + "_ctf"], output_group = "regular_objects", visibility = ["//visibility:public"])
- for name in ["config", "env", "hints", "vnode_if"]]
+ for name in ["config", "env", "hints", "vnode_if", "vers"]]
+
+load("//tools/build/bazel:bsd_kernel_version.bzl", "bsd_kernel_version")
+bsd_kernel_version(name = "generic_version_source", identity = "//sys/amd64/conf:generic_identity",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    shell = "@bsd_sdk//toolchain:sh", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:sh_runtime"],
+    libraries = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    visibility = ["//visibility:public"])

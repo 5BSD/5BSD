@@ -1,19 +1,21 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Run native config with declared configuration metadata and a complete output tree."""
 def _impl(ctx):
+    identity = ctx.actions.declare_file(ctx.label.name + ".ident")
     output = ctx.actions.declare_directory(ctx.label.name + ".generated")
     args = ctx.actions.args()
     args.add_all(["-B", ctx.file.runner.path, ctx.executable.tool.path,
                   ctx.file.config.path, ctx.file.source_anchor.path, output.path])
+    args.add(identity.path)
     args.add("1" if ctx.attr.debug else "0")
     args.add_all(ctx.files.libraries)
     ctx.actions.run(executable = ctx.attr.python[DefaultInfo].files_to_run,
         arguments = [args],
         inputs = [ctx.file.runner, ctx.file.config, ctx.file.source_anchor, ctx.file.python_home] + ctx.files.inputs + ctx.files.runtime + ctx.files.libraries,
-        tools = [ctx.attr.tool[DefaultInfo].files_to_run], outputs = [output],
+        tools = [ctx.attr.tool[DefaultInfo].files_to_run], outputs = [output, identity],
         env = {"LC_ALL": "C", "PYTHONHOME": ctx.file.python_home.dirname, "PYTHONNOUSERSITE": "1"},
         use_default_shell_env = False, mnemonic = "BSDKernelConfig")
-    return [DefaultInfo(files = depset([output]))]
+    return [DefaultInfo(files = depset([output])), OutputGroupInfo(identity = depset([identity]))]
 
 bsd_kernel_config = rule(implementation = _impl, attrs = {
     "config": attr.label(allow_single_file = True, mandatory = True),

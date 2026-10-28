@@ -212,3 +212,6 @@ config_setting(name = "examples_enabled", flag_values = {":examples": "true"}, v
 
 # Match ctfconvert's default when Make's VERSION environment label is absent.
 string_flag(name = "kernel_ctf_label", build_setting_default = "*** No Label Provided ***", visibility = ["//visibility:public"])
+
+# Explicit provenance; kernel version generation rejects an unset value.
+string_flag(name = "kernel_source_revision", build_setting_default = "", visibility = ["//visibility:public"])

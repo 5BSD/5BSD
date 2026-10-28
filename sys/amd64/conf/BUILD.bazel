@@ -34,3 +34,5 @@ cc_library(name = "generic_config_header", hdrs = [":opt_config"], strip_include
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], visibility = ["//visibility:public"])
  for name in ["config", "env", "hints"]]
+
+filegroup(name = "generic_identity", srcs = [":generic_config"], output_group = "identity", visibility = ["//visibility:public"])

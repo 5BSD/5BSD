@@ -1161,3 +1161,59 @@ must come from configuration processing rather than a duplicate hardcoded
 GENERIC string. Register action tests and qualify input invalidation/cache reuse
 before adding native vers.o. Full world/kernel/package/bootstrap/runtime and
 CPU/memory/disk gates remain open; Make remains production/default.
+
+### Native kernel version action and object (2026-10-28)
+
+//sys/kern:generic_version_source uses the shared newvers.sh -e renderer with
+explicit param.h, copyright/template, config-derived identity and source
+revision inputs. Native awk/sed/cat are execution tools with declared libraries;
+SDK Python/shell and selected C toolchain remain bootstrap dependencies. The
+selected C toolchain compiler is obtained through cc_common and its declared
+input closure, then queried for its banner; no ambient CC/Make/VCS is consulted.
+This is declared-input action evidence, not a fully sandboxed/self-hosted build.
+
+config -i exposes the actual parsed identity, processing includes and overrides
+without generating build files or reading Makefile templates. The config action
+retains its existing output directory and adds a separate identity output group;
+//sys/amd64/conf:generic_identity exposes it. No duplicate GENERIC identity or
+Makefile scraping was added. The normal 200 generated configuration files match
+the earlier Make reference byte-for-byte. The identity query rejects -m combined
+with -i and has direct native-tool include/override/error checks.
+
+The format-5 build-settings string //tools/build/bazel/config:kernel_source_revision
+is required when selecting the version target; its empty default causes analysis
+to fail. It must identify the source checkout/revision or a named source archive.
+The caller is responsible for accurate provenance. It is not a signature or an
+automatic dirty-tree detector. Existing version_branch also applies here. The
+frontend accepts these through its maintained settings mechanism; no new C API
+is needed. Automatic provenance acquisition/publication validation is still open.
+
+//sys/kern:generic_vers_object compiles this source with GENERIC kernel flags,
+CTF conversion and retained DWARF. Evidence under
+/usr/obj/usr/src/bazel-generic-version-object-20261028/qualification includes a
+retained comparison script, Make log, CTF dump, config-query checks and reports.
+The maintained Make vers.o recipe uses the same explicit version inputs and
+SDK compiler; SYSTEM_DEP is empty to isolate this object. Source bytes, all
+allocated section contents/layout, global symbol names/sizes and CTF labels/types/
+data agree. Both objects retain debug info and lines; complete ELF/DWARF byte
+identity is not claimed. No kernel was linked or loaded.
+
+The first frontend build caught a missing explicit export of kernel_version.py;
+that dependency was declared. Successful generation is retained in
+bazel-generic-version-r2-20261028; compiled output in the object run above.
+bazel-generic-version-repeat-20261028 executes zero spawns with identical hashes.
+bazel-generic-version-revision-20261028 changes only the explicit revision input
+and executes exactly BSDKernelVersion, its CppCompile, and BSDCtfConvert; identity
+hash is unchanged. The final config query refinement is built in
+bazel-generic-version-r3-20261028 and produces the same captured artifacts.
+These runs have no registered Bazel tests selected; generation invokes the actual
+native tools, with additional direct checks. They are not full runtime or system
+performance gates. Publication still requires the original combined repository,
+hardware/kernel identity and production-world checks.
+
+Complete programs/libraries, world, kernel runtime and link, ALL base modules and
+drivers, pkgbase integration and CPU/memory/disk qualification remain required.
+Modules must preserve generated interfaces, debug/CTF/DTrace, dependency metadata,
+installation and packaging. Ports/third-party module Make support remains required.
+Make stays production/default. This checkpoint does not mark any whole-system
+migration gate complete.

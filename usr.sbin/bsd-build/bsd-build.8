@@ -3200,7 +3200,7 @@ Static/shared trust initialization and library installation metadata have been
 qualified with explicitly selected test inputs.
 System-wide signing, key rotation and enforcement remain incomplete.
 .Pp
-.Ss Userland version branch
+.Ss Version branch
 The format-5 string setting
 .Li //tools/build/bazel/config:version_branch
 provides an explicit branch override for the native
@@ -3210,8 +3210,8 @@ An empty value retains the maintained source default.
 Use a version token containing only letters, digits, dot, underscore, plus or
 hyphen.
 The script and installation metadata have been compared with Make.
-This currently selects userland script generation; complete native kernel/image
-version consistency remains unqualified.
+This selects userland and native kernel version-source generation; complete
+kernel/image version consistency remains unqualified.
 .Pp
 .Ss Signed-file qualification
 The native
@@ -3647,4 +3647,19 @@ compiler banner and source revision. An explicitly empty revision denotes an
 unversioned source archive. This mode uses no host/VCS discovery or build counter;
 its caller is responsible for supplying accurate provenance.
 The shared renderer has direct Make/source/object comparison evidence.
-A native Bazel kernel version action and complete kernel remain unqualified.
+Complete native kernel and module builds remain unqualified.
+
+.Pp
+.Dq //sys/kern:generic_version_source
+now generates native GENERIC version C with declared text tools, the selected
+C compiler identity, and the parsed identity from
+.Dq //sys/amd64/conf:generic_identity .
+The format-5 build-settings string
+.Dq //tools/build/bazel/config:kernel_source_revision
+must explicitly identify the source revision or archive; an empty value fails
+analysis. This value is caller-supplied provenance, not automatic source
+verification. The existing version_branch setting also applies.
+.Dq //sys/kern:generic_vers_object
+adds normal kernel compilation, CTF conversion and retained DWARF. Make object
+comparison and limited invalidation checks pass; complete kernel/modules,
+publication, runtime and system performance remain unqualified.
