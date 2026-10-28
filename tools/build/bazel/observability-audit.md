@@ -2868,3 +2868,12 @@ entries retain the maintained exit-0 behavior with stdout diagnostics; this
 must be considered by future integrity-check callers. No completeness or
 security conclusion can be drawn from that exit code alone. These tests do
 not qualify privileged mutation, ownership/flags, or full ATF coverage.
+
+## libkldelf / kldxref (2026-10-28)
+
+No local DTrace/audit sites were found in these sources. All eight relocation
+backend registrations are retained through linker sets in both native shared
+and static-bootstrap consumers. Hints generation and failed-output preservation
+were checked on private copies of two amd64 modules; no kernel modules or
+probes were loaded. Other architecture relocation paths, live loader behavior
+and kernel instrumentation retention remain separate qualification gates.

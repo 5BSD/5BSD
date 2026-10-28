@@ -3524,3 +3524,13 @@ execution platform. Their loader path is applied only to the mtree policy
 subprocess. The xinstall archive now uses native mtree with explicit libraries;
 its output matches the previous staged-tool archive. Other SDK consumers and
 complete native bootstrap remain separate qualification work.
+
+.Pp
+.Dq //lib/libkldelf:install_archive
+and
+.Dq //usr.sbin/kldxref:install_archive
+stage the private ELF module reader and module-hints utility.
+.Dq //usr.sbin/kldxref:bootstrap_kldxref
+uses the native static library with linker-set registrations retained.
+These candidates have amd64 copied-module comparison evidence; image/publication
+helpers and full cross-architecture kernel packaging remain separate work.

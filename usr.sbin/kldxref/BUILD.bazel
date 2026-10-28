@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_binary(name = "kldxref", srcs = ["kldxref.c"], deps = ["//lib/libelf:elf", "//lib/libkldelf:kldelf"],
+    dynamic_deps = ["//lib/libelf:elf_shared", "//lib/libkldelf:kldelf_shared"], 
+    copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "kldxref", manual = "kldxref.8", package = "runtime", bindir = "/usr/sbin", man_section = "8")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+# Static archive registration uses alwayslink instead of duplicating backend sources.
+cc_binary(name = "bootstrap_kldxref", srcs = ["kldxref.c"],
+    deps = ["//lib/libelf:elf", "//lib/libkldelf:kldelf_pie"], dynamic_deps = ["//lib/libelf:elf_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

@@ -674,3 +674,42 @@ The backend rule/helper/tests/manual changed together. Frontend CLI/input
 formats are unchanged; no build-bsd C change is required for this rule-level
 execution dependency. Further native-tool adoption and full world/kernel/
 pkgbase/performance gates remain open.
+
+## Native libkldelf and kldxref (2026-10-28)
+
+Added the nine maintained libkldelf sources, private static/shared installation,
+explicit libelf dependency, native kldxref and a static-library bootstrap variant.
+Relocation backends register via linker sets with no ordinary references;
+Bazel alwayslink preserves them in static consumers instead of duplicating
+backend source lists in kldxref. The ordinary shared library remains
+libprivatekldelf.so.5, matching the maintained ABI. No public header installation
+was invented; the Make component declares none.
+
+Evidence: /usr/obj/usr/src/bazel-kldxref-20261028/qualification. Make references:
+bazel-libkldelf-make-20261028 and bazel-kldxref-make-20261028 under /usr/obj/usr/src.
+Global symbols match (program 6, shared library 33, static archive 29); all nine
+archive members are present. Ordered dependencies, SONAME and NOW/PIE metadata
+match. All eight relocation registrations survive in the shared library and
+bootstrap executable. This verifies registration retention, not functional
+coverage of all represented architectures.
+
+Using private copies of host nullfs.ko and tmpfs.ko, native, Make and bootstrap
+executables produce byte-identical three-record hints. The records' bounds and
+module names are independently checked. Malformed explicit input fails without
+replacing the existing hints file. Fixture hashes and output SHA256 are retained:
+1ce54594795f70645790cfcff5cb35e87427b822cb496d2c854c04692fe658e2.
+No module was installed or loaded. This is an amd64 direct runtime comparison,
+not a newly registered Bazel test suite or qualification of cross-architecture
+relocations, full module generation, recursive discovery or bootstrap independence.
+
+Private-library installation matches six records, its link and debug linkage;
+program installation matches five records, its manual bytes and debug linkage.
+Archive SHA256:
+- libkldelf: a9f4114810019d2737f9998b3bd7f0e791c938c7a0e53be0d8215f59c68cb129
+- kldxref: 395243bf4521823bd3cf72ddd0db341335b253bdf3409894577b5c9c16f69fbb
+
+Existing frontend format-5 target selection supports these candidates without
+C/backend contract changes. The manual records new targets; publication/image
+helpers have not been switched to this candidate. Native execution dependencies,
+maintained fixture tests, kernel/module builds, complete pkgbase and performance
+qualification remain unfinished. Make remains the production/default backend.
