@@ -3102,3 +3102,27 @@ deny/signal/throttle actions, concurrency and resource usage need linked-kernel
 qualification. Full kernel/world/pkgbase/bootstrap and performance gates remain
 open. Make remains production/default; module count remains 45. No host
 installation or BIP work occurred.
+
+### Native affinity and scheduling helpers
+
+Added //sys/kern:generic_affinity_scheduling_object_files for kern_cpuset.c,
+kern_switch.c and ksched.c, selected by the maintained GENERIC Makefile.
+Dependencies declare CK/VM, debugger, generated bus/device interfaces and
+DDB/KTRACE/POSIX/SCHED options. No scheduling source behavior changed.
+This batch does not cover sched_ule.c or establish a complete scheduler build.
+
+Evidence: `/usr/obj/usr/src/bazel-affinity-scheduling-kernel-20261028/qualification`.
+All three objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records/associations. All four option headers match Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-affinity-scheduling-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and generated inputs cover these
+additions without new build-bsd C/backend options, staging or manual changes.
+No runtime tests ran. CPU/domain affinity, jail constraints, scheduling policy,
+priority permissions, migration and latency require linked-kernel tests.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+remains production/default; module count remains 45. No host installation
+or BIP changes occurred.

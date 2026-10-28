@@ -3534,3 +3534,14 @@ No instrumentation source changed. No local AUDIT_ARG calls were found;
 review rule-management syscall audit mapping and emitted records before
 claiming administrative-operation coverage. Live resource enforcement,
 accounting accuracy and probe firing remain unqualified.
+
+### CPU affinity and scheduling helpers (2026-10-28)
+
+kern_cpuset.c defines affinity set-start/set-done probes. kern_switch.c and
+ksched.c have no local SDT_PROBE_DEFINE or AUDIT_ARG calls; scheduler-level
+instrumentation requires separate sched_ule review. Native GENERIC objects
+match Make symbols, raw CTF, allocated sections and runtime relocations.
+Evidence: `/usr/obj/usr/src/bazel-affinity-scheduling-kernel-20261028/qualification`.
+No instrumentation source changed. Review administrative affinity/scheduling
+syscall audit mapping and records before claiming coverage. Live probes,
+permission decisions and scheduling behavior remain unqualified.
