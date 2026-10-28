@@ -21,3 +21,6 @@ cc_library(
 bsd_component_archive(name = "objects_archive", groups = [":resolv_objects"])
 bsd_component_archive(name = "pic_objects_archive", groups = [":resolv_objects"], pic = True)
 exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+cc_library(name = "net_private_headers", hdrs = ["res_private.h", "nameres_trace.h"], strip_include_prefix = ".",
+    visibility = ["//lib/libc/net:__pkg__"])

@@ -4337,3 +4337,12 @@ Four unchanged NetBSD basic/error cases pass against native inet_addr/inet_ntoa
 and inet_network definitions. Saved-binary symbol checks establish native routine
 ownership; SDK libc remains for other functions. No live networking, audit events,
 new probes or full libc/system runtime qualification is implied.
+
+### 2026-10-28: libc network/NSS objects
+
+Retains nsdispatch's configured name-resolution probe references and shared libc
+DOF anchor in ordinary/PIC objects. Maintained syslog/error handling and generated
+NSS parser behavior remain unchanged. 82 objects have symbol/text comparison;
+parser generation differences are confined to verified #line paths. No live NSS,
+cache daemon, NIS/Hesiod, kernel/network or audit-event behavior is qualified.
+Final shared libc provider processing and registration remain open.

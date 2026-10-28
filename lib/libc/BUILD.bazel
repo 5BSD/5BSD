@@ -11,4 +11,4 @@ bsd_dtrace_header(name = "nameres_provider", source = "nameres_provider.d", outp
     drti = "//cddl/lib/drti:drti", runtime_libraries = ["//cddl/usr.sbin/dtrace:bootstrap_runtime"],
     tool_inputs = ["@bsd_sdk//toolchain:compile_inputs", "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
 cc_library(name = "nameres_provider_headers", hdrs = [":nameres_provider"], strip_include_prefix = ".",
-    visibility = ["//lib/libc/resolv:__pkg__"])
+    visibility = ["//lib/libc/resolv:__pkg__", "//lib/libc/net:__pkg__"])

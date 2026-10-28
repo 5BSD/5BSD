@@ -5201,3 +5201,32 @@ image qualification remain open; no partial test executables replace that suite.
 Frontend review: existing format-5 targets/tests express all four cases through
 build-bsd; no frontend/backend contract update needed. No host install or network
 operations were performed by these string/address conversion tests.
+
+## 2026-10-28: native libc network/NSS object inventory
+
+Adds configured network/NSS sources, native lex/yacc actions and generated parser
+header dependencies. Preserves -p_nsyy/-P_nsyy and scopes YY_BUF_SIZE=1024 to a
+separate lexer object target. Both groups retain libc private interfaces and
+configured NIS, caching, Hesiod, NLS, IPv6 support and DTrace definitions. Optional
+caching/Hesiod sources are selected by typed settings; raw NSS probe references
+remain inputs to the still-pending combined libc DOF step. No runtime Make
+parsing, generated-source patching or implicit source/header discovery is used.
+
+Evidence: /usr/obj/usr/src/bazel-libc-net-20261028/qualification/parity.json
+against fresh bazel-libc-net-make-20261028. Selected configuration (caching on,
+Hesiod/NIS off, DTrace on) contains 41 C units including lexer/parser. All 82
+ordinary/PIC objects match global symbols, unresolved symbols and .text bytes.
+generation-and-probes.json separately verifies nsparser.h exact bytes and both
+generated C files equal after normalizing ONLY enumerated #line source/output
+paths. Original artifacts are unchanged. Two nsdispatch object variants retain
+probe/enabled references and the static archive anchor.
+
+This is not final libc linkage, DOF rewriting/registration, complete object/debug
+identity, runtime NSS behavior or configuration-variant qualification. Generated
+nsswitch.conf plus hosts/networks/protocols configuration and manual installation
+remain separate required work; current targets do not claim to stage those files.
+Full libc tests and installed image qualification remain open.
+
+Frontend review: existing format-5 targets and typed settings cover objects and
+generators via build-bsd; no frontend/backend contract changes required. No host
+name-service configuration, installed software or network service was changed.
