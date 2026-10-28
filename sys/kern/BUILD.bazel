@@ -122,3 +122,7 @@ amd64_generic_kernel_objects(name = "generic_timers", srcs = ["kern_timeout.c", 
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers", "//sys/ddb:symbol_headers",
         ":bus_if_headers", ":device_if_headers", "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_ktrace_header",
         "//sys/amd64/conf:generic_opt_callout_profiling_header", "//sys/amd64/conf:generic_opt_ffclock_header", "//sys/amd64/conf:generic_opt_ntp_header", "//sys/amd64/conf:generic_opt_rss_header"])
+
+amd64_generic_kernel_objects(name = "generic_events", srcs = ["kern_event.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_kqueue_header"])

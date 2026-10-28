@@ -2789,3 +2789,27 @@ Clock accuracy/selection, timer delivery, callout drain/cancel races and
 latency/resource measurements remain runtime qualification. Complete kernel/
 world/pkgbase/bootstrap gates stay open. Make remains production/default,
 module count stays 45, and no host installation or BIP changes occurred.
+
+### Native kqueue event handling
+
+Added //sys/kern:generic_events_object_files for kern_event.c using the
+maintained GENERIC source selection, declared CK/VM headers, and generated
+KTRACE/KQUEUE options extracted from native config output. No event-handling
+source behavior or configuration substitute was introduced.
+
+Evidence: `/usr/obj/usr/src/bazel-events-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. Both option headers match Make bytes. The retained comparison
+includes allocated SDT data for the 16 kqueue probe definitions. Reference
+log: `/usr/obj/usr/src/bazel-events-kernel-make-20261028.log`; maintained
+recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target selection and generated inputs
+cover this addition without new build-bsd C/backend options, staging or
+manual changes. No runtime tests ran: event registration/delivery, filters,
+cancellation, descriptor lifetime and concurrency need the linked test
+kernel. Full kernel/world/pkgbase/bootstrap and performance gates remain
+open. Make remains production/default; module count remains 45, with no host
+installation or BIP changes.

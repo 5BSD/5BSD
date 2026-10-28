@@ -3369,3 +3369,14 @@ relocations relative to Make. Live clock selection/adjustment, callout callback
 lifecycle and timer delivery still need tests; collect timing and contention
 measurements under load. Object parity does not establish clock accuracy or
 latency. No source timing or instrumentation behavior was altered.
+
+### Kqueue built-in object (2026-10-28)
+
+`sys/kern/kern_event.c` has 16 SDT probe definitions covering queue creation,
+close, registration, attachment/drop, process attachment, scan/wait/copyout
+and drain/detach. Native GENERIC output matches Make allocated sections and
+runtime relocations, including probe metadata; raw CTF and symbols also
+match. Evidence: `/usr/obj/usr/src/bazel-events-kernel-20261028/qualification`.
+No source instrumentation was changed. Live probe firing, event semantics
+and audit coverage remain runtime/integration qualification; compilation
+parity alone does not establish those properties.
