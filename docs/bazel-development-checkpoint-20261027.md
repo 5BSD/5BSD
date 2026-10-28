@@ -8052,3 +8052,28 @@ Library installation/header/symlink/debug/pkg metadata, backend runtime tests,
 consumer linking and incremental/cache qualification still need completion.
 No event-loop runtime or PF/network operation was executed. Full world/kernel,
 pkgbase/publication and performance gates remain open; Make stays default.
+
+## 2026-10-28 native tftp-proxy consumer
+
+Added the two unchanged contributed tftp-proxy/filter sources and local header,
+with explicit native libevent1 and OpenBSD compatibility-header dependencies.
+Forced compatibility inclusion and NOPRIV_USER="proxy" match maintained Make.
+Narrow source/manual exports and compatibility visibility were added; no PF
+policy, privilege-drop code or daemon behavior was changed. Installation keeps
+package=pf, /usr/libexec, the manual and split debug payload.
+
+At 16 jobs through build-bsd, both compiled object .text bodies/global+undefined
+symbol sets match independent Make. Linked comparison matches 110 symbol
+entries, libc plus libprivateevent1 dependencies, empty RPATH/RUNPATH, five
+metadata records, manual bytes, debug name/CRC/DWARF, and strip-preserved .text.
+Evidence: /usr/obj/usr/src/bazel-tftp-proxy-20261028/qualification/{parity.json,
+object-parity.json}; reference: bazel-tftp-proxy-reference-20261028 and matching
+reference-objects tree; scripts: bazel-tftp-proxy-qualification-20261028.
+
+Reviewed build-bsd.c: existing format-5 targets and artifact collection support
+this component; no frontend change required. No daemon started and no /dev/pf
+access, rule changes or traffic were exercised. Rule lifetime, session cleanup,
+privilege separation, transfer/error paths and event-loop backend behavior still
+need guest qualification. The new libevent1 installation archive remains open,
+as do configured-world integration, pkgbase/publication and performance gates.
+Make remains production/default; BIP remains out of scope.

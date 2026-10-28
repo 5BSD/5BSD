@@ -5194,3 +5194,12 @@ and symbols. Build parity preserves existing logging and backend code but does
 not establish event delivery, descriptor lifetime, timeout, signal, or teardown
 behavior. Qualify kqueue/poll/select paths with consumers in a compatible guest;
 no runtime or tracing coverage is claimed by this dependency conversion.
+
+## 2026-10-28 tftp-proxy
+
+Both native objects match Make executable code/symbols. Existing syslog and
+PF error reporting remain unchanged; no dedicated audit/SDT/DTrace calls were
+found in these two sources. Qualification still needs actual PF rule creation,
+rollback/removal, malformed/failed transfer handling, privilege changes and
+session cleanup under event-loop load in an isolated guest. No /dev/pf access
+or network traffic was performed by this build/install comparison.
