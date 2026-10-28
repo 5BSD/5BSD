@@ -8627,3 +8627,23 @@ input limits, subprocess lifecycle, privileged VM operations, bootstrap variants
 installed Kyua integration, cache invalidation or performance. Full world/kernel/
 pkgbase qualification remains open and Make stays production/default. No host
 installation or configuration change occurred.
+
+
+## 2026-10-28: flua local cache and test-input invalidation
+
+Repeated the same combined archive/four-test qualification with unchanged inputs.
+All four BEP test results report cachedLocally=true and the execution log is empty.
+Then added the binary SHA-256 digest assertion to the maintained Lua hash test.
+All four tests sharing runtime.lua actually reran and passed; BEP reports no cached
+results. Execution log contains only eight TestRunner actions (four test setup
+executions and their result generation), with no compiler/linker/archive actions.
+Every collected artifact hash matches the original run and the unchanged repeat.
+
+Evidence: /usr/obj/usr/src/bazel-flua-cache-qualification-20261028/
+{verify.py,results.json}; runs bazel-flua-tests-cache-20261028 and
+bazel-flua-tests-invalidation-20261028 retain events/execution/artifact manifests.
+Both used maintained build-bsd at 16 jobs. Reviewed frontend input handling: no
+change required. This establishes local cache reuse and declared Lua test-input
+invalidation only. Native source/header invalidation, remote/cache portability,
+bootstrap variants and full world/kernel/pkgbase/performance gates remain open.
+No benchmark or system-wide caching claim follows from these bounded checks.

@@ -16,6 +16,11 @@ elseif case == 'hash' then
   local expected = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
   assert(h.sha256('abc'):hexdigest() == expected)
   assert(h.sha256('a'):update('b'):update('c'):hexdigest() == expected)
+  local binary = h.sha256('abc'):digest()
+  assert(#binary == 32)
+  assert((binary:gsub('.', function(c)
+    return string.format('%02x', string.byte(c))
+  end)) == expected)
 elseif case == 'formats' then
   local y, u = require('lyaml'), require('ucl')
   local obj = y.load('count: 42\nitems: [a, b]\n')

@@ -5402,3 +5402,12 @@ YAML/UCL interchange/error and temporary filesystem behavior. Sources/probes of
 the interpreter/modules are unchanged. Privileged operation/audit checks remain
 open; these tests import jail/kenv/linker without invoking their system mutations.
 Evidence: /usr/obj/usr/src/bazel-flua-tests-20261028-r3/test-reports/.
+
+
+### flua test-input invalidation (2026-10-28)
+
+Added binary SHA-256 digest comparison to the Bazel-owned hash test. An unchanged
+repeat used four cached results; this Lua file change reran all four shared-script
+tests without compile/link work. Production artifacts stayed byte-identical.
+This verifies execution of the updated assertions, not privileged runtime/audit
+coverage. Evidence: /usr/obj/usr/src/bazel-flua-cache-qualification-20261028/.
