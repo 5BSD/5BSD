@@ -3633,3 +3633,12 @@ allocated sections and runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-init-kernel-20261028/qualification`.
 No startup or instrumentation source changed. This is compile evidence only;
 boot trace collection, SYSINIT ordering and PID 1 operation remain unqualified.
+
+### Clock handling (2026-10-28)
+
+kern_clock.c defines/calls sched:tick; kern_clocksource.c has KTR clock-event,
+interrupt and idle/active call sites. Native GENERIC objects match Make symbols,
+raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-clocks-kernel-20261028/qualification`.
+No tracing source changed. Arbitrary KTR configurations and live tick/probe
+firing, clock accuracy and interrupt overhead remain unqualified.

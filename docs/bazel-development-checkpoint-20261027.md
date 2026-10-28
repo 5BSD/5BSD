@@ -3313,3 +3313,27 @@ root mounting and PID 1 startup require a linked kernel and normal-system VM
 tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
 Make remains production/default; module count remains 45. No host installation
 or BIP changes occurred.
+
+### Native clock and clock-source handling
+
+Added //sys/kern:generic_clocks_object_files for kern_clock.c and
+kern_clocksource.c, selected by the maintained GENERIC Makefile. Dependencies
+declare CK/VM, debugger, HWPMC, generated bus/device interfaces and native
+DDB/KDB/HWPMC_HOOKS/NTP/DEVICE_POLLING/WATCHDOG options. No clock source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-clocks-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section inventories,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. All six option headers match Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-clocks-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and generated inputs cover these
+objects without new build-bsd C/backend options, staging or manual changes.
+No runtime tests ran. Clock accuracy, periodic/oneshot events, idle transitions,
+watchdog behavior and interrupt/CPU overhead require linked-kernel tests.
+Alternate polling/watchdog configurations remain separate qualification.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+remains production/default; module count remains 45. No host installation
+or BIP changes occurred.
