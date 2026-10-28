@@ -81,9 +81,11 @@ cc_shared_library(name = "c_shared", deps = [":shared_link_objects"],
 
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
-# Compile the existing ABI probe with the declared SDK, then explicitly select
-# native libc/libsys runfiles for execution. The runner itself is static.
+# Link the existing ABI probe through the native public libc interface, then
+# select native runtime runfiles. SDK headers/startup objects still apply.
 cc_binary(name = "runtime_probe", srcs = ["//tools/build/bazel:tests/libc_runtime.c"],
+    deps = [":shared_link_interface"], dynamic_deps = [":c_shared", "//lib/libsys:sys_shared"],
+    linkopts = ["-nodefaultlibs"],
     testonly = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 bsd_program_test(name = "runtime_test", program = ":runtime_probe",
     runtime_lib = [":c_shared", "//lib/libsys:sys_shared"],
@@ -97,3 +99,19 @@ cc_binary(name = "static_runtime_probe", srcs = ["//tools/build/bazel:tests/libc
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 bsd_program_test(name = "static_runtime_test", program = ":static_runtime_probe",
     runner = "//tools/build/bazel:program_test_runner", size = "small")
+
+# Shared consumers need the nonshared public wrappers as well as the DSO.
+cc_library(name = "shared_link_interface", deps = [":shared_link_objects", "//lib/libc_nonshared:nonshared"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_template.bzl", libc_link_template = "bsd_template")
+libc_link_template(name = "linker_script", template = "libc_nossp.ldscript", output = "libc.ld",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    substitutions = {"@@SHLIB@@": "/lib/libc.so.7", "@@LIBDIR@@": "/usr/lib"})
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")
+bsd_install_file(name = "linker_script_install", src = ":linker_script", destination = "/usr/lib/libc.so",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clibs", "dev"])
+bsd_install_link(name = "xnet_link", destination = "/usr/lib/libxnet.so", target = "libc.so",
+    kind = "symlink", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clibs"])
+# This manifest covers the link interface only; whole libc installation is separate.
+bsd_install_manifest(name = "link_interface_manifest", entries = [":linker_script_install", ":xnet_link"])

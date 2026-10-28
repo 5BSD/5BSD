@@ -6449,3 +6449,34 @@ thread/cancellation/locale/service behavior, options, install/pkgbase and whole
 system/performance gates remain. Frontend review: build-bsd's existing format-5
 explicit targets/tests path ran these tests with 16 jobs; no new CLI/backend or
 publication contract is needed. No host installation/upgrade occurred.
+
+## 2026-10-28: native libc public shared link interface
+
+Added a public shared_link_interface combining the shared libc link objects and
+libc_nonshared, with cc_shared_library dynamic dependencies selecting native libc
+and libsys. The existing shared smoke program now links through that interface
+with -nodefaultlibs. The maintained iconvctl test program also links through it;
+its public iconv_open/iconv_close/iconvctl wrappers are defined locally and call
+imported __bsd_* implementations. This program is link-qualified only: native
+iconv conversion modules and data must be declared before runtime qualification.
+
+For default amd64 installation, expand the maintained libc_nossp.ldscript and
+record /usr/lib/libc.so and libxnet.so in a deliberately partial link-interface
+manifest. The linker script is byte-identical to Make. Comparison caught and
+corrected the libxnet symlink mode to 0444; its package tag is clibs without dev.
+Both entries match Make's logical ownership, modes, type, tags and link target.
+Other architectures/custom installation directories and complete libc installation
+remain unqualified. No whole libc packaging claim follows from these two entries.
+
+Evidence: /usr/obj/usr/src/bazel-libc-link-interface-20261028-r3/receipt.json and
+qualification/link-interface-parity.json. Two static/shared smoke cases passed;
+loader inspection resolves the shared probe to saved native libc/libsys artifacts.
+Reference: bazel-libc-link-interface-reference-20261028-r2, using maintained
+_libinstall with the top-level IMAKE_INSTALL rootless command. The initial
+reference failed because NO_ROOT alone did not supply direct subdirectory install
+flags; that failed run remains recorded. Scripts are retained under
+bazel-libc-link-interface-qualification-20261028. No host installation occurred.
+
+Frontend review: build-bsd.c's existing bazel-test --bazel-inputs path and backend
+format-5 targets/tests handle these additions; no new inputs or publication
+contract require frontend changes. Make remains the production default.

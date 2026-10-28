@@ -4725,3 +4725,13 @@ programs. Added the existing arc4random fork/uniform cases after full native aux
 became available. Passing these cases does not establish live DTrace firing,
 audit-record coverage, entropy strength, thread cancellation or all libc features.
 No instrumentation or audit policy was altered for this test integration.
+
+## 2026-10-28 libc shared public interface
+
+Native libc shared consumers now have an explicit interface including nonshared
+public wrappers. Link qualification covers iconv_open/iconv_close/iconvctl; their
+existing maintained test is not run until conversion modules/data are declared.
+No probes or audit hooks were removed or added. The shared smoke program now
+links native libc directly; two static/shared smoke cases passed. Live DTrace
+and audit behavior remain outside this evidence. See checkpoint link-interface
+section and bazel-libc-link-interface-20261028-r3 qualification report.
