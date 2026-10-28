@@ -26,3 +26,5 @@ filegroup(name = "vnode_source", srcs = [":vnode_if"], output_group = "source", 
 cc_library(name = "vnode_headers", hdrs = [":vnode_header_files"],
     strip_include_prefix = "vnode_if.generated", visibility = ["//visibility:public"])
 filegroup(name = "vnode_header_files", srcs = [":vnode_if"], output_group = "headers")
+
+exports_files(["genassym.sh", "genoffset.sh"], visibility = ["//visibility:public"])

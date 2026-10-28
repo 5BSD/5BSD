@@ -48,3 +48,6 @@ cc_library(name = "cryptodesc_header", hdrs = ["cryptodesc.h"], strip_include_pr
 exports_files(["socket.h"], visibility = ["//usr.bin/getaddrinfo:__pkg__"])
 
 exports_files(["signal.h", "errno.h"], visibility = ["//bin/zsh:__pkg__"])
+
+cc_library(name = "assym_header", hdrs = ["assym.h"],
+    strip_include_prefix = "/sys/sys", include_prefix = "sys", visibility = ["//visibility:public"])

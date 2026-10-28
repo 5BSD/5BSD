@@ -3581,3 +3581,11 @@ and
 .Dq //sys/dev/usb:usb_if
 emit their maintained C/header pairs. This qualifies text generation only,
 not compilation or runtime support for the associated driver or architecture.
+
+.Pp
+.Dq //tools/build/bazel/tests/kernel_constants:constants_test
+checks native object-based extraction of assembly constants and field offsets,
+including compile-time layout assertions. The generation actions declare
+execution tools and prerequisite objects and never execute target objects.
+This test does not compile GENERIC's actual offset or assembly-constant objects;
+configured kernel headers and full kernel builds remain separate work.

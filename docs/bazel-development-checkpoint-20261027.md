@@ -878,3 +878,33 @@ kernel builds receive the fix without frontend C or backend selection changes.
 No staging, signing, packaging or publication contract changes. Native offset
 object compilation and generation actions still need integration and configured
 kernel headers; whole-kernel/module/package/performance gates remain open.
+
+### Declared kernel constant extraction actions (2026-10-28)
+
+`kernel_constants` wraps the maintained genassym/genoffset scripts through the
+existing declared script-output rule. Object inputs, prerequisite check objects,
+generator scripts, tool-only PATH and execution runtime are explicit. Native
+awk, grep, sed and sort are selected in the execution configuration. llvm-nm,
+shell and compiler remain SDK tools. The action reads target ELF objects and
+does not execute them; cross-target correctness still requires qualification.
+
+`//tools/build/bazel/tests/kernel_constants:constants_test` compiles real
+ASSYM/OFFSYM encodings with -fcommon, extracts offset.inc, compiles OFFSET_TEST
+layout assertions, requires that check object before assym.inc generation, then
+compiles assertions for zero, negative, 16-bit-boundary, 64-bit and member-offset
+constants. The standalone fixture supplies CTASSERT as a real _Static_assert;
+this was missing in the first attempt and caused a compile failure. No assertion
+was disabled. The fixture is not the kernel's actual thread structure.
+
+`/usr/obj/usr/src/bazel-kernel-constants-r2-20261028` records a passed Bazel test
+through maintained build-bsd with sixteen jobs. Both generated includes match
+the maintained host-tool recipe on the same native-compiled fixture object:
+offset.inc 516 bytes, assym.inc 142 bytes. Reference commands and hashes are in
+`qualification/parity.json`. This qualifies extraction and its prerequisite
+chain, not GENERIC genoffset.o/genassym.o compilation or a bootable kernel.
+
+The existing frontend format-5 interface can select these targets without a
+C/backend change. Manual guidance is updated. Kernel configuration/options and
+complete header dependencies must precede real kernel-layout object conversion.
+Complete world/kernel/modules, pkgbase, bootstrap independence, cache-invalidation,
+sandbox and performance gates remain open. Make remains production/default.

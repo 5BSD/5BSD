@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+load("//tools/build/bazel:bsd_kernel_constants.bzl", "kernel_constants")
+
+cc_library(name = "layout", srcs = ["layout.c"], deps = ["//sys/sys:assym_header"], copts = ["-fcommon"])
+bsd_component_object(name = "layout_object", group = ":layout", out = "layout.o")
+kernel_constants(name = "offset", object = ":layout_object", kind = "offset", output = "offset.inc")
+cc_library(name = "offset_header", hdrs = [":offset"], strip_include_prefix = ".")
+cc_library(name = "offset_check", srcs = ["layout.c"],
+    deps = ["//sys/sys:assym_header", ":offset_header"],
+    local_defines = ["OFFSET_TEST"], copts = ["-fcommon"])
+bsd_component_object(name = "offset_check_object", group = ":offset_check", out = "offset_check.o")
+kernel_constants(name = "assym", object = ":layout_object", kind = "assym", output = "assym.inc",
+    prerequisites = [":offset_check_object"])
+cc_library(name = "assym_header", hdrs = [":assym"], strip_include_prefix = ".")
+cc_test(name = "constants_test", srcs = ["layout.c"],
+    deps = ["//sys/sys:assym_header", ":offset_header", ":assym_header"],
+    local_defines = ["OFFSET_TEST", "CHECK_CONSTANTS"], copts = ["-fcommon"],
+    size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
