@@ -3307,3 +3307,12 @@ complete fifty-object aggregate. Live entropy initialization/reseeding,
 random-provider behavior and CPU dispatch/CRC vectors still need execution
 tests. Do not infer entropy quality or instruction compatibility from a
 successful compile. No runtime source or instrumentation policy changed.
+
+### devfs kernel object group (2026-10-28)
+
+The five native objects preserve Make's code/data and runtime relocations,
+including existing MAC vnode association, relabel/update and symlink hooks.
+Do not infer live hook invocation from artifact parity. Runtime qualification
+must cover node lifecycle, devfs rules, jailed views, device I/O and label
+propagation; assess audit/probe coverage along those paths. No instrumentation,
+filesystem policy or source behavior changed in this build conversion.

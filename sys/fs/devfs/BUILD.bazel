@@ -1,3 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "kernel_headers", hdrs = ["devfs.h"], includes = ["../.."], visibility = ["//sys/security/mac:__pkg__", "//sys/security/mac_test:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+cc_library(name = "internal_headers", hdrs = ["devfs_int.h"], includes = ["../.."],
+    deps = [":kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+amd64_generic_kernel_objects(name = "generic", srcs = ["devfs_devs.c", "devfs_dir.c", "devfs_rule.c", "devfs_vfsops.c", "devfs_vnops.c"],
+    deps = [":internal_headers", "//sys/security/mac:framework_headers"])

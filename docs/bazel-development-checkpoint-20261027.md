@@ -2615,3 +2615,28 @@ completes GENERIC libkern object coverage, not kernel linking/boot or live
 entropy/reseed/CRC dispatch validation. Functional vectors, performance,
 world/pkgbase/publication and bootstrap gates remain open. Module count
 remains 45. Make stays production/default; no host installation or BIP changes.
+
+### Native GENERIC devfs objects
+
+Added //sys/fs/devfs:generic_object_files covering all five selected devfs
+sources (devs, dir, rule, vfsops, vnops), with explicit internal/MAC/CK/VM
+headers and native generated vnode/offset inputs. The source inventory matches
+the generated GENERIC Makefile. Runtime filesystem, rules and label behavior
+are unchanged.
+
+Evidence: `/usr/obj/usr/src/bazel-devfs-kernel-20261028/qualification`,
+including retained native/reference objects, comparison script and inventory.
+All five match Make symbols, raw CTF, complete allocated-section inventories
+and contents/size/type/flags/alignment, and runtime relocation bytes and
+associations. Make uses maintained kernel recipes, the same SDK compiler,
+16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible paths; reference log:
+`/usr/obj/usr/src/bazel-devfs-kernel-make-20261028.log`.
+Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target selection and native artifact
+retention cover the added kernel objects without a new C/backend option or
+standalone installation entries. Actual /dev startup, node creation/removal,
+rulesets, jail visibility, MAC labels, open/read/write and teardown remain
+runtime tests for the linked kernel. Complete world/kernel/pkgbase/bootstrap
+and CPU/memory/disk performance gates remain open. Module count stays 45;
+Make remains production/default, and no host installation or BIP work occurred.
