@@ -67,3 +67,20 @@ cc_library(name = "generic_genassym", srcs = ["//sys/amd64/amd64:genassym.c"],
 bsd_component_object(name = "generic_genassym_object", group = ":generic_genassym", out = "generic_layout/genassym.o")
 kernel_constants(name = "generic_assym", object = ":generic_genassym_object", kind = "assym", output = "generic_layout/assym.inc",
     prerequisites = [":generic_genoffset_check_object"])
+
+load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_library")
+# Generated GENERIC data objects use normal kernel common-symbol policy.
+[cc_library(name = "generic_" + name + "_objects", srcs = ["//sys/amd64/conf:generic_" + name + "_source"],
+    deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header"] + (["//sys/amd64/conf:generic_config_header"] if name == "config" else []),
+    copts = [flag for flag in _AMD64_LAYOUT_FLAGS if flag != "-fcommon"] + ["-fno-common"],
+    local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for name in ["config", "env", "hints"]]
+[bsd_ctf_library(name = "generic_" + name + "_ctf", library = ":generic_" + name + "_objects",
+    converter = "//cddl/usr.bin/ctfconvert:ctfconvert",
+    runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libdwarf:dwarf_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label", preserve_debug = True)
+ for name in ["config", "env", "hints"]]
+[filegroup(name = "generic_" + name + "_object", srcs = [":generic_" + name + "_ctf"], output_group = "regular_objects", visibility = ["//visibility:public"])
+ for name in ["config", "env", "hints"]]

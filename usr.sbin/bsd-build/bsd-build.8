@@ -3614,3 +3614,15 @@ Qualification confirms an unrelated MSGBUF_SIZE change causes no layout C
 compilation, while KSTACK_PAGES recompiles genassym only. This is limited
 invalidation evidence for layout targets; it is not a complete kernel build
 or system performance result.
+
+.Pp
+.Dq //sys/kern:generic_config_object ,
+.Dq //sys/kern:generic_env_object ,
+and
+.Dq //sys/kern:generic_hints_object
+compile generated kernel data with CTF and retained DWARF.
+The format-5 build-settings key
+.Dq //tools/build/bazel/config:kernel_ctf_label
+sets their CTF label explicitly. Its default matches ctfconvert when Make's
+VERSION environment variable is unset. Changing this label reruns conversion
+without recompiling these objects. Full kernel linking remains unqualified.

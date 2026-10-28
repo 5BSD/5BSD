@@ -5,7 +5,14 @@ load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@rules_cc//cc/common:cc_shared_library_hint_info.bzl", "CcSharedLibraryHintInfo")
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+
 def _convert(ctx):
+    if ctx.attr.ctf_label and ctx.attr.ctf_label_setting:
+        fail("select ctf_label or ctf_label_setting")
+    label = ctx.attr.ctf_label_setting[BuildSettingInfo].value if ctx.attr.ctf_label_setting else ctx.attr.ctf_label
+    if not label:
+        fail("an explicit CTF label is required")
     source = ctx.attr.library
     regular = []
     pic = []
@@ -37,7 +44,7 @@ def _convert(ctx):
             # Indexed directories retain distinct equal-basename input objects.
             out = ctx.actions.declare_file(ctx.label.name + "/" + variant + "/" + str(index) + "/" + obj.basename)
             ctx.actions.run(executable = ctx.attr.converter[DefaultInfo].files_to_run,
-                arguments = ["-l", ctx.attr.ctf_label, "-o", out.path, obj.path],
+                arguments = (["-g"] if ctx.attr.preserve_debug else []) + ["-l", label, "-o", out.path, obj.path],
                 inputs = [obj], tools = ctx.files.runtime, outputs = [out],
                 env = {"LC_ALL": "C", "LD_LIBRARY_PATH": ":".join(runtime_dirs)},
                 use_default_shell_env = False, mnemonic = "BSDCtfConvert")
@@ -64,7 +71,9 @@ bsd_ctf_library = rule(implementation = _convert, provides = [CcInfo, CcSharedLi
     attrs = {"library": attr.label(providers = [CcInfo], mandatory = True),
         "converter": attr.label(executable = True, cfg = "exec", mandatory = True),
         "runtime": attr.label_list(allow_files = True, cfg = "exec"),
-        "ctf_label": attr.string(mandatory = True)},
+        "ctf_label": attr.string(),
+        "ctf_label_setting": attr.label(providers = [BuildSettingInfo]),
+        "preserve_debug": attr.bool(default = False)},
     toolchains = use_cc_toolchain(), fragments = ["cpp"])
 
 

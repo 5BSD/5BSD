@@ -1009,3 +1009,38 @@ remote execution or CPU/memory/disk performance qualification. Full native
 kernel/world/module/package and runtime gates remain unfinished. Existing
 frontend target selection handles these actions without a C/backend contract
 change; the manual documents the dependency behavior. Make remains default.
+
+### Generated kernel data objects with retained CTF/DWARF (2026-10-28)
+
+Native targets now extract and compile GENERIC config.c, env.c and hints.c,
+with -fno-common and declared generated option/offset headers. Their ordinary
+objects pass through native ctfconvert. The missing offset.inc dependency
+through sys/kpilite.h was caught on the first attempt and added explicitly.
+No kernel options or header checks were disabled.
+
+bsd_ctf_library now accepts preserve_debug (default false for existing callers)
+and either a literal CTF label or a string build-setting label. These generated
+GENERIC objects enable debug preservation, matching Make's -g conversion flag.
+`//tools/build/bazel/config:kernel_ctf_label` defaults to ctfconvert's maintained
+no-VERSION fallback label, and can be overridden in frontend build-settings.
+The rule does not read an undeclared VERSION environment variable.
+
+`/usr/obj/usr/src/bazel-generic-data-r2-20261028/qualification` compares native
+objects against fresh maintained Make config.o/env.o/hints.o using the same SDK
+compiler and the host Make ctfconvert tool. Symbols/sizes, all allocated section
+contents/layout (including kern_conf bytes), and CTF label/type/data dumps match.
+Both outputs retain .debug_info and .debug_line. ELF/DWARF byte identity is not
+claimed. Comparison uses retained artifact blobs because later builds can
+replace Bazel's live output symlinks.
+
+`/usr/obj/usr/src/bazel-generic-data-label-20261028` proves a frontend input-file
+label override reaches all three objects: zero C compilation actions, three
+CTF conversion actions, and qualification-label in each label table. Existing
+frontend format-5 settings/targets support this without C/backend changes;
+manual and observability notes describe the new input and retained metadata.
+
+Targets are //sys/kern:generic_{config,env,hints}_object. This remains scoped to
+amd64 GENERIC's generated data, with WITH_CTF and debug enabled. Full configurable
+kernel compilation, vers/vnode/runtime objects, linking/CTF merge, modules,
+packages, bootstrap/runtime and whole-system performance gates remain open.
+Make remains production/default; no kernel was installed or booted.

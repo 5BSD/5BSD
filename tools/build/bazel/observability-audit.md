@@ -2915,3 +2915,10 @@ including HWPMC_HOOKS. Their symbol sizes and generated offsets/constants match
 a fresh Make reference. These are layout objects, not instrumentation-bearing
 kernel runtime implementations; this does not qualify live PMC, DTrace or audit
 behavior. No option was removed to avoid declaring its headers.
+
+## Generated kernel config/env/hints objects (2026-10-28)
+
+CTF conversion retains DWARF for GENERIC's debug configuration. CTF labels,
+types/data records and allocated payload sections match Make, including the
+embedded kernel configuration. These data objects add no probe sites; kernel
+CTF merging, debugger use and live DTrace/audit behavior remain unqualified.

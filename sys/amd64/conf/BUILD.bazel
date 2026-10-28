@@ -22,8 +22,15 @@ load("//tools/build/bazel:bsd_tree_file.bzl", "bsd_tree_file")
     python = "@bsd_sdk//toolchain:extra_python",
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"])
- for name in ["opt_global", "opt_hwpmc_hooks", "opt_kstack_pages"]]
+ for name in ["opt_global", "opt_hwpmc_hooks", "opt_kstack_pages", "opt_config"]]
 cc_library(name = "generic_global_headers", hdrs = [":opt_global"],
     strip_include_prefix = "generic_options", visibility = ["//visibility:public"])
 cc_library(name = "generic_assym_headers", hdrs = [":opt_hwpmc_hooks", ":opt_kstack_pages"],
     strip_include_prefix = "generic_options", visibility = ["//visibility:public"])
+
+cc_library(name = "generic_config_header", hdrs = [":opt_config"], strip_include_prefix = "generic_options", visibility = ["//visibility:public"])
+[bsd_tree_file(name = "generic_" + name + "_source", tree = ":generic_config", member = name + ".c",
+    output = "generic_sources/" + name + ".c",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"], visibility = ["//visibility:public"])
+ for name in ["config", "env", "hints"]]
