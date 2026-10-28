@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+_SCRIPTS = ["firstboot_integrity_test", "rc_subr_test", "safe_eval_test", "svcj_test", "sysext_startup_test", "hostid_test", "root_integrity_test", "sshd_startup_test", "syslogd_startup_test", "osrelease_startup_test", "motd_startup_test"]
+[bsd_script_wrapper(name = n, body = n + ".sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect") for n in _SCRIPTS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = sorted(_SCRIPTS), interfaces = {n: "atf" for n in _SCRIPTS})
+[bsd_install_file(name = n + "_file", src = ":" + n, destination = "/usr/tests/libexec/rc/" + n,
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"]) for n in _SCRIPTS]
+bsd_install_file(name = "kyuafile_file", src = ":kyuafile", destination = "/usr/tests/libexec/rc/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":" + n + "_file" for n in _SCRIPTS] + [":kyuafile_file"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/usr/tests/libexec/rc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

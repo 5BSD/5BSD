@@ -9166,3 +9166,27 @@ use the maintained frontend, without new options. No host service execution or
 installation occurred. All rc.d groups now have native installation expressions;
 full default/option-implication semantics, system package aggregation, rc tests,
 normal boot and full-system performance gates remain unqualified. Make stays default.
+
+## 2026-10-28: complete maintained rc ATF script installation
+
+Added native wrapping and installation of all eleven ATF_TESTS_SH entries from
+libexec/rc/tests/Makefile, preserving unchanged assertions and the installed
+/usr/libexec/atf-sh interpreter. Sorted Kyua metadata matches Make exactly.
+Thirteen installation records and twelve payloads (eleven wrappers plus Kyuafile)
+match rootless Make. Evidence:
+/usr/obj/usr/src/bazel-rc-tests-20261028/qualification/rc/parity.json.
+Reference: bazel-rc-tests-reference-20261028; scripts:
+bazel-rc-tests-qualification-20261028/{make.py,verify.py}.
+
+This is installation evidence only; no ATF case ran. rc_subr/svcj cases include
+root requirements and installed /etc dependencies. Several source-oriented
+cases expose fixture overrides suitable for declared runtime inputs. Integrity-
+named tests already exist in the maintained Make list; preserving their bytes
+here does not restore BIP or qualify their applicability. Review before runtime
+execution; BIP remains out of scope. No tests were omitted from installation to
+make the comparison pass.
+
+Reviewed frontend artifact collection and typed inputs: no frontend change
+required; used 16 jobs. Next work is actual Bazel-owned rc test execution with
+explicit source/runtime inputs and isolated system tests where required.
+Full boot/world/kernel/pkgbase/performance gates remain open; Make stays default.

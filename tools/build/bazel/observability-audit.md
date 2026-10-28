@@ -5570,3 +5570,11 @@ match Make metadata/payloads. Architecture checks inspect configured dependencie
 only. The scripts remain unchanged; power management, Kerberos authentication,
 TLS offload, error reporting and boot ordering still need runtime qualification.
 No service was started or host configuration changed.
+
+### 2026-10-28 rc ATF installation
+
+All eleven maintained rc shell-test wrappers and Kyua metadata match Make.
+No test assertions changed and no cases executed. Installed-system/root cases
+need isolation; existing integrity-related cases require applicability review
+without reintroducing out-of-scope BIP. Source-fixture tests should use declared
+native inputs. Packaging these tests does not prove startup or logging behavior.
