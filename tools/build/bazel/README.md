@@ -33561,3 +33561,28 @@ Kernel source selection still contains special compile rules and dependencies
 that require explicit native actions. Configured options, full compiler flags,
 assembly offsets, kernel/module linking, packages and performance gates remain
 unfinished. Make remains production/default.
+
+### Kernel include-generator failure propagation (2026-10-28)
+
+Review before native offset/assembly-constant integration reproduced a shared
+Make-path defect: genassym.sh and genoffset.sh both returned success when NM
+could not execute. The successful final pipeline command masked symbol-reader
+failure. The maintained scripts now capture NM output and require its success
+before transformation; genoffset also checks selection, substitution and sorting
+before emitting the include. A genoffset input with no offset symbols fails.
+The valid transformation logic and formatting remain unchanged.
+
+`python3.12 -B tools/build/bazel/kernel-offset-errors-test.py` passes two tests
+with twenty failure subcases: missing NM, a partially writing failed NM, invalid
+and missing object inputs (stdout and -o forms), and failed awk/grep/sed/sort.
+`/usr/obj/usr/src/bazel-kernel-offset-errors-20261028/parity.json` records byte-equal
+before/after output for the existing Make GENERIC genassym.o and genoffset.o:
+5465 and 695 bytes respectively. Those objects are reference inputs, not native
+Bazel-built kernel artifacts. The scripts' -o interface still truncates the
+requested output before work; transactional publication is not claimed.
+
+The scripts are shared by maintained kernel Make targets, so normal frontend
+kernel builds receive the fix without frontend C or backend selection changes.
+No staging, signing, packaging or publication contract changes. Native offset
+object compilation and generation actions still need integration and configured
+kernel headers; whole-kernel/module/package/performance gates remain open.
