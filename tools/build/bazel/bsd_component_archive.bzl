@@ -62,3 +62,30 @@ bsd_component_object = rule(implementation = _object, attrs = {
     "pic": attr.bool(default = False),
     "out": attr.output(mandatory = True),
 })
+
+
+def _selected_objects(ctx):
+    group = ctx.attr.group
+    available = {}
+    for item in group[CcInfo].linking_context.linker_inputs.to_list():
+        if item.owner == group.label:
+            for library in item.libraries:
+                for obj in (library.pic_objects if ctx.attr.pic else library.objects):
+                    if obj.basename in available:
+                        fail("ambiguous component object basename: " + obj.basename)
+                    available[obj.basename] = obj
+    requested = ctx.attr.object_names
+    if not requested or len(requested) != len(depset(requested).to_list()):
+        fail("component object selection must be nonempty and unique")
+    missing = [name for name in requested if name not in available]
+    if missing:
+        fail("component object selection absent from " + str(group.label) + ": " + str(missing))
+    # Forward declared compiler outputs directly: no archive extraction action,
+    # filesystem search, or transitive link dependency can expand this selection.
+    return [DefaultInfo(files = depset([available[name] for name in requested]))]
+
+bsd_component_selected_objects = rule(implementation = _selected_objects, attrs = {
+    "group": attr.label(providers = [CcInfo], mandatory = True),
+    "pic": attr.bool(default = False),
+    "object_names": attr.string_list(mandatory = True),
+})

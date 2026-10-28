@@ -4887,3 +4887,11 @@ global/undefined symbols. The core, replacement code and provider inventories
 reconcile to all 55 Make compilation outputs. Private rtld namespace headers
 and generic string implementations are retained. No runtime C sources, DTrace
 probes or audit hooks changed; final loader runtime remains unqualified.
+
+## 2026-10-28 selected runtime-linker dependencies
+
+The six libc NOSSP and 32 libsys PIC objects selected for rtld match Make's
+explicit inventory, executable-section bytes and global/undefined symbols.
+Selection forwards declared compiler outputs without pulling in transitive
+library objects. No C source, DTrace provider or audit hook changed. Final
+loader dependency checks and runtime observability remain pending linkage.

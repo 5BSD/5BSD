@@ -125,3 +125,14 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
 exports_files(["syscalls.map"], visibility = ["//lib/libc:__pkg__"])
 
 exports_files(["Symbol.sys.map"], visibility = ["//lib/libc:__pkg__"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+# Explicit rtld dependency boundary, matching rtld-libc/Makefile.inc on amd64.
+bsd_component_selected_objects(name = "rtld_pic_objects", group = ":sys_objects", pic = True,
+    object_names = [name + ".pic.o" for name in [
+        "fstat", "fstatat", "fstatfs", "syscall", "cerror", "geteuid", "getegid",
+        "sigfastblock", "munmap", "mprotect", "sysarch", "__sysctl", "issetugid",
+        "__getcwd", "utrace", "getpid", "thr_self", "thr_kill", "pread", "mmap",
+        "lseek", "_exit", "getdirentries", "_close", "_fcntl", "_open", "_openat",
+        "_read", "_sigprocmask", "_write", "readlink", "___realpathat",
+    ]], visibility = ["//libexec/rtld-elf:__pkg__"])

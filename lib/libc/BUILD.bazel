@@ -175,10 +175,10 @@ bsd_install_archive(name = "install_archive",
     visibility = ["//visibility:public"])
 
 # Build-only PIC archive used by rtld; never substitute the SSP-enabled archive.
-load(":nossp.bzl", "libc_nossp_archive")
+load(":nossp.bzl", "libc_nossp_variant")
 bsd_component_archive(name = "nossp_objects_archive", groups = COMMON_GROUPS + NOSSP_GROUPS + _TRACE_LINK, pic = True,
     visibility = ["//visibility:private"])
-libc_nossp_archive(name = "nossp_pic_archive", archive = ":nossp_objects_archive",
+libc_nossp_variant(name = "nossp_pic_archive", dep = ":nossp_objects_archive",
     visibility = ["//libexec/rtld-elf:__pkg__"])
 
 # Internal archive variant, selected by nossp_pic_archive's transition.
@@ -187,3 +187,14 @@ bool_setting(name = "nossp", build_setting_default = False,
     visibility = ["//lib/libc:__subpackages__"])
 config_setting(name = "nossp_enabled", flag_values = {":nossp": "true"},
     visibility = ["//lib/libc:__subpackages__"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+bsd_component_selected_objects(name = "rtld_jump_objects", group = "//lib/libc/amd64/gen:objects", pic = True,
+    object_names = ["sigsetjmp.pic.o", "_setjmp.pic.o", "setjmp.pic.o"])
+bsd_component_selected_objects(name = "rtld_stat_objects", group = "//lib/libc/sys:pseudo_objects", pic = True,
+    object_names = ["lstat.pic.o", "stat.pic.o"])
+bsd_component_selected_objects(name = "rtld_jump_error_object", group = "//lib/libc/gen:process_objects", pic = True,
+    object_names = ["setjmperr.pic.o"])
+filegroup(name = "rtld_selected_objects", srcs = [":rtld_jump_objects", ":rtld_stat_objects", ":rtld_jump_error_object"])
+libc_nossp_variant(name = "rtld_nossp_objects", dep = ":rtld_selected_objects",
+    visibility = ["//libexec/rtld-elf:__pkg__"])

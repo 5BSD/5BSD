@@ -20,13 +20,13 @@ _nossp_configuration = transition(
 )
 
 def _impl(ctx):
-    return [DefaultInfo(files = ctx.attr.archive[DefaultInfo].files)]
+    return [DefaultInfo(files = ctx.attr.dep[DefaultInfo].files)]
 
-libc_nossp_archive = rule(
+libc_nossp_variant = rule(
     implementation = _impl,
     cfg = _nossp_configuration,
     attrs = {
-        "archive": attr.label(mandatory = True),
+        "dep": attr.label(mandatory = True),
         "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
     },
 )

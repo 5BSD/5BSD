@@ -7045,3 +7045,34 @@ linkage still requires its selected libc/libsys archive objects and compiler
 runtime, version script, dependency checks and installation/runtime tests.
 No complete-loader, world/kernel/package or performance claim is made. Make
 remains production/default.
+
+## 2026-10-28: rtld's selected libc/libsys dependency objects
+
+Added bsd_component_selected_objects, which selects named compiler outputs from
+a component's own CcInfo linker inputs. It rejects empty/duplicate requests,
+missing names and ambiguous basenames. Transitive link dependencies cannot
+expand the selection; no archive extraction, filesystem search or staging-file
+substitution is involved. Only the selected outputs are returned as build inputs.
+
+libc exposes six rtld objects through its existing NOSSP configuration, now
+named libc_nossp_variant to cover both archive and object consumers. The existing
+nossp_pic_archive label retains its meaning. libsys exposes 32 selected PIC
+objects. rtld imports these and constructs selected_runtime_archive using the
+native toolchain archive action. Final linkage must use normal archive extraction
+semantics, not whole-link libc or libsys.
+
+Evidence: /usr/obj/usr/src/bazel-rtld-selected-20261028/qualification/selection-parity.json.
+Queried Make's _libc_other_objects and _libsys_other_objects independently: the
+38-member archive exactly matches their union. All 38 executable-section payloads
+and global/undefined symbol sets match independently compiled Make objects.
+The report records each reference object; comparisons use libc NOSSP objects
+and libsys PIC objects, never host installed libraries. Script:
+bazel-rtld-selected-qualification-20261028/verify.py.
+
+Reviewed build-bsd.c's maintained bazel-test backend: existing format-5 targets
+handle this archive with 16 jobs; no new public inputs or publication changes.
+No runtime source or host installation changed. Next: final loader linkage,
+version script, forbidden-dependency checks, installation/debug parity and
+loader runtime tests. These dependency-object results do not establish loader
+execution, full-world/kernel/pkgbase or performance qualification. Make remains
+production/default.
