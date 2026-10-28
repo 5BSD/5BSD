@@ -12,7 +12,7 @@ _LIBS = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared
     runtime_bin = _TOOLS, runtime_lib = _LIBS,
     data = _FIXTURES, size = "small")
  for source,cases in _SUITES.values() for case in cases]
-test_suite(name = "tests", tests = [":native_" + case for source,cases in _SUITES.values() for case in cases], visibility = ["//visibility:public"])
+test_suite(name = "tests", tests = [":legacy"] + [":native_" + case for source,cases in _SUITES.values() for case in cases], visibility = ["//visibility:public"])
 [bsd_script_wrapper(name = name, body = source, interpreter = "/usr/libexec/atf-sh",
     cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect") for name,(source,cases) in _SUITES.items()]
 [bsd_install_file(name = "install_" + name, src = ":" + name, destination = "/usr/tests/usr.bin/bintrans/" + name,
@@ -26,3 +26,14 @@ bsd_install_manifest(name = "install_manifest", entries = [":install_kyuafile", 
 # The shared /usr/tests/usr.bin/regress.m4 belongs to usr.bin/tests.
 bsd_install_file(name = "install_legacy", src = "legacy_test.sh", destination = "/usr/tests/usr.bin/bintrans/legacy_test",
     owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+bsd_script_wrapper(name = "legacy_test", body = "legacy_test.sh", interpreter = "/bin/sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyua_test(name = "legacy", program = ":legacy_test", program_path = "bintrans/legacy_test", interface = "tap",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    path_programs = {"//usr.bin/bintrans:uuencode": "uuencode", "//usr.bin/bintrans:uudecode": "uudecode"},
+    suite_files = {f: "bintrans/" + f for f in _FIXTURES} | {"//usr.bin/tests:regress.m4": "regress.m4"},
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])

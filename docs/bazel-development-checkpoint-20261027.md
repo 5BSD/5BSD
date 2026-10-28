@@ -4461,3 +4461,33 @@ Frontend review: format-5 explicit targets/tests and existing tests/split_manpag
 settings express this addition; no frontend/backend contract change is required.
 Make remains production default. BIP remains out of scope. Nothing installed on
 the host, no reboot, and no complete-world/kernel/package/boot claim.
+
+
+## 2026-10-28: bintrans legacy TAP integration
+
+The pending legacy TAP runner is now integrated into bintrans/tests:tests.
+Added optional normalized relative program_path to the existing Kyua adapter.
+Nested programs use Kyua include() and a child Kyuafile, preserve sibling/parent
+fixture layout, and retain full relative names in selection and typed result
+reconciliation. Absolute paths, empty components and traversal are rejected;
+existing fixture overlap validation includes the generated child Kyuafile.
+Shared regression macros are declared by usr.bin/tests:support_manifest at the
+maintained /usr/tests/usr.bin/regress.m4 location. Parent Kyuafile/world test
+inventory assembly is still outstanding, explicitly not claimed complete.
+
+Evidence: /usr/obj/usr/src/bazel-bintrans-tap-20261028-r2 passes the unchanged
+legacy script's five TAP checks, zero failures or skips. Both multicall aliases
+are pinned to the native bintrans executable through declared PATH targets.
+Flat-layout regression /usr/obj/usr/src/bazel-kyua-layout-regression-20261028
+passes lastcomm's existing suite. Logs, JUnit and result databases are copied
+into each run's qualification directory. The first attempted layout was rejected
+by Kyua (program names cannot contain path components); retained failure led to
+the native include mechanism, not alteration of test scripts or test outcomes.
+
+Qualification limits: Kyua adapter still uses host shell, m4, diff and other
+ancillary execution tools, and this TAP run uses host loader libraries. This is
+not hermetic-runtime or current-image qualification. The two ATF cases retain
+the previously recorded startup assertion and are not counted as passing.
+No host upgrade or installation occurred. Frontend review: existing explicit
+format-5 target/test inputs carry these additions without a new frontend option.
+Whole-world, kernel, package, boot and performance gates remain incomplete.

@@ -34,3 +34,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+# Distinct target labels let the test PATH pin both multicall names.
+alias(name = "uuencode", actual = ":bintrans", visibility = ["//visibility:public"])
+alias(name = "uudecode", actual = ":bintrans", visibility = ["//visibility:public"])

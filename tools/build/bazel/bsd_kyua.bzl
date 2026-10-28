@@ -19,7 +19,11 @@ def _copy_suite_file(ctx, source, output):
     )
 
 def _impl(ctx):
-    program = ctx.actions.declare_file(ctx.label.name + ".suite/" + ctx.executable.program.basename)
+    program_path = ctx.attr.program_path or ctx.executable.program.basename
+    if program_path.startswith("/") or any([part in ["", ".", ".."] for part in program_path.split("/")]):
+        fail("program_path must be a normalized relative path")
+    program_directory = program_path.rsplit("/", 1)[0] + "/" if "/" in program_path else ""
+    program = ctx.actions.declare_file(ctx.label.name + ".suite/" + program_path)
     if ctx.attr.runtime_libraries:
         if not ctx.executable.python or not ctx.file.python_home:
             fail("native suite staging requires an explicit Python execution tool")
@@ -36,13 +40,18 @@ def _impl(ctx):
         properties.append("timeout=" + str(ctx.attr.case_timeout))
     properties += kyua_metadata_fields(ctx.attr.test_metadata,
                                       reserved = ["timeout"] if ctx.attr.case_timeout else [])
-    ctx.actions.write(kyuafile, "syntax(2)\ntest_suite(" + json.encode(ctx.attr.suite) + ")\n" + ctx.attr.interface + "_test_program{" + ", ".join(properties) + "}\n")
-    files = [program, kyuafile, ctx.executable.program, ctx.executable.kyua] + ctx.files.runtime
+    program_kyuafile = kyuafile
+    if program_directory:
+        program_kyuafile = ctx.actions.declare_file(ctx.label.name + ".suite/" + program_directory + "Kyuafile")
+        ctx.actions.write(kyuafile, "syntax(2)\ninclude(" + json.encode(program_directory + "Kyuafile") + ")\n")
+    ctx.actions.write(program_kyuafile, "syntax(2)\ntest_suite(" + json.encode(ctx.attr.suite) + ")\n" + ctx.attr.interface + "_test_program{" + ", ".join(properties) + "}\n")
+    files = [program, kyuafile, program_kyuafile, ctx.executable.program, ctx.executable.kyua] + ctx.files.runtime
     suite_paths = {}
     artifact_files = {}
-    occupied = {program.basename: True, "Kyuafile": True}
+    occupied = {program_path: True, "Kyuafile": True}
+    occupied[program_directory + "Kyuafile"] = True
     for soname in ctx.attr.runtime_libraries.values():
-        occupied[soname] = True
+        occupied[program_directory + soname] = True
     for target, name in ctx.attr.suite_files.items():
         parts = name.split("/")
         if not name or any([part in ["", ".", ".."] for part in parts]):
@@ -94,7 +103,7 @@ def _impl(ctx):
             if len(artifacts) != 1:
                 fail("one declared runtime library artifact required")
             artifact = artifacts[0]
-            link = ctx.actions.declare_file(ctx.label.name + ".suite/" + soname)
+            link = ctx.actions.declare_file(ctx.label.name + ".suite/" + program_directory + soname)
             ctx.actions.symlink(output = link, target_file = artifact)
             files += [link, artifact]
             artifact_files[soname] = artifact
@@ -161,7 +170,7 @@ def _impl(ctx):
     commands.append(kyua_command + config_arguments + ' --logfile="$TEST_UNDECLARED_OUTPUTS_DIR/kyua.log" test' +
                     ' --kyuafile=' + suite_argument +
                     ' --results-file="$TEST_UNDECLARED_OUTPUTS_DIR/results.db"' +
-                    (' ' + _quote(program.basename + ":" + ctx.attr.case_name) if ctx.attr.case_name else '') +
+                    (' ' + _quote(program_path + ":" + ctx.attr.case_name) if ctx.attr.case_name else '') +
                     ' || status=$?')
     # Preserve Kyua JUnit output, including skips and failed runs.
     # Reconcile expected failures from typed database results below.
@@ -171,7 +180,7 @@ def _impl(ctx):
     files += [ctx.executable._report_python, ctx.file._report_python_home, ctx.file._reporter] + ctx.files._report_runtime
     commands.append('PYTHONNOUSERSITE=1 PYTHONHOME="$root/"' + _quote(ctx.file._report_python_home.short_path[:-len(ctx.file._report_python_home.basename)]) +
                     ' "$root/"' + _quote(ctx.executable._report_python.short_path) + ' -B "$root/"' + _quote(ctx.file._reporter.short_path) +
-                    ' --kyua="$root/"' + _quote(ctx.executable.kyua.short_path) + ' --database="$TEST_UNDECLARED_OUTPUTS_DIR/results.db" --report="$XML_OUTPUT_FILE" --program=' + _quote(program.basename))
+                    ' --kyua="$root/"' + _quote(ctx.executable.kyua.short_path) + ' --database="$TEST_UNDECLARED_OUTPUTS_DIR/results.db" --report="$XML_OUTPUT_FILE" --program=' + _quote(program_path))
     commands.append('exit "$status"')
     runner = ctx.actions.declare_file(ctx.label.name + ".sh")
     ctx.actions.write(runner, "\n".join(commands) + "\n", is_executable = True)
@@ -191,6 +200,7 @@ bsd_kyua_test = rule(
         "_report_runtime": attr.label_list(default = ["@bsd_sdk//toolchain:python_stdlib"], allow_files = True, cfg = "exec"),
         "_reporter": attr.label(default = "//tools/build/bazel:kyua_junit.py", allow_single_file = True),
         "interface": attr.string(default = "tap", values = ["tap", "atf"]),
+        "program_path": attr.string(doc = "Normalized program path within the suite, preserving installed relative fixture layout."),
         "program": attr.label(executable = True, cfg = "target", mandatory = True),
         "kyua": attr.label(executable = True, allow_single_file = True, cfg = "exec", mandatory = True),
         "runtime": attr.label_list(allow_files = True, cfg = "exec"),

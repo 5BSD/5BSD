@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+exports_files(["regress.m4"])
+bsd_install_file(name = "regression_macros", src = "regress.m4", destination = "/usr/tests/usr.bin/regress.m4",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+# Parent Kyuafile assembly remains part of full-world test inventory integration.
+bsd_install_manifest(name = "support_manifest", entries = [":regression_macros"], visibility = ["//visibility:public"])

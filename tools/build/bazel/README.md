@@ -34303,3 +34303,22 @@ all modules, other architectures, runtime and publication qualification remain
 open. The separately logged libctf v2 reader discrepancy and broader consumer
 coverage remain follow-up work; no test was suppressed or expected to pass on
 corrupt metadata.
+
+
+### Kyua suites with relative fixture layouts
+
+`bsd_kyua_test(program_path = "component/test_program", ...)` stages the
+program at a normalized relative path under the suite root. The adapter emits
+a root Kyuafile and includes the component Kyuafile, as Kyua requires bare
+program basenames within each Kyuafile. `suite_files` paths remain relative to
+the suite root, so shared parent fixtures can be declared without traversal.
+Paths must not be absolute or contain empty, dot or parent components. Runtime
+libraries, when selected, are placed beside the nested executable. Individual
+case selection and typed result reconciliation retain the full relative path.
+The default remains the executable basename for existing flat suites. This
+layout support does not remove the adapter's documented host-runtime limits.
+
+The bintrans legacy suite qualifies this layout and all five original TAP
+checks; lastcomm qualifies the existing flat layout. Evidence is recorded in
+the 2026-10-28 checkpoint. Bintrans's two ATF cases still fail at runtime startup
+on the current host and are not qualified by the passing legacy suite.
