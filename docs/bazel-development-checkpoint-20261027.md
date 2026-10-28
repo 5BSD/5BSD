@@ -1867,3 +1867,26 @@ the additions without a new C option or publication change. The current
 artifact-comparison batch contains fifteen module builds. Full partition
 operations, mutation invalidation, runtime/performance, complete kernel/world
 and pkgbase qualification remain open. Make remains production/default.
+
+### GEOM label
+
+Added all ten maintained geom_label C sources, explicit GEOM slice/flashmap,
+multipath, partition and UFS header dependencies, and a native Skylib
+write_file action for the module-local opt_geom.h. The GEOM_LABEL=1 content
+is module build policy from its maintained Makefile, not a substitute for
+GENERIC configuration. The reference build log confirms that local rule ran;
+the two generated option files are byte-identical. Userland header targets
+remain available.
+
+Evidence: `/usr/obj/usr/src/bazel-geom-label-20261028/qualification`, with Make
+reference `/usr/obj/usr/src/bazel-geom_label-make-20261028`. Symbols,
+relocations, text/data/rodata, raw CTF and generated options match. Debug
+identity/CRC pass. Staged metadata matches runtime/debug paths, owner/group,
+mode/type and package/debug tags. No live filesystem label discovery, host
+module loading or installation was performed.
+
+The current artifact-comparison batch has sixteen module builds. Frontend
+review: existing format-5 input/target selection covers the new generator
+and dependency graph; no C frontend option or publication-policy change is
+needed. Source/header invalidation, runtime, resource/performance and complete
+kernel/world/pkgbase qualification remain open; Make remains production.

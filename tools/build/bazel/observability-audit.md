@@ -3065,3 +3065,11 @@ SDT_* or AUDIT_* calls. Native symbols and relocations match Make. No
 instrumentation was added or removed; common partition/GEOM audit and
 probe coverage needs separate runtime review. Evidence is retained under
 /usr/obj/usr/src/bazel-partition-modules-20261028/qualification.
+
+### GEOM label (2026-10-28)
+
+The ten inspected g_label*.c sources contain no explicit SDT_* or AUDIT_*
+calls. Native runtime symbols and relocations match Make. No probes/audit
+behavior were changed; common GEOM discovery instrumentation and useful
+format-specific label probes require separate review. Runtime label detection
+was not exercised. Evidence: bazel-geom-label-20261028/qualification under /usr/obj/usr/src.

@@ -21,3 +21,6 @@ cc_library(name = "partition_interface_headers", hdrs = [":g_part_interface_head
 exports_files(["part/g_part_mbr.c"], visibility = ["//sys/modules/geom/geom_part/geom_part_mbr:__pkg__"])
 exports_files(["part/g_part_ebr.c"], visibility = ["//sys/modules/geom/geom_part/geom_part_ebr:__pkg__"])
 exports_files(["part/g_part_bsd.c"], visibility = ["//sys/modules/geom/geom_part/geom_part_bsd:__pkg__"])
+
+cc_library(name = "slice_headers", hdrs = ["geom_slice.h", "geom_flashmap.h"], includes = [".."],
+    deps = [":kernel_headers"], visibility = ["//visibility:public"])
