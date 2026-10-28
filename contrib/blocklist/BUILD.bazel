@@ -2,3 +2,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 exports_files(['lib/bl.c', 'lib/blocklist.c', 'port/vsyslog_r.c', 'include/blocklist.h', 'lib/libblocklist.3'], visibility = ["//lib/libblocklist:__pkg__"])
 cc_library(name = "headers", hdrs = ['include/bl.h', 'include/blocklist.h', 'port/config.h', 'port/port.h', 'port/_strtoi.h'], includes = ["include", "port"], visibility = ["//visibility:public"])
+
+exports_files(["libexec/blocklistd-helper"], visibility = ["//libexec/blocklistd-helper:__pkg__"])

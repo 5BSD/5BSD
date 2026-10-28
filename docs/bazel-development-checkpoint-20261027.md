@@ -8196,3 +8196,25 @@ random-device reads, or manual databases were changed. Runtime permissions,
 rotation/error cases, manual database traversal and split-manual configurations
 remain unqualified. World/pkgbase/publication/runtime/cache/performance gates
 remain open; Make stays production/default.
+
+## 2026-10-28 blocklist helper installation
+
+Added native archive installation for both the contributed blocklistd-helper
+and maintained blacklistd-helper compatibility script. These remain separate
+source payloads, not an invented alias. Both install at /usr/libexec with
+0555 permissions and package=blocklist; the package-owned directory record is
+preserved. The contributed source export is limited to this consumer.
+
+Through build-bsd at 16 jobs, all three component metadata records and both
+script payloads match independent rootless Make exactly. Evidence:
+/usr/obj/usr/src/bazel-blocklist-helper-20261028/qualification/
+installation-parity.json. Reference: bazel-blocklistd-helper-reference-20261028.
+Scripts: bazel-blocklist-helper-qualification-20261028. Reviewed build-bsd.c:
+existing explicit archive collection supports this installation without frontend
+changes. No script ran and no host firewall operation or installation occurred.
+
+The scripts retain existing firewall selection and legacy-IPFW rejection
+behavior. PF table/rule lifetime, failed commands, address/protocol handling,
+compatibility entry behavior and other backend branches still need isolated
+runtime tests. Configured-world/package/publication/cache/performance gates
+remain incomplete; Make remains production/default.

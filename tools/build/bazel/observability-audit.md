@@ -5241,3 +5241,11 @@ Existing entropy error logging remains unchanged. No script was executed;
 qualify entropy-slot rotation/permissions/failure reporting and manual database
 maintenance in isolated writable fixtures before runtime claims. Installation
 parity does not establish random-device or maintenance behavior.
+
+## 2026-10-28 blocklist helper scripts
+
+Native archive payloads preserve both maintained scripts exactly, including
+existing error messages and legacy-IPFW rejection. No firewall command was
+executed. Runtime review remains for add/remove/flush, failed PF operations,
+address/protocol parsing and legacy configuration errors in an isolated guest.
+No security-policy correctness or live audit coverage is claimed by packaging.
