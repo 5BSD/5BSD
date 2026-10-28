@@ -4436,3 +4436,13 @@ No direct DTrace/SDT or BSM audit calls were found. No probes were added to
 matching loops. libc's collation path remains enabled and must be exercised by
 runtime tests with locale data; standalone libregex evidence is not a substitute.
 Object evidence: bazel-libc-regex-build-20261028/qualification/parity.json.
+
+## 2026-10-28: non-allocator libc stdlib
+
+Reviewed the maintained non-allocator stdlib sources. No direct DTrace/SDT or
+BSM audit calls found. Native targets preserve cancellation, destructor, exit,
+secure environment and sorting paths without new probes or policy. Lifecycle
+and thread tests remain necessary at aggregate libc qualification; .text and
+symbol parity alone do not prove those behaviors. Allocator observability is
+outside this source group's coverage. Evidence: bazel-libc-stdlib-build-20261028/
+qualification/parity.json (148 ordinary/PIC objects).

@@ -5493,3 +5493,28 @@ by this migration. Those libc runtime tests were not run in this comparison.
 Frontend review: existing build-bsd format-5 explicit targets/NLS setting cover
 the group; no new C/backend contract required. No host installation or locale
 configuration changes were made.
+
+## 2026-10-28: native non-allocator stdlib inventory
+
+Adds the 74 sources selected by stdlib/Makefile.inc before its separate allocator
+inventory. The amd64 default selects div.S/ldiv.S/lldiv.S; a typed default-on
+machdep_optimizations setting selects portable C alternatives when disabled.
+The qsort group preserves its specific -Wsign-compare flag. Shared algorithm
+sources included textually by other functions are declared textual inputs.
+_Exit.c is compiled directly; Make's C99_Exit alias is used only to locate the
+reference object during comparison. Private headers cover blocks, locking,
+locale, gdtoa and float formatting. No runtime source changes were introduced.
+
+Evidence: /usr/obj/usr/src/bazel-libc-stdlib-build-20261028/qualification/parity.json
+against fresh bazel-libc-stdlib-make-20261028. All 148 ordinary/PIC objects match
+.text bytes, global and unresolved symbols, including the assembly divisions.
+This qualifies default amd64 selection, not the portable-division option yet.
+The two sized-free sources and selected allocator (including production/debug
+and address-width configuration) remain a separate outstanding migration.
+
+Full libc link/versioning, data/relocation/debug identity, installed manuals,
+startup/exit/thread behavior, environment, sort and numeric runtime tests remain
+open. Existing maintained stdlib tests must exercise the complete native libc.
+Frontend review: existing format-5 typed build-settings input supports the new
+source selection; build-bsd C/backend and manual interfaces need no new option.
+No host installation, account/environment modification or upgrade performed.

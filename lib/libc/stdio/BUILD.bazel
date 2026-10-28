@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-exports_files(["floatio.h"], visibility = ["//lib/libc/gdtoa:__pkg__"])
+exports_files(["floatio.h"], visibility = ["//lib/libc/gdtoa:__pkg__", "//lib/libc/stdlib:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")

@@ -9,7 +9,7 @@ cc_library(
 
 cc_library(name = "setlocale_header", hdrs = ["setlocale.h"], strip_include_prefix = ".", visibility = ["//usr.bin/locale:__pkg__"])
 
-cc_library(name = "gdtoa_headers", hdrs = ['xlocale_private.h', 'setlocale.h'], strip_include_prefix = ".", visibility = ["//lib/libc/gdtoa:__pkg__"])
+cc_library(name = "gdtoa_headers", hdrs = ['xlocale_private.h', 'setlocale.h'], strip_include_prefix = ".", visibility = ["//lib/libc/gdtoa:__pkg__", "//lib/libc/stdlib:__pkg__"])
 
 cc_library(name = "stdio_headers", hdrs = ["xlocale_private.h", "setlocale.h", "mblocal.h", "collate.h"], strip_include_prefix = ".", visibility = ["//lib/libc/stdio:__pkg__"])
 

@@ -241,3 +241,6 @@ config_setting(name = "hesiod_enabled", flag_values = {":hesiod": "true"}, visib
 # Match the default-off DETECT_TZ_CHANGES source option.
 bool_flag(name = "detect_tz_changes", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "detect_tz_changes_enabled", flag_values = {":detect_tz_changes": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "machdep_optimizations", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "machdep_optimizations_enabled", flag_values = {":machdep_optimizations": "true"}, visibility = ["//visibility:public"])
