@@ -4374,3 +4374,11 @@ design; the migration adds none. Security auditing belongs also at callers
 that modify accounts or policy; this object comparison does not qualify those
 callers or establish runtime audit coverage. Ordinary/PIC .text and symbol
 parity evidence: bazel-libc-db-build-20261028/qualification/parity.json.
+
+## 2026-10-28: libc gdtoa conversion routines
+
+Reviewed libc gdtoa wrappers and imported netlib sources. No direct DTrace/SDT
+or BSM audit calls were found. The migration preserves source behavior and adds
+no hot-path probes. Conversion edge-case runtime tests remain necessary at libc
+integration; object parity alone does not establish numeric API correctness.
+Evidence: bazel-libc-gdtoa-build-20261028/qualification/parity.json (42 objects).

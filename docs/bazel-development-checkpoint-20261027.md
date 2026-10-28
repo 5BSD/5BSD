@@ -5307,3 +5307,23 @@ remain open.
 Frontend review: existing explicit target and NLS settings cover these inputs;
 no build-bsd C/backend contract change is needed. No host database modification,
 installation or package publication was performed.
+
+## 2026-10-28: native libc floating-point conversion objects
+
+Adds the complete amd64 gdtoa inventory: four libc glue/conversion sources,
+machdep_ldisx.c and sixteen netlib sources including strtorx.c. Native targets
+consume contrib sources directly rather than recreating Make's gdtoa_ source
+aliases. Separate cc_library groups apply -fno-strict-aliasing only to imported
+sources. Declared headers cover architecture arith/gd_qnan, libc math/private
+interfaces, locale and stdio floatio; architecture compatibility remains explicit.
+
+Evidence: /usr/obj/usr/src/bazel-libc-gdtoa-build-20261028/qualification/parity.json
+and fresh bazel-libc-gdtoa-make-20261028. All 42 ordinary/PIC objects match .text,
+global and unresolved symbols. The comparison maps imported object names to
+Make's gdtoa_ prefix; no output bytes are rewritten. Other architectures,
+complete libc linking/version maps, data/relocation/debug identity and runtime
+floating-point edge cases remain unqualified. This is not complete libc.
+
+Frontend review: build-bsd format-5 targets and existing NLS setting carry the
+inputs; native toolchain compile rules retain flags and headers in action inputs.
+No frontend/backend contract change or host installation is needed.

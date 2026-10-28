@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["floatio.h"], visibility = ["//lib/libc/gdtoa:__pkg__"])
