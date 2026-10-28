@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+cc_library(name = "headers", hdrs = ["abac_dtrace.h", "mac_abac.h"],
+    deps = ["//sys/security/mac:policy_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(srcs = ["abac_cred.c", "abac_kenv.c", "abac_label.c", "abac_match.c", "abac_pipe.c", "abac_posixsem.c", "abac_posixshm.c", "abac_proc.c", "abac_rules.c", "abac_socket.c", "abac_syscall.c", "abac_system.c", "abac_sysv.c", "abac_vnode.c", "mac_abac.c"], deps = [":headers"])

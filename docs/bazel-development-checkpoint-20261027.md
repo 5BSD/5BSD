@@ -2129,3 +2129,24 @@ addition without new C/backend policy. The current comparison batch has
 twenty-six native module builds; complete kernel/world/pkgbase, live policy,
 source/header invalidation and performance gates remain open. Make remains
 production/default. Next MAC review includes mac_abac and capability modules.
+
+### Native mac_abac and module package ownership
+
+Added all fifteen maintained ABAC sources and declared local headers. The
+shared module macro now accepts explicit package ownership, defaulting to
+kernel; mac_abac selects mac-abac as its Makefile requires. This preserves
+separate pkgbase ownership for runtime and debug payloads.
+
+Evidence: `/usr/obj/usr/src/bazel-abac-20261028/qualification`; Make reference
+`/usr/obj/usr/src/bazel-mac_abac-make-20261028`. Runtime symbols/relocations,
+text/data/rodata, raw CTF and SDT provider/probe/argument/tracepoint sections
+match. Debug identity/CRC and staged metadata pass, including package=mac-abac
+and its debug tag. No policy source was altered, host module loaded, or
+installation performed. Rule enforcement, label persistence, credentials,
+object coverage, live tracing/audit and performance remain to be qualified.
+
+Frontend review: package ownership is native target metadata consumed by
+existing installation manifests, selectable through maintained format-5
+targets without a new C option. Full pkgbase assembly/publication remains
+a separate gate. The current batch has twenty-seven native module builds
+with artifact comparisons; whole-system completion is not established.

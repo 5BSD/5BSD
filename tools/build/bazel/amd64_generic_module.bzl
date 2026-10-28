@@ -9,11 +9,12 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_FLAGS", "AMD64_KERNEL_HEADER_DEPS")
 load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_library")
 
-def amd64_generic_module(module, objects, exports = [], export_all = False):
+def amd64_generic_module(module, objects, exports = [], export_all = False, package = "kernel"):
     """Build runtime/debug artifacts and kernel installation metadata.
 
     An empty export list implements kmod.mk EXPORT_SYMS=NO.
     export_all implements EXPORT_SYMS=YES without symbol localization.
+    package retains the module's pkgbase ownership (default: kernel).
     This macro currently supports GENERIC tied modules and the amd64 relocatable ABI.
     """
     if export_all and exports:
@@ -43,10 +44,10 @@ def amd64_generic_module(module, objects, exports = [], export_all = False):
 
     bsd_install_file(name = "install_module", src = ":generic_module", destination = "/%s.ko" % module,
         destination_prefixes = ["//tools/build/bazel/config:kernel_directory"],
-        owner = "root", group = "wheel", mode = "0444", install_tags = ["package=kernel"])
+        owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + package])
     bsd_install_file(name = "install_debug", src = ":generic_debug", destination = "/%s.ko.debug" % module,
         destination_prefixes = ["//tools/build/bazel/config:kernel_debug_directory", "//tools/build/bazel/config:kernel_directory"],
-        owner = "root", group = "wheel", mode = "0444", install_tags = ["package=kernel", "dbg"])
+        owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + package, "dbg"])
     bsd_install_manifest(name = "install_manifest", entries = [":install_module", ":install_debug"], visibility = ["//visibility:public"])
 
 def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = []):

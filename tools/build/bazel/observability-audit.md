@@ -3130,3 +3130,12 @@ hooks include init/destroy, credential setcred enter/check/exit and privilege
 grant. Artifact parity does not establish credential authorization or audit
 behavior. Live grants/denials, jail interaction and probe firing remain open.
 Evidence: bazel-mac-do-20261028/qualification under /usr/obj/usr/src.
+
+### mac_abac (2026-10-28)
+
+Native ABAC preserves all provider/probe/argument/tracepoint section bytes
+and relocation listings against Make, including rule evaluation, grant/deny,
+rule-management and label/extattr probes. Existing policy source remains
+unchanged. Live probe firing, rule decisions and audit-record semantics have
+not been tested by the build comparison. Evidence: bazel-abac-20261028/qualification
+under /usr/obj/usr/src.
