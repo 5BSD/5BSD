@@ -3800,3 +3800,14 @@ runtime relocations. Evidence:
 `/usr/obj/usr/src/bazel-vnops-kernel-r4-20261028/qualification`.
 No runtime source changed. Actual audit records, mmap hook delivery and
 filesystem behavior remain unqualified.
+
+### VFS defaults, hashing and initialization (2026-10-28)
+
+No local SDT definitions or AUDIT_ARG calls were found in vfs_default.c,
+vfs_hash.c or vfs_init.c. Generated vnode interface probes and surrounding
+syscall audit paths must be assessed together; absence of local calls does
+not establish missing coverage. Native GENERIC output matches Make symbols,
+raw CTF, allocated sections and runtime relocations. Evidence:
+`/usr/obj/usr/src/bazel-vfs-defaults-kernel-20261028/qualification`.
+No runtime source changed. Live probe/audit coverage, fallback dispatch and
+concurrent vnode lifecycle behavior remain unqualified.

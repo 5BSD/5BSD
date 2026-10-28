@@ -3681,3 +3681,25 @@ and concurrent filesystem performance still require a linked kernel and runtime
 tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
 Make stays production/default; module count remains 45. No host installation
 or BIP changes occurred.
+
+### Native VFS defaults, hashing and initialization
+
+Added //sys/kern:generic_vfs_defaults_object_files for vfs_default.c,
+vfs_hash.c and vfs_init.c, selected by maintained GENERIC Make. Native rules
+use declared CK/VM, MAC and audit headers. No runtime source changed.
+
+Evidence: `/usr/obj/usr/src/bazel-vfs-defaults-kernel-20261028/qualification`.
+All three objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records and associations. Reference log:
+`/usr/obj/usr/src/bazel-vfs-defaults-kernel-make-20261028.log`; maintained
+recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target inputs cover this addition without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Filesystem registration/unregistration, vnode hash concurrency, fallback
+operation dispatch, access checks and VM-backed reads still require a linked
+kernel and runtime tests. Full kernel/world/pkgbase/bootstrap and performance
+gates remain open. Make stays production/default; module count remains 45.
+No host installation or BIP changes occurred.
