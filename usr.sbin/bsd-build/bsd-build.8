@@ -3544,3 +3544,19 @@ format-5 targets and tests lists. These tests run locally and are not cached:
 the host shell and SDK Python loader remain execution dependencies. They never
 load their synthetic fixtures into the kernel. This does not qualify a complete
 kernel/module build or cross-architecture relocation behavior.
+
+.Pp
+Native kernel-interface generation candidates are
+.Dq //sys/kern:bus_if ,
+.Dq //sys/kern:clock_if ,
+.Dq //sys/kern:cpufreq_if ,
+.Dq //sys/kern:device_if ,
+.Dq //sys/kern:linker_if ,
+.Dq //sys/kern:msi_if ,
+.Dq //sys/kern:pic_if ,
+and
+.Dq //sys/kern:serdev_if .
+Each emits the maintained interface C source and header using declared native
+generation tools. These targets do not compile a kernel or module. Complete
+native kernel configuration, compilation, linking and packaging remain
+separate qualification work.

@@ -60,3 +60,5 @@ cc_binary(
 exports_files(["secureboot_headers.py"])
 
 exports_files(["freebsd_version.py"])
+
+exports_files(["kobj_generate.py"], visibility = ["//visibility:public"])

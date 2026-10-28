@@ -9,3 +9,15 @@ cc_library(name = "sysdecode_syscalls", textual_hdrs = ["syscalls.c"],
 exports_files(["subr_stats.c"], visibility = ["//lib/libstats:__pkg__"])
 
 exports_files(["syscalls.master"], visibility = ["//usr.sbin/BSDAudit/tests:__pkg__"])
+
+load("//tools/build/bazel:bsd_kobj.bzl", "bsd_kobj_interface")
+# All maintained core-kernel interfaces; selected consumers will depend on them.
+[bsd_kobj_interface(
+    name = interface,
+    src = interface + ".m",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+    libraries = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    visibility = ["//visibility:public"],
+) for interface in ["bus_if", "clock_if", "cpufreq_if", "device_if", "linker_if", "msi_if", "pic_if", "serdev_if"]]

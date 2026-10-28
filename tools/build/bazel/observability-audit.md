@@ -2883,3 +2883,11 @@ six Bazel test targets for native and bootstrap kldxref (37 checks per variant).
 They exercise malformed metadata and failed output updates without loading
 modules. This expands utility error-path coverage; no DTrace/audit sites were
 added, removed or runtime-attached, and kernel instrumentation remains untested.
+
+## Core kernel object interfaces (2026-10-28)
+
+Native generation preserves all C/header bytes from makeobjops for the eight
+core sys/kern interfaces when invoked with identical source basenames. It does
+not filter methods or substitute stub implementations. Kernel compilation and
+runtime dispatch, tracing and audit behavior have not been exercised by this
+output-generation comparison.

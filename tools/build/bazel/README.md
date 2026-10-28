@@ -33474,3 +33474,34 @@ and exports only regular JSON reports. The third run completes naturally.
 No modules were loaded, and no host installation or publication was performed.
 Full world/kernel/module builds, package aggregation, cross-architecture runtime,
 bootstrap independence, sandboxing and performance qualification remain open.
+
+### Native core kernel object-interface generation (2026-10-28)
+
+`bsd_kobj_interface` now declares both C and header outputs from each maintained
+`.m` input. The rule runs unchanged `sys/tools/makeobjops.awk` using native awk,
+mv and rm selected for the execution platform, an explicit tool-only PATH,
+execution-platform libraries, and declared SDK Python/stdlib. Separate source
+and header output groups are available to future native kernel consumers.
+A declared input symlink supplies a stable basename so generated provenance
+comments do not embed the action execroot. Input contents are not rewritten.
+
+All eight `sys/kern` interfaces are targets: bus_if, clock_if, cpufreq_if,
+device_if, linker_if, msi_if, pic_if and serdev_if. Qualification at
+`/usr/obj/usr/src/bazel-kobj-20261028` uses maintained frontend format-5 target
+selection and sixteen jobs. Each of sixteen generated C/header files is
+byte-equal to the unchanged Make recipe's separate -c/-h invocations, using
+host awk and the same source basename. Results and hashes are in
+`qualification/parity.json`. This compares generation, not compiled kernel ABI.
+
+`/usr/obj/usr/src/bazel-kobj-repeat-20261028` has zero executed spawns and the
+same sixteen output hashes. That proves local unchanged-input reuse only;
+input invalidation, remote execution/cache portability and performance gates
+remain separate work. The generator's awk system() calls still use host
+/bin/sh, and SDK Python/loader dependencies remain. Full sandbox hermeticity
+and native compiler bootstrap are not established.
+
+No generated kernel interfaces were compiled or linked into a kernel. Device
+interfaces outside sys/kern, configured source selection, option headers,
+assembly/offset generation, kernel linking, modules and pkgbase aggregation
+remain unfinished. The existing frontend needs no interface change to select
+these generation targets; its manual is updated. Make remains production/default.
