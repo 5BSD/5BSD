@@ -4781,3 +4781,12 @@ both text inventories before compiling their databases. Bazel analysis rejects
 index membership inconsistent with generated encoding databases. All four text
 and binary outputs match Make. No runtime probes or audit hooks were changed;
 mapper indexes, installation and full conversion tests are still outstanding.
+
+## 2026-10-28 mapper indexes
+
+Native mapper directory/pivot generation declares family metadata and every
+maintained source fragment. Both text and binary index outputs match Make,
+including KOI parallel and ISO-8859 GR/zone/serial mappings. No runtime C code,
+DTrace probes or audit hooks changed. All 656 generated binary i18n files now have
+native generation/parity evidence; installation and full iconv runtime remain
+unqualified. Generation evidence must not be reported as conversion testing.

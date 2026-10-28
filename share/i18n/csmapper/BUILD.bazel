@@ -9,3 +9,19 @@ load("//tools/build/bazel:bsd_citrus_database.bzl", "citrus_database")
 ) for source in MAP_SOURCES]
 filegroup(name = "binary_maps", srcs = [source[:-4] + "_database" for source in MAP_SOURCES],
     visibility = ["//visibility:public"])
+
+load(":index_policy.bzl", "INDEX_SOURCES", "MAPPER_FAMILIES")
+load("//tools/build/bazel:bsd_citrus_mapper_index.bzl", "citrus_mapper_index")
+citrus_mapper_index(name = "indexes", families = json.encode(MAPPER_FAMILIES),
+    srcs = INDEX_SOURCES, script = "mapper_indexes.py",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+filegroup(name = "directory", srcs = [":indexes"], output_group = "directory")
+filegroup(name = "pivot", srcs = [":indexes"], output_group = "pivot")
+citrus_database(name = "directory_database", src = ":directory", output = "mapper.dir.db",
+    mode = "lookup", tool = "//usr.bin/mkcsmapper:mkcsmapper_tool")
+citrus_database(name = "pivot_database", src = ":pivot", output = "charset.pivot.pvdb",
+    mode = "pivot", tool = "//usr.bin/mkcsmapper:mkcsmapper_tool")
+filegroup(name = "mapper_indexes", srcs = [":indexes", ":directory_database", ":pivot_database"],
+    visibility = ["//visibility:public"])

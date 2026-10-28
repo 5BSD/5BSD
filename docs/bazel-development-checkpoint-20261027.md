@@ -6642,3 +6642,31 @@ conversion qualification. Character mapper directory/pivot indexes and static
 Frontend review: existing build-bsd.c format-5 target selection invokes the native
 index filegroup with 16 jobs; no new CLI/backend publication input is required.
 Make remains production/default and full world/kernel/pkgbase gates remain open.
+
+## 2026-10-28: native mapper directory and pivot indexes
+
+Added declared native generation of mapper.dir and charset.pivot, followed by
+lookup/pivot-mode mkcsmapper actions. Ordered family metadata is owned by
+csmapper/index_policy.bzl; maintained directory/pivot source fragments remain
+explicit action inputs. The generator preserves generic mappings, reverse .646
+mappings, CP additions, KOI parallel mappings and ISO-8859 GR/zone/serial rules.
+It reads no Make files and does not copy reference outputs. Its Python executable,
+standard library, script, metadata request and source fragments are declared;
+the action uses a fixed locale and no default shell environment.
+
+Final evidence: /usr/obj/usr/src/bazel-mapper-indexes-20261028-r2/receipt.json and
+qualification/index-parity.json. Both text indexes and both compiled databases
+match the full maintained Make output names and bytes: mapper.dir, mapper.dir.db,
+charset.pivot and charset.pivot.pvdb. Reference:
+bazel-citrus-data-make-20261028. Scripts:
+bazel-mapper-indexes-qualification-20261028. The first native analysis rejected
+an executable attribute that did not allow the staged Python source executable;
+that declaration was corrected and the failed run retained. No fallback occurred.
+
+Combined with the prior character maps and encoding data/indexes, all 656 binary
+i18n files in the maintained build now have native generation with byte-parity
+evidence. This does not yet establish installation coverage: static .646 data,
+complete file metadata/package integration and end-to-end iconv runtime testing
+remain. Frontend review: build-bsd.c's existing format-5 explicit-target backend
+runs this filegroup at 16 jobs; no new CLI or publication contract is required.
+Make remains production/default; no host installation occurred.
