@@ -2,3 +2,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 exports_files(["buffer.c", "evbuffer.c", "event.c", "kqueue.c", "log.c", "poll.c", "select.c", "signal.c", "event-internal.h", "evsignal.h", "log.h"], visibility = ["//lib/libevent1:__pkg__"])
 cc_library(name = "headers", hdrs = ["event.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+
+exports_files(["event.h"], visibility = ["//lib/libevent1:__pkg__"])

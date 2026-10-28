@@ -5203,3 +5203,10 @@ found in these two sources. Qualification still needs actual PF rule creation,
 rollback/removal, malformed/failed transfer handling, privilege changes and
 session cleanup under event-loop load in an isolated guest. No /dev/pf access
 or network traffic was performed by this build/install comparison.
+
+## 2026-10-28 private libevent1 installation
+
+Private header, archive, DSO/link and debug packaging now match maintained
+Make component metadata. Runtime source/logging behavior is unchanged. This
+adds installation evidence only; readiness/timer/signal/backend and teardown
+runtime qualification remains outstanding.

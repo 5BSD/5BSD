@@ -8077,3 +8077,27 @@ privilege separation, transfer/error paths and event-loop backend behavior still
 need guest qualification. The new libevent1 installation archive remains open,
 as do configured-world integration, pkgbase/publication and performance gates.
 Make remains production/default; BIP remains out of scope.
+
+## 2026-10-28 private libevent1 installation qualified
+
+Added native installation/debug rules and archive for libevent1. Paths follow
+independent Make staging: event.h under /usr/include/private/event1, ordinary
+libprivateevent1.a and DSO/link under /usr/lib, with split debug under
+/usr/lib/debug/usr/lib. Tags preserve package=libevent1 and its dev/dbg splits.
+No public include path or third-party libevent ABI is substituted.
+
+Through build-bsd at 16 jobs, all seven component metadata records match Make,
+including modes, owners, tags and symlink target. Header bytes match exactly.
+The installed static archive equals the native archive and its member inventory
+matches Make; prior 16 ordinary/PIC object comparisons establish code parity.
+Debug name/CRC/DWARF checks pass, and stripping preserves native DSO .text.
+Evidence: /usr/obj/usr/src/bazel-event1-install-20261028/qualification/
+installation-parity.json. Make reference: bazel-event1-install-reference-20261028.
+Retained install/verifier scripts: bazel-event1-reference-20261028/{install.py,
+verify-install.py}. No host library was installed.
+
+Reviewed build-bsd.c: existing format-5 archive collection supports these rules;
+no frontend/backend changes required. This completes default component library
+installation evidence, not configured-world/pkg publication or runtime coverage.
+Event-loop backend behavior, consumer traffic, cache/incremental performance and
+whole-world/kernel/publication gates remain open. Make remains production/default.
