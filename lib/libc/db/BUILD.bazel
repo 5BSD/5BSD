@@ -47,7 +47,7 @@ cc_library(
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
     local_defines = ["__DBINTERFACE_PRIVATE", "_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] +
         select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
-    copts = ["-fexceptions", "-ftls-model=initial-exec"],
+    copts = ["-ftls-model=initial-exec"],
     linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//lib/libc:__pkg__"],

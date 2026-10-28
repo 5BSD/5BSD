@@ -7,7 +7,7 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 cc_library(name = "msgcat_objects", srcs = ["msgcat.c"],
     implementation_deps = ["//lib/libc/include:rt_private_headers", "//lib/libc/locale:gdtoa_headers"],
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
-    copts = ["-fexceptions", "-ftls-model=initial-exec"], linkstatic = True,
+    copts = ["-ftls-model=initial-exec"], linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//lib/libc:__pkg__"],
 )

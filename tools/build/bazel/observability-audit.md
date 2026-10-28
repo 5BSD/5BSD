@@ -4574,3 +4574,12 @@ Ten native signal conversion/set-operation cases pass; no real signal delivery
 or process-launch runtime qualification is claimed. The posix_spawn comparison
 caught incorrect broad -fexceptions use; corrected for this group, with a
 cross-component libc flag/exception-section audit now required before linking.
+
+## 2026-10-28: non-cancellation libc exception-flag correction
+
+Removed broad -fexceptions from 31 libc BUILD files after confirming Make's
+final per-source cancellation restriction. Requalification covers 1,694 objects
+including raw exception/unwind section contents, and 24 passing ATF cases.
+This is not active unwinding, DTrace registration or BSM event-delivery evidence.
+No provider definitions or source instrumentation changed. Alternate configuration
+qualification and future cancellation-point handling remain explicit requirements.

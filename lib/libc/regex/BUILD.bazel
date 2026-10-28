@@ -13,7 +13,7 @@ cc_library(
     textual_hdrs = ["engine.c", "cname.h", "regex2.h", "utils.h"],
     implementation_deps = ["//lib/libc/locale:regex_headers"],
     local_defines = ["POSIX_MISTAKE", "_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
-    copts = ["-fexceptions", "-ftls-model=initial-exec"],
+    copts = ["-ftls-model=initial-exec"],
     linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//lib/libc:__pkg__"],

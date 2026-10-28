@@ -5,7 +5,7 @@ cc_library(
     name = 'objects',
     srcs = ['stdc_bit_ceil.c', 'stdc_bit_floor.c', 'stdc_bit_width.c', 'stdc_count_ones.c', 'stdc_count_zeros.c', 'stdc_first_leading_one.c', 'stdc_first_leading_zero.c', 'stdc_first_trailing_one.c', 'stdc_first_trailing_zero.c', 'stdc_has_single_bit.c', 'stdc_leading_ones.c', 'stdc_leading_zeros.c', 'stdc_trailing_ones.c', 'stdc_trailing_zeros.c'],
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
-    copts = ['-fexceptions', '-ftls-model=initial-exec'],
+    copts = ['-ftls-model=initial-exec'],
     linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//lib/libc:__pkg__"],

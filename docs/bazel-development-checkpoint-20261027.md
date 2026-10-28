@@ -5899,3 +5899,42 @@ AIO, host/source syscall compatibility, full libc linking/install or performance
 Frontend review: the existing build-bsd format-5 target/test interface and ATF
 reporting suffice; no frontend/backend contract change needed. Make remains
 production/default. No host installation or process policy changes performed.
+
+## 2026-10-28: correct broad libc exception flags and requalify objects
+
+Corrects all 31 previously migrated libc BUILD files that applied -fexceptions
+to non-cancellation sources. None currently contains cancelpoints_* sources.
+The final libc/Makefile CANCELPOINTS_CFLAGS restriction, rather than its initial
+assignment, determines the required behavior. Existing TLS, sanitizer, stack
+protector and per-source optimization flags remain unchanged. Cancellation-point
+migration must separately preserve its exception option and NO_THREAD_STACK_UNWIND.
+This resolves the broad-flag correction identified in the previous entry.
+
+Evidence: /usr/obj/usr/src/bazel-libc-exception-flags-build-20261028 builds 101
+selected targets and passes 24 maintained ATF cases without skips. Its qualification
+subdirectories contain renewed Make comparisons for 1,688 ordinary/PIC objects
+across 34 component groups; all match .text and global/unresolved symbols.
+The saved Make reference objects are reused, not rebuilt for this flag-only
+correction. qualification/exception-sections.json also compares raw .eh_frame
+and .gcc_except_table contents/presence for all 1,688 objects: all match.
+Section relocation equivalence and actual unwind behavior are not established.
+
+NIS-enabled YP evidence: bazel-libc-exception-nis-build-20261028/qualification/
+parity.json and exception-sections.json compare six more objects successfully
+(1,694 total). The original YP verifier requested generated files not selected
+as top-level artifact outputs; that failed invocation is retained. The follow-up
+verify-objects.py explicitly checks only archive objects. Neither it nor the RPC
+object comparison claims renewed generated-file qualification. Generator rules
+were unchanged; their prior evidence remains separately scoped.
+
+The rebuilt default profile uses optimized amd64 sources, iconv on, Hyper-V on,
+timezone-change detection off and debug jemalloc. Alternate portable, no-iconv,
+no-Hyper-V, timezone-change-detection and production-jemalloc variants still need
+renewed flag-corrected qualification. NIS-enabled RPC was compiled but not newly
+compared with a matching NIS Make reference. No full native libc link/ABI/install,
+world/kernel/package, actual cancellation/unwinding or performance gate is claimed.
+
+Frontend review: build-bsd's existing format-5 target/test/settings interface
+supports the combined and NIS checks; no CLI/backend contract changes needed.
+All compilation uses 16 CPUs. Make remains production/default; no host install,
+upgrade, reboot or policy changes occurred.
