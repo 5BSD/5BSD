@@ -7976,3 +7976,26 @@ startup, RPC requests, user/session disclosure, wall authorization/delivery,
 statistics behavior, nondefault configurations and performance remain open.
 Whole-world/kernel/pkgbase/publication/runtime qualification is incomplete;
 Make remains production/default and BIP remains out of scope.
+
+## 2026-10-28 native pppoed
+
+Added the unchanged PPPoE daemon as a native cc_binary with explicit netgraph
+CcInfo/shared-library dependencies and its ppp package installation archive.
+At 16 jobs through build-bsd, the build and archive complete. Independent Make
+comparison matches the single compiled object's .text and global/undefined
+symbols, 57 linked symbol entries, libc/libnetgraph dependencies, empty RPATH,
+five installation metadata records, compressed manual bytes, and debug
+name/CRC/DWARF. Stripping preserves native executable .text.
+
+Evidence: /usr/obj/usr/src/bazel-pppoed-20261028/qualification/{parity.json,
+object-parity.json}. Reference: bazel-pppoed-reference-20261028 and corresponding
+reference-objects tree. Scripts: bazel-pppoed-qualification-20261028. Existing
+format-5 frontend target/installation collection supports this component;
+reviewed build-bsd.c, with no frontend/backend change required.
+
+No daemon was executed, interface changed, or module loaded. The maintained
+program can load netgraph modules and execute a configured session command;
+these paths, PPPoE discovery/negotiation, failure cleanup and authorization need
+isolated guest qualification. Nondefault compile configurations, full world,
+kernel, package publication, cache and performance gates remain open. Make
+remains production/default and BIP remains out of scope.

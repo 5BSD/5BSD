@@ -5169,3 +5169,11 @@ popen, so guest qualification must cover process invocation, terminal delivery
 and authorization before runtime claims. rusers session disclosure and rstat
 kernel/device statistics require actual RPC requests in isolation. Build and
 installation parity does not establish those behaviors; no services started.
+
+## 2026-10-28 pppoed
+
+Native compilation preserves the maintained source and existing syslog/vsyslog
+calls; its executable object matches Make. No dedicated DTrace/SDT or audit call
+was found. Review guest coverage for module loading, netgraph node/hook creation,
+discovery/session failures, fork/exec and configured command authorization.
+No network or module-loading runtime was exercised in this build conversion.
