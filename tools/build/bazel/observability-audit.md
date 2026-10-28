@@ -5218,3 +5218,11 @@ existing syslog and privilege-drop code. No dedicated SDT/DTrace/audit calls
 were found. Guest qualification must exercise FTP command/address handling,
 PF rule creation/removal, dropped privileges, failures and concurrent sessions.
 This conversion adds build/install evidence, not network or authorization proof.
+
+## 2026-10-28 BOOTP subtree builds
+
+Four programs compile unchanged with per-program defines preserved; 31 object
+code/symbol comparisons match Make. Runtime review remains for configuration
+parsing, address/interface lookup, gateway relay, vendor options, malformed
+packets and service/client error reporting. No BOOTP traffic or live tracing
+was exercised; installation and runtime qualification remain open.

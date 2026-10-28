@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+cc_library(name = "headers", hdrs = ["bootp.h", "bootpd.h", "bptypes.h", "dovend.h", "getether.h", "getif.h", "hash.h", "hwaddr.h", "lookup.h", "patchlevel.h", "readfile.h", "report.h", "tzone.h"], strip_include_prefix = ".")
+cc_binary(name = "bootpd", srcs = ["bootpd.c", "dovend.c", "readfile.c", "hash.c", "dumptab.c", "lookup.c", "getif.c", "hwaddr.c", "report.c", "tzone.c", "rtmsg.c"],
+    deps = [":headers"],
+    local_defines = ["ETC_ETHERS", "SYSLOG", "DEBUG", "VEND_CMU"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+cc_binary(name = "bootpgw", srcs = ["bootpgw/bootpgw.c", "getif.c", "hwaddr.c", "report.c", "rtmsg.c"],
+    deps = [":headers"],
+    local_defines = [],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+cc_binary(name = "bootpef", srcs = ["tools/bootpef/bootpef.c", "dovend.c", "readfile.c", "hash.c", "dumptab.c", "lookup.c", "hwaddr.c", "report.c", "tzone.c", "rtmsg.c"],
+    deps = [":headers"],
+    local_defines = [],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+cc_binary(name = "bootptest", srcs = ["tools/bootptest/bootptest.c", "tools/bootptest/bootptest.h", "getether.c", "getif.c", "tools/bootptest/print-bootp.c", "report.c"],
+    deps = [":headers"],
+    local_defines = [],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])

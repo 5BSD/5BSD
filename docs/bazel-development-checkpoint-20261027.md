@@ -8124,3 +8124,28 @@ operation ran. Active/passive FTP, address rewriting, malformed commands,
 privilege changes, timeout/error cleanup, and concurrent session behavior still
 need isolated runtime qualification. Configured-world selection, pkgbase
 publication and full-system/performance gates remain open. Make stays default.
+
+## 2026-10-28 complete BOOTP subtree native build candidates
+
+Added bootpd, bootpgw, bootpef and bootptest as native targets with explicit
+per-program source lists and a shared header interface. Only bootpd receives
+ETC_ETHERS/SYSLOG/DEBUG/VEND_CMU, matching its Makefile; children retain their
+own defaults. Sandbox compilation caught an undeclared bootptest.h in the
+first run; the local header was added rather than widening filesystem access.
+
+At 16 jobs through build-bsd, all four programs build. Independent recursive
+Make comparison matches linked global/undefined entries: bootpd 128, bootpgw
+77, bootpef 97, bootptest 85, with matching NEEDED and RPATH/RUNPATH properties.
+All 31 compiled objects (11/5/10/5 respectively) match .text and symbol sets.
+The inventory verifier initially included Make .depend.*.pieo text files;
+it now identifies ELF objects explicitly and checks each program's complete
+object count. No production source changed.
+
+Evidence: /usr/obj/usr/src/bazel-bootp-20261028-r2/qualification/build-parity.json.
+Reference, command log and verifier: bazel-bootp-reference-20261028/{objects,
+command.txt,build.log,verify.py}. Initial failure: bazel-bootp-20261028.
+Reviewed build-bsd.c: existing explicit targets support this build-only stage;
+no frontend change required. Manuals, hardlinks, installation/debug metadata
+and aggregate subtree installation still require migration and qualification.
+No daemon/client network operation occurred. Complete-world/kernel/pkgbase,
+runtime, cache and performance gates remain open; Make remains default.
