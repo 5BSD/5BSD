@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["hv_set_ifconfig", "hv_get_dns_info", "hv_get_dhcp_info", "hyperv_vfattach", "hyperv_vfup"], visibility = ["//libexec/hyperv:__pkg__"])

@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+_SCRIPTS = ["hv_set_ifconfig", "hv_get_dns_info", "hv_get_dhcp_info", "hyperv_vfattach", "hyperv_vfup"]
+[bsd_install_file(name = name, src = "//contrib/hyperv/tools/scripts:" + name,
+    destination = "/usr/libexec/hyperv/" + name,
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=hyperv-tools"])
+ for name in _SCRIPTS]
+bsd_install_manifest(name = "install_manifest", entries = [":" + name for name in _SCRIPTS])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/usr/libexec/hyperv": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=hyperv-tools"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

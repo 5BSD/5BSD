@@ -5517,3 +5517,12 @@ byte-identical after the dependency change. Live map transfer, peer validation,
 partial-write cleanup, syslog delivery and audit coverage remain unqualified.
 Evidence: bazel-ypxfr-install-20261028/qualification/ypxfr/parity.json and
 bazel-rpcsvc-native-libc-regression-20261028-r2/regression-parity.json.
+
+### 2026-10-28 Hyper-V helper scripts
+
+All five script payloads are unchanged and installation metadata matches Make.
+The scripts consume /etc/rc.subr and network configuration; hv_set_ifconfig also
+edits /etc/rc.conf. Interface reconfiguration, virtual-function failover,
+command failures and reporting still require isolated Hyper-V runtime testing.
+No host networking was changed. No probes/logging hooks were added during this
+packaging conversion. Evidence: bazel-hyperv-scripts-20261028/qualification/hyperv/parity.json.

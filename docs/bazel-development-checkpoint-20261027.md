@@ -9001,3 +9001,22 @@ privileged destination handling and ypxfr installation/runtime on an image are
 still pending. This component qualification does not establish whole-system
 completion, publication, performance or the NIS SDK bootstrap path. Make stays
 default and no host installation occurred.
+
+## 2026-10-28: Hyper-V helper script installation
+
+Added native installation targets for all five maintained libexec/hyperv scripts:
+hv_set_ifconfig, hv_get_dns_info, hv_get_dhcp_info, hyperv_vfattach and hyperv_vfup.
+Sources are exported with narrow package visibility from contrib/hyperv/tools/scripts.
+All five payloads match Make byte-for-byte. Six metadata records match, including
+the package-owned /usr/libexec/hyperv directory, root:wheel ownership, 0555
+script modes and hyperv-tools tags. Evidence:
+/usr/obj/usr/src/bazel-hyperv-scripts-20261028/qualification/hyperv/parity.json.
+Reference: bazel-hyperv-scripts-reference-20261028; scripts:
+bazel-hyperv-scripts-qualification-20261028/{make.py,verify.py}.
+
+Reviewed maintained frontend explicit targets/archive collection: no frontend
+change required. Qualification used build-bsd at 16 jobs. Script runtime depends
+on system rc configuration, network tools and Hyper-V devices; no network or
+rc.conf mutation was attempted on the host. This establishes installation parity,
+not functional Hyper-V or complete package aggregation. Full world/kernel/runtime/
+publication/performance gates remain open and Make stays production/default.
