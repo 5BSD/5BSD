@@ -8300,3 +8300,27 @@ world test discovery, package publication, host ABI compatibility, or a generic
 VM test backend. No host installation or additional runtime execution occurred.
 Whole-system/kernel/pkgbase/cache/performance gates remain open; Make stays
 production/default.
+
+
+## 2026-10-28: nuageinit installation candidate
+
+Added native Bazel installation declarations for nuageinit, nuage.lua and the
+compressed section-7 manual. Rootless Make installation and the Bazel archive
+match all five component records (including package-owned /usr/libexec and
+/usr/share/flua), all three payloads byte-for-byte, ownership, modes and package
+tags. Exact archive membership and ancestor directory metadata are also checked.
+The first archive omitted the package-owned Lua directory; the reference exposed
+that omission and the corrected r2 archive passed. Both runs are retained.
+
+Evidence: /usr/obj/usr/src/bazel-nuageinit-20261028-r2/qualification/
+installation-parity.json. Make reference: bazel-nuageinit-reference-20261028.
+Retained scripts: bazel-nuageinit-qualification-20261028/{make.py,verify.py}.
+Qualification used build-bsd explicit inputs with 16 jobs. Reviewed build-bsd.c:
+existing target collection supports these outputs; no frontend change required.
+
+This establishes installation parity only. flua and its modules still need native
+Bazel integration, and nuageinit's existing ATF suites and isolated configuration
+runtime checks remain open. The script's interpreter/modules are runtime package
+dependencies, not bundled substitutes. Split-manpage configuration, complete
+pkgbase construction, world/kernel, cache and performance gates remain open.
+Make remains production/default. No host configuration was changed.

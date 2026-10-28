@@ -5273,3 +5273,15 @@ The maintained 14-case shell suite and Kyua index now match Make installation
 bytes and metadata; tar ancestor directories are independently checked too.
 This preserves the previously guest-exercised diagnostics/protocol assertions
 for installation. No additional runtime, SSH, signing or audit claim is added.
+
+
+### nuageinit installation (2026-10-28)
+
+Native installation preserves the existing Lua program/module and manual bytes;
+no source or observability behavior changed. Five Make metadata records and three
+payloads match the qualified archive. Existing tests in libexec/nuageinit/tests
+remain to be migrated and run in isolation; they exercise user creation, SSH
+configuration and other system mutations. flua/module integration is pending.
+No runtime, audit-event or DTrace coverage is claimed for this installation-only
+change. Evidence: bazel-nuageinit-20261028-r2/qualification/installation-parity.json
+under /usr/obj/usr/src.
