@@ -2841,3 +2841,28 @@ additions without new build-bsd C/backend options, staging or manual changes.
 Full kernel/world/pkgbase/bootstrap and CPU/memory/disk performance gates
 remain open. Make stays production/default, module count remains 45, and no
 host installation or BIP work occurred.
+
+### Native UNIX-domain sockets and socket syscalls
+
+Added //sys/kern:generic_unix_socket_object_files and
+//sys/kern:generic_socket_syscalls_object_files for uipc_usrreq.c and
+uipc_syscalls.c. Both are selected by the maintained GENERIC Makefile.
+Declared dependencies include SipHash, CK/VM, networking, debugger, MAC,
+audit and generated Capsicum/DDB/INET/INET6/KTRACE headers. Runtime source
+and policy behavior are unchanged.
+
+Evidence: `/usr/obj/usr/src/bazel-unix-sockets-kernel-20261028/qualification`.
+Both objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records/associations. All five generated option headers match Make bytes.
+Reference log: `/usr/obj/usr/src/bazel-unix-sockets-kernel-make-20261028.log`;
+maintained recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes
+and reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 target selection covers these native
+objects without new build-bsd C/backend options, staging or manual changes.
+No runtime tests ran. UNIX stream/datagram/seqpacket behavior, SCM_RIGHTS,
+credential transfer, garbage collection, MAC denial and audit record delivery
+remain linked-kernel qualification. Full kernel/world/pkgbase/bootstrap and
+CPU/memory/disk performance gates remain open. Make remains production/default;
+module count remains 45. No host installation or BIP work occurred.

@@ -3390,3 +3390,18 @@ allocated sections and runtime relocations, including SDT metadata. Evidence:
 calls remain unchanged; live enforcement and probe firing are unqualified.
 Audit coverage across socket syscalls and descriptor passing requires the
 syscall-layer/integration review; object parity does not establish coverage.
+
+### UNIX-domain sockets and socket syscalls (2026-10-28)
+
+uipc_usrreq.c has 20 SDT probe definitions, including SCM_RIGHTS transfer,
+transfer denial/consumption, local-socket lifecycle and garbage collection.
+uipc_syscalls.c has existing AUDIT_ARG_SOCKET/FD/SOCKADDR calls and MAC checks
+for create/bind/listen/accept/connect/send/receive/setsockopt. It has no local
+SDT_PROBE_DEFINE declarations; lower socket layers carry probes. No missing
+probe requirement is inferred solely from that absence.
+
+Both native GENERIC objects match Make symbols, raw CTF, allocated sections
+and runtime relocations, including existing instrumentation. Evidence:
+`/usr/obj/usr/src/bazel-unix-sockets-kernel-20261028/qualification`.
+Live descriptor-transfer denials, audit records, probes and policy outcomes
+remain to be exercised; source/object inspection is not runtime proof.
