@@ -4162,3 +4162,12 @@ No local SDT/DTrace/AUDIT hooks in either unchanged compiler frontend. Process
 exec auditing, where applicable, belongs to the existing exec path; absence of
 local hooks does not establish missing syscall audit coverage. Argument and
 language-mode qualification uses host cc and does not test live audit events.
+
+
+### 2026-10-28: killall
+
+Preserves signalall operation-start and operation-done probes via native DTrace
+rules. Two probe schemas match Make and both ordinary/is-enabled instruction
+sites pass offline validation. Configured-disabled build omits DOF. No live
+firing, signal delivery or jail semantics qualified; runtime comparisons only
+list signals and show help. No runtime sources or audit policy modified.

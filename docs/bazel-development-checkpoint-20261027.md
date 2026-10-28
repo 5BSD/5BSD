@@ -4599,3 +4599,35 @@ cover the additions without frontend/backend contract changes. No new registered
 Bazel tests claimed; retained comparisons qualify this conversion only. World,
 kernel, pkgbase, boot, runtime and performance gates remain incomplete; Make
 remains production default. No host installation or reboot.
+
+
+## 2026-10-28: native killall with DTrace variants
+
+Added native killall compilation and libjail dependency using the existing
+DTrace header/object/provider rules. WITH_COVERAGE_DTRACE follows the configured
+DTrace setting. Source and signal behavior remain unchanged. Installation keeps
+the utilities package, section-1 manual, split debug and PIE linking.
+
+Evidence: /usr/obj/usr/src/bazel-killall-20261028 and Make reference
+/usr/obj/usr/src/bazel-killall-make-20261028. Five installation records, compressed
+manual bytes, ten defined globals and ordered libjail.so.1/libc.so.7 dependencies
+plus BIND_NOW/NOW PIE match Make. qualification/native-dof.json and make-dof.json
+use the maintained DOF inventory/site verifier. Both provider schemas match:
+signalall operation-start(int,int) and operation-done(int,int,int,int); both
+ordinary and enabled sites pass function-range and patched-instruction checks.
+This is offline site qualification, not registration or live firing.
+
+Explicit DTrace-disabled build bazel-killall-notrace-20261028 passes and has no
+.SUNW_dof section. qualification/variants.py compares signal-list and help output
+for the enabled, disabled and Make executables; all agree. It uses byte-verified
+private executable copies of saved artifact snapshots, native libjail and SDK
+libraries. No signals are sent. Disabled variant lacks a separate Make-disabled
+reference; no claim of full disabled-build parity. Host jail behavior and live
+probe firing remain VM gates. First verifier attempts showed that the inventory
+rejects absent metadata and saved snapshots are nonexecutable; final verification
+uses readelf for absence and executable copies without mutating snapshots.
+
+Frontend review: existing format-5 target selection and dtrace setting carry
+both variants without frontend/backend contract change. No new system backend,
+host installation or reboot. Full world/kernel/pkgbase/runtime/performance
+qualification remains incomplete; Make remains production default.
