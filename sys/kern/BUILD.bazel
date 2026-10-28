@@ -260,3 +260,6 @@ amd64_generic_kernel_objects(name = "generic_event_timers", srcs = ["kern_et.c",
 amd64_generic_kernel_objects(name = "generic_notifications", srcs = ["sys_eventfd.c", "vfs_inotify.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/audit:kernel_headers",
         "//sys/amd64/conf:generic_opt_ktrace_header"])
+
+amd64_generic_kernel_objects(name = "generic_kthread_posix", srcs = ["kern_kthread.c", "p1003_1b.c", "posix4_mib.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/amd64/conf:generic_opt_posix_header"])

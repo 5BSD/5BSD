@@ -3382,3 +3382,26 @@ permissions, rename/unlink/overflow and concurrent close/watch removal need
 linked-kernel tests. Full kernel/world/pkgbase/bootstrap and performance gates
 remain open. Make remains production/default; module count remains 45.
 No host installation or BIP changes occurred.
+
+### Native kernel threads and POSIX scheduling entry points
+
+Added //sys/kern:generic_kthread_posix_object_files for kern_kthread.c,
+p1003_1b.c and posix4_mib.c, selected by the maintained GENERIC Makefile.
+Dependencies declare CK/VM and generated POSIX options. No runtime source
+changed; the previously converted ksched.c is not counted again.
+
+Evidence: `/usr/obj/usr/src/bazel-kthread-posix-kernel-20261028/qualification`.
+All three objects match Make symbols, raw CTF, complete allocated-section
+inventories, section bytes/size/type/flags/alignment and runtime relocation
+records/associations. The POSIX header matches Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-kthread-posix-kernel-make-20261028.log`; maintained
+recipes used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and
+reproducible paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets support these additions without
+new build-bsd C/backend options, staging or manual changes. No runtime tests
+ran. Kernel-thread creation/suspend/resume/exit, scheduling-policy permissions,
+parameter handling and POSIX sysctl reporting require linked-kernel tests.
+Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
+remains production/default; module count remains 45. No host installation
+or BIP changes occurred.

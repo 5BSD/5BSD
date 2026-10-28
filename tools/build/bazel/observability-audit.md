@@ -3664,3 +3664,15 @@ runtime relocations. Evidence:
 No instrumentation source changed. Inotify audit mapping and records require
 review before claiming coverage; local probes alone are not audit records.
 Live delivery, permissions, probe firing and lifecycle races remain unqualified.
+
+### Kernel threads and POSIX scheduling (2026-10-28)
+
+kern_kthread.c retains TSTHREAD timestamp logging; p1003_1b.c retains scheduling
+policy privilege checks. No local SDT/AUDIT calls were found in these sources
+or posix4_mib.c. Review scheduling syscall audit mapping and records before
+claiming coverage; lower scheduler layers provide separate probes. Native
+GENERIC objects match Make symbols, raw CTF, allocated sections and runtime
+relocations. Evidence:
+`/usr/obj/usr/src/bazel-kthread-posix-kernel-20261028/qualification`.
+No runtime source changed. Live thread lifecycle, policy decisions and logging
+remain unqualified.
