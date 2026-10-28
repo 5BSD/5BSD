@@ -2817,3 +2817,13 @@ qualify probe attachment. Eighteen compression/CLI cases pass, 1,051 assertions,
 zero skips. Program/harness globals, dependency order, generated registry and
 both installed debug links match Make. The local suite still uses host shell
 utilities/libc; full runtime closure and performance remain open.
+
+## stdbuf/libstdbuf (2026-10-28)
+
+These two small C components contain no DTrace providers or audit calls.
+No instrumentation was removed or added. The preload constructor's output
+buffering is exercised in eight native child-process cases; debug links and
+binary metadata match Make. Installed absolute-path integration, stdin and
+privileged-loader behavior remain unqualified. A preload library must avoid
+unnecessary dependencies and namespace pollution; native libstdbuf retains
+Make's sole libc dependency.

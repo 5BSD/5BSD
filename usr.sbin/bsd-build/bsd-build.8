@@ -3470,3 +3470,13 @@ upstream harness, fixtures and Kyuafile when tests are enabled.
 runs the upstream cases against the declared candidate with its original
 executable name. This local, noncacheable integration suite uses host shell
 utilities; passing it does not qualify a complete native system runtime.
+
+.Pp
+.Dq //usr.bin/stdbuf:install_archive
+and
+.Dq //lib/libstdbuf:install_archive
+stage the command and preload library independently.
+.Dq //lib/libstdbuf:runtime_test
+checks candidate library buffering through explicit preload runfiles.
+It does not substitute for testing the installed command's absolute library
+path in an isolated system runtime.

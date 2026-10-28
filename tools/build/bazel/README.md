@@ -33172,3 +33172,31 @@ pkgbase aggregation, declared runtime closure, cache/performance qualification.
 The directory scan found 94 immediate usr.bin Makefile directories without
 BUILD files before bsdcat, now 93; that includes aggregate directories and is
 not a count of missing programs or a completion percentage.
+
+## Native stdbuf and preload library (2026-10-28)
+
+Added native stdbuf compilation and libstdbuf static/shared targets, with
+explicit package/manual/debug/symlink installation. No production C or
+installed preload path changed: stdbuf still selects /usr/lib/libstdbuf.so.
+The new Bazel runtime_test preloads the declared candidate DSO into child
+processes and observes pipe output after _exit (no exit-time stdio flush).
+All eight stdout/stderr cases pass: 0, L, B and 4k buffer modes. This exercises
+the real library constructor, not an installed host copy. It does not test
+stdin buffering, invalid modes, privileged loading, other architectures or
+the installed stdbuf-to-library path; the last requires an isolated runtime.
+
+Evidence: /usr/obj/usr/src/bazel-stdbuf-runtime-20261028/qualification.
+Make references: bazel-libstdbuf-make-20261028 and bazel-stdbuf-make-20261028
+under /usr/obj/usr/src. Program globals (6), shared globals (2), static archive
+(1 member, no exported globals), SONAME, NEEDED and dynamic hardening flags
+match Make. Installation matches seven library records and five command
+records, two byte-identical manuals, one symlink and both debug links.
+Library archive SHA256:
+b55ce983050d8b9d331f3c95ed4ed173f550dee7a1bbd737a28528d54700855e.
+Command archive SHA256:
+f4b8ee37a87f195541ee5dd3eb655c63bb6f65af349070072702b15aa3613a46.
+
+Existing frontend format-5 target/test inputs support this integration; no
+frontend C/backend contract change is needed. Manual and observability records
+are updated. Make remains production/default. Full world/kernel/bootstrap,
+pkgbase aggregation and CPU/memory/disk/cache qualification remain open.
