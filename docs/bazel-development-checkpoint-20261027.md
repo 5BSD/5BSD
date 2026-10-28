@@ -1769,3 +1769,26 @@ tmpfs, pseudofs, geom_nop and geom_gate. This is a batch count, not an
 authoritative total for the repository or full kernel/module completion.
 The broader module inventory, hardware/drivers, source/header invalidation,
 runtime, full-world/kernel packaging and performance gates remain open.
+
+### GEOM Linux LVM, multipath and zoned
+
+Added explicit native module targets for geom_linux_lvm, geom_multipath and
+geom_zoned using the shared GENERIC rules. Existing multipath/zoned userland
+header targets are preserved. Maintained format-5 frontend selection builds
+the three modules with 16 jobs; no new frontend C option or publication
+policy is needed.
+
+Evidence: `/usr/obj/usr/src/bazel-geom-expanded-20261028/qualification`,
+including raw comparison dumps and comparison.json. Make references are
+`/usr/obj/usr/src/bazel-geom_{linux_lvm,multipath,zoned}-make-20261028`.
+All three match Make's complete runtime symbol and relocation listings,
+text/data/rodata and raw CTF. Debug-file identity/debuglink CRC checks pass.
+Staged metadata matches paths, ownership, permissions, type and package/debug
+tags. Multipath's SDT probe, argument-type and tracepoint section bytes also
+match. Modules were neither loaded nor installed into the host.
+
+The current conversion batch now contains ten module builds with artifact
+comparisons. Live storage behavior, failover, zoned-device semantics,
+source/header invalidation, broad configuration/architecture support and
+resource/performance qualification remain unproven. This does not qualify
+a whole kernel or all modules/drivers, and Make remains the production path.

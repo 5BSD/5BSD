@@ -3032,3 +3032,13 @@ AUDIT_* calls. Their complete runtime symbols and relocations match Make;
 no observability source changes were made for migration. Assess useful
 GEOM fault-injection and gate I/O instrumentation separately, together with
 common GEOM tracing/audit coverage. No live I/O or probe attachment was run.
+
+### GEOM Linux LVM, multipath and zoned (2026-10-28)
+
+Multipath declares six SDT probes: config restore/remove/disconnect/fail/taste
+and io restart. Its SDT probe/argument/tracepoint sections and complete
+symbol/relocation listings match Make in the native artifact comparison.
+No live probe firing or failover was exercised. Inspected Linux LVM/zoned
+sources have no explicit SDT_* or AUDIT_* calls; migration adds/removes none.
+Assess common GEOM instrumentation and useful component-specific coverage
+separately. Evidence: bazel-geom-expanded-20261028/qualification under /usr/obj/usr/src.
