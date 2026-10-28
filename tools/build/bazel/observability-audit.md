@@ -5226,3 +5226,10 @@ code/symbol comparisons match Make. Runtime review remains for configuration
 parsing, address/interface lookup, gateway relay, vendor options, malformed
 packets and service/client error reporting. No BOOTP traffic or live tracing
 was exercised; installation and runtime qualification remain open.
+
+## 2026-10-28 BOOTP installation
+
+All four executable/debug payloads and five manual entries now have Make-parity
+installation evidence, including the gateway manual hardlink. No runtime source
+or logging was altered. BOOTP packet/configuration/relay/error behavior still
+needs isolated execution; packaging checks do not supply that coverage.

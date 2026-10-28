@@ -8149,3 +8149,26 @@ no frontend change required. Manuals, hardlinks, installation/debug metadata
 and aggregate subtree installation still require migration and qualification.
 No daemon/client network operation occurred. Complete-world/kernel/pkgbase,
 runtime, cache and performance gates remain open; Make remains default.
+
+## 2026-10-28 BOOTP subtree installation qualified
+
+Added installation for all four native programs: bootpd/bootpgw in /usr/libexec
+and bootpef/bootptest in /usr/sbin, matching recursive Make. The aggregate
+archive includes four split debug pairs, bootptab(5), all section-8 manuals,
+and the maintained bootpgw(8) hardlink to bootpd(8). Utilities ownership and
+manual split configuration use existing installation rules.
+
+Through build-bsd at 16 jobs, 16 unique component metadata records match
+independent rootless Make staging. Repeated Make directory records are checked
+for equality before deduplication. All five manual payloads match; tar hardlink
+identity/target and Make inode identity are verified. All four debug pairs pass
+name/CRC/DWARF checks; stripping preserves each native .text section.
+Evidence: /usr/obj/usr/src/bazel-bootp-install-20261028/qualification/
+installation-parity.json. Reference: bazel-bootp-install-reference-20261028.
+Scripts: bazel-bootp-reference-20261028/{install.py,verify-install.py}.
+
+Reviewed build-bsd.c: current format-5 target/archive collection supports this
+subtree without frontend changes. No host installation or network execution
+occurred. Split-manual variant, runtime behavior, configured-world/pkgbase
+aggregation, full-system publication and performance gates remain open. Make
+remains production/default; this is component installation evidence only.
