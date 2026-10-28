@@ -6670,3 +6670,31 @@ complete file metadata/package integration and end-to-end iconv runtime testing
 remain. Frontend review: build-bsd.c's existing format-5 explicit-target backend
 runs this filegroup at 16 jobs; no new CLI or publication contract is required.
 Make remains production/default; no host installation occurred.
+
+## 2026-10-28: complete share/i18n installation archive
+
+Added native installation manifests for the complete csmapper and esdb payloads,
+including 27 maintained static ISO646 maps. Package directories are derived from
+the owned family metadata, while parent directory/account policy uses maintained
+mtree/passwd/group inputs. The aggregate share/i18n:install_archive materializes
+all generated and static inputs; it does not select a hand-picked runtime subset.
+Files carry root/wheel 0444 and package=utilities. The 35 component directories
+carry root/wheel 0755 and the same package tag, matching maintained Make.
+
+Evidence: /usr/obj/usr/src/bazel-i18n-install-20261028/receipt.json and
+qualification/installation-parity.json. All 687 installed file bytes and metadata
+match the complete Make component inventory, and all 35 component directory
+records match. Archive ownership/modes/types and empty file flags are checked
+against the same inventory; unexpected file payloads fail comparison. Rootless
+reference: bazel-i18n-install-reference-20261028, using maintained distrib-dirs
+and share/i18n install with the top-level IMAKE_INSTALL contract. Its sources and
+Make generators reuse the previously qualified independent Make data build.
+Scripts: bazel-i18n-install-qualification-20261028. No host installation occurred.
+
+This establishes share/i18n installation-archive coverage, not a complete
+utilities pkgbase package or published repository. Citrus module installation,
+end-to-end iconv conversion with native libraries/modules/data together, and
+whole libc/world/kernel/package qualification still remain. Frontend review:
+build-bsd.c's existing explicit format-5 targets and maintained backend built
+these manifests/archive with 16 jobs. No new CLI/publication input was introduced.
+Make remains the production default.

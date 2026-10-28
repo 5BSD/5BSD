@@ -25,3 +25,13 @@ citrus_database(name = "pivot_database", src = ":pivot", output = "charset.pivot
     mode = "pivot", tool = "//usr.bin/mkcsmapper:mkcsmapper_tool")
 filegroup(name = "mapper_indexes", srcs = [":indexes", ":directory_database", ":pivot_database"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load(":static_data.bzl", "STATIC_MAPS")
+_INSTALL_FILES = [(":" + source[:-4] + "_database", source[:-4] + ".mps") for source in MAP_SOURCES] + [(source, source) for source in STATIC_MAPS] + [(":directory", "mapper.dir"), (":pivot", "charset.pivot"), (":directory_database", "mapper.dir.db"), (":pivot_database", "charset.pivot.pvdb")]
+[bsd_install_file(name = "install_" + destination, src = source,
+    destination = "/usr/share/i18n/csmapper/" + destination,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=utilities"])
+ for source, destination in _INSTALL_FILES]
+bsd_install_manifest(name = "install_manifest", entries = [":install_" + destination for _, destination in _INSTALL_FILES],
+    visibility = ["//visibility:public"])

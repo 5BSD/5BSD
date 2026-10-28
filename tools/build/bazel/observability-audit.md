@@ -4790,3 +4790,11 @@ including KOI parallel and ISO-8859 GR/zone/serial mappings. No runtime C code,
 DTrace probes or audit hooks changed. All 656 generated binary i18n files now have
 native generation/parity evidence; installation and full iconv runtime remain
 unqualified. Generation evidence must not be reported as conversion testing.
+
+## 2026-10-28 i18n installation
+
+The complete native i18n installation archive now matches Make for all 687 file
+payloads/metadata and 35 component directory records. This includes static ISO646
+maps, not only generated binary databases. No runtime code, probes or audit hooks
+changed. This establishes installation coverage for share/i18n only; dynamic
+module installation, end-to-end conversion and package publication remain.

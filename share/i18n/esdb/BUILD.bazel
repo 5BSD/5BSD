@@ -33,3 +33,12 @@ citrus_database(name = "alias_database", src = ":aliases", output = "esdb.alias.
     mode = "lookup", tool = "//usr.bin/mkesdb:mkesdb_tool")
 filegroup(name = "encoding_indexes", srcs = [":indexes", ":directory_database", ":alias_database"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+_INSTALL_FILES = [(":" + stem + "_database", stem + ".esdb") for stem, _, _ in ENCODINGS] + [(":directory", "esdb.dir"), (":aliases", "esdb.alias"), (":directory_database", "esdb.dir.db"), (":alias_database", "esdb.alias.db")]
+[bsd_install_file(name = "install_" + destination, src = source,
+    destination = "/usr/share/i18n/esdb/" + destination,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=utilities"])
+ for source, destination in _INSTALL_FILES]
+bsd_install_manifest(name = "install_manifest", entries = [":install_" + destination for _, destination in _INSTALL_FILES],
+    visibility = ["//visibility:public"])
