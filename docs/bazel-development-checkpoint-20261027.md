@@ -6127,3 +6127,35 @@ linking/DOF, ABI/install and runtime gates remain broader outstanding work.
 Frontend review: existing build-bsd format-5 targets support these additions;
 no new frontend/backend contract required. All compilation uses 16 CPUs; Make
 remains production/default. No host installation or loader configuration changed.
+
+## 2026-10-28: libc account/group lookup sources and optional Hesiod headers
+
+Adds getgrent, getgrouplist, getnetgrent, getpwent and initgroups as native
+account_objects. NIS, Hesiod and NSS caching are explicit existing typed settings;
+private NSS/thread/cache and pw_scan headers are declared dependencies.
+
+Three matching Make/native configurations pass: default (NIS/Hesiod off, cache
+on), both optional backends on with caching, and both backends off without caching.
+All 30 ordinary/PIC object comparisons match .text, global/unresolved symbols and
+raw exception-section contents. Evidence: /usr/obj/usr/src/bazel-libc-accounts-
+20261028/exception-sections.json and each bazel-libc-accounts-{default,backends,
+no-cache}-build-20261028/qualification/parity.json (backends uses the -r2 run).
+Other combinations and actual services are not qualified by this matrix.
+
+The first backend-enabled native run failed because the prepared SDK omitted
+hesiod.h. The source-owned include/hesiod.h now has a narrow native header target;
+no SDK mutation, copied header or host-header fallback was used. All four libc
+consumers (getgrent/getpwent/getusershell/hesiod) have conditional dependencies.
+bazel-libc-hesiod-consumers-build-20261028 confirms their selected archives compile
+with both backends enabled. The additional helper/network archives were not
+newly compared against matching Make backend variants; that remains open.
+
+primary-source-coverage.json confirms every one of the 170 entries in gen's
+primary SRCS assignment belongs to a native cc_library srcs list. This excludes
+exports-only declarations and is not a whole-libc completeness claim. Imported,
+architecture-specific and generated inputs, final DOF/link/ABI/install metadata,
+full library runtime and broader system gates still require reconciliation.
+No account/authentication/NSS service runtime tests or host account/policy changes
+were performed. Frontend review: existing build-bsd format-5 settings/targets
+support these cases; no frontend/backend contract change required. Compilation
+uses 16 CPUs, and Make remains production/default.

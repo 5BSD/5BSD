@@ -249,7 +249,10 @@ cc_library(
         "wordexp.c",
     ],
     hdrs = ["gen-compat.h", "gen-private.h"],
-    implementation_deps = ["//lib/libc/include:gen_helper_headers", "//lib/libc/locale:regex_headers"],
+    implementation_deps = ["//lib/libc/include:gen_helper_headers", "//lib/libc/locale:regex_headers"] + select({
+        "//tools/build/bazel/config:hesiod_enabled": ["//include:hesiod_header"],
+        "//conditions:default": [],
+    }),
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({
         "//tools/build/bazel/config:nls_enabled": ["NLS"],
         "//conditions:default": [],
@@ -329,3 +332,28 @@ cc_library(
 )
 bsd_component_archive(name = "loader_import_archive", groups = [":loader_import_objects"])
 bsd_component_archive(name = "loader_import_pic_archive", groups = [":loader_import_objects"], pic = True)
+
+cc_library(
+    name = "account_objects",
+    srcs = ["getgrent.c", "getgrouplist.c", "getnetgrent.c", "getpwent.c", "initgroups.c"],
+    hdrs = ["gen-compat.h", "pw_scan.h"],
+    implementation_deps = ["//lib/libc/include:rpc_private_headers"] + select({
+        "//tools/build/bazel/config:hesiod_enabled": ["//include:hesiod_header"],
+        "//conditions:default": [],
+    }),
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({
+        "//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": [],
+    }) + select({
+        "//tools/build/bazel/config:nis_enabled": ["YP"], "//conditions:default": [],
+    }) + select({
+        "//tools/build/bazel/config:hesiod_enabled": ["HESIOD"], "//conditions:default": [],
+    }) + select({
+        "//tools/build/bazel/config:ns_caching_enabled": ["NS_CACHING"], "//conditions:default": [],
+    }),
+    copts = ["-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "account_archive", groups = [":account_objects"])
+bsd_component_archive(name = "account_pic_archive", groups = [":account_objects"], pic = True)

@@ -4640,3 +4640,12 @@ Existing weak loader-service stubs, TLS bootstrap interfaces and imported
 utility implementations are unchanged. Object/exception-section parity does not
 prove loader interposition, TLS lifetime, tracing or lookup-cache behavior.
 Full native loader/libc runtime qualification remains required.
+
+## 2026-10-28: libc account and group lookup routines
+
+No direct SDT/DTrace or BSM audit hooks found in these five sources. Existing NSS
+routing and cache interaction remain source-identical; lower-level NSS provider
+probes belong to the separate net group and eventual combined libc DOF link.
+Three configuration comparisons pass, but authentication, account-policy effects,
+NIS/Hesiod service behavior, NSS cache recovery and concurrent lookup runtime
+coverage remain outstanding. No host account/group or NSS configuration changed.

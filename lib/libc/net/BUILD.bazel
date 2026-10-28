@@ -22,7 +22,8 @@ _DEFINES = (["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] +
     select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}) +
     select({_TRACE: ["WITH_COVERAGE_DTRACE"], "//conditions:default": []}))
 _DEPS = ([":private_headers", "//lib/libc/include:rpc_private_headers", "//lib/libc/resolv:net_private_headers"] +
-    select({_TRACE: ["//lib/libc:nameres_provider_headers"], "//conditions:default": []}))
+    select({_TRACE: ["//lib/libc:nameres_provider_headers"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:hesiod_enabled": ["//include:hesiod_header"], "//conditions:default": []}))
 # Raw objects retain NSS probe references for final combined libc DOF processing.
 [cc_library(name = name, srcs = sources,
     implementation_deps = _DEPS, local_defines = _DEFINES + extra_defines,

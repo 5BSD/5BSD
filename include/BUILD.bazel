@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+# Optional installed headers must remain available to configured native builds.
+cc_library(name = "hesiod_header", hdrs = ["hesiod.h"], strip_include_prefix = ".",
+    visibility = ["//lib/libc/gen:__pkg__", "//lib/libc/net:__pkg__"])
