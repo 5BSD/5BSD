@@ -70,3 +70,5 @@ exports_files(["kernel_version.py"])
 exports_files(["module_exports.py"])
 
 exports_files(["elf-debug-check.py"])
+
+exports_files(["tests/libsys_runtime.c"], visibility = ["//lib/libsys:__pkg__"])

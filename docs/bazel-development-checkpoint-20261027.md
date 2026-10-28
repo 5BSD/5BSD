@@ -6243,3 +6243,39 @@ remain required. No installed host files changed. Make remains production/defaul
 Frontend review: existing build-bsd bazel-test format-5 target inputs drive both
 runs with 16 jobs. No new frontend input, signing, staging or publication contract
 is introduced; no frontend/backend change is needed for these native targets.
+
+## 2026-10-28: complete amd64 libsys object inventory and direct syscall smoke test
+
+Source-owned libsys targets now compile all 477 configured amd64 sources with
+LIBSYS, initial-exec TLS, no stack protection, typed HyperV selection and the
+IFUNC sanitizer exceptions. Private memcpy/memset/strlcpy and memcpy's textual
+bcopy dependency are explicit. These settings are independent of libc's groups.
+The existing native version-map generator consumes libsys's ordered symbol maps
+and libc Versions.def. No runtime Make query supplies native build metadata.
+
+Evidence: /usr/obj/usr/src/bazel-libsys-native-build-20261028-r2/qualification/
+parity.json against fresh bazel-libsys-native-make-20261028. All 954 ordinary/PIC
+objects match text bytes, global/undefined symbols and normalized text relocations;
+the complete Version.map is byte-identical. The first build failed because
+version_gen.awk's visibility did not grant libsys access; the narrow export was
+fixed, and the failed run is retained. Scripts live in bazel-libsys-native-20261028.
+
+The maintained tests/libsys_runtime.c is now a native cc_test. One actual Bazel
+test passes at bazel-libsys-native-test-20261028: process identity, pipe I/O,
+closing descriptors and errno=EBADF. native-link-proof.json proves the exercised
+__sys_* functions and __error are native executable definitions, not unresolved
+SDK symbols. The final test build's two archives and map are byte-identical to
+the compared run. The rest of the process runtime still uses SDK/host libc;
+this is not full native libc/loader or threading qualification.
+
+No libsys.so, installation or pkgbase result is claimed. Native compiler-rt is
+the next linkage dependency: earlier configured exports are not a replacement
+for source-owned Bazel definitions. libsys's -nodefaultlibs/-Bsymbolic linkage,
+static compiler-rt selection, symbol versions, debug/install metadata and shared
+runtime behavior still need qualification. Other architectures and full system
+runtime/performance remain outstanding. Make remains production/default.
+
+Frontend review: build-bsd.c and native-qualify.py's maintained format-5 path
+already accept these targets and the cc_test, and were used with 16 jobs. No new
+option or staging/signing/publication contract is introduced. No frontend change
+or host installation is needed for this component step.

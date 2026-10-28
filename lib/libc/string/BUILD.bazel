@@ -212,3 +212,5 @@ cc_library(
 bsd_component_archive(name = 'objects_archive', groups = [":string_objects", ":page_read_objects"] + select({"//tools/build/bazel/config:machdep_optimizations_enabled": [":archlevel_objects"], "//conditions:default": []}), pic = False)
 bsd_component_archive(name = 'pic_objects_archive', groups = [":string_objects", ":page_read_objects"] + select({"//tools/build/bazel/config:machdep_optimizations_enabled": [":archlevel_objects"], "//conditions:default": []}), pic = True)
 exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+exports_files(["memcpy.c", "memset.c", "strlcpy.c", "bcopy.c"], visibility = ["//lib/libsys:__pkg__"])

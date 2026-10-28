@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 cc_library(name = "headers", hdrs = ["libsys.h", "_libsys.h"], strip_include_prefix = ".", visibility = ["//lib/libc/include:__pkg__"])
 
 exports_files(["auxv.c", "interposing_table.c", "libc_stubs.c", "ptrace.c", "recvmmsg.c", "sendmmsg.c"], visibility = ["//lib/libc/sys:__pkg__"])
@@ -28,4 +28,67 @@ filegroup(
     name = "amd64_syscall_sources",
     srcs = [":" + stem + "_asm" for stem, _, _ in _SYSCALL_STUBS],
     visibility = ["//lib/libc/sys:__pkg__"],
+)
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+
+_AMD64 = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_HEADERS = ["//lib/libc/include:rt_private_headers",
+    "//lib/libc/include:syscall_compat_header", "//lib/libsys/amd64:sys_headers",
+    "//sys/sys:syscall_header"]
+_DEFINES = ["LIBSYS"] + select({
+    "//tools/build/bazel/config:hyperv_enabled": ["WANT_HYPERV"],
+    "//conditions:default": [],
+})
+_COPTS = ["-ftls-model=initial-exec", "-fno-stack-protector"]
+cc_library(
+    name = "sys_objects",
+    srcs = [":amd64_syscall_sources", "auxv.c", "interposing_table.c",
+        "clock_gettime.c", "gettimeofday.c", "__vdso_gettimeofday.c",
+        "__error.c", "__getosreldate.c", "getpagesize.c", "getpagesizes.c",
+        "libsys_sigwait.c", "//lib/libsys/x86:pkru.c",
+        "//lib/libsys/x86:sched_getcpu_x86.c"] +
+        ["//lib/libsys/amd64:" + n for n in [
+            "amd64_get_fsbase.c", "amd64_get_gsbase.c", "amd64_set_fsbase.c",
+            "amd64_set_gsbase.c", "amd64_set_tlsbase.c", "rfork_thread.S",
+            "pdrfork_thread.S", "vfork.S", "cerror.S", "getcontext.S", "_umtx_op_err.S",
+        ]] + ["//lib/libc/string:" + n for n in ["memcpy.c", "memset.c", "strlcpy.c"]],
+    textual_hdrs = ["//lib/libc/string:bcopy.c"],
+    implementation_deps = _HEADERS,
+    local_defines = _DEFINES,
+    copts = _COPTS,
+    linkstatic = True,
+    target_compatible_with = _AMD64,
+)
+# IFUNC initialization precedes sanitizer runtime initialization.
+cc_library(
+    name = "vdso_objects", srcs = ["//lib/libsys/x86:__vdso_gettc.c"],
+    implementation_deps = _HEADERS, local_defines = _DEFINES,
+    copts = _COPTS + ["-fno-sanitize=address", "-fno-sanitize=undefined"],
+    linkstatic = True, target_compatible_with = _AMD64,
+)
+cc_library(name = "sys", deps = [":sys_objects", ":vdso_objects"],
+    target_compatible_with = _AMD64, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":sys_objects", ":vdso_objects"])
+bsd_component_archive(name = "pic_archive", groups = [":sys_objects", ":vdso_objects"], pic = True)
+bsd_configured_version_map(
+    name = "version_map",
+    symbol_maps = ["Symbol.map", "syscalls.map", "Symbol.sys.map",
+        "//lib/libsys/amd64:Symbol.sys.map", "Symbol.thr.map"],
+    versions = "//lib/libc:Versions.def", generator = "//share/mk:version_gen.awk",
+    cpp_flags = ["-P", "-nostdinc", "-undef"],
+    compiler = "@bsd_sdk//toolchain:bin/clang",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk", awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+
+# Direct syscall smoke test; links this native archive, with the SDK/host libc
+# still supplying the rest of the process runtime until full libc integration.
+cc_test(name = "syscall_runtime_test",
+    srcs = ["//tools/build/bazel:tests/libsys_runtime.c"],
+    deps = [":sys", ":headers"], linkstatic = True,
+    target_compatible_with = _AMD64, size = "small",
 )

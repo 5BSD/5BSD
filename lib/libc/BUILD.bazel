@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-exports_files(["Versions.def"], visibility = ["//lib/libusb:__pkg__", "//lib/libthr:__pkg__", "//lib/libmixer:__pkg__", "//lib/msun:__pkg__", "//lib/libmd:__pkg__", "//lib/libutil:__pkg__", "//lib/libprocstat:__pkg__", "//lib/librt:__pkg__"])
+exports_files(["Versions.def"], visibility = ["//lib/libsys:__pkg__", "//lib/libusb:__pkg__", "//lib/libthr:__pkg__", "//lib/libmixer:__pkg__", "//lib/msun:__pkg__", "//lib/libmd:__pkg__", "//lib/libutil:__pkg__", "//lib/libprocstat:__pkg__", "//lib/librt:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header")

@@ -1,2 +1,2 @@
 # SPDX-License-Identifier: BSD-2-Clause
-exports_files(["__vdso_gettc.c", "pkru.c", "sched_getcpu_x86.c"], visibility = ["//lib/libc/sys:__pkg__"])
+exports_files(["__vdso_gettc.c", "pkru.c", "sched_getcpu_x86.c"], visibility = ["//lib/libsys:__pkg__", "//lib/libc/sys:__pkg__"])

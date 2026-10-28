@@ -4675,3 +4675,12 @@ match text, global/undefined symbols and text relocations against fresh Make.
 No tracing or audit policy changed. Syscall entry auditing and DTrace syscall
 providers belong to kernel/runtime qualification, which this object comparison
 does not establish. Complete native libc/libsys links and runtime tests remain.
+
+## 2026-10-28: native libsys complete amd64 source groups
+
+477 sources/954 ordinary and PIC objects preserve Make's text, symbols and text
+relocations, with identical ABI map. libsys exposes audit syscalls; this does not
+mean it owns kernel audit policy. No new SDT providers or audit logging are added.
+The direct syscall smoke test covers successful pipe I/O and EBADF, not audit
+records, DTrace syscall probes, thread errno, IFUNC timekeeping or shared-library
+interposition. Those remain full runtime/kernel qualification obligations.
