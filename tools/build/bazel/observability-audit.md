@@ -5319,3 +5319,15 @@ establish process-spawn/pipe cleanup, privileged filesystem behavior, or audit
 coverage of consumers. Keep those runtime/security checks open when qualifying
 nuageinit and other privileged Lua users. Evidence:
 /usr/obj/usr/src/bazel-flua-modules-20261028-r2/qualification/.
+
+
+### flua hash module (2026-10-28)
+
+Unchanged lhash.c is compiled against native libmd; object code and symbols match
+Make. One-shot, incremental and binary output checks pass on four inputs for
+native/Make modules. These checks do not establish context reuse after finalizing,
+GC memory erasure, side-channel behavior or privileged consumer audit coverage.
+The manual says uppercase hex while the existing implementation emits lowercase;
+this pre-existing documentation discrepancy is recorded, not silently changed by
+the build migration. Evidence: /usr/obj/usr/src/bazel-flua-hash-20261028-r2/
+qualification/{parity.json,runtime/results.json}.

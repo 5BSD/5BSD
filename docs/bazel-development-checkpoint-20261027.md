@@ -8414,3 +8414,31 @@ Native builds ran through build-bsd at 16 jobs. Reviewed frontend explicit input
 handling; current collection supports these targets without frontend changes.
 Remaining flua modules, Bazel-owned runtime tests, bootstrap variants, nuageinit,
 full world/kernel/pkgbase/cache/performance gates remain open. Make stays default.
+
+
+## 2026-10-28: flua hash module
+
+Added native hash.so with declared libmd CcInfo/shared dependency and unchanged
+Lua API resolution from flua. Extended the flua module installation helper with
+explicit extra_entries; the hash target declares its compressed hash.3lua manual.
+The Make reference exposed the initial manual path/tag mismatch: corrected to
+/usr/share/man/man3lua and package=flua-dev (non-split-man configuration).
+The initial build and corrected r2 remain under /usr/obj.
+
+Qualification matches the PIC object .text/global symbols, 24 DSO symbols,
+libc/libmd dependencies, SONAME and empty RPATH/RUNPATH, six installation records
+and compressed manual bytes. Debug validation and unchanged stripped text pass.
+Four external runtime vectors (empty, abc, embedded NUL, 10000-byte string)
+pass one-shot, bytewise incremental and binary-digest checks against Python
+hashlib results for both native and Make modules, using native libmd and the
+previously qualified flua/loader/libraries. The verifier initially named the
+wrong reference directory; corrected before any successful qualification claim.
+
+Evidence: /usr/obj/usr/src/bazel-flua-hash-20261028-r2/qualification/
+{parity.json,runtime/results.json}. Scripts: bazel-flua-hash-qualification-20261028/
+{make.py,verify.py,runtime.py}. Reference: bazel-flua-hash-reference-20261028.
+Builds used maintained build-bsd with 16 jobs. Reviewed build-bsd.c: existing
+explicit inputs/artifact collection cover this target without frontend changes.
+Other modules, Bazel-owned runtime tests, bootstrap and split-man variants,
+full world/kernel/pkgbase/cache/performance qualification remain open. No host
+installation or configuration change. Make remains production/default.
