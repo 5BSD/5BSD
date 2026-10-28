@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ["ext/yaml/lyaml.h"], strip_include_prefix = "ext/yaml", visibility = ["//libexec/flua/liblyaml:__pkg__"])
+exports_files(["ext/yaml/emitter.c", "ext/yaml/parser.c", "ext/yaml/scanner.c", "ext/yaml/yaml.c", "lib/lyaml/explicit.lua", "lib/lyaml/functional.lua", "lib/lyaml/implicit.lua", "lib/lyaml/init.lua"], visibility = ["//libexec/flua/liblyaml:__pkg__"])

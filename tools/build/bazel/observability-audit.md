@@ -5362,3 +5362,13 @@ not establish parser resource limits, malformed-input handling, emitter runtime
 behavior or privileged consumers' audit integration. Runtime qualification will
 continue through the flua YAML binding and its consumers. Evidence:
 /usr/obj/usr/src/bazel-yaml-20261028/qualification/.
+
+
+### flua YAML binding (2026-10-28)
+
+Four original binding C files and four Lua files are carried forward. Object code
+and Lua payload parity pass against Make. Mapping, serialization roundtrip, alias
+and syntax-error checks pass using the archived Lua payload. These checks do not
+establish hostile-input resource limits, exhaustive YAML semantics, or audit
+coverage of privileged configuration consumers. Nuageinit integration remains
+open. Evidence: /usr/obj/usr/src/bazel-flua-lyaml-20261028-r2/qualification/.

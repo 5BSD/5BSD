@@ -8517,3 +8517,31 @@ outputs without frontend changes. This is build/install qualification only;
 parser runtime, flua YAML module and its Lua payloads remain pending. Full world,
 kernel/pkgbase/cache/performance gates remain open. Make remains default, with
 no host installation or configuration changes.
+
+
+## 2026-10-28: flua YAML binding and Lua payloads
+
+Added all four lyaml C sources with explicit headers, native libyaml dependency
+and the maintained VERSION=6.2.8 definition. Installation includes yaml.so,
+split debug, and explicit/functional/implicit/init.lua in /usr/share/flua/lyaml.
+Initial archive creation correctly rejected missing directory policy; added the
+package-owned directory with Make's ownership/mode/tags. Failed run retained.
+
+All four PIC object .text/global-symbol comparisons, 78 DSO symbols, dependencies,
+SONAME and empty RPATH/RUNPATH match Make. Ten installation metadata records and
+all four Lua payloads match; debug/stripped-text checks pass. Four external runtime
+cases pass for native/Make builds: typed mapping, dump/load roundtrip, YAML alias,
+and malformed-input rejection. Native runs use Lua payloads extracted from the
+qualified archive, copied native libprivateyaml, and previously qualified flua/
+loader/libraries. The initial runtime harness had incorrectly escaped Lua string
+newlines; fixed runtime-r2 passes and initial failure remains recorded.
+
+Evidence: /usr/obj/usr/src/bazel-flua-lyaml-20261028-r2/qualification/
+{parity.json,runtime-r2/results.json}. Scripts:
+bazel-flua-lyaml-qualification-20261028/{make.py,verify.py,runtime.py}.
+Reference: bazel-flua-lyaml-reference-20261028. Builds used build-bsd at 16 jobs.
+Reviewed frontend explicit input handling: existing artifact collection needs no
+frontend change. This is bounded module qualification, not exhaustive YAML parser
+coverage, resource-limit testing or nuageinit runtime. Remaining FreeBSD modules,
+Bazel-owned tests, bootstrap and complete world/kernel/pkgbase/cache/performance
+gates remain open. No host installation. Make remains production/default.

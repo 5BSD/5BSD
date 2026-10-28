@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+cc_library(name = "objects", srcs = ["//contrib/lyaml:ext/yaml/emitter.c", "//contrib/lyaml:ext/yaml/parser.c", "//contrib/lyaml:ext/yaml/scanner.c", "//contrib/lyaml:ext/yaml/yaml.c"],
+    deps = ["//contrib/lua/src:headers", "//libexec/flua:bootstrap_headers", "//contrib/lyaml:headers", "//lib/libyaml:yaml"],
+    local_defines = ["VERSION=\\\"6.2.8\\\""],
+    linkstatic = True)
+# Lua API symbols resolve from the interpreter; do not embed another Lua runtime.
+cc_shared_library(name = "module", deps = [":objects"], shared_lib_name = "yaml.so",
+    dynamic_deps = ["//lib/libyaml:yaml_shared"],
+    user_link_flags = ["-Wl,-soname,yaml.so", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+load("//libexec/flua:module_installation.bzl", "module_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
+[bsd_install_file(name = n + "_lua", src = "//contrib/lyaml:lib/lyaml/" + n + ".lua",
+    destination = "/usr/share/flua/lyaml/" + n + ".lua", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=flua"])
+ for n in ["explicit", "functional", "implicit", "init"]]
+module_installation(name = "install_manifest", module = "yaml.so",
+    extra_entries = [":" + n + "_lua" for n in ["explicit", "functional", "implicit", "init"]])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {
+        "/usr/share/flua/lyaml": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=flua"]}',
+        "/usr/lib/debug/usr": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=flua","dbg"]}',
+        "/usr/lib/debug/usr/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=flua","dbg"]}',
+        "/usr/lib/debug/usr/lib/flua": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=flua","dbg"]}',
+    },
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
