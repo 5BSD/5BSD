@@ -3172,3 +3172,26 @@ interprocessor signaling and latency/resource use require linked-kernel tests.
 Full kernel/world/pkgbase/bootstrap and performance gates remain open. Make
 remains production/default; module count remains 45. No host installation
 or BIP work occurred.
+
+### Native sysctl handling
+
+Added //sys/kern:generic_sysctl_object_files for kern_sysctl.c, selected by
+the maintained GENERIC Makefile. Dependencies declare CK/VM, MAC, VNET,
+debugger lexer headers and native Capsicum/DDB/KTRACE/SYSCTL options.
+No sysctl or security source behavior changed.
+
+Evidence: `/usr/obj/usr/src/bazel-sysctl-kernel-20261028/qualification`.
+The object matches Make symbols, raw CTF, complete allocated-section inventory,
+section bytes/size/type/flags/alignment and runtime relocation records and
+associations. All four option headers match Make bytes. Reference log:
+`/usr/obj/usr/src/bazel-sysctl-kernel-make-20261028.log`; maintained recipes
+used the same SDK compiler, 16 jobs, DEBUG=-g, WITH_CTF=yes and reproducible
+paths. Whole-object/debug-path identity is not claimed.
+
+Frontend review: existing format-5 targets and generated inputs support this
+addition without new build-bsd C/backend options, staging or manual changes.
+No runtime tests ran. Sysctl enumeration/read/write, Capsicum/MAC permissions,
+jail/VNET behavior and concurrent registration/removal require linked-kernel
+tests. Full kernel/world/pkgbase/bootstrap and performance gates remain open.
+Make remains production/default; module count remains 45. No host installation
+or BIP changes occurred.

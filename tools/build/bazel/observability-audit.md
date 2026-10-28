@@ -3568,3 +3568,14 @@ relocations. Evidence:
 No instrumentation source changed. This qualifies only the selected GENERIC
 configuration, not arbitrary KTR configurations. Live probes, cross-CPU
 coordination and sleep/wakeup behavior remain unqualified.
+
+### Sysctl handling (2026-10-28)
+
+kern_sysctl.c defines the sysctl:write probe and retains MAC/Capsicum checks.
+Native GENERIC output matches Make symbols, raw CTF, allocated sections and
+runtime relocations, including probe metadata. Evidence:
+`/usr/obj/usr/src/bazel-sysctl-kernel-20261028/qualification`.
+No instrumentation source changed. No local AUDIT_ARG calls were found;
+review sysctl syscall event mapping and emitted records before claiming
+administrative-write audit coverage. Live permissions, probe firing and
+concurrent sysctl lifecycle behavior remain unqualified.
