@@ -4145,3 +4145,12 @@ paths stay enabled and link existing native libraries with their configured
 DTrace inputs. Runtime source is unchanged. VM checks must cover PAM account
 and session handling, credential changes, queued/batch job execution and syslog;
 compile/link/manual parity and cache reuse do not qualify those behaviors.
+
+
+### 2026-10-28: chat and comsat
+
+Neither source has local SDT/DTrace/AUDIT hooks; native conversion preserves
+sources unchanged. chat tty/modem exchanges, timeouts and syslog, and comsat
+mail notification/terminal writes deserve integration coverage. Early invocation
+checks do not exercise them. No claim that syscall auditing is absent; no probe
+or audit-policy changes introduced.

@@ -4549,3 +4549,27 @@ complete invalidation behavior, cold-build reproducibility or system performance
 Frontend review: existing format-5 inputs select both components and archives;
 no frontend/backend contract change required. No Make backend/default change,
 host installation, job execution or reboot. Full-system goals remain active.
+
+
+## 2026-10-28: chat and comsat native candidates
+
+Added unchanged-source native cc_binary targets and installation archives for
+usr.bin/chat and libexec/comsat. Preserve PPP versus utilities package ownership,
+section-8 manuals, binary/debug installation locations and PIE linking. Neither
+Make component declares a test subdirectory. No program source changes.
+
+Evidence: /usr/obj/usr/src/bazel-chat-comsat-20261028, with separate maintained
+Make references bazel-chat-make-20261028 and bazel-comsat-make-20261028.
+qualification/chat and qualification/comsat retain verification scripts/results:
+five installation records each match Make, compressed manual bytes match, as
+do 32 and six defined global symbols respectively and libc.so.7/BIND_NOW/NOW PIE.
+qualification/runtime.py and runtime.json compare two early invalid chat option
+paths and comsat stdin=/dev/null invocation, including exit status and output.
+All three comparisons pass with SDK libraries. They exit before modem/mail
+service operations and do not qualify those operations. No full executable/debug
+byte identity, tty integration, mail notification, privilege or performance claim.
+
+Frontend review: existing explicit format-5 inputs and archive rules cover both
+components with no frontend/backend contract change. Standard /usr/obj storage
+and 16-job execution preserved. No host install or service activation. Full
+world/kernel/pkgbase/boot/runtime/performance gates remain incomplete.
