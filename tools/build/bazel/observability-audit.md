@@ -4921,3 +4921,11 @@ libc/libsys/private ATF provenance. Test C sources are unchanged. The adapter
 records explicit-loader selection and preserves body/cleanup result handling;
 19 protocol/lifecycle regressions pass. No runtime probes or audit hooks changed.
 This does not qualify child exec interpreter selection or live DTrace firing.
+
+## 2026-10-28 runtime-linker deep binding
+
+The maintained deep-binding ATF case passes under native rtld with independently
+verified fixture dependency separation and $ORIGIN behavior matching Make.
+Original C sources and assertions remain unchanged. Native loader/runtime
+provenance is recorded; no audit or DTrace hooks changed. This single case
+does not establish general loader behavior or live probe firing.

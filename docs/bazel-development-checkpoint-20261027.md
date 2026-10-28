@@ -7184,3 +7184,36 @@ Bazel runfiles carry the loader and fixtures. Remaining loader tests include
 dlopen/libthr unload, deep binding, child fexecve/preload behavior, TLS, libmap,
 parse-integer and signature-verifier cases. No host installation occurred;
 whole-system/bootstrap/package/performance gates remain open. Make stays default.
+
+## 2026-10-28: maintained rtld deep-binding case
+
+Added native libval, libval2 and libdeep fixture targets plus the unmodified
+rtld_deepbind ATF program. The fixture outputs live beside that program, matching
+the installed test directory and preserving $ORIGIN lookup. libdeep.so is a
+declared symlink to its versioned DSO. libval and libval2 remain separate shared
+objects with separate state: the program depends on libval; libdeep depends on
+libval2. The test's original RTLD_DEEPBIND and independent-value assertions remain.
+
+The first analysis rejected an implicit cc_library shared-output collision with
+the explicit libdeep alias; component cc_library rules now use linkstatic=True
+and cc_shared_library owns the DSOs. The second run caught $$ORIGIN preserved
+literally by cc_shared_library user_link_flags. Corrected that argument to
+$ORIGIN; cc_binary linkopts retains its required $$ escaping. No source/test
+assertion was changed. Both unsuccessful runs remain recorded.
+
+Evidence: /usr/obj/usr/src/bazel-rtld-deepbind-20261028-r3/receipt.json and
+qualification/fixture-and-runtime-parity.json. One actual ATF case passes under
+the declared native loader. All four program/DSO NEEDED, SONAME and RPATH/RUNPATH
+properties match independent Make outputs. Explicit checks preserve the separate
+val/val2 dependency paths and literal $ORIGIN. Runfile fixture bytes match saved
+artifacts, and loader tracing confirms declared native libc/libsys/private ATF
+and libval selection. Reference: bazel-rtld-deepbind-reference-20261028; scripts:
+bazel-rtld-deepbind-qualification-20261028. This establishes one deep-binding
+case, not general loader completion or live DTrace behavior.
+
+Reviewed build-bsd.c's maintained bazel-test backend: existing format-5 target/
+test inputs qualify this case at 16 jobs without new CLI/publication behavior.
+No host installation occurred. Remaining work includes libthr dlopen/unload,
+child exec/fexecve/preload paths, TLS/libmap and other maintained loader tests,
+then broad world/kernel/pkgbase/bootstrap/cache/performance qualification.
+Make remains production/default.
