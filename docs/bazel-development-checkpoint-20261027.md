@@ -5266,3 +5266,25 @@ complete libc, package lifecycle and system qualification remain open.
 Frontend review: existing format-5 targets/NIS input and maintained template,
 account-generation and staging helpers expose this through build-bsd. No new
 frontend C or backend contract needed; no one-off replacement build path.
+
+## 2026-10-28: complete libc ACL/MAC object inventory
+
+Adds all 32 maintained posix1e compilation sources: ACL interfaces, extended
+attributes, MAC interfaces and shared NFSv4 ACL implementation. Native Bazel
+compiles //sys/kern:subr_acl_nfs4.c directly in userland mode rather than creating
+an independently maintained copy; narrow source visibility permits that sharing.
+Preserves _ACL_PRIVATE, libc private interfaces and ordinary/PIC variants.
+Existing mac.conf staging remains part of libc:config_archive.
+
+Evidence: /usr/obj/usr/src/bazel-libc-posix1e-build-20261028/qualification/parity.json
+against fresh bazel-libc-posix1e-make-20261028. All 64 ordinary/PIC objects match
+global symbols, unresolved symbols and .text bytes. Make's copied subr_acl_nfs4.c
+also matches the declared kernel source byte for byte. This is userland object
+qualification, not kernel module qualification or installed ACL/MAC enforcement.
+Full debug/source-path/allocated-section/relocation identity, libc symbol-version
+link, manuals, installed tests and runtime filesystem/security behavior remain
+open. No ACL policy, MAC enforcement, host file labels or runtime code changed.
+
+Frontend review: existing explicit targets and NLS setting cover this group via
+build-bsd format 5; no frontend/backend contract change needed. The shared source
+export does not change existing kernel target recipes or flags. No host install.

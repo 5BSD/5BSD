@@ -4354,3 +4354,12 @@ reuses existing pwd_mkdb generation. Make metadata and bytes match with NIS on
 and off (fresh staging only). Generated account files remain untagged state.
 No host account mutation, MAC policy installation, live authentication/NSS or
 audit event behavior was exercised; those remain installed-system tests.
+
+### 2026-10-28: libc ACL/MAC object group
+
+Carries the maintained ACL, extended-attribute and MAC interfaces unchanged,
+including the userland mode of the shared NFSv4 ACL implementation. The word
+"audit" in ACL text parsing is an ACE type, not a newly added audit hook. No
+direct SDT/DTrace/BSM hook was found in these local C sources. Object comparison
+does not establish kernel audit emission, mac_abac/openES behavior, permission
+enforcement or live filesystem ACL compatibility; runtime qualification remains.
