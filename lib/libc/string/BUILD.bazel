@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 # Explicit source selection also preserves Make .PATH overrides for bcopy/bzero.
 # Portable routines remain selectable independently of the amd64 implementations.
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'string_objects',
     srcs = select({"//tools/build/bazel/config:machdep_optimizations_enabled": [
             "//lib/libc/amd64/string:bcmp.S",
@@ -187,6 +189,7 @@ cc_library(
 # These portable routines can read within a page beyond the requested range.
 # Preserve their narrowly scoped address-sanitizer exclusions.
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'page_read_objects',
     srcs = select({"//tools/build/bazel/config:machdep_optimizations_enabled": ['//lib/libc/amd64/string:strlen.S', '//lib/libc/amd64/string:strchrnul.S', '//lib/libc/amd64/string:memchr.S'], "//conditions:default": ['strlen.c', 'strchrnul.c', 'memchr.c']}),
     textual_hdrs = ["bcopy.c", "memset.c", "//lib/libc/amd64/string:memcmp.S", "//lib/libc/amd64/string:memmove.S"],
@@ -199,6 +202,7 @@ cc_library(
 )
 # IFUNC CPU selection runs before address-sanitizer initialization.
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'archlevel_objects',
     srcs = ['//lib/libc/amd64/string:amd64_archlevel.c'],
     textual_hdrs = ["bcopy.c", "memset.c", "//lib/libc/amd64/string:memcmp.S", "//lib/libc/amd64/string:memmove.S"],

@@ -1,10 +1,12 @@
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load(":nonshared_sources.bzl", "ICONV_WRAPPERS")
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-cc_library(name = "locale_headers", hdrs = ["citrus_hash.h", "citrus_module.h", "citrus_iconv.h", "citrus_iconv_local.h"], visibility = ["//lib/libc/locale:__pkg__"])
+cc_library(features = LIBC_VARIANT_FEATURES, name = "locale_headers", hdrs = ["citrus_hash.h", "citrus_module.h", "citrus_iconv.h", "citrus_iconv_local.h"], visibility = ["//lib/libc/locale:__pkg__"])
 
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "iconv_objects",
     srcs = [
         "citrus_bcs.c",
@@ -73,6 +75,7 @@ cc_library(
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "static_wrapper_objects",
     srcs = ICONV_WRAPPERS + ['_strtol.h', '_strtoul.h', 'citrus_aliasname_local.h', 'citrus_bcs.h', 'citrus_csmapper.h', 'citrus_db.h', 'citrus_db_factory.h', 'citrus_db_file.h', 'citrus_db_hash.h', 'citrus_esdb.h', 'citrus_esdb_file.h', 'citrus_fix_grouping.h', 'citrus_hash.h', 'citrus_iconv.h', 'citrus_iconv_local.h', 'citrus_lock.h', 'citrus_lookup.h', 'citrus_lookup_factory.h', 'citrus_lookup_file.h', 'citrus_mapper.h', 'citrus_mapper_local.h', 'citrus_memstream.h', 'citrus_mmap.h', 'citrus_module.h', 'citrus_namespace.h', 'citrus_none.h', 'citrus_pivot_factory.h', 'citrus_pivot_file.h', 'citrus_prop.h', 'citrus_region.h', 'citrus_stdenc.h', 'citrus_stdenc_local.h', 'citrus_stdenc_template.h', 'citrus_types.h', 'iconv-internal.h'],
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
@@ -92,7 +95,7 @@ exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
 exports_files(ICONV_WRAPPERS + ["iconv-internal.h"], visibility = ["//lib/libc_nonshared:__pkg__"])
 
 # Private Citrus module API, made available only to the module package.
-cc_library(name = "module_headers", hdrs = glob(["citrus_*.h"]),
+cc_library(features = LIBC_VARIANT_FEATURES, name = "module_headers", hdrs = glob(["citrus_*.h"]),
     strip_include_prefix = ".", visibility = ["//lib/libiconv_modules:__pkg__", "//usr.bin/mkesdb:__pkg__", "//usr.bin/mkcsmapper:__pkg__"])
 
 # Maintained manual sources consumed by libc installation.

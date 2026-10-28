@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 
 # libc owns these objects; the archives below are qualification artifacts.
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "xdr_objects",
     srcs = [
         "xdr.c",

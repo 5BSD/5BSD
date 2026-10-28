@@ -4859,3 +4859,13 @@ library. All package-tagged installation records match maintained Make in the
 qualified amd64 configuration. No runtime sources, probes or audit hooks change.
 Generated account databases remain separate initial state; neither account
 migration nor authentication behavior is demonstrated by this archive check.
+
+## 2026-10-28 libc NOSSP variant
+
+All 1442 NOSSP member executable sections match the maintained Make archive;
+the ordinary PIC archive remains byte-identical to its earlier qualification.
+DTrace-transformed libc objects use the NOSSP configuration, while drti keeps
+its separately built compiler policy. An initially overbroad transition was
+rejected by symbol comparison and replaced with a libc-only setting. No C
+sources, probes or audit hooks changed. This does not establish live DTrace
+registration/firing or qualify the still-unbuilt native runtime linker.

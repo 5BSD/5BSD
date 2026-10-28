@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 
 # libc object group; qualification archives are not independently installed.
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "inet_objects",
     srcs = ['inet_addr.c', 'inet_cidr_ntop.c', 'inet_cidr_pton.c', 'inet_lnaof.c', 'inet_makeaddr.c', 'inet_net_ntop.c', 'inet_net_pton.c', 'inet_neta.c', 'inet_netof.c', 'inet_network.c', 'inet_ntoa.c', 'inet_ntop.c', 'inet_pton.c', 'nsap_addr.c'],
     implementation_deps = ["//lib/libc/include:inet_private_headers"],

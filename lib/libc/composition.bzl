@@ -61,3 +61,7 @@ STATIC_GROUPS = ["//lib/libc/sys:static_libsys_objects", "//lib/libc/sys:amd64_o
     "//tools/build/bazel/config:iconv_enabled": ["//lib/libc/iconv:static_wrapper_objects"], "//conditions:default": [],
 })
 SHARED_GROUPS = ["//lib/libc/sys:shared_libsys_objects", "//lib/libc/sys:amd64_shared_objects", "//lib/libc/sys:shared_syscall_objects"]
+
+# NOSSP derives from Make OBJS with shared compilation flags, without the
+# SOBJS-only libc_stubs or STATICOBJS-only implementations/wrappers.
+NOSSP_GROUPS = ["//lib/libc/sys:amd64_shared_objects", "//lib/libc/sys:shared_syscall_objects"]

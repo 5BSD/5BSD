@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load("//lib/libsys:syscall_policy.bzl", "INTERPOSED_SYSCALLS")
 # C wrappers and generated syscall/libsys variants remain separate.
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'interposed_objects',
     srcs = ["//lib/libsys:ptrace.c" if name == "ptrace" else name + ".c"
             for name in INTERPOSED_SYSCALLS],
@@ -15,6 +17,7 @@ cc_library(
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'pseudo_objects',
     srcs = ['POSIX2x_Fork.c', 'brk.c', 'closefrom.c', 'compat-stub.c', 'creat.c', 'getdents.c', 'lockf.c', 'lstat.c', 'mknod.c', 'pipe.c', 'recv.c', '//lib/libsys:recvmmsg.c', 'send.c', '//lib/libsys:sendmmsg.c', 'shm_open.c', 'stat.c', 'vadvise.c', 'wait.c', 'wait3.c', 'waitid.c', 'waitpid.c'],
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
@@ -30,6 +33,7 @@ exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
 
 # libsys source variants required by libc: never merge these groups.
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'static_libsys_objects',
     srcs = ['//lib/libsys:auxv.c', '//lib/libsys:interposing_table.c'],
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
@@ -40,6 +44,7 @@ cc_library(
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'shared_libsys_objects',
     srcs = ['//lib/libsys:libc_stubs.c'],
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
@@ -53,7 +58,7 @@ bsd_component_archive(name = "static_libsys_archive", groups = [":static_libsys_
 bsd_component_archive(name = "shared_libsys_archive", groups = [":shared_libsys_objects"], pic = True)
 
 # Common libsys sources compiled with libc's flags for its own artifacts.
-cc_library(name = "common_libsys_objects",
+cc_library(features = LIBC_VARIANT_FEATURES, name = "common_libsys_objects",
     srcs = ['//lib/libsys:clock_gettime.c', '//lib/libsys:gettimeofday.c', '//lib/libsys:__vdso_gettimeofday.c', '//lib/libsys:__error.c', '//lib/libsys:__getosreldate.c', '//lib/libsys:getpagesize.c', '//lib/libsys:getpagesizes.c', '//lib/libsys:libsys_sigwait.c'],
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
@@ -66,6 +71,7 @@ bsd_component_archive(name = "common_libsys_pic_archive", groups = [":common_lib
 
 # Preserve libc-specific shared syscall-body preprocessing separately.
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'amd64_objects',
     srcs = ['//lib/libsys/amd64:amd64_get_fsbase.c', '//lib/libsys/amd64:amd64_get_gsbase.c', '//lib/libsys/amd64:amd64_set_fsbase.c', '//lib/libsys/amd64:amd64_set_gsbase.c', '//lib/libsys/amd64:amd64_set_tlsbase.c', '//lib/libsys/amd64:rfork_thread.S', '//lib/libsys/amd64:pdrfork_thread.S', '//lib/libsys/amd64:vfork.S', '//lib/libsys/amd64:cerror.S', '//lib/libsys/amd64:getcontext.S'],
     implementation_deps = ["//lib/libsys/amd64:sys_headers", "//lib/libc/include:rt_private_headers"],
@@ -75,6 +81,7 @@ cc_library(
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'amd64_shared_objects',
     srcs = ['//lib/libsys/amd64:amd64_get_fsbase.c', '//lib/libsys/amd64:amd64_get_gsbase.c', '//lib/libsys/amd64:amd64_set_fsbase.c', '//lib/libsys/amd64:amd64_set_gsbase.c', '//lib/libsys/amd64:amd64_set_tlsbase.c', '//lib/libsys/amd64:rfork_thread.S', '//lib/libsys/amd64:pdrfork_thread.S', '//lib/libsys/amd64:vfork.S', '//lib/libsys/amd64:cerror.S', '//lib/libsys/amd64:getcontext.S'],
     implementation_deps = ["//lib/libsys/amd64:sys_headers", "//lib/libc/include:rt_private_headers"],
@@ -86,6 +93,7 @@ cc_library(
 bsd_component_archive(name = "amd64_archive", groups = [":amd64_objects"])
 bsd_component_archive(name = "amd64_shared_archive", groups = [":amd64_shared_objects"], pic = True)
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'x86_objects',
     srcs = ['//lib/libsys/x86:pkru.c', '//lib/libsys/x86:sched_getcpu_x86.c'],
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
@@ -98,6 +106,7 @@ cc_library(
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'vdso_gettc_objects',
     srcs = ['//lib/libsys/x86:__vdso_gettc.c'],
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
@@ -115,6 +124,7 @@ bsd_component_archive(name = "x86_pic_archive", groups = [":x86_objects", ":vdso
 # Full syscall implementations in static libc; shared libc exports empty bodies
 # filtered by libsys. Keep these as separate compilation groups.
 [cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = name,
     srcs = ["//lib/libsys:amd64_syscall_sources"],
     implementation_deps = ["//lib/libsys/amd64:sys_headers",

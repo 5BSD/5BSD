@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
-cc_library(name = "resolver_config_headers", hdrs = ["res_config.h"],
+cc_library(features = LIBC_VARIANT_FEATURES, name = "resolver_config_headers", hdrs = ["res_config.h"],
     strip_include_prefix = ".", visibility = ["//lib/libc/resolv:__pkg__"])
 
 load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
@@ -11,7 +12,7 @@ filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
 filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
 bsd_lex(name = "lexer", src = "nslexer.l", output = "nslexer.c", flags = ["-P_nsyy"],
     lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
-cc_library(name = "private_headers", hdrs = ["netdb_private.h", "nss_backends.h", "res_config.h", ":parser_header"],
+cc_library(features = LIBC_VARIANT_FEATURES, name = "private_headers", hdrs = ["netdb_private.h", "nss_backends.h", "res_config.h", ":parser_header"],
     strip_include_prefix = ".")
 _TRACE = "//tools/build/bazel/config:dtrace_enabled"
 _DEFINES = (["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] +
@@ -25,7 +26,7 @@ _DEPS = ([":private_headers", "//lib/libc/include:rpc_private_headers", "//lib/l
     select({_TRACE: ["//lib/libc:nameres_provider_headers"], "//conditions:default": []}) +
     select({"//tools/build/bazel/config:hesiod_enabled": ["//include:hesiod_header"], "//conditions:default": []}))
 # Raw objects retain NSS probe references for final combined libc DOF processing.
-[cc_library(name = name, srcs = sources,
+[cc_library(features = LIBC_VARIANT_FEATURES, name = name, srcs = sources,
     implementation_deps = _DEPS, local_defines = _DEFINES + extra_defines,
     copts = ["-ftls-model=initial-exec"], linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],

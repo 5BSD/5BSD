@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'objects',
     srcs = ['gethostid.c', 'getwd.c', 'killpg.c', 'sethostid.c', 'setpgrp.c', 'setrgid.c', 'setruid.c', 'sigcompat.c'],
     implementation_deps = ["//lib/libc/include:rt_private_headers"],

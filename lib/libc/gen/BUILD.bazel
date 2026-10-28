@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 exports_files(["pw_scan.c"], visibility = ["//lib/libutil:__pkg__", "//usr.sbin/pwd_mkdb:__pkg__", "//usr.bin/chpass:__pkg__"])
-cc_library(name = "pw_scan_headers", hdrs = ["pw_scan.h"], strip_include_prefix = ".", visibility = ["//lib/libutil:__pkg__", "//usr.sbin/pwd_mkdb:__pkg__", "//usr.bin/chpass:__pkg__"])
+cc_library(features = LIBC_VARIANT_FEATURES, name = "pw_scan_headers", hdrs = ["pw_scan.h"], strip_include_prefix = ".", visibility = ["//lib/libutil:__pkg__", "//usr.sbin/pwd_mkdb:__pkg__", "//usr.bin/chpass:__pkg__"])
 
-cc_library(name = "exterr_catalog_headers", hdrs = ["exterr_cat_filenames.h"],
+cc_library(features = LIBC_VARIANT_FEATURES, name = "exterr_catalog_headers", hdrs = ["exterr_cat_filenames.h"],
     strip_include_prefix = ".", visibility = ["//usr.bin/kdump:__pkg__"])
 
 exports_files(["getcap.c"], visibility = ["//usr.bin/cap_mkdb:__pkg__"])
@@ -12,6 +13,7 @@ exports_files(["getcap.c"], visibility = ["//usr.bin/cap_mkdb:__pkg__"])
 exports_files(["ldexp.c"], visibility = ["//lib/libc/amd64/gen:__pkg__"])
 
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "directory_objects",
     srcs = [
         "closedir.c",
@@ -50,6 +52,7 @@ cc_library(
 )
 
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "directory_blocks_objects",
     srcs = [
         "fts.c",
@@ -72,6 +75,7 @@ bsd_component_archive(name = "directory_archive", groups = [":directory_objects"
 bsd_component_archive(name = "directory_pic_archive", groups = [":directory_objects", ":directory_blocks_objects"], pic = True, visibility = ["//lib/libc:__pkg__", "//lib/libc/tests/gen:__pkg__"])
 
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "process_objects",
     srcs = [
         "aio_read2.c",
@@ -133,6 +137,7 @@ bsd_component_archive(name = "process_pic_archive", groups = [":process_objects"
 # Compile the maintained sources directly. Make's cancelpoints_ aliases select
 # these exception flags; source copies/aliases are unnecessary in the native graph.
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "semaphore_objects",
     srcs = ["sem.c", "sem_new.c"],
     implementation_deps = ["//lib/libc/include:semaphore_headers"],
@@ -156,6 +161,7 @@ bsd_component_archive(name = "semaphore_archive", groups = [":semaphore_objects"
 bsd_component_archive(name = "semaphore_pic_archive", groups = [":semaphore_objects"], pic = True)
 
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "random_objects",
     srcs = [
         "_rand48.c",
@@ -188,6 +194,7 @@ bsd_component_archive(name = "random_archive", groups = [":random_objects"])
 bsd_component_archive(name = "random_pic_archive", groups = [":random_objects"], pic = True, visibility = ["//lib/libc:__pkg__", "//lib/libc/tests/gen:__pkg__"])
 
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "system_helper_objects",
     srcs = [
         "__xuname.c",
@@ -272,6 +279,7 @@ bsd_component_archive(name = "system_helpers_archive", groups = [":system_helper
 bsd_component_archive(name = "system_helpers_pic_archive", groups = [":system_helper_objects"], pic = True)
 
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "support_objects",
     srcs = [
         "__pthread_mutex_init_calloc_cb_stub.c",
@@ -316,6 +324,7 @@ bsd_component_archive(name = "support_archive", groups = [":support_objects"])
 bsd_component_archive(name = "support_pic_archive", groups = [":support_objects"], pic = True)
 
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "loader_import_objects",
     srcs = ["dlfcn.c", "tls.c", "sysconf.c", "unvis-compat.c",
             "//contrib/libc-vis:vis.c", "//contrib/libc-vis:unvis.c", "//contrib/libc-pwcache:pwcache.c"],
@@ -334,6 +343,7 @@ bsd_component_archive(name = "loader_import_archive", groups = [":loader_import_
 bsd_component_archive(name = "loader_import_pic_archive", groups = [":loader_import_objects"], pic = True)
 
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "account_objects",
     srcs = ["getgrent.c", "getgrouplist.c", "getnetgrent.c", "getpwent.c", "initgroups.c"],
     hdrs = ["gen-compat.h", "pw_scan.h"],

@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
-cc_library(name = "relocation_input", textual_hdrs = ["amd64/reloc.c"], strip_include_prefix = "amd64")
+cc_library(features = LIBC_VARIANT_FEATURES, name = "relocation_input", textual_hdrs = ["amd64/reloc.c"], strip_include_prefix = "amd64")
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "objects",
     srcs = ['libc_start1.c'],
     implementation_deps = ['//lib/libc/include:rt_private_headers', ':relocation_input'],

@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'stdlib_objects',
     srcs = ['_Exit.c', 'a64l.c', 'abort.c', 'abs.c', 'atexit.c', 'atof.c', 'atoi.c', 'atol.c', 'atoll.c', 'bsearch.c', 'bsearch_b.c', 'bsearch_s.c', 'cxa_thread_atexit.c', 'cxa_thread_atexit_impl.c', 'exit.c', 'getenv.c', 'getopt.c', 'getopt_long.c', 'getsubopt.c', 'hcreate.c', 'hcreate_r.c', 'hdestroy_r.c', 'heapsort.c', 'heapsort_b.c', 'hsearch_r.c', 'imaxabs.c', 'imaxdiv.c', 'insque.c', 'l64a.c', 'labs.c', 'llabs.c', 'lsearch.c', 'memalignment.c', 'merge.c', 'mergesort_b.c', 'ptsname.c', 'qsort_r.c', 'qsort_r_compat.c', 'qsort_s.c', 'quick_exit.c', 'radixsort.c', 'rand.c', 'random.c', 'reallocarray.c', 'reallocf.c', 'realpath.c', 'recallocarray.c', 'remque.c', 'set_constraint_handler_s.c', 'strfmon.c', 'strfrom.c', 'strfromd.c', 'strfromf.c', 'strfroml.c', 'strtoimax.c', 'strtol.c', 'strtold.c', 'strtoll.c', 'strtoq.c', 'strtoul.c', 'strtonum.c', 'strtoull.c', 'strtoumax.c', 'strtouq.c', 'system.c', 'tdelete.c', 'tdestroy.c', 'tfind.c', 'tsearch.c', 'twalk.c', 'atexit.h', 'hsearch.h', 'random.h', 'strfrom.h', 'tsearch_path.h', '//lib/libc/stdio:floatio.h'],
     textual_hdrs = ["bsearch.c", "heapsort.c", "merge.c", "qsort.c"],
@@ -13,6 +15,7 @@ cc_library(
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'qsort_objects',
     srcs = ['qsort.c', 'atexit.h', 'hsearch.h', 'random.h', 'strfrom.h', 'tsearch_path.h', '//lib/libc/stdio:floatio.h'],
     textual_hdrs = ["bsearch.c", "heapsort.c", "merge.c", "qsort.c"],
@@ -24,6 +27,7 @@ cc_library(
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'division_objects',
     srcs = ['atexit.h', 'hsearch.h', 'random.h', 'strfrom.h', 'tsearch_path.h', '//lib/libc/stdio:floatio.h'] + select({"//tools/build/bazel/config:machdep_optimizations_enabled": ["//lib/libc/amd64/stdlib:div.S", "//lib/libc/amd64/stdlib:ldiv.S", "//lib/libc/amd64/stdlib:lldiv.S"], "//conditions:default": ["div.c", "ldiv.c", "lldiv.c"]}),
     textual_hdrs = ["bsearch.c", "heapsort.c", "merge.c", "qsort.c"],

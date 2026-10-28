@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 
 # libc object group; qualification archives are not independently installed.
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "isc_objects",
     srcs = ['ev_streams.c', 'ev_timers.c', 'eventlib_p.h'],
     implementation_deps = ["//lib/libc/include:resolver_port_headers"],

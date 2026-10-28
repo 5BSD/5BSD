@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "rpc_com_headers",
     hdrs = ["rpc_com.h"],
     strip_include_prefix = ".",
@@ -14,10 +16,11 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
     rpcgen = "//usr.bin/rpcgen:rpcgen", cpp = "@bsd_sdk//toolchain:bin/cpp",
     compiler_inputs = "@bsd_sdk//toolchain:compile_inputs", runtime = ["@bsd_sdk//toolchain:cpp_runtime"])
  for output, mode in [("crypt.h", "-h"), ("crypt_clnt.c", "-l"), ("crypt_xdr.c", "-c")]]
-cc_library(name = "private_headers", hdrs = ["mt_misc.h", ":crypt.h"], strip_include_prefix = ".")
+cc_library(features = LIBC_VARIANT_FEATURES, name = "private_headers", hdrs = ["mt_misc.h", ":crypt.h"], strip_include_prefix = ".")
 
 # Complete RPC object inventory from the maintained libc component.
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "rpc_objects",
     srcs = [
         "auth_none.c",

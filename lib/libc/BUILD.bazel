@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 exports_files(["Versions.def"], visibility = ["//lib/libsys:__pkg__", "//lib/libusb:__pkg__", "//lib/libthr:__pkg__", "//lib/libmixer:__pkg__", "//lib/msun:__pkg__", "//lib/libmd:__pkg__", "//lib/libutil:__pkg__", "//lib/libprocstat:__pkg__", "//lib/librt:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
@@ -10,7 +11,7 @@ bsd_dtrace_header(name = "nameres_provider", source = "nameres_provider.d", outp
     linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
     drti = "//cddl/lib/drti:drti", runtime_libraries = ["//cddl/usr.sbin/dtrace:bootstrap_runtime"],
     tool_inputs = ["@bsd_sdk//toolchain:compile_inputs", "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
-cc_library(name = "nameres_provider_headers", hdrs = [":nameres_provider"], strip_include_prefix = ".",
+cc_library(features = LIBC_VARIANT_FEATURES, name = "nameres_provider_headers", hdrs = [":nameres_provider"], strip_include_prefix = ".",
     visibility = ["//lib/libc/resolv:__pkg__", "//lib/libc/net:__pkg__", "//lib/libc/include:__pkg__"])
 
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
@@ -42,7 +43,7 @@ bsd_install_archive(
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
 
-load(":composition.bzl", "COMMON_GROUPS", "TRACE_GROUPS", "STATIC_GROUPS", "SHARED_GROUPS")
+load(":composition.bzl", "COMMON_GROUPS", "TRACE_GROUPS", "STATIC_GROUPS", "SHARED_GROUPS", "NOSSP_GROUPS")
 load("@rules_cc//cc:defs.bzl", "cc_import", "cc_shared_library")
 load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_cc_objects")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
@@ -101,7 +102,7 @@ bsd_program_test(name = "static_runtime_test", program = ":static_runtime_probe"
     runner = "//tools/build/bazel:program_test_runner", size = "small")
 
 # Shared consumers need the nonshared public wrappers as well as the DSO.
-cc_library(name = "shared_link_interface", deps = [":shared_link_objects", "//lib/libc_nonshared:nonshared"],
+cc_library(features = LIBC_VARIANT_FEATURES, name = "shared_link_interface", deps = [":shared_link_objects", "//lib/libc_nonshared:nonshared"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_template.bzl", libc_link_template = "bsd_template")
@@ -172,3 +173,17 @@ bsd_install_archive(name = "install_archive",
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
     visibility = ["//visibility:public"])
+
+# Build-only PIC archive used by rtld; never substitute the SSP-enabled archive.
+load(":nossp.bzl", "libc_nossp_archive")
+bsd_component_archive(name = "nossp_objects_archive", groups = COMMON_GROUPS + NOSSP_GROUPS + _TRACE_LINK, pic = True,
+    visibility = ["//visibility:private"])
+libc_nossp_archive(name = "nossp_pic_archive", archive = ":nossp_objects_archive",
+    visibility = ["//libexec/rtld-elf:__pkg__"])
+
+# Internal archive variant, selected by nossp_pic_archive's transition.
+load("@bazel_skylib//rules:common_settings.bzl", "bool_setting")
+bool_setting(name = "nossp", build_setting_default = False,
+    visibility = ["//lib/libc:__subpackages__"])
+config_setting(name = "nossp_enabled", flag_values = {":nossp": "true"},
+    visibility = ["//lib/libc:__subpackages__"])

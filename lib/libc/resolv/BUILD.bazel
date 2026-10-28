@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 _TRACE = "//tools/build/bazel/config:dtrace_enabled"
 # Raw libc compilation objects. Final DOF rewriting must process the combined
 # libc groups once, retaining the shared provider and its static archive anchor.
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "resolv_objects",
     srcs = ['herror.c', 'h_errno.c', 'mtctxres.c', 'res_comp.c', 'res_data.c', 'res_debug.c', 'res_findzonecut.c', 'res_init.c', 'res_mkquery.c', 'res_mkupdate.c', 'res_query.c', 'res_send.c', 'res_state.c', 'res_update.c', 'res_private.h', 'res_debug.h', 'nameres_trace.h'],
     implementation_deps = ["//lib/libc/include:resolver_private_headers", "//lib/libc/net:resolver_config_headers"] +
@@ -22,5 +24,5 @@ bsd_component_archive(name = "objects_archive", groups = [":resolv_objects"])
 bsd_component_archive(name = "pic_objects_archive", groups = [":resolv_objects"], pic = True)
 exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
 
-cc_library(name = "net_private_headers", hdrs = ["res_private.h", "nameres_trace.h"], strip_include_prefix = ".",
+cc_library(features = LIBC_VARIANT_FEATURES, name = "net_private_headers", hdrs = ["res_private.h", "nameres_trace.h"], strip_include_prefix = ".",
     visibility = ["//lib/libc/net:__pkg__"])

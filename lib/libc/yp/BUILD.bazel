@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_rpcgen.bzl", "bsd_rpcgen")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
@@ -19,12 +20,14 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 ) for output, mode in [("yp.h", "-h"), ("yp_xdr.c", "-c")]]
 
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "protocol_headers",
     hdrs = [":yp.h"],
     include_prefix = "rpcsvc",
 )
 
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = "yp_objects",
     srcs = ["xdryp.c", "yplib.c", ":yp_xdr.c", ":yp.h"],
     implementation_deps = [":protocol_headers", "//lib/libc/include:yp_private_headers"],

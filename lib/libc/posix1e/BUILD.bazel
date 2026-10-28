@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 exports_files(["mac.conf"], visibility = ["//lib/libc:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 # Compile the same kernel ACL source in its userland mode, without a copied fork.
-cc_library(name = "posix1e_objects",
+cc_library(features = LIBC_VARIANT_FEATURES, name = "posix1e_objects",
     srcs = ['acl_branding.c', 'acl_calc_mask.c', 'acl_cmp_np.c', 'acl_compat.c', 'acl_copy.c', 'acl_delete.c', 'acl_delete_entry.c', 'acl_entry.c', 'acl_equiv_mode_np.c', 'acl_extended_file_np.c', 'acl_flag.c', 'acl_free.c', 'acl_from_mode_np.c', 'acl_from_text.c', 'acl_from_text_nfs4.c', 'acl_get.c', 'acl_id_to_name.c', 'acl_init.c', 'acl_perm.c', 'acl_set.c', 'acl_strip.c', 'acl_support.c', 'acl_support_nfs4.c', 'acl_to_text.c', 'acl_to_text_nfs4.c', 'acl_valid.c', 'extattr.c', 'mac.c', 'mac_exec.c', 'mac_get.c', 'mac_set.c', 'acl_support.h', '//sys/kern:subr_acl_nfs4.c'],
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
     local_defines = ["_ACL_PRIVATE", "_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] +

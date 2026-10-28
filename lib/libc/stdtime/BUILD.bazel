@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
-cc_library(name = "localedef_headers", hdrs = ["timelocal.h"],
+cc_library(features = LIBC_VARIANT_FEATURES, name = "localedef_headers", hdrs = ["timelocal.h"],
     strip_include_prefix = ".", deps = ["//lib/libc/locale:localedef_headers"],
     visibility = ["//usr.bin/localedef:__pkg__"])
 
@@ -8,6 +9,7 @@ exports_files(["timelocal.h"], visibility = ["//lib/libc/locale:__pkg__"])
 
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'time_objects',
     srcs = ['//contrib/tzcode:asctime.c', '//contrib/tzcode:difftime.c', 'strftime.c', 'strptime.c', 'timelocal.c', 'timelocal.h'],
     implementation_deps = ["//contrib/tzcode:headers", "//lib/libc/include:rt_private_headers", "//lib/libc/locale:stdtime_headers"],
@@ -18,6 +20,7 @@ cc_library(
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'localtime_objects',
     srcs = ['//contrib/tzcode:localtime.c'],
     implementation_deps = ["//contrib/tzcode:headers", "//lib/libc/include:rt_private_headers", "//lib/libc/locale:stdtime_headers"],
@@ -28,6 +31,7 @@ cc_library(
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'time32_objects',
     srcs = ['time32.c'],
     implementation_deps = ["//contrib/tzcode:headers", "//lib/libc/include:rt_private_headers", "//lib/libc/locale:stdtime_headers"],

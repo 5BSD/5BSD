@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'objects',
     srcs = ['fgets_chk.c', 'memcpy_chk.c', 'memmove_chk.c', 'mempcpy_chk.c', 'memset_chk.c', 'stpcpy_chk.c', 'stpncpy_chk.c', 'strcat_chk.c', 'strcpy_chk.c', 'strlcat_chk.c', 'strncat_chk.c', 'strlcpy_chk.c', 'strncpy_chk.c', 'stack_protector_compat.c'],
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
@@ -12,6 +14,7 @@ cc_library(
     visibility = ["//lib/libc:__pkg__"],
 )
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'format_objects',
     srcs = ['snprintf_chk.c', 'sprintf_chk.c', 'vsnprintf_chk.c', 'vsprintf_chk.c'],
     implementation_deps = ["//lib/libc/include:rt_private_headers"],
@@ -23,6 +26,7 @@ cc_library(
 )
 # libc/Makefile excludes this implementation from SSP instrumentation.
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'stack_protector_objects',
     srcs = ["libc_stack_protector.c"],
     implementation_deps = ["//lib/libc/include:rt_private_headers"],

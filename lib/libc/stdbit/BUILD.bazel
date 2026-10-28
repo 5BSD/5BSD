@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 cc_library(
+    features = LIBC_VARIANT_FEATURES,
     name = 'objects',
     srcs = ['stdc_bit_ceil.c', 'stdc_bit_floor.c', 'stdc_bit_width.c', 'stdc_count_ones.c', 'stdc_count_zeros.c', 'stdc_first_leading_one.c', 'stdc_first_leading_zero.c', 'stdc_first_trailing_one.c', 'stdc_first_trailing_zero.c', 'stdc_has_single_bit.c', 'stdc_leading_ones.c', 'stdc_leading_zeros.c', 'stdc_trailing_ones.c', 'stdc_trailing_zeros.c'],
     local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),

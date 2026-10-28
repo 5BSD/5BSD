@@ -6928,3 +6928,51 @@ inputs or publication behavior. No frontend change is needed for this target.
 No host installation occurred. Make remains production/default. Privileged
 iconv conversion, broader configurations, complete world/kernel/packages and
 performance qualification remain open.
+
+## 2026-10-28: native libc NOSSP PIC archive for rtld
+
+Added //lib/libc:nossp_pic_archive. An internal bool_setting and incoming
+configuration transition select a separate libc object graph. The existing
+cc_library rules consume LIBC_VARIANT_FEATURES, disabling the bsd_ssp toolchain
+feature only for libc; separately built dependencies retain their own policy.
+This uses Bazel's documented configuration transitions and native C++ features,
+not exported Make recipes or post-compilation rewriting. Reference:
+https://bazel.build/extending/config
+
+NOSSP source selection reuses common groups and shared syscall variants, but
+excludes SOBJS-only libc_stubs and STATICOBJS-only implementations/wrappers.
+The initial candidate incorrectly reused the complete shared inventory; its
+comparison caught the extra libc_stubs object. The next candidate disabled SSP
+through a global features transition, also changing drti. The final internal
+libc-only setting preserves Make's separately built drti policy. Both rejected
+candidates remain under bazel-libc-nossp-20261028 and its -r2 directory.
+
+Evidence: /usr/obj/usr/src/bazel-libc-nossp-20261028-r3/qualification/object-comparison.json.
+All 1442 object members map to the independent Make NOSSP archive; every mapped
+member's executable sections match byte-for-byte. Global and undefined symbol
+multisets match after normalizing DTrace path IDs. Stack-protector imports match
+Make: drti retains its instrumentation and the compatibility wrapper explicitly
+calls __stack_chk_fail. Do not describe the entire archive as lacking all SSP
+symbols. Member aliases from gdtoa/jemalloc/cancellation sources are accounted
+for; the two div.pic.o basenames are distinguished without dropping a member.
+This check does not claim full ELF/debug bytes or relocation-table equivalence.
+Reference: bazel-libc-nossp-reference-20261028/receipt.json and the independently
+compiled libc_nossp_pic.a in bazel-libc-link-make-20261028/objects/usr/src/lib/libc.
+Scripts: bazel-libc-nossp-qualification-20261028/{make-reference.py,verify.py}.
+
+Regression evidence: bazel-libc-nossp-regression-20261028/qualification/regression.json.
+The ordinary PIC archive is byte-identical to its previous qualified build;
+the NOSSP archive is byte-identical to the object-comparison candidate. Both
+maintained shared and static libc smoke tests pass through bazel-test. Reviewed
+build-bsd.c: existing explicit format-5 targets/tests suffice, with 16 jobs and
+no public option changes. This internal setting is not a new user CLI option.
+Scope is native amd64, NIS off, debug malloc, current supported instrumentation
+settings. Arbitrary sanitizer flags and other architectures are not qualified.
+
+The runtime linker itself still needs native source rules, its replacement libc
+code, selected syscall objects, lazy DTrace provider, linkage/install tests and
+runtime qualification. NOSSP does not finish rtld or SDK/bootstrap closure.
+Full world/kernel/packages/performance gates remain open; Make stays default.
+No host installation occurred. The full execution diagnostic for the first
+candidate was approximately 1.8 GiB; broad diagnostic disk/resource cost remains
+a performance work item, not a passed gate.
