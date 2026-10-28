@@ -1077,3 +1077,43 @@ This is compiled-object evidence, not kernel linking, linker-set retention after
 link/GC, live probe attachment, vnode execution or audit-policy qualification.
 Other runtime objects, kernel/module/package aggregation, bootstrap, runtime and
 performance gates remain open. Make remains production/default.
+
+### Kernel version input audit and producer failures (2026-10-28)
+
+The next native kernel prerequisite is vers.c. Inspection of maintained
+sys/conf/newvers.sh establishes that -r removes dynamic fields from the rendered
+version, but still reads the clock, queries Make for KERN_IDENT/CC, searches host
+VCS commands and checkout state, discovers copyright inputs, and increments a
+local version counter. Merely invoking -r in a Bazel action would not declare
+those dependencies. No native vers.c target or hermetic version action is claimed.
+
+`/usr/obj/usr/src/bazel-newvers-audit-20261028/report.json` records four successful
+-r invocations (two fresh directories, twice each) with the same actual SDK
+compiler/source and SOURCE_DATE_EPOCH=0. All output hashes match while counters
+advance from 1 to 2. Shell traces are retained. This is generator evidence only,
+not a kernel build, cross-toolchain test or performance qualification.
+
+The audit also reproduced silent success after failed Make KERN_IDENT/CC queries,
+a failed compiler that printed a version banner, and a successful compiler with
+no recognizable banner. The maintained script now checks each producer status
+before using its output. tools/build/bazel/newvers-errors-test.py exercises those
+four errors and a successful fixture. All four errors failed the assertions
+before the fix and pass afterward; the positive case passes. These are direct
+host Python regression checks, not registered Bazel tests. A separate comparison
+using the actual SDK compiler proves unchanged successful vers.c bytes between
+the old and fixed script (successful-output-parity.json). Existing output is not
+removed on a failed regeneration; callers must honor failure. Counter creation
+still occurs before these checks, so this is not an atomic publication change.
+
+Next: introduce a maintained explicit-input generation path shared with Make,
+with declared copyright/template/param inputs, configured kernel identity,
+compiler identity from the selected execution toolchain, and explicit source
+revision/dirty provenance. Avoid substituting a fake Make executable or omitting
+provenance to obtain cache hits. Separate reproducible inputs from optional
+stamped build identity; qualify changes and no-op rebuilds before native vers.o.
+The existing userland newvers -v early exit is unchanged. Frontend review finds
+no new user-facing input in this failure-handling fix: build-bsd's maintained
+Make backend already propagates a failed recipe. Explicit kernel version inputs
+will require frontend/configuration documentation when implemented. Make remains
+production/default; complete world/kernel/package/runtime/performance gates stay
+open. Push approval remains pending separately.

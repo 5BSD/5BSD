@@ -213,8 +213,18 @@ if [ -n "$SOURCE_DATE_EPOCH" ]; then
 else
 	t=$(date)
 fi
-i=$(${MAKE:-make} -V KERN_IDENT)
-compiler_v=$($(${MAKE:-make} -V CC) -v 2>&1 | grep -w 'version')
+i=$(${MAKE:-make} -V KERN_IDENT) || exit 1
+cc=$(${MAKE:-make} -V CC) || exit 1
+# Capture the compiler status before filtering its banner. A pipeline would
+# otherwise accept a failed compiler that happened to print "version".
+if ! compiler_output=$(${cc} -v 2>&1); then
+	printf '%s\n' "$compiler_output" >&2
+	exit 1
+fi
+if ! compiler_v=$(printf '%s\n' "$compiler_output" | grep -w 'version'); then
+	echo "Cannot determine compiler version" >&2
+	exit 1
+fi
 
 for dir in /usr/bin /usr/local/bin; do
 	if [ ! -z "${svnversion}" ] ; then
