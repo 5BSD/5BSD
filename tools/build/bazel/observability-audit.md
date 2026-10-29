@@ -5831,3 +5831,9 @@ Native migration preserves the formatting CLI and library calls. Focused CLI
 source inspection found no direct DTrace/SDT or audit submission hooks. No new
 privileged boundary or instrumentation is introduced. Format/error/locale tests
 remain pending; successful linking to libxo is not functional output proof.
+
+Xo test follow-up (2026-10-29): all eight maintained format cases are declared
+with unchanged assertions and fixtures. Recursive installation parity passes;
+the attempted text case fails in ATF startup on the incompatible host Capsicum
+ABI. Formatting/runtime behavior and observability remain unqualified by this
+attempt. No production instrumentation or authority behavior changed.

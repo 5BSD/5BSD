@@ -35245,3 +35245,30 @@ Kyuafile installation, then qualify the eight format cases with their declared
 locale/configured xo input. Those are not covered by this program-only run.
 Frontend review: format-5 target/artifact handling already covers this target;
 no build-bsd C/protocol/manual change is needed. Make remains production/default.
+
+### 2026-10-29 xo recursive test installation and native declarations
+
+Added the maintained functional_test wrapper, unchanged executable xo_01 script,
+all sixteen selected output/error fixtures and Kyuafile. Recursive target
+//usr.bin/xo:installation_archives includes a separate tests archive when tests
+are enabled. All eight format cases have native ATF declarations with explicit
+locale data and usr.bin.xo.test_xo bound to the native CLI, preserving the test
+body and expected outputs.
+
+/usr/obj/usr/src/bazel-xo-tests-20261029 passes recursive installation comparison
+with fresh rootless Make at bazel-xo-tests-reference-20261029: 25 distinct metadata
+records, 20 exact non-ELF payloads and one program/debug ELF pair. Scripts and
+reports: bazel-xo-tests-qualification-20261029 (r4-installation-parity.json and
+r4-elf-parity.json; inherited report naming only, not four xo attempts).
+
+Runtime attempt bazel-xo-runtime-20261029 builds native_T but fails during ATF
+startup with cap_rights_is_valid(src), before the test body. Failure reports are
+retained under failure-test-reports. This matches the already diagnosed host
+Capsicum ABI mismatch. None of the eight cases is runtime-qualified here; a
+matching-kernel replay remains required. No host-library substitution, weakened
+assertion, expected-output regeneration or automatic skip was introduced.
+
+Frontend review: existing format-5 targets/tests/settings and failure report
+capture cover these additions; no C/protocol/manual change is needed. Make stays
+production/default. The next userland work can proceed independently of this
+open runtime gate; whole-system completion remains unproven.

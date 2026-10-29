@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+bsd_script_wrapper(name = "functional_test", body = "functional_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+# Make's .sh suffix rule copies this script unchanged and makes it executable.
+copy_file(name = "fixture_script", src = "//contrib/libxo:tests/xo/xo_01.sh", out = "xo_01", is_executable = True)
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["functional_test"], interfaces = {"functional_test": "atf"})
+_FORMATS = ['H', 'HIPx', 'HP', 'J', 'JP', 'T', 'X', 'XP']
+_FIXTURES = ['xo_01.H.err', 'xo_01.H.out', 'xo_01.HIPx.err', 'xo_01.HIPx.out', 'xo_01.HP.err', 'xo_01.HP.out', 'xo_01.J.err', 'xo_01.J.out', 'xo_01.JP.err', 'xo_01.JP.out', 'xo_01.T.err', 'xo_01.T.out', 'xo_01.X.err', 'xo_01.X.out', 'xo_01.XP.err', 'xo_01.XP.out']
+_FILES = [("functional_test", ":functional_test", "0555"), ("xo_01", ":fixture_script", "0555"), ("Kyuafile", ":kyuafile", "0444")] + [(n, "//contrib/libxo:tests/xo/saved/" + n, "0444") for n in _FIXTURES]
+[bsd_install_file(name = "install_" + n, src = label, destination = "/usr/tests/usr.bin/xo/" + n,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=tests"]) for n, label, mode in _FILES]
+bsd_install_manifest(name = "install_manifest", entries = [":install_" + n for n, label, mode in _FILES])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin:__subpackages__"],
+    manifests = [":install_manifest"],
+    directories = {"/usr/tests/usr.bin/xo": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+_TOOLS = ["//bin/sh:sh", "//bin/cat:cat", "//bin/rm:rm", "//bin/test:test", "//usr.bin/env:env", "//usr.bin/find:find",
+    "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/grep:grep", "//usr.bin/sed:sed", "//usr.bin/diff:diff",
+    "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//usr.bin/xo:xo"]
+_LIBS = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libutil:util_shared"]
+[bsd_atf_test(name = "native_" + fmt, case_name = "xo_01__" + fmt, body = "functional_test.sh",
+    subr = "//libexec/atf/atf-sh:shell_library", runner = "//tools/build/bazel:atf_runner",
+    config_files = {"//usr.bin/xo:xo": "usr.bin.xo.test_xo"},
+    runtime_bin = _TOOLS, runtime_lib = _LIBS,
+    data = [":fixture_script"] + ["//contrib/libxo:tests/xo/saved/" + n for n in _FIXTURES],
+    locale_files = {"//share/ctypedef:C.UTF-8": "en_US.UTF-8/LC_CTYPE", "//share/colldef_unicode:en_US.UTF-8": "en_US.UTF-8/LC_COLLATE", "//share/monetdef_unicode:en_US.UTF-8": "en_US.UTF-8/LC_MONETARY", "//share/msgdef_unicode:en_US.UTF-8": "en_US.UTF-8/LC_MESSAGES", "//share/numericdef_unicode:en_US.UTF-8": "en_US.UTF-8/LC_NUMERIC", "//share/timedef:en_US.UTF-8": "en_US.UTF-8/LC_TIME"},
+    size = "small") for fmt in _FORMATS]
+test_suite(name = "tests", tests = [":native_" + fmt for fmt in _FORMATS], visibility = ["//visibility:public"])
