@@ -15042,3 +15042,30 @@ RPC remain qualification work. Reviewed build-bsd.c/source_graph.py: current
 explicit target selection supports this addition without contract changes.
 Make stays production/default; SDK bootstrap and full world/kernel/pkgbase/
 sandbox/cache/performance gates remain open. No host install or service change.
+
+### Native Kerberos replication tool family (2026-10-29)
+
+Added explicit kprop, kpropd (including kpropd_rpc.c) and kproplog program and
+manual/debug installation targets, matching their individual Make library lists.
+Added the kprop_util PIE variant while retaining its ordinary archive. Shared
+utility dependencies use native libutil; existing tracing configuration remains
+selected through that library's maintained target.
+
+Run bazel-kprop-family-20261029 completes all seven binary/archive targets.
+Fresh Make installation comparisons pass:
+- kprop: 5 install records; 67 symbols for /usr/libexec/kprop, 74 symbols for /usr/lib/debug/usr/libexec/kprop.debug.
+- kpropd: 5 install records; 126 symbols for /usr/libexec/kpropd, 137 symbols for /usr/lib/debug/usr/libexec/kpropd.debug.
+- kproplog: 5 install records; 41 symbols for /usr/libexec/kproplog, 45 symbols for /usr/lib/debug/usr/libexec/kproplog.debug.
+
+Checks include destination/ownership/mode/tags, dynamic dependencies/PIE flags,
+debuglink CRC and byte-identical manuals. The support PIE archive matches one
+ordered member and nine global/weak symbol records. Per-program evidence is
+under /usr/obj/usr/src/bazel-{kprop,kpropd,kproplog}-reference-20261029; shared
+selection/PIE evidence is under bazel-kprop-family-reference-20261029.
+
+No runtime tests were selected or replication daemons started. Authenticated
+full/incremental replication, log inspection/reset behavior, ACL denials and
+recovery remain qualification work. Reviewed build-bsd.c/source_graph.py: current
+explicit target inputs support the family without contract changes. SDK bootstrap
+and whole-world/kernel/pkgbase/sandbox/cache/performance gates remain open.
+Make stays production/default; no host installation, publication or replication.

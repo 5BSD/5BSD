@@ -6933,3 +6933,11 @@ The native target retains server_stubs.c request logging through krb5_klog_syslo
 and the ACL/self authorization and password-change sources. Build/install parity
 does not establish OS audit integration or successful delivery of request logs.
 Remote authorization, denial and logging runtime tests remain outstanding.
+
+### kprop, kpropd and kproplog (2026-10-29)
+
+Native build/install parity passes. kpropd retains syslog connection, resync,
+permission-denial and failure reporting. No DTrace/SDT or explicit audit hook
+was found in the three entry-point source scans. Native libutil selection is
+preserved; tracing and log delivery were not exercised. Authenticated replication
+and observability runtime coverage remain outstanding.
