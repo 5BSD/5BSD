@@ -6619,3 +6619,12 @@ non-debug relocations. GCRT source selection is retained, but profiling startup
 has not been executed. C/C++ static smoke cases pass. This is not a DTrace/audit
 runtime qualification; full csu constructor/destructor and startup-mode tests
 remain necessary. No runtime source or instrumentation hooks changed.
+
+### Static csu initialization/finalization tests (2026-10-29)
+
+Eight existing ATF cases now pass with native startup objects under ordinary
+rules_cc links. Covers C/C++ construction/destruction, preinit/init ordering,
+fini arrays and the static DSO handle. Source fixtures are unchanged. No new
+DTrace or audit hooks; dynamic/DSO/GCRT behavior remains unqualified. The tests'
+fork failure branches remain as upstream source; this run does not exercise
+resource-exhaustion behavior.

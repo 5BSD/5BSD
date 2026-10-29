@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_PROGRAMS = {
+    "init_test": ("init_test.c", ["ctors_test", "preinit_array_test", "init_array_test"]),
+    "fini_test": ("fini_test.c", ["dtors_test", "fini_array_test", "dso_handle_test"]),
+    "cxx_constructors": ("cxx_constructors.cc", ["cxx_constructor", "cxx_destructor"]),
+}
+[cc_binary(name = "static_" + name, srcs = [spec[0]],
+    deps = ["//lib/csu/amd64:startup", "//lib/csu/amd64:arch_header",
+        "//lib/atf/libatf-c:atf_c"] + (["//lib/atf/libatf-c++:atf_cxx"] if name == "cxx_constructors" else []),
+    copts = ["-fno-pie"] + (["-nostdinc++"] if name == "cxx_constructors" else []), linkopts = ["-static"],
+    linkstatic = True, testonly = True, target_compatible_with = _PLATFORM)
+ for name, spec in _PROGRAMS.items()]
+[bsd_atf_test(name = "static_" + case, case_name = case,
+    interface = "program", body = ":static_" + name,
+    runner = "//tools/build/bazel:atf_runner", size = "small",
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+ for name, spec in _PROGRAMS.items() for case in spec[1]]
+test_suite(name = "static_tests", tests = [":static_" + case for spec in _PROGRAMS.values() for case in spec[1]],
+    visibility = ["//visibility:public"])

@@ -7,7 +7,7 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 _FLAGS = ["-fno-omit-frame-pointer", "-fno-stack-protector", "-fno-pic", "-fno-pie"]
-cc_library(name = "arch_header", hdrs = ["crt.h"], strip_include_prefix = ".")
+cc_library(name = "arch_header", hdrs = ["crt.h"], strip_include_prefix = ".", visibility = ["//lib/csu/tests:__pkg__"])
 # Each output has its own compilation identity; shared/GCRT variants must not
 # reuse an ordinary object. The ordered partial links mirror the startup ABI.
 _SOURCES = {
@@ -61,3 +61,8 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_startup_objects.bzl", "bsd_startup_objects")
+bsd_startup_objects(name = "startup", objects = ":startup_objects",
+    required_names = [name + ".o" for name in _INSTALLED],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

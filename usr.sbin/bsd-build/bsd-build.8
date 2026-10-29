@@ -4158,3 +4158,14 @@ and
 compile and run static probes with native startup objects, compiler and linker.
 The probes retain SDK system headers and libraries. Other architectures,
 dynamic/PIE/profiling startup and independent bootstrap are not qualified here.
+
+.Pp
+.Cm //lib/csu/amd64:startup
+exposes the native objects as a CcInfo dependency for ordinary rules_cc links.
+The individual
+.Cm //lib/csu/tests:static_*
+ATF case targets exercise the existing static constructor, initialization,
+finalization, destructor and DSO-handle tests. Select explicit case labels in
+format-5 targets and tests. The static_tests suite groups these eight cases for
+direct Bazel use. These tests retain the prepared SDK compiler/system libraries;
+dynamic, PIE, DSO and profiling startup remain separate qualification work.

@@ -38506,3 +38506,29 @@ The full csu tests and configured system graph remain to qualify. Make remains
 production/default. No host installation, upgrade, reboot or publication.
 Frontend review: build-bsd.c/format-5 source_graph.py already accept these explicit
 targets and tests; no CLI/schema change needed. Manual and audit updated.
+
+### Maintained static csu tests through rules_cc (2026-10-29)
+
+Added //lib/csu/amd64:startup, a CcInfo adapter exposing declared native startup
+objects through the compiler driver's -B interface. Ordinary cc_binary consumers
+receive startup artifacts as linker additional_inputs; filename/directory and
+required-object validation runs during analysis. This avoids separate compilation
+or link logic for test programs. The existing compiler-probe targets remain.
+
+Added all eight existing static cases from lib/csu/tests/init_test.c, fini_test.c
+and cxx_constructors.cc through the maintained ATF runner. Qualification
+bazel-csu-static-tests-20261029-r2 reports eight passed cases, no skips: .ctors,
+preinit/init ordering, .dtors, .fini_array, __dso_handle, and C++ construction and
+destruction. All three test programs use normal rules_cc builds and native ATF;
+C++ uses declared native libc++ headers/libraries. Initial C++ build failure from
+mixed default/native headers is preserved and corrected with the existing native
+-nostdinc++ convention. Runtime source files were not changed.
+
+Saved atf-driver-check.py/atf-driver-selection.json under bazel-csu-reference-
+20261029 confirm all three compiler-driver links select native crt1/crti/
+crtbeginT/crtend/crtn. Action logs declare all ten CRT inputs. The registered
+compiler and system libraries still use the explicit prepared SDK. This does not
+qualify independent bootstrap, dynamic/PIE/DSO/GCRT startup, test installation,
+complete world/kernel/pkgbase or performance. No host installation/publication.
+Frontend review: build-bsd.c/format-5 backend accept the existing explicit target
+and test lists; no new user input contract. Manual updated; Make stays production.
