@@ -5981,3 +5981,11 @@ No explicit DTrace/SDT or direct audit calls found in contrib/lutok or
 lib/liblutok. The native ordinary/PIE libraries preserve all maintained sources.
 Lua exception translation and stack cleanup need consumer runtime coverage;
 archive parity alone does not qualify those behaviors.
+
+### 2026-10-29 SQLite
+
+No explicit DTrace/SDT or direct audit calls found in the maintained sqlite3.c
+amalgamation or lib/libsqlite3 build files. Native build preserves that source
+and uses native libthr, whose separate instrumentation is retained. SQLite
+transaction/locking/recovery behavior needs runtime tests through consumers;
+binary/installation comparisons do not qualify it.

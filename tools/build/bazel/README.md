@@ -35835,3 +35835,29 @@ native sqlite3, its own source graph/install payload and runtime qualification.
 Frontend review: existing format-5 target and artifact support handles these
 internal archives; no build-bsd.c/backend/manual interface change is needed.
 Make remains production/default; complete world/kernel/pkgbase is unfinished.
+
+### 2026-10-29 SQLite prerequisite for Kyua
+
+Added native sqlite3 compilation from the maintained amalgamation, explicit
+public headers and compile options, native libthr dependency, static archive,
+private shared library and full private development/debug installation.
+The target currently supports FreeBSD amd64; PowerPC byte-order configuration
+is not claimed. No generated amalgamation regeneration is implemented here;
+the maintained Make build also consumes the checked-in sqlite3.c.
+
+Maintained frontend /usr/obj/usr/src/bazel-sqlite3-20261029-r2 (16 jobs) matches
+fresh isolated Make reference bazel-sqlite3-reference-20261029: eight distinct
+metadata records, both exact header payloads, static member/global/undefined
+symbol inventory and one valid ELF/debug pair with matching dynamic fields and
+symbols. Reports/scripts reside in bazel-sqlite3-qualification-20261029/r2.
+Initial compilation succeeded but archive comparison detected an extra symbol:
+a one-time transcription incorrectly included a truncated PowerPC-only byte-order
+option. Removed that option from the amd64 declaration; retained initial failure
+reports and used unchanged comparison criteria for the corrected build.
+
+Frontend review: existing format-5 targets, artifact staging and private-library
+installation helpers cover this addition; no build-bsd.c/backend/manual interface
+change is required. No host installation occurred. Database transactions, locking,
+WAL/recovery, Kyua consumption, cross-target builds and performance remain
+unqualified. Structural parity does not assert instruction or runtime equivalence.
+Make remains production/default; full world/kernel/pkgbase qualification is open.

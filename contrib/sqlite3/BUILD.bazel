@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["sqlite3.c", "sqlite3.h", "sqlite3ext.h"], visibility = ["//lib/libsqlite3:__pkg__"])
+cc_library(name = "headers", hdrs = ["sqlite3.h", "sqlite3ext.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])

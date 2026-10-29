@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(
+    name = "sqlite3",
+    srcs = ["//contrib/sqlite3:sqlite3.c"],
+    deps = ["//contrib/sqlite3:headers", "//lib/libthr:thr"],
+    local_defines = ['USE_PREAD=1', 'STDC_HEADERS=1', 'HAVE_SYS_TYPES_H=1', 'HAVE_SYS_STAT_H=1', 'HAVE_STDLIB_H=1', 'HAVE_STRING_H=1', 'HAVE_MEMORY_H=1', 'HAVE_STRINGS_H=1', 'HAVE_INTTYPES_H=1', 'HAVE_STDINT_H=1', 'HAVE_UNISTD_H=1', 'HAVE_DLFCN_H=1', 'HAVE_USLEEP=1', 'HAVE_LOCALTIME_R=1', 'HAVE_GMTIME_R=1', 'HAVE_DECL_STRERROR_R=1', 'HAVE_STRERROR_R=1', 'HAVE_POSIX_FALLOCATE=1', '_REENTRANT=1', 'SQLITE_THREADSAFE=1'],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":sqlite3"], visibility = ["//visibility:public"])
+cc_shared_library(
+    name = "sqlite3_shared",
+    deps = [":sqlite3"],
+    dynamic_deps = ["//lib/libthr:thr_shared"],
+    shared_lib_name = "libprivatesqlite3.so.0",
+    user_link_flags = ["-Wl,-soname,libprivatesqlite3.so.0", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    visibility = ["//visibility:public"],
+)
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Private library installation matches the maintained base payload.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libsqlite3","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
