@@ -4281,3 +4281,10 @@ patching, callback delivery or correctness of recorded tracing data.
 packages the native amd64 deadlock-detector archive. Its source inventory, archive
 members/symbols and installation metadata match a fresh Make reference. This does
 not qualify lock-order inversion detection or runtime interceptor behavior.
+
+.Pp
+.Cm //lib/libclang_rt/asan_dynamic:runtime_shared
+and its install_archive target provide the native amd64 dynamic ASan candidate,
+including split debug data and package-tagged debug directories. Native shared
+C++/math libraries are declared link-only inputs. Runtime startup ordering and
+memory-error reporting require qualification separately from static ASan.

@@ -14269,3 +14269,36 @@ library. A fresh Make reference is being prepared by asan_dynamic-make.py under
 bazel-dd-reference-20261029; its link and install contracts need inspection before
 native implementation. Directory coverage will not close runtime, option,
 architecture, bootstrap or system-wide acceptance gates.
+
+### Native dynamic ASan candidate (2026-10-29)
+
+Added asan_dynamic runtime_shared, source_inventory and installation targets.
+Common compiler-runtime object policy is shared through compiler_rt_objects;
+the dynamic target explicitly enables ASAN_DYNAMIC=1 and uses the PIC variant.
+Native libc++/libcxxrt/libm shared outputs are declared link-only cc_import inputs,
+so their compilation header paths cannot change sanitizer source compilation.
+The first attempt using full library dependencies exposed an errno header-search
+conflict; it was corrected at the compilation/link dependency boundary.
+
+The native installation uses maintained debug splitting/stripping helpers and
+explicit clang/debug package directory metadata. An initial install comparison
+found two omitted debug parent-directory records, which were added. Fresh Make
+reference is bazel-compiler-rt-asan_dynamic-make-20261029; native final candidate
+is bazel-asan-dynamic-20261029-r3. Comparison evidence and scripts are retained
+under bazel-asan-dynamic-reference-20261029. The final build and complete
+comparison pass: 77 explicit sources; eight installation records; 1936 global/weak
+symbol records in each installed library/debug file matching Make; matching
+NEEDED/SONAME/flags and verified debuglink CRC. readelf warns about the absent
+dynamic table in both split debug files; installed library dynamic metadata is
+checked separately. No runtime tests were selected.
+
+A consumer must still exercise startup/load ordering, clean execution, heap
+bounds/lifetime errors and C++ allocations using this shared runtime. Existing
+static ASan tests do not prove those properties for the dynamic library. Other
+architectures, independent bootstrap and world/kernel/pkgbase/performance gates
+remain open. All compiler-runtime directories now have native target files;
+that is source graph coverage, not complete runtime or system qualification.
+
+Frontend review: build-bsd.c and format-5 source_graph.py already accept these
+shared/install targets; no CLI/schema change. SDK compilation/system inputs
+remain. Make stays production/default; no host installation/publication.

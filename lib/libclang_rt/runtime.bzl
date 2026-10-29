@@ -15,10 +15,14 @@ _CXXOPTS = ["-std=c++17"] + _COPTS + ["-fno-rtti", "-fvisibility-inlines-hidden"
 _DEFINES = ["NDEBUG", "HAVE_RPC_XDR_H=0", "SANITIZER_SUPPORTS_WEAK_HOOKS=0", "UBSAN_CAN_USE_CXXABI"]
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 
-def compiler_rt_archive(stem, cxx_srcs, deps, asm_srcs = [], defines = [], cxxopts = [], data_files = {}, installed_headers = {}, object_order = []):
-    cc_library(name = "objects", srcs = cxx_srcs, deps = deps,
+def compiler_rt_objects(name, cxx_srcs, deps, defines = [], cxxopts = []):
+    cc_library(name = name, srcs = cxx_srcs, deps = deps,
         copts = _CXXOPTS + cxxopts, local_defines = _DEFINES + defines,
         target_compatible_with = _PLATFORM)
+
+def compiler_rt_archive(stem, cxx_srcs, deps, asm_srcs = [], defines = [], cxxopts = [], data_files = {}, installed_headers = {}, object_order = []):
+    compiler_rt_objects(name = "objects", cxx_srcs = cxx_srcs, deps = deps,
+        defines = defines, cxxopts = cxxopts)
     groups = [":objects"]
     if asm_srcs:
         cc_library(name = "assembly", srcs = asm_srcs, deps = deps,

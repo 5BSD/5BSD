@@ -6732,3 +6732,10 @@ DTrace/audit integration was added or removed.
 Native DD preserves the maintained source inventory and archive contract. Actual
 lock-order inversion reporting, clean execution and interceptor/thread behavior
 remain runtime work. No production DTrace/audit instrumentation was changed.
+
+### Dynamic ASan candidate (2026-10-29)
+
+The shared runtime retains explicit maintained sources and ASAN_DYNAMIC semantics.
+Startup ordering and memory-error reporting need a real dynamically linked
+consumer; static ASan tests are not evidence for this variant. No production
+DTrace/audit instrumentation was modified.

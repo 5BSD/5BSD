@@ -1,0 +1,119 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_shared_library", "cc_import")
+load("//lib/libclang_rt:runtime.bzl", "compiler_rt_objects")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_sources")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+cc_import(name = "cxx_link", shared_library = "//lib/libc++:cxx_shared")
+cc_import(name = "cxxrt_link", shared_library = "//lib/libcxxrt:cxxrt_shared")
+cc_import(name = "math_link", shared_library = "//lib/msun:m_shared")
+compiler_rt_objects(name = "objects", defines = ["ASAN_DYNAMIC=1"],
+    cxx_srcs = [
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_activation.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_allocator.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_debugging.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_descriptions.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_errors.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_fake_stack.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_flags.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_globals.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_interceptors.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_interceptors_memintrinsics.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_linux.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_malloc_linux.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_memory_profile.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_poisoning.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_posix.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_preinit.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_report.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_rtl.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_shadow_setup.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_stack.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_stats.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_suppressions.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_thread.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/interception:interception_linux.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/interception:interception_type_test.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/lsan:lsan_common.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sancov_flags.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_allocator.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_allocator_checks.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_allocator_report.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_chained_origin_depot.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_common.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_common_libcdep.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_coverage_libcdep_new.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_deadlock_detector1.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_dl.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_errno.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_file.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_flag_parser.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_flags.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_libc.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_libignore.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_linux.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_linux_libcdep.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_mutex.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_platform_limits_freebsd.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_posix.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_posix_libcdep.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_printf.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_procmaps_bsd.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_procmaps_common.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_range.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_stack_store.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_stackdepot.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_stacktrace.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_stacktrace_libcdep.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_stacktrace_printer.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_suppressions.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_symbolizer.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_symbolizer_libbacktrace.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_symbolizer_libcdep.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_symbolizer_markup.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_symbolizer_posix_libcdep.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_symbolizer_report.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_termination.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_thread_arg_retval.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_thread_history.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_thread_registry.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_tls_get_addr.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_type_traits.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:sanitizer_unwind_linux_libcdep.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/ubsan:ubsan_diag.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/ubsan:ubsan_flags.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/ubsan:ubsan_handlers.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/ubsan:ubsan_init.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/ubsan:ubsan_monitor.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/ubsan:ubsan_value.cpp",
+    ],
+    deps = ["//contrib/llvm-project/compiler-rt/lib/asan:headers", "//contrib/llvm-project/compiler-rt/lib/interception:headers", "//contrib/llvm-project/compiler-rt/lib/lsan:headers", "//contrib/llvm-project/compiler-rt/lib/sanitizer_common:headers", "//contrib/llvm-project/compiler-rt/lib/ubsan:headers", ":cxx_link", ":cxxrt_link", ":math_link"],
+)
+bsd_component_sources(name = "source_inventory", groups = [":objects"], visibility = ["//visibility:public"])
+cc_shared_library(name = "runtime_shared", deps = [":objects"],
+    shared_lib_name = "libclang_rt.asan-x86_64.so",
+    user_link_flags = ["-Wl,-soname,libclang_rt.asan-x86_64.so", "-Wl,-x,--fatal-warnings,--warn-shared-textrel", "-lgcc_s"],
+    visibility = ["//visibility:public"])
+bsd_debug_split(name = "debug_split", src = ":runtime_shared",
+    binary_name = "split/libclang_rt.asan-x86_64.so", debug_name = "split/libclang_rt.asan-x86_64.so.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy", objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs")
+bsd_strip_binary(name = "stripped", src = ":debug_split", output = "stripped/libclang_rt.asan-x86_64.so",
+    strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
+filegroup(name = "debug_file", srcs = [":debug_split"], output_group = "debug_files")
+bsd_install_file(name = "library_file", src = ":stripped",
+    destination = "/usr/lib/clang/21/lib/freebsd/libclang_rt.asan-x86_64.so",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clang"])
+bsd_install_file(name = "symbols_file", src = ":debug_file",
+    destination = "/usr/lib/debug/usr/lib/clang/21/lib/freebsd/libclang_rt.asan-x86_64.so.debug",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clang", "dbg"])
+bsd_install_manifest(name = "install_manifest", entries = [":library_file", ":symbols_file"], visibility = ["//visibility:public"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {d: json.encode(dict(owner = "root", group = "wheel", mode = "0755", tags = ["package=clang", "dbg"])) for d in [
+        "/usr/lib/debug/usr", "/usr/lib/debug/usr/lib", "/usr/lib/debug/usr/lib/clang", "/usr/lib/debug/usr/lib/clang/21", "/usr/lib/debug/usr/lib/clang/21/lib", "/usr/lib/debug/usr/lib/clang/21/lib/freebsd"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])
