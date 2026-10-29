@@ -11621,3 +11621,29 @@ complete compiler bootstrap. Frontend review: existing format-5 target/settings,
 artifact collection and maintained TableGen backend need no new build-bsd.c or
 manual interface. Full Clang/LLVM, world/kernel/pkgbase/runtime/cache/performance
 gates remain open; Make stays production/default. No host installation occurred.
+
+### 2026-10-29 native clang-tblgen bootstrap
+
+Added the 22-source //usr.bin/clang/clang-tblgen:bootstrap and single-source
+clangminimal support component (RISCVVIntrinsicUtils.cpp), with source headers,
+maintained LLVM assertion/debug settings and native library/runtime dependencies.
+Clang uses ncursesw as in clang.prog.mk. The first real Clang TableGen action
+produces clang/Basic/AttrList.inc with explicit AttrDocs, DeclNodes, StmtNodes and
+transitive ASTNode definitions. No staged generated definitions are imported.
+
+Maintained frontend bazel-clang-tblgen-20261029-r2 (16 jobs) succeeds in target and
+execution configurations and the sandboxed attribute generation action.
+AttrList.inc is 16,387 bytes and matches a fresh invocation of the existing Make
+bootstrap generator exactly. Evidence/scripts/reference tool hash:
+/usr/obj/usr/src/bazel-clang-tblgen-qualification-20261029. Initial failure for
+undeclared ASTNode.td is retained; adding the actual transitive input fixes it
+without relaxing sandboxing. The Make generator itself was not freshly rebuilt.
+
+This qualifies one Clang generation mode and execution path, not all diagnostics,
+architecture emitters, installed compiler metadata, compiler behavior or cross
+execution. No source files were changed. The selected sources do not consume
+CLANG_ENABLE_STATIC_ANALYZER; full Clang feature configuration remains to model
+when building components that use it. Frontend review: existing format-5 settings,
+native action backend and artifacts suffice; build-bsd.c/manual need no interface
+change. Complete compiler/world/kernel/pkgbase/bootstrap/runtime/performance gates
+remain open; Make stays production/default, with no host installation.

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = glob(["*.h"]), includes = ["."], visibility = ["//usr.bin/clang/clang-tblgen:__pkg__"])
+exports_files(["ASTTableGen.cpp", "ClangASTNodesEmitter.cpp", "ClangASTPropertiesEmitter.cpp", "ClangAttrEmitter.cpp", "ClangBuiltinTemplatesEmitter.cpp", "ClangBuiltinsEmitter.cpp", "ClangCommentCommandInfoEmitter.cpp", "ClangCommentHTMLNamedCharacterReferenceEmitter.cpp", "ClangCommentHTMLTagsEmitter.cpp", "ClangDataCollectorsEmitter.cpp", "ClangDiagnosticsEmitter.cpp", "ClangOpcodesEmitter.cpp", "ClangOpenCLBuiltinEmitter.cpp", "ClangOptionDocEmitter.cpp", "ClangSACheckersEmitter.cpp", "ClangSyntaxEmitter.cpp", "ClangTypeNodesEmitter.cpp", "MveEmitter.cpp", "NeonEmitter.cpp", "RISCVVEmitter.cpp", "SveEmitter.cpp", "TableGen.cpp"], visibility = ["//usr.bin/clang/clang-tblgen:__pkg__"])

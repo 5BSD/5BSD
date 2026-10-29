@@ -6100,3 +6100,10 @@ All 72 maintained source entries are represented. A scan of TableGen sources for
 DTRACE, SDT_PROBE and audit_submit found no matches. No instrumentation was
 removed or upstream source changed. Native runtime library dependencies retain
 their existing configured instrumentation; no tracing-session test was run.
+
+### 2026-10-29 Clang TableGen bootstrap
+
+The 22 generator sources plus RISCVVIntrinsicUtils.cpp retain their source
+behavior. DTRACE, SDT_PROBE and audit_submit scans found no matches; no probes
+were removed. This build-time code generator introduces no privileged service
+operation requiring a new audit event. Runtime tracing sessions were not tested.

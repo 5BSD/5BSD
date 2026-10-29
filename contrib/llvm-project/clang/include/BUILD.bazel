@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "support_headers", hdrs = glob(["clang/Support/*.h"]), includes = ["."], visibility = ["//visibility:public"])
+exports_files(["clang/Basic/Attr.td"], visibility = ["//usr.bin/clang/clang-tblgen:__pkg__"])
+filegroup(name = "attribute_definitions", srcs = ["clang/Basic/ASTNode.td", "clang/Basic/AttrDocs.td", "clang/Basic/DeclNodes.td", "clang/Basic/StmtNodes.td"], visibility = ["//usr.bin/clang/clang-tblgen:__pkg__"])
