@@ -15092,3 +15092,32 @@ qualification work. Reviewed build-bsd.c/source_graph.py: existing explicit targ
 selection supports the pair without contract changes. Make stays production;
 SDK bootstrap and complete world/kernel/pkgbase/sandbox/cache/performance gates
 remain open. No host installation or service configuration change occurred.
+
+### Native sample authentication programs and Make source-path fixes (2026-10-29)
+
+Added sclient, sserver, sim_client and sim_server with explicit vendor sources,
+shared sample/simple header targets, native Kerberos linkage and maintained
+program/manual/debug installation. Fresh Make exposed a stale sserver .PATH:
+it pointed to appl/simple, but the source is appl/sample/sserver. The captured
+reference fails with "don't know how to make sserver.c". Corrected that maintained
+Makefile. sim_client likewise pointed above its actual appl/simple/client source;
+corrected its source path and declared the appl/simple header include directory.
+The corrected fresh Make builds all four programs successfully.
+
+Run bazel-krb-samples-20261029 completes eight binary/archive targets. Comparisons:
+- sclient: 5 install records; 36 symbols for /usr/bin/sclient, 40 symbols for /usr/lib/debug/usr/bin/sclient.debug.
+- sserver: 5 install records; 42 symbols for /usr/sbin/sserver, 46 symbols for /usr/lib/debug/usr/sbin/sserver.debug.
+- sim_client: 4 install records; 34 symbols for /usr/bin/sim_client, 39 symbols for /usr/lib/debug/usr/bin/sim_client.debug.
+- sim_server: 4 install records; 34 symbols for /usr/sbin/sim_server, 38 symbols for /usr/lib/debug/usr/sbin/sim_server.debug.
+
+Metadata, dynamic dependencies/PIE flags, debuglink CRC and installed manual bytes
+match. Evidence/verifiers are under /usr/obj/usr/src/bazel-{sclient,sserver,
+sim_client,sim_server}-reference-20261029. The initial failing sserver reference
+is retained; corrected Make installation uses bazel-sserver-make-20261029-r2.
+
+No runtime tests or sample servers were started. Authentication exchanges,
+message handling and logging remain qualification work. Reviewed build-bsd.c
+and source_graph.py: explicit native target inputs remain adequate; maintained
+Make receives the source fixes directly, without a frontend/schema change.
+Make remains production/default; SDK bootstrap and full world/kernel/pkgbase/
+sandbox/cache/performance gates remain open. No host installation or publication.

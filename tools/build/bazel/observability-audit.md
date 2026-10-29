@@ -6947,3 +6947,10 @@ and observability runtime coverage remain outstanding.
 Native artifact/install comparisons pass. Scans of gss-client.c, gss-server.c
 and gss-misc.c found no DTrace/SDT, audit or syslog hooks. Sources are unchanged.
 GSS authentication/message protection and observability runtime remain open.
+
+### Sample/simple authentication programs (2026-10-29)
+
+All four native program installations match Make. sserver retains syslog error
+reporting for sockets and authentication; source scans found no DTrace/SDT or
+explicit audit hooks in the four programs. Authentication exchange and logging
+runtime remain untested. Vendor source instrumentation is unchanged.

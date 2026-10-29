@@ -32,5 +32,5 @@ CLEANFILES+=	sserver.8
 .man.8:
 	@cp ${.ALLSRC} ${.TARGET}
 
-.PATH:	${KRB5_DIR}/appl/simple \
+.PATH:	${KRB5_DIR}/appl/sample/sserver \
 	${KRB5_DIR}/man
