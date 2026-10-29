@@ -6854,3 +6854,12 @@ Reviewed clients/klist/klist.c: no DTrace/SDT or audit hooks were found by the
 source scan. No probes were added or removed by the build conversion. Whether
 credential-cache/keytab inspection needs additional audit coverage remains a
 security-policy review; this test does not qualify network authentication.
+
+### kdestroy, kswitch and kpasswd (2026-10-29)
+
+Native binary/manual/debug installation matches fresh Make references. Source
+scans of the three clients found no DTrace/SDT or audit hooks. Build conversion
+does not add or remove instrumentation. Credential destruction, default-cache
+selection and password-change auditing deserve policy review; neither absence
+of local hooks nor artifact parity establishes behavior of library/server audit
+paths. Authenticated runtime and observability qualification remain open.

@@ -14769,3 +14769,29 @@ Reviewed build-bsd.c and source_graph.py: existing explicit target/test inputs
 support this component without a frontend or schema change. Make remains the
 production path. Independent bootstrap, full world/kernel/pkgbase, sandbox/cache
 and performance qualification remain open. No host installation or publication.
+
+### Native Kerberos cache and password clients (2026-10-29)
+
+Added explicit native kdestroy, kswitch and kpasswd program targets, vendor source
+exports, manual inputs and utility/debug installation rules. Each maintained
+Makefile has one C source and the same Kerberos/profile/support/sys dependency
+list; native targets retain that list and PIE/shared-library selection.
+
+Run bazel-krb-clients-20261029 completes all six requested binary/archive targets.
+Fresh per-program Make references and verifiers under
+/usr/obj/usr/src/bazel-{kdestroy,kswitch,kpasswd}-reference-20261029 establish:
+- kdestroy: 5 installation records; 30 symbols for /usr/bin/kdestroy, 35 symbols for /usr/lib/debug/usr/bin/kdestroy.debug.
+- kswitch: 5 installation records; 24 symbols for /usr/bin/kswitch, 28 symbols for /usr/lib/debug/usr/bin/kswitch.debug.
+- kpasswd: 5 installation records; 34 symbols for /usr/bin/kpasswd, 38 symbols for /usr/lib/debug/usr/bin/kpasswd.debug.
+
+All three comparisons pass ownership/mode/tags, destination coverage, global/weak
+symbols, dynamic dependencies/PIE flags, debuglink CRC and byte-identical manuals.
+The receipt has no requested runtime tests: this batch does not establish cache
+destruction/switching, password changes, PAM/KDC interoperability or network
+behavior. No user credentials or password services were exercised.
+
+Reviewed build-bsd.c and format-5 source_graph.py: current explicit target inputs
+cover this batch without a contract change. Make-prepared SDK and host dependencies
+remain. Full world/kernel/modules, bootstrap, pkgbase/publication, sandbox/cache
+and performance gates remain open. Make stays production/default; no host
+installation, upgrade, publication or reboot.
