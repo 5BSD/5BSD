@@ -39438,3 +39438,29 @@ cover this batch without a contract change. Make-prepared SDK and host dependenc
 remain. Full world/kernel/modules, bootstrap, pkgbase/publication, sandbox/cache
 and performance gates remain open. Make stays production/default; no host
 installation, upgrade, publication or reboot.
+
+### Native ticket clients kinit and kvno (2026-10-29)
+
+Added native kinit and kvno program/manual/debug installation targets. kinit
+includes both kinit.c and kinit_kdb.c plus extern.h and the maintained Make
+administration-server, KDB, GSS-RPC, GSSAPI, Kerberos, crypto, error, profile,
+support and sys dependency list. Its database-keytab source is retained.
+kvno uses its maintained single source and Kerberos dependency list.
+
+Run bazel-krb-ticket-clients-20261029 completes the four selected binary/archive
+targets. Fresh Make reference comparisons pass:
+- kinit: 5 installation records; 90 symbols for /usr/bin/kinit, 97 symbols for /usr/lib/debug/usr/bin/kinit.debug.
+- kvno: 5 installation records; 69 symbols for /usr/bin/kvno, 73 symbols for /usr/lib/debug/usr/bin/kvno.debug.
+
+Checks cover destination/ownership/mode/tags, global/weak symbol records,
+dynamic dependencies/PIE flags, debuglink CRC and byte-identical compressed
+manuals. Evidence and verifiers are under
+/usr/obj/usr/src/bazel-{kinit,kvno}-reference-20261029. No runtime tests were
+selected: ticket acquisition, renewal, keytab/database use, service-ticket
+requests and KDC interoperability remain unqualified by this batch.
+
+Reviewed build-bsd.c and format-5 source_graph.py; existing explicit target
+inputs support these additions without a CLI/schema change. SDK bootstrap,
+whole-world/kernel/modules, pkgbase/publication, sandbox/cache and performance
+gates remain open. Make stays production/default. No host installation,
+publication, upgrade or reboot was performed.

@@ -6863,3 +6863,11 @@ does not add or remove instrumentation. Credential destruction, default-cache
 selection and password-change auditing deserve policy review; neither absence
 of local hooks nor artifact parity establishes behavior of library/server audit
 paths. Authenticated runtime and observability qualification remain open.
+
+### kinit and kvno (2026-10-29)
+
+Native artifact/install comparisons pass. Scans of client entry-point sources
+found no DTrace/SDT or audit hooks; the conversion preserves existing sources,
+including kinit_kdb.c. Ticket acquisition/renewal and service-ticket request
+audit coverage needs review across client libraries and KDC boundaries. No
+authenticated runtime or tracing claim follows from these artifact checks.
