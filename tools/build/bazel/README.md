@@ -35762,3 +35762,31 @@ Recursive test installation and Bazel-native test registration remain to be
 migrated, as do cross-target LTO behavior, bootstrap and performance gates.
 The passing host suites do not complete those tasks. Make remains production/
 default; complete world/kernel/pkgbase/runtime qualification remains open.
+
+### 2026-10-29 bc/dc complete test installation
+
+Added the recursive calculator test payload: maintained bc_tests/dc_tests
+wrappers, plain-test Kyuafile, shared functions.sh and every fixture selected
+by the maintained Make directory patterns. The native macro runs in contrib/bc
+and uses matching nonrecursive glob patterns, so future fixtures in these groups
+are included without a hand-maintained file list. Source scripts/expectations
+are unchanged; 0755 script groups versus 0444 data groups remain explicit.
+The normal tests setting selects a separate test archive through the parent
+installation_archives target, preserving package ownership.
+
+Maintained frontend /usr/obj/usr/src/bazel-bc-tests-20261029 (16 jobs) matches
+fresh recursive rootless Make reference bazel-bc-tests-reference-20261029:
+989 distinct metadata records and 905 exact nonbinary payloads, including all
+catalogs/fixtures/wrappers/manuals and plain Kyuafile entries. Program aliases
+and one ELF/debug pair also match global/undefined symbols/dynamic fields.
+Scripts/reports are retained in bazel-bc-tests-qualification-20261029; r4 report
+names are inherited from the previous comparator, not repeated attempts.
+
+This completes this component's default tests-enabled installation comparison;
+it does not register its plain suites as native Bazel test targets. The prior
+maintained bc/dc runtime suites passed separately; this batch did not rerun them.
+Native test registration, installed-image execution, interactive/locale cases
+and performance remain open. No host installation or source fixture changes.
+Frontend review: existing tests selection and format-5 archive/artifact staging
+cover the new payload, with no build-bsd C/backend/manual change needed.
+Make remains production/default and full-system qualification is incomplete.

@@ -5956,3 +5956,11 @@ explicit DTrace/SDT or audit_submit/auditon sites. Maintained selected bc/dc
 suites pass with saved native binaries; generated/problematic cases, interactive
 history/terminal and locale coverage remain open. No runtime/security logic or
 expected test outputs changed to obtain build or suite parity.
+
+### 2026-10-29 bc/dc fixture installation follow-up
+
+Native tests-enabled installation now includes the complete maintained fixture
+patterns and both plain test wrappers, verified against Make. No production
+source, expectations, probes or audit behavior changed. Earlier host suite
+passes remain separate from native Bazel test registration and installed-image
+runtime qualification, which are still outstanding.

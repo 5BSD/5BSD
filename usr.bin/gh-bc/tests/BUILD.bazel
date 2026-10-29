@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+[copy_file(name = name, src = name + ".sh", out = name, is_executable = True) for name in ["bc_tests", "dc_tests"]]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["bc_tests", "dc_tests"], interfaces = {"bc_tests": "plain", "dc_tests": "plain"})
+[bsd_install_file(name = "install_" + name, src = label, destination = "/usr/tests/usr.bin/gh-bc/" + name,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=tests"])
+ for name, label, mode in [("bc_tests", ":bc_tests", "0555"), ("dc_tests", ":dc_tests", "0555"), ("Kyuafile", ":kyuafile", "0444")]]
+bsd_install_manifest(name = "install_manifest", entries = [":install_bc_tests", ":install_dc_tests", ":install_Kyuafile"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin:__subpackages__"],
+    manifests = [":install_manifest", "//contrib/bc:test_install_manifest"],
+    directories = {"/usr/tests/usr.bin/gh-bc" + suffix: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'
+        for suffix in ["", "/scripts", "/tests", "/tests/bc", "/tests/bc/errors", "/tests/bc/scripts", "/tests/dc", "/tests/dc/errors", "/tests/dc/scripts"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

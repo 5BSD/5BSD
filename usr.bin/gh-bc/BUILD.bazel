@@ -56,3 +56,6 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.bin/gh-bc/tests:install_archive"], "//conditions:default": []}), visibility = ["//usr.bin:__pkg__"])
