@@ -1,3 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 exports_files(['cm.h', 'cm_abi.h'], visibility = ["//lib/ofed/include:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["cm.c", "libibcm.map"], visibility = ["//lib/ofed/libibcm:__pkg__"])
+cc_library(name = "headers", hdrs = ["cm.h", "cm_abi.h"], strip_include_prefix = ".", include_prefix = "infiniband", deps = ["//contrib/ofed/libibverbs:headers", "//sys/ofed/include/uapi/rdma:cm_headers"], visibility = ["//visibility:public"])
+cc_library(name = "configuration", hdrs = ["config.h"], strip_include_prefix = ".", visibility = ["//lib/ofed/libibcm:__pkg__"])

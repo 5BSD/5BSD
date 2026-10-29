@@ -6,7 +6,7 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
     owner = "root", group = "wheel", mode = "0444", install_tags = ["package=rdma", "dev"])
  for i, (source, destination) in enumerate(OFED_HEADERS)]
 bsd_install_manifest(name = "install_manifest", entries = [":header_" + str(i) for i in range(len(OFED_HEADERS))], visibility = ["//visibility:public"])
-bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+bsd_install_archive(name = "install_archive", visibility = ["//lib/ofed:__pkg__"], manifests = [":install_manifest"],
     mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include"},
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",

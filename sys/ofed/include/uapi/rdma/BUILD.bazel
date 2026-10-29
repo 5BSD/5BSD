@@ -4,3 +4,5 @@ cc_library(name = "sa_headers", hdrs = ["ib_user_sa.h"], strip_include_prefix = 
     deps = ["//contrib/ofed/include:headers"], visibility = ["//visibility:public"])
 
 exports_files(['ib_user_cm.h', 'ib_user_sa.h', 'ib_user_verbs.h', 'rdma_user_cm.h', 'mlx4-abi.h', 'mlx5-abi.h'], visibility = ["//lib/ofed/include:__pkg__"])
+
+cc_library(name = "cm_headers", hdrs = ["ib_user_cm.h"], strip_include_prefix = ".", include_prefix = "rdma", deps = [":sa_headers"], visibility = ["//contrib/ofed/libibcm:__pkg__"])

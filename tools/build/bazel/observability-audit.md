@@ -6063,3 +6063,11 @@ No explicit SDT/DTrace or direct audit calls found in reviewed OpenSM C/lexer/
 parser sources. Native declaration preserves logging and source inventory.
 Subnet changes, QoS configuration, console commands and permission/error paths
 remain runtime and audit-review candidates. No daemon or hardware operation ran.
+
+### 2026-10-29 libibcm and OFED aggregate
+
+No explicit SDT/DTrace or direct audit calls found in reviewed libibcm sources.
+Native target retains the maintained cm.c implementation. Connection-management
+permission/error paths remain runtime/audit-review candidates. Aggregate parity
+preserves existing component sources but adds no claim about kernel probes or
+hardware behavior; no RDMA device operation was performed.

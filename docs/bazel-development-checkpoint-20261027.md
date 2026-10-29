@@ -11480,3 +11480,29 @@ Frontend review: format-5 artifacts already collects transitive output groups;
 the maintained archive backend changed in this batch, with no build-bsd.c interface
 or manual option change required. Package creation/publication was not exercised.
 Make remains production/default; full world/kernel/pkgbase/runtime gates are open.
+
+### 2026-10-29 complete OFED library/header aggregate
+
+Added native libibcm with cm.c, declared public/config headers and source
+ib_user_cm.h dependency, native ibverbs dependency, maintained symbol map and
+static/shared/debug installation. Added //lib/ofed:installation_archives covering
+all 15 maintained directories (14 libraries plus the OFED header installation).
+Granted only the OFED parent visibility to each installation archive; initial
+analysis failure identifying private leaf targets is retained.
+
+Maintained frontend bazel-ofed-libraries-20261029-r2 (16 jobs) matches fresh
+recursive Make reference bazel-ofed-libraries-reference-20261029: 318 distinct
+metadata records, 259 exact nonbinary header/manual payloads, all 14 static
+archive member/global/undefined-symbol inventories, and 14 valid shared ELF/debug
+pairs with matching symbols/dynamic fields. Verifier saves each static archive
+and its own report rather than overwriting a single-library report. Evidence:
+bazel-ofed-libraries-qualification-20261029 under /usr/obj/usr/src.
+
+Together with the earlier default/extra program aggregates, this qualifies
+recursive build/installation comparisons for the maintained OFED program/library
+subtrees. It does not qualify RDMA hardware operations, kernel drivers, runtime
+provider behavior, ports consumers or performance. No host installation occurred.
+Frontend review: current format-5 transitive output collection and maintained
+archive backend cover the aggregate; no build-bsd.c/manual interface change.
+Whole-system world/kernel/pkgbase/bootstrap/runtime/performance gates remain open;
+Make stays production/default.
