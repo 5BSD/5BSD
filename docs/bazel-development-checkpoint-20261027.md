@@ -12917,3 +12917,31 @@ open. Frontend review: build-bsd.c/format-5 backend accepts these targets with n
 input, staging, security or manual contract. Other backends and full world/kernel/
 pkgbase/runtime gates remain open. Make remains production/default; no installation
 or publication occurred.
+
+### AArch64 backend component (2026-10-29)
+
+Added native installed-world AArch64 cc_library for 77 explicit sources: 75 core
+plus disassembler/external symbolizer. Private headers/.def and native generated
+tables are declared; hidden visibility follows Make. llvm_target_aarch64 boolean
+defaults true for current native AMD64 world target-all selection; disabling makes
+explicit component incompatible. Aggregate target-all/registration and cross-platform
+defaults remain unfinished; bootstrap TOOLS_PREFIX selection remains separate.
+
+Maintained frontend `/usr/obj/usr/src/bazel-llvm-aarch64-backend-20261029` succeeds
+with 16 jobs. All 77 PIC objects match fresh Make global/weak ELF symbol type, binding,
+visibility, defined/undefined state and name. Resolved source inventories and archive
+member multiplicities match expanded Make. Evidence/scripts:
+`/usr/obj/usr/src/bazel-llvm-aarch64-backend-qualification-20261029`. Reference
+headers generated before objects using existing bootstrap tools/staged SDK. No
+compiler source or sandbox modification.
+
+These are AMD64-hosted compiler objects, not a qualified AArch64 system build or
+generated-code execution test. Full compiler linkage, independent bootstrap and
+comparative CPU/memory/disk qualification remain open, as do remaining backends and
+world/kernel/pkgbase/runtime gates. Frontend review: build-bsd.c/format-5 backend
+accepts the new setting; manual updated. Make remains production/default.
+No host installation/publication occurred.
+
+Next dependency finding: RISCV GlobalISel generators use RISCVGISel.td, which includes
+RISCV.td and RISCVCombine.td. Existing target-parser input inventory does not expose
+that entry point; backend generation must declare its additional closure explicitly.

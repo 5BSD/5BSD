@@ -6441,3 +6441,11 @@ runtime qualification. Evidence:
 tables. No source probe/audit changes. Runtime backend diagnostics, unwind/debug
 behavior and generated-code tracing/execution remain unqualified. Evidence:
 `/usr/obj/usr/src/bazel-llvm-aarch64-tables-qualification-20261029`.
+
+### AArch64 backend (2026-10-29)
+
+77 installed-world backend objects preserve upstream sources and match Make ELF
+symbol type/binding/visibility/defined state. Disassembly, external symbolization and
+code-generation sources included; no new DTrace probes/audit hooks. Runtime target
+diagnostics, unwind/debug behavior and generated-code execution/tracing remain open.
+Evidence: `/usr/obj/usr/src/bazel-llvm-aarch64-backend-qualification-20261029`.

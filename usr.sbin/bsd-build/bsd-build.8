@@ -3904,3 +3904,11 @@ which defaults to true for the current world target-all selection. Disabling it
 makes the explicit component incompatible. This selects a compiler backend,
 not a PowerPC host or a qualified cross-system build. Aggregate target selection
 and cross-platform defaults remain unfinished.
+
+.Pp
+The native AMD64-hosted LLVM AArch64 component uses the boolean
+.Cm //tools/build/bazel/config:llvm_target_aarch64 ,
+which defaults to true for current world target-all selection. Disabling it makes
+the explicit component incompatible. Installed-world sources include its disassembler
+and external symbolizer. This does not qualify an AArch64 host or cross-system build;
+aggregate target selection and cross-platform defaults remain unfinished.
