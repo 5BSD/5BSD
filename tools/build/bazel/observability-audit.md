@@ -6897,3 +6897,11 @@ Artifact/install and error-generator parity pass. A dbutil source scan found no
 DTrace/SDT or audit hooks; sources are unchanged. Database creation/destruction,
 master-key rotation and dump/restore require runtime and audit-policy review.
 No database operations or observability runtime tests were executed.
+
+### DB2 Kerberos backend (2026-10-29)
+
+The native graph retains db2_exp.c's audit_as_req callback and lockout.c's
+krb5_db2_lockout_audit implementation. These are Kerberos authentication-result/
+lockout hooks; they do not themselves prove integration with the OS audit
+subsystem. Plugin artifact/install parity passes. Loading and authentication/
+lockout behavior remain runtime qualification work. No instrumentation changed.

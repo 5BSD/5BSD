@@ -39554,3 +39554,25 @@ qualification; no database operation was run. Reviewed build-bsd.c/source_graph.
 existing target selection supports this component without contract changes.
 SDK/bootstrap and whole-system/package/sandbox/cache/performance gates remain
 open. Make stays production/default; no host installation or publication.
+
+### Native DB2 Kerberos database plugin (2026-10-29)
+
+Added explicit DB2 backend and bundled btree/db/hash/mpool/recno sources and
+headers. The two db.h/db-config.h inputs are declared Skylib copy actions, matching
+Make's template copies bytewise. The shared target preserves the maintained
+version map, db2.so.122 SONAME and private profile archive preceding shared
+Kerberos/admin/database/RPC dependencies. No host database library substitutes
+for the bundled implementation.
+
+Final run bazel-db2-install-20261029 matches fresh Make reference:
+8 installation records; 253 symbols for /usr/lib/krb5/plugins/kdb/db2.so.122, 253 symbols for /usr/lib/debug/usr/lib/krb5/plugins/kdb/db2.so.122.debug.
+Comparison also covers modes/ownership/tags, dynamic dependencies, SONAME/flags,
+plugin symlink and debuglink CRC. Installed plugin mode is 0444; the db2.so alias
+has Make's 0755 metadata. Evidence: /usr/obj/usr/src/bazel-db2-reference-20261029.
+
+No runtime tests were selected. Plugin loading, database creation/dump/restore,
+lockout behavior and crash recovery remain qualification work. Reviewed frontend
+build-bsd.c/source_graph.py: existing target inputs cover the plugin/archive with
+no contract changes. Make stays production/default; SDK bootstrap and full-world,
+kernel/pkgbase/sandbox/cache/performance gates remain open. No host installation,
+publication or database operation was performed.
