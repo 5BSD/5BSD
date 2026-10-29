@@ -16402,3 +16402,29 @@ existing CMake invocation behavior; no installed library payload was added.
 Reviewed build-bsd/source_graph existing explicit test/data handling: no interface
 change required. Whole-system/kernel/pkgbase/bootstrap and sandbox/cache/performance
 qualification remain open; Make remains production/default.
+
+### Native pkg-specific ECC internal archives (2026-10-29)
+
+Added all 83 maintained libpkgecc C inputs as explicit native source declarations,
+with source-owned public and private headers and separate ordinary/PIE variants.
+Preserved USE_WARN_UNUSED_RET, WITH_STDLIB, -fno-builtin and the five SHA symbol
+renames required by pkg compatibility. Fresh Make command inspection confirms
+its CFLAGS replacement supplies no optimization option; native -O0 preserves that
+policy rather than silently inheriting the general toolchain optimization level.
+Targets remain scoped to pkg consumers, respecting the Makefile's warning that
+this is not a general-purpose cryptographic library. No production code changed.
+
+The initial native compilation exposed missing private implementation header
+inputs; those are now explicitly declared. Run bazel-libpkgecc-20261029-r2 passes
+through build-bsd with 16 jobs. Fresh Make reference matches ordered members and
+global/weak symbols for both 83-member archives. Internal PIE member suffixes are
+explicitly normalized from Make .pieo to Bazel .o. Make install contributes zero
+payload records, as expected for INTERNALLIB. Evidence is retained under
+/usr/obj/usr/src/bazel-libpkgecc-reference-20261029/inputs.json, make.py, verify.py
+and comparison.json; first-run failure remains in bazel-libpkgecc-20261029.
+
+This closes the native archive prerequisite, not pkg bootstrap integration or
+cryptographic runtime qualification. Signature known-answer/negative tests and
+consumer runtime remain open. Existing build-bsd/source_graph explicit inputs
+support these targets without interface changes. Complete world/kernel/pkgbase,
+bootstrap, sandbox/cache and performance gates remain open; Make stays default.

@@ -7193,3 +7193,11 @@ pkg consumers. No new audit policy or claim of cryptographic validation is made.
 libder follow-up: both maintained upstream public/private key parser/construction/
 round-trip tests now pass as native Bazel tests. This does not close malformed-
 input fuzz coverage or pkg consumer signature-failure reporting.
+
+### libpkgecc (2026-10-29)
+
+Native ordinary/PIE archives preserve the maintained pkg-specific ECC sources,
+randomness shim and symbol renames. No Make-declared DTrace provider exists.
+Artifact parity is not cryptographic validation; known-answer/negative signature
+checks and pkg failure diagnostics still require consumer runtime qualification.
+No signing keys, repository state, installation or audit policy were changed.
