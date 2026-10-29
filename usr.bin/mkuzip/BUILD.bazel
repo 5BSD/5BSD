@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "mkuzip", srcs = ['mkuzip.c', 'mkuz_blockcache.c', 'mkuz_lzma.c', 'mkuz_zlib.c', 'mkuz_conveyor.c', 'mkuz_blk.c', 'mkuz_fqueue.c', 'mkuz_time.c', 'mkuz_insize.c', 'mkuz_zstd.c', 'mkuz_blk.h', 'mkuz_blk_chain.h', 'mkuz_blockcache.h', 'mkuz_cfg.h', 'mkuz_cloop.h', 'mkuz_conveyor.h', 'mkuz_format.h', 'mkuz_fqueue.h', 'mkuz_insize.h', 'mkuz_lzma.h', 'mkuz_time.h', 'mkuz_zlib.h', 'mkuz_zstd.h', 'mkuzip.h'], deps = ['//lib/liblzma:lzma', '//lib/libmd:md_link', '//lib/libz:z', '//lib/libzstd:zstd'], dynamic_deps = ['//lib/liblzma:lzma_shared', '//lib/libmd:md_shared', '//lib/libz:z_shared', '//lib/libzstd:zstd_shared'], copts = ["-fPIE", "-pthread"], linkopts = ["-pie", "-pthread"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "mkuzip", manual = "mkuzip.8", package = "utilities", man_section = "8")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

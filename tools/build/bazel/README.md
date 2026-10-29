@@ -34952,3 +34952,28 @@ and support combinations, live network/kernel queries, complete /usr/bin parent,
 world/kernel/pkgbase and performance gates remain outstanding. Frontend review:
 existing typed settings/native target handling cover the change; no C/protocol
 update required. Make remains production/default; no host installation performed.
+
+### 2026-10-29 reduced netstat and native mkuzip
+
+Qualified netstat with INET_SUPPORT, INET6_SUPPORT, NETGRAPH_SUPPORT,
+NETLINK_SUPPORT, JAIL, OFED and PF disabled together. Maintained frontend run:
+/usr/obj/usr/src/bazel-netstat-minimal-20261029. Fresh Make reference:
+bazel-netstat-minimal-reference-20261029; scripts in bazel-netstat-qualification-20261029.
+Five metadata records, exact manual bytes, valid debug linkage, symbols and
+dynamic interfaces match; direct jail/netgraph dependencies are absent as expected.
+This qualifies the default and all-disabled endpoints, not every mixed combination
+or live networking behavior.
+
+Added //usr.bin/mkuzip:install_archive with all ten maintained C sources,
+explicit headers and lzma/md/z/zstd/threading dependencies. Maintained frontend
+run (16 jobs): /usr/obj/usr/src/bazel-mkuzip-20261029. Fresh rootless Make reference:
+bazel-mkuzip-native-reference-20261029; scripts in bazel-mkuzip-qualification-20261029.
+qualification/mkuzip reports establish five matching metadata records, exact
+manual bytes, valid debug pairing, equal global/undefined symbols and matching
+dynamic dependencies/search paths. No source changes or host installation.
+Compression round trips, output image compatibility/mounting, resource/performance
+and complete /usr/bin integration remain pending.
+
+Frontend review: existing format-5 native targets/settings and metadata capture
+cover both qualifications; no C/protocol changes needed. Make stays production/
+default, and world/kernel/pkgbase/runtime/performance gates remain open.

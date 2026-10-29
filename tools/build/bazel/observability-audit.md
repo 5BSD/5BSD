@@ -5752,3 +5752,10 @@ No explicit DTRACE/SDT/audit references found in command C/header sources and no
 provider in its maintained Makefile. No instrumentation added or removed. Source
 scan does not establish kernel tracing/audit coverage; live statistics and route
 query behavior remain runtime qualification items.
+
+### 2026-10-29 mkuzip
+
+No explicit DTRACE/SDT/audit references found in local mkuzip C/header sources.
+No instrumentation or production sources changed. Compression/thread scheduling,
+image mounting, kernel tracing and audit behavior remain runtime qualification
+items; installation/ELF parity alone does not establish them.
