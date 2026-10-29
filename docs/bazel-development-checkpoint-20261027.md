@@ -15341,3 +15341,23 @@ APIs compile, but those APIs are not exercised by this consumer. Existing native
 runtime tests remain separate. No host installation occurred. This evidence-only
 check changes no build-bsd inputs or maintained backend contracts. Complete
 world/kernel/pkgbase, bootstrap, cache/sandbox and performance gates remain open.
+
+### Native lib9p library artifacts (2026-10-29)
+
+Added explicit native lib9p sources/headers, a component static archive and
+libprivate9p.so.1. Casper selection uses the existing typed casper flag;
+WITH_CASPER and the native casper/cap_pwd/cap_grp dependencies follow it.
+libsbuf is always declared. No Make parsing or SDK library substitution is used
+for these library dependencies. Current qualification covers Casper enabled.
+
+Run bazel-lib9p-20261029 passes through build-bsd with 16 jobs. Against fresh
+Make output, the static archive matches 11 ordered members and 293 global/weak
+symbol entries. The shared library matches 338 symbol entries, ordered NEEDED
+libraries, SONAME and binding flags. Evidence and verifier reside under
+/usr/obj/usr/src/bazel-lib9p-reference-20261029; private Make reference under
+bazel-lib9p-make-20261029 and bazel-lib9p-make-objects-20261029. These are artifact
+checks, not runtime, installation/debug/package or Casper-disabled qualification.
+Those component gates remain open. Existing build-bsd explicit target and typed
+config inputs support this addition without frontend/backend contract changes.
+Full world/kernel/pkgbase and independent bootstrap/performance gates remain open.
+No host installation; Make remains production/default.

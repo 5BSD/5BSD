@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_CASPER = "//tools/build/bazel/config:casper_enabled"
+cc_library(
+    name = "ninep",
+    srcs = ["//contrib/lib9p:" + source for source in [
+        "connection.c", "genacl.c", "hashtable.c", "log.c", "pack.c",
+        "request.c", "rfuncs.c", "threadpool.c", "utils.c",
+        "backend/fs.c", "transport/socket.c",
+    ]],
+    local_defines = select({_CASPER: ["WITH_CASPER"], "//conditions:default": []}),
+    deps = ["//contrib/lib9p:headers", "//lib/libsbuf:sbuf"] + select({
+        _CASPER: ["//lib/libcasper/libcasper:casper", "//lib/libcasper/services/cap_pwd:cap_pwd", "//lib/libcasper/services/cap_grp:cap_grp"],
+        "//conditions:default": [],
+    }),
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":ninep"], visibility = ["//visibility:public"])
+cc_shared_library(
+    name = "ninep_shared",
+    deps = [":ninep"],
+    dynamic_deps = ["//lib/libsbuf:sbuf_shared"] + select({
+        _CASPER: ["//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_pwd:cap_pwd_shared", "//lib/libcasper/services/cap_grp:cap_grp_shared"],
+        "//conditions:default": [],
+    }),
+    shared_lib_name = "libprivate9p.so.1",
+    user_link_flags = ["-Wl,-soname,libprivate9p.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    visibility = ["//visibility:public"],
+)

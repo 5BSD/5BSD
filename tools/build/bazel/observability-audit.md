@@ -7000,3 +7000,12 @@ The 45-archive aggregate changes build visibility and grouping only. Existing
 probe, logging and audit source coverage is unchanged. Database and TCP/keytab
 KDC tests pass in bazel-krb-aggregate-20261029-r2; this adds no OS audit, DTrace,
 replication, OTP/PKINIT or remote administration runtime qualification.
+
+### lib9p artifact migration (2026-10-29)
+
+The native target includes the maintained log.c and filesystem backend unchanged.
+log.c writes its formatted messages to a FILE stream; no dedicated DTrace provider
+or OS audit integration is declared by this library Makefile. Native Casper
+dependencies retain their own existing probe targets. Review protocol operations
+and filesystem authorization observability separately; build parity is not proof
+of audit-event delivery or 9P runtime correctness.
