@@ -5910,3 +5910,12 @@ five formats with explicit SDK libraries; host libc failure remains recorded.
 Manual-database writes, package-trigger execution and man pager/shell lookup
 remain runtime review items. Package trigger contents and application source
 policy were not modified as part of the migration.
+
+### 2026-10-29 host/drill
+
+Native targets retain all maintained DNS-client sources, resolver/crypto
+library dependencies and drill's trust-anchor default. Focused client C/header
+scan found no explicit DTrace/SDT or OS audit_submit/auditon integration.
+DNSSEC validation failures, resolver transport/timeouts and trust-anchor
+loading remain runtime/observability review items. No audit/probe hooks or
+security decisions were changed to obtain build parity.
