@@ -4132,3 +4132,12 @@ The format-5 build setting
 False retains the LLVM-named utilities and omits their default-name aliases.
 This archive is not a complete compiler, sysroot or package repository; building
 it does not install it on the host.
+
+.Pp
+.Cm //lib/clang:compiler_tools_install_archive
+combines the compiler driver, resource headers, private Clang/LLVM libraries,
+LLD, LLVM utility installations/default-name aliases, dependency scanner and
+profile-data utility. Formatting follows clang_format or clang_extras.
+It excludes debugger/optional LLVM extras, system headers, CRT/runtime and
+compiler-runtime packages. It is not a complete SDK or installed system.
+The existing compiler_install_archive retains its narrower contents.

@@ -38415,3 +38415,33 @@ boolean and target; manual updated. No host installation/publication. Cross-arch
 split-manpage variant, complete toolchain/system composition, native SDK/bootstrap,
 cache invalidation, pkgbase/publication and performance gates remain open. Make
 stays production/default.
+
+### Composed compiler/linker/utility installation (2026-10-29)
+
+Added //lib/clang:compiler_tools_install_archive, reusing the existing compiler
+manifests and composing native LLD, the LLVM utility/alias manifest, scanner and
+profile-data utility. clang-format is included only with clang_format or extras.
+The prior compiler_install_archive keeps its existing narrower contents. New
+artifact excludes debugger/optional LLVM extras, system headers/runtime/CRT and
+compiler-runtime packages; it is not a complete SDK or installed operating system.
+
+Build /usr/obj/usr/src/bazel-compiler-tools-install-20261029 with clang_format=true
+passes and produces 348 payload records. Extracted the saved archive into an
+isolated stage after matching its SHA256 to the artifact manifest. Diagnostic
+/usr/obj/usr/src/bazel-compiler-tools-runtime-20261029/check.py passes 38 commands:
+automatic resource-header and adjacent ld.lld discovery, compiler aliases, eight
+C/C++ static/dynamic compile-link-run cases using the staged native linker,
+preprocessor aliases and thirteen tool version invocations. Eleven executable
+alias resolutions are checked. Compiler/output loader checks constrain resolution
+to stage or explicit SDK runtime except the host rtld. PATH is /nonexistent.
+The CC shell wrapper is not executed outside a matching root, as before.
+
+This strengthens the prior staged compiler check by replacing its SDK linker with
+the packaged native linker. System headers/CRT/runtime still use the explicit
+Make-prepared SDK; host kernel/rtld remain in use. These staged-layout checks remain
+diagnostic scripts, not maintained Bazel installed-layout tests. No whole-system,
+independent bootstrap, cache invalidation or performance claim.
+
+Frontend review: build-bsd.c/format-5 backend already supports composed targets and
+settings; manual updated with exact artifact boundaries. Make stays production/
+default. No host installation, upgrade, reboot or publication.
