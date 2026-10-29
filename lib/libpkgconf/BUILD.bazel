@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "configuration", hdrs = ["libpkgconf/config.h"], strip_include_prefix = ".", visibility = ["//usr.bin/pkgconf:__pkg__"])
+cc_library(name = "pkgconf", srcs = ['//contrib/pkgconf:libpkgconf/argvsplit.c', '//contrib/pkgconf:libpkgconf/audit.c', '//contrib/pkgconf:libpkgconf/buffer.c', '//contrib/pkgconf:libpkgconf/bufferset.c', '//contrib/pkgconf:libpkgconf/bytecode.c', '//contrib/pkgconf:libpkgconf/bsdstubs.c', '//contrib/pkgconf:libpkgconf/cache.c', '//contrib/pkgconf:libpkgconf/client.c', '//contrib/pkgconf:libpkgconf/dependency.c', '//contrib/pkgconf:libpkgconf/fileio.c', '//contrib/pkgconf:libpkgconf/fragment.c', '//contrib/pkgconf:libpkgconf/license.c', '//contrib/pkgconf:libpkgconf/output.c', '//contrib/pkgconf:libpkgconf/parser.c', '//contrib/pkgconf:libpkgconf/path.c', '//contrib/pkgconf:libpkgconf/personality.c', '//contrib/pkgconf:libpkgconf/pkg.c', '//contrib/pkgconf:libpkgconf/queue.c', '//contrib/pkgconf:libpkgconf/tuple.c', '//contrib/pkgconf:libpkgconf/variable.c', '//contrib/pkgconf:libpkgconf/version.c'],
+    deps = ["//contrib/pkgconf:headers", ":configuration"],
+    local_defines = ["SYSTEM_INCLUDEDIR=\\\"/usr/include\\\"", "SYSTEM_LIBDIR=\\\"/usr/lib\\\""],
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":pkgconf"], visibility = ["//visibility:public"])
+cc_shared_library(name = "pkgconf_shared", deps = [":pkgconf"], shared_lib_name = "libprivatepkgconf.so.5",
+    user_link_flags = ["-Wl,-soname,libprivatepkgconf.so.5", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])

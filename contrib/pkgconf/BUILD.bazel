@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['libpkgconf/argvsplit.c', 'libpkgconf/audit.c', 'libpkgconf/buffer.c', 'libpkgconf/bufferset.c', 'libpkgconf/bytecode.c', 'libpkgconf/bsdstubs.c', 'libpkgconf/cache.c', 'libpkgconf/client.c', 'libpkgconf/dependency.c', 'libpkgconf/fileio.c', 'libpkgconf/fragment.c', 'libpkgconf/license.c', 'libpkgconf/output.c', 'libpkgconf/parser.c', 'libpkgconf/path.c', 'libpkgconf/personality.c', 'libpkgconf/pkg.c', 'libpkgconf/queue.c', 'libpkgconf/tuple.c', 'libpkgconf/variable.c', 'libpkgconf/version.c'], visibility = ["//lib/libpkgconf:__pkg__"])
+exports_files(['cli/main.c', 'cli/core.c', 'cli/getopt_long.c', 'cli/renderer-msvc.c', 'man/pkgconf.1'], visibility = ["//usr.bin/pkgconf:__pkg__"])
+cc_library(name = "headers", hdrs = ['libpkgconf/bsdstubs.h', 'libpkgconf/iter.h', 'libpkgconf/libpkgconf-api.h', 'libpkgconf/libpkgconf.h', 'libpkgconf/path.h', 'libpkgconf/stdinc.h', 'libpkgconf/win-dirent.h'], strip_include_prefix = ".", visibility = ["//lib/libpkgconf:__pkg__", "//usr.bin/pkgconf:__pkg__"])
+cc_library(name = "cli_headers", hdrs = ['cli/core.h', 'cli/getopt_long.h', 'cli/renderer-msvc.h'], strip_include_prefix = "cli", visibility = ["//usr.bin/pkgconf:__pkg__"])

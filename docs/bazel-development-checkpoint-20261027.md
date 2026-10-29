@@ -10591,3 +10591,33 @@ Frontend review: existing format-5 targets/tests/settings and failure report
 capture cover these additions; no C/protocol/manual change is needed. Make stays
 production/default. The next userland work can proceed independently of this
 open runtime gate; whole-system completion remains unproven.
+
+### 2026-10-29 pkgconf native library build and CLI installation
+
+Added all 21 maintained libpkgconf C sources, explicit public/internal headers
+and maintained configuration header, plus native static/shared build targets.
+The shared name remains libprivatepkgconf.so.5 (PRIVATELIB and lib/Makefile.inc
+version). Added pkgconf's four CLI sources, native library dependency, section-1
+manual, pkgconf package ownership and relative pkg-config -> pkgconf symlink.
+SYSTEM_INCLUDEDIR and SYSTEM_LIBDIR match maintained Make's /usr/include and
+/usr/lib settings; no host search fallback was introduced.
+
+Initial bazel-pkgconf-20261029 compilation exposed incorrect string macro quoting.
+Corrected escaping; successful frontend run is
+/usr/obj/usr/src/bazel-pkgconf-20261029-r2 (16 jobs). Fresh rootless Make CLI
+reference: bazel-pkgconf-native-reference-20261029. Scripts/reports:
+bazel-pkgconf-qualification-20261029. Six metadata records, symlink target/mode,
+compressed manual bytes, separate-debug linkage, global/undefined symbols and
+dynamic fields match Make. Original failure evidence remains available.
+
+Scope remains partial: private-library installation (headers, static archive,
+DSO/debug/link, three manuals), independent archive/ABI parity, bomtool and
+spdxtool are still pending. Building the CLI against native libpkgconf does not
+qualify its complete library payload. Real .pc resolution, sysroot/cross-build
+behavior, environment overrides and Make/ports consumer tests also remain open.
+No host installation or repository publication occurred.
+
+Frontend review: existing format-5 explicit targets/artifact path supports the
+CLI candidate; no build-bsd C/protocol/manual change is needed for it. Library
+and whole-system packaging must be completed before any production/default
+switch. Make remains production/default.

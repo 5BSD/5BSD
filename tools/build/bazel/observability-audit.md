@@ -5837,3 +5837,11 @@ with unchanged assertions and fixtures. Recursive installation parity passes;
 the attempted text case fails in ATF startup on the incompatible host Capsicum
 ABI. Formatting/runtime behavior and observability remain unqualified by this
 attempt. No production instrumentation or authority behavior changed.
+
+### 2026-10-29 pkgconf / libpkgconf
+
+Maintained package audit-log handling in libpkgconf/audit.c is retained. This
+logs package-resolution activity; it is not evidence of OS security-audit
+integration. No production instrumentation or privilege boundary was changed.
+Environment-controlled paths, sysroot handling and downstream build behavior
+remain runtime qualification items. CLI install parity does not establish them.
