@@ -37372,3 +37372,29 @@ Frontend review: build-bsd.c/format-5 backend already accept these targets/setti
 manual updated for additional setting consumers. Remaining components/backends and
 complete compiler/world/kernel/pkgbase/runtime/performance gates stay open.
 Make remains production/default. No installation/publication occurred.
+
+### LLVM ExecutionEngine, ORC and JITLink (2026-10-29)
+
+Added native ExecutionEngine component with two installed-world bridge/EH-frame
+sources, 19 extras-or-lldb sources, and 87 extras sources. Default selects 21;
+clang_extras selects 108. Private headers are declared. JITLink COFFOptions.inc
+is produced by the native llvm-tblgen rule with declared .td/include inputs;
+OptParser.td visibility was extended only to this new consumer package.
+
+Maintained frontend `/usr/obj/usr/src/bazel-llvm-executionengine-20261029` succeeds
+with 16 jobs and clang_extras. All 108 PIC global/undefined symbol inventories
+match fresh isolated Make objects; archive member multiplicities and expanded
+Make/resolved Bazel source inventories match. Native COFF option table bytes match
+Make. Separate default source-inventory run selects exactly the expected 21
+(inventory-only; not a separate default compiled/runtime qualification). Evidence:
+`/usr/obj/usr/src/bazel-llvm-executionengine-qualification-20261029`. Fresh Make
+reference generates headers before objects and uses existing bootstrap generators
+and staged SDK. No source/sandbox changes or runtime fallback.
+
+Execution, relocations, memory permissions, remote ORC behavior, unwinding and debugger
+registration remain unqualified at runtime. Object symbol comparison is not
+instruction equivalence, full compiler linkage, bootstrap independence or performance.
+Frontend review: existing format-5 target/settings transport suffices; manual
+documents extras/lldb consumers. No build-bsd.c input/staging/publication change.
+Remaining LLVM/backends and compiler/world/kernel/pkgbase/runtime/performance
+gates remain open. Make remains production/default; no installation/publication.

@@ -6378,3 +6378,12 @@ hooks added. Signal handling, process spawning, filesystem operations, threading
 compression and hashing need linked-tool/runtime tests; symbol parity does not
 establish those semantics or performance. Evidence:
 `/usr/obj/usr/src/bazel-llvm-support-qualification-20261029`.
+
+### LLVM ExecutionEngine / ORC / JITLink (2026-10-29)
+
+108 extras-enabled object comparisons cover upstream GDBRegistrationListener and
+Orc/TargetProcess/JITLoaderGDB, including __jit_debug_descriptor and
+__jit_debug_register_code machinery. No new probes/audit hooks were added. Runtime
+debugger interaction, code registration/unregistration, EH frames, generated-code
+memory permissions and remote process diagnostics still require linked-tool tests.
+Evidence: `/usr/obj/usr/src/bazel-llvm-executionengine-qualification-20261029`.
