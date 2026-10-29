@@ -33,6 +33,6 @@ bsd_install_archive(
 
 _RUNTIME = ["//krb5/lib/krb5:krb5_shared", "//krb5/lib/crypto:k5crypto_shared", "//krb5/util/et:com_err_shared", "//krb5/util/support:krb5support_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libsys:sys_shared", "//secure/lib/libcrypto:crypto_shared"] + [
     "@bsd_sdk//toolchain:sysroot/" + f for f in ["lib/libc.so.7", "lib/libthr.so.3", "lib/libm.so.5"]]
-cc_test(name = "runtime_test", srcs = ["runtime_test.c"], data = [":ktutil"] + _RUNTIME,
-    args = ["$(location :ktutil)"] + ["$(location " + lib + ")" for lib in _RUNTIME],
+cc_test(name = "runtime_test", srcs = ["runtime_test.c"], data = [":ktutil", "//krb5/usr.bin/klist:klist"] + _RUNTIME,
+    args = ["$(location :ktutil)", "$(location //krb5/usr.bin/klist:klist)"] + ["$(location " + lib + ")" for lib in _RUNTIME],
     linkstatic = True, linkopts = ["-static"], size = "small")

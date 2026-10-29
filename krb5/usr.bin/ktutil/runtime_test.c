@@ -49,18 +49,18 @@ static void sendline(int fd, const char *line)
 }
 int main(int argc, char **argv)
 {
-    char program[PATH_MAX], path[PATH_MAX], work[PATH_MAX];
+    char program[PATH_MAX], listing[PATH_MAX], path[PATH_MAX], work[PATH_MAX];
     const char *tmp = getenv("TEST_TMPDIR");
-    if (argc < 3 || tmp == NULL || realpath(argv[1], program) == NULL) fail("test inputs");
+    if (argc < 4 || tmp == NULL || realpath(argv[1], program) == NULL || realpath(argv[2], listing) == NULL) fail("test inputs");
     size_t capacity = (size_t)argc * PATH_MAX;
     char *libraries = calloc(capacity, 1);
     if (libraries == NULL) fail("allocating library path");
-    for (int i = 2; i < argc; i++) {
+    for (int i = 3; i < argc; i++) {
         if (realpath(argv[i], path) == NULL) fail("runtime library");
         char *slash = strrchr(path, '/');
         if (slash == NULL) fail("library directory");
         *slash = '\0';
-        if (strlcat(libraries, i == 2 ? "" : ":", capacity) >= capacity ||
+        if (strlcat(libraries, i == 3 ? "" : ":", capacity) >= capacity ||
             strlcat(libraries, path, capacity) >= capacity) fail("library path length");
     }
     if (snprintf(work, sizeof(work), "%s/ktutil.XXXXXX", tmp) >= (int)sizeof(work) ||
@@ -81,7 +81,7 @@ int main(int argc, char **argv)
             setenv("HOME", work, 1) || setenv("TERM", "dumb", 1) || setenv("PATH", "/nonexistent", 1)) _exit(125);
         execl(program, program, (char *)NULL); _exit(127);
     }
-    close(slave); free(libraries);
+    close(slave);
     expect(master, "ktutil:");
     sendline(master, "addent -key -p test@EXAMPLE.TEST -k 1 -e aes256-cts-hmac-sha1-96\n");
     expect(master, "(hex):");
@@ -130,6 +130,39 @@ int main(int argc, char **argv)
     child = -1;
     if (!WIFEXITED(status) || WEXITSTATUS(status)) fail("ktutil exit");
     close(master);
+    /* Verify the serialized keytab through a separate native consumer. */
+    int pipefd[2];
+    if (pipe(pipefd)) fail("klist pipe");
+    child = fork();
+    if (child < 0) fail("klist fork");
+    if (child == 0) {
+        close(pipefd[0]);
+        if (dup2(pipefd[1], STDOUT_FILENO) < 0 || dup2(pipefd[1], STDERR_FILENO) < 0) _exit(125);
+        close(pipefd[1]);
+        if (setenv("LD_LIBRARY_PATH", libraries, 1) || setenv("KRB5_CONFIG", "/dev/null", 1) ||
+            setenv("KRB5_KDC_PROFILE", "/dev/null", 1) || setenv("LC_ALL", "C", 1) ||
+            setenv("HOME", work, 1) || setenv("PATH", "/nonexistent", 1)) _exit(125);
+        execl(listing, listing, "-k", "-e", "keytab", (char *)NULL); _exit(127);
+    }
+    close(pipefd[1]); free(libraries);
+    size_t used = 0;
+    response[0] = '\0';
+    for (;;) {
+        struct pollfd p = { .fd = pipefd[0], .events = POLLIN };
+        int ready = poll(&p, 1, 10000);
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready <= 0 || used == sizeof(response) - 1) fail("klist output timeout/overflow");
+        ssize_t n = read(pipefd[0], response + used, sizeof(response) - used - 1);
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) fail("klist output");
+        if (n == 0) break;
+        used += n; response[used] = '\0';
+    }
+    close(pipefd[0]);
+    if (waitpid(child, &status, 0) != child) fail("klist wait");
+    child = -1;
+    if (!WIFEXITED(status) || WEXITSTATUS(status) ||
+        !strstr(response, "test@EXAMPLE.TEST") || !strstr(response, "aes256-cts-hmac-sha1-96")) fail("klist keytab contents");
     if (unlink("keytab") || chdir(tmp) || rmdir(work)) fail("test cleanup");
     return 0;
 }

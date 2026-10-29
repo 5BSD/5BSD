@@ -39387,3 +39387,28 @@ network/KDC authentication, every terminal/locale, independent bootstrap or
 performance. Reviewed build-bsd.c/format-5 source_graph.py: existing target/test
 inputs support this component without schema changes. Make stays production;
 no host installation, publication or reboot. Whole-system gates remain open.
+
+### Native klist and serialized keytab consumer (2026-10-29)
+
+Added native klist with explicit Kerberos dependencies, PIE linkage and
+program/manual/debug installation. Extended the ktutil Bazel runtime test to
+invoke native klist -k -e on the serialized keytab and check its principal and
+AES256 encryption type. The test declares both programs and runtime libraries;
+configuration paths and HOME remain controlled. This covers keytab inspection,
+not credential caches, KDC authentication or network operations.
+
+Run bazel-klist-runtime-20261029 reports one passing test. The final artifact
+comparison against bazel-klist-make-20261029 matches five installation records,
+68 program and 89 debug global/weak symbol records, dynamic dependencies/PIE
+flags, debuglink CRC and byte-identical compressed manual. Evidence and verifier:
+/usr/obj/usr/src/bazel-klist-reference-20261029. Loader resolution using the
+test's native-before-SDK search order confirms eight declared libraries, with
+hashes recorded. An initial audit reconstructed directories in ldd traversal
+order and selected SDK libcrypto; correcting that audit to the actual declared
+test order selects native libcrypto. The test declaration itself already had
+native libraries first. Host kernel/rtld and SDK libc/thr remain dependencies.
+
+Reviewed build-bsd.c and source_graph.py: existing explicit target/test inputs
+support this component without a frontend or schema change. Make remains the
+production path. Independent bootstrap, full world/kernel/pkgbase, sandbox/cache
+and performance qualification remain open. No host installation or publication.

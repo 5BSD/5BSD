@@ -1,2 +1,2 @@
 # SPDX-License-Identifier: BSD-2-Clause
-exports_files(["ktutil.man", 'k5identity.man', 'k5login.man', 'krb5.conf.man', 'kerberos.man', 'kadm5.acl.man', 'kdc.conf.man'], visibility = ["//krb5:__subpackages__"])
+exports_files(["klist.man", "ktutil.man", 'k5identity.man', 'k5login.man', 'krb5.conf.man', 'kerberos.man', 'kadm5.acl.man', 'kdc.conf.man'], visibility = ["//krb5:__subpackages__"])

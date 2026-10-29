@@ -6846,3 +6846,11 @@ The migrated ktutil.c/ktutil_funcs.c contain no explicit DTrace provider or audi
 submissions. Review keytab write failures and entry mutation observability while
 excluding key material/passwords. The PTY test qualifies dummy-key local lifecycle
 operations only; no authoritative KDC or system audit coverage is inferred.
+
+### klist (2026-10-29)
+
+Native build/install parity and the ktutil-to-klist keytab lifecycle pass.
+Reviewed clients/klist/klist.c: no DTrace/SDT or audit hooks were found by the
+source scan. No probes were added or removed by the build conversion. Whether
+credential-cache/keytab inspection needs additional audit coverage remains a
+security-policy review; this test does not qualify network authentication.
