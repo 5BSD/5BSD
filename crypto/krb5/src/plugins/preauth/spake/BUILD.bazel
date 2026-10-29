@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['edwards25519.c', 'groups.c', 'iana.c', 'openssl.c', 'spake_client.c', 'spake_kdc.c', 'util.c', 'edwards25519_fiat.h', 'edwards25519_tables.h', 'groups.h', 'iana.h', 'trace.h', 'util.h'])

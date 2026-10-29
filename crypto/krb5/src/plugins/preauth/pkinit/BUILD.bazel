@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['pkinit_accessor.c', 'pkinit_clnt.c', 'pkinit_constants.c', 'pkinit_crypto_openssl.c', 'pkinit_identity.c', 'pkinit_kdf_test.c', 'pkinit_lib.c', 'pkinit_matching.c', 'pkinit_profile.c', 'pkinit_srv.c', 'pkcs11.h', 'pkinit.h', 'pkinit_accessor.h', 'pkinit_crypto.h', 'pkinit_trace.h'])

@@ -39813,3 +39813,31 @@ qualification work. Reviewed build-bsd.c/source_graph.py: existing explicit
 targets cover these plugins without contract changes. Make stays production;
 SDK bootstrap and whole-world/kernel/pkgbase/sandbox/cache/performance gates
 remain open. No host installation, network exchange or publication occurred.
+
+### Native SPAKE, PKINIT and test preauthentication plugins (2026-10-29)
+
+Added explicit native source/header lists for the remaining three maintained
+preauthentication subdirectories. SPAKE and PKINIT preserve private profile
+binding and native crypto dependencies; the test plugin uses its maintained
+Kerberos-only dependency list. Each retains its version map, SONAME, plugin
+symlink and debug installation. PKINIT's Make list includes pkinit_kdf_test.c;
+that source is preserved, but compilation does not count as KDF test execution.
+
+Run bazel-preauth-20261029 completes six binary/archive targets. Fresh Make
+comparisons pass:
+- spake: 8 installation records; 136 symbols for /usr/lib/krb5/plugins/preauth/spake.so.122, 136 symbols for /usr/lib/debug/usr/lib/krb5/plugins/preauth/spake.so.122.debug.
+- pkinit: 8 installation records; 442 symbols for /usr/lib/krb5/plugins/preauth/pkinit.so.122, 442 symbols for /usr/lib/debug/usr/lib/krb5/plugins/preauth/pkinit.so.122.debug.
+- test: 8 installation records; 24 symbols for /usr/lib/krb5/plugins/preauth/test.so.122, 24 symbols for /usr/lib/debug/usr/lib/krb5/plugins/preauth/test.so.122.debug.
+
+Checks cover destination/ownership/mode/tags, global/weak symbols, dynamic
+libraries/SONAME/flags, symlinks and debuglink CRC. Evidence/verifiers are under
+/usr/obj/usr/src/bazel-{spake,pkinit,test}-reference-20261029. All four entries in
+krb5/plugins/preauth/Makefile now have native component targets; this is not
+proof of complete Kerberos installation composition or protocol coverage.
+
+No runtime tests were selected. SPAKE exchanges, certificate/PKINIT validation,
+KDF vectors, malformed inputs and test-plugin behavior remain qualification work.
+Reviewed build-bsd.c/source_graph.py: existing explicit target selection supports
+these components without contract changes. Make stays production/default;
+SDK bootstrap and whole-world/kernel/pkgbase/sandbox/cache/performance gates
+remain open. No host installation, network exchange or publication occurred.

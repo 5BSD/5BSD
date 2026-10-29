@@ -6967,3 +6967,10 @@ Native artifacts/installations match Make. OTP retains com_err diagnostics for
 secret/configuration and request-processing failures. Source scans found no
 DTrace/SDT or explicit audit hooks in these four plugin C files. TLS/OTP negative
 cases and observability runtime remain open; vendor instrumentation is unchanged.
+
+### SPAKE, PKINIT and test preauthentication plugins (2026-10-29)
+
+Native artifacts/installations match Make. Existing Kerberos TRACE_* call sites,
+including PKINIT certificate matching/rejection and verification diagnostics,
+remain in the source graph. These are not evidence of DTrace or OS audit-event
+delivery. Protocol and observability runtime checks remain outstanding.

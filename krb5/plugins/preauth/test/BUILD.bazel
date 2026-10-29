@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_import")
+cc_library(name = "test", srcs = ["//crypto/krb5/src/plugins/preauth/test:" + f for f in ['cltest.c', 'common.c', 'kdctest.c', 'common.h']],
+    deps = ['//crypto/krb5/src/include:internal_headers', '//krb5/lib/krb5:krb5', '//krb5/lib/crypto:k5crypto', '//krb5/util/et:com_err', '//krb5/util/support:krb5support'], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_shared_library(name = "test_shared", deps = [":test"], dynamic_deps = ['//krb5/lib/krb5:krb5_shared', '//krb5/lib/crypto:k5crypto_shared', '//krb5/util/et:com_err_shared', '//krb5/util/support:krb5support_shared'],
+    shared_lib_name = "test.so.122", additional_linker_inputs = ["version.map"],
+    user_link_flags = ["-Wl,--version-script=$(location version.map)", "-Wl,-z,defs", "-Wl,-soname,test.so.122"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+bsd_install_link(name = "plugin_alias", destination = "/usr/lib/krb5/plugins/preauth/test.so", target = "test.so.122",
+    kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=kerberos-kdc"])
+utility_installation(name = "install_manifest", program = "test.so.122", binary = ":test_shared", manual = None,
+    package = "kerberos-kdc", bindir = "/usr/lib/krb5/plugins/preauth", binary_mode = "0444", extra_entries = [":plugin_alias"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos-kdc","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib", "/usr/lib/debug/usr/lib/krb5", "/usr/lib/debug/usr/lib/krb5/plugins", "/usr/lib/debug/usr/lib/krb5/plugins/preauth"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
