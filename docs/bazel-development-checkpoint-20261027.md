@@ -15552,3 +15552,20 @@ qualification remains open. No host configuration files or installation changed.
 Reviewed frontend/backend requirements: existing explicit target inputs and
 metadata groups suffice. Complete world/kernel/pkgbase/bootstrap, sandbox/cache
 and performance gates remain open. Make remains production/default.
+
+### libbsdconf configuration round-trip (2026-10-29)
+
+Added runtime_static/runtime_shared native cc_tests. Each creates a unique file
+under TEST_TMPDIR, changes a value to a string containing spaces, reparses and
+unquotes the result, checks comment and unrelated-line preservation, and verifies
+CHECK leaves inode, size and nanosecond mtime unchanged. Normal exits remove the
+fixture. Both pass in bazel-libbsdconf-runtime-20261029 via build-bsd (16 jobs).
+With LD_LIBRARY_PATH removed, ldd confirms native libbsdconf.so.1; host libc/
+libsys/rtld remain in use. Loader evidence is saved under
+/usr/obj/usr/src/bazel-libbsdconf-reference-20261029/runtime-loader.txt.
+
+This is selected generic-format rewrite/parse/CHECK qualification, not every
+format, malformed-input path, concurrent writer, power-loss or durability test.
+No system configuration was read or modified. Existing frontend explicit test
+inputs and runtime-path features support it without changes. Whole-system,
+bootstrap, sandbox/cache and performance gates remain open; Make stays default.

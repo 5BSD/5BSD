@@ -7051,3 +7051,7 @@ All ten maintained parser/format sources are carried forward. No DTrace/SDT,
 syslog or OS audit hooks appear in these sources or a provider in the Makefile.
 Configuration write authorization/auditing remains a consumer responsibility;
 artifact parity does not qualify parser behavior or audit-event delivery.
+
+libbsdconf runtime_static/runtime_shared now cover selected temporary-file
+rewrite, parse and CHECK semantics. No instrumentation or host configuration
+changes are involved, and audit-event delivery remains unqualified.
