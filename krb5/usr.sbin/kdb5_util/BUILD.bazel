@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_test")
 load("//krb5/util/et:error_table.bzl", "mit_error_table")
 mit_error_table(name = "errors", src = "//crypto/krb5/src/kadmin/dbutil:import_err.et", basename = "import_err",
     textdomain = "mit-krb5", awk = "@bsd_sdk//toolchain:awk", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
@@ -31,3 +31,10 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+_RUNTIME = ["//krb5/lib/kadm5srv:kadm5srv_mit_shared", "//krb5/lib/kdb:kdb5_shared", "//krb5/lib/rpc:gssrpc_shared", "//krb5/lib/gssapi:gssapi_krb5_shared", "//krb5/lib/krb5:krb5_shared", "//krb5/lib/crypto:k5crypto_shared", "//krb5/util/et:com_err_shared", "//krb5/util/support:krb5support_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libsys:sys_shared", "//secure/lib/libcrypto:crypto_shared"] + [
+    "@bsd_sdk//toolchain:sysroot/" + f for f in ["lib/libc.so.7", "lib/libthr.so.3", "lib/libm.so.5"]]
+cc_test(name = "database_test", srcs = ["database_test.c"],
+    data = [":kdb5_util", "//krb5/usr.sbin/kadmin.local:kadmin.local", "//krb5/plugins/kdb/db2:db2_shared"] + _RUNTIME,
+    args = ["$(location :kdb5_util)", "$(location //krb5/usr.sbin/kadmin.local:kadmin.local)", "$(location //krb5/plugins/kdb/db2:db2_shared)"] + ["$(location " + lib + ")" for lib in _RUNTIME],
+    linkstatic = True, linkopts = ["-static"], size = "small")

@@ -14933,3 +14933,33 @@ build-bsd.c/source_graph.py: existing target inputs cover the plugin/archive wit
 no contract changes. Make stays production/default; SDK bootstrap and full-world,
 kernel/pkgbase/sandbox/cache/performance gates remain open. No host installation,
 publication or database operation was performed.
+
+### Native isolated database lifecycle test (2026-10-29)
+
+Added //krb5/usr.sbin/kdb5_util:database_test as a native cc_test. Its explicit
+data/arguments include native kdb5_util, kadmin.local, the DB2 plugin and shared
+libraries, with native library directories before SDK libc/thr/m directories.
+The statically linked harness creates a private TEST_TMPDIR subdirectory and
+configuration, disables DNS realm/KDC lookup, uses an empty KDC profile and
+nonexistent PATH, and bounds each command with a child alarm.
+
+The plugin is symlinked under a unique db_library name in the test directory;
+installed db2.so cannot satisfy that lookup. The lifecycle creates/stashes a
+new database with a disposable test password, adds a random-key principal,
+queries it, dumps and loads into a second database, deletes the principal from
+the original, then successfully queries the restored copy. This last assertion
+checks that the restored lookup is independent of the modified original.
+Successful execution removes the test files and directory.
+
+Run bazel-database-runtime-20261029-r2 reports one passing test. Inputs are under
+/usr/obj/usr/src/bazel-database-runtime-reference-20261029; receipt and saved
+reports are under the run directory. This closes a selected plugin/local-admin/
+dump-restore integration case. Network/KDC authentication, remote administration,
+master-key rotation, lockout policy, concurrency, crash recovery and performance
+remain unqualified. Host kernel/rtld and SDK runtime dependencies remain.
+
+Reviewed build-bsd.c/source_graph.py: existing explicit target/test inputs support
+the lifecycle without contract changes. Make stays production/default; complete
+world/kernel/pkgbase/bootstrap/sandbox/cache/performance gates remain open. No
+host installation or host database was changed; all database mutations use the
+private test configuration and paths.

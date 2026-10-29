@@ -6905,3 +6905,10 @@ krb5_db2_lockout_audit implementation. These are Kerberos authentication-result/
 lockout hooks; they do not themselves prove integration with the OS audit
 subsystem. Plugin artifact/install parity passes. Loading and authentication/
 lockout behavior remain runtime qualification work. No instrumentation changed.
+
+### Database lifecycle runtime (2026-10-29)
+
+Native DB2 loading, creation/stash, local principal add/query/delete, dump and
+restore pass in an isolated Bazel test. Restored principal survives deletion
+from the source database. This test does not inspect audit events or exercise
+authentication lockout callbacks; those observability gates remain open.
