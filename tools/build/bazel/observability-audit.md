@@ -7215,3 +7215,12 @@ accept/reject coverage, including wrong-key, tampered/truncated-signature and
 changed-package cases. Expected rejection diagnostics appear in saved test logs.
 ECC file-key callback initialization was corrected. End-to-end fingerprint trust,
 revocation, EdDSA, download and extraction diagnostics remain unqualified.
+
+### libcompat / liby (2026-10-29)
+
+Native static archive sources preserve the existing implementations. No DTrace
+provider or audit integration was added. Archive/member/symbol and installation
+comparisons pass; this does not establish runtime observability coverage. liby
+contains yacc main/error defaults and libcompat contains legacy regex, rexec and
+cuserid interfaces; any audit requirement for remote authentication in rexec
+needs a separate semantic review, not an inferred probe added during migration.

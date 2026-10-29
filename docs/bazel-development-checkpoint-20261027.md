@@ -16550,3 +16550,27 @@ build-bsd/source_graph interfaces carry the new test and install target unchange
 Input verification was slow under concurrent host load; no hashing checks were
 bypassed or performance qualification claimed. Whole-system/kernel/pkgbase,
 bootstrap, sandbox/cache/performance gates remain open; Make stays production/default.
+
+### Native libcompat and liby static installation (2026-10-29)
+
+Added source-owned cc_library and ordinary archive targets for libcompat and
+liby, retaining Make's NO_PIC static-only installation contract. liby declares
+its private yyerror.h input. libcompat carries its three compressed manuals and
+re_exec manual hardlink, with configured split-manpage package tags.
+
+Run bazel-libcompat-liby-20261029 passes both install_archive builds through
+build-bsd with 16 jobs. Fresh independent Make references match all five
+libcompat destinations and the single liby destination, with zero missing/extra
+paths or ownership/mode/non-directory tag differences. Payload checks match
+archive member ordering and global/weak symbol inventories, all three compressed
+manuals bytewise, and the manual hardlink. These static-only libraries install
+no separate debug files. Evidence lives under
+/usr/obj/usr/src/bazel-libcompat-reference-20261029/ and
+/usr/obj/usr/src/bazel-liby-reference-20261029/: install-audit.json,
+payload-audit.json and their retained verifier scripts/logs.
+
+No runtime tests were selected; successful builds are not runtime qualification.
+The existing build-bsd/source_graph explicit-target interface supports these
+archives without frontend changes. Complete world/kernel, independent bootstrap,
+pkgbase publication, sandbox/cache and performance gates remain open; Make stays
+production/default.
