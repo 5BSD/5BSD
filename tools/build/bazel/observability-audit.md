@@ -6160,3 +6160,9 @@ lexer runtime and tracing behavior remain to qualify with the linked compiler.
 All 18 maintained Parse sources are represented without source changes. Existing
 instrumentation is preserved; this object/generator comparison does not establish
 parser runtime or tracing behavior. No new privileged service operation is added.
+
+### 2026-10-29 Clang serialization
+
+All 17 maintained sources are represented without source changes. Scan for DTRACE,
+SDT_PROBE and audit_submit found no matches. No probes/audit hooks were removed;
+module/PCH runtime behavior remains unqualified until compiler linkage/tests.

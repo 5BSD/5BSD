@@ -11848,3 +11848,26 @@ Frontend review: existing documented LLVM/Clang settings, format-5 artifacts and
 TableGen backend suffice; no build-bsd.c/manual interface change required. Remaining
 compiler components, world/kernel/pkgbase/bootstrap/runtime/performance gates stay
 open; Make remains production/default. No host installation/publication occurred.
+
+### 2026-10-29 native Clang serialization component
+
+Added the explicit 17-source Serialization component and PIC archive, including
+AST readers/writers, module index/cache management, PCH containers and template
+argument hashing. Declared private headers and native generated Clang/LLVM directive
+providers; compile configuration preserves maintained shared-library behavior.
+This is a component of libclang, not an extra installed library.
+
+Maintained frontend bazel-clang-serialization-20261029 (16 jobs) succeeds. All 17
+individual PIC global/undefined symbol inventories match fresh isolated Make
+Serialization/*.pico objects. Evidence/scripts:
+/usr/obj/usr/src/bazel-clang-serialization-qualification-20261029. Reference uses
+existing bootstrap generators/staged SDK dependencies. No source patches or
+comparison exceptions were needed. This does not qualify module/PCH read-write
+round trips, compatibility across compiler versions, malformed PCH handling,
+instruction identity or performance; those require the linked compiler.
+
+Frontend review: current documented LLVM/Clang settings and format-5 artifacts
+cover the component; no build-bsd.c/backend/manual interface change. Remaining
+compiler libraries/linkage and whole-system world/kernel/pkgbase/bootstrap/runtime/
+performance gates remain open. Make stays production/default; no host installation
+or publication occurred.
