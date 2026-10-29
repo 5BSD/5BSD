@@ -6987,3 +6987,9 @@ now match Make; no runtime instrumentation changed.
 The maintained shell script is installed unchanged with byte-identical manual
 and metadata parity. Nine host reporting comparisons pass; no instrumentation
 changes or security-service runtime claims arise from this developer utility.
+
+### Top-level Kerberos public headers (2026-10-29)
+
+Five header installation records match Make, with only an exact generated
+filename-comment difference in profile.h. No runtime instrumentation changed;
+installed-header consumer and whole-system qualification remain separate.

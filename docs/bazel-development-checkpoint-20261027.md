@@ -15243,3 +15243,25 @@ this installation without contract changes. Top-level public headers and aggrega
 payload reconciliation remain next. Make stays production/default; independent
 bootstrap and complete world/kernel/pkgbase/sandbox/cache/performance gates stay
 open. No host installation or publication occurred.
+
+### Native top-level Kerberos public headers (2026-10-29)
+
+Added the five krb5/include installation payloads: gssapi.h, kdb.h, krad.h,
+krb5.h and profile.h. The latter reuses the existing native profile_header action;
+its visibility now explicitly permits the installation package. Source wrappers
+are exported only to that package. No generated Make header is used as a native
+payload input.
+
+Run bazel-krb-headers-20261029 matches five fresh Make records. The reference
+sets SUBDIR empty to isolate this directory; child krb5/GSSRPC/GSSAPI installations
+remain separately qualified. Four headers match bytewise. profile.h matches
+exactly after replacing only its generated prof_err.h output-filename comment
+with Make's et-h-prof_err.h comment; declarations and all other bytes match.
+Destination, owner/group, mode and package/dev tags also match. Evidence and
+repeatable verifier: /usr/obj/usr/src/bazel-krb-headers-reference-20261029.
+
+Reviewed build-bsd.c/source_graph.py: existing explicit target inputs support
+this archive without contract changes. Aggregate payload reconciliation and
+installed-header consumer compilation/linking remain qualification work.
+Make stays production/default; SDK bootstrap and whole-world/kernel/pkgbase/
+sandbox/cache/performance gates remain open. No host installation/publication.

@@ -20,3 +20,5 @@ cc_library(name = "radius_headers", hdrs = ["krad.h"], includes = ["."],
 cc_library(name = "database_headers", hdrs = ["iprop.h", "iprop_hdr.h", "kdb_log.h", "kdb_kt.h"], includes = ["."],
     deps = [":internal_headers", "//crypto/krb5/src/include/gssrpc:headers"],
     visibility = ["//krb5:__subpackages__", "//crypto/krb5/src/lib/kdb:__pkg__", "//crypto/krb5/src/lib/kadm5:__pkg__"])
+
+exports_files(["gssapi.h", "kdb.h", "krad.h", "krb5.h"], visibility = ["//krb5/include:__pkg__"])

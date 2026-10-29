@@ -7,7 +7,7 @@ mit_error_table(name = "errors", src = "//crypto/krb5/src/util/profile:prof_err.
     textdomain = "mit-krb5", awk = "@bsd_sdk//toolchain:awk", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
 filegroup(name = "error_source", srcs = [":errors"], output_group = "source")
 filegroup(name = "error_header", srcs = [":errors"], output_group = "header")
-profile_header(name = "profile_header", interface = "//crypto/krb5/src/util/profile:profile.hin", errors = ":error_header",
+profile_header(name = "profile_header", visibility = ["//krb5/include:__pkg__"], interface = "//crypto/krb5/src/util/profile:profile.hin", errors = ":error_header",
     cat = "@bsd_sdk//toolchain:cat", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:cat_runtime"])
 cc_library(name = "headers", hdrs = [":profile_header", ":error_header"],
     includes = ["."],
