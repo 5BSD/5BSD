@@ -16818,3 +16818,38 @@ and the host kernel/loader remain part of this selected runtime qualification.
 Full Make test/reference run bazel-libutilpp-full-make-20261029 is still running;
 native test installation and fresh Make test ELF/metadata comparisons remain
 next work. No full installed-suite or system qualification is claimed yet.
+
+### Libutil++ configured test installation in progress (2026-10-29)
+
+Fresh Make full reference completed with three installed ATF binaries, their
+debug payloads and Kyuafile. Native tests-enabled installation now declares those
+outputs and package=tests metadata alongside the seven manuals. Test executables
+use the normal Make-equivalent link contract; the ATF runner explicitly selects
+matching native libc/libsys at runtime rather than adding direct dependencies to
+the installed ELF. SDK libgcc_s remains a declared runtime input.
+
+The first combined run rejected nested installation manifests passed as file
+entries. Corrected the aggregate to use its typed manifests attribute. Run
+bazel-libutilpp-full-20261029-r2 is pending; no full test-installation parity is
+claimed yet. Existing build-bsd/source_graph tests setting and test inputs support
+this integration unchanged. Full-system/performance gates remain open.
+
+Libutil++ full comparison follow-up: r2 builds and passes its four tests, but
+installation comparison found an explicitly redeclared /usr/tests/lib/libutil++
+that is already identical in the mtree baseline. Removed the redundant directory
+record. ELF comparison also found a different NEEDED order despite matching
+symbols and dependency sets; reordered explicit test dependencies to mirror
+Make's ATF, optional util, C++ ABI and math order. Kept ordered comparison strict.
+Run bazel-libutilpp-full-20261029-r3 is pending; full installation parity remains
+unproven until its retained comparison passes.
+
+Libutil++ full qualification result: bazel-libutilpp-full-20261029-r3 passes all
+four ATF cases and the configured test installation. Fresh Make comparison matches
+18 changed destinations with zero missing/extra paths or metadata mismatches;
+14 regular payloads match symbols, ordered dynamic tags, text/manual bytes and
+three debug-link CRCs. Kyuafile bytes match, including all three test programs.
+Evidence: full-install-audit.json/full-payload-audit.json under
+bazel-libutilpp-reference-20261029, plus the saved native artifacts/test reports.
+The initial manifest-provider error and r2 parity differences remain documented.
+This completes selected libutil++ archive/manual/test installation qualification,
+not system-wide, cross-platform, independent bootstrap or performance gates.

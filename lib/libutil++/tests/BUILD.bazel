@@ -1,19 +1,28 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
-cc_import(name = "sdk_unwind", shared_library = "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1")
 _CASES = {"stringf": ["basic", "va_list"], "up": ["FILE_up"], "pidfile": ["basic"]}
 _SHARED = ["//lib/atf/libatf-c++:atf_cxx_shared", "//lib/atf/libatf-c:atf_c_shared",
-    "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
-    "//lib/libc:c_shared", "//lib/libsys:sys_shared"]
+    "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"]
 [cc_binary(name = program + "_test", srcs = [program + "_test.cc"],
-    deps = ["//lib/libutil++:utilpp_pie", "//lib/atf/libatf-c++:atf_cxx", "//lib/libc:shared_link_interface", ":sdk_unwind"] + (["//lib/libutil:util"] if program == "pidfile" else []),
+    deps = ["//lib/atf/libatf-c++:atf_cxx", "//lib/atf/libatf-c:atf_c"] + (["//lib/libutil:util"] if program == "pidfile" else []) + ["//lib/libutil++:utilpp_pie", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"],
     dynamic_deps = _SHARED + (["//lib/libutil:util_shared"] if program == "pidfile" else []),
-    copts = ["-std=gnu++17", "-nostdinc++", "-fPIE"], linkopts = ["-pie", "-nodefaultlibs"],
+    copts = ["-std=gnu++17", "-nostdinc++", "-fPIE"], linkopts = ["-pie"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
  for program in _CASES]
 [bsd_atf_test(name = program + "_" + case, body = ":" + program + "_test", case_name = case,
-    interface = "program", runtime_lib = _SHARED + ["@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"] + (["//lib/libutil:util_shared"] if program == "pidfile" else []),
+    interface = "program", runtime_lib = _SHARED + ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"] + (["//lib/libutil:util_shared"] if program == "pidfile" else []),
     runner = "//tools/build/bazel:atf_runner", size = "small")
  for program, cases in _CASES.items() for case in cases]
 test_suite(name = "tests", tests = [":" + program + "_" + case for program, cases in _CASES.items() for case in cases], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+[utility_installation(name = "install_" + program, program = program + "_test", manual = "",
+    package = "tests", bindir = "/usr/tests/lib/libutil++") for program in _CASES]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["pidfile_test", "stringf_test", "up_test"],
+    interfaces = {program + "_test": "atf" for program in _CASES})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libutil++/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", manifests = [":install_" + program for program in _CASES], entries = [":install_kyuafile"],
+    visibility = ["//lib/libutil++:__pkg__"])

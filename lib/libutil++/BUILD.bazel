@@ -21,8 +21,9 @@ _MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["packa
 bsd_install_manifest(name = "install_manifest", entries = [":install_" + page for page in _MANUALS])
 
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
-bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
-    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libutil++/tests:install_manifest"], "//conditions:default": []}),
+    directories = select({"//tools/build/bazel/config:tests_enabled": {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libutil++"]}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

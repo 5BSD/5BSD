@@ -7321,3 +7321,14 @@ and the host kernel/loader remain part of this selected runtime qualification.
 Full Make test/reference run bazel-libutilpp-full-make-20261029 is still running;
 native test installation and fresh Make test ELF/metadata comparisons remain
 next work. No full installed-suite or system qualification is claimed yet.
+
+Libutil++ full qualification result: bazel-libutilpp-full-20261029-r3 passes all
+four ATF cases and the configured test installation. Fresh Make comparison matches
+18 changed destinations with zero missing/extra paths or metadata mismatches;
+14 regular payloads match symbols, ordered dynamic tags, text/manual bytes and
+three debug-link CRCs. Kyuafile bytes match, including all three test programs.
+Evidence: full-install-audit.json/full-payload-audit.json under
+bazel-libutilpp-reference-20261029, plus the saved native artifacts/test reports.
+The initial manifest-provider error and r2 parity differences remain documented.
+This completes selected libutil++ archive/manual/test installation qualification,
+not system-wide, cross-platform, independent bootstrap or performance gates.
