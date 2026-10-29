@@ -34721,3 +34721,28 @@ No implementation changed in this audit turn; existing frontend typed settings
 were exercised via the recorded configured-query commands. No new frontend
 protocol requirements identified. Make remains production/default. Full world,
 kernel, packaging, runtime and performance gates remain incomplete.
+
+### 2026-10-29 /usr/bin resizewin, runat, mdo, pom and mididump
+
+Added five native cc_binary and installation archive targets with source-owned
+manual/debug/package metadata. pom and mididump declare libm; pom additionally
+declares Capsicum helper headers. No production source changes or Make invocation
+in native actions. Parent /usr/bin integration remains pending.
+
+Maintained frontend build, 16 jobs:
+/usr/obj/usr/src/bazel-usr-bin-small-20261029.
+Fresh rootless Make references are bazel-<program>-native-reference-20261029
+under /usr/obj/usr/src; scripts are in bazel-usr-bin-small-qualification-20261029.
+Per-program qualification/<program>/{parity.json,elf-parity.json} records five
+equal metadata records, exact compressed manual bytes, a valid split-debug pair,
+and matching global/undefined symbols and NEEDED/RPATH/RUNPATH/SONAME. Across
+the batch: 25 per-component records, five manuals and five ELF/debug pairs.
+Shared directory records are counted separately here, not as distinct aggregate
+paths. Full instruction equivalence and runtime behavior are not claimed.
+
+mdo, terminal interaction and MIDI/device operations were not executed on the
+host. Those need appropriate runtime qualification. No host installation,
+credential changes or service actions occurred. Existing format-5 target/artifact
+handling covers this batch; no frontend C/protocol change required. Make remains
+production/default; complete /usr/bin, world/kernel/pkgbase and performance gates
+remain open.

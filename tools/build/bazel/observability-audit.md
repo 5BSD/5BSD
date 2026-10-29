@@ -5688,3 +5688,11 @@ No production sources or probe definitions changed. mdconfig drops redundant
 direct libbsdxml/libsbuf linkage while preserving libgeom's own dependency graph.
 Installation and ELF interface checks do not establish live tracing, audit,
 device-management, network or ZFS behavior. Those runtime gates remain open.
+
+### 2026-10-29 resizewin, runat, mdo, pom and mididump
+
+No explicit SDT/DTRACE/audit references found in these five utility C/header
+sources. Source scan is not evidence of absent kernel syscall tracing or audit.
+No sources modified. mdo's credential/authorization behavior warrants a dedicated
+runtime audit review; resizewin terminal and mididump device behavior also remain
+unqualified. Current evidence covers installation and ELF interfaces only.
