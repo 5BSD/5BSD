@@ -4296,3 +4296,10 @@ shared ASan/C++/math libraries and SDK system libraries. Its original startup fa
 corrected. It and tls_runtime_test now pass for executables without and with
 PT_TLS; the static ASan regression and rebuilt Make shared runtime also pass.
 Thread/dlopen TLS lifecycle and C++ allocation still need qualification.
+
+.Pp
+The asan_dynamic thread_runtime_test and thread_tls_runtime_test targets check
+worker creation/join, thread-specific-data destruction and memory-error detection
+with and without executable TLS. The TLS variant also checks per-thread value
+isolation. Dynamic library TLS loading and high-concurrency behavior remain
+separate qualification work.

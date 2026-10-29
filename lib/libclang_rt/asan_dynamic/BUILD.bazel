@@ -149,3 +149,18 @@ cc_test(name = "tls_runtime_test", srcs = ["//lib/libclang_rt/asan:runtime_test.
     linkopts = ["-static"], linkstatic = True, size = "small",
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//visibility:public"])
+
+[cc_binary(name = probe, srcs = ["thread_probe.c"],
+    local_defines = ["PROBE_TLS"] if tls else [],
+    copts = ["-fsanitize=address", "-fno-omit-frame-pointer"],
+    deps = [":runtime_link"], linkstatic = True,
+    linkopts = ["-Wl,--export-dynamic", "-Wl,--no-as-needed", "-lpthread", "-lrt", "-lexecinfo"],
+    testonly = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for probe, tls in [("thread_probe", False), ("thread_tls_probe", True)]]
+[cc_test(name = name, srcs = ["//lib/libclang_rt/asan:runtime_test.c"],
+    data = [":" + probe] + _RUNTIME_LIBS,
+    args = ["$(location :" + probe + ")"] + ["$(location " + lib + ")" for lib in _RUNTIME_LIBS],
+    linkopts = ["-static"], linkstatic = True, size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+ for name, probe in [("thread_runtime_test", "thread_probe"), ("thread_tls_runtime_test", "thread_tls_probe")]]

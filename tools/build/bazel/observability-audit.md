@@ -6754,3 +6754,10 @@ segment, so sanitizer discovery now selects the earliest actual TLS module and
 avoids extending empty ranges. Shared ASan with/without executable TLS and static
 ASan pass real clean/bounds/lifetime checks. Fresh Make shared runtime also passes.
 Thread/dlopen TLS lifecycle and C++ allocations remain unqualified.
+
+### Shared ASan worker-thread checks (2026-10-29)
+
+Worker variants with/without executable TLS pass clean creation/join/destructor
+checks and real instrumented heap-boundary/lifetime failures. TLS-bearing workers
+verify fresh initialization and isolation. Dynamic TLS loading, high concurrency
+and C++ allocation remain open; no tracing/audit implementation changes.

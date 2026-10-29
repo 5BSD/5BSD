@@ -39013,3 +39013,25 @@ and complete world/kernel/pkgbase/performance qualification remain open.
 Frontend review: existing build-bsd format-5 target/test lists cover the new
 regression target. Manual/observability updated. No host installation/reboot.
 The earlier startup failure is resolved for these cases; the full goal is active.
+
+### Shared ASan worker-thread/TLS regression (2026-10-29)
+
+Added thread_runtime_test and thread_tls_runtime_test using a real instrumented
+pthread worker, with and without executable PT_TLS. Clean execution creates and
+joins four sequential threads and verifies each thread-specific-data destructor.
+The TLS variant checks fresh per-thread initialization and isolation from the
+main-thread value. Heap overflow and use-after-free execute inside the worker;
+the existing harness requires the correct ASan diagnostic and failure exit.
+
+Frontend run bazel-asan-dynamic-threads-20261029 passes all five selected tests:
+the two new worker variants, two main-thread dynamic variants and static ASan.
+thread-probe-layouts.json in bazel-asan-dynamic-reference-20261029 confirms the
+actual ELF TLS layouts. Runtime flags/checks are unchanged. This qualifies these
+bounded worker lifecycle cases; it does not establish high concurrency, dynamic
+library TLS loading/unloading, C++ allocation or sanitizer performance. Prepared
+SDK system libraries and host kernel/rtld remain.
+
+Frontend/backend review: build-bsd.c and format-5 source_graph.py already support
+the explicit test selections. Manual/observability updated; no new CLI/schema,
+host installation, publication or reboot. Complete-system qualification remains
+open and Make remains production/default.
