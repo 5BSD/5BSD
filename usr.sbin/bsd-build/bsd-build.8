@@ -3849,3 +3849,14 @@ The native LLVM DWARFLinker component requires
 .Cm clang_extras .
 Its component qualification does not establish debug-information linking runtime
 behavior or complete compiler linkage.
+
+.Pp
+The installed AMD64 LLVM Support component selects partitioning and archive-writing
+sources with
+.Cm lld ,
+the solver source with
+.Cm clang_full ,
+and system utilities with
+.Cm clang_extras .
+This component is separate from the minimal TableGen bootstrap library.
+Other architectures and complete runtime linkage remain unqualified.

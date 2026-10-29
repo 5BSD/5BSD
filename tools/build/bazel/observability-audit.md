@@ -6370,3 +6370,11 @@ The 22-source object transformation component preserves upstream implementation.
 No DTrace probes/audit hooks added. File mutation and malformed-input diagnostics
 require linked llvm-objcopy runtime tests; compile/symbol parity does not prove them.
 Evidence: `/usr/obj/usr/src/bazel-llvm-objcopy-qualification-20261029`.
+
+### Installed LLVM Support (2026-10-29)
+
+155 default C/C++/assembly objects preserve upstream sources. No new probes/audit
+hooks added. Signal handling, process spawning, filesystem operations, threading,
+compression and hashing need linked-tool/runtime tests; symbol parity does not
+establish those semantics or performance. Evidence:
+`/usr/obj/usr/src/bazel-llvm-support-qualification-20261029`.

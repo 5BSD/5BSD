@@ -12665,3 +12665,29 @@ Frontend review: build-bsd.c and format-5 source_graph.py already support these
 native targets; no input, staging, signing, packaging or manual contract changed.
 Remaining LLVM components, compiler linkage and full world/kernel/package gates
 remain open. Make remains production/default; no installation/publication occurred.
+
+### Installed LLVM Support component (2026-10-29)
+
+Added a separate native installed Support target in the existing llvm/lib package.
+This preserves llvmminimal bootstrap source labels/header globs. AMD64 contract
+includes C/C++ sources and four BLAKE3 assembly implementations, BLAKE3_USE_NEON=0,
+declared private platform headers, and explicit zlib/zstd/SipHash header providers.
+C++-only flags use cxxopts. LLD selects BalancedPartitioning/TarWriter, clang_full
+selects Z3Solver, and clang_extras selects SystemUtils. Non-AMD64 builds are explicitly
+incompatible; no cross-architecture implementation is claimed.
+
+Maintained frontend `/usr/obj/usr/src/bazel-llvm-support-20261029` succeeds with
+16 jobs. All 155 default PIC object global/undefined symbol inventories match fresh
+isolated Make objects, including assembly and C objects. Resolved source inventories
+and archive member multiplicities match expanded Make. Evidence/scripts:
+`/usr/obj/usr/src/bazel-llvm-support-qualification-20261029`. An initial inventory
+helper used the generic source_inventory suffix rather than support_source_inventory;
+corrected helper now reads the actual target and passes. Native compilation did not
+require source or sandbox changes. References use the staged SDK/existing generators.
+
+This qualifies compilation only: no complete LLVM link, compression/hash runtime
+checks, bootstrap independence, alternate-option compilation or performance claim.
+Frontend review: build-bsd.c/format-5 backend already accept these targets/settings;
+manual updated for additional setting consumers. Remaining components/backends and
+complete compiler/world/kernel/pkgbase/runtime/performance gates stay open.
+Make remains production/default. No installation/publication occurred.
