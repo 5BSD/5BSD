@@ -16219,3 +16219,31 @@ authorization failures, mutation, reload and complete installed-system behavior
 remain unqualified. No performance or independent bootstrap claim follows.
 Existing build-bsd explicit target/configuration interfaces remain sufficient;
 no production input or frontend contract changed. Make remains production/default.
+
+### Maintained native SNMP request and reload test (2026-10-29)
+
+Added //usr.sbin/bsnmpd/bsnmpd:native_runtime using the existing native ATF
+adapter. Daemon/client executables are declared configuration inputs; native
+ATF, begemot, bsnmp, optional wrap and crypto DSOs are explicit runtime libraries.
+SDK libc/libsys and (with crypto) libthr remain declared runtime dependencies.
+The test uses a relative private Unix socket in the test work directory, private
+configuration/PID/engine state, bounded child waits and daemon termination/reaping
+before fatal assertions. The adapter also provides process-group timeout cleanup.
+No IP listeners or host configuration changes are involved.
+
+Run bazel-bsnmp-native-runtime-20261029-r2 passes through build-bsd with 16 jobs.
+One ATF case verifies an exact sysLocation response, rewrites configuration with
+only the mutable value, sends SIGHUP and verifies the changed response, then
+checks normal daemon shutdown. This replaces the direct pilot as a maintained
+Bazel test, without claiming independent bootstrap or full installed-system coverage.
+
+The first run exposed a limitation: replaying the startup configuration, including
+creation of the already-existing local socket, reports an initialization dependency
+failure and does not update sysLocation. Its saved failure-test-reports remain in
+bazel-bsnmp-native-runtime-20261029. The passing test intentionally exercises a
+value-only reload; full startup-configuration replay is still an unresolved runtime
+case, not a passing check. Modules and authorization denial behavior remain open.
+Reviewed build-bsd.c/source_graph.py: existing explicit targets/tests and runtime
+inputs carry the new test without interface changes. No production build default,
+installation, signing or publication contract changed. Whole-system/kernel/pkgbase,
+bootstrap, sandbox/cache and comparative performance gates remain incomplete.

@@ -21,3 +21,20 @@ load(":installation.bzl", "daemon_installation")
 daemon_installation()
 
 exports_files(["generation.bzl", "generate.py"], visibility = ["//usr.sbin/bsnmpd/modules:__subpackages__"])
+
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+cc_binary(name = "runtime_test", srcs = ["runtime_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True)
+bsd_atf_test(name = "native_runtime", body = ":runtime_test",
+    case_name = "private_request", interface = "program",
+    config_files = {":bsnmpd": "daemon", "//usr.sbin/bsnmpd/tools/bsnmptools:bsnmpget": "client"},
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libbegemot:begemot_shared",
+        "//lib/libbsnmp/libbsnmp:bsnmp_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"] + select({
+        _WRAP: ["//lib/libwrap:wrap_shared"], "//conditions:default": []}) + select({
+        "//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libcrypto:crypto_shared",
+            "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"], "//conditions:default": []}),
+    runner = "//tools/build/bazel:atf_runner", size = "small", timeout = "short",
+    visibility = ["//visibility:public"])
