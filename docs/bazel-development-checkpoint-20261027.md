@@ -15265,3 +15265,28 @@ this archive without contract changes. Aggregate payload reconciliation and
 installed-header consumer compilation/linking remain qualification work.
 Make stays production/default; SDK bootstrap and whole-world/kernel/pkgbase/
 sandbox/cache/performance gates remain open. No host installation/publication.
+
+### Kerberos installation archive aggregate (2026-10-29)
+
+Added //krb5:installation_archives, an explicit collection of 45 component
+archives, preserving metadata and directory_metadata output groups. Component
+visibility permits only the krb5 parent package to consume these archives.
+The maintained Make traversal excludes the audit plugin; this aggregate does
+not enable it. Internal libraries without installed payloads are not archives.
+
+Run bazel-krb-aggregate-20261029-r2 passed, including database_test and kdc_test.
+Saved artifact hashes were checked before auditing 299 manifest records across
+211 destinations. All nine repeated destinations are directories with matching
+filesystem attributes. Package/dev/dbg tag sets remain distinct; they are not
+flattened or overwritten. No non-directory destination overlaps were found.
+Repeatable audit and result: /usr/obj/usr/src/bazel-krb-aggregate-reference-20261029/
+(audit.py and audit.json). This is a manifest overlap audit, not complete tar
+payload reconciliation, configured installation coverage, or pkgbase composition.
+The initial aggregate analysis exposed missing component visibility; that failure
+was retained and corrected explicitly before the passing run.
+
+Reviewed build-bsd.c, source_graph.py, and bsd_install_archive.bzl: existing
+explicit target inputs and metadata output groups support this aggregate without
+frontend changes. Installed-header consumer checks, full configured payload
+reconciliation, bootstrap/world/kernel/pkgbase, sandbox/cache and performance
+gates remain open. Make stays production/default; no host installation occurred.

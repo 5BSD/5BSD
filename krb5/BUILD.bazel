@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+
+# Explicit configured installation families; internal archives have no payload.
+# The audit plugin is excluded by the maintained Make traversal.
+_ARCHIVES = [
+    "//krb5/include:install_archive",
+    "//krb5/include/gssapi:install_archive",
+    "//krb5/include/gssrpc:install_archive",
+    "//krb5/include/krb5:install_archive",
+    "//krb5/lib/crypto:install_archive",
+    "//krb5/lib/gssapi:install_archive",
+    "//krb5/lib/kadm5clnt:install_archive",
+    "//krb5/lib/kadm5srv:install_archive",
+    "//krb5/lib/kdb:install_archive",
+    "//krb5/lib/krad:install_archive",
+    "//krb5/lib/krb5:install_archive",
+    "//krb5/lib/rpc:install_archive",
+    "//krb5/libexec/kadmind:install_archive",
+    "//krb5/libexec/kdc:install_archive",
+    "//krb5/libexec/kprop:install_archive",
+    "//krb5/libexec/kpropd:install_archive",
+    "//krb5/libexec/kproplog:install_archive",
+    "//krb5/plugins/k5tls:install_archive",
+    "//krb5/plugins/kdb/db2:install_archive",
+    "//krb5/plugins/preauth/otp:install_archive",
+    "//krb5/plugins/preauth/pkinit:install_archive",
+    "//krb5/plugins/preauth/spake:install_archive",
+    "//krb5/plugins/preauth/test:install_archive",
+    "//krb5/usr.bin/gss-client:install_archive",
+    "//krb5/usr.bin/kadmin:install_archive",
+    "//krb5/usr.bin/kdestroy:install_archive",
+    "//krb5/usr.bin/kinit:install_archive",
+    "//krb5/usr.bin/klist:install_archive",
+    "//krb5/usr.bin/kpasswd:install_archive",
+    "//krb5/usr.bin/ksu:install_archive",
+    "//krb5/usr.bin/kswitch:install_archive",
+    "//krb5/usr.bin/ktutil:install_archive",
+    "//krb5/usr.bin/kvno:install_archive",
+    "//krb5/usr.bin/sclient:install_archive",
+    "//krb5/usr.bin/sim_client:install_archive",
+    "//krb5/usr.sbin/gss-server:install_archive",
+    "//krb5/usr.sbin/kadmin.local:install_archive",
+    "//krb5/usr.sbin/kdb5_util:install_archive",
+    "//krb5/usr.sbin/sim_server:install_archive",
+    "//krb5/usr.sbin/sserver:install_archive",
+    "//krb5/util/build-tools:install_archive",
+    "//krb5/util/compile_et:install_archive",
+    "//krb5/util/et:install_archive",
+    "//krb5/util/support:install_archive",
+    "//krb5/util/verto:install_archive",
+]
+
+bsd_install_archive_set(
+    name = "installation_archives",
+    archives = _ARCHIVES,
+    visibility = ["//visibility:public"],
+)

@@ -6993,3 +6993,10 @@ changes or security-service runtime claims arise from this developer utility.
 Five header installation records match Make, with only an exact generated
 filename-comment difference in profile.h. No runtime instrumentation changed;
 installed-header consumer and whole-system qualification remain separate.
+
+### Kerberos aggregate (2026-10-29)
+
+The 45-archive aggregate changes build visibility and grouping only. Existing
+probe, logging and audit source coverage is unchanged. Database and TCP/keytab
+KDC tests pass in bazel-krb-aggregate-20261029-r2; this adds no OS audit, DTrace,
+replication, OTP/PKINIT or remote administration runtime qualification.
