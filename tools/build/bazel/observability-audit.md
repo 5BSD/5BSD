@@ -5845,3 +5845,11 @@ logs package-resolution activity; it is not evidence of OS security-audit
 integration. No production instrumentation or privilege boundary was changed.
 Environment-controlled paths, sysroot handling and downstream build behavior
 remain runtime qualification items. CLI install parity does not establish them.
+
+### 2026-10-29 bomtool and spdxtool
+
+Native migration retains package metadata, licensing and serialization sources.
+Focused inspection found no direct DTrace/SDT or OS audit submission hooks.
+Build/install parity does not validate generated inventory correctness or license
+interpretation. Functional document and input-error coverage remains open; no
+new privileged boundary or migration-only instrumentation was introduced.

@@ -10649,3 +10649,28 @@ pending. Split-manpage configuration is declared but not separately qualified.
 Frontend review: maintained format-5 targets/artifacts and stage helpers already
 support this payload; no build-bsd C/protocol/manual change is required. Make
 remains production/default, with whole-system/package/performance gates open.
+
+### 2026-10-29 bomtool and spdxtool normal installation
+
+Added native rules for bomtool's two maintained sources and spdxtool's eight,
+explicit local/CLI headers, native private pkgconf dependency and maintained
+manuals/package ownership. Shared getopt source is reused through a declared
+label. No production source or document output changes were introduced.
+
+Maintained frontend /usr/obj/usr/src/bazel-pkgconf-tools-20261029 (16 jobs)
+passes against fresh rootless Make references bazel-bomtool-native-reference-
+20261029 and bazel-spdxtool-native-reference-20261029. Scripts are under
+bazel-pkgconf-tools-qualification-20261029. Each program passes five installed
+metadata records, exact compressed manual bytes, valid separate-debug linkage,
+and matching global/undefined symbols and dynamic fields. Both use libc and
+libprivatepkgconf.so.5. Saved per-program reports are in qualification/<program>.
+
+Scope is the normal installed build. Spdxtool's Make TOOLS_PREFIX-defined
+NO_SHARED mode is NOT modeled/qualified by these targets yet; it remains an
+explicit bootstrap/cross-tool requirement. Functional BOM/SPDX output and .pc
+resolution, downstream Make/ports use and comparative performance remain open.
+No host installation, package publication or live metadata modification occurred.
+Frontend review: format-5 targets and artifacts already support these normal
+candidates. Future bootstrap mode must be connected through maintained frontend
+inputs, not a one-off override. No frontend C/protocol/manual change is needed
+for this batch; Make remains production/default.
