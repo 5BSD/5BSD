@@ -16063,3 +16063,30 @@ resources, HAST and netgraph still require native implementations. No host servi
 network, hardware, filesystem installation or policy was changed. Reviewed build-bsd.c
 and source_graph.py: existing explicit target/metadata inputs suffice. Make remains
 production/default; full-system/bootstrap/cache/sandbox/performance gates stay open.
+
+### Native MIB-II and netgraph SNMP modules (2026-10-29)
+
+Added the twelve maintained MIB-II sources, internal/public headers, generated
+tables/OIDs and module; added netgraph source/header/table/module targets with the
+native libnetgraph dependency. Both include complete installation declarations
+for module/debug/symlink, filtered manuals, definition data, MIBs and public headers.
+MIB-II's earlier header-only target is now accompanied by its actual implementation.
+
+Run bazel-snmp-mib-netgraph-install-20261029 passes via build-bsd with 16 jobs.
+Fresh separate Make references match all six generated files byte-for-byte, and
+both module symbol inventories/ordered dynamic metadata. Installation comparisons
+match MIB-II's 12 and netgraph's 11 changed records with no missing/extra entries or
+attribute/non-directory package-tag mismatches. All 13 regular payloads pass
+header/manual/MIB/definition bytes or ELF comparisons; both debug-link CRCs/names
+and symlink targets pass. Shared directory entries recur in per-component counts.
+Evidence: /usr/obj/usr/src/bazel-snmp-mib-netgraph-reference-20261029/verify.py,
+comparison.json and per-module install-audit.py,json/payload-audit.py,json.
+
+No network interface state, routing table, netgraph nodes or daemon modules were
+modified or exercised. Native build/install candidates now exist for nine of the
+11 configured module directories; hostres and hast remain. This directory count
+is local SNMP coverage, not world or kernel migration completion. Runtime/module
+loading and complete SNMP aggregate reconciliation also remain open.
+Reviewed build-bsd.c/source_graph.py: existing targets/metadata inputs suffice;
+Make remains production/default. Full-system/bootstrap/cache/sandbox/performance
+gates are still incomplete.

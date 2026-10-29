@@ -2,3 +2,6 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "public_headers", hdrs = ["snmp_mibII.h"], strip_include_prefix = ".", include_prefix = "bsnmp",
     deps = ["//contrib/bsnmp/snmpd:public_headers"], visibility = ["//usr.sbin/bsnmpd:__subpackages__"])
+
+exports_files(["mibII.c", "mibII_begemot.c", "mibII_ifmib.c", "mibII_ifstack.c", "mibII_interfaces.c", "mibII_ip.c", "mibII_ipaddr.c", "mibII_nettomedia.c", "mibII_rcvaddr.c", "mibII_route.c", "mibII_tcp.c", "mibII_udp.c", "mibII_tree.def", "snmp_mibII.h", "snmp_mibII.3", "BEGEMOT-IP-MIB.txt", "BEGEMOT-MIB2-MIB.txt"], visibility = ["//usr.sbin/bsnmpd/modules/snmp_mibII:__pkg__"])
+cc_library(name = "headers", hdrs = ["mibII.h", "snmp_mibII.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/bsnmpd/modules/snmp_mibII:__pkg__"])

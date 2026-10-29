@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//usr.sbin/bsnmpd/bsnmpd:generation.bzl", "snmp_tree")
+snmp_tree(name = "generated", source = "//contrib/bsnmp/snmp_mibII:mibII_tree.def", prefix = "mibII_", local_includes = False, symbols = ["ipAddrTable", "ifTable", "ifRcvAddressEntry", "ifMIB", "ipMIB", "tcpMIB", "udpMIB", "ipForward", "ifIndex", "linkDown", "linkUp"],
+    generator = "//usr.sbin/bsnmpd/gensnmptree:gensnmptree", driver = "//usr.sbin/bsnmpd/bsnmpd:generate.py",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+filegroup(name = "tree_source", srcs = [":generated"], output_group = "source")
+filegroup(name = "tree_headers", srcs = [":generated"], output_group = "headers")
+cc_library(name = "generated_headers", hdrs = [":tree_headers"], strip_include_prefix = "generated")
+cc_library(name = "objects", srcs = ["//contrib/bsnmp/snmp_mibII:mibII.c", "//contrib/bsnmp/snmp_mibII:mibII_begemot.c", "//contrib/bsnmp/snmp_mibII:mibII_ifmib.c", "//contrib/bsnmp/snmp_mibII:mibII_ifstack.c", "//contrib/bsnmp/snmp_mibII:mibII_interfaces.c", "//contrib/bsnmp/snmp_mibII:mibII_ip.c", "//contrib/bsnmp/snmp_mibII:mibII_ipaddr.c", "//contrib/bsnmp/snmp_mibII:mibII_nettomedia.c", "//contrib/bsnmp/snmp_mibII:mibII_rcvaddr.c", "//contrib/bsnmp/snmp_mibII:mibII_route.c", "//contrib/bsnmp/snmp_mibII:mibII_tcp.c", "//contrib/bsnmp/snmp_mibII:mibII_udp.c"] + [":tree_source"],
+    deps = [":generated_headers", "//contrib/bsnmp/snmpd:headers", "//contrib/bsnmp/lib:public_headers", "//contrib/bsnmp/snmp_mibII:headers"],
+    local_defines = ["HAVE_ERR_H", "HAVE_GETADDRINFO", "HAVE_STRLCPY", "HAVE_SYS_TREE_H"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_shared_library(name = "module", deps = [":objects"], shared_lib_name = "snmp_mibII.so.6",
+    user_link_flags = ["-Wl,-soname,snmp_mibII.so.6", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load("//usr.sbin/bsnmpd/modules:installation.bzl", "module_installation")
+module_installation(module = "mibII", binary = ":module", manual = "//contrib/bsnmp/snmp_mibII:snmp_mibII.3",
+    definitions = {"//contrib/bsnmp/snmp_mibII:mibII_tree.def": "mibII_tree.def"},
+    mibs = {"//contrib/bsnmp/snmp_mibII:BEGEMOT-IP-MIB.txt": "BEGEMOT-IP-MIB.txt", "//contrib/bsnmp/snmp_mibII:BEGEMOT-MIB2-MIB.txt": "BEGEMOT-MIB2-MIB.txt"}, headers = {"//contrib/bsnmp/snmp_mibII:snmp_mibII.h": "snmp_mibII.h"})

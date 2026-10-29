@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//usr.sbin/bsnmpd/bsnmpd:generation.bzl", "snmp_tree")
+snmp_tree(name = "generated", source = "netgraph_tree.def", prefix = "netgraph_", local_includes = False, symbols = ["begemotNg"],
+    generator = "//usr.sbin/bsnmpd/gensnmptree:gensnmptree", driver = "//usr.sbin/bsnmpd/bsnmpd:generate.py",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+filegroup(name = "tree_source", srcs = [":generated"], output_group = "source")
+filegroup(name = "tree_headers", srcs = [":generated"], output_group = "headers")
+cc_library(name = "generated_headers", hdrs = [":tree_headers"], strip_include_prefix = "generated")
+cc_library(name = "objects", srcs = ["snmp_netgraph.c", "snmp_netgraph.h"] + [":tree_source"],
+    deps = [":generated_headers", "//contrib/bsnmp/snmpd:public_headers", "//lib/libnetgraph:netgraph"],
+    local_defines = ["HAVE_STRLCPY"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_shared_library(name = "module", deps = [":objects"], dynamic_deps = ["//lib/libnetgraph:netgraph_shared"], shared_lib_name = "snmp_netgraph.so.6",
+    user_link_flags = ["-Wl,-soname,snmp_netgraph.so.6", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load("//usr.sbin/bsnmpd/modules:installation.bzl", "module_installation")
+module_installation(module = "netgraph", binary = ":module", manual = "snmp_netgraph.3",
+    definitions = {"netgraph_tree.def": "netgraph_tree.def"},
+    mibs = {"BEGEMOT-NETGRAPH.txt": "BEGEMOT-NETGRAPH.txt"}, headers = {"snmp_netgraph.h": "snmp_netgraph.h"})
