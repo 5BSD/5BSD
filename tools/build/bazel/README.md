@@ -40814,3 +40814,29 @@ pkgbase composition and world/kernel/bootstrap/performance gates remain open.
 Reviewed build-bsd.c/source_graph.py; existing archive-set metadata handling and
 explicit inputs suffice without frontend changes. No host installation/startup;
 Make remains production/default.
+
+### SNMP aggregate with optional modules disabled (2026-10-29)
+
+Qualified the same native installation aggregate with HAST, PF, netgraph support
+and wireless disabled through explicit build inputs. Run
+bazel-bsnmp-minimal-20261029 completed through build-bsd with 16 jobs. The fresh
+Make reference bazel-bsnmp-minimal-make-20261029 uses the corresponding WITHOUT
+options and independent objects/staging. All 168 changed installation destinations
+match, with no missing/extra paths or ownership/mode/non-directory tag mismatches.
+All 53 regular payloads pass byte or ELF comparisons; ten debug links pass name/CRC
+checks. Hardlink identity and symlink targets also pass. The full configured
+aggregate previously matched 192 destinations, 73 regular payloads and 14 debug
+links; disabled features are therefore covered by an independent installation
+reference, not merely successful compilation.
+
+Evidence is retained under
+/usr/obj/usr/src/bazel-bsnmp-aggregate-reference-20261029/:
+minimal-inputs.json, make-minimal.py, minimal-install-audit.py/log and
+minimal-payload-audit.py/json/log. Verifiers authenticate saved artifact hashes
+and reject duplicate regular destinations and unexpected archive members.
+This checks the four-disabled combination, not every feature combination.
+Daemon/module runtime, complete world/kernel/pkgbase/bootstrap and comparative
+performance remain open. Reviewed build-bsd.c and source_graph.py: the existing
+explicit configuration inputs and aggregate metadata contract suffice; no frontend
+interface change is required. Make remains production/default. No host installation
+or service startup was performed.
