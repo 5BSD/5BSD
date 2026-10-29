@@ -6026,3 +6026,10 @@ sources. Native declarations preserve maintained diagnostics and source selectio
 Connection/address resolution, multicast and error paths remain runtime and
 observability-review candidates. No hardware operations were performed; these
 build comparisons do not assess kernel auditing or driver instrumentation.
+
+### 2026-10-29 ibumad and ibmad
+
+No explicit SDT/DTrace or direct audit calls found in the reviewed management
+library sources/build files. Native targets preserve source inventory and existing
+diagnostics. Management-datagram routing, timeout and permission failures remain
+runtime/observability-review candidates. No device operations were exercised.

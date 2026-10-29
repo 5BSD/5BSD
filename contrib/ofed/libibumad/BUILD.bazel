@@ -1,3 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 exports_files(['umad.h', 'umad_cm.h', 'umad_sa.h', 'umad_sm.h', 'umad_str.h', 'umad_types.h'], visibility = ["//lib/ofed/include:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['umad.c', 'umad_str.c', 'sysfs.c', 'libibumad.map'], visibility = ["//lib/ofed/libibumad:__pkg__"])
+cc_library(name = "headers", hdrs = ['umad.h', 'umad_cm.h', 'umad_sa.h', 'umad_sm.h', 'umad_str.h', 'umad_types.h'], strip_include_prefix = ".", include_prefix = "infiniband", deps = ["//contrib/ofed/include:headers"], visibility = ["//visibility:public"])
+cc_library(name = "private_headers", hdrs = ['config.h', 'sysfs.h'], strip_include_prefix = ".", deps = [":headers"], visibility = ["//lib/ofed/libibumad:__pkg__"])

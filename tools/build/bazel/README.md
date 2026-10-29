@@ -36004,3 +36004,25 @@ and their remaining libraries, plus optional opensm. Frontend review: current
 format-5 targets/archive sets and staging helpers cover this addition; no
 build-bsd.c/backend/manual interface change. Make remains production/default;
 whole-system world/kernel/pkgbase/runtime/performance qualification remains open.
+
+### 2026-10-29 management datagram library prerequisites
+
+Added native libibumad (three sources) and libibmad (14 sources), explicit public/
+private header providers, maintained version maps, static/shared/debug outputs
+and /usr/lib installation. libibmad retains HAVE_CONFIG_H=1 and native ibumad
+dependency. Header installation stays with the existing OFED include package.
+
+Maintained frontend bazel-mad-libraries-20261029 (16 jobs) matches fresh isolated
+Make references bazel-ibumad-reference-20261029 and bazel-ibmad-reference-20261029:
+six metadata records each, both static archive member/global/undefined-symbol
+inventories, and both shared ELF/debug pairs with matching symbols/dynamic fields.
+Evidence/scripts in bazel-ibumad-qualification-20261029 and
+bazel-ibmad-qualification-20261029 under /usr/obj/usr/src.
+
+The diagnostics' maintained common Make include links osmcomp, ibmad and ibumad,
+even for default ibstat. Native osmcomp and consumers remain next; ofed_extra
+already has a maintained configuration setting for optional diagnostics. No
+management datagrams, device operations, traffic or performance tests occurred.
+Frontend review: existing format-5 targets/staging cover these libraries; no
+build-bsd.c/backend/manual interface change required. Make remains production/
+default, and full world/kernel/pkgbase/runtime qualification is incomplete.
