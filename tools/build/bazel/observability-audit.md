@@ -5628,3 +5628,11 @@ Its helper functions and ATF failure reporting are now present in the installed
 ELF as well as the other fd-loading tests. The broader recursive symbol check
 caught the omission. Test source/assertions are unchanged; no new runtime result
 or DTrace/audit instrumentation is claimed.
+
+### 2026-10-29 twelve /bin shell suites
+
+Preserved all existing test bodies and diagnostics for chmod, cp, date, hostname,
+ln, ls, mkdir, mv, pwd, rm, rmdir and test. No DTrace/audit calls were found in
+these shell test bodies; no instrumentation added for installation-only work.
+Kyua unprivileged-user and required-file constraints are retained. Runtime and
+privileged filesystem behavior are not qualified by these payload comparisons.

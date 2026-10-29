@@ -34453,3 +34453,10 @@ metadata records, 284 noncompiled payloads, one separately verified static test
 archive, and 41 executable/module debug pairs with matching symbols and dynamic
 properties. This audit caught and corrected missing common.c in set_var_test.
 It does not establish runtime test success.
+
+### Additional /bin shell-test installations (2026-10-29)
+
+Native `//bin/<component>/tests:install_archive` targets are available for chmod,
+cp, date, hostname, ln, ls, mkdir, mv, pwd, rm, rmdir and test. All twelve match
+Make installation, including Kyua required-user/file properties. This does not
+establish runtime success or complete /bin test coverage.

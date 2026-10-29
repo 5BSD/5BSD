@@ -9663,3 +9663,30 @@ requires no change. No host install or runtime test execution occurred. These
 results qualify installed outputs and ELF interface/debug properties, not full
 instruction equivalence, all option variants, tests actually passing at runtime,
 complete world/kernel/packages or performance. Make remains default.
+
+## 2026-10-29: twelve /bin shell-test installation suites
+
+Added native test install_archive targets for chmod, cp, date, hostname, ln, ls,
+mkdir, mv, pwd, rm, rmdir and test. Eleven ATF scripts use the declared wrapper
+action; the legacy test TAP script installs its existing bytes without adding
+a second interpreter line. Kyua metadata preserves the unprivileged-user
+requirements for ls/test and ls's required awk/nc/sort files. These source-declared
+paths are test runtime requirements, not substitutions for undeclared build inputs.
+
+All twelve targets built in one maintained build-bsd invocation. Twelve independent
+rootless Make installations match every payload byte, mode, owner/group, tag,
+flag and archive type: 24 payload files and 36 metadata records total. Each suite
+has its script, Kyuafile and test directory record. Tests themselves have not
+been executed or registered as native Bazel cases in this change.
+
+Evidence: /usr/obj/usr/src/bazel-bin-shell-installs-20261029/qualification/
+summary.json and <component>/parity.json. Reproduction scripts and component list:
+bazel-bin-shell-install-qualification-20261029; reference stages:
+bazel-bin-<component>-tests-reference-20261029. All builds use 16 jobs.
+
+Frontend review: existing typed target inputs, script/installation rules and
+artifact capture suffice. No new frontend C/backend protocol or build replacement.
+No host installation, test mutation of host files, or services executed. More /bin
+test installations (including imported NetBSD suites and data/Perl fixtures),
+parent discovery/aggregation and runtime remain before complete /bin qualification.
+Full world/kernel/pkgbase/performance gates remain open; Make stays default.
