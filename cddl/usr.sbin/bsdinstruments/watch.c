@@ -33,6 +33,7 @@
 
 #include "otelexport.h"
 #include "dtotel.h"
+#include "oe_sysconf.h"
 #include "bsdinstruments.h"
 
 /* File outputs are flushed (and fsynced) at least this often. */
@@ -195,6 +196,7 @@ watch_run(const struct profile *p, const char *rendered,
 	struct oe_sink_config sc;
 	struct oe_sink *sink;
 	struct oe_env env;
+	struct oe_sysconf sysconf;	/* otel.conf(5); outlives env */
 	struct dtotel_config dcfg;
 	struct dtotel *dt;
 	struct timespec now, last_flush;
@@ -217,8 +219,25 @@ watch_run(const struct profile *p, const char *rendered,
 	 * service.name from OTEL_SERVICE_NAME, else a service.name in
 	 * OTEL_RESOURCE_ATTRIBUTES, else the program name.  Other
 	 * OTEL_RESOURCE_ATTRIBUTES entries override detected values.
+	 *
+	 * OTLP settings: --endpoint > OTEL_* environment > otel.conf(5) >
+	 * default.  The other formats do not read otel.conf.
 	 */
-	oe_env_load(&env);
+	memset(&sysconf, 0, sizeof(sysconf));
+	if (wo->format == FORMAT_OTEL) {
+		if (oe_sysconf_load(&sysconf, NULL, NULL) != 0) {
+			fprintf(stderr, "bsdinstruments: %s\n", sysconf.error);
+			oe_sysconf_free(&sysconf);
+			return (1);
+		}
+		if (oe_env_load_system(&env, &sysconf, wo->endpoint) != 0) {
+			fprintf(stderr, "bsdinstruments: out of memory\n");
+			oe_env_free(&env);
+			oe_sysconf_free(&sysconf);
+			return (1);
+		}
+	} else
+		oe_env_load(&env);
 	oe_host_detect(&host);
 	memset(&resource, 0, sizeof(resource));
 	oe_resource_host(&resource, &host);
@@ -439,5 +458,6 @@ out:
 	if (sink != NULL && oe_sink_close(sink) != 0)
 		err_ret = 1;
 	oe_env_free(&env);
+	oe_sysconf_free(&sysconf);
 	return (err_ret);
 }

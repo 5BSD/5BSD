@@ -23,7 +23,14 @@ ${PACKAGE}FILES+=	golden/otlpjson-spans.jsonl
 ${PACKAGE}FILES+=	golden/otlpjson-semconv.jsonl
 ${PACKAGE}FILESDIR=	${TESTSDIR}/golden
 
+# otel.conf(5) system configuration layer.
+ATF_TESTS_C+=	sysconf_test
+# Allocation-failure sweep: links a failalloc-instrumented oe_sysconf.c.
+ATF_TESTS_C+=	sysconf_oom_test
+SRCS.sysconf_oom_test=	sysconf_oom_test.c sysconf_oom_unit.c failalloc.c
+
 CFLAGS+=	-I${.CURDIR:H}
+CFLAGS.sysconf_oom_unit.c+=	-I${SRCTOP}/contrib/libucl/include
 
 # Allocation-failure injection (otel_testutil.c).
 WRAP_ALLOC=	-Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc \
@@ -31,6 +38,8 @@ WRAP_ALLOC=	-Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc \
 LDFLAGS.otelexport_test+=	${WRAP_ALLOC}
 LDFLAGS.otlp_collector+=	${WRAP_ALLOC}
 
-LIBADD.otelexport_test+=	otelexport z ssl crypto pthread
+LIBADD.otelexport_test+=	otelexport z ssl crypto pthread ucl
+LIBADD.sysconf_test+=		otelexport
+LIBADD.sysconf_oom_test+=	otelexport ucl
 
 .include <bsd.test.mk>

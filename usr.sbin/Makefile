@@ -38,6 +38,9 @@ SUBDIR=	adduser \
 	getpmac \
 	gstat \
 	hwstat \
+	otelauditd \
+	otelconf \
+	otelpfd \
 	i2c \
 	ifmcstat \
 	iostat \

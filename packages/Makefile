@@ -48,6 +48,7 @@ SUBDIR=	\
 	geom \
 	ggate \
 	hwstat \
+	otel \
 	lib9p \
 	libauditcmp \
 	libarchive \
@@ -208,7 +209,7 @@ SUBDIR.${MK_TESTS}+=		libcryptocmp-tests libcryptodesc-tests
 SUBDIR.${MK_TESTS}+=		libnetworkcmp-tests libsysctlcmp-tests libtimecmp-tests libpowercmp-tests
 SUBDIR.${MK_TESTS}+=		libcapreclaim-tests
 SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotify-tests libcache-tests bsdmemory-tests
-SUBDIR.${MK_TESTS}+=		libotelexport-tests
+SUBDIR.${MK_TESTS}+=		libotelexport-tests otel-tests
 SUBDIR.${MK_TESTS}+=		libtrustedzfs-tests
 SUBDIR.${MK_TESTS}+=		libcapsulert-tests libservice-tests
 SUBDIR.${MK_TESTS}+=		mac-capability-tests

@@ -456,11 +456,30 @@ and
 An explicit
 .Fl -endpoint
 flag takes precedence over
-.Ev OTEL_EXPORTER_OTLP_ENDPOINT ,
-which takes precedence over the built-in default
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT .
+With
+.Fl -format Cm otel ,
+settings given neither on the command line nor in the environment come
+from
+.Xr otel.conf 5 ,
+and an invalid
+.Xr otel.conf 5
+is an error; the built-in default endpoint is
 .Ql http://localhost:4318 .
 Malformed values are reported and ignored as described in
 .Xr libotelexport 3 .
+Aggregation keys written as clause-local variables
+.Pq Li this->device
+are exported under the variable name.
+.Pp
+The
+.Pa otel_dtrace
+rc.d script runs the
+.Cm system-metrics
+profile as a service, exporting its aggregations at the end of every
+.Va otel_dtrace_window
+seconds; see
+.Xr rc.conf 5 .
 .Sh EXIT STATUS
 .Nm
 exits 0 on success, 1 when tracing or exporting fails, and 2 on a usage
@@ -507,6 +526,7 @@ bsdinstruments watch sched-on-cpu --with-stack --format collapsed \e
 .Xr dtrace 1 ,
 .Xr dwatch 1 ,
 .Xr libotelexport 3 ,
+.Xr otel.conf 5 ,
 .Xr hwstat 8
 .Sh HISTORY
 .Nm

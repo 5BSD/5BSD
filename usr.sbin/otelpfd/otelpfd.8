@@ -1,0 +1,135 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd October 26, 2026
+.Dt OTELPFD 8
+.Os
+.Sh NAME
+.Nm otelpfd
+.Nd export pf statistics as OpenTelemetry metrics
+.Sh SYNOPSIS
+.Nm
+.Op Fl c Ar count
+.Op Fl e Ar endpoint
+.Op Fl f Ar file
+.Op Fl i Ar interval
+.Op Fl u Ar user
+.Sh DESCRIPTION
+.Nm
+reads the
+.Xr pf 4
+status with the
+.Dv DIOCGETSTATUS
+ioctl, the structure that
+.Ql pfctl -s info
+prints, every
+.Ar interval
+seconds and sends it as OTLP metrics to the endpoint configured in
+.Xr otel.conf 5 .
+It is normally started by the
+.Pa otelpfd
+rc.d script; see
+.Xr rc.conf 5 .
+.Pp
+The options are:
+.Bl -tag -width "-e endpoint"
+.It Fl c Ar count
+Exit after
+.Ar count
+samples.
+By default
+.Nm
+runs until it receives
+.Dv SIGTERM ,
+.Dv SIGINT
+or
+.Dv SIGHUP ,
+then flushes pending metrics and exits.
+.It Fl e Ar endpoint
+Send to
+.Ar endpoint
+instead of the one resolved from the environment and
+.Xr otel.conf 5 .
+Credentials from the
+.Xr otel.conf 5
+headers file are not sent to it.
+.It Fl f Ar file
+Read consecutive binary
+.Vt struct pf_status
+records from
+.Ar file
+instead of
+.Pa /dev/pf ,
+and stop at its end.
+This replays captured samples for testing and diagnosis.
+.It Fl i Ar interval
+Seconds between samples, 0.1 to 3600; the default is 15.
+.It Fl u Ar user
+After opening
+.Pa /dev/pf
+and reading the configuration, switch permanently to
+.Ar user .
+.El
+.Sh METRICS
+Names carry the
+.Dq Ar service . Ns Li pf.
+prefix of the exporter, where
+.Ar service
+is
+.Dq otelpfd
+unless
+.Ev OTEL_SERVICE_NAME
+says otherwise.
+.Bl -tag -width "src_node_operations"
+.It Li running , states , states_halfopen , src_nodes , fragments , syncookies_active
+Gauges.
+.It Li state_operations , src_node_operations , fragment_operations
+Cumulative sums by
+.Va operation
+.Pq search, insert, removal .
+.It Li reasons
+Cumulative sums by
+.Va reason ,
+the pf drop and match reason counters.
+.It Li limits
+Cumulative sums by
+.Va limit ,
+the limit counters.
+.It Li packets
+Cumulative sums by
+.Va network.type
+.Pq inet, inet6 ,
+.Va direction
+.Pq in, out
+and
+.Va action
+.Pq pass, block .
+.It Li bytes
+Cumulative sums by
+.Va network.type
+and
+.Va direction .
+.El
+.Sh SECURITY
+.Pa /dev/pf
+is opened read-only and its capability rights are limited to the single
+.Dv DIOCGETSTATUS
+ioctl before the process changes to
+.Ar user .
+.Nm
+does not enter capability mode because its exporter must be able to
+connect to the collector again after a failure.
+.Sh EXIT STATUS
+.Ex -std
+Usage errors exit 2.
+.Sh SEE ALSO
+.Xr pf 4 ,
+.Xr otel.conf 5 ,
+.Xr rc.conf 5 ,
+.Xr otelconf 8 ,
+.Xr pfctl 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD.

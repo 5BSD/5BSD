@@ -1,0 +1,57 @@
+# This file holds the default OpenTelemetry settings of the base system.
+# Do not edit it: put local changes in /etc/otel.conf, which is read
+# after this file and overrides individual keys.  See otel.conf(5).
+#
+# Precedence for programs that export telemetry, highest first:
+#   command line > OTEL_* environment > /etc/otel.conf >
+#   /etc/defaults/otel.conf > built-in defaults
+#
+# Services that emit telemetry out of the box are started only when
+# otel_enable="YES" is set in rc.conf(5).
+
+# Apply this system configuration.  When false, programs ignore the
+# file and the rc.d OpenTelemetry services refuse to start.
+enable = true;
+
+# Where base system emitters send OTLP: the local agent by default.
+endpoint = "http://localhost:4318";
+protocol = "http/json";
+compression = "gzip";
+timeout_ms = 10000;
+
+# Optional credentials ("Name: value" lines) for endpoint, kept outside
+# this file.  The file must be owned by root and have mode 0600 or 0400.
+headers_file = "";
+
+# host.id resource attribute source (written by the hostid rc.d script).
+host_id_file = "/etc/hostid";
+
+# Resource attributes attached to every record.  An empty value removes
+# a default attribute.
+resource {
+	"service.namespace" = "5bsd";
+	"deployment.environment.name" = "production";
+}
+
+# Persistent buffering for the local agent and exporters.
+spool {
+	directory = "/var/spool/otel";
+	max_bytes = 268435456;
+}
+
+# Local agent (fluent-bit, started by the fluentbit rc.d script).
+agent {
+	# OTLP/HTTP receiver for the base system emitters.
+	listen = "127.0.0.1:4318";
+	# Remote collector the agent forwards to; the agent does not start
+	# until this is set.
+	upstream = "";
+	upstream_protocol = "http/protobuf";
+	# Credentials for upstream, same format and mode rules as
+	# headers_file.
+	headers_file = "";
+	tls_verify = true;
+	log_level = "info";
+	# Text logs shipped as OTel log records.
+	tail = [ "/var/log/messages" ];
+}

@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd October 15, 2026
+.Dd October 26, 2026
 .Dt RC.CONF 5
 .Os
 .Sh NAME
@@ -3096,6 +3096,99 @@ Daylight Saving Time in
 .Xr cron 8
 (equivalent to using the flag
 .Fl s ) .
+.It Va otel_enable
+.Pq Vt bool
+Master switch for the OpenTelemetry services
+.Pa fluentbit ,
+.Pa otel_hwstat ,
+.Pa otelpfd ,
+.Pa otelauditd
+and
+.Pa otel_dtrace .
+Each of their
+.Va *_enable
+variables that is empty follows this value; set one to
+.Dq Li NO
+to keep that service off.
+Exporter settings are read from
+.Xr otel.conf 5 ;
+the services refuse to start when it is invalid or has
+.Ic enable
+set to false.
+.It Va otel_endpoint
+.Pq Vt str
+If not empty, the OTLP endpoint of the emitter services instead of
+.Ic endpoint
+in
+.Xr otel.conf 5 .
+Its
+.Ic headers_file
+credentials are then not sent.
+.It Va otel_rundir
+.Pq Vt str
+Directory for the services' pid files and the generated agent
+configuration (default
+.Pa /var/run/otel ) .
+.It Va fluentbit_enable
+.Pq Vt bool
+Run the local agent,
+.Xr fluent-bit 8 ,
+with the configuration that
+.Xr otelconf 8
+renders from
+.Xr otel.conf 5 ,
+as
+.Va fluentbit_runas
+(default
+.Dq Li _otel ) .
+It does not start while
+.Ic agent.upstream
+is empty or the agent is not installed.
+.Va fluentbit_config
+names an administrator-provided configuration to use instead;
+.Va fluentbit_bin
+and
+.Va fluentbit_flags
+select the binary and extra options.
+.It Va otel_hwstat_enable
+.Pq Vt bool
+Export hardware metrics with
+.Ql hwstat watch --format otel
+every
+.Va otel_hwstat_interval
+seconds (default 10);
+.Va otel_hwstat_flags
+adds options.
+.It Va otelpfd_enable
+.Pq Vt bool
+Export
+.Xr pf 4
+statistics with
+.Xr otelpfd 8 ,
+which drops to
+.Va otelpfd_runas
+after opening
+.Pa /dev/pf .
+.It Va otelauditd_enable
+.Pq Vt bool
+Export audit records as log records with
+.Xr otelauditd 8 ,
+which drops to
+.Va otelauditd_runas
+after opening the audit pipe.
+.It Va otel_dtrace_enable
+.Pq Vt bool
+Export DTrace-derived system metrics by running the
+.Xr bsdinstruments 8
+profile
+.Va otel_dtrace_profile
+(default
+.Dq Li system-metrics ) ,
+exporting its aggregations once per
+.Va otel_dtrace_window
+seconds (default 60).
+The DTrace modules must be loaded by
+.Xr loader.conf 5 .
 .It Va lpd_program
 .Pq Vt str
 Path to

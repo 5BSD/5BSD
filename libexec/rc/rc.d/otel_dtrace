@@ -1,0 +1,58 @@
+#!/bin/sh
+#
+# PROVIDE: otel_dtrace
+# REQUIRE: DAEMON
+# AFTER: fluentbit
+# KEYWORD: shutdown
+#
+# DTrace-derived system metrics: bsdinstruments(8) runs the conservative
+# "system-metrics" profile in windows of otel_dtrace_window seconds and
+# exports each window's aggregations with OTLP; daemon(8) starts the next
+# window.  Each window's sums start again from zero (backends see a
+# counter reset per window).
+
+. /etc/rc.subr
+
+name="otel_dtrace"
+desc="OpenTelemetry DTrace system metrics (bsdinstruments)"
+rcvar="otel_dtrace_enable"
+
+load_rc_config $name
+
+: ${otel_enable:="NO"}
+[ -n "${otel_dtrace_enable}" ] || otel_dtrace_enable="${otel_enable}"
+: ${otel_dtrace_bin:="/usr/sbin/bsdinstruments"}
+: ${otel_dtrace_profile:="system-metrics"}
+: ${otel_dtrace_window:="60"}
+: ${otel_rundir:="/var/run/otel"}
+: ${otelconf_program:="/usr/sbin/otelconf"}
+if [ -n "${otel_endpoint}" ]; then
+	otel_dtrace_env="OTEL_EXPORTER_OTLP_ENDPOINT=${otel_endpoint}"
+fi
+
+pidfile="${otel_rundir}/${name}.pid"
+command="/usr/sbin/daemon"
+start_precmd="otel_dtrace_prestart"
+
+otel_dtrace_prestart()
+{
+	if [ ! -x "${otel_dtrace_bin}" ]; then
+		warn "${otel_dtrace_bin} is not installed"
+		return 1
+	fi
+	${otelconf_program} check -eq || return 1
+	# Late kldload of the DTrace providers is refused on 5BSD; they must
+	# come from loader.conf(5) (dtraceall_load="YES").
+	if ! kldstat -q -m dtrace; then
+		warn "DTrace is not loaded; set dtraceall_load=\"YES\" in" \
+		    "/boot/loader.conf"
+		return 1
+	fi
+	install -d -m 0755 "${otel_rundir}" || return 1
+	command_args="-f -S -T ${name} -P ${pidfile} -r -R 1 \
+${otel_dtrace_bin} watch ${otel_dtrace_profile} --format otel \
+--duration ${otel_dtrace_window} ${rc_flags}"
+	rc_flags=""
+}
+
+run_rc_command "$1"

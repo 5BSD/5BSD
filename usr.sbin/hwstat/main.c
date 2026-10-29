@@ -23,6 +23,7 @@
 #include <unistd.h>
 
 #include "otelexport.h"
+#include "oe_sysconf.h"
 #include "hwstat.h"
 
 static volatile sig_atomic_t got_signal;
@@ -111,6 +112,7 @@ struct otel_ctx {
 	struct oe_exporter *exporter;
 	struct oe_env	 env;
 	struct oe_host_info host;
+	struct oe_sysconf sysconf;	/* otel.conf(5); outlives env */
 };
 
 static struct oe_exporter *
@@ -120,8 +122,20 @@ otel_open(struct otel_ctx *ctx, const char *cli_endpoint, double interval)
 	struct oe_otlp_config ocfg;
 	const char *endpoint;
 
-	/* The same resource conventions as bsdinstruments(8). */
-	oe_env_load(&ctx->env);
+	/*
+	 * The same resource conventions as bsdinstruments(8); settings:
+	 * command line > OTEL_* environment > otel.conf(5) > default.
+	 */
+	if (oe_sysconf_load(&ctx->sysconf, NULL, NULL) != 0) {
+		warnx("%s", ctx->sysconf.error);
+		return (NULL);
+	}
+	if (oe_env_load_system(&ctx->env, &ctx->sysconf,
+	    strcmp(cli_endpoint, "http://localhost:4318") == 0 ? NULL :
+	    cli_endpoint) != 0) {
+		warnx("out of memory");
+		return (NULL);
+	}
 	oe_host_detect(&ctx->host);
 	memset(&resource, 0, sizeof(resource));
 	oe_resource_host(&resource, &ctx->host);
@@ -175,6 +189,7 @@ otel_close(struct otel_ctx *ctx)
 		ctx->exporter = NULL;
 	}
 	oe_env_free(&ctx->env);
+	oe_sysconf_free(&ctx->sysconf);
 }
 
 static void

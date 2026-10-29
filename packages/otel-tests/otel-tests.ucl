@@ -1,0 +1,7 @@
+comment = "Tests for the OpenTelemetry system layer"
+
+desc = <<EOD
+ATF/Kyua tests for otelconf(8), the rc.d OpenTelemetry services and the
+otelpfd(8) and otelauditd(8) exporters, with a local fake OTLP/HTTP
+receiver and an independent OTLP-JSON validator.
+EOD

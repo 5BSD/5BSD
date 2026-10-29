@@ -29,6 +29,7 @@ The per-file detail lives next to the code:
 | OpenBSD regress suites | OpenBSD, verbatim | `contrib/openbsd-pf/regress` |
 | Compatibility layer, pfil(9) hooks, VNET, ioctl dispatch, DTrace provider | 5BSD | `sys/netpfil/openbsd-pf` |
 | Userland compatibility for the OpenBSD tools | 5BSD | `sys/netpfil/openbsd-pf/user` |
+| otelpfd(8): pf status (`DIOCGETSTATUS`, OpenBSD `struct pf_status`) as OpenTelemetry metrics | 5BSD consumer of the OpenBSD ioctl ABI | `usr.sbin/otelpfd` |
 | IPv4, IPv6, TCP, UDP, SCTP protocol stacks | FreeBSD | `sys/netinet`, `sys/netinet6` |
 | Routing (FIBs, nexthops), route(4) sockets, netlink | FreeBSD | `sys/net`, `sys/net/route`, `sys/netlink` |
 | ifnet, if_clone, pfil(9), VNET, loopback, epair, bridge, carp, vlan | FreeBSD, with 5BSD changes listed below | `sys/net`, `sys/netinet` |

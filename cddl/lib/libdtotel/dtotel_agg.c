@@ -64,6 +64,9 @@ builtin_key_name(const char *expr, int idx, char *buf, size_t len)
 			return (names[i].name);
 	if (expr[0] == '"')
 		return ("label");
+	/* this->name keys export their variable name. */
+	if (strncmp(expr, "this->", 6) == 0 && expr[6] != '\0')
+		return (expr + 6);
 	snprintf(buf, len, "key.%d", idx);
 	return (buf);
 }
