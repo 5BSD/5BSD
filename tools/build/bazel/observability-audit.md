@@ -5863,3 +5863,12 @@ Four maintained signal/dead.letter tests pass with the native mailx executable;
 mail delivery, mailbox permissions and editor/shell invocation remain runtime
 coverage gaps. Consider mail submission/error observability in a separate
 behavioral review; this build migration introduces no production policy changes.
+
+### 2026-10-29 whois and FTP client
+
+Focused WHOIS/tnftp source/header scan found no explicit DTrace/SDT,
+audit_submit/auditon or setuid/setgid call sites. Native rules retain all
+maintained sources and FTP IPv6 configuration without adding/removing probes.
+Network transactions, credentials, transfers, proxy/active/passive paths and
+WHOIS referrals remain runtime coverage gaps. Any new audit policy needs a
+separate behavioral/security review, not inferred from build/install parity.

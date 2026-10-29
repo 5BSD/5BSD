@@ -35416,3 +35416,35 @@ cross-platform behavior or comparative performance. Frontend review: existing
 format-5 target/test selection, tests setting, artifact/debug/stage handling
 support this component; no build-bsd C, backend or manual change is required.
 Make remains production/default and complete world/kernel/package gates remain.
+
+### 2026-10-29 whois and FTP client installation
+
+Added native whois and FTP rules. FTP declares all ten maintained tnftp sources,
+five upstream headers, the maintained tnftp_config.h and native libedit;
+INET6 follows the existing inet6_support build setting. Installation preserves
+FTP package ownership and pftp/gate-ftp executable/manual hardlinks. No runtime
+sources changed. WHOIS currently covers the ordinary build; Make's optional
+external SOCKS library/remapped-symbol mode remains a migration requirement.
+
+Maintained frontend /usr/obj/usr/src/bazel-network-clients-20261029 (16 jobs)
+passes fresh rootless Make reference comparisons: whois has five metadata
+records, one exact manual payload and one matching ELF/debug pair; FTP has
+nine metadata records, three exact manual payloads/aliases and one matching
+ELF/debug pair. Native /usr/obj/usr/src/bazel-ftp-noinet6-20261029 independently
+matches the MK_INET6_SUPPORT=no Make reference on the same nine records and
+ELF/debug checks. Global/undefined symbols and dynamic fields are compared;
+instruction identity and runtime equivalence are not asserted.
+
+Scripts and reports are in bazel-network-clients-qualification-20261029,
+with whois, ftp and ftp-noinet6 report directories. Report names r2-* are
+inherited comparator names, not evidence of repeated attempts. WHOIS retains
+an existing CHOPSPAM+4 compiler warning; no production source changes were
+introduced to silence it. Network transactions, FTP active/passive/proxy modes,
+credentials, transfers and WHOIS referrals remain runtime qualification work.
+No live network operations, installation or repository publication occurred.
+
+Frontend review: maintained format-5 targets/artifacts and inet6_support input
+already cover these ordinary configurations; no build-bsd C, backend, signing,
+staging or manual change is needed. The optional SOCKS mode is not represented
+as qualified. Whole-world/kernel/bootstrap/pkgbase and performance gates remain
+open; Make stays production/default.

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['src/cmds.c', 'src/cmdtab.c', 'src/complete.c', 'src/domacro.c', 'src/fetch.c', 'src/ftp.c', 'src/main.c', 'src/progressbar.c', 'src/ruserpass.c', 'src/util.c', 'src/ftp.1'], visibility = ["//usr.bin/ftp:__pkg__"])
+cc_library(name = "headers", hdrs = ['tnftp.h', 'src/extern.h', 'src/ftp_var.h', 'src/progressbar.h', 'src/version.h'], includes = [".", "src"], visibility = ["//usr.bin/ftp:__pkg__"])
