@@ -6449,3 +6449,10 @@ symbol type/binding/visibility/defined state. Disassembly, external symbolizatio
 code-generation sources included; no new DTrace probes/audit hooks. Runtime target
 diagnostics, unwind/debug behavior and generated-code execution/tracing remain open.
 Evidence: `/usr/obj/usr/src/bazel-llvm-aarch64-backend-qualification-20261029`.
+
+### RISC-V backend tables (2026-10-29)
+
+20 native generated outputs match Make bytes, with each regular/GlobalISel input
+closure verified. No source probes/audit hooks changed. Backend diagnostics, unwind/
+debug behavior and generated-code execution/tracing remain unqualified. Evidence:
+`/usr/obj/usr/src/bazel-llvm-riscv-tables-qualification-20261029`.

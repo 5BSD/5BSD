@@ -131,3 +131,13 @@ _AARCH64_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-as
 ) for stem, flags in _AARCH64_TABLES]
 cc_library(name = "aarch64_generated_headers", hdrs = [":aarch64_" + stem.lower() for stem, _ in _AARCH64_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
 filegroup(name = "aarch64_generated_outputs", srcs = [":aarch64_" + stem.lower() for stem, _ in _AARCH64_TABLES], visibility = ["//visibility:public"])
+
+_RISCV_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-writer']), ('CallingConv', ['-gen-callingconv']), ('CompressInstEmitter', ['-gen-compress-inst-emitter']), ('DAGISel', ['-gen-dag-isel']), ('DisassemblerTables', ['-gen-disassembler']), ('GlobalISel', ['-gen-global-isel']), ('InstrInfo', ['-gen-instr-info']), ('MCCodeEmitter', ['-gen-emitter']), ('MCPseudoLowering', ['-gen-pseudo-lowering']), ('MacroFusion', ['-gen-macro-fusion-pred']), ('O0PreLegalizeGICombiner', ['-gen-global-isel-combiner', '-combiners=RISCVO0PreLegalizerCombiner']), ('PostLegalizeGICombiner', ['-gen-global-isel-combiner', '-combiners=RISCVPostLegalizerCombiner']), ('PreLegalizeGICombiner', ['-gen-global-isel-combiner', '-combiners=RISCVPreLegalizerCombiner']), ('RegisterBank', ['-gen-register-bank']), ('RegisterInfo', ['-gen-register-info']), ('SearchableTables', ['-gen-searchable-tables']), ('SDNodeInfo', ['-gen-sd-node-info']), ('SubtargetInfo', ['-gen-subtarget']), ('SystemOperands', ['-gen-searchable-tables'])]
+[bsd_tablegen(name = "riscv_" + stem.lower(),
+    src = "//contrib/llvm-project/llvm/lib/Target/RISCV:" + ("RISCVGISel.td" if flags[0].startswith("-gen-global-isel") else "RISCV.td"),
+    includes = ["//contrib/llvm-project/llvm/lib/Target/RISCV:definitions", "//contrib/llvm-project/llvm/include:riscv_target_inputs"] + (["//contrib/llvm-project/llvm/lib/Target/RISCV:gisel_definitions", "//contrib/llvm-project/llvm/include:riscv_gisel_inputs"] if flags[0].startswith("-gen-global-isel") else []),
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/RISCV"],
+    flags = flags, output = "RISCVGen" + stem + ".inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for stem, flags in _RISCV_TABLES]
+cc_library(name = "riscv_generated_headers", hdrs = [":riscv_" + stem.lower() for stem, _ in _RISCV_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "riscv_generated_outputs", srcs = [":riscv_" + stem.lower() for stem, _ in _RISCV_TABLES], visibility = ["//visibility:public"])

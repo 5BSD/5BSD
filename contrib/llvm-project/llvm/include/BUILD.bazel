@@ -227,3 +227,7 @@ filegroup(name = "x86_target_inputs", srcs = [
     "llvm/Target/TargetSchedule.td",
     "llvm/Target/TargetSelectionDAG.td"
 ], visibility = ["//lib/clang/libllvm:__pkg__"])
+
+filegroup(name = "riscv_gisel_inputs", srcs = [
+    "llvm/Target/GlobalISel/Combine.td"
+], visibility = ["//lib/clang/libllvm:__pkg__"])

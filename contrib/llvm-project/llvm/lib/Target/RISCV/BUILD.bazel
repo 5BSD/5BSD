@@ -79,3 +79,9 @@ filegroup(name = "definitions", srcs = [
     "RISCVScheduleZvk.td",
     "RISCVSystemOperands.td"
 ], visibility = ["//lib/clang/libllvm:__pkg__"])
+
+exports_files(["RISCVGISel.td"], visibility = ["//lib/clang/libllvm:__pkg__"])
+filegroup(name = "gisel_definitions", srcs = [
+    "RISCVCombine.td",
+    "RISCVGISel.td"
+], visibility = ["//lib/clang/libllvm:__pkg__"])

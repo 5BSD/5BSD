@@ -37608,3 +37608,27 @@ No host installation/publication occurred.
 Next dependency finding: RISCV GlobalISel generators use RISCVGISel.td, which includes
 RISCV.td and RISCVCombine.td. Existing target-parser input inventory does not expose
 that entry point; backend generation must declare its additional closure explicitly.
+
+### Native RISC-V backend TableGen outputs (2026-10-29)
+
+Added 20 distinct native backend table actions. The duplicate DAGISel entry in Make's
+TGHDRS yields one output. Regular actions use RISCV.td (116 transitive inputs);
+GlobalISel and its three combiner actions use RISCVGISel.td (119). Declared supplemental
+inputs are RISCVGISel.td, RISCVCombine.td and llvm/Target/GlobalISel/Combine.td, only
+attached to those four actions. Existing target-parser input closure is preserved.
+All flags, named combiners and entry-point selection follow maintained Make rules.
+
+Maintained frontend `/usr/obj/usr/src/bazel-llvm-riscv-tables-20261029` succeeds
+with 16 jobs. All 20 generated tables match fresh Make bytes: 211,739,403 total.
+Each Make depfile plus primary input matches its appropriate source closure, rather
+than checking only the union. Evidence/scripts:
+`/usr/obj/usr/src/bazel-llvm-riscv-tables-qualification-20261029`. Make uses existing
+bootstrap llvm-tblgen; native generation uses the declared Bazel target and staged
+SDK/runtime. No pre-generated table substitution or runtime Make metadata parsing.
+
+Backend C++ compilation, ELF parity, target registration, full compiler linkage,
+generated-code execution, independent bootstrap and comparative CPU/memory/disk
+qualification remain open. Frontend review: build-bsd.c/format-5 backend accepts
+these targets; no new input/staging/security/manual contract. Other backends and
+world/kernel/pkgbase/runtime gates remain open. Make remains production/default;
+no host installation/publication occurred.
