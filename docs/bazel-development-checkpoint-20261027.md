@@ -11871,3 +11871,27 @@ cover the component; no build-bsd.c/backend/manual interface change. Remaining
 compiler libraries/linkage and whole-system world/kernel/pkgbase/bootstrap/runtime/
 performance gates remain open. Make stays production/default; no host installation
 or publication occurred.
+
+### 2026-10-29 native LLVM target-parser definitions
+
+Basic component review identified generated target-parser dependencies. Added
+AArch64TargetParserDef.inc, ARMTargetParserDef.inc, RISCVTargetParserDef.inc and
+PPCGenTargetFeatures.inc as native llvm-tblgen actions, matching the maintained
+Make modes. Declared recursive input closures explicitly: AArch64 49 target/40
+shared files, ARM 29/39, RISCV 77/39, PowerPC 36/38. Target input filegroups and
+shared definitions are regular Bazel dependencies; no runtime Make parsing or
+undeclared source-directory access is used. A header provider exposes the results.
+
+Maintained frontend bazel-llvm-targetdefs-20261029 (16 jobs) succeeds in the sandbox.
+All four outputs total 129,521 bytes and match fresh invocations of existing Make
+llvm-tblgen exactly. Evidence/scripts/tool hash:
+/usr/obj/usr/src/bazel-llvm-targetdefs-qualification-20261029. Reference generator
+was not freshly rebuilt. This qualifies generated target definitions, not backend
+machine-code generation, architecture execution or broad cache invalidation tests.
+Basic component compilation remains next; its version header must be declared as
+a source input rather than copying the version constant into build rules.
+
+Frontend review: existing format-5 settings/artifacts and native TableGen backend
+suffice; no build-bsd.c/manual interface change. Compiler/world/kernel/pkgbase/
+bootstrap/runtime/performance gates remain open; Make stays production/default.
+No host installation/publication occurred.

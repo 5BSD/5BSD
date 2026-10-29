@@ -13,3 +13,38 @@ load("//tools/build/bazel:bsd_tablegen.bzl", "bsd_tablegen")
 ]]
 cc_library(name = "directive_headers", hdrs = [":openacc_impl", ":openmp_decl", ":openmp_impl"], strip_include_prefix = ".", visibility = ["//visibility:public"])
 filegroup(name = "directive_outputs", srcs = [":openacc_impl", ":openmp_decl", ":openmp_impl"], visibility = ["//visibility:public"])
+
+_TARGET_DEFINITIONS = [
+    [
+        "AArch64",
+        "AArch64",
+        "-gen-arm-target-def",
+        "AArch64TargetParserDef.inc"
+    ],
+    [
+        "ARM",
+        "ARM",
+        "-gen-arm-target-def",
+        "ARMTargetParserDef.inc"
+    ],
+    [
+        "RISCV",
+        "RISCV",
+        "-gen-riscv-target-def",
+        "RISCVTargetParserDef.inc"
+    ],
+    [
+        "PowerPC",
+        "PPC",
+        "-gen-target-features",
+        "PPCGenTargetFeatures.inc"
+    ]
+]
+[bsd_tablegen(name = arch.lower() + "_target_definitions",
+    src = "//contrib/llvm-project/llvm/lib/Target/" + arch + ":" + stem + ".td",
+    includes = ["//contrib/llvm-project/llvm/lib/Target/" + arch + ":definitions", "//contrib/llvm-project/llvm/include:" + arch.lower() + "_target_inputs"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/" + arch],
+    flags = [flag], output = "llvm/TargetParser/" + output, tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for arch, stem, flag, output in _TARGET_DEFINITIONS]
+cc_library(name = "target_definition_headers", hdrs = [":" + arch.lower() + "_target_definitions" for arch, _, _, _ in _TARGET_DEFINITIONS], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "target_definition_outputs", srcs = [":" + arch.lower() + "_target_definitions" for arch, _, _, _ in _TARGET_DEFINITIONS], visibility = ["//visibility:public"])

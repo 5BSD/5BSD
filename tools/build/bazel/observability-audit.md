@@ -6166,3 +6166,9 @@ parser runtime or tracing behavior. No new privileged service operation is added
 All 17 maintained sources are represented without source changes. Scan for DTRACE,
 SDT_PROBE and audit_submit found no matches. No probes/audit hooks were removed;
 module/PCH runtime behavior remains unqualified until compiler linkage/tests.
+
+### 2026-10-29 LLVM target-parser definitions
+
+Only source-definition exports, generation actions and header providers changed.
+No compiler/backend source instrumentation was changed. Target runtime/tracing
+behavior is outside this generated-output comparison.

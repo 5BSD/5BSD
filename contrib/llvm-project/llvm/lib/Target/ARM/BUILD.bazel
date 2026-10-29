@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["ARM.td"], visibility = ["//lib/clang/libllvm:__pkg__"])
+filegroup(name = "definitions", srcs = [
+    "ARM.td",
+    "ARMArchitectures.td",
+    "ARMCallingConv.td",
+    "ARMFeatures.td",
+    "ARMInstrCDE.td",
+    "ARMInstrFormats.td",
+    "ARMInstrInfo.td",
+    "ARMInstrMVE.td",
+    "ARMInstrNEON.td",
+    "ARMInstrThumb.td",
+    "ARMInstrThumb2.td",
+    "ARMInstrVFP.td",
+    "ARMPredicates.td",
+    "ARMProcessors.td",
+    "ARMRegisterBanks.td",
+    "ARMRegisterInfo.td",
+    "ARMSchedule.td",
+    "ARMScheduleA57.td",
+    "ARMScheduleA57WriteRes.td",
+    "ARMScheduleA8.td",
+    "ARMScheduleA9.td",
+    "ARMScheduleM4.td",
+    "ARMScheduleM55.td",
+    "ARMScheduleM7.td",
+    "ARMScheduleM85.td",
+    "ARMScheduleR52.td",
+    "ARMScheduleSwift.td",
+    "ARMScheduleV6.td",
+    "ARMSystemRegister.td"
+], visibility = ["//lib/clang/libllvm:__pkg__"])
