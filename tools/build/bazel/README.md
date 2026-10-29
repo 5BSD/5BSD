@@ -34396,3 +34396,10 @@ launcher; `:install_archive` packages its executable and debug file. Build and
 installation parity with Make are qualified, including all executable object
 sections. Running it still requires pytest and the applicable ATF pytest plugin
 in the test environment. Native compilation does not qualify Python test runtime.
+
+### ATF shell test installation (2026-10-29)
+
+Native install_archive targets now exist under libexec/atf/atf-check/tests,
+libexec/atf/atf-sh/tests, libexec/atf/tests and libexec/tests. Their scripts,
+helper and Kyuafiles match Make installation. This supplies test payloads and
+discovery, not registered or passing native Bazel test cases.

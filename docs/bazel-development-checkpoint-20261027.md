@@ -9422,3 +9422,39 @@ capture require no new frontend/backend protocol. Runtime pytest invocation,
 ATF tests and libexec/world aggregation remain open. This component build adds
 no host pytest dependency or installation. Make remains production/default;
 complete world/kernel/package/runtime and resource gates are still outstanding.
+
+## 2026-10-29: ATF shell tests and discovery installation
+
+Added native install_archive targets for libexec/atf/atf-check/tests,
+libexec/atf/atf-sh/tests, libexec/atf/tests and libexec/tests. Eight existing
+ATF shell programs and misc_helpers use declared script-wrapper actions; the
+integration test's __ATF_SH__ substitution uses the native template action.
+The two hierarchy Kyuafiles install the maintained tests/Kyuafile verbatim,
+preserving discovery instead of inventing a fixed child list. Source exports
+are limited to their libexec consumers. Archives are visible to libexec parents.
+
+Independent rootless Make installation and native build-bsd format-5 comparison
+passed for all four components:
+
+| Component | Payload files | Metadata records |
+| --- | ---: | ---: |
+| atf-check/tests | 2 | 3 |
+| atf-sh/tests | 9 | 10 |
+| atf/tests discovery | 1 | 2 |
+| libexec/tests discovery | 1 | 2 |
+
+Every payload is byte-identical to Make, including generated scripts, helper,
+interpreter substitution and Kyuafiles. Owners/groups, modes, tags, flags and
+archive types also match. These are installation tests, not execution of ATF
+cases. Runtime registration and execution remain required.
+
+Evidence: /usr/obj/usr/src/bazel-atf-{check,shell,atf-index,libexec-index}-20261028/
+qualification/rc/parity.json. The inherited rc directory name is only an evidence
+location. Reproduction scripts are in bazel-atf-tests-qualification-20261028;
+independent stages use corresponding -reference-20261028 directories. All builds
+used 16 jobs. Runs straddled UTC midnight; retained run paths keep their start date.
+
+Frontend review: existing format-5 targets, script/template rules and artifact
+capture suffice; no C frontend change or one-off build backend. No host install,
+module loading or service execution. Complete libexec/world aggregation, kernel,
+pkgbase publication, runtime and performance gates remain open. Make is default.

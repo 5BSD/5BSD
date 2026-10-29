@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+bsd_script_wrapper(name = "atf_check_test", body = "//contrib/atf:atf-sh/atf_check_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "atf_check_test_file", src = ":atf_check_test", destination = "/usr/tests/libexec/atf/atf-sh/atf_check_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_script_wrapper(name = "config_test", body = "//contrib/atf:atf-sh/config_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "config_test_file", src = ":config_test", destination = "/usr/tests/libexec/atf/atf-sh/config_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_template(name = "integration_body", template = "//contrib/atf:atf-sh/integration_test.sh", output = "integration_body.sh", substitutions = {"__ATF_SH__": "/usr/libexec/atf-sh"})
+bsd_script_wrapper(name = "integration_test", body = ":integration_body", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "integration_test_file", src = ":integration_test", destination = "/usr/tests/libexec/atf/atf-sh/integration_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_script_wrapper(name = "kmod_test", body = "//contrib/atf:atf-sh/kmod_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "kmod_test_file", src = ":kmod_test", destination = "/usr/tests/libexec/atf/atf-sh/kmod_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_script_wrapper(name = "normalize_test", body = "//contrib/atf:atf-sh/normalize_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "normalize_test_file", src = ":normalize_test", destination = "/usr/tests/libexec/atf/atf-sh/normalize_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_script_wrapper(name = "tc_test", body = "//contrib/atf:atf-sh/tc_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "tc_test_file", src = ":tc_test", destination = "/usr/tests/libexec/atf/atf-sh/tc_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_script_wrapper(name = "tp_test", body = "//contrib/atf:atf-sh/tp_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "tp_test_file", src = ":tp_test", destination = "/usr/tests/libexec/atf/atf-sh/tp_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_script_wrapper(name = "misc_helpers", body = "//contrib/atf:atf-sh/misc_helpers.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "misc_helpers_file", src = ":misc_helpers", destination = "/usr/tests/libexec/atf/atf-sh/misc_helpers", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ['atf_check_test', 'config_test', 'integration_test', 'kmod_test', 'normalize_test', 'tc_test', 'tp_test'], interfaces = {n: "atf" for n in ['atf_check_test', 'config_test', 'integration_test', 'kmod_test', 'normalize_test', 'tc_test', 'tp_test']})
+bsd_install_file(name = "kyuafile_file", src = ":kyuafile", destination = "/usr/tests/libexec/atf/atf-sh/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [':atf_check_test_file', ':config_test_file', ':integration_test_file', ':kmod_test_file', ':normalize_test_file', ':tc_test_file', ':tp_test_file', ':misc_helpers_file', ':kyuafile_file'], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//libexec:__subpackages__"],
+    manifests = [":install_manifest"],
+    directories = {"/usr/tests/libexec/atf/atf-sh": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+

@@ -5612,3 +5612,11 @@ printing and execvp failure reports. The source contains no DTrace probes or
 audit calls. This unprivileged test-launch adapter does not introduce a new
 privileged policy operation; no new audit instrumentation added. Build and
 installation parity pass; actual pytest dispatch/runtime remains unqualified.
+
+### 2026-10-29 ATF shell test installation
+
+All existing shell-test bodies and diagnostics are preserved. Generated wrapper
+bytes and the integration interpreter substitution match Make; hierarchy
+discovery uses the existing Kyuafile. No new DTrace or audit instrumentation
+was needed for this installation-only change. Kernel-module-related and other
+ATF test behavior has not been executed or qualified by these archive checks.

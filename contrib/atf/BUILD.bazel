@@ -14,3 +14,5 @@ exports_files(['atf-c++/detail/env_test.cpp', 'atf-c++/detail/exceptions_test.cp
 cc_library(name = "cxx_test_headers", hdrs = ["atf-c++/detail/test_helpers.hpp"], strip_include_prefix = ".", deps = [":cxx_private_headers", ":cxx_headers"], visibility = ["//lib/atf/libatf-c++/tests:__pkg__"])
 
 exports_files(['atf-sh/atf-check.cpp', 'atf-sh/atf-check.1', 'atf-sh/atf-sh.cpp', 'atf-sh/atf-sh.1', 'atf-sh/atf-sh.3', 'atf-sh/libatf-sh.subr'], visibility = ["//libexec/atf:__subpackages__"])
+
+exports_files(['atf-sh/atf-check_test.sh', 'atf-sh/atf_check_test.sh', 'atf-sh/config_test.sh', 'atf-sh/integration_test.sh', 'atf-sh/kmod_test.sh', 'atf-sh/normalize_test.sh', 'atf-sh/tc_test.sh', 'atf-sh/tp_test.sh', 'atf-sh/misc_helpers.sh'], visibility = ["//libexec/atf:__subpackages__"])
