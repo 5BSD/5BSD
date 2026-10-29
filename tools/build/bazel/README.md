@@ -35222,3 +35222,26 @@ was performed. These runtime/authorization gates remain open. No host install,
 upgrade or reboot occurred. Resource logs do not establish comparative performance.
 Frontend review: existing format-5 explicit targets and artifact handling suffice;
 no build-bsd C/protocol/manual change is needed. Make remains production/default.
+
+### 2026-10-29 xo native CLI installation
+
+Added //usr.bin/xo:install_archive using the maintained contrib CLI source,
+libxo/util shared dependencies, and explicit CLI/configuration header providers.
+The initial bazel-xo-20261029 run rejected nonexistent xoversion.h, which had
+been inferred from a stale Makefile comment. Removed the unnecessary declaration;
+actual source includes xo_config.h, xo.h and xo_explicit.h. No replacement or
+synthetic version header was introduced, and production source is unchanged.
+
+Successful maintained frontend run /usr/obj/usr/src/bazel-xo-20261029-r2 used
+16 jobs. Fresh rootless Make reference: bazel-xo-native-reference-20261029.
+Scripts: bazel-xo-qualification-20261029. Saved qualification/xo reports establish
+five matching metadata records, exact compressed manual bytes, valid debug
+linkage and matching global/undefined symbols and dynamic dependencies
+(libc/util/xo). No runtime or comparative performance claim follows.
+
+Remaining next step: migrate usr.bin/xo/tests' functional_test wrapper, xo_01
+script, all sixteen explicitly maintained saved output/error fixtures and
+Kyuafile installation, then qualify the eight format cases with their declared
+locale/configured xo input. Those are not covered by this program-only run.
+Frontend review: format-5 target/artifact handling already covers this target;
+no build-bsd C/protocol/manual change is needed. Make remains production/default.

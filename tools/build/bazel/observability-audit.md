@@ -5824,3 +5824,10 @@ metadata. Focused inspection found no direct DTrace/SDT or audit submission
 hooks. Installed credential behavior, quota authorization, remote RPC and
 netlink interaction require separate runtime qualification; metadata parity
 alone proves none of these. No migration-only instrumentation was introduced.
+
+### 2026-10-29 xo CLI
+
+Native migration preserves the formatting CLI and library calls. Focused CLI
+source inspection found no direct DTrace/SDT or audit submission hooks. No new
+privileged boundary or instrumentation is introduced. Format/error/locale tests
+remain pending; successful linking to libxo is not functional output proof.
