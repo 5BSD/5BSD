@@ -15845,3 +15845,38 @@ boot/runtime, independent bootstrap and comparative performance.
 Reviewed build-bsd.c and source_graph.py: existing typed tests setting, targets,
 metadata groups and ATF reports support this addition without frontend changes.
 Make remains production/default; no host installation or service changes.
+
+### libbsnmp tests-disabled installation and generator invalidation (2026-10-29)
+
+Qualified the root aggregate with tests=false against the fresh library-only
+Make reference: all 104 changed installation destinations match with no missing,
+extra or mismatched records. All 12 regular payloads and the library debug link
+pass, including header/manual/definition bytes and manual hardlink relationships.
+Evidence: bazel-libbsnmp-reference-20261029/notests-install-audit.py,json and
+notests-payload-audit.py,json; run bazel-libbsnmp-incremental-20261029-baseline.
+
+Four build-bsd runs using the same declared inputs/local Bazel state establish:
+- Baseline and unchanged repeat have identical saved output hashes; repeat records
+  no executed actions.
+- Temporarily changing RowStatus active from 1 to 7 in tc.def reruns exactly
+  BsdSnmpConventions, BsdSnmpHeader and BSDInstallArchive. The generated header and
+  affected installed payload/metadata change.
+- Restoration reruns those three actions and restores every selected saved output
+  hash exactly. Original tc.def bytes are restored and the source tree is clean.
+
+The six maintained library C files do NOT include snmptc.h. Its presence in Make
+SRCS establishes a generated prerequisite, not a compiled consumer. Accordingly,
+this mutation correctly caused no C recompilation. Do not call it proof of
+compiled-consumer invalidation, remote cache restoration or clean bootstrap.
+The restored generator actions executed again; this is local no-op/invalidation
+and deterministic restoration evidence, not a claim of cache hits on restoration.
+
+Repeatable driver/verifier and action summaries:
+/usr/obj/usr/src/bazel-libbsnmp-reference-20261029/incremental.py,
+verify-incremental.py, incremental-source.json and incremental-audit.json.
+The driver temporarily edits tc.def and restores it in finally; use only with a
+clean, unshared source file. A private checkout is preferable for concurrent CI.
+Generator implementation/tool mutation and sandbox/remote-cache gates remain open.
+Existing build-bsd and source_graph explicit-input interfaces suffice; no frontend
+changes required. Make remains production/default; full-system qualification and
+comparative CPU/memory/disk performance remain outstanding.
