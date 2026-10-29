@@ -4240,3 +4240,10 @@ amd64 static_archive, source_inventory and install_archive targets. CFI includes
 its maintained ignorelist. Build success for these targets does not establish
 SafeStack thread behavior, statistics reporting or CFI enforcement; those need
 instrumented runtime qualification. No new frontend input schema is required.
+
+.Pp
+The lib/libclang_rt/fuzzer, fuzzer_no_main and fuzzer_interceptors packages
+provide native amd64 archive and installation targets. The main fuzzer package
+also installs FuzzedDataProvider.h using the common runtime rule's declared
+installed_headers mapping. These builds do not by themselves qualify fuzzing
+execution, coverage, interceptors or corpus behavior.

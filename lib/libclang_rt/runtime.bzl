@@ -15,7 +15,7 @@ _CXXOPTS = ["-std=c++17"] + _COPTS + ["-fno-rtti", "-fvisibility-inlines-hidden"
 _DEFINES = ["NDEBUG", "HAVE_RPC_XDR_H=0", "SANITIZER_SUPPORTS_WEAK_HOOKS=0", "UBSAN_CAN_USE_CXXABI"]
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 
-def compiler_rt_archive(stem, cxx_srcs, deps, asm_srcs = [], defines = [], cxxopts = [], data_files = {}):
+def compiler_rt_archive(stem, cxx_srcs, deps, asm_srcs = [], defines = [], cxxopts = [], data_files = {}, installed_headers = {}):
     cc_library(name = "objects", srcs = cxx_srcs, deps = deps,
         copts = _CXXOPTS + cxxopts, local_defines = _DEFINES + defines,
         target_compatible_with = _PLATFORM)
@@ -40,6 +40,12 @@ def compiler_rt_archive(stem, cxx_srcs, deps, asm_srcs = [], defines = [], cxxop
         bsd_install_file(name = name, src = source,
             destination = "/usr/lib/clang/21/share/" + destination,
             owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clang"])
+        entries.append(":" + name)
+    for index, (source, destination) in enumerate(installed_headers.items()):
+        name = "header_" + str(index)
+        bsd_install_file(name = name, src = source,
+            destination = "/usr/lib/clang/21/include/" + destination,
+            owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clang", "dev"])
         entries.append(":" + name)
     bsd_install_manifest(name = "install_manifest", entries = entries, visibility = ["//visibility:public"])
     bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],

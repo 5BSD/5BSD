@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libclang_rt:runtime.bzl", "compiler_rt_archive")
+
+compiler_rt_archive(
+    stem = "fuzzer_interceptors",
+    cxx_srcs = [
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerInterceptors.cpp",
+    ],
+    deps = ["//contrib/llvm-project/compiler-rt/lib/fuzzer:headers"],
+)

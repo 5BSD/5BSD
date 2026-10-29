@@ -6,3 +6,5 @@ exports_files(["profile/InstrProfData.inc", "profile/MemProfData.inc"], visibili
 cc_library(name = "sanitizer_headers", hdrs = glob(["sanitizer/*.h"]), includes = ["."],
     visibility = ["//visibility:public"])
 exports_files(glob(["sanitizer/*.h"]), visibility = ["//lib/libclang_rt/include:__pkg__"])
+
+exports_files(["fuzzer/FuzzedDataProvider.h"], visibility = ["//lib/libclang_rt/fuzzer:__pkg__"])

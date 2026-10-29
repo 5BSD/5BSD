@@ -6690,3 +6690,10 @@ Native source inventories preserve the maintained runtime implementations. No
 DTrace/audit instrumentation was added or removed. Statistics reporting and CFI
 diagnostics require real instrumented consumers before runtime claims; SafeStack
 requires main/thread unsafe-stack placement and lifecycle checks.
+
+### Fuzzing runtime archives (2026-10-29)
+
+The native source inventories retain the maintained libFuzzer implementations.
+No production DTrace/audit instrumentation changes. Sanitizer coverage, corpus
+execution and interceptor behavior need actual instrumented consumers; archive
+build success is not runtime coverage evidence.

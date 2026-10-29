@@ -38761,3 +38761,29 @@ Frontend review: build-bsd.c forwards the format-5 input target list to the
 maintained backend, which accepts these targets without new CLI/schema inputs.
 Prepared SDK dependencies remain, and Make stays production/default. No host
 installation/publication or production observability changes.
+
+### Native fuzzing runtime archives (2026-10-29)
+
+Added source-owned native amd64 targets for fuzzer (18 sources), fuzzer_no_main
+(17) and fuzzer_interceptors (one), with declared private headers/definition files.
+The common compiler-runtime macro now accepts installed_headers, mapping declared
+source labels to paths relative to the compiler resource include directory, with
+clang/dev package tags. The fuzzer target installs FuzzedDataProvider.h through
+that interface; existing callers retain their prior installation inputs.
+
+Frontend build bazel-fuzzer-20261029 passed with no runtime tests selected.
+Source review and fresh Make comparisons pass; evidence is maintained under
+/usr/obj/usr/src/bazel-fuzzer-reference-20261029. Main fuzzer matches 18 archive
+members/1256 global+weak symbol records, no-main matches 17/1253, and the
+interceptor archive matches one member with zero global/weak symbols in this
+FreeBSD configuration. All four installation records match; the public header
+is byte-identical. Empty interceptor symbol inventory is not interception proof. This archive build alone does
+not establish working fuzz execution, coverage instrumentation, custom-main
+integration, interceptor behavior, corpus handling, subprocesses or reproducible
+seed execution. Those runtime checks remain necessary, alongside other
+architectures, bootstrap, world/kernel/pkgbase and performance qualification.
+
+Frontend review: build-bsd.c and format-5 source_graph.py already accept these
+explicit targets; installed header handling is internal to the maintained native
+archive rule and requires no new CLI/schema input. Prepared SDK dependencies
+remain. Make stays production/default; no host installation or publication.
