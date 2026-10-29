@@ -37819,3 +37819,23 @@ frontend accepts explicit test labels and existing backend flags without changes
 manual documents the test. CPU/memory/disk benchmarking, installed compiler,
 system headers/linker and produced-program execution remain unqualified. Make
 remains production/default; independent bootstrap/world/kernel/pkgbase remain open.
+
+### Compiler headers, static linkage and produced-program execution (2026-10-29)
+
+The X86-only native compiler now has diagnostic system-header/link/run evidence.
+Using explicit --sysroot, -resource-dir and -fuse-ld inputs from the existing
+Make-prepared SDK, it compiled and statically linked a C allocation/string/stdio
+probe and a C++ vector/numeric/iostream probe. Both executed successfully with
+expected output. The C++ run uses --driver-mode=g++ so the compiler chooses its
+normal C++ libraries; the earlier exploratory run supplied explicit libraries and
+is not the driver-default evidence. Corrected commands/results/sources/script:
+/usr/obj/usr/src/bazel-clang-sdk-execution-20261029-r2.
+
+Compiler SHA256: 4b7e8f672cbbe014b9594411b8f9c160e641e333856a5af1393dea3d3de8b8bc.
+This is explicit-SDK static-link evidence, not independent bootstrap, dynamic
+runtime, installation defaults, broad language conformance or performance proof.
+Promoting link/run coverage to a maintained Bazel test with declared SDK inputs
+remains next work. Existing codegen_test covers compilation only.
+Frontend review: no input or packaging semantics changed; the diagnostic uses
+existing compiler flags and SDK inputs, so no build-bsd/backend/manual interface
+change is required. Make remains production/default; full migration remains open.
