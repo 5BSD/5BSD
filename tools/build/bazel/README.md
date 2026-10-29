@@ -34422,3 +34422,22 @@ rc.d services and optional rc tests. The existing `:install_archive` is core-onl
 The recursive target uses the existing native feature settings; tests are selected
 by `//tools/build/bazel/config:tests`. Default, tests-enabled and Heimdal recursive
 installation variants match Make. This does not qualify normal system startup.
+
+### Native libexec archive selection (2026-10-29)
+
+`//libexec:installation_archives` selects the native libexec installation archives
+using build settings, including recursive ATF/rc, flua modules, and optional
+child test archives. It returns separate archives with their metadata and
+directory_metadata output groups; it does not merge or publish packages.
+The native archive-set rule preserves these groups through the frontend.
+
+New bool selectors: at, bootpd, finger, freebsd_update, dmagent, pkgserve,
+rbootd, talk, tftp and man_utils. DMAGENT requires MAIL/OpenSSL/CRYPT.
+`tests_support` is a string setting: `auto` follows tests, `yes` explicitly
+includes ATF support, and `no` excludes it. This preserves Make's independent
+WITH_TESTS_SUPPORT override rather than forcing support to equal tests.
+
+Default amd64 builds with and without test payloads passed; five configured
+child-selection comparisons match Make. Other architectures, legacy NO_PIC/
+NO_RTLD modes, MAN-dependent man_utils defaulting, full merged installation
+comparison and runtime tests remain unqualified. Make remains production/default.

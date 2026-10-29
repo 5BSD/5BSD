@@ -90,3 +90,18 @@ bsd_install_archive = rule(
         "_writer": attr.label(default = Label(":install_archive.py"), allow_single_file = True, cfg = "exec"),
     },
 )
+
+def _archive_set(ctx):
+    return [
+        DefaultInfo(files = depset(transitive = [target[DefaultInfo].files for target in ctx.attr.archives])),
+        OutputGroupInfo(
+            metadata = depset(transitive = [target[OutputGroupInfo].metadata for target in ctx.attr.archives]),
+            directory_metadata = depset(transitive = [target[OutputGroupInfo].directory_metadata for target in ctx.attr.archives]),
+        ),
+    ]
+
+bsd_install_archive_set = rule(
+    implementation = _archive_set,
+    attrs = {"archives": attr.label_list(providers = [BsdInstallArchiveInfo], mandatory = True)},
+    doc = "Group declared installation archives while preserving metadata output groups.",
+)

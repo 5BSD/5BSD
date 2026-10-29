@@ -38,6 +38,7 @@ cc_library(name = "bootstrap_headers", hdrs = ["bootstrap.h"], strip_include_pre
 # Interpreter and all modules from the non-bootstrap Make configuration.
 bsd_install_archive(
     name = "complete_install_archive",
+    visibility = ["//libexec:__pkg__"],
     manifests = [":install_manifest", "//libexec/flua/lfbsd:install_manifest", "//libexec/flua/lfs:install_manifest", "//libexec/flua/libhash:install_manifest", "//libexec/flua/libjail:install_manifest", "//libexec/flua/libucl:install_manifest", "//libexec/flua/liblyaml:install_manifest", "//libexec/flua/libfreebsd/kenv:install_manifest", "//libexec/flua/libfreebsd/sys/linker:install_manifest"],
     directories = {
     "/usr/lib/debug/usr": "{\"owner\":\"root\",\"group\":\"wheel\",\"mode\":\"0755\",\"tags\":[\"package=flua\",\"dbg\"]}",

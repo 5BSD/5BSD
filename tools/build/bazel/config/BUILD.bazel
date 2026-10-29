@@ -317,3 +317,33 @@ config_setting(name = "acpi_enabled", flag_values = {":acpi": "true"}, visibilit
 # Native component selection used by rc.d.
 bool_flag(name = "kerberos", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "kerberos_enabled", flag_values = {":kerberos": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
+
+# libexec component selection. These select aggregation, not direct target requests.
+bool_flag(name = "at", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "at_enabled", flag_values = {':at': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "bootpd", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "bootpd_enabled", flag_values = {':bootpd': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "finger", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "finger_enabled", flag_values = {':finger': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "freebsd_update", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "freebsd_update_enabled", flag_values = {':freebsd_update': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "dmagent", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "dmagent_enabled", flag_values = {':dmagent': 'true', ':mail': 'true', ':openssl': 'true', ':crypt': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "pkgserve", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "pkgserve_enabled", flag_values = {':pkgserve': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "rbootd", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "rbootd_enabled", flag_values = {':rbootd': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "talk", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "talk_enabled", flag_values = {':talk': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "tftp", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "tftp_enabled", flag_values = {':tftp': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "man_utils", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "man_utils_enabled", flag_values = {':man_utils': 'true'}, visibility = ["//visibility:public"])
+config_setting(name = "netgraph_enabled", flag_values = {":netgraph": "true"}, visibility = ["//visibility:public"])
+
+load("@bazel_skylib//lib:selects.bzl", "selects")
+# Make defaults TESTS_SUPPORT to TESTS, but permits an explicit override.
+string_flag(name = "tests_support", build_setting_default = "auto", values = ["auto", "yes", "no"], visibility = ["//visibility:public"])
+config_setting(name = "tests_support_requested", flag_values = {":tests_support": "yes"})
+config_setting(name = "tests_support_default", flag_values = {":tests_support": "auto", ":tests": "true"})
+selects.config_setting_group(name = "tests_support_enabled", match_any = [":tests_support_requested", ":tests_support_default"], visibility = ["//visibility:public"])

@@ -9546,3 +9546,50 @@ for this composition; documentation records the recursive target.
 Remaining libexec aggregation must include conditional test payloads for its
 other children and all parent option/architecture gates. This is not complete
 world/kernel/pkgbase or runtime qualification; Make stays production/default.
+
+## 2026-10-29: native libexec parent selection and archive metadata
+
+Added //libexec:installation_archives with explicit maintained child dependencies
+and native option selection, including recursive ATF/rc, complete flua modules,
+DMA, and separate optional test payload archives. Narrow child archive visibility
+now permits the libexec parent. No runtime Make parsing, tar repacking or source
+substitution. New native flags cover the missing libexec selectors; DMAGENT
+requires mail/openssl/crypt. tests_support has auto/yes/no semantics, matching
+Make's default-from-tests plus explicit overrides.
+
+The first generic filegroup build exposed missing metadata output groups: it
+returned only 20 tar files. Replaced it with bsd_install_archive_set, which
+requires the archive provider and forwards default files plus both metadata
+output groups using transitive depsets. The rule adds no execution actions.
+The first run remains as diagnostic evidence.
+
+Maintained build-bsd format-5 builds with 16 jobs passed:
+- Tests disabled: 20 archives, 60 saved artifacts including both metadata groups.
+- Tests enabled: 25 archives, 75 saved artifacts; exact equality with configured
+  archive labels and paired metadata filenames checked. This builds test
+  installation payloads; it does not execute their test cases.
+
+Evidence under /usr/obj/usr/src/bazel-libexec-aggregate-20261029-r2 and
+bazel-libexec-with-tests-20261029: metadata-forwarding.json, artifacts/manifest.json,
+receipt, commands, execution and time/resource logs. The existing frontend
+requests metadata/directory_metadata output groups; forwarding them in the native
+rule fixes integration without a C frontend/protocol change.
+
+Five independent Make SUBDIR/native configured-label comparisons passed:
+default (22 direct children), tests off (20), tests off with support explicitly
+on (21), tests on with support explicitly off (21), and extra optional legacy
+components/NIS/Sendmail enabled (31). Configured selections include the extra
+test archives while child comparisons collapse them to their parent directories.
+Evidence: bazel-libexec-selection-20261029-r2/selection.json, reproducible query
+script /usr/obj/usr/src/libexec-selection-20261029-r2.py. Initial diagnostic
+query lacked the declared Java environment and failed local-JDK detection;
+corrected query uses the same declared JAVA_HOME/LC_ALL/toolchain environment
+as source_graph. Original failed query retained; actual frontend builds were
+not affected.
+
+This proves aggregation build and selected children for these configurations,
+not full recursive installed-tree/pkgbase equivalence, all compiled option
+combinations, or runtime. Legacy NO_PIC/NO_RTLD selection and MAN-dependent
+man_utils defaulting have not been implemented in the native parent. Kernel,
+other world subtrees, merged package construction/publication, complete runtime,
+bootstrap independence and performance gates remain open. Make stays default.
