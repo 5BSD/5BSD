@@ -7182,3 +7182,10 @@ messages. No Make-declared DTrace provider exists. /dev/cuse access, unit alloca
 device creation/destruction, command dispatch and shared-memory operations require
 kernel-backed authorization, lifecycle and observability testing. Artifact parity
 alone does not establish those behaviors. No device or host service was modified.
+
+### libder (2026-10-29)
+
+The internal DER parser archive has no Make-declared DTrace provider. Native
+compilation preserves upstream parsing/error behavior. Malformed-input and
+round-trip/fuzz testing remain, as does checking signature failure diagnostics in
+pkg consumers. No new audit policy or claim of cryptographic validation is made.

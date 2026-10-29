@@ -40973,3 +40973,26 @@ recorded separately. build-bsd.c and source_graph.py already accept the typed
 build-settings label through the maintained format-5 interface, so no frontend
 interface change is needed. Complete world/kernel/pkgbase/bootstrap and runtime,
 cache/sandbox/performance qualification remain open; Make stays production/default.
+
+### Native internal libder archives (2026-10-29)
+
+Added six explicit upstream C sources and maintained public/private headers as
+native inputs. Ordinary and -fPIE variants provide separate CcInfo/archive targets
+for base consumers, including the still-unconverted pkg bootstrap program.
+INTERNALLIB is preserved: no library, headers or upstream manuals are installed
+by this component. No source behavior or generated-source fallback changed.
+
+Run bazel-libder-20261029 passes through build-bsd with 16 jobs. Fresh Make
+build/install produces libder.a and libder_pie.a. Both six-member native archives
+match ordered source members and global/weak symbol inventories. Make's internal
+PIE member suffix .pieo maps explicitly to Bazel's .o in its separate PIE target;
+these are not installed member names. The Make installation delta is empty.
+Evidence: /usr/obj/usr/src/bazel-libder-reference-20261029/inputs.json, make.py,
+verify.py and comparison.json.
+
+Upstream parser/key round-trip tests and fuzzing are not executed here; actual
+pkg bootstrap integration and signature-verification runtime remain open. Build
+and symbol parity do not establish parser security. Existing build-bsd/source_graph
+explicit target inputs suffice without interface changes. Whole-system/kernel,
+pkgbase/bootstrap, sandbox/cache and performance gates remain open; Make remains
+production/default.

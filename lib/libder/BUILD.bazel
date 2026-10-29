@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_SOURCES = ["//contrib/libder/libder:" + source for source in [
+    "libder.c", "libder_error.c", "libder_obj.c", "libder_read.c", "libder_type.c", "libder_write.c",
+]]
+# INTERNALLIB: consumed by base programs, with no installed library/header payload.
+cc_library(name = "der", srcs = _SOURCES, deps = ["//contrib/libder/libder:headers"],
+    linkstatic = True, visibility = ["//visibility:public"])
+cc_library(name = "der_pie", srcs = _SOURCES, deps = ["//contrib/libder/libder:headers"],
+    copts = ["-fPIE"], linkstatic = True, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":der"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pie_archive", groups = [":der_pie"], visibility = ["//visibility:public"])
