@@ -6198,3 +6198,10 @@ Semantic/diagnostic runtime behavior awaits linked compiler tests.
 Generation declarations only; no compiler, runtime-library, probe or audit source
 changes. Exact table parity does not establish runtime-call behavior or target
 instrumentation correctness.
+
+### 2026-10-29 Clang CodeGen
+
+All 100 maintained CodeGen sources are represented without source changes. Scan
+for DTRACE, SDT_PROBE and audit_submit found no matches. No instrumentation was
+removed. Emitted-code instrumentation and runtime behavior await linked compiler
+and system tests; object-symbol comparison is not proof of those properties.

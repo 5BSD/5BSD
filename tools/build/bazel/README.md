@@ -36678,3 +36678,35 @@ Frontend review: current format-5 inputs/artifacts and maintained TableGen backe
 suffice; no build-bsd.c/manual interface change. CodeGen compilation remains next;
 full compiler/world/kernel/pkgbase/bootstrap/runtime/performance qualification is
 open. Make stays production/default; no host installation/publication occurred.
+
+### 2026-10-29 native Clang code generation
+
+Added all 100 maintained CodeGen sources with private headers and native generated
+Clang/LLVM IR/intrinsic/directive/target/machine-value-type dependencies. Initial
+missing GenVT.inc dependency is retained; fixed by declaring the existing native
+provider, without importing staged generated headers or modifying sources.
+
+Added bsd_component_objects, forwarding only the selected component's own declared
+objects with full artifact paths and rejecting empty/duplicate artifact sets.
+CodeGen has 11 repeated source basenames across Targets and TargetBuiltins. Initial
+verifier incorrectly assumed Bazel object paths preserve source subdirectories;
+Bazel uses numbered collision directories. Corrected verification to map each
+object using recorded CppCompile -c/-o arguments, with full source-set equality
+and uniqueness assertions, rather than guessing collision numbering or extracting
+an archive into a flat directory.
+
+Maintained frontend bazel-clang-codegen-20261029-r2 (16 jobs) succeeds. All 100
+individual PIC global/undefined symbol inventories match fresh isolated Make
+objects through that source mapping. Archive member-name multiplicities also
+match all 100 sources, retaining duplicate basenames. Evidence/scripts/report:
+/usr/obj/usr/src/bazel-clang-codegen-qualification-20261029. Reference uses existing
+bootstrap tools and staged LLVM/SDK headers. No compiler sources or symbol
+comparison exceptions changed. This does not qualify emitted machine code, LLVM
+optimization behavior, runtime ABI correctness or performance.
+
+Frontend review: the maintained object-export backend changed; normal format-5
+artifacts already preserve the exported file names. No build-bsd.c/manual interface
+change needed. Seven qualified default Clang components now cover 430 sources;
+compiler linkage and remaining components/world/kernel/pkgbase/bootstrap/runtime/
+performance gates remain open. Make stays production/default; no host installation
+or publication occurred.

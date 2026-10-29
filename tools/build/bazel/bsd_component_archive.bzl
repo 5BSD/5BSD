@@ -89,3 +89,21 @@ bsd_component_selected_objects = rule(implementation = _selected_objects, attrs 
     "pic": attr.bool(default = False),
     "object_names": attr.string_list(mandatory = True),
 })
+
+
+def _all_objects(ctx):
+    group = ctx.attr.group
+    objects = []
+    for item in group[CcInfo].linking_context.linker_inputs.to_list():
+        if item.owner == group.label:
+            for library in item.libraries:
+                objects += library.pic_objects if ctx.attr.pic else library.objects
+    if not objects or len(objects) != len(depset(objects).to_list()):
+        fail("component must expose a nonempty unique object set: " + str(group.label))
+    # Preserve full artifact paths, including equal basenames in subdirectories.
+    return [DefaultInfo(files = depset(objects))]
+
+bsd_component_objects = rule(implementation = _all_objects, attrs = {
+    "group": attr.label(providers = [CcInfo], mandatory = True),
+    "pic": attr.bool(default = False),
+})
