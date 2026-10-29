@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files([
+    "alias.c", "alias_db.c", "alias_proxy.c", "alias_util.c", "alias_mod.c",
+    "alias_dummy.c", "alias_ftp.c", "alias_irc.c", "alias_nbt.c", "alias_pptp.c", "alias_skinny.c", "alias_smedia.c",
+    "alias.h", "libalias.3",
+], visibility = ["//lib/libalias:__subpackages__"])
+cc_library(name = "headers", hdrs = ["alias.h", "alias_local.h", "alias_mod.h", "alias_db.h", "alias_sctp.h"],
+    strip_include_prefix = ".", visibility = ["//lib/libalias:__subpackages__"])

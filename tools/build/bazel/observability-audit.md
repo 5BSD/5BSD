@@ -7068,3 +7068,10 @@ belong to derived consumers and require separate qualification.
 Vendor data/runtime sources and platform atomics configuration are preserved.
 The maintained Makefile declares no DTrace provider. Capture/lifetime tests
 exercise the compiler/runtime ABI; they do not add or qualify OS audit delivery.
+
+### libalias family (2026-10-29)
+
+Main and seven userland protocol modules preserve their maintained sources.
+The userland Makefiles declare no DTrace providers. Packet translation, module
+loading, error logging and any kernel-side audit integration require separate
+runtime review; this build migration does not establish those behaviors.

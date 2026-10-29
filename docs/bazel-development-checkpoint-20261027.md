@@ -15610,3 +15610,26 @@ Existing frontend explicit targets/tests and backend runtime-path/metadata group
 support this addition without contract changes. Complete world/kernel/pkgbase,
 bootstrap, sandbox/cache and performance gates remain open. No host installation;
 Make remains production/default.
+
+### Native libalias and protocol-module artifacts (2026-10-29)
+
+Added native main libalias (five maintained sources) and all seven configured
+userland modules: dummy, ftp, irc, nbt, pptp, skinny and smedia. A shared Starlark
+macro expresses their identical archive/DSO structure; each component names its
+source explicitly. No kernel-module claim follows from these userland targets.
+The common headers include alias_sctp.h even though SCTP is not in the maintained
+module selection; declared that include after the initial sandbox compile caught
+its omission. No SCTP module was silently enabled.
+
+Run bazel-libalias-20261029-r2 passes via build-bsd with 16 jobs. Against a fresh
+Make build of the entire lib/libalias subtree, all 16 outputs (eight archives,
+eight DSOs) match archive member order, global/weak symbol inventories and DSO
+NEEDED/SONAME/runtime-path/binding metadata. Evidence/verifier under
+/usr/obj/usr/src/bazel-libalias-reference-20261029. The reference includes staged
+installation, but native installation/debug/configuration-file targets still
+need implementation and comparison. Packet translation, protocol-module loading
+and NAT behavior are not runtime-qualified by these artifact checks.
+
+Existing frontend explicit target inputs support this addition without changes.
+Full world/kernel/pkgbase/bootstrap, sandbox/cache and performance gates remain
+open; Make remains production/default. No host installation occurred.
