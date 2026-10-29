@@ -11109,3 +11109,29 @@ and performance remain open. No host installation or source fixture changes.
 Frontend review: existing tests selection and format-5 archive/artifact staging
 cover the new payload, with no build-bsd C/backend/manual change needed.
 Make remains production/default and full-system qualification is incomplete.
+
+### 2026-10-29 Bluetooth libraries and clients
+
+Added native libbluetooth/libsdp static and shared libraries, explicit source
+kernel-header dependencies, and bthost/btsockstat/rfcomm_sppd. The parent client
+archive set covers all three maintained Make subdirectories. Installation keeps
+shared-library versions, development headers/links, manuals and aliases,
+/etc/bluetooth configuration, and btsockstat group kmem/mode 2555.
+
+Maintained frontend run /usr/obj/usr/src/bazel-bluetooth-20261029 built with
+16 jobs. Fresh isolated Make references and reports in
+/usr/obj/usr/src/bazel-bluetooth-qualification-20261029 establish matching
+installation metadata (clients 11, libbluetooth 43, libsdp 28), exact nonbinary
+payloads (3, 36, 22), five valid ELF/debug pairs with matching dynamic fields
+and global/undefined symbols, and both static-library member/symbol inventories.
+These are structural comparisons, not instruction identity or runtime proof.
+Reference client dependency libraries include staged SDK inputs; not every
+reference dependency was rebuilt. Existing compiler warnings are not a clean
+warning qualification. Hardware operations, privileged socket inspection,
+service discovery, serial sessions, cross-target builds and performance remain
+unqualified. No host installation or hardware access was performed.
+
+Frontend review: existing format-5 targets, installation archives and staged
+SDK inputs cover this batch; build-bsd.c and its backend/manual require no new
+interface. Package construction/publication remains a separate gate. Make is
+still production/default; full world/kernel/pkgbase qualification is incomplete.

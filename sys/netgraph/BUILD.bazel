@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = "bluetooth_user_headers", hdrs = ['ng_message.h'], strip_include_prefix = "/sys", visibility = ["//lib/libbluetooth:__pkg__"])

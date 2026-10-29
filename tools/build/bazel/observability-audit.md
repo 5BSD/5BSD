@@ -5964,3 +5964,13 @@ patterns and both plain test wrappers, verified against Make. No production
 source, expectations, probes or audit behavior changed. Earlier host suite
 passes remain separate from native Bazel test registration and installed-image
 runtime qualification, which are still outstanding.
+
+### 2026-10-29 Bluetooth user libraries and clients
+
+Reviewed lib/libbluetooth, lib/libsdp and usr.bin/bluetooth source/build files.
+No explicit DTrace provider/SDT probes or direct audit calls were found in these
+components. Native declarations preserve their maintained source inventory;
+no instrumentation was removed. Review candidates include rfcomm_sppd session
+establishment/failure and service registration through libsdp. This is an
+observability follow-up, not a claim that kernel socket auditing is absent.
+Kernel Bluetooth modules and operational auditing were not qualified here.
