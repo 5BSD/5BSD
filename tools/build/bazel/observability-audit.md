@@ -6280,3 +6280,10 @@ observability remain unqualified. Evidence: bazel-llvm-analysis-qualification-20
 symbol/archive references. Missing private .def dependency was declared; no compiler
 source workaround. Transform semantics and emitted-code observability remain
 unqualified. Evidence: bazel-llvm-transforms[-extras]-qualification-20261029.
+
+### 2026-10-29 LLVM CodeGen
+
+311 default source objects match Make symbols/archive inventories. Source-selection
+checks cover default/no-LLD/extras variants. No compiler/probe/audit source changes.
+Machine-code generation, debug-location behavior and runtime observability remain
+unqualified. Evidence: bazel-llvm-codegen-qualification-20261029.

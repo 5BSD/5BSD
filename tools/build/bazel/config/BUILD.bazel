@@ -400,3 +400,8 @@ bool_flag(name = "clang_extras", build_setting_default = False, visibility = ["/
 config_setting(name = "clang_extras_enabled", flag_values = {":clang_extras": "true"}, visibility = ["//visibility:public"])
 
 selects.config_setting_group(name = "clang_format_or_extras_enabled", match_any = [":clang_format_enabled", ":clang_extras_enabled"], visibility = ["//visibility:public"])
+
+# Installed LLVM library selection; bootstrap is a separate contract.
+bool_flag(name = "lld", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "lld_enabled", flag_values = {":lld": "true"}, visibility = ["//visibility:public"])
+selects.config_setting_group(name = "clang_extras_or_lld_enabled", match_any = [":clang_extras_enabled", ":lld_enabled"], visibility = ["//visibility:public"])

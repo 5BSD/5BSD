@@ -12344,3 +12344,32 @@ manual updated, no build-bsd.c parser change. LLVM IR/Analysis/Transforms now co
 839-source libclang aggregate. Remaining LLVM libraries/backends, linkage and world/
 kernel/pkgbase/bootstrap/runtime/cache/performance gates stay open. Make remains
 production/default. No host installation/publication occurred.
+
+### 2026-10-29 native installed LLVM CodeGen component
+
+Added 309 core CodeGen sources plus the installed-world MIW source and the default
+LLD-dependent CommandFlags source: 311 default. Five EXT sources select on
+clang_extras; CommandFlags selects on clang_extras OR lld. New lld boolean defaults
+true, matching src.opts.mk. The component explicitly models installed libllvm;
+TOOLS_PREFIX/LLD_BOOTSTRAP variants remain a separate unqualified contract. Private
+headers and AsmPrinter/DIEHashAttributes.def are declared, alongside native generated
+dependencies. No compiler source or sandbox changes were required.
+
+Maintained frontend bazel-llvm-codegen-20261029 (16 jobs) succeeds. All 311 PIC object
+global/undefined symbol inventories and archive member multiplicities match fresh
+isolated Make references. Resolved source_inventory matches expanded Make ${SRCS}
+for default (311), lld=false/extras=false (310), and lld=false/extras=true (316).
+The two alternate runs request source_inventory only; they do not qualify compiled
+alternate objects or their runtime behavior. Evidence/scripts:
+/usr/obj/usr/src/bazel-llvm-codegen-qualification-20261029.
+Reference uses existing bootstrap generators/staged SDK headers. Streaming verifier
+completed in 24.73 seconds with 70,772 KB maximum RSS; these are verifier-only
+measurements, not compiler performance. Source/object parity is not emitted-machine-
+code equivalence, correctness of code generation, LLVM linkage or runtime validation.
+
+Frontend review: added typed lld selection and updated maintained manual with its
+current scope; existing format-5 build-bsd.c/backend/artifact support suffices.
+LLVM IR/Analysis/Transforms/CodeGen now cover 818 default component sources, separate
+from libclang's 839-source object aggregate. Remaining LLVM libraries/target backends,
+linkage and world/kernel/pkgbase/bootstrap/runtime/cache/performance gates stay open.
+Make remains production/default; no host installation/publication occurred.
