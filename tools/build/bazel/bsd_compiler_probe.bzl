@@ -18,6 +18,8 @@ def _impl(ctx):
     args.add("--ld-path=" + ctx.file.linker.path)
     args.add("-fuse-ld=lld")
     args.add_all(["-O2", "-static"])
+    if ctx.attr.lto != "none":
+        args.add("-flto=" + ctx.attr.lto)
     if ctx.attr.cxx:
         args.add("--driver-mode=g++")
     args.add(ctx.file.src)
@@ -35,4 +37,5 @@ bsd_compiler_probe = rule(implementation = _impl, executable = True, attrs = {
     "sdk": attr.label_list(mandatory = True),
     "src": attr.label(allow_single_file = True, mandatory = True),
     "cxx": attr.bool(),
+    "lto": attr.string(default = "none", values = ["none", "full", "thin"]),
 })

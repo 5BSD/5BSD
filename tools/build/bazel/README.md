@@ -38070,3 +38070,20 @@ Frontend review: existing build-bsd.c/format-5 transports new targets; manual
 updated. Cross-link/platform/configuration variants, LTO and broader linker tests,
 installed compiler/linker composition, independent bootstrap and full system/cache/
 performance gates remain open. Make remains production/default; no host install.
+
+### Native Clang/LLD LTO execution (2026-10-29)
+
+Added maintained full-LTO and ThinLTO C/C++ compiler probes. The lto rule attribute
+accepts only none/full/thin and contributes the corresponding compiler argument.
+All four tests in /usr/obj/usr/src/bazel-clang-native-lto-20261029 passed with no
+skipped cases. The execution log confirms four uncached processwrapper-sandbox
+compiler actions, using native Clang and native LLD with -flto=full or -flto=thin;
+each action exited zero and its generated static executable passed the runtime test.
+These are single-translation-unit smoke tests, not inter-module optimization,
+ThinLTO cache, dynamic-library LTO or performance qualification. System headers,
+CRT and runtime libraries still come from the declared Make-prepared SDK.
+
+Frontend review: build-bsd.c and the format-5 source_graph.py backend already carry
+explicit targets/tests; no new frontend option is required. Manual documents all
+four test labels. Independent bootstrap, complete system/package/runtime/cache and
+performance gates remain open. Make remains production/default; no host install.

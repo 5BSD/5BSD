@@ -4035,3 +4035,15 @@ and
 .Cm //usr.bin/clang/clang:native_link_cc_test
 use native Clang and LLD together with the selected staged SDK.
 They do not establish independent bootstrap or cross-system linker qualification.
+
+.Pp
+The tests
+.Cm //usr.bin/clang/clang:native_lto_full_c_test ,
+.Cm //usr.bin/clang/clang:native_lto_full_cc_test ,
+.Cm //usr.bin/clang/clang:native_lto_thin_c_test
+and
+.Cm //usr.bin/clang/clang:native_lto_thin_cc_test
+compile, link and execute static C/C++ probes with native Clang and LLD using
+full LTO or ThinLTO. Select these labels in both targets and tests.
+These single-translation-unit checks use the selected staged SDK; they do not
+qualify inter-module optimization, ThinLTO caches or independent bootstrap.
