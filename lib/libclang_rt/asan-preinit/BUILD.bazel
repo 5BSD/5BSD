@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libclang_rt:runtime.bzl", "compiler_rt_archive")
+compiler_rt_archive(stem = "asan-preinit",
+    cxx_srcs = ["//contrib/llvm-project/compiler-rt/lib/asan:asan_preinit.cpp"],
+    asm_srcs = [],
+    deps = ["//contrib/llvm-project/compiler-rt/lib/asan:headers"])

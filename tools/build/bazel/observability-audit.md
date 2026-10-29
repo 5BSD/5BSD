@@ -6661,3 +6661,11 @@ Runtime test validates actual signed-overflow diagnostics, recovery and SIGABRT;
 no handler substitution. Minimal UBSan uses sanitizer instrumentation rather than
 DTrace/audit providers. No runtime source modifications or new audit hooks. Other
 handlers, concurrency and sanitizer libraries remain unqualified.
+
+### ASan support and statistics client archives (2026-10-29)
+
+Declared ASan preinitialization/static C++ and x86_64 assembly sources, plus the
+statistics client, with source-owned common compiler-rt build policy. Archive
+members/symbols and install metadata match Make. No source hooks changed. These
+are sanitizer/statistics support components; full runtime instrumentation and
+reporting have not been executed. No DTrace/audit runtime claim.

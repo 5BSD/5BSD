@@ -38652,3 +38652,31 @@ bootstrap remain unqualified. This is not machine-code identity or complete
 world/kernel/package/performance qualification. No host installation/publication.
 Frontend review: build-bsd.c and format-5 backend already support explicit labels;
 manual updated, no new input schema. Make stays production/default.
+
+### Shared compiler-runtime archive policy and support components (2026-10-29)
+
+Added lib/libclang_rt/runtime.bzl for source-owned native amd64 compiler-rt
+archive policy: common C/C++ flags/defines, separately compiled assembly,
+explicit PIC object archives, source inventories and installation metadata.
+Callers declare exact sources and extra definitions; no Make query, host library
+selection or source-discovery fallback. Minimal UBSan now uses the macro, with
+its archive SHA256 unchanged (0f67d4b56287c86d52b15c3aff5ac261d248b33534c6fcd648fed7c3eea0e8b1).
+The existing mixed-C/profile component retains its separate implementation.
+
+Added asan-preinit, asan_static and stats_client candidates with declared ASan/
+stats headers. Fresh isolated Make references and verification scripts under
+bazel-compiler-rt-support-reference-20261029 compare installed metadata, archive
+member inventories and global/weak symbols. Counts: asan-preinit one object/three
+symbols; asan_static two objects/163 symbols; stats_client one object/eight symbols.
+All match. Refactored UBSan also retains one object/53 symbols and its passing
+runtime-test report. Final run: bazel-compiler-rt-support-20261029-r2. Initial
+analysis failed on an empty stats *.inc glob; removed the nonexistent pattern.
+
+These support archives have artifact/install comparisons, not full ASan or stats
+runtime qualification. No instrumentation claims for ASan startup/shadow memory,
+assembly access checks or stats reporting until the complete runtimes and their
+consumers are built and tested. SDK compiler/system dependencies, other runtime
+components/architectures, world/kernel/pkgbase/bootstrap and performance gates
+remain open. No host installation/publication. Frontend review: build-bsd.c and
+format-5 backend already accept these target lists; manual updated. Make stays
+production/default.

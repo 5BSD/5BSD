@@ -1,25 +1,10 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_test")
-load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive", "bsd_component_sources")
-load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
-load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
-cc_library(name = "objects", srcs = ["//contrib/llvm-project/compiler-rt/lib/ubsan_minimal:ubsan_minimal_handlers.cpp"],
+load("//lib/libclang_rt:runtime.bzl", "compiler_rt_archive")
+compiler_rt_archive(stem = "ubsan_minimal",
+    cxx_srcs = ["//contrib/llvm-project/compiler-rt/lib/ubsan_minimal:ubsan_minimal_handlers.cpp"],
     deps = ["//contrib/llvm-project/compiler-rt/lib/sanitizer_common:headers"],
-    copts = ["-std=c++17", "-fno-builtin", "-fno-exceptions", "-fno-sanitize=safe-stack", "-fno-stack-protector", "-funwind-tables", "-fno-rtti", "-fvisibility-inlines-hidden", "-fvisibility=hidden"],
-    local_defines = ["NDEBUG", "HAVE_RPC_XDR_H=0", "SANITIZER_SUPPORTS_WEAK_HOOKS=0", "UBSAN_CAN_USE_CXXABI", "SANITIZER_COMMON_NO_REDEFINE_BUILTINS"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
-bsd_component_archive(name = "static_archive", groups = [":objects"], pic = True, visibility = ["//visibility:public"])
-bsd_component_sources(name = "source_inventory", groups = [":objects"], visibility = ["//visibility:public"])
-bsd_install_file(name = "archive_file", src = ":static_archive",
-    destination = "/usr/lib/clang/21/lib/freebsd/libclang_rt.ubsan_minimal-x86_64.a",
-    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clang", "dev"])
-bsd_install_manifest(name = "install_manifest", entries = [":archive_file"], visibility = ["//visibility:public"])
-bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
-    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
-    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
-    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
-    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
-    visibility = ["//visibility:public"])
+    defines = ["SANITIZER_COMMON_NO_REDEFINE_BUILTINS"])
 
 cc_import(name = "runtime", static_library = ":static_archive", visibility = ["//visibility:public"])
 [cc_library(name = mode + "_probe", srcs = ["overflow_probe.c"],

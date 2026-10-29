@@ -4206,3 +4206,11 @@ checks clean, recoverable signed-overflow and aborting signed-overflow behavior
 with compiler-generated instrumentation and the explicitly linked native archive.
 The registered SDK compiler/system runtime remain in use. These checks do not
 qualify other sanitizer runtimes, all handlers, other architectures or bootstrap.
+
+.Pp
+The lib/libclang_rt/asan-preinit, asan_static and stats_client packages provide
+static_archive, source_inventory, install_manifest and install_archive targets
+using the common native amd64 runtime.bzl policy. Their archive inventories,
+symbol records and installation metadata match fresh Make references. This is
+support-component qualification, not proof of working full ASan instrumentation
+or statistics reporting; complete runtime consumers remain to be tested.
