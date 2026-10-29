@@ -5,7 +5,7 @@ load("//krb5/util/et:error_table.bzl", "mit_error_table")
 [mit_error_table(name = table, src = "//crypto/krb5/src/lib/kadm5:" + table + ".et", basename = table,
     textdomain = "mit-krb5", awk = "@bsd_sdk//toolchain:awk", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
  for table in ["kadm_err", "chpass_util_strings"]]
-[filegroup(name = table + "_" + group, srcs = [":" + table], output_group = group)
+[filegroup(name = table + "_" + group, srcs = [":" + table], output_group = group, visibility = ["//krb5:__subpackages__"])
  for table in ["kadm_err", "chpass_util_strings"] for group in ["source", "header"]]
 cc_library(name = "error_headers", hdrs = [":kadm_err_header", ":chpass_util_strings_header"],
     includes = ["."], strip_include_prefix = ".", include_prefix = "kadm5", visibility = ["//visibility:public"])

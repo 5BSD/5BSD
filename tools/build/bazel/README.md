@@ -39273,3 +39273,26 @@ Reviewed build-bsd.c and format-5 source_graph.py: existing explicit target
 inputs cover this archive without a frontend/schema change. Prepared SDK and
 host dependencies remain. Make remains production/default. No host installation,
 publication or reboot; whole-system and performance gates remain open.
+
+### Native Kerberos administration server library (2026-10-29)
+
+Added libkadm5srv_mit with six common and fourteen server source files plus the
+two existing declared administration error-table outputs. Shared generator
+filegroups now allow Kerberos consumers; the server consumes their source/header
+outputs without linking the administration client library. The graph preserves
+private static profile binding, native RPC/GSS/KDB dependencies, version-map
+linking, pkg-config generation, installation and separate debug artifacts.
+
+Run bazel-kadm-server-20261029 matches fresh Make reference
+bazel-kadm-server-make-20261029: seven installation records, all 22 ordered
+archive members, 521 static and 347 shared/debug global/weak symbol records,
+dynamic dependencies/SONAME/flags, debuglink CRC, symlink and ownership/modes/tags.
+kadm-server.pc is byte-identical. Evidence and repeatable verifier:
+/usr/obj/usr/src/bazel-kadm-server-reference-20261029.
+
+This is build/install artifact qualification only. No server, password policy,
+plugin hook, database mutation or remote administration operation was executed.
+Prepared SDK and host dependencies remain. Reviewed build-bsd.c and format-5
+source_graph.py: existing explicit target selections need no contract change.
+Make stays production/default; no host installation, publication or reboot.
+Whole-world/kernel/pkgbase/runtime/performance gates remain open.

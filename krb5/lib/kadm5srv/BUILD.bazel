@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_import")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Reuse the declared administration error-table actions; no client library link.
+cc_import(name = "private_profile", static_library = "//krb5/util/profile:static_archive")
+cc_library(name = "kadm5srv_mit",
+    srcs = ["//crypto/krb5/src/lib/kadm5:" + f for f in ["alt_prof.c", "chpass_util.c", "logger.c", "kadm_rpc_xdr.c", "misc_free.c", "str_conv.c"]] +
+           ["//krb5/lib/kadm5clnt:kadm_err_source", "//krb5/lib/kadm5clnt:chpass_util_strings_source"] +
+           ["//crypto/krb5/src/lib/kadm5:srv/" + f for f in ['adb_xdr.c', 'kadm5_hook.c', 'pwqual.c', 'pwqual_dict.c', 'pwqual_empty.c', 'pwqual_hesiod.c', 'pwqual_princ.c', 'server_init.c', 'server_kdb.c', 'server_misc.c', 'svr_chpass_util.c', 'svr_iters.c', 'svr_policy.c', 'svr_principal.c']],
+    deps = ["//crypto/krb5/src/lib/kadm5:headers", ":private_profile"] + ['//krb5/lib/rpc:gssrpc', '//krb5/lib/gssapi:gssapi_krb5', '//krb5/lib/kdb:kdb5', '//krb5/lib/krb5:krb5', '//krb5/lib/crypto:k5crypto', '//krb5/util/support:krb5support', '//krb5/util/et:com_err'],
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":kadm5srv_mit"], visibility = ["//visibility:public"])
+cc_shared_library(name = "kadm5srv_mit_shared", deps = [":kadm5srv_mit"],
+    dynamic_deps = ['//krb5/lib/rpc:gssrpc_shared', '//krb5/lib/gssapi:gssapi_krb5_shared', '//krb5/lib/kdb:kdb5_shared', '//krb5/lib/krb5:krb5_shared', '//krb5/lib/crypto:k5crypto_shared', '//krb5/util/support:krb5support_shared', '//krb5/util/et:com_err_shared'],
+    shared_lib_name = "libkadm5srv_mit.so.122", additional_linker_inputs = ["version.map"],
+    user_link_flags = ["-Wl,--version-script=$(location version.map)", "-Wl,-z,defs", "-Wl,-soname,libkadm5srv_mit.so.122"], visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

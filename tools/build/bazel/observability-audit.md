@@ -6816,3 +6816,11 @@ audit submission calls. Existing logger.c behavior is carried forward. Review
 RPC/authentication failures and administrative operations jointly with kadmind;
 do not confuse client logging with authoritative server-side security auditing.
 Only build/install artifact comparisons were performed for this component.
+
+### MIT administration server library (2026-10-29)
+
+The fourteen migrated srv C sources have no explicit DTrace provider or audit
+submission calls. Review principal/policy mutations, password-quality rejection
+and hook failures alongside kadmind's authoritative request/authentication logs.
+Artifact comparisons preserve the existing sources; they do not establish
+security-audit completeness or runtime behavior of those operations.
