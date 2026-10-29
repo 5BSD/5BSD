@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/clang:llvm_utility.bzl", "llvm_utility")
+load("//tools/build/bazel:bsd_tablegen.bzl", "bsd_tablegen")
+bsd_tablegen(name = "ObjdumpOpts", src = "//contrib/llvm-project/llvm/tools/llvm-objdump:ObjdumpOpts.td",
+    includes = ["//contrib/llvm-project/llvm/include:llvm/Option/OptParser.td"],
+    include_dirs = ["contrib/llvm-project/llvm/include"], flags = ["-gen-opt-parser-defs"],
+    output = "ObjdumpOpts.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap")
+bsd_tablegen(name = "OtoolOpts", src = "//contrib/llvm-project/llvm/tools/llvm-objdump:OtoolOpts.td",
+    includes = ["//contrib/llvm-project/llvm/include:llvm/Option/OptParser.td"],
+    include_dirs = ["contrib/llvm-project/llvm/include"], flags = ["-gen-opt-parser-defs"],
+    output = "OtoolOpts.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap")
+llvm_utility(name = "llvm-objdump",
+    srcs = ['//contrib/llvm-project/llvm/tools/llvm-objdump:COFFDump.cpp', '//contrib/llvm-project/llvm/tools/llvm-objdump:ELFDump.cpp', '//contrib/llvm-project/llvm/tools/llvm-objdump:MachODump.cpp', '//contrib/llvm-project/llvm/tools/llvm-objdump:OffloadDump.cpp', '//contrib/llvm-project/llvm/tools/llvm-objdump:SourcePrinter.cpp', '//contrib/llvm-project/llvm/tools/llvm-objdump:WasmDump.cpp', '//contrib/llvm-project/llvm/tools/llvm-objdump:XCOFFDump.cpp', 'llvm-objdump-driver.cpp', '//contrib/llvm-project/llvm/tools/llvm-objdump:llvm-objdump.cpp'],
+    options = None, generated_options = [":ObjdumpOpts", ":OtoolOpts"], manual = "llvm-objdump.1",
+    deps = ["//contrib/llvm-project/llvm/tools/llvm-objdump:headers"])

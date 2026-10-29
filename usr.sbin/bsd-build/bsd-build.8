@@ -4088,3 +4088,11 @@ covers native debug splitting, strip dispatch, code-section preservation and
 address-based resolution through the separate debug file. Installation helpers
 still select their declared SDK objcopy/strip; this does not qualify an independent
 native bootstrap.
+
+.Pp
+The llvm-objdump package provides native runtime, _installed, source_inventory,
+options and install_archive targets, with native ObjdumpOpts/OtoolOpts generation.
+.Cm //lib/clang:utilities_test
+also checks AMD64 disassembly and code/debug-section reporting on native Clang
+and LLD output. Other object formats and cross-architecture disassembly remain
+outside this runtime qualification.

@@ -89,11 +89,11 @@ identical(const char *left, const char *right)
 int
 main(int argc, char **argv)
 {
-    char tools[9][PATH_MAX];
+    char tools[10][PATH_MAX];
     const char *tmp = getenv("TEST_TMPDIR");
-    if (argc != 10 || tmp == NULL)
+    if (argc != 11 || tmp == NULL)
         return (2);
-    for (int i = 0; i < 9; i++) {
+    for (int i = 0; i < 10; i++) {
         if (realpath(argv[i + 1], tools[i]) == NULL) {
             perror(argv[i + 1]);
             return (2);
@@ -160,6 +160,13 @@ main(int argc, char **argv)
     run((char *[]){tools[6], "--obj=stripped.elf", address, NULL}, "separate-debug.out");
     contains("separate-debug.out", "answer\n");
     contains("separate-debug.out", "probe.c:2:");
-    puts("native LLVM inspection, aliases and separate-debug checks passed");
+    run((char *[]){tools[9], "--disassemble", "probe.elf", NULL}, "disassemble.out");
+    contains("disassemble.out", "<answer>:");
+    contains("disassemble.out", "movl");
+    contains("disassemble.out", "retq");
+    run((char *[]){tools[9], "--section-headers", "probe.elf", NULL}, "objdump-sections.out");
+    contains("objdump-sections.out", ".text");
+    contains("objdump-sections.out", ".debug_info");
+    puts("native LLVM inspection, disassembly and separate-debug checks passed");
     return (0);
 }

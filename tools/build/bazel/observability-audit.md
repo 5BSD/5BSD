@@ -6579,3 +6579,10 @@ changed. Maintained tests check code-byte preservation and separate debug-file
 resolution after stripping. This does not qualify retention of every custom ELF
 section or system-wide DTrace/audit delivery; production artifact helpers still
 use the declared SDK tools and their existing keep-section policy.
+
+### Native objdump (2026-10-29)
+
+All nine Make sources retained. Source scan finds Mach-O DTrace DOF section-name
+decoding, not an instrumentation call. No probe/audit changes. Maintained native
+AMD64 disassembly and section-reporting checks pass; runtime decoding of Mach-O
+DOF and system-wide audit/DTrace delivery are not established by this test.

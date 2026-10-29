@@ -13549,3 +13549,28 @@ using native tools throughout installation requires bootstrap dependency review
 and remains open. Static LLVM/cross-host variants, complete system/bootstrap,
 cache/performance/package gates remain open. Make stays production/default;
 no host installation or publication.
+
+### Native llvm-objdump (2026-10-29)
+
+Added all nine maintained driver sources, explicit private headers and native
+ObjdumpOpts/OtoolOpts generation. Both tables include only OptParser.td; fresh
+Make depfiles confirm the closure. The unused llvm-objcopy include directory in
+the Make command is not needed by these actions. Resolved sources match expanded
+Make. Native build /usr/obj/usr/src/bazel-llvm-objdump-native-20261029 passes.
+Fresh Make driver/link/install comparison has zero global/weak ELF symbol record
+differences; all three installation records, compressed manual and debuglink CRC
+match. Both generated tables match all 52,239 bytes. Reference/scripts/reports:
+/usr/obj/usr/src/bazel-llvm-objdump-driver-reference-20261029.
+
+Extended //lib/clang:utilities_test passes in bazel-llvm-objdump-test-20261029
+(one reported case, none skipped), checking native disassembly of the linked
+answer function and its expected AMD64 move/return instructions, plus code/debug
+section reporting. Existing compiler/linker/inspection/debug-split checks remain.
+This does not establish other architectures, COFF/Mach-O/Wasm/XCOFF runtime
+behavior or exhaustive option coverage, despite those sources being built.
+
+Frontend review: existing build-bsd.c/format-5 source_graph.py supports the explicit
+targets/tests; manual updated. The fresh reference reuses Make SDK/private LLVM
+libraries. Independent bootstrap, remaining system/tool targets, static/cross
+configuration, cache/performance and complete pkgbase gates remain open. Make
+stays production/default; no host installation, upgrade or publication.
