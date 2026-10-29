@@ -39933,3 +39933,32 @@ explicit target inputs and metadata output groups support this aggregate without
 frontend changes. Installed-header consumer checks, full configured payload
 reconciliation, bootstrap/world/kernel/pkgbase, sandbox/cache and performance
 gates remain open. Make stays production/default; no host installation occurred.
+
+### Configured Kerberos subtree reconciliation (2026-10-29)
+
+A full configured traversal review found two unintended default aggregate entries:
+sim_client and sserver are individually buildable but absent from the maintained
+usr.bin/usr.sbin SUBDIR lists. Removed both from installation_archives; their
+explicit native targets remain available. This corrects the preceding 45-archive
+aggregate to 43 archives. The earlier overlap audit did not prove selection.
+
+Fresh Make all/install for the entire krb5 subtree completed under a separate
+NO_ROOT staging/object root, using 16 jobs and the existing SDK. Corrected native
+run bazel-krb-aggregate-20261029-r3 passed, including both database/KDC tests.
+The full Make METALOG minus baseline directories and the aggregate have exactly
+206 destinations: no missing or extra records, matching ownership/modes and
+non-directory package tags. Saved native outputs were hash checked; tar members
+match declared records plus only ancestor directories whose filesystem metadata
+matches the distrib-dirs baseline. Shared directory package tags remain separate.
+INTERNALLIB headers are suppressed by bsd.lib.mk; auxiliary ss scripts are not
+installed by this configured library traversal. The full install confirms no
+missing destinations from those internal components.
+
+Evidence: bazel-krb-full-make-20261029 and
+bazel-krb-aggregate-reference-20261029/{make-full.py,full-audit.py,full-audit.json}
+under /usr/obj/usr/src. This audit establishes destination/metadata/archive-member
+coverage for this configuration, not whole-subtree binary byte equality or every
+configuration. Earlier component symbol/content checks remain separate evidence.
+Installed-header consumer linking and full-system qualification remain open.
+Existing build-bsd explicit inputs and backend output groups remain sufficient;
+no frontend contract change. Make remains production/default. No host install.
