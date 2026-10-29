@@ -6,3 +6,10 @@ filegroup(name = "attribute_definitions", srcs = ["clang/Basic/ASTNode.td", "cla
 
 exports_files(["clang/Basic/Diagnostic.td"], visibility = ["//lib/clang/libclang:__pkg__"])
 filegroup(name = "diagnostic_definitions", srcs = glob(["clang/Basic/Diagnostic*.td"]), visibility = ["//lib/clang/libclang:__pkg__"])
+
+exports_files(["clang/AST/CommentCommands.td", "clang/AST/CommentHTMLNamedCharacterReferences.td", "clang/AST/CommentHTMLTags.td", "clang/AST/PropertiesBase.td", "clang/AST/StmtDataCollectors.td", "clang/AST/TypeProperties.td", "clang/Basic/CommentNodes.td", "clang/Basic/DeclNodes.td", "clang/Basic/StmtNodes.td", "clang/Basic/TypeNodes.td"], visibility = ["//lib/clang/libclang:__pkg__"])
+filegroup(name = "ast_TypeProperties_inputs", srcs = ["clang/AST/PropertiesBase.td", "clang/Basic/ASTNode.td", "clang/Basic/TypeNodes.td"], visibility = ["//lib/clang/libclang:__pkg__"])
+filegroup(name = "ast_CommentNodes_inputs", srcs = ["clang/Basic/ASTNode.td"], visibility = ["//lib/clang/libclang:__pkg__"])
+filegroup(name = "ast_DeclNodes_inputs", srcs = ["clang/Basic/ASTNode.td"], visibility = ["//lib/clang/libclang:__pkg__"])
+filegroup(name = "ast_StmtNodes_inputs", srcs = ["clang/Basic/ASTNode.td"], visibility = ["//lib/clang/libclang:__pkg__"])
+filegroup(name = "ast_TypeNodes_inputs", srcs = ["clang/Basic/ASTNode.td"], visibility = ["//lib/clang/libclang:__pkg__"])

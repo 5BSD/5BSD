@@ -11675,7 +11675,8 @@ installation or publication occurred.
 
 ### 2026-10-29 Clang attribute generated-header family
 
-Added all 18 maintained libclang generation recipes consuming Attr.td: AST
+Added 18 libclang generation recipes consuming Attr.td (coverage corrected
+to 21 in the subsequent AST/inventory audit): AST
 classes/implementation/visitors/dumps, Basic attribute lists/spellings, Sema tables
 and serialization readers/writers. Each has a native TableGen action and declared
 transitive definitions; attribute_headers supplies the compiler include namespace.
@@ -11696,3 +11697,30 @@ Frontend review: format-5 artifact collection and existing TableGen action backe
 cover this change; no new build-bsd.c/manual interface. Remaining generated families,
 compiler libraries, world/kernel/pkgbase/bootstrap/runtime/performance gates are
 open. Make stays production/default; no host installation or publication occurred.
+
+### 2026-10-29 AST definitions and corrected attribute inventory
+
+Added 14 native AST definition actions: property readers/writers, comment commands/
+HTML tables, node lists and statement data collectors. Source inputs and recursive
+.td include closure are explicit Bazel declarations. Added three previously missed
+attribute actions: Parse/AttrParserStringSwitches, Parse/AttrSubMatchRulesParser-
+StringSwitches and Sema/AttrTemplateInstantiate. Earlier claim that 18 outputs were
+all maintained attribute recipes was incorrect: the transcription regex omitted
+multiline prerequisite declarations. The correct attribute count is 21. The 18
+previously compared outputs remain valid; their coverage claim was incomplete.
+
+Reference inventory now normalizes Make line continuations before selecting recipes.
+The independent count assertion exposed the third omission after the first two were
+identified during review; implementation was completed rather than excluding the
+extra reference. Maintained frontend bazel-clang-ast-20261029-r2 (16 jobs) succeeds.
+All 35 relative outputs (21 attributes plus 14 AST definitions), totaling 4,976,622
+bytes, match fresh invocations of the existing Make bootstrap generator exactly.
+Scripts, complete recipe-derived reference inventory, tool hash and per-output
+comparisons: /usr/obj/usr/src/bazel-clang-ast-qualification-20261029. Reference tool
+was not freshly rebuilt. First build and inventory-failure evidence are retained.
+
+Frontend review: current format-5 targets/artifacts and TableGen backend suffice;
+no build-bsd.c/manual interface change. Generated definition parity does not qualify
+compiled compiler behavior or installation. Remaining compiler definitions/libraries,
+world/kernel/pkgbase/bootstrap/runtime/performance gates remain open. Make stays
+production/default; no host installation or publication occurred.

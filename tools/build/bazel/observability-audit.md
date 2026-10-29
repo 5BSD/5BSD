@@ -6121,3 +6121,10 @@ Only generation declarations/provider wiring changed. Maintained AST, Sema and
 serialization definitions are retained byte-for-byte against the reference. No
 generator/compiler source instrumentation was changed. Runtime behavior remains
 unqualified until the consuming compiler is built and tested.
+
+### 2026-10-29 AST generation and inventory correction
+
+Only generator declarations/header providers changed. Three previously omitted
+attribute generation recipes are now represented; no source probes or audit hooks
+were changed. Generated AST/attribute byte parity does not establish runtime
+instrumentation or compiler behavior.

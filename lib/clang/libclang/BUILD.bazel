@@ -23,6 +23,9 @@ cc_library(name = "diagnostic_headers", hdrs = [":" + name for name in _DIAGNOST
 filegroup(name = "diagnostic_outputs", srcs = [":" + name for name in _DIAGNOSTICS], visibility = ["//visibility:public"])
 
 _ATTRIBUTES = {
+    "clang/Sema/AttrTemplateInstantiate.inc": "-gen-clang-attr-template-instantiate",
+    "clang/Parse/AttrParserStringSwitches.inc": "-gen-clang-attr-parser-string-switches",
+    "clang/Parse/AttrSubMatchRulesParserStringSwitches.inc": "-gen-clang-attr-subject-match-rules-parser-string-switches",
     "clang/AST/AttrImpl.inc": "-gen-clang-attr-impl",
     "clang/AST/AttrNodeTraverse.inc": "-gen-clang-attr-node-traverse",
     "clang/AST/AttrTextNodeDump.inc": "-gen-clang-attr-text-node-dump",
@@ -53,3 +56,84 @@ _ATTRIBUTES = {
 ) for output, flag in _ATTRIBUTES.items()]
 cc_library(name = "attribute_headers", hdrs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _ATTRIBUTES], strip_include_prefix = ".", visibility = ["//visibility:public"])
 filegroup(name = "attribute_outputs", srcs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _ATTRIBUTES], visibility = ["//visibility:public"])
+
+_AST_DEFINITIONS = {
+    "clang/AST/AbstractBasicReader.inc": [
+        "-gen-clang-basic-reader",
+        "clang/AST/PropertiesBase.td",
+        ""
+    ],
+    "clang/AST/AbstractBasicWriter.inc": [
+        "-gen-clang-basic-writer",
+        "clang/AST/PropertiesBase.td",
+        ""
+    ],
+    "clang/AST/AbstractTypeReader.inc": [
+        "-gen-clang-type-reader",
+        "clang/AST/TypeProperties.td",
+        "//contrib/llvm-project/clang/include:ast_TypeProperties_inputs"
+    ],
+    "clang/AST/AbstractTypeWriter.inc": [
+        "-gen-clang-type-writer",
+        "clang/AST/TypeProperties.td",
+        "//contrib/llvm-project/clang/include:ast_TypeProperties_inputs"
+    ],
+    "clang/AST/CommentCommandInfo.inc": [
+        "-gen-clang-comment-command-info",
+        "clang/AST/CommentCommands.td",
+        ""
+    ],
+    "clang/AST/CommentCommandList.inc": [
+        "-gen-clang-comment-command-list",
+        "clang/AST/CommentCommands.td",
+        ""
+    ],
+    "clang/AST/CommentHTMLNamedCharacterReferences.inc": [
+        "-gen-clang-comment-html-named-character-references",
+        "clang/AST/CommentHTMLNamedCharacterReferences.td",
+        ""
+    ],
+    "clang/AST/CommentHTMLTags.inc": [
+        "-gen-clang-comment-html-tags",
+        "clang/AST/CommentHTMLTags.td",
+        ""
+    ],
+    "clang/AST/CommentHTMLTagsProperties.inc": [
+        "-gen-clang-comment-html-tags-properties",
+        "clang/AST/CommentHTMLTags.td",
+        ""
+    ],
+    "clang/AST/CommentNodes.inc": [
+        "-gen-clang-comment-nodes",
+        "clang/Basic/CommentNodes.td",
+        "//contrib/llvm-project/clang/include:ast_CommentNodes_inputs"
+    ],
+    "clang/AST/DeclNodes.inc": [
+        "-gen-clang-decl-nodes",
+        "clang/Basic/DeclNodes.td",
+        "//contrib/llvm-project/clang/include:ast_DeclNodes_inputs"
+    ],
+    "clang/AST/StmtDataCollectors.inc": [
+        "-gen-clang-data-collectors",
+        "clang/AST/StmtDataCollectors.td",
+        ""
+    ],
+    "clang/AST/StmtNodes.inc": [
+        "-gen-clang-stmt-nodes",
+        "clang/Basic/StmtNodes.td",
+        "//contrib/llvm-project/clang/include:ast_StmtNodes_inputs"
+    ],
+    "clang/AST/TypeNodes.inc": [
+        "-gen-clang-type-nodes",
+        "clang/Basic/TypeNodes.td",
+        "//contrib/llvm-project/clang/include:ast_TypeNodes_inputs"
+    ]
+}
+[bsd_tablegen(name = output.replace("/", "_").removesuffix(".inc"),
+    src = "//contrib/llvm-project/clang/include:" + config[1],
+    includes = [config[2]] if config[2] else [],
+    include_dirs = ["contrib/llvm-project/clang/include"], flags = [config[0]],
+    output = output, tool = "//usr.bin/clang/clang-tblgen:bootstrap",
+) for output, config in _AST_DEFINITIONS.items()]
+cc_library(name = "ast_definition_headers", hdrs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _AST_DEFINITIONS], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "ast_definition_outputs", srcs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _AST_DEFINITIONS], visibility = ["//visibility:public"])
