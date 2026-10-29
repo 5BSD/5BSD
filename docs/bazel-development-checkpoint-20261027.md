@@ -10835,3 +10835,33 @@ locale/cross-platform behavior and performance remain open. Frontend review:
 existing format-5 target/artifact staging covers the complete payload; no
 build-bsd C/backend/manual change is required. Make remains production/default;
 complete world/kernel/pkgbase/runtime/performance gates remain open.
+
+### 2026-10-29 tip/cu group
+
+Added native tip/cu with all 23 maintained C sources, two local headers and
+Make's DEFBR/DEFFS/ACULOG/PRISTINE/CONNECT and modem-selection defines. The
+libacu source provider exports only the nine compiled modem sources; biz31.c
+is not part of the maintained Make SRCS. cu is an executable hardlink to tip,
+but has its own distinct manual. Both /etc/phones and /etc/remote retain their
+maintained configuration metadata. Source UID/GID handling is unchanged; the
+actual default executable installation is 0555, not setuid.
+
+Maintained frontend /usr/obj/usr/src/bazel-tip-20261029 (16 jobs) passes against
+fresh rootless recursive Make reference bazel-tip-reference-20261029. Evidence
+in bazel-tip-qualification-20261029 establishes ten distinct metadata records,
+four exact nonbinary payloads, executable hardlink identity, valid separate
+debug linkage and matching global/undefined symbols and dynamic fields. The
+r2 report names are inherited from the comparator, not repeated build attempts.
+
+Make's beforeinstall hook clears schg on a pre-existing cu as historical direct
+installation cleanup. Native archive construction operates on a fresh payload
+and does not mutate a pre-existing installation. Existing-system replacement
+and flags behavior belong to pkgbase upgrade qualification, still outstanding;
+this component check does not claim to establish that behavior.
+
+No serial device/session, transfer, shell escape, lock or accounting-log runtime
+operation was performed. These remain qualification gaps, along with custom
+modem/baud options and cross-platform behavior. Frontend review: existing
+format-5 target/artifact/configuration staging supports this group; no build-bsd
+C/backend/manual change is required. Make remains production/default and
+complete world/kernel/bootstrap/pkgbase/runtime/performance gates remain open.

@@ -5891,3 +5891,12 @@ both Make/native bigram binaries fail host loading for missing
 cap_rights_intersect@FBSD_1.9 and remain unqualified. Maintenance scripts and
 filesystem visibility/privacy behavior require separate runtime qualification.
 No source checks or capability calls were removed to bypass host limitations.
+
+### 2026-10-29 tip/cu
+
+Native rules preserve ACULOG and PRISTINE, loginit/logent and the maintained
+seteuid/setegid transitions. Source scan found no explicit DTrace/SDT or
+OS audit_submit/auditon calls. ACU accounting is not OS audit integration.
+Keep serial sessions, lock ownership, privilege transitions, shell escapes,
+transfers and logging/privacy behavior on the runtime review list. No source
+behavior or privilege checks were modified to achieve build parity.

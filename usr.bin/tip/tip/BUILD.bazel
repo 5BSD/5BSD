@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+cc_library(name = "headers", hdrs = ["tip.h", "pathnames.h"], includes = ["."])
+cc_binary(name = 'tip', srcs = ['acu.c', 'acutab.c', 'cmds.c', 'cmdtab.c', 'cu.c', 'hunt.c', 'log.c', 'partab.c', 'remote.c', 'tip.c', 'tipout.c', 'uucplock.c', 'value.c', 'vars.c', '//usr.bin/tip/libacu:biz22.c', '//usr.bin/tip/libacu:courier.c', '//usr.bin/tip/libacu:df.c', '//usr.bin/tip/libacu:dn11.c', '//usr.bin/tip/libacu:hayes.c', '//usr.bin/tip/libacu:t3000.c', '//usr.bin/tip/libacu:v3451.c', '//usr.bin/tip/libacu:v831.c', '//usr.bin/tip/libacu:ventel.c'], deps = [":headers"], dynamic_deps = [], local_defines = ['DEFBR=9600', 'DEFFS=BUFSIZ', 'ACULOG', 'PRISTINE', 'CONNECT', 'V831', 'VENTEL', 'HAYES', 'COURIER', 'T3000'], copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = 'tip', manual = 'tip.1', package = 'utilities', bindir = "/usr/bin", man_section = '1', extra_entries = [":cu_link", ":cu_manual_file", ":config_phones", ":config_remote"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin/tip:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]} | {"/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_compress")
+# cu has a distinct manual, despite sharing tip's executable.
+bsd_install_link(name = "cu_link", destination = "/usr/bin/cu", target = "/usr/bin/tip", kind = "hardlink",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=utilities"])
+bsd_compress(name = "cu_manual", src = "cu.1", output = "cu.1.gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "cu_manual_file", src = ":cu_manual", destination = "/usr/share/man/man1/cu.1.gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
+[bsd_install_file(name = "config_" + n, src = n, destination = "/etc/" + n,
+    owner = "root", group = "wheel", mode = "0644", install_tags = ["package=utilities", "config"]) for n in ["phones", "remote"]]
