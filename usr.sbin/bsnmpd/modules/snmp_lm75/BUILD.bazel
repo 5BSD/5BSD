@@ -14,3 +14,8 @@ cc_library(name = "objects", srcs = ["snmp_lm75.c"] + [":tree_source"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 cc_shared_library(name = "module", deps = [":objects"], shared_lib_name = "snmp_lm75.so.6",
     user_link_flags = ["-Wl,-soname,snmp_lm75.so.6", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load("//usr.sbin/bsnmpd/modules:installation.bzl", "module_installation")
+module_installation(module = "lm75", binary = ":module", manual = "snmp_lm75.3",
+    definitions = {"lm75_tree.def": "lm75_tree.def"},
+    mibs = {"BEGEMOT-LM75-MIB.txt": "BEGEMOT-LM75-MIB.txt"}, headers = {})

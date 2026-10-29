@@ -14,3 +14,8 @@ cc_library(name = "objects", srcs = ["wlan_snmp.c", "wlan_sys.c", "wlan_snmp.h"]
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 cc_shared_library(name = "module", deps = [":objects"], shared_lib_name = "snmp_wlan.so.6",
     user_link_flags = ["-Wl,-soname,snmp_wlan.so.6", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load("//usr.sbin/bsnmpd/modules:installation.bzl", "module_installation")
+module_installation(module = "wlan", binary = ":module", manual = "snmp_wlan.3",
+    definitions = {"wlan_tree.def": "wlan_tree.def"},
+    mibs = {"BEGEMOT-WIRELESS-MIB.txt": "BEGEMOT-WIRELESS-MIB.txt"}, headers = {})

@@ -14,3 +14,8 @@ cc_library(name = "objects", srcs = ["bridge_snmp.c", "bridge_if.c", "bridge_por
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 cc_shared_library(name = "module", deps = [":objects"], shared_lib_name = "snmp_bridge.so.6",
     user_link_flags = ["-Wl,-soname,snmp_bridge.so.6", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load("//usr.sbin/bsnmpd/modules:installation.bzl", "module_installation")
+module_installation(module = "bridge", binary = ":module", manual = "snmp_bridge.3",
+    definitions = {"bridge_tree.def": "bridge_tree.def"},
+    mibs = {"BRIDGE-MIB.txt": "BRIDGE-MIB.txt", "BEGEMOT-BRIDGE-MIB.txt": "BEGEMOT-BRIDGE-MIB.txt", "RSTP-MIB.txt": "RSTP-MIB.txt"}, headers = {"bridge_snmp.h": "bridge_snmp.h"})

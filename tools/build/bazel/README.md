@@ -40681,3 +40681,28 @@ header target does not qualify that module's executable implementation.
 Reviewed build-bsd.c/source_graph.py: existing explicit targets suffice without
 frontend changes. Make remains production/default; complete system/kernel/pkgbase,
 bootstrap/cache/sandbox and comparative performance gates remain open.
+
+### SNMP device/network module installation and shared-rule regression (2026-10-29)
+
+Extended the shared module installer with explicit MIB/header mappings and optional
+manual input. Added maintained LM75, PF, bridge and wireless payload declarations.
+PF has no manual in its Makefile; no synthetic manual is installed. Bridge exports
+bridge_snmp.h and all three maintained MIBs. MIB directory metadata is included
+only when MIB files are declared. Installed header ancestors use BSD.include.dist.
+
+Run bazel-snmp-device-modules-install-20261029 passes through build-bsd with 16
+jobs. Independent Make comparisons match every changed installation record:
+LM75 10, PF 9, bridge 13, wireless 10. The same run requalifies USM/VACM/target
+(eight each) after shared-rule changes. No missing/extra entries or ownership/
+mode/non-directory package-tag mismatches. Across all seven modules, 34 regular
+payloads pass header/manual/MIB/definition bytes or ELF symbol/dynamic checks;
+all seven debug links and module symlink targets pass. Shared directories recur
+in per-component counts; these counts do not imply unique aggregate system paths.
+
+Evidence/scripts: /usr/obj/usr/src/bazel-snmp-device-modules-reference-20261029/
+installation-summary.json and per-module install-audit.py,json/payload-audit.py,json.
+Module runtime and full aggregate/pkgbase composition remain open. MIB-II, host
+resources, HAST and netgraph still require native implementations. No host service,
+network, hardware, filesystem installation or policy was changed. Reviewed build-bsd.c
+and source_graph.py: existing explicit target/metadata inputs suffice. Make remains
+production/default; full-system/bootstrap/cache/sandbox/performance gates stay open.
