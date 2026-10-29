@@ -16328,3 +16328,29 @@ BSDNotify/real channel qualification. SDK bootstrap inputs and matching-kernel
 service runtime remain. Existing build-bsd target/test/metadata contracts carry
 these additions without frontend interface changes. Full world/kernel/pkgbase,
 bootstrap, sandbox/cache and comparative performance gates remain open.
+
+### Native libcuse default and debug variants (2026-10-29)
+
+Added cuse_lib.c, public cuse.h and explicit source-owned fs/cuse protocol headers
+as native inputs, pthread linkage, archive/DSO outputs and complete library
+installation. The source ioctl/definitions headers belong to the kernel header
+inventory; this library installs cuse.h exactly as its Makefile specifies. Added
+//tools/build/bazel/config:cuse_debug (default false) for Make's HAVE_DEBUG branch,
+including its diagnostic define and -g option. No production code was changed.
+
+Runs bazel-libcuse-20261029 and bazel-libcuse-debug-20261029 pass through build-bsd
+with 16 jobs. Independent Make references build the default and HAVE_DEBUG=1
+variants in separate object/staging directories. Both match 34 changed installation
+records, five regular payloads and all 26 manual hardlinks, including archive
+members, global/weak symbols, DSO dynamic metadata and debug-link name/CRC.
+Evidence: /usr/obj/usr/src/bazel-libcuse-reference-20261029/ contains inputs.json,
+debug-inputs.json, make.py, make-debug.py, verify.py, verify-debug.py and both
+installation comparison reports.
+
+No /dev/cuse access, kernel module load, device creation, ioctl or mapping runtime
+was performed. Those paths need isolated matching-kernel qualification. Source
+review found no Make-declared local DTrace provider; observability follow-up is
+recorded separately. build-bsd.c and source_graph.py already accept the typed
+build-settings label through the maintained format-5 interface, so no frontend
+interface change is needed. Complete world/kernel/pkgbase/bootstrap and runtime,
+cache/sandbox/performance qualification remain open; Make stays production/default.

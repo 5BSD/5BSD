@@ -451,3 +451,7 @@ bool_flag(name = "enable_suid_k5su", build_setting_default = False,
     visibility = ["//visibility:public"])
 config_setting(name = "suid_k5su_enabled", flag_values = {":enable_suid_k5su": "true"},
     visibility = ["//visibility:public"])
+
+# libcuse Makefile's optional HAVE_DEBUG diagnostics.
+bool_flag(name = "cuse_debug", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "cuse_debug_enabled", flag_values = {":cuse_debug": "true"}, visibility = ["//visibility:public"])

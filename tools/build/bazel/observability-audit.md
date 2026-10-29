@@ -7174,3 +7174,11 @@ libcache follow-up: all twenty maintained cache unit cases now execute through
 Bazel, including pressure/invalidation, watcher lifecycle and budget/backoff cases.
 They use the existing injected notify implementation; real service event delivery
 and matching-kernel tracing/audit behavior remain unqualified.
+
+### libcuse (2026-10-29)
+
+Native default/debug builds preserve cuse_lib.c and its existing optional debug
+messages. No Make-declared DTrace provider exists. /dev/cuse access, unit allocation,
+device creation/destruction, command dispatch and shared-memory operations require
+kernel-backed authorization, lifecycle and observability testing. Artifact parity
+alone does not establish those behaviors. No device or host service was modified.
