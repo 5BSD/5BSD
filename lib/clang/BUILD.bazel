@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["freebsd_cc_version.h"], visibility = ["//contrib/llvm-project/clang/lib/Basic:__pkg__"])

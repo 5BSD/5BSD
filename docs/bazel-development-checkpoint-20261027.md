@@ -11895,3 +11895,28 @@ Frontend review: existing format-5 settings/artifacts and native TableGen backen
 suffice; no build-bsd.c/manual interface change. Compiler/world/kernel/pkgbase/
 bootstrap/runtime/performance gates remain open; Make stays production/default.
 No host installation/publication occurred.
+
+### 2026-10-29 native Clang Basic component
+
+Added 74 maintained Basic sources, including target-specific implementations.
+Targets.cpp is a separate compile group with the source freebsd_cc_version.h
+force-included as a declared header; the version value is not copied into Bazel.
+Other sources retain ordinary flags. Declared maintained VCSVersion.inc and Clang
+source .inc headers alongside existing version/config headers. Initial sandbox
+failure identified AllDiagnosticKinds.inc absent from the source header provider;
+corrected the provider without importing generated outputs or changing source.
+
+Maintained frontend bazel-clang-basic-20261029-r2 (16 jobs) succeeds. All 74 native
+PIC object global/undefined symbol inventories match fresh isolated Make objects,
+including the Basic/Targets subdirectory and special Targets.cpp object. Evidence:
+/usr/obj/usr/src/bazel-clang-basic-qualification-20261029. Source inventory maps
+basenames back to actual Make object paths and verifies uniqueness. Reference uses
+existing bootstrap generators and staged LLVM/SDK dependencies. No compiler source
+patches or comparison exceptions were needed. Object parity does not establish
+linked compiler target selection, predefined macro correctness, runtime behavior,
+instruction identity or performance.
+
+Frontend review: current documented settings and format-5 artifacts suffice; no
+build-bsd.c/backend/manual interface change. Compiler/world/kernel/pkgbase/bootstrap/
+runtime/performance qualification remains open. Make stays production/default;
+no host installation or publication occurred.

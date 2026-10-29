@@ -6172,3 +6172,10 @@ module/PCH runtime behavior remains unqualified until compiler linkage/tests.
 Only source-definition exports, generation actions and header providers changed.
 No compiler/backend source instrumentation was changed. Target runtime/tracing
 behavior is outside this generated-output comparison.
+
+### 2026-10-29 Clang Basic
+
+All 74 maintained sources are represented, including target implementations and
+version handling. Scan for DTRACE, SDT_PROBE and audit_submit found no matches.
+No source instrumentation changed. Actual compiler target/runtime behavior remains
+outside the object-symbol comparison.
