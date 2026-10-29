@@ -36429,3 +36429,27 @@ does not qualify target machine-code generation, execution, ABI or CPU features.
 Remaining compiler definitions/libraries, world/kernel/pkgbase/bootstrap/runtime/
 performance gates stay open; Make remains production/default. No host installation
 or publication occurred.
+
+### 2026-10-29 Clang builtin tables
+
+Added twelve native builtin-table generation actions: general Builtins, ten
+maintained architecture tables (BPF, DirectX, Hexagon, NVPTX, RISCV, SPIRVCommon,
+SPIRVCL, SPIRVVK, X86, X86_64), and BuiltinTemplates. Each source has an explicit
+recursive include closure rather than depending on all compiler definitions.
+Corrected Make's architecture-table prerequisite to Builtins${arch}.td, matching
+its existing command input instead of the unrelated general Builtins.td. Commands
+and generated semantics were not changed.
+
+Maintained 16-job frontend bazel-clang-builtins-20261029 succeeds. All twelve output
+paths and 1,663,881 bytes match fresh invocations of the existing Make bootstrap
+generator exactly. Reference independently checks the architecture list against
+the maintained Make loop. Evidence/scripts/tool hash/per-output comparisons:
+/usr/obj/usr/src/bazel-clang-builtins-qualification-20261029. Reference generator
+itself was not freshly rebuilt. This establishes generated-table parity, not
+compiled builtin lowering, target ABI behavior or execution.
+
+Frontend review: existing format-5 targets/artifacts and TableGen backend suffice;
+no build-bsd.c/manual interface change. Remaining checker/opcode/OpenCL/driver
+outputs and compiler libraries still need integration, followed by full world/
+kernel/pkgbase/bootstrap/runtime/performance qualification. Make stays production/
+default; no host installation or publication occurred.

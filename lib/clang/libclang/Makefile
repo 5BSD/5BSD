@@ -1074,7 +1074,7 @@ TGHDRS+=	clang/Basic/Builtins.inc
 
 .for arch in \
 	BPF DirectX Hexagon NVPTX RISCV SPIRVCommon SPIRVCL SPIRVVK X86 X86_64
-clang/Basic/Builtins${arch}.inc: ${CLANG_SRCS}/include/clang/Basic/Builtins.td
+clang/Basic/Builtins${arch}.inc: ${CLANG_SRCS}/include/clang/Basic/Builtins${arch}.td
 	${CLANG_TBLGEN} -gen-clang-builtins \
 	    -I ${CLANG_SRCS}/include -d ${.TARGET:C/$/.d/} -o ${.TARGET} \
 	    ${CLANG_SRCS}/include/clang/Basic/Builtins${arch}.td

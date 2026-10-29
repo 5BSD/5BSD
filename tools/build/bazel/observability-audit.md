@@ -6134,3 +6134,9 @@ instrumentation or compiler behavior.
 Generation declarations and one Make prerequisite correction only; no compiler or
 TableGen source instrumentation changes. Target runtime/probe behavior is not
 established by generated-definition byte comparisons.
+
+### 2026-10-29 Clang builtin tables
+
+Only generation declarations and a Make prerequisite correction changed. No
+compiler/generator sources, probes or audit integration were modified. Generated
+byte parity does not establish builtin runtime behavior.

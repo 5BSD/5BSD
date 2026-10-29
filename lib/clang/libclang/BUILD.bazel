@@ -299,3 +299,75 @@ _ARCH_BUILTINS = {
 ) for output, config in _ARCH_BUILTINS.items()]
 cc_library(name = "architecture_builtin_headers", hdrs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _ARCH_BUILTINS], strip_include_prefix = ".", visibility = ["//visibility:public"])
 filegroup(name = "architecture_builtin_outputs", srcs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _ARCH_BUILTINS], visibility = ["//visibility:public"])
+
+_BUILTIN_TABLES = {
+    "clang/Basic/Builtins.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/Builtins.td",
+        "//contrib/llvm-project/clang/include:Builtins_inputs"
+    ],
+    "clang/Basic/BuiltinsBPF.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsBPF.td",
+        "//contrib/llvm-project/clang/include:BuiltinsBPF_inputs"
+    ],
+    "clang/Basic/BuiltinsDirectX.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsDirectX.td",
+        "//contrib/llvm-project/clang/include:BuiltinsDirectX_inputs"
+    ],
+    "clang/Basic/BuiltinsHexagon.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsHexagon.td",
+        "//contrib/llvm-project/clang/include:BuiltinsHexagon_inputs"
+    ],
+    "clang/Basic/BuiltinsNVPTX.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsNVPTX.td",
+        "//contrib/llvm-project/clang/include:BuiltinsNVPTX_inputs"
+    ],
+    "clang/Basic/BuiltinsRISCV.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsRISCV.td",
+        "//contrib/llvm-project/clang/include:BuiltinsRISCV_inputs"
+    ],
+    "clang/Basic/BuiltinsSPIRVCommon.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsSPIRVCommon.td",
+        "//contrib/llvm-project/clang/include:BuiltinsSPIRVCommon_inputs"
+    ],
+    "clang/Basic/BuiltinsSPIRVCL.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsSPIRVCL.td",
+        "//contrib/llvm-project/clang/include:BuiltinsSPIRVCL_inputs"
+    ],
+    "clang/Basic/BuiltinsSPIRVVK.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsSPIRVVK.td",
+        "//contrib/llvm-project/clang/include:BuiltinsSPIRVVK_inputs"
+    ],
+    "clang/Basic/BuiltinsX86.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsX86.td",
+        "//contrib/llvm-project/clang/include:BuiltinsX86_inputs"
+    ],
+    "clang/Basic/BuiltinsX86_64.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsX86_64.td",
+        "//contrib/llvm-project/clang/include:BuiltinsX86_64_inputs"
+    ],
+    "clang/Basic/BuiltinTemplates.inc": [
+        "-gen-clang-builtin-templates",
+        "clang/Basic/BuiltinTemplates.td",
+        ""
+    ]
+}
+[bsd_tablegen(name = output.replace("/", "_").removesuffix(".inc"),
+    src = "//contrib/llvm-project/clang/include:" + config[1],
+    includes = [config[2]] if config[2] else [],
+    include_dirs = ["contrib/llvm-project/clang/include"],
+    flags = [config[0]], output = output,
+    tool = "//usr.bin/clang/clang-tblgen:bootstrap",
+) for output, config in _BUILTIN_TABLES.items()]
+cc_library(name = "builtin_table_headers", hdrs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _BUILTIN_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "builtin_table_outputs", srcs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _BUILTIN_TABLES], visibility = ["//visibility:public"])
