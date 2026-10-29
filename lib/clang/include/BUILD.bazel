@@ -7,3 +7,5 @@ cc_library(
     includes = ["."],
     visibility = ["//visibility:public"],
 )
+
+cc_library(name = "clang_headers", hdrs = glob(["clang/**/*.h", "clang/**/*.inc"]), includes = ["."], visibility = ["//visibility:public"])

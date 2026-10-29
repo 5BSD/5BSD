@@ -6147,3 +6147,10 @@ All 136 maintained generated headers are represented with exact path/payload
 comparison. No compiler/generator sources or instrumentation changed. Static
 analyzer registration output is included; this does not qualify analyzer execution
 or diagnostic instrumentation.
+
+### 2026-10-29 Clang lexer
+
+All 25 maintained Lex sources are carried into native compilation without source
+changes. This component consumes diagnostic/attribute definitions rather than
+introducing a privileged service operation. No instrumentation was removed;
+lexer runtime and tracing behavior remain to qualify with the linked compiler.

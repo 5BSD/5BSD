@@ -3761,3 +3761,12 @@ Their defaults are true and false, respectively, matching the maintained
 LLVM defaults; reduced debug information uses line tables.
 These settings do not establish that the entire compiler toolchain has been
 converted or qualified.
+
+.Pp
+The native Clang component setting
+.Cm //tools/build/bazel/config:clang_full
+is true by default, matching
+.Dv MK_CLANG_FULL .
+Components that consume it define
+.Dv CLANG_ENABLE_STATIC_ANALYZER .
+This setting does not yet establish complete compiler feature-selection coverage.

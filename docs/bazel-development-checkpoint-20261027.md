@@ -11798,3 +11798,30 @@ artifacts and native TableGen backend cover this addition; no build-bsd.c/manual
 interface changes. Compiler/world/kernel/pkgbase/bootstrap/runtime/performance
 qualification remains open; Make stays production/default. No host installation
 or publication occurred.
+
+### 2026-10-29 native Clang lexer component
+
+Added the explicit 25-source Clang Lex component and PIC archive qualification
+target, consuming native generated Clang headers through declared providers and
+maintained source/configuration headers. C++17, assertion/debug settings, no RTTI/
+exceptions, section flags and shared -UPIC behavior match maintained component
+flags. This is a component of libclang, not an additional installed library.
+
+Added typed clang_full=true build setting matching maintained MK_CLANG_FULL,
+selecting CLANG_ENABLE_STATIC_ANALYZER for components consuming it. Existing
+format-5 source_graph setting handling already accepts it; documented scope in
+bsd-build(8). No C frontend parser change is needed. Full compiler feature/variant
+coverage remains unqualified.
+
+Maintained frontend bazel-clang-lex-20261029 (16 jobs) succeeds. Built 25 fresh Make
+Lex/*.pico objects plus required Clang generated headers in an isolated reference
+object tree. All 25 individual global/undefined symbol inventories match native
+PIC objects. Evidence/scripts: /usr/obj/usr/src/bazel-clang-lex-qualification-20261029.
+Make reference uses existing bootstrap generators and staged SDK dependencies;
+this is not a fresh complete toolchain build. No source modifications or comparison
+exceptions were required. Matching symbols does not establish instruction identity,
+lexer runtime semantics, full compiler linkage or performance.
+
+Remaining compiler libraries/configuration, world/kernel/pkgbase/bootstrap/runtime/
+performance gates remain open. Make stays production/default. No host installation
+or publication occurred.
