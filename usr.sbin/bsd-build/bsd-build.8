@@ -4292,6 +4292,7 @@ memory-error reporting require qualification separately from static ASan.
 .Pp
 .Cm //lib/libclang_rt/asan_dynamic:runtime_test
 exercises clean, heap-overflow and use-after-free behavior with declared native
-shared ASan/C++/math libraries and SDK system libraries. It currently fails during
-startup on the qualification host; the same probe also fails with the Make shared
-runtime. This is an open qualification failure, not a supported runtime claim.
+shared ASan/C++/math libraries and SDK system libraries. Its original startup failure was traced to FreeBSD TLS module discovery and
+corrected. It and tls_runtime_test now pass for executables without and with
+PT_TLS; the static ASan regression and rebuilt Make shared runtime also pass.
+Thread/dlopen TLS lifecycle and C++ allocation still need qualification.

@@ -6746,3 +6746,11 @@ Maintained runtime test fails before main through jemalloc configuration readlin
 and ASan initialization. Identical harness/probe also fails with the Make shared
 runtime. Static ASan still passes. Diagnosis remains open; retain the failed gate
 and warnings rather than claiming dynamic memory-error reporting works.
+
+### Shared ASan TLS startup correction (2026-10-29)
+
+The failure above is resolved for tested layouts: FreeBSD module 1 may lack a TLS
+segment, so sanitizer discovery now selects the earliest actual TLS module and
+avoids extending empty ranges. Shared ASan with/without executable TLS and static
+ASan pass real clean/bounds/lifetime checks. Fresh Make shared runtime also passes.
+Thread/dlopen TLS lifecycle and C++ allocations remain unqualified.

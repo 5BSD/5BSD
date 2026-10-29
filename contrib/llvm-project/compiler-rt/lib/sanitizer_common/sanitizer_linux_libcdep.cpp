@@ -490,7 +490,16 @@ __attribute__((unused)) static void GetStaticTlsBoundary(uptr *addr, uptr *size,
   // libc.so uses PT_TLS, this module is guaranteed to exist and is one of
   // the initially loaded modules.
   uptr one = 0;
+#    if SANITIZER_FREEBSD
+  // rtld reserves module 1 for the executable even when it has no PT_TLS.
+  // Anchor the contiguous static TLS range at the earliest TLS module that
+  // actually exists (normally libc or the sanitizer in that case).
+  for (uptr i = 1; i < len; ++i)
+    if (ranges[i].tls_modid < ranges[one].tls_modid)
+      one = i;
+#    else
   while (one != len && ranges[one].tls_modid != main_tls_modid) ++one;
+#    endif
   if (one == len) {
     // This may happen with musl if no module uses PT_TLS.
     *addr = 0;
@@ -595,6 +604,9 @@ static void GetTls(uptr *addr, uptr *size) {
 #    elif SANITIZER_FREEBSD || SANITIZER_LINUX || SANITIZER_SOLARIS
   uptr align;
   GetStaticTlsBoundary(addr, size, &align);
+  // An empty range cannot be extended to cover surplus TLS or a TCB.
+  if (*size == 0)
+    return;
 #      if defined(__x86_64__) || defined(__i386__) || defined(__s390__) || \
           defined(__sparc__)
   if (SANITIZER_GLIBC) {

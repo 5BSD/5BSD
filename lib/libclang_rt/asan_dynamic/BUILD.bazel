@@ -125,6 +125,12 @@ cc_binary(name = "instrumented_probe", srcs = ["//lib/libclang_rt/asan:runtime_p
     deps = [":runtime_link"], linkstatic = True,
     linkopts = ["-Wl,--export-dynamic", "-Wl,--no-as-needed", "-lpthread", "-lrt", "-lexecinfo"],
     testonly = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_binary(name = "instrumented_tls_probe", srcs = ["//lib/libclang_rt/asan:runtime_probe.c"],
+    local_defines = ["PROBE_TLS"],
+    copts = ["-fsanitize=address", "-fno-omit-frame-pointer"],
+    deps = [":runtime_link"], linkstatic = True,
+    linkopts = ["-Wl,--export-dynamic", "-Wl,--no-as-needed", "-lpthread", "-lrt", "-lexecinfo"],
+    testonly = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 _RUNTIME_LIBS = [":runtime_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"] + [
     "@bsd_sdk//toolchain:sysroot/" + name for name in [
         "lib/libc.so.7", "lib/libsys.so.7", "lib/libthr.so.3", "lib/librt.so.1",
@@ -133,6 +139,13 @@ _RUNTIME_LIBS = [":runtime_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:c
 cc_test(name = "runtime_test", srcs = ["//lib/libclang_rt/asan:runtime_test.c"],
     data = [":instrumented_probe"] + _RUNTIME_LIBS,
     args = ["$(location :instrumented_probe)"] + ["$(location " + lib + ")" for lib in _RUNTIME_LIBS],
+    linkopts = ["-static"], linkstatic = True, size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+cc_test(name = "tls_runtime_test", srcs = ["//lib/libclang_rt/asan:runtime_test.c"],
+    data = [":instrumented_tls_probe"] + _RUNTIME_LIBS,
+    args = ["$(location :instrumented_tls_probe)"] + ["$(location " + lib + ")" for lib in _RUNTIME_LIBS],
     linkopts = ["-static"], linkstatic = True, size = "small",
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//visibility:public"])

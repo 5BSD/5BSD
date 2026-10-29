@@ -14333,3 +14333,40 @@ The target is intentionally retained as a failing qualification gate. Source/
 installation parity from the previous checkpoint remains valid, but runtime
 usability is not established. build-bsd.c and format-5 backend support these tests
 without new CLI/schema inputs. No host installation or reboot. Full goal active.
+
+### Resolved: shared ASan TLS-module assumption (2026-10-29)
+
+Root cause is in sanitizer static-TLS discovery, not a Bazel link workaround.
+FreeBSD rtld reserves module index 1 for the executable (tls_max_index starts at
+1); an executable without PT_TLS has no corresponding TLS range. The sanitizer
+looked only for module 1, returned an empty range, then extended it by static TLS
+surplus, underflowing the address. Static ASan masked the issue because its
+runtime contributes executable TLS. Dynamic ASan without executable TLS exposed
+it during jemalloc/readlink-triggered initialization.
+
+On FreeBSD, GetStaticTlsBoundary now anchors at the lowest module ID actually
+present, preserving the contiguous-range calculation. GetTls returns an empty
+range without extending it when no TLS range exists. Other OS anchor selection
+is unchanged. No startup ordering workaround, preload, disabled ASan checks or
+hardcoded runtime addresses were introduced.
+
+Added a TLS-bearing probe variant and tls_runtime_test; ELF inspection confirms
+that the original probe has no PT_TLS and the variant does. Final frontend run
+bazel-asan-dynamic-tls-20261029 passes all three maintained tests: shared ASan
+with/without executable TLS and static ASan. Each checks clean execution, heap
+overflow and use-after-free diagnostics/exits. Fresh Make rebuild also passes the
+previously failing non-TLS probe under the same harness. Loader audits verify all
+resolved libraries are declared and the selected native/Make ASan is actually
+loaded. The original failing Make/native evidence remains preserved.
+
+Final Make/native comparison still matches eight install records, exported/debug
+symbol contracts, dynamic dependency/SONAME/flags and debuglink CRC. Evidence:
+bazel-asan-dynamic-reference-20261029/{tls-probe-layouts.json,tls-comparison.json,
+tls-runtime-comparison.json,tls-runtime-native,tls-runtime-make}; reference build
+bazel-compiler-rt-asan_dynamic-tls-make-20261029. Host kernel/rtld and SDK system
+libraries remain. C++ allocation, thread/TLS lifecycle, dlopen TLS, other platforms
+and complete world/kernel/pkgbase/performance qualification remain open.
+
+Frontend review: existing build-bsd format-5 target/test lists cover the new
+regression target. Manual/observability updated. No host installation/reboot.
+The earlier startup failure is resolved for these cases; the full goal is active.
