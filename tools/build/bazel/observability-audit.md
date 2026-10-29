@@ -7032,3 +7032,7 @@ registration, plus the maintained portability implementation. No dedicated
 DTrace provider or OS audit hook is declared by its Makefile. Socket exchange,
 error-log delivery and daemon policy effects still require runtime qualification;
 artifact parity does not establish those behaviors.
+
+Legacy libblacklist runtime_test now verifies private-socket action/message,
+credentials and descriptor transfer. Its logger writes diagnostics to stderr;
+this does not prove host syslog delivery or blocklistd policy/audit behavior.

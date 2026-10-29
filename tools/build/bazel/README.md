@@ -40132,3 +40132,27 @@ open. No host installation or daemon interaction occurred.
 Existing build-bsd explicit inputs and metadata backend support this addition
 without contract changes. Full world/kernel/pkgbase/bootstrap, sandbox/cache and
 performance gates remain open. Make remains production/default.
+
+### Legacy libblacklist private-socket runtime (2026-10-29)
+
+Added native runtime_test using bl_create's explicit private socket path inside
+a unique TEST_TMPDIR directory. It exercises blacklist_r action translation for
+AUTH_FAIL/AUTH_OK/ABUSIVE_BEHAVIOR/BAD_USER, message text, sender effective uid/gid,
+and SCM_RIGHTS descriptor identity against fstat. It closes transferred fds and
+library endpoints and removes its socket/directory on normal exit. An alarm
+bounds hangs. No host blocklist daemon or default socket is contacted.
+
+Run bazel-libblacklist-runtime-20261029-r3 passes. Loader audit with
+LD_LIBRARY_PATH removed confirms native libblacklist, libthr, libc and libsys;
+SDK startup objects/headers and host kernel/rtld still apply. Evidence under
+/usr/obj/usr/src/bazel-libblacklist-reference-20261029/runtime-loader.txt and the
+run receipt. Explicit native libc shared_link_interface and -nodefaultlibs avoid
+mixing host libc with source-ahead libthr. The first static attempt failed at
+__thr_jtable; the next shared attempt failed on host libc's missing private
+__uexterr_set_ue symbol. Both failures are preserved. This qualifies the selected
+shared closure, not a general resolution of static pthread ABI integration.
+
+No frontend/backend contract changes: explicit tests and existing runtime-path
+features support this. Daemon policy effects, malformed ancillary messages,
+concurrent API calls and error-log delivery remain outside this test. Full-system,
+bootstrap, sandbox/cache and performance gates remain open; Make stays default.

@@ -28,3 +28,15 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_test(
+    name = "runtime_test",
+    srcs = ["runtime_test.c"],
+    deps = [":blacklist", "//lib/libc:shared_link_interface"],
+    dynamic_deps = [":blacklist_shared", "//lib/libthr:thr_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+    linkopts = ["-nodefaultlibs"],
+    features = ["bsd_test_runtime_paths"],
+    linkstatic = True,
+    size = "small",
+)
