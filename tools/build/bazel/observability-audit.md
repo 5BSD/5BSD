@@ -6498,3 +6498,10 @@ aggregate. Global/weak dynamic symbol records match the pre-existing Make librar
 this does not test DTrace delivery, auditing or compiler runtime. No compiler
 source or probe changes were made. Evidence: bazel-clang-shared-qualification-20261029
 under /usr/obj/usr/src.
+
+### Clang driver execution (2026-10-29)
+
+The native five-source driver executes and emits C/C++ objects for five default
+backend families. No source/probe changes. This does not establish audit events,
+DTrace delivery, linker operation or generated-program runtime. Retain these gaps
+alongside the compiler installation and configuration qualification work.

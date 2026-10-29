@@ -3960,3 +3960,15 @@ target links the selected Clang PIC aggregate with the native LLVM, C++, C++ ABI
 and math shared libraries to produce
 .Pa libprivateclang.so.21 .
 This candidate does not establish compiler execution or complete system builds.
+
+.Pp
+The experimental
+.Cm //usr.bin/clang/clang:clang
+target builds the compiler driver with native Clang and LLVM libraries.
+Backend registration follows the
+.Cm llvm_target_*
+settings; native initialization follows the Bazel platform CPU when enabled.
+At least one backend must be selected.
+This runtime qualification target uses Bazel runfile library paths and is not an
+installation or package target. Cross-system builds and compiler installation
+remain separate qualification requirements.

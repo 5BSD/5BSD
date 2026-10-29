@@ -13105,3 +13105,30 @@ Frontend review: build-bsd.c and format-5 source_graph.py already accept the new
 explicit target; manual documents its scope. Make remains production/default.
 Target registration/selection, compiler executable, world/kernel/pkgbase and
 CPU/memory/disk/cache qualification remain open. No installation occurred.
+
+### Native Clang driver and default code generation (2026-10-29)
+
+Added an explicit five-source native compiler target //usr.bin/clang/clang:clang.
+The bsd_llvm_targets provider derives backend-enable definitions from the existing
+seven boolean settings and native initialization definitions from Bazel platform
+CPU constraints, only when that backend is enabled. It rejects zero backends.
+Aggregate target-all/cross default policy and reduced/zero selection tests remain
+open. Compiler defaults use the existing typed defaults provider.
+
+The first new run name was already occupied and frontend rejected it before build.
+The r2 run exposed missing generated OpenMP headers; added explicit LLVM generated
+header dependencies. Corrected maintained frontend run
+/usr/obj/usr/src/bazel-clang-driver-20261029-r3 succeeds with 16 jobs.
+This is a runtime qualification executable using declared native libc/libsys and
+Bazel runfile paths, not an installation-ready compiler artifact.
+
+Verified executable digest against its saved artifact before executing --version
+and --print-targets. Reports 5BSD Clang 21.1.8 and the five default backend families.
+Compiled C and C++ probes to objects for x86_64, AArch64, ARMv7, PowerPC64 and
+RISCV64; saved readelf headers for all ten outputs. Evidence/script:
+/usr/obj/usr/src/bazel-clang-driver-qualification-20261029/{runtime.json,check.py}.
+These tests do not exercise system headers, linker integration, generated-program
+execution, non-native kernel boot or performance. Fresh Make object/install parity,
+Bazel test integration and full bootstrap/world/kernel/pkgbase remain open.
+Frontend review: build-bsd.c and source_graph.py format-5 already accept this target
+and existing settings; manual updated. Make remains production/default.
