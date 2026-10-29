@@ -35888,3 +35888,23 @@ creation, module loading or test execution occurred. Native compilation uses
 existing format-5 frontend target/settings and installation helpers; no
 build-bsd.c/backend/manual interface change is required. Make remains the
 production/default system builder; full world/kernel/pkgbase is incomplete.
+
+### 2026-10-29 Kyua configuration and runtime follow-up
+
+No-jail/no-examples frontend run bazel-kyua-minimal-20261029 matches fresh Make
+MK_JAIL=no/MK_EXAMPLES=no reference: 33 metadata records, 25 nonbinary payloads
+and one ELF/debug pair. Both lutok archive variants rebuilt with source libc++
+headers retain matching Make members/symbols. Reports reside in
+bazel-kyua-qualification-20261029/minimal and lutok-source-header-parity.json.
+Existing frontend settings cover these variants; no C/backend/manual change.
+
+Disposable native Kyua runs help, list, two plain shell tests, result storage,
+text/JUnit/HTML reports and db-exec PRAGMA integrity_check. One deliberate pass
+and one deliberate failure are correctly reported; JUnit has two cases/one
+failure and database integrity reports ok. Evidence is runtime/smoke.json and
+runtime/smoke/validation.json. Initial --version was invalid (usage status 3),
+retained in startup.json. Python lacks _sqlite3, so database validation used
+Kyua's own db-exec command. Runtime uses host libraries/shell and Make-staged
+schema/report assets verified byte-identical to native installation payloads.
+Full native-library runtime, jail execution, old-database migrations, maintained
+ATF suites and performance remain unqualified. No host installation occurred.

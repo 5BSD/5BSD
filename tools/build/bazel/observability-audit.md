@@ -5989,3 +5989,10 @@ amalgamation or lib/libsqlite3 build files. Native build preserves that source
 and uses native libthr, whose separate instrumentation is retained. SQLite
 transaction/locking/recovery behavior needs runtime tests through consumers;
 binary/installation comparisons do not qualify it.
+
+### 2026-10-29 Kyua
+
+No explicit SDT/DTrace or direct audit calls found in reviewed Kyua C++ sources.
+Native source inventory preserves logging, results and jail implementation.
+Jail/module preparation remains an audit-review candidate; no privileged
+operation was exercised. Plain-test reporting passed with host runtime libraries.
