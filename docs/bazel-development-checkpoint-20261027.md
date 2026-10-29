@@ -9720,3 +9720,36 @@ picks up sleep's corrected registration. No frontend C/backend protocol changes.
 No host installation or runtime execution. Remaining /bin aggregation/fixtures,
 complete world/kernel/pkgbase, runtime and performance gates remain unfinished.
 Make stays production/default.
+
+## 2026-10-29: configurable pax Perl test and /bin discovery
+
+Added pax/tests and bin/tests native installation archives. Pax's runtime
+interpreter is the typed string flag tap_perl_interpreter (default
+/usr/local/bin/perl from tap.test.mk). The script-wrapper rule accepts either
+a literal interpreter or a BuildSettingInfo interpreter input; exactly one is
+required. Configured interpreter values require an absolute path without
+whitespace. Existing literal interpreter arguments remain supported.
+Kyua generation can obtain required_programs from that same setting, avoiding
+independent shebang/metadata policy. Existing metadata field order is preserved
+when no configured override is used. The discovery file is the maintained
+tests/Kyuafile, not a manually enumerated child list.
+
+Independent Make comparisons pass for the default Perl path and the alternate
+/opt/test-tools/bin/perl: two byte-identical payloads and three metadata records
+each. Parent discovery: one payload/two records. Explicit Make
+TAP_PERL_INTERPRETER input matches the native override. Perl was not executed.
+
+Evidence: /usr/obj/usr/src/bazel-bin-pax-install-20261029-r2/qualification/pax,
+bazel-bin-pax-alt-install-20261029/qualification/pax-alt, and
+bazel-bin-index-install-20261029/qualification/index. Scripts/references use
+bazel-pax-install-qualification-20261029 and bazel-bin-<variant>-install-reference-20261029.
+A focused regression confirms the ls test archive remains byte-identical and
+the ping pytest wrapper retains its literal interpreter arguments. Evidence:
+bazel-script-settings-regression-20261029-r2/regression.json. Initial failed
+Starlark escape and metadata-order checks remain in their original run directories.
+
+All builds use the maintained frontend with 16 jobs. Existing typed settings
+transport handles the new flag; no frontend C/backend protocol change. Shared
+rules propagate declared settings into generated artifacts and cache keys.
+Runtime Perl/pytest execution, remaining test integration, /bin/world/kernel
+aggregation, pkgbase and performance gates remain open. Make stays default.

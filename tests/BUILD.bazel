@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["README"], visibility = ["//lib/libregex/tests:__pkg__"])
 
-exports_files(["Kyuafile"], visibility = ["//libexec:__subpackages__"])
+exports_files(["Kyuafile"], visibility = ["//libexec:__subpackages__", "//bin:__subpackages__"])

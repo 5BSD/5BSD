@@ -110,11 +110,20 @@ def _kyuafile(ctx):
     for name in ctx.attr.metadata:
         if name not in ctx.attr.names:
             fail("metadata for unknown Kyua program: " + name)
+    metadata = dict(ctx.attr.metadata)
+    for setting, name in ctx.attr.required_programs_settings.items():
+        if name not in ctx.attr.names:
+            fail("required-program setting for unknown Kyua program: " + name)
+        fields = json.decode(metadata.get(name, "{}"))
+        if "required_programs" in fields:
+            fail("duplicate required_programs for " + name)
+        fields["required_programs"] = setting[BuildSettingInfo].value
+        metadata[name] = json.encode(fields)
     for name in ctx.attr.names:
         interface = ctx.attr.interfaces[name]
         if interface not in ["atf", "tap", "plain"]:
             fail("unsupported Kyua interface: " + interface)
-        fields = kyua_metadata_fields(ctx.attr.metadata.get(name, "{}"))
+        fields = kyua_metadata_fields(metadata.get(name, "{}"))
         content += interface + "_test_program{name=" + json.encode(name) + ", " + ", ".join(fields) + "}\n"
     for directory in ctx.attr.subdirectories:
         if not directory or any([part in ["", ".", ".."] for part in directory.split("/")]):
@@ -132,6 +141,7 @@ bsd_kyuafile = rule(
         "interfaces": attr.string_dict(mandatory = True),
         "subdirectories": attr.string_list(),
         "metadata": attr.string_dict(doc = "Per-program JSON objects of typed Kyua properties."),
+        "required_programs_settings": attr.label_keyed_string_dict(providers = [BuildSettingInfo], doc = "Build setting to test-program name for required_programs."),
     },
 )
 

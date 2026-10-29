@@ -34465,3 +34465,13 @@ Native test installation is also available for dd, expr and sleep. The imported
 NetBSD suites and expr's maintained transformations match Make. The missing
 netbsd-tests.test.mk include in sleep/tests was corrected so both build systems
 register its suite. These checks establish installation, not runtime success.
+
+### Perl test interpreter and /bin discovery (2026-10-29)
+
+`//bin/pax/tests:install_archive` installs the existing TAP Perl test. Set
+`//tools/build/bazel/config:tap_perl_interpreter` to its absolute runtime Perl
+path; the default is `/usr/local/bin/perl`, matching tap.test.mk. The same native
+setting drives its shebang and Kyua required_programs metadata. Building the
+archive does not execute Perl or require that runtime path to exist on the host.
+`//bin/tests:install_archive` installs the maintained recursive discovery file.
+Default and alternate Perl paths match Make installation. Runtime remains open.

@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Declared BSD artifact transformations; installation metadata is separate."""
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+
 BsdDebugInfo = provider(fields = ["binary", "debug", "unstripped"])
 
 def _debug_split(ctx):
@@ -61,7 +63,12 @@ bsd_strip_binary = rule(
 def _script_wrapper(ctx):
     output = ctx.actions.declare_file(ctx.label.name)
     prefix = ctx.actions.declare_file(ctx.label.name + ".interpreter")
-    ctx.actions.write(prefix, "#! " + ctx.attr.interpreter + "\n")
+    if bool(ctx.attr.interpreter) == bool(ctx.attr.interpreter_setting):
+        fail("provide exactly one interpreter or interpreter_setting")
+    interpreter = ctx.attr.interpreter_setting[BuildSettingInfo].value if ctx.attr.interpreter_setting else ctx.attr.interpreter
+    if ctx.attr.interpreter_setting and (type(interpreter) != "string" or not interpreter.startswith("/") or any([c in interpreter for c in [" ", "\t", "\r", "\n"]])):
+        fail("script interpreter must be an absolute executable path without whitespace")
+    ctx.actions.write(prefix, "#! " + interpreter + "\n")
     ctx.actions.run(
         executable = ctx.attr.redirect[DefaultInfo].files_to_run,
         arguments = ["--executable", output.path, ctx.executable.cat.path, prefix.path, ctx.file.body.path],
@@ -77,7 +84,8 @@ bsd_script_wrapper = rule(
     executable = True,
     attrs = {
         "body": attr.label(allow_single_file = True, mandatory = True),
-        "interpreter": attr.string(mandatory = True),
+        "interpreter": attr.string(),
+        "interpreter_setting": attr.label(providers = [BuildSettingInfo]),
         "cat": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),
         "cat_runtime": attr.label_list(cfg = "exec", allow_files = True),
         "redirect": attr.label(executable = True, cfg = "exec", mandatory = True),

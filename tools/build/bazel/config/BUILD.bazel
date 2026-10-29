@@ -347,3 +347,6 @@ string_flag(name = "tests_support", build_setting_default = "auto", values = ["a
 config_setting(name = "tests_support_requested", flag_values = {":tests_support": "yes"})
 config_setting(name = "tests_support_default", flag_values = {":tests_support": "auto", ":tests": "true"})
 selects.config_setting_group(name = "tests_support_enabled", match_any = [":tests_support_requested", ":tests_support_default"], visibility = ["//visibility:public"])
+
+# Runtime Perl interpreter for installed TAP tests (tap.test.mk default).
+string_flag(name = "tap_perl_interpreter", build_setting_default = "/usr/local/bin/perl", visibility = ["//visibility:public"])
