@@ -12285,3 +12285,26 @@ object coverage remains 839; LLVM IR is a separate 77-source component and must 
 be counted as more Clang sources. Most LLVM libraries/backends and complete compiler/
 world/kernel/pkgbase/bootstrap/runtime/cache/performance qualification remain open.
 Make stays production/default; no host installation/publication occurred.
+
+### 2026-10-29 native LLVM Analysis component
+
+Added all 119 maintained Analysis sources as a native libllvm component, with
+public/generated dependencies and the shared LLVM_BUILD_LLVM_DYLIB/-UPIC compile
+contract. The directory has no private header inputs. No LLVM source or sandbox
+changes were required.
+
+Maintained frontend bazel-llvm-analysis-20261029 (16 jobs) succeeds. All 119 PIC
+object global/undefined symbol inventories match fresh isolated Make objects;
+archive member multiplicities also match. Evidence/scripts:
+/usr/obj/usr/src/bazel-llvm-analysis-qualification-20261029.
+Reference uses existing bootstrap generators and staged SDK headers. This qualifies
+compilation structure, not analysis semantics, optimization correctness, instruction
+identity, LLVM linkage or performance. Alternate build contracts remain unqualified.
+
+Frontend review: current typed settings, generated providers and format-5 object/
+archive artifacts suffice; no build-bsd.c/manual interface change required. LLVM IR
+and Analysis now cover 196 component sources; this is separate from the default
+839-source libclang aggregate and is not total LLVM completion. Most LLVM libraries/
+backends, compiler linkage and world/kernel/pkgbase/bootstrap/runtime/cache/performance
+qualification remain open. Make stays production/default. No host installation or
+publication occurred.

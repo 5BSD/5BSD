@@ -6267,3 +6267,9 @@ observability remain unqualified. Evidence: bazel-clang-aggregate-qualification-
 All 77 maintained IR sources match Make object symbols/archive inventory. No source,
 probe or audit changes. IR verifier/runtime, optimization behavior and emitted-code
 observability remain unqualified. Evidence: bazel-llvm-ir-qualification-20261029.
+
+### 2026-10-29 LLVM Analysis
+
+119 maintained sources match Make object symbols/archive membership. No source,
+probe or audit changes. Analysis runtime, optimization semantics and emitted-code
+observability remain unqualified. Evidence: bazel-llvm-analysis-qualification-20261029.
