@@ -38787,3 +38787,28 @@ Frontend review: build-bsd.c and format-5 source_graph.py already accept these
 explicit targets; installed header handling is internal to the maintained native
 archive rule and requires no new CLI/schema input. Prepared SDK dependencies
 remain. Make stays production/default; no host installation or publication.
+
+### Native libFuzzer runtime execution (2026-10-29)
+
+Added maintained fuzzer:runtime_test and fuzzer:custom_main_test. The first uses
+libFuzzer's supplied main; the second invokes LLVMFuzzerRunDriver from its own
+main. Both compile a real -fsanitize=fuzzer-no-link callback, link the explicit
+native fuzzer/no-main archive and native libc++/libcxxrt, and run a bounded
+100-iteration seed-1 campaign. A process-exit assertion requires at least 100
+callback invocations; no runtime handler or callback dispatch is substituted.
+
+Final frontend run bazel-fuzzer-runtime-20261029-r2 reports two passing tests.
+Logs show registered coverage counters/PC tables, growing in-memory corpus and
+100 completed runs. Saved link parameters and runtime-audit.json under
+bazel-fuzzer-reference-20261029 verify native archive selection, no sanitizer
+driver link flag and static binaries without PT_INTERP. The initial link failure
+exposed a missing C++ runtime dependency; corrected with //lib/libc++:cxx, not a
+host library fallback. Failed evidence is retained.
+
+Both logs warn that optional sanitizer crash-reporting hooks are unavailable.
+Warnings are not suppressed. These checks do not qualify ASan integration,
+crash/death reporting, disk corpus management, subprocess/fork mode, interceptors,
+seed reproducibility across builds or fuzzing performance. SDK compiler, CRT and
+system libraries and host kernel remain. Frontend/backend already support the
+selected test labels; manual and observability record updated. Make remains the
+production build path; no host installation/publication.

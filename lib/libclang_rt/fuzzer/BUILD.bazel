@@ -26,3 +26,16 @@ compiler_rt_archive(
     deps = ["//contrib/llvm-project/compiler-rt/lib/fuzzer:headers"],
     installed_headers = {"//contrib/llvm-project/compiler-rt/include:fuzzer/FuzzedDataProvider.h": "fuzzer/FuzzedDataProvider.h"},
 )
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
+cc_import(name = "runtime", static_library = ":static_archive", alwayslink = True)
+cc_import(name = "no_main_runtime", static_library = "//lib/libclang_rt/fuzzer_no_main:static_archive", alwayslink = True)
+[cc_test(name = name, srcs = ["runtime_test.cpp"],
+    copts = ["-fsanitize=fuzzer-no-link"],
+    local_defines = ["CUSTOM_MAIN"] if custom else [],
+    deps = ([":no_main_runtime"] if custom else [":runtime"]) + ["//lib/libc++:cxx"],
+    linkopts = ["-static", "-lpthread", "-lm"], linkstatic = True,
+    args = ["-runs=100", "-seed=1", "-max_len=32"], size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+ for name, custom in [("runtime_test", False), ("custom_main_test", True)]]

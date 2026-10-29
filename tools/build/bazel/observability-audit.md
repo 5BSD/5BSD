@@ -6697,3 +6697,11 @@ The native source inventories retain the maintained libFuzzer implementations.
 No production DTrace/audit instrumentation changes. Sanitizer coverage, corpus
 execution and interceptor behavior need actual instrumented consumers; archive
 build success is not runtime coverage evidence.
+
+### Fuzzer callback/coverage execution (2026-10-29)
+
+Supplied-main and custom-main tests pass 100 real instrumented callbacks each,
+with coverage registration and in-memory corpus growth in their logs. Optional
+sanitizer crash hooks are unavailable and warnings remain visible. Crash
+reporting, ASan integration, disk corpus and fork/interceptor behavior remain
+open; no production tracing/audit code was changed.

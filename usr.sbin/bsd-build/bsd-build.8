@@ -4247,3 +4247,12 @@ provide native amd64 archive and installation targets. The main fuzzer package
 also installs FuzzedDataProvider.h using the common runtime rule's declared
 installed_headers mapping. These builds do not by themselves qualify fuzzing
 execution, coverage, interceptors or corpus behavior.
+
+.Pp
+.Cm //lib/libclang_rt/fuzzer:runtime_test
+and
+.Cm //lib/libclang_rt/fuzzer:custom_main_test
+run bounded instrumented campaigns with native libFuzzer and libc++ archives,
+checking callback execution with supplied and custom main entry points.
+These tests retain SDK CRT/system libraries and do not qualify optional sanitizer
+crash hooks, ASan integration, disk corpus or subprocess behavior.
