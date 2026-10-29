@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['irdma_umain.c', 'irdma_uverbs.c', 'irdma_uk.c', 'libirdma.map'], visibility = ["//lib/ofed/libirdma:__pkg__"])
+cc_library(name = "private_headers", hdrs = ['abi.h', 'i40e_devids.h', 'i40iw_hw.h', 'ice_devids.h', 'irdma-abi.h', 'irdma.h', 'irdma_defs.h', 'irdma_umain.h', 'irdma_uquery.h', 'irdma_user.h', 'osdep.h'], strip_include_prefix = ".", deps = ['//contrib/ofed/libibverbs:headers', '//contrib/ofed/libibverbs:provider_config'], visibility = ["//lib/ofed/libirdma:__pkg__"])

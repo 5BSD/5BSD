@@ -6003,3 +6003,10 @@ No explicit SDT/DTrace or direct audit calls found in libmlx4 sources/build file
 Native target retains all seven maintained source files. RDMA resource lifecycle,
 error paths and kernel/provider observability require hardware/runtime review;
 archive/ELF parity does not qualify them. No kernel driver conversion is claimed.
+
+### 2026-10-29 cxgb4 and irdma user providers
+
+No explicit DTrace/SDT or direct audit calls found in the reviewed provider
+sources/build files. Native targets retain all maintained sources. Queue and
+completion errors, memory registration and device lifecycle observability need
+hardware/runtime review; no RDMA operation was exercised by build parity checks.

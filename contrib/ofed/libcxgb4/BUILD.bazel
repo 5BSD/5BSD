@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['cq.c', 'dev.c', 'qp.c', 'verbs.c'], visibility = ["//lib/ofed/libcxgb4:__pkg__"])
+cc_library(name = "private_headers", hdrs = ['config.h', 'cxgb4-abi.h', 'libcxgb4.h', 't4.h', 't4_chip_type.h', 't4_pci_id_tbl.h', 't4_regs.h'], strip_include_prefix = ".", deps = ['//contrib/ofed/libibverbs:headers', '//sys/dev/cxgbe:rdma_common_headers', '//sys/dev/cxgbe:rdma_firmware_headers'], visibility = ["//lib/ofed/libcxgb4:__pkg__"])

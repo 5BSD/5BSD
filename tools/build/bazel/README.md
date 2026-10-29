@@ -35929,3 +35929,26 @@ missing before migrating these consumers; do not silently omit providers.
 Frontend review: current format-5 library targets/archive staging suffice;
 no build-bsd.c/backend/manual interface change required. Make remains the
 production/default builder and whole-system qualification remains incomplete.
+
+### 2026-10-29 cxgb4 and irdma provider dependencies
+
+Added native cxgb4 (four sources) and irdma (three sources), native ibverbs and
+pthread dependencies, static/shared artifacts and installation. Fresh Make
+.depend files identified cxgb4's t4_msg.h/t4fw_interface.h source-kernel headers
+and irdma's libibverbs config.h; explicit providers declare these inputs.
+Preserved cxgb4 /usr/lib and irdma /lib placement and irdma's maintained symbol
+version map. Kernel header provider additions do not claim kernel driver builds.
+
+Maintained frontend bazel-rdma-providers-20261029 uses 16 jobs. Fresh references
+bazel-cxgb4-reference-20261029 and bazel-irdma-reference-20261029 match six and
+five installation metadata records respectively, both static member/symbol
+inventories and both ELF/debug pairs (global/undefined symbols, dynamic fields).
+Reports/scripts: bazel-cxgb4-qualification-20261029 and
+bazel-irdma-qualification-20261029 under /usr/obj/usr/src.
+
+This supplies the previously missing native providers required by all seven
+libibverbs utilities; consumer migration remains next. No device discovery,
+RDMA traffic, hardware/provider loading or performance tests were performed.
+Frontend review: existing format-5 targets/artifact staging and installation
+helpers cover these libraries; no build-bsd.c/backend/manual interface change.
+No host installation. Make remains production/default; full system unqualified.
