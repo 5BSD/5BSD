@@ -4146,3 +4146,15 @@ profile-data utility. Formatting follows clang_format or clang_extras.
 It excludes debugger/optional LLVM extras, system headers, CRT/runtime and
 compiler-runtime packages. It is not a complete SDK or installed system.
 The existing compiler_install_archive retains its narrower contents.
+
+.Pp
+.Cm //lib/csu/amd64:startup_objects
+and
+.Cm //lib/csu/amd64:install_archive
+provide the ten native amd64 startup objects and their installation metadata.
+.Cm //usr.bin/clang/clang:native_startup_c_test
+and
+.Cm //usr.bin/clang/clang:native_startup_cc_test
+compile and run static probes with native startup objects, compiler and linker.
+The probes retain SDK system headers and libraries. Other architectures,
+dynamic/PIE/profiling startup and independent bootstrap are not qualified here.

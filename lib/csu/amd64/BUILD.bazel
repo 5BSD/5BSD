@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+load("//tools/build/bazel:bsd_relocatable_link.bzl", "bsd_relocatable_link")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_FLAGS = ["-fno-omit-frame-pointer", "-fno-stack-protector", "-fno-pic", "-fno-pie"]
+cc_library(name = "arch_header", hdrs = ["crt.h"], strip_include_prefix = ".")
+# Each output has its own compilation identity; shared/GCRT variants must not
+# reuse an ordinary object. The ordered partial links mirror the startup ABI.
+_SOURCES = {
+    "crt1_s": ("crt1_s.S", ["LOCORE"], False),
+    "gcrt1_s": ("crt1_s.S", ["GCRT"], False),
+    "Scrt1_s": ("crt1_s.S", ["PIC"], True),
+    "crt1_c": ("crt1_c.c", [], False),
+    "crtbrand": ("//lib/csu/common:crtbrand.S", ["LOCORE"], False),
+    "feature_note": ("//lib/csu/common:feature_note.S", ["LOCORE"], False),
+    "ignore_init_note": ("//lib/csu/common:ignore_init_note.S", ["LOCORE"], False),
+    "crti_s": ("crti.S", ["LOCORE"], False),
+    "crtn": ("crtn.S", ["LOCORE"], False),
+    "crtbegin": ("//lib/csu/common:crtbegin.c", [], False),
+    "crtbeginS": ("//lib/csu/common:crtbegin.c", ["SHARED"], True),
+    "crtbeginT": ("//lib/csu/common:crtbegin.c", [], False),
+    "crtend": ("//lib/csu/common:crtend.c", [], False),
+    "crtendS": ("//lib/csu/common:crtend.c", ["SHARED"], True),
+}
+[cc_library(name = name + "_objects", srcs = [spec[0]],
+    deps = [":arch_header", "//lib/csu/common:notes_header", "//lib/csu/common:csu_header"],
+    copts = _FLAGS + (["-fPIC"] if spec[2] else []),
+    local_defines = ["STRIP_FBSDID"] + spec[1],
+    target_compatible_with = _PLATFORM) for name, spec in _SOURCES.items()]
+[bsd_component_object(name = name, group = ":" + name + "_objects", out = name + ".o",
+    visibility = ["//visibility:public"]) for name in _SOURCES]
+_LINKS = {
+    "crt1": ["crt1_s", "crtbrand", "feature_note", "ignore_init_note", "crt1_c"],
+    "gcrt1": ["gcrt1_s", "crtbrand", "feature_note", "ignore_init_note", "crt1_c"],
+    "Scrt1": ["Scrt1_s", "crtbrand", "feature_note", "ignore_init_note", "crt1_c"],
+    "crti": ["crti_s", "crtbrand"],
+}
+[bsd_relocatable_link(name = name, objects = [":" + obj for obj in objects],
+    output = name + ".o", linkopts = ["-znow", "-zrelro"], linker = "//usr.bin/clang/lld:ld.lld",
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+ for name, objects in _LINKS.items()]
+_INSTALLED = ["Scrt1", "crt1", "gcrt1", "crtbegin", "crtbeginS", "crtbeginT", "crtend", "crtendS", "crti", "crtn"]
+filegroup(name = "startup_objects", srcs = [":" + name for name in _INSTALLED],
+    visibility = ["//visibility:public"])
+[bsd_install_file(name = name + "_install", src = ":" + name,
+    destination = "/usr/lib/" + name + ".o", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=clibs-dev"])
+ for name in _INSTALLED]
+bsd_install_manifest(name = "install_manifest", entries = [":" + name + "_install" for name in _INSTALLED],
+    visibility = ["//visibility:public"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {"/usr/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=clibs-dev"]}'},
+    directory_packages = ["clibs-dev"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0, python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])

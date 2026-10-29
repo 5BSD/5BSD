@@ -13831,3 +13831,35 @@ world/kernel/pkgbase, or performance. No host installation/publication.
 
 Frontend review: build-bsd.c and format-5 source_graph.py already pass these targets
 and tests without a new input contract; manual updated. Make stays production.
+
+### Native amd64 startup objects (2026-10-29)
+
+Added lib/csu/amd64 native startup objects: crt1/Scrt1/gcrt1, crti/crtn,
+crtbegin/crtbeginS/crtbeginT, and crtend/crtendS. Common and architecture headers
+are declared. Separate compilation identities preserve PIC, SHARED, GCRT and
+LOCORE variants; ordered relocatable links use native LLD with Make's znow/relro
+flags. The new bsd_relocatable_link action takes explicit object inputs and linker
+runfiles, rejects empty/duplicate inputs, and performs no source discovery.
+
+Fresh Make comparison under /usr/obj/usr/src/bazel-csu-reference-20261029 passes
+for all ten objects: 30 global/weak symbol records, ELF note bytes, .text bytes,
+and non-debug relocation records (ignoring symbol-table numbering). Eleven
+installation records match, including the /usr/lib package=clibs-dev directory
+record found missing in the initial candidate and corrected. Debug bytes are not
+claimed identical. Build/install evidence is bazel-csu-runtime-20261029-r2;
+fresh Make reference is bazel-csu-make-20261029.
+
+Two maintained native_startup_c_test/native_startup_cc_test cases pass under
+//usr.bin/clang/clang. bsd_compiler_probe accepts declared startup_objects, checks
+unique names in one directory and requires the complete five-object static set,
+then passes the directory through Clang's -B interface. Separate saved driver
+traces confirm both C and C++ choose native crt1/crti/crtbeginT/crtend/crtn; all ten
+live object hashes match saved qualification artifacts. Native compiler and LLD
+are used, with SDK system headers/libraries. Existing SDK-only tests remain.
+
+This qualifies static C/C++ smoke execution, not dynamic/PIE/GCRT startup,
+constructor/destructor coverage, other architectures or independent bootstrap.
+The full csu tests and configured system graph remain to qualify. Make remains
+production/default. No host installation, upgrade, reboot or publication.
+Frontend review: build-bsd.c/format-5 source_graph.py already accept these explicit
+targets and tests; no CLI/schema change needed. Manual and audit updated.

@@ -20,6 +20,16 @@ def _impl(ctx):
     args.add("--ld-path=" + ctx.file.linker.path)
     args.add("-fuse-ld=lld")
     args.add_all(["-O2", "-static"])
+    startup = ctx.files.startup_objects
+    if startup:
+        directories = depset([f.dirname for f in startup]).to_list()
+        names = [f.basename for f in startup]
+        if len(directories) != 1 or len(names) != len(depset(names).to_list()):
+            fail("startup objects require unique filenames in one declared directory")
+        for name in ["crt1.o", "crti.o", "crtbeginT.o", "crtend.o", "crtn.o"]:
+            if name not in names:
+                fail("missing static startup object: " + name)
+        args.add("-B" + directories[0] + "/")
     if ctx.attr.lto != "none":
         args.add("-flto=" + ctx.attr.lto)
     if ctx.attr.cxx:
@@ -51,7 +61,7 @@ def _impl(ctx):
         args.add(ctx.file.src)
     args.add("-o", out)
     ctx.actions.run(executable = ctx.attr.compiler[DefaultInfo].files_to_run,
-        arguments = [args], inputs = depset(inputs, transitive = [sdk]),
+        arguments = [args], inputs = depset(inputs + startup, transitive = [sdk]),
         tools = [ctx.attr.linker[DefaultInfo].files_to_run], outputs = [out],
         env = {"LC_ALL": "C"}, use_default_shell_env = False,
         mnemonic = "BSDCompilerProbe")
@@ -65,5 +75,6 @@ bsd_compiler_probe = rule(implementation = _impl, executable = True, attrs = {
     "cxx": attr.bool(),
     "coverage": attr.bool(),
     "profile_runtime": attr.label(allow_single_file = [".a"]),
+    "startup_objects": attr.label(allow_files = [".o"]),
     "lto": attr.string(default = "none", values = ["none", "full", "thin"]),
 })

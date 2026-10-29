@@ -6610,3 +6610,12 @@ component; timestamp Probe identifiers are LLVM profile data, not DTrace probes.
 The maintained profiles_test exercises instrumented execution/profile merge/
 coverage with the native archive. No DTrace or system audit runtime claim, and
 no new audit hooks introduced by this build conversion.
+
+### Native amd64 csu (2026-10-29)
+
+Declared all ten installed startup objects and their compile/partial-link
+variants. Fresh Make comparisons preserve ABI/feature/ignore-init ELF notes and
+non-debug relocations. GCRT source selection is retained, but profiling startup
+has not been executed. C/C++ static smoke cases pass. This is not a DTrace/audit
+runtime qualification; full csu constructor/destructor and startup-mode tests
+remain necessary. No runtime source or instrumentation hooks changed.
