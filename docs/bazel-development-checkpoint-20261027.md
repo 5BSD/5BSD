@@ -15021,3 +15021,24 @@ or hermetic-runtime qualification.
 Reviewed build-bsd.c/source_graph.py: existing target/test inputs support both
 cases without contract changes. Make stays production/default; full world/kernel,
 pkgbase/bootstrap/sandbox/cache/performance gates remain open.
+
+### Native administration daemon artifacts (2026-10-29)
+
+Added kadmind with the maintained nine source files and two local headers,
+explicit GSSAPI/server/database/administration headers, native libraries and PIE
+apputils. ACL/self authorization, password-change handling, replication RPC and
+server request stubs are included. The KDC-only LIBDIR definition and profile
+link dependency are not carried into this distinct Make contract.
+
+Run bazel-kadmind-runtime-20261029 matches fresh Make reference:
+5 installation records; 247 symbols for /usr/libexec/kadmind, 320 symbols for /usr/lib/debug/usr/libexec/kadmind.debug.
+Checks also pass ownership/mode/tags, dynamic dependencies/PIE flags, debuglink
+CRC and byte-identical compressed manual. Evidence and repeatable verifier:
+/usr/obj/usr/src/bazel-kadmind-reference-20261029.
+
+No runtime tests were selected despite the run-directory name. The daemon was
+not started; remote administration, ACL denials, password changes and replication
+RPC remain qualification work. Reviewed build-bsd.c/source_graph.py: current
+explicit target selection supports this addition without contract changes.
+Make stays production/default; SDK bootstrap and full world/kernel/pkgbase/
+sandbox/cache/performance gates remain open. No host install or service change.

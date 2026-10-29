@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['auth.c', 'auth_acl.c', 'auth_self.c', 'ipropd_svc.c', 'kadm_rpc_svc.c', 'misc.c', 'ovsec_kadmd.c', 'schpw.c', 'server_stubs.c', 'misc.h', 'auth.h'])

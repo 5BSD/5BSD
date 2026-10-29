@@ -6926,3 +6926,10 @@ The native KDC now passes a loopback keytab AS/TGS lifecycle with native clients
 service-ticket listing and cache destruction. KDC log paths are test-local.
 This does not assert audit-plugin delivery or OS audit events; negative
 authentication, lockout and observability checks remain outstanding.
+
+### kadmind (2026-10-29)
+
+The native target retains server_stubs.c request logging through krb5_klog_syslog
+and the ACL/self authorization and password-change sources. Build/install parity
+does not establish OS audit integration or successful delivery of request logs.
+Remote authorization, denial and logging runtime tests remain outstanding.
