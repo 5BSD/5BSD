@@ -40733,3 +40733,28 @@ loading and complete SNMP aggregate reconciliation also remain open.
 Reviewed build-bsd.c/source_graph.py: existing targets/metadata inputs suffice;
 Make remains production/default. Full-system/bootstrap/cache/sandbox/performance
 gates are still incomplete.
+
+### Native SNMP host-resources module (2026-10-29)
+
+Added all thirteen hostres sources, maintained local header, generated tables/OIDs,
+and separate printcap.c compilation. The printcap target preserves PIC/NDEBUG
+behavior without applying its definitions to unrelated sources. Its shared LPR
+headers are declared from source even though the selected world disables the LPR
+programs. Native kvm/devinfo/m/geom/memstat dependencies supply the module linkage.
+Added complete manual/MIB/definition/module/debug/symlink installation declarations.
+
+Run bazel-snmp-hostres-20261029 passes through build-bsd with 16 jobs. Fresh Make
+reference matches all three generated files exactly, plus module global/weak symbols
+and ordered dynamic metadata. All ten changed installation records match without
+missing/extra destinations or ownership/mode/non-directory tag mismatches. Five
+regular payloads pass byte or ELF comparisons, and debug-link name/CRC plus module
+symlink target pass. Evidence: /usr/obj/usr/src/bazel-snmp-hostres-reference-20261029/
+verify.py, comparison.json, install-audit.py,json and payload-audit.py,json.
+
+No printer, process, storage, device or other host state was queried or changed
+through this module. Matching-kernel runtime and permission behavior remain open.
+Ten of eleven configured SNMP module directories now have native build/install
+candidates; HAST remains, as do aggregate reconciliation and service/module runtime.
+Reviewed build-bsd.c/source_graph.py: existing target/metadata interfaces suffice.
+Make remains production/default; full-system/bootstrap/cache/sandbox and comparative
+CPU/memory/disk performance gates remain incomplete.

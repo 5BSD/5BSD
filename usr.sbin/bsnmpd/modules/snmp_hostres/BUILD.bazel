@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//usr.sbin/bsnmpd/bsnmpd:generation.bzl", "snmp_tree")
+snmp_tree(name = "generated", source = "hostres_tree.def", prefix = "hostres_", local_includes = False, symbols = ["host", "hrStorageOther", "hrStorageRam", "hrStorageVirtualMemory", "hrStorageFixedDisk", "hrStorageRemovableDisk", "hrStorageFloppyDisk", "hrStorageCompactDisc", "hrStorageRamDisk", "hrStorageFlashMemory", "hrStorageNetworkDisk", "hrDeviceOther", "hrDeviceUnknown", "hrDeviceProcessor", "hrDeviceNetwork", "hrDevicePrinter", "hrDeviceDiskStorage", "hrDeviceVideo", "hrDeviceAudio", "hrDeviceCoprocessor", "hrDeviceKeyboard", "hrDeviceModem", "hrDeviceParallelPort", "hrDevicePointing", "hrDeviceSerialPort", "hrDeviceTape", "hrDeviceClock", "hrDeviceVolatileMemory", "hrDeviceNonVolatileMemory", "hrFSOther", "hrFSUnknown", "hrFSBerkeleyFFS", "hrFSSys5FS", "hrFSFat", "hrFSHPFS", "hrFSHFS", "hrFSMFS", "hrFSNTFS", "hrFSVNode", "hrFSJournaled", "hrFSiso9660", "hrFSRockRidge", "hrFSNFS", "hrFSNetware", "hrFSAFS", "hrFSDFS", "hrFSAppleshare", "hrFSRFS", "hrFSDGCFS", "hrFSBFS", "hrFSFAT32", "hrFSLinuxExt2"],
+    generator = "//usr.sbin/bsnmpd/gensnmptree:gensnmptree", driver = "//usr.sbin/bsnmpd/bsnmpd:generate.py",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+filegroup(name = "tree_source", srcs = [":generated"], output_group = "source")
+filegroup(name = "tree_headers", srcs = [":generated"], output_group = "headers")
+cc_library(name = "generated_headers", hdrs = [":tree_headers"], strip_include_prefix = "generated")
+cc_library(name = "objects", srcs = ["hostres_begemot.c", "hostres_device_tbl.c", "hostres_diskstorage_tbl.c", "hostres_fs_tbl.c", "hostres_network_tbl.c", "hostres_partition_tbl.c", "hostres_printer_tbl.c", "hostres_processor_tbl.c", "hostres_scalars.c", "hostres_snmp.c", "hostres_storage_tbl.c", "hostres_swinstalled_tbl.c", "hostres_swrun_tbl.c", "hostres_snmp.h"] + [":tree_source"],
+    deps = [":generated_headers", "//contrib/bsnmp/snmpd:public_headers", "//usr.sbin/lpr/common_source:printcap_headers", "//lib/libkvm:kvm", "//lib/libdevinfo:devinfo", "//lib/msun:m", "//lib/libgeom:geom", "//lib/libmemstat:memstat"],
+    local_defines = ["HAVE_STRLCPY", "NDEBUG"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+# Make compiles this shared printcap source separately with PIC and NDEBUG.
+cc_library(name = "printcap", srcs = ["//usr.sbin/lpr/common_source:printcap.c"],
+    deps = ["//usr.sbin/lpr/common_source:printcap_headers"], local_defines = ["PIC", "NDEBUG", "HAVE_STRLCPY"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_shared_library(name = "module", deps = [":objects", ":printcap"], dynamic_deps = ["//lib/libkvm:kvm_shared", "//lib/libdevinfo:devinfo_shared", "//lib/msun:m_shared", "//lib/libgeom:geom_shared", "//lib/libmemstat:memstat_shared"], shared_lib_name = "snmp_hostres.so.6",
+    user_link_flags = ["-Wl,-soname,snmp_hostres.so.6", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load("//usr.sbin/bsnmpd/modules:installation.bzl", "module_installation")
+module_installation(module = "hostres", binary = ":module", manual = "snmp_hostres.3",
+    definitions = {"hostres_tree.def": "hostres_tree.def"},
+    mibs = {"BEGEMOT-HOSTRES-MIB.txt": "BEGEMOT-HOSTRES-MIB.txt"}, headers = {})

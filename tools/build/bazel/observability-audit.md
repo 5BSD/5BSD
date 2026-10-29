@@ -7145,3 +7145,11 @@ Makefiles declare no DTrace providers. Interface/routing reads and writes and
 netgraph operations require matching-kernel runtime authorization/audit/log tests.
 Artifact and installation parity do not establish safe mutations or delivery of
 observability events. No kernel, logging or audit-policy changes were made.
+
+### SNMP host resources (2026-10-29)
+
+Native hostres/printcap compilation preserves sources and NDEBUG policy. The
+Makefile declares no DTrace provider. Process/storage/device/printer enumeration
+and configuration interfaces require runtime permission and audit/log review.
+No host information collection or mutation was performed by build qualification;
+artifact parity alone does not qualify observability behavior.

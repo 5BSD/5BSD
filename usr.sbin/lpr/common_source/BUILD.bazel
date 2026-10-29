@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["printcap.c"], visibility = ["//usr.sbin/bsnmpd/modules/snmp_hostres:__pkg__"])
+cc_library(name = "printcap_headers", hdrs = ["lp.cdefs.h", "lp.h", "lp.local.h", "pathnames.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/bsnmpd/modules/snmp_hostres:__pkg__"])
