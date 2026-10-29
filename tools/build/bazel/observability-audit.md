@@ -6726,3 +6726,9 @@ Native core/basic/FDR/profiling source inventories and amd64 trampoline are
 retained. Instrumented patch/unpatch, callback delivery, recorded log correctness,
 concurrency and tracing overhead need runtime qualification. No production
 DTrace/audit integration was added or removed.
+
+### Deadlock-detector archive (2026-10-29)
+
+Native DD preserves the maintained source inventory and archive contract. Actual
+lock-order inversion reporting, clean execution and interceptor/thread behavior
+remain runtime work. No production DTrace/audit instrumentation was changed.

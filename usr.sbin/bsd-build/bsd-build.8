@@ -4275,3 +4275,9 @@ The lib/libclang_rt/xray, xray-basic, xray-fdr and xray-profiling packages expos
 native amd64 archive and installation targets. Core includes the amd64 trampoline
 and maintained public headers. These archive targets do not qualify runtime
 patching, callback delivery or correctness of recorded tracing data.
+
+.Pp
+.Cm //lib/libclang_rt/dd:install_archive
+packages the native amd64 deadlock-detector archive. Its source inventory, archive
+members/symbols and installation metadata match a fresh Make reference. This does
+not qualify lock-order inversion detection or runtime interceptor behavior.

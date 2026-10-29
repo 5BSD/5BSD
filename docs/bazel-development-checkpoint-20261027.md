@@ -14247,3 +14247,25 @@ world/kernel/pkgbase/performance remain open. SDK dependencies remain. Frontend
 review: build-bsd.c and format-5 source_graph.py already accept these labels;
 no CLI/schema changes. Make remains production/default, with no host install or
 publication.
+
+### Deadlock-detector archive candidate (2026-10-29)
+
+Added native amd64 lib/libclang_rt/dd archive/source/install targets with all
+32 maintained sources and explicit sanitizer/interception/DD header dependencies.
+Frontend run bazel-dd-20261029 passed. Fresh Make comparison matches all 32
+archive members in order, 1447 global/weak symbol records and the installed
+archive metadata. Evidence is under bazel-dd-reference-20261029.
+
+No runtime tests were selected. Real lock-order inversion detection, clean lock
+ordering, interceptors and thread lifecycle remain unqualified. Other platforms,
+bootstrap and complete world/kernel/pkgbase/performance remain open. No production
+DTrace/audit changes, host installation or publication. Prepared SDK dependencies
+remain. build-bsd.c and format-5 source_graph.py already accept these labels, so
+no CLI/schema change is needed; Make remains production/default.
+
+Dynamic ASan is the remaining compiler-runtime directory without native targets.
+Its Makefile explicitly enables ASAN_DYNAMIC and uses the C++ linker for a shared
+library. A fresh Make reference is being prepared by asan_dynamic-make.py under
+bazel-dd-reference-20261029; its link and install contracts need inspection before
+native implementation. Directory coverage will not close runtime, option,
+architecture, bootstrap or system-wide acceptance gates.
