@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['arch.c', 'buf.c', 'compat.c', 'cond.c', 'dir.c', 'for.c', 'hash.c', 'job.c', 'lst.c', 'main.c', 'make.c', 'make_malloc.c', 'meta.c', 'metachar.c', 'parse.c', 'str.c', 'suff.c', 'targ.c', 'trace.c', 'util.c', 'var.c', 'stresep.c', 'filemon/filemon_dev.c', 'VERSION', 'make.1'], visibility = ["//usr.bin/bmake:__pkg__"])
+cc_library(name = "headers", hdrs = ['_strtol.h', 'buf.h', 'dir.h', 'hash.h', 'job.h', 'lst.h', 'make-conf.h', 'make.h', 'make_malloc.h', 'meta.h', 'metachar.h', 'pathnames.h', 'ranlib.h', 'sigact.h', 'str.h', 'trace.h', 'wait.h', 'filemon/filemon.h'], includes = ["."], visibility = ["//usr.bin/bmake:__pkg__"])

@@ -35678,3 +35678,40 @@ or host installation performed. Frontend review: existing format-5 target/test
 selection, archive and tests-option support cover this component; no build-bsd
 C/backend/manual change is required. Make stays production/default; whole-world/
 kernel/pkgbase/bootstrap/runtime/performance gates remain open.
+
+### 2026-10-29 native bmake program and regression evidence
+
+Added native base make/bmake from all 23 maintained C sources, source config.h,
+explicit headers and filemon kernel interface. Separate native source groups
+preserve main-specific defaults/version inclusion and job/meta/filemon defines.
+Version header is generated from contrib/bmake/VERSION with a declared sed action;
+no duplicated numeric version is embedded in the BUILD file. Maintained default
+meta mode, filemon dev mode, system mk search path, no dollar-saving default and
+NO_PWD_OVERRIDE are retained. Production C sources and unit fixtures unchanged.
+
+Maintained frontend /usr/obj/usr/src/bazel-bmake-20261029 (16 jobs) matches
+fresh rootless Make reference bazel-bmake-reference-20261029: seven metadata
+records, two exact manual payloads, make/bmake hardlinks and one valid ELF/debug
+pair with matching global/undefined symbols and dynamic properties. Runtime
+version query returns 20260704. Evidence/scripts in bazel-bmake-qualification-
+20261029; r2 comparator report names are inherited, not repeated build attempts.
+
+Executed the maintained contrib/bmake/unit-tests suite with the saved native
+binary, 16 jobs and fresh disposable source copies. First run's output
+comparisons passed but final Lua check failed because lua was absent from PATH.
+Second run explicitly selected LUA=/usr/libexec/flua but its unit-tests-r2
+basename violated two maintained path assertions. Third run preserves the
+unit-tests basename under a fresh r3 parent and selects the same explicit flua;
+it exits zero, passes all 398 selected output comparisons and the final Lua
+expectation check. runtime/suite-summary.json records results; original failures
+remain. No expectations or assertions were altered. The maintained suite skips
+filemon-dependent tests when /dev/filemon is unavailable; those remain untested.
+
+This suite uses host shell/utilities/shared libraries and the native make binary;
+it is not yet a Bazel-native test graph. Recursive installed tests from
+usr.bin/bmake/tests, explicit alternative filemon/bootstrap/cross-host settings,
+ports builds, pkgbase consumer builds and performance remain migration gates.
+No host installation or /dev/filemon activation occurred. Frontend review:
+format-5 targets/artifacts and existing generator staging cover the default
+program; no build-bsd C/backend/manual change is required for this batch. Make
+remains production/default; native world/kernel/pkgbase completion is unproven.

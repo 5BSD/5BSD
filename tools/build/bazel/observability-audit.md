@@ -5938,3 +5938,12 @@ cases are declared but fail before their bodies at the documented host Capsicum
 ABI mismatch. None is runtime-qualified. Preserve process lifecycle, ABI
 translation, syscall filtering and privilege/capability checks for matching-kernel
 qualification; no source checks were weakened to bypass this host limitation.
+
+### 2026-10-29 bmake
+
+Native rules retain meta/trace and filemon support, including declared kernel
+filemon ioctl headers. No explicit DTrace/SDT or audit_submit/auditon sites were
+found in focused source scanning. Filemon records are distinct from DTrace/OS
+audit integration. 398 selected maintained unit-output comparisons and Lua
+expectation check pass; /dev/filemon-dependent cases are excluded by the suite
+and remain open, along with real ports/meta-mode dependency monitoring.
