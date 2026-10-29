@@ -40004,3 +40004,23 @@ Those component gates remain open. Existing build-bsd explicit target and typed
 config inputs support this addition without frontend/backend contract changes.
 Full world/kernel/pkgbase and independent bootstrap/performance gates remain open.
 No host installation; Make remains production/default.
+
+### lib9p installation and debug metadata (2026-10-29)
+
+Added the native installation manifest/archive and debug split for lib9p using
+its maintained private-library naming and explicit header destinations. Run
+bazel-lib9p-install-20261029 passes through build-bsd. All nine fresh Make
+installation records match destinations, owner/group, mode and package tags.
+Three installed headers match bytewise. Archive membership/symbols, installed
+DSO/debug symbols, dynamic metadata and debuglink CRC pass. Evidence/verifier:
+/usr/obj/usr/src/bazel-lib9p-reference-20261029/verify-install.py and
+install-comparison.json. No installation on the host occurred.
+
+This proves installation parity, not installed consumer usability: lib9p.h
+includes fcall.h, threadpool.h and hashtable.h, and installed fs.h includes
+backend.h, while the maintained Make INCS list installs only fid.h, lib9p.h and
+fs.h. This pre-existing private-library header closure needs investigation;
+do not count it as a working installed SDK interface. Native runtime and
+Casper-disabled qualification also remain open. Existing build-bsd/source_graph
+explicit targets and metadata output groups need no changes for this addition.
+Whole-system and performance gates remain open; Make stays production/default.

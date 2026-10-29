@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 exports_files([
+    "fid.h", "lib9p.h", "backend/fs.h",
     "connection.c", "genacl.c", "hashtable.c", "log.c", "pack.c",
     "request.c", "rfuncs.c", "threadpool.c", "utils.c",
     "backend/fs.c", "transport/socket.c",
