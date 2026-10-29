@@ -38568,3 +38568,35 @@ performance. SDK compiler and remaining system libraries still apply. No host
 installation/publication. Frontend review confirms build-bsd.c and format-5
 source_graph.py accept the explicit test matrix without schema changes; manual
 updated. Make remains production/default.
+
+### Packaged csu test suite (2026-10-29)
+
+Added //lib/csu/tests:install_manifest and install_archive for the full maintained
+suite: 17 binaries, 15 separate debug payloads, six Kyuafiles and nine directory
+metadata records. Source-owned installation policy preserves package=tests,
+permissions, directory/debug tags, installed names and Kyua subdirectory order.
+bsd_kyuafile now accepts an output path (default Kyuafile unchanged) so one Bazel
+package can compose multiple suite registrations without output collisions.
+
+Fresh Make build/install reference: bazel-csu-tests-make-20261029. Final frontend
+run bazel-csu-test-install-20261029-r4 passes with all 36 runtime cases. Comparison
+scripts/reports under bazel-csu-tests-reference-20261029 establish 47 matching
+installation records, six byte-identical Kyuafiles, 15 debuglink CRCs, and matching
+global/weak symbol records for all 15 debug payloads. Installed binaries contain
+no Bazel output/solib runtime search paths. DSO programs preserve Make's installed
+/usr/tests/lib/csu/dynamiclib RUNPATH and link ATF C++ in all three programs.
+
+Corrections from reference evidence: two errno binaries with explicit -static
+omit separate debug files under bsd.prog.mk (unlike NO_SHARED static ATF tests).
+The helper DSO now has header-only dependencies, matching Make's unresolved
+symbols for the executable to supply, instead of extra DSO dependencies. Initial
+archive output collision, debug inventory differences and four helper symbol-type
+differences are preserved in earlier evidence; final checks pass without ignoring
+them. Runtime fixtures remain unchanged.
+
+These checks do not establish executable byte identity, execution from a fully
+installed system/package repository, other configurations/architectures, GCRT,
+independent bootstrap or complete world/kernel/publication/performance. Tests
+still use the prepared SDK compiler and remaining runtime. No host installation,
+upgrade or publication. Frontend review: build-bsd.c/format-5 backend already
+accept the archive and test labels; no CLI/input schema change. Manual updated.

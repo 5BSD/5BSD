@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load(":installation.bzl", "CSU_TEST_ROOT", "csu_test_installation")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
@@ -21,27 +22,26 @@ _RUNTIME = ["@bsd_sdk//toolchain:sysroot/lib/" + name for name in [
 ]]
 _CXX_SHARED = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"]
 cc_library(name = "h_csu_objects", srcs = [spec[0] for spec in _PROGRAMS.values()],
-    deps = ["//lib/csu/amd64:arch_header", "//lib/atf/libatf-c:atf_c",
-        "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"],
+    deps = ["//lib/csu/amd64:arch_header", "//contrib/atf:c_headers",
+        "//contrib/llvm-project/libcxx/include:headers"],
     local_defines = ["DSO_LIB"], copts = ["-nostdinc++"],
-    testonly = True, target_compatible_with = _PLATFORM)
+    target_compatible_with = _PLATFORM)
 cc_shared_library(name = "h_csu", deps = [":h_csu_objects"],
-    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"] + _CXX_SHARED,
     shared_lib_name = "libh_csu.so", user_link_flags = ["-Wl,-soname,libh_csu.so"] + _STARTUP_FLAGS,
     additional_linker_inputs = _STARTUP_INPUTS,
-    testonly = True, target_compatible_with = _PLATFORM)
+    target_compatible_with = _PLATFORM)
 [cc_binary(name = mode + "_" + name, srcs = [spec[0]],
     deps = ["//lib/csu/amd64:arch_header",
-        "//lib/atf/libatf-c:atf_c"] + (["//lib/atf/libatf-c++:atf_cxx"] if name == "cxx_constructors" else []) + ([":h_csu_objects"] if mode == "dynamiclib" else []),
+        "//lib/atf/libatf-c:atf_c"] + (["//lib/atf/libatf-c++:atf_cxx"] if name == "cxx_constructors" or mode == "dynamiclib" else []) + ([":h_csu_objects"] if mode == "dynamiclib" else []),
     local_defines = ["DSO_BASE"] if mode == "dynamiclib" else [],
-    dynamic_deps = (["//lib/atf/libatf-c:atf_c_shared"] + (["//lib/atf/libatf-c++:atf_cxx_shared"] if name == "cxx_constructors" else []) + (_CXX_SHARED if name == "cxx_constructors" or mode == "dynamiclib" else []) + ([":h_csu"] if mode == "dynamiclib" else [])) if mode != "static" else [],
-    copts = flags[0] + (["-nostdinc++"] if name == "cxx_constructors" or mode == "dynamiclib" else []), linkopts = flags[1] + _STARTUP_FLAGS,
+    dynamic_deps = (["//lib/atf/libatf-c:atf_c_shared"] + (["//lib/atf/libatf-c++:atf_cxx_shared"] if name == "cxx_constructors" or mode == "dynamiclib" else []) + (_CXX_SHARED if name == "cxx_constructors" or mode == "dynamiclib" else []) + ([":h_csu"] if mode == "dynamiclib" else [])) if mode != "static" else [],
+    copts = flags[0] + (["-nostdinc++"] if name == "cxx_constructors" or mode == "dynamiclib" else []), linkopts = flags[1] + _STARTUP_FLAGS + (["-Wl,-rpath," + CSU_TEST_ROOT + "/dynamiclib"] if mode == "dynamiclib" else []),
     additional_linker_inputs = _STARTUP_INPUTS,
-    linkstatic = True, testonly = True, target_compatible_with = _PLATFORM)
+    linkstatic = True, target_compatible_with = _PLATFORM)
  for mode, flags in _MODES.items() for name, spec in _PROGRAMS.items()]
 [bsd_atf_test(name = mode + "_" + case, case_name = case,
     interface = "program", body = ":" + mode + "_" + name,
-    runtime_lib = (_RUNTIME + ["//lib/atf/libatf-c:atf_c_shared"] + (["//lib/atf/libatf-c++:atf_cxx_shared"] if name == "cxx_constructors" else []) + (_CXX_SHARED if name == "cxx_constructors" or mode == "dynamiclib" else []) + ([":h_csu"] if mode == "dynamiclib" else [])) if mode != "static" else [],
+    runtime_lib = (_RUNTIME + ["//lib/atf/libatf-c:atf_c_shared"] + (["//lib/atf/libatf-c++:atf_cxx_shared"] if name == "cxx_constructors" or mode == "dynamiclib" else []) + (_CXX_SHARED if name == "cxx_constructors" or mode == "dynamiclib" else []) + ([":h_csu"] if mode == "dynamiclib" else [])) if mode != "static" else [],
     runner = "//tools/build/bazel:atf_runner", size = "small",
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
  for mode in _MODES for name, spec in _PROGRAMS.items() for case in spec[1]]
@@ -50,11 +50,11 @@ cc_shared_library(name = "h_csu", deps = [":h_csu_objects"],
 
 load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
 [cc_binary(name = "errno_" + mode + "_" + threading + "_program",
-    srcs = ["errno/errno_test.c"], deps = [] + (["//lib/libthr:thr"] if threading == "threaded" else []),
+    srcs = ["errno/errno_test.c"], deps = (["//lib/libthr:thr"] if threading == "threaded" else []),
     dynamic_deps = ["//lib/libthr:thr_shared"] if mode == "dynamic" and threading == "threaded" else [],
     copts = ["-fno-pie"], linkopts = (["-static"] if mode == "static" else []) + _STARTUP_FLAGS,
     additional_linker_inputs = _STARTUP_INPUTS,
-    linkstatic = True, testonly = True, target_compatible_with = _PLATFORM)
+    linkstatic = True, target_compatible_with = _PLATFORM)
  for mode in ["static", "dynamic"] for threading in ["plain", "threaded"]]
 [bsd_program_test(name = "errno_" + mode + "_" + threading,
     program = ":errno_" + mode + "_" + threading + "_program",
@@ -62,3 +62,5 @@ load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
     runner = "//tools/build/bazel:program_test_runner", size = "small",
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
  for mode in ["static", "dynamic"] for threading in ["plain", "threaded"]]
+
+csu_test_installation()

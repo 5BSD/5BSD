@@ -6638,3 +6638,11 @@ fixtures remain unchanged. An explicit final-link response-file interface fixes
 CcInfo flags being dropped during dynamic dependency processing. No DTrace/audit
 hooks added or removed; GCRT execution and exhaustive failure handling remain
 unqualified. Runtime closure checks retain the host rtld.
+
+### csu test installation (2026-10-29)
+
+The full suite installation now matches Make metadata/Kyua registration, with 15
+debuglink CRCs and debug-payload symbol comparisons. Preserves explicit-static
+errno debug policy and DSO helper linkage. All 36 Bazel cases pass after the
+packaging changes. No runtime source changes, new probes or audit hooks; actual
+installed-system execution remains a separate gate.

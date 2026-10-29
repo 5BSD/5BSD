@@ -143,13 +143,14 @@ def _kyuafile(ctx):
         if not directory or any([part in ["", ".", ".."] for part in directory.split("/")]):
             fail("Kyua subdirectories require normalized relative paths")
         content += "include(" + json.encode(directory + "/Kyuafile") + ")\n"
-    output = ctx.actions.declare_file("Kyuafile")
+    output = ctx.actions.declare_file(ctx.attr.output)
     ctx.actions.write(output, content)
     return [DefaultInfo(files = depset([output]))]
 
 bsd_kyuafile = rule(
     implementation = _kyuafile,
     attrs = {
+        "output": attr.string(default = "Kyuafile", doc = "Package-relative output path for composing multiple suite registrations."),
         "suite": attr.string(mandatory = True),
         "names": attr.string_list(mandatory = True),
         "interfaces": attr.string_dict(mandatory = True),

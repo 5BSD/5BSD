@@ -4180,5 +4180,15 @@ Select explicit case labels in format-5 targets and tests. Mode test suites grou
 the ATF cases for direct Bazel use. All 36 cases passed in the tested native amd64
 configuration, with final-link startup selection and runtime libraries checked.
 The tests retain the prepared SDK compiler/system libraries and host rtld;
-GCRT, other architectures, installed-test parity and independent bootstrap
-remain separate qualification work.
+GCRT, other architectures and independent bootstrap remain separate
+qualification work.
+
+.Pp
+.Cm //lib/csu/tests:install_archive
+packages all maintained csu test programs, their helper, debug payloads and Kyua
+registrations. Installation metadata, Kyuafile bytes, debug links and debug-payload
+symbol records match a fresh Make reference for the qualified configuration.
+The two errno programs using explicit -static omit separate debug files, matching
+bsd.prog.mk. This archive does not itself qualify a complete installed system or
+pkgbase repository. The bsd_kyuafile rule accepts an optional output path when
+composing multiple registrations in one Bazel package.
