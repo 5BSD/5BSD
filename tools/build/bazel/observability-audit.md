@@ -7189,3 +7189,7 @@ The internal DER parser archive has no Make-declared DTrace provider. Native
 compilation preserves upstream parsing/error behavior. Malformed-input and
 round-trip/fuzz testing remain, as does checking signature failure diagnostics in
 pkg consumers. No new audit policy or claim of cryptographic validation is made.
+
+libder follow-up: both maintained upstream public/private key parser/construction/
+round-trip tests now pass as native Bazel tests. This does not close malformed-
+input fuzz coverage or pkg consumer signature-failure reporting.

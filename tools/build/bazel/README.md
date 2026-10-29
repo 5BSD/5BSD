@@ -40996,3 +40996,28 @@ and symbol parity do not establish parser security. Existing build-bsd/source_gr
 explicit target inputs suffice without interface changes. Whole-system/kernel,
 pkgbase/bootstrap, sandbox/cache and performance gates remain open; Make remains
 production/default.
+
+### Native upstream libder key round-trip tests (2026-10-29)
+
+Added native cc_test targets for upstream test_pubkey/test_privkey linked to the
+native internal libder target. Public upstream repo.pub/repo.priv vectors are
+explicit data inputs passed with rootpath arguments. The test-only fixture helper
+accepts an optional file argument, retaining original executable-relative fixture
+lookup when no argument is supplied. Assertions are explicitly enabled with
+-UNDEBUG; no production parser source or expected key bytes were changed.
+
+Run bazel-libder-tests-20261029 passes both reported tests through build-bsd with
+16 jobs. Upstream assertions cover parsed object fields, construction, serialized
+length and byte-for-byte DER round trips. Independently copied hash-verified test
+artifacts also pass their original no-argument lookup from an unrelated working
+directory with adjacent fixtures. Evidence: test-inputs.json,
+default-fixture-tests.json and test_{pubkey,privkey}-default.log under
+/usr/obj/usr/src/bazel-libder-reference-20261029/; Bazel receipt and saved reports
+are under bazel-libder-tests-20261029.
+
+These are two deterministic upstream vectors, not malformed-input/fuzz coverage
+or pkg signature verification. The test-only command-line extension preserves
+existing CMake invocation behavior; no installed library payload was added.
+Reviewed build-bsd/source_graph existing explicit test/data handling: no interface
+change required. Whole-system/kernel/pkgbase/bootstrap and sandbox/cache/performance
+qualification remain open; Make remains production/default.

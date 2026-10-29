@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_test")
+# These public upstream fixtures are test vectors, not operational signing keys.
+[cc_test(name = name, srcs = [name + ".c", "test_common.h"],
+    deps = ["//lib/libder:der"], data = [fixture], args = ["$(rootpath " + fixture + ")"],
+    copts = ["-UNDEBUG"], linkstatic = True, size = "small")
+ for name, fixture in [("test_pubkey", "repo.pub"), ("test_privkey", "repo.priv")]]
+test_suite(name = "native_tests", tests = [":test_pubkey", ":test_privkey"], visibility = ["//visibility:public"])
