@@ -3980,3 +3980,22 @@ target executes the produced compiler on C and C++ fixtures for enabled backends
 and checks the emitted ELF architecture. Select it in both the format-5 targets
 and tests lists. It does not exercise system headers, linking or execution of
 the generated objects.
+
+.Pp
+The experimental
+.Cm //usr.bin/clang/clang:sdk_c_test
+and
+.Cm //usr.bin/clang/clang:sdk_cc_test
+targets compile, statically link and execute probes using the candidate compiler
+and the explicitly selected staged SDK. They do not establish independent
+bootstrap or installed-system defaults.
+
+.Pp
+The
+.Cm //usr.bin/clang/clang:clang_installed
+target links the PIE driver without build-tree runtime search paths.
+.Cm //usr.bin/clang/clang:install_archive
+packages its stripped executable, debug file, manual, aliases and CC script.
+The driver archive does not include the separately installed Clang resource
+headers or compiler runtime libraries. Building it does not install or qualify
+a complete toolchain or system.

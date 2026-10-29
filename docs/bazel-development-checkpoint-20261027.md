@@ -13176,3 +13176,91 @@ remains next work. Existing codegen_test covers compilation only.
 Frontend review: no input or packaging semantics changed; the diagnostic uses
 existing compiler flags and SDK inputs, so no build-bsd/backend/manual interface
 change is required. Make remains production/default; full migration remains open.
+
+### Maintained compiler SDK link/run tests, initial implementation (2026-10-29)
+
+Added bsd_compiler_probe and C/C++ self-checking programs exposed as
+//usr.bin/clang/clang:sdk_c_test and sdk_cc_test. Compilation is an explicit Bazel
+action using the candidate compiler in execution configuration, declared SDK
+files and the selected linker. Resource/sysroot paths are resolved from SDK
+artifacts; no host include/linker fallback. Static outputs are executed by the
+existing bsd_program_test adapter. These tests deliberately qualify a prepared
+SDK, not an independent bootstrap.
+
+The initial run rejected an incorrect resource-header anchor: FreeBSD supplies
+stddef.h through system headers. Corrected to the installed Clang resource
+__stddef_size_t.h. Run /usr/obj/usr/src/bazel-clang-sdk-tests-20261029-r2 built the execution-tool
+compiler, then failed the relative linker-path check; corrected results follow below. The first
+failure remains retained. Review SDK input breadth after the run: the initial
+rule uses all SDK inputs, and should narrow to compilation/link inputs where
+possible. Frontend review: existing format-5 targets/tests support the new labels;
+manual documents test scope. Make remains production/default.
+
+### Compiler installation contract review (2026-10-29, pending correction)
+
+Fresh expanded Make variables are saved at
+/usr/obj/usr/src/bazel-clang-install-contract-20261029/make-variables.json.
+Make requires -fPIE/-pie for the installed driver. Inspection of the saved native
+candidate from bazel-clang-driver-20261029-r3 shows ELF type EXEC: the initial
+runtime candidate omitted PIE. Correct compilation/link flags and verify ELF type
+before claiming driver artifact or installation parity. Existing execution tests
+remain execution evidence only. Apply the correction after the live SDK-test run
+finishes so its inputs remain stable.
+
+The installation contract includes /usr/bin/clang mode 0555, five binary hardlinks
+(clang++, clang-cpp, cc, c++, cpp), six manual aliases (also CC), and the separate
+CC.sh script installed as CC, mode 0555, package clang. A separate installed link
+target must omit qualification runtime search paths; preserve normal source and
+library dependencies. Debug split and complete installation comparison remain open.
+
+Installation preparation: usr.bin/clang/clang/installation.bzl now defines the
+compiler manifest/archive using maintained utility/debug/install helpers, the
+five binary aliases, six manual aliases and CC script. It was initially prepared without loading it into the active build. The corrected
+system-link target and archive validation described below now use this macro.
+
+Resource-header installation contract captured separately in
+/usr/obj/usr/src/bazel-clang-header-contract-20261029/make-variables.json:
+256 default headers, including nine generated ARM/RISCV headers, installed under
+/usr/lib/clang/21/include as root:wheel 0444. bsd.incs.mk adds package=clang
+and dev installation tags under NO_ROOT; preserve both in native manifests. The conditional
+INSTALL_CONFLICTING_CLANG_HEADERS group must remain an explicit option; it is not
+part of that default count. Native resource-header installation is still pending.
+
+Generator input closures for all nine resource headers are saved beside that
+contract in generator-inputs.json. In particular, arm_vector_types.h consumes
+arm_neon.td (and its included definitions), despite Make naming arm_sme.td in the
+target prerequisite. Native actions must declare the actual consumed inputs;
+generator output parity remains to be checked after implementing the actions.
+
+### Maintained SDK tests and installed-driver candidate (2026-10-29)
+
+The execution-configuration compiler build completed. Its first SDK probe failed
+because -fuse-ld rejects a relative artifact path. Corrected to --ld-path with
+-fuse-ld=lld, matching Clang's supported path/flavor interface. No shell wrapper,
+absolute sandbox path or host linker fallback. Narrowed SDK dependencies to its
+existing compile_inputs/link_inputs groups, excluding unrelated Python tools.
+
+Applied Make's -fPIE/-pie contract to both driver targets. Added clang_installed
+without qualification runtime paths/native-runtime overrides and wired the
+installation macro. The first installed link explicitly included libelf; removed
+that unnecessary direct dependency (libexecinfo owns it). The runtime target
+retains declared library paths needed for build-tree execution.
+
+Corrected run /usr/obj/usr/src/bazel-clang-install-tests-20261029-r2 passes both
+sdk_c_test and sdk_cc_test: two reported cases, neither skipped. They compile,
+statically link and execute C allocation/string/stdio and C++ vector/numeric/iostream
+probes with the native compiler and declared staged SDK/linker inputs. This remains
+a Make-prepared SDK test, not independent bootstrap or dynamic runtime qualification.
+
+Installed candidate has ELF DYN/PIE, BIND_NOW, GNU_RELRO, non-executable stack,
+no RPATH/RUNPATH and no TEXTREL. Its NEEDED set matches the pre-existing Make
+clang.full; order differs and remains part of fresh link review. Installation
+archive has 15 records. Owners/groups/modes/hardlinks match declared metadata;
+CC script and decompressed manual match source. Evidence/scripts:
+/usr/obj/usr/src/bazel-clang-install-qualification-20261029.
+Fresh Make driver object/link/install/debug comparisons remain pending. The 256
+resource headers are not included in this driver archive; their native generation
+and installation remain separate required work. No host installation occurred.
+Frontend review: existing build-bsd format-5 transports the target/test selections;
+manual updated for installed target and test scope. Make stays production/default;
+world/kernel/pkgbase/cache/performance gates remain open.

@@ -6510,3 +6510,11 @@ alongside the compiler installation and configuration qualification work.
 
 Default and X86-only codegen_test runs pass; these exercise compilation and ELF
 architecture checks, not audit or DTrace delivery. Prior observability gaps remain.
+
+### Compiler SDK execution and installation candidate (2026-10-29)
+
+Both maintained C/C++ static link/run tests pass using declared compiler and staged
+SDK inputs. PIE omission corrected in runtime and installed driver targets.
+Installed ELF protections and 15 archive records inspected; source manual/script
+payloads checked. This does not qualify audit/DTrace delivery, dynamic runtime,
+resource-header installation, fresh Make parity or whole-system behavior.

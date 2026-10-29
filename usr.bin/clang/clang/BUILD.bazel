@@ -4,18 +4,18 @@ load("//tools/build/bazel:bsd_llvm_targets.bzl", "bsd_llvm_targets")
 load("//tools/build/bazel:bsd_clang_defaults.bzl", "bsd_clang_defaults")
 bsd_llvm_targets(name = "registered_targets")
 bsd_clang_defaults(name = "compiler_defaults")
-cc_binary(
-    name = "clang",
+[cc_binary(
+    name = name,
     srcs = ["clang-driver.cpp"] + ["//contrib/llvm-project/clang/tools/driver:" + f for f in ["cc1_main.cpp", "cc1as_main.cpp", "cc1gen_reproducer_main.cpp", "driver.cpp"]],
-    deps = ["//lib/clang/libllvm:directive_headers", "//lib/clang/libllvm:intrinsic_headers", "//lib/clang/libllvm:ir_generated_headers", "//lib/clang/libllvm:target_definition_headers", ":registered_targets", ":compiler_defaults", "//contrib/llvm-project/clang/include:headers", "//contrib/llvm-project/libcxx/include:headers", "//usr.bin/clang/llvm-min-tblgen:value_type_headers", "//lib/libc:shared_link_interface", "//lib/clang/libclang:clang", "//lib/clang/libllvm:llvm", "//lib/libz:z", "//lib/libzstd:zstd", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/libexecinfo:execinfo", "//lib/ncurses/ncurses:ncurses", "//lib/libthr:thr"],
-    dynamic_deps = ["//lib/clang/libclang:clang_shared", "//lib/clang/libllvm:llvm_shared", "//lib/libz:z_shared", "//lib/libzstd:zstd_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libexecinfo:execinfo_shared", "//lib/libelf:elf_shared", "//lib/ncurses/ncurses:ncurses_shared", "//lib/libthr:thr_shared"],
-    copts = ["-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
+    deps = ["//lib/clang/libllvm:directive_headers", "//lib/clang/libllvm:intrinsic_headers", "//lib/clang/libllvm:ir_generated_headers", "//lib/clang/libllvm:target_definition_headers", ":registered_targets", ":compiler_defaults", "//contrib/llvm-project/clang/include:headers", "//contrib/llvm-project/libcxx/include:headers", "//usr.bin/clang/llvm-min-tblgen:value_type_headers", "//lib/clang/libclang:clang", "//lib/clang/libllvm:llvm", "//lib/libz:z", "//lib/libzstd:zstd", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/libexecinfo:execinfo", "//lib/ncurses/ncurses:ncurses", "//lib/libthr:thr"] + (["//lib/libc:shared_link_interface"] if runtime else []),
+    dynamic_deps = ["//lib/clang/libclang:clang_shared", "//lib/clang/libllvm:llvm_shared", "//lib/libz:z_shared", "//lib/libzstd:zstd_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libexecinfo:execinfo_shared", "//lib/ncurses/ncurses:ncurses_shared", "//lib/libthr:thr_shared"] + (["//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/libelf:elf_shared"] if runtime else []),
+    copts = ["-fPIE", "-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
     local_defines = select({"//tools/build/bazel/config:clang_full_enabled": ["CLANG_ENABLE_STATIC_ANALYZER"], "//conditions:default": []}) + ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}),
-    features = ["bsd_test_runtime_paths"],
-    linkopts = ["-Wl,--gc-sections"],
+    features = ["bsd_test_runtime_paths"] if runtime else [],
+    linkopts = ["-pie", "-Wl,--gc-sections"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//visibility:public"],
-)
+) for name, runtime in [("clang", True), ("clang_installed", False)]]
 
 # Exercise the produced compiler, including object architecture, through bazel test.
 cc_test(name = "codegen_test", srcs = ["codegen_test.c"],
@@ -31,3 +31,19 @@ cc_test(name = "codegen_test", srcs = ["codegen_test.c"],
     linkopts = ["-static"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_compiler_probe.bzl", "bsd_compiler_probe")
+load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
+[bsd_compiler_probe(name = "sdk_" + language + "_probe",
+    compiler = ":clang", linker = "@bsd_sdk//toolchain:bin/ld.lld",
+    sdk = ["@bsd_sdk//toolchain:compile_inputs", "@bsd_sdk//toolchain:link_inputs"], src = "sdk_probe." + language,
+    cxx = language == "cc",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+) for language in ["c", "cc"]]
+[bsd_program_test(name = "sdk_" + language + "_test", program = ":sdk_" + language + "_probe",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+) for language in ["c", "cc"]]
+
+load(":installation.bzl", "clang_installation")
+clang_installation(binary = ":clang_installed")
