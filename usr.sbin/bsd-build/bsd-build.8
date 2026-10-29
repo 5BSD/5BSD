@@ -4047,3 +4047,15 @@ compile, link and execute static C/C++ probes with native Clang and LLD using
 full LTO or ThinLTO. Select these labels in both targets and tests.
 These single-translation-unit checks use the selected staged SDK; they do not
 qualify inter-module optimization, ThinLTO caches or independent bootstrap.
+
+.Pp
+The native archiver targets
+.Cm //usr.bin/clang/llvm-ar:llvm-ar
+and
+.Cm //usr.bin/clang/llvm-ar:llvm_ar_installed
+provide build-tree runtime and installed candidates for the default shared LLVM
+configuration on amd64 FreeBSD.
+.Cm //usr.bin/clang/llvm-ar:install_archive
+contains llvm-ar, its debug file, the llvm-ranlib binary hardlink and both distinct
+manual pages. Static LLVM library linking and cross-host variants remain outside
+this qualification. Building the archive does not install it on the host.

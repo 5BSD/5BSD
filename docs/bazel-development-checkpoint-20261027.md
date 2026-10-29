@@ -13424,3 +13424,31 @@ Frontend review: build-bsd.c and the format-5 source_graph.py backend already ca
 explicit targets/tests; no new frontend option is required. Manual documents all
 four test labels. Independent bootstrap, complete system/package/runtime/cache and
 performance gates remain open. Make remains production/default; no host install.
+
+### Native llvm-ar and llvm-ranlib candidate (2026-10-29)
+
+Added explicit llvm-ar-driver.cpp and upstream llvm-ar.cpp native targets, sharing
+one object library between runtime and installed variants. Uses native LLVM target
+registration/defaults, private LLVM and declared runtime dependencies. The current
+candidate supports the default shared-library configuration on amd64 FreeBSD;
+LLVM_LINK_STATIC_LIBRARIES and cross-host variants are not qualified.
+Runs bazel-llvm-ar-native-20261029 and bazel-llvm-ar-install-20261029 under
+/usr/obj/usr/src pass. Fresh Make reference builds both sources, links and installs
+using the pre-existing SDK/private LLVM library. Global/weak ELF records match
+with no additions/removals. All five payload records match installation ownership,
+modes, tags and hardlinks; both compressed manuals match byte-for-byte and debuglink
+CRC is valid. llvm-ranlib is a binary hardlink with its own distinct manual payload.
+
+Diagnostic runtime checks exercise create/list, deterministic timestamps, ranlib
+argv0 dispatch, native LLD relocatable-link resolution of an archive member,
+byte-identical extraction and deletion. Runtime executable digest is checked
+against its saved artifact receipt. Native Clang and LLD build-tree tools supply
+the fixture; PATH is /nonexistent, with absolute readelf for symbol inspection.
+These are not yet maintained Bazel archive-operation tests. Reports and scripts:
+/usr/obj/usr/src/bazel-llvm-ar-reference-qualification-20261029.
+
+Frontend review: existing build-bsd.c and format-5 source_graph.py support the
+explicit runtime/installed/inventory/archive targets; manual records the scope.
+No host installation or publication. Independent bootstrap, complete system,
+configuration coverage, cache and performance qualification remain open.
+Make remains production/default.
