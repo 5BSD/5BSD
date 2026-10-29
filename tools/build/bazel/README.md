@@ -34770,3 +34770,32 @@ Frontend review: existing format-5 target capture and metadata output groups
 cover these targets, with no C/protocol change needed. /usr/bin parent assembly,
 remaining utilities, runtime and performance qualification are still open; Make
 remains production/default and ports retain Make.
+
+### 2026-10-29 newgrp and passwd native installation
+
+Added native newgrp (crypt/util) and passwd (PAM) build/install targets. Preserved
+passwd's 4555/schg installation metadata and NIS-selected yppasswd symlink/manual
+hardlink. Added explicit enable_suid_newgrp boolean (default false), matching
+Make's ENABLE_SUID_NEWGRP opt-in: default 0555/no flag, enabled 4555/schg.
+No production source change. Installation is staged, never applied to the host.
+Make's beforeinstall removal of old immutable flags is not performed by archive
+construction; actual upgrade/install application remains a separate gate.
+
+Maintained frontend builds, 16 jobs, under /usr/obj/usr/src:
+- bazel-account-utils-20261029-r2: default; five metadata records and one exact
+  manual payload per utility, valid debug pairs, matching global/undefined symbols
+  and dynamic interfaces.
+- bazel-account-utils-options-20261029: NIS and setuid newgrp enabled; five/seven
+  metadata records for newgrp/passwd, exact manual payloads, symlink target and
+  manual hardlink identity, plus the same ELF/debug checks against fresh Make.
+Scripts: bazel-account-utils-qualification-20261029. Fresh references:
+bazel-{newgrp,passwd}-{native,options}-reference-20261029. Initial failed build
+is retained: conditional manual aliases cannot be passed to the utility macro's
+static alias parameter; explicit conditional link entries use the existing
+chpass pattern without broadening the shared macro.
+
+Frontend review: existing format-5 typed settings accept enable_suid_newgrp and
+NIS; normal target/artifact handling was exercised, no C/protocol change needed.
+No authentication, password modification or group switching was executed. Runtime
+PAM/audit/credential semantics, actual upgrade handling and complete /usr/bin
+integration remain unqualified. Make remains production/default.

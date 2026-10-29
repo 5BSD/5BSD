@@ -5702,3 +5702,11 @@ unqualified. Current evidence covers installation and ELF interfaces only.
 Script bodies and lorder test assertions are installed unchanged. No probes or
 audit hooks added or removed. ssh-copy-id's remote authentication/key-installation
 behavior was not exercised; installed byte equality is not runtime qualification.
+
+### 2026-10-29 newgrp/passwd
+
+No explicit SDT/DTRACE/audit references found in these command sources; passwd
+includes syslog.h and delegates authentication/password changes through PAM.
+That scan does not determine kernel or PAM audit coverage. Preserve sources and
+review authentication success/failure audit behavior during VM qualification.
+No runtime authentication or credential operation was performed in this batch.

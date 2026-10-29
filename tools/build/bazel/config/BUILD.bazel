@@ -366,3 +366,7 @@ config_setting(name = "veriexec_requested", flag_values = {":veriexec": "yes"})
 config_setting(name = "veriexec_default", flag_values = {":veriexec": "auto", ":bearssl": "true"})
 selects.config_setting_group(name = "veriexec_enabled", match_any = [":veriexec_requested", ":veriexec_default"], visibility = ["//visibility:public"])
 selects.config_setting_group(name = "ip_enabled", match_any = [":inet_support_enabled", ":inet6_support_enabled"], visibility = ["//visibility:public"])
+
+# Make ENABLE_SUID_NEWGRP is an explicit opt-in.
+bool_flag(name = "enable_suid_newgrp", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "suid_newgrp_enabled", flag_values = {":enable_suid_newgrp": "true"}, visibility = ["//visibility:public"])

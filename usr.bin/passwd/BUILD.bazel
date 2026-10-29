@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = 'passwd', srcs = ['passwd.c'], deps = ['//lib/libpam/libpam:pam'], dynamic_deps = ['//lib/libpam/libpam:pam_shared'], copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")
+_NIS = "//tools/build/bazel/config:nis_enabled"
+bsd_install_link(name = "yp_command", destination = "/usr/bin/yppasswd", target = "passwd", kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=runtime"])
+bsd_install_link(name = "yp_manual", destination = "/usr/share/man/man1/yppasswd.1.gz", target = "/usr/share/man/man1/passwd.1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
+utility_installation(name = "install_manifest", program = 'passwd', manual = 'passwd.1', package = 'runtime', bindir = "/usr/bin", binary_mode = "4555", binary_flags = "schg", extra_entries = select({_NIS: [":yp_command", ":yp_manual"], "//conditions:default": []}))
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
