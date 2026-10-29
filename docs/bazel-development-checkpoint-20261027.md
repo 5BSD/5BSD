@@ -10486,3 +10486,34 @@ from these checks. No network/interface mutation or host installation occurred.
 Frontend review: the existing format-5 target/artifact pathway supports this
 program without a C/protocol/manual change. Make remains production/default;
 whole-world/kernel/pkgbase and runtime qualification remain incomplete.
+
+### 2026-10-29 iscsictl and internal iscsiutil native integration
+
+Added native iscsictl, its declared yacc source/header/report and case-insensitive
+lex generation, both maintained manuals, and iscsi package ownership. Added the
+seven-source internal libiscsiutil with regular/PIE variants and explicit iSCSI
+protocol/ioctl headers. No installed shared library is introduced. Existing
+kernel-interface generation in sys/dev/iscsi is preserved.
+
+First build bazel-iscsictl-20261029 found the missing PIE variant at link time.
+The fresh Make link explicitly uses libiscsiutil_pie.a; native iscsictl now uses
+the separately declared iscsiutil_pie variant (-fPIE and PIC). Successful frontend
+run /usr/obj/usr/src/bazel-iscsictl-20261029-r2 used 16 jobs. Fresh rootless Make
+reference: bazel-iscsictl-native-reference-20261029. Scripts and retained generated
+outputs: bazel-iscsictl-qualification-20261029. Installation comparison passes six
+metadata records, exact compressed bytes for both manuals, valid debug linkage,
+matching global/undefined symbols and dynamic dependencies (libc, md, util, xo).
+The library PIE consumer is qualified at this level; independent regular/archive
+variant parity and full library runtime coverage are not established here.
+
+Complete parse.c, token.c and y.tab.h comparisons pass with only explicitly
+listed #line filename aliases normalized; line numbers and all other contents
+remain compared. y.tab.h is byte-identical. generated-parity.json retains hashes
+and scope. Both generators emit the maintained undefined-PCP grammar warning;
+no grammar correction or suppression was introduced as part of migration.
+
+No live iSCSI/CAM/session operations were performed. Authentication, session
+management, config error paths and runtime/performance qualification remain open.
+Frontend review: existing format-5 target/artifact pathway and declared generator
+rules support this integration without build-bsd C/protocol/manual changes.
+Make remains production/default; whole-system completion is not claimed.

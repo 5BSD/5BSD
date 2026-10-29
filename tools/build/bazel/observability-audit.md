@@ -5807,3 +5807,12 @@ qualification should check authorization and syscall audit behavior without
 logging private keys. No migration-only instrumentation was added. Build and
 installation parity do not qualify live interface changes, peer handshakes,
 cryptographic vectors, credential boundaries or observability of updates.
+
+### 2026-10-29 iscsictl / libiscsiutil
+
+Migration retains libiscsiutil syslog handling, CHAP processing and iscsictl's
+CAM/iSCSI ioctls. Focused inspection found no direct DTrace/SDT or audit submission
+hooks. Session creation/modification/removal, credential handling and module/device
+access need VM qualification and audit review. Existing logging is not proof of
+security audit coverage; secrets must not be added to instrumentation. No live
+sessions, device operations or source instrumentation changes occurred here.
