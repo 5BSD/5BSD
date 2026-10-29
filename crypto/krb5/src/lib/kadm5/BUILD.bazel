@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['alt_prof.c', 'chpass_util.c', 'logger.c', 'kadm_rpc_xdr.c', 'misc_free.c', 'str_conv.c', 'clnt/client_init.c', 'clnt/client_principal.c', 'clnt/client_rpc.c', 'clnt/clnt_chpass_util.c', 'clnt/clnt_policy.c', 'clnt/clnt_privs.c', 'kadm_err.et', 'chpass_util_strings.et', 'admin.h'])
+cc_library(name = "headers",
+    hdrs = ["admin.h", "admin_internal.h", "admin_xdr.h", "kadm_rpc.h", "server_internal.h", "clnt/client_internal.h"],
+    includes = ["."], strip_include_prefix = ".", include_prefix = "kadm5",
+    deps = ["//crypto/krb5/src/include:server_headers", "//crypto/krb5/src/include:database_headers", "//krb5/lib/kadm5clnt:error_headers"],
+    visibility = ["//krb5:__subpackages__"])

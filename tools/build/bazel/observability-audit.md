@@ -6808,3 +6808,11 @@ audit submission calls. Review backend load/failure, update-log operations and
 key mutation visibility with the KDC/kadmin consumers. The string-attribute unit
 test covers in-memory entry operations; it does not establish backend, update-log,
 replication or authentication-audit correctness. No probes were added here.
+
+### MIT administration client library (2026-10-29)
+
+The migrated common/client C sources contain no explicit DTrace provider or
+audit submission calls. Existing logger.c behavior is carried forward. Review
+RPC/authentication failures and administrative operations jointly with kadmind;
+do not confuse client logging with authoritative server-side security auditing.
+Only build/install artifact comparisons were performed for this component.

@@ -14600,3 +14600,33 @@ Frontend review: build-bsd.c and format-5 source_graph.py already support these
 explicit target/test labels; no frontend/schema change. Documentation and
 observability audit updated. Make stays production/default. No host installation,
 publication or reboot; complete-system qualification remains open.
+
+### Native Kerberos administration client library (2026-10-29)
+
+Added libkadm5clnt_mit with twelve maintained C sources and two declared vendor
+error-table generators. Header dependencies include the generated public error
+interfaces, RPC, database and administration interfaces. The native profile
+archive is a private static dependency preceding shared Kerberos libraries.
+Installed outputs include admin.h, both generated error headers, kadm-client.pc,
+static/shared/debug libraries and the compatibility libkadm5clnt.so symlink.
+
+Initial artifact comparison caught error-table objects placed after client
+objects; corrected the declared source ordering to match Make. A subsequent
+comparison caught the compatibility symlink metadata: Make records mode 0444
+for that afterinstall link, versus 0755 for the standard library symlink. Both
+are now represented explicitly. No comparison gate was relaxed for these fixes.
+
+Final run bazel-kadm-client-20261029-r3 matches fresh Make reference
+bazel-kadm-client-make-20261029: eleven installation records, fourteen ordered
+archive members, 410 static and 302 shared/debug global/weak symbol records,
+dynamic metadata, debuglink CRC, ownership/modes/tags and both symlinks.
+admin.h and kadm-client.pc match bytewise. The two generated installed headers
+match except for their exact output-filename comments, separately asserted by
+the verifier. Evidence: /usr/obj/usr/src/bazel-kadm-client-reference-20261029.
+This is artifact/install qualification only; no realm, authentication, remote
+administration or password-changing operation was executed.
+
+Reviewed build-bsd.c and format-5 source_graph.py: existing explicit target
+inputs cover this archive without a frontend/schema change. Prepared SDK and
+host dependencies remain. Make remains production/default. No host installation,
+publication or reboot; whole-system and performance gates remain open.
