@@ -7102,3 +7102,7 @@ component Makefile declares no DTrace provider. The migration preserves source
 behavior and does not add audit policy. SNMP network operations, authentication,
 error paths and daemon-level observability remain runtime qualification work;
 archive/DSO parity establishes none of those behaviors.
+
+The maintained libbsnmp malformed-ASN.1 regression now passes through Bazel ATF
+with and without OpenSSL. This checks a parser error return only; it supplies no
+new evidence for SNMP daemon/network logging, probes or audit delivery.

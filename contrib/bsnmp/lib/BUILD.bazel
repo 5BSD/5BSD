@@ -4,3 +4,7 @@ cc_library(name = "headers", hdrs = ["asn1.h", "snmp.h", "snmpagent.h", "snmpcli
     strip_include_prefix = ".", visibility = ["//usr.sbin/bsnmpd:__subpackages__", "//lib/libbsnmp:__subpackages__"])
 exports_files(["asn1.c", "snmp.c", "snmpagent.c", "snmpclient.c", "snmpcrypto.c", "support.c", "tc.def", "asn1.3", "bsnmpagent.3", "bsnmpclient.3", "bsnmplib.3"],
     visibility = ["//lib/libbsnmp:__subpackages__"])
+
+# Match the installed public include namespace for native consumers.
+cc_library(name = "public_headers", hdrs = ["asn1.h", "snmp.h", "snmpagent.h", "snmpclient.h"],
+    strip_include_prefix = ".", include_prefix = "bsnmp", visibility = ["//visibility:public"])

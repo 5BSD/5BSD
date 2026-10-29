@@ -40435,3 +40435,28 @@ installation/public-header/manual metadata, generator mutation/cache checks,
 network/SNMP service behavior and full-system qualification. Reviewed frontend
 and source_graph contracts; existing explicit targets suffice without changes.
 Make remains production/default; no host installation or service changes occurred.
+
+### libbsnmp maintained regression and OpenSSL-disabled variant (2026-10-29)
+
+Added the unchanged bsnmpd_test.c as a native executable and its maintained
+sa_19_20_bsnmp_test case through the existing Bazel ATF adapter. Public headers
+now expose the installed bsnmp/ include namespace. Runtime inputs explicitly
+include native libbsnmp/ATF, native libcrypto when enabled, and SDK libc/libsys/
+libthr as needed; this does not claim an entirely native runtime bootstrap.
+
+Both bazel-libbsnmp-runtime-20261029 and bazel-libbsnmp-noopenssl-20261029 pass,
+with one reported passing case each. The regression checks ASN_ERR_EOBUF for a
+malformed two-byte ASN.1 header. It does not exercise SNMP sockets, authentication,
+cryptography, service setup or the complete parser input space.
+
+The no-OpenSSL library also matches a fresh WITHOUT_OPENSSL Make build: generated
+header bytes, six-member archive order/global/weak symbols and shared-library
+symbols/ordered dynamic metadata. No crypto dependency remains in that variant.
+Evidence: /usr/obj/usr/src/bazel-libbsnmp-reference-20261029/
+verify-noopenssl.py, noopenssl-comparison.json and both runs' receipts/test reports.
+
+Complete library/test installation aggregation and generator cache/mutation
+qualification remain next, alongside the overall world/kernel/pkgbase/bootstrap
+and performance gates. Reviewed build-bsd.c and source_graph.py; existing explicit
+target/test lists and ATF reporting support this without frontend changes.
+Make remains production/default. No host installation or service changes.
