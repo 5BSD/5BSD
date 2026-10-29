@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libclang_rt:runtime.bzl", "compiler_rt_archive")
+
+compiler_rt_archive(
+    stem = "safestack",
+    cxx_srcs = [
+        "//contrib/llvm-project/compiler-rt/lib/interception:interception_linux.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/interception:interception_type_test.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/safestack:safestack.cpp",
+    ],
+    deps = ["//contrib/llvm-project/compiler-rt/lib/interception:headers", "//contrib/llvm-project/compiler-rt/lib/safestack:headers"],
+)

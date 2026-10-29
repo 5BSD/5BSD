@@ -14094,3 +14094,27 @@ The prepared SDK compiler/system libraries and host kernel/rtld are still used.
 No host installation or publication. Frontend review: build-bsd.c and format-5
 source_graph.py already accept the explicit target/test list, so no CLI/schema
 change is required. Make remains production/default.
+
+### SafeStack, statistics and CFI archive candidates (2026-10-29)
+
+Added explicit native amd64 archive/source/install targets for safestack (three
+sources), stats (44), cfi (31) and cfi_diag (54). CFI also installs its maintained
+ignorelist and package-tagged parent directory. Source lists were reviewed
+against their Makefiles; production Bazel targets do not query Make. They use
+the shared compiler-runtime flags and declared source/header dependencies.
+
+The maintained frontend build bazel-runtime-batch-20261029 passed. This run
+selected no runtime tests and does not establish instrumentation behavior.
+Fresh Make comparisons pass and are recorded in
+/usr/obj/usr/src/bazel-runtime-batch-reference-20261029: SafeStack three archive
+members/47 global+weak symbol records; stats 44/1837; CFI 31/1308; diagnostic CFI
+54/2174. All six installation records match owner/group/mode/tags, and the CFI
+ignorelist bytes match. Runtime coverage needed:
+SafeStack main/thread stack placement and cleanup; statistics collection/output;
+CFI valid/invalid indirect calls, diagnostic mode and shared-library behavior.
+Other architectures, bootstrap, world/kernel/pkgbase and performance remain open.
+
+Frontend review: build-bsd.c forwards the format-5 input target list to the
+maintained backend, which accepts these targets without new CLI/schema inputs.
+Prepared SDK dependencies remain, and Make stays production/default. No host
+installation/publication or production observability changes.

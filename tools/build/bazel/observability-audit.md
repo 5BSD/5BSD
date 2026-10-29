@@ -6683,3 +6683,10 @@ The native main/C++ archives preserve the maintained source inventories. The
 runtime test checks actual C signed-overflow diagnostics, not replacement
 handlers. C++ type checks and broader handler coverage remain open; no production
 DTrace/audit instrumentation was added or removed.
+
+### SafeStack/statistics/CFI archives (2026-10-29)
+
+Native source inventories preserve the maintained runtime implementations. No
+DTrace/audit instrumentation was added or removed. Statistics reporting and CFI
+diagnostics require real instrumented consumers before runtime claims; SafeStack
+requires main/thread unsafe-stack placement and lifecycle checks.

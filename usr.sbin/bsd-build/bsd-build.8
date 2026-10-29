@@ -4233,3 +4233,10 @@ checks clean execution and a signed-overflow diagnostic/nonzero exit using real
 compiler instrumentation and the explicitly linked native standalone archive.
 C++ type checks and broader handler coverage remain unqualified; the prepared
 SDK compiler/system libraries and host kernel/rtld remain in use.
+
+.Pp
+The lib/libclang_rt/safestack, stats, cfi and cfi_diag packages expose native
+amd64 static_archive, source_inventory and install_archive targets. CFI includes
+its maintained ignorelist. Build success for these targets does not establish
+SafeStack thread behavior, statistics reporting or CFI enforcement; those need
+instrumented runtime qualification. No new frontend input schema is required.
