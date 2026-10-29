@@ -9972,3 +9972,38 @@ Frontend review: existing format-5 typed build-settings and metadata output grou
 cover the aggregate without C/protocol changes. Make remains production/default.
 
 Tests-enabled inventory: 81 archives, 243 artifacts, 988 distinct non-directory paths; no duplicate payload paths.
+
+### 2026-10-29 recursive /sbin Make parity
+
+Fresh recursive rootless Make builds and installation comparisons now pass for
+both test configurations. Tests disabled: 377 distinct metadata records, 152
+non-ELF payloads and 78 executable/module split-debug pairs. Tests enabled:
+1048 metadata records, 774 non-ELF payloads and 85 split-debug pairs. Metadata
+covers paths, types, owner/group, mode, package tags and flags; non-ELF bytes,
+symlinks and Make hardlink inode identity are checked. ELF checks validate debug
+linkage, global/undefined symbols and NEEDED/RPATH/RUNPATH/SONAME; they do not
+establish complete instruction equivalence or runtime behavior.
+
+Real discrepancies fixed without weakening comparisons:
+- devfs configuration directory package ownership for /etc/defaults;
+- NVMe program/module debug directory package ownership;
+- bectl/zfsbootcfg debug directory package ownership;
+- dhclient test debug parent directory missing dbg tag;
+- mdconfig redundant direct libbsdxml/libsbuf dependencies (libgeom retains its
+  own declared dependencies; Make LIBADD is util geom).
+
+Evidence roots under /usr/obj/usr/src:
+- bazel-sbin-recursive-reference-20261029 and
+  bazel-sbin-recursive-tests-reference-20261029: fresh Make stages and time -l logs.
+- bazel-sbin-aggregate-20261029-r3 and
+  bazel-sbin-aggregate-tests-20261029-r3: final maintained frontend artifacts.
+- bazel-sbin-recursive-qualification-20261029: scripts, original failing reports,
+  r3-installation-parity.json, r3-elf-parity.json,
+  tests-r3-installation-parity.json and tests-r3-elf-parity.json.
+
+No host installation or privileged tests performed. Resource logs are retained
+but not a controlled Make/Bazel performance comparison. Option-selection matrix,
+veriexec policy input variants, matching-kernel runtime tests, complete world,
+kernel, pkgbase publication and performance gates remain. Existing format-5
+frontend target/metadata handling covered these corrections; no C/protocol change
+required. Make remains production/default; BIP remains excluded.

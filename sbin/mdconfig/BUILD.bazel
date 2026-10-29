@@ -2,7 +2,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 cc_binary(name = "mdconfig", srcs = ["mdconfig.c"], deps = ["//lib/libutil:util", "//lib/libgeom:geom"],
-    dynamic_deps = ["//lib/libutil:util_shared", "//lib/libgeom:geom_shared", "//lib/libexpat:bsdxml_shared", "//lib/libsbuf:sbuf_shared"],
+    dynamic_deps = ["//lib/libutil:util_shared", "//lib/libgeom:geom_shared"],
     copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = "mdconfig", manual = "mdconfig.8", package = "runtime", bindir = "/sbin", man_section = "8")

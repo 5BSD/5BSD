@@ -5681,3 +5681,10 @@ DTrace-disabled output has no DOF. No live probe firing or audit runtime claim.
 No production source or probe/audit declaration changed. Casper selection now
 matches Make's optional capability-service integration. ELF parity verifies the
 selected dependency interface, not live capability-service or audit behavior.
+
+### 2026-10-29 recursive /sbin parity fixes
+
+No production sources or probe definitions changed. mdconfig drops redundant
+direct libbsdxml/libsbuf linkage while preserving libgeom's own dependency graph.
+Installation and ELF interface checks do not establish live tracing, audit,
+device-management, network or ZFS behavior. Those runtime gates remain open.
