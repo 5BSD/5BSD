@@ -12057,3 +12057,28 @@ maintained backend rule and manual together. Eight qualified default Clang
 components now cover 505 sources. Remaining compiler components/linkage and
 world/kernel/pkgbase/bootstrap/runtime/cache/performance gates remain open.
 Make remains production/default. No host installation or publication occurred.
+
+### 2026-10-29 native Clang Frontend
+
+Added all 38 maintained Frontend sources, including six Rewrite sources, as a
+native component with private headers, generated definitions and declared
+compiler defaults. FrontendActions consumes LLVM_HOST_TRIPLE; it uses the same
+configuration provider as Driver. Updated the manual to describe both consumers.
+No compiler sources or source-selection behavior were changed.
+
+Maintained frontend bazel-clang-frontend-20261029 (16 jobs) succeeds. All 38 PIC
+object global/undefined symbol inventories match fresh isolated Make objects.
+Source-to-object correspondence comes from recorded compile actions, preserving
+both FrontendActions.cpp sources in different directories; archive member
+multiplicities also match. Evidence/scripts:
+/usr/obj/usr/src/bazel-clang-frontend-qualification-20261029.
+Reference uses existing bootstrap generators and staged SDK headers. This does
+not qualify compiler invocation, diagnostics, module loading, instruction identity,
+complete compiler linkage, alternate settings or performance.
+
+Frontend review: existing typed format-5 inputs and native component/object backend
+cover this addition; no build-bsd.c interface change needed. Nine qualified default
+Clang components now cover 543 sources. FrontendTool and other remaining Clang/LLVM
+components, compiler linkage and world/kernel/pkgbase/bootstrap/runtime/cache/
+performance gates remain open. Make remains production/default. No host
+installation or publication occurred.
