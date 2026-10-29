@@ -35448,3 +35448,38 @@ already cover these ordinary configurations; no build-bsd C, backend, signing,
 staging or manual change is needed. The optional SOCKS mode is not represented
 as qualified. Whole-world/kernel/bootstrap/pkgbase and performance gates remain
 open; Make stays production/default.
+
+### 2026-10-29 fortune group and declared index generation
+
+Added native fortune, strfile and unstr with shared strfile.h, fortune DEBUG
+configuration, maintained manuals and the unstr.8 manual alias. Aggregate
+installation includes both freebsd-tips and 5bsd-tips and their generated
+indexes. fortune_database is a declared action: source input, output, explicit
+-C s flags (-Cs), LC_ALL=C, no shell/PATH discovery, and strfile selected in the
+execution configuration. Index format is emitted by the maintained strfile.
+No production sources or data were rewritten.
+
+Initial analysis caught a header provider incorrectly listed in dynamic_deps;
+corrected it to the ordinary header dependency. First installation comparison
+caught missing package ownership of /usr/share/games/fortune; added that record
+without weakening the comparator. Final maintained frontend run
+/usr/obj/usr/src/bazel-fortune-20261029-r3 (16 jobs) matches recursive rootless
+Make reference bazel-fortune-reference-20261029: 16 distinct metadata records,
+seven exact nonbinary payloads (including both generated indexes), and three
+valid ELF/debug pairs with matching global/undefined symbols/dynamic fields.
+
+Evidence lives in bazel-fortune-qualification-20261029. r2-installation-parity
+retains the directory mismatch; r3 reports establish the corrected result.
+An evidence-script stale artifact path was corrected before ELF comparison.
+Make's maintained index rule searches PATH, so fresh-index.py additionally
+invokes the freshly built reference strfile by absolute path with
+PATH=/nonexistent and confirms both index bytes against the compared installed
+payloads; fresh-index-parity.json records commands and hashes. This avoids
+attributing host-tool output to the new reference generator.
+
+Frontend review: existing format-5 targets/artifacts and execution-toolchain
+selection cover this group; no build-bsd C/backend/manual change is required.
+No host installation/publication occurred. Random selection, regex, locale,
+malformed databases, cross-host generator behavior and comparative performance
+remain runtime/configuration coverage gaps. These component comparisons do not
+qualify complete world/kernel/pkgbase; Make remains production/default.

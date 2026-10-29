@@ -5872,3 +5872,12 @@ maintained sources and FTP IPv6 configuration without adding/removing probes.
 Network transactions, credentials, transfers, proxy/active/passive paths and
 WHOIS referrals remain runtime coverage gaps. Any new audit policy needs a
 separate behavioral/security review, not inferred from build/install parity.
+
+### 2026-10-29 fortune group
+
+Fortune, strfile and unstr retain their maintained source and shared format
+header. Focused source inspection found no explicit DTrace/SDT/audit-submit
+integration to carry forward. Exact installed tip/index bytes and three ELF
+pairs are compared; random choice, regex/locale behavior and malformed database
+handling remain runtime coverage gaps. Index generation executes the declared
+native strfile; it does not substitute a synthetic database or host PATH tool.
