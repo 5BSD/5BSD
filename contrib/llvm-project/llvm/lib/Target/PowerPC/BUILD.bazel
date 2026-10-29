@@ -38,3 +38,75 @@ filegroup(name = "definitions", srcs = [
     "PPCScheduleP8.td",
     "PPCScheduleP9.td"
 ], visibility = ["//lib/clang/libllvm:__pkg__"])
+
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Native component of libllvm; not an additional installed library.
+cc_library(name = "powerpc", srcs = [
+    "AsmParser/PPCAsmParser.cpp",
+    "Disassembler/PPCDisassembler.cpp",
+    "GISel/PPCCallLowering.cpp",
+    "GISel/PPCInstructionSelector.cpp",
+    "GISel/PPCLegalizerInfo.cpp",
+    "GISel/PPCRegisterBankInfo.cpp",
+    "MCTargetDesc/PPCAsmBackend.cpp",
+    "MCTargetDesc/PPCELFObjectWriter.cpp",
+    "MCTargetDesc/PPCELFStreamer.cpp",
+    "MCTargetDesc/PPCInstPrinter.cpp",
+    "MCTargetDesc/PPCMCAsmInfo.cpp",
+    "MCTargetDesc/PPCMCCodeEmitter.cpp",
+    "MCTargetDesc/PPCMCTargetDesc.cpp",
+    "MCTargetDesc/PPCPredicates.cpp",
+    "MCTargetDesc/PPCXCOFFObjectWriter.cpp",
+    "MCTargetDesc/PPCXCOFFStreamer.cpp",
+    "PPCAsmPrinter.cpp",
+    "PPCBoolRetToInt.cpp",
+    "PPCBranchCoalescing.cpp",
+    "PPCBranchSelector.cpp",
+    "PPCCCState.cpp",
+    "PPCCTRLoops.cpp",
+    "PPCCTRLoopsVerify.cpp",
+    "PPCCallingConv.cpp",
+    "PPCEarlyReturn.cpp",
+    "PPCExpandAtomicPseudoInsts.cpp",
+    "PPCFastISel.cpp",
+    "PPCFrameLowering.cpp",
+    "PPCGenScalarMASSEntries.cpp",
+    "PPCHazardRecognizers.cpp",
+    "PPCISelDAGToDAG.cpp",
+    "PPCISelLowering.cpp",
+    "PPCInstrInfo.cpp",
+    "PPCLoopInstrFormPrep.cpp",
+    "PPCLowerMASSVEntries.cpp",
+    "PPCMCInstLower.cpp",
+    "PPCMIPeephole.cpp",
+    "PPCMachineFunctionInfo.cpp",
+    "PPCMachineScheduler.cpp",
+    "PPCMacroFusion.cpp",
+    "PPCPreEmitPeephole.cpp",
+    "PPCReduceCRLogicals.cpp",
+    "PPCRegisterInfo.cpp",
+    "PPCSelectionDAGInfo.cpp",
+    "PPCSubtarget.cpp",
+    "PPCTLSDynamicCall.cpp",
+    "PPCTOCRegDeps.cpp",
+    "PPCTargetMachine.cpp",
+    "PPCTargetObjectFile.cpp",
+    "PPCTargetTransformInfo.cpp",
+    "PPCVSXCopy.cpp",
+    "PPCVSXFMAMutate.cpp",
+    "PPCVSXSwapRemoval.cpp",
+    "TargetInfo/PowerPCTargetInfo.cpp"
+], hdrs = glob(["**/*.h", "**/*.def"]), includes = ["."],
+    deps = ["//lib/clang/libllvm:powerpc_generated_headers","//usr.bin/clang/llvm-min-tblgen:value_type_headers", "//lib/clang/libllvm:intrinsic_headers", "//lib/clang/libllvm:ir_generated_headers", "//lib/clang/libllvm:target_definition_headers", "//lib/clang/libllvm:directive_headers", "//contrib/llvm-project/llvm/include:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    copts = ["-fvisibility=hidden", "-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections", "-UPIC"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
+    local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC", "LLVM_BUILD_LLVM_DYLIB"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}),
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({"//tools/build/bazel/config:llvm_target_powerpc_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}), visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = [":powerpc"], pic = True, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
+bsd_component_objects(name = "pic_objects", group = ":powerpc", pic = True, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_sources")
+bsd_component_sources(name = "source_inventory", groups = [":powerpc"], visibility = ["//visibility:public"])

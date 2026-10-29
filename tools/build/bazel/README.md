@@ -37535,3 +37535,26 @@ open. Frontend review: build-bsd.c/format-5 source_graph.py already accepts thes
 targets; no new input, staging, security or manual contract. Other backends and full
 world/kernel/pkgbase/runtime qualification remain open. Make stays production/default;
 no host installation/publication occurred.
+
+### PowerPC backend component (2026-10-29)
+
+Added native installed-world PowerPC cc_library for 54 explicit sources with declared
+private headers/.def files, qualified native generated-table dependencies and hidden
+symbol visibility. llvm_target_powerpc boolean defaults true for current native
+AMD64 world target-all selection; disabling makes explicit component incompatible.
+Aggregate target-all/registration and cross-platform defaults remain unfinished.
+
+Maintained frontend `/usr/obj/usr/src/bazel-llvm-powerpc-backend-20261029` succeeds
+with 16 jobs. All 54 PIC objects match fresh Make global/weak ELF symbol type, binding,
+visibility, defined/undefined state and name. Source inventories and archive member
+multiplicities match expanded Make. Evidence/scripts:
+`/usr/obj/usr/src/bazel-llvm-powerpc-backend-qualification-20261029`. Reference
+headers are generated before objects using existing bootstrap tools and staged SDK.
+No compiler source/sandbox changes.
+
+This builds an AMD64-hosted compiler component; it does not demonstrate PowerPC
+system builds, generated-code execution, full compiler linkage, independent bootstrap
+or comparative CPU/memory/disk performance. Other backends and world/kernel/pkgbase/
+runtime gates remain open. Frontend review: existing build-bsd.c/format-5 backend
+transports the new setting; manual updated. Make remains production/default.
+No host installation/publication occurred.

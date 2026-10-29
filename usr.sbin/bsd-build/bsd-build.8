@@ -3896,3 +3896,11 @@ which defaults to true to match the current world target-all selection.
 Disabling it makes the explicit ARM component incompatible. This selects a compiler
 backend; it does not select the host architecture or qualify an ARM system build.
 Aggregate target-all and cross-platform defaults remain unfinished.
+
+.Pp
+The native AMD64-hosted LLVM PowerPC component uses the boolean
+.Cm //tools/build/bazel/config:llvm_target_powerpc ,
+which defaults to true for the current world target-all selection. Disabling it
+makes the explicit component incompatible. This selects a compiler backend,
+not a PowerPC host or a qualified cross-system build. Aggregate target selection
+and cross-platform defaults remain unfinished.

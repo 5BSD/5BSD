@@ -6426,3 +6426,11 @@ generated ARM code still require runtime qualification. Evidence under
 12 generated tables match Make bytes. No source probes or audit hooks changed;
 backend diagnostics and generated-code execution/tracing remain unqualified.
 Evidence: `/usr/obj/usr/src/bazel-llvm-powerpc-tables-qualification-20261029`.
+
+### PowerPC backend (2026-10-29)
+
+54 backend objects preserve upstream sources and match Make ELF symbol type,
+binding, visibility and defined state. No added DTrace probes/audit hooks. Backend
+diagnostics, unwind/debug behavior and generated-code tracing/execution still need
+runtime qualification. Evidence:
+`/usr/obj/usr/src/bazel-llvm-powerpc-backend-qualification-20261029`.
