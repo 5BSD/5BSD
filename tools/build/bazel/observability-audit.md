@@ -6219,3 +6219,10 @@ All 38 Frontend sources retain their original source behavior. Object symbols
 and archive membership match Make; compiler diagnostics/module runtime and
 observability are not yet qualified. No probes or audit hooks were changed.
 Evidence: bazel-clang-frontend-qualification-20261029.
+
+### 2026-10-29 Clang Analysis
+
+Native Analysis preserves 22 core and eight clang_full source selections without
+source/probe/audit changes. Default and reduced configurations match fresh Make
+object symbols and archive inventories. Runtime analysis diagnostics remain
+unqualified. Evidence: bazel-clang-analysis[-minimal]-qualification-20261029.

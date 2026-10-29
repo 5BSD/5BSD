@@ -36763,3 +36763,30 @@ Clang components now cover 543 sources. FrontendTool and other remaining Clang/L
 components, compiler linkage and world/kernel/pkgbase/bootstrap/runtime/cache/
 performance gates remain open. Make remains production/default. No host
 installation or publication occurred.
+
+### 2026-10-29 native Clang Analysis and reduced configuration
+
+Added 22 core Analysis sources plus eight selected by the existing clang_full
+setting. Both selections use native cc_library compilation and declared generated
+header dependencies. Initial package loading failed on a copied private-header
+glob: this directory has no private .h files. Removed the invalid declaration;
+no empty-glob exception, compiler source patch or sandbox relaxation was added.
+The failed run is retained at bazel-clang-analysis-20261029.
+
+Default frontend run bazel-clang-analysis-20261029-r2 succeeds; all 30 PIC object
+global/undefined symbol inventories and archive member multiplicities match fresh
+isolated Make objects. Separate clang_full=false run
+bazel-clang-analysis-minimal-20261029 succeeds; all 22 selected objects and archive
+members match a separately compiled Make MK_CLANG_FULL=no reference. Both use
+16 jobs and the maintained frontend. Evidence/scripts:
+/usr/obj/usr/src/bazel-clang-analysis-qualification-20261029 and
+/usr/obj/usr/src/bazel-clang-analysis-minimal-qualification-20261029.
+References use existing bootstrap generators and staged SDK headers. These checks
+qualify compilation/source selection, not analysis diagnostics, algorithm behavior,
+instruction identity, compiler linkage or performance.
+
+Frontend review: existing documented clang_full selection and format-5 artifact
+handling suffice; no new build-bsd.c/backend interface/manual setting required.
+Ten qualified default Clang components now cover 573 sources. Remaining Clang/LLVM
+components and whole-system world/kernel/pkgbase/bootstrap/runtime/cache/performance
+gates remain open. Make stays production/default; no host installation/publication.
