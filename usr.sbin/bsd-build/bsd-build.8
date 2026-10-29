@@ -4156,16 +4156,29 @@ provide the ten native amd64 startup objects and their installation metadata.
 and
 .Cm //usr.bin/clang/clang:native_startup_cc_test
 compile and run static probes with native startup objects, compiler and linker.
-The probes retain SDK system headers and libraries. Other architectures,
-dynamic/PIE/profiling startup and independent bootstrap are not qualified here.
+The probes retain SDK system headers and libraries. Broader startup cases are
+covered by the maintained csu matrix below; other architectures, profiling
+startup and independent bootstrap remain unqualified.
 
 .Pp
 .Cm //lib/csu/amd64:startup
-exposes the native objects as a CcInfo dependency for ordinary rules_cc links.
+supplies validated startup artifacts and
+.Cm //lib/csu/amd64:startup_link_flags
+supplies their compiler-driver response file.
+Final rules_cc links declare both in additional_linker_inputs and pass
+@$(location //lib/csu/amd64:startup_link_flags) in linkopts or user_link_flags.
+Startup selection must be attached to the final link: CcInfo-only flags can be
+pruned during dynamic_deps processing.
+.Pp
 The individual
-.Cm //lib/csu/tests:static_*
-ATF case targets exercise the existing static constructor, initialization,
-finalization, destructor and DSO-handle tests. Select explicit case labels in
-format-5 targets and tests. The static_tests suite groups these eight cases for
-direct Bazel use. These tests retain the prepared SDK compiler/system libraries;
-dynamic, PIE, DSO and profiling startup remain separate qualification work.
+.Cm //lib/csu/tests:static_* ,
+.Cm dynamic_* ,
+.Cm dynamicpie_* ,
+.Cm dynamiclib_*
+and errno case targets exercise the maintained startup test matrix.
+Select explicit case labels in format-5 targets and tests. Mode test suites group
+the ATF cases for direct Bazel use. All 36 cases passed in the tested native amd64
+configuration, with final-link startup selection and runtime libraries checked.
+The tests retain the prepared SDK compiler/system libraries and host rtld;
+GCRT, other architectures, installed-test parity and independent bootstrap
+remain separate qualification work.

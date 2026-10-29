@@ -66,3 +66,6 @@ load("//tools/build/bazel:bsd_startup_objects.bzl", "bsd_startup_objects")
 bsd_startup_objects(name = "startup", objects = ":startup_objects",
     required_names = [name + ".o" for name in _INSTALLED],
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+filegroup(name = "startup_link_flags", srcs = [":startup"], output_group = "link_flags",
+    visibility = ["//visibility:public"])

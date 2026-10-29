@@ -6628,3 +6628,13 @@ fini arrays and the static DSO handle. Source fixtures are unchanged. No new
 DTrace or audit hooks; dynamic/DSO/GCRT behavior remains unqualified. The tests'
 fork failure branches remain as upstream source; this run does not exercise
 resource-exhaustion behavior.
+
+### Dynamic/PIE/DSO and errno csu tests (2026-10-29)
+
+The 36-case maintained matrix passes with verified native startup selection.
+Includes .ctors/.dtors, preinit/init/fini arrays, C++ constructors/destructors,
+DSO handle and errno reset before main with/without pthread. Existing source
+fixtures remain unchanged. An explicit final-link response-file interface fixes
+CcInfo flags being dropped during dynamic dependency processing. No DTrace/audit
+hooks added or removed; GCRT execution and exhaustive failure handling remain
+unqualified. Runtime closure checks retain the host rtld.

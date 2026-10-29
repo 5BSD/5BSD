@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""Expose native startup objects to ordinary rules_cc compiler-driver links."""
-load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
-load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+"""Declare startup artifacts and response flags for rules_cc final links."""
 
 def _impl(ctx):
     objects = ctx.files.objects
@@ -12,11 +10,11 @@ def _impl(ctx):
     missing = [name for name in ctx.attr.required_names if name not in names]
     if missing:
         fail("missing startup objects: " + str(missing))
-    link = cc_common.create_linker_input(owner = ctx.label,
-        user_link_flags = depset(["-B" + directories[0] + "/"]),
-        additional_inputs = depset(objects))
-    return [DefaultInfo(files = depset(objects)),
-        CcInfo(linking_context = cc_common.create_linking_context(linker_inputs = depset([link])))]
+    flags = ctx.actions.declare_file(ctx.label.name + ".params")
+    ctx.actions.write(flags, "-B" + directories[0] + "/\n")
+    # Final link attributes consume this response file and the object inputs.
+    # CcInfo flags alone can be pruned during dynamic_deps processing.
+    return [DefaultInfo(files = depset(objects)), OutputGroupInfo(link_flags = depset([flags]))]
 
 bsd_startup_objects = rule(implementation = _impl, attrs = {
     "objects": attr.label(allow_files = [".o"], mandatory = True),

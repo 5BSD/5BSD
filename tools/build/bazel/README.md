@@ -38532,3 +38532,39 @@ qualify independent bootstrap, dynamic/PIE/DSO/GCRT startup, test installation,
 complete world/kernel/pkgbase or performance. No host installation/publication.
 Frontend review: build-bsd.c/format-5 backend accept the existing explicit target
 and test lists; no new user input contract. Manual updated; Make stays production.
+
+### Full maintained csu startup matrix and final-link correction (2026-10-29)
+
+Expanded the three unchanged ATF sources across static, dynamic, dynamicpie and
+dynamiclib modes, including the native DSO_LIB helper and DSO_BASE programs.
+Added all four existing errno startup programs (static/dynamic, with/without
+pthread). Native shared ATF/C++ dependencies are used for dynamic tests; an initial
+PIE failure selecting non-PIC static ATF was corrected by modeling these shared
+dependencies. Runtime libraries are declared runfiles, with SDK libc/libsys/
+libgcc_s and native ATF/C++/math/pthread/helper libraries as required.
+
+Driver inspection found that CcInfo-only startup flags were dropped during
+shared-dependency linking, despite passing runtime cases. The prior adapter is
+superseded: //lib/csu/amd64:startup now supplies validated startup artifacts, and
+startup_link_flags supplies a generated compiler response file in a separate
+output group. Each cc_binary/cc_shared_library final link explicitly declares
+both as additional_linker_inputs and passes the response file in linkopts or
+user_link_flags. This keeps -B and object dependencies at the final link, outside
+dynamic_deps pruning. No hardcoded Bazel output directory or copied SDK CRTs.
+
+Final run bazel-csu-all-tests-20261029-r2 reports 36 passed cases and no skipped
+cases. Saved modes-check-r2.py under bazel-csu-reference-20261029 verifies all 17
+final links choose native startup objects: ordinary, PIC/PIE, static, and shared
+helper variants. Loader checks cover all eleven dynamically linked test programs
+and require each resolved library to match a declared runfile (host rtld remains).
+ELF type checks distinguish non-PIE/PIE in six dynamic/dynamicpie programs.
+Initial failures and pre-correction passing tests are retained and must not be
+cited as native dynamic-startup qualification.
+
+These are the cases in the current maintained csu test sources; this does not
+establish exhaustive startup behavior, GCRT execution, other architectures,
+installed-test/package parity, independent bootstrap, complete world/kernel or
+performance. SDK compiler and remaining system libraries still apply. No host
+installation/publication. Frontend review confirms build-bsd.c and format-5
+source_graph.py accept the explicit test matrix without schema changes; manual
+updated. Make remains production/default.
