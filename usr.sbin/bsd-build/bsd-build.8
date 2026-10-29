@@ -3548,6 +3548,16 @@ execution platform. Their loader path is applied only to the mtree policy
 subprocess. The xinstall archive now uses native mtree with explicit libraries;
 its output matches the previous staged-tool archive. Other SDK consumers and
 complete native bootstrap remain separate qualification work.
+.Pp
+.Dq //usr.bin/spdxtool:bootstrap_spdxtool
+selects the native static, non-PIE tool corresponding to the Make
+.Dv TOOLS_PREFIX
+build mode.
+It links native libpkgconf and libc and can be selected in format-5 targets.
+Allocator policy remains an explicit build setting; static comparison must use
+matching libc configurations.
+This target does not automatically replace staged execution tools or establish
+cross-host bootstrap compatibility.
 
 .Pp
 .Dq //lib/libkldelf:install_archive

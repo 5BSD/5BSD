@@ -10674,3 +10674,30 @@ Frontend review: format-5 targets and artifacts already support these normal
 candidates. Future bootstrap mode must be connected through maintained frontend
 inputs, not a one-off override. No frontend C/protocol/manual change is needed
 for this batch; Make remains production/default.
+
+### 2026-10-29 spdxtool static bootstrap variant
+
+Added //usr.bin/spdxtool:bootstrap_spdxtool sharing the maintained CLI sources,
+with native static libpkgconf/libc, fully_static_link and no PIE flags. Make
+query and fresh TOOLS_PREFIX-defined reference confirm this mode uses -static
+without PIE. Existing dynamic installed target is unchanged.
+
+Native run bazel-spdxtool-bootstrap-20261029 and rootless Make reference
+bazel-spdxtool-bootstrap-reference-20261029 both produce EXEC ELF without INTERP
+or NEEDED and identical --version/--help output. Initial global-symbol mismatch
+was allocator configuration: native development malloc versus production malloc
+in the reused Make SDK libc. The reference builds the tool afresh, not libc.
+Explicit malloc_production=true run
+/usr/obj/usr/src/bazel-spdxtool-bootstrap-production-20261029 also passes complete
+global/undefined symbol comparison. No flags or assertions were weakened and
+development defaults were not changed. Reports and scripts are retained in
+bazel-spdxtool-bootstrap-qualification-20261029 (parity.json records the initial
+mismatch; production-parity.json records the matching-configuration pass).
+
+Runtime checks use byte-identical executable copies of immutable saved artifacts,
+with PATH=/nonexistent; no installed tool or shared-library fallback. These are
+version/help smoke checks, not SPDX generation or cross-host qualification.
+The native build uses all 16 CPUs. No host install occurred. Frontend review:
+format-5 explicit targets and allocator settings support selection; updated
+bsd-build(8) to document this mode. Staged-tool replacement and complete bootstrap
+remain pending. Make stays production/default.
