@@ -36841,3 +36841,32 @@ backend suffice; no build-bsd.c/manual interface change needed. Twelve qualified
 default Clang components now cover 784 sources. Remaining Clang/LLVM components,
 compiler linkage and world/kernel/pkgbase/bootstrap/runtime/cache/performance gates
 remain open. Make stays production/default. No host installation/publication.
+
+### 2026-10-29 nine native Clang support components
+
+Added APINotes (4), ASTMatchers (7), CrossTU (1), Edit (3), ExtractAPI (6),
+FrontendTool (1), Index (8), InstallAPI (1), and Rewrite (3): 34 maintained sources.
+Each component has native compilation, declared generated/public/private headers
+where applicable, and its own PIC archive/object outputs. CrossTU is compatible
+only with clang_full enabled, matching its SRCS_FUL selection. The already native
+Support/clangminimal component is not duplicated or counted in this batch.
+No compiler sources or sandbox restrictions changed.
+
+Maintained frontend bazel-clang-support-components-20261029 (16 jobs) succeeds.
+All 34 individual PIC global/undefined symbol inventories match fresh isolated
+Make objects; all nine archive member inventories match. Verifier maps saved
+objects through recorded compile actions and asserts full source-set equality.
+Evidence/scripts:
+/usr/obj/usr/src/bazel-clang-support-components-qualification-20261029.
+Reference uses existing bootstrap generators and staged SDK headers. This qualifies
+compilation structure, not AST matching, indexing, API extraction, rewriting,
+frontend dispatch runtime, instruction identity or performance. CrossTU-disabled
+selection was implemented but not separately exercised in this batch.
+
+Frontend review: existing clang_full input, format-5 artifacts and native backend
+support these components; no build-bsd.c/manual interface change required.
+Twenty-one qualified default Clang components now cover 818 sources, excluding the
+separately integrated minimal Support component. Format source selection and full
+libclang linkage remain open, along with LLVM completion and world/kernel/pkgbase/
+bootstrap/runtime/cache/performance gates. Make stays production/default; no host
+installation or publication occurred.

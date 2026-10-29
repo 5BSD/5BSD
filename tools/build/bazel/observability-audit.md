@@ -6240,3 +6240,10 @@ bazel-clang-static-analyzer-qualification-20261029.
 probe or audit changes. Dependency scanning, compilation-database handling and
 refactoring runtime remain unqualified. Evidence:
 bazel-clang-tooling-qualification-20261029.
+
+### 2026-10-29 Clang support component batch
+
+APINotes, ASTMatchers, CrossTU, Edit, ExtractAPI, FrontendTool, Index, InstallAPI
+and Rewrite retain their maintained sources/probes/audit behavior. All 34 object
+symbol comparisons and nine archive inventories pass. Runtime behavior remains
+unqualified. Evidence: bazel-clang-support-components-qualification-20261029.
