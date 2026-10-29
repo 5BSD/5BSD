@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_test")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load(":rename.bzl", "verto_rename")
+verto_rename(
+    name = "rename",
+    symbols = "//crypto/krb5/src/util/verto:Symbols.ev",
+    awk = "@bsd_sdk//toolchain:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"],
+)
+cc_library(
+    name = "verto",
+    srcs = ["//crypto/krb5/src/util/verto:" + f for f in ["module.c", "verto-k5ev.c", "verto.c"]],
+    hdrs = [":rename"],
+    includes = ["."],
+    local_defines = ['DEFAULT_LIBRARY="k5ev"', "BUILTIN_MODULE=k5ev"],
+    deps = ["//crypto/krb5/src/util/verto:headers", "//krb5/include:config_headers"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":verto"], visibility = ["//visibility:public"])
+cc_shared_library(
+    name = "verto_shared",
+    deps = [":verto"],
+    shared_lib_name = "libverto.so.122",
+    additional_linker_inputs = ["version.map"],
+    user_link_flags = ["-Wl,--version-script=$(location version.map)", "-Wl,-soname,libverto.so.122"],
+    visibility = ["//visibility:public"],
+)
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+cc_test(
+    name = "runtime_test",
+    srcs = ["runtime_test.c"],
+    deps = [":verto"],
+    size = "small",
+)

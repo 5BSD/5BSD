@@ -14453,3 +14453,29 @@ configuration choices, generated code and test inventories. The completed
 bootstrap, kernel/modules, pkgbase/publication, enforced sandbox and resource/
 performance gates remain open. This is a read-only inventory refresh: no frontend
 input contract change, host installation, publication or reboot.
+
+### Native MIT Kerberos libverto (2026-10-29)
+
+Added explicit native static/shared libverto targets, the embedded libev source
+and header closure, and a declared exec-tool action deriving rename.h from the
+maintained Symbols.ev inventory. The generated header is byte-identical to Make.
+The library preserves DEFAULT_LIBRARY=k5ev and BUILTIN_MODULE=k5ev; the upstream
+bundled module-loading implementation is unchanged. Added maintained install,
+strip/debug and archive rules for both public headers and library artifacts.
+
+Run bazel-verto-install-20261029 passes the native pipe-read event dispatch test
+(one case, no skips). It creates the built-in event context with I/O and timeout
+support, registers a real pipe and timeout guard, dispatches the readable event,
+breaks the loop and frees the context. It does not establish timeout callback,
+signal/child events, concurrency, dynamic-library runtime or KDC behavior.
+
+A fresh Make build/install under bazel-verto-make-20261029 matches all eight
+installation records, ownership/modes/tags, symlink, ordered static members,
+global/weak symbols (96 static, 81 shared/debug), dynamic metadata and debuglink
+CRC. Both installed headers match bytewise. Evidence and repeatable comparison
+scripts: /usr/obj/usr/src/bazel-verto-reference-20261029. Prepared SDK and host
+kernel/rtld dependencies remain; this is not whole-world/package qualification.
+
+Reviewed build-bsd.c and format-5 source_graph.py: existing explicit target/test
+inputs support this component with no frontend contract change. Make remains
+production/default; no host installation, publication or reboot.

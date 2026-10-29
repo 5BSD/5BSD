@@ -6768,3 +6768,12 @@ All 27 amd64 runtime components now participate in a single installation graph.
 The ten selected runtime tests retain their documented scopes; aggregate build
 success does not add coverage for untested sanitizer/tracing modes. No production
 DTrace/audit behavior changes. Profile member ordering was corrected.
+
+### MIT libverto (2026-10-29)
+
+Native library/event-loop conversion preserves the bundled source implementation.
+The selected module.c, verto.c and verto-k5ev.c contain no explicit DTrace provider
+or audit submission calls. Consider event registration/dispatch/failure probes
+when reviewing KDC/kadmind observability; absence here does not establish missing
+security auditing in their consumers. One native pipe-read lifecycle test passes;
+signal, child, timeout callback and concurrency behavior are not qualified.
