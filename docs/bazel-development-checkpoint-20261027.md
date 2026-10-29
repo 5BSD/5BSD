@@ -12895,3 +12895,25 @@ or comparative CPU/memory/disk performance. Other backends and world/kernel/pkgb
 runtime gates remain open. Frontend review: existing build-bsd.c/format-5 backend
 transports the new setting; manual updated. Make remains production/default.
 No host installation/publication occurred.
+
+### Native AArch64 backend TableGen outputs (2026-10-29)
+
+Added 20 native TableGen actions for AArch64 assembly/disassembly, calling
+conventions, instruction selection, emitter/pseudo-lowering tables, register banks,
+registers, SDNodes, subtargets and system operands. Four GlobalISel combiner/lowering
+actions preserve Make's exact named combiners. Existing inventories declare 49
+target-specific and 40 shared .td inputs. Make depfiles plus primary AArch64.td
+match the transitive source include closure (89 total inputs).
+
+Maintained frontend `/usr/obj/usr/src/bazel-llvm-aarch64-tables-20261029` succeeds
+with 16 jobs. All 20 outputs match fresh Make tables byte-for-byte: 74,348,214 bytes.
+Evidence/scripts: `/usr/obj/usr/src/bazel-llvm-aarch64-tables-qualification-20261029`.
+Make uses its existing bootstrap llvm-tblgen; native generation uses the declared
+Bazel execution target and staged SDK/runtime. No pre-generated table substitution.
+
+Backend C++ compilation, ELF parity, target registration, complete compiler linkage,
+generated-code execution, independent bootstrap and comparative performance remain
+open. Frontend review: build-bsd.c/format-5 backend accepts these targets with no new
+input, staging, security or manual contract. Other backends and full world/kernel/
+pkgbase/runtime gates remain open. Make remains production/default; no installation
+or publication occurred.

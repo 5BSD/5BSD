@@ -6434,3 +6434,10 @@ binding, visibility and defined state. No added DTrace probes/audit hooks. Backe
 diagnostics, unwind/debug behavior and generated-code tracing/execution still need
 runtime qualification. Evidence:
 `/usr/obj/usr/src/bazel-llvm-powerpc-backend-qualification-20261029`.
+
+### AArch64 backend tables (2026-10-29)
+
+20 generated outputs match Make bytes, including four GlobalISel combiner/lowering
+tables. No source probe/audit changes. Runtime backend diagnostics, unwind/debug
+behavior and generated-code tracing/execution remain unqualified. Evidence:
+`/usr/obj/usr/src/bazel-llvm-aarch64-tables-qualification-20261029`.
