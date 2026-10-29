@@ -6890,3 +6890,10 @@ Native binary/script/manual installation matches Make. The existing keytab.c
 source and helper script are preserved; no instrumentation added or removed.
 Remote keytab/principal operations and their audit behavior remain runtime
 qualification work. The earlier keytab source scan found no local probe hooks.
+
+### kdb5_util (2026-10-29)
+
+Artifact/install and error-generator parity pass. A dbutil source scan found no
+DTrace/SDT or audit hooks; sources are unchanged. Database creation/destruction,
+master-key rotation and dump/restore require runtime and audit-policy review.
+No database operations or observability runtime tests were executed.

@@ -14889,3 +14889,25 @@ Reviewed build-bsd.c/source_graph.py; existing explicit target inputs support th
 new component without frontend/schema changes. SDK bootstrap, whole-system
 composition, pkgbase/publication, sandbox/cache and performance gates remain
 open. Make stays production/default; no host install or administration mutation.
+
+### Native Kerberos database utility (2026-10-29)
+
+Added kdb5_util with all ten maintained C sources, three local headers, explicit
+internal/database/administration header dependencies and declared import_err
+C/header generation through mit_error_table. Native PIE administration support
+and the full database/RPC/Kerberos library closure are retained. Installation
+uses kerberos-kdc, /usr/sbin and the section-8 manual.
+
+Final run bazel-kdb5-util-runtime-20261029-r2 matches fresh Make reference:
+5 installation records; 169 symbols for /usr/sbin/kdb5_util, 240 symbols for /usr/lib/debug/usr/sbin/kdb5_util.debug.
+Destination/mode/owner/group/tags, dynamic dependencies/PIE flags, debuglink CRC
+and compressed manual bytes match. Generated error C/header files match after
+replacing only their exact output-filename comments. Evidence and artifact
+verifier: /usr/obj/usr/src/bazel-kdb5-util-reference-20261029.
+
+No runtime tests were requested despite the run-directory name. Database backend
+loading, creation, dump/restore, stash and master-key operations remain pending
+qualification; no database operation was run. Reviewed build-bsd.c/source_graph.py:
+existing target selection supports this component without contract changes.
+SDK/bootstrap and whole-system/package/sandbox/cache/performance gates remain
+open. Make stays production/default; no host installation or publication.
