@@ -39035,3 +39035,37 @@ Frontend/backend review: build-bsd.c and format-5 source_graph.py already suppor
 the explicit test selections. Manual/observability updated; no new CLI/schema,
 host installation, publication or reboot. Complete-system qualification remains
 open and Make remains production/default.
+
+### Complete amd64 compiler-runtime installation aggregate (2026-10-29)
+
+Added //lib/libclang_rt:install_manifest and :install_archive composing all 27
+maintained amd64 components through their native manifests. Component selection
+is explicit source-owned Bazel data, reviewed against the amd64 Make selection;
+production actions do not query Make or discover host files. The aggregate has
+shared ignorelist-directory and dynamic-ASan debug-directory package metadata.
+It produces one installation archive, not merely a collection of component tars.
+Other architectures are explicitly incompatible pending their own qualification.
+
+The first aggregate build and all ten selected runtime tests passed, but the
+combined archive comparison exposed the profiling archive's C++ object at the
+end rather than its Make position. Added explicit validated object_order to the
+profile archive. Its earlier Counter-based member comparison had established
+membership only, not order; the aggregate verifier now checks exact member order.
+Corrected run bazel-compiler-rt-aggregate-20261029-r2 passes all ten tests without
+skips. The complete comparison passes 59 records: 25 static archives, 25
+byte-identical nonbinary payloads, one shared library plus its debug file and
+seven directory records. Source inventory,
+comparison script and evidence under bazel-compiler-rt-aggregate-reference-20261029.
+
+The comparison uses the union of existing component Make references, checking
+complete destination coverage, duplicate conflicts, modes/ownership/tags, archive
+member order/global+weak symbol records and nonbinary payload bytes. It is not a
+fresh aggregate Make build or executable byte-identity proof. Runtime tests cover
+static/shared ASan and TLS/worker variants, minimal/standalone UBSan, supplied/
+custom-main fuzzers and profiling; untested sanitizer modes remain unqualified.
+This is progress toward world/package composition, not a full world, bootstrap,
+pkgbase transaction, publication or performance result. Prepared SDK inputs remain.
+
+Frontend review: build-bsd.c and format-5 source_graph.py support the aggregate
+and explicit test list without CLI/schema changes. Manual and observability audit
+updated. Make stays production/default; no host installation/reboot/publication.

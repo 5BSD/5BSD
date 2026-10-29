@@ -6761,3 +6761,10 @@ Worker variants with/without executable TLS pass clean creation/join/destructor
 checks and real instrumented heap-boundary/lifetime failures. TLS-bearing workers
 verify fresh initialization and isolation. Dynamic TLS loading, high concurrency
 and C++ allocation remain open; no tracing/audit implementation changes.
+
+### Compiler-runtime aggregate (2026-10-29)
+
+All 27 amd64 runtime components now participate in a single installation graph.
+The ten selected runtime tests retain their documented scopes; aggregate build
+success does not add coverage for untested sanitizer/tracing modes. No production
+DTrace/audit behavior changes. Profile member ordering was corrected.

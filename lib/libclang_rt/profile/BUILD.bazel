@@ -12,7 +12,8 @@ cc_library(name = "c_objects", srcs = ['//contrib/llvm-project/compiler-rt/lib/p
 cc_library(name = "cxx_objects", srcs = ['//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingRuntime.cpp'],
     deps = ["//contrib/llvm-project/compiler-rt/lib/profile:headers"],
     copts = _FLAGS + ["-std=c++17", "-fno-rtti", "-fvisibility-inlines-hidden", "-fvisibility=default"], local_defines = _DEFINES, target_compatible_with = _PLATFORM)
-bsd_component_archive(name = "profile_archive", groups = [":c_objects", ":cxx_objects"], pic = False, visibility = ["//visibility:public"])
+bsd_component_archive(name = "profile_archive", groups = [":c_objects", ":cxx_objects"], pic = False,
+    object_order = ['GCDAProfiling.o', 'InstrProfiling.o', 'InstrProfilingBuffer.o', 'InstrProfilingFile.o', 'InstrProfilingInternal.o', 'InstrProfilingMerge.o', 'InstrProfilingMergeFile.o', 'InstrProfilingNameVar.o', 'InstrProfilingPlatformLinux.o', 'InstrProfilingPlatformOther.o', 'InstrProfilingRuntime.o', 'InstrProfilingUtil.o', 'InstrProfilingValue.o', 'InstrProfilingVersionVar.o', 'InstrProfilingWriter.o'], visibility = ["//visibility:public"])
 bsd_component_sources(name = "source_inventory", groups = [":c_objects", ":cxx_objects"], visibility = ["//visibility:public"])
 
 # Source-owned installation policy, matching compiler-rt-vars.mk for amd64.

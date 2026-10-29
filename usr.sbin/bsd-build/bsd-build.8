@@ -4303,3 +4303,10 @@ worker creation/join, thread-specific-data destruction and memory-error detectio
 with and without executable TLS. The TLS variant also checks per-thread value
 isolation. Dynamic library TLS loading and high-concurrency behavior remain
 separate qualification work.
+
+.Pp
+.Cm //lib/libclang_rt:install_archive
+composes the complete maintained amd64 compiler-runtime installation from 27
+component manifests, including headers, ignorelists and shared-runtime debug data.
+It is an installation artifact, not an independently bootstrapped toolchain or
+a complete pkgbase transaction. Other architectures remain unqualified.
