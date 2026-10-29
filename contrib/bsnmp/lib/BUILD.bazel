@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ["asn1.h", "snmp.h", "snmpagent.h", "snmpclient.h", "snmppriv.h", "support.h"],
+    strip_include_prefix = ".", visibility = ["//usr.sbin/bsnmpd:__subpackages__", "//lib/libbsnmp:__subpackages__"])
+exports_files(["asn1.c", "snmp.c", "snmpagent.c", "snmpclient.c", "snmpcrypto.c", "support.c", "tc.def", "asn1.3", "bsnmpagent.3", "bsnmpclient.3", "bsnmplib.3"],
+    visibility = ["//lib/libbsnmp:__subpackages__"])

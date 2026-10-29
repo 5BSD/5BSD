@@ -7086,3 +7086,11 @@ have no direct DTrace/audit calls; this adds no new tracing requirements. Packet
 handling and observability still need isolated runtime qualification, including
 proof that smedia executes the intended native RTSP handler. perf is built but
 has not been run or used to claim a performance result.
+
+### gensnmptree (2026-10-29)
+
+The native build preserves the maintained generator source and feature defines.
+Its Makefile declares no DTrace provider. This local source-to-source build tool
+has no new audit integration in this migration; SNMP daemon/network behavior is
+outside this prerequisite's checks. Enum header/function generation on tc.def
+matches Make, but no daemon, protocol or audit-delivery claim follows.

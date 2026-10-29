@@ -15736,3 +15736,30 @@ aggregation and complete pkgbase composition remain system-level work.
 Reviewed build-bsd.c/source_graph.py: existing explicit target and metadata output
 groups cover this addition without interface changes. Make stays production/default;
 full-system/bootstrap/cache/sandbox/performance gates remain open.
+
+### Native gensnmptree prerequisite for libbsnmp (2026-10-29)
+
+Added native gensnmptree executable and installation targets with explicit vendor
+source/header inputs, maintained feature definitions, PIE linkage, bsnmp package
+metadata, manual and debug split. Run bazel-gensnmptree-20261029-r2 passes through
+build-bsd with 16 jobs. Fresh Make all/install comparison matches five installation
+records, three regular payloads (manual bytes and binary/debug symbol inventories),
+ordered ELF dependencies/security metadata and debug-link CRC. Initial installation
+comparison caught the inherited /usr/sbin destination; corrected the declaration.
+
+Two executions of the authenticated native binary on maintained tc.def, -E -f
+and -E -F, produce nonempty output byte-identical to the fresh Make binary.
+Evidence/scripts are under /usr/obj/usr/src/bazel-gensnmptree-reference-20261029:
+install-audit.py,json, payload-audit.py,json, runtime.py,json and generated output.
+The saved artifact store is not executable; runtime.py copies the hash-verified
+binary to a separate executable before running. Host libc/rtld remain in use.
+These direct generator checks are not yet Bazel test rules or native libbsnmp
+generation actions. Other generator modes and include resolution remain open.
+
+The next SNMP step is an exec-configured native generation action for snmptc.h,
+followed by libbsnmp/configuration/test/install qualification. No generated header
+was copied from the object tree. Existing build-bsd explicit targets and metadata
+output groups support this prerequisite without frontend/backend changes.
+Full-system/kernel/pkgbase/bootstrap/cache/sandbox/performance gates remain open;
+Make stays production/default. Libalias isolated runtime still needs a root-run
+filesystem setup; the current uid is 1001 and no host configuration was changed.
