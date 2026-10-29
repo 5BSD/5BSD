@@ -36989,3 +36989,39 @@ and Analysis now cover 196 component sources; this is separate from the default
 backends, compiler linkage and world/kernel/pkgbase/bootstrap/runtime/cache/performance
 qualification remain open. Make stays production/default. No host installation or
 publication occurred.
+
+### 2026-10-29 native LLVM Transforms and extras
+
+Added 311 maintained core transform sources plus four selected by clang_extras.
+Native dependencies include private headers, ValueProfilePlugins.inc and the
+SandboxVectorizer PassRegistry.def textual input. The first sandboxed build exposed
+that missing .def declaration; added the actual source input without source patches,
+SDK header imports or sandbox relaxation. Failed run retained at
+bazel-llvm-transforms-20261029. Updated the manual for this existing setting consumer.
+
+Corrected frontend bazel-llvm-transforms-20261029-r2 (16 jobs) succeeds. All 311 PIC
+object global/undefined symbol inventories and archive member multiplicities match
+fresh isolated Make references. bazel-llvm-transforms-extras-20261029 succeeds with
+clang_extras=true; all 315 objects/archive members match the retained 311 core
+references plus four fresh Make MK_CLANG_EXTRAS=yes objects. This is not a separate
+315-object Make rebuild. Evidence/scripts:
+/usr/obj/usr/src/bazel-llvm-transforms[-extras]-qualification-20261029.
+References use existing bootstrap generators and staged SDK headers. Compile-action
+provenance combines retained logs, rejects conflicting mappings, and requires full
+source/object sets. Results do not establish optimization semantics, instruction
+identity, full compiler execution/linkage or performance.
+
+Verifier resource correction: loading whole execution logs used about 4 GB RSS per
+process. The initial default comparison completed successfully; stopped the still
+running extras comparison and changed both evidence scripts to stream JSON records.
+Both complete comparisons then passed. Recorded /usr/bin/time -l maxima are 59,124
+and 73,284 KB, with elapsed 27.87 and 27.40 seconds respectively. These measure the
+comparison scripts only, not compiler/build memory or system performance. Preserve
+streaming for future large-log qualification.
+
+Frontend review: existing clang_extras input and format-5 backend/artifacts suffice;
+manual updated, no build-bsd.c parser change. LLVM IR/Analysis/Transforms now cover
+507 default component sources (four optional additions), separate from the default
+839-source libclang aggregate. Remaining LLVM libraries/backends, linkage and world/
+kernel/pkgbase/bootstrap/runtime/cache/performance gates stay open. Make remains
+production/default. No host installation/publication occurred.

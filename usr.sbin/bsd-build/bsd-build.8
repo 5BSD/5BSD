@@ -3799,5 +3799,8 @@ and
 .Cm //tools/build/bazel/config:clang_extras
 both default to false, matching the maintained source defaults.
 The native Clang Format component includes its extra source when either is true.
+The native LLVM Transforms component also selects four additional sources when
+.Cm clang_extras
+is true.
 These settings do not yet establish complete optional-tool build or installation
 coverage.

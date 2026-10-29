@@ -6273,3 +6273,10 @@ observability remain unqualified. Evidence: bazel-llvm-ir-qualification-20261029
 119 maintained sources match Make object symbols/archive membership. No source,
 probe or audit changes. Analysis runtime, optimization semantics and emitted-code
 observability remain unqualified. Evidence: bazel-llvm-analysis-qualification-20261029.
+
+### 2026-10-29 LLVM Transforms
+
+311 core/315 extras objects preserve source/probe/audit behavior and match Make
+symbol/archive references. Missing private .def dependency was declared; no compiler
+source workaround. Transform semantics and emitted-code observability remain
+unqualified. Evidence: bazel-llvm-transforms[-extras]-qualification-20261029.
