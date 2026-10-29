@@ -13638,3 +13638,40 @@ Frontend review: build-bsd.c/format-5 source_graph.py already transport clang_fo
 and explicit targets; manual updated. Static LLVM/cross-host, native SDK/bootstrap,
 remaining system targets, full pkgbase/cache/performance gates stay open. Make
 remains production/default; no host installation/upgrade/publication.
+
+### Formatter reference rebuild and maintained tests in progress (2026-10-29)
+
+Started a full isolated Make libclang build with WITH_CLANG_FORMAT=1 and 16 jobs:
+/usr/obj/usr/src/bazel-clang-format-library-make-20261029/build.log, object tree
+bazel-clang-format-library-make-objects-20261029. It retains the existing SDK,
+LLVM library and bootstrap generators, but rebuilds all Clang library objects.
+Driver reference script clang-format-make-r2.py under
+bazel-clang-utilities-reference-20261029 waits for that complete library and
+selects it by replacing the exact maintained libclang path in LDADD/DPADD;
+it does not inject a standalone substitute object. Neither reference is yet
+claimed complete here.
+
+Added //lib/clang:clang_tools_test for command-line dependency scanning across a
+nested-header change, formatting idempotence and dry-run validation. Existing
+utilities/profile tests now share tool_test.h helpers. Qualification run
+bazel-clang-tools-test-20261029 requests all three tests with clang_format=true;
+result remains pending at this checkpoint. Frontend review: existing build-bsd.c
+and format-5 backend already transport the setting/targets/tests. No frontend
+input or publication policy changed. Do not infer passing tests from this entry.
+
+### Maintained Clang tool tests pass (2026-10-29)
+
+Run /usr/obj/usr/src/bazel-clang-tools-test-20261029 passes all three maintained
+tests: utilities_test, profiles_test and clang_tools_test (three reported cases,
+none skipped). New scanner test uses the supported per-file command after --,
+checks nested header discovery, changes the include, then verifies replacement
+and removal of the old dependency. Formatter checks explicit LLVM style,
+byte-identical second formatting and dry-run validation. All tools are declared
+runfiles and PATH is /nonexistent. Common fork/exec/output checks now live in
+lib/clang/tool_test.h rather than duplicated in the test programs.
+
+This closes the prior maintained-test gap for the tested scanner/formatter cases.
+It does not prove compilation-database/module/PCH variants or cache invalidation.
+Formatter fresh Make parity still awaits the full format-enabled library rebuild
+recorded above. Frontend review: existing build-bsd.c/format-5 supports these test
+labels and clang_format=true; manual updated. Make remains production/default.

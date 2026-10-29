@@ -38301,3 +38301,20 @@ Frontend review: build-bsd.c/format-5 source_graph.py already transport clang_fo
 and explicit targets; manual updated. Static LLVM/cross-host, native SDK/bootstrap,
 remaining system targets, full pkgbase/cache/performance gates stay open. Make
 remains production/default; no host installation/upgrade/publication.
+
+### Maintained Clang tool tests pass (2026-10-29)
+
+Run /usr/obj/usr/src/bazel-clang-tools-test-20261029 passes all three maintained
+tests: utilities_test, profiles_test and clang_tools_test (three reported cases,
+none skipped). New scanner test uses the supported per-file command after --,
+checks nested header discovery, changes the include, then verifies replacement
+and removal of the old dependency. Formatter checks explicit LLVM style,
+byte-identical second formatting and dry-run validation. All tools are declared
+runfiles and PATH is /nonexistent. Common fork/exec/output checks now live in
+lib/clang/tool_test.h rather than duplicated in the test programs.
+
+This closes the prior maintained-test gap for the tested scanner/formatter cases.
+It does not prove compilation-database/module/PCH variants or cache invalidation.
+Formatter fresh Make parity still awaits the full format-enabled library rebuild
+recorded above. Frontend review: existing build-bsd.c/format-5 supports these test
+labels and clang_format=true; manual updated. Make remains production/default.
