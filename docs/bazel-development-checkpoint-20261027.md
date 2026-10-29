@@ -10956,3 +10956,44 @@ Next inspected component is truss: four maintained C sources, libsysdecode,
 source-tree kernel header precedence and an ATF shell syscall-filter suite.
 Its native rule/test migration remains outstanding; no completed truss claim
 is implied by this checkpoint.
+
+### 2026-10-29 truss and syscall-filter test integration
+
+Added native truss's four maintained sources/three headers and native
+libsysdecode dependency. Inspected fresh Make compiler dependency files to
+identify the amd64 source-kernel-header closure behind Make's -I${SRCTOP}/sys.
+Explicit narrow truss_headers providers in sys/bsm, netinet, netinet6, netlink
+and sys/sys preserve source-header precedence. This closure is scoped to the
+currently supported amd64 native target; other architectures require their own
+qualification. Builds do not parse Make or compiler dependency snapshots.
+
+Added the maintained ATF shell wrapper/Kyuafile installation and all 17 native
+case declarations with explicit tools/libraries. The test's hardcoded true
+executable now accepts ATF configuration usr.bin.truss.test_true, defaulting to
+/usr/bin/true for ordinary installed tests; native cases supply the declared
+true target. readlink's declared runtime alias preserves stat's argv[0] behavior.
+No assertions, ptrace checks or application capability behavior were removed.
+Shell syntax validation passes. Production C sources are unchanged.
+
+/usr/obj/usr/src/bazel-truss-install-20261029-r3 (16 jobs) matches fresh
+rootless tests-enabled Make reference bazel-truss-tests-r2-reference-20261029:
+eight distinct metadata records, three exact nonbinary payloads and one valid
+ELF/debug pair with matching global/undefined symbols and dynamic properties.
+Evidence/scripts are in bazel-truss-qualification-20261029. Earlier program-only
+reference and initial tests installation remain retained separately.
+
+Runtime run bazel-truss-tests-20261029-r2 built all targets but FAILED all 17
+cases at ATF source-directory startup with cap_rights_is_valid(src) assertion in
+cap_rights_intersect, matching the documented source/host Capsicum ABI issue.
+The input mistakenly selected all native test targets while intending only the
+list case; Bazel test executes selected test targets, so all 17 were attempted.
+No test body is qualified. Original failure-test-reports and per-case
+runtime-failure-summary.json are retained. Installation-only qualification was
+run separately; no runtime failure was converted to a pass or skip.
+
+Matching-kernel tests remain required for tracing, ABI decode, syscall filters,
+process lifecycle and capability handling. No existing host process was attached
+or host installation performed. Frontend review: existing format-5 target/test
+selection, archive and tests-option support cover this component; no build-bsd
+C/backend/manual change is required. Make stays production/default; whole-world/
+kernel/pkgbase/bootstrap/runtime/performance gates remain open.

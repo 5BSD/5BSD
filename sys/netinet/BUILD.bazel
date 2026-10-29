@@ -15,3 +15,6 @@ cc_library(name = "ip6_wire_headers", hdrs = ["ip6.h"], includes = [".."], visib
 cc_library(name = "ipv4_wire_headers", hdrs = ["in_systm.h", "ip.h"], includes = [".."], deps = [":address_headers"], visibility = ["//sys/security/audit:__pkg__"])
 
 cc_library(name = "tcp_wire_headers", hdrs = ["tcp.h"], includes = [".."], visibility = ["//sys/kern:__pkg__"])
+
+# Source-header closure for the maintained truss build on amd64.
+cc_library(name = "truss_headers", hdrs = ['in.h', 'sctp.h', 'sctp_uio.h'], strip_include_prefix = "/sys", visibility = ["//usr.bin/truss:__pkg__"])

@@ -5927,3 +5927,14 @@ data. Focused C/header scan found no explicit DTrace/SDT or audit_submit/auditon
 sites. gprof profile analysis is distinct from DTrace probe integration; this
 build check does not establish producer instrumentation or profiling accuracy.
 Profile generation, kernel inputs and call-graph/output checks remain open.
+
+### 2026-10-29 truss
+
+Native build retains ptrace/process-descriptor handling, Capsicum helpers,
+syscall filters and libsysdecode. No explicit DTrace/SDT or audit_submit/auditon
+sites were found in focused local C/header scanning; syscall observation through
+ptrace is distinct from adding DTrace/audit integration. All 17 maintained ATF
+cases are declared but fail before their bodies at the documented host Capsicum
+ABI mismatch. None is runtime-qualified. Preserve process lifecycle, ABI
+translation, syscall filtering and privilege/capability checks for matching-kernel
+qualification; no source checks were weakened to bypass this host limitation.

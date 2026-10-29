@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+bsd_script_wrapper(name = "truss_test", body = "truss_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["truss_test"], interfaces = {"truss_test": "atf"})
+[bsd_install_file(name = "install_" + name, src = src, destination = "/usr/tests/usr.bin/truss/" + name,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=tests"])
+ for name, src, mode in [("truss_test", ":truss_test", "0555"), ("Kyuafile", ":kyuafile", "0444")]]
+bsd_install_manifest(name = "install_manifest", entries = [":install_truss_test", ":install_Kyuafile"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin:__subpackages__"],
+    manifests = [":install_manifest"],
+    directories = {"/usr/tests/usr.bin/truss": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# readlink is an installed alias of stat; preserve its argv[0] semantics.
+copy_file(name = "readlink_runtime", src = "//usr.bin/stat:stat", out = "readlink", is_executable = True)
+_TOOLS = ["//bin/sh:sh", "//bin/cat:cat", "//bin/rm:rm", "//bin/test:test", "//bin/ln:ln", "//usr.bin/env:env", "//usr.bin/find:find",
+    "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/grep:grep", "//usr.bin/sed:sed", "//usr.bin/sort:sort", "//usr.bin/tr:tr", "//usr.bin/uname:uname",
+    "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//usr.bin/truss:truss", ":readlink_runtime"]
+_LIBS = ["//lib/libsysdecode:sysdecode_shared", "//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libutil:util_shared"]
+_CASES = ['list', 'unknown_group', 'empty_term', 'none', 'by_number', 'bad_number', 'unknown_syscall', 'accepted_abis', 'by_name', 'by_pattern', 'group', 'group_read_excludes_readlink', 'group_reference', 'negation', 'order', 'accumulate', 'count']
+[bsd_atf_test(name = "native_" + case, case_name = case, body = "truss_test.sh",
+    subr = "//libexec/atf/atf-sh:shell_library", runner = "//tools/build/bazel:atf_runner",
+    config_files = {"//usr.bin/true:true": "usr.bin.truss.test_true"},
+    runtime_bin = _TOOLS, runtime_lib = _LIBS, size = "small") for case in _CASES]
+test_suite(name = "tests", tests = [":native_" + case for case in _CASES], visibility = ["//visibility:public"])
