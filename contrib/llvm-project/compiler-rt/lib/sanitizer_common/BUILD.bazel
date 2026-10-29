@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = glob(["*.h", "*.inc"]),
+    strip_include_prefix = ".", include_prefix = "sanitizer_common",
+    deps = ["//contrib/llvm-project/compiler-rt/include:sanitizer_headers"],
+    visibility = ["//visibility:public"])

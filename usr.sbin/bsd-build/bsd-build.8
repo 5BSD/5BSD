@@ -4194,3 +4194,15 @@ declared runtime libraries; this remains a diagnostic stage using the host
 kernel/rtld and SDK Kyua. The archive does not itself qualify a complete installed system or
 pkgbase repository. The bsd_kyuafile rule accepts an optional output path when
 composing multiple registrations in one Bazel package.
+
+.Pp
+.Cm //lib/libclang_rt/include:install_archive
+packages the maintained sanitizer interface headers.
+.Cm //lib/libclang_rt/ubsan_minimal:install_archive
+packages the native amd64 minimal UBSan runtime; static_archive and
+source_inventory are also available.
+.Cm //lib/libclang_rt/ubsan_minimal:runtime_test
+checks clean, recoverable signed-overflow and aborting signed-overflow behavior
+with compiler-generated instrumentation and the explicitly linked native archive.
+The registered SDK compiler/system runtime remain in use. These checks do not
+qualify other sanitizer runtimes, all handlers, other architectures or bootstrap.

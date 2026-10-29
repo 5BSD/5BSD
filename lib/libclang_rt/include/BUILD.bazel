@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+# Source-owned installed interface, matching this package's Makefile.
+_HEADERS = [
+    "allocator_interface.h",
+    "asan_interface.h",
+    "common_interface_defs.h",
+    "coverage_interface.h",
+    "dfsan_interface.h",
+    "hwasan_interface.h",
+    "linux_syscall_hooks.h",
+    "lsan_interface.h",
+    "memprof_interface.h",
+    "msan_interface.h",
+    "netbsd_syscall_hooks.h",
+    "rtsan_interface.h",
+    "scudo_interface.h",
+    "tsan_interface.h",
+    "tsan_interface_atomic.h",
+    "ubsan_interface.h",
+]
+[bsd_install_file(name = name, src = "//contrib/llvm-project/compiler-rt/include:sanitizer/" + name,
+    destination = "/usr/lib/clang/21/include/sanitizer/" + name,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clang", "dev"])
+ for name in _HEADERS]
+bsd_install_manifest(name = "install_manifest", entries = [":" + name for name in _HEADERS],
+    visibility = ["//visibility:public"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])

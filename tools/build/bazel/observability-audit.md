@@ -6653,3 +6653,11 @@ Kyua executed all 36 cases using the archive's registrations and stripped
 programs, with packaged DSO helper and declared runtime libraries. JUnit and
 post-run payload/loader audits pass. This supplements build-tree execution;
 no booted-system, DTrace/audit or kernel behavior claim beyond these tests.
+
+### Sanitizer headers and minimal UBSan (2026-10-29)
+
+Preserved the maintained 16 public interface headers and minimal handler source.
+Runtime test validates actual signed-overflow diagnostics, recovery and SIGABRT;
+no handler substitution. Minimal UBSan uses sanitizer instrumentation rather than
+DTrace/audit providers. No runtime source modifications or new audit hooks. Other
+handlers, concurrency and sanitizer libraries remain unqualified.

@@ -13976,3 +13976,36 @@ LD_LIBRARY_PATH; host kernel/rtld and SDK Kyua remain. This establishes executio
 of the packaged test payload/layout, not a booted installed OS, pkgbase transaction,
 independent bootstrap, or hermetic runtime. No host installation/upgrade/reboot.
 The diagnostic is not yet a maintained Bazel archive-execution test.
+
+### Sanitizer interfaces and minimal UBSan runtime (2026-10-29)
+
+Added native lib/libclang_rt/include installation for the 16 sanitizer interface
+headers in its maintained Makefile, and lib/libclang_rt/ubsan_minimal archive,
+source inventory and installation targets. Sanitizer common/public headers are
+declared source dependencies; the minimal archive preserves common compiler-rt
+flags, its extra define and PIC object selection. Runtime candidate is native
+FreeBSD amd64; installed header inventory is source-owned, not discovered from
+host installations.
+
+Fresh Make references under bazel-compiler-rt-include-make-20261029 and
+bazel-compiler-rt-ubsan_minimal-make-20261029 match all 17 installation records.
+All 16 header payloads are byte-identical. Minimal UBSan has one matching archive
+member and 53 matching global/weak symbol records. Comparison scripts/report
+are retained under bazel-compiler-rt-next-reference-20261029.
+
+Final frontend run bazel-compiler-rt-next-test-20261029-r2 reports one passing
+maintained runtime_test. The test uses actual compiler-generated signed-overflow
+instrumentation: clean input emits no diagnostic, recoverable overflow emits the
+minimal runtime diagnostic and exits normally, and nonrecoverable overflow emits
+that diagnostic and terminates with SIGABRT. Core dumps are disabled in the child.
+No handler is stubbed or replaced. Saved runtime-link.params selects the native
+archive without sanitizer-driver link flags that could select an SDK runtime.
+The first test build omitted linkstatic and failed to find static probe libraries;
+this was corrected in Bazel dependency selection, with failed evidence retained.
+
+SDK compiler, CRT and system libraries remain; other sanitizer runtimes,
+other architectures, additional UBSan handlers/concurrency and independent
+bootstrap remain unqualified. This is not machine-code identity or complete
+world/kernel/package/performance qualification. No host installation/publication.
+Frontend review: build-bsd.c and format-5 backend already support explicit labels;
+manual updated, no new input schema. Make stays production/default.
