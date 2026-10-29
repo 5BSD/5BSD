@@ -40302,3 +40302,25 @@ support this without contract changes. Shared package directory entries remain
 in component metadata; this is not final pkgbase composition. Kernel modules,
 full-system/bootstrap, sandbox/cache and performance gates remain open. Make
 stays production/default; no host installation or networking changes occurred.
+
+### Native libalias module lifecycle (2026-10-29)
+
+Added module_test with all seven configured native module DSOs as declared data
+and explicit rootpath arguments. The test loads every module, unloads all, then
+repeats the cycle. It deliberately does not call LibAliasInit, which reads
+/etc/libalias.conf and would otherwise select host modules. No host configuration
+or network traffic is used. Native run bazel-libalias-runtime-20261029-r2 passes;
+ldd with LD_LIBRARY_PATH removed confirms native libalias.so.7 (host libc/libsys/
+rtld still apply). Evidence: bazel-libalias-reference-20261029/runtime-loader.txt
+and the run receipt/test reports under /usr/obj/usr/src.
+
+Initial test failed because its assertion incorrectly expected unload success
+zero; the maintained LibAliasUnLoadAllModule returns one. Corrected that test
+expectation without changing production behavior. The loader uses RTLD_LAZY:
+loading success does not prove every module's lazy function binding or protocol
+handler execution. NAT tests need an explicit configuration-input strategy;
+do not run the existing instance tests and silently accept host module loading.
+
+Existing frontend explicit tests/runfiles and runtime-path feature suffice;
+no build-bsd contract changes. Full system, bootstrap, sandbox/cache and
+performance gates remain open; Make stays production/default.

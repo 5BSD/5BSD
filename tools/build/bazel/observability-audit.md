@@ -7075,3 +7075,7 @@ Main and seven userland protocol modules preserve their maintained sources.
 The userland Makefiles declare no DTrace providers. Packet translation, module
 loading, error logging and any kernel-side audit integration require separate
 runtime review; this build migration does not establish those behaviors.
+
+libalias module_test now verifies two load/unload cycles for all seven native
+userland modules through explicit runfiles. No packets are translated and no
+protocol handler/audit/probe delivery is qualified by this lifecycle test.
