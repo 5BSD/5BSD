@@ -39790,3 +39790,26 @@ No runtime tests were requested. Authentication, authorization denials, credenti
 cache behavior, privilege transitions and actual installed file-flag enforcement
 remain qualification work. SDK bootstrap and whole-world/kernel/pkgbase/sandbox/
 cache/performance gates remain open. Make stays production/default.
+
+### Native TLS and OTP plugins (2026-10-29)
+
+Added k5tls (notls.c and openssl.c) and OTP (main.c/otp_state.c with its header)
+with explicit native library dependencies, maintained symbol version maps and
+versioned plugin/debug/symlink installation. TLS uses native OpenSSL ssl/crypto.
+OTP preserves Make's private profile binding before shared RADIUS/verto/Kerberos
+libraries. Removed an unrelated radius header dependency from TLS during review.
+
+Final run bazel-tls-otp-20261029-r2 matches fresh Make references:
+- k5tls: 8 installation records; 75 symbols for /usr/lib/krb5/plugins/tls/k5tls.so.122, 75 symbols for /usr/lib/debug/usr/lib/krb5/plugins/tls/k5tls.so.122.debug.
+- otp: 8 installation records; 99 symbols for /usr/lib/krb5/plugins/preauth/otp.so.122, 99 symbols for /usr/lib/debug/usr/lib/krb5/plugins/preauth/otp.so.122.debug.
+
+Checks cover complete destination/metadata, global/weak symbols, dynamic
+libraries/SONAME/flags, symlink targets and debuglink CRC. Evidence/verifiers:
+/usr/obj/usr/src/bazel-{k5tls,otp}-reference-20261029.
+
+No runtime tests were selected. TLS certificate validation/handshake behavior,
+OTP/RADIUS exchanges, timeout/error handling and plugin loading remain runtime
+qualification work. Reviewed build-bsd.c/source_graph.py: existing explicit
+targets cover these plugins without contract changes. Make stays production;
+SDK bootstrap and whole-world/kernel/pkgbase/sandbox/cache/performance gates
+remain open. No host installation, network exchange or publication occurred.

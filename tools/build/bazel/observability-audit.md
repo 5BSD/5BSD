@@ -6960,3 +6960,10 @@ runtime remain untested. Vendor source instrumentation is unchanged.
 Both installation configurations match Make. main.c retains syslog reporting
 for authorization/authentication failures and successful authentication. No
 privilege transitions, audit-event delivery or log runtime were tested.
+
+### TLS and OTP plugins (2026-10-29)
+
+Native artifacts/installations match Make. OTP retains com_err diagnostics for
+secret/configuration and request-processing failures. Source scans found no
+DTrace/SDT or explicit audit hooks in these four plugin C files. TLS/OTP negative
+cases and observability runtime remain open; vendor instrumentation is unchanged.
