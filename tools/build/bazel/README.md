@@ -38346,3 +38346,13 @@ Frontend review: no build-bsd.c option/backend/helper change is required; normal
 world/package installation already uses this maintained target. Native Bazel
 composition of these optional default-name aliases remains to be implemented.
 Formatter's full isolated Make library build remains active, not yet qualified.
+
+### Formatter disabled-configuration rejection (2026-10-29)
+
+Explicitly requested //usr.bin/clang/clang-format:clang-format with clang_format
+and clang_extras both false. Run bazel-clang-format-disabled-20261029 terminates
+with the expected analysis error: the target is incompatible and cannot be built
+when explicitly requested. Only an internal action ran; this is not a successful
+build or test. This confirms the formatter cannot silently omit its required
+library-support component in this configuration. The full format-enabled Make
+library rebuild is still active and formatter parity remains open.
