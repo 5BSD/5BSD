@@ -3,7 +3,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "support_headers", hdrs = ['k5-platform.h', 'k5-thread.h', 'k5-base64.h', 'k5-buf.h', 'k5-err.h', 'k5-gmt_mktime.h', 'k5-hashtab.h', 'k5-hex.h', 'k5-input.h', 'k5-json.h', 'k5-plugin.h', 'k5-queue.h', 'k5-utf8.h', 'win-mac.h', 'port-sockets.h', 'socket-utils.h', 'fake-addrinfo.h'], includes = ["."], deps = ["//krb5/include:config_headers"], visibility = ["//visibility:public"])
 
 cc_library(name = "internal_headers", hdrs = ["k5-der.h", "CredentialsCache.h", "foreachaddr.h", "k5-regex.h", "k5-spake.h", "k5-tls.h", "k5-unicode.h", "kcm.h", "kdb.h", "k5-int.h", "k5-trace.h", "k5-int-pkinit.h", "krb5.h", "//crypto/krb5/src/include/krb5:authdata_plugin.h"], includes = ["."],
-    deps = [":support_headers", "//krb5/include:config_headers", "//krb5/include/krb5:headers", "//krb5/util/profile:headers", "//crypto/krb5/src/util/et:headers"], visibility = ["//contrib/pam-krb5:__pkg__", "//lib/libpam/modules/pam_ksu:__pkg__", "//krb5:__subpackages__", "//crypto/krb5/src/lib/crypto:__pkg__", "//crypto/krb5/src/lib/krb5:__pkg__", "//crypto/krb5/src/lib/gssapi:__subpackages__", "//crypto/krb5/src/lib/rpc:__pkg__", "//crypto/krb5/src/lib/krad:__pkg__"])
+    deps = [":support_headers", "//krb5/include:config_headers", "//krb5/include/krb5:headers", "//krb5/util/profile:headers", "//crypto/krb5/src/util/et:headers"], visibility = ["//contrib/pam-krb5:__pkg__", "//lib/libpam/modules/pam_ksu:__pkg__", "//krb5:__subpackages__", "//crypto/krb5/src/lib/crypto:__pkg__", "//crypto/krb5/src/lib/krb5:__pkg__", "//crypto/krb5/src/lib/gssapi:__subpackages__", "//crypto/krb5/src/lib/rpc:__pkg__", "//crypto/krb5/src/lib/krad:__pkg__", "//crypto/krb5/src/lib/kdb:__pkg__"])
 
 cc_library(
     name = "server_headers",
@@ -16,3 +16,7 @@ cc_library(
 cc_library(name = "radius_headers", hdrs = ["krad.h"], includes = ["."],
     deps = ["//krb5/include/krb5:headers", "//crypto/krb5/src/util/verto:headers"],
     visibility = ["//krb5:__subpackages__", "//crypto/krb5/src/lib/krad:__pkg__"])
+
+cc_library(name = "database_headers", hdrs = ["iprop.h", "iprop_hdr.h", "kdb_log.h", "kdb_kt.h"], includes = ["."],
+    deps = [":internal_headers", "//crypto/krb5/src/include/gssrpc:headers"],
+    visibility = ["//krb5:__subpackages__", "//crypto/krb5/src/lib/kdb:__pkg__"])

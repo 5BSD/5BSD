@@ -39211,3 +39211,35 @@ Reviewed build-bsd.c and format-5 source_graph.py; existing explicit labels/test
 selections cover both components without frontend/schema changes. Prepared SDK
 and host dependencies remain. No host installation, publication or reboot.
 Make remains production/default; whole-world/kernel/pkgbase gates remain open.
+
+### Native Kerberos database library (2026-10-29)
+
+Added libkdb5 with nine maintained C sources plus declared adb_err.et generation
+through the vendor AWK programs, native dependencies, static/shared outputs and
+pkg-config/install/debug metadata. iprop_xdr.c and include/iprop.h are maintained
+vendor source inputs used by Make; this conversion does not silently regenerate
+or replace them. Both generated adb_err outputs match the fresh Make reference
+except the exact output-filename comment, checked explicitly by the verifier.
+
+Initial run bazel-kdb-20261029 passed its string-attribute test but failed shared
+symbol comparison: Bazel substituted libkrb5's exported profile API while Make
+places the internal profile archive first and embeds private profile code. KDB
+now declares that private static dependency through cc_import of the native
+profile archive (already compiled with -fPIC). This preserves the private link
+contract without suppressing comparison differences or invoking Make in actions.
+Corrected run bazel-kdb-20261029-r2 passes artifact comparison and the selected
+upstream t_stringattr test, with assertions enabled and both Kerberos config
+paths set to /dev/null to avoid host configuration input.
+
+Fresh Make reference bazel-kdb-make-20261029 matches seven installation records,
+ten ordered archive members, 345 static and 260 shared/debug global/weak symbol
+records, dynamic dependencies/SONAME/flags, debuglink CRC, symlink and
+ownership/modes/tags. kdb.pc matches bytewise. Evidence and repeatable verifiers:
+/usr/obj/usr/src/bazel-kdb-reference-20261029. Backend plugins, actual databases,
+update-log and replication behavior, shared-library runtime and performance
+remain unqualified. Prepared SDK and host kernel/rtld dependencies remain.
+
+Frontend review: build-bsd.c and format-5 source_graph.py already support these
+explicit target/test labels; no frontend/schema change. Documentation and
+observability audit updated. Make stays production/default. No host installation,
+publication or reboot; complete-system qualification remains open.

@@ -6800,3 +6800,11 @@ or audit calls. Review RADIUS retry/timeouts and replication connection/transfer
 failures at their consumer boundaries; avoid duplicating authentication audit
 records owned by KDC/OTP callers. Three upstream RADIUS unit executables pass;
 daemon-backed packet/client tests and replication runtime remain outstanding.
+
+### MIT KDB (2026-10-29)
+
+The migrated database library C sources have no explicit DTrace provider or
+audit submission calls. Review backend load/failure, update-log operations and
+key mutation visibility with the KDC/kadmin consumers. The string-attribute unit
+test covers in-memory entry operations; it does not establish backend, update-log,
+replication or authentication-audit correctness. No probes were added here.
