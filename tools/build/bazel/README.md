@@ -38356,3 +38356,33 @@ when explicitly requested. Only an internal action ran; this is not a successful
 build or test. This confirms the formatter cannot silently omit its required
 library-support component in this configuration. The full format-enabled Make
 library rebuild is still active and formatter parity remains open.
+
+### Formatter fresh Make parity completed (2026-10-29)
+
+The full isolated Make libclang rebuild with WITH_CLANG_FORMAT=1 completed
+successfully (840 actual object files; .depend.* files are not objects). It uses
+existing SDK/LLVM/bootstrap generators and creates its own complete Clang library.
+Receipt/log: /usr/obj/usr/src/bazel-clang-format-library-make-20261029.
+
+The first driver attempt with this library (clang-format-make-20261029-r2) failed
+Make's LIBADD validation because re-injecting expanded LDADD carried -l flags.
+Preserved that failure. Corrected r3 uses a private object-tree view: all existing
+object dependencies remain selected except libclang, which points to the fresh
+complete library. The normal Make library resolution/validation runs unchanged;
+no standalone substitute object or validation bypass. Driver script requires the
+library's successful receipt and checks its SHA256 before and after the build.
+
+Fresh driver/build/install r3 succeeds. Saved Bazel formatter from
+bazel-clang-utilities-native-20261029-r2 matches all global/weak ELF symbol records
+with zero differences. Both installation payload records and debuglink CRC match;
+there is no manual payload for this utility. Comparison scripts/report:
+/usr/obj/usr/src/bazel-clang-utilities-reference-20261029/clang-format-verify-r3.py
+and clang-format-r3-comparison.json. This closes the previously recorded formatter
+binary/install parity gap for the tested configuration. It is not machine-code
+identity, independent bootstrap, cross-host/static-LLVM or performance evidence.
+
+Maintained scanner/formatter runtime tests were already verified in
+bazel-clang-tools-test-20261029. Frontend review: no input/schema or backend changes
+needed; manual removes obsolete pending-parity wording. Complete world/kernel,
+SDK/bootstrap, pkgbase/publication, cache-invalidation and performance gates remain
+open. Make stays production/default; no host installation or publication.

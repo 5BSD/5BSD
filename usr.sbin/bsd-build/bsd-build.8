@@ -4111,9 +4111,9 @@ The clang-scan-deps and clang-format packages provide native runtime, _installed
 source_inventory and install_archive candidates; neither installs a manual.
 Scanner also provides its generated options target. clang-format requires
 clang_format or clang_extras in build-settings to include its library support.
-Scanner has fresh Make parity evidence; formatter binary/install parity awaits
-a matching Make library configuration. Diagnostic runtime checks do not establish
-independent bootstrap or maintained Bazel scanner/formatter test coverage.
+Both have fresh Make binary/install parity evidence for the tested configuration;
+the formatter reference uses a complete Make Clang library with formatting enabled.
+These checks do not establish independent bootstrap.
 
 .Pp
 .Cm //lib/clang:clang_tools_test
@@ -4121,4 +4121,4 @@ checks per-file dependency scanning across a nested include change, explicit
 LLVM formatting, formatting idempotence and dry-run validation. Enable
 clang_format or clang_extras and select this label in targets and tests.
 These checks do not qualify compilation-database/module/PCH variants or Bazel
-cache invalidation. Formatter Make parity still needs its matching library.
+cache invalidation.
