@@ -7247,3 +7247,11 @@ The nine vendor sources are carried without production changes. Archive ordering
 and symbols match Make, with no installed payload. No DTrace providers or audit
 integration are added by this migration; device-tree parsing/mutation runtime,
 malformed input handling and bootloader consumers remain separate qualification.
+
+### libefivar (2026-10-29)
+
+Native graph retains all eight maintained source files and matches archive,
+shared-library and installation metadata. No production probe/audit change was
+made. EFI variable mutation crosses device/ioctl boundaries; audit coverage and
+actual firmware behavior require separate runtime review. No EFI variables were
+read or modified as part of this artifact qualification.

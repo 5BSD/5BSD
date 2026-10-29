@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["efichar.c"], visibility = ["//lib/libefivar:__pkg__"])

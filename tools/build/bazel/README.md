@@ -41270,3 +41270,32 @@ global/weak symbol inventory, and confirms zero changed installation records.
 The native artifact hash is checked against its saved manifest; comparison.json
 retains native/reference hashes and symbol counts. No runtime tests were run.
 Full-system/bootstrap/kernel and performance gates remain open.
+
+### Native libefivar candidate (2026-10-29)
+
+Added native static/shared library and installation targets for all eight Make
+sources, including stand/efi/libefi/efichar.c. EDK2 device-path header inputs are
+explicit source declarations reconciled against the fresh Make depfiles; they
+are not generated or queried from Make during Bazel builds. Userland efichar
+headers, private device-path headers and public efivar headers are declared.
+The native shared target preserves Make's libc-only dynamic dependency contract:
+GEOM symbols remain unresolved for consumers to supply. No automatic libgeom
+link dependency was added. Installation includes both public headers, compressed
+manual and all fourteen aliases, static/shared outputs and separate debug data.
+
+Fresh Make build/install completed under bazel-libefivar-make-20261029. Native
+run bazel-libefivar-20261029 is pending; retained install/payload comparators are
+under bazel-libefivar-reference-20261029. No EFI variable operation or host
+firmware modification is part of this qualification. Existing build-bsd/source_graph
+explicit target inputs support the addition unchanged. Full-system gates remain
+open and Make remains production/default.
+
+Libefivar result: bazel-libefivar-20261029 passes. Fresh Make comparison matches
+all 23 changed installation destinations with no missing/extra paths or
+owner/group/mode/non-directory tag differences. Six regular payloads pass:
+static archive member order and symbol inventory, shared/debug symbols, ordered
+dynamic metadata, both public headers and compressed manual bytes, plus the
+manual hardlink checks and debug-link CRC. Evidence is retained in
+bazel-libefivar-reference-20261029/{install,payload}-audit.json and verifier scripts.
+No runtime or EFI hardware behavior has been qualified. Cross-platform, full
+world/kernel/package/bootstrap and performance gates remain open.
