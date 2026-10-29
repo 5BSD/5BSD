@@ -6974,3 +6974,10 @@ Native artifacts/installations match Make. Existing Kerberos TRACE_* call sites,
 including PKINIT certificate matching/rejection and verification diagnostics,
 remain in the source graph. These are not evidence of DTrace or OS audit-event
 delivery. Protocol and observability runtime checks remain outstanding.
+
+### Configured audit-plugin boundary and GSSAPI headers (2026-10-29)
+
+The default Make plugin traversal explicitly excludes the audit directory. Native
+conversion has not enabled it. Existing KDC audit-interface source coverage must
+not be reported as a built/loaded audit backend. Four GSSAPI public header payloads
+now match Make; no runtime instrumentation changed.

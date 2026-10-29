@@ -15198,3 +15198,25 @@ Reviewed build-bsd.c/source_graph.py: existing explicit target selection support
 these components without contract changes. Make stays production/default;
 SDK bootstrap and whole-world/kernel/pkgbase/sandbox/cache/performance gates
 remain open. No host installation, network exchange or publication occurred.
+
+### GSSAPI header installation and configured inventory reconciliation (2026-10-29)
+
+Added krb5/include/gssapi's four configured public headers to a native installation
+manifest/archive: gssapi_alloc.h, gssapi_ext.h, gssapi_generic.h and gssapi_krb5.h.
+Run bazel-gssapi-headers-20261029 matches all four fresh Make installation records,
+including exact bytes, destination, owner/group, mode and package/dev tags.
+Evidence/verifier: /usr/obj/usr/src/bazel-gssapi-headers-reference-20261029.
+
+Reviewed the maintained plugin traversal: krb5/plugins/Makefile explicitly excludes
+audit. Its directory is not a missing default configured product and was not
+silently enabled. The prior complete metadata survey contains 56 krb5 directories;
+reconciliation against today's checkout leaves krb5/util/build-tools (installed
+krb5-config.sh) as the product-bearing directory without a local BUILD. This is
+only a local-file presence check, not completion proof: top-level public header
+installation and aggregate payload coverage still require reconciliation even
+where BUILD files exist. The audit-plugin runtime gaps remain separate.
+
+Reviewed build-bsd.c/source_graph.py: explicit target inputs support this header
+archive without contract changes. Make stays production/default; SDK bootstrap
+and whole-world/kernel/pkgbase/sandbox/cache/performance gates remain open.
+No host installation or publication occurred.
