@@ -6871,3 +6871,9 @@ found no DTrace/SDT or audit hooks; the conversion preserves existing sources,
 including kinit_kdb.c. Ticket acquisition/renewal and service-ticket request
 audit coverage needs review across client libraries and KDC boundaries. No
 authenticated runtime or tracing claim follows from these artifact checks.
+
+### kadmin_common PIE variant (2026-10-29)
+
+The PIE variant reuses the existing source and generator declarations. No source
+instrumentation changed. Archive parity and the ordinary date-parser test do
+not establish administration-command runtime or audit coverage.

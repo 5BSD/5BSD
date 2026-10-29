@@ -6,12 +6,16 @@ load("//krb5/util/ss:command_table.bzl", "mit_command_table")
 mit_command_table(name = "kadmin_table", src = "//crypto/krb5/src/kadmin/cli:kadmin_ct.ct", output = "kadmin_ct.c")
 mit_command_table(name = "ktutil_table", src = "//crypto/krb5/src/kadmin/ktutil:ktutil_ct.ct", output = "ktutil_ct.c", visibility = ["//krb5:__subpackages__"])
 bsd_yacc(name = "date_parser", src = "//crypto/krb5/src/kadmin/cli:getdate.y", output = "getdate.c", header = "getdate.h", yacc = "//usr.bin/yacc:yacc")
-cc_library(name = "kadmin_common",
+[cc_library(name = "kadmin_common" + suffix,
     srcs = ["//crypto/krb5/src/kadmin/cli:kadmin.c", ":kadmin_table", ":ktutil_table", "//crypto/krb5/src/kadmin/cli:ss_wrapper.c", ":date_parser"],
     deps = ["//crypto/krb5/src/kadmin/cli:headers", "//crypto/krb5/src/lib/kadm5:headers", "//crypto/krb5/src/util/ss:headers"],
+    copts = flags, local_defines = defines,
     linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//krb5:__subpackages__"])
+ for suffix, flags, defines in [("", [], []), ("_pie", ["-fpie"], ["PIC"])]]
 bsd_component_archive(name = "static_archive", groups = [":kadmin_common"], visibility = ["//visibility:public"])
+
+bsd_component_archive(name = "pie_archive", groups = [":kadmin_common_pie"], visibility = ["//visibility:public"])
 
 cc_import(name = "archive_link", static_library = ":static_archive")
 cc_test(name = "date_test", srcs = ["date_test.c"],

@@ -14821,3 +14821,23 @@ inputs support these additions without a CLI/schema change. SDK bootstrap,
 whole-world/kernel/modules, pkgbase/publication, sandbox/cache and performance
 gates remain open. Make stays production/default. No host installation,
 publication, upgrade or reboot was performed.
+
+### Administration common-library PIE variant (2026-10-29)
+
+Review of remaining kadmin/kadmin.local consumers identified the missing native
+PIE variant of kadmin_common. Added kadmin_common_pie and pie_archive using the
+same explicit sources, headers and generated command/date inputs as the ordinary
+variant, with Make's -fpie/PIC flags. The ordinary archive remains available.
+
+Run bazel-kadmin-common-pie-20261029-r2 builds both variants and passes the existing
+ordinary-archive date-parser test. Each archive matches the previously built Make
+reference's five ordered members and 198 global/weak symbols. Evidence and repeatable
+verifier: /usr/obj/usr/src/bazel-kadmin-common-pie-reference-20261029. The initial
+qualification input omitted the test from selected targets and was correctly
+rejected before building; the corrected input includes it in both lists.
+
+This is an archive prerequisite, not qualification of either administration
+program or authenticated operations. PIE final-link/runtime checks remain for
+those consumers. Reviewed build-bsd.c/source_graph.py; existing target/test
+selection supports the variant without contract changes. SDK bootstrap and
+whole-system/package/performance gates remain open; Make stays production.
