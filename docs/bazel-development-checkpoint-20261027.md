@@ -15988,3 +15988,27 @@ qualification. Reviewed build-bsd.c/source_graph.py; existing target inputs suff
 without frontend changes. No host daemon started, installation or policy change.
 Make remains production/default; full-system/bootstrap/cache/performance gates stay
 open. These are userland SNMP plugins, not kernel modules.
+
+### SNMP USM/VACM/target installation (2026-10-29)
+
+Added a shared module installation macro with explicit module name, binary,
+manual, definition-file mapping and major version inputs. The three native
+module targets now include DSO/debug files, maintained .so symlink, filtered
+manual and definition data. Package tags match bsd.snmpmod.mk: the module link
+belongs to bsnmp (without a dev tag), and default manuals belong to bsnmp-dev.
+
+Run bazel-snmpmodules-install-20261029 passes via build-bsd with 16 jobs. Each
+module independently matches its fresh Make reference's eight changed installation
+records. All four regular payloads per module pass manual/definition bytes or
+ELF symbol/dynamic comparisons; all three debug-link names/CRCs and symlink targets
+pass. The 24 per-component records include repeated shared directory entries;
+they are not 24 unique system paths or final package composition evidence.
+Evidence/scripts under /usr/obj/usr/src/bazel-snmpmodules-reference-20261029:
+{usm,vacm,target}-install-audit.py,json and corresponding payload-audit.py,json.
+
+Module load/runtime authorization and remaining configured modules still need
+qualification. The root modules BUILD currently exports the shared macro only;
+it does not imply a complete modules aggregate. Reviewed build-bsd.c/source_graph.py:
+existing explicit targets/metadata groups suffice without frontend changes.
+No host installation, daemon startup or policy changes. Make remains production/
+default; full-system/bootstrap/cache/sandbox/performance gates remain open.

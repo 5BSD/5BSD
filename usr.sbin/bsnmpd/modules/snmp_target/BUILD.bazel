@@ -15,3 +15,6 @@ cc_library(name = "objects", srcs = ["//contrib/bsnmp/snmp_target:target_snmp.c"
     linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 cc_shared_library(name = "module", deps = [":objects"], shared_lib_name = "snmp_target.so.6",
     user_link_flags = ["-Wl,-soname,snmp_target.so.6", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load("//usr.sbin/bsnmpd/modules:installation.bzl", "module_installation")
+module_installation(module = "target", binary = ":module", manual = "//contrib/bsnmp/snmp_target:snmp_target.3", definitions = {"//contrib/bsnmp/snmp_target:target_tree.def": "target_tree.def"})
