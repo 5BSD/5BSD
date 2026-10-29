@@ -29,3 +29,11 @@ bsd_install_archive(name = "install_archive", manifests = [":install_program", "
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_test(name = "signature_test", srcs = ["//usr.sbin/pkg/tests:signature_test.c", "rsa.c", "ecc.c", "hash.c", "pkg.h", "hash.h", "config.h"],
+    deps = ["//lib/libder:der", "//secure/lib/libpkgecc:pkgecc", "//secure/lib/libcrypto:crypto",
+        "//secure/lib/libssl:ssl", "//lib/libmd:md_link"],
+    dynamic_deps = ["//secure/lib/libcrypto:crypto_shared", "//secure/lib/libssl:ssl_shared", "//lib/libmd:md_shared"],
+    copts = ["-UNDEBUG"], features = ["bsd_test_runtime_paths"], linkstatic = True,
+    size = "small", visibility = ["//visibility:public"])

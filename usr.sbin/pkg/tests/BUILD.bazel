@@ -1,3 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load(":repository_tests.bzl", "repository_tests")
 repository_tests(name = "repository_tests")
+
+exports_files(["signature_test.c"], visibility = ["//usr.sbin/pkg:__pkg__"])

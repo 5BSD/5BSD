@@ -41132,3 +41132,40 @@ cases, package bootstrap installation and full system publication remain open.
 The existing frontend explicit tests/settings contract handles this suite without
 API changes. No host state or repository contents were changed. Make remains
 production/default; world/kernel/bootstrap/sandbox/cache/performance gates remain.
+
+### Native pkg signature verification and ECC callback initialization (2026-10-29)
+
+Added a native cc_test that compiles the actual rsa.c/ecc.c/hash.c callbacks and
+uses native libder/libpkgecc/OpenSSL/libmd dependencies. Ephemeral RSA-2048 and
+secp256k1 ECDSA keys sign private temporary data. Assertions cover raw-data and
+package-file (ASCII SHA256 digest) APIs, buffer-backed and file-backed public keys,
+changed payloads, modified/truncated signatures and signatures from the wrong key.
+One Bazel test case executes 18 verification calls: eight expected acceptances and
+ten expected rejections. Assertions are enabled explicitly. Host OpenSSL config
+loading is disabled, and no download, installation or repository mutation occurs.
+
+Code review found ecc_verify_data left buffer-key fields uninitialized when using
+a file key; ecc_extract_pubkey receives those fields and checks the mutually
+exclusive file/buffer invariant. Zero-initialized callback state fixes that path.
+Removed a redundant preliminary keysz assignment that read the unset length and
+was immediately overwritten. This is a production initialization fix, not a change
+to algorithm selection or trust policy. No claim is made that the old undefined
+behavior failed deterministically on every execution.
+
+The first test compilation exposed a missing config.h input, now declared.
+Run bazel-pkg-signatures-20261029-r2 passes the signature case. The subsequent
+bazel-pkg-bootstrap-eccfix-20261029 run also reports it passed and rebuilds the
+installed program after the production fix. Fresh Make build/install/installconfig
+matches all ten changed destinations, seven regular payloads and one debug-link
+CRC, with no missing/extra paths or ownership/mode/non-directory tag mismatches.
+Evidence under /usr/obj/usr/src/bazel-pkg-bootstrap-reference-20261029/ includes
+signature-inputs.json, eccfix-inputs.json, make-eccfix.py,
+eccfix-install-audit.py/json and eccfix-payload-audit.py/json. Native receipts and
+saved test logs retain expected rejection diagnostics separately from pass status.
+
+This covers RSA/ECDSA verification callbacks, not EdDSA, fingerprint/revocation
+policy, download handling, extraction or complete bootstrap installation. Existing
+build-bsd/source_graph interfaces carry the new test and install target unchanged.
+Input verification was slow under concurrent host load; no hashing checks were
+bypassed or performance qualification claimed. Whole-system/kernel/pkgbase,
+bootstrap, sandbox/cache/performance gates remain open; Make stays production/default.

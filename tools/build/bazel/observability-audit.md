@@ -7209,3 +7209,9 @@ linkage. No local Make-declared DTrace provider is present; archive/fetch depend
 probe generation is carried by their existing targets. Repository selection,
 signature rejection, download/extraction failure reporting and bootstrap authorization
 still require isolated runtime tests. No network fetch or package installation ran.
+
+pkg signature follow-up: RSA/ECDSA production callbacks now have passing native
+accept/reject coverage, including wrong-key, tampered/truncated-signature and
+changed-package cases. Expected rejection diagnostics appear in saved test logs.
+ECC file-key callback initialization was corrected. End-to-end fingerprint trust,
+revocation, EdDSA, download and extraction diagnostics remain unqualified.
