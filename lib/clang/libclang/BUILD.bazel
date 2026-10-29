@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_tablegen.bzl", "bsd_tablegen")
+
+# Maintained Clang diagnostic families and modes; each output is its own action.
+_DIAGNOSTIC_COMPONENTS = ["AST", "Analysis", "Comment", "Common", "CrossTU", "Driver", "Frontend", "InstallAPI", "Lex", "Parse", "Refactoring", "Sema", "Serialization"]
+_DIAGNOSTIC_MODES = {"CompatIDs": "-gen-clang-diags-compat-ids", "Enums": "-gen-clang-diags-enums", "Kinds": "-gen-clang-diags-defs", "Interface": "-gen-clang-diags-iface"}
+_DIAGNOSTICS = {"Diagnostic" + component + suffix: [flag, "-clang-component=" + component] for component in _DIAGNOSTIC_COMPONENTS for suffix, flag in _DIAGNOSTIC_MODES.items()} | {
+    "DiagnosticAllCompatIDs": ["-gen-clang-diags-compat-ids"],
+    "DiagnosticGroups": ["-gen-clang-diag-groups"],
+    "DiagnosticIndexName": ["-gen-clang-diags-index-name"],
+}
+[bsd_tablegen(
+    name = name,
+    src = "//contrib/llvm-project/clang/include:clang/Basic/Diagnostic.td",
+    includes = ["//contrib/llvm-project/clang/include:diagnostic_definitions"],
+    include_dirs = ["contrib/llvm-project/clang/include/clang/Basic"],
+    flags = flags,
+    output = "clang/Basic/" + name + ".inc",
+    tool = "//usr.bin/clang/clang-tblgen:bootstrap",
+) for name, flags in _DIAGNOSTICS.items()]
+cc_library(name = "diagnostic_headers", hdrs = [":" + name for name in _DIAGNOSTICS], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "diagnostic_outputs", srcs = [":" + name for name in _DIAGNOSTICS], visibility = ["//visibility:public"])

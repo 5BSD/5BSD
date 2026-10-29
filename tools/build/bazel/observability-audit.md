@@ -6107,3 +6107,10 @@ The 22 generator sources plus RISCVVIntrinsicUtils.cpp retain their source
 behavior. DTRACE, SDT_PROBE and audit_submit scans found no matches; no probes
 were removed. This build-time code generator introduces no privileged service
 operation requiring a new audit event. Runtime tracing sessions were not tested.
+
+### 2026-10-29 Clang diagnostic generated headers
+
+This batch adds generation actions only and changes no generator or compiler
+sources. All maintained diagnostic families are retained; no probes or audit
+hooks were removed. Actual compiler diagnostic behavior remains to qualify after
+native compiler linkage.

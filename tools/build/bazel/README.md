@@ -36328,3 +36328,28 @@ when building components that use it. Frontend review: existing format-5 setting
 native action backend and artifacts suffice; build-bsd.c/manual need no interface
 change. Complete compiler/world/kernel/pkgbase/bootstrap/runtime/performance gates
 remain open; Make stays production/default, with no host installation.
+
+### 2026-10-29 complete Clang diagnostic generated-header family
+
+Added lib/clang/libclang native diagnostic generation: 13 maintained components
+(AST, Analysis, Comment, Common, CrossTU, Driver, Frontend, InstallAPI, Lex, Parse,
+Refactoring, Sema, Serialization), four modes each (CompatIDs, Enums, Kinds,
+Interface), plus AllCompatIDs, Groups and IndexName. Each of 55 outputs is a
+separate native TableGen action with declared Diagnostic*.td input family and
+include root. diagnostic_headers exports generated headers for future compiler
+consumers; diagnostic_outputs supports artifact inventory/qualification. The
+Bazel declarations own this inventory and do not parse Make at build time.
+
+Maintained frontend bazel-clang-diagnostics-20261029 (16 jobs) succeeds. Compared
+all 55 output names and 2,195,560 bytes exactly against fresh invocations of the
+existing Make bootstrap generator. Qualification reference selection is derived
+independently from maintained Make diagnostic recipes. Scripts, reference tool
+hash and per-output hashes: /usr/obj/usr/src/bazel-clang-diagnostics-qualification-
+20261029. All outputs match. Reference generator was not freshly rebuilt.
+
+This establishes diagnostic generation coverage, not compiled Clang diagnostics,
+installed compiler/package behavior or other generated families. Frontend review:
+existing format-5 targets/artifacts and maintained TableGen backend suffice; no
+build-bsd.c/manual interface change required. Compiler/world/kernel/pkgbase/runtime/
+cache/performance gates remain open; Make stays production/default. No host
+installation or publication occurred.
