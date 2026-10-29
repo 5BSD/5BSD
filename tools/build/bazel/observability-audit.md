@@ -6464,3 +6464,12 @@ type/binding/visibility/defined state. No new probes/audit hooks. Runtime target
 diagnostics, unwind/debug behavior, MCA behavior and generated-code execution/tracing
 still need qualification. Evidence:
 `/usr/obj/usr/src/bazel-llvm-riscv-backend-qualification-20261029`.
+
+### BPF and LoongArch backends (2026-10-29)
+
+20 generated tables match Make bytes; 61 backend objects match ELF symbol type,
+binding, visibility and defined state. Sources unchanged, no added probes/audit
+hooks. BPF loading/verifier/execution, LoongArch generated-code execution and target
+diagnostics/unwind/debug behavior remain unqualified. Evidence:
+`/usr/obj/usr/src/bazel-llvm-optional-tables-qualification-20261029` and
+`/usr/obj/usr/src/bazel-llvm-optional-backends-qualification-20261029`.

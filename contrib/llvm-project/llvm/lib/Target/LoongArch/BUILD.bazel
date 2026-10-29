@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["LoongArch.td"], visibility = ["//lib/clang/libllvm:__pkg__"])
+filegroup(name = "definitions", srcs = [
+    "LoongArch.td",
+    "LoongArchCallingConv.td",
+    "LoongArchFloat32InstrInfo.td",
+    "LoongArchFloat64InstrInfo.td",
+    "LoongArchFloatInstrFormats.td",
+    "LoongArchInstrFormats.td",
+    "LoongArchInstrInfo.td",
+    "LoongArchLASXInstrFormats.td",
+    "LoongArchLASXInstrInfo.td",
+    "LoongArchLBTInstrFormats.td",
+    "LoongArchLBTInstrInfo.td",
+    "LoongArchLSXInstrFormats.td",
+    "LoongArchLSXInstrInfo.td",
+    "LoongArchLVZInstrInfo.td",
+    "LoongArchRegisterInfo.td"
+], visibility = ["//lib/clang/libllvm:__pkg__"])
+
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Native component of libllvm; not an additional installed library.
+cc_library(name = "loongarch", srcs = [
+    "AsmParser/LoongArchAsmParser.cpp",
+    "Disassembler/LoongArchDisassembler.cpp",
+    "LoongArchAsmPrinter.cpp",
+    "LoongArchDeadRegisterDefinitions.cpp",
+    "LoongArchExpandAtomicPseudoInsts.cpp",
+    "LoongArchExpandPseudoInsts.cpp",
+    "LoongArchFrameLowering.cpp",
+    "LoongArchISelDAGToDAG.cpp",
+    "LoongArchISelLowering.cpp",
+    "LoongArchInstrInfo.cpp",
+    "LoongArchMCInstLower.cpp",
+    "LoongArchMergeBaseOffset.cpp",
+    "LoongArchOptWInstrs.cpp",
+    "LoongArchRegisterInfo.cpp",
+    "LoongArchSubtarget.cpp",
+    "LoongArchTargetMachine.cpp",
+    "LoongArchTargetTransformInfo.cpp",
+    "MCTargetDesc/LoongArchAsmBackend.cpp",
+    "MCTargetDesc/LoongArchBaseInfo.cpp",
+    "MCTargetDesc/LoongArchELFObjectWriter.cpp",
+    "MCTargetDesc/LoongArchELFStreamer.cpp",
+    "MCTargetDesc/LoongArchInstPrinter.cpp",
+    "MCTargetDesc/LoongArchMCAsmInfo.cpp",
+    "MCTargetDesc/LoongArchMCCodeEmitter.cpp",
+    "MCTargetDesc/LoongArchMCTargetDesc.cpp",
+    "MCTargetDesc/LoongArchMatInt.cpp",
+    "MCTargetDesc/LoongArchTargetStreamer.cpp",
+    "TargetInfo/LoongArchTargetInfo.cpp"
+], hdrs = glob(["**/*.h"]), includes = ["."],
+    deps = ["//lib/clang/libllvm:loongarch_generated_headers","//usr.bin/clang/llvm-min-tblgen:value_type_headers", "//lib/clang/libllvm:intrinsic_headers", "//lib/clang/libllvm:ir_generated_headers", "//lib/clang/libllvm:target_definition_headers", "//lib/clang/libllvm:directive_headers", "//contrib/llvm-project/llvm/include:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    copts = ["-fvisibility=hidden", "-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections", "-UPIC"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
+    local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC", "LLVM_BUILD_LLVM_DYLIB"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}),
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({"//tools/build/bazel/config:llvm_target_loongarch_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}), visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = [":loongarch"], pic = True, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
+bsd_component_objects(name = "pic_objects", group = ":loongarch", pic = True, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_sources")
+bsd_component_sources(name = "source_inventory", groups = [":loongarch"], visibility = ["//visibility:public"])

@@ -37656,3 +37656,31 @@ and world/kernel/pkgbase/runtime/CPU/memory/disk qualification remain open. Conc
 builds do not provide comparative performance evidence. Frontend review: build-bsd.c/
 format-5 backend transports new setting; manual updated. Make remains production/
 default; no host installation/publication occurred.
+
+### Optional BPF and LoongArch generators/backends (2026-10-29)
+
+Added native generator inputs/actions and backend components for BPF (11 tables,
+33 sources) and LoongArch (9 tables, 28 sources). Explicit .td inventories contain
+44 and 53 transitive inputs respectively. Every generated output's Make depfile
+plus primary input matches its source include closure. All 20 tables match Make
+byte-for-byte: 6,357,782 bytes. Maintained frontend run:
+`/usr/obj/usr/src/bazel-llvm-optional-tables-20261029`; evidence/scripts in matching
+`bazel-llvm-optional-tables-qualification-20261029` directory.
+
+Backend targets declare generated/private headers, BPF's pass registry .def, hidden
+visibility and explicit source lists. llvm_target_bpf/llvm_target_loongarch booleans
+default false, matching src.opts.mk. Qualification explicitly enables both.
+Maintained frontend `bazel-llvm-optional-backends-20261029` succeeds with 16 jobs.
+All 61 objects match fresh Make global/weak ELF symbol type, binding, visibility,
+defined/undefined state and name. Both archive member inventories and resolved
+sources match expanded Make. Evidence/scripts:
+`/usr/obj/usr/src/bazel-llvm-optional-backends-qualification-20261029`. No compiler
+source or sandbox workaround. Reference uses existing bootstrap tools/staged SDK.
+
+All seven backend families in the maintained LLVM Makefile now have component
+compilation evidence, but aggregate source reconciliation/target selection, full
+compiler linkage and runtime code generation remain unqualified. Component results
+do not establish BPF program loading/execution or a LoongArch system build.
+Independent bootstrap and world/kernel/pkgbase/runtime/CPU/memory/disk gates remain
+open. Frontend review: build-bsd.c/format-5 backend accepts new booleans; manual
+updated. Make remains production/default; no installation/publication occurred.

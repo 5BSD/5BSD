@@ -3921,3 +3921,12 @@ the explicit component incompatible. Its MCA source is selected by
 .Cm clang_extras .
 This selects a compiler backend, not a qualified RISC-V host/system build.
 Aggregate target selection and cross-platform defaults remain unfinished.
+
+.Pp
+The optional native AMD64-hosted LLVM BPF and LoongArch components use
+.Cm //tools/build/bazel/config:llvm_target_bpf
+and
+.Cm //tools/build/bazel/config:llvm_target_loongarch .
+Both booleans default to false, matching the maintained Make configuration.
+Enable the corresponding setting when requesting that explicit backend component.
+This does not qualify BPF execution, a LoongArch host, or complete compiler linkage.

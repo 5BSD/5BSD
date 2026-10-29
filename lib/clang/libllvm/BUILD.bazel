@@ -141,3 +141,24 @@ _RISCV_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-
 ) for stem, flags in _RISCV_TABLES]
 cc_library(name = "riscv_generated_headers", hdrs = [":riscv_" + stem.lower() for stem, _ in _RISCV_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
 filegroup(name = "riscv_generated_outputs", srcs = [":riscv_" + stem.lower() for stem, _ in _RISCV_TABLES], visibility = ["//visibility:public"])
+
+_BPF_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-writer']), ('CallingConv', ['-gen-callingconv']), ('DAGISel', ['-gen-dag-isel']), ('DisassemblerTables', ['-gen-disassembler']), ('GlobalISel', ['-gen-global-isel']), ('InstrInfo', ['-gen-instr-info']), ('MCCodeEmitter', ['-gen-emitter']), ('RegisterBank', ['-gen-register-bank']), ('RegisterInfo', ['-gen-register-info']), ('SubtargetInfo', ['-gen-subtarget'])]
+[bsd_tablegen(name = "bpf_" + stem.lower(),
+    src = "//contrib/llvm-project/llvm/lib/Target/BPF:BPF.td",
+    includes = ["//contrib/llvm-project/llvm/lib/Target/BPF:definitions", "//contrib/llvm-project/llvm/include:bpf_target_inputs"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/BPF"],
+    flags = flags, output = "BPFGen" + stem + ".inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for stem, flags in _BPF_TABLES]
+cc_library(name = "bpf_generated_headers", hdrs = [":bpf_" + stem.lower() for stem, _ in _BPF_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "bpf_generated_outputs", srcs = [":bpf_" + stem.lower() for stem, _ in _BPF_TABLES], visibility = ["//visibility:public"])
+
+
+_LOONGARCH_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-writer']), ('DAGISel', ['-gen-dag-isel']), ('DisassemblerTables', ['-gen-disassembler']), ('InstrInfo', ['-gen-instr-info']), ('MCCodeEmitter', ['-gen-emitter']), ('MCPseudoLowering', ['-gen-pseudo-lowering']), ('RegisterInfo', ['-gen-register-info']), ('SubtargetInfo', ['-gen-subtarget'])]
+[bsd_tablegen(name = "loongarch_" + stem.lower(),
+    src = "//contrib/llvm-project/llvm/lib/Target/LoongArch:LoongArch.td",
+    includes = ["//contrib/llvm-project/llvm/lib/Target/LoongArch:definitions", "//contrib/llvm-project/llvm/include:loongarch_target_inputs"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/LoongArch"],
+    flags = flags, output = "LoongArchGen" + stem + ".inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for stem, flags in _LOONGARCH_TABLES]
+cc_library(name = "loongarch_generated_headers", hdrs = [":loongarch_" + stem.lower() for stem, _ in _LOONGARCH_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "loongarch_generated_outputs", srcs = [":loongarch_" + stem.lower() for stem, _ in _LOONGARCH_TABLES], visibility = ["//visibility:public"])

@@ -429,3 +429,11 @@ config_setting(name = "llvm_target_aarch64_enabled", flag_values = {":llvm_targe
 # Matches the current native AMD64 world LLVM target-all selection.
 bool_flag(name = "llvm_target_riscv", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "llvm_target_riscv_enabled", flag_values = {":llvm_target_riscv": "true"}, visibility = ["//visibility:public"])
+
+# Optional LLVM backend, matching src.opts.mk default.
+bool_flag(name = "llvm_target_bpf", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "llvm_target_bpf_enabled", flag_values = {":llvm_target_bpf": "true"}, visibility = ["//visibility:public"])
+
+# Optional LLVM backend, matching src.opts.mk default.
+bool_flag(name = "llvm_target_loongarch", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "llvm_target_loongarch_enabled", flag_values = {":llvm_target_loongarch": "true"}, visibility = ["//visibility:public"])
