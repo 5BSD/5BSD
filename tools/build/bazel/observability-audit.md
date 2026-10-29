@@ -6669,3 +6669,10 @@ statistics client, with source-owned common compiler-rt build policy. Archive
 members/symbols and install metadata match Make. No source hooks changed. These
 are sanitizer/statistics support components; full runtime instrumentation and
 reporting have not been executed. No DTrace/audit runtime claim.
+
+### ASan compiler runtime (2026-10-29)
+
+Main ASan and its C++ companion preserve their maintained source inventories.
+The runtime test verifies real heap-boundary and lifetime diagnostics. This does
+not establish C++ instrumentation, leak detection, concurrency, or tracing/audit
+coverage. No production instrumentation was added or removed for this migration.

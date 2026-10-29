@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libclang_rt:runtime.bzl", "compiler_rt_archive")
+# Explicit source inventory from this component's maintained Makefile.
+compiler_rt_archive(stem = "asan_cxx",
+    cxx_srcs = [
+        "//contrib/llvm-project/compiler-rt/lib/asan:asan_new_delete.cpp",
+    ],
+    deps = ['//contrib/llvm-project/compiler-rt/lib/asan:headers', '//contrib/llvm-project/compiler-rt/lib/interception:headers', '//contrib/llvm-project/compiler-rt/lib/lsan:headers', '//contrib/llvm-project/compiler-rt/lib/sanitizer_common:headers', '//contrib/llvm-project/compiler-rt/lib/ubsan:headers'],
+    cxxopts = ["-frtti"],
+)

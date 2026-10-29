@@ -4214,3 +4214,13 @@ using the common native amd64 runtime.bzl policy. Their archive inventories,
 symbol records and installation metadata match fresh Make references. This is
 support-component qualification, not proof of working full ASan instrumentation
 or statistics reporting; complete runtime consumers remain to be tested.
+
+.Pp
+The lib/libclang_rt/asan and asan_cxx packages provide native amd64 archive and
+installation targets, including the maintained ASan ignorelist.
+.Cm //lib/libclang_rt/asan:runtime_test
+checks clean execution, heap overflow and use-after-free with real compiler
+instrumentation and explicitly linked native archives. Compiler-rt uses -fpic
+without the toolchain PIC variant's -DPIC, matching Make's static-runtime policy.
+The C++ companion currently has archive comparison only; SDK system libraries,
+host kernel/rtld and independent bootstrap remain qualification boundaries.

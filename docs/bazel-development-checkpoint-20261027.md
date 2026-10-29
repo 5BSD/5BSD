@@ -14037,3 +14037,35 @@ components/architectures, world/kernel/pkgbase/bootstrap and performance gates
 remain open. No host installation/publication. Frontend review: build-bsd.c and
 format-5 backend already accept these target lists; manual updated. Make stays
 production/default.
+
+### Main ASan and compiler-runtime PIC correction (2026-10-29)
+
+Native amd64 ASan and its C++ companion now have explicit source, archive and
+installation targets. Fresh Make comparisons pass: main ASan 77 archive members,
+5615 global/weak symbol records; companion one member, 32 records. The ignorelist
+payload is byte-identical and its parent-directory package metadata matches Make.
+Support archives and minimal UBSan also retain matching inventories/symbols and
+installation metadata. Profiling retains 15 members, 381 symbol records, three
+installation records and two byte-identical installed headers.
+
+The initial ASan runtime test exposed a real flag mismatch: toolchain PIC objects
+added -DPIC, selecting ASAN_DYNAMIC semantics for a static archive. Compiler-rt
+now uses ordinary objects explicitly compiled with Make's -fpic, without -DPIC.
+The profile archive received the same correction. No ASan runtime checks were
+disabled to make the test pass. Native archives are explicitly linked without a
+sanitizer driver flag at link time that could select the SDK sanitizer archive.
+
+Frontend run bazel-asan-runtime-20261029-r4 passed all three maintained tests:
+ASan clean/heap-overflow/use-after-free, minimal UBSan clean/recover/abort, and
+compiler profiling. Comparisons and scripts are in
+/usr/obj/usr/src/bazel-asan-main-reference-20261029. The C++ companion has archive
+comparison only; C++ instrumentation, concurrency, leak detection, other platforms
+and independent bootstrap remain unqualified. SDK compiler/system libraries and
+host kernel/rtld remain. No full world/kernel/pkgbase or performance claim.
+
+Frontend review: build-bsd.c and format-5 source_graph.py already accept these
+explicit targets and tests; no new input or CLI contract is required. Make remains
+the production default. The final rerun includes initialization of the test harness wait-status error
+diagnostic. Its three tests and all artifact comparisons pass. Saved link
+parameters select native ASan archives; loader-audit.json verifies every resolved
+shared library is a declared SDK artifact. Host kernel and rtld remain.
