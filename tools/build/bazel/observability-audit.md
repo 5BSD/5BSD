@@ -6247,3 +6247,10 @@ APINotes, ASTMatchers, CrossTU, Edit, ExtractAPI, FrontendTool, Index, InstallAP
 and Rewrite retain their maintained sources/probes/audit behavior. All 34 object
 symbol comparisons and nine archive inventories pass. Runtime behavior remains
 unqualified. Evidence: bazel-clang-support-components-qualification-20261029.
+
+### 2026-10-29 Clang Format
+
+20 core plus one optional source preserve original probe/audit/source behavior.
+Default and both optional selectors pass object/archive checks; formatter runtime
+and diagnostics remain unqualified. Retained evidence:
+bazel-clang-format[-enabled|-extras]-qualification-20261029.

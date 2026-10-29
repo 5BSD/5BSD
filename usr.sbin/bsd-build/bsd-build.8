@@ -3791,3 +3791,13 @@ sets the produced compiler's default runtime sysroot; its default is empty.
 It does not inherit the SDK used to compile Clang.
 These inputs currently apply to the native Driver and Frontend components;
 complete compiler and cross-compilation qualification remain outstanding.
+
+.Pp
+The boolean settings
+.Cm //tools/build/bazel/config:clang_format
+and
+.Cm //tools/build/bazel/config:clang_extras
+both default to false, matching the maintained source defaults.
+The native Clang Format component includes its extra source when either is true.
+These settings do not yet establish complete optional-tool build or installation
+coverage.

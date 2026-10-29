@@ -392,3 +392,11 @@ string_flag(name = "llvm_host_triple", build_setting_default = "", visibility = 
 string_flag(name = "llvm_default_target_triple", build_setting_default = "", visibility = ["//visibility:public"])
 
 string_flag(name = "llvm_default_sysroot", build_setting_default = "", visibility = ["//visibility:public"])
+
+bool_flag(name = "clang_format", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "clang_format_enabled", flag_values = {":clang_format": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "clang_extras", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "clang_extras_enabled", flag_values = {":clang_extras": "true"}, visibility = ["//visibility:public"])
+
+selects.config_setting_group(name = "clang_format_or_extras_enabled", match_any = [":clang_format_enabled", ":clang_extras_enabled"], visibility = ["//visibility:public"])

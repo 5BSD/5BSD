@@ -36870,3 +36870,38 @@ separately integrated minimal Support component. Format source selection and ful
 libclang linkage remain open, along with LLVM completion and world/kernel/pkgbase/
 bootstrap/runtime/cache/performance gates. Make stays production/default; no host
 installation or publication occurred.
+
+### 2026-10-29 native Clang Format configuration
+
+Added 20 core Format sources and MatchFilePath.cpp selected when clang_format OR
+clang_extras is enabled. Both new typed boolean settings default false, matching
+share/mk/src.opts.mk. Native select uses a config_setting_group match_any; source
+inventory is explicit. Private/public/generated headers are declared. Manual
+states current component scope without claiming complete optional tool coverage.
+No compiler source or configuration-header changes.
+
+Default frontend bazel-clang-format-20261029 succeeds; all 20 PIC object symbol
+inventories/archive members match a fresh Make reference with both options off.
+bazel-clang-format-enabled-20261029 succeeds with clang_format=true; all 21 objects
+and archive members match a separate fresh Make MK_CLANG_FORMAT=yes reference.
+bazel-clang-format-extras-20261029 succeeds with only clang_extras=true; all 21
+objects match that same enabled reference (no independent extras Make rebuild).
+All runs use 16 jobs. Evidence/scripts:
+/usr/obj/usr/src/bazel-clang-format[-enabled|-extras]-qualification-20261029.
+
+Initial enabled verifier wrongly assumed every compile action appears in a warm
+execution log. Bazel reused the core objects and compiled MatchFilePath.cpp.
+Corrected verification combines retained default/enabled action records, rejects
+conflicting mappings, and still requires exact full source/object sets plus all
+symbol comparisons. No compiler assertion or comparison exception was relaxed.
+Enabled run reports 5075 cache hits/two sandbox processes; extras run reports one
+total action. This is observed reuse, not complete cache correctness qualification.
+References use existing bootstrap generators/staged SDK headers. Formatting runtime,
+style behavior, instruction identity, linkage and performance remain unqualified.
+
+Frontend review: typed format-5 settings already cover both booleans; updated source
+settings/manual together, no build-bsd.c parser change. Twenty-two default Clang
+components now cover 838 qualified sources, plus one separately integrated minimal
+Support source; optional Format adds one more. Complete aggregate inventory/linkage,
+LLVM completion and world/kernel/pkgbase/bootstrap/runtime/cache/performance gates
+remain open. Make stays production/default; no host installation/publication.
