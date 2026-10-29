@@ -4078,3 +4078,13 @@ each alias's distinct manual. The maintained
 .Cm //lib/clang:utilities_test
 covers ELF inspection, linked debug-line lookup and both argv0 dispatch modes.
 Symbol-name lookup in relocatable objects is not qualified by this test.
+
+.Pp
+The llvm-objcopy package provides native runtime, _installed, source_inventory,
+options and install_archive targets. Four native TableGen actions produce the
+option tables. Its archive includes the llvm-strip binary hardlink.
+.Cm //lib/clang:utilities_test
+covers native debug splitting, strip dispatch, code-section preservation and
+address-based resolution through the separate debug file. Installation helpers
+still select their declared SDK objcopy/strip; this does not qualify an independent
+native bootstrap.

@@ -8,12 +8,17 @@ load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_compress")
 
-def llvm_utility(name, srcs, options, manual, deps = [], aliases = {}):
+def llvm_utility(name, srcs, options, manual, deps = [], aliases = {}, generated_options = []):
     """Default shared-LLVM utility with declared option generation and installation."""
-    bsd_tablegen(name = "options", src = options,
-        includes = ["//contrib/llvm-project/llvm/include:llvm/Option/OptParser.td"],
-        include_dirs = ["contrib/llvm-project/llvm/include"], flags = ["-gen-opt-parser-defs"],
-        output = "Opts.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap")
+    if bool(options) == bool(generated_options):
+        fail("Supply one option-table source or explicit generated option tables")
+    if options:
+        bsd_tablegen(name = "options", src = options,
+            includes = ["//contrib/llvm-project/llvm/include:llvm/Option/OptParser.td"],
+            include_dirs = ["contrib/llvm-project/llvm/include"], flags = ["-gen-opt-parser-defs"],
+            output = "Opts.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap")
+    else:
+        native.filegroup(name = "options", srcs = generated_options, visibility = ["//visibility:public"])
     cc_library(name = "option_headers", hdrs = [":options"], strip_include_prefix = ".")
     bsd_llvm_targets(name = "registered_targets")
     bsd_clang_defaults(name = "compiler_defaults")
@@ -34,13 +39,15 @@ def llvm_utility(name, srcs, options, manual, deps = [], aliases = {}):
     for alias, alias_manual in aliases.items():
         bsd_install_link(name = alias + "_alias", destination = "/usr/bin/" + alias, target = "/usr/bin/" + name,
             kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=clang"])
-        bsd_compress(name = alias + "_manual", src = alias_manual, output = alias + ".1.gz",
-            arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
-            runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
-        bsd_install_file(name = alias + "_manual_file", src = ":" + alias + "_manual", destination = "/usr/share/man/man1/" + alias + ".1.gz",
-            owner = "root", group = "wheel", mode = "0444",
-            install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=clang-man"], "//conditions:default": ["package=clang"]}))
-        entries.extend([":" + alias + "_alias", ":" + alias + "_manual_file"])
+        entries.append(":" + alias + "_alias")
+        if alias_manual:
+            bsd_compress(name = alias + "_manual", src = alias_manual, output = alias + ".1.gz",
+                arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+                runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+            bsd_install_file(name = alias + "_manual_file", src = ":" + alias + "_manual", destination = "/usr/share/man/man1/" + alias + ".1.gz",
+                owner = "root", group = "wheel", mode = "0444",
+                install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=clang-man"], "//conditions:default": ["package=clang"]}))
+            entries.append(":" + alias + "_manual_file")
     utility_installation(name = "install_manifest", program = name, binary = ":" + name + "_installed", manual = manual, package = "clang", extra_entries = entries)
     bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
         mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},

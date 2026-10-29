@@ -38178,3 +38178,37 @@ and tests; manual updated. Native amd64/default shared LLVM remains the qualifie
 configuration; static LLVM, cross-host, independent bootstrap, full system/package,
 cache and performance gates remain open. Make stays production/default. No host
 installation, upgrade or publication.
+
+### Native llvm-objcopy/llvm-strip (2026-10-29)
+
+Added the three maintained objcopy sources, private ObjcopyOptions.h, and explicit
+native TableGen actions for BitcodeStripOpts, InstallNameToolOpts, ObjcopyOpts and
+StripOpts. CommonOpts.td is declared only for its two users; all include closures
+match fresh Make depfiles. Common LLVM utility macro accepts either one table
+source or explicit generated outputs, and aliases may omit a separate manual.
+llvm-strip is a binary hardlink; Make installs only the llvm-objcopy manual here.
+
+The first output path was already occupied and build-bsd rejected it. New run
+/usr/obj/usr/src/bazel-llvm-objcopy-native-20261029 passes, including the existing
+utilities test. Fresh Make driver/link/install comparison finds zero global/weak
+ELF symbol differences, all four installation records match, manual bytes match,
+and debuglink CRC validates. Four generated tables match all 79,446 bytes; expanded
+Make and Bazel source inventory both contain three sources. Reference scripts and
+reports: /usr/obj/usr/src/bazel-llvm-objcopy-driver-reference-20261029.
+Make reference still uses the existing SDK/private LLVM library.
+
+Extended //lib/clang:utilities_test uses native objcopy to split debug data and
+add its debuglink, invokes native strip through argv0, checks that .debug_info and
+.symtab are absent, verifies .text bytes unchanged, then resolves the original
+function/source line through the separate debug file using native symbolizer.
+Initial bazel-llvm-objcopy-test-20261029 failed because name lookup was requested
+after removing the symbol table. Corrected test discovers the linked address with
+native nm before stripping and uses it for lookup; r2 passes (one reported case,
+none skipped). No fixed fixture address and no relaxed symbol/line assertions.
+
+Frontend review: build-bsd.c/format-5 source_graph.py already transport targets and
+tests; manual updated. Installation helpers still use declared SDK objcopy/strip;
+using native tools throughout installation requires bootstrap dependency review
+and remains open. Static LLVM/cross-host variants, complete system/bootstrap,
+cache/performance/package gates remain open. Make stays production/default;
+no host installation or publication.

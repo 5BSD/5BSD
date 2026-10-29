@@ -6570,3 +6570,12 @@ instrumentation calls. No probe/audit code changed. Maintained smoke tests cover
 ELF inspection, linked source-line resolution and readelf/addr2line aliases; they
 do not establish kernel audit delivery or DTrace execution. Relocatable symbol
 lookup limitation reproduced with Make and recorded in the development checkpoint.
+
+### Native objcopy/strip (2026-10-29)
+
+All three driver sources and four option tables retained; no explicit DTrace/SDT
+or audit calls found in the upstream driver sources/private header. No instrumentation
+changed. Maintained tests check code-byte preservation and separate debug-file
+resolution after stripping. This does not qualify retention of every custom ELF
+section or system-wide DTrace/audit delivery; production artifact helpers still
+use the declared SDK tools and their existing keep-section policy.

@@ -45,7 +45,7 @@ run(char *const args[], const char *output)
 }
 
 static void
-contains(const char *file, const char *expected)
+check_text(const char *file, const char *expected, int present)
 {
     char data[65536];
     FILE *f = fopen(file, "r");
@@ -57,20 +57,43 @@ contains(const char *file, const char *expected)
     int failed = ferror(f) || !feof(f);
     fclose(f);
     data[n] = '\0';
-    if (failed || strstr(data, expected) == NULL) {
-        fprintf(stderr, "%s: missing %s\n%s\n", file, expected, data);
+    if (failed || (strstr(data, expected) != NULL) != present) {
+        fprintf(stderr, "%s: unexpected presence/absence of %s\n%s\n", file, expected, data);
         exit(1);
     }
+}
+
+static void
+contains(const char *file, const char *expected)
+{
+    check_text(file, expected, 1);
+}
+
+static void
+identical(const char *left, const char *right)
+{
+    FILE *a = fopen(left, "rb"), *b = fopen(right, "rb");
+    int x, y;
+    if (a == NULL || b == NULL)
+        exit(1);
+    do {
+        x = fgetc(a); y = fgetc(b);
+        if (x != y)
+            exit(1);
+    } while (x != EOF);
+    if (ferror(a) || ferror(b))
+        exit(1);
+    fclose(a); fclose(b);
 }
 
 int
 main(int argc, char **argv)
 {
-    char tools[8][PATH_MAX];
+    char tools[9][PATH_MAX];
     const char *tmp = getenv("TEST_TMPDIR");
-    if (argc != 9 || tmp == NULL)
+    if (argc != 10 || tmp == NULL)
         return (2);
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 9; i++) {
         if (realpath(argv[i + 1], tools[i]) == NULL) {
             perror(argv[i + 1]);
             return (2);
@@ -108,6 +131,35 @@ main(int argc, char **argv)
     run_as(tools[6], (char *[]){"llvm-addr2line", "-e", "probe.elf", "-f", "answer", NULL}, "addr2line.out");
     contains("addr2line.out", "answer\n");
     contains("addr2line.out", "probe.c:2");
-    puts("native LLVM inspection, aliases and debug-line checks passed");
+    run((char *[]){tools[1], "--defined-only", "probe.elf", NULL}, "linked-nm.out");
+    FILE *symbols = fopen("linked-nm.out", "r");
+    char line[1024], symbol[256], type, address[32];
+    unsigned long long value;
+    int found = 0;
+    if (symbols == NULL)
+        return (1);
+    while (fgets(line, sizeof(line), symbols) != NULL) {
+        if (sscanf(line, "%llx %c %255s", &value, &type, symbol) == 3 &&
+            type == 'T' && strcmp(symbol, "answer") == 0) {
+            snprintf(address, sizeof(address), "0x%llx", value);
+            found++;
+        }
+    }
+    if (ferror(symbols) || fclose(symbols) != 0 || found != 1)
+        return (1);
+    run((char *[]){tools[8], "--only-keep-debug", "probe.elf", "probe.debug", NULL}, "debug.out");
+    run((char *[]){tools[8], "--strip-debug", "--add-gnu-debuglink=probe.debug", "probe.elf", "split.elf", NULL}, "split.out");
+    run_as(tools[8], (char *[]){"llvm-strip", "--strip-all", "-o", "stripped.elf", "split.elf", NULL}, "strip.out");
+    run((char *[]){tools[5], "--sections", "stripped.elf", NULL}, "sections.out");
+    contains("sections.out", ".gnu_debuglink");
+    check_text("sections.out", ".debug_info", 0);
+    check_text("sections.out", ".symtab", 0);
+    run((char *[]){tools[8], "--dump-section", ".text=before.text", "probe.elf", NULL}, "before.out");
+    run((char *[]){tools[8], "--dump-section", ".text=after.text", "stripped.elf", NULL}, "after.out");
+    identical("before.text", "after.text");
+    run((char *[]){tools[6], "--obj=stripped.elf", address, NULL}, "separate-debug.out");
+    contains("separate-debug.out", "answer\n");
+    contains("separate-debug.out", "probe.c:2:");
+    puts("native LLVM inspection, aliases and separate-debug checks passed");
     return (0);
 }
