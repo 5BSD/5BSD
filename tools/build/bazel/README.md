@@ -34511,3 +34511,30 @@ Remaining /sbin work includes the devd compiled test, recursive archive and
 option selection reconciliation, full parent installation comparison and
 matching-kernel runtime qualification. No complete world/kernel/pkgbase claim;
 Make remains production/default and BIP remains excluded.
+
+### 2026-10-29 devd compiled test installation
+
+Added //sbin/devd/tests:install_archive with native cc_binary and declared ATF
+library dependencies. Preserved required_files=/var/run/devd.pid,
+required_programs=devd, required_user=root and timeout=15 in installed Kyua
+metadata. No program-source changes. This is a VM-only runtime candidate:
+its cases connect to live devd sockets and create/destroy md devices.
+
+Maintained frontend qualification:
+`/usr/obj/usr/src/bazel-devd-test-install-20261029-r2`.
+Fresh Make reference: `bazel-sbin-devd-tests-reference-20261029` under the same
+object root. Scripts: `bazel-devd-test-qualification-20261029`.
+The qualification/devd reports establish eight equal installation metadata
+records, exact Kyuafile bytes, a valid split-debug pair, and equal global/undefined
+symbols and NEEDED/RPATH/RUNPATH/SONAME. Instruction equivalence and runtime
+execution are not claimed. Initial archive failure is retained: missing debug
+parent-directory policy was fixed by declaring Make's owned directory records,
+without weakening the archive validator.
+
+Frontend review: existing format-5 target/artifact handling covers this target;
+no build-bsd C or protocol change required. No production backend switch.
+Further source inspection found sbin/devd/BUILD.bazel exports only the NVMe
+configuration: devd itself is still unmigrated. The next dependency is a native
+devd executable including lex/yacc generation, its DTrace provider, option-selected
+configuration groups and manuals, before complete /sbin aggregation can qualify.
+A BUILD file's existence alone must not be counted as a migrated program.

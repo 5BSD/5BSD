@@ -5660,3 +5660,10 @@ changed. A source scan found no explicit SDT/DTRACE/audit references in their
 C/header files; this is an instrumentation review candidate, not evidence that
 kernel-level syscall audit/tracing is absent. Installation parity does not prove
 runtime tracing, audit, ZFS, device or network behavior.
+
+### 2026-10-29 devd client test
+
+Preserved both stream and seqpacket test bodies and diagnostics. No runtime
+probe/audit qualification performed. Production devd migration is still pending;
+Make conditionally compiles devd_provider.d with WITH_DTRACE, which must be
+carried into its native graph. The current devd BUILD file only installs nvmf.conf.
