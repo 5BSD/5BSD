@@ -6941,3 +6941,9 @@ permission-denial and failure reporting. No DTrace/SDT or explicit audit hook
 was found in the three entry-point source scans. Native libutil selection is
 preserved; tracing and log delivery were not exercised. Authenticated replication
 and observability runtime coverage remain outstanding.
+
+### GSS sample client/server (2026-10-29)
+
+Native artifact/install comparisons pass. Scans of gss-client.c, gss-server.c
+and gss-misc.c found no DTrace/SDT, audit or syslog hooks. Sources are unchanged.
+GSS authentication/message protection and observability runtime remain open.

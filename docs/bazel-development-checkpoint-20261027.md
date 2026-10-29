@@ -15069,3 +15069,26 @@ recovery remain qualification work. Reviewed build-bsd.c/source_graph.py: curren
 explicit target inputs support the family without contract changes. SDK bootstrap
 and whole-world/kernel/pkgbase/sandbox/cache/performance gates remain open.
 Make stays production/default; no host installation, publication or replication.
+
+### Native GSS sample client/server artifacts (2026-10-29)
+
+Added gss-client and gss-server with explicit per-program source, shared
+gss-misc.c/header, native GSSAPI/Kerberos dependencies and PIE linkage. Client
+installs in /usr/bin; server in /usr/sbin. Neither Make directory installs a
+manual; native installation preserves that contract.
+
+Run bazel-gss-sample-20261029 completes four binary/archive targets. Fresh Make
+comparisons pass:
+- gss-client: 4 installation records; 58 symbols for /usr/bin/gss-client, 70 symbols for /usr/lib/debug/usr/bin/gss-client.debug.
+- gss-server: 4 installation records; 61 symbols for /usr/sbin/gss-server, 74 symbols for /usr/lib/debug/usr/sbin/gss-server.debug.
+
+Checks include destination/ownership/mode/tags, dynamic dependencies/PIE flags
+and debuglink CRC. Evidence and per-program verifiers are under
+/usr/obj/usr/src/bazel-{gss-client,gss-server}-reference-20261029.
+
+No runtime tests were requested and no GSS server was started. Context exchange,
+wrap/unwrap, MIC verification, delegation and negative credentials remain runtime
+qualification work. Reviewed build-bsd.c/source_graph.py: existing explicit target
+selection supports the pair without contract changes. Make stays production;
+SDK bootstrap and complete world/kernel/pkgbase/sandbox/cache/performance gates
+remain open. No host installation or service configuration change occurred.
