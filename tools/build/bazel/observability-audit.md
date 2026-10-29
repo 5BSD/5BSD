@@ -5816,3 +5816,11 @@ hooks. Session creation/modification/removal, credential handling and module/dev
 access need VM qualification and audit review. Existing logging is not proof of
 security audit coverage; secrets must not be added to instrumentation. No live
 sessions, device operations or source instrumentation changes occurred here.
+
+### 2026-10-29 genl and quota
+
+Native migration preserves existing sources and quota's setuid installation
+metadata. Focused inspection found no direct DTrace/SDT or audit submission
+hooks. Installed credential behavior, quota authorization, remote RPC and
+netlink interaction require separate runtime qualification; metadata parity
+alone proves none of these. No migration-only instrumentation was introduced.

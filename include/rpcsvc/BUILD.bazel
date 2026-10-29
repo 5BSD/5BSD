@@ -21,5 +21,5 @@ cc_library(name = "library_local_headers", hdrs = [":" + n + ".h" for n in RPCSV
 # Public protocol interfaces for consumers; reuse the native rpcgen actions.
 [cc_library(name = name + "_public_header", hdrs = [":" + name + ".h"],
     strip_include_prefix = ".", include_prefix = "rpcsvc",
-    visibility = ["//libexec/" + consumer + ":__pkg__"])
+    visibility = ["//libexec/" + consumer + ":__pkg__"] + (["//usr.bin/quota:__pkg__"] if name == "rquota" else []))
  for name, consumer in [("ypxfrd", "ypxfr"), ("spray", "rpc.sprayd"), ("rquota", "rpc.rquotad"), ("rwall", "rpc.rwalld"), ("rstat", "rpc.rstatd"), ("rnusers", "rpc.rusersd")]]

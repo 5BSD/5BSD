@@ -35198,3 +35198,27 @@ management, config error paths and runtime/performance qualification remain open
 Frontend review: existing format-5 target/artifact pathway and declared generator
 rules support this integration without build-bsd C/protocol/manual changes.
 Make remains production/default; whole-system completion is not claimed.
+
+### 2026-10-29 genl and quota native installation
+
+Added native genl (both maintained sources and local header) and quota. Quota
+uses native rpcsvc/util and the existing generated rquota public header, with
+narrow visibility extended to its new consumer. Root ownership and mode 4555
+are preserved in installation metadata. No production source changes occurred.
+Future usr.bin parent selection must retain Make's NETLINK/QUOTAS conditions.
+
+Initial bazel-genl-quota-20261029 analysis correctly rejected the missing quota
+header visibility; the corrected run is
+/usr/obj/usr/src/bazel-genl-quota-20261029-r2 (maintained frontend, 16 jobs).
+Fresh rootless references: bazel-genl-native-reference-20261029 and
+bazel-quota-native-reference-20261029. Scripts are in
+bazel-genl-quota-qualification-20261029. Both pass five metadata records, exact
+compressed manual bytes, separate-debug linkage, global/undefined symbols and
+dynamic dependency comparison. Genl requires libc; quota requires libc/rpcsvc/util.
+Saved per-program reports are under the successful run's qualification directory.
+
+No installed setuid execution, live netlink, local quota or remote RPC testing
+was performed. These runtime/authorization gates remain open. No host install,
+upgrade or reboot occurred. Resource logs do not establish comparative performance.
+Frontend review: existing format-5 explicit targets and artifact handling suffice;
+no build-bsd C/protocol/manual change is needed. Make remains production/default.
