@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["AST/ByteCode/Opcodes.td", "Sema/OpenCLBuiltins.td"], visibility = ["//lib/clang/libclang:__pkg__"])

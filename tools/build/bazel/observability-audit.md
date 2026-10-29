@@ -6140,3 +6140,10 @@ established by generated-definition byte comparisons.
 Only generation declarations and a Make prerequisite correction changed. No
 compiler/generator sources, probes or audit integration were modified. Generated
 byte parity does not establish builtin runtime behavior.
+
+### 2026-10-29 libclang generated-header aggregate
+
+All 136 maintained generated headers are represented with exact path/payload
+comparison. No compiler/generator sources or instrumentation changed. Static
+analyzer registration output is included; this does not qualify analyzer execution
+or diagnostic instrumentation.

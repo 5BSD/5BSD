@@ -371,3 +371,20 @@ _BUILTIN_TABLES = {
 ) for output, config in _BUILTIN_TABLES.items()]
 cc_library(name = "builtin_table_headers", hdrs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _BUILTIN_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
 filegroup(name = "builtin_table_outputs", srcs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _BUILTIN_TABLES], visibility = ["//visibility:public"])
+
+bsd_tablegen(name = "checker_definitions", src = "//contrib/llvm-project/clang/include:clang/StaticAnalyzer/Checkers/Checkers.td",
+    includes = ["//contrib/llvm-project/clang/include:clang/StaticAnalyzer/Checkers/CheckerBase.td"],
+    include_dirs = ["contrib/llvm-project/clang/include/clang/StaticAnalyzer/Checkers"],
+    flags = ["-gen-clang-sa-checkers"], output = "clang/StaticAnalyzer/Checkers/Checkers.inc", tool = "//usr.bin/clang/clang-tblgen:bootstrap")
+bsd_tablegen(name = "opcode_definitions", src = "//contrib/llvm-project/clang/lib:AST/ByteCode/Opcodes.td",
+    flags = ["-gen-clang-opcodes"], output = "Opcodes.inc", tool = "//usr.bin/clang/clang-tblgen:bootstrap")
+bsd_tablegen(name = "opencl_definitions", src = "//contrib/llvm-project/clang/lib:Sema/OpenCLBuiltins.td",
+    flags = ["-gen-clang-opencl-builtins"], output = "OpenCLBuiltins.inc", tool = "//usr.bin/clang/clang-tblgen:bootstrap")
+bsd_tablegen(name = "driver_options", src = "//contrib/llvm-project/clang/include:clang/Driver/Options.td",
+    includes = ["//contrib/llvm-project/llvm/include:llvm/Option/OptParser.td"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/clang/include/clang/Driver"],
+    flags = ["-gen-opt-parser-defs"], output = "clang/Driver/Options.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap")
+_REMAINING_DEFINITIONS = [":checker_definitions", ":opcode_definitions", ":opencl_definitions", ":driver_options"]
+cc_library(name = "remaining_definition_headers", hdrs = _REMAINING_DEFINITIONS, strip_include_prefix = ".", visibility = ["//visibility:public"])
+cc_library(name = "generated_headers", deps = [":diagnostic_headers", ":attribute_headers", ":ast_definition_headers", ":architecture_builtin_headers", ":builtin_table_headers", ":remaining_definition_headers"], visibility = ["//visibility:public"])
+filegroup(name = "generated_outputs", srcs = [":diagnostic_outputs", ":attribute_outputs", ":ast_definition_outputs", ":architecture_builtin_outputs", ":builtin_table_outputs"] + _REMAINING_DEFINITIONS, visibility = ["//visibility:public"])

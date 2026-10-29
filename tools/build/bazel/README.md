@@ -36453,3 +36453,29 @@ no build-bsd.c/manual interface change. Remaining checker/opcode/OpenCL/driver
 outputs and compiler libraries still need integration, followed by full world/
 kernel/pkgbase/bootstrap/runtime/performance qualification. Make stays production/
 default; no host installation or publication occurred.
+
+### 2026-10-29 complete libclang generated-header aggregate
+
+Added checker registration, constexpr opcodes, OpenCL builtin definitions and
+LLVM-generated driver options with explicit source/includes and execution tools.
+Added generated_headers/generated_outputs aggregates over every maintained
+libclang definition family. Driver options uses native llvm-tblgen; the other
+three use native clang-tblgen. No imported generated header substitutes are used.
+
+Maintained frontend bazel-clang-generated-20261029 (16 jobs) succeeds. Independently
+queried Make's expanded ${TGHDRS} through BuildEnvironment: 136 unique paths. The
+Bazel aggregate matches exactly that full path set, closing the loop/multiline
+inventory risk exposed earlier. All 136 outputs, totaling 20,890,780 bytes, match
+recorded fresh invocations of existing Make bootstrap generators. Prior family
+references are reused without regenerating unchanged source inputs; four new
+references are freshly generated here. Reference tools themselves were not rebuilt.
+Evidence, expanded Make inventory, scripts and per-file hashes:
+/usr/obj/usr/src/bazel-clang-generated-qualification-20261029.
+
+This closes libclang generated-header inventory/parity for the queried configuration,
+not library compilation/linkage, compiler behavior, installed metadata, cross builds
+or complete LLVM generated definitions. Frontend review: current format-5 aggregate
+artifacts and native TableGen backend cover this addition; no build-bsd.c/manual
+interface changes. Compiler/world/kernel/pkgbase/bootstrap/runtime/performance
+qualification remains open; Make stays production/default. No host installation
+or publication occurred.

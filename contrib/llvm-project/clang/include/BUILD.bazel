@@ -37,3 +37,5 @@ filegroup(name = "BuiltinsSPIRVCL_inputs", srcs = ["clang/Basic/BuiltinsBase.td"
 filegroup(name = "BuiltinsSPIRVVK_inputs", srcs = ["clang/Basic/BuiltinsBase.td", "clang/Basic/BuiltinsSPIRVBase.td"], visibility = ["//lib/clang/libclang:__pkg__"])
 filegroup(name = "BuiltinsX86_inputs", srcs = ["clang/Basic/BuiltinsBase.td", "clang/Basic/BuiltinsX86Base.td"], visibility = ["//lib/clang/libclang:__pkg__"])
 filegroup(name = "BuiltinsX86_64_inputs", srcs = ["clang/Basic/BuiltinsBase.td", "clang/Basic/BuiltinsX86Base.td"], visibility = ["//lib/clang/libclang:__pkg__"])
+
+exports_files(["clang/Driver/Options.td", "clang/StaticAnalyzer/Checkers/Checkers.td", "clang/StaticAnalyzer/Checkers/CheckerBase.td"], visibility = ["//lib/clang/libclang:__pkg__"])
