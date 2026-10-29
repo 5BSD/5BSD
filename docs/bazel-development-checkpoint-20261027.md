@@ -11401,3 +11401,27 @@ Frontend review: existing ofed_extra/ofed settings and format-5 archive sets
 cover both configurations; no build-bsd.c/backend/manual interface change needed.
 Make remains production/default; full world/kernel/pkgbase and runtime/performance
 gates remain open. No host installation or privileged device operation occurred.
+
+### 2026-10-29 OpenSM vendor and core libraries
+
+Added native osmvendor (two maintained sources) and opensm library (three sources),
+reusable declared subnet/vendor headers, maintained HAVE_CONFIG_H configuration,
+symbol-version maps, native pthread/ibumad dependencies where selected by Make,
+and static/shared/debug installation. Header installation remains in the OFED
+include package. No source changes or new runtime policy.
+
+Maintained frontend bazel-opensm-libraries-20261029 uses 16 jobs and matches fresh
+isolated Make references bazel-osmvendor-reference-20261029 and
+bazel-opensm-reference-20261029: six metadata records each, both static archive
+member/global/undefined-symbol inventories, and both ELF/debug pairs with
+matching symbols/dynamic fields. Evidence/scripts in the corresponding
+bazel-osmvendor-qualification-20261029 and bazel-opensm-qualification-20261029
+directories under /usr/obj/usr/src.
+
+The OpenSM executable remains unconverted: it also requires native lexer/parser
+actions for osm_qos_parser_l.l and osm_qos_parser_y.y. Existing bsd_lex_yacc rules
+are available; integrate declared outputs instead of importing generated object
+tree files. No subnet-manager execution, device operations, traffic or performance
+checks occurred. Frontend review: current format-5 library targets/archive helpers
+cover this batch; no build-bsd.c/backend/manual interface change needed. Make
+remains production/default and full-system qualification remains incomplete.

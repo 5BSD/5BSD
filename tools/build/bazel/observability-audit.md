@@ -6049,3 +6049,10 @@ infiniband-diags C/C++ sources. Native targets preserve existing diagnostics.
 Discovery/cache lifecycle, management writes and failure reporting remain runtime
 and observability-review candidates. No port/configuration-changing commands or
 hardware queries were executed by this build qualification.
+
+### 2026-10-29 OpenSM vendor/core libraries
+
+No explicit SDT/DTrace or direct audit calls found in reviewed libvendor and
+osm_log/osm_mad_pool/osm_helper sources. Native declarations preserve logging.
+Management-datagram lifecycle and permission failures remain runtime/audit-review
+candidates. No subnet-manager or privileged network operation was executed.
