@@ -15763,3 +15763,32 @@ output groups support this prerequisite without frontend/backend changes.
 Full-system/kernel/pkgbase/bootstrap/cache/sandbox/performance gates remain open;
 Make stays production/default. Libalias isolated runtime still needs a root-run
 filesystem setup; the current uid is 1001 and no host configuration was changed.
+
+### Native libbsnmp and generated textual conventions (2026-10-29)
+
+Added six explicit library sources, native crypto dependency selected by the
+maintained OpenSSL configuration, static archive and libbsnmp.so.7. Feature
+macros preserve the source build's compatibility settings. LD_FATAL_WARNINGS=no
+is preserved for this component; warnings are not promoted by an unrelated rule.
+
+snmptc.bzl declares gensnmptree as an executable cfg=exec dependency. One action
+feeds declared tc.def to the native generator; another concatenates explicit
+prefix/body/suffix inputs using declared SDK cat/runtime and stream redirector.
+The existing header guard/comment wrapper matches the maintained source build.
+No Make query, object-tree generated header, shell PATH tool or host gensnmptree
+is used by these actions. SDK tools/runtime still require independent bootstrap
+qualification across the system.
+
+Run bazel-libbsnmp-20261029-r2 passes through build-bsd with 16 jobs. Fresh Make
+reference bazel-libbsnmp-make-20261029 explicitly uses the previously qualified
+Make-built gensnmptree. The generated header matches byte-for-byte; the six-member
+archive order/global/weak symbols and shared-library symbols/ordered dynamic
+metadata match. Evidence: /usr/obj/usr/src/bazel-libbsnmp-reference-20261029/
+verify.py and comparison.json. Initial analysis rejected a source-file SDK cat
+alias; its executable attribute now explicitly permits the single-file tool.
+
+Remaining: OpenSSL-disabled variant, maintained runtime regression, complete
+installation/public-header/manual metadata, generator mutation/cache checks,
+network/SNMP service behavior and full-system qualification. Reviewed frontend
+and source_graph contracts; existing explicit targets suffice without changes.
+Make remains production/default; no host installation or service changes occurred.

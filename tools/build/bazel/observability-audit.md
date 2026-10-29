@@ -7094,3 +7094,11 @@ Its Makefile declares no DTrace provider. This local source-to-source build tool
 has no new audit integration in this migration; SNMP daemon/network behavior is
 outside this prerequisite's checks. Enum header/function generation on tc.def
 matches Make, but no daemon, protocol or audit-delivery claim follows.
+
+### libbsnmp native library (2026-10-29)
+
+Six maintained source files and generated snmptc.h now build natively. The
+component Makefile declares no DTrace provider. The migration preserves source
+behavior and does not add audit policy. SNMP network operations, authentication,
+error paths and daemon-level observability remain runtime qualification work;
+archive/DSO parity establishes none of those behaviors.
