@@ -41390,3 +41390,26 @@ Evidence: native saved test log/receipt and
 bazel-libpathconv-reference-20261029/{runner-check,perl-runner-check}.json.
 This does not cover arbitrary buffer-boundary/fuzz behavior or full-system runtime.
 Existing build-bsd/source_graph explicit test inputs support this unchanged.
+
+### Native libutil++ candidate (2026-10-29)
+
+Fresh Make reference bazel-libutilpp-make-20261029 confirms ordinary and PIE
+internal archives plus seven installed freebsd:: manuals; INTERNALLIB does not
+suppress this manual installation. Added explicit stringf.cc and public build-only
+header targets, native libc++ dependencies and GNU C++17 compilation matching Make.
+The native installation maps maintained freebsd__ source filenames to the public
+freebsd:: manual destinations. No library/header installation is invented.
+Run bazel-libutilpp-20261029 is pending; archive and installation comparison
+scripts are retained under bazel-libutilpp-reference-20261029. Existing ATF tests
+and their installation are still to be integrated. Existing build-bsd/source_graph
+target inputs require no frontend change. No runtime or full-system claim is made.
+
+Libutil++ candidate result: bazel-libutilpp-20261029 passes. Ordinary and PIE
+archive member ordering and global/weak symbols match the independent Make
+reference, with explicit .pieo-to-.o normalization for PIE member names. All
+seven manual installation destinations match ownership/mode/package tags and
+compressed bytes, with no missing/extra payloads. Evidence is retained in
+archive-comparison.json, install-audit.json and payload-audit.json under
+bazel-libutilpp-reference-20261029. Existing stringf/up/pidfile ATF tests and their
+installation remain outstanding; no runtime success is claimed here. Full-system
+and performance qualification gates remain open.

@@ -7305,3 +7305,11 @@ Evidence: native saved test log/receipt and
 bazel-libpathconv-reference-20261029/{runner-check,perl-runner-check}.json.
 This does not cover arbitrary buffer-boundary/fuzz behavior or full-system runtime.
 Existing build-bsd/source_graph explicit test inputs support this unchanged.
+
+### libutil++ (2026-10-29)
+
+Internal string-formatting archives and manuals match Make. Public header RAII
+wrappers are declared build inputs; no implementation or instrumentation change
+was made. File-descriptor, FILE and pidfile lifetime behavior still needs the
+existing ATF cases, including their actual cleanup and error paths. Archive
+symbols alone do not establish those resource-lifecycle properties.
