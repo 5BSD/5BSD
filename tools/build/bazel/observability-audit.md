@@ -6309,3 +6309,9 @@ bazel-llvm-bitcode-extras-qualification-20261029.
 match expanded Make. No source/probe/audit changes. Object parser/writer/relocation
 runtime behavior remains unqualified. Evidence:
 bazel-llvm-object-formats-qualification-20261029.
+
+### 2026-10-29 LLVM ProfileData/Remarks/CGData
+
+39 default sources match Make source/object/archive inventories. No source/probe/
+audit changes. Profiling, coverage, optimization remarks and codegen-data runtime
+behavior remain unqualified. Evidence: bazel-llvm-profile-qualification-20261029.

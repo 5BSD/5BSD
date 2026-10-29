@@ -37131,3 +37131,27 @@ manual; existing build-bsd.c format-5 backend/artifacts suffice. Remaining LLVM
 libraries/target backends, compiler linkage and world/kernel/pkgbase/bootstrap/
 runtime/cache/performance gates remain open. Make stays production/default.
 No host installation/publication occurred.
+
+### 2026-10-29 native LLVM profiling, remarks and codegen data
+
+Added ProfileData (23 installed-world sources), Remarks (9), and CGData (7): 39
+sources. ProfileData includes the installed-world MIW source and unconditional COV
+source, matching the maintained retirement of the separate LLVM_COV choice. Public
+.inc definitions and generated dependencies are declared through native providers;
+private Remark parser headers are declared. No LLVM source/sandbox changes.
+
+Maintained frontend bazel-llvm-profile-20261029 (16 jobs) succeeds. All 39 PIC object
+global/undefined symbol inventories match fresh isolated Make objects; all three
+archive member inventories match. Resolved native source_inventory artifacts match
+expanded Make ${SRCS} exactly. Evidence/scripts:
+/usr/obj/usr/src/bazel-llvm-profile-qualification-20261029.
+References use existing bootstrap generators/staged SDK headers; verification streams
+execution records. This does not qualify profile/coverage file round trips, PGO,
+memory profiling, remark serialization, codegen-data semantics, instruction identity,
+complete linkage, runtime or performance. Bootstrap variants remain unqualified.
+
+Frontend review: existing typed settings, generated dependencies and format-5
+backend/artifacts suffice; no build-bsd.c/manual interface change needed. Remaining
+LLVM libraries/target backends, compiler linkage and world/kernel/pkgbase/bootstrap/
+runtime/cache/performance gates remain open. Make stays production/default.
+No host installation/publication occurred.
