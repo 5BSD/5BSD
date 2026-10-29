@@ -35546,3 +35546,44 @@ modem/baud options and cross-platform behavior. Frontend review: existing
 format-5 target/artifact/configuration staging supports this group; no build-bsd
 C/backend/manual change is required. Make remains production/default and
 complete world/kernel/bootstrap/pkgbase/runtime/performance gates remain open.
+
+### 2026-10-29 man frontend and mandoc formatter
+
+Added native man script/manpath hardlink and three maintained manuals. Added
+mandoc's explicit 61 C sources, local headers/textual .in inputs, source config.h,
+PIE libopenbsd and native zlib dependencies. Source inventories are declarations
+in BUILD files; builds do not parse Make. Default installation includes the
+maintained mandoc.ucl package trigger, manuals/aliases and apropos/whatis/
+makewhatis hardlinks. Existing man_utils setting controls optional utilities and
+their manuals, matching MK_MAN_UTILS; formatter sources are unchanged in both
+configurations, as in Make. No runtime sources or package-trigger policy changed.
+The man.conf manual is installed here; this component does not invent a new
+/etc/man.conf payload. Neither component Makefile defines a test subdirectory.
+
+Maintained frontend /usr/obj/usr/src/bazel-manual-tools-20261029 (16 jobs)
+matches isolated fresh rootless Make references bazel-man-reference-20261029
+and bazel-mandoc-reference-20261029: man has six distinct metadata records and
+five exact nonbinary payloads; mandoc has 21 records, 13 exact nonbinary payloads
+and one matching ELF/debug pair. The independent
+bazel-mandoc-no-utils-20261029 run matches MK_MAN_UTILS=no on 15 records, ten
+nonbinary payloads and ELF/debug checks. Global/undefined symbols, dynamic
+properties, ownership/modes/tags and hardlinks were compared.
+
+Scripts/reports are in bazel-manual-tools-qualification-20261029. First host
+runtime attempt failed for both builders because host libc lacks
+fts_open@FBSD_1.9; original failure is retained. runtime-sdk.py explicitly
+copies and hashes SDK libc/libsys/libz into a disposable directory, preserving
+the mandoc executable name, then runs both saved-artifact/reference copies
+with LD_LIBRARY_PATH set to those libraries and PATH=/nonexistent. Fifteen
+comparisons match: three maintained manuals (man.1, man.conf.5, cu.1) across
+ascii/html/lint/tree/man formats. Twelve rendering cases return zero with
+matching output; lint of man.conf.5 returns zero, and the other two lint cases
+return identical status 1 diagnostics. This is SDK-library host-kernel runtime
+evidence, not proof against installed host libraries or a native full system.
+
+Package-trigger execution, database construction/search/update, full shell man
+lookup/pager integration, cross-host bootstrap and performance remain open.
+No host installation, package trigger or manual database update was run.
+Frontend review: existing format-5 targets/artifacts and man_utils input cover
+these configurations; no build-bsd C/backend/manual change is required. Make
+remains production/default; complete world/kernel/pkgbase gates stay open.

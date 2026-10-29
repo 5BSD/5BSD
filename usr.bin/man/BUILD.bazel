@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+_MANUALS = ['man.1', 'manpath.1', 'man.conf.5']
+_MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=mandoc-man"], "//conditions:default": ["package=mandoc"]})
+[bsd_compress(name = "compressed_" + n, src = "" + n, output = n + ".gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for n in _MANUALS]
+[bsd_install_file(name = "manual_" + n, src = ":compressed_" + n, destination = "/usr/share/man/man" + n[-1] + "/" + n + ".gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS) for n in _MANUALS]
+bsd_install_file(name = "script", src = "man.sh", destination = "/usr/bin/man", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=mandoc"])
+bsd_install_link(name = "manpath", destination = "/usr/bin/manpath", target = "/usr/bin/man", kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=mandoc"])
+bsd_install_manifest(name = "install_manifest", entries = [":script", ":manpath"] + [":manual_" + n for n in _MANUALS])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {"/usr/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=mandoc"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

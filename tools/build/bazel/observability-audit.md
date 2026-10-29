@@ -5900,3 +5900,13 @@ OS audit_submit/auditon calls. ACU accounting is not OS audit integration.
 Keep serial sessions, lock ownership, privilege transitions, shell escapes,
 transfers and logging/privacy behavior on the runtime review list. No source
 behavior or privilege checks were modified to achieve build parity.
+
+### 2026-10-29 man/mandoc
+
+Native rules preserve the man shell frontend and all 61 formatter/database C
+sources. Focused mandoc C/header scan found no explicit DTrace/SDT or
+OS audit_submit/auditon integration. Rendering evidence covers three pages and
+five formats with explicit SDK libraries; host libc failure remains recorded.
+Manual-database writes, package-trigger execution and man pager/shell lookup
+remain runtime review items. Package trigger contents and application source
+policy were not modified as part of the migration.
