@@ -7262,3 +7262,19 @@ Native source and installation parity is established without production changes.
 No DTrace provider or audit hook was added during migration. Device opens and
 GPIO ioctls need a qualified device or VM fixture for runtime/audit assessment;
 artifact parity does not establish pin control, event delivery or permissions.
+
+### libstdthreads (2026-10-29)
+
+Native five-source wrapper library matches Make installation and versioned symbols.
+No production audit/probe behavior changed. Its pthread calls retain the native
+libthr dependency; native runtime coverage is pending against matching libc/libsys.
+Condition-variable/timed-wait, cancellation and broader contention observability
+are not established by the initial creation/join/mutex/TSS lifecycle test.
+
+Libstdthreads runtime result: bazel-libstdthreads-runtime-20261029-r2 passes its
+one native test case with matching native stdthreads/thr/libc/libsys dependencies.
+It checks four joined threads returning 17, 400 mutex-protected increments,
+exactly one call_once initialization, four TSS destructor calls and main-thread
+TSS isolation. SDK startup/header inputs and host kernel/loader remain in use.
+This is selected API lifecycle coverage, not complete C11 threading or stress/
+performance qualification. No production source change was required.

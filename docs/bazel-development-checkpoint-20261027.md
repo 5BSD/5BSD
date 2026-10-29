@@ -16700,3 +16700,37 @@ CRC checks; all 23 manual hardlinks match. Evidence is retained under
 bazel-libgpio-reference-20261029 in install-audit.json and payload-audit.json.
 No GPIO operation or runtime test was executed. Full-system and performance
 qualification remain open.
+
+### Native libstdthreads installation (2026-10-29)
+
+Added all five C11 threads sources with explicit public threads.h, native pthread
+dependency, generated symbol-version map, ordinary archive and shared ABI 0.
+Run bazel-libstdthreads-20261029 passes; fresh Make comparison matches all 32
+installation destinations with zero missing/extra paths or owner/group/mode and
+non-directory tag differences. Five regular payloads match archive member order,
+global/weak symbols, ordered dynamic metadata, header/manual bytes and debug-link
+CRC; all 24 manual aliases are checked. Evidence lives under
+bazel-libstdthreads-reference-20261029/{install,payload}-audit.json.
+
+A native runtime test now exercises four threads, protected counter increments,
+call_once, thread identity and return values, and thread-specific storage with
+per-thread destructor callbacks. It dynamically links native stdthreads and thr.
+Run bazel-libstdthreads-runtime-20261029 is pending. Existing build-bsd/source_graph
+target/settings/test inputs require no frontend API change. Full-system and
+performance gates remain open; Make stays production/default.
+
+Libstdthreads runtime first run failed before its body: native libthr requires
+__uexterr_set_ue@FBSDprivate_1.0 absent from host libc. The test now declares the
+native libc shared_link_interface and c_shared/sys_shared dynamic dependencies
+with -nodefaultlibs, matching the maintained libblacklist runtime approach.
+Run bazel-libstdthreads-runtime-20261029-r2 is pending. Initial failure logs remain
+in the first run's failure-test-reports. This is a runtime dependency correction,
+not a change to C11 thread implementation or a substitution of host pthreads.
+
+Libstdthreads runtime result: bazel-libstdthreads-runtime-20261029-r2 passes its
+one native test case with matching native stdthreads/thr/libc/libsys dependencies.
+It checks four joined threads returning 17, 400 mutex-protected increments,
+exactly one call_once initialization, four TSS destructor calls and main-thread
+TSS isolation. SDK startup/header inputs and host kernel/loader remain in use.
+This is selected API lifecycle coverage, not complete C11 threading or stress/
+performance qualification. No production source change was required.
