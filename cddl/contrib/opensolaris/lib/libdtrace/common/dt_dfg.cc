@@ -55,7 +55,10 @@
 #include <dtrace.h>
 #include <dt_hypertrace_linker.hh>
 
+#include <array>
+#include <set>
 #include <stack>
+#include <tuple>
 #include <unordered_map>
 #include <iterator>
 #include <unordered_set>
@@ -737,121 +740,112 @@ HyperTraceLinker::updateActiveVarRegs(uint8_t active_varregs[DT_VARREGS],
 	}
 }
 
-static void
-removeBasicBlocks(BasicBlock *bb,
-    HashMap<size_t, BasicBlock *> &bb_map, Vec<BasicBlock *> &bb_path)
+/*
+ * Propagate the register or variable definition `n' to the nodes it reaches:
+ * through the basic blocks after its own until one redefines it.
+ *
+ * What a block contributes depends only on the block and on the state the
+ * walk enters it with (whether a typecast has redefined the register, and
+ * which registers hold a loaded variable), so a block is processed once for
+ * each distinct entry state rather than once for each path that reaches it.
+ * Walking every path took time exponential in the number of branches that
+ * the definition lives across: a value held over tcp_state_string[]'s
+ * eleven conditions (two lookups in one action) never finished linking.
+ */
+void
+HyperTraceLinker::updateDFGReach(dtrace_difo_t *difo, DFGNode *n,
+    DFGList::iterator pos)
 {
-	BasicBlock *parent_BasicBlock;
-	int remove;
+	using Regs = Array<uint8_t, DT_VARREGS>;
+	struct Entry {
+		BasicBlock *bb;
+		int seenTypecast;
+		Regs regs;
+	};
+	std::set<std::tuple<BasicBlock *, int, Regs>> done;
+	std::stack<Entry> work;
+	DFGNodeData &data = n->nodeData;
 
-	/*
-	 * Start by removing the current basic block from the path. Since
-	 * this will always be the last element in bb_path, we just need to
-	 * decrement bb_last and we can consider it to be out of bb_path.
-	 */
-	bb_map.erase(bb->idx);
-	bb_path.pop_back();
+	work.push({ n->bb, 0, Regs{} });
+	while (!work.empty()) {
+		Entry e = work.top();
+		work.pop();
+		if (!done.emplace(e.bb, e.seenTypecast, e.regs).second)
+			continue;
 
-	/*
-	 * Find the parent that's in the path.
-	 */
-	parent_BasicBlock = nullptr;
-	for (auto p : bb->parents) {
-		if (bb_map.contains(p.first->idx)) {
-			parent_BasicBlock = p.first;
-			break;
-		}
+		bool redefined, var_redefined = false;
+		if (data.kind == DT_NKIND_REG) {
+			redefined = updateNodesInBBForReg(difo, e.bb, data.rd(),
+			    pos, &e.seenTypecast);
+			updateActiveVarRegs(e.regs.data(), difo, e.bb, pos);
+			var_redefined = true;
+			for (size_t i = 0; i < DT_VARREGS; i++)
+				if (e.regs[i] == 1)
+					var_redefined = false;
+		} else
+			redefined = updateNodesInBBForVar(e.bb, data, pos);
+
+		if ((data.kind == DT_NKIND_REG && !var_redefined) ||
+		    !redefined)
+			for (auto &child : e.bb->children)
+				work.push({ child.first, e.seenTypecast, e.regs });
 	}
+}
 
-	/*
-	 * There's only one case when we won't have a parent. That case is when
-	 * we are in the root node. In that case, we will simply assert a few
-	 * things and break out of the function.
-	 */
-	assert((bb->parents.empty() && parent_BasicBlock == nullptr) ||
-	    (!bb->parents.empty() && parent_BasicBlock != nullptr));
+/*
+ * Add the push `n' to the tuple stack of every node that consumes the stack
+ * after it: through the blocks after its own until a FLUSHTS, or the POPTS
+ * of this push, ends it.
+ *
+ * The pushes that reach a consumer form a single stack, in instruction
+ * order: the compiler pushes a subroutine's arguments unconditionally (the
+ * branches of an argument's computation join before its push), so every
+ * path to the consumer carries the same pushes.  Identifying a stack by the
+ * path from each push, as the walk did, enumerated every path: time
+ * exponential in the branches between a push and its consumer (a clause
+ * assigning tcp.d's tcpsinfo_t, whose members' inet_ntoa() calls follow
+ * conditions, never finished linking).
+ */
+void
+HyperTraceLinker::updateDFGStack(dtrace_difo_t *difo, DFGNode *n,
+    DFGList::iterator pos)
+{
+	Vec<BasicBlock *> ident = {
+	    static_cast<BasicBlock *>(difo->dtdo_bb) };
+	USet<BasicBlock *> done;
+	std::stack<BasicBlock *> work;
 
-	if (parent_BasicBlock == nullptr) {
-		assert(bb->start == 0);
-		return;
+	work.push(n->bb);
+	while (!work.empty()) {
+		BasicBlock *bb = work.top();
+		work.pop();
+		if (!done.insert(bb).second)
+			continue;
+		if (updateNodesInBBForStack(ident, bb, pos) != 0)
+			continue;
+		for (auto &child : bb->children)
+			work.push(child.first);
 	}
-
-	remove = 1;
-	for (auto child : parent_BasicBlock->children) {
-		if (child.second == true) {
-			remove = 0;
-			break;
-		}
-	}
-
-	if (remove)
-		removeBasicBlocks(parent_BasicBlock, bb_map, bb_path);
 }
 
 void
 HyperTraceLinker::updateDFG(dtrace_difo_t *difo, DFGNode *n,
     DFGList::iterator pos)
 {
-	uint8_t active_varregs[DT_VARREGS];
-	int seen_typecast = 0;
-
-	/* computeDFG() gives every node its basic block. */
-
-	std::stack<BasicBlock *> bb_stack;
-	BasicBlock *bbp = n->bb;
-	bb_stack.push(bbp);
-
-	Vec<BasicBlock *> bb_path;
-	HashMap<size_t, BasicBlock *> bb_map;
-	DFGNodeData &data = n->nodeData;
-	memset(active_varregs, 0, sizeof(active_varregs));
-
-	while (!bb_stack.empty()) {
-		auto bb = bb_stack.top();
-
-		bb_stack.pop();
-
-		bool redefined = false;
-		bool var_redefined = false;
-
-		bb_path.push_back(bb);
-		bb_map[bb->idx] = bb;
-
-		if (data.kind == DT_NKIND_REG) {
-			redefined = updateNodesInBBForReg(difo, bb, data.rd(),
-			    pos, &seen_typecast);
-			updateActiveVarRegs(active_varregs, difo, bb, pos);
-			var_redefined = true;
-			for (size_t i = 0; i < DT_VARREGS; i++)
-				if (active_varregs[i] == 1)
-					var_redefined = false;
-		} else if (data.kind == DT_NKIND_VAR)
-			redefined = updateNodesInBBForVar(bb, data, pos);
-		else if (data.kind == DT_NKIND_STACK)
-			redefined = updateNodesInBBForStack(bb_path, bb, pos);
-		else
-			return;
-
-		if (redefined || bb->children.empty())
-			removeBasicBlocks(bb, bb_map, bb_path);
-
-		if ((data.kind == DT_NKIND_REG && var_redefined == false) ||
-		    !redefined) {
-			for (auto child : bb->children) {
-				bb_stack.push(child.first);
-				/*
-				 * This is a little more subtle than it looks.
-				 * dtbe_tovisit here is not per basic-block.
-				 * It is in fact per individual child of each
-				 * basic block -- which differs for different
-				 * basic blocks. This ensures that we have a
-				 * way to say "have we visited the children
-				 * of *this particular basic block*" rather than
-				 * "have we visited this basic block".
-				 */
-				child.second = false;
-			}
-		}
+	/*
+	 * computeDFG() gives every node its basic block.  Each walk visits a
+	 * block once (per entry state), not once per path.
+	 */
+	switch (n->nodeData.kind) {
+	case DT_NKIND_REG:
+	case DT_NKIND_VAR:
+		updateDFGReach(difo, n, pos);
+		break;
+	case DT_NKIND_STACK:
+		updateDFGStack(difo, n, pos);
+		break;
+	default:
+		break;
 	}
 }
 

@@ -3363,8 +3363,8 @@ again:
 			    dcp->dc_desc, dcp->dc_name,
 			    dpi.dpi_matches, dpi.dpi_matches == 1 ? "" : "s");
 		}
-
-		setup_tracing();
+		/* main() starts tracing once every program is enabled:
+		 * dtrace(4) refuses ENABLE on an active state (EBUSY). */
 	} else {
 		link_failed(dcp->dc_prog, "failed to apply relocations", err,
 		    errmsg);
@@ -5224,6 +5224,12 @@ main(int argc, char *argv[])
 	 */
 	if (g_total == 0 && !g_grabanon && !(g_cflags & DTRACE_C_ZDEFS))
 		dfatal("no probes %s\n", g_cmdc ? "matched" : "specified");
+
+	/* Every local program is enabled (or -a grabs anonymous state):
+	 * start tracing.  HyperTrace modes start their own and never get here
+	 * with a program. */
+	if (!g_elf)
+		setup_tracing();
 
 	dtrace_workarg_t workarg = { print_upon_exit };
 	(void) dtc_work(&workarg);

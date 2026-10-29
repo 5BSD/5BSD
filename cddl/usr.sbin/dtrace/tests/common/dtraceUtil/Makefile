@@ -91,6 +91,7 @@ TFILES= \
      tst.InvalidTraceProvider4.d.ksh  \
      tst.InvalidTraceProvider5.d.ksh  \
      tst.MultipleInvalidProbeId.d.ksh  \
+     tst.MultiplePrograms.d.ksh  \
      tst.PreprocessorStatement.d.ksh  \
      tst.QuietMode.d.ksh  \
      tst.QuietMode.d.ksh.out  \

@@ -5834,6 +5834,33 @@ host/guest runtime evidence.
    Current-source `-j16 buildworld` passes for amd64, arm64/aarch64, and
    riscv/riscv64 in `ctf-linker-verified-*-buildworld.log` under the same
    validation root.
+   Bit-field members of linker-resolved types are now extracted instead of
+   refused: the compiler follows the member load with an identity
+   extraction (`setx 0; sll; setx 0; srl|sra`), and the linker chooses the
+   smallest naturally aligned load of 1, 2, 4 or 8 bytes holding the field,
+   the member address and the shift counts from the CTF it links against.
+   A bit-field load without that extraction, a field no such load holds,
+   and a bit-field address used other than by its load stay refused. The
+   linker's usetx-consumer, register/variable reaching-definition and
+   tuple-stack walks now visit each basic block once (per entry state)
+   instead of once per control-flow path; the per-path walks took time
+   exponential in the branches a value lived across, so
+   `tcp_state_string[args[3]->tcps_state]` and a clause assigning
+   `tcpsinfo_t` never finished linking (dtrace(1) and bsdinstruments spun).
+   The pushes that reach a tuple-stack consumer now form one stack. A member
+   of an embedded structure (`p->t_inpcb.inp_inc`, tcp.d's `tcps_lport`)
+   is typed and relocated with its own member information: the type
+   checker looked it up in the type the embedded structure "references"
+   (and failed), and, once found, the usetx was relocated to the enclosing
+   member's offset. The
+   `typing-bitfield.cc` harness in `typing-inference.py` executes linked
+   programs against the C++ compiler's layout of a ctfconvert fixture and
+   bounds the link time of the tcp.d shapes; evidence is under
+   `/usr/obj/5BSD-otel-validation/ctf-*`. The front end's own bit-field
+   code for types in the D container (`dt_cg_load()`, `dt_cg_field_get()`,
+   `dt_cg_field_set()`) still loads `clp2(bits)` bytes at the field's first
+   byte, as upstream FreeBSD does, which misreads a field that crosses a
+   byte boundary and can be misaligned; that path is unchanged.
    Member relocation now resolves an absent CTF member before reading its
    type; an absent typefile returns a linking error instead of dereferencing
    it. A member-free load fails closed while a member-free ADD stays

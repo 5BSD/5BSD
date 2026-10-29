@@ -123,6 +123,37 @@ HyperTraceLinker::progErr(const char *fmt, ...)
 	return (-1);
 }
 
+/*
+ * The index of `value' in the DIFO's integer table (added if absent), for a
+ * SETX operand.
+ */
+int
+HyperTraceLinker::integerIndex(dtrace_difo_t *difo, uint64_t value,
+    uint16_t *idx)
+{
+	if (difo->dtdo_inthash == nullptr) {
+		difo->dtdo_inthash = dt_inttab_create(dtp);
+		if (difo->dtdo_inthash == nullptr) {
+			setErrorMessage("failed to allocate inttab");
+			return (E_HYPERTRACE_LIBDTRACE);
+		}
+	}
+
+	int index = dt_inttab_insert(difo->dtdo_inthash, value, 0);
+	if (index < 0) {
+		setErrorMessage("failed to insert %" PRIu64 " into inthash",
+		    value);
+		return (E_HYPERTRACE_LIBDTRACE);
+	}
+	if (index > UINT16_MAX) {
+		setErrorMessage("DIF integer table index %d exceeds 16 bits",
+		    index);
+		return (E_HYPERTRACE_LINKING);
+	}
+	*idx = (uint16_t)index;
+	return (E_HYPERTRACE_NONE);
+}
+
 int
 HyperTraceLinker::patchUsetxDefs(DFGNode *n)
 {
@@ -141,7 +172,13 @@ HyperTraceLinker::patchUsetxDefs(DFGNode *n)
 		    n->mip->ctm_offset);
 		return (E_HYPERTRACE_LINKING);
 	}
-	uint64_t offset = n->mip->ctm_offset / 8;
+	return (patchUsetxDefs(n, n->mip->ctm_offset / 8));
+}
+
+/* Resolve the usetx definitions of `n' to the byte offset `offset'. */
+int
+HyperTraceLinker::patchUsetxDefs(DFGNode *n, uint64_t offset)
+{
 	for (auto node : n->usetxDefs) {
 		if (node->isRelocated)
 			continue;
@@ -154,31 +191,185 @@ HyperTraceLinker::patchUsetxDefs(DFGNode *n)
 			return (E_HYPERTRACE_LINKING);
 		}
 
-		uint8_t rd = DIF_INSTR_RD(instr);
-		if (n->difo->dtdo_inthash == nullptr) {
-			n->difo->dtdo_inthash = dt_inttab_create(dtp);
-			if (n->difo->dtdo_inthash == nullptr) {
-				setErrorMessage("failed to allocate inttab");
-				return (E_HYPERTRACE_LIBDTRACE);
-			}
-		}
-
-		int index = dt_inttab_insert(n->difo->dtdo_inthash, offset, 0);
-		if (index < 0) {
-			setErrorMessage("failed to insert %" PRIu64
-					" into inthash",
-			    offset);
-			return (E_HYPERTRACE_LIBDTRACE);
-		}
-		if (index > UINT16_MAX) {
-			setErrorMessage("DIF integer table index %d exceeds 16 bits",
-			    index);
-			return (E_HYPERTRACE_LINKING);
-		}
-
-		node->Instruction() = DIF_INSTR_SETX(index, rd);
+		uint16_t index;
+		int e = integerIndex(n->difo, offset, &index);
+		if (e)
+			return (e);
+		node->Instruction() = DIF_INSTR_SETX(index, DIF_INSTR_RD(instr));
 		node->isRelocated = true;
 	}
+	return (E_HYPERTRACE_NONE);
+}
+
+/*
+ * Whether the member `mip' describes is a C bit-field: an integer whose value
+ * bits do not fill its storage, or that does not begin on a byte boundary.
+ */
+static bool
+isIntegerBitfield(Typefile *tf, const ctf_membinfo_t *mip)
+{
+	ctf_encoding_t e = {};
+	ctf_id_t t = tf->resolve(mip->ctm_type);
+
+	if (t == CTF_ERR || tf->getKind(t) != CTF_K_INTEGER)
+		return (false);
+	ssize_t size = tf->getSize(t);
+	if (size <= 0 || tf->getEncoding(t, &e) != 0)
+		return (false);
+	return (e.cte_offset != 0 || e.cte_bits != (size_t)size * NBBY ||
+	    (mip->ctm_offset % NBBY) != 0);
+}
+
+/*
+ * Relocate the load of a bit-field member (DIF_OP_ULOAD or DIF_OP_UULOAD at
+ * `node').  The compiler follows such a load with an extraction whose shift
+ * counts are placeholders (dt_cg_field_get_reloc()):
+ *
+ *	uload	[%rd], %rd
+ *	setx	0, %rt
+ *	sll	%rd, %rt, %rd
+ *	setx	0, %rt
+ *	srl	%rd, %rt, %rd		(sra for a signed field)
+ *
+ * With both counts 0 the extraction is the identity, so the code is correct
+ * for a member that is not a bit-field where it is linked.  Here, with the
+ * layout of the CTF the program is linked against, the member's address
+ * (the ADD that defines %rd) becomes that of the smallest naturally aligned
+ * unit of 1, 2, 4 or 8 bytes that holds all of the field's bits, the load an
+ * unsigned load of that unit (DTrace refuses a misaligned load), and the
+ * counts move the field to the top of the register and back down, with sign
+ * extension for a signed field.  A field that fills such a unit exactly (an
+ * 8-, 16-, 32- or 64-bit field on its natural alignment, which the compiler
+ * does not treat as a bit-field) may also be loaded without the extraction.
+ * Any other bit-field load without the extraction (or with another shape),
+ * and a field that no such unit holds, is refused.
+ */
+int
+HyperTraceLinker::relocateBitfieldLoad(DFGNode *node, ctf_id_t ctfid,
+    const ctf_encoding_t &e)
+{
+	dtrace_difo_t *difo = node->difo;
+	dif_instr_t instr = node->getInstruction();
+	uint8_t opcode = DIF_INSTR_OP(instr);
+	uint8_t rd = DIF_INSTR_RD(instr);
+	uint8_t r1 = DIF_INSTR_R1(instr);
+	size_t i = node->uidx;
+	uint64_t first = node->mip->ctm_offset; /* in bits */
+	uint64_t start = 0, lsize = 0;
+
+	if (e.cte_offset == 0 && e.cte_bits != 0 && e.cte_bits <= 64) {
+		for (uint64_t sz = 1; sz <= 8; sz <<= 1) {
+			start = first / NBBY & ~(sz - 1);
+			if (first + e.cte_bits <= (start + sz) * NBBY) {
+				lsize = sz;
+				break;
+			}
+		}
+	}
+	if (lsize == 0) {
+		setErrorMessage("unsupported bitfield encoding for CTF type %ld "
+		    "(%u bits at bit %lu, value offset %u): no aligned load of "
+		    "at most 8 bytes holds it", ctfid, e.cte_bits,
+		    node->mip->ctm_offset, e.cte_offset);
+		return (E_HYPERTRACE_LINKING);
+	}
+
+	/* The extraction must follow the load in the same basic block. */
+	dif_instr_t *b = difo->dtdo_buf;
+	bool shaped = node->bb != nullptr && i + 4 < difo->dtdo_len &&
+	    i + 4 <= node->bb->end && r1 == rd && rd != 0 &&
+	    DIF_INSTR_OP(b[i + 1]) == DIF_OP_SETX &&
+	    DIF_INSTR_OP(b[i + 3]) == DIF_OP_SETX;
+	uint8_t rt = shaped ? DIF_INSTR_RD(b[i + 1]) : 0;
+	uint8_t rop = shaped ? DIF_INSTR_OP(b[i + 4]) : 0;
+	shaped = shaped && rt != 0 && rt != rd &&
+	    DIF_INSTR_RD(b[i + 3]) == rt &&
+	    b[i + 2] == (dif_instr_t)DIF_INSTR_FMT(DIF_OP_SLL, rd, rt, rd) &&
+	    (rop == DIF_OP_SRL || rop == DIF_OP_SRA) &&
+	    b[i + 4] == (dif_instr_t)DIF_INSTR_FMT(rop, rd, rt, rd);
+	for (size_t k = 1; shaped && k <= 3; k += 2) {
+		uint_t idx = DIF_INSTR_INTEGER(b[i + k]);
+		shaped = idx < difo->dtdo_intlen && difo->dtdo_inttab[idx] == 0;
+	}
+	bool whole = first == start * NBBY && e.cte_bits == lsize * NBBY;
+	if (!shaped && !whole) {
+		setErrorMessage("unsupported bitfield encoding for CTF type %ld: "
+		    "the load at %zu is not followed by a field extraction",
+		    ctfid, i);
+		return (E_HYPERTRACE_LINKING);
+	}
+
+	/* The member's address: every ADD of its offset that reaches the
+	 * load. */
+	bool addressed = false;
+	for (auto defs : { &node->r1Defs, &node->r1DataDefs }) {
+		for (DFGNode *def : *defs) {
+			if (!bitfieldAdds.contains(def) &&
+			    !bitfieldAddsDone.contains(def))
+				continue;
+			if (def->mip == nullptr ||
+			    def->mip->ctm_offset != first) {
+				setErrorMessage("bitfield load at %zu is "
+				    "reached by the address of another member",
+				    i);
+				return (E_HYPERTRACE_LINKING);
+			}
+			int err = patchUsetxDefs(def, start);
+			if (err)
+				return (err);
+			bitfieldAdds.erase(def);
+			bitfieldAddsDone.insert(def);
+			addressed = true;
+		}
+	}
+	if (!addressed) {
+		setErrorMessage("bitfield load at %zu has no member address", i);
+		return (E_HYPERTRACE_LINKING);
+	}
+
+	bool sign = (e.cte_format & CTF_INT_SIGNED) != 0;
+	if (!shaped) {
+		/* A whole unit: the load alone reads the field. */
+		static const uint8_t ops[2][2][8] = {
+			{ { DIF_OP_LDUB, DIF_OP_LDUH, 0, DIF_OP_LDUW, 0, 0, 0,
+			    DIF_OP_LDX },
+			  { DIF_OP_LDSB, DIF_OP_LDSH, 0, DIF_OP_LDSW, 0, 0, 0,
+			    DIF_OP_LDX } },
+			{ { DIF_OP_ULDUB, DIF_OP_ULDUH, 0, DIF_OP_ULDUW, 0, 0,
+			    0, DIF_OP_ULDX },
+			  { DIF_OP_ULDSB, DIF_OP_ULDSH, 0, DIF_OP_ULDSW, 0, 0,
+			    0, DIF_OP_ULDX } } };
+		node->Instruction() = DIF_INSTR_LOAD(
+		    ops[opcode == DIF_OP_UULOAD][sign][lsize - 1], r1, rd);
+		node->isRelocated = true;
+		return (E_HYPERTRACE_NONE);
+	}
+
+	/* Bit positions counted from the low end of the loaded unit. */
+	uint64_t bit = first - start * NBBY;
+#if BYTE_ORDER == _BIG_ENDIAN
+	uint64_t top = lsize * NBBY - bit;
+#else
+	uint64_t top = bit + e.cte_bits;
+#endif
+	uint64_t counts[2] = { 64 - top, 64 - e.cte_bits };
+	for (size_t k = 0; k < 2; k++) {
+		uint16_t index;
+		int err = integerIndex(difo, counts[k], &index);
+		if (err)
+			return (err);
+		b[i + 1 + 2 * k] = DIF_INSTR_SETX(index, rt);
+	}
+	b[i + 4] = DIF_INSTR_FMT(sign ? DIF_OP_SRA : DIF_OP_SRL, rd, rt, rd);
+
+	static const uint8_t kops[] = { DIF_OP_LDUB, DIF_OP_LDUH, 0,
+		DIF_OP_LDUW, 0, 0, 0, DIF_OP_LDX };
+	static const uint8_t uops[] = { DIF_OP_ULDUB, DIF_OP_ULDUH, 0,
+		DIF_OP_ULDUW, 0, 0, 0, DIF_OP_ULDX };
+	uint8_t new_op = opcode == DIF_OP_ULOAD ? kops[lsize - 1] :
+	    uops[lsize - 1];
+	node->Instruction() = DIF_INSTR_LOAD(new_op, r1, rd);
+	node->isRelocated = true;
 	return (E_HYPERTRACE_NONE);
 }
 
@@ -233,8 +424,24 @@ HyperTraceLinker::relocateUloadOrAdd(DFGNode *node)
 	int kind;
 	ssize_t ctf_size;
 	size_t size;
-	if (opcode == DIF_OP_ADD)
-		goto usetx_relo;
+	if (opcode == DIF_OP_ADD) {
+		/*
+		 * A bit-field member's address depends on the load that reads
+		 * the field (relocateBitfieldLoad()), which resolves it; the
+		 * address used otherwise fails the link (relocateProgram()).
+		 */
+		if (node->tf != nullptr &&
+		    isIntegerBitfield(node->tf, node->mip)) {
+			bitfieldAdds.insert(node);
+			node->isRelocated = true;
+			return (E_HYPERTRACE_NONE);
+		}
+		int e = patchUsetxDefs(node);
+		if (e)
+			return (e);
+		node->isRelocated = true;
+		return (E_HYPERTRACE_NONE);
+	}
 
 	ctfid = node->tf->resolve(node->mip->ctm_type);
 	ctf_size = node->tf->getSize(ctfid);
@@ -268,15 +475,12 @@ HyperTraceLinker::relocateUloadOrAdd(DFGNode *node)
 		/* An integer always has an encoding. */
 		ctf_encoding_t encoding = {};
 		(void)node->tf->getEncoding(ctfid, &encoding);
-		/* A byte load cannot extract a CTF bitfield. Its neighboring bits
-		 * would become part of the guest value even when the member begins
-		 * on a byte boundary. */
-		if (encoding.cte_offset != 0 ||
-		    encoding.cte_bits != size * 8) {
-			setErrorMessage("unsupported bitfield encoding for CTF type %ld",
-			    ctfid);
-			return (E_HYPERTRACE_LINKING);
-		}
+		/* A bit-field: a sized load would make its neighboring bits part
+		 * of the value, even when the member begins on a byte boundary.
+		 * The load and the extraction that follows it are relocated
+		 * together. */
+		if (isIntegerBitfield(node->tf, node->mip))
+			return (relocateBitfieldLoad(node, ctfid, encoding));
 
 		if (encoding.cte_format & CTF_INT_SIGNED) {
 			if (size == 1)
@@ -319,12 +523,10 @@ HyperTraceLinker::relocateUloadOrAdd(DFGNode *node)
 		new_instr = DIF_INSTR_LOAD(new_op, r1, rd);
 	}
 
-usetx_relo:
 	int e = patchUsetxDefs(node);
 	if (e)
 		return (e);
-	if (opcode != DIF_OP_ADD)
-		node->Instruction() = new_instr;
+	node->Instruction() = new_instr;
 	node->isRelocated = true;
 	return (E_HYPERTRACE_NONE);
 }
@@ -661,6 +863,8 @@ HyperTraceLinker::relocateProgram(dtrace_actkind_t actionKind,
 		}
 	}
 
+	bitfieldAdds.clear();
+	bitfieldAddsDone.clear();
 	for (auto &n : dfgNodes) {
 		if (n.get() == r0node)
 			continue;
@@ -670,70 +874,74 @@ HyperTraceLinker::relocateProgram(dtrace_actkind_t actionKind,
 			return (e);
 	}
 
+	/* The address of a bit-field member used other than by its load. */
+	for (DFGNode *n : bitfieldAdds) {
+		if (n->mip->ctm_offset % NBBY != 0)
+			setErrorMessage("member offset %lu is not byte aligned",
+			    n->mip->ctm_offset);
+		else
+			setErrorMessage("the address of bit-field member %s "
+			    "is used other than by its load",
+			    n->sym != nullptr ? n->sym : "?");
+		return (E_HYPERTRACE_LINKING);
+	}
 	return (E_HYPERTRACE_NONE);
 }
 
 /*
- * Record the usetx `n' (which has a symbol) as a definition of the later
- * nodes of the basic block that consume its value.
+ * Record every usetx with a symbol as a definition of the nodes that consume
+ * its value: a ULOAD, UULOAD, RET, PUSHTR, ADD or TYPECAST later in the DIFO
+ * whose r1 or r2 data definitions include it, in a block reachable from the
+ * DIFO's entry.
+ *
+ * Whether a node consumes a usetx does not depend on the path that reaches
+ * the node's block, so each reachable block is visited once.  (Walking the
+ * control-flow graph once per path for each usetx took time exponential in
+ * the number of branches: a translator member inlined into the eleven
+ * conditions of tcp_state_string[] never finished linking.)
  */
-void
-HyperTraceLinker::updateUsetxDefsInBB(dtrace_difo_t *difo, BasicBlock *bb,
-    DFGNode *n)
-{
-	for (auto &node : dfgNodes) {
-		if (node.get() == r0node)
-			continue;
-
-		dif_instr_t instr = node->getInstruction();
-		uint8_t opcode = DIF_INSTR_OP(instr);
-		if (node.get() == n)
-			continue;
-		if (node->difo != difo)
-			continue;
-		if (n->uidx >= node->uidx)
-			continue;
-		if (node->uidx < bb->start || node->uidx > bb->end)
-			continue;
-		if (opcode == DIF_OP_ULOAD    ||
-		    opcode == DIF_OP_UULOAD   ||
-		    opcode == DIF_OP_RET      ||
-		    opcode == DIF_OP_PUSHTR   ||
-		    opcode == DIF_OP_ADD      ||
-		    opcode == DIF_OP_TYPECAST) {
-			auto usetx_node = node->findChild(n);
-			if (usetx_node != n)
-				continue;
-			node->usetxDefs.insert(n);
-		}
-	}
-}
-
-void
-HyperTraceLinker::updateUsetxDefs(dtrace_difo_t *difo, BasicBlock *bb, DFGNode *n)
-{
-	updateUsetxDefsInBB(difo, bb, n);
-	for (auto child : bb->children)
-		updateUsetxDefs(difo, child.first, n);
-}
-
 void
 HyperTraceLinker::inferUsetxDefs(dtrace_difo_t *difo)
 {
-	BasicBlock *bb = static_cast<BasicBlock *>(difo->dtdo_bb);
+	BasicBlock *entry = static_cast<BasicBlock *>(difo->dtdo_bb);
+	USet<BasicBlock *> reachable;
+	Vec<BasicBlock *> work;
 
-	for (auto it = dfgNodes.rbegin(); it != dfgNodes.rend(); ++it) {
-		auto n = it->get();
-		if (n->sym == nullptr)
-			continue;
-		if (n->difo != difo)
-			continue;
+	if (entry == nullptr)
+		return;
+	reachable.insert(entry);
+	work.push_back(entry);
+	while (!work.empty()) {
+		BasicBlock *bb = work.back();
+		work.pop_back();
+		for (auto &child : bb->children)
+			if (reachable.insert(child.first).second)
+				work.push_back(child.first);
+	}
 
-		dif_instr_t instr = n->getInstruction();
-		uint8_t opcode = DIF_INSTR_OP(instr);
-		if (opcode != DIF_OP_USETX)
+	for (auto &np : dfgNodes) {
+		DFGNode *node = np.get();
+		if (node == r0node || node->difo != difo)
 			continue;
-		updateUsetxDefs(difo, bb, n);
+		if (!reachable.contains(node->bb))
+			continue;
+		uint8_t opcode = DIF_INSTR_OP(node->getInstruction());
+		if (opcode != DIF_OP_ULOAD && opcode != DIF_OP_UULOAD &&
+		    opcode != DIF_OP_RET && opcode != DIF_OP_PUSHTR &&
+		    opcode != DIF_OP_ADD && opcode != DIF_OP_TYPECAST)
+			continue;
+		for (auto defs : { &node->r1DataDefs, &node->r2DataDefs }) {
+			for (DFGNode *n : *defs) {
+				if (n == node || n == r0node ||
+				    n->difo != difo || n->sym == nullptr ||
+				    n->uidx >= node->uidx)
+					continue;
+				if (DIF_INSTR_OP(n->getInstruction()) !=
+				    DIF_OP_USETX)
+					continue;
+				node->usetxDefs.insert(n);
+			}
+		}
 	}
 }
 
