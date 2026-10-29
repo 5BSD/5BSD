@@ -13675,3 +13675,14 @@ It does not prove compilation-database/module/PCH variants or cache invalidation
 Formatter fresh Make parity still awaits the full format-enabled library rebuild
 recorded above. Frontend review: existing build-bsd.c/format-5 supports these test
 labels and clang_format=true; manual updated. Make remains production/default.
+
+### Tool-test same-input replay (2026-10-29)
+
+Replayed identical configured targets/tests into fresh qualification directory
+/usr/obj/usr/src/bazel-clang-tools-replay-20261029. All three test results were
+cached, all three saved target output-name/SHA256 mappings match the prior run,
+and execution.json is empty (no spawn execution). Bazel reports three action
+cache hits and one internal action. This establishes reuse for these unchanged
+inputs only, not dependency invalidation, clean-build reproducibility, remote
+cache correctness or a controlled performance comparison. Formatter full Make
+library rebuild remains independently active; no reference completion claimed.
