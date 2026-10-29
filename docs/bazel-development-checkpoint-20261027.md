@@ -16632,3 +16632,22 @@ The successful case covers linked loader entry points, explicit filter loading,
 symbol lookup, missing-symbol errors and handle closure on the current host.
 It does not qualify a wholly native libc/rtld or other architectures. Full-system,
 bootstrap, packaging, cache and performance gates remain open.
+
+### Native libfdt userland archive candidate (2026-10-29)
+
+Added source-owned native cc_library and ordinary archive targets for the nine
+maintained lib/libfdt sources. Vendor headers and the private internal header
+are explicit inputs. This is Make's userland INTERNALLIB contract, with no
+installed library/header payload; stand/fdt's loader extensions and compilation
+options remain a separate target obligation. Runs bazel-libfdt-20261029 and
+bazel-libfdt-make-20261029 are pending. Archive member/symbol and zero-installation
+comparison is prepared under bazel-libfdt-reference-20261029. The existing
+build-bsd/source_graph explicit-target interface needs no frontend changes.
+No runtime, bootloader, cross-platform or full-system qualification is claimed.
+
+Libfdt result: bazel-libfdt-20261029 and the fresh Make reference both completed.
+verify.py matches the nine-member archive's ordered member names and complete
+global/weak symbol inventory, and confirms zero changed installation records.
+The native artifact hash is checked against its saved manifest; comparison.json
+retains native/reference hashes and symbol counts. No runtime tests were run.
+Full-system/bootstrap/kernel and performance gates remain open.

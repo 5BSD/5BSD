@@ -7240,3 +7240,10 @@ The successful case covers linked loader entry points, explicit filter loading,
 symbol lookup, missing-symbol errors and handle closure on the current host.
 It does not qualify a wholly native libc/rtld or other architectures. Full-system,
 bootstrap, packaging, cache and performance gates remain open.
+
+### libfdt userland archive (2026-10-29)
+
+The nine vendor sources are carried without production changes. Archive ordering
+and symbols match Make, with no installed payload. No DTrace providers or audit
+integration are added by this migration; device-tree parsing/mutation runtime,
+malformed input handling and bootloader consumers remain separate qualification.
