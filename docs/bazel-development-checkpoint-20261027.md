@@ -12399,3 +12399,30 @@ Transforms/CodeGen/MC now cover 902 default component sources, separately from
 libclang's 839-source aggregate. Remaining LLVM libraries/target backends and compiler/
 world/kernel/pkgbase/bootstrap/runtime/cache/performance gates stay open. Make stays
 production/default; no host installation/publication occurred.
+
+### 2026-10-29 native LLVM IR support components
+
+Added Bitcode (7 default), Bitstream (1), AsmParser (3), IRReader (1), IRPrinter (1),
+Linker (2), and CodeGenTypes (1): 16 default sources in seven native components.
+BitcodeAnalyzer.cpp is selected by clang_extras. Sources/private headers and native
+generated/public dependencies are explicit; no LLVM source or sandbox changes.
+
+Maintained frontend bazel-llvm-ir-support-20261029 (16 jobs) succeeds. All 16 PIC
+object global/undefined symbol inventories match fresh isolated Make objects;
+all seven archive inventories match. Separate bazel-llvm-bitcode-extras-20261029
+succeeds; all eight Bitcode objects/archive members match a separately compiled
+Make MK_CLANG_EXTRAS=yes reference. Evidence/scripts:
+/usr/obj/usr/src/bazel-llvm-ir-support-qualification-20261029 and
+/usr/obj/usr/src/bazel-llvm-bitcode-extras-qualification-20261029.
+Verifiers stream execution records and retain complete source/object checks.
+References use existing bootstrap generators/staged SDK headers. These checks do
+not qualify bitcode round trips, IR parsing/linking, instruction identity, complete
+compiler linkage, runtime or performance.
+
+Frontend review: existing clang_extras setting and format-5 backend/artifacts suffice;
+manual updated for Bitcode consumer, no build-bsd.c parser change. This adds 16 core
+sources to the recent LLVM component coverage (918 across these and IR/Analysis/
+Transforms/CodeGen/MC), separately from libclang's 839-source aggregate. Remaining
+LLVM libraries/target backends, compiler linkage and world/kernel/pkgbase/bootstrap/
+runtime/cache/performance qualification remain open. Make stays production/default;
+no host installation/publication occurred.

@@ -6294,3 +6294,11 @@ unqualified. Evidence: bazel-llvm-codegen-qualification-20261029.
 source selections match expanded Make. No compiler/probe/audit source changes.
 Assembler/disassembler and encoded instruction behavior remain unqualified.
 Evidence: bazel-llvm-mc-qualification-20261029.
+
+### 2026-10-29 LLVM IR support batch
+
+Bitcode, Bitstream, AsmParser, IRReader, IRPrinter, Linker and CodeGenTypes preserve
+source/probe/audit behavior. All 16 default objects and eight extras-enabled Bitcode
+objects match Make symbols/archive inventories. Parsing/linking/bitcode runtime
+remains unqualified. Evidence: bazel-llvm-ir-support-qualification-20261029 and
+bazel-llvm-bitcode-extras-qualification-20261029.
