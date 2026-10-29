@@ -6186,3 +6186,9 @@ outside the object-symbol comparison.
 DTRACE, SDT_PROBE and audit_submit scan found no matches. No instrumentation was
 removed. Bytecode/constexpr runtime and debugger interactions remain unqualified
 until compiler linkage and execution tests.
+
+### 2026-10-29 Clang Sema
+
+All 86 maintained Sema sources are represented without source changes. DTRACE,
+SDT_PROBE and audit_submit scan found no matches. No probes/audit hooks were removed.
+Semantic/diagnostic runtime behavior awaits linked compiler tests.

@@ -36631,3 +36631,28 @@ and artifacts already support it; no build-bsd.c parser change required.
 Remaining compiler components/linkage and world/kernel/pkgbase/bootstrap/runtime/
 performance gates remain open. Make stays production/default. No host installation
 or publication occurred.
+
+### 2026-10-29 native Clang semantic analysis
+
+Added all 86 unconditional Sema sources as a native component/PIC archive, with
+private headers and generated Clang definitions plus LLVM IR/directive/target
+providers. Updated OpenCLBuiltins.td ownership for the new Sema package boundary;
+the existing native generation action still consumes the same maintained input.
+No compiler sources or semantic behavior were changed.
+
+Maintained frontend bazel-clang-sema-20261029 (16 jobs) succeeds. All 86 individual
+PIC global/undefined symbol inventories match fresh isolated Make Sema objects.
+Evidence/scripts: /usr/obj/usr/src/bazel-clang-sema-qualification-20261029. Both
+builds completed; long expression/template/OpenMP compilation was observed live,
+not restarted on observation timeouts. Reference uses existing bootstrap tools
+and staged LLVM/SDK headers. No comparison exceptions were required. Object parity
+does not qualify language conformance, diagnostic output, template behavior,
+instruction identity or complete compiler execution/performance.
+
+Frontend review: existing documented settings, generated-header providers and
+format-5 artifacts cover this component; no build-bsd.c/backend/manual interface
+change. Basic/Lex/Parse/Serialization/AST/Sema now cover 330 default source objects
+qualified structurally; this is not a whole-userland completion metric. Remaining
+compiler components/linkage and whole-system world/kernel/pkgbase/bootstrap/runtime/
+performance gates stay open. Make remains production/default; no host installation
+or publication occurred.

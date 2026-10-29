@@ -1,2 +1,2 @@
 # SPDX-License-Identifier: BSD-2-Clause
-exports_files(["Sema/OpenCLBuiltins.td"], visibility = ["//lib/clang/libclang:__pkg__"])
+# Source components declare their own inputs in child packages.
