@@ -14426,3 +14426,30 @@ pkgbase transaction, publication or performance result. Prepared SDK inputs rema
 Frontend review: build-bsd.c and format-5 source_graph.py support the aggregate
 and explicit test list without CLI/schema changes. Manual and observability audit
 updated. Make stays production/default; no host installation/reboot/publication.
+
+### World inventory refreshed after compiler-runtime composition (2026-10-29)
+
+A new maintained world-inventory.py traversal succeeds for 2,103 configured
+amd64 directories, using the existing /usr/obj world profile and public loader
+trust anchor. Evidence: /usr/obj/usr/src/bazel-world-inventory-refresh-20261029.
+Its build-presence.json records 1,021 directories with local BUILD/BUILD.bazel
+files and 1,082 without, plus nearest ancestor packages. These numbers supersede
+the older local-file-presence counts for this checkout, not its product coverage.
+A parent can own child outputs (the csu test matrix is a concrete example), and
+a local BUILD may contain only exports. No completion percentage is inferred.
+
+The maintained world-components.py metadata refresh is running with 16 jobs,
+writing bazel-world-components-refresh-20261029 and its sibling .log under
+/usr/obj/usr/src. Wait for its terminal summary before using its counts; partial
+components.jsonl is not a complete survey. The prior metadata/current-file review
+points to Kerberos administration/support libraries, LLDB, boot code and tests
+as areas needing reconciliation. Do not count those as definitively missing until
+existing parent targets and configured product metadata are reconciled.
+
+Next work: finish the survey, select actual missing product/dependency batches,
+then continue native world/library/kernel and installation composition. Preserve
+configuration choices, generated code and test inventories. The completed
+27-component compiler-runtime aggregate closes only that family. Full world,
+bootstrap, kernel/modules, pkgbase/publication, enforced sandbox and resource/
+performance gates remain open. This is a read-only inventory refresh: no frontend
+input contract change, host installation, publication or reboot.
