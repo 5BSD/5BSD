@@ -35093,3 +35093,28 @@ already support the extra execution tool. Updated bsd-build(8) to document the
 explicit jot selection and bootstrap/runtime distinction. No C protocol
 change is needed. Resource logs are retained, but this is not a controlled
 CPU/memory/disk-I/O comparison. Make remains production/default.
+
+### 2026-10-29 recursive bsdiff installation aggregation
+
+Added //usr.bin/bsdiff:installation_archives for both existing native child
+programs, bsdiff and bspatch. Their archive targets now expose narrow parent
+visibility. This closes recursive installation coverage, not two new binary
+conversions. The maintained parent Makefile installs exactly those children;
+its separate Bazel roundtrip tests are not part of Make's installed subtree.
+No program, library, probe, audit or runtime policy changed.
+
+Maintained frontend run /usr/obj/usr/src/bazel-bsdiff-aggregate-20261029
+(16 jobs) passed. Fresh recursive Make reference is
+bazel-bsdiff-native-reference-20261029; orchestration/comparison reports are in
+bazel-bsdiff-aggregate-qualification-20261029. Comparison establishes eight
+distinct metadata records, exact bytes for both compressed manuals, and two
+program/debug ELF pairs with valid debug linkage and matching global/undefined
+symbols and dynamic dependencies. Shared directory records are reconciled;
+no per-package metadata is discarded. No additional runtime or performance
+qualification was performed. Existing roundtrip tests remain unchanged.
+
+Frontend review: existing format-5 explicit targets, saved artifacts and
+archive-set handling cover this integration; no build-bsd C/manual/protocol
+change is needed. Future usr.bin aggregation must consume this parent target.
+Make remains production/default and whole-world/kernel/pkgbase/runtime gates
+remain open. No host install, upgrade, reboot or publication occurred.

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+
+# Both maintained child programs are installed by the recursive Make target.
+bsd_install_archive_set(
+    name = "installation_archives",
+    archives = ["//usr.bin/bsdiff/bsdiff:install_archive", "//usr.bin/bsdiff/bspatch:install_archive"],
+    visibility = ["//usr.bin:__pkg__"],
+)
