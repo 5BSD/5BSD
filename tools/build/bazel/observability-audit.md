@@ -5853,3 +5853,13 @@ Focused inspection found no direct DTrace/SDT or OS audit submission hooks.
 Build/install parity does not validate generated inventory correctness or license
 interpretation. Functional document and input-error coverage remains open; no
 new privileged boundary or migration-only instrumentation was introduced.
+
+### 2026-10-29 mail
+
+Native rules retain all 23 maintained C sources and five local headers.
+Focused C/header scan found no explicit DTrace/SDT, audit_submit/auditon or
+setuid/setgid call sites. No probes or audit calls were removed or invented.
+Four maintained signal/dead.letter tests pass with the native mailx executable;
+mail delivery, mailbox permissions and editor/shell invocation remain runtime
+coverage gaps. Consider mail submission/error observability in a separate
+behavioral review; this build migration introduces no production policy changes.

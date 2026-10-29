@@ -35382,3 +35382,37 @@ The native build uses all 16 CPUs. No host install occurred. Frontend review:
 format-5 explicit targets and allocator settings support selection; updated
 bsd-build(8) to document this mode. Staged-tool replacement and complete bootstrap
 remain pending. Make stays production/default.
+
+### 2026-10-29 mail program, installation and signal tests
+
+Added native mail sources/headers, Mail/mailx program and manual aliases,
+help files and /etc/mail.rc configuration metadata. Initial program comparison
+caught missing package ownership for /usr/share/misc; corrected the directory
+record without changing the verifier. Program-only evidence is retained under
+bazel-mail-20261029-r2 and bazel-mail-qualification-20261029.
+
+Added the maintained four ATF C signal cases, installed Kyuafile/test/debug
+payloads and a tests-selectable installation_archives aggregate. Runtime uses
+an explicitly declared executable copy named mailx, preserving execlp identity
+without changing test sources or searching host PATH. Native libc/libsys and
+ATF libraries are declared runtime dependencies.
+
+/usr/obj/usr/src/bazel-mail-tests-20261029 passes against the fresh isolated
+Make reference bazel-mail-tests-reference-20261029: 22 metadata records,
+seven byte-identical nonbinary payloads, aliases and two ELF/debug pairs with
+matching global/undefined symbols and dynamic properties. Scripts/reports are
+in bazel-mail-tests-qualification-20261029. The r2 report names are inherited
+from the program-only comparator, not evidence of two test-install attempts.
+
+/usr/obj/usr/src/bazel-mail-runtime-20261029-r2 executed all four native tests:
+interactive/noninteractive SIGHUP and SIGINT all PASS, including maintained
+dead.letter assertions. Initial runtime request was rejected before execution
+because tests were not selected targets; corrected explicit inputs are retained
+separately. Build/test runs use the maintained frontend and all 16 CPUs.
+
+No program/test sources changed, host installation or mail delivery performed.
+These tests do not qualify mailbox permissions, delivery, editor/shell commands,
+cross-platform behavior or comparative performance. Frontend review: existing
+format-5 target/test selection, tests setting, artifact/debug/stage handling
+support this component; no build-bsd C, backend or manual change is required.
+Make remains production/default and complete world/kernel/package gates remain.
