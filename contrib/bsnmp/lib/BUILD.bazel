@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = ["asn1.h", "snmp.h", "snmpagent.h", "snmpclient.h", "snmppriv.h", "support.h"],
-    strip_include_prefix = ".", visibility = ["//usr.sbin/bsnmpd:__subpackages__", "//lib/libbsnmp:__subpackages__"])
-exports_files(["asn1.c", "snmp.c", "snmpagent.c", "snmpclient.c", "snmpcrypto.c", "support.c", "tc.def", "asn1.3", "bsnmpagent.3", "bsnmpclient.3", "bsnmplib.3"],
+    strip_include_prefix = ".", visibility = ["//usr.sbin/bsnmpd:__subpackages__", "//lib/libbsnmp:__subpackages__", "//contrib/bsnmp/snmpd:__pkg__"])
+exports_files(["asn1.c", "snmp.c", "snmpagent.c", "snmpclient.c", "snmpcrypto.c", "support.c", "asn1.3", "bsnmpagent.3", "bsnmpclient.3", "bsnmplib.3"],
     visibility = ["//lib/libbsnmp:__subpackages__"])
 
 # Match the installed public include namespace for native consumers.
@@ -10,3 +10,5 @@ cc_library(name = "public_headers", hdrs = ["asn1.h", "snmp.h", "snmpagent.h", "
     strip_include_prefix = ".", include_prefix = "bsnmp", visibility = ["//visibility:public"])
 
 exports_files(["asn1.h", "snmp.h", "snmpagent.h", "snmpclient.h"], visibility = ["//lib/libbsnmp:__subpackages__"])
+
+exports_files(["tc.def"], visibility = ["//lib/libbsnmp:__subpackages__", "//usr.sbin/bsnmpd:__subpackages__"])

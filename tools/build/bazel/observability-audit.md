@@ -7113,3 +7113,11 @@ Native client and four-source internal library preserve maintained sources; thei
 Makefiles declare no DTrace provider. Source syslog/error paths remain unchanged.
 Authentication, SNMP writes, transport failures and server-side audit behavior
 still require runtime qualification. Build/install parity is not network coverage.
+
+### bsnmpd native executable (2026-10-29)
+
+Native sources/generated tree preserve the maintained daemon behavior and exported
+symbols. The Makefile declares no DTrace provider. Daemon authentication, module
+loading, configuration reload, SNMP writes and audit/log behavior need isolated
+runtime tests; build parity does not establish those. No production source changes
+or new audit-policy requirements were introduced.

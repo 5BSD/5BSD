@@ -40553,3 +40553,29 @@ or daemon/modules are qualified by these build/install checks. Native daemon tre
 and OID generation remains next. Reviewed frontend/backend: existing explicit
 targets and metadata groups suffice; no build-bsd interface changes required.
 Make stays production/default; full-system/bootstrap/cache/performance gates remain.
+
+### Native bsnmpd and declared tree/OID generation (2026-10-29)
+
+Added explicit daemon sources, vendor headers, native libbegemot/libbsnmp/libwrap
+linkage and existing OpenSSL/TCP-wrapper configuration selections. Native generation
+uses an exec-configured gensnmptree, declared tree.def/tc.def and explicit extracted
+OID names. A small declared Python driver runs the generator in its output directory;
+this preserves stdin input semantics and avoids misusing -p (which also changes C
+identifiers) as an output pathname. The action owns tree.c, tree.h and oid.h.
+Sources, include inputs, generator and Python runtime are declared. No generated
+files are copied from Make; no shell PATH lookup selects the native generator.
+
+Run bazel-bsnmpd-20261029-r2 passes via build-bsd with 16 jobs. Against fresh Make
+all/install, tree.c (7,834 bytes), tree.h (8,647 bytes) and oid.h (1,950 bytes) match
+exactly. The executable has matching 594 global/weak symbol records and ordered
+DSO/security metadata, including libbegemot, libbsnmp, libwrap, BIND_NOW and PIE.
+Evidence: /usr/obj/usr/src/bazel-bsnmpd-reference-20261029/verify.py and
+comparison.json; independent reference bazel-bsnmpd-make-20261029.
+
+This is a generated-input/build candidate. Native daemon configuration/manual/MIB
+installation, modules, disabled-feature variants, network/service behavior and
+compiled-consumer generator invalidation remain open. No daemon was started or
+host configuration changed. SDK execution tools still require full bootstrap
+qualification. Reviewed build-bsd.c/source_graph.py: existing explicit targets
+cover the work without frontend interface changes. Make remains production/default;
+whole-system/pkgbase/cache/sandbox/performance gates are not complete.

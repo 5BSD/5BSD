@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["main.c", "action.c", "config.c", "export.c", "trap.c", "trans_lsock.c", "trans_inet.c", "tree.def"], visibility = ["//usr.sbin/bsnmpd:__subpackages__"])
+cc_library(name = "headers", hdrs = ["snmpmod.h", "snmpd.h", "trans_lsock.h", "trans_inet.h"], strip_include_prefix = ".",
+    deps = ["//contrib/bsnmp/lib:headers"], visibility = ["//usr.sbin/bsnmpd:__subpackages__"])
