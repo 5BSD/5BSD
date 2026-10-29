@@ -37718,3 +37718,34 @@ Aggregate archive/shared linkage, target registration and complete selection pol
 world/kernel/pkgbase/runtime/cache/performance gates remain open. Frontend review:
 existing build-bsd.c/format-5 backend supports targets; manual documents Telemetry
 selection. Make remains production/default. No installation/publication occurred.
+
+### Full default LLVM archive and shared-library candidate (2026-10-29)
+
+Maintained frontend `bazel-llvm-aggregate-archive-20261029` built the default native
+PIC aggregate: 1740 sources/members, 544,919,658 archive bytes. Source multiset equals
+reconciled Make inventory; member basename multiplicities match, including duplicate
+stems. Evidence/scripts: `/usr/obj/usr/src/bazel-llvm-aggregate-archive-qualification-20261029`.
+This is artifact size, not runtime memory or comparative performance evidence.
+
+Added standard cc_import for the native aggregate and cc_shared_library target
+llvm_shared producing libprivatellvm.so.21, with native C++/C++ ABI/math dynamic
+dependencies. Compression/terminal libraries remain executable dependencies as in
+llvm.prog.mk. Make query confirms SONAME/name and --gc-sections/-znow/-zrelro flags.
+First shared candidate linked but ELF review found missing libm.so.5; added explicit
+native msun dependency. Initial candidate retained; corrected frontend run:
+`/usr/obj/usr/src/bazel-llvm-shared-20261029-r2`.
+
+Corrected candidate (323,809,912 bytes) has SONAME libprivatellvm.so.21, BIND_NOW,
+GNU_RELRO, non-executable stack, no RPATH/RUNPATH and no TEXTREL. Its ordered NEEDED
+list is libc++.so.1, libcxxrt.so.1, libm.so.5, libgcc_s.so.1, libc.so.7. Both that list
+and ALL global/weak dynamic symbol records (type/binding/visibility/defined state/name)
+match the PRE-EXISTING Make libprivatellvm.so.21.full, with zero additions/removals.
+Evidence: `/usr/obj/usr/src/bazel-llvm-shared-qualification-20261029/elf-inspection.json`.
+This diagnostic comparison is not fresh full-library link parity, runtime validation,
+independent bootstrap, install/debug/package qualification or performance evidence.
+Existing component comparisons supply fresh per-component references.
+
+Frontend review: existing build-bsd.c/format-5 backend accepts archive/shared targets;
+manual documents artifact scope. Full target-registration/selection policy, complete
+Clang linkage/execution and world/kernel/pkgbase/runtime/cache/CPU/memory/disk gates
+remain open. Make remains production/default; no installation/publication occurred.

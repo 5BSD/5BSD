@@ -6482,3 +6482,11 @@ no upstream source/probe/audit changes. Telemetry compilation does not demonstra
 runtime telemetry delivery/collection. Whole-library source coverage does not prove
 linkage or runtime observability. Evidence:
 `/usr/obj/usr/src/bazel-llvm-aggregate-qualification-20261029`.
+
+### LLVM aggregate/shared candidate (2026-10-29)
+
+1740-member native archive and libprivatellvm.so.21 candidate now link. Shared ELF
+dynamic symbols match pre-existing Make baseline; no new probe/audit instrumentation.
+No compiler/library runtime executed in this batch. Runtime diagnostics, telemetry
+and generated-code tracing remain unqualified. Evidence:
+`/usr/obj/usr/src/bazel-llvm-shared-qualification-20261029`.

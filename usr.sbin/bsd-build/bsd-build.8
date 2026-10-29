@@ -3940,3 +3940,15 @@ is enabled. The optional Analysis C API entry source is selected by
 .Cm clang_extras .
 Aggregate source inventory qualification does not establish shared-library linkage
 or runtime telemetry delivery.
+
+.Pp
+The native LLVM
+.Cm //lib/clang/libllvm:pic_archive
+and
+.Cm //lib/clang/libllvm:llvm_shared
+targets produce the selected installed-library PIC aggregate and
+.Pa libprivatellvm.so.21
+candidate. The shared target declares native C++, C++ ABI and math dependencies;
+compression and terminal dependencies remain with compiler/tool executables.
+Artifact linkage does not select Bazel as the production backend or establish
+compiler runtime, installation, debug-package or pkgbase qualification.
