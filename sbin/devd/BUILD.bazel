@@ -39,3 +39,62 @@ cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_
 cc_binary(name = "devd", deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}),
     dynamic_deps = ["//lib/libutil:util_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"],
     linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+bsd_compress(name = "config_manual", src = "devd.conf.5", output = "devd.conf.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "config_manual_file", src = ":config_manual", destination = "/usr/share/man/man5/devd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=devd-man"], "//conditions:default": ["package=devd"]}))
+utility_installation(name = "install_manifest", program = "devd", manual = "devd.8", package = "devd", bindir = "/sbin", man_section = "8", extra_entries = [":config_manual_file"])
+# Platform matches the executable's currently supported amd64 target.
+# power_profile.conf is architecture-selected by Make, independent of MK_ACPI.
+_CONFIGS = [
+    ("devd.conf", "/etc/devd.conf", "devd", ""),
+    ("devmatch.conf", "/etc/devd/devmatch.conf", "devd", ""),
+    ("growfs_postboot.conf", "/etc/devd/growfs_postboot.conf", "devd", ""),
+    ("dhclient.conf", "/etc/devd/dhclient.conf", "dhclient", ""),
+    ("moused.conf", "/etc/devd/moused.conf", "console-tools", ""),
+    ("syscons.conf", "/etc/devd/syscons.conf", "console-tools", ""),
+    ("power_profile.conf", "/etc/devd/power_profile.conf", "acpi", ""),
+    ("asus.conf", "/etc/devd/asus.conf", "devd", "acpi"),
+    ("autofs.conf", "/etc/devd/autofs.conf", "autofs", "autofs"),
+    ("bluetooth.conf", "/etc/devd/bluetooth.conf", "bluetooth", "bluetooth"),
+    ("hyperv.conf", "/etc/devd/hyperv.conf", "hyperv-tools", "hyperv"),
+    ("snd.conf", "/etc/devd/snd.conf", "sound", "sound"),
+    ("uath.conf", "/etc/devd/uath.conf", "devd", "usb"),
+    ("ulpt.conf", "/etc/devd/ulpt.conf", "devd", "usb"),
+    ("zfs.conf", "/etc/devd/zfs.conf", "devd", "zfs"),
+]
+[bsd_install_file(name = "config_" + src, src = src, destination = dest, owner = "root", group = "wheel", mode = "0644", install_tags = ["package=" + pkg, "config"]) for src, dest, pkg, option in _CONFIGS]
+_CONFIG_ENTRIES = [":nvme_config"]
+_CONFIG_ENTRIES = _CONFIG_ENTRIES + [":config_" + src for src, dest, pkg, option in _CONFIGS if option == '']
+_CONFIG_ENTRIES = _CONFIG_ENTRIES + select({"//tools/build/bazel/config:acpi_enabled": [":config_" + src for src, dest, pkg, option in _CONFIGS if option == 'acpi'], "//conditions:default": []})
+_CONFIG_ENTRIES = _CONFIG_ENTRIES + select({"//tools/build/bazel/config:autofs_enabled": [":config_" + src for src, dest, pkg, option in _CONFIGS if option == 'autofs'], "//conditions:default": []})
+_CONFIG_ENTRIES = _CONFIG_ENTRIES + select({"//tools/build/bazel/config:bluetooth_enabled": [":config_" + src for src, dest, pkg, option in _CONFIGS if option == 'bluetooth'], "//conditions:default": []})
+_CONFIG_ENTRIES = _CONFIG_ENTRIES + select({"//tools/build/bazel/config:hyperv_enabled": [":config_" + src for src, dest, pkg, option in _CONFIGS if option == 'hyperv'], "//conditions:default": []})
+_CONFIG_ENTRIES = _CONFIG_ENTRIES + select({"//tools/build/bazel/config:sound_enabled": [":config_" + src for src, dest, pkg, option in _CONFIGS if option == 'sound'], "//conditions:default": []})
+_CONFIG_ENTRIES = _CONFIG_ENTRIES + select({"//tools/build/bazel/config:usb_enabled": [":config_" + src for src, dest, pkg, option in _CONFIGS if option == 'usb'], "//conditions:default": []})
+_CONFIG_ENTRIES = _CONFIG_ENTRIES + select({"//tools/build/bazel/config:zfs_enabled": [":config_" + src for src, dest, pkg, option in _CONFIGS if option == 'zfs'], "//conditions:default": []})
+bsd_install_manifest(name = "config_manifest", entries = _CONFIG_ENTRIES)
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//sbin:__pkg__"],
+    target_compatible_with = _PLATFORM,
+    manifests = [":install_manifest", ":config_manifest"],
+    directories = {"/usr/lib/debug/sbin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=devd","dbg"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}' for d in ["/etc", "/etc/devd"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

@@ -9883,3 +9883,32 @@ Configuration groups, two manuals, debug installation and full /sbin parent
 selection remain to be integrated and compared. Existing NVMe configuration
 manifest stays available to its package consumer. Frontend review: existing
 format-5 native targets and typed DTrace settings suffice; no C/protocol change.
+
+### 2026-10-29 devd installation and configuration selection
+
+Added //sbin/devd:install_archive for the native executable/debug pair, both
+manuals and configuration groups. Configuration inventory declares source,
+destination, package owner and option once; selections use maintained native
+build settings. NVMe's existing manifest remains available to its consumer.
+The archive is amd64-compatible like its executable. On that architecture,
+power_profile.conf is installed independently of MK_ACPI, matching Make.
+Other architecture expansion must reconcile Make's architecture selections
+(including apple.conf on powerpc) before removing that compatibility constraint.
+
+Qualification through maintained build-bsd, 16 jobs:
+`/usr/obj/usr/src/bazel-devd-install-20261029`: 18 non-ELF payloads byte-equal to
+fresh Make and 23 distinct metadata records equal; valid installed debug pair,
+matching global/undefined symbols and dynamic dependencies/search paths.
+`/usr/obj/usr/src/bazel-devd-install-minimal-20261029`: ACPI, AUTOFS, BLUETOOTH,
+HYPERV, SOUND, USB and ZFS disabled; 10 payloads and 15 metadata records equal
+to a fresh Make stage with those options. power_profile.conf remains present.
+Scripts are in bazel-devd-install-qualification-20261029 under the object root;
+per-run reports in qualification/devd. Comparisons include package/config tags,
+owner/group, mode, flags and directory records. No live devd execution claimed.
+
+The separate devd test archive is not duplicated in this program archive;
+/sbin aggregation must select it when tests are enabled. Integration of the
+parent and full recursive comparison remain pending. The frontend's existing
+format-5 target selection and typed options were exercised; no C/protocol or
+production-backend change required. This does not complete world/pkgbase,
+full runtime qualification, cross-compilation or performance gates.
