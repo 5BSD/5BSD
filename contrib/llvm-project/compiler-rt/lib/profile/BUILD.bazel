@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['GCDAProfiling.c', 'InstrProfiling.c', 'InstrProfilingBuffer.c', 'InstrProfilingFile.c', 'InstrProfilingInternal.c', 'InstrProfilingMerge.c', 'InstrProfilingMergeFile.c', 'InstrProfilingNameVar.c', 'InstrProfilingPlatformLinux.c', 'InstrProfilingPlatformOther.c', 'InstrProfilingRuntime.cpp', 'InstrProfilingUtil.c', 'InstrProfilingValue.c', 'InstrProfilingVersionVar.c', 'InstrProfilingWriter.c'], visibility = ["//lib/libclang_rt/profile:__pkg__"])
+cc_library(name = "headers", hdrs = glob(["*.h"]), deps = ["//contrib/llvm-project/compiler-rt/include:profile_headers"], visibility = ["//lib/libclang_rt/profile:__pkg__"])

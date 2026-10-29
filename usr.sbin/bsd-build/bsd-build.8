@@ -4103,8 +4103,13 @@ source_inventory and install_archive targets.
 .Cm //lib/clang:profiles_test
 runs a native Clang/LLD instrumented probe, merges its profile with native
 llvm-profdata and reports coverage with native llvm-cov. Select it in targets
-and tests. The probe still links the declared SDK profile runtime; this does
-not establish independent compiler-runtime bootstrap or exhaustive gcov coverage.
+and tests. The probe compiles instrumentation separately and explicitly links
+.Cm //lib/libclang_rt/profile:profile_archive
+rather than selecting a profile runtime from the SDK.
+The profile package also supplies source_inventory, install_manifest and
+install_archive targets for native amd64, including its two profile headers.
+Other system runtime and headers still use the declared SDK; this does not
+establish independent compiler-runtime bootstrap or exhaustive gcov coverage.
 
 .Pp
 The clang-scan-deps and clang-format packages provide native runtime, _installed,

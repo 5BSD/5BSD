@@ -13802,3 +13802,32 @@ independent bootstrap, cache invalidation or performance claim.
 Frontend review: build-bsd.c/format-5 backend already supports composed targets and
 settings; manual updated with exact artifact boundaries. Make stays production/
 default. No host installation, upgrade, reboot or publication.
+
+### Native compiler profiling runtime (2026-10-29)
+
+Added lib/libclang_rt/profile native PIC archive from 14 C sources and one C++
+source, with declared compiler-rt headers and source inventory. Installation
+provides libclang_rt.profile-x86_64.a and the two profile .inc headers with
+package=clang,dev metadata and standard mtree/account directory policy. This
+candidate is constrained to native FreeBSD amd64; other CRTARCH variants remain.
+
+Qualification bazel-profile-runtime-qualified-20261029-r3 passes through build-bsd
+with 16 jobs. Fresh Make build/install reference is bazel-profile-runtime-make-
+20261029. The preserved comparison under bazel-profile-runtime-reference-20261029
+checks all 15 archive members, 381 global/weak symbol records including per-object
+membership, all three installation records and both header payloads. No symbol
+record differences; header bytes and installation metadata match. This is not
+machine-code identity. Initial qualification attempts failed on missing archive
+policy inputs and are preserved; corrected target uses existing archive policy.
+
+The maintained //lib/clang:profiles_test reports one passing case. Coverage probes
+now require a declared profile_runtime archive, compile instrumentation separately,
+and link that archive without a driver flag that would select the SDK profile
+runtime. Execution log confirms native compile and native LLD link actions under
+processwrapper-sandbox. Instrumented execution, native profdata merge and native
+cov reporting pass. System headers/CRT/other runtime still use the prepared SDK;
+this does not establish independent bootstrap, exhaustive gcov behavior, complete
+world/kernel/pkgbase, or performance. No host installation/publication.
+
+Frontend review: build-bsd.c and format-5 source_graph.py already pass these targets
+and tests without a new input contract; manual updated. Make stays production.

@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive", "bsd_component_sources")
+_FLAGS = ["-fno-builtin", "-fno-exceptions", "-fno-sanitize=safe-stack", "-fno-stack-protector", "-funwind-tables"]
+_DEFINES = ["NDEBUG", "HAVE_RPC_XDR_H=0", "SANITIZER_SUPPORTS_WEAK_HOOKS=0", "UBSAN_CAN_USE_CXXABI", "COMPILER_RT_HAS_ATOMICS=1", "COMPILER_RT_HAS_FCNTL_LCK=1", "COMPILER_RT_HAS_UNAME=1"]
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "c_objects", srcs = ['//contrib/llvm-project/compiler-rt/lib/profile:GCDAProfiling.c', '//contrib/llvm-project/compiler-rt/lib/profile:InstrProfiling.c', '//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingBuffer.c', '//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingFile.c', '//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingInternal.c', '//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingMerge.c', '//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingMergeFile.c', '//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingNameVar.c', '//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingPlatformLinux.c', '//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingPlatformOther.c', '//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingUtil.c', '//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingValue.c', '//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingVersionVar.c', '//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingWriter.c'],
+    deps = ["//contrib/llvm-project/compiler-rt/lib/profile:headers"],
+    copts = _FLAGS, local_defines = _DEFINES, target_compatible_with = _PLATFORM)
+cc_library(name = "cxx_objects", srcs = ['//contrib/llvm-project/compiler-rt/lib/profile:InstrProfilingRuntime.cpp'],
+    deps = ["//contrib/llvm-project/compiler-rt/lib/profile:headers"],
+    copts = _FLAGS + ["-std=c++17", "-fno-rtti", "-fvisibility-inlines-hidden", "-fvisibility=default"], local_defines = _DEFINES, target_compatible_with = _PLATFORM)
+bsd_component_archive(name = "profile_archive", groups = [":c_objects", ":cxx_objects"], pic = True, visibility = ["//visibility:public"])
+bsd_component_sources(name = "source_inventory", groups = [":c_objects", ":cxx_objects"], visibility = ["//visibility:public"])
+
+# Source-owned installation policy, matching compiler-rt-vars.mk for amd64.
+bsd_install_file(name = "installed_archive", src = ":profile_archive",
+    destination = "/usr/lib/clang/21/lib/freebsd/libclang_rt.profile-x86_64.a",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clang", "dev"])
+[bsd_install_file(name = header, src = "//contrib/llvm-project/compiler-rt/include:profile/" + header,
+    destination = "/usr/lib/clang/21/include/profile/" + header,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clang", "dev"])
+ for header in ["InstrProfData.inc", "MemProfData.inc"]]
+bsd_install_manifest(name = "install_manifest",
+    entries = [":installed_archive", ":InstrProfData.inc", ":MemProfData.inc"],
+    visibility = ["//visibility:public"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0, python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])

@@ -6601,3 +6601,12 @@ All three Make sources retained. Direct source scan found no explicit DTrace/SDT
 or audit calls in the two upstream tools; no instrumentation changed. Diagnostic
 include-change and formatting checks pass, but maintained tests remain open and
 formatter fresh Make parity requires a library built with formatting support.
+
+### Compiler profile runtime (2026-10-29)
+
+Native 14 C/one C++ profile sources preserve LLVM instrumentation support. Source
+and Makefile review found no DTrace generation or audit integration in this
+component; timestamp Probe identifiers are LLVM profile data, not DTrace probes.
+The maintained profiles_test exercises instrumented execution/profile merge/
+coverage with the native archive. No DTrace or system audit runtime claim, and
+no new audit hooks introduced by this build conversion.

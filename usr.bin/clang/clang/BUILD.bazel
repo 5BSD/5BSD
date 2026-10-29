@@ -73,4 +73,5 @@ clang_installation(binary = ":clang_installed")
 bsd_compiler_probe(name = "coverage_probe", compiler = ":clang", linker = "//usr.bin/clang/lld:ld.lld",
     sdk = ["@bsd_sdk//toolchain:compile_inputs", "@bsd_sdk//toolchain:link_inputs"],
     src = "sdk_probe.c", coverage = True,
+    profile_runtime = "//lib/libclang_rt/profile:profile_archive",
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
