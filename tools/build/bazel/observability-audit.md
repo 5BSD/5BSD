@@ -6154,3 +6154,9 @@ All 25 maintained Lex sources are carried into native compilation without source
 changes. This component consumes diagnostic/attribute definitions rather than
 introducing a privileged service operation. No instrumentation was removed;
 lexer runtime and tracing behavior remain to qualify with the linked compiler.
+
+### 2026-10-29 Clang parser and directive definitions
+
+All 18 maintained Parse sources are represented without source changes. Existing
+instrumentation is preserved; this object/generator comparison does not establish
+parser runtime or tracing behavior. No new privileged service operation is added.

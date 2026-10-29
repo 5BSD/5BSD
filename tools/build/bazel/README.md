@@ -36506,3 +36506,26 @@ lexer runtime semantics, full compiler linkage or performance.
 Remaining compiler libraries/configuration, world/kernel/pkgbase/bootstrap/runtime/
 performance gates remain open. Make stays production/default. No host installation
 or publication occurred.
+
+### 2026-10-29 native Clang parser and LLVM directive definitions
+
+Added the explicit 18-source Clang Parse component/PIC archive, preserving the
+lexer component's maintained compile settings and declaring generated LLVM
+OpenMP/OpenACC headers. Added native actions for ACC.inc, OMP.h.inc and OMP.inc,
+with DirectiveBase.td declared as input. Extended Clang source headers to include
+the clang-c API required by CodeCompleteConsumer.h; initial sandbox failure for
+undeclared clang-c/Index.h is retained. No compiler sources were changed.
+
+Maintained frontend bazel-clang-parse-20261029-r2 (16 jobs) succeeds. All 18 native
+PIC objects match fresh isolated Make Parse/*.pico global/undefined symbol
+inventories. Three directive generated files match fresh invocations of existing
+Make llvm-tblgen exactly. Evidence/scripts/reports:
+/usr/obj/usr/src/bazel-clang-parse-qualification-20261029. Make reference uses
+existing bootstrap tools and staged LLVM/SDK headers; not a complete fresh
+compiler bootstrap. Object-symbol equality does not prove instruction identity,
+parser runtime semantics, diagnostic correctness or full compiler linkage.
+
+Frontend review: existing documented LLVM/Clang settings, format-5 artifacts and
+TableGen backend suffice; no build-bsd.c/manual interface change required. Remaining
+compiler components, world/kernel/pkgbase/bootstrap/runtime/performance gates stay
+open; Make remains production/default. No host installation/publication occurred.

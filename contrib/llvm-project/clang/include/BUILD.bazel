@@ -40,4 +40,4 @@ filegroup(name = "BuiltinsX86_64_inputs", srcs = ["clang/Basic/BuiltinsBase.td",
 
 exports_files(["clang/Driver/Options.td", "clang/StaticAnalyzer/Checkers/Checkers.td", "clang/StaticAnalyzer/Checkers/CheckerBase.td"], visibility = ["//lib/clang/libclang:__pkg__"])
 
-cc_library(name = "headers", hdrs = glob(["clang/**/*.h", "clang/**/*.def"]), includes = ["."], deps = ["//lib/clang/include:clang_headers", "//lib/clang/libclang:generated_headers", "//contrib/llvm-project/llvm/include:headers"], visibility = ["//visibility:public"])
+cc_library(name = "headers", hdrs = glob(["clang/**/*.h", "clang/**/*.def", "clang-c/*.h"]), includes = ["."], deps = ["//lib/clang/include:clang_headers", "//lib/clang/libclang:generated_headers", "//contrib/llvm-project/llvm/include:headers"], visibility = ["//visibility:public"])

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_tablegen.bzl", "bsd_tablegen")
+[bsd_tablegen(name = name,
+    src = "//contrib/llvm-project/llvm/include:llvm/Frontend/" + source,
+    includes = ["//contrib/llvm-project/llvm/include:llvm/Frontend/Directive/DirectiveBase.td"],
+    include_dirs = ["contrib/llvm-project/llvm/include"], flags = [flag],
+    output = "llvm/Frontend/" + output, tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for name, source, flag, output in [
+    ("openacc_impl", "OpenACC/ACC.td", "--gen-directive-impl", "OpenACC/ACC.inc"),
+    ("openmp_decl", "OpenMP/OMP.td", "--gen-directive-decl", "OpenMP/OMP.h.inc"),
+    ("openmp_impl", "OpenMP/OMP.td", "--gen-directive-impl", "OpenMP/OMP.inc"),
+]]
+cc_library(name = "directive_headers", hdrs = [":openacc_impl", ":openmp_decl", ":openmp_impl"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "directive_outputs", srcs = [":openacc_impl", ":openmp_decl", ":openmp_impl"], visibility = ["//visibility:public"])
