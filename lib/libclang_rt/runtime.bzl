@@ -15,7 +15,7 @@ _CXXOPTS = ["-std=c++17"] + _COPTS + ["-fno-rtti", "-fvisibility-inlines-hidden"
 _DEFINES = ["NDEBUG", "HAVE_RPC_XDR_H=0", "SANITIZER_SUPPORTS_WEAK_HOOKS=0", "UBSAN_CAN_USE_CXXABI"]
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 
-def compiler_rt_archive(stem, cxx_srcs, deps, asm_srcs = [], defines = [], cxxopts = [], data_files = {}, installed_headers = {}):
+def compiler_rt_archive(stem, cxx_srcs, deps, asm_srcs = [], defines = [], cxxopts = [], data_files = {}, installed_headers = {}, object_order = []):
     cc_library(name = "objects", srcs = cxx_srcs, deps = deps,
         copts = _CXXOPTS + cxxopts, local_defines = _DEFINES + defines,
         target_compatible_with = _PLATFORM)
@@ -27,7 +27,7 @@ def compiler_rt_archive(stem, cxx_srcs, deps, asm_srcs = [], defines = [], cxxop
         groups.append(":assembly")
     # Make compiles ordinary objects with -fpic, without the toolchain PIC
     # variant's -DPIC (which changes ASAN_DYNAMIC semantics).
-    bsd_component_archive(name = "static_archive", groups = groups, pic = False,
+    bsd_component_archive(name = "static_archive", groups = groups, pic = False, object_order = object_order,
         visibility = ["//visibility:public"])
     bsd_component_sources(name = "source_inventory", groups = groups,
         visibility = ["//visibility:public"])

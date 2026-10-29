@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libclang_rt:runtime.bzl", "compiler_rt_archive")
+
+compiler_rt_archive(
+    stem = "tsan_cxx",
+    cxx_srcs = [
+        "//contrib/llvm-project/compiler-rt/lib/tsan/rtl:tsan_new_delete.cpp",
+    ],
+    deps = ["//contrib/llvm-project/compiler-rt/lib/interception:headers", "//contrib/llvm-project/compiler-rt/lib/tsan/rtl:headers"],
+)

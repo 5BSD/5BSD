@@ -6712,3 +6712,10 @@ The native MSan/C++ source lists preserve maintained implementations. Runtime
 uninitialized-read reports, origin tracking, thread and interceptor behavior
 remain untested; archive comparison cannot establish them. No production
 DTrace/audit code was changed.
+
+### ThreadSanitizer archive candidates (2026-10-29)
+
+Native main/C++ archive inventories retain the maintained implementation and
+amd64 assembly object. Race reports, synchronization, thread lifecycle,
+interceptors and setjmp behavior remain runtime qualification work. No production
+DTrace/audit instrumentation was changed.

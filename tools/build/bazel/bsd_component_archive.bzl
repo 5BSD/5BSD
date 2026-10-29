@@ -25,6 +25,14 @@ def _impl(ctx):
         objects += selected
     if len(depset(objects).to_list()) != len(objects):
         fail("component groups contain duplicate object inputs")
+    if ctx.attr.object_order:
+        by_name = {obj.basename: obj for obj in objects}
+        order = ctx.attr.object_order
+        if len(by_name) != len(objects) or len(depset(order).to_list()) != len(order):
+            fail("explicit archive order requires unique object basenames")
+        if sorted(order) != sorted(by_name.keys()):
+            fail("explicit archive order must name every selected object exactly once")
+        objects = [by_name[name] for name in order]
     compilation = cc_common.create_compilation_outputs(
         objects = depset([] if ctx.attr.pic else objects),
         pic_objects = depset(objects if ctx.attr.pic else []))
@@ -40,7 +48,8 @@ def _impl(ctx):
 
 bsd_component_archive = rule(implementation = _impl,
     attrs = {"groups": attr.label_list(providers = [CcInfo], mandatory = True),
-             "pic": attr.bool(default = False)},
+             "pic": attr.bool(default = False),
+             "object_order": attr.string_list()},
     toolchains = use_cc_toolchain(), fragments = ["cpp"])
 
 

@@ -4262,3 +4262,10 @@ The lib/libclang_rt/msan and msan_cxx packages expose native amd64 archive,
 source-inventory and installation targets. The main runtime includes its
 maintained ignorelist. Archive qualification does not establish uninitialized-read
 detection, origin tracking, C++ allocation or thread/interceptor behavior.
+
+.Pp
+The lib/libclang_rt/tsan and tsan_cxx packages provide native amd64 archive,
+source-inventory and installation targets. The main archive retains explicit
+Make-compatible assembly placement through validated object_order metadata.
+Archive/install comparisons do not qualify race detection, thread lifecycle,
+synchronization or interceptor behavior.

@@ -14196,3 +14196,28 @@ world/kernel/pkgbase and performance remain open. SDK dependencies remain.
 Frontend review: build-bsd.c and format-5 source_graph.py already support these
 explicit labels; no CLI/schema change. No host installation/publication or
 production tracing/audit modifications. Make remains production/default.
+
+### ThreadSanitizer archive candidates (2026-10-29)
+
+Added native amd64 tsan and tsan_cxx archive/source/install targets with explicit
+sources and declared sanitizer/UBSan/interception headers. Main TSan compiles
+82 C++ sources plus tsan_rtl_amd64.S; the companion compiles tsan_new_delete.cpp.
+The generic component archive rule now accepts optional object_order. When set,
+it requires unique basenames and exactly the complete selected object set,
+rejecting duplicates, omissions and extra names. TSan supplies the maintained
+order so separate C++/assembly compilation preserves Make's archive layout.
+Other callers keep their existing group ordering.
+
+Frontend run bazel-tsan-20261029 passed with no runtime tests selected. Fresh
+Make references match all 83 main archive members in order and 6155 global/weak
+symbol records; companion matches one member and 40 records. Both installation
+records match owner/group/mode/package tags. Source/order review and comparison
+reports are under /usr/obj/usr/src/bazel-tsan-reference-20261029.
+
+This does not establish race detection, synchronized clean execution, thread
+creation/destruction, interceptors, setjmp behavior, C++ allocation or supported
+address-space layouts. Those runtime checks, other architectures, independent
+bootstrap and full world/kernel/pkgbase/performance qualification remain open.
+Prepared SDK dependencies remain. Frontend review: build-bsd.c and format-5
+source_graph.py already support the target list; no CLI/schema change. No host
+installation/publication. Make remains production/default.
