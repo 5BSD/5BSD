@@ -41,3 +41,14 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+[cc_test(
+    name = "runtime_" + linkage,
+    srcs = ["runtime_test.c"],
+    deps = [":begemot"],
+    dynamic_deps = [":begemot_shared"] if linkage == "shared" else [],
+    features = ["bsd_test_runtime_paths"] if linkage == "shared" else [],
+    linkstatic = True,
+    size = "small",
+) for linkage in ["static", "shared"]]

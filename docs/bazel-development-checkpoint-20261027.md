@@ -15448,3 +15448,22 @@ unqualified. No host installation occurred.
 Existing frontend explicit target inputs and backend metadata groups support
 this addition without changes. Complete world/kernel/pkgbase, bootstrap,
 sandbox/cache and performance gates remain open; Make stays production/default.
+
+### libbegemot event runtime qualification (2026-10-29)
+
+Added native cc_test runtime_static/runtime_shared. Both verify pipe readability,
+callback unregister while dispatching, no delivery after unregister despite
+remaining readable data, cancellation before firing, stopping a repeating timer
+at its third callback, and automatic removal of a one-shot microsecond timer.
+A ten-second alarm bounds hangs; no tight elapsed-time thresholds are assumed.
+Both pass in bazel-libbegemot-runtime-20261029 through build-bsd with 16 jobs.
+With LD_LIBRARY_PATH removed, ldd confirms the shared test selects Bazel's native
+libbegemot.so.4; host libc/libsys/rtld remain in use. Evidence:
+/usr/obj/usr/src/bazel-libbegemot-reference-20261029/runtime-loader.txt and the
+run receipt/test reports. These tests cover selected event-loop behavior, not
+thread safety, signal interruption, descriptor exhaustion, or performance.
+
+Existing frontend explicit tests and bsd_test_runtime_paths support this without
+frontend/backend changes. The installation targets remain unchanged. Full-world,
+kernel/pkgbase, independent bootstrap, cache/sandbox and performance gates remain
+open. No host install; Make remains production/default.

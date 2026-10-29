@@ -7020,3 +7020,7 @@ maintained Makefile declares no DTrace provider; the source has no DTrace/SDT,
 syslog or OS audit hooks. Event-dispatch/timer tracing could help diagnosis,
 but no new instrumentation is introduced by this build migration. Runtime
 behavior and event observability are not established by artifact parity.
+
+libbegemot runtime_static/runtime_shared now exercise selected readiness and
+timer lifecycle behavior. No instrumentation was added; no DTrace or audit-event
+delivery claim follows from these tests.
