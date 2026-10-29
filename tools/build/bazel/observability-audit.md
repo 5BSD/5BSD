@@ -7313,3 +7313,11 @@ wrappers are declared build inputs; no implementation or instrumentation change
 was made. File-descriptor, FILE and pidfile lifetime behavior still needs the
 existing ATF cases, including their actual cleanup and error paths. Archive
 symbols alone do not establish those resource-lifecycle properties.
+
+Libutil++ ATF result: bazel-libutilpp-tests-20261029-r2 passes all four maintained
+cases (stringf basic/va_list, FILE_up and pidfile basic). The first missing-unwind
+link failure remains in the prior run evidence. SDK unwinding and startup inputs
+and the host kernel/loader remain part of this selected runtime qualification.
+Full Make test/reference run bazel-libutilpp-full-make-20261029 is still running;
+native test installation and fresh Make test ELF/metadata comparisons remain
+next work. No full installed-suite or system qualification is claimed yet.

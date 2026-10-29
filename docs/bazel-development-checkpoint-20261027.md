@@ -16794,3 +16794,27 @@ archive-comparison.json, install-audit.json and payload-audit.json under
 bazel-libutilpp-reference-20261029. Existing stringf/up/pidfile ATF tests and their
 installation remain outstanding; no runtime success is claimed here. Full-system
 and performance qualification gates remain open.
+
+### Native libutil++ ATF integration in progress (2026-10-29)
+
+Added the existing stringf basic/va_list, FILE ownership and pidfile basic cases
+as four native ATF tests. Matching native libc/libsys and C++/ATF libraries are
+explicit runtime dependencies. The first link failed on _Unwind_Resume because
+-nodefaultlibs requires an explicit unwind library; declared the SDK libgcc_s
+through cc_import and runtime_lib rather than relying on the host search path.
+Run bazel-libutilpp-tests-20261029-r2 is pending. This retains an SDK unwind
+bootstrap dependency, not a wholly native C++ runtime claim.
+
+Review corrected an existing FILE_up test use-after-close: save the descriptor
+before reset and verify closure using fcntl(F_GETFD), rather than calling fileno
+on a closed FILE object. The production library is unchanged. Fresh Make tests
+and installation qualification are being prepared. Existing build-bsd/source_graph
+explicit test interfaces support the addition without frontend changes.
+
+Libutil++ ATF result: bazel-libutilpp-tests-20261029-r2 passes all four maintained
+cases (stringf basic/va_list, FILE_up and pidfile basic). The first missing-unwind
+link failure remains in the prior run evidence. SDK unwinding and startup inputs
+and the host kernel/loader remain part of this selected runtime qualification.
+Full Make test/reference run bazel-libutilpp-full-make-20261029 is still running;
+native test installation and fresh Make test ELF/metadata comparisons remain
+next work. No full installed-suite or system qualification is claimed yet.

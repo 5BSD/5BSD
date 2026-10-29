@@ -6,6 +6,7 @@
  */
 
 #include <atf-c++.hpp>
+#include <fcntl.h>
 #include <libutil.h>
 
 #include <libutil++.hh>
@@ -15,7 +16,8 @@ ATF_TEST_CASE_BODY(FILE_up)
 {
 	FILE *fp = fopen("/dev/null", "r");
 	ATF_REQUIRE(fp != NULL);
-	ATF_REQUIRE(fileno(fp) != -1);
+	const int fd = fileno(fp);
+	ATF_REQUIRE(fd != -1);
 
 	freebsd::FILE_up f(fp);
 	ATF_REQUIRE_EQ(fileno(fp), fileno(f.get()));
@@ -23,7 +25,7 @@ ATF_TEST_CASE_BODY(FILE_up)
 	f.reset();
 	ATF_REQUIRE_EQ(f.get(), nullptr);
 
-	ATF_REQUIRE_EQ(-1, fileno(fp));
+	ATF_REQUIRE_EQ(-1, fcntl(fd, F_GETFD));
 	ATF_REQUIRE_EQ(EBADF, errno);
 }
 
