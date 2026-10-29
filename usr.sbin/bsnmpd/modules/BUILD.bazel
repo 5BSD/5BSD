@@ -1,2 +1,20 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["installation.bzl"], visibility = ["//usr.sbin/bsnmpd/modules:__subpackages__"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive", "bsd_install_archive_set")
+bsd_install_file(name = "module_header", src = "//contrib/bsnmp/snmpd:snmpmod.h", destination = "/usr/include/bsnmp/snmpmod.h",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsnmp", "dev"])
+bsd_install_manifest(name = "install_manifest", entries = [":module_header"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+bsd_install_archive_set(name = "installation_archives",
+    archives = [":install_archive"] + ["//usr.sbin/bsnmpd/modules/snmp_" + name + ":install_archive" for name in ["bridge", "hostres", "lm75", "mibII", "target", "usm", "vacm"]] +
+        select({"//tools/build/bazel/config:hast_enabled": ["//usr.sbin/bsnmpd/modules/snmp_hast:install_archive"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:pf_enabled": ["//usr.sbin/bsnmpd/modules/snmp_pf:install_archive"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:netgraph_support_enabled": ["//usr.sbin/bsnmpd/modules/snmp_netgraph:install_archive"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:wireless_enabled": ["//usr.sbin/bsnmpd/modules/snmp_wlan:install_archive"], "//conditions:default": []}),
+    visibility = ["//visibility:public"])

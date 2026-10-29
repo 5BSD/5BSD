@@ -8,3 +8,5 @@ exports_files(["bsnmpd.1", "snmpmod.3", "FOKUS-MIB.txt", "BEGEMOT-MIB.txt", "BEG
 
 cc_library(name = "public_headers", hdrs = ["snmpmod.h"], strip_include_prefix = ".", include_prefix = "bsnmp",
     deps = ["//contrib/bsnmp/lib:public_headers", "//contrib/bsnmp/lib:headers"], visibility = ["//usr.sbin/bsnmpd:__subpackages__", "//contrib/bsnmp/snmp_mibII:__pkg__"])
+
+exports_files(["snmpmod.h"], visibility = ["//usr.sbin/bsnmpd/modules:__pkg__"])

@@ -16142,3 +16142,32 @@ feature-selection variants and daemon/module runtime remain. No HAST daemon,
 replication peer or storage was contacted or changed. Reviewed build-bsd.c and
 source_graph.py: existing explicit targets/metadata inputs suffice. Make remains
 production/default; whole-system/bootstrap/cache/sandbox/performance gates stay open.
+
+### Complete configured usr.sbin/bsnmpd installation aggregate (2026-10-29)
+
+Added nested explicit archive aggregates for the SNMP subtree and its modules.
+The modules aggregate owns snmpmod.h and selects the seven unconditional modules
+plus HAST, PF, netgraph and wireless through their maintained configuration flags.
+The root selects gensnmptree, daemon, modules and client tools. No recursive glob
+or BUILD-file count defines its inventory. Two component archives initially lacked
+parent visibility; granted access specifically to the new root aggregate.
+
+Run bazel-bsnmp-aggregate-20261029-r2 passes via build-bsd with 16 jobs. Fresh Make
+build/install/installconfig of the full usr.sbin/bsnmpd subtree matches all 192
+changed installation destinations with no missing/extra paths or ownership/mode/
+non-directory tag mismatches. All 73 regular payloads pass source/manual/config
+bytes or ELF comparisons, and all 14 debug links pass name/CRC checks. Hardlink
+identity and symlink targets match. The payload audit rejects repeated regular-file
+destinations across component archives; shared directory metadata is preserved.
+Evidence: /usr/obj/usr/src/bazel-bsnmp-aggregate-reference-20261029/
+install-audit.py,json and payload-audit.py,json. Independent reference:
+bazel-bsnmp-full-make-20261029.
+
+This establishes the configured subtree's build/install aggregate, not a running
+SNMP service or the complete system. Its separately migrated libbsnmp dependency
+is not installed by usr.sbin/bsnmpd/Makefile and is not silently added to this
+aggregate. Feature-disabled aggregate comparison, daemon/module runtime, complete
+pkgbase composition and world/kernel/bootstrap/performance gates remain open.
+Reviewed build-bsd.c/source_graph.py; existing archive-set metadata handling and
+explicit inputs suffice without frontend changes. No host installation/startup;
+Make remains production/default.
