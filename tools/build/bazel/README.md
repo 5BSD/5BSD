@@ -34799,3 +34799,29 @@ NIS; normal target/artifact handling was exercised, no C/protocol change needed.
 No authentication, password modification or group switching was executed. Runtime
 PAM/audit/credential semantics, actual upgrade handling and complete /usr/bin
 integration remain unqualified. Make remains production/default.
+
+### 2026-10-29 native su with audit and DTrace
+
+Added //usr.bin/su:install_archive, using native compilation with declared
+PAM/util dependencies, optional libbsm and USE_BSM_AUDIT, and optional su provider
+header/object transformation and WITH_DTRACE. Preserved root-owned 4555/schg
+installation metadata. No production sources changed; no su execution or host
+installation performed.
+
+Maintained frontend qualification (16 jobs) under /usr/obj/usr/src:
+bazel-su-20261029 and bazel-su-no-observability-20261029. Fresh Make references
+are bazel-su-native-reference-20261029 and bazel-su-no-observability-reference-20261029.
+Scripts: bazel-su-qualification-20261029. Both variants match five installation
+metadata records, compressed manual bytes, debug linkage, global/undefined
+symbols and dynamic dependencies/search paths. Default provider attributes and
+probe schemas match Make; both native and Make binaries validate two ordinary
+probe sites against function bounds and patched instructions. Disabled output
+has no DOF section, no audit_submit undefined symbol and no direct libbsm need.
+Reports are in each run's qualification/su directory.
+
+The DTrace run uses the existing experimental section archive setting. This does
+not promote that mechanism or Bazel to production default. No live probe firing,
+audit event emission, PAM authentication, session setup or credential transition
+has been qualified. Full /usr/bin integration and system/runtime/performance
+qualification remain incomplete. Frontend review: existing format-5 targets and
+audit/DTrace settings cover the change; no frontend C/protocol change required.

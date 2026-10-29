@@ -5710,3 +5710,11 @@ includes syslog.h and delegates authentication/password changes through PAM.
 That scan does not determine kernel or PAM audit coverage. Preserve sources and
 review authentication success/failure audit behavior during VM qualification.
 No runtime authentication or credential operation was performed in this batch.
+
+### 2026-10-29 su audit and provider migration
+
+Preserved existing audit_submit call sites for authentication/account/session
+outcomes and the su provider. Enabled binary matches Make's probe schemas and
+two patched ordinary sites, with libbsm declared; disabled configuration removes
+the audit dependency and DOF. Sources unchanged. Live audit success/failure
+records, probe firing and PAM/credential semantics require VM qualification.
