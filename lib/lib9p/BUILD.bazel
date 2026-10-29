@@ -64,3 +64,17 @@ cc_test(
     deps = [":ninep"],
     size = "small",
 )
+
+cc_test(
+    name = "wire_shared_test",
+    srcs = ["wire_test.c"],
+    deps = [":ninep"],
+    dynamic_deps = [":ninep_shared", "//lib/libsbuf:sbuf_shared"] + select({
+        _CASPER: ["//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_pwd:cap_pwd_shared", "//lib/libcasper/services/cap_grp:cap_grp_shared", "//lib/libnv:nv_shared"],
+        "//conditions:default": [],
+    }),
+    # The maintained shared library leaves pthread linkage to consumers (bhyve).
+    linkopts = ["-pthread"],
+    features = ["bsd_test_runtime_paths"],
+    size = "small",
+)

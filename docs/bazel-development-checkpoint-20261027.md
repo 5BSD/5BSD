@@ -15403,3 +15403,27 @@ does not use the incomplete installed private header set. No public interface
 expansion was made merely to match that internal consumer. Existing frontend
 explicit targets/tests support this test without contract changes. Full-system,
 bootstrap, shared-test-runtime, sandbox/cache and performance gates remain open.
+
+### lib9p shared runtime qualification (2026-10-29)
+
+Added wire_shared_test alongside the static wire_test, using the maintained
+bsd_test_runtime_paths feature and explicit dynamic_deps for native lib9p,
+sbuf, casper, cap_pwd, cap_grp and nv. Consumer -pthread matches the existing
+bhyve contract: lib9p's maintained DSO leaves pthread linkage to consumers.
+Final run bazel-lib9p-shared-runtime-20261029-r3 passes both tests. With
+LD_LIBRARY_PATH removed, ldd confirms all six selected libraries resolve through
+Bazel's native _solib paths. Host libc/libthr/libsys and rtld remain in use.
+Loader evidence: bazel-lib9p-reference-20261029/shared-loader.txt under /usr/obj/usr/src.
+
+This resolves the previously recorded lib9p shared-test loader gap. The initial
+wire_test lacked the existing runtime-path opt-in. First shared test then exposed
+missing consumer pthread linkage. The second passed but loaded transitive
+libraries from the host; it was not accepted as native-closure qualification.
+The final test declares that closure and was audited. Installed library link flags
+and metadata are unchanged: test-only runtime paths are not installed.
+
+Frontend/toolchain changes were unnecessary: maintained explicit tests inputs
+and the existing native runtime-path feature support this. This selected loader
+audit does not establish all tests' dependency closure or runtime hermeticity.
+Protocol transport/backend authorization, full-system, cache/sandbox/bootstrap
+and performance qualification remain open. Make remains production/default.
