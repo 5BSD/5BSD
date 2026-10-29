@@ -7079,3 +7079,10 @@ runtime review; this build migration does not establish those behaviors.
 libalias module_test now verifies two load/unload cycles for all seven native
 userland modules through explicit runfiles. No packets are translated and no
 protocol handler/audit/probe delivery is qualified by this lifecycle test.
+
+The five existing libalias NAT/RTSP test and benchmark programs now build natively
+with Make-equivalent symbol and dynamic metadata. Their maintained C sources
+have no direct DTrace/audit calls; this adds no new tracing requirements. Packet
+handling and observability still need isolated runtime qualification, including
+proof that smedia executes the intended native RTSP handler. perf is built but
+has not been run or used to claim a performance result.

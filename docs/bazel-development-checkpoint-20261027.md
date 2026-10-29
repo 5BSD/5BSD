@@ -15681,3 +15681,32 @@ do not run the existing instance tests and silently accept host module loading.
 Existing frontend explicit tests/runfiles and runtime-path feature suffice;
 no build-bsd contract changes. Full system, bootstrap, sandbox/cache and
 performance gates remain open; Make stays production/default.
+
+### Existing libalias test/benchmark program builds (2026-10-29)
+
+Added native cc_binary targets for all five maintained programs in
+tests/sys/netinet/libalias: 1_instance, 2_natout, 3_natin, smedia and perf.
+Sources and util.h are explicit; ATF, libalias and sbuf dependencies select
+native shared-library targets. Production sources remain unchanged.
+
+Run bazel-libalias-tests-20261029-r3 passes via build-bsd with 16 jobs.
+Fresh Make all/install reference is bazel-libalias-tests-make-20261029.
+All five saved, hash-verified executables match global/weak symbol inventories
+and ordered dynamic dependency/security metadata against Make's full binaries.
+The initial comparison caught missing PIE flags; the second caught ATF/libalias
+link order. Both were corrected in BUILD declarations, without weakening the
+comparison. Evidence and repeatable verifier:
+/usr/obj/usr/src/bazel-libalias-reference-20261029/verify-tests.py and
+tests-comparison.json. Earlier failed comparisons remain available.
+
+These are build-only candidates, not five passing runtime tests. LibAliasInit
+unconditionally loads /etc/libalias.conf; normal NAT/RTSP regression execution
+must use an isolated installed filesystem with the intended native modules.
+No host configuration fallback, source API change or test-specific replacement
+of module loading was introduced. Test installation/debug/Kyuafile metadata,
+isolated runtime and perf measurements remain pending.
+
+Reviewed build-bsd.c and source_graph.py: existing explicit target inputs support
+these binaries without frontend/backend contract changes. Complete world/kernel/
+pkgbase, independent bootstrap, sandbox/cache and performance gates remain open.
+Make remains production/default; no host installation or network changes.

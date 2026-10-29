@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+# These unmodified programs read /etc/libalias.conf through LibAliasInit.
+# Build them here; runtime qualification requires an isolated installed root.
+# Do not register host-running tests that could silently load host modules.
+[cc_binary(
+    name = name,
+    srcs = [name + ".c", "util.c", "util.h"],
+    deps = (["//lib/atf/libatf-c:atf_c"] if name != "perf" else []) + ["//lib/libalias/libalias:alias"],
+    dynamic_deps = (["//lib/atf/libatf-c:atf_c_shared"] if name != "perf" else []) + ["//lib/libalias/libalias:alias_shared"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+) for name in ["1_instance", "2_natout", "3_natin", "perf"]]
+
+cc_binary(
+    name = "smedia",
+    srcs = ["smedia.c"],
+    deps = ["//lib/libalias/libalias:alias", "//lib/libsbuf:sbuf"],
+    dynamic_deps = ["//lib/libalias/libalias:alias_shared", "//lib/libsbuf:sbuf_shared"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)
