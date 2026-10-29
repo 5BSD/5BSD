@@ -407,3 +407,5 @@ config_setting(name = "lld_enabled", flag_values = {":lld": "true"}, visibility 
 selects.config_setting_group(name = "clang_extras_or_lld_enabled", match_any = [":clang_extras_enabled", ":lld_enabled"], visibility = ["//visibility:public"])
 
 selects.config_setting_group(name = "clang_extras_or_lld_or_lldb_enabled", match_any = [":clang_extras_enabled", ":lld_enabled", ":lldb_enabled"], visibility = ["//visibility:public"])
+
+selects.config_setting_group(name = "clang_extras_or_lldb_enabled", match_any = [":clang_extras_enabled", ":lldb_enabled"], visibility = ["//visibility:public"])

@@ -6302,3 +6302,10 @@ source/probe/audit behavior. All 16 default objects and eight extras-enabled Bit
 objects match Make symbols/archive inventories. Parsing/linking/bitcode runtime
 remains unqualified. Evidence: bazel-llvm-ir-support-qualification-20261029 and
 bazel-llvm-bitcode-extras-qualification-20261029.
+
+### 2026-10-29 LLVM Object/BinaryFormat
+
+45 default objects match Make symbols/archive inventories; three source selections
+match expanded Make. No source/probe/audit changes. Object parser/writer/relocation
+runtime behavior remains unqualified. Evidence:
+bazel-llvm-object-formats-qualification-20261029.

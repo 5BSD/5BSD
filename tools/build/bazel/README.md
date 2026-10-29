@@ -37107,3 +37107,27 @@ Transforms/CodeGen/MC), separately from libclang's 839-source aggregate. Remaini
 LLVM libraries/target backends, compiler linkage and world/kernel/pkgbase/bootstrap/
 runtime/cache/performance qualification remain open. Make stays production/default;
 no host installation/publication occurred.
+
+### 2026-10-29 native LLVM Object and BinaryFormat
+
+Added installed Object (32 default) and BinaryFormat (13 default) components.
+Object includes its two installed-world MIW sources and selects Object.cpp with
+clang_extras. BinaryFormat selects ELF.cpp with clang_extras OR lldb. Public/private
+and native generated dependencies are declared. Bootstrap selection is not qualified.
+No LLVM source or sandbox changes were required.
+
+Maintained frontend bazel-llvm-object-formats-20261029 (16 jobs) succeeds. All 45 PIC
+object global/undefined symbol inventories match fresh isolated Make references;
+both archive member inventories match. Resolved source selections match expanded
+Make for default (45), extras=false/lldb=false (44), and extras=true/lldb=false (46).
+Alternate runs request inventory only; they do not qualify alternate compiled objects.
+Evidence/scripts: /usr/obj/usr/src/bazel-llvm-object-formats-qualification-20261029.
+References use existing bootstrap generators/staged SDK headers; verification streams
+execution records. Results do not qualify object-file parsing, malformed-input
+handling, relocation correctness, archive writing, instruction identity or runtime.
+
+Frontend review: added a group of existing typed selectors and updated maintained
+manual; existing build-bsd.c format-5 backend/artifacts suffice. Remaining LLVM
+libraries/target backends, compiler linkage and world/kernel/pkgbase/bootstrap/
+runtime/cache/performance gates remain open. Make stays production/default.
+No host installation/publication occurred.

@@ -3827,3 +3827,12 @@ is true. Bootstrap selection remains unqualified.
 The native LLVM Bitcode component includes its analyzer source when
 .Cm clang_extras
 is enabled. This does not establish bitcode tool runtime qualification.
+
+.Pp
+The installed LLVM Object component selects its optional entry source with
+.Cm clang_extras .
+The BinaryFormat component selects ELF.cpp when either
+.Cm clang_extras
+or
+.Cm lldb
+is enabled. Bootstrap selection remains unqualified.
