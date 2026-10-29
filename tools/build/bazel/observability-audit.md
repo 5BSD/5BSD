@@ -6518,3 +6518,9 @@ SDK inputs. PIE omission corrected in runtime and installed driver targets.
 Installed ELF protections and 15 archive records inspected; source manual/script
 payloads checked. This does not qualify audit/DTrace delivery, dynamic runtime,
 resource-header installation, fresh Make parity or whole-system behavior.
+
+### Fresh Clang driver reference (2026-10-29)
+
+Fresh driver ELF symbol and 15-record installation comparisons pass, including
+all eight nonbinary payloads and debuglink CRC. Existing SDK/library dependencies
+were reused. These artifact checks do not establish runtime audit/probe delivery.

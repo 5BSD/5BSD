@@ -37927,3 +37927,29 @@ and installation remain separate required work. No host installation occurred.
 Frontend review: existing build-bsd format-5 transports the target/test selections;
 manual updated for installed target and test scope. Make stays production/default;
 world/kernel/pkgbase/cache/performance gates remain open.
+
+### Fresh compiler-driver and installation comparison (2026-10-29)
+
+Fresh Make built the five driver sources and linked/installed them into an
+isolated /usr/obj stage with 16 jobs; no host installation. Reference uses existing
+staged SDK, generated headers and LLVM/Clang libraries, not a fresh whole-toolchain
+bootstrap. Commands/logs: /usr/obj/usr/src/bazel-clang-driver-make-20261029;
+reference objects: bazel-clang-driver-make-objects-20261029 under the same root.
+
+Comparison with the corrected native clang_installed candidate passes:
+- All global/weak ELF symbol type/binding/visibility/defined-state/name records
+  match the fresh Make driver, with zero additions/removals.
+- All 15 installed payload paths, owner/group/mode/package tags and hardlink
+  relationships match Make's staged installation.
+- Eight nonbinary payloads (CC script and seven compressed manual names) match
+  byte-for-byte. Native .gnu_debuglink names clang.debug and its CRC matches the
+  packaged debug payload.
+The verifier subtracts unchanged distrib-dirs baseline entries (including its two
+NLS symlinks), rather than counting them as compiler payloads. Evidence/scripts:
+/usr/obj/usr/src/bazel-clang-driver-reference-qualification-20261029.
+
+This does not establish machine-code identity, exact dependency ordering,
+resource-header installation, independent bootstrap, dynamic installed runtime,
+world/kernel/pkgbase or comparative performance. Native resource headers remain
+next. Frontend review: qualification-only evidence; no new build-bsd inputs,
+staging/signing/publication semantics or manual contract change. Make stays default.
