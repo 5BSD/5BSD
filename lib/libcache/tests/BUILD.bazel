@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+cc_binary(name = "cache_test", srcs = ["cache_test.c"],
+    deps = ["//lib/libcache:test_source_headers", "//lib/libnotify:headers",
+        "//lib/libservice:service", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"],
+    linkopts = ["-static"], linkstatic = True, visibility = ["//visibility:public"])
+_CASES = [
+    "callback_create_during_shutdown", "shared_registration_churn", "shared_watcher_fanout",
+    "shared_delivery_lifetime", "shared_watcher_fork", "stalled_discovery_destroy",
+    "discovery_eagain_backs_off", "large_cache_lifecycle", "invalidation_during_rebuild",
+    "generation_invalidation", "pressure_during_allocation", "reject_without_allocation",
+    "coalesced_pressure", "lookup_contract", "cost_overflow", "lru_and_copy",
+    "pressure_and_limits", "fork_rejection", "concurrent_bounds", "automatic_pressure",
+]
+[bsd_atf_test(name = case, case_name = case, body = ":cache_test", interface = "program",
+    runner = "//tools/build/bazel:atf_runner", body_timeout_seconds = 60,
+    size = "small", timeout = "moderate") for case in _CASES]
+test_suite(name = "native_tests", tests = [":" + case for case in _CASES], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+utility_installation(name = "install_test", program = "cache_test", manual = "",
+    package = "libcache-tests", bindir = "/usr/tests/lib/libcache")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["cache_test"], interfaces = {"cache_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libcache/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libcache-tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"], visibility = ["//lib/libcache:__pkg__"])

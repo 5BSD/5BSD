@@ -7169,3 +7169,8 @@ Notify discovery budgets, pressure/invalidation delivery, watcher lifetime and
 fork behavior require the maintained unit tests and real service runtime coverage.
 Build/install parity does not prove those paths or their observability. No audit
 or logging policy was changed by the conversion.
+
+libcache follow-up: all twenty maintained cache unit cases now execute through
+Bazel, including pressure/invalidation, watcher lifecycle and budget/backoff cases.
+They use the existing injected notify implementation; real service event delivery
+and matching-kernel tracing/audit behavior remain unqualified.

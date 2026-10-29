@@ -16297,3 +16297,34 @@ this is not full capability-service qualification. Reviewed build-bsd.c and
 source_graph.py: existing target/metadata inputs support this component without
 interface changes. Complete world/kernel/pkgbase/bootstrap/sandbox/cache and
 comparative performance gates remain open; Make stays production/default.
+
+### Native libcache maintained tests and combined installation (2026-10-29)
+
+Added all twenty existing cache_test ATF cases using the native adapter. The
+program preserves Make NO_SHARED with static linkage and explicit native service,
+pthread and ATF dependencies. A narrowly visible source-header target preserves
+the test's existing inclusion of bsd_cache.c and injected notify operations; the
+production library is not replaced with mocks. Tests cover callback shutdown,
+watcher churn/fanout/lifetime/fork, stalled discovery and retry backoff, large-cache
+lifecycle, generation/rebuild invalidation, pressure/allocation behavior, lookup,
+overflow, LRU, limits, concurrency and automatic pressure.
+
+Run bazel-libcache-tests-20261029 passes all twenty cases. Fresh Make test reference
+matches all 2,636 global/weak symbols; both executable artifacts are static (no
+interpreter or NEEDED entries). Evidence: test-inputs.json, make-tests.py,
+verify-tests.py and test-artifact-comparison.json under
+/usr/obj/usr/src/bazel-libcache-reference-20261029/.
+
+Added configured test installation to the library aggregate: cache_test, its debug
+file and Kyuafile with libcache-tests metadata. Run bazel-libcache-full-20261029
+again passes twenty cases. Fresh Make build/install with tests enabled matches all
+28 changed installation destinations with no missing/extra paths or ownership/mode/
+non-directory tag mismatches. Eight regular payloads, manual hardlinks and two
+debug-link CRCs pass comparisons. Evidence: install-test-inputs.json, make-full.py,
+full-install-audit.py, full-payload-audit.py and payload-audit.json in that directory.
+
+These are maintained unit tests with injected notify behavior, not an end-to-end
+BSDNotify/real channel qualification. SDK bootstrap inputs and matching-kernel
+service runtime remain. Existing build-bsd target/test/metadata contracts carry
+these additions without frontend interface changes. Full world/kernel/pkgbase,
+bootstrap, sandbox/cache and comparative performance gates remain open.
