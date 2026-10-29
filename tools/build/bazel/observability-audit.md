@@ -6473,3 +6473,12 @@ hooks. BPF loading/verifier/execution, LoongArch generated-code execution and ta
 diagnostics/unwind/debug behavior remain unqualified. Evidence:
 `/usr/obj/usr/src/bazel-llvm-optional-tables-qualification-20261029` and
 `/usr/obj/usr/src/bazel-llvm-optional-backends-qualification-20261029`.
+
+### LLVM aggregate reconciliation / Telemetry / Analysis entry (2026-10-29)
+
+Whole-source reconciliation found two omissions and corrected their conditional
+selection. New Telemetry and optional Analysis entry objects match Make ELF symbols;
+no upstream source/probe/audit changes. Telemetry compilation does not demonstrate
+runtime telemetry delivery/collection. Whole-library source coverage does not prove
+linkage or runtime observability. Evidence:
+`/usr/obj/usr/src/bazel-llvm-aggregate-qualification-20261029`.

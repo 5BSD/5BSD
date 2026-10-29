@@ -162,3 +162,52 @@ _LOONGARCH_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-
 ) for stem, flags in _LOONGARCH_TABLES]
 cc_library(name = "loongarch_generated_headers", hdrs = [":loongarch_" + stem.lower() for stem, _ in _LOONGARCH_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
 filegroup(name = "loongarch_generated_outputs", srcs = [":loongarch_" + stem.lower() for stem, _ in _LOONGARCH_TABLES], visibility = ["//visibility:public"])
+
+# Installed LLVM source/object aggregate; linkage and installation remain separate.
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive", "bsd_component_sources")
+_COMPONENTS = [
+    "//contrib/llvm-project/llvm/lib/Analysis:analysis",
+    "//contrib/llvm-project/llvm/lib/AsmParser:asmparser",
+    "//contrib/llvm-project/llvm/lib:support",
+    "//contrib/llvm-project/llvm/lib/BinaryFormat:binaryformat",
+    "//contrib/llvm-project/llvm/lib/Bitcode:bitcode",
+    "//contrib/llvm-project/llvm/lib/Bitstream:bitstream",
+    "//contrib/llvm-project/llvm/lib/CGData:cgdata",
+    "//contrib/llvm-project/llvm/lib/CodeGen:codegen",
+    "//contrib/llvm-project/llvm/lib/CodeGenTypes:codegentypes",
+    "//contrib/llvm-project/llvm/lib/DebugInfo:debuginfo",
+    "//contrib/llvm-project/llvm/lib/Debuginfod:debuginfod",
+    "//contrib/llvm-project/llvm/lib/Demangle:demangle",
+    "//contrib/llvm-project/llvm/lib/ExecutionEngine:execution_engine",
+    "//contrib/llvm-project/llvm/lib/Frontend:frontend",
+    "//contrib/llvm-project/llvm/lib/IR:ir",
+    "//contrib/llvm-project/llvm/lib/IRPrinter:irprinter",
+    "//contrib/llvm-project/llvm/lib/IRReader:irreader",
+    "//contrib/llvm-project/llvm/lib/LTO:lto",
+    "//contrib/llvm-project/llvm/lib/Linker:linker",
+    "//contrib/llvm-project/llvm/lib/MC:mc",
+    "//contrib/llvm-project/llvm/lib/ObjCopy:objcopy",
+    "//contrib/llvm-project/llvm/lib/Object:object",
+    "//contrib/llvm-project/llvm/lib/ObjectYAML:objectyaml",
+    "//contrib/llvm-project/llvm/lib/Option:option",
+    "//contrib/llvm-project/llvm/lib/Passes:passes",
+    "//contrib/llvm-project/llvm/lib/ProfileData:profiledata",
+    "//contrib/llvm-project/llvm/lib/Remarks:remarks",
+    "//contrib/llvm-project/llvm/lib/SandboxIR:sandboxir",
+    "//contrib/llvm-project/llvm/lib/Target:target",
+    "//contrib/llvm-project/llvm/lib/TargetParser:targetparser",
+    "//contrib/llvm-project/llvm/lib/TextAPI:textapi",
+    "//contrib/llvm-project/llvm/lib/ToolDrivers/llvm-dlltool:llvm_dlltool",
+    "//contrib/llvm-project/llvm/lib/ToolDrivers/llvm-lib:llvm_lib",
+    "//contrib/llvm-project/llvm/lib/Transforms:transforms",
+    "//contrib/llvm-project/llvm/lib/WindowsDriver:windowsdriver"
+] + select({"//tools/build/bazel/config:clang_extras_enabled": [
+    "//contrib/llvm-project/llvm/lib/DWARFCFIChecker:dwarfcfichecker",
+    "//contrib/llvm-project/llvm/lib/DWARFLinker:dwarflinker",
+    "//contrib/llvm-project/llvm/lib/DWP:dwp",
+    "//contrib/llvm-project/llvm/lib/MCA:mca",
+    "//contrib/llvm-project/llvm/lib/XRay:xray"
+], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_aarch64_enabled": ["//contrib/llvm-project/llvm/lib/Target/AArch64:aarch64"], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_arm_enabled": ["//contrib/llvm-project/llvm/lib/Target/ARM:arm"], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_bpf_enabled": ["//contrib/llvm-project/llvm/lib/Target/BPF:bpf"], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_loongarch_enabled": ["//contrib/llvm-project/llvm/lib/Target/LoongArch:loongarch"], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_powerpc_enabled": ["//contrib/llvm-project/llvm/lib/Target/PowerPC:powerpc"], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_riscv_enabled": ["//contrib/llvm-project/llvm/lib/Target/RISCV:riscv"], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_x86_enabled": ["//contrib/llvm-project/llvm/lib/Target/X86:x86"], "//conditions:default": []})
+_COMPONENTS += select({"//tools/build/bazel/config:clang_extras_or_lldb_enabled": ["//contrib/llvm-project/llvm/lib/Telemetry:telemetry"], "//conditions:default": []})
+bsd_component_sources(name = "source_inventory", groups = _COMPONENTS, visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = _COMPONENTS, pic = True, visibility = ["//visibility:public"])

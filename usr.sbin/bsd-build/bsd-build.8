@@ -3930,3 +3930,13 @@ and
 Both booleans default to false, matching the maintained Make configuration.
 Enable the corresponding setting when requesting that explicit backend component.
 This does not qualify BPF execution, a LoongArch host, or complete compiler linkage.
+
+.Pp
+The installed LLVM Telemetry component is selected when either
+.Cm clang_extras
+or
+.Cm lldb
+is enabled. The optional Analysis C API entry source is selected by
+.Cm clang_extras .
+Aggregate source inventory qualification does not establish shared-library linkage
+or runtime telemetry delivery.

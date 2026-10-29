@@ -37684,3 +37684,37 @@ do not establish BPF program loading/execution or a LoongArch system build.
 Independent bootstrap and world/kernel/pkgbase/runtime/CPU/memory/disk gates remain
 open. Frontend review: build-bsd.c/format-5 backend accepts new booleans; manual
 updated. Make remains production/default; no installation/publication occurred.
+
+### Installed LLVM aggregate source reconciliation (2026-10-29)
+
+Added explicit installed-library component selection, source_inventory and pic_archive
+targets in lib/clang/libllvm. The aggregate selects common groups, extras-only groups,
+extras-or-lldb Telemetry, and individually enabled backends. Uses resolved Bazel srcs
+from declared components; no build-time Make metadata parsing. Archive target is
+declared but not built/qualified in this batch; shared linkage/install remain open.
+
+Initial reconciliation found Telemetry/Telemetry.cpp missing in default (1739 versus
+1740) and also optional Analysis/Analysis.cpp missing with extras (2052 versus 2054).
+Added Telemetry guarded by extras-or-lldb, and Analysis entry source guarded by extras.
+Both new sources compile and match fresh Make ELF symbol type/binding/visibility/
+defined state/name. Telemetry archive inventory matches. Earlier Analysis component
+comparisons cover its other 119 sources; this batch's fresh reference covers only
+the added entry point. No source/sandbox workaround.
+
+Corrected source multisets match expanded Make exactly:
+- Default: 1740, no missing/extra sources.
+- Extras plus all seven backends: 2054, no missing/extra sources.
+These are whole-libllvm SOURCE inventories, not a whole-compiler linkage/runtime
+claim or world completion count. Results/scripts:
+`/usr/obj/usr/src/bazel-llvm-aggregate-qualification-20261029`,
+`bazel-llvm-telemetry-qualification-20261029`, and
+`bazel-llvm-analysis-entry-qualification-20261029`. Maintained frontend corrected
+runs: `bazel-llvm-aggregate-default-fixed-20261029` and
+`bazel-llvm-aggregate-all-fixed-20261029`. Initial all-options attempt was rejected
+by the frontend build lock; rerun after default finished. No running job restarted.
+
+Aggregate archive/shared linkage, target registration and complete selection policy
+(including target-all/cross defaults/zero-backend rejection), independent bootstrap,
+world/kernel/pkgbase/runtime/cache/performance gates remain open. Frontend review:
+existing build-bsd.c/format-5 backend supports targets; manual documents Telemetry
+selection. Make remains production/default. No installation/publication occurred.
