@@ -34898,3 +34898,33 @@ No live sockets, Casper IPC, tracing or audit behavior tested. Full instruction
 parity, compiled tests, /usr/bin parent integration and broader runtime/performance
 gates remain. Frontend review: existing format-5 settings/artifact capture cover
 this target; no C/protocol change required. Make remains production/default.
+
+### 2026-10-29 sockstat compiled tests and recursive installation
+
+Added the maintained sockstat_test program and eleven individual native Bazel
+ATF tests, compiling the real shared sockstat.c parsing implementation with
+explicit libxo/ATF inputs. All eleven cases executed and passed in
+/usr/obj/usr/src/bazel-sockstat-tests-20261029. Final archive layout run
+bazel-sockstat-tests-20261029-r2 reused all eleven successful cached results;
+it is not counted as a second execution. Cases cover single/multiple ports,
+ranges, endpoints and malformed/out-of-range inputs. No live socket service
+or host credentials are used by these parsing cases.
+
+Added //usr.bin/sockstat:installation_archives, collecting the existing program
+archive and optional test archive. Separate archives preserve both utilities and
+tests package ownership for shared debug directories; the initial combined
+dictionary overwrote one owner and failed full Make comparison. Retained that
+failure and fixed structure without weakening metadata checks. Future /usr/bin
+parent must consume installation_archives for recursive coverage.
+
+Fresh recursive Make reference: bazel-sockstat-tests-reference-20261029 under
+/usr/obj/usr/src. Scripts/reports: bazel-sockstat-tests-qualification-20261029.
+Final r2-installation-parity.json matches all thirteen distinct metadata records
+and both non-ELF payloads; r2-elf-parity.json validates two debug pairs and matching
+global/undefined symbols and dynamic interfaces. Test assertions/source unchanged.
+
+Frontend review: maintained format-5 test inventory/execution, target selection,
+and archive metadata capture exercised with 16 jobs; no C/protocol changes needed.
+Live socket snapshots, Casper behavior, full instruction equivalence, /usr/bin
+parent, world/kernel/pkgbase and performance gates remain incomplete. Make remains
+production/default.

@@ -5739,3 +5739,9 @@ Preserved socketsnapshot provider and tracing wrapper. Native/Make schemas and
 two ordinary/two enabled patched sites match; disabled variant omits DOF. No
 explicit audit references found in command C/header sources; kernel auditing may
 still apply. Live snapshot tracing, Casper IPC and output tests remain pending.
+
+### 2026-10-29 sockstat parsing tests
+
+Eleven maintained parsing cases executed successfully through native Bazel ATF
+runners; assertions and source preserved. These cases test port selection parsing,
+not live socket snapshot probes, Casper IPC, kernel auditing or service behavior.
