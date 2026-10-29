@@ -13686,3 +13686,20 @@ cache hits and one internal action. This establishes reuse for these unchanged
 inputs only, not dependency invalidation, clean-build reproducibility, remote
 cache correctness or a controlled performance comparison. Formatter full Make
 library rebuild remains independently active; no reference completion claimed.
+
+### Toolchain manual-alias correction (2026-10-29)
+
+While reviewing installation composition, expanded Make metadata exposed two
+MLINKS= assignments in usr.bin/clang/toolchain/Makefile that replaced earlier
+aliases. MK_LLVM_BINUTILS=yes produced eleven executable aliases but only four
+manual aliases. Changed the gcov and objdump assignments to MLINKS+=, preserving
+all eleven intended manual aliases. Expanded metadata now has matching basename
+coverage for all eleven binaries/manuals; MK_LLVM_BINUTILS=no emits neither set.
+Evidence: /usr/obj/usr/src/bazel-toolchain-alias-audit-20261029/results.json.
+This is metadata verification, not an installed-image qualification. Existing
+Make-based package builds consume this corrected Makefile normally.
+
+Frontend review: no build-bsd.c option/backend/helper change is required; normal
+world/package installation already uses this maintained target. Native Bazel
+composition of these optional default-name aliases remains to be implemented.
+Formatter's full isolated Make library build remains active, not yet qualified.
