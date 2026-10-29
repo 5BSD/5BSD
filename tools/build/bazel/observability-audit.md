@@ -5797,3 +5797,13 @@ vtfontcvt its output file/font compression behavior. No new privileged boundary
 or observability mechanism was introduced; syscall audit coverage is not
 established by build/metadata parity. Device and file-format runtime coverage
 remains open rather than adding migration-only probes.
+
+### 2026-10-29 wg
+
+Native migration retains all subcommands and the FreeBSD interface-control and
+userspace IPC sources. Focused inspection found no direct DTrace/SDT or audit
+submission hooks. Interface/key configuration is security-sensitive: system
+qualification should check authorization and syscall audit behavior without
+logging private keys. No migration-only instrumentation was added. Build and
+installation parity do not qualify live interface changes, peer handshakes,
+cryptographic vectors, credential boundaries or observability of updates.

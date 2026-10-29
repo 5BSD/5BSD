@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['wg.c', 'config.c', 'encoding.c', 'ipc.c', 'terminal.c', 'curve25519.c', 'show.c', 'showconf.c', 'set.c', 'setconf.c', 'genkey.c', 'pubkey.c', 'config.h', 'containers.h', 'ctype.h', 'curve25519-fiat32.h', 'curve25519-hacl64.h', 'curve25519.h', 'encoding.h', 'ipc-freebsd.h', 'ipc-uapi-unix.h', 'ipc-uapi.h', 'ipc.h', 'subcommands.h', 'terminal.h', 'version.h', 'man/wg.8'], visibility = ["//usr.bin/wg:__pkg__"])

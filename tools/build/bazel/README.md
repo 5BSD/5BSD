@@ -35145,3 +35145,25 @@ runtime gates. Resource logs do not constitute comparative performance proof.
 Frontend review: existing format-5 explicit target/artifact handling suffices;
 no C/protocol/manual change is required. Make remains production/default.
 Whole-world/kernel/pkgbase integration remains unfinished.
+
+### 2026-10-29 wg native program/install target
+
+Added //usr.bin/wg:install_archive with all 12 maintained C sources and explicit
+local headers, including both curve25519 implementation headers and the FreeBSD
+IPC backend. Uses native libnv and its shared implementation. RUNSTATEDIR stays
+_PATH_VARRUN via forced paths.h inclusion, matching Make rather than embedding a
+runtime directory string in Bazel. The maintained section-8 manual is installed.
+No production or cryptographic source changes were made.
+
+Maintained frontend run /usr/obj/usr/src/bazel-wg-20261029 (16 jobs) passes.
+Fresh rootless Make reference: bazel-wg-native-reference-20261029; scripts:
+bazel-wg-qualification-20261029. Saved qualification/wg reports establish five
+matching installed metadata records, exact compressed manual bytes, valid ELF
+separate-debug linkage, matching global/undefined symbols and dynamic fields.
+Both implementations require libc.so.7 and libnv.so.1. No instruction-level,
+cryptographic-vector, tunnel, IPC, live interface or performance proof follows
+from these checks. No network/interface mutation or host installation occurred.
+
+Frontend review: the existing format-5 target/artifact pathway supports this
+program without a C/protocol/manual change. Make remains production/default;
+whole-world/kernel/pkgbase and runtime qualification remain incomplete.
