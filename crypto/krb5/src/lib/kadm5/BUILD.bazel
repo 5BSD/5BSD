@@ -5,6 +5,6 @@ cc_library(name = "headers",
     hdrs = ["admin.h", "admin_internal.h", "admin_xdr.h", "kadm_rpc.h", "server_internal.h", "clnt/client_internal.h"],
     includes = ["."], strip_include_prefix = ".", include_prefix = "kadm5",
     deps = ["//crypto/krb5/src/include:server_headers", "//crypto/krb5/src/include:database_headers", "//krb5/lib/kadm5clnt:error_headers"],
-    visibility = ["//krb5:__subpackages__"])
+    visibility = ["//krb5:__subpackages__", "//crypto/krb5/src/kadmin/cli:__pkg__"])
 
 exports_files(['srv/adb_xdr.c', 'srv/kadm5_hook.c', 'srv/pwqual.c', 'srv/pwqual_dict.c', 'srv/pwqual_empty.c', 'srv/pwqual_hesiod.c', 'srv/pwqual_princ.c', 'srv/server_init.c', 'srv/server_kdb.c', 'srv/server_misc.c', 'srv/svr_chpass_util.c', 'srv/svr_iters.c', 'srv/svr_policy.c', 'srv/svr_principal.c'], visibility = ["//krb5:__subpackages__"])

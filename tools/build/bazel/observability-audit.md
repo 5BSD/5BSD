@@ -6877,3 +6877,9 @@ authenticated runtime or tracing claim follows from these artifact checks.
 The PIE variant reuses the existing source and generator declarations. No source
 instrumentation changed. Archive parity and the ordinary date-parser test do
 not establish administration-command runtime or audit coverage.
+
+### kadmin.local (2026-10-29)
+
+Artifact parity passes; scans of keytab.c/keytab_local.c found no DTrace/SDT or
+audit hooks. Existing common-library/server instrumentation is unchanged. Local
+keytab/database mutations need runtime and audit-policy review; none were run.

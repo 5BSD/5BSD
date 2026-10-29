@@ -39484,3 +39484,29 @@ program or authenticated operations. PIE final-link/runtime checks remain for
 those consumers. Reviewed build-bsd.c/source_graph.py; existing target/test
 selection supports the variant without contract changes. SDK bootstrap and
 whole-system/package/performance gates remain open; Make stays production.
+
+### Native local administration program (2026-10-29)
+
+Added kadmin.local with native PIE administration-common and ss archives, full
+maintained administration/database/RPC/Kerberos dependencies, and kerberos-kdc
+program/debug installation under /usr/sbin. Make deliberately installs no manual
+from this directory; the kadmin package owns the shared manual alias and remains
+separate pending work.
+
+The first compile exposed keytab_local.c's textual inclusion of keytab.c. Added
+a textual_hdrs declaration so the vendor KADMIN_LOCAL wrapper remains one
+compilation unit. The following analysis rejected its direct administration
+header dependency; granted that specific source package visibility on the header
+target. No library source or runtime behavior was changed.
+
+Final run bazel-kadmin-local-runtime-20261029-r3 matches the fresh Make reference:
+4 installation records; 157 global/weak symbols for /usr/sbin/kadmin.local, 221 global/weak symbols for /usr/lib/debug/usr/sbin/kadmin.local.debug.
+Ownership/mode/tags, dynamic dependencies/PIE flags and debuglink CRC also match.
+Evidence: /usr/obj/usr/src/bazel-kadmin-local-reference-20261029. Despite the run
+directory name, no runtime test was requested or executed. Database mutations,
+plugin loading and interactive administration remain unqualified.
+
+Reviewed build-bsd.c and source_graph.py; explicit targets support this component
+without contract changes. Make-prepared SDK and host dependencies remain; full
+world/kernel/pkgbase/bootstrap/sandbox/cache/performance gates remain open.
+Make stays production/default; no host installation or database change occurred.
