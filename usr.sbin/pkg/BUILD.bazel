@@ -13,7 +13,7 @@ cc_binary(name = "pkg", srcs = ["pkg.c", "rsa.c", "dns_utils.c", "config.c", "ec
 
 load(":repository.bzl", "default_repository", "repository_install")
 default_repository(name = "default_repository", visibility = ["//visibility:public"])
-repository_install(name = "repository_config")
+repository_install(name = "repository_config", visibility = ["//usr.sbin/pkg/tests:__pkg__"])
 exports_files(["FreeBSD.conf.latest", "FreeBSD.conf.quarterly", "FreeBSD.conf.quarterly-release"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")

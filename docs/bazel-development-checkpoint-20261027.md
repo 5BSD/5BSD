@@ -16485,3 +16485,31 @@ build-settings interface accepts the new string/label settings without a fronten
 API change; these setting names and their requirements are now documented here.
 Complete world/kernel/bootstrap/sandbox/cache/performance gates remain open and
 Make stays production/default. No host installation or network operation occurred.
+
+### Maintained pkg repository selection matrix (2026-10-29)
+
+Added 31 native Bazel analysis tests for the real repository selection rule.
+The 28 positive selections cover CURRENT, BETA2, RC1, RELEASE-p3, STABLE,
+explicit quarterly channel override and channel-only input across amd64, i386,
+arm64 and riscv64 target constraints. Two cases require analysis failures for
+missing input and an unknown channel. A label-flag override test clears branch/
+channel inputs and verifies the chosen file, normalized /etc/pkg/FreeBSD.conf
+name, 0644 mode and package/config tags through BsdInstallFileInfo.
+
+Run bazel-pkg-repository-tests-20261029-r2 passes all 31 tests through build-bsd
+with 16 jobs. Independent Make queries match the same 28 positive selections
+using the corresponding MACHINE/MACHINE_ARCH values; no compiler/installer was
+invoked by that reference matrix. Evidence: repository-test-inputs.json,
+repository-make-matrix.py and repository-make-matrix.json under
+/usr/obj/usr/src/bazel-pkg-bootstrap-reference-20261029/, plus the Bazel run's
+receipt and saved test reports. Initial analysis-test transitions resolved custom
+labels relative to skylib; explicit canonical main-repository labels fixed the
+test harness. The production selection rule did not need a behavior change.
+
+These tests qualify configuration selection, not cross-compiled executables or
+full installation on those architectures. The earlier complete installation
+comparison remains amd64/CURRENT. Repository network access, signature negative
+cases, package bootstrap installation and full system publication remain open.
+The existing frontend explicit tests/settings contract handles this suite without
+API changes. No host state or repository contents were changed. Make remains
+production/default; world/kernel/bootstrap/sandbox/cache/performance gates remain.
