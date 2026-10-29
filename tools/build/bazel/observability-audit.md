@@ -6041,3 +6041,11 @@ ibstat and shared diagnostic C sources. Native targets preserve logging and all
 selected sources. Thread/timer lifecycle, device status queries and management
 operation error paths remain runtime/observability-review candidates. No device
 operations were exercised by these structural build comparisons.
+
+### 2026-10-29 libibnetdisc and optional diagnostics
+
+No explicit SDT/DTrace or direct audit calls found in reviewed libibnetdisc and
+infiniband-diags C/C++ sources. Native targets preserve existing diagnostics.
+Discovery/cache lifecycle, management writes and failure reporting remain runtime
+and observability-review candidates. No port/configuration-changing commands or
+hardware queries were executed by this build qualification.

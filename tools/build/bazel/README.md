@@ -36050,3 +36050,35 @@ testing. Native optional diagnostics and complete parent aggregation remain
 unfinished. Frontend review: existing format-5 targets/archive helpers suffice;
 no build-bsd.c/backend/manual interface change. Make remains production/default;
 complete world/kernel/pkgbase/runtime/performance qualification remains open.
+
+### 2026-10-29 libibnetdisc and complete diagnostic selection
+
+Added native libibnetdisc with four C sources and one C++ source, source libc++
+headers selected only for C++ compilation, explicit C++ runtime and OFED library
+dependencies, maintained symbol map, static/shared/debug installation and all
+three manuals/five manual hardlinks. Maintained frontend bazel-ibnetdisc-20261029
+matches fresh Make on 14 metadata records, eight exact manual payloads, static
+member/global/undefined-symbol inventory and one valid ELF/debug pair.
+
+Added all 20 optional diagnostics beside existing ibstat, preserving inherited
+common source files, per-program ibnetdisc dependencies and utilities package
+ownership. Parent installation_archives selects optional targets through existing
+ofed_extra_enabled setting. No manual is invented for ibmirror.
+Frontend bazel-ib-diags-20261029 with ofed_extra=true matches fresh recursive Make
+MK_OFED_EXTRA=yes reference: 64 metadata records, 20 exact manuals and 21 valid
+ELF/debug pairs with matching symbols/dynamic fields. Default aggregate run
+bazel-ib-diags-default-20261029 selects only ibstat and matches its five records,
+one manual and one ELF/debug pair. All builds use 16 jobs.
+
+Evidence/scripts: bazel-ibnetdisc-qualification-20261029 and
+bazel-ib-diags-qualification-20261029 (default subdirectory for default aggregate),
+under /usr/obj/usr/src. No hardware discovery, traffic, port changes, management
+operations or performance tests were run. Make consumer references reuse staged
+dependency libraries. These comparisons establish structural installation/binary
+parity, not instruction or runtime equivalence. Optional opensm and remaining
+base-library coverage are still incomplete.
+
+Frontend review: existing ofed_extra/ofed settings and format-5 archive sets
+cover both configurations; no build-bsd.c/backend/manual interface change needed.
+Make remains production/default; full world/kernel/pkgbase and runtime/performance
+gates remain open. No host installation or privileged device operation occurred.
