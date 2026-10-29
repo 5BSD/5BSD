@@ -370,3 +370,6 @@ selects.config_setting_group(name = "ip_enabled", match_any = [":inet_support_en
 # Make ENABLE_SUID_NEWGRP is an explicit opt-in.
 bool_flag(name = "enable_suid_newgrp", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "suid_newgrp_enabled", flag_values = {":enable_suid_newgrp": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "netgraph_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "netgraph_support_enabled", flag_values = {":netgraph_support": "true"}, visibility = ["//visibility:public"])

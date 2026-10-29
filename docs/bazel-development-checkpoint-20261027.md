@@ -10247,3 +10247,27 @@ and archive metadata capture exercised with 16 jobs; no C/protocol changes neede
 Live socket snapshots, Casper behavior, full instruction equivalence, /usr/bin
 parent, world/kernel/pkgbase and performance gates remain incomplete. Make remains
 production/default.
+
+### 2026-10-29 native netstat and generated symbol tables
+
+Added native netstat with declared AWK actions over nlist_symbols, explicit
+generated-header dependencies and optional IPv4/IPv6, OFED, PF, Netgraph,
+Netlink and jail sources/defines/libraries. Added netgraph_support setting,
+independent from the Netgraph build-selection setting, matching the Make
+MK_NETGRAPH_SUPPORT branch. Native symbol/definition AWK scripts preserve Make's
+transformation; no Make parsing or generated-file import occurs during builds.
+
+Maintained frontend default build, 16 jobs:
+/usr/obj/usr/src/bazel-netstat-20261029. Fresh Make reference:
+bazel-netstat-native-reference-20261029 under the same object root. Scripts:
+bazel-netstat-qualification-20261029. Five metadata records, exact compressed
+manual bytes, debug linkage, global/undefined symbols and dynamic dependencies
+match Make. generated-parity.json proves byte-identical nl_symbols.c and nl_defs.h
+from the two independent builds, including hashes. No production source changes.
+
+No Casper or DTrace feature exists in this command's maintained Makefile; none
+was introduced. Default configuration only is qualified here. Reduced protocol
+and support combinations, live network/kernel queries, complete /usr/bin parent,
+world/kernel/pkgbase and performance gates remain outstanding. Frontend review:
+existing typed settings/native target handling cover the change; no C/protocol
+update required. Make remains production/default; no host installation performed.

@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
+[bsd_awk_output(name = name, script = script, srcs = ["nlist_symbols"], output = output, awk = "//usr.bin/awk:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect") for name, script, output in [("symbols", "symbols.awk", "nl_symbols.c"), ("definitions", "definitions.awk", "nl_defs.h")]]
+cc_library(name = "generated_headers", hdrs = [":definitions"], strip_include_prefix = ".")
+_SOURCES = ['if.c', 'inet.c', 'main.c', 'mbuf.c', 'mroute.c', 'netisr.c', ':symbols', 'route.c', 'unix.c', 'mroute6.c', 'ipsec.c', 'bpf.c', 'pfkey.c', 'sctp.c', 'common.c', 'nhops.c', 'nhgrp.c', 'netstat.h', 'common.h']
+_DEPS = [":generated_headers", "//lib/libkvm:kvm", "//lib/libmemstat:memstat", "//lib/libxo/libxo:xo", "//lib/libutil:util"]
+_DYNAMIC = ["//lib/libkvm:kvm_shared", "//lib/libmemstat:memstat_shared", "//lib/libxo/libxo:xo_shared", "//lib/libutil:util_shared"]
+_DEFINES = ["IPSEC", "SCTP"]
+_DEFINES = _DEFINES + select({"//tools/build/bazel/config:inet_support_enabled": ['INET'], "//conditions:default": []})
+_DEFINES = _DEFINES + select({"//tools/build/bazel/config:inet6_support_enabled": ['INET6'], "//conditions:default": []})
+_SOURCES = _SOURCES + select({"//tools/build/bazel/config:inet6_support_enabled": ['inet6.c'], "//conditions:default": []})
+_DEFINES = _DEFINES + select({"//tools/build/bazel/config:ofed_enabled": ['SDP'], "//conditions:default": []})
+_DEFINES = _DEFINES + select({"//tools/build/bazel/config:pf_enabled": ['PF'], "//conditions:default": []})
+_DEFINES = _DEFINES + select({"//tools/build/bazel/config:netgraph_support_enabled": ['NETGRAPH'], "//conditions:default": []})
+_SOURCES = _SOURCES + select({"//tools/build/bazel/config:netgraph_support_enabled": ['netgraph.c'], "//conditions:default": []})
+_DEPS = _DEPS + select({"//tools/build/bazel/config:netgraph_support_enabled": ['//lib/libnetgraph:netgraph'], "//conditions:default": []})
+_DYNAMIC = _DYNAMIC + select({"//tools/build/bazel/config:netgraph_support_enabled": ['//lib/libnetgraph:netgraph_shared'], "//conditions:default": []})
+_DEFINES = _DEFINES + select({"//tools/build/bazel/config:netlink_support_enabled": [], "//conditions:default": ['WITHOUT_NETLINK']})
+_SOURCES = _SOURCES + select({"//tools/build/bazel/config:netlink_support_enabled": ['route_netlink.c'], "//conditions:default": []})
+_DEFINES = _DEFINES + select({"//tools/build/bazel/config:jail_enabled": ['JAIL'], "//conditions:default": []})
+_DEPS = _DEPS + select({"//tools/build/bazel/config:jail_enabled": ['//lib/libjail:jail'], "//conditions:default": []})
+_DYNAMIC = _DYNAMIC + select({"//tools/build/bazel/config:jail_enabled": ['//lib/libjail:jail_shared'], "//conditions:default": []})
+cc_binary(name = "netstat", srcs = _SOURCES, deps = _DEPS, dynamic_deps = _DYNAMIC, local_defines = _DEFINES, copts = ["-fPIE", "-fno-strict-aliasing"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "netstat", manual = "netstat.1", package = "utilities")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

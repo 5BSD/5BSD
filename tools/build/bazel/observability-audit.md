@@ -5745,3 +5745,10 @@ still apply. Live snapshot tracing, Casper IPC and output tests remain pending.
 Eleven maintained parsing cases executed successfully through native Bazel ATF
 runners; assertions and source preserved. These cases test port selection parsing,
 not live socket snapshot probes, Casper IPC, kernel auditing or service behavior.
+
+### 2026-10-29 netstat
+
+No explicit DTRACE/SDT/audit references found in command C/header sources and no
+provider in its maintained Makefile. No instrumentation added or removed. Source
+scan does not establish kernel tracing/audit coverage; live statistics and route
+query behavior remain runtime qualification items.
