@@ -37289,3 +37289,20 @@ manual updated for LTO consumer, no build-bsd.c parser change. Remaining LLVM
 libraries/target backends, full compiler linkage and world/kernel/pkgbase/bootstrap/
 runtime/cache/performance qualification stay open. Make remains production/default.
 No host installation/publication occurred.
+
+### LLVM ObjectYAML component (2026-10-29)
+
+Added native ObjectYAML cc_library, PIC archive/object exports and resolved source
+inventory for the 11 default installed libllvm sources. Maintained frontend run
+`/usr/obj/usr/src/bazel-llvm-objectyaml-20261029` succeeds with 16 jobs. All 11
+PIC global/undefined symbol inventories match fresh isolated Make objects; archive
+member multiplicities and resolved native source inventory match Make. Evidence:
+`/usr/obj/usr/src/bazel-llvm-objectyaml-qualification-20261029`. Reference headers
+use existing bootstrap generators and the staged SDK. No source/sandbox workaround.
+
+This establishes component compilation, not instruction identity, YAML conversion
+runtime behavior, complete compiler linkage, bootstrap independence or performance.
+Frontend review: build-bsd.c and format-5 backend already accept these native targets;
+no input, staging, signing, packaging or manual contract changes are needed.
+Full LLVM Support/backends, compiler linkage and system qualification remain open.
+Make remains production/default; no installation or publication occurred.

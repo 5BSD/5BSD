@@ -6349,3 +6349,10 @@ bazel-llvm-targetparser-qualification-20261029.
 selections match expanded Make. No compiler/probe/audit source changes. LTO,
 pass-pipeline and plugin runtime behavior remain unqualified. Evidence:
 bazel-llvm-lto-passes-qualification-20261029.
+
+### LLVM ObjectYAML (2026-10-29)
+
+The new 11-source component preserves upstream sources and compile-time contracts.
+No DTrace probes or audit hooks added; object symbol parity does not establish
+runtime observability. YAML conversion/error paths await linked-tool runtime tests.
+Evidence: `/usr/obj/usr/src/bazel-llvm-objectyaml-qualification-20261029`.
