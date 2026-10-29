@@ -36214,3 +36214,32 @@ Frontend review: existing typed format-5 build-settings passes the new flags;
 bsd-build(8) documents their defaults and limited current scope. No build-bsd.c
 parser/backend change is needed. Make remains production/default and complete
 LLVM/Clang/world/kernel/pkgbase/runtime/performance qualification is open.
+
+### 2026-10-29 native LLVM minimal Support/TableGen archive
+
+Added //contrib/llvm-project/llvm/lib:llvmminimal with the explicit 78-source
+lib/clang/libllvmminimal inventory and minimal_archive for structural comparison.
+Declared upstream C/C++ headers, maintained FreeBSD LLVM configuration/VCS headers,
+private Support/TableGen includes and source libc++ headers. C++17/no RTTI/no
+exceptions flags apply only to C++ actions; assertion/debug settings retain the
+maintained defaults. No Make execution or prebuilt LLVM objects enter this target.
+The selected sources do not consume LLVM host/default-target triple or native
+backend macros; full compiler triple/backend configuration remains future work.
+
+Maintained frontend bazel-llvm-minimal-20261029-r3 (16 jobs) builds the archive.
+Fresh isolated Make libllvmminimal.a matches all 78 archive member names and
+aggregate global/undefined symbol multiplicities. Scripts and archive-parity.json:
+/usr/obj/usr/src/bazel-llvm-minimal-qualification-20261029. Comparison is not
+instruction identity, per-member symbol attribution, runtime, full-debug or
+performance qualification. The internal archive has no installed package payload.
+
+First run rejected a nonexistent Support/*.def glob; second caught undeclared
+llvm-c headers in the sandbox. Removed the nonexistent pattern and declared the
+actual upstream C API headers; both failed runs remain retained. No source code,
+sandbox restrictions or comparison expectations were relaxed.
+
+Frontend review: existing format-5 targets, LLVM settings, archive artifacts and
+source_graph.py setting handling cover this addition; build-bsd.c/backend/manual
+need no new interface. TableGen executable/actions, full LLVM/Clang, world/kernel,
+pkgbase/bootstrap/runtime/performance gates remain open. Make stays production/
+default; no host installation, VM or publication occurred.

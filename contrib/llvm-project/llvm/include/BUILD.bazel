@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(
+    name = "headers",
+    hdrs = glob(["llvm/**/*.h", "llvm-c/*.h", "llvm/**/*.def", "llvm/**/*.inc"]),
+    includes = ["."],
+    deps = ["//contrib/llvm-project/llvm/include/llvm/Demangle:headers", "//lib/clang/include:headers"],
+    visibility = ["//visibility:public"],
+)

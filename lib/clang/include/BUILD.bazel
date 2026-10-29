@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+# Maintained FreeBSD LLVM configuration; not configure results from the host.
+cc_library(
+    name = "headers",
+    hdrs = glob(["llvm/**/*.h", "llvm/**/*.def"]),
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)

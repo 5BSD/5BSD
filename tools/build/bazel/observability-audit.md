@@ -6078,3 +6078,11 @@ No explicit SDT/DTrace or direct audit calls found in reviewed Demangle sources
 and headers. Native component preserves source inventory and assertion selection.
 Malformed-input/resource-consumption runtime coverage remains unqualified; no
 compiler or whole-toolchain instrumentation coverage is claimed.
+
+### 2026-10-29 LLVM minimal Support/TableGen
+
+Inspected the selected Support/TableGen sources for DTRACE, SDT_PROBE, AUDIT and
+audit_submit references; none found. No probes or audit integration were removed.
+This internal build-tool library does not by itself justify adding privileged
+operation audit events. TableGen execution and complete compiler/runtime tracing
+remain outside this archive comparison.
