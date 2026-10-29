@@ -5,3 +5,6 @@ cc_library(name = "headers", hdrs = ["snmpmod.h", "snmpd.h", "trans_lsock.h", "t
     deps = ["//contrib/bsnmp/lib:headers"], visibility = ["//usr.sbin/bsnmpd:__subpackages__"])
 
 exports_files(["bsnmpd.1", "snmpmod.3", "FOKUS-MIB.txt", "BEGEMOT-MIB.txt", "BEGEMOT-SNMPD.txt"], visibility = ["//usr.sbin/bsnmpd/bsnmpd:__pkg__"])
+
+cc_library(name = "public_headers", hdrs = ["snmpmod.h"], strip_include_prefix = ".", include_prefix = "bsnmp",
+    deps = ["//contrib/bsnmp/lib:public_headers", "//contrib/bsnmp/lib:headers"], visibility = ["//usr.sbin/bsnmpd:__subpackages__", "//contrib/bsnmp/snmp_mibII:__pkg__"])

@@ -16012,3 +16012,29 @@ it does not imply a complete modules aggregate. Reviewed build-bsd.c/source_grap
 existing explicit targets/metadata groups suffice without frontend changes.
 No host installation, daemon startup or policy changes. Make remains production/
 default; full-system/bootstrap/cache/sandbox/performance gates remain open.
+
+### Native LM75, PF, bridge and wireless SNMP modules (2026-10-29)
+
+Added explicit native targets for four more configured userland plugins: snmp_lm75,
+snmp_pf, snmp_bridge and snmp_wlan. Each declares maintained sources/local headers,
+OID symbols and tree definitions. Installed-style snmpmod/snmp_mibII header targets
+provide their shared interfaces from source. Initial compilation caught that
+snmpmod.h's quoted sibling includes need the raw native header interface as well
+as the installed bsnmp/ namespace; declared it instead of using an SDK header.
+SDK kernel/system headers remain part of the prepared toolchain.
+
+Run bazel-snmp-device-modules-20261029-r2 passes through build-bsd with 16 jobs.
+Fresh separate Make all/install references establish exact bytes for all 12
+generated files and matching global/weak symbols/ordered dynamic metadata for all
+four module DSOs. Evidence: /usr/obj/usr/src/
+bazel-snmp-device-modules-reference-20261029/verify.py and comparison.json.
+No implementation or generated C source was patched to make these builds pass.
+
+These are build candidates only. Installation/manual/MIB/header metadata remains
+next. No temperature sensor, PF ruleset, bridge, wireless interface, kernel state
+or daemon module was exercised or modified. MIB-II implementation, host resources,
+HAST and netgraph modules remain uncovered by this batch. Existence of the MIB-II
+header target does not qualify that module's executable implementation.
+Reviewed build-bsd.c/source_graph.py: existing explicit targets suffice without
+frontend changes. Make remains production/default; complete system/kernel/pkgbase,
+bootstrap/cache/sandbox and comparative performance gates remain open.
