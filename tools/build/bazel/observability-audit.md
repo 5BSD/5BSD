@@ -5765,3 +5765,10 @@ items; installation/ELF parity alone does not establish them.
 No explicit DTRACE/SDT/audit references found in local etdump C/header sources.
 No instrumentation/source modifications. Parsing real and malformed boot images,
 including shared conversion routines, remains a runtime qualification item.
+
+### 2026-10-29 mkimg
+
+No explicit DTRACE/SDT/audit references found in local mkimg C/header sources.
+No sources/instrumentation changed. Installation and ELF parity do not qualify
+image layout, sparse I/O, format compatibility, or kernel/device audit behavior.
+Existing image/offset tests remain to be migrated and executed.

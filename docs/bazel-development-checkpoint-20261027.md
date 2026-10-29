@@ -10317,3 +10317,27 @@ remain runtime gates. Existing format-5 target/artifact capture covers the new
 target; no build-bsd C/protocol change needed. /usr/bin parent, remaining world,
 kernel, pkgbase and performance qualification remain incomplete; Make remains
 production/default.
+
+### 2026-10-29 mkimg native program
+
+Added //usr.bin/mkimg:install_archive with all five format backends (qcow, raw,
+vhd, vhdx, vmdk), all five schemes (apm, bsd, ebr, gpt, mbr), common sources,
+sparse-write definition and maintained version constant. Explicit disk header
+provider in sys/sys preserves its existing package/glob boundaries. No generated
+backend substitutes, omitted format sources or production source changes.
+
+Maintained frontend run (16 jobs): /usr/obj/usr/src/bazel-mkimg-20261029.
+Fresh rootless Make reference: bazel-mkimg-native-reference-20261029 under the
+object root; scripts in bazel-mkimg-qualification-20261029. qualification/mkimg
+reports establish five matching metadata records, exact compressed manual bytes,
+valid debug linkage, matching global/undefined symbols and dynamic dependencies.
+No host installation, disk writes or image creation performed in this batch.
+
+The existing mkimg shell tests, transformed hex fixtures and generated 4MiB
+partition fixture are NOT yet migrated. They must be native declared generation
+and test actions, preserving assertions rather than rebasing expected outputs.
+Image compatibility, boot-media behavior and resource/performance gates remain
+pending. Future /usr/bin parent must include that recursive test installation.
+Frontend review: existing format-5 target/artifact handling suffices for this
+program target; no C/protocol change needed. Make remains production/default;
+complete world/kernel/pkgbase integration remains unfinished.

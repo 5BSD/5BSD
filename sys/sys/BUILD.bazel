@@ -57,3 +57,5 @@ cc_library(name = "kernel_headers", hdrs = glob(["*.h", "disk/*.h"]),
 
 cc_library(name = "syscall_header", hdrs = ["syscall.h"],
     strip_include_prefix = "/sys", visibility = ["//lib/libsys:__pkg__", "//lib/libc/sys:__pkg__"])
+
+cc_library(name = "disk_format_headers", hdrs = ["disk/apm.h", "disk/bsd.h", "disk/gpt.h", "disk/mbr.h"], strip_include_prefix = "disk", visibility = ["//usr.bin/mkimg:__pkg__"])
