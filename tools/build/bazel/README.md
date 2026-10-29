@@ -34460,3 +34460,8 @@ Native `//bin/<component>/tests:install_archive` targets are available for chmod
 cp, date, hostname, ln, ls, mkdir, mv, pwd, rm, rmdir and test. All twelve match
 Make installation, including Kyua required-user/file properties. This does not
 establish runtime success or complete /bin test coverage.
+
+Native test installation is also available for dd, expr and sleep. The imported
+NetBSD suites and expr's maintained transformations match Make. The missing
+netbsd-tests.test.mk include in sleep/tests was corrected so both build systems
+register its suite. These checks establish installation, not runtime success.

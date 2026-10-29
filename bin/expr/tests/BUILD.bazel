@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_filter_fixture")
+bsd_filter_fixture(name = "adapted_body", src = "//contrib/netbsd-tests/bin/expr:t_expr.sh", output = "adapted_expr.sh", tool = "@bsd_sdk//toolchain:sed", arguments = ['-e', 's/eval expr/eval expr --/g', '-e', 's/"expr: integer overflow or underflow occurred for operation.*"/"expr: overflow"/g'], runtime = ["@bsd_sdk//toolchain:sed_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_script_wrapper(name = "expr_test", body = ":adapted_body", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "expr_test_file", src = ":expr_test", destination = "/usr/tests/bin/expr/expr_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ['expr_test'], interfaces = {n: "atf" for n in ['expr_test']})
+bsd_install_file(name = "kyuafile_file", src = ":kyuafile", destination = "/usr/tests/bin/expr/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [':expr_test_file', ':kyuafile_file'], visibility = ["//bin:__subpackages__"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//bin:__subpackages__"],
+    manifests = [":install_manifest"],
+    directories = {"/usr/tests/bin/expr": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+

@@ -9690,3 +9690,33 @@ No host installation, test mutation of host files, or services executed. More /b
 test installations (including imported NetBSD suites and data/Perl fixtures),
 parent discovery/aggregation and runtime remain before complete /bin qualification.
 Full world/kernel/pkgbase/performance gates remain open; Make stays default.
+
+## 2026-10-29: imported dd/expr/sleep test installations
+
+Added native test install_archive targets for dd (local dd2_test plus imported
+dd_test), expr and sleep. Imported files are explicit exports to their consuming
+packages. expr retains Make's two sed expressions through a declared sed action;
+the generated body then receives the normal ATF interpreter wrapper.
+
+Found and corrected a Make-side omission in bin/sleep/tests: NETBSD_ATF_TESTS_SH
+contained sleep_test, but ATF_TESTS_SH and _TESTS were empty because the Makefile
+never included netbsd-tests.test.mk. Added the maintained include before
+bsd.test.mk. The actual imported suite is now registered and installed by both
+build systems; no fabricated empty-suite baseline.
+
+Independent Make installations match every native payload byte and metadata
+record: dd 3 payloads/4 records, expr 2/3, sleep 2/3. This includes expr's
+transformed source, sorted Kyua metadata, modes and package tags. The new sleep
+registration contains the existing fractional/hex/nonnumeric cases; cases were
+not executed in this installation qualification.
+
+Evidence: /usr/obj/usr/src/bazel-bin-imported-installs-20261029/qualification/
+{dd,expr,sleep}/parity.json. Reproducers: bazel-bin-imported-install-qualification-
+20261029; independent stages: bazel-bin-<component>-imported-tests-reference-20261029.
+All use 16 jobs. Frontend review: existing target inputs and declared
+script/filter/install rules suffice; normal Make test packaging automatically
+picks up sleep's corrected registration. No frontend C/backend protocol changes.
+
+No host installation or runtime execution. Remaining /bin aggregation/fixtures,
+complete world/kernel/pkgbase, runtime and performance gates remain unfinished.
+Make stays production/default.

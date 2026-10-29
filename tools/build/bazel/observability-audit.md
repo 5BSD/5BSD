@@ -5636,3 +5636,10 @@ ln, ls, mkdir, mv, pwd, rm, rmdir and test. No DTrace/audit calls were found in
 these shell test bodies; no instrumentation added for installation-only work.
 Kyua unprivileged-user and required-file constraints are retained. Runtime and
 privileged filesystem behavior are not qualified by these payload comparisons.
+
+### 2026-10-29 imported dd/expr/sleep suites
+
+Existing test assertions and diagnostics are preserved. expr applies exactly
+Make's command/diagnostic substitutions; sleep's missing Make registration is
+restored. This change concerns test installation, not production dd/sleep probes
+or runtime audit coverage. No new instrumentation or runtime success claimed.
