@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['c_gate.cpp', 'debug.cpp', 'exceptions.cpp', 'operations.cpp', 'stack_cleaner.cpp', 'state.cpp'], visibility = ["//lib/liblutok:__pkg__"])
+cc_library(
+    name = "headers",
+    hdrs = ['c_gate.hpp', 'debug.hpp', 'exceptions.hpp', 'operations.hpp', 'stack_cleaner.hpp', 'state.hpp', 'state.ipp', 'include/lutok/c_gate.hpp', 'include/lutok/debug.hpp', 'include/lutok/exceptions.hpp', 'include/lutok/operations.hpp', 'include/lutok/stack_cleaner.hpp', 'include/lutok/state.hpp', 'include/lutok/state.ipp'],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)

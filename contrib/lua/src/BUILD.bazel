@@ -2,7 +2,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(
     name = "headers",
-    hdrs = ["lapi.h", "lauxlib.h", "lcode.h", "lctype.h", "ldebug.h", "ldo.h", "lfunc.h", "lgc.h", "ljumptab.h", "llex.h", "llimits.h", "lmem.h", "lobject.h", "lopcodes.h", "lopnames.h", "lparser.h", "lprefix.h", "lstate.h", "lstring.h", "ltable.h", "ltests.h", "ltm.h", "lua.h", "luaconf.h", "lualib.h", "lundump.h", "lvm.h", "lzio.h"],
+    hdrs = ["lapi.h", "lauxlib.h", "lcode.h", "lctype.h", "ldebug.h", "ldo.h", "lfunc.h", "lgc.h", "ljumptab.h", "llex.h", "llimits.h", "lmem.h", "lobject.h", "lopcodes.h", "lopnames.h", "lparser.h", "lprefix.h", "lstate.h", "lstring.h", "ltable.h", "ltests.h", "ltm.h", "lua.h", "lua.hpp", "luaconf.h", "lualib.h", "lundump.h", "lvm.h", "lzio.h"],
     strip_include_prefix = ".",
     deps = ["//lib/liblua:config_headers"],
     visibility = ["//visibility:public"],

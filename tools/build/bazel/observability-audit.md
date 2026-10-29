@@ -5974,3 +5974,10 @@ no instrumentation was removed. Review candidates include rfcomm_sppd session
 establishment/failure and service registration through libsdp. This is an
 observability follow-up, not a claim that kernel socket auditing is absent.
 Kernel Bluetooth modules and operational auditing were not qualified here.
+
+### 2026-10-29 lutok
+
+No explicit DTrace/SDT or direct audit calls found in contrib/lutok or
+lib/liblutok. The native ordinary/PIE libraries preserve all maintained sources.
+Lua exception translation and stack cleanup need consumer runtime coverage;
+archive parity alone does not qualify those behaviors.

@@ -11135,3 +11135,22 @@ Frontend review: existing format-5 targets, installation archives and staged
 SDK inputs cover this batch; build-bsd.c and its backend/manual require no new
 interface. Package construction/publication remains a separate gate. Make is
 still production/default; full world/kernel/pkgbase qualification is incomplete.
+
+### 2026-10-29 lutok dependency for Kyua
+
+Added native internal lutok library with all six maintained C++ sources,
+explicit upstream wrapper headers, and native Lua dependencies. Ordinary and
+PIE variants match Make's liblutok.a/liblutok_pie.a model; neither is installed.
+The first build exposed lua.hpp missing from Lua's declared headers. Added that
+real source header to the existing provider; the failure remains recorded.
+
+Maintained frontend /usr/obj/usr/src/bazel-lutok-20261029-r3 builds both variants
+with 16 jobs. Fresh Make reference bazel-lutok-reference-20261029 and reports in
+bazel-lutok-qualification-20261029 establish matching six-member inventories and
+global/undefined symbols for both archives (only PIE object suffix normalized).
+This does not prove runtime or instruction equivalence. Kyua still requires
+native sqlite3, its own source graph/install payload and runtime qualification.
+
+Frontend review: existing format-5 target and artifact support handles these
+internal archives; no build-bsd.c/backend/manual interface change is needed.
+Make remains production/default; complete world/kernel/pkgbase is unfinished.
