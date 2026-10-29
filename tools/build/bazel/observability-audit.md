@@ -5651,3 +5651,12 @@ preserves its existing assertions/diagnostics. Pkill's redundant direct libelf
 link was removed while retaining libkvm's declared dependency. Aggregate build
 and ELF interface checks do not establish live tracing, audit or process-control
 runtime behavior; those gates remain separate.
+
+### 2026-10-29 /sbin shell suite installation
+
+Existing test bodies and diagnostics preserved for md5, mdconfig, nvmecontrol,
+route, bectl and growfs. No production source or DTrace/audit declaration was
+changed. A source scan found no explicit SDT/DTRACE/audit references in their
+C/header files; this is an instrumentation review candidate, not evidence that
+kernel-level syscall audit/tracing is absent. Installation parity does not prove
+runtime tracing, audit, ZFS, device or network behavior.

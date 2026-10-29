@@ -9803,3 +9803,30 @@ no C frontend or protocol change. No host installation or runtime tests performe
 Remaining world subtrees/kernel/modules, option/cross-architecture coverage,
 pkgbase/publication, bootstrap independence and runtime/performance qualification
 remain open. Make stays production/default.
+
+### 2026-10-29 /sbin shell test installation coverage
+
+Added native installation archives for existing md5, mdconfig, nvmecontrol,
+route, bectl and growfs test suites, plus the /usr/tests/sbin discovery file.
+Preserved mdconfig's required root user, route's exclusive execution metadata
+and utils.subr, and growfs's configured TAP Perl interpreter (the same typed
+setting controls its wrapper and Kyua requirement). All sources are declared;
+no Make execution or metadata extraction occurs in the native build graph.
+
+Qualification through maintained build-bsd bazel-test, 16 jobs:
+`/usr/obj/usr/src/bazel-sbin-shell-installs-20261029`.
+Fresh rootless Make references and comparison scripts:
+`/usr/obj/usr/src/bazel-sbin-shell-install-qualification-20261029`.
+The seven per-component qualification/parity.json reports prove 14 installed
+payloads byte-identical and 21 metadata records equal to Make (paths, types,
+ownership, permissions, flags and package tags). These are installation checks,
+not execution of the privileged filesystem/network/ZFS tests. No host services,
+disks or boot environments were modified.
+
+Frontend review: existing format-5 target selection, typed interpreter setting,
+artifact capture and metadata output groups cover these additions. No frontend
+C/protocol change is needed; this batch exercised the maintained frontend.
+Remaining /sbin work includes the devd compiled test, recursive archive and
+option selection reconciliation, full parent installation comparison and
+matching-kernel runtime qualification. No complete world/kernel/pkgbase claim;
+Make remains production/default and BIP remains excluded.
