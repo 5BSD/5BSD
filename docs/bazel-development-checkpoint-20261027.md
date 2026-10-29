@@ -15587,3 +15587,26 @@ by these artifact checks. No host installation occurred.
 Existing frontend explicit target inputs and metadata groups support the addition
 without contract changes. Full world/kernel/pkgbase/bootstrap, sandbox/cache and
 performance gates remain open; Make remains production/default.
+
+### Native BlocksRuntime build, installation and runtime (2026-10-29)
+
+Added explicit vendor data.c/runtime.c and public header targets, using maintained
+lib/libblocksruntime/config.h as a declared compilation input. Native static/DSO,
+debug split and installation targets preserve libBlocksRuntime naming and
+package=libblocksruntime. Run bazel-blocksruntime-20261029 matches all 8 fresh
+Make installation records, header bytes, archive order/symbols, DSO/debug symbols,
+dynamic metadata and debuglink CRC. Evidence/verifier:
+/usr/obj/usr/src/bazel-blocksruntime-reference-20261029.
+
+Added static/shared native cc_tests compiled with -fblocks: copy a block containing
+__block state out of its creating stack frame, copy again, release one reference,
+invoke through the surviving reference, and verify ordinary capture-by-value.
+Both pass in bazel-blocksruntime-runtime-20261029. Loader audit with
+LD_LIBRARY_PATH removed confirms native libBlocksRuntime.so.0; host libc/libsys/
+rtld remain in use. Tests do not establish concurrent copy/release, Objective-C
+object retain/release, or every ABI variant. Maintained sources are unchanged.
+
+Existing frontend explicit targets/tests and backend runtime-path/metadata groups
+support this addition without contract changes. Complete world/kernel/pkgbase,
+bootstrap, sandbox/cache and performance gates remain open. No host installation;
+Make remains production/default.

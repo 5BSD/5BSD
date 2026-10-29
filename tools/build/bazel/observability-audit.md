@@ -7062,3 +7062,9 @@ The native target preserves bsdstat.c, including stderr diagnostics for unknown
 statistics and missing derived callbacks. No provider or OS audit integration
 is declared by its Makefile. Statistics acquisition and any related probes
 belong to derived consumers and require separate qualification.
+
+### BlocksRuntime (2026-10-29)
+
+Vendor data/runtime sources and platform atomics configuration are preserved.
+The maintained Makefile declares no DTrace provider. Capture/lifetime tests
+exercise the compiler/runtime ABI; they do not add or qualify OS audit delivery.
