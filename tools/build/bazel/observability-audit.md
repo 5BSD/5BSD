@@ -6719,3 +6719,10 @@ Native main/C++ archive inventories retain the maintained implementation and
 amd64 assembly object. Race reports, synchronization, thread lifecycle,
 interceptors and setjmp behavior remain runtime qualification work. No production
 DTrace/audit instrumentation was changed.
+
+### XRay runtime archive candidates (2026-10-29)
+
+Native core/basic/FDR/profiling source inventories and amd64 trampoline are
+retained. Instrumented patch/unpatch, callback delivery, recorded log correctness,
+concurrency and tracing overhead need runtime qualification. No production
+DTrace/audit integration was added or removed.

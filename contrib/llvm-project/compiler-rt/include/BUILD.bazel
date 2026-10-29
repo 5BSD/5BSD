@@ -8,3 +8,7 @@ cc_library(name = "sanitizer_headers", hdrs = glob(["sanitizer/*.h"]), includes 
 exports_files(glob(["sanitizer/*.h"]), visibility = ["//lib/libclang_rt/include:__pkg__"])
 
 exports_files(["fuzzer/FuzzedDataProvider.h"], visibility = ["//lib/libclang_rt/fuzzer:__pkg__"])
+
+cc_library(name = "xray_headers", hdrs = glob(["xray/*.h"]), includes = ["."],
+    visibility = ["//visibility:public"])
+exports_files(["xray/xray_interface.h", "xray/xray_log_interface.h", "xray/xray_records.h"], visibility = ["//lib/libclang_rt/xray:__pkg__"])

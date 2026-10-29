@@ -14221,3 +14221,29 @@ bootstrap and full world/kernel/pkgbase/performance qualification remain open.
 Prepared SDK dependencies remain. Frontend review: build-bsd.c and format-5
 source_graph.py already support the target list; no CLI/schema change. No host
 installation/publication. Make remains production/default.
+
+### XRay runtime archive candidates (2026-10-29)
+
+Added native amd64 xray, xray-basic, xray-fdr and xray-profiling archive/source/
+installation targets. The core selects 35 C++ sources plus the x86_64 trampoline
+in explicit archive order; the mode archives select two, two and three sources.
+All retain SANITIZER_COMMON_NO_REDEFINE_BUILTINS. Core installation includes the
+three maintained public XRay headers. The target compatibility remains amd64;
+the PowerPC conditional sources are not claimed as migrated or qualified.
+
+The initial build exposed the trampoline's builtins/assembly.h dependency.
+A narrow assembly_headers target now declares assembly.h and int_endianness.h,
+retaining the original relative includes. No source copy or host include fallback.
+Fresh Make comparison evidence is under bazel-xray-reference-20261029; corrected
+frontend output is bazel-xray-20261029-r2. All archive/install comparisons pass:
+core 36 members/1417 global+weak symbol records; basic 2/64; FDR 2/91; profiling
+3/134. All seven installation records match and all three public headers are
+byte-identical. No runtime tests were selected.
+
+Runtime patch/unpatch, callback delivery, basic/FDR/profiling recording and log
+consumption, concurrency and overhead remain unqualified. Archive/header builds
+cannot establish functioning tracing. Other architectures, bootstrap and full
+world/kernel/pkgbase/performance remain open. SDK dependencies remain. Frontend
+review: build-bsd.c and format-5 source_graph.py already accept these labels;
+no CLI/schema changes. Make remains production/default, with no host install or
+publication.

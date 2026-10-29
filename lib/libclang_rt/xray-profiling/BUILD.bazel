@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libclang_rt:runtime.bzl", "compiler_rt_archive")
+
+# Native amd64 selection; other architecture backends remain unqualified.
+compiler_rt_archive(
+    stem = "xray-profiling",
+    defines = ["SANITIZER_COMMON_NO_REDEFINE_BUILTINS"],
+    cxx_srcs = [
+        "//contrib/llvm-project/compiler-rt/lib/xray:xray_profile_collector.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/xray:xray_profiling.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/xray:xray_profiling_flags.cpp",
+    ],
+    deps = ["//contrib/llvm-project/compiler-rt/lib/xray:headers"],
+)

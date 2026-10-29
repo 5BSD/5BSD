@@ -4269,3 +4269,9 @@ source-inventory and installation targets. The main archive retains explicit
 Make-compatible assembly placement through validated object_order metadata.
 Archive/install comparisons do not qualify race detection, thread lifecycle,
 synchronization or interceptor behavior.
+
+.Pp
+The lib/libclang_rt/xray, xray-basic, xray-fdr and xray-profiling packages expose
+native amd64 archive and installation targets. Core includes the amd64 trampoline
+and maintained public headers. These archive targets do not qualify runtime
+patching, callback delivery or correctness of recorded tracing data.
