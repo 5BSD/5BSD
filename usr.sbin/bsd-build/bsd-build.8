@@ -4288,3 +4288,10 @@ and its install_archive target provide the native amd64 dynamic ASan candidate,
 including split debug data and package-tagged debug directories. Native shared
 C++/math libraries are declared link-only inputs. Runtime startup ordering and
 memory-error reporting require qualification separately from static ASan.
+
+.Pp
+.Cm //lib/libclang_rt/asan_dynamic:runtime_test
+exercises clean, heap-overflow and use-after-free behavior with declared native
+shared ASan/C++/math libraries and SDK system libraries. It currently fails during
+startup on the qualification host; the same probe also fails with the Make shared
+runtime. This is an open qualification failure, not a supported runtime claim.

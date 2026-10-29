@@ -6739,3 +6739,10 @@ The shared runtime retains explicit maintained sources and ASAN_DYNAMIC semantic
 Startup ordering and memory-error reporting need a real dynamically linked
 consumer; static ASan tests are not evidence for this variant. No production
 DTrace/audit instrumentation was modified.
+
+### Dynamic ASan startup failure (2026-10-29)
+
+Maintained runtime test fails before main through jemalloc configuration readlink
+and ASan initialization. Identical harness/probe also fails with the Make shared
+runtime. Static ASan still passes. Diagnosis remains open; retain the failed gate
+and warnings rather than claiming dynamic memory-error reporting works.

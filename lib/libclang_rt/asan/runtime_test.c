@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -40,20 +41,27 @@ check(const char *program, const char *argument, const char *expected, int code)
 
 int main(int argc, char **argv)
 {
-    char program[PATH_MAX], library[PATH_MAX], paths[PATH_MAX * 8] = "";
+    char program[PATH_MAX], library[PATH_MAX];
+    char *paths;
+    size_t capacity;
     const char *tmp = getenv("TEST_TMPDIR");
-    if (argc != 10 || tmp == NULL || realpath(argv[1], program) == NULL) return (2);
+    if (argc < 3 || (size_t)argc > SIZE_MAX / PATH_MAX ||
+        tmp == NULL || realpath(argv[1], program) == NULL) return (2);
+    capacity = (size_t)argc * PATH_MAX;
+    paths = calloc(1, capacity);
+    if (paths == NULL) return (2);
     for (int i = 2; i < argc; i++) {
         if (realpath(argv[i], library) == NULL) return (2);
         char *slash = strrchr(library, '/');
         if (slash == NULL) return (2);
         *slash = '\0';
-        if ((i != 2 && strlcat(paths, ":", sizeof(paths)) >= sizeof(paths)) ||
-            strlcat(paths, library, sizeof(paths)) >= sizeof(paths)) return (2);
+        if ((i != 2 && strlcat(paths, ":", capacity) >= capacity) ||
+            strlcat(paths, library, capacity) >= capacity) return (2);
     }
     if (chdir(tmp) == -1 || setenv("LD_LIBRARY_PATH", paths, 1) == -1 ||
         setenv("PATH", "/nonexistent", 1) == -1 ||
         setenv("ASAN_OPTIONS", "symbolize=0:exitcode=86", 1) == -1) return (2);
+    free(paths);
     if (check(program, "7", NULL, 0) ||
         check(program, "8", "ERROR: AddressSanitizer: heap-buffer-overflow", 86) ||
         check(program, "freed", "ERROR: AddressSanitizer: heap-use-after-free", 86)) return (1);

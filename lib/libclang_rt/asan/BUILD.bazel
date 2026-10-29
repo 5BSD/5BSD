@@ -103,3 +103,5 @@ cc_test(name = "runtime_test", srcs = ["runtime_test.c"],
     linkopts = ["-static"], linkstatic = True, size = "small",
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//visibility:public"])
+
+exports_files(["runtime_probe.c", "runtime_test.c"], visibility = ["//lib/libclang_rt/asan_dynamic:__pkg__"])

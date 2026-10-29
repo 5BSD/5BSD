@@ -14302,3 +14302,34 @@ that is source graph coverage, not complete runtime or system qualification.
 Frontend review: build-bsd.c and format-5 source_graph.py already accept these
 shared/install targets; no CLI/schema change. SDK compilation/system inputs
 remain. Make stays production/default; no host installation/publication.
+
+### Dynamic ASan runtime test exposes startup failure (2026-10-29)
+
+Added asan_dynamic:runtime_test using the same real clean/heap-overflow/use-after-
+free probe as static ASan. The shared harness now accepts a declared library list
+instead of assuming eight libraries; library-path storage is sized from inputs.
+The dynamic probe links the native ASan shared artifact and loads declared native
+C++/math libraries plus SDK system libraries. No sanitizer-driver link flag,
+preload workaround, disabled runtime check or replacement handler is used.
+
+Frontend run bazel-asan-dynamic-runtime-20261029 FAILS the dynamic test before
+clean input reaches main; the static ASan regression test passes. The shared
+runtime reports SIGBUS during main-thread initialization/clearing shadow memory.
+Symbolization places the entry path at jemalloc obtain_malloc_conf (readlink of
+/etc/malloc.conf), malloc_init_hard, ASan readlink interception and AsanThread::
+ThreadStart. An initial utility-compatibility-path hypothesis was disproved by
+libc debug symbols and must not be treated as the cause.
+
+compare-runtime.py in bazel-asan-dynamic-reference-20261029 reruns the identical
+probe/harness with the native or fresh Make shared library and otherwise identical
+runtime inputs. BOTH fail in the same startup path. Captured logs explicitly name
+the selected native/Make shared object. runtime-comparison.json preserves commands
+and exit statuses. This points beyond Bazel artifact parity but does not yet
+identify the cause: TLS/shadow initialization, runtime startup ordering and the
+older host loader/newer SDK interaction require further diagnosis. Do not mark
+shared ASan runtime qualified, skip the failure or weaken its expected outcome.
+
+The target is intentionally retained as a failing qualification gate. Source/
+installation parity from the previous checkpoint remains valid, but runtime
+usability is not established. build-bsd.c and format-5 backend support these tests
+without new CLI/schema inputs. No host installation or reboot. Full goal active.
