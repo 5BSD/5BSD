@@ -4256,3 +4256,9 @@ run bounded instrumented campaigns with native libFuzzer and libc++ archives,
 checking callback execution with supplied and custom main entry points.
 These tests retain SDK CRT/system libraries and do not qualify optional sanitizer
 crash hooks, ASan integration, disk corpus or subprocess behavior.
+
+.Pp
+The lib/libclang_rt/msan and msan_cxx packages expose native amd64 archive,
+source-inventory and installation targets. The main runtime includes its
+maintained ignorelist. Archive qualification does not establish uninitialized-read
+detection, origin tracking, C++ allocation or thread/interceptor behavior.

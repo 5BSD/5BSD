@@ -14169,3 +14169,30 @@ seed reproducibility across builds or fuzzing performance. SDK compiler, CRT and
 system libraries and host kernel remain. Frontend/backend already support the
 selected test labels; manual and observability record updated. Make remains the
 production build path; no host installation/publication.
+
+### MemorySanitizer archive candidates (2026-10-29)
+
+Added explicit native amd64 msan (62 sources) and msan_cxx (one source) archive,
+source-inventory and installation targets. The main runtime installs its
+maintained ignorelist. The C++ Makefile's per-source RTTI overrides name UBSan
+sources absent from that component's source list; no blanket RTTI override was
+introduced for msan_new_delete.cpp. An initial build failure exposed msan.h's
+UBSan header dependency; the MSan header target now declares it explicitly.
+The C++ companion also explicitly declares interception headers after the
+next build exposed that missing direct source dependency. Both failed runs
+are retained.
+
+Qualification evidence is under bazel-msan-reference-20261029 and the corrected
+frontend run bazel-msan-20261029-r3. Fresh Make comparisons pass: the main
+archive matches 62 members/5158 global+weak symbol records, and the companion
+matches one member/32 records. All four installation records match, including
+ignorelist parent-directory tags; ignorelist bytes are identical.
+No runtime tests are selected for these
+archive candidates. Real uninitialized-read detection, clean execution, origin
+tracking, C++ allocation, thread/interceptor behavior and supported memory layout
+remain runtime qualification work. Other architectures, independent bootstrap,
+world/kernel/pkgbase and performance remain open. SDK dependencies remain.
+
+Frontend review: build-bsd.c and format-5 source_graph.py already support these
+explicit labels; no CLI/schema change. No host installation/publication or
+production tracing/audit modifications. Make remains production/default.

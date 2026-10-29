@@ -6705,3 +6705,10 @@ with coverage registration and in-memory corpus growth in their logs. Optional
 sanitizer crash hooks are unavailable and warnings remain visible. Crash
 reporting, ASan integration, disk corpus and fork/interceptor behavior remain
 open; no production tracing/audit code was changed.
+
+### MemorySanitizer archive candidates (2026-10-29)
+
+The native MSan/C++ source lists preserve maintained implementations. Runtime
+uninitialized-read reports, origin tracking, thread and interceptor behavior
+remain untested; archive comparison cannot establish them. No production
+DTrace/audit code was changed.
