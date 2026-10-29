@@ -5718,3 +5718,10 @@ outcomes and the su provider. Enabled binary matches Make's probe schemas and
 two patched ordinary sites, with libbsm declared; disabled configuration removes
 the audit dependency and DOF. Sources unchanged. Live audit success/failure
 records, probe firing and PAM/credential semantics require VM qualification.
+
+### 2026-10-29 rctl, who and gcore
+
+No explicit SDT/DTRACE/audit references found in these command C/header sources.
+This does not establish absence of kernel tracing/audit. No source modifications.
+Review resource-control updates and process-attachment/core-dump auditing during
+VM runtime qualification; current evidence covers installation and ELF interfaces.

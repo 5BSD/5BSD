@@ -10144,3 +10144,28 @@ audit event emission, PAM authentication, session setup or credential transition
 has been qualified. Full /usr/bin integration and system/runtime/performance
 qualification remain incomplete. Frontend review: existing format-5 targets and
 audit/DTrace settings cover the change; no frontend C/protocol change required.
+
+### 2026-10-29 rctl, who and gcore native migration
+
+Added native build/install archives for rctl, who and gcore, retaining declared
+libutil/libsbuf dependencies and manuals (rctl in section 8). The amd64 gcore
+target compiles both native and ELF32 writers, matching Make. Its elf32core.c
+textually includes elfcore.c; an explicit textual_hdrs dependency supplies that
+input to the sandbox while elfcore.c remains separately compiled. The initial
+missing-include failure is retained; no ambient include path or sandbox bypass.
+
+Maintained frontend build (16 jobs):
+/usr/obj/usr/src/bazel-query-utils-20261029-r2.
+Fresh Make reference roots: bazel-{rctl,who,gcore}-native-reference-20261029 under
+/usr/obj/usr/src. Comparison scripts: bazel-query-utils-qualification-20261029.
+Per-component reports in qualification/<program> prove five equal metadata
+records, one byte-identical compressed manual, a valid split-debug pair and
+matching global/undefined symbols and dynamic dependencies/search paths for each
+program. Three programs total; per-component shared directory records are not a
+unique aggregate path count. No complete instruction equivalence claim.
+
+No resource-limit modification, process attachment/core dumping, login database
+query or host installation performed. Runtime system interactions remain pending.
+Frontend review: format-5 target/artifact handling suffices; no C/protocol change
+required. /usr/bin parent integration, remaining world/kernel/pkgbase work and
+runtime/performance gates remain open. Make remains production/default.
