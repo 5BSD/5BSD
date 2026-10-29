@@ -16273,3 +16273,27 @@ Run: python3.12 tools/build/bazel/world-native-survey.py --src /usr/src
 any directory as covered. Complete world/kernel/pkgbase/bootstrap/runtime and
 performance gates remain open. This diagnostic changes no production input or
 backend contract; existing build-bsd qualification/publication behavior is unchanged.
+
+### Native libcache build and installation (2026-10-29)
+
+Added explicit bsd_cache.c/public-header targets, PIC static compilation matching
+STATIC_CFLAGS, native notify/service/pthread dependencies, libcache.so.1 and its
+complete library installation candidate. Installation includes archive, DSO/debug,
+header, manual and all thirteen maintained manual aliases with libcache package
+and development/debug metadata. Native dependency graphs carry existing notify
+FIDL/DTrace generation; libcache itself has no Make-declared provider.
+
+Run bazel-libcache-20261029 passes through build-bsd with 16 jobs. The independent
+bazel-libcache-make-20261029 build/install comparison matches all 21 changed
+installation records. Five regular payloads and thirteen manual hardlinks pass
+byte or ELF comparisons, archive member/symbol comparison, shared-library dynamic
+metadata comparison and debug-link name/CRC. Evidence is under
+/usr/obj/usr/src/bazel-libcache-reference-20261029/ (inputs.json, make.py,
+verify.py, verify.log, install-comparison.json).
+
+The twenty existing cache ATF cases are not yet migrated or executed by this
+change. Real notify/service lifecycle and matching-kernel runtime remain open;
+this is not full capability-service qualification. Reviewed build-bsd.c and
+source_graph.py: existing target/metadata inputs support this component without
+interface changes. Complete world/kernel/pkgbase/bootstrap/sandbox/cache and
+comparative performance gates remain open; Make stays production/default.

@@ -7160,3 +7160,12 @@ Native module sources and shared HAST parser/lexer preserve existing behavior;
 its Makefile declares no DTrace provider. HAST configuration/status, control-socket
 access and storage/replication authorization/audit behavior still require isolated
 runtime review. No replication, storage, logging or audit-policy changes occurred.
+
+### libcache (2026-10-29)
+
+Native targets preserve the maintained cache implementation and notify/service
+linkage. The Makefile declares no local DTrace provider; no probes were removed.
+Notify discovery budgets, pressure/invalidation delivery, watcher lifetime and
+fork behavior require the maintained unit tests and real service runtime coverage.
+Build/install parity does not prove those paths or their observability. No audit
+or logging policy was changed by the conversion.
