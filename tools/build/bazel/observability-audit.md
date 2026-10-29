@@ -6594,3 +6594,10 @@ DTrace/SDT or audit calls; no instrumentation code changed. The maintained profi
 test verifies compiler-generated counters, native profile merging and a source
 coverage report using the SDK profile runtime. This is not kernel DTrace/audit
 qualification, a native compiler-runtime build or full PGO/gcov coverage.
+
+### Clang scanner and formatter candidates (2026-10-29)
+
+All three Make sources retained. Direct source scan found no explicit DTrace/SDT
+or audit calls in the two upstream tools; no instrumentation changed. Diagnostic
+include-change and formatting checks pass, but maintained tests remain open and
+formatter fresh Make parity requires a library built with formatting support.

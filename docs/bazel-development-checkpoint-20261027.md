@@ -13604,3 +13604,37 @@ explicit targets/tests; manual updated. Static LLVM/cross-host variants, complet
 native SDK/bootstrap, remaining system targets, cache/performance and pkgbase
 qualification remain open. Make stays production/default; no host installation,
 upgrade or publication.
+
+### Native Clang scanner and formatter candidates (2026-10-29)
+
+Added clang-scan-deps (two sources) and clang-format (one source) using a shared
+Clang utility macro with explicit native private Clang/LLVM dependencies and no
+manual payload, matching their Makefiles. Scanner option generation declares
+OptParser.td. Initial native run failed on clang-format's private MatchFilePath.h;
+added its narrow header dependency. Formatter target requires the existing
+clang_format_or_extras setting so libclang contains MatchFilePath.cpp. Corrected
+run bazel-clang-utilities-native-20261029-r2 with clang_format=true passes.
+
+Scanner fresh Make driver/link/install reference matches global/weak ELF records,
+both payload records and debuglink CRC. Its option table matches all 10,894 bytes.
+Both resolved source inventories match expanded Make. Formatter Make reference
+FAILED to link because the pre-existing Make libclang lacks matchFilePath; it is
+NOT qualified for fresh Make binary/install parity. Next reference step must use
+a Make Clang library built with formatting support, not patch the link command
+with a substitute object. Reference/scripts/reports/failure:
+/usr/obj/usr/src/bazel-clang-utilities-reference-20261029 and
+/usr/obj/usr/src/bazel-clang-format-make-20261029/all.log.
+
+Diagnostic host runtime checks pass for nested include discovery, replacing a
+nested include and seeing the new dependency/removing the old one, explicit LLVM
+formatting, idempotence and dry-run validation. Tool digests match saved artifact
+receipts, PATH is /nonexistent and compiler input is explicit. First diagnostic
+used unsupported -j=1 and failed; corrected run omits it, using default parallelism,
+and keeps the original fixture. Evidence in runtime.json/runtime-r2. These are
+not yet maintained Bazel tests or proof of Bazel cache invalidation. Formatter
+runtime success does not close the missing Make reference qualification.
+
+Frontend review: build-bsd.c/format-5 source_graph.py already transport clang_format
+and explicit targets; manual updated. Static LLVM/cross-host, native SDK/bootstrap,
+remaining system targets, full pkgbase/cache/performance gates stay open. Make
+remains production/default; no host installation/upgrade/publication.

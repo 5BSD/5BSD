@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/clang:clang_utility.bzl", "clang_utility")
+clang_utility(name = "clang-scan-deps", srcs = ['//contrib/llvm-project/clang/tools/clang-scan-deps:ClangScanDeps.cpp', 'clang-scan-deps-driver.cpp'],
+    options = "//contrib/llvm-project/clang/tools/clang-scan-deps:Opts.td")

@@ -11,3 +11,5 @@ bsd_component_archive(name = "pic_archive", groups = [":format"], pic = True, vi
 
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
 bsd_component_objects(name = "pic_objects", group = ":format", pic = True, visibility = ["//visibility:public"])
+
+cc_library(name = "match_file_path_header", hdrs = ["MatchFilePath.h"], deps = ["//contrib/llvm-project/llvm/include:headers"], visibility = ["//usr.bin/clang/clang-format:__pkg__"])

@@ -4105,3 +4105,12 @@ runs a native Clang/LLD instrumented probe, merges its profile with native
 llvm-profdata and reports coverage with native llvm-cov. Select it in targets
 and tests. The probe still links the declared SDK profile runtime; this does
 not establish independent compiler-runtime bootstrap or exhaustive gcov coverage.
+
+.Pp
+The clang-scan-deps and clang-format packages provide native runtime, _installed,
+source_inventory and install_archive candidates; neither installs a manual.
+Scanner also provides its generated options target. clang-format requires
+clang_format or clang_extras in build-settings to include its library support.
+Scanner has fresh Make parity evidence; formatter binary/install parity awaits
+a matching Make library configuration. Diagnostic runtime checks do not establish
+independent bootstrap or maintained Bazel scanner/formatter test coverage.
