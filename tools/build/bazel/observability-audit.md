@@ -6981,3 +6981,9 @@ The default Make plugin traversal explicitly excludes the audit directory. Nativ
 conversion has not enabled it. Existing KDC audit-interface source coverage must
 not be reported as a built/loaded audit backend. Four GSSAPI public header payloads
 now match Make; no runtime instrumentation changed.
+
+### krb5-config installation (2026-10-29)
+
+The maintained shell script is installed unchanged with byte-identical manual
+and metadata parity. Nine host reporting comparisons pass; no instrumentation
+changes or security-service runtime claims arise from this developer utility.

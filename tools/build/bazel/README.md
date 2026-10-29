@@ -39863,3 +39863,26 @@ Reviewed build-bsd.c/source_graph.py: explicit target inputs support this header
 archive without contract changes. Make stays production/default; SDK bootstrap
 and whole-world/kernel/pkgbase/sandbox/cache/performance gates remain open.
 No host installation or publication occurred.
+
+### Native krb5-config installation and reporting checks (2026-10-29)
+
+Added the maintained krb5-config.sh directly as an installed script, plus its
+compressed manual and /usr/bin package/dev directory metadata. This file is a
+checked-in platform script, not a new generated replacement. Run
+bazel-krb5-config-20261029 matches three fresh Make installation records and
+byte-identical script/manual payloads. Evidence/verifier:
+/usr/obj/usr/src/bazel-krb5-config-reference-20261029.
+
+Nine reporting cases match without diagnostics: version, prefix, exec-prefix,
+vendor, cflags, default libraries, GSSAPI libraries, administration client and
+server libraries. These were direct host-shell comparisons using /bin:/usr/bin,
+not Bazel tests or consumer-link qualification. An initial nonexistent-PATH
+trial exposed the script's external-tool requirement and produced unequal
+path-dependent diagnostics; it was not accepted as a successful check. The
+corrected comparison requires both zero status and empty stderr.
+
+Reviewed build-bsd.c/source_graph.py: existing explicit target inputs support
+this installation without contract changes. Top-level public headers and aggregate
+payload reconciliation remain next. Make stays production/default; independent
+bootstrap and complete world/kernel/pkgbase/sandbox/cache/performance gates stay
+open. No host installation or publication occurred.
