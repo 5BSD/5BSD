@@ -91,3 +91,13 @@ bsd_tablegen(name = "runtime_libcalls", src = "//contrib/llvm-project/llvm/inclu
 _INTRINSIC_OUTPUTS = [":intrinsics_" + arch for arch in _INTRINSIC_ARCHITECTURES] + [":intrinsic_implementation", ":runtime_libcalls"]
 cc_library(name = "intrinsic_headers", hdrs = _INTRINSIC_OUTPUTS, deps = [":ir_generated_headers"], strip_include_prefix = ".", visibility = ["//visibility:public"])
 filegroup(name = "intrinsic_outputs", srcs = _INTRINSIC_OUTPUTS, visibility = ["//visibility:public"])
+
+_X86_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-writer']), ('AsmWriter1', ['-gen-asm-writer', '-asmwriternum=1']), ('CallingConv', ['-gen-callingconv']), ('DAGISel', ['-gen-dag-isel']), ('DisassemblerTables', ['-gen-disassembler']), ('FastISel', ['-gen-fast-isel']), ('FoldTables', ['-gen-x86-fold-tables', '-asmwriternum=1']), ('GlobalISel', ['-gen-global-isel']), ('InstrInfo', ['-gen-instr-info', '-instr-info-expand-mi-operand-info=0']), ('InstrMapping', ['-gen-x86-instr-mapping']), ('MnemonicTables', ['-gen-x86-mnemonic-tables', '-asmwriternum=1']), ('RegisterBank', ['-gen-register-bank']), ('RegisterInfo', ['-gen-register-info']), ('SubtargetInfo', ['-gen-subtarget'])]
+[bsd_tablegen(name = "x86_" + stem.lower(),
+    src = "//contrib/llvm-project/llvm/lib/Target/X86:X86.td",
+    includes = ["//contrib/llvm-project/llvm/lib/Target/X86:definitions", "//contrib/llvm-project/llvm/include:x86_target_inputs"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/X86"],
+    flags = flags, output = "X86Gen" + stem + ".inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for stem, flags in _X86_TABLES]
+cc_library(name = "x86_generated_headers", hdrs = [":x86_" + stem.lower() for stem, _ in _X86_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "x86_generated_outputs", srcs = [":x86_" + stem.lower() for stem, _ in _X86_TABLES], visibility = ["//visibility:public"])

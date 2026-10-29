@@ -37423,3 +37423,27 @@ Frontend review: build-bsd.c and format-5 source_graph.py already accept these
 targets/settings; manual records optional consumers. No staging/publication change.
 Architecture backends, full linkage and world/kernel/pkgbase/runtime/performance
 gates remain open. Make remains production/default; no installation/publication.
+
+### Native X86 backend TableGen outputs (2026-10-29)
+
+Added 15 native X86 generator actions using declared llvm-tblgen: assembly matching/
+writers, calling conventions, DAG/fast/global instruction selection, disassembly,
+fold/instruction/mnemonic tables, register banks/registers and subtargets. Preserved
+special writer-number flags and X86 operand-expansion flag. Explicit inventories
+declare 61 target and 38 shared .td files (primary input plus 98 includes).
+A dependency audit initially expected the Make depfile to contain the primary input;
+it contains only the 98 includes. Inspection found the sole difference was X86.td,
+which both build rules explicitly name as the primary input. No missing include.
+
+Maintained frontend `/usr/obj/usr/src/bazel-llvm-x86-tables-20261029` succeeds with
+16 jobs. All 15 outputs match freshly generated Make tables byte-for-byte:
+76,393,918 bytes. Evidence/scripts:
+`/usr/obj/usr/src/bazel-llvm-x86-tables-qualification-20261029`. Make uses its
+existing llvm-tblgen; Bazel uses the native target and staged SDK/runtime dependencies.
+No runtime Make metadata parsing or pre-generated table substitution.
+
+Backend compilation, target configuration, linkage, runtime code generation, cache
+invalidation, independent bootstrap and comparative performance remain open.
+Frontend review: build-bsd.c/format-5 backend accepts these targets; no input/staging/
+security/manual contract change. Full world/kernel/pkgbase gates remain open.
+Make remains production/default. No installation/publication occurred.

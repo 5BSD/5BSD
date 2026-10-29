@@ -6396,3 +6396,9 @@ end-to-end diagnostics remain unqualified. LLVM curl/httplib are disabled in mai
 configuration: no HTTP behavior claim. Debug package writes and target diagnostics
 need linked-tool tests. Evidence:
 `/usr/obj/usr/src/bazel-llvm-toolsupport-qualification-20261029`.
+
+### X86 backend generated tables (2026-10-29)
+
+15 native outputs match Make bytes. No probe/audit changes; generated-code tracing,
+backend diagnostics and execution remain unqualified. Evidence:
+`/usr/obj/usr/src/bazel-llvm-x86-tables-qualification-20261029`.
