@@ -16734,3 +16734,21 @@ exactly one call_once initialization, four TSS destructor calls and main-thread
 TSS isolation. SDK startup/header inputs and host kernel/loader remain in use.
 This is selected API lifecycle coverage, not complete C11 threading or stress/
 performance qualification. No production source change was required.
+
+### Native libpathconv installation (2026-10-29)
+
+Added explicit abs2rel.c/rel2abs.c sources, public pathconv.h, ordinary archive,
+shared ABI 1 and both compressed manuals. Runs bazel-libpathconv-20261029 and
+fresh bazel-libpathconv-make-20261029 pass. All nine installation destinations
+match with no missing/extra paths or owner/group/mode/non-directory tag mismatch.
+Six regular payloads match archive order, global/weak symbols, ordered dynamic
+metadata, header/manual bytes and debug-link CRC. Retained evidence lives under
+bazel-libpathconv-reference-20261029/{install,payload}-audit.json.
+
+Runtime qualification remains open. Existing tests are disabled in the library
+Makefile; tests/Makefile labels command-line helpers as TAP even though they emit
+plain conversion results, and test.pl counts errors without a failing exit status.
+Do not report these as passing runtime suites without correcting their execution
+contract. This migration preserves the current installation contract and does
+not enable the broken test registration. Existing build-bsd/source_graph targets
+support this addition without frontend changes. Full-system gates remain open.

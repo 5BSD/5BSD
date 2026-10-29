@@ -7278,3 +7278,11 @@ exactly one call_once initialization, four TSS destructor calls and main-thread
 TSS isolation. SDK startup/header inputs and host kernel/loader remain in use.
 This is selected API lifecycle coverage, not complete C11 threading or stress/
 performance qualification. No production source change was required.
+
+### libpathconv (2026-10-29)
+
+Both lexical conversion sources are preserved without production changes.
+No audit or DTrace integration was added. Build/install comparisons pass;
+existing disabled tests need proper result/exit handling before runtime claims.
+The functions perform lexical path conversion, not filesystem authorization;
+callers must not infer access-control or symlink resolution from these results.
