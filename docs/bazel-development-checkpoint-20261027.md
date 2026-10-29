@@ -9458,3 +9458,58 @@ Frontend review: existing format-5 targets, script/template rules and artifact
 capture suffice; no C frontend change or one-off build backend. No host install,
 module loading or service execution. Complete libexec/world aggregation, kernel,
 pkgbase publication, runtime and performance gates remain open. Make is default.
+
+## 2026-10-29: ATF parent aggregation investigation (resolved below)
+
+Added an uncommitted //libexec/atf:install_archive candidate containing all three
+program manifests, shell support, the parent discovery file and option-selected
+check/shell test installations. Both tests-on/off frontend builds and recursive
+Make references completed using 16 jobs. Make's unconditional parent discovery
+file is preserved with tests disabled. Existing frontend inputs suffice.
+
+Qualification is NOT complete: the tests-enabled metadata/file-set comparison
+passed before the verifier rejected differing linked .text bytes in atf-check.
+NEEDED dependencies match. Inspection found an embedded source-path difference
+in .rodata, which changes subsequent addresses, but has not yet established
+that it explains all binary differences. No equality assertion was removed.
+Evidence: /usr/obj/usr/src/bazel-atf-aggregate-tests-20261029/qualification/
+linked-text-investigation.json and native-rodata.txt/make-rodata.txt. Reproducer
+and unchanged failing assertion: bazel-atf-aggregate-qualification-20261029/verify.py.
+The no-tests archive comparison still needs to run after resolving this issue.
+Next: compare object sections/relocations and source-path handling, then finish
+both variants and commit only once the evidence supports qualification.
+
+## 2026-10-29: ATF aggregate qualification and source-path diagnosis
+
+The linked-text difference was resolved without modifying program sources or
+Bazel code generation. Fresh independent recursive Make references add only
+CXXFLAGS_LAST=-fmacro-prefix-map=/usr/src/=, derived from the source root. This
+normalizes Make's absolute __FILE__ paths to Bazel's source-relative spelling.
+The original failing references and assertion remain intact. With that mapping,
+all three programs' linked .text and .rodata bytes match exactly; NEEDED, RPATH
+and RUNPATH also match. Each native stripped/debug pair validates. Diagnostic
+source paths intentionally remain relative in Bazel; whole ELF/debug byte
+identity with unmodified Make is not claimed.
+
+Both native aggregate variants pass recursive Make installation comparison:
+
+| Variant | Metadata records | Nonbinary payloads | Manual hardlinks |
+| --- | ---: | ---: | ---: |
+| tests enabled | 50 | 38 | 22 |
+| tests disabled | 37 | 27 | 22 |
+
+Payloads include the unchanged generated test scripts, helpers, manuals and
+discovery files. Hardlinks agree with the actual Make staging inode relations.
+The parent discovery file is present in both variants, matching Make.
+
+Evidence: /usr/obj/usr/src/bazel-atf-aggregate-{tests,no-tests}-20261029/
+qualification/{mapped-parity.json,mapped-data-parity.json}. Fresh references:
+bazel-atf-aggregate-{tests,no-tests}-mapped-reference-20261029; scripts
+make-<variant>-mapped.py and verify-mapped.py are in
+bazel-atf-aggregate-qualification-20261029. Original failed proof retained.
+
+Frontend review: //libexec/atf:install_archive uses existing format-5 targets and
+tests bool selection, with declared child manifests and payload dependencies.
+No frontend C or backend protocol changes needed. This qualifies native ATF
+installation aggregation, not execution of its newly installed tests, a complete
+world, or repository publication. Make remains production/default.

@@ -34403,3 +34403,14 @@ Native install_archive targets now exist under libexec/atf/atf-check/tests,
 libexec/atf/atf-sh/tests, libexec/atf/tests and libexec/tests. Their scripts,
 helper and Kyuafiles match Make installation. This supplies test payloads and
 discovery, not registered or passing native Bazel test cases.
+
+### ATF installation aggregate (2026-10-29)
+
+`//libexec/atf:install_archive` includes atf-check, atf-sh, atf_pytest_wrapper,
+shell support, manuals, debug files and the parent discovery Kyuafile. The
+`//tools/build/bazel/config:tests` flag controls the two program test directories;
+the parent discovery file is unconditional, matching Make. Both variants passed
+recursive installation comparisons. Linked text/read-only data match after
+normalizing Make's embedded absolute source paths to source-relative paths in
+the reference build. Original mismatch evidence is retained in the checkpoint.
+Runtime execution and whole-world assembly remain separate qualification gates.
