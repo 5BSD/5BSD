@@ -7255,3 +7255,10 @@ shared-library and installation metadata. No production probe/audit change was
 made. EFI variable mutation crosses device/ioctl boundaries; audit coverage and
 actual firmware behavior require separate runtime review. No EFI variables were
 read or modified as part of this artifact qualification.
+
+### libgpio (2026-10-29)
+
+Native source and installation parity is established without production changes.
+No DTrace provider or audit hook was added during migration. Device opens and
+GPIO ioctls need a qualified device or VM fixture for runtime/audit assessment;
+artifact parity does not establish pin control, event delivery or permissions.

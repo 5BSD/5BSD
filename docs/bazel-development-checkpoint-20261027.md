@@ -16680,3 +16680,23 @@ manual hardlink checks and debug-link CRC. Evidence is retained in
 bazel-libefivar-reference-20261029/{install,payload}-audit.json and verifier scripts.
 No runtime or EFI hardware behavior has been qualified. Cross-platform, full
 world/kernel/package/bootstrap and performance gates remain open.
+
+### Native libgpio candidate (2026-10-29)
+
+Added source-owned gpio.c/header, ordinary archive, shared ABI 0, and complete
+installation targets including the compressed manual and its 23 aliases. Package
+tags follow Make's default utilities package. Runs bazel-libgpio-20261029 and
+bazel-libgpio-make-20261029 are pending, with retained comparators under
+bazel-libgpio-reference-20261029. The existing build-bsd/source_graph explicit
+inputs support the new target without frontend changes. GPIO devices are not
+opened or modified; no hardware/runtime qualification is claimed. Full-system
+completion gates remain open and Make stays production/default.
+
+Libgpio result: bazel-libgpio-20261029 and the independent fresh Make build pass.
+All 31 installation destinations match with zero missing/extra or ownership,
+mode and non-directory tag mismatches. Five regular payloads pass archive order,
+global/weak symbols, dynamic metadata, public header/manual bytes and debug-link
+CRC checks; all 23 manual hardlinks match. Evidence is retained under
+bazel-libgpio-reference-20261029 in install-audit.json and payload-audit.json.
+No GPIO operation or runtime test was executed. Full-system and performance
+qualification remain open.
