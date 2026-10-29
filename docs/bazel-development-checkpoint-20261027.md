@@ -12717,3 +12717,28 @@ Frontend review: existing format-5 target/settings transport suffices; manual
 documents extras/lldb consumers. No build-bsd.c input/staging/publication change.
 Remaining LLVM/backends and compiler/world/kernel/pkgbase/runtime/performance
 gates remain open. Make remains production/default; no installation/publication.
+
+### LLVM shared target and tool-support components (2026-10-29)
+
+Added six native component targets: shared Target (5), XRay (10), DWARFCFIChecker
+(4), DWP (2), Debuginfod (4), MCA (23). Target and Debuginfod are installed-world
+components; the other four require clang_extras. Target includes only shared
+Target/*.cpp sources; architecture-specific backends/MCA extensions remain separate
+and unqualified. Private unwind-checker headers are declared.
+
+Maintained frontend `/usr/obj/usr/src/bazel-llvm-toolsupport-20261029` succeeds
+with 16 jobs and clang_extras. All 48 PIC global/undefined symbol inventories match
+fresh isolated Make objects, six archive member inventories match, and resolved
+native sources match expanded Make. Evidence/scripts:
+`/usr/obj/usr/src/bazel-llvm-toolsupport-qualification-20261029`. Reference headers
+use existing bootstrap generators and staged SDK; no source/sandbox modifications.
+
+The maintained llvm-config.h disables LLVM_ENABLE_CURL and LLVM_ENABLE_HTTPLIB:
+Debuginfod compilation is not evidence of working HTTP downloads/server. Runtime
+trace parsing, unwind verification, debug-package writing and machine-code analysis
+remain unqualified. Symbol comparison does not prove instruction identity, full
+compiler linkage, independent bootstrap or performance.
+Frontend review: build-bsd.c and format-5 source_graph.py already accept these
+targets/settings; manual records optional consumers. No staging/publication change.
+Architecture backends, full linkage and world/kernel/pkgbase/runtime/performance
+gates remain open. Make remains production/default; no installation/publication.

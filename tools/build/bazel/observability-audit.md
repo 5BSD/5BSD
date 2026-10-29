@@ -6387,3 +6387,12 @@ __jit_debug_register_code machinery. No new probes/audit hooks were added. Runti
 debugger interaction, code registration/unregistration, EH frames, generated-code
 memory permissions and remote process diagnostics still require linked-tool tests.
 Evidence: `/usr/obj/usr/src/bazel-llvm-executionengine-qualification-20261029`.
+
+### LLVM Target / XRay / DWARFCFIChecker / DWP / Debuginfod / MCA (2026-10-29)
+
+48 component objects preserve upstream sources; no new probes/audit hooks added.
+XRay trace processing and unwind analysis are included, but trace collection and
+end-to-end diagnostics remain unqualified. LLVM curl/httplib are disabled in maintained
+configuration: no HTTP behavior claim. Debug package writes and target diagnostics
+need linked-tool tests. Evidence:
+`/usr/obj/usr/src/bazel-llvm-toolsupport-qualification-20261029`.
