@@ -6646,3 +6646,10 @@ debuglink CRCs and debug-payload symbol comparisons. Preserves explicit-static
 errno debug policy and DSO helper linkage. All 36 Bazel cases pass after the
 packaging changes. No runtime source changes, new probes or audit hooks; actual
 installed-system execution remains a separate gate.
+
+### Extracted csu test payload execution (2026-10-29)
+
+Kyua executed all 36 cases using the archive's registrations and stripped
+programs, with packaged DSO helper and declared runtime libraries. JUnit and
+post-run payload/loader audits pass. This supplements build-tree execution;
+no booted-system, DTrace/audit or kernel behavior claim beyond these tests.

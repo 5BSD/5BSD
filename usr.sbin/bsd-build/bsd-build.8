@@ -4189,6 +4189,8 @@ packages all maintained csu test programs, their helper, debug payloads and Kyua
 registrations. Installation metadata, Kyuafile bytes, debug links and debug-payload
 symbol records match a fresh Make reference for the qualified configuration.
 The two errno programs using explicit -static omit separate debug files, matching
-bsd.prog.mk. This archive does not itself qualify a complete installed system or
+bsd.prog.mk. A separate extracted-archive Kyua run passed all 36 cases with
+declared runtime libraries; this remains a diagnostic stage using the host
+kernel/rtld and SDK Kyua. The archive does not itself qualify a complete installed system or
 pkgbase repository. The bsd_kyuafile rule accepts an optional output path when
 composing multiple registrations in one Bazel package.

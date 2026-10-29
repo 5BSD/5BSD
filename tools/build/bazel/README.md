@@ -38600,3 +38600,22 @@ independent bootstrap or complete world/kernel/publication/performance. Tests
 still use the prepared SDK compiler and remaining runtime. No host installation,
 upgrade or publication. Frontend review: build-bsd.c/format-5 backend already
 accept the archive and test labels; no CLI/input schema change. Manual updated.
+
+### Extracted csu archive execution (2026-10-29)
+
+Ran SDK Kyua against the unmodified Kyuafiles extracted from the saved native
+install_archive (SHA256 52ce4e84624e251ab716f1f36e2e123203ccfdf06b4f645eb4873e180d4461c5).
+All 36 cases passed with zero broken/failed/skipped cases. JUnit report independently
+confirms 36 successful cases. Post-run comparison verifies all 38 payload files
+remain byte-identical to the archive. Loader traces check all eleven dynamic test
+programs plus Kyua: every resolved library matches a declared runtime artifact,
+and DSO tests load libh_csu.so from the extracted archive itself.
+
+Evidence: /usr/obj/usr/src/bazel-csu-packaged-runtime-20261029 contains results.db,
+junit.xml, logs, invocation and receipt. Preserved packaged-run.py and packaged-
+audit.py are under bazel-csu-tests-reference-20261029. The diagnostic stage uses
+explicit native library runfiles and SDK execution libraries through
+LD_LIBRARY_PATH; host kernel/rtld and SDK Kyua remain. This establishes execution
+of the packaged test payload/layout, not a booted installed OS, pkgbase transaction,
+independent bootstrap, or hermetic runtime. No host installation/upgrade/reboot.
+The diagnostic is not yet a maintained Bazel archive-execution test.
