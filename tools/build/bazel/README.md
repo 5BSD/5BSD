@@ -40758,3 +40758,30 @@ candidates; HAST remains, as do aggregate reconciliation and service/module runt
 Reviewed build-bsd.c/source_graph.py: existing target/metadata interfaces suffice.
 Make remains production/default; full-system/bootstrap/cache/sandbox and comparative
 CPU/memory/disk performance gates remain incomplete.
+
+### Native HAST SNMP module (2026-10-29)
+
+Added the final configured SNMP module's explicit sources, generated tree/OIDs,
+shared HAST parser/lexer dependencies and native libutil linkage. Source/header
+exports from sbin/hastd now permit this specific consumer. The module reuses
+existing native yacc/lex actions rather than copying generated C or querying Make.
+Its compilation preserves HAVE_CAPSICUM, INET, configured INET6, YY_NO_UNPUT and
+YY_NO_INPUT. Module/manual/MIB/definition/debug/symlink installation uses the
+maintained shared SNMP module installer.
+
+Run bazel-snmp-hast-20261029 passes via build-bsd with 16 jobs. Fresh Make reference
+matches all three SNMP-generated files byte-for-byte and module global/weak symbols
+plus ordered dynamic metadata. All ten changed installation records match; five
+regular payloads pass byte or ELF comparisons, debug-link name/CRC and module
+symlink target pass. Evidence: /usr/obj/usr/src/bazel-snmp-hast-reference-20261029/
+verify.py, comparison.json, install-audit.py,json and payload-audit.py,json.
+The three byte-compared files are SNMP outputs, not a new lexer/parser byte-parity
+claim; the HAST generators are reused and their compiled result is covered by the
+module artifact comparison.
+
+All eleven currently configured SNMP module directories now have native build/install
+candidates. This does not close the SNMP subtree: aggregate/header reconciliation,
+feature-selection variants and daemon/module runtime remain. No HAST daemon,
+replication peer or storage was contacted or changed. Reviewed build-bsd.c and
+source_graph.py: existing explicit targets/metadata inputs suffice. Make remains
+production/default; whole-system/bootstrap/cache/sandbox/performance gates stay open.

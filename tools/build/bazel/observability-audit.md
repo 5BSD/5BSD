@@ -7153,3 +7153,10 @@ Makefile declares no DTrace provider. Process/storage/device/printer enumeration
 and configuration interfaces require runtime permission and audit/log review.
 No host information collection or mutation was performed by build qualification;
 artifact parity alone does not qualify observability behavior.
+
+### HAST SNMP module (2026-10-29)
+
+Native module sources and shared HAST parser/lexer preserve existing behavior;
+its Makefile declares no DTrace provider. HAST configuration/status, control-socket
+access and storage/replication authorization/audit behavior still require isolated
+runtime review. No replication, storage, logging or audit-policy changes occurred.
