@@ -6363,3 +6363,10 @@ The 17-source optional debug-info linking component preserves upstream sources.
 No probes or audit hooks added. Symbol parity does not establish runtime error
 reporting or observability; linked-tool debug-info tests remain required. Evidence:
 `/usr/obj/usr/src/bazel-llvm-dwarflinker-qualification-20261029`.
+
+### LLVM ObjCopy (2026-10-29)
+
+The 22-source object transformation component preserves upstream implementation.
+No DTrace probes/audit hooks added. File mutation and malformed-input diagnostics
+require linked llvm-objcopy runtime tests; compile/symbol parity does not prove them.
+Evidence: `/usr/obj/usr/src/bazel-llvm-objcopy-qualification-20261029`.

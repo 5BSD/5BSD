@@ -37325,3 +37325,24 @@ performance. Frontend review: existing build-bsd.c format-5 input/backend suppor
 this target and clang_extras setting; manual documents its new consumer.
 Remaining LLVM components, complete compiler and world/kernel/package qualification
 remain open. Make remains production/default. No host installation/publication.
+
+### LLVM ObjCopy component (2026-10-29)
+
+Added native ObjCopy cc_library with 22 explicit default installed-libllvm sources,
+declared private headers/include root, PIC archive/object exports and resolved source
+inventory. ELF, COFF, Mach-O, XCOFF, wasm and archive implementation sources are
+covered. Maintained frontend run `/usr/obj/usr/src/bazel-llvm-objcopy-20261029`
+succeeds with 16 jobs. All 22 PIC global/undefined symbol inventories match fresh
+isolated Make objects; archive member multiplicities and resolved native source
+inventory match expanded Make. Evidence/scripts:
+`/usr/obj/usr/src/bazel-llvm-objcopy-qualification-20261029`. The Make reference
+generates headers before parallel object compilation using existing bootstrap
+generators and the staged SDK. No source or sandbox workaround was introduced.
+
+This does not establish instruction identity, llvm-objcopy executable linkage,
+file transformation/debug stripping correctness, independent bootstrap or performance.
+Those linked-tool/runtime tests remain necessary before system qualification.
+Frontend review: build-bsd.c and format-5 source_graph.py already support these
+native targets; no input, staging, signing, packaging or manual contract changed.
+Remaining LLVM components, compiler linkage and full world/kernel/package gates
+remain open. Make remains production/default; no installation/publication occurred.
